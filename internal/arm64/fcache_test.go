@@ -911,3 +911,94 @@ func TestModuleCheckAuto(t *testing.T) {
 		t.Error("XO_CHK_CACHE=auto skipped no module of any program")
 	}
 }
+
+// TestFrontCacheClosures: a body that makes closures is cached with its
+// closures' bodies (decision 0271 step 1b, the closure relocation): a
+// second build replays them, renumbered as that build numbers closures,
+// and is the cache-off build's binary; verify builds every body, closures
+// too, and compares. Programs: nested and capturing closures, and
+// conc_mutex_rollback's `m.with(fn(var l) ...)` (closure_with).
+func TestFrontCacheClosures(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-feclos-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	own := filepath.Join(work, "p")
+	if err := os.MkdirAll(own, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := `fn adder(n: Int) -> fn(Int) -> Int {
+  fn(x: Int) -> Int { x + n }
+}
+
+fn twice(f: fn(Int) -> Int) -> fn(Int) -> Int {
+  fn(x: Int) -> Int {
+    let g = fn(y: Int) -> Int { f(f(y)) }
+    g(x)
+  }
+}
+
+fn main(os: Os) uses stdio {
+  let k = 3
+  let h = twice(adder(k))
+  let xs = [1, 2, 3].map(fn(x) { h(x) * k })
+  os.stdio.println("${xs[0]} ${xs[1]} ${xs[2]}")
+}
+`
+	if err := os.WriteFile(filepath.Join(own, "main.xo"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dirs := []string{own, filepath.Join("..", "llvm", "testdata", "golden", "conc_mutex_rollback")}
+	out := filepath.Join(work, "prog")
+	build := func(dir, cache string, env ...string) []byte {
+		t.Helper()
+		os.Remove(out)
+		cmd := exec.Command(xo, "build", "--backend=arm64", "-o", out, ".")
+		cmd.Dir = dir
+		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache), env...)
+		if log, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%s: xo build %v: %v\n%s", filepath.Base(dir), env, err, log)
+		}
+		b, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	for i, d := range dirs {
+		cache := filepath.Join(work, "cache", strconv.Itoa(i))
+		off := build(d, cache, "XO_BACKEND_CACHE=off")
+		build(d, cache, "XO_BACKEND_CACHE=on")
+		if !bytes.Equal(build(d, cache, "XO_BACKEND_CACHE=on"), off) {
+			t.Errorf("%s: the build replaying closures differs from the cache-off build", filepath.Base(d))
+		}
+		if !bytes.Equal(build(d, cache, "XO_BACKEND_CACHE=verify"), off) {
+			t.Errorf("%s: the verify build differs from the cache-off build", filepath.Base(d))
+		}
+	}
+	// closures numbered differently: a function made first now makes a
+	// closure, so every replayed closure gets another name than the one
+	// it was recorded under (as when a std body's entry from another
+	// program replays)
+	first := "fn first(n: Int) -> Int {\n  let f = fn(x: Int) -> Int { x + n }\n  f(1)\n}\n\n"
+	src2 := strings.Replace(src, "fn main(os: Os) uses stdio {\n", "fn main(os: Os) uses stdio {\n  let _ = first(2)\n", 1)
+	if err := os.WriteFile(filepath.Join(own, "main.xo"), []byte(first+src2), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cache := filepath.Join(work, "cache", "0")
+	off := build(own, filepath.Join(work, "cache", "off"), "XO_BACKEND_CACHE=off")
+	if !bytes.Equal(build(own, cache, "XO_BACKEND_CACHE=on"), off) {
+		t.Error("the build replaying renumbered closures differs from the cache-off build")
+	}
+}

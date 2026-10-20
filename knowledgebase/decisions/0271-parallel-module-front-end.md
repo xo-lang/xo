@@ -333,3 +333,23 @@ A one-constant edit of xo after a warm build (three edits, load 28 to
 `xo check` of xo, flow 0.18 s, parsing 0.23 s, CPU profile) come first
 (the checker overlay, step 3), then the relocations; linking is 6.6% of
 an edit.
+
+### Step 1b, the closure relocation (2026-10-20)
+
+A body that makes closures is cached: each closure it makes is an event
+of its entry (its name as made, its parameters, results and captures by
+type name, whether it catches), and each closure's body, built by its
+job later in the queue, gets an entry of its own that is sealed into the
+owner's entry once the build is done (nested closures in turn). A commit
+numbers each closure as the build numbers closures (Builder.nclos is
+builder-wide, so a closure's name depends on every earlier body),
+renames the body's references, declares the function, and queues a
+replay of the closure's entry at its job's turn, so the queue order and
+the output are a serial build's. A closure entry that does not replay
+drops the build as a failed commit does. Measured on xo: the 59 bodies
+that made closures no longer skip; a warm rebuild hits 8,425 of 8,618
+bodies (8,284 of 8,534 before) and fe.build 575 ms (1,092 ms); identity
+446 of 446. With them cached, XO_CHK_CACHE=auto can skip the modules
+whose only uncached bodies made closures (3 of 21 skipped before).
+Remaining skips on xo: generic instances 139 (always built), constants
+32, spawn sites 19, thunks 6.

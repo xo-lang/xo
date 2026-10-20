@@ -297,6 +297,7 @@ fn (var b: Builder) closure(e: Expr, lit: parser.FnLit) -> Int {
   let fi = b.m.new_func(name, ps, [b.m.types[t].ret])
   b.m.funcs[fi].indirect = true
   b.m.funcs[fi].captures = cap_ts
+  b.fe_closure_made(fi)
   let x = b.c.tys[ct]
   let err_t = b.fail_err(x.err)
   b.queue.push(Job.Closure(fi: fi, lit: lit, file: b.s.file, result: x.result, err_t: err_t, owner: owner, closures: b.s.closures + 1, sub: b.s.sub, caps: caps, cap_ts: cap_ts, pack: false, polls: b.s.polls))

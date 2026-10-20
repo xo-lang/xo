@@ -705,3 +705,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [std-gen-hand-edits.md](std-gen-hand-edits.md): std/rt/std_gen.go edited by hand drifted (seeds, a missing XoMark, newtype JSON); regenerate with scripts/stdgen, never by hand (Observed)
 - [def-transient-prelude-miss.md](def-transient-prelude-miss.md): Observed, cause open: xo def from a checkout root missed Str.to_upper while suggesting it (6 of 6 runs for Lib 1, then gone); found_at misses now fall back to the object (68bff367); what to capture if it recurs
 - [windows-no-dwarf.md](windows-no-dwarf.md): Anticipated: native windows/amd64 builds have no debug information (PDB/CodeView not written; DWARF kept off)
+- [fe-cache-replayed-name.md](fe-cache-replayed-name.md): Observed: a replayed closure took the name it was recorded under (another program numbered closures differently) and the backend found no such function; a commit keeps this build's name

@@ -136,6 +136,9 @@ enum Job {
   /// The function of a test block (testBody).
   Test(fi: Int, file: Int, td: parser.TestDecl)
   Closure(fi: Int, lit: parser.FnLit, file: Int, result: Int, err_t: Int, owner: Int, closures: Int, sub: Map[Int, Int], caps: List[Int], cap_ts: List[Int], pack: Bool, polls: Bool)
+  /// A closure a front end cache entry made (fe_replay): its body from
+  /// its entry d, the owner's entry's key for a failure.
+  ClosureReplay(fi: Int, d: Bytes, key: Str)
 }
 
 /// A check after an operation (build_conc.go unwindCheck): the function,
@@ -631,6 +634,7 @@ fn (var b: Builder) run_job_fe(j: Job) {
       let entry = b.fe.entries.get(key)
       if !b.fe.verify {
         if let Some(e) = entry {
+          b.fe.cur_key = key
           if b.fe_replay(e, fi) {
             if b.fe.broken {
               // the module is half committed: the driver drops this build
@@ -664,20 +668,58 @@ fn (var b: Builder) run_job_fe(j: Job) {
           }
           None => {}
         }
-        if entry == None || entry != Some(e) {
-          b.fe.stores.push((key, e))
+        let clos = b.fe_made_closures()
+        if !clos.is_empty() {
+          // its closures' entries follow it once their jobs ran
+          b.fe.pending.push((key, e, clos))
+        } else if let Some(x) = b.fe_seal(e, []) {
+          if entry == None || entry != Some(x) {
+            b.fe.stores.push((key, x))
+          }
         }
       }
       return
     }
   }
+  match j {
+    Closure(cf, _, file, _, _, _, _, _, _, _, _, _) => {
+      // a closure's body: an entry of its own, sealed into its owner's
+      // (fe_finalize); none makes its module's bodies incomplete
+      let r = b.fe_begin()
+      b.run_job0(j)
+      match b.fe_entry(r, cf) {
+        Some(e) => b.fe.clos_rec[cf] = (e, b.fe_made_closures())
+        None => {
+          b.fe.no_clos[cf] = true
+          if file >= 0 {
+            b.nofe_mods[b.c.files[file].module] = true
+          }
+        }
+      }
+      return
+    }
+    ClosureReplay(cf, d, key) => {
+      // a closure its owner's entry made: its body from the entry; it
+      // cannot be built here (its job's data is not kept), so a replay
+      // that fails drops the build as a commit that fails does
+      b.fe.cur_key = key
+      if !b.fe_replay(d, cf) || b.fe.broken {
+        b.fe.broken = false
+        b.fe.bad.push("${key} (closure ${b.m.funcs[cf].name}, recorded by xo ${b.fe.last_recorder})")
+        if b.why.is_empty() {
+          b.why = "the front end cache's entry for the closure ${b.m.funcs[cf].name} does not replay (XO_FE_CACHE=off builds without it)"
+        }
+      }
+      return
+    }
+    _ => {}
+  }
   // built with no entry: a generic instance, a body with no key, a
-  // contract's inner body, a test, a closure (its owner's module)
+  // contract's inner body, a test
   let jm = match j {
     Body(fo, _, _) => b.c.objs[fo].module
     Inner(fo, _, _) => b.c.objs[fo].module
-    Closure(_, _, file, _, _, _, _, _, _, _, _, _) => if file >= 0 { b.c.files[file].module } else { -1 }
-    Test(..) => -1
+    _ => -1
   }
   if jm >= 0 {
     b.nofe_mods[jm] = true
@@ -691,6 +733,7 @@ fn (var b: Builder) run_job0(j: Job) {
     Inner(fo, fi, sub) => b.body_of(fo, fi, sub, false)
     Test(fi, file, td) => b.test_body(fi, file, td)
     Closure(fi, lit, file, result, err_t, owner, closures, sub, caps, cap_ts, pack, polls) => b.closure_body(fi, lit, file, result, err_t, owner, closures, sub, caps, cap_ts, pack, polls)
+    ClosureReplay(..) => b.impossible("a closure's front end cache replay without the cache")
   }
 }
 

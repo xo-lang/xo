@@ -22,7 +22,7 @@
 use std/crypto
 use github.com/xo-lang/xo/compiler/check
 
-const FE_CACHE_VERSION = "xo front cache v8"
+const FE_CACHE_VERSION = "xo front cache v9"
 
 /// The front end cache of one build: entries by key (fe_keys), the
 /// entries to store, and counts.
@@ -53,6 +53,16 @@ pub struct FeCache {
   /// a test hook (XO_FE_BREAK): the commit of this function's entry
   /// fails, as an entry that does not replay does
   pub break_name: Str = ""
+  /// the entries of bodies that made closures, waiting for their
+  /// closures' entries (fe_finalize): key, entry, the closures in order
+  pub pending: List[(Str, Bytes, List[Int])] = []
+  /// a closure's entry when its job recorded one, and the closures it
+  /// made in turn; a closure in no_clos recorded none
+  pub clos_rec: Map[Int, (Bytes, List[Int])] = {}
+  pub no_clos: Map[Int, Bool] = {}
+  /// the key of the entry being committed (its closures' replay jobs
+  /// name it when one fails)
+  pub cur_key: Str = ""
   /// qualified name to function object, built on the first replay
   by_ident: Map[Str, Int] = {}
 }
@@ -149,7 +159,7 @@ fn fe_mix(h: Int, s: Str) -> Int {
 /// What a body may change and an entry not replay: when any differs
 /// after the body, it is not cached.
 fn (b: Builder) fe_fixed() -> Str {
-  "${b.gens.len()} ${b.consts.len()} ${b.ifaces.len()} ${b.tids.len()} ${b.sites.len()} ${b.thunks.len()} ${b.natives.len()} ${b.late_tids.len()} ${b.nclos} ${b.nsyn} ${b.skipped_any} ${b.errs.len()} ${b.seen_err.len()} ${b.why} ${b.c.types.len()} ${b.c.diags.len()}"
+  "${b.gens.len()} ${b.consts.len()} ${b.ifaces.len()} ${b.tids.len()} ${b.sites.len()} ${b.thunks.len()} ${b.natives.len()} ${b.late_tids.len()} ${b.nsyn} ${b.skipped_any} ${b.errs.len()} ${b.seen_err.len()} ${b.why} ${b.c.types.len()} ${b.c.diags.len()}"
 }
 
 /// A function object's qualified name: module path, receiver type, name.
@@ -172,6 +182,7 @@ struct FeRec {
   nq: Int
   nc: Int
   nvar: Int
+  nclos: Int
   mods: Map[Str, Bool]
 }
 
@@ -186,7 +197,7 @@ fn (var b: Builder) fe_begin() -> FeRec {
   b.m.fe_fabsent = {}
   b.fe_flagbits = 0
   b.m.fe_ev = []
-  FeRec{fixed: b.fe_fixed(), nt: b.m.types.len(), nf: b.m.funcs.len(), nq: b.queue.len(), nc: b.checks.len(), nvar: b.nvar, mods: b.decl_mods}
+  FeRec{fixed: b.fe_fixed(), nt: b.m.types.len(), nf: b.m.funcs.len(), nq: b.queue.len(), nc: b.checks.len(), nvar: b.nvar, nclos: b.nclos, mods: b.decl_mods}
 }
 
 /// The name of type t in an entry ("" for none); a type its name does
@@ -217,7 +228,7 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
       b.fe_skip("read.${b.fe_touched}")
     } else if b.fe_fixed() != r.fixed {
       // which side table the body changed (XO_FE_STATS)
-      let names = ["gens", "consts", "ifaces", "tids", "sites", "thunks", "natives", "late_tids", "nclos", "nsyn", "skipped_any", "errs", "seen_err"]
+      let names = ["gens", "consts", "ifaces", "tids", "sites", "thunks", "natives", "late_tids", "nsyn", "skipped_any", "errs", "seen_err"]
       let was = r.fixed.split(" ")
       let now = b.fe_fixed().split(" ")
       for (i, n) in names.indexed() {
@@ -230,11 +241,29 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
     }
     return None
   }
-  // only declares' bodies queued: a contract's inner body (Job.Inner)
-  // is not replayed
+  // the closures it made: each an event 5 (fe_closure_made), their
+  // bodies' entries added when their jobs ran (fe_finalize)
+  var made_c: Map[Int, Bool] = {}
+  for (k, x) in b.m.fe_ev {
+    if k == 5 {
+      made_c[x] = true
+    }
+  }
+  if made_c.len() != b.nclos - r.nclos {
+    b.fe_skip("fixed.nclos")
+    return None
+  }
+  // only declares' bodies and its closures queued: a contract's inner
+  // body (Job.Inner) is not replayed
   for j in b.queue[r.nq..b.queue.len()] {
     match j {
       Body(..) => {}
+      Closure(cf, _, _, _, _, _, _, _, _, _, _, _) => {
+        if !made_c.contains(cf) {
+          b.fe_skip("queue")
+          return None
+        }
+      }
       _ => {
         b.fe_skip("queue")
         return None
@@ -332,6 +361,26 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
     } else if k == 3 {
       e.str(b.m.funcs[x].name)
       made_f.push(x)
+    } else if k == 5 {
+      // a closure: its name as made here (renamed at a commit) and its
+      // function as made, before its job built the body: parameters,
+      // results, captures by type name, whether it catches
+      let cf = b.m.funcs[x]
+      e.str(cf.name)
+      let ps = cf.blocks[0].params
+      e.uv(ps.len())
+      for v in ps {
+        e.str(b.fe_tname(cf.values[v].ty))
+      }
+      e.uv(cf.results.len())
+      for t in cf.results {
+        e.str(b.fe_tname(t))
+      }
+      e.uv(cf.captures.len())
+      for t in cf.captures {
+        e.str(b.fe_tname(t))
+      }
+      e.bool(cf.catches)
     } else {
       e.str(b.fe_ident(x))
     }
@@ -437,6 +486,12 @@ struct FeEv {
   k: Int
   s: Str
   fo: Int = -1
+  /// a closure's (k 5) parameters, results and captures by type name,
+  /// and whether it catches
+  ps: List[Str] = []
+  rs: List[Str] = []
+  caps: List[Str] = []
+  catches: Bool = false
 }
 
 /// Commits entry d for the body of function fi: true when it was placed,
@@ -535,6 +590,22 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
         return b.fe_miss("ident")
       }
       evs.push(FeEv{k: 4, s: "", fo: fo})
+    } else if k == 5 {
+      var x = FeEv{k: 5, s: r.str()}
+      for _ in 0..r.uv() {
+        x.ps.push(r.str())
+      }
+      for _ in 0..r.uv() {
+        x.rs.push(r.str())
+      }
+      for _ in 0..r.uv() {
+        x.caps.push(r.str())
+      }
+      x.catches = r.bool()
+      if !r.ok {
+        return b.fe_miss("malformed")
+      }
+      evs.push(x)
     } else {
       return b.fe_miss("malformed")
     }
@@ -591,6 +662,15 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
     let tg = r.bool()
     helpers.push((tg, r.bytes()))
   }
+  // its closures' entries, in the order it made them
+  var subs: List[Bytes] = []
+  let ns = r.uv()
+  if !r.ok || ns > d.len() {
+    return b.fe_miss("malformed")
+  }
+  for _ in 0..ns {
+    subs.push(r.bytes())
+  }
   if !r.ok {
     return b.fe_miss("malformed")
   }
@@ -621,6 +701,8 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
     return b.fe_miss("malformed")
   }
   // the events, as the body's build made them
+  var bad = false
+  var ci = 0
   var made_t: List[(Int, Int)] = []
   var holes: List[(Int, Int)] = []
   var ti = 0
@@ -643,12 +725,47 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
       let i = b.m.new_func(ev.s, [], [])
       holes.push((i, hi))
       hi += 1
+    } else if ev.k == 5 {
+      // a closure, numbered as the build here numbers it; its body from
+      // its own entry, at its job's turn
+      if ci >= subs.len() {
+        bad = true
+        continue
+      }
+      b.nclos += 1
+      let name = "${b.m.funcs[fi].name}.fn${b.nclos}"
+      renames[ev.s] = name
+      var ps: List[Int] = []
+      for n in ev.ps {
+        let t = b.m.type_at.get(n) ?? -1
+        bad = bad || t < 0
+        ps.push(t)
+      }
+      var rs: List[Int] = []
+      for n in ev.rs {
+        let t = b.m.type_at.get(n) ?? -1
+        bad = bad || t < 0
+        rs.push(t)
+      }
+      var caps: List[Int] = []
+      for n in ev.caps {
+        let t = b.m.type_at.get(n) ?? -1
+        bad = bad || t < 0
+        caps.push(t)
+      }
+      if !bad {
+        let cf = b.m.new_func(name, ps, rs)
+        b.m.funcs[cf].indirect = true
+        b.m.funcs[cf].captures = caps
+        b.m.funcs[cf].catches = ev.catches
+        b.queue.push(Job.ClosureReplay(fi: cf, d: subs[ci], key: b.fe.cur_key))
+      }
+      ci += 1
     } else {
       let _ = b.declare(ev.fo, [])
     }
   }
   // the types made get their structure, by name
-  var bad = false
   for (t, si) in made_t {
     var x = shapes[si]
     x.kind = b.m.types[t].kind
@@ -698,6 +815,9 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
     return true
   }
   var g = f ?? Func{name: ""}
+  // the name this build gave fi (a closure's is numbered here, not as
+  // where the entry was recorded)
+  g.name = b.m.funcs[fi].name
   g.target = target
   fe_rename(g, renames)
   b.m.funcs[fi] = g
@@ -762,4 +882,64 @@ fn (var b: Builder) fe_miss(why: Str) -> Bool {
 
 fn all_kinds() -> List[Kind] {
   [Kind.Unit, Kind.Int, Kind.Float, Kind.Bool, Kind.Str, Kind.Struct, Kind.Enum, Kind.Tuple, Kind.List, Kind.Cap, Kind.Func, Kind.Box, Kind.Handle, Kind.Bad]
+}
+
+/// Notes the closure function fi a body made, while it records:
+/// an event 5, not the whole function new_func noted (its body is built
+/// by its job; the entry takes the job's entry, fe_finalize).
+fn (var b: Builder) fe_closure_made(fi: Int) {
+  if !b.m.fe_log {
+    return
+  }
+  let n = b.m.fe_ev.len()
+  if n > 0 && b.m.fe_ev[n - 1] == (3, fi) {
+    b.m.fe_ev[n - 1] = (5, fi)
+  } else {
+    b.m.fe_ev.push((5, fi))
+  }
+}
+
+/// The closures (event 5) the entry just recorded made, in order.
+fn (b: Builder) fe_made_closures() -> List[Int] {
+  var out: List[Int] = []
+  for (k, x) in b.m.fe_ev {
+    if k == 5 {
+      out.push(x)
+    }
+  }
+  out
+}
+
+/// Entry e with its closures' entries after it (each sealed in turn),
+/// none when one of them recorded none.
+fn (b: Builder) fe_seal(e: Bytes, clos: List[Int]) -> Option[Bytes] {
+  var w = EntryW{b: BytesBuilder.new()}
+  w.b.write(e)
+  w.uv(clos.len())
+  for cf in clos {
+    if b.fe.no_clos.contains(cf) {
+      return None
+    }
+    match b.fe.clos_rec.get(cf) {
+      Some((ce, sub)) => {
+        match b.fe_seal(ce, sub) {
+          Some(x) => w.bytes(x)
+          None => return None
+        }
+      }
+      None => return None
+    }
+  }
+  Some(w.b.freeze())
+}
+
+/// The entries waiting for their closures', sealed and stored (after the
+/// build: every closure job has run).
+pub fn (var b: Builder) fe_finalize() {
+  for (key, e, clos) in b.fe.pending {
+    if let Some(x) = b.fe_seal(e, clos) {
+      b.fe.stores.push((key, x))
+    }
+  }
+  b.fe.pending = []
 }

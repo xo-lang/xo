@@ -399,6 +399,8 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
     // build_native drops this build, so none of it is stored
     return b
   }
+  // the entries of bodies that made closures, with their closures'
+  b.fe_finalize()
   let fin = b.fe_final_own()
   if fin != hint {
     cache_put(os, hint_path, fin.bytes())
