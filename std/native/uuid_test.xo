@@ -1,0 +1,181 @@
+use std/uuid
+
+// github.com/google/uuid v1.6.0's Parse on uuid_test.go's inputs and on
+// random UUIDs in each form (upper case, urn:uuid:, braces, 32 hex), some
+// with a character changed: google/uuid's results (decision 0282).
+const PARSE: List[(Str, Str, Str)] = [
+  ("f47ac10b-58cc-0372-8567-0e02b2c3d479", "f47ac10b-58cc-0372-8567-0e02b2c3d479", ""),
+  ("f47ac10b-58cc-1372-8567-0e02b2c3d479", "f47ac10b-58cc-1372-8567-0e02b2c3d479", ""),
+  ("f47ac10b-58cc-2372-8567-0e02b2c3d479", "f47ac10b-58cc-2372-8567-0e02b2c3d479", ""),
+  ("f47ac10b-58cc-3372-8567-0e02b2c3d479", "f47ac10b-58cc-3372-8567-0e02b2c3d479", ""),
+  ("f47ac10b-58cc-4372-8567-0e02b2c3d479", "f47ac10b-58cc-4372-8567-0e02b2c3d479", ""),
+  ("f47ac10b-58cc-5372-8567-0e02b2c3d479", "f47ac10b-58cc-5372-8567-0e02b2c3d479", ""),
+  ("f47ac10b-58cc-6372-8567-0e02b2c3d479", "f47ac10b-58cc-6372-8567-0e02b2c3d479", ""),
+  ("f47ac10b-58cc-7372-8567-0e02b2c3d479", "f47ac10b-58cc-7372-8567-0e02b2c3d479", ""),
+  ("f47ac10b-58cc-8372-8567-0e02b2c3d479", "f47ac10b-58cc-8372-8567-0e02b2c3d479", ""),
+  ("f47ac10b-58cc-9372-8567-0e02b2c3d479", "f47ac10b-58cc-9372-8567-0e02b2c3d479", ""),
+  ("f47ac10b-58cc-a372-8567-0e02b2c3d479", "f47ac10b-58cc-a372-8567-0e02b2c3d479", ""),
+  ("f47ac10b-58cc-b372-8567-0e02b2c3d479", "f47ac10b-58cc-b372-8567-0e02b2c3d479", ""),
+  ("f47ac10b-58cc-c372-8567-0e02b2c3d479", "f47ac10b-58cc-c372-8567-0e02b2c3d479", ""),
+  ("f47ac10b-58cc-d372-8567-0e02b2c3d479", "f47ac10b-58cc-d372-8567-0e02b2c3d479", ""),
+  ("f47ac10b-58cc-e372-8567-0e02b2c3d479", "f47ac10b-58cc-e372-8567-0e02b2c3d479", ""),
+  ("f47ac10b-58cc-f372-8567-0e02b2c3d479", "f47ac10b-58cc-f372-8567-0e02b2c3d479", ""),
+  ("urn:uuid:f47ac10b-58cc-4372-0567-0e02b2c3d479", "f47ac10b-58cc-4372-0567-0e02b2c3d479", ""),
+  ("URN:UUID:f47ac10b-58cc-4372-0567-0e02b2c3d479", "f47ac10b-58cc-4372-0567-0e02b2c3d479", ""),
+  ("f47ac10b-58cc-4372-0567-0e02b2c3d479", "f47ac10b-58cc-4372-0567-0e02b2c3d479", ""),
+  ("f47ac10b-58cc-4372-1567-0e02b2c3d479", "f47ac10b-58cc-4372-1567-0e02b2c3d479", ""),
+  ("f47ac10b-58cc-4372-2567-0e02b2c3d479", "f47ac10b-58cc-4372-2567-0e02b2c3d479", ""),
+  ("f47ac10b-58cc-4372-3567-0e02b2c3d479", "f47ac10b-58cc-4372-3567-0e02b2c3d479", ""),
+  ("f47ac10b-58cc-4372-4567-0e02b2c3d479", "f47ac10b-58cc-4372-4567-0e02b2c3d479", ""),
+  ("f47ac10b-58cc-4372-5567-0e02b2c3d479", "f47ac10b-58cc-4372-5567-0e02b2c3d479", ""),
+  ("f47ac10b-58cc-4372-6567-0e02b2c3d479", "f47ac10b-58cc-4372-6567-0e02b2c3d479", ""),
+  ("f47ac10b-58cc-4372-7567-0e02b2c3d479", "f47ac10b-58cc-4372-7567-0e02b2c3d479", ""),
+  ("f47ac10b-58cc-4372-9567-0e02b2c3d479", "f47ac10b-58cc-4372-9567-0e02b2c3d479", ""),
+  ("f47ac10b-58cc-4372-a567-0e02b2c3d479", "f47ac10b-58cc-4372-a567-0e02b2c3d479", ""),
+  ("f47ac10b-58cc-4372-b567-0e02b2c3d479", "f47ac10b-58cc-4372-b567-0e02b2c3d479", ""),
+  ("f47ac10b-58cc-4372-c567-0e02b2c3d479", "f47ac10b-58cc-4372-c567-0e02b2c3d479", ""),
+  ("f47ac10b-58cc-4372-d567-0e02b2c3d479", "f47ac10b-58cc-4372-d567-0e02b2c3d479", ""),
+  ("f47ac10b-58cc-4372-e567-0e02b2c3d479", "f47ac10b-58cc-4372-e567-0e02b2c3d479", ""),
+  ("f47ac10b-58cc-4372-f567-0e02b2c3d479", "f47ac10b-58cc-4372-f567-0e02b2c3d479", ""),
+  ("f47ac10b158cc-5372-a567-0e02b2c3d479", "", "invalid UUID format"),
+  ("f47ac10b-58cc25372-a567-0e02b2c3d479", "", "invalid UUID format"),
+  ("f47ac10b-58cc-53723a567-0e02b2c3d479", "", "invalid UUID format"),
+  ("f47ac10b-58cc-5372-a56740e02b2c3d479", "", "invalid UUID format"),
+  ("f47ac10b-58cc-5372-a567-0e02-2c3d479", "", "invalid UUID format"),
+  ("g47ac10b-58cc-4372-a567-0e02b2c3d479", "", "invalid UUID format"),
+  ("{f47ac10b-58cc-0372-8567-0e02b2c3d479}", "f47ac10b-58cc-0372-8567-0e02b2c3d479", ""),
+  ("{f47ac10b-58cc-0372-8567-0e02b2c3d479", "", "invalid UUID length: 37"),
+  ("f47ac10b-58cc-0372-8567-0e02b2c3d479}", "", "invalid UUID length: 37"),
+  ("f47ac10b58cc037285670e02b2c3d479", "f47ac10b-58cc-0372-8567-0e02b2c3d479", ""),
+  ("f47ac10b58cc037285670e02b2c3d4790", "", "invalid UUID length: 33"),
+  ("f47ac10b58cc037285670e02b2c3d47", "", "invalid UUID length: 31"),
+  ("01ee836c-e7c9-619d-929a-525400475911", "01ee836c-e7c9-619d-929a-525400475911", ""),
+  ("018bd12c-58b0-7683-8a5b-8752d0e86651", "018bd12c-58b0-7683-8a5b-8752d0e86651", ""),
+  ("1352319d-7258-462e-9x9a-3df50f806b36", "", "invalid UUID format"),
+  ("E438A55E-0D4B-4E49-B46C-97250AD84073", "e438a55e-0d4b-4e49-b46c-97250ad84073", ""),
+  ("urn:uuid:66c7ec89-3060-4769-b174-d963427e10a5", "66c7ec89-3060-4769-b174-d963427e10a5", ""),
+  ("{2adb3749-dc0c-45e6-baab-52f026fc3d0a}", "2adb3749-dc0c-45e6-baab-52f026fc3d0a", ""),
+  ("01248e76b8e547249e8a4ad7d419f2c7", "01248e76-b8e5-4724-9e8a-4ad7d419f2c7", ""),
+  ("e5cc06f6-d1f3-4e3b-a4a5-37a99a6f6c22", "e5cc06f6-d1f3-4e3b-a4a5-37a99a6f6c22", ""),
+  ("5E7B87FF-180E-49A8-8CF2-051838DDF73F", "5e7b87ff-180e-49a8-8cf2-051838ddf73f", ""),
+  ("urn:uuid:03e55dda-57c4-4b9e-af8b-83d50dedde1x", "", "invalid UUID format"),
+  ("{921a37e0-bcfa-46c8-bc1f-75c9063ef91d}", "921a37e0-bcfa-46c8-bc1f-75c9063ef91d", ""),
+  ("544e500b2c3d404896ba715ab9a07bf8", "544e500b-2c3d-4048-96ba-715ab9a07bf8", ""),
+  ("f7c4f3b9-30d0-4c1b-b459-06f473290dfc", "f7c4f3b9-30d0-4c1b-b459-06f473290dfc", ""),
+  ("28C188E9-158D-49EE-9BF3-140B04F21E64", "28c188e9-158d-49ee-9bf3-140b04f21e64", ""),
+  ("urn:uuid:4fd796e1-182a-403d-854c-d103d0922353", "4fd796e1-182a-403d-854c-d103d0922353", ""),
+  ("{c53f3139-9f99-4d39-9df8-36848c5822c6}", "c53f3139-9f99-4d39-9df8-36848c5822c6", ""),
+  ("a84e3f2a0af94968bae09bed69c573:3", "", "invalid UUID format"),
+  ("c636e7d9-42df-4919-b5f3-65a19cd0a00b", "c636e7d9-42df-4919-b5f3-65a19cd0a00b", ""),
+  ("44C84F8F-B01D-46D5-BAAF-50E228751B9C", "44c84f8f-b01d-46d5-baaf-50e228751b9c", ""),
+  ("urn:uuid:fc4b7258-3c1b-4a41-af87-c573e5888d19", "fc4b7258-3c1b-4a41-af87-c573e5888d19", ""),
+  ("{a3821c80-0b28-453a-a867-acb485ef350d}", "a3821c80-0b28-453a-a867-acb485ef350d", ""),
+  ("f1f73783e8e54fa7bdfc7bf3e74195c3", "f1f73783-e8e5-4fa7-bdfc-7bf3e74195c3", ""),
+  ("4e57b433-423e-4b3f-bf8d-708294fd5088", "4e57b433-423e-4b3f-bf8d-708294fd5088", ""),
+  ("44F0D1C1-557A-476D-80D9-B48EA697{068", "", "invalid UUID format"),
+  ("urn:uuid:69d3ee17-3077-4521-8df3-4632522420d3", "69d3ee17-3077-4521-8df3-4632522420d3", ""),
+  ("{9a296e22-4a7a-4f2a-828a-9fcd290d8c2e}", "9a296e22-4a7a-4f2a-828a-9fcd290d8c2e", ""),
+  ("32915990585f438198a2d60346c208e0", "32915990-585f-4381-98a2-d60346c208e0", ""),
+  ("ebe0ec1f-6a31-4397-9482-e44e6e89dc75", "ebe0ec1f-6a31-4397-9482-e44e6e89dc75", ""),
+  ("16CC6366-84B9-4B01-9347-CE81234CA6A9", "16cc6366-84b9-4b01-9347-ce81234ca6a9", ""),
+  ("urn:uuid:cee31dcb-ad5d-488d-b0c0-c0273ca8c161", "cee31dcb-ad5d-488d-b0c0-c0273ca8c161", ""),
+  ("{aa56f92f-776x-49e3-8953-bd57befb02d6}", "", "invalid UUID format"),
+  ("da2018f1a7234aba82fd1096cd712f63", "da2018f1-a723-4aba-82fd-1096cd712f63", ""),
+  ("73a6cce0-11fe-4823-a4f5-2a69290ae352", "73a6cce0-11fe-4823-a4f5-2a69290ae352", ""),
+  ("44FA3F94-2289-4451-AC43-355FD0A008E5", "44fa3f94-2289-4451-ac43-355fd0a008e5", ""),
+  ("urn:uuid:7e3aa52e-f611-4042-938a-1e530e66fc8e", "7e3aa52e-f611-4042-938a-1e530e66fc8e", ""),
+  ("{725203b1-01f5-4a12-be03-22fa09d197ae}", "725203b1-01f5-4a12-be03-22fa09d197ae", ""),
+  ("745518f2f81a4bf4b4be649b23418b66", "745518f2-f81a-4bf4-b4be-649b23418b66", ""),
+  ("bbf-f67f-e51a-4871-8e17-34f3bfd09b74", "", "invalid UUID format"),
+  ("A2DC4247-5040-407E-A9D7-548FFEA62F45", "a2dc4247-5040-407e-a9d7-548ffea62f45", ""),
+  ("urn:uuid:d7c6c6a7-11ff-47cc-a0cc-819aee101e05", "d7c6c6a7-11ff-47cc-a0cc-819aee101e05", ""),
+  ("{48578f5d-6809-4823-a64d-d507c3c00cee}", "48578f5d-6809-4823-a64d-d507c3c00cee", ""),
+  ("22289f0534784c50aa7d209a7c64c9b4", "22289f05-3478-4c50-aa7d-209a7c64c9b4", ""),
+  ("e1d8401e-7f3f-4da8-bea3-9ea9a7ce46ad", "e1d8401e-7f3f-4da8-bea3-9ea9a7ce46ad", ""),
+  ("ADC9285B-F964-4F05-9F3E-40E6B6C7B2BD", "adc9285b-f964-4f05-9f3e-40e6b6c7b2bd", ""),
+  ("urnxuuid:61909326-32f4-474f-8048-f975267b2ec2", "", "invalid urn prefix: \"urnxuuid:\""),
+  ("{a17993d4-b1b6-4e9f-ac47-6f1cd68812ad}", "a17993d4-b1b6-4e9f-ac47-6f1cd68812ad", ""),
+  ("b7af40dfc3404a5287a005ef8c0c3031", "b7af40df-c340-4a52-87a0-05ef8c0c3031", ""),
+  ("1f9459c3-9eb5-4f16-bf44-523ae8437410", "1f9459c3-9eb5-4f16-bf44-523ae8437410", ""),
+  ("5AC9F291-90F6-4DE8-96D6-6A3CCB51DE45", "5ac9f291-90f6-4de8-96d6-6a3ccb51de45", ""),
+  ("urn:uuid:c5ead203-3180-475a-b709-3e5f02166959", "c5ead203-3180-475a-b709-3e5f02166959", ""),
+  ("{21cc99ed-a9da-49df-af35-eb0dd1456490}", "21cc99ed-a9da-49df-af35-eb0dd1456490", ""),
+  ("50bba 203c424db48f13a871fc0041a5", "", "invalid UUID format"),
+  ("0035e0b5-df75-4052-9ebd-2aaa2c5b694f", "0035e0b5-df75-4052-9ebd-2aaa2c5b694f", ""),
+  ("6DC58035-AF4E-4046-9BD1-320F8DCAD23A", "6dc58035-af4e-4046-9bd1-320f8dcad23a", ""),
+  ("urn:uuid:fe70d522-e230-4ffa-a981-272135073979", "fe70d522-e230-4ffa-a981-272135073979", ""),
+  ("{b2632562-23cc-4f1f-8882-9f510946bc16}", "b2632562-23cc-4f1f-8882-9f510946bc16", ""),
+  ("9d221dfd07d147eeb5962daec71a8ffb", "9d221dfd-07d1-47ee-b596-2daec71a8ffb", ""),
+  ("e6c8a41c-b012-415d-9c1d-b3161132119d", "e6c8a41c-b012-415d-9c1d-b3161132119d", ""),
+  ("02090ABC-A2A4-4C37-BE87-74481E-04999", "", "invalid UUID format"),
+  ("urn:uuid:4cc17fe3-9bb5-4e19-9453-9a54799f36e4", "4cc17fe3-9bb5-4e19-9453-9a54799f36e4", ""),
+  ("{159acd14-f6d4-47e2-8a67-d4e7bb534edf}", "159acd14-f6d4-47e2-8a67-d4e7bb534edf", ""),
+  ("7d40840ddf9f47a49ce32bf8ae9b9ede", "7d40840d-df9f-47a4-9ce3-2bf8ae9b9ede", ""),
+  ("c6b142c9-5a8b-4230-958e-bb1c2c066103", "c6b142c9-5a8b-4230-958e-bb1c2c066103", ""),
+  ("238B0316-8DFA-4759-859E-98674CB40430", "238b0316-8dfa-4759-859e-98674cb40430", ""),
+  ("urn:uuid:dacd6224-33b5-420f-8a54-c0222b1aabc0", "dacd6224-33b5-420f-8a54-c0222b1aabc0", ""),
+  ("{a9e02145-8905-43fe-b08d-15cdadf3 2ba}", "", "invalid UUID format"),
+  ("10b0c3e1302d4a01ad0eaae4a8ae675c", "10b0c3e1-302d-4a01-ad0e-aae4a8ae675c", ""),
+  ("f0e99887-fe2d-4781-9e9d-e36712668bb2", "f0e99887-fe2d-4781-9e9d-e36712668bb2", ""),
+  ("3450EE46-5EE9-4926-9552-B22E57169359", "3450ee46-5ee9-4926-9552-b22e57169359", ""),
+  ("urn:uuid:ad619110-7e4a-4c2b-adc8-b4b41dc4a604", "ad619110-7e4a-4c2b-adc8-b4b41dc4a604", ""),
+  ("{554ba95f-b61e-436b-85ff-62b977cceb60}", "554ba95f-b61e-436b-85ff-62b977cceb60", ""),
+  ("756d323056854e2ca19832c1da2d2335", "756d3230-5685-4e2c-a198-32c1da2d2335", ""),
+  ("32783580-81e6-472a b112-e8e47144ff9d", "", "invalid UUID format"),
+  ("B0243491-B7A9-425D-9231-0C6D8660926A", "b0243491-b7a9-425d-9231-0c6d8660926a", ""),
+  ("urn:uuid:70e50c85-df35-438f-b434-c5bc17c603c4", "70e50c85-df35-438f-b434-c5bc17c603c4", ""),
+  ("{1cc7a465-ba7f-4053-9d90-94eb229748fe}", "1cc7a465-ba7f-4053-9d90-94eb229748fe", ""),
+  ("9c83ac21ee23400b857445e082641a00", "9c83ac21-ee23-400b-8574-45e082641a00", ""),
+  ("46d102b5-ca34-4f3c-b171-d9869eb338f9", "46d102b5-ca34-4f3c-b171-d9869eb338f9", ""),
+  ("AB99B7A9-8AFD-4CA8-8BF0-F1A593622F61", "ab99b7a9-8afd-4ca8-8bf0-f1a593622f61", ""),
+  ("urn:uuid:c6061gf2-025e-4f1c-bb88-d4eabee6c509", "", "invalid UUID format"),
+  ("{812d6227-2bb3-45e2-8108-527fdabf57d7}", "812d6227-2bb3-45e2-8108-527fdabf57d7", ""),
+  ("e93b6d3f31a440b0a9459ff0967e56dc", "e93b6d3f-31a4-40b0-a945-9ff0967e56dc", ""),
+  ("URN:UUID:6ba7b810-9dad-11d1-80b4-00c04fd430c8", "6ba7b810-9dad-11d1-80b4-00c04fd430c8", ""),
+  ("urn:uid::6ba7b810-9dad-11d1-80b4-00c04fd430c8", "", "invalid urn prefix: \"urn:uid::\""),
+  ("", "", "invalid UUID length: 0"),
+  ("x", "", "invalid UUID length: 1"),
+]
+
+test "google/uuid parse" {
+  for (input, want, e) in PARSE {
+    let got = parse(input).map(fn(u) { u.0 })
+    if e.is_empty() {
+      expect(got) == Ok(want)
+    } else {
+      expect(got) == Err(uuid.UuidErr{msg: e})
+    }
+  }
+}
+
+test "v4 and v7 bits" {
+  for _ in 0..50 {
+    let a = v4(os.rand)
+    expect(uuid_version(a)) == 4
+    expect("89ab".contains(a.0[19..20])) == true
+    expect(parse(a.0)) == Ok(a)
+    let b = v7(os.rand, os.clock)
+    expect(uuid_version(b)) == 7
+    // the first 48 bits are the Unix time in milliseconds
+    let tb = uuid_bytes(b)
+    var ms = 0
+    for k in 0..6 {
+      ms = ms * 256 + Int(tb[k])
+    }
+    expect(ms) == os.clock.now().unix_millis()
+  }
+}
+
+test "v7 keys sort by time" {
+  let first = v7(os.rand, os.clock)
+  os.clock.advance(5ms)
+  let second = v7(os.rand, os.clock)
+  expect(first.0 < second.0) == true
+}
+
+test "bytes round trip" {
+  let u = parse("6ba7b810-9dad-11d1-80b4-00c04fd430c8").or_fault("parses")
+  expect(from_bytes(uuid_bytes(u))) == Ok(u)
+  expect(from_bytes(b"\x00").is_err()) == true
+  expect(nil().0) == "00000000-0000-0000-0000-000000000000"
+}

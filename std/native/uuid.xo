@@ -1,0 +1,114 @@
+// std/uuid on the native backends (decision 0282): RFC 9562 version 4 and
+// 7 UUIDs and parsing, following github.com/google/uuid v1.6.0 (BSD-3;
+// THIRD_PARTY_NOTICES): Parse's accepted forms and error texts, NewRandom
+// and NewV7's bit layouts (v7 without google/uuid's process wide counter:
+// random bits after the millisecond, no package state).
+use std/uuid
+
+fn uuiderr_display(e: uuid.UuidErr) -> Str { e.msg }
+
+fn fail(msg: Str) -> uuid.UuidErr { uuid.UuidErr{msg: msg} }
+
+fn text_of(b: Bytes) -> uuid.Uuid {
+  let h = b.to_hex()
+  uuid.Uuid("${h[0..8]}-${h[8..12]}-${h[12..16]}-${h[16..20]}-${h[20..32]}")
+}
+
+fn with_bits(b: Bytes, version: Int) -> Bytes {
+  var out = BytesBuilder.with_capacity(16)
+  for i in 0..16 {
+    var x = Int(b[i])
+    if i == 6 {
+      x = (x & 0x0f) | (version << 4)
+    }
+    if i == 8 {
+      // the RFC 9562 variant: 10xx
+      x = (x & 0x3f) | 0x80
+    }
+    out.write_byte(UInt8(x))
+  }
+  out.freeze()
+}
+
+fn v4(r: Rand) -> uuid.Uuid uses rand { text_of(with_bits(r.bytes(16), 4)) }
+
+fn v7(r: Rand, c: Clock) -> uuid.Uuid uses (rand, clock) {
+  let ms = c.now().unix_millis()
+  var b = BytesBuilder.with_capacity(16)
+  for k in 0..6 {
+    b.write_byte(UInt8((ms >> (40 - 8 * k)) & 255))
+  }
+  b.write(r.bytes(10))
+  text_of(with_bits(b.freeze(), 7))
+}
+
+fn xtob(a: UInt8, b: UInt8) -> Int {
+  let hi = hex_val(a)
+  let lo = hex_val(b)
+  if hi < 0 || lo < 0 { -1 } else { hi * 16 + lo }
+}
+
+fn hex_val(c: UInt8) -> Int {
+  if c >= 48 && c <= 57 { return Int(c) - 48 }
+  if c >= 97 && c <= 102 { return Int(c) - 87 }
+  if c >= 65 && c <= 70 { return Int(c) - 55 }
+  -1
+}
+
+fn parse(s0: Str) -> uuid.Uuid ! uuid.UuidErr {
+  var s = s0.bytes()
+  var out = BytesBuilder.with_capacity(16)
+  match s.len() {
+    36 => {}
+    45 => {
+      if s0[0..9].to_lower() != "urn:uuid:" {
+        return Err(fail("invalid urn prefix: ${s0[0..9].quote()}"))
+      }
+      s = s[9..]
+    }
+    // google/uuid takes the 36 characters after the first without
+    // checking the braces
+    38 => s = s[1..]
+    32 => return parse_hex(s)
+    n => return Err(fail("invalid UUID length: ${n}"))
+  }
+  if s[8] != 45 || s[13] != 45 || s[18] != 45 || s[23] != 45 {
+    return Err(fail("invalid UUID format"))
+  }
+  for x in [0, 2, 4, 6, 9, 11, 14, 16, 19, 21, 24, 26, 28, 30, 32, 34] {
+    let v = xtob(s[x], s[x + 1])
+    if v < 0 {
+      return Err(fail("invalid UUID format"))
+    }
+    out.write_byte(UInt8(v))
+  }
+  text_of(out.freeze())
+}
+
+/// 32 hex digits without dashes.
+fn parse_hex(s: Bytes) -> uuid.Uuid ! uuid.UuidErr {
+  var out = BytesBuilder.with_capacity(16)
+  for i in 0..16 {
+    let v = xtob(s[2 * i], s[2 * i + 1])
+    if v < 0 {
+      return Err(fail("invalid UUID format"))
+    }
+    out.write_byte(UInt8(v))
+  }
+  text_of(out.freeze())
+}
+
+fn from_bytes(b: Bytes) -> uuid.Uuid ! uuid.UuidErr {
+  if b.len() != 16 {
+    return Err(fail("invalid UUID (got ${b.len()} bytes)"))
+  }
+  text_of(b)
+}
+
+fn nil() -> uuid.Uuid { uuid.Uuid("00000000-0000-0000-0000-000000000000") }
+
+fn uuid_bytes(u: uuid.Uuid) -> Bytes { Bytes.from_hex(u.0.replace("-", "")) ?? b"" }
+
+fn uuid_version(u: uuid.Uuid) -> Int { hex_val(u.0.bytes()[14]) }
+
+fn uuid_display(u: uuid.Uuid) -> Str { u.0 }

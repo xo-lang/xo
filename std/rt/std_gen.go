@@ -3742,3 +3742,53 @@ func (v Mime_MimeErr) XoDebug(b *strings.Builder) {
 }
 
 func (v Mime_MimeErr) M_debug(*Task) string { return Debug(v) }
+
+type Uuid_Uuid struct {
+	F0 string
+}
+
+func (v Uuid_Uuid) XoEq(x any) bool {
+	o, ok := x.(Uuid_Uuid)
+	return ok && v.F0 == o.F0
+}
+
+func (v Uuid_Uuid) XoHash() uint64 { return MixHash(uint64(7867108134910073432), Hash(v.F0)) }
+
+func (v Uuid_Uuid) XoDebug(b *strings.Builder) {
+	b.WriteString("Uuid(")
+	DebugTo(b, v.F0)
+	b.WriteString(")")
+}
+
+func (v Uuid_Uuid) M_debug(*Task) string { return Debug(v) }
+
+type Uuid_UuidErr struct {
+	F_msg string
+}
+
+func (v Uuid_UuidErr) XoEq(x any) bool {
+	o, ok := x.(Uuid_UuidErr)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_msg, o.F_msg) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Uuid_UuidErr) XoHash() uint64 {
+	h := uint64(502650492166235511)
+	h = MixHash(h, Hash(v.F_msg))
+	return h
+}
+
+func (v Uuid_UuidErr) XoDebug(b *strings.Builder) {
+	b.WriteString("UuidErr{")
+	b.WriteString("msg: ")
+	DebugTo(b, v.F_msg)
+	b.WriteString("}")
+}
+
+func (v Uuid_UuidErr) M_debug(*Task) string { return Debug(v) }

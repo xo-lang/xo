@@ -45,6 +45,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | std/binary | 22 | `std/changes/binary.md` |
 | std/tls | 27 | `std/changes/tls.md` |
 | std/mime | 23 | `std/changes/mime.md` |
+| std/uuid | 24 | `std/changes/uuid.md` |
 
 ## Go packages
 
@@ -220,7 +221,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | WebSocket | golang.org/x/net/websocket, gorilla, coder/websocket | none | planned | Needs connection hijacking in std/http. |
 | HTTP/2 | golang.org/x/net/http2 | std/http | done | Decision 0121. |
 | JWT, JOSE | golang-jwt, go-jose | none | planned | HS256 is writable today by hand; RS256 and ES256 need public RSA and ECDSA. |
-| UUID | google/uuid | none | planned | v4 and v7. |
+| UUID | google/uuid | std/uuid | done | v4 and v7 from Rand and Clock, parsing (decision 0282). |
 | OAuth2 client | golang.org/x/oauth2 | none | planned | Needs form encoding. |
 | TOTP | pquerna/otp | none | planned | Needs HMAC-SHA1 and base32. |
 | Migrations | golang-migrate, goose | none | planned | Needs embed. |

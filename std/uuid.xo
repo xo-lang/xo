@@ -1,0 +1,33 @@
+// std/uuid (spec/std.md 24, decision 0282). Declaration file; encoding
+// rules are listed at the top of std/prelude.xo. RFC 9562 UUIDs, following
+// github.com/google/uuid: random (v4) and time ordered (v7) ones from the
+// Rand and Clock capabilities, and parsing. A Uuid is its canonical text
+// (lower case 8-4-4-4-12): equality, order, hashing, and JSON are the
+// text's, and it reads and writes as a Postgres uuid with sql.str.
+
+/// A UUID: its canonical text, `u.0` (compare texts to order UUIDs).
+type Uuid struct(Str)
+
+/// Displays as google/uuid's texts: `invalid UUID length: 35`,
+/// `invalid UUID format`, `invalid urn prefix: "urn:uid::"`.
+struct UuidErr {
+  msg: Str
+}
+
+fn (e: UuidErr) display() -> Str
+
+/// A random UUID (version 4): 122 random bits.
+fn v4(r: Rand) -> Uuid uses rand
+/// A time ordered UUID (version 7): the Unix time in milliseconds, then 74
+/// random bits, so keys made later sort later (to the millisecond).
+fn v7(r: Rand, c: Clock) -> Uuid uses (rand, clock)
+/// xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx, urn:uuid:..., {...}, or 32 hex
+/// digits (google/uuid's Parse), in either case.
+fn parse(s: Str) -> Uuid ! UuidErr
+/// The 16 bytes.
+fn from_bytes(b: Bytes) -> Uuid ! UuidErr
+/// 00000000-0000-0000-0000-000000000000.
+fn nil() -> Uuid
+fn (u: Uuid) version() -> Int
+fn (u: Uuid) bytes() -> Bytes
+fn (u: Uuid) display() -> Str

@@ -2762,6 +2762,45 @@ pub fn detect_content_type(data: Bytes) -> Str
   MIME Sniffing algorithm over the first 512 bytes):
   `text/html; charset=utf-8`, `image/png`, `application/pdf`,
   `text/plain; charset=utf-8`, ..., else `application/octet-stream`.
+
+---
+
+## 24. std/uuid
+
+Status: implemented on every backend (decision 0282, 2026-10-20),
+following github.com/google/uuid v1.6.0 (outside Go's std; RFC 9562);
+google/uuid's Parse results on its test inputs in
+`std/native/uuid_test.xo`.
+
+```
+type Uuid struct(Str)                     // its canonical text, lower case 8-4-4-4-12: `u.0`
+struct UuidErr { msg: Str }               // google/uuid's texts: `invalid UUID length: 35`
+
+pub fn v4(r: Rand) -> Uuid uses rand
+pub fn v7(r: Rand, c: Clock) -> Uuid uses (rand, clock)
+pub fn parse(s: Str) -> Uuid ! UuidErr
+pub fn from_bytes(b: Bytes) -> Uuid ! UuidErr
+pub fn nil() -> Uuid
+fn (u: Uuid) version() -> Int
+fn (u: Uuid) bytes() -> Bytes
+fn (u: Uuid) display() -> Str
+```
+
+- A `Uuid` is a newtype over its canonical text, so equality and hashing
+  are the text's, and two UUIDs order as their texts do (`a.0 < b.0`,
+  which is the order of their bytes). It reads and writes as a Postgres
+  `uuid` column through `sql.str(u.0)` and `uuid.parse(row.str(...)?)`.
+- `v4` is 122 random bits from `r` with the version 4 and variant bits
+  set; `v7` is the Unix time in milliseconds from `c` (48 bits), then
+  random bits, so keys made later sort later to the millisecond (no
+  counter within a millisecond: google/uuid keeps one in a package
+  variable, which std does not have). Tests are reproducible: `os.rand`
+  is seeded and `os.clock` virtual.
+- `parse` takes `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`, `urn:uuid:` and
+  that (prefix in any case), the 36 characters wrapped in two others (as
+  google/uuid, `{...}`, without checking the braces), or 32 hex digits;
+  hex digits in either case. The result is the canonical lower case
+  text.
 ## 27. std/tls
 
 A TLS client on a connection the program dialed (decision 0281): the
