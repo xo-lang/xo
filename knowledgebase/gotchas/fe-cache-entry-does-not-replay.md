@@ -23,6 +23,11 @@ Fix: the driver no longer fails the build: an entry whose commit fails
 is dropped with the half committed build, the program is built again
 without it (a warning names the entry), the body built fresh replaces
 the entry, and the pack is rewritten without the old one (compiler/xo
-bcache.xo fe_cached_build, ssa FeCache.bad). The root cause fix logs
+bcache.xo fe_cached_build, ssa FeCache.bad). The warning names the xo
+that recorded the entry (entries hold it since FE_CACHE_VERSION v8) and
+the current one: a different recorder with the same cache id points at
+a keying hole (decision 0275), the same one at the entry itself. The
+entry is kept as $XO_FE_KEEP_DIR/KEY, else <cache>/fe-bad/KEY, for a
+look after the cache moved on. The root cause fix logs
 every type name an entry needs as a read, so such an entry misses
 before the commit starts.

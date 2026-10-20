@@ -23,7 +23,12 @@ closure (the files as written), so the stamped value was in no key and
 the first build's body replayed. Any xo building one program twice with
 different stamps hit it; decision 0275 made it reach across xo builds
 (entries shared by every xo with the same code generation key), which is
-how a stamped xo picked up the bootstrap's stamps.
+how a stamped xo picked up the bootstrap's stamps. The hole dates from
+the front end cache itself (decision 0220 stage 2, 0271), not from 0275:
+one xo was enough (Xo lang 5, 2026-10-20: main's xo built ./compiler/xo
+with `--stamp XO_COMMIT=aaaa` then `bbbb` in one fresh cache and the
+second binary said aaaa; with XO_FE_CACHE=off, or XO_BACKEND_CACHE=off,
+bbbb).
 
 ## Fix
 

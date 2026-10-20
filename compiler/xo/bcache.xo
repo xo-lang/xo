@@ -375,8 +375,15 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
     tries += 1
     for x in b.fe.bad {
       // "KEY (FUNCTION, recorded by xo ID)"; this xo is self_id
-      os.stdio.eprintln("xo: warning: the front end cache entry ${x} did not replay in xo ${fe.recorder}; building again without it")
       let k = x.split(" ")[0]
+      // the entry kept for a look (which xo wrote it, what it needs):
+      // $XO_FE_KEEP_DIR, else the cache's fe-bad directory
+      let keep = os.env.get("XO_FE_KEEP_DIR") ?? "${dir}/fe-bad"
+      let kept = "${keep}/${k}"
+      if let Some(d) = fe.entries.get(k) {
+        cache_put(os, kept, d)
+      }
+      os.stdio.eprintln("xo: warning: the front end cache entry ${x} did not replay in xo ${fe.recorder} (kept as ${kept}); building again without it")
       let _ = fe.entries.remove(k)
       let _ = entries.remove(k)
     }

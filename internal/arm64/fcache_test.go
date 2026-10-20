@@ -808,6 +808,9 @@ func TestFrontCacheEntryDoesNotReplay(t *testing.T) {
 	if !strings.Contains(log, "did not replay") || !strings.Contains(log, "(twice, recorded by xo ") {
 		t.Fatalf("the build with a broken entry printed no warning naming it:\n%s", log)
 	}
+	if kept, _ := filepath.Glob(filepath.Join(work, "cache", "fe-bad", "*")); len(kept) != 1 {
+		t.Fatalf("the broken entry was not kept under the cache's fe-bad: %v", kept)
+	}
 	off, _ := build("XO_BACKEND_CACHE=off")
 	if !bytes.Equal(broken, off) {
 		t.Fatal("the build made again without the broken entry differs from the build with XO_BACKEND_CACHE=off")
