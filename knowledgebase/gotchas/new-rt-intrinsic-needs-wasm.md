@@ -31,3 +31,16 @@ a string) next to the native ones. internal/repotest
 TestRuntimeIntrinsicsLowered (-short, 2026-10-17) catches it in a second:
 every intrinsic needs a lowering in arm64, LLVM, and wasm, or a line with
 its reason in internal/repotest/testdata/intrinsic_gaps.txt.
+
+## Also: std code calling sysio.mono_ns (Observed 2026-10-20)
+
+No new intrinsic is needed to hit it: std/sql's pool (decision 0278
+stage B, 17d32a65) timed its connections' ages with `sysio.mono_ns`, whose
+Linux and macOS clock calls (`rt.sys_words`, `rt.call_c2`) compiler/wasm
+lowers to a fault, so the wasm golden `sql_driver` faulted ("the wasm
+backend does not support the call `rt.sys_words` at sysio.mono_ns")
+while every native backend passed; the 0.23.0 seed run found it. The wasm
+runtime keeps the monotonic clock to itself (rt3.xo `$mono`). Fix: std
+code that a wasm program reaches gates on `sysio.layer() == 0` and takes
+`sysio.real_ns()` there (std/native/sql.xo `pool_now`), and its change
+runs TestSelfhostWasm.

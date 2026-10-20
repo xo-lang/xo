@@ -45,9 +45,21 @@ struct Pool {
   max_lifetime: Int
 }
 
+/// The pool's clock for connection ages: the monotonic clock, except in
+/// a WASI module (sysio.layer() 0), whose runtime keeps the monotonic
+/// clock to itself (compiler/wasm rt3.xo $mono): there the wall clock
+/// (sysio.real_ns, WASI clock_time_get), since mono_ns's Linux and macOS
+/// calls do not exist in wasm.
+fn pool_now() -> Int {
+  if sysio.layer() == 0 {
+    return sysio.real_ns()
+  }
+  sysio.mono_ns()
+}
+
 struct Idle {
   c: sql.DriverConn
-  /// When it was connected (sysio.mono_ns).
+  /// When it was connected (pool_now).
   born: Int
 }
 
@@ -62,7 +74,7 @@ fn (p: Pool) take() -> Taken ! sql.SqlErr uses net.dial {
   if p.permits.recv() is None {
     return Err(sql.SqlErr.Canceled)
   }
-  let now = sysio.mono_ns()
+  let now = pool_now()
   while {
     let got = p.idle.with(fn(var xs) { xs.pop() })
     match got {
@@ -88,7 +100,7 @@ fn (p: Pool) take() -> Taken ! sql.SqlErr uses net.dial {
 /// Gives t back: kept idle while it works, has room, and is young enough,
 /// else closed; then the permit.
 fn (p: Pool) give(t: Taken) {
-  let keep = !t.c.is_broken() && (p.max_lifetime == 0 || sysio.mono_ns() - t.born < p.max_lifetime)
+  let keep = !t.c.is_broken() && (p.max_lifetime == 0 || pool_now() - t.born < p.max_lifetime)
   let kept = keep && p.idle.with(fn(var xs) -> Bool {
     if xs.len() >= p.max_idle {
       return false
