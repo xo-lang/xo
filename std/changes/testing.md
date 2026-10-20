@@ -3,7 +3,7 @@
 ## 2026-10-20: feature: FakeNet raw connections
 
 - Kind: feature
-- Commit: (filled in after the push)
+- Commit: 5a6d15fa
 - Found by: survey (raw protocol drivers could not be unit tested: std/sql's Postgres driver, std/smtp)
 - Go reference: net.Pipe and net/http/httptest's in process listeners (the idea; the buffering is Xo's)
 - Test: internal/gen/testdata/golden/test_fakenet_raw (Go, arm64, LLVM; cmd/xo TestNoGCTests), std/rt TestMemConn
