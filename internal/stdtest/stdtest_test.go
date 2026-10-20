@@ -2,8 +2,8 @@
 // std/.../NAME_test.xo beside its module's source is run with `xo test
 // --std-module=MODULE`, so the tests have the module's private
 // functions. Backends by tier: -short the host's native backend (arm64
-// on an arm64 host, else llvm); the default LLVM and arm64 (arm64 on
-// arm64 hosts); XO_STDTEST_BACKENDS (comma separated) names them
+// or amd64, decision 0270; llvm on another host); the default LLVM and
+// the native one; XO_STDTEST_BACKENDS (comma separated) names them
 // instead.
 package stdtest
 
@@ -62,17 +62,20 @@ func backends() []string {
 	if v := os.Getenv("XO_STDTEST_BACKENDS"); v != "" {
 		return strings.Split(v, ",")
 	}
-	arm := runtime.GOARCH == "arm64" && (runtime.GOOS == "darwin" || runtime.GOOS == "linux")
-	if testing.Short() {
-		if arm {
-			return []string{"arm64"}
-		}
+	native := ""
+	switch {
+	case runtime.GOARCH == "arm64" && (runtime.GOOS == "darwin" || runtime.GOOS == "linux"):
+		native = "arm64"
+	case runtime.GOARCH == "amd64" && (runtime.GOOS == "darwin" || runtime.GOOS == "linux" || runtime.GOOS == "windows"):
+		native = "amd64"
+	}
+	if native == "" {
 		return []string{"llvm"}
 	}
-	if arm {
-		return []string{"llvm", "arm64"}
+	if testing.Short() {
+		return []string{native}
 	}
-	return []string{"llvm"}
+	return []string{"llvm", native}
 }
 
 // TestStdModules runs every std module's tests on each backend.

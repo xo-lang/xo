@@ -1,6 +1,6 @@
 # 0248: Native is the default backend
 
-Status: Accepted (owner, 2026-10-16; implemented the same day by xo-fa)
+Status: Accepted (owner, 2026-10-16; implemented the same day by xo-fa). Its x86_64 line (LLVM the default there) superseded by 0270 (owner, 2026-10-19): native amd64 is the default on x86-64 hosts.
 
 ## Context
 

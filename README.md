@@ -107,9 +107,10 @@ scripts/bootstrap-xo.sh                         # the self rebuild fixed point
 
 ## Backends
 
-The default backend is native (decision 0248): arm64 on arm64 hosts
-(Apple Silicon, arm64 Linux), with Xo's own assembler and linkers for
-macOS and Linux, and LLVM on x86-64 hosts (clang needed). `--backend=go`
+The default backend is native (decisions 0248 and 0270): arm64 on arm64
+hosts (Apple Silicon, arm64 Linux) and amd64 on x86-64 hosts (macOS,
+Linux, Windows), with Xo's own assemblers and linkers; `--backend=llvm`
+(clang needed) is the choice for `--race`. `--backend=go`
 builds through the Go toolchain, which `use go` bindings need, and
 `--backend=wasm` builds a WASI preview1 module. `xo build --targets=all`
 cross compiles for linux, darwin, windows, and wasi.

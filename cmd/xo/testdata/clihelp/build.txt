@@ -1,4 +1,4 @@
-usage: xo build [--targets=all|os/arch,...] [--backend=go|llvm|arm64|wasm] [--no-gc]
+usage: xo build [--targets=all|os/arch,...] [--backend=go|llvm|arm64|amd64|wasm] [--no-gc]
                 [--no-mono] [--no-arenas] [--tzdata=embedded|system] [--ci]
                 [--release [--error-args=false] [--profile-support] [--trace-support]]
                 [-s] [--debug-info] [--ld=macho|cc] [--race]
@@ -6,8 +6,9 @@ usage: xo build [--targets=all|os/arch,...] [--backend=go|llvm|arm64|wasm] [--no
                 [--json] [-o out] <dirs...>
 
 Compile to static binaries (default: the host). The directories are one
-program. The default backend is native (decision 0248): arm64 on arm64
-hosts, llvm (which needs clang) otherwise; --backend=go builds through
+program. The default backend is native (decisions 0248 and 0270): arm64
+or amd64 for the target's architecture; --race picks llvm (which needs
+clang) and its ThreadSanitizer; --backend=go builds through
 the Go toolchain, and a program with `use go` needs it. A linux/arm64
 target links with Xo's own linker, from any host (decision 0243).
 --no-gc (also on run and test) reports every construct, std API, or

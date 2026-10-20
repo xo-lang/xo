@@ -177,7 +177,7 @@ pub fn no_match_error(cmd: Str, arg: Str) -> Str {
 
 fn build_text() -> Str {
   """
-usage: xo build [--targets=all|os/arch,...] [--backend=go|llvm|arm64|wasm] [--no-gc]
+usage: xo build [--targets=all|os/arch,...] [--backend=go|llvm|arm64|amd64|wasm] [--no-gc]
                 [--no-mono] [--no-arenas] [--tzdata=embedded|system] [--ci]
                 [--release [--error-args=false] [--profile-support] [--trace-support]]
                 [-s] [--debug-info] [--ld=macho|cc] [--race]
@@ -185,8 +185,9 @@ usage: xo build [--targets=all|os/arch,...] [--backend=go|llvm|arm64|wasm] [--no
                 [--json] [-o out] <dirs...>
 
 Compile to static binaries (default: the host). The directories are one
-program. The default backend is native (decision 0248): arm64 on arm64
-hosts, llvm (which needs clang) otherwise; --backend=go builds through
+program. The default backend is native (decisions 0248 and 0270): arm64
+or amd64 for the target's architecture; --race picks llvm (which needs
+clang) and its ThreadSanitizer; --backend=go builds through
 the Go toolchain, and a program with `use go` needs it. A linux/arm64
 target links with Xo's own linker, from any host (decision 0243).
 --no-gc (also on run and test) reports every construct, std API, or
@@ -214,7 +215,7 @@ native assembly (decision 0084).
 
 fn run_text() -> Str {
   """
-usage: xo run [--seed=N] [--record=trace.xotrace] [--holes] [--backend=go|llvm|arm64]
+usage: xo run [--seed=N] [--record=trace.xotrace] [--holes] [--backend=go|llvm|arm64|amd64]
               [--no-gc] [--no-mono] [--no-arenas] [--tzdata=embedded|system]
               [--profile=cpu|heap|cpu,heap] [--trace=FILE] [--race]
               [--stamp NAME=VALUE]... [--watch [--grace=D]] [dir] [-- args...]
@@ -244,7 +245,7 @@ With --json each cycle is a JSON line, the last also in
 fn test_text() -> Str {
   """
 usage: xo test [--seed=N] [--explore=N] [--run=text] [--race] [--real] [--cases=N]
-               [--timeout=D] [--json] [-v] [--backend=go|llvm|arm64] [--no-gc]
+               [--timeout=D] [--json] [-v] [--backend=go|llvm|arm64|amd64] [--no-gc]
                [--profile=cpu|heap|cpu,heap] [--trace=FILE] [--watch] <dirs...>
 
 Run test blocks, property tests, and contract fuzzing on the

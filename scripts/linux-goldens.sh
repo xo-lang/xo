@@ -6,7 +6,8 @@
 #
 #   scripts/linux-goldens.sh XO BACKEND OUTDIR [NAME...]
 #
-# XO is the xo binary (its std at XO/../../std), BACKEND arm64 or llvm,
+# XO is the xo binary (its std at XO/../../std), BACKEND arm64, amd64 or
+# llvm, or default (no --backend: the native one, decision 0270),
 # OUTDIR gets the binaries, build logs, and summary.txt (one `ok NAME`,
 # `FAIL NAME`, or `BUILD NAME` line each). NAMEs restrict the run to
 # those goldens. Exits 1 when any failed.
@@ -27,7 +28,8 @@ bad=0
 for n in $names; do
   d=$goldens/$n
   [ -f "$d/want.txt" ] || continue
-  if ! (cd "$d" && "$xo" build --backend="$backend" -o "$out/bin/$n" .) >"$out/log/$n.build" 2>&1; then
+  if [ "$backend" = default ]; then set -- ; else set -- --backend="$backend"; fi
+  if ! (cd "$d" && "$xo" build "$@" -o "$out/bin/$n" .) >"$out/log/$n.build" 2>&1; then
     echo "BUILD $n" | tee -a "$out/summary.txt"
     tail -5 "$out/log/$n.build"
     bad=1

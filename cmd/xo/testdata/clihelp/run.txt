@@ -1,4 +1,4 @@
-usage: xo run [--seed=N] [--record=trace.xotrace] [--holes] [--backend=go|llvm|arm64]
+usage: xo run [--seed=N] [--record=trace.xotrace] [--holes] [--backend=go|llvm|arm64|amd64]
               [--no-gc] [--no-mono] [--no-arenas] [--tzdata=embedded|system]
               [--profile=cpu|heap|cpu,heap] [--trace=FILE] [--race]
               [--stamp NAME=VALUE]... [--watch [--grace=D]] [dir] [-- args...]

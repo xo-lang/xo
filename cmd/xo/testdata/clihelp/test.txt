@@ -1,5 +1,5 @@
 usage: xo test [--seed=N] [--explore=N] [--run=text] [--race] [--real] [--cases=N]
-               [--timeout=D] [--json] [-v] [--backend=go|llvm|arm64] [--no-gc]
+               [--timeout=D] [--json] [-v] [--backend=go|llvm|arm64|amd64] [--no-gc]
                [--profile=cpu|heap|cpu,heap] [--trace=FILE] [--watch] <dirs...>
 
 Run test blocks, property tests, and contract fuzzing on the

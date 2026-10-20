@@ -1,10 +1,13 @@
 # 0270: Native backend as the default on amd64 hosts
 
-Status: Proposed (xo-fa, 2026-10-19; owner-approved checks). The
-correctness check passes and the performance check does not, so the
-default stays LLVM on amd64 hosts until the gaps below close; Xo lang 4
-works on them (lead, 2026-10-19). When they do, the owner decides, and
-this record is accepted as written or amended with the new figures.
+Status: Accepted (owner, 2026-10-19): native is the default backend on
+every host now, amd64 hosts included (darwin/amd64, linux/amd64,
+windows/amd64), and the speed bar below (about 10% of LLVM's
+instructions) no longer gates it. The gap is still open when this is
+accepted: HTTP about 1.15 times LLVM's instructions; on the Intel Mac
+JSON 1.24, RSA 1.44, portable 1.53 times the instructions and 2.52 times
+the wall time. Xo lang 4 keeps closing it (the gaps ranked below).
+Proposed by xo-fa the same day, with the owner-approved checks.
 
 ## Context
 
@@ -36,19 +39,21 @@ every figure.
 
 Check (2) fails on HTTP plain, the TLS handshake, and JSON.
 
-## Decision (proposed)
+## Decision
 
-When the gaps close (HTTP plain and newconn, the TLS handshake, and
-JSON within about 10% of LLVM's instructions, with the goldens still
-passing), the default backend becomes the native one whenever the host
-has a native backend: arm64 on arm64 hosts and amd64 on darwin/amd64
-and linux/amd64 hosts (compiler/xo main.xo, today `host_arch() ==
-"arm64"`). This supersedes decision 0248's x86_64 line. `--race`
-still chooses LLVM (ThreadSanitizer), the Go-only flags still choose
-Go, and Windows hosts stay on LLVM until the native windows/amd64
-target exists.
+The default backend is the native one: arm64 or amd64 by the
+architecture of the build's targets (`--targets`; else the host's), on
+darwin, linux and windows (compiler/xo main.xo native_backend). This
+supersedes decision 0248's x86_64 line. `--race` still chooses LLVM
+(ThreadSanitizer, which the native backends lack), the Go-only flags
+(--hybrid, --holes, xo test --explore, xo run --seed and --record)
+still choose Go, and `--backend=llvm` keeps LLVM's code for anyone who
+wants it.
 
-Until then nothing changes: LLVM is the default on amd64 hosts.
+As proposed, the switch waited for the gaps to close (HTTP plain and
+newconn, the TLS handshake, and JSON within about 10% of LLVM's
+instructions); the owner made it on 2026-10-19 with them open, and the
+work on them continues.
 
 ## Gaps, ranked (to close first)
 
@@ -67,12 +72,15 @@ Until then nothing changes: LLVM is the default on amd64 hosts.
 
 ## Consequences
 
-- Accepted later: amd64 builds stop needing clang and an LLVM
-  toolchain by default, as arm64 builds already do (decision 0248), and
-  build faster (no clang in the loop).
-- Until then: amd64 users keep LLVM's code; the native backend is one
-  flag away (`--backend=amd64`) and is tested by the goldens on both
-  hosts.
+- amd64 builds stop needing clang and an LLVM toolchain by default, as
+  arm64 builds already do (decision 0248), and build faster (no clang in
+  the loop).
+- amd64 programs run the native backend's code, slower than LLVM's by
+  the gap above until it closes; `--backend=llvm` is one flag away.
+- A cross build picks its backend by the target: `--targets=linux/amd64`
+  from an arm64 Mac is the amd64 backend's, no longer an error.
+- std's module tests (internal/stdtest) run on the host's native
+  backend, amd64 on x86-64 hosts.
 
 ## Alternatives
 

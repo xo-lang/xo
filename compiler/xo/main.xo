@@ -142,11 +142,12 @@ fn main(os: Os) ! {
     os.stdio.eprintln("xo build: --error-args=false needs --release (debug builds always record parameters)")
     os.proc.exit(2)
   }
-  // the default backend is the host's native one (decision 0248): arm64
-  // on arm64 hosts, llvm otherwise; asm prints the arm64 assembly. The
-  // flags only the Go backend has (--hybrid, --holes, xo test --explore,
-  // xo run --seed and --record) choose it, and --race llvm's
-  // ThreadSanitizer (arm64 has no race detector).
+  // the default backend is the native one (decisions 0248 and 0270):
+  // arm64 or amd64 by the targets' architecture, else the host's
+  // (native_backend); asm prints the arm64 assembly. The flags only the
+  // Go backend has (--hybrid, --holes, xo test --explore, xo run --seed
+  // and --record) choose it, and --race llvm's ThreadSanitizer (the
+  // native backends have no race detector).
   var backend = o.backend
   if backend.is_empty() {
     let go_only = o.hybrid || o.holes || (o.cmd == "test" && o.explore > 0) || (o.cmd == "run" && (o.topts.seed != 0 || !o.record.is_empty()))
@@ -154,10 +155,10 @@ fn main(os: Os) ! {
       backend = "arm64"
     } else if go_only {
       backend = "go"
-    } else if host_arch() == "arm64" && !o.race {
-      backend = "arm64"
-    } else {
+    } else if o.race {
       backend = "llvm"
+    } else {
+      backend = native_backend(o)
     }
   }
   if !o.trace.is_empty() && backend == "go" {
@@ -514,9 +515,33 @@ fn in_scope(os: Os, o: Opts, ds: List[check.Diag]) -> List[check.Diag] {
   out
 }
 
-/// A native build (arm64 or llvm, or wasm): check, SSA, passes, code,
-/// then the link of the host target into the build directory or -o.
-fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
+/// The default native backend (decision 0270): arm64 or amd64 for the
+/// architecture --targets names (the last one, so a mix fails on the
+/// backend's own target check), else for the host's; llvm on a host
+/// with neither (a wasm build of xo).
+fn native_backend(o: Opts) -> Str {
+  var arch = host_arch()
+  if !o.targets.is_empty() && o.targets != "all" {
+    for p in o.targets.split(",") {
+      let parts = p.trim().split("/")
+      if parts.len() == 2 && (parts[1] is "arm64" | "amd64") {
+        arch = parts[1]
+      }
+    }
+  }
+  if arch is "arm64" | "amd64" { arch } else { "llvm" }
+}
+
+/// A native build (arm64, amd64 or llvm, or wasm): check, SSA, passes,
+/// code, then the link of the host target into the build directory or -o.
+fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
+  // the backend chosen (lower, nolibc and the link read o.backend), and
+  // whether it was the default, for the errors that name it
+  var o = o0
+  if o.backend.is_empty() {
+    o.backend_auto = true
+    o.backend = backend
+  }
   let phases = o.phases
   let goos = ctx.goos
   // LLVM builds for the host; the arm64 backend for arm64 (on an amd64
@@ -565,7 +590,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     fz = f2
   }
   t = lap(os, phases, "check", t)
-  if o.backend.is_empty() {
+  if o.backend_auto {
     // a program with `use go` builds only with the Go backend: say so,
     // rather than the native build's errors on each Go use (decision 0248)
     for m in c.mods {
@@ -624,7 +649,7 @@ fn build_native(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Native {
     if cc.is_empty() {
       cc = find_clang(os)
       if cc.is_empty() {
-        if o.backend.is_empty() {
+        if o.backend_auto {
           // the default backend on this host (decision 0248)
           fail(os, "the LLVM backend (the default on this host) needs clang: install it (xcode-select --install on macOS, your distribution's clang package on Linux) or set XO_CLANG, or build with --backend=go")
         }

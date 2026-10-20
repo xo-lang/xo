@@ -25,6 +25,8 @@ struct Opts {
   /// --backend as given ("" when not given: go, or arm64 with --no-gc and
   /// for asm; main.xo).
   backend: Str = ""
+  /// build_native: o.backend was empty and is the default it chose.
+  backend_auto: Bool = false
   go_tree: Str = ""
   /// --as and --ld (decision 0182): cc, or macho (compiler/macho; --ld=macho
   /// implies --as=macho); "" when not given: main.xo default_ld picks

@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The native backend is the default on every host: amd64 on x86-64
+  hosts (macOS, Linux, Windows) as arm64 on arm64 ones, chosen by the
+  targets' architecture, so a default build needs no clang (decision
+  0270). Its code is still slower than LLVM's on amd64 (HTTP about 1.15
+  times the instructions; on an Intel Mac JSON 1.24, RSA 1.44);
+  `--backend=llvm` keeps LLVM's, and `--race` uses it.
 - Reference counting insertion sorts each block's live set once, and in
   O(n log n): a cold build of xo spends about 12% less CPU (insert_rc
   16 to 6.5 s of wall).
