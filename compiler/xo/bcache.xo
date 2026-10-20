@@ -132,7 +132,15 @@ fn fn_cache_store(os: Os, dir: Str, pk: Pack, fc: arm64.FnCache, stores: List[(S
   // its namespace), and its text is large (xo: 34 parts, 328 MB), so
   // no loose copy for other programs to share
   if let Some(pp) = pk.parts {
-    pack_store(os, pp, fc.part_entries, part_stores)
+    if pp.fresh && fc.part_keys.len() >= PART_PACK_FIRST && !part_stores.is_empty() {
+      // a large module's parts on the target's first build too: they
+      // have no loose copies to come back from, so the first edit after
+      // a cold build regenerated every part
+      os.fs.create_dir_all(pp.dir).ignore_err("no pack: the parts are made again")
+      pack_write(os, pp, part_stores)
+    } else {
+      pack_store(os, pp, fc.part_entries, part_stores)
+    }
   }
   if stores.is_empty() {
     return
@@ -561,12 +569,21 @@ fn prune_backend_cache(os: Os, dir: Str, stored: Int) {
 // a pack holding over twice what the build used, it writes one segment
 // of what it used and removes the segments it read. A target's first
 // build only creates the directory, so a program built once (a golden)
-// costs no second copy. Segments are written whole and renamed into
-// place (cache_put); a segment another build removed while this one
-// listed it reads as missing, and its keys come from the loose files.
+// costs no second copy; except the parts of a module of PART_PACK_FIRST
+// parts or more, which have no loose copies, so the first edit after a
+// cold build would make every part again. Segments are written whole
+// and renamed into place (cache_put); a segment another build removed
+// while this one listed it reads as missing, and its keys come from the
+// loose files.
 // The prune treats each segment as one entry, marked used when read.
 
 const PACK_VERSION = "xo pack v1"
+
+/// The parts a module needs for its parts pack to be written on its
+/// build target's first build: the compiler has 77; the largest golden
+/// 10 (http_conn_fault, 31 MB of parts), an HTTP server about 7 to 9, a
+/// hello program 3 (m.funcs holds the runtime), 2026-10-20.
+const PART_PACK_FIRST = 16
 const PACK_SEGS = 4
 
 /// One kind's pack for a build target, as cache_get_packed read it.
