@@ -151,9 +151,11 @@ Update the knowledgebase in the same change as the work, not later:
     chased by default. Exception (2026-10-20, two x86 miscompiles the
     arm64 gates could not see): a change to x86 code generation
     (compiler/arm64's x86*.xo and amd64 encoder, or anything only
-    --backend=amd64 runs) also passes the Docker amd64 goldens (scripts/docker-goldens.sh) with every
-    optional pass on, plus a run of the program it targets, before it
-    pushes. Every merge touching what the self build
+    --backend=amd64 runs) also passes the per-push sample of the Docker
+    amd64 goldens (scripts/docker-amd64-sample.txt, 42 of 201, about 15
+    minutes; owner 2026-10-20) with every optional pass on, plus a run
+    of the program it targets, before it pushes; the full 201 run in
+    the lead's 4-hourly full tier. Every merge touching what the self build
     compiles or runs also passes the self rebuild fixed point
     (scripts/bootstrap-xo.sh, s2 and s3 identical) on arm64, so a
     miscompile cannot build the next compiler: compiler/ (but not

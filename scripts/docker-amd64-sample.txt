@@ -1,0 +1,50 @@
+# The per-push sample of the Docker amd64 goldens for an x86 code
+# generation change (owner, 2026-10-20; CLAUDE.md "Tests"): about 40 of
+# the 201, chosen to cover what the x86 passes and encoder touch:
+# integer and checked arithmetic, constants and immediates, floats and
+# libm, spills and calls, strings and collections, JSON, crypto, the
+# runtime (tasks, faults, RC), and the network stack. The full 201 run
+# in the lead's 4-hourly full tier. Run:
+#   scripts/docker-goldens.sh XO amd64 amd64 WORK $(grep -v '^#' scripts/docker-amd64-sample.txt)
+arith
+overflow_add
+overflow_mul
+overflow_spilled_operand
+neg_overflow
+shl_overflow
+sized_overflow
+const_div
+const_div_narrow
+int_word_methods
+tuples_consts
+float32
+float_const_overflow
+float_libm
+float_order
+float_int_fault
+arg_slots
+chain_pads
+closures
+method_values
+generics
+iface_values
+strings
+str_ops_table
+lists
+maps
+map_small
+native_bytes
+json_text
+native_json
+crypto_prims
+cpu_sha256
+native_crypto
+rc_values
+rc_closures
+conc_channels
+conc_stress
+fault_unwind
+fault_tasks
+http_server
+http_tls
+net_echo
