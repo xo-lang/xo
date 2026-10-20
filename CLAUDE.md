@@ -67,6 +67,11 @@ Update the knowledgebase in the same change as the work, not later:
   `NNNN-title.md` (Status: Proposed) and its README line on main, then
   fill it in. `TestDecisionNumbersUnique`
   fails on a duplicate number.
+- **Std change logs** (decision 0276): a user visible change to a std
+  module (fix, port, behavior, security, feature, perf) adds an entry to
+  `std/changes/MODULE.md` in the same commit, in 0276's format. Std
+  follows Go's standard library (port Go's code and tests where they
+  fit, with attribution; Xo's own API); Xo Lang Lib 1 owns std.
 - **Gotchas**: when something breaks unexpectedly, behaves surprisingly, or
   costs more than one attempt to get right, add a gotcha with symptom, cause,
   and fix. Mark it `Observed` or `Anticipated`; flip anticipated entries to
@@ -132,7 +137,12 @@ Update the knowledgebase in the same change as the work, not later:
     linux/arm64 EC2 machine (r8g, warm, seed prefix). Linux amd64 and
     Windows runs are best effort, not a gate: no milestone needs them,
     and a failure seen only there is recorded as a known issue, not
-    chased by default. Every merge touching what the self build
+    chased by default. Exception (2026-10-20, two x86 miscompiles the
+    arm64 gates could not see): a change to x86 code generation
+    (compiler/arm64's x86*.xo and amd64 encoder, or anything only
+    --backend=amd64 runs) also passes the Docker amd64 goldens (scripts/docker-goldens.sh) with every
+    optional pass on, plus a run of the program it targets, before it
+    pushes. Every merge touching what the self build
     compiles or runs also passes the self rebuild fixed point
     (scripts/bootstrap-xo.sh, s2 and s3 identical) on arm64, so a
     miscompile cannot build the next compiler: compiler/ (but not
