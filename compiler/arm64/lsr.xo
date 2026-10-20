@@ -741,6 +741,9 @@ fn cluster_past(inst: Inst, k: Int, base: Int, off: Int) -> Bool {
   k == 1 && k2 == 1
 }
 
+/// copy_runs_l of text's lines (lsr_test.xo).
+fn copy_runs(text: Str) -> Str { copy_runs_l(text.split("\n")).join("\n") }
+
 /// A function's text with each run of four or more word copies through
 /// x16 or x17 (`ldr x16, [A, #a]` then `str x16, [B, #b]`, each next pair
 /// a word further on both sides) copied 32 bytes at a time: x16 = A + a
@@ -754,11 +757,10 @@ fn cluster_past(inst: Inst, k: Int, base: Int, off: Int) -> Bool {
 /// by word copy read; and neither x16 nor x17 is read after the run
 /// before it is written (scratch_dead). Before reload_reuse, which takes
 /// x16 to hold the run's last word's slot after it.
-fn copy_runs(text: Str) -> Str {
-  if !text.contains("\tstr x16, [") && !text.contains("\tstr x17, [") {
-    return text
+fn copy_runs_l(lines: List[Str]) -> List[Str] {
+  if !any_has(lines, "\tstr x16, [") && !any_has(lines, "\tstr x17, [") {
+    return lines
   }
-  let lines = text.split("\n")
   var out: List[Str] = []
   var i = 0
   let n = lines.len()
@@ -819,8 +821,11 @@ fn copy_runs(text: Str) -> Str {
     out.push(lines[i])
     i += 1
   }
-  out.join("\n")
+  resplit(out)
 }
+
+/// borrow_flag_peep_l of text's lines (lsr_test.xo).
+fn borrow_flag_peep(text: Str) -> Str { borrow_flag_peep_l(text.split("\n")).join("\n") }
 
 /// A function's text without the round trip of a borrow through a
 /// register into the next subtract with borrow: `subs A, B, C` then
@@ -831,11 +836,10 @@ fn copy_runs(text: Str) -> Str {
 /// borrow carried into the chain, std/native/llrt x25519.xo fe64_sub,
 /// nistec.xo sub4, sub6, sub_m6; a constant carry in of 1 made LLVM join
 /// two carries with a conditional select).
-fn borrow_flag_peep(text: Str) -> Str {
-  if !text.contains("\teor ") || !text.contains(", cc\n") {
-    return text
+fn borrow_flag_peep_l(ls: List[Str]) -> List[Str] {
+  if !any_has(ls, "\teor ") || !any_line_ends(ls, ", cc") {
+    return ls
   }
-  let ls = text.split("\n")
   var out: List[Str] = List.with_capacity(ls.len())
   var i = 0
   while i < ls.len() {
@@ -872,7 +876,7 @@ fn borrow_flag_peep(text: Str) -> Str {
     out.push(ls[i])
     i += 1
   }
-  out.join("\n")
+  resplit(out)
 }
 
 /// Whether register x (an x register, or its w form) is written before it
@@ -1154,13 +1158,15 @@ fn pair_loads(text: Str) -> Str {
   out.join("\n")
 }
 
+/// pair_mem_l of text's lines (lsr_test.xo).
+fn pair_mem(text: Str, ext: Str) -> Str { pair_mem_l(text.split("\n"), ext).join("\n") }
+
 /// pair_loads for a function's text (pairMem, decision 0208), which also
 /// joins two stores of adjacent words through one base register (not
 /// sp) into a store pair, and pairs across labels nothing refers to (the
 /// labels of blocks only fallen into, which go). ext is the text that
 /// may refer to the function's labels besides it (its call site table).
-fn pair_mem(text: Str, ext: Str) -> Str {
-  let lines = text.split("\n")
+fn pair_mem_l(lines: List[Str], ext: Str) -> List[Str] {
   var refs: Map[Str, Bool] = {}
   var have_refs = false
   var out: List[Str] = []
@@ -1190,7 +1196,7 @@ fn pair_mem(text: Str, ext: Str) -> Str {
           continue
         }
         if !have_refs {
-          refs = label_refs(text, ext)
+          refs = label_refs(lines, ext)
           have_refs = true
         }
         if refs.contains(name) {
@@ -1216,8 +1222,11 @@ fn pair_mem(text: Str, ext: Str) -> Str {
     out.push(lines[i])
     i += 1
   }
-  out.join("\n")
+  resplit(out)
 }
+
+/// reload_reuse_l of text's lines (lsr_test.xo).
+fn reload_reuse(text: Str, ext: Str) -> Str { reload_reuse_l(text.split("\n"), ext).join("\n") }
 
 /// A function's text without the reloads of a spill slot into x16 or
 /// x17 that already hold it (2026-10-17: 13% of bench/perf/tls's arm64
@@ -1232,8 +1241,7 @@ fn pair_mem(text: Str, ext: Str) -> Str {
 /// to which (in text and ext) came before it, the registers hold what
 /// they held at each of those branches and on the way falling into it;
 /// a label referred to later (a loop's head), or from ext, starts empty.
-fn reload_reuse(text: Str, ext: Str) -> Str {
-  let lines = text.split("\n")
+fn reload_reuse_l(lines: List[Str], ext: Str) -> List[Str] {
   // how many times each label is referred to, in text and in ext
   var nrefs: Map[Str, Int] = {}
   for x in lines {
@@ -1351,7 +1359,7 @@ fn reload_reuse(text: Str, ext: Str) -> Str {
     }
     out.push(l)
   }
-  out.join("\n")
+  resplit(out)
 }
 
 /// The labels line l refers to (label_refs's names, of one line).
@@ -1479,10 +1487,10 @@ fn is_label_byte(c: UInt8) -> Bool {
 
 /// The labels the lines of text and ext refer to (every `L` and the
 /// letters, digits, and `_` after it, outside label definitions).
-fn label_refs(text: Str, ext: Str) -> Map[Str, Bool] {
+fn label_refs(lines: List[Str], ext: Str) -> Map[Str, Bool] {
   var refs: Map[Str, Bool] = {}
-  for t in [text, ext] {
-    for x in t.split("\n") {
+  for t in [lines, ext.split("\n")] {
+    for x in t {
       if !label_def(x).is_empty() {
         continue
       }
@@ -1853,4 +1861,54 @@ fn (var g: G) emit_latch(var b: List[Str], t: Int, next: Int) {
     g.emit_inst(b, inst, next)
   }
   g.pos = pos
+}
+
+/// Whether any of lines contains s (s without a newline): text.contains
+/// for a text split into lines.
+fn any_has(lines: List[Str], s: Str) -> Bool {
+  for l in lines {
+    if l.contains(s) {
+      return true
+    }
+  }
+  false
+}
+
+/// Whether a line other than the last ends with s: text.contains("${s}\n")
+/// for a text split into lines.
+fn any_line_ends(lines: List[Str], s: Str) -> Bool {
+  for (i, l) in lines.indexed() {
+    if i + 1 < lines.len() && l.ends_with(s) {
+      return true
+    }
+  }
+  false
+}
+
+/// The lines of xs joined with newlines, without joining them: an
+/// element holding newlines is split, the rest kept (the text passes
+/// take and give lines, so a function's text is split once, not once a
+/// pass).
+fn resplit(xs: List[Str]) -> List[Str] {
+  var multi = false
+  for x in xs {
+    if x.contains("\n") {
+      multi = true
+      break
+    }
+  }
+  if !multi {
+    return xs
+  }
+  var out: List[Str] = []
+  for x in xs {
+    if x.contains("\n") {
+      for y in x.split("\n") {
+        out.push(y)
+      }
+    } else {
+      out.push(x)
+    }
+  }
+  out
 }

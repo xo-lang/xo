@@ -327,8 +327,12 @@ fn (var g: G) emit() {
     ext = g.lsdas[g.lsdas.len() - 1]
   }
   b.push("\n")
-  let body = if g.x86 { b.join("") } else { borrow_flag_peep(copy_runs(b.join(""))) }
-  g.text.push(g.local_empty(g.far_tests(g.far_slots(pair_mem(reload_reuse(body, ext), ext)))))
+  // the function's text split into lines once for the passes after it,
+  // joined once (each split and joined it again: memmove and allocation
+  // were a fifth of a cold build's emit, 2026-10-19)
+  let ls0 = b.join("").split("\n")
+  let ls = if g.x86 { ls0 } else { borrow_flag_peep_l(copy_runs_l(ls0)) }
+  g.text.push(g.local_empty_l(g.far_tests_l(g.far_slots_l(pair_mem_l(reload_reuse_l(ls, ext), ext)))))
 }
 
 /// The number of instructions past which a function keeps adrp and add
@@ -343,13 +347,12 @@ const LOCAL_EMPTY_LIMIT = 200000
 /// xo-code-size-2026-10-18.md, fix 4). A `[]` is then not one address,
 /// so the runtime tests an empty list by its count (llrt
 /// obj.is_immortal), never by address.
-fn (g: G) local_empty(text: Str) -> Str {
+fn (g: G) local_empty_l(lines: List[Str]) -> Str {
   let s = g.sym("xo_empty_list")
   let (pg, off) = if g.os == "darwin" { ("${s}@PAGE", "${s}@PAGEOFF") } else { (s, ":lo12:${s}") }
-  if g.x86 || !text.contains("adrp") || !text.contains(pg) {
-    return text
+  if g.x86 || !any_has(lines, "adrp") || !any_has(lines, pg) {
+    return lines.join("\n")
   }
-  let lines = text.split("\n")
   var n = 0
   for l in lines {
     if l.starts_with("\t") && !l.starts_with("\t.") {
@@ -357,7 +360,7 @@ fn (g: G) local_empty(text: Str) -> Str {
     }
   }
   if n > LOCAL_EMPTY_LIMIT {
-    return text
+    return lines.join("\n")
   }
   let lab = g.local("${g.lbl_prefix()}_el")
   var out: List[Str] = []
@@ -378,7 +381,7 @@ fn (g: G) local_empty(text: Str) -> Str {
     i += 1
   }
   if !hit {
-    return text
+    return lines.join("\n")
   }
   // .long words: compiler/macho takes no .quad in code (IMMORTAL is
   // 1 << 63, its high half 2^31)
@@ -397,8 +400,7 @@ const FAR_COND_LIMIT = 240000
 /// instructions, and every b.cond, cbz, and cbnz of one longer than
 /// FAR_COND_LIMIT, as the opposite test around an unconditional branch
 /// (farTests; gotchas/arm64-tbz-range.md).
-fn (g: G) far_tests(text: Str) -> Str {
-  let lines = text.split("\n")
+fn (g: G) far_tests_l(lines: List[Str]) -> List[Str] {
   var n = 0
   for l in lines {
     if l.starts_with("\t") && !l.starts_with("\t.") {
@@ -406,7 +408,7 @@ fn (g: G) far_tests(text: Str) -> Str {
     }
   }
   if n < FAR_TEST_LIMIT {
-    return text
+    return lines
   }
   var b: List[Str] = []
   var k = 0
@@ -441,7 +443,7 @@ fn (g: G) far_tests(text: Str) -> Str {
     }
     b.push(l)
   }
-  b.join("")
+  b.join("").split("\n")
 }
 
 /// The fields of a line split on white space (strings.Fields).
@@ -477,11 +479,10 @@ const MAX_FAR_FRAME = 16777216
 
 /// Rewrites the sp relative loads and stores of a far frame whose offset
 /// is past the instruction's reach to go through x28 (farSlots).
-fn (g: G) far_slots(text: Str) -> Str {
+fn (g: G) far_slots_l(lines: List[Str]) -> List[Str] {
   if g.base == 0 {
-    return text
+    return lines
   }
-  let lines = text.split("\n")
   var b: List[Str] = []
   for (i, l) in lines.indexed() {
     if i > 0 {
@@ -510,7 +511,7 @@ fn (g: G) far_slots(text: Str) -> Str {
     }
     b.push("\t${op} ${rs}, [x28, #${lo}]")
   }
-  b.join("")
+  b.join("").split("\n")
 }
 
 /// Whether l is `\t<op> <regs>, [sp, #<off>]` with op a load or store
