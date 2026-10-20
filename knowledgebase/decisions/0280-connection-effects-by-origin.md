@@ -43,6 +43,16 @@ client if it were written over the prelude's `Conn`.
   programs. Allowed in the `preview` edition (decision 0155).
 - Conn's TLS upgrade (spec 3.2, Xo Lang 3) is dial side and so
   `net.dial`.
+- It lands in two phases (gotchas/seed-older-than-intrinsics.md): the
+  seed builds the next compiler with the checkout's std, so a prelude
+  naming `ServerConn` needs a seed whose compiler knows it. Phase 1
+  (compiler only, in seed 0.23.0) makes `ServerConn` a handle lowered
+  like `Conn`, dispatches calls through the prelude's `Stream` as an
+  interface (not a capability), and lowers `Listener.accept` to the
+  handle its declared result names; with the old prelude nothing
+  changes. Phase 2 (the prelude, spec, and callers) lands after the cut.
+  Both phase 1 fixes after the first were found by building phase 2's
+  tree with phase 1's xo, the check to repeat on the seed before a cut.
 
 ## Alternatives
 
