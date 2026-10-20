@@ -36,6 +36,13 @@ Last verified: 2026-10-12
   git remote is `github.com/josephspurrier/xo` (owner's choice, 2026-10-08).
   `cmd/xo` holds only tests since decision 0215; build xo from a checkout
   with `go run ./scripts/xobuild` (writes `bin/xo`, last verified 2026-10-13).
+  Before each seed's build, xobuild runs that seed's `xo check` of
+  compiler/xo (about 4 s on the Mac) and moves on to the next seed when it
+  fails, so an error in the sources is reported in seconds with its
+  location, not after a build of minutes; `XO_BUILD_PRECHECK=0` turns the
+  check off (internal/xotool CheckXo; with the seed chain on, a seed whose
+  check fails is still built, through the chain). Last verified:
+  2026-10-20.
 - Standard library only. No third party module dependencies, for the
   compiler or for generated programs. (Go packages bound with `use go` are
   dependencies of the generated program, not of the compiler; see "Go

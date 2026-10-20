@@ -343,6 +343,18 @@ func buildLocked(root, out string, log io.Writer) error {
 			}
 			s.Path = p
 		}
+		// a check first (seconds) so an error in the sources fails each seed
+		// at once instead of after a build of minutes (Xo Lang 2: a
+		// receiver error cost a 5 minute build, 2026-10-20); a seed whose
+		// check fails is too old for these sources or the sources do not
+		// check: the next seed is tried, or the seed chain when it is on
+		if PrecheckOn() && (s.NoChain || !chain) {
+			if cerr := CheckXo(root, s.Path); cerr != nil {
+				fmt.Fprintf(log, "xotool: compiler/xo does not check with %s (%s); trying the next seed\n", s.Why, summary(cerr))
+				errs = append(errs, s.Why+": its check of compiler/xo: "+cerr.Error())
+				continue
+			}
+		}
 		fmt.Fprintf(log, "xotool: building xo (compiler/xo of %s) with %s (%s), a few minutes, into %s\n", root, s.Why, s.Path, out)
 		t0 := time.Now()
 		err := BuildXo(root, s.Path, out)
@@ -687,6 +699,39 @@ func BuildXo(root, seed, out string) error {
 		return fmt.Errorf("no binary written\n%s", lastLines(o, 20))
 	}
 	return os.Rename(tmp, out)
+}
+
+// CheckXo runs `xo check` of root's compiler/xo with seed and root's std:
+// the check errors, if any (seconds, where BuildXo takes minutes).
+func CheckXo(root, seed string) error {
+	o, err := runIn(root, []string{"XO_STD=" + xoPath(filepath.Join(root, "std"))}, seed, "check", xoPath(filepath.Join(root, CompilerDir(root), "xo")))
+	if err != nil {
+		return fmt.Errorf("%v\n%s", err, firstErrors(o, 20))
+	}
+	return nil
+}
+
+// PrecheckOn is false when XO_BUILD_PRECHECK=0 turns CheckXo off before
+// each build.
+func PrecheckOn() bool { return os.Getenv("XO_BUILD_PRECHECK") != "0" }
+
+// firstErrors is the error lines of xo check's output and the line after
+// each (its note or fix), at most n lines, then its summary line.
+func firstErrors(s string, n int) string {
+	var out []string
+	ls := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	for i, l := range ls {
+		if strings.Contains(l, ": error ") && len(out) < n {
+			out = append(out, l)
+			if i+1 < len(ls) && strings.HasPrefix(ls[i+1], "  ") {
+				out = append(out, ls[i+1])
+			}
+		}
+	}
+	if len(ls) > 0 {
+		out = append(out, ls[len(ls)-1])
+	}
+	return strings.Join(out, "\n")
 }
 
 // xoPath is p as xo takes paths: with / separators on Windows (std.md
