@@ -1,0 +1,62 @@
+// std/tls against Postgres's SSLRequest (decision 0281): libpq's three
+// sslmode levels that use TLS, then a StartupMessage over the TLS
+// connection, whose answer starts with 'R' (an authentication request).
+use std/tls
+
+fn be32(n: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  for s in [24, 16, 8, 0] {
+    b.write_byte(UInt8((n >> s) & 255))
+  }
+  b.freeze()
+}
+
+fn ssl_request() -> Bytes { be32(8) + be32(80877103) }
+
+fn startup() -> Bytes {
+  let body = be32(196608) + "user\x00postgres\x00database\x00postgres\x00\x00".bytes()
+  be32(body.len() + 4) + body
+}
+
+fn neterr(e: NetErr) -> Str {
+  match e {
+    NetErr.Io(msg) => "Io(${msg})"
+    NetErr.Timeout => "Timeout"
+    NetErr.Refused => "Refused"
+    _ => "other"
+  }
+}
+
+fn session(os: Os, addr: Str, host: Str, roots: tls.Roots?, verify: tls.Verify) -> Str ! NetErr uses net {
+  let c = os.net.dial(addr)?
+  c.write(ssl_request())?
+  let s = c.read(1)? ?? b""
+  if s != b"S" {
+    return "server refused TLS (${s.len()} bytes)"
+  }
+  let t = tls.client(c, host, roots: roots, verify: verify)?
+  t.write(startup())?
+  let r = t.read(1)? ?? b""
+  t.close()
+  "${t.version()} first byte ${r.to_str() ?? "?"}"
+}
+
+fn main(os: Os) ! {
+  let addr = os.env.get("PG_ADDR") ?? "127.0.0.1:55432"
+  let ca = tls.roots(os.fs.read(os.env.get("PG_CA") ?? "certs/ca.pem")?)?
+  let cases = [
+    ("verify-full 127.0.0.1", "127.0.0.1", Some(ca), tls.Verify.Full),
+    ("verify-full db.test", "db.test", Some(ca), tls.Verify.Full),
+    ("verify-full wrong name", "other.test", Some(ca), tls.Verify.Full),
+    ("verify-ca wrong name", "other.test", Some(ca), tls.Verify.ChainOnly),
+    ("verify-full system roots", "127.0.0.1", None, tls.Verify.Full),
+    ("verify-ca system roots", "127.0.0.1", None, tls.Verify.ChainOnly),
+    ("require system roots", "127.0.0.1", None, tls.Verify.None),
+  ]
+  for (label, host, roots, verify) in cases {
+    match session(os, addr, host, roots, verify) {
+      Ok(s) => os.stdio.println("${label}: ${s}")
+      Err(e) => os.stdio.println("${label}: ${neterr(e)}")
+    }
+  }
+}

@@ -1470,6 +1470,12 @@ default on LLVM and arm64, XO_STDTEST_BACKENDS to name them.
   STEP=STATUS line per step; each step's output is OUTDIR/STEP.log. Run
   it in a heavy slot. Add `MODE=short bench/perf/http/callgrind-docker.sh`
   for the cost of an HTTP change.
+- `scripts/pgtls/run.sh [XO]`: std/tls against a real Postgres
+  (decision 0281): a test CA and server certificate (openssl),
+  postgres:16-alpine with ssl=on in Docker on 127.0.0.1:55432, then
+  scripts/pgtls/main.xo on the arm64 and Go backends (verify-full,
+  verify-ca, require, each followed by a StartupMessage over TLS), which
+  must print the same lines. Last verified: 2026-10-20
 - `scripts/fuzz-http.sh OUTDIR [SECONDS]`: TestHTTPFuzz (seeded from the
   clock) and the Go fuzzer on FuzzHTTPDiff, SECONDS each (default 1800);
   new FuzzHTTPDiff failures land in internal/llvm/testdata/fuzz for

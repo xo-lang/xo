@@ -1,0 +1,18 @@
+// std/tls's private functions (decision 0262): the NetErr of each tlsio
+// failure, and roots' errors.
+
+use native/llrt/tlsio
+
+test "cc_err maps tlsio statuses to NetErr" {
+  expect(cc_err(tlsio.CC_TIMEOUT, "read", "")) == NetErr.Timeout
+  expect(cc_err(tlsio.CC_CANCELED, "write", "")) == NetErr.Canceled
+  expect(cc_err(tlsio.CC_ERR, "read", "remote error: tls: bad certificate")) == NetErr.Io(msg: "remote error: tls: bad certificate")
+  expect(cc_err(tlsio.CC_ERR, "write", "")) == NetErr.Io(msg: "write tcp: use of closed network connection")
+}
+
+test "roots refuses a PEM without certificates" {
+  match roots(b"-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n") {
+    Ok(_) => fault("roots took a key")
+    Err(e) => expect(e.msg) == "tls: no certificates found in PEM input"
+  }
+}
