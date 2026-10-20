@@ -782,18 +782,8 @@ fn (r: Rc) held(s: RcState) -> List[Leaf] {
   for id in s.ids {
     out.push(r.vleaves[id])
   }
-  var i = 1
-  while i < out.len() {
-    var j = i
-    while j > 0 && leaf_less(out[j], out[j - 1]) {
-      let t = out[j]
-      out[j] = out[j - 1]
-      out[j - 1] = t
-      j -= 1
-    }
-    i += 1
-  }
-  out
+  // stable, by root, then path (an insertion sort here was quadratic)
+  out.sort_by(fn(l) { (l.root, l.path) })
 }
 
 fn leaf_text(l: Leaf) -> Str {

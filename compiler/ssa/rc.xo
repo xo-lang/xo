@@ -762,6 +762,9 @@ fn (k: Counted) borrows(l: Leaf) -> Int {
 struct RcFunc {
   live_in: List[Map[Str, Leaf]] = []
   live_out: List[Map[Str, Leaf]] = []
+  /// live_in per block in sorted_leaves order, made once after liveness
+  /// (edge_need read it for every edge, sorting again each time)
+  live_sorted: List[List[Leaf]] = []
   /// Code for the start of a block (edges), by block.
   pre: Map[Int, List[Int]] = {}
 }
@@ -981,6 +984,9 @@ fn (var r: Rc) rc_func(var f: Func, fi: Int) {
   var c = RcFunc{}
   r.borrow_projections(f)
   r.liveness(f, c)
+  for s in c.live_in {
+    c.live_sorted.push(sorted_leaves(f, s))
+  }
   r.insert(f, c)
   r.cancel(f)
   r.reuse(f)
@@ -1240,7 +1246,7 @@ fn (var r: Rc) edge_need(f: Func, c: RcFunc, e: Int) -> Counted {
   for l in r.edge_uses(f, e) {
     k.add(l, Mode.Consume)
   }
-  for l in sorted_leaves(f, c.live_in[f.edges[e].to]) {
+  for l in c.live_sorted[f.edges[e].to] {
     k.add(l, Mode.Consume)
   }
   k
@@ -1252,26 +1258,12 @@ fn sorted_leaves(f: Func, s: Map[Str, Leaf]) -> List[Leaf] {
   for (_, l) in s {
     out.push(l)
   }
-  var i = 1
-  while i < out.len() {
-    var j = i
-    while j > 0 && leaf_less(out[j], out[j - 1]) {
-      let t = out[j]
-      out[j] = out[j - 1]
-      out[j - 1] = t
-      j -= 1
-    }
-    i += 1
-  }
-  out
+  // a stable sort by (root, path), by root, then path, (an insertion sort
+  // here was quadratic in the live set, at every edge: 2.7 s of a cold
+  // build of xo, 2026-10-19)
+  out.sort_by(fn(l) { (l.root, l.path) })
 }
 
-fn leaf_less(a: Leaf, b: Leaf) -> Bool {
-  if a.root != b.root {
-    return a.root < b.root
-  }
-  a.path < b.path
-}
 
 /// Inserts RC into block bl, backward from its terminator (walk).
 fn (var r: Rc) walk(var f: Func, var c: RcFunc, bl: Int) {
