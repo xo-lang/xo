@@ -218,7 +218,7 @@ pub fn (var b: Builder) fold_known_calls() {
     if hit {
       var f = b.m.funcs[fi]
       b.m.funcs[fi] = Func{name: ""}
-      fold_const_branches(f)
+      let _c = fold_const_branches(f)
       b.m.funcs[fi] = f
     }
   }
@@ -284,10 +284,33 @@ fn known_result(f: Func) -> Option[Aux] {
   None
 }
 
+/// fold_const_branches, then prune_func when a branch became a jump; whether
+/// one did. The native inliner runs it after its constant folding
+/// (2026-10-19: checked_mul inlined `ints.fits(2, a, b)`, and its `op ==
+/// 0`, `op == 1` tests stayed, the constants hoisted and spilled, in the
+/// loop).
+pub fn fold_branches(var f: Func) -> Bool {
+  // not with landings: a function with one failed the inlined module's
+  // verification (windows.fix: a value landing on a check that was no
+  // longer one, 2026-10-20), so its branches stay for isel
+  for v in f.values {
+    if v.pad >= 0 && v.block >= 0 {
+      return false
+    }
+  }
+  if !fold_const_branches(f) {
+    return false
+  }
+  prune_func(f)
+  true
+}
+
 /// Folds the negations of a Bool constant, the integer equalities of two
 /// constants, and the branches on a constant of f into constants and jumps (the edge not taken leaves its
 /// target's predecessors; prune_func drops what became unreachable).
-fn fold_const_branches(var f: Func) {
+/// Whether a branch became a jump.
+fn fold_const_branches(var f: Func) -> Bool {
+  var changed = false
   for vi in 0..f.values.len() {
     let v = f.values[vi]
     if v.op == Op.Not && v.block >= 0 && v.args.len() == 1 && f.values[v.args[0]].op == Op.Const {
@@ -340,7 +363,9 @@ fn fold_const_branches(var f: Func) {
     f.values[t].op = Op.Jump
     f.values[t].args = []
     f.values[t].succs = [keep]
+    changed = true
   }
+  changed
 }
 
 /// The integer constant value v of f, or None.

@@ -443,6 +443,11 @@ fn inline_one(var m: ssa.Module, st: InlineState, fi: Int) -> Bool {
     let _j = ssa.merge_straight(f, m, block_calls(f))
     if pass_on(m, "fold_consts") {
       fold_consts(f, m.types)
+      // a callee's tests of a constant parameter (ints.fits(2, a, b)'s
+      // `op == 0`): jumps, the arms not taken gone
+      if ssa.fold_branches(f) {
+        let _j2 = ssa.merge_straight(f, m, block_calls(f))
+      }
     }
     // a callee's release of its parameter meets the caller's retain
     if pass_on(m, "cancel_rc_pairs") {
