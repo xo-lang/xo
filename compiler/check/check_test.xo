@@ -373,3 +373,36 @@ test "a discarded result of a call that only computes it is XO0209 (decision 025
   expect(ls[0].contains("the `List[Int]` that")) == true
   expect(ls[1].contains("`helper(...)`")) == true
 }
+
+test "only functions that are not pub, not std's and with no uses have inferred effects (XO_CHK_CACHE=auto rests on it)" {
+  os.fs.create_dir_all("std")?
+  os.fs.write("std/prelude.xo", PRELUDE.bytes())?
+  os.fs.write("std/testing.xo", b"")?
+  os.fs.create_dir_all("m")?
+  os.fs.write("m/main.xo", """
+    pub fn api(x: Int) -> Int {
+      helper(x)
+    }
+
+    fn helper(x: Int) -> Int {
+      x
+    }
+
+    fn main() {
+      let f = fn(y: Int) -> Int { helper(y) }
+      let _ = f(api(1))
+    }
+    """.bytes())?
+  var c = new_checker(os.fs, "std")
+  if let Err(e) = c.check_dirs(["m"]) {
+    expect(e) == ""
+  }
+  var names: List[Str] = []
+  for f in c.inferred_fns {
+    expect(c.objs[f].is_pub) == false
+    names.push(text(c.objs[f].name))
+  }
+  expect(names.contains("helper")) == true
+  expect(names.contains("api")) == false
+  expect(c.effect_reads_across_modules()) == []
+}

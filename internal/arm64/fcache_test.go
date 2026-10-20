@@ -820,3 +820,94 @@ func TestFrontCacheEntryDoesNotReplay(t *testing.T) {
 		t.Fatalf("the build after the fallback warned again or differs from the cache-off build:\n%s", log)
 	}
 }
+
+// TestModuleCheckAuto: XO_CHK_CACHE=auto skips a module's check only when
+// every body of it has a front end cache entry, so no pass misses a body
+// built from source (gotchas/module-check-cache-skips-whole-program-
+// passes.md). Each program (a sample of the goldens and os_tasks, whose
+// task closure lost its error under XO_CHK_CACHE=1) is built twice in one
+// cache with auto, and again after the front end cache's entries are
+// removed (the modules are skipped and their bodies built from source:
+// the fallback checks them again, with a warning); every build's binary
+// is the cache-off build's.
+func TestModuleCheckAuto(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := xotool.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-chkauto-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	dirs := []string{filepath.Join(root, "internal", "gen", "testdata", "golden", "os_tasks")}
+	for i, d := range goldenDirs(t) {
+		if _, err := os.Stat(filepath.Join(d, "main.xo")); err == nil && (os.Getenv("XO_SELFHOST_TIER") == "full" || i%8 == 0) {
+			dirs = append(dirs, d)
+		}
+	}
+	out := filepath.Join(work, "prog")
+	build := func(dir, cache string, env ...string) ([]byte, string) {
+		t.Helper()
+		os.Remove(out)
+		cmd := exec.Command(xo, "build", "--backend=arm64", "--phase-times", "-o", out, ".")
+		cmd.Dir = dir
+		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache), env...)
+		log, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s: xo build %v: %v\n%s", filepath.Base(dir), env, err, log)
+		}
+		b, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b, string(log)
+	}
+	skipped := regexp.MustCompile(`cache chk ([1-9]\d*)/\d+ modules`)
+	nskip := 0
+	for i, d := range dirs {
+		cache := filepath.Join(work, "cache", strconv.Itoa(i))
+		off, _ := build(d, cache, "XO_BACKEND_CACHE=off")
+		auto := []string{"XO_BACKEND_CACHE=on", "XO_CHK_CACHE=auto"}
+		build(d, cache, auto...)
+		warm, log := build(d, cache, auto...)
+		if strings.Contains(log, "module check cache skipped") {
+			t.Errorf("%s: the warm build fell back:\n%s", filepath.Base(d), log)
+		}
+		if !bytes.Equal(warm, off) {
+			t.Errorf("%s: the warm build with XO_CHK_CACHE=auto differs from the cache-off build", filepath.Base(d))
+		}
+		if skipped.MatchString(log) {
+			nskip++
+			// the front end cache's entries gone, the module entries kept:
+			// the skipped modules' bodies are built from source
+			filepath.WalkDir(cache, func(p string, e fs.DirEntry, err error) error {
+				if err == nil && e.IsDir() && e.Name() == "fe" {
+					os.RemoveAll(p)
+					return filepath.SkipDir
+				}
+				return nil
+			})
+			fb, log := build(d, cache, auto...)
+			if !strings.Contains(log, "module check cache skipped") {
+				t.Errorf("%s: no fallback with the front end cache's entries removed:\n%s", filepath.Base(d), log)
+			}
+			if !bytes.Equal(fb, off) {
+				t.Errorf("%s: the build after the fallback differs from the cache-off build", filepath.Base(d))
+			}
+		}
+	}
+	if nskip == 0 {
+		t.Error("XO_CHK_CACHE=auto skipped no module of any program")
+	}
+}

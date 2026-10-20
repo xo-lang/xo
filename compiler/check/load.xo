@@ -49,6 +49,17 @@ pub struct Checker {
   pub mod_verify: Bool = false
   /// XO_CHK_CACHE=1: modules with an entry are skipped (opt in)
   pub mod_skip_on: Bool = false
+  /// XO_CHK_CACHE=auto: a module is skipped only when its entry says
+  /// every body of it the last full build built had a front end cache
+  /// entry (ModEntry.fe_complete), so no body of it is built from source
+  /// after the whole-program passes; mod_noskip names modules (paths)
+  /// checked in full regardless (the driver's fallback)
+  pub mod_skip_auto: Bool = false
+  pub mod_noskip: Map[Str, Bool] = {}
+  /// The bodies checked read the inferred effects of a function of
+  /// another module (effect_reads_across_modules): skipping is unsound,
+  /// the driver checks again without it
+  pub skip_unsafe: Bool = false
   mod_entries: Map[Int, ModEntry] = {}
   /// $XO_LLRT_C: the runtime modules (or `all`) loaded from their C path,
   /// std/native/llrt/<name>_c.xo, where they have one (load.go

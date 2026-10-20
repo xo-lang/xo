@@ -26,3 +26,24 @@ entry and replay them, or check before those passes the bodies the
 front end cache will not replay; test by building every golden twice
 with XO_CHK_CACHE=1 and comparing outputs. Lazily checking a module is
 only sound when no whole-program pass depends on its bodies.
+
+XO_CHK_CACHE=auto (2026-10-20, opt in until verified on every golden,
+the fixed point and a week without fallback warnings): the passes over
+the checked bodies read nothing of another module's bodies, since only
+a function that is not pub, not an interface's or std's and has no
+`uses` gets inferred effects (decl.xo), and solve_effects reads only
+those. So a skipped module matters only when one of its bodies is built
+from source. auto skips a module only when its entry says every body of
+it had a front end cache entry in the build that wrote the entry
+(ModEntry.fe_complete: no skip reason, no generic instance, no closure
+built apart); when a skipped module's body still reaches check_lazy (an
+entry pruned or missing), or the checked bodies name another module's
+inferred function (Checker.effect_reads_across_modules, the assumption
+checked on every build), the driver warns, drops the build (storing
+nothing in the front end cache) and checks those modules in full.
+Tests: check_test.xo "only functions that are not pub ... have inferred
+effects", internal/arm64 TestModuleCheckAuto (os_tasks and a golden
+sample, warm and with the front end cache's entries removed, against
+the cache-off binaries). Measured ceiling (XO_CHK_CACHE=1, edits of xo):
+the check phase of a body-only edit 216 to 273 ms against 753 to 867 ms
+without skipping, peak memory about 3.1 GB against 5.3 GB.

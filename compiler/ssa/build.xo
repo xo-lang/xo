@@ -275,6 +275,14 @@ pub struct Builder {
   /// The front end cache (fecache.xo), and the recording of a body: the
   /// functions it declared.
   pub fe: FeCache = FeCache{}
+  /// The modules (checker indexes) the module check cache skipped of
+  /// which a body was built from source (check_lazy): the driver checks
+  /// them in full and builds again (XO_CHK_CACHE=auto)
+  pub skip_src: Map[Int, Bool] = {}
+  /// The modules of which a body was built with no front end cache entry
+  /// made or replayed (a skip reason, a generic instance, a contract's
+  /// inner body, a closure): ModEntry.fe_complete is false for them
+  pub nofe_mods: Map[Int, Bool] = {}
   /// Per program module: uses_os_tasks and uses_budgets of it, for the
   /// module check cache.
   pub mod_scans: Map[Int, (Bool, Bool)] = {}
@@ -638,6 +646,9 @@ fn (var b: Builder) run_job_fe(j: Job) {
       let r = b.fe_begin()
       b.run_job0(j)
       let eo = b.fe_entry(r, fi)
+      if eo == None {
+        b.nofe_mods[b.c.objs[fo].module] = true
+      }
       if let Some(e) = eo {
         match entry {
           Some(old) => {
@@ -653,6 +664,17 @@ fn (var b: Builder) run_job_fe(j: Job) {
       }
       return
     }
+  }
+  // built with no entry: a generic instance, a body with no key, a
+  // contract's inner body, a test, a closure (its owner's module)
+  let jm = match j {
+    Body(fo, _, _) => b.c.objs[fo].module
+    Inner(fo, _, _) => b.c.objs[fo].module
+    Closure(_, _, file, _, _, _, _, _, _, _, _, _) => if file >= 0 { b.c.files[file].module } else { -1 }
+    Test(..) => -1
+  }
+  if jm >= 0 {
+    b.nofe_mods[jm] = true
   }
   b.run_job0(j)
 }

@@ -410,7 +410,15 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
       // flow_bodies, never results) cover a skipped module's bodies: a
       // body checked lazily after them builds wrong (os_tasks lost its
       // task's error, 2026-10-19)
-      c.mod_skip_on = (os.env.get("XO_CHK_CACHE") ?? "") == "1"
+      let cc = os.env.get("XO_CHK_CACHE") ?? ""
+      c.mod_skip_on = cc == "1" || (cc == "auto" && !o.many_targets)
+      // auto: only modules whose every body the front end cache replays,
+      // with a fallback (build_native) when one is built from source
+      // anyway (gotchas/module-check-cache-skips-whole-program-passes.md)
+      c.mod_skip_auto = cc == "auto"
+      for p in o.chk_noskip {
+        c.mod_noskip[p] = true
+      }
       parse_prefetch(os, c, dir)
     }
   }
@@ -553,6 +561,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   let march = if backend == "amd64" { "amd64" } else { "arm64" }
   let host = if backend == "llvm" { "${goos}/${host_arch()}" } else { "${goos}/${march}" }
   let targets = parse_targets(os, o.targets, host)
+  o.many_targets = targets.len() > 1
   // the LLVM backend: the host, or one other target clang cross
   // compiles for with the host's SDK (llvm_cross_triple: windows/arm64 on
   // windows/amd64, decision 0197), or Windows from any host given a
@@ -624,6 +633,24 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     tgoarch = "wasm"
   }
   var lo = lower(os, o, c, root, tests, release, uses_time, tgoos, tgoarch, backend == "wasm", backend is "arm64" | "amd64", t)
+  if c.mod_skip_auto && (!lo.b.skip_src.is_empty() || c.skip_unsafe) {
+    // XO_CHK_CACHE=auto skipped a module a body of which was built from
+    // source after the whole-program passes (or the checked bodies read
+    // a skipped module's inferred effects): that build is dropped, and
+    // the program checked again with those modules (all skipped ones
+    // when unsafe) checked in full; nothing of the dropped build was
+    // stored in the front end cache (bcache.xo)
+    var no: List[Str] = []
+    for (m, _) in c.mod_skip {
+      if c.skip_unsafe || lo.b.skip_src.contains(m) {
+        no.push(c.mods[m].path)
+      }
+    }
+    os.stdio.eprintln("xo: warning: the module check cache skipped ${no.len()} module(s) a body of which was built from source (${no.sort().join(", ")}${if c.skip_unsafe { "; effects read across modules: ${c.effect_reads_across_modules().join(", ")}" } else { "" }}); checking them again")
+    o.chk_noskip = o.chk_noskip + no
+    c = check_program(os, o, true)
+    lo = lower(os, o, c, root, tests, release, uses_time, tgoos, tgoarch, backend == "wasm", backend is "arm64" | "amd64", t)
+  }
   t = lo.t
   let b = lo.b
   let tu = lo.tu

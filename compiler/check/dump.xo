@@ -31,6 +31,9 @@ fn (var c: Checker) run() -> () ! Str {
       c.check_module(m)
     }
   }
+  if c.mod_skip_auto && !c.mod_skip.is_empty() && !c.effect_reads_across_modules().is_empty() {
+    c.skip_unsafe = true
+  }
   c.report_edition_aliases()
   c.check_key_types()
   c.solve_effects()

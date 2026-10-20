@@ -35,6 +35,10 @@ fn (var b: Builder) ensures_of(fo: Int) -> List[parser.Clause] {
 /// native module's, decision 0247). An error there is std's own, which
 /// TestStdChecks reports; the build stops with it.
 fn (var b: Builder) check_lazy(fo: Int) {
+  let m = b.c.objs[fo].module
+  if m >= 0 && b.c.mod_skip.contains(m) {
+    b.skip_src[m] = true
+  }
   let errs = b.c.check_lazy(fo)
   if !errs.is_empty() {
     let d = errs[0]

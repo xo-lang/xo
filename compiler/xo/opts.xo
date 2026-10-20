@@ -75,6 +75,12 @@ struct Opts {
   workspace: Str = ""
   /// --stamp NAME=VALUE, in command line order.
   stamps: List[(Str, Str)] = []
+  /// Modules (paths) the module check cache checks in full though their
+  /// entries would let it skip them (XO_CHK_CACHE=auto's fallback)
+  chk_noskip: List[Str] = []
+  /// More than one target: XO_CHK_CACHE=auto does not skip (the fallback
+  /// covers the first target's build only)
+  many_targets: Bool = false
   topts: TestOpts = TestOpts{}
   /// --std-module=MODULE (test, decision 0262): the std module whose
   /// _test.xo tests run, as `use` names it below std (`json`,

@@ -394,6 +394,11 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
     b = ssa.build_program_fe(c, root, tests, release, real, tgoos, tgoarch, wasm, nolibc, prof, trace, soft_cpu, heap_guard, fe)
   }
   t = lap(os, phases, "fe.build", t)
+  if c.mod_skip_auto && !b.skip_src.is_empty() {
+    // a skipped module's body was built from source (XO_CHK_CACHE=auto):
+    // build_native drops this build, so none of it is stored
+    return b
+  }
   let fin = b.fe_final_own()
   if fin != hint {
     cache_put(os, hint_path, fin.bytes())
@@ -416,7 +421,7 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
   // the module check cache's entries: the modules checked in full now
   var mn = 0
   var mdiff: List[Str] = []
-  for (k, e) in c.mod_cache_entries(b.mod_scans) {
+  for (k, e) in c.mod_cache_entries(b.mod_scans, b.nofe_mods) {
     let p = entry_path(c.mod_cache_dir, "chk", k)
     if c.mod_verify {
       match os.fs.read(p) {

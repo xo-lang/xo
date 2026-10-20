@@ -14,7 +14,7 @@
 
 use std/crypto
 
-const MOD_CACHE_VERSION = "xo check cache v2"
+const MOD_CACHE_VERSION = "xo check cache v3"
 
 /// Per module: the SHA-256 of its interface closure (above).
 pub fn (c: Checker) iface_closures() -> List[Str] {
@@ -125,8 +125,10 @@ fn (var c: Checker) mod_cache_load() uses fs.read {
       Ok(d) => {
         match decode_mod_entry(d) {
           Some(e) => {
-            c.mod_skip[m] = true
-            c.mod_entries[m] = e
+            if !c.mod_skip_auto || (e.fe_complete && !c.mod_noskip.contains(c.mods[m].path)) {
+              c.mod_skip[m] = true
+              c.mod_entries[m] = e
+            }
           }
           None => {}
         }
@@ -146,6 +148,11 @@ pub struct ModEntry {
   pub zones: List[(Str, Int, Int, Int, Str)] = []
   pub tasks: Bool = false
   pub budgets: Bool = false
+  /// Every body of the module the full build that wrote the entry built
+  /// had a front end cache entry, stored or replayed (none skipped by a
+  /// reason such as closures, none a generic instance): XO_CHK_CACHE=auto
+  /// skips only such a module.
+  pub fe_complete: Bool = false
 }
 
 /// The files of module m by path.
@@ -234,7 +241,7 @@ pub fn (c: Checker) mod_cached_scan(m: Int) -> Option[(Bool, Bool)] {
 /// full this time, with no error in its files, by its key, with the SSA
 /// builder's scans of it (scans: module to (tasks, budgets); a module
 /// the builder did not scan is not stored).
-pub fn (c: Checker) mod_cache_entries(scans: Map[Int, (Bool, Bool)]) -> List[(Str, Bytes)] {
+pub fn (c: Checker) mod_cache_entries(scans: Map[Int, (Bool, Bool)], nofe: Map[Int, Bool]) -> List[(Str, Bytes)] {
   var out: List[(Str, Bytes)] = []
   if c.mod_cache_dir.is_empty() {
     return out
@@ -268,6 +275,7 @@ pub fn (c: Checker) mod_cache_entries(scans: Map[Int, (Bool, Bool)]) -> List[(St
     let (t, b) = sc ?? (false, false)
     e.tasks = t
     e.budgets = b
+    e.fe_complete = !nofe.contains(m)
     e.zones = c.mod_zones(paths)
     out.push((key, encode_mod_entry(e)))
   }
@@ -298,6 +306,7 @@ fn encode_mod_entry(e: ModEntry) -> Bytes {
   put_s(b, MOD_CACHE_VERSION)
   put_i(b, if e.tasks { 1 } else { 0 })
   put_i(b, if e.budgets { 1 } else { 0 })
+  put_i(b, if e.fe_complete { 1 } else { 0 })
   put_i(b, e.zones.len())
   for (file, off, line, col, mp) in e.zones {
     put_s(b, file)
@@ -387,7 +396,7 @@ fn decode_mod_entry(d: Bytes) -> Option[ModEntry] {
   if r.s() != MOD_CACHE_VERSION {
     return None
   }
-  var e = ModEntry{tasks: r.i() == 1, budgets: r.i() == 1}
+  var e = ModEntry{tasks: r.i() == 1, budgets: r.i() == 1, fe_complete: r.i() == 1}
   let nz = r.i()
   if !r.ok || nz > d.len() {
     return None
@@ -437,4 +446,38 @@ fn decode_mod_entry(d: Bytes) -> Option[ModEntry] {
     return None
   }
   Some(e)
+}
+
+/// The function items of the checked bodies' inferred effects that name
+/// a function of another module whose effects are inferred too: none,
+/// by the language (only a function that is not pub, not an interface's
+/// and not std's, with no `uses`, has its effects inferred: decl.xo),
+/// which is what makes skipping a module's bodies sound
+/// (XO_CHK_CACHE=auto): no pass over the checked bodies reads a skipped
+/// module's bodies. Run after the bodies are checked; Checker.run sets
+/// skip_unsafe when it finds one.
+pub fn (c: Checker) effect_reads_across_modules() -> List[Str] {
+  var out: List[Str] = []
+  for f in c.inferred_fns {
+    let m = c.objs[f].module
+    // the body's set and the sets its effect variables stand for
+    var work = [c.objs[f].body_eff]
+    var seen: Map[Int, Bool] = {}
+    while !work.is_empty() {
+      let s = work.pop() ?? -1
+      if s < 0 || s >= c.esets.len() || seen.contains(s) {
+        continue
+      }
+      seen[s] = true
+      for it in c.esets[s] {
+        if it.evar >= 0 && it.evar < c.evars.len() {
+          work.push(c.evars[it.evar])
+        }
+        if it.fn_obj >= 0 && c.objs[it.fn_obj].declared < 0 && c.objs[it.fn_obj].module != m {
+          out.push("${c.display_name(f)} -> ${c.display_name(it.fn_obj)}")
+        }
+      }
+    }
+  }
+  out
 }
