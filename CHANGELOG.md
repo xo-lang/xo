@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- A cold build of a large program spreads its code generation better:
+  the parts go to the tasks largest first and a part of large functions
+  is cut further (xo's emit 11 to 8 s of wall on 8 tasks), and the
+  passes after each function's generation split its text once.
 - XO_HEAP_GUARD=1 when building: the runtime's records end against an
   inaccessible page, so an overrun faults where it happens, and an
   rt.slot_* on a List checks its index (the class of the SV_ROOTS

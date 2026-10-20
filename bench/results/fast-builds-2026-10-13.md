@@ -838,3 +838,53 @@ CPU 126.3 s and 127.5 s to 118.6 s and 114.4 s. The output is the same
 (identity 402/402 on arm64 and amd64, verify mode, the fixed point).
 Steps A and B together: a cold build of xo uses about 18% less CPU
 than 1ff0e0bd.
+
+## emit on a cold build: the part schedule, the cuts, and the text passes (the Mac, 2026-10-20)
+
+A cold self-build of xo (main 274d4929's xo, fresh caches, XO_PROF=cpu
+at 200 Hz so the whole build fits the profile's 32,768 samples: at 500
+Hz the earlier profiles above stopped at 65.5 s of CPU): gen_part holds
+35.6 s of CPU, emit 11.8 s of wall, about 3 of the 8 emit tasks
+(emit_jobs: min(cores, 16, memory GB / 3)). Cold builds by task count,
+load 13 to 15:
+
+| emit tasks | 1 | 2 | 4 | 8 | 12 |
+|---|---|---|---|---|---|
+| emit (wall) | 43.1 s | 21.6 s | 13.7 s | 11.3 s | 11.2 s |
+| user CPU, whole build | 93.5 s | 94.6 s | 98.5 s | 112.4 s | 118.2 s |
+
+Each of the 36 parts generated alone (a scratch hook, not kept): part 25
+(120 functions from ssa.Builder.float_t, 159,360 SSA values after
+inlining) 13.8 s, part 22 10.1 s, part 24 8.3 s, of 111 s in all (that
+run at a higher load). The parts were cut by function count, so a part
+of large functions was one indivisible unit, and the tasks took them in
+order, so part 25 of 36 started late.
+
+- L1 (19545764): the tasks take the parts largest first (SSA values).
+  Emit 16.3 and 12.6 s to 9.35 and 8.5 s (cold, interleaved, load 24 to
+  39); output identical (identity 402/402 on arm64 and amd64, verify
+  mode, the fixed point).
+- L2 (09391cb7): a part is also cut at 60,000 SSA values (a constant:
+  the parts never depend on the task count), and the part cache key
+  (v2) holds no part count, part index, or function indexes, which a
+  part's output never read (so a moved cut or an added function no
+  longer changes every later part's key). 34 parts to 77; emit
+  11.1/8.4/10.6 s to 8.1/8.4/8.0 s (three interleaved rounds, load 19
+  to 22), real 33.9 to 33.2 s (medians). Edit builds: a statement edit
+  reuses 72 of 77 parts (31 of 34 before), an added function 73 of 77
+  (28 of 34). Not identical to before by design (new namespaces), so
+  checked by behavior and layout: xo's assembly by both compilers, the
+  text sections compared per function with part namespaces normalized,
+  9,708 functions in both and only the two changed ones differ; verify
+  mode after the edits; amd64 goldens 200/200 in Docker; the fixed
+  point.
+- L3 (562b3108): the seven text passes after a function's generation
+  (copy_runs, borrow_flag_peep, reload_reuse, pair_mem, far_slots,
+  far_tests, local_empty) take and give lines, split once and joined
+  once. Emit on one task 39.4 to 38.1 s (about 3%, at load 6 to 9);
+  output identical (identity 402/402 on both arches, verify, the fixed
+  point). Less than the 5 s of memmove the profile showed under emit:
+  most of it is inside the passes' own line handling.
+
+inline.verify: 1.7 to 2.7 s of wall at load 13 to 22 (verify_rc 5.2 s
+of CPU on tasks); the earlier 24 s readings were the load.
