@@ -3,7 +3,7 @@
 ## 2026-10-20: fix: the client sends a URL's query as given
 
 - Kind: fix
-- Commit: (filled in after the push)
+- Commit: 361a427c
 - Found by: survey
 - Go reference: net/http/client.go, net/url URL.RawQuery (go1.26.1)
 - Test: internal/llvm/testdata/golden/http_form (repeated keys and their order); internal/llvm/testdata/golden/http_tls (HTTP/2)
@@ -15,7 +15,7 @@ now sends the query as given unless `url.query` was changed.
 ## 2026-10-20: feature: Request.form and Request.query_all
 
 - Kind: feature
-- Commit: (filled in after the push)
+- Commit: e2be349f
 - Found by: survey
 - Go reference: net/http/request.go ParseForm, PostForm; net/url URL.Query (go1.26.1)
 - Test: std/native/http_test.xo (Go's TestParseFormQuery, TestParseFormQueryMethods, TestParseFormUnknownContentType, TestParseFormSemicolonSeparator); internal/llvm/testdata/golden/http_form

@@ -3,7 +3,7 @@
 ## 2026-10-20: feature: Hash, digest, hmac, and a streaming Hasher
 
 - Kind: feature
-- Commit: (filled in after the push)
+- Commit: 4c5b0df2
 - Found by: survey
 - Go reference: crypto/md5/md5.go and md5block.go (go1.26.1), crypto/hmac/hmac.go
 - Test: std/native/crypto_test.xo (160 Go digest and HMAC cases); std/native/llrt/md5_test.xo (Go's md5_test.go table); internal/llvm/testdata/golden/crypto_hash

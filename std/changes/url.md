@@ -3,7 +3,7 @@
 ## 2026-10-20: port: std/url, Go's query and path escaping and url.Values
 
 - Kind: port
-- Commit: (filled in after the push)
+- Commit: 3c9839e6
 - Found by: survey
 - Go reference: net/url/url.go (go1.26.1)
 - Test: std/native/url_test.xo (Go's url_test.go tables); internal/llvm/testdata/golden/url_basic

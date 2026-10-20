@@ -3,7 +3,7 @@
 ## 2026-10-20: port: std/base32 from Go
 
 - Kind: port
-- Commit: (filled in after the push)
+- Commit: 4c5b0df2
 - Found by: survey
 - Go reference: encoding/base32/base32.go (go1.26.1)
 - Test: std/native/base32_test.xo; internal/llvm/testdata/golden/base64_basic

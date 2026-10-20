@@ -3,7 +3,7 @@
 ## 2026-10-20: port: std/binary from Go
 
 - Kind: port
-- Commit: (filled in after the push)
+- Commit: 4c5b0df2
 - Found by: survey
 - Go reference: encoding/binary/binary.go and varint.go (go1.26.1)
 - Test: std/native/binary_test.xo; internal/llvm/testdata/golden/binary_basic
