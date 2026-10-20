@@ -598,6 +598,9 @@ pub struct Head {
   expect_other: Bool
   /// "PRI * HTTP/2.0" (closed after the answer).
   h2up: Bool
+  /// [name, value, ...] of every field when a name repeats (decision
+  /// 0288: Request.header_values), else []
+  fields: List[Str] = []
 }
 
 fn no_head() -> Head {
@@ -1079,6 +1082,7 @@ fn head_of(method: Str, target: Str, major: Int, minor: Int, url: neturl.Url, qu
   var headers: List[Str] = List.with_capacity(2 * nraw + 2)
   var pragma = -1
   var have_cc = false
+  var repeated = false
   k = 0
   while k < nraw {
     let key = keys[k]
@@ -1105,6 +1109,7 @@ fn head_of(method: Str, target: Str, major: Int, minor: Int, url: neturl.Url, qu
     }
     if e >= 0 {
       headers[e + 1] = headers[e + 1] + ", " + vals[k - 1]
+      repeated = true
     } else {
       headers.push(key)
       headers.push(vals[k - 1])
@@ -1114,6 +1119,20 @@ fn head_of(method: Str, target: Str, major: Int, minor: Int, url: neturl.Url, qu
     }
     if kk == K_CC {
       have_cc = true
+    }
+  }
+  // a name with several fields: each, as received (Go's Header keeps
+  // them; decision 0288), without those dropped above
+  var fields: List[Str] = []
+  if repeated {
+    k = 0
+    while k < nraw {
+      let kk = kinds[k]
+      if !(kk == K_HOST || kk == K_TE || (chunked && (kk == K_CL || kk == K_TRAILER))) {
+        fields.push(keys[k])
+        fields.push(vals[k])
+      }
+      k += 1
     }
   }
   // fixPragmaCacheControl: Pragma: no-cache without Cache-Control
@@ -1189,7 +1208,7 @@ fn head_of(method: Str, target: Str, major: Int, minor: Int, url: neturl.Url, qu
   } else if have_ev && !ev.is_empty() {
     expect_other = true
   }
-  let head = Head{method: method, target: target, major: major, minor: minor, headers: headers, host: rhost, url: url, query: query, clen: clen, chunked: chunked, close: close, wants10ka: wants10ka, wantsclose: wantsclose, expect100: expect100, expect_other: expect_other, h2up: h2up}
+  let head = Head{method: method, target: target, major: major, minor: minor, headers: headers, host: rhost, url: url, query: query, clen: clen, chunked: chunked, close: close, wants10ka: wants10ka, wantsclose: wantsclose, expect100: expect100, expect_other: expect_other, h2up: h2up, fields: fields}
   Parse{res: OK, used: used, head: head, status: 0, reason: ""}
 }
 
@@ -1460,6 +1479,10 @@ fn blk_of(s: Str) -> Int {
 /// replaces an earlier one (xo_hc_header).
 pub fn header_set(h: rthttp.HConn, name: Str, value: Str) { hdr_set(x1_of(h), canonical_key(name), value) }
 
+/// One more field of name (decision 0288: a response's repeated fields,
+/// such as Set-Cookie), after any of the same name.
+pub fn header_add(h: rthttp.HConn, name: Str, value: Str) { hdr_append(x1_of(h), canonical_key(name), value) }
+
 fn hdr_set(x: Int, k: Str, v: Str) {
   let a = xl(x, X_HDR)
   let n = xl(x, X_HN)
@@ -1472,9 +1495,14 @@ fn hdr_set(x: Int, k: Str, v: Str) {
       return
     }
   }
+  hdr_append(x, k, v)
+}
+
+fn hdr_append(x: Int, k: Str, v: Str) {
+  let n = xl(x, X_HN)
   if n == xl(x, X_HCAP) {
     let c = if n == 0 { 8 } else { 2 * n }
-    xs(x, X_HDR, raw.c_resize(a, 32 * c))
+    xs(x, X_HDR, raw.c_resize(xl(x, X_HDR), 32 * c))
     xs(x, X_HCAP, c)
   }
   let e = xl(x, X_HDR) + 32 * n
@@ -1585,6 +1613,8 @@ pub struct Req {
   pub query: List[Str]
   /// The URL's raw query, for Request.query_all (decision 0279).
   pub rawquery: Str
+  /// Head.fields (decision 0288)
+  pub fields: List[Str] = []
 }
 
 /// The next request (its body read: body), or None when the connection
@@ -1999,7 +2029,7 @@ fn req_of(h: Head) -> Req {
       port = v
     }
   }
-  Req{method: h.method, path: h.url.path, scheme: h.url.scheme, host: host, port: port, headers: h.headers, query: h.query, rawquery: h.url.rawquery}
+  Req{method: h.method, path: h.url.path, scheme: h.url.scheme, host: host, port: port, headers: h.headers, query: h.query, rawquery: h.url.rawquery, fields: h.fields}
 }
 
 // ---------------------------------------------------------------------------
@@ -2542,7 +2572,8 @@ fn (var x: H2X) block_done(r: rthttp.CResp) -> (Bool, Str) {
   }
   x.headers = true
   x.status = code
-  // the header: canonical names, each once, values joined
+  // the header: canonical names, each field as received (decision
+  // 0288: std/native/http.xo fields_in makes the Map view)
   var hk: List[Str] = []
   var hv: List[Str] = []
   i = 0
@@ -2552,17 +2583,8 @@ fn (var x: H2X) block_done(r: rthttp.CResp) -> (Bool, Str) {
       i += 1
       continue
     }
-    let ck = canonical_key(k)
-    var j = 0
-    while j < hk.len() && hk[j] != ck {
-      j += 1
-    }
-    if j < hk.len() {
-      hv[j] = hv[j] + (if ck == "Cookie" { "; " } else { ", " }) + values[i]
-    } else {
-      hk.push(ck)
-      hv.push(values[i])
-    }
+    hk.push(canonical_key(k))
+    hv.push(values[i])
     i += 1
   }
   hclient.h2_response(r, code, hk, hv)
@@ -2846,21 +2868,11 @@ pub fn parse_response(s: Str) -> RespHead {
             clen = x
           }
         }
-        var at = -1
-        var q = 0
-        while q < keys.len() {
-          if keys[q] == k {
-            at = q
-            break
-          }
-          q += 1
-        }
-        if at >= 0 {
-          vals[at] = vals[at] + ", " + v
-        } else {
-          keys.push(k)
-          vals.push(v)
-        }
+        // each field as received (decision 0288: std/native/http.xo
+        // fields_in joins a repeated name for the Map, Set-Cookie
+        // excepted)
+        keys.push(k)
+        vals.push(v)
       }
     }
     i = e + 1
@@ -3052,28 +3064,15 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
   if !valid_method(m) {
     return cfail(1, "net/http: invalid method " + go_quote(m))
   }
-  // the initial request's header (Header.Set: canonical names, the last
-  // value of a name)
+  // the initial request's header: canonical names, a repeated name's
+  // fields each (Header.Add; std/native/http.xo repeats a name only for
+  // a Request's several fields, decision 0288)
   var ik: List[Str] = []
   var iv: List[Str] = []
   var n = 0
   while n < names.len() && n < values.len() {
-    let k = canonical_key(names[n])
-    var at = -1
-    var q = 0
-    while q < ik.len() {
-      if ik[q] == k {
-        at = q
-        break
-      }
-      q += 1
-    }
-    if at >= 0 {
-      iv[at] = values[n]
-    } else {
-      ik.push(k)
-      iv.push(values[n])
-    }
+    ik.push(canonical_key(names[n]))
+    iv.push(values[n])
     n += 1
   }
   let when = if timeout > 0 { hclient.cl_deadline(timeout) } else { 0 }

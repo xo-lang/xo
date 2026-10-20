@@ -6,8 +6,10 @@ Quoted, which String needs to round-trip); Go's Raw, RawExpires and
 Unparsed are left out; a byte or domain Go drops with a log line is
 dropped silently. Part 1 (2026-10-20, Xo Lang 3): Cookie, SameSite,
 display, parse_cookie, parse_set_cookie, Request.cookie, cookies,
-with_cookie. Part 2: the fields behind the Map (header_values,
-add_header) and Response.with_cookie and cookies.
+with_cookie (54da082a). Part 2 (2026-10-20): the fields behind the Map
+(header_values, add_header) and Response.with_cookie and cookies; the
+HTTP/1.1 and HTTP/2 server, the client's requests and responses, and the
+Go backend (golden http_header_fields).
 
 ## Context
 

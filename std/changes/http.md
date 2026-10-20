@@ -1,9 +1,25 @@
 # std/http changes
 
-## 2026-10-20: feature: cookies
+## 2026-10-20: feature: header fields with repeated names; fix: Set-Cookie
 
 - Kind: feature
 - Commit: (filled in after the push)
+- Found by: survey
+- Go reference: net/http Header.Add, Header.Values, SetCookie, Response.Cookies (go1.26.1)
+- Test: internal/llvm/testdata/golden/http_header_fields (HTTP/1.1 and HTTP/2; arm64, LLVM, and the Go backend agree)
+
+`header_values` and `add_header` on Request and Response, and
+`Response.with_cookie` and `cookies` (decision 0288, part 2): several
+fields of one name are sent and received each. A fix with it: a client
+response with several `Set-Cookie` fields was one value joined with ", "
+(which `Expires` dates also contain); `headers` now shows the first, and
+`header_values` or `cookies()` give all. The HTTP/2 client also kept the
+last of a repeated field in the Map instead of joining them.
+
+## 2026-10-20: feature: cookies
+
+- Kind: feature
+- Commit: 54da082a
 - Found by: survey
 - Go reference: net/http/cookie.go Cookie.String, ParseCookie, ParseSetCookie, readCookies, Request.Cookie, Cookies, AddCookie (go1.26.1)
 - Test: internal/llvm/testdata/golden/http_cookies (the inputs of Go's cookie_test.go tables; arm64, LLVM, and the Go backend's net/http agree); std/native/http_test.xo (Go's TestCookieSanitizeValue, TestCookieSanitizePath, writeSetCookiesTests' domains and names)

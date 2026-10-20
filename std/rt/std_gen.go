@@ -238,6 +238,7 @@ type Http_Request struct {
 	XParams     Map[string, string]
 	XValues     *reqValues
 	XRawQuery   string
+	XFields     []string
 }
 
 func (v Http_Request) XoEq(x any) bool {
@@ -302,6 +303,7 @@ type Http_Response struct {
 	F_headers Map[string, string]
 	F_body    Bytes
 	XStream   func(*Task, Http_BodyWriter) Result[Unit, IoErr]
+	XFields   []string
 }
 
 func (v Http_Response) XoEq(x any) bool {

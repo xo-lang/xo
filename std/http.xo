@@ -50,6 +50,10 @@ fn (r: Request) multipart_form() -> multipart.Form ! multipart.MultipartErr
 fn (r: Request) header(name: Str) -> Str?
 fn (r: Request) json[T: Json]() -> T ! json.DecodeErr
 fn (r: Request) with_header(name: Str, value: Str) -> Request
+/// Every field of name, in order (decision 0288).
+fn (r: Request) header_values(name: Str) -> List[Str]
+/// The request with one more field of name.
+fn (r: Request) add_header(name: Str, value: Str) -> Request
 fn (r: Request) with_value[T](k: Key[T], v: T) -> Request
 fn (r: Request) value[T](k: Key[T]) -> T?
 /// The first cookie of that name in the Cookie fields (Go's
@@ -120,6 +124,14 @@ fn (w: BodyWriter) write(data: Bytes) -> () ! IoErr
 fn (w: BodyWriter) flush() -> () ! IoErr
 fn (r: Response) with_header(name: Str, value: Str) -> Response
 fn (r: Response) header(name: Str) -> Str?
+/// Every field of name, in order (decision 0288).
+fn (r: Response) header_values(name: Str) -> List[Str]
+/// The response with one more field of name.
+fn (r: Response) add_header(name: Str, value: Str) -> Response
+/// One more Set-Cookie field (Go's SetCookie); none for an invalid name.
+fn (r: Response) with_cookie(c: Cookie) -> Response
+/// Every Set-Cookie field that parses (Go's Response.Cookies).
+fn (r: Response) cookies() -> List[Cookie]
 /// The body as text; None if it is not valid UTF-8 (std.md 4.3).
 fn (r: Response) text() -> Str?
 fn (r: Response) decode_json[T: Json]() -> T ! json.DecodeErr

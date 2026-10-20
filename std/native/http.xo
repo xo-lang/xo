@@ -42,6 +42,10 @@ struct Request {
   /// The URL's raw query, for query_all (decision 0279); "" for a
   /// request built as a struct literal (query_all then reads url.query).
   raw_query: Str = ""
+  /// The header's fields when a name has several (decision 0288): [name,
+  /// value, ...], canonical names in order; [] when every name has one
+  /// value (headers is then all of it). Hidden from Xo code.
+  fields: List[Str] = []
 }
 
 struct ReqValue {
@@ -106,6 +110,8 @@ struct Response {
   headers: Map[Str, Str]
   body: Bytes
   stream: Int = 0
+  /// as Request.fields (decision 0288)
+  fields: List[Str] = []
 }
 
 /// The writer of a streamed body: a sink into a buffer or a connection.
@@ -516,9 +522,18 @@ fn request_header(r: Request, name: Str) -> Str? { header_get(r.headers, name) }
 fn request_json[T: Json](r: Request) -> T ! js.DecodeErr { js.decode(r.body) }
 
 fn request_with_header(r: Request, name: Str, value: Str) -> Request {
+  let k = http1.canonical_key(name)
   var h = r.headers
-  h.put(http1.canonical_key(name), value)
-  r with {headers: h}
+  h.put(k, value)
+  r with {headers: h, fields: without_field(r.fields, k)}
+}
+
+fn request_header_values(r: Request, name: Str) -> List[Str] { values_of(r.headers, r.fields, name) }
+
+fn request_add_header(r: Request, name: Str, value: Str) -> Request {
+  let k = http1.canonical_key(name)
+  let (h, fs) = with_values(r.headers, r.fields, k, values_of(r.headers, r.fields, k) + [value])
+  r with {headers: h, fields: fs}
 }
 
 fn request_with_value[T](r: Request, k: Key[T], v: T) -> Request {
@@ -607,9 +622,129 @@ fn text(status: Int, s: Str) -> http.Response {
 fn empty(status: Int) -> http.Response { http.Response{status: status, headers: {}, body: "".bytes()} }
 
 fn response_with_header(r: http.Response, name: Str, value: Str) -> http.Response {
-  var h = r.headers
-  h.put(http1.canonical_key(name), value)
-  r with {headers: h}
+  let k = http1.canonical_key(name)
+  let n = rt.cast[http.Response, Response](r)
+  var h = n.headers
+  h.put(k, value)
+  rt.cast[Response, http.Response](n with {headers: h, fields: without_field(n.fields, k)})
+}
+
+fn response_header_values(r: http.Response, name: Str) -> List[Str] {
+  let n = rt.cast[http.Response, Response](r)
+  values_of(n.headers, n.fields, name)
+}
+
+fn response_add_header(r: http.Response, name: Str, value: Str) -> http.Response {
+  let k = http1.canonical_key(name)
+  let n = rt.cast[http.Response, Response](r)
+  let (h, fs) = with_values(n.headers, n.fields, k, values_of(n.headers, n.fields, k) + [value])
+  rt.cast[Response, http.Response](n with {headers: h, fields: fs})
+}
+
+/// Go's SetCookie: one more Set-Cookie field, none for a cookie whose
+/// display is "" (an invalid name).
+fn response_with_cookie(r: http.Response, c: http.Cookie) -> http.Response {
+  let v = cookie_display(c)
+  if v.is_empty() { r } else { response_add_header(r, "Set-Cookie", v) }
+}
+
+/// Go's Response.Cookies (readSetCookies): every Set-Cookie field that
+/// parses.
+fn response_cookies(r: http.Response) -> List[http.Cookie] {
+  let vs = response_header_values(r, "Set-Cookie")
+  if vs.len() > COOKIE_MAX {
+    return []
+  }
+  var out: List[http.Cookie] = []
+  for v in vs {
+    if let Ok(c) = parse_set_cookie(v) {
+      out.push(c)
+    }
+  }
+  out
+}
+
+// ---------------------------------------------------------------------------
+// Fields with repeated names (decision 0288)
+
+/// The Map view of a name's values: joined with ", ", but Set-Cookie's
+/// first value (cookies are never joined).
+fn field_view(k: Str, vs: List[Str]) -> Str { if k == "Set-Cookie" { vs[0] } else { vs.join(", ") } }
+
+/// The values of field name: its fields when the Map still shows them
+/// (headers[name] is their view), else the Map's one value (a literal or
+/// a direct change of headers wins), else none.
+fn values_of(h: Map[Str, Str], fs: List[Str], name: Str) -> List[Str] {
+  let k = http1.canonical_key(name)
+  let mv = match header_get(h, k) {
+    Some(v) => v
+    None => return []
+  }
+  var vs: List[Str] = []
+  var i = 0
+  while i + 1 < fs.len() {
+    if fs[i] == k {
+      vs.push(fs[i + 1])
+    }
+    i += 2
+  }
+  if !vs.is_empty() && field_view(k, vs) == mv { vs } else { [mv] }
+}
+
+/// fs without the fields of k.
+fn without_field(fs: List[Str], k: Str) -> List[Str] {
+  if fs.is_empty() {
+    return fs
+  }
+  var out: List[Str] = []
+  var i = 0
+  while i + 1 < fs.len() {
+    if fs[i] != k {
+      out.push(fs[i])
+      out.push(fs[i + 1])
+    }
+    i += 2
+  }
+  out
+}
+
+/// The header and fields with k's values set to vs (at least one).
+fn with_values(h0: Map[Str, Str], fs0: List[Str], k: Str, vs: List[Str]) -> (Map[Str, Str], List[Str]) {
+  var h = h0
+  h.put(k, field_view(k, vs))
+  var fs = without_field(fs0, k)
+  if vs.len() > 1 {
+    for v in vs {
+      fs.push(k)
+      fs.push(v)
+    }
+  }
+  (h, fs)
+}
+
+/// The header and fields of a received field list [name, value, ...]
+/// (canonical names; a name may repeat): the Map view of each name and,
+/// when any name repeats, the list itself.
+fn fields_in(list: List[Str]) -> (Map[Str, Str], List[Str]) {
+  var h: Map[Str, Str] = {}
+  var counts: Map[Str, Int] = {}
+  var repeated = false
+  var i = 0
+  while i + 1 < list.len() {
+    let k = list[i]
+    let n = counts.get(k) ?? 0
+    if n > 0 {
+      repeated = true
+      if k != "Set-Cookie" {
+        h.put(k, (h.get(k) ?? "") + ", " + list[i + 1])
+      }
+    } else {
+      h.put(k, list[i + 1])
+    }
+    counts.put(k, n + 1)
+    i += 2
+  }
+  (h, if repeated { list } else { [] })
 }
 
 fn response_header(r: http.Response, name: Str) -> Str? { header_get(r.headers, name) }
@@ -838,8 +973,19 @@ fn serve_stream(q: h2srv.H2Req, r: Router) {
 /// names no HTTP/2 code, decision 0244).
 fn respond(hc: rthttp.HConn, req: Request, r: Router) -> (Bool, Response?) {
   let resp = rt.cast[http.Response, Response](call_raw(r, req))
-  for (k, v) in resp.headers {
-    http1.header_set(hc, k, v)
+  if resp.fields.is_empty() {
+    for (k, v) in resp.headers {
+      http1.header_set(hc, k, v)
+    }
+  } else {
+    // a name with several fields (decision 0288) sends each
+    for (k, _) in resp.headers {
+      let vs = values_of(resp.headers, resp.fields, k)
+      http1.header_set(hc, k, vs[0])
+      for x in vs[1..] {
+        http1.header_add(hc, k, x)
+      }
+    }
   }
   if resp.stream != 0 {
     // a streamed body goes out as f makes it (std/rt's serve)
@@ -878,7 +1024,7 @@ fn head_request(rd: http1.Reader, q: http1.Req) -> Request {
     port = Some(q.port)
   }
   let url = http.Url{scheme: q.scheme, host: q.host, port: port, path: upath, query: query}
-  Request{method: q.method, path: q.path, url: url, headers: headers, body: rd.body(), remote_ip: hconn.remote_ip(rd.conn()), raw_query: q.rawquery}
+  Request{method: q.method, path: q.path, url: url, headers: headers, body: rd.body(), remote_ip: hconn.remote_ip(rd.conn()), raw_query: q.rawquery, fields: q.fields}
 }
 
 /// The request of an HTTP/2 stream (std/rt's serve).
@@ -906,7 +1052,7 @@ fn stream_request(q: h2srv.H2Req) -> Request {
     port = Some(p)
   }
   let url = http.Url{scheme: q.scheme, host: http1.host_name(q.host), port: port, path: upath, query: query}
-  Request{method: q.method, path: q.path, url: url, headers: headers, body: q.body, remote_ip: hconn.remote_ip(q.conn), raw_query: q.rawquery}
+  Request{method: q.method, path: q.path, url: url, headers: headers, body: q.body, remote_ip: hconn.remote_ip(q.conn), raw_query: q.rawquery, fields: q.fields}
 }
 
 // ---------------------------------------------------------------------------
@@ -1002,8 +1148,11 @@ fn (c: Client) send(req: Request) -> http.Response ! http.ClientErr uses net.dia
   var names: List[Str] = []
   var values: List[Str] = []
   for (k, v) in req.headers {
-    names.push(k)
-    values.push(v)
+    // a name with several fields sends each (decision 0288)
+    for x in if req.fields.is_empty() { [v] } else { values_of(req.headers, req.fields, k) } {
+      names.push(k)
+      values.push(x)
+    }
   }
   let r = http1.client_do(req.method, raw, names, values, req.body, c.timeout.nanos(), c.roots, c.lists)
   match r.err {
@@ -1014,13 +1163,10 @@ fn (c: Client) send(req: Request) -> http.Response ! http.ClientErr uses net.dia
     5 => return Err(http.ClientErr.Canceled)
     _ => return Err(http.ClientErr.Protocol(msg: r.msg))
   }
-  var h: Map[Str, Str] = {}
-  var i = 0
-  while i + 1 < r.headers.len() {
-    h.put(r.headers[i], r.headers[i + 1])
-    i += 2
-  }
-  http.Response{status: r.status, headers: h, body: r.body}
+  // each received field; the Map joins a repeated name, Set-Cookie
+  // excepted (decision 0288)
+  let (h, fs) = fields_in(r.headers)
+  rt.cast[Response, http.Response](Response{status: r.status, headers: h, body: r.body, fields: fs})
 }
 
 // ---------------------------------------------------------------------------

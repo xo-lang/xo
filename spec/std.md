@@ -1062,6 +1062,8 @@ fn (r: Request) multipart_form() -> multipart.Form ! multipart.MultipartErr   //
 fn (r: Request) header(name: Str) -> Str?           // case insensitive
 fn (r: Request) json[T: Json]() -> T ! json.DecodeErr
 fn (r: Request) with_header(name: Str, value: Str) -> Request
+fn (r: Request) header_values(name: Str) -> List[Str]   // every field of name, in order (decision 0288)
+fn (r: Request) add_header(name: Str, value: Str) -> Request   // one more field of name
 fn (r: Request) cookie(name: Str) -> Cookie?        // the first Cookie pair of that name (Go's Request.Cookie)
 fn (r: Request) cookies() -> List[Cookie]           // every Cookie pair that parses
 fn (r: Request) with_cookie(c: Cookie) -> Request   // name=value appended to Cookie (Go's AddCookie)
@@ -1108,6 +1110,10 @@ fn (w: BodyWriter) write(data: Bytes) -> () ! IoErr
 fn (w: BodyWriter) flush() -> () ! IoErr
 fn (r: Response) with_header(name: Str, value: Str) -> Response
 fn (r: Response) header(name: Str) -> Str?          // case insensitive
+fn (r: Response) header_values(name: Str) -> List[Str]   // every field of name, in order (decision 0288)
+fn (r: Response) add_header(name: Str, value: Str) -> Response   // one more field of name
+fn (r: Response) with_cookie(c: Cookie) -> Response     // one more Set-Cookie field (Go's SetCookie); none for an invalid name
+fn (r: Response) cookies() -> List[Cookie]              // every Set-Cookie field that parses (Go's Response.Cookies)
 fn (r: Response) text() -> Str?                     // the body as text; None if not valid UTF-8
 fn (r: Response) decode_json[T: Json]() -> T ! json.DecodeErr
 ```
@@ -1151,8 +1157,19 @@ errors are Go's (`http: blank cookie`, `http: '=' not found in cookie`,
 `http: invalid cookie name`, `http: invalid cookie value`); Go's `Raw`,
 `RawExpires` and `Unparsed` are not kept. `Request.cookies()` reads the
 `Cookie` field as Go's readCookies (invalid pairs skipped, at most 3000).
-Responses setting several cookies (`Response.with_cookie`, one
-`Set-Cookie` field each) come with decision 0288's second part.
+**Fields with repeated names** (decision 0288): a Request or Response
+keeps its header fields in order behind `headers`, which is their view:
+a name's values joined with ", ", except `Set-Cookie`, whose view is its
+first field (cookies are never joined). `header_values(name)` returns
+each field of the name (case insensitive), as received or as added;
+`add_header` appends one; `with_header` replaces every field of the name
+with one. A struct literal or a direct change of `headers` sets that
+name to the one value written (a Map entry that is not the view of the
+name's fields wins), so code that only uses the Map works as before. A
+response or a client request sends one field per value (HTTP/1.1 and
+HTTP/2), so two `with_cookie` calls send two `Set-Cookie` fields. The
+server and the client keep each received field (an HTTP/2 request's
+`Cookie` fields arrive as one, joined with `; `, as net/http's).
 
 `with_header` returns a copy with the header set (canonical key), like
 `Response.with_header`.

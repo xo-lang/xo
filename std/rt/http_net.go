@@ -74,8 +74,12 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 		}
 		// outside bytes (decision 0259): U+FFFD in the fields, percent
 		// escapes in the URL parts
+		var fields []string
 		for k, vs := range hr.Header {
-			Map_put(nil, &h, textOf(k), textOf(strings.Join(vs, ", ")))
+			Map_put(nil, &h, textOf(k), textOf(fieldView(k, vs)))
+			if len(vs) > 1 {
+				fields = appendFields(fields, k, vs)
+			}
 		}
 		u := urlOf(a, hr.URL)
 		u.F_host = urlTextOf(hr.Host)
@@ -86,7 +90,7 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 		if host, _, err := net.SplitHostPort(ip); err == nil {
 			ip = host
 		}
-		req := Http_Request{F_method: hr.Method, F_path: urlTextOf(hr.URL.Path), F_url: u, F_headers: h, F_body: body, F_remote_ip: ip, XRawQuery: hr.URL.RawQuery}
+		req := Http_Request{F_method: hr.Method, F_path: urlTextOf(hr.URL.Path), F_url: u, F_headers: h, F_body: body, F_remote_ip: ip, XRawQuery: hr.URL.RawQuery, XFields: fields}
 		// the recorder keeps what it is given past the request: never
 		// arena memory (recCopy)
 		recReq := req
@@ -121,7 +125,15 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 		resp := s.r.call(reqTask, req)
 		wh := w.Header()
 		for k, v := range Map_All(resp.F_headers) {
-			wh.Set(k, v)
+			if len(resp.XFields) == 0 {
+				wh.Set(k, v)
+				continue
+			}
+			// a name with several fields sends each (decision 0288)
+			wh.Del(k)
+			for _, x := range valuesOf(resp.F_headers, resp.XFields, k) {
+				wh.Add(k, x)
+			}
 		}
 		if n := len(resp.F_body); n > chunkingSize && resp.XStream == nil && bodyAllowed(resp.F_status) {
 			// a body net/http cannot hold in its 2 KiB buffer would go
@@ -283,7 +295,14 @@ func (c Http_Client) send(tk *Task, req Http_Request, rawURL string) Result[Http
 		return Err[Http_Response](clientErr(1, err.Error()))
 	}
 	for k, v := range Map_All(req.F_headers) {
-		hr.Header.Set(k, v)
+		if len(req.XFields) == 0 {
+			hr.Header.Set(k, v)
+			continue
+		}
+		hr.Header.Del(k)
+		for _, x := range valuesOf(req.F_headers, req.XFields, k) {
+			hr.Header.Add(k, x)
+		}
 	}
 	tr := sharedTransport
 	if c.tr != nil {
@@ -335,11 +354,16 @@ func (c Http_Client) send(tk *Task, req Http_Request, rawURL string) Result[Http
 		return Err[Http_Response](clientErr(4, err.Error()))
 	}
 	var h Map[string, string]
+	var fields []string
 	for k, vs := range resp.Header {
-		// a response's fields: outside bytes (decision 0259)
-		Map_put(tk, &h, textOf(k), textOf(strings.Join(vs, ", ")))
+		// a response's fields: outside bytes (decision 0259); a repeated
+		// name keeps each field (decision 0288), Set-Cookie is not joined
+		Map_put(tk, &h, textOf(k), textOf(fieldView(k, vs)))
+		if len(vs) > 1 {
+			fields = appendFields(fields, k, vs)
+		}
 	}
-	return Ok[Http_Response, Http_ClientErr](Http_Response{F_status: int64(resp.StatusCode), F_headers: h, F_body: Bytes(body)})
+	return Ok[Http_Response, Http_ClientErr](Http_Response{F_status: int64(resp.StatusCode), F_headers: h, F_body: Bytes(body), XFields: fields})
 }
 
 // handshakeLogFilter is the ErrorLog of serve: net/http's log lines on

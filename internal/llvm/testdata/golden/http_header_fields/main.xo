@@ -1,0 +1,66 @@
+// Header fields with repeated names (std.md 4.3, decision 0288): a
+// response with two Set-Cookie fields and a repeated Vary, a request
+// with a repeated field, each sent and received over HTTP/1.1 and over
+// TLS (HTTP/2 by ALPN), and the Map view beside the fields.
+use std/http
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle("GET /set", fn(_req) {
+    http.text(200, "ok")
+      .with_cookie(http.Cookie{name: "session", value: "abc", path: "/", http_only: true})
+      .with_cookie(http.Cookie{name: "theme", value: "dark", max_age: 3600})
+      .add_header("Vary", "Accept")
+      .add_header("Vary", "Cookie")
+  })
+  r.handle("GET /echo", fn(req) {
+    http.text(200, "X-Tag=${req.header("X-Tag") ?? "-"} values=${req.header_values("X-Tag").join(" | ")} cookies=${req.cookies().map(fn(c) { "${c.name}=${c.value}" }).join(",")}")
+  })
+  r
+}
+
+fn show(os: Os, label: Str, r: Result[http.Response, http.ClientErr]) {
+  match r {
+    Ok(resp) => {
+      os.stdio.println("${label}: ${resp.status} ${resp.text() ?? "?"}")
+      os.stdio.println("  Set-Cookie map: ${resp.header("Set-Cookie") ?? "-"}")
+      os.stdio.println("  Set-Cookie fields: ${resp.header_values("Set-Cookie").join(" | ")}")
+      os.stdio.println("  cookies: ${resp.cookies().map(fn(c) { "${c.name}=${c.value} path=${c.path} max_age=${c.max_age} http_only=${c.http_only}" }).join("; ")}")
+      os.stdio.println("  Vary map: ${resp.header("Vary") ?? "-"} fields: ${resp.header_values("Vary").join(" | ")}")
+    }
+    Err(e) => os.stdio.println("${label}: ${e}")
+  }
+}
+
+fn main(os: Os) {
+  // the view rules, without a network
+  var r = http.text(200, "x").add_header("Link", "<a>").add_header("Link", "<b>")
+  os.stdio.println("view: ${r.header("Link") ?? "-"} fields: ${r.header_values("Link").join(" | ")}")
+  r = r.with_header("Link", "<c>")
+  os.stdio.println("with_header: ${r.header("Link") ?? "-"} fields: ${r.header_values("Link").join(" | ")}")
+  r = r.add_header("Link", "<d>")
+  os.stdio.println("add after set: ${r.header("Link") ?? "-"} fields: ${r.header_values("Link").join(" | ")}")
+  os.stdio.println("absent: ${r.header_values("X-None").len()}")
+  let good = http.tls_cert(good_cert(), good_key()).or_fault("cert")
+  let l1 = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let l2 = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let plain = http.server(l1, routes())
+  let tls = http.server(l2, routes()).with_tls([good])
+  let c = http.client(os.net, timeout: 5s).with_roots(ca_pem()).or_fault("roots")
+  scope s {
+    s.spawn_background(fn() { plain.serve().ignore_err("test server") })
+    s.spawn_background(fn() { tls.serve().ignore_err("test server") })
+    for (label, base) in [("http/1.1", "http://${l1.addr()}"), ("h2", "https://${l2.addr()}")] {
+      show(os, "${label} set", c.get("${base}/set"))
+      let req = http.new_request("GET", "${base}/echo").add_header("X-Tag", "one").add_header("X-Tag", "two").with_cookie(http.Cookie{name: "a", value: "1"}).with_cookie(http.Cookie{name: "b", value: "2"})
+      show(os, "${label} echo", c.send(req))
+    }
+  }
+  os.stdio.println("done")
+}
+
+// ---------------------------------------------------------------------------
+// Test certificates (golden http_tls's; PEM)
+fn ca_pem() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBXTCCAQOgAwIBAgIBAjAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAVMRMwEQYDVQQD\nEwpYbyBUZXN0IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEijw7AWGYTeLp\n/9oDX6t32fPfTkDcI/F29wXFQRBDz+0AxRDpI6PQf9UdiF9aZfB5AM5J3PdtARhw\nCIekwP7z7aNCMEAwDgYDVR0PAQH/BAQDAgKEMA8GA1UdEwEB/wQFMAMBAf8wHQYD\nVR0OBBYEFLrbZ5A0fzzE42xjrFaZTWKJC9Z6MAoGCCqGSM49BAMCA0gAMEUCIHzG\n+C1Oz2qF9sqKv6CMRcep89t3K01Um1dypPN+nE7ZAiEA3+DkafbsP8oH5cfghe/i\nMsgJIwR+YEK89sPkPWqn3nI=\n-----END CERTIFICATE-----\n".bytes() }
+fn good_cert() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBlzCCAT2gAwIBAgIBBDAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAPMQ0wCwYDVQQD\nEwRnb29kMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE9O8DlRiEOqE5kBcoi9Xg\nkTscb94E/jndT7qf0pYOYj1zJGJbD2l1bZAVsrAY5C3Wv2aAF51muJPDyheawAHK\nSqOBgTB/MA4GA1UdDwEB/wQEAwIHgDATBgNVHSUEDDAKBggrBgEFBQcDATAfBgNV\nHSMEGDAWgBS622eQNH88xONsY6xWmU1iiQvWejA3BgNVHREEMDAugglsb2NhbGhv\nc3SCCWdvb2QudGVzdIcEfwAAAYcQAAAAAAAAAAAAAAAAAAAAATAKBggqhkjOPQQD\nAgNIADBFAiAckDQ7jBugRRKa+Ugpt8hKU8GY0WGo4eWxak8QHej1hgIhAORlgKwn\niJ4cvV9cxqu4a2fovArW28G2KaR4WLfzeSBL\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nMIIBXTCCAQOgAwIBAgIBAjAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAVMRMwEQYDVQQD\nEwpYbyBUZXN0IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEijw7AWGYTeLp\n/9oDX6t32fPfTkDcI/F29wXFQRBDz+0AxRDpI6PQf9UdiF9aZfB5AM5J3PdtARhw\nCIekwP7z7aNCMEAwDgYDVR0PAQH/BAQDAgKEMA8GA1UdEwEB/wQFMAMBAf8wHQYD\nVR0OBBYEFLrbZ5A0fzzE42xjrFaZTWKJC9Z6MAoGCCqGSM49BAMCA0gAMEUCIHzG\n+C1Oz2qF9sqKv6CMRcep89t3K01Um1dypPN+nE7ZAiEA3+DkafbsP8oH5cfghe/i\nMsgJIwR+YEK89sPkPWqn3nI=\n-----END CERTIFICATE-----\n".bytes() }
+fn good_key() -> Bytes { "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgRJJMUtA6v5smeBFF\npZ933x7IwE6wYj/9NyjqnMscBwmhRANCAAT07wOVGIQ6oTmQFyiL1eCROxxv3gT+\nOd1Pup/Slg5iPXMkYlsPaXVtkBWysBjkLda/ZoAXnWa4k8PKF5rAAcpK\n-----END PRIVATE KEY-----\n".bytes() }

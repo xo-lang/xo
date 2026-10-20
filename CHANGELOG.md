@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- std/http: header fields with repeated names, sent and received each:
+  `header_values` and `add_header` on requests and responses, and
+  `Response.with_cookie` and `cookies()`. A client response with several
+  `Set-Cookie` fields no longer arrives as one joined value.
 - std/http: cookies, ported from net/http: `http.Cookie` and its
   `display()` (a Set-Cookie value), `parse_cookie`, `parse_set_cookie`,
   and `Request.cookie(name)`, `cookies()`, and `with_cookie`.

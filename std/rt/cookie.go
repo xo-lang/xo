@@ -100,3 +100,7 @@ func (r Http_Request) M_with_cookie(tk *Task, c Http_Cookie) Http_Request {
 	hr.AddCookie(goCookie(c))
 	return r.M_with_header(tk, "Cookie", hr.Header.Get("Cookie"))
 }
+
+// httpParseSetCookie is http.ParseSetCookie (here so headers.go needs no
+// net/http import of its own).
+func httpParseSetCookie(line string) (*http.Cookie, error) { return http.ParseSetCookie(line) }
