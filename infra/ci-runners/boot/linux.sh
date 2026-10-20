@@ -82,6 +82,14 @@ systemctl enable --now xo-ci-idle.timer
 # 3. toolchain
 command -v git >/dev/null && command -v clang >/dev/null && command -v jq >/dev/null && rpm -q libicu >/dev/null ||
   dnf install -y git clang llvm gcc tar gzip make nodejs jq libicu
+# The LLVM backend needs clang 16 or later (XO1505; Amazon Linux 2023's
+# clang is 15, owner approved the upgrade 2026-10-20): install clang22
+# and put it first on PATH through /usr/local/bin.
+if ! clang --version 2>/dev/null | grep -qE 'clang version (1[6-9]|[2-9][0-9])'; then
+  dnf install -y clang22 llvm22 || true
+  c22=$(command -v clang-22 || ls /usr/lib64/llvm22/bin/clang 2>/dev/null | head -1)
+  [ -n "$c22" ] && ln -sf "$c22" /usr/local/bin/clang
+fi
 case $(uname -m) in aarch64) goarch=arm64 ra=arm64;; x86_64) goarch=amd64 ra=x64;; esac
 [ -x /usr/local/go/bin/go ] || curl -fsSL "https://go.dev/dl/go$GOVER.linux-$goarch.tar.gz" | tar -C /usr/local -xz
 
