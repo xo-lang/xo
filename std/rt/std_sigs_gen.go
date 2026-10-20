@@ -401,6 +401,7 @@ var (
 	_ func(*Sql_Tx, *Task) Result[Unit, Sql_SqlErr]                                                      = (*Sql_Tx).M_commit
 	_ func(*Sql_Tx, *Task) Result[Unit, Sql_SqlErr]                                                      = (*Sql_Tx).M_rollback
 	_ func(*Sql_Row, *Task) List[string]                                                                 = (*Sql_Row).M_columns
+	_ func(*Sql_Row, *Task, string) Result[Sql_SqlValue, Sql_SqlErr]                                     = (*Sql_Row).M_value
 	_ func(*Sql_Row, *Task, string) Result[bool, Sql_SqlErr]                                             = (*Sql_Row).M_is_null
 	_ func(*Sql_Row, *Task, string) Result[int64, Sql_SqlErr]                                            = (*Sql_Row).M_int
 	_ func(*Sql_Row, *Task, string) Result[string, Sql_SqlErr]                                           = (*Sql_Row).M_str

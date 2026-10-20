@@ -1,12 +1,24 @@
 # std/sql changes
 
+## 2026-10-20: feature: Row.value
+
+- Kind: feature
+- Commit: (filled in after the push)
+- Found by: test
+- Go reference: github.com/jackc/pgx/v5 Rows.Values
+- Test: scripts/pg-diff.sh (each row printed through value)
+
+`row.value(name)` is a column's SqlValue as the driver read it, on every
+backend. The Postgres differential test needed it: a native Row's Debug
+text is `<row>`, as for every opaque std type.
+
 ## 2026-10-20: feature: a Postgres driver written in Xo
 
 - Kind: port
 - Commit: (filled in after the push)
 - Found by: survey
 - Go reference: github.com/jackc/pgx/v5 v5.11.0 pgproto3 and pgconn (outside Go's std)
-- Test: std/native/llrt/pgwire_test.xo (pgx's message vectors and connection string corpora, RFC 7677); the differential test against PostgreSQL in Docker
+- Test: std/native/llrt/pgwire_test.xo (pgx's message vectors and connection string corpora, RFC 7677); internal/llvm/testdata/golden/pg_fake (fake servers on local sockets); scripts/pg-diff.sh against PostgreSQL 17 and 14 in Docker, the same output as pgx
 
 `sql.open(net, "postgres", dsn)` opens PostgreSQL natively: protocol 3,
 SCRAM-SHA-256, MD5, and cleartext authentication, keyword and URL

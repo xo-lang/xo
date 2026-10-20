@@ -613,6 +613,15 @@ func sqlTypeName(v any) string {
 	return "a value"
 }
 
+// M_value is `row.value(name)`: the column's value as a SqlValue.
+func (r Sql_Row) M_value(_ *Task, name string) Result[Sql_SqlValue, Sql_SqlErr] {
+	v, e := r.get(name)
+	if e != nil {
+		return Err[Sql_SqlValue](*e)
+	}
+	return Ok[Sql_SqlValue, Sql_SqlErr](List_Slice(sqlValues([]any{v}))[0])
+}
+
 // M_is_null is `row.is_null(name)`.
 func (r Sql_Row) M_is_null(_ *Task, name string) Result[bool, Sql_SqlErr] {
 	v, e := r.get(name)

@@ -485,6 +485,8 @@ fn mismatch(name: Str, want: Str, v: sql.SqlValue) -> sql.SqlErr {
   sql.SqlErr.Mismatch(column: name, msg: "expected ${want}, found ${got}")
 }
 
+fn (r: Row) value(name: Str) -> sql.SqlValue ! sql.SqlErr { r.get(name) }
+
 fn (r: Row) is_null(name: Str) -> Bool ! sql.SqlErr { r.get(name)? is Null }
 
 fn (r: Row) int(name: Str) -> Int ! sql.SqlErr {

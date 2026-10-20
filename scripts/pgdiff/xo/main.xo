@@ -25,7 +25,9 @@ fn main(os: Os) ! {
       match db.query(line) {
         Ok(rows) => {
           for r in rows {
-            os.stdio.println(r.debug())
+            // Go's Row Debug text: the columns and their values
+            let vals = r.columns().map(fn(c) { r.value(c).or_fault("column") })
+            os.stdio.println("Row{cols: ${r.columns().debug()}, vals: ${vals.debug()}}")
           }
         }
         Err(e) => os.stdio.println(err_line(e))

@@ -15,11 +15,43 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-func q(s string) string { return strconv.Quote(s) }
+// q is Xo's Debug text of a Str or Bytes (std/rt show.go quote): U+FFFD
+// for each byte that is not UTF-8.
+func q(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '"':
+			b.WriteString(`\"`)
+		case '\\':
+			b.WriteString(`\\`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\t':
+			b.WriteString(`\t`)
+		case '\r':
+			b.WriteString(`\r`)
+		case 0:
+			b.WriteString(`\0`)
+		case utf8.RuneError:
+			b.WriteString(`\u{FFFD}`)
+		default:
+			if r < 0x20 || r == 0x7f {
+				b.WriteString(`\x` + strconv.FormatUint(uint64(r)>>4, 16) + strconv.FormatUint(uint64(r)&15, 16))
+			} else {
+				b.WriteRune(r)
+			}
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
+}
 
 func elemOf(oid uint32) int64 {
 	m := map[uint32]int64{1000: 16, 1001: 17, 1003: 19, 1005: 21, 1007: 23, 1016: 20, 1009: 25, 1014: 1042, 1015: 1043, 1021: 700, 1022: 701, 1028: 26, 199: 114, 3807: 3802, 1115: 1114, 1185: 1184}

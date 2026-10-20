@@ -567,7 +567,7 @@ fn (p: PgConn) ping() -> () ! sql.SqlErr uses net.dial {
   let _ = p.run("-- ping", [])?
 }
 
-fn (p: PgConn) close() {
+fn (p: PgConn) close() uses net.dial {
   let _ = p.c.write(pgwire.terminate()).is_ok()
   p.c.close()
 }

@@ -1747,7 +1747,7 @@ unknown driver (no Go drivers), `max_open` does not bound the in memory
 driver (it runs one statement at a time), and a `Row`'s Debug text is
 `<row>` (the Go backend writes its columns and values, `Row(a: 1, b:
 "x")`; natively an opaque std type's Debug text is its name, compiler/ssa
-show.xo, verified 2026-10-20).
+show.xo, verified 2026-10-20); `value` gives each column's value.
 
 ### 10.1 Opening
 
@@ -1820,6 +1820,7 @@ write with a `RETURNING` clause returns rows, so it goes through `query`
 ```
 struct Row {}
 fn (r: Row) columns() -> List[Str]
+fn (r: Row) value(name: Str) -> SqlValue ! SqlErr  // the column's value as read (pgx's Rows.Values)
 fn (r: Row) is_null(name: Str) -> Bool ! SqlErr
 fn (r: Row) int(name: Str) -> Int ! SqlErr       // also str, float, bool, time
 fn (r: Row) int_opt(name: Str) -> Int? ! SqlErr  // also str_opt, float_opt, bool_opt, time_opt
