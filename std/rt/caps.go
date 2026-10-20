@@ -572,6 +572,9 @@ func (c Conn) M_read(tk *Task, max int64) Result[Option[Bytes], NetErr] {
 		if c.c == nil {
 			return Err[Option[Bytes]](netErr(4, netClosedText))
 		}
+		if connUpgraded(c.c) {
+			return Err[Option[Bytes]](netErr(4, upgradedText))
+		}
 		buf := make([]byte, min(max, 1<<20))
 		var n int
 		canceled, err := interruptible(tk, c.c.SetReadDeadline, func() error {
@@ -600,6 +603,9 @@ func (c Conn) M_write(tk *Task, data Bytes) Result[Unit, NetErr] {
 	return fx(tk, "net.write", true, func() []any { return []any{data} }, func() Result[Unit, NetErr] {
 		if c.c == nil {
 			return Err[Unit](netErr(4, netClosedText))
+		}
+		if connUpgraded(c.c) {
+			return Err[Unit](netErr(4, upgradedText))
 		}
 		canceled, err := interruptible(tk, c.c.SetWriteDeadline, func() error {
 			_, e := c.c.Write([]byte(data))

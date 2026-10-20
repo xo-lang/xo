@@ -1,0 +1,152 @@
+// std/tls (std.md 27, decision 0281): a TLS client on a connection the
+// program dialed, against std/http servers with test certificates (those
+// of golden http_tls): the three verification levels, roots, ALPN, the
+// connection taken over, and the texts of each failure.
+use std/http
+use std/tls
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle("GET /hello", fn(_req) { http.text(200, "hello over tls") })
+  r
+}
+
+fn norm(s: Str, addrs: List[Str]) -> Str {
+  var t = s
+  for i in 0..addrs.len() {
+    t = t.replace(addrs[i], "ADDR${i}")
+  }
+  // the time now varies: "current time <now> is after <limit>"
+  let parts = t.split("current time ")
+  if parts.len() == 2 {
+    let rest = parts[1].split(" is ")
+    if rest.len() == 2 {
+      t = parts[0] + "current time NOW is " + rest[1]
+    }
+  }
+  t
+}
+
+fn neterr(e: NetErr) -> Str {
+  match e {
+    NetErr.InvalidAddr(msg) => "InvalidAddr(${msg})"
+    NetErr.Refused => "Refused"
+    NetErr.Timeout => "Timeout"
+    NetErr.Io(msg) => "Io(${msg})"
+    NetErr.Canceled => "Canceled"
+    NetErr.Denied(addr) => "Denied(${addr})"
+  }
+}
+
+/// A GET /hello over t: the status line and the body's last line.
+fn get(t: tls.TlsConn) -> Str ! NetErr uses net {
+  t.write("GET /hello HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n".bytes())?
+  var all = b""
+  while {
+    match t.read(4096)? {
+      Some(b) => all = all + b
+      None => break
+    }
+  }
+  let lines = (all.to_str() ?? "").split("\r\n")
+  "${lines[0]} / ${lines[lines.len() - 1]}"
+}
+
+fn attempt(os: Os, label: Str, addrs: List[Str], addr: Str, host: Str, roots: tls.Roots?, verify: tls.Verify, alpn: List[Str] = []) {
+  let c = os.net.dial(addr).or_fault("dial")
+  match tls.client(c, host, roots: roots, verify: verify, alpn: alpn) {
+    Ok(t) => {
+      match get(t) {
+        Ok(s) => os.stdio.println("${label}: ${t.version()} alpn=\"${t.alpn()}\" ${s}")
+        Err(e) => os.stdio.println("${label}: request: ${norm(neterr(e), addrs)}")
+      }
+      t.close()
+    }
+    Err(e) => os.stdio.println("${label}: ${norm(neterr(e), addrs)}")
+  }
+}
+
+fn main(os: Os) {
+  match tls.roots(b"not pem") {
+    Ok(_) => os.stdio.println("roots: ok?")
+    Err(e) => os.stdio.println("roots: ${e.msg}")
+  }
+  let ca = tls.roots(ca_pem()).or_fault("roots")
+  let good = http.tls_cert(good_cert(), good_key()).or_fault("good")
+  let expired = http.tls_cert(expired_cert(), expired_key()).or_fault("expired")
+  let unknown = http.tls_cert(unknown_cert(), unknown_key()).or_fault("unknown")
+  let wrongip = http.tls_cert(wrongip_cert(), wrongip_key()).or_fault("wrongip")
+  let l1 = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let l2 = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let l3 = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let l4 = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let l5 = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let servers = [
+    http.server(l1, routes()).with_tls([good]),
+    http.server(l2, routes()).with_tls([expired]),
+    http.server(l3, routes()).with_tls([unknown]),
+    http.server(l4, routes()).with_tls([wrongip]),
+    http.server(l5, routes()),
+  ]
+  let addrs = [l1.addr(), l2.addr(), l3.addr(), l4.addr(), l5.addr()]
+  scope s {
+    for srv in servers {
+      s.spawn_background(fn() {
+        match srv.serve() {
+          Ok(_) => ()
+          Err(e) => os.stdio.println("serve failed: ${e}")
+        }
+      })
+    }
+    attempt(os, "full", addrs, l1.addr(), "127.0.0.1", Some(ca), tls.Verify.Full)
+    attempt(os, "alpn", addrs, l1.addr(), "127.0.0.1", Some(ca), tls.Verify.Full, alpn: ["http/1.1"])
+    attempt(os, "full wrong ip", addrs, l4.addr(), "127.0.0.1", Some(ca), tls.Verify.Full)
+    attempt(os, "chain only wrong ip", addrs, l4.addr(), "127.0.0.1", Some(ca), tls.Verify.ChainOnly)
+    attempt(os, "full other name", addrs, l1.addr(), "db.example", Some(ca), tls.Verify.Full)
+    attempt(os, "chain only other name", addrs, l1.addr(), "db.example", Some(ca), tls.Verify.ChainOnly)
+    attempt(os, "full unknown ca", addrs, l3.addr(), "127.0.0.1", Some(ca), tls.Verify.Full)
+    attempt(os, "chain only unknown ca", addrs, l3.addr(), "127.0.0.1", Some(ca), tls.Verify.ChainOnly)
+    attempt(os, "none unknown ca", addrs, l3.addr(), "127.0.0.1", Some(ca), tls.Verify.None)
+    attempt(os, "none system roots", addrs, l3.addr(), "127.0.0.1", None, tls.Verify.None)
+    attempt(os, "chain only expired", addrs, l2.addr(), "127.0.0.1", Some(ca), tls.Verify.ChainOnly)
+    attempt(os, "none expired", addrs, l2.addr(), "127.0.0.1", Some(ca), tls.Verify.None)
+    attempt(os, "not tls", addrs, l5.addr(), "127.0.0.1", Some(ca), tls.Verify.Full)
+    // the connection belongs to the TlsConn
+    let c = os.net.dial(l1.addr()).or_fault("dial")
+    let t = tls.client(c, "127.0.0.1", roots: Some(ca)).or_fault("client")
+    match c.write(b"x") {
+      Ok(_) => os.stdio.println("write after upgrade: ok?")
+      Err(e) => os.stdio.println("write after upgrade: ${neterr(e)}")
+    }
+    match c.read(1) {
+      Ok(_) => os.stdio.println("read after upgrade: ok?")
+      Err(e) => os.stdio.println("read after upgrade: ${neterr(e)}")
+    }
+    match tls.client(c, "127.0.0.1", roots: Some(ca)) {
+      Ok(_) => os.stdio.println("second upgrade: ok?")
+      Err(e) => os.stdio.println("second upgrade: ${neterr(e)}")
+    }
+    match get(t) {
+      Ok(r) => os.stdio.println("still works: ${r}")
+      Err(e) => os.stdio.println("still works: ${neterr(e)}")
+    }
+    t.close()
+    match t.read(10) {
+      Ok(_) => os.stdio.println("read after close: ok?")
+      Err(e) => os.stdio.println("read after close: ${neterr(e)}")
+    }
+  }
+  os.stdio.println("done")
+}
+
+// ---------------------------------------------------------------------------
+// Test certificates (golden http_tls's; PEM)
+fn ca_pem() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBXTCCAQOgAwIBAgIBAjAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAVMRMwEQYDVQQD\nEwpYbyBUZXN0IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEijw7AWGYTeLp\n/9oDX6t32fPfTkDcI/F29wXFQRBDz+0AxRDpI6PQf9UdiF9aZfB5AM5J3PdtARhw\nCIekwP7z7aNCMEAwDgYDVR0PAQH/BAQDAgKEMA8GA1UdEwEB/wQFMAMBAf8wHQYD\nVR0OBBYEFLrbZ5A0fzzE42xjrFaZTWKJC9Z6MAoGCCqGSM49BAMCA0gAMEUCIHzG\n+C1Oz2qF9sqKv6CMRcep89t3K01Um1dypPN+nE7ZAiEA3+DkafbsP8oH5cfghe/i\nMsgJIwR+YEK89sPkPWqn3nI=\n-----END CERTIFICATE-----\n".bytes() }
+fn good_cert() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBlzCCAT2gAwIBAgIBBDAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAPMQ0wCwYDVQQD\nEwRnb29kMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE9O8DlRiEOqE5kBcoi9Xg\nkTscb94E/jndT7qf0pYOYj1zJGJbD2l1bZAVsrAY5C3Wv2aAF51muJPDyheawAHK\nSqOBgTB/MA4GA1UdDwEB/wQEAwIHgDATBgNVHSUEDDAKBggrBgEFBQcDATAfBgNV\nHSMEGDAWgBS622eQNH88xONsY6xWmU1iiQvWejA3BgNVHREEMDAugglsb2NhbGhv\nc3SCCWdvb2QudGVzdIcEfwAAAYcQAAAAAAAAAAAAAAAAAAAAATAKBggqhkjOPQQD\nAgNIADBFAiAckDQ7jBugRRKa+Ugpt8hKU8GY0WGo4eWxak8QHej1hgIhAORlgKwn\niJ4cvV9cxqu4a2fovArW28G2KaR4WLfzeSBL\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nMIIBXTCCAQOgAwIBAgIBAjAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAVMRMwEQYDVQQD\nEwpYbyBUZXN0IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEijw7AWGYTeLp\n/9oDX6t32fPfTkDcI/F29wXFQRBDz+0AxRDpI6PQf9UdiF9aZfB5AM5J3PdtARhw\nCIekwP7z7aNCMEAwDgYDVR0PAQH/BAQDAgKEMA8GA1UdEwEB/wQFMAMBAf8wHQYD\nVR0OBBYEFLrbZ5A0fzzE42xjrFaZTWKJC9Z6MAoGCCqGSM49BAMCA0gAMEUCIHzG\n+C1Oz2qF9sqKv6CMRcep89t3K01Um1dypPN+nE7ZAiEA3+DkafbsP8oH5cfghe/i\nMsgJIwR+YEK89sPkPWqn3nI=\n-----END CERTIFICATE-----\n".bytes() }
+fn good_key() -> Bytes { "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgRJJMUtA6v5smeBFF\npZ933x7IwE6wYj/9NyjqnMscBwmhRANCAAT07wOVGIQ6oTmQFyiL1eCROxxv3gT+\nOd1Pup/Slg5iPXMkYlsPaXVtkBWysBjkLda/ZoAXnWa4k8PKF5rAAcpK\n-----END PRIVATE KEY-----\n".bytes() }
+fn expired_cert() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBejCCASCgAwIBAgIBBjAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMB4XDTAwMDEwMTAwMDAwMFoXDTAxMDEwMTAwMDAwMFowEjEQMA4GA1UEAxMH\nZXhwaXJlZDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABMvqYu5QbtjmRMoTv8AK\nuQYbVia2RA05T7JoW78V7Uq7N+01GbVrGrA5YbF1TZKlT5QtOAaJ580kdwJqQu83\nQwCjZDBiMA4GA1UdDwEB/wQEAwIHgDATBgNVHSUEDDAKBggrBgEFBQcDATAfBgNV\nHSMEGDAWgBS622eQNH88xONsY6xWmU1iiQvWejAaBgNVHREEEzARgglsb2NhbGhv\nc3SHBH8AAAEwCgYIKoZIzj0EAwIDSAAwRQIhAMciidKX/La//tC3HTLab+grh7tx\n3bK9twvtqI93zXRRAiBDSdtn9b6Xw7ukwG1scPZkpc+3OJH7uNV10M+NPP8Ycw==\n-----END CERTIFICATE-----\n".bytes() }
+fn expired_key() -> Bytes { "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg+4il0KnoEXq+wVfR\n7X637/VRJPhTxTjV+zAaulv6OxGhRANCAATL6mLuUG7Y5kTKE7/ACrkGG1YmtkQN\nOU+yaFu/Fe1KuzftNRm1axqwOWGxdU2SpU+ULTgGiefNJHcCakLvN0MA\n-----END PRIVATE KEY-----\n".bytes() }
+fn unknown_cert() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBfjCCASOgAwIBAgIBCDAKBggqhkjOPQQDAjAWMRQwEgYDVQQDEwtYbyBPdGhl\nciBDQTAgFw0yMDAxMDEwMDAwMDBaGA8yMTIwMDEwMTAwMDAwMFowEjEQMA4GA1UE\nAxMHdW5rbm93bjBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABJE2mbMxfiqEkB72\nBZbSndLuWM1GWhGNhJoCFaTrCdAMLZpnqFW5fnmEVeW3qYX5hD6pCFySvGht+xgP\n3SFHETCjZDBiMA4GA1UdDwEB/wQEAwIHgDATBgNVHSUEDDAKBggrBgEFBQcDATAf\nBgNVHSMEGDAWgBThd1TdOq6x1TDfNmNgmBOm2DKL9TAaBgNVHREEEzARgglsb2Nh\nbGhvc3SHBH8AAAEwCgYIKoZIzj0EAwIDSQAwRgIhAJ/EBGSW+w+zEFIvZ/6dGGxY\nkvJWKqKQrAApSn5Z1zC+AiEAy06894JG/cAapDNaP2Cl/YMf87ny3s5bpZ10Optc\nTig=\n-----END CERTIFICATE-----\n".bytes() }
+fn unknown_key() -> Bytes { "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgenxOrn5VHnZ3ntvp\nxVga8m4QJH80qS2cRNwUsZUZbHihRANCAASRNpmzMX4qhJAe9gWW0p3S7ljNRloR\njYSaAhWk6wnQDC2aZ6hVuX55hFXlt6mF+YQ+qQhckrxobfsYD90hRxEw\n-----END PRIVATE KEY-----\n".bytes() }
+fn wrongip_cert() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBeDCCAR2gAwIBAgIBCjAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjASMRAwDgYDVQQD\nEwd3cm9uZ2lwMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHkKB7Y8Tg18sYL4i\ntP+E+nuqpbQTvHnx4mSm7YkMUpV5R4KdyAR7YcsYkil8NMUoeKJTpsQhSkltaLzH\ngoFQkKNfMF0wDgYDVR0PAQH/BAQDAgeAMBMGA1UdJQQMMAoGCCsGAQUFBwMBMB8G\nA1UdIwQYMBaAFLrbZ5A0fzzE42xjrFaZTWKJC9Z6MBUGA1UdEQQOMAyHBH8AAAKH\nBAoAAAEwCgYIKoZIzj0EAwIDSQAwRgIhAP3i356C6IJoTXBd+J5gbQYtsvqXnHMu\nq590DG9ELItcAiEAo4qnKd6Es3M7jvvl8Q5LNzS/M2ocuY3z/58KBHJlsO0=\n-----END CERTIFICATE-----\n".bytes() }
+fn wrongip_key() -> Bytes { "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgUJh6ZX7WlOS8yh1z\nNt+GEqtwTaEDW4mNYfN3Kg1v4n2hRANCAAQeQoHtjxODXyxgviK0/4T6e6qltBO8\nefHiZKbtiQxSlXlHgp3IBHthyxiSKXw0xSh4olOmxCFKSW1ovMeCgVCQ\n-----END PRIVATE KEY-----\n".bytes() }

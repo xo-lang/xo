@@ -15,3 +15,4 @@ entries yet.
 - [binary.md](binary.md): std/binary (spec/std.md 22)
 - [crypto.md](crypto.md): std/crypto (spec/std.md 11)
 - [http.md](http.md): std/http (spec/std.md 4)
+- [tls.md](tls.md): std/tls (spec/std.md 27)

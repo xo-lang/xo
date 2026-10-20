@@ -2453,6 +2453,76 @@ func (v Testing_FsOp) XoDebug(b *strings.Builder) {
 
 func (v Testing_FsOp) M_debug(*Task) string { return Debug(v) }
 
+type Tls_Verify struct {
+	Tag int
+	P   any
+}
+
+func (v Tls_Verify) XoEq(x any) bool {
+	o, ok := x.(Tls_Verify)
+	if !ok || o.Tag != v.Tag {
+		return false
+	}
+	switch v.Tag {
+	}
+	return true
+}
+
+func (v Tls_Verify) XoHash() uint64 {
+	h := MixHash(uint64(7406372850315573347), uint64(v.Tag))
+	switch v.Tag {
+	}
+	return h
+}
+
+func (v Tls_Verify) XoDebug(b *strings.Builder) {
+	switch v.Tag {
+	case 1:
+		b.WriteString("Full")
+	case 2:
+		b.WriteString("ChainOnly")
+	case 3:
+		b.WriteString("None")
+	}
+}
+
+func (v Tls_Verify) M_debug(*Task) string { return Debug(v) }
+
+func (v Tls_Verify) M_display(*Task) string { return Debug(v) }
+
+type Tls_TlsErr struct {
+	F_msg string
+}
+
+func (v Tls_TlsErr) XoEq(x any) bool {
+	o, ok := x.(Tls_TlsErr)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_msg, o.F_msg) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Tls_TlsErr) XoHash() uint64 {
+	h := uint64(1735216609364297291)
+	h = MixHash(h, Hash(v.F_msg))
+	return h
+}
+
+func (v Tls_TlsErr) XoDebug(b *strings.Builder) {
+	b.WriteString("TlsErr{")
+	b.WriteString("msg: ")
+	DebugTo(b, v.F_msg)
+	b.WriteString("}")
+}
+
+func (v Tls_TlsErr) M_debug(*Task) string { return Debug(v) }
+
+func (v Tls_TlsErr) M_display(*Task) string { return Debug(v) }
+
 type Time_ZoneErr struct {
 	Tag int
 	P   any

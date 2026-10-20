@@ -2275,7 +2275,7 @@ test "retries after 503" {
 | `xo serve` | Resident checker on a unix socket; `xo check` and `xo query` use it automatically when it answers |
 | `xo fmt` | Canonical format, no options |
 | `xo fix [--dry-run] [--from=draft-0.N] [--edition=preview]` | Apply all machine fixes until none apply, xo.mod and xo.work lines included (`edition 2026` becomes `edition preview`, `xo 2026` becomes `xo preview`, `XO1315`); `--from` migrates code written for an older draft (interpolation, prelude variants, `let _ =` discards, scope timeouts, Map index reads) |
-| `xo vet` | Advisory checks, never errors: checker warnings plus `XO0207` (`??` precedence trap), `XO0208` (each `ignore_err` with its reason), `XO0530` (a field's large payload bound and shared, decision 0263), `XO0531` (a large parameter only stored while each caller passes its last use, decision 0263), `XO0532` (a Map value changed through a copy and stored back, `Map.update` instead; decision 0266), `XO0703` (declared effect never performed), `XO0901` (`dbg` left in code), `XO1103` (use of Go packages per module) |
+| `xo vet` | Advisory checks, never errors: checker warnings plus `XO0207` (`??` precedence trap), `XO0208` (each `ignore_err` with its reason), `XO0530` (a field's large payload bound and shared, decision 0263), `XO0531` (a large parameter only stored while each caller passes its last use, decision 0263), `XO0532` (a Map value changed through a copy and stored back, `Map.update` instead; decision 0266), `XO0703` (declared effect never performed), `XO0901` (`dbg` left in code), `XO0902` (`tls.Verify.None`, decision 0281), `XO1103` (use of Go packages per module) |
 | `xo def`, `xo refs`, `xo type`, `xo doc NAME`, `xo symbols` | Agents' lookups on `xo lsp`'s engine (decision 0261): `def NAME` (`Type.method` or a bare name, `--methods`), `refs NAME`, `type FILE:LINE:COL`, `doc NAME` (a name, not a path), `symbols [--all]`; `--dir`, `--json`; exit 0 with an answer, 1 for no match, 2 for usage |
 | `xo query <kind> ...` | Semantic queries (10.3): `type`, `def`, `callers`, `effects`, `holes`, `api`, `imports`, `deps` |
 | `xo edit <op> ...` | Semantic edits (10.4) |
@@ -2617,6 +2617,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0804` | warning | checker | value read in one `Mutex.with` is written back in a later one (core 5.4) |
 | `XO0900` | warning | checker | typed hole report (core 3.7) |
 | `XO0901` | warning | vet | `dbg(...)` left in code (core 11.4) |
+| `XO0902` | warning | vet | `tls.Verify.None`: a TLS client that checks no certificate (std.md 27, decision 0281) |
 | `XO1001` | error | reserved | `std/sys/<os>` used outside the matching target arm (core 12.2) |
 | `XO1101` | error | checker | Go package cannot be bound (not found, does not build, main package, or binding error) |
 | `XO1102` | error | checker | Go name exists but its signature does not map to Xo, so the binding skipped it |

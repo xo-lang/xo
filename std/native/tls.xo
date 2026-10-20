@@ -1,0 +1,172 @@
+// std/tls on the native backends (decision 0281): the client of
+// std/native/llrt/tlsio.xo (the http client's) on a connection the
+// program dialed. std/rt/tls.go is the Go backend's.
+use std/tls
+use native/rt
+use native/rthttp
+use native/llrt/cabi_tlsclient
+use native/llrt/netconn
+use native/llrt/raw
+use native/llrt/tlsio
+use native/llrt/twflags
+
+struct Roots {
+  r: rthttp.Roots
+}
+
+/// The connection (counted: the TLS state uses its descriptor), its TLS
+/// state (none on FakeNet: the bytes pass through), and whether close ran.
+struct TlsConn {
+  c: Conn
+  h: rthttp.TlsH?
+}
+
+/// The text of a read or write after close (Go's net.ErrClosed).
+const CLOSED_TEXT = "use of closed network connection"
+
+/// The test world's real network (netconn.xo TW_REAL_NET).
+const TW_REAL_NET = 4
+
+fn roots(pem: Bytes) -> Roots ! tls.TlsErr {
+  let r = tlsio.roots_pem(pem)
+  let e = tlsio.roots_err(r)
+  if !e.is_empty() {
+    return Err(tls.TlsErr{msg: e})
+  }
+  Roots{r: r}
+}
+
+fn client(c: Conn, host: Str, roots: Roots? = None, verify: tls.Verify = tls.Verify.Full, alpn: List[Str] = []) -> TlsConn ! NetErr uses net.dial {
+  let cn = rt.obj_addr(c)
+  if netconn.conn_upgraded(cn) {
+    return Err(NetErr.Io(msg: "use of a connection upgraded to TLS"))
+  }
+  netconn.conn_upgrade(cn)
+  if twflags.fake(TW_REAL_NET) {
+    // FakeNet: no TLS, the connection's bytes pass through
+    return TlsConn{c: c, h: None}
+  }
+  let r = match roots {
+    Some(x) => x.r
+    None => tlsio.roots_system_at(rt.fn_addr("tls_roots_free"), true)
+  }
+  let v = match verify {
+    Full => tlsio.VERIFY_FULL
+    ChainOnly => tlsio.VERIFY_CHAIN
+    None => tlsio.VERIFY_NONE
+  }
+  let started = tlsio.client_with(netconn.conn_pd(cn), host, rt.obj_addr(r), 0, alpn, v)
+  if started.status == tlsio.CC_TIMEOUT {
+    return Err(NetErr.Timeout)
+  }
+  if started.status == tlsio.CC_CANCELED {
+    return Err(NetErr.Canceled)
+  }
+  if started.status != tlsio.CC_OK {
+    // the http client's text for a plain HTTP server is net/http's;
+    // crypto/tls's own is this
+    let msg = if started.msg == "http: server gave HTTP response to HTTPS client" { "tls: first record does not look like a TLS handshake" } else { started.msg }
+    return Err(NetErr.Io(msg: msg))
+  }
+  TlsConn{c: c, h: Some(tlsio.handle_new(started.conn))}
+}
+
+fn (t: TlsConn) read(max: Int) -> Bytes? ! NetErr uses net {
+  let h = match t.h {
+    Some(x) => {
+      if tlsio.handle_closed(x) {
+        return Err(NetErr.Io(msg: CLOSED_TEXT))
+      }
+      tlsio.handle_conn(x)
+    }
+    None => return passthrough_read(t.c, max)
+  }
+  if max <= 0 {
+    return Some(b"")
+  }
+  let n = if max > 1048576 { 1048576 } else { max }
+  let buf = raw.bytes_buf(n)
+  let k = tlsio.read(h, raw.bytes_addr(buf), n)
+  if k > 0 {
+    return Some(raw.bytes_len(buf, k))
+  }
+  if k == 0 {
+    return None
+  }
+  Err(cc_err(-k, "read", tlsio.alert(h)))
+}
+
+fn (t: TlsConn) write(data: Bytes) -> () ! NetErr uses net {
+  let h = match t.h {
+    Some(x) => {
+      if tlsio.handle_closed(x) {
+        return Err(NetErr.Io(msg: CLOSED_TEXT))
+      }
+      tlsio.handle_conn(x)
+    }
+    None => return passthrough_write(t.c, data)
+  }
+  let s = tlsio.write(h, raw.bytes_addr(data), data.len())
+  raw.alive(data)
+  if s != tlsio.CC_OK {
+    return Err(cc_err(s, "write", tlsio.alert(h)))
+  }
+}
+
+fn (t: TlsConn) close() {
+  if let Some(x) = t.h {
+    if tlsio.handle_closed(x) {
+      return
+    }
+    tlsio.handle_close(x)
+    tlsio.close_notify(tlsio.handle_conn(x))
+  }
+  netconn.conn_close(rt.obj_addr(t.c))
+}
+
+fn (t: TlsConn) alpn() -> Str {
+  match t.h {
+    Some(x) => tlsio.alpn_of(tlsio.handle_conn(x))
+    None => ""
+  }
+}
+
+fn (t: TlsConn) version() -> Str {
+  match t.h {
+    Some(x) => tlsio.version_of(tlsio.handle_conn(x))
+    None => "TLS 1.3"
+  }
+}
+
+/// The NetErr of a failed read or write (tlsio CC_*): a server's alert's
+/// text, else Go's text of a closed or broken connection.
+fn cc_err(status: Int, op: Str, alert: Str) -> NetErr {
+  if status == tlsio.CC_TIMEOUT {
+    return NetErr.Timeout
+  }
+  if status == tlsio.CC_CANCELED {
+    return NetErr.Canceled
+  }
+  if !alert.is_empty() {
+    return NetErr.Io(msg: alert)
+  }
+  NetErr.Io(msg: "${op} tcp: use of closed network connection")
+}
+
+/// FakeNet's TlsConn reads the connection itself. The connection is
+/// marked upgraded, so its own read refuses: lift the mark around it.
+fn passthrough_read(c: Conn, max: Int) -> Bytes? ! NetErr uses net {
+  let cn = rt.obj_addr(c)
+  netconn.conn_unupgrade(cn)
+  let r = c.read(max)
+  netconn.conn_upgrade(cn)
+  r
+}
+
+fn passthrough_write(c: Conn, data: Bytes) -> () ! NetErr uses net {
+  let cn = rt.obj_addr(c)
+  netconn.conn_unupgrade(cn)
+  let r = c.write(data)
+  netconn.conn_upgrade(cn)
+  r
+}

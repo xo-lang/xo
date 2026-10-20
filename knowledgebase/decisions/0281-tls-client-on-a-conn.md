@@ -1,7 +1,12 @@
 # 0281: A TLS client on an existing connection (std/tls)
 
-Status: Proposed (2026-10-20, Xo Lang 3; the spec section below is for
-the owner's approval before any code)
+Status: Accepted (owner, 2026-10-20), as drafted, with the `xo vet`
+warning on `Verify.None` in the same change (XO0902; its message names
+`ChainOnly` and `roots:` as the safer choices). Implemented 2026-10-20
+(Xo Lang 3): spec/std.md 27, std/tls.xo, std/native/tls.xo,
+std/rt/tls.go, golden tls_client. Until decision 0280 lands, a TlsConn's
+read and write are `uses net`, as Conn's are; they narrow to `net.dial`
+with it.
 
 ## Context
 
@@ -24,7 +29,7 @@ path), and tls12.Conf has `insecure`.
 
 ## Decision (proposed): the spec section
 
-A new section of spec/std.md, `std/tls`:
+A new section of spec/std.md, `std/tls` (section 27):
 
 ```
 use std/tls
@@ -66,7 +71,7 @@ fn pg_tls(os: Os, addr: Str, host: Str) -> tls.TlsConn ! Error uses net.dial {
   client does (4.6); `ChainOnly` checks the chain but not the name
   (libpq's `verify-ca`); `None` checks nothing and only encrypts
   (`require`): it accepts any certificate, so it does not stop an active
-  attacker. `xo vet` may flag `Verify.None` (later).
+  attacker. `xo vet` reports each use (`XO0902`).
 - `roots`: `None` is the system's roots, as the http client's
   (macOS's trust settings, Linux's CA bundle and directories with
   `SSL_CERT_FILE` and `SSL_CERT_DIR`); `tls.roots(pem)` trusts exactly

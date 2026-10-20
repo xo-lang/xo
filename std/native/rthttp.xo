@@ -20,3 +20,7 @@ struct Sink {}
 /// The roots a client trusts (std/native/llrt/tlsio.xo's record: the
 /// certificates parsed by x509.xo, or the system's).
 struct Roots {}
+
+/// A std/tls client connection's TLS state (decision 0281): a handle
+/// whose word is tlsio.xo's connection (tlsio.handle_new).
+struct TlsH {}

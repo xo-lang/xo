@@ -116,6 +116,11 @@ fn vet_module(c: check.Checker, m: Int) -> List[Diag] {
         Block(b) => {
           out = out + copy_store(c, f, path, b)
         }
+        SelectorExpr(span, _, sel) => {
+          if let Some(d) = verify_none(c, f, path, e, span, sel) {
+            out.push(d)
+          }
+        }
         _ => {}
       }
     }
@@ -504,6 +509,17 @@ fn lit_text(e: parser.Expr) -> Str {
   }
 }
 
+/// XO0902 (decision 0281): `tls.Verify.None`, a TLS client that checks no
+/// certificate (encryption without authentication).
+fn verify_none(c: check.Checker, f: Int, file: Str, e: parser.Expr, span: parser.Span, sel: parser.Ident) -> Diag? {
+  if sel.name != b"None" || c.type_text_in(f, e) != "tls.Verify" {
+    return None
+  }
+  var d = vdiag("XO0902", false, file, span, "`tls.Verify.None` checks no certificate: the connection is encrypted but an active attacker can stand in for the server")
+  d.notes.push(check.DNote{message: "`tls.Verify.ChainOnly` checks the chain without the host name (libpq's verify-ca); `roots: tls.roots(pem)` trusts a private CA with full checks (std.md 27)"})
+  Some(d)
+}
+
 /// XO0208 for `.ignore_err` and XO0901 for `dbg` calls.
 fn vet_call(c: check.Checker, f: Int, file: Str, call: parser.Expr, span: parser.Span, fun: parser.Expr, args: List[parser.Arg]) -> Diag? {
   let ci = match c.call_in(f, call) {
@@ -826,7 +842,11 @@ fn walk_expr(e: parser.Expr, var out: List[parser.Expr]) {
         walk_expr(x, out)
       }
     }
-    SelectorExpr(_, x, _) => walk_expr(x, out)
+    SelectorExpr(_, x, _) => {
+      // XO0902 reads the selector itself
+      out.push(e)
+      walk_expr(x, out)
+    }
     TypeArgsExpr(_, x, _) => walk_expr(x, out)
     IndexExpr(_, x, index) => {
       walk_expr(x, out)

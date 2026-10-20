@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- std/tls: a TLS client on a connection the program dialed
+  (`tls.client(conn, host)`), for protocols that upgrade a plaintext
+  connection (Postgres's sslmode, SMTP STARTTLS, Redis). It verifies the
+  certificate and host name by default; `Verify.ChainOnly` skips the
+  name and `Verify.None` only encrypts (`xo vet` warns, XO0902).
 - `xo build --race --backend=arm64` on macOS: the arm64 backend checks
   races itself (decision 0273), with no clang: it calls
   ThreadSanitizer at the program's loads, stores, and atomics, and Xo's

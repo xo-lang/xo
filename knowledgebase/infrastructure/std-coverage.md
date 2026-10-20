@@ -43,6 +43,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | std/url | 20 | `std/changes/url.md` |
 | std/base64, std/base32 | 21 | `std/changes/base64.md`, `std/changes/base32.md` |
 | std/binary | 22 | `std/changes/binary.md` |
+| std/tls | 27 | `std/changes/tls.md` |
 
 ## Go packages
 

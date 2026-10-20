@@ -659,6 +659,8 @@ pub struct Conf {
   /// time of an expired certificate's error in time.Local (tlsio sets
   /// it; tls13.Conf's zone_off).
   pub zone_off: Int = 0
+  /// std/tls Verify.ChainOnly (decision 0281, tls13.xo's)
+  pub chain_only: Bool = false
 }
 
 /// Go's defaults for host: the AEAD suites, X25519 then P-256 and P-384.
@@ -1298,8 +1300,9 @@ fn verify_certificates(var c: Client) -> Bool {
   if !c.conf.insecure && c.conf.apple_svc != 0 {
     // Go's systemVerify on macOS (tls13.xo's path; TLS 1.2 sends
     // bad_certificate for every failure)
-    let r = if leaf.unhandled > 0 { tlscert.AppleRes{code: 10, msg: "x509: unhandled critical extension"} } else { tlscert.apple_trust(c.conf.apple_svc, c.certs, c.conf.host) }
-    let code = if r.code == 0 && c.conf.host != "" && !x509verify.host_ok(leaf, c.conf.host) { 7 } else { r.code }
+    let vh = if c.conf.chain_only { "" } else { c.conf.host }
+    let r = if leaf.unhandled > 0 { tlscert.AppleRes{code: 10, msg: "x509: unhandled critical extension"} } else { tlscert.apple_trust(c.conf.apple_svc, c.certs, vh) }
+    let code = if r.code == 0 && vh != "" && !x509verify.host_ok(leaf, vh) { 7 } else { r.code }
     if code != 0 {
       let msg = if code == 1 {
         "x509: certificate signed by unknown authority"
@@ -1312,9 +1315,10 @@ fn verify_certificates(var c: Client) -> Bool {
       return false
     }
   } else if !c.conf.insecure {
-    let r = x509verify.verify(leaf, certs[1..certs.len()], c.conf.roots, c.conf.host, c.conf.now, x509.EKU_SERVER)
+    let vh = if c.conf.chain_only { "" } else { c.conf.host }
+    let r = x509verify.verify(leaf, certs[1..certs.len()], c.conf.roots, vh, c.conf.now, x509.EKU_SERVER)
     if r.code != x509verify.OK {
-      fail(c, ALERT_BAD_CERTIFICATE, "tls: failed to verify certificate: ${verify_msg(r, leaf, c.conf.host, c.conf.now, c.conf.zone_off)}")
+      fail(c, ALERT_BAD_CERTIFICATE, "tls: failed to verify certificate: ${verify_msg(r, leaf, vh, c.conf.now, c.conf.zone_off)}")
       return false
     }
   }

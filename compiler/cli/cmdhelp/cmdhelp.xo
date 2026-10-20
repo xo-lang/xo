@@ -329,7 +329,8 @@ usage: xo vet [--json] [dirs...]
 Advisory checks (never errors, exit 0): the warnings of check, unused
 declared effects (XO0703), x ?? [].f() precedence traps (XO0207), every
 .ignore_err reason (XO0208), use go packages and functions that perform
-go per module (XO1103), dbg(...) left in code (XO0901). Default: .
+go per module (XO1103), dbg(...) left in code (XO0901), tls.Verify.None
+(XO0902). Default: .
 """
 }
 

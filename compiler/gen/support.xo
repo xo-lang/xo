@@ -202,6 +202,10 @@ fn (var g: Gen) std_default(e: Expr, t: Int) -> Str {
       if id.name == b"true" || id.name == b"false" {
         return check.text(id.name)
       }
+      if id.name == b"None" {
+        // an absent Option (std/tls's roots: Roots? = None): its zero value
+        return g.go_type(t) + "{}"
+      }
     }
     _ => {}
   }

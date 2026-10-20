@@ -1,0 +1,23 @@
+exit 0
+--- stdout
+roots: tls: no certificates found in PEM input
+full: TLS 1.3 alpn="" HTTP/1.1 200 OK / hello over tls
+alpn: TLS 1.3 alpn="http/1.1" HTTP/1.1 200 OK / hello over tls
+full wrong ip: Io(tls: failed to verify certificate: x509: certificate is valid for 127.0.0.2, 10.0.0.1, not 127.0.0.1)
+chain only wrong ip: TLS 1.3 alpn="" HTTP/1.1 200 OK / hello over tls
+full other name: Io(tls: failed to verify certificate: x509: certificate is valid for localhost, good.test, not db.example)
+chain only other name: TLS 1.3 alpn="" HTTP/1.1 200 OK / hello over tls
+full unknown ca: Io(tls: failed to verify certificate: x509: certificate signed by unknown authority)
+chain only unknown ca: Io(tls: failed to verify certificate: x509: certificate signed by unknown authority)
+none unknown ca: TLS 1.3 alpn="" HTTP/1.1 200 OK / hello over tls
+none system roots: TLS 1.3 alpn="" HTTP/1.1 200 OK / hello over tls
+chain only expired: Io(tls: failed to verify certificate: x509: certificate has expired or is not yet valid: current time NOW is after 2001-01-01T00:00:00Z)
+none expired: TLS 1.3 alpn="" HTTP/1.1 200 OK / hello over tls
+not tls: Io(tls: first record does not look like a TLS handshake)
+write after upgrade: Io(use of a connection upgraded to TLS)
+read after upgrade: Io(use of a connection upgraded to TLS)
+second upgrade: Io(use of a connection upgraded to TLS)
+still works: HTTP/1.1 200 OK / hello over tls
+read after close: Io(use of closed network connection)
+done
+--- stderr

@@ -46,9 +46,14 @@ const L_MEM = 32
 const L_UNLINK = 40
 const L_SIZE = 48
 
-/// A connection (xo_rt.c xo_conn): its descriptor.
+/// A connection (xo_rt.c xo_conn): its descriptor, and whether std/tls
+/// took it over (decision 0281: then its own read and write fail).
 const C_PD = 16
-const C_SIZE = 24
+const C_UP = 24
+const C_SIZE = 32
+
+/// The error of a read or write on a connection std/tls took over.
+const UPGRADED_TEXT = "use of a connection upgraded to TLS"
 
 /// The test world's real network (xo_rt.c TW_REAL_NET).
 const TW_REAL_NET = 4
@@ -466,9 +471,24 @@ fn conn_new(c: Int, fd: Int, pd0: Int) -> Int {
   }
   let cn = new_handle(C_SIZE, rt.fn_addr("nc_conn_free"))
   st(cn, C_PD, pd)
+  st(cn, C_UP, 0)
   ok(c)
   cn
 }
+
+/// The poll descriptor of connection handle cn (std/tls).
+pub fn conn_pd(cn: Int) -> Int { ld(cn, C_PD) }
+
+/// Marks connection handle cn as taken over by std/tls: its read and
+/// write fail from now on (decision 0281).
+pub fn conn_upgrade(cn: Int) { st(cn, C_UP, 1) }
+
+/// Lifts conn_upgrade (std/tls on FakeNet reads and writes through the
+/// connection itself).
+pub fn conn_unupgrade(cn: Int) { st(cn, C_UP, 0) }
+
+/// Whether std/tls took connection handle cn over.
+pub fn conn_upgraded(cn: Int) -> Bool { ld(cn, C_UP) != 0 }
 
 /// A connection's free function (the services record's).
 pub fn conn_free(cn: Int) {
@@ -920,6 +940,10 @@ pub fn conn_read(cn: Int, max0: Int, np: Int) -> Int {
     return list_of(raw.str_at(0, 0), np)
   }
   let max = if max0 > 1048576 { 1048576 } else { max0 }
+  if ld(cn, C_UP) != 0 {
+    fail(c, 4, UPGRADED_TEXT)
+    return 0
+  }
   let pd = ld(cn, C_PD)
   if !poll.pd_begin(pd) {
     fail(c, 4, "read tcp: ${CLOSED_TEXT}")
@@ -968,6 +992,10 @@ pub fn conn_write(cn: Int, p: Int, n: Int) {
   let c = ctx.cur()
   if poll.canceled() {
     fail(c, 5, "")
+    return
+  }
+  if ld(cn, C_UP) != 0 {
+    fail(c, 4, UPGRADED_TEXT)
     return
   }
   let pd = ld(cn, C_PD)

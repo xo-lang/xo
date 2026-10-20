@@ -2720,3 +2720,73 @@ pub fn get_varint(b: Bytes, at: Int) -> (Int, Int)?
   `get_varint` return None instead, as Go's `n <= 0` (also for a
   negative `at`).
 - Build messages with a `BytesBuilder`: `bb.write(binary.u32_be(len))`.
+## 27. std/tls
+
+A TLS client on a connection the program dialed (decision 0281): the
+STARTTLS shape of Postgres's SSLRequest, SMTP, and Redis, where the
+client speaks plaintext first and then upgrades the same socket.
+
+```
+enum Verify { Full, ChainOnly, None }
+struct Roots {}                                    // handle: trusted certificates
+struct TlsErr { msg: Str }
+fn roots(pem: Bytes) -> Roots ! TlsErr
+struct TlsConn {}                                  // handle
+fn client(c: Conn, host: Str, roots: Roots? = None, verify: Verify = Verify.Full, alpn: List[Str] = []) -> TlsConn ! NetErr uses net.dial
+fn (t: TlsConn) read(max: Int) -> Bytes? ! NetErr  uses net
+fn (t: TlsConn) write(data: Bytes) -> () ! NetErr  uses net
+fn (t: TlsConn) close()
+fn (t: TlsConn) alpn() -> Str                      // the protocol the server chose, "" for none
+fn (t: TlsConn) version() -> Str                   // "TLS 1.2" or "TLS 1.3"
+```
+
+```
+fn pg_tls(os: Os, addr: Str, host: Str) -> tls.TlsConn ! Error uses net {
+  let c = os.net.dial(addr)?
+  c.write(ssl_request())?
+  if c.read(1)? != Some(b"S") {
+    return Err(Error.msg("server refused TLS"))
+  }
+  tls.client(c, host)?
+}
+```
+
+- `client` runs a TLS 1.2 or 1.3 client handshake (Go's default cipher
+  suites and curves) on `c` and returns the encrypted connection. `c`
+  belongs to the TlsConn from then on: a `read` or `write` on `c`, or a
+  second `client`, fails with `Io("use of a connection upgraded to
+  TLS")`; `close` sends close_notify and closes `c`; a `read` or `write`
+  after `close` is `Io("use of closed network connection")`. `host` is
+  the server name sent by SNI (not for an IP address) and the name
+  verified.
+- `verify`: `Full` checks the chain against the roots and the host name
+  (an IP address against the certificate's IP addresses), as the http
+  client does (4.6); `ChainOnly` checks the chain but not the name
+  (libpq's `sslmode=verify-ca`); `None` checks nothing and only encrypts
+  (`sslmode=require`): it accepts any certificate, so it does not stop an
+  active attacker, and `xo vet` reports each use (`XO0902`).
+- `roots`: `None` is the system's roots, as the http client's (macOS's
+  trust settings; Linux's CA bundle and directories, `SSL_CERT_FILE` and
+  `SSL_CERT_DIR`); `tls.roots(pem)` trusts exactly the certificates of
+  `pem`, with http's `with_roots` parser and its error
+  (`TlsErr("tls: no certificates found in PEM input")`).
+- Errors are `NetErr`s with Go's texts: a certificate that does not
+  verify is `Io("tls: failed to verify certificate: x509: ...")`; a
+  server that does not speak TLS is `Io("tls: first record does not look
+  like a TLS handshake")`. The handshake must finish within 10 seconds,
+  else `Timeout`; it and every read and write are cancellation points
+  (`Canceled`, core 7.2).
+- `alpn` lists the protocols offered (none by default); `alpn()` is the
+  one the server chose.
+- Tests: on FakeNet `client` does no TLS: the TlsConn reads and writes the
+  connection's plain bytes, `alpn()` is "" and `version()` is "TLS
+  1.3", so a driver's tests can run an in-process fake server. Real TLS
+  is covered by golden `tls_client` (every backend) and Docker
+  differential tests against Go.
+- Effects: `client` is `net.dial`, since only a dialed connection is
+  upgraded. A TlsConn's `read` and `write` are `net`, as `Conn`'s are
+  until decision 0280 makes a dialed connection's `net.dial`; then
+  they narrow with it.
+- Backends: native (std/native/llrt/tlsio.xo, the http client's TLS, on
+  the connection's descriptor) and Go (crypto/tls; `ChainOnly` as
+  InsecureSkipVerify with a check of the chain alone). Wasm has no Net.

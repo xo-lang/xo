@@ -1,0 +1,35 @@
+// std/tls (spec/std.md 27, decision 0281). Declaration file; encoding
+// rules are listed at the top of std/prelude.xo. A TLS client on a
+// connection the program dialed itself (the STARTTLS shape: Postgres's
+// SSLRequest, SMTP, Redis).
+
+/// How the server's certificate is checked (std.md 27).
+enum Verify {
+  Full
+  ChainOnly
+  None
+} derive Display
+
+/// Certificates a client trusts (std.md 27); a handle.
+struct Roots {}
+
+struct TlsErr {
+  msg: Str
+} derive Display
+
+/// Parses the CERTIFICATE blocks of a PEM text, as http's with_roots.
+fn roots(pem: Bytes) -> Roots ! TlsErr
+
+/// A TLS connection (std.md 27); a handle.
+struct TlsConn {}
+
+/// Runs a TLS client handshake on c, which belongs to the result from
+/// then on (std.md 27).
+fn client(c: Conn, host: Str, roots: Roots? = None, verify: Verify = Verify.Full, alpn: List[Str] = []) -> TlsConn ! NetErr uses net.dial
+fn (t: TlsConn) read(max: Int) -> Bytes? ! NetErr uses net
+fn (t: TlsConn) write(data: Bytes) -> () ! NetErr uses net
+fn (t: TlsConn) close()
+/// The protocol the server chose by ALPN, "" for none.
+fn (t: TlsConn) alpn() -> Str
+/// "TLS 1.2" or "TLS 1.3".
+fn (t: TlsConn) version() -> Str

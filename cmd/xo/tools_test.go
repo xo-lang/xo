@@ -175,6 +175,60 @@ func TestVetCLI(t *testing.T) {
 	}
 }
 
+// TestVetVerifyNone: XO0902 (decision 0281) flags tls.Verify.None, once
+// per use, and nothing else named None (a program's own enum, Option).
+func TestVetVerifyNone(t *testing.T) {
+	t.Parallel()
+	dir := writeFiles(t, map[string]string{"main.xo": `use std/tls
+
+enum Mode {
+  On
+  None
+} derive Display
+
+fn pick(strict: Bool) -> tls.Verify {
+  if strict {
+    return tls.Verify.ChainOnly
+  }
+  tls.Verify.None
+}
+
+fn main(os: Os) {
+  let m = Mode.None
+  let o: Int? = None
+  os.stdio.println("${pick(false)} ${m} ${o ?? 0}")
+}
+`})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"vet", "--json", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	var res struct {
+		Diagnostics []struct {
+			Code string `json:"code"`
+			Span struct {
+				Line int `json:"line"`
+			} `json:"span"`
+		} `json:"diagnostics"`
+		CheckErrors int `json:"check_errors"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &res); err != nil {
+		t.Fatalf("bad JSON: %v\n%s", err, out.String())
+	}
+	var lines []int
+	for _, d := range res.Diagnostics {
+		if d.Code == "XO0902" {
+			lines = append(lines, d.Span.Line)
+		}
+	}
+	if res.CheckErrors != 0 {
+		t.Errorf("check errors: %d\n%s", res.CheckErrors, out.String())
+	}
+	if len(lines) != 1 || lines[0] != 12 {
+		t.Errorf("XO0902 at lines %v, want [12]\n%s", lines, out.String())
+	}
+}
+
 // copyStoreProg has the shape of decision 0266, a copy changed and
 // stored back (XO0532, line 4), and three that are not: a store with
 // another statement between, a copy that is only read, and the update

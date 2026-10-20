@@ -9,6 +9,7 @@
 // are UNTESTED.
 use native/llrt/atexit
 use native/llrt/hconn
+use native/llrt/obj
 use native/llrt/poll
 use native/llrt/process
 use native/llrt/raw
@@ -26,10 +27,10 @@ use native/rt
 use native/rthttp
 
 // the results of reads and writes (hclient.xo CC_*)
-const CC_OK: Int = 0
-const CC_TIMEOUT: Int = 2
-const CC_CANCELED: Int = 3
-const CC_ERR: Int = 4
+pub const CC_OK: Int = 0
+pub const CC_TIMEOUT: Int = 2
+pub const CC_CANCELED: Int = 3
+pub const CC_ERR: Int = 4
 
 /// MSG_NOSIGNAL of Linux's send (sock.send ignores it elsewhere).
 const NOSIGNAL = 16384
@@ -106,6 +107,8 @@ fn take_in(var c: Conn, data: Bytes) {
     var cf = tls12.conf(c.cl.conf.host, c.cl.conf.roots, c.cl.conf.now)
     cf.apple_svc = c.cl.conf.apple_svc
     cf.zone_off = c.cl.conf.zone_off
+    cf.insecure = c.cl.conf.insecure
+    cf.chain_only = c.cl.conf.chain_only
     cf.alpn = c.cl.conf.alpn
     // the offered ones: a TLS 1.3 suite picked under 1.2 is refused
     cf.suites = c.cl.conf.legacy_suites
@@ -200,12 +203,21 @@ pub fn roots_err(r: rthttp.Roots) -> Str {
 /// parsed at the first handshake that needs them (system_certs), not
 /// here: a client that makes no https request does not pay for them (61M
 /// instructions on linux/arm64, callgrind 2026-10-16).
-pub fn roots_system() -> rthttp.Roots {
+pub fn roots_system() -> rthttp.Roots { roots_system_at(rt.fn_addr("streams_free"), false) }
+
+/// roots_system for std/tls (decision 0281): at, the at-exit function
+/// that frees the roots (cabi_tlsclient.xo's), registered only when nothing
+/// is (only_unset), as std/http's streams_free frees them too.
+pub fn roots_system_at(at: Int, only_unset: Bool) -> rthttp.Roots {
   let w = rt.static_word(31)
   var s = rt.slot_load(w, 0, ACQUIRE)
   if s == 0 {
     // freed at exit with std/http's state (entry.xo, decision 0233)
-    atexit.set_streams(rt.fn_addr("streams_free"))
+    if only_unset {
+      atexit.set_streams_if_unset(at)
+    } else {
+      atexit.set_streams(at)
+    }
     let cell = rt.heap_large(8)
     rt.mem_store(cell, 0, 0, 8)
     let mine = keep(rt.any_of(RootsData{certs: [], err: "", system: true, cell: cell}))
@@ -258,7 +270,17 @@ fn failed(status: Int, kind: Int, msg: Str) -> Start { Start{status: status, con
 /// The client's handshake on poll descriptor pd for host (the URL's
 /// host, IPv6 in brackets) with roots (a rthttp.Roots record) by the
 /// deadline dl (0 none; and the 10 s TLSHandshakeTimeout).
-pub fn client(pd: Int, host: Str, roots: Int, dl: Int) -> Start {
+pub fn client(pd: Int, host: Str, roots: Int, dl: Int) -> Start { client_with(pd, host, roots, dl, ["h2", "http/1.1"], VERIFY_FULL) }
+
+/// std/tls's Verify (decision 0281): the chain and the host name, the
+/// chain only (libpq's verify-ca), nothing (require: encryption only).
+pub const VERIFY_FULL = 0
+pub const VERIFY_CHAIN = 1
+pub const VERIFY_NONE = 2
+
+/// client with the ALPN protocols offered (none: no extension) and the
+/// verification (VERIFY_*); std/tls's client (decision 0281).
+pub fn client_with(pd: Int, host: Str, roots: Int, dl: Int, protos: List[Str], verify: Int) -> Start {
   let data = match roots_data(roots) {
     Some(d) => d
     None => RootsData{certs: [], err: "", system: false}
@@ -267,7 +289,7 @@ pub fn client(pd: Int, host: Str, roots: Int, dl: Int) -> Start {
   // the framework decides on macOS with the system's roots
   let apple = if system && target.os == TargetOs.Darwin { 1 } else { 0 }
   let certs = if system && apple == 0 && data.cell != 0 { system_certs(data.cell) } else { data.certs }
-  if system && apple == 0 && certs.is_empty() {
+  if system && apple == 0 && certs.is_empty() && verify != VERIFY_NONE {
     return failed(CC_ERR, 4, "tls: failed to verify certificate: x509: failed to load system roots and no roots provided")
   }
   var name = host
@@ -278,8 +300,11 @@ pub fn client(pd: Int, host: Str, roots: Int, dl: Int) -> Start {
   cf.apple_svc = apple
   // Go's texts show the time in time.Local
   cf.zone_off = local_offset(cf.now)
-  // as the C's configuration and Go's Transport: HTTP/2, then HTTP/1.1
-  cf.alpn = ["h2", "http/1.1"]
+  // the http client's: HTTP/2, then HTTP/1.1, as the C's configuration
+  // and Go's Transport
+  cf.alpn = protos
+  cf.insecure = verify == VERIFY_NONE
+  cf.chain_only = verify == VERIFY_CHAIN
   cf.legacy_suites = tls12.default_suites()
   // XO_TLS_MLKEM=0: no X25519MLKEM768 (Go's GODEBUG=tlsmlkem=0)
   cf.groups = tls13.client_groups()
@@ -513,12 +538,71 @@ pub fn set_when(h: Int, dl: Int) {
   }
 }
 
+/// The protocol ALPN chose, "" for none.
+pub fn alpn_of(h: Int) -> Str {
+  match load(h) {
+    Some(c) => alpn(c)
+    None => ""
+  }
+}
+
+/// The version the handshake chose, as Go's tls.VersionName.
+pub fn version_of(h: Int) -> Str {
+  match load(h) {
+    Some(c) => if v12(c) { "TLS 1.2" } else { "TLS 1.3" }
+    None => ""
+  }
+}
+
+/// Sends close_notify (best effort; the caller closes the socket).
+pub fn close_notify(h: Int) {
+  if let Some(x) = load(h) {
+    var c = x
+    if done(c) {
+      if v12(c) {
+        tls12.close(c.cl12[0])
+      } else {
+        tls13.close(c.cl)
+      }
+      let _sent = flush(c)
+    }
+    save(h, c)
+  }
+}
+
 /// Whether ALPN chose HTTP/2.
 pub fn alpn_h2(h: Int) -> Bool {
   match load(h) {
     Some(c) => alpn(c) == "h2"
     None => false
   }
+}
+
+/// A std/tls handle of connection h (decision 0281): the handle's free
+/// function (cabi_tlsclient.xo tls_h_free) frees h when its last reference
+/// goes.
+pub fn handle_new(h: Int) -> rthttp.TlsH {
+  let t = tasks.new_handle(32, rt.fn_addr("tls_h_free"))
+  rt.mem_store(t, 16, h, 8)
+  rt.mem_store(t, 24, 0, 8)
+  let v = rt.obj_at[rthttp.TlsH](t)
+  tasks.h_release(t)
+  v
+}
+
+/// The connection of a std/tls handle.
+pub fn handle_conn(t: rthttp.TlsH) -> Int { rt.mem_load(rt.obj_addr(t), 16, 8) }
+
+/// Whether the std/tls handle's close ran.
+pub fn handle_closed(t: rthttp.TlsH) -> Bool { rt.mem_load(rt.obj_addr(t), 24, 8) != 0 }
+
+/// Marks the std/tls handle closed.
+pub fn handle_close(t: rthttp.TlsH) { rt.mem_store(rt.obj_addr(t), 24, 1, 8) }
+
+/// A std/tls handle's free function: frees its connection.
+pub fn handle_free(t: Int) {
+  free(rt.mem_load(t, 16, 8))
+  obj.free_obj(t)
 }
 
 /// Frees a connection (0: none).

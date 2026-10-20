@@ -1,0 +1,13 @@
+// The C ABI exports of std/tls (decision 0281): like cabi_http.xo, every
+// top level function here is an export, carried by the programs that
+// use std/tls (std/native/tls.xo imports this module; cabi_tls.xo is the
+// https server's).
+use native/llrt/tlsio
+
+/// The free function of a std/tls handle (tlsio.handle_new): the record
+/// at p, whose last reference went.
+fn tls_h_free(p: Int) { tlsio.handle_free(p) }
+
+/// At exit: the system's roots std/tls parsed (tlsio.roots_system_at),
+/// for the leak check, when std/http's streams_free did not take over.
+fn tls_roots_free() { tlsio.roots_free() }

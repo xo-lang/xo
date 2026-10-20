@@ -130,6 +130,9 @@ pub struct Conf {
   /// The local zone's offset from UTC in seconds at now (Go's texts show
   /// the time in time.Local).
   pub zone_off: Int
+  /// std/tls Verify.ChainOnly (decision 0281): the chain is verified but
+  /// not the host name (libpq's verify-ca)
+  pub chain_only: Bool = false
   pub hello: Bytes
   pub random: Bytes
   pub sid: Bytes
@@ -790,8 +793,9 @@ fn certificate(var c: Client, msg: Bytes) {
   }
   if !c.conf.insecure && c.conf.apple_svc != 0 {
     // Go's systemVerify on macOS
-    let r = if leaf.unhandled > 0 { tlscert.AppleRes{code: 10, msg: "x509: unhandled critical extension"} } else { tlscert.apple_trust(c.conf.apple_svc, ders, c.conf.host) }
-    let code = if r.code == 0 && c.conf.host != "" && !x509verify.host_ok(leaf, c.conf.host) { 7 } else { r.code }
+    let vh = vhost(c.conf)
+    let r = if leaf.unhandled > 0 { tlscert.AppleRes{code: 10, msg: "x509: unhandled critical extension"} } else { tlscert.apple_trust(c.conf.apple_svc, ders, vh) }
+    let code = if r.code == 0 && vh != "" && !x509verify.host_ok(leaf, vh) { 7 } else { r.code }
     if code != 0 {
       let msg = if code == 1 {
         "x509: certificate signed by unknown authority"
@@ -806,7 +810,7 @@ fn certificate(var c: Client, msg: Bytes) {
     }
   } else if !c.conf.insecure {
     let inters = certs[1..certs.len()]
-    let r = x509verify.verify(leaf, inters, c.conf.roots, c.conf.host, c.conf.now, x509.EKU_SERVER)
+    let r = x509verify.verify(leaf, inters, c.conf.roots, vhost(c.conf), c.conf.now, x509.EKU_SERVER)
     if r.code != x509verify.OK {
       let alert = if r.code == x509verify.UNKNOWN_AUTHORITY { ALERT_UNKNOWN_CA } else if r.code == x509verify.EXPIRED { ALERT_CERTIFICATE_EXPIRED } else { ALERT_BAD_CERTIFICATE }
       fail(c, alert, "tls: failed to verify certificate: ${verify_msg(r, leaf, c.conf)}")
@@ -819,7 +823,10 @@ fn certificate(var c: Client, msg: Bytes) {
 }
 
 /// The text of x509.Verify's error.
-fn verify_msg(r: x509verify.Outcome, leaf: x509.Cert, cf: Conf) -> Str { x509verify.full_text_zone(r, leaf, cf.host, cf.now, cf.zone_off) }
+fn verify_msg(r: x509verify.Outcome, leaf: x509.Cert, cf: Conf) -> Str { x509verify.full_text_zone(r, leaf, vhost(cf), cf.now, cf.zone_off) }
+
+/// The name the certificate is verified for: none with chain_only.
+fn vhost(cf: Conf) -> Str { if cf.chain_only { "" } else { cf.host } }
 
 fn certificate_verify(var c: Client, msg: Bytes) {
   if msg.len() < 8 || u16_at(msg, 6) != msg.len() - 8 {
