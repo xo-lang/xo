@@ -700,3 +700,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [nan-ordering-in-ports.md](nan-ordering-in-ports.md): Observed: Xo orders NaN after +Inf, Go compares IEEE; ported Go numeric code needs is_nan guards before < and >
 - [go-backend-fused-float.md](go-backend-fused-float.md): Observed, fixed: the Go backend let Go fuse Float a*b+c into FMA on arm64; products now print as float64(a * b); golden float_no_fma
 - [go-backend-wide-tuples.md](go-backend-wide-tuples.md): Observed, fixed to 16: the Go backend failed go build on tuples wider than six (rt.Tuple7+ missing); over 16 still fails
+- [dwarf-vars-faulting-frame.md](dwarf-vars-faulting-frame.md): Observed: the faulting frame's locals were <unavailable> (ranges ended before the fault stub; register copies not followed)

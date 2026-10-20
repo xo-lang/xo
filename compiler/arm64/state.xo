@@ -198,6 +198,8 @@ struct G {
   /// the rows of the fault stubs (placed after the body), and the
   /// labels made so far (one numbering for both)
   dl_stub_rows: List[Str] = []
+  /// The fault stubs' location ranges (dwvars.xo DvStub)
+  dv_stubs: List[DvStub] = []
   dl_n: Int = 0
   ncs: Int = 0
   personality_ref: Bool = false
@@ -392,6 +394,7 @@ fn (var g: G) begin_func(fi: Int) {
   g.dl_last_inl = -1
   g.dl_rows = []
   g.dl_stub_rows = []
+  g.dv_stubs = []
   g.vranges = []
   g.kints = {}
   g.ksyms = {}

@@ -1206,12 +1206,22 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
     var ms = g.call_moves(inst.fargs, "sp", 0)
     g.recover_operand(sb, inst, ms)
     g.parallel(sb, ms)
+    // the variables' places over the stub, to its call's return (the
+    // faulting frame's pc in a traceback): its index, labels, and how sp
+    // moved (decision 0268's locals, dwvars.xo dv_stub_expr)
+    var dv_end = ""
+    if g.m.debug_info && g.pos >= 0 {
+      dv_end = g.local("${g.lbl_prefix()}_dvs${g.nstub}")
+      let adj = if g.fr.leaf { 16 } else if g.shrink && g.fl[g.cur] { -1 } else { 0 }
+      g.dv_stubs.push(DvStub{at: g.pos / 4, lo: l, hi: dv_end, adj: adj})
+    }
+    let after = if dv_end.is_empty() { "" } else { "${dv_end}:\n" }
     if inst.pad >= 0 {
       let (from2, to2) = g.call_site_labels()
       g.stub_sites.push(CallSite{from: from2, to: to2, pad: g.pad_of(inst.pad)})
-      sb.push("${from2}:\n\tbl ${inst.ffn}\n${to2}:\n\tbrk #1\n")
+      sb.push("${from2}:\n\tbl ${inst.ffn}\n${to2}:\n${after}\tbrk #1\n")
     } else {
-      sb.push("\tbl ${inst.ffn}\n\tbrk #1\n")
+      sb.push("\tbl ${inst.ffn}\n${after}\tbrk #1\n")
     }
     g.stubs.push(sb.join(""))
   }

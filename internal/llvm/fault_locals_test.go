@@ -107,3 +107,91 @@ func TestFaultLocals(t *testing.T) {
 		})
 	}
 }
+
+// faultFrameProgram faults (a division by zero) in total itself, a
+// function that calls (depth, recursive, so not inlined; total calls
+// itself too, so it stays a frame of its own): its variables
+// live across that call in callee saved registers or spill slots, which
+// the faulting frame keeps at the fault stub's call.
+const faultFrameProgram = `fn depth(n: Int) -> Int {
+  if n <= 0 {
+    return 0
+  }
+  1 + depth(n - 1)
+}
+
+fn total(xs: List[Int], k: Int) -> Int {
+  if k > 100 {
+    // never taken: a call of itself keeps total out of line
+    return total(xs, k - 1)
+  }
+  var s = 0
+  for x in xs {
+    s += depth(x)
+    s += x / k
+  }
+  s
+}
+
+fn main(os: Os) {
+  let xs = [1, 2, 3]
+  os.stdio.println("${total(xs, 1)}")
+  os.stdio.println("${total(xs, xs.len() - 3)}")
+}
+`
+
+// TestFaultLocalsFaultingFrame: the faulting frame's own variables
+// (2026-10-20: every one printed <unavailable>, their ranges ending before
+// the out of line fault stub the traceback returns into; dwvars.xo
+// DvStub). arm64; the amd64 backend writes no DWARF variables yet.
+func TestFaultLocalsFaultingFrame(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a program")
+	}
+	if runtime.GOARCH != "arm64" || (runtime.GOOS != "darwin" && runtime.GOOS != "linux") {
+		t.Skip("the arm64 backend's DWARF, on Linux and macOS")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte(faultFrameProgram), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module example.com/faultframe\nedition preview\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := xotool.Build([]string{dir}, xotool.Options{Backend: xotool.BackendArm64})
+	if err != nil || res.Failed {
+		t.Fatalf("build: %v %v", err, res.Output)
+	}
+	cmd := exec.Command(res.Binaries[xotool.Host()])
+	cmd.Env = append(os.Environ(), "XO_TRACEBACK=locals")
+	testtmp.Lifeline(t, cmd, 2*time.Minute)
+	out, _ := cmd.CombinedOutput()
+	got := string(out)
+	if !strings.Contains(got, "fault: division by zero") {
+		t.Fatalf("no fault report:\n%s", got)
+	}
+	// total's frame, the first after "traceback:"
+	i := strings.Index(got, "  total (")
+	if i < 0 {
+		t.Fatalf("no total frame:\n%s", got)
+	}
+	// up to the next frame's line (two spaces, then its name)
+	frame := got[i:]
+	lines := strings.Split(frame, "\n")
+	end := len(lines)
+	for n := 1; n < len(lines); n++ {
+		if strings.HasPrefix(lines[n], "  ") && !strings.HasPrefix(lines[n], "   ") {
+			end = n
+			break
+		}
+	}
+	frame = strings.Join(lines[:end], "\n") + "\n"
+	// k and x live across depth's call (callee saved registers); xs is
+	// read through its data and length only, and s's latest sum is in a
+	// caller saved register the fault path does not keep
+	for _, w := range []string{"k = 0", "x = 1"} {
+		if !strings.Contains(frame, "      "+w+"\n") {
+			t.Errorf("XO_TRACEBACK=locals: total's frame lacks %q:\n%s", w, got)
+		}
+	}
+}

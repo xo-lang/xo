@@ -37,6 +37,85 @@ struct DvPlan {
   syms: List[Str] = []
 }
 
+/// A fault stub's range for the variables (2026-10-20): the faulting
+/// instruction's index, the stub's label and the label after its call
+/// (the faulting frame's pc in a traceback returns there), and how far sp
+/// moved in it (16 for a leaf's frame record; -1 when a prologue moved it,
+/// and its slots are then left out).
+struct DvStub {
+  at: Int
+  lo: Str
+  hi: Str
+  adj: Int
+}
+
+/// op over a fault stub, or none: a traceback has the faulting frame's
+/// callee saved registers (x19 to x29) and sp at the call (decision 0268
+/// point 4), not the registers the stub's moves and the fault function
+/// overwrite.
+fn dv_stub_op(op: List[Int], adj: Int) -> List[Int] {
+  if op.len() == 1 && op[0] >= 0x50 + 19 && op[0] <= 0x50 + 29 {
+    return op
+  }
+  if op.len() >= 2 && op[0] == 0x8f && adj >= 0 {
+    // DW_OP_breg31: sp, plus how far the stub moved it
+    let off = sp_offset(op)
+    if off >= 0 {
+      return [0x8f] + sleb_bytes(off + adj)
+    }
+  }
+  []
+}
+
+/// The location expression of a variable over stub s, from the binding
+/// defined last among mine with a word at s's instruction; empty when no
+/// word has a place there.
+fn dv_stub_expr(mine: List[DvBind], s: DvStub, nw: Int) -> List[Int] {
+  var best = -1
+  for (bi, b) in mine.indexed() {
+    var here = false
+    for w in b.words {
+      for sp in w {
+        if sp.lo <= s.at && sp.hi > s.at {
+          here = true
+        }
+      }
+    }
+    if here && (best < 0 || b.def > mine[best].def) {
+      best = bi
+    }
+  }
+  if best < 0 {
+    return []
+  }
+  var ops: List[List[Int]] = []
+  var any = false
+  for w in mine[best].words {
+    var op: List[Int] = []
+    for sp in w {
+      if sp.lo <= s.at && sp.hi > s.at {
+        op = dv_stub_op(sp.op, s.adj)
+      }
+    }
+    any = any || !op.is_empty()
+    ops.push(op)
+  }
+  if !any {
+    return []
+  }
+  if nw == 1 {
+    return ops[0]
+  }
+  while !ops.is_empty() && ops[ops.len() - 1].is_empty() {
+    let _o = ops.pop()
+  }
+  var expr: List[Int] = []
+  for op in ops {
+    expr = expr + op + [0x93] + uleb_bytes(8) // DW_OP_piece 8
+  }
+  expr
+}
+
 /// The most words of a value whose locations are described: a larger
 /// one (the emitter's own G, a record of hundreds of words) keeps its
 /// variable and type with no location, as unavailable. Without the bound
@@ -132,6 +211,31 @@ fn (var g: G) dv_plan() -> DvPlan {
       }
     }
   }
+  // the copies of each register: a register whose one definition is a
+  // parallel move from r holds r's value wherever it lives (2026-10-20:
+  // a parameter copied into a callee saved register for a loop with calls
+  // was described only until the copy, so a fault in the loop showed it
+  // <unavailable>)
+  var ndefs: Map[Int, Int] = {}
+  var copy_of: Map[Int, Int] = {}
+  for blk in g.blocks {
+    for ins in blk.insts {
+      for (i, d) in ins.defs.indexed() {
+        ndefs[d] = (ndefs.get(d) ?? 0) + 1
+        if ins.kind == K_PMOVE && i < ins.srcs.len() && ins.srcs[i].kind == S_REG && ins.srcs[i].v > 0 {
+          copy_of[d] = ins.srcs[i].v
+        }
+      }
+    }
+  }
+  var copies: Map[Int, List[Int]] = {}
+  for (d, r) in copy_of.entries() {
+    if (ndefs.get(d) ?? 0) == 1 {
+      var l = copies.get(r) ?? []
+      l.push(d)
+      copies[r] = l
+    }
+  }
   var symix: Map[Str, Int] = {}
   for d in g.f.dbinds {
     let dv = g.f.dvars[d.dvar]
@@ -166,9 +270,23 @@ fn (var g: G) dv_plan() -> DvPlan {
         words.push(spans)
         continue
       }
-      let op = g.dv_op(r)
-      if !op.is_empty() && r < g.vranges.len() {
-        for rg in g.vranges[r] {
+      // r and its copies (each copy's copies too, a few levels)
+      var regs = [r]
+      var at = 0
+      while at < regs.len() && regs.len() < 8 {
+        for c in copies.get(regs[at]) ?? [] {
+          if !regs.contains(c) {
+            regs.push(c)
+          }
+        }
+        at += 1
+      }
+      for rr in regs {
+        let op = g.dv_op(rr)
+        if op.is_empty() || rr >= g.vranges.len() {
+          continue
+        }
+        for rg in g.vranges[rr] {
           let lo = (rg.s + 3) / 4
           let hi = rg.e / 4 + 1
           if hi <= lo {
@@ -333,6 +451,18 @@ fn (var g: G) dv_field(p: DvPlan, labels: Map[Int, Str]) -> Str {
       }
       last_end = lz
       last_op = ops
+    }
+    // over each fault stub: the places the faulting frame keeps
+    for s in g.dv_stubs {
+      let expr = dv_stub_expr(mine, s, nw)
+      if expr.is_empty() {
+        continue
+      }
+      var bs: List[Str] = []
+      for x in expr {
+        bs.push(if x < 0 { p.syms[-1 - x] } else { "${x}" })
+      }
+      entries.push("${s.lo} ${s.hi} ${bs.join(",")}")
     }
     let tn = g.m.types[dv.ty].name
     out.push("${dv.name}|${tn}|${if dv.param { 1 } else { 0 }}|${dv.line}|${entries.join("~")}")
