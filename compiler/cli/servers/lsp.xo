@@ -2,9 +2,13 @@
 // (decision 0178 stage 5). JSON-RPC 2.0 over standard input and output
 // with Content-Length framing (LSP 3.17). The server keeps the text of
 // open documents and checks their modules in process with the self hosted
-// checker (compiler/check), the open texts as its overlay, after each
-// change (debounced, 150 ms) and before each request that reads the
-// check, and publishes the diagnostics as the Go server does.
+// checker (compiler/check), the open texts as its overlay, and publishes
+// the diagnostics as the Go server does. Each open directory is checked
+// on its own, in a worker task (decision 0284): after a change (debounced,
+// 150 ms) only its directory and the open directories whose last check
+// read it are checked again, a request that reads a check waits for its
+// directory's (references and rename for one over every open directory),
+// and formatting and documentSymbol are answered at once.
 //
 // Every request of the Go server: initialize, shutdown, exit, the
 // document notifications, publishDiagnostics (with window/logMessage when
@@ -377,6 +381,23 @@ struct Session {
   keys: Map[Str, Int] = {}
   /// a headless session (agent.xo's commands): no notifications written
   quiet: Bool = false
+  /// the texts the published diagnostics' positions are in
+  dfiles: Map[Str, Bytes] = {}
+  /// `xo lsp` (run_lsp) checks each open directory on its own, in a
+  /// worker task, and keeps each one's last check: the views by key (an
+  /// open directory, or ALL for references and rename), and the
+  /// generation of the last change each directory's check must include
+  views: Map[Str, View] = {}
+  need: Map[Str, Int] = {}
+  /// the requests waiting for a check
+  waiting: List[Waiting] = []
+  /// a check is running in the worker: its key
+  busy: Str = ""
+  /// the debounce passed since the last change: stale directories are
+  /// checked without a request asking
+  auto: Bool = true
+  /// the patched checks of completion and signatureHelp the worker ran
+  pre: List[Pre] = []
 }
 
 fn abs_of(wd: Str, p: Str) -> Str {
@@ -398,65 +419,108 @@ pub fn std_dir(os: Os) -> Str uses (env, fs) {
   check.std_dir(os.env, os.fs)
 }
 
-/// recheck: checks the modules of the open documents and publishes their
-/// diagnostics.
-fn (var s: Session) recheck(os: Os) uses (stdio, fs, env) {
-  s.dirty = false
-  s.checked = true
-  s.files = {}
-  s.diags = {}
-  s.err = ""
-  s.res = []
-  s.sites = {}
-  s.keys = {}
-  var dirs: List[Str] = []
-  var overlay: Map[Str, Bytes] = {}
+/// The result of one check: what Session.res, keys, files, and diags hold
+/// for the requests it answers.
+struct View {
+  /// the generation of the documents it checked
+  gen: Int = -1
+  err: Str = ""
+  files: Map[Str, Bytes] = {}
+  diags: Map[Str, List[check.Diag]] = {}
+  res: List[Res] = []
+  keys: Map[Str, Int] = {}
+  sites: Map[Int, List[Site]] = {}
+  /// the directories of the user files it read (the open directory and
+  /// the local modules it imports)
+  deps: Set[Str] = #{}
+}
+
+/// The open documents to check, without std copies (a std source opened
+/// through a definition is served from the std module, never checked as
+/// user code).
+fn (s: Session) overlay() -> Map[Str, Bytes] {
+  var out: Map[Str, Bytes] = {}
   for (p, src) in s.docs {
-    if s.is_std_copy(p) {
-      // a std source opened through a definition: it is served from the
-      // std module, never checked as user code
-      continue
+    if !s.is_std_copy(p) {
+      out[p] = src
     }
-    overlay[p] = src
+  }
+  out
+}
+
+/// The directories of the documents of overlay, sorted.
+fn dirs_of(overlay: Map[Str, Bytes]) -> List[Str] {
+  var dirs: List[Str] = []
+  for (p, _) in overlay {
     let d = dir_of(p)
     if !dirs.contains(d) {
       dirs.push(d)
     }
   }
-  dirs = dirs.sort()
-  if dirs.is_empty() {
-    s.publish(os)
-    return
-  }
-  var c = check.new_checker(os.fs, s.std_dir)
+  dirs.sort()
+}
+
+fn new_lsp_checker(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes]) -> check.Checker uses (fs, env) {
+  var c = check.new_checker(os.fs, std_dir)
   c.overlay = overlay
-  c.set_mod_env(s.wd, os.env.get("XO_MODCACHE") ?? "", os.env.get("HOME") ?? "", os.env.get("XDG_CACHE_HOME") ?? "",
-    os.env.get("XO_OFFLINE") ?? "", os.env.get("XO_WORK") ?? "")
+  c.set_mod_env(wd, os.env.get("XO_MODCACHE") ?? "", os.env.get("HOME") ?? "", os.env.get("XDG_CACHE_HOME") ?? "", os.env.get("XO_OFFLINE") ?? "", os.env.get("XO_WORK") ?? "")
+  c
+}
+
+/// check_view: checks the modules of dirs with the open texts as the
+/// overlay. It reads no Session, so the server's worker task runs it.
+fn check_view(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes], dirs: List[Str]) -> View uses (fs, env) {
+  var v = View{}
+  if dirs.is_empty() {
+    return v
+  }
+  var c = new_lsp_checker(os, std_dir, wd, overlay)
   match c.check_dirs(dirs) {
     Ok(_) => {}
     Err(e) => {
-      s.err = e
-      if !s.quiet {
-        notify(os, "window/logMessage", jobj(["message", "type"], [jstr("xo: ${e}"), jint(2)]))
-      }
-      s.publish(os)
-      return
+      v.err = e
+      return v
     }
   }
   for (i, f) in c.files.indexed() {
     let std = f.module >= 0 && c.mods[f.module].is_std
-    let p = if std { f.path } else { abs_of(s.wd, f.path) }
-    if !s.keys.contains(p) {
-      s.keys[p] = i
+    let p = if std { f.path } else { abs_of(wd, f.path) }
+    if !v.keys.contains(p) {
+      v.keys[p] = i
     }
-    s.files[p] = overlay.get(p) ?? f.src
+    v.files[p] = overlay.get(p) ?? f.src
+    if !std {
+      v.deps.add(dir_of(p))
+    }
   }
-  s.res = [new_res(c)]
+  v.res = [new_res(c)]
   for d in c.diags {
-    let p = abs_of(s.wd, d.file)
-    var l = s.diags.get(p) ?? []
-    l.push(d)
-    s.diags[p] = l
+    v.diags.update(abs_of(wd, d.file), [], fn(var l) { l.push(d) })
+  }
+  v
+}
+
+/// use_view: answer requests from v.
+fn (var s: Session) use_view(v: View) {
+  s.dirty = false
+  s.checked = true
+  s.err = v.err
+  s.files = v.files
+  s.res = v.res
+  s.keys = v.keys
+  s.sites = v.sites
+}
+
+/// recheck: checks the modules of the open documents and publishes their
+/// diagnostics.
+fn (var s: Session) recheck(os: Os) uses (stdio, fs, env) {
+  let overlay = s.overlay()
+  let v = check_view(os, s.std_dir, s.wd, overlay, dirs_of(overlay))
+  s.use_view(v)
+  s.diags = v.diags
+  s.dfiles = v.files
+  if !v.err.is_empty() && !s.quiet {
+    notify(os, "window/logMessage", jobj(["message", "type"], [jstr("xo: ${v.err}"), jint(2)]))
   }
   s.publish(os)
 }
@@ -517,11 +581,14 @@ fn (var s: Session) publish(os: Os) uses (stdio, fs) {
   }
   var now: List[Str] = []
   for p in all.sort() {
-    let t = match s.text_of(p) {
-      Some(t) => t
-      None => match os.fs.read(p) {
-        Ok(src) => new_text(src)
-        Err(_) => continue
+    let t = match s.dfiles.get(p) {
+      Some(src) => new_text(src)
+      None => match s.text_of(p) {
+        Some(t) => t
+        None => match os.fs.read(p) {
+          Ok(src) => new_text(src)
+          Err(_) => continue
+        }
       }
     }
     var out: List[J] = []
@@ -564,21 +631,42 @@ fn uri_of(params: J) -> Str {
   }
 }
 
-/// A notification: documents opened, changed, closed, or saved.
-fn (var s: Session) notification(os: Os, method: Str, params: J) -> Bool {
+/// The open directories: those of the open documents, std copies aside.
+fn (s: Session) groups() -> List[Str] { dirs_of(s.overlay()) }
+
+/// changed: a document of directory d changed. Every open directory whose
+/// check read d needs a new one.
+fn (var s: Session) changed(d: Str) {
+  s.dirty = true
+  s.gen += 1
+  for g in s.groups() {
+    let reads = match s.views.get(g) {
+      Some(v) => v.deps.contains(d)
+      None => false
+    }
+    if g == d || reads {
+      s.need[g] = s.gen
+    }
+  }
+}
+
+/// A notification: documents opened, changed, closed, or saved. It
+/// returns when the checks it calls for start: "now", "later" (after the
+/// debounce), or "" (none).
+fn (var s: Session) notification(os: Os, method: Str, params: J) -> Str {
   if method == "textDocument/didOpen" {
     let td = get(params, "textDocument") ?? J.Null
     let path = uri_to_path(jstr_of(td, "uri"))
     if !path.is_empty() {
       s.docs[path] = jstr_of(td, "text").bytes()
-      s.dirty = true
-      return true
+      s.changed(dir_of(path))
+      return "now"
     }
   } else if method == "textDocument/didChange" {
     let path = uri_to_path(uri_of(params))
     var src = match s.docs.get(path) {
       Some(b) => b
-      None => return false
+      None => return ""
     }
     match get(params, "contentChanges") {
       Some(J.Arr(changes, _)) => {
@@ -601,18 +689,30 @@ fn (var s: Session) notification(os: Os, method: Str, params: J) -> Bool {
       _ => {}
     }
     s.docs[path] = src
+    s.changed(dir_of(path))
+    return "later"
+  } else if method == "textDocument/didClose" {
+    let path = uri_to_path(uri_of(params))
+    s.docs.remove(path)
+    let d = dir_of(path)
+    if !s.groups().contains(d) {
+      s.views.remove(d)
+      s.need.remove(d)
+    }
+    // the file is read from disk again
+    s.changed(d)
+    return "now"
+  } else if method == "workspace/didChangeWatchedFiles" {
+    // a file on disk changed: any check may have read it
     s.dirty = true
     s.gen += 1
-    return false
-  } else if method == "textDocument/didClose" {
-    s.docs.remove(uri_to_path(uri_of(params)))
-    s.dirty = true
-    return true
-  } else if method is "textDocument/didSave" | "workspace/didChangeWatchedFiles" {
-    s.dirty = true
-    return true
+    for g in s.groups() {
+      s.need[g] = s.gen
+    }
+    return "now"
   }
-  false
+  // didSave: the check already has the saved text
+  ""
 }
 
 /// The quick fixes of the diagnostics that overlap the range.
@@ -849,12 +949,213 @@ fn (var s: Session) request(os: Os, method: Str, params: J, has_params: Bool) ->
   }
 }
 
-/// The events of the server loop: a message, a debounce wake, or the end
-/// of input.
+// ---------------------------------------------------------------------------
+// the server's checks (run_lsp): each open directory is checked on its
+// own, by a worker task, so the loop answers requests that need no check
+// (formatting, documentSymbol) at once, and an edit rechecks only its
+// directory and the open directories whose last check read it
+
+/// The key of the check over every open directory (references, rename,
+/// and requests in std copies).
+const ALL = "*"
+
+/// A request waiting for the check of key at generation gen or later.
+struct Waiting {
+  id: Str
+  method: Str
+  params: J
+  key: Str
+  gen: Int
+}
+
+/// A patched check (lsp_complete.xo check_patched): the resolution and
+/// file index of path checked with text, if it checked.
+struct Pre {
+  path: Str
+  text: Bytes
+  res: List[(Res, Int)]
+}
+
+/// A check for the worker: the view of key, or (patched) path's Pre.
+struct Job {
+  key: Str
+  gen: Int
+  overlay: Map[Str, Bytes]
+  dirs: List[Str]
+  patched: Bool = false
+  path: Str = ""
+  text: Bytes = b""
+}
+
+/// The events of the server loop: a message, a debounce wake, a check's
+/// result, or the end of input.
 enum Ev {
   Msg(body: Str)
   Wake(gen: Int)
+  Checked(key: Str, gen: Int, v: View)
+  Patched(p: Pre)
   End(err: Str)
+}
+
+/// The check a request reads: "" for none, ALL, or its open directory.
+fn (s: Session) check_key(method: Str, params: J, has_params: Bool) -> Str {
+  let reads = method is "textDocument/hover" | "textDocument/definition" | "textDocument/references" | "textDocument/prepareRename" | "textDocument/rename" | "textDocument/codeAction" | "textDocument/semanticTokens/full" | "textDocument/completion" | "textDocument/signatureHelp"
+  if !reads || !has_params {
+    return ""
+  }
+  if method is "textDocument/references" | "textDocument/rename" {
+    return ALL
+  }
+  let path = uri_to_path(uri_of(params))
+  let d = dir_of(path)
+  if s.is_std_copy(path) || !s.groups().contains(d) {
+    return ALL
+  }
+  d
+}
+
+/// The generation a check of key must include.
+fn (s: Session) need_of(key: Str) -> Int {
+  if key == ALL { s.gen } else { s.need.get(key) ?? s.gen }
+}
+
+fn (s: Session) fresh_view(key: Str, gen: Int) -> Bool {
+  match s.views.get(key) {
+    Some(v) => v.gen >= gen
+    None => false
+  }
+}
+
+/// The patched text a completion or signatureHelp request checks, if any.
+fn (s: Session) patch_for(w: Waiting) -> (Str, Bytes)? {
+  let path = uri_to_path(uri_of(w.params))
+  let src = match s.docs.get(path) {
+    Some(b) => b
+    None => return None
+  }
+  let p = if w.method == "textDocument/completion" { completion_patch(src, w.params) } else if w.method == "textDocument/signatureHelp" { signature_patch(src, w.params) } else { None }
+  match p {
+    Some(text) => Some((path, text))
+    None => None
+  }
+}
+
+fn (s: Session) has_patched(path: Str, text: Bytes) -> Bool {
+  for p in s.pre {
+    if p.path == path && p.text == text {
+      return true
+    }
+  }
+  false
+}
+
+/// The check a waiting request still needs, if any.
+fn (s: Session) job_for(w: Waiting) -> Job? {
+  match s.patch_for(w) {
+    Some((path, text)) => {
+      if s.has_patched(path, text) {
+        return None
+      }
+      var ov = s.overlay()
+      ov[path] = text
+      return Some(Job{key: "", gen: s.gen, overlay: ov, dirs: [dir_of(path)], patched: true, path: path, text: text})
+    }
+    None => {}
+  }
+  if s.fresh_view(w.key, w.gen) {
+    return None
+  }
+  let ov = s.overlay()
+  Some(Job{key: w.key, gen: s.gen, overlay: ov, dirs: if w.key == ALL { dirs_of(ov) } else { [w.key] }})
+}
+
+/// answer: replies to w from its check.
+fn (var s: Session) answer(os: Os, w: Waiting) uses (stdio, fs, env) {
+  if let Some(v) = s.views.get(w.key) {
+    s.use_view(v)
+  }
+  match s.request(os, w.method, w.params, true) {
+    Ok(res) => reply(os, w.id, res)
+    Err((c, msg)) => reply_error(os, w.id, c, msg)
+  }
+  // keep what the request cached (identifier sites, resolutions)
+  if let Some(v0) = s.views.get(w.key) {
+    var v = v0
+    v.res = s.res
+    v.sites = s.sites
+    s.views[w.key] = v
+  }
+  match s.patch_for(w) {
+    Some((path, _)) => {
+      var keep: List[Pre] = []
+      for p in s.pre {
+        if p.path != path {
+          keep.push(p)
+        }
+      }
+      s.pre = keep
+    }
+    None => {}
+  }
+}
+
+/// merge: the diagnostics of the open directories' checks, each file's
+/// from its own directory's check when it is open, and publishes them.
+fn (var s: Session) merge(os: Os) uses (stdio, fs) {
+  let gs = s.groups()
+  var diags: Map[Str, List[check.Diag]] = {}
+  var files: Map[Str, Bytes] = {}
+  for g in gs {
+    if let Some(v) = s.views.get(g) {
+      for (p, l) in v.diags {
+        let own = dir_of(p)
+        if own == g || (!gs.contains(own) && !diags.contains(p)) {
+          diags[p] = l
+          if let Some(src) = v.files.get(p) {
+            files[p] = src
+          }
+        }
+      }
+    }
+  }
+  s.diags = diags
+  s.dfiles = files
+  s.publish(os)
+}
+
+/// pump: answers the waiting requests whose checks are done, then starts
+/// the next check if the worker is idle: one a request waits for first,
+/// then (after the debounce) a stale open directory's.
+fn (var s: Session) pump(os: Os, jobs: Chan[Job]) uses (stdio, fs, env) {
+  let ws = s.waiting
+  s.waiting = []
+  for w in ws {
+    if s.job_for(w).is_none() {
+      s.answer(os, w)
+    } else {
+      s.waiting.push(w)
+    }
+  }
+  if !s.busy.is_empty() {
+    return
+  }
+  for w in s.waiting {
+    if let Some(j) = s.job_for(w) {
+      s.busy = if j.patched { "patch" } else { j.key }
+      jobs.send(j)
+      return
+    }
+  }
+  if !s.auto {
+    return
+  }
+  for g in s.groups() {
+    if !s.fresh_view(g, s.need_of(g)) {
+      s.busy = g
+      jobs.send(Job{key: g, gen: s.gen, overlay: s.overlay(), dirs: [g]})
+      return
+    }
+  }
 }
 
 pub fn run_lsp(os: Os, ex: Exec, version: Str, args: List[Str]) -> Int uses (stdio, proc, env, fs, clock) {
@@ -866,10 +1167,22 @@ pub fn run_lsp(os: Os, ex: Exec, version: Str, args: List[Str]) -> Int uses (std
     }
   }
   let _ = ex
-  var s = Session{version: version, std_dir: std_dir(os), wd: os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? "", lsp_std: lsp_std_dir(os)}
+  let s0 = Session{version: version, std_dir: std_dir(os), wd: os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? "", lsp_std: lsp_std_dir(os)}
   let events: Chan[Ev] = Chan.new(16)
-  var code = 0
+  let jobs: Chan[Job] = Chan.new(1)
+  let fin: Chan[Int] = Chan.new(1)
+  let std = s0.std_dir
+  let wd = s0.wd
   scope sc {
+    sc.spawn_background(fn() {
+      for j in jobs {
+        if j.patched {
+          events.send(Ev.Patched(Pre{path: j.path, text: j.text, res: patched_check(os, std, wd, j.overlay, j.dirs, j.path)}))
+        } else {
+          events.send(Ev.Checked(key: j.key, gen: j.gen, v: check_view(os, std, wd, j.overlay, j.dirs)))
+        }
+      }
+    })
     sc.spawn_background(fn() {
       var r = Reader{}
       while {
@@ -886,61 +1199,105 @@ pub fn run_lsp(os: Os, ex: Exec, version: Str, args: List[Str]) -> Int uses (std
         }
       }
     })
-    while {
-      let ev = match events.recv() {
-        Some(e) => e
-        None => break
-      }
-      match ev {
-        Ev.End(e) => {
-          if !e.is_empty() {
-            os.stdio.eprintln("xo lsp: ${e}")
-            code = 1
-          }
-          break
+    // the loop is a task of its own, and the body waits for it on a
+    // channel, not with await: a task the root thread runs inline (main's
+    // body, or a task its join claims) helps with other work while it is
+    // parked, so its wake would wait for a check to end
+    // (gotchas/root-inline-task-waits-for-helped-work.md)
+    sc.spawn(fn() {
+      var s = s0
+      var code = 0
+      while {
+        let ev = match events.recv() {
+          Some(e) => e
+          None => break
         }
-        Ev.Wake(g) => {
-          if g == s.gen && s.dirty {
-            s.recheck(os)
-          }
-        }
-        Ev.Msg(body) => {
-          let m = match parse(body) {
-            Ok(m) => m
-            Err(e) => {
-              os.stdio.eprintln("xo lsp: bad message: ${e}")
+        match ev {
+          Ev.End(e) => {
+            if !e.is_empty() {
+              os.stdio.eprintln("xo lsp: ${e}")
               code = 1
-              break
             }
-          }
-          let method = jstr_of(m, "method")
-          if method == "exit" {
             break
           }
-          let id = match get(m, "id") {
-            None | Some(J.Null) => ""
-            Some(_) => get_raw(m, "id") ?? ""
-          }
-          let params = get(m, "params") ?? J.Null
-          if id.is_empty() {
-            if s.notification(os, method, params) {
-              s.recheck(os)
-            } else if method == "textDocument/didChange" {
-              let g = s.gen
-              sc.spawn_background(fn() {
-                os.clock.sleep(150ms)
-                events.send(Ev.Wake(g))
-              })
+          Ev.Wake(g) => {
+            if g == s.gen {
+              s.auto = true
+              s.pump(os, jobs)
             }
-            continue
           }
-          match s.request(os, method, params, get(m, "params").is_some()) {
-            Ok(res) => reply(os, id, res)
-            Err((c, msg)) => reply_error(os, id, c, msg)
+          Ev.Checked(key, gen, v0) => {
+            s.busy = ""
+            var v = v0
+            v.gen = gen
+            s.views[key] = v
+            if key != ALL {
+              if !v.err.is_empty() {
+                notify(os, "window/logMessage", jobj(["message", "type"], [jstr("xo: ${v.err}"), jint(2)]))
+              }
+              s.merge(os)
+            }
+            s.pump(os, jobs)
+          }
+          Ev.Patched(p) => {
+            s.busy = ""
+            s.pre.push(p)
+            s.pump(os, jobs)
+          }
+          Ev.Msg(body) => {
+            let m = match parse(body) {
+              Ok(m) => m
+              Err(e) => {
+                os.stdio.eprintln("xo lsp: bad message: ${e}")
+                code = 1
+                break
+              }
+            }
+            let method = jstr_of(m, "method")
+            if method == "exit" {
+              break
+            }
+            let id = match get(m, "id") {
+              None | Some(J.Null) => ""
+              Some(_) => get_raw(m, "id") ?? ""
+            }
+            let params = get(m, "params") ?? J.Null
+            if id.is_empty() {
+              let start = s.notification(os, method, params)
+              if start == "now" {
+                s.auto = true
+                if method != "textDocument/didOpen" {
+                  // a closed document's diagnostics go
+                  s.merge(os)
+                }
+                s.pump(os, jobs)
+              } else if start == "later" {
+                s.auto = false
+                let g = s.gen
+                sc.spawn_background(fn() {
+                  os.clock.sleep(150ms)
+                  events.send(Ev.Wake(g))
+                })
+                s.pump(os, jobs)
+              }
+              continue
+            }
+            let has_params = get(m, "params").is_some()
+            let key = s.check_key(method, params, has_params)
+            if !key.is_empty() {
+              s.waiting.push(Waiting{id: id, method: method, params: params, key: key, gen: s.need_of(key)})
+              s.pump(os, jobs)
+              continue
+            }
+            match s.request(os, method, params, has_params) {
+              Ok(res) => reply(os, id, res)
+              Err((c, msg)) => reply_error(os, id, c, msg)
+            }
           }
         }
       }
-    }
+      fin.send(code)
+    })
+    fin.recv() ?? 1
   }
-  code
 }

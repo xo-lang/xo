@@ -158,35 +158,34 @@ fn unclosed(src: Bytes, off: Int) -> Bool {
 /// A check of the open documents with path's text replaced by src: the
 /// resolution and path's file index, or None when the check fails.
 fn (s: Session) check_patched(os: Os, path: Str, src: Bytes) -> (Res, Int)? uses (fs, env) {
-  var overlay: Map[Str, Bytes] = {}
-  var dirs: List[Str] = []
-  for (p, text) in s.docs {
-    if s.is_std_copy(p) {
-      continue
-    }
-    overlay[p] = if p == path { src } else { text }
-    let d = dir_of(p)
-    if !dirs.contains(d) {
-      dirs.push(d)
+  // `xo lsp` ran it in its worker (lsp.xo pump)
+  for p in s.pre {
+    if p.path == path && p.text == src {
+      return p.res.first()
     }
   }
-  if dirs.is_empty() {
-    return None
+  var overlay = s.overlay()
+  overlay[path] = src
+  match patched_check(os, s.std_dir, s.wd, overlay, [dir_of(path)], path).first() {
+    Some(x) => Some(x)
+    None => None
   }
-  var c = check.new_checker(os.fs, s.std_dir)
-  c.overlay = overlay
-  c.set_mod_env(s.wd, os.env.get("XO_MODCACHE") ?? "", os.env.get("HOME") ?? "", os.env.get("XDG_CACHE_HOME") ?? "",
-    os.env.get("XO_OFFLINE") ?? "", os.env.get("XO_WORK") ?? "")
-  if c.check_dirs(dirs.sort()).is_err() {
-    return None
+}
+
+/// patched_check: the resolution of dirs checked with overlay, and the
+/// file index of path in it; empty when it does not check.
+fn patched_check(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes], dirs: List[Str], path: Str) -> List[(Res, Int)] uses (fs, env) {
+  var c = new_lsp_checker(os, std_dir, wd, overlay)
+  if c.check_dirs(dirs).is_err() {
+    return []
   }
   for (i, f) in c.files.indexed() {
     let std = f.module >= 0 && c.mods[f.module].is_std
-    if !std && abs_of(s.wd, f.path) == path {
-      return Some((new_res(c), i))
+    if !std && abs_of(wd, f.path) == path {
+      return [(new_res(c), i)]
     }
   }
-  None
+  []
 }
 
 /// The resolution to answer a request at path from: the session's when
@@ -224,6 +223,15 @@ fn (var s: Session) view_for(os: Os, path: Str, src: Bytes, patched: Bytes?) -> 
 // ---------------------------------------------------------------------------
 // completion
 
+/// The text completion checks in place of src: with the placeholder for
+/// an empty name, so `x.` and `let y = ` parse; None for src itself.
+fn completion_patch(src: Bytes, params: J) -> Bytes? {
+  let t = new_text(src)
+  let (pl, pc) = pos_of(get(params, "position"))
+  let cur = cursor_at(src, t.offset(pl, pc))
+  if cur.prefix.is_empty() { Some(src[0..cur.off] + PLACEHOLDER.bytes() + src[cur.off..src.len()]) } else { None }
+}
+
 fn (var s: Session) completion(os: Os, params: J) -> J uses (stdio, fs, env) {
   let path = uri_to_path(uri_of(params))
   let src = match s.docs.get(path) {
@@ -233,9 +241,7 @@ fn (var s: Session) completion(os: Os, params: J) -> J uses (stdio, fs, env) {
   let t = new_text(src)
   let (pl, pc) = pos_of(get(params, "position"))
   let cur = cursor_at(src, t.offset(pl, pc))
-  // an empty name gets the placeholder, so `x.` and `let y = ` parse
-  let patched: Bytes? = if cur.prefix.is_empty() { Some(src[0..cur.off] + PLACEHOLDER.bytes() + src[cur.off..src.len()]) } else { None }
-  let (v0, f) = match s.view_for(os, path, src, patched) {
+  let (v0, f) = match s.view_for(os, path, src, completion_patch(src, params)) {
     Some(x) => x
     None => return jobj(["isIncomplete", "items"], [jbool(false), jarr([])])
   }
@@ -691,37 +697,47 @@ fn (var s: Session) callee_target(f: Int, paren: Int) -> LspTarget? {
   None
 }
 
-fn (var s: Session) signature_help(os: Os, params: J) -> J uses (stdio, fs, env) {
-  let path = uri_to_path(uri_of(params))
-  let src = match s.docs.get(path) {
-    Some(b) => b
-    None => return J.Null
-  }
+/// The innermost open `(` before the request's position (brackets of a
+/// list or a struct literal inside the arguments keep the call's), and
+/// that position's byte offset.
+fn open_call(src: Bytes, params: J) -> (Open, Int)? {
   let t = new_text(src)
   let (pl, pc) = pos_of(get(params, "position"))
   let off = t.offset(pl, pc)
   let opens = open_brackets(src, off)
-  // the innermost open `(` (brackets of a list or a struct literal inside
-  // the arguments keep the call's)
-  var call: List[Open] = []
   var i = opens.len() - 1
   while i >= 0 {
     if opens[i].ch == '(' {
-      call = [opens[i]]
-      break
+      return Some((opens[i], off))
     }
     if opens[i].ch == '{' {
       break
     }
     i -= 1
   }
-  let top = match call.first() {
-    Some(o) => o
+  None
+}
+
+/// The text signatureHelp checks in place of src: a call left open gets
+/// its `)` so the text parses; None for src itself.
+fn signature_patch(src: Bytes, params: J) -> Bytes? {
+  match open_call(src, params) {
+    Some((top, off)) => if unclosed(src, top.off) { Some(src[0..off] + b")" + src[off..src.len()]) } else { None }
+    None => None
+  }
+}
+
+fn (var s: Session) signature_help(os: Os, params: J) -> J uses (stdio, fs, env) {
+  let path = uri_to_path(uri_of(params))
+  let src = match s.docs.get(path) {
+    Some(b) => b
     None => return J.Null
   }
-  // a call left open gets its `)` so the text parses
-  let patched: Bytes? = if unclosed(src, top.off) { Some(src[0..off] + b")" + src[off..src.len()]) } else { None }
-  let (v0, f) = match s.view_for(os, path, src, patched) {
+  let (top, _) = match open_call(src, params) {
+    Some(x) => x
+    None => return J.Null
+  }
+  let (v0, f) = match s.view_for(os, path, src, signature_patch(src, params)) {
     Some(x) => x
     None => return J.Null
   }
