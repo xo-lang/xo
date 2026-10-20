@@ -131,6 +131,10 @@ Update the knowledgebase in the same change as the work, not later:
     merges each report (`-short` and vet after each merge) and runs the
     merge tier and the full tier once on the combined main per batch, bisecting over the batch's
     merge commits when it fails, and the owning agent fixes forward.
+  - heavy runs stay on the Mac (owner, 2026-10-20); it has 24 GB, so
+    heavy.sh gives a second concurrent slot only with 40% of memory free
+    (HEAVY_MIN_FREE). CI is used only with the owner's approval for that
+    use: ask the lead, who asks the owner.
   - batch mode is standing (owner, 2026-10-20, after a 4 hour trial:
     26 pushes, 14 code, 7.7 slot-hours, against 9, 7, and 9.8 the 4
     hours before): each push gates on -short, the fixed point when it
