@@ -546,7 +546,7 @@ pub fn write(t: Int, p: Int, n: Int) -> Int {
     save(t, c)
     return CC_ERR
   }
-  send(c, raw.str_at(p, n).bytes())
+  send_at(c, p, n)
   let ok = flush(c)
   let st = c.status
   // save's body here, c's last use: c moves into the block (save's
@@ -695,6 +695,17 @@ fn send(var c: Conn, data: Bytes) {
     }
     None => tls13srv.send(c.s, data)
   }
+}
+
+/// send of the n bytes at p: TLS 1.3 seals them in place (no copy
+/// first). c is a var parameter: passing a local's c.s as var copied
+/// the whole Server in and out (253 instructions a write, 2026-10-20).
+fn send_at(var c: Conn, p: Int, n: Int) {
+  if c.s12.is_none() {
+    tls13srv.send_at(c.s, p, n)
+    return
+  }
+  send(c, raw.str_at(p, n).bytes())
 }
 
 fn close(var c: Conn) {
@@ -872,6 +883,14 @@ fn step(var c: Conn) -> Bool {
     k = c.pend.len()
   } else if c.pend.len() < k {
     return false
+  }
+  if k == c.pend.len() {
+    // pend is exactly one record (the usual read): handed over, not
+    // sliced (a copy of the record)
+    let rec = c.pend
+    c.pend = b""
+    feed(c, rec)
+    return true
   }
   let rec = c.pend[0..k]
   c.pend = c.pend[k..c.pend.len()]

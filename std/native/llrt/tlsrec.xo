@@ -8,6 +8,7 @@
 use native/llrt/aesgcm
 use native/llrt/chacha
 use native/llrt/hkdf
+use native/llrt/raw
 use native/llrt/sha256
 use native/rt
 
@@ -148,6 +149,28 @@ pub fn seal(var k: Keys, ct: Int, data: Bytes, version: Int) -> Bytes {
     }
   }
   out.bytes()
+}
+
+/// seal of the n bytes at address p (the caller's, read before this
+/// returns): one protected record made from them in place, without the
+/// copy of the data seal takes (tlssrv.write's response, 2026-10-20);
+/// seal itself when the keys are off or the data needs more records.
+pub fn seal_at(var k: Keys, ct: Int, p: Int, n: Int, version: Int) -> Bytes {
+  if !k.on || n > MAX_PLAIN {
+    return seal(k, ct, raw.str_at(p, n).bytes(), version)
+  }
+  var inner = rt.rs_set_len(rt.rs_with_cap(n + 1), n)
+  rt.mem_copy(raw.data(inner), p, n)
+  inner = rt.rs_push_byte(inner, ct)
+  let hdr = header(CT_APP, 0x0303, n + 17)
+  let sealed = match k.gcm {
+    Some(g) => g.seal(nonce(k), inner.bytes(), hdr)
+    None => chacha.seal(k.key, nonce(k), inner.bytes(), hdr)
+  }
+  k.seq += 1
+  var out = rt.rs_with_cap(n + 22)
+  out = rt.rs_append_bytes(out, hdr, 0, 5, 0)
+  rt.rs_append_bytes(out, sealed, 0, sealed.len(), 0).bytes()
 }
 
 /// A record's content after protection is removed: its type and data;

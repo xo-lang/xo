@@ -223,6 +223,13 @@ pub fn send(var s: Server, data: Bytes) {
   }
 }
 
+/// send of the n bytes at address p (read before this returns).
+pub fn send_at(var s: Server, p: Int, n: Int) {
+  if s.state == DONE {
+    s.out = tls13.cat2(s.out, tlsrec.seal_at(s.wk, tlsrec.CT_APP, p, n, 0x0303))
+  }
+}
+
 /// Sends close_notify (Go's CloseWrite: a warning alert).
 pub fn close(var s: Server) {
   if s.state != FAILED {
