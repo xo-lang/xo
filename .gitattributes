@@ -1,0 +1,6 @@
+# Index files every session appends a line to: a rebase keeps both sides'
+# new lines instead of stopping on a conflict (2026-10-20: gotchas and
+# decisions README conflicts cost several requeues a day). Only for
+# append-only indexes; a real edit of the same line would keep both
+# versions, which review and TestDecisionNumbersUnique catch.
+knowledgebase/*/README.md merge=union
