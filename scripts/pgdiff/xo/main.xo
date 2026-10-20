@@ -13,6 +13,33 @@ fn err_line(e: sql.SqlErr) -> Str {
   }
 }
 
+/// The arguments of a case line (after ` ;; `, separated by ` | `), as
+/// the reference reads them: T:text, I:int, F:float, B:t or f, N, X:hex,
+/// J:json, D:RFC 3339 time, A:ints and S:strs (comma separated, N for
+/// NULL).
+fn args(s: Str) -> List[sql.SqlValue] {
+  var out: List[sql.SqlValue] = []
+  for a in s.split(" | ") {
+    let (kind, v) = match a.find(":") {
+      Some(i) => (a[0..i], a[i + 1..])
+      None => (a, "")
+    }
+    out.push(match kind {
+      "T" => sql.str(v)
+      "I" => sql.int(Int.parse(v) ?? 0)
+      "F" => sql.float(Float.parse(v) ?? 0.0)
+      "B" => sql.bool(v == "t")
+      "X" => sql.bytes(Bytes.from_hex(v) ?? b"")
+      "J" => sql.SqlValue.JsonText(s: v)
+      "D" => sql.time(Time.parse_rfc3339(v) ?? Time.UNIX_EPOCH)
+      "A" => sql.array(v.split(",").map(fn(x) { if x == "N" { sql.null() } else { sql.int(Int.parse(x) ?? 0) } }))
+      "S" => sql.array(v.split(",").map(fn(x) { if x == "N" { sql.null() } else { sql.str(x) } }))
+      _ => sql.null()
+    })
+  }
+  out
+}
+
 fn main(os: Os) ! {
   let dsn = os.env.args().first().or_err("usage: diff DSN < cases")?
   let db = sql.open(os.net, "postgres", dsn, max_open: 1)?
@@ -21,8 +48,12 @@ fn main(os: Os) ! {
       continue
     }
     os.stdio.println("== ${line}")
+    let (stmt, xs) = match line.find(" ;; ") {
+      Some(i) => (line[0..i], args(line[i + 4..]))
+      None => (line, [])
+    }
     if line.starts_with("SELECT") {
-      match db.query(line) {
+      match db.query(stmt, xs) {
         Ok(rows) => {
           for r in rows {
             // Go's Row Debug text: the columns and their values
@@ -33,7 +64,7 @@ fn main(os: Os) ! {
         Err(e) => os.stdio.println(err_line(e))
       }
     } else {
-      match db.exec(line) {
+      match db.exec(stmt, xs) {
         Ok(x) => os.stdio.println("affected ${x.rows_affected}")
         Err(e) => os.stdio.println(err_line(e))
       }

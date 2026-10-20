@@ -168,6 +168,39 @@ func parseArray(s string, elem uint32) ([]string, bool) {
 	return out, true
 }
 
+// params is the text form of each argument of a case line (after " ;; ",
+// separated by " | "): T:text, I:int, F:float, B:t or f, N (NULL),
+// X:hex (bytea), J:json, D:RFC 3339 time, A:ints and S:strs (comma
+// separated, N for NULL), as std/sql's driver sends them.
+func params(s string) [][]byte {
+	var out [][]byte
+	for _, a := range strings.Split(s, " | ") {
+		kind, v, _ := strings.Cut(a, ":")
+		switch kind {
+		case "N":
+			out = append(out, nil)
+		case "X":
+			out = append(out, []byte(`\x`+v))
+		case "A", "S":
+			var xs []string
+			for _, x := range strings.Split(v, ",") {
+				switch {
+				case x == "N":
+					xs = append(xs, "NULL")
+				case kind == "S":
+					xs = append(xs, `"`+strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(x)+`"`)
+				default:
+					xs = append(xs, x)
+				}
+			}
+			out = append(out, []byte("{"+strings.Join(xs, ",")+"}"))
+		default:
+			out = append(out, []byte(v))
+		}
+	}
+	return out
+}
+
 func main() {
 	ctx := context.Background()
 	c, err := pgconn.Connect(ctx, os.Args[1])
@@ -181,7 +214,14 @@ func main() {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		res, err := c.Exec(ctx, line).ReadAll()
+		stmt, args, hasArgs := strings.Cut(line, " ;; ")
+		var res []*pgconn.Result
+		if hasArgs {
+			r := c.ExecParams(ctx, stmt, params(args), nil, nil, nil).Read()
+			res, err = []*pgconn.Result{r}, r.Err
+		} else {
+			res, err = c.Exec(ctx, line).ReadAll()
+		}
 		fmt.Println("== " + line)
 		var pe *pgconn.PgError
 		if errors.As(err, &pe) {

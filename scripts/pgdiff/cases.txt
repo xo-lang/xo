@@ -16,3 +16,14 @@ SELECT nosuchcol FROM t
 UPDATE t SET n = n + 1 WHERE name = 'a'
 DELETE FROM t WHERE name = 'b'
 SELECT count(*) AS c FROM t
+SELECT $1::text AS a, $2::int8 AS b, $3::float8 AS c, $4::bool AS d, $5::bool AS e ;; T:hé 漢 | I:-42 | F:2.5 | B:t | B:f
+INSERT INTO t (name, n, d, j, ns, tags, at) VALUES ($1, $2, $3, $4, $5, $6, $7) ;; T:c | I:7 | X:00ff10 | J:{"x": [1, "y"]} | A:1,N,3 | S:p,q r,N,s"t\u | D:2026-10-20T01:02:03.5Z
+SELECT name, n, d, j, ns, tags, at FROM t WHERE name = $1 ;; T:c
+SELECT $1::text IS NULL AS isnull, $2::int8 AS n ;; N | N
+SELECT $1::int8 AS bad ;; T:notanumber
+UPDATE t SET n = $1 WHERE name = $2 ;; I:9 | T:c
+SELECT $1::text AS q ;; T:quote ' and \ backslash; -- not a comment
+SELECT $1::bytea AS raw, length($1::bytea) AS len ;; X:
+SELECT $1::float8 AS big, $2::float8 AS small, $3::int8 AS min ;; F:1e300 | F:-0.000001 | I:-9223372036854775808
+INSERT INTO t (name) VALUES ($1) ;; T:c
+SELECT count(*) AS c FROM t WHERE n > $1 ;; I:1
