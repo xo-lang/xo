@@ -1,0 +1,107 @@
+// bench/ct (decision 0285): a dudect style timing test of std/crypto's
+// private key operations on the native backends. For each operation two
+// classes of inputs are timed in random order, a fixed secret against a
+// fresh random one (RSA: a fixed message against random ones, the key
+// fixed, since RSA keys cannot be generated yet), and Welch's t statistic
+// compares their times; |t| above 4.5 is a leak (the dudect threshold).
+// Samples above the pooled 90th percentile are dropped first (scheduler
+// noise). Run on a quiet machine: `xo run bench/ct [N]` (N samples per
+// class, default 20000); the exit status is 1 when a test leaks.
+use std/crypto
+
+const RSA_KEY: Str = "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDIjyOIEVG4P1C6\nBaJiFdZqYiL1Nclm+zXFXJwpg8YLPwdL0ieeit3CE77Rn5FMqZlNO/JTa8fUK1Su\ns+FP7iWrPQf3D0DW873jChMNIP0XTLPuFzQcIVpE2QA4jdDpxiZhddXU1B/dU5lD\nJdrxOL8crHay89QNWlqE+4R9Buc0/9VeUpInPy37XynPepROCVPUy3B3xftQxBkP\ncguftIIA3jZj/OiyTPq6Mk/gAOL6L/7YEEDZOWHwxUjDjTCl1/dCuXSAyAU7UamL\nGlQOlPxEiHaG4PQUocb6fQtjcCTgXJyThzri7179RGTKyxTMZhKftvhft07sS/Bk\nVGQ7t7kbAgMBAAECggEASwLaP7h2j4pCx6h20Oeo/7X/rCW3U6huNohKMe7Cog8r\nS+zoe5Alm8Jl0qIzJnCiUTQ0EIZVwWGJdSP7B7mi5hZYBcvzLNIR+boZYQYvEslR\n3KFaEJFa4TgmMIC+G8lMLpRzavwBhPaQ8n/UkPbv56oLZSfz7iCWjXlC1r4/uF6z\nDC7Ol7rI2utj12JMrGvNV06cAp5CzcEB5QtZGR2z7bQ97j1G/VpgiTaYQOjz5hvw\nindmBkk7qf7DfASXHnB2ND1511gk4hTTdcPV8M1KTuMfUmQ0nEVa8e4J5paD/Nsy\nV6MIPOGLzLKFLzZr9s9oMQFFE8sL65aPru9zS4fwJQKBgQD3K9Ve53OZ978erifu\nTSt6YE2DQyIR/mxmwAEercGfgHtnWT9514rL3LvukRtkpQ0BpvBTOujFFN9sYpf5\nB+xbtk0WjYjZ951Ve6UeauDUXXR8uvBZjDuLCEy1RbI9hrYhfp0K37V6wgtIp4LU\nlBoFlomrfHI5tAsrR6SjKpaDvwKBgQDPuRQD19i7Ss3hOxuY3MhWTWp4nwlXAqqq\n/mMnT+05Pupdwq3LvNEWgjC1QJ4EJuGs6MTPFqTFiUk3L+K20fkIL4rQ25imx2xE\n3ldrvlrHjzUfgpM9IbVUg0SFdox17cmEwocrJtu902/b54EjTZVc9HDOBd1URkI6\ns7OG/NLxpQKBgQCMWgmZEFhmT3XpF/94o71Siii5pn9MNGqdld2M7CGMTsrEDruq\nligsRrU4bJFffxF5pK/GsybF8mpEA2BEeqlOEqCHc+sHykE+7yz9rrboIAEraoNc\ndfLBqf7U2DS0FzCIqHrIV+uXP2Rk5ym1SDvWfHrEM7Aw7/l/o/jq5h39xQKBgFUe\nSwRUI3yD559eoC1gcztiF7n7uVENR7Av86N9TgECNflbt+nfonItwRXUt6uN3zYC\nX/tYFQbY/cZ+edFec0SWbrSs932IBGaoEXyWEQ7rMOKLmBgZwvsxmxdxf5cnbEdZ\nixf0oWDEznZ3A+TaetUPWVYi8xIAhE0Xq/4phar9AoGBAKBGDdbWUzxcElb360sp\n31wEF86qskZrq896Se5GXNZO6mGBkK2dtH17VUb3D/LdroLg0gVenLceMSKUEMg+\n6HlzTfnguBq+ZI3mwyDPE48lYRWbGH4OPc4H8IxjNTZK8HgqzeGgFMA+zBAaGP9N\nallFtAOxeGnj0ZrJusFquq05\n-----END PRIVATE KEY-----\n"
+
+struct Stat {
+  n: Int
+  mean: Float
+  var_: Float
+}
+
+fn stat(xs: List[Int]) -> Stat {
+  let n = xs.len()
+  var sum = 0.0
+  for x in xs {
+    sum = sum + Float(x)
+  }
+  let mean = sum / Float(n)
+  var ss = 0.0
+  for x in xs {
+    let d = Float(x) - mean
+    ss = ss + d * d
+  }
+  Stat{n: n, mean: mean, var_: ss / Float(n - 1)}
+}
+
+fn welch(a: Stat, b: Stat) -> Float { (a.mean - b.mean) / (a.var_ / Float(a.n) + b.var_ / Float(b.n)).sqrt() }
+
+/// The t statistic of the two classes' times, after dropping the samples
+/// above the pooled 90th percentile.
+fn t_of(fixed: List[Int], random: List[Int]) -> Float {
+  let all = (fixed + random).sort()
+  let cut = all[all.len() * 9 / 10]
+  welch(stat(fixed.filter(fn(x) { x <= cut })), stat(random.filter(fn(x) { x <= cut })))
+}
+
+fn main(os: Os) ! {
+  let n = Int.parse(os.env.args().first() ?? "20000") ?? 20000
+  let msg = b"timing"
+  var leaks = 0
+  for alg in [crypto.KeyAlg.EcdsaP256, crypto.KeyAlg.EcdsaP384, crypto.KeyAlg.Ed25519] {
+    // every input prepared first (dudect): the class of each sample and
+    // its key, so no allocation or key generation sits next to a timing
+    let fixed_key = crypto.generate_key(os.rand, alg).map_err(fn(e) { e.msg })?
+    var classes: List[Bool] = []
+    var keys: List[crypto.PrivateKey] = []
+    for _ in 0..2 * n {
+      let f = os.rand.bool()
+      classes.push(f)
+      keys.push(if f { fixed_key } else { crypto.generate_key(os.rand, alg).map_err(fn(e) { e.msg })? })
+    }
+    var times: List[Int] = []
+    for i in 0..2 * n {
+      let t0 = os.clock.now()
+      let _s = crypto.sign(os.rand, keys[i], crypto.Hash.Sha256, msg).map_err(fn(e) { e.msg })?
+      times.push(os.clock.since(t0).nanos())
+    }
+    var fixed: List[Int] = []
+    var random: List[Int] = []
+    for i in 0..2 * n {
+      if classes[i] { fixed.push(times[i]) } else { random.push(times[i]) }
+    }
+    let t = t_of(fixed, random)
+    let leak = t.abs() > 4.5
+    if leak {
+      leaks += 1
+    }
+    os.stdio.println("${alg.debug()} sign: n ${fixed.len()} and ${random.len()}, t ${t}${if leak { " LEAK" } else { "" }}")
+  }
+  let rk = crypto.parse_private_key(crypto.pem_decode(RSA_KEY)[0].bytes).map_err(fn(e) { e.msg })?
+  let rn = n / 10
+  var rclasses: List[Bool] = []
+  var msgs: List[Bytes] = []
+  for _ in 0..2 * rn {
+    let f = os.rand.bool()
+    rclasses.push(f)
+    msgs.push(if f { msg } else { os.rand.bytes(32) })
+  }
+  var rtimes: List[Int] = []
+  for i in 0..2 * rn {
+    let t0 = os.clock.now()
+    let _s = crypto.sign(os.rand, rk, crypto.Hash.Sha256, msgs[i]).map_err(fn(e) { e.msg })?
+    rtimes.push(os.clock.since(t0).nanos())
+  }
+  var fixed: List[Int] = []
+  var random: List[Int] = []
+  for i in 0..2 * rn {
+    if rclasses[i] { fixed.push(rtimes[i]) } else { random.push(rtimes[i]) }
+  }
+  let t = t_of(fixed, random)
+  let leak = t.abs() > 4.5
+  if leak {
+    leaks += 1
+  }
+  os.stdio.println("Rsa 2048 sign: n ${fixed.len()} and ${random.len()}, t ${t}${if leak { " LEAK" } else { "" }}")
+  if leaks > 0 {
+    os.proc.exit(1)
+  }
+}

@@ -39,12 +39,15 @@ start=$(date +%s)
 	s2=$?
 	go vet ./...
 	s3=$?
-	echo "status: test=$s1 race=$s2 vet=$s3 arith=$s4"
+	# constant time private key operations (decision 0285, bench/ct)
+	go run ./scripts/xobuild >/dev/null && bin/xo run bench/ct
+	s5=$?
+	echo "status: test=$s1 race=$s2 vet=$s3 arith=$s4 ct=$s5"
 } >"$log" 2>&1
 status=$(tail -1 "$log")
 secs=$(($(date +%s) - start))
 echo "$day $(git rev-parse --short HEAD) ${secs}s $status" >>"$out/summary.txt"
 case "$status" in
-*"test=0 race=0 vet=0 arith=0"*) exit 0 ;;
+*"test=0 race=0 vet=0 arith=0 ct=0"*) exit 0 ;;
 *) exit 1 ;;
 esac

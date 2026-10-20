@@ -1925,10 +1925,12 @@ fn (x: Hasher) written() -> Int
   each are in std/native/crypto_test.xo and llrt/md5_test.xo.
 
 **Public key signatures, keys, and PEM** (decision 0285, Accepted by
-the owner 2026-10-20; implemented in steps, PEM first):
+the owner 2026-10-20; every backend; Go's results on generated keys,
+signatures, and mutations in std/native/crypto_test.xo, golden
+`crypto_keys`):
 
 ```
-enum KeyAlg { Rsa, EcdsaP256, EcdsaP384, EcdsaP521, Ed25519 }
+enum KeyAlg { Rsa, EcdsaP224, EcdsaP256, EcdsaP384, EcdsaP521, Ed25519 }
 struct PublicKey {}          // a value: ==; Debug text `<publickey>`
 struct PrivateKey {}         // Debug text `<privatekey>`: never key material
 struct KeyErr { msg: Str }
@@ -1946,9 +1948,9 @@ fn (k: PrivateKey) public_key() -> PublicKey
 pub fn verify(k: PublicKey, h: Hash, msg: Bytes, sig: Bytes) -> Bool
 pub fn verify_pss(k: PublicKey, h: Hash, msg: Bytes, sig: Bytes) -> Bool
 pub fn verify_raw_ecdsa(k: PublicKey, h: Hash, msg: Bytes, sig: Bytes) -> Bool
-pub fn sign(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes uses rand
-pub fn sign_pss(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes uses rand
-pub fn sign_raw_ecdsa(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes uses rand
+pub fn sign(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes ! KeyErr uses rand
+pub fn sign_pss(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes ! KeyErr uses rand
+pub fn sign_raw_ecdsa(r: Rand, k: PrivateKey, h: Hash, msg: Bytes) -> Bytes ! KeyErr uses rand
 pub fn generate_key(r: Rand, alg: KeyAlg) -> PrivateKey ! KeyErr uses rand
 ```
 
@@ -1974,16 +1976,34 @@ pub fn generate_key(r: Rand, alg: KeyAlg) -> PrivateKey ! KeyErr uses rand
   wrong length, or a malformed signature is `false`, never a fault.
   `verify_pss` accepts any salt length (Go's `PSSSaltLengthAuto`);
   `sign_pss` uses a salt as long as the hash (RFC 7518 PS256, TLS 1.3).
-- RSA keys verify from 1024 bits (Go 1.24's minimum) and sign from 2048;
-  `generate_key(r, Rsa)` is `KeyErr` until prime generation lands (import
-  RSA keys from PEM).
+- RSA keys verify and sign from 1024 bits (Go 1.24's minimum: `crypto/rsa:
+  512-bit keys are insecure (see ...)`), and a key's public values are
+  checked as Go checks them (`crypto/rsa: public exponent is even`, ...);
+  a private key is checked when parsed (`crypto/rsa: p * q != n`, its CRT
+  values computed when absent); keys of more than two primes are
+  `crypto/rsa: multi-prime keys are not supported`. A message hash too
+  long for the key is `crypto/rsa: message too long for RSA key size`;
+  `sign_pss` with another kind of key is `KeyErr`. `generate_key(r, Rsa)`
+  is `KeyErr` until prime generation lands (import RSA keys from PEM).
+- `jwk_public_key` reads RFC 7517 JSON (members matched exactly,
+  unpadded base64url values; `use`, `kid`, `alg`, and private members
+  ignored): `jwk: malformed JSON`, `jwk: unsupported key type "oct"`,
+  `jwk: unsupported curve "P-192"`, `jwk: missing member "n"`, `jwk:
+  member "n" is not unpadded base64url`, `jwk: coordinates of the wrong
+  size for P-256`, `jwk: point not on the curve`, `jwk: invalid RSA
+  key`.
 - **Nonces.** ECDSA signing takes its nonce from an HMAC_DRBG seeded with
   the private key, bytes from `r`, and the message hash (Go 1.24's hedged
   construction): a `Rand` that repeats or returns zeros degrades to
-  deterministic RFC 6979 signing, so it cannot leak the key, and a test's
-  seeded `Rand` gives reproducible signatures. The Go backend passes `r`
-  to Go (it builds with `GODEBUG=cryptocustomrand=1`), so both backends
-  sign the same bytes for the same `Rand`.
+  deterministic signing (as RFC 6979), so it cannot leak the key, and a
+  test's seeded `Rand` gives reproducible signatures natively. On the Go
+  backend ECDSA nonces and PSS salts come from Go's own generator (Go
+  1.26 ignores a custom reader, and with `cryptocustomrand=1` it reads
+  one extra byte at random), so those signatures verify but differ run
+  to run; the bytes the native signer takes are drawn from `r` and
+  dropped, so `r`'s later values match. Keys from `generate_key`, RSA
+  PKCS #1 v1.5, and Ed25519 signatures are the same bytes on every
+  backend for the same `r`.
 - **Timing.** Every operation on a private key or a nonce (scalar
   multiplication, the nonce inversion, RSA's CRT exponentiation) runs in
   time independent of the secret; bench/ct checks it with a Welch t-test

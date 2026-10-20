@@ -147,6 +147,17 @@ sets the cycles, SCENARIOS narrows the list. Repeats agree within about
 when reads return). Docker Desktop's VM has no hardware counters, so
 `perf stat` (the CI measure suite) does not work there; callgrind does.
 
+## Constant time: `bench/ct/`
+
+`xo run bench/ct [N]` (decision 0285): a dudect style timing test of
+std/crypto's private key operations on the native backends (ECDSA P-256
+and P-384 and Ed25519 signing with a fixed key against fresh keys, RSA
+2048 signing with fixed against random messages), Welch's t over N
+samples per class (default 20000; RSA a tenth), failing at |t| > 4.5. On
+demand and in the nightly run, not per push: it needs a quiet machine.
+Inputs are prepared before the timed loop
+(knowledgebase/gotchas/timing-test-inline-inputs.md).
+
 ## Other models: `bench/harness/`
 
 `bench/harness/` packages stage 3 and the planted bug benchmark so they can

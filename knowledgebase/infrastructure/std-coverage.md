@@ -67,7 +67,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | encoding/hex | prelude Bytes | done | to_hex, from_hex. Dump is not offered. |
 | encoding/binary | std/binary | done | Byte orders on Bytes and varints (decision 0279); no Read and Write of structs (no reflection). |
 | encoding/csv | std/csv | done | Native port (decision 0164); in memory, no streaming reader. |
-| encoding/pem | inside std/native/llrt (TLS) | partial | Parsed for http.tls_cert and with_roots; no public API. |
+| encoding/pem | std/crypto | done | pem_decode, pem_encode (decision 0285). |
 | encoding/asn1 | inside std/native/llrt/asn1.xo | partial | Used by X.509; no public API. |
 | encoding/xml | none | planned | SOAP, SAML, sitemaps, TwiML; lower than JSON gaps. |
 | encoding/gob | none | not planned | Go specific wire format; Xo programs exchange JSON. |
@@ -124,10 +124,10 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | crypto/hkdf | inside std/native/llrt/hkdf.xo | partial | TLS only; no public API. |
 | crypto/aes, crypto/cipher | inside std/native/llrt (AES-GCM, ChaCha20-Poly1305) | partial | TLS only. Missing: a public AEAD seal and open for encrypted cookies and data at rest. |
 | crypto/ecdh | inside std/native/llrt (X25519, nistec) | partial | TLS only. |
-| crypto/ecdsa, crypto/rsa, crypto/elliptic | inside std/native/llrt (rsa.xo, nistec.xo) | partial | Verification for TLS only. Missing: public sign and verify (JWT RS256 and ES256, OIDC id tokens, webhook signatures). |
+| crypto/ecdsa, crypto/rsa, crypto/elliptic | std/crypto | partial | Sign and verify (PKCS #1 v1.5, PSS, ECDSA DER and raw), ECDSA and Ed25519 key generation (decision 0285). Missing: RSA key generation, OAEP encryption, ECDH as an API. |
 | crypto/mlkem | inside std/native/llrt/mlkem.xo | partial | TLS key exchange only. |
 | crypto/hpke | none | planned | After a public AEAD and ECDH. |
-| crypto/x509, crypto/x509/pkix | inside std/native/llrt (x509.xo, x509verify.xo) | partial | Chain verification for the HTTP client; no certificate API (parsing, CSRs, generating test certificates). |
+| crypto/x509, crypto/x509/pkix | std/crypto (keys); inside std/native/llrt (x509.xo, x509verify.xo) | partial | Key parsing and marshaling in std/crypto (decision 0285); chain verification for the HTTP client. Missing: a certificate API (parsing, CSRs, generating test certificates). |
 | crypto/tls | std/http (with_tls, with_roots, tls_cert) | partial | TLS 1.2 and 1.3 in Xo (decision 0202), inside HTTP only. Missing: TLS on a Net Conn (dial and listen), needed by Postgres sslmode, SMTP STARTTLS, Redis, any non HTTP protocol; client certificates. |
 | crypto | none | not planned | The Go registry of hash functions; Xo calls functions directly. |
 | crypto/des, crypto/dsa, crypto/rc4 | none | not planned | Broken or deprecated algorithms. |
