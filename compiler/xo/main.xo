@@ -222,9 +222,10 @@ fn main(os: Os) ! {
   if !(o.linker is "" | "cc" | "macho") {
     fail(os, "--ld=${o.linker}: want cc or macho")
   }
-  // the arm64 backend's --race (decision 0273) is in progress: on with
-  // XO_NATIVE_RACE=1 until it links ThreadSanitizer's runtime itself
-  if o.race && backend != "llvm" && !(backend == "arm64" && (os.env.get("XO_NATIVE_RACE") ?? "") == "1") {
+  // the arm64 backend's --race (decision 0273 parts 2 and 3): its
+  // ThreadSanitizer calls, linked by Xo's linker with the runtime
+  // race_runtime finds; amd64 is not instrumented yet
+  if o.race && !(backend is "llvm" | "arm64") {
     fail(os, "the ${backend} backend does not support --race: use --backend=llvm (ThreadSanitizer) or --backend=go (Go's race detector)")
   }
   if o.holes {
@@ -888,6 +889,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     if o.linker.is_empty() && (tg == host || tgoos == "linux" || mac_x86) {
       no_cc = default_ld(os, ctx, o, c, tgoos, code, uses_time)
     }
+    if o.race && march == "arm64" && !no_cc {
+      fail(os, "--race on the arm64 backend links with Xo's linker on darwin (not --ld=cc, not ${tg} yet, decision 0273): use --backend=llvm")
+    }
     let macho_as = if mac_x86 { o.assembler != "cc" } else { o.assembler == "macho" || (no_cc && o.assembler.is_empty()) }
     if march == "amd64" && tgoos == "windows" {
       // the amd64 backend's windows/amd64 program (decision 0254 6b):
@@ -999,11 +1003,19 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     let srcs = progs + lk.srcs
     if no_cc {
       let nl = nolibc(os, o, c, tgoos)
-      let mkey = macho_bin_key(os, ctx, dir, tgoos, flags, srcs, o.strip, nl)
+      var race_rt = ""
+      if o.race {
+        let (rp, rwhy) = race_runtime(os, ctx, tgoos, march)
+        if !rwhy.is_empty() {
+          fail(os, rwhy)
+        }
+        race_rt = rp
+      }
+      let mkey = macho_bin_key(os, ctx, dir, tgoos, flags, srcs, o.strip, nl, race_rt)
       let (mhit, mentry) = fetch_bin(os, ctx, mkey, bin)
       if !mhit {
         write_or_fail(os, dir_name(bin), "", b"")
-        let why = macho_link(os, ctx, tgoos, flags, srcs, bin, o.strip, nl)
+        let why = macho_link(os, ctx, tgoos, flags, srcs, bin, o.strip, nl, race_rt)
         if !why.is_empty() {
           fail(os, why)
         }

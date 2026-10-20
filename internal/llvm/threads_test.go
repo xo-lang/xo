@@ -509,9 +509,9 @@ func TestRaceSyncTableArm64(t *testing.T) {
 }
 
 // raceBuild builds testdata/name with --race (decision 0273 mode 2) on
-// backend: llvm (its IR through clang's -fsanitize=thread) or arm64 (its
-// assembly, already instrumented, linked with clang's ThreadSanitizer
-// runtime).
+// backend: llvm (its IR through clang's -fsanitize=thread) or arm64
+// (xo build on darwin; elsewhere its assembly, already instrumented,
+// linked with clang's ThreadSanitizer runtime).
 func raceBuild(t *testing.T, name, backend string) string {
 	t.Helper()
 	if testing.Short() {
@@ -535,6 +535,31 @@ func raceBuild(t *testing.T, name, backend string) string {
 	if !xotool.Arm64Host() {
 		t.Skip("the arm64 backend's --race runs on an arm64 host")
 	}
+	if runtime.GOOS == "darwin" {
+		// xo build links it (decision 0273 part 3: Xo's linker, the
+		// runtime a dylib), with clang's runtime until one is shipped
+		bin := filepath.Join(t.TempDir(), "prog")
+		var env []string
+		if os.Getenv("XO_RACE_RUNTIME") == "" {
+			cl, err := xotool.Clang()
+			if err != nil {
+				t.Skip("clang not found")
+			}
+			out, err := exec.Command(cl, "-print-file-name=lib/darwin/libclang_rt.tsan_osx_dynamic.dylib").Output()
+			if err != nil {
+				t.Skipf("no ThreadSanitizer runtime: %v", err)
+			}
+			env = append(env, "XO_RACE_RUNTIME="+strings.TrimSpace(string(out)))
+		}
+		r, err := xotool.Build([]string{dir}, xotool.Options{Backend: xotool.BackendArm64, Race: true, Out: bin, Env: env})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.Failed {
+			t.Fatalf("xo build --race --backend=arm64 failed:\n%s", r.Output)
+		}
+		return bin
+	}
 	asm, err := xotool.Arm64Race(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -543,19 +568,7 @@ func raceBuild(t *testing.T, name, backend string) string {
 	if err := os.WriteFile(src, asm, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// macOS's ld leaves a weak reference nothing defines 0 only when told
-	// (-U), as the xo driver tells it for each
-	var flags []string
-	if runtime.GOOS == "darwin" {
-		seen := map[string]bool{}
-		for _, m := range regexp.MustCompile(`(?m)^\s*\.weak_reference\s+(\S+)`).FindAllSubmatch(asm, -1) {
-			if n := string(m[1]); !seen[n] {
-				seen[n] = true
-				flags = append(flags, "-Wl,-U,"+n)
-			}
-		}
-	}
-	return tsanBuild(t, flags, []string{src})
+	return tsanBuild(t, nil, []string{src})
 }
 
 func raceSyncTable(t *testing.T, bin string) {

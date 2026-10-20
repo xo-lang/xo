@@ -374,10 +374,10 @@ func LLVMIRRaceRuntime(dir string) ([]byte, error) {
 
 // Arm64Race is the arm64 backend's assembly with --race (decision 0273
 // part 2: compiler/arm64 race.xo's calls of ThreadSanitizer), for a
-// build with clang's -fsanitize=thread; XO_NATIVE_RACE=1 until the
-// driver links ThreadSanitizer's runtime itself.
+// build with clang's -fsanitize=thread (where Xo's linker does not link
+// --race yet: Linux).
 func Arm64Race(dir string) ([]byte, error) {
-	return asmEnv(dir, BackendArm64, "", []string{"XO_NATIVE_RACE=1"}, "--race")
+	return asmEnv(dir, BackendArm64, "", nil, "--race")
 }
 
 // Asm is `xo asm --backend=backend [--target=target] dir`: the assembly

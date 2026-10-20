@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo build --race --backend=arm64` on macOS: the arm64 backend checks
+  races itself (decision 0273), with no clang: it calls
+  ThreadSanitizer at the program's loads, stores, and atomics, and Xo's
+  linker links ThreadSanitizer's runtime (XO_RACE_RUNTIME names it until
+  releases ship one). Linux and amd64 still use --backend=llvm.
 - The TLS server seals a response without copying it first and takes a
   whole record without slicing it, and HTTP/2 header names are compared
   in words: TLS requests 2.2% and HTTP/2 requests about 2% fewer

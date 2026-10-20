@@ -10,9 +10,14 @@ use github.com/xo-lang/xo/compiler/tzsel
 
 /// Links prog (an object) into out for tgoos; "" on success, else why
 /// not. strip leaves the local symbols out (`-s`); nolibc: a Linux
-/// program with no C library, linked static (decision 0243).
-fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], out: Str, strip: Bool, nolibc: Bool) -> Str {
+/// program with no C library, linked static (decision 0243); race_rt:
+/// for --race (decision 0273 part 3), ThreadSanitizer's runtime, a dylib
+/// the executable loads by that path ("" for none).
+fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], out: Str, strip: Bool, nolibc: Bool, race_rt: Str) -> Str {
   if tgoos == "linux" {
+    if !race_rt.is_empty() {
+      return "--race on the native backends links darwin executables only so far (decision 0273): use --backend=llvm"
+    }
     return elf_link(os, ctx, flags, srcs, out, nolibc, strip)
   }
   if ctx.goos != "darwin" {
@@ -30,7 +35,12 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
       Err(e) => return "${p}: ${e}"
     }
   }
-  let dylibs = ["/usr/lib/libSystem.B.dylib"]
+  var dylibs = ["/usr/lib/libSystem.B.dylib"]
+  if !race_rt.is_empty() {
+    // its interceptors (malloc, pthread_create, ...) take effect through
+    // its __interpose section, whatever the lookup order
+    dylibs.push(race_rt)
+  }
   let opts = macho.LinkOpts{name: base_name(out), dylibs: dylibs, strip: strip}
   match macho.link_debug(ins, opts) {
     Ok((b, dsym)) => {
@@ -66,6 +76,24 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
     }
     Err(e) => "link: ${e}"
   }
+}
+
+/// ThreadSanitizer's runtime for a native --race executable of tgoos and
+/// march (decision 0273 part 3), or why there is none: $XO_RACE_RUNTIME,
+/// else lib/xo/race/GOOS-ARCH/ next to xo's std (XO/../std, the release
+/// archive's and the seed's layout).
+fn race_runtime(os: Os, ctx: Ctx, tgoos: Str, march: Str) -> (Str, Str) {
+  let file = if tgoos == "darwin" { "libclang_rt.tsan_osx_dynamic.dylib" } else { "libclang_rt.tsan.so" }
+  let env = os.env.get("XO_RACE_RUNTIME") ?? ""
+  if !env.is_empty() {
+    return (env, "")
+  }
+  let root = dir_name(ctx.std.trim_suffix("/"))
+  let p = "${root}/lib/xo/race/${tgoos}-${march}/${file}"
+  if os.fs.exists(p).ok() ?? false {
+    return (p, "")
+  }
+  ("", "--race: no ThreadSanitizer runtime for ${tgoos}/${march} (${p}; XO_RACE_RUNTIME names one): use --backend=llvm")
 }
 
 /// The objects a --ld=macho link takes from srcs, and why not ("" when

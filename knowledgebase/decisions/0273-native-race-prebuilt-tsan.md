@@ -3,8 +3,8 @@
 Status: Proposed (owner decision 2026-10-19, through the lead; Xo Lang 2).
 Part 1 (what --race checks, the two modes) accepted by the lead
 2026-10-20 and implemented on the LLVM backend; part 2 on the arm64
-backend (2026-10-20, behind XO_NATIVE_RACE=1 until part 3); part 3 (the
-prebuilt runtime, Xo's linkers) and amd64 in progress.
+backend (2026-10-20); part 3's link by Xo's Mach-O linker (2026-10-20);
+the shipped runtime, Linux, and amd64 in progress.
 
 ## Context
 
@@ -103,7 +103,7 @@ test run in it, as before. Races inside the runtime are found there and
 by the ordinary tests; a --race build does not exercise Xo's thread
 caches.
 
-### Part 2: the arm64 backend (implemented, behind XO_NATIVE_RACE=1)
+### Part 2: the arm64 backend (implemented)
 
 compiler/arm64 race.xo, a pass over a function's machine instructions
 after selection and before register allocation (its calls are K_CALL,
@@ -133,17 +133,26 @@ module is built with --race (ssa Module.race):
   one that reads them (the call clobbers them).
 
 The per function back-end cache is off with --race (its keys do not say
-so). Until part 3 the driver accepts `--race --backend=arm64` only with
-XO_NATIVE_RACE=1, for `xo asm`, linked with clang's ThreadSanitizer
-runtime (macOS's ld given `-U` for each weak reference). The table above
-holds on it too (internal/llvm TestRaceSyncTableArm64, all 40 runs; the
+so). The table above holds on it too (internal/llvm TestRaceSyncTableArm64, all 40 runs; the
 first run reported a false race for Atomic add, whose compare and swap,
 a template of four lines, was not instrumented, so its release was
 missing), and TestTSanSameThreadRaceArm64 reports a race between two task
 fibers of one thread. amd64 (the x86 templates) is not instrumented yet.
 
-### Part 3 (to be written)
+### Part 3: the link (darwin implemented) and the shipped runtime
 
+- `xo build --race --backend=arm64` on darwin links with Xo's Mach-O
+  linker (compiler/xo ld.xo): ThreadSanitizer's runtime is a dylib the
+  executable loads by its path (a second LC_LOAD_DYLIB after
+  libSystem; its interceptors take effect through its `__interpose`
+  section), found by race_runtime: `$XO_RACE_RUNTIME`, else
+  lib/xo/race/darwin-arm64/libclang_rt.tsan_osx_dynamic.dylib next to
+  xo's std (the release archive's and the seed's layout); none is an
+  error naming --backend=llvm. With --ld=cc, and for Linux, --race on the
+  arm64 backend is refused for now (Linux: its assembly links with
+  clang, as the tests do there). Tested by the same table
+  (TestRaceSyncTableArm64 builds with xo build on darwin, the runtime
+  clang's until one is shipped: 40 of 40, 2026-10-20).
 - The runtime: LLVM compiler-rt's ThreadSanitizer (C++), at a pinned
   revision, built per platform by a maintainer script (never on users'
   machines), shipped in lib/xo/race/<goos>-<goarch>, linked by Xo's own
