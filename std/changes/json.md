@@ -6,7 +6,7 @@
 - Commit: (this change)
 - Found by: survey
 - Go reference: encoding/json struct tags (go1.25.3), as a field's `as "key"` instead of a tag
-- Test: internal/llvm/testdata/golden/json_wire_names, test/errorcheck/wire_names
+- Test: internal/llvm/testdata/golden/json_wire_names and sql_wire_names, test/errorcheck/wire_names
 
 A field names its JSON key with `kind as "type": Str` (a keyword or a
 camelCase key no longer forces the field's name), and `derive Json(case:

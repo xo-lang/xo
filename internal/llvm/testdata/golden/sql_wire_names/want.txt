@@ -1,0 +1,5 @@
+inserted
+1 charge 7 ada
+2 refund -1 -
+cased: NoColumn(name: "createdAt")
+missing: NoColumn(name: "kind")

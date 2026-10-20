@@ -1,0 +1,57 @@
+// SqlRow columns by wire name and case rule (decision 0277), with std/sql's
+// in memory driver on every backend. The driver folds identifiers to lower
+// case (as Postgres does unquoted ones) and has no quoted ones, so the
+// camel case rule shows as the column it asks for.
+use std/sql
+
+const SCHEMA = "CREATE TABLE events (id SERIAL, type TEXT NOT NULL, created INT, user_name TEXT)"
+
+struct Event {
+  id: Int
+  kind as "type": Str
+  created_at as "created": Int?
+  user_name: Str?
+} derive SqlRow
+
+struct Cased {
+  created_at: Int?
+  kind as "type": Str
+} derive SqlRow(case: camel)
+
+struct Missing {
+  kind: Str
+} derive SqlRow
+
+fn main(os: Os) uses (stdio, net.dial) {
+  let db = match sql.memory(SCHEMA) {
+    Ok(d) => d
+    Err(e) => {
+      os.stdio.println("schema: ${e}")
+      return
+    }
+  }
+  match db.exec("INSERT INTO events (type, created, user_name) VALUES ('charge', 7, 'ada'), ('refund', NULL, NULL)") {
+    Ok(_) => os.stdio.println("inserted")
+    Err(e) => os.stdio.println("insert: ${e}")
+  }
+  match db.query_as[Event]("SELECT * FROM events") {
+    Ok(es) => {
+      for e in es {
+        os.stdio.println("${e.id} ${e.kind} ${e.created_at ?? -1} ${e.user_name ?? "-"}")
+      }
+    }
+    Err(e) => os.stdio.println("events: ${e}")
+  }
+  match db.query_as[Cased]("SELECT * FROM events") {
+    Ok(cs) => {
+      for c in cs {
+        os.stdio.println("cased ${c.kind} ${c.created_at ?? -1}")
+      }
+    }
+    Err(e) => os.stdio.println("cased: ${e}")
+  }
+  match db.query_as[Missing]("SELECT * FROM events") {
+    Ok(_) => os.stdio.println("missing: no error")
+    Err(e) => os.stdio.println("missing: ${e}")
+  }
+}
