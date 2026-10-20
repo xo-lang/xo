@@ -47,6 +47,9 @@ fn main(os: Os) ! {
   let bad = http.new_request("POST", "http://x/login", headers: {"Content-Type": "application/x-www-form-urlencoded"}, body: b"user=%zz")
   let resp = r.call(bad)
   os.stdio.println("${resp.status} ${resp.text() ?? "?"}")
+  // a Content-Type that does not parse is mime's error (Go's ParseForm)
+  let odd = r.call(http.new_request("POST", "http://x/login", headers: {"Content-Type": "application/x-www-form-urlencoded; a"}, body: b"user=x"))
+  os.stdio.println("${odd.status} ${odd.text() ?? "?"}")
   let l = os.net.listen("127.0.0.1:0")?
   let addr = l.addr()
   scope s {

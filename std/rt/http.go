@@ -500,13 +500,21 @@ func (r Http_Request) M_query_all(_ *Task, name string) List[string] {
 
 // M_form is `req.form()` (decision 0279): the body of an
 // application/x-www-form-urlencoded POST, PUT, or PATCH (Go's PostForm);
-// the media type is the Content-Type before any ";", without case.
+// the media type is std/mime's parse_media_type of the Content-Type.
 func (r Http_Request) M_form(tk *Task) Result[Url_Values, Url_EscapeErr] {
 	if r.F_method != "POST" && r.F_method != "PUT" && r.F_method != "PATCH" {
 		return Ok[Url_Values, Url_EscapeErr](Url_Values{})
 	}
-	media, _, _ := strings.Cut(Map_get(nil, r.F_headers, "Content-Type").V, ";")
-	if strings.ToLower(strings.TrimSpace(media)) != "application/x-www-form-urlencoded" {
+	// Go's parsePostForm, through std/mime as the native code does
+	ct := headerGet(r.F_headers, "Content-Type").V
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+	m := Mime_parse_media_type(tk, ct)
+	if !m.Ok {
+		return Err[Url_Values](Url_EscapeErr{F_msg: m.E.F_msg})
+	}
+	if m.V.F_kind != "application/x-www-form-urlencoded" {
 		return Ok[Url_Values, Url_EscapeErr](Url_Values{})
 	}
 	return Url_parse_query(tk, urlText(string(r.F_body)))

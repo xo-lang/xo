@@ -42,12 +42,16 @@ test "go TestParseFormQueryMethods" {
 
 test "go TestParseFormUnknownContentType" {
   // text/plain, no Content-Type (application/octet-stream), and an unknown
-  // type are not forms; Go's "text/plain; boundary=" parameter error needs
-  // mime.ParseMediaType, which Xo does not have yet: there it is no form
-  for ct in [Some("text/plain"), None, Some("application/unknown"), Some("text/plain; boundary=")] {
+  // type are not forms; a malformed media type is mime's error
+  for ct in [Some("text/plain"), None, Some("application/unknown")] {
     expect(form_of("POST", ct, "body").map(fn(v) { v.keys() })) == Ok([])
   }
+  expect(form_of("POST", Some("text/plain; boundary="), "body").map_err(fn(e) { e.msg })) == Err("mime: invalid media parameter")
   expect(form_of("POST", Some("Application/X-WWW-Form-URLEncoded"), "a=1").map(fn(v) { v.keys() })) == Ok(["a"])
+  expect(form_of("POST", Some("application/x-www-form-urlencoded; a"), "a=1").map_err(fn(e) { e.msg })) == Err("mime: invalid media parameter")
+  expect(form_of("POST", Some("; a=1"), "a=1").map_err(fn(e) { e.msg })) == Err("mime: no media type")
+  // a GET's form is empty whatever its Content-Type (Go parses only POST, PUT, PATCH)
+  expect(form_of("GET", Some("text/plain; boundary="), "a=1").map(fn(v) { v.keys() })) == Ok([])
 }
 
 test "go TestParseFormSemicolonSeparator: query_all skips a pair with a semicolon" {

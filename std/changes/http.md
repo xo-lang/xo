@@ -1,5 +1,18 @@
 # std/http changes
 
+## 2026-10-20: change: form() parses the Content-Type as Go does
+
+- Kind: change
+- Commit: (filled in after the push)
+- Found by: review (Xo Lang 3)
+- Go reference: net/http/request.go parsePostForm, TestParseFormUnknownContentType (go1.26.1)
+- Test: std/native/http_test.xo (go TestParseFormUnknownContentType); internal/llvm/testdata/golden/http_form
+
+`req.form()` reads the media type with `mime.parse_media_type`, so a
+malformed Content-Type (`text/plain; boundary=`) is now an error with
+mime's text, where it was an empty form; a well formed one behaves as
+before.
+
 ## 2026-10-20: port: Request.multipart_form
 
 - Kind: port
