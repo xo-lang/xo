@@ -707,3 +707,64 @@ func TestFrontCacheOneWayFlags(t *testing.T) {
 		build("verify", "XO_BACKEND_CACHE=verify")
 	}
 }
+
+// TestFrontCacheEntryDoesNotReplay: an entry whose checks pass and whose
+// commit fails (XO_FE_BREAK forces it for one function) does not fail
+// the build: the build is made again without the entry, with a warning
+// naming it, and the binary is the cache-off build's
+// (gotchas/fe-cache-entry-does-not-replay.md).
+func TestFrontCacheEntryDoesNotReplay(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-fenoreplay-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	dir := filepath.Join(work, "p")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := "fn twice(x: Int) -> Int {\n  x * 2\n}\n\nfn main(os: Os) uses stdio {\n  os.stdio.println(\"${twice(21)}\")\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(work, "prog")
+	build := func(env ...string) ([]byte, string) {
+		t.Helper()
+		os.Remove(out)
+		cmd := exec.Command(xo, "build", "--backend=arm64", "-o", out, ".")
+		cmd.Dir = dir
+		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache")), env...)
+		log, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("xo build %v: %v\n%s", env, err, log)
+		}
+		b, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b, string(log)
+	}
+	build("XO_BACKEND_CACHE=on")
+	broken, log := build("XO_BACKEND_CACHE=on", "XO_FE_BREAK=twice")
+	if !strings.Contains(log, "did not replay") || !strings.Contains(log, "(twice, recorded by xo ") {
+		t.Fatalf("the build with a broken entry printed no warning naming it:\n%s", log)
+	}
+	off, _ := build("XO_BACKEND_CACHE=off")
+	if !bytes.Equal(broken, off) {
+		t.Fatal("the build made again without the broken entry differs from the build with XO_BACKEND_CACHE=off")
+	}
+	again, log := build("XO_BACKEND_CACHE=on")
+	if strings.Contains(log, "did not replay") || !bytes.Equal(again, off) {
+		t.Fatalf("the build after the fallback warned again or differs from the cache-off build:\n%s", log)
+	}
+}

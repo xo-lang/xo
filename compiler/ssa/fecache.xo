@@ -22,7 +22,7 @@
 use std/crypto
 use github.com/xo-lang/xo/compiler/check
 
-const FE_CACHE_VERSION = "xo front cache v7"
+const FE_CACHE_VERSION = "xo front cache v8"
 
 /// The front end cache of one build: entries by key (fe_keys), the
 /// entries to store, and counts.
@@ -40,6 +40,19 @@ pub struct FeCache {
   /// the build starts with unwinding checks (Builder.conc): the last
   /// build of the program needed them (xo bcache.xo's hint)
   pub start_conc: Bool = false
+  /// the keys of entries whose checks passed but whose commit did not
+  /// (a front end cache bug): the driver builds again without them
+  pub bad: List[Str] = []
+  /// the last commit failed (fe_replay), for run_job_fe to note its key
+  broken: Bool = false
+  /// the xo that records entries (its identity, xo bcache.xo self_id),
+  /// written in each entry so a failed commit names who made the entry
+  pub recorder: Str = ""
+  /// the recorder of the entry being committed
+  last_recorder: Str = ""
+  /// a test hook (XO_FE_BREAK): the commit of this function's entry
+  /// fails, as an entry that does not replay does
+  pub break_name: Str = ""
   /// qualified name to function object, built on the first replay
   by_ident: Map[Str, Int] = {}
 }
@@ -242,6 +255,7 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
   var e = EntryW{b: BytesBuilder.new()}
   e.str(FE_CACHE_VERSION)
   e.str(b.fe_own_flags())
+  e.str(b.fe.recorder)
   // the body and what it does to the builder itself: the same whichever
   // builder made the entry (fe_same compares this for verify)
   var tl = EntryW{b: BytesBuilder.new()}
@@ -385,6 +399,7 @@ fn (var b: Builder) fe_applies(d: Bytes) -> Bool {
   if r.str() != FE_CACHE_VERSION || r.str() != b.fe_own_flags() {
     return false
   }
+  let _recorder = r.str()
   let _tail = r.bytes()
   let nr = r.uv()
   if !r.ok || nr > d.len() {
@@ -439,6 +454,7 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
   if r.str() != b.fe_own_flags() {
     return b.fe_miss("flags")
   }
+  b.fe.last_recorder = r.str()
   let tail = r.bytes()
   let nr = r.uv()
   if !r.ok || nr > d.len() {
@@ -667,10 +683,14 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
     }
   }
   let f = decode_func(b.m, fb, ops)
+  if !b.fe.break_name.is_empty() && b.m.funcs[fi].name == b.fe.break_name {
+    bad = true
+  }
   if bad || f == None {
     // the checks passed but the commit did not: a builder bug, never a
     // silent difference
     b.why = "the front end cache's entry for ${b.m.funcs[fi].name} does not replay (XO_FE_CACHE=off builds without it)"
+    b.fe.broken = true
     return true
   }
   var g = f ?? Func{name: ""}

@@ -326,7 +326,7 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
     return ssa.build_program_guard(c, root, tests, release, real, tgoos, tgoarch, wasm, nolibc, prof, trace, soft_cpu, heap_guard)
   }
   var t = os.clock.now()
-  var fe = ssa.FeCache{on: true, verify: backend_cache_mode(os) == "verify"}
+  var fe = ssa.FeCache{on: true, verify: backend_cache_mode(os) == "verify", break_name: os.env.get("XO_FE_BREAK") ?? "", recorder: self_id(os)}
   fe.keys = ssa.fe_keys(c, "${id}\n${ssa.fe_flags(root, tests, release, real, tgoos, tgoarch, wasm, nolibc, prof, trace, soft_cpu, heap_guard)}", root, std_tree_sum(os, c.std_root(), dir))
   t = lap(os, phases, "fe.keys", t)
   // the own flags the last build of this program ended with (a hint):
@@ -343,10 +343,33 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
       keys.push(ssa.fe_variant(k, own))
     }
   }
-  let (entries, pk) = cache_get_packed(os, dir, "fe", "${tgoos}/${tgoarch}", keys, 8)
+  let (entries0, pk0) = cache_get_packed(os, dir, "fe", "${tgoos}/${tgoarch}", keys, 8)
+  var entries = entries0
+  var pk = pk0
   fe.entries = entries
   t = lap(os, phases, "fe.read", t)
   var b = ssa.build_program_fe(c, root, tests, release, real, tgoos, tgoarch, wasm, nolibc, prof, trace, soft_cpu, heap_guard, fe)
+  var tries = 0
+  while !b.fe.bad.is_empty() {
+    // an entry whose checks passed and whose commit did not (a front end
+    // cache bug, never a silent difference): the build is dropped and
+    // made again without it, the body built fresh replaces the entry and
+    // the pack is rewritten without the old one; a third failure builds
+    // without entries (gotchas/fe-cache-entry-does-not-replay.md)
+    tries += 1
+    for x in b.fe.bad {
+      // "KEY (FUNCTION, recorded by xo ID)"; this xo is self_id
+      os.stdio.eprintln("xo: warning: the front end cache entry ${x} did not replay in xo ${fe.recorder}; building again without it")
+      let k = x.split(" ")[0]
+      let _ = fe.entries.remove(k)
+      let _ = entries.remove(k)
+    }
+    if tries >= 3 {
+      fe.entries = {}
+    }
+    pk.compact = true
+    b = ssa.build_program_fe(c, root, tests, release, real, tgoos, tgoarch, wasm, nolibc, prof, trace, soft_cpu, heap_guard, fe)
+  }
   t = lap(os, phases, "fe.build", t)
   let fin = b.fe_final_own()
   if fin != hint {
@@ -697,6 +720,9 @@ struct Pack {
   from_pack: Map[Str, Bool] = {}
   /// The target's first build: no pack directory yet.
   fresh: Bool = false
+  /// Rewrite the pack with the entries used, dropping the rest (an entry
+  /// that did not replay must not be read again).
+  compact: Bool = false
   /// fn_cache_load's: the pack of the parts' entries beside the
   /// functions'
   parts: Option[Pack] = None
@@ -865,7 +891,7 @@ fn pack_store(os: Os, p: Pack, entries: Map[Str, Bytes], stores: List[(Str, Byte
       extra.push((k, b))
     }
   }
-  if p.segs.len() >= PACK_SEGS || p.held > 2 * used.len() + 64 {
+  if p.compact || p.segs.len() >= PACK_SEGS || p.held > 2 * used.len() + 64 {
     pack_write(os, p, used)
     for s in p.segs {
       os.fs.remove("${p.dir}/${s}").ignore_err("another build compacted it")

@@ -618,6 +618,12 @@ fn (var b: Builder) run_job_fe(j: Job) {
       if !b.fe.verify {
         if let Some(e) = entry {
           if b.fe_replay(e, fi) {
+            if b.fe.broken {
+              // the module is half committed: the driver drops this build
+              // and builds again without the entry (xo bcache.xo)
+              b.fe.broken = false
+              b.fe.bad.push("${key} (${b.m.funcs[fi].name}, recorded by xo ${b.fe.last_recorder})")
+            }
             b.fe.hits += 1
             return
           }
