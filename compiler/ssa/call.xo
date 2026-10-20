@@ -79,8 +79,9 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
     return b.value_call(x)
   }
   let fr = b.c.objs[fo].recv
-  if b.c.objs[fo].iface && fr >= 0 && (!b.is_prelude_mod(b.obj_mod(fr)) || b.dyn_iface(fr)) {
-    // not a capability's method (those are lowered as std calls)
+  if b.c.objs[fo].iface && fr >= 0 && (!b.is_prelude_mod(b.obj_mod(fr)) || b.dyn_iface(fr) || b.obj_name(fr) == "Stream") {
+    // not a capability's method (those are lowered as std calls); the
+    // prelude's Stream (decision 0280) is an ordinary interface
     return b.iface_call(x, ci)
   }
   let fm = b.obj_mod(fo)
