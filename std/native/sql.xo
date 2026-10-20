@@ -16,6 +16,7 @@ use std/task
 use native/rt
 use native/rtsql
 use native/llrt/raw
+use native/llrt/sysio
 
 // ---------------------------------------------------------------------------
 // Handles
@@ -25,6 +26,132 @@ struct Db {
   /// One token: the permit of the single open transaction.
   writer: Chan[Bool]
   closed: Atomic[Bool]
+  /// The connections of a driver (open_driver); None for the in memory one.
+  pool: Pool? = None
+}
+
+// ---------------------------------------------------------------------------
+// The pool of a driver (decision 0278): max_open permits, idle connections
+
+struct Pool {
+  net: Net
+  drv: sql.Driver
+  dsn: Str
+  /// max_open tokens: one per operation in flight and open transaction.
+  permits: Chan[Bool]
+  idle: Mutex[List[Idle]]
+  max_idle: Int
+  /// Nanoseconds; 0 for none.
+  max_lifetime: Int
+}
+
+struct Idle {
+  c: sql.DriverConn
+  /// When it was connected (sysio.mono_ns).
+  born: Int
+}
+
+/// A connection taken from the pool, with when it was connected.
+struct Taken {
+  c: sql.DriverConn
+  born: Int
+}
+
+fn (p: Pool) take() -> Taken ! sql.SqlErr uses net.dial {
+  // waiting for a permit is a cancellation point
+  if p.permits.recv() is None {
+    return Err(sql.SqlErr.Canceled)
+  }
+  let now = sysio.mono_ns()
+  while {
+    let got = p.idle.with(fn(var xs) { xs.pop() })
+    match got {
+      Some(x) => {
+        if p.max_lifetime > 0 && now - x.born >= p.max_lifetime {
+          x.c.close()
+          continue
+        }
+        return Taken{c: x.c, born: x.born}
+      }
+      None => break
+    }
+  }
+  match p.drv.connect(p.net, p.dsn) {
+    Ok(c) => Taken{c: c, born: now}
+    Err(e) => {
+      p.permits.send(true)
+      Err(e)
+    }
+  }
+}
+
+/// Gives t back: kept idle while it works, has room, and is young enough,
+/// else closed; then the permit.
+fn (p: Pool) give(t: Taken) {
+  let keep = !t.c.is_broken() && (p.max_lifetime == 0 || sysio.mono_ns() - t.born < p.max_lifetime)
+  let kept = keep && p.idle.with(fn(var xs) -> Bool {
+    if xs.len() >= p.max_idle {
+      return false
+    }
+    xs.push(Idle{c: t.c, born: t.born})
+    true
+  })
+  if !kept {
+    t.c.close()
+  }
+  p.permits.send(true)
+}
+
+fn (p: Pool) query(q: Str, args: List[sql.SqlValue]) -> List[Row] ! sql.SqlErr uses net.dial {
+  let t = p.take()?
+  let r = t.c.query(q, args)
+  p.give(t)
+  let rows = r?
+  to_rows(rows.columns, rows.rows)
+}
+
+fn (p: Pool) exec(q: Str, args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses net.dial {
+  let t = p.take()?
+  let r = t.c.exec(q, args)
+  p.give(t)
+  r
+}
+
+fn (p: Pool) ping() -> () ! sql.SqlErr uses net.dial {
+  let t = p.take()?
+  let r = t.c.ping()
+  p.give(t)
+  r
+}
+
+fn (p: Pool) close_idle() {
+  let xs = p.idle.with(fn(var xs) {
+    let all = xs
+    xs = []
+    all
+  })
+  for x in xs {
+    x.c.close()
+  }
+}
+
+fn open_driver(net: Net, d: sql.Driver, dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m) -> Db ! sql.SqlErr uses net.dial {
+  if task.is_canceled() {
+    return Err(sql.SqlErr.Canceled)
+  }
+  if max_open < 1 {
+    return Err(sql.SqlErr.Param(msg: "max_open must be at least 1"))
+  }
+  let permits: Chan[Bool] = Chan.new(cap: max_open)
+  for _ in 0..max_open {
+    permits.send(true)
+  }
+  let p = Pool{net: net, drv: d, dsn: dsn, permits: permits, idle: Mutex.new([]), max_idle: max_idle.max(0),
+    max_lifetime: max_lifetime.nanos().max(0)}
+  // connect once now, so a wrong password or host fails at open
+  p.ping()?
+  let db = new_db({})
+  db with {pool: Some(p)}
 }
 
 struct Store {
@@ -34,6 +161,8 @@ struct Store {
 struct Tx {
   st: Mutex[TxState]
   db: Db
+  /// A transaction of a driver: its connection, held from begin to its end.
+  conn: Taken? = None
 }
 
 struct TxState {
@@ -112,6 +241,9 @@ fn to_rows(cols: List[Str], rows: List[List[sql.SqlValue]]) -> List[Row] {
 
 fn (d: Db) query(q: Str, args: List[sql.SqlValue] = []) -> List[Row] ! sql.SqlErr uses net.dial {
   d.ready()?
+  if let Some(p) = d.pool {
+    return p.query(q, args)
+  }
   let res = d.st.with(fn(var st) -> Rows ! sql.SqlErr {
     var work = st.tables
     let r = mem_run(work, q, args)?
@@ -131,6 +263,9 @@ fn (d: Db) query_one(q: Str, args: List[sql.SqlValue] = []) -> Row ! sql.SqlErr 
 
 fn (d: Db) exec(q: Str, args: List[sql.SqlValue] = []) -> sql.ExecResult ! sql.SqlErr uses net.dial {
   d.ready()?
+  if let Some(p) = d.pool {
+    return p.exec(q, args)
+  }
   d.st.with(fn(var st) -> sql.ExecResult ! sql.SqlErr {
     var work = st.tables
     let r = mem_exec(work, q, args)?
@@ -155,14 +290,31 @@ fn decode_all[T: SqlRow](rows: List[Row]) -> List[T] ! sql.SqlErr {
   out
 }
 
-fn (d: Db) ping() -> () ! sql.SqlErr uses net.dial { d.ready()? }
+fn (d: Db) ping() -> () ! sql.SqlErr uses net.dial {
+  d.ready()?
+  if let Some(p) = d.pool {
+    return p.ping()
+  }
+}
 
 fn (d: Db) close() -> () ! sql.SqlErr {
   d.closed.set(true)
+  if let Some(p) = d.pool {
+    p.close_idle()
+  }
 }
 
 fn (d: Db) begin() -> Tx ! sql.SqlErr uses net.dial {
   d.ready()?
+  if let Some(p) = d.pool {
+    // the transaction holds its permit and connection until it ends
+    let t = p.take()?
+    if let Err(e) = t.c.begin() {
+      p.give(t)
+      return Err(e)
+    }
+    return Tx{st: Mutex.new(TxState{tables: {}, done: false}), db: d, conn: Some(t)}
+  }
   // the single writer permit; waiting is a cancellation point
   if d.writer.recv() is None {
     return Err(sql.SqlErr.Canceled)
@@ -174,6 +326,15 @@ fn (d: Db) begin() -> Tx ! sql.SqlErr uses net.dial {
 fn (t: Tx) query(q: Str, args: List[sql.SqlValue] = []) -> List[Row] ! sql.SqlErr uses net.dial {
   if task.is_canceled() {
     return Err(sql.SqlErr.Canceled)
+  }
+  if let Some(tc) = t.conn {
+    let rows = t.st.with(fn(var ts) -> sql.DriverRows ! sql.SqlErr {
+      if ts.done {
+        return Err(sql.SqlErr.TxDone)
+      }
+      tc.c.query(q, args)
+    })?
+    return to_rows(rows.columns, rows.rows)
   }
   let res = t.st.with(fn(var ts) -> Rows ! sql.SqlErr {
     if ts.done {
@@ -199,6 +360,14 @@ fn (t: Tx) exec(q: Str, args: List[sql.SqlValue] = []) -> sql.ExecResult ! sql.S
   if task.is_canceled() {
     return Err(sql.SqlErr.Canceled)
   }
+  if let Some(tc) = t.conn {
+    return t.st.with(fn(var ts) -> sql.ExecResult ! sql.SqlErr {
+      if ts.done {
+        return Err(sql.SqlErr.TxDone)
+      }
+      tc.c.exec(q, args)
+    })
+  }
   t.st.with(fn(var ts) -> sql.ExecResult ! sql.SqlErr {
     if ts.done {
       return Err(sql.SqlErr.TxDone)
@@ -221,6 +390,17 @@ fn (t: Tx) query_one_as[T: SqlRow](q: Str, args: List[sql.SqlValue] = []) -> T !
 
 fn (t: Tx) commit() -> () ! sql.SqlErr uses net.dial {
   let db = t.db
+  if let Some(tc) = t.conn {
+    return t.st.with(fn(var ts) -> () ! sql.SqlErr {
+      if ts.done {
+        return Err(sql.SqlErr.TxDone)
+      }
+      ts.done = true
+      let r = tc.c.commit()
+      db.pool.or_fault("a driver's transaction has a pool").give(tc)
+      r
+    })
+  }
   t.st.with(fn(var ts) -> () ! sql.SqlErr {
     if ts.done {
       return Err(sql.SqlErr.TxDone)
@@ -234,6 +414,17 @@ fn (t: Tx) commit() -> () ! sql.SqlErr uses net.dial {
 
 fn (t: Tx) rollback() -> () ! sql.SqlErr uses net.dial {
   let db = t.db
+  if let Some(tc) = t.conn {
+    return t.st.with(fn(var ts) -> () ! sql.SqlErr {
+      if ts.done {
+        return Ok(())
+      }
+      ts.done = true
+      let r = tc.c.rollback()
+      db.pool.or_fault("a driver's transaction has a pool").give(tc)
+      r
+    })
+  }
   t.st.with(fn(var ts) {
     if !ts.done {
       ts.done = true

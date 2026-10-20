@@ -1,0 +1,77 @@
+// A driver written in Xo over sql.open_driver (decision 0278): the pool
+// connects once at open, reuses an idle connection, drops a broken one,
+// holds one connection for a transaction, and closes idle ones at close.
+use std/sql
+
+struct Log {
+  lines: Mutex[List[Str]]
+  next: Atomic[Int]
+}
+
+fn (l: Log) add(s: Str) { l.lines.with(fn(var xs) { xs.push(s) }) }
+
+struct FakeDriver {
+  log: Log
+  fail_password: Bool
+}
+
+struct FakeConn {
+  id: Int
+  log: Log
+  broken: Atomic[Bool]
+}
+
+fn (d: FakeDriver) connect(net: Net, dsn: Str) -> sql.DriverConn ! sql.SqlErr uses net.dial {
+  if d.fail_password {
+    return Err(sql.SqlErr.Conn(msg: "password authentication failed"))
+  }
+  let id = d.log.next.add(1)
+  d.log.add("connect ${id} ${dsn}")
+  FakeConn{id: id, log: d.log, broken: Atomic.new(false)}
+}
+
+fn (c: FakeConn) query(q: Str, args: List[sql.SqlValue]) -> sql.DriverRows ! sql.SqlErr uses net.dial {
+  c.log.add("conn ${c.id} query ${q}")
+  if q == "BREAK" {
+    c.broken.set(true)
+    return Err(sql.SqlErr.Conn(msg: "connection reset"))
+  }
+  sql.DriverRows{columns: ["conn", "q", "n"], rows: [[sql.int(c.id), sql.str(q), sql.int(args.len())]]}
+}
+
+fn (c: FakeConn) exec(q: Str, args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses net.dial {
+  c.log.add("conn ${c.id} exec ${q}")
+  sql.ExecResult{rows_affected: args.len(), last_insert_id: 0}
+}
+
+fn (c: FakeConn) begin() -> () ! sql.SqlErr uses net.dial { c.log.add("conn ${c.id} BEGIN") }
+fn (c: FakeConn) commit() -> () ! sql.SqlErr uses net.dial { c.log.add("conn ${c.id} COMMIT") }
+fn (c: FakeConn) rollback() -> () ! sql.SqlErr uses net.dial { c.log.add("conn ${c.id} ROLLBACK") }
+fn (c: FakeConn) ping() -> () ! sql.SqlErr uses net.dial { c.log.add("conn ${c.id} ping") }
+fn (c: FakeConn) close() { c.log.add("conn ${c.id} close") }
+fn (c: FakeConn) is_broken() -> Bool { c.broken.get() }
+
+fn main(os: Os) ! {
+  let log = Log{lines: Mutex.new([]), next: Atomic.new(0)}
+  match sql.open_driver(os.net, FakeDriver{log: log, fail_password: true}, "x") {
+    Ok(_) => os.stdio.println("open: ok?")
+    Err(e) => os.stdio.println("open: ${e}")
+  }
+  let db = sql.open_driver(os.net, FakeDriver{log: log, fail_password: false}, "dsn", max_open: 2, max_idle: 1)?
+  let r = db.query_one("SELECT 1", [sql.int(1), sql.int(2)])?
+  os.stdio.println("row conn ${r.int("conn")?} n ${r.int("n")?}")
+  os.stdio.println("exec ${db.exec("UPDATE", [sql.int(1)])?.rows_affected}")
+  let tx = db.begin()?
+  tx.exec("INSERT", [])?
+  let _ = tx.query("SELECT in tx")?
+  tx.commit()?
+  os.stdio.println("commit again: ${tx.commit().err().map(fn(e) { "${e}" }) ?? "ok"}")
+  tx.rollback()?
+  os.stdio.println("break: ${db.query("BREAK").err().map(fn(e) { "${e}" }) ?? "ok"}")
+  let _ = db.query("after break")?
+  db.close()?
+  os.stdio.println("closed: ${db.query("x").err().map(fn(e) { "${e}" }) ?? "ok"}")
+  for l in log.lines.with(fn(xs) { xs }) {
+    os.stdio.println(l)
+  }
+}

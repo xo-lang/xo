@@ -181,6 +181,9 @@ func sqlMsgErr(tag int, msg string) Sql_SqlErr {
 
 // toSqlErr converts a backend error.
 func toSqlErr(err error) Sql_SqlErr {
+	if b, ok := err.(*sqlErrBox); ok {
+		return b.e
+	}
 	if se, ok := err.(*SqlError); ok {
 		switch se.Kind {
 		case SqlSyntax:
@@ -359,8 +362,15 @@ type sqlRunner interface {
 	Exec(q string, args []any) (int64, int64, error)
 }
 
+func runQuery(tk *Task, r sqlRunner, q string, args []any) ([]string, [][]any, error) {
+	if t, ok := r.(sqlTaskRunner); ok {
+		return t.QueryTk(tk, q, args)
+	}
+	return r.Query(q, args)
+}
+
 func sqlQuery(tk *Task, r sqlRunner, q string, args List[Sql_SqlValue]) Result[List[Sql_Row], Sql_SqlErr] {
-	cols, rows, err := r.Query(q, sqlArgs(args))
+	cols, rows, err := runQuery(tk, r, q, sqlArgs(args))
 	if err != nil {
 		return sqlFailErr[List[Sql_Row]](err)
 	}
@@ -368,7 +378,7 @@ func sqlQuery(tk *Task, r sqlRunner, q string, args List[Sql_SqlValue]) Result[L
 }
 
 func sqlQueryOne(tk *Task, r sqlRunner, q string, args List[Sql_SqlValue]) Result[Sql_Row, Sql_SqlErr] {
-	cols, rows, err := r.Query(q, sqlArgs(args))
+	cols, rows, err := runQuery(tk, r, q, sqlArgs(args))
 	if err != nil {
 		return sqlFailErr[Sql_Row](err)
 	}
@@ -379,7 +389,13 @@ func sqlQueryOne(tk *Task, r sqlRunner, q string, args List[Sql_SqlValue]) Resul
 }
 
 func sqlExec(tk *Task, r sqlRunner, q string, args List[Sql_SqlValue]) Result[Sql_ExecResult, Sql_SqlErr] {
-	n, id, err := r.Exec(q, sqlArgs(args))
+	var n, id int64
+	var err error
+	if t, ok := r.(sqlTaskRunner); ok {
+		n, id, err = t.ExecTk(tk, q, sqlArgs(args))
+	} else {
+		n, id, err = r.Exec(q, sqlArgs(args))
+	}
 	if err != nil {
 		return sqlFailErr[Sql_ExecResult](err)
 	}
@@ -404,6 +420,12 @@ func (d Sql_Db) M_exec(tk *Task, q string, args List[Sql_SqlValue]) Result[Sql_E
 // M_ping is `db.ping()`.
 func (d Sql_Db) M_ping(tk *Task) Result[Unit, Sql_SqlErr] {
 	return withConn(tk, d.d, func() Result[Unit, Sql_SqlErr] {
+		if b, ok := d.d.be.(*sqlDriverBackend); ok {
+			if err := b.PingTk(tk); err != nil {
+				return sqlFailErr[Unit](err)
+			}
+			return Ok[Unit, Sql_SqlErr](Unit{})
+		}
 		if err := d.d.be.Ping(); err != nil {
 			return sqlFailErr[Unit](err)
 		}
@@ -413,8 +435,12 @@ func (d Sql_Db) M_ping(tk *Task) Result[Unit, Sql_SqlErr] {
 
 // M_close is `db.close()`: later operations fail with Closed. Closing twice
 // is fine. Open transactions keep working until they finish.
-func (d Sql_Db) M_close(*Task) Result[Unit, Sql_SqlErr] {
+func (d Sql_Db) M_close(tk *Task) Result[Unit, Sql_SqlErr] {
 	if d.d != nil && d.d.closed.CompareAndSwap(false, true) {
+		if b, ok := d.d.be.(*sqlDriverBackend); ok {
+			b.CloseTk(tk)
+			return Ok[Unit, Sql_SqlErr](Unit{})
+		}
 		if err := d.d.be.Close(); err != nil {
 			return sqlFailErr[Unit](err)
 		}
@@ -439,7 +465,13 @@ func (d Sql_Db) M_begin(tk *Task) Result[Sql_Tx, Sql_SqlErr] {
 		db.pool.release()
 		return sqlFail[Sql_Tx](sqlTagCanceled)
 	}
-	be, err := db.be.Begin()
+	var be SqlTxBackend
+	var err error
+	if b, ok := db.be.(*sqlDriverBackend); ok {
+		be, err = b.BeginTk(tk)
+	} else {
+		be, err = db.be.Begin()
+	}
 	if err != nil {
 		db.release()
 		return sqlFailErr[Sql_Tx](err)
@@ -486,10 +518,12 @@ func (t Sql_Tx) M_exec(tk *Task, q string, args List[Sql_SqlValue]) Result[Sql_E
 }
 
 // finish ends the transaction and releases its permits.
-func (t Sql_Tx) finish(commit bool) error {
+func (t Sql_Tx) finish(tk *Task, commit bool) error {
 	t.t.done = true
 	var err error
-	if commit {
+	if dt, ok := t.t.be.(*sqlDriverTx); ok {
+		err = dt.FinishTk(tk, commit)
+	} else if commit {
 		err = t.t.be.Commit()
 	} else {
 		err = t.t.be.Rollback()
@@ -508,7 +542,7 @@ func (t Sql_Tx) M_commit(tk *Task) Result[Unit, Sql_SqlErr] {
 	if t.t.done {
 		return sqlFail[Unit](sqlTagTxDone)
 	}
-	if err := t.finish(true); err != nil {
+	if err := t.finish(tk, true); err != nil {
 		return sqlFailErr[Unit](err)
 	}
 	return Ok[Unit, Sql_SqlErr](Unit{})
@@ -525,7 +559,7 @@ func (t Sql_Tx) M_rollback(tk *Task) Result[Unit, Sql_SqlErr] {
 	if t.t.done {
 		return Ok[Unit, Sql_SqlErr](Unit{})
 	}
-	if err := t.finish(false); err != nil {
+	if err := t.finish(tk, false); err != nil {
 		return sqlFailErr[Unit](err)
 	}
 	return Ok[Unit, Sql_SqlErr](Unit{})

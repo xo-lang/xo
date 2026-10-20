@@ -1,5 +1,18 @@
 # std/sql changes
 
+## 2026-10-20: feature: drivers written in Xo, opened with open_driver
+
+- Kind: feature
+- Commit: (filled in after the push)
+- Found by: survey
+- Go reference: none
+- Test: internal/llvm/testdata/golden/sql_driver
+
+A driver implements `sql.Driver` and `sql.DriverConn` in Xo and is opened
+with `sql.open_driver(net, driver, dsn)`, which gives it std/sql's pool
+(`max_open`, `max_idle`, `max_lifetime`), transactions on one connection,
+and cancellation.
+
 ## 2026-10-20: feature: bytes, JSON, and array values, and SQLSTATE codes
 
 - Kind: feature

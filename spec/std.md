@@ -1830,6 +1830,42 @@ writes; reads outside see the last commit. A write through `query` that
 fails changes nothing, like one through `exec`.
 Results of a `Db` are not recorded by record and replay (core 11.3) yet.
 
+### 10.7 Drivers written in Xo
+
+Status: implemented natively and on the Go backend (decision 0278 stage
+B, 2026-10-20); the Postgres driver (10.8) uses it.
+
+```
+interface Driver {
+  fn connect(self, net: Net, dsn: Str) -> DriverConn ! SqlErr uses net.dial
+}
+interface DriverConn {
+  fn query(self, q: Str, args: List[SqlValue]) -> DriverRows ! SqlErr uses net.dial
+  fn exec(self, q: Str, args: List[SqlValue]) -> ExecResult ! SqlErr uses net.dial
+  fn begin(self) -> () ! SqlErr uses net.dial      // also commit, rollback, ping
+  fn close(self)
+  fn is_broken(self) -> Bool                       // dropped from the pool when true
+}
+struct DriverRows { columns: List[Str], rows: List[List[SqlValue]] }
+
+pub fn open_driver(net: Net, d: Driver, dsn: Str, max_open: Int = 10, max_idle: Int = 2,
+                   max_lifetime: Duration = 30m) -> Db ! SqlErr uses net.dial
+```
+
+- A driver is a value passed to `open_driver`; there is no registry of
+  names (a package global). std/sql gives it the pool: `max_open`
+  permits (each operation and open transaction holds one; waiting is a
+  cancellation point), at most `max_idle` idle connections, each closed
+  once older than `max_lifetime` (on the monotonic clock). An operation
+  takes an idle connection or connects, runs, and gives it back; a
+  connection whose `is_broken` is true is closed instead. A transaction
+  holds one connection from `begin` to `commit` or `rollback`.
+- `open_driver` connects once (a `ping`) before it returns, so a wrong
+  password or host fails there. `close` closes the idle connections;
+  later operations are `Closed`.
+- A `DriverConn` is used by one task at a time; the driver's waits are
+  cancellation points that return `Canceled`.
+
 ---
 
 ## 11. std/crypto

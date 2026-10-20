@@ -4175,3 +4175,56 @@ func (v Crypto_KeyAlg) XoDebug(b *strings.Builder) {
 }
 
 func (v Crypto_KeyAlg) M_debug(*Task) string { return Debug(v) }
+
+type Sql_Driver interface {
+	M_connect(tk *Task, p0 Net, p1 string) Result[Sql_DriverConn, Sql_SqlErr]
+}
+
+type Sql_DriverConn interface {
+	M_query(tk *Task, p0 string, p1 List[Sql_SqlValue]) Result[Sql_DriverRows, Sql_SqlErr]
+	M_exec(tk *Task, p0 string, p1 List[Sql_SqlValue]) Result[Sql_ExecResult, Sql_SqlErr]
+	M_begin(tk *Task) Result[Unit, Sql_SqlErr]
+	M_commit(tk *Task) Result[Unit, Sql_SqlErr]
+	M_rollback(tk *Task) Result[Unit, Sql_SqlErr]
+	M_ping(tk *Task) Result[Unit, Sql_SqlErr]
+	M_close(tk *Task)
+	M_is_broken(tk *Task) bool
+}
+
+type Sql_DriverRows struct {
+	F_columns List[string]
+	F_rows    List[List[Sql_SqlValue]]
+}
+
+func (v Sql_DriverRows) XoEq(x any) bool {
+	o, ok := x.(Sql_DriverRows)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_columns, o.F_columns) {
+		return false
+	}
+	if !Eq(v.F_rows, o.F_rows) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v Sql_DriverRows) XoHash() uint64 {
+	h := uint64(1690444802796448442)
+	h = MixHash(h, Hash(v.F_columns))
+	h = MixHash(h, Hash(v.F_rows))
+	return h
+}
+
+func (v Sql_DriverRows) XoDebug(b *strings.Builder) {
+	b.WriteString("DriverRows{")
+	b.WriteString("columns: ")
+	DebugTo(b, v.F_columns)
+	b.WriteString(", rows: ")
+	DebugTo(b, v.F_rows)
+	b.WriteString("}")
+}
+
+func (v Sql_DriverRows) M_debug(*Task) string { return Debug(v) }

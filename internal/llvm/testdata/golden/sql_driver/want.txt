@@ -1,0 +1,22 @@
+exit 0
+--- stdout
+open: Conn(msg: "password authentication failed")
+row conn 1 n 2
+exec 1
+commit again: TxDone
+break: Conn(msg: "connection reset")
+closed: Closed
+connect 1 dsn
+conn 1 ping
+conn 1 query SELECT 1
+conn 1 exec UPDATE
+conn 1 BEGIN
+conn 1 exec INSERT
+conn 1 query SELECT in tx
+conn 1 COMMIT
+conn 1 query BREAK
+conn 1 close
+connect 2 dsn
+conn 2 query after break
+conn 2 close
+--- stderr

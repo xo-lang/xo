@@ -126,3 +126,36 @@ fn (r: Row) ints(name: Str) -> List[Int] ! SqlErr
 fn (r: Row) strs(name: Str) -> List[Str] ! SqlErr
 /// An array's elements as values.
 fn (r: Row) items(name: Str) -> List[SqlValue] ! SqlErr
+
+/// A database driver written in Xo (decision 0278): opened with
+/// `open_driver`, which gives it std/sql's pool, transactions, and
+/// cancellation. It dials through the Net it is given.
+interface Driver {
+  fn connect(self, net: Net, dsn: Str) -> DriverConn ! SqlErr uses net.dial
+}
+
+/// One connection of a Driver, used by one task at a time. Its waits are
+/// cancellation points that return Canceled.
+interface DriverConn {
+  fn query(self, q: Str, args: List[SqlValue]) -> DriverRows ! SqlErr uses net.dial
+  fn exec(self, q: Str, args: List[SqlValue]) -> ExecResult ! SqlErr uses net.dial
+  fn begin(self) -> () ! SqlErr uses net.dial
+  fn commit(self) -> () ! SqlErr uses net.dial
+  fn rollback(self) -> () ! SqlErr uses net.dial
+  fn ping(self) -> () ! SqlErr uses net.dial
+  fn close(self)
+  /// True once the connection cannot be used again; the pool drops it.
+  fn is_broken(self) -> Bool
+}
+
+/// The result of DriverConn.query: column names and rows of values.
+struct DriverRows {
+  columns: List[Str]
+  rows: List[List[SqlValue]]
+}
+
+/// A Db over d: `max_open` connections at most (operations and open
+/// transactions; waiting is a cancellation point), `max_idle` kept open
+/// when unused, each closed after `max_lifetime`. Connects once before it
+/// returns, so a wrong password or host fails here.
+fn open_driver(net: Net, d: Driver, dsn: Str, max_open: Int = 10, max_idle: Int = 2, max_lifetime: Duration = 30m) -> Db ! SqlErr uses net.dial
