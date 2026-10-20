@@ -86,7 +86,8 @@ func Err[T, E any](e E) Result[T, E] { return Result[T, E]{E: e} }
 // ErrTr wraps an error that keeps the frames of an earlier Result.
 func ErrTr[T, E any](e E, tr *Trace) Result[T, E] { return Result[T, E]{E: e, Tr: tr} }
 
-// Tuple2 to Tuple6 are tuples `(A, B, ...)`.
+// Tuple2 to Tuple6 are tuples `(A, B, ...)`; Tuple7 to Tuple16 are in
+// tuples_gen.go.
 type Tuple2[A, B any] struct {
 	F0 A
 	F1 B

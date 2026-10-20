@@ -1,0 +1,30 @@
+// Tuples wider than six elements (7 to 16) on every backend: inside a
+// Result and a List, ==, sorting, Debug, JSON, and destructuring; the Go
+// backend's runtime had Tuple2 to Tuple6 only, so a wider tuple failed in
+// go build.
+use std/json
+
+fn row(i: Int) -> Result[(Int, Str, Str, Str, Bool, Bool, Bool, Bool, Bool, Bool, Bool, Str), Str] {
+  if i < 0 {
+    return Err("negative")
+  }
+  Ok((i, "a${i}", "b", "c", i % 2 == 0, true, false, i > 1, false, true, false, "z"))
+}
+
+fn main(os: Os) ! {
+  let rows = [3, 1, 2].map(fn(i) { row(i).or_fault("row") })
+  os.stdio.println(rows.sort().map(fn(r) { r.0 }).debug())
+  os.stdio.println("${row(1) == row(1)} ${row(1) == row(2)} ${row(-1).debug()}")
+  let (n, s, _, _, even, _, _, big, _, _, _, last) = rows[0]
+  os.stdio.println("${n} ${s} ${even} ${big} ${last}")
+  os.stdio.println(rows[1].debug())
+  let seven: (Int, Int, Int, Int, Int, Int, Int) = (1, 2, 3, 4, 5, 6, 7)
+  let sixteen = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16)
+  os.stdio.println("${seven.6} ${sixteen.15} ${seven < (1, 2, 3, 4, 5, 6, 8)}")
+  let text = json.encode_str(seven)
+  let back = json.decode_str[(Int, Int, Int, Int, Int, Int, Int)](text)?
+  os.stdio.println("${text} ${back == seven}")
+  var m: Map[(Int, Int, Int, Int, Int, Int, Int), Str] = {}
+  m.put(seven, "seven")
+  os.stdio.println(m.get((1, 2, 3, 4, 5, 6, 7)) ?? "-")
+}

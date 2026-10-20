@@ -23,7 +23,10 @@ func TestGenericMethodSets(t *testing.T) {
 		List[int64]{}, Map[string, int64]{}, Set[string]{}, Option[int64]{},
 		Result[int64, string]{}, Tuple2[int64, string]{}, Tuple3[int64, int64, int64]{},
 		Tuple4[int64, int64, int64, int64]{}, Tuple5[int64, int64, int64, int64, int64]{},
-		Tuple6[int64, int64, int64, int64, int64, int64]{}, Chan[int64]{}, Secret[int64]{},
+		Tuple6[int64, int64, int64, int64, int64, int64]{},
+		Tuple7[int64, int64, int64, int64, int64, int64, int64]{},
+		Tuple16[int64, int64, int64, int64, int64, int64, int64, int64, int64, int64, int64, int64, int64, int64, int64, int64]{},
+		Chan[int64]{}, Secret[int64]{},
 		Json_Patch[int64]{},
 	} {
 		for _, typ := range []reflect.Type{reflect.TypeOf(v), reflect.PointerTo(reflect.TypeOf(v))} {
