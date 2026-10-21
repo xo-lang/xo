@@ -65,7 +65,13 @@ leave the 32,760 byte reach of a scaled `ldr`/`str` offset from sp.
   write the stack words it takes, its arguments as well as its results,
   as AAPCS64 allows). The copy then goes, src and destination equal.
   This function's own words are free once the entry has read them. Not
-  for x86_64, Float values, or far frames. xo's `__text` 32.24 to 31.52
+  for Float values or far frames; on x86_64 since 2026-10-21 (0aff5ec2)
+  but not on Windows (the shadow space above the stack arguments) or in
+  a function with shrink wrapped frameless blocks (rsp differs there),
+  with this function's own words at x86_in_arg (past the return address
+  and rbp) and x86 slots named `%rsp` so same_loc sees a slot and a
+  stack word as one (bench/perf/tls pushq/popq stack copies 5,782 to
+  2,042). xo's `__text` 32.24 to 31.52
   MB (-2.21%), the HTTP server's assembly 3.7% fewer lines; golden
   arg_slots (in the spill and poison runs); `XO_PASSES=-arg_slots`.
 
