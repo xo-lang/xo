@@ -1,8 +1,10 @@
 # 0308: Frozen shared data: `Shared[T]`, read without counts or locks, reclaimed at safe points
 
-Status: Proposed (Xo Lang 2, 2026-10-21, drafted on the owner's
-direction: explicit opt in frozen values, not automatic sticky counts;
-for the owner's approval before implementation)
+Status: Accepted (owner, 2026-10-21). Drafted by Xo Lang 2 on the
+owner's direction (explicit opt in frozen values, not automatic sticky
+counts). Stage 1 (runtime counts, freeze and thaw helpers) in progress;
+the checker stage with Xo Publish; the persistent map gets its own
+decision.
 
 ## Context
 
