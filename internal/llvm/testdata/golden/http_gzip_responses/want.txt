@@ -1,3 +1,5 @@
+exit 0
+--- stdout
 /text ae="gzip": 200 ce=gzip vary=Accept-Encoding ct=text/plain; charset=utf-8 etag=- cl=39 text=240 "hello world "
 /text ae="": 200 ce=- vary=Accept-Encoding ct=text/plain; charset=utf-8 etag=- cl=240 text=240 "hello world "
 /text ae="gzip;q=0": 200 ce=- vary=Accept-Encoding ct=text/plain; charset=utf-8 etag=- cl=240 text=240 "hello world "
@@ -12,3 +14,4 @@
 /stream ae="gzip": 200 ce=gzip vary=Accept-Encoding ct=text/plain etag=- cl=- text=180 "part one par"
 /stream ae="identity": 200 ce=- vary=Accept-Encoding ct=text/plain etag=- cl=- text=180 "part one par"
 done
+--- stderr

@@ -1,3 +1,5 @@
+exit 0
+--- stdout
 30! = 265252859812191058636308480000000
 2^127 - 1 prime: true, +2: false
 quo_rem -124999998873437499901 -574845669; div_mod -124999998873437499902 412808652
@@ -13,3 +15,4 @@ parse "12x": invalid number "12x" in base 0
 parse "0x_ff": 255
 parse "1__0": invalid number "1__0" in base 0
 parse "": invalid number "" in base 0
+--- stderr

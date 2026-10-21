@@ -1,3 +1,5 @@
+exit 0
+--- stdout
 ndjson: [{"a":1}] [{"a":2}] [{"a":3}] end[]
 concatenated: [{"a":1}] [{"b":[1,2,3]} [] "s\"}"] [true null] end[]
 numbers: [1] [23] [4] [] end[55]
@@ -14,3 +16,4 @@ event 1 push a
 event 2 pull 
 event error at $.id: expected integer
 done
+--- stderr
