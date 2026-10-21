@@ -63,7 +63,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | unicode | prelude Rune | partial | is_letter, is_digit, is_space, is_print, to_lower, to_upper (Go's tables, decision 0079). Missing: is_upper, is_lower, is_punct, is_control, range tables by name. |
 | unicode/utf8 | prelude Str, Bytes | done | rune_count, decode_rune, UTF-8 validity rules (decision 0259). |
 | unicode/utf16 | none | planned | Needed for Windows and JSON surrogate work only inside std today; no user API. |
-| encoding/json | std/json | partial | `derive Json`, Patch, typed decode with paths. Missing: key names other than the field name (camelCase and keyword keys such as `type`, Go's struct tags), a raw or dynamic value (json.RawMessage, any), streaming decoder, omitempty. |
+| encoding/json | std/json | partial | `derive Json`, Patch, typed decode with paths, wire key names (`kind as "type"` and `derive Json(case: ...)`, decision 0277), json.Value for JSON of any shape (2026-10-21). Missing: a streaming decoder, omitempty. |
 | encoding/base64 | std/base64, prelude Bytes | done | Std, Url, RawStd, RawUrl with Go's decoding rules (decision 0279). |
 | encoding/base32 | std/base32 | done | Std, Hex, RawStd, RawHex (decision 0279). |
 | encoding/hex | prelude Bytes | done | to_hex, from_hex, the same as EncodeToString and DecodeString on 1,500 strings (2026-10-20). Dump is not offered. |
@@ -188,7 +188,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | compress/gzip, compress/flate | std/archive gzip, gunzip | done | In memory. Missing: streaming. |
 | compress/zlib | none | planned | Small on top of flate. |
 | compress/bzip2, compress/lzw | none | not planned | Read only legacy formats. |
-| archive/tar, archive/zip | std/archive | done | Zip64 is an error natively. |
+| archive/tar, archive/zip | std/archive | done | Go's results natively on Go's small test archives (zip64 and PAX sparse files included) and on written archives (2026-10-21). |
 
 ### Testing
 

@@ -2,10 +2,10 @@
 // compress/flate (the compressor at levels 5 and 6, the decompressor),
 // compress/gzip, hash/crc32, archive/tar, and archive/zip ported to Xo,
 // as far as std/rt archive.go uses them, so the bytes written and the
-// errors read are the Go backend's. Not ported: the other compression
-// levels, sparse tar files, zip64 archives (larger than 4 GiB), and
-// reading tar archives in the old V7 and STAR formats beyond their
-// common fields.
+// errors read are the Go backend's, including PAX sparse tar files and
+// zip64 archives (2026-10-21, std/native/archive_test.xo). Not ported:
+// the other compression levels and reading tar archives in the old V7
+// and STAR formats beyond their common fields.
 use std/archive
 use native/llrt/raw
 use native/llrt/scan
@@ -39,6 +39,10 @@ fn put_u32(var b: BytesBuilder, v: Int) {
 fn get_u16(b: Bytes, i: Int) -> Int { byte_of(b, i) | (byte_of(b, i + 1) << 8) }
 
 fn get_u32(b: Bytes, i: Int) -> Int { get_u16(b, i) | (get_u16(b, i + 2) << 16) }
+
+/// A little endian uint64 (one at or above 2^63 is negative: callers
+/// refuse it, as Go's checks against maxInt64 do).
+fn get_u64(b: Bytes, i: Int) -> Int { get_u32(b, i) | (get_u32(b, i + 4) << 32) }
 
 /// A list of n zeros in one allocation (decision 0207 stage 2).
 fn zeros(n: Int) -> List[Int] { raw.zero_ints(n) }
@@ -1872,6 +1876,9 @@ fn parse_pax_time(s: Str) -> Int? {
 /// parsePAX of the records: the map, or None (ErrHeader).
 fn parse_pax(text: Bytes) -> Map[Str, Str]? {
   var m: Map[Str, Str] = {}
+  // GNU sparse format 0.0's repeated offset and numbytes records, joined
+  // into a 0.1 map (parsePAX)
+  var sparse: List[Str] = []
   var s = rt.cast[Bytes, Str](text)
   while s.len() > 0 {
     let sp = match s.find(" ") {
@@ -1900,18 +1907,191 @@ fn parse_pax(text: Bytes) -> Map[Str, Str]? {
     }
     let k = rec[0..eq]
     let v = rec[eq + 1..]
-    if k == "" || k.contains("\u{0}") {
+    // validPAXRecord: a NUL is refused in the value of path, linkpath,
+    // uname, and gname, and in any other record's key
+    if k == "" {
       return None
     }
-    if v.contains("\u{0}") && k != "path" && k != "linkpath" {
+    if k == "path" || k == "linkpath" || k == "uname" || k == "gname" {
+      if v.contains("\u{0}") {
+        return None
+      }
+    } else if k.contains("\u{0}") {
       return None
     }
-    // keys and values from the archive: outside bytes (decision 0259);
-    // the records are parsed on the raw bytes (their lengths count bytes)
-    m.put(scan.text(k), scan.text(v))
+    if k == "GNU.sparse.offset" || k == "GNU.sparse.numbytes" {
+      if (sparse.len() % 2 == 0) != (k == "GNU.sparse.offset") || v.contains(",") {
+        return None
+      }
+      sparse.push(scan.text(v))
+    } else {
+      // keys and values from the archive: outside bytes (decision 0259);
+      // the records are parsed on the raw bytes (their lengths count bytes)
+      m.put(scan.text(k), scan.text(v))
+    }
     s = rest[rest_n..]
   }
+  if sparse.len() > 0 {
+    m.put("GNU.sparse.map", sparse.join(","))
+  }
   Some(m)
+}
+
+/// strconv.ParseInt(s, 10, 64) for the sparse maps' numbers.
+fn sparse_int(s: Str) -> Int? {
+  if s.is_empty() {
+    return None
+  }
+  Int.parse(s)
+}
+
+/// readGNUSparsePAXHeaders, readGNUSparseMap1x0 and 0x1,
+/// validateSparseEntries, and the sparse reader: None when the records
+/// describe no sparse file, else its name ("" to keep the header's) and
+/// its logical data made from the physical data phys.
+fn sparse_pax(records: Map[Str, Str], phys: Bytes) -> (Str, Bytes)? ! Str {
+  let major = records.get("GNU.sparse.major") ?? ""
+  let minor = records.get("GNU.sparse.minor") ?? ""
+  var is1x0 = false
+  if major == "0" && (minor == "0" || minor == "1") {
+    is1x0 = false
+  } else if major == "1" && minor == "0" {
+    is1x0 = true
+  } else if major != "" || minor != "" {
+    return None
+  } else if (records.get("GNU.sparse.map") ?? "") != "" {
+    is1x0 = false
+  } else {
+    return None
+  }
+  let name = records.get("GNU.sparse.name") ?? ""
+  var size = phys.len()
+  var size_text = records.get("GNU.sparse.size") ?? ""
+  if size_text == "" {
+    size_text = records.get("GNU.sparse.realsize") ?? ""
+  }
+  if size_text != "" {
+    size = match sparse_int(size_text) {
+      Some(v) => v
+      None => return Err(ERR_HEADER)
+    }
+  }
+  var spd: List[Int] = []
+  var data_at = 0
+  if is1x0 {
+    // the map in the data's first blocks: a count, then offset and
+    // length, each on its own line
+    var lines: List[Str] = []
+    var line = BytesBuilder.new()
+    var want = 1
+    var read = 0
+    var count = -1
+    while lines.len() < want {
+      if read + 512 > 1048576 {
+        return Err("untar: archive/tar: sparse map too long")
+      }
+      if phys.len() - read < 512 {
+        return Err("untar: unexpected EOF")
+      }
+      for b in phys[read..read + 512] {
+        if b == 10 {
+          lines.push(line.freeze().to_str() ?? "")
+          line = BytesBuilder.new()
+        } else {
+          line.write_byte(b)
+        }
+      }
+      read += 512
+      if count < 0 && lines.len() >= 1 {
+        count = match sparse_int(lines[0]) {
+          Some(v) => v
+          None => return Err(ERR_HEADER)
+        }
+        if count < 0 {
+          return Err(ERR_HEADER)
+        }
+        want = 1 + 2 * count
+      }
+    }
+    var i = 0
+    while i < count {
+      let off = sparse_int(lines[1 + 2 * i])
+      let len = sparse_int(lines[2 + 2 * i])
+      if off.is_none() || len.is_none() {
+        return Err(ERR_HEADER)
+      }
+      spd.push(off ?? 0)
+      spd.push(len ?? 0)
+      i += 1
+    }
+    data_at = read
+  } else {
+    let count = match sparse_int(records.get("GNU.sparse.numblocks") ?? "") {
+      Some(v) => v
+      None => return Err(ERR_HEADER)
+    }
+    if count < 0 {
+      return Err(ERR_HEADER)
+    }
+    let m = records.get("GNU.sparse.map") ?? ""
+    let parts = if m == "" { [] } else { m.split(",") }
+    if parts.len() != 2 * count {
+      return Err(ERR_HEADER)
+    }
+    for x in parts {
+      spd.push(match sparse_int(x) {
+        Some(v) => v
+        None => return Err(ERR_HEADER)
+      })
+    }
+  }
+  // validateSparseEntries
+  if size < 0 {
+    return Err(ERR_HEADER)
+  }
+  var pre_end = 0
+  var k = 0
+  while k < spd.len() {
+    let off = spd[k]
+    let len = spd[k + 1]
+    if off < 0 || len < 0 || off > 9223372036854775807 - len || off + len > size || pre_end > off {
+      return Err(ERR_HEADER)
+    }
+    pre_end = off + len
+    k += 2
+  }
+  // the logical data: the fragments from the physical data in order,
+  // zeros between them
+  var out = BytesBuilder.with_capacity(size)
+  var at = 0
+  var src = data_at
+  k = 0
+  while k < spd.len() {
+    let off = spd[k]
+    let len = spd[k + 1]
+    k += 2
+    if len == 0 {
+      continue
+    }
+    while at < off {
+      out.write_byte(0)
+      at += 1
+    }
+    if phys.len() - src < len {
+      return Err("untar: archive/tar: sparse file references non-existent data")
+    }
+    out.write(phys[src..src + len])
+    src += len
+    at += len
+  }
+  if src < phys.len() {
+    return Err("untar: archive/tar: sparse file contains unreferenced data")
+  }
+  while at < size {
+    out.write_byte(0)
+    at += 1
+  }
+  Some((name, out.freeze()))
 }
 
 fn untar(data: Bytes) -> List[archive.Entry] ! archive.ArchiveErr {
@@ -1988,9 +2168,24 @@ fn untar_entries(data: Bytes) -> List[archive.Entry] ! Str {
       }
     }
     if star {
+      if parse_numeric(data, pos + 476, 12).is_none() || parse_numeric(data, pos + 488, 12).is_none() {
+        return Err(ERR_HEADER)
+      }
       let prefix = parse_cstr(data, pos + 345, 131)
       if prefix != "" {
         name = prefix + "/" + name
+      }
+    } else if gnu {
+      // a writer before Go 1.8 put a USTAR prefix where GNU keeps the
+      // access and change times: when those do not parse, the field is
+      // the prefix if it is ASCII (Go's reader, issues 12594 and 21005)
+      let bad_atime = byte_of(data, pos + 345) != 0 && parse_numeric(data, pos + 345, 12).is_none()
+      let bad_ctime = byte_of(data, pos + 357) != 0 && parse_numeric(data, pos + 357, 12).is_none()
+      if bad_atime || bad_ctime {
+        let prefix = parse_cstr(data, pos + 345, 155)
+        if prefix != "" && is_ascii(prefix) {
+          name = prefix + "/" + name
+        }
       }
     } else if ustar {
       let prefix = parse_cstr(data, pos + 345, 155)
@@ -2021,6 +2216,11 @@ fn untar_entries(data: Bytes) -> List[archive.Entry] ! Str {
       }
       let body = sub(data, pos, pos + nb)
       pos += nb
+      // the records are parsed before the padding is read (parsePAX,
+      // then the next header's discard)
+      if (flag == 120 || flag == 103) && parse_pax(body).is_none() {
+        return Err(ERR_HEADER)
+      }
       let pad = (512 - nb % 512) % 512
       if n - pos < pad {
         if pos == n {
@@ -2046,6 +2246,7 @@ fn untar_entries(data: Bytes) -> List[archive.Entry] ! Str {
       continue
     }
     // mergePAX
+    let records = pax
     for (k, v) in pax.entries() {
       if v == "" {
         continue
@@ -2100,6 +2301,20 @@ fn untar_entries(data: Bytes) -> List[archive.Entry] ! Str {
         return Err("untar: unexpected EOF")
       }
       e.data = sub(data, pos, pos + nb)
+      // a GNU sparse file described by PAX records (handleSparseFile)
+      match sparse_pax(records, e.data) {
+        Ok(Some((sname, logical))) => {
+          if sname != "" {
+            e.path = match archive_path(sname) {
+              Some(x) => x
+              None => return Err("untar: entry path ${sname.quote()} leaves the archive")
+            }
+          }
+          e.data = logical
+        }
+        Ok(None) => {}
+        Err(m) => return Err(m)
+      }
     } else {
       return Err("untar: entry ${name.quote()} is not a file or a directory")
     }
@@ -2321,10 +2536,57 @@ fn zip_dir_header(data: Bytes, pos: Int) -> (ZipFile, Int)? ! Str {
   if n - p < nlen + xlen + clen {
     return None
   }
-  if csize == 0xffffffff || offset == 0xffffffff || usize == 0xffffffff {
-    return Err("zip: zip64 archives are not supported by native builds yet (decision 0172)")
+  // a size or offset at its 32-bit maximum is in the zip64 extra field,
+  // in the order usize, csize, offset (readDirectoryHeader)
+  var need_u = usize == 0xffffffff
+  var need_c = csize == 0xffffffff
+  var need_o = offset == 0xffffffff
+  var csize64 = csize
+  var usize64 = usize
+  var offset64 = offset
+  let x = sub(data, p + nlen, p + nlen + xlen)
+  var i = 0
+  while x.len() - i >= 4 {
+    let tag = get_u16(x, i)
+    let fsize = get_u16(x, i + 2)
+    i += 4
+    if x.len() - i < fsize {
+      break
+    }
+    var f = i
+    let fend = i + fsize
+    i = fend
+    if tag != 1 {
+      continue
+    }
+    if need_u {
+      need_u = false
+      if fend - f < 8 {
+        return Err(ERR_FORMAT)
+      }
+      usize64 = get_u64(x, f)
+      f += 8
+    }
+    if need_c {
+      need_c = false
+      if fend - f < 8 {
+        return Err(ERR_FORMAT)
+      }
+      csize64 = get_u64(x, f)
+      f += 8
+    }
+    if need_o {
+      need_o = false
+      if fend - f < 8 {
+        return Err(ERR_FORMAT)
+      }
+      offset64 = get_u64(x, f)
+    }
   }
-  let zf = ZipFile{name: scan.text_of(sub(data, p, p + nlen)), creator: get_u16(data, pos + 4), flags: get_u16(data, pos + 8), method: get_u16(data, pos + 10), time: get_u16(data, pos + 12), date: get_u16(data, pos + 14), crc: get_u32(data, pos + 16), csize: csize, usize: usize, extra: sub(data, p + nlen, p + nlen + xlen), attrs: get_u32(data, pos + 38), offset: offset}
+  if need_c || need_o {
+    return Err(ERR_FORMAT)
+  }
+  let zf = ZipFile{name: scan.text_of(sub(data, p, p + nlen)), creator: get_u16(data, pos + 4), flags: get_u16(data, pos + 8), method: get_u16(data, pos + 10), time: get_u16(data, pos + 12), date: get_u16(data, pos + 14), crc: get_u32(data, pos + 16), csize: csize64, usize: usize64, extra: x, attrs: get_u32(data, pos + 38), offset: offset64}
   Some((zf, p + nlen + xlen + clen))
 }
 
@@ -2427,17 +2689,39 @@ fn unzip_entries(data: Bytes) -> List[archive.Entry] ! Str {
   if end_off < 0 {
     return Err(ERR_FORMAT)
   }
-  let records = get_u16(data, end_off + 10)
-  let dir_size = get_u32(data, end_off + 12)
-  let dir_off = get_u32(data, end_off + 16)
+  let records32 = get_u16(data, end_off + 10)
+  let dir_size32 = get_u32(data, end_off + 12)
+  let dir_off32 = get_u32(data, end_off + 16)
   let comment_len = get_u16(data, end_off + 20)
   if comment_len > size - end_off - 22 {
     return Err("zip: invalid comment length")
   }
+  var records = records32
+  var dir_size = dir_size32
+  var dir_off = dir_off32
+  var end_at = end_off
+  // these values mean the archive may be zip64 (Go compares the 32-bit
+  // size with 0xffff too): the zip64 end record through its locator
   if records == 0xffff || dir_size == 0xffff || dir_off == 0xffffffff {
-    return Err("zip: zip64 archives are not supported by native builds yet (decision 0172)")
+    let loc = end_off - 20
+    if loc >= 0 && get_u32(data, loc) == 0x07064b50 && get_u32(data, loc + 4) == 0 && get_u32(data, loc + 16) == 1 {
+      let p = get_u64(data, loc + 8)
+      if p < 0 || p > size - 56 {
+        return Err("EOF")
+      }
+      if get_u32(data, p) != 0x06064b50 {
+        return Err(ERR_FORMAT)
+      }
+      records = get_u64(data, p + 32)
+      dir_size = get_u64(data, p + 40)
+      dir_off = get_u64(data, p + 48)
+      end_at = p
+    }
   }
-  var base = end_off - dir_size - dir_off
+  if dir_size < 0 || dir_off < 0 {
+    return Err(ERR_FORMAT)
+  }
+  var base = end_at - dir_size - dir_off
   if base + dir_off < 0 || base + dir_off >= size {
     return Err(ERR_FORMAT)
   }
@@ -2460,7 +2744,7 @@ fn unzip_entries(data: Bytes) -> List[archive.Entry] ! Str {
       None => break
     }
   }
-  if (files.len() & 65535) != records {
+  if (files.len() & 65535) != (records & 65535) {
     return Err("unexpected EOF")
   }
   var out: List[archive.Entry] = []

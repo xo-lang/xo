@@ -2964,8 +2964,8 @@ In `replace_all`, `$name` takes the longest name it can (`$1x` is group
 
 Status: implemented on the Go backend (decision 0164, Go's
 `compress/gzip`, `archive/tar`, `archive/zip`) and natively (decision
-0172: those packages ported to Xo, the same bytes and errors; zip64
-archives are an error natively).
+0172: those packages ported to Xo, the same bytes and errors, zip64
+archives and PAX sparse tar files included since 2026-10-21).
 
 ```
 struct Entry { path: Str, data: Bytes, mode: Int, is_dir: Bool, modified: Time }
