@@ -9,6 +9,7 @@
 use std/json
 use std/multipart
 use std/url
+use std/netip
 
 struct Router {}
 type Next = fn(Request) -> Response
@@ -54,6 +55,20 @@ fn (r: Request) with_header(name: Str, value: Str) -> Request
 fn (r: Request) header_values(name: Str) -> List[Str]
 /// The request with one more field of name.
 fn (r: Request) add_header(name: Str, value: Str) -> Request
+/// The client's address behind trusted proxies (std.md 4.3): the peer
+/// (`remote_ip`) when it is not inside a prefix of trusted, else the
+/// rightmost address of header (every field of it, in order) that is not
+/// inside one; None when an address does not parse.
+fn (r: Request) client_ip(trusted: List[netip.Prefix] = [], header: ProxyHeader = ProxyHeader.XForwardedFor) -> netip.Addr?
+
+/// The header a server's trusted proxies write the client chain to:
+/// `X-Forwarded-For: client, proxy1` or RFC 7239's `Forwarded:
+/// for=client, for=proxy1`. Only that one is read: a proxy that writes one
+/// passes a client's own copy of the other through.
+enum ProxyHeader {
+  XForwardedFor
+  Forwarded
+} derive Display
 fn (r: Request) with_value[T](k: Key[T], v: T) -> Request
 fn (r: Request) value[T](k: Key[T]) -> T?
 /// The first cookie of that name in the Cookie fields (Go's

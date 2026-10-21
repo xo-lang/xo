@@ -4,6 +4,7 @@
 use std/http
 use std/json as js
 use std/mime
+use std/netip
 use std/multipart
 use std/time
 use std/url
@@ -1730,4 +1731,130 @@ fn cookie_date(v: Str) -> Time? {
     Err(_) => return None
   }
   time.instant(d, time.ClockTime{hour: h, minute: m, second: s, nanos: 0}, time.utc()).ok()
+}
+
+// ---------------------------------------------------------------------------
+// The client's address behind trusted proxies (std.md 4.3)
+
+/// An address as a peer or a hop gives it: bare, `[v6]`, `[v6%zone]:port`,
+/// or `v4:port`; unmapped (an IPv4-mapped IPv6 address is its IPv4 one).
+fn hop_addr(s0: Str) -> netip.Addr? {
+  var s = s0.trim()
+  if s.starts_with("[") {
+    let end = s.find("]")?
+    s = s[1..end]
+  } else if s.split(":").len() == 2 {
+    // v4:port (a bare IPv6 address has more colons)
+    s = s.split(":")[0]
+  }
+  match netip.parse_addr(s) {
+    Ok(a) => Some(a.unmap())
+    Err(_) => None
+  }
+}
+
+fn trusted_addr(a: netip.Addr, trusted: List[netip.Prefix]) -> Bool { trusted.any(fn(p) { p.contains(a) }) }
+
+/// s split on sep outside quoted strings (quotes and escapes kept).
+fn split_quoted(s: Str, sep: Rune) -> List[Str] {
+  var out: List[Str] = []
+  var cur = ""
+  var quoted = false
+  var esc = false
+  for c in s.runes() {
+    if esc {
+      esc = false
+    } else if quoted && c == '\\' {
+      esc = true
+    } else if c == '"' {
+      quoted = !quoted
+    } else if c == sep && !quoted {
+      out.push(cur)
+      cur = ""
+      continue
+    }
+    cur = cur + "${c}"
+  }
+  out.push(cur)
+  out
+}
+
+/// A quoted-string's content (escapes removed), or s itself.
+fn unquote_param(s0: Str) -> Str {
+  let s = s0.trim()
+  if s.len() < 2 || !s.starts_with("\"") || !s.ends_with("\"") {
+    return s
+  }
+  var out = ""
+  var esc = false
+  for c in s[1..s.len() - 1].runes() {
+    if !esc && c == '\\' {
+      esc = true
+      continue
+    }
+    esc = false
+    out = out + "${c}"
+  }
+  out
+}
+
+/// The `for=` values of Forwarded fields (RFC 7239), in order: elements
+/// on commas and parameters on semicolons outside quoted strings, the
+/// value unquoted; "" for an element without one.
+fn forwarded_fors(fields: List[Str]) -> List[Str] {
+  var out: List[Str] = []
+  for f in fields {
+    for e in split_quoted(f, ',') {
+      var v = ""
+      for p in split_quoted(e, ';') {
+        match p.find("=") {
+          Some(i) => {
+            if p[0..i].trim().to_lower() == "for" {
+              v = unquote_param(p[i + 1..])
+            }
+          }
+          None => {}
+        }
+      }
+      out.push(v)
+    }
+  }
+  out
+}
+
+fn request_client_ip(r: Request, trusted: List[netip.Prefix] = [], header: http.ProxyHeader = http.ProxyHeader.XForwardedFor) -> netip.Addr? {
+  let peer = hop_addr(r.remote_ip)?
+  if trusted.is_empty() || !trusted_addr(peer, trusted) {
+    return Some(peer)
+  }
+  let hops = match header {
+    XForwardedFor => {
+      var hs: List[Str] = []
+      for f in request_header_values(r, "X-Forwarded-For") {
+        for h in f.split(",") {
+          hs.push(h.trim())
+        }
+      }
+      hs
+    }
+    Forwarded => forwarded_fors(request_header_values(r, "Forwarded"))
+  }
+  // from the right: the first hop that is not a trusted address ends the
+  // walk: the client when it parses, else None (a hidden, unknown, or
+  // missing hop means the client is unknown, and the hops on its left
+  // came from that client; garbage would let a client shift the walk)
+  var leftmost: netip.Addr? = None
+  var i = hops.len() - 1
+  while i >= 0 {
+    let h = hops[i]
+    i -= 1
+    let a = hop_addr(h)?
+    if !trusted_addr(a, trusted) {
+      return Some(a)
+    }
+    leftmost = Some(a)
+  }
+  // every hop trusted: the leftmost (a trusted proxy appended it); no
+  // hops: the peer
+  leftmost ?? Some(peer)
 }

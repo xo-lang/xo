@@ -1,0 +1,24 @@
+exit 0
+--- stdout
+no proxies trusted: 203.0.113.9
+peer not trusted: its own XFF ignored: 198.51.100.7
+one proxy: 203.0.113.9
+spoofed leftmost entry: 203.0.113.9
+two trusted hops: 203.0.113.9
+two XFF fields chain: 203.0.113.9
+every hop trusted: the leftmost: 10.9.9.9
+no header: the peer: 10.0.0.5
+garbage ends the walk: None
+spoofed Forwarded ignored under XFF: 203.0.113.9
+Forwarded with ports and quotes: 192.0.2.60
+Forwarded hidden hop ends the walk: None
+XFF hidden hop ends the walk: None
+Forwarded UNKNOWN ends the walk: None
+Forwarded element with only proto: None
+Forwarded quoted ; and , in a value: 2001:db8:cafe::17
+Forwarded quoted comma: 203.0.113.9
+IPv4-mapped peer is trusted: 203.0.113.9
+bracketed peer with port and zone: fe80::1%en0
+v4 peer with a port: 203.0.113.9
+peer that does not parse: None
+--- stderr

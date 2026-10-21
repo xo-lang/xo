@@ -1,5 +1,18 @@
 # std/http changes
 
+## 2026-10-21: feature: Request.client_ip behind trusted proxies
+
+- Kind: feature
+- Commit: (filled in after the push)
+- Found by: survey (client addresses behind load balancers; with Xo Lang 3)
+- Go reference: net/netip (Prefix.Contains, Addr.Unmap); RFC 7239; the walk of chi's and gorilla's proxy headers middleware
+- Test: internal/llvm/testdata/golden/http_client_ip (every backend)
+
+`client_ip(trusted, header)`: the peer, or the rightmost address of the
+named proxy header outside the trusted prefixes, with only that header
+read and the first untrusted hop ending the walk (None when it is hidden,
+unknown, or does not parse; reviewed with Xo Lang 3).
+
 ## 2026-10-21: feature: the client keeps HTTP/1.1 connections alive
 
 - Kind: feature

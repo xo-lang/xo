@@ -1,0 +1,53 @@
+// Request.client_ip (std.md 4.3) on every backend: the peer without
+// trusted proxies, X-Forwarded-For walked from the right past trusted
+// prefixes (several fields chain in order), Forwarded read only when
+// named (a client's own Forwarded is ignored while X-Forwarded-For is the
+// proxies' header), a hidden, unknown, missing, or unparsable hop ending
+// the walk with None, IPv4-mapped and bracketed peers with ports and zones.
+use std/http
+use std/netip
+
+fn pfx(s: Str) -> netip.Prefix { netip.parse_prefix(s).ok() ?? netip.parse_prefix("0.0.0.0/32").ok() ?? fault("prefix") }
+
+fn show(a: netip.Addr?) -> Str {
+  match a {
+    Some(x) => x.display()
+    None => "None"
+  }
+}
+
+fn main(os: Os) {
+  let lb = [pfx("10.0.0.0/8"), pfx("2001:db8::/32")]
+  let base = http.new_request("GET", "http://svc.test/")
+  let cases: List[(Str, Str, List[(Str, Str)], http.ProxyHeader)] = [
+    ("no proxies trusted", "203.0.113.9", [("X-Forwarded-For", "1.2.3.4")], http.ProxyHeader.XForwardedFor),
+    ("peer not trusted: its own XFF ignored", "198.51.100.7", [("X-Forwarded-For", "1.2.3.4")], http.ProxyHeader.XForwardedFor),
+    ("one proxy", "10.0.0.5", [("X-Forwarded-For", "203.0.113.9")], http.ProxyHeader.XForwardedFor),
+    ("spoofed leftmost entry", "10.0.0.5", [("X-Forwarded-For", "6.6.6.6, 203.0.113.9")], http.ProxyHeader.XForwardedFor),
+    ("two trusted hops", "10.0.0.5", [("X-Forwarded-For", "203.0.113.9, 10.1.1.1, 10.2.2.2")], http.ProxyHeader.XForwardedFor),
+    ("two XFF fields chain", "10.0.0.5", [("X-Forwarded-For", "203.0.113.9"), ("X-Forwarded-For", "10.1.1.1")], http.ProxyHeader.XForwardedFor),
+    ("every hop trusted: the leftmost", "10.0.0.5", [("X-Forwarded-For", "10.9.9.9, 10.1.1.1")], http.ProxyHeader.XForwardedFor),
+    ("no header: the peer", "10.0.0.5", [], http.ProxyHeader.XForwardedFor),
+    ("garbage ends the walk", "10.0.0.5", [("X-Forwarded-For", "203.0.113.9, garbage")], http.ProxyHeader.XForwardedFor),
+    ("spoofed Forwarded ignored under XFF", "10.0.0.5", [("Forwarded", "for=1.2.3.4"), ("X-Forwarded-For", "203.0.113.9")], http.ProxyHeader.XForwardedFor),
+    ("Forwarded with ports and quotes", "10.0.0.5", [("Forwarded", "for=\"[2001:db8:cafe::17]:4711\", for=192.0.2.60:80;proto=http;by=10.0.0.1")], http.ProxyHeader.Forwarded),
+    ("Forwarded hidden hop ends the walk", "10.0.0.5", [("Forwarded", "for=198.51.100.17, for=_hidden")], http.ProxyHeader.Forwarded),
+    ("XFF hidden hop ends the walk", "10.0.0.5", [("X-Forwarded-For", "6.6.6.6, _hidden")], http.ProxyHeader.XForwardedFor),
+    ("Forwarded UNKNOWN ends the walk", "10.0.0.5", [("Forwarded", "for=6.6.6.6, for=UNKNOWN")], http.ProxyHeader.Forwarded),
+    ("Forwarded element with only proto", "10.0.0.5", [("Forwarded", "for=6.6.6.6, proto=https")], http.ProxyHeader.Forwarded),
+    ("Forwarded quoted ; and , in a value", "10.0.0.5", [("Forwarded", "for=\"[2001:db8:cafe::17]:4711\";by=\"x;y,z\"")], http.ProxyHeader.Forwarded),
+    ("Forwarded quoted comma", "10.0.0.5", [("Forwarded", "for=\"203.0.113.9\";by=\"a,b\", for=10.1.1.1")], http.ProxyHeader.Forwarded),
+    ("IPv4-mapped peer is trusted", "::ffff:10.0.0.1", [("X-Forwarded-For", "203.0.113.9")], http.ProxyHeader.XForwardedFor),
+    ("bracketed peer with port and zone", "[fe80::1%en0]:1234", [("X-Forwarded-For", "203.0.113.9")], http.ProxyHeader.XForwardedFor),
+    ("v4 peer with a port", "10.0.0.5:51234", [("X-Forwarded-For", "203.0.113.9:443")], http.ProxyHeader.XForwardedFor),
+    ("peer that does not parse", "nonsense", [], http.ProxyHeader.XForwardedFor),
+  ]
+  for (name, peer, hs, which) in cases {
+    var r = base with {remote_ip: peer}
+    for (k, v) in hs {
+      r = r.add_header(k, v)
+    }
+    let trusted = if name == "no proxies trusted" { [] } else { lb }
+    os.stdio.println("${name}: ${show(r.client_ip(trusted: trusted, header: which))}")
+  }
+}

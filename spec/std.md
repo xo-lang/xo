@@ -1247,6 +1247,33 @@ boundary param in Content-Type`); the body is read with
 `multipart.parse_form` (26), whose files stay in memory: the body is
 already limited by the server.
 
+#### The client's address behind proxies
+
+```
+fn (r: Request) client_ip(trusted: List[netip.Prefix] = [], header: ProxyHeader = ProxyHeader.XForwardedFor) -> netip.Addr?
+enum ProxyHeader { XForwardedFor, Forwarded }
+```
+
+- No trusted prefixes: the peer (`remote_ip`). A peer outside every
+  trusted prefix: the peer, whatever the headers say (a client can write
+  them).
+- Otherwise the chain of the one header named (`header`: the header the
+  server's own proxies write; the other is never read, since a proxy that
+  writes one passes a client's copy of the other through): every field of
+  it in order, split on commas (`X-Forwarded-For`), or RFC 7239 elements
+  (`Forwarded`: commas and semicolons outside quoted strings, the `for=`
+  parameter, quoted values unquoted). Walked from the right, the first
+  hop that is not a trusted address ends the walk: the client when it
+  parses, else None: a hidden (`for=_hidden`), unknown, or missing hop
+  means the client is unknown and every hop on its left came from that
+  client, and garbage would let a client shift the walk. When every hop
+  is trusted the leftmost is the client (a trusted proxy appended it);
+  with no hops, the peer.
+- Addresses parse bare, as `[v6]`, `[v6%zone]:port`, or `v4:port`, and
+  are unmapped before matching: `::ffff:10.0.0.1` is inside
+  `10.0.0.0/8` and is returned as `10.0.0.1`.
+- Golden `http_client_ip` (every backend).
+
 ### 4.4 Server
 
 ```
