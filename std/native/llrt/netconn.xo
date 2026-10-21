@@ -25,16 +25,13 @@ use native/llrt/rc
 use native/llrt/rtstats
 use native/llrt/sock
 use native/llrt/sysio
+use native/llrt/tasks
 use native/llrt/twflags
 use native/llrt/twrun
 use native/llrt/windows
 use native/rt
 use native/sys_darwin
 use native/sys_windows
-
-/// A handle's header (xo_rt.c xo_hdr): its count and its free function.
-const H_RC = 0
-const H_FREE = 8
 
 /// A listener (xo_rt.c xo_listener, asserted there): its descriptor, its
 /// address (a malloc'd C string: "ip:port", or "unix:PATH" as given), the
@@ -267,16 +264,6 @@ pub fn msg_list() -> Int {
   list_of(if m != 0 { str_of(m) } else { raw.str_at(0, 0) }, 0)
 }
 
-/// A new handle of n bytes, zeroed, with one reference and the free
-/// function in the services record's word k.
-fn new_handle(n: Int, f: Int) -> Int {
-  let o = obj.alloc_obj(n)
-  rt.mem_set(o, 0, n)
-  st(o, H_RC, -1)
-  st(o, H_FREE, f)
-  o
-}
-
 /// The descriptor's socket (poll.xo D_FD, a C int; stable while an
 /// operation runs).
 fn pd_fd(pd: Int) -> Int {
@@ -472,7 +459,7 @@ fn conn_new(c: Int, fd: Int, pd0: Int) -> Int {
       return 0
     }
   }
-  let cn = new_handle(C_SIZE, rt.fn_addr("nc_conn_free"))
+  let cn = tasks.new_handle(C_SIZE, rt.fn_addr("nc_conn_free"))
   st(cn, C_PD, pd)
   st(cn, C_UP, 0)
   st(cn, C_MEM, 0)
@@ -483,7 +470,7 @@ fn conn_new(c: Int, fd: Int, pd0: Int) -> Int {
 /// The connection of end me of a raw in memory connection (decision
 /// 0292).
 fn conn_new_mem(c: Int, me: Int) -> Int {
-  let cn = new_handle(C_SIZE, rt.fn_addr("nc_conn_free"))
+  let cn = tasks.new_handle(C_SIZE, rt.fn_addr("nc_conn_free"))
   st(cn, C_PD, 0)
   st(cn, C_UP, 0)
   st(cn, C_MEM, me)
@@ -513,7 +500,7 @@ pub fn conn_free(cn: Int) {
   } else {
     poll.pd_free(ld(cn, C_PD))
   }
-  obj.free_obj(cn)
+  tasks.free_handle(cn)
 }
 
 /// A listener's free function (the services record's).
@@ -527,11 +514,11 @@ pub fn listener_free(l: Int) {
     poll.pd_free(ld(l, L_PD))
   }
   mfree(ld(l, L_ADDR))
-  obj.free_obj(l)
+  tasks.free_handle(l)
 }
 
 fn listener_new(pd: Int, addr: Str, unlink_path: Bool) -> Int {
-  let l = new_handle(L_SIZE, rt.fn_addr("nc_listener_free"))
+  let l = tasks.new_handle(L_SIZE, rt.fn_addr("nc_listener_free"))
   st(l, L_PD, pd)
   st(l, L_ADDR, cstr(addr))
   rt.mem_store(l, L_UNLINK, if unlink_path { 1 } else { 0 }, 4)
@@ -560,7 +547,7 @@ pub fn listen(lists: Str, addr: Str) -> Int {
       fail(c, 4, "address already in use")
       return 0
     }
-    let l = new_handle(L_SIZE, rt.fn_addr("nc_listener_free"))
+    let l = tasks.new_handle(L_SIZE, rt.fn_addr("nc_listener_free"))
     let ml = twrun.listen(addr, l)
     st(l, L_MEM, ml)
     st(l, L_ADDR, twrun.ml_caddr(ml))

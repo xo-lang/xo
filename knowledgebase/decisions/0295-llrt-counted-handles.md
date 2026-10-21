@@ -51,6 +51,10 @@ task, so a hook that stops freeing its record fails it.
   correct today, so there is no flag day. Xo Lang 3 moves tlsio's
   handle_new, and netconn's private new_handle (byte for byte
   tasks.new_object) and free calls, the next time they touch those files.
+- Done for tlsio and netconn (Xo Lang 3, 2026-10-21): tlsio handle_new
+  uses make_handle with named field offsets, and its hook ends with
+  free_handle; netconn's private copy is gone, its constructors use
+  tasks.new_handle (rule 5) and its hooks end with free_handle.
 
 ## Alternatives
 

@@ -9,7 +9,6 @@
 // are UNTESTED.
 use native/llrt/atexit
 use native/llrt/hconn
-use native/llrt/obj
 use native/llrt/poll
 use native/llrt/raw
 use native/llrt/rc
@@ -558,31 +557,34 @@ pub fn alpn_h2(h: Int) -> Bool {
   }
 }
 
+// A std/tls handle's fields (decision 0295): the connection, and whether
+// its close ran.
+const H_CONN = tasks.HANDLE_FIELDS
+const H_CLOSED = tasks.HANDLE_FIELDS + 8
+const H_SIZE = tasks.HANDLE_FIELDS + 16
+
 /// A std/tls handle of connection h (decision 0281): the handle's free
 /// function (cabi_tlsclient.xo tls_h_free) frees h when its last reference
 /// goes.
 pub fn handle_new(h: Int) -> rthttp.TlsH {
-  let t = tasks.new_handle(32, rt.fn_addr("tls_h_free"))
-  rt.mem_store(t, 16, h, 8)
-  rt.mem_store(t, 24, 0, 8)
-  let v = rt.obj_at[rthttp.TlsH](t)
-  tasks.h_release(t)
+  let (v, t) = tasks.make_handle[rthttp.TlsH](H_SIZE, rt.fn_addr("tls_h_free"))
+  rt.mem_store(t, H_CONN, h, 8)
   v
 }
 
 /// The connection of a std/tls handle.
-pub fn handle_conn(t: rthttp.TlsH) -> Int { rt.mem_load(rt.obj_addr(t), 16, 8) }
+pub fn handle_conn(t: rthttp.TlsH) -> Int { rt.mem_load(rt.obj_addr(t), H_CONN, 8) }
 
 /// Whether the std/tls handle's close ran.
-pub fn handle_closed(t: rthttp.TlsH) -> Bool { rt.mem_load(rt.obj_addr(t), 24, 8) != 0 }
+pub fn handle_closed(t: rthttp.TlsH) -> Bool { rt.mem_load(rt.obj_addr(t), H_CLOSED, 8) != 0 }
 
 /// Marks the std/tls handle closed.
-pub fn handle_close(t: rthttp.TlsH) { rt.mem_store(rt.obj_addr(t), 24, 1, 8) }
+pub fn handle_close(t: rthttp.TlsH) { rt.mem_store(rt.obj_addr(t), H_CLOSED, 1, 8) }
 
 /// A std/tls handle's free function: frees its connection.
 pub fn handle_free(t: Int) {
-  free(rt.mem_load(t, 16, 8))
-  obj.free_obj(t)
+  free(rt.mem_load(t, H_CONN, 8))
+  tasks.free_handle(t)
 }
 
 /// Frees a connection (0: none).
