@@ -105,6 +105,15 @@ fn nonce(k: Keys) -> Bytes {
   s.bytes()
 }
 
+/// nonce as two little endian words (aesgcm ctr_w): bytes 0 to 7, and 8
+/// to 11 in the low half. With s the sequence number byte swapped, its
+/// big endian bytes 0 to 3 xor nonce bytes 4 to 7 (s << 32) and 4 to 7
+/// xor bytes 8 to 11 (s >> 32).
+fn nonce_w(k: Keys) -> (Int, Int) {
+  let s = k.seq.swap_bytes()
+  (rt.bytes_word(k.iv, 0) ^ s.wrapping_shl(32), rt.bytes_word(k.iv, 4).shr_logical(32) ^ s.shr_logical(32))
+}
+
 /// A record header: the type, legacy version (0x0301 for a first
 /// ClientHello, else 0x0303), and the length.
 pub fn header(ct: Int, version: Int, n: Int) -> Bytes {
@@ -136,7 +145,10 @@ pub fn seal(var k: Keys, ct: Int, data: Bytes, version: Int) -> Bytes {
       inner = rt.rs_push_byte(inner, ct)
       let hdr = header(CT_APP, 0x0303, part.len() + 17)
       let sealed = match k.gcm {
-        Some(g) => g.seal(nonce(k), inner.bytes(), hdr)
+        Some(g) => {
+          let (nlo, nhi) = nonce_w(k)
+          g.seal_w(nlo, nhi, inner.bytes(), hdr)
+        }
         None => chacha.seal(k.key, nonce(k), inner.bytes(), hdr)
       }
       k.seq += 1
@@ -164,7 +176,10 @@ pub fn seal_at(var k: Keys, ct: Int, p: Int, n: Int, version: Int) -> Bytes {
   inner = rt.rs_push_byte(inner, ct)
   let hdr = header(CT_APP, 0x0303, n + 17)
   let sealed = match k.gcm {
-    Some(g) => g.seal(nonce(k), inner.bytes(), hdr)
+    Some(g) => {
+      let (nlo, nhi) = nonce_w(k)
+      g.seal_w(nlo, nhi, inner.bytes(), hdr)
+    }
     None => chacha.seal(k.key, nonce(k), inner.bytes(), hdr)
   }
   k.seq += 1
@@ -189,7 +204,10 @@ pub fn open(var k: Keys, hdr: Bytes, body: Bytes) -> Inner {
     return Inner{ct: Int(hdr[0]), data: body}
   }
   let opened = match k.gcm {
-    Some(g) => g.open(nonce(k), body, hdr)
+    Some(g) => {
+      let (nlo, nhi) = nonce_w(k)
+      g.open_w(nlo, nhi, body, hdr)
+    }
     None => chacha.open(k.key, nonce(k), body, hdr)
   }
   let pt = match opened {

@@ -6,12 +6,12 @@
 // circuit, no table indexed by a secret) and GHASH is BearSSL's
 // ghash_ctmul64 (carryless products from integer multiplications with
 // holes; arm64's and x86-64's 64 bit multiplies take a fixed time).
-// Branches and indexes depend on lengths only; open compares the tag
-// with ct.bytes_equal before it decrypts. With the CPU's AES rounds and
+// Branches and indexes depend on lengths only; open compares the tag's
+// two words before it decrypts (their differences or'd, one test, as
+// ct.xo's bytes_equal). With the CPU's AES rounds and
 // carry-less multiply (decision 0231, cpu.xo; cpu.hw() says whether this
 // CPU has them) encryption and GHASH take them instead.
 use native/llrt/cpu
-use native/llrt/ct
 use native/llrt/raw
 use native/rt
 
@@ -859,10 +859,12 @@ pub fn new_gcm(key: Bytes) -> Gcm {
 /// bits, big endian after the 12 byte nonce), written in place into s0,
 /// a new empty string with room for n + 8 bytes (a word at a time, the
 /// last one past n; the length is set to n).
-fn (g: Gcm) ctr(s0: Str, nonce: Bytes, ctr0: Int, src: Bytes, n: Int) -> Str {
+fn (g: Gcm) ctr(s0: Str, nonce: Bytes, ctr0: Int, src: Bytes, n: Int) -> Str { g.ctr_w(s0, rt.bytes_word(nonce, 0), le32(nonce, 8), ctr0, src, n) }
+
+/// ctr with the nonce as its two little endian words: bytes 0 to 7, and
+/// 8 to 11 in the low half.
+fn (g: Gcm) ctr_w(s0: Str, nlo: Int, nhi: Int, ctr0: Int, src: Bytes, n: Int) -> Str {
   var s = s0
-  let nlo = rt.bytes_word(nonce, 0)
-  let nhi = le32(nonce, 8)
   var io = [0, 0, 0, 0, 0, 0, 0, 0]
   var ctr = ctr0
   var i = 0
@@ -938,35 +940,51 @@ fn tail_word(src: Bytes, off: Int, n: Int) -> Int {
 /// The tag of the first n bytes of ciphertext data and additional data
 /// aad.
 fn (g: Gcm) tag(nonce: Bytes, data: Bytes, n: Int, aad: Bytes) -> Bytes {
+  let (t0, t1) = g.tag_w(rt.bytes_word(nonce, 0), le32(nonce, 8), data, n, aad)
+  rt.rs_push_word(rt.rs_push_word(rt.rs_with_cap(16), t0, 8), t1, 8).bytes()
+}
+
+/// tag's two little endian words, the nonce as ctr_w's: no string for
+/// the nonce or the tag (a TLS record's seal and open).
+fn (g: Gcm) tag_w(nlo: Int, nhi: Int, data: Bytes, n: Int, aad: Bytes) -> (Int, Int) {
   let (a1, a0) = g.ghash(0, 0, aad, aad.len())
   let (b1, b0) = g.ghash(a1, a0, data, n)
   let (y1, y0) = g.mul(b1 ^ (8 * aad.len()), b0 ^ (8 * n))
-  var io = [rt.bytes_word(nonce, 0), le32(nonce, 8) | shl(0x01000000, 32), 0, 0, 0, 0, 0, 0]
+  var io = [nlo, nhi | shl(0x01000000, 32), 0, 0, 0, 0, 0, 0]
   encrypt_n(g.c, io, 1)
-  rt.rs_push_word(rt.rs_push_word(rt.rs_with_cap(16), y1.swap_bytes() ^ io[0], 8), y0.swap_bytes() ^ io[1], 8).bytes()
+  (y1.swap_bytes() ^ io[0], y0.swap_bytes() ^ io[1])
 }
 
 /// The ciphertext of plaintext pt with its 16 byte tag after it (the
 /// nonce is 12 bytes; cipher.AEAD's Seal).
-pub fn (g: Gcm) seal(nonce: Bytes, pt: Bytes, aad: Bytes) -> Bytes {
+pub fn (g: Gcm) seal(nonce: Bytes, pt: Bytes, aad: Bytes) -> Bytes { g.seal_w(rt.bytes_word(nonce, 0), le32(nonce, 8), pt, aad) }
+
+/// seal with the nonce as two words (ctr_w): the ciphertext and its tag
+/// are the one string allocated.
+pub fn (g: Gcm) seal_w(nlo: Int, nhi: Int, pt: Bytes, aad: Bytes) -> Bytes {
   let n = pt.len()
-  let ct = g.ctr(rt.rs_with_cap(n + 16), nonce, 2, pt, n)
-  let t = g.tag(nonce, ct.bytes(), n, aad)
-  rt.rs_append_bytes(ct, t, 0, 16, 0).bytes()
+  let ct = g.ctr_w(rt.rs_with_cap(n + 16), nlo, nhi, 2, pt, n)
+  let (t0, t1) = g.tag_w(nlo, nhi, ct.bytes(), n, aad)
+  rt.rs_push_word(rt.rs_push_word(ct, t0, 8), t1, 8).bytes()
 }
 
 /// The plaintext of ciphertext and tag sealed, or None when the tag does
 /// not match (cipher.AEAD's Open). The body is read in place.
-pub fn (g: Gcm) open(nonce: Bytes, sealed: Bytes, aad: Bytes) -> Bytes? {
+pub fn (g: Gcm) open(nonce: Bytes, sealed: Bytes, aad: Bytes) -> Bytes? { g.open_w(rt.bytes_word(nonce, 0), le32(nonce, 8), sealed, aad) }
+
+/// open with the nonce as two words (ctr_w): the tag is compared in
+/// place, in constant time (one test of the two words' differences), and
+/// the plaintext is the one string allocated.
+pub fn (g: Gcm) open_w(nlo: Int, nhi: Int, sealed: Bytes, aad: Bytes) -> Bytes? {
   let n = sealed.len() - 16
   if n < 0 {
     return None
   }
-  let want = rt.rs_append_bytes(rt.rs_with_cap(16), sealed, n, n + 16, 0).bytes()
-  if !ct.bytes_equal(g.tag(nonce, sealed, n, aad), want) {
+  let (t0, t1) = g.tag_w(nlo, nhi, sealed, n, aad)
+  if ((t0 ^ rt.bytes_word(sealed, n)) | (t1 ^ rt.bytes_word(sealed, n + 8))) != 0 {
     return None
   }
-  g.ctr(rt.rs_with_cap(n + 8), nonce, 2, sealed, n).bytes()
+  g.ctr_w(rt.rs_with_cap(n + 8), nlo, nhi, 2, sealed, n).bytes()
 }
 
 /// AES-GCM's seal under key.
