@@ -1,0 +1,81 @@
+// key_func writes its text straight into the builder; these check it
+// writes the bytes the interpolating version (kept here as key_func_ref)
+// wrote, so no cache key changed.
+
+fn key_func_ref(var b: BytesBuilder, f: Func, tk: List[Str]) {
+  b.write_str("func ${f.name.len()}:${f.name} indirect=${f.indirect} entry=${f.entry} export=${f.export.len()}:${f.export} catches=${f.catches} unwind=${f.unwind_exit} skip=${f.skip.len()}:${f.skip} file=${f.file.len()}:${f.file} var=[${ints_line(f.var_params)}] borrowed=${bools_text(f.borrowed)}\n")
+  b.write_str("results")
+  for t in f.results {
+    b.write_str(" ${tkey(tk, t)}")
+  }
+  b.write_str("\ncaptures")
+  for t in f.captures {
+    b.write_str(" ${tkey(tk, t)}")
+  }
+  var lr: List[Int] = []
+  for (k, _) in f.land_rest {
+    lr.push(k)
+  }
+  b.write_str("\nland_rest [${ints_line(lr.sort())}]\n")
+  for (bi, bl) in f.blocks.indexed() {
+    b.write_str("b${bi} [${ints_line(bl.params)}] [${ints_line(bl.instrs)}] [${ints_line(bl.preds)}]\n")
+  }
+  for (vi, x) in f.values.indexed() {
+    b.write_str("v${vi} ${op_name(x.op)} ${tkey(tk, x.ty)} [${ints_line(x.args)}] ")
+    key_aux(b, x.aux)
+    b.write_str(" ${x.block} [${ints_line(x.succs)}] ${x.pad} ${x.line} ${x.pos.len()}:${x.pos}\n")
+  }
+  for (ei, e) in f.edges.indexed() {
+    b.write_str("e${ei} ${e.from} ${e.to} [${ints_line(e.args)}]\n")
+  }
+  for d in f.dvars {
+    b.write_str("dvar ${d.name.len()}:${d.name} ${tkey(tk, d.ty)} ${d.line} ${d.param} ${d.inl}\n")
+  }
+  for d in f.dbinds {
+    b.write_str("dbind ${d.dvar} ${d.value} ${d.line}\n")
+  }
+}
+
+test "write_int and write_ints write what interpolation and ints_line do" {
+  for x in [0, 1, 9, 10, 11, 99, 100, 12345, 9223372036854775807, -1, -9, -10, -12345, -9223372036854775807 - 1] {
+    var b = BytesBuilder.new()
+    write_int(b, x)
+    expect(b.freeze().to_str() ?? "") == "${x}"
+  }
+  let xs = [3, -1, 0, 1024, -77]
+  var b = BytesBuilder.new()
+  write_ints(b, xs)
+  expect(b.freeze().to_str() ?? "") == ints_line(xs)
+  var e = BytesBuilder.new()
+  write_ints(e, [])
+  expect(e.freeze().len()) == 0
+}
+
+test "key_func writes the bytes of the interpolating version" {
+  var m = Module{}
+  let it = m.intern(SType{kind: Kind.Int, name: "Int"})
+  let st = m.intern(SType{kind: Kind.Str, name: "Str"})
+  let _g = m.new_func("g", [], [])
+  let fi = m.new_func("f", [it, st], [it])
+  var f = m.funcs[fi]
+  let c = f.add(0, Op.Const, it, Aux.I(n: -42), [])
+  let _s = f.add(0, Op.Const, st, Aux.Bs(b: b"a\nb"), [])
+  let _k = f.add(0, Op.Call, it, Aux.S(s: "g"), [c, c])
+  let _p = f.add(0, Op.Field, it, Aux.P(tag: 3, field: 12), [c])
+  let _fl = f.add(0, Op.Const, -1, Aux.F(f: 2.5), [])
+  f.values[c].line = 1234
+  f.values[c].pos = "x.xo:12:34"
+  f.values[c].pad = 17
+  f.var_params = [1]
+  f.captures = [st, 99]
+  f.results = [it, -1]
+  m.funcs[fi] = f
+  let tk = ["Int", "Str"]
+  for g in m.funcs {
+    var a = BytesBuilder.new()
+    key_func(a, g, tk)
+    var r = BytesBuilder.new()
+    key_func_ref(r, g, tk)
+    expect(a.freeze()) == r.freeze()
+  }
+}

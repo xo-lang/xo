@@ -309,38 +309,114 @@ fn tkey(tk: List[Str], t: Int) -> Str {
   if t < 0 || t >= tk.len() { "-" } else { tk[t] }
 }
 
-/// Function f in full for a key: every field, its types by key.
+/// Function f in full for a key: every field, its types by key. Written
+/// straight into b (no text per value: it ran on every function of every
+/// build, twice), the bytes ints_line and interpolation wrote before.
 fn key_func(var b: BytesBuilder, f: Func, tk: List[Str]) {
-  b.write_str("func ${f.name.len()}:${f.name} indirect=${f.indirect} entry=${f.entry} export=${f.export.len()}:${f.export} catches=${f.catches} unwind=${f.unwind_exit} skip=${f.skip.len()}:${f.skip} file=${f.file.len()}:${f.file} var=[${ints_line(f.var_params)}] borrowed=${bools_text(f.borrowed)}\n")
+  b.write_str("func ")
+  write_int(b, f.name.len())
+  b.write_str(":${f.name} indirect=${f.indirect} entry=${f.entry} export=${f.export.len()}:${f.export} catches=${f.catches} unwind=${f.unwind_exit} skip=${f.skip.len()}:${f.skip} file=${f.file.len()}:${f.file} var=[")
+  write_ints(b, f.var_params)
+  b.write_str("] borrowed=${bools_text(f.borrowed)}\n")
   b.write_str("results")
   for t in f.results {
-    b.write_str(" ${tkey(tk, t)}")
+    b.write_byte(' ')
+    b.write_str(tkey(tk, t))
   }
   b.write_str("\ncaptures")
   for t in f.captures {
-    b.write_str(" ${tkey(tk, t)}")
+    b.write_byte(' ')
+    b.write_str(tkey(tk, t))
   }
   var lr: List[Int] = []
   for (k, _) in f.land_rest {
     lr.push(k)
   }
-  b.write_str("\nland_rest [${ints_line(lr.sort())}]\n")
+  b.write_str("\nland_rest [")
+  write_ints(b, lr.sort())
+  b.write_str("]\n")
   for (bi, bl) in f.blocks.indexed() {
-    b.write_str("b${bi} [${ints_line(bl.params)}] [${ints_line(bl.instrs)}] [${ints_line(bl.preds)}]\n")
+    b.write_byte('b')
+    write_int(b, bi)
+    b.write_str(" [")
+    write_ints(b, bl.params)
+    b.write_str("] [")
+    write_ints(b, bl.instrs)
+    b.write_str("] [")
+    write_ints(b, bl.preds)
+    b.write_str("]\n")
   }
   for (vi, x) in f.values.indexed() {
-    b.write_str("v${vi} ${op_name(x.op)} ${tkey(tk, x.ty)} [${ints_line(x.args)}] ")
+    b.write_byte('v')
+    write_int(b, vi)
+    b.write_byte(' ')
+    b.write_str(op_name(x.op))
+    b.write_byte(' ')
+    b.write_str(tkey(tk, x.ty))
+    b.write_str(" [")
+    write_ints(b, x.args)
+    b.write_str("] ")
     key_aux(b, x.aux)
-    b.write_str(" ${x.block} [${ints_line(x.succs)}] ${x.pad} ${x.line} ${x.pos.len()}:${x.pos}\n")
+    b.write_byte(' ')
+    write_int(b, x.block)
+    b.write_str(" [")
+    write_ints(b, x.succs)
+    b.write_str("] ")
+    write_int(b, x.pad)
+    b.write_byte(' ')
+    write_int(b, x.line)
+    b.write_byte(' ')
+    write_int(b, x.pos.len())
+    b.write_byte(':')
+    b.write_str(x.pos)
+    b.write_byte('\n')
   }
   for (ei, e) in f.edges.indexed() {
-    b.write_str("e${ei} ${e.from} ${e.to} [${ints_line(e.args)}]\n")
+    b.write_byte('e')
+    write_int(b, ei)
+    b.write_byte(' ')
+    write_int(b, e.from)
+    b.write_byte(' ')
+    write_int(b, e.to)
+    b.write_str(" [")
+    write_ints(b, e.args)
+    b.write_str("]\n")
   }
   for d in f.dvars {
     b.write_str("dvar ${d.name.len()}:${d.name} ${tkey(tk, d.ty)} ${d.line} ${d.param} ${d.inl}\n")
   }
   for d in f.dbinds {
     b.write_str("dbind ${d.dvar} ${d.value} ${d.line}\n")
+  }
+}
+
+/// Writes x in decimal, as "${x}" does.
+fn write_int(var b: BytesBuilder, x: Int) {
+  if x >= 0 && x < 10 {
+    b.write_byte(UInt8(x + 48))
+    return
+  }
+  if x < 0 {
+    // the most negative Int has no positive; -x would overflow
+    if x < -999999999999999999 {
+      b.write_str("${x}")
+      return
+    }
+    b.write_byte('-')
+    write_int(b, -x)
+    return
+  }
+  write_int(b, x / 10)
+  b.write_byte(UInt8(x % 10 + 48))
+}
+
+/// Writes xs as ints_line does: decimal, separated by one space.
+fn write_ints(var b: BytesBuilder, xs: List[Int]) {
+  for (i, x) in xs.indexed() {
+    if i > 0 {
+      b.write_byte(' ')
+    }
+    write_int(b, x)
   }
 }
 
