@@ -762,12 +762,22 @@ fn copy_runs_l(lines: List[Str]) -> List[Str] {
     return lines
   }
   var out: List[Str] = []
+  var changed = false
   var i = 0
   let n = lines.len()
   while i < n {
-    let r = if lines[i].starts_with("\tldr x16, [") { "x16" } else { "x17" }
-    let ld = "\tldr ${r}, ["
-    let st = "\tstr ${r}, ["
+    // only a run's first load starts one (most lines: copied at once, no
+    // prefix built for them: two strings a line were most of this pass's
+    // time, decision 0274's measurement)
+    if !lines[i].starts_with("\tldr x1") {
+      out.push(lines[i])
+      i += 1
+      continue
+    }
+    let x16 = lines[i].starts_with(LD_X16)
+    let r = if x16 { "x16" } else { "x17" }
+    let ld = if x16 { LD_X16 } else { LD_X17 }
+    let st = if x16 { ST_X16 } else { ST_X17 }
     let (aok, ab, ao) = x16_word(lines[i], ld)
     let j = past_rows(lines, i + 1)
     let (bok, bb, bo) = if aok && j < n { x16_word(lines[j], st) } else { (false, "", 0) }
@@ -814,6 +824,7 @@ fn copy_runs_l(lines: List[Str]) -> List[Str] {
         for l in rows + code {
           out.push(l)
         }
+        changed = true
       }
       i = e
       continue
@@ -821,8 +832,16 @@ fn copy_runs_l(lines: List[Str]) -> List[Str] {
     out.push(lines[i])
     i += 1
   }
-  resplit(out)
+  // the copy blocks are lines of several instructions; with none, out is
+  // the input's lines as they were
+  if changed { resplit(out) } else { out }
 }
+
+/// copy_runs_l's prefixes of a word copy through a scratch register.
+const LD_X16 = "\tldr x16, ["
+const LD_X17 = "\tldr x17, ["
+const ST_X16 = "\tstr x16, ["
+const ST_X17 = "\tstr x17, ["
 
 /// borrow_flag_peep_l of text's lines (lsr_test.xo).
 fn borrow_flag_peep(text: Str) -> Str { borrow_flag_peep_l(text.split("\n")).join("\n") }
@@ -1159,16 +1178,17 @@ fn pair_loads(text: Str) -> Str {
 }
 
 /// pair_mem_l of text's lines (lsr_test.xo).
-fn pair_mem(text: Str, ext: Str) -> Str { pair_mem_l(text.split("\n"), ext).join("\n") }
+fn pair_mem(text: Str, ext: Str) -> Str {
+  let ls = text.split("\n")
+  pair_mem_l(ls, label_counts(ls, ext)).join("\n")
+}
 
 /// pair_loads for a function's text (pairMem, decision 0208), which also
 /// joins two stores of adjacent words through one base register (not
 /// sp) into a store pair, and pairs across labels nothing refers to (the
 /// labels of blocks only fallen into, which go). ext is the text that
 /// may refer to the function's labels besides it (its call site table).
-fn pair_mem_l(lines: List[Str], ext: Str) -> List[Str] {
-  var refs: Map[Str, Bool] = {}
-  var have_refs = false
+fn pair_mem_l(lines: List[Str], nrefs: Map[Str, Int]) -> List[Str] {
   var out: List[Str] = []
   var i = 0
   let n = lines.len()
@@ -1195,11 +1215,7 @@ fn pair_mem_l(lines: List[Str], ext: Str) -> List[Str] {
           j += 1
           continue
         }
-        if !have_refs {
-          refs = label_refs(lines, ext)
-          have_refs = true
-        }
-        if refs.contains(name) {
+        if nrefs.contains(name) {
           break
         }
         j += 1
@@ -1226,7 +1242,10 @@ fn pair_mem_l(lines: List[Str], ext: Str) -> List[Str] {
 }
 
 /// reload_reuse_l of text's lines (lsr_test.xo).
-fn reload_reuse(text: Str, ext: Str) -> Str { reload_reuse_l(text.split("\n"), ext).join("\n") }
+fn reload_reuse(text: Str, ext: Str) -> Str {
+  let ls = text.split("\n")
+  reload_reuse_l(ls, label_counts(ls, ext)).join("\n")
+}
 
 /// A function's text without the reloads of a spill slot into x16 or
 /// x17 that already hold it (2026-10-17: 13% of bench/perf/tls's arm64
@@ -1241,8 +1260,12 @@ fn reload_reuse(text: Str, ext: Str) -> Str { reload_reuse_l(text.split("\n"), e
 /// to which (in text and ext) came before it, the registers hold what
 /// they held at each of those branches and on the way falling into it;
 /// a label referred to later (a loop's head), or from ext, starts empty.
-fn reload_reuse_l(lines: List[Str], ext: Str) -> List[Str] {
-  // how many times each label is referred to, in text and in ext
+/// How many times each label is referred to in a function's lines, a
+/// reference from ext (its LSDA) counted 1000000 (decision 0274 step 4's
+/// label table, still by spelling): counted once per function for the
+/// passes that need it (reload_reuse_l, pair_mem_l), where each scanned
+/// every line again; no pass between them adds or removes a reference.
+pub fn label_counts(lines: List[Str], ext: Str) -> Map[Str, Int] {
   var nrefs: Map[Str, Int] = {}
   for x in lines {
     if label_def(x).is_empty() {
@@ -1256,6 +1279,10 @@ fn reload_reuse_l(lines: List[Str], ext: Str) -> List[Str] {
       nrefs[r] = (nrefs.get(r) ?? 0) + 1000000
     }
   }
+  nrefs
+}
+
+fn reload_reuse_l(lines: List[Str], nrefs: Map[Str, Int]) -> List[Str] {
   // per label, the references seen so far and what x16 and x17 held at
   // them (the intersection)
   var seen: Map[Str, Int] = {}
@@ -1362,7 +1389,8 @@ fn reload_reuse_l(lines: List[Str], ext: Str) -> List[Str] {
   resplit(out)
 }
 
-/// The labels line l refers to (label_refs's names, of one line).
+/// The labels line l refers to (every `L` and the letters, digits, and `_`
+/// after it).
 fn line_label_refs(l: Str) -> List[Str] {
   var out: List[Str] = []
   let bs = l.bytes()
@@ -1414,6 +1442,12 @@ fn parse_sp_str(l: Str) -> (Bool, Str, Int) {
 /// w16, or w17 other than as a read (a store's source, a compare's or a
 /// test's operand, a later operand of a computation).
 fn writes_scratch(l: Str) -> Bool {
+  // most lines name no scratch register, no sp, no write back, and are no
+  // call: false without the slices below (each true case needs one of
+  // these spellings)
+  if !l.contains("16") && !l.contains("17") && !l.contains("sp") && !l.contains("]!") && !l.contains("\tb") && !l.contains("svc") {
+    return false
+  }
   let body = l[1..l.len()]
   let sp = body.find(" ") ?? body.len()
   let op = body[0..sp]
@@ -1463,7 +1497,7 @@ fn is_row_label(name: Str) -> Bool {
 }
 
 /// The name of the label line l defines (`L<letters, digits, _>:`, or
-/// ELF's `.L...:`, named without the dot as label_refs names its
+/// ELF's `.L...:`, named without the dot as line_label_refs names its
 /// references), or "". (Until 2026-10-17 only the Mach-O form: on Linux
 /// every label ended a pair_mem search and cleared reload_reuse's
 /// registers, the debug rows before nearly every line among them.)
@@ -1487,33 +1521,6 @@ fn is_label_byte(c: UInt8) -> Bool {
   c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == 1
 }
 
-/// The labels the lines of text and ext refer to (every `L` and the
-/// letters, digits, and `_` after it, outside label definitions).
-fn label_refs(lines: List[Str], ext: Str) -> Map[Str, Bool] {
-  var refs: Map[Str, Bool] = {}
-  for t in [lines, ext.split("\n")] {
-    for x in t {
-      if !label_def(x).is_empty() {
-        continue
-      }
-      let bs = x.bytes()
-      var k = 0
-      while k < bs.len() {
-        if bs[k] != 'L' {
-          k += 1
-          continue
-        }
-        var e = k + 1
-        while e < bs.len() && is_label_byte(bs[e]) {
-          e += 1
-        }
-        refs[x[k..e]] = true
-        k = e
-      }
-    }
-  }
-  refs
-}
 
 /// Whether l is `\tstr x<n>|xzr|d<n>, [x<m>, #<off>]` (strRE): the register,
 /// the base, and the offset.

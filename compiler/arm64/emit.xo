@@ -351,7 +351,8 @@ fn (var g: G) emit() {
   // were a fifth of a cold build's emit, 2026-10-19)
   let ls0 = b.join("").split("\n")
   let ls = if g.x86 { ls0 } else { borrow_flag_peep_l(copy_runs_l(ls0)) }
-  g.text.push(g.local_empty_l(g.far_tests_l(g.far_slots_l(pair_mem_l(reload_reuse_l(ls, ext), ext)))))
+  let nrefs = label_counts(ls, ext)
+  g.text.push(g.local_empty_l(g.far_tests_l(g.far_slots_l(pair_mem_l(reload_reuse_l(ls, nrefs), nrefs)))))
 }
 
 /// The number of instructions past which a function keeps adrp and add
