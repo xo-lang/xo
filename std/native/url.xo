@@ -15,7 +15,33 @@ const UPPER_HEX: Str = "0123456789ABCDEF"
 
 fn escapeerr_display(e: url.EscapeErr) -> Str { e.msg }
 
-fn escape_error(s: Str) -> url.EscapeErr { url.EscapeErr{msg: "invalid URL escape ${s.quote()}"} }
+/// Go's EscapeError: strconv.Quote of the escape's three bytes, which may
+/// cut a rune (`"%#\xc3"`).
+fn escape_error(b: Bytes) -> url.EscapeErr { url.EscapeErr{msg: "invalid URL escape ${go_q(b)}"} }
+
+/// strconv.Quote of bytes: \xNN for each byte of an invalid sequence.
+fn go_q(b: Bytes) -> Str {
+  if let Some(s) = b.to_str() {
+    return s.quote()
+  }
+  var out = StrBuilder.new()
+  out.write("\"")
+  var i = 0
+  while i < b.len() {
+    let (r, n) = b.decode_rune(i)
+    if r == '\u{FFFD}' && n == 1 {
+      let h = "0123456789abcdef"
+      let v = Int(b[i])
+      out.write("\\x" + h[v >> 4..(v >> 4) + 1] + h[v & 15..(v & 15) + 1])
+    } else {
+      let q = b[i..i + n].to_str().or_fault("rune").quote()
+      out.write(q[1..q.len() - 1])
+    }
+    i += n
+  }
+  out.write("\"")
+  out.freeze()
+}
 
 fn is_unreserved(c: UInt8) -> Bool {
   (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57) || c == 45 || c == 46 || c == 95 || c == 126
@@ -75,7 +101,7 @@ fn unescape(s: Str, query: Bool) -> Str ! url.EscapeErr {
       escapes += 1
       if i + 2 >= b.len() || !is_hex(b[i + 1]) || !is_hex(b[i + 2]) {
         let end = if i + 3 < b.len() { i + 3 } else { b.len() }
-        return Err(escape_error(text_of(b[i..end])))
+        return Err(escape_error(b[i..end]))
       }
       i += 3
     } else {
@@ -217,10 +243,12 @@ fn parse_query(s: Str) -> Values ! url.EscapeErr {
   var at: Map[Str, Int] = {}
   var ks: List[Str] = []
   var vs: List[List[Str]] = []
+  // Go's parseQuery: a pair with a semicolon sets its error whatever came
+  // before, so it wins over an earlier escape error
+  if s.split("&").any(fn(p) { p.contains(";") }) {
+    return Err(url.EscapeErr{msg: "invalid semicolon separator in query"})
+  }
   for pair in s.split("&") {
-    if pair.contains(";") {
-      return Err(url.EscapeErr{msg: "invalid semicolon separator in query"})
-    }
     if pair.is_empty() {
       continue
     }
