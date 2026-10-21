@@ -251,7 +251,8 @@ pub fn (var c: Checker) from_variant(to: Int, from: Int) -> Int {
   let s = c.args_subst(c.objs[o].tparams, c.tys[r].args)
   for v in c.objs[o].variants {
     if v.fields.len() == 1 && v.fields[0].from {
-      if c.identical(c.subst(v.fields[0].ty, s), from) {
+      let ft = c.subst(v.fields[0].ty, s)
+      if c.identical(ft, from) {
         return v.index
       }
     }
@@ -359,12 +360,20 @@ fn (var c: Checker) structural(t: Int, iface: Int, sp: Span) -> Bool {
     }
     let mps = c.objs[m].params
     let ips = c.objs[im].params
+    // the substitutions first: identical's receiver is read before its
+    // arguments (core 5.2, decision 0142), so a type subst creates (the
+    // own type parameters of a generic method) would be past the end of
+    // the c.tys it sees (2026-10-21: a user Rand with shuffle[T] faulted)
     for (i, p) in mps.indexed() {
-      if p.is_var != ips[i].is_var || !c.identical(c.subst(p.ty, ms2), c.subst(ips[i].ty, is)) {
+      let mt = c.subst(p.ty, ms2)
+      let it = c.subst(ips[i].ty, is)
+      if p.is_var != ips[i].is_var || !c.identical(mt, it) {
         return false
       }
     }
-    if !c.identical(c.subst(c.objs[m].result, ms2), c.subst(c.objs[im].result, is)) {
+    let mr = c.subst(c.objs[m].result, ms2)
+    let ir = c.subst(c.objs[im].result, is)
+    if !c.identical(mr, ir) {
       return false
     }
     if c.objs[m].err >= 0 {

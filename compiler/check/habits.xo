@@ -203,7 +203,8 @@ fn (var c: Checker) habit_call(call: Expr, id: Ident, hint: Int) -> (Int, Bool) 
       let d = c.habit_report(id, "`${name}(f, xs)` is Python; Xo calls the method on the collection, `xs.${name}(f)` (spec/std.md 2)")
       var recv = c.operand_src(args[1].value)
       var on = args[1].value
-      if c.is_prelude(c.infer(args[1].value, -1), "Range") {
+      let it = c.infer(args[1].value, -1)
+      if c.is_prelude(it, "Range") {
         // A range has no map or filter: make it a list first.
         recv = recv + ".to_list()"
         on = Expr.CallExpr(span: args[1].span, fun: Expr.SelectorExpr(span: id.span, x: args[1].value, sel: Ident{span: id.span, name: b"to_list"}), args: [])

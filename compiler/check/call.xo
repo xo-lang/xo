@@ -501,7 +501,10 @@ fn (var c: Checker) numeric_conversion_hint(d: Int, obj: Int, sel_span: Span, ca
     if unparen(args[0].value) is FnLit(..) {
       return
     }
-    if !c.is_numeric(c.infer(args[0].value, -1)) {
+    // bound first: is_numeric's receiver is read before its argument
+    // (receiver-read-before-args), and infer may add types
+    let at = c.infer(args[0].value, -1)
+    if !c.is_numeric(at) {
       return
     }
     let on = text(c.objs[obj].name)
@@ -1179,7 +1182,8 @@ fn (var c: Checker) call_func(fo: Int, pre: Subst, targs: List[Int], has_targs: 
     if c.is_open_var(at) || c.is_bad(at) {
       continue
     }
-    let cn = c.resolve(c.subst(ct, sm))
+    let st = c.subst(ct, sm)
+    let cn = c.resolve(st)
     if c.tys[cn].kind != TyKind.Named {
       continue
     }

@@ -36,3 +36,14 @@ type to the checker's table). A scan for the pattern (calls of by value
 methods of `g` or `g.c` whose arguments call `var` methods of `g`) found
 two more in the port before they faulted; all three bind the argument
 first.
+
+Observed again 2026-10-21 (Xo Publish, decision 0307's last step): a user
+`Rand` (any user type with a generic method converted to an interface with
+one) faulted the checker in structural's `c.identical(c.subst(...),
+c.subst(...))` (the substitution makes the method's own type parameters).
+A scan of compiler/ for `x.byvalue(x.var(...))` with the argument a direct
+call found three more in the checker (call.xo `c.is_numeric(c.infer(..))`
+and `c.resolve(c.subst(..))`, habits.xo `c.is_prelude(c.infer(..))`); all
+bind the argument first. The scan's ssa hits are false positives (every
+Builder method is `var`). A `xo vet` check for the shape would end the
+series.

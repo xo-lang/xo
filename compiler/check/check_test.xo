@@ -509,3 +509,31 @@ test "a std struct documented @move_only moves like the builders (XO0510), a use
   expect(ls.len()) == 1
   expect(ls.any(fn(l) { l.contains("use of moved value `a`") })) == true
 }
+
+test "a user type with a generic method implements an interface's generic method" {
+  // structural's substitutions make the method's own type parameters
+  // after identical's receiver was read: it faulted past the end of
+  // c.tys (2026-10-21, a user Rand with shuffle[T])
+  let src = """
+    interface Shuf {
+      fn shuffle[T](self, xs: List[T]) -> List[T]
+    }
+
+    struct Rev {}
+
+    fn (r: Rev) shuffle[T](xs: List[T]) -> List[T] { xs.reverse() }
+
+    struct Bad {}
+
+    fn (r: Bad) shuffle(xs: List[Int]) -> List[Int] { xs }
+
+    fn f() -> Shuf { Rev{} }
+
+    fn g() -> Shuf { Bad{} }
+    """
+  let out = check_files(os, "m", [("m/main.xo", src)])?
+  let errs = lines(out).filter(fn(l) { l.contains("XO0401") })
+  // f's Rev converts; g's Bad, with no type parameter, does not
+  expect(errs.len()) == 1
+  expect(errs[0].contains("\"line\":15,") && errs[0].contains("found `Bad`")) == true
+}
