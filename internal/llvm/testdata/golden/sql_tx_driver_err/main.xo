@@ -1,0 +1,77 @@
+// A driver whose commit and rollback fail: the transaction stays done (an Err
+// out of a Mutex.with closure undoes its writes, core 5.4, so the driver call
+// runs outside it), the connection goes back to the pool once, and a second
+// commit or rollback reports TxDone without touching it.
+use std/sql
+
+struct Log {
+  lines: Mutex[List[Str]]
+  next: Atomic[Int]
+}
+
+fn (l: Log) add(s: Str) { l.lines.with(fn(var xs) { xs.push(s) }) }
+
+struct FakeDriver {
+  log: Log
+  fail_password: Bool
+}
+
+struct FakeConn {
+  id: Int
+  log: Log
+  broken: Atomic[Bool]
+}
+
+fn (d: FakeDriver) connect(net: Net, dsn: Str) -> sql.DriverConn ! sql.SqlErr uses net.dial {
+  if d.fail_password {
+    return Err(sql.SqlErr.Conn(msg: "password authentication failed"))
+  }
+  let id = d.log.next.add(1)
+  d.log.add("connect ${id} ${dsn}")
+  FakeConn{id: id, log: d.log, broken: Atomic.new(false)}
+}
+
+fn (c: FakeConn) query(q: Str, args: List[sql.SqlValue]) -> sql.DriverRows ! sql.SqlErr uses net.dial {
+  c.log.add("conn ${c.id} query ${q}")
+  if q == "BREAK" {
+    c.broken.set(true)
+    return Err(sql.SqlErr.Conn(msg: "connection reset"))
+  }
+  sql.DriverRows{columns: ["conn", "q", "n"], rows: [[sql.int(c.id), sql.str(q), sql.int(args.len())]]}
+}
+
+fn (c: FakeConn) exec(q: Str, args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses net.dial {
+  c.log.add("conn ${c.id} exec ${q}")
+  sql.ExecResult{rows_affected: args.len(), last_insert_id: 0}
+}
+
+fn (c: FakeConn) begin() -> () ! sql.SqlErr uses net.dial { c.log.add("conn ${c.id} BEGIN") }
+fn (c: FakeConn) commit() -> () ! sql.SqlErr uses net.dial {
+  c.log.add("conn ${c.id} COMMIT")
+  Err(sql.SqlErr.Conn(msg: "commit failed"))
+}
+fn (c: FakeConn) rollback() -> () ! sql.SqlErr uses net.dial {
+  c.log.add("conn ${c.id} ROLLBACK")
+  Err(sql.SqlErr.Conn(msg: "rollback failed"))
+}
+fn (c: FakeConn) ping() -> () ! sql.SqlErr uses net.dial { c.log.add("conn ${c.id} ping") }
+fn (c: FakeConn) close() { c.log.add("conn ${c.id} close") }
+fn (c: FakeConn) is_broken() -> Bool { c.broken.get() }
+
+fn main(os: Os) ! {
+  let log = Log{lines: Mutex.new([]), next: Atomic.new(0)}
+  let db = sql.open_driver(os.net, FakeDriver{log: log, fail_password: false}, "dsn", max_open: 2, max_idle: 2)?
+  let tx = db.begin()?
+  os.stdio.println("commit: ${tx.commit().err().map(fn(e) { "${e}" }) ?? "ok"}")
+  os.stdio.println("commit again: ${tx.commit().err().map(fn(e) { "${e}" }) ?? "ok"}")
+  os.stdio.println("rollback after: ${tx.rollback().err().map(fn(e) { "${e}" }) ?? "ok"}")
+  let tx2 = db.begin()?
+  os.stdio.println("rollback: ${tx2.rollback().err().map(fn(e) { "${e}" }) ?? "ok"}")
+  os.stdio.println("rollback again: ${tx2.rollback().err().map(fn(e) { "${e}" }) ?? "ok"}")
+  os.stdio.println("commit after: ${tx2.commit().err().map(fn(e) { "${e}" }) ?? "ok"}")
+  let r = db.query_one("SELECT 1")?
+  os.stdio.println("pooled conn ${r.int("conn")?}")
+  for l in log.lines.with(fn(xs) { xs }) {
+    os.stdio.println(l)
+  }
+}

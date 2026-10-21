@@ -404,18 +404,27 @@ fn (t: Tx) query_one_as[T: SqlRow](q: Str, args: List[sql.SqlValue] = []) -> T !
   t.query_one(q, args)?.decode[T]()
 }
 
+/// Marks the transaction done and tells whether it already was. The driver's
+/// commit or rollback runs after this, outside the mutex section: an Err
+/// returned from a Mutex.with closure undoes the closure's writes (core
+/// 5.4), which would un-mark `done` while the connection is back in the pool.
+fn finish_once(t: Tx) -> Bool {
+  t.st.with(fn(var ts) -> Bool {
+    let was = ts.done
+    ts.done = true
+    was
+  })
+}
+
 fn (t: Tx) commit() -> () ! sql.SqlErr uses net.dial {
   let db = t.db
   if let Some(tc) = t.conn {
-    return t.st.with(fn(var ts) -> () ! sql.SqlErr {
-      if ts.done {
-        return Err(sql.SqlErr.TxDone)
-      }
-      ts.done = true
-      let r = tc.c.commit()
-      db.pool.or_fault("a driver's transaction has a pool").give(tc)
-      r
-    })
+    if finish_once(t) {
+      return Err(sql.SqlErr.TxDone)
+    }
+    let r = tc.c.commit()
+    db.pool.or_fault("a driver's transaction has a pool").give(tc)
+    return r
   }
   t.st.with(fn(var ts) -> () ! sql.SqlErr {
     if ts.done {
@@ -431,15 +440,12 @@ fn (t: Tx) commit() -> () ! sql.SqlErr uses net.dial {
 fn (t: Tx) rollback() -> () ! sql.SqlErr uses net.dial {
   let db = t.db
   if let Some(tc) = t.conn {
-    return t.st.with(fn(var ts) -> () ! sql.SqlErr {
-      if ts.done {
-        return Ok(())
-      }
-      ts.done = true
-      let r = tc.c.rollback()
-      db.pool.or_fault("a driver's transaction has a pool").give(tc)
-      r
-    })
+    if finish_once(t) {
+      return Ok(())
+    }
+    let r = tc.c.rollback()
+    db.pool.or_fault("a driver's transaction has a pool").give(tc)
+    return r
   }
   t.st.with(fn(var ts) {
     if !ts.done {

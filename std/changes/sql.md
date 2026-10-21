@@ -1,5 +1,21 @@
 # std/sql changes
 
+## 2026-10-21: fix: a driver transaction stays done when its commit or rollback fails
+
+- Kind: fix
+- Commit: (filled in after the push)
+- Found by: Xo Lang 3's Mutex.with rule (core 5.4: an Err out of the closure undoes its writes)
+- Go reference: database/sql Tx.Commit and Rollback (done set before the driver call)
+- Test: internal/llvm/testdata/golden/sql_tx_driver_err
+
+`Tx.commit` and `rollback` of a driver's transaction set `done` and called
+the driver inside the `Mutex.with` closure, so a driver error undid `done`
+while the connection was already back in the pool: a second commit ran the
+driver on a pooled connection (the test program deadlocked there). They now
+mark `done` in a section of its own and call the driver after it, so the
+transaction stays done, the connection is given back once, and a second
+commit or rollback reports TxDone (or Ok for rollback) without touching it.
+
 ## 2026-10-20: feature: Postgres over TLS
 
 - Kind: feature

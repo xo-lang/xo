@@ -1,0 +1,17 @@
+exit 0
+--- stdout
+commit: Conn(msg: "commit failed")
+commit again: TxDone
+rollback after: ok
+rollback: Conn(msg: "rollback failed")
+rollback again: ok
+commit after: TxDone
+pooled conn 1
+connect 1 dsn
+conn 1 ping
+conn 1 BEGIN
+conn 1 COMMIT
+conn 1 BEGIN
+conn 1 ROLLBACK
+conn 1 query SELECT 1
+--- stderr
