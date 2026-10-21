@@ -19,7 +19,15 @@ broken: bad Content-Length "x"`, `unsupported transfer encoding:
 with a space, equal Content-Length fields read as one, a closing
 HTTP/1.1 response has no `Connection` field (as net/http removes it),
 and the body's errors (`unexpected EOF`, `invalid byte in chunk length`)
-come without the request, as Go's body reads give them.
+come without the request, as Go's body reads give them. An error text
+keeps a zero byte of the line it quotes (it was cut there), a status
+line's bytes are quoted as Go's %q (`"\xff"`), and a Location that
+url.Parse rejects is Client.Do's `Get "URL": failed to parse Location
+header ...`. On the Go backend, an error text quoting a field line with
+bytes that are not UTF-8 now has U+FFFD for them (decision 0259), as
+natively. TestHTTP1ClientDiff now holds every backend to the Go
+backend's output on all 457 of its responses (testdata/http1_client.txt
+is the Go backend's).
 
 ## 2026-10-21: speedup: Router matching without a string per path segment
 

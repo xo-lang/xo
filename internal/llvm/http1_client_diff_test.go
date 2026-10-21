@@ -56,11 +56,10 @@ fn main(os: Os) {
 }
 `
 
-// http1ClientAgree are responses on which the native client and the Go
-// backend's (net/http's) agree; the rest of http1ClientCorpus shows
-// where the native client is lenient (it skips a field line without a
-// colon, reads a status line with "HTTP/", a space, and 3 digits) or
-// where net/http retries or reads differently.
+// http1ClientAgree are the responses the native client and the Go
+// backend (net/http) read alike before the native client ported
+// ReadResponse (2026-10-21); since then every response of the corpus
+// is read alike, and these come first in the inputs as before.
 var http1ClientAgree = []string{
 	"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nX-A: 1\r\n\r\nhello",
 	"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n6;ext=1\r\n world\r\n0\r\n\r\n",
@@ -241,10 +240,11 @@ const http1ClientN = 400
 // client_do and parse_response, audit item B10): the same client
 // program built with the native backends requests each response of the
 // corpus and of random and mutated ones from a server that sends them
-// raw; every backend must print testdata/http1_client.txt (written by
-// the C client, xo_http.c's cl_read_response and xo_cl_do, before the
-// port: -golden-update rewrites it), and the Go backend (net/http) the
-// same for the responses both read alike (http1ClientAgree).
+// raw; every backend must print testdata/http1_client.txt, which is
+// the Go backend's (net/http's) output on every response since the
+// native client ports ReadResponse (2026-10-21; before, it was the C
+// client's, and the Go backend was held only to http1ClientAgree):
+// -golden-update rewrites it from the Go backend.
 func TestHTTP1ClientDiff(t *testing.T) {
 	xotool.NeedPorts(t)
 	if testing.Short() {
@@ -274,11 +274,7 @@ func TestHTTP1ClientDiff(t *testing.T) {
 			t.Fatalf("build (%s) failed: %v", be, res.Output)
 		}
 		cmd := exec.Command(res.Binaries[xotool.Host()])
-		n := len(inputs)
-		if be == xotool.BackendGo {
-			n = len(http1ClientAgree)
-		}
-		cmd.Env = append(os.Environ(), "ADDR="+addr, "N="+strconv.Itoa(n))
+		cmd.Env = append(os.Environ(), "ADDR="+addr, "N="+strconv.Itoa(len(inputs)))
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		out, err := cmd.Output()
@@ -287,9 +283,8 @@ func TestHTTP1ClientDiff(t *testing.T) {
 		}
 		outs[be] = strings.Split(strings.TrimSuffix(strings.ReplaceAll(string(out), addr, "ADDR"), "\n"), "\n")
 	}
-	native := outs[xotool.BackendLLVM]
 	if *updateGolden {
-		if err := os.WriteFile(http1ClientGolden, []byte(strings.Join(native, "\n")+"\n"), 0o644); err != nil {
+		if err := os.WriteFile(http1ClientGolden, []byte(strings.Join(outs[xotool.BackendGo], "\n")+"\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -302,9 +297,6 @@ func TestHTTP1ClientDiff(t *testing.T) {
 	for _, be := range backends {
 		got := outs[be]
 		for i := range want {
-			if be == xotool.BackendGo && i >= len(http1ClientAgree) {
-				break
-			}
 			g := ""
 			if i < len(got) {
 				g = got[i]
@@ -327,7 +319,7 @@ func TestHTTP1ClientDiff(t *testing.T) {
 				}
 			}
 		}
-		if be != xotool.BackendGo && len(got) != len(want) {
+		if len(got) != len(want) {
 			t.Errorf("%s: %d lines, want %d", be, len(got), len(want))
 		}
 	}

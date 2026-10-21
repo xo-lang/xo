@@ -209,6 +209,18 @@ fn cstr_dup(s: Str) -> Int {
 
 fn cstr(a: Int) -> Str { if a == 0 { "" } else { raw.str_at(a, raw.cstr_len(a)) } }
 
+/// A copy of s after its length (8 bytes), for an error text that may
+/// hold a zero byte (net/http's texts quote a field line as received).
+fn msg_dup(s: Str) -> Int {
+  let n = s.len()
+  let b = rt.heap_large(n + 8) - 8
+  rt.mem_store(b, 0, n, 8)
+  rt.mem_copy(b + 8, raw.data(s), n)
+  b
+}
+
+fn msg_at(a: Int) -> Str { if a == 0 { "" } else { raw.str_at(a + 8, rt.mem_load(a, 0, 8)) } }
+
 /// Sets r's error: the ClientErr tag (2 Connect, 3 Timeout, 4 Protocol,
 /// 5 Canceled) and its text.
 fn fail(r: Int, tag: Int, msg: Str) {
@@ -216,7 +228,7 @@ fn fail(r: Int, tag: Int, msg: Str) {
   if old != 0 {
     rt.heap_release(old)
   }
-  st(r, R_MSG, cstr_dup(msg))
+  st(r, R_MSG, msg_dup(msg))
   rt.mem_store(r, R_ERR, tag, 4)
 }
 
@@ -397,7 +409,7 @@ pub fn end(r: rthttp.CResp, s: Int, why: Str) {
 /// Protocol, 5 Canceled).
 pub fn err(r: rthttp.CResp) -> Int { rt.mem_load(rec(r), R_ERR, 4) }
 
-pub fn msg(r: rthttp.CResp) -> Str { cstr(ld(rec(r), R_MSG)) }
+pub fn msg(r: rthttp.CResp) -> Str { msg_at(ld(rec(r), R_MSG)) }
 
 /// An HTTP/2 response: its status, header (names and values in turns),
 /// and body.

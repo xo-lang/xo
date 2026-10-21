@@ -2971,7 +2971,8 @@ pub fn parse_response(s: Str, eof: Bool, method: Str) -> RespHead {
   let (_, ll, nx) = line_at(s, b, 0, end, true)
   let sp = find(s, 32, 0, ll)
   if sp < 0 {
-    return resp_fail(BAD, "malformed HTTP response " + go_quote(text_of(s, 0, ll)))
+    // %q of the bytes as received (an invalid byte is \xff, as Go's)
+    return resp_fail(BAD, "malformed HTTP response " + go_quote(rawb.str_slice(s, 0, ll)))
   }
   var c0 = sp + 1
   while c0 < ll && b[c0] == 32 {
@@ -2981,7 +2982,7 @@ pub fn parse_response(s: Str, eof: Bool, method: Str) -> RespHead {
   if c1 < 0 {
     c1 = ll
   }
-  let code_text = text_of(s, c0, c1)
+  let code_text = rawb.str_slice(s, c0, c1)
   // strconv.Atoi of three bytes: a sign, then digits; not negative
   var code = 0
   var good = c1 - c0 == 3
@@ -3005,7 +3006,7 @@ pub fn parse_response(s: Str, eof: Bool, method: Str) -> RespHead {
   let proto = rawb.str_slice(s, 0, sp)
   let pb = proto.bytes()
   if pb.len() != 8 || !proto.starts_with("HTTP/") || pb[6] != 46 || pb[5] < 48 || pb[5] > 57 || pb[7] < 48 || pb[7] > 57 {
-    return resp_fail(BAD, "malformed HTTP version " + go_quote(text_of(s, 0, sp)))
+    return resp_fail(BAD, "malformed HTTP version " + go_quote(rawb.str_slice(s, 0, sp)))
   }
   let major = Int(pb[5]) - 48
   let minor = Int(pb[7]) - 48
@@ -3454,8 +3455,14 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
       referer = referer + "?" + u.rawquery
     }
     has_referer = true
-    // the new URL: the Location resolved against this one
+    // the new URL: the Location resolved against this one; a Location
+    // url.Parse rejects is Client.Do's error naming this request
     let loc = last_loc
+    let lhash = scan.find(loc, "#", 0)
+    let lu = neturl.url_parse(if lhash >= 0 { rawb.str_slice(loc, 0, lhash) } else { loc }, false)
+    if !lu.ok {
+      return cfail(4, op + " " + go_quote(raw) + ": failed to parse Location header " + go_quote(loc) + ": parse " + go_quote(loc) + ": " + lu.err)
+    }
     if scan.find(loc, ":", 0) >= 0 && !loc.starts_with("/") {
       raw = loc
     } else if loc.starts_with("//") {

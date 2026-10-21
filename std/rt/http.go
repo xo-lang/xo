@@ -866,6 +866,9 @@ func Http_client(_ *Task, n Net, timeout Duration) Http_Client {
 }
 
 func clientErr(tag int, msg string) Http_ClientErr {
+	// net/http's texts quote a response's field line as received: its
+	// bytes become valid UTF-8 (decision 0259), as natively
+	msg = textOf(msg)
 	switch tag {
 	case 1:
 		return Http_ClientErr{Tag: 1, P: Http_ClientErr_InvalidUrl{F_msg: msg}}
