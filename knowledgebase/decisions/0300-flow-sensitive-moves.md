@@ -117,6 +117,27 @@ already emits for these paths.
   backend.
 - The two gotchas are marked fixed by this decision when it lands.
 
+## Evidence (2026-10-21, for the owner)
+
+- What it buys is the time to write the code, not run time: the rule
+  only accepts more programs, and code generation is unchanged (see
+  Decision), so no profile can show a gain. `xo vet`'s copy-cost notes
+  are about something else (XO0534, a task capturing a value of 32 or
+  more heap fields, decision 0294; there is no XO0536); over compiler/
+  and std they report none (compiler: 47 XO0208, 8 XO0305, 2 XO0532,
+  1 XO0207; std: 24 XO0703, 6 XO0208, 1 XO0530, 1 XO0531, 1 XO0207).
+- Of the 292 functions in std and compiler/ (tests excluded) with a
+  move-only builder local, a scan for the workaround shape (one freeze,
+  a loop left by `break`, an error or flag variable set before it)
+  finds std/native/multipart.xo read_part and qp_decode, and
+  std/native/mail.xo consume_quoted_string; it also matches
+  compiler/arm64/partcache.xo part_keys, which is not that shape. The
+  scan cannot see code that was restructured in other ways (a helper
+  returning early, a builder made per iteration); the agent poll of
+  2026-10-20 names those (the uuid parser, the base64 decoder).
+- None of these is in the hot paths of the profiles we have (plain HTTP,
+  TLS, xo's own build): multipart and mail parsing do not run there.
+
 ## Alternatives
 
 - Keep the rule and document the workaround: today's state, and the
