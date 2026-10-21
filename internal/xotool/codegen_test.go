@@ -81,6 +81,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_TEST_ONLY":            {"none", ""},
 	"XO_TRACEBACK":            {"none", ""},
 	"XO_WARNINGS":             {"none", ""},
+	"XO_CACHE_PRUNE_BUDGET":   {"none", ""}, // how long a build prunes its caches
 }
 
 // codegenFields classifies the module fields compiler/xo sets.
