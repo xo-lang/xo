@@ -2016,6 +2016,18 @@ func TestPruneDetached(t *testing.T) {
 		t.Errorf("%d of %d stale entries left after the detached prune:\n%s", len(es), n, b)
 	}
 	t.Logf("prune-log:\n%s", b)
+	// the child's output and exit status, so a fault in it is seen
+	var cl []byte
+	for time.Now().Before(deadline) {
+		cl, _ = os.ReadFile(filepath.Join(cache, "prune-child.log"))
+		if strings.Contains(string(cl), "prune-backend exit ") {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if !strings.Contains(string(cl), "prune-backend exit 0") {
+		t.Errorf("prune-child.log has no `prune-backend exit 0`:\n%s", cl)
+	}
 }
 
 // TestFrontCacheStdTestEdit: an edit to one std test block's body keeps

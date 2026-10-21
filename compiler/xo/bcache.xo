@@ -863,7 +863,10 @@ fn prune_backend_cache(os: Os, dir: Str, stored: Int) {
   // write its profile at the build's path first, and the build's could
   // not be written (2026-10-21: a cold self-build's profile was the
   // child's 0.5 s)
-  let script = "XO_PROF= XO_PROF_OUT= XO_TRACE= XO_TRACE_OUT= \"$0\" dev prune-backend \"$1\" </dev/null >/dev/null 2>&1 &"
+  // its output and exit status go to DIR/prune-child.log: a child that
+  // faulted was invisible (2026-10-21: an overflow faulted every child
+  // for two hours while the cache grew to 49 GB)
+  let script = "( XO_PROF= XO_PROF_OUT= XO_TRACE= XO_TRACE_OUT= \"$0\" dev prune-backend \"$1\"; echo \"$(date +%s) prune-backend exit $?\" ) </dev/null >>\"$1/prune-child.log\" 2>&1 &"
   os.proc.cmd("/bin/sh", ["-c", script, xo, dir]).run().ignore_err("a prune that does not start runs on a later build")
 }
 
@@ -877,6 +880,18 @@ fn backend_prune_allowed(os: Os, dir: Str, p: prune.Policy) -> Bool {
   }
   let host = host_os(os)
   dir.trim_suffix("/") != "${user_cache_dir(os, host)}/xo/backend"
+}
+
+/// Keeps the log at path (prune-child.log) under 1 MiB: past it, its last
+/// 256 KiB stay.
+fn trim_log(os: Os, path: Str) {
+  if let Ok(Some(fi)) = os.fs.stat(path) {
+    if fi.size > 1048576 {
+      if let Ok(b) = os.fs.read(path) {
+        cache_put(os, path, b[b.len() - 262144..b.len()])
+      }
+    }
+  }
 }
 
 /// The back-end cache's prune policy version (prune_version_ok): raised
@@ -925,6 +940,7 @@ const BACKEND_EVERY: Duration = 1m
 /// it is under its cap (or the whole cache was walked, or a minute
 /// passed); the child prune_backend_cache starts.
 fn prune_backend_child(os: Os, dir: Str) -> Int {
+  trim_log(os, "${dir}/prune-child.log")
   var p = backend_policy(os)
   if !backend_prune_allowed(os, dir, p) || !prune_version_ok(os, dir) {
     return 1
