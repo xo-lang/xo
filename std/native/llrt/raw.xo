@@ -21,10 +21,14 @@ pub fn bytes_buf(n: Int) -> Bytes {
 }
 
 /// b with its length set to n, clamped to 0 and b's capacity, consuming
-/// b: the bytes a read filled, without a copy.
+/// b: the bytes a read filled, without a copy. The capacity is read at
+/// the width of a count (rt.layout(7)): wasm keeps an i32 capacity
+/// before the bytes, and a word read there turned a TLS plaintext
+/// starting with a byte of 128 or more into a negative capacity and the
+/// record's data into nothing (the tls13 goldens on wasm, 2026-10-21).
 pub fn bytes_len(b: Bytes, n: Int) -> Bytes {
   let s = rt.cast[Bytes, Str](b)
-  let cap = rt.mem_load(rt.obj_addr(s), rt.layout(1), 8)
+  let cap = rt.mem_load(rt.obj_addr(s), rt.layout(1), rt.layout(7))
   let k = if n < 0 { 0 } else if n > cap { cap } else { n }
   rt.cast[Str, Bytes](rt.rs_set_len(s, k))
 }

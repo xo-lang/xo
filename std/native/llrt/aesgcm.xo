@@ -973,7 +973,7 @@ fn (g: Gcm) ctr_at(s0: Str, d: Int, nlo: Int, nhi: Int, ctr0: Int, src: Bytes, s
 fn chunk_room(n: Int) -> Int { n.wrapping_add(63) & -64 }
 
 /// The capacity of s's buffer (raw.bytes_len's).
-fn cap_of(s: Str) -> Int { rt.mem_load(rt.obj_addr(s), rt.layout(1), 8) }
+fn cap_of(s: Str) -> Int { rt.mem_load(rt.obj_addr(s), rt.layout(1), rt.layout(7)) }
 
 /// hw_n's rounds on the blocks at address p.
 fn enc_at(c: Cipher, p: Int, blocks: Int) {
