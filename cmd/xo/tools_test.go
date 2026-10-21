@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -1206,5 +1207,54 @@ func TestSymbolsScope(t *testing.T) {
 	var out, errOut bytes.Buffer
 	if code := run(t, []string{"symbols", "--file=x.xo", "--module=std/json"}, &out, &errOut); code != 2 {
 		t.Errorf("--file with --module: exit %d, want 2: %s", code, errOut.String())
+	}
+}
+
+// TestDevGoldensInlineStrict: `xo dev goldens` builds with
+// XO_INLINE_STRICT=1 (an arm64 module whose inlining does not verify
+// fails the build), as the Go tests do, unless the caller sets it: a gate
+// of dev goldens passed http_server while the Go tests failed it on the
+// verifier (2026-10-21). A fake xo records what it was given.
+func TestDevGoldensInlineStrict(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake xo is a shell script")
+	}
+	dir := writeFiles(t, map[string]string{
+		"golden/p/main.xo":  "fn main(os: Os) {\n  os.stdio.println(\"hi\")\n}\n",
+		"golden/p/want.txt": "exit 0\n--- stdout\nhi\n--- stderr\n",
+	})
+	rec := filepath.Join(dir, "strict.txt")
+	fake := filepath.Join(dir, "fakexo")
+	// records XO_INLINE_STRICT and writes the -o output
+	script := "#!/bin/sh\nprintf '%s\\n' \"${XO_INLINE_STRICT-unset}\" >> " + rec + "\nout=\nwhile [ $# -gt 0 ]; do if [ \"$1\" = -o ]; then out=$2; fi; shift; done\n[ -n \"$out\" ] && : > \"$out\"\nexit 0\n"
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ env, want string }{{"", "1"}, {"0", "0"}} {
+		os.Remove(rec)
+		cli, err := xoCommand()
+		if err != nil {
+			t.Skip(err)
+		}
+		cmd := exec.Command(cli[0], append(cli[1:], "dev", "goldens", "--xo="+fake, "--backend=arm64", "--build-only", "--no-each", "--force", "--no-cache", filepath.Join(dir, "golden"))...)
+		env := []string{}
+		for _, kv := range os.Environ() {
+			if !strings.HasPrefix(kv, "XO_INLINE_STRICT=") {
+				env = append(env, kv)
+			}
+		}
+		if c.env != "" {
+			env = append(env, "XO_INLINE_STRICT="+c.env)
+		}
+		cmd.Env = env
+		out, _ := cmd.CombinedOutput()
+		b, err := os.ReadFile(rec)
+		if err != nil {
+			t.Fatalf("XO_INLINE_STRICT=%q: the fake xo never ran: %s", c.env, out)
+		}
+		if got := strings.TrimSpace(strings.Split(string(b), "\n")[0]); got != c.want {
+			t.Errorf("XO_INLINE_STRICT=%q in the caller: the build got %q, want %q\n%s", c.env, got, c.want, out)
+		}
 	}
 }

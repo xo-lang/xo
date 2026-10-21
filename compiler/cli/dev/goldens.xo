@@ -58,6 +58,12 @@ pub struct Config {
   pub each: Bool = true
   /// Build and run each program with one `xo run` in its directory.
   pub run_cmd: Bool = false
+  /// XO_INLINE_STRICT for every xo the run starts: "1" (an arm64 module
+  /// whose inlining does not verify fails the build) unless the caller's
+  /// environment sets it, as the Go tests set it (internal/xotool): a gate
+  /// of `xo dev goldens` passed a program the Go tests failed that way
+  /// (2026-10-21)
+  pub inline_strict: Str = "1"
   /// The PATH of the build command, "" to keep the harness's.
   pub build_path: Str = ""
 }
@@ -292,7 +298,8 @@ fn judge(os: Os, cfg: Config, key: Str, p: Prog, out: ProcOutput, build_ms: Int,
 
 /// with_path gives the build command the PATH of --build-path when set
 /// (/nonexistent shows a build needs no external tool, decision 0182).
-fn with_path(cfg: Config, c: Cmd) -> Cmd {
+fn with_path(cfg: Config, c0: Cmd) -> Cmd {
+  let c = c0.set_env("XO_INLINE_STRICT", cfg.inline_strict)
   if cfg.build_path.is_empty() { c } else { c.set_env("PATH", cfg.build_path) }
 }
 
@@ -312,7 +319,7 @@ fn run_one(os: Os, cfg: Config, key: Str, p: Prog) -> Outcome {
   }
   let wd = os.env.get("PWD") ?? "."
   let abs = if p.dir.starts_with("/") { p.dir } else { "${wd}/${p.dir}" }
-  var c = os.proc.cmd(cfg.xo, args).dir(p.dir).stdin(h.stdin).set_env("XO_LEAKCHECK", "1").set_env("PWD", abs)
+  var c = os.proc.cmd(cfg.xo, args).dir(p.dir).stdin(h.stdin).set_env("XO_LEAKCHECK", "1").set_env("PWD", abs).set_env("XO_INLINE_STRICT", cfg.inline_strict)
   // env.txt is the program's environment, and xo sees it too: a HOME such
   // as env_dirs' /home/test has no user cache to build in
   c = c.set_env("XO_BUILD_DIR", "${cfg.out}/runbuild")

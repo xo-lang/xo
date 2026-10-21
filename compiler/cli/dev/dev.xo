@@ -126,6 +126,7 @@ fn goldens_cmd(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.rea
     each: !fl.get_bool("no-each"),
     run_cmd: fl.get_str("cmd") == "run",
     build_path: fl.get_str("build-path"),
+    inline_strict: os.env.get("XO_INLINE_STRICT") ?? "1",
   }
   let t0 = os.clock.now()
   let outs = run_goldens(os, cfg, fl.args)

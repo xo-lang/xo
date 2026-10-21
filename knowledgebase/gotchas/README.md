@@ -735,3 +735,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [prune-slice-listing-cost.md](prune-slice-listing-cost.md): a sliced prune whose shard listing outruns its walk budget walks one shard a run and evicts nothing; retire an old layout explicitly.
 - [timeout-sigterm-spinning-xo.md](timeout-sigterm-spinning-xo.md): Observed: SIGTERM only asks an Xo program to stop at its next poll, so `timeout N` never ends one spinning with preemption off; use `timeout -s KILL N` (137)
 - [pinned-xo-cli-stale-after-pushq.md](pinned-xo-cli-stale-after-pushq.md): Observed: XO_CLI pinned to a pushed worktree's bin/xo is older than the tree pushq rebased it onto; run post-push checks in a fresh worktree.
+- [dev-goldens-inline-strict.md](dev-goldens-inline-strict.md): `xo dev goldens` did not set XO_INLINE_STRICT as the Go tests do, so an inline verifier failure passed a gate; it now defaults to 1

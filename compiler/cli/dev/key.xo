@@ -40,7 +40,7 @@ pub fn tree_hash(fs: Fs, dir: Str) -> Str? uses fs.read {
 /// never hit a pass recorded for other bytes.
 fn base_key(fs: Fs, cfg: Config) -> Str uses fs.read {
   var b = BytesBuilder.new()
-  b.write_str("${HARNESS_VERSION}\n${cfg.backend}\n${cfg.flags.join(" ")}\n${cfg.host}\nbuild_only=${cfg.build_only} run=${cfg.run_cmd} path=${cfg.build_path}\n")
+  b.write_str("${HARNESS_VERSION}\n${cfg.backend}\n${cfg.flags.join(" ")}\n${cfg.host}\nbuild_only=${cfg.build_only} run=${cfg.run_cmd} path=${cfg.build_path} inline_strict=${cfg.inline_strict}\n")
   let xo = match fs.read(cfg.xo) {
     Ok(d) => d
     Err(_) => return ""

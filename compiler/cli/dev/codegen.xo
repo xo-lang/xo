@@ -223,7 +223,9 @@ fn codegen_one(os: Os, h: Host, xo: Str, d: Str, backend: Str) -> (Int, List[Str
   if ps.is_empty() {
     return (0, [])
   }
-  let out = match os.proc.cmd(xo, ["asm", "--backend=${backend}", "--std=${h.std}", d]).set_env("XO_LLVM_SPLIT", "1").output() {
+  // the inline verify as the Go tests and xo dev goldens run it
+  let strict = os.env.get("XO_INLINE_STRICT") ?? "1"
+  let out = match os.proc.cmd(xo, ["asm", "--backend=${backend}", "--std=${h.std}", d]).set_env("XO_LLVM_SPLIT", "1").set_env("XO_INLINE_STRICT", strict).output() {
     Ok(o) => o
     Err(e) => return (ps.len(), ["xo asm: ${e}"])
   }
