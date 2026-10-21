@@ -83,11 +83,27 @@ fn unescape(s: Str) -> Str {
   s.replace("\\\"", "\"").replace("\\t", "\t")
 }
 
-/// functions cuts the output of `xo asm` into functions by name.
+/// functions cuts the output of `xo asm` into functions by name. An LLVM
+/// function's text ends with the attribute groups its `define` line
+/// names (`attributes #N = { ... }`), so a pattern checks what a function
+/// is (noinline, a frame pointer) and not a group's number, which moves
+/// when the backend adds groups.
 pub fn functions(backend: Str, code: Str) -> Map[Str, Str] {
   var out: Map[Str, Str] = {}
   var name = ""
   var body: List[Str] = []
+  var groups: Map[Str, Str] = {}
+  var refs: List[Str] = []
+  if backend != "arm64" {
+    for l in code.split("\n") {
+      if l.starts_with("attributes #") {
+        match l.find(" = ") {
+          Some(k) => groups[l["attributes ".len()..k]] = l
+          None => {}
+        }
+      }
+    }
+  }
   for l in code.split("\n") {
     if backend == "arm64" {
       if l.starts_with("// func ") {
@@ -114,10 +130,21 @@ pub fn functions(backend: Str, code: Str) -> Map[Str, Str] {
           None => name = ""
         }
         body = []
+        refs = []
+        for w in l.split(" ") {
+          if w.starts_with("#") && groups.contains(w) {
+            refs.push(w)
+          }
+        }
       }
       if !name.is_empty() {
         body.push(l)
         if l == "}" {
+          for r in refs {
+            if let Some(g) = groups.get(r) {
+              body.push(g)
+            }
+          }
           out[name] = body.join("\n")
           name = ""
         }

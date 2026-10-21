@@ -27,4 +27,4 @@ fn main(os: Os) {
 // record (a leaf otherwise) and is never inlined.
 // func internal.frame_below
 // arm64: "stp x29, x30" "mov x[0-9]+, x29"
-// llvm: "llvm.frameaddress.p0" "#9 [{]"
+// llvm: "llvm.frameaddress.p0" "attributes #[0-9]+ = [{][^}]*noinline \"frame-pointer\"=\"all\""

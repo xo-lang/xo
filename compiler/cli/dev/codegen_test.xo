@@ -20,4 +20,10 @@ test "functions" {
   expect((fs.get("a") ?? "").contains("mul") && !(fs.get("b") ?? "").contains("mul"))
   let ir = "define internal i64 @\"x.a\"(i64 %v0) #1 {\n  %v1 = shl i64 %v0, 3\n  ret i64 %v1\n}\n"
   expect((functions("llvm", ir).get("a") ?? "").contains("shl i64"))
+  // the attribute groups a define names follow its text
+  let ir2 = ir + "define internal i64 @\"x.b\"(i64 %v0) #9 section \"xo_text\" {\n  ret i64 %v0\n}\n\nattributes #1 = { uwtable }\nattributes #9 = { uwtable noinline \"frame-pointer\"=\"all\" }\n"
+  let f2 = functions("llvm", ir2)
+  expect((f2.get("b") ?? "").contains("attributes #9 = { uwtable noinline"))
+  expect(!(f2.get("b") ?? "").contains("attributes #1 ="))
+  expect((f2.get("a") ?? "").contains("attributes #1 = { uwtable }"))
 }
