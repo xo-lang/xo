@@ -428,38 +428,27 @@ fn (var p: P) consume_quoted_string() -> Str ! mail.MailErr {
   var i = 1
   var out = StrBuilder.new()
   var escaped = false
-  var closed = false
-  var bad = ""
   while i < b.len() {
     let (r, n) = b.decode_rune(i)
     if escaped {
       if !is_vchar(r) && !is_wsp(r) {
-        bad = "mail: bad character in quoted-string: ${r.quote()}"
-        break
+        return Err(fail("mail: bad character in quoted-string: ${r.quote()}"))
       }
       out.write("${r}")
       escaped = false
     } else if is_qtext(r) || is_wsp(r) {
       out.write("${r}")
     } else if r == '"' {
-      closed = true
-      break
+      p.s = p.s[i + 1..]
+      return out.freeze()
     } else if r == '\\' {
       escaped = true
     } else {
-      bad = "mail: bad character in quoted-string: ${r.quote()}"
-      break
+      return Err(fail("mail: bad character in quoted-string: ${r.quote()}"))
     }
     i += n
   }
-  if !bad.is_empty() {
-    return Err(fail(bad))
-  }
-  if !closed {
-    return Err(fail("mail: unclosed quoted-string"))
-  }
-  p.s = p.s[i + 1..]
-  out.freeze()
+  Err(fail("mail: unclosed quoted-string"))
 }
 
 fn (var p: P) consume_atom(dot: Bool, permissive: Bool) -> Str ! mail.MailErr {

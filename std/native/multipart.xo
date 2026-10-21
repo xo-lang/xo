@@ -218,7 +218,6 @@ fn (var r: R) read_part() -> (Bytes, Str) {
   var out = BytesBuilder.new()
   var total = 0
   var eof = false
-  var err = ""
   while {
     let (n, e) = r.scan(total, eof)
     if n == 0 && e.is_empty() {
@@ -230,11 +229,9 @@ fn (var r: R) read_part() -> (Bytes, Str) {
     r.pos += n
     total += n
     if !e.is_empty() {
-      err = if e == "EOF" { "" } else { e }
-      break
+      return (out.freeze(), if e == "EOF" { "" } else { e })
     }
   }
-  (out.freeze(), err)
 }
 
 // ---------------------------------------------------------------------------
@@ -464,11 +461,9 @@ fn is_qp_ws(c: UInt8) -> Bool { c == 10 || c == 13 || c == 32 || c == 9 }
 fn qp_decode(raw: Bytes, end: Str) -> (Bytes, Str) {
   var out = BytesBuilder.with_capacity(raw.len())
   var pos = 0
-  var err = ""
   while {
     if pos >= raw.len() {
-      err = end
-      break
+      return (out.freeze(), end)
     }
     // ReadSlice('\n') on a 4096 byte buffer
     var stop = if raw.len() - pos > BUF { pos + BUF } else { raw.len() }
@@ -520,16 +515,14 @@ fn qp_decode(raw: Bytes, end: Str) -> (Bytes, Str) {
           if l.len() - i >= 2 && l[i + 1] != 13 && l[i + 1] != 10 {
             c = 61
           } else {
-            err = UNEXPECTED_EOF
-            break
+            return (out.freeze(), UNEXPECTED_EOF)
           }
         } else if qp_hex(l[i + 1]) < 0 || qp_hex(l[i + 2]) < 0 {
           if l[i + 1] != 13 && l[i + 1] != 10 {
             c = 61
           } else {
             let x = if qp_hex(l[i + 1]) < 0 { l[i + 1] } else { l[i + 2] }
-            err = "quotedprintable: invalid hex byte 0x${hex2(x)}"
-            break
+            return (out.freeze(), "quotedprintable: invalid hex byte 0x${hex2(x)}")
           }
         } else {
           c = UInt8(qp_hex(l[i + 1]) * 16 + qp_hex(l[i + 2]))
@@ -538,25 +531,18 @@ fn qp_decode(raw: Bytes, end: Str) -> (Bytes, Str) {
       } else if c == 9 || c == 13 || c == 10 || c >= 128 {
         // as it is
       } else if c < 32 || c > 126 {
-        err = "quotedprintable: invalid unescaped byte 0x${hex2(c)} in body"
-        break
+        return (out.freeze(), "quotedprintable: invalid unescaped byte 0x${hex2(c)} in body")
       }
       out.write_byte(c)
       i += 1
     }
-    if !err.is_empty() {
-      break
-    }
     if !bad.is_empty() {
-      err = bad
-      break
+      return (out.freeze(), bad)
     }
     if !rerr.is_empty() {
-      err = if rerr == "EOF" { "" } else { rerr }
-      break
+      return (out.freeze(), if rerr == "EOF" { "" } else { rerr })
     }
   }
-  (out.freeze(), err)
 }
 
 // ---------------------------------------------------------------------------
