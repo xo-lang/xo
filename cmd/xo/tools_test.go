@@ -767,3 +767,85 @@ fn main(os: Os) {
 		t.Errorf("got %v, want %s\n%s", got, want, out.String())
 	}
 }
+
+// TestVetIODefault covers XO0903: an Fs result's error turned into a
+// default by `.ok() ?? d` (line 3) or `Err(_) => <empty>` (line 17)
+// warns; an allow comment with a reason (line 10) silences it, one
+// without a reason (line 32) does not; a match that names NotFound and a
+// non-I/O `??` do not warn.
+func TestVetIODefault(t *testing.T) {
+	t.Parallel()
+	src := `fn files(os: Os, d: Str) -> List[Str] uses fs.read {
+  var out: List[Str] = []
+  for e in os.fs.read_dir(d).ok() ?? [] {
+    out.push(e.name)
+  }
+  out
+}
+
+fn hint(os: Os, p: Str) -> Str uses fs.read {
+  // xo:allow XO0903 a hint: a failed read rebuilds
+  (os.fs.read_text(p).ok() ?? "").trim()
+}
+
+fn src(os: Os, p: Str) -> Bytes uses fs.read {
+  match os.fs.read(p) {
+    Ok(b) => b
+    Err(_) => b""
+  }
+}
+
+fn src2(os: Os, p: Str) -> Bytes uses fs.read {
+  match os.fs.read(p) {
+    Ok(b) => b
+    Err(NotFound(_)) => b""
+    Err(_) => b""
+  }
+}
+
+fn n(xs: List[Int]) -> Int { xs.first() ?? 0 }
+
+fn bare(os: Os, p: Str) -> Str uses fs.read {
+  // xo:allow XO0903
+  os.fs.read_text(p).ok() ?? ""
+}
+
+fn main(os: Os) {
+  os.stdio.println("${files(os, ".").len()} ${hint(os, "x")} ${src(os, "x").len()} ${src2(os, "x").len()} ${n([1])} ${bare(os, "x")}")
+}
+`
+	dir := writeFiles(t, map[string]string{"main.xo": src})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"vet", "--json", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	var res struct {
+		Diagnostics []struct {
+			Code     string `json:"code"`
+			Severity string `json:"severity"`
+			Message  string `json:"message"`
+			Span     struct {
+				Line int `json:"line"`
+			} `json:"span"`
+		} `json:"diagnostics"`
+		CheckErrors int `json:"check_errors"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &res); err != nil {
+		t.Fatalf("bad JSON: %v\n%s", err, out.String())
+	}
+	if res.CheckErrors != 0 {
+		t.Fatalf("check errors: %d\n%s", res.CheckErrors, out.String())
+	}
+	var got []string
+	for _, d := range res.Diagnostics {
+		if d.Code == "XO0903" {
+			got = append(got, fmt.Sprintf("%d %s", d.Span.Line, d.Severity))
+			if !strings.Contains(d.Message, "FsErr") {
+				t.Errorf("message: %s", d.Message)
+			}
+		}
+	}
+	if want := "3 warning, 17 warning, 33 warning"; strings.Join(got, ", ") != want {
+		t.Errorf("XO0903 at %v, want %s\n%s", got, want, out.String())
+	}
+}

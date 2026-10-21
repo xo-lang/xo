@@ -2,7 +2,7 @@
 // checked program, never errors: the warnings of check, unused declared
 // effects (XO0703), `x ?? [].f()` (XO0207), every `.ignore_err` reason
 // (XO0208), `use go` per module (XO1103), `dbg(...)` left in code
-// (XO0901).
+// (XO0901), an I/O error defaulted away (XO0903).
 
 use github.com/xo-lang/xo/compiler/check
 use github.com/xo-lang/xo/compiler/lexer
@@ -233,6 +233,9 @@ fn vet_module(c: check.Checker, m: Int) -> List[Diag] {
             if let Some(d) = coalesce_chain(path, span, x, y) {
               out.push(d)
             }
+            if let Some(d) = io_default(c, f, path, span, x) {
+              out.push(d)
+            }
           }
         }
         CallExpr(span, fun, args) => {
@@ -249,6 +252,7 @@ fn vet_module(c: check.Checker, m: Int) -> List[Diag] {
           if let Some(d) = payload_share(c, f, path, subject, pats) {
             out.push(d)
           }
+          out = out + io_match(c, f, path, subject, arms)
         }
         IfExpr(ie) => {
           if let (Some(p), Some(x)) = (ie.pattern, ie.value) {
@@ -651,6 +655,146 @@ fn lit_text(e: parser.Expr) -> Str {
     DurationLit(_, raw, _) => text_of(raw)
     _ => "literal"
   }
+}
+
+/// The error types of a program's own I/O whose loss XO0903 notes.
+const IO_ERRS = ["FsErr", "NetErr", "ProcErr", "IoErr"]
+
+/// The I/O error type of a Result type's text (`Result[T, FsErr]`), or "".
+fn io_err_of(t: Str) -> Str {
+  if !t.starts_with("Result[") {
+    return ""
+  }
+  for e in IO_ERRS {
+    if t.ends_with(", ${e}]") {
+      return e
+    }
+  }
+  ""
+}
+
+/// Whether the line of file f holding a finding, or the line above it,
+/// says `xo:allow CODE <reason>`; the reason is required, as ignore_err's.
+fn allowed(c: check.Checker, f: Int, line: Int, code: Str) -> Bool {
+  let lines = (c.files[f].src.to_str() ?? "").split("\n")
+  for l in [line - 1, line - 2] {
+    if l < 0 || l >= lines.len() {
+      continue
+    }
+    let tag = "xo:allow ${code} "
+    if let Some(i) = lines[l].find(tag) {
+      if !lines[l][i + tag.len()..].trim().is_empty() {
+        return true
+      }
+    }
+  }
+  false
+}
+
+/// The note every XO0903 carries: the rewrite, and the allow comment for
+/// a default that is right for every error.
+fn io_note(e: Str) -> check.DNote {
+  let missing = if e == "FsErr" { "`Err(NotFound(_)) => default` for a file that may be missing, " } else { "" }
+  check.DNote{message: "match the result: ${missing}and return or report every other ${e}; when the default is right for every error (a hint, a cache miss that is rebuilt), say why with `// xo:allow XO0903 <reason>` on the line or the line above"}
+}
+
+/// XO0903: `r.ok() ?? default` on the result of a filesystem, process, or
+/// network call: every error becomes the default, so a transient one (no
+/// file descriptors or memory, EIO) gives a smaller or empty answer
+/// instead of an error (a directory walk that drops a subtree, a hash of
+/// a partial tree; the 2026-10-21 sweep).
+fn io_default(c: check.Checker, f: Int, file: Str, span: parser.Span, x: parser.Expr) -> Diag? {
+  let r = match x {
+    CallExpr(_, fun, args) => {
+      if !args.is_empty() {
+        return None
+      }
+      match fun {
+        SelectorExpr(_, r, sel) => {
+          if sel.name != b"ok" {
+            return None
+          }
+          r
+        }
+        _ => return None
+      }
+    }
+    _ => return None
+  }
+  let e = io_err_of(c.type_text_in(f, r))
+  if e.is_empty() || allowed(c, f, span.start.line, "XO0903") {
+    return None
+  }
+  var d = vdiag("XO0903", false, file, span, "`.ok() ?? ...` turns every ${e} into the default: a transient error (no file descriptors or memory, EIO) gives a smaller or empty answer instead of an error")
+  d.notes.push(io_note(e))
+  Some(d)
+}
+
+/// Whether x is an empty value: `[]`, `{}`, `#{}`, `""`, `b""`, `None`,
+/// `false`, or `0`.
+fn empty_value(x: parser.Expr) -> Bool {
+  match x {
+    ListLit(_, elems) => elems.is_empty()
+    MapLit(_, entries) => entries.is_empty()
+    SetLit(_, elems) => elems.is_empty()
+    StringLit(s) => s.parts.all(fn(p) { p.expr.is_none() && p.text.is_empty() })
+    BytesLit(_, value) => value.is_empty()
+    Ident(id) => id.name == b"None" || id.name == b"false"
+    IntLit(_, _, value) => value == b"0"
+    _ => false
+  }
+}
+
+/// Whether p is `Err(_)` or `Err(e)`: every error.
+fn every_err(p: parser.Pattern) -> Bool {
+  match p {
+    VariantPat(_, path, _, fields, _) => {
+      if path.is_empty() || path[path.len() - 1].name != b"Err" || fields.len() != 1 {
+        return false
+      }
+      match fields[0].pattern {
+        WildcardPat(_) => true
+        BindPat(_, _) => true
+        _ => false
+      }
+    }
+    _ => false
+  }
+}
+
+/// Whether p names NotFound anywhere (`Err(NotFound(_))`).
+fn names_not_found(p: parser.Pattern) -> Bool {
+  match p {
+    VariantPat(_, path, _, fields, _) => path.any(fn(i) { i.name == b"NotFound" }) || fields.any(fn(pf) { names_not_found(pf.pattern) })
+    OrPat(_, alts) => alts.any(fn(a) { names_not_found(a) })
+    _ => false
+  }
+}
+
+/// XO0903 for a match on a filesystem, process, or network result whose
+/// `Err(_)` arm is an empty value and no arm names NotFound.
+fn io_match(c: check.Checker, f: Int, file: Str, subject: parser.Expr, arms: List[parser.MatchArm]) -> List[Diag] {
+  let e = io_err_of(c.type_text_in(f, subject))
+  if e.is_empty() || arms.any(fn(a) { names_not_found(a.pattern) }) {
+    return []
+  }
+  var out: List[Diag] = []
+  for a in arms {
+    if !every_err(a.pattern) {
+      continue
+    }
+    let empty = match a.body {
+      Some(ExprStmt(_, x)) => empty_value(x)
+      _ => false
+    }
+    if !empty || allowed(c, f, a.span.start.line, "XO0903") {
+      continue
+    }
+    var d = vdiag("XO0903", false, file, a.span, "`Err(_) => <empty>` turns every ${e} into an empty value: a transient error (no file descriptors or memory, EIO) gives a smaller or empty answer instead of an error")
+    d.notes.push(io_note(e))
+    out.push(d)
+  }
+  out
 }
 
 /// XO0902 (decision 0281): `tls.Verify.None`, a TLS client that checks no
