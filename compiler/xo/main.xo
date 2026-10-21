@@ -827,7 +827,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   let later = defer_inline_verify(os, o, march, release)
   // the inline cache's hits left undecoded until read (decision 0283
   // stage B), where the per-function cache is used
-  let lazy_inl = march == "arm64" && !o.race && !release && o.cmd != "asm" && passes_off(os).is_empty() && backend_cache_mode(os) != "verify" && (os.env.get("XO_LAZY_INLINE") ?? "") != "off"
+  let lazy_inl = march == "arm64" && !o.race && !release && o.cmd != "asm" && passes_off(os).is_empty() && backend_cache_mode(os) != "verify" && (os.env.get("XO_LAZY_INLINE") ?? "") != "off" && (os.env.get("XO_INLINE_BREAK") ?? "").is_empty()
   let (inl0, pend0) = inline_or_defer(os, mi, emit_jobs(os), phases, cur_os, release, cur_rk, later, lazy_inl)
   var inl = inl0
   var pend = pend0

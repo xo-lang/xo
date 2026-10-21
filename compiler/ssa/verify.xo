@@ -448,12 +448,14 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
       let name = aux_name(x.aux)
       let ci = m.func_index(name)
       if ci >= 0 {
-        let ps = m.funcs[ci].blocks[0].params
-        if ps.len() != n {
-          return "call of ${name} with ${n} arguments for ${ps.len()} parameters"
+        // the callee's parameters, from its body facts when it is not
+        // decoded (decision 0283 stage B)
+        let pts = m.param_types(ci)
+        if pts.len() != n {
+          return "call of ${name} with ${n} arguments for ${pts.len()} parameters"
         }
         for (i, a) in ats.indexed() {
-          let pt = m.funcs[ci].values[ps[i]].ty
+          let pt = pts[i]
           if a != pt {
             return "argument ${i} has type ${m.tname(a)}, want ${m.tname(pt)}"
           }
@@ -473,13 +475,13 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
         return "closure of a function that is not Indirect, or not of a function type"
       }
       let g = m.funcs[ci]
-      let ps = g.blocks[0].params
+      let pts = m.param_types(ci)
       let ft = m.types[x.ty]
-      if ps.len() != ft.elems.len() + 1 || g.values[ps[0]].ty != x.ty || g.results.len() != 1 || g.results[0] != ft.ret {
+      if pts.len() != ft.elems.len() + 1 || pts[0] != x.ty || g.results.len() != 1 || g.results[0] != ft.ret {
         return "closure type does not match its function"
       }
-      for i in 1..ps.len() {
-        if g.values[ps[i]].ty != ft.elems[i - 1] {
+      for i in 1..pts.len() {
+        if pts[i] != ft.elems[i - 1] {
           return "closure type does not match its function"
         }
       }
@@ -508,9 +510,9 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
         return "rebind of a function that is not Indirect, or not of function types"
       }
       let g = m.funcs[ci]
-      let ps = g.blocks[0].params
+      let pts = m.param_types(ci)
       let ft = m.types[x.ty]
-      if ps.len() != ft.elems.len() + 1 || g.values[ps[0]].ty != x.ty || g.results.len() != 1 || g.results[0] != ft.ret {
+      if pts.len() != ft.elems.len() + 1 || pts[0] != x.ty || g.results.len() != 1 || g.results[0] != ft.ret {
         return "rebind type does not match its function"
       }
     }
