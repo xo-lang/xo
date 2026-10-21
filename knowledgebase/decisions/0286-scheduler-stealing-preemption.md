@@ -308,8 +308,18 @@ the runtime locks held, with XO_PREEMPT=0 as the kill switch.
   XO_LOCKCHECK=1 a fiber that switches away with the count not zero is
   a fatal "lock held" error (pool.xo run_fiber), so an unbalanced site
   shows at once.
-- arm64 only (native and LLVM); amd64's polls follow (x86.xo, with Xo
-  lang 4).
+- The monitor asks a worker to yield only when work waits, no worker is
+  idle, and no other can start (otherwise wakep wakes or starts one): a
+  spawner that spins was preempted the moment it spawned, before an idle
+  worker could steal its child, so the child ran on the spawner's thread
+  (internal/llvm TestRuntimeTasks' magazines, 2026-10-21).
+- amd64 (2026-10-21): the amd64 emitter lowers a poll to `testl` and
+  `jne` to a stub that steps over the red zone (not on Windows) and calls
+  xo_preempt_stub; LLVM on x86_64 the same in inline asm. The stub (ssa
+  preempt_stub_amd64) keeps rax to r11, the flags, and xmm0 to xmm15 in a
+  frame it aligns itself, Win64's shadow space below them. The test
+  writes the flags; the poll is at an iteration's start, where none is
+  live.
 
 ## Predictions
 
