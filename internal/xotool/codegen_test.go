@@ -84,6 +84,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_BORROW_CHECK":         {"none", ""}, // runs the full inference too and compares; the flags are the same
 	"XO_KEEP_ASM":             {"none", ""}, // writes and keeps the assembly files only
 	"XO_CACHE_PRUNE_BUDGET":   {"none", ""}, // how long a build prunes its caches
+	"XO_OP_VERIFY":            {"none", ""}, // only fails a build (decision 0274 step 3); a cache hit skips the check: verify with XO_BACKEND_CACHE=off
 }
 
 // codegenFields classifies the module fields compiler/xo sets.
@@ -99,6 +100,7 @@ var codegenFields = map[string]inputClass{
 	"inline_deny":   {"keyed", "deny ${m.inline_deny"},
 	"passes_off":    {"keyed", "passes ${m.passes_off"},
 	"jobs":          {"none", ""}, // the tasks of may_fault's scan; its result does not depend on them
+	"op_verify":     {"none", ""}, // XO_OP_VERIFY: checks, never changes, the emitter's output
 }
 
 // codegenFS are the closure's files that use the file system, with why
