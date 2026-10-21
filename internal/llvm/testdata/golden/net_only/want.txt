@@ -22,7 +22,8 @@ http case: Connect(msg: "denied by Net.only: WWW.Example.COM.evil:80")
 redirect within: 200 fine
 redirect away: Protocol(msg: "Get \"http://evil.example/x?k=v\": denied by Net.only: redirect to evil.example:80")
 redirect away with a port: Protocol(msg: "Get \"https://Evil.Example:8443/x\": denied by Net.only: redirect to Evil.Example:8443")
-sql: Conn(msg: "an attenuated Net (Net.only) cannot open a database: the driver dials by itself; pass an unattenuated Net")
+sql allowed host: Conn(msg: "Refused")
+sql denied host: Conn(msg: "Denied(addr: \"203.0.113.7:5432\")")
 env get unlisted: false
 env vars unlisted: false
 env home: Missing(name: "HOME")

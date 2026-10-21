@@ -85,10 +85,19 @@ fn main(os: Os) ! {
     os.stdio.println("redirect away with a port: ${show(client.get(base + "/away-port"))}")
   }
 
-  // a database driver dials by itself: an attenuated Net cannot open one
-  match sql.open(local, "postgres", "postgres://127.0.0.1/db") {
-    Ok(_) => os.stdio.println("sql: opened")
-    Err(e) => os.stdio.println("sql: ${e}")
+  // the Postgres driver (decision 0278) dials through the Net it is
+  // given: an allowed host reaches the driver (nothing listens on that
+  // port), a denied one fails before any packet; the Go backend has no
+  // Postgres driver yet (0278 point 9, want_go.txt)
+  let l3 = local.listen("127.0.0.1:0")?
+  let closed = l3.addr()
+  l3.close()
+  for c in ["postgres://u@${closed}/db?sslmode=disable", "postgres://u@203.0.113.7/db?sslmode=disable"] {
+    let shown = if c.contains("127.0.0.1") { "allowed host" } else { "denied host" }
+    match sql.open(local, "postgres", c) {
+      Ok(_) => os.stdio.println("sql ${shown}: opened")
+      Err(e) => os.stdio.println("sql ${shown}: ${e}")
+    }
   }
 
   let env = os.env.only(["XO_ATTENUATION_NOT_SET"])

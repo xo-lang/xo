@@ -280,6 +280,14 @@ func TestGolden(t *testing.T) {
 			}
 			wantPath := filepath.Join(dir, "want.txt")
 			if *updateGolden {
+				if _, err := os.Stat(filepath.Join(dir, "want_go.txt")); err == nil {
+					// a known Go backend gap: want.txt is the native
+					// output, want_go.txt the Go backend's
+					if err := os.WriteFile(wantPath, []byte(llRes.String()), 0o644); err != nil {
+						t.Fatal(err)
+					}
+					return
+				}
 				goRes := buildAndRun(t, dir, xotool.Options{Backend: xotool.BackendGo})
 				if goRes.String() != llRes.String() {
 					t.Errorf("LLVM backend differs from the Go backend\n--- go\n%s\n--- llvm\n%s", goRes, llRes)
@@ -301,7 +309,9 @@ func TestGolden(t *testing.T) {
 }
 
 // TestGoldenGoParity builds every program under testdata/golden with the
-// Go backend and requires want.txt: for most of them (157 of 179 on
+// Go backend and requires want.txt (want_go.txt when a golden has one: a
+// known gap of the Go backend, such as decision 0278's Postgres driver):
+// for most of them (157 of 179 on
 // 2026-10-18) the only check that the Go backend still builds and runs
 // them, since TestGolden no longer builds the Go reference. Skipped
 // unless XO_TEST_GO_PARITY=1: scripts/gate.sh's llvm step sets it for a
@@ -319,12 +329,17 @@ func TestGoldenGoParity(t *testing.T) {
 		t.Run(filepath.Base(dir), func(t *testing.T) {
 			t.Parallel()
 			res := buildAndRun(t, dir, xotool.Options{Backend: xotool.BackendGo})
-			want, err := os.ReadFile(filepath.Join(dir, "want.txt"))
+			name := "want_go.txt"
+			want, err := os.ReadFile(filepath.Join(dir, name))
+			if os.IsNotExist(err) {
+				name = "want.txt"
+				want, err = os.ReadFile(filepath.Join(dir, name))
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
 			if string(want) != res.String() {
-				t.Errorf("Go backend differs from want.txt\n--- want\n%s\n--- got\n%s", want, res)
+				t.Errorf("Go backend differs from %s\n--- want\n%s\n--- got\n%s", name, want, res)
 			}
 		})
 	}

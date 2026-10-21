@@ -227,7 +227,9 @@ fn main(os: Os) uses (stdio, net.dial) {
     Ok(_) => os.stdio.println("ping")
     Err(e) => os.stdio.println("ping: ${e}")
   }
-  match sql.open(os.net, "postgres", "x") {
+  // a connection string the Postgres driver (decision 0278) rejects; the
+  // Go backend has no Postgres driver yet (0278 point 9, want_go.txt)
+  match sql.open(os.net, "postgres", "host=127.0.0.1 user=u sslmode=bogus") {
     Ok(_) => os.stdio.println("opened")
     Err(e) => os.stdio.println("open: ${e}")
   }

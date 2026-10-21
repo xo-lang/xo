@@ -1536,7 +1536,10 @@ the golden programs. Since 2026-10-19 (owner approved, Xo lang 4):
   TestGoldenGoParity (XO_TEST_GO_PARITY=1) builds every golden with the
   Go backend against want.txt; scripts/gate.sh's llvm step sets it when
   the branch changes compiler/gen or std/rt, and the batch full tier
-  always should.
+  always should. A golden with a `want_go.txt` (a known Go backend gap:
+  net_only and native_sql, whose Postgres driver is native only,
+  decision 0278 point 9; 2026-10-21) is checked against that file
+  instead, and `-golden-update` writes its want.txt from the LLVM run.
 - **TestGoldenSplit**: no LTO, ThinLTO too for shortGoldens only.
 - **TestDebugInfoSameOutputLLVM**: o2Goldens as --release with and without
   --debug-info; the rest -s against a plain -O1 build (TestGolden's,

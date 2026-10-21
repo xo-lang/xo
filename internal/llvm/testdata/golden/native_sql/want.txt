@@ -76,6 +76,6 @@ bad schema: Syntax(msg: "expected \")\", found end of input")
 closed
 after close: error Closed
 ping: Closed
-open: Driver(msg: "unknown driver postgres")
+open: Param(msg: "sslmode is invalid: \"bogus\"")
 open: Param(msg: "max_open must be at least 1")
 --- stderr
