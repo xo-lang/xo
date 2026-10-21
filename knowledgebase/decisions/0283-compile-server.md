@@ -106,3 +106,57 @@ with every other agent's work.
 - Per-module separate compilation (decision 0220 stage 3): a larger
   change to code generation; the server keeps whole-program compilation
   and its output.
+
+## Where an edit's time goes, and what a server can remove (xo-fa, 2026-10-21)
+
+Measured with the front end cache's closure relocation in (176bd7c3),
+XO_CHK_CACHE=auto, a warm build of xo then one constant edit and three
+body-only edits of compiler/cli/core/fix.xo (load 20 to 25, phases of
+at least 100 ms, in ms):
+
+| Phase | Edits |
+|---|---|
+| check | 869 to 921 (auto skipped 3 of 21 modules: generic bodies kept the rest, fixed by ModEntry.eager) |
+| fe.build (front end commits) | 487 to 532 |
+| ssa | 614 to 1,203 |
+| inline (keys 163 to 172, apply 372 to 460, verify 372 to 419) | 748 to 838 |
+| insert_rc (borrows 344 to 377, plan 473 to 520, keys 125 to 140) | 540 to 589 |
+| prune_unwind, add_landings, cleanup | 109 to 113, 156 to 160, 243 to 268 |
+| fn_keys | 126 to 147 |
+| emit | 435 to 494 |
+| write | 206 to 1,522 |
+| assemble | 690 to 2,226 |
+| link | 417 to 458 |
+
+Wall 5.5 to 8.3 s, user 8.3 to 8.4 s, peak 5.9 to 6.5 GB. No phase that
+only reads or decodes a cache (fe.read, inline.read, insert_rc.read,
+run_cache) reached 100 ms. The time is in passes over every function of
+the program: the checker's bodies, the commits, the inliner's keys and
+verify, insert_rc's borrow and plan analyses, the unwind passes, the
+function keys, emit of the whole module, assembling and linking. A
+server that keeps parsed files and decoded entries (step (b) above)
+removes the process start and the reads, well under a second.
+
+What follows from it, ranked by the time each can remove:
+
+1. Reuse per-function results of the whole-program passes when a
+   function's inputs did not change (its key, and the keys of what the
+   pass reads across functions): insert_rc's borrows and plan, prune,
+   landings and cleanup, inline apply and verify, emit. Each is a cache
+   keyed like the ones the build has (fn_keys), so it helps a one-shot
+   build too and needs no resident process.
+2. Assemble and write: the text assembly of the whole module (0.7 to 2.2
+   s with write): direct machine code (plan-direct-machine-code, after
+   native --race) or per-function object caching.
+3. The checker: ModEntry.eager lets auto skip the modules with generic
+   functions; measured next.
+4. The server (this decision) for what is left: the start, the reads,
+   and the commits of unchanged bodies (fe.build 0.5 s), by keeping the
+   last build's module in memory.
+
+A server's in-process build also needs the driver not to exit on an
+error: compiler/xo exits from 73 `fail` calls and 42 `os.proc.exit`
+calls. Options: fork a child per request from the warm server (exits
+stay; needs an rt fork for darwin, linux has llrt linux.fork, and a
+reset of the worker pool in the child, whose threads do not survive a
+fork), or return errors from the driver (about 115 call sites).
