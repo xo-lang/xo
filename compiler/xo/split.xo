@@ -5,6 +5,8 @@
 // are the bytes the Go driver writes for the same IR and count, so both
 // drivers share the binary cache entry.
 
+use std/crypto
+
 /// SplitConfig: the module count (1: one module with full LTO), the job
 /// bound, and the LTO mode of split builds.
 struct SplitConfig {
@@ -21,6 +23,14 @@ struct SplitConfig {
   opt_set: Bool = false
   /// why the environment is wrong ("" when it is not)
   err: Str = ""
+  /// functions placed by their names' hash, not by size (test builds:
+  /// an edit leaves the other modules' text as it was)
+  stable: Bool = false
+  /// the back-end cache's directory: each module's object kept by its IR
+  /// ("llobj"), so an edit compiles only the modules it changed; "" off
+  objcache: Str = ""
+  /// the modules taken from objcache (split_build)
+  reused: Int = 0
 }
 
 /// LLVMSplitConfig from the environment.
@@ -168,6 +178,12 @@ struct ParsedIR {
   global_at: Map[Str, Int] = {}
   defs: List[IRItem] = []
   def_at: Map[Str, Int] = {}
+  /// The numbered metadata lines (`!N = ...`), in order, by their `!N`:
+  /// a module of a stable split takes those its own text reaches
+  /// (meta_closure), so a line moved in one function's debug info
+  /// changes only its module
+  meta: List[(Str, Str)] = []
+  meta_at: Map[Str, Int] = {}
 }
 
 /// parseIR: top level entities start a line, function bodies end at a
@@ -231,6 +247,10 @@ fn parse_ir(ir: Str) -> ParsedIR {
     }
     if line.starts_with("module asm ") {
       p.masm = p.masm + line
+    } else if line.len() > 1 && line.bytes()[1] >= '0' && line.bytes()[1] <= '9' && line.starts_with("!") {
+      let id = line.split(" ")[0]
+      p.meta_at[id] = p.meta.len()
+      p.meta.push((id, line))
     } else {
       header.write(line)
     }
@@ -365,7 +385,7 @@ fn decl_of(line: Str) -> Str {
 /// constants and helpers it uses and declarations of the functions of
 /// other modules it calls (internal to hidden linkage for those). n <= 1,
 /// or fewer than two functions, gives the IR back as one module.
-fn split_ir(ir: Str, n0: Int) -> List[Str] {
+fn split_ir(ir: Str, n0: Int, stable: Bool) -> List[Str] {
   if n0 <= 1 {
     return [ir]
   }
@@ -396,9 +416,21 @@ fn split_ir(ir: Str, n0: Int) -> List[Str] {
   }
   for (_, i) in order {
     var m = 0
-    for k in 1..n {
-      if load[k] < load[m] {
-        m = k
+    if stable {
+      // by source file (the file of its debug info's subprogram), else
+      // by name: the same module whatever the other functions' sizes,
+      // and a line added to a file moves the debug lines of that file's
+      // functions only
+      var hv = 2166136261
+      for ch in def_file_key(p, p.defs[i]).bytes() {
+        hv = ((hv ^ Int(ch)) * 16777619) % 4294967296
+      }
+      m = hv % n
+    } else {
+      for k in 1..n {
+        if load[k] < load[m] {
+          m = k
+        }
       }
     }
     home[i] = m
@@ -460,6 +492,33 @@ fn split_ir(ir: Str, n0: Int) -> List[Str] {
       b.write(p.masm)
     }
     b.write("\n")
+    // the metadata this module's text reaches (all of it for a split by
+    // size: those modules are compiled together each time)
+    var roots: List[Str] = [p.header]
+    for g in p.globals {
+      if used[m].contains(g.name) {
+        roots.push(g.text)
+      }
+    }
+    for (i, d) in p.defs.indexed() {
+      if home[i] == m || (d.helper && used[m].contains(d.name)) {
+        roots.push(d.text)
+      }
+    }
+    let keep: Map[Int, Bool] = if stable { meta_closure(p, roots) } else { {} }
+    // a stable module's metadata is numbered by itself (`!0` up, in the
+    // IR's order): the IR numbers it for the whole program, so a variable
+    // added to one function would renumber every module (meta_renumber)
+    var renum: Map[Str, Str] = {}
+    for (k, (id, line)) in p.meta.indexed() {
+      if !stable || keep.contains(k) {
+        b.write(line)
+        if stable {
+          renum[id] = "!${renum.len()}"
+        }
+      }
+    }
+    b.write("\n")
     for g in p.globals {
       if used[m].contains(g.name) {
         b.write(g.text)
@@ -486,7 +545,121 @@ fn split_ir(ir: Str, n0: Int) -> List[Str] {
         b.write(d.text)
       }
     }
-    out.push(b.freeze())
+    out.push(if stable { meta_renumber(b.freeze(), renum) } else { b.freeze() })
+  }
+  out
+}
+
+/// The key a stable split places d by: the DIFile line of the
+/// subprogram on its define line (`!dbg !N`, then `file: !M`), else its
+/// name.
+fn def_file_key(p: ParsedIR, d: IRItem) -> Str {
+  let first = d.text.split("\n")[0]
+  if let Some(at) = first.find("!dbg !") {
+    let refs = meta_refs(first[at + 5..first.len()])
+    if !refs.is_empty() {
+      if let Some(k) = p.meta_at.get(refs[0]) {
+        let sp = p.meta[k].1
+        if let Some(fa) = sp.find("file: !") {
+          let frefs = meta_refs(sp[fa + 6..sp.len()])
+          if !frefs.is_empty() {
+            if let Some(fk) = p.meta_at.get(frefs[0]) {
+              // without its `!M = `: the number may change, the file not
+              let fl = p.meta[fk].1
+              return fl[(fl.find(" = ") ?? 0)..fl.len()]
+            }
+          }
+        }
+      }
+    }
+  }
+  d.name
+}
+
+/// The indexes in p.meta of the metadata texts reach: each `!N` they
+/// name, and each one those lines name in turn.
+fn meta_closure(p: ParsedIR, texts: List[Str]) -> Map[Int, Bool] {
+  var seen: Map[Int, Bool] = {}
+  var work: List[Int] = []
+  for t in texts {
+    for id in meta_refs(t) {
+      if let Some(k) = p.meta_at.get(id) {
+        if !seen.contains(k) {
+          seen[k] = true
+          work.push(k)
+        }
+      }
+    }
+  }
+  while !work.is_empty() {
+    let k = work.pop() ?? 0
+    let line = p.meta[k].1
+    // the line's own id is its first word: skip it
+    let at = line.find(" = ") ?? 0
+    for id in meta_refs(line[at..line.len()]) {
+      if let Some(j) = p.meta_at.get(id) {
+        if !seen.contains(j) {
+          seen[j] = true
+          work.push(j)
+        }
+      }
+    }
+  }
+  seen
+}
+
+/// t with each `!N` outside quotes that renum names replaced by its new
+/// number (an IR string is quoted, its quotes escaped as \22).
+fn meta_renumber(t: Str, renum: Map[Str, Str]) -> Str {
+  let b = t.bytes()
+  var out = StrBuilder.new()
+  var at = 0
+  var quoted = false
+  var i = 0
+  while i < b.len() {
+    let c = b[i]
+    if c == '"' {
+      quoted = !quoted
+      i += 1
+    } else if !quoted && c == '!' && i + 1 < b.len() && b[i + 1] >= '0' && b[i + 1] <= '9' {
+      var j = i + 1
+      while j < b.len() && b[j] >= '0' && b[j] <= '9' {
+        j += 1
+      }
+      if let Some(n) = renum.get(t[i..j]) {
+        out.write(t[at..i])
+        out.write(n)
+        at = j
+      }
+      i = j
+    } else {
+      i += 1
+    }
+  }
+  out.write(t[at..t.len()])
+  out.freeze()
+}
+
+/// The `!N` references in t (outside quotes).
+fn meta_refs(t: Str) -> List[Str] {
+  var out: List[Str] = []
+  let b = t.bytes()
+  var i = 0
+  var quoted = false
+  while i < b.len() {
+    if b[i] == '"' {
+      quoted = !quoted
+      i += 1
+    } else if !quoted && b[i] == '!' && i + 1 < b.len() && b[i + 1] >= '0' && b[i + 1] <= '9' {
+      var j = i + 1
+      while j < b.len() && b[j] >= '0' && b[j] <= '9' {
+        j += 1
+      }
+      out.push(t[i..j])
+      i = j
+    } else {
+      i += 1
+    }
   }
   out
 }
@@ -495,7 +668,7 @@ fn split_ir(ir: Str, n0: Int) -> List[Str] {
 /// clang processes), then links their objects with the other sources
 /// into bin through cc_build. The compiler's output of a failure, "" on
 /// success.
-fn split_build(os: Os, ctx: Ctx, clang: Str, lls: List[Str], others: List[Str], bin: Str, c: SplitConfig, flags: List[Str]) -> Str {
+fn split_build(os: Os, ctx: Ctx, clang: Str, lls: List[Str], others: List[Str], bin: Str, var c: SplitConfig, flags: List[Str]) -> Str {
   var objs: List[Str] = []
   for ll in lls {
     objs.push(ll.trim_suffix(".ll") + ".o")
@@ -516,17 +689,48 @@ fn split_build(os: Os, ctx: Ctx, clang: Str, lls: List[Str], others: List[Str], 
     }
     i += 1
   }
-  var next = 0
+  // the modules whose objects the cache holds (by the IR, the clang and
+  // its arguments) are not compiled
+  var keys: List[Str] = []
+  var todo: List[Int] = []
+  for (i, ll) in lls.indexed() {
+    let args = [c.opt] + lto_flags(c.lto) + target + ["-Wno-override-module", "-fexceptions", "-funwind-tables"]
+    var k = ""
+    if !c.objcache.is_empty() {
+      match os.fs.read(ll) {
+        Ok(ir) => {
+          var h = BytesBuilder.new()
+          h.write_str("xo llvm module object v1\n${clang}\n${args.join(" ")}\n")
+          h.write(ir)
+          k = crypto.sha256(h.freeze()).to_hex()
+        }
+        // xo:allow XO0903 compiled instead
+        Err(_) => {}
+      }
+    }
+    keys.push(k)
+    if !k.is_empty() {
+      if let Some(o) = cache_get(os, entry_path(c.objcache, "llobj", k)) {
+        if os.fs.write(objs[i], o).is_ok() {
+          c.reused += 1
+          continue
+        }
+      }
+    }
+    todo.push(i)
+  }
+  var ti = 0
   var running: List[(Int, Child)] = []
   var fails: List[Str] = []
-  while next < lls.len() || !running.is_empty() {
-    while next < lls.len() && running.len() < c.jobs {
+  while ti < todo.len() || !running.is_empty() {
+    while ti < todo.len() && running.len() < c.jobs {
+      let next = todo[ti]
+      ti += 1
       let args = [c.opt] + lto_flags(c.lto) + target + ["-Wno-override-module", "-fexceptions", "-funwind-tables", "-c", lls[next], "-o", objs[next]]
       match os.proc.cmd(clang, args).merge_stderr().spawn() {
         Ok(ch) => running.push((next, ch))
         Err(e) => fails.push("${lls[next]}: ${e}\n")
       }
-      next += 1
     }
     if running.is_empty() {
       break
@@ -546,6 +750,10 @@ fn split_build(os: Os, ctx: Ctx, clang: Str, lls: List[Str], others: List[Str], 
       Ok(code) => {
         if code != 0 {
           fails.push("${lls[k]}: exit status ${code}\n${outb.freeze().to_str() ?? ""}")
+        } else if !keys[k].is_empty() {
+          if let Ok(o) = os.fs.read(objs[k]) {
+            cache_put(os, entry_path(c.objcache, "llobj", keys[k]), o)
+          }
         }
       }
       Err(e) => fails.push("${lls[k]}: ${e}\n")

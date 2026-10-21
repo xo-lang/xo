@@ -2200,6 +2200,23 @@ first, AST based prototype, since deleted) and
   jobs, no LTO unless the environment says otherwise; `XO_LLVM_SPLIT=0`
   for the release configuration). Timings:
   `bench/results/llvm-build-time-2026-10-12.md`.
+- Test build split (2026-10-21, xo-fa; last verified: 2026-10-21): an
+  LLVM `xo test` build with the back-end cache on (and no
+  `XO_LLVM_SPLIT`, no --race, the host target) cuts the IR into
+  `XO_LLVM_TEST_SPLIT` modules (default 8; `off` for one module),
+  placed by source file (the DIFile of each function's subprogram; by
+  name without debug info), not by size, each with only the debug
+  metadata its own functions reach, numbered by the module (the IR
+  numbers metadata for the whole program, so one variable added would
+  renumber every module). The modules are written beside the build
+  directory (`llvm-split8-none-modules/`), since the binary cache's key
+  hashes every file in it. They compile at -O0 with no LTO,
+  and each module's object is kept in the back-end cache (`llobj/`,
+  keyed by the module's IR, clang and its arguments), so an edit
+  recompiles only the modules of the files it changed. The split runs
+  only after a miss of the binary cache, which keys the whole IR.
+  `--phase-times` prints `cache llvm modules R/N reused`. Test:
+  internal/llvm TestTestSplitReuse.
 - Target (decision 0119, 2026-10-10): `build.ClangTargetAttrs` reads
   clang's default `-target-cpu` and `-target-feature`s (`clang -### -c
   -x c /dev/null`, once per compiler) and the IR's function attribute

@@ -760,8 +760,24 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       // a test binary is built at -O0, so with no LTO (decision 0236:
       // examples/notes-service's link 38.7 s at -O2, 5.4 s at -O0)
       split.opt = "-O0"
+      // and split by name into modules whose objects the back-end cache
+      // keeps (XO_LLVM_TEST_SPLIT, 2026-10-21): an edit compiles only
+      // the modules it changed (json's edit build: 1.9 s in clang for the
+      // whole IR)
+      let ts = os.env.get("XO_LLVM_TEST_SPLIT") ?? ""
+      let tn = Int.parse(ts) ?? 8
+      let cdir = backend_cache_dir(os, ctx)
+      if split.modules == 1 && ts != "off" && tn > 1 && !cdir.is_empty() && !o.race && ltarget == host {
+        split.modules = tn
+        split.lto = "none"
+        split.stable = true
+        split.objcache = cdir
+      }
     }
-    let parts = split_ir(code, split.modules)
+    // a test build's split (stable) is made after a miss of the binary
+    // cache, which keys it on the whole IR: a warm build does not split
+    let parts = if split.stable { [code] } else { split_ir(code, split.modules, false) }
+    let multi = parts.len() > 1 || split.stable
     var dir = "${bdir}/llvm"
     if o.race {
       dir = "${dir}-race"
@@ -769,10 +785,10 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     if ltarget != host {
       dir = "${dir}-${ltarget.replace("/", "-")}"
     }
-    if parts.len() > 1 {
+    if multi {
       // a split build has its own directory (a single module build of
       // the same program may run at the same time)
-      dir = "${dir}-split${parts.len()}-${split.lto}"
+      dir = "${dir}-split${if split.stable { split.modules } else { parts.len() }}-${split.lto}"
     }
     write_or_fail(os, dir, "", b"")
     var lls: List[Str] = []
@@ -796,7 +812,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     }
     let lto1 = single_lto(split)
     var mode_flags = ["llvm", split.opt]
-    if lls.len() > 1 {
+    if multi {
       mode_flags = mode_flags + ["split", split.lto]
     } else {
       mode_flags = mode_flags + ["lto", lto1]
@@ -807,9 +823,23 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     if !hit {
       write_or_fail(os, dir_name(bin), "", b"")
       let dsym = lm.debug_info && lctx.tgoos == "darwin" && ctx.goos == "darwin"
-      let lto = if lls.len() > 1 { split.lto } else { lto1 }
+      let lto = if multi { split.lto } else { lto1 }
       let lflags = (if dsym { lk.flags + lto_object_flags(os, dir, lto) } else { lk.flags }) + lk.link_only
-      let msg = if lls.len() > 1 {
+      let msg = if split.stable {
+        // beside dir, not in it: the binary cache's key hashes every
+        // file of dir, and the modules are made only after its miss
+        let mdir = "${dir}-modules"
+        write_or_fail(os, mdir, "", b"")
+        var mls: List[Str] = []
+        for (i, part) in split_ir(code, split.modules, true).indexed() {
+          let ll = "${mdir}/prog.${i}.ll"
+          write_or_fail(os, mdir, ll, part.bytes())
+          mls.push(ll)
+        }
+        let m = split_build(os, lctx, cc, mls, lk.srcs, bin, split, lflags)
+        cache_note(os, phases, "llvm modules", split.reused, mls.len())
+        m
+      } else if multi {
         split_build(os, lctx, cc, lls, lk.srcs, bin, split, lflags)
       } else {
         cc_build(os, lctx, cc, [split.opt] + single_lto_flags(lto1) + ["-Wno-override-module"] + lflags, srcs, bin)

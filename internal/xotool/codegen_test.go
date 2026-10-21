@@ -52,6 +52,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_LLVM_OPT":             {"link", ""},
 	"XO_LLVM_LTO":             {"link", ""},
 	"XO_LLVM_SPLIT":           {"link", ""},
+	"XO_LLVM_TEST_SPLIT":      {"link", ""},
 	"XO_LLVM_JOBS":            {"none", ""},
 	"XO_SYSROOT":              {"link", ""},
 	"XO_LINUXSYSROOT":         {"link", ""},
