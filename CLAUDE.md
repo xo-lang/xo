@@ -162,9 +162,15 @@ Update the knowledgebase in the same change as the work, not later:
     TestCodegenInputsClassified for a new XO_* variable) in its gate.
   - gates take no slot (owner, 2026-10-21): run your gate as
     `HEAVY_CLASS=gate ~/xo-lead/agents/heavy.sh NAME CMD...`; it starts
-    as soon as 55% of memory is free and fewer than 3 gates run (starts staggered by 20 s), with
-    no queue. The two heavy slots are for hourly.sh, bulk runs and
-    suites.
+    as soon as 55% of memory is free and fewer than 2 gates run (owner,
+    2026-10-21; starts staggered by 20 s), with no queue. The two heavy
+    slots are for hourly.sh, bulk runs and suites. A job the memory
+    reaper stops is reported to the lead, who restarts it (owner,
+    2026-10-21: no owner go needed any more).
+  - code size per push (owner, 2026-10-21): a codegen change reports xo's
+    native __text only; the LLVM column (split 12, no LTO) is measured
+    in the lead's full tier for that window's codegen changes, since an
+    LLVM build of xo takes about 25 minutes under load.
   - a failure found on main that is not yours (owner, 2026-10-21):
     message the lead first with the error and the good and bad
     commits; the lead assigns one bisect owner (two agents bisected one
