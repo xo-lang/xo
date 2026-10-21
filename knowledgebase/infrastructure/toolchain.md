@@ -4362,3 +4362,5 @@ allowed; the vulnerability link goes to private reporting). Settings live
 on GitHub: Actions disabled, homepage https://xolang.dev, topics, the
 rulesets in `../xo-publish-tools` (enforced once public), private
 vulnerability reporting. Last verified: 2026-10-18.
+
+go run ./scripts/xocheck [--no-gc] DIR...   # xo check of the tree's sources without building xo when a cached build has the same checker sources (internal/xotool CheckerXo: compiler/check, parser, lexer, cli/bind, cli/core/check.xo, xo.mod; --no-gc adds compiler/ssa), else after building bin/xo; the tree's std via XO_STD; prints which xo on stderr (last verified: 2026-10-21)

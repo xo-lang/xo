@@ -203,6 +203,12 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   tree) or, for a deliberate cross version run, `XO_CLI_STALE_OK=1`.
   Every such run's log starts with `xotool: xo PATH (key ..., commit ...);
   tree key ...`: check it when a run's failures look unrelated.
+- Checking a compiler edit: `go run ./scripts/xocheck [--no-gc] DIR...`
+  runs `xo check` with an xo that reports what a fresh build would (the
+  tree's current bin/xo, else a cached build whose checker sources,
+  internal/xotool CheckerDirs, are the tree's; --no-gc adds compiler/ssa)
+  and the tree's std, building only when there is none. Never check with
+  an older worktree's bin/xo: its checker and std differ (2026-10-21).
 - Gate scripts: `. ~/xo-lead/agents/gatelib.sh` (scripts/lead/gatelib.sh,
   installed by install.sh), then `gotests PKG 'TestA|TestB'` for the
   proving tests (exactly those names, -v, one `--- PASS` line each) and
