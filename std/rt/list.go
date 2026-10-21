@@ -152,12 +152,18 @@ func List_unique[T any](l *List[T]) bool {
 	return b != nil && !b.shared.Load()
 }
 
-// ListOf builds a list from elements; the caller gives up xs.
+// ListOf builds a list from elements; the caller gives up xs. It has no
+// block (2026-10-21): a nil block means "not known to be unique", so the
+// first write copies (List_copyOut gives the copy a block), which a push
+// does anyway (xs has no room past its length), and a list that is only
+// read (a split's parts, a map's keys) never allocates one. That was one
+// allocation of every fresh list from std/rt (ADR 0312's path profile:
+// 3 of the 15 an iteration).
 func ListOf[T any](xs ...T) List[T] {
 	if len(xs) == 0 {
 		return List[T]{}
 	}
-	return List[T]{s: xs, b: newBlock(len(xs))}
+	return List[T]{s: xs}
 }
 
 // ListFromSlice wraps a slice the caller no longer uses.
@@ -226,9 +232,15 @@ func List_copyOut[T any](l *List[T], extra int) {
 	}
 	s := make([]T, n, c)
 	copy(s, l.s)
-	if !List_unique(l) {
-		markElems(s)
+	if List_unique(l) {
+		// the unique owner grows: no other header reaches the block
+		// (invariant U), so it describes the new array (one allocation
+		// fewer a growth)
+		l.s = s
+		l.b.used = int64(n)
+		return
 	}
+	markElems(s)
 	l.s, l.b = s, newBlock(n)
 }
 

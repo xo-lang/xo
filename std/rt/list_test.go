@@ -262,3 +262,88 @@ func BenchmarkListInsertMiddle(b *testing.B) {
 		}
 	}
 }
+
+// TestListFreshSharing: a list fresh from std/rt (ListOf, no block since
+// 2026-10-21) and a list whose unique owner grows (the block is reused)
+// keep value semantics when they are copied (Own), pushed after the copy,
+// stored in a Map, captured by a closure, and read by another goroutine
+// while the owner keeps growing (run under -race).
+func TestListFreshSharing(t *testing.T) {
+	// copied, then both sides push and write
+	a := ListOf[int64](1, 2, 3)
+	b := List_Own(a)
+	pushL(&a, 4)
+	setL(&a, 0, 10)
+	pushL(&b, 5)
+	checkList(t, "a after its push", a, []int64{10, 2, 3, 4})
+	checkList(t, "b after its push", b, []int64{1, 2, 3, 5})
+
+	// stored in a Map, then the original changes
+	var m Map[string, List[int64]]
+	c := ListOf[int64](7, 8)
+	Map_put(nil, &m, "c", List_Own(c))
+	setL(&c, 1, 80)
+	pushL(&c, 9)
+	got := Map_get(nil, m, "c")
+	if !got.Some || !slices.Equal(List_Slice(got.V), []int64{7, 8}) {
+		t.Fatalf("the Map's copy changed: %v", got)
+	}
+
+	// captured by a closure
+	d := ListOf[int64](1)
+	cap := List_Own(d)
+	read := func() []int64 { return List_Slice(cap) }
+	for i := range int64(20) {
+		pushL(&d, i)
+	}
+	if !slices.Equal(read(), []int64{1}) {
+		t.Fatalf("the closure's copy changed: %v", read())
+	}
+
+	// a growing owner and snapshots read by other goroutines: each growth
+	// reuses the owner's block, which must not touch a snapshot's array
+	var l List[int64]
+	var wg sync.WaitGroup
+	for round := range 10 {
+		for i := range 37 {
+			pushL(&l, int64(round*100+i))
+		}
+		snap := List_Own(l)
+		want := slices.Clone(List_Slice(snap))
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 100 {
+				if !slices.Equal(List_Slice(snap), want) {
+					t.Errorf("round %d: snapshot changed", round)
+					return
+				}
+			}
+		}()
+		setL(&l, 0, int64(-round))
+	}
+	wg.Wait()
+}
+
+// TestListFreshAllocs: a fresh list that is only read allocates nothing
+// past its elements, and growing a unique list allocates one array a
+// growth, no block (both were one allocation more before 2026-10-21).
+func TestListFreshAllocs(t *testing.T) {
+	xs := []int64{1, 2, 3}
+	if n := testing.AllocsPerRun(100, func() {
+		l := ListOf(xs...)
+		_ = List_len(nil, l)
+	}); n != 0 {
+		t.Errorf("ListOf of a slice: %v allocations, want 0", n)
+	}
+	n := testing.AllocsPerRun(20, func() {
+		var l List[int64]
+		for i := range int64(1000) {
+			pushL(&l, i)
+		}
+	})
+	// capacities 4, 8, ..., 1024: 9 arrays and the first block
+	if n > 10 {
+		t.Errorf("1000 pushes: %v allocations, want at most 10", n)
+	}
+}
