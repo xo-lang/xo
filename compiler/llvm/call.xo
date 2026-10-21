@@ -1214,6 +1214,13 @@ fn (var g: Gen) atomic(v: Int) {
     g.preempt_stub()
     let a = g.op(x.args[0])
     let stub = if g.goos == "darwin" { "_xo_preempt_stub" } else { "xo_preempt_stub" }
+    if g.arch() == "amd64" {
+      // the call steps over System V's red zone (Windows has none)
+      let rz = if g.os() == "windows" { "" } else { "leaq -128(%rsp), %rsp\\0A" }
+      let rz2 = if g.os() == "windows" { "" } else { "leaq 128(%rsp), %rsp\\0A" }
+      g.emit("call void asm sideeffect \"movl ($0), %r11d\\0Atestl %r11d, %r11d\\0Ajz 1f\\0A${rz}callq ${stub}\\0A${rz2}1:\", \"r,~{r11},~{memory},~{dirflag},~{fpsr},~{flags}\"(i64 ${a})")
+      return
+    }
     g.emit("call void asm sideeffect \"ldr w16, [$0]\\0Acbz w16, 1f\\0Abl ${stub}\\0A1:\", \"r,~{x16},~{x17},~{lr},~{memory}\"(i64 ${a})")
     return
   }

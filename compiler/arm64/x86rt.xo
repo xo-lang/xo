@@ -465,6 +465,7 @@ fn x86_sched_asm(os: Str, split: Bool) -> Str {
     b.push("\t.globl xo_fiber_entry\n\t.hidden xo_fiber_entry\n")
   }
   b.push(x86_sched_fn("xo_fiber_entry", false, ["movq %rbx, %rdi", "callq *%r12", "ud2"]))
+  b.push(x86_sched_fn("xo_preempt_stub", true, ssa.preempt_stub_amd64("linux")))
   let tp = ["movq %fs:0, %rax", "leaq xo_tlocal@TPOFF(%rax), %rax"]
   b.push(x86_sched_fn("xo_tlocal_get", true, tp + ["movq (%rax,%rdi,8), %rax", "retq"]))
   b.push(x86_sched_fn("xo_tlocal_set", true, tp + ["movq %rsi, (%rax,%rdi,8)", "retq"]))
@@ -575,6 +576,7 @@ fn x86_sched_asm_darwin(split: Bool) -> Str {
     b.push("\t.globl _xo_fiber_entry\n\t.private_extern _xo_fiber_entry\n")
   }
   b.push(x86_sched_fn_darwin("xo_fiber_entry", false, ["movq %rbx, %rdi", "callq *%r12", "ud2"]))
+  b.push(x86_sched_fn_darwin("xo_preempt_stub", true, ssa.preempt_stub_amd64("darwin")))
   let tlv = ["pushq %rbp", "movq %rsp, %rbp", "movq _xo_tlocal@TLVP(%rip), %rdi", "callq *(%rdi)", "popq %rbp"]
   b.push(x86_sched_fn_darwin("xo_tlocal_get", true, ["movq %rdi, %rsi"] + tlv + ["movq (%rax,%rsi,8), %rax", "retq"]))
   b.push(x86_sched_fn_darwin("xo_tlocal_set", true, ["movq %rdi, %rdx"] + tlv + ["movq %rsi, (%rax,%rdx,8)", "retq"]))

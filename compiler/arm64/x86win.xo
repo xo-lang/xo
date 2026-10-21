@@ -363,6 +363,7 @@ fn x86_sched_asm_windows() -> Str {
   b.push("\t.text\n")
   b.push(w64_sched_fn("xo_stack_switch", ["pushq %rbp", "pushq %rbx", "pushq %rdi", "pushq %rsi", "pushq %r12", "pushq %r13", "pushq %r14", "pushq %r15", "subq $192, %rsp", "movq %gs:0x1478, %rax", "movq %rax, 184(%rsp)", "movq %gs:0x10, %rax", "movq %rax, 176(%rsp)", "movq %gs:0x08, %rax", "movq %rax, 168(%rsp)", "stmxcsr (%rsp)", "fnstcw 4(%rsp)", "movq %rsp, (%rdi)", "movq %rsi, %rsp", "ldmxcsr (%rsp)", "fldcw 4(%rsp)", "movq 168(%rsp), %rax", "movq %rax, %gs:0x08", "movq 176(%rsp), %rax", "movq %rax, %gs:0x10", "movq 184(%rsp), %rax", "movq %rax, %gs:0x1478", "addq $192, %rsp", "popq %r15", "popq %r14", "popq %r13", "popq %r12", "popq %rsi", "popq %rdi", "popq %rbx", "popq %rbp", "retq"]))
   b.push(w64_sched_fn("xo_fiber_entry", ["subq $32, %rsp", "movq %rbx, %rcx", "callq *%r12", "ud2"]))
+  b.push(w64_sched_fn("xo_preempt_stub", ssa.preempt_stub_amd64("windows")))
   let tp = ["movl _tls_index(%rip), %eax", "movq %gs:88, %rcx", "movq (%rcx,%rax,8), %rax", "leaq xo_tlocal@SECREL32(%rax), %rax"]
   b.push(w64_sched_fn("xo_tlocal_get", tp + ["movq (%rax,%rdi,8), %rax", "retq"]))
   b.push(w64_sched_fn("xo_tlocal_set", tp + ["movq %rsi, (%rax,%rdi,8)", "retq"]))

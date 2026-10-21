@@ -695,6 +695,9 @@ fn (var e: XB) inst(mn: Str, ops: List[XOp]) {
   match mn {
     "ret" | "retq" => return e.byte(0xc3)
     "nop" => return e.byte(0x90)
+    // the flags around xo_preempt_stub's call (decision 0286 step 3)
+    "pushfq" => return e.byte(0x9c)
+    "popfq" => return e.byte(0x9d)
     "hlt" => return e.byte(0xf4)
     "int3" => return e.byte(0xcc)
     "ud2" => {

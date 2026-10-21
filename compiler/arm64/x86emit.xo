@@ -1025,6 +1025,25 @@ fn (var g: G) x86_emit_plain(var b: List[Str], inst: Inst) {
   for (k, br) in borrowed.indexed() {
     b.push("\t${if br >= FP_BASE { "movsd" } else { "movq" }} ${g.x86_borrow_at(k)}(%rsp), ${x86_reg(br, 8)}\n")
   }
+  if inst.poll {
+    // a preemption poll (decision 0286 step 3): the flag's word is in the
+    // scratch register; set, a stub after the function calls
+    // xo_preempt_stub, which keeps every register, and comes back. Off
+    // Windows the call steps over the red zone (a leaf may keep words
+    // below rsp). The test writes the flags: the poll is at a loop
+    // iteration's start, where none is live (a carry chain stays within
+    // an iteration)
+    g.nstub += 1
+    let l = g.local("${g.lbl_prefix()}_pp${g.nstub}")
+    let r = x86_reg(XR_SCRATCH, 4)
+    b.push("\ttestl ${r}, ${r}\n\tjne ${l}\n${l}_r:\n")
+    let stub = g.sym("xo_preempt_stub")
+    if g.os == "windows" {
+      g.stubs.push("${l}:\n\tcallq ${stub}\n\tjmp ${l}_r\n")
+    } else {
+      g.stubs.push("${l}:\n\tleaq -128(%rsp), %rsp\n\tcallq ${stub}\n\tleaq 128(%rsp), %rsp\n\tjmp ${l}_r\n")
+    }
+  }
   if inst.has_fault {
     g.nstub += 1
     let l = g.local("${g.lbl_prefix()}_fault${g.nstub}")

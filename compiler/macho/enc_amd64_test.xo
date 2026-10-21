@@ -2022,3 +2022,23 @@ test "every amd64 form round trips through its XInst (decision 0274 step 2)" {
   }
   expect(bad) == []
 }
+
+test "xo_preempt_stub's instructions encode as clang's (decision 0286 step 3)" {
+  // clang -c --target=x86_64-unknown-linux-gnu, llvm-objdump -d
+  let want: List[(Str, Str)] = [
+    ("pushfq", "9c"),
+    ("popfq", "9d"),
+    ("andq $-16, %rsp", "4883e4f0"),
+    ("leaq -8(%rbp), %rsp", "488d65f8"),
+    ("movups %xmm15, 344(%rsp)", "440f11bc2458010000"),
+  ]
+  var bad: List[Str] = []
+  for (ins, w) in want {
+    let r = encode_x86_line(ins.bytes())
+    let got = if r.err.is_empty() { hex_bytes(r.b) } else { "error: ${r.err}" }
+    if got != w {
+      bad.push("${ins}: got ${got}, want ${w}")
+    }
+  }
+  expect(bad) == []
+}

@@ -27,14 +27,14 @@ fn (var b: Builder) is_with_budget(fo: Int) -> Bool {
 /// flag.
 const PREEMPT_WORD = 76
 
-/// The preemption poll at a loop's iteration, on arm64 (decision 0286
+/// The preemption poll at a loop's iteration, on arm64 and amd64 (decision 0286
 /// step 3, the owner's choice (a+) of 2026-10-21): in every module but
 /// the runtime's (runtime_mod: it holds spin locks, and pool.xo preempt
 /// yields only when the worker holds none of them), the static word
 /// W_PREEMPT tested, a call of xo_preempt_stub (which keeps every
 /// register) when it is set; the word's address is loop invariant.
 fn (var b: Builder) preempt_poll() {
-  if !b.s.ppolls || b.wasm || b.goarch != "arm64" || b.is_dead() {
+  if !b.s.ppolls || b.wasm || !(b.goarch is "arm64" | "amd64") || b.is_dead() {
     return
   }
   let a = b.rt("static_word", b.int_t(), [b.cint(PREEMPT_WORD)])
@@ -223,4 +223,45 @@ pub fn preempt_stub_arm64(os: Str) -> List[Str] {
 /// rt modules, and the system call wrappers.
 fn runtime_mod(p: Str) -> Bool {
   p.starts_with("native/llrt") || p.starts_with("native/rt") || p.starts_with("native/sys_")
+}
+
+/// The body of xo_preempt_stub on amd64 (decision 0286 step 3; both
+/// emitters define it, compiler/arm64 x86rt.xo and compiler/llvm): a
+/// preemption poll's slow path, which keeps every register either
+/// convention lets a callee change (rax, rcx, rdx, rsi, rdi, r8 to r11,
+/// the flags, xmm0 to xmm15) around the runtime's xo_x_preempt, in a
+/// frame it aligns itself (a poll may be in a leaf), with Win64's shadow
+/// space below the saves (on Windows the export takes Win64).
+pub fn preempt_stub_amd64(os: Str) -> List[Str] {
+  let gp = ["rax", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10", "r11"]
+  // first, with r11 only (the poll's scratch; the flags are the poll's
+  // test's): whether this worker was asked (its record, xo_tlocal slot
+  // TLS_W, word W_PREEMPT_I of pool.xo: bytes 16 and 3456), as the arm64
+  // stub; every other worker's poll returns here saving nothing
+  let l = if os == "darwin" { "Lxo_preempt" } else { ".Lxo_preempt" }
+  var b: List[Str] = []
+  if os == "darwin" {
+    // the TLV thunk changes rax and rdi
+    b = ["pushq %rbp", "movq %rsp, %rbp", "andq $-16, %rsp", "pushq %rax", "pushq %rdi", "movq _xo_tlocal@TLVP(%rip), %rdi", "callq *(%rdi)", "movq 16(%rax), %r11", "popq %rdi", "popq %rax", "movq %rbp, %rsp", "popq %rbp"]
+  } else if os == "windows" {
+    b = ["pushq %rax", "movl _tls_index(%rip), %eax", "movq %gs:88, %r11", "movq (%r11,%rax,8), %r11", "leaq xo_tlocal@SECREL32(%r11), %r11", "popq %rax", "movq 16(%r11), %r11"]
+  } else {
+    b = ["movq %fs:0, %r11", "leaq xo_tlocal@TPOFF(%r11), %r11", "movq 16(%r11), %r11"]
+  }
+  b = b + ["testq %r11, %r11", "jz ${l}_none", "cmpq $0, 3456(%r11)", "jne ${l}_asked", "${l}_none:", "retq", "${l}_asked:"]
+  b = b + ["pushq %rbp", "movq %rsp, %rbp", "pushfq", "andq $-16, %rsp", "subq $368, %rsp"]
+  for (i, r) in gp.indexed() {
+    b.push("movq %${r}, ${32 + 8 * i}(%rsp)")
+  }
+  for i in 0..16 {
+    b.push("movups %xmm${i}, ${104 + 16 * i}(%rsp)")
+  }
+  b.push(if os == "darwin" { "callq _xo_x_preempt" } else { "callq xo_x_preempt" })
+  for i in 0..16 {
+    b.push("movups ${104 + 16 * i}(%rsp), %xmm${i}")
+  }
+  for (i, r) in gp.indexed() {
+    b.push("movq ${32 + 8 * i}(%rsp), %${r}")
+  }
+  b + ["leaq -8(%rbp), %rsp", "popfq", "popq %rbp", "retq"]
 }

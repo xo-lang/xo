@@ -44,7 +44,9 @@ fn (g: Gen) preempt_asm() -> Str {
   } else {
     ls = ls + [".weak ${s}", ".hidden ${s}", ".type ${s},@function"]
   }
-  ls = ls + [".p2align 2", "${s}:"] + ssa.preempt_stub_arm64(g.goos)
+  // the body on x86_64 is ssa.preempt_stub_amd64's (decision 0286 step 3)
+  let body = if g.arch() == "amd64" { ssa.preempt_stub_amd64(g.goos) } else { ssa.preempt_stub_arm64(g.goos) }
+  ls = ls + [".p2align 2", "${s}:"] + body
   var out = ""
   for l in ls {
     out = out + "module asm \"${l}\"\n"
