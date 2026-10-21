@@ -135,17 +135,17 @@ Update the knowledgebase in the same change as the work, not later:
     heavy.sh runs up to two heavy jobs, the second only when 60% of memory is free (HEAVY_MIN_FREE)
     (HEAVY_MIN_FREE). CI is used only with the owner's approval for that
     use: ask the lead, who asks the owner.
-  - batch mode is standing (owner, 2026-10-20, after a 4 hour trial:
-    26 pushes, 14 code, 7.7 slot-hours, against 9, 7, and 9.8 the 4
-    hours before): each push gates on -short, the fixed point when it
-    touches the self build paths below, the identity check when it
-    claims no output change, and the targeted tests its change needs,
-    through pushq.sh (its overlap gate after a rebase); no package
-    suites per push. Every 4 hours the lead runs the full tier on the
-    combined main (scripts/gate.sh short arm64 llvm cmd gen fp, LLVM at
-    -O1 with Go parity, plus the Docker amd64 goldens), bisects a
-    failure over that window's pushes, and the owner of the commit
-    fixes forward.
+  - batch mode is standing (owner, 2026-10-20); per push only the bare
+    minimum (owner, 2026-10-21): -short, the one or two tests that show
+    the change works, the fixed point only when the change touches what
+    compiler/xo itself builds from (compiler/, or std/native and llrt
+    files it imports), and the 42-golden Docker amd64 sample only for an
+    x86 code generation change. No package suites, no identity unless a
+    push claims no output change, no extra benchmark sweeps unless the
+    push claims a speedup. The lead runs the full tier every 8 hours
+    (scripts/gate.sh short arm64 llvm cmd gen fp, LLVM at -O1 with Go
+    parity, plus the Docker amd64 goldens), bisects a failure over that
+    window's pushes, and the owner of the commit fixes forward.
   - arm64 only (owner, 2026-10-14, replaces the platform runs at
     milestones): "testing on just the fastest machine and arch". Agents
     verify on the Mac (arm64); the full tier, when wanted, runs on one
