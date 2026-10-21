@@ -3604,6 +3604,51 @@ fn (d: Dir) len() -> Int
 A single file embeds as a `Str` or `Bytes` constant instead (core 3.1).
 An `Fs` view of a Dir (for code written against `Fs`) is planned.
 
+## 32. std/compress
+
+Status: implemented on every backend (decision 0305, 2026-10-21) over
+whole buffers; the streaming Compressor and Decompressor and
+`http.gzip_responses` of 0305 follow. Go's compress/gzip, compress/flate,
+and compress/zlib: the Go backend calls them, and the native backends
+port them (std/native/llrt/flate.xo, which std/archive uses too). Every
+level writes the bytes Go's writers write, and the decoders give Go's
+output or Go's error. Pure.
+
+```
+enum Level { NoCompression, BestSpeed, Default, BestCompression, HuffmanOnly, Of(n: Int) }
+struct CompressErr { msg: Str }   // Go's texts; displays as msg
+
+pub fn gzip(data: Bytes, level: Level = Level.Default) -> Bytes
+pub fn gunzip(data: Bytes, max_size: Int = 1073741824) -> Bytes ! CompressErr
+pub fn deflate(data: Bytes, level: Level = Level.Default) -> Bytes       // raw RFC 1951
+pub fn inflate(data: Bytes, max_size: Int = 1073741824) -> Bytes ! CompressErr
+pub fn zlib(data: Bytes, level: Level = Level.Default) -> Bytes          // RFC 1950
+pub fn unzlib(data: Bytes, max_size: Int = 1073741824) -> Bytes ! CompressErr
+```
+
+- `Level.Of(n)` is Go's level n, -2 (HuffmanOnly) to 9 (BestCompression);
+  outside that range it is a fault (`compress: invalid compression level
+  12: want value in range [-2, 9]`). `Default` is 6.
+- `gzip` writes no name and no time, so the output depends only on the
+  data and the level. `gunzip` reads every concatenated member, as Go's
+  multistream reader does.
+- The decoders stop at `max_size` (default 1 GiB) with
+  `gzip: output exceeds max_size (N bytes)` (`flate:`, `zlib:`). Go has
+  no limit; this is Go's reader through `io.LimitReader(r, max_size + 1)`,
+  so an error found within the first max_size + 1 bytes of output (a bad
+  checksum, a truncated stream) is reported in its place. Pass an
+  explicit limit for untrusted input: a few KB of gzip can expand to
+  gigabytes.
+- Errors are Go's: `gzip: invalid header`, `gzip: invalid checksum`,
+  `flate: corrupt input before offset N`, `zlib: invalid header`,
+  `zlib: invalid checksum`, `zlib: invalid dictionary` (a preset
+  dictionary other than the empty one), `unexpected EOF`, and `EOF` for
+  an empty gzip input.
+- Tests: internal/stdtest/testdata/corpus/compress (`go run
+  ./scripts/stdcorpus compress`): 720 writes over every level and format
+  against Go's bytes, and 431 Go-written, corrupted, bounded, and bomb
+  streams against Go's results.
+
 <!-- BEGIN prelude index: generated from std/prelude.xo by `go run ./scripts/stdindex`; do not edit -->
 
 ## Appendix A. Prelude index

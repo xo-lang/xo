@@ -1,0 +1,38 @@
+// std/compress (spec/std.md 32, decision 0305). Declaration file; encoding
+// rules are listed at the top of std/prelude.xo. Go's compress/gzip,
+// compress/flate, and compress/zlib over whole buffers: the bytes Go's
+// writers write at each level, Go's error texts, and decoders bounded by
+// max_size. Pure.
+
+/// A compression level: Go's -2 (HuffmanOnly) to 9 (BestCompression);
+/// `Of(n)` for any of them, a fault outside -2 to 9.
+enum Level {
+  NoCompression
+  BestSpeed
+  Default
+  BestCompression
+  HuffmanOnly
+  Of(n: Int)
+}
+
+/// Go's error texts (`gzip: invalid header`, `flate: corrupt input before
+/// offset 5`, `zlib: invalid checksum`, `unexpected EOF`), or
+/// `gzip: output exceeds max_size (N bytes)` (flate, zlib likewise).
+struct CompressErr {
+  msg: Str
+}
+
+fn (e: CompressErr) display() -> Str
+
+/// A gzip member with no name and no time (the output depends on the data
+/// and the level only).
+fn gzip(data: Bytes, level: Level = Level.Default) -> Bytes
+/// Every concatenated member; more than max_size bytes of output is an
+/// error.
+fn gunzip(data: Bytes, max_size: Int = 1073741824) -> Bytes ! CompressErr
+/// Raw DEFLATE (RFC 1951).
+fn deflate(data: Bytes, level: Level = Level.Default) -> Bytes
+fn inflate(data: Bytes, max_size: Int = 1073741824) -> Bytes ! CompressErr
+/// zlib (RFC 1950): a two byte header, DEFLATE, and the Adler-32 sum.
+fn zlib(data: Bytes, level: Level = Level.Default) -> Bytes
+fn unzlib(data: Bytes, max_size: Int = 1073741824) -> Bytes ! CompressErr

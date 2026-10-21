@@ -1,0 +1,173 @@
+// std/compress on the native backends (decision 0305): Go's compress/gzip,
+// compress/flate, and compress/zlib over std/native/llrt/flate.xo (the
+// port of compress/flate that std/archive uses too), with the bytes Go's
+// writers write at each level and Go's error texts.
+use std/compress
+use native/llrt/flate
+
+fn compresserr_display(e: compress.CompressErr) -> Str { e.msg }
+
+/// Go's level number: a fault outside -2 to 9 (flate.NewWriter's error).
+fn level_of(l: compress.Level) -> Int {
+  match l {
+    NoCompression => 0
+    BestSpeed => 1
+    Default => -1
+    BestCompression => 9
+    HuffmanOnly => -2
+    Of(n) => {
+      if n < -2 || n > 9 {
+        fault("compress: invalid compression level ${n}: want value in range [-2, 9]")
+      }
+      n
+    }
+  }
+}
+
+fn bytes_of(l: List[Int]) -> Bytes {
+  var b = BytesBuilder.with_capacity(l.len())
+  for x in l {
+    b.write_byte(UInt8(x))
+  }
+  b.freeze()
+}
+
+fn put_u32le(var b: BytesBuilder, v: Int) {
+  b.write_byte(UInt8(v & 255))
+  b.write_byte(UInt8((v >> 8) & 255))
+  b.write_byte(UInt8((v >> 16) & 255))
+  b.write_byte(UInt8((v >> 24) & 255))
+}
+
+fn put_u32be(var b: BytesBuilder, v: Int) {
+  b.write_byte(UInt8((v >> 24) & 255))
+  b.write_byte(UInt8((v >> 16) & 255))
+  b.write_byte(UInt8((v >> 8) & 255))
+  b.write_byte(UInt8(v & 255))
+}
+
+/// The error of a decoder: Go's text, or the max_size text for LIMIT.
+fn fail(format: Str, e: Str, max_size: Int) -> compress.CompressErr {
+  if e == flate.LIMIT {
+    return compress.CompressErr{msg: "${format}: output exceeds max_size (${max_size} bytes)"}
+  }
+  compress.CompressErr{msg: e}
+}
+
+/// The decoder's limit: max_size + 1 bytes, as Go's io.LimitReader(r,
+/// max + 1) reads them, so an error found within them (a bad checksum at
+/// the end of exactly max + 1 bytes) is Go's result, and only more than
+/// max_size bytes without one is the max_size error.
+fn limit_of(max_size: Int) -> Int { if max_size < 0 { 1 } else { max_size + 1 } }
+
+fn over(out: List[Int], max_size: Int) -> Bool { out.len() > (if max_size < 0 { 0 } else { max_size }) }
+
+fn gzip(data: Bytes, level: compress.Level) -> Bytes {
+  let lv = level_of(level)
+  // gzip.Writer's header: no name, no time; XFL 2 for level 9, 4 for 1
+  let xfl = if lv == 9 { 2 } else if lv == 1 { 4 } else { 0 }
+  var b = BytesBuilder.new()
+  b.write(b"\x1f\x8b\x08\x00\x00\x00\x00\x00")
+  b.write_byte(UInt8(xfl))
+  b.write_byte(UInt8(255))
+  b.write(bytes_of(flate.deflate_level(data, lv)))
+  put_u32le(b, flate.crc32(flate.crc_table(), 0, data))
+  put_u32le(b, data.len() & 0xffffffff)
+  b.freeze()
+}
+
+fn gunzip(data: Bytes, max_size: Int) -> Bytes ! compress.CompressErr {
+  match flate.gunzip_members(data, limit_of(max_size)) {
+    Ok(out) => {
+      if over(out, max_size) {
+        return Err(fail("gzip", flate.LIMIT, max_size))
+      }
+      bytes_of(out)
+    }
+    Err(e) => Err(fail("gzip", e, max_size))
+  }
+}
+
+fn deflate(data: Bytes, level: compress.Level) -> Bytes { bytes_of(flate.deflate_level(data, level_of(level))) }
+
+fn inflate(data: Bytes, max_size: Int) -> Bytes ! compress.CompressErr {
+  var f = flate.Inflater{data: data, pos: 0, start: 0, end: data.len(), b: 0, nb: 0, out: [], out_start: 0, limit: limit_of(max_size)}
+  match f.inflate(flate.fixed_decoder()) {
+    Ok(_) => {
+      if over(f.out, max_size) {
+        return Err(fail("flate", flate.LIMIT, max_size))
+      }
+      bytes_of(f.out)
+    }
+    Err(e) => Err(fail("flate", e, max_size))
+  }
+}
+
+/// hash/adler32's Checksum.
+fn adler32(data: Bytes) -> Int {
+  var a = 1
+  var b = 0
+  for c in data {
+    a = (a + Int(c)) % 65521
+    b = (b + a) % 65521
+  }
+  (b << 16) | a
+}
+
+fn zlib(data: Bytes, level: compress.Level) -> Bytes {
+  let lv = level_of(level)
+  // zlib.Writer's header: CMF 0x78, FLEVEL from the level, FCHECK
+  let flevel = if lv == -2 || lv == 0 || lv == 1 { 0 } else if lv >= 2 && lv <= 5 { 1 } else if lv == 6 || lv == -1 { 2 } else { 3 }
+  var flg = flevel << 6
+  flg += 31 - ((0x78 * 256 + flg) % 31)
+  var b = BytesBuilder.new()
+  b.write_byte(UInt8(0x78))
+  b.write_byte(UInt8(flg))
+  b.write(bytes_of(flate.deflate_level(data, lv)))
+  put_u32be(b, adler32(data))
+  b.freeze()
+}
+
+fn unzlib(data: Bytes, max_size: Int) -> Bytes ! compress.CompressErr {
+  // zlib.NewReader: the header (EOF on none, unexpected EOF on a short
+  // one), a preset dictionary is invalid (none can be given here)
+  let n = data.len()
+  if n < 2 {
+    // io.ReadFull's EOF is unexpected EOF here (zlib.Reader.Reset)
+    return Err(compress.CompressErr{msg: "unexpected EOF"})
+  }
+  let c0 = Int(data[0])
+  let c1 = Int(data[1])
+  if (c0 & 15) != 8 || (c0 >> 4) > 7 || ((c0 << 8) | c1) % 31 != 0 {
+    return Err(compress.CompressErr{msg: "zlib: invalid header"})
+  }
+  var at = 2
+  if (c1 & 0x20) != 0 {
+    if n < 6 {
+      return Err(compress.CompressErr{msg: "unexpected EOF"})
+    }
+    // the dictionary's Adler-32 against the (empty) dictionary given: 1
+    let id = (Int(data[2]) << 24) | (Int(data[3]) << 16) | (Int(data[4]) << 8) | Int(data[5])
+    if id != 1 {
+      return Err(compress.CompressErr{msg: "zlib: invalid dictionary"})
+    }
+    at = 6
+  }
+  var f = flate.Inflater{data: data, pos: at, start: at, end: n, b: 0, nb: 0, out: [], out_start: 0, limit: limit_of(max_size)}
+  match f.inflate(flate.fixed_decoder()) {
+    Ok(_) => {}
+    Err(e) => return Err(fail("zlib", e, max_size))
+  }
+  let out = bytes_of(f.out)
+  if n - f.pos < 4 {
+    return Err(compress.CompressErr{msg: "unexpected EOF"})
+  }
+  let sum = (Int(data[f.pos]) << 24) | (Int(data[f.pos + 1]) << 16) | (Int(data[f.pos + 2]) << 8) | Int(data[f.pos + 3])
+  if sum != adler32(out) {
+    return Err(compress.CompressErr{msg: "zlib: invalid checksum"})
+  }
+  if over(f.out, max_size) {
+    return Err(fail("zlib", flate.LIMIT, max_size))
+  }
+  out
+}
