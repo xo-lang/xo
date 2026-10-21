@@ -2017,3 +2017,75 @@ func TestPruneDetached(t *testing.T) {
 	}
 	t.Logf("prune-log:\n%s", b)
 }
+
+// TestFrontCacheStdTestEdit: an edit to one std test block's body keeps
+// the front end cache entries of every other body (the interface hash
+// cuts test bodies, compiler/parser iface.xo); before 2026-10-21 it did
+// not, and `xo test --std-module=native/path` after a one-line test edit
+// hit 0 of 1,148 bodies.
+func TestFrontCacheStdTestEdit(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := xotool.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-festdtest-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	std := filepath.Join(work, "std")
+	if err := os.CopyFS(std, os.DirFS(filepath.Join(root, "std"))); err != nil {
+		t.Fatal(err)
+	}
+	cache := filepath.Join(work, "cache")
+	hits := regexp.MustCompile(`cache fe (\d+)/(\d+) bodies`)
+	run := func() (int, int) {
+		t.Helper()
+		cmd := exec.Command(xo, "test", "--backend=arm64", "--phase-times", "--std-module=native/path")
+		cmd.Dir = work
+		cmd.Env = append(os.Environ(), "XO_STD="+std, "XO_BACKEND_CACHE_DIR="+cache, "XO_BIN_CACHE="+filepath.Join(work, "bin"))
+		log, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("xo test: %v\n%s", err, log)
+		}
+		m := hits.FindStringSubmatch(string(log))
+		if m == nil {
+			t.Fatalf("no cache fe line:\n%s", log)
+		}
+		h, _ := strconv.Atoi(m[1])
+		n, _ := strconv.Atoi(m[2])
+		return h, n
+	}
+	run()
+	wh, wn := run()
+	tf := filepath.Join(std, "native", "path_test.xo")
+	b, err := os.ReadFile(tf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	i := strings.Index(s, "\ntest \"")
+	j := strings.Index(s[i:], "{\n")
+	if i < 0 || j < 0 {
+		t.Fatal("no test block in path_test.xo")
+	}
+	at := i + j + 2
+	if err := os.WriteFile(tf, []byte(s[:at]+"  let _edit = 1\n"+s[at:]), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	eh, en := run()
+	// the edited test's own body misses; every other body hits as warm
+	if en != wn || eh < wh-1 {
+		t.Errorf("after an edit to one test body: %d/%d front end hits, warm %d/%d", eh, en, wh, wn)
+	}
+}

@@ -299,71 +299,77 @@ fn borrow_record_write(os: Os, path: Str, rec: Map[Str, List[Bool]]) {
   cache_put(os, path, w.freeze().bytes())
 }
 /// The version of std_tree_sum's hash (its memo's signature).
-const STD_SUM_VERSION = "xo std sum v2 (interfaces)"
+const STD_SUM_VERSION = "xo std sum v3 (interfaces, per file)"
 
 /// The hash of every std source under dir (its .xo files, by path
 /// relative to dir and interface: parser.iface_text, the tokens outside
-/// function bodies, without comments or layout): the front end cache's
-/// key of a std body (ssa fe_keys), the same for every program. A
+/// function and test bodies, without comments or layout): the front end
+/// cache's key of a std body (ssa fe_keys), the same for every program. A
 /// comment or body edit in std keeps it (2026-10-21: the full sources
 /// were hashed, so a comment added to json.xo missed every std body of
-/// every program); the edited body's own key, its text, changes. "" when dir cannot be
-/// walked (std bodies then share no key with another build).
-/// The hash is kept in the cache (cache/stdsums/<hash of dir>; not stdsum/, the old single memo file of that name) under the files' paths,
-/// sizes and modification times, and read again only when those differ
-/// or a file changed in the last 2 s (a change within one clock tick).
+/// every program); the edited body's own key, its text, changes. "" when
+/// dir cannot be walked (std bodies then share no key with another build).
+/// Each file's interface hash is kept in the cache
+/// (cache/stdsums/<hash of dir>, a line per file: path, size, modification
+/// time, hash) and computed again only for a file whose size or time
+/// differs or that changed in the last 2 s (a change within one clock
+/// tick): an edit to one std file parsed every std file again, 0.8 to
+/// 1.9 s of the next build (2026-10-21).
 fn std_tree_sum(os: Os, dir: Str, cache: Str) -> Str {
   let all = match os.fs.walk(dir) {
     Ok(fs) => fs
     Err(_) => return ""
   }
-  var paths: List[Str] = []
-  var stat: Map[Str, Str] = {}
+  let memo = "${cache}/stdsums/${crypto.sha256(dir.bytes()).to_hex()[0..32]}"
+  var known: Map[Str, (Str, Str)] = {}
+  if !cache.is_empty() {
+    // xo:allow XO0903 a memo: a failed read hashes the files again
+    let text = (os.fs.read(memo).ok() ?? b"").to_str() ?? ""
+    let lines = text.split("\n")
+    if !lines.is_empty() && lines[0] == STD_SUM_VERSION {
+      for line in lines[1..lines.len()] {
+        let f = line.split(" ")
+        if f.len() == 4 {
+          known[f[0]] = ("${f[1]} ${f[2]}", f[3])
+        }
+      }
+    }
+  }
   let recent = os.clock.now().unix_millis() - 2000
-  var fresh = true
+  var files: List[(Str, Str, Bool)] = []
   for fi in all {
     if !fi.is_dir && fi.path.ends_with(".xo") {
-      paths.push(fi.path)
-      stat[fi.path] = "${fi.size} ${fi.modified.unix_millis()}"
-      fresh = fresh && fi.modified.unix_millis() < recent
+      files.push((fi.path, "${fi.size} ${fi.modified.unix_millis()}", fi.modified.unix_millis() >= recent))
     }
   }
-  var sig = StrBuilder.new()
-  sig.write("${STD_SUM_VERSION}\n")
-  for p in paths.sort() {
-    sig.write("${p} ${stat.get(p) ?? ""}\n")
-  }
-  let sigh = crypto.sha256(sig.freeze().bytes()).to_hex()
-  // one memo per std tree (2026-10-21: one file for every tree; the
-  // agents' worktrees each have their own std, so each build overwrote
-  // the others' memo and hashed std again, 0.2 s since the hash parses)
-  let memo = "${cache}/stdsums/${crypto.sha256(dir.bytes()).to_hex()[0..32]}"
-  if fresh && !cache.is_empty() {
-    // xo:allow XO0903 a memo: a failed read hashes the std tree again
-    let parts = ((os.fs.read(memo).ok() ?? b"").to_str() ?? "").split(" ")
-    if parts.len() == 2 && parts[0] == sigh {
-      return parts[1]
-    }
-  }
-  let sum = std_tree_hash(os, dir, paths)
-  if fresh && !cache.is_empty() && !sum.is_empty() {
-    cache_put(os, memo, "${sigh} ${sum}".bytes())
-  }
-  sum
-}
-
-/// The hash of the std sources paths under dir, read in full.
-fn std_tree_hash(os: Os, dir: Str, paths: List[Str]) -> Str {
   var h = BytesBuilder.new()
-  for p in paths.sort() {
-    match os.fs.read(p) {
-      Ok(b) => {
-        let text = parser.iface_text(p.bytes(), b)
-        h.write_str("${p.trim_prefix("${dir}/")} ${text.len()}\n")
-        h.write(text)
+  h.write_str("${STD_SUM_VERSION}\n")
+  var out = StrBuilder.new()
+  out.write("${STD_SUM_VERSION}\n")
+  var changed = false
+  for (p, st, fresh_edit) in files.sort_by(fn(f) { f.0 }) {
+    // relative: std's own paths have no spaces, the memo's separator
+    let rel = p.trim_prefix("${dir}/")
+    var fh = ""
+    if let Some((kst, kh)) = known.get(rel) {
+      if kst == st && !fresh_edit {
+        fh = kh
       }
-      Err(_) => return ""
     }
+    if fh.is_empty() {
+      match os.fs.read(p) {
+        Ok(b) => fh = crypto.sha256(parser.iface_text(p.bytes(), b)).to_hex()
+        Err(_) => return ""
+      }
+      changed = true
+    }
+    h.write_str("${rel} ${fh}\n")
+    if !fresh_edit {
+      out.write("${rel} ${st} ${fh}\n")
+    }
+  }
+  if (changed || known.len() != files.len()) && !cache.is_empty() {
+    cache_put(os, memo, out.freeze().bytes())
   }
   crypto.sha256(h.freeze()).to_hex()
 }

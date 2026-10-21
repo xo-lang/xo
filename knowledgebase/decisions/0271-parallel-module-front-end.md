@@ -415,3 +415,13 @@ keeps the entry out of the cache, since no key covers that file's
 layout. Test: internal/arm64 TestFrontCacheMovedBodies (hits after three
 lines are added above a library's bodies, binary equal to the cache-off
 build).
+
+Addendum (2026-10-21, xo-fa): the std interface hash cuts test bodies
+too, and is kept per file. A warm `xo test --std-module` of path, url
+or mime after a one-line edit to a std test body hit 0 of about 1,200
+front-end bodies: test blocks' bodies were in the interface, so std_sum
+changed and every std body's key with it. Every std file's interface
+hash was also computed again after any std change (0.8 to 1.9 s); now
+the memo (cache/stdsums/<dir hash>, std sum v3) keeps one per file
+(path, size, time, hash), and only changed files are parsed. Test:
+internal/arm64 TestFrontCacheStdTestEdit.

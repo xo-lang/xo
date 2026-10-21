@@ -25,6 +25,13 @@ fn iface_bytes(toks: List[lexer.Token], decls: List[Decl]) -> Bytes {
         cuts.push((bd.span.start.offset, bd.span.end.offset))
       }
     }
+    // a test's body too: nothing outside it reads it (2026-10-21: an
+    // edit to one std test body missed every std body's front end entry)
+    if let TestDecl(d: td) = d {
+      if let Some(bd) = td.body {
+        cuts.push((bd.span.start.offset, bd.span.end.offset))
+      }
+    }
   }
   let sorted = cuts.sort_by(fn(c) { c.0 })
   var ci = 0
