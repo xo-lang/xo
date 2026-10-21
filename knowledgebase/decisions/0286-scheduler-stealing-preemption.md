@@ -401,3 +401,21 @@ Preemption as on main now costs nothing measurable on this load
 the "15%" seen before compared against an older build. Requeueing on the
 worker's own ring and a longer slice were both worse, so the inject
 queue's tail and 10 ms stay.
+
+## Addendum (2026-10-21): the polls' cost in loops
+
+Xo lang 4's comparison (bench/results/compare-2026-10-21.md) showed the
+loop rows slower since step 3. Against the same compiler with no polls
+(native arm64, exact instructions under callgrind; LLVM, darwin user
+time): sieve 2,111 M against 1,682 M (+25.5%), sort +11.7%, nbody +9.0%,
+fib unchanged (no loops); LLVM sieve 0.18 s against 0.10 s, collatz 0.58
+against 0.47. Making the test cheaper (9ccc0f0e5: the flag's address one
+loop invariant constant, no memory clobber at a poll, LLVM's test in IR
+with only the stub's call as asm) changed nothing measurable: the cost
+is the load and branch per iteration in inner loops of six to eight
+instructions, and on LLVM a loop with a call path is neither vectorized
+nor unrolled. 9ccc0f0e5 also fixed a real bug: a poll did not end the
+reuse of the thread local table's address within a block, so a task
+resumed on another worker could use the old thread's table
+(TestPreemptMigrate). Decision 0318 proposes preempting by a signal
+instead of a test in every loop.
