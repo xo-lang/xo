@@ -182,6 +182,16 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   given out again, even if its branch is dropped (core 10: a code keeps
   its meaning). A code used twice on main fails -short
   (internal/repotest explainCodes and TestSpecListsEveryCode).
+- Rebase or merge conflicts: `~/xo-lead/agents/resolve-addadd FILE...`
+  (or `python3 -I ~/xo-lead/agents/resolve-addadd.py FILE...`; source
+  scripts/lead/resolve, installed by scripts/lead/install.sh) merges each
+  conflicted file again from the index: a .go file by top level
+  declaration (imports united, entries both sides added to one table
+  merged), any other file only where both sides added lines at one place
+  (and spec core's `xo vet` row codes). Whatever changed on both sides is
+  refused: the file is left as is and named (exit 1), to resolve by hand.
+  Name the files one by one under zsh, then read `git diff` and
+  `git add` (it stages nothing). Last verified: 2026-10-21.
 
 ## Coming
 
