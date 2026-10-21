@@ -165,10 +165,41 @@ fn bytes_rune_count(b: Bytes) -> Int { scan.bytes_rune_count(b) }
 
 fn bytes_to_hex(b: Bytes) -> Str { scan.to_hex(b) }
 
-/// bytes.Index and bytes.LastIndex, on the bytes as they are.
-fn bytes_find(b: Bytes, sub: Bytes) -> Int? { str_find(rt.cast[Bytes, Str](b), rt.cast[Bytes, Str](sub)) }
+/// Whether sub is at b[i:] (i + sub.len() <= b.len()).
+fn bytes_at(b: Bytes, sub: Bytes, i: Int) -> Bool {
+  var j = 0
+  while j < sub.len() {
+    if b[i + j] != sub[j] {
+      return false
+    }
+    j += 1
+  }
+  true
+}
 
-fn bytes_rfind(b: Bytes, sub: Bytes) -> Int? { str_rfind(rt.cast[Bytes, Str](b), rt.cast[Bytes, Str](sub)) }
+/// bytes.Index and bytes.LastIndex, on the bytes as they are (no Str cast:
+/// the bytes need not be UTF-8, TestOutsideBytesValidated).
+fn bytes_find(b: Bytes, sub: Bytes) -> Int? {
+  var i = 0
+  while i + sub.len() <= b.len() {
+    if bytes_at(b, sub, i) {
+      return Some(i)
+    }
+    i += 1
+  }
+  None
+}
+
+fn bytes_rfind(b: Bytes, sub: Bytes) -> Int? {
+  var i = b.len() - sub.len()
+  while i >= 0 {
+    if bytes_at(b, sub, i) {
+      return Some(i)
+    }
+    i -= 1
+  }
+  None
+}
 
 /// make([]byte, n): one allocation, cleared.
 fn bytes_zeroed(n: Int) -> Bytes {

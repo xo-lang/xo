@@ -3582,8 +3582,6 @@ fn (t: Template) render_named(name: Str, data: json.Value) -> Str ! TemplateErr
 - `render` parses the set again each time (a parsed set is not a value
   yet); parse once with `parse` to check a template early.
 
-<!-- BEGIN prelude index: generated from std/prelude.xo by `go run ./scripts/stdindex`; do not edit -->
-
 ## 31. std/embed
 
 Files embedded at build time (decision 0304; core 3.1): a constant
@@ -3605,6 +3603,8 @@ fn (d: Dir) len() -> Int
 
 A single file embeds as a `Str` or `Bytes` constant instead (core 3.1).
 An `Fs` view of a Dir (for code written against `Fs`) is planned.
+
+<!-- BEGIN prelude index: generated from std/prelude.xo by `go run ./scripts/stdindex`; do not edit -->
 
 ## Appendix A. Prelude index
 
