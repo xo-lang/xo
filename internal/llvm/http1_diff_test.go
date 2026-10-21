@@ -45,6 +45,10 @@ fn describe(req: http.Request) -> http.Response {
   var hs: List[Str] = []
   for k in req.headers.keys().sort() {
     hs.push("${k}: ${req.headers.get(k) ?? ""}")
+    let vs = req.header_values(k)
+    if vs.len() != 1 || vs[0] != (req.headers.get(k) ?? "") {
+      hs.push("${k} fields: ${vs.join(" ;; ")}")
+    }
   }
   b = b + hs.join("|") + "\nbody=${req.body.to_hex()}\n"
   var status = 200
@@ -282,6 +286,7 @@ func http1DiffInputs(n int, seed int64) []string {
 		strings.Repeat("a", 4096),
 		"GET / HTTP/1.1\r\nHost: x\r\n\r\nPOST /p HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\nab\r\n\r\nGET /3 HTTP/1.1\r\nHost: x\r\n\r\n",
 	)
+	inputs = append(inputs, http1HeaderInputs(seed)...)
 	r := rand.New(rand.NewSource(seed))
 	for i := 0; i < n; i++ {
 		s := randRequest(r)
@@ -291,6 +296,90 @@ func http1DiffInputs(n int, seed int64) []string {
 		inputs = append(inputs, s)
 	}
 	return inputs
+}
+
+// http1HeaderInputs are header block cases (net/textproto's
+// ReadMIMEHeader and net/http's readRequest: repeated names in any case,
+// continuation lines, names with spaces, colons, and non-token bytes,
+// control and non-UTF-8 bytes in values, Host, Content-Length, and
+// Transfer-Encoding repeated or malformed) and 400 random header blocks
+// of such names and values (2026-10-21; this corpus found the native
+// servers joining Set-Cookie fields, std/changes/http.md).
+func http1HeaderInputs(seed int64) []string {
+	end := "Connection: close\r\n\r\n"
+	h := "GET /p?q=1 HTTP/1.1\r\nHost: x\r\n"
+	cases := []string{
+		h + "X-A: 1\r\nx-a: 2\r\n" + end,
+		h + "X-Long:  spaced value  \r\n" + end,
+		h + "X-Fold: a\r\n b\r\n" + end,
+		h + "X-Fold: a\r\n\tb\r\n" + end,
+		h + "X-Fold: a\r\n  \r\n" + end,
+		h + "X-Fold:\r\n b\r\n" + end,
+		h + " X-Lead: 1\r\n" + end,
+		h + "X-No-Colon\r\n" + end,
+		h + "X-Space : 1\r\n" + end,
+		h + "X Sp: 1\r\n" + end,
+		h + ": empty-name\r\n" + end,
+		h + "X-Empty:\r\n" + end,
+		h + "X-Ctl: a\x01b\r\n" + end,
+		h + "X-Del: a\x7fb\r\n" + end,
+		h + "X-Tab: a\tb\r\n" + end,
+		h + "X-High: caf\xc3\xa9\r\n" + end,
+		h + "X-Bad-Utf8: \xff\xfe\r\n" + end,
+		h + "X-Nul: a\x00b\r\n" + end,
+		h + "X-\xc3\xa9: v\r\n" + end,
+		h + "x-lower-case: v\r\n" + end,
+		h + "X-UNDER_SCORE: v\r\n" + end,
+		h + "x-a-b-c: 1\r\nX-a-B-c: 2\r\n" + end,
+		h + "Content-Type: text/plain\r\ncontent-type: text/html\r\n" + end,
+		h + "Set-Cookie: a=1\r\nSet-Cookie: b=2\r\n" + end,
+		h + "Cookie: a=1\r\nCookie: b=2\r\n" + end,
+		h + "Accept: a\r\nAccept: \r\nAccept: b\r\n" + end,
+		h + "X-Colon: a:b: c\r\n" + end,
+		h + "X-A:1\r\nX-A:\t2\t\r\n" + end,
+		"GET /p HTTP/1.1\r\n" + end,
+		"GET /p HTTP/1.1\r\nHost: a\r\nHost: b\r\n" + end,
+		"GET /p HTTP/1.1\r\nHost: a b\r\n" + end,
+		"GET /p HTTP/1.1\r\nHost: a/b\r\n" + end,
+		"GET /p HTTP/1.1\r\nhost: lower\r\n" + end,
+		"GET /p HTTP/1.1\r\nHost:\r\n" + end,
+		"GET /p HTTP/1.0\r\n" + end,
+		"GET /p HTTP/1.1\nHost: x\n" + "Connection: close\n\n",
+		"GET /p HTTP/1.1\r\nHost: x\nX-Mixed: 1\r\n" + end,
+		"POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\nContent-Length: 3\r\n" + end + "abc",
+		"POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\nContent-Length: 4\r\n" + end + "abcd",
+		"POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: 3, 3\r\n" + end + "abc",
+		"POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: -1\r\n" + end,
+		"POST /p HTTP/1.1\r\nHost: x\r\nContent-Length: 0x3\r\n" + end + "abc",
+		"POST /p HTTP/1.1\r\nHost: x\r\nContent-Length:\r\n" + end,
+		"POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: gzip, chunked\r\n" + end + "3\r\nabc\r\n0\r\n\r\n",
+		"POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: identity\r\n" + end,
+		"POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nContent-Length: 3\r\n" + end + "3\r\nabc\r\n0\r\n\r\n",
+		"POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding: chunked\r\n" + end + "3\r\nabc\r\n0\r\n\r\n",
+		"POST /p HTTP/1.0\r\nHost: x\r\nTransfer-Encoding: chunked\r\n" + end + "3\r\nabc\r\n0\r\n\r\n",
+		"POST /p HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n" + end + "3\r\nabc\r\n0\r\nTrailer-A: t\r\ntrailer-a: u\r\n\r\n",
+		"GET /p HTTP/1.1\r\nHost: x\r\nExpect: something\r\n" + end,
+		"GET /p HTTP/1.1\r\nHost: x\r\nConnection: close\r\nConnection: keep-alive\r\n\r\n",
+		"GET /p HTTP/1.1\r\nHost: x\r\n" + strings.Repeat("X-Many: v\r\n", 100) + end,
+		"GET /p HTTP/1.1\r\nHost: x\r\nX-Fold: " + strings.Repeat("a\r\n ", 2000) + "b\r\n" + end,
+	}
+	names := []string{"X-A", "x-a", "Content-Type", "Host", "X-\xc3\x9cn\xc3\xaf", "X A", "X:B", "", "X-B", "Accept", "Set-Cookie", "Cookie", "X_C", "X-\t"}
+	vals := []string{"1", " 2 ", "a,b", "", "\t", "x\x01", "\xc3\xa9", "  ", "a\r\n b", "v:w"}
+	r := rand.New(rand.NewSource(seed))
+	for i := 0; i < 400; i++ {
+		var b strings.Builder
+		b.WriteString(h)
+		n := 1 + r.Intn(4)
+		for k := 0; k < n; k++ {
+			b.WriteString(names[r.Intn(len(names))])
+			b.WriteString([]string{":", ": ", " :", ":"}[r.Intn(4)])
+			b.WriteString(vals[r.Intn(len(vals))])
+			b.WriteString("\r\n")
+		}
+		b.WriteString(end)
+		cases = append(cases, b.String())
+	}
+	return cases
 }
 
 // TestHTTP1ParseDiff is the differential test of the native HTTP/1.1
