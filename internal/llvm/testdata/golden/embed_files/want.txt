@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+Hello from an embedded file.
+Second line.
+hello: 42 bytes, 2 lines
+data: 4 bytes, 000102ff
+--- stderr
