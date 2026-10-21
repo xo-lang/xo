@@ -14,22 +14,10 @@
 
 use std/crypto
 
-const MOD_CACHE_VERSION = "xo check cache v4"
+const MOD_CACHE_VERSION = "xo check cache v5"
 
 /// Per module: the SHA-256 of its interface closure (above).
 pub fn (c: Checker) iface_closures() -> List[Str] {
-  // the bodies' spans, per file
-  var cuts: Map[Int, List[(Int, Int)]] = {}
-  for o in c.objs {
-    if o.kind != ObjKind.Func || o.fn_decl.is_empty() || o.decl_file < 0 {
-      continue
-    }
-    if let Some(bd) = o.fn_decl[0].body {
-      var l = cuts.get(o.decl_file) ?? []
-      l.push((bd.span.start.offset, bd.span.end.offset))
-      cuts[o.decl_file] = l
-    }
-  }
   var own: List[Str] = []
   for md in c.mods {
     var paths: List[(Str, Int)] = []
@@ -38,19 +26,12 @@ pub fn (c: Checker) iface_closures() -> List[Str] {
     }
     var h = BytesBuilder.new()
     h.write_str("${md.path}\n")
+    // each file's interface (parser: its tokens outside function
+    // bodies, without comments or layout), so a comment, layout or body
+    // edit keeps the module's closure (2026-10-21: comments counted, and
+    // a comment missed every body of its module)
     for (p, f) in paths.sort_by(fn(e) { e.0 }) {
-      h.write_str("${p}\n")
-      let src = c.files[f].src
-      var at = 0
-      for (lo, hi) in (cuts.get(f) ?? []).sort_by(fn(e) { e.0 }) {
-        if lo >= at && hi <= src.len() {
-          h.write(src[at..lo])
-          h.write_str("{}")
-          at = hi
-        }
-      }
-      h.write(src[at..src.len()])
-      h.write_str("\n")
+      h.write_str("${p}\n${c.files[f].iface}\n")
       // the files its embed constants embed (decision 0304)
       h.write_str(c.embed_digest(f))
     }

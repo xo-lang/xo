@@ -631,7 +631,7 @@ fn (var c: Checker) parse_into(m: Int, path: Str, src: Bytes, sig: Bool) {
   c.parsed.push((path, sig))
   c.diags = c.diags + parse_diags(path, r.diags)
   let f = c.files.len()
-  c.files.push(SrcFile{path: path, module: m, ast: r.file, is_test: path.ends_with("_test.xo"), src: src})
+  c.files.push(SrcFile{path: path, module: m, ast: r.file, iface: r.iface, is_test: path.ends_with("_test.xo"), src: src})
   c.mods[m].files.push(f)
 }
 

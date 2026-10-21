@@ -642,6 +642,8 @@ fn (var b: Builder) run_job_fe(j: Job) {
     return
   }
   if let Body(fo, fi, sub) = j {
+    // the declaration's line: the entry's lines are relative to it
+    b.fe.cur_line = if b.c.objs[fo].fn_decl.is_empty() { 0 } else { b.c.objs[fo].fn_decl[0].span.start.line }
     // the entry of this builder's own flags (concurrency, budgets): a
     // body differs by them, and programs of either kind share the cache
     let k0 = b.fe.keys.get(fo) ?? ""
@@ -699,6 +701,8 @@ fn (var b: Builder) run_job_fe(j: Job) {
   }
   match j {
     Closure(cf, _, file, _, _, _, _, _, _, _, _, _) => {
+      // a closure's entry is pinned: its lines are not made relative
+      b.fe.cur_line = 0
       // a closure's body: an entry of its own, sealed into its owner's
       // (fe_finalize); none makes its module's bodies incomplete
       let r = b.fe_begin()
@@ -719,6 +723,9 @@ fn (var b: Builder) run_job_fe(j: Job) {
       // cannot be built here (its job's data is not kept), so a replay
       // that fails drops the build as a commit that fails does
       b.fe.cur_key = key
+      // a closure's entry is pinned (its owner's is too, so it replays
+      // only where it was recorded)
+      b.fe.cur_line = 0
       if !b.fe_replay(d, cf) || b.fe.broken {
         b.fe.broken = false
         b.fe.bad.push("${key} (closure ${b.m.funcs[cf].name}, recorded by xo ${b.fe.last_recorder})")

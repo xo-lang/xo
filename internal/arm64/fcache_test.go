@@ -1867,3 +1867,78 @@ func TestParseListForTests(t *testing.T) {
 		t.Errorf("the parse list does not name the module's file:\n%s", b)
 	}
 }
+
+// TestFrontCacheMovedBodies: a library's bodies keep their front end
+// cache entries when a line is added above them (an entry's lines are
+// relative to its declaration's, decision 0271 addendum), and the build,
+// its line tables and fault positions included, is the cache-off one.
+func TestFrontCacheMovedBodies(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-femoved-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	own := filepath.Join(work, "p")
+	if err := os.MkdirAll(filepath.Join(own, "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lib := "// lib\n\npub fn pick(xs: List[Int], i: Int) -> Int {\n  xs[i]\n}\n\npub fn sum(xs: List[Int]) -> Int {\n  var s = 0\n  for x in xs {\n    s += x\n  }\n  s\n}\n"
+	files := map[string]string{
+		"xo.mod":     "module example.com/p\n",
+		"lib/lib.xo": lib,
+		"main.xo":    "use example.com/p/lib\n\nfn main(os: Os) uses stdio {\n  let xs = [4, 5, 6]\n  os.stdio.println(\"${lib.sum(xs)} ${lib.pick(xs, 1)}\")\n}\n",
+	}
+	for p, s := range files {
+		if err := os.WriteFile(filepath.Join(own, p), []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := filepath.Join(work, "prog")
+	cache := filepath.Join(work, "cache")
+	hits := regexp.MustCompile(`cache fe (\d+)/(\d+) bodies`)
+	build := func(env ...string) ([]byte, string) {
+		t.Helper()
+		os.Remove(out)
+		cmd := exec.Command(xo, "build", "--backend=arm64", "--phase-times", "-o", out, ".")
+		cmd.Dir = own
+		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache), env...)
+		log, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("xo build %v: %v\n%s", env, err, log)
+		}
+		b, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b, string(log)
+	}
+	build()
+	_, warm := build()
+	w := hits.FindStringSubmatch(warm)
+	if w == nil {
+		t.Fatalf("no cache fe line:\n%s", warm)
+	}
+	// three lines above every body of lib
+	if err := os.WriteFile(filepath.Join(own, "lib", "lib.xo"), []byte("// moved\n// down\n// three lines\n"+lib), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, edit := build()
+	e := hits.FindStringSubmatch(edit)
+	if e == nil || e[1] != w[1] {
+		t.Errorf("after lines added above lib's bodies: %v, want the warm build's %s hits", e, w[1])
+	}
+	off, _ := build("XO_BACKEND_CACHE=off")
+	if !bytes.Equal(got, off) {
+		t.Error("the build with moved bodies replayed differs from the cache-off build")
+	}
+}

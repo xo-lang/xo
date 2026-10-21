@@ -12,8 +12,14 @@ use github.com/xo-lang/xo/compiler/lexer
 /// error keeps its bodies (its tokens all count, its comments still not).
 pub fn iface_text(name: Bytes, src: Bytes) -> Bytes {
   let r = parse_file(name, src, true)
+  iface_bytes(lexer.lex(src).tokens, if r.hard { [] } else { r.file.decls })
+}
+
+/// The interface text of a file from its tokens and declarations (its
+/// functions' bodies cut; [] for a file that did not parse: every token).
+fn iface_bytes(toks: List[lexer.Token], decls: List[Decl]) -> Bytes {
   var cuts: List[(Int, Int)] = []
-  for d in (if r.hard { [] } else { r.file.decls }) {
+  for d in decls {
     if let FnDecl(d: fd) = d {
       if let Some(bd) = fd.body {
         cuts.push((bd.span.start.offset, bd.span.end.offset))
@@ -22,8 +28,8 @@ pub fn iface_text(name: Bytes, src: Bytes) -> Bytes {
   }
   let sorted = cuts.sort_by(fn(c) { c.0 })
   var ci = 0
-  var out = BytesBuilder.with_capacity(src.len())
-  for t in lexer.lex(src).tokens {
+  var out = BytesBuilder.new()
+  for t in toks {
     if t.kind == lexer.Kind.Newline || t.kind == lexer.Kind.Eof {
       continue
     }

@@ -398,3 +398,20 @@ edited body misses by its own text, as a program module's body does.
 Program modules' interface closures still hash comments (a comment edit
 misses that module's bodies): the next step. Test: internal/arm64
 TestFrontCacheStdCommentEdit, compiler/parser iface_test.xo.
+
+Addendum (2026-10-21, xo-fa): program modules too, and moved bodies.
+The parser hashes each file's interface as it parses (ParseResult.iface,
+the iface_text tokens), and iface_closures hashes those instead of the
+files' text with bodies cut: a comment, layout or body edit keeps the
+module's closure (module check cache v5). A body's key names its
+declaration's column, not its line, and an entry keeps its lines
+(values, positions, debug variables) relative to the declaration's
+first line (front cache v12), so lines added above a body keep its
+entry and the replay moves its lines. An entry is pinned to its line
+(replayed only there) when it made closures, when a constant names its
+file (dbg's `[file:line:col]`), or when a line falls before the
+declaration; a function it made whole with source lines in another file
+keeps the entry out of the cache, since no key covers that file's
+layout. Test: internal/arm64 TestFrontCacheMovedBodies (hits after three
+lines are added above a library's bodies, binary equal to the cache-off
+build).

@@ -17,6 +17,7 @@
 // parser's for every file.
 
 use github.com/xo-lang/xo/compiler/lexer
+use std/crypto
 
 pub type Diag = lexer.Diag
 pub type Note = lexer.Note
@@ -53,6 +54,9 @@ pub struct ParseResult {
   /// A hard error was reported (not only lexer diagnostics and soft
   /// errors): the tree holds Bad nodes where the parser resynchronized.
   pub hard: Bool = false
+  /// The SHA-256 of the file's interface (iface.xo: its tokens outside
+  /// function bodies, without comments or layout), for cache keys.
+  pub iface: Str = ""
 }
 
 struct Parser {
@@ -109,7 +113,8 @@ pub fn parse_file(name: Bytes, src: Bytes, sig: Bool) -> ParseResult {
   p.lex_habits()
   p.tok = p.toks[0]
   let f = p.parse_file(name)
-  ParseResult{file: f, diags: sort_diags(p.diags), hard: p.hard}
+  let iface = crypto.sha256(iface_bytes(lx.tokens, if p.hard { [] } else { f.decls })).to_hex()
+  ParseResult{file: f, diags: sort_diags(p.diags), hard: p.hard, iface: iface}
 }
 
 /// Orders diagnostics by position, keeping the order of equal ones

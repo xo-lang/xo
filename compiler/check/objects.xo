@@ -254,6 +254,9 @@ pub struct SrcFile {
   pub path: Str
   pub module: Int
   pub ast: parser.File
+  /// The hash of its interface (parser ParseResult.iface): the module
+  /// check and front end caches' key of it (iface_closures)
+  pub iface: Str = ""
   /// Local import names to imports.
   pub imports: Map[Bytes, Import] = {}
   /// The name ends in _test.xo.

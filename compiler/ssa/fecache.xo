@@ -22,7 +22,7 @@
 use std/crypto
 use github.com/xo-lang/xo/compiler/check
 
-const FE_CACHE_VERSION = "xo front cache v11"
+const FE_CACHE_VERSION = "xo front cache v12"
 
 /// The front end cache of one build: entries by key (fe_keys), the
 /// entries to store, and counts.
@@ -63,6 +63,10 @@ pub struct FeCache {
   /// the key of the entry being committed (its closures' replay jobs
   /// name it when one fails)
   pub cur_key: Str = ""
+  /// the first line of the declaration whose body is being built or
+  /// replayed (0 for a closure's): an entry's lines are kept relative to
+  /// it, so a body that moved replays (fe_entry, fe_replay)
+  pub cur_line: Int = 0
   /// qualified name to function object, built on the first replay
   by_ident: Map[Str, Int] = {}
 }
@@ -114,7 +118,10 @@ pub fn fe_keys(c: check.Checker, flags: Str, root: Str, std_sum: Str) -> Map[Int
     // unknown runtime call there, 2026-10-21)
     let whose = if (md.is_std || md.is_prelude || md.native) && !md.root && !std_sum.is_empty() { "std ${std_sum} rooted=${!root.is_empty()} std_roots=${rootsk}" } else { "${closure[o.module]} root=${root} rootmod=${md.root}" }
     var h = BytesBuilder.new()
-    h.write_str("${FE_CACHE_VERSION}\n${flags}\n${whose}\n${c.files[o.decl_file].path}\n${fd.span.start.line}:${fd.span.start.col}\n")
+    // the declaration's column, not its line: an entry's lines are
+    // relative to the declaration's (fe_entry), so a body that moved (an
+    // edit above it) keeps its entry
+    h.write_str("${FE_CACHE_VERSION}\n${flags}\n${whose}\n${c.files[o.decl_file].path}\n${fd.span.start.col}\n")
     h.write(src[fd.span.start.offset..fd.span.end.offset])
     keys[fo] = crypto.sha256(h.freeze()).to_hex()
   }
@@ -284,7 +291,27 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
       return None
     }
   }
-  let fbo = encode_func(b.m, b.m.funcs[fi])
+  // the body's lines relative to its declaration's: pinned to the line
+  // (replayed only there) when it cannot be moved, or made closures
+  let base = b.fe.cur_line
+  var body = b.m.funcs[fi]
+  var pinned = base <= 0 || !made_c.is_empty() || !relocatable(body, base)
+  // a function it made whole with source lines: its lines are its own
+  // file's, which a closure without layout (iface_closures) does not
+  // cover; in the body's file the entry is pinned, elsewhere not kept
+  for (k, x) in b.m.fe_ev {
+    if k == 3 && !b.m.funcs[x].file.is_empty() {
+      if b.m.funcs[x].file != body.file {
+        b.fe_skip("made.file")
+        return None
+      }
+      pinned = true
+    }
+  }
+  if !pinned {
+    shift_lines(body, 1 - base)
+  }
+  let fbo = encode_func(b.m, body)
   if fbo == None {
     return None
   }
@@ -292,6 +319,8 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
   e.str(FE_CACHE_VERSION)
   e.str(b.fe_own_flags())
   e.str(b.fe.recorder)
+  e.uv(base.max(0))
+  e.bool(pinned)
   // the body and what it does to the builder itself: the same whichever
   // builder made the entry (fe_same compares this for verify)
   var tl = EntryW{b: BytesBuilder.new()}
@@ -461,6 +490,12 @@ fn fe_same(a: Bytes, b: Bytes) -> Bool {
   let same_head = x.str() == y.str() && x.str() == y.str()
   let _xr = x.str()
   let _yr = y.str()
+  // the declaration's line and whether the entry is pinned to it: where
+  // the body was, not what it is
+  let _xl = x.uv()
+  let _yl = y.uv()
+  let _xp = x.bool()
+  let _yp = y.bool()
   same_head && x.bytes() == y.bytes() && x.ok && y.ok
 }
 
@@ -474,6 +509,10 @@ fn (var b: Builder) fe_applies(d: Bytes) -> Bool {
     return false
   }
   let _recorder = r.str()
+  let line = r.uv()
+  if r.bool() && line != b.fe.cur_line {
+    return false
+  }
   let _tail = r.bytes()
   let nr = r.uv()
   if !r.ok || nr > d.len() {
@@ -535,6 +574,13 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
     return b.fe_miss("flags")
   }
   b.fe.last_recorder = r.str()
+  let line = r.uv()
+  let pinned = r.bool()
+  if pinned && line != b.fe.cur_line {
+    return b.fe_miss("moved")
+  }
+  // the body's lines were kept relative to its declaration's
+  let shift = if pinned { 0 } else { b.fe.cur_line - 1 }
   let tail = r.bytes()
   let nr = r.uv()
   if !r.ok || nr > d.len() {
@@ -895,7 +941,12 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
       None => bad = true
     }
   }
-  let f = decode_func(b.m, fb, ops)
+  var f = decode_func(b.m, fb, ops)
+  if let Some(g0) = f {
+    var g = g0
+    shift_lines(g, shift)
+    f = Some(g)
+  }
   if !b.fe.break_name.is_empty() && b.m.funcs[fi].name == b.fe.break_name {
     bad = true
   }
@@ -1086,3 +1137,101 @@ pub fn (var b: Builder) fe_finalize() {
 /// (drop_list's xo.droplist[T], an empty function). An entry that made
 /// one whole replays where another body made it already.
 fn fe_const_fn(n: Str) -> Bool { n.starts_with("xo.const[") || n.starts_with("xo.droplist[") }
+
+/// Adds delta to every line of f in its own file: each value's line and
+/// position (`file:line[:col]`), its variables' and their bindings'
+/// (decision 0271 addendum, entries relative to the declaration's line).
+fn shift_lines(var f: Func, delta: Int) {
+  if delta == 0 {
+    return
+  }
+  let pre = "${f.file}:"
+  for vi in 0..f.values.len() {
+    if f.values[vi].line > 0 {
+      f.values[vi].line += delta
+    }
+    if f.values[vi].pos.starts_with(pre) {
+      f.values[vi].pos = shift_pos(f.values[vi].pos, pre, delta)
+    }
+  }
+  for i in 0..f.dvars.len() {
+    if f.dvars[i].line > 0 {
+      f.dvars[i].line += delta
+    }
+  }
+  for i in 0..f.dbinds.len() {
+    if f.dbinds[i].line > 0 {
+      f.dbinds[i].line += delta
+    }
+  }
+}
+
+/// p (`pre` then `line` or `line:col`) with its line moved by delta.
+fn shift_pos(p: Str, pre: Str, delta: Int) -> Str {
+  var parts = p[pre.len()..p.len()].split(":")
+  match Int.parse(parts[0]) {
+    Some(l) => {
+      parts[0] = "${l + delta}"
+      "${pre}${parts.join(":")}"
+    }
+    None => p
+  }
+}
+
+/// Whether f's lines can be kept relative to base (fe_entry): every line
+/// in its file at base or after (a relative line of 0 would read as no
+/// line), its positions all `file:line[:col]`, and no constant naming
+/// its file (dbg's `[file:line:col]`, which a move would not update).
+fn relocatable(f: Func, base: Int) -> Bool {
+  let pre = "${f.file}:"
+  for x in f.values {
+    if x.line > 0 && x.line < base {
+      return false
+    }
+    if x.pos.starts_with(pre) {
+      match Int.parse(x.pos[pre.len()..x.pos.len()].split(":")[0]) {
+        Some(l) => {
+          if l < base {
+            return false
+          }
+        }
+        None => return false
+      }
+    }
+  }
+  for d in f.dvars {
+    if d.line > 0 && d.line < base {
+      return false
+    }
+  }
+  for d in f.dbinds {
+    if d.line > 0 && d.line < base {
+      return false
+    }
+  }
+  !names_file(f, f.file)
+}
+
+/// Whether a constant of f names file (`file:` in a string).
+fn names_file(f: Func, file: Str) -> Bool {
+  if file.is_empty() {
+    return false
+  }
+  let pre = "${file}:"
+  for x in f.values {
+    match x.aux {
+      S(s) => {
+        if x.op == Op.Const && s.contains(pre) {
+          return true
+        }
+      }
+      Bs(b) => {
+        if (b.to_str() ?? "").contains(pre) {
+          return true
+        }
+      }
+      None | I(..) | F(..) | B(..) | P(..) => {}
+    }
+  }
+  false
+}
