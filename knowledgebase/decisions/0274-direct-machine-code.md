@@ -141,6 +141,60 @@ enc_amd64.xo the amd64 emitter's; both are reached only through text
   builds Ops directly instead of text (step 3), and amd64's assembler the
   same way.
 
+## Step 3 for arm64: design notes (2026-10-21, before the measurement)
+
+What the text costs now, per function (compiler/arm64 emit.xo): selection
+writes each instruction as a template rendered to text (emit_plain), the
+line passes rewrite the function's lines in this order: copy_runs_l and
+borrow_flag_peep_l (before the LSDA exists), label_counts (the label
+table, by spelling, step 1), reload_reuse_l, pair_mem_l, far_slots_l,
+far_tests_l, local_empty_l; the text is joined, and the assembler parses
+it back (step 2: into Ops) to encode it. Step 3 removes the print and the
+parse, and makes the passes work on structure instead of strings. The cold
+build profile (phase times and XO_PROF of `xo build compiler/xo` with every
+cache off; held 2026-10-21 for memory, the first item when it runs) is to
+replace the 8.22 s and 6.2 s figures above and to say what each stage
+buys.
+
+The stages, each one pushed alone:
+
+1. Ops beside the text. Each distinct template is parsed once a build
+   into an Op pattern (a map by template text; `$dN`, `$uN`, `$wN` are
+   operand slots), and emit_plain fills the slots with the allocated
+   registers. The text is still what the passes read; under
+   XO_OP_VERIFY=1 each Op is printed and compared with the line rendered
+   from its template, and the first difference fails the build with both
+   texts. Gate: XO_OP_VERIFY=1 builds of every golden and the compiler
+   for darwin and linux arm64 with no failure; no output change at all
+   (the object identity check, obj-identity.sh, every golden, and the
+   fixed point).
+2. A function's lines as items: an Op, a label by id (a join point, a
+   debug row, or a variable location: the marker kinds of step 4's
+   list), a directive (CFI, data) as a call recorded for the object
+   writer, and raw text for what has no Op yet. The label table counts
+   references from the Ops and from the LSDA's label operands, replacing
+   label_counts' scan of text.
+3. The passes ported one at a time, in this order: reload_reuse_l (the
+   largest, and the one every later pass's input depends on), copy_runs_l,
+   pair_mem_l, borrow_flag_peep_l, far_slots_l, far_tests_l,
+   local_empty_l (far_tests_l counts instructions, so it stays after
+   every pass that adds or removes one). For each: under XO_OP_VERIFY=1
+   the text pass also runs on the printed items and its output must equal
+   the ported pass's printed output, function by function (the first
+   difference fails with both texts); the object identity check over
+   every golden and the compiler, darwin and linux; the fixed point.
+4. The assembler takes the items directly (encode_op_fix on each Op, the
+   label table for the fixups): no join, no parse. Text is printed only
+   for `xo asm`, --asm, and XO_OP_VERIFY, through print_op, so
+   TestGoldenAsm and the asm goldens stay byte for byte (decision item 6).
+5. amd64 the same way (decision item 7), after its assembler gets step 2.
+
+What identity means at each stage: the same object (linux byte for byte;
+darwin by disassembly or to the same output name,
+gotchas/darwin-binary-identity-output-name.md) and the same `xo asm`
+text, for every golden and the compiler, on both targets; a stage that
+changes either is wrong, however good its output looks.
+
 ## Consequences
 
 - About 11 s of 89.5 s CPU off a cold self build from steps 1 to 3 and
