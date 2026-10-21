@@ -107,7 +107,12 @@ pub fn fe_keys(c: check.Checker, flags: Str, root: Str, std_sum: Str) -> Map[Int
     // a root module (a std module under test, --std-module) is the
     // program's own: its functions are named and built as the main
     // module's
-    let whose = if (md.is_std || md.is_prelude || md.native) && !md.root && !std_sum.is_empty() { "std ${std_sum} rooted=${!root.is_empty()} std_roots=${rootsk}" } else { "${closure[o.module]} root=${root}" }
+    // a program module's body by whether its module is the build's root
+    // too: a root module's functions are named unprefixed, a library's
+    // with its module, so an entry `xo test compiler/ssa` recorded called
+    // value_self_faults by the name a build importing ssa lacks (an
+    // unknown runtime call there, 2026-10-21)
+    let whose = if (md.is_std || md.is_prelude || md.native) && !md.root && !std_sum.is_empty() { "std ${std_sum} rooted=${!root.is_empty()} std_roots=${rootsk}" } else { "${closure[o.module]} root=${root} rootmod=${md.root}" }
     var h = BytesBuilder.new()
     h.write_str("${FE_CACHE_VERSION}\n${flags}\n${whose}\n${c.files[o.decl_file].path}\n${fd.span.start.line}:${fd.span.start.col}\n")
     h.write(src[fd.span.start.offset..fd.span.end.offset])

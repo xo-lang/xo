@@ -1478,3 +1478,74 @@ fn main(os: Os) {
 		t.Error("the warm build with XO_CHK_CACHE=auto differs from the cache-off build")
 	}
 }
+
+// TestFrontCacheRootThenLibrary: a module's bodies cached while it was
+// the build's root (`xo test` of it: its functions named unprefixed) are
+// not replayed where it is a library (its functions named with its
+// module): an entry `xo test compiler/ssa` recorded called
+// value_self_faults by a name the build of compiler/arm64's tests lacked
+// (2026-10-21). The front end cache keys a program module's body by
+// whether its module is the root.
+func TestFrontCacheRootThenLibrary(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-feroot-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	own := filepath.Join(work, "p")
+	if err := os.MkdirAll(filepath.Join(own, "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"xo.mod":          "module example.com/p\n",
+		"lib/a.xo":        "pub fn api(xs: List[Int]) -> Int {\n  var n = 0\n  for x in xs {\n    if helper(x) {\n      n += 1\n    }\n  }\n  n\n}\n",
+		"lib/b.xo":        "fn helper(x: Int) -> Bool {\n  x > 1\n}\n",
+		"lib/lib_test.xo": "test \"api counts\" {\n  expect(api([1, 2, 3])) == 2\n}\n",
+		"main.xo":         "use example.com/p/lib\n\nfn main(os: Os) uses stdio {\n  os.stdio.println(\"${lib.api([1, 2, 3, 4])}\")\n}\n",
+	}
+	for p, s := range files {
+		if err := os.WriteFile(filepath.Join(own, p), []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cache := filepath.Join(work, "cache")
+	run := func(env []string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command(xo, args...)
+		cmd.Dir = own
+		cmd.Env = append(os.Environ(), env...)
+		log, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("xo %v %v: %v\n%s", args, env, err, log)
+		}
+		return string(log)
+	}
+	on := []string{"XO_BACKEND_CACHE_DIR=" + cache, "XO_BACKEND_CACHE=on"}
+	// lib as the root, then as a library
+	run(on, "test", "--backend=arm64", "./lib")
+	out := filepath.Join(work, "prog")
+	run(on, "build", "--backend=arm64", "-o", out, ".")
+	got, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// the same output path (the code signature names the file)
+	run([]string{"XO_BACKEND_CACHE_DIR=" + filepath.Join(work, "off"), "XO_BACKEND_CACHE=off"}, "build", "--backend=arm64", "-o", out, ".")
+	want, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Error("the build after lib's test build differs from the cache-off build")
+	}
+}
