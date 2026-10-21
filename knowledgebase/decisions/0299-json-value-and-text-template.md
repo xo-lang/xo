@@ -19,8 +19,8 @@ needs data of a shape it can walk. std/json had only typed `encode` and
 2. A new module std/template ports Go's text/template (lexer, parser,
    executor, its actions, pipelines, and built in functions) and renders
    over a `json.Value`: `.Name` is an object field, `index` an array or
-   object element, `range` iterates arrays and objects (objects in key
-   order), `len` counts strings, arrays, and objects. `printf` takes Go's
+   object element, `range` iterates arrays and objects (objects in sorted
+   key order, as Go ranges a map), `len` counts strings, arrays, and objects. `printf` takes Go's
    verbs over JSON values. No custom function maps in the first step; no
    html/template contextual escaping (`html` is the explicit escaper).
    Tests: Go's exec_test.go and parse_test.go tables translated to JSON

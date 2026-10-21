@@ -1,0 +1,18 @@
+// std/template (decision 0299) on every backend: actions, range over a list
+// and a map (sorted keys), if/else, with, printf, index, slice, define and
+// template, the escapers, and parse and execution errors, Go's texts.
+use std/json
+use std/template
+
+fn main(os: Os) {
+  let data = json.parse_value("{\"name\":\"Ann\",\"items\":[1,2,3],\"m\":{\"b\":2,\"a\":1},\"f\":2.5,\"n\":null}").ok() ?? json.Value.Null
+  for src in ["Hello {{.name}}!", "{{range $i, $x := .items}}{{$i}}={{$x}} {{end}}", "{{.m}} {{.items}} {{.f}} {{.n}} {{.missing}}", "{{if gt (len .items) 2}}big{{else}}small{{end}}", "{{printf \"%05.2f|%-4d|%q|%x\" .f 7 .name .name}}", "{{index .items 1}} {{slice .name 1 2}} {{len .m}}", "{{define \"t\"}}[{{.}}]{{end}}{{template \"t\" .name}}", "{{.name.x}}", "{{nope}}", "{{range .m}}{{.}},{{end}}", "{{with .n}}x{{else}}none{{end}}", "{{print 1 2 \"a\" 3}}|{{html \"<a&b>\"}}|{{js \"a'b\"}}|{{urlquery \"a b&c\"}}"] {
+    match template.parse("t0", src) {
+      Ok(t) => match t.render(data) {
+        Ok(s) => os.stdio.println("${src.debug()} -> ${s.debug()}")
+        Err(e) => os.stdio.println("${src.debug()} -> exec error ${e.msg}")
+      }
+      Err(e) => os.stdio.println("${src.debug()} -> parse error ${e.msg}")
+    }
+  }
+}

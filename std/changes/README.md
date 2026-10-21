@@ -31,3 +31,4 @@ entries yet.
 - [json.md](json.md): std/json (spec/std.md 5)
 - [smtp.md](smtp.md): std/smtp (spec/std.md 29)
 - [time.md](time.md): std/time (spec/std.md 13)
+- [template.md](template.md): std/template (spec/std.md 30)

@@ -1,0 +1,15 @@
+exit 0
+--- stdout
+"Hello {{.name}}!" -> "Hello Ann!"
+"{{range $i, $x := .items}}{{$i}}={{$x}} {{end}}" -> "0=1 1=2 2=3 "
+"{{.m}} {{.items}} {{.f}} {{.n}} {{.missing}}" -> "map[a:1 b:2] [1 2 3] 2.5 <no value> <no value>"
+"{{if gt (len .items) 2}}big{{else}}small{{end}}" -> "big"
+"{{printf \"%05.2f|%-4d|%q|%x\" .f 7 .name .name}}" -> "02.50|7   |\"Ann\"|416e6e"
+"{{index .items 1}} {{slice .name 1 2}} {{len .m}}" -> "2 n 2"
+"{{define \"t\"}}[{{.}}]{{end}}{{template \"t\" .name}}" -> "[Ann]"
+"{{.name.x}}" -> exec error template: t0:1:7: executing "t0" at <.name.x>: can't evaluate field x in type interface {}
+"{{nope}}" -> parse error template: t0:1: function "nope" not defined
+"{{range .m}}{{.}},{{end}}" -> "1,2,"
+"{{with .n}}x{{else}}none{{end}}" -> "none"
+"{{print 1 2 \"a\" 3}}|{{html \"<a&b>\"}}|{{js \"a'b\"}}|{{urlquery \"a b&c\"}}" -> "1 2a3|&lt;a&amp;b&gt;|a\\'b|a+b%26c"
+--- stderr

@@ -1,0 +1,35 @@
+// std/template (spec/std.md 30, decision 0299). Declaration file;
+// encoding rules are listed at the top of std/prelude.xo. Go's
+// text/template over a json.Value: the same actions, pipelines, built in
+// functions, output, and errors. Pure.
+use std/json
+
+/// A parse or execution error, with Go's text
+/// (`template: t:1: function "nope" not defined`).
+struct TemplateErr {
+  msg: Str
+} derive Display
+
+/// A set of named templates (template.Template and its associated
+/// templates): each name's source, in the order added, the action
+/// delimiters, and whether a missing object key is an error
+/// (`missingkey=error`) rather than `<no value>`.
+struct Template {
+  name: Str
+  sources: List[(Str, Str)]
+  left: Str = "{{"
+  right: Str = "}}"
+  missing_key_error: Bool = false
+}
+
+/// template.New(name).Delims(left, right).Parse(src): the template, or
+/// Go's parse error. `{{define}}` blocks become templates of the set.
+fn parse(name: Str, src: Str, left: Str = "{{", right: Str = "}}") -> Template ! TemplateErr
+/// Another named template in the set (t.New(name).Parse(src)).
+fn (t: Template) add(name: Str, src: Str) -> Template ! TemplateErr
+/// The set with Option("missingkey=error") (true) or the default.
+fn (t: Template) missing_key(error: Bool) -> Template
+/// Execute: the output of the template named t.name with data.
+fn (t: Template) render(data: json.Value) -> Str ! TemplateErr
+/// ExecuteTemplate: the output of the template name of the set.
+fn (t: Template) render_named(name: Str, data: json.Value) -> Str ! TemplateErr

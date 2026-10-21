@@ -428,6 +428,11 @@ var (
 	_ func(*Task) bool                                                                                                          = Task_stop_requested
 	_ func(*Task) *Chan[Unit]                                                                                                   = Task_stopping
 	_ func(*Task, int64) Task_Semaphore                                                                                         = Task_semaphore
+	_ func(*Task, string, string, string, string) Result[Template_Template, Template_TemplateErr]                               = Template_parse
+	_ func(*Template_Template, *Task, string, string) Result[Template_Template, Template_TemplateErr]                           = (*Template_Template).M_add
+	_ func(*Template_Template, *Task, bool) Template_Template                                                                   = (*Template_Template).M_missing_key
+	_ func(*Template_Template, *Task, Json_Value) Result[string, Template_TemplateErr]                                          = (*Template_Template).M_render
+	_ func(*Template_Template, *Task, string, Json_Value) Result[string, Template_TemplateErr]                                  = (*Template_Template).M_render_named
 	_ func(*Task, Stdio, Env) bool                                                                                              = Term_color_enabled
 	_ func(*Task, Stdio, Env) Term_Painter                                                                                      = Term_painter
 	_ func(*Term_Painter, *Task, string) string                                                                                 = (*Term_Painter).M_bold

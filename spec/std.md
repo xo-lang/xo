@@ -3467,6 +3467,45 @@ fn send(net: Net, addr: Str, from: Str, to: List[Str], msg: Bytes,
   that does not offer it is `smtp: server doesn't support AUTH`.
 - Tests: golden test_smtp (a fake server on FakeNet, every backend),
   with CRAM-MD5 checked against net/smtp's auth_test vector.
+## 30. std/template
+
+Status: implemented on every backend (decision 0299, 2026-10-21): Go's
+text/template, run by the Go backend itself (`std/rt/template.go`) and
+ported natively (`std/native/template.xo`: lexer, parser, executor, the
+built in functions, and fmt's printing); Go's output and error texts on
+205 templates (`template_test.xo`) and golden `template_basic`.
+
+```
+struct TemplateErr { msg: Str } derive Display          // Go's texts
+struct Template { name: Str, sources: List[(Str, Str)], left: Str = "{{", right: Str = "}}", missing_key_error: Bool = false }
+
+pub fn parse(name: Str, src: Str, left: Str = "{{", right: Str = "}}") -> Template ! TemplateErr
+fn (t: Template) add(name: Str, src: Str) -> Template ! TemplateErr
+fn (t: Template) missing_key(error: Bool) -> Template
+fn (t: Template) render(data: json.Value) -> Str ! TemplateErr
+fn (t: Template) render_named(name: Str, data: json.Value) -> Str ! TemplateErr
+```
+
+- The data is a `json.Value` (5.1; `json.to_value(x)` for a type that
+  derives Json). The template sees it as Go sees `encoding/json` data:
+  numbers are int64 (an Int) or float64, objects `map[string]interface
+  {}` (`.name` is a field, `index` an element; `range` and printing in
+  sorted key order), arrays `[]interface {}`, null a nil.
+- Everything of text/template: text and actions, `{{- ` and ` -}}` trim
+  markers, comments, variables (`$x := `, `$x = `), pipelines, `if`,
+  `else if`, `range` (lists, objects, integers, `break`, `continue`,
+  `else`), `with`, `define`, `template`, `block`, constants (booleans,
+  strings, numbers including hex, runes, and complex), and the built in
+  functions `and`, `or`, `not`, `len`, `index`, `slice`, `eq`, `ne`, `lt`,
+  `le`, `gt`, `ge`, `print`, `println`, `printf` (fmt's verbs and flags),
+  `html`, `js`, `urlquery`, and `call` (no function values in JSON data,
+  so `call` always fails). A missing field prints `<no value>`;
+  `missing_key(true)` makes it an error. No custom functions.
+- Errors are Go's: parse errors `template: t:1: function "nope" not
+  defined`, execution errors `template: t:1:7: executing "t" at
+  <.name.x>: can't evaluate field x in type interface {}`.
+- `render` parses the set again each time (a parsed set is not a value
+  yet); parse once with `parse` to check a template early.
 
 <!-- BEGIN prelude index: generated from std/prelude.xo by `go run ./scripts/stdindex`; do not edit -->
 

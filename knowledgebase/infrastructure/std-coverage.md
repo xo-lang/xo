@@ -80,7 +80,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | mime/quotedprintable | inside std/native/multipart | partial | The decoder, for quoted-printable parts. Missing: a public module and the encoder (with an SMTP client). |
 | html | none | planned | EscapeString for server rendered pages. |
 | html/template | none | planned | Contextual escaping templates; after html. |
-| text/template | none | planned | Config and mail templates; after html/template. |
+| text/template | std/template | done | Go's text/template over json.Value data (decision 0299); no custom function maps, no html/template. |
 | text/tabwriter | none | planned | CLI tables; std/cli and std/term cover most tool output. |
 | text/scanner | none | not planned | Go source tokenizer; Xo's own lexer is in selfhost. |
 | regexp, regexp/syntax | std/regexp | done | Go's parser, compiler, and Pike VM ported, with every Unicode class of Go's regexp natively (2026-10-21); Go's results on re2-search.txt and on each class. |
