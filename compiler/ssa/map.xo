@@ -1034,8 +1034,125 @@ fn (var b: Builder) closure_with(lit: parser.FnLit, ct: check.Ty, et: Int) -> In
 }
 
 /// `for (k, v) in m` and `for x in set`: the live entries in insertion
-/// order, of the value the map had when the loop started (forMap).
+/// order, of the value the map had when the loop started (forMap). A
+/// hybrid map (decision 0291) in log mode on a root table is walked in
+/// place (for_mlog_root: its bindings read the table's entries, nothing
+/// copied); the lists' loop otherwise, whose log-mode lists
+/// (xo.maph.logkvl) copy every entry, a dup of each key and value per
+/// loop (a GET of a store's map under a read lock: the counts of every
+/// value's strings fought over by the cores, 2026-10-21). The body is
+/// built for both loops when it is small (MAP_WALK_TWICE nodes) and has
+/// no closure or defer (check.twice_ok); a larger one keeps the lists'
+/// loop alone (every body built twice grew xo's text 0.44%).
 fn (var b: Builder) for_map(label: Bytes, p: Pattern, bound: List[Expr], body: parser.Block, mv: Int) {
+  let t = b.vty(mv)
+  if !b.m.map_log || !check.twice_ok(body, MAP_WALK_TWICE) {
+    b.for_map_lists(label, p, bound, body, mv)
+    return
+  }
+  let lt = b.maph_lt(t)
+  let done = b.new_block()
+  let lists = b.new_block()
+  let (lb, nb) = b.branch(b.maph_is_log(t, mv))
+  b.s.cur = lb
+  let tbl = b.call("list.index", lt, "", [b.mfield(t, 5, mv), b.cint(0)])
+  // a root table (no parents) from position 0: eachpos and mlog_at read
+  // own positions as absolute ones (a flatten's table starts at 0; a
+  // view with a base reads through its parents)
+  let root = b.add(Op.And, b.bool_t(), Aux.None, [b.bop(Op.Eq, b.call("list.len", b.int_t(), "", [b.mf(lt, 7, tbl)]), b.cint(0)), b.bop(Op.Eq, b.mf(lt, 3, tbl), b.cint(0))])
+  let (rb, fb) = b.branch(root)
+  b.s.cur = rb
+  b.for_mlog_root(label, p, bound, body, t, tbl)
+  if !b.is_dead() {
+    b.jump(done, [])
+  }
+  b.s.cur = fb
+  b.jump(lists, [])
+  b.s.cur = nb
+  b.jump(lists, [])
+  b.seal(lists)
+  b.s.cur = lists
+  b.for_map_lists(label, p, bound, body, mv)
+  if !b.is_dead() {
+    b.jump(done, [])
+  }
+  b.seal(done)
+  b.s.cur = done
+}
+
+/// The most nodes of a loop body for_map builds twice (its in-place walk
+/// of a log-mode table beside the lists' loop).
+const MAP_WALK_TWICE = 64
+
+/// for_map's loop over the root log table tbl of the hybrid map type t:
+/// its live entries' current entries in insertion order
+/// (xo.mlog.eachpos), each read in place from the table's directory (the
+/// map value holds the table for the loop, and entries never change).
+fn (var b: Builder) for_mlog_root(label: Bytes, p: Pattern, bound: List[Expr], body: parser.Block, t: Int, tbl: Int) {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let lt = b.vty(tbl)
+  let et = mlog_entry_of(b.m, lt)
+  let ps = b.call(b.mlog_eachpos(lt), b.m.list(it), "", [tbl])
+  let dir = b.mf(lt, 0, tbl)
+  let set = b.m.types[t].name.starts_with("Set[")
+  let n = b.call("list.len", it, "", [ps])
+  let idx = b.local()
+  b.write_var(idx, b.cint(0))
+  let tick = b.loop_bound(bound)
+  let head = b.new_block()
+  let bodyb = b.new_block()
+  let latch = b.new_block()
+  let exit = b.new_block()
+  b.jump(head, [])
+  b.s.cur = head
+  let i = b.read(idx)
+  b.s.f.branch(b.s.cur, b.add(Op.Lt, bt, Aux.None, [i, n]), bodyb, exit)
+  b.seal(bodyb)
+  b.s.cur = bodyb
+  b.loop_tick(tick)
+  let e = b.mlog_at(et, dir, b.call("list.index", it, "", [ps, i]))
+  let kt = map_key(b.m, t)
+  let k = b.add(Op.Field, kt, Aux.I(n: 3), [e])
+  var elem = k
+  let fail = b.new_block()
+  if !set {
+    let vt = map_val(b.m, t)
+    let v = b.add(Op.Field, vt, Aux.I(n: 4), [e])
+    var els: List[Pattern] = []
+    if let TuplePat(elems: es, ..) = p {
+      els = es
+    }
+    if els.len() == 2 {
+      // `(k, v)` binds the key and the value apart, both borrowed from
+      // the table's entry
+      b.pattern(k, els[0], fail)
+      b.pattern(v, els[1], fail)
+      elem = -1
+    } else {
+      elem = b.add(Op.Tuple, b.m.tuple([kt, vt]), Aux.None, [k, v])
+    }
+  }
+  if elem >= 0 {
+    b.pattern(elem, p, fail)
+  }
+  b.end_fail(fail)
+  b.s.loops.push(LoopCtx{label: label, brk: exit, cont: latch, exits: b.s.exits.len()})
+  b.block(body)
+  b.s.loops.pop()
+  b.jump(latch, [])
+  b.seal(latch)
+  b.s.cur = latch
+  let ci = b.read(idx)
+  b.write_var(idx, b.add(Op.Add, it, Aux.None, [ci, b.cint(1)]))
+  b.jump(head, [])
+  b.seal(head)
+  b.seal(exit)
+  b.s.cur = exit
+}
+
+/// for_map over the lists (map_kvl): a hybrid map's in log mode copied.
+fn (var b: Builder) for_map_lists(label: Bytes, p: Pattern, bound: List[Expr], body: parser.Block, mv: Int) {
   let it = b.int_t()
   let bt = b.bool_t()
   let t = b.vty(mv)

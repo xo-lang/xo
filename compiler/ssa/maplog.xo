@@ -752,6 +752,76 @@ fn (var b: Builder) mlog_each(t: Int) -> Str {
   name
 }
 
+/// xo.mlog.eachpos[T](m) -> List[Int]: for a root table m (no parents,
+/// base 0), the own positions of its live keys' current entries in
+/// insertion order (mlog_each's order and values, as positions: a loop
+/// reads the entries in place, for_mlog_root, with no copy of a key or
+/// a value).
+fn (var b: Builder) mlog_eachpos(t: Int) -> Str {
+  let it = b.int_t()
+  let et = mlog_entry_of(b.m, t)
+  let il = b.m.list(it)
+  let name = "xo.mlog.eachpos[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t], [il], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let mp = b.param(0)
+  let n = b.mf(t, 4, mp)
+  let out = b.local()
+  b.write_var(out, b.call("list.new", il, "", [n]))
+  let rdir = b.mf(t, 0, mp)
+  let rlim = b.mf(t, 5, mp)
+  // with no garbage every entry is live and its own origin, in order
+  let (ng, jg) = b.if_then_begin(b.bop(Op.Eq, rlim, n))
+  let fv = b.local()
+  let (fi0, fh, fx) = b.for_up_to_begin(n, fv)
+  b.write_var(out, b.call("list.push", il, "", [b.read(out), fi0]))
+  b.for_up_to_end(fi0, fv, fh, fx)
+  b.retv(b.read(out))
+  b.if_then_end(ng, jg)
+  // else mlog_each's root walk: an entry is current when no later
+  // entry's prev names it, and current live entries go by origin
+  let bl = b.m.list(b.bool_t())
+  let supv = b.local()
+  b.write_var(supv, b.call("list.new", bl, "", [rlim]))
+  let ordv = b.local()
+  b.write_var(ordv, b.call("list.new", il, "", [rlim]))
+  let zv = b.local()
+  let (z, zh, zx) = b.for_up_to_begin(rlim, zv)
+  b.write_var(supv, b.call("list.push", bl, "", [b.read(supv), b.cbool(false)]))
+  b.write_var(ordv, b.call("list.push", il, "", [b.read(ordv), b.cint(0)]))
+  b.for_up_to_end(z, zv, zh, zx)
+  let sv = b.local()
+  let (s, sh, sx) = b.for_up_to_begin(rlim, sv)
+  let sp = b.add(Op.Field, it, Aux.I(n: 1), [b.mlog_at(et, rdir, s)])
+  let (nps, jps) = b.if_then_begin(b.bop(Op.Ge, sp, b.cint(0)))
+  b.write_var(supv, b.call("list.set", bl, "", [b.read(supv), sp, b.cbool(true)]))
+  b.if_then_end(nps, jps)
+  b.for_up_to_end(s, sv, sh, sx)
+  let ov = b.local()
+  let (o, oh, ox) = b.for_up_to_begin(rlim, ov)
+  let oorg = b.add(Op.Field, it, Aux.I(n: 2), [b.mlog_at(et, rdir, o)])
+  let cur_live = b.add(Op.And, b.bool_t(), Aux.None, [b.add(Op.Not, b.bool_t(), Aux.None, [b.call("list.index", b.bool_t(), "", [b.read(supv), o])]), b.bop(Op.Ge, oorg, b.cint(0))])
+  let (nol, jol) = b.if_then_begin(cur_live)
+  b.write_var(ordv, b.call("list.set", il, "", [b.read(ordv), oorg, b.iop(Op.Add, o, b.cint(1))]))
+  b.if_then_end(nol, jol)
+  b.for_up_to_end(o, ov, oh, ox)
+  let ords = b.read(ordv)
+  let wv = b.local()
+  let (w0, wh, wx) = b.for_up_to_begin(rlim, wv)
+  let x = b.call("list.index", it, "", [ords, w0])
+  let (nx, jx) = b.if_then_begin(b.bop(Op.Ne, x, b.cint(0)))
+  b.write_var(out, b.call("list.push", il, "", [b.read(out), b.iop(Op.Sub, x, b.cint(1))]))
+  b.if_then_end(nx, jx)
+  b.for_up_to_end(w0, wv, wh, wx)
+  b.retv(b.read(out))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
 /// A fresh table holding entries es (fresh, in insertion order) with
 /// room for extra more, claimed through position es.len() + claim.
 fn (var b: Builder) mlog_table(t: Int, es: Int, claim: Int) -> Int {
@@ -1000,6 +1070,11 @@ fn (var b: Builder) mlog_put(t: Int) -> Str {
   // claim cell then count two) whose view is the whole log, and k's newest
   // entry is live: the entry's value is replaced in place, as the lists'
   // put does (no claim, no new entry, no garbage to flatten later)
+  // A loop walking the table in place (map.xo for_mlog_root) holds a
+  // count of its directory for the whole walk, so the directory is never
+  // sole during a walk and a put in the loop's body appends: a test
+  // here that stops reading the directory's count would let the body
+  // change an entry the walk reads later.
   let used = b.mf(t, 2, mp)
   let (nt, jt) = b.if_then_begin(b.bop(Op.Gt, b.call("list.len", it, "", [used]), b.cint(0)))
   let dir = b.mf(t, 0, mp)

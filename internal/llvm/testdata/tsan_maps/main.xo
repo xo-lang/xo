@@ -3,7 +3,8 @@
 // outside the lock: a --race build reports nothing in either Map form
 // (TestTSanSharedMaps, XO_MAP_LOG=0 and 1). The log form once stored new
 // entries into chunks already marked shared, whose values other threads
-// then counted without atomics (decision 0291, 2026-10-21).
+// then counted without atomics (decision 0291, 2026-10-21). A walk under
+// the read lock reads a log-mode table in place while other tasks append.
 use std/task
 
 struct Rec {
@@ -48,6 +49,15 @@ fn worker(m: Mutex[State], w: Int) -> Int {
     for (_, r) in snap {
       seen += r.tags.len() % 2
     }
+    // a walk under the read lock while other tasks append (a log-mode
+    // Map's loop reads its table in place, ssa for_mlog_root)
+    seen += m.with_read(fn(st) {
+      var c = 0
+      for (_, r) in st.recs {
+        c += r.name.len() % 3
+      }
+      c
+    })
   }
   seen
 }

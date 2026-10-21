@@ -1,0 +1,134 @@
+// decision 0291 hybrid maps: a loop over a map in log mode walks its
+// table in place (ssa map.xo for_mlog_root, xo.mlog.eachpos), with the
+// same entries, order and snapshot as the lists' loop: a put of a later
+// key and a remove in the body (the unshared in-place put must not reach
+// the walk), a body that flattens the table, and a converted set. Log
+// mode by two shared writes on one lineage (the copies read after).
+
+/// Log mode by Xo Lang 3's recipe: a shared write marks b, a shared
+/// write on its copy c converts c (decision 0291).
+fn log_map(n: Int) -> (Map[Int, Int], Int) {
+  var a: Map[Int, Int] = {}
+  for i in 0..n {
+    a[i] = i
+  }
+  var b = a
+  b[n] = n
+  var c = b
+  c[n + 1] = n + 1
+  // a and b read in full after c's write: their lists stay held there
+  var keep = 0
+  for (_, v) in a {
+    keep += v
+  }
+  for (_, v) in b {
+    keep += v
+  }
+  (c, keep)
+}
+
+fn walk(m: Map[Int, Int]) -> Str {
+  var s = StrBuilder.new()
+  for (k, v) in m {
+    s.write("${k}:${v} ")
+  }
+  s.freeze()
+}
+
+/// The first key whose value is v, returned from inside the walk.
+fn find_val(m: Map[Int, Int], v: Int) -> Int {
+  for (k, x) in m {
+    if x == v {
+      return k
+    }
+  }
+  -1
+}
+
+/// The keys before the first one over lim, a break inside the walk.
+fn upto(m: Map[Int, Int], lim: Int) -> Int {
+  var c = 0
+  for (k, _) in m {
+    if k > lim {
+      break
+    }
+    c += 1
+  }
+  c
+}
+
+/// The hazard steps in a body of more than 64 nodes (the lists' loop,
+/// ssa for_map's MAP_WALK_TWICE): the same view as the small body's.
+fn big_body(var m: Map[Int, Int]) -> Str {
+  var s = StrBuilder.new()
+  var t = 0
+  for (k, v) in m {
+    if k == 3 {
+      m[15] = 99
+      m.remove(17)
+    }
+    let a = k * 2 + v * 3 - 1
+    let b = if a % 2 == 0 { a / 2 } else { a * 3 + 1 }
+    let c = if b > 50 { b - 50 } else { b + 50 }
+    let d = (a + b + c) % 7
+    t += a + b + c + d
+    if d == 3 && k > 100 {
+      t -= 1
+    }
+    s.write("${k}:${v} ")
+  }
+  "${s.freeze()}${t}"
+}
+
+fn main(os: Os) {
+  let (m0, l) = log_map(20)
+  var m = m0
+  os.stdio.println("log ${l}: ${walk(m)}")
+  // m is now the table's only holder: a put of a live key is in place
+  var seen = StrBuilder.new()
+  for (k, v) in m {
+    if k == 3 {
+      m[15] = 99
+      m.remove(17)
+    }
+    seen.write("${k}:${v} ")
+  }
+  os.stdio.println("inplace: ${seen.freeze()}")
+  os.stdio.println("after: ${walk(m)}")
+  // a body that flattens: garbage past 8x the live keys
+  var seen2 = 0
+  var sum = 0
+  for (k, v) in m {
+    if k == 1 {
+      for j in 0..300 {
+        m[2] = j
+      }
+    }
+    seen2 += 1
+    sum += v
+  }
+  os.stdio.println("flatten: ${seen2} ${sum} now ${m.get(2) ?? -1}")
+  // a set converted the same way
+  var sa: Set[Int] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].to_set()
+  var sb = sa
+  sb.add(10)
+  var sc = sb
+  sc.add(11)
+  var sk = 0
+  for x in sa {
+    sk += x
+  }
+  for x in sb {
+    sk += x
+  }
+  var ss = StrBuilder.new()
+  for x in sc {
+    ss.write("${x} ")
+  }
+  os.stdio.println("set: ${ss.freeze()} ${sk}")
+  let (m2, _) = log_map(20)
+  os.stdio.println("return: ${find_val(m2, 7)} ${find_val(m2, 99)}")
+  os.stdio.println("break: ${upto(m2, 9)}")
+  var m3 = m2
+  os.stdio.println("big: ${big_body(m3)}")
+}

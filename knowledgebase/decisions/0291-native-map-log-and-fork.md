@@ -309,3 +309,41 @@ the Map goldens on wasm in both forms and TestSelfhostWasm every golden
 with the hybrid. HTTP CRUD instructions per
 request (callgrind, arm64): -0.9% at 8 users, -54.9% at 10,000.
 
+Addendum (2026-10-21, xo-fa; reviewed by Xo Lang 3 and Xo Lang 2): a
+`for` loop over a hybrid Map or Set in log mode on a root table walks the
+table in place (compiler/ssa map.xo for_mlog_root). `xo.mlog.eachpos[L]`
+gives the own positions of the live keys' current entries in insertion
+order (mlog_each's root walk and order, as positions: the view's len,
+field 5; origin order; positions 0..n-1 only when the table has no
+garbage), and the loop binds the key and value to fields of each entry,
+borrowed. Before, the loop's lists came from xo.maph.logkvl, which copied
+every entry (a dup of each key and value, dropped after the loop): a
+store under a lock walked on every GET had its strings' counts fought
+over by the cores. A forked view (parents) and a loop body with a closure
+or a defer keep the lists' loop (the body is built once per loop:
+check.twice_ok: at most 64 nodes).
+- Soundness: mlog_put's unshared fast path (maplog.xo) replaces an entry
+  in place when the directory and claim cell are sole; the loop holds its
+  table's directory counted for the whole walk (insert_rc retains the
+  leaf when the body's write consumes the map), so the directory is never
+  sole during a walk and a put in the body appends. Entries are otherwise
+  append only, a flatten builds a new table, and a reader reads positions
+  below its view's len (find's argument).
+- Measured: a single-thread walk loop over a log map, user 3.6 to 3.9 s
+  to 1.21 s; Xo Lang 3's CRUD profile (Docker arm64, 1024 connections):
+  drop Str, dup Str?, xo.mlog.each and logkvl gone from GET /users, CPU
+  per request on 6 cores -9% and -44% in two rounds; throughput within the
+  run-to-run noise (sockets and the scheduler lead).
+- Cost: the body is built twice (the walk beside the lists' loop): xo's
+  own __text grew 0.44% (51,250,808 to 51,474,280 bytes; nearly every
+  loop body is under the 64 node limit). A single loop choosing the
+  element read per entry was tried and rejected: insert_rc owns the
+  joined bindings (a retain on each edge, a release after use), a dup
+  and drop per entry in both modes; it needs a borrowed join first.
+- The root test also requires the table's base to be 0 (field 3).
+- Tests: golden map_log_iter (puts and removes in the body, a flattening
+  body, a return and a break inside the walk, a body over 64 nodes on
+  the lists' loop, a converted set; want.txt is the XO_MAP_LOG=0
+  build's output, and XO_LEAKCHECK shows 0 live in both), the Map
+  goldens on arm64, LLVM and wasm, TestTSanSharedMaps with a walk under
+  with_read.
