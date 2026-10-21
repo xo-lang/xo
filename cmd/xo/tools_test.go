@@ -1330,3 +1330,69 @@ func TestWasmToolRejectedText(t *testing.T) {
 		t.Errorf("want `== rejected FILE:2:COL: XO0401 ...`, got:\n%s", out)
 	}
 }
+
+// TestVetRecvOrder covers XO0537 (gotchas/receiver-read-before-args.md):
+// `t.size(t.add(v))` with a by value `size` and a `var` `add` is reported
+// (line 15); a `var` receiver and an argument that changes another value
+// are not.
+func TestVetRecvOrder(t *testing.T) {
+	t.Parallel()
+	src := `struct Table {
+  items: List[Int]
+}
+
+fn (var t: Table) add(v: Int) -> Int {
+  t.items.push(v)
+  t.items.len() - 1
+}
+
+fn (t: Table) size(i: Int) -> Int { t.items[i] }
+
+fn (var t: Table) vsize(i: Int) -> Int { t.items[i] }
+
+fn bad(var t: Table, v: Int) -> Int {
+  t.size(t.add(v))
+}
+
+fn good(var t: Table, var u: Table, v: Int) -> Int {
+  let a = t.vsize(t.add(v))
+  let b = t.size(u.add(v))
+  a + b
+}
+
+fn main(os: Os) {
+  var t = Table{items: [1]}
+  os.stdio.println("${bad(t, 2)}")
+}
+`
+	dir := writeFiles(t, map[string]string{"main.xo": src})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"vet", "--json", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	var res struct {
+		Diagnostics []struct {
+			Code     string `json:"code"`
+			Severity string `json:"severity"`
+			Span     struct {
+				Line int `json:"line"`
+			} `json:"span"`
+		} `json:"diagnostics"`
+		CheckErrors int `json:"check_errors"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &res); err != nil {
+		t.Fatalf("bad JSON: %v\n%s", err, out.String())
+	}
+	if res.CheckErrors != 0 {
+		t.Fatalf("check errors: %d\n%s", res.CheckErrors, out.String())
+	}
+	var got []string
+	for _, d := range res.Diagnostics {
+		if d.Code == "XO0537" {
+			got = append(got, fmt.Sprintf("%d %s", d.Span.Line, d.Severity))
+		}
+	}
+	if strings.Join(got, ", ") != "15 warning" {
+		t.Errorf("XO0537 at %v, want [15 warning]\n%s", got, out.String())
+	}
+}

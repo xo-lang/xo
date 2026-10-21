@@ -484,7 +484,7 @@ parent for a sub effect; implicit effect variables are never reported),
 XO0207 (`x ?? [].f()`: a selector chain on the right of `??` whose base is
 a literal, with a fix that parenthesizes the `??`), XO0208 (note: every
 prelude `.ignore_err(reason)` call with its reason and the Result type),
-XO1103 (note, one per module: `use go` packages and the functions whose
+XO0537 (warning, 2026-10-21: `x.m(x.n(..))` where m takes x by value and n is a `var` method of the same root value: the by value receiver is read before the argument runs, gotchas/receiver-read-before-args.md), XO1103 (note, one per module: `use go` packages and the functions whose
 performed effects include `go`), XO0901 (`dbg(...)` with a fix that keeps
 the argument). Human output goes to stdout, the summary to stderr.
 

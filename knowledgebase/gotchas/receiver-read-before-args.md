@@ -45,5 +45,5 @@ A scan of compiler/ for `x.byvalue(x.var(...))` with the argument a direct
 call found three more in the checker (call.xo `c.is_numeric(c.infer(..))`
 and `c.resolve(c.subst(..))`, habits.xo `c.is_prelude(c.infer(..))`); all
 bind the argument first. The scan's ssa hits are false positives (every
-Builder method is `var`). A `xo vet` check for the shape would end the
-series.
+Builder method is `var`). `xo vet` now has the check (XO0537, 2026-10-21): a call of a by value
+method whose argument calls a `var` method of the same root value.
