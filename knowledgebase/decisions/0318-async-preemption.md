@@ -335,3 +335,75 @@ Goldens async_preempt_regs and async_preempt_alloc (XO_THREADS=1) run
 the stress programs on every backend and are in the Docker amd64
 sample. darwin/amd64 is untested (no Intel Mac in the gates: best
 effort).
+
+## Addendum (2026-10-21): the LLVM backend (stage 4, proposed)
+
+Owner and lead, 2026-10-21: LLVM builds go poll-free too. Xo lang 4's
+measurement: nbody at O3 with the approved list fixes runs 1,169 M
+instructions without polls and 2,130 M with them; the poll's inline asm
+call keeps LLVM from promoting the loop's values to registers, and an
+`unordered` flag load recovers only 16% of it.
+
+The native backend's tables do not carry over: LLVM inlines runtime
+code into the program's functions by design (the backend calls
+xo_x_obj_rl_new_n, rl_free_n, rc_defer_n, and others with
+`alwaysinline`, and its own inliner takes any small runtime function),
+and after optimization nothing marks which instructions came from where.
+Keeping runtime code out of program functions would give up the
+allocation fast paths. Reading the DWARF inline records of every object
+before the link would work but needs debug information in every build
+and a DWARF reader in the driver.
+
+Instead, Go's way (its `acquirem` and `mallocing`): the runtime says
+when it must not be interrupted, with a count kept per fiber.
+
+1. **Which runtime functions guard.** The SSA builder marks every
+   runtime function (runtime_mod's modules) that can reach a thread's
+   own structures: one that uses rt.tlocal_get, rt.tlocal_set, or
+   rt.tlocal_addr, or calls (transitively, over the module's call graph)
+   one that does. The allocator, the free lists, the deferred release
+   queue, the worker's rings, and the scheduler's switches all go
+   through the thread local table, so they are marked; string compares,
+   hashing, and list arithmetic are not. The signal entries (cabi.xo
+   on_urg, on_prof) are not marked, or the handler would always see its
+   own count.
+2. **The guard.** A marked function's LLVM body starts by adding one to
+   the current fiber's no-preemption count (the fiber record's new word
+   F_NOPRE, through the fiber pointer in the thread local table, read
+   inline, not through the noinline xo_tlocal_get) and ends, on every
+   return, by taking one away through the same fiber pointer, so a
+   function that parks and resumes on another thread still decrements
+   its own fiber. A compiler barrier (`asm sideeffect "", "~{memory}"`)
+   follows the increment and precedes the decrement, so no load or store
+   of the guarded body moves out when LLVM inlines it. A thread with no
+   fiber skips both (it is never preempted). The count is per fiber,
+   not per thread: a fiber that parks inside a marked function (a
+   channel wait inlined into the program) leaves its own count up while
+   others run on the thread.
+3. **The handler** (unchanged otherwise) declines when the current
+   fiber's F_NOPRE is not 0, and when the PC is outside the Xo text: in
+   LLVM builds every Xo function, runtime included, is placed in a
+   section of its own (`__TEXT,__xo_text` on darwin, `xo_text` on ELF,
+   whose `__start_`/`__stop_` and `section$start$` symbols the linkers
+   define), and static word 77's list holds one table: that section, no
+   ranges. The C library, compiler-rt, and the signal trampolines are
+   outside it, so an interrupted malloc or memmove is declined.
+4. **Polls off** for `--backend=llvm` on darwin and Linux, not --race
+   (ThreadSanitizer, item 5). Windows LLVM follows stage 3.
+5. **Cost.** A marked function inlined into a program loop costs the
+   fiber pointer's load, an add, a store, and the same at the end (about
+   six instructions per allocation or release that reaches the
+   allocator), and its barrier ends the loop's register promotion only
+   where the loop already calls into the allocator.
+6. **Tests and measurements.** TestAsyncPreempt and the goldens
+   async_preempt_regs and async_preempt_alloc on the LLVM backend (darwin
+   and linux/arm64), TestPreemptMigrate, the LLVM goldens at -O1 and the
+   -O2 sample, and the loop rows (sieve, collatz, sort, nbody) and an
+   allocation heavy row (push, update) against `--no-preempt`, with
+   Xo lang 4's nbody kit.
+
+Estimate: about half a day of work: the builder's marking and the
+guard's emission (compiler/ssa, compiler/llvm), the fiber word and the
+handler's two checks (std/native/llrt pool.xo, sched.xo), the section
+attribute and its table, then the tests and measurements; the full LLVM
+goldens through the heavy queue.
