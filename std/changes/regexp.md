@@ -1,5 +1,19 @@
 # std/regexp changes
 
+## 2026-10-21: test: a Go-generated corpus for regexp
+
+- Kind: test
+- Commit: (filled in after the push)
+- Found by: the lead's plan for the regexp fast paths (Go's order, each proved by a corpus)
+- Go reference: regexp (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/regexp (go, arm64, LLVM); scripts/stdcorpus regexp
+
+260 patterns (curated: anchors, classes, repeats, lazy forms, alternation,
+groups, flags, folding, empty matches, bad syntax; and seeded random ones)
+against 40 texts: whether the pattern compiles, find_index, find_all,
+captures, replace_all, replace_all_literal, and split, equal to Go's. It
+passes on the current engine on all three backends.
+
 ## 2026-10-21: perf: the Pike VM queues are flat and preallocated
 
 - Kind: perf
