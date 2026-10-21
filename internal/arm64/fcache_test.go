@@ -1807,3 +1807,63 @@ func TestStdSumMemoPerTree(t *testing.T) {
 		t.Fatalf("stdsums memos: %d (%v), want one per std tree, 2", len(es), err)
 	}
 }
+
+// TestParseListForTests: `xo test` keeps the build target's parse list
+// and parses its files on tasks before the check, as a build does
+// (2026-10-21: a test build parsed std serially, 0.14 s of a warm 0.5 s
+// build of json's tests).
+func TestParseListForTests(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-parselist-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	own := filepath.Join(work, "p")
+	if err := os.MkdirAll(own, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"xo.mod":      "module example.com/p\n",
+		"lib.xo":      "pub fn twice(x: Int) -> Int {\n  x * 2\n}\n",
+		"lib_test.xo": "test \"twice\" {\n  expect(twice(2)) == 4\n}\n",
+	}
+	for p, s := range files {
+		if err := os.WriteFile(filepath.Join(own, p), []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cache := filepath.Join(work, "cache")
+	for i := 0; i < 2; i++ {
+		if i == 1 {
+			// an unchanged test build is served by the test binary
+			// cache and checks nothing (decision 0236): edit first
+			if err := os.WriteFile(filepath.Join(own, "lib.xo"), []byte(files["lib.xo"]+"\n// edited\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		cmd := exec.Command(xo, "test", "--backend=arm64", ".")
+		cmd.Dir = own
+		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on")
+		if log, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("xo test (%d): %v\n%s", i, err, log)
+		}
+	}
+	lists, _ := filepath.Glob(filepath.Join(cache, "pack", "*", "parse", "list"))
+	if len(lists) == 0 {
+		t.Fatal("no parse list after two test builds")
+	}
+	b, err := os.ReadFile(lists[0])
+	if err != nil || !strings.Contains(string(b), "lib.xo") {
+		t.Errorf("the parse list does not name the module's file:\n%s", b)
+	}
+}
