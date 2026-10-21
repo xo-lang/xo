@@ -1,0 +1,8 @@
+// Tests of the regression file writes of `xo test` (core 9.2).
+
+test "a regressions file that cannot be read is an error, not empty" {
+  expect(existing_text(Ok("old tests"))) == Ok("old tests")
+  expect(existing_text(Err(FsErr.NotFound(path: "r_test.xo")))) == Ok("")
+  // "" here wrote the new test over every earlier one
+  expect(existing_text(Err(FsErr.Io(path: "r_test.xo", msg: "input/output error"))).is_err()) == true
+}

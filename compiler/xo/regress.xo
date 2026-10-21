@@ -45,7 +45,13 @@ fn write_regressions(os: Os, path: Str, std_dir: Str) {
     }
     let name = "regression: ${r.test_name.trim_prefix("contract fuzz: ")} (seed ${r.seed})"
     let dst = "${r.dir}/regressions_test.xo"
-    let old = os.fs.read_text(dst).ok() ?? ""
+    let old = match existing_text(os.fs.read_text(dst)) {
+      Ok(t) => t
+      Err(e) => {
+        os.stdio.println("xo test: no regression test for ${r.test_name}: read ${dst}: ${e}")
+        continue
+      }
+    }
     if old.contains(name.quote()) {
       continue
     }
@@ -68,6 +74,17 @@ fn write_regressions(os: Os, path: Str, std_dir: Str) {
       Ok(_) => os.stdio.println("xo test: wrote ${name.quote()} to ${dst}")
       Err(e) => os.stdio.println("xo test: no regression test for ${r.test_name}: ${e}")
     }
+  }
+}
+
+/// The text of a regressions file read as r: "" when it does not exist
+/// yet, and an error for any other failure, so a write never replaces the
+/// file's earlier tests with the new one alone.
+fn existing_text(r: Result[Str, FsErr]) -> Str ! FsErr {
+  match r {
+    Ok(t) => Ok(t)
+    Err(NotFound(_)) => Ok("")
+    Err(e) => Err(e)
   }
 }
 

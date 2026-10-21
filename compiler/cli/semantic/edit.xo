@@ -280,7 +280,17 @@ fn write_all(fs: Fs, outs0: List[(Str, Bytes)]) -> () ! Str uses fs {
   let outs = outs0.sort_by(fn(o) { o.0 })
   var staged: List[(Str, Str, Bytes)] = []
   for (p, data) in outs {
-    let orig = fs.read(p).ok() ?? b""
+    // the bytes a failed rename restores: empty for a new file, and no
+    // edit at all when an existing file cannot be read (restoring "" would
+    // empty it)
+    let orig = match fs.read(p) {
+      Ok(b) => b
+      Err(NotFound(_)) => b""
+      Err(e) => {
+        remove_staged(fs, staged)
+        return Err("read ${p}: ${e}")
+      }
+    }
     let mode = fs.mode(p).ok() ?? 0o644
     let tmp = match fs.create_temp(dir_of(p), ".xo-edit-") {
       Ok(t) => t
