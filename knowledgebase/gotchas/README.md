@@ -3,6 +3,8 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [reuse-is-the-uniqueness-mark.md](reuse-is-the-uniqueness-mark.md): Observed 2026-10-21: removing a `var` parameter's entry reuse (decision 0322's first version) failed the inlined module's verification and built nbody without inlining (+10.7%): the verifier, insert_rc's uniq and the arm64 field and in-place passes read a reuse result as the uniqueness mark; mark it proved and lower it to its argument instead
+
 - [konst-text-not-value.md](konst-text-not-value.md): Observed 2026-10-21: hoist_consts merged constants by template text; Float constants (`fmov $d0, $u0`) all share it, so one loop read one Float for another (native_json 5e+08, list_field_licm 15.0); key on text, operands, and class
 
 - [closure-body-names-no-nat-type.md](closure-body-names-no-nat-type.md): Observed 2026-10-21: lowering `task.isolate(fn() { h(q) })` as the call itself never applied: the checker has no type (nat_check -1) for a name inside a closure body seen from the enclosing function; read the variable (var_of, b.read) and use its SSA type

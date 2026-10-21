@@ -395,6 +395,10 @@ pub struct Module {
   /// PASSES): miscompile triage (`xo dev bisect-pass`) builds with
   /// passes off to find the one whose output diverges.
   pub passes_off: List[Str] = []
+  /// XO_RC_CHECK=1: each copy-on-write check decision 0322 proves
+  /// unneeded stays, as a check that reports and exits when its list is
+  /// shared (uniqvar.xo apply_uniq).
+  pub rc_check: Bool = false
   /// The function whose SSA and MIR a native build writes to a file
   /// ($XO_DUMP_FN; arm64 G.dump_ir), or "": a backend internal error
   /// writes its function's either way.

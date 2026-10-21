@@ -1,0 +1,560 @@
+// Unique `var` List parameters (decision 0322): which `var` List
+// parameters are passed a unique list by every call of their function,
+// so that the copy-on-write check reuse_var_params puts at the entry is
+// removed. Runs before insert_rc, after the borrow inference (a call's
+// borrowed arguments are reads), as a fixpoint over the module like it:
+// optimistic, each fact dropped on a counterexample until none changes.
+//
+// A function is a candidate when every reference to its name in the
+// module is the callee of a direct Call (no closure, function value,
+// method table, thunk, entry, export, or test), and it does not catch
+// (Func.catches hands back a value from a landing). For a candidate f,
+// uniq_entry[f][i] says the i-th parameter (a `var` List) is unique at
+// every call; uniq_out[f][k] that the k-th `var` out of every Return is
+// unique (not counting fault exits, whose outs callers never read past
+// the call's landing check), and uniq_ret[f] the same of a List result.
+//
+// A value is unique where it is used when it comes from a unique origin
+// and that use is its only owning use, with no other use reachable after
+// it. Origins (the list is closed: anything else is shared): list.new
+// (unsized, the immortal empty list, which every update replaces or
+// faults on before writing, as insert_rc's uniq has it); a literal is a
+// list.new and its pushes;
+// a list update's result (list.set, list.push, and the list of list.pop
+// and list.take: the update copies a shared list first); a candidate's
+// unique `var` out (a Field of the call, past its landing check) or List
+// result; a unique parameter; a Rebind or a block parameter whose every
+// incoming value is unique. Reads are list.len, list.index, list.get, and
+// a borrowed argument of a direct call; any other use owns the list.
+
+/// The facts of the analysis, by function index.
+struct UniqFacts {
+  entry: List[List[Bool]] = []
+  out: List[List[Bool]] = []
+  ret: List[Bool] = []
+}
+
+/// Whether name is a list read that keeps no reference to its list.
+fn list_read(name: Str) -> Bool {
+  name is "list.len" | "list.index" | "list.get"
+}
+
+/// The candidates: each function whose name only appears as the callee
+/// of a direct Call. Interface dispatch names a generated thunk (ssa
+/// iface.xo: a Closure or Rebind with the thunk's name), never the
+/// method: the method is called directly by the thunk, which is not a
+/// candidate, so the argument it passes (its own parameter) is never
+/// unique and the method's facts fall. (A `var` parameter through an
+/// interface is not on the native backends yet: XO1201.)
+fn uniq_candidates(funcs: List[Func], fidx: Map[Str, Int]) -> List[Bool] {
+  var ok: List[Bool] = []
+  for f in funcs {
+    ok.push(!f.entry && f.export.is_empty() && !f.indirect && !f.catches && f.captures.is_empty() && !f.target)
+  }
+  for f in funcs {
+    for x in f.values {
+      let name = aux_name(x.aux)
+      if name.is_empty() {
+        continue
+      }
+      let ci = fidx.get(name) ?? -1
+      if ci < 0 {
+        continue
+      }
+      if x.op != Op.Call {
+        ok[ci] = false
+      }
+    }
+  }
+  ok
+}
+
+/// Each value's uses in f: (the value using it, or -1 for an edge, the
+/// edge, the argument index).
+struct UUse {
+  v: Int
+  e: Int
+  k: Int
+}
+
+fn uses_of(f: Func) -> List[List[UUse]] {
+  var us: List[List[UUse]] = []
+  for _ in f.values {
+    us.push([])
+  }
+  for bl in f.blocks {
+    for v in bl.instrs {
+      for (k, a) in f.values[v].args.indexed() {
+        if a >= 0 && a < us.len() {
+          us[a].push(UUse{v: v, e: -1, k: k})
+        }
+      }
+    }
+  }
+  for (e, ed) in f.edges.indexed() {
+    for (k, a) in ed.args.indexed() {
+      if a >= 0 && a < us.len() {
+        us[a].push(UUse{v: -1, e: e, k: k})
+      }
+    }
+  }
+  us
+}
+
+/// The per-function state of the analysis.
+struct UFn {
+  us: List[List[UUse]] = []
+  idom: List[Int] = []
+  // the position of each instruction in its block
+  pos: List[Int] = []
+}
+
+fn ufn(f: Func) -> UFn {
+  var pos: List[Int] = []
+  for _ in f.values {
+    pos.push(-1)
+  }
+  for bl in f.blocks {
+    for (i, v) in bl.instrs.indexed() {
+      pos[v] = i
+    }
+  }
+  UFn{us: uses_of(f), idom: dominators(f), pos: pos}
+}
+
+/// Whether block a dominates block b.
+fn udom(idom: List[Int], a: Int, b0: Int) -> Bool {
+  var b = b0
+  while b >= 0 {
+    if b == a {
+      return true
+    }
+    let d = idom[b]
+    if d == b || d < 0 {
+      return false
+    }
+    b = d
+  }
+  false
+}
+
+/// The block an edge use reads its value in, and where: a use by value u
+/// is at (u's block, its position); an edge use at (the edge's source,
+/// its end).
+fn use_at(f: Func, s: UFn, u: UUse) -> (Int, Int) {
+  if u.v >= 0 {
+    return (f.values[u.v].block, s.pos[u.v])
+  }
+  (f.edges[u.e].from, 1000000000)
+}
+
+/// Whether a use at (b2, p2) can run after one at (b1, p1) without v
+/// being defined again in between: later in the same block, or in a block
+/// reachable from b1 not through v's own block (dblock), which defines a
+/// new v.
+fn after(f: Func, b1: Int, p1: Int, b2: Int, p2: Int, dblock: Int) -> Bool {
+  if b1 == b2 && p2 > p1 {
+    return true
+  }
+  var seen: Map[Int, Bool] = {}
+  var work: List[Int] = []
+  for e in succ_edges(f, b1) {
+    work.push(f.edges[e].to)
+  }
+  while !work.is_empty() {
+    let b = work.pop() ?? -1
+    if b < 0 || seen.contains(b) {
+      continue
+    }
+    seen[b] = true
+    if b == b2 {
+      return true
+    }
+    if b == dblock {
+      continue
+    }
+    for e in succ_edges(f, b) {
+      work.push(f.edges[e].to)
+    }
+  }
+  false
+}
+
+/// The edges out of block b (its terminator's successors).
+fn succ_edges(f: Func, b: Int) -> List[Int] {
+  let ins = f.blocks[b].instrs
+  if ins.is_empty() {
+    return []
+  }
+  f.values[ins[ins.len() - 1]].succs
+}
+
+/// Whether use u of v reads it only (keeps no reference): a list read,
+/// or a borrowed argument of a direct call.
+fn (r: Rc) reads_only(f: Func, u: UUse) -> Bool {
+  if u.v < 0 {
+    return false
+  }
+  let x = f.values[u.v]
+  if x.op != Op.Call {
+    return false
+  }
+  let name = aux_name(x.aux)
+  if list_read(name) {
+    return u.k == 0
+  }
+  let ci = r.fidx.get(name) ?? -1
+  if ci < 0 {
+    return false
+  }
+  let bs = r.borrowed[ci]
+  u.k < bs.len() && bs[u.k]
+}
+
+/// Whether use own of v holds v alone: no other use of v can run after
+/// it, every other use that can run before it only reads (an owner on a
+/// path that cannot reach own is fine), and own's instruction or edge
+/// uses v only once (the same list as two `var` arguments, or as two
+/// block parameters).
+fn (r: Rc) owned_at(f: Func, s: UFn, v: Int, own: UUse) -> Bool {
+  let (ob, op) = use_at(f, s, own)
+  let dblock = f.values[v].block
+  for u in s.us[v] {
+    if u.v == own.v && u.e == own.e && u.k == own.k {
+      continue
+    }
+    // the same instruction or edge takes it twice (`var q = t`, both
+    // passed on: two block parameters, one list)
+    if own.v >= 0 && u.v == own.v || own.e >= 0 && u.e == own.e {
+      return false
+    }
+    let (b, p) = use_at(f, s, u)
+    if after(f, ob, op, b, p, dblock) {
+      return false
+    }
+    // a use that can run before own must keep no reference
+    if !r.reads_only(f, u) && after(f, b, p, ob, op, dblock) {
+      return false
+    }
+  }
+  true
+}
+
+/// Whether v is of unique origin in function fi (memo: 0 unknown, 1 in
+/// progress or true, 2 false; a block parameter is assumed unique while
+/// it is being checked, as the fixpoint's optimism).
+fn (r: Rc) origin(funcs: List[Func], fi: Int, s: UFn, uf: UniqFacts, v: Int, var memo: List[Int]) -> Bool {
+  if memo[v] != 0 {
+    return memo[v] == 1
+  }
+  memo[v] = 1
+  let ok = r.origin1(funcs, fi, s, uf, v, memo)
+  memo[v] = if ok { 1 } else { 2 }
+  ok
+}
+
+fn (r: Rc) origin1(funcs: List[Func], fi: Int, s: UFn, uf: UniqFacts, v: Int, var memo: List[Int]) -> Bool {
+  let f = funcs[fi]
+  let x = f.values[v]
+  match x.op {
+    Call => {
+      let name = aux_name(x.aux)
+      // without a size, list.new is the shared empty list, immortal:
+      // as insert_rc's uniq, unique enough, since every update of an
+      // empty list allocates (push) or faults (set, pop, take) before
+      // it writes
+      if name is "list.new" | "list.set" | "list.push" {
+        return true
+      }
+      let ci = r.fidx.get(name) ?? -1
+      return ci >= 0 && uf.ret[ci] && r.is_list(x.ty)
+    }
+    // the copy-on-write check's result: a list held only here
+    Reuse => return true
+    Field => {
+      let c = x.args[0]
+      let cx = f.values[c]
+      if cx.op != Op.Call {
+        return false
+      }
+      let name = aux_name(cx.aux)
+      let k = aux_int(x.aux)
+      if name is "list.pop" | "list.take" {
+        return k == 0
+      }
+      let ci = r.fidx.get(name) ?? -1
+      if ci < 0 || k < 0 {
+        return false
+      }
+      let past = past_landing(f, s, c, x.block)
+      if k == 0 {
+        return uf.ret[ci] && past
+      }
+      let outs = uf.out[ci]
+      return k - 1 < outs.len() && outs[k - 1] && past
+    }
+    Rebind => {
+      let a = x.args[0]
+      return r.owned_at(f, s, a, UUse{v: v, e: -1, k: 0}) && r.origin(funcs, fi, s, uf, a, memo)
+    }
+    Param => {
+      if x.block == 0 {
+        let i = param_index(f, v)
+        let es = uf.entry[fi]
+        return i >= 0 && i < es.len() && es[i]
+      }
+      let i = param_index(f, v)
+      for e in f.blocks[x.block].preds {
+        let a = f.edges[e].args[i]
+        if !r.owned_at(f, s, a, UUse{v: -1, e: e, k: i}) || !r.origin(funcs, fi, s, uf, a, memo) {
+          return false
+        }
+      }
+      return true
+    }
+    _ => {}
+  }
+  false
+}
+
+/// Whether block b runs only after call c did not land: c's block ends
+/// in `br landed, fault, ok` on the value of its `lands`, and b is
+/// dominated by ok. A call that cannot land: b dominated by c's block.
+fn past_landing(f: Func, s: UFn, c: Int, b: Int) -> Bool {
+  let cb = f.values[c].block
+  let ins = f.blocks[cb].instrs
+  if ins.is_empty() {
+    return false
+  }
+  let t = f.values[ins[ins.len() - 1]]
+  let ci = s.pos[c]
+  // a landing check: `vL = call rt.landing` right after c, and the
+  // block's branch on it
+  if ci + 1 < ins.len() {
+    let l = f.values[ins[ci + 1]]
+    if l.op == Op.Call && aux_name(l.aux) == "rt.landing" {
+      if t.op != Op.Branch || t.args.is_empty() || t.args[0] != ins[ci + 1] || t.succs.len() != 2 {
+        return false
+      }
+      let ok = f.edges[t.succs[1]].to
+      return udom(s.idom, ok, b)
+    }
+  }
+  udom(s.idom, cb, b)
+}
+
+/// Whether the Return r0 of f is a fault exit (its block calls
+/// rt.fault_continue): callers never read its outs.
+fn fault_exit(f: Func, r0: Int) -> Bool {
+  for v in f.blocks[f.values[r0].block].instrs {
+    let x = f.values[v]
+    if x.op == Op.Call && aux_name(x.aux) == "rt.fault_continue" {
+      return true
+    }
+  }
+  false
+}
+
+/// The fixpoint: every fact starts true for the candidates' `var` List
+/// parameters, outs, and List results, and is dropped on a counterexample
+/// until none changes.
+fn (r: Rc) uniq_facts(funcs: List[Func]) -> UniqFacts {
+  let cand = uniq_candidates(funcs, r.fidx)
+  var uf = UniqFacts{}
+  for (fi, f) in funcs.indexed() {
+    var es: List[Bool] = []
+    for (i, p) in f.blocks[0].params.indexed() {
+      let t = f.values[p].ty
+      es.push(cand[fi] && f.var_params.contains(i) && r.is_list(t))
+    }
+    uf.entry.push(es)
+    var os: List[Bool] = []
+    for i in f.var_params {
+      let t = f.values[f.blocks[0].params[i]].ty
+      os.push(cand[fi] && r.is_list(t))
+    }
+    uf.out.push(os)
+    uf.ret.push(cand[fi] && f.var_params.is_empty() && f.results.len() == 1 && r.is_list(f.results[0]))
+  }
+  // the calls of each candidate: (caller, call value)
+  var calls: List[List[(Int, Int)]] = []
+  for _ in funcs {
+    calls.push([])
+  }
+  for (fi, f) in funcs.indexed() {
+    for bl in f.blocks {
+      for v in bl.instrs {
+        let x = f.values[v]
+        if x.op == Op.Call {
+          let ci = r.fidx.get(aux_name(x.aux)) ?? -1
+          if ci >= 0 && cand[ci] {
+            calls[ci].push((fi, v))
+          }
+        }
+      }
+    }
+  }
+  // each function's uses and dominators, made when first needed: only
+  // the callers of candidates and the candidates with facts need them
+  // (2026-10-21: made for every function, they cost the self build 365
+  // ms), and one memo of origins per function and round
+  var st: Map[Int, UFn] = {}
+  var changed = true
+  while changed {
+    changed = false
+    var memos: Map[Int, List[Int]] = {}
+    for fi in 0..funcs.len() {
+      if !cand[fi] || !(uf.entry[fi].contains(true) || uf.out[fi].contains(true) || uf.ret[fi]) {
+        continue
+      }
+      let f = funcs[fi]
+      // entry: every call passes a unique list
+      for (i, e) in uf.entry[fi].indexed() {
+        if !e {
+          continue
+        }
+        var ok = true
+        for (ci, cv) in calls[fi] {
+          let sc = ufn_of(funcs, ci, st)
+          var memo = memos.get(ci) ?? zeros(funcs[ci].values.len())
+          let a = funcs[ci].values[cv].args[i]
+          let mine = r.owned_at(funcs[ci], sc, a, UUse{v: cv, e: -1, k: i})
+          let good = mine && r.origin(funcs, ci, sc, uf, a, memo)
+          memos[ci] = memo
+          if !good {
+            ok = false
+            break
+          }
+        }
+        if !ok {
+          uf.entry[fi][i] = false
+          changed = true
+        }
+      }
+      // outs and result: every Return but a fault exit's
+      if !(uf.out[fi].contains(true) || uf.ret[fi]) {
+        continue
+      }
+      let sf = ufn_of(funcs, fi, st)
+      var memo = memos.get(fi) ?? zeros(f.values.len())
+      for bl in f.blocks {
+        for v in bl.instrs {
+          let x = f.values[v]
+          if x.op != Op.Return || fault_exit(f, v) {
+            continue
+          }
+          // ret value, then the `var` outs
+          for k in 0..uf.out[fi].len() {
+            if uf.out[fi][k] && !r.returned_unique(funcs, fi, sf, uf, v, 1 + k, memo) {
+              uf.out[fi][k] = false
+              changed = true
+            }
+          }
+          if uf.ret[fi] && !r.returned_unique(funcs, fi, sf, uf, v, 0, memo) {
+            uf.ret[fi] = false
+            changed = true
+          }
+        }
+      }
+      memos[fi] = memo
+    }
+  }
+  uf
+}
+
+/// The uses and dominators of function fi, made once (uniq_facts).
+fn ufn_of(funcs: List[Func], fi: Int, var st: Map[Int, UFn]) -> UFn {
+  if let Some(s) = st.get(fi) {
+    return s
+  }
+  let s = if funcs[fi].blocks.is_empty() { UFn{} } else { ufn(funcs[fi]) }
+  st[fi] = s
+  s
+}
+
+/// Whether the k-th operand of Return v is unique there.
+fn (r: Rc) returned_unique(funcs: List[Func], fi: Int, s: UFn, uf: UniqFacts, v: Int, k: Int, var memo: List[Int]) -> Bool {
+  let f = funcs[fi]
+  let x = f.values[v]
+  if k >= x.args.len() {
+    return false
+  }
+  let a = x.args[k]
+  r.owned_at(f, s, a, UUse{v: v, e: -1, k: k}) && r.origin(funcs, fi, s, uf, a, memo)
+}
+
+fn (r: Rc) is_list(t: Int) -> Bool {
+  t >= 0 && t < r.types.len() && r.types[t].kind == Kind.List
+}
+
+fn zeros(n: Int) -> List[Int] {
+  var z: List[Int] = []
+  for _ in 0..n {
+    z.push(0)
+  }
+  z
+}
+
+/// The analysis applied to the module, after the borrow inference
+/// (rc_prepare, rc_prepare_incr): the entry Reuse reuse_var_params gave
+/// each `var` List parameter proved unique is marked proved (aux I(2)),
+/// which the backends lower to nothing (the parameter itself), or under
+/// XO_RC_CHECK=1 (Module.rc_check) a check (aux I(1)): a report and an
+/// exit instead of a copy when the list is shared. The Reuse stays so
+/// that every pass that knows a Reuse result is unique (the verifier,
+/// insert_rc's uniq, the arm64 field and in-place passes) still does,
+/// and the mark is part of the body every cache key hashes.
+/// XO_PASSES=-uniq_var_params turns it off.
+pub fn (r: Rc) apply_uniq(var m: Module) {
+  if m.passes_off.contains("uniq_var_params") {
+    return
+  }
+  let uf = r.uniq_facts(m.funcs)
+  let mark = if m.rc_check { REUSE_CHECKED } else { REUSE_PROVED }
+  for fi in 0..m.funcs.len() {
+    let es = uf.entry[fi]
+    if !es.contains(true) {
+      continue
+    }
+    var f = m.funcs[fi]
+    m.funcs[fi] = Func{name: ""}
+    mark_entry_reuse(f, es, mark)
+    m.funcs[fi] = f
+  }
+}
+
+/// A Reuse's aux: a check XO_RC_CHECK=1 keeps (REUSE_CHECKED), one
+/// decision 0322 proved unneeded (REUSE_PROVED).
+const REUSE_CHECKED = 1
+const REUSE_PROVED = 2
+
+/// Marks the entry Reuse of each parameter proved unique (aux I(mark)).
+fn mark_entry_reuse(var f: Func, es: List[Bool], mark: Int) {
+  for v in f.blocks[0].instrs {
+    let x = f.values[v]
+    if x.op == Op.Reuse && x.args.len() == 1 {
+      let p = x.args[0]
+      let i = param_index(f, p)
+      if f.values[p].op == Op.Param && f.values[p].block == 0 && i >= 0 && i < es.len() && es[i] {
+        f.values[v].aux = Aux.I(n: mark)
+      }
+    }
+  }
+}
+
+/// Whether a Reuse's aux marks it an XO_RC_CHECK check (apply_uniq).
+pub fn checked_reuse(a: Aux) -> Bool {
+  if let I(n) = a {
+    return n == REUSE_CHECKED
+  }
+  false
+}
+
+/// Whether a Reuse's aux marks it proved unneeded: the backends lower it
+/// to its argument (apply_uniq).
+pub fn proved_reuse(a: Aux) -> Bool {
+  if let I(n) = a {
+    return n == REUSE_PROVED
+  }
+  false
+}

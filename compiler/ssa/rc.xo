@@ -910,11 +910,17 @@ pub fn (var b: Builder) rc_prepare(jobs: Int) -> Rc {
     b.m.funcs[fi] = f
   }
   r.infer_borrows(b.m.funcs, jobs)
+  r.apply_uniq(b.m)
   r.chain = !b.m.passes_off.contains("chain_pads")
   r
 }
 
-/// rc_prepare with the borrow inference incremental (infer_borrows_incr)
+/// rc_prepare with the borrow inference incremental (infer_borrows_incr),
+/// without decision 0322's analysis: its caller runs r.apply_uniq(b.m)
+/// after it (compiler/xo bcache.xo, timed), where rc_prepare runs it
+/// itself; a caller that skipped it would build slower code than the
+/// full path, never wrong code (the marks are in the hashed bodies)
+///
 /// over prev, the last build's flags by body hash (borrow_hashes, for the
 /// compiler of identity id): the Rc, this build's record (each body
 /// hash's flags), how many functions were inferred, and with check
@@ -942,6 +948,8 @@ pub fn (var b: Builder) rc_prepare_incr(jobs: Int, id: Str, prev: Map[Str, List[
   for fi in 0..n {
     rec[hs[fi]] = r.borrowed[fi]
   }
+  // decision 0322's apply_uniq is the caller's next step (compiler/xo
+  // bcache.xo rc_cached, which times it), unlike rc_prepare's
   r.chain = !b.m.passes_off.contains("chain_pads")
   (r, rec, nd, !check || r.borrowed == full)
 }

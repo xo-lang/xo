@@ -1318,6 +1318,7 @@ fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Boo
   t = lap(os, o.phases, "cleanup", t)
   // the reference counting's optional pass (rc.xo chain_pads)
   b.m.passes_off = passes_off(os)
+  b.m.rc_check = (os.env.get("XO_RC_CHECK") ?? "") == "1"
   let rk = rc_cached(os, b, release, emit_jobs(os), o.phases, lazy)
   t = lap(os, o.phases, "insert_rc", t)
   Lowered{b: b, tu: tu, t: t, rc_keys: rk}

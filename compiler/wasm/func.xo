@@ -1385,6 +1385,12 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
         return
       }
       let cp = g.lcopy_fn(at)
+      if ssa.proved_reuse(x.aux) {
+        // decision 0322: every call passes this list unique
+        g.push(a)
+        g.def(v)
+        return
+      }
       g.push(a)
       g.e("i32.load")
       g.e("i32.const 1")

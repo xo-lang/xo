@@ -851,6 +851,21 @@ fn ring_owner() {
   process.os_exit(70)
 }
 
+/// A `var` List parameter decision 0322 proved unique at every call
+/// (compiler/ssa uniqvar.xo) held a shared list: under XO_RC_CHECK=1 its
+/// copy-on-write check stays and reports instead of copying.
+fn obj_rl_not_unique(l: Int) {
+  // the shared empty list (list.new without a size) is unique enough:
+  // every update allocates or faults before it writes
+  if obj.is_immortal(l) && rt.mem_load(l, 8, 8) == 0 {
+    return
+  }
+  stdio.flush()
+  let m = "xo: internal: a var List parameter proved unique (decision 0322) holds a shared list (count ${rt.mem_load(l, 0, 8)})\n"
+  stdio.write_all(2, raw.data(m), m.len())
+  process.os_exit(70)
+}
+
 fn deadlock() {
   stdio.flush()
   // straight to the descriptor, as the C did (not the test world's fake)

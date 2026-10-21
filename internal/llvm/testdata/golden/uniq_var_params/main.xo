@@ -1,0 +1,149 @@
+// Decision 0322: a `var` List parameter every call passes unique skips
+// its copy-on-write check; every other way a list reaches a `var`
+// parameter must still copy, so the caller's other reference keeps its
+// value. Each case prints what a missed copy would change. (A function
+// value with a `var` parameter, which would not be a candidate, is not
+// available on the native backends yet: XO1201.)
+
+struct Holder {
+  xs: List[Int]
+}
+
+// proved: only called with fresh or updated lists
+fn bump_all(var xs: List[Int]) {
+  for i in 0..xs.len() {
+    xs[i] = xs[i] + 1
+  }
+}
+
+// shared: one caller keeps another reference
+fn add_one(var xs: List[Int]) {
+  xs.push(1)
+}
+
+// kept in a struct and passed
+fn set_first(var xs: List[Int], v: Int) {
+  xs[0] = v
+}
+
+// recursive: unique at every level when the first call is
+fn fill(var xs: List[Int], n: Int) {
+  if n == 0 {
+    return
+  }
+  xs.push(n)
+  fill(xs, n - 1)
+}
+
+// passed while the same list is iterated
+fn grow(var xs: List[Int]) {
+  xs.push(0)
+}
+
+// every update of a list that may be the shared empty list (list.new
+// without a size, passed through a proved var parameter): none may write
+// the empty list itself
+fn updates(var xs: List[Int]) -> Int {
+  let p = xs.pop() ?? -1
+  xs.insert(0, 5)
+  xs.push(6)
+  xs[1] = 7
+  let r = xs.remove_at(0)
+  let t = xs.pop() ?? -2
+  p + r + t
+}
+
+fn pop_only(var xs: List[Int]) -> Int {
+  xs.pop() ?? -3
+}
+
+// a literal passed straight to a var parameter
+fn zero_first(var xs: List[Int]) {
+  xs[0] = 0
+}
+
+fn show(xs: List[Int]) -> Str {
+  var t = "["
+  for (i, x) in xs.indexed() {
+    if i > 0 {
+      t = t + " "
+    }
+    t = t + "${x}"
+  }
+  t + "]"
+}
+
+fn fresh(n: Int) -> List[Int] {
+  var xs: List[Int] = []
+  for i in 0..n {
+    xs.push(i * 10)
+  }
+  xs
+}
+
+fn main(os: Os) {
+  let out = os.stdio
+  // proved: fresh, then threaded through var calls in a loop
+  var a = fresh(4)
+  for _ in 0..3 {
+    bump_all(a)
+  }
+  out.println("proved ${show(a)}")
+
+  // shared: b keeps the old value
+  var s = fresh(2)
+  let b = s
+  add_one(s)
+  out.println("shared ${show(s)} ${show(b)}")
+
+  // kept in a struct: the struct's copy is unchanged
+  var k = fresh(3)
+  let h = Holder{xs: k}
+  set_first(k, 99)
+  out.println("struct ${show(k)} ${show(h.xs)}")
+
+  // captured by a closure: the closure sees the old value
+  var c = fresh(2)
+  let snap = fn() -> Int { c.len() }
+  add_one(c)
+  out.println("closure ${show(c)} ${snap()}")
+
+  // recursive
+  var r: List[Int] = []
+  fill(r, 3)
+  out.println("recursive ${show(r)}")
+
+  // passed while iterated: the loop reads the list it started with
+  var it = fresh(3)
+  var seen = 0
+  for x in it {
+    grow(it)
+    seen += x
+  }
+  out.println("iterate ${it.len()} ${seen}")
+
+  // one list as two block parameters (`var q = t`, both threaded
+  // through a loop): each must still copy
+  var t = fresh(2)
+  var q = t
+  for _ in 0..2 {
+    set_first(t, 7)
+    add_one(q)
+  }
+  out.println("two names ${show(t)} ${show(q)}")
+
+  // the shared empty list through proved var parameters, twice, then a
+  // fresh empty one: the static stays empty
+  var e: List[Int] = []
+  let u1 = updates(e)
+  var e2: List[Int] = []
+  let u2 = pop_only(e2)
+  var e3: List[Int] = []
+  out.println("empty ${u1} ${show(e)} ${u2} ${show(e2)} ${e3.len()}")
+
+  // a constant literal
+  var lit = [5, 6, 7]
+  let lk = lit
+  zero_first(lit)
+  out.println("literal ${show(lit)} ${show(lk)}")
+}

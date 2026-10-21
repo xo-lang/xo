@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+proved [3 13 23 33]
+shared [0 10 1] [0 10]
+struct [99 10 20] [0 10 20]
+closure [0 10 1] 2
+recursive [3 2 1]
+iterate 6 30
+two names [7 10] [0 10 1 1]
+empty 11 [] -3 [] 0
+literal [0 6 7] [5 6 7]
+--- stderr

@@ -215,6 +215,11 @@ fn rc_cached(os: Os, var b: ssa.Builder, release: Bool, jobs: Int, phases: Bool,
     os.stdio.eprintln("cache borrows ${b.m.funcs.len() - nd}/${b.m.funcs.len()} kept")
   }
   t = lap(os, phases, "insert_rc.borrows", t)
+  if !full_mode {
+    // decision 0322 (rc_prepare applies it itself)
+    r.apply_uniq(b.m)
+  }
+  t = lap(os, phases, "insert_rc.uniq_var_params", t)
   let tk = ssa.type_keys(b.m)
   t = lap(os, phases, "insert_rc.types", t)
   let plan = b.insert_rc_keys(r, tk, id, jobs)

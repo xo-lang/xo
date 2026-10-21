@@ -79,6 +79,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_BUILD_DIR":            {"none", ""},
 	"XO_INLINE_REPORT":        {"none", ""},
 	"XO_DUMP_FN":              {"none", ""}, // writes a function's SSA and MIR to a file; the code is the same
+	"XO_RC_CHECK":             {"none", ""}, // decision 0322's checks: marks Reuse values in the SSA bodies every cache key hashes
 	"XO_DUMP_DIR":             {"none", ""}, // where those files go
 	"XO_INLINE_STRICT":        {"none", ""},
 	"XO_TEST_BATCH":           {"none", ""},
@@ -110,6 +111,7 @@ var codegenFields = map[string]inputClass{
 	"inline_deny":   {"keyed", "deny ${m.inline_deny"},
 	"passes_off":    {"keyed", "passes ${m.passes_off"},
 	"dump_fn":       {"keyed", "dumpfn=${m.dump_fn}"}, // XO_DUMP_FN: the code is the same, but a cached function would not be generated and dumped
+	"rc_check":      {"none", ""},                     // XO_RC_CHECK: marks Reuse values in the SSA bodies every cache key hashes
 	"jobs":          {"none", ""},                     // the tasks of may_fault's scan; its result does not depend on them
 	"op_verify":     {"none", ""},                     // XO_OP_VERIFY: checks, never changes, the emitter's output
 }

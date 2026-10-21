@@ -138,6 +138,11 @@ fn (var g: G) release(t: Int, ws: List[Int]) {
 /// copy (and the original loses a reference).
 fn (var g: G) reuse(v: Int) {
   let x = g.arg(v, 0)
+  if ssa.proved_reuse(g.f.values[v].aux) {
+    // decision 0322: every call passes this list unique
+    g.set(v, g.words(x))
+    return
+  }
   if g.vkind(x) != ssa.Kind.List {
     g.fail("reuse of `${g.tname(g.vty(x))}`")
     g.set(v, g.words(x))
@@ -160,6 +165,10 @@ fn (var g: G) reuse(v: Int) {
   let es = g.esize(et)
   let dup = g.elem_fn("dup", et)
   let drop = g.elem_fn("drop", et)
+  if ssa.checked_reuse(g.f.values[v].aux) {
+    // XO_RC_CHECK=1: decision 0322 proved this list unique
+    let _n = g.rt("xo_x_obj_rl_not_unique", [rsrc(l)], [])
+  }
   let cp = g.rt("xo_x_obj_rl_copy_n", [rsrc(l), isrc(es), dup, drop], [false])
   g.pmove([r], regs([cp[0]]))
   let _j2 = g.add(Inst{kind: K_JUMP, targets: [cont]})

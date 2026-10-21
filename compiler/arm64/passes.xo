@@ -15,6 +15,9 @@ pub fn passes() -> List[Str] {
     "inline",
     "devirtualize",
     "chain_pads",
+    // compiler/ssa uniqvar.xo (decision 0322): a `var` List parameter
+    // every call passes unique skips its entry copy-on-write check
+    "uniq_var_params",
     "fold_consts",
     "cancel_rc_pairs",
     "hoist_fields",
