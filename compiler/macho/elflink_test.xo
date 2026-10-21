@@ -1,0 +1,113 @@
+// The ELF linker's constructor arrays and linker defined symbols
+// (decision 0273's native --race on linux/arm64: ThreadSanitizer's static
+// runtime has a .preinit_array, an .init_array, and reads _DYNAMIC).
+
+const INIT_SRC = "\t.text\n\t.globl main\n\t.p2align 2\n\t.type main, %function\nmain:\n\tadrp x0, _DYNAMIC\n\tadd x0, x0, :lo12:_DYNAMIC\n\tmov w0, #0\n\tret\n\t.globl early\n\t.p2align 2\nearly:\n\tret\n\t.globl first\n\t.p2align 2\nfirst:\n\tret\n\t.globl plain\n\t.p2align 2\nplain:\n\tret\n\t.globl last\n\t.p2align 2\nlast:\n\tret\n\t.section .preinit_array,\"aw\"\n\t.p2align 3\n\t.quad early\n\t.section .init_array,\"aw\"\n\t.p2align 3\n\t.quad plain\n\t.section .init_array.100,\"aw\"\n\t.p2align 3\n\t.quad first\n\t.section .fini_array,\"aw\"\n\t.p2align 3\n\t.quad last\n"
+
+/// The value of dynamic tag tag in ELF executable b (-1 for none).
+fn elf_dyn_tag(b: Bytes, tag: Int) -> Int {
+  let phoff = rd64(b, 32)
+  let phnum = rd16(b, 56)
+  for i in 0..phnum {
+    let ph = phoff + 56 * i
+    if rd32(b, ph) == 2 {
+      var off = rd64(b, ph + 8)
+      let end = off + rd64(b, ph + 32)
+      while off + 16 <= end {
+        let t = rd64(b, off)
+        if t == 0 {
+          return -1
+        }
+        if t == tag {
+          return rd64(b, off + 8)
+        }
+        off += 16
+      }
+    }
+  }
+  -1
+}
+
+/// The 8 byte word of ELF executable b at virtual address a (its loadable
+/// segments: file offset = a - vaddr + offset).
+fn elf_word_at(b: Bytes, a: Int) -> Int {
+  let phoff = rd64(b, 32)
+  for i in 0..rd16(b, 56) {
+    let ph = phoff + 56 * i
+    let va = rd64(b, ph + 16)
+    if rd32(b, ph) == 1 && a >= va && a + 8 <= va + rd64(b, ph + 32) {
+      return rd64(b, rd64(b, ph + 8) + a - va)
+    }
+  }
+  -1
+}
+
+/// The address of global symbol name in ELF executable b's .symtab.
+fn elf_sym_value(b: Bytes, name: Str) -> Int {
+  let shoff = rd64(b, 40)
+  let shnum = rd16(b, 60)
+  for i in 0..shnum {
+    let sh = shoff + 64 * i
+    if rd32(b, sh + 4) == 2 {
+      let str = shoff + 64 * rd32(b, sh + 40)
+      let stroff = rd64(b, str + 24)
+      let off = rd64(b, sh + 24)
+      let n = rd64(b, sh + 32) / 24
+      for k in 0..n {
+        let s = off + 24 * k
+        var e = stroff + rd32(b, s)
+        let start = e
+        while Int(b[e]) != 0 {
+          e += 1
+        }
+        if bstr(b[start..e]) == name {
+          return rd64(b, s + 8)
+        }
+      }
+    }
+  }
+  -1
+}
+
+test "an ELF link calls the init arrays through the dynamic section, by priority, and defines _DYNAMIC" {
+  let obj = assemble_elf(INIT_SRC.bytes()).or_fault("assemble")
+  let exe = link_elf([LinkInput{path: "i.o", data: obj}], ElfLinkOpts{}).or_fault("link")
+  let pre = elf_dyn_tag(exe, 32)
+  let init = elf_dyn_tag(exe, 25)
+  let fini = elf_dyn_tag(exe, 26)
+  expect(pre > 0 && init > 0 && fini > 0)
+  expect(elf_dyn_tag(exe, 33)) == 8
+  expect(elf_dyn_tag(exe, 27)) == 16
+  expect(elf_dyn_tag(exe, 28)) == 8
+  // .init_array.100 before the plain .init_array
+  expect(elf_word_at(exe, pre)) == elf_sym_value(exe, "early")
+  expect(elf_word_at(exe, init)) == elf_sym_value(exe, "first")
+  expect(elf_word_at(exe, init + 8)) == elf_sym_value(exe, "plain")
+  expect(elf_word_at(exe, fini)) == elf_sym_value(exe, "last")
+  // _DYNAMIC is the dynamic section's address: main's adrp and add of it
+  let main = elf_sym_value(exe, "main")
+  expect(main > 0)
+  let adrp = elf_word_at(exe, main) & 0xffffffff
+  let add = elf_word_at(exe, main + 4) & 0xffffffff
+  let immlo = (adrp >> 29) & 3
+  let immhi = (adrp >> 5) & 0x7ffff
+  let page = (main & -4096) + ((immhi << 2) | immlo) * 4096
+  let target = page + ((add >> 10) & 0xfff)
+  let phoff = rd64(exe, 32)
+  var pdyn = -1
+  for i in 0..rd16(exe, 56) {
+    if rd32(exe, phoff + 56 * i) == 2 {
+      pdyn = rd64(exe, phoff + 56 * i + 16)
+    }
+  }
+  expect(pdyn > 0)
+  expect(target) == pdyn
+}
+
+test "an ELF link refuses .ctors" {
+  let obj = assemble_elf("\t.text\n\t.globl main\nmain:\n\tret\n\t.section .ctors,\"aw\"\n\t.quad main\n".bytes()).or_fault("assemble")
+  match link_elf([LinkInput{path: "c.o", data: obj}], ElfLinkOpts{}) {
+    Ok(_) => fault("linked .ctors")
+    Err(e) => expect(e.contains(".ctors"))
+  }
+}

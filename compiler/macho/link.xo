@@ -58,6 +58,10 @@ pub struct LinkOpts {
 pub struct LinkInput {
   pub path: Str
   pub data: Bytes
+  /// an archive's every member, referenced or not (ld's --whole-archive:
+  /// ThreadSanitizer's runtime, whose __tsan_init a .preinit_array of a
+  /// member no symbol reaches calls; the ELF linker)
+  pub whole: Bool = false
 }
 
 /// An output section.

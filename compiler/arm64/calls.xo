@@ -2473,6 +2473,34 @@ fn (var g: G) atomic_result(v: Int, r: Int) {
   }
 }
 
+/// --race on Linux (decision 0273): an outline atomic's call (a call, so
+/// race.xo, which reads instructions, does not see it as an atomic)
+/// tells ThreadSanitizer its order itself, as race.xo does around
+/// darwin's LSE instruction: __tsan_release before it when it releases,
+/// __tsan_acquire after it when it acquires; not in the runtime's code
+/// (race_unchecked: its function, or the innermost inline site of value
+/// v). Without it a synchronized Atomic.add reported a race
+/// (race_sync's atomic_add on linux/arm64).
+fn (g: G) race_checks(v: Int) -> Bool {
+  if !g.m.race || race_unchecked(g.f.file) {
+    return false
+  }
+  let k = g.f.values[v].inl
+  !(k >= 0 && k < g.f.inl_sites.len() && race_unchecked(g.f.inl_sites[k].file))
+}
+
+fn (var g: G) race_release(v: Int, ord: Int, a: Int) {
+  if ord >= 2 && g.race_checks(v) {
+    let _r = g.rt("__tsan_release", [rsrc(a)], [])
+  }
+}
+
+fn (var g: G) race_acquire(v: Int, ord: Int, a: Int) {
+  if (ord == 1 || ord >= 3) && g.race_checks(v) {
+    let _r = g.rt("__tsan_acquire", [rsrc(a)], [])
+  }
+}
+
 /// Lowers the atomics and fences of decision 0200 inline: on darwin the
 /// LSE instructions every Apple arm64 CPU has (ldar, stlr, swp, cas,
 /// ldadd with the order's a and l; dmb, yield); on linux, which also runs
@@ -2541,7 +2569,9 @@ fn (var g: G) atomic(v: Int) {
       } else if g.os == "darwin" {
         g.atomic_result(v, g.atomic_def("${op}${sfx} $u0, $d0, [$u1]", [val, a]))
       } else {
+        g.race_release(v, ord, a)
         let r = g.rt("__aarch64_${op}8_${model}", [rsrc(val), rsrc(a)], [false])
+        g.race_acquire(v, ord, a)
         g.atomic_result(v, r[0])
       }
     }
@@ -2554,7 +2584,9 @@ fn (var g: G) atomic(v: Int) {
       } else if g.os == "darwin" {
         g.set(v, [g.atomic_def("mov $d0, $u0\ncas${sfx} $d0, $u1, [$u2]\ncmp $d0, $u0\ncset $d0, eq", [old, new, a])])
       } else {
+        g.race_release(v, ord, a)
         let r = g.rt("__aarch64_cas8_${model}", [rsrc(old), rsrc(new), rsrc(a)], [false])
+        g.race_acquire(v, ord, a)
         g.set(v, [g.def1(false, "cmp $u0, $u1\ncset $d0, eq", [r[0], old])])
       }
     }

@@ -1020,7 +1020,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       no_cc = default_ld(os, ctx, o, c, tgoos, code, uses_time)
     }
     if o.race && march == "arm64" && !no_cc {
-      fail(os, "--race on the arm64 backend links with Xo's linker on darwin (not --ld=cc, not ${tg} yet, decision 0273): use --backend=llvm")
+      fail(os, "--race on the arm64 backend links with Xo's linker (not --ld=cc, decision 0273): darwin/arm64 and linux/arm64")
     }
     let macho_as = if mac_x86 { o.assembler != "cc" } else { o.assembler == "macho" || (no_cc && o.assembler.is_empty()) }
     let win = march == "amd64" && tgoos == "windows"
@@ -1242,7 +1242,9 @@ fn default_ld(os: Os, ctx: Ctx, o: Opts, c: check.Checker, tgoos: Str, code: Str
     return false
   }
   if tgoos == "linux" {
-    return nolibc(os, o, c, tgoos)
+    // --race too: ThreadSanitizer's static archive, linked whole by Xo's
+    // ELF linker with the C library (decision 0273)
+    return nolibc(os, o, c, tgoos) || o.race
   }
   if ctx.goos != "darwin" || tgoos != "darwin" {
     return false

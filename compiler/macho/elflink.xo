@@ -51,6 +51,12 @@ const DT_RELAENT = 9
 const DT_STRSZ = 10
 const DT_SYMENT = 11
 const DT_DEBUG = 21
+const DT_INIT_ARRAY = 25
+const DT_FINI_ARRAY = 26
+const DT_INIT_ARRAYSZ = 27
+const DT_FINI_ARRAYSZ = 28
+const DT_PREINIT_ARRAY = 32
+const DT_PREINIT_ARRAYSZ = 33
 const DT_FLAGS = 30
 const DF_BIND_NOW = 8
 const DT_FLAGS_1 = 0x6ffffffb
@@ -94,12 +100,20 @@ const O_TEXT = 11
 const O_PLT = 12
 const O_TDATA = 13
 const O_TBSS = 14
-const O_RELRO = 15
-const O_GOT = 16
-const O_DYNAMIC = 17
-const O_DATA = 18
-const O_BSS = 19
-const O_COUNT = 20
+/// the constructors' and destructors' arrays (a static runtime's, such as
+/// ThreadSanitizer's for native --race: its __tsan_init in .preinit_array,
+/// sanitizer_common's static initializers in .init_array), which the
+/// dynamic loader calls through DT_PREINIT_ARRAY, DT_INIT_ARRAY, and
+/// DT_FINI_ARRAY
+const O_PREINIT = 15
+const O_INITA = 16
+const O_FINIA = 17
+const O_RELRO = 18
+const O_GOT = 19
+const O_DYNAMIC = 20
+const O_DATA = 21
+const O_BSS = 22
+const O_COUNT = 23
 
 /// What the ELF linker writes: the dynamic loader and the entry symbol.
 pub struct ElfLinkOpts {
@@ -221,7 +235,15 @@ pub fn link_elf(inputs: List[LinkInput], opts: ElfLinkOpts) -> Result[Bytes, Str
   for inp in inputs {
     if inp.data.len() >= 8 && bstr(inp.data[0..8]) == "!<arch>\n" {
       match parse_elf_archive(inp.path, inp.data) {
-        Ok(ms) => l.objs = l.objs + ms
+        Ok(ms) => {
+          for m in ms {
+            var x = m
+            if inp.whole {
+              x.live = true
+            }
+            l.objs.push(x)
+          }
+        }
         Err(e) => return Err(e)
       }
     } else {
@@ -259,6 +281,15 @@ pub fn link_elf(inputs: List[LinkInput], opts: ElfLinkOpts) -> Result[Bytes, Str
     return Err(l.err)
   }
   l.layout()
+  // the linker's own symbols, now that the layout has placed them
+  match l.globals.get("_DYNAMIC".bytes()) {
+    Some((o, i)) => {
+      if l.objs[o].path == "<start>" {
+        l.objs[o].syms[i].value = l.osects[O_DYNAMIC].addr
+      }
+    }
+    None => {}
+  }
   l.relocate()
   if !l.err.is_empty() {
     return Err(l.err)
@@ -558,7 +589,18 @@ fn (var l: ELinker) synthesize_start() {
   match start {
     Ok(obj) => {
       match parse_elf_object("<start>", obj) {
-        Ok(o) => {
+        Ok(o0) => {
+          var o = o0
+          var dynamic = false
+          for (n, _) in l.undefined() {
+            dynamic = dynamic || n == "_DYNAMIC".bytes()
+          }
+          if !l.opts.static && dynamic {
+            // _DYNAMIC, the dynamic section's address (as GNU ld defines
+            // it: ThreadSanitizer's runtime reads it), absolute, its value
+            // set once the layout places .dynamic (link_elf)
+            o.syms.push(ESym{name: "_DYNAMIC".bytes(), info: STB_GLOBAL * 16, other: 0, shndx: SHN_ABS, value: 0, size: 0})
+          }
           l.objs.push(o)
           l.add_globals(l.objs.len() - 1)
         }
@@ -577,6 +619,15 @@ fn (var l: ELinker) synthesize_start() {
 /// later (gotchas/glibc-nonshared-stat.md). None for other names. On
 /// x86-64 the version is 1 (_STAT_VER_LINUX) and the base GLIBC_2.2.5.
 fn nonshared(name: Str, amd64: Bool) -> Str? {
+  if name == "pthread_atfork" {
+    // libc_nonshared.a's pthread_atfork: __register_atfork(prepare,
+    // parent, child, the DSO handle), 0 for the executable (only dlclose
+    // reads it); ThreadSanitizer's runtime calls it
+    if amd64 {
+      return Some("\t.globl pthread_atfork\n\t.type pthread_atfork,@function\npthread_atfork:\n\txorl %ecx, %ecx\n\tjmp __register_atfork\n")
+    }
+    return Some("\t.globl pthread_atfork\n\t.p2align 2\n\t.type pthread_atfork, %function\npthread_atfork:\n\tmov x3, #0\n\tb __register_atfork\n")
+  }
   let (target, args) = match name {
     "stat" | "stat64" => ("__xstat", 2)
     "lstat" | "lstat64" => ("__lxstat", 2)
@@ -703,13 +754,14 @@ fn glibc_versions(amd64: Bool) -> Map[Bytes, (Str, Str)] {
   m
 }
 
-/// The link order of cc's libraries: -lm -lpthread, libgcc_s, libc.
+/// The link order of cc's libraries: -lm -lpthread -ldl, libgcc_s, libc.
 fn lib_rank(lib: Str) -> Int {
   match lib {
     "libm.so.6" => 0
     "libpthread.so.0" => 1
-    "libgcc_s.so.1" => 2
-    _ => 3
+    "libdl.so.2" => 2
+    "libgcc_s.so.1" => 3
+    _ => 4
   }
 }
 
@@ -730,13 +782,20 @@ fn (var l: ELinker) collect_imports() {
   let vers = glibc_versions(l.amd64)
   let base = if l.amd64 { "GLIBC_2.2.5" } else { "GLIBC_2.17" }
   var gcc = false
+  var dl = false
   for (name, weak) in l.undefined() {
     let (lib, ver) = vers.get(name) ?? ("libc.so.6", base)
     gcc = gcc || lib == "libgcc_s.so.1"
+    dl = dl || lib == "libdl.so.2"
     l.import_ix.put(name, l.imports.len())
     l.imports.push(EImport{name: name, lib: lib, ver: ver, weak: weak})
   }
   l.needed = ["libm.so.6", "libpthread.so.0"]
+  if dl {
+    // dlsym and dladdr (ThreadSanitizer's runtime): libdl.so.2 on glibc
+    // 2.31; since 2.34 libc.so.6 holds them under the same versions
+    l.needed.push("libdl.so.2")
+  }
   if gcc {
     l.needed.push("libgcc_s.so.1")
   }
@@ -789,6 +848,15 @@ fn classify(s: ESect) -> Int {
   if (s.flags & SHF_EXECINSTR) != 0 {
     return O_TEXT
   }
+  if s.typ == 16 || s.name == ".preinit_array" {
+    return O_PREINIT
+  }
+  if s.typ == 14 || s.name == ".init_array" || s.name.starts_with(".init_array.") {
+    return O_INITA
+  }
+  if s.typ == 15 || s.name == ".fini_array" || s.name.starts_with(".fini_array.") {
+    return O_FINIA
+  }
   if (s.flags & SHF_WRITE) != 0 {
     if s.typ == SHT_NOBITS {
       return O_BSS
@@ -807,8 +875,19 @@ fn classify(s: ESect) -> Int {
   O_RODATA
 }
 
+/// An init or fini array section's priority: N of `.init_array.N`, and
+/// past every N for the plain one (they run after the prioritized ones).
+fn array_prio(name: Str) -> Int {
+  for pre in [".init_array.", ".fini_array."] {
+    if name.starts_with(pre) {
+      return Int.parse(name[pre.len()..name.len()]) ?? 65536
+    }
+  }
+  65536
+}
+
 fn (var l: ELinker) place() {
-  let names = [".interp", ".hash", ".dynsym", ".dynstr", ".gnu.version", ".gnu.version_r", ".rela.dyn", ".rodata", ".gcc_except_table", ".eh_frame_hdr", ".eh_frame", ".text", ".plt", ".tdata", ".tbss", ".data.rel.ro", ".got", ".dynamic", ".data", ".bss"]
+  let names = [".interp", ".hash", ".dynsym", ".dynstr", ".gnu.version", ".gnu.version_r", ".rela.dyn", ".rodata", ".gcc_except_table", ".eh_frame_hdr", ".eh_frame", ".text", ".plt", ".tdata", ".tbss", ".preinit_array", ".init_array", ".fini_array", ".data.rel.ro", ".got", ".dynamic", ".data", ".bss"]
   for (i, n) in names.indexed() {
     var typ = SHT_PROGBITS
     if i == O_HASH {
@@ -827,17 +906,24 @@ fn (var l: ELinker) place() {
       typ = SHT_DYNAMIC
     } else if i == O_TBSS || i == O_BSS {
       typ = SHT_NOBITS
+    } else if i == O_PREINIT {
+      typ = 16
+    } else if i == O_INITA {
+      typ = 14
+    } else if i == O_FINIA {
+      typ = 15
     }
     var flags = SHF_ALLOC
     if i == O_TEXT || i == O_PLT {
       flags = SHF_ALLOC + SHF_EXECINSTR
     } else if i == O_TDATA || i == O_TBSS {
       flags = SHF_ALLOC + SHF_WRITE + SHF_TLS
-    } else if i >= O_RELRO {
+    } else if i >= O_PREINIT {
       flags = SHF_ALLOC + SHF_WRITE
     }
     l.osects.push(EOSect{name: n, typ: typ, flags: flags})
   }
+  var arrays: List[(Int, Int, Int)] = []
   for o in 0..l.objs.len() {
     if !l.objs[o].live {
       continue
@@ -849,13 +935,19 @@ fn (var l: ELinker) place() {
         continue
       }
       // 0x70000001: SHT_X86_64_UNWIND, x86-64's .eh_frame
-      if s.typ != SHT_NOBITS && s.typ != SHT_PROGBITS && s.typ != SHT_NOTE && s.typ != 14 && s.typ != 15 && s.typ != 0x70000001 {
+      if s.typ != SHT_NOBITS && s.typ != SHT_PROGBITS && s.typ != SHT_NOTE && s.typ != 14 && s.typ != 15 && s.typ != 16 && s.typ != 0x70000001 {
         l.fail("${l.objs[o].path}: section ${s.name} of type ${s.typ}")
         return
       }
-      if s.name == ".init_array" || s.name == ".fini_array" || s.name.starts_with(".init_array.") || s.name.starts_with(".fini_array.") || s.name == ".ctors" || s.name == ".dtors" {
-        l.fail("${l.objs[o].path}: ${s.name}: constructors are not supported")
+      if s.name == ".ctors" || s.name == ".dtors" || s.name.starts_with(".ctors.") || s.name.starts_with(".dtors.") {
+        l.fail("${l.objs[o].path}: ${s.name}: .ctors and .dtors are not supported (only the init and fini arrays)")
         return
+      }
+      if out == O_INITA || out == O_FINIA {
+        // placed below in their priority order (.init_array.N first by
+        // N, then the plain ones; as GNU ld's SORT_BY_INIT_PRIORITY)
+        arrays.push((array_prio(s.name), o, k))
+        continue
       }
       // .eh_frame pieces only need 4 byte alignment: no gap may hold a
       // zero length terminator
@@ -867,6 +959,29 @@ fn (var l: ELinker) place() {
       l.osects[out].align = l.osects[out].align.max(al)
       l.osects[out].chunks.push((o, k))
     }
+  }
+  // the init and fini arrays by priority, a stable order within one
+  var i = 1
+  while i < arrays.len() {
+    let x = arrays[i]
+    var j = i
+    while j > 0 && arrays[j - 1].0 > x.0 {
+      arrays[j] = arrays[j - 1]
+      j -= 1
+    }
+    arrays[j] = x
+    i += 1
+  }
+  for (_, o, k) in arrays {
+    let s = l.objs[o].sects[k]
+    let out = classify(s)
+    let al = s.align.max(1)
+    let off = align_up(l.osects[out].size, al)
+    l.objs[o].sects[k].out = out
+    l.objs[o].sects[k].off = off
+    l.osects[out].size = off + s.size
+    l.osects[out].align = l.osects[out].align.max(al)
+    l.osects[out].chunks.push((o, k))
   }
   // the common symbols each name's definition chose, after the .bss
   // sections: aligned to their value (ELF's alignment of a common
@@ -1095,7 +1210,7 @@ fn (var l: ELinker) layout() {
   l.osects[O_PLT].align = 16
   l.osects[O_GOT].size = 8 * l.got.len()
   l.osects[O_GOT].align = 8
-  l.osects[O_DYNAMIC].size = 16 * (l.needed.len() + 16)
+  l.osects[O_DYNAMIC].size = 16 * (l.needed.len() + 22)
   l.osects[O_DYNAMIC].align = 8
   if l.opts.static {
     for i in [O_INTERP, O_HASH, O_DYNSYM, O_DYNSTR, O_VERSYM, O_VERNEED, O_RELADYN, O_PLT, O_DYNAMIC] {
@@ -1522,7 +1637,7 @@ fn (var l: ELinker) write() -> Bytes {
     body.push("".bytes())
   }
   // the program's sections
-  for i in [O_RODATA, O_EXCEPT, O_EH, O_TEXT, O_TDATA, O_RELRO, O_DATA] {
+  for i in [O_RODATA, O_EXCEPT, O_EH, O_TEXT, O_TDATA, O_PREINIT, O_INITA, O_FINIA, O_RELRO, O_DATA] {
     body[i] = l.contents(i, ps)
     if !l.err.is_empty() {
       return "".bytes()
@@ -1651,7 +1766,7 @@ fn (var l: ELinker) write() -> Bytes {
     b.u64(DT_NEEDED)
     b.u64(ds.off.get(n) ?? 0)
   }
-  let dyn = [(DT_HASH, l.osects[O_HASH].addr), (DT_STRTAB, l.osects[O_DYNSTR].addr), (DT_SYMTAB, l.osects[O_DYNSYM].addr), (DT_STRSZ, ds.tab.len()), (DT_SYMENT, 24), (DT_DEBUG, 0), (DT_RELA, l.osects[O_RELADYN].addr), (DT_RELASZ, l.osects[O_RELADYN].size), (DT_RELAENT, 24), (DT_FLAGS, DF_BIND_NOW), (DT_FLAGS_1, DF_1_NOW), (DT_VERSYM, l.osects[O_VERSYM].addr), (DT_VERNEED, l.osects[O_VERNEED].addr), (DT_VERNEEDNUM, libs.len())]
+  let dyn = [(DT_HASH, l.osects[O_HASH].addr), (DT_STRTAB, l.osects[O_DYNSTR].addr), (DT_SYMTAB, l.osects[O_DYNSYM].addr), (DT_STRSZ, ds.tab.len()), (DT_SYMENT, 24), (DT_DEBUG, 0), (DT_RELA, l.osects[O_RELADYN].addr), (DT_RELASZ, l.osects[O_RELADYN].size), (DT_RELAENT, 24), (DT_FLAGS, DF_BIND_NOW), (DT_FLAGS_1, DF_1_NOW), (DT_VERSYM, l.osects[O_VERSYM].addr), (DT_VERNEED, l.osects[O_VERNEED].addr), (DT_VERNEEDNUM, libs.len())] + array_tags(l.osects)
   for (tag, val) in dyn {
     b.u64(tag)
     b.u64(val)
@@ -1920,6 +2035,21 @@ fn patch_bytes(data: Bytes, addr: Int, ps: List[Patch]) -> Bytes {
   }
   o.bytes(data[at..])
   o.done()
+}
+
+/// The dynamic tags of the init and fini arrays that hold any.
+fn array_tags(s: List[EOSect]) -> List[(Int, Int)] {
+  var t: List[(Int, Int)] = []
+  if s[O_PREINIT].size > 0 {
+    t = t + [(DT_PREINIT_ARRAY, s[O_PREINIT].addr), (DT_PREINIT_ARRAYSZ, s[O_PREINIT].size)]
+  }
+  if s[O_INITA].size > 0 {
+    t = t + [(DT_INIT_ARRAY, s[O_INITA].addr), (DT_INIT_ARRAYSZ, s[O_INITA].size)]
+  }
+  if s[O_FINIA].size > 0 {
+    t = t + [(DT_FINI_ARRAY, s[O_FINIA].addr), (DT_FINI_ARRAYSZ, s[O_FINIA].size)]
+  }
+  t
 }
 
 /// The program headers.

@@ -194,3 +194,42 @@ fibers of one thread. amd64 (the x86 templates) is not instrumented yet.
 - ThreadSanitizer's Java heap API (`__tsan_java_alloc`, which resets a
   range's shadow): needs one contiguous heap range declared at start,
   which Xo's heap is not.
+
+## Addendum (2026-10-21): linux/arm64 (owner-queued item 1)
+
+The native arm64 backend's --race links on linux/arm64 too, with Xo's
+ELF linker (compiler/macho elflink.xo), the default linker of a Linux
+race build (with the C library, dynamic: ThreadSanitizer's runtime is
+built on it):
+
+- **The runtime**: compiler-rt's tsan at the pinned LLVM 23.1.3 as the
+  static archive libclang_rt.tsan-aarch64.a (scripts/race-runtime.sh,
+  in Docker linux/arm64), built with -mno-outline-atomics (the inline
+  ARMv8.0 loops: no libgcc __aarch64_* helper, of which the linker
+  writes only the 4 and 8 byte ones) and -fno-threadsafe-statics (no
+  __cxa_guard_* from a C++ runtime Xo does not link; the runtime
+  initializes once, in __tsan_init, before any thread). Found as
+  lib/xo/race/linux-arm64/ next to std, or $XO_RACE_RUNTIME.
+- **The link**: the archive is linked whole (LinkInput.whole, ld's
+  --whole-archive, as clang -fsanitize=thread does): __tsan_init is
+  reached only through a member's .preinit_array. The ELF linker gains
+  the constructor arrays (.preinit_array, .init_array by priority,
+  .fini_array; DT_PREINIT_ARRAY, DT_INIT_ARRAY, DT_FINI_ARRAY and their
+  sizes; .ctors and .dtors stay refused), the linker defined _DYNAMIC
+  (the runtime reads it), libdl.so.2's imports (dlsym, dladdr: glibc.xo
+  regenerated with libdl, a DT_NEEDED only when used), and
+  libc_nonshared.a's pthread_atfork (a stub calling __register_atfork,
+  as the stat family's).
+- **Atomics**: on Linux the read modify writes are calls of outline
+  atomics (decision 0200), which race.xo, reading instructions, does not
+  see as atomics; the lowering itself puts __tsan_release before and
+  __tsan_acquire after such a call by its order (compiler/arm64 calls.xo
+  race_release, race_acquire), outside the runtime's code. Without it a
+  synchronized Atomic.add reported a race.
+- **Measured**: in Docker linux/arm64, testdata/race_sync's table (ten
+  cases, one and several threads, with and without the
+  synchronization) 40 of 40 as TestRaceSyncTable expects, and
+  testdata/tsan_race reports its races with Xo's source lines.
+- **Shipping**: the archive (5.2 MB) belongs in lib/xo/race/linux-arm64
+  of the release and the linux-arm64 seed, as darwin's dylib does
+  (owner's call for the seed contents; until then $XO_RACE_RUNTIME).
