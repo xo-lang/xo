@@ -94,6 +94,13 @@ pub struct Policy {
   /// Over zero: a sliced run walks at most this many shards (as
   /// walk_budget, by count; both may be set).
   pub slice_shards: Int = 0
+  /// With dirs: the files below an entry whose names end in drop_suffix
+  /// and that are unused for drop_idle are removed by every run, however
+  /// recently their directory was used (the build directories' assembly:
+  /// no build reads it after its link, and it held 28 GB of 40 under
+  /// directories the keep protected, 2026-10-21).
+  pub drop_suffix: Str = ""
+  pub drop_idle: Duration = 0s
 }
 
 /// What one run did: whether it ran (the stamp allowed it), the paths it
@@ -197,7 +204,7 @@ pub fn run(fs: Fs, clock: Clock, dir: Str, p: Policy) -> Stats uses (fs.read, fs
   var kept: List[Entry] = []
   var total = 0
   var subdirs: List[Entry] = []
-  let all = entries(fs, clock, dir, p.dirs, p.keep, subdirs)
+  let all = entries(fs, clock, dir, p, subdirs)
   // the budget is for the removals: a walk longer than it still lets a
   // run make progress
   let start = clock.now()
@@ -614,7 +621,9 @@ fn stored(fs: Fs, dir: Str) -> Int uses fs.read {
 /// The entries of the cache in dir; files left under a temporary name
 /// (".tmp" in the name) for over keep are removed on the way. Without
 /// dirs, the directories below the top level go to subdirs in walk order.
-fn entries(fs: Fs, clock: Clock, dir: Str, dirs: Bool, keep: Duration, var subdirs: List[Entry]) -> List[Entry] uses (fs.read, fs.write, clock) {
+fn entries(fs: Fs, clock: Clock, dir: Str, p: Policy, var subdirs: List[Entry]) -> List[Entry] uses (fs.read, fs.write, clock) {
+  let dirs = p.dirs
+  let keep = p.keep
   var out: List[Entry] = []
   if dirs {
     let top = match fs.read_dir(dir) {
@@ -630,9 +639,15 @@ fn entries(fs: Fs, clock: Clock, dir: Str, dirs: Bool, keep: Duration, var subdi
       match fs.walk(path) {
         Ok(all) => {
           for f in all {
-            if !f.is_dir {
-              size += f.size
+            if f.is_dir {
+              continue
             }
+            if !p.drop_suffix.is_empty() && f.name.ends_with(p.drop_suffix) && clock.since(f.modified) >= p.drop_idle {
+              if fs.remove(f.path).is_ok() {
+                continue
+              }
+            }
+            size += f.size
           }
         }
         Err(_) => {}

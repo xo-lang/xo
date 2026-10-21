@@ -97,7 +97,11 @@ fn build_dir(os: Os, ctx: Ctx, wd: Str, dirs: List[Str], mode: Int, mono: Bool, 
   os.fs.create_dir_all(dir)?
   os.fs.set_modified(dir, os.clock.now()).ignore_err("only the prune order")
   if !chosen {
-    prune.run(os.fs, os.clock, base, cap_env(os, prune.from_env(os.env, prune.Policy{dirs: true}), "XO_BUILD_DIR_MAX"))
+    // a directory is one target's last build: kept 30 minutes, not
+    // prune.KEEP's 2 hours (about 50 builds an hour held 31.7 GB under a
+    // 20 GB cap, 2026-10-21), and its assembly files (written for cc, or
+    // with XO_KEEP_ASM) go after 10 minutes whatever the directory's age
+    prune.run(os.fs, os.clock, base, cap_env(os, prune.from_env(os.env, prune.Policy{dirs: true, keep: BUILD_DIR_KEEP, drop_suffix: ".s", drop_idle: 10m}), "XO_BUILD_DIR_MAX"))
   }
   Ok(dir)
 }
@@ -150,6 +154,10 @@ fn cap_env(os: Os, p: prune.Policy, name: Str) -> prune.Policy {
   }
   q
 }
+
+/// How long a build directory is kept after its last use (build_dir's
+/// prune).
+const BUILD_DIR_KEEP: Duration = 30m
 
 /// How long one build may prune a cache (cap_env).
 const PRUNE_BUDGET: Duration = 2s

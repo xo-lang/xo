@@ -445,3 +445,17 @@ test "an entry another prune removed counts as removed" {
   // gone: its bytes left the cache, so a run counts it and stops sooner
   expect(remove(os.fs, os.clock, "c/aa/x", false, 1m)) == true
 }
+
+test "a build directory's assembly goes after its idle time, whatever the directory's keep" {
+  put(os, "b/aa/arm64/prog.s", 1000)
+  put(os, "b/aa/arm64/prog.o", 10)
+  os.clock.advance(11m)
+  // the directory was used just now (a build of it): kept, its .s not
+  put(os, "b/aa/arm64/prog.o", 10)
+  put(os, "b/aa/stamp", 0)
+  let p = Policy{dirs: true, max_bytes: 1 * GB, keep: 30m, drop_suffix: ".s", drop_idle: 10m}
+  let st = run(os.fs, os.clock, "b", p)
+  expect(there(os, "b/aa/arm64/prog.s")) == false
+  expect(there(os, "b/aa/arm64/prog.o")) == true
+  expect(st.bytes) == 10
+}
