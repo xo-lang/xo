@@ -290,7 +290,7 @@ fn (var g: G) x86_emit_once() {
   if g.os == "windows" {
     g.seh_end(b, sites)
     b.push("\n")
-    g.text.push(x86_copy_runs(x86_reload_peep(b.join(""))))
+    g.text.push(x86_r11_reuse(x86_copy_runs(x86_reload_peep(b.join("")))))
     return
   }
   b.push("\t.cfi_endproc\n")
@@ -302,7 +302,7 @@ fn (var g: G) x86_emit_once() {
     g.lsda(sites)
   }
   b.push("\n")
-  g.text.push(x86_copy_runs(x86_reload_peep(b.join(""))))
+  g.text.push(x86_r11_reuse(x86_copy_runs(x86_reload_peep(b.join("")))))
 }
 
 /// The frame: rbp and the callee saved registers pushed, the rest of
@@ -1649,6 +1649,70 @@ fn x86_r11_dead(ls: List[Str], i: Int) -> Bool {
 /// Whether s is a 64 bit general register (%rax ... %r15).
 fn gp64(s: Str) -> Bool {
   s.starts_with("%r") && !s.ends_with("d") && !s.ends_with("w") && !s.ends_with("b") && !s.contains("(")
+}
+
+/// A pass over a function's emitted text: a reload of a slot into r11
+/// (`movq N(%rsp), %r11`, a spilled base or operand) goes when r11 still
+/// holds that slot's word from the same reload, nothing between having
+/// written r11 or a stack slot, moved rsp, or left the straight line
+/// (2026-10-21: nistec.mul4p reloaded its spilled multiplier pointer
+/// before each of four `mulq N(%r11)`). Debug labels are not boundaries
+/// (x86_lift_dbg: the same code with and without debug information).
+fn x86_r11_reuse(text: Str) -> Str {
+  let (ls, pre) = x86_lift_dbg(text)
+  var out: List[Str] = List.with_capacity(ls.len())
+  var held = ""
+  for (i, l) in ls.indexed() {
+    let (src, dst, ok) = movq_ops(l)
+    if ok && dst == "%r11" && rsp_slot(src) {
+      if held == src {
+        x86_put_pre(out, pre, i, i + 1)
+        continue
+      }
+      held = src
+    } else if !x86_keeps_r11_slots(l) {
+      held = ""
+    }
+    x86_put_pre(out, pre, i, i + 1)
+    out.push(l)
+  }
+  x86_put_pre(out, pre, ls.len(), ls.len() + 1)
+  out.join("\n")
+}
+
+/// Whether line l leaves r11 and every stack slot as they were and
+/// control on the straight line (x86_r11_reuse): an instruction that
+/// names r11 only as a memory base, writes no stack slot, does not move
+/// rsp, and is no label, jump, call, return, push, or pop.
+fn x86_keeps_r11_slots(l: Str) -> Bool {
+  if l.is_empty() || l.starts_with("\t.") {
+    return true
+  }
+  if !l.starts_with("\t") {
+    return false
+  }
+  let body = l[1..l.len()]
+  let sp = body.find(" ") ?? body.len()
+  let m = body[0..sp]
+  if m.starts_with("j") || m.starts_with("call") || m.starts_with("ret") || m.starts_with("push") || m.starts_with("pop") || m == "leave" || m == "ud2" || m == "syscall" || m.ends_with(":") {
+    // (syscall writes rcx and r11 without naming them)
+    return false
+  }
+  if body.replace("(%r11", "").contains("%r11") {
+    return false
+  }
+  if body.ends_with("%rsp") || body.ends_with("%esp") {
+    return false
+  }
+  if body.contains("(%rsp)") {
+    let ops = x86_ops(body[sp..body.len()].trim())
+    if ops.len() == 1 {
+      return m is "mulq" | "imulq" | "divq" | "idivq" | "mull" | "imull"
+    }
+    let last = ops[ops.len() - 1]
+    return !last.contains("(%rsp)") && last.starts_with("%")
+  }
+  true
 }
 
 /// Whether s is a stack slot reference `N(%rsp)`.
