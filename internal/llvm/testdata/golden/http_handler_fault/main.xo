@@ -1,0 +1,16 @@
+// A handler fault becomes a 500 and its message and location reach stderr
+// as an error log record (std.md 4.2; 2026-10-20 poll: "an overflow trap
+// became a silent 500" was not reproduced, this keeps it so).
+
+use std/http
+
+fn main(os: Os) uses stdio {
+  var r = http.router()
+  r.handle("GET /boom", fn(req: http.Request) -> http.Response ! http.HttpErr {
+    let one = Int.parse(req.path.len().display()) ?? 1
+    let big = 9223372036854775807
+    Ok(http.text(200, "${big + one}"))
+  })
+  let resp = r.call(http.new_request("GET", "/boom"))
+  os.stdio.println("status ${resp.status}")
+}

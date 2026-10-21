@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+status 500
+--- stderr
+<time> ERROR handler fault fault=integer overflow: 9223372036854775807 + 5 does not fit Int at main.xo:12:26
