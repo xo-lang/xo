@@ -97,7 +97,9 @@ fn main(os: Os) ! {
     Err(Closed) => os.stdio.println("closed")
     Err(e) => os.stdio.println("other ${e}")
   }
-  match sql.open(os.net, "postgres", "postgres://localhost/x") {
+  // a driver name no backend has (natively "postgres" is the Xo driver,
+  // decision 0278)
+  match sql.open(os.net, "mysql", "mysql://localhost/x") {
     Ok(_) => os.stdio.println("opened?")
     Err(Driver(msg)) => os.stdio.println("driver: ${msg}")
     Err(e) => os.stdio.println("other ${e}")

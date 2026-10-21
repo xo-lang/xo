@@ -17,5 +17,5 @@ mismatch age: expected text, found an integer
 mismatch email: expected an integer, found NULL
 no column height
 closed
-driver: unknown driver postgres
+driver: unknown driver mysql
 --- stderr
