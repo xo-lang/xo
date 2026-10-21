@@ -153,6 +153,11 @@ Update the knowledgebase in the same change as the work, not later:
     bisects a failure to the commit's owner, who fixes forward. An
     agent still runs any repo test its change obviously affects (e.g.
     TestCodegenInputsClassified for a new XO_* variable) in its gate.
+  - gates take no slot (owner, 2026-10-21): run your gate as
+    `HEAVY_CLASS=gate ~/xo-lead/agents/heavy.sh NAME CMD...`; it starts
+    as soon as 40% of memory is free (starts staggered by 20 s), with
+    no queue. The two heavy slots are for hourly.sh, bulk runs and
+    suites.
   - merges before testing (owner, 2026-10-21): heavy.sh serves pushq
     first, then gates, then HEAVY_CLASS=bulk runs (measurements,
     profiles, full suites, deferred checks; set it on every such run).

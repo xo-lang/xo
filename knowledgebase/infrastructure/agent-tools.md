@@ -160,6 +160,8 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 ## Coordinating (scripts/lead/README.md)
 
+- Gates: `HEAVY_CLASS=gate ~/xo-lead/agents/heavy.sh NAME CMD...`: no slot,
+  no queue; starts when 40% of memory is free (HEAVY_GATE_MIN_FREE).
 - Heavy runs: `~/xo-lead/agents/heavy.sh NAME CMD...`. Slot order:
   pushq's runs, then gates, then `HEAVY_CLASS=bulk` runs (measurements,
   profiles, suites). While `~/xo-lead/merge-first` exists, gates are the
