@@ -1,0 +1,13 @@
+// Metadata numbers: the debug information's start past every function's
+// alias scope nodes (noalias.xo), however many functions the module has.
+
+test "the debug metadata starts past the last function's alias scopes" {
+  for n in [0, 1, 100, 9998, 9999, 10056, 20000] {
+    // function n - 1's nodes: SCOPE_BASE * n up to 1 + 3 * SCOPE_MAX past it
+    let last_scope = SCOPE_BASE * n + 1 + 3 * SCOPE_MAX
+    expect(dbg_first(n) >= DBG_BASE) == true
+    expect(dbg_first(n) > last_scope) == true
+  }
+  // a module under 9,999 functions keeps the numbers it had
+  expect(dbg_first(100)) == 1000000
+}

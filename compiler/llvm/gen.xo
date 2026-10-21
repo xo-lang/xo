@@ -83,10 +83,11 @@ pub struct Gen {
   pub tsan_runtime: Bool = false
 
   /// DWARF line tables (decision 0239; debug.xo): the metadata numbers
-  /// made (from 1000000, past the fixed ones), the compile unit, the
+  /// made (from dbg_first, past the fixed ones and the alias scopes'),
+  /// the compile unit, the
   /// files, the subprogram of the function being lowered (-1 for none),
   /// and the line of the value being lowered
-  dbg_n: Int = 1000000
+  dbg_n: Int = DBG_BASE
   dbg_cu: Int = -1
   /// xo_static's DIGlobalVariableExpression (-1: no debug information)
   dbg_static: Int = -1
@@ -205,8 +206,22 @@ pub fn new_gen(m: ssa.Module) -> Gen {
     g.by_ref.push([])
     g.by_ref_done.push(false)
   }
+  g.dbg_n = dbg_first(m.funcs.len())
   g
 }
+
+/// The debug metadata's numbers start past 1000000 and past the alias
+/// scopes' (noalias.xo: function fi's from SCOPE_BASE * (fi + 1), under
+/// SCOPE_BASE each): a module of 10,000 functions or more (the
+/// compiler's) gave both families the same numbers, which clang rejects
+/// ("Metadata id is already used", 2026-10-21).
+fn dbg_first(nfuncs: Int) -> Int {
+  DBG_BASE.max(SCOPE_BASE * (nfuncs + 1))
+}
+
+/// The debug metadata's first number in a module of fewer than 9,999
+/// functions (dbg_first).
+const DBG_BASE = 1000000
 
 /// Records the first construct the lowering does not support (fail).
 fn (var g: Gen) fail(msg: Str) {
