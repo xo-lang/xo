@@ -1,5 +1,19 @@
 # std/http changes
 
+## 2026-10-21: feature: http.gzip_responses
+
+- Kind: feature
+- Commit: (filled in after the push)
+- Found by: decision 0305 (approved by the owner, 2026-10-21)
+- Go reference: none in Go's standard library; the rules of klauspost/compress gzhttp
+- Test: internal/llvm/testdata/golden/http_gzip_responses
+
+`r.wrap(http.gzip_responses())` compresses responses with gzip when the
+request accepts it. It skips small bodies, compressed content types,
+206s, and responses that already have a Content-Encoding. It adds
+`Vary: Accept-Encoding`, weakens ETags, and compresses streamed bodies
+through a Compressor that each flush reaches.
+
 ## 2026-10-21: feature: Request.client_ip behind trusted proxies
 
 - Kind: feature

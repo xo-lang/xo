@@ -1428,6 +1428,40 @@ fn serve_https(os: Os, r: http.Router) -> () ! Error uses (fs.read, net.listen) 
     body the server reads (default 64 MiB; a longer one is cut short as
     a body whose client went away). Go has no such limit.
 
+### 4.7 Response compression
+
+```
+fn gzip_responses(min_size: Int = 1024, level: compress.Level = compress.Level.Default) -> fn(Request, Next) -> Response
+// r.wrap(http.gzip_responses())
+```
+
+A middleware that compresses responses with gzip (decision 0305, an Xo
+addition: Go's standard library has none). It follows the rules of
+klauspost/compress's gzhttp:
+
+- **Passed through unchanged:**
+  - a status below 200, 204, 304, or 206;
+  - a response with its own Content-Encoding or a Content-Range;
+  - a Content-Type that is compressed already: `image/*`, `video/*`,
+    `application/zip`, `application/gzip`, `font/woff2`.
+- **Vary.** Every other response gets `Vary: Accept-Encoding`, because
+  its body could depend on that header.
+- **When it compresses.** The request's Accept-Encoding must allow it: a
+  `gzip` or `*` element whose q is not 0. A body must be `min_size`
+  bytes or more; a streamed body needs a Content-Type of its own (its
+  bytes are not sniffed). It then:
+  - compresses the body with `compress.gzip` at `level`;
+  - sets `Content-Encoding: gzip`;
+  - drops Content-Length;
+  - makes a strong ETag weak (`W/"..."`);
+  - sets the Content-Type sniffed from the uncompressed body
+    (`mime.detect_content_type`) when the response had none, so the
+    server does not sniff the gzip bytes.
+- **Streamed responses** run through a `compress.Compressor`. Each
+  `BodyWriter.flush` flushes it (Go's `Writer.Flush`), so the client can
+  decode what has been sent.
+- Tests: golden http_gzip_responses (go, arm64, LLVM).
+
 ---
 
 ## 5. std/json

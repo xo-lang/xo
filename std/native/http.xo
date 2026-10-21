@@ -2,6 +2,7 @@
 // reference; std/llrt/xo_http.c reads requests and writes responses as
 // net/http does.
 use std/http
+use std/compress
 use std/json as js
 use std/mime
 use std/netip
@@ -118,6 +119,8 @@ struct Response {
 /// The writer of a streamed body: a sink into a buffer or a connection.
 struct BodyWriter {
   s: rthttp.Sink
+  /// gzip_responses: the compressor between the handler's writes and s
+  gz: Mutex[compress.Compressor]? = None
 }
 
 // ---------------------------------------------------------------------------
@@ -882,7 +885,11 @@ fn (w: BodyWriter) write(data: Bytes) -> () ! IoErr {
   if task.is_canceled() {
     return Err(IoErr.Canceled)
   }
-  if !hserve.sink_write(w.s, data) {
+  var out = data
+  if let Some(m) = w.gz {
+    out = m.with(fn(var c) { c.write(data) })
+  }
+  if !hserve.sink_write(w.s, out) {
     return Err(IoErr.Io(msg: "write: connection closed"))
   }
 }
@@ -891,9 +898,132 @@ fn (w: BodyWriter) flush() -> () ! IoErr {
   if task.is_canceled() {
     return Err(IoErr.Canceled)
   }
+  if let Some(m) = w.gz {
+    // Go's Writer.Flush: everything written so far, then the sink's flush
+    let out = m.with(fn(var c) { c.flush() })
+    if !hserve.sink_write(w.s, out) {
+      return Err(IoErr.Io(msg: "flush: connection closed"))
+    }
+  }
   if !hserve.sink_flush(w.s) {
     return Err(IoErr.Io(msg: "flush: connection closed"))
   }
+}
+
+// ---------------------------------------------------------------------------
+// gzip_responses (std.md 4.7, decision 0305): gzhttp's rules
+
+/// Whether Accept-Encoding allows gzip: a `gzip` or `*` element whose q is
+/// not 0.
+fn accepts_gzip(v: Str) -> Bool {
+  for el in v.split(",") {
+    let parts = el.split(";")
+    let token = parts[0].trim().to_lower()
+    if token != "gzip" && token != "*" {
+      continue
+    }
+    var q = 1.0
+    var i = 1
+    while i < parts.len() {
+      let p = parts[i].trim().to_lower()
+      if p.starts_with("q=") {
+        q = Float.parse(p[2..].trim()) ?? 0.0
+      }
+      i += 1
+    }
+    if q > 0.0 {
+      return true
+    }
+  }
+  false
+}
+
+/// A Content-Type whose data is compressed already.
+fn compressed_type(ct: Str) -> Bool {
+  let t = ct.split(";")[0].trim().to_lower()
+  t.starts_with("image/") || t.starts_with("video/") || t == "application/zip" || t == "application/gzip" || t == "font/woff2"
+}
+
+fn response_without(r: http.Response, name: Str) -> http.Response {
+  let k = http1.canonical_key(name)
+  let n = rt.cast[http.Response, Response](r)
+  var h = n.headers
+  let _old = h.remove(k)
+  rt.cast[Response, http.Response](n with {headers: h, fields: without_field(n.fields, k)})
+}
+
+/// The stream f with its writes compressed into the writer it gets.
+fn gzip_stream(f: fn(BodyWriter) -> () ! IoErr, level: compress.Level) -> fn(BodyWriter) -> () ! IoErr {
+  fn(w: BodyWriter) -> () ! IoErr {
+    let m = Mutex[compress.Compressor].new(compress.compressor(compress.Format.Gzip, level: level))
+    let r = f(BodyWriter{s: w.s, gz: Some(m)})
+    let rest = m.with(fn(var c) { c.finish() })
+    if !hserve.sink_write(w.s, rest) {
+      return Err(IoErr.Io(msg: "write: connection closed"))
+    }
+    r
+  }
+}
+
+fn gzip_response(req: Request, resp0: http.Response, min_size: Int, level: compress.Level) -> http.Response {
+  let n = rt.cast[http.Response, Response](resp0)
+  let status = n.status
+  if status < 200 || status == 204 || status == 304 || status == 206 {
+    return resp0
+  }
+  if response_header(resp0, "Content-Encoding") is Some(_) || response_header(resp0, "Content-Range") is Some(_) {
+    return resp0
+  }
+  let streamed = n.stream != 0
+  var ct = response_header(resp0, "Content-Type") ?? ""
+  if ct.is_empty() && !streamed && !n.body.is_empty() {
+    ct = mime.detect_content_type(n.body)
+  }
+  if compressed_type(ct) {
+    return resp0
+  }
+  // the response depends on Accept-Encoding from here on
+  var resp = resp0
+  if !response_header_values(resp, "Vary").any(fn(v) { v.to_lower().contains("accept-encoding") }) {
+    resp = response_add_header(resp, "Vary", "Accept-Encoding")
+  }
+  if !accepts_gzip(request_header(req, "Accept-Encoding") ?? "") {
+    return resp
+  }
+  if streamed && ct.is_empty() {
+    // a stream's type is not sniffed: it stays uncompressed
+    return resp
+  }
+  if !streamed && n.body.len() < min_size {
+    return resp
+  }
+  resp = response_with_header(resp, "Content-Encoding", "gzip")
+  resp = response_without(resp, "Content-Length")
+  if !ct.is_empty() {
+    resp = response_with_header(resp, "Content-Type", ct)
+  }
+  if let Some(et) = response_header(resp, "ETag") {
+    if !et.starts_with("W/") {
+      resp = response_with_header(resp, "ETag", "W/" + et)
+    }
+  }
+  let m = rt.cast[http.Response, Response](resp)
+  if !streamed {
+    return rt.cast[Response, http.Response](m with {body: compress.gzip(m.body, level: level)})
+  }
+  let fs = hserve.stream_get(m.stream, false)
+  if fs.is_empty() {
+    return resp
+  }
+  if let Some(f) = rt.any_get[fn(BodyWriter) -> () ! IoErr](fs[0]) {
+    let id = hserve.stream_put(rt.any_of(gzip_stream(f, level)))
+    return rt.cast[Response, http.Response](m with {stream: id})
+  }
+  resp
+}
+
+fn gzip_responses(min_size: Int, level: compress.Level) -> fn(http.Request, http.Next) -> http.Response {
+  fn(req: http.Request, next: http.Next) -> http.Response { gzip_response(rt.cast[http.Request, Request](req), next(req), min_size, level) }
 }
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,60 @@
+// http.gzip_responses (std.md 4.7, decision 0305): gzhttp's rules over a
+// server on 127.0.0.1:0. A body of min_size bytes or more is gzipped when
+// the request's Accept-Encoding allows it (q > 0); Vary: Accept-Encoding
+// on every response it could have compressed; Content-Length dropped, a
+// strong ETag made weak, the sniffed Content-Type kept; compressed types,
+// 206s, and responses with their own Content-Encoding pass; a stream is
+// compressed through a Compressor, its flushes reaching the client.
+use std/compress
+use std/http
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.wrap(http.gzip_responses(min_size: 64))
+  r.handle("GET /text", fn(_req) { http.text(200, "hello world ".repeat(20)) })
+  r.handle("GET /small", fn(_req) { http.text(200, "tiny") })
+  r.handle("GET /html", fn(_req) { http.Response{status: 200, headers: {}, body: "<html><body>${"x".repeat(100)}</body></html>".bytes()} })
+  r.handle("GET /png", fn(_req) { http.Response{status: 200, headers: {"Content-Type": "image/png"}, body: "x".repeat(200).bytes()} })
+  r.handle("GET /etag", fn(_req) { http.text(200, "e".repeat(100)).with_header("ETag", "\"abc\"") })
+  r.handle("GET /weak", fn(_req) { http.text(200, "w".repeat(100)).with_header("ETag", "W/\"abc\"") })
+  r.handle("GET /coded", fn(_req) { http.text(200, "c".repeat(100)).with_header("Content-Encoding", "br") })
+  r.handle("GET /partial", fn(_req) { http.text(206, "p".repeat(100)).with_header("Content-Range", "bytes 0-99/200") })
+  r.handle("GET /stream", fn(_req) {
+    http.stream(200, fn(w) {
+      w.write("part one ".repeat(10).bytes())?
+      w.flush()?
+      w.write("part two ".repeat(10).bytes())?
+    }).with_header("Content-Type", "text/plain")
+  })
+  r
+}
+
+fn main(os: Os) {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let srv = http.server(l, routes())
+  let c = http.client(os.net, timeout: 5s)
+  scope s {
+    s.spawn_background(fn() { srv.serve().ignore_err("test server") })
+    for (path, ae) in [("/text", "gzip"), ("/text", ""), ("/text", "gzip;q=0"), ("/text", "br, *;q=0.5"), ("/small", "gzip"), ("/html", "gzip"), ("/png", "gzip"), ("/etag", "gzip"), ("/weak", "gzip"), ("/coded", "gzip"), ("/partial", "gzip"), ("/stream", "gzip"), ("/stream", "identity")] {
+      var req = http.new_request("GET", "http://${l.addr()}${path}")
+      req = req.with_header("Accept-Encoding", if ae.is_empty() { "identity" } else { ae })
+      match c.send(req) {
+        Ok(resp) => {
+          let ce = resp.header("Content-Encoding") ?? "-"
+          let body = resp.body
+          let text = if ce == "gzip" {
+            match compress.gunzip(body) {
+              Ok(b) => b.to_str() ?? "?"
+              Err(e) => "gunzip: ${e}"
+            }
+          } else {
+            body.to_str() ?? "?"
+          }
+          os.stdio.println("${path} ae=${ae.quote()}: ${resp.status} ce=${ce} vary=${resp.header("Vary") ?? "-"} ct=${resp.header("Content-Type") ?? "-"} etag=${resp.header("ETag") ?? "-"} cl=${resp.header("Content-Length") ?? "-"} text=${text.len()} ${text[0..(if text.len() < 12 { text.len() } else { 12 })].quote()}")
+        }
+        Err(e) => os.stdio.println("${path}: ${e}")
+      }
+    }
+  }
+  os.stdio.println("done")
+}

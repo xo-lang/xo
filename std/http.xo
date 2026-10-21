@@ -6,6 +6,7 @@
 //   and perform their callback's effects (std.md 4.1).
 // - `Key[T]` is a handle; keys with the same name and type are the same key
 //   (std.md 4.3).
+use std/compress
 use std/json
 use std/multipart
 use std/url
@@ -203,3 +204,7 @@ struct Url {
 struct UrlErr {
   msg: Str
 } derive Display
+
+/// A middleware that compresses responses with gzip when the request
+/// accepts it (std.md 4.7, decision 0305): `r.wrap(http.gzip_responses())`.
+fn gzip_responses(min_size: Int = 1024, level: compress.Level = compress.Level.Default) -> fn(Request, Next) -> Response
