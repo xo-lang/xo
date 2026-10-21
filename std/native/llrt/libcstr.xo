@@ -80,7 +80,7 @@ fn copy_words(d: Int, s: Int, n: Int) -> Int {
 /// overlap in the middle, else a byte (2026-10-19: the byte loops of a
 /// short copy were most of json/enc_small's memmove, three times
 /// LLVM's on amd64).
-fn move_small(d: Int, s: Int, n: Int) {
+pub fn move_small(d: Int, s: Int, n: Int) {
   if n >= 8 {
     let t = subw(n, 8)
     let a = rt.mem_load(s, 0, 8)

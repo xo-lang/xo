@@ -24,6 +24,7 @@
 // fault. check_no_alloc does not check it: it calls alloc.xo's and
 // rc.xo's functions, which that check allows no module.
 use native/llrt/alloc
+use native/llrt/libcstr
 use native/llrt/rc
 use native/llrt/rtstats
 use native/rt
@@ -802,8 +803,22 @@ fn reserve_slow(a: Int, an: Int, need: Int) -> Int {
 /// string the caller holds, so the bytes are moved after the reserve.
 pub fn rs_append(a: Int, an: Int, p: Int, n: Int) -> Int {
   let s = reserve(a, an, n)
-  rt.mem_move(addw(addw(s, S_HDR), an), p, n)
+  move_at(addw(addw(s, S_HDR), an), p, n)
   s
+}
+
+/// rt.mem_move of n bytes from p to d, a short one (1 to 16 bytes: two
+/// overlapping loads and stores, libcstr.move_small) inline: an append
+/// of a word or a short string called memmove, which checked its
+/// arguments and called move_small (2026-10-21: bench/perf/llvm strings
+/// spent 103 M instructions on arm64 in memmove, memcpy, and
+/// move_small, LLVM 24 M, which lowers the copy itself).
+fn move_at(d: Int, p: Int, n: Int) {
+  if n > 0 && n <= 16 {
+    libcstr.move_small(d, p, n)
+    return
+  }
+  rt.mem_move(d, p, n)
 }
 
 /// a + the byte x (xo_rs_push_byte).
@@ -860,7 +875,7 @@ pub fn rs_append_bytes(a: Int, an: Int, b: Int, lo: Int, hi: Int, mode: Int) -> 
   let n = subw(hi, lo)
   let s = reserve(a, an, n)
   let d = addw(addw(s, S_HDR), an)
-  rt.mem_move(d, addw(addw(b, S_HDR), lo), n)
+  move_at(d, addw(addw(b, S_HDR), lo), n)
   if mode != 0 {
     fold(d, n, mode)
   }
