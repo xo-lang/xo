@@ -707,7 +707,7 @@ fn x86_borrow(fp: Bool, taken: List[Int]) -> Int {
       return r
     }
   }
-  fault("amd64: no register to borrow for a spilled operand")
+  -1
 }
 
 /// The operand reference at byte i of template tb: (width prefix, 'u' or
@@ -1121,7 +1121,13 @@ fn (var g: G) x86_scratch_b(var b: List[Str], fp: Bool, n: Int, taken: List[Int]
   if r >= 0 {
     return r
   }
-  let br = x86_borrow(fp, taken + borrowed)
+  var br = x86_borrow(fp, taken + borrowed)
+  if br < 0 {
+    // a failure with the function's IR (G.fail; was a fault), r11 a
+    // placeholder for the rest of the generation
+    g.fail("internal: no register to borrow for a spilled operand in ${g.f.name}")
+    br = 11
+  }
   borrowed.push(br)
   if g.os == "windows" && g.borrow_at < 0 {
     // the first emission (x86_emit): again, with the frame's words

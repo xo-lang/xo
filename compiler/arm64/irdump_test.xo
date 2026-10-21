@@ -26,3 +26,18 @@ test "dump_named records only the named function" {
   expect(g.dumps.len()) == 1
   expect(g.dumps[0].0) == "keep"
 }
+
+test "no free scratch register fails the function with its IR, not the process" {
+  var g = G{m: ssa.Module{}, os: "darwin"}
+  g.f = ssa.Func{name: "pkg.spilly"}
+  // past the two scratch registers, with no allocation to take a free
+  // one from: scratch_reg has none
+  let r = g.scratch_or_fail(false, 2, [])
+  expect(r) == gp_scratch(0)
+  expect(g.err.contains("no free register for a spilled operand in pkg.spilly")) == true
+  expect(g.dumps.len()) == 1
+}
+
+test "x86_borrow says none when every register is taken" {
+  expect(x86_borrow(false, [10, 9, 8, 1, 2, 6, 7, 0, 3, 12, 13, 14, 15])) == -1
+}

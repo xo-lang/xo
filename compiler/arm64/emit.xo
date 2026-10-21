@@ -1128,6 +1128,7 @@ fn (g: G) use_reg(var b: List[Str], v: Int, k: Int) -> Str {
 /// not one in taken (2026-10-16: past three,
 /// they all took the last scratch register, and a template with four
 /// spilled operands, such as a long adc chain, read a wrong value).
+/// -1 when none is free (scratch_or_fail fails the function then).
 fn (g: G) scratch_reg(fp: Bool, n: Int, taken: List[Int]) -> Int {
   // x16 and x17 (d30, d29, d31: three of them), then a register free at
   // the instruction
@@ -1158,7 +1159,20 @@ fn (g: G) scratch_reg(fp: Bool, n: Int, taken: List[Int]) -> Int {
       }
     }
   }
-  fault("arm64: no free register for a spilled operand in ${g.f.name}: one instruction with ${taken.len()} registers and more spilled operands than free registers")
+  -1
+}
+
+/// scratch_reg, or a failure (G.fail, which writes the function's IR
+/// for the driver: 2026-10-21, it was a fault that stopped the process
+/// first) and a placeholder register, generation going on as after any
+/// failure.
+fn (var g: G) scratch_or_fail(fp: Bool, n: Int, taken: List[Int]) -> Int {
+  let r = g.scratch_reg(fp, n, taken)
+  if r >= 0 {
+    return r
+  }
+  g.fail("internal: no free register for a spilled operand in ${g.f.name}: one instruction with ${taken.len()} registers and more spilled operands than free registers")
+  if fp { fp_scratch(0) } else { gp_scratch(0) }
 }
 
 /// The operand number of a template's $uN or $dN whose digits start at
@@ -1209,10 +1223,10 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
           } else {
             var r = 0
             if g.fp[v] {
-              r = g.scratch_reg(true, nfp, use_reg)
+              r = g.scratch_or_fail(true, nfp, use_reg)
               nfp += 1
             } else {
-              r = g.scratch_reg(false, ngp, use_reg)
+              r = g.scratch_or_fail(false, ngp, use_reg)
               ngp += 1
             }
             b.push("\tldr ${reg_name(r, false)}, [${l.base}, #${l.off}]\n")
@@ -1270,10 +1284,10 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
     }
     var r = 0
     if g.fp[d] {
-      r = g.scratch_reg(true, dfp, taken)
+      r = g.scratch_or_fail(true, dfp, taken)
       dfp += 1
     } else {
-      r = g.scratch_reg(false, dgp, taken)
+      r = g.scratch_or_fail(false, dgp, taken)
       dgp += 1
     }
     taken.push(r)
