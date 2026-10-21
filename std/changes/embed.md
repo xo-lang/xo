@@ -3,7 +3,7 @@
 ## 2026-10-21: feature: embed.Dir.fs, a read-only Fs over the files
 
 - Kind: feature
-- Commit: (this change)
+- Commit: a0d510fd
 - Found by: decision 0304's plan (Go's embed.FS is an fs.FS)
 - Go reference: embed.FS (go1.26): Open, ReadDir, ReadFile, fs.Glob over the embedded tree
 - Test: internal/llvm/testdata/golden/embed_dir_fs (arm64, LLVM, Go, amd64, wasm)
