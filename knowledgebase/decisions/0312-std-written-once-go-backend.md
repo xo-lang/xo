@@ -137,6 +137,9 @@ not affected.
       package 97 ms, rt wrapper 86 ms, native Xo through gen 538 ms
       (native arm64 312 ms). The rt copy was Go's package itself; the
       cost is gen's code for byte loops (Xo Publish's profile items).
+    - base64 (2026-10-21): 1 KB encode and decode, 20,000 times: Go's
+      package 53 ms, rt wrapper 37 ms, native Xo through gen 593 ms
+      (native arm64 180 ms); 11 times Go's package.
 
 - One implementation per pure module. A fix lands once and reaches every
   backend.

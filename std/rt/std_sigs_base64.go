@@ -6,7 +6,5 @@ package rt
 // The signatures the Go backend calls the hand written std functions
 // with (compiler/gen stdtypes.xo std_sigs).
 var (
-	_ func(*Base64_DecodeErr, *Task) string                              = (*Base64_DecodeErr).M_display
-	_ func(*Task, Bytes, Base64_Base64) string                           = Base64_encode
-	_ func(*Task, string, Base64_Base64) Result[Bytes, Base64_DecodeErr] = Base64_decode
+	_ func(*Base64_DecodeErr, *Task) string = (*Base64_DecodeErr).M_display
 )
