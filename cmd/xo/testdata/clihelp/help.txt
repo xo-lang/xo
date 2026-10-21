@@ -15,7 +15,7 @@ commands:
   def       where a name is declared, as code writes it
   refs      every reference to a name
   type      the type and declaration at FILE:LINE:COL
-  symbols   a directory's own declarations
+  symbols   a directory's, file's, or module's declarations
   explain   long form explanation of a diagnostic code
   init      write xo.mod for a new module
   get       require, upgrade, or remove a module

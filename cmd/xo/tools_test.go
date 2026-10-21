@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -1164,5 +1166,45 @@ func TestAgentRootSkipsBrokenModule(t *testing.T) {
 	var out, errOut bytes.Buffer
 	if code := run(t, []string{"def", "--dir=" + root, "--text", "helper"}, &out, &errOut); code != 0 || !strings.Contains(out.String(), "note: skipped") {
 		t.Errorf("def --text: exit %d: %s%s", code, out.String(), errOut.String())
+	}
+}
+
+// TestSymbolsScope: `xo symbols` of one file (--file, or a .xo argument)
+// and of one module by import path (--module), std and runtime ones too;
+// the directory's own declarations stay the default (agent feedback: the
+// whole directory came back when one file was wanted).
+func TestSymbolsScope(t *testing.T) {
+	t.Parallel()
+	dir := writeFiles(t, map[string]string{
+		"a.xo": "pub fn alpha() -> Int { 1 }\n\nfn main(os: Os) {\n  os.stdio.println(\"${alpha() + beta()}\")\n}\n",
+		"b.xo": "fn beta() -> Int { 2 }\n\nstruct Bee {\n  n: Int\n}\n",
+	})
+	names := func(args ...string) []string {
+		t.Helper()
+		var out []string
+		for _, s := range agentJSON(t, 0, append([]string{"symbols", "--json"}, args...)...)["symbols"].([]any) {
+			out = append(out, s.(map[string]any)["name"].(string))
+		}
+		sort.Strings(out)
+		return out
+	}
+	if got := strings.Join(names(dir), " "); got != "Bee Bee.n alpha beta main" {
+		t.Errorf("the directory: %s", got)
+	}
+	if got := strings.Join(names("--file="+filepath.Join(dir, "b.xo")), " "); got != "Bee Bee.n beta" {
+		t.Errorf("--file b.xo: %s", got)
+	}
+	if got := strings.Join(names(filepath.Join(dir, "a.xo")), " "); got != "alpha main" {
+		t.Errorf("a.xo as the argument: %s", got)
+	}
+	if got := names("--dir="+dir, "--module=std/json", "--pub"); !slices.Contains(got, "encode_str") {
+		t.Errorf("--module=std/json: %v", got)
+	}
+	if got := names("--dir="+dir, "--module=native/llrt/pool", "--pub"); !slices.Contains(got, "park_wait") {
+		t.Errorf("--module=native/llrt/pool: %v", got)
+	}
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"symbols", "--file=x.xo", "--module=std/json"}, &out, &errOut); code != 2 {
+		t.Errorf("--file with --module: exit %d, want 2: %s", code, errOut.String())
 	}
 }

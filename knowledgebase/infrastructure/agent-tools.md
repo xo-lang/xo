@@ -9,7 +9,9 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 - `xo def NAME`, `xo refs NAME`, `xo type FILE:LINE:COL`, `xo doc NAME`
   (a type's methods), `xo symbols [DIR] [--pub]` (the directory's own
   declarations; at a root with no .xo files of its own it names the
-  directories below that have them); `--dir=DIR`, `--json` or `--text` (text at a terminal).
+  directories below that have them; `--file=F.xo` or a .xo argument for
+  one file, `--module=std/json` or `native/llrt/pool` or an import path
+  for one module, 2026-10-21); `--dir=DIR`, `--json` or `--text` (text at a terminal).
   Use them instead of grep for declarations, callers, types, and to check
   that a method exists before calling it (`Map.update` existed while
   agents guessed `update_or`, 2026-10-18).

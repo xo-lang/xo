@@ -62,6 +62,10 @@ struct AgentArgs {
   text: Bool = false
   /// symbols: pub declarations only
   pub_only: Bool = false
+  /// symbols: one file's declarations (`--file=PATH`, or a .xo target)
+  file: Str = ""
+  /// symbols: one module's, by import path (`--module=std/json`)
+  module: Str = ""
 }
 
 fn agent_args(cmd: Str, args: List[Str]) -> AgentArgs ! Str {
@@ -74,6 +78,10 @@ fn agent_args(cmd: Str, args: List[Str]) -> AgentArgs ! Str {
       a.all = true
     } else if x == "--pub" {
       a.pub_only = true
+    } else if x.starts_with("--file=") && cmd == "symbols" {
+      a.file = x.trim_prefix("--file=")
+    } else if x.starts_with("--module=") && cmd == "symbols" {
+      a.module = x.trim_prefix("--module=")
     } else if x is "--json" | "-json" {
       a.json = true
       a.text = false
@@ -87,6 +95,14 @@ fn agent_args(cmd: Str, args: List[Str]) -> AgentArgs ! Str {
     } else {
       return Err("xo ${cmd}: one target only (got ${a.target} and ${x})")
     }
+  }
+  if cmd == "symbols" && a.target.ends_with(".xo") && a.file.is_empty() {
+    // `xo symbols FILE.xo`: that file's declarations
+    a.file = a.target
+    a.target = ""
+  }
+  if cmd == "symbols" && !a.file.is_empty() && !a.module.is_empty() {
+    return Err("xo symbols: --file or --module, not both")
   }
   if a.target.is_empty() && cmd != "symbols" {
     return Err("xo ${cmd}: no ${if cmd == "type" { "FILE:LINE:COL" } else { "NAME" }}")
@@ -113,12 +129,21 @@ pub fn run_agent(os: Os, cmd: Str, args: List[Str]) -> Int uses (stdio, fs, env)
   if cmd == "symbols" && !a.target.is_empty() {
     dir = a.target
   }
+  let cwd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
+  if cmd == "symbols" && !a.file.is_empty() {
+    // the file is checked with its directory
+    dir = dir_of(abs_of(cwd, a.file))
+  }
   // a position's file is checked with its directory
   if let Some((file, _, _)) = position_of(a.target) {
     dir = dir_of(abs_of(os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? "", file))
   }
   // the std and runtime modules a name refers to load with the program
-  let preload = if a.target.is_empty() || position_of(a.target).is_some() { [] } else if cmd == "refs" { semantic.preloads_wide(os, std_dir(os), a.target) } else { semantic.preloads_for(os, std_dir(os), a.target) }
+  var preload = if a.target.is_empty() || position_of(a.target).is_some() { [] } else if cmd == "refs" { semantic.preloads_wide(os, std_dir(os), a.target) } else { semantic.preloads_for(os, std_dir(os), a.target) }
+  if cmd == "symbols" && (a.module.starts_with("std/") || a.module.starts_with("native/")) {
+    // a std or runtime module loads with the program
+    preload = [a.module]
+  }
   let as_json = a.json || (!a.text && !os.stdio.stdout_is_tty())
   var s = match agent_session(os, dir, preload) {
     Ok(x) => x
@@ -129,7 +154,7 @@ pub fn run_agent(os: Os, cmd: Str, args: List[Str]) -> Int uses (stdio, fs, env)
     "doc" => s.agent_def(os, a.target, true)
     "refs" => s.agent_refs(os, a.target)
     "type" => s.agent_type(os, a.target)
-    _ => s.agent_symbols(os, dir, a.pub_only)
+    _ => s.agent_symbols(os, dir, a.pub_only, if a.file.is_empty() { "" } else { abs_of(cwd, a.file) }, a.module)
   }
   // the modules left out of a root's check, named
   var shown: List[Str] = []
@@ -664,14 +689,46 @@ fn (var s: Session) agent_type(os: Os, target: Str) -> J ! Str {
 
 /// `xo symbols [DIR]`: the declarations of the files of dir (not of the
 /// modules it imports), private ones too unless pub_only (decision 0289).
-fn (var s: Session) agent_symbols(os: Os, dir: Str, pub_only: Bool) -> J ! Str {
+fn (var s: Session) agent_symbols(os: Os, dir: Str, pub_only: Bool, file: Str, module: Str) -> J ! Str {
   let c = s.res[0].c
   let d = abs_of(s.wd, dir)
   var out: List[J] = []
-  for f in s.user_files() {
-    if dir_of(abs_of(s.wd, c.files[f].path)) != d {
-      continue
+  // the files in scope: one file, one module (std and runtime ones
+  // included), or the directory's own
+  var files: List[Int] = []
+  var mod_ix = -1
+  if !module.is_empty() {
+    mod_ix = c.mod_index.get(module) ?? -1
+    if mod_ix < 0 {
+      for (m, md) in c.mods.indexed() {
+        if md.path == module {
+          mod_ix = m
+        }
+      }
     }
+    if mod_ix < 0 {
+      return Err("no module ${module} in the check of ${d} (a std module is std/NAME, a runtime one native/llrt/NAME, a program's its import path)")
+    }
+    for (_, f) in s.keys {
+      if c.files[f].module == mod_ix && !files.contains(f) && !c.files[f].path.ends_with("_test.xo") {
+        files.push(f)
+      }
+    }
+  } else {
+    for f in s.user_files() {
+      if !file.is_empty() {
+        if abs_of(s.wd, c.files[f].path) == file {
+          files.push(f)
+        }
+      } else if dir_of(abs_of(s.wd, c.files[f].path)) == d {
+        files.push(f)
+      }
+    }
+    if !file.is_empty() && files.is_empty() {
+      return Err("${file} is not a checked .xo file")
+    }
+  }
+  for f in files {
     for site in s.sites_of(f) {
       if site.id.name.is_empty() {
         continue
@@ -691,7 +748,7 @@ fn (var s: Session) agent_symbols(os: Os, dir: Str, pub_only: Bool) -> J ! Str {
       out.push(s.decl_json(Found{f: f, site: site, tg: tg, name: name}))
     }
   }
-  if out.is_empty() && !s.user_files().any(fn(f) { dir_of(abs_of(s.wd, c.files[f].path)) == d }) {
+  if out.is_empty() && file.is_empty() && module.is_empty() && !s.user_files().any(fn(f) { dir_of(abs_of(s.wd, c.files[f].path)) == d }) {
     // a workspace or repository root: symbols lists one directory's own
     // declarations, so say which directories have them (agent poll
     // 2026-10-20: `symbols --dir=.` at a root was a silent [])
