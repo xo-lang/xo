@@ -1,5 +1,19 @@
 # std/json changes
 
+## 2026-10-21: feature: omitempty and json.Decoder
+
+- Kind: feature
+- Commit: (filled in after the push)
+- Found by: decision 0309 (approved by the owner, 2026-10-21)
+- Go reference: encoding/json `,omitempty` (TestOmitEmpty) and json.Decoder over a stream of values
+- Test: internal/llvm/testdata/golden/json_omitempty, internal/llvm/testdata/golden/json_stream, test/errorcheck/wire_names
+
+`as "key,omitempty"` (or `as ",omitempty"`) leaves an empty field out of
+derive Json's output, with Go's emptiness: None, false, 0, "", and no
+elements. `json.decoder()` reads a stream of values pushed in pieces
+(NDJSON, concatenated objects), bounded by max_value, and `from_value`
+turns a Value into a typed struct.
+
 ## 2026-10-21: test: parse_value against Go's encoding/json
 
 - Kind: test

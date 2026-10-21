@@ -25,6 +25,12 @@ struct BadDerive {
   a: Int
 } derive Eq(case: camel) // ERROR XO0413 "takes no arguments"
 
+struct BadOption {
+  a as "a,string": Int // ERROR XO0422 "unknown wire name option `string`"
+  b as ",omitempty,bogus": Int // ERROR XO0422 "unknown wire name option `bogus`"
+  c as ",omitempty": Int
+} derive Json
+
 struct Unused {
   a as "A": Int // ERROR XO0414 "wire name of field `a` is unused"
 }

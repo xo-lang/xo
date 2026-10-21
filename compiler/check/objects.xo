@@ -43,6 +43,9 @@ pub struct FieldInfo {
   /// name, else the name under the derive's `case:` rule, else the name
   /// (decision 0277; check decl.xo wire_keys)
   pub json_key: Bytes = b""
+  /// `as "key,omitempty"`: derive Json leaves the field out when it is
+  /// empty (decision 0309)
+  pub omit_empty: Bool = false
   pub sql_key: Bytes = b""
 }
 

@@ -1,0 +1,53 @@
+// json.Decoder (decision 0309): values in a stream of bytes cut anywhere,
+// as Go's json.Decoder reads them: NDJSON, concatenated objects, numbers
+// that end only at a delimiter or at finish, errors, and max_value; and
+// from_value into a typed struct.
+use std/json
+
+struct Event {
+  id: Int
+  kind as "type": Str
+  tags: List[Str] = []
+} derive Json
+
+fn run(label: Str, pieces: List[Str], max: Int) -> Str {
+  var d = json.decoder(max_value: max)
+  var got: List[Str] = []
+  for p in pieces {
+    match d.write(p.bytes()) {
+      Ok(vs) => got.push("[${vs.map(fn(v) { v.encode() }).join(" ")}]")
+      Err(e) => return "${label}: ${got.join(" ")} error ${e.msg}"
+    }
+  }
+  match d.finish() {
+    Ok(vs) => got.push("end[${vs.map(fn(v) { v.encode() }).join(" ")}]")
+    Err(e) => return "${label}: ${got.join(" ")} error ${e.msg}"
+  }
+  "${label}: ${got.join(" ")}"
+}
+
+fn main(os: Os) {
+  let out = os.stdio
+  let big = 67108864
+  out.println(run("ndjson", ["{\"a\":1}\n{\"a\"", ":2}\n", "{\"a\":3}\n"], big))
+  out.println(run("concatenated", ["{\"a\":1}{\"b\":[1,2", ",3]}[]\"s\\\"}\"", "true null"], big))
+  out.println(run("numbers", ["1 2", "3 4", " 5.5e", "1"], big))
+  out.println(run("byte by byte", "[1, {\"x\": \"y\\u0041\"}] 7".runes().map(fn(c) { "${c}" }), big))
+  out.println(run("empty", [], big))
+  out.println(run("spaces only", ["  \n\t ", " "], big))
+  out.println(run("unfinished", ["{\"a\": [1, 2"], big))
+  out.println(run("bad literal", ["tru", "x "], big))
+  out.println(run("bad object", ["{\"a\" 1}"], big))
+  out.println(run("stray close", ["1 ]"], big))
+  out.println(run("too big", ["[1,2,3,", "4,5,6]"], 8))
+  out.println(run("fits", ["[1,2,3]"], 8))
+  var d = json.decoder()
+  let vs = d.write("{\"id\":1,\"type\":\"push\",\"tags\":[\"a\"]}\n{\"id\":2,\"type\":\"pull\"}\n{\"id\":\"x\"}\n".bytes()).ok() ?? []
+  for v in vs {
+    match json.from_value[Event](v) {
+      Ok(e) => out.println("event ${e.id} ${e.kind} ${e.tags.join(",")}")
+      Err(e) => out.println("event error ${e}")
+    }
+  }
+  out.println("done")
+}

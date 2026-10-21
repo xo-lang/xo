@@ -17,7 +17,9 @@ fn (var g: Gen) gen_json_struct(t: Int) {
   let fields = g.c.objs[t].fields
   var has_patch = false
   for f in fields {
-    if g.is_patch(f.ty) {
+    if g.is_patch(f.ty) || f.omit_empty {
+      // an omitempty field (decision 0309) too: whether it is written is
+      // known only when the code runs
       has_patch = true
     }
   }
@@ -30,6 +32,11 @@ fn (var g: Gen) gen_json_struct(t: Int) {
       let k = check.text(f.json_key)
       if g.is_patch(f.ty) {
         g.pl("\tif !${rt}Json_Patch_PatchAbsent(v.${go_field(n)}) {")
+        g.pl("\t\tw.Field(${k.quote()})\n\t\t${g.json_enc_value(t, i, "v." + go_field(n))}\n\t}")
+        continue
+      }
+      if f.omit_empty {
+        g.pl("\tif !${rt}JsonEmpty(v.${go_field(n)}) {")
         g.pl("\t\tw.Field(${k.quote()})\n\t\t${g.json_enc_value(t, i, "v." + go_field(n))}\n\t}")
         continue
       }

@@ -1,0 +1,69 @@
+// omitempty (decision 0309): `as "key,omitempty"` leaves a field out of
+// derive Json's output when it is empty in Go's sense (encoding/json's
+// TestOmitEmpty): None, false, 0, 0.0, "", and an empty List, Map, Set,
+// or Bytes; a struct or an enum value is never empty. `as ",omitempty"`
+// keeps the default key, also under `case:`. Decoding a missing key gives
+// the field's default, as before.
+use std/json
+
+struct Inner {
+  n: Int = 0
+} derive Json, Eq
+
+enum Color {
+  Red
+  Blue
+} derive Json, Eq
+
+struct Optionals {
+  sr as "sr": Str = ""
+  so as "so,omitempty": Str = ""
+  ir as "omitempty": Int = 0
+  io as "io,omitempty": Int = 0
+  slr as "slr": List[Str] = []
+  slo as "slo,omitempty": List[Str] = []
+  mr as "mr": Map[Str, Int] = {}
+  mo as ",omitempty": Map[Str, Int] = {}
+  fr as "fr": Float = 0.0
+  fo as "fo,omitempty": Float = 0.0
+  br as "br": Bool = false
+  bo as "bo,omitempty": Bool = false
+  str as "str": Inner = Inner{}
+  sto as "sto,omitempty": Inner = Inner{}
+  opt as "opt,omitempty": Int? = None
+  set as "set,omitempty": Set[Int] = [].to_set()
+  raw as "raw,omitempty": Bytes = b""
+  col as "col,omitempty": Color = Color.Red
+} derive Json, Eq
+
+struct Camel {
+  user_id as ",omitempty": Int = 0
+  display_name as ",omitempty": Str = ""
+  tags: List[Str] = []
+} derive Json(case: camel), Eq
+
+struct Node {
+  name: Str
+  next as "next,omitempty": Node? = None
+} derive Json, Eq
+
+fn main(os: Os) {
+  let out = os.stdio
+  let o = Optionals{}
+  out.println(json.encode_str(o))
+  let full = Optionals{so: "x", io: 1, slo: ["a"], mo: {"k": 1}, fo: 0.5, bo: true, opt: Some(0), set: [1].to_set(), raw: b"\x00", col: Color.Blue}
+  out.println(json.encode_str(full))
+  out.println(json.encode_str(Optionals{fo: -0.0, opt: Some(0)}))
+  match json.decode_str[Optionals](json.encode_str(full)) {
+    Ok(back) => out.println("round trip: ${back == full}")
+    Err(e) => out.println("round trip: ${e}")
+  }
+  match json.decode_str[Optionals]("{}") {
+    Ok(d) => out.println("from {}: ${d == o}")
+    Err(e) => out.println("from {}: ${e}")
+  }
+  out.println(json.encode_str(Camel{}))
+  out.println(json.encode_str(Camel{user_id: 3, display_name: "Ann"}))
+  out.println(json.encode_str(Node{name: "a", next: Some(Node{name: "b"})}))
+  out.println(json.encode_str([Camel{}, Camel{user_id: 1}]))
+}

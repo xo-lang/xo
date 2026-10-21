@@ -63,7 +63,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | unicode | prelude Rune | partial | is_letter, is_digit, is_space, is_print, to_lower, to_upper (Go's tables, decision 0079). Missing: is_upper, is_lower, is_punct, is_control, range tables by name. |
 | unicode/utf8 | prelude Str, Bytes | done | rune_count, decode_rune, UTF-8 validity rules (decision 0259). |
 | unicode/utf16 | none | planned | Needed for Windows and JSON surrogate work only inside std today; no user API. |
-| encoding/json | std/json | partial | `derive Json`, Patch, typed decode with paths, wire key names (`kind as "type"` and `derive Json(case: ...)`, decision 0277), json.Value for JSON of any shape (2026-10-21). Missing: a streaming decoder, omitempty. |
+| encoding/json | std/json | partial | `derive Json`, Patch, typed decode with paths, wire key names (`kind as "type"` and `derive Json(case: ...)`, decision 0277), json.Value for JSON of any shape (2026-10-21), `as "key,omitempty"` and the push-style json.Decoder of value streams (decision 0309). Missing: Encoder.SetIndent, Number, RawMessage. |
 | encoding/base64 | std/base64, prelude Bytes | done | Std, Url, RawStd, RawUrl with Go's decoding rules (decision 0279). |
 | encoding/base32 | std/base32 | done | Std, Hex, RawStd, RawHex (decision 0279). |
 | encoding/hex | prelude Bytes | done | to_hex, from_hex, the same as EncodeToString and DecodeString on 1,500 strings (2026-10-20). Dump is not offered. |

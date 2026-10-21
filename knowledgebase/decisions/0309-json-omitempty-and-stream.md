@@ -56,6 +56,22 @@ name. The owner approved both gaps on 2026-10-21.
 
 ## Consequences
 
+- Implementation notes (2026-10-21):
+  - The checker splits the wire string at its commas (check decl.xo
+    wire_parts) into FieldInfo.json_key and omit_empty; the unknown
+    option is XO0422. The native encoder (compiler/ssa json.xo
+    json_empty) and the Go one (compiler/gen json.xo, rt.JsonEmpty) treat
+    an omitempty field as they treat a Patch field: whether its comma is
+    needed is known only at run time.
+  - The Decoder finds each value's end with Go's grammar for numbers and
+    literals and bracket counting for objects and arrays, then parses it
+    as parse_value does; the same scanner is in std/native/json.xo and
+    std/rt/jsonstream.go. The first corpus run found three differences
+    from Go: values before an error were dropped, `01` and `truex` were
+    one token, and invalid UTF-8 in a string was an error.
+  - The native JSON decoder cannot convert to Int32 and other sized
+    integers under no-gc yet (XO1201), so json_omitempty uses Int.
+
 - omitempty needs work in compiler/check (wire_keys reads the options),
   compiler/ssa json.xo (native, LLVM, wasm) and compiler/gen json.xo (Go).
   It is a compiler change, covered by the hourly fixed point.
@@ -64,7 +80,7 @@ name. The owner approved both gaps on 2026-10-21.
 - Tests:
   - Go's encoding/json omitempty tests as goldens on every backend.
   - A Go-generated corpus of value streams cut at random places
-    (scripts/stdcorpus json_stream), against json.Decoder's values and
+    (scripts/stdcorpus json), against json.Decoder's values and
     errors.
 
 ## Alternatives

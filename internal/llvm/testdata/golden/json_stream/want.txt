@@ -1,0 +1,16 @@
+ndjson: [{"a":1}] [{"a":2}] [{"a":3}] end[]
+concatenated: [{"a":1}] [{"b":[1,2,3]} [] "s\"}"] [true null] end[]
+numbers: [1] [23] [4] [] end[55]
+byte by byte: [] [] [] [] [] [] [] [] [] [] [] [] [] [] [] [] [] [] [] [] [[1,{"x":"yA"}]] [] [] end[7]
+empty: end[]
+spaces only: [] [] end[]
+unfinished: [] error invalid JSON: unexpected EOF
+bad literal: [] error invalid JSON: invalid character 'x' in literal true (expecting 'e')
+bad object:  error invalid JSON: invalid character '1' after object key
+stray close: [1] error invalid JSON: invalid character ']' looking for beginning of value
+too big: [] error invalid JSON: value exceeds max_value (8 bytes)
+fits: [[1,2,3]] end[]
+event 1 push a
+event 2 pull 
+event error at $.id: expected integer
+done

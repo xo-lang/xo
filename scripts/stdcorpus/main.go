@@ -27,6 +27,7 @@ import (
 // generators are the corpora by module.
 var generators = map[string]func() string{
 	"compress": compressCorpus,
+	"json":     jsonCorpus,
 	"mail":     mailCorpus,
 }
 

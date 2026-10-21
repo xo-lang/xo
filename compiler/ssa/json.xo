@@ -371,7 +371,10 @@ fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
       let fname = json_key_text(f.json_key)
       let ft = b.c.subst(f.ty, sb)
       let fv = b.unbox(b.add(Op.Field, b.m.types[t].fields[fi].ty, Aux.I(n: fi), [v]))
-      if b.is_json_patch(ft) {
+      let patch = b.is_json_patch(ft)
+      // an omitempty field (decision 0309) of a type that can be empty
+      let omit = !patch && f.omit_empty && b.json_can_be_empty(fv, ft)
+      if patch || omit {
         if fixed {
           // from here on, whether a field is the first is known only
           // when the code runs
@@ -379,9 +382,15 @@ fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
           b.write_var(av, b.lit(if any { b.read(av) } else { acc }, pend))
           b.write_var(first, b.cbool(!any))
         }
-        let absent = b.m.variant_index(b.vty(fv), "Absent")
-        let tag = b.add(Op.Tag, it, Aux.None, [fv])
-        let (no0, join0) = b.if_then_begin(b.add(Op.Ne, bt, Aux.None, [tag, b.cint(absent)]))
+        var keep = -1
+        if patch {
+          let absent = b.m.variant_index(b.vty(fv), "Absent")
+          let tag = b.add(Op.Tag, it, Aux.None, [fv])
+          keep = b.add(Op.Ne, bt, Aux.None, [tag, b.cint(absent)])
+        } else {
+          keep = b.add(Op.Not, bt, Aux.None, [b.json_empty(fv, ft)])
+        }
+        let (no0, join0) = b.if_then_begin(keep)
         b.json_field(av, first, fname, fv, ft)
         b.if_then_end(no0, join0)
         continue
@@ -482,6 +491,40 @@ fn json_key_text(key: Bytes) -> Str {
 }
 
 /// One field of an object being encoded (jsonEnc's write).
+/// Whether a value fv of checker type ft can be empty in Go's omitempty
+/// sense (decision 0309): an Option, Bool, number, Str, Bytes, List, Map,
+/// or Set. A struct or another enum never is.
+fn (var b: Builder) json_can_be_empty(fv: Int, ft: Int) -> Bool {
+  if b.option_elem(ft) >= 0 {
+    return true
+  }
+  let t = b.vty(fv)
+  let k = b.tkind(t)
+  k == Kind.Bool || k == Kind.Int || k == Kind.Float || k == Kind.Str || k == Kind.List || b.m.types[t].coll
+}
+
+/// Whether fv (json_can_be_empty) is empty: None, false, 0, 0.0, or no
+/// elements.
+fn (var b: Builder) json_empty(fv: Int, ft: Int) -> Int {
+  let bt = b.bool_t()
+  let t = b.vty(fv)
+  if b.option_elem(ft) >= 0 {
+    let tag = b.add(Op.Tag, b.int_t(), Aux.None, [fv])
+    return b.add(Op.Eq, bt, Aux.None, [tag, b.cint(b.m.variant_index(t, "None"))])
+  }
+  let k = b.tkind(t)
+  if k == Kind.Bool {
+    return b.add(Op.Not, bt, Aux.None, [fv])
+  }
+  if k == Kind.Int {
+    return b.compare(Op.Eq, fv, b.add(Op.Const, t, Aux.I(n: 0), []))
+  }
+  if k == Kind.Float {
+    return b.compare(Op.Eq, fv, b.add(Op.Const, t, Aux.F(f: 0.0), []))
+  }
+  b.inline_method("is_empty", fv, [])
+}
+
 fn (var b: Builder) json_field(av: Int, first: Int, fname: Str, fv: Int, ft: Int) {
   let bt = b.bool_t()
   let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.read(first)]))

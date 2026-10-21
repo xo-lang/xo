@@ -81,8 +81,11 @@ fn value_at(src: Bytes, tape: List[Int], i: Int) -> json.Value {
   json.Value.Object(fields: fields)
 }
 
-fn parse_value(text: Str) -> json.Value ! json.DecodeErr {
-  let src = text.bytes()
+fn parse_value(text: Str) -> json.Value ! json.DecodeErr { parse_bytes(text.bytes()) }
+
+/// parse_value of bytes that may hold invalid UTF-8 (decoded as decode
+/// decodes it, Go's U+FFFD)
+fn parse_bytes(src: Bytes) -> json.Value ! json.DecodeErr {
   let tape = jsontext.parse(src)
   if tape.is_empty() {
     return Err(json.DecodeErr{path: "$", msg: "invalid JSON: ${jsontext.parse_err(src)}"})
@@ -137,3 +140,200 @@ fn value_get(v: json.Value, key: Str) -> json.Value? {
     _ => None
   }
 }
+
+// ---------------------------------------------------------------------------
+// The streaming decoder (decision 0309): where each top level value ends,
+// then parse_value on it, so the values and errors are parse_value's
+
+struct Decoder {
+  buf: Bytes
+  max: Int
+  /// an error found after values the same write returned: the next
+  /// call's (Go's Decoder returns the values before it first)
+  err: Str = ""
+}
+
+fn decoder(max_value: Int) -> Decoder { Decoder{buf: b"", max: max_value} }
+
+fn is_space(c: Int) -> Bool { c == 32 || c == 9 || c == 10 || c == 13 }
+
+fn digit(c: Int) -> Bool { c >= 48 && c <= 57 }
+
+/// Where a number at b[i] ends (Go's scanner: -? (0 | [1-9][0-9]*)
+/// (. [0-9]+)? ([eE] [+-]? [0-9]+)?): the first byte that cannot go on
+/// it; one past a byte that breaks it (parse_value names the error); -1
+/// when the input ends first.
+fn number_end(b: Bytes, i: Int) -> Int {
+  let n = b.len()
+  var k = i
+  // states: 0 start, 1 after -, 2 after a leading 0, 3 in the integer,
+  // 4 after ., 5 in the fraction, 6 after e, 7 after the exponent's
+  // sign, 8 in the exponent
+  var st = 0
+  while k < n {
+    let c = Int(b[k])
+    var next = -1
+    if st == 0 {
+      next = if c == 45 { 1 } else if c == 48 { 2 } else if digit(c) { 3 } else { -1 }
+    } else if st == 1 {
+      next = if c == 48 { 2 } else if digit(c) { 3 } else { -1 }
+    } else if st == 2 || st == 3 {
+      next = if st == 3 && digit(c) { 3 } else if c == 46 { 4 } else if c == 101 || c == 69 { 6 } else { -2 }
+    } else if st == 4 || st == 5 {
+      next = if digit(c) { 5 } else if st == 5 && (c == 101 || c == 69) { 6 } else if st == 5 { -2 } else { -1 }
+    } else if st == 6 {
+      next = if c == 43 || c == 45 { 7 } else if digit(c) { 8 } else { -1 }
+    } else if st == 7 {
+      next = if digit(c) { 8 } else { -1 }
+    } else {
+      next = if digit(c) { 8 } else { -2 }
+    }
+    if next == -2 {
+      return k
+    }
+    if next == -1 {
+      return k + 1
+    }
+    st = next
+    k += 1
+  }
+  -1
+}
+
+/// Where a literal at b[i] ends: after true, false, or null; one past
+/// the first byte that differs; -1 when the input ends first.
+fn literal_end(b: Bytes, i: Int) -> Int {
+  let c = Int(b[i])
+  let lit = if c == 116 { b"true" } else if c == 102 { b"false" } else { b"null" }
+  var k = 0
+  while k < lit.len() {
+    if i + k >= b.len() {
+      return -1
+    }
+    if b[i + k] != lit[k] {
+      return i + k + 1
+    }
+    k += 1
+  }
+  i + lit.len()
+}
+
+/// The end of the value at b[i] (exclusive), or -1 when the input so far
+/// does not finish it.
+fn value_end(b: Bytes, i: Int) -> Int {
+  let n = b.len()
+  let c = Int(b[i])
+  if c == 123 || c == 91 {
+    var depth = 0
+    var k = i
+    var in_str = false
+    while k < n {
+      let x = Int(b[k])
+      if in_str {
+        if x == 92 {
+          k += 1
+        } else if x == 34 {
+          in_str = false
+        }
+      } else if x == 34 {
+        in_str = true
+      } else if x == 123 || x == 91 {
+        depth += 1
+      } else if x == 125 || x == 93 {
+        depth -= 1
+        if depth == 0 {
+          return k + 1
+        }
+      }
+      k += 1
+    }
+    return -1
+  }
+  if c == 34 {
+    var k = i + 1
+    while k < n {
+      let x = Int(b[k])
+      if x == 92 {
+        k += 1
+      } else if x == 34 {
+        return k + 1
+      }
+      k += 1
+    }
+    return -1
+  }
+  if c == 45 || digit(c) {
+    return number_end(b, i)
+  }
+  if c == 116 || c == 102 || c == 110 {
+    return literal_end(b, i)
+  }
+  // a byte no value starts with: parse_value names it
+  i + 1
+}
+
+fn stream_err(msg: Str) -> json.DecodeErr { json.DecodeErr{path: "$", msg: msg} }
+
+/// The values of d.buf; with last, an unfinished value is an error.
+fn (var d: Decoder) take(last: Bool) -> List[json.Value] ! json.DecodeErr {
+  if !d.err.is_empty() {
+    return Err(stream_err(d.err))
+  }
+  var out: List[json.Value] = []
+  let b = d.buf
+  let n = b.len()
+  var i = 0
+  var err = ""
+  while true {
+    while i < n && is_space(Int(b[i])) {
+      i += 1
+    }
+    if i >= n {
+      break
+    }
+    var end = value_end(b, i)
+    if end < 0 && !last {
+      // it may go on: wait for more, up to max_value
+      if n - i > d.max {
+        err = "invalid JSON: value exceeds max_value (${d.max} bytes)"
+      }
+      break
+    }
+    if end < 0 {
+      end = n
+    }
+    if end - i > d.max {
+      err = "invalid JSON: value exceeds max_value (${d.max} bytes)"
+      break
+    }
+    match parse_bytes(b[i..end]) {
+      Ok(v) => out.push(v)
+      Err(e) => {
+        // the input ran out (jsontext's texts, Go's)
+        let short = e.msg == "invalid JSON: EOF" || e.msg.ends_with("unexpected end of JSON input")
+        err = if short { "invalid JSON: unexpected EOF" } else { e.msg }
+        break
+      }
+    }
+    i = end
+  }
+  d.buf = b[i..n]
+  if err.is_empty() {
+    return out
+  }
+  if out.is_empty() {
+    return Err(stream_err(err))
+  }
+  d.err = err
+  out
+}
+
+fn (var d: Decoder) write(data: Bytes) -> List[json.Value] ! json.DecodeErr {
+  let b0 = d.buf
+  d.buf = b0 + data
+  d.take(false)
+}
+
+fn (var d: Decoder) finish() -> List[json.Value] ! json.DecodeErr { d.take(true) }
+
+fn from_value[T: Json](v: json.Value) -> T ! json.DecodeErr { decode(value_encode(v).bytes()) }

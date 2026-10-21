@@ -49,3 +49,20 @@ fn (v: Value) encode() -> Str
 /// The value of an object's field key; None for a missing key or a value
 /// that is not an object.
 fn (v: Value) get(key: Str) -> Value?
+
+/// A streaming decoder of a sequence of JSON values (Go's json.Decoder,
+/// decision 0309): bytes in, the values completed so far out; push style,
+/// no I/O of its own.
+/// @move_only
+struct Decoder {}
+
+/// One value may be at most max_value bytes.
+fn decoder(max_value: Int = 67108864) -> Decoder
+/// The values the input so far completes (a number at the very end waits
+/// for what follows it).
+fn (var d: Decoder) write(data: Bytes) -> List[Value] ! DecodeErr
+/// The rest; a value that did not end is `invalid JSON: unexpected EOF`.
+/// @moves
+fn (var d: Decoder) finish() -> List[Value] ! DecodeErr
+/// The typed value of v, as decode reads it from v's text.
+fn from_value[T: Json](v: Value) -> T ! DecodeErr

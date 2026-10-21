@@ -1532,6 +1532,40 @@ fn (v: Value) get(key: Str) -> Value?        // an object's field
   (decision 0299).
 - Golden `json_value` (every backend).
 
+### 5.2 Streams of values (decision 0309)
+
+```
+struct Decoder {}                                   // move only
+pub fn decoder(max_value: Int = 67108864) -> Decoder
+fn (var d: Decoder) write(data: Bytes) -> List[Value] ! DecodeErr   // the values completed so far
+fn (var d: Decoder) finish() -> List[Value] ! DecodeErr            // the rest
+pub fn from_value[T: Json](v: Value) -> T ! DecodeErr
+```
+
+- Go's json.Decoder reading `any`, push style (as std/compress's
+  Decompressor, decision 0305): bytes go in, finished values come out.
+  The input is JSON values one after another with optional whitespace
+  between them: NDJSON, concatenated objects, numbers separated by
+  spaces.
+- Values end where Go's scanner ends them: `01` is the values 0 and 1,
+  `truex` is `true` and then an error. A value that the bytes so far do
+  not finish (a number at the very end may still go on) waits for more,
+  or for `finish`, where it is `invalid JSON: unexpected EOF`.
+- Each value is read as `parse_value` reads it, with its errors; invalid
+  UTF-8 in a string is U+FFFD, as in Go. As Go's Decoder returns the
+  values before an error first, a `write` that finds an error after some
+  values returns them, and the next call returns the error.
+- A value longer than `max_value` bytes is `invalid JSON: value exceeds
+  max_value (N bytes)`, so a stream that never closes a value is bounded
+  (Go has no bound).
+- Tested against Go's json.Decoder on 1,200 generated streams, some cut
+  short or with a byte changed, written in random pieces
+  (internal/stdtest/testdata/corpus/json, scripts/stdcorpus).
+- `from_value` decodes a Value into T as `decode` decodes its text.
+- `derive Json` fields marked `as "key,omitempty"` (core 2.2) are left
+  out of `encode`'s output when empty.
+- Goldens `json_stream` and `json_omitempty` (every backend).
+
 ## 6. std/log
 
 The log functions perform the `log` effect (core 6.1, decision 0156): no

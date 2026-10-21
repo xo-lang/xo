@@ -1,0 +1,9 @@
+{"sr":"","omitempty":0,"slr":[],"mr":{},"fr":0,"br":false,"str":{"n":0},"sto":{"n":0},"col":"Red"}
+{"sr":"","so":"x","omitempty":0,"io":1,"slr":[],"slo":["a"],"mr":{},"mo":{"k":1},"fr":0,"fo":0.5,"br":false,"bo":true,"str":{"n":0},"sto":{"n":0},"opt":0,"set":[1],"raw":"AA==","col":"Blue"}
+{"sr":"","omitempty":0,"slr":[],"mr":{},"fr":0,"br":false,"str":{"n":0},"sto":{"n":0},"opt":0,"col":"Red"}
+round trip: true
+from {}: true
+{"tags":[]}
+{"userId":3,"displayName":"Ann","tags":[]}
+{"name":"a","next":{"name":"b"}}
+[{"tags":[]},{"userId":1,"tags":[]}]

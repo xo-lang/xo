@@ -183,13 +183,23 @@ fn (var c: Checker) resolve_type_obj(t: Int) {
           dflt.push(e)
         }
         var wire = b""
+        var omit = false
         if let Some(w) = fl.wire {
+          // Go's tag options after a comma (decision 0309)
+          let (key, opts) = wire_parts(w)
           if w.is_empty() {
             c.error("XO0412", fl.wire_span ?? fl.name.span, "field `${text(fl.name.name)}` has an empty wire name; write a key, or leave out `as \"\"` to use the field's name")
           }
-          wire = w
+          for o in opts {
+            if o == b"omitempty" {
+              omit = true
+            } else {
+              c.error("XO0422", fl.wire_span ?? fl.name.span, "unknown wire name option `${text(o)}` of field `${text(fl.name.name)}`; the only option is `omitempty` (decision 0309)")
+            }
+          }
+          wire = key
         }
-        fields.push(FieldInfo{name: fl.name.name, ty: ft, is_pub: fl.is_pub || c.mods[c.objs[t].module].is_std, default: dflt, line: fl.name.span.start.line, col: fl.name.span.start.col, wire: wire})
+        fields.push(FieldInfo{name: fl.name.name, ty: ft, is_pub: fl.is_pub || c.mods[c.objs[t].module].is_std, default: dflt, line: fl.name.span.start.line, col: fl.name.span.start.col, wire: wire, omit_empty: omit})
       }
       c.objs[t].derives = c.derives_of(sd.derive)
       c.objs[t].fields = c.wire_keys(sd, fields, c.objs[t].derives)
@@ -326,7 +336,7 @@ fn (var c: Checker) wire_keys(sd: parser.StructDecl, fields0: List[FieldInfo], d
   var any_wire = false
   for i in 0..fields.len() {
     let f = fields[i]
-    any_wire = any_wire || !f.wire.is_empty()
+    any_wire = any_wire || !f.wire.is_empty() || f.omit_empty
     fields[i].json_key = if !f.wire.is_empty() { f.wire } else { wire_case(f.name, json_case) }
     fields[i].sql_key = if !f.wire.is_empty() { f.wire } else { wire_case(f.name, sql_case) }
   }
@@ -353,6 +363,22 @@ fn (var c: Checker) wire_keys(sd: parser.StructDecl, fields0: List[FieldInfo], d
     }
   }
   fields
+}
+
+/// A wire string's key and its comma separated options (Go's struct tag
+/// form, decision 0309): `"email,omitempty"` is ("email", ["omitempty"]),
+/// `",omitempty"` an empty key (the field's default key) with one option.
+fn wire_parts(w: Bytes) -> (Bytes, List[Bytes]) {
+  var parts: List[Bytes] = []
+  var start = 0
+  for i in 0..w.len() {
+    if w[i] == ',' {
+      parts.push(w[start..i])
+      start = i + 1
+    }
+  }
+  parts.push(w[start..w.len()])
+  (parts[0], parts[1..parts.len()])
 }
 
 /// name (a snake_case field name) under a `case:` rule (decision 0277):

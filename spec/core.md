@@ -661,6 +661,15 @@ pub struct User {
   the wire name: `Json` keys (and TOML keys, which std/toml decodes
   through JSON) and `SqlRow` columns (2.9). The name is a plain string
   literal, not empty (`XO0412`).
+- The wire string may carry Go's tag options after a comma (decision
+  0309). The one option is `omitempty`: `email as "email,omitempty":
+  Str?`, or `as ",omitempty"` to keep the field's default key (its name,
+  or what `case:` makes of it). `derive Json`'s encoder leaves such a
+  field out when its value is empty as Go defines it: `None`, `false`, a
+  zero number, `""`, or an empty `List`, `Map`, `Set`, or `Bytes`. A
+  struct or an enum value is never empty. Decoding is unchanged: a
+  missing key takes the field's default. Another option is `XO0422`.
+  Unlike Go, `as "-"` is the key `-`, not a skipped field.
 - `derive Json(case: camel)` (also `snake`, `pascal`, `kebab`, and the
   same argument on `derive SqlRow`) converts every field without its own
   wire name: `api_version` is `apiVersion` under camel, `ApiVersion`
@@ -2698,6 +2707,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0414` | warning | checker | a wire name on a struct with no derive that maps fields to keys (core 2.2) |
 | `XO0420` | error | checker | constant std/time layout is invalid: unknown field, bad field form, or stray brace (std.md 13.3) |
 | `XO0421` | error | checker | integer literal does not fit the integer type it takes in context (1.6) |
+| `XO0422` | error | checker | unknown wire name option; the only one is `omitempty` (core 2.2, decision 0309) |
 | `XO0501` | error | checker | var method called on a non var binding (core 3.4) |
 | `XO0502` | error | checker | assignment to an immutable binding or to a captured variable (core 5.2, 3.3) |
 | `XO0503` | error | checker | one variable or overlapping places passed to two `var` parameters of one call (core 5.2, decision 0111) |
