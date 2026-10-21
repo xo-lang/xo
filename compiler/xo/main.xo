@@ -946,6 +946,11 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         fail(os, "XO_BACKEND_CACHE=verify: ${p.mismatches.len()} functions differ from their cache entries, the first ${p.mismatches[0]}")
       }
     }
+    write_dumps(os, p.dumps)
+    let want = os.env.get("XO_DUMP_FN") ?? ""
+    if !want.is_empty() && !p.dumps.any(fn(d) { d.0 == want }) {
+      os.stdio.eprintln("xo: XO_DUMP_FN=${want}: no function of that name reached the backend (inlined into every caller and removed, unused, or misspelled; XO_INLINE_REPORT=1 lists the functions)")
+    }
     if !p.err.is_empty() {
       fail(os, p.err)
     }
@@ -1466,6 +1471,32 @@ fn rel_to(wd: Str, p: Str) -> Str {
   p
 }
 
+/// Writes each function's SSA and MIR text (arm64 Program.dumps: the
+/// function an internal error stopped on, or $XO_DUMP_FN's) to
+/// $XO_DUMP_DIR (else $TMPDIR, else /tmp) as xo-ir-NAME.txt, and names the
+/// file on standard error (2026-10-21, the owner's approval).
+fn write_dumps(os: Os, dumps: List[(Str, Str)]) {
+  if dumps.is_empty() {
+    return
+  }
+  var dir = os.env.get("XO_DUMP_DIR") ?? (os.env.get("TMPDIR") ?? "/tmp")
+  while dir.len() > 1 && dir.ends_with("/") {
+    dir = dir[0..dir.len() - 1]
+  }
+  for (name, text) in dumps {
+    var file = BytesBuilder.with_capacity(name.len())
+    for c in name.bytes() {
+      let ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '_'
+      file.write_byte(if ok { c } else { '_' })
+    }
+    let path = "${dir}/xo-ir-${file.freeze().to_str() ?? "fn"}.txt"
+    match os.fs.write(path, text.bytes()) {
+      Ok(_) => os.stdio.eprintln("xo: the SSA and MIR of ${name}: ${path}")
+      Err(e) => os.stdio.eprintln("xo: could not write the IR of ${name} to ${path}: ${e}")
+    }
+  }
+}
+
 fn fail(os: Os, msg: Str) -> Never {
   os.stdio.eprintln("xo: ${msg}")
   os.proc.exit(1)
@@ -1562,6 +1593,8 @@ fn gen_module(os: Os, o: Opts, ctx: Ctx, c: check.Checker, m: ssa.Module, tgoos:
     t = lap(os, phases, "dce", t)
   }
   gm.passes_off = passes_off(os)
+  // XO_DUMP_FN=NAME: that function's SSA and MIR to a file (write_dumps)
+  gm.dump_fn = os.env.get("XO_DUMP_FN") ?? ""
   gm.race = o.race
   gm.arm64_regs = Int.parse(os.env.get("XO_ARM64_REGS") ?? "") ?? 0
   gm.poison_frames = (os.env.get("XO_POISON_FRAMES") ?? "") == "1"

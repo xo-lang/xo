@@ -47,6 +47,9 @@ pub struct Program {
   /// asm is empty (their text joined was xo's whole 1.1 GB again, which
   /// Xo's assembler does not read): text() joins them
   pub parts: List[Str] = []
+  /// functions' SSA and MIR text by name (G.dump_ir), for the driver to
+  /// write to files
+  pub dumps: List[(Str, Str)] = []
   /// the per-function cache (fcache.xo, generate_cached): the entries to
   /// store (key, entry), the functions placed from entries, and the
   /// functions whose generated text differs from their entry (verify)
@@ -90,7 +93,7 @@ fn (var g: G) generate() -> Program {
   g.shared_code(out)
   g.data(out)
   g.end_data(out)
-  Program{asm: g.win_text(g.drop_own_weak(out.join(""))), err: g.err, skipped: g.skipped}
+  Program{asm: g.win_text(g.drop_own_weak(out.join(""))), err: g.err, skipped: g.skipped, dumps: g.dumps}
 }
 
 /// The first lines of the assembly file.

@@ -1,0 +1,28 @@
+// A backend failure records the failing function's SSA and MIR for the
+// driver to write (irdump.xo, 2026-10-21); once per function.
+
+use github.com/xo-lang/xo/compiler/ssa
+
+test "fail records the function's IR once" {
+  var g = G{m: ssa.Module{}, os: "darwin"}
+  g.f = ssa.Func{name: "pkg.broken"}
+  g.fail("internal: pkg.broken reads virtual register 3 before it is written")
+  g.fail("internal: a second failure")
+  expect(g.dumps.len()) == 1
+  expect(g.dumps[0].0) == "pkg.broken"
+  expect(g.dumps[0].1.contains("== ssa")) == true
+  expect(g.dumps[0].1.contains("== mir")) == true
+  expect(g.err) == "arm64 backend: internal: pkg.broken reads virtual register 3 before it is written"
+}
+
+test "dump_named records only the named function" {
+  var m = ssa.Module{}
+  m.dump_fn = "keep"
+  var g = G{m: m, os: "darwin"}
+  g.f = ssa.Func{name: "other"}
+  g.dump_named()
+  g.f = ssa.Func{name: "keep"}
+  g.dump_named()
+  expect(g.dumps.len()) == 1
+  expect(g.dumps[0].0) == "keep"
+}

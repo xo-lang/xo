@@ -1,0 +1,101 @@
+// The IR of a function as text (2026-10-21, the owner's approval): its
+// SSA (ssa Module.write_func) and its MIR (the blocks in layout order,
+// each instruction's template, definitions, uses, and sources, with the
+// registers allocation gave), which the driver writes to a file when the
+// backend fails on the function (G.fail) or $XO_DUMP_FN names it.
+
+/// Records the current function's IR once (G.dumps).
+fn (var g: G) dump_ir() {
+  let name = g.f.name
+  if name.is_empty() {
+    return
+  }
+  for (n, _) in g.dumps {
+    if n == name {
+      return
+    }
+  }
+  g.dumps.push((name, g.ir_text()))
+}
+
+/// dump_ir for the function $XO_DUMP_FN names (ssa Module.dump_fn).
+fn (var g: G) dump_named() {
+  if !g.m.dump_fn.is_empty() && g.f.name == g.m.dump_fn {
+    g.dump_ir()
+  }
+}
+
+/// The function's SSA, then its MIR.
+fn (g: G) ir_text() -> Str {
+  var b = StrBuilder.new()
+  b.write("== ssa\n")
+  // (a failure before its body was read leaves none: the dump must not
+  // fault while it reports one)
+  if g.f.blocks.is_empty() {
+    b.write("func ${g.f.name}: no blocks\n")
+  } else {
+    g.m.write_func(b, g.f)
+  }
+  b.write("\n== mir\n")
+  let order = if g.order.is_empty() { mir_blocks(g.blocks.len()) } else { g.order }
+  for bi in order {
+    if bi < 0 || bi >= g.blocks.len() {
+      continue
+    }
+    let bl = g.blocks[bi]
+    b.write("b${bi}${if bl.cold { " cold" } else { "" }} succs ${ints_line(g.msuccs(bi))}\n")
+    for ins in bl.insts {
+      var srcs: List[Int] = []
+      for s in ins.srcs {
+        if s.kind == S_REG {
+          srcs.push(s.v)
+        }
+      }
+      b.write("  k${ins.kind} ${ins.text.replace("\n", " | ")}${if ins.sym.is_empty() { "" } else { " " + ins.sym }}")
+      b.write(" defs ${g.regs_line(ins.defs)} us ${g.regs_line(ins.us)} srcs ${g.regs_line(srcs)}\n")
+    }
+  }
+  b.freeze()
+}
+
+/// 0, 1, ... n - 1 (the blocks before layout).
+fn mir_blocks(n: Int) -> List[Int] {
+  var out: List[Int] = []
+  for i in 0..n {
+    out.push(i)
+  }
+  out
+}
+
+/// xs joined by commas.
+fn ints_line(xs: List[Int]) -> Str {
+  var b = StrBuilder.new()
+  for (i, x) in xs.indexed() {
+    if i > 0 {
+      b.write(",")
+    }
+    b.write("${x}")
+  }
+  b.freeze()
+}
+
+/// The virtual registers vs, each with its allocated register or slot
+/// when allocation has run (v3=x9, v4=s2).
+fn (g: G) regs_line(vs: List[Int]) -> Str {
+  var b = StrBuilder.new()
+  for (i, v) in vs.indexed() {
+    if i > 0 {
+      b.write(",")
+    }
+    b.write("v${v}")
+    if v > 0 && v < g.loc.len() {
+      let l = g.loc[v]
+      if l.reg >= 0 {
+        b.write("=r${l.reg}")
+      } else if l.slot >= 0 {
+        b.write("=s${l.slot}")
+      }
+    }
+  }
+  b.freeze()
+}

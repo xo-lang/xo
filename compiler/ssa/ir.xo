@@ -395,6 +395,10 @@ pub struct Module {
   /// PASSES): miscompile triage (`xo dev bisect-pass`) builds with
   /// passes off to find the one whose output diverges.
   pub passes_off: List[Str] = []
+  /// The function whose SSA and MIR a native build writes to a file
+  /// ($XO_DUMP_FN; arm64 G.dump_ir), or "": a backend internal error
+  /// writes its function's either way.
+  pub dump_fn: Str = ""
   /// The tasks a whole-module analysis may use (may_fault's scan); the
   /// result does not depend on it. The driver sets it (emit_jobs).
   pub jobs: Int = 1
@@ -879,7 +883,7 @@ pub fn (m: Module) func_text(f: Func) -> Str {
   b.freeze()
 }
 
-fn (m: Module) write_func(var b: StrBuilder, f: Func) {
+pub fn (m: Module) write_func(var b: StrBuilder, f: Func) {
   var ps: List[Str] = []
   for (i, p) in f.blocks[0].params.indexed() {
     let bw = if i < f.borrowed.len() && f.borrowed[i] { "borrow " } else { "" }

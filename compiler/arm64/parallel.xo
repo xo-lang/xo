@@ -30,6 +30,7 @@ const PART_VALUES = 60000
 struct Part {
   asm: Str = ""
   err: Str = ""
+  dumps: List[(Str, Str)] = []
   skipped: List[Str] = []
   restorer_ref: Bool = false
   words_ref: Bool = false
@@ -354,6 +355,7 @@ pub fn generate_cached(m0: ssa.Module, os: Str, jobs: Int, fc: FnCache) -> Progr
     if part.part_diff {
       part_mismatches.push(pi)
     }
+    g.dumps = g.dumps + part.dumps
     if g.err.is_empty() && !part.err.is_empty() {
       g.err = part.err
     }
@@ -394,7 +396,7 @@ pub fn generate_cached(m0: ssa.Module, os: Str, jobs: Int, fc: FnCache) -> Progr
     own.push(g.win_text(f))
   }
   // with parts, no whole text (Program.text joins them when wanted)
-  Program{asm: if own.len() > 1 { "" } else { own.join("") }, err: g.err, skipped: skipped + g.skipped, parts: own, stores: stores, reused: reused, mismatches: mismatches, part_stores: part_stores, parts_reused: parts_reused, part_mismatches: part_mismatches}
+  Program{asm: if own.len() > 1 { "" } else { own.join("") }, err: g.err, skipped: skipped + g.skipped, dumps: g.dumps, parts: own, stores: stores, reused: reused, mismatches: mismatches, part_stores: part_stores, parts_reused: parts_reused, part_mismatches: part_mismatches}
 }
 
 /// The part cache's key of part p, "" for none.
@@ -482,7 +484,7 @@ fn gen_part(m: ssa.Module, os: Str, taken: Map[Str, Bool], lo: Int, hi: Int, ns:
   if os == "linux" {
     out.push("\t.section .note.GNU-stack,\"\",@progbits\n")
   }
-  var part = Part{asm: out.join(""), err: g.err, skipped: g.skipped, restorer_ref: g.restorer_ref, words_ref: g.words_ref, static_ref: g.static_ref, clone_ref: g.clone_ref, sched_ref: g.sched_ref, personality_ref: g.personality_ref, w64: g.w64, wsyms: g.wsyms, wants: g.wants, stores: stores, reused: reused, mismatches: mismatches}
+  var part = Part{asm: out.join(""), err: g.err, dumps: g.dumps, skipped: g.skipped, restorer_ref: g.restorer_ref, words_ref: g.words_ref, static_ref: g.static_ref, clone_ref: g.clone_ref, sched_ref: g.sched_ref, personality_ref: g.personality_ref, w64: g.w64, wsyms: g.wsyms, wants: g.wants, stores: stores, reused: reused, mismatches: mismatches}
   if !pkey.is_empty() {
     if let Some(enc) = encode_part(g, part) {
       match pentry {

@@ -120,6 +120,7 @@ fn (var g: G) function(fi: Int) {
       }
       g.regalloc()
     }
+    g.dump_named()
     g.x86_emit()
     return
   }
@@ -139,6 +140,7 @@ fn (var g: G) function(fi: Int) {
     g.cluster_mem()
   }
   g.regalloc()
+  g.dump_named()
   g.emit()
 }
 

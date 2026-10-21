@@ -260,6 +260,9 @@ struct G {
   // ---- the function being generated (fstate)
   fi: Int = -1
   f: ssa.Func = ssa.Func{name: ""}
+  /// the SSA and MIR of functions, by name, for the driver to write
+  /// (dump_ir: a failing function, or $XO_DUMP_FN's)
+  dumps: List[(Str, Str)] = []
   /// class of each vreg (index 0 is xzr)
   fp: List[Bool] = []
   blocks: List[MBlock] = []
@@ -405,6 +408,10 @@ struct G {
 fn (var g: G) fail(msg: Str) {
   if g.err.is_empty() {
     g.err = "arm64 backend: ${msg}"
+    // the failing function's SSA and MIR, which the driver writes to a
+    // file and names (2026-10-21, the owner's approval: an internal
+    // error named a register and nothing else)
+    g.dump_ir()
   }
 }
 
