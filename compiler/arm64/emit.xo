@@ -361,7 +361,15 @@ fn (var g: G) emit() {
       g.fail("XO_OP_VERIFY: ${g.f.name}: ${bad}")
     }
   }
-  g.text.push(g.local_empty_l(g.far_tests_l(g.far_slots_l(pair_mem_l(reload_reuse_l(ls, nrefs), nrefs)))))
+  var rr = reload_reuse_l(ls, nrefs)
+  if g.m.op_verify && !g.x86 {
+    // decision 0274 step 3: the pass on items gives the text pass's lines
+    let ported = line_texts(reload_reuse_ops(to_lines(ls), nrefs))
+    if ported != rr {
+      g.fail("XO_OP_VERIFY: ${g.f.name}: reload_reuse_ops differs from reload_reuse_l")
+    }
+  }
+  g.text.push(g.local_empty_l(g.far_tests_l(g.far_slots_l(pair_mem_l(rr, nrefs)))))
 }
 
 /// The number of instructions past which a function keeps adrp and add

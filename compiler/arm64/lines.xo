@@ -1,0 +1,187 @@
+// Decision 0274 step 3: a function's lines as structured items for the
+// line passes, each instruction parsed once into a compiler/macho Op beside
+// its text, and the passes ported to them one at a time behind
+// XO_OP_VERIFY (each ported pass's output printed must equal the text
+// pass's, function by function). reload_reuse_ops is the first: its slot
+// loads and stores are read from the Op instead of matched in the text.
+use github.com/xo-lang/xo/compiler/macho
+
+/// One line of a function's text: an instruction's Op beside its text,
+/// or (op None) a label, directive, comment, or blank line.
+struct Line {
+  text: Str
+  op: macho.Op?
+}
+
+/// The items of lines (a line of several instructions split).
+fn to_lines(ls: List[Str]) -> List[Line] {
+  var out: List[Line] = List.with_capacity(ls.len())
+  for l0 in ls {
+    for l in l0.split("\n") {
+      if l.starts_with("\t") && !l.starts_with("\t.") {
+        let body = l[1..l.len()]
+        let bs = body.bytes()
+        var k = 0
+        while k < bs.len() && bs[k] != ' ' {
+          k += 1
+        }
+        out.push(Line{text: l, op: Some(macho.parse_op(body[0..k], macho.split_operands(bs[k..])))})
+      } else {
+        out.push(Line{text: l, op: None})
+      }
+    }
+  }
+  out
+}
+
+/// The texts of items xs.
+fn line_texts(xs: List[Line]) -> List[Str] {
+  var out: List[Str] = List.with_capacity(xs.len())
+  for x in xs {
+    out.push(x.text)
+  }
+  out
+}
+
+/// `ldr x16, [sp, #off]` or `ldr x17, [sp, #off]` (parse_ldr's sp form
+/// with a scratch register): (true, the register's name, off).
+fn op_sp_ldr(x: Line) -> (Bool, Str, Int) {
+  if let Some(o) = x.op {
+    if o.m == "ldr" && o.ops.len() == 2 {
+      if let macho.Operand.Reg(n: r, kind: k) = o.ops[0] {
+        if let macho.Operand.MemOp(m: mo) = o.ops[1] {
+          if k == macho.RX && (r == 16 || r == 17) && mo.ok && mo.mode == 0 && mo.explicit && mo.base == 31 {
+            return (true, "x${r}", mo.off)
+          }
+        }
+      }
+    }
+  }
+  (false, "", 0)
+}
+
+/// `str xN, [sp, #off]` or `str xzr, [sp, #off]` (parse_sp_str's form):
+/// (true, the register's name, off).
+fn op_sp_str(x: Line) -> (Bool, Str, Int) {
+  if let Some(o) = x.op {
+    if o.m == "str" && o.ops.len() == 2 {
+      if let macho.Operand.Reg(n: r, kind: k) = o.ops[0] {
+        if let macho.Operand.MemOp(m: mo) = o.ops[1] {
+          if k == macho.RX && mo.ok && mo.mode == 0 && mo.explicit && mo.base == 31 {
+            return (true, if r == 31 { "xzr" } else { "x${r}" }, mo.off)
+          }
+        }
+      }
+    }
+  }
+  (false, "", 0)
+}
+
+/// reload_reuse_l on items (lsr.xo's text pass, the same decisions).
+fn reload_reuse_ops(lines: List[Line], nrefs: Map[Str, Int]) -> List[Line] {
+  // per label, the references seen so far and what x16 and x17 held at
+  // them (the intersection)
+  var seen: Map[Str, Int] = {}
+  var at16: Map[Str, Int] = {}
+  var at17: Map[Str, Int] = {}
+  // the slot offsets x16 and x17 hold, -1 for none; whether the line
+  // before can fall into the next
+  var h16 = -1
+  var h17 = -1
+  var falls = true
+  var out: List[Line] = List.with_capacity(lines.len())
+  for x in lines {
+    let l = x.text
+    let name = label_def(l)
+    if !name.is_empty() && is_row_label(name) {
+      // a debug line row or variable location: only the debug sections
+      // refer to it, never a branch, so what the registers hold stays
+      out.push(x)
+      continue
+    }
+    if !name.is_empty() {
+      let n = nrefs.get(name) ?? 0
+      if n > 0 {
+        if (seen.get(name) ?? 0) != n {
+          h16 = -1
+          h17 = -1
+        } else {
+          let b16 = at16.get(name) ?? -1
+          let b17 = at17.get(name) ?? -1
+          h16 = if falls && h16 != b16 { -1 } else { b16 }
+          h17 = if falls && h17 != b17 { -1 } else { b17 }
+        }
+      }
+      falls = true
+      out.push(x)
+      continue
+    }
+    if !l.starts_with("\t") {
+      // a symbol, a comment, or a blank line: forget
+      if !l.is_empty() && !l.starts_with("//") {
+        h16 = -1
+        h17 = -1
+      }
+      out.push(x)
+      continue
+    }
+    if l.starts_with("\t.") {
+      out.push(x) // a directive
+      continue
+    }
+    // the labels this instruction may branch to: what x16 and x17 hold
+    // here (before it runs: a branch writes neither)
+    for r in line_label_refs(l) {
+      let k = seen.get(r) ?? 0
+      if k == 0 {
+        at16[r] = h16
+        at17[r] = h17
+      } else {
+        if (at16.get(r) ?? -1) != h16 {
+          at16[r] = -1
+        }
+        if (at17.get(r) ?? -1) != h17 {
+          at17[r] = -1
+        }
+      }
+      seen[r] = k + 1
+    }
+    falls = !(l.starts_with("\tb ") || l.starts_with("\tret") || l.starts_with("\tbr ") || l.starts_with("\tbrk"))
+    let (lok, lr, loff) = op_sp_ldr(x)
+    if lok {
+      if (lr == "x16" && h16 == loff) || (lr == "x17" && h17 == loff) {
+        continue // it holds the slot already
+      }
+      if lr == "x16" {
+        h16 = loff
+      } else {
+        h17 = loff
+      }
+      out.push(x)
+      continue
+    }
+    let (sok, sr, soff) = op_sp_str(x)
+    if sok {
+      // the slot's value is the stored register's now
+      if h16 == soff {
+        h16 = -1
+      }
+      if h17 == soff {
+        h17 = -1
+      }
+      if sr == "x16" {
+        h16 = soff
+      } else if sr == "x17" {
+        h17 = soff
+      }
+      out.push(x)
+      continue
+    }
+    if writes_scratch(l) {
+      h16 = -1
+      h17 = -1
+    }
+    out.push(x)
+  }
+  out
+}

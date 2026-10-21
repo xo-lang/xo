@@ -5,13 +5,13 @@
 const NOP = 0xd503201f
 
 /// Register kinds.
-const RX = 0
-const RW = 1
-const RD = 2
-const RS = 3
-const RSP = 4
+pub const RX = 0
+pub const RW = 1
+pub const RD = 2
+pub const RS = 3
+pub const RSP = 4
 /// A 128 bit SIMD and floating point register (q0 to q31).
-const RQ = 5
+pub const RQ = 5
 
 /// A register operand: its number (31 for xzr, wzr, sp) and kind; kind
 /// -1 when the operand is not a register.
@@ -354,18 +354,18 @@ fn vreg(b: Bytes) -> (Int, Str) {
 
 /// A memory operand: [base], [base, #imm], [base, #imm]! (pre), or
 /// [base, Rm{, lsl #s}]; post indexing is the next operand.
-struct Mem {
-  base: Int
+pub struct Mem {
+  pub base: Int
   /// 0 offset, 1 pre index, 2 post index, 3 register offset
-  mode: Int
-  off: Int
-  rm: Int = 0
+  pub mode: Int
+  pub off: Int
+  pub rm: Int = 0
   /// the shift of a register offset, -1 for none
-  sh: Int = -1
-  ok: Bool
+  pub sh: Int = -1
+  pub ok: Bool
   /// an offset written out, `[x0, #0]` (the Op prints it back as written,
   /// decision 0274 step 3)
-  explicit: Bool = false
+  pub explicit: Bool = false
 }
 
 fn mem_op(ops: List[Bytes], at: Int) -> Mem {
