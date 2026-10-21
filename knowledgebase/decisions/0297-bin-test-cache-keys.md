@@ -131,6 +131,49 @@ before and after (`scripts/ci/m297.sh`'s cache_stats on the Mac's
 cache root, one bulk slot). If the Mac's third pass is near the warm
 one only with the key in, build the key behind the safety net above.
 
+### The Mac (2026-10-21, bulk run, empty private cache)
+
+The same script on the development Mac (24 GB), `HOME` set to a private
+directory so the first pass starts with no cache but the xo itself
+(`TestGoldenRun`, 275 tests; passes in order, same xo unless noted):
+
+| pass | wall | backend/ added | testbin/ added |
+|---|---|---|---|
+| cold | 123 s | +67,444 files, +1.3 GiB | +550 files, +665 MiB |
+| warm (2nd) | 114 s | +1,645 files, +12.1 GiB | 0 |
+| warm2 | 52 s | 0 (the prune freed 2.0 GiB) | 0 |
+| warm3 | 43 s | 0 | 0 |
+| tool-only change (xo rebuilt in 329 s) | 51 s | +81 files, +23 MiB | +548 files, +665 MiB |
+| tool-only change, 2nd pass | 90 s | 0 | 0 |
+
+(A first run of the same script gave cold 115 s, warm 107 s and a
+tool-only change at 37 s; the walls swing by ten seconds or more with the
+other agents' load on this machine.)
+
+- The binary and test-run entries (testbin/) are all missed after the
+  tool-only change (548 new entries), and that pass took 51 s against
+  43 to 52 s for the two hot passes. The most the proposal could save
+  here is the difference to the hot wall, about 8 s of 51 (below the
+  spread between warm2 and warm3).
+- The second pass over an xo is the slow one (114 s, no faster than
+  cold): it writes 12.1 GiB of pack segments (decision 0220 addendum
+  part 2d) for 1,645 files. The same cost explains the 90 s second pass
+  after the tool-only change. That write is the large item in this suite
+  and is not 0297's.
+- Cold at 123 s on the Mac against 767 s of the earlier figure in this
+  decision: the earlier figure was a different set (the package's whole
+  test run).
+
+Reading: for `TestGoldenRun` on either machine the binary and test-run
+keys by xo's identity cost little (1 s on CI, about 8 s on the Mac)
+because the backend caches (decision 0275's key) already carry the
+tool-only change. 0297 stays Proposed; it is not worth its safety net on
+this evidence. The next experiments: (1) the pack write above (packing
+from a target's third build, or by hard link; Xo lang 5 has it); (2) the
+same measurement on a suite where the test binaries' link dominates (the
+package's whole run, `./internal/arm64` without `-run`), if the owner
+wants the question closed for good.
+
 ## Consequences
 
 - A gate whose change leaves the driver and the code generation alone
