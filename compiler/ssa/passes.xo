@@ -770,7 +770,7 @@ pub fn cse(var f: Func, m: Module) -> Bool {
         None => {}
         I(n) => key = "${key} #${n}"
         P(t, fl) => key = "${key} #${t}.${fl}"
-        _ => continue
+        F(..) | B(..) | S(..) | Bs(..) => continue
       }
       // a constant operand by its value: each use site has its own Const
       var args: List[Str] = []
@@ -782,7 +782,7 @@ pub fn cse(var f: Func, m: Module) -> Bool {
           match y.aux {
             I(n) => args.push("k${y.ty}=${n}")
             B(t) => args.push("k${y.ty}=${t}")
-            _ => ok = false
+            None | F(..) | S(..) | Bs(..) | P(..) => ok = false
           }
         } else {
           args.push("v${a}")
@@ -908,7 +908,7 @@ pub fn fold_tuple_fields(var f: Func, m: Module) -> Bool {
         }
         let i = match f.values[u].aux {
           I(n) => n
-          _ => -1
+          None | F(..) | B(..) | S(..) | Bs(..) | P(..) => -1
         }
         if i < 0 || i >= x.args.len() {
           ok = false
@@ -921,7 +921,7 @@ pub fn fold_tuple_fields(var f: Func, m: Module) -> Bool {
       for u in tu {
         let i = match f.values[u].aux {
           I(n) => n
-          _ => 0
+          None | F(..) | B(..) | S(..) | Bs(..) | P(..) => 0
         }
         repl[u] = x.args[i]
         dead[u] = true

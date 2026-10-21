@@ -740,14 +740,14 @@ fn (var b: Builder) run_job_fe(j: Job) {
       }
       return
     }
-    _ => {}
+    Body(..) | Inner(..) | Test(..) => {}
   }
   // built with no entry: a generic instance, a body with no key, a
   // contract's inner body, a test
   match j {
     Body(fo, _, _) => b.nofe_fo(fo)
     Inner(fo, _, _) => b.nofe_fo(fo)
-    _ => {}
+    Test(..) | Closure(..) | ClosureReplay(..) => {}
   }
   b.run_job0(j)
 }
