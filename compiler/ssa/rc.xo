@@ -1810,6 +1810,19 @@ fn (var r: Rc) group_releases(var f: Func) {
   var any = false
   for bl in 0..f.blocks.len() {
     let ins = f.blocks[bl].instrs
+    // a block with no release keeps its instructions (no copy, no
+    // rewrite: most blocks; 2026-10-21, group_releases 5.7 s of a cold
+    // self-build's 168 s CPU)
+    var has_release = false
+    for v in ins {
+      if f.values[v].op == Op.Release {
+        has_release = true
+        break
+      }
+    }
+    if !has_release {
+      continue
+    }
     var out: List[Int] = []
     var i = 0
     while i < ins.len() {
@@ -1829,10 +1842,10 @@ fn (var r: Rc) group_releases(var f: Func) {
       // `var` results in place while only field reads use the call,
       // byref.xo lazy_result, and a release of the whole call would load
       // every word: bench/results/fast-builds-2026-10-13.md)
-      var by_group: Map[Str, List[Int]] = {}
-      var groups: List[Str] = []
-      var gsite: Map[Str, (Int, Int)] = {}
-      var bad: Set[Str] = #{}
+      var by_group: Map[Int, List[Int]] = {}
+      var groups: List[Int] = []
+      var gsite: Map[Int, (Int, Int)] = {}
+      var bad: Set[Int] = #{}
       for k in i..j {
         let v = ins[k]
         if f.values[v].op != Op.Release {
@@ -1840,7 +1853,7 @@ fn (var r: Rc) group_releases(var f: Func) {
         }
         let a = f.values[v].args[0]
         let ls = r.leaves(f, a)
-        var mine: Set[Str] = #{}
+        var mine: Set[Int] = #{}
         for l in ls {
           let (g, root, comp) = r.leaf_group(f, l)
           mine.add(g)
@@ -1859,7 +1872,7 @@ fn (var r: Rc) group_releases(var f: Func) {
           }
         }
       }
-      var joined: Map[Str, Bool] = {}
+      var joined: Map[Int, Bool] = {}
       for g in groups {
         let ks = by_group.get(g) ?? []
         let (root, comp) = gsite.get(g) ?? (-1, -1)
@@ -1879,7 +1892,7 @@ fn (var r: Rc) group_releases(var f: Func) {
           joined[g] = true
         }
       }
-      var placed: Set[Str] = #{}
+      var placed: Set[Int] = #{}
       for k in i..j {
         let v = ins[k]
         if f.values[v].op == Op.Release {
@@ -1911,15 +1924,16 @@ fn (var r: Rc) group_releases(var f: Func) {
   }
 }
 
-/// The group of leaf l in group_releases: its key, its root, and, for a
-/// root that is a call, the result it belongs to (else -1).
-fn (r: Rc) leaf_group(f: Func, l: Leaf) -> (Str, Int, Int) {
+/// The group of leaf l in group_releases: its key (the root and the
+/// result, one Int, not the text "root.comp"), its root, and, for a root
+/// that is a call, the result it belongs to (else -1).
+fn (r: Rc) leaf_group(f: Func, l: Leaf) -> (Int, Int, Int) {
   if (f.values[l.root].op is Op.Call | Op.CallValue) && l.path.len() > 1 {
     let first = l.path[1..l.path.len()].split(".")[0]
     let comp = Int.parse(first) ?? -1
-    return ("${l.root}.${comp}", l.root, comp)
+    return (l.root * 4294967296 + comp + 1, l.root, comp)
   }
-  ("${l.root}", l.root, -1)
+  (l.root * 4294967296, l.root, -1)
 }
 
 /// Every heap leaf of a group of group_releases.
