@@ -70,7 +70,7 @@ pub fn user(f: Fs) -> UserFs? {
 // File and FileLock (F, L), which the prelude's types lower to (decision
 // 0083) and which the native prelude cannot name otherwise.
 
-pub fn open_as[F](u: UserFs, p: Str, mode: Int) -> F ! FsErr {
+pub fn open_as[F](u: UserFs, p: Str, mode: Int) -> F ! FsErr uses fs.read, fs.write {
   let h = match mode {
     0 => u.open(p)?
     1 => u.create(p)?
@@ -80,9 +80,9 @@ pub fn open_as[F](u: UserFs, p: Str, mode: Int) -> F ! FsErr {
   Ok(rt.cast[File, F](h))
 }
 
-pub fn lock_as[L](u: UserFs, p: Str) -> L ! FsErr { Ok(rt.cast[FileLock, L](u.lock(p)?)) }
+pub fn lock_as[L](u: UserFs, p: Str) -> L ! FsErr uses fs.write { Ok(rt.cast[FileLock, L](u.lock(p)?)) }
 
-pub fn try_lock_as[L](u: UserFs, p: Str) -> L? ! FsErr {
+pub fn try_lock_as[L](u: UserFs, p: Str) -> L? ! FsErr uses fs.write {
   match u.try_lock(p)? {
     Some(l) => Ok(Some(rt.cast[FileLock, L](l)))
     None => Ok(None)
