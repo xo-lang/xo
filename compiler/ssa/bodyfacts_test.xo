@@ -68,4 +68,5 @@ test "block_names and taken_names: the same from facts as from the body" {
   m.funcs[fi] = Func{name: "f"}
   expect(m.block_names(fi).sort()) == body_names.sort()
   expect(m.taken_names(fi)) == body_taken
+  expect(m.value_count(fi)) == m0.funcs[fi].values.len()
 }

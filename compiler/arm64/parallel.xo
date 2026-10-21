@@ -174,7 +174,8 @@ pub fn part_bounds(m: ssa.Module) -> List[Int] {
   var vals = 0
   for (fi, f) in m.funcs.indexed() {
     let k = fi + 1 - start
-    vals += f.values.len()
+    // a function not decoded: its body facts' count (decision 0283 B)
+    vals += m.value_count(fi)
     if fi + 1 < n && ((k >= PART_MIN && (k >= PART_MAX || fnv(f.name) % PART_CUT == 0)) || vals >= PART_VALUES) {
       out.push(fi + 1)
       start = fi + 1
@@ -246,7 +247,7 @@ pub fn generate_cached(m: ssa.Module, os: Str, jobs: Int, fc: FnCache) -> Progra
     for p in 0..np {
       var nv = 0
       for fi in bounds[p]..bounds[p + 1] {
-        nv += m.funcs[fi].values.len()
+        nv += m.value_count(fi)
       }
       cost.push((p, nv))
     }

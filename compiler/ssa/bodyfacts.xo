@@ -192,3 +192,12 @@ pub fn (m: Module) taken_names(fi: Int) -> List[Str] {
   }
   out
 }
+
+/// The number of values of function fi, from its facts or its body
+/// (arm64 part_bounds).
+pub fn (m: Module) value_count(fi: Int) -> Int {
+  match m.facts.get(fi) {
+    Some(x) => x.nvalues
+    None => m.funcs[fi].values.len()
+  }
+}
