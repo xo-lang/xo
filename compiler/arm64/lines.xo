@@ -185,3 +185,110 @@ fn reload_reuse_ops(lines: List[Line], nrefs: Map[Str, Int]) -> List[Line] {
   }
   out
 }
+
+/// `ldr x16, [A, #off]` (load) or `str x16, [A, #off]` (x17 when not
+/// x16), A sp or an x register (lsr.xo x16_word's form): (true, A's name,
+/// off).
+fn op_x16_word(x: Line, load: Bool, x16: Bool) -> (Bool, Str, Int) {
+  if let Some(o) = x.op {
+    if o.m == (if load { "ldr" } else { "str" }) && o.ops.len() == 2 {
+      if let macho.Operand.Reg(n: r, kind: k) = o.ops[0] {
+        if let macho.Operand.MemOp(m: mo) = o.ops[1] {
+          if k == macho.RX && r == (if x16 { 16 } else { 17 }) && mo.ok && mo.mode == 0 && mo.explicit {
+            return (true, if mo.base == 31 { "sp" } else { "x${mo.base}" }, mo.off)
+          }
+        }
+      }
+    }
+  }
+  (false, "", 0)
+}
+
+/// The lines of ls, each line of several instructions split (what the
+/// ported passes' items print as).
+fn flat_lines(ls: List[Str]) -> List[Str] {
+  var out: List[Str] = []
+  for l in ls {
+    for x in l.split("\n") {
+      out.push(x)
+    }
+  }
+  out
+}
+
+/// copy_runs_l on items (lsr.xo's text pass; its word copies read from
+/// the Op).
+fn copy_runs_ops(xs: List[Line]) -> List[Line] {
+  let lines = line_texts(xs)
+  if !any_has(lines, "\tstr x16, [") && !any_has(lines, "\tstr x17, [") {
+    return xs
+  }
+  var out: List[Line] = []
+  var i = 0
+  let n = lines.len()
+  while i < n {
+    // only a run's first load starts one (most lines: copied at once, no
+    // prefix built for them: two strings a line were most of this pass's
+    // time, decision 0274's measurement)
+    if !lines[i].starts_with("\tldr x1") {
+      out.push(xs[i])
+      i += 1
+      continue
+    }
+    let x16 = lines[i].starts_with(LD_X16)
+    let r = if x16 { "x16" } else { "x17" }
+    let (aok, ab, ao) = op_x16_word(xs[i], true, x16)
+    let j = past_rows(lines, i + 1)
+    let (bok, bb, bo) = if aok && j < n { op_x16_word(xs[j], false, x16) } else { (false, "", 0) }
+    if bok {
+      // the debug line rows and variable locations among the copies
+      // (decisions 0239, 0252): kept, before the copy, as pair_mem
+      // keeps them, so a build with debug information has the same code
+      var rows: List[Line] = []
+      for x in xs[i + 1..j] {
+        rows.push(x)
+      }
+      var e = j + 1
+      var k = 1
+      while true {
+        let c = past_rows(lines, e)
+        if c >= n {
+          break
+        }
+        let (cok, cb, co) = op_x16_word(xs[c], true, x16)
+        let d = past_rows(lines, c + 1)
+        if !cok || cb != ab || co != ao + 8 * k || d >= n {
+          break
+        }
+        let (dok, db, dof) = op_x16_word(xs[d], false, x16)
+        if !dok || db != bb || dof != bo + 8 * k {
+          break
+        }
+        for x in xs[e..c] {
+          rows.push(x)
+        }
+        for x in xs[c + 1..d] {
+          rows.push(x)
+        }
+        e = d + 1
+        k += 1
+      }
+      let ok = k >= 4 && scratch_dead(lines, e, "16") && scratch_dead(lines, e, "17")
+      let code = if ok { copy_block(r, ab, ao, bb, bo, k) } else { [] }
+      if code.is_empty() {
+        for x in xs[i..e] {
+          out.push(x)
+        }
+      } else {
+        for x in rows + to_lines(code) {
+          out.push(x)
+        }
+      }
+      i = e
+      continue
+    }
+    out.push(xs[i])
+    i += 1
+  }
+  out
+}

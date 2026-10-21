@@ -350,7 +350,14 @@ fn (var g: G) emit() {
   // joined once (each split and joined it again: memmove and allocation
   // were a fifth of a cold build's emit, 2026-10-19)
   let ls0 = b.join("").split("\n")
-  let ls = if g.x86 { ls0 } else { borrow_flag_peep_l(copy_runs_l(ls0)) }
+  let cr = if g.x86 { ls0 } else { copy_runs_l(ls0) }
+  if g.m.op_verify && !g.x86 {
+    // decision 0274 step 3: copy_runs on items gives the text pass's lines
+    if line_texts(copy_runs_ops(to_lines(ls0))) != flat_lines(cr) {
+      g.fail("XO_OP_VERIFY: ${g.f.name}: copy_runs_ops differs from copy_runs_l")
+    }
+  }
+  let ls = if g.x86 { ls0 } else { borrow_flag_peep_l(cr) }
   let nrefs = label_counts(ls, ext)
   if g.m.op_verify && !g.x86 {
     // decision 0274 step 3: the lines reload_reuse_l reads, as Ops (a
