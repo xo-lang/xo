@@ -18,6 +18,7 @@ fn host_os(os: Os) -> Str {
         return "linux"
       }
     }
+    // xo:allow XO0903 a uname probe: the host's own OS when it fails
     Err(_) => {}
   }
   "darwin"

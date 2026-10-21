@@ -45,6 +45,7 @@ fn install(fs: Fs, next: Str, bin: Str) -> Str uses fs.write {
 /// The watched files under root and their size and modified time.
 fn snapshot(os: Os, root: Str) -> Map[Str, Str] {
   var out: Map[Str, Str] = {}
+  // xo:allow XO0903 an empty snapshot looks like a change: one extra rebuild
   let all = os.fs.walk(root).ok() ?? []
   for fi in all {
     if fi.is_dir {
@@ -263,6 +264,7 @@ fn watch_run(os: Os, o: Opts, args: List[Str]) -> Int {
           let waiter_child = r.child
           let waiter_done = r.done
           let _w = os.tasks.spawn_background(fn() {
+            // xo:allow XO0903 a program that cannot be waited for is reported as exit -1
             let code = waiter_child.wait().ok() ?? -1
             let _ = waiter_done.try_send(code)
           })
@@ -379,11 +381,13 @@ fn test_state(os: Os, root: Str) -> TestState {
     st.defs[d.key] = d.hash
     st.names[d.key] = d.name
   }
+  // xo:allow XO0903 a walk it cannot do reruns every test: no stale result
   for fi in os.fs.walk(root).ok() ?? [] {
     let rel = fi.path.trim_prefix(root + "/")
     if fi.is_dir || !rel.ends_with(".xo") || !watched_path(rel) {
       continue
     }
+    // xo:allow XO0903 an unreadable file reruns its tests: no stale result
     let src = os.fs.read(fi.path).ok() ?? "".bytes()
     let r = parser.parse_file(fi.path.bytes(), src, false)
     for d in r.file.decls {
@@ -468,6 +472,7 @@ fn run_test_child(os: Os, o: Opts, xo_bin: Str, flags: List[Str], only: List[Str
     cmd = cmd.set_env("XO_TEST_ONLY", names.join("\n"))
   }
   if !o.json {
+    // xo:allow XO0903 a command that cannot run is reported as exit 1
     return (cmd.inherit().run().ok() ?? 1, [])
   }
   match cmd.output() {

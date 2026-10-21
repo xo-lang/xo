@@ -74,6 +74,7 @@ fn self_id(os: Os) -> Str {
               return id
             }
           }
+          // xo:allow XO0903 a memo: a failed read hashes the binary again
           Err(_) => {}
         }
       }
@@ -82,6 +83,7 @@ fn self_id(os: Os) -> Str {
   }
   let id = match os.fs.read(p) {
     Ok(b) => crypto.sha256(b).to_hex()
+    // xo:allow XO0903 no id: the build runs without the backend cache
     Err(_) => ""
   }
   if !memo.is_empty() && !id.is_empty() {
@@ -273,6 +275,7 @@ fn std_tree_sum(os: Os, dir: Str, cache: Str) -> Str {
   let sigh = crypto.sha256(sig.freeze().bytes()).to_hex()
   let memo = "${cache}/stdsum"
   if fresh && !cache.is_empty() {
+    // xo:allow XO0903 a memo: a failed read hashes the std tree again
     let parts = ((os.fs.read(memo).ok() ?? b"").to_str() ?? "").split(" ")
     if parts.len() == 2 && parts[0] == sigh {
       return parts[1]
@@ -304,6 +307,7 @@ fn std_tree_hash(os: Os, dir: Str, paths: List[Str]) -> Str {
 /// modules' paths and absolute directories (a root's dir is as named,
 /// "." for most builds).
 fn fe_program_id(os: Os, c: check.Checker) -> Str {
+  // xo:allow XO0903 the working directory from $PWD when getcwd fails
   let wd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
   var b = StrBuilder.new()
   for md in c.mods {
@@ -350,6 +354,7 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
   // read both common variants
   let fl = ssa.fe_flags(root, tests, release, real, tgoos, tgoarch, wasm, nolibc, prof, trace, soft_cpu, heap_guard)
   let hint_path = "${dir}/fe-hint/${crypto.sha256("${id}\n${fl}\n${fe_program_id(os, c)}".bytes()).to_hex()[0..32]}"
+  // xo:allow XO0903 a hint: with none the build reads both common variants
   let hint = (os.fs.read(hint_path).ok() ?? b"").to_str() ?? ""
   let owns = if hint.is_empty() { ssa.fe_common_owns() } else { [hint] }
   fe.start_conc = hint.starts_with("conc=true ")
@@ -437,6 +442,7 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
           }
           continue
         }
+        // xo:allow XO0903 verify mode: an entry it cannot read is stored again
         Err(_) => {}
       }
     }
@@ -659,6 +665,7 @@ fn cache_get(os: Os, path: Str) -> Option[Bytes] {
       prune.mark_used_within(os.fs, os.clock, path, BACKEND_TOUCH)
       Some(b)
     }
+    // xo:allow XO0903 a cache miss: the body is built again
     Err(_) => None
   }
 }
@@ -765,6 +772,7 @@ struct Pack {
 /// decide what an entry is; the target only groups the entries one edit
 /// loop uses).
 fn pack_dir(os: Os, dir: Str, kind: Str, target: Str) -> Str {
+  // xo:allow XO0903 the working directory only names the build in the cache
   let cwd = os.fs.cwd_path().ok() ?? ""
   var words: List[Str] = []
   var skip = false
@@ -811,6 +819,7 @@ fn cache_get_packed(os: Os, dir: Str, kind: Str, target: Str, keys: List[Str], j
               }
             }
           }
+          // xo:allow XO0903 a pack segment it cannot read is a miss: its bodies are built again
           Err(_) => {}
         }
       }
@@ -979,6 +988,7 @@ fn parse_list_path(os: Os, dir: Str) -> Str {
 /// which reuses a parse whose path, bytes, and mode match and parses
 /// any other file itself.
 fn parse_prefetch(os: Os, var c: check.Checker, dir: Str) {
+  // xo:allow XO0903 the parse prefetch only saves time; the check reads every file itself
   let data = os.fs.read(parse_list_path(os, dir)).ok() ?? b""
   var todo: List[(Str, Bytes, Bool)] = []
   for line in (data.to_str() ?? "").split("\n") {
@@ -989,6 +999,7 @@ fn parse_prefetch(os: Os, var c: check.Checker, dir: Str) {
     let path = line[2..line.len()]
     match os.fs.read(c.source_path(path)) {
       Ok(b) => todo.push((path, b, sig))
+      // xo:allow XO0903 the parse prefetch only saves time; the check reads every file itself
       Err(_) => {}
     }
   }
@@ -1047,6 +1058,7 @@ fn parse_list_store(os: Os, var c: check.Checker, dir: Str) {
     Err(_) => {
       // a target's first build only makes the directory (as the packs
       // do), so a program built once (a golden) leaves no list
+      // xo:allow XO0903 only the prefetch
       if os.fs.exists(dir_name(p)).ok() ?? false {
         cache_put(os, p, list)
       } else {

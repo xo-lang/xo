@@ -173,6 +173,7 @@ fn build_go(os: Os, ctx: Ctx, o: Opts) ! {
       let abs = abs_of(wd, o.record)
       env.push("XO_RECORD=${abs}")
       let code = exec_binary(os, host_bin, o.prog_args, env)
+      // xo:allow XO0903 a path it cannot stat is not used
       if os.fs.exists(abs).ok() ?? false {
         os.stdio.eprintln("xo run: recorded ${o.record} (xo replay ${o.record})")
       }
@@ -454,9 +455,11 @@ fn build_info_file(os: Os, c: check.Checker, root: Str, dir: Str, wd: Str, std_d
         }
       }
     }
+    // xo:allow XO0903 a wrong program id only misses the Go build cache
     Err(_) => {}
   }
   for name in rt.sort() {
+    // xo:allow XO0903 a wrong program id only misses the Go build cache
     let data = os.fs.read("${std_dir}/rt/${name}").ok() ?? b""
     h.write("rt/${name} ${crypto.sha256(data).to_hex()}\n")
   }

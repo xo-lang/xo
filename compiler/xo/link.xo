@@ -44,6 +44,7 @@ fn cc_dsym(os: Os, bin: Str) {
     Ok(r) => if r.code != 0 {
       os.fs.remove_all(d).ignore_err("a failed dsymutil")
     }
+    // xo:allow XO0903 dsymutil is optional: no dSYM, as on a system without it
     Err(_) => {}
   }
 }
@@ -79,6 +80,7 @@ fn cc_build(os: Os, ctx: Ctx, cc: Str, flags0: List[Str], srcs: List[Str], bin: 
   if !memo.is_empty() {
     match os.fs.read_text(memo) {
       Ok(t) => cands.push(t.trim())
+      // xo:allow XO0903 a memo: a failed read finds the sysroot again
       Err(_) => {}
     }
   }
@@ -292,6 +294,7 @@ fn sysroot_candidates(os: Os, ctx: Ctx) -> List[Str] {
         out.push((r.stdout.to_str() ?? "").trim())
       }
     }
+    // xo:allow XO0903 an SDK probe: the next candidate, or the link's own error
     Err(_) => {}
   }
   out.push("/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk")
@@ -305,6 +308,7 @@ fn sysroot_candidates(os: Os, ctx: Ctx) -> List[Str] {
         }
       }
     }
+    // xo:allow XO0903 an SDK probe: the next candidate, or the link's own error
     Err(_) => {}
   }
   out + ms.sort().reverse()
@@ -369,4 +373,3 @@ fn win_amd64_link(os: Os, srcs: List[Str], bin: Str, flags: List[Str]) -> Str {
   }
   ""
 }
-

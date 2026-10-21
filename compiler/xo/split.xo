@@ -118,6 +118,7 @@ fn mem_gb(os: Os) -> Int {
         }
       }
     }
+    // xo:allow XO0903 a memory size probe: the default size when it fails
     Err(_) => {}
   }
   16

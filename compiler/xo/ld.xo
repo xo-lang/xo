@@ -92,6 +92,7 @@ fn race_runtime(os: Os, ctx: Ctx, tgoos: Str, march: Str) -> (Str, Str) {
   let root = dir_name(ctx.std.trim_suffix("/"))
   let rel = "${tgoos}-${march}/${file}"
   for p in ["${root}/race/${rel}", "${root}/lib/xo/race/${rel}"] {
+    // xo:allow XO0903 a candidate it cannot stat is skipped; the link reports a missing one
     if os.fs.exists(p).ok() ?? false {
       return (p, "")
     }

@@ -44,6 +44,7 @@ fn c_inputs(os: Os, c: check.Checker, dir: Str) -> CInputs {
       Err(e) => return CInputs{err: "the adapter of `use c \"${m.c_header}\"`: ${e} (a Go build or `xo bind --c` writes it)"}
     }
     let p = "${cdir}/xo_${m.c_prefix.trim_suffix("_")}.c"
+    // xo:allow XO0903 a failed read writes the same adapter bytes again
     let old = os.fs.read(p).ok() ?? b""
     if old != data {
       match os.fs.write(p, data) {

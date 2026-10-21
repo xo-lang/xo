@@ -327,7 +327,9 @@ fn run_tests(os: Os, bin: Str, tests: List[TestInfo], o: TestOpts) -> Int {
         write_regressions(os, rf, o.std)
         os.fs.remove(rf).ignore_err("a temporary file")
       }
-      Err(_) => {}
+      // the shrunk failures are not lost silently: say so (the failing
+      // tests themselves are reported above)
+      Err(e) => os.stdio.println("xo test: no regression tests written: ${rf}: ${e}")
     }
   }
   if !o.json {
@@ -494,6 +496,7 @@ fn run_proc(c: Cmd, limit: Duration) -> Ran uses (proc, clock) {
     }
     (to.await, te.await)
   }
+  // xo:allow XO0903 a child that cannot be waited for fails its test (exit 1)
   let code = child.wait().ok() ?? 1
   Ran{out: out.to_str() ?? "", err: err.to_str() ?? "", code: code, timed_out: killed.get() != 0}
 }
@@ -1101,6 +1104,7 @@ fn serve_run(os: Os, bin: Str, limit: Duration, t: TestInfo, seed: Int, replay: 
       _ => break
     }
   }
+  // xo:allow XO0903 a child that cannot be waited for fails its test (exit 1)
   let code = c.wait().ok() ?? 1
   let first = s.runs == 0
   if begun && first {

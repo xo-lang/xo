@@ -88,6 +88,7 @@ fn run_key(os: Os, ctx: Ctx, o: Opts, args: List[Str], backend: Str) -> Str {
   }
   let memo = sysroot_memo(os, ctx)
   if !memo.is_empty() {
+    // xo:allow XO0903 a memo: a failed read only changes the key, a cache miss
     k.str((os.fs.read_text(memo).ok() ?? "").trim())
   }
   k.sum()
@@ -197,8 +198,10 @@ fn run_fetch(os: Os, ctx: Ctx, key: Str) -> RunHit? {
 
 /// The files and directories a test build of c read (run_fetch's
 /// inputs): the std tree, each non-std module's directory, and the
-/// module files from wd up.
-fn run_inputs(os: Os, c: check.Checker, std: Str, wd: Str) -> (List[Str], List[Str]) {
+/// module files from wd up. None when a directory cannot be listed: a run
+/// stored with fewer inputs could be fetched after one of the others
+/// changed (XO0903).
+fn run_inputs(os: Os, c: check.Checker, std: Str, wd: Str) -> (List[Str], List[Str])? {
   var files: List[Str] = []
   var dirs: List[Str] = []
   let sd = std.trim_suffix("/")
@@ -213,7 +216,7 @@ fn run_inputs(os: Os, c: check.Checker, std: Str, wd: Str) -> (List[Str], List[S
         }
       }
     }
-    Err(_) => {}
+    Err(_) => return None
   }
   var seen: Map[Str, Bool] = {}
   for m in c.mods {
@@ -234,7 +237,7 @@ fn run_inputs(os: Os, c: check.Checker, std: Str, wd: Str) -> (List[Str], List[S
           }
         }
       }
-      Err(_) => {}
+      Err(_) => return None
     }
   }
   var d = wd
@@ -248,7 +251,7 @@ fn run_inputs(os: Os, c: check.Checker, std: Str, wd: Str) -> (List[Str], List[S
     }
     d = up
   }
-  (files, dirs)
+  Some((files, dirs))
 }
 
 /// Stores the run of key: bin, its tests, and the inputs c read, with
@@ -258,7 +261,10 @@ fn run_store(os: Os, ctx: Ctx, key: Str, c: check.Checker, std: Str, wd: Str, bi
   if key.is_empty() || bin.is_empty() {
     return
   }
-  let (files, dirs) = run_inputs(os, c, std, wd)
+  let (files, dirs) = match run_inputs(os, c, std, wd) {
+    Some(x) => x
+    None => return
+  }
   var b = StrBuilder.new()
   b.write("xo-testrun-v1\n")
   for p in files {

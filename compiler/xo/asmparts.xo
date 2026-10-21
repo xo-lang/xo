@@ -76,6 +76,7 @@ fn memo_sysroot(os: Os, ctx: Ctx) -> List[Str] {
   if memo.is_empty() {
     return []
   }
+  // xo:allow XO0903 a memo: a failed read finds the sysroot again
   let root = (os.fs.read_text(memo).ok() ?? "").trim()
   if root.is_empty() {
     return []
@@ -277,6 +278,7 @@ fn cached_cc_assemble(os: Os, ctx: Ctx, cc: Str, flags: List[Str], srcs: List[St
         cache_put(os, entry_path(dir, "obj", keys[i]), b)
         n += b.len()
       }
+      // xo:allow XO0903 an object not stored in the cache is built again
       Err(_) => {}
     }
   }

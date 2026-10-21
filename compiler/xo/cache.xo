@@ -226,6 +226,7 @@ fn native_bin_key(os: Os, ctx: Ctx, dir: Str, cc: Str, flags: List[Str], srcs: L
   var root = ""
   let memo = sysroot_memo(os, ctx)
   if !memo.is_empty() {
+    // xo:allow XO0903 a memo: a failed read finds the sysroot again
     root = (os.fs.read_text(memo).ok() ?? "").trim()
   }
   k.str("sysroot ${root} ${os.env.get("XO_SYSROOT") ?? ""}")
@@ -378,6 +379,7 @@ fn dsym_dwarf(bin: Str) -> Str {
 /// fetch gives the program its line tables too.
 fn store_dsym(os: Os, entry: Str, bin: Str) {
   let src = dsym_dwarf(bin)
+  // xo:allow XO0903 no dSYM stored: a fetch gives the program no line tables, as with none
   if !(os.fs.exists(src).ok() ?? false) {
     return
   }
@@ -393,6 +395,7 @@ fn store_dsym(os: Os, entry: Str, bin: Str) {
 fn fetch_dsym(os: Os, entry: Str, bin: Str) {
   os.fs.remove_all("${bin}.dSYM").ignore_err("none from an earlier link")
   let src = "${entry}.dsym"
+  // xo:allow XO0903 no dSYM fetched: the program runs without its line tables
   if !(os.fs.exists(src).ok() ?? false) {
     return
   }

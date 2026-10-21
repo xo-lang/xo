@@ -74,6 +74,7 @@ fn build_each_cmd(os: Os, args: List[Str]) -> Int {
         break
       }
       // --stdin: the next `OUT<tab>DIR` line, until the input ends
+      // xo:allow XO0903 end of input or an error ends the interactive loop
       let line = os.stdio.read_line().ok() ?? None
       match line {
         Some(l) => {

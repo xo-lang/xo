@@ -13,6 +13,7 @@ fn fail_unsupported(os: Os, msg: Str) -> Never {
   if !marker.is_empty() {
     match os.fs.write(marker, msg.bytes()) {
       Ok(_) => os.proc.exit(125)
+      // xo:allow XO0903 a marker that cannot be written: the error below reports it
       Err(_) => {}
     }
   }
