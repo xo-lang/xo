@@ -161,6 +161,65 @@ and the cpuburst and large-heap runs.
   fixed point and the cold-build measurement decide whether the switch
   lands as is or with a faster path for unshared Maps.
 
+## Addendum (2026-10-21, Xo Lang 3): the hybrid representation
+
+**Measured before the switch** (Mac, bench/perf collection workloads,
+ms, best of 5; main 495fd983 lists against the log Maps of branch
+mswitch): putget 23 -> 99, get 8 -> 21, update 23 -> 95, copymut 3 ->
+26, iter about 1 (json `maps` +5% instructions). An unshared fast path
+for the log (`log.set`: the table's only holder overwrites in place)
+gave putget 50, get 19, update 45, copymut 22.
+
+**Why fast paths cannot close it.** A log get follows index slot ->
+chunk directory -> chunk -> entry and decodes the position twice (find,
+then the value); a copy then write pays a flatten that rebuilds entries
+and index where the lists copy one block. With a fused get and a flat
+root chunk the floor is still about 1.6x on get.
+
+**Design (map.xo, maphyb.xo; behind XO_MAP_LOG=1).** A Map or Set value
+is the lists' struct (keys, vals, live, slots, n) with one more field,
+`log`: in log mode a list holding one log table (xo.MapLog[...]) whose
+n field 4 mirrors; in lists mode empty, the shared immortal empty list
+until the value's lists copied on write once, then an empty list of its
+own (the mark: six fields keep a put's map, key, and value in arm64
+registers, where a seventh put the value on the stack). In lists mode
+every read and every write by the only holder is the lists' code. A
+write to a value whose written list (values for a put, live flags for a
+remove) is shared copies on write as the lists do and marks the result;
+the second such write converts the value to a log table (one pass over
+its live entries into mlog_table: a flatten's cost, once) and writes
+through it from then on. So a Map written while shared again and again
+(a store under `Mutex.with`, a snapshot per request) gets the log's
+O(1) copies, and code that copies a Map and writes the copy keeps the
+lists' speed. A log value never goes back. The log paths, the
+conversion, and the log lookup stay out of line (ssa.cold_fn); a
+lookup tries the lists first (a log value's lists are empty, so they
+miss at once) and tags a log position (MAPH_LOG) so the value read
+needs no second test.
+
+**Prototype measurements** (branch mhybrid, 2026-10-21):
+
+- Collections, instructions retired (deterministic), lists -> hybrid:
+  putget 1.23x, get 1.19x, update 1.19x, copymut 1.24x, branch 1.20x,
+  iter 1.00x. Wall time (min of 9, interleaved, a loaded machine):
+  putget about 1.5x, get about 1.5x, update 1.28x, copymut 1.47x,
+  branch 1.14x.
+- HTTP CRUD callgrind (arm64, plain, 3 runs, instructions a request),
+  lists -> hybrid: 8 users 23,606 -> 23,405 (-0.9%); 10,000 users
+  1,185,600 -> 534,805 (-54.9%), the log's win kept.
+- Correctness: the Map goldens (map_log_model's random model,
+  map_log_sets, maps, map_small, set_hofs...) in both modes, an aliasing
+  check (kept copies, small maps, heap values, iteration while a copy is
+  written, update) identical to the Go backend, no leaks.
+
+**What remains is code generation**, not the Map: the never-taken call
+to the out-of-line log lookup in a get loop makes arm64's register
+allocator keep the loop's values in callee-saved registers and stop
+hoisting its invariants (constants and base addresses rebuilt each
+iteration; gotchas/arm64-cold-call-in-loop.md). The lists' loop has no
+call. Allocating around cold calls would close most of the wall-time
+gap; the owner decides the switch on these numbers.
+
 ## Alternatives
 
 - **A HAMT** (hash array mapped trie, with an insertion-order structure
