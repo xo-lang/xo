@@ -2333,10 +2333,11 @@ func TestStdModuleRunCache(t *testing.T) {
 }
 
 // TestParseListAfterRunCache: a test build's first check writes the build
-// target's parse list, so the first edit build after builds the test run
-// cache served (which check nothing) parses its files ahead on tasks
-// (2026-10-21: it reused 0 of 185 parses, check 0.8 to 1.2 s; with the
-// list 185 of 185, check 0.33 to 0.47 s).
+// target's parse list and its first build packs the parts, so the first
+// edit build after builds the test run cache served (which reach neither
+// the check nor the back end) parses its files ahead on tasks and
+// regenerates only the edited part (2026-10-21: it reused 0 of 185
+// parses, check 0.8 to 1.2 s; with the list 185 of 185, 0.33 to 0.47 s).
 func TestParseListAfterRunCache(t *testing.T) {
 	if !native() {
 		t.Skip("the host is not arm64")
@@ -2397,5 +2398,16 @@ func TestParseListAfterRunCache(t *testing.T) {
 	n, _ := strconv.Atoi(m[2])
 	if n == 0 || h < n-1 {
 		t.Errorf("the edit build reused %d of %d parses, want all but at most the edited file", h, n)
+	}
+	// the parts too: packed on the first build (fn_cache_store
+	// first_parts), so only the edited one is generated again
+	pm := regexp.MustCompile(`cache parts (\d+)/(\d+) reused`).FindStringSubmatch(edit)
+	if pm == nil {
+		t.Fatalf("no cache parts line:\n%s", edit)
+	}
+	ph, _ := strconv.Atoi(pm[1])
+	pn, _ := strconv.Atoi(pm[2])
+	if pn < 2 || ph < pn-1 {
+		t.Errorf("the edit build reused %d of %d parts, want all but the edited one", ph, pn)
 	}
 }

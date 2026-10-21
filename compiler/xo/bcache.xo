@@ -140,8 +140,11 @@ fn fn_cache_load(os: Os, ctx: Ctx, m: ssa.Module, tgoos: Str, jobs: Int, release
 
 /// Stores the entries a cached generation made (fn_cache_load's dir),
 /// functions' and parts', and updates the target's packs with them and
-/// the hits of fc.
-fn fn_cache_store(os: Os, dir: Str, pk: Pack, fc: arm64.FnCache, stores: List[(Str, Bytes)], part_stores: List[(Str, Bytes)]) {
+/// the hits of fc. first_parts: the parts are packed on the target's
+/// first build whatever their count (a test build the run cache keys:
+/// its unchanged rebuilds never reach the back end, so its first edit
+/// regenerated every part, 2026-10-21).
+fn fn_cache_store(os: Os, dir: Str, pk: Pack, fc: arm64.FnCache, stores: List[(Str, Bytes)], part_stores: List[(Str, Bytes)], first_parts: Bool) {
   if dir.is_empty() {
     return
   }
@@ -150,7 +153,7 @@ fn fn_cache_store(os: Os, dir: Str, pk: Pack, fc: arm64.FnCache, stores: List[(S
   // its namespace), and its text is large (xo: 34 parts, 328 MB), so
   // no loose copy for other programs to share
   if let Some(pp) = pk.parts {
-    if pp.fresh && fc.part_keys.len() >= PART_PACK_FIRST && !part_stores.is_empty() {
+    if pp.fresh && (first_parts || fc.part_keys.len() >= PART_PACK_FIRST) && !part_stores.is_empty() {
       // a large module's parts on the target's first build too: they
       // have no loose copies to come back from, so the first edit after
       // a cold build regenerated every part
