@@ -131,6 +131,12 @@ fn dump_body(os: Os, args: List[Str]) ! {
       out.write("== rejected\n")
       continue
     }
+    let (lower_off, lower_err) = parse_lowerings(os.env.get("XO_LOWER") ?? "")
+    if !lower_err.is_empty() {
+      os.stdio.eprintln(lower_err)
+      os.proc.exit(2)
+    }
+    c.lower_off = lower_off
     c.dump_roots = fns
     var b = build_program(c, wd, tests)
     b.m.show_dvars = debug_vars

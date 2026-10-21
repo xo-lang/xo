@@ -39,6 +39,10 @@ pub struct Checker {
   /// file descriptors left), or "": check_dirs fails with it rather than
   /// check the program without that directory's modules.
   walk_err: Str = ""
+  /// Optional SSA builder lowerings turned off, by name ($XO_LOWER,
+  /// `-name` entries, comma separated; compiler/ssa lowerings.xo): miscompile
+  /// triage inside one commit, as XO_PASSES is for the native passes.
+  pub lower_off: List[Str] = []
   /// Functions `xo dev dump ssa --fn=NAME` names (display name, or
   /// module.name): the SSA builder declares each non generic one as a
   /// root, so a function main does not reach is built too.

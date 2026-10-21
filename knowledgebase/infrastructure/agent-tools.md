@@ -62,6 +62,16 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 - `XO_PASSES=-name,...` turns optional passes off; `xo dev bisect-pass
   DIR` finds the first pass that changes a program's output.
+- `XO_LOWER=-name,...` turns optional SSA builder lowerings off
+  (2026-10-21; compiler/ssa lowerings.xo lists them: `eq_lower`, the
+  `a.to_lower() == b.to_lower()` rewrite, and `user_cap_call`, decision
+  0307's dispatch on user capabilities, which then work only for the
+  runtime's own): bisect inside a commit that changed what the builder
+  emits, as XO_PASSES does for the native passes. A wrong name fails and
+  lists them; the front end cache keys on it; a new lowering is added
+  to lowerings() and gated with `b.lowering_on("name")`
+  (TestLoweringsListed fails when they disagree). `xo dev dump ssa
+  --fn=NAME` with and without it shows the difference.
 - `reduce-diff.py --crash` shrinks a failing program; property tests
   keep the failing program, print the build's output, the culprit pass,
   and the reduced program.

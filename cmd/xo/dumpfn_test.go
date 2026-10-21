@@ -61,3 +61,43 @@ func TestDumpFn(t *testing.T) {
 		t.Errorf("main after inline still calls sq:\n%.800s", in)
 	}
 }
+
+const lowerProg = `fn same(a: Str, b: Str) -> Bool { a.to_lower() == b.to_lower() }
+
+fn main(os: Os) {
+  os.stdio.println("${same("Ab", "aB")}")
+}
+`
+
+// TestLowerOff covers XO_LOWER (compiler/ssa lowerings.xo): the
+// `a.to_lower() == b.to_lower()` lowering to the prelude's str_eq_lower is
+// in the SSA by default and gone with XO_LOWER=-eq_lower, where the
+// program builds through the general path; a name that is not a lowering
+// fails and lists them.
+func TestLowerOff(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module example.com/lo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte(lowerProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, dir)
+	dump := func() (string, int, string) {
+		t.Helper()
+		var out, errb bytes.Buffer
+		code := runXo(t, []string{"dev", "dump", "ssa", "--fn=same", "."}, &out, &errb)
+		return out.String(), code, errb.String()
+	}
+	if s, code, e := dump(); code != 0 || !strings.Contains(s, "str_eq_lower") {
+		t.Errorf("default: exit %d, want a call of str_eq_lower:\n%.600s%s", code, s, e)
+	}
+	t.Setenv("XO_LOWER", "-eq_lower")
+	if s, code, e := dump(); code != 0 || strings.Contains(s, "str_eq_lower") || !strings.Contains(s, "func same(") {
+		t.Errorf("-eq_lower: exit %d, want no str_eq_lower:\n%.600s%s", code, s, e)
+	}
+	t.Setenv("XO_LOWER", "-nosuchlowering")
+	if _, code, e := dump(); code != 2 || !strings.Contains(e, "no lowering nosuchlowering") || !strings.Contains(e, "eq_lower") {
+		t.Errorf("bad name: exit %d, stderr %q", code, e)
+	}
+}

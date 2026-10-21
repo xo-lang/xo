@@ -121,7 +121,7 @@ pub fn fe_keys(c: check.Checker, flags: Str, root: Str, std_sum: Str) -> Map[Int
     // the declaration's column, not its line: an entry's lines are
     // relative to the declaration's (fe_entry), so a body that moved (an
     // edit above it) keeps its entry
-    h.write_str("${FE_CACHE_VERSION}\n${flags}\n${whose}\n${c.files[o.decl_file].path}\n${fd.span.start.col}\n")
+    h.write_str("${FE_CACHE_VERSION}\n${flags}\nlower=${c.lower_off.join(",")}\n${whose}\n${c.files[o.decl_file].path}\n${fd.span.start.col}\n")
     h.write(src[fd.span.start.offset..fd.span.end.offset])
     keys[fo] = crypto.sha256(h.freeze()).to_hex()
   }

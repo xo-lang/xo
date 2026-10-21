@@ -2345,6 +2345,9 @@ fn (b: Builder) pin_key(e: Expr) -> Str {
 /// pinned for that lowering). None when x is not such a call or the
 /// native capability has no user field.
 fn (var b: Builder) user_cap_call(x: Expr, ci: check.CallInfo) -> Int? {
+  if !b.lowering_on("user_cap_call") {
+    return None
+  }
   let fo = ci.fn_obj
   let r = b.c.objs[fo].recv
   if r < 0 || !b.c.objs[fo].iface || ci.recv.is_empty() || !b.is_prelude_mod(b.obj_mod(fo)) {

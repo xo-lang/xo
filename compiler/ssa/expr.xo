@@ -1434,8 +1434,9 @@ fn (var b: Builder) binary(e: Expr) -> Int {
     return res
   }
   if op == lexer.Kind.Eq || op == lexer.Kind.NotEq {
-    let lr = b.to_lower_recv(x)
-    let rr = b.to_lower_recv(y)
+    let on = b.lowering_on("eq_lower")
+    let lr = if on { b.to_lower_recv(x) } else { None }
+    let rr = if on { b.to_lower_recv(y) } else { None }
     if lr != None && rr != None {
       // compares without making the lowered strings (the native
       // prelude's str_eq_lower, in Xo since decision 0180)

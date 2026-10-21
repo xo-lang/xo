@@ -1,0 +1,48 @@
+// The optional lowerings of the SSA builder, by name: each can be turned
+// off ($XO_LOWER=-name,..., Checker.lower_off) and the program builds
+// through the general path, only slower or larger (user capabilities
+// excepted: see user_cap_call). `XO_PASSES` does the same for the native
+// passes; this is for bisecting inside a commit that changed what the
+// builder emits, not what a pass does.
+
+/// Every optional lowering. Add one here with the check
+/// `b.lowering_on("name")` where it applies (TestLoweringsListed fails
+/// when the two disagree).
+pub fn lowerings() -> List[Str] {
+  [
+    // `a.to_lower() == b.to_lower()` as the prelude's str_eq_lower, without
+    // the lowered strings
+    "eq_lower",
+    // a method of Proc, Env, Net, Stdio, Clock, or Rand called on a user
+    // value (decision 0307) dispatched at the call; off, only the
+    // runtime's own capabilities work
+    "user_cap_call",
+  ]
+}
+
+/// The lowerings $XO_LOWER turns off (`-name` entries, comma separated),
+/// or why the value is wrong.
+pub fn parse_lowerings(v: Str) -> (List[Str], Str) {
+  var off: List[Str] = []
+  let all = lowerings()
+  for e0 in v.split(",") {
+    let e = e0.trim()
+    if e.is_empty() {
+      continue
+    }
+    if !e.starts_with("-") {
+      return ([], "XO_LOWER: ${e} is not -NAME (only turning lowerings off is supported)")
+    }
+    let n = e[1..e.len()]
+    if !all.contains(n) {
+      return ([], "XO_LOWER: no lowering ${n}; the lowerings are ${all.join(", ")}")
+    }
+    off.push(n)
+  }
+  (off, "")
+}
+
+/// Whether lowering name is on (not turned off by $XO_LOWER).
+fn (b: Builder) lowering_on(name: Str) -> Bool {
+  !b.c.lower_off.contains(name)
+}

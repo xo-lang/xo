@@ -412,6 +412,12 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   // XO_MAP_LOG=0 builds the lists alone (wasm too, since its hybrid's
   // checks were fixed, 2026-10-21)
   c.map_log = (os.env.get("XO_MAP_LOG") ?? "") != "0"
+  // the SSA builder's lowerings $XO_LOWER turns off (miscompile triage)
+  let (lower_off, lower_err) = ssa.parse_lowerings(os.env.get("XO_LOWER") ?? "")
+  if !lower_err.is_empty() {
+    fail(os, lower_err)
+  }
+  c.lower_off = lower_off
   // loops without preemption polls (decision 0286 step 3's opt out)
   c.no_preempt = o.no_preempt || (os.env.get("XO_PREEMPT_POLLS") ?? "") == "off"
   // decision 0318: SIGURG's preemption instead of loop polls
