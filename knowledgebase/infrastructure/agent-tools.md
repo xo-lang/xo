@@ -209,6 +209,18 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   internal/xotool CheckerDirs, are the tree's; --no-gc adds compiler/ssa)
   and the tree's std, building only when there is none. Never check with
   an older worktree's bin/xo: its checker and std differ (2026-10-21).
+- Output identity (a change that claims no output change): `go run
+  ./scripts/identity [-targets T,...] [-backend B] [-step N] [-std DIR]
+  [-out DIR] BASE NEW [DIR...]`. BASE and NEW are xo binaries or git
+  revisions (built in a temporary worktree, removed after; the base is the
+  change's parent, not main). Every -step-th golden and compiler/xo by
+  default, with one std for both, the same output names, every cache off,
+  a private backend cache for every xo it starts (old xos' prune), each
+  pair deleted once compared and a differing one kept in OUT/keep; Mach-O
+  compared by disassembly, ELF byte for byte. Exit 1 when one differs or
+  NEW fails to build one. Run it in a bulk slot (`HEAVY_CLASS=bulk
+  heavy.sh`). Last verified: 2026-10-21 (the same xo on both sides: 12
+  compared, 0 differing).
 - Gate scripts: `. ~/xo-lead/agents/gatelib.sh` (scripts/lead/gatelib.sh,
   installed by install.sh), then `gotests PKG 'TestA|TestB'` for the
   proving tests (exactly those names, -v, one `--- PASS` line each) and
