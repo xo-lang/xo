@@ -601,6 +601,13 @@ fn (var b: Builder) unwind_exit() -> Int {
 
 /// Prunes the blocks unreachable from the entry, removes trivial block
 /// parameters, and renumbers (Func.cleanup).
+/// f after cleanup_func.
+fn cleaned(f0: Func) -> Func {
+  var f = f0
+  cleanup_func(f)
+  f
+}
+
 fn cleanup_func(var f: Func) {
   prune_func(f)
   remove_trivial_params(f)
@@ -1183,12 +1190,58 @@ fn renumber(var f: Func) {
 
 /// Runs cleanup on every function (the cleanup stage).
 pub fn (var b: Builder) cleanup_all() {
-  for fi in 0..b.m.funcs.len() {
-    var f = b.m.funcs[fi]
-    b.m.funcs[fi] = Func{name: ""}
-    cleanup_func(f)
-    b.m.funcs[fi] = f
+  b.cleanup_all_jobs(1)
+}
+
+/// cleanup_all on up to jobs tasks: each function's cleanup reads only
+/// the function, so the module is the same for any number of jobs (a
+/// serial pass over xo was 0.25 s of every edit build).
+pub fn (var b: Builder) cleanup_all_jobs(jobs: Int) {
+  let n = b.m.funcs.len()
+  if jobs <= 1 || n < 256 || target.arch == TargetArch.Wasm32 {
+    for fi in 0..n {
+      var f = b.m.funcs[fi]
+      b.m.funcs[fi] = Func{name: ""}
+      cleanup_func(f)
+      b.m.funcs[fi] = f
+    }
+    return
   }
+  b.m.funcs = cleanup_funcs(b.m.funcs, jobs)
+}
+
+/// funcs after cleanup, on up to jobs tasks, in order.
+fn cleanup_funcs(funcs: List[Func], jobs: Int) -> List[Func] {
+  let n = funcs.len()
+  let next = Atomic[Int].new(0)
+  let done = scope s {
+    var ts = []
+    for _ in 0..jobs.min((n + 63) / 64).max(1) {
+      ts.push(s.spawn(fn() -> List[(Int, Func)] {
+        var mine: List[(Int, Func)] = []
+        while true {
+          let i = next.add(64) - 64
+          if i >= n {
+            break
+          }
+          for fi in i..(i + 64).min(n) {
+            mine.push((fi, cleaned(funcs[fi])))
+          }
+        }
+        mine
+      }))
+    }
+    var all: List[(Int, Func)] = []
+    for t in ts {
+      all = all + t.await
+    }
+    all
+  }
+  var out = funcs
+  for (fi, f) in done {
+    out[fi] = f
+  }
+  out
 }
 
 /// Runs the passes after the build and writes the module after each:

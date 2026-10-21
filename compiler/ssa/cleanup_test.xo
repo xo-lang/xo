@@ -1,0 +1,34 @@
+// The cleanup stage on tasks (cleanup_all_jobs): the same functions as
+// one task's.
+
+/// A module of n functions, each with an unreachable block and a block
+/// parameter every edge passes the same value: prune and
+/// remove_trivial_params have work in each.
+fn cleanup_module(n: Int) -> Module {
+  var m = Module{}
+  let it = m.intern(SType{kind: Kind.Int, name: "Int"})
+  for k in 0..n {
+    let fi = m.new_func("f${k}", [it], [it])
+    var f = m.funcs[fi]
+    let p = f.blocks[0].params[0]
+    let b1 = f.new_block()
+    let q = f.add_param(b1, it)
+    let dead = f.new_block()
+    let _j = f.jump(0, b1, [p])
+    let _d = f.jump(dead, b1, [p])
+    let _r = f.add(b1, Op.Return, -1, Aux.None, [q])
+    m.funcs[fi] = f
+  }
+  m
+}
+
+test "cleanup on tasks gives one task's functions" {
+  let m = cleanup_module(300)
+  let before = m.text()
+  var one = m
+  one.funcs = cleanup_funcs(m.funcs, 1)
+  var four = m
+  four.funcs = cleanup_funcs(m.funcs, 4)
+  expect(one.text() == before) == false
+  expect(four.text()) == one.text()
+}

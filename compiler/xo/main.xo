@@ -1230,7 +1230,7 @@ fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Boo
   t = lap(os, o.phases, "prune_unwind", t)
   b.add_landings()
   t = lap(os, o.phases, "add_landings", t)
-  b.cleanup_all()
+  b.cleanup_all_jobs(emit_jobs(os))
   t = lap(os, o.phases, "cleanup", t)
   // the reference counting's optional pass (rc.xo chain_pads)
   b.m.passes_off = passes_off(os)
