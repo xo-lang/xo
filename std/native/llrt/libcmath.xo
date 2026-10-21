@@ -82,8 +82,9 @@ fn norm(u: Int, e0: Int) -> (Int, Int) {
 }
 
 /// x - n*y for the integer n of x / y rounded toward zero, exactly (C's
-/// fmod; musl's algorithm): the sign of x; NaN when y is 0 or x is
-/// infinite or either is NaN; x when |x| < |y|.
+/// fmod; a port of musl's src/math/fmod.c, THIRD_PARTY_NOTICES 5): the
+/// sign of x; NaN when y is 0 or x is infinite or either is NaN; x when
+/// |x| < |y|.
 pub fn fmod(x: Float, y: Float) -> Float {
   let ux0 = rt.float_bits(x)
   let uy0 = rt.float_bits(y)
