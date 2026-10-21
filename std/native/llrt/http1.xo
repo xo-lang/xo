@@ -1241,6 +1241,8 @@ pub struct Chunked {
   res: Int
   used: Int
   body: Str
+  /// HB_ERR's text: net/http's chunkedReader or readTrailer error
+  why: Str = ""
 }
 
 /// Decodes the chunked body at the start of s (eof: no more will come),
@@ -1256,19 +1258,22 @@ pub fn chunked(s: Str, eof: Bool) -> Chunked {
     let nl = if i < n { scan.find_byte(s.bytes(), i, s.len(), 10) } else { -1 }
     if nl < 0 {
       if n - i >= 4096 {
-        return Chunked{res: HB_ERR, used: 0, body: out} // header line too long
+        return Chunked{res: HB_ERR, used: 0, body: out, why: "header line too long"}
       }
-      return Chunked{res: if eof { HB_ERR } else { HB_NEED }, used: 0, body: out}
+      return Chunked{res: if eof { HB_ERR } else { HB_NEED }, used: 0, body: out, why: "unexpected EOF"}
     }
     let e = nl
     // CRLF required, no other CR
     let cr = bfind(b, 13, i, e + 1)
-    if cr < 0 || cr != e - 1 {
-      return Chunked{res: HB_ERR, used: 0, body: out}
+    if cr < 0 {
+      return Chunked{res: HB_ERR, used: 0, body: out, why: "chunked line ends with bare LF"}
+    }
+    if cr != e - 1 {
+      return Chunked{res: HB_ERR, used: 0, body: out, why: "invalid CR in chunked line"}
     }
     let ll = e - 1 - i
     if ll >= 4096 {
-      return Chunked{res: HB_ERR, used: 0, body: out}
+      return Chunked{res: HB_ERR, used: 0, body: out, why: "header line too long"}
     }
     excess += ll + 2
     var z = i + ll
@@ -1280,15 +1285,18 @@ pub fn chunked(s: Str, eof: Bool) -> Chunked {
       z = semi
     }
     if z == i {
-      return Chunked{res: HB_ERR, used: 0, body: out} // empty hex number
+      return Chunked{res: HB_ERR, used: 0, body: out, why: "empty hex number for chunk length"}
     }
     // the size as a UInt64 (a negative Int is at least 2^63)
     var size = 0
     var k = i
     while k < z {
       let c = Int(b[k])
-      if (cls(c) & HEX) == 0 || k - i == 16 {
-        return Chunked{res: HB_ERR, used: 0, body: out}
+      if (cls(c) & HEX) == 0 {
+        return Chunked{res: HB_ERR, used: 0, body: out, why: "invalid byte in chunk length"}
+      }
+      if k - i == 16 {
+        return Chunked{res: HB_ERR, used: 0, body: out, why: "http chunk length too large"}
       }
       size = size.wrapping_shl(4) | unhex(c)
       k += 1
@@ -1299,13 +1307,13 @@ pub fn chunked(s: Str, eof: Bool) -> Chunked {
       excess = 0
     }
     if excess > 16 * 1024 {
-      return Chunked{res: HB_ERR, used: 0, body: out} // too much non-data
+      return Chunked{res: HB_ERR, used: 0, body: out, why: "chunked encoding contains too much non-data"}
     }
     i = e + 1
     if size == 0 {
       // the trailer: CRLF, or a MIME header up to an empty line
       if n - i < 2 {
-        return Chunked{res: if eof { HB_ERR } else { HB_NEED }, used: 0, body: out}
+        return Chunked{res: if eof { HB_ERR } else { HB_NEED }, used: 0, body: out, why: "http: unexpected EOF reading trailer"}
       }
       if b[i] == 13 && b[i + 1] == 10 {
         return Chunked{res: HB_OK, used: i + 2, body: out}
@@ -1323,7 +1331,7 @@ pub fn chunked(s: Str, eof: Bool) -> Chunked {
       }
       if end < 0 {
         if n - i >= 4096 || eof {
-          return Chunked{res: HB_ERR, used: 0, body: out}
+          return Chunked{res: HB_ERR, used: 0, body: out, why: "http: suspiciously long trailer after chunked body"}
         }
         return Chunked{res: HB_NEED, used: 0, body: out}
       }
@@ -1335,7 +1343,8 @@ pub fn chunked(s: Str, eof: Bool) -> Chunked {
         return Chunked{res: HB_NEED, used: 0, body: out}
       }
       if t.res != OK && t.res != STATUS {
-        return Chunked{res: HB_ERR, used: 0, body: out}
+        let (_, _, tw) = mime_header(s, b, i, end)
+        return Chunked{res: HB_ERR, used: 0, body: out, why: if tw.is_empty() { "malformed trailer" } else { tw }}
       }
       return Chunked{res: HB_OK, used: i + t.used - 16, body: out}
     }
@@ -1343,12 +1352,12 @@ pub fn chunked(s: Str, eof: Bool) -> Chunked {
       // copy what is there: an error later still delivers it
       let have = if size >= 0 && size < n - i { size } else { n - i }
       out = rt.rs_append_bytes(out, b, i, i + have, 0)
-      return Chunked{res: if eof { HB_ERR } else { HB_NEED }, used: 0, body: out}
+      return Chunked{res: if eof { HB_ERR } else { HB_NEED }, used: 0, body: out, why: "unexpected EOF"}
     }
     out = rt.rs_append_bytes(out, b, i, i + size, 0)
     i += size
     if b[i] != 13 || b[i + 1] != 10 {
-      return Chunked{res: HB_ERR, used: 0, body: out} // malformed chunked encoding
+      return Chunked{res: HB_ERR, used: 0, body: out, why: "malformed chunked encoding"}
     }
     i += 2
   }
@@ -2788,10 +2797,12 @@ pub fn escape_path(s: Str) -> Str {
 }
 
 /// A response head: res (NEED, OK, BAD, TOO_LARGE), its length (OK), the
-/// status code, the header ([name, value, ...]: canonical names, the
-/// values of a name joined with ", ", Transfer-Encoding left out),
-/// whether the body is chunked, the Content-Length (-1 when there is
-/// none), and BAD's text.
+/// status code, the header ([name, value, ...] in the order received:
+/// net/http's names, Transfer-Encoding, a chunked body's Content-Length
+/// and Trailer, and a closing HTTP/1.1 response's Connection left out),
+/// whether the body is chunked, its length (readTransfer's realLength:
+/// -1 up to the end of the stream or chunked), and BAD's text (Go's
+/// error, without Transport's prefix).
 pub struct RespHead {
   res: Int
   used: Int
@@ -2804,11 +2815,133 @@ pub struct RespHead {
 
 fn resp_fail(res: Int, why: Str) -> RespHead { RespHead{res: res, used: 0, status: 0, headers: [], chunked: false, clen: -1, why: why} }
 
+/// The text of b[a..z] (outside bytes: U+FFFD, decision 0259).
+fn text_of(s: Str, a: Int, z: Int) -> Str { scan.text_at(rawb.data(s) + a, z - a) }
+
+/// %q of a list of strings, as fmt prints a []string.
+fn quote_list(l: List[Str]) -> Str {
+  var parts: List[Str] = []
+  for x in l {
+    parts.push(go_quote(x))
+  }
+  "[" + parts.join(" ") + "]"
+}
+
+/// textproto.TrimString: without leading and trailing ASCII space.
+fn trim_ascii(v: Str) -> Str {
+  let b = v.bytes()
+  var a = 0
+  var z = b.len()
+  while a < z && (b[a] == 32 || b[a] == 9 || b[a] == 10 || b[a] == 13) {
+    a += 1
+  }
+  while z > a && (b[z - 1] == 32 || b[z - 1] == 9 || b[z - 1] == 10 || b[z - 1] == 13) {
+    z -= 1
+  }
+  rawb.str_slice(v, a, z)
+}
+
+/// textproto's readMIMEHeader of the lines of s from i to end (end: just
+/// after the empty line, or the end of the input at its end): the
+/// fields as received, and "" or Go's error.
+fn mime_header(s: Str, b: Bytes, i0: Int, end: Int) -> (List[Str], List[Str], Str) {
+  var keys: List[Str] = []
+  var vals: List[Str] = []
+  var i = i0
+  if i < end && is_sp(Int(b[i])) {
+    let (_, e0, _) = line_at(s, b, i, end, true)
+    return (keys, vals, "malformed MIME header initial line: " + text_of(s, i, e0))
+  }
+  while true {
+    if i >= end {
+      return (keys, vals, "unexpected EOF")
+    }
+    let (_, e, nx) = line_at(s, b, i, end, true)
+    if e == i {
+      return (keys, vals, "")
+    }
+    if find(s, 58, i, e) < 0 {
+      return (keys, vals, "malformed MIME header: missing colon: " + go_quote(rawb.str_slice(s, i, e)))
+    }
+    // readContinuedLineSlice: the line trimmed, and each line that starts
+    // with a space or tab after one space, trimmed
+    let (a, z) = trim_sp(b, i, e)
+    var kv = rawb.str_slice(s, a, z)
+    i = nx
+    while i < end && is_sp(Int(b[i])) {
+      var c = i
+      while c < end && is_sp(Int(b[c])) {
+        c += 1
+      }
+      kv = kv + " "
+      if c >= end {
+        i = c
+        break
+      }
+      let (_, e3, nx3) = line_at(s, b, c, end, true)
+      let (a3, z3) = trim_sp(b, c, e3)
+      kv = kv + rawb.str_slice(s, a3, z3)
+      i = nx3
+    }
+    let kb = kv.bytes()
+    let colon = bfind(kb, 58, 0, kb.len())
+    // canonicalMIMEHeaderKey: token bytes, or spaces (the name kept as
+    // is); the value: no control byte but a tab
+    var ok = colon > 0
+    var spaced = false
+    var x = 0
+    while ok && x < colon {
+      let ch = Int(kb[x])
+      if (cls(ch) & TCHAR) == 0 {
+        if ch == 32 {
+          spaced = true
+        } else {
+          ok = false
+        }
+      }
+      x += 1
+    }
+    if !ok {
+      return (keys, vals, "malformed MIME header line: " + text_of(kv, 0, kb.len()))
+    }
+    x = colon + 1
+    while x < kb.len() {
+      let ch = Int(kb[x])
+      if (ch < 32 && ch != 9) || ch == 127 {
+        // canonicalMIMEHeaderKey rewrote the name in the line already
+        let shown = if spaced { text_of(kv, 0, colon) } else { canonical_key(rawb.str_slice(kv, 0, colon)) }
+        return (keys, vals, "malformed MIME header line: " + shown + text_of(kv, colon, kb.len()))
+      }
+      x += 1
+    }
+    var v0 = colon + 1
+    while v0 < kb.len() && is_sp(Int(kb[v0])) {
+      v0 += 1
+    }
+    let name = rawb.str_slice(kv, 0, colon)
+    keys.push(if spaced { text_of(kv, 0, colon) } else { canonical_key(name) })
+    vals.push(text_of(kv, v0, kb.len()))
+  }
+  (keys, vals, "")
+}
+
+/// The values of field k in keys and vals.
+fn values_in(keys: List[Str], vals: List[Str], k: Str) -> List[Str] {
+  var out: List[Str] = []
+  for (j, key) in keys.indexed() {
+    if key == k {
+      out.push(vals[j])
+    }
+  }
+  out
+}
+
 /// Reads the status line and the header at the start of s, up to the
-/// first empty line (the native client's reading, lenient where net/http
-/// is strict: a field line without a colon is skipped, the status line
-/// needs only "HTTP/", a space at 8 or later, and a code of 3 digits).
-pub fn parse_response(s: Str) -> RespHead {
+/// first empty line, as net/http's ReadResponse for a request of method
+/// (textproto.ReadMIMEHeader, then readTransfer: the transfer encoding,
+/// fixLength, fixTrailer, shouldClose, and fixPragmaCacheControl); at
+/// eof a head without its empty line is read as far as it goes.
+pub fn parse_response(s: Str, eof: Bool, method: Str) -> RespHead {
   let b = s.bytes()
   let n = b.len()
   // the end of the head: \n\n or \n\r\n
@@ -2826,80 +2959,160 @@ pub fn parse_response(s: Str) -> RespHead {
     nl = scan.find(s, "\n", nl + 1)
   }
   if end < 0 {
-    return resp_fail(if n > MAX_HEAD { TOO_LARGE } else { NEED }, "")
+    if n > MAX_HEAD {
+      return resp_fail(TOO_LARGE, "")
+    }
+    if !eof {
+      return resp_fail(NEED, "")
+    }
+    end = n
   }
-  // the status line: HTTP/x.y code reason
-  let nl0 = scan.find(s, "\n", 0)
-  var ll = nl0
-  if ll > 0 && b[ll - 1] == 13 {
-    ll -= 1
-  }
+  // the status line: proto SP code [SP reason]
+  let (_, ll, nx) = line_at(s, b, 0, end, true)
   let sp = find(s, 32, 0, ll)
-  if sp < 8 || !s.starts_with("HTTP/") {
-    // at most 80 bytes of the line, up to a NUL (C's %.*s)
-    var k = 0
-    while k < ll && k < 80 && b[k] != 0 {
-      k += 1
-    }
-    return resp_fail(BAD, "net/http: HTTP/1.x transport connection broken: malformed HTTP response " + rawb.str_slice(s, 0, k))
+  if sp < 0 {
+    return resp_fail(BAD, "malformed HTTP response " + go_quote(text_of(s, 0, ll)))
   }
-  var cs = sp + 1
+  var c0 = sp + 1
+  while c0 < ll && b[c0] == 32 {
+    c0 += 1
+  }
+  var c1 = find(s, 32, c0, ll)
+  if c1 < 0 {
+    c1 = ll
+  }
+  let code_text = text_of(s, c0, c1)
+  // strconv.Atoi of three bytes: a sign, then digits; not negative
   var code = 0
-  var digits = 0
-  while cs < ll && b[cs] >= 48 && b[cs] <= 57 && digits < 4 {
-    code = code * 10 + Int(b[cs]) - 48
-    cs += 1
-    digits += 1
+  var good = c1 - c0 == 3
+  var k = c0
+  if good && (b[k] == 43 || b[k] == 45) {
+    good = b[k] == 43
+    k += 1
   }
-  if digits != 3 {
-    return resp_fail(BAD, "net/http: HTTP/1.x transport connection broken: malformed HTTP status code")
+  while good && k < c1 {
+    if b[k] < 48 || b[k] > 57 {
+      good = false
+    } else {
+      code = code * 10 + Int(b[k]) - 48
+    }
+    k += 1
   }
-  // the header fields
-  var keys: List[Str] = []
-  var vals: List[Str] = []
+  if !good {
+    return resp_fail(BAD, "malformed HTTP status code " + go_quote(code_text))
+  }
+  // ParseHTTPVersion: HTTP/X.Y
+  let proto = rawb.str_slice(s, 0, sp)
+  let pb = proto.bytes()
+  if pb.len() != 8 || !proto.starts_with("HTTP/") || pb[6] != 46 || pb[5] < 48 || pb[5] > 57 || pb[7] < 48 || pb[7] > 57 {
+    return resp_fail(BAD, "malformed HTTP version " + go_quote(text_of(s, 0, sp)))
+  }
+  let major = Int(pb[5]) - 48
+  let minor = Int(pb[7]) - 48
+  let (keys0, vals0, why) = mime_header(s, b, nx, end)
+  if !why.is_empty() {
+    return resp_fail(BAD, why)
+  }
+  var keys = keys0
+  var vals = vals0
+  // fixPragmaCacheControl
+  let pragma = values_in(keys, vals, "Pragma")
+  if !pragma.is_empty() && pragma[0] == "no-cache" && values_in(keys, vals, "Cache-Control").is_empty() {
+    keys.push("Cache-Control")
+    vals.push("no-cache")
+  }
+  // shouldClose: an HTTP/1.1 (or later) response that closes loses its
+  // Connection field
+  let at11 = major > 1 || (major == 1 && minor >= 1)
+  var closing = false
+  for v in values_in(keys, vals, "Connection") {
+    if has_token(v, "close") {
+      closing = true
+    }
+  }
+  var drop: List[Str] = []
+  if closing && at11 {
+    drop.push("Connection")
+  }
+  // parseTransferEncoding (HTTP/0.0 reads as 1.1 here)
+  let te = values_in(keys, vals, "Transfer-Encoding")
   var chunked = false
+  if !te.is_empty() {
+    drop.push("Transfer-Encoding")
+    if at11 || (major == 0 && minor == 0) {
+      if te.len() != 1 {
+        return resp_fail(BAD, "too many transfer encodings: " + quote_list(te))
+      }
+      if !equal_fold(te[0], "chunked") {
+        return resp_fail(BAD, "unsupported transfer encoding: " + go_quote(te[0]))
+      }
+      chunked = true
+    }
+  }
+  // fixLength: one Content-Length, or several equal ones (kept once)
+  let cl = values_in(keys, vals, "Content-Length")
   var clen = -1
-  var i = nl0 + 1
-  while i < end {
-    let e = scan.find_byte(s.bytes(), i, s.len(), 10)
-    var le = e
-    if e > i && b[e - 1] == 13 {
-      le = e - 1
-    }
-    if le == i {
-      break
-    }
-    let colon = find(s, 58, i, le)
-    if colon >= 0 {
-      // a response's fields: outside bytes (decision 0259)
-      let k = canonical_key(scan.text_at(rawb.data(s) + i, colon - i))
-      let (a, z) = trim_sp(b, colon + 1, le)
-      let v = scan.text_at(rawb.data(s) + a, z - a)
-      if k == "Transfer-Encoding" {
-        chunked = z - a == 7 && equal_fold(v, "chunked")
-      } else {
-        if k == "Content-Length" {
-          if let Some(x) = Int.parse(v) {
-            clen = x
-          }
-        }
-        // each field as received (decision 0288: std/native/http.xo
-        // fields_in joins a repeated name for the Map, Set-Cookie
-        // excepted)
-        keys.push(k)
-        vals.push(v)
+  if !cl.is_empty() {
+    let first = trim_ascii(cl[0])
+    for v in cl {
+      if trim_ascii(v) != first {
+        return resp_fail(BAD, "http: message cannot contain multiple Content-Length headers; got " + quote_list(cl))
       }
     }
-    i = e + 1
+    if first.is_empty() {
+      return resp_fail(BAD, "invalid empty Content-Length " + go_quote(first))
+    }
+    let fb = first.bytes()
+    var v = 0
+    for d in fb {
+      if d < 48 || d > 57 || v > (MAX_INT - (Int(d) - 48)) / 10 {
+        return resp_fail(BAD, "bad Content-Length " + go_quote(first))
+      }
+      v = v * 10 + Int(d) - 48
+    }
+    clen = v
+  }
+  var length = clen
+  if method == "HEAD" || code / 100 == 1 || code == 204 || code == 304 {
+    length = 0
+  } else if chunked {
+    length = -1
+    drop.push("Content-Length")
+  }
+  // fixTrailer
+  if chunked {
+    let tr = values_in(keys, vals, "Trailer")
+    if !tr.is_empty() {
+      drop.push("Trailer")
+      for v in tr {
+        for part in v.split(",") {
+          let key = canonical_key(trim_ascii(part))
+          if key == "Transfer-Encoding" || key == "Trailer" || key == "Content-Length" {
+            return resp_fail(BAD, "bad trailer key " + go_quote(key))
+          }
+        }
+      }
+    }
   }
   var headers: List[Str] = []
-  var j = 0
-  while j < keys.len() {
-    headers.push(keys[j])
+  var seen_cl = false
+  for (j, key) in keys.indexed() {
+    if drop.contains(key) {
+      continue
+    }
+    if key == "Content-Length" {
+      if seen_cl {
+        continue
+      }
+      seen_cl = true
+      headers.push(key)
+      headers.push(trim_ascii(vals[j]))
+      continue
+    }
+    headers.push(key)
     headers.push(vals[j])
-    j += 1
   }
-  RespHead{res: OK, used: end, status: code, headers: headers, chunked: chunked, clen: clen, why: ""}
+  RespHead{res: OK, used: end, status: code, headers: headers, chunked: chunked, clen: length, why: ""}
 }
 
 /// The end of one exchange: s (CC_*), the failure's text, and the
@@ -2955,8 +3168,11 @@ fn field_at(h: List[Str], k: Str) -> Int {
 /// body ends at its Content-Length or, without one, at the end of the
 /// stream; HEAD, 1xx, 204, and 304 responses have none.
 fn read_response(r: rthttp.CResp, method: Str) -> Exchange {
+  // ReadResponse's errors come after Transport's prefix; the body's, as
+  // io.ReadAll returns them, without the request (the "\u{1}" mark)
+  let broken = "net/http: HTTP/1.x transport connection broken: "
   while true {
-    var h = parse_response(hclient.input(r, 0))
+    var h = parse_response(hclient.input(r, 0), false, method)
     while h.res == NEED || h.res == TOO_LARGE {
       if h.res == TOO_LARGE {
         return ex_fail(CC_ERR, "net/http: server response headers exceeded 1048576 bytes; aborted")
@@ -2964,15 +3180,19 @@ fn read_response(r: rthttp.CResp, method: Str) -> Exchange {
       let avail = hclient.avail(r)
       let f = hclient.more(r)
       if f == CC_EOF {
-        return ex_fail(CC_ERR, if avail == 0 { "EOF" } else { "unexpected EOF" })
+        if avail == 0 {
+          return ex_fail(CC_ERR, "EOF")
+        }
+        h = parse_response(hclient.input(r, 0), true, method)
+        break
       }
       if f != CC_OK {
         return ex_fail(f, "")
       }
-      h = parse_response(hclient.input(r, 0))
+      h = parse_response(hclient.input(r, 0), false, method)
     }
     if h.res != OK {
-      return ex_fail(CC_ERR, h.why)
+      return ex_fail(CC_ERR, broken + h.why)
     }
     hclient.skip(r, h.used)
     let code = h.status
@@ -2980,18 +3200,8 @@ fn read_response(r: rthttp.CResp, method: Str) -> Exchange {
       // an informational response: the real one follows
       continue
     }
-    var headers = h.headers
-    if h.chunked {
-      let at = field_at(headers, "Content-Length")
-      if at >= 0 {
-        headers.remove_at(at)
-        headers.remove_at(at)
-      }
-    }
-    if method == "HEAD" || code == 204 || code == 304 || (code >= 100 && code <= 199) {
-      return Exchange{s: CC_OK, why: "", status: code, headers: headers, body: b""}
-    }
-    if h.chunked {
+    let headers = h.headers
+    if h.chunked && h.clen != 0 {
       while true {
         let eof = hclient.eof(r)
         let c = chunked(hclient.input(r, 2), eof)
@@ -3000,7 +3210,7 @@ fn read_response(r: rthttp.CResp, method: Str) -> Exchange {
           return Exchange{s: CC_OK, why: "", status: code, headers: headers, body: c.body.bytes()}
         }
         if c.res == HB_ERR || eof {
-          return ex_fail(CC_ERR, if eof { "unexpected EOF" } else { "malformed chunked encoding" })
+          return ex_fail(CC_ERR, "\u{1}" + (if c.why.is_empty() { "unexpected EOF" } else { c.why }))
         }
         let f = hclient.more(r)
         if f != CC_OK && f != CC_EOF {
@@ -3015,7 +3225,7 @@ fn read_response(r: rthttp.CResp, method: Str) -> Exchange {
       }
       if hclient.eof(r) {
         if h.clen >= 0 {
-          return ex_fail(CC_ERR, "unexpected EOF")
+          return ex_fail(CC_ERR, "\u{1}unexpected EOF")
         }
         return Exchange{s: CC_OK, why: "", status: code, headers: headers, body: hclient.take(r, have)}
       }

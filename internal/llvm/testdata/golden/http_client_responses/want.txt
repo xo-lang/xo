@@ -1,0 +1,352 @@
+exit 0
+--- stdout
+0 200 ["Content-Length"="2"] body="hi"
+1 200 [] body="body until close"
+2 err Protocol(msg: "unexpected EOF")
+3 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: http: message cannot contain multiple Content-Length headers; got [\"2\" \"3\"]")
+4 200 ["Content-Length"="2"] body="hi"
+5 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: bad Content-Length \"x\"")
+6 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: bad Content-Length \"-2\"")
+7 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: bad Content-Length \"2, 2\"")
+8 200 [] body="hi"
+9 200 [] body="hi"
+10 err Protocol(msg: "invalid byte in chunk length")
+11 err Protocol(msg: "unexpected EOF")
+12 200 [] body="hi"
+13 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: unsupported transfer encoding: \"gzip\"")
+14 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: unsupported transfer encoding: \"identity\"")
+15 204 ["Content-Length"="2"] body=""
+16 304 [] body=""
+17 404 ["Content-Length"="0"] body=""
+18 404 ["Content-Length"="0"] body=""
+19 999 ["Content-Length"="0"] body=""
+20 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed HTTP status code \"99\"")
+21 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed HTTP status code \"1000\"")
+22 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed HTTP status code \"2x0\"")
+23 200 [] body="old"
+24 200 ["Content-Length"="0"] body=""
+25 200 ["Content-Length"="0"] body=""
+26 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed HTTP version \"http/1.1\"")
+27 200 ["Content-Length"="0"] body=""
+28 200 ["Content-Length"="2"] body="hi"
+29 200 ["Content-Length"="0" "X-Fold"="a b"] body=""
+30 200 ["Content-Length"="0" "X-A"="1, 2"] body=""
+31 200 ["Content-Length"="0" "X Bad"="1"] body=""
+32 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: X-Ctl: a\x01b")
+33 200 ["Content-Length"="0" "X-Utf"="café"] body=""
+34 200 ["Content-Length"="0" "X-Bad"="�"] body=""
+35 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header: missing colon: \"NoColon\"")
+36 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: : v")
+37 200 ["Content-Length"="2"] body="hi"
+38 200 ["Content-Length"="2"] body="hi"
+39 101 ["Content-Length"="0"] body=""
+40 err Protocol(msg: "Get \"http://ADDR/x\": EOF")
+41 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed HTTP response \"garbage\"")
+42 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: unexpected EOF")
+43 200 ["Content-Length"="0" "Content-Type"="text/plain, text/html"] body=""
+44 200 ["Content-Length"="0" "Set-Cookie"="a=1"] body=""
+45 err Protocol(msg: "unexpected EOF")
+46 err Protocol(msg: "unexpected EOF")
+47 err Protocol(msg: "unexpected EOF")
+48 200 ["Content-Encoding"="gzip" "Content-Length"="0"] body=""
+49 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header initial line:  :0")
+50 200 ["Transfer-Encoding "="1" "X-A "="5"] body="5\r\nhello\r\n0\r\n\r\n"
+51 200 ["Content-Length "="chunked" "Vary"="0"] body="5\r\nhello\r\n0\r\n\r\n"
+52 200 ["Content-Type"="close" "X-A"="é" "x-a "="a,b"] body=""
+53 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: x-a :x\x01")
+54 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: X A: x\x01")
+55 200 ["Content-Length "="close" "X A "="" "x-a "="a,b"] body="hello"
+56 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: unsupported transfer encoding: \"1\"")
+57 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: : close")
+58 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: unsupported transfer encoding: \"\"")
+59 200 ["X A"="0" "X-A"="é"] body="5\r\nhello\r\n0\r\n\r\n"
+60 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: X-A :x\x01")
+61 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: X-A: x\x01 :0")
+62 200 ["Set-Cookie"="1" "Trailer"="close"] body="5\r\nhello\r\n0\r\n\r\n"
+63 200 ["X A "="close"] body=""
+64 err Protocol(msg: "unexpected EOF")
+65 200 ["Vary "="close" "X A"="-1"] body="5\r\nhello\r\n0\r\n\r\n"
+66 200 ["Content-Length "="a,b" "Content-Type"="close" "X-A"="1, chunked"] body=""
+67 200 ["Trailer"="a,b" "X-A"="1, a,b"] body=""
+68 200 ["Content-Type"="close" "Content-Type "="chunked" "Vary "="é"] body="5\r\nhello\r\n0\r\n\r\n"
+69 200 ["Connection "="a,b" "Transfer-Encoding "="-1"] body=""
+70 200 ["Content-Type"="close" "Set-Cookie"="2" "Trailer"="a,b"] body="hello"
+71 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: unsupported transfer encoding: \"2\"")
+72 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: : 2")
+73 200 ["Content-Type "="chunked" "X-A"="a,b"] body="5\r\nhello\r\n0\r\n\r\n"
+74 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: unsupported transfer encoding: \"\"")
+75 200 ["Trailer"="0" "Vary"="-1, 1" "X-A"="a,b"] body=""
+76 err Protocol(msg: "unexpected EOF")
+77 200 ["Vary"="5" "x-a "="é"] body=""
+78 200 ["Transfer-Encoding "="5" "X-A"="5"] body=""
+79 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header initial line:  :")
+80 200 ["Content-Length "="2" "Transfer-Encoding "="a,b" "X A"="0" "X-A"=""] body=""
+81 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: : close")
+82 200 ["Connection "="chunked" "X-A"="1, chunked"] body="hello"
+83 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: bad Content-Length \"a,b\"")
+84 200 ["Content-Type"="2" "Vary"="-1" "x-a "="5"] body="5\r\nhello\r\n0\r\n\r\n"
+85 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: bad Content-Length \"chunked\"")
+86 200 ["Content-Type"="a,b" "Set-Cookie"="5" "X-A"="close"] body=""
+87 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: invalid empty Content-Length \"\"")
+88 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: :é")
+89 200 ["Content-Length"="0"] body=""
+90 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: bad Content-Length \"é\"")
+91 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Vary:x\x01")
+92 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Vary :x\x01")
+93 200 ["Transfer-Encoding "="0" "X-A"="0"] body="hello"
+94 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Trailer:x\x01")
+95 200 ["Transfer-Encoding "=""] body="5\r\nhello\r\n0\r\n\r\n"
+96 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: X-A: x\x01")
+97 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: X-A: x\x01")
+98 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: bad Content-Length \"a,b\"")
+99 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Transfer-Encoding :x\x01")
+100 200 ["Vary"="a,b"] body=""
+101 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: bad Content-Length \"chunked\"")
+102 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: unsupported transfer encoding: \"5\"")
+103 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Transfer-Encoding:x\x01")
+104 200 ["Vary "="close"] body="5\r\nhello\r\n0\r\n\r\n"
+105 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: :chunked")
+106 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: : close")
+107 200 ["Transfer-Encoding "="chunked"] body="hello"
+108 200 ["X-A"="0"] body="5\r\nhello\r\n0\r\n\r\n"
+109 200 ["Content-Type"="chunked" "Vary"="chunked, é"] body="5\r\nhello\r\n0\r\n\r\n"
+110 200 ["Vary"="é"] body="hello"
+111 200 ["Content-Type "="-1" "Vary"="a,b"] body="hello"
+112 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: X A: x\x01")
+113 200 ["Connection "="2" "Content-Length "="1" "Content-Type"="é"] body="5\r\nhello\r\n0\r\n\r\n"
+114 200 ["Connection "="close" "Content-Type"="5" "Trailer"="0" "X-A"="a,b"] body=""
+115 200 ["X-A"="a,b"] body="5\r\nhello\r\n0\r\n\r\n"
+116 200 ["Content-Type "="" "Vary"="0" "X A"="" "X-A"="1"] body="hello"
+117 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: :x\x01")
+118 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: X-A: x\x01")
+119 200 ["Content-Type"="chunked"] body=""
+120 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: unsupported transfer encoding: \"\"")
+121 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: unsupported transfer encoding: \"1\"")
+122 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: :")
+123 200 ["X-A"=""] body="5\r\nhello\r\n0\r\n\r\n"
+124 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: :-1")
+125 200 ["Set-Cookie"="-1"] body="hello"
+126 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Connection:x\x01")
+127 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: unsupported transfer encoding: \"é\"")
+128 200 ["X-A"=""] body="5\r\nhello\r\n0\r\n\r\n"
+129 err Protocol(msg: "unexpected EOF")
+130 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: : -1")
+131 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: : a,b")
+132 200 ["Content-Type"="2" "Vary"="a,b" "X A "="0" "X-A"="a,b"] body=""
+133 200 ["Vary"="close"] body=""
+134 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: : 0")
+135 200 ["Content-Length "="close"] body="hello"
+136 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: unsupported transfer encoding: \"2\"")
+137 200 ["Content-Type "="é" "X A"="1"] body="5\r\nhello\r\n0\r\n\r\n"
+138 200 ["Set-Cookie"="close" "Vary"="1" "X A "="a,b"] body="5\r\nhello\r\n0\r\n\r\n"
+139 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: :chunked")
+140 200 ["Trailer"="" "Vary"="chunked" "X A"=""] body="hello"
+141 200 ["Set-Cookie "="chunked" "X A"="close" "X-A"="1, close"] body="hello"
+142 200 ["Trailer "="a,b" "X-A"=""] body=""
+143 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: :0")
+144 200 ["Set-Cookie"="2" "Trailer "="2" "Vary"="é" "X-A"="a,b"] body=""
+145 200 ["Vary"="2"] body=""
+146 200 ["Set-Cookie"="close" "Transfer-Encoding "="5" "X-A"="chunked, chunked"] body="hello"
+147 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: :")
+148 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: unsupported transfer encoding: \"-1\"")
+149 200 ["Vary"="5"] body="hello"
+150 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: X-A:x\x01")
+151 200 ["X-A "="a,b"] body="hello"
+152 200 ["X-A"="5"] body="hello"
+153 200 ["Set-Cookie"="" "X A"="0"] body="hello"
+154 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Set-Cookie :x\x01")
+155 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: bad Content-Length \"chunked\"")
+156 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header initial line:  :0")
+157 200 ["Vary"="0" "X-A"="a,b" "x-a "="-1"] body="5\r\nhello\r\n0\r\n\r\n"
+158 200 ["Trailer"="é" "X-A"="0"] body="5\r\nhello\r\n0\r\n\r\n"
+159 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: bad Content-Length \"-1\"")
+160 200 ["Transfer-Encoding "="1" "Vary"="0, chunked"] body=""
+161 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: unsupported transfer encoding: \"\"")
+162 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: :x\x01")
+163 200 ["Content-Length "=""] body="5\r\nhello\r\n0\r\n\r\n"
+164 200 ["Content-Length"="1" "Content-Type"="close"] body="5"
+165 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: :a,b")
+166 200 ["Set-Cookie"="chunked"] body="5\r\nhello\r\n0\r\n\r\n"
+167 200 ["Set-Cookie"="chunked"] body=""
+168 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: unsupported transfer encoding: \"é\"")
+169 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: unsupported transfer encoding: \"0\"")
+170 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Connection: x\x01")
+171 200 ["Vary "="é"] body="5\r\nhello\r\n0\r\n\r\n"
+172 200 ["Set-Cookie "="2"] body="5\r\nhello\r\n0\r\n\r\n"
+173 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: :")
+174 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: X A: x\x01")
+175 200 ["X-A"="chunked" "X-A "="5" "x-a "="5"] body=""
+176 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: unsupported transfer encoding: \"-1\"")
+177 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: : 2")
+178 200 ["Set-Cookie"="close"] body=""
+179 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Set-Cookie: x\x01")
+180 200 ["x-a "="5"] body="5\r\nhello\r\n0\r\n\r\n"
+181 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: : 0")
+182 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: :")
+183 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: unsupported transfer encoding: \"-1\"")
+184 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: unsupported transfer encoding: \"é\"")
+185 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: unsupported transfer encoding: \"é\"")
+186 200 ["x-a "="5"] body="5\r\nhello\r\n0\r\n\r\n"
+187 200 ["Content-Type"="é" "Trailer "="0" "X A"=""] body=""
+188 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: X A: 1 :x\x01")
+189 200 ["X-A"="é"] body=""
+190 200 ["Content-Length "="close" "Content-Type"="é" "Trailer "="chunked" "X-A"="a,b"] body="hello"
+191 200 ["Trailer "=""] body="hello"
+192 200 ["X-A"="close"] body="5\r\nhello\r\n0\r\n\r\n"
+193 200 ["Content-Length "="5, close"] body="5\r\nhello\r\n0\r\n\r\n"
+194 200 ["Trailer "="2 :5" "X A"="chunked" "X-A"=""] body="hello"
+195 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: X-A:x\x01")
+196 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: :0")
+197 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: : x\x01")
+198 200 ["Content-Length"="5" "X-A"="é"] body="hello"
+199 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: : x\x01 :é")
+200 200 ["Content-Length"="2" "X A"="a,b" "X-A"="a,b"] body="5\r"
+201 200 ["Set-Cookie "="a,b"] body="hello"
+202 200 ["Trailer"="" "Transfer-Encoding "="a,b"] body="hello"
+203 200 ["Trailer "="5" "Vary"="close" "X A"="" "X-A"="é"] body=""
+204 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: :  2")
+205 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: :é")
+206 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Content-Length: x\x01")
+207 200 ["Content-Type "="1" "Trailer"="-1"] body="hello"
+208 200 ["Vary "="chunked"] body="5\r\nhello\r\n0\r\n\r\n"
+209 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: unsupported transfer encoding: \"1\"")
+210 200 ["Vary "="1" "X-A"="é, 1"] body=""
+211 200 ["Set-Cookie "="chunked" "Trailer"="5" "Transfer-Encoding "="-1" "X-A"="a,b"] body="hello"
+212 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: :a,b")
+213 200 ["Content-Type "="chunked" "x-a "="5"] body=""
+214 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: unsupported transfer encoding: \"close\"")
+215 200 ["Content-Type "="0" "Set-Cookie"="2" "Set-Cookie "="" "X-A "="chunked"] body="5\r\nhello\r\n0\r\n\r\n"
+216 200 ["X A"="5, chunked, -1"] body="hello"
+217 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: : close")
+218 200 ["Set-Cookie"="0" "Set-Cookie "="5" "X-A "="5"] body=""
+219 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Vary: x\x01")
+220 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Content-Type: x\x01")
+221 200 ["Content-Type "="0" "X-A"="0"] body=""
+222 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: X-A:x\x01")
+223 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: :1")
+224 200 ["Trailer"="é, 1" "X A"="1" "x-a "="1"] body="hello"
+225 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: X-A: x\x01")
+226 200 ["X-A"="chunked"] body=""
+227 200 ["Trailer"="close"] body="5\r\nhello\r\n0\r\n\r\n"
+228 200 ["Content-Type"="2" "X A"="chunked"] body="5\r\nhello\r\n0\r\n\r\n"
+229 200 ["X A"="chunked"] body=""
+230 200 ["Set-Cookie "="0" "Trailer"="5" "X A"="-1"] body=""
+231 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header initial line:  :a,b")
+232 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: : close")
+233 200 ["Connection "="5 :1" "Transfer-Encoding "="close"] body="5\r\nhello\r\n0\r\n\r\n"
+234 200 ["Transfer-Encoding "="a,b" "X-A"="close"] body="5\r\nhello\r\n0\r\n\r\n"
+235 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: :")
+236 200 ["X-A"="é"] body=""
+237 200 ["Set-Cookie"="close" "Set-Cookie "="close" "Trailer"="a,b" "X-A"="1"] body="hello"
+238 200 ["Transfer-Encoding "="close"] body="hello"
+239 200 ["Trailer"="a,b" "Vary "="0" "X-A "="5"] body=""
+240 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Transfer-Encoding:x\x01")
+241 200 ["Vary"="-1" "X A"="2" "X-A"="close" "X-A "="5"] body="hello"
+242 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: X-A:x\x01")
+243 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: X-A:x\x01")
+244 200 ["X-A "=""] body="hello"
+245 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: X-A: x\x01")
+246 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Content-Length:x\x01")
+247 200 ["Connection "="0"] body=""
+248 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: :")
+249 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: bad Content-Length \"a,b\"")
+250 200 ["Content-Length"="1" "Content-Type"="0, chunked" "Trailer "="0"] body="5"
+251 200 ["Set-Cookie "="2" "X A"="chunked"] body="hello"
+252 200 ["Content-Type"="-1" "Set-Cookie"="0" "Set-Cookie "="a,b"] body=""
+253 200 ["X-A"="é"] body="hello"
+254 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: X-A :x\x01")
+255 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Vary:x\x01")
+256 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Content-Length:x\x01")
+257 200 ["Trailer "="é" "Vary "="-1" "X-A"="0"] body=""
+258 200 ["Content-Length "="chunked"] body="hello"
+259 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: : a,b")
+260 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: : 1")
+261 200 ["Set-Cookie"="5" "X-A"="chunked"] body="5\r\nhello\r\n0\r\n\r\n"
+262 200 ["x-a "="0"] body="hello"
+263 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: :-1")
+264 200 ["Content-Type "="é"] body="hello"
+265 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: : 5")
+266 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Trailer :x\x01")
+267 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: X A:x\x01")
+268 200 ["X-A"="é" "X-A "="a,b" "x-a "="2"] body="hello"
+269 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header initial line:  :chunked")
+270 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: :é")
+271 200 ["Trailer"="-1" "Trailer "="0" "Vary"="2" "X-A"="-1"] body=""
+272 200 ["X A"="é"] body="hello"
+273 200 ["X-A "="-1"] body=""
+274 200 ["Content-Length "="close" "Content-Type"=", é" "X A"="-1"] body="5\r\nhello\r\n0\r\n\r\n"
+275 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: :0")
+276 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header initial line:  :x\x01")
+277 200 ["Content-Type "="-1" "X A"="close" "X-A"="a,b"] body="5\r\nhello\r\n0\r\n\r\n"
+278 200 ["X-A"="a,b"] body="hello"
+279 200 ["Content-Length "=""] body="5\r\nhello\r\n0\r\n\r\n"
+280 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: unsupported transfer encoding: \"-1\"")
+281 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: unsupported transfer encoding: \"close\"")
+282 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: :1")
+283 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: X-A:x\x01")
+284 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Connection:x\x01")
+285 200 ["Set-Cookie"="" "X-A"="2, 2"] body="hello"
+286 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header initial line:  :chunked")
+287 200 ["Content-Length "="close" "Content-Type"="-1, a,b" "X-A"="a,b"] body="hello"
+288 200 ["Content-Type"="2"] body=""
+289 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: : close")
+290 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Set-Cookie: x\x01")
+291 200 ["Connection "="chunked" "Transfer-Encoding "="2 :close" "X-A"="-1"] body="5\r\nhello\r\n0\r\n\r\n"
+292 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: : 1")
+293 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Set-Cookie :x\x01")
+294 200 ["Connection "="chunked" "Set-Cookie"="é"] body="5\r\nhello\r\n0\r\n\r\n"
+295 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: :a,b :-1")
+296 200 ["Connection "="a,b" "Content-Length"="0" "Vary "="a,b" "X A "="1"] body=""
+297 200 ["Content-Type "="-1"] body="hello"
+298 200 ["Vary"="é" "x-a "="2"] body=""
+299 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: bad Content-Length \"a,b\"")
+300 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: X-A: x\x01")
+301 200 ["Content-Type "="-1" "X A"="0" "X-A"=""] body="hello"
+302 200 ["Trailer"="0"] body=""
+303 200 ["Set-Cookie"="5"] body="5\r\nhello\r\n0\r\n\r\n"
+304 200 ["Trailer"="close"] body=""
+305 200 ["Vary "="close" "X A "="2 :é"] body="5\r\nhello\r\n0\r\n\r\n"
+306 200 ["Transfer-Encoding "="1" "Vary "="0"] body=""
+307 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Trailer :x\x01")
+308 200 ["Content-Length"="0" "Transfer-Encoding "="" "X-A"=""] body=""
+309 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: : 5")
+310 200 [] body=""
+311 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Trailer :x\x01")
+312 200 ["Vary"="2"] body="hello"
+313 200 ["Trailer "="2"] body="hello"
+314 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Content-Type: x\x01")
+315 200 ["Trailer"="5" "Vary"=""] body="5\r\nhello\r\n0\r\n\r\n"
+316 200 ["Content-Type "="2" "X-A"="a,b"] body="5\r\nhello\r\n0\r\n\r\n"
+317 200 ["Set-Cookie "="-1" "X A"="close, 2"] body="hello"
+318 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: X A: x\x01")
+319 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: unsupported transfer encoding: \"1\"")
+320 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: unsupported transfer encoding: \"2\"")
+321 200 ["Trailer"="-1"] body="hello"
+322 200 ["Content-Type"="chunked" "Set-Cookie"="a,b" "Transfer-Encoding "="chunked"] body="5\r\nhello\r\n0\r\n\r\n"
+323 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: unsupported transfer encoding: \"5\"")
+324 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: unsupported transfer encoding: \"-1\"")
+325 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: : 5")
+326 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: bad Content-Length \"close\"")
+327 err Protocol(msg: "unexpected EOF")
+328 200 ["Connection "="1" "Set-Cookie"="5" "X-A "="é" "x-a "="5"] body=""
+329 200 ["X A"="2" "x-a "="0"] body="hello"
+330 200 ["Vary"="chunked" "X-A"="chunked, a,b, 0"] body="hello"
+331 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Transfer-Encoding: x\x01")
+332 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: X-A: x\x01")
+333 200 ["Content-Type "="2 :1"] body="5\r\nhello\r\n0\r\n\r\n"
+334 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: invalid empty Content-Length \"\"")
+335 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header initial line:  :1")
+336 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: bad Content-Length \"chunked\"")
+337 200 ["Content-Type"="a,b" "Trailer "="1" "X-A"="0"] body="hello"
+338 200 ["Vary"="é"] body="5\r\nhello\r\n0\r\n\r\n"
+339 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: unsupported transfer encoding: \"0\"")
+340 200 ["Transfer-Encoding "="5" "X-A"="-1"] body="5\r\nhello\r\n0\r\n\r\n"
+341 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: unsupported transfer encoding: \"2\"")
+342 200 ["Set-Cookie "="é" "Vary"="close, 1" "X A"="a,b"] body="hello"
+343 200 ["Trailer"="0"] body="5\r\nhello\r\n0\r\n\r\n"
+344 200 ["Content-Type"="-1" "X-A"="a,b"] body=""
+345 200 ["Set-Cookie"="close" "Trailer "="0"] body="5\r\nhello\r\n0\r\n\r\n"
+346 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: : 5")
+347 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: : -1")
+348 err Protocol(msg: "Get \"http://ADDR/x\": net/http: HTTP/1.x transport connection broken: malformed MIME header line: Connection: x\x01")
+--- stderr

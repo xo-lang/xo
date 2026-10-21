@@ -1,5 +1,26 @@
 # std/http changes
 
+## 2026-10-21: fix: the native client reads responses as net/http does
+
+- Kind: fix
+- Commit: (filled in after the push)
+- Found by: differential test against Go
+- Go reference: net/http ReadResponse, readTransfer (parseTransferEncoding, fixLength, fixTrailer, shouldClose), internal/chunked.go; net/textproto readMIMEHeader (go1.26.1)
+- Test: internal/llvm/testdata/golden/http_client_responses (349 raw responses: net/http's parsing cases and 300 random header blocks; arm64, LLVM, and the Go backend agree); internal/llvm TestHTTP1ClientDiff's 457 random responses now agree with the Go backend on every one
+
+The native HTTP/1.1 client was lenient where Go's is strict, and
+reported other texts. It took a bad or negative Content-Length, two
+different ones, or one like `2, 2`; a Transfer-Encoding other than
+chunked; a field line without a colon, with an empty or invalid name,
+or with a control byte; and kept only the first line of a folded field.
+Each is now Go's error (`net/http: HTTP/1.x transport connection
+broken: bad Content-Length "x"`, `unsupported transfer encoding:
+"gzip"`, `malformed MIME header line: ...`), a folded field is joined
+with a space, equal Content-Length fields read as one, a closing
+HTTP/1.1 response has no `Connection` field (as net/http removes it),
+and the body's errors (`unexpected EOF`, `invalid byte in chunk length`)
+come without the request, as Go's body reads give them.
+
 ## 2026-10-21: speedup: Router matching without a string per path segment
 
 - Kind: speedup
