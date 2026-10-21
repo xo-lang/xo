@@ -78,6 +78,60 @@ fn (var b: Builder) maph_loglookup(t: Int) -> Str {
   name
 }
 
+/// Map.get of a hybrid map (nt: V?): the lists' lookup, and on a hit
+/// the lists' value with no other test, so the hit path is the lists'
+/// own (a position tagged MAPH_LOG cost two more branches a get, 1.66x
+/// the cycles in a get loop at 1.05x the instructions); a miss looks in
+/// the log through the cold xo.maph.logget when the value is a log one.
+fn (var b: Builder) maph_get(t: Int, mv: Int, k: Int, nt: Int) -> Int {
+  let bt = b.bool_t()
+  let lg = b.maph_logget(t, nt)
+  let idx = b.lists_lookup(t, mv, k)
+  let join = b.new_block()
+  let res = b.s.f.add_param(join, nt)
+  let (yes, no) = b.branch(b.add(Op.Ge, bt, Aux.None, [idx, b.cint(0)]))
+  b.s.cur = yes
+  b.jump(join, [b.variant(nt, "Some", [b.lists_value(t, mv, idx)])])
+  b.s.cur = no
+  let (lg_yes, lg_no) = b.branch(b.maph_is_log(t, mv))
+  b.s.cur = lg_yes
+  b.jump(join, [b.call(lg, nt, "", [mv, k])])
+  b.s.cur = lg_no
+  b.jump(join, [b.variant(nt, "None", [])])
+  b.seal(join)
+  b.s.cur = join
+  res
+}
+
+/// xo.maph.logget[T](m, k) -> V? (ssa.cold_fn): k's value in the log
+/// value m's table.
+fn (var b: Builder) maph_logget(t: Int, nt: Int) -> Str {
+  let kt = map_key(b.m, t)
+  let lt = b.maph_lt(t)
+  var name = "xo.maph.logget[${b.m.types[t].name}]"
+  let have = b.fidx(name)
+  if have >= 0 && b.m.types[b.m.funcs[have].results[0]].name != b.m.types[nt].name {
+    // Map[K, Bytes] lowers to Map[K, Str], but its get is a Bytes?
+    name = name + "[${b.m.types[nt].name}]"
+  }
+  let fi = b.thunk_func(name, [t, kt], [nt], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let mp = b.param(0)
+  let k = b.param(1)
+  let lv = b.call("list.index", lt, "", [b.mfield(t, 5, mp), b.cint(0)])
+  let w = b.mlog_lookup(lt, lv, k)
+  let (nt2, jt) = b.if_then_begin(b.bop(Op.Ge, w, b.cint(0)))
+  b.retv(b.variant(nt, "Some", [b.mlog_value_at(lt, lv, w)]))
+  b.if_then_end(nt2, jt)
+  b.retv(b.variant(nt, "None", []))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
 /// map_value of a hybrid map, for a maph_lookup result idx (>= 0).
 fn (var b: Builder) maph_value(t: Int, mv: Int, idx: Int) -> Int {
   let vt = map_val(b.m, t)

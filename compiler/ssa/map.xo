@@ -848,6 +848,9 @@ fn (var b: Builder) map_call(x: Expr, ci: check.CallInfo) -> Int? {
     }
     "Map.get" => {
       let k = b.value_as(args[0] ?? fault("arg"), map_key(b.m, t))
+      if b.m.map_log {
+        return Some(b.maph_get(t, mv, k, nt))
+      }
       let idx = b.map_index(t, mv, k)
       let join = b.new_block()
       let res = b.s.f.add_param(join, nt)
