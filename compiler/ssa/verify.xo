@@ -670,9 +670,11 @@ fn (var r: Rc) vstart() {
     r.cur = []
     r.mark = []
     r.touched = []
-    r.vleafs = {}
-    r.vimm = {}
-    r.vuses = {}
+    r.vleafs = []
+    r.vimm = []
+    r.vuses = []
+    r.vset = []
+    r.uset = []
   }
 }
 
@@ -694,29 +696,45 @@ fn (var r: Rc) lid(l: Leaf) -> Int {
 /// The numbers of the leaves value v denotes (leaves).
 fn (var r: Rc) lids(f: Func, v: Int) -> List[Int] {
   r.vstart()
-  if let Some(ids) = r.vleafs.get(v) {
-    return ids
+  if v < r.vset.len() && r.vset[v] {
+    return r.vleafs[v]
   }
+  r.vgrow(v)
   var ids: List[Int] = []
   for l in r.leaves(f, v) {
     ids.push(r.lid(l))
   }
   r.vleafs[v] = ids
+  r.vset[v] = true
   ids
 }
 
 /// The leaves instruction v uses, by number (leaf_uses).
 fn (var r: Rc) luses(f: Func, v: Int) -> List[UseId] {
   r.vstart()
-  if let Some(us) = r.vuses.get(v) {
-    return us
+  if v < r.uset.len() && r.uset[v] {
+    return r.vuses[v]
   }
+  r.vgrow(v)
   var us: List[UseId] = []
   for u in r.leaf_uses(f, v) {
     us.push(UseId{id: r.lid(u.l), m: u.m})
   }
   r.vuses[v] = us
+  r.uset[v] = true
   us
+}
+
+/// Grows the by-value lists (lids, luses) to value v: indexed by value,
+/// as the maps they were cost a hash per lookup (2026-10-21, verify_rc
+/// 7.5 s of a cold self-build).
+fn (var r: Rc) vgrow(v: Int) {
+  while r.vset.len() <= v {
+    r.vset.push(false)
+    r.uset.push(false)
+    r.vleafs.push([])
+    r.vuses.push([])
+  }
 }
 
 fn (var r: Rc) get(s: RcState, l: Leaf) -> Int {
@@ -730,11 +748,14 @@ fn (var r: Rc) set(var s: RcState, l: Leaf, k: Int) {
 /// Whether verifier leaf number i is immortal (immortal_leaf): its
 /// count is never tracked, retains and releases of it being skipped.
 fn (var r: Rc) imm_id(f: Func, i: Int) -> Bool {
-  if let Some(b) = r.vimm.get(i) {
-    return b
+  while r.vimm.len() <= i {
+    r.vimm.push(-1)
+  }
+  if r.vimm[i] >= 0 {
+    return r.vimm[i] == 1
   }
   let b = immortal_leaf(f, r.vleaves[i], r.imm_ret)
-  r.vimm[i] = b
+  r.vimm[i] = if b { 1 } else { 0 }
   b
 }
 

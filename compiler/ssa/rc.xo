@@ -76,8 +76,12 @@ struct Rc {
   // number, whether each was touched in it, and those touched; the leaf
   // numbers and uses by value
   vfi: Int = -2
-  vleafs: Map[Int, List[Int]] = {}
-  vuses: Map[Int, List[UseId]] = {}
+  // by value index (dense: lists, not maps; vset marks the values
+  // whose leaf numbers and uses are made)
+  vleafs: List[List[Int]] = []
+  vuses: List[List[UseId]] = []
+  vset: List[Bool] = []
+  uset: List[Bool] = []
   vids: Map[Int, Int] = {}
   vleaves: List[Leaf] = []
   cur: List[Int] = []
@@ -85,7 +89,7 @@ struct Rc {
   touched: List[Int] = []
   /// whether each verifier leaf number is immortal (immortal_leaf), by
   /// number: never counted
-  vimm: Map[Int, Bool] = {}
+  vimm: List[Int] = []
   /// the functions whose one return is a struct literal, and which of its
   /// fields are immortal (immortal_returns): immortal_leaf sees through a
   /// call of one (x509.empty, the defaults of x509.parse's setfield chain)
