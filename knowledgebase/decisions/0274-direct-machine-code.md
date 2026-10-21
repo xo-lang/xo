@@ -141,6 +141,16 @@ enc_amd64.xo the amd64 emitter's; both are reached only through text
   builds Ops directly instead of text (step 3), and amd64's assembler the
   same way.
 
+- 2026-10-21, step 2 for amd64 (branch direct-mc-amd64): the amd64
+  encoder already parsed each operand into XOp before encoding; op_amd64.xo
+  makes the instruction a value of its own (XInst: the mnemonic with its
+  lock or rep prefix, and the XOps), parse_x86_line, print_x86 back to AT&T
+  text, and encode_x86_inst, which encode_x86 now calls. Every form of the
+  encoder's tables round trips through the XInst to clang's bytes: the
+  1,957 forms of AMD64_ENCODINGS (parse, print, encode both the printed
+  text and the XInst) and the 3,192 of AMD64_SURVEY (LLVM's x86_64 output
+  for the goldens).
+
 ## Step 3 for arm64: design notes (2026-10-21, before the measurement)
 
 What the text costs now, per function (compiler/arm64 emit.xo): selection

@@ -658,15 +658,18 @@ fn sse_map(s: Str) -> (Int, Int, Int, Bool)? {
 /// Encodes one instruction: mnemonic mn with its operands (AT&T order,
 /// the destination last).
 pub fn encode_x86(mn0: Bytes, args: List[Bytes]) -> XEnc {
-  var e = XB{}
-  var ops: List[XOp] = []
-  for a in args {
-    match x86_operand(a) {
-      Some(o) => ops.push(o)
-      None => return XEnc{err: "bad operand `${bstr(a)}`"}
-    }
+  match parse_x86(mn0, args) {
+    Ok(x) => encode_x86_inst(x)
+    Err(why) => XEnc{err: why}
   }
-  var mn = bstr(mn0)
+}
+
+/// The encoding of instruction x (decision 0274 step 2: from its parsed
+/// operands, op_amd64.xo).
+pub fn encode_x86_inst(x: XInst) -> XEnc {
+  var e = XB{}
+  let ops = x.ops
+  var mn = x.mn
   var lock = false
   if mn.starts_with("lock ") {
     lock = true

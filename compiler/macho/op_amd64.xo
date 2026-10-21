@@ -1,0 +1,127 @@
+// The structured x86-64 instruction of decision 0274 (step 2 for amd64):
+// an XInst is a mnemonic (with its lock or rep prefix) and its operands
+// (enc_amd64.xo XOp, in AT&T order), parsed once from the emitter's text,
+// printed back to that text, and encoded from the operands. The encoder
+// already worked on parsed operands; this makes the parse a step of its
+// own so a later stage can build XInsts directly.
+
+/// An instruction: its mnemonic as written (`movq`, `lock xaddq`, `rep
+/// stosb`) and its operands.
+pub struct XInst {
+  mn: Str
+  ops: List[XOp]
+}
+
+/// The XInst of an assembly line, or the error (an operand that does not
+/// parse).
+pub fn parse_x86_line(line: Bytes) -> Result[XInst, Str] {
+  let l = trim(line)
+  var i = 0
+  while i < l.len() && !is_space(l[i]) {
+    i += 1
+  }
+  var mn = l[0..i]
+  var rest = trim(l[i..])
+  if bstr(mn) is "lock" | "rep" {
+    var j = 0
+    while j < rest.len() && !is_space(rest[j]) {
+      j += 1
+    }
+    mn = "${bstr(mn)} ${bstr(rest[0..j])}".bytes()
+    rest = trim(rest[j..])
+  }
+  parse_x86(mn, split_x86_operands(rest))
+}
+
+/// The XInst of mnemonic mn and operand texts args.
+pub fn parse_x86(mn: Bytes, args: List[Bytes]) -> Result[XInst, Str] {
+  var ops: List[XOp] = []
+  for a in args {
+    match x86_operand(a) {
+      Some(o) => ops.push(o)
+      None => return Err("bad operand `${bstr(a)}`")
+    }
+  }
+  Ok(XInst{mn: bstr(mn), ops: ops})
+}
+
+/// The text of instruction x, as the emitter writes it (no leading tab).
+pub fn print_x86(x: XInst) -> Str {
+  if x.ops.is_empty() {
+    return x.mn
+  }
+  var parts: List[Str] = []
+  for o in x.ops {
+    parts.push(print_xop(o))
+  }
+  "${x.mn} ${parts.join(", ")}"
+}
+
+/// The text of operand o.
+pub fn print_xop(o: XOp) -> Str {
+  let star = if o.star { "*" } else { "" }
+  if o.kind == XO_REG {
+    return "${star}%${xreg_name(o.reg, o.rclass, o.size, o.rex8)}"
+  }
+  if o.kind == XO_IMM {
+    return "$${xexpr_text(o.imm, o.sym, o.sym2, o.rel, true)}"
+  }
+  let seg = if o.seg == 0x64 { "%fs:" } else if o.seg == 0x65 { "%gs:" } else { "" }
+  let disp = xexpr_text(o.imm, o.sym, o.sym2, o.rel, o.base < 0 && o.index < 0)
+  if o.base < 0 && o.index < 0 {
+    return "${star}${seg}${disp}"
+  }
+  let b = if o.base == RIP { "%rip" } else if o.base >= 0 { "%${xreg_name(o.base, RC_GPR, 8, false)}" } else { "" }
+  let ix = if o.index >= 0 { ",%${xreg_name(o.index, RC_GPR, 8, false)},${o.scale}" } else { "" }
+  "${star}${seg}${disp}(${b}${ix})"
+}
+
+/// A displacement or immediate: the number, the symbols, the operator;
+/// with no symbol and n zero, "0" when always (an immediate, or an
+/// absolute address) else "" (a displacement of 0).
+fn xexpr_text(n: Int, sym: Bytes, sym2: Bytes, rel: Str, always: Bool) -> Str {
+  let op = if rel.is_empty() { "" } else { "@${rel}" }
+  if sym.is_empty() {
+    if n == 0 && !always {
+      return op
+    }
+    return "${n}${op}"
+  }
+  var t = bstr(sym)
+  if !sym2.is_empty() {
+    t = "${t}-${bstr(sym2)}"
+  } else if n > 0 {
+    t = "${t}+${n}"
+  } else if n < 0 {
+    t = "${t}${n}"
+  }
+  "${t}${op}"
+}
+
+const XR64 = ["rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi"]
+const XR32 = ["eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"]
+const XR16 = ["ax", "cx", "dx", "bx", "sp", "bp", "si", "di"]
+const XR8 = ["al", "cl", "dl", "bl", "spl", "bpl", "sil", "dil"]
+const XRH = ["ah", "ch", "dh", "bh"]
+
+/// The name of register n of class rc and width size (rex8: %spl to
+/// %dil, else 4 to 7 of width 1 are %ah to %bh).
+fn xreg_name(n: Int, rc: Int, size: Int, rex8: Bool) -> Str {
+  if rc == RC_XMM {
+    return "xmm${n}"
+  }
+  if n >= 8 {
+    return match size {
+      8 => "r${n}"
+      4 => "r${n}d"
+      2 => "r${n}w"
+      _ => "r${n}b"
+    }
+  }
+  match size {
+    8 => XR64[n]
+    4 => XR32[n]
+    2 => XR16[n]
+    _ => if n >= 4 && !rex8 { XRH[n - 4] } else { XR8[n] }
+  }
+}

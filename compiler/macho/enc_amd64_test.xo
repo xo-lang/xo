@@ -1997,3 +1997,28 @@ test "forms with no encoding are refused, not encoded as an address" {
   // the valid three operand imul stays
   expect(encode_x86_line("imulq $48, %r11, %r11".bytes()).err) == ""
 }
+
+test "every amd64 form round trips through its XInst (decision 0274 step 2)" {
+  // parse, print, and encode the printed text: the same bytes; and
+  // encode_x86_inst of the parsed XInst gives them too
+  var bad: List[Str] = []
+  for (ins, want) in AMD64_ENCODINGS {
+    match parse_x86_line(ins.bytes()) {
+      Ok(x) => {
+        let text = print_x86(x)
+        let r = encode_x86_line(text.bytes())
+        let got = if r.err.is_empty() { hex_bytes(r.b) } else { "error: ${r.err}" }
+        let r2 = encode_x86_inst(x)
+        let got2 = if r2.err.is_empty() { hex_bytes(r2.b) } else { "error: ${r2.err}" }
+        if got != want || got2 != want {
+          bad.push("${ins}: printed `${text}`, got ${got} and ${got2}, want ${want}")
+        }
+      }
+      Err(why) => bad.push("${ins}: ${why}")
+    }
+  }
+  if bad.len() > 40 {
+    bad = bad[0..40] + ["... ${bad.len() - 40} more"]
+  }
+  expect(bad) == []
+}

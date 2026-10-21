@@ -3208,3 +3208,24 @@ test "the forms of LLVM's x86_64 output for the goldens encode as clang's" {
   }
   expect(bad) == []
 }
+
+test "LLVM's x86_64 forms round trip through their XInsts" {
+  var bad: List[Str] = []
+  for (ins, want) in AMD64_SURVEY {
+    match parse_x86_line(ins.bytes()) {
+      Ok(x) => {
+        let text = print_x86(x)
+        let r = encode_x86_line(text.bytes())
+        let got = if r.err.is_empty() { hex_bytes(r.b) } else { "error: ${r.err}" }
+        if got != want {
+          bad.push("${ins}: printed `${text}`, got ${got}, want ${want}")
+        }
+      }
+      Err(why) => bad.push("${ins}: ${why}")
+    }
+  }
+  if bad.len() > 40 {
+    bad = bad[0..40] + ["... ${bad.len() - 40} more"]
+  }
+  expect(bad) == []
+}
