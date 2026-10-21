@@ -9,12 +9,12 @@ bad later 0 of 72
 bad cached 0 of 72
 slow timeouts 6 bad 0
 --- stderr
-<time> ERROR handler fault fault=index 151 out of range for List of length 150 at main.xo:155:23
-<time> ERROR handler fault fault=index 151 out of range for List of length 150 at main.xo:155:23
-<time> ERROR handler fault fault=index 151 out of range for List of length 150 at main.xo:155:23
-<time> ERROR handler fault fault=index 151 out of range for List of length 150 at main.xo:155:23
-<time> ERROR handler fault fault=index 151 out of range for List of length 150 at main.xo:155:23
-<time> ERROR handler fault fault=index 151 out of range for List of length 150 at main.xo:155:23
-<time> ERROR handler fault fault=index 151 out of range for List of length 150 at main.xo:155:23
-<time> ERROR handler fault fault=index 151 out of range for List of length 150 at main.xo:155:23
-<time> ERROR handler fault fault=index 151 out of range for List of length 150 at main.xo:155:23
+<time> ERROR handler fault fault=index 151 out of range for List of length 150 at main.xo:154:23
+<time> ERROR handler fault fault=index 151 out of range for List of length 150 at main.xo:154:23
+<time> ERROR handler fault fault=index 151 out of range for List of length 150 at main.xo:154:23
+<time> ERROR handler fault fault=index 151 out of range for List of length 150 at main.xo:154:23
+<time> ERROR handler fault fault=index 151 out of range for List of length 150 at main.xo:154:23
+<time> ERROR handler fault fault=index 151 out of range for List of length 150 at main.xo:154:23
+<time> ERROR handler fault fault=index 151 out of range for List of length 150 at main.xo:154:23
+<time> ERROR handler fault fault=index 151 out of range for List of length 150 at main.xo:154:23
+<time> ERROR handler fault fault=index 151 out of range for List of length 150 at main.xo:154:23

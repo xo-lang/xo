@@ -31,7 +31,6 @@ struct State {
   cached: Map[Str, http.Response]
 }
 
-const PORT = 18735
 const N = 24
 const CLIENTS = 3
 const SIZE = 150
@@ -256,46 +255,46 @@ fn inner_routes() -> http.Router {
   r
 }
 
-fn url(path: Str) -> Str {
-  "http://127.0.0.1:${PORT}${path}"
+fn url(base: Str, path: Str) -> Str {
+  "${base}${path}"
 }
 
-fn run_client(client: http.Client, c: Int) -> Int ! http.ClientErr {
+fn run_client(client: http.Client, base: Str, c: Int) -> Int ! http.ClientErr {
   var bad = 0
   for j in 0..N {
     let i = c * N + j + 1
     let item = Item{name: name_of(i), tags: ["t${i}"]}
     let body = json.encode_str(item).bytes()
-    let a = client.send(http.new_request("POST", url("/go/${i}"), body: body))?
+    let a = client.send(http.new_request("POST", url(base, "/go/${i}"), body: body))?
     if a.status != 200 || (a.text() ?? "") != json.encode_str({"name": item.name, "bad": "0"}) {
       bad += 1
     }
-    let b = client.get(url("/once/${i}"))?
+    let b = client.get(url(base, "/once/${i}"))?
     if b.status != 200 || (b.text() ?? "") != json.encode_str({"len": "${SIZE}", "bad": "0"}) {
       bad += 1
     }
-    let s = client.get(url("/stream/${i}"))?
+    let s = client.get(url(base, "/stream/${i}"))?
     if s.status != 200 || (s.text() ?? "") != "0:50:100:${expected(i)}" {
       bad += 1
     }
-    let q = client.send(http.new_request("POST", url("/sql/${i}"), headers: {"x-tag": "tag${i}"}, body: body))?
+    let q = client.send(http.new_request("POST", url(base, "/sql/${i}"), headers: {"x-tag": "tag${i}"}, body: body))?
     if q.status != 201 || (q.text() ?? "") != json.encode_str(item) {
       bad += 1
     }
-    let n = client.send(http.new_request("GET", url("/inner/${i}"), headers: {"x-tag": "in${i}"}))?
+    let n = client.send(http.new_request("GET", url(base, "/inner/${i}"), headers: {"x-tag": "in${i}"}))?
     if n.status != 200 || (n.text() ?? "") != json.encode_str({"inner": "${i}", "sum": "${expected(i)}"}) {
       bad += 1
     }
-    let mc = client.get(url("/m/c/${i}"))?
+    let mc = client.get(url(base, "/m/c/${i}"))?
     if mc.status != 200 || (mc.text() ?? "") != json.encode_str({"cached": "${i}", "sum": "${expected(i)}"}) {
       bad += 1
     }
-    let vs = client.get(url("/vs/${i}"))?
+    let vs = client.get(url(base, "/vs/${i}"))?
     if vs.status != 200 || (vs.text() ?? "") != "0 -1,${i} ${i},-2 -3,${i} -4,${i} -6 -7,${i}" {
       bad += 1
     }
     if j % 8 == 0 {
-      let f = client.get(url("/fault/${i}"))?
+      let f = client.get(url(base, "/fault/${i}"))?
       if f.status != 500 {
         bad += 1
       }
@@ -310,7 +309,11 @@ fn main(os: Os) ! {
   let db = sql.memory("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT NOT NULL, tag TEXT NOT NULL);")?
   let client = http.client(os.net, timeout: 5s)
   let impatient = http.client(os.net, timeout: 40ms)
-  let srv = http.server(os.net.listen("127.0.0.1:${PORT}")?, routes(state, once, db, inner_routes(), os.clock))
+  // a port of the system's choice: other sessions run this golden at the
+  // same time, and a fixed port failed with "address already in use"
+  let l = os.net.listen("127.0.0.1:0")?
+  let base = "http://${l.addr()}"
+  let srv = http.server(l, routes(state, once, db, inner_routes(), os.clock))
   var bad_responses = 0
   var timeouts = 0
   scope s {
@@ -319,7 +322,7 @@ fn main(os: Os) ! {
     let hs = scope c {
       var handles: List[Task[Int, http.ClientErr]] = []
       for k in 0..CLIENTS {
-        handles.push(c.spawn(fn() { run_client(client, k) }))
+        handles.push(c.spawn(fn() { run_client(client, base, k) }))
       }
       var sum = 0
       for h in handles {
@@ -330,7 +333,7 @@ fn main(os: Os) ! {
     bad_responses = hs
     for i in 1..=6 {
       let item = Item{name: name_of(1000 + i), tags: []}
-      match impatient.send(http.new_request("POST", url("/slow/${i}"), body: json.encode_str(item).bytes())) {
+      match impatient.send(http.new_request("POST", url(base, "/slow/${i}"), body: json.encode_str(item).bytes())) {
         Ok(_) => {}
         Err(_) => timeouts += 1
       }
