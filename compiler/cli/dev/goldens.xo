@@ -351,6 +351,15 @@ pub fn run_goldens(os: Os, cfg0: Config, dirs: List[Str]) -> List[Outcome] uses 
     Ok(ps) => ps
     Err(e) => return [Outcome{name: "(discovery)", dir: dirs.join(" "), status: "fail", why: e}]
   }
+  if cfg.backend == "go" {
+    // a golden whose Go backend output differs (native-only std, such as
+    // the Postgres driver) has want_go.txt beside want.txt, as
+    // internal/llvm's TestGoldenGoParity reads it
+    progs = progs.map(fn(p: Prog) {
+      let wg = "${p.dir}/want_go.txt"
+      if os.fs.exists(wg).ok() ?? false { p with {want: wg} } else { p }
+    })
+  }
   if !cfg.only.is_empty() {
     progs = progs.filter(fn(p: Prog) { cfg.only.any(fn(o: Str) { p.dir.contains(o) }) })
   }

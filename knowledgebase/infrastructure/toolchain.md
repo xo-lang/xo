@@ -1564,6 +1564,8 @@ the golden programs. Since 2026-10-19 (owner approved, Xo lang 4):
   net_only and native_sql, whose Postgres driver is native only,
   decision 0278 point 9; 2026-10-21) is checked against that file
   instead, and `-golden-update` writes its want.txt from the LLVM run.
+  `xo dev goldens --backend=go` reads want_go.txt the same way
+  (compiler/cli/dev/goldens.xo, 2026-10-21).
 - **TestGoldenSplit**: no LTO, ThinLTO too for shortGoldens only.
 - **TestDebugInfoSameOutputLLVM**: o2Goldens as --release with and without
   --debug-info; the rest -s against a plain -O1 build (TestGolden's,
