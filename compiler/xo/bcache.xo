@@ -10,6 +10,7 @@
 
 use github.com/xo-lang/xo/compiler/arm64
 use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
 use github.com/xo-lang/xo/compiler/prune
 use github.com/xo-lang/xo/compiler/ssa
 use std/crypto
@@ -297,10 +298,16 @@ fn borrow_record_write(os: Os, path: Str, rec: Map[Str, List[Bool]]) {
   }
   cache_put(os, path, w.freeze().bytes())
 }
+/// The version of std_tree_sum's hash (its memo's signature).
+const STD_SUM_VERSION = "xo std sum v2 (interfaces)"
 
 /// The hash of every std source under dir (its .xo files, by path
-/// relative to dir and contents): the front end cache's key of a std
-/// body (ssa fe_keys), the same for every program. "" when dir cannot be
+/// relative to dir and interface: parser.iface_text, the tokens outside
+/// function bodies, without comments or layout): the front end cache's
+/// key of a std body (ssa fe_keys), the same for every program. A
+/// comment or body edit in std keeps it (2026-10-21: the full sources
+/// were hashed, so a comment added to json.xo missed every std body of
+/// every program); the edited body's own key, its text, changes. "" when dir cannot be
 /// walked (std bodies then share no key with another build).
 /// The hash is kept in the cache (cache/stdsum) under the files' paths,
 /// sizes and modification times, and read again only when those differ
@@ -322,6 +329,7 @@ fn std_tree_sum(os: Os, dir: Str, cache: Str) -> Str {
     }
   }
   var sig = StrBuilder.new()
+  sig.write("${STD_SUM_VERSION}\n")
   for p in paths.sort() {
     sig.write("${p} ${stat.get(p) ?? ""}\n")
   }
@@ -347,8 +355,9 @@ fn std_tree_hash(os: Os, dir: Str, paths: List[Str]) -> Str {
   for p in paths.sort() {
     match os.fs.read(p) {
       Ok(b) => {
-        h.write_str("${p.trim_prefix("${dir}/")} ${b.len()}\n")
-        h.write(b)
+        let text = parser.iface_text(p.bytes(), b)
+        h.write_str("${p.trim_prefix("${dir}/")} ${text.len()}\n")
+        h.write(text)
       }
       Err(_) => return ""
     }

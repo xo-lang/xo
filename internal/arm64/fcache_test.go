@@ -1668,3 +1668,85 @@ func TestBorrowIncremental(t *testing.T) {
 		}
 	}
 }
+
+// TestFrontCacheStdCommentEdit: a comment added to a std file keeps every
+// std body's front end cache entry (the std key hashes interfaces: the
+// tokens outside bodies, without comments, compiler/parser iface.xo);
+// before 2026-10-21 it hashed the full sources, and a comment added to
+// json.xo missed every std body of every program.
+func TestFrontCacheStdCommentEdit(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := xotool.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-festdedit-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	std := filepath.Join(work, "std")
+	if err := os.CopyFS(std, os.DirFS(filepath.Join(root, "std"))); err != nil {
+		t.Fatal(err)
+	}
+	own := filepath.Join(work, "p")
+	if err := os.MkdirAll(own, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(own, "main.xo"), []byte("fn main(os: Os) uses stdio {\n  let xs = [3, 1, 2].sort()\n  os.stdio.println(\"${xs[0]} ${xs.len()}\")\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(work, "prog")
+	cache := filepath.Join(work, "cache")
+	hits := regexp.MustCompile(`cache fe (\d+)/(\d+) bodies`)
+	build := func(env ...string) ([]byte, string) {
+		t.Helper()
+		os.Remove(out)
+		cmd := exec.Command(xo, "build", "--backend=arm64", "--phase-times", "--std="+std, "-o", out, ".")
+		cmd.Dir = own
+		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache), env...)
+		log, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("xo build %v: %v\n%s", env, err, log)
+		}
+		b, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b, string(log)
+	}
+	build()
+	_, warm := build()
+	w := hits.FindStringSubmatch(warm)
+	if w == nil {
+		t.Fatalf("no cache fe line:\n%s", warm)
+	}
+	prelude := filepath.Join(std, "prelude.xo")
+	b, err := os.ReadFile(prelude)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// at the end: a line added above a body moves it, and its position is
+	// in its own key
+	if err := os.WriteFile(prelude, append(b, []byte("\n// a comment the test adds\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, edit := build()
+	e := hits.FindStringSubmatch(edit)
+	if e == nil || e[1] != w[1] {
+		t.Errorf("after a comment in prelude.xo: %v, want the warm build's %s hits", e, w[1])
+	}
+	off, _ := build("XO_BACKEND_CACHE=off")
+	if !bytes.Equal(got, off) {
+		t.Error("the build after the comment differs from the cache-off build")
+	}
+}

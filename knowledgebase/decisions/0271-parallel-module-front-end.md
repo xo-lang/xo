@@ -384,3 +384,17 @@ Three more tables a body changed and a commit did not replay:
   its body out.
 
 FE_CACHE_VERSION v11 (v10 had the constants alone). The skip counts on xo and identity are measured in the end-of-night run (owner, 2026-10-21: testing at the end).
+
+## Addendum: std bodies keyed by std's interfaces (2026-10-21, xo-fa)
+
+A std body's front end cache key held std_tree_sum, the hash of every
+std source in full, so any edit of any std file, a comment too, missed
+every std body of every program (`cache fe 0/1188` after a comment was
+added to json.xo; bench/results/test-speed-vs-go-2026-10-21.md). It now
+hashes each std file's interface (compiler/parser iface_text: the tokens
+outside function bodies, without comments or layout; std sum v2). A
+comment, layout or body edit keeps every other std body's key; the
+edited body misses by its own text, as a program module's body does.
+Program modules' interface closures still hash comments (a comment edit
+misses that module's bodies): the next step. Test: internal/arm64
+TestFrontCacheStdCommentEdit, compiler/parser iface_test.xo.

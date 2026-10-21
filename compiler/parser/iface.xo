@@ -1,0 +1,44 @@
+// A source file's interface for cache keys (decision 0271, 0283): its
+// tokens outside the bodies of its functions, without comments or
+// layout, so that an edit of a comment, of blank lines or of a body
+// keeps the interface of its file.
+
+use github.com/xo-lang/xo/compiler/lexer
+
+/// The interface text of src (file name): each token's text and a
+/// separator, a function body as `{}`, comments and newlines left out.
+/// Parsed as signatures may be (bodies optional: the prelude and the
+/// runtime declare functions without one); a file with a hard parse
+/// error keeps its bodies (its tokens all count, its comments still not).
+pub fn iface_text(name: Bytes, src: Bytes) -> Bytes {
+  let r = parse_file(name, src, true)
+  var cuts: List[(Int, Int)] = []
+  for d in (if r.hard { [] } else { r.file.decls }) {
+    if let FnDecl(d: fd) = d {
+      if let Some(bd) = fd.body {
+        cuts.push((bd.span.start.offset, bd.span.end.offset))
+      }
+    }
+  }
+  let sorted = cuts.sort_by(fn(c) { c.0 })
+  var ci = 0
+  var out = BytesBuilder.with_capacity(src.len())
+  for t in lexer.lex(src).tokens {
+    if t.kind == lexer.Kind.Newline || t.kind == lexer.Kind.Eof {
+      continue
+    }
+    let at = t.span.start.offset
+    while ci < sorted.len() && at >= sorted[ci].1 {
+      ci += 1
+    }
+    if ci < sorted.len() && at >= sorted[ci].0 {
+      if at == sorted[ci].0 {
+        out.write_str("{} ")
+      }
+      continue
+    }
+    out.write(t.text)
+    out.write_byte(UInt8(1))
+  }
+  out.freeze()
+}

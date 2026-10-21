@@ -1,0 +1,29 @@
+// The interface text of a file for cache keys (iface_text): comments,
+// layout and function bodies do not count; declarations do.
+
+const BASE = "/// Adds.\npub fn add(a: Int, b: Int) -> Int {\n  a + b\n}\n\nconst URL = \"http://x//y\"\n"
+
+fn text(src: Str) -> Bytes { iface_text(b"f.xo", src.bytes()) }
+
+test "a comment, a blank line or a body edit keeps the interface" {
+  let base = text(BASE)
+  expect(text("// a new comment\n" + BASE)) == base
+  expect(text(BASE + "\n\n// trailing\n")) == base
+  expect(text(BASE.replace("a + b", "b + a"))) == base
+  expect(text(BASE.replace("/// Adds.", "/// Adds two."))) == base
+}
+
+test "a signature or a constant edit changes the interface" {
+  let base = text(BASE)
+  expect(text(BASE.replace("b: Int) -> Int", "b: Int) -> Float")) == base) == false
+  expect(text(BASE.replace("http://x//y", "http://x//z")) == base) == false
+  expect(text(BASE + "pub fn sub(a: Int) -> Int {\n  a\n}\n") == base) == false
+}
+
+test "a bodiless declaration (the prelude's) and a file that does not parse" {
+  let decl = "fn intrinsic(x: Int) -> Int\n\nfn f() -> Int {\n  1\n}\n"
+  expect(text("// c\n" + decl)) == text(decl)
+  let bad = "fn f( -> {\n"
+  expect(text("// c\n" + bad)) == text(bad)
+  expect(text(bad + "x") == text(bad)) == false
+}
