@@ -233,11 +233,15 @@ pub fn getcwd() -> Str {
 pub fn flock(fd: Int, op: Int) -> Int { ret(Int(sys_darwin.flock(fd, op))) }
 
 /// The entries of the directory path (not `.` and `..`, in readdir's
-/// order) and 0, or the errno of opendir (as the C runtime's loop, a
-/// failed read ends the list).
+/// order) and 0, or the errno of its open or of a failed read
+/// (os.File.ReadDir: EINTR retried, any other error reported, not a
+/// list cut short).
 pub fn names(path: Str) -> (List[Str], Int) {
   // opendir(3)'s open: a file is ENOTDIR
-  let fd = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC, 0)
+  var fd = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC, 0)
+  while fd == -EINTR {
+    fd = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC, 0)
+  }
   if fd < 0 {
     return ([], -fd)
   }
@@ -247,9 +251,15 @@ pub fn names(path: Str) -> (List[Str], Int) {
   // the position, after the records
   rt.mem_store(a, DIRENT_BUF, 0, 8)
   while true {
-    // an error ends the listing, as readdir(3)'s NULL ended the C path's
-    let n = sys_darwin.__getdirentries64(fd, a, DIRENT_BUF, a + DIRENT_BUF)
-    if n <= 0 {
+    let n = ret(Int(sys_darwin.__getdirentries64(fd, a, DIRENT_BUF, a + DIRENT_BUF)))
+    if n == -EINTR {
+      continue
+    }
+    if n < 0 {
+      let _e = sys_darwin.close(fd)
+      return ([], keep(buf, -n))
+    }
+    if n == 0 {
       break
     }
     var off = 0

@@ -1,5 +1,22 @@
 # prelude changes
 
+## 2026-10-21: fix: Fs.read_dir and walk report errors instead of a shorter list
+
+- Kind: fix
+- Commit: (filled in after the push)
+- Found by: Xo Publish (a sweep for errors that become empty results)
+- Go reference: os.File.ReadDir and Readdir (dir_unix.go: EINTR retried, an lstat error other than not-exist returned), filepath.WalkDir (go1.26.1)
+- Test: internal/llvm/testdata/golden/fs_dir_errors (go, arm64, LLVM)
+
+A directory read that failed partway (getdents64, __getdirentries64,
+FindNextFileW) ended the listing and returned the names so far as
+success, and an entry whose stat failed for any reason was left out of
+`read_dir` (for `walk`, with its whole subtree), on every backend. Now
+the read's error is returned (Darwin also retries EINTR on the open and
+the read, and Windows checks for ERROR_NO_MORE_FILES), and only an
+entry removed since the listing is skipped; any other stat error, such
+as `Denied` in a directory without search permission, is the result.
+
 ## 2026-10-21: fix: Set.filter, map, any and all build natively
 
 - Kind: fix

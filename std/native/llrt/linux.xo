@@ -693,8 +693,9 @@ pub fn getcwd() -> Str {
 pub fn flock(fd: Int, op: Int) -> Int { rt.sys6(nr(32, 73), fd, op, 0, 0, 0, 0) }
 
 /// The entries of the directory path (not `.` and `..`, in the order
-/// getdents64(2) gives) and 0, or the errno of its open (as the C
-/// runtime's readdir loop, a failed read ends the list).
+/// getdents64(2) gives) and 0, or the errno of its open or of a failed
+/// read (os.File.ReadDir: EINTR retried, any other error reported, not
+/// a list cut short).
 pub fn names(path: Str) -> (List[Str], Int) {
   var fd = open(path, O_RDONLY | O_CLOEXEC | o_directory(), 0)
   while fd == -EINTR {
@@ -711,7 +712,12 @@ pub fn names(path: Str) -> (List[Str], Int) {
     if n == -EINTR {
       continue
     }
-    if n <= 0 {
+    if n < 0 {
+      keep(buf, 0)
+      close(fd)
+      return ([], -n)
+    }
+    if n == 0 {
       break
     }
     // struct linux_dirent64: d_reclen at 16, d_name (zero terminated)

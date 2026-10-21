@@ -272,8 +272,13 @@ func (f *realFs) readDir(tk *Task, dir string) Result[List[FileInfo], FsErr] {
 	var out []FileInfo
 	for _, de := range ents {
 		fi, err := de.Info()
-		if err != nil {
+		// os.File.Readdir: an entry removed since the listing is skipped,
+		// any other error is the result
+		if errors.Is(err, fs.ErrNotExist) {
 			continue
+		}
+		if err != nil {
+			return Err[List[FileInfo]](mapFsErr(err, path.Join(dir, textOf(de.Name()))))
 		}
 		// the name the program sees: outside bytes (decision 0259)
 		out = append(out, f.info(filepath.Join(op, de.Name()), path.Join(dir, textOf(de.Name())), fi))
@@ -305,11 +310,15 @@ func (f *realFs) walk(tk *Task, dir string) Result[List[FileInfo], FsErr] {
 		sort.Slice(ents, func(i, j int) bool { return ents[i].Name() < ents[j].Name() })
 		for _, de := range ents {
 			fi, err := de.Info()
-			if err != nil {
-				continue
-			}
 			child := filepath.Join(osDir, de.Name())
 			xc := path.Join(xoDir, de.Name())
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				e := mapFsErr(err, xc)
+				return &e
+			}
 			out = append(out, f.info(child, xc, fi))
 			if fi.IsDir() {
 				if e := walk(child, xc); e != nil {

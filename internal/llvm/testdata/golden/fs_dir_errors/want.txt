@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+before ok 2 ok 5
+read_dir agrees: true
+walk agrees: true
+after ok 2 ok 5
+--- stderr

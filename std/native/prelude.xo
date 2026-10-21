@@ -975,14 +975,22 @@ fn fs_read_dir(f: Fs, dir: Str) -> List[FileInfo] ! FsErr {
     return Err(fs_err(st, dir))
   }
   var out: List[FileInfo] = []
-  for n in names {
+  // in name order, as os.ReadDir: the first failing entry is Go's
+  for n in names.sort() {
     let child = fs_join(op, n)
-    let i = sysio.fs_stat(child, false, n)
-    if i.st == 0 {
-      // the name the program sees: outside bytes (decision 0259); the
-      // system's path keeps the bytes
-      out.push(fs_info_of(f, child, fs_join(dir, scan.text(n)), i))
+    // the name the program sees: outside bytes (decision 0259); the
+    // system's path keeps the bytes
+    let xc = fs_join(dir, scan.text(n))
+    let i = sysio.fs_stat(child, false, xc)
+    // os.File.Readdir: an entry removed since the listing is skipped,
+    // any other lstat error is the result
+    if i.st == 1 {
+      continue
     }
+    if i.st != 0 {
+      return Err(fs_err(i.st, xc))
+    }
+    out.push(fs_info_of(f, child, xc, i))
   }
   out.sort_by(fn(fi) { fi.name })
 }
@@ -997,12 +1005,17 @@ fn fs_walk_dir(f: Fs, osdir: Str, xodir: Str, var out: List[FileInfo]) -> () ! F
     let child = fs_join(osdir, n)
     let xc = fs_join(xodir, scan.text(n))
     let i = sysio.fs_stat(child, false, xc)
-    if i.st == 0 {
-      let fi = fs_info_of(f, child, xc, i)
-      out.push(fi)
-      if fi.is_dir {
-        fs_walk_dir(f, child, xc, out)?
-      }
+    // as fs_read_dir: only an entry removed since the listing is skipped
+    if i.st == 1 {
+      continue
+    }
+    if i.st != 0 {
+      return Err(fs_err(i.st, xc))
+    }
+    let fi = fs_info_of(f, child, xc, i)
+    out.push(fi)
+    if fi.is_dir {
+      fs_walk_dir(f, child, xc, out)?
     }
   }
 }

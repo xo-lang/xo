@@ -577,6 +577,12 @@ fn count_errors(fs: Fs, path: Str) -> Int ! FsErr uses fs.read {
 - `open` of a directory is `IsDir`. `create` and `open_append` do not
   create missing parent directories on the real filesystem (MemFs does,
   as its `write` does).
+- `read_dir` and `walk` fail with the error of a failed directory read
+  (never a list cut short) and of an entry whose stat fails (`Denied`
+  for an entry of a directory without search permission), naming that
+  entry, as Go's os.File.Readdir and filepath.WalkDir; an entry removed
+  between the listing and its stat is left out. `walk` lists each
+  directory in name order and stops at the first error.
 - `copy` reads `from` and writes `to` (created or truncated) with
   `from`'s permission bits; a directory is `IsDir(from)`.
 - `mode` and `set_mode` are the permission bits (`0o777` mask). Windows

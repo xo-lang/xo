@@ -590,6 +590,8 @@ const LOCKFILE_FAIL_IMMEDIATELY: Int = 1
 const LOCKFILE_EXCLUSIVE_LOCK: Int = 2
 const MAXDWORD: Int = 4294967295
 const ERROR_DIRECTORY: Int = 267
+/// FindNextFileW at the end of a listing.
+const ERROR_NO_MORE_FILES: Int = 18
 const ERROR_LOCK_VIOLATION: Int = 33
 const ERROR_IO_PENDING: Int = 997
 // st_mode values xo_w_fill_stat and xo_w_fstat give
@@ -884,6 +886,13 @@ pub fn names(path: Str) -> (List[Str], Int) {
       out.push(narrow(fd, 44, n))
     }
     if Int(sys_windows.FindNextFileW(h, fa)) == 0 {
+      // the end is ERROR_NO_MORE_FILES; another error is reported, not
+      // a list cut short (os.File.ReadDir)
+      let le = Int(sys_windows.GetLastError())
+      if le != ERROR_NO_MORE_FILES {
+        sys_windows.FindClose(h)
+        return ([], keep(fd, shim_errno(le)))
+      }
       break
     }
   }

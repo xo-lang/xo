@@ -1,0 +1,44 @@
+// read_dir and walk report an entry's stat error as os.File.Readdir and
+// filepath.WalkDir do, instead of leaving the entry (and a directory's
+// whole subtree) out of a successful list (2026-10-21): a directory
+// with read but no search permission (0o444) lists its names, but the
+// stat of each entry fails with EACCES. A privileged user (root) can
+// stat them anyway, so the program checks that read_dir and walk agree
+// with a direct read of an entry rather than printing which case ran.
+
+fn kind(r: Result[List[FileInfo], FsErr]) -> Str {
+  match r {
+    Ok(l) => "ok ${l.len()}"
+    Err(FsErr.Denied(path: p)) => "denied ${p}"
+    Err(e) => "other ${e}"
+  }
+}
+
+fn main(os: Os) ! {
+  let out = os.stdio
+  let base = os.fs.sub(os.env.get("TMPDIR") ?? "/tmp")
+  let name = "xo-fs-dir-errors-${os.rand.int(0, 1000000000)}"
+  base.create_dir_all("${name}/top/locked/inner")?
+  let root = base.sub(name)
+  root.write("top/a.txt", b"a")?
+  root.write("top/locked/b.txt", b"b")?
+  root.write("top/locked/inner/c.txt", b"c")?
+  out.println("before ${kind(root.read_dir("top/locked"))} ${kind(root.walk("top"))}")
+  root.set_mode("top/locked", 0o444)?
+  let denied = match root.read("top/locked/b.txt") {
+    Ok(_) => false
+    Err(_) => true
+  }
+  let rd = kind(root.read_dir("top/locked"))
+  let wk = kind(root.walk("top"))
+  let want_rd = if denied { "denied top/locked/b.txt" } else { "ok 2" }
+  let want_wk = if denied { "denied top/locked/b.txt" } else { "ok 5" }
+  out.println("read_dir agrees: ${rd == want_rd}")
+  out.println("walk agrees: ${wk == want_wk}")
+  if rd != want_rd || wk != want_wk {
+    out.println("got ${rd} | ${wk}")
+  }
+  root.set_mode("top/locked", 0o755)?
+  out.println("after ${kind(root.read_dir("top/locked"))} ${kind(root.walk("top"))}")
+  base.remove_all(name)?
+}
