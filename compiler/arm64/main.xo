@@ -2,6 +2,11 @@
 //
 //   arm64 [--std=DIR] [--wd=DIR] [--os=darwin|linux] [--no-inline] [--each] [--test] <dirs...>
 //   arm64 [--std=DIR] [--wd=DIR] ... --bench=N <dirs...>
+//   arm64 [--std=DIR] [--wd=DIR] ... --ssa=rc|inline [--fn=NAME]... <dirs...>
+//       the SSA the emitter reads instead of the assembly: after the
+//       passes (rc), or after the inliner (inline: what the register
+//       allocator sees), only the functions NAME names (as `xo dev dump
+//       ssa --fn`; a function every caller inlined is gone from inline)
 //
 // It checks the directories as `xo asmdump` does (compiler/check in
 // native mode), builds them with compiler/ssa and its passes, and prints
@@ -21,6 +26,8 @@ fn dump_body(os: Os, args: List[Str]) ! {
   var each = false
   var tests = false
   var no_inline = false
+  var ssa_stage = ""
+  var fns: List[Str] = []
   var target = "darwin"
   var std_dir = "std"
   var wd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
@@ -40,6 +47,14 @@ fn dump_body(os: Os, args: List[Str]) ! {
       tests = true
     } else if a == "--no-inline" {
       no_inline = true
+    } else if a.starts_with("--ssa=") {
+      ssa_stage = a.trim_prefix("--ssa=")
+      if !(ssa_stage is "rc" | "inline") {
+        os.stdio.eprintln("arm64: --ssa is rc or inline")
+        os.proc.exit(2)
+      }
+    } else if a.starts_with("--fn=") {
+      fns.push(a.trim_prefix("--fn="))
     } else {
       dirs.push(a)
     }
@@ -92,6 +107,7 @@ fn dump_body(os: Os, args: List[Str]) ! {
       }
       continue
     }
+    c.dump_roots = fns
     var b = ssa.build_program(c, wd, tests)
     if !b.why.is_empty() {
       if repeat == 0 {
@@ -121,6 +137,30 @@ fn dump_body(os: Os, args: List[Str]) ! {
         lines += p.asm.split("\n").len() - 1
       }
       total += (os.clock.now() - t0).nanos()
+      continue
+    }
+    if !ssa_stage.is_empty() {
+      var mi = b.m
+      if ssa_stage == "inline" {
+        let _changed = inline_module(mi)
+      }
+      var so = StrBuilder.new()
+      so.write("== ssa after ${ssa_stage}\n")
+      var n = 0
+      for f in mi.funcs {
+        if !ssa.named_in(f.name, fns) {
+          continue
+        }
+        if n > 0 {
+          so.write("\n")
+        }
+        n += 1
+        so.write(mi.func_text(f))
+      }
+      if n == 0 {
+        so.write("== no function matches ${fns.join(", ")}\n")
+      }
+      os.stdio.print(so.freeze())
       continue
     }
     let p = generate_module(b.m, target, no_inline)

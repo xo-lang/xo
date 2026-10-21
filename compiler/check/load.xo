@@ -39,6 +39,10 @@ pub struct Checker {
   /// file descriptors left), or "": check_dirs fails with it rather than
   /// check the program without that directory's modules.
   walk_err: Str = ""
+  /// Functions `xo dev dump ssa --fn=NAME` names (display name, or
+  /// module.name): the SSA builder declares each non generic one as a
+  /// root, so a function main does not reach is built too.
+  pub dump_roots: List[Str] = []
   /// Native mode (check.Options.Native): the implementation modules of
   /// the native backends are loaded and checked too (load_native).
   pub native: Bool = false

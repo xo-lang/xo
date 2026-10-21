@@ -65,6 +65,16 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 - `reduce-diff.py --crash` shrinks a failing program; property tests
   keep the failing program, print the build's output, the culprit pass,
   and the reduced program.
+- What the inliner and the register allocator read (2026-10-21):
+  `xo dev dump ssa --fn=NAME --stage=build|unwind|landings|cleanup|rc DIR`
+  prints only the functions NAME names (`Type.method`, `name`, or with
+  the module's name before it: `flate.InStream.push`) after that pass; a
+  non generic function main does not reach is declared as a root, so a
+  std function works from any program directory. `xo dev dump asm
+  --ssa=rc|inline --fn=NAME DIR` prints them after the passes or after
+  the native inliner (a function every caller inlined is gone from
+  inline; `call sq` becomes its body). `--stage=rc` marks borrowed
+  parameters (`borrow v1`). Without --fn the dump is as before.
 - `XO_POISON_FRAMES=1` fills frame slots with a poison pattern, so a
   read before a write shows up at once.
 - `XO_DCE=off|debug|list` controls and lists native dead function

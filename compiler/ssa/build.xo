@@ -504,7 +504,34 @@ pub fn (var b: Builder) build() uses fs.read {
   }
   b.run_queue()
   b.declare_exports()
+  b.declare_dump_roots()
   b.run_queue()
+}
+
+/// Declares the non generic functions the checker's dump_roots name
+/// (`xo dev dump ssa --fn=NAME`: `Type.method`, `name`, or either with
+/// its module's name before) as roots of the build.
+fn (var b: Builder) declare_dump_roots() {
+  if b.c.dump_roots.is_empty() {
+    return
+  }
+  for o in 0..b.c.objs.len() {
+    let ob = b.c.objs[o]
+    if ob.kind != check.ObjKind.Func || !ob.tparams.is_empty() || ob.module < 0 {
+      continue
+    }
+    if ob.recv >= 0 && !b.c.objs[ob.recv].tparams.is_empty() {
+      continue
+    }
+    let dn = b.c.display_name(o)
+    let full = "${b.c.mods[ob.module].name}.${dn}"
+    for n in b.c.dump_roots {
+      if n == dn || n == full {
+        let _f = b.declare(o, [])
+        break
+      }
+    }
+  }
 }
 
 /// Declares every function of the marker modules of C ABI exports the
