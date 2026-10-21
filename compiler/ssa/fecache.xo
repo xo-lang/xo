@@ -548,7 +548,9 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
         return b.fe_miss("read")
       }
     } else if k.starts_with("a ") {
-      if b.m.func_at.contains(n) {
+      // a constant's function made whole here may be there already,
+      // made by another body: the commit keeps that one
+      if b.m.func_at.contains(n) && !fe_const_fn(n) {
         return b.fe_miss("absent")
       }
     } else if !b.m.func_at.contains(n) {
@@ -631,18 +633,21 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
       }
       evs.push(x)
     } else if k == 6 {
-      // a constant made here must be new at the commit, one made before
-      // it already there
+      // a constant made before the body must be there at the commit;
+      // one the body made is made there unless another body made it
+      // first (its function is the same, by its name: the commit keeps
+      // the one there), so a body's entry does not depend on which of
+      // the bodies reading a constant the build reaches first
       let n = r.str()
       let made = r.bool()
       if !r.ok {
         return b.fe_miss("malformed")
       }
       let there = b.consts.contains(n) || cnew.contains(n)
-      if made == there {
+      if !made && !there {
         return b.fe_miss("const")
       }
-      if made {
+      if made && !there {
         cnew[n] = true
       }
       evs.push(FeEv{k: 6, s: n})
@@ -781,9 +786,12 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
         b.m.order.push(b.m.type_at.get(ev.s) ?? -1)
       }
     } else if ev.k == 3 {
-      // absent: checked above
-      let i = b.m.new_func(ev.s, [], [])
-      holes.push((i, hi))
+      // absent: checked above, but for a constant's function another
+      // body made (the same function: its body is not decoded)
+      if !(fe_const_fn(ev.s) && b.m.func_at.contains(ev.s)) {
+        let i = b.m.new_func(ev.s, [], [])
+        holes.push((i, hi))
+      }
       hi += 1
     } else if ev.k == 5 {
       // a closure, numbered as the build here numbers it; its body from
@@ -1071,3 +1079,10 @@ pub fn (var b: Builder) fe_finalize() {
   }
   b.fe.pending = []
 }
+
+/// Whether n names a function its name determines, which a body that
+/// reads a constant makes when it is the first: the constant's function
+/// (const_value's xo.const[M.N]) and the drop of its list type
+/// (drop_list's xo.droplist[T], an empty function). An entry that made
+/// one whole replays where another body made it already.
+fn fe_const_fn(n: Str) -> Bool { n.starts_with("xo.const[") || n.starts_with("xo.droplist[") }

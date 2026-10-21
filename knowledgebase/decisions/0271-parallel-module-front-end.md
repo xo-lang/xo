@@ -364,8 +364,15 @@ Three more tables a body changed and a commit did not replay:
   function then one of the functions made whole). A commit numbers a
   constant as the build there numbers constants and writes the number
   into the body's `rt.const_once` calls (and those of the functions it
-  made whole); a constant the entry says it made must be new there, one
-  it read must be there.
+  made whole); a constant it read must be there. One it made may be
+  there already, made by another body the build reached first: the
+  commit keeps that one and does not decode the entry's copy of its
+  function, nor of its list type's drop (`xo.droplist[T]`), both fixed
+  by their names, which are exempt from the absent check (fe_const_fn).
+  Requiring it new (the first version) made the entry depend on which
+  reader a build reaches first: under XO_CHK_CACHE=auto every warm edit
+  of xo missed three such bodies and fell back, lowering the program
+  twice (12 s an edit; 5.0 s after, 2026-10-21).
 - Spawn sites (Builder.sites, the spawns whose task can fail): each site
   a body numbers is an event 8; a commit numbers it next and writes the
   number into its `rt.task_spawn_fn` (or `rt.task_spawn`) call. A body

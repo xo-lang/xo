@@ -1086,6 +1086,51 @@ fn main(os: Os) uses stdio {
 	if !bytes.Equal(build(own, cache, "XO_BACKEND_CACHE=on"), off) {
 		t.Error("the build replaying renumbered constants differs from the cache-off build")
 	}
+	// another body makes a constant first: a library's sum, whose entry
+	// made PRIMES (and its list type's drop), replays with peek's (the
+	// same functions, by their names) instead of missing, which made
+	// every warm edit of xo fall back under XO_CHK_CACHE=auto
+	// (2026-10-21). A library: the root module's bodies have no entries.
+	lp := filepath.Join(work, "lp")
+	if err := os.MkdirAll(filepath.Join(lp, "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lib := "const PRIMES = [2, 3, 5, 7, 11]\n\npub fn peek() -> Int {\n  PRIMES[0]\n}\n\npub fn sum() -> Int {\n  var s = 0\n  for p in PRIMES {\n    s += p\n  }\n  s\n}\n"
+	for p, s := range map[string]string{"xo.mod": "module example.com/p\n", "lib/lib.xo": lib} {
+		if err := os.WriteFile(filepath.Join(lp, p), []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mainOf := func(call string) []byte {
+		return []byte("use example.com/p/lib\n\nfn main(os: Os) uses stdio {\n  os.stdio.println(\"${" + call + "}\")\n}\n")
+	}
+	lcache := filepath.Join(work, "cache", "lib")
+	stats := func() string {
+		t.Helper()
+		os.Remove(out)
+		cmd := exec.Command(xo, "build", "--backend=arm64", "-o", out, ".")
+		cmd.Dir = lp
+		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+lcache, "XO_BACKEND_CACHE=on", "XO_FE_STATS=1")
+		log, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("xo build: %v\n%s", err, log)
+		}
+		return string(log)
+	}
+	if err := os.WriteFile(filepath.Join(lp, "main.xo"), mainOf("lib.sum()"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stats()
+	if err := os.WriteFile(filepath.Join(lp, "main.xo"), mainOf("lib.peek()} ${lib.sum()"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if log := stats(); strings.Contains(log, "fe miss.const") || strings.Contains(log, "fe miss.absent") {
+		t.Errorf("sum missed over a constant peek made first:\n%s", log)
+	}
+	got, _ := os.ReadFile(out)
+	if !bytes.Equal(got, build(lp, filepath.Join(work, "cache", "liboff"), "XO_BACKEND_CACHE=off")) {
+		t.Error("the build replaying a constant another body made differs from the cache-off build")
+	}
 }
 
 // TestFrontCacheSitesThunks: bodies that spawn tasks that can fail and
