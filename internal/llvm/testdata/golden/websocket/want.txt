@@ -158,6 +158,12 @@ Upgrade: websocket
 Connection: Upgrade
 Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
 frames: 881d03ef696e76616c6964205554462d3820696e2074657874206672616d65
+== masked text
+HTTP/1.1 101 Switching Protocols
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+frames: 810568656c6c6f8800
 == close no code
 HTTP/1.1 101 Switching Protocols
 Upgrade: websocket

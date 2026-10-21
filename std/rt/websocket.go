@@ -311,13 +311,48 @@ func (c *wsConn) readMessage() (Websocket_Message, *Websocket_WsErr) {
 				return Websocket_Message{}, &e
 			}
 		}
-		payload, err := c.readN(n)
-		if err != nil {
-			return Websocket_Message{}, err
-		}
-		if mask {
-			for i := range payload {
-				payload[i] ^= key[i&3]
+		var payload []byte
+		if op == wsText || (op == wsContinuation && kind == wsText) {
+			// a text payload is validated in the pieces that arrive
+			// (Autobahn 6.4.3, 6.4.4): a bad sequence fails the
+			// connection before the rest of the frame is read
+			for got := int64(0); got < n; {
+				if c.br.Buffered() == 0 {
+					if _, perr := c.br.Peek(1); perr != nil {
+						if perr == io.EOF || perr == io.ErrUnexpectedEOF {
+							e := wsClosed(1006, io.ErrUnexpectedEOF.Error())
+							return Websocket_Message{}, &e
+						}
+						e := wsNetErr(perr)
+						return Websocket_Message{}, &e
+					}
+				}
+				piece, err := c.readN(min(int64(c.br.Buffered()), n-got))
+				if err != nil {
+					return Websocket_Message{}, err
+				}
+				if mask {
+					for i := range piece {
+						piece[i] ^= key[(got+int64(i))&3]
+					}
+				}
+				data = append(data, piece...)
+				cut, ok := wsUTF8Prefix(data[checked:])
+				if !ok {
+					return Websocket_Message{}, c.protocolError(1007, "invalid UTF-8 in text frame")
+				}
+				checked += cut
+				got += int64(len(piece))
+			}
+		} else {
+			var err *Websocket_WsErr
+			if payload, err = c.readN(n); err != nil {
+				return Websocket_Message{}, err
+			}
+			if mask {
+				for i := range payload {
+					payload[i] ^= key[i&3]
+				}
 			}
 		}
 		switch op {

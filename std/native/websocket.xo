@@ -250,6 +250,17 @@ fn utf8_cut(b: Bytes) -> Int {
   n
 }
 
+/// Up to max of the next bytes of the input: what has arrived, at least
+/// one byte.
+fn (c: WsConn) read_some(var st: ReadState, max: Int) -> Bytes ! websocket.WsErr {
+  if st.buf.len() == st.pos {
+    c.read_n(st, 1)?
+    st.pos -= 1
+  }
+  let have = st.buf.len() - st.pos
+  c.read_n(st, if have < max { have } else { max })
+}
+
 /// Frames up to a whole message (NextReader and its messageReader), the
 /// control frames between them handled.
 fn (c: WsConn) read_message(var st: ReadState) -> websocket.Message ! websocket.WsErr {
@@ -326,13 +337,39 @@ fn (c: WsConn) read_message(var st: ReadState) -> websocket.Message ! websocket.
         return Err(websocket.WsErr.TooBig(limit: c.max))
       }
     }
-    var payload = c.read_n(st, n)?
-    if mask {
-      var u = BytesBuilder.with_capacity(n)
-      for i in 0..n {
-        u.write_byte(payload[i] ^ key[i & 3])
+    var payload = b""
+    if op == OP_TEXT || (op == OP_CONT && kind == OP_TEXT) {
+      // a text payload is validated in the pieces that arrive (Autobahn
+      // 6.4.3, 6.4.4): a bad sequence fails the connection before the
+      // rest of the frame is read
+      var got = 0
+      while got < n {
+        var piece = c.read_some(st, n - got)?
+        if mask {
+          var u = BytesBuilder.with_capacity(piece.len())
+          for i in 0..piece.len() {
+            u.write_byte(piece[i] ^ key[(got + i) & 3])
+          }
+          piece = u.freeze()
+        }
+        let chunk = if pend.len() == 0 { piece } else { pend + piece }
+        let cut = utf8_cut(chunk)
+        if cut < 0 || chunk[0..cut].to_str() is None {
+          return Err(c.protocol_error(1007, "invalid UTF-8 in text frame"))
+        }
+        pend = chunk[cut..]
+        data.write(piece)
+        got += piece.len()
       }
-      payload = u.freeze()
+    } else {
+      payload = c.read_n(st, n)?
+      if mask {
+        var u = BytesBuilder.with_capacity(n)
+        for i in 0..n {
+          u.write_byte(payload[i] ^ key[i & 3])
+        }
+        payload = u.freeze()
+      }
     }
     if op == OP_PONG {
       continue

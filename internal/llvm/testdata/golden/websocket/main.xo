@@ -205,6 +205,7 @@ fn main(os: Os) {
         exchange(os, addr, "utf8 split ok", upgrade_raw("/echo", "") + frames("018200000000e282808100000000ac8880aabbccdd"))
         exchange(os, addr, "utf8 split bad", upgrade_raw("/echo", "") + frames("018100000000e000810000000080"))
         exchange(os, addr, "utf8 unfinished", upgrade_raw("/echo", "") + frames("018100000000e280810000000082"))
+        exchange(os, addr, "masked text", upgrade_raw("/echo", "") + frames("81850102030469676f686e") + frames("8880aabbccdd"))
         exchange(os, addr, "close no code", upgrade_raw("/echo", "") + frames("8880aabbccdd"))
         exchange(os, addr, "close with text", upgrade_raw("/echo", "") + frames("888500000000"+"03e8") + "bye".bytes())
       }
