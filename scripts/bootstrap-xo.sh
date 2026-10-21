@@ -72,6 +72,7 @@ say() { echo "bootstrap: $*" | tee -a "$log" >&2; }
 
 # PATH without Go: a directory holding `go` is replaced by a shim
 # directory with links to its other programs.
+origpath=$PATH
 newpath=""
 oldifs=$IFS
 IFS=:
@@ -114,7 +115,19 @@ say "no go on PATH; seed $seed; backend $backend; $(uname -sm); $(${XO_CC:-clang
 
 # the build stamps (decision 0264, compiler/xo/provenance.xo): the
 # commit and a hash of the uncommitted changes, the same for every stage
-# so s2 and s3 can be identical; no source key (it needs Go)
+# so s2 and s3 can be identical; and the source key (internal/xotool
+# Key) when it is known: $XO_SOURCE_KEY, else computed with the Go that
+# PATH had before (only the key; no stage uses Go), so a test run that
+# pins an output (XO_CLI) can tell it is stale (xotool StaleCLI,
+# 2026-10-21)
+srckey=${XO_SOURCE_KEY:-}
+if [ -z "$srckey" ]; then
+  srckey=$(PATH=$origpath go run ./scripts/xobuild --key 2>/dev/null || true)
+fi
+case "$srckey" in
+  [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+  *) srckey="" ;;
+esac
 stamps=""
 if [ -f "$root/compiler/xo/provenance.xo" ]; then
   commit=$(git -C "$root" rev-parse HEAD 2>/dev/null || true)
@@ -127,6 +140,7 @@ if [ -f "$root/compiler/xo/provenance.xo" ]; then
     fi
   fi
   stamps="--stamp XO_COMMIT=$commit --stamp XO_DIRTY=$dirty --stamp XO_BUILT_BY=bootstrap-xo.sh"
+  [ -n "$srckey" ] && stamps="$stamps --stamp XO_SOURCE_KEY=$srckey"
 fi
 
 # stage N: binary $2 builds compiler/xo into $out/sN/xo (with the
