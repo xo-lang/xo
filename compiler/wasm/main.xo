@@ -9,7 +9,8 @@
 // lowers it with this backend, and prints `== ok <bytes>` with the module
 // written to DIR/<name>.wasm and its text to DIR/<name>.wat (--out; the
 // name is the directory's), or `== unsupported <why>` (no module: a
-// construct of a later stage), `== rejected`, or `== error <message>`.
+// construct of a later stage), `== rejected <file:line:col: code message>`
+// (the checker's first error), or `== error <message>`.
 // --each builds every directory as a run of its own, each preceded by
 // `=== wasm <dir>`. Fault positions are relative to the directory's
 // module root (the nearest xo.mod, else the directory), as `xo build`
@@ -112,10 +113,22 @@ fn build_one(os: Os, std_dir: Str, wd: Str, dirs: List[Str], out_dir: Str, why: 
   if !c.unsupported.is_empty() {
     return "== unsupported ${c.unsupported}"
   }
+  // the checker's own text, so a rejected run says why (owner, from the
+  // 2026-10-21 poll): the first error by position
+  var first: check.Diag? = None
   for d in c.diags {
     if !d.warning || d.code == "XO0900" {
-      return "== rejected"
+      let earlier = match first {
+        Some(f) => d.file < f.file || (d.file == f.file && (d.line < f.line || (d.line == f.line && d.col < f.col)))
+        None => true
+      }
+      if earlier {
+        first = Some(d)
+      }
     }
+  }
+  if let Some(d) = first {
+    return "== rejected ${d.file}:${d.line}:${d.col}: ${d.code} ${d.message}"
   }
   let root = line_root(os, wd, dirs[0])
   // the host's `target.os` (want.txt is the host's run), WASI's

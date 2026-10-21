@@ -1297,3 +1297,35 @@ func TestGoCompiledMethodRouting(t *testing.T) {
 		t.Errorf("want a build error naming uuid.Uuid.xo_test_zero, got (err %v):\n%s", err, out)
 	}
 }
+
+// TestWasmToolRejectedText: the wasm tool (compiler/wasm) prints the
+// checker's first error after `== rejected`, so a rejected run says why
+// (owner, from the 2026-10-21 poll).
+func TestWasmToolRejectedText(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("builds compiler/wasm")
+	}
+	cli, err := xoCommand()
+	if err != nil {
+		t.Skip(err)
+	}
+	tool := filepath.Join(t.TempDir(), "xowasm")
+	b := exec.Command(cli[0], append(cli[1:], "build", "-o", tool, filepath.Join("..", "..", "compiler", "wasm"))...)
+	if out, err := b.CombinedOutput(); err != nil {
+		t.Fatalf("building compiler/wasm: %v\n%s", err, out)
+	}
+	dir := writeFiles(t, map[string]string{
+		"xo.mod":  "module example.com/w\n",
+		"main.xo": "fn main(os: Os) {\n  let n: Int = \"x\"\n  os.stdio.println(\"${n}\")\n}\n",
+	})
+	std, _ := filepath.Abs(filepath.Join("..", "..", "std"))
+	// run in the directory, as the tool's callers do (an absolute
+	// directory argument reports `no main function`, a separate quirk)
+	run := exec.Command(tool, "--std="+std, ".")
+	run.Dir = dir
+	out, _ := run.CombinedOutput()
+	if !strings.Contains(string(out), "== rejected ") || !strings.Contains(string(out), ":2:") || !strings.Contains(string(out), "XO0401") {
+		t.Errorf("want `== rejected FILE:2:COL: XO0401 ...`, got:\n%s", out)
+	}
+}
