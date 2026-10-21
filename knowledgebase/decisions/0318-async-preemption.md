@@ -202,3 +202,33 @@ redirects itself into a stub that saves every register and yields.
   costs every function a register.
 - Cooperative only (decision 0286 before step 3): a task that never
   calls the runtime starves its worker.
+
+## Addendum (2026-10-21, before stage 1): runtime code inlined into the program
+
+Pinning (item 4 (a)) keeps the values the interrupted code holds valid,
+but while the fiber is set aside its worker runs other fibers, and they
+may enter the same per thread structures: the heap's free lists (alloc
+and free's fast paths), the deferred release queue, the worker's rings.
+An interruption in the middle of such an update, with another fiber on
+the same worker updating the same structure, corrupts it. Inside the
+runtime's own functions the runtime section check declines (item 2). But
+the inliner (compiler/arm64 inline.xo) inlines runtime functions into
+the program's code: no rule keeps an llrt body out of a std/native or
+program function, so a runtime sequence can sit in the program's text
+with no section to tell it apart. Go has the same problem and marks such
+code unsafe for asynchronous preemption.
+
+So stage 1 adds the unsafe range table after all (item 4 (b), for this
+case only): every instruction the emitter lowers from a value whose
+inline site's callee is a runtime function (runtime_mod: the inline
+sites the debug information already records) is inside an unsafe range;
+the emitter writes each function's ranges, sorted, into a section of
+their own (`__DATA,__xo_unsafe` and `.data.xo_unsafe`, start and end
+addresses), and the handler declines when the interrupted PC falls in one
+(a binary search). With pinning this covers both hazards: values derived
+from the thread (pinning) and reentrancy into the worker's structures
+(the runtime section and the unsafe ranges). The every-register test
+gains an allocating loop (a list grown and dropped each iteration in
+program code) preempted thousands of times with another allocating
+fiber on the same worker (XO_THREADS=1), checked by the leak checker and
+the heap's own checks (XO_HEAP_GUARD).
