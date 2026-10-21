@@ -377,7 +377,8 @@ fn x86_sched_asm_windows() -> Str {
 fn w64_sched_fn(name: Str, body: List[Str]) -> Str {
   var b: List[Str] = ["\t.globl ${name}\n\t.p2align 4\n${name}:\n"]
   for l in body {
-    b.push("\t${l}\n")
+    // a label (the preemption stub's) at the line start
+    b.push(if l.ends_with(":") { "${l}\n" } else { "\t${l}\n" })
   }
   b.join("")
 }

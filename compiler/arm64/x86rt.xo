@@ -482,7 +482,8 @@ fn x86_sched_fn(name: Str, global: Bool, body: List[Str]) -> Str {
   }
   b.push("\t.type ${name}, @function\n\t.p2align 4\n${name}:\n")
   for l in body {
-    b.push("\t${l}\n")
+    // a label (the preemption stub's) at the line start
+    b.push(if l.ends_with(":") { "${l}\n" } else { "\t${l}\n" })
   }
   b.join("")
 }
@@ -595,7 +596,8 @@ fn x86_sched_fn_darwin(name: Str, global: Bool, body: List[Str]) -> Str {
   }
   b.push("\t.p2align 4\n_${name}:\n")
   for l in body {
-    b.push("\t${l}\n")
+    // a label (the preemption stub's) at the line start
+    b.push(if l.ends_with(":") { "${l}\n" } else { "\t${l}\n" })
   }
   b.join("")
 }
