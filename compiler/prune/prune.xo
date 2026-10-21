@@ -399,7 +399,7 @@ fn run_sliced(fs: Fs, clock: Clock, dir: Str, p: Policy) -> Stats uses (fs.read,
     }
     var size = kept_sizes.get(s) ?? 0
     // the shard's share of the cap: its bytes scaled by cap / total
-    let share = if p.max_bytes > 0 && total > p.max_bytes { size * p.max_bytes / total } else { size }
+    let share = if p.max_bytes > 0 && total > p.max_bytes { share_of(size, p.max_bytes, total) } else { size }
     var rest: List[Entry] = []
     for e in es {
       let idle = clock.since(e.used)
@@ -487,6 +487,17 @@ pub fn retire(fs: Fs, clock: Clock, dir: Str, name: Str) uses (fs.read, fs.write
   if fs.exists("${dir}/${name}").ok() ?? false {
     fs.rename("${dir}/${name}", "${dir}/trash-${name}-${clock.now().unix_millis()}").ignore_err("another prune retired it")
   }
+}
+
+/// size scaled by cap / total, in Float: size * cap overflowed Int once
+/// a shard held over 512 MiB under a 16 GiB cap (2026-10-21: every
+/// detached prune faulted before removing anything, and the back-end
+/// cache grew to 49 GB).
+fn share_of(size: Int, cap: Int, total: Int) -> Int {
+  if total <= 0 {
+    return size
+  }
+  Int(Float(size) * (Float(cap) / Float(total)))
 }
 
 /// The shards of the cache in dir, sorted: each directory one level

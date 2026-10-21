@@ -357,3 +357,11 @@ test "a retired layout leaves the shards and its trash is removed" {
     expect(fi.name.starts_with("trash-")) == false
   }
 }
+
+test "a shard's share of the cap does not overflow at real sizes" {
+  // a 613 MB shard of a 49 GB cache under 16 GiB (2026-10-21's fault)
+  let share = share_of(613024918, 16 * GB, 49 * GB)
+  expect(share > 200000000 && share < 210000000) == true
+  expect(share_of(5, 10, 0)) == 5
+  expect(share_of(GB * 1000, GB * 16, GB * 2000) == GB * 8) == true
+}

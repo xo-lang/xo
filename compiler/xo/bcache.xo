@@ -879,9 +879,13 @@ const BACKEND_EVERY: Duration = 1m
 /// passed); the child prune_backend_cache starts.
 fn prune_backend_child(os: Os, dir: Str) -> Int {
   var p = backend_policy(os)
-  // no removal budget and no interval: the child is the only runner
+  // no removal budget and no interval: the child is the only runner;
+  // and every shard walked in a run, so the sizes it acts on are current
+  // (300 ms slices left the ledger stale for 10 minutes while packs grew,
+  // 2026-10-21: the ledger said 16 GB of a 49 GB cache)
   p.budget = 0s
   p.every = 0s
+  p.walk_budget = 60s
   // pack/ (a slot per build target in one directory) is read no more
   // since packs/<xx>/ (2026-10-21): its 138,000 slots made each run's
   // listing of the shards take 4 to 5 s, so a run walked one shard;
