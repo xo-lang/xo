@@ -165,6 +165,22 @@ func bigCorpus() string {
 		}
 		fmt.Fprintf(&o, "  (%q, %q, %q, %d, %q),\n", op, bigHex(a), bigHex(b), k, want)
 	}
+	// operands past Go's Karatsuba threshold (40 words) and of very
+	// different sizes, for mul, quo, rem, text, and sqrt
+	for i := 0; i < 160; i++ {
+		op := []string{"mul", "mul", "quo", "rem", "text", "sqrt", "sub"}[r.Intn(7)]
+		a := bigRand(r, []int{2600, 4000, 8000}[r.Intn(3)])
+		b := bigRand(r, []int{2600, 3000, 64, 1300}[r.Intn(4)])
+		k := 10
+		if op == "text" {
+			k = []int{10, 16, 7}[r.Intn(3)]
+		}
+		want := bigOp(op, a, b, k)
+		if want == "" {
+			continue
+		}
+		fmt.Fprintf(&o, "  (%q, %q, %q, %d, %q),\n", op, bigHex(a), bigHex(b), k, want)
+	}
 	o.WriteString("]\n\n/// (text, base, Go's SetString: the value in hex, or \"bad\")\nconst PARSE: List[(Str, Int, Str)] = [\n")
 	texts := []string{"", "0", "-0", "+7", "--1", "12x", "0x_1f", "0x1f", "0X1F", "0b101", "0o17", "017", "08", "0_1", "1__2", "1_2", "_1", "1_", "0x", "0b", "ff", "FF", "zz", "ZZ", "-", "+", " 1", "1 ", "9223372036854775808", "-9223372036854775809", "1.5"}
 	for i := 0; i < 400; i++ {

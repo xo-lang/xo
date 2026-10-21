@@ -85,6 +85,11 @@ queue on 2026-10-21.
   - **Tests.** The scripts/stdcorpus big corpus (2,600 operations, plus
     SetString) passed on go, arm64, and LLVM on its first full run.
     Karatsuba and recursive division come next, held to the same corpus.
+  - Stage 2 (2026-10-21): Karatsuba above Go's 40-word threshold, split
+    at half the longer operand. 3^300000 times itself plus one went from
+    0.31 s to 0.06 s on arm64 (~/xo-lead/notes/lib1/bigbench.sh). The
+    corpus gained operands of 2,600 to 8,000 bits. Recursive division
+    (Burnikel-Ziegler) remains.
 
 - RSA and ECDSA public keys from JWKs can be read with `big.from_bytes`,
   and JSON with integers past 2^63 decodes exactly into a `big.Int`.

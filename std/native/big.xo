@@ -185,9 +185,41 @@ fn nat_sub(x: List[Int], y: List[Int]) -> List[Int] {
   norm(z)
 }
 
+/// Go's karatsubaThreshold: operands of fewer words multiply by rows.
+const KARATSUBA: Int = 40
+
+/// x * B^k (B = 2^64): k zero words below x.
+fn nat_shift_words(x: List[Int], k: Int) -> List[Int] {
+  if x.is_empty() {
+    return []
+  }
+  var z = raw.zero_ints(x.len() + k)
+  for i in 0..x.len() {
+    z[i + k] = x[i]
+  }
+  z
+}
+
+/// Karatsuba: with x = x1 B^m + x0 and y = y1 B^m + y0, x y = z2 B^2m +
+/// (z1 - z2 - z0) B^m + z0, where z1 = (x0 + x1)(y0 + y1).
+fn nat_mul_karatsuba(x: List[Int], y: List[Int]) -> List[Int] {
+  let m = (if x.len() > y.len() { x.len() } else { y.len() }) / 2
+  let x0 = norm(x[0..(if m < x.len() { m } else { x.len() })])
+  let x1 = if m < x.len() { x[m..x.len()] } else { [] }
+  let y0 = norm(y[0..(if m < y.len() { m } else { y.len() })])
+  let y1 = if m < y.len() { y[m..y.len()] } else { [] }
+  let z0 = nat_mul(x0, y0)
+  let z2 = nat_mul(x1, y1)
+  let z1 = nat_sub(nat_sub(nat_mul(nat_add(x0, x1), nat_add(y0, y1)), z2), z0)
+  nat_add(nat_add(nat_shift_words(z2, 2 * m), nat_shift_words(z1, m)), z0)
+}
+
 fn nat_mul(x: List[Int], y: List[Int]) -> List[Int] {
   if x.is_empty() || y.is_empty() {
     return []
+  }
+  if x.len() >= KARATSUBA && y.len() >= KARATSUBA {
+    return nat_mul_karatsuba(x, y)
   }
   var z = raw.zero_ints(x.len() + y.len())
   for i in 0..x.len() {
