@@ -10,7 +10,7 @@
 use std/regexp
 use native/llrt/raw
 use native/llrt/scan
-use native/llrt/unicode
+use native/llrt/unicode_classes
 use native/rt
 
 // ---------------------------------------------------------------------------
@@ -429,10 +429,6 @@ fn (var p: Parser) append_group(var r: List[Int], sign: Int, class: List[Int]) {
   }
 }
 
-/// The canonical names Go's regexp knows in \p{...} (categories,
-/// scripts, aliases, and Any, Assigned, Ascii, Lc).
-const UNICODE_NAMES: Str = " Adlam Ahom Anatolian_Hieroglyphs Any Arabic Armenian Ascii Assigned Avestan Balinese Bamum Bassa_Vah Batak Bengali Bhaiksuki Bopomofo Brahmi Braille Buginese Buhid C Canadian_Aboriginal Carian Casedletter Caucasian_Albanian Cc Cf Chakma Cham Cherokee Chorasmian Closepunctuation Cntrl Co Combiningmark Common Connectorpunctuation Control Coptic Cs Cuneiform Currencysymbol Cypriot Cypro_Minoan Cyrillic Dashpunctuation Decimalnumber Deseret Devanagari Digit Dives_Akuru Dogra Duployan Egyptian_Hieroglyphs Elbasan Elymaic Enclosingmark Ethiopic Finalpunctuation Format Georgian Glagolitic Gothic Grantha Greek Gujarati Gunjala_Gondi Gurmukhi Han Hangul Hanifi_Rohingya Hanunoo Hatran Hebrew Hiragana Imperial_Aramaic Inherited Initialpunctuation Inscriptional_Pahlavi Inscriptional_Parthian Javanese Kaithi Kannada Katakana Kawi Kayah_Li Kharoshthi Khitan_Small_Script Khmer Khojki Khudawadi L LC Lao Latin Lc Lepcha Letter Letternumber Limbu Linear_A Linear_B Lineseparator Lisu Ll Lm Lo Lowercaseletter Lt Lu Lycian Lydian M Mahajani Makasar Malayalam Mandaic Manichaean Marchen Mark Masaram_Gondi Mathsymbol Mc Me Medefaidrin Meetei_Mayek Mende_Kikakui Meroitic_Cursive Meroitic_Hieroglyphs Miao Mn Modi Modifierletter Modifiersymbol Mongolian Mro Multani Myanmar N Nabataean Nag_Mundari Nandinagari Nd New_Tai_Lue Newa Nko Nl No Nonspacingmark Number Nushu Nyiakeng_Puachue_Hmong Ogham Ol_Chiki Old_Hungarian Old_Italic Old_North_Arabian Old_Permic Old_Persian Old_Sogdian Old_South_Arabian Old_Turkic Old_Uyghur Openpunctuation Oriya Osage Osmanya Other Otherletter Othernumber Otherpunctuation Othersymbol P Pahawh_Hmong Palmyrene Paragraphseparator Pau_Cin_Hau Pc Pd Pe Pf Phags_Pa Phoenician Pi Po Privateuse Ps Psalter_Pahlavi Punct Punctuation Rejang Runic S Samaritan Saurashtra Sc Separator Sharada Shavian Siddham SignWriting Sinhala Sk Sm So Sogdian Sora_Sompeng Soyombo Spaceseparator Spacingmark Sundanese Surrogate Syloti_Nagri Symbol Syriac Tagalog Tagbanwa Tai_Le Tai_Tham Tai_Viet Takri Tamil Tangsa Tangut Telugu Thaana Thai Tibetan Tifinagh Tirhuta Titlecaseletter Toto Ugaritic Unassigned Uppercaseletter Vai Vithkuqi Wancho Warang_Citi Yezidi Yi Z Zanabazar_Square Zl Zp Zs "
-
 /// canonicalName: a leading capital, lowercase after it, no `_`, `-`, or
 /// space.
 fn canonical_name(name: Str) -> Str {
@@ -458,24 +454,41 @@ fn canonical_name(name: Str) -> Str {
   b.freeze().to_str() ?? name
 }
 
-/// The ranges of a Unicode class the native backends have: the sign (1,
-/// or -1 to invert), the table, and the extra runes of its case folds; a
-/// sign 0 for a name they do not have.
-fn unicode_table(name: Str) -> (Int, List[Int], List[Int]) {
-  match canonical_name(name) {
-    "Any" => (1, [0, MAX_RUNE], [0, MAX_RUNE])
-    "Ascii" => (1, [0, 0x7f], [0, 0x7f, 0x17f, 0x17f, 0x212a, 0x212a])
-    "L" | "Letter" => (1, unicode.ranges(0), [0x345, 0x345])
-    "Nd" | "Decimalnumber" | "Digit" => (1, unicode.ranges(1), [])
-    _ => (0, [], [])
+/// Table k of unicode_classes as inclusive [lo, hi, ...] ranges.
+fn class_table(k: Int) -> List[Int] {
+  let t = unicode_classes.TABLES
+  let r = unicode_classes.RANGES
+  let first = u24(t, 6 * k)
+  let n = u24(t, 6 * k + 3)
+  var out: List[Int] = []
+  var i = first
+  while i < first + n {
+    out.push(u24(r, 6 * i))
+    out.push(u24(r, 6 * i + 3))
+    i += 1
   }
+  out
 }
 
-/// Whether Go's regexp knows the class name (looked up by its canonical
-/// name, as Go does).
-fn unicode_known(name: Str) -> Bool {
+fn u24(t: Bytes, i: Int) -> Int {
+  (Int(t[i]) << 16) | (Int(t[i + 1]) << 8) | Int(t[i + 2])
+}
+
+/// unicodeTable: the ranges of a Unicode class, the sign (1, or -1 to
+/// invert), and its case fold ranges (empty: none); a sign 0 for a name
+/// Go's regexp does not know.
+fn unicode_table(name: Str) -> (Int, List[Int], List[Int]) {
   let c = canonical_name(name)
-  UNICODE_NAMES.contains(" ${c} ")
+  match c {
+    "Any" => return (1, [0, MAX_RUNE], [0, MAX_RUNE])
+    "Ascii" => return (1, [0, 0x7f], [0, 0x7f, 0x17f, 0x17f, 0x212a, 0x212a])
+    _ => {}
+  }
+  let (tab, fold, sign) = unicode_classes.class_of(c)
+  if sign == 0 {
+    return (0, [], [])
+  }
+  (sign, class_table(tab), if fold < 0 { [] } else { class_table(fold) })
 }
 
 // ---------------------------------------------------------------------------
@@ -516,9 +529,6 @@ fn (var p: Parser) parse_unicode_class(s: Str, i: Int, r: List[Int]) -> (List[In
   }
   let (tsign, tab, fold) = unicode_table(name)
   if tsign == 0 {
-    if unicode_known(name) {
-      return Err(perr("Unicode class not supported by native builds yet (decision 0172)", seq))
-    }
     return Err(perr("invalid character class range", seq))
   }
   if tsign < 0 {

@@ -1,5 +1,20 @@
 # std/regexp changes
 
+## 2026-10-21: port: every Unicode class natively
+
+- Kind: port
+- Commit: (filled in after the push)
+- Found by: the std coverage table (decision 0276)
+- Go reference: regexp/syntax unicodeTable, unicode.Categories, Scripts, FoldCategory, FoldScript, CategoryAliases (go1.26.1, Unicode 15.0.0)
+- Test: std/native/regexp_test.xo (1,092 cases: `\p{NAME}`, `\P{NAME}`, and `(?i)[\p{NAME}]` for every category, script, and alias, on the runes at the edges of the class's ranges, against Go's ReplaceAllString), TestUnicodeTables
+
+Native builds had only `\pL`, `\p{Nd}`, `\p{Any}`, and `\p{ASCII}`; any
+other class Go knows (`\p{Greek}`, `\pN`, `\p{Lu}`) was an error. They now
+have all of them, generated from Go's tables (std/native/llrt/unicode_classes.xo,
+about 64 KB more in a program that uses regexp). As in Go, a script
+name with an underscore (`\p{Old_Italic}`) is an invalid class: Go's
+lookup canonicalizes it to `Olditalic`, which no table has.
+
 ## 2026-10-21: test: Go's RE2 search tests
 
 - Kind: test
@@ -10,5 +25,5 @@
 
 No difference found: the native engine compiles, rejects, and matches as
 Go's regexp on every pair, except patterns with a Unicode class native
-builds do not have yet (`\p{Greek}`, decision 0172), which the test
-counts apart.
+builds did not have yet (`\p{Greek}`, decision 0172), which the test
+counted apart until the entry above.

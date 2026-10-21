@@ -1712,9 +1712,9 @@ std/native/             std implemented in Xo for the native backends (decision 
                         implements std/<name>; rt.xo, rtjson.xo, rthttp.xo declare C intrinsics
                         (embedded as std.NativeFiles, loaded only for native builds)
 std/native/llrt/        the native runtime written in Xo (decision 0180): unicode.xo (case mapping,
-                        Rune classes, quoting) and unicode_tables.xo (generated from Go's unicode
-                        and strconv tables: `go test ./internal/llvm -run TestUnicodeTables
-                        -golden-update`); imported as
+                        Rune classes, quoting), unicode_tables.xo, and unicode_classes.xo (regexp's
+                        \p{...} classes), both generated from Go's unicode and strconv tables:
+                        `go test ./internal/llvm -run TestUnicodeTables -golden-update`; imported as
                         `use native/llrt/<name>` by std/native only.
                         text.xo (Int parse, Duration and Time text, Debug quoting) and
                         strings.xo (replace, trims), decision 0193,

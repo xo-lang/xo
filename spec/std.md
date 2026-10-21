@@ -2912,10 +2912,10 @@ pub fn format(rows: List[List[Str]], sep: Rune = ',') -> Str
 
 Status: implemented on the Go backend (decision 0164, Go's `regexp`)
 and natively (decision 0172: Go's regexp/syntax parser, compiler, and
-Pike VM ported to Xo, the same matches and errors). Native builds have
-the Unicode classes `\pL` (`\p{Letter}`), `\p{Nd}`, `\p{Any}`, and
-`\p{ASCII}` so far; another class Go knows is a `RegexErr` saying it is
-not supported by native builds yet.
+Pike VM ported to Xo, the same matches and errors). Every Unicode class
+Go's regexp knows (`\p{Greek}`, `\pN`, `\p{Lu}`, `\p{Assigned}`, the
+category aliases such as `\p{Letter}`) is in native builds too, from
+Go's tables (Unicode 15.0.0), looked up by name as Go does.
 
 ```
 struct Regex {}                          // an immutable compiled value (not a handle, core 2.9)

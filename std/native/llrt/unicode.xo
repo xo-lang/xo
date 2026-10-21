@@ -358,29 +358,3 @@ pub fn quote(b: Bytes) -> Str {
   rt.rs_push_byte(o, 34)
 }
 
-/// The ranges of a Unicode class as lo, hi pairs, sorted (std/regexp's
-/// \pL and \p{Nd}, decision 0172): 0 the letters (unicode.L), 1 the
-/// decimal digits (unicode.Nd).
-pub fn ranges(which: Int) -> List[Int] {
-  var out: List[Int] = []
-  var t = unicode_tables.DIGIT
-  var n = unicode_tables.DIGIT_N
-  if which == 0 {
-    t = unicode_tables.LETTER
-    n = unicode_tables.LETTER_N
-    out.push(65)
-    out.push(90)
-    out.push(97)
-    out.push(122)
-  } else {
-    out.push(48)
-    out.push(57)
-  }
-  var i = 0
-  while i < n {
-    out.push(u24(t, 6 * i))
-    out.push(u24(t, 6 * i + 3))
-    i += 1
-  }
-  out
-}

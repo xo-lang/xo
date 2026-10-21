@@ -83,7 +83,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | text/template | none | planned | Config and mail templates; after html/template. |
 | text/tabwriter | none | planned | CLI tables; std/cli and std/term cover most tool output. |
 | text/scanner | none | not planned | Go source tokenizer; Xo's own lexer is in selfhost. |
-| regexp, regexp/syntax | std/regexp | partial | Go's parser, compiler, and Pike VM ported. Missing natively: Unicode classes other than L, Nd, Any, ASCII. |
+| regexp, regexp/syntax | std/regexp | done | Go's parser, compiler, and Pike VM ported, with every Unicode class of Go's regexp natively (2026-10-21); Go's results on re2-search.txt and on each class. |
 | index/suffixarray | none | not planned | Niche; a module can provide it. |
 | fmt | string interpolation, Display, Debug | partial | `${x}`, Display, Debug, Float shortest text. Missing: width, padding, precision, and base verbs (`%08.3f`, `%x`, `%-10s`). |
 
