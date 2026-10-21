@@ -428,7 +428,7 @@ Where NAME is declared, with its signature and doc comment. NAME is
 written as code writes it: `greet`, `Counter.next`, `Str.find`,
 `check.Checker.check_dirs`, `std/tls.client`; std and runtime modules
 load when a name refers to them (decision 0289).
-""" + "\n" + LOOKUP_DIR + LOOKUP_OUT
+""" + "\n\n" + LOOKUP_DIR + "\n" + LOOKUP_OUT
 }
 
 fn refs_text() -> Str {
@@ -437,7 +437,7 @@ usage: xo refs [--dir=DIR] [--json|--text] NAME
 
 Every reference to NAME in the program, the declaration marked, NAME
 written as for xo def.
-""" + "\n" + LOOKUP_DIR + LOOKUP_OUT
+""" + "\n\n" + LOOKUP_DIR + "\n" + LOOKUP_OUT
 }
 
 fn type_text() -> Str {
@@ -446,7 +446,7 @@ usage: xo type [--json|--text] FILE:LINE:COL
 
 The type of the expression at a position (1 based line and column) and
 the declaration it refers to; FILE's directory is the program checked.
-""" + "\n" + LOOKUP_OUT
+""" + "\n\n" + LOOKUP_OUT
 }
 
 fn symbols_text() -> Str {
@@ -456,7 +456,7 @@ usage: xo symbols [--dir=DIR] [--pub] [--json|--text] [DIR]
 The declarations of one directory's own files, private ones too; --pub
 lists the exported surface only. At a root with no .xo files of its
 own, the directories below that have them are named.
-""" + "\n" + LOOKUP_OUT
+""" + "\n\n" + LOOKUP_OUT
 }
 
 fn explain_text() -> Str {
