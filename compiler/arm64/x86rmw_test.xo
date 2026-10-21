@@ -1,0 +1,24 @@
+// x86_rmw: a spilled two address operation through r11 becomes the
+// memory destination form (2026-10-21).
+
+test "x86_rmw folds a load, operation, and store back of one slot" {
+  let text = "\tmovq 24(%rsp), %r11\n\tadcq %rcx, %r11\n\tmovq %r11, 24(%rsp)\n\tmovq 8(%rsp), %r11"
+  expect(x86_rmw(text)) == "\tadcq %rcx, 24(%rsp)\n\tmovq 8(%rsp), %r11"
+  let imm = "\tmovq 16(%rsp), %r11\n\taddq $8, %r11\n\tmovq %r11, 16(%rsp)\n\tret"
+  expect(x86_rmw(imm)) == "\taddq $8, 16(%rsp)\n\tret"
+}
+
+test "x86_rmw keeps the triple when r11 is read after or the slots differ" {
+  // r11 read after the store
+  let a = "\tmovq 24(%rsp), %r11\n\taddq %rcx, %r11\n\tmovq %r11, 24(%rsp)\n\tmovq %r11, %rax"
+  expect(x86_rmw(a)) == a
+  // another slot
+  let b = "\tmovq 24(%rsp), %r11\n\taddq %rcx, %r11\n\tmovq %r11, 32(%rsp)\n\tret"
+  expect(x86_rmw(b)) == b
+  // a memory source (two memory operands)
+  let c = "\tmovq 24(%rsp), %r11\n\taddq 8(%rbx), %r11\n\tmovq %r11, 24(%rsp)\n\tret"
+  expect(x86_rmw(c)) == c
+  // a call through r11 after
+  let d = "\tmovq 24(%rsp), %r11\n\taddq %rcx, %r11\n\tmovq %r11, 24(%rsp)\n\tcallq *%r11"
+  expect(x86_rmw(d)) == d
+}

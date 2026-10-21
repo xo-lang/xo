@@ -290,7 +290,7 @@ fn (var g: G) x86_emit_once() {
   if g.os == "windows" {
     g.seh_end(b, sites)
     b.push("\n")
-    g.text.push(x86_not_reuse(x86_r11_reuse(x86_imul3(x86_copy_runs(x86_reload_peep(b.join("")))))))
+    g.text.push(x86_rmw(x86_not_reuse(x86_r11_reuse(x86_imul3(x86_copy_runs(x86_reload_peep(b.join(""))))))))
     return
   }
   b.push("\t.cfi_endproc\n")
@@ -302,7 +302,7 @@ fn (var g: G) x86_emit_once() {
     g.lsda(sites)
   }
   b.push("\n")
-  g.text.push(x86_not_reuse(x86_r11_reuse(x86_imul3(x86_copy_runs(x86_reload_peep(b.join("")))))))
+  g.text.push(x86_rmw(x86_not_reuse(x86_r11_reuse(x86_imul3(x86_copy_runs(x86_reload_peep(b.join(""))))))))
 }
 
 /// The frame: rbp and the callee saved registers pushed, the rest of
@@ -1774,6 +1774,62 @@ fn x86_not_reuse(text: Str) -> Str {
   }
   x86_put_pre(out, pre, ls.len(), ls.len() + 1)
   out.join("\n")
+}
+
+/// A pass over a function's emitted text: a spilled two address
+/// operation through r11, `movq S, %r11; OPq X, %r11; movq %r11, S` with
+/// S a stack slot and OP add, adc, sub, sbb, and, or, or xor, is the
+/// memory destination form `OPq X, S` (the same flags: an adc chain
+/// through it holds) when r11 is not read again before it is written
+/// (r11 is the emitter's scratch, live in no block's edges). 2026-10-21:
+/// 162 such triples in bench/perf/tls, x25519.fe64_sq's adc chain among
+/// them.
+fn x86_rmw(text: Str) -> Str {
+  let (ls, pre) = x86_lift_dbg(text)
+  var out: List[Str] = List.with_capacity(ls.len())
+  var i = 0
+  while i < ls.len() {
+    if i + 2 < ls.len() {
+      let (s0, d0, ok0) = movq_ops(ls[i])
+      let (s2, d2, ok2) = movq_ops(ls[i + 2])
+      let op = ls[i + 1]
+      if ok0 && ok2 && d0 == "%r11" && rsp_slot(s0) && s2 == "%r11" && d2 == s0 && x86_rmw_op(op) && x86_r11_dead(ls, i + 3) {
+        let body = op[1..op.len()]
+        let sp = body.find(" ") ?? body.len()
+        let src = x86_ops(body[sp..body.len()].trim())[0]
+        x86_put_pre(out, pre, i, i + 3)
+        out.push("\t${body[0..sp]} ${src}, ${s0}")
+        i += 3
+        continue
+      }
+    }
+    x86_put_pre(out, pre, i, i + 1)
+    out.push(ls[i])
+    i += 1
+  }
+  x86_put_pre(out, pre, ls.len(), ls.len() + 1)
+  out.join("\n")
+}
+
+/// Whether line l is `OPq X, %r11` for an operation x86_rmw folds into
+/// a stack slot: X a register other than r11 or an immediate (a memory
+/// X would make two memory operands).
+fn x86_rmw_op(l: Str) -> Bool {
+  if !l.starts_with("\t") {
+    return false
+  }
+  let body = l[1..l.len()]
+  let sp = body.find(" ") ?? body.len()
+  let m = body[0..sp]
+  if !(m is "addq" | "adcq" | "subq" | "sbbq" | "andq" | "orq" | "xorq") {
+    return false
+  }
+  let ops = x86_ops(body[sp..body.len()].trim())
+  if ops.len() != 2 || ops[1] != "%r11" {
+    return false
+  }
+  let x = ops[0]
+  (x.starts_with("$") || (x.starts_with("%") && !x86_parts("%r11").contains(x))) && !x.contains("(")
 }
 
 /// Whether s names a 64 bit general register (not rsp or rip).
