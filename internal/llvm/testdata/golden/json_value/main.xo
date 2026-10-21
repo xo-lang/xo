@@ -1,0 +1,28 @@
+// json.Value (decision 0299) on every backend: parse_value (numbers as
+// Int or Num, strings with escapes, nesting, a duplicate key at its first
+// position with its last value, errors as decode's), to_value of a
+// derived struct, encode (round trips), and get.
+use std/json
+
+struct User {
+  name: Str
+  age: Int
+  tags: List[Str]
+  score: Float
+  boss: Str?
+} derive Json
+
+fn main(os: Os) {
+  for t in ["null", "true", "42", "-7", "9223372036854775807", "9223372036854775808", "1.5", "1e3", "-0.0", "\"a\\u00e9\\n\\ud83d\\ude00\"", "[]", "[1,[2,[3]],{}]", "{\"b\":1,\"a\":2,\"b\":3}", "{\"x\":{\"y\":[true,null]}}", "  [1, 2]  ", "{", "[1,]", "tru", "1 2", "\"\\x\""] {
+    match json.parse_value(t) {
+      Ok(v) => os.stdio.println("${t.debug()} -> ${v.debug()} | ${v.encode()}")
+      Err(e) => os.stdio.println("${t.debug()} -> ${e}")
+    }
+  }
+  let u = User{name: "Zoë", age: 41, tags: ["a", "b"], score: 2.5, boss: None}
+  let v = json.to_value(u)
+  os.stdio.println(v.encode())
+  os.stdio.println("${v.get("name").debug()} ${v.get("tags").map(fn(x) { x.encode() }).debug()} ${v.get("missing").debug()} ${json.Value.Int(n: 1).get("name").debug()}")
+  let back = json.parse_value(v.encode()).ok() ?? json.Value.Null
+  os.stdio.println("round trip: ${back.encode() == v.encode()}")
+}

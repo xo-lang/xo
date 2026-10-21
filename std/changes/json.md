@@ -1,5 +1,16 @@
 # std/json changes
 
+## 2026-10-21: feature: json.Value, JSON of any shape
+
+- Kind: feature
+- Commit: (filled in after the push)
+- Found by: survey (dynamic JSON; std/template's data, decision 0299)
+- Go reference: encoding/json decoding into `any`
+- Test: internal/llvm/testdata/golden/json_value (every backend)
+
+`Value` (Null, Bool, Int, Num, Str, List, Object in key order),
+`to_value`, `parse_value`, `encode`, and `get`.
+
 ## 2026-10-20: feature: field wire names and derive Json(case: ...)
 
 - Kind: feature

@@ -150,6 +150,9 @@ var (
 	_ func(*Http_Client, *Task, Http_Request) Result[Http_Response, Http_ClientErr]                      = (*Http_Client).M_send
 	_ func(*Http_Client, *Task, Bytes) Result[Http_Client, Http_TlsErr]                                  = (*Http_Client).M_with_roots
 	_ func(*Task, string) Result[Http_Url, Http_UrlErr]                                                  = Http_parse_url
+	_ func(*Task, string) Result[Json_Value, Json_DecodeErr]                                             = Json_parse_value
+	_ func(*Json_Value, *Task) string                                                                    = (*Json_Value).M_encode
+	_ func(*Json_Value, *Task, string) Option[Json_Value]                                                = (*Json_Value).M_get
 	_ func(*Task, string, Map[string, IDebug])                                                           = Log_debug
 	_ func(*Task, string, Map[string, IDebug])                                                           = Log_info
 	_ func(*Task, string, Map[string, IDebug])                                                           = Log_warn

@@ -41,3 +41,99 @@ fn patch_apply_opt[T](p: json.Patch[T], current: T?) -> T? {
     Value(v) => Some(v)
   }
 }
+
+// ---------------------------------------------------------------------------
+// Value (decision 0299): built from jsontext's tape, as decode reads it
+
+fn value_at(src: Bytes, tape: List[Int], i: Int) -> json.Value {
+  let k = tape[i]
+  if k == 0 {
+    return json.Value.Null
+  }
+  if k == 1 || k == 2 {
+    return json.Value.Bool(b: k == 2)
+  }
+  if k == 3 {
+    if jsontext.int_ok(src, tape, i) {
+      return json.Value.Int(n: jsontext.int_at(src, tape, i))
+    }
+    return json.Value.Num(n: jsontext.float_at(src, tape, i))
+  }
+  if k == 4 {
+    return json.Value.Str(s: jsontext.str_at(src, tape, i))
+  }
+  if k == 5 {
+    var items: List[json.Value] = []
+    var j = i + 3
+    while j < tape[i + 2] {
+      items.push(value_at(src, tape, j))
+      j = jsontext.next(tape, j)
+    }
+    return json.Value.List(items: items)
+  }
+  let ms = jsontext.members(src, tape, i)
+  var fields: List[(Str, json.Value)] = []
+  var m = 0
+  while m + 1 < ms.len() {
+    fields.push((jsontext.str_at(src, tape, ms[m]), value_at(src, tape, ms[m + 1])))
+    m += 2
+  }
+  json.Value.Object(fields: fields)
+}
+
+fn parse_value(text: Str) -> json.Value ! json.DecodeErr {
+  let src = text.bytes()
+  let tape = jsontext.parse(src)
+  if tape.is_empty() {
+    return Err(json.DecodeErr{path: "$", msg: "invalid JSON: ${jsontext.parse_err(src)}"})
+  }
+  Ok(value_at(src, tape, 0))
+}
+
+fn to_value[T: Json](v: T) -> json.Value { parse_value(encode_str(v)).ok() ?? json.Value.Null }
+
+fn value_append(out: Str, v: json.Value) -> Str {
+  match v {
+    Null => out + "null"
+    Bool(b) => out + (if b { "true" } else { "false" })
+    Int(n) => out + "${n}"
+    Num(n) => jsontext.append_float(out, n)
+    Str(s) => jsontext.append_str(out, s)
+    List(items) => {
+      var o = out + "["
+      for (k, x) in items.indexed() {
+        if k > 0 {
+          o = o + ","
+        }
+        o = value_append(o, x)
+      }
+      o + "]"
+    }
+    Object(fields) => {
+      var o = out + "{"
+      for (k, f) in fields.indexed() {
+        if k > 0 {
+          o = o + ","
+        }
+        o = value_append(jsontext.append_str(o, f.0) + ":", f.1)
+      }
+      o + "}"
+    }
+  }
+}
+
+fn value_encode(v: json.Value) -> Str { value_append("", v) }
+
+fn value_get(v: json.Value, key: Str) -> json.Value? {
+  match v {
+    Object(fields) => {
+      for (k, x) in fields {
+        if k == key {
+          return Some(x)
+        }
+      }
+      None
+    }
+    _ => None
+  }
+}

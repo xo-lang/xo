@@ -22,3 +22,30 @@ enum Patch[T] {
   Null
   Value(v: T)
 } derive Json
+
+/// A JSON value of any shape (decision 0299; Go's decoding into `any`):
+/// an object keeps its keys in the order of the text (each key once, at
+/// its first position, with its last value, as `decode` reads objects),
+/// and a number without a fraction or exponent that fits an Int is `Int`,
+/// any other number `Num`.
+enum Value {
+  Null
+  Bool(b: Bool)
+  Int(n: Int)
+  Num(n: Float)
+  Str(s: Str)
+  List(items: List[Value])
+  Object(fields: List[(Str, Value)])
+}
+
+/// The value of v's JSON encoding (`encode`): field names are its JSON
+/// names (`derive Json(case:)`, decision 0277).
+fn to_value[T: Json](v: T) -> Value
+/// The value of a JSON text; `DecodeErr` at `$` with `decode`'s texts.
+fn parse_value(text: Str) -> Value ! DecodeErr
+/// The JSON text of v, as `encode` writes its parts (strings escaped,
+/// numbers, objects in their order).
+fn (v: Value) encode() -> Str
+/// The value of an object's field key; None for a missing key or a value
+/// that is not an object.
+fn (v: Value) get(key: Str) -> Value?

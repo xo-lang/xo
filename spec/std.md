@@ -1420,6 +1420,28 @@ works without a struct.
 
 ---
 
+### 5.1 Values of any shape (decision 0299)
+
+```
+enum Value { Null, Bool(b: Bool), Int(n: Int), Num(n: Float), Str(s: Str), List(items: List[Value]), Object(fields: List[(Str, Value)]) }
+pub fn to_value[T: Json](v: T) -> Value      // v's encoding as a Value
+pub fn parse_value(text: Str) -> Value ! DecodeErr
+fn (v: Value) encode() -> Str
+fn (v: Value) get(key: Str) -> Value?        // an object's field
+```
+
+- Go's decoding into `any`, with two differences: a number without a
+  fraction or exponent that fits an Int is `Int` (Go gives float64, which
+  loses ids above 2^53), any other `Num`; an object keeps its keys in the
+  order of the text, each key once at its first position with its last
+  value (as `decode` reads objects; Go's map has no order).
+- Errors are `decode`'s (`at $: invalid JSON: ...`, Go's texts).
+- `encode` writes the parts as `encode` does (strings escaped, numbers,
+  objects in their order); `parse_value(v.encode())` gives `v` back.
+- Uses: JSON whose shape varies (webhook bodies), and std/template's data
+  (decision 0299).
+- Golden `json_value` (every backend).
+
 ## 6. std/log
 
 The log functions perform the `log` effect (core 6.1, decision 0156): no

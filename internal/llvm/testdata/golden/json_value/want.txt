@@ -1,0 +1,26 @@
+exit 0
+--- stdout
+"null" -> Null | null
+"true" -> Bool(b: true) | true
+"42" -> Int(n: 42) | 42
+"-7" -> Int(n: -7) | -7
+"9223372036854775807" -> Int(n: 9223372036854775807) | 9223372036854775807
+"9223372036854775808" -> Num(n: 9.223372036854776e+18) | 9223372036854776000
+"1.5" -> Num(n: 1.5) | 1.5
+"1e3" -> Num(n: 1000.0) | 1000
+"-0.0" -> Num(n: -0.0) | -0
+"\"a\\u00e9\\n\\ud83d\\ude00\"" -> Str(s: "aé\n😀") | "aé\n😀"
+"[]" -> List(items: []) | []
+"[1,[2,[3]],{}]" -> List(items: [Int(n: 1), List(items: [Int(n: 2), List(items: [Int(n: 3)])]), Object(fields: [])]) | [1,[2,[3]],{}]
+"{\"b\":1,\"a\":2,\"b\":3}" -> Object(fields: [("b", Int(n: 3)), ("a", Int(n: 2))]) | {"b":3,"a":2}
+"{\"x\":{\"y\":[true,null]}}" -> Object(fields: [("x", Object(fields: [("y", List(items: [Bool(b: true), Null]))]))]) | {"x":{"y":[true,null]}}
+"  [1, 2]  " -> List(items: [Int(n: 1), Int(n: 2)]) | [1,2]
+"{" -> at $: invalid JSON: EOF
+"[1,]" -> at $: invalid JSON: invalid character ']' looking for beginning of value
+"tru" -> at $: invalid JSON: unexpected EOF
+"1 2" -> at $: invalid JSON: trailing data
+"\"\\x\"" -> at $: invalid JSON: invalid character 'x' in string escape code
+{"name":"Zoë","age":41,"tags":["a","b"],"score":2.5,"boss":null}
+Some(Str(s: "Zoë")) Some("[\"a\",\"b\"]") None None
+round trip: true
+--- stderr
