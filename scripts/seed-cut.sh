@@ -33,6 +33,13 @@
 # main, no tag is made): a rehearsal; seed-upload.sh refuses its output.
 # XO_HEAVY, when set, prefixes the heavy steps (the lead's slot lock,
 # e.g. XO_HEAVY="$XO_LEAD_SCRATCH/agents/heavy.sh seed").
+# XO_PUSH_LOCK, when set, is the push lock directory that pushq.sh takes
+# (e.g. "$XO_LEAD_SCRATCH/locks/push"): seed-cut takes it (mkdir, a "who"
+# file of NAME@PID, a lock whose PID is gone is stale) before it reads
+# origin/main and holds it through the gate until its push, so main
+# cannot move under the gate (2026-10-21: the 0.24.0 cut passed its gate
+# and its push was refused, main having moved in the 20 minutes). Other
+# pushes wait meanwhile. A dry run takes no lock.
 set -euo pipefail
 
 die() { echo "seed-cut: $*" >&2; exit 1; }
@@ -70,6 +77,22 @@ work=$(cd "$work" && pwd)
 [ -z "$(ls -A "$work")" ] || die "$work is not empty"
 log=$work/logs
 mkdir -p "$log"
+
+locked=""
+if [ -n "${XO_PUSH_LOCK:-}" ] && [ "$dry" != 1 ]; then
+  waited=0
+  until mkdir "$XO_PUSH_LOCK" 2>/dev/null; do
+    holder=$(cat "$XO_PUSH_LOCK/who" 2>/dev/null || true); hpid=${holder##*@}
+    if [ -n "$hpid" ] && ! kill -0 "$hpid" 2>/dev/null; then
+      echo "seed-cut: stale push lock from $holder, taking it"; rm -rf "${XO_PUSH_LOCK:?}"; continue
+    fi
+    [ $((waited % 60)) = 0 ] && echo "seed-cut: waiting for the push lock ($holder)"
+    sleep 5; waited=$((waited + 5))
+  done
+  echo "seed-$version@$$" > "$XO_PUSH_LOCK/who"
+  locked=$XO_PUSH_LOCK
+  trap 'rm -rf "${locked:?}"' EXIT
+fi
 
 git -C "$repo" fetch -q origin --tags
 if git -C "$repo" rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
@@ -125,6 +148,9 @@ else
   git push -q origin HEAD:main || die "push refused (main moved?): rerun with a new WORKDIR"
   git tag -a "v$version" -F "$notes" "$commit"
   git push -q origin "v$version"
+  if [ -n "$locked" ]; then
+    rm -rf "${locked:?}"; trap - EXIT; locked=""
+  fi
 fi
 
 step "5. darwin-arm64 at -O2"

@@ -4125,7 +4125,14 @@ WORKDIR/logs. A failure after the push (a build or pack) is fixed and
 the packing redone by hand from WORKDIR/tree; the tag and the version
 commit stay. `XO_SEED_DRY_RUN=1` rehearses every step without the push
 and tag (seed-upload.sh refuses its output); `XO_HEAVY` prefixes the
-heavy steps with a lock (the lead's agents/heavy.sh).
+heavy steps with a lock (the lead's agents/heavy.sh). With other
+sessions pushing, set `XO_PUSH_LOCK` to the push lock pushq.sh takes
+(`XO_PUSH_LOCK=$XO_LEAD_SCRATCH/locks/push`): seed-cut.sh takes it
+before it reads origin/main and holds it through the gate to its push,
+so main cannot move under the gate; without it the 0.24.0 cut passed its
+gate and its push was refused (2026-10-21). Pushes from other sessions
+wait for the gate (about 20 minutes). A lock whose holder's PID is gone
+is taken over; a dry run takes none (last verified: 2026-10-21).
 
 seed-upload.sh checks every tarball against its .sha256 and the
 manifest, refuses a seed already in the bucket, uploads the five
