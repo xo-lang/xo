@@ -95,7 +95,12 @@ xo_f_main:
 	ldp x22, x21, [sp, #32]
 	ldp x29, x30, [sp], #48
 	b xo_x_fault_continue
+.LpGL1jtk_f1_pe22:
+	mov sp, x29
+	b .LpGL1jtk_f1_b22
 .LpGL1jtk_f1_fault1:
+	sub sp, sp, #16
+	str x2, [sp, #0]
 	mov x0, x22
 	mov x1, #43
 	mov x2, #16

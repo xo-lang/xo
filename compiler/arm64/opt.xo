@@ -1686,6 +1686,24 @@ fn (var g: G) copy_prop() {
     }
     g.put_insts(b, ins)
   }
+  // the SSA values' registers, which the variables' locations and the
+  // fault stubs' saves read (dwvars.xo): a dropped copy's value lives in
+  // its source (2026-10-21: a string parameter of a function inlined
+  // into a loop printed <unavailable> in tracebacks, TestFaultLocals)
+  for v in 0..g.vals.len() {
+    var ws = g.vals[v]
+    var moved = false
+    for i in 0..ws.len() {
+      let r = same_root(same, ws[i])
+      if r != ws[i] {
+        ws[i] = r
+        moved = true
+      }
+    }
+    if moved {
+      g.vals[v] = ws
+    }
+  }
 }
 
 /// The most constants hoist_consts moves out of a loop that calls on its
