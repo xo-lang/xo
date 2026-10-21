@@ -855,7 +855,12 @@ fn fill(var c: Conn, nb: Bool) -> Bool {
         let k = if 5 - c.first.len() < r { 5 - c.first.len() } else { r }
         c.first = rt.rs_append_bytes(rt.rs_append_bytes(rt.rs_with_cap(5), c.first, 0, c.first.len(), 0), got, 0, k, 0).bytes()
       }
-      c.pend = rt.rs_append_bytes(rt.rs_append_bytes(rt.rs_with_cap(c.pend.len() + r), c.pend, 0, c.pend.len(), 0), got, 0, r, 0).bytes()
+      if c.pend.is_empty() {
+        // the usual read: the buffer becomes pend, not a copy of it
+        c.pend = got
+      } else {
+        c.pend = rt.rs_append_bytes(rt.rs_append_bytes(rt.rs_with_cap(c.pend.len() + r), c.pend, 0, c.pend.len(), 0), got, 0, r, 0).bytes()
+      }
       if !done(c) {
         // the handshake takes everything
         feed(c, c.pend)
