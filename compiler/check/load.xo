@@ -784,7 +784,22 @@ fn (var c: Checker) load_dir(dir0: Str) -> Int {
   }
   for n in names.sort() {
     let p = join(dir, n)
-    let src = c.overlay.get(c.abs(p)) ?? (c.fs.read(p).ok() ?? b"")
+    let src = match c.overlay.get(c.abs(p)) {
+      Some(b) => b
+      None => match c.fs.read(p) {
+        Ok(b) => b
+        // removed since the listing: not part of the module
+        Err(NotFound(_)) => continue
+        Err(e) => {
+          // checking the module without this file would answer for a
+          // different program (as list_dir)
+          if c.walk_err.is_empty() {
+            c.walk_err = "read ${p}: ${e}"
+          }
+          continue
+        }
+      }
+    }
     c.parse_into(m, p, src, false)
   }
   c.mods[m].state = 1

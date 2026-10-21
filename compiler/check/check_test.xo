@@ -407,8 +407,8 @@ test "only functions that are not pub, not std's and with no uses have inferred 
   expect(c.effect_reads_across_modules()) == []
 }
 
-/// An Fs whose read_dir of one directory fails with an I/O error, as a
-/// directory listing does when the process is out of file descriptors.
+/// An Fs whose read_dir or read of one path fails with an I/O error, as a
+/// listing or a read does when the process is out of file descriptors.
 struct FlakyFs {
   inner: Fs
   bad: Str
@@ -422,7 +422,12 @@ fn (f: FlakyFs) write_only() -> Fs { f.inner.write_only() }
 fn (f: FlakyFs) case_sensitive() -> Bool { f.inner.case_sensitive() }
 fn (f: FlakyFs) stat(path: Str) -> FileInfo? ! FsErr uses fs.read { f.inner.stat(path) }
 fn (f: FlakyFs) exists(path: Str) -> Bool ! FsErr uses fs.read { f.inner.exists(path) }
-fn (f: FlakyFs) read(path: Str) -> Bytes ! FsErr uses fs.read { f.inner.read(path) }
+fn (f: FlakyFs) read(path: Str) -> Bytes ! FsErr uses fs.read {
+  if path == f.bad {
+    return Err(FsErr.Io(path: path, msg: "input/output error"))
+  }
+  f.inner.read(path)
+}
 fn (f: FlakyFs) read_text(path: Str) -> Str ! FsErr uses fs.read { f.inner.read_text(path) }
 fn (f: FlakyFs) read_dir(dir: Str) -> List[FileInfo] ! FsErr uses fs.read {
   if dir == f.bad {
@@ -464,4 +469,8 @@ test "a directory that cannot be listed fails the check instead of being skipped
   var ok = new_checker(FlakyFs{inner: os.fs, bad: "root/none"}, "std")
   expect(ok.check_dirs(["root"]).is_ok()) == true
   expect(ok.root_mods.len()) == 1
+  // a source file that cannot be read fails the check too, rather than
+  // being checked as an empty file
+  var unread = new_checker(FlakyFs{inner: os.fs, bad: "root/app/main.xo"}, "std")
+  expect(unread.check_dirs(["root"]).err().map(fn(e) { e.contains("read root/app/main.xo") })) == Some(true)
 }
