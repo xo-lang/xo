@@ -1,5 +1,18 @@
 # std/big changes
 
+## 2026-10-21: perf: divide and conquer text natively
+
+- Kind: perf
+- Commit: (filled in after the push)
+- Found by: decision 0311 stage 4 (text of 3^300000 took 942 ms against Go's 5)
+- Go reference: math/big natconv.go itoa, convertWords, divisors, leafSize 8 (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/big; internal/llvm/testdata/golden/big_basic
+
+Natively, `text` of a number of more than 8 words splits it by a table of
+powers of the base near its square root (recursive division and Karatsuba
+squaring), converts the halves, and joins the digits, as Go's itoa does;
+smaller numbers keep word division. On 3^300000 (143,137 digits, paired runs of 3 on a busy machine), `text` went from 178 to 191 ms down to 53 to 56 ms (3.4 times); `parse` and `quo_rem` are unchanged.
+
 ## 2026-10-21: perf: recursive division natively
 
 - Kind: perf

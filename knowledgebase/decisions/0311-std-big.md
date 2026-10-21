@@ -98,6 +98,13 @@ queue on 2026-10-21.
     (the 161 ms run overlapped other load). text and parse are word
     divisions and unchanged. Go's divide-and-conquer text conversion
     remains.
+  - Stage 4 (2026-10-21): `text` is Go's divide and conquer (itoa,
+    convertWords, divisors: leaf size 8 words, a table of squared word
+    powers of the base, split near the square root); the table is built
+    on each call (Go caches the base 10 one). Checked against the word
+    division text on 992 numbers of 1 to 3,000 factors in 7 bases.
+    3^300000: `text` 178 to 191 ms before, 53 to 56 ms
+    after (3 paired runs, ~/xo-lead/notes/lib1/bigbench5.sh). `parse` stays Go's quadratic scan.
 
 - RSA and ECDSA public keys from JWKs can be read with `big.from_bytes`,
   and JSON with integers past 2^63 decodes exactly into a `big.Int`.

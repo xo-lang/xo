@@ -1038,6 +1038,104 @@ fn bigint_to_float(x: big.BigInt) -> Float {
 
 const DIGITS: Str = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
+/// Go's leafSize: blocks of this many words or fewer convert by word
+/// division.
+const LEAF: Int = 8
+
+/// Go's divisor: a power of the base to split a number by, its bit length,
+/// and its digit count.
+struct Divisor {
+  bbb: List[Int]
+  nbits: Int
+  nd: Int
+}
+
+/// Go's divisors: the successive squares of (largest word power of the
+/// base)^LEAF for a number of m words, each widened by whole factors of
+/// the base while the top word holds them.
+fn divisors(m: Int, base: Int, nd: Int, bb: Int) -> List[Divisor] {
+  var k = 1
+  var words = LEAF
+  while words < (m >> 1) && k < 64 {
+    words = words << 1
+    k += 1
+  }
+  var table: List[Divisor] = []
+  for i in 0..k {
+    var bbb: List[Int] = []
+    var d = 0
+    if i == 0 {
+      bbb = nat_exp([bb], [LEAF], [])
+      d = nd * LEAF
+    } else {
+      let prev = table[i - 1]
+      bbb = nat_mul(prev.bbb, prev.bbb)
+      d = 2 * prev.nd
+    }
+    while {
+      let larger = nat_mul_add_ww(bbb, base, 0)
+      if larger.len() != bbb.len() {
+        break
+      }
+      bbb = larger
+      d += 1
+    }
+    table.push(Divisor{bbb: bbb, nbits: nat_bit_len(bbb), nd: d})
+  }
+  table
+}
+
+/// Go's convertWords: the digits of q (base `base`) right aligned in
+/// s[lo..hi), zero filled. A large q is split by the table's divisors
+/// near its square root, the remainder converted into the low digits and
+/// the quotient continued; a small one is divided by bb word by word.
+fn convert_words(q0: List[Int], var s: List[Int], lo: Int, hi0: Int, base: Int, nd: Int, bb: Int, table: List[Divisor], upto: Int) {
+  var q = q0
+  var hi = hi0
+  var index = upto - 1
+  if upto > 0 {
+    while q.len() > LEAF {
+      let max_length = nat_bit_len(q)
+      let min_length = max_length >> 1
+      while index > 0 && table[index - 1].nbits > min_length {
+        index -= 1
+      }
+      if table[index].nbits >= max_length && nat_cmp(table[index].bbb, q) >= 0 {
+        index -= 1
+        if index < 0 {
+          fault("internal inconsistency")
+        }
+      }
+      let (qq, r) = nat_divmod(q, table[index].bbb)
+      q = qq
+      let h = hi - table[index].nd
+      convert_words(r, s, h, hi, base, nd, bb, table, index)
+      hi = h
+    }
+  }
+  var a = q[0..q.len()]
+  var n = a.len()
+  let m = reciprocal_word(bb)
+  var i = hi
+  while n > 0 {
+    var r = nat_div_w_in(a, n, bb, m)
+    while n > 0 && a[n - 1] == 0 {
+      n -= 1
+    }
+    var j = 0
+    while j < nd && i > lo {
+      i -= 1
+      s[i] = r % base
+      r = r / base
+      j += 1
+    }
+  }
+  while i > lo {
+    i -= 1
+    s[i] = 0
+  }
+}
+
 fn bigint_text(x: big.BigInt, base: Int) -> Str {
   if base < 2 || base > 62 {
     fault("invalid base ${base}")
@@ -1054,6 +1152,25 @@ fn bigint_text(x: big.BigInt, base: Int) -> Str {
     nd += 1
   }
   let ds = DIGITS.bytes()
+  var out = BytesBuilder.new()
+  if xn {
+    out.write_byte(45)
+  }
+  if xa.len() > LEAF {
+    // Go's itoa: split large numbers recursively by the divisor table
+    let width = Int(Float(nat_bit_len(xa)) / Float(base).log2()) + 2
+    var s = raw.zero_ints(width)
+    let table = divisors(xa.len(), base, nd, bb)
+    convert_words(xa, s, 0, width, base, nd, bb, table, table.len())
+    var start = 0
+    while start < width - 1 && s[start] == 0 {
+      start += 1
+    }
+    for k in start..width {
+      out.write_byte(ds[s[k]])
+    }
+    return out.freeze().to_str() ?? ""
+  }
   // the base^nd chunks from the lowest, dividing a copy in place
   var chunks: List[Int] = []
   var a = xa[0..xa.len()]
@@ -1064,10 +1181,6 @@ fn bigint_text(x: big.BigInt, base: Int) -> Str {
     while n > 0 && a[n - 1] == 0 {
       n -= 1
     }
-  }
-  var out = BytesBuilder.new()
-  if xn {
-    out.write_byte(45)
   }
   var i = chunks.len() - 1
   while i >= 0 {
