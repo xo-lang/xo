@@ -646,10 +646,13 @@ fn format(t: Time, z: Zone, layout: Str, at: rt.Loc) -> Str {
         if off == 0 && it.arg == "" {
           out = out + "Z"
         } else {
+          // Go's sign is the offset's in whole minutes: -59s is +00:00
           var o = off
           var sign = "+"
-          if o < 0 {
+          if o / 60 < 0 {
             sign = "-"
+          }
+          if o < 0 {
             o = -o
           }
           out = out + sign + pad(o / 3600 % 100, 2)

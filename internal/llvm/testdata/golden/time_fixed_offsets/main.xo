@@ -1,0 +1,13 @@
+// time.format in fixed zones as Go's Format (std.md 13.3): an offset
+// under a minute shows Go's sign, the offset's in whole minutes, so -59s
+// is +00:00 and -61s is -00:01 (found by a differential against Go,
+// 2026-10-21; std/native/time_test.xo has 1,200 instants).
+use std/time
+
+fn main(os: Os) {
+  let t = Time.from_unix(1700000000) + Duration.from_nanos(5000000)
+  for off in [0, 1, -1, 59, -59, 60, -60, -61, 3661, -3661, 19800, -34200] {
+    let z = time.fixed("F", Duration.from_secs_int(off))
+    os.stdio.println("${off}: ${time.format(t, z, "{year}-{month}-{day}T{hour}:{minute}:{second}{frac}{offset} {offset:compact} {zone}")}")
+  }
+}

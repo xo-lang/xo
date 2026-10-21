@@ -234,9 +234,14 @@ func Time_format(_ *Task, t Time, z Time_Zone, layout string) string {
 				b.WriteByte('Z')
 				continue
 			}
+			// Go's sign is the offset's in whole minutes: -59s is +00:00
 			sign := byte('+')
-			if off < 0 {
-				sign, off = '-', -off
+			if off/60 < 0 {
+				sign = '-'
+			}
+			neg := off < 0
+			if neg {
+				off = -off
 			}
 			b.WriteByte(sign)
 			two(off / 3600)
@@ -244,7 +249,7 @@ func Time_format(_ *Task, t Time, z Time_Zone, layout string) string {
 				b.WriteByte(':')
 			}
 			two(off / 60 % 60)
-			if sign == '-' {
+			if neg {
 				off = -off
 			}
 		case "zone":
