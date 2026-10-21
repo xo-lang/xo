@@ -1,0 +1,32 @@
+// decision 0291: Sets, Map equality and JSON through copies and removals
+// (the same output on the lists and log representations).
+
+use std/json
+
+struct Doc { tags: Map[Str, Int], seen: Set[Int] } derive Json
+
+fn main(os: Os) {
+  var s: Set[Int] = [0].to_set()
+  for i in 0..50 {
+    s.add(i % 17)
+  }
+  let t = s
+  let removed = s.remove(3)
+  var sum = 0
+  for x in s {
+    sum += x
+  }
+  let u = s.union([100, 101].to_set())
+  os.stdio.println("set ${s.len()} ${t.len()} ${removed} ${s.contains(3)} ${t.contains(3)} ${sum} ${u.len()} ${u.to_list().sort().len()}")
+  var m: Map[Str, Int] = {"b": 2, "a": 1}
+  m.put("c", 3)
+  let m2 = m
+  let _r = m.remove("a")
+  os.stdio.println("eq ${m == m2} ${m == m} ${m.keys().join(",")} ${m2.keys().join(",")}")
+  let text = json.encode_str(Doc{tags: m2, seen: [5, 1, 3].to_set()})
+  os.stdio.println(text)
+  match json.decode_str[Doc](text) {
+    Ok(d) => os.stdio.println("back ${d.tags.len()} ${d.seen.len()} ${d.tags == m2}")
+    Err(e) => os.stdio.println("decode error ${e}")
+  }
+}
