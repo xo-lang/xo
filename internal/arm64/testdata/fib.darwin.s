@@ -39,40 +39,39 @@ LpGL1jtk_f1_b5:
 	add x21, x9, #24
 	ldr x9, [x21, #24]
 	cmp x9, #1
-	b.ne LpGL1jtk_f1_b19
+	b.ne LpGL1jtk_f1_b16
 LpGL1jtk_f1_b6:
 	ldp x20, x10, [x21, #0]
 	add x19, x10, x2
-	cbz x20, LpGL1jtk_f1_b19
+	cbz x20, LpGL1jtk_f1_b16
 LpGL1jtk_f1_b7:
 	mov x9, #32768
 	cmp x2, x9
-	b.gt LpGL1jtk_f1_b19
+	b.gt LpGL1jtk_f1_b16
 LpGL1jtk_f1_b10:
 	mov x9, #65536
 	cmp x19, x9
-	b.ge LpGL1jtk_f1_b19
+	b.ge LpGL1jtk_f1_b16
 LpGL1jtk_f1_b13:
 	add x0, x20, x10
 	mov x1, x11
 LpGL1jtk_f1_cs2a:
 	bl _memcpy
 LpGL1jtk_f1_cs2b:
-LpGL1jtk_f1_b14:
 	mov x9, #10
 	strb w9, [x20, x19]
 	add x9, x19, #1
 	str x9, [x21, #8]
-	b LpGL1jtk_f1_b24
-LpGL1jtk_f1_b19:
+	b LpGL1jtk_f1_b21
+LpGL1jtk_f1_b16:
 	ldr x1, [x21, #24]
-	tbnz x1, #0, LpGL1jtk_f1_b22
-LpGL1jtk_f1_b21:
+	tbnz x1, #0, LpGL1jtk_f1_b19
+LpGL1jtk_f1_b18:
 	orr x10, x1, #1
 	mov x9, #0
 	orr x1, x10, x9
 	str x1, [x21, #24]
-LpGL1jtk_f1_b22:
+LpGL1jtk_f1_b19:
 	mov x4, #1
 	mov x0, x21
 	mov x3, x2
@@ -80,17 +79,17 @@ LpGL1jtk_f1_b22:
 LpGL1jtk_f1_cs3a:
 	bl _xo_f_stdio_2eout__slow
 LpGL1jtk_f1_cs3b:
+LpGL1jtk_f1_b21:
 LpGL1jtk_f1_b24:
-LpGL1jtk_f1_b27:
 	mov x0, x22
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldp x29, x30, [sp], #48
 	b _xo_hV7Co53ncOR
-LpGL1jtk_f1_b25:
+LpGL1jtk_f1_b22:
 	mov x0, x22
 	bl _xo_hV7Co53ncOR
-LpGL1jtk_f1_b26:
+LpGL1jtk_f1_b23:
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldp x29, x30, [sp], #48

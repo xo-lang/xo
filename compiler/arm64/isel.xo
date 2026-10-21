@@ -607,6 +607,9 @@ fn (var g: G) isel() {
       g.has_range.push(false)
     }
   }
+  if g.on("ranges") {
+    g.fold_decided(blocks)
+  }
   for b in blocks {
     g.bmap[b] = g.blocks.len()
     g.blocks.push(MBlock{id: 0})
@@ -1389,6 +1392,96 @@ fn (var g: G) instr1(v: Int) {
     }
     _ => g.fail("op `${ssa.op_name(x.op)}`")
   }
+}
+
+/// Branches whose compare the operands' bounds decide become jumps
+/// (2026-10-20: portable shift's UInt32(i % 8) tested (i % 8) >> 32 != 0
+/// every iteration), when every reached value's landing check stays
+/// reached (ssa.pads_reached: a call on the kept path may land on a check
+/// on the other, chain_pads). The block not taken is still lowered, and
+/// the MIR thread drops it.
+fn (var g: G) fold_decided(blocks: List[Int]) {
+  for b in blocks {
+    let t = g.f.term(b)
+    if t < 0 || g.f.values[t].op != ssa.Op.Branch || g.f.values[t].succs.len() != 2 || g.f.values[t].pad >= 0 {
+      continue
+    }
+    let c = g.f.values[t].args[0]
+    if let Some(k) = g.decided(c) {
+      let keep = g.f.values[t].succs[if k { 0 } else { 1 }]
+      let drop = g.f.values[t].succs[if k { 1 } else { 0 }]
+      if !ssa.pads_reached(g.f, t, keep) {
+        continue
+      }
+      let to = g.f.edges[drop].to
+      var preds: List[Int] = []
+      for e in g.f.blocks[to].preds {
+        if e != drop {
+          preds.push(e)
+        }
+      }
+      g.f.blocks[to].preds = preds
+      g.f.values[t].op = ssa.Op.Jump
+      g.f.values[t].args = []
+      g.f.values[t].succs = [keep]
+      g.nuses[c] -= 1
+    }
+  }
+}
+
+/// The outcome of the Int compare c when its operands' bounds decide it.
+fn (var g: G) decided(c: Int) -> Bool? {
+  let x = g.f.values[c]
+  if !(x.op is ssa.Op.Eq | ssa.Op.Ne | ssa.Op.Lt | ssa.Op.Le | ssa.Op.Gt | ssa.Op.Ge) || x.args.len() != 2 {
+    return None
+  }
+  for a in x.args {
+    let t = g.f.values[a].ty
+    if t < 0 || g.kind(t) != ssa.Kind.Int {
+      return None
+    }
+  }
+  if x.op is ssa.Op.Eq | ssa.Op.Ne {
+    // x | k with a constant k other than 0 is never 0 (portable divmod's
+    // `d = (x % 97) | 1` kept its division by zero check)
+    for j in 0..2 {
+      let (z, zk) = g.const_int(x.args[1 - j])
+      if zk && z == 0 && g.nonzero_or(x.args[j]) {
+        return Some(x.op == ssa.Op.Ne)
+      }
+    }
+  }
+  let (alo, ahi) = g.bounds(x.args[0])
+  let (blo, bhi) = g.bounds(x.args[1])
+  let lt_t = ahi < blo
+  let lt_f = alo >= bhi
+  let gt_t = alo > bhi
+  let gt_f = ahi <= blo
+  let eq_t = alo == ahi && blo == bhi && alo == blo
+  let eq_f = ahi < blo || bhi < alo
+  match x.op {
+    Eq => if eq_t { Some(true) } else if eq_f { Some(false) } else { None }
+    Ne => if eq_f { Some(true) } else if eq_t { Some(false) } else { None }
+    Lt => if lt_t { Some(true) } else if lt_f { Some(false) } else { None }
+    Ge => if lt_f { Some(true) } else if lt_t { Some(false) } else { None }
+    Gt => if gt_t { Some(true) } else if gt_f { Some(false) } else { None }
+    _ => if gt_f { Some(true) } else if gt_t { Some(false) } else { None }
+  }
+}
+
+/// Whether v is an Or with a constant operand other than 0 (never 0).
+fn (var g: G) nonzero_or(v: Int) -> Bool {
+  let x = g.f.values[v]
+  if x.op != ssa.Op.Or || x.args.len() != 2 {
+    return false
+  }
+  for a in x.args {
+    let (k, ok) = g.const_int(a)
+    if ok && k != 0 {
+      return true
+    }
+  }
+  false
 }
 
 fn (var g: G) branch_op(v: Int) {

@@ -290,14 +290,10 @@ fn known_result(f: Func) -> Option[Aux] {
 /// 0`, `op == 1` tests stayed, the constants hoisted and spilled, in the
 /// loop).
 pub fn fold_branches(var f: Func) -> Bool {
-  // not with landings: a function with one failed the inlined module's
-  // verification (windows.fix: a value landing on a check that was no
-  // longer one, 2026-10-20), so its branches stay for isel
-  for v in f.values {
-    if v.pad >= 0 && v.block >= 0 {
-      return false
-    }
-  }
+  // a function with landings folds only the branches that leave every
+  // reached value's landing check reached (fold_const_branches): one
+  // that did not failed the inlined module's verification (windows.fix:
+  // a value landing on a check that was no longer one, 2026-10-20)
   if !fold_const_branches(f) {
     return false
   }
@@ -324,8 +320,8 @@ fn fold_const_branches(var f: Func) -> Bool {
     if v.block < 0 || v.args.len() != 2 || !(v.op is Op.Eq | Op.Ne | Op.Lt | Op.Le | Op.Gt | Op.Ge) {
       continue
     }
-    if let Some(x) = const_int(f, v.args[0]) {
-      if let Some(y) = const_int(f, v.args[1]) {
+    if let Some(x) = const_word(f, v.args[0]) {
+      if let Some(y) = const_word(f, v.args[1]) {
         // an ordering only of two constants at least 0, which order the
         // same signed or not (an unsigned type's word above 2^63 is
         // negative as Int's; 2026-10-20: ints.u64_rem's `b > 0` stayed a
@@ -365,6 +361,9 @@ fn fold_const_branches(var f: Func) -> Bool {
     }
     let keep = f.values[t].succs[taken]
     let drop = f.values[t].succs[1 - taken]
+    if !pads_reached(f, t, keep) {
+      continue
+    }
     let to = f.edges[drop].to
     var preds: List[Int] = []
     for e in f.blocks[to].preds {
@@ -379,6 +378,63 @@ fn fold_const_branches(var f: Func) -> Bool {
     changed = true
   }
   changed
+}
+
+/// Whether, with branch t taking only edge keep, the landing check of
+/// every value in a reached block is in a reached block (chain_pads lets
+/// calls share a check, so one on the edge not taken can be the landing
+/// of a value that stays).
+pub fn pads_reached(f: Func, t: Int, keep: Int) -> Bool {
+  let n = f.blocks.len()
+  var reach: List[Bool] = []
+  for _ in 0..n {
+    reach.push(false)
+  }
+  var stack = [0]
+  reach[0] = true
+  while !stack.is_empty() {
+    let bl = stack.pop() ?? 0
+    let tt = f.term(bl)
+    if tt >= 0 {
+      let ss = if tt == t { [keep] } else { f.values[tt].succs }
+      for e in ss {
+        let to = f.edges[e].to
+        if !reach[to] {
+          reach[to] = true
+          stack.push(to)
+        }
+      }
+    }
+  }
+  for bl in 0..n {
+    if !reach[bl] {
+      continue
+    }
+    for v in f.blocks[bl].instrs {
+      let w = f.values[v].pad
+      if w >= 0 {
+        let wb = f.values[w].block
+        if wb < 0 || !reach[wb] {
+          return false
+        }
+      }
+    }
+  }
+  true
+}
+
+/// const_int through IntConv, the same word as another integer type
+/// (2026-10-20: a UInt64 literal passed to ints.u64_rem's Int parameter
+/// left `b > 0` unfolded in portable u64's loop).
+fn const_word(f: Func, v: Int) -> Option[Int] {
+  var x = v
+  for _ in 0..8 {
+    if f.values[x].op != Op.IntConv || f.values[x].args.len() != 1 {
+      break
+    }
+    x = f.values[x].args[0]
+  }
+  const_int(f, x)
 }
 
 /// The integer constant value v of f, or None.
