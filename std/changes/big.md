@@ -1,5 +1,20 @@
 # std/big changes
 
+## 2026-10-21: perf: recursive division natively
+
+- Kind: perf
+- Commit: (filled in after the push)
+- Found by: decision 0311 stage 3
+- Go reference: math/big natdiv.go divRecursive, divRecursiveThreshold 40 (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/big; internal/llvm/testdata/golden/big_basic
+
+Natively, `quo_rem` (and so `div` and `mod`) with a divisor of 40 words or
+more and a quotient of 40 words or more uses Burnikel-Ziegler recursive
+division; smaller operands keep Knuth D. On a 3^300000-sized
+quotient, quo_rem went from about 270 ms to 35 ms (best two of three paired
+runs; the third after run overlapped other load at 161 ms). `text` and `parse`
+divide by a word and are unchanged.
+
 ## 2026-10-21: perf: parse and text of large numbers natively
 
 - Kind: perf

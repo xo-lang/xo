@@ -88,8 +88,16 @@ queue on 2026-10-21.
   - Stage 2 (2026-10-21): Karatsuba above Go's 40-word threshold, split
     at half the longer operand. 3^300000 times itself plus one went from
     0.31 s to 0.06 s on arm64 (~/xo-lead/notes/lib1/bigbench.sh). The
-    corpus gained operands of 2,600 to 8,000 bits. Recursive division
-    (Burnikel-Ziegler) remains.
+    corpus gained operands of 2,600 to 8,000 bits.
+  - Stage 3 (2026-10-21): recursive division (Burnikel-Ziegler, Go's
+    divRecursive shape: div2n1n and div3n2n) when the divisor has 40 words
+    or more and the quotient 40 or more; Knuth D (`nat_divmod_basic`)
+    below that. A 3^300000-sized quotient and
+    remainder (~/xo-lead/notes/lib1/bigbench4.sh, 3 paired runs on a busy
+    machine) took quo_rem 248, 284, 273 ms before and 35, 37, 161 ms after
+    (the 161 ms run overlapped other load). text and parse are word
+    divisions and unchanged. Go's divide-and-conquer text conversion
+    remains.
 
 - RSA and ECDSA public keys from JWKs can be read with `big.from_bytes`,
   and JSON with integers past 2^63 decodes exactly into a `big.Int`.

@@ -408,8 +408,115 @@ fn nat_bit(x: List[Int], i: Int) -> Int {
   x[w].shr_logical(i % 64) & 1
 }
 
-/// u / v and u % v for v != 0 (Knuth's algorithm D, natdiv.go divBasic).
+/// Divisors of this many words or more divide recursively (Go's
+/// divRecursiveThreshold).
+const DIV_RECURSIVE: Int = 40
+
+/// The low k bits of x.
+fn nat_low(x: List[Int], k: Int) -> List[Int] {
+  let words = k / 64
+  let bits = k % 64
+  if words >= x.len() {
+    return x
+  }
+  var z = raw.zero_ints(if bits == 0 { words } else { words + 1 })
+  for i in 0..words {
+    z[i] = x[i]
+  }
+  if bits != 0 {
+    let one = 1
+    z[words] = x[words] & one.wrapping_shl(bits).wrapping_sub(1)
+  }
+  norm(z)
+}
+
+/// Burnikel-Ziegler's 2n-by-n step (as CPython's _div2n1n): a / b and
+/// a % b for a < b * 2^n, b of n bits.
+fn div2n1n(a0: List[Int], b0: List[Int], n0: Int) -> (List[Int], List[Int]) {
+  if nat_bit_len(a0) - n0 <= DIV_RECURSIVE * 64 {
+    return nat_divmod_basic(a0, b0)
+  }
+  var a = a0
+  var b = b0
+  var n = n0
+  let pad = (n & 1) == 1
+  if pad {
+    a = nat_shl(a, 1)
+    b = nat_shl(b, 1)
+    n += 1
+  }
+  let half = n / 2
+  let b1 = nat_shr(b, half)
+  let b2 = nat_low(b, half)
+  let (q1, r1) = div3n2n(nat_shr(a, n), nat_low(nat_shr(a, half), half), b, b1, b2, half)
+  let (q2, r2) = div3n2n(r1, nat_low(a, half), b, b1, b2, half)
+  let r = if pad { nat_shr(r2, 1) } else { r2 }
+  (nat_add(nat_shl(q1, half), q2), r)
+}
+
+/// The 3n-by-2n step (CPython's _div3n2n): (a12 * 2^n + a3) / b for b =
+/// b1 * 2^n + b2; the remainder corrected by at most two subtractions.
+fn div3n2n(a12: List[Int], a3: List[Int], b: List[Int], b1: List[Int], b2: List[Int], n: Int) -> (List[Int], List[Int]) {
+  var q: List[Int] = []
+  var r: List[Int] = []
+  if nat_cmp(nat_shr(a12, n), b1) == 0 {
+    q = nat_sub(nat_shl([1], n), [1])
+    r = nat_add(nat_sub(a12, nat_shl(b1, n)), b1)
+  } else {
+    let (qq, rr) = div2n1n(a12, b1, n)
+    q = qq
+    r = rr
+  }
+  let t = nat_add(nat_shl(r, n), a3)
+  let p = nat_mul(q, b2)
+  if nat_cmp(t, p) >= 0 {
+    return (q, nat_sub(t, p))
+  }
+  // r < 0: add b back, one less in the quotient each time
+  var d = nat_sub(p, t)
+  while true {
+    q = nat_sub(q, [1])
+    if nat_cmp(d, b) <= 0 {
+      return (q, nat_sub(b, d))
+    }
+    d = nat_sub(d, b)
+  }
+  (q, r)
+}
+
+/// u / v by n-bit chunks of u, each through div2n1n (CPython's
+/// _divmod_pos).
+fn nat_divmod_recursive(u: List[Int], v: List[Int]) -> (List[Int], List[Int]) {
+  let n = nat_bit_len(v)
+  var chunks: List[List[Int]] = []
+  var rest = u
+  while !rest.is_empty() {
+    chunks.push(nat_low(rest, n))
+    rest = nat_shr(rest, n)
+  }
+  var r: List[Int] = []
+  var q: List[Int] = []
+  var i = chunks.len() - 1
+  while i >= 0 {
+    let (qd, rd) = div2n1n(nat_add(nat_shl(r, n), chunks[i]), v, n)
+    q = nat_add(nat_shl(q, n), qd)
+    r = rd
+    i -= 1
+  }
+  (q, r)
+}
+
+/// u / v and u % v for v != 0: recursive for a long divisor, else
+/// Knuth's algorithm D.
 fn nat_divmod(u: List[Int], v: List[Int]) -> (List[Int], List[Int]) {
+  if v.len() >= DIV_RECURSIVE && u.len() >= v.len() + DIV_RECURSIVE {
+    return nat_divmod_recursive(u, v)
+  }
+  nat_divmod_basic(u, v)
+}
+
+/// u / v and u % v for v != 0 (Knuth's algorithm D, natdiv.go divBasic).
+fn nat_divmod_basic(u: List[Int], v: List[Int]) -> (List[Int], List[Int]) {
   if nat_cmp(u, v) < 0 {
     return ([], u)
   }
