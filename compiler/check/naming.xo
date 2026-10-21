@@ -18,7 +18,7 @@ struct Rename {
 /// XO0101 when id breaks the convention of kind (check.go checkName).
 fn (var c: Checker) check_name(id: Ident, kind: Str) {
   let name = id.name
-  if name.is_empty() || name == b"_" || c.cur_mod < 0 || c.mods[c.cur_mod].is_std || c.gen_spans.contains(c.path) {
+  if name.is_empty() || name == b"_" || c.cur_mod < 0 || c.mods[c.cur_mod].is_std {
     return
   }
   var ok = false

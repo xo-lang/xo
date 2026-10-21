@@ -373,6 +373,12 @@ fn (var c: Checker) habit_print(span: Span, args: List[Arg], name: Str, at0: Spa
     }
   }
   if recv.is_empty() {
+    // no capability in scope: say exactly what to write
+    if fo >= 0 && text(c.objs[fo].name) == "main" && c.objs[fo].recv < 0 {
+      c.note(d, "give main the `Os` capability and print through it: `fn main(os: Os) { os.stdio.${print_method(name)}(...) }` (a `fn main()` has no way to print)")
+    } else if fo >= 0 {
+      c.note(d, "give `${text(c.objs[fo].name)}` a `stdio: Stdio` parameter, print with `stdio.${print_method(name)}(...)`, and pass `os.stdio` from `main` (a function's output is part of its signature)")
+    }
     return c.unit_ty
   }
   var t = ""

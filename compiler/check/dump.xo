@@ -99,9 +99,6 @@ fn (var c: Checker) run() -> () ! Str {
 /// Reports XO0110 for the imports of module m never referenced.
 fn (var c: Checker) check_unused_imports(m: Int) {
   for f in c.mods[m].files {
-    if c.files[f].generated {
-      continue
-    }
     for u in c.files[f].ast.imports {
       for (_, imp) in c.files[f].imports.entries() {
         if imp.used || imp.span != u.span || text(u.path) == "native/llrt/cabi" || text(u.path).starts_with("native/llrt/cabi_") {

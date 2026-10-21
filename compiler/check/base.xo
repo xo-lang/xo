@@ -98,8 +98,16 @@ fn (var c: Checker) error_at(f: Int, code: Str, sp: Span, msg: Str) -> Int {
 }
 
 /// A warning in the current file (check.go warnf).
+/// Findings the checker never reports in generated code (derive.xo,
+/// synthesized declarations): style (a name's convention XO0101, an unused
+/// name or import XO0110) and every warning. The one place that says so;
+/// the checks themselves know nothing of generated files.
+fn (c: Checker) quiet_in(file: Str, code: Str, warning: Bool) -> Bool {
+  c.gen_spans.contains(file) && (warning || code is "XO0101" | "XO0110")
+}
+
 fn (var c: Checker) warn(code: Str, sp: Span, msg: Str) -> Int {
-  if c.gen_spans.contains(c.path) {
+  if c.quiet_in(c.path, code, true) {
     return -1
   }
   let d = c.report(c.path, code, sp, msg)
@@ -110,6 +118,9 @@ fn (var c: Checker) warn(code: Str, sp: Span, msg: Str) -> Int {
 }
 
 fn (var c: Checker) report(file0: Str, code: Str, sp0: Span, msg0: Str) -> Int {
+  if c.quiet_in(file0, code, false) {
+    return -1
+  }
   var file = file0
   var sp = sp0
   var msg = msg0
