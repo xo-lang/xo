@@ -1132,7 +1132,22 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
       }
     }
   }
-  var dgp = if inst.early { ngp } else { 0 }
+  // a definition into the scratch register after the uses' when both
+  // fit in the two scratch registers (x16, x17): the reloaded use keeps
+  // its register, so reload_reuse_l drops its next reload (2026-10-21:
+  // http.dispatch's 35-word `req with {...}` copied each word as `ldr
+  // x16, [sp, #88]`, `ldr x16, [x16, #k]`, `str x16, [sp, #m]`, the
+  // spilled record's base reloaded for every word)
+  var nsp = 0
+  for d in inst.defs {
+    let (l, ok) = g.vloc(d)
+    if !(ok && l.reg >= 0) && !g.fp[d] {
+      nsp += 1
+    }
+  }
+  // (not a template that names x16 or x17 itself)
+  let own = t.contains("x16") || t.contains("x17") || t.contains("w16") || t.contains("w17")
+  var dgp = if inst.early || (!own && ngp > 0 && ngp + nsp <= 2) { ngp } else { 0 }
   var dfp = if inst.early { nfp } else { 0 }
   var def_reg: List[Int] = []
   var stores: List[Str] = []

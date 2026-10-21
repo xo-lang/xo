@@ -1381,12 +1381,50 @@ fn reload_reuse_l(lines: List[Str], nrefs: Map[Str, Int]) -> List[Str] {
       continue
     }
     if writes_scratch(l) {
-      h16 = -1
-      h17 = -1
+      // only the register the line writes, when that is all it does (a
+      // load into x17 from a base in x16 keeps x16: 2026-10-21,
+      // http.dispatch's record copy reloaded the base for every word)
+      let (w16, w17) = scratch_written(l)
+      if w16 {
+        h16 = -1
+      }
+      if w17 {
+        h17 = -1
+      }
     }
     out.push(l)
   }
   resplit(out)
+}
+
+/// Which of x16 and x17 line l (one writes_scratch is true of) may
+/// write: only the destination for a plain load (no write back) or a
+/// computation, whose result is its first operand; both for anything
+/// else (a call, sp, a swap).
+fn scratch_written(l: Str) -> (Bool, Bool) {
+  let body = l[1..l.len()]
+  let sp = body.find(" ") ?? body.len()
+  let op = body[0..sp]
+  let ops = if sp < body.len() { body[sp + 1..body.len()] } else { "" }
+  if op is "bl" | "blr" | "blraa" | "blrab" | "svc" | "br" || ops.contains("sp") || ops.contains("]!") || ops.contains("], #") {
+    return (true, true)
+  }
+  if op.starts_with("ld") && !op.starts_with("ldxr") && !op.starts_with("ldax") {
+    let br = ops.find("[") ?? ops.len()
+    let dst = ops[0..br]
+    return (dst.contains("x16") || dst.contains("w16"), dst.contains("x17") || dst.contains("w17"))
+  }
+  if op.starts_with("sw") || op.starts_with("cas") || op.starts_with("st") || op.starts_with("ldxr") || op.starts_with("ldax") {
+    return (true, true)
+  }
+  let first = ops.split(",")[0].trim()
+  if first is "x16" | "w16" {
+    return (true, false)
+  }
+  if first is "x17" | "w17" {
+    return (false, true)
+  }
+  (true, true)
 }
 
 /// The labels line l refers to (every `L` and the letters, digits, and `_`
