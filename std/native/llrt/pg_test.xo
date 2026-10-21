@@ -1,8 +1,10 @@
 // std/sql's Postgres driver (decision 0278): connection strings, TLS modes,
-// and text values. The conversations with a server (startup,
-// authentication, queries, errors, a server that goes away) are golden
-// pg_fake, on real local sockets: a test's FakeNet has no raw
-// connections.
+// text values, and conversations with fake servers on FakeNet's raw
+// connections (decision 0292): startup, trust and cleartext logins,
+// queries, errors by SQLSTATE, and a server that goes away. The fakes
+// answer with the backend messages a PostgreSQL 17 sends (recorded with
+// pgx against a server in Docker; scripts/pg-diff.sh checks the driver
+// against pgx itself).
 use std/sql
 
 test "connection strings: what is refused" {
@@ -33,4 +35,225 @@ test "values: arrays, bytea, json, floats, timestamps" {
   expect(text_param(sql.SqlValue.Array(items: [sql.SqlValue.Text(s: "a\"b"), sql.SqlValue.Null, sql.SqlValue.Integer(n: 2)]))) == Some("{\"a\\\"b\",NULL,2}")
   expect(text_param(sql.SqlValue.Real(f: Float.parse("-inf") ?? 0.0))) == Some("-Infinity")
   expect(param_of(sql.SqlValue.Blob(b: b"\x01")).format) == 1
+}
+
+test "a fake server: rows decoded by type, and an exec's count" {
+  let l = os.net.listen("db.test:5432")?
+  scope s {
+    s.spawn_background(fn() { fk_serve(l, fk_hello_trust(), fk_query_server).ignore_err("the server stops when the test ends") })
+    let db = sql.open(os.net, "postgres", fk_dsn("db.test:5432"))?
+    let rows = db.query("SELECT id, name, ok, at FROM t")?
+    expect(rows.len()) == 2
+    expect(rows[0].int("id")) == Ok(1)
+    expect(rows[0].str("name")) == Ok("a")
+    expect(rows[0].bool("ok")) == Ok(true)
+    expect(rows[0].time("at").map(fn(t) { t.unix_millis() })) == Ok(1792499696500)
+    expect(rows[1].str_opt("name")) == Ok(None)
+    expect(db.exec("UPDATE t SET x = 1").map(fn(r) { r.rows_affected })) == Ok(3)
+    s.cancel()
+  }
+}
+
+test "a fake server: errors by SQLSTATE" {
+  let l = os.net.listen("db.test:5432")?
+  scope s {
+    s.spawn_background(fn() { fk_serve(l, fk_hello_trust(), fk_error_server).ignore_err("the server stops when the test ends") })
+    let db = sql.open(os.net, "postgres", fk_dsn("db.test:5432"))?
+    expect(db.exec("dup").err()) == Some(sql.SqlErr.Constraint(msg: "duplicate key value violates unique constraint \"t_name_key\"", code: "23505", name: "t_name_key"))
+    expect(db.exec("syntax").err()) == Some(sql.SqlErr.Syntax(msg: "syntax error at or near \"SELEC\""))
+    expect(db.exec("table").err()) == Some(sql.SqlErr.NoTable(name: "nope"))
+    expect(db.exec("zero").err()) == Some(sql.SqlErr.Server(code: "22012", msg: "division by zero"))
+    expect(db.exec("other").map(fn(r) { r.rows_affected })) == Ok(0)
+    s.cancel()
+  }
+}
+
+test "a fake server: a cleartext password from a keyword connection string" {
+  let l = os.net.listen("db.test:5432")?
+  let got: Mutex[List[Str]] = Mutex.new([])
+  scope s {
+    s.spawn_background(fn() {
+      fk_serve(l, fk_auth_cleartext(), fn(kind, body) {
+        if kind == "p" {
+          got.with(fn(var xs) { xs.push(body[0..body.len() - 1].to_str() ?? "?") })
+          return fk_auth_ok() + fk_ready()
+        }
+        fk_complete("") + fk_ready()
+      }).ignore_err("the server stops when the test ends")
+    })
+    let db = sql.open(os.net, "postgres", "host=db.test port=5432 user=app password='p w' sslmode=disable")?
+    expect(db.ping().is_ok()) == true
+    expect(got.with(fn(xs) { xs })) == ["p w"]
+    s.cancel()
+  }
+}
+
+test "a fake server that goes away: the pool reconnects" {
+  let l = os.net.listen("db.test:5432")?
+  let calls = Atomic.new(0)
+  scope s {
+    s.spawn_background(fn() {
+      let r = fn() -> () ! NetErr {
+        while let Ok(c) = l.accept() {
+          var buf = b""
+          let (_, _, rest) = fk_read_msg(c, buf, true)?
+          buf = rest
+          c.write(fk_hello_trust())?
+          while {
+            let (kind, _, rest2) = fk_read_msg(c, buf, false)?
+            buf = rest2
+            if kind.is_empty() || kind == "X" {
+              break
+            }
+            // the second statement: the server closes the connection
+            if kind == "Q" && calls.add(1) == 2 {
+              break
+            }
+            c.write(fk_complete("SELECT 0") + fk_ready())?
+          }
+          c.close()
+        }
+      }
+      r().ignore_err("the server stops when the test ends")
+    })
+    let db = sql.open(os.net, "postgres", fk_dsn("db.test:5432"), max_open: 1)?
+    expect(db.exec("x").err()) == Some(sql.SqlErr.Conn(msg: "unexpected EOF"))
+    expect(db.exec("y").is_ok()) == true
+    s.cancel()
+  }
+}
+
+// ---- a fake backend (fk_: the messages a PostgreSQL 17 sends) ----
+
+fn fk_be32(n: Int) -> Bytes {
+  var b = BytesBuilder.with_capacity(4)
+  for k in 0..4 {
+    b.write_byte(UInt8((n >> (24 - 8 * k)) & 255))
+  }
+  b.freeze()
+}
+
+fn fk_be16(n: Int) -> Bytes { fk_be32(n)[2..] }
+
+fn fk_get32(b: Bytes, at: Int) -> Int {
+  var n = 0
+  for k in 0..4 {
+    n = n * 256 + Int(b[at + k])
+  }
+  n
+}
+
+fn fk_m(kind: Str, body: Bytes) -> Bytes { kind.bytes() + fk_be32(body.len() + 4) + body }
+
+fn fk_cs(s: Str) -> Bytes { s.bytes() + b"\x00" }
+
+fn fk_auth_ok() -> Bytes { fk_m("R", fk_be32(0)) }
+fn fk_auth_cleartext() -> Bytes { fk_m("R", fk_be32(3)) }
+fn fk_ready() -> Bytes { fk_m("Z", b"I") }
+fn fk_key_data() -> Bytes { fk_m("K", fk_be32(77) + fk_be32(1234)) }
+fn fk_complete(tag: Str) -> Bytes { fk_m("C", fk_cs(tag)) }
+
+/// RowDescription with each column's name and type OID.
+fn fk_row_desc(cols: List[(Str, Int)]) -> Bytes {
+  var b = fk_be16(cols.len())
+  for (name, oid) in cols {
+    b = b + fk_cs(name) + fk_be32(0) + fk_be16(0) + fk_be32(oid) + fk_be16(-1) + fk_be32(-1) + fk_be16(0)
+  }
+  fk_m("T", b)
+}
+
+fn fk_data_row(vals: List[Str?]) -> Bytes {
+  var b = fk_be16(vals.len())
+  for v in vals {
+    b = b + match v {
+      Some(s) => fk_be32(s.len()) + s.bytes()
+      None => fk_be32(-1)
+    }
+  }
+  fk_m("D", b)
+}
+
+fn fk_error_resp(code: Str, msg: Str, constraint: Str) -> Bytes {
+  var b = fk_cs("SERROR") + fk_cs("C" + code) + fk_cs("M" + msg)
+  if !constraint.is_empty() {
+    b = b + fk_cs("n" + constraint)
+  }
+  fk_m("E", b + b"\x00")
+}
+
+/// Reads one frontend message (or the startup packet when untyped) from c.
+fn fk_read_msg(c: ServerConn, var buf: Bytes, untyped: Bool) -> (Str, Bytes, Bytes) ! NetErr {
+  while {
+    let need = if untyped { 4 } else { 5 }
+    if buf.len() >= need {
+      let n = if untyped { fk_get32(buf, 0) } else { 1 + fk_get32(buf, 1) }
+      if buf.len() >= n {
+        let kind = if untyped { "" } else { buf[0..1].to_str() ?? "?" }
+        let body = if untyped { buf[4..n] } else { buf[5..n] }
+        return (kind, body, buf[n..])
+      }
+    }
+    match c.read(4096)? {
+      Some(b) => buf = buf + b
+      None => return ("", b"", b"")
+    }
+  }
+  ("", b"", b"")
+}
+
+/// A fake server: after startup, answer(kind, body) gives the bytes for
+/// each message; the conversation ends at Terminate or end of stream.
+fn fk_serve(l: Listener, hello: Bytes, answer: fn(Str, Bytes) -> Bytes) -> () ! NetErr {
+  while let Ok(c) = l.accept() {
+    var buf = b""
+    let (_, _, rest) = fk_read_msg(c, buf, true)?
+    buf = rest
+    c.write(hello)?
+    while {
+      let (kind, body, rest2) = fk_read_msg(c, buf, false)?
+      buf = rest2
+      if kind.is_empty() || kind == "X" {
+        break
+      }
+      let out = answer(kind, body)
+      if out.is_empty() {
+        continue
+      }
+      c.write(out)?
+    }
+    c.close()
+  }
+}
+
+fn fk_hello_trust() -> Bytes { fk_auth_ok() + fk_key_data() + fk_ready() }
+
+
+fn fk_dsn(addr: Str) -> Str { "postgres://app@${addr}/app?sslmode=disable" }
+
+fn fk_query_server(kind: Str, body: Bytes) -> Bytes {
+  if kind != "Q" {
+    return b""
+  }
+  let q = body[0..body.len() - 1].to_str() ?? ""
+  if q.starts_with("SELECT") {
+    return fk_row_desc([("id", 23), ("name", 25), ("ok", 16), ("at", 1184)]) +
+      fk_data_row([Some("1"), Some("a"), Some("t"), Some("2026-10-20 12:34:56.5+00")]) +
+      fk_data_row([Some("2"), None, Some("f"), None]) + fk_complete("SELECT 2") + fk_ready()
+  }
+  fk_complete("UPDATE 3") + fk_ready()
+}
+
+fn fk_error_server(kind: Str, body: Bytes) -> Bytes {
+  if kind != "Q" {
+    return b""
+  }
+  let q = body[0..body.len() - 1].to_str() ?? ""
+  match q {
+    "-- ping" => fk_complete("") + fk_ready()
+    "dup" => fk_error_resp("23505", "duplicate key value violates unique constraint \"t_name_key\"", "t_name_key") + fk_ready()
+    "syntax" => fk_error_resp("42601", "syntax error at or near \"SELEC\"", "") + fk_ready()
+    "table" => fk_error_resp("42P01", "relation \"nope\" does not exist", "") + fk_ready()
+    "zero" => fk_error_resp("22012", "division by zero", "") + fk_ready()
+    _ => fk_complete("SELECT 0") + fk_ready()
+  }
 }

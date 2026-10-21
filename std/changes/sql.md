@@ -31,7 +31,7 @@ text is `<row>`, as for every opaque std type.
 - Commit: (filled in after the push)
 - Found by: survey
 - Go reference: github.com/jackc/pgx/v5 v5.11.0 pgproto3 and pgconn (outside Go's std)
-- Test: std/native/llrt/pgwire_test.xo (pgx's message vectors and connection string corpora, RFC 7677); internal/llvm/testdata/golden/pg_fake (fake servers on local sockets); scripts/pg-diff.sh against PostgreSQL 17 and 14 in Docker, the same output as pgx
+- Test: std/native/llrt/pgwire_test.xo (pgx's message vectors and connection string corpora, RFC 7677); std/native/llrt/pg_test.xo (fake servers on FakeNet, decision 0292; was golden pg_fake); scripts/pg-diff.sh against PostgreSQL 17 and 14 in Docker, the same output as pgx
 
 `sql.open(net, "postgres", dsn)` opens PostgreSQL natively: protocol 3,
 SCRAM-SHA-256, MD5, and cleartext authentication, keyword and URL
