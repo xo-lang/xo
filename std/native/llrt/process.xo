@@ -297,6 +297,42 @@ pub fn env_real_at(name: Str) -> Int {
   0
 }
 
+/// Removes the variable name from the process's own environment (the
+/// array a spawn without an environment of its own passes on), so the
+/// processes it starts do not see it; its value's memory stays where it
+/// was. The profiler and the tracer drop their switches this way
+/// (XO_PROF, XO_TRACE apply to the process that reads them; 2026-10-21: a
+/// profiled xo's detached prune child wrote its own profile over the
+/// build's). The OS's own block is not changed: on windows a child still
+/// inherits it.
+pub fn env_drop(name: Str) {
+  let envp = rt.mem_load(rt.static_word(WORDS), ENVP, 8)
+  if envp == 0 {
+    return
+  }
+  let fold = fold_case()
+  let p = raw.data(name)
+  let n = name.len()
+  var k = 0
+  var j = 0
+  while true {
+    let e = rt.mem_load(envp, 8 * k, 8)
+    if e == 0 {
+      break
+    }
+    if !entry_is(e, p, n, fold) {
+      if j != k {
+        rt.mem_store(envp, 8 * j, e, 8)
+      }
+      j = j.wrapping_add(1)
+    }
+    k = k.wrapping_add(1)
+  }
+  if j != k {
+    rt.mem_store(envp, 8 * j, 0, 8)
+  }
+}
+
 /// env.vars(): the NAME=VALUE entries of the environment, sorted as
 /// std/rt's realEnv.vars sorts os.Environ() (decision 0172); a test's
 /// FakeEnv in the order of its variables.

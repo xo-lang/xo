@@ -841,7 +841,15 @@ and for diffing two builds function by function, not for a first look.
   locations, so `xo prof` needs neither the binary nor its dSYM. Its
   default names are replaced on a rerun; a path given with `--cpu-out`
   or `--heap-out` is never overwritten (files mode 0600). `xo run --profile` and `xo test
-  --profile` do both steps. On windows/amd64 a sampler thread suspends
+  --profile` do both steps. XO_PROF and XO_TRACE apply to the process that reads
+  them (owner, 2026-10-21): the runtime drops the switch from its own
+  environment once armed, so the processes it starts (a test binary,
+  xo's detached prune) are not profiled or traced; `XO_PROF_CHILDREN=1`
+  passes them on (darwin, linux; on windows a child still inherits the
+  OS block). `xo build --profile=cpu|heap|cpu,heap` profiles the
+  compiler itself: xo runs itself again with XO_PROF set
+  (XO_PROF_SELF=1) and writes `xo-build.cpu.pprof` (`.heap.pprof`) and
+  their `.txt` in the working directory. On windows/amd64 a sampler thread suspends
   each thread that used CPU (no SIGPROF), and names come from the COFF
   symbol table Windows links keep (no lines); to check it on the Mac,
   cross build (above) and run under Wine with Box64:

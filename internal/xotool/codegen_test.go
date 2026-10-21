@@ -91,6 +91,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_CACHE_PRUNE_BUDGET":   {"none", ""}, // how long a build prunes its caches
 	"XO_PRUNE_DETACH":         {"cache", ""},
 	"XO_PRUNE_FORCE":          {"none", ""}, // allows a back-end prune of the user cache below 64 MiB
+	"XO_PROF_SELF":            {"none", ""}, // xo build --profile's own run of xo (no re-run)
 	"XO_OP_VERIFY":            {"none", ""}, // only fails a build (decision 0274 step 3); a cache hit skips the check: verify with XO_BACKEND_CACHE=off
 }
 

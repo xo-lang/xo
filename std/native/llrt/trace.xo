@@ -72,6 +72,10 @@ pub fn start() {
   if path == 0 || rt.mem_load(path, 0, 1) == 0 {
     return
   }
+  // this process's trace only (as prof.start's XO_PROF)
+  if process.env_real_at("XO_PROF_CHILDREN") == 0 {
+    process.env_drop("XO_TRACE")
+  }
   match target.os {
     TargetOs.Darwin | TargetOs.Linux => {}
     TargetOs.Windows | TargetOs.Wasi => {

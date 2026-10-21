@@ -3,6 +3,8 @@
 // directory (or after `--`) on xo1's own standard streams; xo1 exits with
 // its status (128 plus the signal number for a program a signal ended).
 
+use github.com/xo-lang/xo/compiler/check
+
 /// execBinary: runs bin with args and the extra environment (NAME=value
 /// words) on this process's standard input, output, and error; its exit
 /// status.
@@ -19,4 +21,24 @@ fn exec_binary(os: Os, bin: Str, args: List[Str], env: List[Str]) -> Int {
       1
     }
   }
+}
+
+/// `xo build --profile=P` (main.xo): runs this xo again on args with
+/// XO_PROF=P, then writes its profile as xo-build.cpu.pprof and
+/// xo-build.heap.pprof (and their .txt) in the working directory; the
+/// build's exit status.
+fn profile_self(os: Os, o: Opts, args: List[Str]) -> Int {
+  let xo = check.executable(os.env, os.fs)
+  let raw = "${o.wd}/xo-build.xoraw"
+  os.fs.remove(raw).ignore_err("not there")
+  let code = exec_binary(os, xo, args, ["XO_PROF=${o.profile}", "XO_PROF_OUT=${raw}", "XO_PROF_QUIET=1", "XO_PROF_SELF=1"])
+  // xo:allow XO0903 no profile: the build did not get far enough to write one
+  if os.fs.exists(raw).ok() ?? false {
+    match prof_convert(os, raw, "${o.wd}/xo-build.cpu.pprof", "${o.wd}/xo-build.heap.pprof", true, true) {
+      Ok(_) => {}
+      Err(e) => os.stdio.eprintln("xo build: ${e}")
+    }
+  }
+  os.fs.remove(raw).ignore_err("not there")
+  code
 }

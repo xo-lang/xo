@@ -608,3 +608,64 @@ func runCombined(cmd *exec.Cmd, d time.Duration) (string, error) {
 		return b.String(), os.ErrDeadlineExceeded
 	}
 }
+
+// TestProfProcessOnly: XO_PROF applies to the process that reads it (owner,
+// 2026-10-21): a profiled program's children do not see it unless
+// XO_PROF_CHILDREN=1; and `xo build --profile=cpu` profiles the compiler
+// itself into xo-build.cpu.pprof and its .txt.
+func TestProfProcessOnly(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("the CPU profile needs SIGPROF (darwin, linux)")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := t.TempDir()
+	files := map[string]string{
+		"xo.mod":  "module example.com/envchild\n",
+		"main.xo": "fn main(os: Os) uses (stdio, proc) {\n  match os.proc.cmd(\"env\", []).output() {\n    Ok(o) => os.stdio.print(o.stdout.to_str() ?? \"\")\n    Err(e) => os.stdio.println(\"error ${e}\")\n  }\n}\n",
+	}
+	for p, s := range files {
+		if err := os.WriteFile(filepath.Join(d, p), []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bin := filepath.Join(d, "envchild")
+	build := exec.Command(xo, "build", "--backend=arm64", "-o", bin, ".")
+	build.Dir = d
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("xo build: %v\n%s", err, out)
+	}
+	run := func(env ...string) string {
+		t.Helper()
+		cmd := exec.Command(bin)
+		cmd.Dir = d
+		cmd.Env = append(os.Environ(), env...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%v: %v\n%s", env, err, out)
+		}
+		return string(out)
+	}
+	if got := run("XO_PROF=cpu", "XO_PROF_QUIET=1", "XO_PROF_OUT="+filepath.Join(d, "a.xoraw")); strings.Contains(got, "XO_PROF=") {
+		t.Errorf("the child saw XO_PROF:\n%s", got)
+	}
+	if got := run("XO_PROF=cpu", "XO_PROF_QUIET=1", "XO_PROF_CHILDREN=1", "XO_PROF_OUT="+filepath.Join(d, "b.xoraw")); !strings.Contains(got, "XO_PROF=cpu") {
+		t.Errorf("with XO_PROF_CHILDREN=1 the child did not see XO_PROF:\n%s", got)
+	}
+	// the compiler's own profile
+	self := exec.Command(xo, "build", "--backend=arm64", "--profile=cpu", "-o", bin, ".")
+	self.Dir = d
+	if out, err := self.CombinedOutput(); err != nil {
+		t.Fatalf("xo build --profile=cpu: %v\n%s", err, out)
+	}
+	for _, f := range []string{"xo-build.cpu.pprof", "xo-build.cpu.txt", "envchild"} {
+		if _, err := os.Stat(filepath.Join(d, f)); err != nil {
+			t.Errorf("xo build --profile=cpu left no %s: %v", f, err)
+		}
+	}
+}

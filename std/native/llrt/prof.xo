@@ -146,6 +146,11 @@ pub fn start() {
   if v == 0 {
     return
   }
+  // this process's profile only: the processes it starts do not inherit
+  // the switch unless XO_PROF_CHILDREN=1 (its value stays readable here)
+  if process.env_real_at("XO_PROF_CHILDREN") == 0 {
+    process.env_drop("XO_PROF")
+  }
   if names(v, "heap") {
     start_heap()
   }

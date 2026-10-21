@@ -112,6 +112,15 @@ fn main(os: Os) ! {
     os.proc.exit(2)
   }
   var o = parse_args(os, args)
+  if o.cmd == "build" && !o.profile.is_empty() && (os.env.get("XO_PROF_SELF") ?? "").is_empty() {
+    // `xo build --profile=cpu|heap`: a profile of the compiler itself, as
+    // xo-build.cpu.pprof (and .heap.pprof) with their .txt in the working
+    // directory (owner, 2026-10-21). The profiler is armed when a process
+    // starts, so xo runs itself again with XO_PROF set; XO_PROF_SELF keeps
+    // that run from doing the same (it drops XO_PROF from its own
+    // environment once armed).
+    os.proc.exit(profile_self(os, o, args))
+  }
   // the tests `xo test --watch` selected (decision 0267)
   for name in (os.env.get("XO_TEST_ONLY") ?? "").split("\n") {
     if !name.is_empty() {
