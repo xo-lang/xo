@@ -772,6 +772,12 @@ fn x86_mem_ok(t: Str, k: Int) -> Bool {
         continue
       }
       seen = true
+      // the one operand of a multiply (a mulq pair's second factor,
+      // 2026-10-20: bigmod.mac_row reloaded its spilled k into r11 before
+      // each of its four mulq)
+      if ops.len() == 1 && (l[0..sp] is "mulq" | "imulq") && !o.contains("(") {
+        continue
+      }
       if i != 0 || ops.len() != 2 || ops[1].contains("(") || o.contains("(") || !x86_src_mem(l[0..sp]) {
         return false
       }
