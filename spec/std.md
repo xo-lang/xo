@@ -1774,13 +1774,13 @@ pub fn clean(p: Str) -> Str          // removes `.`, `..`, repeated `/`
 
 ## 10. std/sql
 
-Status: draft, implemented with an in memory driver only (2026-10-08). Real
-drivers are written in Xo (decision 0278, 10.7): `sql.open(net,
-"postgres", dsn)` opens Postgres on every native target (10.8). Native builds
-(`--no-gc`, decision 0083) run the same in memory driver, ported to Xo,
-with the same results and error texts; there `sql.open` always reports an
-unknown driver (no Go drivers), `max_open` does not bound the in memory
-driver (it runs one statement at a time). A `Row`'s Debug text is its
+Status: draft (2026-10-08), implemented on every backend: the in memory
+driver (`sql.memory`, ported to Xo for native builds, decision 0083, with
+the same results and error texts; `max_open` does not bound it, as it
+runs one statement at a time) and drivers written in Xo (decision 0278,
+10.7). `sql.open(net, "postgres", dsn)` opens Postgres natively (10.8);
+on the Go backend, and for any other driver name on every backend,
+`sql.open` reports an unknown driver. A `Row`'s Debug text is its
 columns and values on every backend, `Row(a: 1, b: "x", c: null)`;
 `value` gives each column's value.
 
