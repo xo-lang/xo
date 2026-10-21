@@ -3488,7 +3488,12 @@ hours is removed, so a cache can sit above its cap by that much.
   and no longer blocks. A new cache directory gets its stamp, not a
   prune (a test's cache is never pruned while it is removed). Packs
   live under `packs/<xx>/<slot>/` (pack/ held 138,000 slots in one
-  directory). Tests: `xo test compiler/prune` (slices, convergence
+  directory); the child renames the old `pack/` to `trash-pack-<ms>`
+  and removes every `trash-*` directory (prune.retire, prune_trash),
+  which the shards leave out: listing pack/'s slots took 4 to 5 s a run,
+  more than the 300 ms walk budget, so a run walked one shard and the
+  cache grew from 15 to 33 GB in 11 minutes (2026-10-21). The walk
+  budget counts the shards' walk, not their listing. Tests: `xo test compiler/prune` (slices, convergence
   under the cap, the stale lock), internal/arm64 TestPruneBudget.
 - `rtobj/` keeps its own 512 MiB size trim; `dev/`, `mbedtls/`, `seed/`,
   and `seeds/` are not pruned.

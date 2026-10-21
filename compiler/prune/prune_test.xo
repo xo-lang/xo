@@ -339,3 +339,21 @@ test "a lock younger than LOCK_STALE holds off a run, an older one does not" {
   expect(run(os.fs, os.clock, "c", p).ran) == true
   expect(there(os, "c/prune-lock")) == false
 }
+
+test "a retired layout leaves the shards and its trash is removed" {
+  sliced_cache(os)
+  for i in 0..50 {
+    put(os, "c/pack/slot${i}/fn/s-1", 10)
+  }
+  retire(os.fs, os.clock, "c", "pack")
+  expect(there(os, "c/pack")) == false
+  let p = Policy{max_age: 0s, max_bytes: GB, every: 0s, slice_shards: 100}
+  let _s = run(os.fs, os.clock, "c", p)
+  // the shards are s/0 to s/7 alone: the trash is not walked
+  expect(os.fs.read_text("c/prune-sizes").or_fault("sizes").split("\n").len()) == 9
+  prune_trash(os.fs, "c")
+  let left = os.fs.read_dir("c").or_fault("read c")
+  for fi in left {
+    expect(fi.name.starts_with("trash-")) == false
+  }
+}

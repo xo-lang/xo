@@ -323,8 +323,9 @@ fn run_sliced(fs: Fs, clock: Clock, dir: Str, p: Policy) -> Stats uses (fs.read,
   if p.burst > 0 {
     fs.remove("${dir}/prune-stored").ignore_err("none stored since the last prune")
   }
-  let t0 = clock.now()
   let shards = shard_list(fs, dir)
+  // the walk budget is the shards' walk, not their listing
+  let t0 = clock.now()
   var sizes = read_sizes(fs, dir)
   // the shards from the cursor on, until the walk budget (at least one)
   let cursor = (fs.read_text("${dir}/prune-cursor").ok() ?? "").trim()
@@ -466,6 +467,28 @@ fn run_sliced(fs: Fs, clock: Clock, dir: Str, p: Policy) -> Stats uses (fs.read,
   st
 }
 
+/// Removes the directories under dir named trash-* (a cache's retired
+/// layout, renamed there whole by retire), for a detached prune: each is
+/// many files, too long for a build.
+pub fn prune_trash(fs: Fs, dir: Str) uses (fs.read, fs.write) {
+  if let Ok(top) = fs.read_dir(dir) {
+    for t in top {
+      if t.is_dir && t.name.starts_with("trash-") {
+        fs.remove_all("${dir}/${t.name}").ignore_err("another prune removes it")
+      }
+    }
+  }
+}
+
+/// Renames dir/name, a layout the cache no longer reads, to a trash-*
+/// directory (one rename; prune_trash removes it). Nothing when it is
+/// absent.
+pub fn retire(fs: Fs, clock: Clock, dir: Str, name: Str) uses (fs.read, fs.write, clock) {
+  if fs.exists("${dir}/${name}").ok() ?? false {
+    fs.rename("${dir}/${name}", "${dir}/trash-${name}-${clock.now().unix_millis()}").ignore_err("another prune retired it")
+  }
+}
+
 /// The shards of the cache in dir, sorted: each directory one level
 /// below a top level directory (`fn/ab`, `packs/ab`), and each top level
 /// directory holding files of its own (`stdsums`: those files alone).
@@ -476,7 +499,8 @@ fn shard_list(fs: Fs, dir: Str) -> List[Str] uses fs.read {
     Err(_) => return out
   }
   for t in top {
-    if !t.is_dir {
+    // trash-*: directories a cache retired whole (prune_trash)
+    if !t.is_dir || t.name.starts_with("trash-") {
       continue
     }
     if let Ok(l) = fs.read_dir("${dir}/${t.name}") {

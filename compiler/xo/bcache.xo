@@ -873,6 +873,12 @@ fn prune_backend_child(os: Os, dir: Str) -> Int {
   // no removal budget and no interval: the child is the only runner
   p.budget = 0s
   p.every = 0s
+  // pack/ (a slot per build target in one directory) is read no more
+  // since packs/<xx>/ (2026-10-21): its 138,000 slots made each run's
+  // listing of the shards take 4 to 5 s, so a run walked one shard;
+  // retired whole and removed here, off the builds
+  prune.retire(os.fs, os.clock, dir, "pack")
+  prune.prune_trash(os.fs, dir)
   let t0 = os.clock.now()
   var slices = 0
   while {
