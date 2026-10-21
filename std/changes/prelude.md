@@ -1,5 +1,23 @@
 # prelude changes
 
+## 2026-10-21: feature: Str.rfind, Bytes.find, rfind, and zeroed, Map.map, any, and all, read_text_or and read_or
+
+- Kind: feature
+- Commit: (filled in after the push)
+- Found by: the agent poll of 2026-10-20 (approved by the owner, 2026-10-21)
+- Go reference: strings.LastIndex, bytes.Index, bytes.LastIndex, make([]byte, n), errors.Is(err, fs.ErrNotExist) (go1.26.1)
+- Test: internal/llvm/testdata/golden/prelude_additions (go, arm64, LLVM, and wasm the same)
+
+`s.rfind(sub)` is Go's strings.LastIndex. `b.find(sub)` and `b.rfind(sub)`
+are bytes.Index and bytes.LastIndex. `Bytes.zeroed(n)` is n zero bytes in
+one allocation, where a loop of `write_byte(0)` was needed. `m.map(f)`,
+`m.any(f)` and `m.all(f)` take the key and the value, run in insertion
+order, stop at the first entry that decides, and return the first error
+at once. `read_text_or(fs, path, default)` and
+`read_or(fs, path, default)` give the default only when the file does
+not exist. They are free functions rather than methods of Fs, so every
+type that satisfies Fs still does.
+
 ## 2026-10-21: fix: Fs.read_dir and walk report errors instead of a shorter list
 
 - Kind: fix

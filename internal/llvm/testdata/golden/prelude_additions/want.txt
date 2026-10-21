@@ -1,0 +1,32 @@
+exit 0
+--- stdout
+rfind "go gopher" "go": 3 (find 0)
+rfind "go gopher" "o": 4 (find 1)
+rfind "go gopher" "": 9 (find 0)
+rfind "" "": 0 (find 0)
+rfind "abc" "abcd": none (find none)
+rfind "aaa" "aa": 1 (find 0)
+rfind "héllo é" "é": 7 (find 1)
+rfind "x" "y": none (find none)
+bytes 6162: find 1 rfind 4
+bytes 00: find 0 rfind 3
+bytes ff: find 6 rfind 6
+bytes : find 0 rfind 7
+bytes 616263: find none rfind none
+bytes 006162006162ff00: find none rfind none
+zeroed 0: len 0, nonzero 0
+zeroed 1: len 1, nonzero 0
+zeroed 7: len 7, nonzero 0
+zeroed 4096: len 4096, nonzero 0
+map: b,a,c b4,a2,c6
+any >2: true, any >3: false
+all >0: true, all <3: false
+empty: any false, all true, map 0
+all stops: Ok(false)
+map error: failed at a
+read_text_or there: hello
+read_text_or missing: default
+read_or missing: 0102
+read_text_or dir: IsDir(path: "d")
+read_text_or outside: Denied(path: "../outside")
+--- stderr

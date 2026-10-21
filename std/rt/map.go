@@ -657,6 +657,47 @@ func Map_filter[K, V, E any](tk *Task, m Map[K, V], f func(*Task, K, V) Result[b
 	return Ok[Map[K, V], E](out)
 }
 
+// Map_map is `m.map(f)`: every key with f's value, in insertion order.
+func Map_map[K, V, U, E any](tk *Task, m Map[K, V], f func(*Task, K, V) Result[U, E]) Result[Map[K, U], E] {
+	var out Map[K, U]
+	for k, v := range Map_All(m) {
+		r := f(tk, k, v)
+		if !r.Ok {
+			return ErrTr[Map[K, U]](r.E, r.Tr)
+		}
+		Map_put(tk, &out, k, r.V)
+	}
+	return Ok[Map[K, U], E](out)
+}
+
+// Map_any is `m.any(f)`: in insertion order, stopping at the first true.
+func Map_any[K, V, E any](tk *Task, m Map[K, V], f func(*Task, K, V) Result[bool, E]) Result[bool, E] {
+	for k, v := range Map_All(m) {
+		r := f(tk, k, v)
+		if !r.Ok {
+			return ErrTr[bool](r.E, r.Tr)
+		}
+		if r.V {
+			return Ok[bool, E](true)
+		}
+	}
+	return Ok[bool, E](false)
+}
+
+// Map_all is `m.all(f)`: in insertion order, stopping at the first false.
+func Map_all[K, V, E any](tk *Task, m Map[K, V], f func(*Task, K, V) Result[bool, E]) Result[bool, E] {
+	for k, v := range Map_All(m) {
+		r := f(tk, k, v)
+		if !r.Ok {
+			return ErrTr[bool](r.E, r.Tr)
+		}
+		if !r.V {
+			return Ok[bool, E](false)
+		}
+	}
+	return Ok[bool, E](true)
+}
+
 // Map_update is `m.update(k, init, f)`: reads k (or init), runs f on a
 // mutable copy, stores the result, and returns f's value (std.md 2.4). If f
 // fails the map is unchanged.

@@ -235,3 +235,12 @@ func Bytes_decode_rune(_ *Task, b Bytes, i int64) Tuple2[Rune, int64] {
 	r, n := utf8.DecodeRuneInString(string(b[i:]))
 	return Tuple2[Rune, int64]{F0: Rune(r), F1: int64(n)}
 }
+
+// Str_rfind is `s.rfind(sub)`: strings.LastIndex's byte offset.
+func Str_rfind(_ *Task, s, sub string) Option[int64] {
+	i := strings.LastIndex(s, sub)
+	if i < 0 {
+		return Option[int64]{}
+	}
+	return Some(int64(i))
+}

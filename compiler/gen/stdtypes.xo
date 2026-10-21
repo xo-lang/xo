@@ -163,7 +163,7 @@ pub fn std_sigs(c: check.Checker) -> Str ! Str {
   b.write("var (\n")
   for m in mods.sort_by(fn(m: Int) -> Str { c.mods[m].path }) {
     g.pkgs[rp].m = m
-    let prefix = g.std_prefix(m)
+    let prefix = g.std_free_prefix(m)
     for fi in c.mods[m].files {
       g.pkgs[rp].cur = fi
       let file = c.files[fi]

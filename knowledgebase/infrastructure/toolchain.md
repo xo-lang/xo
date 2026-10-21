@@ -2050,7 +2050,10 @@ Last verified: 2026-10-08. Rules and choices; details in
   XRawQuery, XFields; Http_Response's XStream, XFields) are listed in
   stdtypes.xo rt_extra_fields. Opaque std handles and every std function are hand
   written in rt; the same command generates `std/rt/std_sigs_M.go`, a
-  `var _ func(*Task, ...) R = Module_name` line for each std and prelude
+  `var _ func(*Task, ...) R = Module_name` line (a free prelude function
+  is `Prelude_name`, compiler/gen std_free_prefix, 2026-10-21: the
+  prelude's types and methods have no prefix, and a lower case free
+  function name would not be exported) for each std and prelude
   function and method that has no Xo body and is not generic, nor a
   method of a generic type (List, Map, Option, ...), nor `fault` or
   `dbg` (lowered where called): 571 on 2026-10-20, a Go method as

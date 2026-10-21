@@ -81,6 +81,7 @@ var (
 	_ func(*Task, string, string) bool                              = Str_starts_with
 	_ func(*Task, string, string) bool                              = Str_ends_with
 	_ func(*Task, string, string) Option[int64]                     = Str_find
+	_ func(*Task, string, string) Option[int64]                     = Str_rfind
 	_ func(*Task, string, string) List[string]                      = Str_split
 	_ func(*Task, string) List[string]                              = Str_lines
 	_ func(*Task, string) string                                    = Str_trim
@@ -104,6 +105,9 @@ var (
 	_ func(*Task, Bytes) int64                                      = Bytes_rune_count
 	_ func(*Task, Bytes, int64) Tuple2[Rune, int64]                 = Bytes_decode_rune
 	_ func(*Task, Bytes) string                                     = Bytes_quote
+	_ func(*Task, Bytes, Bytes) Option[int64]                       = Bytes_find
+	_ func(*Task, Bytes, Bytes) Option[int64]                       = Bytes_rfind
+	_ func(*Task, int64) Bytes                                      = Bytes_zeroed
 	_ func(*Task, string) string                                    = Str_quote
 	_ func(*Task, string) Option[string]                            = Str_unquote
 	_ func(*Task, Rune) bool                                        = Rune_is_digit
@@ -139,6 +143,8 @@ var (
 	_ func(*BytesBuilder, *Task, Rune)                              = (*BytesBuilder).M_write_rune
 	_ func(*BytesBuilder, *Task) int64                              = (*BytesBuilder).M_len
 	_ func(*BytesBuilder, *Task) Bytes                              = (*BytesBuilder).M_freeze
+	_ func(*Task, Fs, string, string) Result[string, FsErr]         = Prelude_read_text_or
+	_ func(*Task, Fs, string, Bytes) Result[Bytes, FsErr]           = Prelude_read_or
 	_ func(*File, *Task, int64) Result[Option[Bytes], FsErr]        = (*File).M_read
 	_ func(*File, *Task) Result[Option[string], FsErr]              = (*File).M_read_line
 	_ func(*File, *Task, Bytes) Result[Unit, FsErr]                 = (*File).M_write

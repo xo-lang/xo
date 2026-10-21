@@ -1,6 +1,7 @@
 package rt
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/hex"
 )
@@ -74,4 +75,30 @@ func Json_Patch_apply_opt[T any](_ *Task, p Json_Patch[T], current Option[T]) Op
 		return Some(p.P.(Json_Patch_Value[T]).F_v)
 	}
 	return current
+}
+
+// Bytes_find is `b.find(sub)`: bytes.Index.
+func Bytes_find(_ *Task, b, sub Bytes) Option[int64] {
+	i := bytes.Index([]byte(b), []byte(sub))
+	if i < 0 {
+		return Option[int64]{}
+	}
+	return Some(int64(i))
+}
+
+// Bytes_rfind is `b.rfind(sub)`: bytes.LastIndex.
+func Bytes_rfind(_ *Task, b, sub Bytes) Option[int64] {
+	i := bytes.LastIndex([]byte(b), []byte(sub))
+	if i < 0 {
+		return Option[int64]{}
+	}
+	return Some(int64(i))
+}
+
+// Bytes_zeroed is `Bytes.zeroed(n)`: make([]byte, n).
+func Bytes_zeroed(_ *Task, n int64) Bytes {
+	if n < 0 {
+		FaultHere("negative length %d for Bytes.zeroed", n)
+	}
+	return Bytes(make([]byte, n))
 }

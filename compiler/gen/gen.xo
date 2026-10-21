@@ -586,6 +586,18 @@ fn (g: Gen) go_tparam(p: Int) -> Str {
   "tp_" + g.oname(p)
 }
 
+/// The Go name prefix of a free function of std module m in the runtime:
+/// std_prefix, but "Prelude_" for the prelude, whose types and methods
+/// have no prefix (Str_find) while a free function's lower case name would
+/// not be exported (read_text_or is rt.Prelude_read_text_or; fault and dbg
+/// are lowered where they are called).
+fn (g: Gen) std_free_prefix(m: Int) -> Str {
+  if m < 0 || g.c.mods[m].is_prelude {
+    return "Prelude_"
+  }
+  g.std_prefix(m)
+}
+
 /// The Go name prefix of std module m's declarations in the runtime: ""
 /// for the prelude, "Http_" for std/http (stdPrefix).
 fn (g: Gen) std_prefix(m: Int) -> Str {

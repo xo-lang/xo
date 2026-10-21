@@ -572,7 +572,7 @@ fn (var g: Gen) call_result(fo: Int, sub: Map[Int, Int], call: Str) -> (Str, Int
 fn (var g: Gen) std_call(fo: Int, sub: Map[Int, Int], recv0: Str, args: List[Str]) -> Str {
   let r = g.rt()
   let o = g.c.objs[fo]
-  let prefix = g.std_prefix(o.module)
+  let prefix = g.std_free_prefix(o.module)
   if o.recv < 0 {
     return "${r}${prefix}${g.oname(fo)}${g.targs_code(o.tparams, sub)}(tk${prefix_comma(args)})"
   }

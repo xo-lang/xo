@@ -57,8 +57,8 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 
 | Go package | Xo | Status | Notes |
 |---|---|---|---|
-| strings | prelude Str | partial | Has contains, find, split, lines, trim*, replace, repeat, to_lower/upper, join, StrBuilder. Missing: last_index, count, fields, cut, equal_fold, index of a rune or any, split_n, title, Map, Replacer. |
-| bytes | prelude Bytes, BytesBuilder | partial | Has len, slicing, `+`, hex, base64, decode_rune, BytesBuilder. Missing: find, split, contains, equal, trim, has_prefix on Bytes; a Reader. |
+| strings | prelude Str | partial | Has contains, find, rfind (LastIndex, 2026-10-21), split, lines, trim*, replace, repeat, to_lower/upper, join, StrBuilder. Missing: count, fields, cut, equal_fold, index of a rune or any, split_n, title, Map, Replacer. |
+| bytes | prelude Bytes, BytesBuilder | partial | Has len, slicing, `+`, hex, base64, decode_rune, find and rfind (Index, LastIndex), zeroed (make([]byte, n)), BytesBuilder (2026-10-21). Missing: split, contains, equal, trim, has_prefix on Bytes; a Reader. |
 | strconv | prelude Int.parse, parse_base, to_str_base, Float.parse, Bool.parse, quote, unquote | done | ParseInt, FormatInt, ParseBool, Unquote added (decision 0287). Not planned: the Append functions (StrBuilder covers them). |
 | unicode | prelude Rune | partial | is_letter, is_digit, is_space, is_print, to_lower, to_upper (Go's tables, decision 0079). Missing: is_upper, is_lower, is_punct, is_control, range tables by name. |
 | unicode/utf8 | prelude Str, Bytes | done | rune_count, decode_rune, UTF-8 validity rules (decision 0259). |

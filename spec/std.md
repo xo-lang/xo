@@ -174,6 +174,7 @@ fn (s: Str) contains(sub: Str) -> Bool
 fn (s: Str) starts_with(p: Str) -> Bool
 fn (s: Str) ends_with(p: Str) -> Bool
 fn (s: Str) find(sub: Str) -> Int?           // byte offset
+fn (s: Str) rfind(sub: Str) -> Int?          // the last sub's byte offset (strings.LastIndex); Some(s.len()) for ""
 fn (s: Str) split(sep: Str) -> List[Str]
 fn (s: Str) lines() -> List[Str]             // splits on \n, strips \r
 fn (s: Str) trim() -> Str                    // also trim_start, trim_end
@@ -194,6 +195,9 @@ Bytes.from_base64(s: Str) -> Bytes?
 fn (b: Bytes) rune_count() -> Int            // an invalid byte counts as one rune
 fn (b: Bytes) decode_rune(i: Int) -> (Rune, Int)  // the rune at byte i and its size
 fn (b: Bytes) quote() -> Str                 // also on Str: a quoted literal
+fn (b: Bytes) find(sub: Bytes) -> Int?       // bytes.Index; Some(0) for an empty sub
+fn (b: Bytes) rfind(sub: Bytes) -> Int?      // bytes.LastIndex; Some(b.len()) for an empty sub
+fn (static: Bytes) zeroed(n: Int) -> Bytes   // n zero bytes (make([]byte, n)); a fault for n < 0
 fn (s: Str) unquote() -> Str?                // Go's Unquote (decision 0287); None when s is not a literal or the text is not UTF-8
 
 fn (r: Rune) is_digit() -> Bool              // also is_letter, is_space, to_lower, to_upper
@@ -275,6 +279,9 @@ fn (m: Map[K, V]) keys() -> List[K]
 fn (m: Map[K, V]) values() -> List[V]
 fn (m: Map[K, V]) entries() -> List[(K, V)]
 fn (m: Map[K, V]) filter(f: fn(K, V) -> Bool) -> Map[K, V]
+fn (m: Map[K, V]) map[U](f: fn(K, V) -> U) -> Map[K, U]   // every key, in insertion order
+fn (m: Map[K, V]) any(f: fn(K, V) -> Bool) -> Bool        // insertion order; stops at the first true
+fn (m: Map[K, V]) all(f: fn(K, V) -> Bool) -> Bool        // insertion order; stops at the first false
 
 fn ([var] m: Map[K, V]) put(k: K, v: V)
 fn ([var] m: Map[K, V]) remove(k: K) -> V?
@@ -510,6 +517,8 @@ fn (f: Fs) stat(path: Str) -> FileInfo? ! FsErr  uses fs.read // None when missi
 fn (f: Fs) exists(path: Str) -> Bool ! FsErr     uses fs.read
 fn (f: Fs) read(path: Str) -> Bytes ! FsErr      uses fs.read
 fn (f: Fs) read_text(path: Str) -> Str ! FsErr   uses fs.read
+fn read_text_or(fs: Fs, path: Str, default: Str) -> Str ! FsErr uses fs.read   // default when missing
+fn read_or(fs: Fs, path: Str, default: Bytes) -> Bytes ! FsErr uses fs.read     // the same for bytes
 fn (f: Fs) read_dir(dir: Str) -> List[FileInfo] ! FsErr uses fs.read   // sorted by name
 fn (f: Fs) walk(dir: Str) -> List[FileInfo] ! FsErr     uses fs.read
     // recursive, parents before children, siblings by name; excludes `dir` itself;
@@ -524,6 +533,16 @@ fn (f: Fs) remove_all(path: Str) -> () ! FsErr          uses fs.write
 fn (f: Fs) create_dir_all(dir: Str) -> () ! FsErr       uses fs.write
 fn (f: Fs) set_modified(path: Str, t: Time) -> () ! FsErr uses fs.write
 ```
+
+`read_text_or` and `read_or` (approved by the owner, 2026-10-21) give
+the file, or `default` when it does not exist (`FsErr.NotFound`, Go's
+`errors.Is(err, fs.ErrNotExist)`). Any other error is still the result
+(`IsDir`, `Denied` under `sub` or `only`), so a typo in a path to an
+unreadable file is not silently a default. They are free functions, not
+methods of `Fs`: an `Fs` is any type with its methods (core 2.4), and a
+new interface method would stop every such type from satisfying it. They
+call `read_text` and `read`, so MemFs, FakeFs and attenuated capabilities
+answer as they do for those.
 
 Handles, links, globs, and locks (decision 0163; the Go backend and
 MemFs, and native builds on the real filesystem, decision 0172; a native
@@ -3542,7 +3561,7 @@ fn (t: Template) render_named(name: Str, data: json.Value) -> Str ! TemplateErr
 
 Every function and method of std/prelude.xo, by type, as declared there
 (the sections above explain them); interface methods take `self`.
-345 declarations.
+354 declarations.
 
 ### Range
 
@@ -3713,6 +3732,7 @@ fn (s: Str) contains(sub: Str) -> Bool
 fn (s: Str) starts_with(p: Str) -> Bool
 fn (s: Str) ends_with(p: Str) -> Bool
 fn (s: Str) find(sub: Str) -> Int?
+fn (s: Str) rfind(sub: Str) -> Int?
 fn (s: Str) split(sep: Str) -> List[Str]
 fn (s: Str) lines() -> List[Str]
 fn (s: Str) trim() -> Str
@@ -3743,6 +3763,9 @@ fn (static: Bytes) from_base64(s: Str) -> Bytes?
 fn (b: Bytes) rune_count() -> Int
 fn (b: Bytes) decode_rune(i: Int) -> (Rune, Int)
 fn (b: Bytes) quote() -> Str
+fn (b: Bytes) find(sub: Bytes) -> Int?
+fn (b: Bytes) rfind(sub: Bytes) -> Int?
+fn (static: Bytes) zeroed(n: Int) -> Bytes
 ```
 
 ### List
@@ -3787,6 +3810,9 @@ fn (m: Map[K, V]) keys() -> List[K]
 fn (m: Map[K, V]) values() -> List[V]
 fn (m: Map[K, V]) entries() -> List[(K, V)]
 fn (m: Map[K, V]) filter[E, fx: Effects](f: fn(K, V) -> Bool ! E uses fx) -> Map[K, V] ! E uses fx
+fn (m: Map[K, V]) map[U, E, fx: Effects](f: fn(K, V) -> U ! E uses fx) -> Map[K, U] ! E uses fx
+fn (m: Map[K, V]) any[E, fx: Effects](f: fn(K, V) -> Bool ! E uses fx) -> Bool ! E uses fx
+fn (m: Map[K, V]) all[E, fx: Effects](f: fn(K, V) -> Bool ! E uses fx) -> Bool ! E uses fx
 fn (var m: Map[K, V]) put(k: K, v: V)
 fn (var m: Map[K, V]) remove(k: K) -> V?
 fn (var m: Map[K, V]) update[R, E, fx: Effects](k: K, init: V, f: fn(var V) -> R ! E uses fx) -> R ! E uses fx
@@ -4142,6 +4168,8 @@ fn (c: Child) kill()
 ```
 fn fault(msg: Str) -> Never
 fn dbg[T](x: T) -> T
+fn read_text_or(fs: Fs, path: Str, default: Str) -> Str ! FsErr uses fs.read
+fn read_or(fs: Fs, path: Str, default: Bytes) -> Bytes ! FsErr uses fs.read
 ```
 
 <!-- END prelude index -->

@@ -1061,3 +1061,23 @@ func (realProc) run(tk *Task, cmd string, args List[string]) Result[ProcOutput, 
 }
 
 func (realProc) XoDebug(b *strings.Builder) { b.WriteString("<proc>") }
+
+// Prelude_read_text_or is `read_text_or(fs, path, default)` (std.md 3.1): the
+// file's text, or default when it does not exist (FsErr.NotFound); any
+// other error is the result.
+func Prelude_read_text_or(tk *Task, fs Fs, path string, def string) Result[string, FsErr] {
+	r := fs.M_read_text(tk, path)
+	if !r.Ok && r.E.Tag == 1 {
+		return Ok[string, FsErr](def)
+	}
+	return r
+}
+
+// Prelude_read_or is `read_or(fs, path, default)`: read_text_or for bytes.
+func Prelude_read_or(tk *Task, fs Fs, path string, def Bytes) Result[Bytes, FsErr] {
+	r := fs.M_read(tk, path)
+	if !r.Ok && r.E.Tag == 1 {
+		return Ok[Bytes, FsErr](def)
+	}
+	return r
+}

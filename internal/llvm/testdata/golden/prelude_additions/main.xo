@@ -1,0 +1,76 @@
+// The prelude additions approved on 2026-10-21: Str.rfind, Bytes.find,
+// Bytes.rfind, Bytes.zeroed (Go's strings.LastIndex, bytes.Index,
+// bytes.LastIndex, make([]byte, n)), Map.map, Map.any, Map.all (insertion
+// order, stopping at the first deciding entry, the first error at once),
+// and read_text_or and read_or (the default only for a missing file).
+
+fn show(r: Int?) -> Str {
+  match r {
+    Some(i) => "${i}"
+    None => "none"
+  }
+}
+
+fn main(os: Os) ! {
+  let out = os.stdio
+  for (s, sub) in [("go gopher", "go"), ("go gopher", "o"), ("go gopher", ""), ("", ""), ("abc", "abcd"), ("aaa", "aa"), ("héllo é", "é"), ("x", "y")] {
+    out.println("rfind ${s.quote()} ${sub.quote()}: ${show(s.rfind(sub))} (find ${show(s.find(sub))})")
+  }
+  let b = b"\x00ab\x00ab\xff"
+  for sub in [b"ab", b"\x00", b"\xff", b"", b"abc", b"\x00ab\x00ab\xff\x00"] {
+    out.println("bytes ${sub.to_hex()}: find ${show(b.find(sub))} rfind ${show(b.rfind(sub))}")
+  }
+  for n in [0, 1, 7, 4096] {
+    let z = Bytes.zeroed(n)
+    var nonzero = 0
+    for x in z {
+      if x != 0 {
+        nonzero += 1
+      }
+    }
+    out.println("zeroed ${n}: len ${z.len()}, nonzero ${nonzero}")
+  }
+  let m: Map[Str, Int] = {"b": 2, "a": 1, "c": 3}
+  let doubled = m.map(fn(k: Str, v: Int) { "${k}${v * 2}" })
+  out.println("map: ${doubled.keys().join(",")} ${doubled.values().join(",")}")
+  out.println("any >2: ${m.any(fn(_k: Str, v: Int) { v > 2 })}, any >3: ${m.any(fn(_k: Str, v: Int) { v > 3 })}")
+  out.println("all >0: ${m.all(fn(_k: Str, v: Int) { v > 0 })}, all <3: ${m.all(fn(_k: Str, v: Int) { v < 3 })}")
+  let empty: Map[Str, Int] = {}
+  out.println("empty: any ${empty.any(fn(_k: Str, _v: Int) { true })}, all ${empty.all(fn(_k: Str, _v: Int) { false })}, map ${empty.map(fn(_k: Str, v: Int) { v }).len()}")
+  // the first deciding entry stops the walk: "b" decides all, so "a"'s
+  // error is never reached; the first error is returned at once
+  let stop = m.all(fn(k: Str, _v: Int) -> Bool ! Str {
+    if k == "a" {
+      return Err("reached a")
+    }
+    false
+  })
+  out.println("all stops: ${stop.debug()}")
+  let failed = m.map(fn(k: Str, v: Int) -> Int ! Str {
+    if k == "a" {
+      return Err("failed at ${k}")
+    }
+    v
+  })
+  match failed {
+    Ok(x) => out.println("map error: ok ${x.len()}?")
+    Err(e) => out.println("map error: ${e}")
+  }
+  let base = os.fs.sub(os.env.get("TMPDIR") ?? "/tmp")
+  let name = "xo-prelude-additions-${os.rand.int(0, 1000000000)}"
+  base.create_dir_all("${name}/d")?
+  let root = base.sub(name)
+  root.write("there.txt", b"hello")?
+  out.println("read_text_or there: ${read_text_or(root, "there.txt", "default")?}")
+  out.println("read_text_or missing: ${read_text_or(root, "missing.txt", "default")?}")
+  out.println("read_or missing: ${read_or(root, "missing.bin", b"\x01\x02")?.to_hex()}")
+  match read_text_or(root, "d", "default") {
+    Ok(s) => out.println("read_text_or dir: ok ${s}?")
+    Err(e) => out.println("read_text_or dir: ${e}")
+  }
+  match read_text_or(root, "../outside", "default") {
+    Ok(s) => out.println("read_text_or outside: ok ${s}?")
+    Err(e) => out.println("read_text_or outside: ${e}")
+  }
+  base.remove_all(name)?
+}
