@@ -201,6 +201,10 @@ fn main(os: Os) {
         exchange(os, addr, "ping between", upgrade_raw("/echo", "") + frames("018200000000686989810000000070808100000000218880aabbccdd"))
         exchange(os, addr, "bad close code", upgrade_raw("/echo", "") + frames("888200000000038d"))
         exchange(os, addr, "bad utf8", upgrade_raw("/echo", "") + frames("818200000000c328"))
+        exchange(os, addr, "utf8 fail fast", upgrade_raw("/echo", "") + frames("0182000000006869008200000000c328"))
+        exchange(os, addr, "utf8 split ok", upgrade_raw("/echo", "") + frames("018200000000e282808100000000ac8880aabbccdd"))
+        exchange(os, addr, "utf8 split bad", upgrade_raw("/echo", "") + frames("018100000000e000810000000080"))
+        exchange(os, addr, "utf8 unfinished", upgrade_raw("/echo", "") + frames("018100000000e280810000000082"))
         exchange(os, addr, "close no code", upgrade_raw("/echo", "") + frames("8880aabbccdd"))
         exchange(os, addr, "close with text", upgrade_raw("/echo", "") + frames("888500000000"+"03e8") + "bye".bytes())
       }

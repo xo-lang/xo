@@ -206,6 +206,50 @@ fn (c: WsConn) read_n(var st: ReadState, n: Int) -> Bytes ! websocket.WsErr {
   out
 }
 
+/// Where the whole characters of b end: b's length, or the start of an
+/// incomplete sequence at its end; -1 when that tail can no longer become
+/// a valid character (a bad lead byte or a bad second byte).
+fn utf8_cut(b: Bytes) -> Int {
+  let n = b.len()
+  var back = 0
+  while back < 3 && back < n {
+    back += 1
+    let i = n - back
+    let x = Int(b[i])
+    if x < 128 {
+      return n
+    }
+    if x >= 192 {
+      if x < 194 || x > 244 {
+        return -1
+      }
+      let need = if x < 224 { 2 } else if x < 240 { 3 } else { 4 }
+      if back >= need {
+        return n
+      }
+      if back >= 2 {
+        let y = Int(b[i + 1])
+        var lo = 128
+        var hi = 191
+        if x == 224 {
+          lo = 160
+        } else if x == 237 {
+          hi = 159
+        } else if x == 240 {
+          lo = 144
+        } else if x == 244 {
+          hi = 143
+        }
+        if y < lo || y > hi {
+          return -1
+        }
+      }
+      return i
+    }
+  }
+  n
+}
+
 /// Frames up to a whole message (NextReader and its messageReader), the
 /// control frames between them handled.
 fn (c: WsConn) read_message(var st: ReadState) -> websocket.Message ! websocket.WsErr {
@@ -213,6 +257,7 @@ fn (c: WsConn) read_message(var st: ReadState) -> websocket.Message ! websocket.
   var data = BytesBuilder.new()
   var read_final = true
   var length = 0
+  var pend = b""
   while true {
     let p = c.read_n(st, 2)?
     let b0 = Int(p[0])
@@ -319,10 +364,22 @@ fn (c: WsConn) read_message(var st: ReadState) -> websocket.Message ! websocket.
     if op == OP_TEXT || op == OP_BINARY {
       kind = op
     }
+    if kind == OP_TEXT {
+      // validate each fragment as it arrives (gorilla's utf8 reader):
+      // a bad sequence fails the connection before the rest of the
+      // message is read; an incomplete one at the end waits for the
+      // next fragment
+      let chunk = if pend.len() == 0 { payload } else { pend + payload }
+      let cut = utf8_cut(chunk)
+      if cut < 0 || chunk[0..cut].to_str() is None {
+        return Err(c.protocol_error(1007, "invalid UTF-8 in text frame"))
+      }
+      pend = chunk[cut..]
+    }
     data.write(payload)
     if read_final {
       let all = data.freeze()
-      if kind == OP_TEXT && all.to_str() is None {
+      if pend.len() != 0 {
         return Err(c.protocol_error(1007, "invalid UTF-8 in text frame"))
       }
       return websocket.Message{kind: if kind == OP_TEXT { websocket.Kind.Text } else { websocket.Kind.Binary }, data: all}

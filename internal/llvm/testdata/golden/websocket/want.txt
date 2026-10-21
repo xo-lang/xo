@@ -134,6 +134,30 @@ Upgrade: websocket
 Connection: Upgrade
 Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
 frames: 881d03ef696e76616c6964205554462d3820696e2074657874206672616d65
+== utf8 fail fast
+HTTP/1.1 101 Switching Protocols
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+frames: 881d03ef696e76616c6964205554462d3820696e2074657874206672616d65
+== utf8 split ok
+HTTP/1.1 101 Switching Protocols
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+frames: 8103e282ac8800
+== utf8 split bad
+HTTP/1.1 101 Switching Protocols
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+frames: 881d03ef696e76616c6964205554462d3820696e2074657874206672616d65
+== utf8 unfinished
+HTTP/1.1 101 Switching Protocols
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+frames: 881d03ef696e76616c6964205554462d3820696e2074657874206672616d65
 == close no code
 HTTP/1.1 101 Switching Protocols
 Upgrade: websocket

@@ -230,6 +230,7 @@ func (c *wsConn) readN(n int64) ([]byte, *Websocket_WsErr) {
 func (c *wsConn) readMessage() (Websocket_Message, *Websocket_WsErr) {
 	kind := 0
 	var data []byte
+	checked := 0
 	readFinal := true
 	var length int64
 	for {
@@ -347,13 +348,40 @@ func (c *wsConn) readMessage() (Websocket_Message, *Websocket_WsErr) {
 			kind = op
 		}
 		data = append(data, payload...)
+		if kind == wsText {
+			// each fragment is checked as it arrives (gorilla's utf8
+			// reader): a bad sequence fails the connection at its
+			// fragment, an incomplete one at the end waits for the next
+			cut, ok := wsUTF8Prefix(data[checked:])
+			if !ok {
+				return Websocket_Message{}, c.protocolError(1007, "invalid UTF-8 in text frame")
+			}
+			checked += cut
+		}
 		if readFinal {
-			if kind == wsText && !utf8.Valid(data) {
+			if checked != len(data) && kind == wsText {
 				return Websocket_Message{}, c.protocolError(1007, "invalid UTF-8 in text frame")
 			}
 			return Websocket_Message{F_kind: Websocket_Kind{Tag: kind}, F_data: Bytes(data)}, nil
 		}
 	}
+}
+
+// wsUTF8Prefix is how many bytes of b are whole characters; ok is false
+// when b has an invalid sequence (an incomplete one at the end is not).
+func wsUTF8Prefix(b []byte) (cut int, ok bool) {
+	for cut < len(b) {
+		if b[cut] < utf8.RuneSelf {
+			cut++
+			continue
+		}
+		r, size := utf8.DecodeRune(b[cut:])
+		if r == utf8.RuneError && size == 1 {
+			return cut, !utf8.FullRune(b[cut:])
+		}
+		cut += size
+	}
+	return cut, true
 }
 
 func (c *wsConn) isCloseSent(e *Websocket_WsErr) bool {
