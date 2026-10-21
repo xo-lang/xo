@@ -71,6 +71,20 @@ redirects itself into a stub that saves every register and yields.
    runtime and the C library, holding no runtime lock and no C library
    state, so the runtime code that runs while the fiber is set aside
    reenters nothing the interrupted code was in.
+   **The signal mask.** While a handler runs, the kernel blocks SIGURG
+   (and sa_mask's signals, which the runtime leaves empty) on that thread.
+   Before yielding, the handler sets the thread's mask back to the
+   worker's normal one (pthread_sigmask), so the worker's other fibers
+   run preemptible and SIGPROF is not held; when the parked fiber runs
+   again and its handler returns, sigreturn restores the mask saved in
+   its frame (uc_sigmask: the interrupted code's), so nothing is left
+   blocked or unblocked by mistake.
+   **No nesting.** A fiber holds at most one signal frame: it is
+   preempted only at a PC in the program's code; once set aside it runs
+   again only by returning into its handler, whose remaining code (the
+   return and sigreturn) is in the runtime section, where a SIGURG is
+   declined. So a fiber preempted, resumed, and preempted again has
+   always left its first handler before the second begins.
 4. **Thread derived state across the interruption** (the main hazard):
    the interrupt can land between loading something that belongs to the
    worker's thread (the thread pointer, the thread local table's
@@ -146,7 +160,10 @@ redirects itself into a stub that saves every register and yields.
    --race). Tests: TestPreempt and TestPreemptMigrate unchanged (the
    spinner is preempted within the bound), a new test that interrupts a
    loop holding live values in every register (x16, x17, x30, vectors,
-   flags) a thousand times and checks its result, the profiler, fault,
+   flags) a thousand times and checks its result, a test of two spinning
+   fibers on one worker (XO_THREADS=1) both preempted many times (each
+   preemption while the other is parked inside its handler: the mask
+   reset), with SIGPROF sampling both (XO_PROF=cpu), the profiler, fault,
    and dump tests, and the loop rows: sieve, collatz, sort, nbody within
    2% of no polls (native instructions under callgrind; LLVM user time).
 2. linux and darwin amd64 (the same handler; the kernel places the
