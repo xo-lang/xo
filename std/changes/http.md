@@ -3,7 +3,7 @@
 ## 2026-10-21: feature: BodyReader.multipart (multipart parts from the stream)
 
 - Kind: feature
-- Commit: (filled in after the push)
+- Commit: 942699fbf
 - Found by: decision 0310 phase 3
 - Go reference: net/http Request.MultipartReader; mime/multipart Reader.NextPart and Part.Read; mime/quotedprintable (go1.26.1)
 - Test: internal/llvm/testdata/golden/http_multipart_stream (native identical to the Go backend)
@@ -17,7 +17,7 @@ part's data, so an upload is never held in memory whole.
 ## 2026-10-21: feature: streamed request bodies over HTTP/2
 
 - Kind: feature
-- Commit: (filled in after the push)
+- Commit: 8ac517e64
 - Found by: decision 0310 phase 2
 - Go reference: golang.org/x/net/http2 server (requestBody, the stream's inflow returned as the handler reads, RST_STREAM NO_ERROR for an unread body; go1.26.1's bundled h2_bundle.go)
 - Test: internal/llvm/testdata/golden/http_stream_body_h2 (300,000 byte bodies over a 64 KiB stream window, small reads, a body read halfway and one not read; native identical to the Go backend)
