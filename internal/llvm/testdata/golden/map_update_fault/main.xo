@@ -1,0 +1,62 @@
+// A Map.update closure with a var parameter catches its faults (it
+// hands back the value it was given; the caller goes on unwinding). The
+// arm64 inliner inlines it where the call lands (decision 0317): the
+// lambda changes its parameter, then faults in a nested call (boom), and
+// the fault still reaches the isolate, with the maps' values released
+// once (the leak check of the goldens). run_str's lambda owns a string it
+// built when its nested call faults (Xo Lang 2's review: a release of it
+// on the landing's way or at the exit keeps the call).
+use std/task
+
+fn boom(x: Int) -> Int {
+  if x > 2 {
+    return 100 / (x - x)
+  }
+  x
+}
+
+fn run(n: Int) -> Int {
+  var m: Map[Int, Str] = {}
+  var c: Map[Int, Int] = {}
+  m[1] = "start"
+  for _ in 0..n {
+    c.update(1, 0, fn(var v) {
+      v += 1
+      v = boom(v)
+    })
+    m.update(1, "", fn(var s) { s = s + "!" })
+  }
+  (c.get(1) ?? -1) + (m.get(1) ?? "").len()
+}
+
+fn pick(n: Int) -> Str {
+  if n > 4 {
+    return "${100 / (n - n)}"
+  }
+  "c"
+}
+
+fn run_str(n: Int) -> Int {
+  var w: Map[Int, Str] = {}
+  w[1] = "a"
+  for _ in 0..n {
+    w.update(1, "", fn(var s) {
+      let t = s + "b"
+      s = t + pick(t.len())
+    })
+  }
+  (w.get(1) ?? "").len()
+}
+
+fn main(os: Os) {
+  for n in [2, 5] {
+    match task.isolate(fn() -> Int { run(n) }) {
+      Ok(r) => os.stdio.println("n ${n}: ok ${r}")
+      Err(_) => os.stdio.println("n ${n}: faulted")
+    }
+    match task.isolate(fn() -> Int { run_str(n) }) {
+      Ok(r) => os.stdio.println("str n ${n}: ok ${r}")
+      Err(_) => os.stdio.println("str n ${n}: faulted")
+    }
+  }
+}

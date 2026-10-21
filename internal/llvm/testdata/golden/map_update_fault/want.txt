@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+n 2: ok 9
+str n 2: ok 5
+n 5: faulted
+str n 5: faulted
+--- stderr

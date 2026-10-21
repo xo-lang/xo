@@ -66,6 +66,8 @@ struct InlineCost {
   /// not inlinable for another reason than its size (main, a slow path,
   /// landing pads, rt.frame_addr, a cycle)
   hard: Bool = false
+  /// why it is hard, for XO_INLINE_REPORT
+  why: Str = ""
   /// it has landing pads of its own: inlined only at a call that passes a
   /// closure literal (decision 0256; elsewhere the copies grew hot loops)
   pads: Bool = false
@@ -148,8 +150,14 @@ fn inline_walk(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int], sites: 
   // the runtime's slow paths stay calls (ssa.cold_fn)
   // a function that catches its faults returns on one (ssa raises):
   // inlined, the fault would reach the caller
-  var c = InlineCost{instrs: 0, blocks: s.blocks, bad: f.name == "main" || ssa.cold_fn(f.name) || s.catches || denied(m, f.name)}
+  // a closure that catches its faults (Map.update's, with a var
+  // parameter) is inlinable where its call lands and its own landings
+  // only hand back (find_call, catch_inlinable; decision 0317)
+  var c = InlineCost{instrs: 0, blocks: s.blocks, bad: f.name == "main" || ssa.cold_fn(f.name) || denied(m, f.name)}
   c.hard = c.bad
+  if c.hard {
+    c.why = if f.name == "main" { "main" } else if ssa.cold_fn(f.name) { "slow path" } else { "denied" }
+  }
   c.instrs -= s.adc
   // landing pads of its own (decision 0085) are copied with the body
   // since decision 0256: each copied value's pad is the copy of its
@@ -161,6 +169,7 @@ fn inline_walk(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int], sites: 
   if s.badpad {
     c.bad = true
     c.hard = true
+    c.why = "pad before operands"
   }
   if s.pads {
     c.pads = true
@@ -179,6 +188,7 @@ fn inline_walk(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int], sites: 
       // its frame is the function's own (decision 0233)
       c.bad = true
       c.hard = true
+      c.why = "frame_addr"
     }
     if ci < 0 {
       if !inline_intrinsic(name) {
@@ -193,6 +203,7 @@ fn inline_walk(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int], sites: 
     if st == 1 {
       c.bad = true // a cycle through f
       c.hard = true
+      c.why = "cycle through ${cname}"
       k.bad = true
     } else if st == 2 {
       k = costs.get(cname) ?? k
@@ -319,7 +330,7 @@ pub fn inline_report(m: ssa.Module, filter: Str) -> List[Str] {
       continue
     }
     let c = costs.get(f.name) ?? InlineCost{instrs: 0, blocks: 0, bad: true}
-    let how = if small.contains(f.name) { "small" } else if fewl.contains(f.name) { "few" } else if loopy.contains(f.name) { "loop" } else if padded.contains(f.name) { "padded" } else if c.hard { "no (hard)" } else if c.pads { "no (pads)" } else { "no (size)" }
+    let how = if small.contains(f.name) { "small" } else if fewl.contains(f.name) { "few" } else if loopy.contains(f.name) { "loop" } else if padded.contains(f.name) { "padded" } else if c.hard { "no (hard: ${c.why})" } else if c.pads { "no (pads)" } else { "no (size)" }
     out.push("inline ${f.name}: instrs ${c.instrs} blocks ${c.blocks} sites ${sites.get(f.name) ?? 0} ${how}")
   }
   out
@@ -374,9 +385,10 @@ fn devirtualize(var f: ssa.Func, m: ssa.Module, by_name: Map[Str, Int]) {
       // only a function made to be called through values (parameter 0
       // the closure: a literal, or a named function's `.value` thunk)
       let ci = by_name.get(name) ?? -1
-      // and not one that catches its faults (a task's body: the call has
-      // no landing, and an inlined copy would fault into the caller)
-      if ci >= 0 && m.funcs[ci].indirect && !m.funcs[ci].catches {
+      // and one that catches its faults (Map.update's closure with a var
+      // parameter) only where the call lands: inlined, a fault in the
+      // copy goes to that landing (decision 0317)
+      if ci >= 0 && m.funcs[ci].indirect && (!m.funcs[ci].catches || x.pad >= 0) {
         f.values[v].op = ssa.Op.Call
         f.values[v].aux = ssa.Aux.S(s: name)
       }
@@ -621,10 +633,13 @@ fn find_call(f: ssa.Func, m: ssa.Module, small: Map[Str, Bool], by_name: Map[Str
       if !small.contains(name) {
         continue
       }
+      let ci = by_name.get(name) ?? -1
+      if ci >= 0 && m.funcs[ci].catches && !catch_inlinable(x, m.funcs[ci], m) {
+        continue
+      }
       if x.pad < 0 {
         return v
       }
-      let ci = by_name.get(name) ?? -1
       if m.funcs[ci].results.len() == 1 {
         return v
       }
@@ -652,10 +667,13 @@ fn find_closure_call(f: ssa.Func, m: ssa.Module, padded: Map[Str, Bool], by_name
       if !closure {
         continue
       }
+      let ci = by_name.get(aux_str(x.aux)) ?? -1
+      if ci >= 0 && m.funcs[ci].catches && !catch_inlinable(x, m.funcs[ci], m) {
+        continue
+      }
       if x.pad < 0 {
         return v
       }
-      let ci = by_name.get(aux_str(x.aux)) ?? -1
       if m.funcs[ci].results.len() == 1 {
         return v
       }
@@ -680,16 +698,106 @@ fn find_loop_call(f: ssa.Func, m: ssa.Module, loopy: Map[Str, Bool], by_name: Ma
       if looped == 0 {
         break
       }
+      let ci = by_name.get(aux_str(x.aux)) ?? -1
+      if ci >= 0 && m.funcs[ci].catches && !catch_inlinable(x, m.funcs[ci], m) {
+        continue
+      }
       if x.pad < 0 {
         return v
       }
-      let ci = by_name.get(aux_str(x.aux)) ?? -1
       if m.funcs[ci].results.len() == 1 {
         return v
       }
     }
   }
   -1
+}
+
+/// Whether call x of callee g, a closure that catches its faults
+/// (Func.catches: Map.update's, with a var parameter), may be inlined
+/// (decision 0317): its parameters hold no heap memory, x lands (the caller already goes on unwinding from
+/// the landing, and writes the new value only after the call returns),
+/// every landing of g only reaches g's unwind exit, which hands back the
+/// value it was given, and the exit makes only that and the zero
+/// results: no cleanup on the way or there, so in the copy the call's
+/// landing does the same. Otherwise a fault in the copy would run
+/// g's cleanup and return normally into the caller.
+fn catch_inlinable(x: ssa.Value, g: ssa.Func, m: ssa.Module) -> Bool {
+  if x.pad < 0 || g.unwind_exit < 0 {
+    return false
+  }
+  // its parameters (but the closure, parameter 0) hold no heap memory:
+  // the exit hands the var parameter back, so an owned one (a Map
+  // updated in place) would still be held on the copy's way to the
+  // call's landing, where the call's other ways hold it no more
+  // (TestGoldenRun/maps under XO_INLINE_STRICT=1: nested.update's
+  // fn(var inner))
+  for (i, p) in g.blocks[0].params.indexed() {
+    if i >= 1 && m.heap(g.values[p].ty) {
+      return false
+    }
+  }
+  // the exit itself only makes the zero results and the handed back
+  // value and returns: a release there (insert_rc places one for an
+  // owned parameter or a value live into the shared exit) would be
+  // skipped in the copy, whose faults never reach it (Xo Lang 2's
+  // review, 2026-10-21)
+  for v in g.blocks[g.unwind_exit].instrs {
+    let y = g.values[v]
+    let pure = match y.op {
+      Const | Struct | Tuple | Variant | Undef | Field | Return => true
+      Call => aux_str(y.aux).starts_with("rt.") && aux_str(y.aux).ends_with("_empty")
+      _ => false
+    }
+    if !pure {
+      return false
+    }
+  }
+  for bl in g.blocks {
+    for v in bl.instrs {
+      let y = g.values[v]
+      if y.pad < 0 {
+        continue
+      }
+      if !hands_back(g, y.pad) {
+        return false
+      }
+    }
+  }
+  true
+}
+
+/// Whether landing value p of g (a check `br p, cleanup, rest`) goes
+/// from its cleanup block straight to g's unwind exit: blocks that only
+/// jump, without parameters, at most 16.
+fn hands_back(g: ssa.Func, p: Int) -> Bool {
+  if g.unwind_exit < 0 {
+    return false
+  }
+  var start = -1
+  for bl in g.blocks {
+    for v in bl.instrs {
+      let y = g.values[v]
+      if y.op == ssa.Op.Branch && y.args.len() >= 1 && y.args[0] == p {
+        start = g.edges[y.succs[0]].to
+      }
+    }
+  }
+  if start < 0 {
+    return false
+  }
+  var b = start
+  for _ in 0..16 {
+    if b == g.unwind_exit {
+      return true
+    }
+    let ins = g.blocks[b].instrs
+    if ins.len() != 1 || !g.blocks[b].params.is_empty() || g.values[ins[0]].op != ssa.Op.Jump || !g.edges[g.values[ins[0]].succs[0]].args.is_empty() {
+      return false
+    }
+    b = g.edges[g.values[ins[0]].succs[0]].to
+  }
+  false
 }
 
 /// An edge of the copy whose arguments are mapped after all bodies.
@@ -829,7 +937,12 @@ fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
     f.edges[p.e].args = args
   }
   for (nv, cp) in pads {
-    f.values[nv].pad = vm.get(cp) ?? pad
+    // a closure that catches its faults hands back the value it was
+    // given and the caller goes on unwinding from the call's landing
+    // (the caller writes the new value only after the call returns): its
+    // own landings, which only reach its unwind exit (catch_inlinable),
+    // are the call's landing in the copy (decision 0317)
+    f.values[nv].pad = if callee.catches { pad } else { vm.get(cp) ?? pad }
   }
   for d in callee.dbinds {
     if let Some(nv) = vm.get(d.value) {
