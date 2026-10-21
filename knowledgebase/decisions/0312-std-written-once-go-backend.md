@@ -1,0 +1,144 @@
+# 0312: The Go backend compiles the pure-Xo std modules (std written once, step 2)
+
+Status: Proposed (drafted by Xo Lang Lib 1 on 2026-10-21 at the owner's
+request; for the owner's approval before implementation)
+
+## Context
+
+A std module has three parts today:
+
+- `std/M.xo` declares it.
+- `std/native/M.xo` implements it for the native backends.
+- `std/rt/M.go` implements it again, by hand, for the Go backend, mostly
+  by calling Go's own package.
+
+Decisions 0164 and 0172 set up that split for their modules. The later
+module decisions (0276's ports, 0282 multipart, and others) follow the
+same pattern. It gives the native port an oracle: run the program on the
+Go backend, where Go's package does the work, and compare. Most of
+2026-10-21's std bugs were found that way (parse_url, Set-Cookie, the
+client's ReadResponse, untar, unzip).
+
+The cost is two implementations of every module. Step 1 of "std written
+once" (bdd73dd8, one generated file pair per module) removed the merge
+conflicts in the generated files. The hand-written std/rt files remain,
+and the two implementations can drift in small ways that only a
+differential finds.
+
+Since 2026-10-21 the oracle has a second form that does not need the Go
+backend: corpora generated from Go itself. `scripts/stdcorpus MODULE`
+runs Go's package on Go's own test inputs and on seeded random ones and
+writes the results as an Xo test
+(internal/stdtest/testdata/corpus/MODULE). `-check` keeps each corpus
+reproducible from its generator. TestStdCorpora runs the corpora on every
+native backend outside -short. On their first runs the corpora found:
+
+- mail: 2 native differences;
+- compress: the order of errors;
+- json.Decoder: 3 differences;
+- multipart: a skipped quoted-printable part.
+
+## Decision
+
+1. **Pure-Xo modules compile on the Go backend.** A std module whose
+   `std/native/M.xo` imports only the prelude and other std modules (no
+   `native/llrt`, no `rt.*` intrinsics, no `use c`) is compiled by
+   compiler/gen from that file, as it compiles a user module.
+   - Its `std/rt/M.go` is deleted.
+   - scripts/stdgen emits only its types for the Go backend.
+   - stdgen records the pure modules in a generated list, and `stdgen
+     -check` fails when a module on the list gains a native-only import.
+2. **The modules** (13, as of 2026-10-21): base32, base64, binary, mail,
+   mime, multipart, netip, path, smtp, template, term, url, uuid.
+   - Together their std/rt files are about 1,780 lines.
+   - Their native files are about 7,300 lines and stay the single
+     implementation.
+3. **A module moves only once it has a generated Go corpus.** It needs a
+   `scripts/stdcorpus` generator (reproducible, under `-check`) that
+   covers its public API with Go's results.
+   - As of 2026-10-21 (11:45): base32, base64, binary, mail, mime,
+     multipart, netip, template, and url have one, and with path's
+     one-off table that is ten of the thirteen. base32, base64,
+     binary, mime, netip, path, template, and url have Go-derived tables
+     in their std tests, made by one-off programs; these become stdcorpus
+     generators first. smtp and term have none. term has no Go package
+     to compare with, since its API is Xo's own (colors, NO_COLOR): its
+     module tests stay its oracle. smtp needs a scripted SMTP server for
+     both net/smtp and the Xo client to talk to (FakeNet), which is its
+     corpus to build.
+   - uuid's oracle is github.com/google/uuid, which is not Go's standard
+     library. Its generator may keep using it, as its test does now.
+   - The corpus runs on the Go backend too (TestStdCorpora gains `go`),
+     so a gen bug in a moved module is caught the same way.
+4. **What stays hand-written in std/rt:**
+   - the prelude;
+   - every module that wraps Go runtime facilities or needs native-only
+     code: http, sql, crypto, tls, time, testing, cli, log, task,
+     internal, archive, compress, csv, json, regexp, toml;
+   - the modules whose Go implementation is meant to be Go's (regexp,
+     json), which keep Go's speed on the Go backend.
+   - A module leaves this list only by a later decision.
+5. **Order.** path and uuid first, as the pilot. Then base32, base64,
+   binary, url, netip, mime, mail, multipart, template, smtp, term, each
+   after its corpus. Each move is one push, and the module's goldens must
+   stay identical on go, arm64, and LLVM.
+
+This supersedes the part of 0164 and 0172, and of the module decisions
+that follow them, that fixes how these 13 modules run on the Go backend.
+The oracle rule is unchanged: Go's results stay the reference, but they
+come from the generated corpora, not from the Go backend calling Go's
+package. 0164's and 0172's own modules (csv, toml, regexp, archive) are
+not affected.
+
+## Consequences
+
+- One implementation per pure module. A fix lands once and reaches every
+  backend.
+- The Go backend stops being an independent oracle for these modules:
+  the native-against-Go differential finds nothing for them. The
+  corpora carry that role. They must be at least as thorough as the
+  differentials were, which is why a module moves only after its
+  generator exists.
+- Measured on path (2026-10-21, Mac arm64): a 300,000-iteration loop of
+  join, clean, base, ext, and dir.
+  - Program a: `use std/path` on the Go backend, so Go's path package.
+  - Program b: the same program, with std/native/path.xo copied into a
+    user module and compiled by gen. That is what this decision does.
+  - Results, as one command after the other on an idle machine:
+
+    | | a: Go's path | b: gen-compiled path.xo |
+    |---|---|---|
+    | output | 4300000 | 4300000 |
+    | run time (5 runs) | 0.03 s | 0.12 s |
+    | binary size | 5,233,170 B | 5,266,722 B (+33.5 KB, +0.6%) |
+    | build, warm (2 runs) | 0.18 to 0.19 s | 0.17 to 0.18 s |
+
+    The first build of each (1.61 s and 0.71 s) included one-time cache
+    fills, so it is not compared. Script:
+    ~/xo-lead/notes/lib1/swo-measure.sh.
+- **Speed on the Go backend.** gen's code for a string-heavy module is
+  about 4 times slower than Go's hand-tuned package: about 60 ns more per
+  call here. The native backends are unaffected, because they already run
+  the Xo code. Go backend programs that call these modules in hot loops
+  get slower. Two options:
+  - accept it, since the Go backend is not the performance target
+    (decision 0215);
+  - keep a module on Go's package for speed, which is item 4's escape
+    hatch. Its oracle stays the corpus.
+- Size grows by the module's generated code (here +0.6%). Build time does
+  not change measurably.
+- smtp and term perform I/O through Net and Stdio. Compiled by gen, they
+  use the Go backend's capability objects as user code does, so fakes
+  (FakeNet, test stdio) behave the same on every backend.
+
+## Alternatives
+
+- **Keep both implementations (status quo).** Two copies to keep equal,
+  and every new module costs a second port. The independent oracle is
+  its one benefit, and the corpora now provide it.
+- **Generate std/rt Go from the native Xo with a separate tool.** That is
+  what compiler/gen already is. Running it on std as on user modules
+  needs no second translator.
+- **Move every module, including regexp and json.** Their Go
+  implementations are Go's own optimized packages. Through gen they would
+  be slower, and their oracle is the package itself.
