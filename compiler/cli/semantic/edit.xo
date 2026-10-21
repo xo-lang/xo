@@ -273,6 +273,17 @@ fn line_diff(name: Str, a0: Bytes, b0: Bytes) -> Str {
   out.freeze()
 }
 
+/// The bytes a failed rename restores for the file at p, read as r:
+/// empty for a new file (NotFound), and an error for an existing file that
+/// cannot be read, since restoring "" would empty it.
+fn rollback_bytes(r: Result[Bytes, FsErr], p: Str) -> Bytes ! Str {
+  match r {
+    Ok(b) => Ok(b)
+    Err(NotFound(_)) => Ok(b"")
+    Err(e) => Err("read ${p}: ${e}")
+  }
+}
+
 /// Writes every file through a temporary file and a rename, so a reader
 /// never sees a half written file; if a rename fails, the files already
 /// replaced are restored.
@@ -283,12 +294,11 @@ fn write_all(fs: Fs, outs0: List[(Str, Bytes)]) -> () ! Str uses fs {
     // the bytes a failed rename restores: empty for a new file, and no
     // edit at all when an existing file cannot be read (restoring "" would
     // empty it)
-    let orig = match fs.read(p) {
+    let orig = match rollback_bytes(fs.read(p), p) {
       Ok(b) => b
-      Err(NotFound(_)) => b""
       Err(e) => {
         remove_staged(fs, staged)
-        return Err("read ${p}: ${e}")
+        return Err(e)
       }
     }
     let mode = fs.mode(p).ok() ?? 0o644

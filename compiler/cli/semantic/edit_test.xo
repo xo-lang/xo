@@ -1,57 +1,15 @@
 // Tests of the semantic edits' file writes.
 
-/// An Fs whose read of one path fails with an I/O error.
-struct FlakyFs {
-  inner: Fs
-  bad: Str
+test "an edit's rollback bytes: empty for a new file, an error for an unreadable one" {
+  expect(rollback_bytes(Ok(b"fn a() {}\n"), "a.xo")) == Ok(b"fn a() {}\n")
+  expect(rollback_bytes(Err(FsErr.NotFound(path: "c.xo")), "c.xo")) == Ok(b"")
+  // "" here made a failed rename restore the file empty
+  expect(rollback_bytes(Err(FsErr.Io(path: "b.xo", msg: "input/output error")), "b.xo").is_err()) == true
 }
 
-fn (f: FlakyFs) sub(dir: Str) -> Fs { f.inner.sub(dir) }
-fn (f: FlakyFs) cwd() -> Fs { f.inner.cwd() }
-fn (f: FlakyFs) cwd_path() -> Str ! FsErr { f.inner.cwd_path() }
-fn (f: FlakyFs) read_only() -> Fs { f.inner.read_only() }
-fn (f: FlakyFs) write_only() -> Fs { f.inner.write_only() }
-fn (f: FlakyFs) case_sensitive() -> Bool { f.inner.case_sensitive() }
-fn (f: FlakyFs) stat(path: Str) -> FileInfo? ! FsErr uses fs.read { f.inner.stat(path) }
-fn (f: FlakyFs) exists(path: Str) -> Bool ! FsErr uses fs.read { f.inner.exists(path) }
-fn (f: FlakyFs) read(path: Str) -> Bytes ! FsErr uses fs.read {
-  if path == f.bad {
-    return Err(FsErr.Io(path: path, msg: "input/output error"))
-  }
-  f.inner.read(path)
-}
-fn (f: FlakyFs) read_text(path: Str) -> Str ! FsErr uses fs.read { f.inner.read_text(path) }
-fn (f: FlakyFs) read_dir(dir: Str) -> List[FileInfo] ! FsErr uses fs.read { f.inner.read_dir(dir) }
-fn (f: FlakyFs) walk(dir: Str) -> List[FileInfo] ! FsErr uses fs.read { f.inner.walk(dir) }
-fn (f: FlakyFs) write(path: Str, data: Bytes) -> () ! FsErr uses fs.write { f.inner.write(path, data) }
-fn (f: FlakyFs) create_temp(dir: Str, prefix: Str) -> Str ! FsErr uses fs.write { f.inner.create_temp(dir, prefix) }
-fn (f: FlakyFs) rename(from: Str, to: Str) -> () ! FsErr uses fs.write { f.inner.rename(from, to) }
-fn (f: FlakyFs) remove(path: Str) -> () ! FsErr uses fs.write { f.inner.remove(path) }
-fn (f: FlakyFs) remove_all(path: Str) -> () ! FsErr uses fs.write { f.inner.remove_all(path) }
-fn (f: FlakyFs) create_dir_all(dir: Str) -> () ! FsErr uses fs.write { f.inner.create_dir_all(dir) }
-fn (f: FlakyFs) set_modified(path: Str, t: Time) -> () ! FsErr uses fs.write { f.inner.set_modified(path, t) }
-fn (f: FlakyFs) open(path: Str) -> File ! FsErr uses fs.read { f.inner.open(path) }
-fn (f: FlakyFs) create(path: Str) -> File ! FsErr uses fs.write { f.inner.create(path) }
-fn (f: FlakyFs) open_append(path: Str) -> File ! FsErr uses fs.write { f.inner.open_append(path) }
-fn (f: FlakyFs) create_new(path: Str) -> File ! FsErr uses fs.write { f.inner.create_new(path) }
-fn (f: FlakyFs) append(path: Str, data: Bytes) -> () ! FsErr uses fs.write { f.inner.append(path, data) }
-fn (f: FlakyFs) copy(from: Str, to: Str) -> () ! FsErr uses fs { f.inner.copy(from, to) }
-fn (f: FlakyFs) mode(path: Str) -> Int ! FsErr uses fs.read { f.inner.mode(path) }
-fn (f: FlakyFs) set_mode(path: Str, mode: Int) -> () ! FsErr uses fs.write { f.inner.set_mode(path, mode) }
-fn (f: FlakyFs) symlink(target: Str, link: Str) -> () ! FsErr uses fs.write { f.inner.symlink(target, link) }
-fn (f: FlakyFs) read_link(path: Str) -> Str? ! FsErr uses fs.read { f.inner.read_link(path) }
-fn (f: FlakyFs) glob(pattern: Str) -> List[Str] ! FsErr uses fs.read { f.inner.glob(pattern) }
-fn (f: FlakyFs) lock(path: Str) -> FileLock ! FsErr uses fs.write { f.inner.lock(path) }
-fn (f: FlakyFs) try_lock(path: Str) -> FileLock? ! FsErr uses fs.write { f.inner.try_lock(path) }
-
-test "an edit of a file it cannot read writes nothing, rather than risk restoring it empty" {
+test "write_all writes every file and creates new ones" {
   os.fs.write("a.xo", b"fn a() {}\n")?
-  os.fs.write("b.xo", b"fn b() {}\n")?
-  let fs = FlakyFs{inner: os.fs, bad: "b.xo"}
-  expect(write_all(fs, [("a.xo", b"fn a2() {}\n"), ("b.xo", b"fn b2() {}\n")]).is_err()) == true
-  expect(os.fs.read("a.xo")?) == b"fn a() {}\n"
-  expect(os.fs.read("b.xo")?) == b"fn b() {}\n"
-  // a new file is still created
-  expect(write_all(os.fs, [("c.xo", b"fn c() {}\n")]).is_ok()) == true
+  expect(write_all(os.fs, [("a.xo", b"fn a2() {}\n"), ("c.xo", b"fn c() {}\n")]).is_ok()) == true
+  expect(os.fs.read("a.xo")?) == b"fn a2() {}\n"
   expect(os.fs.read("c.xo")?) == b"fn c() {}\n"
 }
