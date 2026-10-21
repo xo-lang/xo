@@ -832,6 +832,18 @@ fn (var g: G) x86_emit_plain(var b: List[Str], inst: Inst) {
   if g.x86_emit_mem_rmw(b, inst) {
     return
   }
+  if inst.defs.len() == 1 && inst.us.is_empty() && !inst.has_fault {
+    // a constant of 32 bits into a spilled register: one store of the
+    // immediate (2026-10-21: `movl $0, %r11d`, `movq %r11, 264(%rsp)`,
+    // 719 times in bench/perf/tls)
+    if let Some(n) = x86_const_def(inst.text) {
+      let (l, ok) = g.vloc(inst.defs[0])
+      if ok && l.reg < 0 && imm32(n) && !g.fp[inst.defs[0]] {
+        b.push("\tmovq $${n}, ${x86_mem_ref(l)}\n")
+        return
+      }
+    }
+  }
   let t = inst.text
   let tb = t.bytes()
   let tn = tb.len()
