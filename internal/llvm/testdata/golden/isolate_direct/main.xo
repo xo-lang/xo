@@ -1,0 +1,101 @@
+// task.isolate of a closure that only calls a local function value on
+// local names (`fn() { h(q) }`): the native backends make the call
+// itself under the isolation, with no closure. A fault in the call is
+// caught as before; the arguments are moved at their last use and
+// shared when used after; an error result and a closure whose type is
+// not the callee's keep the closure.
+use std/task
+
+struct Req {
+  path: Str
+  tags: List[Str]
+  meta: Map[Str, Str]
+}
+
+enum ReqErr {
+  Bad(why: Str)
+}
+
+fn (e: ReqErr) display() -> Str {
+  match e {
+    Bad(why: why) => "bad: ${why}"
+  }
+}
+
+fn serve(q: Req) -> Str {
+  if q.path == "/boom" {
+    let i = q.tags.len() + 5
+    // out of range: a fault inside the isolated call
+    return q.tags[i]
+  }
+  "${q.path} ${q.tags.join(",")} ${q.meta.get("k") ?? "-"}"
+}
+
+fn check(q: Req) -> Str ! ReqErr {
+  if q.path == "/bad" {
+    return Err(ReqErr.Bad(why: q.path))
+  }
+  Ok(q.path.to_upper())
+}
+
+fn req(path: Str, n: Int) -> Req {
+  var tags: List[Str] = []
+  for i in 0..n {
+    tags.push("t${i}")
+  }
+  Req{path: path, tags: tags, meta: {"k": "v${n}"}}
+}
+
+fn main(os: Os) {
+  let h = serve
+  // the request's last use is the call: it moves in
+  for p in ["/a", "/boom", "/c"] {
+    let q = req(p, 2)
+    match task.isolate(fn() -> Str { h(q) }) {
+      Ok(s) => os.stdio.println("moved ok: ${s}")
+      Err(task.Isolated.Faulted(info)) => os.stdio.println("moved fault: ${info.msg}")
+      Err(_) => os.stdio.println("moved failed")
+    }
+  }
+  // used after the isolate: shared, still valid
+  let kept = req("/kept", 3)
+  match task.isolate(fn() -> Str { h(kept) }) {
+    Ok(s) => os.stdio.println("kept ok: ${s}")
+    Err(_) => os.stdio.println("kept failed")
+  }
+  os.stdio.println("kept after: ${kept.path} ${kept.tags.len()} ${kept.meta.get("k") ?? "-"}")
+  let faulty = req("/boom", 1)
+  match task.isolate(fn() -> Str { h(faulty) }) {
+    Ok(s) => os.stdio.println("faulty ok: ${s}")
+    Err(task.Isolated.Faulted(info)) => os.stdio.println("faulty fault: ${info.msg}")
+    Err(_) => os.stdio.println("faulty failed")
+  }
+  os.stdio.println("faulty after: ${faulty.path} ${faulty.tags.len()}")
+  // an error result: the callee's type is the closure's
+  let c = check
+  for p in ["/ok", "/bad"] {
+    let q = req(p, 1)
+    match task.isolate(fn() -> Str ! ReqErr { c(q) }) {
+      Ok(s) => os.stdio.println("check ok: ${s}")
+      Err(task.Isolated.Failed(e)) => os.stdio.println("check failed: ${e.display()}")
+      Err(_) => os.stdio.println("check faulted")
+    }
+  }
+  // the closure's type is not the callee's (its result is wrapped): the
+  // closure stays
+  let q2 = req("/wrap", 1)
+  match task.isolate(fn() -> Str ! () { h(q2) }) {
+    Ok(s) => os.stdio.println("wrapped ok: ${s}")
+    Err(_) => os.stdio.println("wrapped failed")
+  }
+  // a capture used again after the isolate in a loop
+  var total = 0
+  let base = req("/loop", 2)
+  for _ in 0..3 {
+    match task.isolate(fn() -> Str { h(base) }) {
+      Ok(s) => total += s.len()
+      Err(_) => total -= 1
+    }
+  }
+  os.stdio.println("loop ${total} ${base.tags.len()}")
+}

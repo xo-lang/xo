@@ -1,0 +1,14 @@
+exit 0
+--- stdout
+moved ok: /a t0,t1 v2
+moved fault: index 7 out of range for List of length 2
+moved ok: /c t0,t1 v2
+kept ok: /kept t0,t1,t2 v3
+kept after: /kept 3 v3
+faulty fault: index 6 out of range for List of length 1
+faulty after: /boom 1
+check ok: /OK
+check failed: bad: /bad
+wrapped ok: /wrap t0 v1
+loop 42 2
+--- stderr

@@ -1076,13 +1076,16 @@ fn (var b: Builder) isolate(x: Expr) -> Int {
   let ct = b.c.tys[b.c.resolve(nct)]
   let err_t = b.fail_err(b.apply(ct.err))
   let rt = b.typ(b.result_of(b.apply(ct.result), err_t))
-  let f = b.value_as(arg, b.m.func_type([], rt))
+  // `task.isolate(fn() { g(a, ...) })`: the call is made here, with the
+  // landing on it, and no closure; otherwise f is the closure's value
+  let direct = b.isolate_direct(arg, rt)
+  let vs = if direct.is_empty() { [b.value_as(arg, b.m.func_type([], rt))] } else { direct }
   if b.s.pending >= 0 {
     b.flush_landing()
   }
   let bt = b.bool_t()
   let st = b.str_t()
-  let r = b.s.f.add(b.s.cur, Op.CallValue, rt, Aux.None, [f])
+  let r = b.s.f.add(b.s.cur, Op.CallValue, rt, Aux.None, vs)
   let u = b.s.f.add(b.s.cur, Op.Call, bt, Aux.S(s: "rt.unwinding"), [])
   b.s.f.values[r].pad = u
   let (pad, normal) = b.branch(u)
@@ -1129,6 +1132,70 @@ fn (var b: Builder) isolate(x: Expr) -> Int {
   b.seal(join)
   b.s.cur = join
   res
+}
+
+/// The operands of isolate's call when its argument is a closure literal
+/// with no parameters whose body is one call `g(a, ...)` of a local
+/// function value g on local names, and g's type is the closure's (result
+/// rt, the arguments' types its parameters' exactly): g's value and the arguments', which the call
+/// then takes as a call in the closure would (an argument moves at its
+/// last use here). A closure would hold them in its environment and
+/// pass each on retained, releasing them again with the environment
+/// (about 300 instructions a Router request with 22 heap fields, Xo
+/// Publish, 2026-10-21). Names only: evaluating anything else before the
+/// call would move it out of the isolation. Empty when it does not apply.
+fn (var b: Builder) isolate_direct(arg: Expr, rt: Int) -> List[Int] {
+  let lit = match arg {
+    FnLit(f: f) => f
+    _ => return []
+  }
+  if !lit.params.is_empty() || lit.body.stmts.len() != 1 {
+    return []
+  }
+  let call = match lit.body.stmts[0] {
+    ExprStmt(x: x, ..) => x
+    _ => return []
+  }
+  let (fun, args) = match call {
+    CallExpr(fun: fun, args: args, ..) => (fun, args)
+    _ => return []
+  }
+  let fo = b.local_var(fun)
+  if fo < 0 {
+    return []
+  }
+  var vos: List[Int] = []
+  for a in args {
+    let vo = if a.name == None { b.local_var(a.value) } else { -1 }
+    if vo < 0 {
+      return []
+    }
+    vos.push(vo)
+  }
+  // the variables' values as the closure's call would read them; unused
+  // (and dropped as dead) when the types do not match
+  let fv = b.read(fo)
+  let ft = b.vty(fv)
+  if b.tkind(ft) != Kind.Func || b.m.types[ft].ret != rt || b.m.types[ft].elems.len() != vos.len() {
+    return []
+  }
+  var vs = [fv]
+  for (i, vo) in vos.indexed() {
+    let v = b.read(vo)
+    if b.vty(v) != b.m.types[ft].elems[i] {
+      return []
+    }
+    vs.push(v)
+  }
+  vs
+}
+
+/// The local variable or parameter e names, or -1.
+fn (var b: Builder) local_var(e: Expr) -> Int {
+  match e {
+    Ident(id: x) => b.c.var_of(b.s.file, x)
+    _ => -1
+  }
 }
 
 /// `task.with_timeout(clock, d, f)` (withTimeout, std.md 7): f runs as
