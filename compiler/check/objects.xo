@@ -46,6 +46,12 @@ pub struct FieldInfo {
   /// `as "key,omitempty"`: derive Json leaves the field out when it is
   /// empty (decision 0309)
   pub omit_empty: Bool = false
+  /// per-format overrides of the wire name (decision 0315): the key, empty
+  /// for none (`json ",omitempty"` keeps the default key)
+  pub json_wire: Bytes = b""
+  pub sql_wire: Bytes = b""
+  /// the `xml` string as written (Go's tag text), for derive Xml
+  pub xml_wire: Bytes = b""
   pub sql_key: Bytes = b""
 }
 

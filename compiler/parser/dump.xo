@@ -238,6 +238,9 @@ fn dump_decl(var out: StrBuilder, depth: Int, label: Str, decl: Decl) {
         if let Some(w) = f.wire {
           attr(out, "wire", w)
         }
+        for fw in f.formats {
+          attr(out, "wire_${fw.format.to_str() ?? ""}", fw.wire)
+        }
         out.write("\n")
         dump_doc(out, d + 1, f.doc)
         dump_ident(out, d + 1, "name", f.name)

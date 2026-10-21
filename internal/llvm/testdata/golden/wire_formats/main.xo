@@ -1,0 +1,41 @@
+// Per-format wire names (decision 0315): `as "name"` is shared by every
+// derive, and `json "..."` or `sql "..."` overrides it for that format
+// alone (its name and options); a field without either uses its name. The
+// JSON key and the SQL column of one field can differ.
+use std/json
+use std/sql
+
+const SCHEMA = "CREATE TABLE events (id SERIAL, type TEXT NOT NULL, created INT, note TEXT)"
+
+struct Event {
+  id: Int
+  kind as "type": Str
+  created_at as "createdAt" sql "created": Int?
+  note json "memo,omitempty" sql "note": Str? = None
+} derive Json, SqlRow
+
+fn main(os: Os) uses (stdio, net.dial) {
+  let db = match sql.memory(SCHEMA) {
+    Ok(d) => d
+    Err(e) => {
+      os.stdio.println("schema: ${e}")
+      return
+    }
+  }
+  match db.exec("INSERT INTO events (type, created, note) VALUES ('charge', 7, 'first'), ('refund', NULL, NULL)") {
+    Ok(_) => os.stdio.println("inserted")
+    Err(e) => os.stdio.println("insert: ${e}")
+  }
+  match db.query_as[Event]("SELECT * FROM events") {
+    Ok(es) => {
+      for e in es {
+        os.stdio.println(json.encode_str(e))
+      }
+    }
+    Err(e) => os.stdio.println("events: ${e}")
+  }
+  match json.decode_str[Event]("{\"id\":9,\"type\":\"x\",\"createdAt\":3,\"memo\":\"m\"}") {
+    Ok(e) => os.stdio.println("decoded ${e.id} ${e.kind} ${e.created_at ?? -1} ${e.note ?? "-"}")
+    Err(e) => os.stdio.println("decode: ${e}")
+  }
+}

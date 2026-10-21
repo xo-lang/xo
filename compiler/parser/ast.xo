@@ -157,6 +157,17 @@ pub struct Field {
   /// own name
   pub wire: Bytes? = None
   pub wire_span: Span? = None
+  /// per-format overrides, `json "..."`, `xml "..."`, `sql "..."`
+  /// (decision 0315), in source order
+  pub formats: List[FormatWire] = []
+}
+
+/// One format's wire string of a field (decision 0315): `xml "ID,attr"`.
+pub struct FormatWire {
+  /// "json", "xml", or "sql"
+  pub format: Bytes
+  pub wire: Bytes
+  pub span: Span
 }
 
 pub struct EnumDecl {

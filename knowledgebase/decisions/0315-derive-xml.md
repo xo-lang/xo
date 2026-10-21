@@ -85,6 +85,22 @@ is the question for the owner.
 
 ## Consequences
 
+- Implementation notes (2026-10-21):
+  - **Phase 1: the field syntax.** The parser reads `json`, `sql`, and
+    `xml` strings after a field's name or `as` string (FormatWire), and
+    the formatter, AST JSON, dump, and defhash carry them. The checker
+    gives each format its key: the format's string, else `as`, else the
+    name (FieldInfo.json_wire, sql_wire, xml_wire).
+  - **Codes.** XO0423 is a format given twice. XO0424 is a format the
+    struct does not derive. XO0412 and XO0422 apply to each string.
+  - **What works now.** JSON keys and SQL columns can differ: golden
+    wire_formats is identical on go, arm64, and LLVM.
+  - **`xml` strings** are rejected (XO0424) until derive Xml lands in
+    phase 2.
+  - **Options of `as`.** `omitempty` still applies to Json only, and
+    SqlRow ignores it as before. A `json` string's options replace the
+    `as` string's for Json.
+
 - Programs read and write SOAP, RSS, and S3 bodies as typed structs.
 - Compiler work goes where Json's does:
   - the checker parses the second wire string (decl.xo wire_keys);

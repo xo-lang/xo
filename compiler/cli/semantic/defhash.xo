@@ -595,6 +595,12 @@ fn (var c: Enc) decl(var b: BytesBuilder, d: Decl) {
           open(b, "Wire")
           str(b, w)
         }
+        for fw in f.formats {
+          // decision 0315; likewise only when present
+          open(b, "FormatWire")
+          str(b, fw.format)
+          str(b, fw.wire)
+        }
       }
       c.opt_expr(b, x.inv)
       list_len(b, x.derive.len())

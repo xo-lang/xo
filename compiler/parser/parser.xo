@@ -1181,6 +1181,18 @@ fn (var p: Parser) parse_struct_body(s0: StructDecl, start: Pos) -> StructDecl {
           wire_span = Some(wsp)
         }
       }
+      // per-format overrides, `xml "ID,attr"` (decision 0315): a contextual
+      // word followed by a string
+      var formats: List[FormatWire] = []
+      while (p.at_ident(b"json") || p.at_ident(b"xml") || p.at_ident(b"sql")) && (p.peek(1).kind == Kind.String || p.peek(1).kind == Kind.RawString) {
+        let fmt = p.tok.text
+        p.next()
+        let (w, wsp, ok) = p.plain_string()
+        if !ok {
+          p.fail(UNEXPECTED_TOKEN, wsp, "a wire name is a plain string literal, without interpolation")
+        }
+        formats.push(FormatWire{format: fmt, wire: w, span: wsp})
+      }
       var typ = Type.BadType(p.tok.span)
       if let Some(ft) = p.foreign_field(fname) {
         typ = ft
@@ -1188,7 +1200,7 @@ fn (var p: Parser) parse_struct_body(s0: StructDecl, start: Pos) -> StructDecl {
         p.expect(Kind.Colon, "`:` after the field name")
         typ = p.parse_type()
       }
-      var f = Field{span: p.tok.span, doc: fdoc, is_pub: fpub, name: fname, typ: typ, wire: wire, wire_span: wire_span}
+      var f = Field{span: p.tok.span, doc: fdoc, is_pub: fpub, name: fname, typ: typ, wire: wire, wire_span: wire_span, formats: formats}
       if p.got(Kind.Assign) {
         f.default = Some(p.parse_expr())
       }

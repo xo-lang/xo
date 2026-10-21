@@ -474,6 +474,10 @@ fn (var p: Printer) print_item(it: Item) {
         // its wire name (decision 0277), as written
         p.w(" as " + p.text(ws))
       }
+      for fw in f.formats {
+        // a format's own wire string (decision 0315), as written
+        p.w(" ${text_of(fw.format)} " + p.text(fw.span))
+      }
       p.w(": ")
       p.typ(f.typ)
       if let Some(d) = f.default {

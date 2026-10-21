@@ -190,6 +190,10 @@ fn decl_json(d: parser.Decl) -> Str {
         if let Some(w) = f.wire {
           fo.str("wire", w)
         }
+        for fw in f.formats {
+          // decision 0315: "wire_json", "wire_xml", "wire_sql"
+          fo.str("wire_${fw.format.to_str() ?? ""}", fw.wire)
+        }
         fo.put("type", type_json(f.typ))
         fo.opt("default", oexpr(f.default))
         fo.done()

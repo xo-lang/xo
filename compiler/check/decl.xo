@@ -199,7 +199,42 @@ fn (var c: Checker) resolve_type_obj(t: Int) {
           }
           wire = key
         }
-        fields.push(FieldInfo{name: fl.name.name, ty: ft, is_pub: fl.is_pub || c.mods[c.objs[t].module].is_std, default: dflt, line: fl.name.span.start.line, col: fl.name.span.start.col, wire: wire, omit_empty: omit})
+        // per-format overrides (decision 0315): the format's own string
+        // replaces the name and its options for that format
+        var json_wire = b""
+        var sql_wire = b""
+        var xml_wire = b""
+        var seen_fmt: List[Bytes] = []
+        for fw in fl.formats {
+          if seen_fmt.contains(fw.format) {
+            c.error("XO0423", fw.span, "field `${text(fl.name.name)}` has two `${text(fw.format)}` wire strings; keep one")
+            continue
+          }
+          seen_fmt.push(fw.format)
+          let (key, opts) = wire_parts(fw.wire)
+          if fw.wire.is_empty() {
+            c.error("XO0412", fw.span, "field `${text(fl.name.name)}` has an empty `${text(fw.format)}` wire name; write a key, or leave the string out to use the shared one")
+          }
+          if fw.format == b"json" {
+            json_wire = key
+            omit = false
+            for o in opts {
+              if o == b"omitempty" {
+                omit = true
+              } else {
+                c.error("XO0422", fw.span, "unknown wire name option `${text(o)}` of field `${text(fl.name.name)}`; the only json option is `omitempty` (decision 0309)")
+              }
+            }
+          } else if fw.format == b"sql" {
+            sql_wire = key
+            for o in opts {
+              c.error("XO0422", fw.span, "unknown wire name option `${text(o)}` of field `${text(fl.name.name)}`; a `sql` column name takes no options")
+            }
+          } else {
+            xml_wire = fw.wire
+          }
+        }
+        fields.push(FieldInfo{name: fl.name.name, ty: ft, is_pub: fl.is_pub || c.mods[c.objs[t].module].is_std, default: dflt, line: fl.name.span.start.line, col: fl.name.span.start.col, wire: wire, omit_empty: omit, json_wire: json_wire, sql_wire: sql_wire, xml_wire: xml_wire})
       }
       c.objs[t].derives = c.derives_of(sd.derive)
       c.objs[t].fields = c.wire_keys(sd, fields, c.objs[t].derives)
@@ -337,8 +372,19 @@ fn (var c: Checker) wire_keys(sd: parser.StructDecl, fields0: List[FieldInfo], d
   for i in 0..fields.len() {
     let f = fields[i]
     any_wire = any_wire || !f.wire.is_empty() || f.omit_empty
-    fields[i].json_key = if !f.wire.is_empty() { f.wire } else { wire_case(f.name, json_case) }
-    fields[i].sql_key = if !f.wire.is_empty() { f.wire } else { wire_case(f.name, sql_case) }
+    // the format's own string, else the shared `as`, else the field's
+    // name under the case rule (decision 0315)
+    fields[i].json_key = if !f.json_wire.is_empty() { f.json_wire } else if !f.wire.is_empty() { f.wire } else { wire_case(f.name, json_case) }
+    fields[i].sql_key = if !f.sql_wire.is_empty() { f.sql_wire } else if !f.wire.is_empty() { f.wire } else { wire_case(f.name, sql_case) }
+  }
+  // an override for a format the struct does not derive (decision 0315)
+  for fl in sd.fields {
+    for fw in fl.formats {
+      let d = if fw.format == b"json" { "Json" } else if fw.format == b"sql" { "SqlRow" } else { "Xml" }
+      if !derives.contains(d) {
+        c.error("XO0424", fw.span, "field `${text(fl.name.name)}` has a `${text(fw.format)}` wire string, but `${text(sd.name.name)}` does not derive ${d}; add `derive ${d}` or remove the string")
+      }
+    }
   }
   for d in WIRE_DERIVES {
     if !derives.contains(d) {

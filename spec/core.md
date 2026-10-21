@@ -670,6 +670,21 @@ pub struct User {
   struct or an enum value is never empty. Decoding is unchanged: a
   missing key takes the field's default. Another option is `XO0422`.
   Unlike Go, `as "-"` is the key `-`, not a skipped field.
+- A field may override the shared wire name for one format (decision
+  0315), after its name or its `as` string: `json "..."`, `sql "..."`,
+  `xml "..."` (`json`, `sql`, and `xml` are contextual words, not
+  keywords).
+  - The override replaces the name and the options for that format only.
+  - Each format's name is its own string, else the `as` string, else the
+    field's name under its derive's `case:` rule.
+  - Examples: `created_at as "createdAt" sql "created": Int?` has the JSON
+    key `createdAt` and the column `created`; `note json "memo,omitempty"
+    sql "note": Str?` names each format alone.
+  - A `json` string takes `omitempty`. A `sql` string takes no options
+    (`XO0422` for one). An `xml` string is Go's tag text, for `derive Xml`
+    (decision 0315, stage 2).
+  - A format given twice on a field is `XO0423`. A string for a format the
+    struct does not derive is `XO0424`.
 - `derive Json(case: camel)` (also `snake`, `pascal`, `kebab`, and the
   same argument on `derive SqlRow`) converts every field without its own
   wire name: `api_version` is `apiVersion` under camel, `ApiVersion`
@@ -2708,6 +2723,8 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0420` | error | checker | constant std/time layout is invalid: unknown field, bad field form, or stray brace (std.md 13.3) |
 | `XO0421` | error | checker | integer literal does not fit the integer type it takes in context (1.6) |
 | `XO0422` | error | checker | unknown wire name option; the only one is `omitempty` (core 2.2, decision 0309) |
+| `XO0423` | error | checker | a field has two wire strings for one format (`json "a" json "b"`) (core 2.2, decision 0315) |
+| `XO0424` | error | checker | a format's wire string (`json`, `sql`, `xml`) on a struct that does not derive that format (core 2.2, decision 0315) |
 | `XO0501` | error | checker | var method called on a non var binding (core 3.4) |
 | `XO0502` | error | checker | assignment to an immutable binding or to a captured variable (core 5.2, 3.3) |
 | `XO0503` | error | checker | one variable or overlapping places passed to two `var` parameters of one call (core 5.2, decision 0111) |

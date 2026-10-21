@@ -31,6 +31,18 @@ struct BadOption {
   c as ",omitempty": Int
 } derive Json
 
+struct Formats {
+  a json "a" json "b": Int // ERROR XO0423 "two `json` wire strings"
+  b sql "b,omitempty": Int // ERROR XO0422 "takes no options"
+  c json "c,bogus": Int // ERROR XO0422 "unknown wire name option `bogus`"
+  d xml "D,attr": Int // ERROR XO0424 "does not derive Xml"
+  e as "e" json "": Int // ERROR XO0412 "empty `json` wire name"
+} derive Json, SqlRow
+
+struct NoSql {
+  a sql "col": Int // ERROR XO0424 "does not derive SqlRow"
+} derive Json
+
 struct Unused {
   a as "A": Int // ERROR XO0414 "wire name of field `a` is unused"
 }

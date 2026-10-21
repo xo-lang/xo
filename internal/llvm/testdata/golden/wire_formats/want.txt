@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+inserted
+{"id":1,"type":"charge","createdAt":7,"memo":"first"}
+{"id":2,"type":"refund","createdAt":null}
+decoded 9 x 3 m
+--- stderr
