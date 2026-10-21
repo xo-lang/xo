@@ -1,5 +1,19 @@
 # std/path changes
 
+## 2026-10-21: perf: clean's buffer is bytes, written by index
+
+- Kind: perf
+- Commit: (filled in after the push)
+- Found by: Xo Publish's profile of the Go backend (go-backend-path-profile-2: the lazy buffer was a List[Int] grown from empty, 17%)
+- Go reference: path.go lazybuf (go1.26.1)
+- Test: std/native/path_test.xo; goldens std_path and std06_path
+
+`clean`'s lazy buffer is a `List[UInt8]` made once at the input's length and
+written by index, as Go's, and the bytes are compared and copied as bytes
+(no widening to Int). 3,000,000 iterations of clean(join) + base + ext +
+dir, median of 5 on a busy machine: the Go backend 0.97 s to 0.75 s, native
+1.43 s to 1.03 s; the output is the same.
+
 ## 2026-10-21: behavior: the Go backend runs path.xo too
 
 - Kind: behavior

@@ -3,25 +3,26 @@
 // the only separator.
 
 /// Go's lazybuf: the output of clean, a prefix of the input until the
-/// first byte that differs, then its own bytes.
+/// first byte that differs, then its own bytes, a byte buffer made once
+/// at the input's length and written by index, as Go's.
 struct Lazy {
   s: Bytes
-  buf: List[Int] = []
+  buf: List[UInt8] = []
   copied: Bool = false
   w: Int = 0
 }
 
-fn (l: Lazy) index(i: Int) -> Int { if l.copied { l.buf[i] } else { Int(l.s[i]) } }
+fn (l: Lazy) index(i: Int) -> UInt8 { if l.copied { l.buf[i] } else { l.s[i] } }
 
-fn (var l: Lazy) append(c: Int) {
+fn (var l: Lazy) append(c: UInt8) {
   if !l.copied {
-    if l.w < l.s.len() && Int(l.s[l.w]) == c {
+    if l.w < l.s.len() && l.s[l.w] == c {
       l.w += 1
       return
     }
-    var buf: List[Int] = []
+    var buf = List[UInt8].with_capacity(l.s.len())
     for i in 0..l.w {
-      buf.push(Int(l.s[i]))
+      buf.push(l.s[i])
     }
     l.buf = buf
     l.copied = true
@@ -41,7 +42,7 @@ fn (l: Lazy) text(p: Str) -> Str {
   }
   var b = BytesBuilder.with_capacity(l.w)
   for i in 0..l.w {
-    b.write_byte(UInt8(l.buf[i]))
+    b.write_byte(l.buf[i])
   }
   b.freeze().to_str() ?? ""
 }
@@ -88,7 +89,7 @@ fn clean(p: Str) -> Str {
         out.append(47)
       }
       while r < n && path[r] != 47 {
-        out.append(Int(path[r]))
+        out.append(path[r])
         r += 1
       }
     }
