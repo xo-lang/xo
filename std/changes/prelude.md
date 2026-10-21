@@ -3,7 +3,7 @@
 ## 2026-10-21: feature: a program's own Stdio, Clock, Rand, and Os on the native backends
 
 - Kind: feature
-- Commit: (this commit)
+- Commit: f05128eb5
 - Found by: decision 0307's last step (owner, 2026-10-21)
 - Go reference: none (Xo's capability interfaces; the Go backend already behaved so)
 - Test: internal/llvm/testdata/golden/user_void_caps and os_literal (go, arm64, LLVM, wasm the same), cmd/xo testdata/nogc/userfs, TestUserRandShuffle
