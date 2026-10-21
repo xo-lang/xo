@@ -467,6 +467,60 @@ test "every instruction encodes as the system assembler encodes it" {
   expect(bad) == []
 }
 
+test "every encoding round trips through Op (decision 0274 step 2)" {
+  // parse each instruction to an Op, print it, and encode the printed
+  // text: the same word; and only system registers and barrier options
+  // stay Raw
+  var bad: List[Str] = []
+  var raw: List[Str] = []
+  for (ins, want) in ENCODINGS {
+    let b = ins.bytes()
+    var k = 0
+    while k < b.len() && b[k] != ' ' {
+      k += 1
+    }
+    let m = bstr(b[0..k])
+    let o = parse_op(m, split_operands(b[k..]))
+    let text = print_op(o)
+    let got = first_word("\t${text}\nL:\n")
+    if got != want {
+      bad.push("${ins}: printed `${text}`, got ${hex32(got)}, want ${hex32(want)}")
+    }
+    for x in o.ops {
+      if let Operand.Raw(b: r) = x {
+        if !(bstr(r) is "ish" | "ishld" | "nzcv" | "tpidr_el0" | "#0.0" | "b30") {
+          raw.push("${ins}: `${bstr(r)}`")
+        }
+      }
+    }
+  }
+  expect(bad) == []
+  expect(raw) == []
+}
+
+test "every encoding goes through the Op (decision 0274 step 2)" {
+  // each instruction of the table encodes from its Op: the same word as
+  // the text path where it has no label fixup (a fixup's word is patched
+  // later), and none is left to the text path
+  var bad: List[Str] = []
+  var left: List[Str] = []
+  for (ins, want) in ENCODINGS {
+    let b = ins.bytes()
+    var k = 0
+    while k < b.len() && b[k] != ' ' {
+      k += 1
+    }
+    let e = encode_op_fix(parse_op(bstr(b[0..k]), split_operands(b[k..])), false)
+    if e.w < 0 {
+      left.push(ins)
+    } else if e.fx < 0 && e.w != want {
+      bad.push("${ins}: got ${hex32(e.w)}, want ${hex32(want)}")
+    }
+  }
+  expect(bad) == []
+  expect(left) == []
+}
+
 fn hex32(v: Int) -> Str {
   let digits = "0123456789abcdef"
   var s = ""

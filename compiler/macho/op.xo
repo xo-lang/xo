@@ -1,0 +1,1292 @@
+// The structured arm64 instruction of decision 0274 (step 2's first part):
+// an Op is a mnemonic and its operands, parsed once from the text the
+// emitter writes (or, later, built by the emitter itself), printed back to
+// that text for `xo asm` and --asm. The encoder still reads text; the
+// round trip (parse, print, encode equal) over every encoding the
+// assembler's tests check is what makes the Op form trusted before the
+// encoder's families move to it one at a time.
+
+/// One operand.
+pub enum Operand {
+  /// a general or floating point register: its number (31 for xzr, wzr,
+  /// sp) and kind (RX, RW, RD, RS, RSP, RQ)
+  Reg(n: Int, kind: Int)
+  /// a SIMD register with its arrangement or lane (`v3.16b`, `v1.d[1]`)
+  VReg(n: Int, arr: Str)
+  /// `#N`
+  Imm(v: Int)
+  /// `lsl #N`, `lsr #N`, `asr #N`, `ror #N` (kind 0, 1, 2, 3)
+  Shift(kind: Int, amt: Int)
+  /// a memory operand, a post index's immediate folded in
+  MemOp(m: Mem)
+  /// a condition (csel, cset, ccmp and their family)
+  Cond(c: Int)
+  /// a label or symbol with its relocation operator ("" or PAGE,
+  /// PAGEOFF, GOTPAGE, GOTPAGEOFF, TPREL_HI12, TPREL_LO12) and its text
+  /// as written (the target's spelling of the operator)
+  Sym(name: Bytes, rel: Str, text: Bytes)
+  /// anything else, kept as written (a system register, a barrier's
+  /// option, fcmp's `#0.0`, addv's scalar byte register)
+  Raw(b: Bytes)
+}
+
+/// An instruction: the mnemonic and its operands.
+pub struct Op {
+  m: Str
+  ops: List[Operand]
+}
+
+/// The mnemonics whose operand that is a condition's name is one.
+fn takes_cond(m: Str) -> Bool {
+  m is "csel" | "csinc" | "csinv" | "csneg" | "cset" | "csetm" | "cinc" | "cinv" | "cneg" | "ccmp" | "ccmn" | "fccmp" | "fcsel"
+}
+
+/// The Op of mnemonic m with the operand texts toks (split_operands'
+/// output).
+pub fn parse_op(m: Str, toks: List[Bytes]) -> Op {
+  var ops: List[Operand] = []
+  var i = 0
+  while i < toks.len() {
+    let t = toks[i]
+    if t.len() > 0 && t[0] == '[' {
+      // the memory operand: from here to the end (a post index's
+      // immediate is the next and last token)
+      let mm = mem_op(toks, i)
+      if mm.ok {
+        ops.push(Operand.MemOp(m: mm))
+        i = if mm.mode == 2 { i + 2 } else { i + 1 }
+        continue
+      }
+      ops.push(Operand.Raw(b: t))
+      i += 1
+      continue
+    }
+    ops.push(parse_operand(m, t))
+    i += 1
+  }
+  Op{m: m, ops: ops}
+}
+
+/// One operand's text t of mnemonic m (not a memory operand).
+fn parse_operand(m: Str, t: Bytes) -> Operand {
+  if let Some(v) = imm(t) {
+    return Operand.Imm(v: v)
+  }
+  if let Some((k, n)) = shift_op(t) {
+    return Operand.Shift(kind: k, amt: n)
+  }
+  if t.len() > 4 && bstr(t[0..3]) == "ror" {
+    if let Some(n) = imm(trim(t[3..])) {
+      return Operand.Shift(kind: 3, amt: n)
+    }
+  }
+  let (r, k) = reg(t)
+  if k >= 0 {
+    return Operand.Reg(n: r, kind: k)
+  }
+  let (vn, arr) = vreg(t)
+  if vn >= 0 {
+    return Operand.VReg(n: vn, arr: arr)
+  }
+  if takes_cond(m) {
+    let c = cond(t)
+    if c >= 0 {
+      return Operand.Cond(c: c)
+    }
+  }
+  if t.len() > 0 && (t[0] == 'L' || t[0] == '_' || t[0] == '.' || t[0] == ':') {
+    let (name, rel) = label_op(t)
+    return Operand.Sym(name: name, rel: rel, text: t)
+  }
+  Operand.Raw(b: t)
+}
+
+/// The text of instruction o, as the emitter writes it (no leading tab).
+pub fn print_op(o: Op) -> Str {
+  if o.ops.is_empty() {
+    return o.m
+  }
+  var parts: List[Str] = []
+  for x in o.ops {
+    parts.push(print_operand(x))
+  }
+  "${o.m} ${parts.join(", ")}"
+}
+
+const COND_NAMES = ["eq", "ne", "hs", "lo", "mi", "pl", "vs", "vc", "hi", "ls", "ge", "lt", "gt", "le", "al", "nv"]
+const SHIFT_NAMES = ["lsl", "lsr", "asr", "ror"]
+
+/// The text of operand x.
+pub fn print_operand(x: Operand) -> Str {
+  match x {
+    Reg(n, kind) => reg_text(n, kind)
+    VReg(n, arr) => "v${n}.${arr}"
+    Imm(v) => "#${v}"
+    Shift(kind, amt) => "${SHIFT_NAMES[kind]} #${amt}"
+    MemOp(m) => mem_text(m)
+    Cond(c) => COND_NAMES[c]
+    Sym(_, _, text) => bstr(text)
+    Raw(b) => bstr(b)
+  }
+}
+
+/// The name of register n of kind k.
+fn reg_text(n: Int, k: Int) -> Str {
+  if k == RSP {
+    return "sp"
+  }
+  if n == 31 && k == RX {
+    return "xzr"
+  }
+  if n == 31 && k == RW {
+    return "wzr"
+  }
+  let p = if k == RX { "x" } else if k == RW { "w" } else if k == RD { "d" } else if k == RS { "s" } else { "q" }
+  "${p}${n}"
+}
+
+/// The text of memory operand m (a base of 31 is sp: mem_op takes only x
+/// registers and sp there).
+fn mem_text(m: Mem) -> Str {
+  let b = if m.base == 31 { "sp" } else { "x${m.base}" }
+  match m.mode {
+    1 => "[${b}, #${m.off}]!"
+    2 => "[${b}], #${m.off}"
+    3 => {
+      // an index of 31 is xzr (mem_op takes only x registers there)
+      let r = if m.rm == 31 { "xzr" } else { "x${m.rm}" }
+      if m.sh < 0 {
+        "[${b}, ${r}]"
+      } else {
+        "[${b}, ${r}, lsl #${m.sh}]"
+      }
+    }
+    _ => if m.off == 0 { "[${b}]" } else { "[${b}, #${m.off}]" }
+  }
+}
+
+/// The word of instruction o, or -1 when it has no direct encoding yet
+/// (decision 0274 step 2: the families move here one at a time; a family
+/// not moved yet, and an instruction with a relocation, return -1 and
+/// stay on the text path).
+pub fn encode_op(o: Op) -> Int {
+  let n = o.ops.len()
+  if o.m is "cnt" | "addv" | "dup" | "movi" | "cmeq" | "cmlt" | "shrn" | "pmull" | "pmull2" | "umov" | "aese" | "aesd" | "aesmc" | "aesimc" | "uzp1" | "ushll" | "ushll2" | "rev32" | "sha256h" | "sha256h2" | "sha256su0" | "sha256su1" {
+    return simd_word(o.m, o.ops)
+  }
+  if o.m is "mov" | "add" | "eor" && n >= 2 {
+    if let Operand.VReg(..) = o.ops[0] {
+      return simd_word(o.m, o.ops)
+    }
+  }
+  if o.m is "ldr" | "str" | "ldrb" | "strb" | "ldrsw" | "ldrh" | "strh" | "ldur" | "stur" && n == 2 {
+    if let Operand.Reg(n: t, kind: kt) = o.ops[0] {
+      if let Operand.MemOp(m: mo) = o.ops[1] {
+        return ldst_word(o.m, t, kt, mo)
+      }
+    }
+    return -1
+  }
+  if o.m is "add" | "adds" | "sub" | "subs" && (n == 3 || n == 4) {
+    if let Operand.Reg(n: d, kind: kd) = o.ops[0] {
+      if let Operand.Reg(n: s, kind: ks) = o.ops[1] {
+        return addsub_word(o.m, d, kd, s, ks, o.ops[2], if n == 4 { [o.ops[3]] } else { [] })
+      }
+    }
+    return -1
+  }
+  match o.m {
+    "adc" | "adcs" | "sbc" | "sbcs" => return adcsbc_word(o.m, o.ops)
+    "and" | "orr" | "eor" | "ands" | "bic" | "orn" | "eon" | "bics" => return logical_word(o.m, o.ops)
+    "extr" => return extr_word(o.ops)
+    "lsl" | "lsr" | "asr" | "ror" => return shift_word(o.m, o.ops)
+    "cmp" | "cmn" => {
+      // subs or adds into the zero register
+      if n < 2 || n > 3 {
+        return -1
+      }
+      let zk = zr_kind(o.ops[0])
+      if let Operand.Reg(n: s, kind: ks) = o.ops[0] {
+        return addsub_word(if o.m == "cmp" { "subs" } else { "adds" }, 31, zk, s, ks, o.ops[1], o.ops[2..])
+      }
+      return -1
+    }
+    "neg" | "negs" => {
+      // sub or subs from the zero register
+      if n < 2 || n > 3 {
+        return -1
+      }
+      if let Operand.Reg(n: d, kind: kd) = o.ops[0] {
+        return addsub_word(if o.m == "neg" { "sub" } else { "subs" }, d, kd, 31, zr_kind(o.ops[0]), o.ops[1], o.ops[2..])
+      }
+      return -1
+    }
+    "mov" => return mov_word(o.ops)
+    "mul" | "madd" | "msub" | "smulh" | "umulh" | "sdiv" | "udiv" | "mneg" => return muldiv_word(o.m, o.ops)
+    "umull" | "smull" | "umaddl" | "smaddl" => return mull_word(o.m, o.ops)
+    "csel" | "csinc" | "csinv" | "csneg" | "cset" | "csetm" | "cinc" | "cneg" => return csel_word(o.m, o.ops)
+    "ccmp" | "ccmn" => return ccmp_word(o.m, o.ops)
+    "rev" | "rbit" | "clz" => return unary_word(o.m, o.ops)
+    "stadd" | "ldaddal" | "ldadd" | "ldaddl" | "ldadda" | "staddl" | "swp" | "swpa" | "swpl" | "swpal" => return atomic_word(o.m, o.ops)
+    "cas" | "casa" | "casl" | "casal" => return cas_word(o.m, o.ops)
+    "ldxr" | "ldaxr" | "stxr" | "stlxr" | "ldar" | "stlr" => return excl_word(o.m, o.ops)
+    "fadd" | "fsub" | "fmul" | "fdiv" | "fneg" | "fabs" | "fsqrt" | "frintz" | "frinta" | "frintm" | "frintp" | "frintn" | "frintx" | "frinti" | "scvtf" | "ucvtf" | "fcvt" | "fcvtzs" | "fcvtzu" | "fcmp" | "fcmpe" | "fcsel" | "fccmp" | "fccmpe" | "fmov" => return fp_word(o.m, o.ops)
+    "movz" | "movn" | "movk" => return movw_word(o.m, o.ops)
+    "sxtw" => {
+      // sbfm xd, xn, #0, #31 (rt.mem_cmp's result, decision 0207)
+      if n != 2 {
+        return -1
+      }
+      if let Operand.Reg(n: d, kind: kd) = o.ops[0] {
+        if let Operand.Reg(n: s, kind: ks) = o.ops[1] {
+          return if kd != RX || ks != RW { -1 } else { 0x93407c00 | (s * 32) | d }
+        }
+      }
+      return -1
+    }
+    "svc" => {
+      // a Linux system call (decision 0206)
+      let v = if n == 1 { imm_of(o.ops[0]) ?? -1 } else { -1 }
+      return if v < 0 || v > 65535 { -1 } else { 0xd4000001 | (v * 32) }
+    }
+    "nop" => return if n == 0 { NOP } else { -1 }
+    "yield" => return if n == 0 { 0xd503203f } else { -1 }
+    "dmb" => {
+      // the barrier domains the atomics use (decision 0200)
+      if n != 1 {
+        return -1
+      }
+      let crm = match o.ops[0] {
+        Raw(b) => match bstr(b) {
+          "ish" => 11
+          "ishld" => 9
+          "ishst" => 10
+          "sy" => 15
+          _ => -1
+        }
+        Reg(..) | VReg(..) | Imm(..) | Shift(..) | MemOp(..) | Cond(..) | Sym(..) => -1
+      }
+      return if crm < 0 { -1 } else { 0xd50330bf | (crm * 0x100) }
+    }
+    "tst" => {
+      if n < 2 {
+        return -1
+      }
+      return logical_word("ands", [Operand.Reg(n: 31, kind: zr_kind(o.ops[0]))] + o.ops)
+    }
+    "mvn" => {
+      if n < 2 {
+        return -1
+      }
+      return logical_word("orn", [o.ops[0], Operand.Reg(n: 31, kind: zr_kind(o.ops[0]))] + o.ops[1..])
+    }
+    _ => {}
+  }
+  if o.m is "ldp" | "stp" && n == 3 {
+    if let Operand.Reg(n: t1, kind: k1) = o.ops[0] {
+      if let Operand.Reg(n: t2, kind: k2) = o.ops[1] {
+        if let Operand.MemOp(m: mo) = o.ops[2] {
+          return ldstp_word(o.m, t1, k1, t2, k2, mo)
+        }
+      }
+    }
+    return -1
+  }
+  -1
+}
+
+/// The general register operand x (enc.xo gp): (number, sf), or (-1, 0).
+fn gp_of(x: Operand, sp_ok: Bool) -> (Int, Int) {
+  match x {
+    Reg(n, k) => gp(n, k, sp_ok)
+    VReg(..) | Imm(..) | Shift(..) | MemOp(..) | Cond(..) | Sym(..) | Raw(..) => (-1, 0)
+  }
+}
+
+/// The shift operand x: (kind, amount), or (-1, 0).
+fn shift_of(x: Operand) -> (Int, Int) {
+  match x {
+    Shift(k, a) => (k, a)
+    Reg(..) | VReg(..) | Imm(..) | MemOp(..) | Cond(..) | Sym(..) | Raw(..) => (-1, 0)
+  }
+}
+
+/// The immediate operand x, or None.
+fn imm_of(x: Operand) -> Int? {
+  match x {
+    Imm(v) => Some(v)
+    Reg(..) | VReg(..) | Shift(..) | MemOp(..) | Cond(..) | Sym(..) | Raw(..) => None
+  }
+}
+
+/// adc, adcs, sbc, sbcs.
+fn adcsbc_word(m: Str, o: List[Operand]) -> Int {
+  if o.len() != 3 {
+    return -1
+  }
+  let (d, sfd) = gp_of(o[0], false)
+  let (n, sfn) = gp_of(o[1], false)
+  let (r, sfm) = gp_of(o[2], false)
+  if d < 0 || n < 0 || r < 0 || sfd != sfn || sfd != sfm {
+    return -1
+  }
+  let base = match m {
+    "adc" => 0x1a000000
+    "adcs" => 0x3a000000
+    "sbc" => 0x5a000000
+    _ => 0x7a000000
+  }
+  base | (sfd << 31) | (r << 16) | (n << 5) | d
+}
+
+/// and, orr, eor, ands and the inverted bic, orn, eon, bics: a logical
+/// immediate or a shifted register.
+fn logical_word(m: Str, o: List[Operand]) -> Int {
+  let n = o.len()
+  if n < 3 || n > 4 {
+    return -1
+  }
+  let opc = match m {
+    "and" | "bic" => 0
+    "orr" | "orn" => 1
+    "eor" | "eon" => 2
+    _ => 3
+  }
+  let inv = m == "bic" || m == "orn" || m == "eon" || m == "bics"
+  let (d, sfd) = gp_of(o[0], opc != 3)
+  let (s, sfs) = gp_of(o[1], false)
+  if d < 0 || s < 0 || sfd != sfs {
+    return -1
+  }
+  let sf = sfd
+  if let Some(v) = imm_of(o[2]) {
+    if inv || n != 3 {
+      return -1
+    }
+    return match logical_imm(v, if sf == 1 { 64 } else { 32 }) {
+      Some(e) => 0x12000000 | (sf * 0x80000000) | (opc * 0x20000000) | (e * 0x400) | (s * 32) | d
+      None => -1
+    }
+  }
+  let (r, sfr) = gp_of(o[2], false)
+  if r < 0 || sfr != sf {
+    return -1
+  }
+  var sk = 0
+  var amt = 0
+  if n == 4 {
+    let (k, a) = shift_of(o[3])
+    if k < 0 {
+      return -1
+    }
+    sk = k
+    amt = a
+  }
+  if amt < 0 || amt > (if sf == 1 { 63 } else { 31 }) {
+    return -1
+  }
+  let nb = if inv { 0x200000 } else { 0 }
+  0x0a000000 | (sf * 0x80000000) | (opc * 0x20000000) | (sk * 0x400000) | nb | (r * 0x10000) | (amt * 0x400) | (s * 32) | d
+}
+
+/// extr d, n, m, #lsb.
+fn extr_word(o: List[Operand]) -> Int {
+  if o.len() != 4 {
+    return -1
+  }
+  let (d, sfd) = gp_of(o[0], false)
+  let (n, sfn) = gp_of(o[1], false)
+  let (r, sfr) = gp_of(o[2], false)
+  if d < 0 || n < 0 || r < 0 || sfd != sfn || sfd != sfr {
+    return -1
+  }
+  let size = if sfd == 1 { 64 } else { 32 }
+  let nbit = if sfd == 1 { 0x400000 } else { 0 }
+  match imm_of(o[3]) {
+    Some(v) => if v < 0 || v >= size { -1 } else { 0x13800000 | (sfd * 0x80000000) | nbit | (r * 0x10000) | (v * 0x400) | (n * 32) | d }
+    None => -1
+  }
+}
+
+/// lsl, lsr, asr, ror by an immediate (ubfm, sbfm, extr) or a register
+/// (lslv, lsrv, asrv, rorv).
+fn shift_word(m: Str, o: List[Operand]) -> Int {
+  if o.len() != 3 {
+    return -1
+  }
+  let (d, sfd) = gp_of(o[0], false)
+  let (s, sfs) = gp_of(o[1], false)
+  if d < 0 || s < 0 || sfd != sfs {
+    return -1
+  }
+  let sf = sfd
+  let size = if sf == 1 { 64 } else { 32 }
+  let nbit = if sf == 1 { 0x400000 } else { 0 }
+  match imm_of(o[2]) {
+    Some(v) => {
+      if v < 0 || v >= size {
+        return -1
+      }
+      match m {
+        "lsl" => {
+          let immr = (size - v) % size
+          let imms = size - 1 - v
+          0x53000000 | (sf * 0x80000000) | nbit | (immr * 0x10000) | (imms * 0x400) | (s * 32) | d
+        }
+        "lsr" => 0x53000000 | (sf * 0x80000000) | nbit | (v * 0x10000) | ((size - 1) * 0x400) | (s * 32) | d
+        "asr" => 0x13000000 | (sf * 0x80000000) | nbit | (v * 0x10000) | ((size - 1) * 0x400) | (s * 32) | d
+        _ => 0x13800000 | (sf * 0x80000000) | nbit | (s * 0x10000) | (v * 0x400) | (s * 32) | d
+      }
+    }
+    None => {
+      let (r, sfr) = gp_of(o[2], false)
+      if r < 0 || sfr != sf {
+        return -1
+      }
+      let op2 = match m {
+        "lsl" => 0x2000
+        "lsr" => 0x2400
+        "asr" => 0x2800
+        _ => 0x2c00
+      }
+      0x1ac00000 | (sf * 0x80000000) | (r * 0x10000) | op2 | (s * 32) | d
+    }
+  }
+}
+
+/// The zero register's kind for an alias whose first operand is x (wzr
+/// beside a w register, else xzr).
+fn zr_kind(x: Operand) -> Int {
+  match x {
+    Reg(_, k) => if k == RW { RW } else { RX }
+    VReg(..) | Imm(..) | Shift(..) | MemOp(..) | Cond(..) | Sym(..) | Raw(..) => RX
+  }
+}
+
+/// mov between general registers or sp, or of an immediate (movz, movn,
+/// or orr of a logical immediate); a SIMD mov is not here.
+fn mov_word(o: List[Operand]) -> Int {
+  if o.len() != 2 {
+    return -1
+  }
+  let (d, kd) = match o[0] {
+    Reg(n, k) => (n, k)
+    VReg(..) | Imm(..) | Shift(..) | MemOp(..) | Cond(..) | Sym(..) | Raw(..) => (0, -1)
+  }
+  if kd != RX && kd != RW && kd != RSP {
+    return -1
+  }
+  let sf = if kd == RW { 0 } else { 1 }
+  if let Some(v) = imm_of(o[1]) {
+    if kd == RSP {
+      return -1
+    }
+    return mov_imm_word(d, sf, v)
+  }
+  let (s, ks) = match o[1] {
+    Reg(n, k) => (n, k)
+    VReg(..) | Imm(..) | Shift(..) | MemOp(..) | Cond(..) | Sym(..) | Raw(..) => (0, -1)
+  }
+  if ks < 0 {
+    return -1
+  }
+  if kd == RSP || ks == RSP {
+    // add Rd, Rn, #0
+    return 0x11000000 | (sf * 0x80000000) | (s * 32) | d
+  }
+  if (ks == RX) != (sf == 1) {
+    return -1
+  }
+  // orr Rd, zr, Rm
+  0x2a0003e0 | (sf * 0x80000000) | (s * 0x10000) | d
+}
+
+/// mov of immediate v0 into register d (sf 1: x, 0: w).
+fn mov_imm_word(d: Int, sf: Int, v0: Int) -> Int {
+  var v = v0
+  let nchunks = if sf == 1 { 4 } else { 2 }
+  if sf == 0 {
+    if v < -2147483648 || v > 4294967295 {
+      return -1
+    }
+    v = v & 0xffffffff
+  }
+  // movz: at most one chunk not zero
+  var nz = 0
+  var at = 0
+  for k in 0..nchunks {
+    if (lsr(v, 16 * k) & 0xffff) != 0 {
+      nz += 1
+      at = k
+    }
+  }
+  if nz <= 1 {
+    return 0x52800000 | (sf * 0x80000000) | (at * 0x200000) | ((lsr(v, 16 * at) & 0xffff) * 32) | d
+  }
+  // movn: at most one chunk not all ones
+  let inv = if sf == 1 { ~v } else { (~v) & 0xffffffff }
+  var ni = 0
+  var at2 = 0
+  for k in 0..nchunks {
+    if (lsr(inv, 16 * k) & 0xffff) != 0 {
+      ni += 1
+      at2 = k
+    }
+  }
+  if ni <= 1 {
+    return 0x12800000 | (sf * 0x80000000) | (at2 * 0x200000) | ((lsr(inv, 16 * at2) & 0xffff) * 32) | d
+  }
+  match logical_imm(v, if sf == 1 { 64 } else { 32 }) {
+    Some(e) => 0x32000000 | (sf * 0x80000000) | (e * 0x400) | (31 * 32) | d
+    None => -1
+  }
+}
+
+/// The condition operand x, or -1.
+fn cond_of(x: Operand) -> Int {
+  match x {
+    Cond(c) => c
+    Reg(..) | VReg(..) | Imm(..) | Shift(..) | MemOp(..) | Sym(..) | Raw(..) => -1
+  }
+}
+
+/// mul, mneg, madd, msub, smulh, umulh, sdiv, udiv.
+fn muldiv_word(m: Str, o: List[Operand]) -> Int {
+  let n = o.len()
+  var rs: List[Int] = []
+  var sf = -1
+  for x in o {
+    let (r, f) = gp_of(x, false)
+    if r < 0 || (sf >= 0 && f != sf) {
+      return -1
+    }
+    sf = f
+    rs.push(r)
+  }
+  let sfb = sf * 0x80000000
+  match m {
+    "mul" | "mneg" => {
+      if n != 3 {
+        return -1
+      }
+      let o0 = if m == "mneg" { 0x8000 } else { 0 }
+      0x1b000000 | sfb | (rs[2] * 0x10000) | o0 | (31 * 0x400) | (rs[1] * 32) | rs[0]
+    }
+    "madd" | "msub" => {
+      if n != 4 {
+        return -1
+      }
+      let o0 = if m == "msub" { 0x8000 } else { 0 }
+      0x1b000000 | sfb | (rs[2] * 0x10000) | o0 | (rs[3] * 0x400) | (rs[1] * 32) | rs[0]
+    }
+    "smulh" | "umulh" => {
+      if n != 3 || sf != 1 {
+        return -1
+      }
+      let base = if m == "smulh" { 0x9b407c00 } else { 0x9bc07c00 }
+      base | (rs[2] * 0x10000) | (rs[1] * 32) | rs[0]
+    }
+    _ => {
+      if n != 3 {
+        return -1
+      }
+      let op2 = if m == "sdiv" { 0xc00 } else { 0x800 }
+      0x1ac00000 | sfb | (rs[2] * 0x10000) | op2 | (rs[1] * 32) | rs[0]
+    }
+  }
+}
+
+/// The long multiplies (decision 0208): umull and smull Xd, Wn, Wm, and
+/// umaddl and smaddl Xd, Wn, Wm, Xa.
+fn mull_word(m: Str, o: List[Operand]) -> Int {
+  let four = m.ends_with("addl")
+  if o.len() != (if four { 4 } else { 3 }) {
+    return -1
+  }
+  let (d, fd) = gp_of(o[0], false)
+  let (rn, fn0) = gp_of(o[1], false)
+  let (rm, fm) = gp_of(o[2], false)
+  var ra = 31
+  var fa = 1
+  if four {
+    let (x, fx) = gp_of(o[3], false)
+    ra = x
+    fa = fx
+  }
+  if d < 0 || rn < 0 || rm < 0 || ra < 0 || fd != 1 || fn0 != 0 || fm != 0 || fa != 1 {
+    return -1
+  }
+  let base = if m.starts_with("u") { 0x9ba00000 } else { 0x9b200000 }
+  base | (rm * 0x10000) | (ra * 0x400) | (rn * 32) | d
+}
+
+/// The conditional selects and their aliases (cset, csetm, cinc, cneg).
+fn csel_word(m: Str, o: List[Operand]) -> Int {
+  let n = o.len()
+  if n < 2 {
+    return -1
+  }
+  let c = cond_of(o[n - 1])
+  if c < 0 {
+    return -1
+  }
+  var rs: List[Int] = []
+  var sf = -1
+  for x in o[0..n - 1] {
+    let (r, f) = gp_of(x, false)
+    if r < 0 || (sf >= 0 && f != sf) {
+      return -1
+    }
+    sf = f
+    rs.push(r)
+  }
+  // (op, o2): csel 0/0, csinc 0/1, csinv 1/0, csneg 1/1
+  let d = rs[0]
+  var x = 0
+  var y = 0
+  var cc = c
+  var op = 0
+  var o2 = 0
+  match m {
+    "csel" | "csinc" | "csinv" | "csneg" => {
+      if rs.len() != 3 {
+        return -1
+      }
+      x = rs[1]
+      y = rs[2]
+      op = if m == "csinv" || m == "csneg" { 1 } else { 0 }
+      o2 = if m == "csinc" || m == "csneg" { 1 } else { 0 }
+    }
+    "cset" | "csetm" => {
+      if rs.len() != 1 {
+        return -1
+      }
+      x = 31
+      y = 31
+      cc = c ^ 1
+      op = if m == "csetm" { 1 } else { 0 }
+      o2 = if m == "cset" { 1 } else { 0 }
+    }
+    _ => {
+      // cinc, cneg: Rd, Rn, cond
+      if rs.len() != 2 {
+        return -1
+      }
+      x = rs[1]
+      y = rs[1]
+      cc = c ^ 1
+      op = if m == "cneg" { 1 } else { 0 }
+      o2 = 1
+    }
+  }
+  0x1a800000 | (sf * 0x80000000) | (op * 0x40000000) | (y * 0x10000) | (cc * 0x1000) | (o2 * 0x400) | (x * 32) | d
+}
+
+/// ccmp, ccmn with an immediate or a register.
+fn ccmp_word(m: Str, o: List[Operand]) -> Int {
+  if o.len() != 4 {
+    return -1
+  }
+  let (x, sf) = gp_of(o[0], false)
+  let nzcv = imm_of(o[2]) ?? -1
+  let c = cond_of(o[3])
+  if x < 0 || nzcv < 0 || nzcv > 15 || c < 0 {
+    return -1
+  }
+  let base = if m == "ccmp" { 0x7a400000 } else { 0x3a400000 }
+  match imm_of(o[1]) {
+    Some(v) => if v < 0 || v > 31 { -1 } else { base | (sf * 0x80000000) | (v * 0x10000) | (c * 0x1000) | 0x800 | (x * 32) | nzcv }
+    None => {
+      let (y, sfy) = gp_of(o[1], false)
+      if y < 0 || sfy != sf { -1 } else { base | (sf * 0x80000000) | (y * 0x10000) | (c * 0x1000) | (x * 32) | nzcv }
+    }
+  }
+}
+
+/// An instruction's encoding: its word (-1: none here, the text path
+/// encodes it) and the fixup of a label it refers to (kind -1: none).
+pub struct Enc {
+  w: Int
+  fx: Int = -1
+  name: Bytes = b""
+}
+
+/// The label operand x: its name and relocation operator, or ("", "-")
+/// when x is not one (a symbol without a leading `_`, `L`, or `.`, as
+/// ELF's, parses as Raw).
+fn sym_of(x: Operand) -> (Bytes, Str) {
+  match x {
+    Sym(name, rel, _) => (name, rel)
+    Raw(b) => label_op(b)
+    Reg(..) | VReg(..) | Imm(..) | Shift(..) | MemOp(..) | Cond(..) => (b"", "-")
+  }
+}
+
+/// The encoding of instruction o for an object of ELF (elf) or Mach-O:
+/// the branches and adr/adrp with their label fixups, then encode_op's
+/// families.
+pub fn encode_op_fix(o: Op, elf: Bool) -> Enc {
+  let n = o.ops.len()
+  let none = Enc{w: -1}
+  match o.m {
+    "b" | "bl" => {
+      if n != 1 {
+        return none
+      }
+      let (name, rel) = sym_of(o.ops[0])
+      if rel != "" {
+        return none
+      }
+      return if o.m == "bl" { Enc{w: 0x94000000, fx: FX_BL26, name: name} } else { Enc{w: 0x14000000, fx: FX_B26, name: name} }
+    }
+    "cbz" | "cbnz" => {
+      if n != 2 {
+        return none
+      }
+      let (r, sf) = gp_of(o.ops[0], false)
+      let (name, rel) = sym_of(o.ops[1])
+      if r < 0 || rel != "" {
+        return none
+      }
+      let base = if o.m == "cbz" { 0x34000000 } else { 0x35000000 }
+      return Enc{w: base | (sf * 0x80000000) | r, fx: FX_COND19, name: name}
+    }
+    "tbz" | "tbnz" => {
+      if n != 3 {
+        return none
+      }
+      let (r, _) = gp_of(o.ops[0], false)
+      let bit = imm_of(o.ops[1]) ?? -1
+      let (name, rel) = sym_of(o.ops[2])
+      if r < 0 || bit < 0 || bit > 63 || rel != "" {
+        return none
+      }
+      let base = if o.m == "tbz" { 0x36000000 } else { 0x37000000 }
+      return Enc{w: base | ((bit >> 5) * 0x80000000) | ((bit & 31) * 0x80000) | r, fx: FX_TB14, name: name}
+    }
+    "br" | "blr" | "ret" => {
+      var r = 30
+      if n == 1 {
+        match o.ops[0] {
+          Reg(x, k) => {
+            if k != RX {
+              return none
+            }
+            r = x
+          }
+          VReg(..) | Imm(..) | Shift(..) | MemOp(..) | Cond(..) | Sym(..) | Raw(..) => return none
+        }
+      } else if n != 0 || o.m != "ret" {
+        return none
+      }
+      let base = match o.m {
+        "br" => 0xd61f0000
+        "blr" => 0xd63f0000
+        _ => 0xd65f0000
+      }
+      return Enc{w: base | (r * 32)}
+    }
+    "brk" => {
+      let v = if n == 1 { imm_of(o.ops[0]) ?? -1 } else { -1 }
+      return if v < 0 || v > 65535 { none } else { Enc{w: 0xd4200000 | (v * 32)} }
+    }
+    "adr" | "adrp" => {
+      if n != 2 {
+        return none
+      }
+      let (r, k) = match o.ops[0] {
+        Reg(x, kk) => (x, kk)
+        VReg(..) | Imm(..) | Shift(..) | MemOp(..) | Cond(..) | Sym(..) | Raw(..) => (0, -1)
+      }
+      let (name, op) = sym_of(o.ops[1])
+      if k != RX || op == "-" {
+        return none
+      }
+      if o.m == "adr" {
+        return if op != "" { none } else { Enc{w: 0x10000000 | r, fx: FX_ADR21, name: name} }
+      }
+      if op == "TLVPPAGE" && !elf {
+        // a thread local's TLV descriptor (decision 0212)
+        return Enc{w: 0x90000000 | r, fx: FX_TLVP_PAGE21, name: name}
+      }
+      if op == "GOTPAGE" {
+        return Enc{w: 0x90000000 | r, fx: FX_GOT_PAGE21, name: name}
+      }
+      // ELF: a bare label is its page
+      if op != "PAGE" && !(elf && op == "") {
+        return none
+      }
+      return Enc{w: 0x90000000 | r, fx: FX_PAGE21, name: name}
+    }
+    _ => {}
+  }
+  if o.m == "ldr" && n == 2 {
+    // [base, sym@TLVPPAGEOFF] (a thread local's TLV descriptor, decision
+    // 0212) and [base, sym@GOTPAGEOFF]: not memory operands mem_op takes
+    if let Operand.Raw(b: b) = o.ops[1] {
+      let (t, kt) = rk_of(o.ops[0])
+      if kt == RX && b.len() > 2 && b[0] == '[' && b[b.len() - 1] == ']' {
+        let parts = split_operands(b[1..b.len() - 1])
+        if parts.len() == 2 {
+          let (name, op) = label_op(parts[1])
+          let (base, kb) = reg(parts[0])
+          if op == "TLVPPAGEOFF" && kb == RX && !elf {
+            return Enc{w: 0xf9400000 | (base * 32) | t, fx: FX_TLVP_PAGEOFF12, name: name}
+          }
+          if op == "GOTPAGEOFF" && kb == RX {
+            return Enc{w: 0xf9400000 | (base * 32) | t, fx: FX_GOT_PAGEOFF12, name: name}
+          }
+        }
+      }
+      return none
+    }
+  }
+  if o.m == "add" && n == 3 {
+    // a page offset or a thread local offset: add Xd, Xn, sym@PAGEOFF
+    let (lab, op) = sym_of(o.ops[2])
+    if op is "PAGEOFF" | "TPREL_HI12" | "TPREL_LO12" {
+      let (d, sfd) = gp_of(o.ops[0], true)
+      let (s, sfs) = gp_of(o.ops[1], true)
+      if d < 0 || s < 0 || sfd != sfs {
+        return none
+      }
+      if op == "PAGEOFF" {
+        return Enc{w: 0x91000000 | (s * 32) | d, fx: FX_PAGEOFF12, name: lab}
+      }
+      if !elf {
+        return none
+      }
+      return if op == "TPREL_HI12" { Enc{w: 0x91400000 | (s * 32) | d, fx: FX_TPREL_HI12, name: lab} } else { Enc{w: 0x91000000 | (s * 32) | d, fx: FX_TPREL_LO12, name: lab} }
+    }
+  }
+  if o.m == "prfm" && n == 2 {
+    // rt.prefetch (decision 0207 stage 3): pldl1keep at [xn{, #imm}]
+    if let Operand.Raw(b: k) = o.ops[0] {
+      if let Operand.MemOp(m: mo) = o.ops[1] {
+        if bstr(k) == "pldl1keep" && mo.ok && mo.mode == 0 && mo.off >= 0 && mo.off % 8 == 0 && mo.off / 8 <= 4095 {
+          return Enc{w: 0xf9800000 | ((mo.off / 8) * 0x400) | (mo.base * 32)}
+        }
+      }
+    }
+    return none
+  }
+  if o.m is "mrs" | "msr" && n == 2 {
+    // the thread pointer (decisions 0212, 0243)
+    let (ri, si) = if o.m == "mrs" { (0, 1) } else { (1, 0) }
+    let (r, k) = rk_of(o.ops[ri])
+    if let Operand.Raw(b: sr) = o.ops[si] {
+      if k == RX && bstr(sr).to_lower() == "tpidr_el0" {
+        return Enc{w: (if o.m == "mrs" { 0xd53bd040 } else { 0xd51bd040 }) | r}
+      }
+    }
+    return none
+  }
+  if o.m.starts_with("b.") && n == 1 {
+    let c = cond(o.m.bytes()[2..])
+    let (name, rel) = sym_of(o.ops[0])
+    if c < 0 || rel != "" {
+      return none
+    }
+    return Enc{w: 0x54000000 | c, fx: FX_COND19, name: name}
+  }
+  Enc{w: encode_op(o)}
+}
+
+/// rev (the bytes reversed, decision 0195), rbit, clz: Rd, Rn.
+fn unary_word(m: Str, o: List[Operand]) -> Int {
+  if o.len() != 2 {
+    return -1
+  }
+  let (d, sd) = gp_of(o[0], false)
+  let (x, sx) = gp_of(o[1], false)
+  if d < 0 || x < 0 || sd != sx {
+    return -1
+  }
+  match m {
+    "rev" => (if sd == 1 { 0xDAC00C00 } else { 0x5AC00800 }) | (x * 32) | d
+    "rbit" => 0x5ac00000 | (sd * 0x80000000) | (x * 32) | d
+    _ => 0x5ac01000 | (sd * 0x80000000) | (x * 32) | d
+  }
+}
+
+/// movz, movn, movk Rd, #imm16{, lsl #16k}.
+fn movw_word(m: Str, o: List[Operand]) -> Int {
+  let n = o.len()
+  if n != 2 && n != 3 {
+    return -1
+  }
+  let (r, sf) = gp_of(o[0], false)
+  let v = imm_of(o[1]) ?? -1
+  var sh = 0
+  if n == 3 {
+    let (k, a) = shift_of(o[2])
+    if k != 0 {
+      return -1
+    }
+    sh = a
+  }
+  if r < 0 || v < 0 || v > 65535 || sh % 16 != 0 || sh < 0 || sh > (if sf == 1 { 48 } else { 16 }) {
+    return -1
+  }
+  let base = match m {
+    "movz" => 0x52800000
+    "movn" => 0x12800000
+    _ => 0x72800000
+  }
+  base | (sf * 0x80000000) | ((sh / 16) * 0x200000) | (v * 32) | r
+}
+
+/// The register operand x: (number, kind), or (0, -1).
+fn rk_of(x: Operand) -> (Int, Int) {
+  match x {
+    Reg(n, k) => (n, k)
+    VReg(..) | Imm(..) | Shift(..) | MemOp(..) | Cond(..) | Sym(..) | Raw(..) => (0, -1)
+  }
+}
+
+/// The scalar floating point instructions (double precision but for the
+/// conversions to and from single, decision 0195).
+fn fp_word(m: Str, o: List[Operand]) -> Int {
+  let n = o.len()
+  match m {
+    "fadd" | "fsub" | "fmul" | "fdiv" => {
+      let base = match m {
+        "fadd" => 0x1e602800
+        "fsub" => 0x1e603800
+        "fmul" => 0x1e600800
+        _ => 0x1e601800
+      }
+      if n != 3 {
+        return -1
+      }
+      let (d, kd) = rk_of(o[0])
+      let (x, kx) = rk_of(o[1])
+      let (y, ky) = rk_of(o[2])
+      if kd != RD || kx != RD || ky != RD { -1 } else { base | (y * 0x10000) | (x * 32) | d }
+    }
+    "fneg" | "fabs" | "fsqrt" | "frintz" | "frinta" | "frintm" | "frintp" | "frintn" | "frintx" | "frinti" => {
+      let base = match m {
+        "fneg" => 0x1e614000
+        "fabs" => 0x1e60c000
+        "fsqrt" => 0x1e61c000
+        "frintz" => 0x1e65c000
+        "frinta" => 0x1e664000
+        "frintm" => 0x1e654000
+        "frintp" => 0x1e64c000
+        "frintn" => 0x1e644000
+        "frintx" => 0x1e674000
+        _ => 0x1e67c000
+      }
+      if n != 2 {
+        return -1
+      }
+      let (d, kd) = rk_of(o[0])
+      let (s, ks) = rk_of(o[1])
+      if kd != RD || ks != RD { -1 } else { base | (s * 32) | d }
+    }
+    "scvtf" | "ucvtf" => {
+      if n != 2 {
+        return -1
+      }
+      let (d, kd) = rk_of(o[0])
+      let (s, sf) = gp_of(o[1], false)
+      if (kd != RD && kd != RS) || s < 0 {
+        return -1
+      }
+      var base = if m == "scvtf" { 0x1e620000 } else { 0x1e630000 }
+      if kd == RS {
+        // to single precision (rt.i64_to_f32)
+        base -= 0x400000
+      }
+      base | (sf * 0x80000000) | (s * 32) | d
+    }
+    "fcvt" => {
+      // between double and single precision (rt.f32_round)
+      if n != 2 {
+        return -1
+      }
+      let (d, kd) = rk_of(o[0])
+      let (s, ks) = rk_of(o[1])
+      if kd == RS && ks == RD {
+        return 0x1e624000 | (s * 32) | d
+      }
+      if kd == RD && ks == RS {
+        return 0x1e22c000 | (s * 32) | d
+      }
+      -1
+    }
+    "fcvtzs" | "fcvtzu" => {
+      if n != 2 {
+        return -1
+      }
+      let (d, sf) = gp_of(o[0], false)
+      let (s, ks) = rk_of(o[1])
+      if d < 0 || ks != RD {
+        return -1
+      }
+      (if m == "fcvtzs" { 0x1e780000 } else { 0x1e790000 }) | (sf * 0x80000000) | (s * 32) | d
+    }
+    "fcmp" | "fcmpe" => {
+      if n != 2 {
+        return -1
+      }
+      let (x, kx) = rk_of(o[0])
+      if kx != RD {
+        return -1
+      }
+      let e = if m == "fcmpe" { 16 } else { 0 }
+      let (y, ky) = rk_of(o[1])
+      if ky == RD {
+        return 0x1e602000 | (y * 0x10000) | (x * 32) | e
+      }
+      // against zero: `#0.0` (Raw) or `#0`
+      let zero = match o[1] {
+        Raw(b) => bstr(b) == "#0.0"
+        Imm(v) => v == 0
+        Reg(..) | VReg(..) | Shift(..) | MemOp(..) | Cond(..) | Sym(..) => false
+      }
+      if zero { 0x1e602008 | (x * 32) | e } else { -1 }
+    }
+    "fcsel" => {
+      if n != 4 {
+        return -1
+      }
+      let (d, kd) = rk_of(o[0])
+      let (x, kx) = rk_of(o[1])
+      let (y, ky) = rk_of(o[2])
+      let c = cond_of(o[3])
+      if kd != RD || kx != RD || ky != RD || c < 0 { -1 } else { 0x1e600c00 | (y * 0x10000) | (c * 0x1000) | (x * 32) | d }
+    }
+    "fccmp" | "fccmpe" => {
+      if n != 4 {
+        return -1
+      }
+      let (x, kx) = rk_of(o[0])
+      let (y, ky) = rk_of(o[1])
+      let nzcv = imm_of(o[2]) ?? -1
+      let c = cond_of(o[3])
+      if kx != RD || ky != RD || nzcv < 0 || nzcv > 15 || c < 0 {
+        return -1
+      }
+      let e = if m == "fccmpe" { 16 } else { 0 }
+      0x1e600400 | (y * 0x10000) | (c * 0x1000) | (x * 32) | e | nzcv
+    }
+    _ => {
+      // fmov between d registers, or a d and an x register
+      if n != 2 {
+        return -1
+      }
+      let (d, kd) = rk_of(o[0])
+      let (s, ks) = rk_of(o[1])
+      if kd == RD && ks == RD {
+        0x1e604000 | (s * 32) | d
+      } else if kd == RD && ks == RX {
+        0x9e670000 | (s * 32) | d
+      } else if kd == RX && ks == RD {
+        0x9e660000 | (s * 32) | d
+      } else {
+        -1
+      }
+    }
+  }
+}
+
+/// The base register of an atomic's memory operand x (`[Xn]` or `[sp]`),
+/// or -1.
+fn base_of(x: Operand) -> Int {
+  match x {
+    MemOp(m) => if m.ok && m.mode == 0 && m.off == 0 { m.base } else { -1 }
+    Reg(..) | VReg(..) | Imm(..) | Shift(..) | Cond(..) | Sym(..) | Raw(..) => -1
+  }
+}
+
+/// The LSE atomics: ldadd{a,l,al} and swp{a,l,al} Rs, Rt, [Rn], stadd{l}
+/// Rs, [Rn].
+fn atomic_word(m: Str, o: List[Operand]) -> Int {
+  let st = m.starts_with("st")
+  let n = o.len()
+  if (st && n != 2) || (!st && n != 3) {
+    return -1
+  }
+  let (s, sf) = gp_of(o[0], false)
+  var t = 31
+  var sft = sf
+  if !st {
+    let (r, f) = gp_of(o[1], false)
+    t = r
+    sft = f
+  }
+  let b = base_of(o[n - 1])
+  if s < 0 || t < 0 || sft != sf || b < 0 {
+    return -1
+  }
+  let swp = m.starts_with("swp")
+  let sfx = m.trim_prefix(if swp { "swp" } else if st { "stadd" } else { "ldadd" })
+  let acq = sfx == "a" || sfx == "al"
+  let rel = sfx == "l" || sfx == "al"
+  let size = if sf == 1 { 0xc0000000 } else { 0x80000000 }
+  let op = if swp { 0x8000 } else { 0 }
+  0x38200000 | op | size | (if acq { 0x800000 } else { 0 }) | (if rel { 0x400000 } else { 0 }) | (s * 0x10000) | (b * 32) | t
+}
+
+/// The LSE compare and swap: cas{a,l,al} Rs, Rt, [Rn].
+fn cas_word(m: Str, o: List[Operand]) -> Int {
+  if o.len() != 3 {
+    return -1
+  }
+  let (s, sf) = gp_of(o[0], false)
+  let (t, sft) = gp_of(o[1], false)
+  let b = base_of(o[2])
+  if s < 0 || t < 0 || sft != sf || b < 0 {
+    return -1
+  }
+  let sfx = m.trim_prefix("cas")
+  let acq = sfx == "a" || sfx == "al"
+  let rel = sfx == "l" || sfx == "al"
+  let size = if sf == 1 { 0xc0000000 } else { 0x80000000 }
+  0x08a07c00 | size | (if acq { 0x400000 } else { 0 }) | (if rel { 0x8000 } else { 0 }) | (s * 0x10000) | (b * 32) | t
+}
+
+/// The exclusive and ordered loads and stores: ldxr, ldaxr Rt, [Xn];
+/// stxr, stlxr Ws, Rt, [Xn]; ldar, stlr Rt, [Xn].
+fn excl_word(m: Str, o: List[Operand]) -> Int {
+  let st = m == "stxr" || m == "stlxr"
+  let n = o.len()
+  if (st && n != 3) || (!st && n != 2) {
+    return -1
+  }
+  var s = 31
+  if st {
+    let (r, k) = rk_of(o[0])
+    if k != RW {
+      return -1
+    }
+    s = r
+  }
+  let (t, sf) = gp_of(o[n - 2], false)
+  let b = base_of(o[n - 1])
+  if t < 0 || b < 0 {
+    return -1
+  }
+  let size = if sf == 1 { 0xc0000000 } else { 0x80000000 }
+  let base = match m {
+    "ldxr" => 0x085f7c00
+    "ldaxr" => 0x085ffc00
+    "stxr" => 0x08007c00
+    "stlxr" => 0x0800fc00
+    "ldar" => 0x08dffc00
+    _ => 0x089ffc00
+  }
+  base | size | (s * 0x10000) | (b * 32) | t
+}
+
+/// The SIMD operand x: (number, arrangement), or (-1, "").
+fn v_of(x: Operand) -> (Int, Str) {
+  match x {
+    VReg(n, arr) => (n, arr)
+    Reg(..) | Imm(..) | Shift(..) | MemOp(..) | Cond(..) | Sym(..) | Raw(..) => (-1, "")
+  }
+}
+
+/// The SIMD instructions of the scan and crypto intrinsics (decisions
+/// 0201, 0231; enc.xo simd's forms).
+fn simd_word(m: Str, o: List[Operand]) -> Int {
+  let n = o.len()
+  if n < 2 {
+    return -1
+  }
+  if m == "umov" {
+    // umov xD, vN.d[0] or vN.d[1]
+    let (x, kx) = rk_of(o[0])
+    let (s, sa) = v_of(o[1])
+    if n != 2 || kx != RX || s < 0 || (sa != "d[0]" && sa != "d[1]") {
+      return -1
+    }
+    return (if sa == "d[1]" { 0x4e183c00 } else { 0x4e083c00 }) | (s * 32) | x
+  }
+  if m == "sha256h" || m == "sha256h2" {
+    // sha256h qD, qN, vM.4s
+    let (d, kd) = rk_of(o[0])
+    let (x, kx) = rk_of(o[1])
+    let (y, ay) = if n == 3 { v_of(o[2]) } else { (-1, "") }
+    if kd != RQ || kx != RQ || y < 0 || ay != "4s" {
+      return -1
+    }
+    return (if m == "sha256h" { 0x5e004000 } else { 0x5e005000 }) | (y * 0x10000) | (x * 32) | d
+  }
+  if m == "addv" {
+    // addv bD, vN.8b (bD a Raw operand)
+    let (x, ax) = v_of(o[1])
+    let r = match o[0] {
+      Raw(b) => if b.len() >= 2 && b[0] == 'b' { parse_int(b[1..]) ?? -1 } else { -1 }
+      Reg(..) | VReg(..) | Imm(..) | Shift(..) | MemOp(..) | Cond(..) | Sym(..) => -1
+    }
+    if n != 2 || x < 0 || ax != "8b" || r < 0 || r > 31 {
+      return -1
+    }
+    return 0x0e31b800 | (x * 32) | r
+  }
+  let (d, ad) = v_of(o[0])
+  let (x, ax) = v_of(o[1])
+  let (y, ay) = if n == 3 { v_of(o[2]) } else { (-1, "") }
+  let i2 = if n == 3 { imm_of(o[2]) ?? -1 } else { -1 }
+  match m {
+    "add" | "uzp1" | "sha256su1" => {
+      if d < 0 || x < 0 || y < 0 || ad != "4s" || ax != "4s" || ay != "4s" {
+        return -1
+      }
+      let base = match m {
+        "add" => 0x4ea08400
+        "uzp1" => 0x4e801800
+        _ => 0x5e006000
+      }
+      base | (y * 0x10000) | (x * 32) | d
+    }
+    "sha256su0" => if n != 2 || d < 0 || x < 0 || ad != "4s" || ax != "4s" { -1 } else { 0x5e282800 | (x * 32) | d }
+    "ushll" | "ushll2" => {
+      // ushll vD.2d, vN.2s, #0 (uxtl); ushll2 vD.2d, vN.4s, #0 (uxtl2)
+      let want = if m == "ushll" { "2s" } else { "4s" }
+      if n != 3 || d < 0 || x < 0 || ad != "2d" || ax != want || i2 != 0 { -1 } else { (if m == "ushll" { 0x2f20a400 } else { 0x6f20a400 }) | (x * 32) | d }
+    }
+    "rev32" | "mov" => {
+      if n != 2 || d < 0 || x < 0 || ad != "16b" || ax != "16b" {
+        return -1
+      }
+      // mov vD.16b, vN.16b is orr vD.16b, vN.16b, vN.16b
+      if m == "rev32" { 0x6e200800 | (x * 32) | d } else { 0x4ea01c00 | (x * 0x10000) | (x * 32) | d }
+    }
+    "pmull" | "pmull2" => {
+      let lane = if m == "pmull" { "1d" } else { "2d" }
+      if d < 0 || x < 0 || y < 0 || ad != "1q" || ax != lane || ay != lane { -1 } else { (if m == "pmull" { 0x0ee0e000 } else { 0x4ee0e000 }) | (y * 0x10000) | (x * 32) | d }
+    }
+    "aese" | "aesd" | "aesmc" | "aesimc" => {
+      if n != 2 || d < 0 || x < 0 || ad != "16b" || ax != "16b" {
+        return -1
+      }
+      let base = match m {
+        "aese" => 0x4e284800
+        "aesd" => 0x4e285800
+        "aesmc" => 0x4e286800
+        _ => 0x4e287800
+      }
+      base | (x * 32) | d
+    }
+    "eor" => if d < 0 || x < 0 || y < 0 || ad != "16b" || ax != "16b" || ay != "16b" { -1 } else { 0x6e201c00 | (y * 0x10000) | (x * 32) | d }
+    "dup" => {
+      let (r, kr) = rk_of(o[1])
+      if n != 2 || d < 0 || ad != "16b" || kr != RW { -1 } else { 0x4e010c00 | (r * 32) | d }
+    }
+    "movi" => {
+      let v = imm_of(o[1]) ?? -1
+      if n != 2 || d < 0 || ad != "16b" || v < 0 || v > 255 { -1 } else { 0x4f00e400 | ((v >> 5) * 0x10000) | ((v & 31) * 32) | d }
+    }
+    "cnt" => if n != 2 || d < 0 || ad != "8b" || ax != "8b" || x < 0 { -1 } else { 0x0e205800 | (x * 32) | d }
+    "cmeq" => if d < 0 || x < 0 || y < 0 || ad != "16b" || ax != "16b" || ay != "16b" { -1 } else { 0x6e208c00 | (y * 0x10000) | (x * 32) | d }
+    "cmlt" => if n != 3 || d < 0 || x < 0 || ad != "16b" || ax != "16b" || i2 != 0 { -1 } else { 0x4e20a800 | (x * 32) | d }
+    "shrn" => {
+      // shrn vD.8b, vN.8h, #s (1 to 8)
+      if d < 0 || x < 0 || ad != "8b" || ax != "8h" || i2 < 1 || i2 > 8 { -1 } else { 0x0f008400 | ((16 - i2) * 0x10000) | (x * 32) | d }
+    }
+    _ => -1
+  }
+}

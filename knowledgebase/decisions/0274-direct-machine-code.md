@@ -120,6 +120,27 @@ enc_amd64.xo the amd64 emitter's; both are reached only through text
 7. arm64 first, then amd64 (decision 0254's x86 templates); x86 text
    changes stay small meanwhile (Xo lang 4, 2026-10-20).
 
+## Progress
+
+- 2026-10-21, step 1's first part (the line pass speedups, branch
+  direct-mc-stage1): label references counted once per function
+  (lsr.xo label_counts) for reload_reuse_l and pair_mem_l; copy_runs_l
+  and writes_scratch skip lines that cannot matter before slicing them.
+- 2026-10-21, step 2 for arm64 (branch direct-mc-op): compiler/macho
+  op.xo holds the Op (a mnemonic and typed operands: Reg, VReg, Imm,
+  Shift, MemOp, Cond, Sym with its relocation, Raw for system registers,
+  barrier options, fcmp's `#0.0`, and addv's `bN`), parse_op from the
+  emitter's text, print_op back to it, and encode_op_fix: the word and
+  the label fixup of every instruction the assembler takes, from typed
+  operands. The assembler's text path is parse then encode; the per
+  family text encoders are gone (enc.xo 1,680 to about 560 lines). Every
+  instruction of the encoder's test table (427) round trips through the
+  Op and encodes from it to the word clang's assembler writes. Next: the
+  object identity of real builds (goldens and the compiler, darwin and
+  linux, built with the old and the new assembler); then the emitter
+  builds Ops directly instead of text (step 3), and amd64's assembler the
+  same way.
+
 ## Consequences
 
 - About 11 s of 89.5 s CPU off a cold self build from steps 1 to 3 and
