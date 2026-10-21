@@ -290,7 +290,7 @@ fn (var g: G) x86_emit_once() {
   if g.os == "windows" {
     g.seh_end(b, sites)
     b.push("\n")
-    g.text.push(x86_r11_reuse(x86_imul3(x86_copy_runs(x86_reload_peep(b.join(""))))))
+    g.text.push(x86_not_reuse(x86_r11_reuse(x86_imul3(x86_copy_runs(x86_reload_peep(b.join("")))))))
     return
   }
   b.push("\t.cfi_endproc\n")
@@ -302,7 +302,7 @@ fn (var g: G) x86_emit_once() {
     g.lsda(sites)
   }
   b.push("\n")
-  g.text.push(x86_r11_reuse(x86_imul3(x86_copy_runs(x86_reload_peep(b.join(""))))))
+  g.text.push(x86_not_reuse(x86_r11_reuse(x86_imul3(x86_copy_runs(x86_reload_peep(b.join("")))))))
 }
 
 /// The frame: rbp and the callee saved registers pushed, the rest of
@@ -1733,6 +1733,101 @@ fn x86_r11_reuse(text: Str) -> Str {
   }
   x86_put_pre(out, pre, ls.len(), ls.len() + 1)
   out.join("\n")
+}
+
+/// A pass over a function's emitted text: `movq %R, %r11; notq %r11`,
+/// an and-not's inverted operand (x86_64 has no andn before BMI1), goes
+/// when r11 still holds ~R from the same pair: neither R nor r11 written
+/// since, and control on the straight line (2026-10-21:
+/// x25519.madd_digit's constant time table select inverted one mask for
+/// each of an entry's 12 words, 24 of the loop's 93 instructions). Debug
+/// labels are not boundaries (x86_lift_dbg).
+fn x86_not_reuse(text: Str) -> Str {
+  let (ls, pre) = x86_lift_dbg(text)
+  var out: List[Str] = List.with_capacity(ls.len())
+  // the register whose complement r11 holds, or ""
+  var held = ""
+  var i = 0
+  while i < ls.len() {
+    let l = ls[i]
+    let (src, dst, ok) = movq_ops(l)
+    if ok && dst == "%r11" && i + 1 < ls.len() && ls[i + 1] == "\tnotq %r11" && x86_gp64(src) && src != "%r11" {
+      if held == src {
+        x86_put_pre(out, pre, i, i + 2)
+        i += 2
+        continue
+      }
+      x86_put_pre(out, pre, i, i + 1)
+      out.push(l)
+      x86_put_pre(out, pre, i + 1, i + 2)
+      out.push(ls[i + 1])
+      held = src
+      i += 2
+      continue
+    }
+    if !held.is_empty() && !x86_keeps_regs(l, [held, "%r11"]) {
+      held = ""
+    }
+    x86_put_pre(out, pre, i, i + 1)
+    out.push(l)
+    i += 1
+  }
+  x86_put_pre(out, pre, ls.len(), ls.len() + 1)
+  out.join("\n")
+}
+
+/// Whether s names a 64 bit general register (not rsp or rip).
+fn x86_gp64(s: Str) -> Bool {
+  s.starts_with("%r") && !s.contains("(") && s != "%rsp" && s != "%rip"
+}
+
+/// The names of 64 bit register r and its low parts (`%rdx`: edx, dx,
+/// dl, dh; `%r9`: r9d, r9w, r9b).
+fn x86_parts(r: Str) -> List[Str] {
+  let n = r[2..r.len()]
+  if n.len() >= 1 && n[0..1] >= "0" && n[0..1] <= "9" {
+    return [r, "${r}d", "${r}w", "${r}b"]
+  }
+  // ax, cx, dx, bx, si, di, bp
+  var out = [r, "%e${n}", "%${n}"]
+  if n.ends_with("x") {
+    out.push("%${n[0..1]}l")
+    out.push("%${n[0..1]}h")
+  } else {
+    out.push("%${n}l")
+  }
+  out
+}
+
+/// Whether line l leaves the 64 bit registers rs (with their low parts)
+/// as they were and control on the straight line (x86_not_reuse): no
+/// label, jump, call, return, push, or pop, no instruction that writes
+/// registers it does not name (one operand mul and div: rax and rdx;
+/// cqto, cpuid, syscall), and none whose destination is one of them.
+fn x86_keeps_regs(l: Str, rs: List[Str]) -> Bool {
+  if l.is_empty() || l.starts_with("\t.") {
+    return true
+  }
+  if !l.starts_with("\t") {
+    return false
+  }
+  let body = l[1..l.len()]
+  let sp = body.find(" ") ?? body.len()
+  let m = body[0..sp]
+  if m.starts_with("j") || m.starts_with("call") || m.starts_with("ret") || m.starts_with("push") || m.starts_with("pop") || m.starts_with("xchg") || m.starts_with("cmpxchg") || m.starts_with("xadd") || m is "leave" | "ud2" | "syscall" | "cqto" | "cqo" | "cltq" | "cltd" | "cpuid" | "rdtsc" || m.ends_with(":") {
+    return false
+  }
+  let ops = x86_ops(body[sp..body.len()].trim())
+  if ops.len() == 1 && (m.starts_with("mul") || m.starts_with("imul") || m.starts_with("div") || m.starts_with("idiv")) {
+    return false
+  }
+  let dest = ops[ops.len() - 1]
+  for r in rs {
+    if x86_parts(r).contains(dest) {
+      return false
+    }
+  }
+  true
 }
 
 /// Whether line l leaves r11 and every stack slot as they were and

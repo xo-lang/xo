@@ -1,0 +1,22 @@
+// x86_not_reuse: a repeated `movq %R, %r11; notq %r11` goes while r11
+// still holds ~R (2026-10-21, x25519.madd_digit's table select).
+
+test "x86_not_reuse drops a repeated inversion of an unchanged register" {
+  let text = "\tmovq %rdx, %r11\n\tnotq %r11\n\tandq %r11, %r15\n\tmovq 8(%rbx), %r14\n\tmovq %rdx, %r11\n\tnotq %r11\n\tandq %r11, %r14"
+  expect(x86_not_reuse(text)) == "\tmovq %rdx, %r11\n\tnotq %r11\n\tandq %r11, %r15\n\tmovq 8(%rbx), %r14\n\tandq %r11, %r14"
+}
+
+test "x86_not_reuse keeps the inversion after a write of the register or r11" {
+  // rdx written through edx
+  let a = "\tmovq %rdx, %r11\n\tnotq %r11\n\tandq %r11, %r15\n\tmovl $0, %edx\n\tmovq %rdx, %r11\n\tnotq %r11"
+  expect(x86_not_reuse(a)) == a
+  // r11 written
+  let b = "\tmovq %rdx, %r11\n\tnotq %r11\n\tmovq 8(%rsp), %r11\n\tmovq %rdx, %r11\n\tnotq %r11"
+  expect(x86_not_reuse(b)) == b
+  // a one operand mulq writes rdx
+  let c = "\tmovq %rdx, %r11\n\tnotq %r11\n\tmulq %r9\n\tmovq %rdx, %r11\n\tnotq %r11"
+  expect(x86_not_reuse(c)) == c
+  // a label
+  let d = "\tmovq %rdx, %r11\n\tnotq %r11\n.L1:\n\tmovq %rdx, %r11\n\tnotq %r11"
+  expect(x86_not_reuse(d)) == d
+}
