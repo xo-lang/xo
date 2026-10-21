@@ -170,9 +170,14 @@ Update the knowledgebase in the same change as the work, not later:
     minutes; owner 2026-10-20) with every optional pass on, plus a run
     of the program it targets, before it pushes; the full 201 run in
     the lead's 4-hourly full tier. Every merge touching what the self build
-    compiles or runs also passes the self rebuild fixed point
-    (scripts/bootstrap-xo.sh, s2 and s3 identical) on arm64, so a
-    miscompile cannot build the next compiler: compiler/ (but not
+    compiles or runs builds xo once, with the current xo (`go run
+    ./scripts/xobuild`), and runs its proving tests with that xo: no
+    fixed point per push (owner, 2026-10-21). The full self rebuild
+    fixed point (scripts/bootstrap-xo.sh, s2 and s3 identical) runs
+    hourly on main (~/xo-lead/agents/fp-hourly.sh, bisected to the
+    owner of the guilty commit, who fixes forward) and in releases,
+    seed-cut.sh and CI, so a miscompile cannot build the next released
+    compiler. The paths: compiler/ (but not
     compiler/macho or compiler/wasm, which the bootstrap never uses,
     and not `_test.xo` files), std/native/, std/llrt/, and the xo build
     code (internal/xotool xotool.go, chain.go, seed.go, lock_*.go,
