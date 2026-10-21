@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [go-backend-dropped-lock-held.md](go-backend-dropped-lock-held.md): a FileLock dropped while held is released natively at once but on the Go backend only when the GC collects it; unlock explicitly (Observed 2026-10-20)
 - [module-check-cache-skips-whole-program-passes.md](module-check-cache-skips-whole-program-passes.md): Observed 2026-10-19: the module check cache's skipped modules are checked lazily, after solve_effects, flow_bodies and the never results ran, so a task closure's error was lost (os_tasks exited 0); opt in (XO_CHK_CACHE=1) until those passes' results are cached or the bodies checked first.
 - [fe-cache-replay-queued-jobs.md](fe-cache-replay-queued-jobs.md): Observed 2026-10-19, fixed: the front end cache replayed a contract-wrapped body without the inner body job it queued, so the second build of a program with `ensures` failed loudly; entries are only recorded for bodies that queue declares' Body jobs alone.
 - [macho-asm-no-quad-in-text.md](macho-asm-no-quad-in-text.md): Observed 2026-10-18: compiler/macho rejects .quad (any data but .long and .p2align) in code; s1 builds, s2 fails; write constants in code as .long words
