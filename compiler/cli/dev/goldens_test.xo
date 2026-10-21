@@ -11,3 +11,14 @@ test "order puts the slow first" {
   let o = order(ps, {"c": 900})
   expect(o.map(fn(p: Prog) { p.dir }) == ["c", "a", "b"])
 }
+
+test "discovery fails on a directory it cannot list instead of finding fewer programs" {
+  os.fs.create_dir_all("g/one")?
+  os.fs.write("g/one/main.xo", b"fn main() {}\n")?
+  os.fs.write("g/one/want.txt", b"")?
+  expect(programs(os.fs, ["g"]).map(fn(ps) { ps.map(fn(p: Prog) { p.name }) })) == Ok(["one"])
+  // a misspelled or unreadable directory used to be zero programs and a pass
+  expect(programs(os.fs, ["g", "nosuch"]).is_err()) == true
+  expect(module_dirs(os.fs, ["nosuch"]).is_err()) == true
+  expect(module_dirs(os.fs, ["g"])) == Ok(["g/one"])
+}

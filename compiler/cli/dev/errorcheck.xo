@@ -125,7 +125,13 @@ fn errorcheck_cmd(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.
       extra.push(f)
     }
   }
-  let dirs = module_dirs(os.fs, fl.args)
+  let dirs = match module_dirs(os.fs, fl.args) {
+    Ok(ds) => ds
+    Err(e) => {
+      os.stdio.eprintln("xo dev errorcheck: ${e}")
+      return 1
+    }
+  }
   let t0 = os.clock.now()
   let res = task.map_concurrent(dirs, fl.get_int("j").max(1), fn(d: Str) { check_one(os, h, xo, extra, d) })
   var fails = 0
@@ -147,21 +153,21 @@ fn errorcheck_cmd(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.
 
 /// module_dirs is each of dirs that holds .xo files, else its
 /// subdirectories that do, sorted.
-fn module_dirs(fs: Fs, dirs: List[Str]) -> List[Str] uses fs.read {
+fn module_dirs(fs: Fs, dirs: List[Str]) -> List[Str] ! Str uses fs.read {
   var out: List[Str] = []
   for d0 in dirs {
     let d = d0.trim_suffix("/")
-    if has_xo(fs, d) {
+    if has_xo(fs, d)? {
       out.push(d)
       continue
     }
-    for e in (fs.read_dir(d).ok() ?? []).sort_by(fn(e: FileInfo) { e.name }) {
-      if e.is_dir && has_xo(fs, "${d}/${e.name}") {
+    for e in list_dir(fs, d)?.sort_by(fn(e: FileInfo) { e.name }) {
+      if e.is_dir && has_xo(fs, "${d}/${e.name}")? {
         out.push("${d}/${e.name}")
       }
     }
   }
-  out
+  Ok(out)
 }
 
 fn check_one(os: Os, h: Host, xo: Str, extra: List[Str], d: Str) -> List[Str] uses (env, fs.read, proc) {

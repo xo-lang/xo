@@ -170,7 +170,13 @@ fn codegen_cmd(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.rea
   }
   let xo = if fl.get_str("xo").is_empty() { h.xo } else { fl.get_str("xo") }
   let backends = fl.get_str("backend").split(",")
-  let dirs = module_dirs(os.fs, fl.args)
+  let dirs = match module_dirs(os.fs, fl.args) {
+    Ok(ds) => ds
+    Err(e) => {
+      os.stdio.eprintln("xo dev codegen: ${e}")
+      return 1
+    }
+  }
   var jobs: List[(Str, Str)] = []
   for d in dirs {
     for b in backends {

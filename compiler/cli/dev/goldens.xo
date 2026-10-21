@@ -74,36 +74,44 @@ pub struct Outcome {
 }
 
 /// programs lists the golden programs under each of dirs (a program
-/// directory itself, or a directory of them), sorted by path.
-pub fn programs(fs: Fs, dirs: List[Str]) -> List[Prog] uses fs.read {
+/// directory itself, or a directory of them), sorted by path. A directory
+/// that cannot be listed is an error, never fewer programs: a run that
+/// skipped it would pass without running them.
+pub fn programs(fs: Fs, dirs: List[Str]) -> List[Prog] ! Str uses fs.read {
   var out: List[Prog] = []
   for d0 in dirs {
     let d = d0.trim_suffix("/")
-    if has_xo(fs, d) {
-      if let Some(p) = program(fs, d) {
+    if has_xo(fs, d)? {
+      if let Some(p) = program(fs, d)? {
         out.push(p)
       }
       continue
     }
-    let ents = fs.read_dir(d).ok() ?? []
+    let ents = list_dir(fs, d)?
     for e in ents.sort_by(fn(e: FileInfo) { e.name }) {
-      if e.is_dir && has_xo(fs, "${d}/${e.name}") {
-        if let Some(p) = program(fs, "${d}/${e.name}") {
+      if e.is_dir && has_xo(fs, "${d}/${e.name}")? {
+        if let Some(p) = program(fs, "${d}/${e.name}")? {
           out.push(p)
         }
       }
     }
   }
-  out
+  Ok(out)
 }
 
-fn has_xo(fs: Fs, d: Str) -> Bool uses fs.read {
-  for e in fs.read_dir(d).ok() ?? [] {
-    if !e.is_dir && e.name.ends_with(".xo") {
-      return true
-    }
+/// The entries of d, or why they cannot be listed.
+fn list_dir(fs: Fs, d: Str) -> List[FileInfo] ! Str uses fs.read {
+  fs.read_dir(d).map_err(fn(e) { "read ${d}: ${e}" })
+}
+
+/// Whether d holds a .xo file; false when d is not a directory.
+fn has_xo(fs: Fs, d: Str) -> Bool ! Str uses fs.read {
+  let ents = match fs.read_dir(d) {
+    Ok(es) => es
+    Err(NotDir(_)) => return Ok(false)
+    Err(e) => return Err("read ${d}: ${e}")
   }
-  false
+  Ok(ents.any(fn(e) { !e.is_dir && e.name.ends_with(".xo") }))
 }
 
 fn base_name(p: Str) -> Str {
@@ -119,22 +127,22 @@ fn parent(p: Str) -> Str {
   parts[0..parts.len() - 1].join("/")
 }
 
-fn program(fs: Fs, d: Str) -> Prog? uses fs.read {
+fn program(fs: Fs, d: Str) -> Prog? ! Str uses fs.read {
   let name = base_name(d)
   var want = "${d}/want.txt"
-  if !(fs.exists(want).ok() ?? false) {
+  if !fs.exists(want).map_err(fn(e) { "stat ${want}: ${e}" })? {
     want = "${parent(parent(d))}/${base_name(parent(d))}want/${name}.txt"
-    if !(fs.exists(want).ok() ?? false) {
-      return None
+    if !fs.exists(want).map_err(fn(e) { "stat ${want}: ${e}" })? {
+      return Ok(None)
     }
   }
   var size = 0
-  for e in fs.read_dir(d).ok() ?? [] {
+  for e in list_dir(fs, d)? {
     if !e.is_dir && e.name.ends_with(".xo") {
       size += e.size
     }
   }
-  Some(Prog{dir: d, name: name, want: want, size: size})
+  Ok(Some(Prog{dir: d, name: name, want: want, size: size}))
 }
 
 /// The files of the run harness: args.txt (fields), env.txt (NAME=VALUE
@@ -339,7 +347,10 @@ pub fn run_goldens(os: Os, cfg0: Config, dirs: List[Str]) -> List[Outcome] uses 
   remove_stale_runs(os, cfg.out)
   cfg.bins = "${cfg.out}/run-${os.rand.bytes(6).to_hex()}"
   os.fs.create_dir_all(cfg.bins).ok()
-  var progs = programs(os.fs, dirs)
+  var progs = match programs(os.fs, dirs) {
+    Ok(ps) => ps
+    Err(e) => return [Outcome{name: "(discovery)", dir: dirs.join(" "), status: "fail", why: e}]
+  }
   if !cfg.only.is_empty() {
     progs = progs.filter(fn(p: Prog) { cfg.only.any(fn(o: Str) { p.dir.contains(o) }) })
   }
