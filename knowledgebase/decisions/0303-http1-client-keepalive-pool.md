@@ -29,9 +29,13 @@ http.Transport does with its defaults:
 - **When a connection goes back.** After a response read in full: its
   body was framed (Content-Length or chunked; a body ending at EOF
   closes), nothing was left unread after it, the status was not 101,
-  the response did not say close (HTTP/1.1 with `Connection: close`;
-  HTTP/1.0 without `Connection: keep-alive`, Go's shouldClose), and the
-  request did not say close (its header's `Connection: close`). The
+  and the response did not say close (HTTP/1.1 with `Connection:
+  close`; HTTP/1.0 without `Connection: keep-alive`, Go's shouldClose).
+  A `Connection: close` field in the request's header does not count:
+  Transport's read loop looks only at Request.Close, which std/http's
+  requests do not set (the Go backend reused the connection in golden
+  http_client_keepalive); a server that honors the field closes, and the
+  next request's take notices. The
   native client reads every body in full before it returns, so the
   "body read or closed before reuse" rule always holds.
 - **Taking one.** A request takes the newest idle connection for its key
@@ -40,10 +44,13 @@ http.Transport does with its defaults:
   would have noticed.
 - **A dead pooled connection.** When a reused connection fails before any
   byte of the response (the write fails, or the read gets EOF or a
-  reset first), a replayable request (GET, HEAD, OPTIONS, TRACE with no
-  body, Go's isReplayable without the Idempotency-Key header form) is
+  reset first), a replayable request (GET, HEAD, OPTIONS, TRACE, or one
+  with an Idempotency-Key or X-Idempotency-Key field: Go's isReplayable,
+  whose body condition always holds for std/http's in-memory bodies) is
   sent once more on a new connection, as Transport's retry does; any
-  other request gets the error.
+  other request gets the error. (Go also replays any request whose
+  write failed before a byte went out; the native client cannot tell a
+  partial write from none and replays only replayable requests.)
 - **Exit.** The leak check's exit hook (cabi_http.xo streams_free, via
   hclient.pool_free) closes the idle HTTP/1.1 connections with the
   HTTP/2 ones.

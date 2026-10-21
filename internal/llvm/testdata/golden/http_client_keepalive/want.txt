@@ -1,0 +1,23 @@
+exit 0
+--- stdout
+keep: 200 "ok" conns=1
+keep again: 200 "ok" conns=1
+keep third: 200 "ok" conns=1
+server close: 200 "close" conns=1
+after close: 200 "ok" conns=2
+http/1.0: 200 "old" conns=2
+after http/1.0: 200 "ok" conns=3
+http/1.0 keep-alive: 200 "ka" conns=3
+after keep-alive: 200 "ka" conns=3
+until eof: 200 "until eof" conns=3
+after eof: 200 "ok" conns=4
+chunked: 200 "chunk" conns=4
+chunked again: 200 "chunk" conns=4
+no content: 204 "" conns=4
+after no content: 200 "ok" conns=4
+server drops idle: 200 "drop" conns=4
+after drop: 200 "ok" conns=5
+request close: 200 conns=5
+after request close: 200 conns=5
+post: 200 "ok" conns=5
+--- stderr

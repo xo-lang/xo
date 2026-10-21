@@ -1,5 +1,8 @@
 // The server of bench/perf/httpclient: answers each request with a
-// fixed response written raw in one piece, then closes the connection.
+// fixed response written raw in one piece, on a connection kept open
+// for the client's next request (decision 0303; until 2026-10-21 it
+// closed after each response, when the native client did not reuse
+// connections).
 // Paths: /len (a 200 with nine header fields and a 256 byte body by
 // Content-Length), /chunked (the same fields, 4 KiB in 32 chunks),
 // /big (64 KiB by Content-Length), /redirect (a 302 to /len). With
@@ -130,23 +133,33 @@ func main() {
 		go func() {
 			defer c.Close()
 			br := bufio.NewReader(c)
-			line, err := br.ReadString('\n')
-			if err != nil {
-				return
-			}
+			// requests on the connection until the client closes it (a
+			// client that keeps connections alive, decision 0303, reuses
+			// it; one that does not closes it after each response)
 			for {
-				h, err := br.ReadString('\n')
-				if err != nil || h == "\r\n" {
-					break
+				line, err := br.ReadString('\n')
+				if err != nil {
+					return
+				}
+				for {
+					h, err := br.ReadString('\n')
+					if err != nil {
+						return
+					}
+					if h == "\r\n" {
+						break
+					}
+				}
+				resp := "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n"
+				if f := strings.Fields(line); len(f) >= 2 {
+					if r, ok := rs[f[1]]; ok {
+						resp = r
+					}
+				}
+				if _, err := io.WriteString(c, resp); err != nil {
+					return
 				}
 			}
-			resp := "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n"
-			if f := strings.Fields(line); len(f) >= 2 {
-				if r, ok := rs[f[1]]; ok {
-					resp = r
-				}
-			}
-			io.WriteString(c, resp)
 		}()
 	}
 }

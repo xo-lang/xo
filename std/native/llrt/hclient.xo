@@ -470,7 +470,10 @@ const P_SPENT = 120
 const P_IDLE = 128
 const P_OUT = 136
 const P_OUT_N = 144
-const P_SIZE = 152
+/// 1 for an HTTP/1.1 connection (decision 0303: pooled between requests,
+/// no HTTP/2 state), 0 for HTTP/2
+const P_H1 = 152
+const P_SIZE = 160
 
 /// An exchange on a connection (r's h2, an obj.xo object): the
 /// connection, whether it came from the pool (a failure before an answer
@@ -576,9 +579,15 @@ fn conn_for(pc: Int, roots: Int, kp: Int, kn: Int) -> Bool {
   ld(pc, P_ROOTS) == roots && raw.cstr_len(k) == kn && raw.mem_eq(k, kp, kn)
 }
 
+/// Whether pc is of kind h1 (1 HTTP/1.1, 0 HTTP/2) for roots and key.
+fn conn_is(pc: Int, h1: Int, roots: Int, kp: Int, kn: Int) -> Bool { ld4(pc, P_H1) == h1 && conn_for(pc, roots, kp, kn) }
+
 /// An idle connection for roots and key, or 0; the ones idle too long
 /// close (xo_h2.c h2_pool_take).
-pub fn pool_take(roots: Int, kp: Int, kn: Int) -> Int {
+pub fn pool_take(roots: Int, kp: Int, kn: Int) -> Int { pool_take_kind(0, roots, kp, kn) }
+
+/// pool_take of kind h1 (1 HTTP/1.1, 0 HTTP/2): the newest idle one.
+fn pool_take_kind(h1: Int, roots: Int, kp: Int, kn: Int) -> Int {
   let now = sysio.mono_ns()
   let pl = h2pool()
   var found = 0
@@ -589,7 +598,7 @@ pub fn pool_take(roots: Int, kp: Int, kn: Int) -> Int {
   while pc != 0 {
     let next = ld(pc, P_NEXT)
     let old = now - ld(pc, P_IDLE) > IDLE_NS
-    if old || (found == 0 && conn_for(pc, roots, kp, kn)) {
+    if old || (found == 0 && conn_is(pc, h1, roots, kp, kn)) {
       if prev == 0 {
         st(pl, PL_FIRST, next)
       } else {
@@ -618,11 +627,31 @@ pub fn pool_take(roots: Int, kp: Int, kn: Int) -> Int {
 }
 
 /// Keeps pc for the next request, or closes it (xo_h2.c h2_pool_put):
-/// at most 100 stay, the oldest goes (MaxIdleConns).
+/// at most 100 stay, the oldest goes (MaxIdleConns); an HTTP/1.1 one
+/// closes when 2 for its key are idle already (MaxIdleConnsPerHost).
 fn pool_put(pc: Int) {
   if ld4(pc, P_BROKEN) != 0 || ld4(pc, P_GOAWAY) != 0 || ld4(pc, P_SPENT) != 0 {
     conn_free(pc)
     return
+  }
+  if ld4(pc, P_H1) != 0 {
+    let k = ld(pc, P_KEY)
+    let kn = raw.cstr_len(k)
+    let pl = h2pool()
+    var same = 0
+    pool.lock(pl + PL_MU)
+    var q = ld(pl, PL_FIRST)
+    while q != 0 {
+      if conn_is(q, 1, ld(pc, P_ROOTS), k, kn) {
+        same += 1
+      }
+      q = ld(q, P_NEXT)
+    }
+    pool.unlock(pl + PL_MU)
+    if same >= H1_PER_HOST {
+      conn_free(pc)
+      return
+    }
   }
   st(pc, P_IDLE, sysio.mono_ns())
   // the idle connections are closed at exit (entry.xo, decision 0233)
@@ -648,6 +677,102 @@ fn pool_put(pc: Int) {
   pool.unlock(pl + PL_MU)
   conn_free(drop)
 }
+
+/// Idle HTTP/1.1 connections kept per key (MaxIdleConnsPerHost).
+const H1_PER_HOST = 2
+
+/// Whether the idle connection at c (a ccon) is still usable: no input
+/// waits on it (an EOF, an alert, or bytes no request asked for mean the
+/// server closed it or broke the exchange; Transport's background read
+/// notices the same).
+fn idle_ok(c: Int) -> Bool {
+  if ld(c, C_N) != ld(c, C_OFF) || rt.mem_load(c, C_EOF, 4) != 0 {
+    return false
+  }
+  let t = rt.heap_large(8) - 8
+  let r = sock.recv(rt.mem_load(c, C_FD, 4), t, 1, MSG_PEEK)
+  rt.heap_release(t)
+  r < 0 && would_block(r)
+}
+
+/// MSG_PEEK (Linux, Darwin, and Windows alike).
+const MSG_PEEK = 2
+
+/// r's HTTP/1.1 connection, after a response read in full that leaves it
+/// open (decision 0303), goes to the pool for key (the kn bytes at kp)
+/// and roots; r no longer holds it.
+fn h1_put(a: Int, roots: Int, kp: Int, kn: Int) {
+  let pc = obj.alloc_obj(P_SIZE)
+  rt.mem_set(pc, 0, P_SIZE)
+  st(pc, P_CN, ld(a, R_CN))
+  rt.mem_copy(pc + P_C, a + R_C, 72)
+  rc.inc(roots)
+  st(pc, P_ROOTS, roots)
+  let key = rt.heap_large(kn + 1) - 8
+  rt.mem_copy(key, kp, kn)
+  rt.mem_store(key, kn, 0, 1)
+  st(pc, P_KEY, key)
+  st4(pc, P_H1, 1)
+  rt.mem_set(a + R_C, 0, 72)
+  st(a, R_CN, 0)
+  st4(a, R_READING, 0)
+  pool_put(pc)
+}
+
+/// An idle HTTP/1.1 connection for key and roots moved into r (reading,
+/// R_REUSED set), with the deadline dl: whether there was a usable one
+/// (the others found close).
+fn h1_take(a: Int, roots: Int, kp: Int, kn: Int, dl: Int) -> Bool {
+  while true {
+    let pc = pool_take_kind(1, roots, kp, kn)
+    if pc == 0 {
+      return false
+    }
+    if !idle_ok(pc + P_C) {
+      conn_free(pc)
+      continue
+    }
+    rt.mem_copy(a + R_C, pc + P_C, 72)
+    st(a, R_CN, ld(pc, P_CN))
+    st(a + R_C, C_WHEN, dl)
+    let t = ld(a + R_C, C_TLS)
+    if t != 0 {
+      tlsio.set_when(t, dl)
+    }
+    st4(a, R_READING, 1)
+    st4(a, R_REUSED, 1)
+    // the record keeps the connection now: only the shell goes
+    tasks.h_release(ld(pc, P_ROOTS))
+    free_c(ld(pc, P_KEY))
+    obj.free_obj(pc)
+    return true
+  }
+  false
+}
+
+/// The pool key of an exchange: addr and, for https, the server name
+/// (HTTP/2's key; the kinds keep the two apart).
+fn pool_key(https: Bool, addr: Str, tls_host: Str) -> Str { if https { addr + "|" + tls_host } else { addr } }
+
+/// Ends the HTTP/1.1 exchange Xo read in full with keep (the connection
+/// may serve another request: decision 0303) and s (CC_*): a kept
+/// connection goes to the pool, else it closes; a failure becomes r's
+/// error.
+pub fn end_keep(r: rthttp.CResp, keep: Bool, https: Bool, addr: Str, tls_host: Str, roots: rthttp.Roots, s: Int, why: Str) {
+  let a = rec(r)
+  if keep && s == CC_OK && ld(a, R_CN) != 0 {
+    let key = pool_key(https, addr, tls_host)
+    h1_put(a, rt.obj_addr(roots), raw.data(key), key.len())
+    raw.alive_str(key)
+    finish(a, s, why, "")
+    return
+  }
+  end(r, s, why)
+}
+
+/// Whether r's connection came from the pool (a failure before the
+/// response is replayed on a new connection for a replayable request).
+pub fn reused(r: rthttp.CResp) -> Bool { ld4(rec(r), R_REUSED) != 0 }
 
 /// Closes the idle connections at exit (the leak check; xo_h2.c
 /// h2_pool_free).
@@ -888,7 +1013,10 @@ pub fn h2_end(r: rthttp.CResp, sv: rt.Any, res: Int, why: Str, flags: Int) {
 /// The record's net.Conn (a reference, while Xo reads an HTTP/1.1
 /// response) and its size.
 const R_CN = 176
-const R_SIZE = 192
+/// whether r's HTTP/1.1 connection came from the pool (an int; a failure
+/// before any byte of the response is replayed on a new one)
+const R_REUSED = 192
+const R_SIZE = 200
 
 /// The deadline of a client's timeout (ns, > 0): the timers' clock.
 pub fn cl_deadline(timeout: Int) -> Int { hconn.deadline(timeout) }
@@ -917,13 +1045,17 @@ pub fn cl_start(https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roo
 fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roots: Int, prefix: Str, pool: Bool) {
   // an idle HTTP/2 connection to the same address, server name, and
   // roots
-  let key = if https { addr + "|" + tls_host } else { "" }
+  let key = pool_key(https, addr, tls_host)
   if https && pool {
     let pc = pool_take(roots, raw.data(key), key.len())
     if pc != 0 {
       exchange_start(r, pc, 1, raw.bytes_addr(body), body.len(), dl)
       return
     }
+  }
+  // an idle HTTP/1.1 connection (decision 0303)
+  if pool && h1_take(r, roots, raw.data(key), key.len(), dl) {
+    return
   }
   let d = if dl != 0 { dl - sysio.mono_ns() } else { 0 }
   if dl != 0 && d <= 0 {

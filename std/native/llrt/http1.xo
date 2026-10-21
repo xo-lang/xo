@@ -2811,9 +2811,13 @@ pub struct RespHead {
   chunked: Bool
   clen: Int
   why: Str
+  /// whether the connection closes after this response (net/http's
+  /// shouldClose: HTTP/1.1 with Connection: close, HTTP/1.0 without
+  /// Connection: keep-alive, HTTP/0.x; decision 0303)
+  close: Bool
 }
 
-fn resp_fail(res: Int, why: Str) -> RespHead { RespHead{res: res, used: 0, status: 0, headers: [], chunked: false, clen: -1, why: why} }
+fn resp_fail(res: Int, why: Str) -> RespHead { RespHead{res: res, used: 0, status: 0, headers: [], chunked: false, clen: -1, why: why, close: true} }
 
 /// The text of b[a..z] (outside bytes: U+FFFD, decision 0259).
 fn text_of(s: Str, a: Int, z: Int) -> Str { scan.text_at(rawb.data(s) + a, z - a) }
@@ -3031,6 +3035,15 @@ pub fn parse_response(s: Str, eof: Bool, method: Str) -> RespHead {
       closing = true
     }
   }
+  var keep_alive = false
+  if major == 1 && minor == 0 {
+    for v in values_in(keys, vals, "Connection") {
+      if has_token(v, "keep-alive") {
+        keep_alive = true
+      }
+    }
+  }
+  let close = major < 1 || closing || (major == 1 && minor == 0 && !keep_alive)
   var drop: List[Str] = []
   if closing && at11 {
     drop.push("Connection")
@@ -3113,7 +3126,7 @@ pub fn parse_response(s: Str, eof: Bool, method: Str) -> RespHead {
     headers.push(key)
     headers.push(vals[j])
   }
-  RespHead{res: OK, used: end, status: code, headers: headers, chunked: chunked, clen: length, why: ""}
+  RespHead{res: OK, used: end, status: code, headers: headers, chunked: chunked, clen: length, why: "", close: close}
 }
 
 /// The end of one exchange: s (CC_*), the failure's text, and the
@@ -3124,9 +3137,19 @@ struct Exchange {
   status: Int
   headers: List[Str]
   body: Bytes
+  /// the connection may serve another request (decision 0303): the body
+  /// was framed and read in full, nothing followed it, and the response
+  /// did not close
+  keep: Bool
+  /// no byte of a response came (a pooled connection's failure is then
+  /// replayed on a new one)
+  none: Bool
 }
 
-fn ex_fail(s: Int, why: Str) -> Exchange { Exchange{s: s, why: why, status: 0, headers: [], body: b""} }
+fn ex_fail(s: Int, why: Str) -> Exchange { Exchange{s: s, why: why, status: 0, headers: [], body: b"", keep: false, none: false} }
+
+/// ex_fail before any byte of the response.
+fn ex_none(s: Int, why: Str) -> Exchange { Exchange{s: s, why: why, status: 0, headers: [], body: b"", keep: false, none: true} }
 
 /// The index of the name k in a header ([name, value, ...]), or -1.
 fn has_key(keys: List[Str], k: Str) -> Bool {
@@ -3172,6 +3195,8 @@ fn read_response(r: rthttp.CResp, method: Str) -> Exchange {
   // ReadResponse's errors come after Transport's prefix; the body's, as
   // io.ReadAll returns them, without the request (the "\u{1}" mark)
   let broken = "net/http: HTTP/1.x transport connection broken: "
+  // no byte of a response yet
+  var first = true
   while true {
     var h = parse_response(hclient.input(r, 0), false, method)
     while h.res == NEED || h.res == TOO_LARGE {
@@ -3182,13 +3207,13 @@ fn read_response(r: rthttp.CResp, method: Str) -> Exchange {
       let f = hclient.more(r)
       if f == CC_EOF {
         if avail == 0 {
-          return ex_fail(CC_ERR, "EOF")
+          return if first { ex_none(CC_ERR, "EOF") } else { ex_fail(CC_ERR, "EOF") }
         }
         h = parse_response(hclient.input(r, 0), true, method)
         break
       }
       if f != CC_OK {
-        return ex_fail(f, "")
+        return if first && avail == 0 && f != hclient.CC_TIMEOUT && f != hclient.CC_CANCELED { ex_none(f, "") } else { ex_fail(f, "") }
       }
       h = parse_response(hclient.input(r, 0), false, method)
     }
@@ -3196,7 +3221,10 @@ fn read_response(r: rthttp.CResp, method: Str) -> Exchange {
       return ex_fail(CC_ERR, broken + h.why)
     }
     hclient.skip(r, h.used)
+    first = false
     let code = h.status
+    // the connection may serve another request (decision 0303)
+    let open = !h.close && code != 101
     if code >= 100 && code <= 199 && code != 101 {
       // an informational response: the real one follows
       continue
@@ -3208,7 +3236,7 @@ fn read_response(r: rthttp.CResp, method: Str) -> Exchange {
         let c = chunked(hclient.input(r, 2), eof)
         if c.res == HB_OK {
           hclient.skip(r, c.used)
-          return Exchange{s: CC_OK, why: "", status: code, headers: headers, body: c.body.bytes()}
+          return Exchange{s: CC_OK, why: "", status: code, headers: headers, body: c.body.bytes(), keep: open && hclient.avail(r) == 0, none: false}
         }
         if c.res == HB_ERR || eof {
           return ex_fail(CC_ERR, "\u{1}" + (if c.why.is_empty() { "unexpected EOF" } else { c.why }))
@@ -3222,13 +3250,15 @@ fn read_response(r: rthttp.CResp, method: Str) -> Exchange {
     while true {
       let have = hclient.avail(r)
       if h.clen >= 0 && have >= h.clen {
-        return Exchange{s: CC_OK, why: "", status: code, headers: headers, body: hclient.take(r, h.clen)}
+        let b = hclient.take(r, h.clen)
+        return Exchange{s: CC_OK, why: "", status: code, headers: headers, body: b, keep: open && hclient.avail(r) == 0, none: false}
       }
       if hclient.eof(r) {
         if h.clen >= 0 {
           return ex_fail(CC_ERR, "\u{1}unexpected EOF")
         }
-        return Exchange{s: CC_OK, why: "", status: code, headers: headers, body: hclient.take(r, have)}
+        // a body that ends at EOF: the connection is done
+        return Exchange{s: CC_OK, why: "", status: code, headers: headers, body: hclient.take(r, have), keep: false, none: false}
       }
       let f = hclient.more(r)
       if f != CC_OK && f != CC_EOF {
@@ -3237,6 +3267,33 @@ fn read_response(r: rthttp.CResp, method: Str) -> Exchange {
     }
   }
   ex_fail(CC_ERR, "")
+}
+
+/// An HTTP/1.1 exchange on r: the request, its response read in full,
+/// and the connection to the pool when it may serve another request
+/// (decision 0303: the response did not close it; a Connection field in
+/// the request's header does not count, as Transport looks only at
+/// Request.Close), else closed. A request
+/// that could not be written is an exchange with no response byte.
+fn h1_round(r: rthttp.CResp, method: Str, target: Str, host: Str, hk: List[Str], hv: List[Str], body: Bytes, https: Bool, addr: Str, name: Str, roots: rthttp.Roots) -> Exchange {
+  hclient.request(r, method, target, host, hk, hv, body)
+  if hclient.err(r) != 0 {
+    return ex_none(CC_ERR, "")
+  }
+  let x = read_response(r, method)
+  hclient.end_keep(r, x.keep, https, addr, name, roots, x.s, x.why)
+  x
+}
+
+/// Whether a request may be sent again after its pooled connection
+/// failed before any byte of the response (net/http's isReplayable: the
+/// body is in memory, as GetBody makes it; a safe method, or an
+/// Idempotency-Key).
+fn replayable(method: Str, hk: List[Str]) -> Bool {
+  if method == "GET" || method == "HEAD" || method == "OPTIONS" || method == "TRACE" {
+    return true
+  }
+  has_key(hk, "Idempotency-Key") || has_key(hk, "X-Idempotency-Key")
 }
 
 /// What std/http's client.send gets: err (0, or the ClientErr tag: 1
@@ -3403,16 +3460,28 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
     var status = 0
     var headers: List[Str] = []
     var rbody = b""
-    if hclient.reading(r) {
-      hclient.request(r, method, target, u.host, hk, hv, body)
-      if hclient.err(r) == 0 {
-        let x = read_response(r, method)
-        hclient.end(r, x.s, x.why)
+    var h1 = hclient.reading(r)
+    if h1 {
+      var x = h1_round(r, method, target, u.host, hk, hv, body, https, addr, name, roots)
+      if x.none && hclient.reused(r) && replayable(method, hk) {
+        // the pooled connection was dead (the server closed it): the
+        // request goes once more on a new one, as Transport retries it
+        // (decision 0303)
+        r = hclient.cl_start(https, addr, name, body, when, roots, prefix, false)
+        h1 = hclient.reading(r)
+        if hclient.h2(r) {
+          h2_exchange(r, method, target, u.host, hk, hv, body.len())
+        } else if h1 {
+          x = h1_round(r, method, target, u.host, hk, hv, body, https, addr, name, roots)
+        }
+      }
+      if h1 && hclient.err(r) == 0 {
         status = x.status
         headers = x.headers
         rbody = x.body
       }
-    } else if hclient.err(r) == 0 {
+    }
+    if !h1 && hclient.err(r) == 0 {
       // an HTTP/2 response
       status = hclient.status(r)
       headers = hclient.headers(r)

@@ -1,0 +1,122 @@
+// std/http's client keeps HTTP/1.1 connections alive between requests
+// as net/http's Transport does (decision 0303; the Go backend is the
+// reference): a raw server counts the connections it accepted and
+// answers by path. A response that keeps the connection lets the next
+// request reuse it; Connection: close (either side), an HTTP/1.0
+// response without keep-alive, a body ending at EOF, and a connection
+// the server closed while idle make the next request dial again.
+use std/http
+
+/// The response for path p, and whether the server closes after it.
+fn answer(p: Str) -> (Str, Bool) {
+  match p {
+    "/close" => ("HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nclose", true)
+    "/h10" => ("HTTP/1.0 200 OK\r\nContent-Length: 3\r\n\r\nold", true)
+    "/h10ka" => ("HTTP/1.0 200 OK\r\nConnection: keep-alive\r\nContent-Length: 2\r\n\r\nka", false)
+    "/eof" => ("HTTP/1.1 200 OK\r\n\r\nuntil eof", true)
+    "/chunk" => ("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nchunk\r\n0\r\n\r\n", false)
+    "/drop" => ("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\ndrop", true)
+    "/nocontent" => ("HTTP/1.1 204 No Content\r\n\r\n", false)
+    _ => ("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok", false)
+  }
+}
+
+/// The path of a request head, and its Content-Length.
+fn head_of(h: Str) -> (Str, Int) {
+  let lines = h.split("\r\n")
+  let parts = lines[0].split(" ")
+  var n = 0
+  for l in lines {
+    if l.to_lower().starts_with("content-length:") {
+      n = Int.parse(l.split(":")[1].trim()) ?? 0
+    }
+  }
+  (if parts.len() > 1 { parts[1] } else { "" }, n)
+}
+
+fn main(os: Os) ! {
+  let l = os.net.listen("127.0.0.1:0")?
+  let addr = l.addr()
+  let conns = Atomic[Int].new(0)
+  let c = http.client(os.net, timeout: 5s)
+  let base = "http://${addr}"
+  scope s {
+    s.spawn_background(fn() {
+      while true {
+        match l.accept() {
+          Ok(conn) => {
+            let _n = conns.add(1)
+            s.spawn_background(fn() {
+              var got = ""
+              var open = true
+              while open {
+                // one request: its head, then its body
+                var at = got.find("\r\n\r\n")
+                while at == None {
+                  match conn.read(4096) {
+                    Ok(Some(b)) => got = got + (b.to_str() ?? "")
+                    _ => {
+                      conn.close()
+                      return
+                    }
+                  }
+                  at = got.find("\r\n\r\n")
+                }
+                let e = (at ?? 0) + 4
+                let (path, blen) = head_of(got[0..e])
+                while got.len() < e + blen {
+                  match conn.read(4096) {
+                    Ok(Some(b)) => got = got + (b.to_str() ?? "")
+                    _ => {
+                      conn.close()
+                      return
+                    }
+                  }
+                }
+                got = got[e + blen..got.len()]
+                let (resp, closes) = answer(path)
+                conn.write(resp.bytes()).ignore_err("the client may have gone")
+                if closes {
+                  conn.close()
+                  open = false
+                }
+              }
+            })
+          }
+          Err(_) => return
+        }
+      }
+    })
+    let steps = [
+      ("keep", "/keep"), ("keep again", "/keep"), ("keep third", "/keep"),
+      ("server close", "/close"), ("after close", "/keep"),
+      ("http/1.0", "/h10"), ("after http/1.0", "/keep"),
+      ("http/1.0 keep-alive", "/h10ka"), ("after keep-alive", "/h10ka"),
+      ("until eof", "/eof"), ("after eof", "/keep"),
+      ("chunked", "/chunk"), ("chunked again", "/chunk"),
+      ("no content", "/nocontent"), ("after no content", "/keep"),
+      ("server drops idle", "/drop"), ("after drop", "/keep"),
+    ]
+    for (name, path) in steps {
+      match c.get(base + path) {
+        Ok(r) => os.stdio.println("${name}: ${r.status} ${(r.body.to_str() ?? "?").quote()} conns=${conns.get()}")
+        Err(e) => os.stdio.println("${name}: error ${e}")
+      }
+    }
+    // the request says close: the next one dials
+    match c.send(http.new_request("GET", base + "/keep", {"Connection": "close"})) {
+      Ok(r) => os.stdio.println("request close: ${r.status} conns=${conns.get()}")
+      Err(e) => os.stdio.println("request close: error ${e}")
+    }
+    match c.get(base + "/keep") {
+      Ok(r) => os.stdio.println("after request close: ${r.status} conns=${conns.get()}")
+      Err(e) => os.stdio.println("after request close: error ${e}")
+    }
+    // a POST with a body reuses the connection too
+    match c.send(http.new_request("POST", base + "/keep", {}, "payload".bytes())) {
+      Ok(r) => os.stdio.println("post: ${r.status} ${(r.body.to_str() ?? "?").quote()} conns=${conns.get()}")
+      Err(e) => os.stdio.println("post: error ${e}")
+    }
+    s.cancel()
+  }
+}

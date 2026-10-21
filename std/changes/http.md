@@ -1,5 +1,24 @@
 # std/http changes
 
+## 2026-10-21: feature: the client keeps HTTP/1.1 connections alive
+
+- Kind: feature
+- Commit: (filled in after the push)
+- Found by: per-line profile of bench/perf/httpclient (Xo Lang 3)
+- Go reference: net/http Transport (getConn, tryPutIdleConn, persistConn.readLoop, shouldClose, isReplayable, shouldRetryRequest; go1.26.1)
+- Test: internal/llvm/testdata/golden/http_client_keepalive (connections a raw server accepted, request by request, as the Go backend's); TestHTTP1ClientDiff (457 responses, llvm, go, arm64)
+
+Natively, an HTTP/1.1 connection (plain or TLS) goes back to a pool
+after a response read in full that leaves it open, and the next request
+to the same scheme, address and server name takes it: at most 2 idle
+per host, 100 in all, 90 s idle, as Transport's defaults. A response
+with Connection: close, an HTTP/1.0 one without keep-alive, a body that
+ends at EOF, or a 101 closes it; a connection the server closed while
+idle is dropped when taken, and a replayable request that met a dead
+pooled connection is sent once more on a new one. The client bench's
+HTTP/1.1 workloads against a keep-alive server: 1,119M to 520M
+instructions for 3000 requests (decision 0303).
+
 ## 2026-10-21: fix: the native client reads responses as net/http does
 
 - Kind: fix
