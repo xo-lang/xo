@@ -20,7 +20,13 @@ struct Template {
   left: Str = "{{"
   right: Str = "}}"
   missing_key_error: Bool = false
+  /// The parsed set (internal: filled by parse and add, so a render does
+  /// not parse again).
+  parsed: Parsed
 }
+
+/// The parsed trees of a Template (opaque).
+struct Parsed {}
 
 /// template.New(name).Delims(left, right).Parse(src): the template, or
 /// Go's parse error. `{{define}}` blocks become templates of the set.

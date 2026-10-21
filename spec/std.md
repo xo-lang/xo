@@ -3677,7 +3677,7 @@ built in functions, and fmt's printing); Go's output and error texts on
 
 ```
 struct TemplateErr { msg: Str } derive Display          // Go's texts
-struct Template { name: Str, sources: List[(Str, Str)], left: Str = "{{", right: Str = "}}", missing_key_error: Bool = false }
+struct Template { name: Str, sources: List[(Str, Str)], left: Str = "{{", right: Str = "}}", missing_key_error: Bool = false, parsed: Parsed }
 
 pub fn parse(name: Str, src: Str, left: Str = "{{", right: Str = "}}") -> Template ! TemplateErr
 fn (t: Template) add(name: Str, src: Str) -> Template ! TemplateErr
@@ -3685,6 +3685,8 @@ fn (t: Template) missing_key(error: Bool) -> Template
 fn (t: Template) render(data: json.Value) -> Str ! TemplateErr
 fn (t: Template) render_named(name: Str, data: json.Value) -> Str ! TemplateErr
 ```
+
+- `Template.parsed` is an opaque `Parsed` (std internal state, decision 0319): `parse` and `add` fill it with the parsed trees, which only the native implementation reads, so a render does not parse the sources again. A program does not build or read it; the Go backend leaves it empty.
 
 - The data is a `json.Value` (5.1; `json.to_value(x)` for a type that
   derives Json). The template sees it as Go sees `encoding/json` data:

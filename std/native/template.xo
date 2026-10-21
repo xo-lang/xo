@@ -7,6 +7,7 @@
 use std/json
 use std/template
 use std/url
+use native/rt
 
 fn templateerr_display(e: template.TemplateErr) -> Str { e.msg }
 
@@ -1554,6 +1555,11 @@ fn ctx_text(c: Ctx) -> Str {
   }
 }
 
+/// The trees of a parsed set, kept in the Template (std Parsed, opaque).
+struct Parsed {
+  trees: List[Tree] = []
+}
+
 /// One template of the set as the executor sees it.
 struct Ex {
   trees: List[Tree]
@@ -3003,15 +3009,15 @@ fn parse_set(t: template.Template) -> List[Tree] ! template.TemplateErr {
 }
 
 fn parse(name: Str, src: Str, left: Str = "{{", right: Str = "}}") -> template.Template ! template.TemplateErr {
-  let t = template.Template{name: name, sources: [(name, src)], left: if left.is_empty() { "{{" } else { left }, right: if right.is_empty() { "}}" } else { right }}
-  let _trees = parse_set(t)?
-  Ok(t)
+  let t = template.Template{name: name, sources: [(name, src)], left: if left.is_empty() { "{{" } else { left }, right: if right.is_empty() { "}}" } else { right }, parsed: rt.cast[Parsed, template.Parsed](Parsed{})}
+  let trees = parse_set(t)?
+  Ok(t with {parsed: rt.cast[Parsed, template.Parsed](Parsed{trees: trees})})
 }
 
 fn template_add(t: template.Template, name: Str, src: Str) -> template.Template ! template.TemplateErr {
   let n = t with {sources: t.sources + [(name, src)]}
-  let _trees = parse_set(n)?
-  Ok(n)
+  let trees = parse_set(n)?
+  Ok(n with {parsed: rt.cast[Parsed, template.Parsed](Parsed{trees: trees})})
 }
 
 fn template_missing_key(t: template.Template, error: Bool) -> template.Template { t with {missing_key_error: error} }
@@ -3019,7 +3025,11 @@ fn template_missing_key(t: template.Template, error: Bool) -> template.Template 
 fn template_render(t: template.Template, data: json.Value) -> Str ! template.TemplateErr { template_render_named(t, t.name, data) }
 
 fn template_render_named(t: template.Template, name: Str, data: json.Value) -> Str ! template.TemplateErr {
-  let trees = parse_set(t)?
+  let pp = rt.cast[template.Parsed, Parsed](t.parsed)
+  var trees = pp.trees
+  if trees.is_empty() {
+    trees = parse_set(t)?
+  }
   var tree: Tree? = None
   for x in trees {
     if x.name == name {

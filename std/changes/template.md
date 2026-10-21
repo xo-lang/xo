@@ -1,5 +1,20 @@
 # std/template changes
 
+## 2026-10-21: perf: a Template keeps its parsed set
+
+- Kind: perf
+- Commit: (filled in after the push)
+- Found by: XO_PROF=cpu (a render parsed the set again: 52% of what was left after the error text fix)
+- Go reference: text/template (go1.26.1: Parse once, Execute many)
+- Test: internal/stdtest/testdata/corpus/template (go, arm64, LLVM); golden template_basic
+
+`Template` gains an opaque field `parsed` (an opaque `Parsed` struct; the
+trees stay internal to std/native/template.xo): `parse` and `add` fill it,
+`render` and `render_named` read it instead of parsing the sources again, as
+Go's Execute does. 100,000 renders of a template with a range, an if, and
+four fields, user CPU: 1.38 s to 0.47 s with the error text change (Go's
+text/template 0.22 s). The Go backend is unchanged (text/template itself).
+
 ## 2026-10-21: perf: error context written only for errors
 
 - Kind: perf

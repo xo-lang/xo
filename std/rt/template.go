@@ -11,6 +11,10 @@ import (
 
 // jsonValueAny is v as encoding/json would decode it, numbers kept as
 // int64 or float64.
+// Template_Parsed is std/template's opaque parsed set: the Go backend
+// keeps text/template's own trees, not this.
+type Template_Parsed struct{}
+
 func jsonValueAny(v Json_Value) any {
 	switch v.Tag {
 	case 2:
