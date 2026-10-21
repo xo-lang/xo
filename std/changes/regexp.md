@@ -1,5 +1,17 @@
 # std/regexp changes
 
+## 2026-10-21: perf: the Pike VM queues are flat and preallocated
+
+- Kind: perf
+- Commit: (filled in after the push)
+- Found by: XO_PROF=cpu (bench/results/regexp-time-csv-vs-go-2026-10-21.md)
+- Go reference: regexp/exec.go queue (sparse set with a dense entry array)
+- Test: std module tests native/regexp on arm64 and LLVM
+
+Per match the queues and thread captures are allocated once, not per input
+position. match 1.7 times faster, find_all and replace_all 1.9, captures 1.7
+(instructions); results are the same.
+
 ## 2026-10-21: port: every Unicode class natively
 
 - Kind: port

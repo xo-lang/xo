@@ -1708,24 +1708,29 @@ fn rune_before(s: Str, pos: Int) -> Int {
 
 /// A run queue: the instructions in order with their threads' group
 /// positions (an empty list: no thread), and a sparse index.
+/// All of it preallocated once per exec: entry j is the j-th instruction
+/// added, has[j] is 1 when a thread waits there, and its group positions
+/// are caps[j * ncap ..][..ncap] (one flat list, not a list per entry).
 struct Queue {
   pcs: List[Int]
-  has: List[Bool]
-  caps: List[List[Int]]
+  has: List[Int]
+  caps: List[Int]
   sparse: List[Int]
+  len: Int
+  ncap: Int
 }
 
-fn new_queue(n: Int) -> Queue { Queue{pcs: [], has: [], caps: [], sparse: raw.zero_ints(n)} }
+fn new_queue(n: Int, ncap: Int) -> Queue {
+  Queue{pcs: raw.zero_ints(n), has: raw.zero_ints(n), caps: raw.zero_ints(n * ncap), sparse: raw.zero_ints(n), len: 0, ncap: ncap}
+}
 
 fn (var q: Queue) clear() {
-  q.pcs = []
-  q.has = []
-  q.caps = []
+  q.len = 0
 }
 
 fn (var q: Queue) contains(pc: Int) -> Bool {
   let j = q.sparse[pc]
-  j < q.pcs.len() && q.pcs[j] == pc
+  j < q.len && q.pcs[j] == pc
 }
 
 fn rune_matches(g: Prog, pc: Int, r: Int) -> Bool {
@@ -1757,10 +1762,10 @@ fn add(g: Prog, var q: Queue, pc0: Int, pos: Int, var cap: List[Int], cond: Int)
     if pc == 0 || q.contains(pc) {
       return
     }
-    q.sparse[pc] = q.pcs.len()
-    q.pcs.push(pc)
-    q.has.push(false)
-    q.caps.push([])
+    q.sparse[pc] = q.len
+    q.pcs[q.len] = pc
+    q.has[q.len] = 0
+    q.len += 1
     let op = g.op[pc]
     if op == I_FAIL {
       return
@@ -1794,9 +1799,14 @@ fn add(g: Prog, var q: Queue, pc0: Int, pos: Int, var cap: List[Int], cond: Int)
       continue
     }
     // a thread waits here
-    let j = q.pcs.len() - 1
-    q.has[j] = true
-    q.caps[j] = cap
+    let j = q.len - 1
+    q.has[j] = 1
+    let base = j * q.ncap
+    var i = 0
+    while i < q.ncap {
+      q.caps[base + i] = cap[i]
+      i += 1
+    }
     return
   }
 }
@@ -1815,12 +1825,15 @@ fn own(l: List[Int]) -> List[Int] { l }
 /// of them, at least 2), or the empty list.
 fn exec(g: Prog, s: Str, pos0: Int, ncap: Int) -> List[Int] {
   let n = g.op.len()
-  var runq = new_queue(n)
-  var nextq = new_queue(n)
+  var runq = new_queue(n, ncap)
+  var nextq = new_queue(n, ncap)
   var matchcap: List[Int] = []
+  var cap = raw.zero_ints(ncap)
+  var tc = raw.zero_ints(ncap)
   var k = 0
   while k < ncap {
     matchcap.push(-1)
+    cap[k] = -1
     k += 1
   }
   var matched = false
@@ -1839,27 +1852,34 @@ fn exec(g: Prog, s: Str, pos0: Int, ncap: Int) -> List[Int] {
   }
   var cond = empty_context(rune_before(s, pos), r)
   while true {
-    if runq.pcs.is_empty() && matched {
+    if runq.len == 0 && matched {
       break
     }
     if !matched {
-      var cap = matchcap
+      // matchcap is all -1 until the first match, and add restores cap
       cap[0] = pos
       add(g, runq, g.start, pos, cap, cond)
     }
     let next_cond = empty_context(r, r1)
     // step
     var j = 0
-    while j < runq.pcs.len() {
-      if runq.has[j] {
+    while j < runq.len {
+      if runq.has[j] == 1 {
         let pc = runq.pcs[j]
         let op = g.op[pc]
         var ok = false
         if op == I_MATCH {
-          matchcap = with_at(runq.caps[j], 1, pos)
+          var m = raw.zero_ints(ncap)
+          var mi = 0
+          while mi < ncap {
+            m[mi] = runq.caps[j * ncap + mi]
+            mi += 1
+          }
+          m[1] = pos
+          matchcap = m
           matched = true
           // first match: the threads after this one are cut off
-          j = runq.pcs.len()
+          j = runq.len
           continue
         } else if op == I_RUNE {
           ok = r >= 0 && rune_matches(g, pc, r)
@@ -1871,7 +1891,11 @@ fn exec(g: Prog, s: Str, pos0: Int, ncap: Int) -> List[Int] {
           ok = r >= 0 && r != 10
         }
         if ok {
-          var tc = own(runq.caps[j])
+          var ti = 0
+          while ti < ncap {
+            tc[ti] = runq.caps[j * ncap + ti]
+            ti += 1
+          }
           add(g, nextq, g.out[pc], pos + width, tc, next_cond)
         }
       }

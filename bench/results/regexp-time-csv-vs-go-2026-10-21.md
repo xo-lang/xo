@@ -86,3 +86,13 @@ distinct layout needs a place to keep it (Xo has no globals), so the next
 option is a compile-time parse of constant layouts in the compiler (the
 checker already reads them for XO0420) or a cheaper walk without items; not
 done here.
+
+## Step 2, regexp (2026-10-21): flat capture store for the Pike queues
+
+The run queues are preallocated once per match (instruction, thread flag, and
+one flat list of group positions) instead of pushing an empty list per
+instruction and copying a list per thread and per start position.
+Instructions (M), Go in brackets: match 29,759 to 17,354 (3,943); find_all
+18,697 to 9,704 (6,615); replace_all 16,033 to 8,772 (5,000); captures 1,919
+to 1,130 (434). Still 2.0 to 4.4 times Go: next are Go's literal-prefix scan,
+the one-pass matcher, and the bit-state backtracker.
