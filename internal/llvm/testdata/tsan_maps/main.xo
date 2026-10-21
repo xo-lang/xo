@@ -1,0 +1,64 @@
+// Maps shared between tasks under a Mutex, read with with_read and
+// written with with, with values copied out and snapshots iterated
+// outside the lock: a --race build reports nothing in either Map form
+// (TestTSanSharedMaps, XO_MAP_LOG=0 and 1). The log form once stored new
+// entries into chunks already marked shared, whose values other threads
+// then counted without atomics (decision 0291, 2026-10-21).
+use std/task
+
+struct Rec {
+  name: Str
+  tags: List[Str]
+}
+
+struct State {
+  recs: Map[Int, Rec]
+  by_name: Map[Str, Int]
+  counts: Map[Int, Int]
+}
+
+fn worker(m: Mutex[State], w: Int) -> Int {
+  var seen = 0
+  for i in 0..200 {
+    let id = w * 1000 + i
+    let name = "w${w}-r${i}"
+    m.with(fn(var st) {
+      st.recs.put(id, Rec{name: name, tags: ["t${i}", name]})
+      st.by_name.put(name, id)
+      st.counts.put(w, i)
+    })
+    if i % 3 == 0 {
+      m.with(fn(var st) {
+        st.recs.put(id, Rec{name: "${name}!", tags: []})
+      })
+    }
+    if i % 4 == 1 {
+      m.with(fn(var st) {
+        let _r = st.recs.remove(id)
+        let _n = st.by_name.remove(name)
+      })
+    }
+    // a copy out under the read lock, used after it
+    let got = m.with_read(fn(st) { st.recs.get(id) })
+    if let Some(r) = got {
+      seen += r.name.len() + r.tags.len()
+    }
+    // a snapshot of the whole Map, iterated outside the lock
+    let snap = m.with_read(fn(st) { st.recs })
+    for (_, r) in snap {
+      seen += r.tags.len() % 2
+    }
+  }
+  seen
+}
+
+fn main(os: Os) {
+  let m = Mutex[State].new(State{recs: {}, by_name: {}, counts: {}})
+  var tasks: List[Int] = []
+  for w in 0..8 {
+    tasks.push(w)
+  }
+  let results = task.map_concurrent(tasks, 8, fn(w) { worker(m, w) })
+  let (n, names, ws) = m.with_read(fn(st) { (st.recs.len(), st.by_name.len(), st.counts.len()) })
+  os.stdio.println("done ${n} ${names} ${ws} ${results.len()}")
+}

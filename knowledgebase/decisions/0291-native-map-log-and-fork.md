@@ -212,6 +212,17 @@ needs no second test.
   check (kept copies, small maps, heap values, iteration while a copy is
   written, update) identical to the Go backend, no leaks.
 
+**Concurrent use (2026-10-21, later).** Under concurrent HTTP load the
+hybrid crashed: entries stored into chunks already marked shared were
+never marked (gotchas/map-log-store-into-shared-chunk.md). With the fix
+(mlog_share_into) and TestTSanSharedMaps, the CRUD server's mixed load at
+1024 connections (Docker linux/arm64, servers on 6 CPUs, medians of 3
+rounds of 10 s): lists 22,476 req/s, hybrid 75,412 (3.4x), Go 89,846
+(Go's rounds 83k to 120k). With the lists, each write copies the users
+Map under Mutex.with (about 40% of the server's CPU, all inside the
+exclusive section: the server used about 1.2 of its 6 cores); the
+hybrid's copy is O(1) and the server uses about 1.9.
+
 **What remains is code generation**, not the Map: the never-taken call
 to the out-of-line log lookup in a get loop makes arm64's register
 allocator keep the loop's values in callee-saved registers and stop

@@ -780,10 +780,10 @@ fn (var b: Builder) mlog_table(t: Int, es: Int, claim: Int) -> Int {
   let dir = b.read(dv)
   let (nn, jn) = b.if_then_begin(b.bop(Op.Eq, c, b.call("list.len", it, "", [dir])))
   let chunk = b.call("list.new", el, "", [b.iop(Op.Shl, b.cint(1), c)])
-  b.call("log.push", -1, "", [b.read(dv), chunk])
+  b.mlog_push(b.read(dv), chunk)
   b.if_then_end(nn, jn)
   let d2 = b.read(dv)
-  b.call("log.push", -1, "", [b.call("list.index", el, "", [d2, c]), e])
+  b.mlog_push(b.call("list.index", el, "", [d2, c]), e)
   b.for_up_to_end(i, iv, ih, ix)
   let dir2 = b.read(dv)
   let xv = b.local()
@@ -941,10 +941,10 @@ fn (var b: Builder) mlog_record(t: Int) -> Str {
   let (c, _off) = b.mlog_slot(i)
   let (nc, jc) = b.if_then_begin(b.bop(Op.Eq, c, b.call("list.len", it, "", [b.read(dv)])))
   let chunk = b.call("list.new", el, "", [b.iop(Op.Shl, b.cint(1), c)])
-  b.call("log.push", -1, "", [b.read(dv), chunk])
+  b.mlog_push(b.read(dv), chunk)
   b.if_then_end(nc, jc)
   let dir = b.read(dv)
-  b.call("log.push", -1, "", [b.call("list.index", el, "", [dir, c]), e])
+  b.mlog_push(b.call("list.index", el, "", [dir, c]), e)
   let idx = b.read(xv)
   let (nx, jx) = b.if_then_begin(b.bop(Op.Gt, b.call("list.len", it, "", [idx]), b.cint(0)))
   b.rt("slot_store", -1, [idx, b.read(slotv), b.iop(Op.Add, i, b.cint(1)), b.cint(MLOG_REL)])
@@ -1019,6 +1019,7 @@ fn (var b: Builder) mlog_put(t: Int) -> Str {
   let (c, off) = b.mlog_slot(i)
   let chunk = b.call("list.index", el, "", [dir, c])
   let ne = b.add(Op.Struct, et, Aux.None, [b.add(Op.Field, it, Aux.I(n: 0), [e]), b.add(Op.Field, it, Aux.I(n: 1), [e]), org, b.add(Op.Field, kt, Aux.I(n: 3), [e]), v])
+  b.mlog_share_into(chunk, ne)
   b.call("log.set", -1, "", [chunk, off, ne])
   b.retv(mp)
   b.if_then_end(no, jo)
@@ -1031,6 +1032,32 @@ fn (var b: Builder) mlog_put(t: Int) -> Str {
   b.finish_fn()
   b.end(saved)
   name
+}
+
+/// log.push of v into the borrowed list l (a chunk, or the directory),
+/// with v marked shared first when l is (mlog_share_into).
+fn (var b: Builder) mlog_push(l: Int, v: Int) {
+  b.mlog_share_into(l, v)
+  b.call("log.push", -1, "", [l, v])
+}
+
+/// Marks v shared when the list l it is about to be stored in has a
+/// shared count: l's Map crossed threads (a Mutex's state, a task's
+/// capture), and the mark walk that made l shared stops at objects that
+/// are shared already (rc.mark), so it will not reach v later; v read
+/// by another thread with thread local counts was a data race that
+/// corrupted the heap under concurrent HTTP load (2026-10-21,
+/// gotchas/map-log-store-into-shared-chunk.md). A chunk or directory is
+/// never immortal, so a negative count is a shared one.
+fn (var b: Builder) mlog_share_into(l: Int, v: Int) {
+  if !b.m.heap(b.vty(v)) {
+    // nothing in v is counted (a Map[Int, Int]'s entry)
+    return
+  }
+  let it = b.int_t()
+  let (ns, js) = b.if_then_begin(b.bop(Op.Lt, b.rt("slot_load", it, [b.rt("obj_addr", it, [l]), b.cint(0), b.cint(0)]), b.cint(0)))
+  b.add(Op.Share, -1, Aux.None, [v])
+  b.if_then_end(ns, js)
 }
 
 /// Whether the object of list l has one reference (thread local): the
