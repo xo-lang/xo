@@ -540,7 +540,10 @@ fn (var p: P) addr_spec() -> Str ! mail.MailErr {
   }
   var local = ""
   if p.peek() == 34 {
-    local = p.consume_quoted_string()?
+    // consumeAddrSpec: an empty local part, which a failed quoted string
+    // also gives, is this error in place of the quoted string's own
+    let q = p.consume_quoted_string()
+    local = q.ok() ?? ""
     if local.is_empty() {
       return Err(fail("mail: empty quoted string in addr-spec"))
     }
@@ -1083,8 +1086,9 @@ fn spaces(s: Bytes, at: Int) -> Int {
 
 /// One layout of dateLayouts: weekday, two digit day, four digit year,
 /// seconds, and the zone kind (0 numeric, 1 name, 2 "UT"); the instant
-/// in seconds, or None when the layout does not match.
-fn try_layout(s: Bytes, dow: Bool, day2: Bool, year4: Bool, secs: Bool, zone: Int) -> Int? {
+/// in seconds and its nanoseconds, or None when the layout does not
+/// match.
+fn try_layout(s: Bytes, dow: Bool, day2: Bool, year4: Bool, secs: Bool, zone: Int) -> (Int, Int)? {
   var at = 0
   if dow {
     if !DAYS.contains(lower3(s, at)) || at + 4 > s.len() || s[at + 3] != ',' {
@@ -1138,6 +1142,7 @@ fn try_layout(s: Bytes, dow: Bool, day2: Bool, year4: Bool, secs: Bool, zone: In
   }
   at += mn
   var sec = 0
+  var nsec = 0
   if secs {
     if at >= s.len() || s[at] != ':' {
       return None
@@ -1148,6 +1153,25 @@ fn try_layout(s: Bytes, dow: Bool, day2: Bool, year4: Bool, secs: Bool, zone: In
     }
     sec = sv
     at += 1 + sn
+    // time.Parse: a fractional second right after the seconds is read
+    // though the layout has none (`.` or `,`, then digits; the first nine
+    // count)
+    if at + 1 < s.len() && (s[at] == '.' || s[at] == ',') && s[at + 1] >= '0' && s[at + 1] <= '9' {
+      var k = at + 1
+      var digits_read = 0
+      while k < s.len() && s[k] >= '0' && s[k] <= '9' {
+        if digits_read < 9 {
+          nsec = nsec * 10 + Int(s[k]) - 48
+          digits_read += 1
+        }
+        k += 1
+      }
+      while digits_read < 9 {
+        nsec *= 10
+        digits_read += 1
+      }
+      at = k
+    }
   }
   at = spaces(s, at)
   if at < 0 {
@@ -1189,7 +1213,7 @@ fn try_layout(s: Bytes, dow: Bool, day2: Bool, year4: Bool, secs: Bool, zone: In
   if hour >= 24 || min >= 60 || sec >= 60 || day < 1 || day > month_days(year, mon + 1) {
     return None
   }
-  Some(days_from_civil(year, mon + 1, day) * 86400 + hour * 3600 + min * 60 + sec - offset)
+  Some((days_from_civil(year, mon + 1, day) * 86400 + hour * 3600 + min * 60 + sec - offset, nsec))
 }
 
 fn parse_date(s: Str) -> Time ! mail.MailErr {
@@ -1234,11 +1258,11 @@ fn parse_date(s: Str) -> Time ! mail.MailErr {
         for secs in [true, false] {
           for zone in [0, 1, 2] {
             match try_layout(db, dow, day2, year4, secs, zone) {
-              Some(t) => {
-                if t < -9223372036 || t > 9223372036 {
+              Some((t, ns)) => {
+                if t < -9223372036 || t > 9223372036 || (t == 9223372036 && ns > 854775807) {
                   return Err(fail("mail: date out of range"))
                 }
-                return Ok(Time.UNIX_EPOCH + Duration.from_nanos(t * 1000000000))
+                return Ok(Time.UNIX_EPOCH + Duration.from_nanos(t * 1000000000 + ns))
               }
               None => {}
             }

@@ -1,5 +1,20 @@
 # std/mail changes
 
+## 2026-10-21: fix: parse_date reads fractional seconds, an unclosed quoted local part is Go's error
+
+- Kind: fix
+- Commit: (filled in after the push)
+- Found by: differential test against Go (the new corpus)
+- Go reference: net/mail ParseDate (time.Parse reads a fractional second after the seconds though the layout has none), addrParser.consumeAddrSpec (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/mail (scripts/stdcorpus mail: 2,500 addresses, 1,000 lists, 2,000 dates, and 600 messages, random and from net/mail's tests, with Go's results; TestStdCorpora on go, arm64, and LLVM)
+
+Natively, a date with a fractional second (`Mon, 1 Dec 2006 15:04:05.123
++0000`) was `mail: header could not be parsed`; Go reads it (the instant
+keeps the fraction), so parse_date now does. An address whose local part
+is an unclosed quoted string (`<"unclosed`) gave `mail: unclosed
+quoted-string`; Go gives `mail: empty quoted string in addr-spec`, and
+now so does the native port.
+
 ## 2026-10-20: port: messages, dates, and a message builder
 
 - Kind: port

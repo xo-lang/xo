@@ -1483,6 +1483,12 @@ std's public API, which TestStdCorpora runs outside -short, and the
 module's _test.xo keeps a sample (2026-10-21: gomath's 21,460 rows took
 143 to 254 s of -short and pushed it past go test's 10 minutes; now 694
 rows, about 12 s, and the whole table in testdata/corpus/gomath).
+`go run ./scripts/stdcorpus MODULE...` writes the corpora generated from
+Go's own package (testdata/corpus/MODULE/MODULE_test.xo: Go's results
+on its test file's strings and seeded random inputs, mapped as std/rt
+maps them), and `go run ./scripts/stdcorpus -check` fails when one
+differs from its generator (2026-10-21: mail first; the Go oracle kept
+as data whatever implements a module on the Go backend).
 Last verified: 2026-10-21.
 
 ### Gate and fuzz runners (2026-10-18)
