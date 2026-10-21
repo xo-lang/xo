@@ -3888,11 +3888,11 @@ GB guidance above; `--clean` removes it). Last verified: 2026-10-12.
 
 Gates and the fixed point (owner, 2026-10-21): a push builds xo once
 with the current xo and runs no fixed point; the full fixed point runs
-hourly on main (`~/xo-lead/agents/fp-hourly.sh`: skips a main whose
+hourly on main (`~/xo-lead/agents/hourly.sh`, which also runs -short: skips a main whose
 compiler inputs did not change, lists the commits to bisect on a
 failure) and in releases, seed-cut.sh and CI. `XO_BOOTSTRAP_SEED_IS_S1=1
 scripts/bootstrap-xo.sh SEED` uses SEED as s1 when SEED is this tree's
-compiler/xo just built by `go run ./scripts/xobuild` (fp-hourly.sh and
+compiler/xo just built by `go run ./scripts/xobuild` (hourly.sh and
 gate.sh's fp step set it), so the fixed point builds xo twice (s2, s3).
 Measured on a gate on 2026-10-21 under load: xobuild 112 s, s1 62 s,
 s2 155 s, s3 10 s (s3 reuses s2's backend cache entries). Of about 423

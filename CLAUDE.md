@@ -146,6 +146,13 @@ Update the knowledgebase in the same change as the work, not later:
     (scripts/gate.sh short arm64 llvm cmd gen fp, LLVM at -O1 with Go
     parity, plus the Docker amd64 goldens), bisects a failure over that
     window's pushes, and the owner of the commit fixes forward.
+  - per commit only the agent's gate (owner, 2026-10-21): pushq rebases
+    and pushes with no -short (PUSHQ_SHORT=1 runs it) and runs an
+    overlap gate when given; go test -short and the full fixed point
+    run hourly on main (~/xo-lead/agents/hourly.sh), and the lead
+    bisects a failure to the commit's owner, who fixes forward. An
+    agent still runs any repo test its change obviously affects (e.g.
+    TestCodegenInputsClassified for a new XO_* variable) in its gate.
   - merges before testing (owner, 2026-10-21): heavy.sh serves pushq
     first, then gates, then HEAVY_CLASS=bulk runs (measurements,
     profiles, full suites, deferred checks; set it on every such run).
@@ -174,7 +181,7 @@ Update the knowledgebase in the same change as the work, not later:
     ./scripts/xobuild`), and runs its proving tests with that xo: no
     fixed point per push (owner, 2026-10-21). The full self rebuild
     fixed point (scripts/bootstrap-xo.sh, s2 and s3 identical) runs
-    hourly on main (~/xo-lead/agents/fp-hourly.sh, bisected to the
+    hourly on main (~/xo-lead/agents/hourly.sh, with go test -short; bisected to the
     owner of the guilty commit, who fixes forward) and in releases,
     seed-cut.sh and CI, so a miscompile cannot build the next released
     compiler. The paths: compiler/ (but not
