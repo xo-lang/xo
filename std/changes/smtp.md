@@ -1,5 +1,18 @@
 # std/smtp changes
 
+## 2026-10-21: behavior: the Go backend runs smtp.xo too
+
+- Kind: behavior
+- Commit: (filled in after the push)
+- Found by: decision 0312 (std written once)
+- Go reference: net/smtp (go1.26.1), as ported in std/native/smtp.xo
+- Test: internal/stdtest/testdata/corpus/smtp (go, arm64, LLVM); golden test_smtp
+
+The Go backend compiles std/native/smtp.xo instead of its own Go port
+(std/rt/smtp.go, deleted), so every backend runs one implementation; the
+steps and texts are the same. The corpus (in-process servers) takes 0.16 s of
+CPU on the Go backend instead of 0.12 s.
+
 ## 2026-10-21: fix: replies, HELO, AUTH, and an empty message as Go's net/smtp
 
 - Kind: fix
