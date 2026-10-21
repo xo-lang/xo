@@ -3,7 +3,7 @@
 ## 2026-10-20: feature: Postgres over TLS
 
 - Kind: feature
-- Commit: (filled in after the push)
+- Commit: c6acafc2
 - Found by: survey
 - Go reference: github.com/jackc/pgx/v5 pgconn (configTLS, SSLRequest)
 - Test: scripts/pg-diff.sh (PostgreSQL 17 with ssl=on: 45 statements over verify-full and 9 sslmode outcomes, the same as pgx); std/native/llrt/pg_test.xo
@@ -16,7 +16,7 @@ connection for `allow`; `require` with `roots` checks the chain, as libpq.
 ## 2026-10-20: feature: Row.value
 
 - Kind: feature
-- Commit: (filled in after the push)
+- Commit: 0b8d412f
 - Found by: test
 - Go reference: github.com/jackc/pgx/v5 Rows.Values
 - Test: scripts/pg-diff.sh (each row printed through value)
@@ -28,7 +28,7 @@ text is `<row>`, as for every opaque std type.
 ## 2026-10-20: feature: a Postgres driver written in Xo
 
 - Kind: port
-- Commit: (filled in after the push)
+- Commit: 944a4fee
 - Found by: survey
 - Go reference: github.com/jackc/pgx/v5 v5.11.0 pgproto3 and pgconn (outside Go's std)
 - Test: std/native/llrt/pgwire_test.xo (pgx's message vectors and connection string corpora, RFC 7677); std/native/llrt/pg_test.xo (fake servers on FakeNet, decision 0292; was golden pg_fake); scripts/pg-diff.sh against PostgreSQL 17 and 14 in Docker, the same output as pgx

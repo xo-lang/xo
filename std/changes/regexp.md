@@ -3,7 +3,7 @@
 ## 2026-10-21: port: every Unicode class natively
 
 - Kind: port
-- Commit: (filled in after the push)
+- Commit: 9212b69b
 - Found by: the std coverage table (decision 0276)
 - Go reference: regexp/syntax unicodeTable, unicode.Categories, Scripts, FoldCategory, FoldScript, CategoryAliases (go1.26.1, Unicode 15.0.0)
 - Test: std/native/regexp_test.xo (1,092 cases: `\p{NAME}`, `\P{NAME}`, and `(?i)[\p{NAME}]` for every category, script, and alias, on the runes at the edges of the class's ranges, against Go's ReplaceAllString), TestUnicodeTables
@@ -18,7 +18,7 @@ lookup canonicalizes it to `Olditalic`, which no table has.
 ## 2026-10-21: test: Go's RE2 search tests
 
 - Kind: test
-- Commit: (filled in after the push)
+- Commit: b2ef88de
 - Found by: differential test against Go
 - Go reference: regexp/testdata/re2-search.txt, regexp Compile, FindStringSubmatchIndex (go1.26.1)
 - Test: std/native/regexp_test.xo (1,486 pattern and text pairs: compile errors, the match, every capture)

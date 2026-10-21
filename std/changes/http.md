@@ -3,7 +3,7 @@
 ## 2026-10-21: fix: a request's repeated Set-Cookie fields
 
 - Kind: fix
-- Commit: (filled in after the push)
+- Commit: a6a1e92a
 - Found by: differential test against Go
 - Go reference: net/http request parsing (readRequest, textproto ReadMIMEHeader) as the Go backend's fieldView shows it (go1.26.1)
 - Test: internal/llvm/testdata/golden/http_header_fields (a request with two Set-Cookie fields); 467 raw requests (net/textproto and net/http parsing cases and 400 random header blocks) gave the same status, header Map, and body natively as on the Go backend
@@ -15,7 +15,7 @@ as the Go backend and the client do (`header_values` gives each).
 ## 2026-10-21: fix: parse_url's host and fragment checks and error texts
 
 - Kind: fix
-- Commit: (filled in after the push)
+- Commit: b2ef88de
 - Found by: differential test against Go
 - Go reference: net/url Parse, parseHost, unescape (encodeHost, encodeZone), setFragment (go1.26.1)
 - Test: std/native/http_test.xo (1,586 URLs: url_test.go's inputs and 1,500 seeded random ones, with the Go backend's results)
@@ -32,7 +32,7 @@ certificate's URI name errors.
 ## 2026-10-20: feature: header fields with repeated names; fix: Set-Cookie
 
 - Kind: feature
-- Commit: (filled in after the push)
+- Commit: 33fec016
 - Found by: survey
 - Go reference: net/http Header.Add, Header.Values, SetCookie, Response.Cookies (go1.26.1)
 - Test: internal/llvm/testdata/golden/http_header_fields (HTTP/1.1 and HTTP/2; arm64, LLVM, and the Go backend agree)

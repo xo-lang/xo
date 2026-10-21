@@ -3,7 +3,7 @@
 ## 2026-10-21: speedup: a TLS client handshake on macOS without a zone lookup or slow symbol lookups
 
 - Kind: speedup
-- Commit: (filled in after the push)
+- Commit: 7b590102
 - Found by: Xo lang 4's profile of the arm64 TLS client (open and readlink in every handshake)
 - Go reference: none
 - Test: internal/llvm/testdata/golden/tls_client, tls13_go, tls12_client, http_tls (the expired certificate texts in time.Local); a local Go server with a self-signed certificate, 500 dials verified by the system (Mac)

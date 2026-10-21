@@ -3,7 +3,7 @@
 ## 2026-10-21: fix: Fs.read_dir and walk report errors instead of a shorter list
 
 - Kind: fix
-- Commit: (filled in after the push)
+- Commit: bb85a141
 - Found by: Xo Publish (a sweep for errors that become empty results)
 - Go reference: os.File.ReadDir and Readdir (dir_unix.go: EINTR retried, an lstat error other than not-exist returned), filepath.WalkDir (go1.26.1)
 - Test: internal/llvm/testdata/golden/fs_dir_errors (go, arm64, LLVM)
@@ -20,7 +20,7 @@ as `Denied` in a directory without search permission, is the result.
 ## 2026-10-21: fix: Set.filter, map, any and all build natively
 
 - Kind: fix
-- Commit: (filled in after the push)
+- Commit: defe5a7f
 - Found by: Xo Lang 3 (log Map tests, decision 0291)
 - Go reference: none
 - Test: internal/llvm/testdata/golden/set_hofs
@@ -32,7 +32,7 @@ They now build on arm64, LLVM and wasm, with the Go backend's results;
 ## 2026-10-20: behavior: a connection's reads and writes take the effect of how it was made
 
 - Kind: behavior
-- Commit: (filled in after the push)
+- Commit: a48437ba
 - Found by: survey
 - Go reference: none
 - Test: test/errorcheck/connection_effects; internal/llvm/testdata/golden/net_echo

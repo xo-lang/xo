@@ -3,7 +3,7 @@
 ## 2026-10-20: fix: a final \r is a line end, as in Go's csv.Reader
 
 - Kind: fix
-- Commit: (filled in after the push)
+- Commit: b0f96be5
 - Found by: differential test against Go's encoding/csv (2,022 texts)
 - Go reference: encoding/csv reader.go readLine (a trailing \r at EOF reads as \n)
 - Test: std/native/csv_test.xo (Go's records on its cases and 2,000 random texts); internal/llvm/testdata/golden/csv_basic

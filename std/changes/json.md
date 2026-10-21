@@ -3,7 +3,7 @@
 ## 2026-10-21: test: parse_value against Go's encoding/json
 
 - Kind: test
-- Commit: (filled in after the push)
+- Commit: b2ef88de
 - Found by: differential test against Go
 - Go reference: encoding/json Decoder.Token, scanner errors (go1.26.1)
 - Test: std/native/json_test.xo (3,059 texts: encoding/json scanner cases and seeded random ones)
@@ -14,7 +14,7 @@ texts as the Go backend's, with the same error texts.
 ## 2026-10-21: feature: json.Value, JSON of any shape
 
 - Kind: feature
-- Commit: (filled in after the push)
+- Commit: 843a6de6
 - Found by: survey (dynamic JSON; std/template's data, decision 0299)
 - Go reference: encoding/json decoding into `any`
 - Test: internal/llvm/testdata/golden/json_value (every backend)
