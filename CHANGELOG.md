@@ -6,6 +6,8 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- WebAssembly: `Stdio.write` wrote nothing (its buffer was never flushed in a
+  WASI module); it now writes through, in order with print and println.
 - Raw multi-line strings (decision 0320): `r"""..."""` has no escapes
   and no interpolation and removes common indentation as `"""` does;
   `r#"""..."""#` may contain `"""`.

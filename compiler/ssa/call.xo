@@ -90,8 +90,11 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
     if !w.is_empty() {
       // the native runtime's own body reads what a WASI module does not
       // have; the wasm runtime serves the call
-      let a = b.expr(args[0].value)
-      return b.rt(w, if w == "rand_bytes" { b.str_t() } else { b.nat_of(x) }, [a])
+      var vs: List[Int] = []
+      for a in args {
+        vs.push(b.expr(a.value))
+      }
+      return b.rt(w, if w == "rand_bytes" { b.str_t() } else { b.nat_of(x) }, vs)
     }
   }
   if fm >= 0 && !b.c.mods[fm].go_path.is_empty() {
@@ -1465,6 +1468,12 @@ fn wasi_served(path: Str, name: Bytes) -> Str {
   }
   if path == "native/llrt/process" && name == b"real_env_get" {
     return "env_get"
+  }
+  if path == "native/llrt/stdio" && name == b"out" {
+    // Stdio.write's bytes: the native buffer is flushed by the runtime's
+    // exit, which a WASI module does not have, and its flush is a
+    // platform call; written through directly, as print and println are
+    return "stdio_out"
   }
   ""
 }

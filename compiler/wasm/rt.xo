@@ -5349,6 +5349,22 @@ fn rt_text(var g: Gen) -> Str {
       local.get $l)
 
     ;; proc.set_grace(d): nothing to wait for (WASI has no signals)
+    ;; Stdio.write: the n bytes at p on standard output, and a newline when
+    ;; nl (stdio.out of std/native/llrt, written through)
+    (func $stdio_out (param $p i64) (param $n i64) (param $nl i32)
+      i32.const 1
+      local.get $p
+      i32.wrap_i64
+      local.get $n
+      i32.wrap_i64
+      call $write
+      local.get $nl
+      if
+        i32.const 1
+        ${nl}
+        call $write
+      end)
+
     (func $set_grace (param $d i64))
 
     ;; task.stop_requested(): never (WASI has no signals)

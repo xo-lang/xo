@@ -1,0 +1,12 @@
+// Stdio.write (bytes, no newline added) interleaved with print and
+// println keeps the order on every backend, including a WASI module,
+// whose runtime writes it through (it has no exit hook for a buffer).
+
+fn main(os: Os) {
+  os.stdio.println("one")
+  os.stdio.write("two\n".bytes()).ignore_err("a closed stdout is not this test's concern")
+  os.stdio.print("thr")
+  os.stdio.write("ee".bytes()).ignore_err("a closed stdout is not this test's concern")
+  os.stdio.println("")
+  os.stdio.write(b"\x66our\n").ignore_err("a closed stdout is not this test's concern")
+}
