@@ -102,7 +102,9 @@ for step in "$@"; do
     tmp=$(mktemp -d "${TMPDIR:-/tmp}/xo-gate-fp.XXXXXX")
     cp bin/xo "$tmp/seed"
     # bin/xo was just built from this tree, so it is s1 (one build less)
-    if XO_BOOTSTRAP_SEED_IS_S1=1 scripts/bootstrap-xo.sh "$tmp/seed" "$tmp/out" >"$logs/fp.txt" 2>&1; then
+    # quick: s1 is bin/xo, s2 is built and runs hello; s3 and the s2/s3
+    # comparison run hourly on main (owner, 2026-10-21)
+    if XO_BOOTSTRAP_SEED_IS_S1=1 XO_BOOTSTRAP_QUICK=${XO_BOOTSTRAP_QUICK:-1} scripts/bootstrap-xo.sh "$tmp/seed" "$tmp/out" >"$logs/fp.txt" 2>&1; then
       echo "fp: $(tail -1 "$logs/fp.txt")"
     else
       failed=1
