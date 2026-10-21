@@ -7,6 +7,11 @@
 // constant read once into that operand (compiler/arm64 isel.xo
 // rot_operand). The 4 rounds of the loop's body run lazily; at its end
 // the 25 pending rotations are applied, so the loop carries plain lanes.
+// x86_64 has no rotated operands, so there the rotations are applied
+// where they are made (rorq once per lane in rho, once per D), the plain
+// form (2026-10-21: the lazy form's every read of a lane with a pending
+// rotation was a reload, a rorq, and an xorq on amd64); `match
+// target.arch` picks the form at compile time.
 
 // FIPS 202 3.2.2's rotation offsets (left), lane x + 5 y
 const ROT: List[Int] = [0, 1, 62, 28, 27, 36, 44, 6, 55, 20, 3, 10, 43, 25, 39, 41, 45, 15, 21, 8, 18, 2, 61, 56, 14]
@@ -20,6 +25,8 @@ struct Lane {
 struct Gen {
   out: List[Str]
   n: Int
+  /// the lazy form (rotations pending); else rotations applied at once
+  lazy: Bool
 }
 
 /// a mod m in 0..m.
@@ -36,9 +43,18 @@ fn rot(x: Str, k: Int) -> Str {
   "${x}.rotate_right(${r})"
 }
 
-/// a rotated left by r: only its pending rotation changes.
-fn rotl(a: Lane, r: Int) -> Lane {
-  Lane { s: a.s, q: md(a.q - r, 64) }
+/// a rotated left by r: lazily only its pending rotation changes; in the
+/// plain form a value of its own.
+fn (var g: Gen) rotl(a: Lane, r: Int) -> Lane {
+  if g.lazy {
+    return Lane { s: a.s, q: md(a.q - r, 64) }
+  }
+  if md(r, 64) == 0 {
+    return a
+  }
+  let t = g.v("t")
+  g.emit("let ${t} = ${rot(a.s, -r)}")
+  Lane { s: t, q: 0 }
 }
 
 fn (var g: Gen) v(p: Str) -> Str {
@@ -47,7 +63,7 @@ fn (var g: Gen) v(p: Str) -> Str {
 }
 
 fn (var g: Gen) emit(s: Str) {
-  g.out.push("    " + s)
+  g.out.push("        " + s)
 }
 
 /// a ^ b: ror(sa, qa) ^ ror(sb, qb) is ror(sa ^ ror(sb, qb - qa), qa).
@@ -76,7 +92,7 @@ fn (var g: Gen) round(a: List[Lane], j: Int) -> List[Lane] {
   }
   var d: List[Lane] = []
   for x in 0..5 {
-    d.push(g.xor(c[md(x - 1, 5)], rotl(c[(x + 1) % 5], 1)))
+    d.push(g.xor(c[md(x - 1, 5)], g.rotl(c[(x + 1) % 5], 1)))
   }
   // rho and pi: B[y, 2x + 3y] = rotl(A[x, y] ^ D[x], r), made per
   // plane of chi right before it (25 at once spilled more)
@@ -98,7 +114,7 @@ fn (var g: Gen) round(a: List[Lane], j: Int) -> List[Lane] {
     for x in 0..5 {
       let i = x + 5 * y
       let k = src[i]
-      b[i] = rotl(g.xor(a[k], d[k % 5]), ROT[k])
+      b[i] = g.rotl(g.xor(a[k], d[k % 5]), ROT[k])
     }
     for x in 0..5 {
       let i = x + 5 * y
@@ -116,8 +132,10 @@ fn (var g: Gen) round(a: List[Lane], j: Int) -> List[Lane] {
   nl
 }
 
-fn main(os: Os) {
-  var g = Gen { out: [], n: 0 }
+/// The 4 rounds of the loop's body and the lanes' assignments after
+/// them, lazily or plainly.
+fn body(lazy: Bool) -> List[Str] {
+  var g = Gen { out: [], n: 0, lazy: lazy }
   var a: List[Lane] = []
   for i in 0..25 {
     a.push(Lane { s: "a${i}", q: 0 })
@@ -128,6 +146,10 @@ fn main(os: Os) {
   for i in 0..25 {
     g.emit("a${i} = ${rot(a[i].s, a[i].q)}")
   }
+  g.out
+}
+
+fn main(os: Os) {
   var lines: List[Str] = [
     r#"/// Keccak-f[1600] on the 25 lanes, with lazy rotations (XKCP's ARMv8"#,
     r#"/// form, scripts/gen/keccaklazy): a lane is a value and a pending"#,
@@ -135,7 +157,9 @@ fn main(os: Os) {
     r#"/// the eor or bic that reads the lane (arm64 folds a rotation by a"#,
     r#"/// constant read once there: isel.xo rot_operand), not instructions of"#,
     r#"/// their own. The loop's body is 4 rounds; the pending rotations are"#,
-    r#"/// applied at its end. Generated: do not edit."#,
+    r#"/// applied at its end. x86_64 has no rotated operands: there each"#,
+    r#"/// rotation is applied where it is made (the plain form). Generated: do"#,
+    r#"/// not edit."#,
     r#"fn keccak(var a: List[Int]) {"#,
     r#"  // the lanes as raw memory at constant offsets (the arm64 backend"#,
     r#"  // checked each index): a write first makes a this call's own"#,
@@ -151,10 +175,16 @@ fn main(os: Os) {
   lines.push(r#"  // the round constants once (a constant's every use reads it through"#)
   lines.push(r#"  // const_once)"#)
   lines.push(r#"  let rcs = RCS"#)
-  lines.push(r#"  var round = 0"#)
-  lines.push(r#"  while round < 24 {"#)
-  lines = lines + g.out
-  lines.push("    round += 4")
+  lines.push(r#"  match target.arch {"#)
+  for (arm, lazy) in [("TargetArch.Amd64", false), ("TargetArch.Arm64 | TargetArch.Wasm32", true)] {
+    lines.push("    ${arm} => {")
+    lines.push("      var round = 0")
+    lines.push("      while round < 24 {")
+    lines = lines + body(lazy)
+    lines.push("        round += 4")
+    lines.push("      }")
+    lines.push("    }")
+  }
   lines.push("  }")
   for i in 0..25 {
     lines.push("  rt.mem_store(la, ${8 * i}, a${i}, 8)")
