@@ -1,5 +1,20 @@
 # std/base32 changes
 
+## 2026-10-21: perf: decode through a table, eight symbols at a time
+
+- Kind: perf
+- Commit: (filled in after the push)
+- Found by: XO_PROF=cpu (the per quantum lists were 40% of the native decode)
+- Go reference: encoding/base32 decode (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/base32 (go, arm64, LLVM); golden base64_basic
+
+Decode looks each byte up in a 256 byte table, reads eight plain symbols at
+once as one 40 bit integer, and keeps the slow quantum (padding, errors,
+short ends) with its symbols in an integer instead of two lists. 1 KB encode
+and decode, 20,000 times, median of 5: native 296 ms to 74 ms (Go's package
+61 ms), the Go backend 421 ms to 227 ms. Results and error offsets are the
+same.
+
 ## 2026-10-21: behavior: the Go backend runs base32.xo too
 
 - Kind: behavior
