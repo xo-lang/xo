@@ -354,31 +354,31 @@ pub fn link_pe(objs: List[CObj], o: PEOpts) -> Result[Bytes, Str] {
         }
         let at = p.off + r.addr
         let site = rva[p.out] + at
-        var buf = bufs[p.out]
+        // in place: a copy of the section here would copy all of it at each
+        // relocation (a quadratic link of xo.exe, 2026-10-20)
         if r.typ >= IMAGE_REL_AMD64_REL32 && r.typ <= IMAGE_REL_AMD64_REL32 + 5 {
           let n = r.typ - IMAGE_REL_AMD64_REL32
-          let a = get_le(buf, at, 4)
+          let a = get_le(bufs[p.out], at, 4)
           let v = sym_rva(t) + a - (site + 4 + n)
           if v < -0x80000000 || v > 0x7fffffff {
             return Err("${ob.path}: REL32 out of range")
           }
-          put_le(buf, at, v, 4)
+          put_le(bufs[p.out], at, v, 4)
         } else if r.typ == IMAGE_REL_AMD64_ADDR64 {
-          let a = get_le(buf, at, 8)
-          put_le(buf, at, if t.abs { t.off + a } else { PE_BASE + sym_rva(t) + a }, 8)
+          let a = get_le(bufs[p.out], at, 8)
+          put_le(bufs[p.out], at, if t.abs { t.off + a } else { PE_BASE + sym_rva(t) + a }, 8)
           if !t.abs {
             based.push(site)
           }
         } else if r.typ == IMAGE_REL_AMD64_ADDR32NB {
-          put_le(buf, at, sym_rva(t) + get_le(buf, at, 4), 4)
+          put_le(bufs[p.out], at, sym_rva(t) + get_le(bufs[p.out], at, 4), 4)
         } else if r.typ == IMAGE_REL_AMD64_SECREL {
           // the offset in the target's output section (the TLS block)
           let p2 = places[t.obj][t.sect]
-          put_le(buf, at, p2.off + t.off + get_le(buf, at, 4), 4)
+          put_le(bufs[p.out], at, p2.off + t.off + get_le(bufs[p.out], at, 4), 4)
         } else {
           return Err("${ob.path}: relocation type ${r.typ}")
         }
-        bufs[p.out] = buf
       }
     }
   }
