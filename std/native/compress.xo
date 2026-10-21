@@ -171,3 +171,137 @@ fn unzlib(data: Bytes, max_size: Int) -> Bytes ! compress.CompressErr {
   }
   out
 }
+
+// ---------------------------------------------------------------------------
+// Streaming (decision 0305): Go's gzip, flate, and zlib Writers over
+// flate.Stream; a decoder over flate.InStream
+
+struct Compressor {
+  format: compress.Format
+  level: Int
+  s: flate.Stream
+  /// the gzip or zlib header written
+  head: Bool
+  /// gzip's CRC-32 and size, zlib's Adler-32
+  sum: Int
+  size: Int
+}
+
+fn compressor(format: compress.Format, level: compress.Level) -> Compressor {
+  let lv = level_of(level)
+  Compressor{format: format, level: lv, s: flate.new_stream(lv), head: false, sum: if format == compress.Format.Zlib { 1 } else { 0 }, size: 0}
+}
+
+/// The format's header, the first time (gzip.Writer and zlib.Writer write
+/// it on their first Write, Flush, or Close).
+fn (var c: Compressor) header() -> Bytes {
+  if c.head {
+    return b""
+  }
+  c.head = true
+  match c.format {
+    Gzip => {
+      let xfl = if c.level == 9 { 2 } else if c.level == 1 { 4 } else { 0 }
+      var b = BytesBuilder.new()
+      b.write(b"\x1f\x8b\x08\x00\x00\x00\x00\x00")
+      b.write_byte(UInt8(xfl))
+      b.write_byte(UInt8(255))
+      b.freeze()
+    }
+    Deflate => b""
+    Zlib => {
+      let lv = c.level
+      let flevel = if lv == -2 || lv == 0 || lv == 1 { 0 } else if lv >= 2 && lv <= 5 { 1 } else if lv == 6 || lv == -1 { 2 } else { 3 }
+      var flg = flevel << 6
+      flg += 31 - ((0x78 * 256 + flg) % 31)
+      var b = BytesBuilder.new()
+      b.write_byte(UInt8(0x78))
+      b.write_byte(UInt8(flg))
+      b.freeze()
+    }
+  }
+}
+
+fn adler_update(sum: Int, data: Bytes) -> Int {
+  var a = sum & 0xffff
+  var b = sum >> 16
+  for c in data {
+    a = (a + Int(c)) % 65521
+    b = (b + a) % 65521
+  }
+  (b << 16) | a
+}
+
+fn (var c: Compressor) write(data: Bytes) -> Bytes {
+  let h = c.header()
+  match c.format {
+    Gzip => {
+      c.sum = flate.crc32(flate.crc_table(), c.sum, data)
+      c.size += data.len()
+    }
+    Zlib => c.sum = adler_update(c.sum, data)
+    Deflate => {}
+  }
+  c.s.write(data)
+  h + bytes_of(c.s.take())
+}
+
+fn (var c: Compressor) flush() -> Bytes {
+  let h = c.header()
+  c.s.flush()
+  h + bytes_of(c.s.take())
+}
+
+fn (var c: Compressor) finish() -> Bytes {
+  let h = c.header()
+  c.s.close()
+  var b = BytesBuilder.new()
+  b.write(h)
+  b.write(bytes_of(c.s.take()))
+  match c.format {
+    Gzip => {
+      put_u32le(b, c.sum)
+      put_u32le(b, c.size & 0xffffffff)
+    }
+    Zlib => put_u32be(b, c.sum)
+    Deflate => {}
+  }
+  b.freeze()
+}
+
+struct Decompressor {
+  format: compress.Format
+  st: flate.InStream
+  max: Int
+}
+
+fn decompressor(format: compress.Format, max_size: Int) -> Decompressor {
+  let f = match format {
+    Deflate => 0
+    Gzip => 1
+    Zlib => 2
+  }
+  Decompressor{format: format, st: flate.new_instream(f, if max_size < 0 { 0 } else { max_size }), max: max_size}
+}
+
+fn (d: Decompressor) name() -> Str {
+  match d.format {
+    Gzip => "gzip"
+    Deflate => "flate"
+    Zlib => "zlib"
+  }
+}
+
+fn (var d: Decompressor) write(data: Bytes) -> Bytes ! compress.CompressErr {
+  match d.st.push(data, false) {
+    Ok(out) => bytes_of(out)
+    Err(e) => Err(fail(d.name(), e, d.max))
+  }
+}
+
+fn (var d: Decompressor) finish() -> Bytes ! compress.CompressErr {
+  match d.st.push(b"", true) {
+    Ok(out) => bytes_of(out)
+    Err(e) => Err(fail(d.name(), e, d.max))
+  }
+}

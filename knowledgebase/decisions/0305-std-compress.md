@@ -77,6 +77,16 @@ fn (var d: Decompressor) finish() -> () ! CompressErr
 
 ## Consequences
 
+- Implementation notes (2026-10-21):
+  - `Decompressor.finish` returns the rest of the output, `Bytes !
+    CompressErr`, not `()`. Go's gzip reader returns a member's last
+    block only when it reads on past the member, so the end of a stream
+    can carry output.
+  - How much a `write` returns between flushes or the end may differ by
+    backend; the concatenation does not.
+  - Move only is a doc marker, `@move_only`, on std structs (core 5.3),
+    read by the checker as it reads `@moves`.
+
 - The Go backend wraps Go's compress packages (std/rt), and the native
   port is held to them.
 - The levels and the stateful decompressor that are still missing are

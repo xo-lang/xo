@@ -814,7 +814,13 @@ fn (c: Checker) is_move_only(t: Int) -> Bool {
     return false
   }
   let r = c.resolve(t)
-  if c.tys[r].kind != TyKind.Named || c.objs[c.tys[r].obj].module != c.prelude {
+  if c.tys[r].kind != TyKind.Named {
+    return false
+  }
+  if c.objs[c.tys[r].obj].move_only {
+    return true
+  }
+  if c.objs[c.tys[r].obj].module != c.prelude {
     return false
   }
   let n = c.objs[c.tys[r].obj].name

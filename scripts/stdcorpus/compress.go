@@ -31,6 +31,48 @@ func lcgData(seed, n, k int) []byte {
 	return out
 }
 
+// chunks are the Xo test's chunks(seed, n): sizes 1 + v % 5000 from the
+// same LCG, the last cut to n.
+func chunks(seed, n int) []int {
+	x := seed & 0x7fffffff
+	var out []int
+	for left := n; left > 0; {
+		x = (x*1103515245 + 12345) & 0x7fffffff
+		c := 1 + (x>>8)%5000
+		if c > left {
+			c = left
+		}
+		out = append(out, c)
+		left -= c
+	}
+	return out
+}
+
+// streamWrite is a Compressor over Go's writer: the data in chunks, a
+// Flush after every third chunk when flush, then Close.
+func streamWrite(format string, data []byte, level, seed int, flush bool) []byte {
+	var b bytes.Buffer
+	var w io.WriteCloser
+	switch format {
+	case "gzip":
+		w, _ = gzip.NewWriterLevel(&b, level)
+	case "deflate":
+		w, _ = flate.NewWriter(&b, level)
+	default:
+		w, _ = zlib.NewWriterLevel(&b, level)
+	}
+	at := 0
+	for i, c := range chunks(seed, len(data)) {
+		w.Write(data[at : at+c])
+		at += c
+		if flush && i%3 == 2 {
+			w.(interface{ Flush() error }).Flush()
+		}
+	}
+	w.Close()
+	return b.Bytes()
+}
+
 func sha8(b []byte) string { h := sha256.Sum256(b); return hex.EncodeToString(h[:8]) }
 
 // compressWrite is std/rt's: Go's writer at level, written once, closed.
@@ -95,6 +137,17 @@ func compressCorpus() string {
 			}
 		}
 	}
+	o.WriteString("]\n\n/// (format, level, seed, n, k, chunk seed, flush, Go's streamed output: length and sha256 prefix)\nconst STREAM: List[(Str, Int, Int, Int, Int, Int, Bool, Str)] = [\n")
+	for i := 0; i < 160; i++ {
+		f := formats[r.Intn(3)]
+		lv := r.Intn(12) - 2
+		seed, cs := r.Intn(1<<30), r.Intn(1<<30)
+		n := []int{0, 7, 300, 5000, 40000, 100000}[r.Intn(6)]
+		k := []int{1, 3, 26, 256}[r.Intn(4)]
+		fl := r.Intn(2) == 0
+		out := streamWrite(f, lcgData(seed, n, k), lv, cs, fl)
+		fmt.Fprintf(&o, "  (%q, %d, %d, %d, %d, %d, %v, %q),\n", f, lv, seed, n, k, cs, fl, fmt.Sprintf("%d %s", len(out), sha8(out)))
+	}
 	o.WriteString("]\n\n/// (format, stream, max_size, Go's result: ok LEN SHA or err TEXT)\nconst READ: List[(Str, Bytes, Int, Str)] = [\n")
 	nr := 0
 	for i := 0; i < 400; i++ {
@@ -138,6 +191,89 @@ func compressCorpus() string {
 }
 
 const compressTests = `
+fn chunks(seed: Int, n: Int) -> List[Int] {
+  var x = seed & 0x7fffffff
+  var out: List[Int] = []
+  var left = n
+  while left > 0 {
+    x = (x * 1103515245 + 12345) & 0x7fffffff
+    var c = 1 + (x >> 8) % 5000
+    if c > left {
+      c = left
+    }
+    out.push(c)
+    left -= c
+  }
+  out
+}
+
+fn format_of(f: Str) -> compress.Format {
+  match f {
+    "gzip" => compress.Format.Gzip
+    "deflate" => compress.Format.Deflate
+    _ => compress.Format.Zlib
+  }
+}
+
+test "a Compressor writes Go's bytes for the same writes and flushes" {
+  var bad: List[(Str, Int, Int, Int, Str, Str)] = []
+  for (f, lv, seed, n, k, cs, fl, want) in STREAM {
+    let d = data(seed, n, k)
+    var c = compress.compressor(format_of(f), level: level(lv))
+    var out = BytesBuilder.new()
+    var at = 0
+    for (i, n2) in chunks(cs, n).indexed() {
+      out.write(c.write(d[at..at + n2]))
+      at += n2
+      if fl && i % 3 == 2 {
+        out.write(c.flush())
+      }
+    }
+    out.write(c.finish())
+    let got = out.freeze()
+    let g = "${got.len()} ${sha8(got)}"
+    if g != want {
+      bad.push((f, lv, seed, n, g, want))
+    }
+  }
+  expect(first_bad(bad)) == []
+}
+
+test "a Decompressor in pieces gives the whole decoder's result" {
+  var bad: List[(Str, Int, Str, Str)] = []
+  for (i, (f, s, max, want)) in READ.indexed() {
+    if max != 1073741824 {
+      continue
+    }
+    var d = compress.decompressor(format_of(f))
+    var out = BytesBuilder.new()
+    var err = ""
+    var at = 0
+    for n2 in chunks(i + 7, s.len()) {
+      match d.write(s[at..at + n2]) {
+        Ok(b) => out.write(b)
+        Err(e) => {
+          err = e.msg
+          break
+        }
+      }
+      at += n2
+    }
+    if err.is_empty() {
+      match d.finish() {
+        Ok(b) => out.write(b)
+        Err(e) => err = e.msg
+      }
+    }
+    let b = out.freeze()
+    let got = if err.is_empty() { "ok ${b.len()} ${sha8(b)}" } else { "err ${err}" }
+    if got != want {
+      bad.push((f, i, got, want))
+    }
+  }
+  expect(first_bad(bad)) == []
+}
+
 fn data(seed: Int, n: Int, k: Int) -> Bytes {
   var x = seed & 0x7fffffff
   var b = BytesBuilder.with_capacity(n)

@@ -6,11 +6,18 @@ package rt
 // The signatures the Go backend calls the hand written std functions
 // with (compiler/gen stdtypes.xo std_sigs).
 var (
-	_ func(*Compress_CompressErr, *Task) string                     = (*Compress_CompressErr).M_display
-	_ func(*Task, Bytes, Compress_Level) Bytes                      = Compress_gzip
-	_ func(*Task, Bytes, int64) Result[Bytes, Compress_CompressErr] = Compress_gunzip
-	_ func(*Task, Bytes, Compress_Level) Bytes                      = Compress_deflate
-	_ func(*Task, Bytes, int64) Result[Bytes, Compress_CompressErr] = Compress_inflate
-	_ func(*Task, Bytes, Compress_Level) Bytes                      = Compress_zlib
-	_ func(*Task, Bytes, int64) Result[Bytes, Compress_CompressErr] = Compress_unzlib
+	_ func(*Compress_CompressErr, *Task) string                                      = (*Compress_CompressErr).M_display
+	_ func(*Task, Bytes, Compress_Level) Bytes                                       = Compress_gzip
+	_ func(*Task, Bytes, int64) Result[Bytes, Compress_CompressErr]                  = Compress_gunzip
+	_ func(*Task, Bytes, Compress_Level) Bytes                                       = Compress_deflate
+	_ func(*Task, Bytes, int64) Result[Bytes, Compress_CompressErr]                  = Compress_inflate
+	_ func(*Task, Bytes, Compress_Level) Bytes                                       = Compress_zlib
+	_ func(*Task, Bytes, int64) Result[Bytes, Compress_CompressErr]                  = Compress_unzlib
+	_ func(*Task, Compress_Format, Compress_Level) Compress_Compressor               = Compress_compressor
+	_ func(*Compress_Compressor, *Task, Bytes) Bytes                                 = (*Compress_Compressor).M_write
+	_ func(*Compress_Compressor, *Task) Bytes                                        = (*Compress_Compressor).M_flush
+	_ func(*Compress_Compressor, *Task) Bytes                                        = (*Compress_Compressor).M_finish
+	_ func(*Task, Compress_Format, int64) Compress_Decompressor                      = Compress_decompressor
+	_ func(*Compress_Decompressor, *Task, Bytes) Result[Bytes, Compress_CompressErr] = (*Compress_Decompressor).M_write
+	_ func(*Compress_Decompressor, *Task) Result[Bytes, Compress_CompressErr]        = (*Compress_Decompressor).M_finish
 )

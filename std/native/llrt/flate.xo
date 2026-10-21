@@ -875,9 +875,6 @@ fn (var d: Deflater) deflate() {
   }
 }
 
-/// data compressed by compress/flate at level 5 or 6 (std/archive's zip
-/// and gzip), written once and closed.
-pub fn deflate_bytes(data: Bytes, level: Int) -> List[Int] { deflate_config(data, level) }
 
 // ---------------------------------------------------------------------------
 // The decompressor (compress/flate inflate.go), over data[pos:end]
@@ -1000,6 +997,9 @@ pub struct Inflater {
   /// The most bytes out may hold (-1: no limit); past it inflate stops
   /// with LIMIT (std/compress's max_size, decision 0305).
   pub limit: Int = -1
+  /// Bytes of output already dropped from the front of out (a streaming
+  /// decoder keeps only the window), counted for limit.
+  pub dropped: Int = 0
 }
 
 /// The error of an inflate that went past its limit.
@@ -1162,7 +1162,7 @@ fn (var f: Inflater) huffman_block(hl: HDec, hd: HDec, fixed: Bool) -> () ! Str 
     let v = f.huff_sym(hl)?
     if v < 256 {
       f.out.push(v)
-      if f.limit >= 0 && f.out.len() > f.limit {
+      if f.limit >= 0 && f.dropped + f.out.len() > f.limit {
         return Err(LIMIT)
       }
       continue
@@ -1230,7 +1230,7 @@ fn (var f: Inflater) huffman_block(hl: HDec, hd: HDec, fixed: Bool) -> () ! Str 
       f.out.push(c)
       k += 1
     }
-    if f.limit >= 0 && f.out.len() > f.limit {
+    if f.limit >= 0 && f.dropped + f.out.len() > f.limit {
       return Err(LIMIT)
     }
   }
@@ -1259,7 +1259,7 @@ fn (var f: Inflater) data_block() -> () ! Str {
     i += 1
   }
   f.pos += n
-  if f.limit >= 0 && f.out.len() > f.limit {
+  if f.limit >= 0 && f.dropped + f.out.len() > f.limit {
     return Err(LIMIT)
   }
 }
@@ -1267,26 +1267,31 @@ fn (var f: Inflater) data_block() -> () ! Str {
 /// The whole deflate stream from f.pos: Ok at the end of its final block.
 pub fn (var f: Inflater) inflate(fixed: HDec) -> () ! Str {
   while true {
-    f.need(3)?
-    let last = (f.b & 1) == 1
-    f.b = f.b >> 1
-    let typ = f.b & 3
-    f.b = f.b >> 2
-    f.nb -= 3
-    if typ == 0 {
-      f.data_block()?
-    } else if typ == 1 {
-      f.huffman_block(fixed, fixed, true)?
-    } else if typ == 2 {
-      let (hl, hd) = f.read_huffman()?
-      f.huffman_block(hl, hd, false)?
-    } else {
-      return Err(f.corrupt())
-    }
-    if last {
+    if f.block(fixed)? {
       return
     }
   }
+}
+
+/// One block from f.pos: whether it was the final one.
+pub fn (var f: Inflater) block(fixed: HDec) -> Bool ! Str {
+  f.need(3)?
+  let last = (f.b & 1) == 1
+  f.b = f.b >> 1
+  let typ = f.b & 3
+  f.b = f.b >> 2
+  f.nb -= 3
+  if typ == 0 {
+    f.data_block()?
+  } else if typ == 1 {
+    f.huffman_block(fixed, fixed, true)?
+  } else if typ == 2 {
+    let (hl, hd) = f.read_huffman()?
+    f.huffman_block(hl, hd, false)?
+  } else {
+    return Err(f.corrupt())
+  }
+  last
 }
 
 
@@ -1563,84 +1568,25 @@ fn (var e: Fast) encode(src: Bytes) -> List[Int] {
   dst
 }
 
-/// The raw DEFLATE stream of data at level (-2 HuffmanOnly, 0
-/// NoCompression, 1 BestSpeed, 2 to 9; -1 is 6), written once and closed
-/// as compress/flate's Writer does: the same bytes.
-pub fn deflate_level(data: Bytes, level0: Int) -> List[Int] {
-  let level = if level0 == -1 { 6 } else { level0 }
-  if level >= 2 {
-    return deflate_config(data, level)
-  }
-  var blocks = new_blocks()
-  var fast = new_fast()
-  // the window: data[ws:ws + we], at most MAX_STORE bytes (fillStore)
-  var ws = 0
-  var we = 0
-  var rem = data.len()
-  var sync = false
-  while true {
-    // step (store, storeHuff, or encSpeed)
-    if level == 0 {
-      if we > 0 && (we == MAX_STORE || sync) {
-        blocks.write_stored_header(we, false)
-        blocks.w.write_bytes(data, ws, ws + we)
-        ws += we
-        we = 0
-      }
-    } else if level == -2 {
-      if !(we < MAX_STORE && !sync || we == 0) {
-        blocks.write_block_huff(false, data, ws, ws + we)
-        ws += we
-        we = 0
-      }
-    } else if we >= MAX_STORE || sync {
-      if we < 128 && we < MAX_STORE {
-        if we > 0 {
-          if we <= 16 {
-            blocks.write_stored_header(we, false)
-            blocks.w.write_bytes(data, ws, ws + we)
-          } else {
-            blocks.write_block_huff(false, data, ws, ws + we)
-          }
-          ws += we
-          we = 0
-          fast.reset()
-        }
-      } else {
-        let tokens = fast.encode(data[ws..ws + we])
-        if tokens.len() > we - (we >> 4) {
-          blocks.write_block_huff(false, data, ws, ws + we)
-        } else {
-          blocks.write_block_dynamic(tokens, false, data, ws, ws + we)
-        }
-        ws += we
-        we = 0
-      }
-    }
-    if sync {
-      break
-    }
-    if rem == 0 {
-      // close: the last step with sync
-      sync = true
-      continue
-    }
-    // fillStore
-    var n = MAX_STORE - we
-    if n > rem {
-      n = rem
-    }
-    we += n
-    rem -= n
-  }
-  blocks.write_stored_header(0, true)
-  blocks.w.flush()
-  blocks.w.out
+/// A compress/flate Writer (deflate.go's compressor): write, flush
+/// (syncFlush), and close in turns, the output taken as it is made. Levels
+/// 2 to 9 run the Deflater, 0, 1, and -2 a window of up to MAX_STORE bytes
+/// (fillStore with store, encSpeed, or storeHuff).
+pub struct Stream {
+  level: Int
+  d: Deflater
+  blocks: Blocks
+  fast: Fast
+  /// the window of levels 0, 1, -2: buf[ws:ws + we]
+  buf: Bytes
+  ws: Int
+  we: Int
+  sync: Bool
 }
 
-/// Levels 2 to 9: the levels table of deflate.go (good, lazy, nice, chain,
-/// fastSkipHashing).
-fn deflate_config(data: Bytes, level: Int) -> List[Int] {
+/// The Deflater of levels 2 to 9: the levels table of deflate.go (good,
+/// lazy, nice, chain, fastSkipHashing).
+fn deflater_for(level: Int) -> Deflater {
   let cfg = match level {
     2 => (4, 0, 16, 8, 5)
     3 => (4, 0, 32, 32, 6)
@@ -1651,18 +1597,159 @@ fn deflate_config(data: Bytes, level: Int) -> List[Int] {
     8 => (32, 128, 258, 1024, SKIP_NEVER)
     _ => (32, 258, 258, 4096, SKIP_NEVER)
   }
-  var d = Deflater{good: cfg.0, lazy: cfg.1, nice: cfg.2, chain: cfg.3, fast_skip: cfg.4, data: data, base: 0, index: 0, window_end: 0, block_start: 0, byte_available: false, sync: false, tokens: [], length: MIN_MATCH - 1, offset: 0, max_insert_index: 0, chain_head: -1, hash_head: zeros(HASH_SIZE), hash_prev: zeros(WINDOW_SIZE), hash_offset: 1, blocks: new_blocks()}
+  Deflater{good: cfg.0, lazy: cfg.1, nice: cfg.2, chain: cfg.3, fast_skip: cfg.4, data: b"", base: 0, index: 0, window_end: 0, block_start: 0, byte_available: false, sync: false, tokens: [], length: MIN_MATCH - 1, offset: 0, max_insert_index: 0, chain_head: -1, hash_head: if level >= 2 { zeros(HASH_SIZE) } else { [] }, hash_prev: if level >= 2 { zeros(WINDOW_SIZE) } else { [] }, hash_offset: 1, blocks: new_blocks()}
+}
+
+/// A Writer at level (-2 HuffmanOnly, 0 NoCompression, 1 BestSpeed, 2 to
+/// 9; -1 is 6).
+pub fn new_stream(level0: Int) -> Stream {
+  let level = if level0 == -1 { 6 } else { level0 }
+  Stream{level: level, d: deflater_for(level), blocks: new_blocks(), fast: new_fast(), buf: b"", ws: 0, we: 0, sync: false}
+}
+
+/// The step of levels 0, 1, and -2 (store, encSpeed, storeHuff).
+fn (var s: Stream) step() {
+  let level = s.level
+  let sync = s.sync
+  let ws = s.ws
+  let we = s.we
+  if level == 0 {
+    if we > 0 && (we == MAX_STORE || sync) {
+      s.blocks.write_stored_header(we, false)
+      s.blocks.w.write_bytes(s.buf, ws, ws + we)
+      s.ws += we
+      s.we = 0
+    }
+    return
+  }
+  if level == -2 {
+    if !(we < MAX_STORE && !sync || we == 0) {
+      s.blocks.write_block_huff(false, s.buf, ws, ws + we)
+      s.ws += we
+      s.we = 0
+    }
+    return
+  }
+  if we < MAX_STORE {
+    if !sync {
+      return
+    }
+    if we < 128 {
+      if we == 0 {
+        return
+      }
+      if we <= 16 {
+        s.blocks.write_stored_header(we, false)
+        s.blocks.w.write_bytes(s.buf, ws, ws + we)
+      } else {
+        s.blocks.write_block_huff(false, s.buf, ws, ws + we)
+      }
+      s.ws += we
+      s.we = 0
+      s.fast.reset()
+      return
+    }
+  }
+  let tokens = s.fast.encode(s.buf[ws..ws + we])
+  if tokens.len() > we - (we >> 4) {
+    s.blocks.write_block_huff(false, s.buf, ws, ws + we)
+  } else {
+    s.blocks.write_block_dynamic(tokens, false, s.buf, ws, ws + we)
+  }
+  s.ws += we
+  s.we = 0
+}
+
+/// Writer.Write: every byte of data enters the window, the blocks it
+/// fills written.
+pub fn (var s: Stream) write(data: Bytes) {
+  if data.is_empty() {
+    return
+  }
+  if s.level >= 2 {
+    // the window kept, the input after it; positions are relative to base
+    let d0 = s.d.data
+    s.d.data = d0[s.d.base..s.d.base + s.d.window_end] + data
+    s.d.base = 0
+    var rem = data.len()
+    while rem > 0 {
+      s.d.deflate()
+      rem -= s.d.fill(rem)
+    }
+    return
+  }
+  let b0 = s.buf
+  s.buf = b0[s.ws..] + data
+  s.ws = 0
   var rem = data.len()
   while rem > 0 {
-    d.deflate()
-    rem -= d.fill(rem)
+    s.step()
+    var n = MAX_STORE - s.we
+    if n > rem {
+      n = rem
+    }
+    s.we += n
+    rem -= n
   }
-  d.sync = true
-  d.deflate()
-  d.blocks.write_stored_header(0, true)
-  d.blocks.w.flush()
-  d.blocks.w.out
 }
+
+/// Writer.Flush (syncFlush): the pending data in a block, then an empty
+/// stored block, so a reader can decode everything written so far.
+pub fn (var s: Stream) flush() {
+  if s.level >= 2 {
+    s.d.sync = true
+    s.d.deflate()
+    s.d.blocks.write_stored_header(0, false)
+    s.d.blocks.w.flush()
+    s.d.sync = false
+    return
+  }
+  s.sync = true
+  s.step()
+  s.blocks.write_stored_header(0, false)
+  s.blocks.w.flush()
+  s.sync = false
+}
+
+/// Writer.Close: the pending data and the final empty block.
+pub fn (var s: Stream) close() {
+  if s.level >= 2 {
+    s.d.sync = true
+    s.d.deflate()
+    s.d.blocks.write_stored_header(0, true)
+    s.d.blocks.w.flush()
+    return
+  }
+  s.sync = true
+  s.step()
+  s.blocks.write_stored_header(0, true)
+  s.blocks.w.flush()
+}
+
+/// The output made since the last take.
+pub fn (var s: Stream) take() -> List[Int] {
+  if s.level >= 2 {
+    let out = s.d.blocks.w.out
+    s.d.blocks.w.out = []
+    return out
+  }
+  let out = s.blocks.w.out
+  s.blocks.w.out = []
+  out
+}
+
+/// The raw DEFLATE stream of data at level (-2 to 9, -1 is 6), written
+/// once and closed as compress/flate's Writer does: the same bytes.
+pub fn deflate_level(data: Bytes, level: Int) -> List[Int] {
+  var s = new_stream(level)
+  s.write(data)
+  s.close()
+  s.take()
+}
+
+/// data compressed by compress/flate at level 5 or 6 (std/archive's zip
+/// and gzip), written once and closed.
+pub fn deflate_bytes(data: Bytes, level: Int) -> List[Int] { deflate_level(data, level) }
 
 // ---------------------------------------------------------------------------
 // gzip members (compress/gzip Reader, multistream)
@@ -1766,6 +1853,244 @@ pub fn gunzip_members(data: Bytes, limit: Int) -> List[Int] ! Str {
         return Err(e)
       }
     }
+  }
+  out
+}
+
+// ---------------------------------------------------------------------------
+// A streaming decoder (std/compress's Decompressor, decision 0305): input
+// pushed in pieces, the output of each whole DEFLATE block given out as
+// it is decoded; a block whose input is not all there yet is decoded again
+// from its start when more comes.
+
+/// Formats: 0 raw DEFLATE, 1 gzip (concatenated members), 2 zlib.
+pub struct InStream {
+  format: Int
+  /// The decoder over the input buffered from its pos on.
+  f: Inflater
+  t: List[Int]
+  fixed: HDec
+  /// 0 header, 1 blocks, 2 trailer, 3 done
+  state: Int
+  /// gzip: the member's CRC-32 and size; zlib: Adler-32's a and b
+  sum: Int
+  size: Int
+  ab: Int
+  /// The index in f.out of the first byte not given out yet.
+  emit: Int
+  /// Whether any input came (gzip's EOF on none).
+  any: Bool
+}
+
+pub fn new_instream(format: Int, limit: Int) -> InStream {
+  InStream{format: format, f: Inflater{data: b"", pos: 0, start: 0, end: 0, b: 0, nb: 0, out: [], out_start: 0, limit: limit}, t: crc_table(), fixed: fixed_decoder(), state: if format == 0 { 1 } else { 0 }, sum: 0, size: 0, ab: 1, emit: 0, any: false}
+}
+
+/// The bytes decoded since the last call, with the member's running sum
+/// updated; the window of back references kept, the rest dropped.
+fn (var s: InStream) drain() -> List[Int] {
+  var out: List[Int] = []
+  var i = s.emit
+  let n = s.f.out.len()
+  while i < n {
+    out.push(s.f.out[i])
+    i += 1
+  }
+  s.emit = n
+  if !out.is_empty() {
+    let b = bytes_of(out)
+    if s.format == 1 {
+      s.sum = crc32(s.t, s.sum, b)
+      s.size += b.len()
+    } else if s.format == 2 {
+      var a = s.ab & 0xffff
+      var bb = s.ab >> 16
+      for c in b {
+        a = (a + Int(c)) % 65521
+        bb = (bb + a) % 65521
+      }
+      s.ab = (bb << 16) | a
+    }
+  }
+  // keep the last WINDOW_SIZE bytes for back references
+  if n > 2 * WINDOW_SIZE {
+    let k = n - WINDOW_SIZE
+    var keep: List[Int] = []
+    var j = k
+    while j < n {
+      keep.push(s.f.out[j])
+      j += 1
+    }
+    s.f.out = keep
+    s.f.dropped += k
+    s.f.out_start = if s.f.out_start > k { s.f.out_start - k } else { 0 }
+    s.emit -= k
+  }
+  out
+}
+
+/// The input consumed so far dropped (positions shifted; the corruption
+/// offsets still count from the stream's start).
+fn (var s: InStream) compact() {
+  let k = s.f.pos
+  if k > 65536 {
+    let d0 = s.f.data
+    s.f.data = d0[k..]
+    s.f.pos -= k
+    s.f.start -= k
+    s.f.end -= k
+  }
+}
+
+fn be32(b: Bytes, i: Int) -> Int { (byte_of(b, i) << 24) | (byte_of(b, i + 1) << 16) | (byte_of(b, i + 2) << 8) | byte_of(b, i + 3) }
+
+// The steps of push: 1 go on, 0 wait for more input (or, with last, the
+// end), or the error.
+
+fn (var s: InStream) gzip_head(last: Bool) -> Int ! Str {
+  match gzip_header(s.f.data, s.f.pos, s.t) {
+    Ok(p) => {
+      s.f.pos = p
+      s.f.start = p
+      s.f.out_start = s.f.out.len()
+      s.sum = 0
+      s.size = 0
+      s.state = 1
+      1
+    }
+    Err(e) => {
+      if e == "EOF" && s.size == -1 {
+        // after a member: the stream may end here
+        if last {
+          s.state = 3
+        }
+        return 0
+      }
+      if !last && (e == "EOF" || e == unexpected_eof()) {
+        return 0
+      }
+      Err(e)
+    }
+  }
+}
+
+fn (var s: InStream) zlib_head(last: Bool) -> Int ! Str {
+  let n = s.f.end
+  if n - s.f.pos < 2 {
+    if last {
+      return Err(unexpected_eof())
+    }
+    return 0
+  }
+  let c0 = byte_of(s.f.data, s.f.pos)
+  let c1 = byte_of(s.f.data, s.f.pos + 1)
+  if (c0 & 15) != 8 || (c0 >> 4) > 7 || ((c0 << 8) | c1) % 31 != 0 {
+    return Err("zlib: invalid header")
+  }
+  var at = s.f.pos + 2
+  if (c1 & 0x20) != 0 {
+    if n - at < 4 {
+      if last {
+        return Err(unexpected_eof())
+      }
+      return 0
+    }
+    if be32(s.f.data, at) != 1 {
+      return Err("zlib: invalid dictionary")
+    }
+    at += 4
+  }
+  s.f.pos = at
+  s.f.start = at
+  s.state = 1
+  1
+}
+
+/// One block, from its start again when its input is short (not last).
+fn (var s: InStream) one_block(last: Bool) -> Int ! Str {
+  let pos = s.f.pos
+  let b = s.f.b
+  let nb = s.f.nb
+  let olen = s.f.out.len()
+  let r = s.f.block(s.fixed)
+  if let Ok(final) = r {
+    if final {
+      s.state = if s.format == 0 { 3 } else { 2 }
+    }
+    return 1
+  }
+  let e = match r {
+    Ok(_) => ""
+    Err(x) => x
+  }
+  if e == unexpected_eof() && !last {
+    s.f.pos = pos
+    s.f.b = b
+    s.f.nb = nb
+    s.f.out = s.f.out[0..olen]
+    return 0
+  }
+  Err(e)
+}
+
+/// The trailer: gzip's CRC-32 and size, zlib's Adler-32.
+fn (var s: InStream) trailer(last: Bool) -> Int ! Str {
+  let need = if s.format == 1 { 8 } else { 4 }
+  if s.f.end - s.f.pos < need {
+    if last {
+      return Err(unexpected_eof())
+    }
+    return 0
+  }
+  if s.format == 1 {
+    if get_u32(s.f.data, s.f.pos) != s.sum || get_u32(s.f.data, s.f.pos + 4) != (s.size & 0xffffffff) {
+      return Err("gzip: invalid checksum")
+    }
+    s.f.pos += 8
+    s.f.b = 0
+    s.f.nb = 0
+    s.state = 0
+    // the next member, or the end
+    s.size = -1
+    return 1
+  }
+  if be32(s.f.data, s.f.pos) != s.ab {
+    return Err("zlib: invalid checksum")
+  }
+  s.f.pos += 4
+  s.state = 3
+  1
+}
+
+/// Decodes what the input allows: the output, or the error. last: no more
+/// input will come (unexpected EOF then ends it).
+pub fn (var s: InStream) push(data: Bytes, last: Bool) -> List[Int] ! Str {
+  if !data.is_empty() {
+    s.any = true
+    let d0 = s.f.data
+    s.f.data = d0 + data
+    s.f.end = s.f.data.len()
+  }
+  var out: List[Int] = []
+  var go = 1
+  while s.state != 3 && go == 1 {
+    if s.state == 0 {
+      go = if s.format == 1 { s.gzip_head(last)? } else { s.zlib_head(last)? }
+    } else if s.state == 1 {
+      go = s.one_block(last)?
+      for x in s.drain() {
+        out.push(x)
+      }
+    } else {
+      go = s.trailer(last)?
+    }
+  }
+  s.compact()
+  if last && s.state != 3 {
+    if s.format == 1 && !s.any {
+      return Err("EOF")
+    }
+    return Err(unexpected_eof())
   }
   out
 }

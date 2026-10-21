@@ -3606,9 +3606,8 @@ An `Fs` view of a Dir (for code written against `Fs`) is planned.
 
 ## 32. std/compress
 
-Status: implemented on every backend (decision 0305, 2026-10-21) over
-whole buffers; the streaming Compressor and Decompressor and
-`http.gzip_responses` of 0305 follow. Go's compress/gzip, compress/flate,
+Status: implemented on every backend (decision 0305, 2026-10-21), over
+whole buffers and streaming; `http.gzip_responses` of 0305 follows. Go's compress/gzip, compress/flate,
 and compress/zlib: the Go backend calls them, and the native backends
 port them (std/native/llrt/flate.xo, which std/archive uses too). Every
 level writes the bytes Go's writers write, and the decoders give Go's
@@ -3624,7 +3623,35 @@ pub fn deflate(data: Bytes, level: Level = Level.Default) -> Bytes       // raw 
 pub fn inflate(data: Bytes, max_size: Int = 1073741824) -> Bytes ! CompressErr
 pub fn zlib(data: Bytes, level: Level = Level.Default) -> Bytes          // RFC 1950
 pub fn unzlib(data: Bytes, max_size: Int = 1073741824) -> Bytes ! CompressErr
+
+enum Format { Gzip, Deflate, Zlib }
+struct Compressor {}                     // move only (core 5.3)
+pub fn compressor(format: Format, level: Level = Level.Default) -> Compressor
+fn (var c: Compressor) write(data: Bytes) -> Bytes   // the output ready so far (may be empty)
+fn (var c: Compressor) flush() -> Bytes              // everything so far: Go's Flush, a sync block
+fn (var c: Compressor) finish() -> Bytes             // the rest and the trailer; moves c
+struct Decompressor {}                   // move only
+pub fn decompressor(format: Format, max_size: Int = 1073741824) -> Decompressor
+fn (var d: Decompressor) write(data: Bytes) -> Bytes ! CompressErr
+fn (var d: Decompressor) finish() -> Bytes ! CompressErr      // the rest; moves d
 ```
+
+- Streaming is push style: bytes in and bytes out, with no I/O of its own,
+  so it fits a `Stream`, an `http.BodyWriter`, or a file read in pieces.
+- **Compressor.** The concatenation of a Compressor's outputs is the bytes
+  Go's Writer writes for the same Write, Flush and Close calls. `flush`
+  and `finish` return everything up to that point on every backend.
+  Between them, how much a `write` returns may differ by backend: Go's
+  bit writer buffers up to 240 bytes.
+- **Decompressor.** The concatenation of a Decompressor's outputs is what
+  `gunzip`, `inflate`, or `unzlib` gives for the whole input.
+  - How much a `write` returns may differ by backend. Natively it is each
+    whole DEFLATE block once its input has arrived. On the Go backend it is
+    what Go's reader returns, which can hold a member's last block until
+    the next member or the end.
+  - `finish` returns the rest, or `unexpected EOF` if the stream did not
+    end.
+  - More than `max_size` bytes in all is an error at once.
 
 - `Level.Of(n)` is Go's level n, -2 (HuffmanOnly) to 9 (BestCompression);
   outside that range it is a fault (`compress: invalid compression level
@@ -3646,8 +3673,9 @@ pub fn unzlib(data: Bytes, max_size: Int = 1073741824) -> Bytes ! CompressErr
   an empty gzip input.
 - Tests: internal/stdtest/testdata/corpus/compress (`go run
   ./scripts/stdcorpus compress`): 720 writes over every level and format
-  against Go's bytes, and 431 Go-written, corrupted, bounded, and bomb
-  streams against Go's results.
+  against Go's bytes, 160 Compressors with Go's chunked writes and
+  flushes, and 431 Go-written, corrupted, bounded, and bomb streams
+  against Go's results, whole and fed to a Decompressor in pieces.
 
 <!-- BEGIN prelude index: generated from std/prelude.xo by `go run ./scripts/stdindex`; do not edit -->
 

@@ -147,6 +147,9 @@ pub struct Obj {
   /// A function whose doc comment says `@moves`: its receiver is moved
   /// by the call (core 5.3).
   pub moves: Bool = false
+  /// A std struct whose doc comment says `@move_only`: its values move
+  /// like the builders' (core 5.3).
+  pub move_only: Bool = false
   /// Declared `uses realtime` (core 6.5), and where.
   pub realtime: Bool = false
   pub realtime_span: Span = Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}}

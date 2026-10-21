@@ -468,3 +468,44 @@ test "the module audits read a whole tree or fail (XO1318)" {
   expect(tree_listing(Err(FsErr.Io(path: "x", msg: "input/output error")), "x").is_err()) == true
   expect(unreadable_tree("ex.com/m", "v1.0.0", "effects", "read x: boom").code) == "XO1318"
 }
+
+test "a std struct documented @move_only moves like the builders (XO0510), a user one does not" {
+  // core 5.3, decision 0305: std/compress's Compressor and Decompressor
+  os.fs.create_dir_all("std")?
+  os.fs.write("std/prelude.xo", PRELUDE.bytes())?
+  os.fs.write("std/testing.xo", b"")?
+  os.fs.write("std/zz.xo", """
+    /// A handle.
+    /// @move_only
+    struct Z {}
+    fn z() -> Z
+    fn (var x: Z) step() -> Int
+    """.bytes())?
+  os.fs.create_dir_all("m")?
+  os.fs.write("m/main.xo", """
+    use std/zz
+
+    /// @move_only
+    struct Mine {
+      n: Int
+    }
+
+    fn std_moves() -> Int {
+      var a = zz.z()
+      var b = a
+      b.step() + a.step()
+    }
+
+    fn user_copies(m: Mine) -> Int {
+      let k = m
+      k.n + m.n
+    }
+    """.bytes())?
+  var c = new_checker(os.fs, "std")
+  if let Err(e) = c.check_dirs(["m"]) {
+    fault("check: ${e}")
+  }
+  let ls = lines(c.dump(true, true, false, true, false)).filter(fn(l) { l.contains("\"XO0510\"") })
+  expect(ls.len()) == 1
+  expect(ls.any(fn(l) { l.contains("use of moved value `a`") })) == true
+}

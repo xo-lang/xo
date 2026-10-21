@@ -185,7 +185,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 |---|---|---|---|
 | database/sql | std/sql | partial | API, pool limits, transactions, derive SqlRow, an in memory driver; Blob, JsonText, and Array values and SQLSTATE codes (decision 0278 stage A). A Postgres driver written in Xo, `sql.open(net, "postgres", dsn)` with sslmode through std/tls, on every native target (decision 0278). Missing: other network drivers (MySQL), prepared statements, row streaming. |
 | database/sql/driver | none | planned | A driver interface in Xo so drivers are std/sql modules (Postgres first). |
-| compress/gzip, compress/flate | std/compress (and std/archive gzip, gunzip) | partial | Every level, Go's bytes and errors, max_size (decision 0305, 2026-10-21). Missing: the streaming Compressor and Decompressor, http.gzip_responses (0305, next). |
+| compress/gzip, compress/flate | std/compress (and std/archive gzip, gunzip) | done | Every level, Go's bytes and errors, max_size, streaming Compressor and Decompressor (decision 0305, 2026-10-21). http.gzip_responses next. |
 | compress/zlib | std/compress zlib, unzlib | done | Go's writer and reader (decision 0305, 2026-10-21). |
 | compress/bzip2, compress/lzw | none | not planned | Read only legacy formats. |
 | archive/tar, archive/zip | std/archive | done | Go's results natively on Go's small test archives (zip64 and PAX sparse files included) and on written archives (2026-10-21). |

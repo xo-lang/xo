@@ -1715,8 +1715,9 @@ b.push(2)                // error XO0510: use of moved value `b`
 ```
 
 - Assigning, passing, sending on a channel, or capturing in a spawned task moves
-  the buffer. The compiler tracks moves only for these types. There is no
-  general borrow checker.
+  the buffer. The compiler tracks moves only for these types and for std
+  handles documented `@move_only` (std/compress's Compressor and
+  Decompressor, decision 0305). There is no general borrow checker.
 - A move on a path that ends (a `return`, a `break` or `continue`, the error
   side of `?`, a call of a function whose result is `Never`) does not reach the
   code after that point. A use is `XO0510` only when some path that can reach

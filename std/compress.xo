@@ -36,3 +36,39 @@ fn inflate(data: Bytes, max_size: Int = 1073741824) -> Bytes ! CompressErr
 /// zlib (RFC 1950): a two byte header, DEFLATE, and the Adler-32 sum.
 fn zlib(data: Bytes, level: Level = Level.Default) -> Bytes
 fn unzlib(data: Bytes, max_size: Int = 1073741824) -> Bytes ! CompressErr
+
+/// The stream formats of a Compressor or Decompressor.
+enum Format {
+  Gzip
+  Deflate
+  Zlib
+}
+
+/// A streaming compressor: bytes in, compressed bytes out, no I/O of its
+/// own; `write` returns the output ready so far (it may be empty),
+/// `flush` everything written so far (a sync block: a reader can decode
+/// it all), `finish` the rest and the format's trailer. The concatenation
+/// of its outputs is what gzip, deflate, or zlib gives for all the data.
+/// @move_only
+struct Compressor {}
+
+fn compressor(format: Format, level: Level = Level.Default) -> Compressor
+fn (var c: Compressor) write(data: Bytes) -> Bytes
+fn (var c: Compressor) flush() -> Bytes
+/// @moves
+fn (var c: Compressor) finish() -> Bytes
+
+/// A streaming decompressor: compressed bytes in, decoded bytes out as
+/// their input arrives (how much each write returns may differ between
+/// backends: natively each whole DEFLATE block, on the Go backend what Go's
+/// reader returns); `finish` returns the rest, or `unexpected EOF` when
+/// the stream did not end. The concatenation of the outputs is what
+/// gunzip, inflate, or unzlib gives; more than max_size bytes in all is an
+/// error at once.
+/// @move_only
+struct Decompressor {}
+
+fn decompressor(format: Format, max_size: Int = 1073741824) -> Decompressor
+fn (var d: Decompressor) write(data: Bytes) -> Bytes ! CompressErr
+/// @moves
+fn (var d: Decompressor) finish() -> Bytes ! CompressErr
