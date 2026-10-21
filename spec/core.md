@@ -1715,9 +1715,11 @@ b.push(2)                // error XO0510: use of moved value `b`
 ```
 
 - Assigning, passing, sending on a channel, or capturing in a spawned task moves
-  the buffer. The compiler tracks moves only for these types and for std
-  handles documented `@move_only` (std/compress's Compressor and
-  Decompressor, decision 0305). There is no general borrow checker.
+  the buffer. The compiler tracks moves only for these types and for the
+  std handles whose declaration is documented `@move_only` (std/compress's
+  Compressor and Decompressor, decision 0305). The marker is read only in
+  std's declaration files: in user code it is an ordinary comment, so a
+  user type cannot be made move only. There is no general borrow checker.
 - A move on a path that ends (a `return`, a `break` or `continue`, the error
   side of `?`, a call of a function whose result is `Never`) does not reach the
   code after that point. A use is `XO0510` only when some path that can reach
@@ -2699,7 +2701,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0501` | error | checker | var method called on a non var binding (core 3.4) |
 | `XO0502` | error | checker | assignment to an immutable binding or to a captured variable (core 5.2, 3.3) |
 | `XO0503` | error | checker | one variable or overlapping places passed to two `var` parameters of one call (core 5.2, decision 0111) |
-| `XO0510` | error | checker | use of a moved Buf, StrBuilder, or BytesBuilder (core 5.3) |
+| `XO0510` | error | checker | use of a moved Buf, StrBuilder, BytesBuilder, or std move only handle (core 5.3) |
 | `XO0520` | error | checker | mutation of a copied or stored collection element is never written back (core 5.2) |
 | `XO0530` | warning | vet | binding the payload of a field shares every heap field of a large value (decision 0263) |
 | `XO0531` | warning | vet | a large parameter is only stored while each caller passes its last use, so its heap fields are shared and dropped again (decision 0263) |
