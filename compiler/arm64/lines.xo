@@ -535,3 +535,110 @@ fn (g: G) far_tests_ops(xs: List[Line]) -> List[Line] {
   }
   out
 }
+
+/// far_slots_l on items (emit.xo's text pass; its stack slot references
+/// read from the Op: the memory operand's base, mode, and offset, the
+/// registers before it printed as written).
+fn (g: G) far_slots_ops(xs: List[Line]) -> List[Line] {
+  if g.base == 0 {
+    return xs
+  }
+  var out: List[Line] = List.with_capacity(xs.len())
+  for x in xs {
+    let o = if let Some(op) = x.op { op } else {
+      out.push(x)
+      continue
+    }
+    let n = o.ops.len()
+    var ok = o.m is "ldr" | "str" | "ldp" | "stp" | "ldrb" | "strb" | "ldrh" | "strh" | "ldrsw" | "ldrsb" | "ldrsh"
+    var off = 0
+    if ok && n >= 2 {
+      if let macho.Operand.MemOp(m: mo) = o.ops[n - 1] {
+        ok = mo.ok && mo.mode == 0 && mo.explicit && mo.base == 31 && mo.off >= 0
+        off = mo.off
+      } else {
+        ok = false
+      }
+    } else {
+      ok = false
+    }
+    if !ok {
+      out.push(x)
+      continue
+    }
+    var regs: List[Str] = []
+    for k in 0..n - 1 {
+      regs.push(macho.print_operand(o.ops[k]))
+    }
+    let rs = regs.join(", ")
+    let (scale, pair) = mem_scale(o.m, rs)
+    var reach = 4095 * scale
+    if pair {
+      reach = 63 * scale
+    }
+    if off <= reach && off % scale == 0 {
+      out.push(x)
+      continue
+    }
+    let hi = off & ~4095
+    var lo = off & 4095
+    var ls: List[Str] = ["\tadd x28, sp, #${hi >> 12}, lsl #12"]
+    if lo > reach || lo % scale != 0 {
+      ls.push("\tadd x28, x28, #${lo}")
+      lo = 0
+    }
+    ls.push("\t${o.m} ${rs}, [x28, #${lo}]")
+    for y in to_lines(ls) {
+      out.push(y)
+    }
+  }
+  out
+}
+
+/// local_empty_l on items (emit.xo's text pass; the adrp and add of
+/// xo_empty_list read from the Op, their operands as written): the
+/// function's text.
+fn (g: G) local_empty_ops(xs: List[Line]) -> Str {
+  let s = g.sym("xo_empty_list")
+  let (pg, off) = if g.os == "darwin" { ("${s}@PAGE", "${s}@PAGEOFF") } else { (s, ":lo12:${s}") }
+  let lines = line_texts(xs)
+  if g.x86 || !any_has(lines, "adrp") || !any_has(lines, pg) {
+    return lines.join("\n")
+  }
+  var n = 0
+  for x in xs {
+    if x.op != None {
+      n += 1
+    }
+  }
+  if n > LOCAL_EMPTY_LIMIT {
+    return lines.join("\n")
+  }
+  let lab = g.local("${g.lbl_prefix()}_el")
+  var out: List[Str] = []
+  var hit = false
+  var i = 0
+  while i < xs.len() {
+    if i + 1 < xs.len() {
+      if let Some(a) = xs[i].op {
+        if let Some(d) = xs[i + 1].op {
+          if a.m == "adrp" && a.ops.len() == 2 && d.m == "add" && d.ops.len() == 3 && macho.print_operand(a.ops[1]) == pg {
+            let r = macho.print_operand(a.ops[0])
+            if macho.print_operand(d.ops[0]) == r && macho.print_operand(d.ops[1]) == r && macho.print_operand(d.ops[2]) == off {
+              out.push("\tadr ${r}, ${lab}")
+              hit = true
+              i += 2
+              continue
+            }
+          }
+        }
+      }
+    }
+    out.push(xs[i].text)
+    i += 1
+  }
+  if !hit {
+    return lines.join("\n")
+  }
+  out.join("\n") + "\t.p2align 3\n${lab}:\n\t.long 0\n\t.long 2147483648\n\t.long 0\n\t.long 0\n\t.long 0\n\t.long 0\n"
+}

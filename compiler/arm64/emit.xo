@@ -391,6 +391,12 @@ fn (var g: G) emit() {
     }
   }
   let fs = g.far_slots_l(pm)
+  if g.m.op_verify && !g.x86 {
+    // decision 0274 step 3: far_slots on items gives the text pass's lines
+    if line_texts(g.far_slots_ops(to_lines(pm))) != flat_lines(fs) {
+      g.fail("XO_OP_VERIFY: ${g.f.name}: far_slots_ops differs from far_slots_l")
+    }
+  }
   let ft = g.far_tests_l(fs)
   if g.m.op_verify && !g.x86 {
     // decision 0274 step 3: far_tests on items gives the text pass's lines
@@ -398,7 +404,15 @@ fn (var g: G) emit() {
       g.fail("XO_OP_VERIFY: ${g.f.name}: far_tests_ops differs from far_tests_l")
     }
   }
-  g.text.push(g.local_empty_l(ft))
+  let le = g.local_empty_l(ft)
+  if g.m.op_verify && !g.x86 {
+    // decision 0274 step 3: local_empty on items gives the text pass's
+    // text
+    if g.local_empty_ops(to_lines(ft)) != le {
+      g.fail("XO_OP_VERIFY: ${g.f.name}: local_empty_ops differs from local_empty_l")
+    }
+  }
+  g.text.push(le)
 }
 
 /// The number of instructions past which a function keeps adrp and add
@@ -413,6 +427,9 @@ const LOCAL_EMPTY_LIMIT = 200000
 /// xo-code-size-2026-10-18.md, fix 4). A `[]` is then not one address,
 /// so the runtime tests an empty list by its count (llrt
 /// obj.is_immortal), never by address.
+/// Ported to items in lines.xo (decision 0274 step 3): until the text pass
+/// goes, a change here is made in its port too, or XO_OP_VERIFY=1 builds
+/// fail (gotchas/arm64-line-pass-port-drift.md).
 fn (g: G) local_empty_l(lines: List[Str]) -> Str {
   let s = g.sym("xo_empty_list")
   let (pg, off) = if g.os == "darwin" { ("${s}@PAGE", "${s}@PAGEOFF") } else { (s, ":lo12:${s}") }
@@ -548,6 +565,9 @@ const MAX_FAR_FRAME = 16777216
 
 /// Rewrites the sp relative loads and stores of a far frame whose offset
 /// is past the instruction's reach to go through x28 (farSlots).
+/// Ported to items in lines.xo (decision 0274 step 3): until the text pass
+/// goes, a change here is made in its port too, or XO_OP_VERIFY=1 builds
+/// fail (gotchas/arm64-line-pass-port-drift.md).
 fn (g: G) far_slots_l(lines: List[Str]) -> List[Str] {
   if g.base == 0 {
     return lines
