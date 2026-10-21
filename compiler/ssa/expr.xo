@@ -108,6 +108,9 @@ fn (var b: Builder) coerce_at(v: Int, t: Int, at: Expr?) -> Int {
     if b.is_fs(t) && !b.is_fs(vt) {
       return b.user_to_fs(v, ct, at)
     }
+    if b.is_lists(t) && !b.is_lists(vt) {
+      return b.user_to_lists(v, ct, t, at)
+    }
     if b.is_dyn(t) && !b.is_dyn(vt) {
       return b.to_dyn(v, ct, b.iface_name(e))
     }
@@ -185,6 +188,11 @@ fn (var b: Builder) value_as(e: Expr, t: Int) -> Int {
 /// Lowers an expression to a value of its natural type (expr), with the
 /// expression as the position of what it records as unsupported.
 fn (var b: Builder) expr(e: Expr) -> Int {
+  if !b.pinned.is_empty() {
+    if let Some(v) = b.pinned.get(b.pin_key(e)) {
+      return v
+    }
+  }
   let pa = b.at
   let pf = b.at_file
   b.at = parser.expr_span(e)
@@ -1040,7 +1048,7 @@ fn (var b: Builder) selector(e: Expr) -> Int {
     if b.is_lists(t) {
       // os.proc, os.env, os.net: no attenuation (decisions 0172, 0175)
       let lists = b.const_str("")
-      return b.add(Op.Struct, t, Aux.None, [lists])
+      return b.add(Op.Struct, t, Aux.None, b.lists_fields(t, lists))
     }
     return b.add(Op.Cap, t, Aux.S(s: check.text(sel.name)), [v])
   }
@@ -1235,6 +1243,19 @@ fn (var b: Builder) foreign_value(e: Expr, f: Int, t: Int) -> Int {
     if i >= 0 && user_fields(b.m.types[t].variants[i]).is_empty() {
       return b.variant(t, name, [])
     }
+  }
+  // an empty collection, `[]`, `{}`, or `#{}`: the zero value of t (an
+  // interface method's default, as Proc.cmd's `args: List[Str] = []`, is
+  // not checked as a body either, so its literal has no recorded type;
+  // decision 0307's calls on a user value reach it)
+  let empty = match e {
+    ListLit(elems: es, ..) => es.is_empty()
+    MapLit(entries: es, ..) => es.is_empty()
+    SetLit(elems: es, ..) => es.is_empty()
+    _ => false
+  }
+  if empty {
+    return b.zero(t, [])
   }
   let saved = b.s.file
   b.s.file = f

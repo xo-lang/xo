@@ -1,4 +1,5 @@
-// A user value converted to Fs on the native targets (decision 0307):
+// A user value converted to Fs, Net, Proc, or Env on the native targets
+// (decision 0307). For Fs:
 // the native Fs (xo.Fs: root, mode, user) holds it in its user field as a
 // UserFs, and the native prelude's fs_ functions and std/testing's memfs_
 // functions call it first.
@@ -55,6 +56,63 @@ pub interface UserFs {
   fn lock(self, path: Str) -> FileLock ! FsErr uses fs.write
   /// The lock if no one holds it, else None at once.
   fn try_lock(self, path: Str) -> FileLock? ! FsErr uses fs.write
+}
+
+/// The Net methods of a user value converted to Net (decision 0307):
+/// the same methods as the prelude's Net. The compiler calls them at
+/// each Net method call on a native Net that holds one.
+pub interface UserNet {
+  fn listen(self, addr: Str) -> Listener ! NetErr uses net.listen
+  fn dial(self, addr: Str) -> Conn ! NetErr uses net.dial
+  /// A Net that dials and listens only on the listed hosts: `host`,
+  /// `*.domain`, or `host:port`, and `unix:PATH` for a Unix domain
+  /// socket (std.md 3.2, decisions 0156 and 0190).
+  fn only(self, hosts: List[Str]) -> Net
+}
+
+/// The Proc methods of a user value converted to Proc (decision 0307):
+/// the same methods as the prelude's Proc. The compiler calls them at
+/// each Proc method call on a native Proc that holds one.
+pub interface UserProc {
+  fn exit(self, code: Int) -> Never uses proc
+  /// Time between a stop request and the cancellation of main's root scope
+  /// (core 7.5, default 30s; 0s cancels at the first signal).
+  fn set_grace(self, d: Duration) uses proc
+  fn run(self, cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr uses proc
+  /// A Proc that runs only the listed commands (std.md 3.7, decision
+  /// 0156).
+  fn only(self, cmds: List[Str]) -> Proc
+  /// A command to run, not started (std.md 3.8, decision 0161).
+  fn cmd(self, name: Str, args: List[Str] = []) -> Cmd
+  /// Runs the commands with each one's output piped into the next one's
+  /// input: the last one's output, every error stream, and the status of
+  /// the rightmost failing command (std.md 3.8).
+  fn pipeline(self, cmds: List[Cmd]) -> ProcOutput ! ProcErr uses proc
+  /// Sends the signal named (HUP, INT, QUIT, KILL, TERM, USR1, USR2,
+  /// CONT, STOP) to the process pid; an attenuated Proc must list "kill"
+  /// (std.md 3.7, decision 0190).
+  fn kill(self, pid: Int, signal: Str = "TERM") -> () ! ProcErr uses proc
+}
+
+/// The Env methods of a user value converted to Env (decision 0307):
+/// the same methods as the prelude's Env. The compiler calls them at
+/// each Env method call on a native Env that holds one.
+pub interface UserEnv {
+  fn get(self, name: Str) -> Str? uses env
+  fn vars(self) -> Map[Str, Str] uses env
+  fn args(self) -> List[Str] uses env
+  fn program(self) -> Str uses env
+  fn home(self) -> Str ! EnvErr uses env
+  /// An Env that reads only the listed variables (std.md 3.5, decision
+  /// 0156).
+  fn only(self, names: List[Str]) -> Env
+  /// Where a program keeps its configuration: XDG_CONFIG_HOME, else
+  /// ~/.config, ~/Library/Application Support, or %AppData% (std.md 3.5,
+  /// decision 0163).
+  fn config_dir(self) -> Str ! EnvErr uses env
+  /// Where a program keeps its cache: XDG_CACHE_HOME, else ~/.cache,
+  /// ~/Library/Caches, or %LocalAppData%.
+  fn cache_dir(self) -> Str ! EnvErr uses env
 }
 
 /// The user value f holds; None for the runtime's own Fs. The compiler

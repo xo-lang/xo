@@ -1,6 +1,6 @@
-// A test's own Fs wrapper (decision 0307): a user struct converted to
-// Fs builds natively, in test mode too (std/testing's memfs_ functions
-// call the user value first).
+// A test's own Fs, Env, and Net wrappers (decision 0307): a user struct
+// converted to a capability builds natively, in test mode too (the Fs
+// wrapper here; Env and Net in caps.xo).
 
 /// An Fs that fails reads of one path and passes the rest on.
 struct FlakyFs {

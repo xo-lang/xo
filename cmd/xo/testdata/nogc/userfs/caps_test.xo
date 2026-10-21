@@ -1,0 +1,12 @@
+test "a wrapper Env overrides one variable" {
+  os.env.set("USER", "ada")
+  expect(greeting(os.env)) == "hello ada"
+  let e = OverEnv{inner: os.env, name: "USER", value: "bob"}
+  expect(greeting(e)) == "hello bob"
+  expect(e.vars().get("USER") ?? "") == "bob"
+}
+
+test "a wrapper Net refuses one host" {
+  let n = BlockNet{inner: os.net, blocked: "evil.example"}
+  expect(refused(n, "evil.example:443")) == true
+}

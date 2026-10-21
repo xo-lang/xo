@@ -115,6 +115,9 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
     if let Some(v) = b.test_call(x, ci) {
       return v
     }
+    if let Some(v) = b.user_cap_call(x, ci) {
+      return v
+    }
     if b.is_proc_run(fo) {
       b.set_flag(1)
       if !b.conc {
@@ -1293,7 +1296,6 @@ fn (var b: Builder) intrinsic(x: Expr, ci: check.CallInfo) -> Int {
     let c = b.value_as(es[1] ?? fault("arg"), b.m.types[t].fields[1].ty)
     return b.add(Op.Struct, t, Aux.None, b.fs_fields(t, a, c))
   }
-
   if name is "proc_lists" | "env_lists" | "net_lists" {
     // the attenuation lists of a Proc, Env, or Net (decisions 0172 and
     // 0175)
@@ -1307,7 +1309,7 @@ fn (var b: Builder) intrinsic(x: Expr, ci: check.CallInfo) -> Int {
   if name is "proc_new" | "env_new" | "net_new" {
     let t = b.lists_type(if name == "env_new" { "Env" } else if name == "net_new" { "Net" } else { "Proc" })
     let a = b.value_as(es[0] ?? fault("arg"), b.m.types[t].fields[0].ty)
-    return b.add(Op.Struct, t, Aux.None, [a])
+    return b.add(Op.Struct, t, Aux.None, b.lists_fields(t, a))
   }
   if name is "dyn_text" | "dyn_raw" {
     let v = b.expr(es[0] ?? fault("arg"))
@@ -2319,4 +2321,93 @@ fn (var b: Builder) fs_user_call(x: Expr, fo: Int) -> Int? {
     return Some(b.undef(b.nat_of(x)))
   }
   Some(b.add(Op.Field, b.m.types[t].fields[2].ty, Aux.I(n: 2), [v]))
+}
+
+/// The key of e in pinned: its file and span.
+fn (b: Builder) pin_key(e: Expr) -> Str {
+  let sp = parser.expr_span(e)
+  "${b.s.file}:${sp.start.offset}:${sp.end.offset}"
+}
+
+/// A call of a Proc, Env, or Net method (decision 0307): when the
+/// receiver holds a user value, the call goes to its record's method;
+/// else the call is lowered as before (the receiver is evaluated once,
+/// pinned for that lowering). None when x is not such a call or the
+/// native capability has no user field.
+fn (var b: Builder) user_cap_call(x: Expr, ci: check.CallInfo) -> Int? {
+  let fo = ci.fn_obj
+  let r = b.c.objs[fo].recv
+  if r < 0 || !b.c.objs[fo].iface || ci.recv.is_empty() || !b.is_prelude_mod(b.obj_mod(fo)) {
+    return None
+  }
+  let rname = b.obj_name(r)
+  if !(rname is "Proc" | "Env" | "Net") {
+    return None
+  }
+  let recv = ci.recv[0]
+  let key = b.pin_key(recv)
+  if b.pinned.contains(key) {
+    // the lowering of the runtime's own value, inside this dispatch
+    return None
+  }
+  let lt = b.lists_type(rname)
+  if b.m.types[lt].fields.len() < 2 {
+    return None
+  }
+  let fname = b.obj_name(fo)
+  let ot = b.m.types[lt].fields[1].ty
+  let some = b.m.variant_index(ot, "Some")
+  let rect = b.m.types[ot].variants[some].fields[0].ty
+  let j = b.m.field_index(rect, fname)
+  if j < 0 {
+    return None
+  }
+  let (_, _, args) = call_parts(x)
+  let nt = b.nat_of(x)
+  let v = b.value_as(recv, lt)
+  let u = b.add(Op.Field, ot, Aux.I(n: 1), [v])
+  let join = b.new_block()
+  let res = b.s.f.add_param(join, nt)
+  let (yes, no) = b.branch(b.is_tag(u, "Some"))
+  // the user value's method, through its record
+  b.s.cur = yes
+  let rec = b.add(Op.Payload, rect, Aux.P(tag: some, field: 0), [u])
+  let pts = b.m.types[b.m.types[rect].fields[j].ty].elems
+  let es = arg_exprs(b.c.objs[fo].params, args)
+  var vals: List[Int] = []
+  for i in 0..es.len() {
+    if i >= pts.len() {
+      b.unsupported("a call of `${b.c.display_name(fo)}` on a user value")
+      return Some(b.undef(nt))
+    }
+    vals.push(b.io_arg(fo, es, i, pts[i]))
+  }
+  var to_err = -1
+  if b.c.objs[fo].err >= 0 {
+    let (_, et) = b.result_parts(b.nat_check(x))
+    to_err = et
+  }
+  let ur = b.method_on(fname, b.nat_check(recv), rec, vals, nt, b.fail_err(to_err), Some(x))
+  var reach = false
+  if !b.is_dead() {
+    b.jump(join, [ur])
+    reach = true
+  }
+  // the runtime's own value: the lowering as before, with the receiver
+  // already evaluated
+  b.s.cur = no
+  b.pinned[key] = v
+  let rv = b.call_expr(x)
+  b.pinned.remove(key)
+  if !b.is_dead() {
+    b.jump(join, [rv])
+    reach = true
+  }
+  b.seal(join)
+  b.s.cur = join
+  if !reach {
+    b.dead()
+    return Some(b.undef(nt))
+  }
+  Some(res)
 }

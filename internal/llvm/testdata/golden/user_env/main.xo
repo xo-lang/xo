@@ -1,0 +1,40 @@
+// A user struct converted to Env (decision 0307): user_caps without Proc
+// and Net, which WASI preview1 lacks, so the wasm backend runs it too.
+
+struct MapEnv {
+  table: Map[Str, Str]
+}
+
+fn (e: MapEnv) get(name: Str) -> Str? { e.table.get(name) }
+fn (e: MapEnv) vars() -> Map[Str, Str] { e.table }
+fn (e: MapEnv) args() -> List[Str] { ["prog", "--fake"] }
+fn (e: MapEnv) program() -> Str { "fakeprog" }
+fn (e: MapEnv) home() -> Str ! EnvErr { Ok("/home/fake") }
+fn (e: MapEnv) only(names: List[Str]) -> Env {
+  var m: Map[Str, Str] = {}
+  for n in names {
+    if let Some(v) = e.table.get(n) {
+      m[n] = v
+    }
+  }
+  MapEnv{table: m}
+}
+fn (e: MapEnv) config_dir() -> Str ! EnvErr { Ok("/home/fake/.config") }
+fn (e: MapEnv) cache_dir() -> Str ! EnvErr { Ok("/home/fake/.cache") }
+
+fn home_of(e: Env) -> Str uses env { e.home().ok() ?? "?" }
+
+fn main(os: Os) {
+  let e: Env = MapEnv{table: {"A": "1", "B": "2"}}
+  os.stdio.println("${e.get("A") ?? "-"} ${e.get("Z") ?? "-"} ${home_of(e)} ${e.args().join(",")} ${e.program()}")
+  let e2 = e.only(["B"])
+  os.stdio.println("only: ${e2.get("A") ?? "-"} ${e2.get("B") ?? "-"} ${e2.vars().len()}")
+  // the runtime's own capabilities still work beside them
+  os.stdio.println("real env: ${os.env.get("XO_NO_SUCH_VAR_0307") ?? "unset"}")
+  // across a task
+  let r = scope s {
+    let t = s.spawn(fn() -> Str { "task ${e.get("A") ?? "-"} ${e.only(["B"]).get("B") ?? "-"}" })
+    t.await
+  }
+  os.stdio.println(r)
+}

@@ -1,0 +1,87 @@
+// A user struct converted to Proc, Env, and Net (decision 0307): fakes a
+// program passes where the capability is expected, across a task.
+
+struct MapEnv {
+  table: Map[Str, Str]
+}
+
+fn (e: MapEnv) get(name: Str) -> Str? { e.table.get(name) }
+fn (e: MapEnv) vars() -> Map[Str, Str] { e.table }
+fn (e: MapEnv) args() -> List[Str] { ["prog", "--fake"] }
+fn (e: MapEnv) program() -> Str { "fakeprog" }
+fn (e: MapEnv) home() -> Str ! EnvErr { Ok("/home/fake") }
+fn (e: MapEnv) only(names: List[Str]) -> Env {
+  var m: Map[Str, Str] = {}
+  for n in names {
+    if let Some(v) = e.table.get(n) {
+      m[n] = v
+    }
+  }
+  MapEnv{table: m}
+}
+fn (e: MapEnv) config_dir() -> Str ! EnvErr { Ok("/home/fake/.config") }
+fn (e: MapEnv) cache_dir() -> Str ! EnvErr { Ok("/home/fake/.cache") }
+
+struct EchoProc {
+  prefix: Str
+  /// the real Proc, for cmd (a Cmd is made only by a Proc)
+  inner: Proc
+}
+
+fn (p: EchoProc) exit(code: Int) -> Never { fault("exit ${code}") }
+fn (p: EchoProc) set_grace(d: Duration) {}
+fn (p: EchoProc) run(cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr {
+  if cmd == "fail" {
+    return Err(ProcErr.NotFound(cmd: cmd))
+  }
+  Ok(ProcOutput{code: 0, stdout: "${p.prefix}${cmd} ${args.join(" ")}\n".bytes(), stderr: b""})
+}
+fn (p: EchoProc) only(cmds: List[Str]) -> Proc { p }
+fn (p: EchoProc) cmd(name: Str, args: List[Str] = []) -> Cmd { p.inner.cmd(name, args) }
+fn (p: EchoProc) pipeline(cmds: List[Cmd]) -> ProcOutput ! ProcErr { Err(ProcErr.NotFound(cmd: "pipeline")) }
+fn (p: EchoProc) kill(pid: Int, signal: Str = "TERM") -> () ! ProcErr { Err(ProcErr.NotFound(cmd: "kill ${pid} ${signal}")) }
+
+struct NoNet {}
+
+fn (n: NoNet) listen(addr: Str) -> Listener ! NetErr { Err(NetErr.Denied(addr: addr)) }
+fn (n: NoNet) dial(addr: Str) -> Conn ! NetErr { Err(NetErr.Denied(addr: addr)) }
+fn (n: NoNet) only(hosts: List[Str]) -> Net { n }
+
+fn home_of(e: Env) -> Str uses env { e.home().ok() ?? "?" }
+
+fn show_run(p: Proc, cmd: Str) -> Str uses proc {
+  match p.run(cmd, ["a", "b"]) {
+    Ok(o) => (o.stdout.to_str() ?? "").trim_end()
+    Err(e) => "error ${e}"
+  }
+}
+
+fn try_dial(n: Net) -> Str uses net.dial {
+  match n.dial("example.com:80") {
+    Ok(_) => "connected"
+    Err(e) => "error ${e}"
+  }
+}
+
+fn main(os: Os) {
+  let e: Env = MapEnv{table: {"A": "1", "B": "2"}}
+  os.stdio.println("${e.get("A") ?? "-"} ${e.get("Z") ?? "-"} ${home_of(e)} ${e.args().join(",")} ${e.program()}")
+  let e2 = e.only(["B"])
+  os.stdio.println("only: ${e2.get("A") ?? "-"} ${e2.get("B") ?? "-"} ${e2.vars().len()}")
+  let p: Proc = EchoProc{prefix: "ran ", inner: os.proc}
+  os.stdio.println(show_run(p, "ls"))
+  os.stdio.println(show_run(p, "fail"))
+  let _ = p.cmd("x")
+  os.stdio.println("kill: ${p.kill(7).is_err()}")
+  let n: Net = NoNet{}
+  os.stdio.println(try_dial(n))
+  os.stdio.println("only: ${try_dial(n.only(["x"]))}")
+  // the runtime's own capabilities still work beside them
+  os.stdio.println("real env: ${os.env.get("XO_NO_SUCH_VAR_0307") ?? "unset"}")
+  // across a task
+  let r = scope s {
+    let t = s.spawn(fn() -> Str { "${show_run(p, "task")} ${e.get("A") ?? "-"}" })
+    t.await
+  }
+  os.stdio.println(r)
+}

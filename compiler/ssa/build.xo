@@ -237,6 +237,10 @@ pub struct Builder {
   /// (boundTo), by the key of the call.
   sites: Map[Int, Int] = {}
   bound_to: Map[Int, Int] = {}
+  /// Expressions already lowered, by span (pin_key), whose value expr
+  /// returns again: a capability call's receiver, evaluated once before
+  /// user_cap_call branches (decision 0307).
+  pinned: Map[Str, Int] = {}
   /// Some construct was skipped so far: the Go builder lowered code there
   /// that this builder did not, which may have numbered interface types
   /// (tids) and queued bodies, so type numbers given from then on may
@@ -1272,12 +1276,16 @@ fn (var b: Builder) userfs_mod() -> Int {
 
 /// The checker type of native/llrt/userfs's UserFs (decision 0307), or -1
 /// when the program has none (the Go backend).
-fn (var b: Builder) user_fs_check() -> Int {
+fn (var b: Builder) user_fs_check() -> Int { b.user_cap_check("UserFs") }
+
+/// The checker type of the interface name of native/llrt/userfs
+/// (UserFs, UserNet, UserProc, UserEnv; decision 0307), or -1.
+fn (var b: Builder) user_cap_check(name: Str) -> Int {
   let um = b.userfs_mod()
   if um < 0 {
     return -1
   }
-  let o = b.member(um, "UserFs")
+  let o = b.member(um, name)
   if o < 0 || b.c.objs[o].kind != check.ObjKind.Type {
     return -1
   }
@@ -1323,9 +1331,43 @@ fn (var b: Builder) lists_type(name: Str) -> Int {
   let (t, created) = b.m.named("xo.${name}", Kind.Struct)
   if created {
     let st = b.str_t()
-    b.m.types[t].fields = [SField{name: "lists", ty: st}]
+    var fs = [SField{name: "lists", ty: st}]
+    // a user value converted to the capability (decision 0307): its
+    // native/llrt/userfs record, None for the runtime's own
+    let ut = b.user_cap_check("User${name}")
+    if ut >= 0 {
+      fs.push(SField{name: "user", ty: b.typ(b.prelude_type("Option", [ut]))})
+    }
+    b.m.types[t].fields = fs
   }
   t
+}
+
+/// The fields of a runtime Proc, Env, or Net t with lists: the user
+/// field, when there is one, None (decision 0307).
+fn (var b: Builder) lists_fields(t: Int, lists: Int) -> List[Int] {
+  var vs = [lists]
+  if b.m.types[t].fields.len() > 1 {
+    vs.push(b.zero(b.m.types[t].fields[1].ty, []))
+  }
+  vs
+}
+
+/// v (checker type ct, not a Proc, Env, or Net) converted to the
+/// capability t (decision 0307): t's user field holds v as a record, and
+/// its lists admit nothing ("\u{1}", one empty list), so native code
+/// that reads the lists instead of calling a method denies.
+fn (var b: Builder) user_to_lists(v: Int, ct: Int, t: Int, at: Expr?) -> Int {
+  if b.m.types[t].fields.len() < 2 {
+    b.unsupported("converting `${b.m.types[b.vty(v)].name}` to `${b.m.types[t].name}` without the native prelude")
+    return b.undef(t)
+  }
+  let ot = b.m.types[t].fields[1].ty
+  let some = b.m.variant_index(ot, "Some")
+  let it = b.m.types[ot].variants[some].fields[0].ty
+  let rec = b.to_iface(v, ct, it, at)
+  let u = b.add(Op.Variant, ot, Aux.I(n: some), [rec])
+  b.add(Op.Struct, t, Aux.None, [b.const_str("\u{1}"), u])
 }
 
 fn (var b: Builder) is_lists(t: Int) -> Bool {

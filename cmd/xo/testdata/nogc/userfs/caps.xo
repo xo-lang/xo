@@ -1,0 +1,51 @@
+/// An Env that overrides one variable and passes the rest on (decision
+/// 0307: a user struct converted to Env, in a test's own wrapper).
+struct OverEnv {
+  inner: Env
+  name: Str
+  value: Str
+}
+
+fn (e: OverEnv) get(name: Str) -> Str? uses env {
+  if name == e.name {
+    return Some(e.value)
+  }
+  e.inner.get(name)
+}
+fn (e: OverEnv) vars() -> Map[Str, Str] uses env {
+  var m = e.inner.vars()
+  m[e.name] = e.value
+  m
+}
+fn (e: OverEnv) args() -> List[Str] uses env { e.inner.args() }
+fn (e: OverEnv) program() -> Str uses env { e.inner.program() }
+fn (e: OverEnv) home() -> Str ! EnvErr uses env { e.inner.home() }
+fn (e: OverEnv) only(names: List[Str]) -> Env { OverEnv{inner: e.inner.only(names), name: e.name, value: e.value} }
+fn (e: OverEnv) config_dir() -> Str ! EnvErr uses env { e.inner.config_dir() }
+fn (e: OverEnv) cache_dir() -> Str ! EnvErr uses env { e.inner.cache_dir() }
+
+/// A Net that refuses one host and passes the rest on.
+struct BlockNet {
+  inner: Net
+  blocked: Str
+}
+
+fn (n: BlockNet) listen(addr: Str) -> Listener ! NetErr uses net.listen { n.inner.listen(addr) }
+fn (n: BlockNet) dial(addr: Str) -> Conn ! NetErr uses net.dial {
+  if addr.starts_with(n.blocked + ":") {
+    return Err(NetErr.Denied(addr: addr))
+  }
+  n.inner.dial(addr)
+}
+fn (n: BlockNet) only(hosts: List[Str]) -> Net { BlockNet{inner: n.inner.only(hosts), blocked: n.blocked} }
+
+/// The greeting for the user the environment names.
+fn greeting(e: Env) -> Str uses env { "hello ${e.get("USER") ?? "nobody"}" }
+
+/// Whether dialing addr is refused.
+fn refused(n: Net, addr: Str) -> Bool uses net.dial {
+  match n.dial(addr) {
+    Err(NetErr.Denied(..)) => true
+    _ => false
+  }
+}

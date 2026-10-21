@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+1 - /home/fake prog,--fake fakeprog
+only: - 2 1
+real env: unset
+task 1 2
+--- stderr

@@ -43,15 +43,29 @@ test-fs-wrapper-not-native) and an Fs view of `embed.Dir` (decision
    value as the unrestricted Fs.
 5. **Effects** are unchanged: the checker already checks a user
    implementation's `uses` against the interface's.
-6. **Later**: Proc, Env and Net (structs, the same `user` field), then
-   Os, Stdio, Clock and Rand, which are void today (one word each for
-   every program that passes one, so perhaps only in programs that convert
-   to them; Xo Lang 2, 2026-10-21).
+6. **Proc, Env, and Net** (2026-10-21, the second step): their native
+   struct `{lists}` gains the same `user` field (`UserProc`, `UserEnv`,
+   `UserNet` in native/llrt/userfs.xo). Several of their methods are
+   lowered by the compiler itself (Env.args, Proc.exit, Proc.run,
+   Net.listen and dial), so the dispatch is at the call: user_cap_call
+   (compiler/ssa/call.xo) evaluates the receiver once, branches on the
+   user field, calls the record's method or lowers the call as before
+   with that receiver (Builder.pinned). Fail closed: a user value's lists
+   are `"\u{1}"`, one empty allow-list, which admits nothing. An
+   interface method's default argument that is an empty collection
+   (`Proc.cmd`'s `args = []`) lowers to the zero value, since such
+   defaults are not checked as bodies. The void Os, Stdio, Clock, and
+   Rand remain (one word each for every program that passes one, so
+   perhaps only in programs that convert to them; Xo Lang 2,
+   2026-10-21).
 
 ## Consequences
 
-- A user type implementing `Fs` (a fake, a wrapper that fails one read, a
-  read-only view) works on every backend, in tests and programs; goldens
+- A user type implementing `Fs`, `Proc`, `Env`, or `Net` (a fake, a
+  wrapper that fails one read or refuses one host, a read-only view) works
+  on every backend, in tests and programs; goldens user_caps (Proc, Env,
+  Net; wasm has no processes or sockets) and user_env (all five
+  backends), and
   `user_fs` (a user struct in a user interface and in Fs, across a task,
   no leaks under XO_LEAKCHECK) and cmd/xo testdata/nogc/userfs (a test's
   own Fs wrapper, every native backend against Go).
