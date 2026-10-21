@@ -1913,6 +1913,10 @@ pub fn ext(p: Str) -> Str            // extension with the dot, or ""
 pub fn clean(p: Str) -> Str          // removes `.`, `..`, repeated `/`
 ```
 
+Go's path package's results on every backend. Every backend runs one
+implementation, std/native/path.xo: the Go backend compiles it too
+(std/go_compiled.txt, decision 0312), and `clean` is Go's algorithm.
+
 ---
 
 ## 10. std/sql

@@ -2059,7 +2059,11 @@ Last verified: 2026-10-08. Rules and choices; details in
   Fields only the runtime uses (Http_Request's XParams, XValues,
   XRawQuery, XFields; Http_Response's XStream, XFields) are listed in
   stdtypes.xo rt_extra_fields. Opaque std handles and every std function are hand
-  written in rt; the same command generates `std/rt/std_sigs_M.go`, a
+  written in rt, except the modules listed in std/go_compiled.txt
+  (decision 0312, 2026-10-21: path first). For those, the checker loads
+  std/native/M.xo for the Go backend too (check load.xo
+  load_go_compiled), gen routes calls to its functions (call.xo go_impl),
+  and stdgen writes no signature checks for them. The same command generates `std/rt/std_sigs_M.go`, a
   `var _ func(*Task, ...) R = Module_name` line (a free prelude function
   is `Prelude_name`, compiler/gen std_free_prefix, 2026-10-21: the
   prelude's types and methods have no prefix, and a lower case free

@@ -372,6 +372,8 @@ pub fn (var c: Checker) check_dirs(dirs: List[Str]) -> () ! Str uses fs.read {
   }
   if c.native {
     c.load_native()
+  } else {
+    c.load_go_compiled()
   }
   if c.unsupported.is_empty() {
     c.run()?
@@ -393,6 +395,8 @@ fn (var c: Checker) check_std_test() -> () ! Str uses fs.read {
   }
   if c.native {
     c.load_native()
+  } else {
+    c.load_go_compiled()
   }
   let m = match c.mod_index.get(p) {
     Some(m) => m
@@ -556,6 +560,63 @@ fn (var c: Checker) load_std(name: Str) -> Int {
   c.mods[m].state = 2
   c.order.push(m)
   m
+}
+
+/// The std modules the Go backend compiles from their native
+/// implementation (decision 0312): std/go_compiled.txt, one name a line
+/// (`path`), `#` comments.
+fn (c: Checker) go_compiled() -> List[Str] {
+  let data = c.fs.read("${c.std_dir}/go_compiled.txt").ok() ?? None
+  let text = match data {
+    Some(b) => b.to_str() ?? ""
+    None => return []
+  }
+  var out: List[Str] = []
+  for l in text.split("\n") {
+    let t = l.trim()
+    if !t.is_empty() && !t.starts_with("#") {
+      out.push(t)
+    }
+  }
+  out
+}
+
+/// load_native for the Go backend: the implementations of the std
+/// modules in go_compiled only, until no new one appears (decision 0312).
+fn (var c: Checker) load_go_compiled() {
+  let names = c.go_compiled()
+  if names.is_empty() {
+    return
+  }
+  var done: Map[Str, Bool] = {}
+  while {
+    var todo: List[Str] = []
+    for m in c.mods {
+      if m.is_std && !done.contains(m.path) && m.path.starts_with("std/") && names.contains(m.path.trim_prefix("std/")) {
+        todo.push(m.path)
+      }
+    }
+    if todo.is_empty() {
+      return
+    }
+    for path in todo.sort() {
+      done[path] = true
+      let name = path.trim_prefix("std/")
+      let src = c.fs.read("${c.std_dir}/native/${name}.xo").ok() ?? None
+      let data = match src {
+        Some(b) => b
+        None => continue
+      }
+      let m = c.new_module("native/${name}", name, "std/native", false)
+      c.mods[m].native = true
+      c.mods[m].implements = path
+      c.parse_into(m, "std/native/${name}.xo", data, false)
+      c.mods[m].state = 1
+      c.load_imports(m)
+      c.mods[m].state = 2
+      c.order.push(m)
+    }
+  }
 }
 
 /// Loads the implementation modules of the native backends (load.go

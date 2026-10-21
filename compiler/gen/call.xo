@@ -522,6 +522,12 @@ fn (var g: Gen) emit_call(fo: Int, sub: Map[Int, Int], recv0: Str, args: List[St
   if sok {
     return g.emit_spec_call(fo, sub, spec, recv0, args)
   }
+  let impl = g.go_impl(fo)
+  if impl >= 0 {
+    // a std function the Go backend compiles from its native
+    // implementation (decision 0312): the implementation's own call
+    return g.emit_call(impl, sub, recv0, args, at)
+  }
   let o = g.c.objs[fo]
   var call = ""
   var recv = recv0
@@ -549,6 +555,34 @@ fn (var g: Gen) emit_call(fo: Int, sub: Map[Int, Int], recv0: Str, args: List[St
     call = "${pr}${g.func_go_name(fo)}${g.targs_code(o.tparams, sub)}(tk, ${recv}${prefix_comma(args)})"
   }
   g.call_result(fo, sub, call)
+}
+
+/// The native implementation of std function fo when the Go backend
+/// compiles its module from it (std/go_compiled.txt, decision 0312): the
+/// implementation module's function of the same name; -1 otherwise.
+/// Free functions only (the pilot's modules have no methods).
+fn (var g: Gen) go_impl(fo: Int) -> Int {
+  let o = g.c.objs[fo]
+  if !g.ostd(fo) || o.recv >= 0 || g.oprelude(fo) {
+    return -1
+  }
+  let m = g.impl_mod(g.c.mods[o.module].path)
+  if m < 0 || (g.pkg_of.get(m) ?? -1) < 0 {
+    return -1
+  }
+  let x = g.c.mods[m].members.get(o.name) ?? -1
+  if x >= 0 && g.c.objs[x].kind == check.ObjKind.Func { x } else { -1 }
+}
+
+/// The implementation module loaded for std module path on the Go
+/// backend (load_go_compiled), or -1.
+fn (g: Gen) impl_mod(path: Str) -> Int {
+  for (m, md) in g.c.mods.indexed() {
+    if md.native && md.implements == path {
+      return m
+    }
+  }
+  -1
 }
 
 /// Classifies a generated call of fo (callResult).

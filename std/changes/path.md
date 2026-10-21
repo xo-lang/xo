@@ -1,5 +1,17 @@
 # std/path changes
 
+## 2026-10-21: behavior: the Go backend runs path.xo too
+
+- Kind: behavior
+- Commit: (filled in after the push)
+- Found by: decision 0312 (std written once, the pilot)
+- Go reference: path/path.go (go1.26.1), as ported in std/native/path.xo
+- Test: internal/gen/testdata/golden/std06_path; internal/llvm/testdata/golden/std_path (Go parity)
+
+The Go backend compiles std/native/path.xo instead of calling Go's path
+package, so every backend runs one implementation. The results are the
+same; on the Go backend a path call costs about 2.6 times Go's package.
+
 ## 2026-10-21: perf: clean is Go's algorithm natively
 
 - Kind: perf

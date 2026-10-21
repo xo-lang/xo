@@ -1,0 +1,5 @@
+# The std modules the Go backend compiles from their native
+# implementation, std/native/NAME.xo, instead of a hand written
+# std/rt file (decision 0312): one name a line. A module joins only once
+# its std test has a Go-generated corpus (scripts/stdcorpus).
+path

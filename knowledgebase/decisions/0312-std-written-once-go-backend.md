@@ -104,6 +104,25 @@ not affected.
 
 ## Consequences
 
+- Implementation notes (2026-10-21):
+  - **Order, step 1.** path.Clean is Go's algorithm (5cb4ffe1). Measured
+    at 300,000 iterations, medians of 5 on a busy machine:
+    - program b, gen-compiled path.xo on the Go backend, went from 0.20 s
+      to 0.13 s, against 0.05 s for Go's package;
+    - the native loop went from 0.18 s to 0.08 s.
+  - **Pilot, path.**
+    - The list is std/go_compiled.txt, read by the checker (load.xo
+      go_compiled, load_go_compiled) for the Go backend only.
+    - gen's emit_call routes a listed module's free function to the
+      implementation's function (call.xo go_impl), and the implementation
+      module is compiled as a Go package (x_native_path).
+    - stdgen writes no signature checks for those functions, and
+      std/rt/path.go is deleted.
+    - Goldens std06_path (Go backend) and std_path (Go parity, arm64,
+      LLVM) pass.
+  - **Methods.** The pilot routes free functions only. uuid's methods
+    (`Uuid.version`, natively `uuid_version`) are the next step.
+
 - One implementation per pure module. A fix lands once and reaches every
   backend.
 - The Go backend stops being an independent oracle for these modules:
