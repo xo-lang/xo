@@ -1,7 +1,17 @@
 # 0321: `??` with an early exit (`x ?? return v`), and the Result form
 
-Status: Proposed (Xo Lang Lib 1, 2026-10-21), for the owner to decide.
-The lead asked for this draft after the agents' poll of 2026-10-21.
+Status: Accepted for part 1 (owner, 2026-10-21): `return`, `break`, and
+`continue` as `Never` expressions on the right of `??` (the Option form).
+Part 2, the Result form (`?? e => ...`), is deferred: Result code keeps
+`match` and `.or_err(...)?`. Drafted by Xo Lang Lib 1 after the agents'
+poll of 2026-10-21.
+
+Measure (2026-10-21, origin/main): 251 one-arm `match` blocks of the shape
+`let x = match opt { Some(v) => v  None => return|continue|break ... }`
+in std/native and compiler/ (218 `return`, 28 `continue`, 5 `break`; 129
+in std/native, 49 in compiler/check, 49 in compiler/cli, 7 in
+compiler/arm64, 6 in compiler/gen, 6 in compiler/ssa), each four lines
+that `x ?? return v` writes in one.
 
 ## Context
 
@@ -25,7 +35,7 @@ them writes four lines (`let s = match x { Some(v) => v  None =>
 continue }`), which is the pattern repeated most in a loop body and in
 `parse`-style functions that walk a list.
 
-## Decision (proposed)
+## Decision (part 1 accepted, part 2 deferred)
 
 1. **Option form.** `return`, `break`, and `continue` are expressions of
    type `Never` where an expression is expected, as `fault(...)` is. So
