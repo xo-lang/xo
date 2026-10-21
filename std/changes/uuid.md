@@ -3,7 +3,7 @@
 ## 2026-10-21: behavior: the Go backend runs uuid.xo too
 
 - Kind: behavior
-- Commit: (filled in after the push)
+- Commit: e8e2b322
 - Found by: decision 0312 (std written once, the pilot's second module)
 - Go reference: github.com/google/uuid v1.6.0, as ported in std/native/uuid.xo
 - Test: internal/stdtest/testdata/corpus/uuid (go, arm64, LLVM); internal/llvm/testdata/golden/uuid_basic (Go parity)

@@ -3,7 +3,7 @@
 ## 2026-10-21: behavior: the Go backend runs path.xo too
 
 - Kind: behavior
-- Commit: (filled in after the push)
+- Commit: 09c320f9
 - Found by: decision 0312 (std written once, the pilot)
 - Go reference: path/path.go (go1.26.1), as ported in std/native/path.xo
 - Test: internal/gen/testdata/golden/std06_path; internal/llvm/testdata/golden/std_path (Go parity)
@@ -15,7 +15,7 @@ same; on the Go backend a path call costs about 2.6 times Go's package.
 ## 2026-10-21: perf: clean is Go's algorithm natively
 
 - Kind: perf
-- Commit: (filled in after the push)
+- Commit: 5cb4ffe1
 - Found by: decision 0312's measurement, profiled by Xo Publish (clean was about 80% of a path loop, and its split-and-join algorithm, not the code generator, made most of the 4x against Go)
 - Go reference: path/path.go Clean and lazybuf (go1.26.1)
 - Test: std/native/path_test.xo (Go's results on path_test.go's strings and 600 random paths); internal/llvm/testdata/golden/std_path

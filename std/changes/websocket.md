@@ -3,7 +3,7 @@
 ## 2026-10-21: feature: wss:// in websocket.dial
 
 - Kind: feature
-- Commit: (filled in after the push)
+- Commit: 9515923f
 - Found by: decision 0313 stage 2
 - Go reference: github.com/gorilla/websocket v1.5 Dialer (TLSClientConfig, the wss scheme's port 443)
 - Test: internal/llvm/testdata/golden/websocket_tls (echo over TLS with the test CA as roots, the system roots refused, roots that are not PEM; native identical to the Go backend)

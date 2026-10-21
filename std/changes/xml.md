@@ -3,7 +3,7 @@
 ## 2026-10-21: feature: derive Xml, Go's Marshal and Unmarshal for structs
 
 - Kind: feature
-- Commit: (filled in after the push)
+- Commit: 03854dd2
 - Found by: decision 0315 (owner choice B: expansion in the checker)
 - Go reference: encoding/xml marshal.go (marshalStruct, the parent stack, marshalSimple) and read.go (unmarshal, copyValue) (go1.26.1)
 - Test: internal/stdtest/testdata/corpus/xml (1,500 documents decoded and re-encoded); test/errorcheck/derive_xml

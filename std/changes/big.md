@@ -3,7 +3,7 @@
 ## 2026-10-21: perf: recursive division natively
 
 - Kind: perf
-- Commit: (filled in after the push)
+- Commit: f601176a
 - Found by: decision 0311 stage 3
 - Go reference: math/big natdiv.go divRecursive, divRecursiveThreshold 40 (go1.26.1)
 - Test: internal/stdtest/testdata/corpus/big; internal/llvm/testdata/golden/big_basic
@@ -18,7 +18,7 @@ divide by a word and are unchanged.
 ## 2026-10-21: perf: parse and text of large numbers natively
 
 - Kind: perf
-- Commit: (filled in after the push)
+- Commit: f676659d
 - Found by: measurement against the Go backend (3^300000, 143,137 digits: text 942 ms against Go's 5, parse 3,654 ms against 12)
 - Go reference: math/big arith.go reciprocalWord and divWW, natconv.go scan's digits per word (go1.26.1)
 - Test: internal/stdtest/testdata/corpus/big; internal/llvm/testdata/golden/big_basic
