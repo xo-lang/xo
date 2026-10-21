@@ -2471,6 +2471,13 @@ does (decision 0131).
 - A suggestion from edit distance (`did you mean`) is a note; it is also a
   fix only when it is clear: a unique closest candidate at most half the
   name's length away, for names of three or more characters.
+- An unknown method or field suggests the receiver's own fields and
+  methods: the closest by edit distance, also counting a candidate
+  without its `to_`, `is_`, `as_`, or `get_` prefix one further away
+  (`s.uppr()` suggests `to_upper`). A name another language uses for a
+  method Xo has with the same meaning (Go's `TrimSpace` and `HasPrefix`,
+  Rust's `chars` and a Map's `insert`, TypeScript's `some` and `every`)
+  names that language and the Xo method, with the rename as the fix.
 - A diagnostic's first fix is the one `xo fix` and `xo check --fix` apply
   (10.1); fixes whose edits overlap in one round wait for the next round.
   `xo check --fix --json` adds `"applied": [{"file", "line", "rule",

@@ -27,6 +27,16 @@ fn edit_distance(a: Str, b: Str) -> Int {
   prev[rb.len()]
 }
 
+/// s without a leading `to_`, `is_`, `as_`, or `get_`.
+fn strip_verb(s: Str) -> Str {
+  for p in ["to_", "is_", "as_", "get_"] {
+    if s.starts_with(p) && s.len() > p.len() {
+      return s[p.len()..]
+    }
+  }
+  s
+}
+
 /// Up to three candidates close to name, best first (check.go nearest).
 fn nearest(name: Str, cands: List[Str]) -> List[Str] {
   var best: List[(Str, Int)] = []
@@ -41,6 +51,13 @@ fn nearest(name: Str, cands: List[Str]) -> List[Str] {
     var d = edit_distance(lower, cnd.to_lower())
     if cnd.to_lower() == lower {
       d = 0
+    }
+    // `uppr` for `to_upper`, `some` for `is_some`: the name against the
+    // candidate without its `to_`, `is_`, `as_`, or `get_` prefix, one
+    // further away
+    let bare = strip_verb(cnd.to_lower())
+    if bare != cnd.to_lower() {
+      d = d.min(edit_distance(lower, bare) + 1)
     }
     if d <= limit {
       best.push((cnd, d))

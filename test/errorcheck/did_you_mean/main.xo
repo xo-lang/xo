@@ -1,0 +1,28 @@
+// An unknown method or field suggests the receiver's closest names (edit
+// distance, also against names without a `to_`, `is_`, `as_`, or `get_`
+// prefix) or names another language's method (Go, Rust, TypeScript).
+struct User {
+  name: Str
+  age: Int
+}
+
+fn (u: User) greet() -> Str { u.name }
+
+fn main(os: Os) {
+  let u = User{name: "a", age: 1}
+  let xs = [1, 2]
+  var m = {"a": 1}
+  let s = " hi "
+  os.stdio.println(u.nam) // ERROR XO0601 "did you mean `name`"
+  os.stdio.println(u.gret()) // ERROR XO0601 "did you mean `greet`"
+  os.stdio.println("${xs.contain(1)}") // ERROR XO0601 "did you mean `contains`"
+  os.stdio.println("${m.keyz()}") // ERROR XO0601 "did you mean `keys`"
+  os.stdio.println(s.uppr()) // ERROR XO0601 "did you mean `to_upper`"
+  os.stdio.println(s.TrimSpace()) // ERROR XO0601 "Go name; Xo's is `.trim`"
+  os.stdio.println(s.trim_space()) // ERROR XO0601 "Go name; Xo's is `.trim`"
+  os.stdio.println("${s.HasPrefix("h")}") // ERROR XO0601 "Go name; Xo's is `.starts_with`"
+  os.stdio.println("${s.chars().len()}") // ERROR XO0601 "Rust name; Xo's is `.runes`"
+  m.insert("b", 2) // ERROR XO0601 "Rust name; Xo's is `.put`"
+  os.stdio.println("${xs.some(fn(x) { x > 1 })}") // ERROR XO0601 "TypeScript name; Xo's is `.any`"
+  os.stdio.println("${m.len()}")
+}

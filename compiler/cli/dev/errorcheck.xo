@@ -7,7 +7,8 @@
 //   f(y)         // ERROR XO0601 "name `y` not found"
 //
 // A comment holds one or more codes, each optionally followed by a
-// quoted regular expression the message must match. The run passes when
+// quoted regular expression the message, or one of its notes, must
+// match (`// ERROR XO0601 "did you mean .to_upper."`). The run passes when
 // every expected diagnostic is reported and every reported error or
 // warning is expected. `xo check --json` reports them.
 
@@ -30,11 +31,16 @@ struct JSpan {
   line: Int = 0
 } derive Json
 
+struct JNote {
+  message: Str = ""
+} derive Json
+
 struct JDiag {
   code: Str = ""
   severity: Str = ""
   message: Str = ""
   span: JSpan = JSpan{}
+  notes: List[JNote] = []
 } derive Json
 
 struct JCheck {
@@ -188,7 +194,12 @@ fn check_one(os: Os, h: Host, xo: Str, extra: List[Str], d: Str) -> List[Str] us
   }
   var got: List[(Str, Int, Str, Str, Str)] = []
   for g in jc.diagnostics {
-    got.push((g.span.file, g.span.line, g.code, g.severity, g.message))
+    // the notes on lines of their own, so a pattern can name a suggestion
+    var text = g.message
+    for n in g.notes {
+      text = text + "\n" + n.message
+    }
+    got.push((g.span.file, g.span.line, g.code, g.severity, text))
   }
   verdict(want, got)
 }
