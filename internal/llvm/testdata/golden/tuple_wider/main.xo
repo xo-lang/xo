@@ -1,0 +1,33 @@
+// Tuples wider than 16 elements (core sets no arity limit): the Go
+// backend's std/rt declared Tuple2 to Tuple16 only, so a 17-tuple failed
+// in go build ("undefined: rt.Tuple17"); scripts/gentuples now writes
+// them to 64. Construct, destructure, compare, Debug, a Map key.
+
+type Wide17 = (Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Str)
+
+fn wide17(n: Int) -> Wide17 {
+  (n, n + 1, n + 2, n + 3, n + 4, n + 5, n + 6, n + 7, n + 8, n + 9, n + 10, n + 11, n + 12, n + 13, n + 14, n + 15, "w${n}")
+}
+
+fn wide20(n: Int) -> (Int, Bool, Str, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Float) {
+  (n, n > 0, "s", 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 2.5)
+}
+
+fn main(os: Os) {
+  let a = wide17(1)
+  let b = wide17(1)
+  let c = wide17(2)
+  let (x0, x1, _, _, _, _, _, _, _, _, _, _, _, _, _, x15, s) = a
+  os.stdio.println("${x0} ${x1} ${x15} ${s}")
+  os.stdio.println("${a == b} ${a == c} ${a < c}")
+  os.stdio.println("${c:?}")
+  var m: Map[Wide17, Int] = {}
+  m[a] = 1
+  m[c] = 2
+  m[b] = 3
+  os.stdio.println("${m.len()} ${m.get(wide17(1)) ?? 0}")
+  let w = wide20(3)
+  let (n, pos, str, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, last_int, f) = w
+  os.stdio.println("${n} ${pos} ${str} ${last_int} ${f}")
+  os.stdio.println("${w == wide20(3)} ${w:?}")
+}

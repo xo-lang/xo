@@ -316,6 +316,9 @@ fn (g: Gen) reaches_std(path: Str) -> Bool {
   false
 }
 
+/// The widest tuple std/rt declares (scripts/gentuples Max).
+const GO_TUPLE_MAX = 64
+
 /// Records a generation failure at the node of span sp in the current
 /// file (errorf).
 fn (var g: Gen) errorf(sp: Span, msg: Str) {
@@ -936,6 +939,14 @@ fn (var g: Gen) go_type(t0: Int) -> Str {
         return g.rt() + "Unit"
       }
       let r = g.rt()
+      if x.args.len() > GO_TUPLE_MAX {
+        // std/rt declares Tuple2 to Tuple64 (scripts/gentuples); core sets
+        // no arity limit, the native backends have none
+        let msg = "the Go backend's tuples have at most ${GO_TUPLE_MAX} elements (std/rt tuples_gen.go, scripts/gentuples); this one has ${x.args.len()}: use a struct, or a native backend"
+        if !g.errs.contains(msg) {
+          g.errorf(Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}}, msg)
+        }
+      }
       "${r}Tuple${x.args.len()}[${g.type_list(x.args)}]"
     }
     Func => g.func_type(t)
