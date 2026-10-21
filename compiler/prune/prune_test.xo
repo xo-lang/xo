@@ -399,3 +399,41 @@ test "a whole walk acts on current sizes after shards grew since they were measu
   expect(st.bytes <= 6000) == true
   expect(du(os, "c") <= 6000) == true
 }
+
+test "a whole walk of a cache twice its cap ends between 90% and 100% of it" {
+  // 8 shards of 25 entries of 100 bytes: 20,000 bytes against 10,000
+  for e in 0..25 {
+    for s in 0..8 {
+      put(os, "c/s/${s}/e${e}", 100)
+    }
+    os.clock.advance(1m)
+  }
+  put(os, "c/prune-stamp", 0)
+  os.clock.advance(3h)
+  let p = Policy{max_age: 0s, max_bytes: 10000, every: 0s, keep: 1m, walk_budget: 60s}
+  let st = run(os.fs, os.clock, "c", p)
+  expect(st.bytes <= 10000 && st.bytes >= 9000) == true
+  expect(du(os, "c") <= 10000 && du(os, "c") >= 9000) == true
+  // the least recently used went first: each shard keeps its newest
+  for s in 0..8 {
+    expect(there(os, "c/s/${s}/e24")) == true
+    expect(there(os, "c/s/${s}/e0")) == false
+  }
+}
+
+test "a slice of a cache twice its cap does not overshoot it" {
+  for e in 0..25 {
+    for s in 0..8 {
+      put(os, "c/s/${s}/e${e}", 100)
+    }
+    os.clock.advance(1m)
+  }
+  put(os, "c/prune-stamp", 0)
+  os.clock.advance(3h)
+  // a rotation to measure, then slices of 3 shards evicting to shares
+  let p = Policy{max_age: 0s, max_bytes: 10000, every: 0s, keep: 1m, slice_shards: 3}
+  for _ in 0..12 {
+    let _s = run(os.fs, os.clock, "c", p)
+  }
+  expect(du(os, "c") <= 10000 && du(os, "c") >= 9000) == true
+}
