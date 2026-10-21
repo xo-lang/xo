@@ -268,13 +268,21 @@ fn hold_go_cache(os: Os, ctx: Ctx) -> internal.SharedLock? {
 /// least recently used over $XO_CACHE_MAX_GB (default 20, or
 /// $XO_GOCACHE_MAX bytes). Go refreshes a file's time when it uses it
 /// and the time is over an hour old, and treats a missing file as a
-/// miss, so removing files unused for two hours is safe without the
+/// miss, so removing files unused for 75 minutes is safe without the
 /// cache lock: a go command in flight uses only files it refreshed (or
 /// wrote) within the hour. Top level files (README, trim.txt, the
 /// xo-*.lock files) are never removed.
 fn prune_go_cache(os: Os, ctx: Ctx) {
-  prune.run(os.fs, os.clock, go_cache_dir(os, ctx), cap_env(os, prune.from_env(os.env, prune.Policy{}), "XO_GOCACHE_MAX"))
+  // 75 minutes, not prune.KEEP's 2 hours: Go refreshes a file's time
+  // once it is an hour old, so a go command in flight has used each of
+  // its files within an hour plus its own run (2026-10-21: 21.5 GB used
+  // within 2 hours held the cache over its 20 GB cap). Shorter needs the
+  // trim's exclusive locks, which std/internal cannot try yet.
+  prune.run(os.fs, os.clock, go_cache_dir(os, ctx), cap_env(os, prune.from_env(os.env, prune.Policy{keep: GO_CACHE_KEEP}), "XO_GOCACHE_MAX"))
 }
+
+/// How long the Go cache keeps a file after its last use (prune_go_cache).
+const GO_CACHE_KEEP: Duration = 75m
 
 fn release_go_cache(l: internal.SharedLock?) {
   if let Some(h) = l {

@@ -91,12 +91,12 @@ func TestPruneCheckoutsInUse(t *testing.T) {
 	if !reflect.DeepEqual(got, []string{"idle"}) {
 		t.Fatalf("removed %v, want [idle]", got)
 	}
-	// markUsed within the hour leaves the time (one stat)
-	at := now.Add(-30 * time.Minute)
+	// markUsed within pruneTouch leaves the time (one stat)
+	at := now.Add(-5 * time.Minute)
 	os.Chtimes(filepath.Join(dir, "new"), at, at)
 	markUsed(filepath.Join(dir, "new"), now)
 	if fi, _ := os.Stat(filepath.Join(dir, "new")); !fi.ModTime().Equal(at) {
-		t.Fatalf("markUsed refreshed a time 30 minutes old")
+		t.Fatalf("markUsed refreshed a time 5 minutes old")
 	}
 }
 
@@ -110,5 +110,45 @@ func TestCheckoutPruneCfg(t *testing.T) {
 	t.Setenv("XO_CACHE_MAX_AGE", "0")
 	if c := checkoutPruneCfg(); c.keep != 4 || c.maxAge != 0 {
 		t.Fatalf("got %+v", c)
+	}
+}
+
+// TestPruneCheckoutsSizeCap: past the newest keep, the least recently
+// used keys go while the keys hold more than maxBytes, all of them
+// younger than maxAge; a key used within 30 minutes and a key whose
+// build.lock is held stay (2026-10-21: 385 keys, 26 GB, none a day old).
+func TestPruneCheckoutsSizeCap(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 10, 21, 15, 0, 0, 0, time.UTC)
+	big := make([]byte, 1000)
+	mk := func(name string, ago time.Duration) {
+		mkKey(t, dir, name, now.Add(-ago))
+		if err := os.WriteFile(filepath.Join(dir, name, "xo"), big, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(filepath.Join(dir, name), now.Add(-ago), now.Add(-ago)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("newest", time.Minute)
+	mk("recent", 10*time.Minute) // within 30 minutes: stays
+	mk("locked", 5*time.Hour)    // a build in flight: stays
+	mk("old1", 3*time.Hour)
+	mk("old2", 4*time.Hour)
+	mk("old3", 6*time.Hour) // the least recently used
+	unlock, err := lockFile(filepath.Join(dir, "locked", "build.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	// 6,000 bytes against a cap of 3,500: three of the removable go,
+	// oldest first, and the locked one is passed over
+	got := pruneCheckouts(dir, "", now, pruneCfg{keep: 1, maxAge: 24 * time.Hour, every: time.Hour, maxBytes: 3500})
+	sort.Strings(got)
+	if want := []string{"old1", "old2", "old3"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("removed %v, want %v", got, want)
+	}
+	if want := []string{"locked", "newest", "recent"}; !reflect.DeepEqual(keysIn(t, dir), want) {
+		t.Fatalf("left %v, want %v", keysIn(t, dir), want)
 	}
 }
