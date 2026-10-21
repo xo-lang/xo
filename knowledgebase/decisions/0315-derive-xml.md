@@ -101,6 +101,40 @@ is the question for the owner.
     SqlRow ignores it as before. A `json` string's options replace the
     `as` string's for Json.
 
+- Implementation notes, phase 2 (2026-10-21, Addendum 1 built):
+  - **Where.** check/derive.xo expands in `parse_into` (load.xo
+    add_derived_file): a file `PATH#derive` joins the module with the
+    user's imports copied and `use std/xml`, `use std/xmlcodec`. Each line
+    has the span of its field (Checker.gen_spans), and `report` maps a
+    diagnostic there to the field with a note that it is generated.
+    Naming (XO0101), unused imports, and warnings skip generated files.
+  - **Call rewrite.** `xml.encode_value[T]` and `xml.decode[T]` are
+    recorded in call_func and rewritten at the end of the check
+    (`rewrite_xml_calls`) to `xml_encode__T` and `xml_decode__T`; no
+    backend (ssa, gen, wasm) knows about derive Xml. XO0427 is a type
+    parameter. The call's own key and file are kept, since the check's
+    current file has moved on by then.
+  - **Decode order.** Attributes first, then the elements in document
+    order (`xmlcodec.events`), as Go reads them, so the first value error
+    is Go's; a nested struct merges repeated elements (`xml_merge__T`).
+    The document is parsed whole first: a syntax error anywhere wins.
+  - **Text.** Text is written as `Node.Raw` with Go's EscapeText
+    (newline as `&#xA;`), which the Encoder's CharData does not do; a
+    float is Go's shortest `g` (Xo's text without the `.0`).
+  - **Tools.** `xo symbols`, `def`, `refs`, and the edit commands skip
+    generated files (SrcFile.generated); `xo fmt` never sees them, since
+    it formats the parse.
+  - **std/xmlcodec** is a new std module written once (decision 0312:
+    std/native/xmlcodec.xo, listed in std/go_compiled.txt, no std/rt
+    file); only generated code calls it.
+  - **Speed** (100,000 documents, one run each, arm64 Mac): Go's
+    encoding/xml Unmarshal 1,141 ms and Marshal 357 ms; native derive Xml
+    decode 1,352 ms (1.2x) and encode 314 ms (0.9x); the Go backend
+    compiled from the same Xo, 1,887 ms and 736 ms. Output byte counts
+    match.
+  - **Not yet.** `innerxml`, `comment`, `any`, namespaces in tags,
+    XMLName, Time, Map, and Bytes fields.
+
 - Programs read and write SOAP, RSS, and S3 bodies as typed structs.
 - Compiler work goes where Json's does:
   - the checker parses the second wire string (decl.xo wire_keys);

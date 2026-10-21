@@ -1261,6 +1261,7 @@ fn (var p: Printer) encode_element(e: xml.Element) -> () ! Str {
     match n {
       xml.Node.Elem(c) => p.encode_element(c)?
       xml.Node.Text(s) => p.write(escape_text(s, false))
+      xml.Node.Raw(s) => p.write(s)
       xml.Node.Comment(s) => {
         if s.contains("-->") {
           return Err("xml: EncodeToken of Comment containing --> marker")

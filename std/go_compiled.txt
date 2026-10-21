@@ -4,3 +4,4 @@
 # its std test has a Go-generated corpus (scripts/stdcorpus).
 path
 uuid
+xmlcodec

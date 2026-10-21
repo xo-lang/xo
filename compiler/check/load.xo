@@ -276,6 +276,13 @@ pub struct Checker {
   pub result_vars: Map[Int, Int] = {}
   pub inv_vars: Map[Int, List[Int]] = {}
   seen: Map[Str, Bool] = {}
+  /// A generated file (derive.xo), by path: the file whose derives it
+  /// expands and the span each of its lines is reported at.
+  gen_origin: Map[Str, Str] = {}
+  /// The calls of xml.encode_value and xml.decode, rewritten to the
+  /// generated function of their type (derive.xo rewrite_xml_calls).
+  xml_calls: List[(Int, Expr, Int, Int)] = []
+  gen_spans: Map[Str, List[Span]] = {}
   /// Sources that replace the files on disk, by absolute path
   /// (check.CheckOverlay: `xo fix` checks rewritten sources unwritten).
   pub overlay: Map[Str, Bytes] = {}
@@ -739,6 +746,26 @@ fn (var c: Checker) parse_into(m: Int, path: Str, src: Bytes, sig: Bool) {
   let f = c.files.len()
   c.files.push(SrcFile{path: path, module: m, ast: r.file, iface: r.iface, is_test: path.ends_with("_test.xo"), src: src})
   c.mods[m].files.push(f)
+  if !c.mods[m].is_std && !sig {
+    c.add_derived_file(m, path, f, r)
+  }
+}
+
+/// The expansion of the `derive Xml` structs of file f (derive.xo) as a
+/// file of module m, next to it.
+fn (var c: Checker) add_derived_file(m: Int, path: Str, f: Int, r: parser.ParseResult) {
+  let (src, spans) = c.expand_derives(f, r.file)
+  if src.is_empty() {
+    return
+  }
+  let gpath = "${path}#derive"
+  let g = parser.parse_file(gpath.bytes(), src.bytes(), false)
+  c.gen_origin[gpath] = path
+  c.gen_spans[gpath] = spans
+  c.diags = c.diags + parse_diags(gpath, g.diags)
+  let gf = c.files.len()
+  c.files.push(SrcFile{path: gpath, module: m, ast: g.file, iface: "${r.iface}#derive", generated: true, src: src.bytes()})
+  c.mods[m].files.push(gf)
 }
 
 /// One parse of a std file kept for the next checker of the process

@@ -1,0 +1,36 @@
+// derive Xml (decision 0315): wire string and field type errors are
+// reported at the field; generated code's own errors are too.
+use std/xml
+
+struct Plain {
+  a: Int
+}
+
+struct Bad {
+  a xml "a,bogus": Int // ERROR XO0426 "unknown option `bogus`"
+  b xml "x>y,attr": Str // ERROR XO0426 "an attribute cannot have a path"
+  c xml ",chardata": Int // ERROR XO0426 "`chardata` needs a Str field"
+  d xml ",attr": List[Str] // ERROR XO0426 "`attr` needs a Str, Int, Float, or Bool field"
+  e xml ",innerxml": Str // ERROR XO0426 "not supported by `derive Xml` yet"
+} derive Xml
+
+struct BadType {
+  m: Map[Str, Int] // ERROR XO0425 "field `m` is another type"
+} derive Xml
+
+struct Generic[T] { // ERROR XO0425 "without type parameters"
+  v: Int
+} derive Xml
+
+struct NotDerived {
+  inner: Plain // ERROR XO0425 "does not derive Xml"
+} derive Xml
+
+fn use_it(os: Os) {
+  let p = Plain{a: 1}
+  os.stdio.println(xml.encode_value(p).ok() ?? "") // ERROR XO0404 "does not implement `Xml`"
+}
+
+fn generic[T: Xml](text: Str) -> T ! xml.XmlErr {
+  xml.decode[T](text) // ERROR XO0427 "needs a concrete struct that derives Xml"
+}

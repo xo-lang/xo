@@ -1,0 +1,190 @@
+// std/xmlcodec on every backend (decisions 0315, 0312): the helpers of
+// the code `derive Xml` generates, following Go's encoding/xml marshal.go
+// (printer parent stack, marshalSimple) and read.go (unmarshal's
+// character data, copyValue; go1.26.1).
+use std/xml
+use std/xmlcodec
+
+fn fail(msg: Str) -> xml.XmlErr { xml.XmlErr{line: 0, msg: msg} }
+
+fn nm(local: Str) -> xml.Name { xml.Name{space: "", local: local} }
+
+fn open_path(parents: List[Str]) -> xmlcodec.Piece { xmlcodec.Piece{parents: parents, kind: 0} }
+
+fn leaf(parents: List[Str], name: Str, text: Str) -> xmlcodec.Piece {
+  xmlcodec.Piece{parents: parents, kind: 1, name: name, text: xml.escape(text)}
+}
+
+fn child(parents: List[Str], name: Str, el: xml.Element) -> xmlcodec.Piece {
+  xmlcodec.Piece{parents: parents, kind: 2, name: name, el: Some(el)}
+}
+
+fn chardata(text: Str) -> xmlcodec.Piece { xmlcodec.Piece{parents: [], kind: 3, text: xml.escape(text)} }
+
+fn comment(text: Str) -> xmlcodec.Piece { xmlcodec.Piece{parents: [], kind: 4, text: text} }
+
+fn attr(name: Str, value: Str) -> xml.Attr { xml.Attr{name: nm(name), value: value} }
+
+/// Closes the innermost open parent into the frame below it.
+fn close_top(var names: List[Str], var kids: List[List[xml.Node]]) {
+  let top = kids.pop() ?? []
+  let n = names.pop() ?? ""
+  let e = xml.Element{name: nm(n), attrs: [], children: top}
+  let last = kids.len() - 1
+  kids[last].push(xml.Node.Elem(e))
+}
+
+fn build(name: Str, attrs: List[xml.Attr], pieces: List[xmlcodec.Piece]) -> xml.Element {
+  var names: List[Str] = []
+  var kids: List[List[xml.Node]] = [[]]
+  for p in pieces {
+    if p.kind == 3 {
+      let last = kids.len() - 1
+      kids[last].push(xml.Node.Raw(p.text))
+      continue
+    }
+    if p.kind == 4 {
+      let last = kids.len() - 1
+      kids[last].push(xml.Node.Comment(p.text))
+      continue
+    }
+    var keep = 0
+    while keep < p.parents.len() && keep < names.len() && p.parents[keep] == names[keep] {
+      keep += 1
+    }
+    while names.len() > keep {
+      close_top(names, kids)
+    }
+    for i in keep..p.parents.len() {
+      names.push(p.parents[i])
+      kids.push([])
+    }
+    let last = kids.len() - 1
+    if p.kind == 1 {
+      kids[last].push(xml.Node.Elem(xml.Element{name: nm(p.name), attrs: [], children: [xml.Node.Raw(p.text)]}))
+    } else if p.kind == 2 {
+      if let Some(e) = p.el {
+        kids[last].push(xml.Node.Elem(xml.Element{name: nm(p.name), attrs: e.attrs, children: e.children}))
+      }
+    }
+  }
+  while names.len() > 0 {
+    close_top(names, kids)
+  }
+  xml.Element{name: nm(name), attrs: attrs, children: kids[0]}
+}
+
+fn parse_root(text: Str) -> xml.Element ! xml.XmlErr {
+  match xml.parse(text) {
+    Ok(e) => e
+    Err(x) => if x.msg == "xml: no root element" { Err(fail("EOF")) } else { Err(x) }
+  }
+}
+
+fn attr_of(e: xml.Element, name: Str) -> Str? {
+  for a in e.attrs {
+    if a.name.local == name {
+      return Some(a.value)
+    }
+  }
+  None
+}
+
+fn events(e: xml.Element, paths: List[List[Str]]) -> List[xmlcodec.Event] {
+  var out: List[xmlcodec.Event] = []
+  walk(e, [], paths, out)
+  out
+}
+
+/// The elements below el, in document order, whose path from the struct's
+/// element is one of paths (Go reads the document once, in order).
+fn walk(el: xml.Element, prefix: List[Str], paths: List[List[Str]], var out: List[xmlcodec.Event]) {
+  for n in el.children {
+    match n {
+      Elem(c) => {
+        let here = prefix + [c.name.local]
+        var deeper = false
+        for (i, p) in paths.indexed() {
+          if p == here {
+            out.push(xmlcodec.Event{field: i, el: c})
+          } else if p.len() > here.len() && p[0..here.len()] == here {
+            deeper = true
+          }
+        }
+        if deeper {
+          walk(c, here, paths, out)
+        }
+      }
+      Text(..) | Raw(..) | Comment(..) | ProcInst(..) | Directive(..) => {}
+    }
+  }
+}
+
+fn direct_text(e: xml.Element) -> Str {
+  var b = StrBuilder.new()
+  for n in e.children {
+    match n {
+      Text(s) => b.write(s)
+      Elem(..) | Raw(..) | Comment(..) | ProcInst(..) | Directive(..) => {}
+    }
+  }
+  b.freeze()
+}
+
+fn float_text(f: Float) -> Str {
+  let s = "${f}"
+  if s.ends_with(".0") { s[0..s.len() - 2] } else { s }
+}
+
+fn digits_only(s: Str) -> Bool {
+  var body = s
+  if body.starts_with("-") || body.starts_with("+") {
+    body = body[1..]
+  }
+  if body.is_empty() {
+    return false
+  }
+  for r in body.runes() {
+    if r < '0' || r > '9' {
+      return false
+    }
+  }
+  true
+}
+
+fn int_of(s0: Str) -> Int ! xml.XmlErr {
+  let s = s0.trim()
+  if s.is_empty() {
+    return 0
+  }
+  match Int.parse(s) {
+    Some(n) => n
+    None => {
+      let why = if digits_only(s) { "value out of range" } else { "invalid syntax" }
+      Err(fail("strconv.ParseInt: parsing ${s.quote()}: ${why}"))
+    }
+  }
+}
+
+fn float_of(s0: Str) -> Float ! xml.XmlErr {
+  let s = s0.trim()
+  if s.is_empty() {
+    return 0.0
+  }
+  match Float.parse(s) {
+    Some(f) => f
+    None => Err(fail("strconv.ParseFloat: parsing ${s.quote()}: invalid syntax"))
+  }
+}
+
+fn bool_of(s0: Str) -> Bool ! xml.XmlErr {
+  let s = s0.trim()
+  if s.is_empty() {
+    return false
+  }
+  match s {
+    "1" | "t" | "T" | "TRUE" | "true" | "True" => true
+    "0" | "f" | "F" | "FALSE" | "false" | "False" => false
+    _ => Err(fail("strconv.ParseBool: parsing ${s.quote()}: invalid syntax"))
+  }
+}

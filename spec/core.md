@@ -682,7 +682,7 @@ pub struct User {
     sql "note": Str?` names each format alone.
   - A `json` string takes `omitempty`. A `sql` string takes no options
     (`XO0422` for one). An `xml` string is Go's tag text, for `derive Xml`
-    (decision 0315, stage 2).
+    (decision 0315; below, 2.9).
   - A format given twice on a field is `XO0423`. A string for a format the
     struct does not derive is `XO0424`.
 - `derive Json(case: camel)` (also `snake`, `pascal`, `kebab`, and the
@@ -920,6 +920,26 @@ pub struct User { ... } derive Display, Ord, Json, OpenApi
 - `SqlRow` (structs only) generates a decoder from a std/sql row: each field
   is read from the column of the same name, or of its wire name or
   `case:` rule (2.2; `spec/std.md` 10.4).
+
+- `Xml` (structs only, no type parameters) gives the struct Go's
+  encoding/xml Marshal and Unmarshal through `xml.encode_value(v,
+  indent)` and `xml.decode[T](text)` (`spec/std.md` 34, decision 0315).
+  - A field's tag is its `xml` string, else its `as` string, else its
+    name, in Go's tag text: `name`, `name,attr`, `,chardata`, `a>b>c`,
+    `,omitempty`, and `-`. `innerxml` and `comment` are not yet
+    supported (`XO0426`).
+  - Field types are Str, Int, Float, Bool, a struct that derives Xml,
+    each alone, as an Option, or in a List (`XO0425` for another type, a
+    struct with type parameters, or a struct that does not derive Xml).
+  - The expansion is ordinary Xo: the checker parses generated functions
+    (`xml_tree__T`, `xml_zero__T`, `xml_merge__T`, `xml_from_tree__T`,
+    `xml_encode__T`, `xml_decode__T`) into the module as a file of its
+    own, so every backend compiles the same code. A diagnostic in them is
+    reported at the field. They are not declarations of the program:
+    `xo symbols`, `def`, `refs`, `doc`, and the formatter leave them out.
+  - A call of `xml.encode_value` or `xml.decode` is rewritten to the
+    generated function of its type; a type parameter or a struct that
+    does not derive Xml is `XO0427` or `XO0404`.
 
 ### 2.10 Implicit conversions
 
@@ -2733,6 +2753,9 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0422` | error | checker | unknown wire name option; the only one is `omitempty` (core 2.2, decision 0309) |
 | `XO0423` | error | checker | a field has two wire strings for one format (`json "a" json "b"`) (core 2.2, decision 0315) |
 | `XO0424` | error | checker | a format's wire string (`json`, `sql`, `xml`) on a struct that does not derive that format (core 2.2, decision 0315) |
+| `XO0425` | error | checker | a field type, a type parameter list, or a nested struct that `derive Xml` cannot map (core 2.9, decision 0315) |
+| `XO0426` | error | checker | a bad `xml` wire string: an unknown or unsupported option, `attr` with a path, `chardata` or `attr` on a type that cannot hold it (core 2.9, decision 0315) |
+| `XO0427` | error | checker | `xml.encode_value` or `xml.decode` of a type parameter instead of a concrete struct (core 2.9, decision 0315) |
 | `XO0501` | error | checker | var method called on a non var binding (core 3.4) |
 | `XO0502` | error | checker | assignment to an immutable binding or to a captured variable (core 5.2, 3.3) |
 | `XO0503` | error | checker | one variable or overlapping places passed to two `var` parameters of one call (core 5.2, decision 0111) |

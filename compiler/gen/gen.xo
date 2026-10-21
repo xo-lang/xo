@@ -1036,7 +1036,7 @@ fn (var g: Gen) named_type(t: Int) -> Str {
     if n == "Debug" {
       return r + "IDebug"
     }
-    if n is "Eq" | "Hash" | "Ord" | "Json" | "OpenApi" | "Proto" | "SqlRow" {
+    if n is "Eq" | "Hash" | "Ord" | "Json" | "OpenApi" | "Proto" | "SqlRow" | "Xml" {
       return "any"
     }
   }

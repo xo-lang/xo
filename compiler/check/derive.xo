@@ -1,0 +1,562 @@
+// derive expansion (decision 0315, addendum 1): `derive Xml` becomes
+// ordinary Xo functions, parsed into the module as a file of their own.
+// A struct T gets
+//   xml_tree__T(v: T) -> xml.Element        the encoder
+//   xml_from_tree__T(e: xml.Element) -> T   the decoder
+//   xml_encode__T(v: T, indent: Str = "")   what xml.encode_value[T] becomes
+//   xml_decode__T(text: Str) -> T           what xml.decode[T] becomes
+// built from std/xmlcodec's pieces, with Go's encoding/xml field rules
+// (the `xml` wire string holds Go's tag text). Each emitted line carries
+// the span of the field it came from, so a diagnostic in generated code
+// is reported at the user's field (Checker.report).
+
+use github.com/xo-lang/xo/compiler/parser
+
+/// A field's role and name from its xml tag (marshal.go structFieldInfo).
+struct XmlTag {
+  /// the element or attribute name
+  name: Str
+  /// the `a>b` parents of the name
+  parents: List[Str]
+  attr: Bool = false
+  chardata: Bool = false
+  omitempty: Bool = false
+  skip: Bool = false
+  /// the wire string had an error (reported)
+  bad: Bool = false
+}
+
+/// The shape of a field's type: one value, an Option, or a List of a
+/// scalar (Str, Int, Float, Bool) or of a struct that derives Xml.
+struct XmlShape {
+  /// 0 one value, 1 Option, 2 List
+  coll: Int
+  /// Str, Int, Float, Bool, or "" for a struct
+  scalar: Str
+  /// the struct's module qualifier with its dot, `other.`, or ""
+  qual: Str
+  /// the struct's name
+  sname: Str
+}
+
+/// Source text under construction: one span per line.
+struct Emit {
+  lines: List[Str] = []
+  spans: List[Span] = []
+}
+
+fn (var em: Emit) ln(s: Str, sp: Span) {
+  em.lines.push(s)
+  em.spans.push(sp)
+}
+
+fn is_scalar_name(n: Str) -> Bool {
+  n is "Str" | "Int" | "Float" | "Bool"
+}
+
+/// The shape of t, or None when derive Xml does not map it.
+fn xml_shape(t: parser.Type) -> XmlShape? {
+  match t {
+    OptionalType(_, elem) => match xml_base(elem) {
+      Some(s) => Some(XmlShape{coll: 1, scalar: s.scalar, qual: s.qual, sname: s.sname})
+      None => None
+    }
+    NamedType(_, path, args) => {
+      if path.len() == 1 && args.len() == 1 && (text(path[0].name) is "Option" | "List") {
+        return match xml_base(args[0]) {
+          Some(s) => Some(XmlShape{coll: if text(path[0].name) == "Option" { 1 } else { 2 }, scalar: s.scalar, qual: s.qual, sname: s.sname})
+          None => None
+        }
+      }
+      xml_base(t)
+    }
+    TupleType(..) | FnType(..) | BadType(..) => None
+  }
+}
+
+fn xml_base(t: parser.Type) -> XmlShape? {
+  match t {
+    NamedType(_, path, args) => {
+      if !args.is_empty() || path.is_empty() || path.len() > 2 {
+        return None
+      }
+      let n = text(path[path.len() - 1].name)
+      if path.len() == 1 && is_scalar_name(n) {
+        return Some(XmlShape{coll: 0, scalar: n, qual: "", sname: ""})
+      }
+      if path.len() == 1 && (n is "Option" | "List" | "Map" | "Set" | "Time" | "Bytes" | "Duration") {
+        return None
+      }
+      let q = if path.len() == 2 { "${text(path[0].name)}." } else { "" }
+      Some(XmlShape{coll: 0, scalar: "", qual: q, sname: n})
+    }
+    OptionalType(..) | TupleType(..) | FnType(..) | BadType(..) => None
+  }
+}
+
+/// The source text of the shape's type.
+fn shape_type(s: XmlShape) -> Str {
+  let base = if s.scalar.is_empty() { "${s.qual}${s.sname}" } else { s.scalar }
+  if s.coll == 1 {
+    "${base}?"
+  } else if s.coll == 2 {
+    "List[${base}]"
+  } else {
+    base
+  }
+}
+
+/// The text of a value x of the shape's scalar for an attribute or leaf.
+fn scalar_text(scalar: Str, x: Str) -> Str {
+  if scalar == "Str" {
+    x
+  } else if scalar == "Float" {
+    "xmlcodec.float_text(" + x + ")"
+  } else { "\"$" + "{" + x + "}\"" }
+}
+
+/// The value read from the text expression s.
+fn scalar_read(scalar: Str, s: Str) -> Str {
+  match scalar {
+    "Int" => "xmlcodec.int_of(${s})?"
+    "Float" => "xmlcodec.float_of(${s})?"
+    "Bool" => "xmlcodec.bool_of(${s})?"
+    _ => s
+  }
+}
+
+/// The zero value of the shape (Go leaves an absent field zero).
+fn shape_zero(s: XmlShape) -> Str {
+  if s.coll == 1 {
+    return "None"
+  }
+  if s.coll == 2 {
+    return "[]"
+  }
+  match s.scalar {
+    "Str" => "\"\""
+    "Int" => "0"
+    "Float" => "0.0"
+    "Bool" => "false"
+    _ => "${s.qual}xml_zero__${s.sname}()"
+  }
+}
+
+/// The condition that a value x of the shape is not empty (omitempty).
+fn nonempty(s: XmlShape, x: Str) -> Str {
+  if s.coll == 2 {
+    return "!${x}.is_empty()"
+  }
+  if s.coll == 1 {
+    return "${x} != None"
+  }
+  match s.scalar {
+    "Str" => "!${x}.is_empty()"
+    "Int" => "${x} != 0"
+    "Float" => "${x} != 0.0"
+    "Bool" => x
+    _ => "true"
+  }
+}
+
+fn quote_str(s: Str) -> Str {
+  s.quote()
+}
+
+fn path_list(parents: List[Str]) -> Str {
+  var parts: List[Str] = []
+  for p in parents {
+    parts.push(quote_str(p))
+  }
+  "[${parts.join(", ")}]"
+}
+
+/// The field's xml tag: the `xml` wire string, else the shared `as`
+/// string, else the field's name; Go's tag grammar (`ID,attr`, `a>b>c`,
+/// `-`). Errors are XO0426 at the field.
+fn (var c: Checker) xml_tag(f: parser.Field, shape: XmlShape, file: Int) -> XmlTag {
+  var wire: Str? = None
+  for fw in f.formats {
+    if fw.format == b"xml" {
+      wire = Some(text(fw.wire))
+    }
+  }
+  if wire == None {
+    if let Some(w) = f.wire {
+      wire = Some(text(w))
+    }
+  }
+  let sp = f.wire_span ?? f.name.span
+  let raw = wire ?? text(f.name.name)
+  var tag = XmlTag{name: "", parents: []}
+  if raw == "-" {
+    tag.skip = true
+    return tag
+  }
+  let parts = raw.split(",")
+  var name = parts[0]
+  if name.is_empty() {
+    name = text(f.name.name)
+  }
+  for i in 1..parts.len() {
+    let o = parts[i]
+    if o == "attr" {
+      tag.attr = true
+    } else if o == "chardata" {
+      tag.chardata = true
+    } else if o == "omitempty" {
+      tag.omitempty = true
+    } else if o is "innerxml" | "comment" | "any" || o.starts_with("any") {
+      tag.bad = true
+      c.error_at(file, "XO0426", sp, "`${o}` in an xml wire string is not supported by `derive Xml` yet (decision 0315); the supported options are attr, chardata, and omitempty")
+    } else {
+      tag.bad = true
+      c.error_at(file, "XO0426", sp, "unknown option `${o}` in the xml wire string `${raw}`; the options are attr, chardata, and omitempty")
+    }
+  }
+  if name.contains(">") {
+    let segs = name.split(">")
+    for s in segs {
+      if s.is_empty() {
+        tag.bad = true
+        c.error_at(file, "XO0426", sp, "an empty name in the path `${name}` of the xml wire string")
+      }
+    }
+    tag.parents = segs[0..segs.len() - 1]
+    name = segs[segs.len() - 1]
+    if tag.attr {
+      tag.bad = true
+      c.error_at(file, "XO0426", sp, "an attribute cannot have a path: `${raw}` has both `attr` and `>`")
+    }
+  }
+  tag.name = name
+  if tag.chardata && (shape.coll != 0 || shape.scalar != "Str") {
+    tag.bad = true
+    c.error_at(file, "XO0426", sp, "`chardata` needs a Str field; `${text(f.name.name)}` has another type")
+  }
+  if tag.attr && (shape.coll == 2 || shape.scalar.is_empty()) {
+    tag.bad = true
+    c.error_at(file, "XO0426", sp, "`attr` needs a Str, Int, Float, or Bool field (or an Option of one); `${text(f.name.name)}` has another type")
+  }
+  if tag.attr && tag.chardata {
+    tag.bad = true
+    c.error_at(file, "XO0426", sp, "`attr` and `chardata` together on one field")
+  }
+  tag
+}
+
+/// The encoder of struct sd.
+fn (var c: Checker) xml_encoder(sd: parser.StructDecl, shapes: List[XmlShape?], tags: List[XmlTag], em: Emit) -> Emit {
+  var e = em
+  let sp = sd.name.span
+  let n = text(sd.name.name)
+  let pub_ = if sd.is_pub { "pub " } else { "" }
+  e.ln("${pub_}fn xml_tree__${n}(v: ${n}) -> xml.Element {", sp)
+  e.ln("  var attrs: List[xml.Attr] = []", sp)
+  e.ln("  var ps: List[xmlcodec.Piece] = []", sp)
+  for (i, f) in sd.fields.indexed() {
+    let shape = match shapes[i] {
+      Some(s) => s
+      None => continue
+    }
+    let tag = tags[i]
+    if tag.skip {
+      continue
+    }
+    let fsp = f.name.span
+    let fname = text(f.name.name)
+    let v = "v.${fname}"
+    if tag.attr {
+      let name = quote_str(tag.name)
+      let guard = if tag.omitempty { "  if ${nonempty(shape, v)} {" } else { "" }
+      if tag.omitempty {
+        e.ln(guard, fsp)
+      }
+      if shape.coll == 1 {
+        e.ln("  if let Some(x) = ${v} { attrs.push(xmlcodec.attr(${name}, ${scalar_text(shape.scalar, "x")})) }", fsp)
+      } else {
+        e.ln("  attrs.push(xmlcodec.attr(${name}, ${scalar_text(shape.scalar, v)}))", fsp)
+      }
+      if tag.omitempty {
+        e.ln("  }", fsp)
+      }
+      continue
+    }
+    if tag.chardata {
+      e.ln("  ps.push(xmlcodec.chardata(${v}))", fsp)
+      continue
+    }
+    let par = path_list(tag.parents)
+    let name = quote_str(tag.name)
+    let open = !tag.parents.is_empty()
+    // one element for x, a scalar's text or a struct's tree
+    var one = ""
+    if shape.scalar.is_empty() {
+      one = "ps.push(xmlcodec.child(${par}, ${name}, ${shape.qual}xml_tree__${shape.sname}(@)))"
+    } else {
+      one = "ps.push(xmlcodec.leaf(${par}, ${name}, ${scalar_text(shape.scalar, "@")}))"
+    }
+    if shape.coll == 1 {
+      // Go opens the parents unless the value is nil
+      let body = one.replace("@", "x")
+      let pre = if open { "ps.push(xmlcodec.open_path(${par})) " } else { "" }
+      e.ln("  if let Some(x) = ${v} { ${pre}${body} }", fsp)
+    } else if shape.coll == 2 {
+      if open {
+        e.ln("  ps.push(xmlcodec.open_path(${par}))", fsp)
+      }
+      e.ln("  for x in ${v} { ${one.replace("@", "x")} }", fsp)
+    } else {
+      if open {
+        e.ln("  ps.push(xmlcodec.open_path(${par}))", fsp)
+      }
+      if tag.omitempty {
+        e.ln("  if ${nonempty(shape, v)} { ${one.replace("@", v)} }", fsp)
+      } else {
+        e.ln("  ${one.replace("@", v)}", fsp)
+      }
+    }
+  }
+  e.ln("  xmlcodec.build(${quote_str(n)}, attrs, ps)", sp)
+  e.ln("}", sp)
+  e.ln("${pub_}fn xml_encode__${n}(v: ${n}, indent: Str = \"\") -> Str ! xml.XmlErr { xml_tree__${n}(v).encode(indent) }", sp)
+  e
+}
+
+/// The decoder of struct sd: the zero value, a merge of an element into
+/// a value (Go's Unmarshal sets the fields an element mentions and keeps
+/// the rest), and the decoders built from them. Attributes are read
+/// first, then the elements in document order, as Go reads them.
+fn (var c: Checker) xml_decoder(sd: parser.StructDecl, shapes: List[XmlShape?], tags: List[XmlTag], em: Emit) -> Emit {
+  var e = em
+  let sp = sd.name.span
+  let n = text(sd.name.name)
+  let pub_ = if sd.is_pub { "pub " } else { "" }
+  var zeros: List[Str] = []
+  for (i, f) in sd.fields.indexed() {
+    let shape = match shapes[i] {
+      Some(s) => s
+      None => continue
+    }
+    zeros.push("${text(f.name.name)}: ${shape_zero(shape)}")
+  }
+  e.ln("${pub_}fn xml_zero__${n}() -> ${n} { ${n}{${zeros.join(", ")}} }", sp)
+  e.ln("${pub_}fn xml_merge__${n}(base: ${n}, e: xml.Element) -> ${n} ! xml.XmlErr {", sp)
+  var attr_lines: List[(Str, Span)] = []
+  var elem_lines: List[(Str, Span)] = []
+  var paths: List[Str] = []
+  for (i, f) in sd.fields.indexed() {
+    let shape = match shapes[i] {
+      Some(s) => s
+      None => continue
+    }
+    let tag = tags[i]
+    let fsp = f.name.span
+    let fname = text(f.name.name)
+    let x = "f_${fname}"
+    if tag.skip {
+      e.ln("  let ${x}: ${shape_type(shape)} = base.${fname}", fsp)
+      continue
+    }
+    if tag.chardata {
+      continue
+    }
+    e.ln("  var ${x}: ${shape_type(shape)} = base.${fname}", fsp)
+    if tag.attr {
+      let val = scalar_read(shape.scalar, "a.value")
+      let set = if shape.coll == 1 { "Some(${val})" } else { val }
+      attr_lines.push(("    if a.name.local == ${quote_str(tag.name)} { ${x} = ${set} }", fsp))
+      continue
+    }
+    let k = paths.len()
+    paths.push(path_list(tag.parents + [tag.name]))
+    var set = ""
+    if shape.scalar.is_empty() {
+      let q = shape.qual
+      if shape.coll == 1 {
+        set = "${x} = Some(${q}xml_merge__${shape.sname}(${x} ?? ${q}xml_zero__${shape.sname}(), c)?)"
+      } else if shape.coll == 2 {
+        set = "${x}.push(${q}xml_from_tree__${shape.sname}(c)?)"
+      } else {
+        set = "${x} = ${q}xml_merge__${shape.sname}(${x}, c)?"
+      }
+    } else {
+      let val = scalar_read(shape.scalar, "xmlcodec.direct_text(c)")
+      if shape.coll == 1 {
+        set = "${x} = Some(${val})"
+      } else if shape.coll == 2 {
+        set = "${x}.push(${val})"
+      } else {
+        set = "${x} = ${val}"
+      }
+    }
+    elem_lines.push(("    if ev.field == ${k} { ${set} }", fsp))
+  }
+  if !attr_lines.is_empty() {
+    e.ln("  for a in e.attrs {", sp)
+    for (l, fsp) in attr_lines {
+      e.ln(l, fsp)
+    }
+    e.ln("  }", sp)
+  }
+  if !elem_lines.is_empty() {
+    e.ln("  for ev in xmlcodec.events(e, [${paths.join(", ")}]) {", sp)
+    e.ln("    let c = ev.el", sp)
+    for (l, fsp) in elem_lines {
+      e.ln(l, fsp)
+    }
+    e.ln("  }", sp)
+  }
+  var inits: List[Str] = []
+  for (i, f) in sd.fields.indexed() {
+    let fname = text(f.name.name)
+    if tags[i].chardata {
+      inits.push("${fname}: xmlcodec.direct_text(e)")
+    } else {
+      inits.push("${fname}: f_${fname}")
+    }
+  }
+  e.ln("  ${n}{${inits.join(", ")}}", sp)
+  e.ln("}", sp)
+  e.ln("${pub_}fn xml_from_tree__${n}(e: xml.Element) -> ${n} ! xml.XmlErr { xml_merge__${n}(xml_zero__${n}(), e) }", sp)
+  e.ln("${pub_}fn xml_decode__${n}(text: Str) -> ${n} ! xml.XmlErr { xml_from_tree__${n}(xmlcodec.parse_root(text)?) }", sp)
+  e
+}
+
+/// The expansion of every `derive Xml` struct of f as one source text,
+/// with the span each line is reported at; "" when there is none.
+fn (var c: Checker) expand_derives(file: Int, f: parser.File) -> (Str, List[Span]) {
+  var em = Emit{}
+  var any = false
+  // the structs of this file that do not derive Xml
+  var plain: Map[Str, Bool] = {}
+  for d in f.decls {
+    if let StructDecl(s) = d {
+      var has = false
+      for id in s.derive {
+        if id.name == b"Xml" {
+          has = true
+        }
+      }
+      if !has {
+        plain[text(s.name.name)] = true
+      }
+    }
+  }
+  for d in f.decls {
+    let sd = match d {
+      StructDecl(s) => s
+      _ => continue
+    }
+    var derived = false
+    for id in sd.derive {
+      if id.name == b"Xml" {
+        derived = true
+      }
+    }
+    if !derived {
+      continue
+    }
+    if !sd.type_params.is_empty() {
+      c.error_at(file, "XO0425", sd.name.span, "`derive Xml` needs a struct without type parameters; `${text(sd.name.name)}` has some")
+      continue
+    }
+    var shapes: List[XmlShape?] = []
+    var tags: List[XmlTag] = []
+    var ok = true
+    for fl in sd.fields {
+      let shape = xml_shape(fl.typ)
+      if shape == None {
+        c.error_at(file, "XO0425", fl.name.span, "`derive Xml` maps a Str, Int, Float, Bool, or a struct that derives Xml, alone, as an Option, or in a List; field `${text(fl.name.name)}` is another type (decision 0315)")
+        ok = false
+      }
+      shapes.push(shape)
+      tags.push(c.xml_tag(fl, shape ?? XmlShape{coll: 0, scalar: "Str", qual: "", sname: ""}, file))
+    }
+    for (i, fl) in sd.fields.indexed() {
+      if tags[i].bad {
+        ok = false
+      }
+      let sh = match shapes[i] {
+        Some(x) => x
+        None => continue
+      }
+      if sh.scalar.is_empty() && sh.qual.is_empty() && plain.contains(sh.sname) {
+        c.error_at(file, "XO0425", fl.name.span, "field `${text(fl.name.name)}` is the struct `${sh.sname}`, which does not derive Xml; add `derive Xml` to it (decision 0315)")
+        ok = false
+      }
+    }
+    if !ok {
+      continue
+    }
+    any = true
+    em = c.xml_encoder(sd, shapes, tags, em)
+    em = c.xml_decoder(sd, shapes, tags, em)
+  }
+  if !any {
+    return ("", [])
+  }
+  var head: List[Str] = []
+  var seen: Map[Str, Bool] = {}
+  head.push("use std/xml")
+  head.push("use std/xmlcodec")
+  seen["std/xml"] = true
+  seen["std/xmlcodec"] = true
+  for u in f.imports {
+    let p = text(u.path)
+    if u.go || u.c || seen.contains(p) {
+      continue
+    }
+    seen[p] = true
+    if let Some(a) = u.alias {
+      head.push("use ${p} as ${text(a.name)}")
+    } else {
+      head.push("use ${p}")
+    }
+  }
+  var spans: List[Span] = []
+  for _ in head {
+    spans.push(no_span())
+  }
+  (head.join("\n") + "\n" + em.lines.join("\n") + "\n", spans + em.spans)
+}
+
+/// Points each call of xml.encode_value[T] and xml.decode[T] at the
+/// function `derive Xml` generated for T (a call of an ordinary function,
+/// so no backend knows about it); XO0427 for a T that is not a struct
+/// deriving Xml, or is a type parameter.
+fn (var c: Checker) rewrite_xml_calls() {
+  for (key, call, fo, file) in c.xml_calls {
+    let ci = match c.call_infos.get(key) {
+      Some(x) => x
+      None => continue
+    }
+    let tp = c.objs[fo].tparams[0]
+    let t = c.resolve(ci.subst.get(tp) ?? c.bad_ty)
+    if c.is_bad(t) {
+      continue
+    }
+    let sp = parser.expr_span(call)
+    // (the call's file is its own: report by the span in the current file
+    // only for a call in the program's main file)
+    let fname = text(c.objs[fo].name)
+    if c.tys[t].kind == TyKind.Named && !c.derives(c.tys[t].obj, "Xml") {
+      // the constraint check reported it (XO0404)
+      continue
+    }
+    if c.tys[t].kind != TyKind.Named {
+      let d = c.error_at(file, "XO0427", sp, "`xml.${fname}` needs a concrete struct that derives Xml; `${c.show(t)}` is not one (a type parameter cannot be used: call it where the type is known)")
+      c.note(d, "call it where the struct is known, or add `derive Xml` to it (decision 0315)")
+      continue
+    }
+    let o = c.tys[t].obj
+    let want = "xml_${if fname == "decode" { "decode" } else { "encode" }}__${text(c.objs[o].name)}"
+    let g = c.mods[c.objs[o].module].members.get(want.bytes()) ?? -1
+    if g < 0 {
+      c.error("XO0427", sp, "DEBUG no generated function ${want}")
+      continue
+    }
+    c.call_infos[key] = CallInfo{fn_obj: g, recv: ci.recv, params: ci.params, subst: {}}
+    c.fn_calls[key] = g
+  }
+}

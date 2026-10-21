@@ -1163,6 +1163,11 @@ fn (var c: Checker) call_func(fo: Int, pre: Subst, targs: List[Int], has_targs: 
   }
   c.fn_calls[c.expr_key(call)] = fo
   c.call_infos[c.expr_key(call)] = CallInfo{fn_obj: fo, recv: recv, subst: sm}
+  if !recv.is_empty() || c.objs[fo].tparams.len() != 1 || !(text(c.objs[fo].name) is "encode_value" | "decode") || c.objs[fo].module < 0 || c.mods[c.objs[fo].module].path != "std/xml" {
+    // not one of std/xml's derive Xml calls
+  } else {
+    c.xml_calls.push((c.expr_key(call), call, fo, c.cur_file))
+  }
   c.check_args(params, call, c.display_name(fo), false, fo, -1, -1)
   // constraints
   for p in c.objs[fo].tparams {
@@ -1186,7 +1191,7 @@ fn (var c: Checker) call_func(fo: Int, pre: Subst, targs: List[Int], has_targs: 
         if cname is "Eq" | "Hash" {
           c.note_incomparable(d, c.incomparable(at))
         }
-        if cname is "Json" | "Ord" | "Display" | "SqlRow" {
+        if cname is "Json" | "Ord" | "Display" | "SqlRow" | "Xml" {
           c.note(d, "add `derive ${cname}` to the type declaration (core 2.9)")
         }
       }

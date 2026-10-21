@@ -273,6 +273,10 @@ pub struct SrcFile {
   pub imports: Map[Bytes, Import] = {}
   /// The name ends in _test.xo.
   pub is_test: Bool = false
+  /// The expansion of the derives of another file (derive.xo): its
+  /// diagnostics are reported at the fields they came from, and it has
+  /// no naming or style findings.
+  pub generated: Bool = false
   /// The source, for the habits that look at it.
   pub src: Bytes = b""
   /// Per declaration: the object it declares (a function, method,

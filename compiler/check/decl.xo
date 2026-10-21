@@ -401,7 +401,7 @@ fn (var c: Checker) wire_keys(sd: parser.StructDecl, fields0: List[FieldInfo], d
       }
     }
   }
-  if any_wire && !derives.contains("Json") && !derives.contains("SqlRow") {
+  if any_wire && !derives.contains("Json") && !derives.contains("SqlRow") && !derives.contains("Xml") {
     for fl in sd.fields {
       if let Some(ws) = fl.wire_span {
         c.warn("XO0414", ws, "the wire name of field `${text(fl.name.name)}` is unused: no derive of `${text(sd.name.name)}` maps fields to keys (`derive Json`, `derive SqlRow`)")
@@ -461,7 +461,7 @@ fn (var c: Checker) derives_of(ids: List[Ident]) -> List[Str] {
   var out: List[Str] = []
   for id in ids {
     if !is_derivable(id.name) {
-      c.unresolved(id.span, "derivable interface", text(id.name), ["Debug", "Display", "Eq", "Hash", "Json", "OpenApi", "Ord", "Proto", "SqlRow"])
+      c.unresolved(id.span, "derivable interface", text(id.name), ["Debug", "Display", "Eq", "Hash", "Json", "OpenApi", "Ord", "Proto", "SqlRow", "Xml"])
       continue
     }
     out.push(text(id.name))

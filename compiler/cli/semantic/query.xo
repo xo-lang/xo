@@ -503,6 +503,10 @@ fn (s: Session) lookup(m: Int, segs: List[Str]) -> List[QDef] {
     return []
   }
   let obj = s.c.objs[o]
+  if obj.decl_file >= 0 && s.c.files[obj.decl_file].generated {
+    // code a derive generates is not a declaration of the program
+    return []
+  }
   if segs.len() == 1 {
     return match obj.kind {
       Func => [s.fn_def(o)]
@@ -846,7 +850,7 @@ pub fn (s: Session) surface(m: Int, all: Bool) -> List[QDef] {
   }
   for pf in files.sort() {
     let f = pf.1
-    if s.c.files[f].is_test {
+    if s.c.files[f].is_test || s.c.files[f].generated {
       continue
     }
     for (i, d) in s.c.files[f].ast.decls.indexed() {

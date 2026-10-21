@@ -1,0 +1,25 @@
+exit 0
+--- stdout
+<Item ID="7"><title>a&lt;b &amp; c</title><price>1e+06</price><ok>true</ok><tags><tag>x</tag><tag>y</tag></tags><note>n&#xA;m</note><author><name>Al</name><age>3</age></author>hi</Item>
+<Item ID="7">
+  <title>a&lt;b &amp; c</title>
+  <price>1e+06</price>
+  <ok>true</ok>
+  <tags>
+    <tag>x</tag>
+    <tag>y</tag>
+  </tags>
+  <note>n&#xA;m</note>
+  <author>
+    <name>Al</name>
+    <age>3</age>
+  </author>hi
+</Item>
+id=7 title=a<b & c price=1e+06 ok=true tags=x,y note=n
+m lang=[] author=Al/3 body="hi"
+id=12 title= price=2.5 ok=false tags=a,b note=none lang=[en] author=Bo/9 body="text"
+error: strconv.ParseInt: parsing "zz": invalid syntax
+error: strconv.ParseBool: parsing "maybe": invalid syntax
+error: XML syntax error on line 1: unexpected EOF
+error: EOF
+--- stderr

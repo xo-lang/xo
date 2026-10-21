@@ -56,6 +56,9 @@ enum Node {
   Comment(s: Str)
   ProcInst(target: Str, inst: Str)
   Directive(s: Str)
+  /// Text `encode` writes as it is, already escaped (what derive Xml
+  /// builds, with Go's EscapeText); `parse` never makes one.
+  Raw(s: Str)
 } derive Eq
 
 /// The document's root element; outside it only whitespace, comments,
@@ -75,3 +78,12 @@ fn (e: Element) text() -> Str
 fn (e: Element) encode(indent: Str = "") -> Str ! XmlErr
 /// Go's EscapeText of s.
 fn escape(s: Str) -> Str
+
+/// Go's xml.MarshalIndent of a struct that derives Xml (indent "" is
+/// Marshal): attributes, character data, `a>b>c` paths, omitempty and `-`
+/// from its `xml` wire strings (decision 0315). The call is compiled as a
+/// call of the function `derive Xml` generates for T.
+fn encode_value[T: Xml](v: T, indent: Str = "") -> Str ! XmlErr
+/// Go's xml.Unmarshal of text into a struct that derives Xml: the root
+/// element's attributes and children by the field names, the rest ignored.
+fn decode[T: Xml](text: Str) -> T ! XmlErr

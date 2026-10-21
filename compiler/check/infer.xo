@@ -295,6 +295,9 @@ pub fn (var c: Checker) implements(t0: Int, iface: Int, sp: Span) -> Bool {
     if n == "SqlRow" {
       return c.is_sql_row(t)
     }
+    if n == "Xml" {
+      return c.is_xml(t)
+    }
     if n is "Display" | "Error" {
       if c.is_display_builtin(t) {
         return true
@@ -696,6 +699,16 @@ fn (c: Checker) is_sql_row(t0: Int) -> Bool {
   match x.kind {
     Named => c.derives(x.obj, "SqlRow")
     Param => c.constraint_is(t, "SqlRow")
+    Tuple | Func | Var | Bad | EffArg => false
+  }
+}
+
+fn (c: Checker) is_xml(t0: Int) -> Bool {
+  let t = c.resolve(t0)
+  let x = c.tys[t]
+  match x.kind {
+    Named => c.derives(x.obj, "Xml")
+    Param => c.constraint_is(t, "Xml")
     Tuple | Func | Var | Bad | EffArg => false
   }
 }

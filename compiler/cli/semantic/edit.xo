@@ -123,7 +123,9 @@ fn (s: EditSession) user_files() -> List[Int] {
       continue
     }
     for f in s.q.c.mods[m].files {
-      out.push(f)
+      if !s.q.c.files[f].generated {
+        out.push(f)
+      }
     }
   }
   out

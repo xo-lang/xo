@@ -1,0 +1,40 @@
+// derive Xml (decision 0315): Go's Marshal and Unmarshal of a struct.
+use std/xml
+
+struct Person {
+  name: Str
+  age: Int
+} derive Xml
+
+struct Item {
+  id xml "ID,attr": Int
+  title: Str
+  price: Float
+  ok: Bool
+  tags xml "tags>tag": List[Str]
+  note xml "note,omitempty": Str?
+  lang xml "lang,attr,omitempty": Str
+  author: Person
+  seen xml "-": Str
+  body xml ",chardata": Str
+} derive Xml
+
+fn show(os: Os, r: Result[Item, xml.XmlErr]) {
+  match r {
+    Ok(b) => os.stdio.println("id=${b.id} title=${b.title} price=${b.price} ok=${b.ok} tags=${b.tags.join(",")} note=${b.note ?? "none"} lang=[${b.lang}] author=${b.author.name}/${b.author.age} body=${b.body.quote()}")
+    Err(e) => os.stdio.println("error: ${e}")
+  }
+}
+
+fn main(os: Os) {
+  let it = Item{id: 7, title: "a<b & c", price: 1000000.0, ok: true, tags: ["x", "y"], note: Some("n\nm"), lang: "", author: Person{name: "Al", age: 3}, seen: "no", body: "hi"}
+  let s = xml.encode_value(it).ok() ?? "error"
+  os.stdio.println(s)
+  os.stdio.println(xml.encode_value(it, "  ").ok() ?? "error")
+  show(os, xml.decode[Item](s))
+  show(os, xml.decode[Item]("<Other ID=\" 12 \" lang=\"en\"><author><name>Bo</name></author><price>2.5</price><tags><tag>a</tag></tags><tags><tag>b</tag></tags><skip/>text<author><age>9</age></author></Other>"))
+  show(os, xml.decode[Item]("<Item ID=\"zz\"></Item>"))
+  show(os, xml.decode[Item]("<Item><ok>maybe</ok></Item>"))
+  show(os, xml.decode[Item]("<Item><price>x</price>"))
+  show(os, xml.decode[Item](""))
+}

@@ -391,7 +391,7 @@ fn (s: Session) user_files() -> List[Int] {
   var out: List[(Str, Int)] = []
   for (p, f) in s.keys {
     let m = c.files[f].module
-    if m >= 0 && !c.mods[m].is_std {
+    if m >= 0 && !c.mods[m].is_std && !c.files[f].generated {
       out.push((p, f))
     }
   }
@@ -664,6 +664,10 @@ fn (var s: Session) agent_refs(os: Os, target: Str) -> J ! Str {
   // a file loaded twice (a runtime file through two modules) is listed once
   var listed: Set[Str] = #{}
   for (f, r) in s.refs_in(tg, in_std) {
+    if s.res[0].c.files[f].generated {
+      // the code a derive generates is not the program's own
+      continue
+    }
     let sp = r.id.span
     let key = "${s.res[0].c.files[f].path}:${sp.start.offset}"
     if listed.contains(key) {
@@ -710,7 +714,7 @@ fn (var s: Session) agent_symbols(os: Os, dir: Str, pub_only: Bool, file: Str, m
       return Err("no module ${module} in the check of ${d} (a std module is std/NAME, a runtime one native/llrt/NAME, a program's its import path)")
     }
     for (_, f) in s.keys {
-      if c.files[f].module == mod_ix && !files.contains(f) && !c.files[f].path.ends_with("_test.xo") {
+      if c.files[f].module == mod_ix && !files.contains(f) && !c.files[f].generated && !c.files[f].path.ends_with("_test.xo") {
         files.push(f)
       }
     }

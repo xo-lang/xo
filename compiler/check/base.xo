@@ -18,7 +18,7 @@ fn is_protected(name: Bytes) -> Bool {
     "Bool" | "Int" | "Int8" | "Int16" | "Int32" | "Int64" | "UInt8" | "UInt16" | "UInt32" | "UInt64" | "Float" | "Float32" => true
     "Rune" | "Str" | "Bytes" | "Duration" | "Time" | "List" | "Map" | "Set" | "Buf" | "Chan" | "Mutex" | "Atomic" => true
     "Secret" | "Option" | "Result" | "Never" | "StrBuilder" | "BytesBuilder" => true
-    "Display" | "Error" | "Debug" | "Eq" | "Hash" | "Ord" | "Json" | "OpenApi" | "Proto" | "SqlRow" => true
+    "Display" | "Error" | "Debug" | "Eq" | "Hash" | "Ord" | "Json" | "OpenApi" | "Proto" | "SqlRow" | "Xml" => true
     "Os" | "Net" | "Fs" | "Clock" | "Rand" | "Env" | "Proc" | "Stdio" => true
     _ => false
   }
@@ -26,7 +26,7 @@ fn is_protected(name: Bytes) -> Bool {
 
 fn is_derivable(name: Bytes) -> Bool {
   let s = name.to_str() ?? ""
-  s is "Display" | "Ord" | "Json" | "OpenApi" | "Proto" | "Debug" | "Eq" | "Hash" | "SqlRow"
+  s is "Display" | "Ord" | "Json" | "OpenApi" | "Proto" | "Debug" | "Eq" | "Hash" | "SqlRow" | "Xml"
 }
 
 /// UpperCamel: an upper case letter, then letters and digits.
@@ -100,6 +100,9 @@ fn (var c: Checker) error_at(f: Int, code: Str, sp: Span, msg: Str) -> Int {
 
 /// A warning in the current file (check.go warnf).
 fn (var c: Checker) warn(code: Str, sp: Span, msg: Str) -> Int {
+  if c.gen_spans.contains(c.path) {
+    return -1
+  }
   let d = c.report(c.path, code, sp, msg)
   if d >= 0 {
     c.diags[d].warning = true
@@ -107,7 +110,19 @@ fn (var c: Checker) warn(code: Str, sp: Span, msg: Str) -> Int {
   d
 }
 
-fn (var c: Checker) report(file: Str, code: Str, sp: Span, msg: Str) -> Int {
+fn (var c: Checker) report(file0: Str, code: Str, sp0: Span, msg0: Str) -> Int {
+  var file = file0
+  var sp = sp0
+  var msg = msg0
+  if let Some(spans) = c.gen_spans.get(file0) {
+    // a diagnostic in generated code is reported at its field (derive.xo)
+    let i = sp0.start.line - 1
+    if i >= 0 && i < spans.len() && spans[i].start.line > 0 {
+      sp = spans[i]
+    }
+    file = c.gen_origin.get(file0) ?? file0
+    msg = "${msg0} (in the code `derive` generates for this field)"
+  }
   let key = "${code}|${file}|${sp.start.line}:${sp.start.col}|${msg}"
   if c.seen.contains(key) {
     return -1

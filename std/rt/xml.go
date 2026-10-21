@@ -214,7 +214,7 @@ func (e Xml_Element) M_text(*Task) string {
 
 func xmlGoName(n Xml_Name) xml.Name { return xml.Name{Space: n.F_space, Local: n.F_local} }
 
-func (e Xml_Element) xmlEncode(enc *xml.Encoder) error {
+func (e Xml_Element) xmlEncode(enc *xml.Encoder, w *bytes.Buffer) error {
 	start := xml.StartElement{Name: xmlGoName(e.F_name)}
 	for _, a := range e.F_attrs.s {
 		start.Attr = append(start.Attr, xml.Attr{Name: xmlGoName(a.F_name), Value: a.F_value})
@@ -226,7 +226,7 @@ func (e Xml_Element) xmlEncode(enc *xml.Encoder) error {
 		var err error
 		switch n.Tag {
 		case 1:
-			err = n.P.(Xml_Node_Elem).F_e.xmlEncode(enc)
+			err = n.P.(Xml_Node_Elem).F_e.xmlEncode(enc, w)
 		case 2:
 			err = enc.EncodeToken(xml.CharData(n.P.(Xml_Node_Text).F_s))
 		case 3:
@@ -234,6 +234,10 @@ func (e Xml_Element) xmlEncode(enc *xml.Encoder) error {
 		case 4:
 			p := n.P.(Xml_Node_ProcInst)
 			err = enc.EncodeToken(xml.ProcInst{Target: p.F_target, Inst: []byte(p.F_inst)})
+		case 6:
+			if err = enc.Flush(); err == nil {
+				w.WriteString(n.P.(Xml_Node_Raw).F_s)
+			}
 		default:
 			err = enc.EncodeToken(xml.Directive(n.P.(Xml_Node_Directive).F_s))
 		}
@@ -250,7 +254,7 @@ func (e Xml_Element) M_encode(_ *Task, indent string) Result[string, Xml_XmlErr]
 	if indent != "" {
 		enc.Indent("", indent)
 	}
-	if err := e.xmlEncode(enc); err != nil {
+	if err := e.xmlEncode(enc, &b); err != nil {
 		return Err[string](xmlErr(err))
 	}
 	if err := enc.Flush(); err != nil {

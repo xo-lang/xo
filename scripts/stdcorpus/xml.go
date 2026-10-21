@@ -226,6 +226,7 @@ func xmlCorpus() string {
 	}
 	o.WriteString("]\n")
 	o.WriteString(xmlTests)
+	xmlDeriveCorpus(&o)
 	return o.String()
 }
 

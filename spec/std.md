@@ -3845,8 +3845,8 @@ fn (x: BigInt) text(base: Int = 10) -> Str;  bytes();  fill_bytes(len);  to_int(
 
 ## 34. std/xml
 
-Status: implemented on every backend (decision 0314, 2026-10-21), stage
-1: tokens and a tree. Go's encoding/xml: the Go backend calls it, and the
+Status: implemented on every backend (decision 0314, 2026-10-21): stage
+1, tokens and a tree, and stage 2, `derive Xml` (decision 0315, below). Go's encoding/xml: the Go backend calls it, and the
 native backends port its Decoder and Encoder (std/native/xml.xo). The
 tokens, trees, encodings, and errors are Go's. Pure.
 
@@ -3858,11 +3858,13 @@ struct XmlErr { line: Int, msg: Str }   // line > 0: displays as Go's "XML synta
 pub fn tokens(text: Str, strict: Bool = true) -> List[Token] ! XmlErr
 pub fn raw_tokens(text: Str) -> List[Token] ! XmlErr
 struct Element { name: Name, attrs: List[Attr], children: List[Node] }
-enum Node { Elem(e), Text(s), Comment(s), ProcInst(target, inst), Directive(s) }
+enum Node { Elem(e), Text(s), Comment(s), ProcInst(target, inst), Directive(s), Raw(s) }   // Raw: written as is by encode (derive Xml's text)
 pub fn parse(text: Str, strict: Bool = true) -> Element ! XmlErr
 fn (e: Element) attr(local) -> Str?;  child(local) -> Element?;  children_named(local);  text() -> Str
 fn (e: Element) encode(indent: Str = "") -> Str ! XmlErr
 pub fn escape(s: Str) -> Str
+pub fn encode_value[T: Xml](v: T, indent: Str = "") -> Str ! XmlErr   // Go's Marshal, MarshalIndent
+pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's Unmarshal
 ```
 
 - `tokens` is Go's Decoder.Token until EOF:
@@ -3884,8 +3886,32 @@ pub fn escape(s: Str) -> Str
   attributes. Go's EncodeToken errors (a comment holding `-->`, an `xml`
   processing instruction after the start) are errors.
 - `escape` is Go's EscapeText.
-- No DTD processing and no external entities, as in Go. Typed decoding
-  into structs (a `derive Xml`) is decision 0314's stage 2.
+- No DTD processing and no external entities, as in Go.
+- `derive Xml` (decision 0315, core 2.9) is Go's Marshal and Unmarshal for
+  a struct:
+  - `encode_value` writes the root element named for the struct, the
+    attributes, then the fields in order (character data where its field
+    is, `a>b>c` parents shared with the previous field, omitempty, `-`
+    skipped), with Go's text for numbers (`strconv` shortest `g`),
+    booleans, and EscapeText for text; `indent` is MarshalIndent's.
+  - `decode` reads attributes first, then the elements in document
+    order, as Unmarshal does: a repeated element overwrites a scalar,
+    adds to a List, and merges into a struct or Option struct; text of
+    numbers and booleans is trimmed and parsed with `strconv`'s errors
+    (`strconv.ParseInt: parsing "x": invalid syntax`); unknown elements
+    and attributes are ignored; a text with no element is `EOF`.
+  - Not as Go: the document is read whole before fields are set, so a
+    syntax error anywhere wins over a value error before it, and text
+    after the root element is a syntax error where Go stops reading;
+    `innerxml`, `comment`, `any`, namespaces in tags, and XMLName are not
+    supported yet.
+  - The generated code calls std/xmlcodec (`Piece`, `build`, `events`,
+    `int_of`, `float_of`, `bool_of`, `float_text`, `parse_root`), written
+    once in std/native/xmlcodec.xo and compiled by every backend
+    (decision 0312). Programs do not call it.
+  - Tests: a Go-generated corpus of 1,500 documents decoded into a
+    struct and re-encoded (compact and indented) in the xml corpus, on
+    go, arm64, and LLVM; errorcheck `derive_xml`.
 - Tests:
   - Golden `xml_basic` on every backend.
   - A Go-generated corpus of 2,000 documents (namespaces, entities,

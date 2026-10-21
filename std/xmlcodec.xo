@@ -1,0 +1,67 @@
+// std/xmlcodec (spec/std.md 34, decisions 0315 and 0312). Declaration
+// file; encoding rules are listed at the top of std/prelude.xo. The
+// helpers the code `derive Xml` generates calls: it builds a struct's
+// element tree from pieces and reads one back, with Go's encoding/xml
+// Marshal and Unmarshal rules (attributes, character data, `a>b>c`
+// paths, text of numbers and booleans). Programs call xml.encode_value
+// and xml.decode, not these. Pure.
+use std/xml
+
+/// One part of a struct's element: its `parents` path (the `a>b` of a
+/// field's name, empty for none), and what to write there.
+struct Piece {
+  parents: List[Str]
+  /// 0 opens the parents only, 1 a leaf element holding `text`, 2 the
+  /// element `el` renamed `name`, 3 character data, 4 a comment
+  kind: Int
+  name: Str = ""
+  text: Str = ""
+  el: xml.Element? = None
+}
+
+/// Opens the path a field's parents name (Go pushes them even for an
+/// empty list).
+fn open_path(parents: List[Str]) -> Piece
+/// A child element `name` holding the text.
+fn leaf(parents: List[Str], name: Str, text: Str) -> Piece
+/// A child element: the tree of a nested struct, named `name`.
+fn child(parents: List[Str], name: Str, el: xml.Element) -> Piece
+/// Character data inside the open element.
+fn chardata(text: Str) -> Piece
+/// A comment inside the open element.
+fn comment(text: Str) -> Piece
+/// An attribute.
+fn attr(name: Str, value: Str) -> xml.Attr
+/// The element `name` with the attributes and, in order, the pieces
+/// (Go's printer: parents shared with the previous field stay open).
+fn build(name: Str, attrs: List[xml.Attr], pieces: List[Piece]) -> xml.Element
+
+/// The root element of text, as Go's Unmarshal finds it: a text with no
+/// element is `EOF`.
+fn parse_root(text: Str) -> xml.Element ! xml.XmlErr
+/// The value of the attribute of that local name.
+fn attr_of(e: xml.Element, name: Str) -> Str?
+/// An element of a field's path (an index of `paths`), found in document
+/// order.
+struct Event {
+  field: Int
+  el: xml.Element
+}
+
+/// The elements below e whose path from e is one of `paths`, in document
+/// order, with the index of the path.
+fn events(e: xml.Element, paths: List[List[Str]]) -> List[Event]
+/// The character data directly inside e, in order (Go's chardata).
+fn direct_text(e: xml.Element) -> Str
+
+/// Go's FormatFloat(f, 'g', -1, 64): Xo's text of a Float without the
+/// ".0" an integral value gets.
+fn float_text(f: Float) -> Str
+
+/// Go's strconv.ParseInt of the text with spaces trimmed (0 when empty):
+/// `strconv.ParseInt: parsing "x": invalid syntax` or `value out of range`.
+fn int_of(s: Str) -> Int ! xml.XmlErr
+/// Go's strconv.ParseFloat (0 when empty).
+fn float_of(s: Str) -> Float ! xml.XmlErr
+/// Go's strconv.ParseBool (false when empty).
+fn bool_of(s: Str) -> Bool ! xml.XmlErr
