@@ -1,5 +1,18 @@
 # std/mime changes
 
+## 2026-10-21: perf: token characters from a table
+
+- Kind: perf
+- Commit: (filled in after the push)
+- Found by: XO_PROF=cpu (is_tspecial's fifteen comparisons per byte were 23% of parse_media_type)
+- Go reference: mime/grammar.go isTokenChar (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/mime (go, arm64, LLVM)
+
+`is_token_char` reads a 256 byte table instead of comparing against the
+fifteen tspecials. 200,000 parses of a media type with three parameters,
+median of 5, native arm64: 105 ms to 87 ms (Go's package 54 ms). Results are
+the same.
+
 ## 2026-10-21: fix: detect_content_type finds MP4 on the Go backend
 
 - Kind: fix
