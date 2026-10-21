@@ -1244,18 +1244,23 @@ fn (var b: Builder) foreign_value(e: Expr, f: Int, t: Int) -> Int {
       return b.variant(t, name, [])
     }
   }
-  // an empty collection, `[]`, `{}`, or `#{}`: the zero value of t (an
+  // an empty list `[]` with no recorded type: the empty list of t (an
   // interface method's default, as Proc.cmd's `args: List[Str] = []`, is
-  // not checked as a body either, so its literal has no recorded type;
-  // decision 0307's calls on a user value reach it)
-  let empty = match e {
-    ListLit(elems: es, ..) => es.is_empty()
-    MapLit(entries: es, ..) => es.is_empty()
-    SetLit(elems: es, ..) => es.is_empty()
-    _ => false
-  }
-  if empty {
-    return b.zero(t, [])
+  // not checked as a body, so its literal has no type; decision 0307's
+  // calls on a user value reach it). Only then: a literal with a type
+  // lowers as always (a zero value for every empty `{}` default, std's
+  // http headers, broke the arm64 inline verify of http_server,
+  // 2026-10-21)
+  if let ListLit(elems: es, ..) = e {
+    if es.is_empty() && b.tkind(t) == Kind.List {
+      let saved = b.s.file
+      b.s.file = f
+      let typed = b.tkind(b.type_of(e)) == Kind.List || b.tkind(b.nat_of(e)) == Kind.List
+      b.s.file = saved
+      if !typed {
+        return b.rt("rl_empty", t, [])
+      }
+    }
   }
   let saved = b.s.file
   b.s.file = f
