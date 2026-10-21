@@ -1,0 +1,46 @@
+// dfs_loops finds natural loops only: a retreating edge into an
+// irreducible region (two entries into one cycle) gives none, since no
+// block is a preheader every path into its body takes (2026-10-21:
+// hoist_consts hoisted into such a block, flate.InStream.push).
+
+use github.com/xo-lang/xo/compiler/ssa
+
+/// A function of blocks with only terminators: succ[b] the targets of
+/// block b (a jump with one, a conditional branch with two, a return
+/// with none).
+fn cfg(succ: List[List[Int]]) -> G {
+  var g = G{m: ssa.Module{}, os: "darwin"}
+  for (b, ts) in succ.indexed() {
+    let k = if ts.is_empty() { K_RET } else if ts.len() == 1 { K_JUMP } else { K_CONDBR }
+    g.blocks.push(MBlock{id: b, insts: [Inst{kind: k, targets: ts}]})
+  }
+  g
+}
+
+fn loop_heads(g: G) -> List[Int] {
+  var all: List[Int] = []
+  for b in 0..g.blocks.len() {
+    all.push(b)
+  }
+  var out: List[Int] = []
+  for (h, _) in g.dfs_loops(0, g.mpreds_all(all)) {
+    out.push(h)
+  }
+  out
+}
+
+test "dfs_loops finds a natural loop" {
+  // 0 -> 1 -> 2 -> 1, 2 -> 3
+  expect(loop_heads(cfg([[1], [2], [1, 3], []]))) == [1]
+}
+
+test "dfs_loops gives no loop for a cycle with two entries" {
+  // 0 -> 1 and 0 -> 2, 1 <-> 2, 2 -> 3: neither 1 nor 2 dominates the other
+  expect(loop_heads(cfg([[1, 2], [2], [1, 3], []]))) == []
+}
+
+test "dfs_loops keeps a natural loop around an irreducible region" {
+  // 0 -> 1 (the outer header) -> 2 and 3, 2 <-> 3 (two entries), 3 -> 4
+  // -> 1, 4 -> 5
+  expect(loop_heads(cfg([[1], [2, 3], [3], [2, 4], [1, 5], []]))) == [1]
+}

@@ -1344,7 +1344,8 @@ fn (g: G) mpreds_all(blocks: List[Int]) -> List[List[Int]] {
 }
 
 /// The natural loops of the back edges a depth first search from b0
-/// finds, in the order found: each its header and body (hoistConsts).
+/// finds, in the order found: each its header and body (hoistConsts);
+/// a retreating edge into an irreducible region gives none.
 fn (g: G) dfs_loops(b0: Int, preds: List[List[Int]]) -> List[(Int, List[Bool])] {
   let nb = g.blocks.len()
   var state: List[Int] = []
@@ -1384,7 +1385,17 @@ fn (g: G) dfs_loops(b0: Int, preds: List[List[Int]]) -> List[(Int, List[Bool])] 
           }
         }
       }
-      loops.push((t, body))
+      // a retreating edge whose target does not dominate its source (an
+      // irreducible region: the walk back from b, stopped only at t,
+      // reached the entry) makes no natural loop: a block of that body
+      // runs on a path that never passes t, so t has no preheader every
+      // path through the body takes (2026-10-21: hoist_consts put a % 31
+      // magic number in such a "preheader", and flate.InStream.push read
+      // it on a path that never made it: "reads virtual register 307
+      // before it is written")
+      if t == b0 || !body[b0] {
+        loops.push((t, body))
+      }
     }
   }
   loops
