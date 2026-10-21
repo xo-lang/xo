@@ -365,3 +365,37 @@ test "a shard's share of the cap does not overflow at real sizes" {
   expect(share_of(5, 10, 0)) == 5
   expect(share_of(GB * 1000, GB * 16, GB * 2000) == GB * 8) == true
 }
+
+/// The bytes of the files below dir, as du counts them.
+fn du(os: testing.TestOs, dir: Str) -> Int {
+  var n = 0
+  for fi in os.fs.walk(dir).or_fault("walk ${dir}") {
+    if !fi.is_dir && fi.path.trim_prefix("${dir}/").contains("/") {
+      n += fi.size
+    }
+  }
+  n
+}
+
+test "a whole walk acts on current sizes after shards grew since they were measured" {
+  // two pack shards measured small, then appended to past the cap
+  // (2026-10-21: the ledger said 16 GB of a 49 GB cache)
+  for s in 0..4 {
+    put(os, "c/packs/${s}/seg0", 100)
+  }
+  put(os, "c/prune-stamp", 0)
+  os.clock.advance(3h)
+  let measure = Policy{max_age: 0s, max_bytes: GB, every: 0s, keep: 1m, slice_shards: 4}
+  let _m = run(os.fs, os.clock, "c", measure)
+  for s in 0..4 {
+    for k in 1..5 {
+      put(os, "c/packs/${s}/seg${k}", 1000)
+    }
+  }
+  os.clock.advance(3h)
+  // the detached child's policy: every shard each run
+  let whole = Policy{max_age: 0s, max_bytes: 6000, every: 0s, keep: 1m, walk_budget: 60s}
+  let st = run(os.fs, os.clock, "c", whole)
+  expect(st.bytes <= 6000) == true
+  expect(du(os, "c") <= 6000) == true
+}

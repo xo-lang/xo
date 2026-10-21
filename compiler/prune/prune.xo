@@ -391,15 +391,22 @@ fn run_sliced(fs: Fs, clock: Clock, dir: Str, p: Policy) -> Stats uses (fs.read,
   st.unmeasured = shards.len() - kept_sizes.len()
   let before = total
   let start = clock.now()
+  // a run that walked every shard knows every entry: it evicts the least
+  // recently used across them all (below); a slice evicts each shard to
+  // its share of the cap, scaled by the total the run started from (a
+  // total lowered shard by shard gave later shards larger shares, and a
+  // whole walk left the cache over its cap, 2026-10-21)
+  let whole = walked.len() >= shards.len()
   // the shard a run stopped in at its budget: the next run starts there
   var stopped = ""
+  var olds: List[(Str, Entry)] = []
   for (s, es) in walked {
     if st.partial {
       break
     }
     var size = kept_sizes.get(s) ?? 0
     // the shard's share of the cap: its bytes scaled by cap / total
-    let share = if p.max_bytes > 0 && total > p.max_bytes { share_of(size, p.max_bytes, total) } else { size }
+    let share = if !whole && p.max_bytes > 0 && before > p.max_bytes { share_of(size, p.max_bytes, before) } else { size }
     var rest: List[Entry] = []
     for e in es {
       let idle = clock.since(e.used)
@@ -433,6 +440,28 @@ fn run_sliced(fs: Fs, clock: Clock, dir: Str, p: Policy) -> Stats uses (fs.read,
     }
     total = total - (kept_sizes.get(s) ?? 0) + size
     kept_sizes[s] = size
+    if whole {
+      for e in rest {
+        olds.push((s, e))
+      }
+    }
+  }
+  if whole && p.max_bytes > 0 && total > p.max_bytes && !st.partial {
+    for (s, e) in olds.sort_by(fn(x) { x.1.used.unix_millis() }) {
+      if total <= p.max_bytes || clock.since(e.used) < p.keep {
+        break
+      }
+      if over_budget(clock, start, p, st.removed.len()) {
+        st.partial = true
+        stopped = s
+        break
+      }
+      if remove(fs, clock, e.path, false, p.keep) {
+        st.removed.push(e.path)
+        total -= e.size
+        kept_sizes[s] = (kept_sizes.get(s) ?? 0) - e.size
+      }
+    }
   }
   write_sizes(fs, dir, kept_sizes)
   if !stopped.is_empty() {

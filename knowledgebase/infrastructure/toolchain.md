@@ -3466,7 +3466,7 @@ hours is removed, so a cache can sit above its cap by that much.
 | `<user cache>/xo/build` (not a `$XO_BUILD_DIR`) | each `<hash>` directory | build_dir, at most hourly | `XO_CACHE_MAX_AGE` | `XO_BUILD_DIR_MAX` bytes, else `XO_CACHE_MAX_GB` |
 | `$XO_GOCACHE` (`<user cache>/xo/gocache`) | each file below the top level | after a go build, at most hourly | `XO_CACHE_MAX_AGE` | `XO_GOCACHE_MAX` bytes, else `XO_CACHE_MAX_GB` |
 | `$XO_BIN_CACHE` (unset: `<user cache>/xo/testbin` for `xo test`, off for other builds, decision 0236; `off` turns it off; `run/` holds native `xo test`'s run cache, compiler/xo testcache.xo) | each file below the top level | after a store (a binary or a run entry), at most every 2 minutes | `XO_CACHE_MAX_AGE` | `XO_BIN_CACHE_MAX` bytes, else `XO_CACHE_MAX_GB`, else 4 GiB; entries used within 10 minutes stay (not two hours), marked used at most once a minute (last verified: 2026-10-15) |
-| `<user cache>/xo/backend` (`XO_BACKEND_CACHE_DIR`; fn/, inl/, obj/, rc/, sum/, packs/ capped together) | each file below the top level (a pack segment is one entry), walked a slice of shards at a time (below) | after a store, every minute or once an eighth of the cap was stored since the last prune (`DIR/prune-stored`), in a detached `xo dev prune-backend DIR` | `XO_CACHE_MAX_AGE`, else a week | `XO_BACKEND_CACHE_MAX` bytes, else `XO_CACHE_MAX_GB`, else 16 GiB (8 until 2026-10-21: below the agents' working set, so prunes thrashed); entries used within 2 minutes stay (not two hours), marked used at most once a minute (last verified: 2026-10-16) |
+| `<user cache>/xo/backend` (`XO_BACKEND_CACHE_DIR`; every top level directory, fn/, inl/, obj/, rc/, sum/, fe/, packs/, llobj/ and the rest, capped together) | each file below the top level (a pack segment is one entry), walked a slice of shards at a time (below) | after a store, every minute or once an eighth of the cap was stored since the last prune (`DIR/prune-stored`), in a detached `xo dev prune-backend DIR` | `XO_CACHE_MAX_AGE`, else a week | `XO_BACKEND_CACHE_MAX` bytes, else `XO_CACHE_MAX_GB`, else 16 GiB (8 until 2026-10-21: below the agents' working set, so prunes thrashed); entries used within 2 minutes stay (not two hours), marked used at most once a minute (last verified: 2026-10-16) |
 | `<cache base>/checkout/<key>` (xotool) | each key directory | xotool Ensure, at most hourly | `XO_CACHE_MAX_AGE`, past the newest `XO_CHECKOUT_KEEP` (default 4) | none |
 
 - `XO_CACHE_MAX_AGE`: a Go duration (`6h`, `90m`), default `24h`; `0`
@@ -3495,7 +3495,11 @@ hours is removed, so a cache can sit above its cap by that much.
   evicting the least recently used entries of each walked shard down to
   its share of the cap, and appends a line to `DIR/prune-log` (walk
   time, bytes before and after, removed). The child runs slices until
-  the cache is under the cap, for at most a minute. A run holds
+  the cache is under the cap, for at most a minute; it walks every
+  shard each run (60 s budget) and then evicts the least recently used
+  entries across the whole cache, so it acts on current sizes (300 ms
+  slices and per-shard shares left the cache at 49 GB, and a shard's
+  share overflowed Int, 2026-10-21). A run holds
   `DIR/prune-lock`; one older than 10 minutes was left by a killed run
   and no longer blocks. A new cache directory gets its stamp, not a
   prune (a test's cache is never pruned while it is removed). Packs
