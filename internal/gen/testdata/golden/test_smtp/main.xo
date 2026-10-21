@@ -1,0 +1,153 @@
+// std/smtp (decision 0290) against a fake server on FakeNet's raw
+// connections (decision 0292): the client's lines as Go's net/smtp
+// SendMail sends them (STARTTLS, AUTH PLAIN, MAIL, RCPT, DATA with dot
+// stuffing and CRLF, QUIT), CRAM-MD5 with Go's auth_test vector, a 550
+// reply, a server without STARTTLS, plain text only to loopback, and CR
+// or LF in an address; also natively (cmd/xo TestNoGCTests).
+use std/smtp
+
+struct Fake {
+  ext: List[Str] = ["STARTTLS", "AUTH PLAIN CRAM-MD5", "8BITMIME"]
+  /// RCPT addresses refused with 550
+  refuse: List[Str] = []
+  /// sent after AUTH CRAM-MD5 (base64 of the challenge)
+  challenge: Str = ""
+}
+
+/// Serves one session on l: the client's lines, and the DATA payload
+/// after a "== data" line.
+fn serve(l: Listener, f: Fake) -> List[Str] ! NetErr uses net {
+  let c = l.accept()?
+  var seen: List[Str] = []
+  var buf = b""
+  c.write(b"220 mail.test ESMTP\r\n")?
+  var in_data = false
+  var data = ""
+  while true {
+    var i = 0
+    while i < buf.len() && buf[i] != '\n' {
+      i += 1
+    }
+    if i == buf.len() {
+      match c.read(4096)? {
+        Some(b) => {
+          buf = buf + b
+          continue
+        }
+        None => break
+      }
+    }
+    let line = (buf[0..i].to_str() ?? "").trim_suffix("\r")
+    buf = buf[i + 1..]
+    if in_data {
+      if line == "." {
+        in_data = false
+        seen.push("== data")
+        seen.push(data)
+        c.write(b"250 2.0.0 queued\r\n")?
+      } else {
+        data = data + line + "|"
+      }
+      continue
+    }
+    seen.push(line)
+    let reply = if line.starts_with("EHLO") {
+      let lines = ["mail.test"] + f.ext
+      var r = ""
+      for (k, e) in lines.indexed() {
+        r = r + (if k == lines.len() - 1 { "250 " } else { "250-" }) + e + "\r\n"
+      }
+      r
+    } else if line == "STARTTLS" {
+      "220 2.0.0 ready\r\n"
+    } else if line == "AUTH CRAM-MD5" {
+      "334 ${f.challenge}\r\n"
+    } else if line.starts_with("AUTH") || (!f.challenge.is_empty() && seen.len() > 1 && seen[seen.len() - 2] == "AUTH CRAM-MD5") {
+      "235 2.7.0 ok\r\n"
+    } else if line.starts_with("MAIL") {
+      "250 2.1.0 ok\r\n"
+    } else if line.starts_with("RCPT") {
+      if f.refuse.any(fn(a) { line.contains(a) }) { "550 5.1.1 no such user\r\n" } else { "250 2.1.5 ok\r\n" }
+    } else if line == "DATA" {
+      in_data = true
+      "354 go ahead\r\n"
+    } else if line == "QUIT" {
+      "221 2.0.0 bye\r\n"
+    } else {
+      "500 unknown\r\n"
+    }
+    c.write(reply.bytes())?
+    if line == "QUIT" {
+      break
+    }
+  }
+  c.close()
+  seen
+}
+
+test "STARTTLS, AUTH PLAIN, and the lines of SendMail" {
+  let l = os.net.listen("mail.test:587")?
+  let server = os.tasks.spawn(fn() ! NetErr { serve(l, Fake{}) })
+  let msg = b"Subject: hi\n\n.leading dot\nbody\n"
+  smtp.send(os.net, "mail.test:587", "a@x.test", ["b@y.test", "c@y.test"], msg, auth: smtp.Auth.Plain(user: "a", password: Secret.new("pw")))?
+  expect(server.await?) == [
+    "EHLO localhost",
+    "STARTTLS",
+    "EHLO localhost",
+    "AUTH PLAIN AGEAcHc=",
+    "MAIL FROM:<a@x.test> BODY=8BITMIME",
+    "RCPT TO:<b@y.test>",
+    "RCPT TO:<c@y.test>",
+    "DATA",
+    "== data",
+    "Subject: hi||..leading dot|body|",
+    "QUIT",
+  ]
+}
+
+test "CRAM-MD5 answers Go's test vector" {
+  let l = os.net.listen("mail.test:587")?
+  let f = Fake{challenge: "PDEyMzQ1Ni4xMzIyODc2OTE0QHRlc3RzZXJ2ZXI+"}
+  let server = os.tasks.spawn(fn() ! NetErr { serve(l, f) })
+  smtp.send(os.net, "mail.test:587", "a@x.test", ["b@y.test"], b"x\n", auth: smtp.Auth.CramMd5(user: "user", secret: Secret.new("pass")))?
+  let seen = server.await?
+  // base64 of "user 287eb355114cf5c471c26a875f1ca4ae" (net/smtp auth_test)
+  expect(seen[4]) == "dXNlciAyODdlYjM1NTExNGNmNWM0NzFjMjZhODc1ZjFjYTRhZQ=="
+}
+
+test "a refused recipient is the server's reply" {
+  let l = os.net.listen("mail.test:25")?
+  let server = os.tasks.spawn(fn() ! NetErr { serve(l, Fake{refuse: ["nobody@"]}) })
+  match smtp.send(os.net, "mail.test:25", "a@x.test", ["nobody@y.test"], b"x\n") {
+    Ok(_) => expect(false) == true
+    Err(e) => expect(e) == smtp.SmtpErr{code: 550, msg: "5.1.1 no such user"}
+  }
+  l.close()
+  let _ = server.await.ignore_err("the server ends when the listener closes mid session")
+}
+
+test "STARTTLS is required unless Security says otherwise" {
+  let l = os.net.listen("mail.test:25")?
+  let server = os.tasks.spawn(fn() ! NetErr { serve(l, Fake{ext: ["8BITMIME"]}) })
+  match smtp.send(os.net, "mail.test:25", "a@x.test", ["b@y.test"], b"x\n") {
+    Ok(_) => expect(false) == true
+    Err(e) => expect(e.msg) == "smtp: server doesn't support STARTTLS"
+  }
+  l.close()
+  let _ = server.await.ignore_err("the server ends when the listener closes mid session")
+  match smtp.send(os.net, "mail.test:25", "a@x.test", ["b@y.test"], b"x\n", security: smtp.Security.None) {
+    Ok(_) => expect(false) == true
+    Err(e) => expect(e.msg) == "smtp: plain text only to a loopback host (Security.None); use StartTls or Tls"
+  }
+}
+
+test "plain text to localhost, and no CR or LF in an address" {
+  let l = os.net.listen("localhost:2525")?
+  let server = os.tasks.spawn(fn() ! NetErr { serve(l, Fake{ext: []}) })
+  smtp.send(os.net, "localhost:2525", "a@x.test", ["b@y.test"], b"x\r\n", security: smtp.Security.None)?
+  expect(server.await?[0]) == "EHLO localhost"
+  match smtp.send(os.net, "localhost:2525", "a@x.test\r\nRCPT TO:<evil@z>", ["b@y.test"], b"x\n") {
+    Ok(_) => expect(false) == true
+    Err(e) => expect(e.msg) == "smtp: A line must not contain CR or LF"
+  }
+}

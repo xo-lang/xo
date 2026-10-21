@@ -3416,6 +3416,42 @@ fn (p: Prefix) display() -> Str
 - A typical use, the client address behind trusted proxies:
   `trusted.any(fn(p) { p.contains(peer) })`.
 
+## 29. std/smtp
+
+Status: implemented (decision 0290, 2026-10-20) on every backend: Go's
+net/smtp SendMail as one call, on the program's own connection (so
+FakeNet's raw connections serve its tests, decision 0292). Mail messages
+(`read_message`, `parse_date`, `compose` in std/mail) follow.
+
+```
+struct SmtpErr { code: Int, msg: Str } derive Display   // the server's reply, or code 0
+enum Auth { None, Plain(user: Str, password: Secret[Str]), CramMd5(user: Str, secret: Secret[Str]) }
+enum Security { StartTls, Tls, None } derive Display
+
+fn send(net: Net, addr: Str, from: Str, to: List[Str], msg: Bytes,
+        auth: Auth = Auth.None, security: Security = Security.StartTls,
+        roots: Bytes = b"", hello: Str = "localhost") -> () ! SmtpErr uses net.dial
+```
+
+- The steps are SendMail's: the greeting, EHLO (HELO when refused),
+  STARTTLS, AUTH, `MAIL FROM:<from>` (with ` BODY=8BITMIME` and
+  ` SMTPUTF8` when offered), `RCPT TO:<to>` for each, DATA with the
+  message dot stuffed and in CRLF lines, QUIT. A reply with another code
+  than expected is `SmtpErr{code, msg}` with the server's text (a
+  multi-line reply's lines joined by `\n`).
+- `Security.StartTls` (the default) requires the server's STARTTLS
+  (`smtp: server doesn't support STARTTLS` otherwise) and verifies the
+  host name through std/tls (against `roots`, a PEM bundle, when given);
+  `Tls` is TLS from the first byte (port 465); `None` is plain text and
+  is refused unless the host is `localhost` or a loopback address
+  (owner, decision 0290).
+- Go's checks and texts: a CR or LF in `from`, an address, or `hello` is
+  `smtp: A line must not contain CR or LF`; PLAIN over plain text to a
+  host that is not loopback is `unencrypted connection`; AUTH to a server
+  that does not offer it is `smtp: server doesn't support AUTH`.
+- Tests: golden test_smtp (a fake server on FakeNet, every backend),
+  with CRAM-MD5 checked against net/smtp's auth_test vector.
+
 <!-- BEGIN prelude index: generated from std/prelude.xo by `go run ./scripts/stdindex`; do not edit -->
 
 ## Appendix A. Prelude index

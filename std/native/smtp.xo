@@ -1,0 +1,296 @@
+// std/smtp on the native backends (decision 0290): Go's net/smtp
+// SendMail (smtp.go of go1.26: Client.hello, ehlo, StartTLS, Auth, Mail,
+// Rcpt, Data, Quit; auth.go's PlainAuth and CRAMMD5Auth) with
+// net/textproto's reply reader (ReadResponse) and dot writer, ported with
+// Go's checks and texts. STARTTLS is required unless Security says
+// otherwise, and plain text goes only to a loopback host (decision 0290).
+use std/base64
+use std/crypto
+use std/netip
+use std/smtp
+use std/tls
+
+fn fail(code: Int, msg: Str) -> smtp.SmtpErr { smtp.SmtpErr{code: code, msg: msg} }
+
+fn net_fail(e: NetErr) -> smtp.SmtpErr { fail(0, "${e}") }
+
+/// The connection, plain or after STARTTLS (std/sql's Postgres Link).
+enum Link {
+  Plain(c: Conn)
+  Tls(t: tls.TlsConn)
+}
+
+fn (l: Link) read(max: Int) -> Bytes? ! NetErr uses net.dial {
+  match l {
+    Plain(c) => c.read(max)
+    Tls(t) => t.read(max)
+  }
+}
+
+fn (l: Link) write(data: Bytes) -> () ! NetErr uses net.dial {
+  match l {
+    Plain(c) => c.write(data)
+    Tls(t) => t.write(data)
+  }
+}
+
+fn (l: Link) close() {
+  match l {
+    Plain(c) => c.close()
+    Tls(t) => t.close()
+  }
+}
+
+/// A client (smtp.go Client): the connection, the bytes read and not yet
+/// taken, the server's EHLO extensions (upper case keyword to its
+/// parameters), whether the connection is TLS, and the server's name.
+struct Client {
+  link: Link
+  buf: Bytes = b""
+  ext: Map[Str, Str] = {}
+  is_tls: Bool = false
+  host: Str
+}
+
+/// One line of the server, without its CRLF (textproto.Reader.ReadLine).
+fn (var c: Client) line() -> Str ! smtp.SmtpErr uses net.dial {
+  while true {
+    var i = 0
+    while i < c.buf.len() && c.buf[i] != '\n' {
+      i += 1
+    }
+    if i < c.buf.len() {
+      let raw = c.buf[0..i]
+      c.buf = c.buf[i + 1..]
+      let s = raw.to_str() ?? ""
+      return Ok(s.trim_suffix("\r"))
+    }
+    match c.link.read(4096).map_err(net_fail)? {
+      Some(b) => c.buf = c.buf + b
+      None => return Err(fail(0, "EOF"))
+    }
+  }
+  Err(fail(0, "EOF"))
+}
+
+/// A reply (textproto.Reader.ReadResponse): its code and its text, the
+/// lines of a multi-line reply joined by "\n"; an error unless the code
+/// starts with the digits of expect (2: any 2xx, 250: exactly 250, 0:
+/// any).
+fn (var c: Client) reply(expect: Int) -> (Int, Str) ! smtp.SmtpErr uses net.dial {
+  var code = 0
+  var msg = ""
+  var first = true
+  while true {
+    let l = c.line()?
+    let b = l.bytes()
+    if b.len() < 4 || !(b[3] == ' ' || b[3] == '-') {
+      return Err(fail(0, "short response: ${l}"))
+    }
+    let n = Int.parse(l[0..3]) ?? -1
+    if n < 100 || n > 999 {
+      return Err(fail(0, "invalid response code: ${l}"))
+    }
+    if !first && n != code {
+      return Err(fail(0, "status code mismatch: ${l}"))
+    }
+    code = n
+    msg = if first { l[4..] } else { "${msg}\n${l[4..]}" }
+    first = false
+    if b[3] == ' ' {
+      break
+    }
+  }
+  if expect > 0 {
+    let want = "${expect}"
+    if !"${code}".starts_with(want) {
+      return Err(fail(code, msg))
+    }
+  }
+  Ok((code, msg))
+}
+
+/// Sends a command line and reads its reply (Client.cmd).
+fn (var c: Client) cmd(expect: Int, line: Str) -> (Int, Str) ! smtp.SmtpErr uses net.dial {
+  c.link.write("${line}\r\n".bytes()).map_err(net_fail)?
+  c.reply(expect)
+}
+
+/// EHLO, the extensions from its reply (Client.ehlo).
+fn (var c: Client) ehlo(name: Str) -> () ! smtp.SmtpErr uses net.dial {
+  let (_, msg) = c.cmd(250, "EHLO ${name}")?
+  var ext: Map[Str, Str] = {}
+  let lines = msg.split("\n")
+  for l in lines[1..] {
+    match l.find(" ") {
+      Some(i) => ext[l[0..i].to_upper()] = l[i + 1..]
+      None => ext[l.to_upper()] = ""
+    }
+  }
+  c.ext = ext
+  Ok(())
+}
+
+/// EHLO, then HELO when the server refuses it (Client.hello).
+fn (var c: Client) hello(name: Str) -> () ! smtp.SmtpErr uses net.dial {
+  match c.ehlo(name) {
+    Ok(_) => Ok(())
+    Err(_) => {
+      c.ext = {}
+      let _ = c.cmd(250, "HELO ${name}")?
+      Ok(())
+    }
+  }
+}
+
+/// smtp.go validateLine: no CR or LF in a line the client sends.
+fn validate_line(s: Str) -> () ! smtp.SmtpErr {
+  if s.contains("\r") || s.contains("\n") {
+    return Err(fail(0, "smtp: A line must not contain CR or LF"))
+  }
+  Ok(())
+}
+
+/// auth.go isLocalhost, and a loopback IP address (decision 0290's plain
+/// text rule).
+fn is_loopback_host(host: Str) -> Bool {
+  if host == "localhost" {
+    return true
+  }
+  let h = host.trim_prefix("[").trim_suffix("]")
+  match netip.parse_addr(h) {
+    Ok(a) => a.is_loopback()
+    Err(_) => false
+  }
+}
+
+/// The host of `host:port` (net.SplitHostPort's host, brackets removed).
+fn host_of(addr: Str) -> Str {
+  let b = addr.bytes()
+  var i = b.len() - 1
+  while i >= 0 && b[i] != ':' {
+    i -= 1
+  }
+  let h = if i < 0 { addr } else { addr[0..i] }
+  h.trim_prefix("[").trim_suffix("]")
+}
+
+/// AUTH (Client.Auth with auth.go's PlainAuth and CRAMMD5Auth): the
+/// mechanism's first response, then each 334 challenge's answer; on an
+/// error the exchange is cancelled with "*".
+fn (var c: Client) auth(a: smtp.Auth) -> () ! smtp.SmtpErr uses net.dial {
+  if !c.ext.contains("AUTH") {
+    return Err(fail(0, "smtp: server doesn't support AUTH"))
+  }
+  match a {
+    None => Ok(())
+    Plain(user, password) => {
+      if !c.is_tls && !is_loopback_host(c.host) {
+        return Err(fail(0, "unencrypted connection"))
+      }
+      let resp = b"\x00" + user.bytes() + b"\x00" + password.reveal().bytes()
+      let _ = c.cmd(235, "AUTH PLAIN ${base64.encode(resp)}")?
+      Ok(())
+    }
+    CramMd5(user, secret) => {
+      let (code, msg) = c.cmd(0, "AUTH CRAM-MD5")?
+      if code != 334 {
+        return Err(fail(code, msg))
+      }
+      let challenge = match base64.decode(msg) {
+        Ok(b) => b
+        Err(e) => {
+          let _ = c.cmd(0, "*").ignore_err("cancelling the exchange; the decode error is the one reported")
+          return Err(fail(0, "${e}"))
+        }
+      }
+      let d = crypto.hmac(crypto.Hash.Md5, secret.reveal().bytes(), challenge)
+      let answer = "${user} ${d.to_hex()}"
+      let _ = c.cmd(235, base64.encode(answer.bytes()))?
+      Ok(())
+    }
+  }
+}
+
+/// The message as DATA sends it (textproto.DotWriter): CRLF line
+/// endings, a line starting with "." doubled, and "\r\n.\r\n" at the end.
+fn dot_stuff(msg: Bytes) -> Bytes {
+  var b = BytesBuilder.with_capacity(msg.len() + 16)
+  var at_start = true
+  var prev_cr = false
+  for x in msg {
+    if at_start && x == '.' {
+      b.write_byte('.')
+    }
+    if x == '\n' && !prev_cr {
+      b.write_byte('\r')
+    }
+    b.write_byte(x)
+    prev_cr = x == '\r'
+    at_start = x == '\n'
+  }
+  if !at_start {
+    b.write(b"\r\n")
+  }
+  b.write(b".\r\n")
+  b.freeze()
+}
+
+fn send(net: Net, addr: Str, from: Str, to: List[Str], msg: Bytes, auth: smtp.Auth = smtp.Auth.None, security: smtp.Security = smtp.Security.StartTls, roots: Bytes = b"", hello: Str = "localhost") -> () ! smtp.SmtpErr uses net.dial {
+  validate_line(from)?
+  for r in to {
+    validate_line(r)?
+  }
+  validate_line(hello)?
+  let host = host_of(addr)
+  if security is None && !is_loopback_host(host) {
+    return Err(fail(0, "smtp: plain text only to a loopback host (Security.None); use StartTls or Tls"))
+  }
+  let rs = if roots.is_empty() { None } else { Some(tls.roots(roots).map_err(fn(e) { fail(0, "${e}") })?) }
+  let conn = net.dial(addr).map_err(net_fail)?
+  var c = match security {
+    Tls => Client{link: Link.Tls(tls.client(conn, host, roots: rs).map_err(net_fail)?), is_tls: true, host: host}
+    _ => Client{link: Link.Plain(conn), host: host}
+  }
+  let r = run(c, from, to, msg, auth, security, rs, hello)
+  c.link.close()
+  r
+}
+
+fn run(var c: Client, from: Str, to: List[Str], msg: Bytes, auth: smtp.Auth, security: smtp.Security, rs: tls.Roots?, hello: Str) -> () ! smtp.SmtpErr uses net.dial {
+  let _ = c.reply(220)?
+  c.hello(hello)?
+  if security is StartTls {
+    if !c.ext.contains("STARTTLS") {
+      return Err(fail(0, "smtp: server doesn't support STARTTLS"))
+    }
+    let _ = c.cmd(220, "STARTTLS")?
+    let plain = match c.link {
+      Plain(x) => x
+      Tls(_) => return Err(fail(0, "smtp: STARTTLS on a TLS connection"))
+    }
+    c.link = Link.Tls(tls.client(plain, c.host, roots: rs).map_err(net_fail)?)
+    c.is_tls = true
+    c.buf = b""
+    c.ehlo(hello)?
+  }
+  if !(auth is None) {
+    c.auth(auth)?
+  }
+  var mail = "MAIL FROM:<${from}>"
+  if c.ext.contains("8BITMIME") {
+    mail = mail + " BODY=8BITMIME"
+  }
+  if c.ext.contains("SMTPUTF8") {
+    mail = mail + " SMTPUTF8"
+  }
+  let _ = c.cmd(250, mail)?
+  for r in to {
+    let _ = c.cmd(25, "RCPT TO:<${r}>")?
+  }
+  let _ = c.cmd(354, "DATA")?
+  c.link.write(dot_stuff(msg)).map_err(net_fail)?
+  let _ = c.reply(250)?
+  let _ = c.cmd(221, "QUIT")?
+  Ok(())
+}

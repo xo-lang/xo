@@ -27,3 +27,4 @@ entries yet.
 - [csv.md](csv.md): std/csv (spec/std.md 16)
 - [regexp.md](regexp.md): std/regexp (spec/std.md 17)
 - [json.md](json.md): std/json (spec/std.md 5)
+- [smtp.md](smtp.md): std/smtp (spec/std.md 29)

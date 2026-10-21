@@ -48,6 +48,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | std/uuid | 24 | `std/changes/uuid.md` |
 | std/mail | 25 | `std/changes/mail.md` |
 | std/multipart | 26 | `std/changes/multipart.md` |
+| std/smtp | 29 | `std/changes/smtp.md` |
 | std/netip | 28 | `std/changes/netip.md` |
 
 ## Go packages
@@ -149,7 +150,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | net/http/pprof | runtime profiler (decision 0238, XO_PROF) | partial | CPU and heap profiles as files; no HTTP endpoint. |
 | net/http/httptrace | none | not planned | Tracing is the runtime's (decision 0240). |
 | net/http/cgi, net/http/fcgi | none | not planned | Legacy deployment models. |
-| net/smtp | none | planned | Sending mail (STARTTLS, AUTH PLAIN); needs TLS on a Conn. |
+| net/smtp | std/smtp | done | SendMail as `smtp.send` (STARTTLS required by default, PLAIN, CRAM-MD5), decision 0290. Not planned: the step by step Client. |
 | net/mail | std/mail | partial | ParseAddress, ParseAddressList, Address.String with RFC 2047 words (decision 0282). Missing: ReadMessage, headers, ParseDate. |
 | net/textproto | inside std/native/llrt (http1) | partial | Header canonicalization for HTTP only. |
 | net/rpc, net/rpc/jsonrpc | none | not planned | Superseded by HTTP JSON APIs. |
