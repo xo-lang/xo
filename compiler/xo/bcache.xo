@@ -700,14 +700,21 @@ const BACKEND_TOUCH: Duration = 1m
 /// the cap.
 const BACKEND_KEEP: Duration = 2m
 
+/// The back-end cache's default cap, in GiB (owner, 2026-10-21: 16, was 8):
+/// the agents' builds used about 8.8 GB of it within two hours, so at 8 a
+/// prune evicted entries the next builds stored again, and each burst of
+/// stores set off another prune unlinking tens of thousands of files (a
+/// warm build of xo: insert_rc.sums 85.9 s).
+const BACKEND_CAP_GB = 16
+
 /// Prunes the cache (prune.run, decision 0223) after stored new bytes:
 /// hourly, or sooner once an eighth of the cap was stored since the
 /// last prune; the entries unused for a week ($XO_CACHE_MAX_AGE), then
-/// the least recently used past 8 GiB ($XO_BACKEND_CACHE_MAX bytes, or
-/// $XO_CACHE_MAX_GB) across fn, obj and rc together.
+/// the least recently used past BACKEND_CAP_GB ($XO_BACKEND_CACHE_MAX
+/// bytes, or $XO_CACHE_MAX_GB) across every kind together.
 fn prune_backend_cache(os: Os, dir: Str, stored: Int) {
   prune.note_stored(os.fs, dir, stored)
-  let base = prune.from_env(os.env, prune.Policy{max_age: 168h, max_bytes: 8 * prune.GB, keep: BACKEND_KEEP})
+  let base = prune.from_env(os.env, prune.Policy{max_age: 168h, max_bytes: BACKEND_CAP_GB * prune.GB, keep: BACKEND_KEEP})
   var p = cap_env(os, base, "XO_BACKEND_CACHE_MAX")
   p.burst = p.max_bytes / 8
   let _s = prune.run(os.fs, os.clock, dir, p)

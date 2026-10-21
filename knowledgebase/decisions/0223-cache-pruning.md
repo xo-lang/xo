@@ -115,3 +115,17 @@ which std's Proc does not start, and the budget bounds the cost alone.
 Tests: compiler/prune (a run past its budget, then the runs that go on;
 the size cap under a budget) and internal/arm64 TestPruneBudget (an
 overdue prune of 20,000 entries during a golden's build).
+
+## Addendum: the back-end cache's cap is 16 GiB (owner, 2026-10-21)
+
+A fully warm build of xo spent 85.9 s in insert_rc.sums (19.7 s user,
+27.6 s sys), and a probe measured a warm build at 14.8 s against 9.1 s
+with no cap (XO_CACHE_MAX_GB=100). The back-end cache held 11 GB in
+332,535 files with about 8.8 GB used within two hours, above its 8 GiB
+cap: each prune evicted entries the next builds stored again, and with
+the burst rule (a prune once an eighth of the cap was stored) every few
+builds paid for a prune unlinking tens of thousands of files. The
+default cap is now 16 GiB (bcache.xo BACKEND_CAP_GB), above that working
+set; XO_BACKEND_CACHE_MAX and XO_CACHE_MAX_GB still override it. With the
+run budget above (2 s of removals a run) and a pack compaction counting
+only what it adds, a prune no longer dominates a build.
