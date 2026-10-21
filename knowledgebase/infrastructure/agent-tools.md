@@ -201,6 +201,8 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   std and goldens against the older compiler (Xo lang 5 lost a 60 minute
   suite to that, 2026-10-21). Rebuild (`go run ./scripts/xobuild` in that
   tree) or, for a deliberate cross version run, `XO_CLI_STALE_OK=1`.
+  Every such run's log starts with `xotool: xo PATH (key ..., commit ...);
+  tree key ...`: check it when a run's failures look unrelated.
 - Gate scripts: `. ~/xo-lead/agents/gatelib.sh` (scripts/lead/gatelib.sh,
   installed by install.sh), then `gotests PKG 'TestA|TestB'` for the
   proving tests (exactly those names, -v, one `--- PASS` line each) and

@@ -47,8 +47,10 @@ package xotool
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/xo-lang/xo/internal/testtmp"
@@ -112,14 +114,14 @@ func Path() (string, error) {
 				pathErr = fmt.Errorf("XO_CLI=%s: %v", pathBin, err)
 				return
 			}
-			if os.Getenv("XO_CLI_STALE_OK") != "1" {
-				if root, err := Root(); err == nil {
-					pathErr = StaleCLI(root, pathBin)
-					if pathErr != nil {
-						// once, where go test shows it: the callers report a
-						// failed start in their own ways, some not at all
-						fmt.Fprintf(os.Stderr, "xotool: %v\n", pathErr)
-					}
+			root, _ := Root()
+			announce(root, pathBin)
+			if os.Getenv("XO_CLI_STALE_OK") != "1" && root != "" {
+				pathErr = StaleCLI(root, pathBin)
+				if pathErr != nil {
+					// once, where go test shows it: the callers report a
+					// failed start in their own ways, some not at all
+					fmt.Fprintf(os.Stderr, "xotool: %v\n", pathErr)
 				}
 			}
 			return
@@ -130,6 +132,9 @@ func Path() (string, error) {
 			return
 		}
 		pathBin, pathErr = Ensure(root, os.Stderr)
+		if pathErr == nil {
+			announce(root, pathBin)
+		}
 	})
 	return pathBin, pathErr
 }
@@ -149,7 +154,79 @@ func BuiltKey(bin string) (key, commit string, ok bool) {
 		c, _ := os.ReadFile(filepath.Join(dir, "commit"))
 		return filepath.Base(dir), strings.TrimSpace(string(c)), true
 	}
+	// any other xo: the key and commit it was stamped with (`xo version
+	// --json`, decision 0264), so a copy or an `xo build -o` one is
+	// checked too
+	if k, c, ok := stampedKey(bin); ok {
+		return k, c, true
+	}
 	return "", "", false
+}
+
+// stampedKey is the source key and commit xo version --json of bin
+// reports (the build stamps them), ok false when it reports none (an xo
+// built before the stamp, or one that does not run).
+func stampedKey(bin string) (key, commit string, ok bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, bin, "version", "--json").Output()
+	if err != nil {
+		return "", "", false
+	}
+	var v struct {
+		Commit    string `json:"commit"`
+		Dirty     bool   `json:"dirty"`
+		SourceKey string `json:"source_key"`
+	}
+	if json.Unmarshal(out, &v) != nil || !isKey(v.SourceKey) {
+		return "", "", false
+	}
+	c := v.Commit
+	if v.Dirty && c != "" {
+		c += " with uncommitted changes"
+	}
+	return v.SourceKey, c, true
+}
+
+// announce prints, once per process, which xo the run uses: its path,
+// the key and commit it was built from ("no key" when unknown), and the
+// tree's key, so a stale xo is visible in a run's log even when nothing
+// stops it (Xo lang 5's suites, 2026-10-21).
+func announce(root, bin string) {
+	k, c, ok := BuiltKey(bin)
+	built := "no key"
+	if ok {
+		built = "key " + k
+		if c != "" {
+			built += ", commit " + shortCommit(c)
+		}
+	}
+	tree := "unknown"
+	if root != "" {
+		if tk, err := Key(root); err == nil {
+			tree = tk
+			if ok && tk != k {
+				tree += " (differs)"
+			}
+		}
+	}
+	fmt.Fprintf(os.Stderr, "xotool: xo %s (%s); tree key %s\n", bin, built, tree)
+}
+
+func shortCommit(c string) string {
+	if len(c) >= 40 && isHex(c[:40]) {
+		return c[:12] + c[40:]
+	}
+	return c
+}
+
+func isHex(s string) bool {
+	for _, r := range s {
+		if !strings.ContainsRune("0123456789abcdef", r) {
+			return false
+		}
+	}
+	return true
 }
 
 func isKey(s string) bool {

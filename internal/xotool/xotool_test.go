@@ -204,3 +204,45 @@ func TestStaleCLI(t *testing.T) {
 		t.Errorf("a cached build of another key passed")
 	}
 }
+
+// TestStaleCLIStamped: an xo with no key file beside it (a copy, an
+// `xo build -o` one) is checked by the key its build stamped into it
+// (`xo version --json`): a cached build of other sources, copied to a
+// directory of its own, is reported stale.
+func TestStaleCLIStamped(t *testing.T) {
+	root, err := Root()
+	if err != nil {
+		t.Skip(err)
+	}
+	key, err := Key(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := cacheBase()
+	if err != nil {
+		t.Skip(err)
+	}
+	ents, _ := os.ReadDir(filepath.Join(base, "checkout"))
+	var other string
+	for _, e := range ents {
+		p := filepath.Join(base, "checkout", e.Name(), exeName("xo"))
+		if e.Name() != key && isKey(e.Name()) && isFile(p) {
+			other = p
+			break
+		}
+	}
+	if other == "" {
+		t.Skip("no cached xo of other sources")
+	}
+	copied := filepath.Join(t.TempDir(), exeName("xo"))
+	if err := copyFile(other, copied); err != nil {
+		t.Fatal(err)
+	}
+	k, _, ok := BuiltKey(copied)
+	if !ok || k != filepath.Base(filepath.Dir(other)) {
+		t.Fatalf("the stamped key of a copied xo: %q %v, want %s", k, ok, filepath.Base(filepath.Dir(other)))
+	}
+	if err := StaleCLI(root, copied); err == nil || !strings.Contains(err.Error(), k) {
+		t.Errorf("a copied xo of other sources: %v", err)
+	}
+}
