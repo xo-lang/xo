@@ -425,3 +425,11 @@ hash was also computed again after any std change (0.8 to 1.9 s); now
 the memo (cache/stdsums/<dir hash>, std sum v3) keeps one per file
 (path, size, time, hash), and only changed files are parsed. Test:
 internal/arm64 TestFrontCacheStdTestEdit.
+The std tree's hash takes each file's interface from its tokens alone
+(parser.iface_text_lex, std sum v4): `fn` or `test` first on a line
+outside brackets, a `{` before any newline outside the signature's
+brackets, matched to its `}`; otherwise the tokens stay (a needless miss,
+never a stale key). It equals iface_text on every std and compiler file
+and on mutations of each (`xo dev iface-check DIR`, internal/arm64
+TestIfaceLexMatchesParse). The full parse of every std file cost 0.8 to
+1.9 s of a cold build.

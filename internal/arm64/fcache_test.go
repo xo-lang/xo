@@ -2089,3 +2089,31 @@ func TestFrontCacheStdTestEdit(t *testing.T) {
 		t.Errorf("after an edit to one test body: %d/%d front end hits, warm %d/%d", eh, en, wh, wn)
 	}
 }
+
+// TestIfaceLexMatchesParse: the std tree hash's interface from tokens
+// alone (compiler/parser iface_text_lex, no parse) is iface_text's, on
+// every std and compiler file and on mutations of each (identifiers
+// renamed through the file: signatures, types, consts, fields, bodies,
+// test bodies; a comment added; pub added): a key that missed an
+// interface change would replay a stale body.
+func TestIfaceLexMatchesParse(t *testing.T) {
+	if testing.Short() {
+		t.Skip("reads every std file many times")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := xotool.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{"std", "compiler"} {
+		out, err := exec.Command(xo, "dev", "iface-check", filepath.Join(root, d)).CombinedOutput()
+		if err != nil {
+			t.Errorf("iface-check %s: %v\n%s", d, err, out)
+			continue
+		}
+		t.Logf("%s: %s", d, strings.TrimSpace(string(out)))
+	}
+}

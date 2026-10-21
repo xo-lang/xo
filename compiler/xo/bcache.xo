@@ -10,6 +10,7 @@
 
 use github.com/xo-lang/xo/compiler/arm64
 use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/lexer
 use github.com/xo-lang/xo/compiler/parser
 use github.com/xo-lang/xo/compiler/prune
 use github.com/xo-lang/xo/compiler/ssa
@@ -299,7 +300,7 @@ fn borrow_record_write(os: Os, path: Str, rec: Map[Str, List[Bool]]) {
   cache_put(os, path, w.freeze().bytes())
 }
 /// The version of std_tree_sum's hash (its memo's signature).
-const STD_SUM_VERSION = "xo std sum v3 (interfaces, per file)"
+const STD_SUM_VERSION = "xo std sum v4 (interfaces from tokens, per file)"
 
 /// The hash of every std source under dir (its .xo files, by path
 /// relative to dir and interface: parser.iface_text, the tokens outside
@@ -358,7 +359,9 @@ fn std_tree_sum(os: Os, dir: Str, cache: Str) -> Str {
     }
     if fh.is_empty() {
       match os.fs.read(p) {
-        Ok(b) => fh = crypto.sha256(parser.iface_text(p.bytes(), b)).to_hex()
+        // the tokens alone (iface_text_lex): a parse of every std file
+        // took 0.8 to 1.9 s of a cold build (2026-10-21)
+        Ok(b) => fh = crypto.sha256(parser.iface_text_lex(b)).to_hex()
         Err(_) => return ""
       }
       changed = true
@@ -1262,4 +1265,83 @@ fn parse_list_store(os: Os, var c: check.Checker, dir: Str) {
     }
   }
   c.parse_cache = keep
+}
+
+/// `xo dev iface-check DIR`: for every .xo file under DIR, and for
+/// mutations of it (identifiers renamed through the file, a comment
+/// added, `pub` added before a top level `fn`), whether
+/// parser.iface_text_lex (std_tree_sum's) gives iface_text's text; a
+/// line per difference, exit 1 when any. Files that do not parse are
+/// skipped (a build of them fails first).
+fn iface_check_cmd(os: Os, dir: Str) -> Int {
+  let all = match os.fs.walk(dir) {
+    Ok(fs) => fs
+    Err(e) => {
+      os.stdio.eprintln("iface-check: ${e}")
+      return 2
+    }
+  }
+  var files = 0
+  var cases = 0
+  var bad = 0
+  for fi in all {
+    if fi.is_dir || !fi.path.ends_with(".xo") {
+      continue
+    }
+    let src = match os.fs.read(fi.path) {
+      Ok(b) => b
+      Err(_) => continue
+    }
+    if parser.parse_file(fi.path.bytes(), src, true).hard {
+      continue
+    }
+    files += 1
+    var variants: List[(Str, Bytes)] = [("as is", src)]
+    let toks = lexer.lex(src).tokens
+    var idents: List[Int] = []
+    for (k, t) in toks.indexed() {
+      if t.kind == lexer.Kind.Ident {
+        idents.push(k)
+      }
+    }
+    // up to 24 identifiers spread through the file, each renamed
+    let step = (idents.len() / 24).max(1)
+    var n = 0
+    while n < idents.len() {
+      let t = toks[idents[n]]
+      let at = t.span.end.offset
+      variants.push(("rename ${t.text.to_str() ?? ""} at ${t.span.start.line}", src[0..at] + b"Q" + src[at..src.len()]))
+      n += step
+    }
+    // a comment at the start of the line of every 8th newline
+    var nl = 0
+    for (k, t) in toks.indexed() {
+      if t.kind == lexer.Kind.Newline {
+        nl += 1
+        if nl % 8 == 0 && k + 1 < toks.len() {
+          let at = toks[k + 1].span.start.offset
+          variants.push(("comment at ${toks[k + 1].span.start.line}", src[0..at] + b"// x\n" + src[at..src.len()]))
+        }
+      }
+    }
+    // pub before each top level fn that has none
+    for (k, t) in toks.indexed() {
+      if t.kind == lexer.Kind.Fn && (k == 0 || toks[k - 1].kind == lexer.Kind.Newline) {
+        let at = t.span.start.offset
+        variants.push(("pub at ${t.span.start.line}", src[0..at] + b"pub " + src[at..src.len()]))
+      }
+    }
+    for (what, v) in variants {
+      if parser.parse_file(fi.path.bytes(), v, true).hard {
+        continue
+      }
+      cases += 1
+      if parser.iface_text(fi.path.bytes(), v) != parser.iface_text_lex(v) {
+        bad += 1
+        os.stdio.println("DIFF ${fi.path}: ${what}")
+      }
+    }
+  }
+  os.stdio.println("iface-check: ${files} files, ${cases} cases, ${bad} differ")
+  if bad > 0 { 1 } else { 0 }
 }
