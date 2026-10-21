@@ -1,8 +1,13 @@
 usage: xo doc [--json] [--all] [--dir=<dir>] [module dir or import path]
+       xo doc [--dir=DIR] [--json|--text] NAME
 
 Markdown documentation from doc comments and signatures, with the
 example code blocks of each doc comment. --all includes declarations
 that are not pub. Default: the modules under .
+
+With a NAME that is not a directory or an import path (`Map`,
+`std/tls.client`), the declaration's doc comment and, for a type, its
+methods, as xo def finds it.
 
 A directory covers the directories below it, so DIR/... is DIR (decision
 0210); a DIR/... with no .xo file at or below DIR is an error.

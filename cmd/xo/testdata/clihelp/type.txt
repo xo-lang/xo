@@ -1,0 +1,8 @@
+usage: xo type [--json|--text] FILE:LINE:COL
+
+The type of the expression at a position (1 based line and column) and
+the declaration it refers to; FILE's directory is the program checked.
+
+Output is text at a terminal and JSON otherwise; --json or --text
+chooses. Exit status: 0 with an answer, 1 for no match, 2 for a usage
+error.

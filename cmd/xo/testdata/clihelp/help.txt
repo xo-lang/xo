@@ -12,6 +12,10 @@ commands:
   query     semantic queries: type, def, callers, effects, holes, api, ...
   edit      semantic edits: rename, add-field, change-sig
   doc       Markdown documentation from doc comments
+  def       where a name is declared, as code writes it
+  refs      every reference to a name
+  type      the type and declaration at FILE:LINE:COL
+  symbols   a directory's own declarations
   explain   long form explanation of a diagnostic code
   init      write xo.mod for a new module
   get       require, upgrade, or remove a module

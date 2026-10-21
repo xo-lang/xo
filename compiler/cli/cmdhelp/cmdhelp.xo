@@ -28,6 +28,10 @@ pub fn commands() -> List[Command] {
     Command{name: "query", purpose: "semantic queries: type, def, callers, effects, holes, api, ..."},
     Command{name: "edit", purpose: "semantic edits: rename, add-field, change-sig"},
     Command{name: "doc", purpose: "Markdown documentation from doc comments"},
+    Command{name: "def", purpose: "where a name is declared, as code writes it"},
+    Command{name: "refs", purpose: "every reference to a name"},
+    Command{name: "type", purpose: "the type and declaration at FILE:LINE:COL"},
+    Command{name: "symbols", purpose: "a directory's own declarations"},
     Command{name: "explain", purpose: "long form explanation of a diagnostic code"},
     Command{name: "init", purpose: "write xo.mod for a new module"},
     Command{name: "get", purpose: "require, upgrade, or remove a module"},
@@ -94,6 +98,10 @@ pub fn usage(name: Str) -> Str {
     "query" => query_text()
     "edit" => edit_text()
     "doc" => doc_text()
+    "def" => def_text()
+    "refs" => refs_text()
+    "type" => type_text()
+    "symbols" => symbols_text()
     "explain" => explain_text()
     "init" => init_text()
     "get" => get_text()
@@ -387,11 +395,68 @@ that blocked it, and with --dry-run a diff of the changes. Default dir: .
 fn doc_text() -> Str {
   """
 usage: xo doc [--json] [--all] [--dir=<dir>] [module dir or import path]
+       xo doc [--dir=DIR] [--json|--text] NAME
 
 Markdown documentation from doc comments and signatures, with the
 example code blocks of each doc comment. --all includes declarations
 that are not pub. Default: the modules under .
+
+With a NAME that is not a directory or an import path (`Map`,
+`std/tls.client`), the declaration's doc comment and, for a type, its
+methods, as xo def finds it.
 """
+}
+
+/// The program the name lookups check (def, refs, symbols, doc NAME).
+const LOOKUP_DIR = """
+--dir=DIR checks the program in DIR (default .; a workspace or
+repository root checks the modules under it).
+"""
+
+/// The output and exit status of the lookups (decision 0289).
+const LOOKUP_OUT = """
+Output is text at a terminal and JSON otherwise; --json or --text
+chooses. Exit status: 0 with an answer, 1 for no match, 2 for a usage
+error.
+"""
+
+fn def_text() -> Str {
+  """
+usage: xo def [--dir=DIR] [--json|--text] NAME
+
+Where NAME is declared, with its signature and doc comment. NAME is
+written as code writes it: `greet`, `Counter.next`, `Str.find`,
+`check.Checker.check_dirs`, `std/tls.client`; std and runtime modules
+load when a name refers to them (decision 0289).
+""" + "\n" + LOOKUP_DIR + LOOKUP_OUT
+}
+
+fn refs_text() -> Str {
+  """
+usage: xo refs [--dir=DIR] [--json|--text] NAME
+
+Every reference to NAME in the program, the declaration marked, NAME
+written as for xo def.
+""" + "\n" + LOOKUP_DIR + LOOKUP_OUT
+}
+
+fn type_text() -> Str {
+  """
+usage: xo type [--json|--text] FILE:LINE:COL
+
+The type of the expression at a position (1 based line and column) and
+the declaration it refers to; FILE's directory is the program checked.
+""" + "\n" + LOOKUP_OUT
+}
+
+fn symbols_text() -> Str {
+  """
+usage: xo symbols [--dir=DIR] [--pub] [--json|--text] [DIR]
+
+The declarations of one directory's own files, private ones too; --pub
+lists the exported surface only. At a root with no .xo files of its
+own, the directories below that have them are named.
+""" + "\n" + LOOKUP_OUT
 }
 
 fn explain_text() -> Str {

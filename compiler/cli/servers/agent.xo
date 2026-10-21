@@ -12,6 +12,7 @@
 // the program does not check, 2 on a usage error.
 
 use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/cli/cmdhelp
 use github.com/xo-lang/xo/compiler/cli/semantic
 use github.com/xo-lang/xo/compiler/parser
 
@@ -88,17 +89,23 @@ fn agent_args(cmd: Str, args: List[Str]) -> AgentArgs ! Str {
     }
   }
   if a.target.is_empty() && cmd != "symbols" {
-    return Err("xo ${cmd}: usage: xo ${cmd} [--dir=DIR] [--json|--text] NAME|FILE:LINE:COL")
+    return Err("xo ${cmd}: no ${if cmd == "type" { "FILE:LINE:COL" } else { "NAME" }}")
   }
   Ok(a)
 }
 
 /// Runs `xo CMD ARGS`: the exit status.
 pub fn run_agent(os: Os, cmd: Str, args: List[Str]) -> Int uses (stdio, fs, env) {
+  // -h and --help as every command takes them: the usage on standard
+  // output; a usage error prints it on standard error
+  if args.any(fn(x) { cmdhelp.is_help_flag(x) }) {
+    os.stdio.print(cmdhelp.usage(cmd))
+    return 0
+  }
   let a = match agent_args(cmd, args) {
     Ok(x) => x
     Err(e) => {
-      os.stdio.eprintln(e)
+      os.stdio.eprint("${e}\n${cmdhelp.usage(cmd)}")
       return 2
     }
   }

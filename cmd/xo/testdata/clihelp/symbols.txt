@@ -1,0 +1,9 @@
+usage: xo symbols [--dir=DIR] [--pub] [--json|--text] [DIR]
+
+The declarations of one directory's own files, private ones too; --pub
+lists the exported surface only. At a root with no .xo files of its
+own, the directories below that have them are named.
+
+Output is text at a terminal and JSON otherwise; --json or --text
+chooses. Exit status: 0 with an answer, 1 for no match, 2 for a usage
+error.

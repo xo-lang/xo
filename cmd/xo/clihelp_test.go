@@ -17,7 +17,7 @@ var clihelpDir, _ = filepath.Abs(filepath.Join("testdata", "clihelp"))
 
 // helpCommands are the user commands of spec/core.md 10.1, as
 // compiler/cli/cmdhelp lists them.
-var helpCommands = []string{"build", "run", "test", "check", "parse", "fmt", "fix", "vet", "query", "edit", "doc", "explain", "init", "get", "mod", "vendor", "publish", "audit", "bind", "dump", "replay", "lsp", "mcp", "serve", "version"}
+var helpCommands = []string{"build", "run", "test", "check", "parse", "fmt", "fix", "vet", "query", "edit", "doc", "def", "refs", "type", "symbols", "explain", "init", "get", "mod", "vendor", "publish", "audit", "bind", "dump", "replay", "lsp", "mcp", "serve", "version"}
 
 // shippedXo is the shipped xo (xo1, decision 0178 switch point B) whose
 // command line the help tests drive: the binary the other tests run
