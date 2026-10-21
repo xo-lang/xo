@@ -1,0 +1,43 @@
+// preempt_migrate (decision 0286 step 3, 2026-10-21): tasks that allocate
+// and free in tight loops are preempted at their polls while spinners keep
+// every worker busy (XO_THREADS=4), so they resume on other workers; a
+// thread's state cached across a poll (its local table, its heap) would
+// corrupt the heap or the counts. Each churn task's sum is fixed.
+
+fn churn(seed: Int) -> Int {
+  var total = 0
+  for i in 0..200000 {
+    var xs: List[Str] = []
+    for k in 0..4 {
+      xs.push("v${seed}-${i % 97}-${k}")
+    }
+    total = total.wrapping_add(xs[i % 4].len())
+  }
+  total
+}
+
+fn spin(n: Int) -> Int {
+  var x = 0
+  for i in 0..n {
+    x = (x * 31 + i) % 1000003
+  }
+  x
+}
+
+fn main(os: Os) {
+  let sum = Atomic[Int].new(0)
+  let spun = Atomic[Int].new(0)
+  scope s {
+    for _ in 0..4 {
+      s.spawn(fn() {
+        let _a = spun.add(spin(40000000) % 2 + 1)
+      })
+    }
+    for t in 0..8 {
+      s.spawn(fn() {
+        let _b = sum.add(churn(t))
+      })
+    }
+  }
+  os.stdio.println("churn ${sum.get()} spinners ${spun.get() >= 4}")
+}

@@ -284,6 +284,8 @@ fn runtime_decls() -> Str {
     "attributes #15 = { \"xo-norace\" uwtable noinline \"frame-pointer\"=\"all\" }",
     "attributes #16 = { \"xo-norace\" uwtable noinline cold }",
     "attributes #17 = { \"xo-norace\" uwtable noinline }",
+    "; a preemption poll's slow call (decision 0286 step 3): the stub keeps every register and touches none of the program's memory",
+    "attributes #18 = { nounwind memory(inaccessiblemem: readwrite) }",
     "",
     "!0 = !{!\"branch_weights\", i32 1, i32 4000}",
     "; TBAA: list headers, list elements, and reference counts never overlap",

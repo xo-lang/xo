@@ -34,9 +34,9 @@ LpGL1jtk_f1_b3:
 	adds x11, x22, #16
 	b.vs LpGL1jtk_f1_fault1
 LpGL1jtk_f1_b5:
-	adrp x9, _xo_static@PAGE
-	add x9, x9, _xo_static@PAGEOFF
-	add x21, x9, #24
+	adrp x21, _xo_static@PAGE
+	add x21, x21, _xo_static@PAGEOFF
+	add x21, x21, #24
 	ldr x9, [x21, #24]
 	cmp x9, #1
 	b.ne LpGL1jtk_f1_b16

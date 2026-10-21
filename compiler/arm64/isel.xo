@@ -370,6 +370,23 @@ fn (var g: G) sym_addr(sym: Str) -> Int {
   r
 }
 
+/// sym_addr plus off bytes, as one constant.
+fn (var g: G) sym_addr_off(sym: Str, off: Int) -> Int {
+  if off == 0 {
+    return g.sym_addr(sym)
+  }
+  if g.x86 {
+    // the x86 translation keeps the base and the add apart
+    return g.def1(false, "add $d0, $u0, #${off}", [g.real(g.sym_addr(sym))])
+  }
+  let r = if g.os == "darwin" {
+    g.konst(g.def1(false, "adrp $d0, ${sym}@PAGE\nadd $d0, $d0, ${sym}@PAGEOFF\nadd $d0, $d0, #${off}", []))
+  } else {
+    g.konst(g.def1(false, "adrp $d0, ${sym}\nadd $d0, $d0, :lo12:${sym}\nadd $d0, $d0, #${off}", []))
+  }
+  r
+}
+
 /// The bytes of a string or Bytes constant.
 fn const_bytes(a: ssa.Aux) -> Bytes? {
   match a {

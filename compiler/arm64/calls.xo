@@ -1360,13 +1360,11 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       // word k of the process globals (decision 0207, work item B02): the
       // table's address plus 8 * k (k a constant the SSA builder checked)
       g.static_ref = true
-      let base = g.sym_addr(g.tramp("xo_static"))
       let (k, _) = g.const_int(x.args[0])
-      if k == 0 {
-        g.set(v, [base])
-      } else {
-        g.set(v, [g.def1(false, "add $d0, $u0, #${8 * k}", [g.real(base)])])
-      }
+      // one constant (konst) with its offset: loop invariant, so a loop's
+      // preemption poll loads the flag through a hoisted address instead
+      // of adrp, add, add each iteration (2026-10-21: sieve +25%)
+      g.set(v, [g.sym_addr_off(g.tramp("xo_static"), 8 * k)])
     }
     "rt.sys_clone" => {
       // a call of the clone trampoline (gen.xo), written at the end
@@ -1673,8 +1671,16 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
     }
     "rt.preempt_poll" => {
       // decision 0286 step 3: the flag's word, at a loop's iteration
+      // no memory clobber: a yield is not a synchronization point of the
+      // program's data (another task's writes reach this one through
+      // synchronization, which calls); what a poll does change, the
+      // thread the task runs on, ends the thread local base's reuse
+      // (tl_base checks for a poll)
       let _i = g.add(Inst{kind: K_PLAIN, text: "ldr w16, [$u0]", us: [g.real(g.word(x.args[0]))], poll: true})
-      g.clobber()
+      if g.x86 {
+        // amd64 keeps it until measured there
+        g.clobber()
+      }
       g.set(v, [])
     }
     "rt.prefetch" => {
@@ -1733,7 +1739,7 @@ fn (var g: G) tl_base() -> Int {
     var i = g.tl_at
     while ok && i < ins.len() {
       let t = ins[i].text
-      if ins[i].kind != K_PLAIN || t.contains("bl ") || t.contains("blr ") || t.contains("svc") {
+      if ins[i].kind != K_PLAIN || ins[i].poll || t.contains("bl ") || t.contains("blr ") || t.contains("svc") {
         ok = false
       }
       i += 1

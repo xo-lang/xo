@@ -23,15 +23,15 @@ xo_f_main:
 .LpGL1jtk_f1_b0:
 	mov x19, #0
 	mov x20, x19
+	adrp x21, xo_static
+	add x21, x21, :lo12:xo_static
+	add x21, x21, #608
 	b .LpGL1jtk_f1_b2
 .LpGL1jtk_f1_b1:
 	cmp x19, #5
 	b.ge .LpGL1jtk_f1_b5
 .LpGL1jtk_f1_b2:
-	adrp x9, xo_static
-	add x9, x9, :lo12:xo_static
-	add x9, x9, #608
-	ldr w16, [x9]
+	ldr w16, [x21]
 	cbnz w16, .LpGL1jtk_f1_pp1
 .LpGL1jtk_f1_pp1_r:
 	movz x0, #38528, lsl #0
@@ -55,9 +55,9 @@ xo_f_main:
 	adds x11, x22, #16
 	b.vs .LpGL1jtk_f1_fault3
 .LpGL1jtk_f1_b9:
-	adrp x9, xo_static
-	add x9, x9, :lo12:xo_static
-	add x21, x9, #24
+	adrp x21, xo_static
+	add x21, x21, :lo12:xo_static
+	add x21, x21, #24
 	ldr x9, [x21, #24]
 	cmp x9, #1
 	b.ne .LpGL1jtk_f1_b20
@@ -178,15 +178,15 @@ xo_f_sieve:
 .LpGL1jtk_f2_b2:
 	mov x20, #0
 	ldr x19, [x21, #8]
-	adrp x9, xo_static
-	add x9, x9, :lo12:xo_static
-	mov x24, #1
-	add x23, x9, #608
+	adrp x24, xo_static
+	add x24, x24, :lo12:xo_static
+	add x24, x24, #608
+	mov x23, #1
 .LpGL1jtk_f2_b3:
 	cmp x20, x25
 	b.ge .LpGL1jtk_f2_b9
 .LpGL1jtk_f2_b4:
-	ldr w16, [x23]
+	ldr w16, [x24]
 	cbnz w16, .LpGL1jtk_f2_pp2
 .LpGL1jtk_f2_pp2_r:
 	ldr x9, [x21, #16]
@@ -194,7 +194,7 @@ xo_f_sieve:
 	b.eq .LpGL1jtk_f2_b5
 .LpGL1jtk_f2_b7:
 	add x9, x21, x19
-	strb w24, [x9, #24]
+	strb w23, [x9, #24]
 	add x19, x19, #1
 	str x19, [x21, #8]
 .LpGL1jtk_f2_b8:
@@ -202,20 +202,19 @@ xo_f_sieve:
 	cmp x20, x25
 	b.lt .LpGL1jtk_f2_b4
 .LpGL1jtk_f2_b9:
-	add x8, x22, #1
+	add x14, x22, #1
 .LpGL1jtk_f2_b11:
 	mov x11, #2
 	mov x20, #0
 	add x13, x21, #24
-	adrp x9, xo_static
-	add x9, x9, :lo12:xo_static
-	add x14, x9, #608
-	add x12, x9, #608
+	adrp x12, xo_static
+	add x12, x12, :lo12:xo_static
+	add x12, x12, #608
 .LpGL1jtk_f2_b12:
-	cmp x11, x8
+	cmp x11, x14
 	b.ge .LpGL1jtk_f2_b32
 .LpGL1jtk_f2_b13:
-	ldr w16, [x14]
+	ldr w16, [x12]
 	cbnz w16, .LpGL1jtk_f2_pp3
 .LpGL1jtk_f2_pp3_r:
 	cmp x11, x19
@@ -225,7 +224,7 @@ xo_f_sieve:
 	cbnz x9, .LpGL1jtk_f2_b15
 .LpGL1jtk_f2_b31:
 	add x11, x11, #1
-	cmp x11, x8
+	cmp x11, x14
 	b.lt .LpGL1jtk_f2_b13
 	b .LpGL1jtk_f2_b32
 .LpGL1jtk_f2_b15:
@@ -242,7 +241,7 @@ xo_f_sieve:
 	cmp x9, x22
 	b.le .LpGL1jtk_f2_b22
 	add x11, x11, #1
-	cmp x11, x8
+	cmp x11, x14
 	b.lt .LpGL1jtk_f2_b13
 	b .LpGL1jtk_f2_b32
 .LpGL1jtk_f2_b22:

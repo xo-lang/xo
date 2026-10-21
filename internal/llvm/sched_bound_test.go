@@ -2,6 +2,7 @@ package llvm
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -392,5 +393,52 @@ func TestPreempt(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestPreemptMigrate: tasks that allocate and free in tight loops are
+// preempted at their polls while spinners keep the workers busy
+// (XO_THREADS=4), and resume on other workers; their sums stay exact and
+// nothing a thread owns (its local table, its heap) is used from another
+// thread after a poll (2026-10-21: polls no longer clobber the emitter's
+// memory state, and a poll ends the thread local base's reuse). Each
+// native backend, plain and --race.
+func TestPreemptMigrate(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs a program per native backend")
+	}
+	if runtime.GOARCH != "arm64" {
+		t.Skip("loops poll on arm64 here")
+	}
+	const want = "churn 11035040 spinners true\n"
+	for _, be := range []string{xotool.BackendLLVM, xotool.BackendArm64} {
+		for _, race := range []bool{false, true} {
+			name := be
+			if race {
+				name += "-race"
+			}
+			t.Run(name, func(t *testing.T) {
+				if be == xotool.BackendLLVM {
+					if _, err := xotool.Clang(); err != nil {
+						t.Skip("clang not found")
+					}
+				}
+				res, err := xotool.Build([]string{filepath.Join("testdata", "sched", "preempt_migrate")}, xotool.Options{Backend: be, Race: race})
+				if err != nil || res.Failed {
+					if race && res != nil && strings.Contains(fmt.Sprint(res), "race") {
+						t.Skipf("--race unavailable here: %v", res)
+					}
+					t.Fatalf("build: %v %v", err, res)
+				}
+				for i := 0; i < 3; i++ {
+					cmd := exec.Command(res.Binaries[xotool.Host()])
+					cmd.Env = append(os.Environ(), "XO_THREADS=4", "XO_LOCKCHECK=1")
+					out, err := runCombined(cmd, 60*time.Second)
+					if err != nil || out != want {
+						t.Fatalf("run %d: %v\n%s", i, err, out)
+					}
+				}
+			})
+		}
 	}
 }
