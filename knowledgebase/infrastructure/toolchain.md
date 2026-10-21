@@ -1466,7 +1466,16 @@ private functions, go in a `_test.xo` file beside its source
 below std (`json`, `native/http`, `native/llrt/scan`). Like `--std=DIR`
 it is a developer flag of xo1, not in `xo test -h`. internal/stdtest
 runs every such module: -short on the host's native backend, the
-default on LLVM and arm64, XO_STDTEST_BACKENDS to name them.
+default on LLVM and arm64, XO_STDTEST_BACKENDS to name them. The
+modules run as parallel subtests, XO_STDTEST_JOBS at a time (default
+min(GOMAXPROCS, 4)). Keep a std module test quick (a few seconds): a
+large differential corpus generated from Go goes in
+internal/stdtest/testdata/corpus/NAME as a plain test directory over
+std's public API, which TestStdCorpora runs outside -short, and the
+module's _test.xo keeps a sample (2026-10-21: gomath's 21,460 rows took
+143 to 254 s of -short and pushed it past go test's 10 minutes; now 694
+rows, about 12 s, and the whole table in testdata/corpus/gomath).
+Last verified: 2026-10-21.
 
 ### Gate and fuzz runners (2026-10-18)
 
