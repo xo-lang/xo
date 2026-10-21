@@ -24,10 +24,11 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   `--dir=std/native/llrt` (each runtime file its own module there, so a
   bare `park_wait` lists pool's, poll's, and tasks'). A miss suggests the
   std functions of that name (`nosuchmod.park_wait` -> `pool.park_wait`).
-  `--dir` may be a workspace or repository root, but a module there whose
-  `use go` or `use c` binding is missing stops the whole check: the miss
-  then says so (the xo checkout's root: examples/realtime-control's
-  `use c`); give `--dir` a module's directory. Last verified: 2026-10-21.
+  `--dir` may be a workspace or repository root; a module there whose
+  `use go` or `use c` binding is missing (the xo checkout's
+  examples/realtime-control) is left out and the rest checked, and the
+  answer names it (`"skipped"` in JSON, a `note: skipped` line in text).
+  Last verified: 2026-10-21.
 - `xo edit [--dry-run] rename OLD NEW` renames functions, methods,
   constants, types, fields and enum variants (`Type.member`), and
   interface methods (`Iface.m`, with every implementing type's method),

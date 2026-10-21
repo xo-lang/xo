@@ -359,6 +359,9 @@ struct Session {
   version: Str
   std_dir: Str
   wd: Str
+  /// the module directories an agent session left out of its check of a
+  /// root (their `use go` or `use c` binding is missing)
+  skipped: List[Str] = []
   /// open documents: absolute path to text
   docs: Map[Str, Bytes] = {}
   dirty: Bool = true
@@ -436,6 +439,10 @@ struct View {
   /// the directories of the user files it read (the open directory and
   /// the local modules it imports)
   deps: Set[Str] = #{}
+  /// why the check stopped before resolving names (Checker.unsupported),
+  /// and the module directories of the missing bindings behind it
+  stopped: Str = ""
+  stopped_dirs: List[Str] = []
 }
 
 /// The open documents to check, without std copies (a std source opened
@@ -473,6 +480,11 @@ fn new_lsp_checker(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes]) -> c
 /// check_view: checks the modules of dirs with the open texts as the
 /// overlay. It reads no Session, so the server's worker task runs it.
 fn check_view(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes], dirs: List[Str], preload: List[Str]) -> View uses (fs, env) {
+  check_view_excluding(os, std_dir, wd, overlay, dirs, preload, [])
+}
+
+/// check_view, leaving out the module directories exclude.
+fn check_view_excluding(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes], dirs: List[Str], preload: List[Str], exclude: List[Str]) -> View uses (fs, env) {
   var v = View{}
   if dirs.is_empty() {
     return v
@@ -483,6 +495,7 @@ fn check_view(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes], dirs: Lis
   // too, so that xo refs finds the calls inside them
   c.check_bodies_of = preload
   c.runtime_files = true
+  c.exclude_dirs = exclude
   match c.check_dirs(dirs) {
     Ok(_) => {}
     Err(e) => {
@@ -502,6 +515,13 @@ fn check_view(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes], dirs: Lis
     }
   }
   v.res = [new_res(c)]
+  v.stopped = c.unsupported
+  for bm in c.bind_misses {
+    let d = if !bm.mod_dir.is_empty() { bm.mod_dir } else { bm.root }
+    if !d.is_empty() && !v.stopped_dirs.contains(d) {
+      v.stopped_dirs.push(d)
+    }
+  }
   for d in c.diags {
     v.diags.update(abs_of(wd, d.file), [], fn(var l) { l.push(d) })
   }

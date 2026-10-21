@@ -1137,3 +1137,32 @@ func TestAgentRuntimeRefs(t *testing.T) {
 		t.Errorf("def park_wait in the runtime directory: %v, want pool.xo, poll.xo, and tasks.xo", where)
 	}
 }
+
+// TestAgentRootSkipsBrokenModule: at a root whose modules include one
+// whose `use c` binding is missing (the xo checkout's
+// examples/realtime-control), the lookups answer for the other modules
+// and name the skipped one ("skipped" in JSON, a note in text) instead of
+// "no declaration" for every name.
+func TestAgentRootSkipsBrokenModule(t *testing.T) {
+	t.Parallel()
+	root := writeFiles(t, map[string]string{
+		"good/xo.mod":  "module example.com/good\n",
+		"good/main.xo": "fn helper(n: Int) -> Int { n + 1 }\n\nfn main(os: Os) {\n  os.stdio.println(\"${helper(1)}\")\n}\n",
+		"bad/xo.mod":   "module example.com/bad\n",
+		"bad/clock.h":  "long now_ns(void);\n",
+		"bad/main.xo":  "use c \"clock.h\" uses none\n\nfn main(os: Os) {\n  os.stdio.println(\"${clock.now_ns()}\")\n}\n",
+	})
+	v := agentJSON(t, 0, "refs", "--dir="+root, "--json", "helper")
+	refs := v["references"].([]any)
+	if len(refs) != 2 {
+		t.Errorf("refs helper: %d references, want the declaration and the call: %v", len(refs), refs)
+	}
+	sk, _ := v["skipped"].([]any)
+	if len(sk) != 1 || !strings.HasSuffix(sk[0].(string), "bad") {
+		t.Errorf("skipped = %v, want the bad module", v["skipped"])
+	}
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"def", "--dir=" + root, "--text", "helper"}, &out, &errOut); code != 0 || !strings.Contains(out.String(), "note: skipped") {
+		t.Errorf("def --text: exit %d: %s%s", code, out.String(), errOut.String())
+	}
+}

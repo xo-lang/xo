@@ -102,6 +102,10 @@ pub struct Checker {
   /// it; xo check and vet of that directory keep loading it as a
   /// directory.
   pub runtime_files: Bool = false
+  /// Directories find_module_dirs skips (absolute): the agent tools'
+  /// check of a root leaves out a module whose missing binding stopped
+  /// the previous check (agent.xo agent_session).
+  pub exclude_dirs: List[Str] = []
   /// The std module under test (`xo test --std-module`, decision 0262):
   /// its path (`std/json`, `native/http`, `native/llrt/scan`), or "".
   /// That module's _test.xo file, beside its source, is loaded with it,
@@ -446,6 +450,9 @@ fn (var c: Checker) find_module_dirs(dir: Str, top: Bool, var out: List[Str]) {
     // imports that name them (native/llrt/pool); as one directory module
     // their names collide (pool.park_wait, poll.park_wait)
     if c.runtime_files && !c.std_dir.is_empty() && c.abs(sub) == c.abs(join(join(c.std_dir, "native"), "llrt")) {
+      continue
+    }
+    if !c.exclude_dirs.is_empty() && c.exclude_dirs.contains(c.abs(sub)) {
       continue
     }
     c.find_module_dirs(sub, false, out)

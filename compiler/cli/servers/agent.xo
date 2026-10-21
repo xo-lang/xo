@@ -131,16 +131,35 @@ pub fn run_agent(os: Os, cmd: Str, args: List[Str]) -> Int uses (stdio, fs, env)
     "type" => s.agent_type(os, a.target)
     _ => s.agent_symbols(os, dir, a.pub_only)
   }
+  // the modules left out of a root's check, named
+  var shown: List[Str] = []
+  for d in s.skipped {
+    shown.push(d.trim_prefix("${s.wd.trim_suffix("/")}/"))
+  }
+  let skip_note = if shown.is_empty() { "" } else { "skipped (missing use go or use c binding): ${shown.join(", ")}" }
   match out {
-    Ok(v) => {
+    Ok(v0) => {
+      var v = v0
+      if !s.skipped.is_empty() {
+        if let J.Obj(keys, vals, raws) = v0 {
+          var items: List[J] = []
+          for d in shown {
+            items.push(jstr(d))
+          }
+          v = J.Obj(keys: keys + ["skipped"], vals: vals + [jarr(items)], raws: if raws.is_empty() { raws } else { raws + [""] })
+        }
+      }
       if as_json {
         print_json(os, v)
       } else {
         os.stdio.print(agent_text(cmd, v))
+        if !skip_note.is_empty() {
+          os.stdio.println("note: ${skip_note}")
+        }
       }
       0
     }
-    Err(e) => fail(os, cmd, as_json, e)
+    Err(e) => fail(os, cmd, as_json, if skip_note.is_empty() { e } else { "${e} (${skip_note})" })
   }
 }
 
@@ -260,7 +279,28 @@ fn agent_session(os: Os, dir: Str, preload: List[Str]) -> Session ! Str uses (st
   if s.docs.is_empty() {
     // a workspace or repository root: the modules under it, as `xo
     // query` and `xo check` find them (decision 0289)
-    let v = check_view(os, s.std_dir, wd, {}, [d], preload)
+    var v = check_view(os, s.std_dir, wd, {}, [d], preload)
+    // a module below the root whose `use go` or `use c` binding is
+    // missing stops the whole check: leave such modules out and check
+    // again (the xo checkout's examples/realtime-control), naming them
+    var skipped: List[Str] = []
+    var tries = 0
+    while v.err.is_empty() && !v.stopped.is_empty() && tries < 8 {
+      var more: List[Str] = []
+      for sd in v.stopped_dirs {
+        let a = abs_of(wd, sd)
+        if a != d.trim_suffix("/") && a.starts_with("${d.trim_suffix("/")}/") && !skipped.contains(a) {
+          more.push(a)
+        }
+      }
+      if more.is_empty() {
+        break
+      }
+      skipped = skipped + more
+      tries += 1
+      v = check_view_excluding(os, s.std_dir, wd, {}, [d], preload, skipped)
+    }
+    s.skipped = skipped
     // v.files holds the std files the check loaded too
     if v.err.is_empty() && !v.files.keys().any(fn(p) { p.starts_with("${d.trim_suffix("/")}/") }) {
       return Err("no .xo files in or under ${d}")
