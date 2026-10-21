@@ -1,6 +1,10 @@
 # 0318: Asynchronous preemption: a signal instead of a test in every loop
 
-Status: Proposed (Xo Lang 2, 2026-10-21, for the owner)
+Status: Accepted (owner, 2026-10-21, with the lead's review: the signal
+mask reset before the in-handler yield, the two-fibers-on-one-worker test,
+no recursive frames). Drafted by Xo Lang 2. Stage 1 (arm64 darwin and
+linux) in progress. Until it lands, loop polls stay on by default and
+`--no-preempt` (e53f1be69) removes them for tight loop benchmarks.
 
 ## Context
 
