@@ -1,0 +1,40 @@
+// hoist_consts gives constants of one text in a loop's preheader one
+// register; a Float constant is `fmov $d0, $u0` of the register holding
+// its bits, the same text for every value, so the key is the text, the
+// registers it reads, and the class (2026-10-21: merged by text alone,
+// different Float constants read one register: text.xo's 5e+08, 15.0
+// for 20.0). Several Float constants and Int constants in one loop, and
+// in a nested one.
+
+fn scale(xs: List[Float]) -> Float {
+  var a = 0.0
+  var b = 0.0
+  var c = 0.0
+  for x in xs {
+    a = a + x * 1.5
+    b = b + x * 2.25
+    c = c + x / 4.0 - 0.125
+  }
+  a + b * 10.0 + c * 100.0
+}
+
+fn mixed(n: Int) -> Int {
+  var s = 0
+  for i in 0..n {
+    for j in 0..n {
+      s = s + (i * 7 + j * 11) % 13 + Int(Float(i) * 0.5) + Int(Float(j) * 3.0)
+    }
+  }
+  s
+}
+
+fn main(os: Os) {
+  let io = os.stdio
+  io.println("scale ${scale([1.0, 2.0, 3.0, 4.0])}")
+  io.println("mixed ${mixed(12)}")
+  var t = 0.0
+  for k in 0..5 {
+    t = t + Float(k) * 0.75 + 20.0 - 15.0
+  }
+  io.println("t ${t}")
+}

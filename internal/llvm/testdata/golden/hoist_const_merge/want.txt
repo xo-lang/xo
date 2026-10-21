@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+scale 440.0
+mixed 3602
+t 32.5
+--- stderr

@@ -1529,22 +1529,28 @@ fn (var g: G) hoist_consts() {
     }
     let ins = g.blocks[pre].insts
     let n = ins.len()
-    // the preheader's constants (already there, then hoisted) by text
+    // the preheader's constants (already there, then hoisted) by text,
+    // operands, and register class: a Float constant is `fmov $d0, $u0`
+    // of the integer register holding its bits, the same text for every
+    // value (2026-10-21: merged by text alone, text.xo's Float divisions
+    // read one constant for another, native_json's `5e+08 is out of
+    // range for Int`, list_field_licm's 15.0 for 20.0)
     var by_text: Map[Str, Int] = {}
     for inst in ins {
       if inst.konst && inst.defs.len() == 1 && (ndef.get(inst.defs[0]) ?? 0) == 1 && !moved.contains(inst.defs[0]) {
-        by_text[inst.text] = inst.defs[0]
+        by_text[konst_key(inst, g.fp[inst.defs[0]])] = inst.defs[0]
       }
     }
     var keep: List[Inst] = []
     for inst in hoisted {
       if inst.defs.len() == 1 && (ndef.get(inst.defs[0]) ?? 0) == 1 {
-        let k = by_text.get(inst.text) ?? -1
+        let key = konst_key(inst, g.fp[inst.defs[0]])
+        let k = by_text.get(key) ?? -1
         if k >= 0 && k != inst.defs[0] {
           same[inst.defs[0]] = k
           continue
         }
-        by_text[inst.text] = inst.defs[0]
+        by_text[key] = inst.defs[0]
       }
       keep.push(inst)
     }
@@ -1576,6 +1582,16 @@ fn (var g: G) hoist_consts() {
     }
     g.put_insts(b, ins)
   }
+}
+
+/// What makes two constants one value (hoist_consts): the text, the
+/// registers it reads, and the class of the register it defines.
+fn konst_key(inst: Inst, fp: Bool) -> Str {
+  var us: List[Str] = []
+  for u in inst.us {
+    us.push("${u}")
+  }
+  "${if fp { "f" } else { "g" }}|${us.join(",")}|${inst.text}"
 }
 
 /// The register a merged constant's register reads as (hoist_consts).
