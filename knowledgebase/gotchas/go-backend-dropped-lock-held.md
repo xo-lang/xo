@@ -37,3 +37,14 @@ The other options considered:
 2. A finalizer alone: it adds nothing over the existing `os.File`
    finalizer until a collection runs; the collection on contention is
    what makes it prompt.
+
+Decision (owner, 2026-10-21): the fix stays as it is (d446345d: the
+finalizer unlock plus a collection on the first and every tenth contended
+poll). The trade-off: a contended `lock` on the Go backend may run a full
+garbage collection (runtime.GC and a 1 ms pause), a cost native builds
+never pay, accepted because the Go backend is not the production target
+and a program that releases its locks explicitly never contends on a
+dropped one. If a Go backend user hits that cost (a hot path that
+contends on locks while holding a large heap), option 1 above becomes the
+next step: compiler/gen emits the unlock at the handle's last use, as the
+native RC pass drops it.
