@@ -960,6 +960,12 @@ fn scratch_free_after(ls: List[Str], i: Int, x: Str) -> Bool {
 /// instruction's code, `1:`, or a branch to one, `1b`, may). Debug
 /// labels and directives are passed over.
 fn scratch_dead(lines: List[Str], i: Int, r: Str) -> Bool {
+  // the register's names, made once (2026-10-21: building them and
+  // splitting every line scanned into register tokens was 78% of
+  // copy_runs_l, 4.4 s of a cold self build's CPU); a line that does not
+  // contain either name is not split at all
+  let xr = "x${r}"
+  let wr = "w${r}"
   var j = i
   while j < lines.len() {
     let l = lines[j]
@@ -978,11 +984,12 @@ fn scratch_dead(lines: List[Str], i: Int, r: Str) -> Bool {
     let sp = body.find(" ") ?? body.len()
     let op = body[0..sp]
     let ops = if sp < body.len() { body[sp + 1..body.len()] } else { "" }
-    let toks = reg_tokens(ops)
+    let named = ops.contains(xr) || ops.contains(wr)
+    let toks = if named { reg_tokens(ops) } else { [] }
     var at = -1
     var t = 0
     while t < toks.len() {
-      if toks[t] == "x${r}" || toks[t] == "w${r}" {
+      if toks[t] == xr || toks[t] == wr {
         at = t
         break
       }
@@ -1010,14 +1017,14 @@ fn scratch_dead(lines: List[Str], i: Int, r: Str) -> Bool {
       // a load writes the registers before its address and reads those in it
       let br = ops.find("[") ?? ops.len()
       let dst = reg_tokens(ops[0..br])
-      if dst.contains("x${r}") || dst.contains("w${r}") {
-        return !reg_tokens(ops[br..ops.len()]).contains("x${r}")
+      if dst.contains(xr) || dst.contains(wr) {
+        return !reg_tokens(ops[br..ops.len()]).contains(xr)
       }
       return false
     }
     if op is "mov" | "movz" | "movn" | "adr" | "adrp" | "add" | "sub" | "and" | "orr" | "eor" | "lsl" | "lsr" | "asr" | "mul" | "madd" | "msub" | "csel" | "csinc" | "neg" | "mvn" | "ubfx" | "sbfx" | "sxtw" | "uxtw" | "fmov" {
       // a computation: its first operand is its result
-      return at == 0 && !toks[1..toks.len()].contains("x${r}") && !toks[1..toks.len()].contains("w${r}")
+      return at == 0 && !toks[1..toks.len()].contains(xr) && !toks[1..toks.len()].contains(wr)
     }
     return false
   }
