@@ -402,6 +402,8 @@ pub struct Module {
   /// at loads, stores, and atomics (compiler/arm64 race.xo); set by the
   /// driver.
   pub race: Bool = false
+  /// loops without preemption polls (`--no-preempt`, decision 0286 step 3)
+  pub no_preempt: Bool = false
   /// Emit DWARF line tables (decision 0239): set by the driver; off for
   /// `xo asm`, `-s`, and release builds without --debug-info.
   pub debug_info: Bool = false

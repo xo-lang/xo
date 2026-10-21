@@ -435,6 +435,7 @@ fn program_builder(c: check.Checker, line_root: Str, tests: Bool, release: Bool,
   b.fe = fe
   b.heap_guard = heap_guard
   b.m.map_log = c.map_log
+  b.m.no_preempt = c.no_preempt
   b.soft_cpu = soft_cpu
   b.prof = prof
   b.trace_support = trace_support

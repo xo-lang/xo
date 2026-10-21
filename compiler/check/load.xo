@@ -52,6 +52,10 @@ pub struct Checker {
   /// XO_MAP_LOG=1 until the switch): the builder's map_type and map.xo
   /// read it
   pub map_log: Bool = false
+  /// no preemption polls in loops (decision 0286 step 3): `--no-preempt`
+  /// or XO_PREEMPT_POLLS=off, for tight loop benchmarks; a task that
+  /// loops without calling the runtime can then starve its worker
+  pub no_preempt: Bool = false
   /// The functions of the native modules whose bodies run left to
   /// check_lazy (true), and those it checked (false).
   pub lazy_fns: Map[Int, Bool] = {}

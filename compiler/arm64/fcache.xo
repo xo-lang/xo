@@ -445,7 +445,7 @@ fn fn_key(m: ssa.Module, fi: Int, os: Str, id: Str, taken: Map[Str, Bool], by_na
   var b = StrBuilder.new()
   // the module facts a function's text reads: c_sym_addr's direct or GOT
   // address (nolibc); the weak references are the module's (weak_ref)
-  b.write("${FN_CACHE_VERSION}\n${id}\n${os} ${m.goarch} regs=${m.arm64_regs} poison=${m.poison_frames} guard=${m.heap_guard} debug=${m.debug_info} dwaddr=${m.dw_data_addrs} nolibc=${m.nolibc} race=${m.race} maplog=${m.map_log}\n")
+  b.write("${FN_CACHE_VERSION}\n${id}\n${os} ${m.goarch} regs=${m.arm64_regs} poison=${m.poison_frames} guard=${m.heap_guard} debug=${m.debug_info} dwaddr=${m.dw_data_addrs} nolibc=${m.nolibc} race=${m.race} maplog=${m.map_log} nopreempt=${m.no_preempt}\n")
   b.write("func ${f.name.len()}:${f.name} unwind=${f.unwind_exit} skip=${f.skip.len()}:${f.skip}\n")
   b.write("self ${func_sig(m, f.name, taken, by_name, tk)} main=${f.name == "main"}\n")
   var names: List[Str] = []

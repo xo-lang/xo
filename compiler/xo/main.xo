@@ -397,6 +397,8 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   // decision 0291 until the switch: Map and Set on the log and fork
   // representation
   c.map_log = (os.env.get("XO_MAP_LOG") ?? "") == "1"
+  // loops without preemption polls (decision 0286 step 3's opt out)
+  c.no_preempt = o.no_preempt || (os.env.get("XO_PREEMPT_POLLS") ?? "") == "off"
   // the C paths of ported runtime modules (decisions 0193, 0206)
   c.llrt_c = llrt_c_names(os, o.std)
   c.std_test = std_test_path(o.std_module)

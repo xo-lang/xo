@@ -57,6 +57,8 @@ struct Opts {
   hybrid: Bool = false
   no_mono: Bool = false
   no_arenas: Bool = false
+  /// --no-preempt: loops without preemption polls (decision 0286 step 3)
+  no_preempt: Bool = false
   no_gc: Bool = false
   holes: Bool = false
   race: Bool = false
@@ -107,14 +109,14 @@ fn value_flags() -> List[Str] {
 
 /// The boolean flags.
 fn bool_flags() -> List[Str] {
-  ["json", "ci", "release", "error-args", "hybrid", "mono", "no-mono", "arenas", "no-arenas", "no-gc", "holes", "race", "v", "real", "phase-times", "offline", "s", "debug-info", "profile-support", "trace-support", "watch"]
+  ["json", "ci", "release", "error-args", "hybrid", "mono", "no-mono", "arenas", "no-arenas", "no-preempt", "no-gc", "holes", "race", "v", "real", "phase-times", "offline", "s", "debug-info", "profile-support", "trace-support", "watch"]
 }
 
 /// The usage of xo1's hidden commands (asm, keys) and of an unknown one;
 /// build, run, and test print `xo`'s usage (compiler/cli/cmdhelp), which
 /// leaves out xo1's own flags.
 fn usage_line() -> Str {
-  "usage: xo1 build|run|test|asm|keys [flags] [dir ...] (run: [dir] [--] [args]); flags: --std=DIR --wd=DIR --cc=CC --tzdata=embedded|system --targets=OS/ARCH,... --backend=arm64|llvm|go|wasm --go-tree=DIR --as=cc|macho --ld=cc|macho -o OUT --asm=PATH --json --ci --release --error-args=false --profile-support --stamp NAME=VALUE --no-mono --no-arenas --no-gc --holes --race --profile=cpu|heap|cpu,heap --seed=N --explore=N --record=FILE --run=SUB --cases=N --timeout=D --real --std-module=MODULE -v --phase-times"
+  "usage: xo1 build|run|test|asm|keys [flags] [dir ...] (run: [dir] [--] [args]); flags: --std=DIR --wd=DIR --cc=CC --tzdata=embedded|system --targets=OS/ARCH,... --backend=arm64|llvm|go|wasm --go-tree=DIR --as=cc|macho --ld=cc|macho -o OUT --asm=PATH --json --ci --release --error-args=false --profile-support --stamp NAME=VALUE --no-mono --no-arenas --no-preempt --no-gc --holes --race --profile=cpu|heap|cpu,heap --seed=N --explore=N --record=FILE --run=SUB --cases=N --timeout=D --real --std-module=MODULE -v --phase-times"
 }
 
 /// usage prints why and the usage of the command cmd on standard error
@@ -514,6 +516,8 @@ fn set_bool(os: Os, var o: Opts, name: Str, on: Bool) {
     o.no_arenas = o.no_arenas || !on
   } else if name == "no-arenas" {
     o.no_arenas = on
+  } else if name == "no-preempt" {
+    o.no_preempt = on
   } else if name == "no-gc" {
     o.no_gc = on
   } else if name == "holes" {

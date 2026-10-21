@@ -500,3 +500,21 @@ func TestGoldenRunSpill(t *testing.T) {
 		}
 	}
 }
+
+// TestNoPreemptPolls: with XO_PREEMPT_POLLS=off (`--no-preempt`, decision
+// 0286 step 3's opt out for tight loop benchmarks) sieve's own loops have
+// no preemption poll (no `_ppN` stub label, no xo_preempt_stub call);
+// without it they have one.
+func TestNoPreemptPolls(t *testing.T) {
+	dir := filepath.Join(benchDir, "sieve")
+	poll := regexp.MustCompile(`_pp[0-9]+\b`)
+	with := ownFuncs(asm(t, dir, "darwin"))
+	if !poll.MatchString(with) {
+		t.Fatalf("sieve's loops have no poll by default:\n%s", with)
+	}
+	t.Setenv("XO_PREEMPT_POLLS", "off")
+	without := ownFuncs(asm(t, dir, "darwin"))
+	if poll.MatchString(without) || strings.Contains(without, "xo_preempt_stub") {
+		t.Fatalf("XO_PREEMPT_POLLS=off: sieve's loops still poll:\n%s", without)
+	}
+}
