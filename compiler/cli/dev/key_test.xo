@@ -4,3 +4,16 @@
 test "json_str" {
   expect(json_str("a\"b\\\n\u{1}") == "\"a\\\"b\\\\\\n\\u0001\"")
 }
+
+test "an input the cache key cannot read means no key, never the key of other bytes" {
+  os.fs.create_dir_all("kp")?
+  os.fs.write("kp/main.xo", b"fn main() {}\n")?
+  os.fs.write("kp/want.txt", b"exit 0\n")?
+  expect(tree_hash(os.fs, "kp").is_some()) == true
+  // a walk that fails hashed as an empty tree before
+  expect(tree_hash(os.fs, "nosuch")) == None
+  let p = Prog{dir: "kp", name: "kp", want: "kp/want.txt", size: 1}
+  expect(prog_key(os.fs, "base", p).is_empty()) == false
+  expect(prog_key(os.fs, "base", Prog{dir: "kp", name: "kp", want: "kp/nosuch.txt", size: 1})) == ""
+  expect(prog_key(os.fs, "base", Prog{dir: "gone", name: "gone", want: "kp/want.txt", size: 1})) == ""
+}

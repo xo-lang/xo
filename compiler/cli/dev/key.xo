@@ -16,9 +16,10 @@ use std/crypto
 const HARNESS_VERSION = "xo dev goldens v1"
 
 /// tree_hash hashes every file under dir (paths relative to dir, sorted,
-/// with their bytes), skipping nothing; "" when dir cannot be read.
-pub fn tree_hash(fs: Fs, dir: Str) -> Str uses fs.read {
-  let files = fs.walk(dir).ok() ?? []
+/// with their bytes), skipping nothing; None when dir or a file under it
+/// cannot be read, so the key is never that of a different tree.
+pub fn tree_hash(fs: Fs, dir: Str) -> Str? uses fs.read {
+  let files = fs.walk(dir).ok()?
   var paths: List[Str] = []
   for f in files {
     if !f.is_dir {
@@ -27,28 +28,44 @@ pub fn tree_hash(fs: Fs, dir: Str) -> Str uses fs.read {
   }
   var b = BytesBuilder.new()
   for p in paths.sort() {
-    let data = fs.read(p).ok() ?? "".bytes()
+    let data = fs.read(p).ok()?
     b.write_str("${p.trim_prefix(dir)} ${data.len()}\n")
     b.write(crypto.sha256(data))
+  }
+  Some(crypto.sha256(b.freeze()).to_hex())
+}
+
+/// base_key is the part of every program's key shared by the run; "" (no
+/// caching) when an input cannot be read: an unreadable input must miss,
+/// never hit a pass recorded for other bytes.
+fn base_key(fs: Fs, cfg: Config) -> Str uses fs.read {
+  var b = BytesBuilder.new()
+  b.write_str("${HARNESS_VERSION}\n${cfg.backend}\n${cfg.flags.join(" ")}\n${cfg.host}\nbuild_only=${cfg.build_only} run=${cfg.run_cmd} path=${cfg.build_path}\n")
+  let xo = match fs.read(cfg.xo) {
+    Ok(d) => d
+    Err(_) => return ""
+  }
+  b.write(crypto.sha256(xo))
+  match tree_hash(fs, cfg.std) {
+    Some(h) => b.write_str(h)
+    None => return ""
   }
   crypto.sha256(b.freeze()).to_hex()
 }
 
-/// base_key is the part of every program's key shared by the run.
-fn base_key(fs: Fs, cfg: Config) -> Str uses fs.read {
-  var b = BytesBuilder.new()
-  b.write_str("${HARNESS_VERSION}\n${cfg.backend}\n${cfg.flags.join(" ")}\n${cfg.host}\nbuild_only=${cfg.build_only} run=${cfg.run_cmd} path=${cfg.build_path}\n")
-  b.write(crypto.sha256(fs.read(cfg.xo).ok() ?? "".bytes()))
-  b.write_str(tree_hash(fs, cfg.std))
-  crypto.sha256(b.freeze()).to_hex()
-}
-
-/// prog_key is program p's key under the run's base.
+/// prog_key is program p's key under the run's base; "" as base_key.
 fn prog_key(fs: Fs, base: Str, p: Prog) -> Str uses fs.read {
   var b = BytesBuilder.new()
   b.write_str("${base}\n${p.dir}\n")
-  b.write_str(tree_hash(fs, p.dir))
-  b.write(crypto.sha256(fs.read(p.want).ok() ?? "".bytes()))
+  match tree_hash(fs, p.dir) {
+    Some(h) => b.write_str(h)
+    None => return ""
+  }
+  let want = match fs.read(p.want) {
+    Ok(d) => d
+    Err(_) => return ""
+  }
+  b.write(crypto.sha256(want))
   crypto.sha256(b.freeze()).to_hex()
 }
 
