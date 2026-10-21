@@ -1,0 +1,360 @@
+// Decision 0291's hybrid Map (XO_MAP_LOG=1): a Map or Set value is the
+// lists' struct (map.xo: keys, vals, live, slots, n) with one more field:
+//
+//   log   List[L]  in log mode one log table (maplog.xo, the type L =
+//                  xo.MapLog[...]) that holds the entries; in lists mode
+//                  empty: the shared (immortal) empty list until the
+//                  value's lists copied on write once, then an empty list
+//                  of its own (the mark; six fields keep a put's map, key
+//                  and value in registers on arm64, where a seventh field
+//                  put the value on the stack: puts 1.3x the lists')
+//
+// In lists mode every read and every write by the only holder is the
+// lists' code (their speed: no log indirection). A write to a value
+// whose lists are shared copies on write as the lists do and counts it;
+// the second converts the value to a log table (O(n), once) and writes
+// through it from then on: a Map written while shared again and again (a
+// store under Mutex.with) gets the log's O(1) copies, and code that
+// copies a Map and writes the copy keeps the lists' speed. A log value
+// never goes back; its n (field 4) mirrors the table's.
+
+/// The bit a log value's lookup result carries (above any position and
+/// MLOG_LEVEL's levels).
+const MAPH_LOG = 2305843009213693952
+
+/// The log table type of the hybrid map type t.
+fn (var b: Builder) maph_lt(t: Int) -> Int { b.m.types[b.m.types[t].fields[5].ty].elems[0] }
+
+/// Whether the hybrid map mv (of type t) is in log mode.
+fn (var b: Builder) maph_is_log(t: Int, mv: Int) -> Int { b.bop(Op.Gt, b.call("list.len", b.int_t(), "", [b.mfield(t, 5, mv)]), b.cint(0)) }
+
+/// Whether the list l is held by one value only (a thread local count of
+/// one; the shared empty list is immortal, so not).
+fn (var b: Builder) maph_sole(l: Int) -> Int {
+  let it = b.int_t()
+  b.bop(Op.Eq, b.rt("slot_load", it, [b.rt("obj_addr", it, [l]), b.cint(0), b.cint(0)]), b.cint(1))
+}
+
+/// map_lookup of a hybrid map: the lists' position, else (a miss) the
+/// log table's when the value is in log mode (xo.maph.loglookup, out of
+/// line). A log value's lists are empty, so their lookup misses at once,
+/// and a lists value's hit never looks at the log field.
+fn (var b: Builder) maph_lookup(t: Int, mv: Int, k: Int) -> Int {
+  let it = b.int_t()
+  let ll = b.maph_loglookup(t)
+  let res = b.local()
+  b.write_var(res, b.lists_lookup(t, mv, k))
+  let (nm, jm) = b.if_then_begin(b.bop(Op.Lt, b.read(res), b.cint(0)))
+  let (nl, jl) = b.if_then_begin(b.maph_is_log(t, mv))
+  b.write_var(res, b.call(ll, it, "", [mv, k]))
+  b.if_then_end(nl, jl)
+  b.if_then_end(nm, jm)
+  b.read(res)
+}
+
+/// xo.maph.loglookup[T](m, k) -> Int (ssa.cold_fn): k's position in the
+/// log value m's table, with MAPH_LOG set (map_value tells the two kinds
+/// apart without loading the log field again), or -1.
+fn (var b: Builder) maph_loglookup(t: Int) -> Str {
+  let it = b.int_t()
+  let kt = map_key(b.m, t)
+  let lt = b.maph_lt(t)
+  let name = "xo.maph.loglookup[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t, kt], [it], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let mp = b.param(0)
+  let k = b.param(1)
+  let lv = b.call("list.index", lt, "", [b.mfield(t, 5, mp), b.cint(0)])
+  let w = b.mlog_lookup(lt, lv, k)
+  let (nt, jt) = b.if_then_begin(b.bop(Op.Ge, w, b.cint(0)))
+  b.retv(b.iop(Op.Or, w, b.cint(MAPH_LOG)))
+  b.if_then_end(nt, jt)
+  b.retv(b.cint(-1))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// map_value of a hybrid map, for a maph_lookup result idx (>= 0).
+fn (var b: Builder) maph_value(t: Int, mv: Int, idx: Int) -> Int {
+  let vt = map_val(b.m, t)
+  let join = b.new_block()
+  let res = b.s.f.add_param(join, vt)
+  let (yes, no) = b.branch(b.bop(Op.Ne, b.iop(Op.And, idx, b.cint(MAPH_LOG)), b.cint(0)))
+  b.s.cur = yes
+  let lt = b.maph_lt(t)
+  let lv = b.call("list.index", lt, "", [b.mfield(t, 5, mv), b.cint(0)])
+  b.jump(join, [b.mlog_value_at(lt, lv, b.iop(Op.Xor, idx, b.cint(MAPH_LOG)))])
+  b.s.cur = no
+  b.jump(join, [b.lists_value(t, mv, idx)])
+  b.seal(join)
+  b.s.cur = join
+  res
+}
+
+/// xo.maph.tolog[T](m) -> L: the log table of m's live entries, in order
+/// (the conversion: a flatten's cost, once).
+fn (var b: Builder) maph_tolog(t: Int) -> Str {
+  let it = b.int_t()
+  let lt = b.maph_lt(t)
+  let et = mlog_entry_of(b.m, lt)
+  let el = b.m.list(et)
+  let kt = map_key(b.m, t)
+  let vt = map_val(b.m, t)
+  let name = "xo.maph.tolog[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t], [lt], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let mp = b.param(0)
+  let keys = b.mfield(t, 0, mp)
+  let vals = b.mfield(t, 1, mp)
+  let live = b.mfield(t, 2, mp)
+  let es = b.local()
+  b.write_var(es, b.call("list.new", el, "", [b.add(Op.Field, it, Aux.I(n: 4), [mp])]))
+  let iv = b.local()
+  let (i, head, exit) = b.for_up_to_begin(b.call("list.len", it, "", [keys]), iv)
+  let (no, join) = b.if_then_begin(b.call("list.index", b.bool_t(), "", [live, i]))
+  let e = b.add(Op.Struct, et, Aux.None, [b.cint(0), b.cint(-1), b.cint(0), b.call("list.index", kt, "", [keys, i]), b.call("list.index", vt, "", [vals, i])])
+  b.write_var(es, b.call("list.push", el, "", [b.read(es), e]))
+  b.if_then_end(no, join)
+  b.for_up_to_end(i, iv, head, exit)
+  b.retv(b.mlog_table(lt, b.read(es), b.cint(0)))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// The hybrid map of log table lv (a conversion's result): empty lists, n
+/// mirrored.
+fn (var b: Builder) maph_of_log(t: Int, lv: Int) -> Int {
+  let it = b.int_t()
+  let lt = b.maph_lt(t)
+  let ll = b.m.list(lt)
+  var lg = b.call("list.new", ll, "", [b.cint(1)])
+  lg = b.call("list.push", ll, "", [lg, lv])
+  var fs: List[Int] = []
+  for i in 0..4 {
+    fs.push(b.call("list.new", b.m.types[t].fields[i].ty, "", []))
+  }
+  b.add(Op.Struct, t, Aux.None, fs + [b.add(Op.Field, it, Aux.I(n: 4), [lv]), lg])
+}
+
+/// The functions maph_put_pro's code calls (made before the put's own).
+fn (var b: Builder) maph_prep(t: Int) {
+  let _s = b.maph_slowput(t)
+}
+
+/// Whether the list l is shared with another value (not empty, not held
+/// once).
+fn (var b: Builder) maph_shared(l: Int) -> Int {
+  let bt = b.bool_t()
+  b.add(Op.And, bt, Aux.None, [b.bop(Op.Gt, b.call("list.len", b.int_t(), "", [l]), b.cint(0)), b.add(Op.Not, bt, Aux.None, [b.maph_sole(l)])])
+}
+
+/// Whether the hybrid map mp leaves the lists' put (or remove) for
+/// xo.maph.slowput (slowrem): it is a log value, or the list the write
+/// changes (l) is shared and the value copied on write once already.
+fn (var b: Builder) maph_slow(t: Int, mp: Int, l: Int) -> Int {
+  let it = b.int_t()
+  let res = b.local()
+  b.write_var(res, b.cbool(false))
+  // a log value's lists are empty: only then is the log field read
+  let (ne, je) = b.if_then_begin(b.bop(Op.Eq, b.call("list.len", it, "", [l]), b.cint(0)))
+  b.write_var(res, b.maph_is_log(t, mp))
+  b.if_then_end(ne, je)
+  let (ns, js) = b.if_then_begin(b.maph_shared(l))
+  b.write_var(res, b.maph_cowed(t, mp))
+  b.if_then_end(ns, js)
+  b.read(res)
+}
+
+/// Whether the lists of hybrid map mp copied on write once (its log field
+/// is an empty list of its own, not the immortal shared one).
+fn (var b: Builder) maph_cowed(t: Int, mp: Int) -> Int {
+  let it = b.int_t()
+  b.bop(Op.Ne, b.rt("slot_load", it, [b.rt("obj_addr", it, [b.mfield(t, 5, mp)]), b.cint(0), b.cint(0)]), b.iop(Op.Sub, b.cint(-9223372036854775807), b.cint(1)))
+}
+
+/// mp with its copy on write marked (maph_cowed).
+fn (var b: Builder) maph_mark(t: Int, mp: Int) -> Int {
+  b.add(Op.SetField, t, Aux.I(n: 5), [mp, b.call("list.new", b.m.types[t].fields[5].ty, "", [b.cint(1)])])
+}
+
+/// The hybrid's start of xo.map.put[T] (m, k, v its parameters): a log
+/// value's put and the conversion go to the cold xo.maph.slowput;
+/// otherwise whether the values list (every put writes it) is shared:
+/// this put copies it, and its result is marked (maph_marked).
+fn (var b: Builder) maph_put_pro(t: Int, mp: Int, k: Int, v: Int) -> Int {
+  let (nl, jl) = b.if_then_begin(b.maph_slow(t, mp, b.mfield(t, 1, mp)))
+  b.retv(b.call(b.maph_slowput(t), t, "", [mp, k, v]))
+  b.if_then_end(nl, jl)
+  b.maph_shared(b.mfield(t, 1, mp))
+}
+
+/// The lists' result r of a put or remove, marked as copied on write when
+/// sh (a Bool value; -1: not the hybrid).
+fn (var b: Builder) maph_marked(t: Int, r: Int, sh: Int) -> Int {
+  if sh < 0 {
+    return r
+  }
+  let cur = b.local()
+  b.write_var(cur, r)
+  let (ns, js) = b.if_then_begin(sh)
+  b.write_var(cur, b.maph_mark(t, r))
+  b.if_then_end(ns, js)
+  b.read(cur)
+}
+
+/// xo.maph.slowput[T](m, k, v) -> T (ssa.cold_fn): a log value's put (the
+/// table moved out of its list, so the log's own fast path sees it held
+/// once, and back), or the conversion of a value written while shared a
+/// second time, then its put.
+fn (var b: Builder) maph_slowput(t: Int) -> Str {
+  let it = b.int_t()
+  let kt = map_key(b.m, t)
+  let vt = map_val(b.m, t)
+  let lt = b.maph_lt(t)
+  let gput = b.mlog_put(lt)
+  let conv = b.maph_tolog(t)
+  let name = "xo.maph.slowput[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t, kt, vt], [t], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let mp = b.param(0)
+  let k = b.param(1)
+  let v = b.param(2)
+  let ll = b.m.types[t].fields[5].ty
+  let (nl, jl) = b.if_then_begin(b.maph_is_log(t, mp))
+  let tk = b.call("list.take", b.m.tuple([ll, lt]), "", [b.mfield(t, 5, mp), b.cint(0)])
+  let lv2 = b.call(gput, lt, "", [b.add(Op.Field, lt, Aux.I(n: 1), [tk]), k, v])
+  let lg2 = b.call("list.set", ll, "", [b.add(Op.Field, ll, Aux.I(n: 0), [tk]), b.cint(0), lv2])
+  let n2 = b.add(Op.Field, it, Aux.I(n: 4), [b.call("list.index", lt, "", [lg2, b.cint(0)])])
+  b.retv(b.add(Op.SetField, t, Aux.I(n: 4), [b.add(Op.SetField, t, Aux.I(n: 5), [mp, lg2]), n2]))
+  b.if_then_end(nl, jl)
+  let lv = b.call(conv, lt, "", [mp])
+  b.retv(b.maph_of_log(t, b.call(gput, lt, "", [lv, k, v])))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// The functions maph_rem_pro's code calls.
+fn (var b: Builder) maph_prep_rem(t: Int, ot: Int) {
+  let _s = b.maph_slowrem(t, ot)
+}
+
+/// The hybrid's start of xo.map.remove[T] (maph_put_pro's, for remove: it
+/// writes the live flags).
+fn (var b: Builder) maph_rem_pro(t: Int, ot: Int, mp: Int, k: Int) -> Int {
+  let rt = b.m.tuple([t, ot])
+  let (nl, jl) = b.if_then_begin(b.maph_slow(t, mp, b.mfield(t, 2, mp)))
+  b.retv(b.call(b.maph_slowrem(t, ot), rt, "", [mp, k]))
+  b.if_then_end(nl, jl)
+  b.maph_shared(b.mfield(t, 2, mp))
+}
+
+/// xo.maph.slowrem[T](m, k) -> (T, V?) (ssa.cold_fn): maph_slowput's,
+/// for remove.
+fn (var b: Builder) maph_slowrem(t: Int, ot: Int) -> Str {
+  let it = b.int_t()
+  let kt = map_key(b.m, t)
+  let lt = b.maph_lt(t)
+  let grem = b.mlog_remove(lt, ot)
+  let conv = b.maph_tolog(t)
+  let rt = b.m.tuple([t, ot])
+  let lrt = b.m.tuple([lt, ot])
+  var name = "xo.maph.slowrem[${b.m.types[t].name}]"
+  let have = b.fidx(name)
+  if have >= 0 && b.m.types[b.m.funcs[have].results[0]].name != b.m.types[rt].name {
+    name = name + "[${b.m.types[ot].name}]"
+  }
+  let fi = b.thunk_func(name, [t, kt], [rt], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let mp = b.param(0)
+  let k = b.param(1)
+  let ll = b.m.types[t].fields[5].ty
+  let (nl, jl) = b.if_then_begin(b.maph_is_log(t, mp))
+  let tk = b.call("list.take", b.m.tuple([ll, lt]), "", [b.mfield(t, 5, mp), b.cint(0)])
+  let r = b.call(grem, lrt, "", [b.add(Op.Field, lt, Aux.I(n: 1), [tk]), k])
+  let lg2 = b.call("list.set", ll, "", [b.add(Op.Field, ll, Aux.I(n: 0), [tk]), b.cint(0), b.add(Op.Field, lt, Aux.I(n: 0), [r])])
+  let n2 = b.add(Op.Field, it, Aux.I(n: 4), [b.call("list.index", lt, "", [lg2, b.cint(0)])])
+  let m2 = b.add(Op.SetField, t, Aux.I(n: 4), [b.add(Op.SetField, t, Aux.I(n: 5), [mp, lg2]), n2])
+  b.retv(b.add(Op.Tuple, rt, Aux.None, [m2, b.add(Op.Field, ot, Aux.I(n: 1), [r])]))
+  b.if_then_end(nl, jl)
+  let lv = b.call(conv, lt, "", [mp])
+  let r2 = b.call(grem, lrt, "", [lv, k])
+  b.retv(b.add(Op.Tuple, rt, Aux.None, [b.maph_of_log(t, b.add(Op.Field, lt, Aux.I(n: 0), [r2])), b.add(Op.Field, ot, Aux.I(n: 1), [r2])]))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// xo.maph.list[T] (map_list of a hybrid map: the lists', or the table's).
+fn (var b: Builder) maph_list(t: Int, what: Int) -> Str {
+  let kt = map_key(b.m, t)
+  let vt = map_val(b.m, t)
+  let et = [kt, vt, b.m.tuple([kt, vt])][what]
+  let ol = b.m.list(et)
+  let lt = b.maph_lt(t)
+  let llist = b.lists_list(t, what)
+  let glist = b.mlog_list(lt, what)
+  let name = "${["xo.maph.keys[", "xo.maph.values[", "xo.maph.entries["][what]}${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t], [ol], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let mp = b.param(0)
+  let (nl, jl) = b.if_then_begin(b.maph_is_log(t, mp))
+  b.retv(b.call(glist, ol, "", [b.call("list.index", lt, "", [b.mfield(t, 5, mp), b.cint(0)])]))
+  b.if_then_end(nl, jl)
+  b.retv(b.call(llist, ol, "", [mp]))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// map_kvl of a hybrid map: the lists' keys, values and live flags, or
+/// the table's live keys and values with every flag true.
+fn (var b: Builder) maph_kvl(t: Int, mv: Int) -> (Int, Int, Int) {
+  let it = b.int_t()
+  let kl = b.m.types[t].fields[0].ty
+  let vl = b.m.types[t].fields[1].ty
+  let bl = b.m.types[t].fields[2].ty
+  let rt = b.m.tuple([kl, vl, bl])
+  let lt = b.maph_lt(t)
+  let gkv = b.mlog_kv(lt)
+  let name = "xo.maph.kvl[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t], [rt], [])
+  if fi >= 0 {
+    let saved = b.begin(fi, b.s.file)
+    let mp = b.param(0)
+    let (nl, jl) = b.if_then_begin(b.maph_is_log(t, mp))
+    let r = b.call(gkv, b.m.tuple([kl, vl]), "", [b.call("list.index", lt, "", [b.mfield(t, 5, mp), b.cint(0)])])
+    let ks = b.add(Op.Field, kl, Aux.I(n: 0), [r])
+    let n = b.call("list.len", it, "", [ks])
+    let lv = b.local()
+    b.write_var(lv, b.call("list.new", bl, "", [n]))
+    let iv = b.local()
+    let (i, head, exit) = b.for_up_to_begin(n, iv)
+    b.write_var(lv, b.call("list.push", bl, "", [b.read(lv), b.cbool(true)]))
+    b.for_up_to_end(i, iv, head, exit)
+    b.retv(b.add(Op.Tuple, rt, Aux.None, [ks, b.add(Op.Field, vl, Aux.I(n: 1), [r]), b.read(lv)]))
+    b.if_then_end(nl, jl)
+    b.retv(b.add(Op.Tuple, rt, Aux.None, [b.mfield(t, 0, mp), b.mfield(t, 1, mp), b.mfield(t, 2, mp)]))
+    b.finish_fn()
+    b.end(saved)
+  }
+  let r = b.call(name, rt, "", [mv])
+  (b.add(Op.Field, kl, Aux.I(n: 0), [r]), b.add(Op.Field, vl, Aux.I(n: 1), [r]), b.add(Op.Field, bl, Aux.I(n: 2), [r]))
+}

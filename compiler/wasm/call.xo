@@ -213,6 +213,23 @@ fn (var g: Gen) call(v: Int) {
         g.store_leaves(a, 0, g.loc(x.args[1]), el)
       }
     }
+    "log.set" => {
+      // decision 0291: list.set into a borrowed list (a Map log's chunk
+      // its Map's owner alone holds): the old element dropped; no result
+      let et = g.vty(x.args[2])
+      let a = g.elem_addr(v, x.args[0], x.args[1], et)
+      let el = g.leaves(et)
+      if g.heap(et) {
+        let old = g.scratch(el)
+        g.load_leaves(a, 0, old, el)
+        g.push_range(old, el.len())
+        let d = g.rc_fn("drop", et)
+        g.e("call ${d}")
+      }
+      if !el.is_empty() {
+        g.store_leaves(a, 0, g.loc(x.args[2]), el)
+      }
+    }
     "log.push" => {
       // decision 0291: list.push into a borrowed list with room (a Map
       // log's chunk: rl_slot does not move it); no result

@@ -1222,9 +1222,6 @@ fn (var b: Builder) map_type(set: Bool, k: Int, v: Int) -> Int {
   if set {
     name = "Set[${b.m.types[k].name}]"
   }
-  if b.m.map_log {
-    return b.mlog_type(name, k, v)
-  }
   let (t, created) = b.m.named(name, Kind.Struct)
   if created {
     let kl = b.m.list(k)
@@ -1234,6 +1231,12 @@ fn (var b: Builder) map_type(set: Bool, k: Int, v: Int) -> Int {
     let n = b.int_t()
     b.m.types[t].coll = true
     b.m.types[t].fields = [SField{name: "keys", ty: kl}, SField{name: "vals", ty: vl}, SField{name: "live", ty: ll}, SField{name: "slots", ty: sl}, SField{name: "n", ty: n}]
+    if b.m.map_log {
+      // decision 0291's hybrid: the lists until a value written while
+      // shared converts (map.xo maph_*), then the log table in log
+      let lt = b.mlog_type("xo.MapLog[${name}]", k, v)
+      b.m.types[t].fields = b.m.types[t].fields + [SField{name: "log", ty: b.m.list(lt)}]
+    }
   }
   t
 }

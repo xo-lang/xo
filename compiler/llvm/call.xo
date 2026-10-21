@@ -200,6 +200,28 @@ fn (var g: Gen) call(v: Int) {
       g.emit("store i64 ${n1}, ptr ${lp}${TBAA_HDR}${md}")
       g.alias(v, lm)
     }
+    "log.set" => {
+      // decision 0291: list.set into a borrowed list (a Map log's chunk
+      // its Map's owner alone holds): the old element dropped; no result
+      let et = g.vty(args[2])
+      let l = g.op(args[0])
+      let a1 = g.op(args[1])
+      let p = g.elem_ptr(et, l, a1)
+      if g.heap(et) {
+        let el = g.ll(et)
+        let h = g.rc_fn("drop", et)
+        if g.rc_by_ptr(et) {
+          g.emit("call void ${h}(ptr ${p})")
+        } else {
+          let old = g.def("load ${el}, ptr ${p}${TBAA_ELEM}${md}")
+          g.emit("call void ${h}(${el} ${old})")
+        }
+      }
+      if g.kind(et) != ssa.Kind.Unit {
+        let t2 = g.typed(args[2])
+        g.emit("store ${t2}, ptr ${p}${TBAA_ELEM}${md}")
+      }
+    }
     "log.push" => {
       // decision 0291: list.push into a borrowed list with room (a Map
       // log's chunk): no growth, no result

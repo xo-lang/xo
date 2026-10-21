@@ -16,17 +16,11 @@ use github.com/xo-lang/xo/compiler/parser
 
 /// The key type of the Map or Set struct t (mapKey).
 fn map_key(m: Module, t: Int) -> Int {
-  if m.map_log {
-    return mlog_key(m, t)
-  }
   m.types[m.types[t].fields[0].ty].elems[0]
 }
 
 /// The value type of the Map or Set struct t (mapVal).
 fn map_val(m: Module, t: Int) -> Int {
-  if m.map_log {
-    return mlog_val(m, t)
-  }
   m.types[m.types[t].fields[1].ty].elems[0]
 }
 
@@ -163,15 +157,24 @@ fn (var b: Builder) hash_func(t: Int) -> Str {
 
 /// A Map or Set with no entries (emptyMap).
 fn (var b: Builder) empty_map(t: Int) -> Int {
-  if b.m.map_log {
-    return b.mlog_empty(t)
-  }
   var fs: List[Int] = []
   for i in 0..4 {
     fs.push(b.call("list.new", b.m.types[t].fields[i].ty, "", []))
   }
   fs.push(b.cint(0))
-  b.add(Op.Struct, t, Aux.None, fs)
+  b.mstruct(t, fs, -1)
+}
+
+/// The Map struct t of the lists' five fields fs; the hybrid's log field
+/// (decision 0291) comes from src (-1: none).
+fn (var b: Builder) mstruct(t: Int, fs: List[Int], src: Int) -> Int {
+  if !b.m.map_log {
+    return b.add(Op.Struct, t, Aux.None, fs)
+  }
+  if src < 0 {
+    return b.add(Op.Struct, t, Aux.None, fs + [b.call("list.new", b.m.types[t].fields[5].ty, "", [])])
+  }
+  b.add(Op.Struct, t, Aux.None, fs + [b.mfield(t, 5, src)])
 }
 
 /// xo.map.find[T](m, k, h) -> Int: the index of k's live entry, or -1
@@ -351,7 +354,7 @@ fn (var b: Builder) map_rebuild(t: Int) -> Str {
   let rv = b.read(nv)
   let rl = b.read(nl)
   let rs = b.read(sv)
-  b.retv(b.add(Op.Struct, t, Aux.None, [keys2, rv, rl, rs, n]))
+  b.retv(b.mstruct(t, [keys2, rv, rl, rs, n], mp))
   b.finish_fn()
   b.end(saved)
   name
@@ -414,8 +417,13 @@ fn (var b: Builder) map_scan(t: Int) -> Str {
 /// was (find stays small enough for the arm64 inliner).
 fn (var b: Builder) map_lookup(t: Int, mv: Int, k: Int) -> Int {
   if b.m.map_log {
-    return b.mlog_lookup(t, mv, k)
+    return b.maph_lookup(t, mv, k)
   }
+  b.lists_lookup(t, mv, k)
+}
+
+/// map_lookup of the lists' representation.
+fn (var b: Builder) lists_lookup(t: Int, mv: Int, k: Int) -> Int {
   let it = b.int_t()
   let bt = b.bool_t()
   let scan = b.map_scan(t)
@@ -441,9 +449,11 @@ fn (var b: Builder) map_lookup(t: Int, mv: Int, k: Int) -> Int {
 /// new entry at the end (mapPut); a small map's entry with no hash
 /// (SMALL_MAP).
 fn (var b: Builder) map_put(t: Int) -> Str {
-  if b.m.map_log {
-    return b.mlog_put(t)
-  }
+  b.lists_put(t)
+}
+
+/// map_put of the lists' representation.
+fn (var b: Builder) lists_put(t: Int) -> Str {
   let it = b.int_t()
   let bt = b.bool_t()
   let kt = map_key(b.m, t)
@@ -452,20 +462,27 @@ fn (var b: Builder) map_put(t: Int) -> Str {
   let _find = b.map_find(t)
   let rebuild = b.map_rebuild(t)
   let hash = b.hash_func(kt)
+  if b.m.map_log {
+    b.maph_prep(t)
+  }
   let name = "xo.map.put[${b.m.types[t].name}]"
   let fi = b.thunk_func(name, [t, kt, vt], [t], [])
   if fi < 0 {
     return name
   }
   let saved = b.begin(fi, b.s.file)
-  let mp = b.param(0)
   let k = b.param(1)
   let v = b.param(2)
-  let idx = b.map_lookup(t, mp, k)
+  let mp = b.param(0)
+  // the hybrid (decision 0291, maphyb.xo): a log value's write, or a
+  // shared one's copy on write (the second converts; the first is marked
+  // on the result, so the lists' code works on the parameter itself)
+  let sh = if b.m.map_log { b.maph_put_pro(t, mp, k, v) } else { -1 }
+  let idx = b.lists_lookup(t, mp, k)
   let (no, join) = b.if_then_begin(b.add(Op.Ge, bt, Aux.None, [idx, b.cint(0)]))
   let vl = b.mfield(t, 1, mp)
   let vals0 = b.call("list.set", b.m.types[t].fields[1].ty, "", [vl, idx, v])
-  b.retv(b.add(Op.SetField, t, Aux.I(n: 1), [mp, vals0]))
+  b.retv(b.maph_marked(t, b.add(Op.SetField, t, Aux.I(n: 1), [mp, vals0]), sh))
   b.if_then_end(no, join)
   let mv = b.local()
   b.write_var(mv, mp)
@@ -479,7 +496,7 @@ fn (var b: Builder) map_put(t: Int) -> Str {
   let sv = b.call("list.push", b.vty(b.mfield(t, 1, mp)), "", [b.mfield(t, 1, mp), v])
   let sl = b.call("list.push", b.vty(b.mfield(t, 2, mp)), "", [b.mfield(t, 2, mp), b.cbool(true)])
   let sn = b.add(Op.Add, it, Aux.None, [b.add(Op.Field, it, Aux.I(n: 4), [mp]), b.cint(1)])
-  b.retv(b.add(Op.Struct, t, Aux.None, [sk, sv, sl, b.mfield(t, 3, mp), sn]))
+  b.retv(b.maph_marked(t, b.mstruct(t, [sk, sv, sl, b.mfield(t, 3, mp), sn], mp), sh))
   b.if_then_end(sno, sjoin)
   let t1 = b.add(Op.Add, it, Aux.None, [total, b.cint(1)])
   let t4 = b.add(Op.Mul, it, Aux.None, [t1, b.cint(4)])
@@ -504,7 +521,7 @@ fn (var b: Builder) map_put(t: Int) -> Str {
   live = b.call("list.push", b.vty(live), "", [live, tr])
   slots = b.insert_slot(slots, h, pos)
   let n1 = b.add(Op.Add, it, Aux.None, [n, b.cint(1)])
-  b.retv(b.add(Op.Struct, t, Aux.None, [keys, vals, live, slots, n1]))
+  b.retv(b.maph_marked(t, b.mstruct(t, [keys, vals, live, slots, n1], cur), sh))
   b.finish_fn()
   b.end(saved)
   name
@@ -512,9 +529,11 @@ fn (var b: Builder) map_put(t: Int) -> Str {
 
 /// xo.map.remove[T](m, k) -> (T, V?) (mapRemove).
 fn (var b: Builder) map_remove(t: Int, ot: Int) -> Str {
-  if b.m.map_log {
-    return b.mlog_remove(t, ot)
-  }
+  b.lists_remove(t, ot)
+}
+
+/// map_remove of the lists' representation.
+fn (var b: Builder) lists_remove(t: Int, ot: Int) -> Str {
   let it = b.int_t()
   let bt = b.bool_t()
   let kt = map_key(b.m, t)
@@ -529,15 +548,21 @@ fn (var b: Builder) map_remove(t: Int, ot: Int) -> Str {
     // removed value is a Bytes?: one function per result type
     name = name + "[${b.m.types[ot].name}]"
   }
+  if b.m.map_log {
+    b.maph_prep_rem(t, ot)
+  }
   let fi = b.thunk_func(name, [t, kt], [rt], [])
   if fi < 0 {
     return name
   }
   let saved = b.begin(fi, b.s.file)
-  let mp = b.param(0)
   let k = b.param(1)
+  let mp = b.param(0)
+  // the hybrid (decision 0291, maphyb.xo): a log value's removal, or a
+  // shared one's copy on write (put's)
+  let sh = if b.m.map_log { b.maph_rem_pro(t, ot, mp, k) } else { -1 }
   let _hf = b.hash_func(kt)
-  let idx = b.map_lookup(t, mp, k)
+  let idx = b.lists_lookup(t, mp, k)
   let (no, join) = b.if_then_begin(b.add(Op.Lt, bt, Aux.None, [idx, b.cint(0)]))
   let none = b.add(Op.Variant, ot, Aux.I(n: b.m.variant_index(ot, "None")), [])
   b.retv(b.add(Op.Tuple, rt, Aux.None, [mp, none]))
@@ -554,9 +579,9 @@ fn (var b: Builder) map_remove(t: Int, ot: Int) -> Str {
   let n0 = b.add(Op.Field, it, Aux.I(n: 4), [mp])
   let n = b.add(Op.Sub, it, Aux.None, [n0, b.cint(1)])
   let slots = b.mfield(t, 3, mp)
-  let nm = b.add(Op.Struct, t, Aux.None, [keys, vals, live, slots, n])
+  let nm = b.mstruct(t, [keys, vals, live, slots, n], mp)
   let some = b.add(Op.Variant, ot, Aux.I(n: b.m.variant_index(ot, "Some")), [old])
-  b.retv(b.add(Op.Tuple, rt, Aux.None, [nm, some]))
+  b.retv(b.add(Op.Tuple, rt, Aux.None, [b.maph_marked(t, nm, sh), some]))
   b.finish_fn()
   b.end(saved)
   name
@@ -566,8 +591,13 @@ fn (var b: Builder) map_remove(t: Int, ot: Int) -> Str {
 /// or (key, value) tuples (2) in order (mapList).
 fn (var b: Builder) map_list(t: Int, what: Int) -> Str {
   if b.m.map_log {
-    return b.mlog_list(t, what)
+    return b.maph_list(t, what)
   }
+  b.lists_list(t, what)
+}
+
+/// map_list of the lists' representation.
+fn (var b: Builder) lists_list(t: Int, what: Int) -> Str {
   let it = b.int_t()
   let _bt = b.bool_t()
   let kt = map_key(b.m, t)
@@ -644,8 +674,13 @@ fn (var b: Builder) map_index(t: Int, mv: Int, k: Int) -> Int { b.map_lookup(t, 
 /// The value of k's entry idx (a map_lookup result, >= 0) in mv.
 fn (var b: Builder) map_value(t: Int, mv: Int, idx: Int) -> Int {
   if b.m.map_log {
-    return b.mlog_value_at(t, mv, idx)
+    return b.maph_value(t, mv, idx)
   }
+  b.lists_value(t, mv, idx)
+}
+
+/// map_value of the lists' representation.
+fn (var b: Builder) lists_value(t: Int, mv: Int, idx: Int) -> Int {
   b.call("list.index", map_val(b.m, t), "", [b.mfield(t, 1, mv), idx])
 }
 
@@ -654,10 +689,7 @@ fn (var b: Builder) map_value(t: Int, mv: Int, idx: Int) -> Int {
 /// representation the lists of the live entries (live -1).
 fn (var b: Builder) map_kvl(t: Int, mv: Int) -> (Int, Int, Int) {
   if b.m.map_log {
-    let kl = b.m.list(map_key(b.m, t))
-    let vl = b.m.list(map_val(b.m, t))
-    let r = b.call(b.mlog_kv(t), b.m.tuple([kl, vl]), "", [mv])
-    return (b.add(Op.Field, kl, Aux.I(n: 0), [r]), b.add(Op.Field, vl, Aux.I(n: 1), [r]), -1)
+    return b.maph_kvl(t, mv)
   }
   (b.mfield(t, 0, mv), b.mfield(t, 1, mv), b.mfield(t, 2, mv))
 }
@@ -926,10 +958,6 @@ fn (var b: Builder) for_map(label: Bytes, p: Pattern, bound: List[Expr], body: p
   let it = b.int_t()
   let bt = b.bool_t()
   let t = b.vty(mv)
-  if b.m.map_log {
-    b.for_mlog(label, p, bound, body, mv)
-    return
-  }
   let (keys, vals, live) = b.map_kvl(t, mv)
   let set = b.m.types[t].name.starts_with("Set[")
   let n = b.call("list.len", it, "", [keys])

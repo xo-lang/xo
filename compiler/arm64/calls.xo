@@ -778,6 +778,21 @@ fn (var g: G) call_op(v: Int) {
       g.cm.lens[lm] = n1
       g.set(v, [lm])
     }
+    "log.set" => {
+      // decision 0291: list.set into a borrowed list (a Map log's chunk
+      // that only its Map's owner holds, maplog.xo's put fast path): the
+      // old element released, the new one stored; no result
+      let l = g.word(x.args[0])
+      let i = g.word(x.args[1])
+      let et = g.vty(x.args[2])
+      let w = g.store_words(x.args[2])
+      let base = g.elem_addr(l, i, x.args[1], et)
+      if g.heap(et) {
+        let old = g.load_elem(base, et, false)
+        g.release(et, old)
+      }
+      g.store_elem(base, et, w)
+    }
     "log.push" => {
       // decision 0291: list.push into a borrowed list with room (a Map
       // log's chunk, made with its capacity): no growth, no result

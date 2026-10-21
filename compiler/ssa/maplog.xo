@@ -955,8 +955,16 @@ fn (var b: Builder) mlog_record(t: Int) -> Str {
   // too much garbage: flattened (a root's log past twice its keys and 32,
   // a fork's own entries past its keys and 32)
   let own1 = b.iop(Op.Add, i, b.cint(1))
-  let root_g = b.add(Op.And, bt, Aux.None, [b.add(Op.Not, bt, Aux.None, [has_parent]), b.bop(Op.Gt, lim1, b.iop(Op.Add, b.iop(Op.Mul, n1, b.cint(2)), b.cint(32)))])
-  let fork_g = b.add(Op.And, bt, Aux.None, [has_parent, b.bop(Op.Gt, own1, b.iop(Op.Add, n1, b.cint(32)))])
+  // a root's garbage past an eighth of its keys (and 32): only a shared
+  // table gathers it from overwrites (its sole owner writes in place, put's
+  // fast path), and a copy written all over then flattens early, as the
+  // lists copy on the first write, and writes in place after
+  let root_g = b.add(Op.And, bt, Aux.None, [b.add(Op.Not, bt, Aux.None, [has_parent]), b.bop(Op.Gt, b.iop(Op.Mul, lim1, b.cint(8)), b.iop(Op.Add, b.iop(Op.Mul, n1, b.cint(9)), b.cint(256)))])
+  // (or past an eighth of its parents' log: a copy written all over, as
+  // `var c = m` then a put of every key, becomes a root table early, whose
+  // owner then writes in place: the lists' copy on first write, once)
+  let fork_big = b.bop(Op.Gt, b.iop(Op.Mul, own1, b.cint(8)), b.iop(Op.Add, base, b.cint(256)))
+  let fork_g = b.add(Op.And, bt, Aux.None, [has_parent, b.add(Op.Or, bt, Aux.None, [b.bop(Op.Gt, own1, b.iop(Op.Add, n1, b.cint(32))), fork_big])])
   let (nf, jf) = b.if_then_begin(b.add(Op.Or, bt, Aux.None, [b.add(Op.Or, bt, Aux.None, [root_g, fork_g]), b.read(firstv)]))
   let es = b.call(each, el, "", [m1])
   b.retv(b.mlog_table(t, es, b.cint(0)))
@@ -969,24 +977,67 @@ fn (var b: Builder) mlog_record(t: Int) -> Str {
 
 /// xo.mlog.put[T](m, k, v) -> T.
 fn (var b: Builder) mlog_put(t: Int) -> Str {
+  let it = b.int_t()
+  let bt = b.bool_t()
   let kt = mlog_key(b.m, t)
   let vt = mlog_val(b.m, t)
+  let et = mlog_entry_of(b.m, t)
+  let el = b.m.list(et)
   let claim = b.mlog_claim(t)
   let record = b.mlog_record(t)
+  let probe = b.mlog_probe(t)
   let name = "xo.mlog.put[${b.m.types[t].name}]"
   let fi = b.thunk_func(name, [t, kt, vt], [t], [])
   if fi < 0 {
     return name
   }
+  let pt = b.m.tuple([it, it])
   let saved = b.begin(fi, b.s.file)
   let mp = b.param(0)
   let k = b.param(1)
   let v = b.param(2)
+  // the unshared fast path: m is the only value of a root table (put owns
+  // m, so a caller that keeps its m retained it: the directory and the
+  // claim cell then count two) whose view is the whole log, and k's newest
+  // entry is live: the entry's value is replaced in place, as the lists'
+  // put does (no claim, no new entry, no garbage to flatten later)
+  let used = b.mf(t, 2, mp)
+  let (nt, jt) = b.if_then_begin(b.bop(Op.Gt, b.call("list.len", it, "", [used]), b.cint(0)))
+  let dir = b.mf(t, 0, mp)
+  let sole = b.add(Op.And, bt, Aux.None, [b.bop(Op.Eq, b.call("list.len", it, "", [b.mf(t, 7, mp)]), b.cint(0)), b.add(Op.And, bt, Aux.None, [b.mlog_sole(dir), b.mlog_sole(used)])])
+  let (ns, js) = b.if_then_begin(sole)
+  let lim = b.mf(t, 5, mp)
+  let (nw, jw) = b.if_then_begin(b.bop(Op.Eq, b.rt("slot_load", it, [used, b.cint(0), b.cint(MLOG_ACQ)]), lim))
+  let base = b.mf(t, 3, mp)
+  let r = b.call(probe, pt, "", [dir, b.mf(t, 1, mp), base, lim, k, b.mlog_hash_if(t, mp, k)])
+  let j = b.add(Op.Field, it, Aux.I(n: 1), [r])
+  let (nj, jj) = b.if_then_begin(b.bop(Op.Ge, j, b.cint(0)))
+  let i = b.iop(Op.Sub, j, base)
+  let e = b.mlog_at(et, dir, i)
+  let org = b.add(Op.Field, it, Aux.I(n: 2), [e])
+  let (no, jo) = b.if_then_begin(b.bop(Op.Ge, org, b.cint(0)))
+  let (c, off) = b.mlog_slot(i)
+  let chunk = b.call("list.index", el, "", [dir, c])
+  let ne = b.add(Op.Struct, et, Aux.None, [b.add(Op.Field, it, Aux.I(n: 0), [e]), b.add(Op.Field, it, Aux.I(n: 1), [e]), org, b.add(Op.Field, kt, Aux.I(n: 3), [e]), v])
+  b.call("log.set", -1, "", [chunk, off, ne])
+  b.retv(mp)
+  b.if_then_end(no, jo)
+  b.if_then_end(nj, jj)
+  b.if_then_end(nw, jw)
+  b.if_then_end(ns, js)
+  b.if_then_end(nt, jt)
   let m1 = b.call(claim, t, "", [mp])
   b.retv(b.call(record, t, "", [m1, b.mlog_hash_if(t, m1, k), k, v, b.cbool(false)]))
   b.finish_fn()
   b.end(saved)
   name
+}
+
+/// Whether the object of list l has one reference (thread local): the
+/// Map value holding it is its only holder.
+fn (var b: Builder) mlog_sole(l: Int) -> Int {
+  let it = b.int_t()
+  b.bop(Op.Eq, b.rt("slot_load", it, [b.rt("obj_addr", it, [l]), b.cint(0), b.cint(0)]), b.cint(1))
 }
 
 /// xo.mlog.remove[T](m, k) -> (T, V?).

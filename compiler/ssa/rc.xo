@@ -106,6 +106,9 @@ fn runtime_modes(name: Str) -> List[Mode]? {
     // (several Map values hold it; each appends past every other's
     // view, into room made when it was), the element moves in
     "log.push" => Some([w, c])
+    // an in place store into such a chunk by the table's only owner
+    // (maplog.xo's put fast path): borrowed list, the element moves in
+    "log.set" => Some([w, n, c])
     "list.pop" => Some([c])
     "list.take" => Some([c, n])
     "rt.task_spawn" | "rt.task_spawn_fn" => Some([w, c, n, n, n, n, n, w])

@@ -1007,8 +1007,11 @@ fn float_text(x: Float) -> Str {
 /// The log map's findx (forks, scans; decision 0291) inlined into its
 /// small find made find 292 instructions and a get 3 times slower
 /// (2026-10-20). Its newdir stays a call so the directory's length is
-/// not known where log.push grows it (2026-10-21).
+/// not known where log.push grows it (2026-10-21). The hybrid Map's
+/// log and conversion paths stay calls (2026-10-21: inlined, the lists'
+/// put doubled in size).
 pub fn cold_fn(name: Str) -> Bool {
   name is "pool.lock_slow" | "pool.futex_wake" | "budget.tick_slow" | "mutex.held_add_slow" | "obj.reserve_slow" | "obj.push_slow" | "obj.rl_free_n_slow" | "stdio.out_slow" ||
-    name.starts_with("xo.map.rebuild[") || name.starts_with("xo.mlog.findx[") || name.starts_with("xo.mlog.newdir[")
+    name.starts_with("xo.map.rebuild[") || name.starts_with("xo.mlog.findx[") || name.starts_with("xo.mlog.newdir[") ||
+    name.starts_with("xo.maph.slowput[") || name.starts_with("xo.maph.slowrem[") || name.starts_with("xo.maph.loglookup[")
 }
