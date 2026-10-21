@@ -270,6 +270,43 @@ fn map_filter[K, V, E, fx: Effects](m: Map[K, V], f: fn(K, V) -> Bool ! E uses f
   out
 }
 
+fn set_any[T, E, fx: Effects](s: Set[T], f: fn(T) -> Bool ! E uses fx) -> Bool ! E uses fx {
+  for x in s {
+    if f(x)? {
+      return true
+    }
+  }
+  false
+}
+
+fn set_all[T, E, fx: Effects](s: Set[T], f: fn(T) -> Bool ! E uses fx) -> Bool ! E uses fx {
+  for x in s {
+    if !f(x)? {
+      return false
+    }
+  }
+  true
+}
+
+fn set_filter[T, E, fx: Effects](s: Set[T], f: fn(T) -> Bool ! E uses fx) -> Set[T] ! E uses fx {
+  var r: Set[T] = #{}
+  for x in s {
+    if f(x)? {
+      r.add(x)
+    }
+  }
+  r
+}
+
+/// The set of f's results, in the order of their first appearance.
+fn set_map[T, U, E, fx: Effects](s: Set[T], f: fn(T) -> U ! E uses fx) -> Set[U] ! E uses fx {
+  var r: Set[U] = #{}
+  for x in s {
+    r.add(f(x)?)
+  }
+  r
+}
+
 fn set_union[T](s: Set[T], o: Set[T]) -> Set[T] {
   var r = s
   for x in o {

@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-10-21: fix: Set.filter, map, any and all build natively
+
+- Kind: fix
+- Commit: (filled in after the push)
+- Found by: Xo Lang 3 (log Map tests, decision 0291)
+- Go reference: none
+- Test: internal/llvm/testdata/golden/set_hofs
+
+The four Set methods were specified (std.md 2.4) and ran on the Go
+backend, but a native build stopped with XO1201 ("support is planned").
+They now build on arm64, LLVM and wasm, with the Go backend's results;
+`map` keeps each result's first appearance in iteration order.
 ## 2026-10-20: behavior: a connection's reads and writes take the effect of how it was made
 
 - Kind: behavior

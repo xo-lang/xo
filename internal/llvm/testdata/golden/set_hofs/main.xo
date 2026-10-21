@@ -1,0 +1,11 @@
+// Set.filter, map, any and all on every backend (the native ones in
+// std/native/prelude.xo, std.md 2.4)
+
+fn main(os: Os) {
+  let s = [5, 1, 4, 2, 3].to_set()
+  let d = s.filter(fn(x) { x > 2 })
+  let e = s.map(fn(x) { x % 3 })
+  os.stdio.println("${d.to_list().map(fn(x) { "${x}" }).join(",")} ${e.to_list().map(fn(x) { "${x}" }).join(",")} ${s.any(fn(x) { x > 4 })} ${s.any(fn(x) { x > 5 })} ${s.all(fn(x) { x > 0 })} ${s.all(fn(x) { x > 1 })}")
+  let empty: Set[Int] = #{}
+  os.stdio.println("${empty.any(fn(x) { true })} ${empty.all(fn(x) { false })} ${empty.filter(fn(x) { true }).len()}")
+}
