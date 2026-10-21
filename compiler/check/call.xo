@@ -1191,7 +1191,7 @@ fn (var c: Checker) call_func(fo: Int, pre: Subst, targs: List[Int], has_targs: 
         if cname is "Eq" | "Hash" {
           c.note_incomparable(d, c.incomparable(at))
         }
-        if cname is "Json" | "Ord" | "Display" | "SqlRow" | "Xml" {
+        if suggests_derive(cname) {
           c.note(d, "add `derive ${cname}` to the type declaration (core 2.9)")
         }
       }

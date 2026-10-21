@@ -283,20 +283,14 @@ pub fn (var c: Checker) implements(t0: Int, iface: Int, sp: Span) -> Bool {
   let io = c.tys[iface].obj
   if c.objs[io].module == c.prelude {
     let n = text(c.objs[io].name)
-    if n is "Debug" | "Eq" | "Hash" {
-      return c.is_eq_type(t, n)
-    }
-    if n == "Ord" {
-      return c.is_ord(t)
-    }
-    if n is "Json" | "OpenApi" | "Proto" {
-      return c.is_serializable(t, n)
-    }
-    if n == "SqlRow" {
-      return c.is_sql_row(t)
-    }
-    if n == "Xml" {
-      return c.is_xml(t)
+    if let Some(d) = derivable(n) {
+      match d.kind {
+        Equality => return c.is_eq_type(t, n)
+        Order => return c.is_ord(t)
+        Serial => return c.is_serializable(t, n)
+        Marked => return c.is_marked(t, n)
+        Text => {}
+      }
     }
     if n is "Display" | "Error" {
       if c.is_display_builtin(t) {
@@ -693,22 +687,14 @@ fn (var c: Checker) serializable_in(t0: Int, name: Str, seen: List[Int]) -> Bool
   }
 }
 
-fn (c: Checker) is_sql_row(t0: Int) -> Bool {
+/// Whether t derives name (a Marked derive, such as SqlRow or Xml), or
+/// is a type parameter constrained by it.
+fn (c: Checker) is_marked(t0: Int, name: Str) -> Bool {
   let t = c.resolve(t0)
   let x = c.tys[t]
   match x.kind {
-    Named => c.derives(x.obj, "SqlRow")
-    Param => c.constraint_is(t, "SqlRow")
-    Tuple | Func | Var | Bad | EffArg => false
-  }
-}
-
-fn (c: Checker) is_xml(t0: Int) -> Bool {
-  let t = c.resolve(t0)
-  let x = c.tys[t]
-  match x.kind {
-    Named => c.derives(x.obj, "Xml")
-    Param => c.constraint_is(t, "Xml")
+    Named => c.derives(x.obj, name)
+    Param => c.constraint_is(t, name)
     Tuple | Func | Var | Bad | EffArg => false
   }
 }

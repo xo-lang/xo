@@ -380,7 +380,7 @@ fn (var c: Checker) wire_keys(sd: parser.StructDecl, fields0: List[FieldInfo], d
   // an override for a format the struct does not derive (decision 0315)
   for fl in sd.fields {
     for fw in fl.formats {
-      let d = if fw.format == b"json" { "Json" } else if fw.format == b"sql" { "SqlRow" } else { "Xml" }
+      let d = derive_for_format(text(fw.format)) ?? "Json"
       if !derives.contains(d) {
         c.error("XO0424", fw.span, "field `${text(fl.name.name)}` has a `${text(fw.format)}` wire string, but `${text(sd.name.name)}` does not derive ${d}; add `derive ${d}` or remove the string")
       }
@@ -401,10 +401,10 @@ fn (var c: Checker) wire_keys(sd: parser.StructDecl, fields0: List[FieldInfo], d
       }
     }
   }
-  if any_wire && !derives.contains("Json") && !derives.contains("SqlRow") && !derives.contains("Xml") {
+  if any_wire && !maps_field_names(derives) {
     for fl in sd.fields {
       if let Some(ws) = fl.wire_span {
-        c.warn("XO0414", ws, "the wire name of field `${text(fl.name.name)}` is unused: no derive of `${text(sd.name.name)}` maps fields to keys (`derive Json`, `derive SqlRow`)")
+        c.warn("XO0414", ws, "the wire name of field `${text(fl.name.name)}` is unused: no derive of `${text(sd.name.name)}` maps fields to keys (${field_name_derives().join(", ")})")
       }
     }
   }
@@ -461,7 +461,7 @@ fn (var c: Checker) derives_of(ids: List[Ident]) -> List[Str] {
   var out: List[Str] = []
   for id in ids {
     if !is_derivable(id.name) {
-      c.unresolved(id.span, "derivable interface", text(id.name), ["Debug", "Display", "Eq", "Hash", "Json", "OpenApi", "Ord", "Proto", "SqlRow", "Xml"])
+      c.unresolved(id.span, "derivable interface", text(id.name), derivable_names())
       continue
     }
     out.push(text(id.name))

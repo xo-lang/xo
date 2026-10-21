@@ -1,0 +1,122 @@
+// The derivable interfaces (core 2.9), in one table: the prelude's
+// derivable names, what protects them from redeclaration, how a type
+// satisfies each (infer.xo implements), which ones check their fields
+// (stmt.xo check_derives), and what the Go backend calls them (gen). A new
+// derive adds one entry here and its `interface NAME {}` to
+// std/prelude.xo; internal/repotest TestDerivableTable fails when a
+// hand kept list of names reappears elsewhere.
+
+/// How a type satisfies a derivable interface.
+pub enum DeriveKind {
+  /// Display: a `display` method, or a builtin's text.
+  Text
+  /// Debug, Eq, Hash: every type that can be compared (is_eq_type).
+  Equality
+  /// Ord: every type that can be ordered (is_ord).
+  Order
+  /// Json, OpenApi, Proto: a type built from serializable parts
+  /// (is_serializable).
+  Serial
+  /// SqlRow, Xml: only a type that derives it (or a type parameter
+  /// constrained by it); the derive generates the code.
+  Marked
+}
+
+pub struct Derivable {
+  pub name: Str
+  pub kind: DeriveKind
+  /// A marker interface with no methods, a Go `any` in the runtime.
+  pub marker: Bool
+  /// `derive NAME` requires every field to implement NAME.
+  pub fields_must: Bool
+  /// The wire format whose field strings (`json "..."`) name this derive's
+  /// keys, or "" when the derive maps no field names (decision 0315).
+  pub format: Str = ""
+}
+
+fn derivable_table() -> List[Derivable] {
+  [
+    Derivable{name: "Display", kind: DeriveKind.Text, marker: false, fields_must: false},
+    Derivable{name: "Debug", kind: DeriveKind.Equality, marker: false, fields_must: false},
+    Derivable{name: "Eq", kind: DeriveKind.Equality, marker: true, fields_must: false},
+    Derivable{name: "Hash", kind: DeriveKind.Equality, marker: true, fields_must: false},
+    Derivable{name: "Ord", kind: DeriveKind.Order, marker: true, fields_must: true},
+    Derivable{name: "Json", kind: DeriveKind.Serial, marker: true, fields_must: true, format: "json"},
+    Derivable{name: "OpenApi", kind: DeriveKind.Serial, marker: true, fields_must: true},
+    Derivable{name: "Proto", kind: DeriveKind.Serial, marker: true, fields_must: true},
+    Derivable{name: "SqlRow", kind: DeriveKind.Marked, marker: true, fields_must: false, format: "sql"},
+    Derivable{name: "Xml", kind: DeriveKind.Marked, marker: true, fields_must: false, format: "xml"},
+  ]
+}
+
+/// The table's entry for name.
+pub fn derivable(name: Str) -> Derivable? {
+  for d in derivable_table() {
+    if d.name == name {
+      return Some(d)
+    }
+  }
+  None
+}
+
+pub fn is_derivable_name(name: Str) -> Bool {
+  derivable(name) != None
+}
+
+/// The derivable names, sorted.
+pub fn derivable_names() -> List[Str] {
+  var out: List[Str] = []
+  for d in derivable_table() {
+    out.push(d.name)
+  }
+  out.sort()
+}
+
+/// Whether the prelude interface name is a marker the Go runtime spells
+/// `any`.
+pub fn is_marker_interface(name: Str) -> Bool {
+  match derivable(name) {
+    Some(d) => d.marker
+    None => false
+  }
+}
+
+/// The derive whose field strings are written `fmt "..."`.
+pub fn derive_for_format(format: Str) -> Str? {
+  for d in derivable_table() {
+    if d.format == format {
+      return Some(d.name)
+    }
+  }
+  None
+}
+
+/// Whether one of derives maps field names to a wire format.
+pub fn maps_field_names(derives: List[Str]) -> Bool {
+  for d in derivable_table() {
+    if !d.format.is_empty() && derives.contains(d.name) {
+      return true
+    }
+  }
+  false
+}
+
+/// The derives that map field names, as `derive A`, `derive B`.
+pub fn field_name_derives() -> List[Str] {
+  var out: List[Str] = []
+  for d in derivable_table() {
+    if !d.format.is_empty() {
+      out.push("`derive ${d.name}`")
+    }
+  }
+  out
+}
+
+/// Whether a missing NAME is fixed by adding `derive NAME` (the type
+/// checks in `Eq`, `Hash`, and `Debug` are told apart by their own note).
+pub fn suggests_derive(name: Str) -> Bool {
+  match derivable(name) {
+    Some(d) => d.kind != DeriveKind.Equality
+    None => false
+  }
+}

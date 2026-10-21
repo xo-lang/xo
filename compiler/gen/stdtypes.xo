@@ -10,7 +10,7 @@ use github.com/xo-lang/xo/compiler/check
 /// Prelude declarations the runtime implements by hand (core.go,
 /// list.go, ...), which std_types skips (preludeBuiltin).
 fn prelude_builtin(name: Str) -> Bool {
-  name is "Never" | "Option" | "Result" | "Display" | "Error" | "Debug" | "Eq" | "Hash" | "Ord" | "Json" | "OpenApi" | "Proto" | "SqlRow" | "Xml"
+  name is "Never" | "Option" | "Result" | "Error" || check.is_derivable_name(name)
 }
 
 /// Fields of std structs that only the Go runtime reads and writes (the

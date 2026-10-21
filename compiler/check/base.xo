@@ -18,15 +18,14 @@ fn is_protected(name: Bytes) -> Bool {
     "Bool" | "Int" | "Int8" | "Int16" | "Int32" | "Int64" | "UInt8" | "UInt16" | "UInt32" | "UInt64" | "Float" | "Float32" => true
     "Rune" | "Str" | "Bytes" | "Duration" | "Time" | "List" | "Map" | "Set" | "Buf" | "Chan" | "Mutex" | "Atomic" => true
     "Secret" | "Option" | "Result" | "Never" | "StrBuilder" | "BytesBuilder" => true
-    "Display" | "Error" | "Debug" | "Eq" | "Hash" | "Ord" | "Json" | "OpenApi" | "Proto" | "SqlRow" | "Xml" => true
+    "Error" => true
     "Os" | "Net" | "Fs" | "Clock" | "Rand" | "Env" | "Proc" | "Stdio" => true
-    _ => false
+    _ => is_derivable_name(s)
   }
 }
 
 fn is_derivable(name: Bytes) -> Bool {
-  let s = name.to_str() ?? ""
-  s is "Display" | "Ord" | "Json" | "OpenApi" | "Proto" | "Debug" | "Eq" | "Hash" | "SqlRow" | "Xml"
+  is_derivable_name(name.to_str() ?? "")
 }
 
 /// UpperCamel: an upper case letter, then letters and digits.

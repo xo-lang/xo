@@ -132,6 +132,15 @@ is the question for the owner.
     decode 1,352 ms (1.2x) and encode 314 ms (0.9x); the Go backend
     compiled from the same Xo, 1,887 ms and 736 ms. Output byte counts
     match.
+  - **The derivable table** (owner, 2026-10-21): the six hand kept lists
+    of derivable names (protected names, the derive check, the hint, the
+    constraint check, the Go runtime's `any`, the std type skip list)
+    are one table, compiler/check/derivables.xo, with each derive's kind,
+    marker flag, field check, and wire format. A new derive (Toml, Csv)
+    is an entry there and its `interface NAME {}` in std/prelude.xo;
+    `TestDerivableTable` (internal/repotest) fails when an entry lacks its
+    prelude interface or spec mention, or a list of three or more of the
+    names appears in another compiler file.
   - **Not yet.** `innerxml`, `comment`, `any`, namespaces in tags,
     XMLName, Time, Map, and Bytes fields.
 

@@ -543,7 +543,7 @@ fn (var c: Checker) check_derives(t: Int, ids: List[Ident]) {
       c.check_sql_row_derive(t, id)
       continue
     }
-    if !(n is "Json" | "OpenApi" | "Proto" | "Ord") {
+    if !(derivable(n) ?? Derivable{name: n, kind: DeriveKind.Text, marker: false, fields_must: false}).fields_must {
       continue
     }
     let iface = c.named(n)
