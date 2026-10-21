@@ -14,7 +14,7 @@ fn routes() -> http.Router {
       .add_header("Vary", "Cookie")
   })
   r.handle("GET /echo", fn(req) {
-    http.text(200, "X-Tag=${req.header("X-Tag") ?? "-"} values=${req.header_values("X-Tag").join(" | ")} cookies=${req.cookies().map(fn(c) { "${c.name}=${c.value}" }).join(",")}")
+    http.text(200, "X-Tag=${req.header("X-Tag") ?? "-"} values=${req.header_values("X-Tag").join(" | ")} cookies=${req.cookies().map(fn(c) { "${c.name}=${c.value}" }).join(",")} Set-Cookie=${req.header("Set-Cookie") ?? "-"} values=${req.header_values("Set-Cookie").join(" | ")}")
   })
   r
 }
@@ -52,7 +52,7 @@ fn main(os: Os) {
     s.spawn_background(fn() { tls.serve().ignore_err("test server") })
     for (label, base) in [("http/1.1", "http://${l1.addr()}"), ("h2", "https://${l2.addr()}")] {
       show(os, "${label} set", c.get("${base}/set"))
-      let req = http.new_request("GET", "${base}/echo").add_header("X-Tag", "one").add_header("X-Tag", "two").with_cookie(http.Cookie{name: "a", value: "1"}).with_cookie(http.Cookie{name: "b", value: "2"})
+      let req = http.new_request("GET", "${base}/echo").add_header("X-Tag", "one").add_header("X-Tag", "two").with_cookie(http.Cookie{name: "a", value: "1"}).with_cookie(http.Cookie{name: "b", value: "2"}).add_header("Set-Cookie", "s=1").add_header("Set-Cookie", "t=2")
       show(os, "${label} echo", c.send(req))
     }
   }

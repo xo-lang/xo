@@ -1513,7 +1513,11 @@ fn (var h: H2Conn) request(st: Int, names: List[Str], values: List[Str], truncat
     let x = index_of(hk, ck)
     if x >= 0 {
       let sep = if ck == "Cookie" { "; " } else { ", " }
-      hv[x] = hv[x] + sep + values[i]
+      // Set-Cookie keeps its first value in the Map view (decision
+      // 0288, std/rt's fieldView)
+      if ck != "Set-Cookie" {
+        hv[x] = hv[x] + sep + values[i]
+      }
       if ck != "Cookie" {
         repeated = true
       }

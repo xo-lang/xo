@@ -9,7 +9,7 @@ http/1.1 set: 200 ok
   Set-Cookie fields: session=abc; Path=/; HttpOnly | theme=dark; Max-Age=3600
   cookies: session=abc path=/ max_age=0 http_only=true; theme=dark path= max_age=3600 http_only=false
   Vary map: Accept, Cookie fields: Accept | Cookie
-http/1.1 echo: 200 X-Tag=one, two values=one | two cookies=a=1,b=2
+http/1.1 echo: 200 X-Tag=one, two values=one | two cookies=a=1,b=2 Set-Cookie=s=1 values=s=1 | t=2
   Set-Cookie map: -
   Set-Cookie fields: 
   cookies: 
@@ -19,7 +19,7 @@ h2 set: 200 ok
   Set-Cookie fields: session=abc; Path=/; HttpOnly | theme=dark; Max-Age=3600
   cookies: session=abc path=/ max_age=0 http_only=true; theme=dark path= max_age=3600 http_only=false
   Vary map: Accept, Cookie fields: Accept | Cookie
-h2 echo: 200 X-Tag=one, two values=one | two cookies=a=1,b=2
+h2 echo: 200 X-Tag=one, two values=one | two cookies=a=1,b=2 Set-Cookie=s=1 values=s=1 | t=2
   Set-Cookie map: -
   Set-Cookie fields: 
   cookies: 

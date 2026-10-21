@@ -1119,7 +1119,11 @@ fn head_of(method: Str, target: Str, major: Int, minor: Int, url: neturl.Url, qu
       continue // deduplicated; its value as written first
     }
     if e >= 0 {
-      headers[e + 1] = headers[e + 1] + ", " + vals[k - 1]
+      // the Map view joins a repeated name, but Set-Cookie keeps its
+      // first value (decision 0288, std/rt's fieldView)
+      if key != "Set-Cookie" {
+        headers[e + 1] = headers[e + 1] + ", " + vals[k - 1]
+      }
       repeated = true
     } else {
       headers.push(key)

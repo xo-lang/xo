@@ -1,5 +1,17 @@
 # std/http changes
 
+## 2026-10-21: fix: a request's repeated Set-Cookie fields
+
+- Kind: fix
+- Commit: (filled in after the push)
+- Found by: differential test against Go
+- Go reference: net/http request parsing (readRequest, textproto ReadMIMEHeader) as the Go backend's fieldView shows it (go1.26.1)
+- Test: internal/llvm/testdata/golden/http_header_fields (a request with two Set-Cookie fields); 467 raw requests (net/textproto and net/http parsing cases and 400 random header blocks) gave the same status, header Map, and body natively as on the Go backend
+
+The native servers (HTTP/1.1 and HTTP/2) joined a request's repeated
+Set-Cookie fields with ", " in `headers`; decision 0288 keeps the first,
+as the Go backend and the client do (`header_values` gives each).
+
 ## 2026-10-21: fix: parse_url's host and fragment checks and error texts
 
 - Kind: fix
