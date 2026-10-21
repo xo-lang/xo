@@ -1,0 +1,38 @@
+// std/big (decision 0311): big.BigInt's arithmetic, conversions, order,
+// and use as a Map key, as Go's math/big computes them.
+use std/big
+
+fn b(s: Str) -> big.BigInt { big.parse(s).or_fault("literal") }
+
+fn main(os: Os) {
+  let out = os.stdio
+  let f = b("1")
+  var fact = f
+  for i in 1..31 {
+    fact = fact.mul(big.from_int(i))
+  }
+  out.println("30! = ${fact}")
+  let p = b("170141183460469231731687303715884105727")
+  out.println("2^127 - 1 prime: ${p.probably_prime(20)}, +2: ${p.add(big.from_int(2)).probably_prime(20)}")
+  let x = b("-123456789012345678901234567890")
+  let y = b("987654321")
+  let (q, r) = x.quo_rem(y)
+  let (d, m) = x.div_mod(y)
+  out.println("quo_rem ${q} ${r}; div_mod ${d} ${m}")
+  out.println("gcd ${b("462").gcd(b("1071"))}, inverse ${big.from_int(3).mod_inverse(big.from_int(11)) ?? big.from_int(-1)}")
+  out.println("exp ${big.from_int(4).exp(big.from_int(13), m: Some(big.from_int(497)))}, 2^100 = ${big.from_int(2).exp(big.from_int(100))}")
+  out.println("sqrt ${b("99999999999999999999999999").sqrt()}, hex ${x.text(base: 16)}, base 62 ${fact.text(base: 62)}")
+  out.println("shifts ${x.lsh(70)} ${x.rsh(70)}; and ${x.and(y)} or ${x.or(y)} xor ${x.xor(y)} not ${x.not()}")
+  out.println("bytes ${b("65537").bytes().to_hex()} from ${big.from_bytes(Bytes.from_hex("0100000000000000ff") ?? b"")} fill ${b("258").fill_bytes(4).to_hex()}")
+  out.println("to_int ${b("9223372036854775807").to_int() ?? 0} ${b("9223372036854775808").to_int() ?? 0}, to_float ${b("12345678901234567890123").to_float()}")
+  out.println("order ${x < y} ${b("-5") < b("-4")} ${b("18446744073709551616") > b("18446744073709551615")} sorted ${[b("10"), b("-3"), b("7"), b("0")].sort().map(fn(v) { "${v}" }).join(",")}")
+  var seen: Map[big.BigInt, Str] = {}
+  seen[b("100")] = "hundred"
+  out.println("map ${seen.get(big.from_int(10).mul(big.from_int(10))) ?? "-"}")
+  for s in ["12x", "0x_ff", "1__0", ""] {
+    match big.parse(s, base: 0) {
+      Ok(v) => out.println("parse ${s.quote()}: ${v}")
+      Err(e) => out.println("parse ${s.quote()}: ${e}")
+    }
+  }
+}

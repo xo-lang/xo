@@ -103,7 +103,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 |---|---|---|---|
 | math | prelude Float | partial | Go's portable algorithms bit for bit on every backend (decision 0287): pow, exp, exp2, expm1, log, log2, log10, log1p, trigonometric and hyperbolic functions, cbrt, hypot, mod, is_inf, to_bits. Missing: constants (Float.PI, Float.INF; a compiler change), erf, gamma, Nextafter, FMA. |
 | math/bits | prelude Int word methods | done | rotate, swap_bytes, mul_hi_unsigned, unsigned compare (decision 0260); leading_zeros, trailing_zeros, ones_count (decision 0287). |
-| math/big | inside std/native/llrt/bigmod.xo | planned | Needed for RSA and ECDSA keys from JWKs; no public big integer. |
+| math/big | std/big | partial | big.BigInt (Go's Int, immutable; decision 0311, 2026-10-21) with Go's results on every backend; natively schoolbook (no Karatsuba or recursive division yet). Missing: Rat, Float, Json. |
 | math/rand, math/rand/v2 | prelude Rand capability | done | Secure in programs, seeded in tests. |
 | math/cmplx | none | not planned | No backend use. |
 | hash | std/crypto Hasher | partial | A streaming hasher for the cryptographic hashes (decision 0279); no interface user types implement. |

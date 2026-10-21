@@ -3787,6 +3787,56 @@ fn (var d: Decompressor) finish() -> Bytes ! CompressErr      // the rest; moves
   flushes, and 431 Go-written, corrupted, bounded, and bomb streams
   against Go's results, whole and fed to a Decompressor in pieces.
 
+## 33. std/big
+
+Status: implemented on every backend (decision 0311, 2026-10-21), stage
+1: schoolbook multiplication and division natively. Go's math/big Int as
+an immutable value: the Go backend calls math/big, and the native
+backends port its nat arithmetic (std/native/big.xo). Every operation
+gives Go's result. Variable time: not for secrets. Pure.
+
+```
+struct BigInt { key: List[Int] } derive Eq, Ord, Hash   // build with the functions, not a literal
+struct BigErr { msg: Str }
+pub fn from_int(n: Int) -> BigInt
+pub fn parse(s: Str, base: Int = 10) -> BigInt ! BigErr    // Go's SetString; base 0 reads prefixes and _
+pub fn from_bytes(b: Bytes) -> BigInt                      // unsigned big-endian
+fn (x: BigInt) add(y) / sub / mul / quo / rem / quo_rem / div / mod / div_mod
+fn (x: BigInt) exp(y: BigInt, m: BigInt? = None) -> BigInt
+fn (x: BigInt) gcd(y) -> BigInt;  mod_inverse(m) -> BigInt?;  sqrt() -> BigInt
+fn (x: BigInt) neg / abs / sign / cmp / cmp_abs
+fn (x: BigInt) lsh(n) / rsh(n) / and / or / xor / and_not / not / bit(i) / bit_len / trailing_zeros
+fn (x: BigInt) probably_prime(n: Int) -> Bool
+fn (x: BigInt) text(base: Int = 10) -> Str;  bytes();  fill_bytes(len);  to_int() -> Int?;  to_float()
+```
+
+- **The type is `BigInt`.** `Int` is predeclared (core 1.4), so Go's
+  `big.Int` is `big.BigInt` here.
+- **Order.** `<`, `==`, sorting, and Map keys use the derived Eq, Ord,
+  and Hash. These are the numbers' order and equality, because `key`
+  encodes the sign and limbs in order: zero is [0]; a number of n limbs
+  is n (-n when negative), then its limbs from the most significant, each
+  xor 2^63 (xor 2^63 - 1 when negative).
+- **Division.** `quo` and `rem` truncate (Go's Quo and Rem). `div` and
+  `mod` are Euclidean (Go's Div and Mod). A zero divisor is a fault, as
+  is a zero modulus in `mod_inverse`.
+- **Bitwise operations** act on two's complement, as Go's do. `rsh`
+  rounds toward negative infinity.
+- **`exp`** follows Go's Exp, including the sign rule for a negative base.
+  With m, a negative exponent uses the inverse, and a missing inverse is
+  a fault where Go returns nil.
+- **`probably_prime`** runs Go's checks, Miller-Rabin with base 2, and
+  the extra strong Lucas test (Baillie-PSW). Go's n extra rounds use
+  pseudorandom bases; natively they use the first primes. No input is
+  known where the two answers differ.
+- **Json.** BigInt does not derive Json, which would write its key. Use
+  `text` and `parse`.
+- **Tests.**
+  - Golden `big_basic` on every backend.
+  - A Go-generated corpus of 2,600 operations on operands up to 1,500
+    bits, plus Go's SetString on valid and invalid texts
+    (internal/stdtest/testdata/corpus/big, scripts/stdcorpus big).
+
 <!-- BEGIN prelude index: generated from std/prelude.xo by `go run ./scripts/stdindex`; do not edit -->
 
 ## Appendix A. Prelude index

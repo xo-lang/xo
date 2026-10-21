@@ -69,6 +69,23 @@ queue on 2026-10-21.
 
 ## Consequences
 
+- Implementation notes (2026-10-21, stage 1):
+  - **Name.** The type is `big.BigInt`: `Int` is predeclared and cannot
+    be redefined (XO0603).
+  - **Order and equality.** Eq, Ord, and Hash are derive only, so BigInt
+    is one field, `key: List[Int]`, encoding the sign and the limbs so
+    that the derived order is the numeric one (spec std.md 33).
+  - **No Json.** Deriving it would write the key. Use `text` and
+    `parse`.
+  - **exp.** A negative exponent whose base has no inverse mod m is a
+    fault where Go returns nil.
+  - **Native code** (std/native/big.xo): schoolbook multiplication,
+    Knuth division with Go's Div64, Go's scan rules, and Go's Lucas test.
+    `probably_prime`'s extra rounds use fixed prime bases.
+  - **Tests.** The scripts/stdcorpus big corpus (2,600 operations, plus
+    SetString) passed on go, arm64, and LLVM on its first full run.
+    Karatsuba and recursive division come next, held to the same corpus.
+
 - RSA and ECDSA public keys from JWKs can be read with `big.from_bytes`,
   and JSON with integers past 2^63 decodes exactly into a `big.Int`.
 - Immutable values allocate on every operation, which Go's in-place form

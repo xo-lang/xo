@@ -1,0 +1,1145 @@
+// std/big on the native backends (decision 0311): Go's math/big Int over
+// natural numbers held as List[Int] limbs, the lowest first, each an
+// unsigned 64 bit word, with no zero limb on top (nat.go's norm). The
+// algorithms are Go's where the result depends on them (parsing, Exp's
+// signs, ModInverse, the primality test) and schoolbook arithmetic
+// elsewhere (stage 1: the results are the same, the speed is not Go's for
+// operands of thousands of bits). Variable time: not for secrets.
+use std/big
+use native/llrt/raw
+
+fn bigerr_display(e: big.BigErr) -> Str { e.msg }
+
+const MIN: Int = -9223372036854775807 - 1
+const MAX: Int = 9223372036854775807
+
+// ---------------------------------------------------------------------------
+// The key (std/big.xo): an order-preserving encoding of sign and limbs
+
+/// (negative, limbs) of x.
+fn parts(x: big.BigInt) -> (Bool, List[Int]) {
+  let k = x.key
+  if k.is_empty() || k[0] == 0 {
+    return (false, [])
+  }
+  let neg = k[0] < 0
+  let n = if neg { -k[0] } else { k[0] }
+  var ws = raw.zero_ints(n)
+  for i in 0..n {
+    let v = k[1 + i]
+    ws[n - 1 - i] = if neg { v ^ MAX } else { v ^ MIN }
+  }
+  (neg, ws)
+}
+
+/// The BigInt of a sign and limbs (normalized here).
+fn make(neg: Bool, ws0: List[Int]) -> big.BigInt {
+  let ws = norm(ws0)
+  let n = ws.len()
+  if n == 0 {
+    return big.BigInt{key: [0]}
+  }
+  var k = raw.zero_ints(1 + n)
+  k[0] = if neg { -n } else { n }
+  for i in 0..n {
+    let v = ws[n - 1 - i]
+    k[1 + i] = if neg { v ^ MAX } else { v ^ MIN }
+  }
+  big.BigInt{key: k}
+}
+
+// ---------------------------------------------------------------------------
+// Words (math/bits)
+
+/// x + y + c and the carry out (bits.Add64).
+fn add_ww(x: Int, y: Int, c: Int) -> (Int, Int) {
+  let s = x.wrapping_add(y)
+  let s2 = s.wrapping_add(c)
+  let c1 = if s.lt_unsigned(x) { 1 } else { 0 }
+  let c2 = if s2.lt_unsigned(s) { 1 } else { 0 }
+  (s2, c1 + c2)
+}
+
+/// x - y - b and the borrow out (bits.Sub64).
+fn sub_ww(x: Int, y: Int, b: Int) -> (Int, Int) {
+  let d = x.wrapping_sub(y)
+  let d2 = d.wrapping_sub(b)
+  let b1 = if x.lt_unsigned(y) { 1 } else { 0 }
+  let b2 = if d.lt_unsigned(b) { 1 } else { 0 }
+  (d2, b1 + b2)
+}
+
+/// n / d and n % d as unsigned words; d != 0.
+fn udiv(n: Int, d: Int) -> (Int, Int) {
+  if d < 0 {
+    // d >= 2^63: the quotient is 0 or 1
+    if n.lt_unsigned(d) {
+      return (0, n)
+    }
+    return (1, n.wrapping_sub(d))
+  }
+  if n >= 0 {
+    return (n / d, n % d)
+  }
+  var q = (n.shr_logical(1) / d).wrapping_shl(1)
+  var r = n.wrapping_sub(q.wrapping_mul(d))
+  if !r.lt_unsigned(d) {
+    q = q.wrapping_add(1)
+    r = r.wrapping_sub(d)
+  }
+  (q, r)
+}
+
+/// (hi, lo) / y and the remainder for hi < y (bits.Div64).
+fn div_ww(hi: Int, lo: Int, y0: Int) -> (Int, Int) {
+  if hi == 0 {
+    return udiv(lo, y0)
+  }
+  let two32 = 4294967296
+  let mask32 = two32 - 1
+  let s = y0.leading_zeros()
+  let y = y0.wrapping_shl(s)
+  let yn1 = y.shr_logical(32)
+  let yn0 = y & mask32
+  let un32 = if s == 0 { hi } else { hi.wrapping_shl(s) | lo.shr_logical(64 - s) }
+  let un10 = lo.wrapping_shl(s)
+  let un1 = un10.shr_logical(32)
+  let un0 = un10 & mask32
+  let (q1a, rhata) = udiv(un32, yn1)
+  var q1 = q1a
+  var rhat = rhata
+  while !q1.lt_unsigned(two32) || rhat.wrapping_mul(two32).wrapping_add(un1).lt_unsigned(q1.wrapping_mul(yn0)) {
+    q1 = q1.wrapping_sub(1)
+    rhat = rhat.wrapping_add(yn1)
+    if !rhat.lt_unsigned(two32) {
+      break
+    }
+  }
+  let un21 = un32.wrapping_mul(two32).wrapping_add(un1).wrapping_sub(q1.wrapping_mul(y))
+  let (q0a, rhat2a) = udiv(un21, yn1)
+  var q0 = q0a
+  var rhat2 = rhat2a
+  while !q0.lt_unsigned(two32) || rhat2.wrapping_mul(two32).wrapping_add(un0).lt_unsigned(q0.wrapping_mul(yn0)) {
+    q0 = q0.wrapping_sub(1)
+    rhat2 = rhat2.wrapping_add(yn1)
+    if !rhat2.lt_unsigned(two32) {
+      break
+    }
+  }
+  let q = q1.wrapping_mul(two32).wrapping_add(q0)
+  let r = un21.wrapping_mul(two32).wrapping_add(un0).wrapping_sub(q0.wrapping_mul(y)).shr_logical(s)
+  (q, r)
+}
+
+// ---------------------------------------------------------------------------
+// Natural numbers (nat.go)
+
+fn norm(x: List[Int]) -> List[Int] {
+  var n = x.len()
+  while n > 0 && x[n - 1] == 0 {
+    n -= 1
+  }
+  if n == x.len() { x } else { x[0..n] }
+}
+
+fn nat_word(w: Int) -> List[Int] { if w == 0 { [] } else { [w] } }
+
+fn nat_cmp(x: List[Int], y: List[Int]) -> Int {
+  if x.len() != y.len() {
+    return if x.len() < y.len() { -1 } else { 1 }
+  }
+  var i = x.len() - 1
+  while i >= 0 {
+    if x[i] != y[i] {
+      return if x[i].lt_unsigned(y[i]) { -1 } else { 1 }
+    }
+    i -= 1
+  }
+  0
+}
+
+fn nat_add(x0: List[Int], y0: List[Int]) -> List[Int] {
+  let (x, y) = if x0.len() < y0.len() { (y0, x0) } else { (x0, y0) }
+  var z = raw.zero_ints(x.len() + 1)
+  var c = 0
+  for i in 0..x.len() {
+    let yi = if i < y.len() { y[i] } else { 0 }
+    let (s, c2) = add_ww(x[i], yi, c)
+    z[i] = s
+    c = c2
+  }
+  z[x.len()] = c
+  norm(z)
+}
+
+/// x - y for x >= y.
+fn nat_sub(x: List[Int], y: List[Int]) -> List[Int] {
+  var z = raw.zero_ints(x.len())
+  var b = 0
+  for i in 0..x.len() {
+    let yi = if i < y.len() { y[i] } else { 0 }
+    let (d, b2) = sub_ww(x[i], yi, b)
+    z[i] = d
+    b = b2
+  }
+  norm(z)
+}
+
+fn nat_mul(x: List[Int], y: List[Int]) -> List[Int] {
+  if x.is_empty() || y.is_empty() {
+    return []
+  }
+  var z = raw.zero_ints(x.len() + y.len())
+  for i in 0..x.len() {
+    let xi = x[i]
+    if xi == 0 {
+      continue
+    }
+    var c = 0
+    for j in 0..y.len() {
+      // z[i+j] + xi*y[j] + c fits two words
+      let lo = xi.wrapping_mul(y[j])
+      let hi = xi.mul_hi_unsigned(y[j])
+      let (s1, c1) = add_ww(lo, z[i + j], 0)
+      let (s2, c2) = add_ww(s1, c, 0)
+      z[i + j] = s2
+      c = hi.wrapping_add(c1).wrapping_add(c2)
+    }
+    z[i + y.len()] = c
+  }
+  norm(z)
+}
+
+/// x * w + a.
+fn nat_mul_add_ww(x: List[Int], w: Int, a: Int) -> List[Int] {
+  var z = raw.zero_ints(x.len() + 1)
+  var c = a
+  for i in 0..x.len() {
+    let lo = x[i].wrapping_mul(w)
+    let hi = x[i].mul_hi_unsigned(w)
+    let (s, c1) = add_ww(lo, c, 0)
+    z[i] = s
+    c = hi.wrapping_add(c1)
+  }
+  z[x.len()] = c
+  norm(z)
+}
+
+/// x / w and x % w for a word w != 0.
+fn nat_div_w(x: List[Int], w: Int) -> (List[Int], Int) {
+  var q = raw.zero_ints(x.len())
+  var r = 0
+  var i = x.len() - 1
+  while i >= 0 {
+    let (qi, ri) = div_ww(r, x[i], w)
+    q[i] = qi
+    r = ri
+    i -= 1
+  }
+  (norm(q), r)
+}
+
+fn nat_shl(x: List[Int], s: Int) -> List[Int] {
+  if x.is_empty() {
+    return []
+  }
+  let words = s / 64
+  let bits = s % 64
+  var z = raw.zero_ints(x.len() + words + 1)
+  if bits == 0 {
+    for i in 0..x.len() {
+      z[i + words] = x[i]
+    }
+    return norm(z)
+  }
+  var carry = 0
+  for i in 0..x.len() {
+    z[i + words] = x[i].wrapping_shl(bits) | carry
+    carry = x[i].shr_logical(64 - bits)
+  }
+  z[x.len() + words] = carry
+  norm(z)
+}
+
+fn nat_shr(x: List[Int], s: Int) -> List[Int] {
+  let words = s / 64
+  if words >= x.len() {
+    return []
+  }
+  let bits = s % 64
+  let n = x.len() - words
+  var z = raw.zero_ints(n)
+  for i in 0..n {
+    let lo = x[i + words]
+    if bits == 0 {
+      z[i] = lo
+    } else {
+      let hi = if i + words + 1 < x.len() { x[i + words + 1] } else { 0 }
+      z[i] = lo.shr_logical(bits) | hi.wrapping_shl(64 - bits)
+    }
+  }
+  norm(z)
+}
+
+fn nat_bit_len(x: List[Int]) -> Int {
+  if x.is_empty() {
+    return 0
+  }
+  (x.len() - 1) * 64 + 64 - x[x.len() - 1].leading_zeros()
+}
+
+fn nat_trailing_zeros(x: List[Int]) -> Int {
+  for i in 0..x.len() {
+    if x[i] != 0 {
+      return i * 64 + x[i].trailing_zeros()
+    }
+  }
+  0
+}
+
+fn nat_bit(x: List[Int], i: Int) -> Int {
+  let w = i / 64
+  if w >= x.len() {
+    return 0
+  }
+  x[w].shr_logical(i % 64) & 1
+}
+
+/// u / v and u % v for v != 0 (Knuth's algorithm D, natdiv.go divBasic).
+fn nat_divmod(u: List[Int], v: List[Int]) -> (List[Int], List[Int]) {
+  if nat_cmp(u, v) < 0 {
+    return ([], u)
+  }
+  if v.len() == 1 {
+    let (q, r) = nat_div_w(u, v[0])
+    return (q, nat_word(r))
+  }
+  let n = v.len()
+  let m = u.len() - n
+  let s = v[n - 1].leading_zeros()
+  let vn = nat_shl(v, s)
+  var un = raw.zero_ints(u.len() + 1)
+  let us = nat_shl(u, s)
+  for i in 0..us.len() {
+    un[i] = us[i]
+  }
+  var q = raw.zero_ints(m + 1)
+  let vtop = vn[n - 1]
+  let vsec = vn[n - 2]
+  var j = m
+  while j >= 0 {
+    // the estimate from the top two words, corrected with the third
+    var qhat = -1
+    let ujn = un[j + n]
+    if ujn == vtop {
+      qhat = -1
+    } else {
+      let (q0, r0) = div_ww(ujn, un[j + n - 1], vtop)
+      qhat = q0
+      var rhat = r0
+      while true {
+        let plo = qhat.wrapping_mul(vsec)
+        let phi = qhat.mul_hi_unsigned(vsec)
+        let ujn2 = un[j + n - 2]
+        if phi.lt_unsigned(rhat) || (phi == rhat && !ujn2.lt_unsigned(plo)) {
+          break
+        }
+        qhat = qhat.wrapping_sub(1)
+        let prev = rhat
+        rhat = rhat.wrapping_add(vtop)
+        if rhat.lt_unsigned(prev) {
+          break
+        }
+      }
+    }
+    // un[j..j+n+1] -= qhat * vn
+    var borrow = 0
+    var carry = 0
+    for i in 0..n {
+      let lo = qhat.wrapping_mul(vn[i])
+      let hi = qhat.mul_hi_unsigned(vn[i])
+      let (p, c1) = add_ww(lo, carry, 0)
+      carry = hi.wrapping_add(c1)
+      let (d, b1) = sub_ww(un[i + j], p, borrow)
+      un[i + j] = d
+      borrow = b1
+    }
+    let (d, b1) = sub_ww(un[j + n], carry, borrow)
+    un[j + n] = d
+    if b1 != 0 {
+      // one too many: add vn back
+      qhat = qhat.wrapping_sub(1)
+      var c = 0
+      for i in 0..n {
+        let (s2, c2) = add_ww(un[i + j], vn[i], c)
+        un[i + j] = s2
+        c = c2
+      }
+      un[j + n] = un[j + n].wrapping_add(c)
+    }
+    q[j] = qhat
+    j -= 1
+  }
+  (norm(q), nat_shr(norm(un[0..n]), s))
+}
+
+fn nat_sqrt(x: List[Int]) -> List[Int] {
+  if x.is_empty() {
+    return []
+  }
+  // Newton from above (Go's sqrt): z1 >= sqrt(x), then down to the floor
+  var z1 = nat_shl([1], (nat_bit_len(x) + 1) / 2)
+  while true {
+    let (q, _r) = nat_divmod(x, z1)
+    let z2 = nat_shr(nat_add(z1, q), 1)
+    if nat_cmp(z2, z1) >= 0 {
+      return z1
+    }
+    z1 = z2
+  }
+  z1
+}
+
+fn nat_gcd(a0: List[Int], b0: List[Int]) -> List[Int] {
+  var a = a0
+  var b = b0
+  while !b.is_empty() {
+    let (_q, r) = nat_divmod(a, b)
+    a = b
+    b = r
+  }
+  a
+}
+
+/// x^y mod m (m empty: no modulus), as expNN's results.
+fn nat_exp(x: List[Int], y: List[Int], m: List[Int]) -> List[Int] {
+  if m.len() == 1 && m[0] == 1 {
+    return []
+  }
+  if y.is_empty() {
+    return [1]
+  }
+  if x.is_empty() {
+    return []
+  }
+  if x.len() == 1 && x[0] == 1 {
+    return [1]
+  }
+  var base = x
+  if !m.is_empty() {
+    let (_q, r) = nat_divmod(base, m)
+    base = r
+  }
+  var z: List[Int] = [1]
+  var i = nat_bit_len(y) - 1
+  while i >= 0 {
+    z = nat_mul(z, z)
+    if !m.is_empty() {
+      let (_q, r) = nat_divmod(z, m)
+      z = r
+    }
+    if nat_bit(y, i) == 1 {
+      z = nat_mul(z, base)
+      if !m.is_empty() {
+        let (_q, r) = nat_divmod(z, m)
+        z = r
+      }
+    }
+    i -= 1
+  }
+  z
+}
+
+// ---------------------------------------------------------------------------
+// Signed arithmetic (int.go)
+
+fn s_add(an: Bool, a: List[Int], bn: Bool, b: List[Int]) -> big.BigInt {
+  if an == bn {
+    return make(an, nat_add(a, b))
+  }
+  if nat_cmp(a, b) >= 0 {
+    return make(an, nat_sub(a, b))
+  }
+  make(bn, nat_sub(b, a))
+}
+
+fn bigint_add(x: big.BigInt, y: big.BigInt) -> big.BigInt {
+  let (xn, xa) = parts(x)
+  let (yn, ya) = parts(y)
+  s_add(xn, xa, yn, ya)
+}
+
+fn bigint_sub(x: big.BigInt, y: big.BigInt) -> big.BigInt {
+  let (xn, xa) = parts(x)
+  let (yn, ya) = parts(y)
+  s_add(xn, xa, !yn, ya)
+}
+
+fn bigint_mul(x: big.BigInt, y: big.BigInt) -> big.BigInt {
+  let (xn, xa) = parts(x)
+  let (yn, ya) = parts(y)
+  make(xn != yn, nat_mul(xa, ya))
+}
+
+fn nonzero(ya: List[Int]) {
+  if ya.is_empty() {
+    fault("division by zero")
+  }
+}
+
+/// Go's QuoRem: truncated quotient, remainder with x's sign.
+fn quo_rem_of(x: big.BigInt, y: big.BigInt) -> (big.BigInt, big.BigInt) {
+  let (xn, xa) = parts(x)
+  let (yn, ya) = parts(y)
+  nonzero(ya)
+  let (q, r) = nat_divmod(xa, ya)
+  (make(xn != yn, q), make(xn, r))
+}
+
+fn bigint_quo(x: big.BigInt, y: big.BigInt) -> big.BigInt { quo_rem_of(x, y).0 }
+
+fn bigint_rem(x: big.BigInt, y: big.BigInt) -> big.BigInt { quo_rem_of(x, y).1 }
+
+fn bigint_quo_rem(x: big.BigInt, y: big.BigInt) -> (big.BigInt, big.BigInt) { quo_rem_of(x, y) }
+
+/// Go's DivMod: Euclidean, 0 <= m < |y|.
+fn bigint_div_mod(x: big.BigInt, y: big.BigInt) -> (big.BigInt, big.BigInt) {
+  let (q, r) = quo_rem_of(x, y)
+  if bigint_sign(r) < 0 {
+    let (yn, _ya) = parts(y)
+    if yn {
+      return (bigint_add(q, from_int(1)), bigint_sub(r, y))
+    }
+    return (bigint_sub(q, from_int(1)), bigint_add(r, y))
+  }
+  (q, r)
+}
+
+fn bigint_div(x: big.BigInt, y: big.BigInt) -> big.BigInt { bigint_div_mod(x, y).0 }
+
+fn bigint_mod(x: big.BigInt, y: big.BigInt) -> big.BigInt { bigint_div_mod(x, y).1 }
+
+fn bigint_neg(x: big.BigInt) -> big.BigInt {
+  let (xn, xa) = parts(x)
+  make(!xn, xa)
+}
+
+fn bigint_abs(x: big.BigInt) -> big.BigInt {
+  let (_xn, xa) = parts(x)
+  make(false, xa)
+}
+
+fn bigint_sign(x: big.BigInt) -> Int {
+  let k = x.key
+  if k.is_empty() || k[0] == 0 { 0 } else if k[0] < 0 { -1 } else { 1 }
+}
+
+fn bigint_cmp(x: big.BigInt, y: big.BigInt) -> Int {
+  if x < y { -1 } else if x == y { 0 } else { 1 }
+}
+
+fn bigint_cmp_abs(x: big.BigInt, y: big.BigInt) -> Int {
+  let (_xn, xa) = parts(x)
+  let (_yn, ya) = parts(y)
+  nat_cmp(xa, ya)
+}
+
+/// Extended Euclid on a, n > 0: (gcd, x) with a x = gcd mod n.
+fn ext_gcd(a: List[Int], n: List[Int]) -> (List[Int], big.BigInt) {
+  var r0 = make(false, n)
+  var r1 = make(false, a)
+  var s0 = from_int(0)
+  var s1 = from_int(1)
+  while bigint_sign(r1) != 0 {
+    let (q, r) = quo_rem_of(r0, r1)
+    r0 = r1
+    r1 = r
+    let s2 = bigint_sub(s0, bigint_mul(q, s1))
+    s0 = s1
+    s1 = s2
+  }
+  let (_g, ga) = parts(r0)
+  (ga, s0)
+}
+
+fn bigint_gcd(x: big.BigInt, y: big.BigInt) -> big.BigInt {
+  let (_xn, xa) = parts(x)
+  let (_yn, ya) = parts(y)
+  make(false, nat_gcd(xa, ya))
+}
+
+fn bigint_mod_inverse(x: big.BigInt, m: big.BigInt) -> big.BigInt? {
+  let (_mn, ma) = parts(m)
+  nonzero(ma)
+  let n = make(false, ma)
+  let g = if bigint_sign(x) < 0 { bigint_mod(x, n) } else { x }
+  let (_gn, ga) = parts(g)
+  if ga.is_empty() {
+    // GCD(0, n) = n
+    return if ma.len() == 1 && ma[0] == 1 { Some(from_int(0)) } else { None }
+  }
+  let (d, s) = ext_gcd(ga, ma)
+  if !(d.len() == 1 && d[0] == 1) {
+    return None
+  }
+  // s may be negative or (for g > n) not reduced
+  Some(bigint_mod(s, n))
+}
+
+fn bigint_exp(x: big.BigInt, y: big.BigInt, m: big.BigInt?) -> big.BigInt {
+  let (xn, xa0) = parts(x)
+  let (yn, ya) = parts(y)
+  var ma: List[Int] = []
+  if let Some(mv) = m {
+    let (_mn, mm) = parts(mv)
+    ma = mm
+  }
+  var xa = xa0
+  if yn {
+    if ma.is_empty() {
+      return from_int(1)
+    }
+    match bigint_mod_inverse(x, make(false, ma)) {
+      Some(inv) => {
+        let (_in, ia) = parts(inv)
+        xa = ia
+      }
+      None => fault("big.exp: no inverse of the base modulo m for a negative exponent")
+    }
+  }
+  let z = nat_exp(xa, ya, ma)
+  // the sign of x (not of its inverse), as Go's exp
+  let neg = !z.is_empty() && xn && !ya.is_empty() && (ya[0] & 1) == 1
+  if neg && !ma.is_empty() {
+    return make(false, nat_sub(ma, z))
+  }
+  make(neg, z)
+}
+
+fn bigint_sqrt(x: big.BigInt) -> big.BigInt {
+  let (xn, xa) = parts(x)
+  if xn {
+    fault("square root of a negative number")
+  }
+  make(false, nat_sqrt(xa))
+}
+
+fn shift_ok(n: Int) {
+  if n < 0 {
+    fault("negative shift count ${n}")
+  }
+}
+
+fn bigint_lsh(x: big.BigInt, n: Int) -> big.BigInt {
+  shift_ok(n)
+  let (xn, xa) = parts(x)
+  make(xn, nat_shl(xa, n))
+}
+
+fn bigint_rsh(x: big.BigInt, n: Int) -> big.BigInt {
+  shift_ok(n)
+  let (xn, xa) = parts(x)
+  if xn {
+    // (-x) >> n == ^(x-1) >> n == ^((x-1) >> n) == -(((x-1) >> n) + 1)
+    let t = nat_shr(nat_sub(xa, [1]), n)
+    return make(true, nat_add(t, [1]))
+  }
+  make(false, nat_shr(xa, n))
+}
+
+// ---------------------------------------------------------------------------
+// Bitwise operations on two's complement
+
+/// x's two's complement in n words (n more than its length).
+fn twos(neg: Bool, a: List[Int], n: Int) -> List[Int] {
+  var z = raw.zero_ints(n)
+  if !neg {
+    for i in 0..a.len() {
+      z[i] = a[i]
+    }
+    return z
+  }
+  // -a = ^(a - 1)
+  let am1 = nat_sub(a, [1])
+  for i in 0..n {
+    z[i] = if i < am1.len() { ~am1[i] } else { -1 }
+  }
+  z
+}
+
+/// The BigInt of n words of two's complement.
+fn from_twos(z: List[Int]) -> big.BigInt {
+  let n = z.len()
+  if n > 0 && z[n - 1] < 0 {
+    var a = raw.zero_ints(n)
+    for i in 0..n {
+      a[i] = ~z[i]
+    }
+    return make(true, nat_add(norm(a), [1]))
+  }
+  make(false, z)
+}
+
+fn bitwise(x: big.BigInt, y: big.BigInt, op: Int) -> big.BigInt {
+  let (xn, xa) = parts(x)
+  let (yn, ya) = parts(y)
+  let n = (if xa.len() > ya.len() { xa.len() } else { ya.len() }) + 1
+  let a = twos(xn, xa, n)
+  let b = twos(yn, ya, n)
+  var z = raw.zero_ints(n)
+  for i in 0..n {
+    z[i] = match op {
+      0 => a[i] & b[i]
+      1 => a[i] | b[i]
+      2 => a[i] ^ b[i]
+      _ => a[i] & ~b[i]
+    }
+  }
+  from_twos(z)
+}
+
+fn bigint_and(x: big.BigInt, y: big.BigInt) -> big.BigInt { bitwise(x, y, 0) }
+
+fn bigint_or(x: big.BigInt, y: big.BigInt) -> big.BigInt { bitwise(x, y, 1) }
+
+fn bigint_xor(x: big.BigInt, y: big.BigInt) -> big.BigInt { bitwise(x, y, 2) }
+
+fn bigint_and_not(x: big.BigInt, y: big.BigInt) -> big.BigInt { bitwise(x, y, 3) }
+
+/// ^x == -x - 1
+fn bigint_not(x: big.BigInt) -> big.BigInt { bigint_sub(bigint_neg(x), from_int(1)) }
+
+fn bigint_bit(x: big.BigInt, i: Int) -> Int {
+  if i < 0 {
+    fault("negative bit index ${i}")
+  }
+  let (xn, xa) = parts(x)
+  if xn {
+    // bit i of ^(|x| - 1)
+    return 1 - nat_bit(nat_sub(xa, [1]), i)
+  }
+  nat_bit(xa, i)
+}
+
+fn bigint_bit_len(x: big.BigInt) -> Int {
+  let (_xn, xa) = parts(x)
+  nat_bit_len(xa)
+}
+
+fn bigint_trailing_zeros(x: big.BigInt) -> Int {
+  let (_xn, xa) = parts(x)
+  nat_trailing_zeros(xa)
+}
+
+// ---------------------------------------------------------------------------
+// Conversions
+
+fn from_int(n: Int) -> big.BigInt {
+  if n == MIN {
+    return make(true, [MIN])
+  }
+  if n < 0 { make(true, [-n]) } else { make(false, nat_word(n)) }
+}
+
+fn from_bytes(b: Bytes) -> big.BigInt {
+  let n = (b.len() + 7) / 8
+  var z = raw.zero_ints(n)
+  for i in 0..b.len() {
+    // byte i from the end goes to word k / 8, shift 8 (k % 8)
+    let k = b.len() - 1 - i
+    z[k / 8] = z[k / 8] | Int(b[i]).wrapping_shl(8 * (k % 8))
+  }
+  make(false, z)
+}
+
+fn bigint_bytes(x: big.BigInt) -> Bytes {
+  let (_xn, xa) = parts(x)
+  let n = (nat_bit_len(xa) + 7) / 8
+  var out = BytesBuilder.with_capacity(n)
+  var k = n - 1
+  while k >= 0 {
+    out.write_byte(UInt8(xa[k / 8].shr_logical(8 * (k % 8)) & 255))
+    k -= 1
+  }
+  out.freeze()
+}
+
+fn bigint_fill_bytes(x: big.BigInt, len: Int) -> Bytes {
+  let b = bigint_bytes(x)
+  if len < 0 || b.len() > len {
+    fault("big.fill_bytes: ${len} bytes do not hold the number")
+  }
+  var out = BytesBuilder.with_capacity(len)
+  for _i in 0..len - b.len() {
+    out.write_byte(0)
+  }
+  out.write(b)
+  out.freeze()
+}
+
+fn bigint_to_int(x: big.BigInt) -> Int? {
+  let (xn, xa) = parts(x)
+  if xa.is_empty() {
+    return Some(0)
+  }
+  if xa.len() > 1 {
+    return None
+  }
+  let w = xa[0]
+  if xn {
+    if w == MIN {
+      return Some(MIN)
+    }
+    return if w < 0 { None } else { Some(-w) }
+  }
+  if w < 0 { None } else { Some(w) }
+}
+
+/// The nearest Float, ties to even (Go's Float64).
+fn bigint_to_float(x: big.BigInt) -> Float {
+  let (xn, xa) = parts(x)
+  let n = nat_bit_len(xa)
+  if n == 0 {
+    return 0.0
+  }
+  // the top 64 bits, and whether any bit below them is set
+  let top = if n <= 64 { nat_shl(xa, 64 - n) } else { nat_shr(xa, n - 64) }
+  let m = top[0]
+  let sticky = n > 64 && nat_trailing_zeros(xa) < n - 64
+  // keep 53 bits: m >> 11, rounded to nearest even
+  var r = m.shr_logical(11)
+  let rest = m & 2047
+  if rest > 1024 || (rest == 1024 && (sticky || (r & 1) == 1)) {
+    r += 1
+  }
+  var e = n - 1
+  if r == 9007199254740992 {
+    r = r.shr_logical(1)
+    e += 1
+  }
+  if e > 1023 {
+    return if xn { -1.0 / 0.0 } else { 1.0 / 0.0 }
+  }
+  let bits = (e + 1023).wrapping_shl(52) | (r & 4503599627370495)
+  let f = Float.from_bits(bits)
+  if xn { -f } else { f }
+}
+
+const DIGITS: Str = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+fn bigint_text(x: big.BigInt, base: Int) -> Str {
+  if base < 2 || base > 62 {
+    fault("invalid base ${base}")
+  }
+  let (xn, xa) = parts(x)
+  if xa.is_empty() {
+    return "0"
+  }
+  // the largest power of base in a word, and its digit count
+  var bb = base
+  var nd = 1
+  while let Some(nb) = bb.checked_mul(base) {
+    bb = nb
+    nd += 1
+  }
+  let ds = DIGITS.bytes()
+  var chunks: List[Int] = []
+  var a = xa
+  while !a.is_empty() {
+    let (q, r) = nat_div_w(a, bb)
+    chunks.push(r)
+    a = q
+  }
+  var out = BytesBuilder.new()
+  if xn {
+    out.write_byte(45)
+  }
+  var i = chunks.len() - 1
+  while i >= 0 {
+    // the chunk's digits (c is a working copy, not the element)
+    var c = 0
+    c = chunks[i]
+    var buf = raw.zero_ints(nd)
+    for k in 0..nd {
+      buf[nd - 1 - k] = c % base
+      c = c / base
+    }
+    // the top chunk without its leading zeros
+    var start = 0
+    if i == chunks.len() - 1 {
+      while start < nd - 1 && buf[start] == 0 {
+        start += 1
+      }
+    }
+    for k in start..nd {
+      out.write_byte(ds[buf[k]])
+    }
+    i -= 1
+  }
+  out.freeze().to_str() ?? ""
+}
+
+fn bigint_display(x: big.BigInt) -> Str { bigint_text(x, 10) }
+
+fn bigint_debug(x: big.BigInt) -> Str { bigint_text(x, 10) }
+
+/// Go's SetString: an optional sign, then nat.scan's digits; the whole
+/// text must be read.
+fn parse(s: Str, base: Int) -> big.BigInt ! big.BigErr {
+  if base != 0 && (base < 2 || base > 62) {
+    return Err(big.BigErr{msg: "invalid base ${base}"})
+  }
+  let bad = Err(big.BigErr{msg: "invalid number ${s.quote()} in base ${base}"})
+  let b = s.bytes()
+  let n = b.len()
+  if n == 0 {
+    return bad
+  }
+  var i = 0
+  var neg = false
+  if b[0] == 45 || b[0] == 43 {
+    neg = b[0] == 45
+    i = 1
+  }
+  var prev = 46
+  var inval_sep = false
+  var bv = base
+  var prefix = 0
+  var count = 0
+  if base == 0 {
+    bv = 10
+    if i < n && b[i] == 48 {
+      prev = 48
+      count = 1
+      i += 1
+      if i < n {
+        let ch = Int(b[i])
+        if ch == 98 || ch == 66 {
+          bv = 2
+          prefix = 98
+        } else if ch == 111 || ch == 79 {
+          bv = 8
+          prefix = 111
+        } else if ch == 120 || ch == 88 {
+          bv = 16
+          prefix = 120
+        } else {
+          bv = 8
+          prefix = 48
+        }
+        count = 0
+        if prefix != 48 {
+          i += 1
+        }
+      }
+    }
+  }
+  var z: List[Int] = []
+  while i < n {
+    let ch = Int(b[i])
+    if ch == 95 && base == 0 {
+      if prev != 48 {
+        inval_sep = true
+      }
+      prev = 95
+      i += 1
+      continue
+    }
+    var d = 63
+    if ch >= 48 && ch <= 57 {
+      d = ch - 48
+    } else if ch >= 97 && ch <= 122 {
+      d = ch - 97 + 10
+    } else if ch >= 65 && ch <= 90 {
+      d = if bv <= 36 { ch - 65 + 10 } else { ch - 65 + 36 }
+    }
+    if d >= bv {
+      // the rest is not read: SetString fails
+      return bad
+    }
+    prev = 48
+    count += 1
+    z = nat_mul_add_ww(z, bv, d)
+    i += 1
+  }
+  if inval_sep || prev == 95 {
+    return bad
+  }
+  if count == 0 && prefix != 48 {
+    return bad
+  }
+  Ok(make(neg, z))
+}
+
+// ---------------------------------------------------------------------------
+// Primality (prime.go: ProbablyPrime)
+
+/// x mod w for a word w.
+fn nat_mod_w(x: List[Int], w: Int) -> Int { nat_div_w(x, w).1 }
+
+/// Miller-Rabin to the bases given.
+fn miller_rabin(n: List[Int], bases: List[Int]) -> Bool {
+  let nm1 = nat_sub(n, [1])
+  let k = nat_trailing_zeros(nm1)
+  let q = nat_shr(nm1, k)
+  for a in bases {
+    var y = nat_exp(nat_word(a), q, n)
+    if (y.len() == 1 && y[0] == 1) || nat_cmp(y, nm1) == 0 {
+      continue
+    }
+    var ok = false
+    for _j in 1..k {
+      let (_d, r) = nat_divmod(nat_mul(y, y), n)
+      y = r
+      if nat_cmp(y, nm1) == 0 {
+        ok = true
+        break
+      }
+      if y.len() == 1 && y[0] == 1 {
+        return false
+      }
+    }
+    if !ok {
+      return false
+    }
+  }
+  true
+}
+
+/// The Jacobi symbol (a/n) for odd n > 0 (Go's Jacobi on words and nats).
+fn jacobi(a0: List[Int], n0: List[Int]) -> Int {
+  var a = a0
+  var n = n0
+  var j = 1
+  while true {
+    if n.len() == 1 && n[0] == 1 {
+      return j
+    }
+    let (_q, r) = nat_divmod(a, n)
+    a = r
+    if a.is_empty() {
+      return 0
+    }
+    let s = nat_trailing_zeros(a)
+    if (s & 1) != 0 {
+      let bmod8 = n[0] & 7
+      if bmod8 == 3 || bmod8 == 5 {
+        j = -j
+      }
+    }
+    let c = nat_shr(a, s)
+    if (n[0] & 3) == 3 && (c[0] & 3) == 3 {
+      j = -j
+    }
+    a = n
+    n = c
+  }
+  j
+}
+
+/// Go's probablyPrimeLucas: the extra strong Lucas test with Baillie's
+/// parameters.
+fn lucas(n: List[Int]) -> Bool {
+  if n.is_empty() || (n.len() == 1 && n[0] == 1) {
+    return false
+  }
+  if (n[0] & 1) == 0 {
+    return n.len() == 1 && n[0] == 2
+  }
+  var p = 3
+  while true {
+    if p > 10000 {
+      fault("math/big: internal error: cannot find (D/n) = -1 for ${bigint_text(make(false, n), 10)}")
+    }
+    let jv = jacobi([p * p - 4], n)
+    if jv == -1 {
+      break
+    }
+    if jv == 0 {
+      return n.len() == 1 && n[0] == p + 2
+    }
+    if p == 40 {
+      let t = nat_sqrt(n)
+      if nat_cmp(nat_mul(t, t), n) == 0 {
+        return false
+      }
+    }
+    p += 1
+  }
+  var s = nat_add(n, [1])
+  let r = nat_trailing_zeros(s)
+  s = nat_shr(s, r)
+  let nm2 = nat_sub(n, [2])
+  let np = [p]
+  var vk: List[Int] = [2]
+  var vk1: List[Int] = [p]
+  var i = nat_bit_len(s)
+  while i >= 0 {
+    let t1 = nat_sub(nat_add(nat_mul(vk, vk1), n), np)
+    if nat_bit(s, i) != 0 {
+      vk = nat_divmod(t1, n).1
+      vk1 = nat_divmod(nat_add(nat_mul(vk1, vk1), nm2), n).1
+    } else {
+      vk1 = nat_divmod(t1, n).1
+      vk = nat_divmod(nat_add(nat_mul(vk, vk), nm2), n).1
+    }
+    i -= 1
+  }
+  if (vk.len() == 1 && vk[0] == 2) || nat_cmp(vk, nm2) == 0 {
+    var t1 = nat_mul(vk, np)
+    var t2 = nat_shl(vk1, 1)
+    if nat_cmp(t1, t2) < 0 {
+      let t = t1
+      t1 = t2
+      t2 = t
+    }
+    let t3 = nat_divmod(nat_sub(t1, t2), n).1
+    if t3.is_empty() {
+      return true
+    }
+  }
+  for _t in 0..r - 1 {
+    if vk.is_empty() {
+      return true
+    }
+    if vk.len() == 1 && vk[0] == 2 {
+      return false
+    }
+    vk = nat_divmod(nat_sub(nat_mul(vk, vk), [2]), n).1
+  }
+  false
+}
+
+/// Go's ProbablyPrime: its small checks, then Miller-Rabin and the Lucas
+/// test. Go's n extra rounds use pseudorandom bases; these use the first
+/// primes, which gives the same answer on every input known (a composite
+/// passing base 2 and the Lucas test, Baillie-PSW, is not known).
+fn bigint_probably_prime(x: big.BigInt, rounds: Int) -> Bool {
+  if rounds < 0 {
+    fault("negative number of Miller-Rabin rounds ${rounds}")
+  }
+  let (xn, xa) = parts(x)
+  if xn || xa.is_empty() {
+    return false
+  }
+  let w = xa[0]
+  if xa.len() == 1 && w >= 0 && w < 64 {
+    return [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61].contains(w)
+  }
+  if (w & 1) == 0 {
+    return false
+  }
+  for sp in [3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53] {
+    if nat_mod_w(xa, sp) == 0 {
+      return false
+    }
+  }
+  var bases = [2]
+  let more = [3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71]
+  var k = 0
+  while k < rounds && k < more.len() {
+    bases.push(more[k])
+    k += 1
+  }
+  miller_rabin(xa, bases) && lucas(xa)
+}

@@ -96,101 +96,101 @@ func Big_from_bytes(_ *Task, b Bytes) Big_BigInt {
 	return bigKey(new(big.Int).SetBytes([]byte(b)))
 }
 
-func (x *Big_BigInt) M_add(_ *Task, y Big_BigInt) Big_BigInt {
-	return bigKey(new(big.Int).Add(bigOf(*x), bigOf(y)))
+func (x Big_BigInt) M_add(_ *Task, y Big_BigInt) Big_BigInt {
+	return bigKey(new(big.Int).Add(bigOf(x), bigOf(y)))
 }
 
-func (x *Big_BigInt) M_sub(_ *Task, y Big_BigInt) Big_BigInt {
-	return bigKey(new(big.Int).Sub(bigOf(*x), bigOf(y)))
+func (x Big_BigInt) M_sub(_ *Task, y Big_BigInt) Big_BigInt {
+	return bigKey(new(big.Int).Sub(bigOf(x), bigOf(y)))
 }
 
-func (x *Big_BigInt) M_mul(_ *Task, y Big_BigInt) Big_BigInt {
-	return bigKey(new(big.Int).Mul(bigOf(*x), bigOf(y)))
+func (x Big_BigInt) M_mul(_ *Task, y Big_BigInt) Big_BigInt {
+	return bigKey(new(big.Int).Mul(bigOf(x), bigOf(y)))
 }
 
-func (x *Big_BigInt) M_quo(_ *Task, y Big_BigInt) Big_BigInt {
+func (x Big_BigInt) M_quo(_ *Task, y Big_BigInt) Big_BigInt {
 	b := bigOf(y)
 	bigZeroFault(b)
-	return bigKey(new(big.Int).Quo(bigOf(*x), b))
+	return bigKey(new(big.Int).Quo(bigOf(x), b))
 }
 
-func (x *Big_BigInt) M_rem(_ *Task, y Big_BigInt) Big_BigInt {
+func (x Big_BigInt) M_rem(_ *Task, y Big_BigInt) Big_BigInt {
 	b := bigOf(y)
 	bigZeroFault(b)
-	return bigKey(new(big.Int).Rem(bigOf(*x), b))
+	return bigKey(new(big.Int).Rem(bigOf(x), b))
 }
 
-func (x *Big_BigInt) M_quo_rem(_ *Task, y Big_BigInt) Tuple2[Big_BigInt, Big_BigInt] {
+func (x Big_BigInt) M_quo_rem(_ *Task, y Big_BigInt) Tuple2[Big_BigInt, Big_BigInt] {
 	b := bigOf(y)
 	bigZeroFault(b)
-	q, r := new(big.Int).QuoRem(bigOf(*x), b, new(big.Int))
+	q, r := new(big.Int).QuoRem(bigOf(x), b, new(big.Int))
 	return Tuple2[Big_BigInt, Big_BigInt]{F0: bigKey(q), F1: bigKey(r)}
 }
 
-func (x *Big_BigInt) M_div(_ *Task, y Big_BigInt) Big_BigInt {
+func (x Big_BigInt) M_div(_ *Task, y Big_BigInt) Big_BigInt {
 	b := bigOf(y)
 	bigZeroFault(b)
-	return bigKey(new(big.Int).Div(bigOf(*x), b))
+	return bigKey(new(big.Int).Div(bigOf(x), b))
 }
 
-func (x *Big_BigInt) M_mod(_ *Task, y Big_BigInt) Big_BigInt {
+func (x Big_BigInt) M_mod(_ *Task, y Big_BigInt) Big_BigInt {
 	b := bigOf(y)
 	bigZeroFault(b)
-	return bigKey(new(big.Int).Mod(bigOf(*x), b))
+	return bigKey(new(big.Int).Mod(bigOf(x), b))
 }
 
-func (x *Big_BigInt) M_div_mod(_ *Task, y Big_BigInt) Tuple2[Big_BigInt, Big_BigInt] {
+func (x Big_BigInt) M_div_mod(_ *Task, y Big_BigInt) Tuple2[Big_BigInt, Big_BigInt] {
 	b := bigOf(y)
 	bigZeroFault(b)
-	q, r := new(big.Int).DivMod(bigOf(*x), b, new(big.Int))
+	q, r := new(big.Int).DivMod(bigOf(x), b, new(big.Int))
 	return Tuple2[Big_BigInt, Big_BigInt]{F0: bigKey(q), F1: bigKey(r)}
 }
 
-func (x *Big_BigInt) M_exp(_ *Task, y Big_BigInt, m Option[Big_BigInt]) Big_BigInt {
+func (x Big_BigInt) M_exp(_ *Task, y Big_BigInt, m Option[Big_BigInt]) Big_BigInt {
 	var mb *big.Int
 	if m.Some {
 		mb = bigOf(m.V)
 	}
-	z := new(big.Int).Exp(bigOf(*x), bigOf(y), mb)
+	z := new(big.Int).Exp(bigOf(x), bigOf(y), mb)
 	if z == nil {
 		FaultHere("big.exp: no inverse of the base modulo m for a negative exponent")
 	}
 	return bigKey(z)
 }
 
-func (x *Big_BigInt) M_gcd(_ *Task, y Big_BigInt) Big_BigInt {
-	a, b := bigOf(*x), bigOf(y)
+func (x Big_BigInt) M_gcd(_ *Task, y Big_BigInt) Big_BigInt {
+	a, b := bigOf(x), bigOf(y)
 	return bigKey(new(big.Int).GCD(nil, nil, a.Abs(a), b.Abs(b)))
 }
 
-func (x *Big_BigInt) M_mod_inverse(_ *Task, m Big_BigInt) Option[Big_BigInt] {
+func (x Big_BigInt) M_mod_inverse(_ *Task, m Big_BigInt) Option[Big_BigInt] {
 	mb := bigOf(m)
 	bigZeroFault(mb)
-	z := new(big.Int).ModInverse(bigOf(*x), mb)
+	z := new(big.Int).ModInverse(bigOf(x), mb)
 	if z == nil {
 		return None[Big_BigInt]()
 	}
 	return Some(bigKey(z))
 }
 
-func (x *Big_BigInt) M_sqrt(_ *Task) Big_BigInt {
-	a := bigOf(*x)
+func (x Big_BigInt) M_sqrt(_ *Task) Big_BigInt {
+	a := bigOf(x)
 	if a.Sign() < 0 {
 		FaultHere("square root of a negative number")
 	}
 	return bigKey(new(big.Int).Sqrt(a))
 }
 
-func (x *Big_BigInt) M_neg(_ *Task) Big_BigInt { a := bigOf(*x); return bigKey(a.Neg(a)) }
+func (x Big_BigInt) M_neg(_ *Task) Big_BigInt { a := bigOf(x); return bigKey(a.Neg(a)) }
 
-func (x *Big_BigInt) M_abs(_ *Task) Big_BigInt { a := bigOf(*x); return bigKey(a.Abs(a)) }
+func (x Big_BigInt) M_abs(_ *Task) Big_BigInt { a := bigOf(x); return bigKey(a.Abs(a)) }
 
-func (x *Big_BigInt) M_sign(_ *Task) int64 { return int64(bigOf(*x).Sign()) }
+func (x Big_BigInt) M_sign(_ *Task) int64 { return int64(bigOf(x).Sign()) }
 
-func (x *Big_BigInt) M_cmp(_ *Task, y Big_BigInt) int64 { return int64(bigOf(*x).Cmp(bigOf(y))) }
+func (x Big_BigInt) M_cmp(_ *Task, y Big_BigInt) int64 { return int64(bigOf(x).Cmp(bigOf(y))) }
 
-func (x *Big_BigInt) M_cmp_abs(_ *Task, y Big_BigInt) int64 {
-	return int64(bigOf(*x).CmpAbs(bigOf(y)))
+func (x Big_BigInt) M_cmp_abs(_ *Task, y Big_BigInt) int64 {
+	return int64(bigOf(x).CmpAbs(bigOf(y)))
 }
 
 func bigShiftFault(n int64) {
@@ -199,84 +199,84 @@ func bigShiftFault(n int64) {
 	}
 }
 
-func (x *Big_BigInt) M_lsh(_ *Task, n int64) Big_BigInt {
+func (x Big_BigInt) M_lsh(_ *Task, n int64) Big_BigInt {
 	bigShiftFault(n)
-	return bigKey(new(big.Int).Lsh(bigOf(*x), uint(n)))
+	return bigKey(new(big.Int).Lsh(bigOf(x), uint(n)))
 }
 
-func (x *Big_BigInt) M_rsh(_ *Task, n int64) Big_BigInt {
+func (x Big_BigInt) M_rsh(_ *Task, n int64) Big_BigInt {
 	bigShiftFault(n)
-	return bigKey(new(big.Int).Rsh(bigOf(*x), uint(n)))
+	return bigKey(new(big.Int).Rsh(bigOf(x), uint(n)))
 }
 
-func (x *Big_BigInt) M_and(_ *Task, y Big_BigInt) Big_BigInt {
-	return bigKey(new(big.Int).And(bigOf(*x), bigOf(y)))
+func (x Big_BigInt) M_and(_ *Task, y Big_BigInt) Big_BigInt {
+	return bigKey(new(big.Int).And(bigOf(x), bigOf(y)))
 }
 
-func (x *Big_BigInt) M_or(_ *Task, y Big_BigInt) Big_BigInt {
-	return bigKey(new(big.Int).Or(bigOf(*x), bigOf(y)))
+func (x Big_BigInt) M_or(_ *Task, y Big_BigInt) Big_BigInt {
+	return bigKey(new(big.Int).Or(bigOf(x), bigOf(y)))
 }
 
-func (x *Big_BigInt) M_xor(_ *Task, y Big_BigInt) Big_BigInt {
-	return bigKey(new(big.Int).Xor(bigOf(*x), bigOf(y)))
+func (x Big_BigInt) M_xor(_ *Task, y Big_BigInt) Big_BigInt {
+	return bigKey(new(big.Int).Xor(bigOf(x), bigOf(y)))
 }
 
-func (x *Big_BigInt) M_and_not(_ *Task, y Big_BigInt) Big_BigInt {
-	return bigKey(new(big.Int).AndNot(bigOf(*x), bigOf(y)))
+func (x Big_BigInt) M_and_not(_ *Task, y Big_BigInt) Big_BigInt {
+	return bigKey(new(big.Int).AndNot(bigOf(x), bigOf(y)))
 }
 
-func (x *Big_BigInt) M_not(_ *Task) Big_BigInt { return bigKey(new(big.Int).Not(bigOf(*x))) }
+func (x Big_BigInt) M_not(_ *Task) Big_BigInt { return bigKey(new(big.Int).Not(bigOf(x))) }
 
-func (x *Big_BigInt) M_bit(_ *Task, i int64) int64 {
+func (x Big_BigInt) M_bit(_ *Task, i int64) int64 {
 	if i < 0 {
 		FaultHere("negative bit index %d", i)
 	}
-	return int64(bigOf(*x).Bit(int(i)))
+	return int64(bigOf(x).Bit(int(i)))
 }
 
-func (x *Big_BigInt) M_bit_len(_ *Task) int64 { return int64(bigOf(*x).BitLen()) }
+func (x Big_BigInt) M_bit_len(_ *Task) int64 { return int64(bigOf(x).BitLen()) }
 
-func (x *Big_BigInt) M_trailing_zeros(_ *Task) int64 {
-	return int64(bigOf(*x).TrailingZeroBits())
+func (x Big_BigInt) M_trailing_zeros(_ *Task) int64 {
+	return int64(bigOf(x).TrailingZeroBits())
 }
 
-func (x *Big_BigInt) M_probably_prime(_ *Task, n int64) bool {
+func (x Big_BigInt) M_probably_prime(_ *Task, n int64) bool {
 	if n < 0 {
 		FaultHere("negative number of Miller-Rabin rounds %d", n)
 	}
-	return bigOf(*x).ProbablyPrime(int(n))
+	return bigOf(x).ProbablyPrime(int(n))
 }
 
-func (x *Big_BigInt) M_text(_ *Task, base int64) string {
+func (x Big_BigInt) M_text(_ *Task, base int64) string {
 	if base < 2 || base > big.MaxBase {
 		FaultHere("invalid base %d", base)
 	}
-	return bigOf(*x).Text(int(base))
+	return bigOf(x).Text(int(base))
 }
 
-func (x *Big_BigInt) M_bytes(_ *Task) Bytes { return Bytes(bigOf(*x).Bytes()) }
+func (x Big_BigInt) M_bytes(_ *Task) Bytes { return Bytes(bigOf(x).Bytes()) }
 
-func (x *Big_BigInt) M_fill_bytes(_ *Task, n int64) Bytes {
-	a := bigOf(*x)
+func (x Big_BigInt) M_fill_bytes(_ *Task, n int64) Bytes {
+	a := bigOf(x)
 	if n < 0 || int64((a.BitLen()+7)/8) > n {
 		FaultHere("big.fill_bytes: %d bytes do not hold the number", n)
 	}
 	return Bytes(new(big.Int).Abs(a).FillBytes(make([]byte, n)))
 }
 
-func (x *Big_BigInt) M_to_int(_ *Task) Option[int64] {
-	a := bigOf(*x)
+func (x Big_BigInt) M_to_int(_ *Task) Option[int64] {
+	a := bigOf(x)
 	if !a.IsInt64() {
 		return None[int64]()
 	}
 	return Some(a.Int64())
 }
 
-func (x *Big_BigInt) M_to_float(_ *Task) float64 {
-	f, _ := bigOf(*x).Float64()
+func (x Big_BigInt) M_to_float(_ *Task) float64 {
+	f, _ := bigOf(x).Float64()
 	return f
 }
 
-func (x *Big_BigInt) M_display(_ *Task) string { return bigOf(*x).String() }
+func (x Big_BigInt) M_display(_ *Task) string { return bigOf(x).String() }
 
-func (x *Big_BigInt) M_debug(_ *Task) string { return bigOf(*x).String() }
+func (x Big_BigInt) M_debug(_ *Task) string { return bigOf(x).String() }
