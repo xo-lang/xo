@@ -162,6 +162,13 @@ Update the knowledgebase in the same change as the work, not later:
     as soon as 55% of memory is free and fewer than 3 gates run (starts staggered by 20 s), with
     no queue. The two heavy slots are for hourly.sh, bulk runs and
     suites.
+  - a failure found on main that is not yours (owner, 2026-10-21):
+    message the lead first with the error and the good and bad
+    commits; the lead assigns one bisect owner (two agents bisected one
+    failure that day). An old xo (a bisect step, an identity check's
+    base) runs with a private `XO_BACKEND_CACHE_DIR` deleted after, so
+    its older prune never touches the shared cache (an old xo's prune
+    evicted about 25 GB of it the same day).
   - merges before testing (owner, 2026-10-21): heavy.sh serves pushq
     first, then gates, then HEAVY_CLASS=bulk runs (measurements,
     profiles, full suites, deferred checks; set it on every such run).
