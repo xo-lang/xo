@@ -9,6 +9,7 @@ publishes these files as they are.
 
 Files are added as modules change; a module without a file has no
 entries yet.
+- [path.md](path.md): std/path (spec/std.md 9)
 - [url.md](url.md): std/url (spec/std.md 20)
 - [base64.md](base64.md): std/base64 (spec/std.md 21)
 - [base32.md](base32.md): std/base32 (spec/std.md 21)
