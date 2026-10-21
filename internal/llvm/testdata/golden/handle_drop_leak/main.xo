@@ -1,0 +1,52 @@
+// Runtime handles made with std/native/llrt tasks.make_handle (decision
+// 0295) are freed whether closed or dropped: files opened with and
+// without a read buffer and locks, closed, dropped open, and dropped in a
+// task. Run with XO_LEAKCHECK=1 as every golden is, a record the free hook
+// does not free fails it. Each round locks its own file: a lock dropped
+// held is released when its record is freed natively, but only when the
+// collector runs on the Go backend.
+
+fn round(fs: Fs, i: Int) -> Int ! FsErr uses fs {
+  fs.write("h.txt", "line ${i}\nnext\n".bytes())?
+  let f = fs.open("h.txt")?
+  let first = f.read_line()? ?? ""
+  // dropped open: its free hook closes it and frees the buffer
+  if i % 2 == 0 {
+    f.close()?
+  }
+  let w = fs.create("w.txt")?
+  w.write(first.bytes())?
+  if i % 3 == 0 {
+    w.close()?
+  }
+  // odd rounds unlock; even ones drop the lock held, and freeing its
+  // record closes the descriptor
+  let l = fs.lock("h${i}.lock")?
+  if i % 2 == 1 {
+    l.unlock()
+  }
+  Ok(first.len())
+}
+
+fn main(os: Os) ! {
+  var total = 0
+  for i in 0..200 {
+    total += round(os.fs, i)?
+  }
+  let n = scope s {
+    let t = s.spawn(fn() -> Int ! FsErr {
+      let f = os.fs.open("h.txt")?
+      let l = os.fs.try_lock("t.lock")?
+      Ok((f.read_line()? ?? "").len() + (if l.is_some() { 1 } else { 0 }))
+    })
+    t.await?
+  }
+  let again = os.fs.try_lock("h1.lock")?
+  os.stdio.println("total ${total} task ${n} relock ${again.is_some()}")
+  for p in ["h.txt", "w.txt", "t.lock"] {
+    os.fs.remove(p)?
+  }
+  for i in 0..200 {
+    os.fs.remove("h${i}.lock")?
+  }
+}

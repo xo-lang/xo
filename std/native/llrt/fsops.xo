@@ -12,15 +12,14 @@
 // gotchas/dead-target-arm-still-links.md).
 //
 // A handle is a record of this module's behind the runtime's object
-// header (raw_file, raw_lock: tasks.xo new_handle, its free function
-// file_free or lock_free, named by rt.fn_addr at the handle's creation), so a handle
+// header (raw_file, raw_lock: tasks.xo make_handle, decision 0295, its
+// free hook file_free or lock_free through cabi.xo's export), so a handle
 // dropped without close still closes its descriptor (and releases its
 // lock); its words are read and written through rt.obj_addr. The status and message of the last operation stay
 // sysio.xo's thread locals (set_err, status, msg).
 use native/llrt/darwin
 use native/llrt/linux
 use native/llrt/raw
-use native/llrt/obj
 use native/llrt/sysio
 use native/llrt/tasks
 use native/llrt/windows
@@ -51,25 +50,20 @@ const L_SIZE = 32
 /// the 64 KiB read buffer when buffered: freeing it closes fd (was
 /// xo_fs.c xo_fs_raw_file).
 fn raw_file(fd: Int, buffered: Bool) -> rt.FsFile {
-  let f = tasks.new_handle(F_SIZE, rt.fn_addr("fs_file_free"))
+  let (h, f) = tasks.make_handle[rt.FsFile](F_SIZE, rt.fn_addr("fs_file_free"))
   rt.mem_store(f, F_FD, fd, 8)
   if buffered {
     rt.mem_store(f, F_BUF, rt.heap_large(FS_BUF), 8)
   }
-  let h = rt.obj_at[rt.FsFile](f)
-  // obj_at counted it once more: the value holds the one reference
-  tasks.h_release(f)
   h
 }
 
 /// The lock handle of the descriptor fd (-1: none), held or not: freeing
 /// it closes fd, which releases the lock (was xo_fs.c xo_fs_raw_lock).
 fn raw_lock(fd: Int, held: Bool) -> rt.FsLock {
-  let k = tasks.new_handle(L_SIZE, rt.fn_addr("fs_lock_free"))
+  let (h, k) = tasks.make_handle[rt.FsLock](L_SIZE, rt.fn_addr("fs_lock_free"))
   rt.mem_store(k, L_FD, fd, 8)
   rt.mem_store(k, L_HELD, if held { 1 } else { 0 }, 8)
-  let h = rt.obj_at[rt.FsLock](k)
-  tasks.h_release(k)
   h
 }
 
@@ -84,7 +78,7 @@ pub fn file_free(p: Int) {
   if b != 0 {
     rt.heap_release(b - 8)
   }
-  obj.free_obj(p)
+  tasks.free_handle(p)
 }
 
 /// The free function of a lock handle's record at p: closing the
@@ -94,7 +88,7 @@ pub fn lock_free(p: Int) {
   if fd >= 0 {
     let _c = close(sysio.layer(), fd)
   }
-  obj.free_obj(p)
+  tasks.free_handle(p)
 }
 
 // errno values the same on Linux and macOS
