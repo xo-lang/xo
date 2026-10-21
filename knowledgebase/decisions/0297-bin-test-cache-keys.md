@@ -87,6 +87,50 @@ Owner approval per CI use. On one linux/arm64 runner:
    2026-10-20 (0275's count) that touch no included package: how often
    a gate would start warm.
 
+## Measurement result (2026-10-21, CI run 39676596988)
+
+Runner xo-arm64-big2 (32 CPUs), xo 0.24.0, `scripts/ci/m297.sh`
+(branch m297): TestGoldenRun alone (275 tests), `go test -json` per
+pass, `du` and a file count of every cache directory before and after
+each pass (cache root /home/ec2-user/.cache/xo). Raw files:
+cache-stats.txt, times-*.txt, suite-*.json, m297.txt.
+
+| pass | wall | failed | backend/ files added | testbin/ files added |
+|---|---|---|---|---|
+| cold (first pass) | 49 s | 0 of 275 | +72,670 (+1.6 GB) | +275 (+0.7 GB) |
+| warm (same xo) | 41 s | 0 of 275 | +1,644 | 0 |
+| after a tool-only change (a comment in compiler/cli/semantic, xo rebuilt in 95 s) | 42 s | 0 of 275 | +2 | +127 (+115 MB) |
+
+What it shows:
+
+- The tool-only change today misses the binary and test-run caches for
+  127 of the 275 tests (testbin/ +127 entries, keyed on xo's identity)
+  but not the backend caches (+2 entries: 0275's codegen key held). The
+  suite's wall stayed 42 s against 41 s warm. On this runner the part
+  0297 would save costs about one second of wall, so the
+  proposal's gain is not visible here.
+- The first pass was not cold: the runner's cache already held 7.0 GB
+  and 428,614 backend files from other runs, so 49 s is a mostly warm
+  start (72,670 new entries were still created). A truly empty cache
+  was not measured; the Mac's 767 s cold against 349 s warm is the
+  only cold figure.
+- The xo rebuild pruned the backend cache from 502,928 files and
+  22.2 GB to 127,785 files and 17.3 GB before the third pass, without
+  costing hits (the third pass added 2 entries). The prune frees by
+  file count far more than by size, which is worth its own look.
+- The 2026-10-20 run (2442 s warm against 2414 s cold) was not usable:
+  runner without the LLVM linker plugin, Windows identity diffs and a
+  websocket flake. Its wall time is not comparable to this run's.
+
+Reading for the owner: 0297 is not justified by CI's 32 CPU runner. The
+case rests on the Mac (24 GB, few cores) where the same suite is
+349 s warm and the tool-only change is cold today. The next experiment
+is that Mac measurement: TestGoldenRun with XO_CLI set, once warm, then
+after the comment change and an xo rebuild, with the cache counts
+before and after (`scripts/ci/m297.sh`'s cache_stats on the Mac's
+cache root, one bulk slot). If the Mac's third pass is near the warm
+one only with the key in, build the key behind the safety net above.
+
 ## Consequences
 
 - A gate whose change leaves the driver and the code generation alone
