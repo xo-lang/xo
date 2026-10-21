@@ -611,14 +611,14 @@ fn count_errors(fs: Fs, path: Str) -> Int ! FsErr uses fs.read {
   on Windows), so it excludes other processes that lock the same file,
   and other `lock` calls in the same program. It is advisory: reads and
   writes are not blocked. A program that exits releases its locks.
-- Dropping a handle that is still open or held differs by backend
-  (verified 2026-10-20, golden handle_drop_leak). Natively a `File` is
-  closed and a `FileLock` released when its last copy is dropped, at
-  once. On the Go backend that happens only when Go's garbage collector
-  collects the handle, so a program that drops a held lock and locks the
-  same path again waits until a collection, possibly forever. Write
-  `unlock()` (and `close()`) explicitly, or `defer` them; that is correct
-  on every backend (gotchas/go-backend-dropped-lock-held.md).
+- A `FileLock` dropped while held is released: natively at the drop, on
+  the Go backend when a `lock` or `try_lock` of a lock that is held runs
+  the collector, which finds the dropped handle (within a poll, 10 ms).
+  So locking a path again after dropping its lock works on every backend
+  (golden lock_drop_relock). A `File` dropped open is closed at the drop
+  natively and at a collection on the Go backend. `unlock()` and
+  `close()` (or `defer`) release at once everywhere and say what is
+  meant (gotchas/go-backend-dropped-lock-held.md).
 
 ### 3.2 Net (`uses net.dial` / `net.listen`)
 

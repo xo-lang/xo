@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+locked 20 times; try_lock after a drop: true
+--- stderr

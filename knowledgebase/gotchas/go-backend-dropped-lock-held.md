@@ -1,6 +1,6 @@
 # A FileLock dropped while held stays held on the Go backend
 
-Status: Observed (2026-10-20, golden handle_drop_leak, decision 0295)
+Status: Observed (2026-10-20, golden handle_drop_leak, decision 0295); fixed 2026-10-21 (std/rt fsfile.go newFlockH, collectDropped; golden lock_drop_relock)
 
 Symptom: a program that drops a held `FileLock` (or lets it go out of
 scope) and then calls `fs.lock` on the same path runs natively but hangs
@@ -16,19 +16,24 @@ that descriptor only from the `os.File` finalizer when the garbage
 collector collects it. Until then the lock stays held. A dropped open
 `File` keeps its descriptor the same way.
 
-Fix: release explicitly: `l.unlock()`, or `defer { l.unlock() }` right
-after `lock`. That is correct on every backend; spec/std.md 3.1 says so.
-Tests that drop held locks on purpose use a different path each time.
+Fix (2026-10-21): std/rt gives each FileLock handle a finalizer that
+unlocks it (fsfile.go newFlockH), and a `lock` or `try_lock` that finds
+the lock held runs the collector (collectDropped: runtime.GC and a 1 ms
+pause for the finalizer goroutine) on its first try and every tenth poll
+on a real Fs, and up to three times before queueing on a fake Fs (whose
+in-memory lock had no finalizer at all, so a dropped holder there was
+never released). Golden lock_drop_relock drops a held lock 20 times and
+locks the same path again; on the Go backend it hung at the second round
+before the fix (checked by hand, 2026-10-21). Releasing explicitly with
+`l.unlock()` or `defer { l.unlock() }` is still the clearer program.
 
-Options for the Go backend's owner, ranked:
+The other options considered:
 
 1. The Go generator emits the release at the handle's last use, as the
-   native RC pass drops it. compiler/gen already tracks borrows and moves
-   (own.xo), so it can find the last use of a local handle. That would be
-   prompt and deterministic, and matches native.
-2. A `runtime.SetFinalizer` (or Go 1.24's `runtime.AddCleanup`) on
-   flockH that unlocks. That adds nothing over the existing `os.File`
-   finalizer, since both run only after a collection, so it would not
-   fix the hang. Calling `runtime.GC()` in `lock` before each wait poll
-   would release dropped locks within one poll, at the cost of a full
-   collection per poll while a lock is contended.
+   native RC pass drops it. compiler/gen's own.xo tracks List ownership,
+   not the last use of locals. Doing this would need escape analysis
+   (stored, returned, captured, passed) and a release on every block
+   exit (return, `?`, break), so it is more work for the same result.
+2. A finalizer alone: it adds nothing over the existing `os.File`
+   finalizer until a collection runs; the collection on contention is
+   what makes it prompt.

@@ -1,0 +1,20 @@
+// A FileLock dropped while held is released on every backend: natively
+// at the drop, on the Go backend by its finalizer once a contended lock
+// runs the collector (gotchas/go-backend-dropped-lock-held.md). Each
+// round locks the same file again; before, the Go backend waited forever
+// at the second round.
+
+fn hold(fs: Fs, p: Str) -> Int ! FsErr uses fs.write {
+  let _held = fs.lock(p)?
+  1
+}
+
+fn main(os: Os) ! {
+  var n = 0
+  for _ in 0..20 {
+    n += hold(os.fs, "d.lock")?
+  }
+  let again = os.fs.try_lock("d.lock")?
+  os.stdio.println("locked ${n} times; try_lock after a drop: ${again.is_some()}")
+  os.fs.remove("d.lock")?
+}

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -43,6 +44,24 @@ type flockH struct {
 	osf  *os.File
 	mem  *lock
 	done bool
+}
+
+// newFlockH returns h with a finalizer that releases the lock when Go's
+// collector finds the handle dropped while held. Natively the last drop
+// releases it at once (llrt fsops.xo lock_free); here a contended lock
+// runs the collector (collectDropped), so a dropped holder lets go within
+// a poll instead of at the next collection, or never on a fake Fs
+// (gotchas/go-backend-dropped-lock-held.md).
+func newFlockH(h *flockH) *flockH {
+	runtime.SetFinalizer(h, func(h *flockH) { FileLock{h}.M_unlock(nil) })
+	return h
+}
+
+// collectDropped runs the collector and gives the finalizer goroutine a
+// moment, so dropped FileLocks release their locks (newFlockH).
+func collectDropped() {
+	runtime.GC()
+	time.Sleep(time.Millisecond)
 }
 
 func (FileLock) XoDebug(b *strings.Builder) { b.WriteString("<file lock>") }
@@ -370,14 +389,19 @@ func (f *realFs) lockFileMode(tk *Task, p string, wait, shared bool) Result[Opti
 	if err != nil {
 		return Err[Option[FileLock]](mapFsErr(err, p))
 	}
-	for {
+	for polls := 0; ; polls++ {
 		ok, err := tryLockFile(osf, shared)
 		if err != nil {
 			osf.Close()
 			return Err[Option[FileLock]](mapFsErr(err, p))
 		}
 		if ok {
-			return Ok[Option[FileLock], FsErr](Some(FileLock{&flockH{osf: osf}}))
+			return Ok[Option[FileLock], FsErr](Some(FileLock{newFlockH(&flockH{osf: osf})}))
+		}
+		if polls%10 == 0 {
+			// a holder this program dropped lets go once collected
+			collectDropped()
+			continue
 		}
 		if !wait {
 			osf.Close()

@@ -347,22 +347,27 @@ func (f Testing_MemFs) lockFile(tk *Task, p string, wait bool) Result[Option[Fil
 		fs.locks[fs.key(full)] = l
 	}
 	fs.mu.Unlock()
-	if !wait {
+	// a holder this program dropped lets go once collected (newFlockH):
+	// collect before reporting the lock held or queueing behind it
+	for i := 0; i < 3; i++ {
 		l.mu.Lock()
 		free := l.free(false, false) && len(l.q) == 0
 		if free {
 			l.permits--
 		}
 		l.mu.Unlock()
-		if !free {
-			return Ok[Option[FileLock], FsErr](Option[FileLock]{})
+		if free {
+			return Ok[Option[FileLock], FsErr](Some(FileLock{newFlockH(&flockH{mem: l})}))
 		}
-		return Ok[Option[FileLock], FsErr](Some(FileLock{&flockH{mem: l}}))
+		collectDropped()
+	}
+	if !wait {
+		return Ok[Option[FileLock], FsErr](Option[FileLock]{})
 	}
 	if !l.acquire(tk) {
 		return Err[Option[FileLock]](FsCanceled)
 	}
-	return Ok[Option[FileLock], FsErr](Some(FileLock{&flockH{mem: l}}))
+	return Ok[Option[FileLock], FsErr](Some(FileLock{newFlockH(&flockH{mem: l})}))
 }
 
 func (f Testing_MemFs) M_lock(tk *Task, p string) Result[FileLock, FsErr] {
