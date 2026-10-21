@@ -1011,6 +1011,23 @@ pub fn (g: Gcm) open_w(nlo: Int, nhi: Int, sealed: Bytes, aad: Bytes) -> Bytes? 
   g.ctr_w(rt.rs_with_cap(n + 8), nlo, nhi, 2, sealed, n).bytes()
 }
 
+/// open_w of a record in place in buf: the an bytes of additional data
+/// at at (a TLS record's header), then the sn bytes of ciphertext and
+/// tag after them; the plaintext is the one string allocated (no slices
+/// of the record).
+pub fn (g: Gcm) open_from(nlo: Int, nhi: Int, buf: Bytes, at: Int, an: Int, sn: Int) -> Bytes? {
+  let n = sn - 16
+  if n < 0 {
+    return None
+  }
+  let so = at + an
+  let (t0, t1) = g.tag_o(nlo, nhi, buf, so, n, buf, at, an)
+  if ((t0 ^ rt.bytes_word(buf, so + n)) | (t1 ^ rt.bytes_word(buf, so + n + 8))) != 0 {
+    return None
+  }
+  g.ctr_o(rt.rs_with_cap(n + 8), 0, nlo, nhi, 2, buf, so, n).bytes()
+}
+
 /// AES-GCM's seal under key.
 pub fn seal(key: Bytes, nonce: Bytes, pt: Bytes, aad: Bytes) -> Bytes { new_gcm(key).seal(nonce, pt, aad) }
 

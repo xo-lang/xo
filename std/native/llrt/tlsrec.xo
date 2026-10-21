@@ -213,6 +213,24 @@ pub fn open(var k: Keys, hdr: Bytes, body: Bytes) -> Inner {
     }
     None => chacha.open(k.key, nonce(k), body, hdr)
   }
+  inner_of(k, opened)
+}
+
+/// open of the record in place in buf: its header at at, its n byte body
+/// after it. AES-GCM reads both there; the others take slices.
+pub fn open_at(var k: Keys, buf: Bytes, at: Int, n: Int) -> Inner {
+  if k.on {
+    if let Some(g) = k.gcm {
+      let (nlo, nhi) = nonce_w(k)
+      return inner_of(k, g.open_from(nlo, nhi, buf, at, 5, n))
+    }
+  }
+  open(k, buf[at..at + 5], buf[at + 5..at + 5 + n])
+}
+
+/// The inner content of a record's opened plaintext (None: it did not
+/// open), counting the record.
+fn inner_of(var k: Keys, opened: Bytes?) -> Inner {
   let pt = match opened {
     Some(p) => p
     None => return Inner{ct: -1, data: b""}
@@ -229,7 +247,8 @@ pub fn open(var k: Keys, hdr: Bytes, body: Bytes) -> Inner {
     return Inner{ct: -3, data: b""}
   }
   let ct = Int(pt[i])
-  // the plaintext's own string, shortened past the type and padding
-  // (pt[0..i] copied it)
+  // the plaintext's own string, shortened past the type and padding in
+  // place (pt[0..i] copied it): the caller's opened is the decryption's
+  // new string, read by nothing else
   Inner{ct: ct, data: raw.bytes_len(pt, i)}
 }
