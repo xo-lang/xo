@@ -151,6 +151,17 @@ not affected.
       base64, was the native code's per-quantum lists, not gen's code; a
       module is profiled natively (XO_PROF=cpu) before it moves, and its
       Go-backend ratio goes in the move's commit message.
+    - netip (2026-10-21): 200,000 loops of two parses, is_private, two
+      displays: Go's package 59 ms (with its Sprintf of the inputs), rt
+      wrapper 49 ms, native Xo through gen 99 ms (1.7 times; native arm64
+      79 ms). The Go backend keeps the display methods and the runtime's
+      `netipOf` (client_ip) in std/rt/netip.go.
+    - Not moved, and why: binary (the native code uses the runtime's
+      memory intrinsics for an in-place word, which the Go backend does
+      not have); url (the opaque `Values` has a Go runtime type and `var`
+      methods, which go_compiled does not map: it needs the Go backend to
+      use the native struct for an opaque std type); template (its opaque
+      `Parsed` is the same case).
 
 - One implementation per pure module. A fix lands once and reaches every
   backend.

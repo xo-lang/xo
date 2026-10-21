@@ -30,7 +30,7 @@ func hopAddr(s string) (netip.Addr, bool) {
 
 func trustedAddr(a netip.Addr, trusted []Netip_Prefix) bool {
 	for _, p := range trusted {
-		if p.M_contains(nil, netipOf(a)) {
+		if netip.PrefixFrom(p.F_addr.goAddr(), int(p.F_len)).Contains(a) {
 			return true
 		}
 	}

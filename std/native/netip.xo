@@ -3,7 +3,6 @@
 // ParsePrefix, Prefix.Contains and Masked, the Is predicates), ported
 // with the same results and error texts.
 use std/netip
-use native/llrt/raw
 
 fn parseerr_display(e: netip.ParseErr) -> Str { e.msg }
 
@@ -106,7 +105,7 @@ fn parse_ipv6(input: Str) -> netip.Addr ! netip.ParseErr {
     }
     None => ()
   }
-  var ip = raw.zero_ints(16)
+  var ip = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
   var ellipsis = -1
   var b = s.bytes()
   if b.len() >= 2 && b[0] == 58 && b[1] == 58 {

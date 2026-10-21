@@ -1,5 +1,19 @@
 # std/netip changes
 
+## 2026-10-21: behavior: the Go backend runs netip.xo too
+
+- Kind: behavior
+- Commit: (filled in after the push)
+- Found by: decision 0312 (std written once)
+- Go reference: net/netip (go1.26.1), as ported in std/native/netip.xo
+- Test: internal/stdtest/testdata/corpus/netip (go, arm64, LLVM); golden http_client_ip (Go parity)
+
+The Go backend compiles std/native/netip.xo instead of wrapping Go's
+net/netip; the display methods and the runtime's client_ip conversion stay in
+std/rt/netip.go. Results are the same. On the Go backend 200,000 loops of two
+parses, is_private, and two displays take 99 ms (Go's package 59 ms, the old
+wrapper 49 ms): 1.7 times Go's package.
+
 ## 2026-10-21: perf: addresses written without per digit strings
 
 - Kind: perf
