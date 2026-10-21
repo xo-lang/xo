@@ -8,17 +8,21 @@
 // between an operation and its landing check moves into the check's
 // successors.
 
-/// A heap leaf: a root value and a path (`.1.0`) of field indexes.
+/// A heap leaf: a root value and a path (`.1.0`) of field indexes, and
+/// the path's number in its Rc (Rc.leaf: 0 for the root itself).
 struct Leaf {
   root: Int
   path: Str
+  pid: Int = 0
 }
 
-/// A leaf's identity as a map key: its root and path, not the text
-/// "${root}${path}" (formatting the root and hashing the text was a
-/// tenth of insert_rc's time, 2026-10-19).
-fn leaf_key(l: Leaf) -> (Int, Str) {
-  (l.root, l.path)
+/// A leaf's identity as a map key: its root and its path's number, one
+/// Int (the root and the path's text were a tuple key: hashing and
+/// comparing the paths was 8 to 12 s of a cold self-build's 156 s CPU,
+/// 2026-10-21). A path's number is its Rc's (Rc.leaf), and an Rc's copies
+/// keep the numbers it had, so keys are compared only within one Rc.
+fn leaf_key(l: Leaf) -> Int {
+  l.root * 2147483648 + l.pid
 }
 
 /// leaf_key as text, for chain_pads' records.
@@ -74,7 +78,7 @@ struct Rc {
   vfi: Int = -2
   vleafs: Map[Int, List[Int]] = {}
   vuses: Map[Int, List[UseId]] = {}
-  vids: Map[(Int, Str), Int] = {}
+  vids: Map[Int, Int] = {}
   vleaves: List[Leaf] = []
   cur: List[Int] = []
   mark: List[Bool] = []
@@ -88,6 +92,21 @@ struct Rc {
   imm_ret: Map[Str, List[Bool]] = {}
   /// whether rc_ops skips immortal leaves (Builder.imm_rc)
   skip_imm: Bool = false
+  /// the numbers of leaf paths (Rc.leaf, leaf_key): "" is 0
+  pids: Map[Str, Int] = {}
+}
+
+/// The leaf of root at path, its path numbered (leaf_key).
+fn (var r: Rc) leaf(root: Int, path: Str) -> Leaf {
+  if path.is_empty() {
+    return Leaf{root: root, path: path, pid: 0}
+  }
+  if let Some(n) = r.pids.get(path) {
+    return Leaf{root: root, path: path, pid: n}
+  }
+  let n = r.pids.len() + 1
+  r.pids[path] = n
+  Leaf{root: root, path: path, pid: n}
 }
 
 /// The runtime calls whose operand modes matter (runtimeModes), or
@@ -238,11 +257,11 @@ fn aux_int(a: Aux) -> Int {
 }
 
 /// The root and path that v denotes (base).
-fn (r: Rc) base(f: Func, v: Int) -> Leaf {
+fn (var r: Rc) base(f: Func, v: Int) -> Leaf {
   if r.is_alias(f, v) {
     let x = f.values[v]
     let b = r.base(f, x.args[0])
-    return Leaf{root: b.root, path: "${b.path}.${aux_int(x.aux)}"}
+    return r.leaf(b.root, "${b.path}.${aux_int(x.aux)}")
   }
   Leaf{root: v, path: ""}
 }
@@ -252,7 +271,7 @@ fn (var r: Rc) leaves(f: Func, v: Int) -> List[Leaf] {
   let b = r.base(f, v)
   var out: List[Leaf] = []
   for lp in r.leaf_paths(f.values[v].ty) {
-    out.push(Leaf{root: b.root, path: "${b.path}${lp}"})
+    out.push(r.leaf(b.root, "${b.path}${lp}"))
   }
   out
 }
@@ -425,7 +444,7 @@ fn (var r: Rc) leaf_uses(f: Func, v: Int) -> List[Use] {
 
 /// Appends a borrowing use of the owner of a when a is (a field of) a
 /// borrowed projection (ownerUse, decision 0186).
-fn (r: Rc) owner_use(var out: List[Use], f: Func, a: Int) {
+fn (var r: Rc) owner_use(var out: List[Use], f: Func, a: Int) {
   if r.bproj.is_empty() {
     return
   }
@@ -812,8 +831,8 @@ fn landing_site(f: Func, bl: Int) -> (Int, Int) {
 /// (counted): consumes and borrows.
 struct Counted {
   order: List[Leaf] = []
-  cons: Map[(Int, Str), Int] = {}
-  bors: Map[(Int, Str), Int] = {}
+  cons: Map[Int, Int] = {}
+  bors: Map[Int, Int] = {}
 }
 
 fn (var k: Counted) add(l: Leaf, m: Mode) {
@@ -840,8 +859,8 @@ fn (k: Counted) borrows(l: Leaf) -> Int {
 
 /// The per function state of the pass (rcFunc).
 struct RcFunc {
-  live_in: List[Map[(Int, Str), Leaf]] = []
-  live_out: List[Map[(Int, Str), Leaf]] = []
+  live_in: List[Map[Int, Leaf]] = []
+  live_out: List[Map[Int, Leaf]] = []
   /// live_in per block in sorted_leaves order, made once after liveness
   /// (edge_need read it for every edge, sorting again each time)
   live_sorted: List[List[Leaf]] = []
@@ -1404,7 +1423,7 @@ fn (var r: Rc) edge_need(f: Func, c: RcFunc, e: Int) -> Counted {
 }
 
 /// A leaf set ordered by root ID and path (sortedLeaves).
-fn sorted_leaves(f: Func, s: Map[(Int, Str), Leaf]) -> List[Leaf] {
+fn sorted_leaves(f: Func, s: Map[Int, Leaf]) -> List[Leaf] {
   var out: List[Leaf] = []
   for (_, l) in s {
     out.push(l)
@@ -1421,7 +1440,7 @@ fn (var r: Rc) walk(var f: Func, var c: RcFunc, bl: Int) {
   let term = f.term(bl)
   let ni = f.blocks[bl].instrs.len()
   let body = f.blocks[bl].instrs[0..ni - 1]
-  var live: Map[(Int, Str), Leaf] = {}
+  var live: Map[Int, Leaf] = {}
   // the new instruction list, reversed
   var rev: List[Int] = []
   match f.values[term].op {
@@ -1782,7 +1801,7 @@ fn (var r: Rc) group_releases(var f: Func) {
       // `var` results in place while only field reads use the call,
       // byref.xo lazy_result, and a release of the whole call would load
       // every word: bench/results/fast-builds-2026-10-13.md)
-      var by_group: Map[Str, List[(Int, Str)]] = {}
+      var by_group: Map[Str, List[Int]] = {}
       var groups: List[Str] = []
       var gsite: Map[Str, (Int, Int)] = {}
       var bad: Set[Str] = #{}
@@ -1820,11 +1839,11 @@ fn (var r: Rc) group_releases(var f: Func) {
         if bad.contains(g) || all.len() < GROUP_LEAVES || ks.len() != all.len() {
           continue
         }
-        var want: Set[(Int, Str)] = #{}
+        var want: Set[Int] = #{}
         for l in all {
           want.add(leaf_key(l))
         }
-        var got: Set[(Int, Str)] = #{}
+        var got: Set[Int] = #{}
         for s in ks {
           got.add(s)
         }
@@ -1882,7 +1901,7 @@ fn (var r: Rc) group_leaves(f: Func, root: Int, comp: Int) -> List[Leaf] {
   }
   var out: List[Leaf] = []
   for lp in r.leaf_paths(r.field_type(f.values[root].ty, comp)) {
-    out.push(Leaf{root: root, path: ".${comp}${lp}"})
+    out.push(r.leaf(root, ".${comp}${lp}"))
   }
   out
 }
@@ -1953,8 +1972,8 @@ fn (var r: Rc) touches(f: Func, w: Int, an: List[Int]) -> Bool {
 /// The state of the uniqueness analysis (unique): the retained leaves,
 /// and the block parameters' leaves still believed unique.
 struct Uniq {
-  retained: Map[(Int, Str), Bool] = {}
-  param: Map[(Int, Str), Bool] = {}
+  retained: Map[Int, Bool] = {}
+  param: Map[Int, Bool] = {}
 }
 
 /// Whether List leaf l is provably unique where it is used (unique's
@@ -1992,16 +2011,16 @@ fn (var r: Rc) uniq(f: Func, u: Uniq, l: Leaf) -> Bool {
     Struct | Tuple => {
       if idx >= 0 {
         let b = r.base(f, x.args[idx])
-        return r.uniq(f, u, Leaf{root: b.root, path: "${b.path}${rest}"})
+        return r.uniq(f, u, r.leaf(b.root, "${b.path}${rest}"))
       }
     }
     SetField => {
       if idx == aux_int(x.aux) {
         let b = r.base(f, x.args[1])
-        return r.uniq(f, u, Leaf{root: b.root, path: "${b.path}${rest}"})
+        return r.uniq(f, u, r.leaf(b.root, "${b.path}${rest}"))
       }
       let b = r.base(f, x.args[0])
-      return r.uniq(f, u, Leaf{root: b.root, path: "${b.path}${l.path}"})
+      return r.uniq(f, u, r.leaf(b.root, "${b.path}${l.path}"))
     }
     Param => {
       if x.block == 0 {
@@ -2046,7 +2065,7 @@ fn (var r: Rc) unique(f: Func) -> Uniq {
       let i = param_index(f, l.root)
       for e in f.blocks[f.values[l.root].block].preds {
         let b = r.base(f, f.edges[e].args[i])
-        if !r.uniq(f, u, Leaf{root: b.root, path: "${b.path}${l.path}"}) {
+        if !r.uniq(f, u, r.leaf(b.root, "${b.path}${l.path}")) {
           u.param[leaf_key(l)] = false
           changed = true
           break
@@ -2466,7 +2485,7 @@ fn merge_jumps(var f: Func) {
 /// only field of its variant, and the enum leaf it reads is owned,
 /// counted, and dead after v, so the enum's release and the retains of
 /// the payload's live leaves would count the same words.
-fn (var r: Rc) movable(f: Func, v: Int, live: Map[(Int, Str), Leaf]) -> Bool {
+fn (var r: Rc) movable(f: Func, v: Int, live: Map[Int, Leaf]) -> Bool {
   let x = f.values[v]
   if x.op != Op.Payload || x.args.len() != 1 {
     return false
