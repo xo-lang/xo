@@ -137,7 +137,10 @@ fn hfree(hw: Int, p: Int) {
     free1(hw, p)
     return
   }
-  alloc.free_mt(subw(hw, 1), p)
+  let h = subw(hw, 1)
+  if !alloc.free_push(h, p) {
+    alloc.free_mt(h, p)
+  }
 }
 
 /// A block of n bytes for a runtime object (xo_alloc): the calling
@@ -325,7 +328,9 @@ fn rl_free_n_slow(l: Int, esize: Int, drop: Int) {
   // word HEAP becomes 0: cabi.xo heap_threads)
   if t != 0 && rt.mem_load(t, RT_DEPTH, 8) == 0 {
     if drop == 0 {
-      alloc.free_mt(t, l)
+      if !alloc.free_push(t, l) {
+        alloc.free_mt(t, l)
+      }
       return
     }
     rl_free(t | 1, l, esize, drop)

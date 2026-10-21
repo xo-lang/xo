@@ -337,6 +337,30 @@ pub fn refill(h: Int, n: Int) {
   rt.mem_store(fl, NFREE, q, 8)
 }
 
+/// free_mt's common case, a leaf small enough for the inliner at every
+/// call site: block p of a class onto its class's list on heap h when
+/// the list stays under a magazine's worth, counted; true when done.
+/// Else false, having done nothing, and the caller calls free_mt (a big
+/// block, a list that fills a magazine). 2026-10-21: free_mt, at 58
+/// instructions with its calls, was a call on every free in a program
+/// with threads.
+pub fn free_push(h: Int, p: Int) -> Bool {
+  let c = rt.mem_load(p.wrapping_sub(8), 0, 8)
+  if c < 0 {
+    return false
+  }
+  let fl = h.wrapping_add(c.wrapping_shl(3))
+  let nf = rt.mem_load(fl, NFREE, 8).wrapping_add(1)
+  if nf >= rt.mem_load(fl, MAG_CAP, 8) {
+    return false
+  }
+  rt.mem_store(h, FREES, rt.mem_load(h, FREES, 8).wrapping_add(1), 8)
+  rt.mem_store(p, 0, rt.mem_load(fl, FREE_LISTS, 8), 8)
+  rt.mem_store(fl, FREE_LISTS, p, 8)
+  rt.mem_store(fl, NFREE, nf, 8)
+  true
+}
+
 /// Gives back block p to heap h in a program with threads (xo_rt.c
 /// free_mt): as free, then a class's list that reached a magazine's
 /// size becomes the heap's spare magazine, and the spare it replaces
