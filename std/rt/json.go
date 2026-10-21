@@ -405,6 +405,15 @@ type jsonObj struct {
 // jsonParse parses JSON text into *jsonObj, []any, json.Number, string,
 // bool, and nil.
 func jsonParse(data []byte) (any, *Json_DecodeErr) {
+	if x, ok := jsonParseFast(data); ok {
+		return x, nil
+	}
+	return jsonParseSlow(data)
+}
+
+// jsonParseSlow is jsonParse by the token decoder: any text, and the
+// error text of a bad one.
+func jsonParseSlow(data []byte) (any, *Json_DecodeErr) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
 	x, err := jsonValue(dec)

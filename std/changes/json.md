@@ -1,5 +1,19 @@
 # std/json changes
 
+## 2026-10-21: perf: the Go backend reads JSON values without the token decoder
+
+- Kind: perf
+- Commit: (filled in after the push)
+- Found by: go pprof of the streaming decoder (bench/results/json-vs-go-2026-10-21.md)
+- Go reference: encoding/json (go1.26.1: the values and error texts are the token decoder's)
+- Test: internal/stdtest/testdata/corpus/json (go, arm64); goldens json_stream, json_value, json_text; std/rt TestJsonParseFastMatchesDecoder
+
+On the Go backend `json.decoder()`, `parse_value`, and every `Value` parse
+read the text with a hand written reader (std/rt/jsonparsefast.go) and fall
+back to `json.Decoder.Token` for anything it does not read the same way, so
+errors are unchanged. The streaming decoder over 4 KB chunks went from 3.55
+to 1.14 times Go's `json.Decoder` in instructions.
+
 ## 2026-10-21: feature: omitempty and json.Decoder
 
 - Kind: feature
