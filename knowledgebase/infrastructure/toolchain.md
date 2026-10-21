@@ -4147,7 +4147,11 @@ sources checked against pinned SHA-256 sums, built with clang, and cmake
 and ninja from PATH or a Python virtual environment in WORKDIR/race;
 the darwin-arm64 seed then holds xo/lib/xo/race, decision 0273; last
 verified: 2026-10-20), and cross builds linux-arm64, linux-amd64, windows-amd64, and darwin-amd64
-with that xo and the Go backend (about 25 s each), packs all five with
+with that xo and the Go backend (about 25 s each; linux-arm64 also gets
+ThreadSanitizer's static runtime, `scripts/race-runtime.sh
+WORKDIR/race-linux DIR linux-arm64`, built in Docker, about 10 minutes,
+so seed-cut refuses to start while Docker is not running; owner
+2026-10-21), packs all five with
 seed-pack.sh into WORKDIR/out, and writes WORKDIR/out/SEED. Logs are in
 WORKDIR/logs. A failure after the push (a build or pack) is fixed and
 the packing redone by hand from WORKDIR/tree; the tag and the version

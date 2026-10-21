@@ -230,6 +230,13 @@ built on it):
   cases, one and several threads, with and without the
   synchronization) 40 of 40 as TestRaceSyncTable expects, and
   testdata/tsan_race reports its races with Xo's source lines.
-- **Shipping**: the archive (5.2 MB) belongs in lib/xo/race/linux-arm64
-  of the release and the linux-arm64 seed, as darwin's dylib does
-  (owner's call for the seed contents; until then $XO_RACE_RUNTIME).
+- **Shipping** (owner, 2026-10-21): the archive (5.2 MB) ships in
+  lib/xo/race/linux-arm64 of the release and the linux-arm64 seed, as
+  darwin's dylib does, from the next seed on. seed-cut.sh builds it at cut
+  time in Docker (`scripts/race-runtime.sh WORK OUT linux-arm64` on the
+  Mac: the same pinned compiler-rt sources, checked against their SHA-256
+  sum) into the linux-arm64 cross layout, which seed-pack.sh packs;
+  seed-cut refuses to start while Docker is not running. For a release,
+  the same command with OUT the checkout puts it where release.sh takes
+  lib/xo/race/PLATFORM from. xo finds it next to std by default;
+  $XO_RACE_RUNTIME stays an override.

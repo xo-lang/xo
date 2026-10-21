@@ -4,7 +4,7 @@
 # the release archive and the seeds; a maintainer step, never run on
 # users' machines.
 #
-#   scripts/race-runtime.sh WORKDIR OUTDIR
+#   scripts/race-runtime.sh WORKDIR OUTDIR [linux-arm64]
 #
 # Downloads the pinned sources into WORKDIR (checked against the pinned
 # SHA-256 sums), builds with clang, cmake, and ninja (cmake and ninja from
@@ -16,7 +16,10 @@
 # libclang_rt.tsan-aarch64.a, which Xo's ELF linker links in; on the Mac
 # run it in Docker: scripts/docker-linux.sh arm64 WORK -- bash
 # /xo/scripts/race-runtime.sh /work/w /work/out, which installs clang,
-# cmake, and ninja when missing).
+# cmake, and ninja when missing). On the Mac, linux-arm64 as the third
+# argument does that itself: the script copied into WORKDIR, run there in
+# Docker as root, the archive and the license copied to OUTDIR/lib/xo/race
+# (seed-cut.sh's linux-arm64 seed; before release.sh, OUTDIR the checkout).
 set -euo pipefail
 
 # 23.1.3: 21.1.8's runtime crashed at start on macOS 27 (a null atomic
@@ -32,6 +35,20 @@ out=${2:?OUTDIR}
 mkdir -p "$work" "$out"
 work=$(cd "$work" && pwd)
 out=$(cd "$out" && pwd)
+
+if [ "${3:-}" = linux-arm64 ] && [ "$(uname -s)" = Darwin ]; then
+  here=$(cd "$(dirname "$0")" && pwd)
+  cp "$0" "$work/race-runtime.sh"
+  XO_DOCKER_ROOT=1 nice -n 10 "$here/docker-linux.sh" arm64 "$work" -- bash /work/race-runtime.sh /work/w /work/out
+  a="$work/out/lib/xo/race/linux-arm64/libclang_rt.tsan-aarch64.a"
+  [ -s "$a" ] || { echo "race-runtime.sh: Docker build wrote no $a" >&2; exit 1; }
+  mkdir -p "$out/lib/xo/race"
+  rm -rf "${out:?}/lib/xo/race/linux-arm64"
+  cp -R "$work/out/lib/xo/race/linux-arm64" "$out/lib/xo/race/"
+  cp "$work/out/lib/xo/race/LICENSE.TXT" "$out/lib/xo/race/"
+  echo "$out/lib/xo/race/linux-arm64/libclang_rt.tsan-aarch64.a"
+  exit 0
+fi
 
 case "$(uname -s)-$(uname -m)" in
   Darwin-arm64) goos=darwin goarch=arm64 lib=libclang_rt.tsan_osx_dynamic.dylib target=clang_rt.tsan_osx_dynamic libdir=darwin ;;

@@ -25,12 +25,17 @@
 #      (scripts/race-runtime.sh, into the tree's lib/xo/race), packed by
 #      scripts/seed-pack.sh
 #   6. linux-arm64, linux-amd64, windows-amd64, darwin-amd64: cross built
-#      by that xo with the Go backend, packed with the checkout's std
+#      by that xo with the Go backend, packed with the checkout's std;
+#      linux-arm64 also with ThreadSanitizer's static runtime, built in
+#      Docker (scripts/race-runtime.sh ... linux-arm64; Docker must run)
 #   7. WORKDIR/out holds the five tarballs, their .sha256, manifest.txt,
 #      and SEED (the seed's name, VERSION-<commit, 8 hex>)
 #
 # XO_SEED_DRY_RUN=1 does every step but the pushes (no commit reaches
 # main, no tag is made): a rehearsal; seed-upload.sh refuses its output.
+# XO_SEED_REF (dry runs only, default origin/main) is the commit the cut
+# builds and checks this script against: a branch changing the seed
+# scripts rehearses itself (run from that branch's worktree).
 # XO_HEAVY, when set, prefixes the heavy steps (the lead's slot lock,
 # e.g. XO_HEAVY="$XO_LEAD_SCRATCH/agents/heavy.sh seed").
 # XO_PUSH_LOCK, when set, is the push lock directory that pushq.sh takes
@@ -57,20 +62,27 @@ version=$1
 notes=$(cd "$(dirname "$2")" && pwd)/$(basename "$2")
 work=$3
 dry=${XO_SEED_DRY_RUN:-0}
+ref=origin/main
+if [ -n "${XO_SEED_REF:-}" ]; then
+  [ "$dry" = 1 ] || die "XO_SEED_REF is for dry runs (XO_SEED_DRY_RUN=1)"
+  ref=$XO_SEED_REF
+fi
 
 echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.0$' || die "version $version: want X.Y.0"
 [ -s "$notes" ] || die "$notes: write the tag's message first"
 head -1 "$notes" | grep -qx "Xo v$version" || die "$notes: its first line must be \"Xo v$version\""
 [ "$(uname -s)-$(uname -m)" = Darwin-arm64 ] || die "run on the development Mac (darwin/arm64): the darwin-arm64 seed is built natively"
 command -v go >/dev/null && command -v clang >/dev/null || die "needs go and clang"
+# before anything is pushed: step 6 builds linux-arm64's race runtime in it
+docker info >/dev/null 2>&1 || die "Docker is not running (step 6 builds the linux-arm64 race runtime in it)"
 
 repo=$(git rev-parse --show-toplevel)
 # a stale copy of this script (e.g. the main checkout, kept at an old commit)
 # runs old paths and steps: run it from a checkout of origin/main
 # (2026-10-18: a pre-rename copy read selfhost/ paths and failed)
 git -C "$repo" fetch -q origin
-git -C "$repo" diff --quiet origin/main -- scripts/seed-cut.sh scripts/seed-pack.sh scripts/seed-upload.sh ||
-  die "this checkout's seed scripts differ from origin/main's: run seed-cut.sh from a worktree of origin/main"
+git -C "$repo" diff --quiet "$ref" -- scripts/seed-cut.sh scripts/seed-pack.sh scripts/seed-upload.sh scripts/race-runtime.sh ||
+  die "this checkout's seed scripts differ from $ref's: run seed-cut.sh from a worktree of $ref"
 case "$work" in "$repo"/*) die "WORKDIR must be outside the repository" ;; esac
 mkdir -p "$work"
 work=$(cd "$work" && pwd)
@@ -98,23 +110,23 @@ git -C "$repo" fetch -q origin --tags
 if git -C "$repo" rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
   die "tag v$version exists"
 fi
-cur=$(git -C "$repo" show origin/main:compiler/cli/core/cli.xo | sed -n 's/^pub const VERSION = "\(.*\)"$/\1/p')
+cur=$(git -C "$repo" show "$ref":compiler/cli/core/cli.xo | sed -n 's/^pub const VERSION = "\(.*\)"$/\1/p')
 [ -n "$cur" ] || die "no VERSION in origin/main's compiler/cli/core/cli.xo"
 newest=$(printf '%s\n%s\n' "$cur" "$version" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
 prebumped=0
 if [ "$version" = "$cur" ]; then
   # main already carries the bump (2026-10-18: a manual "Version X" commit):
   # cut from origin/main as is when its head is that commit
-  git -C "$repo" log -1 --format=%s origin/main | grep -q "^Version $version " ||
+  git -C "$repo" log -1 --format=%s "$ref" | grep -q "^Version $version " ||
     die "main is already at $version but its head is not the \"Version $version\" commit; tag or bump by hand"
   prebumped=1
 else
   [ "$newest" = "$version" ] || die "version $version is not above main's $cur"
 fi
 
-step "1. worktree of origin/main, version $cur to $version"
+step "1. worktree of $ref, version $cur to $version"
 tree=$work/tree
-git -C "$repo" worktree add -q --detach "$tree" origin/main
+git -C "$repo" worktree add -q --detach "$tree" "$ref"
 cd "$tree"
 if [ "$prebumped" = 0 ]; then
   sed -i '' "s/^pub const VERSION = \"$cur\"$/pub const VERSION = \"$version\"/" compiler/cli/core/cli.xo
@@ -172,6 +184,12 @@ for p in linux/arm64 linux/amd64 windows/amd64 darwin/amd64; do
   bin/xo build --backend=go --targets="$p" --std="$tree/std" -o "$d/bin/$exe" compiler/xo > "$log/cross-$plat.log" 2>&1 ||
     { tail "$log/cross-$plat.log"; die "cross build $plat failed"; }
   (git ls-files -z -- std | tar -c -f - --null -T -) | tar -xf - -C "$d"
+  if [ "$plat" = linux-arm64 ]; then
+    # ThreadSanitizer's static runtime for native --race (decision 0273's
+    # linux/arm64 addendum) into $d/lib/xo/race, which seed-pack.sh packs
+    bash scripts/race-runtime.sh "$work/race-linux" "$d" linux-arm64 > "$log/race-runtime-linux.log" 2>&1 ||
+      { tail "$log/race-runtime-linux.log"; die "race-runtime.sh linux-arm64 failed"; }
+  fi
   XO_SEED_VERSION=$version XO_SEED_PLATFORM=$plat XO_SEED_COMMIT=$commit \
     XO_SEED_NOTE="cross built by the darwin-arm64 $version xo with --backend=go --targets=$p (seed-cut.sh)" \
     bash scripts/seed-pack.sh "$d/bin/$exe" "$out" > "$log/pack-$plat.log"
