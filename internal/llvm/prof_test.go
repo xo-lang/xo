@@ -105,6 +105,47 @@ func TestProfCPU(t *testing.T) {
 	}
 }
 
+// TestProfHelperNames: the arm64 backend's counting helpers carry a
+// readable local symbol (parallel.xo alias: the helper's key),
+// so the CPU profile of testdata/prof/helpers, which spends its time
+// dup'ing the elements of a copied List[User], names `dupp User`, not
+// its hashed global xo_h... (2026-10-21: the 32-core HTTP server's top
+// three entries, 65% of its CPU, were hashes the profile could not
+// name).
+func TestProfHelperNames(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs a program")
+	}
+	if runtime.GOARCH != "arm64" || (runtime.GOOS != "darwin" && runtime.GOOS != "linux") {
+		t.Skip("the arm64 backend's CPU profile")
+	}
+	res, err := xotool.Build([]string{filepath.Join("testdata", "prof", "helpers")}, xotool.Options{Backend: xotool.BackendArm64})
+	if err != nil || res.Failed {
+		t.Fatalf("build: %v %v", err, res)
+	}
+	bin := res.Binaries[xotool.Host()]
+	dir := t.TempDir()
+	raw := filepath.Join(dir, "prof.xoraw")
+	cmd := exec.Command(bin)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "XO_PROF=cpu", "XO_PROF_HZ=1000", "XO_PROF_OUT="+raw)
+	got, err := runCombined(cmd, 2*time.Minute)
+	if err != nil || !strings.Contains(got, "copies 40020000") {
+		t.Fatalf("run: %v\n%s", err, got)
+	}
+	xoProf(t, dir, raw, "--cpu-out="+filepath.Join(dir, "cpu.pprof"))
+	txt, err := os.ReadFile(filepath.Join(dir, "cpu.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(txt), "dupp User") {
+		t.Fatalf("the profile names no dupp User:\n%s", txt)
+	}
+	if regexp.MustCompile(`\bxo_h[0-9A-Za-z]{10}\b`).MatchString(string(txt)) {
+		t.Fatalf("the profile shows a helper by its hash:\n%s", txt)
+	}
+}
+
 // TestProfLeafCaller: on the arm64 backend a leaf whose frame record is
 // built only in its fault stubs (testdata/prof/leaf's mix, called from
 // outer) has the stubs in an unwind region of their own, so the body's

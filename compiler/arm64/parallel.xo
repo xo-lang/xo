@@ -115,8 +115,26 @@ fn base62(h: Int, n: Int) -> Str {
 /// split generation, before its local label; "" otherwise. Two keys of
 /// one global name fail the generation.
 fn (var g: G) alias(key: Str) -> Str {
-  if !g.split || g.defer_helpers {
+  if g.defer_helpers {
     return ""
+  }
+  // a local symbol named for the helper, its key (`dupp User` once
+  // prof.xo demangles it; no function's name has a space, so none
+  // collides with it), so profiles and the debugger name
+  // the helper: the hashed global below names nothing, and without a
+  // split no symbol marked the helper at all, so its samples went to the
+  // function before it (2026-10-21: the 32-core server's top entry,
+  // 39.7%, was xo_hf5d4IGG6wJ, User's dupp). Locals come first in the
+  // symbol table, so the symbolizer takes this name at the address. Not
+  // on Windows (COFF).
+  var named = ""
+  if g.os != "windows" {
+    let rd = g.fname(key)
+    let rty = if g.os == "linux" { "\t.type ${rd}, %function\n" } else { "" }
+    named = "${rty}${rd}:\n"
+  }
+  if !g.split {
+    return named
   }
   let ext = g.helper_ext(key)
   if let Some(k) = g.ext_keys.get(ext) {
@@ -129,7 +147,7 @@ fn (var g: G) alias(key: Str) -> Str {
   // size) valgrind and perf dropped it, and profiles showed every
   // helper as ??? (Xo Lang 3, 2026-10-17)
   let ty = if g.os == "linux" { "\t.type ${ext}, %function\n" } else { "" }
-  "${g.hidden_global(ext)}${ty}${ext}:\n"
+  "${named}${g.hidden_global(ext)}${ty}${ext}:\n"
 }
 
 /// Generates the helper a part wanted (Want), once.

@@ -1,0 +1,26 @@
+// Copying a list of users dups each element through the dupp helper of
+// User (and its strings' dup helpers): the CPU profile names them
+// (dupp User), not by their hashed symbols (TestProfHelperNames).
+
+struct User {
+  name: Str
+  email: Str
+  nick: Str?
+}
+
+fn main(os: Os) {
+  var xs: List[User] = []
+  for i in 0..2000 {
+    xs.push(User{name: "n${i}", email: "e${i}@x", nick: Some("k${i}")})
+  }
+  var total = 0
+  var r = 0
+  while r < 20000 {
+    // a second owner, then a write: the copy dups every element
+    var c = xs
+    c.push(xs[r % 2000])
+    total += c.len()
+    r += 1
+  }
+  os.stdio.println("copies ${total}")
+}
