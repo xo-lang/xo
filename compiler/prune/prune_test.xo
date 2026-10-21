@@ -250,3 +250,24 @@ test "the size cap under a budget: least recently used first, then on" {
   expect(run(os.fs, os.clock, "c", p).removed) == ["c/aa/2"]
   expect(there(os, "c/aa/3")) == true
 }
+
+test "a burst does not prune again a cache it could not bring under its cap until keep passes" {
+  // every entry in use: a prune cannot get under the cap
+  put(os, "c/aa/1", 600)
+  put(os, "c/aa/2", 600)
+  let p = Policy{every: 1h, burst: 100, keep: 2h, max_age: 0s, max_bytes: 1000}
+  let a = run(os.fs, os.clock, "c", p)
+  expect(a.ran) == true
+  expect(a.bytes) == 1200
+  // a burst stored: the last run was futile, so no prune within keep
+  note_stored(os.fs, "c", 500)
+  os.clock.advance(30m)
+  expect(run(os.fs, os.clock, "c", p).ran) == false
+  // past keep (2h since the entries' use) a prune can remove them
+  os.clock.advance(91m)
+  let b = run(os.fs, os.clock, "c", p)
+  expect(b.ran) == true
+  // the entries are past keep now: removed down to the cap, no backoff
+  expect(b.bytes <= 1000) == true
+  expect(there(os, "c/prune-over")) == false
+}

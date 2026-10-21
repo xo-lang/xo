@@ -923,7 +923,17 @@ fn pack_store(os: Os, p: Pack, entries: Map[Str, Bytes], stores: List[(Str, Byte
     }
   }
   if p.compact || p.segs.len() >= PACK_SEGS || p.held > 2 * used.len() + 64 {
-    pack_write(os, p, used)
+    // a compaction replaces the segments it read: only what it adds
+    // counts as stored for the prune's burst (a warm build of xo
+    // rewrote about 1 GB of packs and set off a prune of the whole
+    // cache on every build, 2026-10-21)
+    var old = 0
+    for s in p.segs {
+      if let Ok(Some(fi)) = os.fs.stat("${p.dir}/${s}") {
+        old += fi.size
+      }
+    }
+    pack_write_counted(os, p, used, old)
     for s in p.segs {
       os.fs.remove("${p.dir}/${s}").ignore_err("another build compacted it")
     }
@@ -933,7 +943,11 @@ fn pack_store(os: Os, p: Pack, entries: Map[Str, Bytes], stores: List[(Str, Byte
 }
 
 /// Writes items as a new segment of p.
-fn pack_write(os: Os, p: Pack, items: List[(Str, Bytes)]) {
+fn pack_write(os: Os, p: Pack, items: List[(Str, Bytes)]) { pack_write_counted(os, p, items, 0) }
+
+/// pack_write, counting for the prune only the bytes past replaced (the
+/// segments a compaction removes).
+fn pack_write_counted(os: Os, p: Pack, items: List[(Str, Bytes)], replaced: Int) {
   var n = 0
   for (_, b) in items {
     n += b.len()
@@ -951,7 +965,7 @@ fn pack_write(os: Os, p: Pack, items: List[(Str, Bytes)]) {
   }
   let data = w.freeze()
   cache_put(os, "${p.dir}/s-${os.rand.bytes(8).to_hex()}", data)
-  prune_backend_cache(os, p.root, data.len())
+  prune_backend_cache(os, p.root, (data.len() - replaced).max(0))
 }
 
 /// The file of the build target's parse list (parse_prefetch).

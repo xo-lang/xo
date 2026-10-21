@@ -156,7 +156,13 @@ pub fn run(fs: Fs, clock: Clock, dir: Str, p: Policy) -> Stats uses (fs.read, fs
   let stamp = "${dir}/prune-stamp"
   match fs.stat(stamp) {
     Ok(Some(fi)) => {
-      if clock.since(fi.modified) < p.every && (p.burst <= 0 || stored(fs, dir) < p.burst) {
+      let since = clock.since(fi.modified)
+      // a run that left the cache over its cap could remove nothing more
+      // (every entry used within keep): a burst waits until keep has
+      // passed (a busy day's back-end cache set one off on every build,
+      // each walking all 332,535 files, 2026-10-21)
+      let futile = fs.exists("${dir}/prune-over").ok() ?? false
+      if since < p.every && (p.burst <= 0 || stored(fs, dir) < p.burst || (futile && since < p.keep)) {
         return st
       }
     }
@@ -219,6 +225,12 @@ pub fn run(fs: Fs, clock: Clock, dir: Str, p: Policy) -> Stats uses (fs.read, fs
       }
       i -= 1
     }
+  }
+  // over the cap with nothing left to remove: the burst backs off
+  if p.max_bytes > 0 && total > p.max_bytes && !st.partial {
+    fs.write("${dir}/prune-over", b"").ignore_err("the burst may prune again")
+  } else {
+    fs.remove("${dir}/prune-over").ignore_err("none")
   }
   if st.partial {
     // due again in PARTIAL_PAUSE (or every, if shorter): the next build
