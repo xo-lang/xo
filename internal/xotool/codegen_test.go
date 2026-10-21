@@ -81,6 +81,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_TEST_ONLY":            {"none", ""},
 	"XO_TRACEBACK":            {"none", ""},
 	"XO_WARNINGS":             {"none", ""},
+	"XO_KEEP_ASM":             {"none", ""}, // writes and keeps the assembly files only
 	"XO_CACHE_PRUNE_BUDGET":   {"none", ""}, // how long a build prunes its caches
 }
 
