@@ -1,7 +1,8 @@
 # 0315: derive Xml, std/xml stage 2 (Go's Marshal and Unmarshal)
 
-Status: Proposed (drafted by Xo Lang Lib 1 on 2026-10-21, for the
-owner's decision on the field syntax)
+Status: Accepted (owner, 2026-10-21), as the general rule below; drafted
+by Xo Lang Lib 1 the same day. The owner revised the first draft, which
+gave only XML its own string, into one rule for every format.
 
 ## Context
 
@@ -37,30 +38,44 @@ is the question for the owner.
      supported.
    - The root element's name is the struct's name, or its `xml_name:
      xml.Name` field as in Go.
-2. **The field syntax: a second wire string, after `xml`.** Recommended:
+2. **The field syntax: a shared wire name, and a per-format override.**
 
    ```
    struct Item {
      id as "id" xml "ID,attr": Str
-     title: Str                              // <title> in XML, "title" in JSON
+     created as "created_at" sql "created": Time
+     title: Str                              // "title" in every format
      body xml ",chardata": Str
      tags xml "tags>tag": List[Str]
-     note as "note,omitempty" xml "note,omitempty": Str? = None
-   } derive Json, Xml
+     note as "note,omitempty": Str? = None   // Json; Xml gets "note" and omitempty too
+   } derive Json, Xml, SqlRow
    ```
 
-   - `xml` is a contextual word, only after a field name or its `as`
-     string, so it is not a new keyword.
-   - The string takes Go's tag text unchanged, so a Go struct ports by
-     copying its tags.
-   - Without an `xml` string, the field's XML name is its `as` key (its
-     JSON key) when there is one, else its name. This matches Go, which
-     uses the field name when a struct has no xml tag.
-   - Errors get new XO codes:
+   - `as "name"` (decisions 0277, 0309) stays the wire name shared by
+     every format: Json, Xml, and SqlRow.
+   - Each format may override it for itself with the same contextual
+     form: `json "..."`, `xml "..."`, or `sql "..."`. The override
+     replaces the name and its options for that format only.
+   - Precedence, per format: the format's own string, else the `as`
+     string, else the field's name (under the derive's `case:` rule,
+     0277).
+   - `json`, `xml`, and `sql` are contextual words, only after a field's
+     name or another wire string, so they are not keywords.
+   - Each string is checked against its own format's options, with XO
+     codes for:
      - an unknown option;
-     - two fields with one XML name in one role;
+     - two fields with one name in one role;
      - `chardata` or `innerxml` on a field that is not Str;
-     - a path (`a>b`) combined with `attr`.
+     - a path (`a>b`) together with `attr`.
+   - An override for a format the struct does not derive is an error.
+   - The `xml` string holds Go's tag text unchanged (`"ID,attr"`,
+     `",chardata"`, `"a>b>c"`, `"-"`), so a Go struct ports by copying its
+     tags.
+   - Two consequences:
+     - JSON and SQL names can now differ (`as "created_at" sql
+       "created"`), which 0277's single name could not express.
+     - A later derive (Toml, Csv) adds one word to the rule.
+
 3. **Stages.**
    - First encode_value and decode with attributes, chardata, paths,
      omitempty, and `-`.
@@ -82,13 +97,13 @@ is the question for the owner.
 
 ## Alternatives
 
+- **The first draft: an `xml` override only, the other formats sharing
+  `as`.** The owner generalized it, since the same need (one name per
+  format) exists for Json and SqlRow.
 - **One wire string for every derive, with XML-only options (`attr`,
   `chardata`) that Json ignores.** No new syntax, but a field whose JSON
   key and XML name differ cannot be written. Go keeps the tags separate
   for that reason.
-- **A general per-derive form, `as json "id" xml "ID,attr"`.** More
-  uniform, but it changes how existing `as` fields read, and Json is the
-  common case.
 - **A Go-tag string, `` `json:"id" xml:"ID,attr"` ``.** Familiar to Go
   users. It is a string in a string, its keys are not checked as names,
   and Xo has no backquoted tags elsewhere.
