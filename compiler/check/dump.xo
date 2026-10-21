@@ -26,8 +26,33 @@ fn (var c: Checker) run() -> () ! Str {
     }
   }
   c.mod_cache_load()
+  // check_bodies_of names modules as preload does (native/llrt/pool is
+  // a file of the runtime module std/native/llrt): by mod_index
+  var bodies: Set[Int] = #{}
+  var body_files: List[Str] = []
+  for p in c.check_bodies_of {
+    if let Some(bm) = c.mod_index.get(p) {
+      bodies.add(bm)
+    }
+    body_files.push("/${p}.xo")
+  }
+  // a runtime file loaded through another module too (std/native's
+  // imports load the runtime as std/native/llrt): that module's bodies
+  if !body_files.is_empty() {
+    for (m, md) in c.mods.indexed() {
+      if md.is_std && !bodies.contains(m) {
+        for f in md.files {
+          let fp = c.files[f].path
+          if body_files.any(fn(s) { fp.ends_with(s) }) {
+            bodies.add(m)
+            break
+          }
+        }
+      }
+    }
+  }
   for m in c.order {
-    if !c.mods[m].is_std {
+    if !c.mods[m].is_std || bodies.contains(m) {
       c.check_module(m)
     }
   }

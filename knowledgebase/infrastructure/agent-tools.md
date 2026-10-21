@@ -17,10 +17,17 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   them as code does: `check.Checker.check_dirs`, `Str.find`, `j.f` for
   `use std/json as j`, `main.f`, `std/tls.client`; std and runtime
   modules load when named (`tls.client`, `pool.park_wait`), so
-  `xo refs pool.park_wait` finds tasks.xo's call too. A miss suggests the
+  `xo refs pool.park_wait` finds tasks.xo's call too. A runtime name is
+  qualified by its file (`pool.park_wait` in std/native/llrt/pool.xo);
+  refs lists the calls inside std and the runtime (their bodies are
+  checked for it), from a program's directory, `--dir=std/native`, or
+  `--dir=std/native/llrt` (each runtime file its own module there, so a
+  bare `park_wait` lists pool's, poll's, and tasks'). A miss suggests the
   std functions of that name (`nosuchmod.park_wait` -> `pool.park_wait`).
-  `--dir` may be a workspace or repository root. Last verified:
-  2026-10-20.
+  `--dir` may be a workspace or repository root, but a module there whose
+  `use go` or `use c` binding is missing stops the whole check: the miss
+  then says so (the xo checkout's root: examples/realtime-control's
+  `use c`); give `--dir` a module's directory. Last verified: 2026-10-21.
 - `xo edit [--dry-run] rename OLD NEW` renames functions, methods,
   constants, types, fields and enum variants (`Type.member`), and
   interface methods (`Iface.m`, with every implementing type's method),

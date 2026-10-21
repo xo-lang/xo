@@ -479,6 +479,10 @@ fn check_view(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes], dirs: Lis
   }
   var c = new_lsp_checker(os, std_dir, wd, overlay)
   c.preload = preload
+  // the preloaded std and runtime modules a name refers to: their bodies
+  // too, so that xo refs finds the calls inside them
+  c.check_bodies_of = preload
+  c.runtime_files = true
   match c.check_dirs(dirs) {
     Ok(_) => {}
     Err(e) => {

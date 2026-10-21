@@ -1082,3 +1082,58 @@ fn main(os: Os) {
 		t.Errorf("XO0904 at %v, want %s\n%s", got, want, out.String())
 	}
 }
+
+// TestAgentRuntimeRefs: runtime (std/native/llrt) names by their file's
+// name (Xo Lang 2, 2026-10-21: `pool.park_wait` gave "no declaration"
+// and refs found no callers). refs lists the calls inside the runtime
+// (tasks.xo's qualified call and pool.xo's own), once each, from a
+// program's directory, from std/native, and from the runtime directory,
+// where each file is its own module (a bare name lists every file's).
+func TestAgentRuntimeRefs(t *testing.T) {
+	t.Parallel()
+	prog := writeFiles(t, map[string]string{"main.xo": toolsProg})
+	std, err := filepath.Abs(filepath.Join("..", "..", "std"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	refFiles := func(dir string) []string {
+		t.Helper()
+		v := agentJSON(t, 0, "refs", "--dir="+dir, "--json", "pool.park_wait")
+		var files []string
+		seen := map[string]bool{}
+		for _, r := range v["references"].([]any) {
+			m := r.(map[string]any)
+			k := fmt.Sprintf("%s:%v:%v", m["file"], m["line"], m["col"])
+			if seen[k] {
+				t.Errorf("refs from %s lists %s twice", dir, k)
+			}
+			seen[k] = true
+			files = append(files, filepath.Base(m["file"].(string)))
+		}
+		return files
+	}
+	for _, dir := range []string{prog, filepath.Join(std, "native"), filepath.Join(std, "native", "llrt")} {
+		fs := refFiles(dir)
+		pools, tasks := 0, 0
+		for _, f := range fs {
+			switch f {
+			case "pool.xo":
+				pools++
+			case "tasks.xo":
+				tasks++
+			}
+		}
+		// the declaration and the call in pool.xo, the call in tasks.xo
+		if pools < 2 || tasks < 1 {
+			t.Errorf("refs pool.park_wait from %s: %v", dir, fs)
+		}
+	}
+	ds := agentJSON(t, 0, "def", "--dir="+filepath.Join(std, "native", "llrt"), "--json", "park_wait")["declarations"].([]any)
+	var where []string
+	for _, d := range ds {
+		where = append(where, filepath.Base(d.(map[string]any)["file"].(string)))
+	}
+	if len(where) < 3 {
+		t.Errorf("def park_wait in the runtime directory: %v, want pool.xo, poll.xo, and tasks.xo", where)
+	}
+}

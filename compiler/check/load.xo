@@ -92,6 +92,16 @@ pub struct Checker {
   /// 0289): `std/NAME`, `native/NAME`, and `native/llrt/NAME`, loaded
   /// with the program's modules, not roots.
   pub preload: List[Str] = []
+  /// Std and runtime modules (paths, as preload's, found by mod_index) whose function bodies
+  /// are checked too, as a program's: `xo refs` of a std or runtime name
+  /// finds the calls inside them (otherwise std bodies are not checked).
+  pub check_bodies_of: List[Str] = []
+  /// The runtime directory (std/native/llrt) as what it is, one module
+  /// per file loaded by imports, never one directory module whose names
+  /// collide: the editor's and the agent tools' checks (xo def, refs) set
+  /// it; xo check and vet of that directory keep loading it as a
+  /// directory.
+  pub runtime_files: Bool = false
   /// The std module under test (`xo test --std-module`, decision 0262):
   /// its path (`std/json`, `native/http`, `native/llrt/scan`), or "".
   /// That module's _test.xo file, beside its source, is loaded with it,
@@ -305,6 +315,23 @@ pub fn (var c: Checker) check_dirs(dirs: List[Str]) -> () ! Str uses fs.read {
   }
   var module_dirs: List[Str] = []
   for d in dirs {
+    if c.runtime_files && !c.std_dir.is_empty() && c.abs(clean(d)) == c.abs(join(join(c.std_dir, "native"), "llrt")) {
+      // the runtime directory itself: each file is its own module
+      // (native/llrt/pool), checked with its body, never one directory
+      // module whose names collide
+      for e in c.list_dir(clean(d)) {
+        if !e.is_dir && e.name.ends_with(".xo") && !e.name.ends_with("_test.xo") && !e.name.ends_with("_c.xo") {
+          let p = "native/llrt/${e.name.trim_suffix(".xo")}"
+          if !c.preload.contains(p) {
+            c.preload.push(p)
+          }
+          if !c.check_bodies_of.contains(p) {
+            c.check_bodies_of.push(p)
+          }
+        }
+      }
+      continue
+    }
     c.find_module_dirs(clean(d), true, module_dirs)
   }
   if !c.walk_err.is_empty() {
@@ -413,6 +440,12 @@ fn (var c: Checker) find_module_dirs(dir: Str, top: Bool, var out: List[Str]) {
     // the std tree of this checker (a checkout's std/ under a workspace
     // root): its modules load as std, never as program directories
     if !c.std_dir.is_empty() && c.abs(sub) == c.abs(c.std_dir) {
+      continue
+    }
+    // the runtime (std/native/llrt): one module per file, loaded by the
+    // imports that name them (native/llrt/pool); as one directory module
+    // their names collide (pool.park_wait, poll.park_wait)
+    if c.runtime_files && !c.std_dir.is_empty() && c.abs(sub) == c.abs(join(join(c.std_dir, "native"), "llrt")) {
       continue
     }
     c.find_module_dirs(sub, false, out)

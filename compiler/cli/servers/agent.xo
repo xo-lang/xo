@@ -372,11 +372,35 @@ fn (var s: Session) members(name: Str) -> List[Found] {
   s.declared(fn(full: Str) { full.starts_with(name + ".") })
 }
 
-/// The declarations of the checked files whose full name matches.
+/// The files declared() searches: the user files, then those of the std
+/// and runtime modules the name preloaded (`pool.park_wait` loads
+/// native/llrt/pool).
+fn (s: Session) search_files() -> List[Int] {
+  let c = s.res[0].c
+  var fs = s.user_files()
+  for (_, f) in s.keys {
+    let m = c.files[f].module
+    if m >= 0 && c.mods[m].is_std && s.preloaded(m) && !fs.contains(f) {
+      fs.push(f)
+    }
+  }
+  fs
+}
+
+/// Whether module m is one the name preloaded (by mod_index: the
+/// runtime's native/llrt/pool is a file of module std/native/llrt).
+fn (s: Session) preloaded(m: Int) -> Bool {
+  let c = s.res[0].c
+  s.preload.any(fn(p) { (c.mod_index.get(p) ?? -1) == m })
+}
+
+/// The declarations of the checked files whose full name matches: a
+/// top level declaration also by its module's name (`pool.park_wait` for
+/// park_wait of native/llrt/pool).
 fn (var s: Session) declared(matches: fn(Str) -> Bool) -> List[Found] {
   let c = s.res[0].c
   var out: List[Found] = []
-  for f in s.user_files() {
+  for f in s.search_files() {
     for site in s.sites_of(f) {
       if site.id.name.is_empty() {
         continue
@@ -393,6 +417,23 @@ fn (var s: Session) declared(matches: fn(Str) -> Bool) -> List[Found] {
       }
       if matches(full) {
         out.push(Found{f: f, site: site, tg: tg, name: full})
+        continue
+      }
+      // module qualified: the last segment of the module's path, or for
+      // the runtime (one module of many files, std/native/llrt) the
+      // file's name, as its callers write it (`pool.park_wait`)
+      let m = c.files[f].module
+      if m >= 0 && !full.contains(".") {
+        var quals = [last_seg(c.mods[m].path)]
+        if c.mods[m].path.ends_with("native/llrt") {
+          quals = [last_seg(c.files[f].path).trim_suffix(".xo").trim_suffix("_c")]
+        }
+        for qual in quals {
+          let q = "${qual}.${full}"
+          if matches(q) {
+            out.push(Found{f: f, site: site, tg: tg, name: q})
+          }
+        }
       }
     }
   }
@@ -453,7 +494,13 @@ fn (var s: Session) targets(os: Os, target: Str) -> List[Found] ! Str uses fs {
   if out.is_empty() {
     out = s.declarations(target)
   }
+
   if out.is_empty() {
+    let stopped = s.res[0].c.unsupported
+    if !stopped.is_empty() {
+      // nothing was resolved: say why instead of "no declaration"
+      return Err("no declaration named ${target}: the check stopped before resolving names (${stopped}); run it from a module's directory, or give --dir=DIR${semantic.miss_hint(os, s.std_dir, target)}")
+    }
     return Err("no declaration named ${target}${semantic.miss_hint(os, s.std_dir, target)}")
   }
   Ok(out)
@@ -549,8 +596,15 @@ fn (var s: Session) agent_refs(os: Os, target: Str) -> J ! Str {
   let df = s.file_named(tg.def_file)
   let in_std = df >= 0 && s.res[0].c.files[df].module >= 0 && s.res[0].c.mods[s.res[0].c.files[df].module].is_std
   var refs: List[J] = []
+  // a file loaded twice (a runtime file through two modules) is listed once
+  var listed: Set[Str] = #{}
   for (f, r) in s.refs_in(tg, in_std) {
     let sp = r.id.span
+    let key = "${s.res[0].c.files[f].path}:${sp.start.offset}"
+    if listed.contains(key) {
+      continue
+    }
+    listed.add(key)
     let (k, v) = s.loc_json(f, sp.start.offset, sp.end.offset)
     let decl = s.res[0].c.files[f].path == tg.def_file && sp.start.offset == tg.def_start && sp.end.offset == tg.def_end
     refs.push(jobj(k + ["declaration"], v + [jbool(decl)]))
@@ -616,4 +670,10 @@ fn (var s: Session) agent_symbols(os: Os, dir: Str, pub_only: Bool) -> J ! Str {
     return Err("no .xo files directly in ${d}: symbols lists one directory's declarations; try ${shown.join(", ")}${more}")
   }
   Ok(jobj(["symbols"], [jarr(out)]))
+}
+
+/// The part of path after its last "/".
+fn last_seg(path: Str) -> Str {
+  let segs = path.split("/")
+  segs[segs.len() - 1]
 }
