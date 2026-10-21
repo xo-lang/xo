@@ -1,0 +1,21 @@
+// Int's minimum as a literal (gotchas/int-min-literal-native.md: it was
+// XO1201 on the native backends): the minus folds into the literal.
+
+fn smallest() -> Int {
+  -9223372036854775808
+}
+
+fn main(os: Os) {
+  let m = -9223372036854775808
+  os.stdio.println("${m}")
+  os.stdio.println("${m == -9223372036854775807 - 1}")
+  let xs = [-9223372036854775808, 0, 9223372036854775807]
+  os.stdio.println("${xs[0]} ${xs.len()}")
+  os.stdio.println("${m.wrapping_add(1)} ${smallest() < 0}")
+  let n: Int64 = -9223372036854775808
+  os.stdio.println("${n}")
+  match m {
+    -9223372036854775808 => os.stdio.println("matched")
+    _ => os.stdio.println("no")
+  }
+}

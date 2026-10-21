@@ -46,7 +46,7 @@ func TestDevScaffolds(t *testing.T) {
 
 	xo(0, "dev", "new-golden", "--dir=golden", "hello_scaffold")
 	want, err := os.ReadFile(filepath.Join(root, "golden/hello_scaffold/want.txt"))
-	if err != nil || string(want) != "hello_scaffold\n" {
+	if err != nil || string(want) != "exit 0\n--- stdout\nhello_scaffold\n--- stderr\n" {
 		t.Errorf("want.txt = %q, %v", want, err)
 	}
 	xo(1, "dev", "new-golden", "--dir=golden", "hello_scaffold")

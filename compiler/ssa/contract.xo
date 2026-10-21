@@ -40,10 +40,19 @@ fn (var b: Builder) check_lazy(fo: Int) {
     b.skip_src[m] = true
   }
   let errs = b.c.check_lazy(fo)
-  if !errs.is_empty() {
-    let d = errs[0]
-    b.impossible("the runtime does not check: ${d.file}:${d.line}:${d.col}: ${d.code} ${d.message}")
+  if errs.is_empty() {
+    return
   }
+  // the errors themselves, with their codes (nogc_diags reports them)
+  for d in errs {
+    let k = "${d.file}:${d.line}:${d.col}:${d.code}"
+    if !b.lazy_seen.contains(k) {
+      b.lazy_seen[k] = true
+      b.lazy_diags.push(d)
+    }
+  }
+  let d = errs[0]
+  b.skip_body("the runtime does not check: ${d.file}:${d.line}:${d.col}: ${d.code} ${d.message}")
 }
 
 /// Builds the body of fo into fi (body): as a wrapper around it when fo

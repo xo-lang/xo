@@ -9,8 +9,9 @@
 //     (both in code order; internal/repotest keeps them equal), and a
 //     test/errorcheck case to fill in with the program that reports it
 //   xo dev new-golden NAME [--dir=DIR] [--from=FILE] [--no-run]
-//     DIR/NAME/main.xo (FILE's text, or a stub) and its want.txt, the
-//     output of `xo run` with this xo (DIR: internal/llvm/testdata/golden,
+//     DIR/NAME/main.xo (FILE's text, or a stub) and its want.txt, a run
+//     with this xo in the goldens' layout (compare.xo: exit status,
+//     stdout, stable stderr; DIR: internal/llvm/testdata/golden,
 //     which the arm64, LLVM, and Go golden runs all read)
 
 use github.com/xo-lang/xo/compiler/cli/core
@@ -228,14 +229,18 @@ fn new_golden_cmd(os: Os, h: Host, args: List[Str]) -> Int uses (env, fs.read, f
       return 1
     }
   }
-  if out.code != 0 {
-    os.stdio.eprintln("xo dev new-golden: xo run exited ${out.code}; no want.txt written:\n${(out.stderr.to_str() ?? "").trim()}")
+  // a build error is not a run to record; a program's own exit status
+  // (a fault's 70) is, as goldens record it
+  let errs = out.stderr.to_str() ?? ""
+  if errs.contains(": error XO") {
+    os.stdio.eprintln("xo dev new-golden: the program does not build; no want.txt written:\n${errs.trim()}")
     return 1
   }
-  if let Err(e) = os.fs.write("${dir}/want.txt", out.stdout) {
+  let want = layout(out.code, out.stdout, out.stderr, Rules{})
+  if let Err(e) = os.fs.write("${dir}/want.txt", want) {
     os.stdio.eprintln("xo dev new-golden: ${e.display()}")
     return 1
   }
-  os.stdio.println("wrote ${dir.trim_prefix(root + "/")}/want.txt (${out.stdout.len()} bytes): check it, then `xo dev goldens ${fl.get_str("dir")}`")
+  os.stdio.println("wrote ${dir.trim_prefix(root + "/")}/want.txt (exit ${out.code}, ${out.stdout.len()} bytes of stdout): check it, then `xo dev goldens --only=${name} ${fl.get_str("dir")}`")
   0
 }

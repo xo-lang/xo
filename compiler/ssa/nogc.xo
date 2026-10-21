@@ -34,9 +34,14 @@ fn (var b: Builder) record_err(what: Str, never: Bool) {
 /// consequence of it and left out (core 10.2: never cascade).
 pub fn nogc_diags(b: Builder) -> List[check.Diag] {
   var kept: List[BuildErr] = []
-  var out: List[check.Diag] = []
+  // a native body's check errors (check_lazy) first, as themselves
+  var out: List[check.Diag] = b.lazy_diags
   for e in b.errs {
     if cascades(e, kept) {
+      continue
+    }
+    // an error type comes from a check error, reported as itself
+    if !b.lazy_diags.is_empty() && e.feature.contains("<error>") {
       continue
     }
     kept.push(e)

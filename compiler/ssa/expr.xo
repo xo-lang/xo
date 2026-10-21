@@ -288,6 +288,22 @@ fn (var b: Builder) expr_at(e: Expr) -> Int {
       return v
     }
     UnaryExpr(span: span, op: op, x: x) => {
+      // `-9223372036854775808`, Int's minimum: the literal's magnitude
+      // alone does not fit, so the minus folds into it (it was XO1201 on
+      // the native backends, gotchas/int-min-literal-native.md)
+      if let IntLit(value: value, ..) = x {
+        if value == b"9223372036854775808" {
+          match op {
+            Minus => {
+              let t0 = b.nat_of(x)
+              if b.tkind(t0) == Kind.Int && !b.m.is_u64(t0) {
+                return b.add(Op.Const, t0, Aux.I(n: -9223372036854775807 - 1), [])
+              }
+            }
+            _ => {}
+          }
+        }
+      }
       let v = b.expr(x)
       let vt = b.vty(v)
       match op {

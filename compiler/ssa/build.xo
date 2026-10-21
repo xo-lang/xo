@@ -279,6 +279,12 @@ pub struct Builder {
   /// which a body was built from source (check_lazy): the driver checks
   /// them in full and builds again (XO_CHK_CACHE=auto)
   pub skip_src: Map[Int, Bool] = {}
+  /// The check errors of the native module bodies checked as they were
+  /// built (check_lazy), reported as themselves, not as XO1201 (2026-10-20
+  /// poll: an XO0605 in std/native read as "not available without a
+  /// garbage collector"), once each
+  pub lazy_diags: List[check.Diag] = []
+  lazy_seen: Map[Str, Bool] = {}
   /// The modules of which a body was built with no front end cache entry
   /// made or replayed (a skip reason, a generic instance, a contract's
   /// inner body, a closure): ModEntry.fe_complete is false for them
@@ -728,6 +734,12 @@ fn (var b: Builder) impossible(what: Str) {
 
 fn (var b: Builder) unsupported_kind(what: Str, never: Bool) {
   b.record_err(what, never)
+  b.skip_body(what)
+}
+
+/// Leaves the function being built unbuilt (what says why), recording no
+/// XO1201: check_lazy's check errors are reported as they are.
+fn (var b: Builder) skip_body(what: Str) {
   b.skipped_any = true
   if b.declaring {
     if b.pend_skip.is_empty() {
