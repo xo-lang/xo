@@ -161,8 +161,10 @@ gh workflow run ──> GitHub queues job (runs-on: self-hosted, xo-arm64)
   template): safe to rerun; installs only what is missing. Order: the 8
   hour lifetime cap per boot; the idle stop (installed before anything
   that can fail, and paused by `/run/xo-ci-booting` while the script
-  runs); toolchain (dnf git clang llvm gcc make nodejs jq libicu, Go
-  1.26.1 in /usr/local/go); the runner (latest release, in
+  runs); toolchain (dnf git gcc make nodejs jq libicu; upstream LLVM 23.1.3 in
+  /opt/llvm, pinned by SHA-256, whose clang links with lld through
+  `clang.cfg` and is first on PATH as /usr/local/bin/clang, proved by
+  `scripts/ci/lld-probe.sh`; Go 1.26.1 in /usr/local/go); the runner (latest release, in
   `/home/ec2-user/actions-runner`, a systemd service as ec2-user).
   Jobs get `PATH` with Go, `AWS_REGION`, and ec2-user's HOME, so
   `~/.cache/xo` (seeds, xo builds, backend cache) and Go's caches carry

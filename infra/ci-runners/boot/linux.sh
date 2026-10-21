@@ -82,16 +82,35 @@ systemctl enable --now xo-ci-idle.timer
 # 3. toolchain
 command -v git >/dev/null && command -v jq >/dev/null && rpm -q libicu >/dev/null ||
   dnf install -y git gcc tar gzip make nodejs jq libicu
-# The LLVM backend needs clang 16 or later (XO1505; Amazon Linux 2023's
-# clang is 15, owner approved the upgrade 2026-10-20): install clang22
-# and put it first on PATH through /usr/local/bin.
-if ! clang --version 2>/dev/null | grep -qE 'clang version (1[6-9]|[2-9][0-9])'; then
-  # --allowerasing: clang22's resource filesystem conflicts with clang 15's
-  # (2026-10-20 probe), so it replaces the image's clang 15
-  dnf install -y --allowerasing clang22 llvm22 || true
-  c22=$(command -v clang-22 || ls /usr/lib64/llvm22/bin/clang 2>/dev/null | head -1)
-  [ -n "$c22" ] && ln -sf "$c22" /usr/local/bin/clang
+# The LLVM backend needs clang 16 or later (XO1505) that links LTO
+# bitcode: Amazon Linux 2023's clang 15 is too old, and its clang22
+# package has no lld, so -flto failed at the link (owner approved the
+# upstream release 2026-10-21). Install the pinned upstream LLVM (it ships
+# ld.lld) to /opt/llvm, make its clang link with lld through clang.cfg, and
+# put it first on PATH through /usr/local/bin. Same version and checksums
+# as scripts/ci/lld-probe.sh.
+LLVMVER=23.1.3
+case $(uname -m) in
+  aarch64) lt=ARM64; llvmsha=56d005e339c979a696ed6c244e6472e16f3b1371e48987a07e6145bda7ee0d03;;
+  x86_64) lt=X64; llvmsha=ca9fe385a5d9e2d88132dc0e23a00e9f87f38fa75f67207b5e457d208e71d013;;
+esac
+if [ "$(cat /opt/llvm/.version 2>/dev/null)" != "$LLVMVER" ]; then
+  t=/var/tmp/xo-llvm.tar.xz
+  if curl -fsSL "https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVMVER/LLVM-$LLVMVER-Linux-$lt.tar.xz" -o $t &&
+     echo "$llvmsha  $t" | sha256sum -c - &&
+     rm -rf /opt/llvm.new && mkdir -p /opt/llvm.new &&
+     tar -C /opt/llvm.new --strip-components=1 -xJf $t &&
+     [ -x /opt/llvm.new/bin/ld.lld ]; then
+    printf -- '-fuse-ld=lld\n' > /opt/llvm.new/bin/clang.cfg
+    echo "$LLVMVER" > /opt/llvm.new/.version
+    rm -rf /opt/llvm && mv /opt/llvm.new /opt/llvm
+  else
+    echo "LLVM $LLVMVER install failed"
+    rm -rf /opt/llvm.new
+  fi
+  rm -f $t
 fi
+[ -x /opt/llvm/bin/clang ] && ln -sf /opt/llvm/bin/clang /usr/local/bin/clang
 case $(uname -m) in aarch64) goarch=arm64 ra=arm64;; x86_64) goarch=amd64 ra=x64;; esac
 [ -x /usr/local/go/bin/go ] || curl -fsSL "https://go.dev/dl/go$GOVER.linux-$goarch.tar.gz" | tar -C /usr/local -xz
 
