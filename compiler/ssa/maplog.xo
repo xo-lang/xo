@@ -129,7 +129,8 @@ fn (var b: Builder) mlog_newdir(dt: Int) -> Int {
     let el = b.m.types[dt].elems[0]
     var d = b.call("list.new", dt, "", [b.cint(MLOG_DIR + MLOG_PAD)])
     for _ in 0..MLOG_PAD {
-      d = b.call("list.push", dt, "", [d, b.call("list.new", el, "", [b.cint(0)])])
+      // the shared empty list: list.new with a size allocates
+    d = b.call("list.push", dt, "", [d, b.call("list.new", el, "", [])])
     }
     b.retv(d)
     b.finish_fn()
@@ -722,8 +723,15 @@ fn (var b: Builder) mlog_each(t: Int) -> Str {
   // an origin entry: its key's current entry in m's view, if live and
   // still from this origin
   let (no, jo) = b.if_then_begin(b.bop(Op.Eq, b.add(Op.Field, it, Aux.I(n: 2), [e]), pos))
-  let h = b.add(Op.Field, it, Aux.I(n: 0), [e])
   let k = b.add(Op.Field, kt, Aux.I(n: 3), [e])
+  // the entry's hash, or k's when it kept none (a table with no index,
+  // mlog_hash_if): m's view is probed by hash in its indexed levels
+  let hv = b.local()
+  b.write_var(hv, b.add(Op.Field, it, Aux.I(n: 0), [e]))
+  let (nz, jz) = b.if_then_begin(b.bop(Op.Eq, b.read(hv), b.cint(0)))
+  b.write_var(hv, b.call(b.hash_func(kt), it, "", [k]))
+  b.if_then_end(nz, jz)
+  let h = b.read(hv)
   let w = b.call(find, it, "", [mp, k, h])
   let (nw, jw) = b.if_then_begin(b.bop(Op.Ge, w, b.cint(0)))
   let cur = b.mlog_entry_at(t, mp, w)
