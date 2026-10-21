@@ -523,6 +523,32 @@ fn (var g: G) isel() {
       }
     }
   }
+  // a branch on a negated Bool read only there branches on the Bool with
+  // its targets swapped (2026-10-20: portable checked's `?? 1` and
+  // checked_add tested `!fits`, a compare made into a word, an xor, and
+  // a test, where the compare and a jump do); the Not is left unread
+  for b in 0..nb {
+    let t = g.f.term(b)
+    if t < 0 || g.f.values[t].op != ssa.Op.Branch || g.f.values[t].succs.len() != 2 || g.f.values[t].pad >= 0 {
+      continue
+    }
+    let n = g.f.values[t].args[0]
+    let nv = g.f.values[n]
+    if nv.op != ssa.Op.Not || nv.args.len() != 1 || g.nuses[n] != 1 || nv.ty < 0 || g.kind(nv.ty) != ssa.Kind.Bool {
+      continue
+    }
+    let c = nv.args[0]
+    // only a compare (not rt.landing, whose branch keeps its order)
+    if !(g.f.values[c].op is ssa.Op.Eq | ssa.Op.Ne | ssa.Op.Lt | ssa.Op.Le | ssa.Op.Gt | ssa.Op.Ge) {
+      continue
+    }
+    g.f.values[t].args[0] = c
+    let s0 = g.f.values[t].succs[0]
+    g.f.values[t].succs[0] = g.f.values[t].succs[1]
+    g.f.values[t].succs[1] = s0
+    g.nuses[n] = 0
+    g.users[c] = t
+  }
   // the blocks landing pads enter (decision 0085)
   for b in 0..nb {
     for v in g.f.blocks[b].instrs {
@@ -1164,6 +1190,10 @@ fn (var g: G) instr1(v: Int) {
       g.set(v, [g.checked(false, "negs $d0, $u0", [a], "neg", "vs", "xo_fault_neg", [rsrc(a), symsrc(l)])])
     }
     Not => {
+      if g.nuses[v] == 0 && g.lazy[x.args[0]] {
+        // its branch tests the compare (isel's swap): nothing reads it
+        return
+      }
       let a = g.word(x.args[0])
       if g.kind(x.ty) == ssa.Kind.Bool {
         g.set(v, [g.def1(false, "eor $d0, $u0, #1", [a])])

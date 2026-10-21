@@ -37,7 +37,7 @@ fn mir_may_write(inst: Inst) -> Bool {
 /// w and b forms): the text with its definition left out and its base
 /// the register's number; "" for anything else.
 fn load_key(inst: Inst) -> Str {
-  if inst.kind != K_PLAIN || inst.x86 || inst.has_fault || inst.defs.len() != 1 || inst.us.len() != 1 || inst.text.contains("\n") {
+  if inst.kind != K_PLAIN || inst.x86 || inst.has_fault || inst.defs.len() != 1 || inst.us.is_empty() || inst.us.len() > 2 || inst.text.contains("\n") {
     return ""
   }
   let t = inst.text
@@ -50,18 +50,76 @@ fn load_key(inst: Inst) -> Str {
   }
   let op = t[0..(t.find(" ") ?? 0)]
   let dst = t[op.len() + 1..c]
-  // the definition's width form ($d0, $wd0) is part of the key
-  "${op} ${dst} [v${inst.us[0]}${t[c + 6..t.len()]}"
+  // the definition's width form ($d0, $wd0) is part of the key; an
+  // indexed load (`[$u0, $u1, lsl #3]`) its index register's too
+  var rest = t[c + 6..t.len()]
+  if inst.us.len() == 2 {
+    if !rest.starts_with(", $u1") || rest.contains("$u0") {
+      return ""
+    }
+    rest = ", v${inst.us[1]}${rest[", $u1".len()..rest.len()]}"
+  } else if rest.contains("$u") {
+    return ""
+  }
+  "${op} ${dst} [v${inst.us[0]}${rest}"
 }
 
-/// reuse_loads over every block (redundant loads, above).
+/// reuse_loads over every block (redundant loads, above). A block whose
+/// one predecessor reaches it by a jump, a branch, or a switch (not a
+/// landing pad's edge) starts with what that block's end held: the same
+/// element read again past a check's fault branch (2026-10-20: portable
+/// divmod loaded xs[i] three times an iteration on amd64).
 fn (var g: G) reuse_loads() {
+  let blocks = g.all_blocks()
+  let preds = g.mpreds_all(blocks)
+  // a depth first preorder from the entry: a block's one predecessor
+  // comes before it
+  var order: List[Int] = []
+  var seen: List[Bool] = []
+  for _ in 0..g.blocks.len() {
+    seen.push(false)
+  }
+  if !blocks.is_empty() {
+    var stack = [blocks[0]]
+    while !stack.is_empty() {
+      let b = stack.pop() ?? 0
+      if seen[b] {
+        continue
+      }
+      seen[b] = true
+      order.push(b)
+      let ss = g.msuccs(b)
+      var i = ss.len() - 1
+      while i >= 0 {
+        if !seen[ss[i]] {
+          stack.push(ss[i])
+        }
+        i -= 1
+      }
+    }
+  }
   for b in 0..g.blocks.len() {
+    if !seen[b] {
+      order.push(b)
+    }
+  }
+  var end_avail: Map[Int, Map[Str, Int]] = {}
+  var end_dep: Map[Int, Map[Int, List[Str]]] = {}
+  for b in order {
     var ins = g.take_insts(b)
     // a key -> the value that holds it; a value -> the keys it holds or
     // is the base of
     var avail: Map[Str, Int] = {}
     var dep: Map[Int, List[Str]] = {}
+    if preds[b].len() == 1 {
+      let p = preds[b][0]
+      let pi = g.blocks[p].insts
+      let pt = if pi.is_empty() { Inst{kind: K_PLAIN} } else { pi[pi.len() - 1] }
+      if p != b && (pt.kind == K_CONDBR || pt.kind == K_SWITCH || (pt.kind == K_JUMP && pt.targets.len() == 1)) {
+        avail = end_avail.get(p) ?? {}
+        dep = end_dep.get(p) ?? {}
+      }
+    }
     for k in 0..ins.len() {
       let inst = ins[k]
       let key = load_key(inst)
@@ -83,17 +141,23 @@ fn (var g: G) reuse_loads() {
         }
         dep.remove(d)
       }
-      if !key.is_empty() && !avail.contains(key) && inst.defs[0] != inst.us[0] {
+      if !key.is_empty() && !avail.contains(key) && !inst.us.contains(inst.defs[0]) {
         let v = inst.defs[0]
         avail[key] = v
         var l1 = dep.get(v) ?? []
         l1.push(key)
         dep[v] = l1
-        var l2 = dep.get(inst.us[0]) ?? []
-        l2.push(key)
-        dep[inst.us[0]] = l2
+        for u in inst.us {
+          var l2 = dep.get(u) ?? []
+          l2.push(key)
+          dep[u] = l2
+        }
       }
     }
     g.blocks[b].insts = ins
+    if !avail.is_empty() {
+      end_avail[b] = avail
+      end_dep[b] = dep
+    }
   }
 }
