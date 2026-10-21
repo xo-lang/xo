@@ -169,7 +169,21 @@ fn (var b: Builder) budget_exceeded(k: Int, nt: Int, ei: Int, bud_t: Int, join: 
 /// xo_x_preempt, so a poll in a loop clobbers nothing; x30 is the
 /// caller's to keep (the poll's stub).
 pub fn preempt_stub_arm64(os: Str) -> List[Str] {
-  var b: List[Str] = ["stp x29, x30, [sp, #-16]!", "mov x29, sp", "sub sp, sp, #672"]
+  // first, with x16 (and on Darwin x17, which the TLV thunk changes) only:
+  // whether this worker was asked (its record, xo_tlocal slot TLS_W, word
+  // W_PREEMPT_I of pool.xo: bytes 16 and 3456); a poll of every other
+  // worker returns here, saving nothing (the full save in every poll while
+  // any ask was out cost a loaded server a quarter of its throughput,
+  // 2026-10-21)
+  let l = if os == "darwin" { "Lxo_preempt" } else { ".Lxo_preempt" }
+  var b: List[Str] = []
+  if os == "darwin" {
+    b = ["stp x0, x30, [sp, #-16]!", "adrp x0, _xo_tlocal@TLVPPAGE", "ldr x0, [x0, _xo_tlocal@TLVPPAGEOFF]", "ldr x16, [x0]", "blr x16", "ldr x16, [x0, #16]", "ldp x0, x30, [sp], #16"]
+  } else {
+    b = ["mrs x16, tpidr_el0", "add x16, x16, :tprel_hi12:xo_tlocal", "add x16, x16, :tprel_lo12_nc:xo_tlocal", "ldr x16, [x16, #16]"]
+  }
+  b = b + ["cbz x16, ${l}_none", "ldr x16, [x16, #3456]", "cbnz x16, ${l}_asked", "${l}_none:", "ret", "${l}_asked:"]
+  b = b + ["stp x29, x30, [sp, #-16]!", "mov x29, sp", "sub sp, sp, #672"]
   var i = 0
   while i < 18 {
     b.push("stp x${i}, x${i + 1}, [sp, #${8 * i}]")

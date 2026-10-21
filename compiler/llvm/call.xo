@@ -1214,7 +1214,7 @@ fn (var g: Gen) atomic(v: Int) {
     g.preempt_stub()
     let a = g.op(x.args[0])
     let stub = if g.goos == "darwin" { "_xo_preempt_stub" } else { "xo_preempt_stub" }
-    g.emit("call void asm sideeffect \"ldr w16, [$0]\\0Acbz w16, 1f\\0Abl ${stub}\\0A1:\", \"r,~{x16},~{lr},~{memory}\"(i64 ${a})")
+    g.emit("call void asm sideeffect \"ldr w16, [$0]\\0Acbz w16, 1f\\0Abl ${stub}\\0A1:\", \"r,~{x16},~{x17},~{lr},~{memory}\"(i64 ${a})")
     return
   }
   if name == "rt.spin_hint" {

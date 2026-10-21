@@ -118,8 +118,9 @@ const W_GRACE_WAIT = 3432
 /// klock when XO_LOCKCHECK=1).
 const W_POOLHELD = 3440
 /// When this worker started running its current fiber (mono ns, 0 between
-/// items; slot word 431), and whether the monitor asked it to yield (slot
-/// word 432): preemption (decision 0286 step 3, mon_scan, preempt).
+/// items; slot word 431), and when the monitor asked it to yield (mono
+/// ns, 0 for not asked; slot word 432): preemption (decision 0286 step 3,
+/// mon_scan, preempt).
 const W_RUN_AT_I = 431
 const W_PREEMPT_I = 432
 /// How many runtime locks this worker's thread holds (held): preempt
@@ -1147,7 +1148,12 @@ pub fn preempt() {
     // the request stays, for the next poll after the release
     return
   }
-  rt.slot_store(w, W_PREEMPT_I, 0, RELAXED)
+  // the ask served: the poll flag counts the asks still out (decision
+  // 0286 step 3), so the other workers' polls stop calling the stub
+  let a = rt.slot_load(w, W_PREEMPT_I, RELAXED)
+  if a != 0 && rt.slot_cas(w, W_PREEMPT_I, a, 0, RELAXED) {
+    let _d = rt.slot_add[Int](rt.static_word(W_PREEMPT), 0, -1, RELEASE)
+  }
   stat(ST_PREEMPT)
   sched.fiber_yield(f)
 }
@@ -2207,8 +2213,12 @@ pub fn scope_join(pl: Int, s: Int, c: Int, f: Int, rw: Int) {
 /// rt.static_word: the monitor's record (0: not started; 1: deferral
 /// off, defer_off, or the monitor could not start).
 const W_MON = 75
-/// rt.static_word: the preemption flag generated code polls (1 while some
-/// worker is asked to yield, preempt), set and cleared by the monitor.
+/// rt.static_word: the preemption flag generated code polls: the number of
+/// asks to yield still out (mon_scan adds one, the asked worker's preempt
+/// or the monitor's withdrawal takes it back). Not a flag kept set while
+/// work waits: every poll of every worker calls the stub while it is
+/// nonzero, which cost a loaded server a quarter of its throughput
+/// (2026-10-21).
 const W_PREEMPT = 76
 /// The record: asleep (a word: 1 while it sleeps without a timeout), its
 /// futex word, and started (claimed by the first deferral).
@@ -2339,7 +2349,7 @@ pub fn mon_main(p: Int) -> Int {
 /// Wakes an idle worker for every deferral older than DEFER_NS whose
 /// worker still has work queued (clearing the rest), and with work queued
 /// asks every worker that has run its fiber SLICE_NS to yield (decision
-/// 0286 step 3; the flag W_PREEMPT while any is asked): whether any
+/// 0286 step 3; W_PREEMPT counts the asks out): whether any
 /// deferral was pending or any worker runs while work waits (the monitor
 /// keeps ticking).
 fn mon_scan(p: Int) -> Bool {
@@ -2351,16 +2361,23 @@ fn mon_scan(p: Int) -> Bool {
   // onto the long runner's thread, TestRuntimeTasks' magazines, whose
   // spawner spins while another worker frees)
   let waiting = any_work(p) != 0 && rt.slot_load(p, P_NIDLE, SEQ_CST) == 0 && workers(p) >= rt.mem_load(p, P_NCPU, 8) && rt.slot_load(rt.mem_load(p, P_DLK, 8), DLK_NOPREEMPT, RELAXED) == 0
-  var asked = false
   var i = 0
   while i < n {
     let w = rt.mem_load(p, P_WS.wrapping_add(i.wrapping_shl(3)), 8)
     let ra = rt.slot_load(w, W_RUN_AT_I, RELAXED)
-    if waiting && ra != 0 {
+    let ask = rt.slot_load(w, W_PREEMPT_I, RELAXED)
+    if ask != 0 {
       pending = true
-      if now.wrapping_sub(ra) >= SLICE_NS {
-        rt.slot_store(w, W_PREEMPT_I, 1, RELAXED)
-        asked = true
+      // an ask not served in a slice (the worker blocked, or no work
+      // waits any more) is withdrawn: while any is out every worker's
+      // polls call the stub
+      if (!waiting || now.wrapping_sub(ask) >= SLICE_NS) && rt.slot_cas(w, W_PREEMPT_I, ask, 0, RELAXED) {
+        let _d = rt.slot_add[Int](rt.static_word(W_PREEMPT), 0, -1, RELEASE)
+      }
+    } else if waiting && ra != 0 {
+      pending = true
+      if now.wrapping_sub(ra) >= SLICE_NS && rt.slot_cas(w, W_PREEMPT_I, 0, now, RELAXED) {
+        let _i = rt.slot_add[Int](rt.static_word(W_PREEMPT), 0, 1, RELEASE)
       }
     }
     let at = rt.slot_load(w, W_DEFER_AT_W, SEQ_CST)
@@ -2379,15 +2396,6 @@ fn mon_scan(p: Int) -> Bool {
       }
     }
     i = i.wrapping_add(1)
-  }
-  let pw = rt.static_word(W_PREEMPT)
-  let was = rt.slot_load[Int](pw, 0, RELAXED)
-  if asked {
-    if was == 0 {
-      rt.slot_store[Int](pw, 0, 1, RELEASE)
-    }
-  } else if was != 0 {
-    rt.slot_store[Int](pw, 0, 0, RELAXED)
   }
   pending
 }

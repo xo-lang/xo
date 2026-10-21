@@ -49,7 +49,8 @@ fn sched_fn(os: Str, name: Str, global: Bool, body: List[Str]) -> Str {
     b.push("\t.type ${name}, @function\n\t.p2align 2\n${name}:\n")
   }
   for l in body {
-    b.push("\t${l}\n")
+    // a label (the preemption stub's) at the line start
+    b.push(if l.ends_with(":") { "${l}\n" } else { "\t${l}\n" })
   }
   b.join("")
 }
