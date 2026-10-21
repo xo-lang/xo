@@ -3888,16 +3888,10 @@ GB guidance above; `--clean` removes it). Last verified: 2026-10-12.
 
 Gates skip a separate s1 (owner, 2026-10-21): `XO_BOOTSTRAP_SEED_IS_S1=1
 scripts/bootstrap-xo.sh SEED` uses SEED as s1 when SEED is this tree's
-compiler/xo just built by `go run ./scripts/xobuild`, and
-`XO_BOOTSTRAP_QUICK=1` stops after s2 (s2 builds and runs hello), so a
-gate builds xo once more instead of three times. scripts/gate.sh's fp
-step sets both. The full fixed point (s3 built, s2 and s3 identical)
-runs hourly on main (`~/xo-lead/agents/fp-hourly.sh`, which skips a main
-whose compiler inputs did not change and lists the commits to bisect on
-a failure), and in releases, seed-cut.sh and CI. Why (owner,
-2026-10-21): of about 423 fixed points to that day, 16 failed and none
-was an s2/s3 difference; every failure was a stage that could not build
-xo. Last verified: 2026-10-21.
+compiler/xo just built by `go run ./scripts/xobuild` (scripts/gate.sh's
+fp step sets it), so a gate's fixed point is two xo builds (s2, s3), not
+three. s2 and s3 are still built and compared. Releases, seed-cut.sh and
+CI keep all three stages. Last verified: 2026-10-21.
 
 The bootstrap chain: the first Xo `xo` on a new host is built by the
 previous release's binary (or any self hosted xo1), never by the Go

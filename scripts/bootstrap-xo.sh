@@ -50,13 +50,6 @@
 # (owner, 2026-10-21). Only a caller that just built the seed from this
 # tree may set it; seed-cut.sh and CI keep the full three stages.
 #
-# XO_BOOTSTRAP_QUICK=1 (gates, owner 2026-10-21): stop after s2 (s1 builds
-# compiler/xo), then s2 builds and runs the hello program: the stage
-# failures that caught every bug so far (a compiler that cannot build
-# itself, or builds a broken xo), without s3 and the s2/s3 comparison,
-# which the lead runs hourly on main (scripts/lead/fp-hourly.sh).
-# Releases, seed-cut.sh and CI run the full fixed point.
-#
 # XO_BOOTSTRAP_RTPACK=DIR: use the runtime pack root DIR (a release's
 # lib/xo/rtpack, made by `xo rtpack`) instead of XO_RTPACK=off, so xo1's
 # default linker on darwin is compiler/macho (decision 0182) and the
@@ -200,21 +193,6 @@ else
   stage 1 "$seed"
 fi
 stage 2 "$out/s1/xo"
-if [ "${XO_BOOTSTRAP_QUICK:-}" = 1 ]; then
-  rc=0
-  mkdir -p "$out/hello"
-  printf 'fn main(os: Os) uses (stdio) {\n  os.stdio.println("hello from the bootstrapped xo")\n}\n' > "$out/hello/main.xo"
-  if XO_BUILD_DIR="$out/cache-s2/build" XO_RTOBJ_CACHE="$out/cache-s2/rtobj" \
-    "$out/s2/xo" run --backend="$backend" --std="$root/std" "$out/hello" > "$out/hello.txt" 2>> "$log"; then
-    say "s2 builds and runs a hello program: $(head -1 "$out/hello.txt")"
-  else
-    say "FAIL: s2 cannot build and run a hello program"
-    rc=1
-  fi
-  cat "$times" | tee -a "$log" >&2
-  [ $rc -eq 0 ] && say "ok (quick: s1 and s2 built, no s3; the full fixed point runs hourly)" || say "FAILED"
-  exit $rc
-fi
 stage 3 "$out/s2/xo"
 rc=0
 if cmp -s "$out/s2/xo.s" "$out/s3/xo.s"; then
