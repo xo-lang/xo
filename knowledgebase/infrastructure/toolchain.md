@@ -367,7 +367,7 @@ go run ./cmd/xo build --backend=arm64 --targets=linux/arm64 .   # emit <build di
 XO_RANGE_SEEDS=25 go test ./internal/gen -run TestRangeDifferential   # slow: more random programs, range analysis vs all checked
 XO_LIST_SEEDS=40 go test ./internal/gen -run TestListModel   # slow: more random List value semantics programs vs a deep copy model (XO_LIST_DUMP=<dir> keeps them)
 XO_COMPILE_PROPS=1000 go test ./internal/gen -run TestCompileProperty   # every checked program builds (decision 0110): random programs over the optional syntax, built on Go and --no-gc and run alike (24 with -short, 150 in the full suite, about 4 min for 1000; XO_COMPILE_PROP_SEED=S one seed, XO_COMPILE_PROP_KEEP=<dir> keeps them; last verified: 2026-10-09)
-go run ./scripts/stdgen [-check]                       # regenerate std/rt/std_gen.go and std_sigs_gen.go from std/*.xo (-check: exit 1 when stale)
+go run ./scripts/stdgen [-check]                       # regenerate std/rt/std_gen_M.go and std_sigs_M.go, one pair per std module, from std/*.xo, removing any left over (-check: exit 1 when one is stale, missing, or left over; 2026-10-21)
 go run ./scripts/stdindex                              # rewrite spec/std.md Appendix A, the prelude index (every function and method of std/prelude.xo by type, internal/stdindex), after changing the prelude; internal/repotest TestStdIndexCurrent (-short) fails while it is stale (last verified: 2026-10-20)
 go run ./cmd/xo lexdump [--bench=N] <files...>              # hidden: canonical token dump of the Go lexer (or lexing time), same text as compiler/lexer
 go run ./cmd/xo run compiler/lexer -- [--bench=N] <files...>   # the self hosted (Xo) lexer: same dump or timing
@@ -2030,17 +2030,20 @@ Last verified: 2026-10-08. Rules and choices; details in
   `rt.RegAdapter` for every concrete user type named in generated code and
   every interface generic code converts a type parameter to.
 - The std structs, enums, newtypes, and interfaces are generated into
-  `std/rt/std_gen.go` by `go run ./scripts/stdgen` (internal/stdgen: a
-  program using every std module through `xo dev dump go --std-types`,
-  compiler/gen stdtypes.xo, then gofmt; never edit the file by hand).
-  Its third line records a hash of std/*.xo's type declarations:
-  internal/repotest's `TestStdGenCurrent` (-short, no xo) fails when a
-  declaration changed since, and internal/gen's `TestStdGenOutput` (full
-  tier, runs xo) when the file differs from the generator's output.
+  `std/rt/std_gen_M.go`, one file per std module M (the prelude's in
+  std_gen_prelude.go; one shared std_gen.go until 2026-10-21), by
+  `go run ./scripts/stdgen` (internal/stdgen: a program using every std
+  module through `xo dev dump go --std-types`, compiler/gen stdtypes.xo,
+  gofmt, then split by each declaration's module prefix; never edit the
+  files by hand). Each file's third line records a hash of its module's
+  type declarations: internal/repotest's `TestStdGenCurrent` (-short, no
+  xo) fails when one changed since, and internal/gen's
+  `TestStdGenOutput` (full tier, runs xo) when a file differs from the
+  generator's output, is missing, or is left over.
   Fields only the runtime uses (Http_Request's XParams, XValues,
   XRawQuery, XFields; Http_Response's XStream, XFields) are listed in
   stdtypes.xo rt_extra_fields. Opaque std handles and every std function are hand
-  written in rt; the same command generates `std/rt/std_sigs_gen.go`, a
+  written in rt; the same command generates `std/rt/std_sigs_M.go`, a
   `var _ func(*Task, ...) R = Module_name` line for each std and prelude
   function and method that has no Xo body and is not generic, nor a
   method of a generic type (List, Map, Option, ...), nor `fault` or
@@ -2852,7 +2855,7 @@ Last verified: 2026-10-09.
   fakes included; `httpDenied` called from `Http_Client.M_send`, a
   `CheckRedirect` in `http_net.go`, `Sql_open` refuses an `onlyNet`).
   The interfaces' `only` methods are in std/prelude.xo and std/testing.xo;
-  `std/rt/std_gen.go` is regenerated with `go run ./scripts/stdgen`. Native builds get XO1201 from the SSA builder's
+  `std/rt/std_gen_M.go` is regenerated with `go run ./scripts/stdgen`. Native builds get XO1201 from the SSA builder's
   fallback ("the method `Net.only`"). Tests: golden
   `internal/gen/testdata/golden/cap_attenuation`,
   `cmd/xo/attenuate_test.go`. Last verified: 2026-10-11.
@@ -3223,7 +3226,7 @@ Last verified: 2026-10-08.
   `json.go` (`JsonW.str` escapes directly since 2026-10-08, matching
   encoding/json with HTML escaping off, `TestAppendJSONString`),
   `log.go`, `testing.go` (test runner, fakes, `run_main`),
-  `std_gen.go` (generated), `gointerop.go` (Go interop boundary
+  `std_gen_*.go` and `std_sigs_*.go` (generated), `gointerop.go` (Go interop boundary
   helpers and `go.Error`, 2026-10-08).
 - Command line tool std (decisions 0160 to 0165, 2026-10-11):
   `cli.go` and `cli_completion.go` (std/cli; ported to Xo in

@@ -1,11 +1,15 @@
-// Package stdgen generates std/rt/std_gen.go, the Go declarations of the
-// std types for the Go backend's runtime, from the std declaration files
-// (std/*.xo): `xo dev dump go --std-types` (compiler/gen stdtypes.xo)
-// over a program that uses every std module, then gofmt. The file's
-// second line records Hash, a hash of the type declarations it was
-// generated from, which TestStdGenCurrent (internal/repotest, -short)
-// checks without running xo; TestStdGenOutput (internal/gen) checks the
-// whole file. It also generates std/rt/std_sigs_gen.go (SigsPath), a
+// Package stdgen generates std/rt/std_gen_M.go, the Go declarations of
+// the std types of module M for the Go backend's runtime, from the std
+// declaration files (std/*.xo): `xo dev dump go --std-types`
+// (compiler/gen stdtypes.xo) over a program that uses every std module,
+// then gofmt, split by module (each type's Go name starts with its
+// module's, Archive_Entry; the prelude's types go to std_gen_prelude.go),
+// so pushes that change different std modules do not touch the same
+// generated file (2026-10-21). Each file's third line records the hash
+// of its module's type declarations (Hashes), which TestStdGenCurrent
+// (internal/repotest, -short) checks without running xo; TestStdGenOutput
+// (internal/gen) and `stdgen -check` check every file and that no other
+// generated file is left. It also generates std/rt/std_sigs_M.go, a
 // `var _ TYPE = NAME` line for each std function the runtime writes by
 // hand, so std/rt stops compiling when one's signature is not the one
 // the Go backend calls.
@@ -17,7 +21,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"go/ast"
 	"go/format"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,13 +33,34 @@ import (
 	"strings"
 )
 
-// Path is std_gen.go's path in the repository.
-const Path = "std/rt/std_gen.go"
+// Dir is the generated files' directory in the repository.
+const Dir = "std/rt"
 
-// SigsPath is std_sigs_gen.go's path in the repository.
-const SigsPath = "std/rt/std_sigs_gen.go"
+// TypesPath is the path of module m's generated type declarations.
+func TypesPath(m string) string { return Dir + "/std_gen_" + m + ".go" }
 
-// hashPrefix starts the line of std_gen.go that records Hash.
+// SigsPath is the path of module m's generated signature checks.
+func SigsPath(m string) string { return Dir + "/std_sigs_" + m + ".go" }
+
+// Generated are the generated files present at root (their paths), the
+// ones Generate writes and any left from an earlier layout.
+func Generated(root string) ([]string, error) {
+	var out []string
+	for _, pat := range []string{"std_gen*.go", "std_sigs*.go"} {
+		ms, err := filepath.Glob(filepath.Join(root, Dir, pat))
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range ms {
+			out = append(out, Dir+"/"+filepath.Base(m))
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// hashPrefix starts the line of a std_gen_M.go file that records its
+// module's hash.
 const hashPrefix = "// Declarations: "
 
 // modules are the std modules the generator's program uses: every
@@ -57,26 +85,38 @@ func modules(root string) ([]string, error) {
 
 var declStart = regexp.MustCompile(`^(pub )?(struct|enum|interface|type) `)
 
-// Hash is a hash of the type declarations of std/*.xo (the lines of
-// each top level struct, enum, interface, and type declaration through
-// its closing brace at column 0, comment lines left out), in file name
-// order: what std_gen.go is generated from. A change to a function or a
-// comment leaves it unchanged.
-func Hash(root string) (string, error) {
+// Hashes is a hash per generated module (the prelude's from
+// std/prelude.xo, go.xo, and internal.xo) of the type declarations of
+// its std/*.xo file (the lines of each top level struct, enum, interface,
+// and type declaration through its closing brace at column 0, comment
+// lines left out): what its std_gen_M.go is generated from. A change to a
+// function or a comment leaves it unchanged. A type of one module that
+// names another module's type is checked through the whole files
+// (TestStdGenOutput, stdgen -check), not through this hash.
+func Hashes(root string) (map[string]string, error) {
 	files, err := filepath.Glob(filepath.Join(root, "std", "*.xo"))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	sort.Strings(files)
-	h := sha256.New()
+	hs := map[string]*bytes.Buffer{}
 	for _, f := range files {
-		if strings.HasSuffix(f, "_test.xo") {
+		name := strings.TrimSuffix(filepath.Base(f), ".xo")
+		if strings.HasSuffix(name, "_test") {
 			continue
+		}
+		g := name
+		if name == "go" || name == "internal" {
+			g = "prelude"
+		}
+		if hs[g] == nil {
+			hs[g] = &bytes.Buffer{}
 		}
 		data, err := os.ReadFile(f)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
+		h := hs[g]
 		fmt.Fprintf(h, "== %s\n", filepath.Base(f))
 		in := false
 		sc := bufio.NewScanner(bytes.NewReader(data))
@@ -101,24 +141,38 @@ func Hash(root string) (string, error) {
 			}
 		}
 		if err := sc.Err(); err != nil {
-			return "", err
+			return nil, err
 		}
 	}
-	return "sha256:" + hex.EncodeToString(h.Sum(nil))[:32], nil
+	out := map[string]string{}
+	for g, h := range hs {
+		sum := sha256.Sum256(h.Bytes())
+		out[g] = "sha256:" + hex.EncodeToString(sum[:])[:32]
+	}
+	return out, nil
 }
 
-// Recorded is the hash std_gen.go at root records, "" when it has none.
-func Recorded(root string) (string, error) {
-	data, err := os.ReadFile(filepath.Join(root, Path))
+// Recorded is the hash each std_gen_M.go at root records, by module.
+func Recorded(root string) (map[string]string, error) {
+	ms, err := filepath.Glob(filepath.Join(root, Dir, "std_gen_*.go"))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	for _, l := range strings.SplitN(string(data), "\n", 5) {
-		if strings.HasPrefix(l, hashPrefix) {
-			return strings.TrimPrefix(l, hashPrefix), nil
+	out := map[string]string{}
+	for _, f := range ms {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			return nil, err
+		}
+		m := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(f), "std_gen_"), ".go")
+		out[m] = ""
+		for _, l := range strings.SplitN(string(data), "\n", 5) {
+			if strings.HasPrefix(l, hashPrefix) {
+				out[m] = strings.TrimPrefix(l, hashPrefix)
+			}
 		}
 	}
-	return "", nil
+	return out, nil
 }
 
 // Generate returns the generated files for the std at root by their
@@ -163,23 +217,145 @@ func Generate(root string, xo []string) (map[string][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	sigsSrc, err := format.Source(sigs)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %v", SigsPath, err)
-	}
-	hash, err := Hash(root)
+	hashes, err := Hashes(root)
 	if err != nil {
 		return nil, err
 	}
-	// the hash after the generator's two comment lines
+	group := func(name string) string {
+		name = strings.TrimPrefix(strings.TrimPrefix(name, "(*"), "*")
+		p, _, ok := strings.Cut(name, "_")
+		if !ok {
+			return "prelude"
+		}
+		for _, m := range mods {
+			if strings.ToLower(p) == m {
+				return m
+			}
+		}
+		return "prelude"
+	}
+	files := map[string][]byte{}
+	// the types: each top level declaration (with its doc comment) to its
+	// module's file
 	lines := strings.SplitN(string(out), "\n", 3)
 	if len(lines) < 3 {
 		return nil, fmt.Errorf("xo dev dump go --std-types: short output %q", out)
 	}
-	text := lines[0] + "\n" + lines[1] + "\n" + hashPrefix + hash + "\n" + lines[2]
-	formatted, err := format.Source([]byte(text))
+	whole, err := format.Source(out)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %v", Path, err)
+		return nil, fmt.Errorf("std types: %v", err)
 	}
-	return map[string][]byte{Path: formatted, SigsPath: sigsSrc}, nil
+	chunks, err := split(whole, func(d ast.Decl) string {
+		switch d := d.(type) {
+		case *ast.GenDecl:
+			if len(d.Specs) > 0 {
+				if ts, ok := d.Specs[0].(*ast.TypeSpec); ok {
+					return group(ts.Name.Name)
+				}
+			}
+		case *ast.FuncDecl:
+			if d.Recv != nil && len(d.Recv.List) == 1 {
+				t := d.Recv.List[0].Type
+				if st, ok := t.(*ast.StarExpr); ok {
+					t = st.X
+				}
+				if id, ok := t.(*ast.Ident); ok {
+					return group(id.Name)
+				}
+			}
+			return group(d.Name.Name)
+		}
+		return "prelude"
+	})
+	if err != nil {
+		return nil, err
+	}
+	for g, body := range chunks {
+		var b strings.Builder
+		b.WriteString(lines[0] + "\n" + lines[1] + "\n" + hashPrefix + hashes[g] + "\n\npackage rt\n\n")
+		if strings.Contains(body, "strings.") {
+			b.WriteString("import \"strings\"\n\n")
+		}
+		b.WriteString(body)
+		src, err := format.Source([]byte(b.String()))
+		if err != nil {
+			return nil, fmt.Errorf("%s: %v", TypesPath(g), err)
+		}
+		files[TypesPath(g)] = src
+	}
+	// the signature checks: each `_ T = NAME` line to NAME's module
+	byGroup := map[string][]string{}
+	var head []string
+	inVar := false
+	for _, l := range strings.Split(string(sigs), "\n") {
+		t := strings.TrimSpace(l)
+		switch {
+		case strings.HasPrefix(t, "var ("):
+			inVar = true
+		case inVar && t == ")":
+			inVar = false
+		case inVar && strings.HasPrefix(t, "_ "):
+			i := strings.LastIndex(t, "= ")
+			if i < 0 {
+				return nil, fmt.Errorf("std sigs: %q", t)
+			}
+			g := group(strings.TrimSpace(t[i+2:]))
+			byGroup[g] = append(byGroup[g], t)
+		case !inVar && !strings.HasPrefix(t, "package ") && (strings.HasPrefix(t, "//") || t == ""):
+			if !strings.HasPrefix(t, "// Code generated") && !strings.HasPrefix(t, "// Regenerate") {
+				head = append(head, t)
+			}
+		}
+	}
+	for g, specs := range byGroup {
+		var b strings.Builder
+		b.WriteString(lines[0] + "\n" + lines[1] + "\n\npackage rt\n\n")
+		for _, h := range head {
+			if h != "" {
+				b.WriteString(h + "\n")
+			}
+		}
+		b.WriteString("var (\n" + strings.Join(specs, "\n") + "\n)\n")
+		src, err := format.Source([]byte(b.String()))
+		if err != nil {
+			return nil, fmt.Errorf("%s: %v", SigsPath(g), err)
+		}
+		files[SigsPath(g)] = src
+	}
+	return files, nil
+}
+
+// split is the top level declarations of the Go file src (with their doc
+// comments) grouped by key, in order, each group's text joined by blank
+// lines.
+func split(src []byte, key func(ast.Decl) string) (map[string]string, error) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "std_gen.go", src, parser.ParseComments)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for _, d := range f.Decls {
+		if gd, ok := d.(*ast.GenDecl); ok && gd.Tok == token.IMPORT {
+			continue
+		}
+		start := d.Pos()
+		switch d := d.(type) {
+		case *ast.GenDecl:
+			if d.Doc != nil {
+				start = d.Doc.Pos()
+			}
+		case *ast.FuncDecl:
+			if d.Doc != nil {
+				start = d.Doc.Pos()
+			}
+		}
+		text := string(src[fset.Position(start).Offset:fset.Position(d.End()).Offset])
+		k := key(d)
+		if out[k] != "" {
+			out[k] += "\n\n"
+		}
+		out[k] += text
+	}
+	return out, nil
 }

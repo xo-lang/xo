@@ -4,3 +4,6 @@
 # append-only indexes; a real edit of the same line would keep both
 # versions, which review and TestDecisionNumbersUnique catch.
 knowledgebase/*/README.md merge=union
+# std/changes/README.md is the same kind of append-only index (one line
+# per module change log; it conflicted on most std rebases, 2026-10-21).
+std/changes/README.md merge=union

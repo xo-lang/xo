@@ -34,3 +34,12 @@ changed since, and internal/gen's `TestStdGenOutput` when the file
 differs from the generator's output. The runtime-only fields are listed
 in stdtypes.xo `rt_extra_fields`. Never edit the file by hand; a merge
 conflict in it is resolved by regenerating it after the rebase.
+
+## Since 2026-10-21
+
+The generated declarations are one file per std module
+(`std/rt/std_gen_M.go`, `std/rt/std_sigs_M.go`), because the shared
+file conflicted on almost every rebase of a std push that touched a
+type (csvpar, tmpl, and mailmsg on 2026-10-21). A conflict in one of
+them is still resolved by `go run ./scripts/stdgen`, and `stdgen -check`
+also fails on a file left over from a removed module.

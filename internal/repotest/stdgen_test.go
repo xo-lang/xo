@@ -6,12 +6,12 @@ import (
 	"github.com/xo-lang/xo/internal/stdgen"
 )
 
-// TestStdGenCurrent fails when std/*.xo's type declarations changed
-// since std/rt/std_gen.go was generated (the hash its third line
+// TestStdGenCurrent fails when a std module's type declarations changed
+// since its std/rt/std_gen_M.go was generated (the hash its third line
 // records), without running xo; internal/gen's TestStdGenOutput checks
-// the whole file.
+// the whole files.
 func TestStdGenCurrent(t *testing.T) {
-	want, err := stdgen.Hash(root)
+	want, err := stdgen.Hashes(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -19,7 +19,11 @@ func TestStdGenCurrent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != want {
-		t.Fatalf("%s was generated from other std type declarations (recorded %q, std/*.xo now %q): run go run ./scripts/stdgen", stdgen.Path, got, want)
+	for m, h := range got {
+		if w, ok := want[m]; !ok {
+			t.Errorf("%s: no std module %s: run go run ./scripts/stdgen", stdgen.TypesPath(m), m)
+		} else if h != w {
+			t.Errorf("%s was generated from other std type declarations (recorded %q, std now %q): run go run ./scripts/stdgen", stdgen.TypesPath(m), h, w)
+		}
 	}
 }

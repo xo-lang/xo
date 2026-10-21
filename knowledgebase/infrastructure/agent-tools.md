@@ -75,11 +75,13 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   while it is stale.
 - `go run ./scripts/stdgen` after changing a std type (a struct, enum,
   newtype, or interface in std/*.xo) or a std function's signature:
-  regenerates std/rt/std_gen.go, the Go backend's declarations of the std
-  types, and std_sigs_gen.go, which makes `go vet ./std/rt` name a hand
-  written function whose signature drifted (toolchain.md); the -short
-  `TestStdGenCurrent` fails until it is run. Never edit that file by hand,
-  and resolve a conflict in it by regenerating.
+  regenerates std/rt/std_gen_M.go, the Go backend's declarations of
+  module M's std types, and std_sigs_M.go, which makes `go vet ./std/rt`
+  name a hand written function whose signature drifted (toolchain.md),
+  one pair per module since 2026-10-21, so two pushes that change
+  different modules do not conflict there; the -short `TestStdGenCurrent`
+  fails until it is run. Never edit those files by hand, and resolve a
+  conflict in one by regenerating.
 - `scripts/gate.sh WORKTREE STEP...`: an agent's gate as named steps.
 - `scripts/progen-batches.sh`, the amd64 progen runner, TestArithOracle.
 - `scripts/codesize.py BINARY`: where a darwin/arm64 build's `__text` goes (functions, modules, generic copies, instruction kinds, whole value word copies, release runs, constant addresses); bench/results/xo-code-size-2026-10-18.md.
