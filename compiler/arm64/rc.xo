@@ -121,7 +121,8 @@ fn (var g: G) rc_helper(kind: Str, t: Int) -> Str {
           let et = g.m.types[t].elems[0]
           if g.heap(et) {
             b.push(imm_text(g.esize(et), "x1"))
-            b.push(g.addr("x2", g.elem_helper("share", et)))
+            let eh = g.elem_helper("share", et)
+            b.push(g.addr("x2", eh))
             b.push("\tb ${g.sym("xo_x_obj_rl_share")}\n")
           }
         }
@@ -149,7 +150,8 @@ fn (var g: G) str_list_drop(var b: List[Str], sym: Str, free: Str, t: Int) {
   let et = g.m.types[t].elems[0]
   b.push(imm_text(g.esize(et), "x1"))
   if g.heap(et) {
-    b.push(g.addr("x2", g.elem_helper("drop", et)))
+    let eh = g.elem_helper("drop", et)
+    b.push(g.addr("x2", eh))
   } else {
     b.push("\tmov x2, #0\n")
   }
@@ -330,7 +332,8 @@ fn (var g: G) leaf_call(var b: List[Str], kind: Str, l: Leaf, reg: Str, base: In
     b.push("\tldr x0, [${reg}, #${base + 8 * l.off}]\n")
     b.push(g.dec_text("x0", "x9", "w10", lbl, "${lbl}_free", "${lbl}_done"))
     b.push("${lbl}_free:\n")
-    b.push(g.addr("x1", g.box_drop(l.t)))
+    let bd = g.box_drop(l.t)
+    b.push(g.addr("x1", bd))
     b.push("\tbl ${g.sym("xo_x_obj_rc_defer_n")}\n${lbl}_done:\n")
     return
   }
@@ -564,13 +567,15 @@ fn (var g: G) box_rc(var b: List[Str], kind: Str, sym: Str, t: Int) {
   } else if kind == "drop" {
     b.push(g.dec_text("x0", "x9", "w10", sym, "${sym}_free", ""))
     b.push("${sym}_free:\n")
-    b.push(g.addr("x1", g.box_drop(t)))
+    let bd = g.box_drop(t)
+    b.push(g.addr("x1", bd))
     b.push("\tb ${g.sym("xo_x_obj_rc_defer_n")}\n")
   } else if kind == "share" {
     b.push(mark_text("x0", "x9", "${sym}_ret"))
     if g.heap(g.m.types[t].elems[0]) {
       // the contents through the worklist
-      b.push(g.addr("x1", g.box_share(t)))
+      let bs = g.box_share(t)
+      b.push(g.addr("x1", bs))
       b.push("\tb ${g.sym("xo_x_obj_rc_defer_n")}\n")
     }
     b.push("${sym}_ret:\n\tret\n")
