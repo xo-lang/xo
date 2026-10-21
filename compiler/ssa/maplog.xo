@@ -182,13 +182,11 @@ fn (var b: Builder) mlog_probe(t: Int) -> Str {
   let (miss, more) = b.if_then_begin(b.bop(Op.Lt, i, base))
   b.retv(b.add(Op.Tuple, rt, Aux.None, [b.cint(-1), b.cint(-1)]))
   b.if_then_end(miss, more)
+  // the keys alone: a table with no index keeps no hashes (0, mlog_hash_if)
   let e = b.mlog_at(et, dir, b.iop(Op.Sub, i, base))
-  let same_h = b.bop(Op.Eq, b.add(Op.Field, it, Aux.I(n: 0), [e]), h)
-  let (n1, j1) = b.if_then_begin(same_h)
   let (n2, j2) = b.if_then_begin(b.eq_values(b.add(Op.Field, kt, Aux.I(n: 3), [e]), k))
   b.retv(b.add(Op.Tuple, rt, Aux.None, [b.cint(-1), i]))
   b.if_then_end(n2, j2)
-  b.if_then_end(n1, j1)
   b.write_var(iv, b.iop(Op.Sub, i, b.cint(1)))
   b.jump(head, [])
   b.seal(head)
@@ -266,14 +264,11 @@ fn (var b: Builder) mlog_probe_j(t: Int, dir: Int, idx: Int, base: Int, lim: Int
   b.jump(join, [b.cint(-1)])
   b.s.cur = more
   let e = b.mlog_at(et, dir, b.iop(Op.Sub, i, base))
-  let (hit_h, next) = b.branch(b.bop(Op.Eq, b.add(Op.Field, it, Aux.I(n: 0), [e]), h))
-  b.s.cur = hit_h
+  // the keys alone (no hashes without an index)
   let (hit, next2) = b.branch(b.eq_values(b.add(Op.Field, kt, Aux.I(n: 3), [e]), k))
   b.s.cur = hit
   b.jump(join, [i])
   let step = b.new_block()
-  b.s.cur = next
-  b.jump(step, [])
   b.s.cur = next2
   b.jump(step, [])
   b.seal(step)
@@ -764,7 +759,15 @@ fn (var b: Builder) mlog_table(t: Int, es: Int, claim: Int) -> Int {
   let iv = b.local()
   let (i, ih, ix) = b.for_up_to_begin(n, iv)
   let e0 = b.call("list.index", et, "", [es, i])
-  let e = b.add(Op.SetField, et, Aux.I(n: 2), [e0, i])
+  let ev = b.local()
+  b.write_var(ev, b.add(Op.SetField, et, Aux.I(n: 2), [e0, i]))
+  // an indexed table's entries carry their keys' hashes (an unindexed
+  // one's may be 0: mlog_hash_if)
+  let (nh, jh) = b.if_then_begin(b.bop(Op.Gt, n, b.cint(MLOG_SMALL)))
+  let kh = b.call(b.hash_func(mlog_key(b.m, t)), it, "", [b.add(Op.Field, mlog_key(b.m, t), Aux.I(n: 3), [e0])])
+  b.write_var(ev, b.add(Op.SetField, et, Aux.I(n: 0), [b.read(ev), kh]))
+  b.if_then_end(nh, jh)
+  let e = b.read(ev)
   let (c, _off) = b.mlog_slot(i)
   let dir = b.read(dv)
   let (nn, jn) = b.if_then_begin(b.bop(Op.Eq, c, b.call("list.len", it, "", [dir])))
@@ -893,14 +896,23 @@ fn (var b: Builder) mlog_record(t: Int) -> Str {
   b.write_var(orgv, b.add(Op.Field, it, Aux.I(n: 2), [b.mlog_entry_at(t, pm, w)]))
   b.if_then_end(nw, jw)
   b.if_then_end(np, jp)
-  // a new key of the table: counted, the index made or grown
+  // a new key of the table: counted, the index made or grown. A root
+  // table's first index is a flatten (its entries' hashes may be 0,
+  // mlog_hash_if; mlog_table hashes them); a fork's own entries and an
+  // indexed table's carry theirs
+  let firstv = b.local()
+  b.write_var(firstv, b.cbool(false))
   let (nk, jk) = b.if_then_begin(b.bop(Op.Lt, j, b.cint(0)))
   let keys1 = b.iop(Op.Add, b.read(keysv), b.cint(1))
   b.write_var(keysv, keys1)
   let nidx = b.call("list.len", it, "", [b.read(xv)])
   let make = b.bop(Op.Gt, keys1, b.cint(MLOG_SMALL))
   let full = b.bop(Op.Gt, b.iop(Op.Mul, keys1, b.cint(2)), nidx)
-  let (ng, jg) = b.if_then_begin(b.add(Op.And, bt, Aux.None, [make, full]))
+  let first = b.add(Op.And, bt, Aux.None, [b.bop(Op.Eq, nidx, b.cint(0)), b.add(Op.Not, bt, Aux.None, [has_parent])])
+  let (nfi, jfi) = b.if_then_begin(b.add(Op.And, bt, Aux.None, [make, first]))
+  b.write_var(firstv, b.cbool(true))
+  b.if_then_end(nfi, jfi)
+  let (ng, jg) = b.if_then_begin(b.add(Op.And, bt, Aux.None, [b.add(Op.And, bt, Aux.None, [make, full]), b.add(Op.Not, bt, Aux.None, [first])]))
   b.write_var(xv, b.mlog_build_index(t, b.read(dv), base, lim, keys1))
   let r1 = b.call(probe, pt, "", [b.read(dv), b.read(xv), base, lim, k, h])
   b.write_var(slotv, b.add(Op.Field, it, Aux.I(n: 0), [r1]))
@@ -937,7 +949,7 @@ fn (var b: Builder) mlog_record(t: Int) -> Str {
   let own1 = b.iop(Op.Add, i, b.cint(1))
   let root_g = b.add(Op.And, bt, Aux.None, [b.add(Op.Not, bt, Aux.None, [has_parent]), b.bop(Op.Gt, lim1, b.iop(Op.Add, b.iop(Op.Mul, n1, b.cint(2)), b.cint(32)))])
   let fork_g = b.add(Op.And, bt, Aux.None, [has_parent, b.bop(Op.Gt, own1, b.iop(Op.Add, n1, b.cint(32)))])
-  let (nf, jf) = b.if_then_begin(b.add(Op.Or, bt, Aux.None, [root_g, fork_g]))
+  let (nf, jf) = b.if_then_begin(b.add(Op.Or, bt, Aux.None, [b.add(Op.Or, bt, Aux.None, [root_g, fork_g]), b.read(firstv)]))
   let es = b.call(each, el, "", [m1])
   b.retv(b.mlog_table(t, es, b.cint(0)))
   b.if_then_end(nf, jf)
@@ -949,12 +961,10 @@ fn (var b: Builder) mlog_record(t: Int) -> Str {
 
 /// xo.mlog.put[T](m, k, v) -> T.
 fn (var b: Builder) mlog_put(t: Int) -> Str {
-  let it = b.int_t()
   let kt = mlog_key(b.m, t)
   let vt = mlog_val(b.m, t)
   let claim = b.mlog_claim(t)
   let record = b.mlog_record(t)
-  let hash = b.hash_func(kt)
   let name = "xo.mlog.put[${b.m.types[t].name}]"
   let fi = b.thunk_func(name, [t, kt, vt], [t], [])
   if fi < 0 {
@@ -964,9 +974,8 @@ fn (var b: Builder) mlog_put(t: Int) -> Str {
   let mp = b.param(0)
   let k = b.param(1)
   let v = b.param(2)
-  let h = b.call(hash, it, "", [k])
   let m1 = b.call(claim, t, "", [mp])
-  b.retv(b.call(record, t, "", [m1, h, k, v, b.cbool(false)]))
+  b.retv(b.call(record, t, "", [m1, b.mlog_hash_if(t, m1, k), k, v, b.cbool(false)]))
   b.finish_fn()
   b.end(saved)
   name
@@ -979,7 +988,6 @@ fn (var b: Builder) mlog_remove(t: Int, ot: Int) -> Str {
   let find = b.mlog_find(t)
   let claim = b.mlog_claim(t)
   let record = b.mlog_record(t)
-  let hash = b.hash_func(kt)
   let rt = b.m.tuple([t, ot])
   var name = "xo.mlog.remove[${b.m.types[t].name}]"
   let have = b.fidx(name)
@@ -993,7 +1001,7 @@ fn (var b: Builder) mlog_remove(t: Int, ot: Int) -> Str {
   let saved = b.begin(fi, b.s.file)
   let mp = b.param(0)
   let k = b.param(1)
-  let h = b.call(hash, it, "", [k])
+  let h = b.mlog_hash_if(t, mp, k)
   let w = b.call(find, it, "", [mp, k, h])
   let (no, join) = b.if_then_begin(b.bop(Op.Lt, w, b.cint(0)))
   let none = b.add(Op.Variant, ot, Aux.I(n: b.m.variant_index(ot, "None")), [])
@@ -1001,7 +1009,15 @@ fn (var b: Builder) mlog_remove(t: Int, ot: Int) -> Str {
   b.if_then_end(no, join)
   let old = b.mlog_value_at(t, mp, w)
   let m1 = b.call(claim, t, "", [mp])
-  let m2 = b.call(record, t, "", [m1, h, k, old, b.cbool(true)])
+  // h again only when mp had none and the claim made a table that needs
+  // one (a fork, whose parents are probed by hash)
+  let h2v = b.local()
+  b.write_var(h2v, h)
+  let mp_plain = b.add(Op.And, b.bool_t(), Aux.None, [b.bop(Op.Eq, b.call("list.len", it, "", [b.mf(t, 1, mp)]), b.cint(0)), b.bop(Op.Eq, b.call("list.len", it, "", [b.mf(t, 7, mp)]), b.cint(0))])
+  let (nq, jq) = b.if_then_begin(mp_plain)
+  b.write_var(h2v, b.mlog_hash_if(t, m1, k))
+  b.if_then_end(nq, jq)
+  let m2 = b.call(record, t, "", [m1, b.read(h2v), k, old, b.cbool(true)])
   let some = b.add(Op.Variant, ot, Aux.I(n: b.m.variant_index(ot, "Some")), [old])
   b.retv(b.add(Op.Tuple, rt, Aux.None, [m2, some]))
   b.finish_fn()
@@ -1013,8 +1029,23 @@ fn (var b: Builder) mlog_remove(t: Int, ot: Int) -> Str {
 /// for mlog_value_at.
 fn (var b: Builder) mlog_lookup(t: Int, mv: Int, k: Int) -> Int {
   let it = b.int_t()
-  let h = b.call(b.hash_func(mlog_key(b.m, t)), it, "", [k])
-  b.call(b.mlog_find(t), it, "", [mv, k, h])
+  b.call(b.mlog_find(t), it, "", [mv, k, b.mlog_hash_if(t, mv, k)])
+}
+
+/// k's hash when map m's table has an index or parents (whose indexes
+/// it is probed in), else 0: a small table is scanned by its keys and
+/// keeps no hashes (an HTTP request's headers, 2026-10-21: hashing each
+/// name was 446 instructions a request), and mlog_table hashes them when
+/// it indexes.
+fn (var b: Builder) mlog_hash_if(t: Int, m: Int, k: Int) -> Int {
+  let it = b.int_t()
+  let hv = b.local()
+  b.write_var(hv, b.cint(0))
+  let plain = b.add(Op.And, b.bool_t(), Aux.None, [b.bop(Op.Eq, b.call("list.len", it, "", [b.mf(t, 1, m)]), b.cint(0)), b.bop(Op.Eq, b.call("list.len", it, "", [b.mf(t, 7, m)]), b.cint(0))])
+  let (np, jp) = b.if_then_begin(b.add(Op.Not, b.bool_t(), Aux.None, [plain]))
+  b.write_var(hv, b.call(b.hash_func(mlog_key(b.m, t)), it, "", [k]))
+  b.if_then_end(np, jp)
+  b.read(hv)
 }
 
 /// xo.mlog.iterdir[T](m) -> List[List[E]]: m's live entries in order, in
