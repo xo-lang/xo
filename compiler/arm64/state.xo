@@ -337,6 +337,11 @@ struct G {
   /// kept by emission when it holds; the blocks that run without the
   /// frame, and the one block whose head makes it
   shrink: Bool = false
+  /// x86_fold_loads: the loads whose value it folded into more than one
+  /// read, with their base registers (load value, base); and the loads
+  /// it leaves alone (their base was spilled: each read reloaded it)
+  fold_multi: List[(Int, Int)] = []
+  fold_skip: Map[Int, Bool] = {}
   fl: List[Bool] = []
   pro: Int = -1
   /// per block: 1 a save block, 2 a restore block, 0 neither; and
@@ -461,6 +466,8 @@ fn (var g: G) begin_func(fi: Int) {
   g.saved = []
   g.fr = Frame{}
   g.shrink = false
+  g.fold_multi = []
+  g.fold_skip = {}
   g.fl = []
   g.pro = -1
   g.fedge = []

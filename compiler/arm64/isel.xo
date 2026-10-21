@@ -90,6 +90,11 @@ fn (var g: G) function(fi: Int) {
     if g.on("x86_sink_loads") {
       g.x86_sink_loads()
     }
+    // a load folded into several reads whose base was then spilled
+    // reloads the base at each read (2026-10-21: nistec.mul4p's
+    // multiplier word into four mulq, 217 to 232 instructions): those
+    // loads stay loads, and the function is allocated again
+    let before_fold = g.blocks
     if g.on("x86_fold_loads") {
       g.x86_fold_loads()
     }
@@ -97,6 +102,24 @@ fn (var g: G) function(fi: Int) {
       g.x86_carry_fuse()
     }
     g.regalloc()
+    var refold = false
+    for (v, base) in g.fold_multi {
+      if base > 0 && base < g.loc.len() && g.loc[base].reg < 0 {
+        g.fold_skip[v] = true
+        refold = true
+      }
+    }
+    if refold {
+      g.blocks = before_fold
+      g.fold_multi = []
+      if g.on("x86_fold_loads") {
+        g.x86_fold_loads()
+      }
+      if g.on("x86_carry_fuse") {
+        g.x86_carry_fuse()
+      }
+      g.regalloc()
+    }
     g.x86_emit()
     return
   }

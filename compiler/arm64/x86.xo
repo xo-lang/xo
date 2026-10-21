@@ -2758,7 +2758,7 @@ fn (var g: G) x86_fold_loads() {
       for u in 0..inst.us.len() {
         let v = inst.us[u]
         let li = cand.get(v) ?? -1
-        if li < 0 || (bad.get(v) ?? false) {
+        if li < 0 || (bad.get(v) ?? false) || g.fold_skip.contains(v) {
           continue
         }
         let (off, _j, _ok) = x86_load_line(x86_def_line(ins[li].text, ins[li].defs.index_of(v) ?? -1), ins[li].defs.index_of(v) ?? -1)
@@ -2776,6 +2776,9 @@ fn (var g: G) x86_fold_loads() {
           let (off2, j, ok2) = x86_load_line(x86_def_line(ins[li].text, n), n)
           if ok2 {
             let base = ins[li].us[j]
+            if (at.get(v) ?? []).len() > 1 {
+              g.fold_multi.push((v, base))
+            }
             for p in at.get(v) ?? [] {
               var c = ins[p / 64]
               c.text = x86_fold_into(c.text, p % 64, off2)
