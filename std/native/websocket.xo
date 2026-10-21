@@ -11,10 +11,10 @@ use std/task
 use std/tls
 use std/websocket
 use native/rt
+use native/http as nhttp
 use native/rthttp
 use native/llrt/raw
 use native/llrt/hconn
-use native/llrt/hserve
 use native/llrt/http1
 use native/llrt/rand as llrand
 
@@ -530,9 +530,8 @@ fn upgrade[fx: Effects](req: http.Request, f: fn(WsConn) -> () uses fx, protocol
     let rest = http1.take_rest(h)
     g(WsConn{wire: wire, server: true, max: max_message, proto: proto, rd: Mutex[ReadState].new(ReadState{buf: rest, pos: 0, err: []}), wr: Mutex[WriteState].new(WriteState{close_sent: false})})
   }
-  // the hand-off (http.xo respond): a 101 whose body names the stream
-  // registry's entry of hand
-  http.Response{status: 101, headers: {}, body: "${hserve.HANDOFF}${hserve.stream_put(rt.any_of(hand))}".bytes()}
+  // the hand-off (std/native/http.xo respond; std-internal, decision 0319)
+  nhttp.handoff_response(hand)
 }
 
 /// A client's connection, plain or TLS (std/smtp's Link).

@@ -121,6 +121,15 @@ struct Response {
   fields: List[Str] = []
 }
 
+/// The 101 response that hands its connection to f (respond runs it):
+/// std/websocket's upgrade (decision 0313). `pub` in a native module is
+/// std-internal (decision 0319): std/native modules reach it through
+/// `use native/http`; programs cannot import native/ modules, and
+/// std/http's declaration file does not list it.
+pub fn handoff_response(f: fn(rthttp.HConn) -> ()) -> http.Response {
+  rt.cast[Response, http.Response](Response{status: 101, headers: {}, body: b"", stream: hserve.stream_put(rt.any_of(f))})
+}
+
 /// The body of a request to a handle_stream route (decision 0310).
 struct BodyReader {
   st: Mutex[BodyState]
@@ -1839,20 +1848,16 @@ fn serve_stream(q: h2srv.H2Req, r: Router) {
 /// names no HTTP/2 code, decision 0244).
 fn respond(hc: rthttp.HConn, req: Request, r: Router) -> (Bool, Response?) {
   let resp = rt.cast[http.Response, Response](call_raw(r, req))
-  if resp.status == 101 {
-    // a connection hand-off (decision 0313, std/websocket's upgrade: its
-    // body is hserve.HANDOFF and the stream registry's entry of a
-    // fn(rthttp.HConn) -> ()): that function owns the connection, which
-    // closes when it returns
-    let t = resp.body.to_str() ?? ""
-    if t.starts_with(hserve.HANDOFF) {
-      let fs = hserve.stream_get(Int.parse(t[hserve.HANDOFF.len()..]) ?? 0, true)
-      if !fs.is_empty() {
-        if let Some(f) = rt.any_get[fn(rthttp.HConn) -> ()](fs[0]) {
-          f(hc)
-        }
+  if resp.status == 101 && resp.stream != 0 {
+    // a connection hand-off (decision 0313, handoff_response: std/websocket's
+    // upgrade): its function owns the connection, which closes when it
+    // returns
+    let fs = hserve.stream_get(resp.stream, true)
+    if !fs.is_empty() {
+      if let Some(f) = rt.any_get[fn(rthttp.HConn) -> ()](fs[0]) {
+        f(hc)
+        return (false, None)
       }
-      return (false, None)
     }
   }
   if !req.values.is_empty() {

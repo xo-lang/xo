@@ -1215,6 +1215,14 @@ use github.com/acme/billing/invoice
   `github.com/xo-lang/xo` or below it may import it. For any other module
   `use std/internal` is `XO0601` (module not found), as the native
   backends' intrinsics (`native/...`) are.
+- Std-internal names (decision 0319): a `pub` item of a native std
+  implementation module (std/native/M.xo, imported as `native/M`) is
+  visible to the other native std modules and to nothing else, since
+  only std modules may import `native/...` and `use std/M` sees only
+  std/M.xo's declarations. A std module calls another's internals this
+  way (std/websocket's connection hand-off is
+  `native/http`'s `handoff_response`) instead of a registry or a
+  marker value; std.md lists none of these names.
 
 ### 4.2 xo.mod
 

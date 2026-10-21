@@ -475,10 +475,6 @@ pub fn sink_free(k: Int) {
 
 fn table() -> Int { ctx.svc() + ctx.SV_STREAMS }
 
-/// The body of a 101 response that hands its connection over (decision
-/// 0313): this, then the stream registry's id of a fn(rthttp.HConn) -> ()
-/// (std/native/websocket.xo upgrade, http.xo respond).
-pub const HANDOFF = "xo-handoff:"
 
 
 /// Keeps f (an Any of the stream's function): its number.
