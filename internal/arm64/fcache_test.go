@@ -1594,3 +1594,77 @@ func TestFrontCacheRootThenLibrary(t *testing.T) {
 		t.Error("the build after lib's test build differs from the cache-off build")
 	}
 }
+
+// TestBorrowIncremental: the borrow inference after an edit infers only
+// the changed functions and their callers, the others keeping the last
+// build's flags (decision 0283 stage A), and finds the full inference's
+// flags (XO_BORROW_CHECK=1 fails the build otherwise): keep stops
+// consuming its list (owned to borrowed), which changes mid's flag
+// through it, and then consumes it again.
+func TestBorrowIncremental(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-borrowinc-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	own := filepath.Join(work, "p")
+	if err := os.MkdirAll(filepath.Join(own, "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	owned := "pub fn keep(xs: List[Int]) -> List[Int] {\n  xs\n}\n"
+	borrowed := "pub fn keep(xs: List[Int]) -> List[Int] {\n  [xs.len()]\n}\n"
+	rest := "\npub fn len_of(xs: List[Int]) -> Int {\n  xs.len()\n}\n\npub fn mid(xs: List[Int]) -> Int {\n  len_of(keep(xs)) + xs.len()\n}\n"
+	main := "use example.com/p/lib\n\nfn main(os: Os) uses stdio {\n  let xs = [1, 2, 3]\n  os.stdio.println(\"${lib.mid(xs)} ${xs.len()}\")\n}\n"
+	for p, s := range map[string]string{"xo.mod": "module example.com/p\n", "main.xo": main} {
+		if err := os.WriteFile(filepath.Join(own, p), []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := filepath.Join(work, "prog")
+	build := func(env ...string) ([]byte, string) {
+		t.Helper()
+		os.Remove(out)
+		cmd := exec.Command(xo, "build", "--backend=arm64", "--phase-times", "-o", out, ".")
+		cmd.Dir = own
+		cmd.Env = append(os.Environ(), env...)
+		log, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("xo build %v: %v\n%s", env, err, log)
+		}
+		b, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b, string(log)
+	}
+	kept := regexp.MustCompile(`cache borrows (\d+)/(\d+) kept`)
+	cache := filepath.Join(work, "cache")
+	on := []string{"XO_BACKEND_CACHE_DIR=" + cache, "XO_BACKEND_CACHE=on", "XO_BORROW_CHECK=1"}
+	for i, lib := range []string{owned, borrowed, owned} {
+		if err := os.WriteFile(filepath.Join(own, "lib", "lib.xo"), []byte(lib+rest), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		off, _ := build("XO_BACKEND_CACHE_DIR="+filepath.Join(work, "off"), "XO_BACKEND_CACHE=off")
+		got, log := build(on...)
+		if !bytes.Equal(got, off) {
+			t.Errorf("step %d: the build differs from the cache-off build", i)
+		}
+		m := kept.FindStringSubmatch(log)
+		if m == nil {
+			t.Fatalf("step %d: no borrow record line:\n%s", i, log)
+		}
+		if i > 0 && m[1] == "0" {
+			t.Errorf("step %d: the edit build kept no function's flags (%s)", i, m[0])
+		}
+	}
+}

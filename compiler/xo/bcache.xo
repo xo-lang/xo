@@ -195,7 +195,23 @@ fn rc_cached(os: Os, var b: ssa.Builder, release: Bool, jobs: Int, phases: Bool,
   var t = os.clock.now()
   let t0 = t
   // insert_rc_plan, its two halves timed
-  let r = b.rc_prepare(jobs)
+  // the borrow inference incremental over the target's record of the
+  // last build's flags (decision 0283 stage A); in full with verify.
+  // XO_BORROW_CHECK=1 also runs the full one and fails the build when
+  // the flags differ
+  let bpath = borrow_record_path(os, dir, b.m.goarch)
+  let full_mode = backend_cache_mode(os) == "verify"
+  let check = (os.env.get("XO_BORROW_CHECK") ?? "") == "1"
+  let (r, rec, nd, same) = if full_mode { (b.rc_prepare(jobs), {}, b.m.funcs.len(), true) } else { b.rc_prepare_incr(jobs, id, borrow_record_read(os, bpath), check) }
+  if !same {
+    fail(os, "XO_BORROW_CHECK=1: the incremental borrow inference differs from the full one (${nd} of ${b.m.funcs.len()} functions inferred)")
+  }
+  if !full_mode {
+    borrow_record_write(os, bpath, rec)
+  }
+  if phases {
+    os.stdio.eprintln("cache borrows ${b.m.funcs.len() - nd}/${b.m.funcs.len()} kept")
+  }
   t = lap(os, phases, "insert_rc.borrows", t)
   let tk = ssa.type_keys(b.m)
   t = lap(os, phases, "insert_rc.types", t)
@@ -245,6 +261,41 @@ fn rc_cached(os: Os, var b: ssa.Builder, release: Bool, jobs: Int, phases: Bool,
     fail(os, "XO_BACKEND_CACHE=verify: ${out.mismatches.len()} functions' reference counting differs from their cache entries, the first ${out.mismatches[0]}")
   }
   plan.keys
+}
+
+/// The build target's record of the last build's borrowed flags for
+/// the incremental borrow inference (ssa rc_prepare_incr, decision 0283
+/// stage A): pack <slot>/borrow/list, a body hash and its flags a line.
+fn borrow_record_path(os: Os, dir: Str, goarch: Str) -> Str {
+  "${pack_dir(os, dir, "borrow", goarch)}/list"
+}
+
+fn borrow_record_read(os: Os, path: Str) -> Map[Str, List[Bool]] {
+  var prev: Map[Str, List[Bool]] = {}
+  for line in ((os.fs.read(path).ok() ?? b"").to_str() ?? "").split("\n") {
+    let sp = line.split(" ")
+    if sp.len() == 2 {
+      var fl: List[Bool] = []
+      for c in sp[1].bytes() {
+        fl.push(c == 0x31)
+      }
+      prev[sp[0]] = fl
+    }
+  }
+  prev
+}
+
+fn borrow_record_write(os: Os, path: Str, rec: Map[Str, List[Bool]]) {
+  var w = StrBuilder.new()
+  for (h, fl) in rec {
+    w.write(h)
+    w.write(" ")
+    for x in fl {
+      w.write(if x { "1" } else { "0" })
+    }
+    w.write("\n")
+  }
+  cache_put(os, path, w.freeze().bytes())
 }
 
 /// The hash of every std source under dir (its .xo files, by path

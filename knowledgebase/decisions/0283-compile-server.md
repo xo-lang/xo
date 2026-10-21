@@ -160,3 +160,29 @@ calls. Options: fork a child per request from the warm server (exits
 stay; needs an rt fork for darwin, linux has llrt linux.fork, and a
 reset of the worker pool in the child, whose threads do not survive a
 fork), or return errors from the driver (about 115 call sites).
+
+## Stage A: incremental borrow inference (2026-10-21, xo-fa)
+
+insert_rc's borrow inference (0.39 to 0.50 s of a warm edit of xo)
+scanned all of xo's functions at least once in every build. Now each
+function gets a body hash (ssa borrow_hash: the compiler's identity, the
+target, the function in full after reuse_var_params with its types by
+key, and whether each name it uses names a function), and the build
+target's pack keeps the last build's flags by body hash (<slot>/borrow/
+list). A function whose hash the record has and none of whose callees,
+transitively, is new or changed keeps its recorded flags; the rest (the
+new or changed functions and their callers, closed) start from
+"borrowed" and run the rounds against those. That gives the full
+inference's flags: a function outside the set reads only its own body
+and its callees', all outside the set, so its part of the greatest
+fixed point is the last build's, and the rounds give the set the
+greatest fixed point against it. Starting every function from its
+recorded flags would not: a callee that stops consuming a parameter
+(owned to borrowed) must make its callers borrowed again, which the
+rounds, only ever going from borrowed to owned, cannot do.
+
+Verify mode runs the full inference; XO_BORROW_CHECK=1 runs both and
+fails the build when they differ; --phase-times prints `cache borrows
+KEPT/TOTAL kept`. Test: internal/arm64 TestBorrowIncremental (a callee
+edited from consuming its list to not and back, each build checked and
+compared with the cache-off build).

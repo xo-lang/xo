@@ -502,6 +502,18 @@ fn reuse_var_params(var f: Func, types: List[SType]) {
 /// Marks the parameters no path of their function consumes (inferBorrows).
 /// The rounds scan their functions on up to jobs tasks (borrow_scan).
 fn (var r: Rc) infer_borrows(funcs: List[Func], jobs: Int) {
+  r.init_borrows(funcs)
+  let callers = borrow_callers(r, funcs)
+  var dirty: List[Bool] = []
+  for _ in 0..funcs.len() {
+    dirty.push(true)
+  }
+  r.borrow_rounds(funcs, jobs, callers, dirty)
+}
+
+/// Every function's flags before inference: each heap parameter borrowed
+/// (the closure of an indirect function, none of an entry function's).
+fn (var r: Rc) init_borrows(funcs: List[Func]) {
   r.borrowed = []
   for f in funcs {
     let ps = f.blocks[0].params
@@ -521,21 +533,14 @@ fn (var r: Rc) infer_borrows(funcs: List[Func], jobs: Int) {
     }
     r.borrowed.push(bs)
   }
-  // a function's flags depend on its own and its callees' (through the
-  // modes of its calls): after the first round over every function, only
-  // the callers of a function whose flags changed, and it, are scanned
-  // again. The flags only go from borrowed to owned and each scan is
-  // monotone in them, so the result is the greatest fixed point whatever
-  // the order: the same as rescanning every function until none changes.
-  // So a round scans its functions against the flags as the round began,
-  // on tasks (the serial walk was a second of an edit build of xo,
-  // decision 0220 addendum stage D 2f), and applies what they found
+}
+
+/// The callers of each function (by r.fidx: the functions each name).
+fn borrow_callers(r: Rc, funcs: List[Func]) -> List[List[Int]] {
   let n = funcs.len()
   var callers: List[List[Int]] = []
-  var dirty: List[Bool] = []
   for _ in 0..n {
     callers.push([])
-    dirty.push(true)
   }
   for (fi, f) in funcs.indexed() {
     var seen: Map[Int, Bool] = {}
@@ -550,6 +555,21 @@ fn (var r: Rc) infer_borrows(funcs: List[Func], jobs: Int) {
       }
     }
   }
+  callers
+}
+
+/// infer_borrows' rounds from the dirty functions: a function's flags
+/// depend on its own and its callees' (through the modes of its calls):
+/// only the callers of a function whose flags changed, and it, are
+/// scanned again. The flags only go from borrowed to owned and each scan
+/// is monotone in them, so the result is the greatest fixed point whatever
+/// the order: the same as rescanning every function until none changes.
+/// So a round scans its functions against the flags as the round began,
+/// on tasks (the serial walk was a second of an edit build of xo,
+/// decision 0220 addendum stage D 2f), and applies what they found.
+fn (var r: Rc) borrow_rounds(funcs: List[Func], jobs: Int, callers: List[List[Int]], dirty0: List[Bool]) {
+  let n = funcs.len()
+  var dirty = dirty0
   while true {
     var todo: List[Int] = []
     for fi in 0..n {
@@ -573,6 +593,51 @@ fn (var r: Rc) infer_borrows(funcs: List[Func], jobs: Int) {
       }
     }
   }
+}
+
+/// infer_borrows given the last build's flags by body hash (prev, of
+/// borrow_hashes hs): a function whose hash prev holds, none of whose
+/// callees (transitively) is new or changed, keeps the flags prev has
+/// for it; the others (the new or changed and their callers, closed)
+/// are inferred from the start, against those. A function outside that
+/// set reads only its own body and its callees', all outside it too, so
+/// its part of the greatest fixed point is the last build's; the rounds
+/// then give the rest the greatest fixed point's flags against it. The
+/// number of functions inferred.
+fn (var r: Rc) infer_borrows_incr(funcs: List[Func], jobs: Int, hs: List[Str], prev: Map[Str, List[Bool]]) -> Int {
+  r.init_borrows(funcs)
+  let callers = borrow_callers(r, funcs)
+  let n = funcs.len()
+  var dirty: List[Bool] = []
+  var work: List[Int] = []
+  for fi in 0..n {
+    let known = match prev.get(hs[fi]) {
+      Some(fl) => fl.len() == r.borrowed[fi].len()
+      None => false
+    }
+    dirty.push(!known)
+    if !known {
+      work.push(fi)
+    }
+  }
+  while let Some(fi) = work.pop() {
+    for c in callers[fi] {
+      if !dirty[c] {
+        dirty[c] = true
+        work.push(c)
+      }
+    }
+  }
+  var nd = 0
+  for fi in 0..n {
+    if dirty[fi] {
+      nd += 1
+    } else {
+      r.borrowed[fi] = prev.get(hs[fi]) ?? r.borrowed[fi]
+    }
+  }
+  r.borrow_rounds(funcs, jobs, callers, dirty)
+  nd
 }
 
 /// One round of infer_borrows: each function of todo scanned against the
@@ -821,6 +886,44 @@ pub fn (var b: Builder) rc_prepare(jobs: Int) -> Rc {
   r.infer_borrows(b.m.funcs, jobs)
   r.chain = !b.m.passes_off.contains("chain_pads")
   r
+}
+
+/// rc_prepare with the borrow inference incremental (infer_borrows_incr)
+/// over prev, the last build's flags by body hash (borrow_hashes, for the
+/// compiler of identity id): the Rc, this build's record (each body
+/// hash's flags), how many functions were inferred, and with check
+/// (XO_BORROW_CHECK=1) whether the full inference (of a copy of the
+/// builder, made first) found the same flags (true without check).
+pub fn (var b: Builder) rc_prepare_incr(jobs: Int, id: Str, prev: Map[Str, List[Bool]], check: Bool) -> (Rc, Map[Str, List[Bool]], Int, Bool) {
+  let full = if check { full_borrows(b, jobs) } else { [] }
+  var r = Rc{types: b.m.types, imm_ret: immortal_returns(b.m.funcs), skip_imm: b.imm_rc}
+  for (i, f) in b.m.funcs.indexed() {
+    r.fidx[f.name] = i
+    if !f.var_params.is_empty() {
+      r.vparams[f.name] = f.var_params
+    }
+  }
+  let n = b.m.funcs.len()
+  for fi in 0..n {
+    var f = b.m.funcs[fi]
+    b.m.funcs[fi] = Func{name: ""}
+    reuse_var_params(f, b.m.types)
+    b.m.funcs[fi] = f
+  }
+  let hs = borrow_hashes(b.m, r, type_keys(b.m), id, jobs)
+  let nd = r.infer_borrows_incr(b.m.funcs, jobs, hs, prev)
+  var rec: Map[Str, List[Bool]] = {}
+  for fi in 0..n {
+    rec[hs[fi]] = r.borrowed[fi]
+  }
+  r.chain = !b.m.passes_off.contains("chain_pads")
+  (r, rec, nd, !check || r.borrowed == full)
+}
+
+/// The flags of the full borrow inference of a copy of b.
+fn full_borrows(b0: Builder, jobs: Int) -> List[List[Bool]] {
+  var b = b0
+  b.rc_prepare(jobs).borrowed
 }
 
 /// The reference counting of function fi (f) through the cache

@@ -200,6 +200,71 @@ fn rc_key(m: Module, fi: Int, r: Rc, tk: List[Str], id: Str) -> Str {
   crypto.sha256(b.freeze()).to_hex()
 }
 
+/// Each function's body hash for the incremental borrow inference
+/// (rc_prepare_incr), on up to jobs tasks: the SHA-256 of the compiler's
+/// identity, the target, the function in full (after reuse_var_params)
+/// with its types by key, and whether each name it uses names a function
+/// of the module. What a scan reads of its callees (their flags, `var`
+/// parameters, immortal returns, signatures) comes from their bodies,
+/// whose own hashes cover it: a changed callee makes its callers
+/// inferred again (infer_borrows_incr).
+fn borrow_hashes(m: Module, r: Rc, tk: List[Str], id: Str, jobs: Int) -> List[Str] {
+  let n = m.funcs.len()
+  let rr = r
+  let next = Atomic[Int].new(0)
+  let done = scope s {
+    var ts = []
+    for _ in 0..jobs.min(n).max(1) {
+      ts.push(s.spawn(fn() -> List[(Int, Str)] {
+        var mine: List[(Int, Str)] = []
+        while true {
+          let i = next.add(64) - 64
+          if i >= n {
+            break
+          }
+          for fi in i..(i + 64).min(n) {
+            mine.push((fi, borrow_hash(m, fi, rr, tk, id)))
+          }
+        }
+        mine
+      }))
+    }
+    var all: List[(Int, Str)] = []
+    for t in ts {
+      all = all + t.await
+    }
+    all
+  }
+  var hs: List[Str] = []
+  for _ in 0..n {
+    hs.push("")
+  }
+  for (fi, h) in done {
+    hs[fi] = h
+  }
+  hs
+}
+
+fn borrow_hash(m: Module, fi: Int, r: Rc, tk: List[Str], id: Str) -> Str {
+  let f = m.funcs[fi]
+  var b = BytesBuilder.new()
+  b.write_str("${BORROW_REC_VERSION}\n${id}\n${m.goarch}\nlast=${(r.fidx.get(f.name) ?? -1) == fi} imm=${r.skip_imm}\n")
+  key_func(b, f, tk)
+  var seen: Map[Str, Bool] = {}
+  for x in f.values {
+    if let S(s) = x.aux {
+      if !seen.contains(s) {
+        seen[s] = true
+        b.write_str("name ${s.len()}:${s} ${r.fidx.contains(s)}\n")
+      }
+    }
+  }
+  crypto.sha256(b.freeze()).to_hex()
+}
+
+/// The version of the incremental borrow inference's record and hashes.
+pub const BORROW_REC_VERSION = "xo borrow record v1"
+
 fn bools_text(xs: List[Bool]) -> Str {
   var b = StrBuilder.new()
   b.write("[")
