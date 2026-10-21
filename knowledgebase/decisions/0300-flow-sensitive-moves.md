@@ -1,7 +1,8 @@
 # 0300: Flow-sensitive moves of move-only builders
 
-Status: Proposed (xo-fa, 2026-10-21, drafted at the lead's request for
-the owner; no code until the owner approves).
+Status: Accepted (owner, 2026-10-21; drafted by xo-fa, implemented by Xo
+Publish: compiler/check/flow.xo's move walk, spec core 5.3, errorcheck
+test/errorcheck/moves_path_ends).
 
 ## Context
 

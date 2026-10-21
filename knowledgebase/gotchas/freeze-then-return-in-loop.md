@@ -1,6 +1,8 @@
 # `return b.freeze()` inside a loop counts as a move for the next iteration
 
-Status: Observed (2026-10-11, porting std/toml to Xo)
+Status: Observed (2026-10-11, porting std/toml to Xo); the `return`
+case is fixed by decision 0300 (2026-10-21): a path that ends no longer
+carries its moves to the next iteration
 
 Symptom: XO0510 "use of moved value `b`" on every use of a
 `BytesBuilder` in a `while` loop whose body ends one branch with

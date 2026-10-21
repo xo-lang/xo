@@ -12,6 +12,11 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.10
 
+- **Moves end with their path** (5.3, decision 0300): a move of a
+  `Buf`, `StrBuilder`, or `BytesBuilder` on a path that ends (`return`,
+  `break`, `continue`, the error side of `?`, a `Never` call) no longer
+  reaches the code after it, so `return Some(out.freeze())` inside a loop
+  or an `if` is accepted; `XO0510` keeps its meaning.
 - **Debug interpolation** (1.6, decision 0296): `${x:?}` writes the Debug
   text of `x`, as `x.debug()` does, so a `Result`, `List`, or `Option`
   needs no `.debug()`. `xo vet` notes `${x.debug()}` with the fix
@@ -1694,6 +1699,25 @@ b.push(2)                // error XO0510: use of moved value `b`
 - Assigning, passing, sending on a channel, or capturing in a spawned task moves
   the buffer. The compiler tracks moves only for these types. There is no
   general borrow checker.
+- A move on a path that ends (a `return`, a `break` or `continue`, the error
+  side of `?`, a call of a function whose result is `Never`) does not reach the
+  code after that point. A use is `XO0510` only when some path that can reach
+  it moved the value and did not assign it again (decision 0300). A `break`
+  carries its moves to the code after its loop and a `continue` to the loop's
+  next iteration:
+
+```
+fn decode(s: Bytes) -> Bytes? {
+  var out = BytesBuilder.new()
+  for c in s {
+    if c == 61 {
+      return Some(out.freeze())   // the path ends: no move reaches below
+    }
+    out.write_byte(c)
+  }
+  Some(out.freeze())
+}
+```
 
 ### 5.4 Shared mutable state
 

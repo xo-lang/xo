@@ -1,0 +1,158 @@
+// Decision 0300: a move on a path that ends (return, break, continue, a
+// Never call) does not reach the code after it. The first six functions
+// are accepted; the last four are still rejected.
+
+// a return inside a loop: the natural decoder
+fn decode(s: Bytes) -> Bytes? {
+  var out = BytesBuilder.new()
+  for c in s {
+    if c == 61 {
+      return Some(out.freeze())
+    }
+    out.write_byte(c)
+  }
+  Some(out.freeze())
+}
+
+// an if with no else that freezes and returns
+fn checked(s: Bytes, bad: Bool) -> Bytes ! Str {
+  var out = BytesBuilder.new()
+  out.write(s)
+  if bad {
+    return Err("bad: ${out.freeze().len()} bytes")
+  }
+  Ok(out.freeze())
+}
+
+// a match arm that freezes and returns
+fn by_kind(k: Int) -> Str {
+  var b = StrBuilder.new()
+  match k {
+    0 => {
+      b.write("zero")
+      return b.freeze()
+    }
+    _ => b.write("other")
+  }
+  b.write("!")
+  b.freeze()
+}
+
+// a Never call ends the path
+fn or_fault(s: Bytes, bad: Bool) -> Bytes {
+  var out = BytesBuilder.new()
+  out.write(s)
+  if bad {
+    fault("bad input of ${out.freeze().len()} bytes")
+  }
+  out.freeze()
+}
+
+// a labeled loop left by return from the inner loop
+fn first_row(rows: List[Bytes]) -> Bytes {
+  var out = BytesBuilder.new()
+  outer: for r in rows {
+    for c in r {
+      if c == 10 {
+        return out.freeze()
+      }
+      out.write_byte(c)
+    }
+    if r.is_empty() {
+      continue outer
+    }
+  }
+  out.freeze()
+}
+
+// a builder made again before continue
+fn split(s: Bytes) -> List[Bytes] {
+  var parts: List[Bytes] = []
+  var cur = BytesBuilder.new()
+  for c in s {
+    if c == 44 {
+      parts.push(cur.freeze())
+      cur = BytesBuilder.new()
+      continue
+    }
+    cur.write_byte(c)
+  }
+  parts.push(cur.freeze())
+  parts
+}
+
+// still rejected: break carries the move to the code after the loop
+fn after_break(s: Bytes) -> Bytes {
+  var out = BytesBuilder.new()
+  var first = b""
+  for c in s {
+    if c == 0 {
+      first = out.freeze()
+      break
+    }
+    out.write_byte(c)
+  }
+  if first.is_empty() {
+    return b""
+  }
+  out.freeze() // ERROR XO0510 "use of moved value `out`"
+}
+
+// still rejected: continue carries the move to the next iteration
+fn after_continue(s: Bytes) -> List[Bytes] {
+  var parts: List[Bytes] = []
+  var cur = BytesBuilder.new()
+  for c in s {
+    if c == 44 {
+      parts.push(cur.freeze()) // ERROR XO0510 "use of moved value `cur`"
+      continue
+    }
+    cur.write_byte(c) // ERROR XO0510 "use of moved value `cur`"
+  }
+  parts
+}
+
+// still rejected: a move on a path that falls through
+fn fall_through(s: Bytes, twice: Bool) -> Bytes {
+  var out = BytesBuilder.new()
+  out.write(s)
+  var first = b""
+  if twice {
+    first = out.freeze()
+  }
+  out.write(first) // ERROR XO0510 "use of moved value `out`"
+  out.freeze() // ERROR XO0510 "use of moved value `out`"
+}
+
+// still rejected: break outer carries the move to the code after the
+// outer loop
+fn after_break_outer(rows: List[Bytes]) -> Bytes {
+  var out = BytesBuilder.new()
+  var first = b""
+  outer: for r in rows {
+    for c in r {
+      if c == 0 {
+        first = out.freeze()
+        break outer
+      }
+      out.write_byte(c)
+    }
+  }
+  if first.is_empty() {
+    return b""
+  }
+  out.freeze() // ERROR XO0510 "use of moved value `out`"
+}
+
+fn main(os: Os) {
+  let a = decode(b"ab=c") ?? b""
+  let b = checked(b"x", false).ok() ?? b""
+  let c = or_fault(b"y", false)
+  let d = first_row([b"ab\ncd"])
+  let e = split(b"a,b")
+  let f = after_break(b"a")
+  let g = after_continue(b"a,b")
+  let h = fall_through(b"z", false)
+  let k = after_break_outer([b"a"])
+  os.stdio.println("${a.len()} ${b.len()} ${by_kind(0)} ${c.len()} ${d.len()} ${e.len()} ${f.len()} ${g.len()} ${h.len()} ${k.len()}")
+}

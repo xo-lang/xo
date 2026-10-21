@@ -25,6 +25,11 @@ pub struct Checker {
   pub root_mods: List[Int] = []
   /// Why the run cannot be checked here (`use go`, a parse error), or "".
   pub unsupported: Str = ""
+  /// The move walk (core 5.3, decision 0300): whether the current path
+  /// has ended (a return, break, continue, or a Never call), and the
+  /// loops it is inside, innermost last.
+  mv_dead: Bool = false
+  mv_frames: List[MvFrame] = []
   /// A directory of the run that could not be listed for a reason other
   /// than not existing or not being readable (an I/O error, such as no
   /// file descriptors left), or "": check_dirs fails with it rather than

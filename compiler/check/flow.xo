@@ -824,6 +824,45 @@ fn (c: Checker) is_move_only(t: Int) -> Bool {
 /// The moved locals and where each was moved.
 type Moved = Map[Int, Span]
 
+/// A loop the move walk is inside (decision 0300): its label, and the
+/// moved states its `break`s and `continue`s carried out of the body.
+struct MvFrame {
+  label: Bytes
+  brk: Moved = {}
+  cont: Moved = {}
+}
+
+/// Whether a and b move the same locals (a loop's state stops growing).
+fn same_moved(a: Moved, b: Moved) -> Bool {
+  if a.len() != b.len() {
+    return false
+  }
+  for (k, _) in a.entries() {
+    if !b.contains(k) {
+      return false
+    }
+  }
+  true
+}
+
+/// The frame a `break` or `continue` with label (empty: none) leaves:
+/// the innermost loop, or the one the label names; -1 when none.
+fn (c: Checker) mv_frame(label: Ident?) -> Int {
+  var i = c.mv_frames.len() - 1
+  while i >= 0 {
+    match label {
+      None => return i
+      Some(l) => {
+        if c.mv_frames[i].label == l.name {
+          return i
+        }
+      }
+    }
+    i -= 1
+  }
+  -1
+}
+
 fn union_moved(a: Moved, b: Moved) -> Moved {
   var out = a
   for (k, v) in b.entries() {
@@ -849,15 +888,23 @@ fn (c: Checker) names_move_only(sites: List[FlowSite]) -> Bool {
 
 fn (var c: Checker) check_moves(body: Block) {
   var moved: Moved = {}
+  c.mv_dead = false
+  c.mv_frames = []
   c.mv_block(body, true, moved)
+  c.mv_dead = false
 }
 
 fn (var c: Checker) mv_block(b: Block, tail_moves: Bool, var moved: Moved) {
   let n = b.stmts.len()
   for (i, s) in b.stmts.indexed() {
+    // the rest of a block after its path ended cannot run (decision 0300)
+    if c.mv_dead {
+      return
+    }
     if let ExprStmt(x: x, ..) = s {
       if i == n - 1 && tail_moves {
         c.mv_expr(x, true, moved)
+        c.mv_never(x)
         continue
       }
     }
@@ -865,9 +912,21 @@ fn (var c: Checker) mv_block(b: Block, tail_moves: Bool, var moved: Moved) {
   }
 }
 
+/// Ends the path after an expression statement whose type is Never (a
+/// call of fault or os.proc.exit).
+fn (var c: Checker) mv_never(x: Expr) {
+  let t = c.type_of(x)
+  if t >= 0 && c.is_never(t) {
+    c.mv_dead = true
+  }
+}
+
 fn (var c: Checker) mv_stmt(s: Stmt, var moved: Moved) {
   match s {
-    ExprStmt(x: x, ..) => c.mv_expr(x, false, moved)
+    ExprStmt(x: x, ..) => {
+      c.mv_expr(x, false, moved)
+      c.mv_never(x)
+    }
     LetStmt(pattern: pattern, value: value, ..) => {
       c.mv_expr(value, true, moved)
       // a binding declared in a loop body is a new binding each time
@@ -904,31 +963,76 @@ fn (var c: Checker) mv_stmt(s: Stmt, var moved: Moved) {
       if let Some(x) = value {
         c.mv_expr(x, true, moved)
       }
+      c.mv_dead = true
     }
-    ForStmt(iter: iter, body: body, ..) => {
+    ForStmt(label: label, iter: iter, body: body, ..) => {
       c.mv_expr(iter, false, moved)
-      c.mv_loop(body, moved)
+      c.mv_loop(label, body, moved)
     }
-    WhileStmt(cond: cond, value: value, body: body, ..) => {
+    WhileStmt(label: label, cond: cond, value: value, body: body, ..) => {
       if let Some(x) = cond {
         c.mv_expr(x, false, moved)
       }
       for x in value {
         c.mv_expr(x, false, moved)
       }
-      c.mv_loop(body, moved)
+      c.mv_loop(label, body, moved)
     }
-    BreakStmt(..) | ContinueStmt(..) | BadStmt(..) | ConstDecl(_) => {}
+    // the state goes to the loop's exit or its next iteration, and the
+    // path ends here (decision 0300)
+    BreakStmt(label: label, ..) => {
+      let i = c.mv_frame(label)
+      if i >= 0 {
+        c.mv_frames[i].brk = union_moved(c.mv_frames[i].brk, moved)
+      }
+      c.mv_dead = true
+    }
+    ContinueStmt(label: label, ..) => {
+      let i = c.mv_frame(label)
+      if i >= 0 {
+        c.mv_frames[i].cont = union_moved(c.mv_frames[i].cont, moved)
+      }
+      c.mv_dead = true
+    }
+    BadStmt(..) | ConstDecl(_) => {}
   }
 }
 
-/// A loop body walked twice, so a move in one iteration is seen by the
-/// next; the loop may also not run at all.
-fn (var c: Checker) mv_loop(body: Block, var moved: Moved) {
+/// A loop body walked until its starting state stops growing, so a move
+/// in one iteration is seen by the next (decision 0300): an iteration
+/// starts from the state before the loop, the end of the body, and every
+/// `continue`'s; the state after it is the union of the state before (no
+/// iteration), the end of the body, and every `break`'s. A path that
+/// ended in the body (a return) reaches neither.
+fn (var c: Checker) mv_loop(label: Ident?, body: Block, var moved: Moved) {
   let before = moved
-  c.mv_block(body, false, moved)
-  c.mv_block(body, false, moved)
-  moved = union_moved(before, moved)
+  let outer_dead = c.mv_dead
+  c.mv_frames.push(MvFrame{label: match label {
+    Some(l) => l.name
+    None => b""
+  }})
+  let fi = c.mv_frames.len() - 1
+  var entry = before
+  var ends: Moved = {}
+  var rounds = 0
+  while true {
+    moved = entry
+    c.mv_dead = false
+    c.mv_block(body, false, moved)
+    if !c.mv_dead {
+      ends = union_moved(ends, moved)
+    }
+    let next = union_moved(union_moved(before, ends), c.mv_frames[fi].cont)
+    rounds += 1
+    // the moved set only grows, so this ends; the bound is a guard
+    if same_moved(next, entry) || rounds > 64 {
+      break
+    }
+    entry = next
+  }
+  let fr = c.mv_frames.pop() ?? MvFrame{label: b""}
+  moved = union_moved(union_moved(before, ends), fr.brk)
+  c.mv_dead = outer_dead
 }
 
 /// Walks e; mv is true when e's value is moved (bound, passed to a non
@@ -937,7 +1041,7 @@ fn (var c: Checker) mv_expr(e: Expr, mv: Bool, var moved: Moved) {
   match e {
     Ident(id) => {
       let v = c.ident_obj(id)
-      if v < 0 || !c.is_move_only(c.objs[v].ty) {
+      if v < 0 || !c.is_move_only(c.objs[v].ty) || c.mv_dead {
         return
       }
       if let Some(at) = moved.get(v) {
@@ -1022,40 +1126,67 @@ fn (var c: Checker) mv_expr(e: Expr, mv: Bool, var moved: Moved) {
       if let Some(v) = x.value {
         c.mv_expr(v, false, moved)
       }
+      // a branch whose path ended adds nothing to the join (decision 0300)
       let start = moved
+      let dead0 = c.mv_dead
       c.mv_block(x.then, mv, moved)
       let after_then = moved
+      let then_dead = c.mv_dead
       moved = start
+      c.mv_dead = dead0
       if let Some(els) = x.els {
         c.mv_expr(els, mv, moved)
       }
-      moved = union_moved(after_then, moved)
+      let els_dead = c.mv_dead
+      if then_dead && els_dead {
+        moved = start
+        c.mv_dead = true
+      } else if then_dead {
+        c.mv_dead = false
+      } else if els_dead {
+        moved = after_then
+        c.mv_dead = false
+      } else {
+        moved = union_moved(after_then, moved)
+      }
     }
     MatchExpr(subject: subject, arms: arms, ..) => {
       c.mv_expr(subject, false, moved)
       let start = moved
-      var result = moved
+      let dead0 = c.mv_dead
+      var result: Moved = {}
+      var live = false
       for arm in arms {
         moved = start
+        c.mv_dead = dead0
         if let Some(g) = arm.guard {
           c.mv_expr(g, false, moved)
         }
         if let Some(body) = arm.body {
           if let ExprStmt(x: bx, ..) = body {
             c.mv_expr(bx, mv, moved)
+            c.mv_never(bx)
           } else {
             c.mv_stmt(body, moved)
           }
         }
-        result = union_moved(result, moved)
+        if !c.mv_dead {
+          result = union_moved(result, moved)
+          live = true
+        }
       }
-      moved = result
+      // every arm's path ended: so does the match's (decision 0300)
+      moved = if live { result } else { start }
+      c.mv_dead = !live && !arms.is_empty()
     }
     SelectExpr(arms: arms, ..) => {
       let start = moved
-      var result = moved
+      let dead0 = c.mv_dead
+      var result: Moved = {}
+      var live = false
       for arm in arms {
         moved = start
+        c.mv_dead = dead0
         if let Some(op) = arm.op {
           c.mv_expr(op, false, moved)
         }
@@ -1065,11 +1196,15 @@ fn (var c: Checker) mv_expr(e: Expr, mv: Bool, var moved: Moved) {
         if let Some(body) = arm.body {
           c.mv_stmt(body, moved)
         }
-        result = union_moved(result, moved)
+        if !c.mv_dead {
+          result = union_moved(result, moved)
+          live = true
+        }
       }
-      moved = result
+      moved = if live { result } else { start }
+      c.mv_dead = !live && !arms.is_empty()
     }
-    WhileExpr(body: body, ..) => c.mv_loop(body, moved)
+    WhileExpr(body: body, ..) => c.mv_loop(None, body, moved)
     ScopeExpr(body: body, ..) => c.mv_block(body, mv, moved)
     StructLit(fields: fields, ..) => {
       for f in fields {
