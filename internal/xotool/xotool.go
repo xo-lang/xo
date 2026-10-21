@@ -8,6 +8,13 @@
 //
 //   - $XO_CLI (its first field), when set: that binary, as it is, so a
 //     run can pin one (a release's bin/xo, or one built before a change);
+//     but when the binary records the key it was built for (bin/xo.key
+//     beside it, or the cache's checkout/<key>/xo) and the checkout's
+//     sources now have another key, Path fails (StaleCLI): a worktree's
+//     bin/xo pinned before a rebase tested newer std and goldens against
+//     an older compiler (Xo lang 5, 2026-10-21: 7 bogus failures of a
+//     60 minute suite). XO_CLI_STALE_OK=1 allows a deliberate cross
+//     version run;
 //   - else <repo>/bin/xo, rebuilt first when it was not built from the
 //     checkout's current sources (bin/xo.key holds the key it was built
 //     for, Key).
@@ -103,6 +110,17 @@ func Path() (string, error) {
 			pathBin = f[0]
 			if _, err := os.Stat(pathBin); err != nil {
 				pathErr = fmt.Errorf("XO_CLI=%s: %v", pathBin, err)
+				return
+			}
+			if os.Getenv("XO_CLI_STALE_OK") != "1" {
+				if root, err := Root(); err == nil {
+					pathErr = StaleCLI(root, pathBin)
+					if pathErr != nil {
+						// once, where go test shows it: the callers report a
+						// failed start in their own ways, some not at all
+						fmt.Fprintf(os.Stderr, "xotool: %v\n", pathErr)
+					}
+				}
 			}
 			return
 		}
@@ -114,6 +132,57 @@ func Path() (string, error) {
 		pathBin, pathErr = Ensure(root, os.Stderr)
 	})
 	return pathBin, pathErr
+}
+
+// BuiltKey is the source key the xo at bin was built for, and its
+// commit when recorded ("" for unknown): bin/xo.key and bin/xo.commit
+// beside a checkout's bin/xo (Ensure), or the cache's checkout/<key>/xo
+// and its commit file; ok is false when bin records no key (a release's
+// or seed's xo).
+func BuiltKey(bin string) (key, commit string, ok bool) {
+	dir := filepath.Dir(bin)
+	if b, err := os.ReadFile(filepath.Join(dir, "xo.key")); err == nil {
+		c, _ := os.ReadFile(filepath.Join(dir, "xo.commit"))
+		return strings.TrimSpace(string(b)), strings.TrimSpace(string(c)), true
+	}
+	if filepath.Base(filepath.Dir(dir)) == "checkout" && isKey(filepath.Base(dir)) {
+		c, _ := os.ReadFile(filepath.Join(dir, "commit"))
+		return filepath.Base(dir), strings.TrimSpace(string(c)), true
+	}
+	return "", "", false
+}
+
+func isKey(s string) bool {
+	if len(s) != 16 {
+		return false
+	}
+	for _, r := range s {
+		if !strings.ContainsRune("0123456789abcdef", r) {
+			return false
+		}
+	}
+	return true
+}
+
+// StaleCLI is an error when the xo at bin was built for other sources
+// than root's now (Key), nil when they match or bin records no key.
+func StaleCLI(root, bin string) error {
+	k, commit, ok := BuiltKey(bin)
+	if !ok {
+		return nil
+	}
+	now, err := Key(root)
+	if err != nil || now == k {
+		return nil
+	}
+	if commit == "" {
+		commit = "not recorded"
+	}
+	head := headCommit(root)
+	if head == "" {
+		head = "unknown"
+	}
+	return fmt.Errorf("XO_CLI=%s is stale: it was built from sources with key %s (commit %s), but %s has key %s now (HEAD %s): compiler/ or the std it builds in changed since (a rebase of its worktree?), so newer std and goldens would run against an older compiler. Rebuild it (go run ./scripts/xobuild in that tree) or unset XO_CLI; XO_CLI_STALE_OK=1 runs it anyway, for a deliberate cross version run", bin, k, commit, root, now, head)
 }
 
 // Command is Path with the leading flags $XO_CLI carries (its fields
@@ -291,6 +360,14 @@ func Ensure(root string, log io.Writer) (string, error) {
 	}
 	if err := writeAtomic(keyFile, []byte(key+"\n"), 0o644); err != nil {
 		return "", err
+	}
+	// the commit it was built from, for StaleCLI's message ("" when the
+	// sources had uncommitted changes)
+	commitFile := filepath.Join(root, "bin", "xo.commit")
+	if c, err := os.ReadFile(filepath.Join(filepath.Dir(built), "commit")); err == nil {
+		writeAtomic(commitFile, c, 0o644)
+	} else {
+		os.Remove(commitFile)
 	}
 	// the clang level of an LLVM built xo, which scripts/seed-pack.sh
 	// checks (seeds are -O2)

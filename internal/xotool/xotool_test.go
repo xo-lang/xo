@@ -152,3 +152,55 @@ func TestStampArgs(t *testing.T) {
 		t.Errorf("a tree without provenance.xo: %q", a)
 	}
 }
+
+// TestStaleCLI: a pinned xo (XO_CLI) built for other sources than the
+// checkout's fails fast, naming both keys and the commit it was built
+// from (Xo lang 5, 2026-10-21: a worktree's bin/xo pinned before a
+// rebase ran newer goldens against an older compiler); one built for
+// these sources, or one that records no key, passes.
+func TestStaleCLI(t *testing.T) {
+	root, err := Root()
+	if err != nil {
+		t.Skip(err)
+	}
+	key, err := Key(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := func(dir, k, commit string) string {
+		t.Helper()
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		bin := filepath.Join(dir, "xo")
+		os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755)
+		if k != "" {
+			os.WriteFile(filepath.Join(dir, "xo.key"), []byte(k+"\n"), 0o644)
+		}
+		if commit != "" {
+			os.WriteFile(filepath.Join(dir, "xo.commit"), []byte(commit+"\n"), 0o644)
+		}
+		return bin
+	}
+	tmp := t.TempDir()
+	if err := StaleCLI(root, fake(filepath.Join(tmp, "current"), key, "")); err != nil {
+		t.Errorf("an xo built for these sources: %v", err)
+	}
+	err = StaleCLI(root, fake(filepath.Join(tmp, "old"), "0123456789abcdef", "deadbeef"))
+	if err == nil || !strings.Contains(err.Error(), "0123456789abcdef") || !strings.Contains(err.Error(), key) || !strings.Contains(err.Error(), "deadbeef") || !strings.Contains(err.Error(), "XO_CLI_STALE_OK") {
+		t.Errorf("an xo built for older sources: %v", err)
+	}
+	if err := StaleCLI(root, fake(filepath.Join(tmp, "release"), "", "")); err != nil {
+		t.Errorf("an xo that records no key: %v", err)
+	}
+	// the cache's layout: checkout/<key>/xo
+	cached := filepath.Join(tmp, "checkout", "fedcba9876543210")
+	os.MkdirAll(cached, 0o755)
+	os.WriteFile(filepath.Join(cached, "xo"), []byte("#!/bin/sh\n"), 0o755)
+	if k, _, ok := BuiltKey(filepath.Join(cached, "xo")); !ok || k != "fedcba9876543210" {
+		t.Errorf("BuiltKey of a cached build: %q %v", k, ok)
+	}
+	if err := StaleCLI(root, filepath.Join(cached, "xo")); err == nil {
+		t.Errorf("a cached build of another key passed")
+	}
+}

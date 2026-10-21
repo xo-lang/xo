@@ -193,6 +193,12 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   given out again, even if its branch is dropped (core 10: a code keeps
   its meaning). A code used twice on main fails -short
   (internal/repotest explainCodes and TestSpecListsEveryCode).
+- `XO_CLI` pinned to a worktree's bin/xo goes stale when that worktree is
+  rebased (pushq does): the Go tests then fail at once with `xotool:
+  XO_CLI=... is stale` and both keys and commits, instead of running newer
+  std and goldens against the older compiler (Xo lang 5 lost a 60 minute
+  suite to that, 2026-10-21). Rebuild (`go run ./scripts/xobuild` in that
+  tree) or, for a deliberate cross version run, `XO_CLI_STALE_OK=1`.
 - Gate scripts: `. ~/xo-lead/agents/gatelib.sh` (scripts/lead/gatelib.sh,
   installed by install.sh), then `gotests PKG 'TestA|TestB'` for the
   proving tests (exactly those names, -v, one `--- PASS` line each) and
