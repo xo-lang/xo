@@ -246,3 +246,38 @@ func TestStaleCLIStamped(t *testing.T) {
 		t.Errorf("a copied xo of other sources: %v", err)
 	}
 }
+
+// TestVerifyBuilt: Ensure never returns an xo stamped with another
+// source key than the tree's (2026-10-21: xobuild printed another
+// worktree's bin/xo); VerifyBuilt refuses a cached xo of other sources
+// and accepts one whose stamp matches its key.
+func TestVerifyBuilt(t *testing.T) {
+	base, err := cacheBase()
+	if err != nil {
+		t.Skip(err)
+	}
+	ents, _ := os.ReadDir(filepath.Join(base, "checkout"))
+	n := 0
+	for _, e := range ents {
+		p := filepath.Join(base, "checkout", e.Name(), exeName("xo"))
+		if !isKey(e.Name()) || !isFile(p) {
+			continue
+		}
+		k, _, ok := stampedKey(p)
+		if !ok {
+			continue
+		}
+		if err := VerifyBuilt(p, k); err != nil {
+			t.Errorf("%s with its own key: %v", p, err)
+		}
+		if err := VerifyBuilt(p, "0123456789abcdef"); err == nil || !strings.Contains(err.Error(), k) {
+			t.Errorf("%s with another key: %v", p, err)
+		}
+		if n++; n == 2 {
+			break
+		}
+	}
+	if n == 0 {
+		t.Skip("no stamped xo in the cache")
+	}
+}

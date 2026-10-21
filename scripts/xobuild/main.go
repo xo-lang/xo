@@ -56,6 +56,12 @@ func main() {
 		fmt.Println(key)
 		return
 	}
+	// which tree this builds for, on stderr: an agent's shell that resets
+	// its directory between commands ran xobuild in another worktree, and
+	// the path it printed was that tree's xo (2026-10-21)
+	if key, err := xotool.Key(root); err == nil {
+		fmt.Fprintf(os.Stderr, "xobuild: %s (key %s)\n", root, key)
+	}
 	bin, err := xotool.Ensure(root, os.Stderr)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "xobuild:", err)

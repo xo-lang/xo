@@ -139,6 +139,19 @@ func Path() (string, error) {
 	return pathBin, pathErr
 }
 
+// VerifyBuilt is an error when the xo at bin was stamped with another
+// source key than key: Ensure never returns an xo built from other
+// sources than the tree's (a bin/xo replaced by hand beside a current
+// xo.key, or a cache entry under the wrong key; 2026-10-21). An xo that
+// reports no stamp passes (one built before the stamp).
+func VerifyBuilt(bin, key string) error {
+	k, c, ok := stampedKey(bin)
+	if !ok || k == key {
+		return nil
+	}
+	return fmt.Errorf("%s was built from sources with key %s (commit %s), not this tree's %s: remove it and build again", bin, k, c, key)
+}
+
 // BuiltKey is the source key the xo at bin was built for, and its
 // commit when recorded ("" for unknown): bin/xo.key and bin/xo.commit
 // beside a checkout's bin/xo (Ensure), or the cache's checkout/<key>/xo
@@ -412,7 +425,7 @@ func Ensure(root string, log io.Writer) (string, error) {
 	}
 	bin := filepath.Join(root, "bin", exeName("xo"))
 	keyFile := filepath.Join(root, "bin", "xo.key")
-	if k, err := os.ReadFile(keyFile); err == nil && strings.TrimSpace(string(k)) == key && isFile(bin) {
+	if k, err := os.ReadFile(keyFile); err == nil && strings.TrimSpace(string(k)) == key && isFile(bin) && VerifyBuilt(bin, key) == nil {
 		if base, err := cacheBase(); err == nil {
 			useCheckout(base, key)
 		}
@@ -430,6 +443,9 @@ func Ensure(root string, log io.Writer) (string, error) {
 		}
 	}
 	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
+		return "", err
+	}
+	if err := VerifyBuilt(built, key); err != nil {
 		return "", err
 	}
 	if err := copyFile(built, bin); err != nil {
