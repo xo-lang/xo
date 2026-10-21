@@ -1,0 +1,41 @@
+// The client the Autobahn TestSuite's fuzzingserver tests (decision 0313
+// stage 3, bench/websocket/autobahn/run.sh client): asks the server for
+// its case count, runs each case (echoes every message until the
+// server closes), and asks it to write its reports. $AB_URL is the
+// server (default ws://127.0.0.1:9001).
+use std/websocket
+
+fn echo(c: websocket.WsConn) {
+  while true {
+    match c.read() {
+      Ok(m) => {
+        if c.write(m) is Err(_) {
+          return
+        }
+      }
+      Err(_) => return
+    }
+  }
+}
+
+fn main(os: Os) ! {
+  let base = os.env.get("AB_URL") ?? "ws://127.0.0.1:9001"
+  let cc = websocket.dial(os.net, "${base}/getCaseCount", max_message: 67108864)?
+  let m = cc.read()?
+  let n = Int.parse(m.data.to_str() ?? "0") ?? 0
+  cc.close().ignore_err("the count was read")
+  os.stdio.println("cases: ${n}")
+  for i in 1..n + 1 {
+    match websocket.dial(os.net, "${base}/runCase?case=${i}&agent=xo", max_message: 67108864) {
+      Ok(c) => echo(c)
+      Err(e) => os.stdio.println("case ${i}: ${e}")
+    }
+  }
+  let u = websocket.dial(os.net, "${base}/updateReports?agent=xo")?
+  // the server closes when the reports are written
+  match u.read() {
+    Ok(_) => ()
+    Err(_) => ()
+  }
+  os.stdio.println("reports updated")
+}

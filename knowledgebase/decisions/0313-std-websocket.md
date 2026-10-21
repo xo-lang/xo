@@ -82,6 +82,10 @@ bench/results, and interop with a Go gorilla program.
 - Stage 1 landed 2026-10-21 (golden websocket: native identical to the
   Go backend); stage 2 (wss:// in dial, `roots`) the same day (golden
   websocket_tls).
+- Stage 3 (the Autobahn TestSuite, server and client, arm64 and Go
+  backends) the same day: 293 OK, 4 non-strict (6.4.x, UTF-8 checked at
+  the message's end), 3 informational of 300 cases each, none failed
+  (bench/results/websocket-autobahn-2026-10-21.md, bench/websocket/autobahn).
 - Not now: permessage-deflate (waits for streaming flate), a message
   written in pieces (`NextWriter`), WebSockets over HTTP/2 (RFC 8441).
 

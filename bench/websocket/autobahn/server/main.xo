@@ -1,0 +1,28 @@
+// The echo server the Autobahn TestSuite's fuzzingclient tests
+// (decision 0313 stage 3, bench/websocket/autobahn/run.sh): every
+// message back as it came, on 0.0.0.0:$PORT (default 9001), messages up
+// to 64 MiB (section 9 sends 16 MiB).
+use std/http
+use std/websocket
+
+fn echo(c: websocket.WsConn) {
+  while true {
+    match c.read() {
+      Ok(m) => {
+        if c.write(m) is Err(_) {
+          return
+        }
+      }
+      Err(_) => return
+    }
+  }
+}
+
+fn main(os: Os) ! {
+  let port = os.env.get("PORT") ?? "9001"
+  var r = http.router()
+  r.handle("GET /", fn(req) { websocket.upgrade(req, echo, origins: ["*"], max_message: 67108864) })
+  let l = os.net.listen("0.0.0.0:${port}")?
+  os.stdio.println("listening on ${l.addr()}")
+  http.server(l, r).serve()?
+}
