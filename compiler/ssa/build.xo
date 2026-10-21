@@ -445,7 +445,7 @@ fn program_builder(c: check.Checker, line_root: Str, tests: Bool, release: Bool,
   b.real_tests = real_tests
   b.goos = goos
   b.goarch = goarch
-  b.m.async_preempt = c.async_preempt_ok && !c.no_preempt && goarch == "arm64" && (goos is "darwin" | "linux") && !wasm
+  b.m.async_preempt = c.async_preempt_ok && !c.no_preempt && (goarch is "arm64" | "amd64") && (goos is "darwin" | "linux") && !wasm
   b.wasm = wasm
   b.conc = conc
   b

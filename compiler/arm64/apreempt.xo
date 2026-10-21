@@ -72,6 +72,19 @@ fn (g: G) unsafe_span(mb: Int) -> (Int, Int) {
   ((first - 1).max(0), (last + 1).min(ins.len() - 1))
 }
 
+/// Adds the current function's text: a runtime function's bracketed
+/// whole, its prologue and fault stubs too (asynchronous preemption).
+fn (var g: G) push_fn_text(text: Str) {
+  if g.m.async_preempt && g.f_rt() {
+    let a = g.local("${g.lbl_prefix()}_du${g.du_n}")
+    let z = g.local("${g.lbl_prefix()}_du${g.du_n + 1}")
+    g.du_n += 2
+    g.text.push("${a}:\n${text}${z}:\n")
+  } else {
+    g.text.push(text)
+  }
+}
+
 /// The labels before and after a file's functions' text and its unsafe
 /// range table, for text (the functions, as placed: entries from the
 /// caches included): the `_du` labels in order, paired.

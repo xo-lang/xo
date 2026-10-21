@@ -1207,7 +1207,7 @@ const ASYNC_ROOM = 49152
 
 /// Whether the program preempts asynchronously.
 fn async_on() -> Bool {
-  layer_arch() == 1 && (layer() == 1 || layer() == 2) && rt.mem_load(rt.static_word(W_UNSAFE), 0, 8) != 0
+  (layer() == 1 || layer() == 2) && rt.mem_load(rt.static_word(W_UNSAFE), 0, 8) != 0
 }
 
 /// SIGURG's handler (cabi.xo on_urg), SA_SIGINFO and SA_RESTART, on the
@@ -1240,7 +1240,7 @@ fn async_thread(w: Int) {
   match layer() {
     1 => {
       // gettid(2)
-      rt.mem_store(w, W_THREAD, rt.sys6(178, 0, 0, 0, 0, 0, 0), 8)
+      rt.mem_store(w, W_THREAD, rt.sys6(if layer_arch() == 1 { 178 } else { 186 }, 0, 0, 0, 0, 0, 0), 8)
       rt.mem_store(w, W_URGSET, (1).wrapping_shl(SIGURG_LINUX - 1), 8)
     }
     _ => {
@@ -1260,8 +1260,9 @@ fn async_kick(w: Int) {
   match layer() {
     1 => {
       // tgkill(getpid(), tid, SIGURG)
-      let pid = rt.sys6(172, 0, 0, 0, 0, 0, 0)
-      let _r = rt.sys6(131, pid, t, SIGURG_LINUX, 0, 0, 0)
+      let a64 = layer_arch() == 1
+      let pid = rt.sys6(if a64 { 172 } else { 39 }, 0, 0, 0, 0, 0, 0)
+      let _r = rt.sys6(if a64 { 131 } else { 234 }, pid, t, SIGURG_LINUX, 0, 0, 0)
     }
     _ => {
       let _r = sys_darwin.pthread_kill(t, SIGURG_DARWIN)
@@ -1336,17 +1337,29 @@ pub fn async_signal(uc: Int) {
   if f == 0 || rt.mem_load(w, W_LOCKS, 8) != 0 {
     return
   }
-  // the interrupted pc and sp (darwin: the arm_thread_state64 at 16 in
-  // uc_mcontext, a pointer at 48; Linux: the sigcontext at 176)
+  // the interrupted pc and sp (unwind.xo prof_regs' layouts). arm64:
+  // darwin's arm_thread_state64 at 16 in uc_mcontext (a pointer at 48),
+  // Linux's sigcontext at 176; x86_64: darwin's x86_thread_state64 at 16
+  // in uc_mcontext (rsp word 7, rip 16), Linux's gregs at 40 (rsp 15,
+  // rip 16)
   var pc = 0
   var sp = 0
-  if layer() == 2 {
+  if layer_arch() == 1 {
+    if layer() == 2 {
+      let ss = rt.mem_load(uc, 48, 8) + 16
+      sp = rt.mem_load(ss, 248, 8)
+      pc = rt.mem_load(ss, 256, 8) & 281474976710655
+    } else {
+      sp = rt.mem_load(uc, 432, 8)
+      pc = rt.mem_load(uc, 440, 8)
+    }
+  } else if layer() == 2 {
     let ss = rt.mem_load(uc, 48, 8) + 16
-    sp = rt.mem_load(ss, 248, 8)
-    pc = rt.mem_load(ss, 256, 8) & 281474976710655
+    sp = rt.mem_load(ss, 56, 8)
+    pc = rt.mem_load(ss, 128, 8)
   } else {
-    sp = rt.mem_load(uc, 432, 8)
-    pc = rt.mem_load(uc, 440, 8)
+    sp = rt.mem_load(uc, 160, 8)
+    pc = rt.mem_load(uc, 168, 8)
   }
   let mem = rt.mem_load(f, F_MEM, 8)
   if mem == 0 || sp.wrapping_sub(mem) < ASYNC_ROOM || !async_pc_ok(pc) {

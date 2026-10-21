@@ -430,16 +430,7 @@ fn (var g: G) emit() {
       g.fail("XO_OP_VERIFY: ${g.f.name}: local_empty_ops differs from local_empty_l")
     }
   }
-  if g.m.async_preempt && g.f_rt() {
-    // decision 0318: a runtime function is unsafe whole, its prologue
-    // and fault stubs too (apreempt.xo)
-    let a = g.local("${g.lbl_prefix()}_du${g.du_n}")
-    let z = g.local("${g.lbl_prefix()}_du${g.du_n + 1}")
-    g.du_n += 2
-    g.text.push("${a}:\n${le}${z}:\n")
-  } else {
-    g.text.push(le)
-  }
+  g.push_fn_text(le)
 }
 
 /// The number of instructions past which a function keeps adrp and add

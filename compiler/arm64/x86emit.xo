@@ -228,10 +228,20 @@ fn (var g: G) x86_emit_once() {
     }
     let head = g.x86_check_head(mb)
     let ins = g.blocks[mb].insts
+    // decision 0318: the instructions asynchronous preemption must not
+    // interrupt (apreempt.xo); the x86 text passes treat `_du` labels as
+    // boundaries (not x86_dbg_label), so nothing moves across them
+    let (us, ue) = if g.m.async_preempt { g.unsafe_span(mb) } else { (-1, -1) }
+    var uopen = false
     g.ended = false
     for (k, inst) in ins.indexed() {
       if g.ended {
         break
+      }
+      if k == us {
+        b.push("${g.local("${g.lbl_prefix()}_du${g.du_n}")}:\n")
+        g.du_n += 1
+        uopen = true
       }
       g.pos = g.blocks[mb].start + 4 * k
       if dv_next < dvp.need.len() && dvp.need[dv_next] <= g.pos / 4 {
@@ -256,6 +266,15 @@ fn (var g: G) x86_emit_once() {
         // past the check (x86_rotate_jump)
         b.push("${g.label(mb)}_c:\n")
       }
+      if k == ue && uopen {
+        b.push("${g.local("${g.lbl_prefix()}_du${g.du_n}")}:\n")
+        g.du_n += 1
+        uopen = false
+      }
+    }
+    if uopen {
+      b.push("${g.local("${g.lbl_prefix()}_du${g.du_n}")}:\n")
+      g.du_n += 1
     }
   }
   if g.fr.leaf && !g.stubs.is_empty() && g.os != "windows" {
@@ -290,7 +309,7 @@ fn (var g: G) x86_emit_once() {
   if g.os == "windows" {
     g.seh_end(b, sites)
     b.push("\n")
-    g.text.push(x86_rmw(x86_not_reuse(x86_r11_reuse(x86_imul3(x86_copy_runs(x86_reload_peep(b.join(""))))))))
+    g.push_fn_text(x86_rmw(x86_not_reuse(x86_r11_reuse(x86_imul3(x86_copy_runs(x86_reload_peep(b.join(""))))))))
     return
   }
   b.push("\t.cfi_endproc\n")
@@ -302,7 +321,7 @@ fn (var g: G) x86_emit_once() {
     g.lsda(sites)
   }
   b.push("\n")
-  g.text.push(x86_rmw(x86_not_reuse(x86_r11_reuse(x86_imul3(x86_copy_runs(x86_reload_peep(b.join(""))))))))
+  g.push_fn_text(x86_rmw(x86_not_reuse(x86_r11_reuse(x86_imul3(x86_copy_runs(x86_reload_peep(b.join(""))))))))
 }
 
 /// The frame: rbp and the callee saved registers pushed, the rest of

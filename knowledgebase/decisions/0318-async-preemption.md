@@ -317,3 +317,21 @@ Sequences the emitter lowers inline, not from an inlined runtime body
   or last side effect has no line would escape (stores and atomics come
   from source lines). A loop whose every block is inlined runtime code
   is not preemptible (a runtime loop, bounded).
+
+## Addendum (2026-10-21): stage 2 (amd64, linux and darwin)
+
+The x86 emitter (x86emit.xo) brackets the same spans; its text passes
+treat `_du` labels as boundaries (they are not x86_dbg_label's debug
+rows), so no fused run crosses one. The handler reads x86_64's rip and
+rsp (Linux gregs 15 and 16 at 40 in the ucontext, darwin's
+x86_thread_state64 words 7 and 16), and Linux uses x86_64's gettid,
+getpid, and tgkill. On for `--backend=amd64` targeting linux or darwin
+(windows/amd64 is stage 3). linux/amd64 in Docker (emulated): preempt
+10/10, every register restored across 7,240 interruptions in 20 runs,
+the allocating loop 0/100 failures (751 interruptions, XO_LEAKCHECK and
+XO_HEAP_GUARD); instructions sieve 1,845,609,533 against 1,845,609,512
+with `--no-preempt`, sort 1,847,673,823 against 1,847,673,802.
+Goldens async_preempt_regs and async_preempt_alloc (XO_THREADS=1) run
+the stress programs on every backend and are in the Docker amd64
+sample. darwin/amd64 is untested (no Intel Mac in the gates: best
+effort).

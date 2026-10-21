@@ -1,0 +1,67 @@
+// async_preempt_regs (decision 0318; internal/llvm TestAsyncPreempt
+// runs it longer and counts the preemptions): asynchronous preemption
+// restores every register. Three tasks on one worker (XO_THREADS=1) each run a loop
+// that keeps twelve integers and eight floats live across its body, with
+// no call; the monitor preempts them by signal many times while the
+// others wait. Each task's sums must be the same as uninterrupted.
+
+fn spin(seed: Int, n: Int) -> Str {
+  var a = seed
+  var b = seed.wrapping_mul(3) + 1
+  var c = seed.wrapping_mul(5) + 2
+  var d = seed.wrapping_mul(7) + 3
+  var e = seed.wrapping_mul(11) + 4
+  var f = seed.wrapping_mul(13) + 5
+  var g = seed.wrapping_mul(17) + 6
+  var h = seed.wrapping_mul(19) + 7
+  var i2 = seed.wrapping_mul(23) + 8
+  var j = seed.wrapping_mul(29) + 9
+  var k = seed.wrapping_mul(31) + 10
+  var l = seed.wrapping_mul(37) + 11
+  var x0 = Float(seed) + 0.5
+  var x1 = 1.25
+  var x2 = 2.5
+  var x3 = 3.75
+  var x4 = 0.125
+  var x5 = 0.0625
+  var x6 = 1.0
+  var x7 = 0.75
+  var it = 0
+  while it < n {
+    a = a.wrapping_mul(6364136223846793005).wrapping_add(b)
+    b = b.wrapping_add(c ^ a)
+    c = c.wrapping_mul(3) ^ d
+    d = d.wrapping_add(e).wrapping_shl(1) ^ it
+    e = e ^ f.wrapping_add(it)
+    f = f.wrapping_add(g ^ b)
+    g = g.wrapping_mul(5).wrapping_add(h)
+    h = h ^ i2.wrapping_add(c)
+    i2 = i2.wrapping_add(j ^ d)
+    j = j.wrapping_mul(7) ^ k
+    k = k.wrapping_add(l ^ e)
+    l = l.wrapping_add(a ^ it)
+    x0 = x0 * 0.5 + x1 * 0.25 + 0.125
+    x1 = x1 * 0.5 + x2 * 0.25 + 0.0625
+    x2 = x2 * 0.5 + x3 * 0.25 + 0.03125
+    x3 = x3 * 0.5 + x4 * 0.25 + 0.25
+    x4 = x4 * 0.5 + x5 * 0.25 + Float(it & 7) * 0.01
+    x5 = x5 * 0.5 + x6 * 0.25 + 0.5
+    x6 = x6 * 0.5 + x7 * 0.25 + 0.375
+    x7 = x7 * 0.5 + x0 * 0.25 + Float(it & 3) * 0.02
+    it += 1
+  }
+  let s = a ^ b ^ c ^ d ^ e ^ f ^ g ^ h ^ i2 ^ j ^ k ^ l
+  "${s} ${x0 + x1 + x2 + x3 + x4 + x5 + x6 + x7}"
+}
+
+fn main(os: Os) {
+  let n = 40000000
+  scope s {
+    let t1 = s.spawn(fn() -> Str { spin(1, n) })
+    let t2 = s.spawn(fn() -> Str { spin(2, n) })
+    let t3 = s.spawn(fn() -> Str { spin(3, n) })
+    os.stdio.println(t1.await)
+    os.stdio.println(t2.await)
+    os.stdio.println(t3.await)
+  }
+}

@@ -48,3 +48,5 @@ fault_tasks
 http_server
 http_tls
 net_echo
+async_preempt_regs
+async_preempt_alloc

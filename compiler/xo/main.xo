@@ -417,7 +417,7 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   // loops without preemption polls (decision 0286 step 3's opt out)
   c.no_preempt = o.no_preempt || (os.env.get("XO_PREEMPT_POLLS") ?? "") == "off"
   // decision 0318: SIGURG's preemption instead of loop polls
-  c.async_preempt_ok = o.backend == "arm64" && !o.race && (os.env.get("XO_ASYNC_PREEMPT") ?? "") != "0"
+  c.async_preempt_ok = (o.backend == "arm64" || o.backend == "amd64") && !o.race && (os.env.get("XO_ASYNC_PREEMPT") ?? "") != "0"
   // the C paths of ported runtime modules (decisions 0193, 0206)
   c.llrt_c = llrt_c_names(os, o.std)
   c.std_test = std_test_path(o.std_module)
