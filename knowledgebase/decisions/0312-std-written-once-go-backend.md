@@ -1,7 +1,19 @@
 # 0312: The Go backend compiles the pure-Xo std modules (std written once, step 2)
 
-Status: Proposed (drafted by Xo Lang Lib 1 on 2026-10-21 at the owner's
-request; for the owner's approval before implementation)
+Status: Accepted (owner, 2026-10-21): the Go backend's slower calls
+accepted, item 4's escape hatch kept. Drafted by Xo Lang Lib 1 the same
+day.
+
+Order (owner):
+1. Port Go's path.Clean algorithm natively. The profile of the
+   measurement below put about 80% of the 4x in path.xo's algorithm (it
+   splits into a list and joins), not in gen.
+2. Pilot: path, then uuid.
+3. Then the rest, one module per push, each after its corpus, with
+   goldens identical on go, arm64, and LLVM.
+
+Once the Clean port and Xo Publish's lazy list blocks have both landed,
+the path measurement is rerun.
 
 ## Context
 
