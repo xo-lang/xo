@@ -185,10 +185,13 @@ pub fn std_sigs(c: check.Checker) -> Str ! Str {
           // special_std); a module the Go backend compiles from its
           // native implementation has no hand written function (decision
           // 0312)
-          if !(c.mods[m].is_prelude && g.oname(fo) is "fault" | "dbg") && g.impl_mod(c.mods[m].path) < 0 {
+          if !(c.mods[m].is_prelude && g.oname(fo) is "fault" | "dbg") && (g.impl_mod(c.mods[m].path) < 0 || g.impl_member(g.impl_mod(c.mods[m].path), fo) < 0) {
             b.write("\t_ ${g.std_sig_type(fo, "")} = ${prefix}${g.oname(fo)}\n")
           }
         } else if !g.c.objs[o.recv].tparams.is_empty() {
+          continue
+        } else if g.impl_mod(c.mods[m].path) >= 0 && g.impl_member(g.impl_mod(c.mods[m].path), fo) >= 0 {
+          // compiled from the native implementation (decision 0312)
           continue
         } else if g.method_is_go_method(fo) {
           // a Go method: its method expression on the pointer type takes

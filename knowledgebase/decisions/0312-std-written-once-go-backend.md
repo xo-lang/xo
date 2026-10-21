@@ -120,8 +120,15 @@ not affected.
       std/rt/path.go is deleted.
     - Goldens std06_path (Go backend) and std_path (Go parity, arm64,
       LLVM) pass.
-  - **Methods.** The pilot routes free functions only. uuid's methods
-    (`Uuid.version`, natively `uuid_version`) are the next step.
+  - **Methods (uuid).**
+    - A std method that is not static, var, generic, or an interface's
+      maps to the implementation's free function TYPE_method (natively
+      `uuid_version`). It is called with the receiver as its first
+      argument (call.xo impl_member).
+    - `display` and `debug` stay Go methods in std/rt, since the runtime
+      calls them through interfaces. std/rt/uuid.go is now just those.
+    - The uuid corpus (google/uuid) passes on go, arm64, and LLVM, and
+      uuid_basic passes with Go parity.
 
 - One implementation per pure module. A fix lands once and reaches every
   backend.
