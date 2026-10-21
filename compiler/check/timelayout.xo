@@ -89,6 +89,13 @@ fn (var c: Checker) check_time_layouts() {
       continue
     }
     for f in c.mods[m].files {
+      // a call reaches std/time only through the file's import of it
+      // (by any name), so a file without one has nothing to check: the
+      // walk below collects every expression (60 ms of an edit build's
+      // check, 2026-10-21)
+      if !imports_module(c.files[f], tm) {
+        continue
+      }
       c.set_file(f)
       var nodes: List[Node] = []
       for d in c.files[f].ast.decls {
@@ -146,6 +153,16 @@ fn (var c: Checker) check_time_layouts() {
       }
     }
   }
+}
+
+/// Whether file f imports module m (by any local name).
+fn imports_module(f: SrcFile, m: Int) -> Bool {
+  for (_, imp) in f.imports {
+    if imp.module == m {
+      return true
+    }
+  }
+  false
 }
 
 /// The argument of parameter idx (named name) of a call

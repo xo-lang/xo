@@ -214,6 +214,19 @@ test "time layouts parse as the runtime does" {
   expect(xo_quote("a\"$\n")) == "\"a\\\"\\$\\n\""
 }
 
+test "constant time layouts are checked in the files that import std/time, by any name (XO0420)" {
+  os.fs.create_dir_all("std")?
+  os.fs.write("std/time.xo", b"pub fn check_layout(layout: Str) -> Str {\n  layout\n}\n")?
+  let out = check_files(os, "tl", [
+    ("tl/a.xo", "use std/time as clock\n\npub fn a() -> Str {\n  clock.check_layout(\"{yera}\")\n}\n"),
+    ("tl/b.xo", "fn check_layout(layout: Str) -> Str {\n  layout\n}\n\npub fn b() -> Str {\n  check_layout(\"{yera}\")\n}\n"),
+    ("tl/c.xo", "use std/time\n\npub fn c() -> Str {\n  time.check_layout(\"{year}\")\n}\n"),
+  ])?
+  let bad = lines(out).filter(fn(l) { l.contains("\"XO0420\"") })
+  expect(bad.len()) == 1
+  expect(bad[0].contains("\"file\":\"tl/a.xo\"")) == true
+}
+
 test "a name against its convention is XO0101" {
   let out = check_files(os, "n", [("n/main.xo", """
     fn GetName(userId: Int) -> Int {
