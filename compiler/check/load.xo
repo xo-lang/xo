@@ -29,6 +29,10 @@ pub struct Checker {
   /// has ended (a return, break, continue, or a Never call), and the
   /// loops it is inside, innermost last.
   mv_dead: Bool = false
+  /// Per file: the files its embed constants embed (decision 0304), and
+  /// the program's embedded bytes so far.
+  pub embeds: Map[Int, List[EmbedFile]] = {}
+  embed_total: Int = 0
   mv_frames: List[MvFrame] = []
   /// A directory of the run that could not be listed for a reason other
   /// than not existing or not being readable (an I/O error, such as no
@@ -824,6 +828,9 @@ fn (var c: Checker) load_dir(dir0: Str) -> Int {
     }
     c.parse_into(m, p, src, false)
   }
+  // embed constants become literals before anything reads the module
+  // (decision 0304)
+  c.expand_embeds(m)
   c.mods[m].state = 1
   c.load_imports(m)
   c.mods[m].state = 2

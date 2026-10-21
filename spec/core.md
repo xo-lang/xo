@@ -12,6 +12,9 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.10
 
+- **Embedded files** (3.1, decision 0304): `const X: Str = embed("path")`,
+  also `Bytes` and `embed.Dir`, puts files into the program at build time
+  on every backend; `XO1506` to `XO1509`.
 - **Moves end with their path** (5.3, decision 0300): a move of a
   `Buf`, `StrBuilder`, or `BytesBuilder` on a path that ends (`return`,
   `break`, `continue`, the error side of `?`, a `Never` call) no longer
@@ -929,6 +932,21 @@ const DEFAULT = Config{port: 8080}
 - `const` may appear at top level or in a block. Initializers must be compile
   time values: literals, other
   constants, struct and enum construction, and collection literals of those.
+- A top-level constant may embed files at build time (decision 0304):
+  `const PAGE: Str = embed("static/index.html")` (the file's text, valid
+  UTF-8), `const LOGO: Bytes = embed("logo.png")` (its bytes), or
+  `const SITE: embed.Dir = embed("static")` (std/embed: every file a
+  path or glob names, `*`, `?`, `[a-z]`, `**`; a directory brings its
+  files except names starting with `.` or `_`, unless the pattern starts
+  with `all:`). The path is one string literal, relative to the directory
+  of the declaring file and inside the module (no absolute path, `..`, or
+  symbolic link), and the constant declares its type. The constant is a
+  literal of the files' contents from the check on, so every backend
+  embeds the same bytes, and a change to an embedded file rebuilds what
+  reads it. An embed may hold 64 MiB and a program's embeds 256 MiB. A
+  module that declares its own `embed` uses it. Errors: `XO1506` (no file,
+  too many, too large), `XO1507` (outside the module), `XO1508` (a `Str`
+  that is not UTF-8), `XO1509` (any other use).
 - Unused local bindings, local constants, and imports are errors (`XO0110`). Not covered:
   function and closure parameters, names starting with `_`, and `_` itself.
   `xo fix` removes unused bindings. `xo check --wip` reports `XO0110` and
@@ -2742,6 +2760,10 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO1503` | error | build | the Go backend finds no go command: `$XO_GO` is not an executable file, or there is no `go` on PATH; the native backends need none (decision 0176) |
 | `XO1504` | error | build | the program uses a std API the LLVM backend's runtime does not support on the build's target yet: none since stage 2 of decision 0197 (2026-10-12; stage 1 left out processes on Windows); the message names them, and the Go backend builds the program |
 | `XO1505` | error | build | the LLVM backend's clang (`$XO_CLANG`, else `clang`, or `--cc`) is an LLVM clang older than 16, whose LLVM lacks llvm.threadlocal.address; Apple's clang (numbered apart) is not checked (gotchas/llvm-thread-local-constant.md) |
+| `XO1506` | error | checker | `embed("...")` names no file, more than one for a `Str` or `Bytes` constant, a file that cannot be read, or more than an embed may hold (64 MiB each, 256 MiB a program; decision 0304) |
+| `XO1507` | error | checker | an `embed` path leaves the module: absolute, `..`, `.`, an empty segment, or a symbolic link (decision 0304) |
+| `XO1508` | error | checker | a `Str` embed constant's file is not valid UTF-8; declare it `Bytes` (decision 0304) |
+| `XO1509` | error | checker | `embed` used other than as the initializer of a constant typed `Str`, `Bytes`, or `embed.Dir`, with one plain string literal (decision 0304) |
 
 `XO1001` is reserved: no `std/sys/<os>` module exists yet (14), so it is
 never reported.

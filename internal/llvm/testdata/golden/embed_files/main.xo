@@ -1,0 +1,10 @@
+// Decision 0304: files embedded at build time as Str and Bytes constants.
+
+const HELLO: Str = embed("static/hello.txt")
+const DATA: Bytes = embed("static/sub/data.bin")
+
+fn main(os: Os) {
+  os.stdio.print(HELLO)
+  os.stdio.println("hello: ${HELLO.len()} bytes, ${HELLO.lines().len()} lines")
+  os.stdio.println("data: ${DATA.len()} bytes, ${DATA.to_hex()}")
+}

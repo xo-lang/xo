@@ -51,6 +51,8 @@ pub fn (c: Checker) iface_closures() -> List[Str] {
       }
       h.write(src[at..src.len()])
       h.write_str("\n")
+      // the files its embed constants embed (decision 0304)
+      h.write_str(c.embed_digest(f))
     }
     own.push(crypto.sha256(h.freeze()).to_hex())
   }
@@ -115,6 +117,7 @@ fn (var c: Checker) mod_cache_load() uses fs.read {
       h.write_str("${p}\n")
       h.write(c.files[f].src)
       h.write_str("\n")
+      h.write_str(c.embed_digest(f))
     }
     let key = crypto.sha256(h.freeze()).to_hex()
     c.mod_keys[m] = key

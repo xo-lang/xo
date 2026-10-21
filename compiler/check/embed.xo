@@ -1,0 +1,289 @@
+// Embedded files (decision 0304): `const X: Str = embed("path")`, also
+// Bytes and embed.Dir, is replaced by a literal of the files' contents
+// when its module loads, so the checker, every cache key that reads the
+// literal's module, and every backend see an ordinary constant. The
+// embedded files' hashes join the module's keys (embed_digest).
+
+use github.com/xo-lang/xo/compiler/parser
+use std/crypto
+
+/// One file a constant embeds: its path relative to the declaring file's
+/// directory and the SHA-256 of its bytes.
+pub struct EmbedFile {
+  pub rel: Str
+  pub sha: Str
+}
+
+/// The largest embed, and all of a program's embeds together.
+const EMBED_MAX = 64 * 1024 * 1024
+const EMBED_TOTAL_MAX = 256 * 1024 * 1024
+
+/// The text that keys file f's embedded files ("" when none): every
+/// cache key that hashes f's source adds it.
+pub fn (c: Checker) embed_digest(f: Int) -> Str {
+  var b = StrBuilder.new()
+  for e in c.embeds.get(f) ?? [] {
+    b.write("embed ${e.rel} ${e.sha}\n")
+  }
+  b.freeze()
+}
+
+/// The embedded files of every user file, as paths relative to the
+/// working directory (for the watch loops and the test run inputs).
+pub fn (c: Checker) embedded_paths() -> List[Str] {
+  var out: List[Str] = []
+  for (f, es) in c.embeds.entries() {
+    let dir = dir_of_path(c.files[f].path)
+    for e in es {
+      out.push(join(dir, e.rel))
+    }
+  }
+  out.sort()
+}
+
+/// Whether a module's files declare their own `embed`: then
+/// `embed(...)` is theirs, not the built-in.
+fn (c: Checker) declares_embed(m: Int) -> Bool {
+  for f in c.mods[m].files {
+    for d in c.files[f].ast.decls {
+      match d {
+        FnDecl(d: fd) => {
+          if fd.recv == None && fd.name.name == b"embed" {
+            return true
+          }
+        }
+        ConstDecl(d: cd) => {
+          if cd.name.name == b"embed" {
+            return true
+          }
+        }
+        _ => {}
+      }
+    }
+  }
+  false
+}
+
+/// The pattern of `embed("...")`, if e is such a call: Some(Ok(text)),
+/// or Some(Err(why)) for a call of embed that is not one plain string
+/// literal; None when e is no call of embed.
+fn embed_call(e: Expr) -> Result[Str, Str]? {
+  if let CallExpr(fun: fun, args: args, ..) = e {
+    if let Ident(id) = fun {
+      if id.name != b"embed" {
+        return None
+      }
+      if args.len() != 1 {
+        return Some(Err("embed takes one string literal, the path or pattern"))
+      }
+      if let StringLit(s: s) = args[0].value {
+        var t = StrBuilder.new()
+        for p in s.parts {
+          if p.expr != None {
+            return Some(Err("embed's path must be a plain string literal, without interpolation"))
+          }
+          t.write(p.text.to_str() ?? "")
+        }
+        return Some(Ok(t.freeze()))
+      }
+      return Some(Err("embed's path must be a string literal"))
+    }
+  }
+  None
+}
+
+/// An empty literal of an embed constant's type, put in place of an embed
+/// that failed so the checker reports nothing more about the constant.
+fn embed_placeholder(ty: Str, sp: parser.Span) -> Expr {
+  if ty == "Bytes" {
+    return Expr.BytesLit(span: sp, value: b"")
+  }
+  if ty == "embed.Dir" {
+    let typ = Expr.SelectorExpr(span: sp, x: Expr.Ident(id: parser.Ident{span: sp, name: b"embed"}), sel: parser.Ident{span: sp, name: b"Dir"})
+    return Expr.StructLit(span: sp, typ: typ, fields: [parser.FieldInit{span: sp, name: parser.Ident{span: sp, name: b"files"}, value: Expr.MapLit(span: sp, entries: [])}])
+  }
+  Expr.StringLit(s: parser.StringLit{span: sp, kind: parser.StringKind.Plain, parts: []})
+}
+
+/// The type a const declares, as written (`Str`, `Bytes`, `embed.Dir`).
+fn embed_type_text(t: parser.Type?) -> Str {
+  match t {
+    Some(NamedType(path: path, args: args, ..)) => {
+      if !args.is_empty() {
+        return ""
+      }
+      var parts: List[Str] = []
+      for i in path {
+        parts.push(text(i.name))
+      }
+      parts.join(".")
+    }
+    _ => ""
+  }
+}
+
+/// Replaces the embed constants of module m's files with literals
+/// (decision 0304): run once its files are parsed.
+fn (var c: Checker) expand_embeds(m: Int) uses fs.read {
+  if c.declares_embed(m) {
+    return
+  }
+  for f in c.mods[m].files {
+    for (di, d) in c.files[f].ast.decls.indexed() {
+      let cd = match d {
+        ConstDecl(d: x) => x
+        _ => continue
+      }
+      let pat = match embed_call(cd.value) {
+        None => continue
+        Some(Err(why)) => {
+          c.error_at(f, "XO1509", parser.expr_span(cd.value), why)
+          c.embed_replace(f, di, cd, embed_placeholder(embed_type_text(cd.typ), parser.expr_span(cd.value)))
+          continue
+        }
+        Some(Ok(p)) => p
+      }
+      let ty = embed_type_text(cd.typ)
+      if !(ty is "Str" | "Bytes" | "embed.Dir") {
+        let d0 = c.error_at(f, "XO1509", cd.span, "an embed constant declares its type: `Str`, `Bytes`, or `embed.Dir` (decision 0304)")
+        c.note_at(d0, c.files[f].path, cd.span, "write `const ${text(cd.name.name)}: Str = embed(\"${pat}\")` (or Bytes, or embed.Dir for several files)")
+        c.embed_replace(f, di, cd, embed_placeholder("Str", parser.expr_span(cd.value)))
+        continue
+      }
+      let sp = parser.expr_span(cd.value)
+      let files = match c.embed_files(f, pat, ty == "embed.Dir") {
+        Ok(x) => x
+        Err((code, why)) => {
+          c.error_at(f, code, sp, why)
+          c.embed_replace(f, di, cd, embed_placeholder(ty, sp))
+          continue
+        }
+      }
+      var lit = cd.value
+      var recs: List[EmbedFile] = c.embeds.get(f) ?? []
+      var size = 0
+      for (_, b) in files {
+        size += b.len()
+      }
+      if size > EMBED_MAX || c.embed_total + size > EMBED_TOTAL_MAX {
+        c.error_at(f, "XO1506", sp, "embed(\"${pat}\") is ${size} bytes: an embed may be up to ${EMBED_MAX} bytes and a program's embeds ${EMBED_TOTAL_MAX} together")
+        c.embed_replace(f, di, cd, embed_placeholder(ty, sp))
+        continue
+      }
+      c.embed_total += size
+      for (rel, b) in files {
+        recs.push(EmbedFile{rel: rel, sha: crypto.sha256(b).to_hex()})
+      }
+      if ty == "Str" {
+        let s = match files[0].1.to_str() {
+          Some(x) => x
+          None => {
+            let d1 = c.error_at(f, "XO1508", sp, "`${files[0].0}` is not valid UTF-8, so it cannot be embedded as a `Str`")
+            c.note_at(d1, c.files[f].path, sp, "declare the constant `Bytes` to embed any bytes")
+            c.embed_replace(f, di, cd, embed_placeholder(ty, sp))
+            continue
+          }
+        }
+        lit = Expr.StringLit(s: parser.StringLit{span: sp, kind: parser.StringKind.Plain, parts: [parser.StringPart{text: s.bytes(), expr: None}]})
+      } else if ty == "Bytes" {
+        lit = Expr.BytesLit(span: sp, value: files[0].1)
+      } else {
+        var entries: List[parser.MapEntry] = []
+        for (rel, b) in files {
+          entries.push(parser.MapEntry{span: sp, key: Expr.StringLit(s: parser.StringLit{span: sp, kind: parser.StringKind.Plain, parts: [parser.StringPart{text: rel.bytes(), expr: None}]}), value: Expr.BytesLit(span: sp, value: b)})
+        }
+        let typ = Expr.SelectorExpr(span: sp, x: Expr.Ident(id: parser.Ident{span: sp, name: b"embed"}), sel: parser.Ident{span: sp, name: b"Dir"})
+        lit = Expr.StructLit(span: sp, typ: typ, fields: [parser.FieldInit{span: sp, name: parser.Ident{span: sp, name: b"files"}, value: Expr.MapLit(span: sp, entries: entries)}])
+      }
+      c.embeds[f] = recs
+      c.embed_replace(f, di, cd, lit)
+    }
+  }
+}
+
+/// Declaration di of file f, the constant cd, with value v.
+fn (var c: Checker) embed_replace(f: Int, di: Int, cd: parser.ConstDecl, v: Expr) {
+  var nd = cd
+  nd.value = v
+  c.files[f].ast.decls[di] = parser.Decl.ConstDecl(d: nd)
+}
+
+/// The files pattern names, relative to the directory of file f, with
+/// their bytes, sorted by path; Err((code, why)) when it names none (or
+/// more than one where one is wanted, many false), or leaves the module.
+fn (c: Checker) embed_files(f: Int, pattern: Str, many: Bool) -> List[(Str, Bytes)] ! (Str, Str) uses fs.read {
+  let all = pattern.starts_with("all:")
+  let pat = pattern.trim_prefix("all:")
+  if pat.is_empty() || pat.starts_with("/") || pat.contains("\\") || pat.split("/").any(fn(s) { s == ".." || s == "." || s.is_empty() }) {
+    return Err(("XO1507", "embed(\"${pattern}\"): a path is relative to this file's directory, inside the module, with no `..`, `.`, or empty segment and no leading `/`"))
+  }
+  let bdir = dir_of_path(c.files[f].path)
+  let glob = pat.contains("*") || pat.contains("?") || pat.contains("[")
+  var roots: List[Str] = []
+  if glob {
+    let ms = c.fs.glob(join(bdir, pat)).map_err(fn(e) { ("XO1506", "embed(\"${pattern}\"): ${e}") })?
+    for p in ms {
+      roots.push(p)
+    }
+  } else {
+    let p = join(bdir, pat)
+    if !(c.fs.exists(p).ok() ?? false) {
+      return Err(("XO1506", "embed(\"${pattern}\"): no file or directory `${pat}` next to ${base(c.files[f].path)}"))
+    }
+    roots.push(p)
+  }
+  var out: List[(Str, Bytes)] = []
+  var seen: Map[Str, Bool] = {}
+  for r in roots {
+    c.embed_add(bdir, r, all, true, out, seen)?
+  }
+  if out.is_empty() {
+    return Err(("XO1506", "embed(\"${pattern}\") matches no file"))
+  }
+  if !many && out.len() > 1 {
+    return Err(("XO1506", "embed(\"${pattern}\") matches ${out.len()} files; a `Str` or `Bytes` constant embeds one (use `embed.Dir` for several)"))
+  }
+  Ok(out.sort_by(fn(e) { e.0 }))
+}
+
+/// Adds path p (a file, or a directory's files) to out, keyed relative to
+/// bdir. A directory reached by walking skips names starting with `.` or
+/// `_` unless all, vendor/, and nested modules; top is p named by the
+/// pattern itself.
+fn (c: Checker) embed_add(bdir: Str, p: Str, all: Bool, top: Bool, var out: List[(Str, Bytes)], var seen: Map[Str, Bool]) -> () ! (Str, Str) uses fs.read {
+  let rel = rel_path(bdir, p)
+  if (c.fs.read_link(p).ok() ?? None) != None {
+    return Err(("XO1507", "embed: `${rel}` is a symbolic link; embed the file it names instead"))
+  }
+  let st = match c.fs.stat(p) {
+    Ok(Some(x)) => x
+    Ok(None) => return Ok(())
+    Err(e) => return Err(("XO1506", "embed: ${rel}: ${e}"))
+  }
+  if !st.is_dir {
+    if seen.contains(rel) {
+      return Ok(())
+    }
+    seen[rel] = true
+    let b = c.fs.read(p).map_err(fn(e) { ("XO1506", "embed: ${rel}: ${e}") })?
+    out.push((rel, b))
+    return Ok(())
+  }
+  if !top {
+    let n = base(p)
+    if n == "vendor" || (!all && (n.starts_with(".") || n.starts_with("_"))) {
+      return Ok(())
+    }
+    if c.fs.exists(join(p, "xo.mod")).ok() ?? false {
+      return Ok(())
+    }
+  }
+  let es = c.fs.read_dir(p).map_err(fn(e) { ("XO1506", "embed: ${rel}: ${e}") })?
+  for e in es.sort_by(fn(x) { x.name }) {
+    if !e.is_dir && !all && (e.name.starts_with(".") || e.name.starts_with("_")) {
+      continue
+    }
+    c.embed_add(bdir, join(p, e.name), all, false, out, seen)?
+  }
+  Ok(())
+}

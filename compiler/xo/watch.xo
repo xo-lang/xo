@@ -56,6 +56,57 @@ fn snapshot(os: Os, root: Str) -> Map[Str, Str] {
       out[fi.path] = "${fi.size}:${fi.modified.unix_millis()}"
     }
   }
+  // the files embed constants name (decision 0304): the program changes
+  // with them
+  var dirs: List[Str] = []
+  for (p, _) in out.entries() {
+    if p.ends_with(".xo") {
+      for d in embed_watch_dirs(os, p) {
+        dirs.push(d)
+      }
+    }
+  }
+  for fi in all {
+    if fi.is_dir || out.contains(fi.path) {
+      continue
+    }
+    if dirs.any(fn(d) { fi.path == d || fi.path.starts_with("${d}/") }) {
+      out[fi.path] = "${fi.size}:${fi.modified.unix_millis()}"
+    }
+  }
+  out
+}
+
+/// The paths a .xo file's `embed("...")` patterns name, for watching: a
+/// plain path itself, or a glob's leading directory (its segments before
+/// the first with a `*`, `?`, or `[`). A text scan, not a check: watching
+/// a little more than is embedded only rebuilds once more.
+fn embed_watch_dirs(os: Os, file: Str) -> List[Str] {
+  // xo:allow XO0903 a file it cannot read adds no embedded paths; the build reports the error
+  let src = (os.fs.read(file).ok() ?? b"").to_str() ?? ""
+  let dir = dir_name(file)
+  var out: List[Str] = []
+  var rest = src
+  while let Some(i) = rest.find("embed(\"") {
+    rest = rest[i + 7..]
+    let j = rest.find("\"") ?? -1
+    if j < 0 {
+      break
+    }
+    var pat = rest[0..j].trim_prefix("all:")
+    var keep: List[Str] = []
+    for seg in pat.split("/") {
+      if seg.contains("*") || seg.contains("?") || seg.contains("[") {
+        break
+      }
+      keep.push(seg)
+    }
+    if !keep.is_empty() && !keep.any(fn(s) { s == ".." }) {
+      out.push("${dir}/${keep.join("/")}")
+    } else if keep.is_empty() {
+      out.push(dir)
+    }
+  }
   out
 }
 

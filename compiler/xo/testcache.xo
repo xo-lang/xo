@@ -240,6 +240,11 @@ fn run_inputs(os: Os, c: check.Checker, std: Str, wd: Str) -> (List[Str], List[S
       Err(_) => return None
     }
   }
+  // the files embed constants embed (decision 0304): a change to one
+  // changes the program
+  for p in c.embedded_paths() {
+    files.push(abs_path(wd, p))
+  }
   var d = wd
   while true {
     for n in ["xo.mod", "xo.lock", "xo.work", "xo.work.lock"] {

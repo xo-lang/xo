@@ -1,0 +1,13 @@
+// Decision 0304: the errors of embed constants.
+
+const OK: Str = embed("data/ok.txt")
+const MISSING: Str = embed("data/none.txt") // ERROR XO1506 "no file or directory"
+const TWO: Bytes = embed("data/two/*.txt") // ERROR XO1506 "matches 2 files"
+const UP: Bytes = embed("../main.xo") // ERROR XO1507 "inside the module"
+const ABS: Bytes = embed("/etc/hosts") // ERROR XO1507 "inside the module"
+const BAD: Str = embed("data/bad.bin") // ERROR XO1508 "not valid UTF-8"
+const NOTYPE = embed("data/ok.txt") // ERROR XO1509 "declares its type"
+
+fn main(os: Os) {
+  os.stdio.println("${OK} ${MISSING} ${TWO.len()} ${UP.len()} ${ABS.len()} ${BAD} ${NOTYPE}")
+}
