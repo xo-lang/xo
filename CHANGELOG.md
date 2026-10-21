@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Raw multi-line strings (decision 0320): `r"""..."""` has no escapes
+  and no interpolation and removes common indentation as `"""` does;
+  `r#"""..."""#` may contain `"""`.
 - HTTP server: a connection marks itself idle and checks whether the
   server stops with atomics instead of the server's lock, twice a
   request (40% fewer contended lock slow paths at 32 connections);

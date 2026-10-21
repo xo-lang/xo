@@ -1,0 +1,15 @@
+fn main(os: Os) {
+  // a raw multi-line string: indentation removed, no escapes, no ${}
+  let sql = r"""
+    SELECT "name" FROM t
+      WHERE id = ${id} AND path LIKE 'a\b%'
+    """
+  os.stdio.println(sql)
+  // with #s it may hold """
+  let doc = r#"""
+    say """hi"""
+    """#
+  os.stdio.println(doc)
+  let one = r"""one line \n"""
+  os.stdio.println("${one.len()} ${one}")
+}

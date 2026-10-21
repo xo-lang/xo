@@ -114,6 +114,12 @@ test "runes, bytes, and raw strings" {
     ("r#\"may contain \"quotes\": {\"a\": 1}\"#", "may contain \"quotes\": {\"a\": 1}"),
     ("r##\"a \"# b\"##", "a \"# b"),
     ("r\"a\r\nb\"", "a\nb"),
+    // r"""...""" (decision 0320): indentation stripped as for """, no
+    // escapes or interpolation; with #s it may contain """
+    ("r\"\"\"\n    a \${x} \\t\n      b\n    \"\"\"", "a \${x} \\t\n  b"),
+    ("r#\"\"\"\n  has \"\"\" in\n  \"\"\"#", "has \"\"\" in"),
+    ("r\"\"\"\r\n  a\r\n  \"\"\"", "a"),
+    ("r\"\"\"one line\"\"\"", "one line"),
   ]
   for (src, want) in cases {
     let t = lex_str(src).tokens[0]

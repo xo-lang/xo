@@ -48,6 +48,7 @@
     "strings": {
       "patterns": [
         { "include": "#string-triple" },
+        { "include": "#string-raw-triple" },
         { "include": "#string-raw" },
         { "include": "#string-bytes" },
         { "include": "#string-plain" }
@@ -63,6 +64,17 @@
         { "include": "#string-escapes" },
         { "include": "#interpolation" }
       ]
+    },
+    "string-raw-triple": {
+      "comment": "r\"\"\"...\"\"\" and r#\"\"\"...\"\"\"# (decision 0320); no escapes, no interpolation",
+      "name": "string.quoted.triple.raw.xo",
+      "begin": "\\b(r)(#*)\"\"\"",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.string.begin.xo" },
+        "1": { "name": "storage.type.string.xo" }
+      },
+      "end": "\"\"\"\\2",
+      "endCaptures": { "0": { "name": "punctuation.definition.string.end.xo" } }
     },
     "string-raw": {
       "comment": "r\"...\" and r#\"...\"# with any number of hashes; no escapes, no interpolation",

@@ -12,6 +12,10 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.10
 
+- **Raw multi-line strings** (1.6, decision 0320): `r"""..."""` (and
+  `r#"""..."""#` to hold `"""`) is a multi-line string with no escapes
+  and no interpolation, its common leading indentation removed as for
+  `"""`.
 - **Embedded files** (3.1, decision 0304): `const X: Str = embed("path")`,
   also `Bytes` and `embed.Dir`, puts files into the program at build time
   on every backend; `XO1506` to `XO1509`.
@@ -511,6 +515,9 @@ true  false                               // Bool
 "price: \$5"                              // \$ is a literal $ before {
 r"raw: no escapes, no interpolation \d+"
 r#"raw, may contain "quotes": {"a": 1}"#
+r"""
+raw multi line: no escapes, no ${interpolation}, indentation removed
+"""
 """
 multi line string, common leading indentation is removed
 """
@@ -533,6 +540,12 @@ b"raw bytes\x00"                          // Bytes, escapes but no interpolation
   other text after the expression (`${x:.2}`) is `XO0160`.
 - Raw strings `r"..."` have no escapes and no interpolation. `r#"..."#` may
   also contain `"`, which makes JSON fixtures easy to write.
+- A raw multi-line string `r"""..."""` (decision 0320) has no escapes and
+  no interpolation either, and spans lines: its common leading indentation
+  is removed as for `"""` (a first line holding only the opening quotes
+  and a last line holding only the closing ones are dropped), and CR LF
+  reads as LF. `r#"""..."""#`, with any number of `#`, is closed only by
+  `"""` and as many `#`, so it may contain `"""`.
 - An integer literal takes the integer type expected in context (`Int32`,
   `UInt8`, ...), defaulting to `Int`. It never becomes a `Float`; write `2.0`.
   Its value must fit that type: error `XO0421` otherwise (`300` as an

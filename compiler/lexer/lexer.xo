@@ -671,6 +671,12 @@ fn (var l: Lexer) raw_string(start: Pos) {
     l.advance()
   }
   l.advance() // "
+  if l.peek(0) == '"' && l.peek(1) == '"' {
+    // r"""...""": a multi-line raw string (decision 0320)
+    l.advance_n(2)
+    l.raw_triple(start, hashes)
+    return
+  }
   let body_start = l.off
   while l.off < l.end {
     if l.at_closing(hashes) {
@@ -684,6 +690,44 @@ fn (var l: Lexer) raw_string(start: Pos) {
   let closing = "\"" + "#".repeat(hashes)
   l.emit(Kind.RawString, start, l.src[body_start..l.off])
   l.error(UNTERMINATED_STRING, l.span(start), "raw string literal not terminated; expected ${closing}".bytes())
+}
+
+/// The rest of a raw multi-line string `r"""..."""` (or with `#`s, closed
+/// by `"""` and as many `#`s), decision 0320: no escapes, no
+/// interpolation, and the common leading indentation removed as for
+/// `"""` (strip_indent: a first line holding only the opening quotes and a
+/// last holding only the closing ones are dropped).
+fn (var l: Lexer) raw_triple(start: Pos, hashes: Int) {
+  let body_start = l.off
+  let body_pos = l.pos()
+  while l.off < l.end {
+    if l.cur() == '"' && l.peek(1) == '"' && l.peek(2) == '"' && l.closing_hashes(3, hashes) {
+      let body = replace_crlf(l.src[body_start..l.off])
+      l.advance_n(3 + hashes)
+      var text = b""
+      for p in strip_indent([Piece{expr: false, raw: body, start: body_pos}]) {
+        text = text + p.raw
+      }
+      l.toks.push(Token{kind: Kind.RawString, span: l.span(start), text: l.src[start.offset..l.off], value: text, triple: true})
+      l.last = Kind.RawString
+      return
+    }
+    l.advance()
+  }
+  let closing = "\"\"\"" + "#".repeat(hashes)
+  l.emit(Kind.RawString, start, l.src[body_start..l.off])
+  l.error(UNTERMINATED_STRING, l.span(start), "raw string literal not terminated; expected ${closing}".bytes())
+}
+
+/// Whether the hashes `#` bytes follow at offset i from the current
+/// position.
+fn (l: Lexer) closing_hashes(i: Int, hashes: Int) -> Bool {
+  for k in 0..hashes {
+    if l.peek(i + k) != '#' {
+      return false
+    }
+  }
+  true
 }
 
 /// Scans the body of a bytes or rune literal up to the closing `quote`, a

@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+SELECT "name" FROM t
+  WHERE id = ${id} AND path LIKE 'a\b%'
+say """hi"""
+11 one line \n
+--- stderr
