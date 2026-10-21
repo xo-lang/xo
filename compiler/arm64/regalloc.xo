@@ -405,7 +405,10 @@ fn (var g: G) regalloc() {
   // positions where each call lets its callee write the words it takes
   var whint: List[List[Int]] = []
   var wclob: List[List[Int]] = []
-  let argslots = pass_on(g.m, "arg_slots") && !g.x86
+  // x86_64 (2026-10-21) but on Windows (the shadow space above the stack
+  // arguments) and in a function with frameless blocks (shrink
+  // wrapping: rsp differs there)
+  let argslots = pass_on(g.m, "arg_slots") && (!g.x86 || (g.os != "windows" && !g.shrink))
   if argslots {
     for _ in 0..n {
       whint.push([])

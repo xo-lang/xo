@@ -148,7 +148,9 @@ fn (g: G) x86_dv_op(l: Loc) -> List[Int] {
     return [0x90] + uleb_bytes(17 + l.reg - FP_BASE)
   }
   if l.slot >= 0 && g.base == 0 && !g.fr.leaf {
-    return [0x77] + sleb_bytes(slot_off(g.fr, l.slot)) // DW_OP_breg7: rsp
+    // this function's own stack words past the return address and rbp
+    let off = if l.slot >= SLOT_IN && l.slot < SLOT_OUT { g.x86_in_arg(l.slot - SLOT_IN) } else { slot_off(g.fr, l.slot) }
+    return [0x77] + sleb_bytes(off) // DW_OP_breg7: rsp
   }
   []
 }

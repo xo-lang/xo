@@ -128,6 +128,13 @@ fn (g: G) vloc(v: Int) -> (MLoc, Bool) {
     // Go's zero mloc: register 0
     return (MLoc{reg: 0}, false)
   }
+  if g.x86 {
+    // rsp named as the x86 moves name it (same_loc compares the names:
+    // a slot in a call's stack word is that word, arg_slots), and this
+    // function's own stack words past the return address and rbp
+    let off = if l.slot >= SLOT_IN && l.slot < SLOT_OUT { g.x86_in_arg(l.slot - SLOT_IN) } else { slot_off(g.fr, l.slot) }
+    return (MLoc{reg: -1, base: "%rsp", off: off + g.stub_sp}, true)
+  }
   (MLoc{reg: -1, base: "sp", off: slot_off(g.fr, l.slot) + g.stub_sp}, true)
 }
 
