@@ -2065,7 +2065,9 @@ func TestFrontCacheStdTestEdit(t *testing.T) {
 		t.Helper()
 		cmd := exec.Command(xo, "test", "--backend=arm64", "--phase-times", "--std-module=native/path")
 		cmd.Dir = work
-		cmd.Env = append(os.Environ(), "XO_STD="+std, "XO_BACKEND_CACHE_DIR="+cache, "XO_BIN_CACHE="+filepath.Join(work, "bin"))
+		// the run cache off: it serves the unchanged second run without a
+		// build (5b98eec1), and this test measures the front end cache
+		cmd.Env = append(os.Environ(), "XO_STD="+std, "XO_BACKEND_CACHE_DIR="+cache, "XO_BIN_CACHE=off")
 		log, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("xo test: %v\n%s", err, log)
