@@ -119,3 +119,49 @@ pub fn decode_facts(m: Module, d: Bytes) -> Option[BodyFacts] {
   }
   Some(x)
 }
+
+/// The names the instructions of function fi's blocks use (Aux.S), from
+/// its facts when it has them, else from its body (in value order or in
+/// block order: the readers take them as a set).
+pub fn (m: Module) block_names(fi: Int) -> List[Str] {
+  var out: List[Str] = []
+  if let Some(x) = m.facts.get(fi) {
+    for (s, _, inb) in x.names {
+      if inb {
+        out.push(s)
+      }
+    }
+    return out
+  }
+  let f = m.funcs[fi]
+  for bl in f.blocks {
+    for v in bl.instrs {
+      if let S(s) = f.values[v].aux {
+        out.push(s)
+      }
+    }
+  }
+  out
+}
+
+/// m.facts and m.lazy renumbered after functions were dropped: keep[i]
+/// is old function i's new index, -1 for one dropped.
+pub fn (var m: Module) renumber_shells(keep: List[Int]) {
+  if m.facts.is_empty() && m.lazy.is_empty() {
+    return
+  }
+  var facts: Map[Int, BodyFacts] = {}
+  for (i, x) in m.facts {
+    if i < keep.len() && keep[i] >= 0 {
+      facts[keep[i]] = x
+    }
+  }
+  m.facts = facts
+  var lazy: Map[Int, LazyFn] = {}
+  for (i, l) in m.lazy {
+    if i < keep.len() && keep[i] >= 0 {
+      lazy[keep[i]] = l
+    }
+  }
+  m.lazy = lazy
+}

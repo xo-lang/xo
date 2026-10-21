@@ -326,6 +326,11 @@ pub struct Module {
   /// entry and the inliner's summary of it; the function is a shell
   /// (rccache.xo lazy_shell) until force_lazy decodes it.
   pub lazy: Map[Int, LazyFn] = {}
+  /// The facts that stand in for the body of a function the passes after
+  /// inlining have not decoded (decision 0283 stage B, bodyfacts.xo), by
+  /// index; such a function is a shell. Readers go through the accessors
+  /// (block_names), which read the body when a function has no facts.
+  pub facts: Map[Int, BodyFacts] = {}
   /// The first function of each name.
   pub func_at: Map[Str, Int] = {}
   pub types: List[SType] = []

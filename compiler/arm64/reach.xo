@@ -31,17 +31,13 @@ pub fn drop_unreached(var m: ssa.Module) -> Str {
   }
   while let Some(n) = work.pop() {
     for fi in by_name.get(n) ?? [] {
-      let f = m.funcs[fi]
       // the operations in blocks: values outside them (inlined or
-      // removed calls) are not emitted
-      for bl in f.blocks {
-        for v in bl.instrs {
-          if let S(s) = f.values[v].aux {
-            if by_name.contains(s) && !reached.contains(s) {
-              reached[s] = true
-              work.push(s)
-            }
-          }
+      // removed calls) are not emitted; a function not decoded (its
+      // body facts, decision 0283 stage B) by its facts' names
+      for s in m.block_names(fi) {
+        if by_name.contains(s) && !reached.contains(s) {
+          reached[s] = true
+          work.push(s)
         }
       }
     }
@@ -58,14 +54,18 @@ pub fn drop_unreached(var m: ssa.Module) -> Str {
   }
   var kept: List[ssa.Func] = []
   var gone: List[Str] = []
+  var keep: List[Int] = []
   for f in m.funcs {
     if reached.contains(f.name) {
+      keep.push(kept.len())
       kept.push(f)
     } else {
+      keep.push(-1)
       gone.push(f.name)
     }
   }
   m.funcs = kept
+  m.renumber_shells(keep)
   m.func_at = {}
   for (i, f) in m.funcs.indexed() {
     if !m.func_at.contains(f.name) {

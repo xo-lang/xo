@@ -1,0 +1,44 @@
+// Dead function removal on a function not decoded (decision 0283 stage
+// B): its body facts' names stand in for its body.
+
+use github.com/xo-lang/xo/compiler/ssa
+
+/// main calls a, a calls b (and holds a call of d outside its blocks,
+/// as a pass leaves one), c and d are called by nothing in a block.
+fn reach_module() -> ssa.Module {
+  var m = ssa.Module{}
+  for n in ["main", "a", "b", "c", "d"] {
+    let _f = m.new_func(n, [], [])
+  }
+  var mf = m.funcs[0]
+  let _c = mf.add(0, ssa.Op.Call, -1, ssa.Aux.S(s: "a"), [])
+  m.funcs[0] = mf
+  var af = m.funcs[1]
+  let _ab = af.add(0, ssa.Op.Call, -1, ssa.Aux.S(s: "b"), [])
+  af.values.push(ssa.Value{op: ssa.Op.Call, ty: -1, aux: ssa.Aux.S(s: "d"), block: -1})
+  m.funcs[1] = af
+  m
+}
+
+fn names(m: ssa.Module) -> List[Str] {
+  var out: List[Str] = []
+  for f in m.funcs {
+    out.push(f.name)
+  }
+  out
+}
+
+test "dead function removal reads a shell's facts as its body" {
+  var full = reach_module()
+  let _d = drop_unreached(full)
+  expect(names(full)) == ["main", "a", "b"]
+  // a as a shell: no body, its facts kept
+  var lazy = reach_module()
+  lazy.facts[1] = ssa.body_facts(lazy.funcs[1])
+  lazy.funcs[1] = ssa.Func{name: "a"}
+  let _e = drop_unreached(lazy)
+  expect(names(lazy)) == names(full)
+  // the facts follow their function's new index
+  expect(lazy.facts.contains(1)) == true
+  expect(lazy.facts.len()) == 1
+}
