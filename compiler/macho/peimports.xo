@@ -84,6 +84,7 @@ pub fn pe_imports() -> Map[Str, Str] {
     "SetFileCompletionNotificationModes": "KERNEL32.dll",
     "SetFileTime": "KERNEL32.dll",
     "SetNamedPipeHandleState": "KERNEL32.dll",
+    "SetThreadContext": "KERNEL32.dll",
     "SetThreadStackGuarantee": "KERNEL32.dll",
     "SetWaitableTimer": "KERNEL32.dll",
     "SuspendThread": "KERNEL32.dll",

@@ -139,9 +139,12 @@ const W_THREAD = 3488
 const W_APOK = 3496
 const W_ASYNC = 3504
 const W_URGSET = 3512
+/// The fiber this worker runs (run_fiber; 0 between fibers): Windows'
+/// preemption reads it from the monitor's thread (decision 0318).
+const W_RUNF = 3520
 /// The record's size; poolsetup.xo's W_SIZE (the root's record) must match
 /// (XO_HEAP_GUARD found it 8 bytes short, 2026-10-20).
-const W_SIZE = 3520
+const W_SIZE = 3528
 const FCACHE = 8
 
 /// xo_runq: head (word 0), tail (word 16).
@@ -1115,7 +1118,9 @@ pub fn run_item(p: Int, w: Int, it: Int) {
 /// main's tells its root, root_main).
 fn run_fiber(p: Int, w: Int, f: Int) {
   rt.slot_store(w, W_RUN_AT_I, sysio.mono_ns(), RELAXED)
+  rt.slot_store(w, W_RUNF / 8, f, RELEASE)
   let r = sched.fiber_run(w, f)
+  rt.slot_store(w, W_RUNF / 8, 0, RELEASE)
   if rt.mem_load(w, W_LOCKS, 8) != 0 && rt.slot_load(rt.mem_load(p, P_DLK, 8), DLK_LOCKCHECK, RELAXED) != 0 {
     // a fiber switched away holding a runtime lock (XO_LOCKCHECK=1)
     let _r = rt.call_c2(rt.fn_addr("lock_held_switch"), 0, 0)
@@ -1204,10 +1209,15 @@ const SIGURG_LINUX = 23
 /// page, up to 16 KiB): the signal frame (about 1 KiB on Linux, 0.8 on
 /// darwin, the vector registers included) and the switch.
 const ASYNC_ROOM = 49152
+/// Windows: sizeof(CONTEXT) on x86_64, and the save area at a fiber
+/// stack's top: two 1,280 byte halves, the interrupted CONTEXT and below
+/// it the copy win_kick sends (win_save, win_ctx).
+const WIN_CTX = 1232
+const WIN_SAVE = 2560
 
 /// Whether the program preempts asynchronously.
 fn async_on() -> Bool {
-  (layer() == 1 || layer() == 2) && rt.mem_load(rt.static_word(W_UNSAFE), 0, 8) != 0
+  layer() != 0 && rt.mem_load(rt.static_word(W_UNSAFE), 0, 8) != 0
 }
 
 /// SIGURG's handler (cabi.xo on_urg), SA_SIGINFO and SA_RESTART, on the
@@ -1238,6 +1248,12 @@ fn async_thread(w: Int) {
     return
   }
   match layer() {
+    3 => {
+      // a handle the monitor suspends, reads, and redirects:
+      // THREAD_SUSPEND_RESUME, THREAD_GET_CONTEXT, THREAD_SET_CONTEXT,
+      // THREAD_QUERY_INFORMATION
+      rt.mem_store(w, W_THREAD, sys_windows.OpenThread(90, 0, Int(sys_windows.GetCurrentThreadId())), 8)
+    }
     1 => {
       // gettid(2)
       rt.mem_store(w, W_THREAD, rt.sys6(if layer_arch() == 1 { 178 } else { 186 }, 0, 0, 0, 0, 0, 0), 8)
@@ -1258,6 +1274,7 @@ fn async_kick(w: Int) {
     return
   }
   match layer() {
+    3 => win_kick(w, t)
     1 => {
       // tgkill(getpid(), tid, SIGURG)
       let a64 = layer_arch() == 1
@@ -1268,6 +1285,55 @@ fn async_kick(w: Int) {
       let _r = sys_darwin.pthread_kill(t, SIGURG_DARWIN)
     }
   }
+}
+
+/// Windows (no signals): the monitor suspends worker w's thread t, and
+/// when it runs a fiber in the program's code with no runtime lock and an
+/// ask out, saves its CONTEXT in the fiber's save area (win_ctx) and
+/// sends it to cabi.xo on_wpark on the fiber's stack (Windows x64 has no
+/// red zone), then resumes it: the park routine yields, and restores the
+/// CONTEXT (RtlRestoreContext) when the fiber runs again.
+fn win_kick(w: Int, t: Int) {
+  if Int(sys_windows.SuspendThread(t)) == -1 {
+    return
+  }
+  let f = rt.slot_load(w, W_RUNF / 8, ACQUIRE)
+  if f != 0 && rt.mem_load(w, W_APOK, 8) != 0 && rt.mem_load(w, W_LOCKS, 8) == 0 {
+    let cx = win_ctx(f)
+    // CONTEXT_FULL: control, integer, floating point
+    rt.mem_store(cx, 48, 1048587, 4)
+    if Int(sys_windows.GetThreadContext(t, cx)) != 0 {
+      let pc = rt.mem_load(cx, 248, 8)
+      let sp = rt.mem_load(cx, 152, 8)
+      let a = rt.slot_load(w, W_PREEMPT_I, RELAXED)
+      if a != 0 && sp.wrapping_sub(rt.mem_load(f, F_MEM, 8)) >= ASYNC_ROOM && async_pc_ok(pc) && rt.slot_cas(w, W_PREEMPT_I, a, 0, RELAXED) {
+        let _d = rt.slot_add[Int](rt.static_word(W_PREEMPT), 0, -1, RELEASE)
+        // a copy to change: rip, rsp (below what the interrupted code
+        // used, at a call's alignment), rcx the saved CONTEXT; only
+        // control and integer set
+        let nx = cx.wrapping_sub(WIN_SAVE / 2)
+        rt.mem_copy(nx, cx, WIN_CTX)
+        rt.mem_store(nx, 48, 1048579, 4)
+        rt.mem_store(nx, 248, rt.fn_addr("on_wpark"), 8)
+        rt.mem_store(nx, 152, (sp.wrapping_sub(256) & -16).wrapping_sub(8), 8)
+        rt.mem_store(nx, 128, cx, 8)
+        let _s = sys_windows.SetThreadContext(t, nx)
+      }
+    }
+  }
+  let _r = sys_windows.ResumeThread(t)
+}
+
+/// The park routine of Windows' preemption (cabi.xo on_wpark, entered
+/// with the thread's registers redirected by win_kick, cx the interrupted
+/// CONTEXT): yields the fiber, then resumes the interrupted code exactly.
+pub fn async_wpark(cx: Int) {
+  let w = rt.tlocal_get(TLS_W)
+  let f = rt.tlocal_get(TLS_FIB)
+  stat(ST_PREEMPT)
+  rt.mem_store(w, W_ASYNC, 1, 8)
+  sched.fiber_yield(f)
+  sys_windows.RtlRestoreContext(cx, 0)
 }
 
 /// Puts fiber f, preempted by SIGURG, on w's own list.
@@ -1519,8 +1585,29 @@ fn fiber_new(fs: Int, w: Int, t: Int) -> Int {
   rt.mem_store(f, F_HOOKS, rt.mem_load(w, W_HOOKS, 8), 8)
   rt.slot_store(f, F_STATE, 0, RELAXED)
   // the first frame, for the switch the compiler emits
-  rt.mem_store(f, F_SP, sched.fiber_frame(f, rt.mem_load(f, F_MEM, 8), rt.mem_load(f, F_SIZE, 8), WIN_COMMIT, rt.mem_load(fs, FS_MAIN, 8)), 8)
+  let mem = rt.mem_load(f, F_MEM, 8)
+  let size = rt.mem_load(f, F_SIZE, 8)
+  rt.mem_store(f, F_SP, sched.fiber_frame(f, mem, size - win_save(mem, size), WIN_COMMIT - win_save(mem, size), rt.mem_load(fs, FS_MAIN, 8)), 8)
   f
+}
+
+/// The bytes at the top of a fiber's stack (at mem, size bytes) kept for
+/// Windows' asynchronous preemption (decision 0318): the interrupted
+/// thread's CONTEXT, 16 byte aligned, in committed memory above the
+/// fiber's first frame (win_ctx); 0 elsewhere.
+fn win_save(mem: Int, size: Int) -> Int {
+  if layer() != 3 {
+    return 0
+  }
+  let end = mem.wrapping_add(size)
+  (end & 15) + WIN_SAVE
+}
+
+/// The interrupted CONTEXT's place in fiber f's save area (win_save): its
+/// upper half; win_kick's copy is the lower.
+fn win_ctx(f: Int) -> Int {
+  let end = rt.mem_load(f, F_MEM, 8).wrapping_add(rt.mem_load(f, F_SIZE, 8))
+  end.wrapping_sub(end & 15).wrapping_sub(WIN_SAVE / 2)
 }
 
 /// Main's stack for its fiber (decision 0286 step 1): size bytes and a
@@ -1551,7 +1638,7 @@ pub fn main_fiber(p: Int, w: Int, entry: Int, c: Int, m: Int, total: Int) -> Int
   if hooks != 0 {
     sanhook.fiber_new(f)
   }
-  rt.mem_store(f, F_SP, sched.fiber_frame(f, m, total, WIN_COMMIT, rt.mem_load(fs, FS_MAIN, 8)), 8)
+  rt.mem_store(f, F_SP, sched.fiber_frame(f, m, total - win_save(m, total), WIN_COMMIT - win_save(m, total), rt.mem_load(fs, FS_MAIN, 8)), 8)
   rt.slot_store(rt.mem_load(p, P_DLK, 8), DLK_MAINF, f, RELEASE)
   f
 }

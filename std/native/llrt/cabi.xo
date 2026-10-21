@@ -472,6 +472,12 @@ fn on_urg(sig: Int, info: Int, uc: Int) {
   pool.async_signal(uc)
 }
 
+/// Windows' park routine of asynchronous preemption (decision 0318,
+/// pool.xo win_kick sets a thread's rip here, cx its saved CONTEXT).
+fn on_wpark(cx: Int) {
+  pool.async_wpark(cx)
+}
+
 /// The CPU profile's sampler thread on Windows (prof.xo win_start, a
 /// CreateThread entry taking the profile's record).
 fn prof_sampler(r: Int) -> Int {

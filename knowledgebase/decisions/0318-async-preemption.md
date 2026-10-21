@@ -419,3 +419,35 @@ guard's emission (compiler/ssa, compiler/llvm), the fiber word and the
 handler's two checks (std/native/llrt pool.xo, sched.xo), the section
 attribute and its table, then the tests and measurements; the full LLVM
 goldens through the heavy queue.
+
+## Addendum (2026-10-21): stage 3 (windows/amd64)
+
+No signals: the monitor suspends the worker's thread (SuspendThread),
+reads its CONTEXT (GetThreadContext, CONTEXT_FULL) into a save area at
+the top of the running fiber's stack (2,560 bytes above the fiber's
+first frame, committed with the stack's top, so the monitor never
+touches the guard page; fiber_frame's size and commit are reduced by
+it, so the TEB's StackLimit stays exact), makes the handler's checks
+(the fiber the worker runs, W_RUNF; no runtime lock; the PC in a table's
+text outside its ranges; stack room), and sets a copy's RIP to the park
+routine (cabi.xo on_wpark), RSP 256 bytes below the interrupted one at
+a call's alignment (Windows x64 has no red zone), RCX the saved CONTEXT
+(SetThreadContext, control and integer only), then resumes the thread.
+The routine yields; when the fiber runs again RtlRestoreContext restores
+every register, the flags, and the vector state. Workers open a handle
+to their own thread (OpenThread) for the monitor.
+
+Measured on a real Windows host (CI run 39657249703, windows-batch.sh
+step 5, `--backend=amd64`, XO_THREADS=1, three runs each):
+async_preempt_regs ok with 49, 51, 49 preemptions, async_preempt_alloc
+ok with 3, 3, 2, the preempt program ok with 9, 5, 7. Under Wine with
+Box64 the first two preemptions work and then Wine's suspend machinery
+stalls the monitor (a GetThreadContext fails and the monitor's
+SuspendThread never returns), so Wine is not a test bed for this.
+
+The allocating program's counts are low on every platform (about 7 per
+run on darwin and Linux, 3 on Windows, against about 100 for the
+register program): its loops spend most of their time in the allocator
+and in runtime code inlined into them, where the handler declines and
+the monitor asks again at its next tick. Expected, and the reason the
+test counts preemptions over three runs.

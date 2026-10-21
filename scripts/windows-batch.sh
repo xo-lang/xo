@@ -15,7 +15,12 @@
 #      tasks, the event loop, the two phase shutdown (Ctrl-Break), and the
 #      TLS and HTTP/2 differential tests;
 #   4. `xo1 test` of the native test directories of cmd/xo's
-#      TestNoGCTests, the LLVM backend's report against the Go backend's.
+#      TestNoGCTests, the LLVM backend's report against the Go backend's;
+#   5. asynchronous preemption on the native amd64 backend (decision 0318
+#      stage 3): the goldens async_preempt_regs and async_preempt_alloc
+#      and the preempt program, built with `xo1 build --backend=amd64`, run with
+#      XO_THREADS=1, their output against want, and a nonzero preempt
+#      count (XO_RTSTATS).
 #
 # Each step prints a "batch:" summary line; the exit status is the number
 # of steps that failed. Set XO_BATCH_STEPS (e.g. "1 2") to run some only.
@@ -24,7 +29,7 @@ cd "$(dirname "$0")/.." || exit 1
 root=$(pwd -W 2>/dev/null || pwd)
 export XO_STD="$root/std"
 xo1="$HOME/xo1.exe"
-steps=${XO_BATCH_STEPS:-1 2 3 4}
+steps=${XO_BATCH_STEPS:-1 2 3 4 5}
 failed=0
 say() { echo "batch: $*"; }
 want() { case " $steps " in *" $1 "*) return 0 ;; esac; return 1; }
@@ -84,6 +89,40 @@ if want 4; then
   done
   say "4 xo test, LLVM against Go: $same same, $differ differ"
   [ "$differ" = 0 ] || failed=$((failed + 1))
+fi
+
+if want 5; then
+  bad=0
+  for d in internal/llvm/testdata/golden/async_preempt_regs internal/llvm/testdata/golden/async_preempt_alloc internal/llvm/testdata/sched/preempt; do
+    if [ -f "$d/want.txt" ]; then
+      exp=$(sed -n '/^--- stdout$/,/^--- stderr$/p' "$d/want.txt" | sed '1d;$d')
+    else
+      exp="preempt 5"
+    fi
+    exe="$HOME/batch-async.exe"
+    rm -f "$exe"
+    if ! (cd "$d" && "$xo1" build --backend=amd64 -o "$exe" .) > "$HOME/batch-async-build.log" 2>&1; then
+      bad=$((bad + 1))
+      say "  5 ${d##*/}: build failed"
+      tail -5 "$HOME/batch-async-build.log" | sed 's/^/batch:     /'
+      continue
+    fi
+    for i in 1 2 3; do
+      out=$(set -o pipefail; XO_THREADS=1 XO_LEAKCHECK=1 XO_RTSTATS=1 timeout 300 "$exe" 2> "$HOME/batch-async.err" | tr -d '\r')
+      rc=$?
+      n=$(grep -o 'preempt=[0-9]*' "$HOME/batch-async.err" | head -1 | cut -d= -f2)
+      if [ "$rc" != 0 ] || [ "$out" != "$exp" ] || [ "${n:-0}" = 0 ]; then
+        bad=$((bad + 1))
+        say "  5 ${d##*/} run $i: exit $rc preempt=${n:-0}"
+        echo "$out" | head -5 | sed 's/^/batch:     /'
+        tail -3 "$HOME/batch-async.err" | sed 's/^/batch:     /'
+      else
+        say "  5 ${d##*/} run $i: ok preempt=$n"
+      fi
+    done
+  done
+  say "5 asynchronous preemption (amd64): $bad bad run(s)"
+  [ "$bad" = 0 ] || failed=$((failed + 1))
 fi
 
 say "done: $failed step(s) failed"

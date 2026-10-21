@@ -280,6 +280,9 @@ fn ResumeThread(h: Int) -> UInt32
 /// GetThreadContext into the CONTEXT at cx (16 byte aligned, its
 /// ContextFlags set): nonzero on success.
 fn GetThreadContext(h: Int, cx: Int) -> Int32
+/// SetThreadContext from the CONTEXT at cx (its ContextFlags say which
+/// parts): nonzero on success (std/native/llrt/pool.xo, decision 0318).
+fn SetThreadContext(h: Int, cx: Int) -> Int32
 /// GetThreadTimes: the four FILETIMEs (creation, exit, kernel, user),
 /// nonzero on success.
 fn GetThreadTimes(h: Int, created: Int, exited: Int, kernel: Int, user: Int) -> Int32
