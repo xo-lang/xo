@@ -96,6 +96,7 @@ fn build_dir(os: Os, ctx: Ctx, wd: Str, dirs: List[Str], mode: Int, mono: Bool, 
   let dir = "${base}/${crypto.sha256(h.freeze()).to_hex()[0..16]}"
   os.fs.create_dir_all(dir)?
   os.fs.set_modified(dir, os.clock.now()).ignore_err("only the prune order")
+  sweep_asm(os, dir)
   if !chosen {
     // a directory is one target's last build: kept 30 minutes, not
     // prune.KEEP's 2 hours (about 50 builds an hour held 31.7 GB under a
@@ -153,6 +154,36 @@ fn cap_env(os: Os, p: prune.Policy, name: Str) -> prune.Policy {
     }
   }
   q
+}
+
+/// Removes the assembly files (*.s) unused for 10 minutes from the
+/// build directory dir's own subdirectories (arm64/, llvm*/), unless
+/// $XO_KEEP_ASM=1: no build reads them after its link, but a build that
+/// fails or is killed before its link's cleanup leaves them, and a cross
+/// build writes them for another machine (2026-10-21: 92 part files of a
+/// linux build left in one directory, 28 GB of build/ in all). Each build
+/// sweeps its own directory; build/'s prune sweeps the rest.
+fn sweep_asm(os: Os, dir: Str) {
+  if (os.env.get("XO_KEEP_ASM") ?? "") == "1" {
+    return
+  }
+  let subs = match os.fs.read_dir(dir) {
+    Ok(l) => l
+    // xo:allow XO0903 a new directory: nothing to sweep
+    Err(_) => return
+  }
+  for sd in subs {
+    if !sd.is_dir {
+      continue
+    }
+    if let Ok(files) = os.fs.read_dir("${dir}/${sd.name}") {
+      for f in files {
+        if !f.is_dir && f.name.ends_with(".s") && os.clock.since(f.modified) >= 10m {
+          os.fs.remove("${dir}/${sd.name}/${f.name}").ignore_err("another build removed it")
+        }
+      }
+    }
+  }
 }
 
 /// How long a build directory is kept after its last use (build_dir's

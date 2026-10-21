@@ -2184,3 +2184,68 @@ func TestPruneVersionGuard(t *testing.T) {
 		t.Errorf("prune-version %q, want the newer 999 kept", b)
 	}
 }
+
+// TestBuildSweepsStaleAsm: a build removes the assembly files left in its
+// build directory unused for 10 minutes (a failed or killed build's, a
+// cross build's), and keeps a recent one; XO_KEEP_ASM=1 keeps them all.
+func TestBuildSweepsStaleAsm(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := xotool.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-asmsweep-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	// XO_BUILD_DIR is the base: a build's directory is <base>/<hash>
+	bd := filepath.Join(work, "bd")
+	old := time.Now().Add(-time.Hour)
+	dir := filepath.Join(root, "internal", "gen", "testdata", "golden", "os_tasks")
+	build := func(env ...string) {
+		t.Helper()
+		cmd := exec.Command(xo, "build", "--backend=arm64", "-o", filepath.Join(work, "prog"), ".")
+		cmd.Dir = dir
+		cmd.Env = append(append(os.Environ(), "XO_BUILD_DIR="+bd, "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache")), env...)
+		if log, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("xo build: %v\n%s", err, log)
+		}
+	}
+	build()
+	subs, _ := filepath.Glob(filepath.Join(bd, "*", "arm64"))
+	if len(subs) != 1 {
+		t.Fatalf("build directories %v, want one <hash>/arm64", subs)
+	}
+	sub := subs[0]
+	stale := filepath.Join(sub, "prog-linux.7.s")
+	fresh := filepath.Join(sub, "prog-linux.8.s")
+	for _, p := range []string{stale, fresh} {
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatal(err)
+	}
+	build("XO_KEEP_ASM=1")
+	if _, err := os.Stat(stale); err != nil {
+		t.Errorf("XO_KEEP_ASM=1 removed %s", stale)
+	}
+	build("XO_KEEP_ASM=")
+	if _, err := os.Stat(stale); err == nil {
+		t.Errorf("the build left %s, unused for an hour", stale)
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Errorf("the build removed the recent %s", fresh)
+	}
+}
