@@ -842,6 +842,9 @@ fn prune_backend_cache(os: Os, dir: Str, stored: Int) {
   if !prune.due(os.fs, os.clock, dir, p) {
     return
   }
+  if !backend_prune_allowed(os, dir, p) {
+    return
+  }
   if (os.env.get("XO_PRUNE_DETACH") ?? "") == "off" || host_os(os) == "windows" {
     let _s = prune.run(os.fs, os.clock, dir, p)
     return
@@ -859,6 +862,22 @@ fn prune_backend_cache(os: Os, dir: Str, stored: Int) {
   let script = "\"$0\" dev prune-backend \"$1\" </dev/null >/dev/null 2>&1 &"
   os.proc.cmd("/bin/sh", ["-c", script, xo, dir]).run().ignore_err("a prune that does not start runs on a later build")
 }
+
+/// Whether the back-end cache in dir may be pruned under p: not the
+/// user's own cache (<user cache>/xo/backend) with a cap under
+/// BACKEND_MIN_CAP, which only a test sets ($XO_BACKEND_CACHE_MAX=1) and
+/// which would empty every agent's warm cache; $XO_PRUNE_FORCE=1 allows it.
+fn backend_prune_allowed(os: Os, dir: Str, p: prune.Policy) -> Bool {
+  if p.max_bytes <= 0 || p.max_bytes >= BACKEND_MIN_CAP || (os.env.get("XO_PRUNE_FORCE") ?? "") == "1" {
+    return true
+  }
+  let host = host_os(os)
+  dir.trim_suffix("/") != "${user_cache_dir(os, host)}/xo/backend"
+}
+
+/// The smallest cap the user's own back-end cache is pruned to
+/// (backend_prune_allowed).
+const BACKEND_MIN_CAP: Int = 64 * 1024 * 1024
 
 /// The back-end cache's prune policy (prune_backend_cache): a week's
 /// age, the cap, a slice of shards per run (BACKEND_WALK of walking).
@@ -879,6 +898,9 @@ const BACKEND_EVERY: Duration = 1m
 /// passed); the child prune_backend_cache starts.
 fn prune_backend_child(os: Os, dir: Str) -> Int {
   var p = backend_policy(os)
+  if !backend_prune_allowed(os, dir, p) {
+    return 1
+  }
   // no removal budget and no interval: the child is the only runner;
   // and every shard walked in a run, so the sizes it acts on are current
   // (300 ms slices left the ledger stale for 10 minutes while packs grew,

@@ -323,6 +323,10 @@ fn run_sliced(fs: Fs, clock: Clock, dir: Str, p: Policy) -> Stats uses (fs.read,
   if p.burst > 0 {
     fs.remove("${dir}/prune-stored").ignore_err("none stored since the last prune")
   }
+  // a line before any removal: a run that dies on the way (a build
+  // killed, a fault) still leaves its start (2026-10-21: 25 GB went with
+  // no line, from runs that faulted before their end line)
+  fs.append("${dir}/prune-log", "${clock.now().unix()} start cap ${p.max_bytes} age ${p.max_age} at ${clock.now().unix_millis()} ms\n".bytes()).ignore_err("only the log")
   let shards = shard_list(fs, dir)
   // the walk budget is the shards' walk, not their listing
   let t0 = clock.now()
