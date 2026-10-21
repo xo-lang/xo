@@ -12,4 +12,5 @@ var (
 	_ func(*Embed_Dir, *Task) List[string]           = (*Embed_Dir).M_paths
 	_ func(*Embed_Dir, *Task, string) Embed_Dir      = (*Embed_Dir).M_sub
 	_ func(*Embed_Dir, *Task) int64                  = (*Embed_Dir).M_len
+	_ func(*Embed_Dir, *Task) Fs                     = (*Embed_Dir).M_fs
 )

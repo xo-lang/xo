@@ -249,3 +249,22 @@ pub fn matches(pattern: Str, name: Str) -> Bool {
   }
   si == s.len()
 }
+
+/// Whether pattern is well formed (path.Match(pattern, "") reports no
+/// ErrBadPattern): every chunk's classes close and no `\` ends a chunk.
+pub fn valid(pattern: Str) -> Bool {
+  let p = pattern.bytes()
+  var i = 0
+  while i < p.len() {
+    // 42 is *
+    while i < p.len() && p[i] == 42 {
+      i += 1
+    }
+    let hi = chunk_end(p, i)
+    if chunk_failed(p, i, hi) == -2 {
+      return false
+    }
+    i = hi
+  }
+  true
+}

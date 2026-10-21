@@ -123,3 +123,7 @@ backends, so whatever embeds must work the same on each.
    `Fs`; errorcheck for each error; a cache test that an edit of an
    embedded file rebuilds.
 5. Spec, std.md, toolchain docs, changelog.
+
+## Notes
+
+- 2026-10-21: `Dir.fs()` landed on top of decision 0307 (a std struct converted to `Fs` on the native backends); `open` on it is `Denied` for now (no stream over embedded bytes), so code that streams a file reads it whole instead.

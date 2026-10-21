@@ -3637,10 +3637,25 @@ fn (d: Dir) contains(path: Str) -> Bool
 fn (d: Dir) paths() -> List[Str]             // sorted
 fn (d: Dir) sub(dir: Str) -> Dir             // the files under dir, keyed relative to it
 fn (d: Dir) len() -> Int
+fn (d: Dir) fs() -> Fs                       // a read-only Fs over the files
 ```
 
 A single file embeds as a `Str` or `Bytes` constant instead (core 3.1).
-An `Fs` view of a Dir (for code written against `Fs`) is planned.
+
+`d.fs()` serves code written against `Fs` (a static file handler, a
+template loader; decision 0307 makes it an `Fs` on the native backends).
+Paths are relative to the Dir's keys; `/`, `.`, and a leading `./` name
+the root, and a path that climbs above it is `NotFound`. Directories are
+the ones the files' paths imply. `read`, `read_text` (`Io` when not valid
+UTF-8), `stat` (size, `modified` the Unix epoch), `exists`, `read_dir`,
+`walk`, `glob` (as `Fs.glob`), `mode` (0o444, directories 0o555),
+`read_link` (always `None`), `sub`, `cwd_path` (`/` and the sub
+directory), `read_only` and `write_only` (which denies reads) work as on
+the real Fs; `write`, `create_temp`, `rename`, `remove`, `remove_all`,
+`create_dir_all`, `set_modified`, `append`, `copy`, `set_mode`,
+`symlink`, `lock`, `try_lock`, and `open` (no stream over embedded bytes
+yet: read the whole file) are `FsErr.Denied`. Nothing needs a capability
+beyond the `uses fs.read` that calling an `Fs` method states.
 
 ## 32. std/compress
 

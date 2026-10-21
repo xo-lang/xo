@@ -2,6 +2,7 @@
 // paths to bytes, so its methods are lookups.
 
 use std/embed
+use native/llrt/glob
 
 fn dir_read(d: embed.Dir, path: Str) -> Bytes? { d.files.get(path) }
 
@@ -28,3 +29,300 @@ fn dir_sub(d: embed.Dir, dir: Str) -> embed.Dir {
 }
 
 fn dir_len(d: embed.Dir) -> Int { d.files.len() }
+
+// ---------------------------------------------------------------------------
+// Dir.fs (decision 0304): a read-only Fs over the files, a struct of this
+// module converted to Fs (decision 0307).
+
+fn dir_fs(d: embed.Dir) -> Fs { DirFs{files: d.files} }
+
+struct DirFs {
+  files: Map[Str, Bytes]
+  /// the directory the Fs is rooted at, "" or ending in "/"
+  prefix: Str = ""
+  /// write_only: reads are denied too
+  no_read: Bool = false
+}
+
+/// path as a key of the root's files: no leading "/" or "./", no "." or
+/// empty segment, no trailing "/"; None when it climbs above the root.
+fn dfs_clean(path: Str) -> Str? {
+  var out: List[Str] = []
+  for s in path.split("/") {
+    if s == "" || s == "." {
+      continue
+    }
+    if s == ".." {
+      if out.is_empty() {
+        return None
+      }
+      out.pop()
+      continue
+    }
+    out.push(s)
+  }
+  Some(out.join("/"))
+}
+
+/// The key of path under the Fs's root (its prefix plus the clean path).
+fn (d: DirFs) key(path: Str) -> Str? {
+  let c = dfs_clean(path)?
+  Some((d.prefix + c).trim_suffix("/"))
+}
+
+fn (d: DirFs) is_dir_key(k: Str) -> Bool {
+  if k == "" {
+    return true
+  }
+  let p = k + "/"
+  for f in d.files.keys() {
+    if f.starts_with(p) {
+      return true
+    }
+  }
+  false
+}
+
+fn dfs_base(p: Str) -> Str {
+  match p.rfind("/") {
+    Some(i) => p[i + 1..]
+    None => p
+  }
+}
+
+fn (d: DirFs) info(path: Str, k: Str) -> FileInfo? {
+  let name = dfs_base(path.trim_suffix("/"))
+  if let Some(b) = d.files.get(k) {
+    return Some(FileInfo{name: name, path: path, is_dir: false, size: b.len(), modified: Time.from_unix(0)})
+  }
+  if d.is_dir_key(k) {
+    return Some(FileInfo{name: name, path: path, is_dir: true, size: 0, modified: Time.from_unix(0)})
+  }
+  None
+}
+
+/// The key of path for a read: Denied when the Fs is write only, NotFound
+/// when path climbs above the root.
+fn (d: DirFs) read_key(path: Str) -> Str ! FsErr {
+  if d.no_read {
+    return Err(FsErr.Denied(path: path))
+  }
+  match d.key(path) {
+    Some(k) => Ok(k)
+    None => Err(FsErr.NotFound(path: path))
+  }
+}
+
+fn (d: DirFs) sub(dir: Str) -> Fs {
+  let k = match d.key(dir) {
+    Some(k) => k
+    None => return DirFs{files: {}, no_read: d.no_read}
+  }
+  if k == "" {
+    return d
+  }
+  d with {prefix: k + "/"}
+}
+fn (d: DirFs) cwd() -> Fs { d }
+fn (d: DirFs) cwd_path() -> Str ! FsErr { Ok("/" + d.prefix.trim_suffix("/")) }
+fn (d: DirFs) read_only() -> Fs { d }
+fn (d: DirFs) write_only() -> Fs { d with {no_read: true} }
+fn (d: DirFs) case_sensitive() -> Bool { true }
+
+fn (d: DirFs) stat(path: Str) -> FileInfo? ! FsErr {
+  let k = d.read_key(path)?
+  Ok(d.info(path, k))
+}
+
+fn (d: DirFs) exists(path: Str) -> Bool ! FsErr {
+  let k = d.read_key(path)?
+  Ok(d.info(path, k) != None)
+}
+
+fn (d: DirFs) read(path: Str) -> Bytes ! FsErr {
+  let k = d.read_key(path)?
+  if let Some(b) = d.files.get(k) {
+    return Ok(b)
+  }
+  if d.is_dir_key(k) {
+    return Err(FsErr.IsDir(path: path))
+  }
+  Err(FsErr.NotFound(path: path))
+}
+
+fn (d: DirFs) read_text(path: Str) -> Str ! FsErr {
+  let b = d.read(path)?
+  match b.to_str() {
+    Some(s) => Ok(s)
+    None => Err(FsErr.Io(path: path, msg: "not valid UTF-8"))
+  }
+}
+
+/// The names directly under the directory key k, sorted: files and the
+/// directories their paths imply.
+fn (d: DirFs) children(k: Str) -> List[Str] {
+  let p = if k == "" { "" } else { k + "/" }
+  var names: Set[Str] = #{}
+  for f in d.files.keys() {
+    if f.starts_with(p) {
+      let rest = f[p.len()..]
+      match rest.find("/") {
+        Some(i) => names.add(rest[..i])
+        None => names.add(rest)
+      }
+    }
+  }
+  names.to_list().sort()
+}
+
+fn dfs_join(dir: Str, name: Str) -> Str {
+  if dir == "" || dir == "." {
+    return name
+  }
+  if dir.ends_with("/") {
+    return dir + name
+  }
+  dir + "/" + name
+}
+
+fn (d: DirFs) read_dir(dir: Str) -> List[FileInfo] ! FsErr {
+  let k = d.read_key(dir)?
+  if d.files.contains(k) {
+    return Err(FsErr.NotDir(path: dir))
+  }
+  if !d.is_dir_key(k) {
+    return Err(FsErr.NotFound(path: dir))
+  }
+  var out: List[FileInfo] = []
+  for n in d.children(k) {
+    let ck = if k == "" { n } else { k + "/" + n }
+    if let Some(fi) = d.info(dfs_join(dir, n), ck) {
+      out.push(fi)
+    }
+  }
+  Ok(out)
+}
+
+fn (d: DirFs) walk(dir: Str) -> List[FileInfo] ! FsErr {
+  var out: List[FileInfo] = []
+  for fi in d.read_dir(dir)? {
+    out.push(fi)
+    if fi.is_dir {
+      for x in d.walk(fi.path)? {
+        out.push(x)
+      }
+    }
+  }
+  Ok(out)
+}
+
+fn (d: DirFs) write(path: Str, data: Bytes) -> () ! FsErr { Err(FsErr.Denied(path: path)) }
+fn (d: DirFs) create_temp(dir: Str, prefix: Str) -> Str ! FsErr { Err(FsErr.Denied(path: dir)) }
+fn (d: DirFs) rename(from: Str, to: Str) -> () ! FsErr { Err(FsErr.Denied(path: from)) }
+fn (d: DirFs) remove(path: Str) -> () ! FsErr { Err(FsErr.Denied(path: path)) }
+fn (d: DirFs) remove_all(path: Str) -> () ! FsErr { Err(FsErr.Denied(path: path)) }
+fn (d: DirFs) create_dir_all(dir: Str) -> () ! FsErr { Err(FsErr.Denied(path: dir)) }
+fn (d: DirFs) set_modified(path: Str, t: Time) -> () ! FsErr { Err(FsErr.Denied(path: path)) }
+fn (d: DirFs) open(path: Str) -> File ! FsErr { Err(FsErr.Denied(path: path)) }
+fn (d: DirFs) create(path: Str) -> File ! FsErr { Err(FsErr.Denied(path: path)) }
+fn (d: DirFs) open_append(path: Str) -> File ! FsErr { Err(FsErr.Denied(path: path)) }
+fn (d: DirFs) create_new(path: Str) -> File ! FsErr { Err(FsErr.Denied(path: path)) }
+fn (d: DirFs) append(path: Str, data: Bytes) -> () ! FsErr { Err(FsErr.Denied(path: path)) }
+fn (d: DirFs) copy(from: Str, to: Str) -> () ! FsErr { Err(FsErr.Denied(path: to)) }
+
+fn (d: DirFs) mode(path: Str) -> Int ! FsErr {
+  match d.stat(path)? {
+    Some(fi) => Ok(if fi.is_dir { 0o555 } else { 0o444 })
+    None => Err(FsErr.NotFound(path: path))
+  }
+}
+
+fn (d: DirFs) set_mode(path: Str, mode: Int) -> () ! FsErr { Err(FsErr.Denied(path: path)) }
+fn (d: DirFs) symlink(target: Str, link: Str) -> () ! FsErr { Err(FsErr.Denied(path: link)) }
+
+fn (d: DirFs) read_link(path: Str) -> Str? ! FsErr {
+  let _ = d.read_key(path)?
+  Ok(None)
+}
+
+/// The paths that match pattern, as the real Fs's glob: a segment `**`
+/// matches any number of directories, the others match one name with
+/// `*`, `?`, and classes (Go's path.Match); a name starting with `.`
+/// matches only a segment starting with `.`.
+fn (d: DirFs) glob(pattern: Str) -> List[Str] ! FsErr {
+  if d.no_read {
+    return Err(FsErr.Denied(path: pattern))
+  }
+  let pat = pattern.replace("\\", "/")
+  let segs = pat.trim_prefix("/").trim_suffix("/").split("/")
+  for s in segs {
+    if s != "**" && !glob.valid(s) {
+      return Err(FsErr.Io(path: pat, msg: "bad pattern: syntax error in pattern"))
+    }
+  }
+  // every file under the root and every directory its path implies; a
+  // trailing `**` matches directories only, the root ("") included, as
+  // the real Fs's glob
+  let dirs_only = segs[segs.len() - 1] == "**"
+  var dirs: Set[Str] = #{""}
+  var cands: Set[Str] = #{}
+  for f in d.files.keys() {
+    if !f.starts_with(d.prefix) {
+      continue
+    }
+    let rel = f[d.prefix.len()..]
+    var at = 0
+    while true {
+      match rel[at..].find("/") {
+        Some(i) => {
+          cands.add(rel[..at + i])
+          dirs.add(rel[..at + i])
+          at = at + i + 1
+        }
+        None => break
+      }
+    }
+    cands.add(rel)
+  }
+  if dirs_only {
+    cands = dirs
+  }
+  var out: List[Str] = []
+  for c in cands.to_list() {
+    let ns = if c == "" { [] } else { c.split("/") }
+    if dfs_match(segs, 0, ns, 0) {
+      out.push(c)
+    }
+  }
+  Ok(out.sort())
+}
+
+fn dfs_match(ps: List[Str], i: Int, ns: List[Str], j: Int) -> Bool {
+  if i == ps.len() {
+    return j == ns.len()
+  }
+  if ps[i] == "**" {
+    // zero or more directories, never a hidden one
+    var k = j
+    while true {
+      if dfs_match(ps, i + 1, ns, k) {
+        return true
+      }
+      if k >= ns.len() || ns[k].starts_with(".") {
+        return false
+      }
+      k += 1
+    }
+    return false
+  }
+  if j == ns.len() {
+    return false
+  }
+  if ns[j].starts_with(".") && !ps[i].starts_with(".") {
+    return false
+  }
+  glob.matches(ps[i], ns[j]) && dfs_match(ps, i + 1, ns, j + 1)
+}
+
+fn (d: DirFs) lock(path: Str) -> FileLock ! FsErr { Err(FsErr.Denied(path: path)) }
+fn (d: DirFs) try_lock(path: Str) -> FileLock? ! FsErr { Err(FsErr.Denied(path: path)) }

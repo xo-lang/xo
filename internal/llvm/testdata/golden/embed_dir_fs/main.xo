@@ -1,0 +1,65 @@
+// embed.Dir.fs (decision 0304) on top of decision 0307: a read-only Fs
+// over embedded files, through code written against Fs.
+
+use std/embed
+
+const SITE: embed.Dir = embed("site")
+
+fn infos(r: Result[List[FileInfo], FsErr]) -> Str {
+  match r {
+    Ok(l) => l.map(fn(i: FileInfo) -> Str { "${i.path}${if i.is_dir { "/" } else { "" }}:${i.size}" }).join(" ")
+    Err(e) => "error ${e}"
+  }
+}
+
+fn globs(f: Fs, p: Str) -> Str uses fs.read {
+  match f.glob(p) {
+    Ok(l) => "${p} -> [${l.join(", ")}]"
+    Err(e) => "${p} -> error ${e}"
+  }
+}
+
+/// Code written against Fs, as a static file handler would be.
+fn serve(f: Fs, path: Str) -> Str uses fs.read {
+  match f.read_text(path) {
+    Ok(s) => "200 ${s.trim_end()}"
+    Err(FsErr.NotFound(..)) => "404"
+    Err(FsErr.IsDir(..)) => "301 ${path}/"
+    Err(e) => "500 ${e}"
+  }
+}
+
+fn main(os: Os) {
+  let f = SITE.fs()
+  for p in ["site/index.html", "/site/about.txt", "./site/css/main.css", "site/nope", "site/css", "site/../site/js/app.js", "../x"] {
+    os.stdio.println("${p}: ${serve(f, p)}")
+  }
+  let s = f.sub("site")
+  os.stdio.println("sub: ${serve(s, "index.html")} ${serve(s, "js/lib/b.js")} cwd ${s.cwd_path().ok() ?? "?"}")
+  os.stdio.println("read_dir: ${infos(s.read_dir(""))}")
+  os.stdio.println("read_dir js: ${infos(s.read_dir("js"))}")
+  os.stdio.println("read_dir file: ${infos(s.read_dir("index.html"))}")
+  os.stdio.println("read_dir missing: ${infos(s.read_dir("nope"))}")
+  os.stdio.println("walk: ${infos(s.walk("."))}")
+  for p in ["*", "*.txt", "**/*.js", "js/**", "[a-c]*", "**", "["] {
+    os.stdio.println(globs(s, p))
+  }
+  match s.stat("css") {
+    Ok(Some(i)) => os.stdio.println("stat css: ${i.name} dir ${i.is_dir}")
+    Ok(None) => os.stdio.println("stat css: none")
+    Err(e) => os.stdio.println("stat css: ${e}")
+  }
+  os.stdio.println("stat missing: ${(s.stat("zz").ok() ?? None) == None}")
+  os.stdio.println("exists: ${s.exists("about.txt").ok() ?? false} ${s.exists("zz").ok() ?? true}")
+  os.stdio.println("mode: ${s.mode("about.txt").ok() ?? 0} ${s.mode("js").ok() ?? 0}")
+  os.stdio.println("bytes: ${(s.read("css/main.css").ok() ?? b"").len()}")
+  os.stdio.println("write: ${s.write("x.txt", b"x").is_err()} ${s.remove("about.txt").is_err()} ${s.create("y").is_err()}")
+  os.stdio.println("write_only read: ${serve(s.write_only(), "about.txt")}")
+  os.stdio.println("still there: ${serve(s.read_only(), "about.txt")}")
+  // across a task
+  let r = scope sc {
+    let t = sc.spawn(fn() -> Str { serve(s.sub("js"), "app.js") })
+    t.await
+  }
+  os.stdio.println("task: ${r}")
+}

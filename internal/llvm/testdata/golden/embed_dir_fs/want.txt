@@ -1,0 +1,32 @@
+exit 0
+--- stdout
+site/index.html: 200 <h1>hi</h1>
+/site/about.txt: 200 about
+./site/css/main.css: 200 body{}
+site/nope: 404
+site/css: 301 site/css/
+site/../site/js/app.js: 200 a()
+../x: 404
+sub: 200 <h1>hi</h1> 200 b() cwd /site
+read_dir: about.txt:6 css/:0 index.html:12 js/:0
+read_dir js: js/app.js:4 js/lib/:0
+read_dir file: error NotDir(path: "index.html")
+read_dir missing: error NotFound(path: "nope")
+walk: about.txt:6 css/:0 css/main.css:7 index.html:12 js/:0 js/app.js:4 js/lib/:0 js/lib/b.js:4
+* -> [about.txt, css, index.html, js]
+*.txt -> [about.txt]
+**/*.js -> [js/app.js, js/lib/b.js]
+js/** -> [js, js/lib]
+[a-c]* -> [about.txt, css]
+** -> [, css, js, js/lib]
+[ -> error Io(path: "[", msg: "bad pattern: syntax error in pattern")
+stat css: css dir true
+stat missing: true
+exists: true false
+mode: 292 365
+bytes: 7
+write: true true true
+write_only read: 500 Denied(path: "about.txt")
+still there: 200 about
+task: 200 a()
+--- stderr

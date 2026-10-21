@@ -166,7 +166,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | io, io/fs, bufio, io/ioutil | File, Conn, Child read and write, Fs.walk | partial | Byte streams exist per handle. Missing: a common reader and writer interface, buffered readers over a Conn. |
 | path | std/path | done | |
 | path/filepath | prelude Fs paths, std/path | done | Every Fs path uses `/` on every OS (section 3.1). |
-| embed | std/embed (with core 3.1's `embed`) | partial | a constant of `Str`, `Bytes`, or `embed.Dir` set to `embed("path or glob")`, decision 0304: one file as text or bytes, or a tree. Missing: an `Fs` view of a Dir (Go's embed.FS is an fs.FS). |
+| embed | std/embed (with core 3.1's `embed`) | done | a constant of `Str`, `Bytes`, or `embed.Dir` set to `embed("path or glob")`, decision 0304: one file as text or bytes, or a tree; `Dir.fs()` is a read-only `Fs` over it (decision 0307), as embed.FS is an fs.FS. Not covered: `open` as a stream over an embedded file (read the whole file). |
 | syscall | none | not planned | Capabilities replace raw system calls. |
 | log | std/log | done | |
 | log/slog | std/log fields, Format.Json | partial | Structured fields and JSON. Missing: span and request id (marked later in section 6), handlers. |

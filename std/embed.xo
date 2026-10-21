@@ -2,7 +2,7 @@
 // the files a constant embeds at build time:
 // `const SITE: embed.Dir = embed("static")`. The checker fills it in, so
 // a program never builds one itself; its methods read the data in the
-// binary and need no capability.
+// binary and need no capability (fs() included: its Fs reads only them).
 
 /// Files embedded at build time, keyed by their slash path relative to
 /// the directory of the file that declares the constant.
@@ -23,3 +23,9 @@ fn (d: Dir) paths() -> List[Str]
 fn (d: Dir) sub(dir: Str) -> Dir
 /// The number of files.
 fn (d: Dir) len() -> Int
+/// A read-only Fs over the files (decision 0304), for code written
+/// against Fs: read, read_text, stat, exists, read_dir, walk, glob, mode,
+/// and sub see the files and the directories their paths imply (a path
+/// is relative, `/`, `.` and a leading `./` name the root); every write,
+/// open, and lock is FsErr.Denied. Nothing needs a capability.
+fn (d: Dir) fs() -> Fs
