@@ -61,6 +61,13 @@ Phases:
   then body).
 - A streamed handler's request cannot be recorded for replay until
   phase 3; until then a recording server buffers it as before.
+- The native server discards (or gives up on) an unread body when the
+  handler returns, before a streamed response's function runs; net/http
+  does it at the response's first write, so a `http.stream` function can
+  still read the request body on the Go backend only.
+- Phase 1 landed 2026-10-21 (std/rt http_body_reader.go, the native
+  http1.body_next and body_finish, golden http_stream_body identical on
+  both backends).
 
 ## Alternatives
 

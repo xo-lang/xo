@@ -1245,6 +1245,79 @@ pub struct Chunked {
   why: Str = ""
 }
 
+/// A chunk's size line decoded (HB_OK: its size, the offset after it,
+/// the non-data count carried to the next line; else why).
+struct ChunkLine {
+  res: Int
+  size: Int
+  next: Int
+  excess: Int
+  why: Str = ""
+}
+
+/// The chunk size line at offset i of s (b its bytes; eof: no more will
+/// come), with excess the non-data count of the lines before it
+/// (net/http's chunkedReader.beginChunk).
+fn chunk_line(s: Str, b: Bytes, i: Int, eof: Bool, excess0: Int) -> ChunkLine {
+  let n = b.len()
+  var excess = excess0
+  let nl = if i < n { scan.find_byte(s.bytes(), i, s.len(), 10) } else { -1 }
+  if nl < 0 {
+    if n - i >= 4096 {
+      return ChunkLine{res: HB_ERR, size: 0, next: i, excess: excess, why: "header line too long"}
+    }
+    return ChunkLine{res: if eof { HB_ERR } else { HB_NEED }, size: 0, next: i, excess: excess, why: "unexpected EOF"}
+  }
+  let e = nl
+  // CRLF required, no other CR
+  let cr = bfind(b, 13, i, e + 1)
+  if cr < 0 {
+    return ChunkLine{res: HB_ERR, size: 0, next: i, excess: excess, why: "chunked line ends with bare LF"}
+  }
+  if cr != e - 1 {
+    return ChunkLine{res: HB_ERR, size: 0, next: i, excess: excess, why: "invalid CR in chunked line"}
+  }
+  let ll = e - 1 - i
+  if ll >= 4096 {
+    return ChunkLine{res: HB_ERR, size: 0, next: i, excess: excess, why: "header line too long"}
+  }
+  excess += ll + 2
+  var z = i + ll
+  while z > i && is_sp(Int(b[z - 1])) {
+    z -= 1
+  }
+  let semi = bfind(b, 59, i, z)
+  if semi >= 0 {
+    z = semi
+  }
+  if z == i {
+    return ChunkLine{res: HB_ERR, size: 0, next: i, excess: excess, why: "empty hex number for chunk length"}
+  }
+  // the size as a UInt64 (a negative Int is at least 2^63)
+  var size = 0
+  var k = i
+  while k < z {
+    let c = Int(b[k])
+    if (cls(c) & HEX) == 0 {
+      return ChunkLine{res: HB_ERR, size: 0, next: i, excess: excess, why: "invalid byte in chunk length"}
+    }
+    if k - i == 16 {
+      return ChunkLine{res: HB_ERR, size: 0, next: i, excess: excess, why: "http chunk length too large"}
+    }
+    size = size.wrapping_shl(4) | unhex(c)
+    k += 1
+  }
+  let capped = if size < 0 || size > MAX_INT / 4 { MAX_INT / 4 } else { size }
+  excess -= 16 + 2 * capped
+  if excess < 0 {
+    excess = 0
+  }
+  if excess > 16 * 1024 {
+    return ChunkLine{res: HB_ERR, size: 0, next: i, excess: excess, why: "chunked encoding contains too much non-data"}
+  }
+  ChunkLine{res: HB_OK, size: size, next: e + 1, excess: excess}
+}
+
 /// Decodes the chunked body at the start of s (eof: no more will come),
 /// as net/http's chunkedReader and the trailer reading of
 /// body.readTrailer.
@@ -1255,61 +1328,13 @@ pub fn chunked(s: Str, eof: Bool) -> Chunked {
   var i = 0
   var excess = 0
   while true {
-    let nl = if i < n { scan.find_byte(s.bytes(), i, s.len(), 10) } else { -1 }
-    if nl < 0 {
-      if n - i >= 4096 {
-        return Chunked{res: HB_ERR, used: 0, body: out, why: "header line too long"}
-      }
-      return Chunked{res: if eof { HB_ERR } else { HB_NEED }, used: 0, body: out, why: "unexpected EOF"}
+    let l = chunk_line(s, b, i, eof, excess)
+    if l.res != HB_OK {
+      return Chunked{res: l.res, used: 0, body: out, why: l.why}
     }
-    let e = nl
-    // CRLF required, no other CR
-    let cr = bfind(b, 13, i, e + 1)
-    if cr < 0 {
-      return Chunked{res: HB_ERR, used: 0, body: out, why: "chunked line ends with bare LF"}
-    }
-    if cr != e - 1 {
-      return Chunked{res: HB_ERR, used: 0, body: out, why: "invalid CR in chunked line"}
-    }
-    let ll = e - 1 - i
-    if ll >= 4096 {
-      return Chunked{res: HB_ERR, used: 0, body: out, why: "header line too long"}
-    }
-    excess += ll + 2
-    var z = i + ll
-    while z > i && is_sp(Int(b[z - 1])) {
-      z -= 1
-    }
-    let semi = bfind(b, 59, i, z)
-    if semi >= 0 {
-      z = semi
-    }
-    if z == i {
-      return Chunked{res: HB_ERR, used: 0, body: out, why: "empty hex number for chunk length"}
-    }
-    // the size as a UInt64 (a negative Int is at least 2^63)
-    var size = 0
-    var k = i
-    while k < z {
-      let c = Int(b[k])
-      if (cls(c) & HEX) == 0 {
-        return Chunked{res: HB_ERR, used: 0, body: out, why: "invalid byte in chunk length"}
-      }
-      if k - i == 16 {
-        return Chunked{res: HB_ERR, used: 0, body: out, why: "http chunk length too large"}
-      }
-      size = size.wrapping_shl(4) | unhex(c)
-      k += 1
-    }
-    let capped = if size < 0 || size > MAX_INT / 4 { MAX_INT / 4 } else { size }
-    excess -= 16 + 2 * capped
-    if excess < 0 {
-      excess = 0
-    }
-    if excess > 16 * 1024 {
-      return Chunked{res: HB_ERR, used: 0, body: out, why: "chunked encoding contains too much non-data"}
-    }
-    i = e + 1
+    excess = l.excess
+    let size = l.size
+    i = l.next
     if size == 0 {
       // the trailer: CRLF, or a MIME header up to an empty line
       if n - i < 2 {
@@ -1396,7 +1421,28 @@ const X_BODY = 88
 const X_BODY_N = 96
 const X_BODY_CAP = 104
 const X_MAX = 112
-const X_SIZE = 120
+/// A streamed body (decision 0310, body_next): its mode (S_*), the bytes
+/// left of its Content-Length or of the current chunk, the chunk lines'
+/// non-data count, whether a chunk's CRLF is due, whether 100 Continue
+/// is due, and the request's number (a reader kept past its request
+/// reads nothing).
+const X_SMODE = 120
+const X_SLEFT = 128
+const X_SEXCESS = 136
+const X_SCRLF = 144
+const X_S100 = 152
+const X_SSEQ = 160
+const X_SIZE = 168
+
+/// The modes of a streamed body: none (read before the handler), a
+/// Content-Length body, a chunked one, read to its end, failed, closed
+/// (the handler returned).
+const S_NONE = 0
+const S_CLEN = 1
+const S_CHUNKED = 2
+const S_END = 3
+const S_ERR = 4
+const S_CLOSED = 5
 
 /// A request body longer than this is cut short like a body whose client
 /// went away (the handler gets what was read, the connection closes); Go
@@ -1615,10 +1661,21 @@ pub struct Reader {
   x: Int
   /// The head of the request being read.
   head: Head
+  /// Whether a request's route reads its body itself (decision 0310):
+  /// given its method and path; none: every body is read first.
+  streams: List[fn(Str, Str) -> Bool] = []
 }
 
 /// The reader of the connection.
 pub fn reader(h: rthttp.HConn) -> Reader { Reader{h: h, x: x1_of(h), head: no_head()} }
+
+/// The reader of the connection that leaves the body of a request for
+/// which streams(method, path) holds to the handler (body_next).
+pub fn reader_streaming(h: rthttp.HConn, streams: fn(Str, Str) -> Bool) -> Reader { Reader{h: h, x: x1_of(h), head: no_head(), streams: [streams]} }
+
+/// The number of the request read last when its body is streamed, else
+/// 0.
+pub fn (r: Reader) streamed() -> Int { if xl(r.x, X_SMODE) == S_NONE { 0 } else { xl(r.x, X_SSEQ) } }
 
 /// The request std/rt's serve hands to Xo code (Request's parts).
 pub struct Req {
@@ -1786,6 +1843,26 @@ fn (var r: Reader) read_one() -> Int {
     hdr_clear(x)
     return 0
   }
+  xs(x, X_SMODE, S_NONE)
+  if !r.streams.is_empty() && !(q.method == "OPTIONS" && q.target == "*") && r.streams[0](q.method, q.url.path) {
+    // the handler reads the body (body_next); 100 Continue on its first
+    // read, as net/http's expectContinueReader
+    xs(x, X_SSEQ, xl(x, X_SSEQ) + 1)
+    xs(x, X_SLEFT, 0)
+    xs(x, X_SEXCESS, 0)
+    xs(x, X_SCRLF, 0)
+    // 1: 100 Continue due on the first read; 2: sent
+    xs(x, X_S100, if q.expect100 { 1 } else { 0 })
+    if q.clen == 0 {
+      xs(x, X_SMODE, S_END)
+    } else if q.chunked {
+      xs(x, X_SMODE, S_CHUNKED)
+    } else {
+      xs(x, X_SMODE, S_CLEN)
+      xs(x, X_SLEFT, q.clen)
+    }
+    return 1
+  }
   if q.clen != 0 {
     if q.expect100 {
       let _c = send_str(h, "HTTP/1.1 100 Continue\r\n\r\n")
@@ -1868,6 +1945,164 @@ fn (var r: Reader) read_one() -> Int {
   }
   1
 }
+
+// ---------------------------------------------------------------------------
+// Streamed request bodies (decision 0310)
+
+/// A read of a streamed body: data, or the end, or an error's text.
+pub struct BodyPart {
+  pub data: Str
+  pub end: Bool
+  pub err: Str
+}
+
+fn part_err(x: Int, why: Str) -> BodyPart {
+  xs(x, X_SMODE, S_ERR)
+  BodyPart{data: "", end: false, err: why}
+}
+
+/// The next bytes of the body of request seq on h (at most max, at
+/// least one), its end, or an error (net/http's body.Read: a body cut
+/// short is "unexpected EOF"; a chunked body's errors are its
+/// chunkedReader's). An error sticks.
+pub fn body_next(h: rthttp.HConn, seq: Int, max: Int) -> BodyPart {
+  let x = x1_of(h)
+  let mode = xl(x, X_SMODE)
+  if xl(x, X_SSEQ) != seq || mode == S_CLOSED || mode == S_NONE {
+    return BodyPart{data: "", end: false, err: "http: invalid Read on closed Body"}
+  }
+  if mode == S_END {
+    return BodyPart{data: "", end: true, err: ""}
+  }
+  if mode == S_ERR {
+    return BodyPart{data: "", end: false, err: "http: read on a failed body"}
+  }
+  if xl(x, X_S100) == 1 {
+    // (2: sent; body_finish asks whether one was expected)
+    xs(x, X_S100, 2)
+    let _c = send_str(h, "HTTP/1.1 100 Continue\r\n\r\n")
+  }
+  while true {
+    let have = xl(x, X_N) - xl(x, X_OFF)
+    let eof = xl(x, X_EOF) != 0
+    let left = xl(x, X_SLEFT)
+    if left > 0 && have > 0 {
+      // data: of the Content-Length, or of the current chunk
+      var n = if have < left { have } else { left }
+      if n > max {
+        n = max
+      }
+      let out = raw.str_at(xl(x, X_BUF) + xl(x, X_OFF), n)
+      xs(x, X_OFF, xl(x, X_OFF) + n)
+      xs(x, X_SLEFT, left - n)
+      if mode == S_CLEN && left == n {
+        xs(x, X_SMODE, S_END)
+      }
+      if mode == S_CHUNKED && left == n {
+        xs(x, X_SCRLF, 1)
+      }
+      return BodyPart{data: out, end: false, err: ""}
+    }
+    if mode == S_CHUNKED && left == 0 {
+      if xl(x, X_SCRLF) != 0 && have >= 2 {
+        let p = xl(x, X_BUF) + xl(x, X_OFF)
+        if rt.mem_load(p, 0, 1) != 13 || rt.mem_load(p, 1, 1) != 10 {
+          return part_err(x, "malformed chunked encoding")
+        }
+        xs(x, X_OFF, xl(x, X_OFF) + 2)
+        xs(x, X_SCRLF, 0)
+        continue
+      }
+      if xl(x, X_SCRLF) == 0 {
+        // a line, or the last one and its trailer, fit in 8 KiB: more
+        // of the input is not copied
+        let win = if have > 8448 { 8448 } else { have }
+        let s = input(x, win)
+        let weof = eof && win == have
+        let l = chunk_line(s, s.bytes(), 0, weof, xl(x, X_SEXCESS))
+        if l.res == HB_ERR {
+          return part_err(x, l.why)
+        }
+        if l.res == HB_OK && l.size != 0 {
+          xs(x, X_SEXCESS, l.excess)
+          xs(x, X_SLEFT, l.size)
+          xs(x, X_OFF, xl(x, X_OFF) + l.next)
+          continue
+        }
+        if l.res == HB_OK {
+          // the last chunk and the trailer, as the whole body's reader
+          let c = chunked(s, weof)
+          if c.res == HB_ERR {
+            return part_err(x, c.why)
+          }
+          if c.res == HB_OK {
+            xs(x, X_OFF, xl(x, X_OFF) + c.used)
+            xs(x, X_SMODE, S_END)
+            return BodyPart{data: "", end: true, err: ""}
+          }
+        }
+      }
+    }
+    if eof {
+      return part_err(x, "unexpected EOF")
+    }
+    let got = fill(h, x)
+    if got < 0 {
+      return part_err(x, "unexpected EOF")
+    }
+    if got == 0 {
+      xs(x, X_EOF, 1)
+    }
+  }
+  BodyPart{data: "", end: true, err: ""}
+}
+
+/// After the handler of request seq with a streamed body, as net/http's
+/// chunkWriter.writeHeader: an Expect: 100-continue body not read to its
+/// end closes the connection; else the rest is discarded when it is less
+/// than 256 KiB (a Content-Length body with that much left, or more read
+/// here, sends Connection: close and closes; a failed read closes).
+/// Reads of the body fail from then on.
+pub fn body_finish(h: rthttp.HConn, seq: Int) {
+  let x = x1_of(h)
+  if xl(x, X_SSEQ) != seq {
+    return
+  }
+  let mode = xl(x, X_SMODE)
+  if mode == S_NONE || mode == S_CLOSED {
+    return
+  }
+  let expect = xl(x, X_S100) != 0
+  if expect && mode != S_END {
+    xs(x, X_FLAGS, xl(x, X_FLAGS) | http1w.F_EXPECT_UNREAD)
+  } else if mode == S_ERR {
+    xs(x, X_FLAGS, xl(x, X_FLAGS) | http1w.F_BODY_BAD)
+  } else if mode == S_CLEN && xl(x, X_SLEFT) >= MAX_POST_HANDLER_READ {
+    xs(x, X_FLAGS, xl(x, X_FLAGS) | http1w.F_TOO_BIG)
+  } else if mode != S_END {
+    // io.CopyN(io.Discard, body, 256 KiB + 1)
+    var n = 0
+    while true {
+      let p = body_next(h, seq, MAX_POST_HANDLER_READ + 1 - n)
+      if !p.err.is_empty() {
+        xs(x, X_FLAGS, xl(x, X_FLAGS) | http1w.F_BODY_BAD)
+        break
+      }
+      if p.end {
+        break
+      }
+      n += p.data.len()
+      if n > MAX_POST_HANDLER_READ {
+        xs(x, X_FLAGS, xl(x, X_FLAGS) | http1w.F_TOO_BIG)
+        break
+      }
+    }
+  }
+  xs(x, X_SMODE, S_CLOSED)
+}
+
+/// net/http's maxPostHandlerReadBytes.
+const MAX_POST_HANDLER_READ = 262144
 
 /// Writes the response of status with the bn bytes at body as net/http
 /// does (http1w.response; stream: the head of a stream with its first

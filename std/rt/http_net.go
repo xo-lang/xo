@@ -55,17 +55,24 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 		if useArena {
 			a = getArena()
 		}
+		// a handle_stream route (decision 0310) reads the body itself; a
+		// recording server keeps it whole for the replay
+		stream := rec == nil && !recording && s.r.streams(hr.Method, urlTextOf(hr.URL.Path))
 		var body Bytes
-		if a != nil {
+		if stream {
+			// net/http drains or closes what the handler left unread
+		} else if a != nil {
 			body = a.readBody(hr.Body)
 		} else {
 			body = readBody(hr)
 		}
-		// the body is read to its end: closing it tells net/http so, which
-		// otherwise drains it again after the handler (io.CopyN into
-		// io.Discard: a LimitReader and, whenever a GC emptied the pool,
-		// an 8 KiB buffer per request)
-		hr.Body.Close()
+		if !stream {
+			// the body is read to its end: closing it tells net/http so,
+			// which otherwise drains it again after the handler (io.CopyN
+			// into io.Discard: a LimitReader and, whenever a GC emptied the
+			// pool, an 8 KiB buffer per request)
+			hr.Body.Close()
+		}
 		var h Map[string, string]
 		if a != nil {
 			h = a.strMap()
@@ -91,6 +98,9 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 			ip = host
 		}
 		req := Http_Request{F_method: hr.Method, F_path: urlTextOf(hr.URL.Path), F_url: u, F_headers: h, F_body: body, F_remote_ip: ip, XRawQuery: hr.URL.RawQuery, XFields: fields}
+		if stream {
+			req = withStreamBody(req, hr.Body)
+		}
 		// the recorder keeps what it is given past the request: never
 		// arena memory (recCopy)
 		recReq := req

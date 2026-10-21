@@ -24,6 +24,9 @@ type route struct {
 	// arena is set when internal/gen proved that the handler confines its
 	// request (Http_Router_arenaLast), so it may get arena memory.
 	arena bool
+	// stream: a handle_stream route (decision 0310), called before the
+	// body is read
+	stream bool
 }
 
 type routeSeg struct {
@@ -196,6 +199,22 @@ func Http_Router_handle[E any](_ *Task, r *Http_Router, pattern string, h func(*
 	List_push(nil, &r.routes, rt)
 }
 
+// Http_Router_handle_stream is `r.handle_stream(pattern, h)` (decision
+// 0310): h reads the request body through a BodyReader; the server calls
+// it before reading the body (http_net.go), Router.call streams req.body.
+func Http_Router_handle_stream[E any](_ *Task, r *Http_Router, pattern string, h func(*Task, Http_Request, Http_BodyReader) Result[Http_Response, E]) {
+	method, segs := parsePattern(pattern)
+	rt := &route{method: method, segs: segs, stream: true}
+	rt.h = func(tk *Task, req Http_Request) Http_Response {
+		res := h(tk, req, bodyReaderOf(req))
+		if res.Ok {
+			return res.V
+		}
+		return errorResponse(tk, any(res.E), res.Tr)
+	}
+	List_push(nil, &r.routes, rt)
+}
+
 // errorResponse maps a handler error (std.md 4.2).
 func errorResponse(tk *Task, e any, tr *Trace) Http_Response {
 	if se, ok := e.(Http_StatusError); ok {
@@ -242,7 +261,7 @@ func (r *Http_Router) M_mount(_ *Task, prefix string, sub Http_Router) {
 	_, pre := parsePattern(prefix)
 	mws := append([]middleware(nil), sub.mws.s...)
 	for _, sr := range sub.routes.s {
-		nr := &route{method: sr.method, segs: append(append([]routeSeg(nil), pre...), sr.segs...), arena: sr.arena && len(mws) == 0}
+		nr := &route{method: sr.method, segs: append(append([]routeSeg(nil), pre...), sr.segs...), arena: sr.arena && len(mws) == 0, stream: sr.stream}
 		nr.h = sr.h
 		if len(mws) > 0 {
 			// the middleware sees the handler's response and may keep it
@@ -298,14 +317,11 @@ func (r Http_Router) call(tk *Task, req Http_Request) Http_Response {
 	return isolateHandler(tk, func(tk *Task) Http_Response { return chain(r.mws.s, r.dispatch)(tk, req) })
 }
 
-// dispatch finds the route and runs it isolated.
-func (r Http_Router) dispatch(tk *Task, req Http_Request) Http_Response {
-	var best *route
-	bestBad := ""
-	methodMismatch := false
-	var buf [16]string
-	parts := appendPathParts(buf[:0], req.F_path)
-	method := strings.ToUpper(req.F_method)
+// find is the route of method and the path parts, the first Int
+// segment of it that does not parse, and whether a route matched the
+// path with another method.
+func (r Http_Router) find(method string, parts []string) (best *route, bestBad string, methodMismatch bool) {
+	method = strings.ToUpper(method)
 	for _, rt := range r.routes.s {
 		_, bad, ok := rt.matchParts(nil, parts, false)
 		if !ok {
@@ -319,6 +335,22 @@ func (r Http_Router) dispatch(tk *Task, req Http_Request) Http_Response {
 			best, bestBad = rt, bad
 		}
 	}
+	return best, bestBad, methodMismatch
+}
+
+// streams reports whether a request's route is a handle_stream route
+// (decision 0310): the server then leaves its body unread.
+func (r Http_Router) streams(method, path string) bool {
+	var buf [16]string
+	best, bad, _ := r.find(method, appendPathParts(buf[:0], path))
+	return best != nil && best.stream && bad == ""
+}
+
+// dispatch finds the route and runs it isolated.
+func (r Http_Router) dispatch(tk *Task, req Http_Request) Http_Response {
+	var buf [16]string
+	parts := appendPathParts(buf[:0], req.F_path)
+	best, bestBad, methodMismatch := r.find(req.F_method, parts)
 	if best == nil {
 		if methodMismatch {
 			return jsonError(tk, 405, "method not allowed")

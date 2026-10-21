@@ -64,6 +64,8 @@ struct Route {
   method: Str
   segs: List[Seg]
   h: fn(Request) -> http.Response
+  /// a handle_stream route (decision 0310)
+  stream: Bool = false
 }
 
 struct Seg {
@@ -76,6 +78,8 @@ struct Seg {
 struct Router {
   routes: List[Route]
   mws: List[fn(Request, fn(Request) -> http.Response) -> http.Response]
+  /// whether a route is a handle_stream route
+  streamed: Bool = false
 }
 
 struct Server {
@@ -116,6 +120,30 @@ struct Response {
   /// as Request.fields (decision 0288)
   fields: List[Str] = []
 }
+
+/// The body of a request to a handle_stream route (decision 0310).
+struct BodyReader {
+  st: Mutex[BodyState]
+}
+
+/// What a BodyReader read: from the connection (conn, the request's
+/// number seq; http1.body_next), else from data at pos (Router.call, a
+/// request made in Xo); a read's error, which sticks; the end seen.
+struct BodyState {
+  conn: List[rthttp.HConn]
+  seq: Int
+  data: Bytes
+  pos: Int
+  err: Str
+  end: Bool
+}
+
+/// The request value that carries a server's unread body to its
+/// handle_stream route.
+const STREAM_BODY = "xo:stream-body"
+
+/// The most one read of a streamed body asks of the connection.
+const READ_MAX = 1048576
 
 /// The writer of a streamed body: a sink into a buffer or a connection.
 struct BodyWriter {
@@ -206,6 +234,125 @@ fn (var r: Router) handle[E: Error, fx: Effects](pattern: Str, h: fn(Request) ->
   r.routes.push(Route{method: method, segs: segs, h: rt.launder1(g)})
 }
 
+fn (var r: Router) handle_stream[E: Error, fx: Effects](pattern: Str, h: fn(Request, BodyReader) -> http.Response ! E uses fx) uses fx {
+  let (method, segs) = parse_pattern(pattern)
+  let g = fn(req: Request) -> http.Response {
+    match h(req, body_reader_of(req)) {
+      Ok(resp) => resp
+      Err(e) => error_response(e)
+    }
+  }
+  r.routes.push(Route{method: method, segs: segs, h: rt.launder1(g), stream: true})
+  r.streamed = true
+}
+
+/// The reader of req's body: the server's unread body, else req.body.
+fn body_reader_of(req: Request) -> BodyReader {
+  for rv in req.values {
+    if rv.name == STREAM_BODY {
+      if let Some(b) = rt.any_get[BodyReader](rv.v) {
+        return b
+      }
+    }
+  }
+  BodyReader{st: Mutex[BodyState].new(BodyState{conn: [], seq: 0, data: req.body, pos: 0, err: "", end: false})}
+}
+
+/// The number of req's streamed body on its connection, or 0.
+fn stream_seq(req: Request) -> Int {
+  for rv in req.values {
+    if rv.name == STREAM_BODY {
+      if let Some(b) = rt.any_get[BodyReader](rv.v) {
+        return b.st.with_read(fn(s) { s.seq })
+      }
+    }
+  }
+  0
+}
+
+fn (b: BodyReader) read(max: Int = 32768) -> Bytes? ! IoErr {
+  if max < 1 {
+    fault("BodyReader.read: max must be at least 1, got ${max}")
+  }
+  if task.is_canceled() {
+    return Err(IoErr.Canceled)
+  }
+  b.st.with(fn(var s: BodyState) -> Bytes? ! IoErr { body_read(s, max) })
+}
+
+fn (b: BodyReader) read_all() -> Bytes ! IoErr {
+  var out = BytesBuilder.new()
+  while true {
+    match b.read(READ_MAX)? {
+      Some(d) => out.write(d)
+      None => break
+    }
+  }
+  out.freeze()
+}
+
+/// The next bytes of s, at most max.
+fn body_read(var s: BodyState, max: Int) -> Bytes? ! IoErr {
+  if !s.err.is_empty() {
+    return Err(IoErr.Io(msg: s.err))
+  }
+  if s.end {
+    return None
+  }
+  if s.conn.is_empty() {
+    let n = s.data.len() - s.pos
+    if n == 0 {
+      s.end = true
+      return None
+    }
+    let k = if n < max { n } else { max }
+    let out = s.data[s.pos..s.pos + k]
+    s.pos += k
+    return Some(out)
+  }
+  let p = http1.body_next(s.conn[0], s.seq, if max > READ_MAX { READ_MAX } else { max })
+  if !p.err.is_empty() {
+    s.err = p.err
+    return Err(IoErr.Io(msg: p.err))
+  }
+  if p.end {
+    s.end = true
+    return None
+  }
+  Some(p.data.bytes())
+}
+
+/// Whether the route dispatch picks for method and path is a
+/// handle_stream route: the server then leaves the body to it.
+fn route_streams(r: Router, method: Str, path: Str) -> Bool {
+  let (lo, hi) = path_bounds(path.bytes())
+  let esc = path.contains("%")
+  let sb = if esc { [] } else { seg_bounds(path, lo, hi) }
+  var uparts: List[Str] = []
+  if esc {
+    for p in split_path(path) {
+      uparts.push(http1.path_unescape(p))
+    }
+  }
+  let m = method.to_upper()
+  var best = -1
+  var best_lits = 0
+  var best_bad = ""
+  for (i, route) in r.routes.indexed() {
+    let (ok, bad) = if esc { match_parts(route, uparts) } else { match_in(route, path, sb) }
+    if !ok || (!route.method.is_empty() && route.method != m) {
+      continue
+    }
+    let lits = literals(route)
+    if best < 0 || lits > best_lits {
+      best = i
+      best_lits = lits
+      best_bad = bad
+    }
+  }
+  best >= 0 && best_bad.is_empty() && r.routes[best].stream
+}
+
 fn (var r: Router) wrap[E: Error, fx: Effects](m: fn(Request, fn(Request) -> http.Response) -> http.Response ! E uses fx) uses fx {
   let g = fn(req: Request, next: fn(Request) -> http.Response) -> http.Response {
     match m(req, next) {
@@ -227,7 +374,10 @@ fn (var r: Router) mount(prefix: Str, sub: Router) {
     if !sub.mws.is_empty() {
       h = chain(sub.mws, sr.h)
     }
-    r.routes.push(Route{method: sr.method, segs: segs, h: h})
+    r.routes.push(Route{method: sr.method, segs: segs, h: h, stream: sr.stream})
+  }
+  if sub.streamed {
+    r.streamed = true
   }
 }
 
@@ -1624,11 +1774,18 @@ fn serve_conn(hc: rthttp.HConn, r: Router, serve_h2: fn(rthttp.HConn, Int, Route
     serve_h2(hc, h2, r)
     return
   }
-  var rd = http1.reader(hc)
+  // a handle_stream route reads its body itself (decision 0310)
+  var rd = if r.streamed { http1.reader_streaming(hc, fn(m: Str, p: Str) -> Bool { route_streams(r, m, p) }) } else { http1.reader(hc) }
   while true {
     match rd.read() {
       Some(q) => {
-        let (open, resp) = respond(hc, head_request(rd, q), r)
+        var req = head_request(rd, q)
+        let sq = rd.streamed()
+        if sq != 0 {
+          let b = BodyReader{st: Mutex[BodyState].new(BodyState{conn: [hc], seq: sq, data: b"", pos: 0, err: "", end: false})}
+          req = req with {values: [ReqValue{name: STREAM_BODY, v: rt.any_of(b)}]}
+        }
+        let (open, resp) = respond(hc, req, r)
         let keep = match resp {
           Some(x) => http1.respond(hc, x.status, x.body)
           None => open
@@ -1682,6 +1839,14 @@ fn serve_stream(q: h2srv.H2Req, r: Router) {
 /// names no HTTP/2 code, decision 0244).
 fn respond(hc: rthttp.HConn, req: Request, r: Router) -> (Bool, Response?) {
   let resp = rt.cast[http.Response, Response](call_raw(r, req))
+  if !req.values.is_empty() {
+    // what the handler of a streamed body left: discarded or closing
+    // (net/http's writeHeader)
+    let sq = stream_seq(req)
+    if sq != 0 {
+      http1.body_finish(hc, sq)
+    }
+  }
   if resp.fields.is_empty() {
     for (k, v) in resp.headers {
       http1.header_set(hc, k, v)

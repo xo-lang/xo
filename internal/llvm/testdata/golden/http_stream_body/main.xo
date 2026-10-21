@@ -1,0 +1,173 @@
+// Streamed request bodies (decision 0310): handle_stream routes read the
+// body through a BodyReader as it arrives, over raw TCP to an std/http
+// server on 127.0.0.1:0 (the answers printed with the Date value left
+// out). The Go backend (net/http's r.Body) and the native server must
+// answer alike: Content-Length and chunked bodies read in small pieces,
+// read_all, a body left unread (small: discarded, the connection kept;
+// 256 KiB or more: Connection: close), Expect: 100-continue read and
+// unread, a malformed chunked body's error, a buffered route next to
+// streamed ones, middleware, and Router.call.
+use std/http
+
+/// Reads b to its end, max bytes a read.
+fn drain(b: http.BodyReader, max: Int) -> Bytes ! IoErr {
+  var out = BytesBuilder.new()
+  while true {
+    match b.read(max)? {
+      Some(d) => {
+        if d.len() > max {
+          return Err(IoErr.Io(msg: "read more than max"))
+        }
+        out.write(d)
+      }
+      None => break
+    }
+  }
+  out.freeze()
+}
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle_stream("POST /stream", fn(req, b) {
+    let d = drain(b, 3)?
+    http.text(200, "streamed ${d.len()} bytes: ${d.to_str() ?? "?"} (req.body ${req.body.len()})")
+  })
+  r.handle_stream("POST /all", fn(_req, b) {
+    let d = b.read_all()?
+    // the end, again
+    let again = b.read()?
+    http.text(200, "all ${d.len()} bytes, then ${again is None}")
+  })
+  r.handle_stream("POST /ignore", fn(_req, _b) { http.text(200, "ignored") })
+  r.handle_stream("POST /first", fn(_req, b) {
+    match b.read(4) {
+      Ok(Some(d)) => http.text(200, "first ${d.len()}: ${d.to_str() ?? "?"}")
+      Ok(None) => http.text(200, "empty")
+      Err(e) => http.text(200, "error ${e}")
+    }
+  })
+  r.handle_stream("POST /try", fn(_req, b) {
+    match b.read_all() {
+      Ok(d) => http.text(200, "ok ${d.len()}")
+      Err(IoErr.Io(msg)) => http.text(200, "error: ${msg}")
+      Err(e) => http.text(200, "error ${e}")
+    }
+  })
+  r.handle("POST /echo", fn(req) { http.text(200, "buffered ${req.body.len()} bytes: ${req.body.to_str() ?? "?"}") })
+  r.wrap(fn(req, next) {
+    let resp = next(req)
+    var h = resp.headers
+    h.put("X-Wrapped", "yes")
+    resp with {headers: h}
+  })
+  r
+}
+
+/// The answer without the Date value; a long body is summarized.
+fn clean(s: Str) -> Str {
+  var out: List[Str] = []
+  for line in s.split("\r\n") {
+    if line.starts_with("Date: ") {
+      out.push("Date: <date>")
+    } else if line.len() > 80 {
+      out.push("<${line.len()} bytes>")
+    } else {
+      out.push(line)
+    }
+  }
+  out.join("\n")
+}
+
+/// Sends raw on a new connection and prints everything the server
+/// answers until it closes the connection.
+fn exchange(os: Os, addr: Str, label: Str, raw: Str) {
+  match os.net.dial(addr) {
+    Ok(c) => {
+      match c.write(raw.bytes()) {
+        Ok(_) => ()
+        Err(_) => os.stdio.println("${label}: write failed")
+      }
+      var got = ""
+      while {
+        match c.read(65536) {
+          Ok(Some(b)) => got = got + (b.to_str() ?? "?")
+          Ok(None) => break
+          Err(_) => break
+        }
+      }
+      c.close()
+      os.stdio.println("== ${label}")
+      os.stdio.println(clean(got))
+    }
+    Err(_) => os.stdio.println("${label}: dial failed")
+  }
+}
+
+/// exchange with raw sent in parts, 20 ms apart: the body arrives while
+/// the handler reads it.
+fn exchange_parts(os: Os, addr: Str, label: Str, parts: List[Str]) {
+  match os.net.dial(addr) {
+    Ok(c) => {
+      for p in parts {
+        match c.write(p.bytes()) {
+          Ok(_) => ()
+          Err(_) => os.stdio.println("${label}: write failed")
+        }
+        os.clock.sleep(20ms)
+      }
+      var got = ""
+      while {
+        match c.read(65536) {
+          Ok(Some(b)) => got = got + (b.to_str() ?? "?")
+          Ok(None) => break
+          Err(_) => break
+        }
+      }
+      c.close()
+      os.stdio.println("== ${label}")
+      os.stdio.println(clean(got))
+    }
+    Err(_) => os.stdio.println("${label}: dial failed")
+  }
+}
+
+fn main(os: Os) {
+  let r = routes()
+  // in process: the request's body is the stream
+  let resp = r.call(http.new_request("POST", "/stream", {}, "in process".bytes()))
+  os.stdio.println("call: ${resp.status} ${resp.body.to_str() ?? "?"} ${resp.headers.get("X-Wrapped") ?? "-"}")
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      let srv = http.server(l, r)
+      let addr = srv.addr()
+      scope s {
+        s.spawn_background(fn() {
+          match srv.serve() {
+            Ok(_) => ()
+            Err(e) => os.stdio.println("serve failed: ${e}")
+          }
+        })
+        let pad = "abcdefghij".repeat(20)
+        exchange(os, addr, "length", "POST /stream HTTP/1.1\r\nHost: h\r\nContent-Length: 11\r\nConnection: close\r\n\r\nhello world")
+        exchange(os, addr, "chunked", "POST /stream HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n4\r\nwiki\r\n5;x=y\r\npedia\r\n0\r\n\r\n")
+        exchange(os, addr, "chunked trailer", "POST /stream HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n3\r\nabc\r\n0\r\nX-T: 1\r\n\r\n")
+        exchange(os, addr, "read_all", "POST /all HTTP/1.1\r\nHost: h\r\nContent-Length: 200\r\nConnection: close\r\n\r\n${pad}")
+        exchange(os, addr, "empty", "POST /first HTTP/1.1\r\nHost: h\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+        exchange(os, addr, "partly read, pipelined", "POST /first HTTP/1.1\r\nHost: h\r\nContent-Length: 10\r\n\r\n0123456789POST /echo HTTP/1.1\r\nHost: h\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+        exchange(os, addr, "ignored, pipelined", "POST /ignore HTTP/1.1\r\nHost: h\r\nContent-Length: 200\r\n\r\n${pad}POST /stream HTTP/1.1\r\nHost: h\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi")
+        exchange(os, addr, "ignored chunked, pipelined", "POST /ignore HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nwiki\r\n0\r\n\r\nPOST /echo HTTP/1.1\r\nHost: h\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+        exchange(os, addr, "ignored large", "POST /ignore HTTP/1.1\r\nHost: h\r\nContent-Length: 300000\r\n\r\nabc")
+        exchange(os, addr, "continue read", "POST /stream HTTP/1.1\r\nHost: h\r\nContent-Length: 3\r\nExpect: 100-continue\r\nConnection: close\r\n\r\nabc")
+        exchange(os, addr, "continue unread", "POST /ignore HTTP/1.1\r\nHost: h\r\nContent-Length: 3\r\nExpect: 100-continue\r\n\r\nabc")
+        exchange(os, addr, "bad chunk", "POST /try HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nwiki\r\nzz\r\n")
+        exchange(os, addr, "bad chunk end", "POST /try HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nwikiXY0\r\n\r\n")
+        exchange_parts(os, addr, "length in parts", ["POST /stream HTTP/1.1\r\nHost: h\r\nContent-Length: 12\r\nConnection: close\r\n\r\n", "hel", "lo w", "orld!"])
+        exchange_parts(os, addr, "chunked in parts", ["POST /all HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n", "4\r", "\nwi", "ki\r\n", "5\r\npedia", "\r\n0\r\n", "\r\n"])
+        exchange_parts(os, addr, "continue in parts", ["POST /stream HTTP/1.1\r\nHost: h\r\nContent-Length: 6\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n", "abc", "def"])
+        exchange(os, addr, "buffered", "POST /echo HTTP/1.1\r\nHost: h\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello")
+      }
+      os.stdio.println("done")
+    }
+    Err(e) => os.stdio.println("listen failed: ${e}")
+  }
+}

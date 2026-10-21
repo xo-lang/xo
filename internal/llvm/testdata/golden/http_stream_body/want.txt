@@ -1,0 +1,180 @@
+exit 0
+--- stdout
+call: 200 streamed 10 bytes: in process (req.body 10) yes
+== length
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+X-Wrapped: yes
+Date: <date>
+Content-Length: 43
+Connection: close
+
+streamed 11 bytes: hello world (req.body 0)
+== chunked
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+X-Wrapped: yes
+Date: <date>
+Content-Length: 40
+Connection: close
+
+streamed 9 bytes: wikipedia (req.body 0)
+== chunked trailer
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+X-Wrapped: yes
+Date: <date>
+Content-Length: 34
+Connection: close
+
+streamed 3 bytes: abc (req.body 0)
+== read_all
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+X-Wrapped: yes
+Date: <date>
+Content-Length: 24
+Connection: close
+
+all 200 bytes, then true
+== empty
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+X-Wrapped: yes
+Date: <date>
+Content-Length: 5
+Connection: close
+
+empty
+== partly read, pipelined
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+X-Wrapped: yes
+Date: <date>
+Content-Length: 13
+
+first 4: 0123HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+X-Wrapped: yes
+Date: <date>
+Content-Length: 20
+Connection: close
+
+buffered 2 bytes: ok
+== ignored, pipelined
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+X-Wrapped: yes
+Date: <date>
+Content-Length: 7
+
+ignoredHTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+X-Wrapped: yes
+Date: <date>
+Content-Length: 33
+Connection: close
+
+streamed 2 bytes: hi (req.body 0)
+== ignored chunked, pipelined
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+X-Wrapped: yes
+Date: <date>
+Content-Length: 7
+
+ignoredHTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+X-Wrapped: yes
+Date: <date>
+Content-Length: 20
+Connection: close
+
+buffered 2 bytes: ok
+== ignored large
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+X-Wrapped: yes
+Date: <date>
+Content-Length: 7
+Connection: close
+
+ignored
+== continue read
+HTTP/1.1 100 Continue
+
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+X-Wrapped: yes
+Date: <date>
+Content-Length: 34
+Connection: close
+
+streamed 3 bytes: abc (req.body 0)
+== continue unread
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+X-Wrapped: yes
+Date: <date>
+Content-Length: 7
+Connection: close
+
+ignored
+== bad chunk
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+X-Wrapped: yes
+Date: <date>
+Content-Length: 35
+Connection: close
+
+error: invalid byte in chunk length
+== bad chunk end
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+X-Wrapped: yes
+Date: <date>
+Content-Length: 33
+Connection: close
+
+error: malformed chunked encoding
+== length in parts
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+X-Wrapped: yes
+Date: <date>
+Content-Length: 44
+Connection: close
+
+streamed 12 bytes: hello world! (req.body 0)
+== chunked in parts
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+X-Wrapped: yes
+Date: <date>
+Content-Length: 22
+Connection: close
+
+all 9 bytes, then true
+== continue in parts
+HTTP/1.1 100 Continue
+
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+X-Wrapped: yes
+Date: <date>
+Content-Length: 37
+Connection: close
+
+streamed 6 bytes: abcdef (req.body 0)
+== buffered
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+X-Wrapped: yes
+Date: <date>
+Content-Length: 23
+Connection: close
+
+buffered 5 bytes: hello
+done
+--- stderr

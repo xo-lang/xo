@@ -1014,6 +1014,8 @@ fn follow(p: Proc, out: Stdio) -> () ! ProcErr uses (proc, stdio) {
 ```
 pub fn router() -> Router
 fn ([var] r: Router) handle[E: Error, fx: Effects](pattern: Str, h: fn(Request) -> Response ! E uses fx) uses fx
+fn ([var] r: Router) handle_stream[E: Error, fx: Effects](pattern: Str, h: fn(Request, BodyReader) -> Response ! E uses fx) uses fx
+    // the body read as h asks (decision 0310); req.body is empty
 fn ([var] r: Router) wrap[E: Error, fx: Effects](m: fn(Request, Next) -> Response ! E uses fx) uses fx
 fn ([var] r: Router) mount(prefix: Str, sub: Router)   // sub's routes under prefix, behind sub's middleware
 fn (r: Router) call(req: Request) -> Response      // in process dispatch, for tests
@@ -1028,6 +1030,24 @@ type Next = fn(Request) -> Response
   `{name...}` (rest of the path). Without a method, any method matches.
   plain strings: `"GET /users/{id:Int}"`.
 - Unmatched path: 404. Path matched with another method: 405.
+- Streamed request bodies (decision 0310): for a `handle_stream` route the
+  server calls the handler before reading the body (Go's `r.Body`):
+  `req.body` is empty and `BodyReader.read(max)` gives the next bytes (at
+  most `max`, default 32 KiB; `None` at the end) of a Content-Length or
+  chunked body as they arrive, `read_all()` the rest. `Expect:
+  100-continue` is answered on the first read. A body cut short is
+  `IoErr.Io("unexpected EOF")`; a malformed chunked body's error is
+  net/http's (`invalid byte in chunk length`, `malformed chunked
+  encoding`) and sticks. What the handler leaves unread is discarded
+  when less than 256 KiB (the connection stays open), else the response
+  says `Connection: close` (net/http's `maxPostHandlerReadBytes`); an
+  `Expect: 100-continue` body not read to its end closes the connection.
+  `XO_HTTP_MAX_BODY` does not apply. `Router.call` streams `req.body`.
+  Middleware see the request without its body. Not yet (decision 0310's
+  phases 2 and 3): the native HTTP/2 server and a recording server
+  (decision 0219) read the body first and stream it from memory; a body
+  is discarded when the handler returns, so a streamed response's
+  function (`http.stream`) cannot read it on the native backends.
 - Middleware run in registration order, outermost first, and see the final
   response after error mapping.
 - Middleware may fail: `Err(e)` from a middleware is mapped to a response
@@ -1161,6 +1181,8 @@ pub fn serve_content(req: Request, name: Str, modtime: Time?, content: Bytes, he
     // 416, Content-Type from headers, name's extension, or the content
 fn (w: BodyWriter) write(data: Bytes) -> () ! IoErr
 fn (w: BodyWriter) flush() -> () ! IoErr
+fn (b: BodyReader) read(max: Int = 32768) -> Bytes? ! IoErr   // a handle_stream body's next bytes, None at its end
+fn (b: BodyReader) read_all() -> Bytes ! IoErr                // the rest of it
 fn (r: Response) with_header(name: Str, value: Str) -> Response
 fn (r: Response) header(name: Str) -> Str?          // case insensitive
 fn (r: Response) header_values(name: Str) -> List[Str]   // every field of name, in order (decision 0288)
@@ -1430,7 +1452,8 @@ fn serve_https(os: Os, r: http.Router) -> () ! Error uses (fs.read, net.listen) 
     ClientHello, and for handshake measurements without ML-KEM.
   - `XO_HTTP_MAX_BODY=<bytes>` (native backends): the largest request
     body the server reads (default 64 MiB; a longer one is cut short as
-    a body whose client went away). Go has no such limit.
+    a body whose client went away). Go has no such limit. A
+    `handle_stream` route's body has none either (decision 0310).
 
 ### 4.7 Response compression
 

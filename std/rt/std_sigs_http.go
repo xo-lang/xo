@@ -30,6 +30,8 @@ var (
 	_ func(*Task, Http_Request, string, Option[Time], Bytes, Map[string, string]) Http_Response                                                         = Http_serve_content
 	_ func(*Task, int64, string) Http_Response                                                                                                          = Http_text
 	_ func(*Task, int64) Http_Response                                                                                                                  = Http_empty
+	_ func(*Http_BodyReader, *Task, int64) Result[Option[Bytes], IoErr]                                                                                 = (*Http_BodyReader).M_read
+	_ func(*Http_BodyReader, *Task) Result[Bytes, IoErr]                                                                                                = (*Http_BodyReader).M_read_all
 	_ func(*Http_BodyWriter, *Task, Bytes) Result[Unit, IoErr]                                                                                          = (*Http_BodyWriter).M_write
 	_ func(*Http_BodyWriter, *Task) Result[Unit, IoErr]                                                                                                 = (*Http_BodyWriter).M_flush
 	_ func(*Http_Response, *Task, string, string) Http_Response                                                                                         = (*Http_Response).M_with_header

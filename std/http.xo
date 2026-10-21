@@ -17,6 +17,9 @@ type Next = fn(Request) -> Response
 
 fn router() -> Router
 fn (var r: Router) handle[E: Error, fx: Effects](pattern: Str, h: fn(Request) -> Response ! E uses fx) uses fx
+/// A route whose handler reads the request body as a stream (decision
+/// 0310): the server calls h before reading the body; req.body is empty.
+fn (var r: Router) handle_stream[E: Error, fx: Effects](pattern: Str, h: fn(Request, BodyReader) -> Response ! E uses fx) uses fx
 fn (var r: Router) wrap[E: Error, fx: Effects](m: fn(Request, Next) -> Response ! E uses fx) uses fx
 /// Adds every route of `sub` under `prefix`, behind the middleware of `sub`
 /// (std.md 4.1).
@@ -141,6 +144,13 @@ fn serve_content(req: Request, name: Str, modtime: Time?, content: Bytes, header
 fn text(status: Int, s: Str) -> Response
 fn empty(status: Int) -> Response
 fn stream[fx: Effects](status: Int, f: fn(BodyWriter) -> () ! IoErr uses fx) -> Response uses fx
+
+/// The body of a request to a handle_stream route (decision 0310).
+struct BodyReader {}
+/// The next bytes of the body (at most max, at least 1), None at its end.
+fn (b: BodyReader) read(max: Int = 32768) -> Bytes? ! IoErr
+/// The rest of the body.
+fn (b: BodyReader) read_all() -> Bytes ! IoErr
 
 /// The body of a streamed response (std.md 4.3).
 struct BodyWriter {}

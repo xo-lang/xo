@@ -1,5 +1,19 @@
 # std/http changes
 
+## 2026-10-21: feature: Router.handle_stream (streamed request bodies)
+
+- Kind: feature
+- Commit: (filled in after the push)
+- Found by: owner's request (2026-10-21), decision 0310
+- Go reference: net/http's Request.Body (body, chunkedReader, expectContinueReader, chunkWriter.writeHeader's discard; go1.26.1)
+- Test: internal/llvm/testdata/golden/http_stream_body (17 exchanges: Content-Length and chunked bodies read 3 bytes at a time, in parts as they arrive, read_all, unread bodies small and large, 100-continue read and unread, malformed chunks; native identical to the Go backend)
+
+`r.handle_stream(pattern, fn(req, body) { ... })` calls the handler
+before the body is read; `body.read(max)` and `body.read_all()` read it
+as it arrives, as Go's `r.Body`. The native HTTP/1.1 server reads the
+connection's input on demand, sends 100 Continue on the first read, and
+after the handler discards an unread rest under 256 KiB or closes.
+
 ## 2026-10-21: feature: http.gzip_responses
 
 - Kind: feature
