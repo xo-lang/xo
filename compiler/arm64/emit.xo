@@ -358,6 +358,13 @@ fn (var g: G) emit() {
     }
   }
   let ls = if g.x86 { ls0 } else { borrow_flag_peep_l(cr) }
+  if g.m.op_verify && !g.x86 {
+    // decision 0274 step 3: borrow_flag_peep on items gives the text
+    // pass's lines
+    if line_texts(borrow_flag_peep_ops(to_lines(cr))) != flat_lines(ls) {
+      g.fail("XO_OP_VERIFY: ${g.f.name}: borrow_flag_peep_ops differs from borrow_flag_peep_l")
+    }
+  }
   let nrefs = label_counts(ls, ext)
   if g.m.op_verify && !g.x86 {
     // decision 0274 step 3: the lines reload_reuse_l reads, as Ops (a

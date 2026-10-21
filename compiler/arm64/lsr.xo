@@ -858,6 +858,9 @@ fn borrow_flag_peep(text: Str) -> Str { borrow_flag_peep_l(text.split("\n")).joi
 /// borrow carried into the chain, std/native/llrt x25519.xo fe64_sub,
 /// nistec.xo sub4, sub6, sub_m6; a constant carry in of 1 made LLVM join
 /// two carries with a conditional select).
+/// Ported to items in lines.xo (decision 0274 step 3): until the text pass
+/// goes, a change here is made in its port too, or XO_OP_VERIFY=1 builds
+/// fail (gotchas/arm64-line-pass-port-drift.md).
 fn borrow_flag_peep_l(ls: List[Str]) -> List[Str] {
   if !any_has(ls, "\teor ") || !any_line_ends(ls, ", cc") {
     return ls

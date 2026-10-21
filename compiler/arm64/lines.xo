@@ -381,3 +381,106 @@ fn pair_mem_ops(xs: List[Line], nrefs: Map[Str, Int]) -> List[Line] {
   }
   out
 }
+
+/// Whether x is an instruction m whose operands are registers of kind RX
+/// numbered rs and then, when imm >= 0, the immediate imm.
+fn op_is(x: Line, m: Str, rs: List[Int], imm: Int) -> Bool {
+  if let Some(o) = x.op {
+    let n = rs.len() + if imm >= 0 { 1 } else { 0 }
+    if o.m != m || o.ops.len() != n {
+      return false
+    }
+    for k in 0..rs.len() {
+      if let macho.Operand.Reg(n: rn, kind: kd) = o.ops[k] {
+        if rn != rs[k] || kd != macho.RX {
+          return false
+        }
+      } else {
+        return false
+      }
+    }
+    if imm >= 0 {
+      if let macho.Operand.Imm(v: v) = o.ops[rs.len()] {
+        return v == imm
+      }
+      return false
+    }
+    return true
+  }
+  false
+}
+
+/// borrow_flag_peep_l on items (lsr.xo's text pass; its cset, eor, cmp,
+/// and carry chain instruction read from the Op).
+fn borrow_flag_peep_ops(xs: List[Line]) -> List[Line] {
+  let ls = line_texts(xs)
+  if !any_has(ls, "\teor ") || !any_line_ends(ls, ", cc") {
+    return xs
+  }
+  var out: List[Line] = List.with_capacity(xs.len())
+  var i = 0
+  while i < xs.len() {
+    let subs = if let Some(o) = xs[i].op { o.m == "subs" } else { false }
+    if subs {
+      // the next four instructions, past debug row and variable labels
+      // (kept, after subs, as borrow_flag_peep_l)
+      var at: List[Int] = []
+      var rows: List[Line] = []
+      var j = i + 1
+      while j < xs.len() && at.len() < 4 {
+        let j2 = past_rows(ls, j)
+        for r in xs[j..j2] {
+          rows.push(r)
+        }
+        if j2 < xs.len() {
+          at.push(j2)
+        }
+        j = j2 + 1
+      }
+      if at.len() == 4 {
+        let (cok, x) = op_cset_cc(xs[at[0]])
+        let nx = xs[at[3]]
+        let chain = if let Some(o) = nx.op { (o.m == "sbcs" || o.m == "adcs") && !op_reads_x(o, x) } else { false }
+        if cok && op_is(xs[at[1]], "eor", [x, x], 1) && op_is(xs[at[2]], "cmp", [x], 1) && chain && scratch_free_after(ls, at[3], "x${x}") {
+          out.push(xs[i])
+          for r in rows {
+            out.push(r)
+          }
+          i = at[3]
+          continue
+        }
+      }
+    }
+    out.push(xs[i])
+    i += 1
+  }
+  out
+}
+
+/// `cset x<n>, cc` (n not 31): (true, n).
+fn op_cset_cc(x: Line) -> (Bool, Int) {
+  if let Some(o) = x.op {
+    if o.m == "cset" && o.ops.len() == 2 {
+      if let macho.Operand.Reg(n: r, kind: k) = o.ops[0] {
+        if let macho.Operand.Cond(c: _, name: nm) = o.ops[1] {
+          if k == macho.RX && r != 31 && nm == "cc" {
+            return (true, r)
+          }
+        }
+      }
+    }
+  }
+  (false, 0)
+}
+
+/// Whether one of o's operands is the 64 bit register x<r>.
+fn op_reads_x(o: macho.Op, r: Int) -> Bool {
+  for p in o.ops {
+    if let macho.Operand.Reg(n: rn, kind: k) = p {
+      if rn == r && k == macho.RX {
+        return true
+      }
+    }
+  }
+  false
+}
