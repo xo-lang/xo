@@ -10,7 +10,6 @@
 use native/llrt/budget
 use native/llrt/ctx
 use native/llrt/fault
-use native/llrt/obj
 use native/llrt/pool
 use native/llrt/raw
 use native/llrt/rc
@@ -384,7 +383,7 @@ fn runlock_body(m: Int, l: Int) {
 /// A Mutex's free function (mutex_free): its value.
 pub fn free(m: Int) {
   tasks.list_release(ld(m, M_SLOT), ld(m, M_DROP))
-  obj.free_obj(m)
+  tasks.free_handle(m)
 }
 
 /// The tasks waiting on mutex m to write (writers) or read, under its

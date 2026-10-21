@@ -1,4 +1,4 @@
 exit 0
 --- stdout
-total 1490 task 9 relock true
+total 2290 task 9 relock true procs 5
 --- stderr

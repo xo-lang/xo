@@ -2,13 +2,13 @@
 // like cabi.xo, every top level function here is called by the C runtime
 // as xo_x_<name>. std/native/llrt/procspec.xo imports this module, so a
 // program that runs commands has them, and other programs do not grow.
-use native/llrt/obj
 use native/llrt/proc
+use native/llrt/tasks
 
 /// A child record's free function (proc.xo spawn's rt.fn_addr, the
 /// handles proc.xo spawn makes): its descriptors and process, then the
 /// block.
 fn proc_child_drop(ch: Int) {
   proc.child_free(ch)
-  obj.free_obj(ch)
+  tasks.free_handle(ch)
 }

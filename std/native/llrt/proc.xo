@@ -1100,10 +1100,7 @@ fn set_fail(ch: Int, s: Int, m: Str) {
 pub fn spawn(spec: List[Str], input: Bytes, has_input: Bool) -> rt.ProcChild {
   // the child's record: a handle whose free function is cabi_proc.xo's
   // proc_child_drop (was xo_proc.c xo_proc_child_new)
-  let ch = tasks.new_handle(CH_SIZE, rt.fn_addr("proc_child_drop"))
-  let h = rt.obj_at[rt.ProcChild](ch)
-  // obj_at counted it once more: the value holds the one reference
-  tasks.h_release(ch)
+  let (h, ch) = tasks.make_handle[rt.ProcChild](CH_SIZE, rt.fn_addr("proc_child_drop"))
   st(ch, CH_ST, 48)
   st(ch, CH_IN, -1)
   st(ch, CH_FD, -1)

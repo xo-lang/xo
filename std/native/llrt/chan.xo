@@ -461,5 +461,5 @@ pub fn free(c: Int) {
   if b != 0 {
     rt.heap_release(b)
   }
-  obj.free_obj(c)
+  tasks.free_handle(c)
 }

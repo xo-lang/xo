@@ -1,7 +1,8 @@
 // Runtime handles made with std/native/llrt tasks.make_handle (decision
 // 0295) are freed whether closed or dropped: files opened with and
 // without a read buffer and locks, closed, dropped open, and dropped in a
-// task. Run with XO_LEAKCHECK=1 as every golden is, a record the free hook
+// task; channels dropped with values still buffered, mutexes holding a
+// list, and child processes waited for or dropped. Run with XO_LEAKCHECK=1 as every golden is, a record the free hook
 // does not free fails it. Each round locks its own file: a lock dropped
 // held is released when its record is freed natively, but only when the
 // collector runs on the Go backend.
@@ -28,10 +29,34 @@ fn round(fs: Fs, i: Int) -> Int ! FsErr uses fs {
   Ok(first.len())
 }
 
+fn shared_handles(i: Int) -> Int {
+  let c = Chan[List[Int]].new(cap: 4)
+  c.send([i, i + 1])
+  c.send([i])
+  let m = Mutex.new([i])
+  let n = m.with(fn(var xs) -> Int {
+    xs.push(1)
+    xs.len()
+  })
+  n + (c.recv() ?? []).len()
+}
+
+fn children(p: Proc) -> Int ! ProcErr uses proc {
+  let waited = p.cmd("true").spawn()?
+  let code = waited.wait()?
+  // dropped without a wait: its free hook closes its descriptors
+  let _dropped = p.cmd("true").spawn()?
+  Ok(code + 1)
+}
+
 fn main(os: Os) ! {
   var total = 0
   for i in 0..200 {
-    total += round(os.fs, i)?
+    total += round(os.fs, i)? + shared_handles(i)
+  }
+  var procs = 0
+  for _ in 0..5 {
+    procs += children(os.proc)?
   }
   let n = scope s {
     let t = s.spawn(fn() -> Int ! FsErr {
@@ -42,7 +67,7 @@ fn main(os: Os) ! {
     t.await?
   }
   let again = os.fs.try_lock("h1.lock")?
-  os.stdio.println("total ${total} task ${n} relock ${again.is_some()}")
+  os.stdio.println("total ${total} task ${n} relock ${again.is_some()} procs ${procs}")
   for p in ["h.txt", "w.txt", "t.lock"] {
     os.fs.remove(p)?
   }
