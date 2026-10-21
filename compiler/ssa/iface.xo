@@ -24,7 +24,8 @@ fn (var b: Builder) iface_type(t: Int, obj: Int) -> Int {
     return st
   }
   b.ifaces[st] = t
-  let sub = b.c.args_subst(b.c.objs[obj].tparams, b.ty_args(t))
+  let targs = b.ty_args(t)
+  let sub = b.c.args_subst(b.c.objs[obj].tparams, targs)
   var fs: List[SField] = []
   for im in b.c.objs[obj].iface_meths {
     let iname = b.obj_name(im)
@@ -60,7 +61,8 @@ fn (var b: Builder) iface_meth(r: Int, name: Str) -> (Int, Map[Int, Int]) {
   let o = b.named_obj(r)
   for im in b.c.objs[o].iface_meths {
     if b.obj_name(im) == name {
-      return (im, b.c.args_subst(b.c.objs[o].tparams, b.ty_args(r)))
+      let targs = b.ty_args(r)
+      return (im, b.c.args_subst(b.c.objs[o].tparams, targs))
     }
   }
   (-1, {})
@@ -83,7 +85,8 @@ fn (var b: Builder) to_iface(v: Int, from0: Int, t: Int, at: Expr?) -> Int {
     // others; the hidden fields are the concrete value's
     for (i, im) in meths.indexed() {
       let ft = b.m.types[t].fields[i].ty
-      let j = b.m.field_index(vt, b.obj_name(im))
+      let iname = b.obj_name(im)
+      let j = b.m.field_index(vt, iname)
       if j < 0 {
         b.unsupported("converting `${b.m.types[vt].name}` to `${b.m.types[t].name}`")
         return b.undef(t)
@@ -280,7 +283,8 @@ fn (var b: Builder) iface_thunk(t: Int, i: Int, ct: Int, vt: Int, at: Expr?) -> 
   }
   let saved = b.begin(fi, b.s.file)
   let me = b.add(Op.Capture, vt, Aux.I(n: 0), [b.param(0)])
-  let sub = b.c.args_subst(b.c.objs[robj].tparams, b.ty_args(r))
+  let rargs = b.ty_args(r)
+  let sub = b.c.args_subst(b.c.objs[robj].tparams, rargs)
   var args: List[Int] = []
   for (k, p) in b.s.f.blocks[0].params.indexed() {
     if k > 0 {

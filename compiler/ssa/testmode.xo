@@ -295,7 +295,8 @@ fn (var b: Builder) expect_compare(e: Expr) -> Int {
   var l = b.expr(a)
   var ct = b.nat_check(a)
   let ot = b.nat_check(y)
-  if b.m.variant_index(b.vty(l), "Some") < 0 {
+  let lt = b.vty(l)
+  if b.m.variant_index(lt, "Some") < 0 {
     // `expect(x) == Some(..)` of a value that is not an Option: the
     // comparison is of Options
     if b.option_elem(ot) >= 0 {

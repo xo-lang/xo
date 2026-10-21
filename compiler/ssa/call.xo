@@ -2027,7 +2027,8 @@ fn (var b: Builder) is_tag(o: Int, name: Str) -> Int {
   let t = b.add(Op.Tag, b.int_t(), Aux.None, [o])
   // the index first: a by value read of b.m in the arguments of a `var`
   // call of b would copy the module (an own site)
-  let vi = b.m.variant_index(b.vty(o), name)
+  let vo = b.vty(o)
+  let vi = b.m.variant_index(vo, name)
   b.add(Op.Eq, b.bool_t(), Aux.None, [t, b.cint(vi)])
 }
 
@@ -2397,7 +2398,8 @@ fn (var b: Builder) user_cap_call(x: Expr, ci: check.CallInfo) -> Int? {
     to_err = et
   }
   let ur = b.method_on(fname, b.nat_check(recv), rec, vals, nt, b.fail_err(to_err), Some(x))
-  if b.c.is_never(b.nat_check(x)) {
+  let nx = b.nat_check(x)
+  if b.c.is_never(nx) {
     // Proc.exit: the user's method does not return either
     b.add(Op.Unreachable, -1, Aux.None, [])
     b.dead()

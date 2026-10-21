@@ -1544,7 +1544,8 @@ fn (var b: Builder) type_text(t0: Int) -> Str {
         return "${s}?"
       }
       var name = b.c.qual_name(obj)
-      if b.ambiguous.contains(b.obj_name(obj)) && om >= 0 && !b.c.mods[om].is_std && !b.c.mods[om].native {
+      let oname = b.obj_name(obj)
+      if b.ambiguous.contains(oname) && om >= 0 && !b.c.mods[om].is_std && !b.c.mods[om].native {
         name = "${b.c.mods[om].path}.${b.obj_name(obj)}"
       }
       if x.args.is_empty() {

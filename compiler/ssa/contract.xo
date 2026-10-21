@@ -606,7 +606,8 @@ fn (var b: Builder) invariant_func(ct: Int, o: Int, t: Int) -> Str {
   }
   let saved = b.begin(fi, b.decl_file(o))
   if !b.c.objs[o].tparams.is_empty() {
-    b.s.sub = b.c.args_subst(b.c.objs[o].tparams, b.ty_args(ct))
+    let targs = b.ty_args(ct)
+    b.s.sub = b.c.args_subst(b.c.objs[o].tparams, targs)
   }
   let v = b.param(0)
   let vars = b.c.inv_vars.get(o) ?? []

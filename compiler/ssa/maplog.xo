@@ -1049,7 +1049,8 @@ fn (var b: Builder) mlog_push(l: Int, v: Int) {
 /// gotchas/map-log-store-into-shared-chunk.md). A chunk or directory is
 /// never immortal, so a negative count is a shared one.
 fn (var b: Builder) mlog_share_into(l: Int, v: Int) {
-  if !b.m.heap(b.vty(v)) {
+  let vt = b.vty(v)
+  if !b.m.heap(vt) {
     // nothing in v is counted (a Map[Int, Int]'s entry)
     return
   }

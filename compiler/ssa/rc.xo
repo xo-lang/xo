@@ -452,7 +452,8 @@ fn (var r: Rc) owner_use(var out: List[Use], f: Func, a: Int) {
   if r.bproj.is_empty() {
     return
   }
-  if let Some(o) = r.bproj.get(r.base(f, a).root) {
+  let broot = r.base(f, a).root
+  if let Some(o) = r.bproj.get(broot) {
     out.push(Use{l: o, m: Mode.Borrow})
   }
 }

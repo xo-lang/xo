@@ -384,7 +384,8 @@ fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
         }
         var keep = -1
         if patch {
-          let absent = b.m.variant_index(b.vty(fv), "Absent")
+          let fvt = b.vty(fv)
+          let absent = b.m.variant_index(fvt, "Absent")
           let tag = b.add(Op.Tag, it, Aux.None, [fv])
           keep = b.add(Op.Ne, bt, Aux.None, [tag, b.cint(absent)])
         } else {
