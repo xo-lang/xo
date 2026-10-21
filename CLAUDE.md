@@ -147,7 +147,10 @@ Update the knowledgebase in the same change as the work, not later:
     parity, plus the Docker amd64 goldens), bisects a failure over that
     window's pushes, and the owner of the commit fixes forward.
   - per commit only the agent's gate (owner, 2026-10-21): pushq rebases
-    and pushes with no -short (PUSHQ_SHORT=1 runs it) and no overlap
+    and pushes with no -short (PUSHQ_SHORT=1 runs it) but runs the fast
+    repo checks (a few seconds, no xo build: TestOutsideBytesValidated,
+    TestStdIndexCurrent, TestDecisionNumbersUnique, TestSpecListsEveryCode,
+    TestCodegenInputsClassified; owner, 2026-10-21), and no overlap
     gate (owner, 2026-10-21: the hourly run or the next agent's gate
     catches a bad combination); go test -short and the full fixed point
     run hourly on main (~/xo-lead/agents/hourly.sh), and the lead
