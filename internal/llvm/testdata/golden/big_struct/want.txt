@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+copy: a 1369 c 1370 a.i0 1 c.i0 2 c.s299 s300!
+result: 1378
+result: negative
+option: 1387
+list: 5 7535
+map: 1441 1369 2
+closure: 1375
+enum: 1010
+tasks: 5530
+--- stderr

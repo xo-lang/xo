@@ -1,0 +1,688 @@
+// A struct of 600 fields (300 Int, 300 Str; about 900 words with
+// the strings' two words each), large enough for the backends' size
+// limits (the arm64 reference counting helper's 4 KiB frame broke the
+// fixed point when the hybrid Map grew a compiler struct, 2026-10-21):
+// built, copied, changed through a copy, passed and returned, in a
+// Result, an Option, a List, a Map, a closure, an enum, and a task's
+// result, then dropped; output and leaks checked on every backend.
+use std/task
+
+struct Big {
+  i0: Int
+  s0: Str
+  i1: Int
+  s1: Str
+  i2: Int
+  s2: Str
+  i3: Int
+  s3: Str
+  i4: Int
+  s4: Str
+  i5: Int
+  s5: Str
+  i6: Int
+  s6: Str
+  i7: Int
+  s7: Str
+  i8: Int
+  s8: Str
+  i9: Int
+  s9: Str
+  i10: Int
+  s10: Str
+  i11: Int
+  s11: Str
+  i12: Int
+  s12: Str
+  i13: Int
+  s13: Str
+  i14: Int
+  s14: Str
+  i15: Int
+  s15: Str
+  i16: Int
+  s16: Str
+  i17: Int
+  s17: Str
+  i18: Int
+  s18: Str
+  i19: Int
+  s19: Str
+  i20: Int
+  s20: Str
+  i21: Int
+  s21: Str
+  i22: Int
+  s22: Str
+  i23: Int
+  s23: Str
+  i24: Int
+  s24: Str
+  i25: Int
+  s25: Str
+  i26: Int
+  s26: Str
+  i27: Int
+  s27: Str
+  i28: Int
+  s28: Str
+  i29: Int
+  s29: Str
+  i30: Int
+  s30: Str
+  i31: Int
+  s31: Str
+  i32: Int
+  s32: Str
+  i33: Int
+  s33: Str
+  i34: Int
+  s34: Str
+  i35: Int
+  s35: Str
+  i36: Int
+  s36: Str
+  i37: Int
+  s37: Str
+  i38: Int
+  s38: Str
+  i39: Int
+  s39: Str
+  i40: Int
+  s40: Str
+  i41: Int
+  s41: Str
+  i42: Int
+  s42: Str
+  i43: Int
+  s43: Str
+  i44: Int
+  s44: Str
+  i45: Int
+  s45: Str
+  i46: Int
+  s46: Str
+  i47: Int
+  s47: Str
+  i48: Int
+  s48: Str
+  i49: Int
+  s49: Str
+  i50: Int
+  s50: Str
+  i51: Int
+  s51: Str
+  i52: Int
+  s52: Str
+  i53: Int
+  s53: Str
+  i54: Int
+  s54: Str
+  i55: Int
+  s55: Str
+  i56: Int
+  s56: Str
+  i57: Int
+  s57: Str
+  i58: Int
+  s58: Str
+  i59: Int
+  s59: Str
+  i60: Int
+  s60: Str
+  i61: Int
+  s61: Str
+  i62: Int
+  s62: Str
+  i63: Int
+  s63: Str
+  i64: Int
+  s64: Str
+  i65: Int
+  s65: Str
+  i66: Int
+  s66: Str
+  i67: Int
+  s67: Str
+  i68: Int
+  s68: Str
+  i69: Int
+  s69: Str
+  i70: Int
+  s70: Str
+  i71: Int
+  s71: Str
+  i72: Int
+  s72: Str
+  i73: Int
+  s73: Str
+  i74: Int
+  s74: Str
+  i75: Int
+  s75: Str
+  i76: Int
+  s76: Str
+  i77: Int
+  s77: Str
+  i78: Int
+  s78: Str
+  i79: Int
+  s79: Str
+  i80: Int
+  s80: Str
+  i81: Int
+  s81: Str
+  i82: Int
+  s82: Str
+  i83: Int
+  s83: Str
+  i84: Int
+  s84: Str
+  i85: Int
+  s85: Str
+  i86: Int
+  s86: Str
+  i87: Int
+  s87: Str
+  i88: Int
+  s88: Str
+  i89: Int
+  s89: Str
+  i90: Int
+  s90: Str
+  i91: Int
+  s91: Str
+  i92: Int
+  s92: Str
+  i93: Int
+  s93: Str
+  i94: Int
+  s94: Str
+  i95: Int
+  s95: Str
+  i96: Int
+  s96: Str
+  i97: Int
+  s97: Str
+  i98: Int
+  s98: Str
+  i99: Int
+  s99: Str
+  i100: Int
+  s100: Str
+  i101: Int
+  s101: Str
+  i102: Int
+  s102: Str
+  i103: Int
+  s103: Str
+  i104: Int
+  s104: Str
+  i105: Int
+  s105: Str
+  i106: Int
+  s106: Str
+  i107: Int
+  s107: Str
+  i108: Int
+  s108: Str
+  i109: Int
+  s109: Str
+  i110: Int
+  s110: Str
+  i111: Int
+  s111: Str
+  i112: Int
+  s112: Str
+  i113: Int
+  s113: Str
+  i114: Int
+  s114: Str
+  i115: Int
+  s115: Str
+  i116: Int
+  s116: Str
+  i117: Int
+  s117: Str
+  i118: Int
+  s118: Str
+  i119: Int
+  s119: Str
+  i120: Int
+  s120: Str
+  i121: Int
+  s121: Str
+  i122: Int
+  s122: Str
+  i123: Int
+  s123: Str
+  i124: Int
+  s124: Str
+  i125: Int
+  s125: Str
+  i126: Int
+  s126: Str
+  i127: Int
+  s127: Str
+  i128: Int
+  s128: Str
+  i129: Int
+  s129: Str
+  i130: Int
+  s130: Str
+  i131: Int
+  s131: Str
+  i132: Int
+  s132: Str
+  i133: Int
+  s133: Str
+  i134: Int
+  s134: Str
+  i135: Int
+  s135: Str
+  i136: Int
+  s136: Str
+  i137: Int
+  s137: Str
+  i138: Int
+  s138: Str
+  i139: Int
+  s139: Str
+  i140: Int
+  s140: Str
+  i141: Int
+  s141: Str
+  i142: Int
+  s142: Str
+  i143: Int
+  s143: Str
+  i144: Int
+  s144: Str
+  i145: Int
+  s145: Str
+  i146: Int
+  s146: Str
+  i147: Int
+  s147: Str
+  i148: Int
+  s148: Str
+  i149: Int
+  s149: Str
+  i150: Int
+  s150: Str
+  i151: Int
+  s151: Str
+  i152: Int
+  s152: Str
+  i153: Int
+  s153: Str
+  i154: Int
+  s154: Str
+  i155: Int
+  s155: Str
+  i156: Int
+  s156: Str
+  i157: Int
+  s157: Str
+  i158: Int
+  s158: Str
+  i159: Int
+  s159: Str
+  i160: Int
+  s160: Str
+  i161: Int
+  s161: Str
+  i162: Int
+  s162: Str
+  i163: Int
+  s163: Str
+  i164: Int
+  s164: Str
+  i165: Int
+  s165: Str
+  i166: Int
+  s166: Str
+  i167: Int
+  s167: Str
+  i168: Int
+  s168: Str
+  i169: Int
+  s169: Str
+  i170: Int
+  s170: Str
+  i171: Int
+  s171: Str
+  i172: Int
+  s172: Str
+  i173: Int
+  s173: Str
+  i174: Int
+  s174: Str
+  i175: Int
+  s175: Str
+  i176: Int
+  s176: Str
+  i177: Int
+  s177: Str
+  i178: Int
+  s178: Str
+  i179: Int
+  s179: Str
+  i180: Int
+  s180: Str
+  i181: Int
+  s181: Str
+  i182: Int
+  s182: Str
+  i183: Int
+  s183: Str
+  i184: Int
+  s184: Str
+  i185: Int
+  s185: Str
+  i186: Int
+  s186: Str
+  i187: Int
+  s187: Str
+  i188: Int
+  s188: Str
+  i189: Int
+  s189: Str
+  i190: Int
+  s190: Str
+  i191: Int
+  s191: Str
+  i192: Int
+  s192: Str
+  i193: Int
+  s193: Str
+  i194: Int
+  s194: Str
+  i195: Int
+  s195: Str
+  i196: Int
+  s196: Str
+  i197: Int
+  s197: Str
+  i198: Int
+  s198: Str
+  i199: Int
+  s199: Str
+  i200: Int
+  s200: Str
+  i201: Int
+  s201: Str
+  i202: Int
+  s202: Str
+  i203: Int
+  s203: Str
+  i204: Int
+  s204: Str
+  i205: Int
+  s205: Str
+  i206: Int
+  s206: Str
+  i207: Int
+  s207: Str
+  i208: Int
+  s208: Str
+  i209: Int
+  s209: Str
+  i210: Int
+  s210: Str
+  i211: Int
+  s211: Str
+  i212: Int
+  s212: Str
+  i213: Int
+  s213: Str
+  i214: Int
+  s214: Str
+  i215: Int
+  s215: Str
+  i216: Int
+  s216: Str
+  i217: Int
+  s217: Str
+  i218: Int
+  s218: Str
+  i219: Int
+  s219: Str
+  i220: Int
+  s220: Str
+  i221: Int
+  s221: Str
+  i222: Int
+  s222: Str
+  i223: Int
+  s223: Str
+  i224: Int
+  s224: Str
+  i225: Int
+  s225: Str
+  i226: Int
+  s226: Str
+  i227: Int
+  s227: Str
+  i228: Int
+  s228: Str
+  i229: Int
+  s229: Str
+  i230: Int
+  s230: Str
+  i231: Int
+  s231: Str
+  i232: Int
+  s232: Str
+  i233: Int
+  s233: Str
+  i234: Int
+  s234: Str
+  i235: Int
+  s235: Str
+  i236: Int
+  s236: Str
+  i237: Int
+  s237: Str
+  i238: Int
+  s238: Str
+  i239: Int
+  s239: Str
+  i240: Int
+  s240: Str
+  i241: Int
+  s241: Str
+  i242: Int
+  s242: Str
+  i243: Int
+  s243: Str
+  i244: Int
+  s244: Str
+  i245: Int
+  s245: Str
+  i246: Int
+  s246: Str
+  i247: Int
+  s247: Str
+  i248: Int
+  s248: Str
+  i249: Int
+  s249: Str
+  i250: Int
+  s250: Str
+  i251: Int
+  s251: Str
+  i252: Int
+  s252: Str
+  i253: Int
+  s253: Str
+  i254: Int
+  s254: Str
+  i255: Int
+  s255: Str
+  i256: Int
+  s256: Str
+  i257: Int
+  s257: Str
+  i258: Int
+  s258: Str
+  i259: Int
+  s259: Str
+  i260: Int
+  s260: Str
+  i261: Int
+  s261: Str
+  i262: Int
+  s262: Str
+  i263: Int
+  s263: Str
+  i264: Int
+  s264: Str
+  i265: Int
+  s265: Str
+  i266: Int
+  s266: Str
+  i267: Int
+  s267: Str
+  i268: Int
+  s268: Str
+  i269: Int
+  s269: Str
+  i270: Int
+  s270: Str
+  i271: Int
+  s271: Str
+  i272: Int
+  s272: Str
+  i273: Int
+  s273: Str
+  i274: Int
+  s274: Str
+  i275: Int
+  s275: Str
+  i276: Int
+  s276: Str
+  i277: Int
+  s277: Str
+  i278: Int
+  s278: Str
+  i279: Int
+  s279: Str
+  i280: Int
+  s280: Str
+  i281: Int
+  s281: Str
+  i282: Int
+  s282: Str
+  i283: Int
+  s283: Str
+  i284: Int
+  s284: Str
+  i285: Int
+  s285: Str
+  i286: Int
+  s286: Str
+  i287: Int
+  s287: Str
+  i288: Int
+  s288: Str
+  i289: Int
+  s289: Str
+  i290: Int
+  s290: Str
+  i291: Int
+  s291: Str
+  i292: Int
+  s292: Str
+  i293: Int
+  s293: Str
+  i294: Int
+  s294: Str
+  i295: Int
+  s295: Str
+  i296: Int
+  s296: Str
+  i297: Int
+  s297: Str
+  i298: Int
+  s298: Str
+  i299: Int
+  s299: Str
+}
+
+enum Holder {
+  Empty
+  Full(b: Big)
+}
+
+fn make(base: Int) -> Big {
+  Big{i0: base + 0, s0: "s${base + 0}", i1: base + 1, s1: "s${base + 1}", i2: base + 2, s2: "s${base + 2}", i3: base + 3, s3: "s${base + 3}", i4: base + 4, s4: "s${base + 4}", i5: base + 5, s5: "s${base + 5}", i6: base + 6, s6: "s${base + 6}", i7: base + 7, s7: "s${base + 7}", i8: base + 8, s8: "s${base + 8}", i9: base + 9, s9: "s${base + 9}", i10: base + 10, s10: "s${base + 10}", i11: base + 11, s11: "s${base + 11}", i12: base + 12, s12: "s${base + 12}", i13: base + 13, s13: "s${base + 13}", i14: base + 14, s14: "s${base + 14}", i15: base + 15, s15: "s${base + 15}", i16: base + 16, s16: "s${base + 16}", i17: base + 17, s17: "s${base + 17}", i18: base + 18, s18: "s${base + 18}", i19: base + 19, s19: "s${base + 19}", i20: base + 20, s20: "s${base + 20}", i21: base + 21, s21: "s${base + 21}", i22: base + 22, s22: "s${base + 22}", i23: base + 23, s23: "s${base + 23}", i24: base + 24, s24: "s${base + 24}", i25: base + 25, s25: "s${base + 25}", i26: base + 26, s26: "s${base + 26}", i27: base + 27, s27: "s${base + 27}", i28: base + 28, s28: "s${base + 28}", i29: base + 29, s29: "s${base + 29}", i30: base + 30, s30: "s${base + 30}", i31: base + 31, s31: "s${base + 31}", i32: base + 32, s32: "s${base + 32}", i33: base + 33, s33: "s${base + 33}", i34: base + 34, s34: "s${base + 34}", i35: base + 35, s35: "s${base + 35}", i36: base + 36, s36: "s${base + 36}", i37: base + 37, s37: "s${base + 37}", i38: base + 38, s38: "s${base + 38}", i39: base + 39, s39: "s${base + 39}", i40: base + 40, s40: "s${base + 40}", i41: base + 41, s41: "s${base + 41}", i42: base + 42, s42: "s${base + 42}", i43: base + 43, s43: "s${base + 43}", i44: base + 44, s44: "s${base + 44}", i45: base + 45, s45: "s${base + 45}", i46: base + 46, s46: "s${base + 46}", i47: base + 47, s47: "s${base + 47}", i48: base + 48, s48: "s${base + 48}", i49: base + 49, s49: "s${base + 49}", i50: base + 50, s50: "s${base + 50}", i51: base + 51, s51: "s${base + 51}", i52: base + 52, s52: "s${base + 52}", i53: base + 53, s53: "s${base + 53}", i54: base + 54, s54: "s${base + 54}", i55: base + 55, s55: "s${base + 55}", i56: base + 56, s56: "s${base + 56}", i57: base + 57, s57: "s${base + 57}", i58: base + 58, s58: "s${base + 58}", i59: base + 59, s59: "s${base + 59}", i60: base + 60, s60: "s${base + 60}", i61: base + 61, s61: "s${base + 61}", i62: base + 62, s62: "s${base + 62}", i63: base + 63, s63: "s${base + 63}", i64: base + 64, s64: "s${base + 64}", i65: base + 65, s65: "s${base + 65}", i66: base + 66, s66: "s${base + 66}", i67: base + 67, s67: "s${base + 67}", i68: base + 68, s68: "s${base + 68}", i69: base + 69, s69: "s${base + 69}", i70: base + 70, s70: "s${base + 70}", i71: base + 71, s71: "s${base + 71}", i72: base + 72, s72: "s${base + 72}", i73: base + 73, s73: "s${base + 73}", i74: base + 74, s74: "s${base + 74}", i75: base + 75, s75: "s${base + 75}", i76: base + 76, s76: "s${base + 76}", i77: base + 77, s77: "s${base + 77}", i78: base + 78, s78: "s${base + 78}", i79: base + 79, s79: "s${base + 79}", i80: base + 80, s80: "s${base + 80}", i81: base + 81, s81: "s${base + 81}", i82: base + 82, s82: "s${base + 82}", i83: base + 83, s83: "s${base + 83}", i84: base + 84, s84: "s${base + 84}", i85: base + 85, s85: "s${base + 85}", i86: base + 86, s86: "s${base + 86}", i87: base + 87, s87: "s${base + 87}", i88: base + 88, s88: "s${base + 88}", i89: base + 89, s89: "s${base + 89}", i90: base + 90, s90: "s${base + 90}", i91: base + 91, s91: "s${base + 91}", i92: base + 92, s92: "s${base + 92}", i93: base + 93, s93: "s${base + 93}", i94: base + 94, s94: "s${base + 94}", i95: base + 95, s95: "s${base + 95}", i96: base + 96, s96: "s${base + 96}", i97: base + 97, s97: "s${base + 97}", i98: base + 98, s98: "s${base + 98}", i99: base + 99, s99: "s${base + 99}", i100: base + 100, s100: "s${base + 100}", i101: base + 101, s101: "s${base + 101}", i102: base + 102, s102: "s${base + 102}", i103: base + 103, s103: "s${base + 103}", i104: base + 104, s104: "s${base + 104}", i105: base + 105, s105: "s${base + 105}", i106: base + 106, s106: "s${base + 106}", i107: base + 107, s107: "s${base + 107}", i108: base + 108, s108: "s${base + 108}", i109: base + 109, s109: "s${base + 109}", i110: base + 110, s110: "s${base + 110}", i111: base + 111, s111: "s${base + 111}", i112: base + 112, s112: "s${base + 112}", i113: base + 113, s113: "s${base + 113}", i114: base + 114, s114: "s${base + 114}", i115: base + 115, s115: "s${base + 115}", i116: base + 116, s116: "s${base + 116}", i117: base + 117, s117: "s${base + 117}", i118: base + 118, s118: "s${base + 118}", i119: base + 119, s119: "s${base + 119}", i120: base + 120, s120: "s${base + 120}", i121: base + 121, s121: "s${base + 121}", i122: base + 122, s122: "s${base + 122}", i123: base + 123, s123: "s${base + 123}", i124: base + 124, s124: "s${base + 124}", i125: base + 125, s125: "s${base + 125}", i126: base + 126, s126: "s${base + 126}", i127: base + 127, s127: "s${base + 127}", i128: base + 128, s128: "s${base + 128}", i129: base + 129, s129: "s${base + 129}", i130: base + 130, s130: "s${base + 130}", i131: base + 131, s131: "s${base + 131}", i132: base + 132, s132: "s${base + 132}", i133: base + 133, s133: "s${base + 133}", i134: base + 134, s134: "s${base + 134}", i135: base + 135, s135: "s${base + 135}", i136: base + 136, s136: "s${base + 136}", i137: base + 137, s137: "s${base + 137}", i138: base + 138, s138: "s${base + 138}", i139: base + 139, s139: "s${base + 139}", i140: base + 140, s140: "s${base + 140}", i141: base + 141, s141: "s${base + 141}", i142: base + 142, s142: "s${base + 142}", i143: base + 143, s143: "s${base + 143}", i144: base + 144, s144: "s${base + 144}", i145: base + 145, s145: "s${base + 145}", i146: base + 146, s146: "s${base + 146}", i147: base + 147, s147: "s${base + 147}", i148: base + 148, s148: "s${base + 148}", i149: base + 149, s149: "s${base + 149}", i150: base + 150, s150: "s${base + 150}", i151: base + 151, s151: "s${base + 151}", i152: base + 152, s152: "s${base + 152}", i153: base + 153, s153: "s${base + 153}", i154: base + 154, s154: "s${base + 154}", i155: base + 155, s155: "s${base + 155}", i156: base + 156, s156: "s${base + 156}", i157: base + 157, s157: "s${base + 157}", i158: base + 158, s158: "s${base + 158}", i159: base + 159, s159: "s${base + 159}", i160: base + 160, s160: "s${base + 160}", i161: base + 161, s161: "s${base + 161}", i162: base + 162, s162: "s${base + 162}", i163: base + 163, s163: "s${base + 163}", i164: base + 164, s164: "s${base + 164}", i165: base + 165, s165: "s${base + 165}", i166: base + 166, s166: "s${base + 166}", i167: base + 167, s167: "s${base + 167}", i168: base + 168, s168: "s${base + 168}", i169: base + 169, s169: "s${base + 169}", i170: base + 170, s170: "s${base + 170}", i171: base + 171, s171: "s${base + 171}", i172: base + 172, s172: "s${base + 172}", i173: base + 173, s173: "s${base + 173}", i174: base + 174, s174: "s${base + 174}", i175: base + 175, s175: "s${base + 175}", i176: base + 176, s176: "s${base + 176}", i177: base + 177, s177: "s${base + 177}", i178: base + 178, s178: "s${base + 178}", i179: base + 179, s179: "s${base + 179}", i180: base + 180, s180: "s${base + 180}", i181: base + 181, s181: "s${base + 181}", i182: base + 182, s182: "s${base + 182}", i183: base + 183, s183: "s${base + 183}", i184: base + 184, s184: "s${base + 184}", i185: base + 185, s185: "s${base + 185}", i186: base + 186, s186: "s${base + 186}", i187: base + 187, s187: "s${base + 187}", i188: base + 188, s188: "s${base + 188}", i189: base + 189, s189: "s${base + 189}", i190: base + 190, s190: "s${base + 190}", i191: base + 191, s191: "s${base + 191}", i192: base + 192, s192: "s${base + 192}", i193: base + 193, s193: "s${base + 193}", i194: base + 194, s194: "s${base + 194}", i195: base + 195, s195: "s${base + 195}", i196: base + 196, s196: "s${base + 196}", i197: base + 197, s197: "s${base + 197}", i198: base + 198, s198: "s${base + 198}", i199: base + 199, s199: "s${base + 199}", i200: base + 200, s200: "s${base + 200}", i201: base + 201, s201: "s${base + 201}", i202: base + 202, s202: "s${base + 202}", i203: base + 203, s203: "s${base + 203}", i204: base + 204, s204: "s${base + 204}", i205: base + 205, s205: "s${base + 205}", i206: base + 206, s206: "s${base + 206}", i207: base + 207, s207: "s${base + 207}", i208: base + 208, s208: "s${base + 208}", i209: base + 209, s209: "s${base + 209}", i210: base + 210, s210: "s${base + 210}", i211: base + 211, s211: "s${base + 211}", i212: base + 212, s212: "s${base + 212}", i213: base + 213, s213: "s${base + 213}", i214: base + 214, s214: "s${base + 214}", i215: base + 215, s215: "s${base + 215}", i216: base + 216, s216: "s${base + 216}", i217: base + 217, s217: "s${base + 217}", i218: base + 218, s218: "s${base + 218}", i219: base + 219, s219: "s${base + 219}", i220: base + 220, s220: "s${base + 220}", i221: base + 221, s221: "s${base + 221}", i222: base + 222, s222: "s${base + 222}", i223: base + 223, s223: "s${base + 223}", i224: base + 224, s224: "s${base + 224}", i225: base + 225, s225: "s${base + 225}", i226: base + 226, s226: "s${base + 226}", i227: base + 227, s227: "s${base + 227}", i228: base + 228, s228: "s${base + 228}", i229: base + 229, s229: "s${base + 229}", i230: base + 230, s230: "s${base + 230}", i231: base + 231, s231: "s${base + 231}", i232: base + 232, s232: "s${base + 232}", i233: base + 233, s233: "s${base + 233}", i234: base + 234, s234: "s${base + 234}", i235: base + 235, s235: "s${base + 235}", i236: base + 236, s236: "s${base + 236}", i237: base + 237, s237: "s${base + 237}", i238: base + 238, s238: "s${base + 238}", i239: base + 239, s239: "s${base + 239}", i240: base + 240, s240: "s${base + 240}", i241: base + 241, s241: "s${base + 241}", i242: base + 242, s242: "s${base + 242}", i243: base + 243, s243: "s${base + 243}", i244: base + 244, s244: "s${base + 244}", i245: base + 245, s245: "s${base + 245}", i246: base + 246, s246: "s${base + 246}", i247: base + 247, s247: "s${base + 247}", i248: base + 248, s248: "s${base + 248}", i249: base + 249, s249: "s${base + 249}", i250: base + 250, s250: "s${base + 250}", i251: base + 251, s251: "s${base + 251}", i252: base + 252, s252: "s${base + 252}", i253: base + 253, s253: "s${base + 253}", i254: base + 254, s254: "s${base + 254}", i255: base + 255, s255: "s${base + 255}", i256: base + 256, s256: "s${base + 256}", i257: base + 257, s257: "s${base + 257}", i258: base + 258, s258: "s${base + 258}", i259: base + 259, s259: "s${base + 259}", i260: base + 260, s260: "s${base + 260}", i261: base + 261, s261: "s${base + 261}", i262: base + 262, s262: "s${base + 262}", i263: base + 263, s263: "s${base + 263}", i264: base + 264, s264: "s${base + 264}", i265: base + 265, s265: "s${base + 265}", i266: base + 266, s266: "s${base + 266}", i267: base + 267, s267: "s${base + 267}", i268: base + 268, s268: "s${base + 268}", i269: base + 269, s269: "s${base + 269}", i270: base + 270, s270: "s${base + 270}", i271: base + 271, s271: "s${base + 271}", i272: base + 272, s272: "s${base + 272}", i273: base + 273, s273: "s${base + 273}", i274: base + 274, s274: "s${base + 274}", i275: base + 275, s275: "s${base + 275}", i276: base + 276, s276: "s${base + 276}", i277: base + 277, s277: "s${base + 277}", i278: base + 278, s278: "s${base + 278}", i279: base + 279, s279: "s${base + 279}", i280: base + 280, s280: "s${base + 280}", i281: base + 281, s281: "s${base + 281}", i282: base + 282, s282: "s${base + 282}", i283: base + 283, s283: "s${base + 283}", i284: base + 284, s284: "s${base + 284}", i285: base + 285, s285: "s${base + 285}", i286: base + 286, s286: "s${base + 286}", i287: base + 287, s287: "s${base + 287}", i288: base + 288, s288: "s${base + 288}", i289: base + 289, s289: "s${base + 289}", i290: base + 290, s290: "s${base + 290}", i291: base + 291, s291: "s${base + 291}", i292: base + 292, s292: "s${base + 292}", i293: base + 293, s293: "s${base + 293}", i294: base + 294, s294: "s${base + 294}", i295: base + 295, s295: "s${base + 295}", i296: base + 296, s296: "s${base + 296}", i297: base + 297, s297: "s${base + 297}", i298: base + 298, s298: "s${base + 298}", i299: base + 299, s299: "s${base + 299}"}
+}
+
+fn digest(b: Big) -> Int { b.i0 + b.i37 + b.i74 + b.i111 + b.i148 + b.i185 + b.i222 + b.i259 + b.i296 + b.s0.len() + b.s41.len() + b.s82.len() + b.s123.len() + b.s164.len() + b.s205.len() + b.s246.len() + b.s287.len() }
+
+fn maybe(base: Int) -> Big ! Str {
+  if base < 0 {
+    return Err("negative")
+  }
+  make(base)
+}
+
+fn bump(var b: Big) {
+  b.i0 += 1
+  b.s299 = b.s299 + "!"
+}
+
+fn main(os: Os) {
+  let a = make(1)
+  var c = a
+  bump(c)
+  os.stdio.println("copy: a ${digest(a)} c ${digest(c)} a.i0 ${a.i0} c.i0 ${c.i0} c.s299 ${c.s299}")
+  match maybe(2) {
+    Ok(b) => os.stdio.println("result: ${digest(b)}")
+    Err(e) => os.stdio.println("result: ${e}")
+  }
+  match maybe(-1) {
+    Ok(b) => os.stdio.println("result: ${digest(b)}")
+    Err(e) => os.stdio.println("result: ${e}")
+  }
+  let o: Big? = Some(make(3))
+  os.stdio.println("option: ${o.map(fn(b) { digest(b) }) ?? -1}")
+  var xs: List[Big] = []
+  for k in 0..5 {
+    xs.push(make(k * 10))
+  }
+  xs[2] = c
+  var total = 0
+  for b in xs {
+    total += digest(b)
+  }
+  os.stdio.println("list: ${xs.len()} ${total}")
+  var m: Map[Str, Big] = {}
+  m.put("a", a)
+  m.put("c", c)
+  let m2 = m
+  m.put("a", make(9))
+  os.stdio.println("map: ${digest(m.get("a") ?? a)} ${digest(m2.get("a") ?? c)} ${m.len()}")
+  let f = fn(k: Int) -> Int { digest(c) + k }
+  os.stdio.println("closure: ${f(5)}")
+  let h = Holder.Full(b: make(4))
+  let hs = [h, Holder.Empty, h]
+  var hn = 0
+  for x in hs {
+    match x {
+      Holder.Full(b) => hn += b.i1
+      Holder.Empty => hn += 1000
+    }
+  }
+  os.stdio.println("enum: ${hn}")
+  let rs = task.map_concurrent([1, 2, 3, 4], 2, fn(k) { make(k) })
+  var rt = 0
+  for r in rs {
+    match r {
+      Ok(b) => rt += digest(b)
+      Err(_) => rt -= 1
+    }
+  }
+  os.stdio.println("tasks: ${rt}")
+}
