@@ -4,6 +4,7 @@
 // iso-8859-1, and us-ascii; the B and Q WordEncoders) and net/netip's
 // address syntax for domain literals, ported with the same results and
 // error texts.
+use std/crypto
 use std/mail
 
 fn mailerr_display(e: mail.MailErr) -> Str { e.msg }
@@ -809,4 +810,577 @@ fn address_display(a: mail.Address) -> Str {
     }
   }
   encode_word(true, a.name) + " " + s
+}
+
+// ---------------------------------------------------------------------------
+// Messages (message.go ReadMessage and readHeader, over net/textproto's
+// ReadContinuedLine; decision 0290)
+
+fn mime_field_byte(c: UInt8) -> Bool {
+  (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c is '!' | '#' | '$' | '%' | '&' | '\'' | '*' | '+' | '-' | '.' | '^' | '_' | '`' | '|' | '~'
+}
+
+/// textproto.CanonicalMIMEHeaderKey: k unchanged when a byte of it cannot
+/// be in a field name, else each word capitalized.
+fn canonical_key(k: Bytes) -> Str {
+  for c in k {
+    if !mime_field_byte(c) {
+      return bytes_text(k)
+    }
+  }
+  var out = BytesBuilder.with_capacity(k.len())
+  var upper = true
+  for c in k {
+    var x = c
+    if upper && x >= 'a' && x <= 'z' {
+      x = x - 32
+    } else if !upper && x >= 'A' && x <= 'Z' {
+      x = x + 32
+    }
+    out.write_byte(x)
+    upper = x == '-'
+  }
+  bytes_text(out.freeze())
+}
+
+fn bytes_text(b: Bytes) -> Str { b.to_str() ?? lossy(b) }
+
+/// textproto's trim: spaces and tabs off both ends.
+fn trim_wsp(b: Bytes) -> Bytes {
+  var s = 0
+  while s < b.len() && (b[s] == ' ' || b[s] == '\t') {
+    s += 1
+  }
+  var e = b.len()
+  while e > s && (b[e - 1] == ' ' || b[e - 1] == '\t') {
+    e -= 1
+  }
+  b[s..e]
+}
+
+/// A line reader (bufio.Reader.ReadLine): the line without "\n" or
+/// "\r\n", or None at the end.
+struct LineR {
+  b: Bytes
+  at: Int = 0
+}
+
+fn (var r: LineR) line() -> Bytes? {
+  if r.at >= r.b.len() {
+    return None
+  }
+  var j = r.at
+  while j < r.b.len() && r.b[j] != '\n' {
+    j += 1
+  }
+  var l = r.b[r.at..j]
+  if j < r.b.len() {
+    if l.len() > 0 && l[l.len() - 1] == '\r' {
+      l = l[0..l.len() - 1]
+    }
+    r.at = j + 1
+  } else {
+    r.at = j
+  }
+  Some(l)
+}
+
+/// textproto.Reader.skipSpace: the spaces and tabs skipped.
+fn (var r: LineR) skip_space() -> Int {
+  var n = 0
+  while r.at < r.b.len() && (r.b[r.at] == ' ' || r.b[r.at] == '\t') {
+    r.at += 1
+    n += 1
+  }
+  n
+}
+
+/// textproto.Reader.ReadContinuedLine: a field and its continuation
+/// lines, each trimmed, joined by one space; None at the end.
+fn (var r: LineR) continued() -> Bytes? {
+  let first = r.line()?
+  if first.is_empty() {
+    return Some(first)
+  }
+  var buf = trim_wsp(first)
+  while r.skip_space() > 0 {
+    buf = buf + b" "
+    match r.line() {
+      Some(l) => buf = buf + trim_wsp(l)
+      None => break
+    }
+  }
+  Some(buf)
+}
+
+fn read_message(msg: Bytes) -> mail.Message ! mail.MailErr {
+  var r = LineR{b: msg}
+  var headers: List[(Str, Str)] = []
+  if msg.len() > 0 && (msg[0] == ' ' || msg[0] == '\t') {
+    let l = r.line() ?? b""
+    return Err(fail("malformed initial line: ${bytes_text(l)}"))
+  }
+  while true {
+    let kv = match r.continued() {
+      Some(x) => x
+      None => {
+        // the end before a blank line: a message when it has a field
+        if headers.is_empty() {
+          return Err(fail("EOF"))
+        }
+        break
+      }
+    }
+    if kv.is_empty() {
+      break
+    }
+    var colon = 0
+    while colon < kv.len() && kv[colon] != ':' {
+      colon += 1
+    }
+    if colon == kv.len() {
+      colon = -1
+    }
+    if colon < 0 {
+      return Err(fail("malformed header line: ${bytes_text(kv)}"))
+    }
+    let key = canonical_key(kv[0..colon])
+    if key.is_empty() {
+      continue
+    }
+    var v = kv[colon + 1..]
+    var s = 0
+    while s < v.len() && (v[s] == ' ' || v[s] == '\t') {
+      s += 1
+    }
+    headers.push((key, bytes_text(v[s..])))
+  }
+  Ok(mail.Message{headers: headers, body: msg[r.at..]})
+}
+
+fn message_header(m: mail.Message, name: Str) -> Str? {
+  let want = canonical_key(name.bytes())
+  for (k, v) in m.headers {
+    if k == want {
+      return Some(v)
+    }
+  }
+  None
+}
+
+// ---------------------------------------------------------------------------
+// Dates (message.go ParseDate over time.Parse's layouts; a zone name keeps
+// the wall clock as UTC's, as time.ParseInLocation in UTC does: only a
+// numeric offset moves the instant)
+
+const MONTHS: List[Str] = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+const DAYS: List[Str] = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
+
+/// The digits at the start of s: at most max, at least one (fixed: exactly
+/// max), as the number and their count; (0, 0) when there are none.
+fn digits(s: Bytes, at: Int, min: Int, max: Int) -> (Int, Int) {
+  var n = 0
+  var k = 0
+  while k < max && at + k < s.len() && s[at + k] >= '0' && s[at + k] <= '9' {
+    n = n * 10 + Int(s[at + k] - '0')
+    k += 1
+  }
+  if k < min {
+    return (0, 0)
+  }
+  (n, k)
+}
+
+fn lower3(s: Bytes, at: Int) -> Str {
+  if at + 3 > s.len() {
+    return ""
+  }
+  var b = BytesBuilder.with_capacity(3)
+  for k in 0..3 {
+    let c = s[at + k]
+    b.write_byte(if c >= 'A' && c <= 'Z' { c + 32 } else { c })
+  }
+  b.freeze().to_str() ?? ""
+}
+
+fn is_leap(y: Int) -> Bool { y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) }
+
+fn month_days(y: Int, m: Int) -> Int {
+  if m == 2 {
+    return if is_leap(y) { 29 } else { 28 }
+  }
+  if m is 4 | 6 | 9 | 11 { 30 } else { 31 }
+}
+
+fn days_from_civil(year: Int, m: Int, d: Int) -> Int {
+  var y = year
+  if m <= 2 {
+    y -= 1
+  }
+  let era = if y >= 0 { y / 400 } else { (y - 399) / 400 }
+  let yoe = y - era * 400
+  let mp = (m + 9) % 12
+  let doy = (153 * mp + 2) / 5 + d - 1
+  let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+  era * 146097 + doe - 719468
+}
+
+/// time.parseTimeZone: the length of a zone name at s[at..], 0 for none.
+fn zone_name_len(s: Bytes, at: Int) -> Int {
+  let rest = s.len() - at
+  if rest < 3 {
+    return 0
+  }
+  // time.Parse's stdTZ takes UTC first
+  if s[at..at + 3] == b"UTC" {
+    return 3
+  }
+  if rest >= 4 && (s[at..at + 4] == b"ChST" || s[at..at + 4] == b"MeST") {
+    return 4
+  }
+  if s[at..at + 3] == b"GMT" {
+    // time.parseGMT: GMT, then a signed hour offset of at most 23
+    var k = 3
+    if at + k < s.len() && (s[at + k] == '+' || s[at + k] == '-') {
+      let (x, n) = digits(s, at + k + 1, 1, 20)
+      if n > 0 && x <= 23 {
+        k += 1 + n
+      }
+    }
+    return k
+  }
+  if s[at] == '+' || s[at] == '-' {
+    return 0
+  }
+  var upper = 0
+  while upper < 6 && at + upper < s.len() && s[at + upper] >= 'A' && s[at + upper] <= 'Z' {
+    upper += 1
+  }
+  if upper == 3 {
+    return 3
+  }
+  if upper == 4 && (s[at + 3] == 'T' || s[at..at + 4] == b"WITA") {
+    return 4
+  }
+  if upper == 5 && s[at + 4] == 'T' {
+    return 5
+  }
+  0
+}
+
+/// time.Parse's skip for a layout space: one or more spaces at s[at..],
+/// the offset after them, or -1.
+fn spaces(s: Bytes, at: Int) -> Int {
+  if at >= s.len() || s[at] != ' ' {
+    return -1
+  }
+  var k = at
+  while k < s.len() && s[k] == ' ' {
+    k += 1
+  }
+  k
+}
+
+/// One layout of dateLayouts: weekday, two digit day, four digit year,
+/// seconds, and the zone kind (0 numeric, 1 name, 2 "UT"); the instant
+/// in seconds, or None when the layout does not match.
+fn try_layout(s: Bytes, dow: Bool, day2: Bool, year4: Bool, secs: Bool, zone: Int) -> Int? {
+  var at = 0
+  if dow {
+    if !DAYS.contains(lower3(s, at)) || at + 4 > s.len() || s[at + 3] != ',' {
+      return None
+    }
+    at = spaces(s, at + 4)
+    if at < 0 {
+      return None
+    }
+  }
+  let (day, dn) = if day2 { digits(s, at, 2, 2) } else { digits(s, at, 1, 2) }
+  if dn == 0 {
+    return None
+  }
+  at += dn
+  at = spaces(s, at)
+  if at < 0 {
+    return None
+  }
+  let mon = MONTHS.index_of(lower3(s, at)) ?? -1
+  if mon < 0 {
+    return None
+  }
+  at += 3
+  at = spaces(s, at)
+  if at < 0 {
+    return None
+  }
+  let (yv, yn) = if year4 { digits(s, at, 4, 4) } else { digits(s, at, 2, 2) }
+  if yn == 0 {
+    return None
+  }
+  at += yn
+  let year = if year4 { yv } else if yv >= 69 { 1900 + yv } else { 2000 + yv }
+  at = spaces(s, at)
+  if at < 0 {
+    return None
+  }
+  let (hour, hn) = digits(s, at, 1, 2)
+  if hn == 0 {
+    return None
+  }
+  at += hn
+  if at >= s.len() || s[at] != ':' {
+    return None
+  }
+  at += 1
+  let (min, mn) = digits(s, at, 2, 2)
+  if mn == 0 {
+    return None
+  }
+  at += mn
+  var sec = 0
+  if secs {
+    if at >= s.len() || s[at] != ':' {
+      return None
+    }
+    let (sv, sn) = digits(s, at + 1, 2, 2)
+    if sn == 0 {
+      return None
+    }
+    sec = sv
+    at += 1 + sn
+  }
+  at = spaces(s, at)
+  if at < 0 {
+    return None
+  }
+  var offset = 0
+  if zone == 0 {
+    if at + 5 > s.len() || !(s[at] == '+' || s[at] == '-') {
+      return None
+    }
+    let (hh, hhn) = digits(s, at + 1, 2, 2)
+    let (mm, mmn) = digits(s, at + 3, 2, 2)
+    if hhn == 0 || mmn == 0 || hh > 24 || mm > 60 {
+      return None
+    }
+    offset = (hh * 60 + mm) * 60
+    if s[at] == '-' {
+      offset = -offset
+    }
+    at += 5
+  } else if zone == 1 {
+    let n = zone_name_len(s, at)
+    if n == 0 {
+      return None
+    }
+    // time.Parse keeps the wall clock as UTC's for a zone name, GMT+h
+    // included (only its location's offset changes, not the instant)
+    at += n
+  } else {
+    if at + 2 > s.len() || s[at..at + 2] != b"UT" {
+      return None
+    }
+    at += 2
+  }
+  if at != s.len() {
+    return None
+  }
+  // time.Date's ranges (time.Parse: "out of range")
+  if hour >= 24 || min >= 60 || sec >= 60 || day < 1 || day > month_days(year, mon + 1) {
+    return None
+  }
+  Some(days_from_civil(year, mon + 1, day) * 86400 + hour * 3600 + min * 60 + sec - offset)
+}
+
+fn parse_date(s: Str) -> Time ! mail.MailErr {
+  let date0 = s.replace("\r\n", "")
+  if date0.contains("\r") {
+    return Err(fail("mail: header has a CR without LF"))
+  }
+  var p = P{s: date0}
+  p.skip_space()
+  var date = date0
+  let b = p.s.bytes()
+  var ind = 0
+  while ind < b.len() && b[ind] != '+' && b[ind] != '-' {
+    ind += 1
+  }
+  if ind == b.len() {
+    ind = -1
+  }
+  if ind != -1 && b.len() >= ind + 5 {
+    date = p.s[0..ind + 5]
+    p.s = p.s[ind + 5..]
+  } else {
+    var t = p.s.find("T") ?? -1
+    if t == 0 {
+      t = match p.s[1..].find("T") {
+        Some(x) => x + 1
+        None => -1
+      }
+    }
+    if t != -1 && b.len() >= t + 5 {
+      date = p.s[0..t + 1]
+      p.s = p.s[t + 1..]
+    }
+  }
+  if !p.skip_cfws() {
+    return Err(fail("mail: misformatted parenthetical comment"))
+  }
+  let db = date.bytes()
+  for dow in [false, true] {
+    for day2 in [false, true] {
+      for year4 in [true, false] {
+        for secs in [true, false] {
+          for zone in [0, 1, 2] {
+            match try_layout(db, dow, day2, year4, secs, zone) {
+              Some(t) => {
+                if t < -9223372036 || t > 9223372036 {
+                  return Err(fail("mail: date out of range"))
+                }
+                return Ok(Time.UNIX_EPOCH + Duration.from_nanos(t * 1000000000))
+              }
+              None => {}
+            }
+          }
+        }
+      }
+    }
+  }
+  Err(fail("mail: header could not be parsed"))
+}
+
+// ---------------------------------------------------------------------------
+// Composing (decision 0290; mime/quotedprintable's Writer, mime's
+// QEncoding, mime/multipart's Writer with a boundary from the id)
+
+/// mime/quotedprintable.Writer (Binary false) over data, closed: lines of
+/// at most 76 bytes, CRLF line endings, trailing spaces encoded.
+fn qp_encode(data: Bytes) -> Bytes {
+  var out = BytesBuilder.with_capacity(data.len() + data.len() / 8 + 8)
+  var line: List[UInt8] = []
+  var cr = false
+  let hex = UPPER_HEX.bytes()
+  for b in data {
+    let plain = (b >= '!' && b <= '~' && b != '=') || b == ' ' || b == '\t' || b == '\n' || b == '\r'
+    if plain {
+      if b == '\n' || b == '\r' {
+        if cr && b == '\n' {
+          cr = false
+          continue
+        }
+        if b == '\r' {
+          cr = true
+        }
+        // checkLastByte: a trailing space or tab is encoded
+        if !line.is_empty() && (line[line.len() - 1] == ' ' || line[line.len() - 1] == '\t') {
+          let w = line.pop() ?? 32
+          if 76 - 1 - line.len() < 3 {
+            for x in line {
+              out.write_byte(x)
+            }
+            out.write(b"=\r\n")
+            line = []
+          }
+          line.push('=')
+          line.push(hex[Int(w) >> 4])
+          line.push(hex[Int(w) & 15])
+        }
+        for x in line {
+          out.write_byte(x)
+        }
+        out.write(b"\r\n")
+        line = []
+        continue
+      }
+      if line.len() == 76 - 1 {
+        for x in line {
+          out.write_byte(x)
+        }
+        out.write(b"=\r\n")
+        line = []
+      }
+      line.push(b)
+      cr = false
+      continue
+    }
+    if 76 - 1 - line.len() < 3 {
+      for x in line {
+        out.write_byte(x)
+      }
+      out.write(b"=\r\n")
+      line = []
+    }
+    line.push('=')
+    line.push(hex[Int(b) >> 4])
+    line.push(hex[Int(b) & 15])
+  }
+  // Close: checkLastByte, then flush
+  if !line.is_empty() && (line[line.len() - 1] == ' ' || line[line.len() - 1] == '\t') {
+    let w = line.pop() ?? 32
+    if 76 - 1 - line.len() < 3 {
+      for x in line {
+        out.write_byte(x)
+      }
+      out.write(b"=\r\n")
+      line = []
+    }
+    line.push('=')
+    line.push(hex[Int(w) >> 4])
+    line.push(hex[Int(w) & 15])
+  }
+  for x in line {
+    out.write_byte(x)
+  }
+  out.freeze()
+}
+
+fn two(n: Int) -> Str { if n < 10 { "0${n}" } else { "${n}" } }
+
+/// t in UTC as time.RFC1123Z: `Mon, 02 Jan 2006 15:04:05 +0000`.
+fn rfc1123z(t: Time) -> Str {
+  let secs = t.unix()
+  let days = if secs >= 0 { secs / 86400 } else { (secs - 86399) / 86400 }
+  let rem = secs - days * 86400
+  // civil from days (Howard Hinnant's algorithm)
+  let z = days + 719468
+  let era = if z >= 0 { z / 146097 } else { (z - 146096) / 146097 }
+  let doe = z - era * 146097
+  let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+  let doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+  let mp = (5 * doy + 2) / 153
+  let d = doy - (153 * mp + 2) / 5 + 1
+  let m = if mp < 10 { mp + 3 } else { mp - 9 }
+  let y = yoe + era * 400 + (if m <= 2 { 1 } else { 0 })
+  let wd = ((days % 7) + 7 + 4) % 7
+  let names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+  let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+  let ys = if y < 10 { "000${y}" } else if y < 100 { "00${y}" } else if y < 1000 { "0${y}" } else { "${y}" }
+  "${names[wd]}, ${two(d)} ${months[m - 1]} ${ys} ${two(rem / 3600)}:${two(rem % 3600 / 60)}:${two(rem % 60)} +0000"
+}
+
+fn compose(from: mail.Address, to: List[mail.Address], subject: Str, text: Str, html: Str? = None, date: Time, id: Str) -> Bytes {
+  var b = BytesBuilder.new()
+  b.write("From: ${address_display(from)}\r\n".bytes())
+  b.write("To: ${to.map(address_display).join(", ")}\r\n".bytes())
+  b.write("Subject: ${encode_word(true, subject)}\r\n".bytes())
+  b.write("Date: ${rfc1123z(date)}\r\n".bytes())
+  b.write("Message-ID: <${id}>\r\n".bytes())
+  b.write(b"MIME-Version: 1.0\r\n")
+  match html {
+    None => {
+      b.write(b"Content-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n")
+      b.write(qp_encode(text.bytes()))
+    }
+    Some(h) => {
+      let boundary = "xo" + crypto.sha256(id.bytes()).to_hex()[0..28]
+      b.write("Content-Type: multipart/alternative; boundary=\"${boundary}\"\r\n\r\n".bytes())
+      b.write("--${boundary}\r\nContent-Transfer-Encoding: quoted-printable\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n".bytes())
+      b.write(qp_encode(text.bytes()))
+      b.write("\r\n--${boundary}\r\nContent-Transfer-Encoding: quoted-printable\r\nContent-Type: text/html; charset=utf-8\r\n\r\n".bytes())
+      b.write(qp_encode(h.bytes()))
+      b.write("\r\n--${boundary}--\r\n".bytes())
+    }
+  }
+  b.freeze()
 }

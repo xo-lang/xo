@@ -77,7 +77,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | encoding | none | not planned | Interfaces only; Xo uses derive (Json, SqlRow). |
 | mime | std/mime | partial | ParseMediaType, FormatMediaType, TypeByExtension and ExtensionsByType (Go's builtin table only, no system files), and net/http's DetectContentType (decision 0282). Missing: encoded words (WordEncoder, WordDecoder, RFC 2047). |
 | mime/multipart | std/multipart | partial | Reader (NextPart, ReadForm), Writer, Request.multipart_form, in memory (decision 0282). Missing: streaming parts, multipart/mixed responses. |
-| mime/quotedprintable | inside std/native/multipart | partial | The decoder, for quoted-printable parts. Missing: a public module and the encoder (with an SMTP client). |
+| mime/quotedprintable | inside std/native/multipart and mail | partial | The decoder (multipart parts) and the encoder (mail.compose, decision 0290). Missing: a public module. |
 | html | none | planned | EscapeString for server rendered pages. |
 | html/template | none | planned | Contextual escaping templates; after html. |
 | text/template | std/template | done | Go's text/template over json.Value data (decision 0299); no custom function maps, no html/template. |
@@ -151,7 +151,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | net/http/httptrace | none | not planned | Tracing is the runtime's (decision 0240). |
 | net/http/cgi, net/http/fcgi | none | not planned | Legacy deployment models. |
 | net/smtp | std/smtp | done | SendMail as `smtp.send` (STARTTLS required by default, PLAIN, CRAM-MD5), decision 0290. Not planned: the step by step Client. |
-| net/mail | std/mail | partial | ParseAddress, ParseAddressList, Address.String with RFC 2047 words (decision 0282). Missing: ReadMessage, headers, ParseDate. |
+| net/mail | std/mail | done | ParseAddress, ParseAddressList, Address.String (decision 0282); ReadMessage, Header.Get, ParseDate, and a message builder, compose (decision 0290). Not planned: AddressParser with a custom charset reader. |
 | net/textproto | inside std/native/llrt (http1) | partial | Header canonicalization for HTTP only. |
 | net/rpc, net/rpc/jsonrpc | none | not planned | Superseded by HTTP JSON APIs. |
 
@@ -250,7 +250,7 @@ it. Ranked by how many of the five hit the gap:
 | 4 | Base64 URL and raw encodings, base32, binary | 2 of 5 | encoding/base64, base32, binary |
 | 5 | SHA-1, HMAC over other hashes, streaming hash | 2 of 5 | crypto/sha1, crypto/hmac, hash |
 | 6 | Repeated header fields and cookies | 2 of 5 | net/http Header, Cookie |
-| 7 | TLS on a Conn, SMTP, mail addresses | 2 of 5 | crypto/tls, net/smtp, net/mail |
+| 7 | TLS on a Conn, SMTP, mail addresses | 2 of 5 | crypto/tls, net/smtp, net/mail (all done 2026-10-20) |
 | 8 | JSON key names (keywords, camelCase) | 1 of 5 (most third party payloads) | encoding/json struct tags |
 | 9 | Multipart, MIME types, content sniffing, ServeContent, streaming request bodies | 1 of 5 | mime, mime/multipart, net/http |
 | 10 | Public RSA and ECDSA verify, big integers | 1 of 5 | crypto/rsa, crypto/ecdsa, math/big |

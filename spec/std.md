@@ -3251,8 +3251,8 @@ fn (u: Uuid) display() -> Str
 
 ## 25. std/mail
 
-Status: implemented on every backend (decision 0282, 2026-10-20): Go's
-net/mail addresses (message.go of go1.26) with mime's RFC 2047 encoded
+Status: implemented on every backend (decision 0282, 2026-10-20; messages
+decision 0290): Go's net/mail addresses (message.go of go1.26) with mime's RFC 2047 encoded
 words, through net/mail on the Go backend and ported natively
 (`std/native/mail.xo`; Go's results on about 1,200 generated cases in
 `mail_test.xo`); golden `mail_basic`. Pure.
@@ -3260,10 +3260,16 @@ words, through net/mail on the Go backend and ported natively
 ```
 struct Address { name: Str, address: Str }   // the display name decoded; local@domain
 struct MailErr { msg: Str }                   // Go's texts: `mail: no address`, `mail: missing @ in addr-spec`
+struct Message { headers: List[(Str, Str)], body: Bytes }   // decision 0290
 
 pub fn parse_address(s: Str) -> Address ! MailErr
 pub fn parse_address_list(s: Str) -> List[Address] ! MailErr
 fn (a: Address) display() -> Str             // `"Ann Lee" <ann@example.com>`
+pub fn read_message(msg: Bytes) -> Message ! MailErr
+fn (m: Message) header(name: Str) -> Str?    // the first value, any case
+pub fn parse_date(s: Str) -> Time ! MailErr
+pub fn compose(from: Address, to: List[Address], subject: Str, text: Str,
+               html: Str? = None, date: Time, id: Str) -> Bytes
 ```
 
 - RFC 5322 as Go reads it: `name <local@domain>`, `local@domain
@@ -3277,8 +3283,31 @@ fn (a: Address) display() -> Str             // `"Ann Lee" <ann@example.com>`
   not a dot-atom, the name quoted when it is printable ASCII, else
   RFC 2047 encoded (B encoding when it holds a special character, else
   Q), in words of at most 75 bytes.
-- Message parsing (`ReadMessage`) and sending (SMTP) are later steps:
-  SMTP needs TLS on a connection (decision 0281).
+- `read_message` is Go's ReadMessage (message.go readHeader over
+  textproto's continued lines): the fields in order, each name in
+  canonical form when it is a valid token (`x-lower` is `X-Lower`, `Bad
+  Key` stays), continuation lines unfolded with one space, values without
+  leading spaces, and the body after the first blank line; a message that
+  ends before a blank line keeps the fields read. Errors are Go's:
+  `malformed initial line: ...`, `malformed header line: ...`, `EOF`.
+- `parse_date` is Go's ParseDate: RFC 5322 dates with or without a
+  weekday and seconds, one or two digit days, two digit years (69 to 99
+  are 19xx), runs of spaces, a numeric zone, a zone name, or `UT`, and
+  trailing comments. A zone name keeps the wall clock as UTC's (Go's
+  `time.ParseInLocation` in UTC; `time.Parse` would take the local zone's
+  offset for its own names, which depends on the machine). A date outside
+  the years 1678 to 2262 is `mail: date out of range` (a `Time` is
+  nanoseconds since 1970).
+- `compose` writes `From`, `To`, `Subject` (encoded with mime's
+  QEncoding when it is not ASCII), `Date` (RFC 1123 with a numeric zone,
+  in UTC), `Message-ID: <id>`, `MIME-Version: 1.0`, and a text/plain body,
+  or multipart/alternative with the HTML part (boundary `xo` and 28 hex
+  digits of the SHA-256 of `id`), each body in quoted-printable (Go's
+  Writer: lines of at most 76 bytes, CRLF); the bytes are those of Go's
+  writers given the same boundary. Send them with `smtp.send` (29).
+- Tests: `mail_test.xo` (Go's ReadMessage and ParseDate results on Go's
+  test inputs and 3,000 random dates), golden `mail_messages` on every
+  backend.
 
 ---
 
@@ -3436,8 +3465,8 @@ fn (p: Prefix) display() -> Str
 
 Status: implemented (decision 0290, 2026-10-20) on every backend: Go's
 net/smtp SendMail as one call, on the program's own connection (so
-FakeNet's raw connections serve its tests, decision 0292). Mail messages
-(`read_message`, `parse_date`, `compose` in std/mail) follow.
+FakeNet's raw connections serve its tests, decision 0292); build the
+message with std/mail's `compose` (25).
 
 ```
 struct SmtpErr { code: Int, msg: Str } derive Display   // the server's reply, or code 0

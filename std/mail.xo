@@ -24,3 +24,26 @@ fn parse_address_list(s: Str) -> List[Address] ! MailErr
 /// `"Ann Lee" <ann@example.com>`, the name quoted or RFC 2047 encoded as
 /// needed (Address.String).
 fn (a: Address) display() -> Str
+
+/// A message (net/mail.Message): its header fields in order, each name
+/// in canonical form (`Content-Type`), continuation lines unfolded, and
+/// the body after the blank line.
+struct Message {
+  headers: List[(Str, Str)]
+  body: Bytes
+}
+
+/// The header and body of msg (mail.ReadMessage), with Go's errors
+/// (`malformed MIME header line: ...`).
+fn read_message(msg: Bytes) -> Message ! MailErr
+/// The first value of the header field name, any case (Header.Get).
+fn (m: Message) header(name: Str) -> Str?
+/// An RFC 5322 date (mail.ParseDate): `Mon, 02 Jan 2006 15:04:05 -0700`,
+/// with the forms Go accepts (no weekday, one digit days, two digit
+/// years, no seconds, zone names, comments).
+fn parse_date(s: Str) -> Time ! MailErr
+/// A message ready for smtp.send (decision 0290): From, To, Subject (RFC
+/// 2047 encoded when not ASCII), Date, Message-ID `<id>`, MIME-Version,
+/// and a text/plain body, or multipart/alternative with an HTML part when
+/// html is given; bodies in quoted-printable, CRLF line endings.
+fn compose(from: Address, to: List[Address], subject: Str, text: Str, html: Str? = None, date: Time, id: Str) -> Bytes

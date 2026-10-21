@@ -1,0 +1,26 @@
+// std/mail messages (decision 0290) on every backend: parse_date and
+// read_message on a sample of the std module tests' cases (Go's results,
+// std/native/mail_test.xo), and compose's bytes (Go's QEncoding,
+// quotedprintable.Writer, and multipart.Writer with the boundary from the
+// id give the same, checked when the golden was written).
+use std/mail
+
+fn main(os: Os) {
+  for s in ["Fri, 21 Nov 1997 09:55:06 -0600", "21 Nov 97 09:55:06 GMT", "Fri, 21 Nov 1997 09:55:06 -0600 (MDT)", "   Fri, 21 Nov 1997 09:55:06 -0600", "Fri 21 Nov 1997 09:55:06 -0600", "Fri,        21 Nov 1997 09:55:06 -0600", "Fri, 21 Nov 1997 09:55:06           CST (c) \r\n", "Fri, 21 Nov 1997 09:55:06 -0600 (unclosed", "29 Feb 2000 00:00 UT", "29 Feb 1900 00:00 UT", "1 Jan 2020 10:00 GMT+3", "1 Jan 2020 10:00 +2460", "1 Jan 2263 10:00 +0000"] {
+    os.stdio.println("${s.debug()} -> ${mail.parse_date(s).map(fn(t) { t.unix() }).debug()}")
+  }
+  for m in [b"Subject: a\r\n folded\r\n\tline\r\nx-lower: v\r\nX-Dup: 1\r\nX-Dup: 2\r\n\r\nbody", b" Subject: x\r\n\r\n", b"NoColon\r\n\r\n", b"Bad Key: v\r\n\r\n", b"", b"Key: v\r\n"] {
+    match mail.read_message(m) {
+      Ok(x) => os.stdio.println("${x.headers.debug()} ${x.body.debug()} subject=${x.header("SUBJECT").debug()}")
+      Err(e) => os.stdio.println("err ${e.msg.debug()}")
+    }
+  }
+  let from = mail.Address{name: "Ann Lee", address: "ann@example.com"}
+  let to = [mail.Address{name: "", address: "bob@example.net"}, mail.Address{name: "Zoë", address: "zoe@example.org"}]
+  let at = Time.UNIX_EPOCH + Duration.from_nanos(1792499696 * 1000000000)
+  let long = "a long line of text that goes on past the seventy six byte limit of quoted printable lines = and ends with a space "
+  os.stdio.print(mail.compose(from, to, "Hello", "Hi Bob,\nsee you.\n", date: at, id: "1@example.com").to_str() ?? "?")
+  os.stdio.println("\n----")
+  os.stdio.print(mail.compose(from, to, "Grüße – résumé", long + "\n.dot line\n", html: Some("<p>Hi Bob</p>"), date: at, id: "2@example.com").to_str() ?? "?")
+  os.stdio.println("\n----")
+}

@@ -162,6 +162,10 @@ var (
 	_ func(*Task, string) Result[Mail_Address, Mail_MailErr]                                                                    = Mail_parse_address
 	_ func(*Task, string) Result[List[Mail_Address], Mail_MailErr]                                                              = Mail_parse_address_list
 	_ func(*Mail_Address, *Task) string                                                                                         = (*Mail_Address).M_display
+	_ func(*Task, Bytes) Result[Mail_Message, Mail_MailErr]                                                                     = Mail_read_message
+	_ func(*Mail_Message, *Task, string) Option[string]                                                                         = (*Mail_Message).M_header
+	_ func(*Task, string) Result[Time, Mail_MailErr]                                                                            = Mail_parse_date
+	_ func(*Task, Mail_Address, List[Mail_Address], string, string, Option[string], Time, string) Bytes                         = Mail_compose
 	_ func(*Mime_MimeErr, *Task) string                                                                                         = (*Mime_MimeErr).M_display
 	_ func(*Task, string) Result[Mime_MediaType, Mime_MimeErr]                                                                  = Mime_parse_media_type
 	_ func(*Task, string, Map[string, string]) string                                                                           = Mime_format_media_type
