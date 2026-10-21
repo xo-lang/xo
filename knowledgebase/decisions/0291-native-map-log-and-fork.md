@@ -1,6 +1,8 @@
 # 0291: A native Map whose copies cost O(1) (the Go backend's log and fork)
 
-Status: Accepted (owner, 2026-10-20). Built behind a flag first; every
+Status: Accepted (owner, 2026-10-20); switched on (owner, 2026-10-21):
+native Maps and Sets are the hybrid of the addendum below by default,
+`XO_MAP_LOG=0` builds the lists alone. Built behind a flag first; every
 measurement in "Cost" is taken before the switch. No interim change to
 `Mutex.with` (the owner, the same day): this decision is the fix.
 
@@ -244,3 +246,54 @@ gap; the owner decides the switch on these numbers.
 - **Keep the lists and document the cost**: contradicts the spec's
   persistent map and leaves a quadratic trap in the most common service
   shape (a store under a Mutex).
+
+## The switch (2026-10-21, owner)
+
+The owner's bar: put then get, get, and update within about 1.2x of the
+lists in cycles, copy then mutate not worse, the HTTP gain kept. Two
+changes met it after Xo lang 4's cold-call register allocation
+(aa1fa095): put and remove test only whether the list they write is held
+once and then run the lists' code (9753943a; the rest in the cold
+xo.maph.putrest, remrest), and Map.get reads the lists' value on a hit
+with no tag test (f3d13232: a tagged position cost two taken branches a
+get, 1.50x the cycles at 1.05x the instructions in a get loop).
+
+Collection workloads, hybrid against the lists (Mac, min over 11
+interleaved rounds, both built by the same xo; the machine was loaded,
+load average about 30):
+
+| workload | cycles before | cycles after | instructions after |
+|---|---|---|---|
+| putget | 1.29x | 1.02x | 1.04x |
+| get | 1.24x | 0.98x | 1.02x |
+| update | 1.17x | 1.09x | 1.06x |
+| copymut | 1.17x | 0.99x | 1.04x |
+| branch | 1.18x | 1.17x | 1.20x |
+| iter | 0.99x | 0.98x | 1.00x |
+
+("before": the hybrid with the concurrency fix ae4306dc and the cold-call
+allocation, ahead of the two changes.)
+
+The CRUD server's mixed load (loadgen, 1024 connections, Docker
+linux/arm64, servers on 6 CPUs, medians of 3 rounds of 10 s; Docker's
+run to run spread is large, so compare within a run):
+
+| run | lists | hybrid | Go |
+|---|---|---|---|
+| after the concurrency fix | 22,476 | 75,412 | 89,846 |
+| after 9753943a | 22,170 | 69,715 | 74,478 |
+| after f3d13232 | 17,982 | 83,000 | 107,522 |
+
+req/s; the hybrid is 3.1x to 4.6x the lists.
+
+The wasm backend keeps the lists for now (compiler/xo main.xo: map_log
+is off for `--backend=wasm`, and the wasm tool and playground never set
+it). Two wasm problems showed when the switch was tested there: the
+count read of the hybrid's checks took the native Int word, where the
+wasm runtime keeps an i32 count beside the list's i32 length (fixed:
+maplog.xo obj_count), and an overwrite after a copy on write and an
+iteration of the map was lost (repro: a literal map copied, a new key
+put into the copy, the copy iterated, then an existing key overwritten;
+native correct). The second is open; wasm switches when it is fixed. HTTP CRUD instructions per
+request (callgrind, arm64): -0.9% at 8 users, -54.9% at 10,000.
+

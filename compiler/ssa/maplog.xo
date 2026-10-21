@@ -1054,8 +1054,11 @@ fn (var b: Builder) mlog_share_into(l: Int, v: Int) {
     // nothing in v is counted (a Map[Int, Int]'s entry)
     return
   }
-  let it = b.int_t()
-  let (ns, js) = b.if_then_begin(b.bop(Op.Lt, b.rt("slot_load", it, [b.rt("obj_addr", it, [l]), b.cint(0), b.cint(0)]), b.cint(0)))
+  if b.wasm {
+    // one thread: no count is ever shared
+    return
+  }
+  let (ns, js) = b.if_then_begin(b.bop(Op.Lt, b.obj_count(l), b.cint(0)))
   b.add(Op.Share, -1, Aux.None, [v])
   b.if_then_end(ns, js)
 }
@@ -1063,8 +1066,29 @@ fn (var b: Builder) mlog_share_into(l: Int, v: Int) {
 /// Whether the object of list l has one reference (thread local): the
 /// Map value holding it is its only holder.
 fn (var b: Builder) mlog_sole(l: Int) -> Int {
+  b.bop(Op.Eq, b.obj_count(l), b.cint(1))
+}
+
+/// The reference count of the object of the counted value l (a list),
+/// read in place: the native runtimes keep an Int at the object's
+/// start (rc.xo: negative when shared, INT64_MIN immortal); the wasm
+/// runtime an i32, then the list's i32 length (compiler/wasm gen.xo),
+/// so a word read there is cut to its low half (unsigned: the
+/// immortal i32 minimum reads 2^31) (the
+/// hybrid's put fast path once read count + length << 32 there and lost
+/// writes on wasm, 2026-10-21).
+fn (var b: Builder) obj_count(l: Int) -> Int {
   let it = b.int_t()
-  b.bop(Op.Eq, b.rt("slot_load", it, [b.rt("obj_addr", it, [l]), b.cint(0), b.cint(0)]), b.cint(1))
+  let w = b.rt("slot_load", it, [b.rt("obj_addr", it, [l]), b.cint(0), b.cint(0)])
+  if !b.wasm {
+    return w
+  }
+  b.iop(Op.And, w, b.cint(4294967295))
+}
+
+/// obj_count of an immortal object (a literal, the shared empty list).
+fn (var b: Builder) immortal_count() -> Int {
+  if b.wasm { b.cint(2147483648) } else { b.iop(Op.Sub, b.cint(-9223372036854775807), b.cint(1)) }
 }
 
 /// xo.mlog.remove[T](m, k) -> (T, V?).

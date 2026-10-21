@@ -1,4 +1,5 @@
-// Decision 0291's hybrid Map (XO_MAP_LOG=1): a Map or Set value is the
+// Decision 0291's hybrid Map (the default since 2026-10-21; XO_MAP_LOG=0
+// builds the lists alone): a Map or Set value is the
 // lists' struct (map.xo: keys, vals, live, slots, n) with one more field:
 //
 //   log   List[L]  in log mode one log table (maplog.xo, the type L =
@@ -31,8 +32,7 @@ fn (var b: Builder) maph_is_log(t: Int, mv: Int) -> Int { b.bop(Op.Gt, b.call("l
 /// Whether the list l is held by one value only (a thread local count of
 /// one; the shared empty list is immortal, so not).
 fn (var b: Builder) maph_sole(l: Int) -> Int {
-  let it = b.int_t()
-  b.bop(Op.Eq, b.rt("slot_load", it, [b.rt("obj_addr", it, [l]), b.cint(0), b.cint(0)]), b.cint(1))
+  b.bop(Op.Eq, b.obj_count(l), b.cint(1))
 }
 
 /// map_lookup of a hybrid map: the lists' position, else (a miss) the
@@ -230,8 +230,7 @@ fn (var b: Builder) maph_slow(t: Int, mp: Int, l: Int) -> Int {
 /// Whether the lists of hybrid map mp copied on write once (its log field
 /// is an empty list of its own, not the immortal shared one).
 fn (var b: Builder) maph_cowed(t: Int, mp: Int) -> Int {
-  let it = b.int_t()
-  b.bop(Op.Ne, b.rt("slot_load", it, [b.rt("obj_addr", it, [b.mfield(t, 5, mp)]), b.cint(0), b.cint(0)]), b.iop(Op.Sub, b.cint(-9223372036854775807), b.cint(1)))
+  b.bop(Op.Ne, b.obj_count(b.mfield(t, 5, mp)), b.immortal_count())
 }
 
 /// mp with its copy on write marked (maph_cowed).

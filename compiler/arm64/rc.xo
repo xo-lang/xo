@@ -179,13 +179,22 @@ fn (var g: G) agg_rc(var b: List[Str], kind: Str, sym: Str, id: Int, t: Int) {
   }
   let base = out + 16
   let frame = align16(base + 8 * n)
-  if frame >= 4096 {
+  // the words are stored and loaded at scaled offsets of at most 32760
+  // (a frame of 4 KiB or more, the arguments of a struct of about 500
+  // words, is lowered page by page: probe_sp; the hybrid Map's sixth word
+  // took the compiler's Result[Session, Str] past 4 KiB, 2026-10-21)
+  if frame + 8 * n >= 32760 {
     g.fail("reference counting of `${x.name}` (too many words)")
   }
   if out == 0 && frame <= 504 {
     b.push("\tstp x29, x30, [sp, #-${frame}]!\n\tmov x29, sp\n")
   } else {
-    b.push("\tsub sp, sp, #${frame}\n${record_at("stp", out)}\tadd x29, sp, #${out}\n")
+    if frame >= 4096 {
+      probe_sp(b, frame, g.local("xo_${g.ns}${kind}${id}_probe"))
+    } else {
+      b.push("\tsub sp, sp, #${frame}\n")
+    }
+    b.push("${record_at("stp", out)}\tadd x29, sp, #${out}\n")
   }
   for k in 0..n {
     if k < 8 {
@@ -221,7 +230,13 @@ fn (var g: G) agg_rc(var b: List[Str], kind: Str, sym: Str, id: Int, t: Int) {
   if out == 0 && frame <= 504 {
     b.push("\tldp x29, x30, [sp], #${frame}\n\tret\n")
   } else {
-    b.push("${record_at("ldp", out)}\tadd sp, sp, #${frame}\n\tret\n")
+    b.push(record_at("ldp", out))
+    if frame >= 4096 {
+      sub_sp(b, "add", frame)
+    } else {
+      b.push("\tadd sp, sp, #${frame}\n")
+    }
+    b.push("\tret\n")
   }
 }
 
