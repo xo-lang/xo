@@ -160,6 +160,10 @@ not affected.
       148 ms, rt wrapper 114 ms, native Xo through gen 115 ms (0.8 times
       Go's package; native arm64 210 ms). Only the display methods stay in
       std/rt/mail.go.
+    - smtp (2026-10-21): the protocol bound corpus (in-process servers)
+      takes 0.12 s CPU on the Go backend before and 0.16 s after (1.3
+      times); there is no Go package timing to compare (net/smtp needs a
+      real connection). std/rt/smtp.go is deleted.
     - Not moved, and why: binary (the native code uses the runtime's
       memory intrinsics for an in-place word, which the Go backend does
       not have); url (the opaque `Values` has a Go runtime type and `var`
