@@ -96,6 +96,7 @@ var codegenFields = map[string]inputClass{
 	"race":          {"keyed", "race=${m.race}"},
 	"inline_deny":   {"keyed", "deny ${m.inline_deny"},
 	"passes_off":    {"keyed", "passes ${m.passes_off"},
+	"jobs":          {"none", ""}, // the tasks of may_fault's scan; its result does not depend on them
 }
 
 // codegenFS are the closure's files that use the file system, with why
