@@ -3,7 +3,7 @@
 ## 2026-10-21: perf: clean's buffer is bytes, written by index
 
 - Kind: perf
-- Commit: (filled in after the push)
+- Commit: f04d9d05
 - Found by: Xo Publish's profile of the Go backend (go-backend-path-profile-2: the lazy buffer was a List[Int] grown from empty, 17%)
 - Go reference: path.go lazybuf (go1.26.1)
 - Test: std/native/path_test.xo; goldens std_path and std06_path
