@@ -576,6 +576,17 @@ fn (var g: Gen) go_impl(fo: Int) -> Int {
   if m < 0 || (g.pkg_of.get(m) ?? -1) < 0 {
     return -1
   }
+  if o.recv >= 0 && (o.is_static || o.recv_var || !o.tparams.is_empty()) && !(g.oname(fo) is "display" | "debug") && !o.iface {
+    // the module is compiled from its Xo implementation, so std/rt's Go
+    // version may be gone or stale: no silent fallback (owner,
+    // 2026-10-21)
+    let kind = if o.is_static { "static" } else if o.recv_var { "`var`" } else { "generic" }
+    let msg = "`${g.c.mods[o.module].path}.${g.oname(o.recv)}.${g.oname(fo)}`: a ${kind} method of a std module the Go backend compiles from its Xo implementation (std/go_compiled.txt, decision 0312) has no route there; give the implementation a free function ${g.oname(o.recv).to_lower()}_${g.oname(fo)} and route it in compiler/gen go_impl, or take the module off go_compiled.txt"
+    if !g.errs.contains(msg) {
+      g.errorf(Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}}, msg)
+    }
+    return -1
+  }
   g.impl_member(m, fo)
 }
 

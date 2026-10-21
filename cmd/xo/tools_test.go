@@ -1258,3 +1258,42 @@ func TestDevGoldensInlineStrict(t *testing.T) {
 		}
 	}
 }
+
+// TestGoCompiledMethodRouting: on the Go backend, a static, var, or
+// generic method of a std module compiled from its Xo implementation
+// (std/go_compiled.txt, decision 0312) is a build error naming it, not
+// a silent call of std/rt's Go version (owner, 2026-10-21). A copy of std
+// gives uuid a static method that a program calls.
+func TestGoCompiledMethodRouting(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("copies std and builds")
+	}
+	std := filepath.Join(t.TempDir(), "std")
+	if err := os.CopyFS(std, os.DirFS(filepath.Join("..", "..", "std"))); err != nil {
+		t.Fatal(err)
+	}
+	gc, err := os.ReadFile(filepath.Join(std, "go_compiled.txt"))
+	if err != nil || !strings.Contains(string(gc), "uuid") {
+		t.Skip("uuid is not in std/go_compiled.txt")
+	}
+	f, err := os.OpenFile(filepath.Join(std, "uuid.xo"), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.WriteString("\n/// a test's static method\nfn (static: Uuid) xo_test_zero() -> Int\n")
+	f.Close()
+	dir := writeFiles(t, map[string]string{
+		"main.xo": "use std/uuid\n\nfn main(os: Os) {\n  os.stdio.println(\"${uuid.Uuid.xo_test_zero()}\")\n}\n",
+	})
+	cli, err := xoCommand()
+	if err != nil {
+		t.Skip(err)
+	}
+	cmd := exec.Command(cli[0], append(cli[1:], "build", "--backend=go", "--std="+std, "-o", filepath.Join(dir, "p"), dir)...)
+	cmd.Env = append(os.Environ(), "XO_BIN_CACHE=off")
+	out, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "uuid.Uuid.xo_test_zero`: a static method") {
+		t.Errorf("want a build error naming uuid.Uuid.xo_test_zero, got (err %v):\n%s", err, out)
+	}
+}
