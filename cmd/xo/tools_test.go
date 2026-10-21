@@ -699,3 +699,71 @@ func TestVetDeepTypes(t *testing.T) {
 		t.Fatal("xo vet did not finish in 60 s on nested enums")
 	}
 }
+
+// TestVetTaskCapture covers XO0534 (decision 0294): a spawned task that
+// captures a struct of 33 heap fields gets a note at the capture (line
+// 44), while capturing one field bound before the spawn, a small struct,
+// or the big struct's own parameter inside a plain closure does not.
+func TestVetTaskCapture(t *testing.T) {
+	t.Parallel()
+	var fields, inits []string
+	for i := 0; i < 33; i++ {
+		fields = append(fields, fmt.Sprintf("  f%d: List[Int]", i))
+		inits = append(inits, fmt.Sprintf("f%d: [%d]", i, i))
+	}
+	src := "struct Big {\n" + strings.Join(fields, "\n") + "\n}\n\n" +
+		`struct Small {
+  a: List[Int]
+}
+
+fn run(big: Big, small: Small) -> Int {
+  let f0 = big.f0
+  let n = scope s {
+    let a = s.spawn(fn() { big.f1.len() })
+    let b = s.spawn(fn() { f0.len() + small.a.len() })
+    let g = fn() -> Int { big.f2.len() }
+    a.await + b.await + g()
+  }
+  n
+}
+
+fn main(os: Os) {
+  os.stdio.println("${run(Big{` + strings.Join(inits, ", ") + `}, Small{a: [1]})}")
+}
+`
+	dir := writeFiles(t, map[string]string{"main.xo": src})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"vet", "--json", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	var res struct {
+		Diagnostics []struct {
+			Code     string `json:"code"`
+			Severity string `json:"severity"`
+			Message  string `json:"message"`
+			Span     struct {
+				Line int `json:"line"`
+			} `json:"span"`
+		} `json:"diagnostics"`
+		CheckErrors int `json:"check_errors"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &res); err != nil {
+		t.Fatalf("bad JSON: %v\n%s", err, out.String())
+	}
+	if res.CheckErrors != 0 {
+		t.Fatalf("check errors: %d\n%s", res.CheckErrors, out.String())
+	}
+	var got []string
+	for _, d := range res.Diagnostics {
+		if d.Code == "XO0534" {
+			got = append(got, fmt.Sprintf("%s %d %s", d.Code, d.Span.Line, d.Severity))
+			if !strings.Contains(d.Message, "`big`") || !strings.Contains(d.Message, "33 heap fields of `Big`") {
+				t.Errorf("message: %s", d.Message)
+			}
+		}
+	}
+	want := "XO0534 44 note"
+	if strings.Join(got, ", ") != want {
+		t.Errorf("got %v, want %s\n%s", got, want, out.String())
+	}
+}

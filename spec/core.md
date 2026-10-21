@@ -1578,6 +1578,31 @@ types (`Chan`, `Mutex`, `Atomic`, capability values, `Buf` by move).
 Because values never alias mutably, data races are impossible except through
 `Mutex` and `Atomic`, which are synchronized.
 
+**What a copy costs** (informative; decision 0294). The semantics above
+never depend on it, but the time does:
+
+- Copying a value (a `let` of another binding, an argument a function
+  keeps, a field, list, or map store, a return, a closure's or a task's
+  capture) copies its inline part and shares each of its heap fields
+  (`Str`, `Bytes`, `List`, `Map`, `Set`, a box of a recursive type, a
+  handle) by counting it up. The cost is the number of heap fields,
+  counted through nested structs, never the size of their contents. A
+  parameter that is only read is borrowed and costs nothing.
+- Writing a collection or string that another value still shares copies
+  it first, O(n), and the writer then holds its own: later writes to it
+  are in place (a `push` amortized O(1)). One that nothing else holds is
+  changed in place.
+- So a task that captures a struct shares every heap field of it at the
+  spawn and releases them when it ends, and the first change on either
+  side to a collection in it, while both hold it, copies that collection.
+  A struct of hundreds of heap fields (the compiler's `Checker`) costs
+  hundreds of count updates per spawn: capture the fields the task uses
+  (`let part = c.field` before the spawn). `xo vet` notes such captures
+  (`XO0534`), and a large parameter that is only stored (`XO0531`).
+- A `Mutex.with` body changes the value while the mutex still holds it
+  (an error or fault hands it back, decision 0085), so the body's first
+  write to each collection in it copies that collection.
+
 ### 5.2 Mutation
 
 - Only `var` bindings, `var` parameters, and `var` receivers can be mutated.
@@ -2279,7 +2304,7 @@ test "retries after 503" {
 | `xo serve` | Resident checker on a unix socket; `xo check` and `xo query` use it automatically when it answers |
 | `xo fmt` | Canonical format, no options |
 | `xo fix [--dry-run] [--from=draft-0.N] [--edition=preview]` | Apply all machine fixes until none apply, xo.mod and xo.work lines included (`edition 2026` becomes `edition preview`, `xo 2026` becomes `xo preview`, `XO1315`); `--from` migrates code written for an older draft (interpolation, prelude variants, `let _ =` discards, scope timeouts, Map index reads) |
-| `xo vet` | Advisory checks, never errors (a directory, a `.xo` file's findings, a std directory checked as std, or `--std-module=M`; decision 0289): checker warnings plus `XO0207` (`??` precedence trap), `XO0208` (each `ignore_err` with its reason), `XO0530` (a field's large payload bound and shared, decision 0263), `XO0531` (a large parameter only stored while each caller passes its last use, decision 0263), `XO0532` (a Map value changed through a copy and stored back, `Map.update` instead; decision 0266), `XO0703` (declared effect never performed), `XO0901` (`dbg` left in code), `XO0902` (`tls.Verify.None`, decision 0281), `XO1103` (use of Go packages per module) |
+| `xo vet` | Advisory checks, never errors (a directory, a `.xo` file's findings, a std directory checked as std, or `--std-module=M`; decision 0289): checker warnings plus `XO0207` (`??` precedence trap), `XO0208` (each `ignore_err` with its reason), `XO0530` (a field's large payload bound and shared, decision 0263), `XO0531` (a large parameter only stored while each caller passes its last use, decision 0263), `XO0532` (a Map value changed through a copy and stored back, `Map.update` instead; decision 0266), `XO0534` (a task capturing a value of 32 or more heap fields, core 5.1; decision 0294), `XO0703` (declared effect never performed), `XO0901` (`dbg` left in code), `XO0902` (`tls.Verify.None`, decision 0281), `XO1103` (use of Go packages per module) |
 | `xo def`, `xo refs`, `xo type`, `xo doc NAME`, `xo symbols` | Agents' lookups on `xo lsp`'s engine (decision 0261): `def NAME`, `refs NAME`, `type FILE:LINE:COL`, `doc NAME` (a name, or a module path and name: `std/tls.client`), `symbols [DIR] [--pub]` (the directory's own declarations, private ones too); a name in any form `xo query def` takes, std and runtime modules included (decision 0289); `--dir` (a workspace root checks the modules under it); text at a terminal, `--json` or `--text` to choose; exit 0 with an answer, 1 for no match, 2 for usage |
 | `xo query <kind> ...` | Semantic queries (10.3): `type`, `def`, `callers`, `effects`, `holes`, `api`, `imports`, `deps` |
 | `xo edit <op> ...` | Semantic edits (10.4) |
@@ -2607,6 +2632,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0530` | warning | vet | binding the payload of a field shares every heap field of a large value (decision 0263) |
 | `XO0531` | warning | vet | a large parameter is only stored while each caller passes its last use, so its heap fields are shared and dropped again (decision 0263) |
 | `XO0532` | note | vet | a Map value read into a `var`, changed, and stored back; `Map.update` does it in one lookup (decision 0266) |
+| `XO0534` | note | vet | a task captures a value with many heap fields (32 or more), sharing each at the spawn (core 5.1, decision 0294) |
 | `XO0601` | error | checker | name does not resolve (core 4.3) |
 | `XO0602` | error | checker | import path does not yield a valid local name (core 4.1) |
 | `XO0603` | error | checker | name declared twice in one scope, or a predeclared name redefined (core 3.1, 1.4) |

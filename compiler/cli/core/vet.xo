@@ -239,6 +239,7 @@ fn vet_module(c: check.Checker, m: Int) -> List[Diag] {
           if let Some(d) = vet_call(c, f, path, e, span, fun, args) {
             out.push(d)
           }
+          out = out + task_captures(c, f, path, e, args)
         }
         MatchExpr(_, subject, arms) => {
           var pats: List[parser.Pattern] = []
@@ -718,6 +719,59 @@ fn vet_call(c: check.Checker, f: Int, file: Str, call: parser.Expr, span: parser
     return Some(d)
   }
   None
+}
+
+/// The heap fields from which a value a task captures is large (XO0534):
+/// a struct the size of the compiler's Checker, not an everyday config.
+const TASK_CAPTURE_THRESHOLD = 32
+
+/// XO0534 (decision 0294): the locals with at least TASK_CAPTURE_THRESHOLD
+/// heap fields that the closure passed to `Scope.spawn` or
+/// `spawn_background` in call captures. A capture copies the value
+/// (core 5.1): it shares each heap field when the task starts and releases
+/// it when the task ends, and a collection in it that the task changes is
+/// copied first while the spawner still holds it.
+fn task_captures(c: check.Checker, f: Int, file: Str, call: parser.Expr, args: List[parser.Arg]) -> List[Diag] {
+  let ci = match c.call_in(f, call) {
+    Some(x) => x
+    None => return []
+  }
+  let fo = ci.fn_obj
+  if fo < 0 || !c.mods[c.objs[fo].module].is_prelude || !(text_of(c.objs[fo].name) is "spawn" | "spawn_background") || args.len() != 1 {
+    return []
+  }
+  let fl = match args[0].value {
+    FnLit(x) => x
+    _ => return []
+  }
+  var nodes: List[parser.Expr] = []
+  walk_block(fl.body, nodes)
+  let start = fl.span.start
+  var seen: Map[Int, Bool] = {}
+  var out: List[Diag] = []
+  for e in nodes {
+    if let Ident(id) = e {
+      let v = c.var_of(f, id)
+      if v < 0 || seen.contains(v) {
+        continue
+      }
+      let o = c.objs[v]
+      if o.line > start.line || (o.line == start.line && o.col >= start.col) {
+        continue
+      }
+      seen[v] = true
+      let t = c.type_in(f, e)
+      let n = heap_fields(c, t, 0)
+      if t < 0 || n < TASK_CAPTURE_THRESHOLD {
+        continue
+      }
+      let name = check.text(id.name)
+      var d = vdiag("XO0534", true, file, id.span, "the task captures `${name}` by value: spawning shares the ${n} heap fields of `${c.show(t)}` and the task's end releases them, and a collection in it that the task changes is copied first (core 5.1)")
+      d.notes.push(check.DNote{message: "capture only what the task uses (`let part = ${name}.field` before the spawn)"})
+      out.push(d)
+    }
+  }
+  out
 }
 
 /// XO1103: the Go packages module m imports with `use go` and the
