@@ -187,7 +187,12 @@ const F_STATE = 5
 const F_DONE = 48
 const F_NEXT = 64
 const F_HOOKS = 80
-const F_RECORD = 88
+/// The fiber's no-preemption count (decision 0318 stage 4): LLVM builds'
+/// runtime functions that reach a thread's own structures hold it up
+/// while they run (compiler/llvm apreempt.xo), and the signal handler
+/// declines while it is not 0.
+pub const F_NOPRE = 120
+const F_RECORD = 128
 /// Main's fiber (decision 0286 step 1): the marker in its task word (a
 /// task record is never at 1), the program's entry, its root's record,
 /// whether main ended (word 13), and its record's size.
@@ -199,7 +204,7 @@ const F_ENDED_I = 13
 /// The park of main's counted wait while it is parked, 0 for none
 /// (root_idle counts it blocked): byte 112, word 14.
 const F_WAIT_I = 14
-const F_MAIN_RECORD = 120
+const F_MAIN_RECORD = 128
 
 /// The part of a fiber's stack committed up front on Windows.
 const WIN_COMMIT = 65536
@@ -1298,7 +1303,7 @@ fn win_kick(w: Int, t: Int) {
     return
   }
   let f = rt.slot_load(w, W_RUNF / 8, ACQUIRE)
-  if f != 0 && rt.mem_load(w, W_APOK, 8) != 0 && rt.mem_load(w, W_LOCKS, 8) == 0 {
+  if f != 0 && rt.mem_load(w, W_APOK, 8) != 0 && rt.mem_load(w, W_LOCKS, 8) == 0 && rt.mem_load(f, F_NOPRE, 8) == 0 {
     let cx = win_ctx(f)
     // CONTEXT_FULL: control, integer, floating point
     rt.mem_store(cx, 48, 1048587, 4)
@@ -1400,7 +1405,7 @@ pub fn async_signal(uc: Int) {
     return
   }
   let f = rt.tlocal_get(TLS_FIB)
-  if f == 0 || rt.mem_load(w, W_LOCKS, 8) != 0 {
+  if f == 0 || rt.mem_load(w, W_LOCKS, 8) != 0 || rt.mem_load(f, F_NOPRE, 8) != 0 {
     return
   }
   // the interrupted pc and sp (unwind.xo prof_regs' layouts). arm64:
@@ -1582,6 +1587,7 @@ fn fiber_new(fs: Int, w: Int, t: Int) -> Int {
   rt.mem_store(f, F_TASK, t, 8)
   rt.mem_store(f, F_CUR, 0, 8)
   rt.mem_store(f, F_DONE, 0, 8)
+  rt.mem_store(f, F_NOPRE, 0, 8)
   rt.mem_store(f, F_HOOKS, rt.mem_load(w, W_HOOKS, 8), 8)
   rt.slot_store(f, F_STATE, 0, RELAXED)
   // the first frame, for the switch the compiler emits

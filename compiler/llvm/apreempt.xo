@@ -1,0 +1,240 @@
+use github.com/xo-lang/xo/compiler/ssa
+
+// Decision 0318 stage 4: asynchronous preemption in LLVM builds. LLVM
+// inlines runtime code into the program's functions and keeps no record
+// of it, so instead of the native backend's unsafe ranges the runtime
+// says when it must not be interrupted (Go's acquirem): a runtime function
+// that can reach a thread's own structures (the thread local table, and
+// through it the allocator's lists, the deferred release queue, the
+// worker's rings) adds one to the current fiber's no-preemption count
+// (std/native/llrt pool.xo F_NOPRE) while it runs, and the signal handler
+// declines while the count is not 0. One that runs program code or
+// switches stacks, or can raise, is never inlined instead (noinline) and
+// stays in the runtime's text, which the handler declines: the program's
+// own functions are in a section of their own (xo_text), the one range
+// static word 77's table lists.
+
+/// The marks of apre_mark: a guarded function, and one kept out of the
+/// program's code.
+const APRE_GUARD = 1
+const APRE_OUT = 2
+/// A function that would guard but runs only under a guarded caller.
+const APRE_INNER = 3
+
+/// The fiber record's no-preemption count (std/native/llrt pool.xo
+/// F_NOPRE) and the thread local slot of the current fiber (TLS_FIB).
+const APRE_F_NOPRE = 120
+const APRE_TLS_FIB = 1
+
+/// Whether a source path is the runtime's (compiler/ssa runtime_mod's
+/// modules), as Func.file spells it.
+fn apre_rt_file(p: Str) -> Bool {
+  p.contains("native/llrt/") || p.ends_with("native/rt.xo") || p.contains("native/sys_")
+}
+
+/// The signal handlers' own entries: never guarded (the handler would
+/// see its own count).
+fn apre_exempt(n: Str) -> Bool {
+  n is "cabi.on_urg" | "cabi.on_wpark" | "cabi.on_prof" | "pool.async_signal" | "pool.async_wpark" | "prof.on_signal"
+}
+
+/// Marks every function of the module (g.apre): APRE_GUARD for a runtime
+/// function that reaches the thread local table (itself or through the
+/// functions it calls), APRE_OUT for one of those that also runs program
+/// code, switches stacks, or can raise, 0 for the rest.
+fn (var g: Gen) apre_mark() {
+  let n = g.m.funcs.len()
+  var rt: List[Bool] = List.with_capacity(n)
+  var reach: List[Bool] = List.with_capacity(n)
+  var prog: List[Bool] = List.with_capacity(n)
+  var raises: List[Bool] = List.with_capacity(n)
+  var callees: List[List[Int]] = List.with_capacity(n)
+  for f in g.m.funcs {
+    let isrt = apre_rt_file(f.file)
+    var r = false
+    var p = false
+    var x = false
+    var cs: List[Int] = []
+    for v in f.values {
+      if v.op == ssa.Op.Fault {
+        x = true
+      }
+      if v.op == ssa.Op.CallValue {
+        p = true
+      }
+      if v.op == ssa.Op.Call {
+        let name = aux_str(v.aux)
+        if name is "rt.tlocal_get" | "rt.tlocal_set" | "rt.tlocal_addr" {
+          r = true
+        } else if name is "rt.sched_run_task" | "rt.stack_switch" | "rt.frame_addr" {
+          // a task's body runs under it (rt.frame_addr: the fault
+          // boundary of tasks.run_entry, which calls the body through
+          // rt.call_c4), or it switches stacks; the indirect calls of
+          // the frees (drop helpers, bounded by the data) stay guarded
+          p = true
+        } else if let Some(k) = g.by_name.get(name) {
+          cs.push(k)
+        }
+      }
+    }
+    rt.push(isrt)
+    reach.push(r)
+    prog.push(p)
+    raises.push(x)
+    callees.push(cs)
+  }
+  // a runtime function calling the program's own code (a file outside
+  // the runtime; compiler made helpers have none) runs program code
+  for fi in 0..n {
+    if rt[fi] {
+      for k in callees[fi] {
+        if !rt[k] && !g.m.funcs[k].file.is_empty() {
+          prog[fi] = true
+        }
+      }
+    }
+  }
+  var changed = true
+  while changed {
+    changed = false
+    for fi in 0..n {
+      for k in callees[fi] {
+        if reach[k] && !reach[fi] {
+          reach[fi] = true
+          changed = true
+        }
+        if rt[k] && prog[k] && !prog[fi] {
+          prog[fi] = true
+          changed = true
+        }
+        if raises[k] && !raises[fi] {
+          raises[fi] = true
+          changed = true
+        }
+      }
+    }
+  }
+  g.apre = List.with_capacity(n)
+  for fi in 0..n {
+    var m = 0
+    if rt[fi] && reach[fi] && !apre_exempt(g.m.funcs[fi].name) {
+      m = if prog[fi] || raises[fi] { APRE_OUT } else { APRE_GUARD }
+    }
+    g.apre.push(m)
+  }
+  // a guarded function that only guarded functions call runs under their
+  // count: its own guard goes (each level of rs_push_word, reserve, and
+  // reserve_slow counted again, 14% of maxby's instructions). Program
+  // code, an export (the emitters' xo_x_ calls), an address taken, or an
+  // unguarded runtime caller keeps it
+  var outer: List[Bool] = List.with_capacity(n)
+  for fi in 0..n {
+    let f = g.m.funcs[fi]
+    outer.push(!f.export.is_empty() || g.addr_taken.contains(f.name) || f.name == "main")
+  }
+  for fi in 0..n {
+    for k in callees[fi] {
+      if g.apre[k] == APRE_GUARD && g.apre[fi] != APRE_GUARD {
+        outer[k] = true
+      }
+    }
+  }
+  for fi in 0..n {
+    if g.apre[fi] == APRE_GUARD && !outer[fi] {
+      g.apre[fi] = APRE_INNER
+    }
+  }
+}
+
+/// The mark of function fi (0 when not marking).
+fn (g: Gen) apre_of(fi: Int) -> Int {
+  if fi < g.apre.len() { g.apre[fi] } else { 0 }
+}
+
+/// The section of the program's own functions, as a define's suffix
+/// (" section ..."), or "" for the runtime's.
+fn (g: Gen) apre_section(file: Str) -> Str {
+  if g.apre.is_empty() || apre_rt_file(file) {
+    return ""
+  }
+  if g.os() == "darwin" {
+    " section \"__TEXT,__xo_text,regular,pure_instructions\""
+  } else {
+    " section \"xo_text\""
+  }
+}
+
+/// A guarded function's first instructions: the current fiber's count up
+/// by one, then a barrier no load or store crosses (decision 0318:
+/// volatile updates and an opaque asm that may read and write all
+/// memory). A thread with no fiber counts nothing (it is never
+/// preempted): a branch around the update, not a select of where to
+/// count, which made a conditional select in the constant time functions
+/// (internal/llvm TestConstantTimeLLVM: x25519.base). Ends in block
+/// xo.e1, where the function's own first block's branch follows.
+fn (var g: Gen) apre_enter() -> Str {
+  g.sched_tlocal()
+  "  %xo.af = call i64 @xo_tlocal_get(i64 ${APRE_TLS_FIB})\n" +
+    "  %xo.ap = inttoptr i64 %xo.af to ptr\n" +
+    "  %xo.ag = getelementptr i8, ptr %xo.ap, i64 ${APRE_F_NOPRE}\n" +
+    "  %xo.az = icmp eq i64 %xo.af, 0\n" +
+    "  br i1 %xo.az, label %xo.e1, label %xo.e0\n" +
+    "xo.e0:\n" +
+    "  %xo.ac = load volatile i64, ptr %xo.ag, align 8\n" +
+    "  %xo.ai = add i64 %xo.ac, 1\n" +
+    "  store volatile i64 %xo.ai, ptr %xo.ag, align 8\n" +
+    "  br label %xo.e1\n" +
+    "xo.e1:\n" +
+    "  call void asm sideeffect \"\", \"~{memory}\"()\n"
+}
+
+/// A guarded function's text with the count taken back down before each
+/// return (through the fiber found at entry: a function that parked and
+/// resumed on another thread still counts on its own fiber), the same
+/// branch around it.
+fn apre_leave(text: Str) -> Str {
+  var out: List[Str] = []
+  var k = 0
+  for l in text.split("\n") {
+    if l.starts_with("  ret ") || l == "  ret void" {
+      out.push("  call void asm sideeffect \"\", \"~{memory}\"()")
+      out.push("  br i1 %xo.az, label %xo.r${k}, label %xo.d${k}")
+      out.push("xo.d${k}:")
+      out.push("  %xo.ad${k} = load volatile i64, ptr %xo.ag, align 8")
+      out.push("  %xo.ae${k} = sub i64 %xo.ad${k}, 1")
+      out.push("  store volatile i64 %xo.ae${k}, ptr %xo.ag, align 8")
+      out.push("  br label %xo.r${k}")
+      out.push("xo.r${k}:")
+      k += 1
+    }
+    out.push(l)
+  }
+  out.join("\n")
+}
+
+/// The unsafe range tables of LLVM builds (decision 0318 stage 4): one
+/// table, the program's own section, no ranges; every module defines
+/// them alike (weak), and static word 77 holds the list's address.
+fn (var g: Gen) apre_tables() -> Str {
+  let (start, stop) = if g.os() == "darwin" {
+    ("@\"\\01section$start$__TEXT$__xo_text\"", "@\"\\01section$end$__TEXT$__xo_text\"")
+  } else {
+    ("@__start_xo_text", "@__stop_xo_text")
+  }
+  "${start} = external hidden global i8\n${stop} = external hidden global i8\n" +
+    "@xo.unsafe.t = weak hidden constant [3 x i64] [i64 ptrtoint (ptr ${start} to i64), i64 sub (i64 ptrtoint (ptr ${stop} to i64), i64 ptrtoint (ptr ${start} to i64)), i64 0], align 8\n" +
+    "@xo.unsafe.parts = weak hidden constant [2 x i64] [i64 1, i64 ptrtoint (ptr @xo.unsafe.t to i64)], align 8\n\n"
+}
+
+/// rt.static_word's table's initializer: zero, but word 77 the unsafe
+/// range tables' list when the program preempts asynchronously.
+fn (g: Gen) apre_static_init() -> Str {
+  if g.apre.is_empty() {
+    return "zeroinitializer"
+  }
+  var ws: List[Str] = List.with_capacity(256)
+  for k in 0..256 {
+    ws.push(if k == 77 { "i64 ptrtoint (ptr @xo.unsafe.parts to i64)" } else { "i64 0" })
+  }
+  "[${ws.join(", ")}]"
+}

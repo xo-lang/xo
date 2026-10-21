@@ -17,6 +17,9 @@ use github.com/xo-lang/xo/compiler/ssa
 /// lowered (sfn).
 pub struct Gen {
   pub m: ssa.Module
+  /// Decision 0318 stage 4: each function's mark (apreempt.xo), empty
+  /// when the program polls
+  apre: List[Int] = []
   types: List[Str] = []
   globals: List[Str] = []
   helpers: List[Str] = []
@@ -286,6 +289,8 @@ fn runtime_decls() -> Str {
     "attributes #17 = { \"xo-norace\" uwtable noinline }",
     "; a preemption poll's slow call (decision 0286 step 3): the stub keeps every register and touches none of the program's memory",
     "attributes #18 = { nounwind memory(inaccessiblemem: readwrite) }",
+    "; a runtime function of the C library kept out of the program's code (decision 0318 stage 4)",
+    "attributes #19 = { uwtable \"no-builtins\" noinline }",
     "",
     "!0 = !{!\"branch_weights\", i32 1, i32 4000}",
     "; TBAA: list headers, list elements, and reference counts never overlap",
@@ -341,6 +346,10 @@ pub fn (var g: Gen) generate() -> Str {
         }
       }
     }
+  }
+  if g.m.async_preempt && !g.tsan {
+    // decision 0318 stage 4: the runtime's no-preemption guards
+    g.apre_mark()
   }
   for fi in 0..nf {
     for p in g.m.funcs[fi].blocks[0].params {

@@ -590,9 +590,21 @@ fn (var g: Gen) lower_func(fi: Int) {
       _ => attrs
     }
   }
+  // decision 0318 stage 4: a runtime function kept out of the program's
+  // code, a guarded one, the program's own text section
+  let mark = g.apre_of(g.fi)
+  if mark == APRE_OUT {
+    attrs = match attrs {
+      "#1" => "#11"
+      "#7" => "#19"
+      _ => attrs
+    }
+  }
+  let guard = if mark == APRE_GUARD { g.apre_enter() } else { "" }
+  let sec = g.apre_section(g.f.file)
   let sp = if g.dbg_sp >= 0 { " !dbg !${g.dbg_sp}" } else { "" }
   let br0 = if g.dbg_sp >= 0 { "  br label %b0, !dbg ${g.dbg_loc()}\n" } else { "  br label %b0\n" }
-  out.push("define internal ${rl} ${fname(g.f.name)}(${ps.join(", ")}) ${attrs}${pers}${sp} {\nentry:\n${g.allocas.join("")}${loads}${br0}")
+  out.push("define internal ${rl} ${fname(g.f.name)}(${ps.join(", ")}) ${attrs}${sec}${pers}${sp} {\nentry:\n${g.allocas.join("")}${loads}${guard}${br0}")
   for b in 0..g.f.blocks.len() {
     out.push("${bname(b)}:\n")
     if b != 0 {
@@ -619,7 +631,7 @@ fn (var g: Gen) lower_func(fi: Int) {
     g.skipped.push("${g.f.name}: ${g.skip}")
     return
   }
-  g.funcs.push(out.join(""))
+  g.funcs.push(if mark == APRE_GUARD { apre_leave(out.join("")) } else { out.join("") })
   g.meta.push(g.sc_nodes())
 }
 

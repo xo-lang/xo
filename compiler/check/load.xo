@@ -56,6 +56,9 @@ pub struct Checker {
   /// a native backend (arm64, amd64), not --race, XO_ASYNC_PREEMPT not 0;
   /// the builder decides per target (darwin and linux)
   pub async_preempt_ok: Bool = false
+  /// the LLVM backend's (decision 0318 stage 4): not on Windows, whose
+  /// linker defines no section bounds for the program's text
+  pub async_preempt_llvm: Bool = false
   /// no preemption polls in loops (decision 0286 step 3): `--no-preempt`
   /// or XO_PREEMPT_POLLS=off, for tight loop benchmarks; a task that
   /// loops without calling the runtime can then starve its worker

@@ -916,7 +916,10 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       if !g.emitted.contains("@.xo.static") {
         g.emitted["@.xo.static"] = true
         let dbg = if g.dbg_static >= 0 { ", !dbg !${g.dbg_static}" } else { "" }
-        g.helpers.push("${g.comdat_decl("@.xo.static")}@.xo.static = weak global [256 x i64] zeroinitializer${g.comdat()}, align 8${dbg}\n\n")
+        // with asynchronous preemption word 77 holds the unsafe range
+        // tables (decision 0318 stage 4), alike in every module
+        let tables = if g.apre.is_empty() { "" } else { g.apre_tables() }
+        g.helpers.push("${tables}${g.comdat_decl("@.xo.static")}@.xo.static = weak global [256 x i64] ${g.apre_static_init()}${g.comdat()}, align 8${dbg}\n\n")
       }
       let p = g.def("getelementptr [256 x i64], ptr @.xo.static, i64 0, i64 ${g.op(x.args[0])}")
       g.set(v, "ptrtoint ptr ${p} to i64")

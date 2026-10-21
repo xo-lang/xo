@@ -364,8 +364,8 @@ func TestMainFiberDeadlock(t *testing.T) {
 // its loop's poll (decision 0286 step 3). testdata/sched/preempt keeps
 // both threads of XO_THREADS=1 spinning on a flag only a queued task sets:
 // it ends only by preemption (it hangs with XO_PREEMPT=0). Three runs per
-// native backend, each within 20 s, with XO_LOCKCHECK; arm64 only (LLVM's
-// loops poll; the native backend preempts by signal, decision 0318).
+// native backend, each within 20 s, with XO_LOCKCHECK; arm64 only (both
+// preempt by signal since decision 0318).
 func TestPreempt(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs a program per native backend")
@@ -404,7 +404,9 @@ func TestPreempt(t *testing.T) {
 // interrupts loops that allocate and free in program code while the other
 // tasks on the worker allocate too, under the leak check and the heap's
 // overrun check (XO_HEAP_GUARD=1). Both must be preempted (XO_RTSTATS's
-// preempt count).
+// preempt count). On the native arm64 backend and on LLVM at -O2
+// (decision 0318 stage 4: the runtime's no-preemption guards, which
+// LLVM's inlining must not move the allocator's loads and stores out of).
 func TestAsyncPreempt(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs two programs")
@@ -413,37 +415,51 @@ func TestAsyncPreempt(t *testing.T) {
 		t.Skip("asynchronous preemption: arm64")
 	}
 	preempts := regexp.MustCompile(`preempt=([0-9]+)`)
-	for _, c := range []struct{ dir, want, env string }{
+	cases := []struct{ dir, want, env string }{
 		{"preempt_regs", "6742598953838690335 5.718645907036417\n-3850883126600505201 5.718645907036417\n-1443683438953606781 5.718645907036417\n", ""},
 		{"preempt_alloc", "13452742 13453550 7098632\n", "XO_HEAP_GUARD=1"},
-	} {
-		t.Run(c.dir, func(t *testing.T) {
-			if c.env != "" {
-				k, v, _ := strings.Cut(c.env, "=")
-				t.Setenv(k, v)
-			}
-			res, err := xotool.Build([]string{filepath.Join("testdata", "sched", c.dir)}, xotool.Options{Backend: xotool.BackendArm64})
-			if err != nil || res.Failed {
-				t.Fatalf("build: %v %v", err, res)
-			}
-			total := 0
-			for i := 0; i < 3; i++ {
-				cmd := exec.Command(res.Binaries[xotool.Host()])
-				cmd.Env = append(os.Environ(), "XO_THREADS=1", "XO_LOCKCHECK=1", "XO_LEAKCHECK=1", "XO_RTSTATS=1")
-				out, err := runCombined(cmd, 60*time.Second)
-				if err != nil || !strings.HasPrefix(out, c.want) || !strings.Contains(out, "xo leakcheck: 0 live") {
-					t.Fatalf("run %d: %v\n%s", i, err, out)
-				}
-				if m := preempts.FindStringSubmatch(out); m != nil {
-					n, _ := strconv.Atoi(m[1])
-					total += n
-				}
-			}
-			if total < 10 {
-				t.Fatalf("%d preemptions in three runs: the loops were not interrupted", total)
-			}
-		})
 	}
+	for _, be := range []string{xotool.BackendArm64, xotool.BackendLLVM} {
+		for _, c := range cases {
+			testAsyncPreempt(t, be, c.dir, c.want, c.env, preempts)
+		}
+	}
+}
+
+// testAsyncPreempt runs one of TestAsyncPreempt's programs on backend be.
+func testAsyncPreempt(t *testing.T, be, dir, want, env string, preempts *regexp.Regexp) {
+	t.Run(be+"/"+dir, func(t *testing.T) {
+		if be == xotool.BackendLLVM {
+			if _, err := xotool.Clang(); err != nil {
+				t.Skip("clang not found")
+			}
+			t.Setenv("XO_LLVM_OPT", "O2")
+		}
+		if env != "" {
+			k, v, _ := strings.Cut(env, "=")
+			t.Setenv(k, v)
+		}
+		res, err := xotool.Build([]string{filepath.Join("testdata", "sched", dir)}, xotool.Options{Backend: be})
+		if err != nil || res.Failed {
+			t.Fatalf("build: %v %v", err, res)
+		}
+		total := 0
+		for i := 0; i < 3; i++ {
+			cmd := exec.Command(res.Binaries[xotool.Host()])
+			cmd.Env = append(os.Environ(), "XO_THREADS=1", "XO_LOCKCHECK=1", "XO_LEAKCHECK=1", "XO_RTSTATS=1")
+			out, err := runCombined(cmd, 60*time.Second)
+			if err != nil || !strings.HasPrefix(out, want) || !strings.Contains(out, "xo leakcheck: 0 live") {
+				t.Fatalf("run %d: %v\n%s", i, err, out)
+			}
+			if m := preempts.FindStringSubmatch(out); m != nil {
+				n, _ := strconv.Atoi(m[1])
+				total += n
+			}
+		}
+		if total < 10 {
+			t.Fatalf("%d preemptions in three runs: the loops were not interrupted", total)
+		}
+	})
 }
 
 // TestPreemptMigrate: tasks that allocate and free in tight loops are
