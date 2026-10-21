@@ -1191,6 +1191,9 @@ fn pair_mem(text: Str, ext: Str) -> Str {
 /// sp) into a store pair, and pairs across labels nothing refers to (the
 /// labels of blocks only fallen into, which go). ext is the text that
 /// may refer to the function's labels besides it (its call site table).
+/// Ported to items in lines.xo (decision 0274 step 3): until the text pass
+/// goes, a change here is made in its port too, or XO_OP_VERIFY=1 builds
+/// fail (gotchas/arm64-line-pass-port-drift.md).
 fn pair_mem_l(lines: List[Str], nrefs: Map[Str, Int]) -> List[Str] {
   var out: List[Str] = []
   var i = 0

@@ -300,3 +300,84 @@ fn copy_runs_ops(xs: List[Line]) -> List[Line] {
   }
   out
 }
+
+/// `ldr x<n>|d<n>, [x<m>|sp, #<off>]` or `str x<n>|xzr|d<n>, [x<m>,
+/// #<off>]` (parse_ldr's and parse_str's forms, st for a store): (true,
+/// the register's name, the base's name, off).
+fn op_word_mem(x: Line, st: Bool) -> (Bool, Str, Str, Int) {
+  let bad = (false, "", "", 0)
+  if let Some(o) = x.op {
+    if o.m != (if st { "str" } else { "ldr" }) || o.ops.len() != 2 {
+      return bad
+    }
+    if let macho.Operand.Reg(n: r, kind: k) = o.ops[0] {
+      if let macho.Operand.MemOp(m: mo) = o.ops[1] {
+        if !mo.ok || mo.mode != 0 || !mo.explicit || (st && mo.base == 31) {
+          return bad
+        }
+        let name = if k == macho.RD { "d${r}" } else if k != macho.RX { "" } else if r == 31 { if st { "xzr" } else { "" } } else { "x${r}" }
+        if name.is_empty() {
+          return bad
+        }
+        return (true, name, if mo.base == 31 { "sp" } else { "x${mo.base}" }, mo.off)
+      }
+    }
+  }
+  bad
+}
+
+/// pair_mem_l on items (lsr.xo's text pass; its loads and stores read
+/// from the Op).
+fn pair_mem_ops(xs: List[Line], nrefs: Map[Str, Int]) -> List[Line] {
+  var out: List[Line] = List.with_capacity(xs.len())
+  var i = 0
+  let n = xs.len()
+  while i < n {
+    let (lok, l1, l2, l3) = op_word_mem(xs[i], false)
+    let (sok, s1, s2, s3) = op_word_mem(xs[i], true)
+    let st = !lok
+    let a1 = if lok { l1 } else { s1 }
+    let a2 = if lok { l2 } else { s2 }
+    let a3 = if lok { l3 } else { s3 }
+    if lok || sok {
+      var j = i + 1
+      // the debug line rows and variable locations among the labels
+      // passed: kept, before the pair (as pair_mem_l)
+      var rows: List[Line] = []
+      while j < n {
+        let name = label_def(xs[j].text)
+        if name.is_empty() {
+          break
+        }
+        if is_row_label(name) {
+          rows.push(xs[j])
+          j += 1
+          continue
+        }
+        if nrefs.contains(name) {
+          break
+        }
+        j += 1
+      }
+      if j < n {
+        let (cok, c1, c2, c3) = op_word_mem(xs[j], st)
+        if cok && a2 == c2 && (st || (a1 != c1 && a1 != a2)) && same_class(a1, c1) {
+          if c3 == a3 + 8 && a3 % 8 == 0 && a3 >= -512 && a3 <= 504 {
+            let op = if st { "stp" } else { "ldp" }
+            for r in rows {
+              out.push(r)
+            }
+            for x in to_lines(["\t${op} ${a1}, ${c1}, [${a2}, #${a3}]"]) {
+              out.push(x)
+            }
+            i = j + 1
+            continue
+          }
+        }
+      }
+    }
+    out.push(xs[i])
+    i += 1
+  }
+  out
+}

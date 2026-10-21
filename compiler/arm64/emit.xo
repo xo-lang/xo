@@ -376,7 +376,14 @@ fn (var g: G) emit() {
       g.fail("XO_OP_VERIFY: ${g.f.name}: reload_reuse_ops differs from reload_reuse_l")
     }
   }
-  g.text.push(g.local_empty_l(g.far_tests_l(g.far_slots_l(pair_mem_l(rr, nrefs)))))
+  let pm = pair_mem_l(rr, nrefs)
+  if g.m.op_verify && !g.x86 {
+    // decision 0274 step 3: pair_mem on items gives the text pass's lines
+    if line_texts(pair_mem_ops(to_lines(rr), nrefs)) != pm {
+      g.fail("XO_OP_VERIFY: ${g.f.name}: pair_mem_ops differs from pair_mem_l")
+    }
+  }
+  g.text.push(g.local_empty_l(g.far_tests_l(g.far_slots_l(pm))))
 }
 
 /// The number of instructions past which a function keeps adrp and add
