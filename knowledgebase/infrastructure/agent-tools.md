@@ -164,6 +164,15 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 - Pushes: `~/xo-lead/agents/pushq.sh WORKTREE [--base SHA] [-- GATE...]`.
 - Status: `~/xo-lead/agents/board.sh set|claim|show`, instead of status
   messages.
+- Numbers: `~/xo-lead/agents/adr-claim.sh SLUG WHO` for a decision
+  number, `~/xo-lead/agents/code-claim.sh PREFIX WHO [WHAT]` for a
+  diagnostic code (PREFIX is the family, `XO09` or `XO13`): each takes a
+  lock, reads origin/main and its claims file (~/xo-lead/adr-claims.txt,
+  ~/xo-lead/code-claims.txt), records the next free one, and prints it.
+  Claim before writing the code into a branch; a claimed code is never
+  given out again, even if its branch is dropped (core 10: a code keeps
+  its meaning). A code used twice on main fails -short
+  (internal/repotest explainCodes and TestSpecListsEveryCode).
 
 ## Coming
 
