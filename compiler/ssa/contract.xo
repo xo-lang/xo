@@ -149,25 +149,29 @@ fn (var b: Builder) body_of(fo: Int, fi: Int, sub: Map[Int, Int], with_requires:
 /// violation is a build error of std (unsupported), not a runtime
 /// surprise.
 fn (var b: Builder) check_no_alloc() {
+  let fname = b.s.f.name
   if b.s.unwind_b >= 0 {
-    b.unsupported("a reference count or heap function that can fault (decision 0207: no allocation, no counting)")
+    b.unsupported("`${fname}`: a reference count or heap function that can fault (decision 0207: no allocation, no counting)")
     return
   }
   for v in b.s.f.values {
+    // the error at the offending value's statement, not wherever the
+    // build left off (owner, 2026-10-21)
+    b.at_line(v.line)
     // `target`'s fields (a compile time match, sched.xo fiber_frame) are
     // scalar tags too
     if v.ty >= 0 && !(b.tkind(v.ty) is Kind.Int | Kind.Float | Kind.Bool | Kind.Unit) && !(b.m.types[v.ty].name is "Target" | "TargetOs" | "TargetArch") {
-      b.unsupported("a `${b.m.types[v.ty].name}` value in a reference count or heap function (decision 0207: no allocation, no counting)")
+      b.unsupported("`${fname}`: a `${b.m.types[v.ty].name}` value in a reference count or heap function (decision 0207: no allocation, no counting)")
       return
     }
     if v.op is Op.Fault | Op.Closure | Op.Capture | Op.CallValue | Op.Box {
-      b.unsupported("`${op_name(v.op)}` in a reference count or heap function (decision 0207: no allocation, no counting)")
+      b.unsupported("`${fname}`: `${op_name(v.op)}` in a reference count or heap function (decision 0207: no allocation, no counting)")
       return
     }
     if v.op == Op.Call {
       if let Aux.S(s: n) = v.aux {
         if !rc_callee_ok(n) && !n.starts_with(b.no_alloc_prefix()) {
-          b.unsupported("a call of `${n}` in a reference count or heap function (decision 0207: no allocation, no counting)")
+          b.unsupported("`${fname}`: a call of `${n}` in a reference count or heap function (decision 0207: no allocation, no counting)")
           return
         }
       }
@@ -667,4 +671,16 @@ fn (var b: Builder) loop_tick(cnt: Int) {
   b.fault(b.const_str("XO-F006: loop ran past its bound of ${lb.n} iterations"), lb.pos)
   b.s.cur = ok
   b.poll()
+}
+
+/// Points b.at at the statement of an SSA value's line (Value.line: line
+/// * 4096 + column, 0 for none), in the function's own file, for an
+/// error found after the body was built (check_no_alloc).
+fn (var b: Builder) at_line(line: Int) {
+  if line <= 0 {
+    return
+  }
+  let p = parser.Pos{offset: 0, line: line / 4096, col: line % 4096}
+  b.at = Span{start: p, end: p}
+  b.at_file = b.s.file
 }

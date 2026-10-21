@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -478,5 +479,53 @@ func TestNoGCShrinkOverhead(t *testing.T) {
 	}
 	if best > 5*time.Second {
 		t.Errorf("a warm xo test of %s took %v (best of 3), want under 5s (about 0.5s on arm64, 2026-10-15)", dir, best)
+	}
+}
+
+// TestNoAllocDiagnosticSpan: a reference count function that breaks
+// decision 0207's no allocation rule is reported at the offending
+// statement, with the function's name (owner, 2026-10-21: the error
+// pointed wherever the build had stopped). A copy of std gets a Str
+// built in native/llrt/rc.xo's inc.
+func TestNoAllocDiagnosticSpan(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("copies std and builds")
+	}
+	std := filepath.Join(t.TempDir(), "std")
+	if err := os.CopyFS(std, os.DirFS(filepath.Join("..", "..", "std"))); err != nil {
+		t.Fatal(err)
+	}
+	rc := filepath.Join(std, "native", "llrt", "rc.xo")
+	src, err := os.ReadFile(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(src), "\n")
+	at := -1
+	for i, l := range lines {
+		if strings.HasPrefix(l, "pub fn inc(") && strings.HasSuffix(strings.TrimSpace(l), "{") {
+			at = i
+			break
+		}
+	}
+	if at < 0 {
+		t.Skip("no `pub fn inc(...) {` line in rc.xo")
+	}
+	bad := append(append(append([]string{}, lines[:at+1]...), "  let xo_bad = \"x\" + \"y\"", "  let _ = xo_bad"), lines[at+1:]...)
+	if err := os.WriteFile(rc, []byte(strings.Join(bad, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir := writeFiles(t, map[string]string{"main.xo": "fn main(os: Os) {\n  os.stdio.println(\"hi\")\n}\n"})
+	cli, err := xoCommand()
+	if err != nil {
+		t.Skip(err)
+	}
+	cmd := exec.Command(cli[0], append(cli[1:], "build", "--backend=arm64", "--std="+std, "-o", filepath.Join(dir, "h"), dir)...)
+	cmd.Env = append(os.Environ(), "XO_BIN_CACHE=off", "XO_BACKEND_CACHE=off")
+	out, _ := cmd.CombinedOutput()
+	want := fmt.Sprintf("std/native/llrt/rc.xo:%d:3: error XO1201", at+2)
+	if !strings.Contains(string(out), want) || !strings.Contains(string(out), "`rc.inc`: a `Str` value") {
+		t.Errorf("want %q and the function's name, got:\n%s", want, out)
 	}
 }

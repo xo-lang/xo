@@ -1586,7 +1586,7 @@ fn (var b: Builder) raw_intrinsic(name: Str, vs: List[Int]) -> (Int, Bool) {
     // address
     let (k, ok) = b.const_word(vs[0])
     if !ok || k < 0 || k >= 256 {
-      b.unsupported("`rt.static_word` of a word that is not a constant 0 to 255")
+      b.unsupported("`${b.s.f.name}`: `rt.static_word` of a word that is not a constant 0 to 255")
       return (b.undef(b.int_t()), true)
     }
   }
