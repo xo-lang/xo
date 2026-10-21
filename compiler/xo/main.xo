@@ -1202,7 +1202,8 @@ fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Boo
   // the zone data std/time needs, noted as the Go builder lowers
   let tu = if uses_time { tzsel.tz_use(c, b.m, root) } else { tzsel.TZUse{} }
   t = lap(os, o.phases, "tz", t)
-  // b.run_passes(), timed
+  // b.run_passes(), timed; may_fault's scans on tasks
+  b.m.jobs = emit_jobs(os)
   b.prune_unwind()
   b.fold_known_calls()
   t = lap(os, o.phases, "prune_unwind", t)

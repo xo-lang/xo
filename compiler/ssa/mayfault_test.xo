@@ -1,0 +1,46 @@
+// may_fault on tasks and by work list: the functions that reach an
+// operation that faults through calls, the same for any number of jobs.
+
+/// Two call chains of n functions each: a0 faults and a(i) calls a(i-1);
+/// b0 does not and b(i) calls b(i-1). The calls are made backwards, so
+/// one sweep in function order would not finish the chain.
+fn chains(n: Int) -> Module {
+  var m = Module{}
+  for k in 0..n {
+    let _a = m.new_func("a${k}", [], [])
+    let _b = m.new_func("b${k}", [], [])
+  }
+  for k in 0..n {
+    for p in ["a", "b"] {
+      let fi = m.func_index("${p}${k}")
+      var f = m.funcs[fi]
+      if k == 0 && p == "a" {
+        let _f = f.add(0, Op.Fault, -1, Aux.None, [])
+      } else if k > 0 {
+        let _c = f.add(0, Op.Call, -1, Aux.S(s: "${p}${k - 1}"), [])
+      }
+      m.funcs[fi] = f
+    }
+  }
+  m
+}
+
+test "may_fault on tasks finds the faulting chain, the same as one task" {
+  var m = chains(300)
+  let one = m.may_fault()
+  m.jobs = 4
+  let four = m.may_fault()
+  expect(four) == one
+  var na = 0
+  var nb = 0
+  for (fi, f) in m.funcs.indexed() {
+    if one[fi] && f.name.starts_with("a") {
+      na += 1
+    }
+    if one[fi] && f.name.starts_with("b") {
+      nb += 1
+    }
+  }
+  expect(na) == 300
+  expect(nb) == 0
+}

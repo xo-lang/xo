@@ -44,45 +44,100 @@ fn user_callee(m: Module, x: Value) -> Int {
 
 /// The functions that can fault: those with an operation that faults,
 /// and their callers (mayFault), by function index.
+/// The functions are scanned on up to m.jobs tasks, and the fault is
+/// carried to callers by a work list (the sweep repeated until nothing
+/// changed went over every function once per level of the call chain).
 fn (m: Module) may_fault() -> List[Bool] {
   let n = m.funcs.len()
+  let scans = fault_scans(m)
   var may: List[Bool] = []
-  var calls: List[List[Int]] = []
-  for f in m.funcs {
-    var mf = false
-    var cs: List[Int] = []
-    for bl in f.blocks {
-      for v in bl.instrs {
-        let x = f.values[v]
-        if value_self_faults(x) {
-          mf = true
-        }
-        let g = user_callee(m, x)
-        if g >= 0 {
-          cs.push(g)
-        }
-      }
-    }
-    may.push(mf)
-    calls.push(cs)
+  var callers: List[List[Int]] = []
+  for _ in 0..n {
+    callers.push([])
   }
-  var changed = true
-  while changed {
-    changed = false
-    for i in 0..n {
-      if may[i] {
-        continue
-      }
-      for g in calls[i] {
-        if may[g] {
-          may[i] = true
-          changed = true
-          break
-        }
+  var work: List[Int] = []
+  for (i, (mf, cs)) in scans.indexed() {
+    may.push(mf)
+    if mf {
+      work.push(i)
+    }
+    for g in cs {
+      callers[g].push(i)
+    }
+  }
+  while let Some(i) = work.pop() {
+    for c in callers[i] {
+      if !may[c] {
+        may[c] = true
+        work.push(c)
       }
     }
   }
   may
+}
+
+/// Whether function fi has an operation that faults, and the user
+/// functions it calls (may_fault's scan of one function).
+fn fault_scan(m: Module, fi: Int) -> (Bool, List[Int]) {
+  let f = m.funcs[fi]
+  var mf = false
+  var cs: List[Int] = []
+  for bl in f.blocks {
+    for v in bl.instrs {
+      let x = f.values[v]
+      if value_self_faults(x) {
+        mf = true
+      }
+      let g = user_callee(m, x)
+      if g >= 0 {
+        cs.push(g)
+      }
+    }
+  }
+  (mf, cs)
+}
+
+/// fault_scan of every function, on up to m.jobs tasks, in order.
+fn fault_scans(m: Module) -> List[(Bool, List[Int])] {
+  let n = m.funcs.len()
+  if m.jobs <= 1 || n < 512 || target.arch == TargetArch.Wasm32 {
+    var out: List[(Bool, List[Int])] = []
+    for fi in 0..n {
+      out.push(fault_scan(m, fi))
+    }
+    return out
+  }
+  let next = Atomic[Int].new(0)
+  let done = scope s {
+    var ts = []
+    for _ in 0..m.jobs.min((n + 255) / 256) {
+      ts.push(s.spawn(fn() -> List[(Int, List[(Bool, List[Int])])] {
+        var mine: List[(Int, List[(Bool, List[Int])])] = []
+        while true {
+          let i = next.add(256) - 256
+          if i >= n {
+            break
+          }
+          var part: List[(Bool, List[Int])] = []
+          for fi in i..(i + 256).min(n) {
+            part.push(fault_scan(m, fi))
+          }
+          mine.push((i, part))
+        }
+        mine
+      }))
+    }
+    var all: List[(Int, List[(Bool, List[Int])])] = []
+    for t in ts {
+      all = all + t.await
+    }
+    all
+  }
+  var out: List[(Bool, List[Int])] = []
+  for (_, part) in done.sort_by(fn(x) { x.0 }) {
+    out = out + part
+  }
+  out
 }
 
 /// Whether value x of function f, once built, can fault (raises).

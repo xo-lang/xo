@@ -386,6 +386,9 @@ pub struct Module {
   /// PASSES): miscompile triage (`xo dev bisect-pass`) builds with
   /// passes off to find the one whose output diverges.
   pub passes_off: List[Str] = []
+  /// The tasks a whole-module analysis may use (may_fault's scan); the
+  /// result does not depend on it. The driver sets it (emit_jobs).
+  pub jobs: Int = 1
   /// --race on the arm64 backend (decision 0273): ThreadSanitizer's calls
   /// at loads, stores, and atomics (compiler/arm64 race.xo); set by the
   /// driver.
