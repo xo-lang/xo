@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- main's body runs on a fiber (decision 0286 step 1): a parked main
+  moves to an idle worker while main's thread computes, so a program
+  that sends work to a computing task no longer has its timers and wakes
+  wait for that task (a 20 ms ticker 164 ms late before, 0 now). A ping
+  pong between main and one task costs about 65 ns more a hop (two more
+  stack switches); spawn and fan out are unchanged. XO_MAIN_FIBER=0 keeps
+  main on its thread until 0.24.0 is cut.
 - std/http: header fields with repeated names, sent and received each:
   `header_values` and `add_header` on requests and responses, and
   `Response.with_cookie` and `cookies()`. A client response with several

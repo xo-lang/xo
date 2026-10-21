@@ -227,11 +227,14 @@ fn test_threads(r: Run, iter: Int) {
 fn test_waves(r: Run, iter: Int) {
   let rounds = iter / 100 + 4
   var before = 0
-  let me = probe("thread", 0, 0, 0, 0)
   for round in 0..rounds {
     if round == 2 {
       before = probe("chunks", 0, 0, 0, 0)
     }
+    // main's thread this round: main runs on a fiber (decision 0286 step
+    // 1) and may resume on another thread after a round's join; it does
+    // not park between its allocations and the spawns
+    let me = probe("thread", 0, 0, 0, 0)
     var waves: List[List[Int]] = []
     for k in 0..2 {
       var bs: List[Int] = List.with_capacity(WAVE)

@@ -1,0 +1,24 @@
+// stuckring (decision 0286 step 1): with one worker (XO_THREADS=1), a task
+// spawns a second and then waits for it without parking (a busy loop on an
+// Atomic), so the second task can only run where another thread steals it
+// from the first's queue: the root, idle while main waits. A root that saw
+// the queued task but looked for work without stealing went idle and back
+// forever (gotchas/scheduler-lock-order.md, the spinning root). Ten rounds.
+
+fn main(os: Os) {
+  var done = 0
+  for _ in 0..10 {
+    let flag = Atomic[Int].new(0)
+    scope s {
+      let a = s.spawn(fn() {
+        scope inner {
+          let _b = inner.spawn(fn() { flag.set(1) })
+          while flag.get() == 0 {}
+        }
+        1
+      })
+      done += a.await
+    }
+  }
+  os.stdio.println("stuckring ${done}")
+}

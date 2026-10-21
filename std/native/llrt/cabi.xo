@@ -520,6 +520,14 @@ fn run_main(entry_fn: Int) -> Int {
   0
 }
 
+/// The C function main's thread runs when main's body is on a fiber
+/// (entry.xo run_main_fiber, decision 0286 step 1), with entry.xo main's
+/// record.
+fn run_main_fiber(rec: Int) -> Int {
+  entry.run_main_fiber(rec)
+  0
+}
+
 // ---------------------------------------------------------------------------
 // The scheduler core (decision 0212): xo_rt.c's fiber code and task
 // states, in sched.xo, and the worker pool, the locks' slow paths, and
@@ -640,6 +648,11 @@ fn rtstats_counts() -> Int { rtstats.counts() }
 /// run end here; its spawn released it.
 fn fiber_run_task(f: Int) {
   let t = rt.mem_load(f, 24, 8)
+  if t == pool.MAIN_TASK {
+    // main's fiber (decision 0286 step 1)
+    entry.main_on_fiber(f)
+    return
+  }
   sanhook.acquire(t)
   tasks.run_claimed(t, 4)
 }
@@ -794,6 +807,24 @@ fn dl_check(p: Int) { pool.dl_check(p) }
 
 /// The deadlock fault (XO-F001, decision 0077): standard output flushed,
 /// the message on standard error, status 70.
+/// A park's lock taken with the pool's held (pool.xo klock, XO_LOCKCHECK=1):
+/// the scheduler's lock order broken, a deadlock waiting to happen.
+fn lock_order() {
+  stdio.flush()
+  let m = "xo: lock order: a park's lock taken while holding the pool's (std/native/llrt/pool.xo)\n"
+  stdio.write_all(2, raw.data(m), m.len())
+  process.os_exit(70)
+}
+
+/// A run queue ring's owner-only operation from another thread (pool.xo
+/// owner_check, XO_LOCKCHECK=1): a worker record kept across a park.
+fn ring_owner() {
+  stdio.flush()
+  let m = "xo: ring owner: a worker's ring used from another thread (a record kept across a park; std/native/llrt/pool.xo)\n"
+  stdio.write_all(2, raw.data(m), m.len())
+  process.os_exit(70)
+}
+
 fn deadlock() {
   stdio.flush()
   // straight to the descriptor, as the C did (not the test world's fake)

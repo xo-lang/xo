@@ -19,6 +19,7 @@ use native/llrt/linux
 use native/llrt/obj
 use native/llrt/poll
 use native/llrt/pool
+use native/llrt/poolsetup
 use native/llrt/process
 use native/llrt/prof
 use native/llrt/raw
@@ -103,8 +104,26 @@ pub fn main(argc: Int, argv: Int, envp: Int, entry: Int, n: Int) -> Int {
       stdio.eprint("pthread_create failed", true)
       return 1
     }
-  } else if !pool.thread_run(f, entry, MAIN_STACK, 1) {
-    run_main(entry)
+  } else {
+    // main's body on a fiber (decision 0286 step 1), its stack reserved
+    // here, where main's thread's was: the thread runs the root's loop
+    var ms = 0
+    if main_fiber_on() {
+      let page = poolsetup.page_size()
+      ms = pool.map_main_stack(MAIN_STACK, page)
+      if ms != 0 {
+        let rec = rt.heap_large(24)
+        rt.mem_store(rec, 0, entry, 8)
+        rt.mem_store(rec, 8, ms, 8)
+        rt.mem_store(rec, 16, MAIN_STACK.wrapping_add(page), 8)
+        if !pool.thread_run(rt.fn_addr("run_main_fiber"), rec, MAIN_THREAD_STACK, 1) {
+          run_main_fiber(rec)
+        }
+      }
+    }
+    if ms == 0 && !pool.thread_run(f, entry, MAIN_STACK, 1) {
+      run_main(entry)
+    }
   }
   stdio.flush()
   stop.end()
@@ -128,6 +147,22 @@ pub fn main(argc: Int, argv: Int, envp: Int, entry: Int, n: Int) -> Int {
 /// The size of main's stack.
 const MAIN_STACK = 1073741824
 
+/// main's thread's own stack when main runs on a fiber of MAIN_STACK
+/// (decision 0286 step 1): only the root's loop and the scheduler run on
+/// it, so 8 MiB; 64 MiB beside main's 1 GiB fiber took a program near
+/// its address space limit (ulimit -v) over it.
+const MAIN_THREAD_STACK = 8388608
+
+/// Whether main's body runs on a fiber (decision 0286 step 1): not with
+/// several copies of main (each has its own root, entry.xo main) nor with
+/// XO_MAIN_FIBER=0, the kill switch kept for one seed cycle (the lead,
+/// 2026-10-20: removed after 0.24.0, two scheduler paths double the test
+/// surface).
+fn main_fiber_on() -> Bool {
+  let e = process.env_real_at("XO_MAIN_FIBER")
+  !(e != 0 && raw.byte_at(e, 0) == 48)
+}
+
 
 /// The program's main on its own thread (cabi.xo run_main, the thread's
 /// C function; was xo_rt.c run_main): on Windows the stack the thread
@@ -150,6 +185,38 @@ pub fn run_main(entry: Int) {
   stop.set_root(rt.mem_load(c, ctx.C_NODE, 8))
   rt.mem_store(c, ctx.C_BOUNDARY, rt.frame_addr(), 8)
   let _r = rt.call_c2(entry, 0, 0)
+}
+
+/// run_main with main's body on a fiber (decision 0286 step 1; cabi.xo
+/// run_main_fiber): rec holds the entry, the stack entry.xo main reserved,
+/// and its size. The thread runs the root's loop (pool.xo root_main),
+/// which runs main and other work; a parked main can move to an idle
+/// worker.
+pub fn run_main_fiber(rec: Int) {
+  match target.os {
+    TargetOs.Windows => {
+      let g = rt.heap_large(8)
+      rt.mem_store(g, 0, W_GUARANTEE, 4)
+      let _r = sys_windows.SetThreadStackGuarantee(g)
+      rt.heap_release(g - 8)
+    }
+    _ => {}
+  }
+  let c = ctx.cur()
+  stop.set_root(rt.mem_load(c, ctx.C_NODE, 8))
+  let p = ctx.pool()
+  poolsetup.ready(p)
+  let w = poolsetup.root_worker(p)
+  let mf = pool.main_fiber(p, w, rt.mem_load(rec, 0, 8), c, rt.mem_load(rec, 8, 8), rt.mem_load(rec, 16, 8))
+  pool.root_main(p, w, mf)
+}
+
+/// Main's body on its fiber f (cabi.xo fiber_run_task; decision 0286 step
+/// 1): the fault boundary is this frame, on main's stack, then the entry.
+pub fn main_on_fiber(f: Int) {
+  let c = ctx.cur()
+  rt.mem_store(c, ctx.C_BOUNDARY, rt.frame_addr(), 8)
+  let _r = rt.call_c2(rt.mem_load(f, pool.F_ENTRY, 8), 0, 0)
 }
 
 /// Starts the process (C main, after the heap and the faults' setup,

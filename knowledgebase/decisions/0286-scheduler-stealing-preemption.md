@@ -1,8 +1,9 @@
 # 0286: Scheduler: work stealing, back-edge preemption, and the root's inline task
 
 Status: Proposed (owner decision 2026-10-20, through the lead; Xo Lang 2).
-Step 0 (the root's hand off) implemented 2026-10-20; main on a fiber next,
-then stealing and preemption as measured.
+Step 0 (the root's hand off) implemented 2026-10-20; step 1 (main on a
+fiber) implemented 2026-10-20, accepted by the owner with its ping pong
+cost; stealing and preemption next, as measured.
 
 ## Context
 
@@ -67,6 +68,102 @@ scheduler tests, the fault and traceback goldens (the unwinder's stack
 bounds), ThreadSanitizer's same thread tests, and the Windows kit's
 no-CRT stack checks; ping pong and spawn in each report.
 
+## Step 1: main's body on a fiber (design, 2026-10-20)
+
+- Main's thread (entry.xo main, thread_run) becomes the root scheduler:
+  a small loop (pool.xo, beside worker_main) that runs main's fiber with
+  fiber_run, and when main parks runs queued work or sleeps until main
+  is woken or work arrives. Main's fiber is reserved, never committed,
+  at main's present stack size, 1 GiB (MAIN_STACK; the worker threads'
+  and the task fibers' 64 MiB is not main's: a 64 MiB main would turn
+  recursion that works today into a crash), outside the fiber caches,
+  with a guard page; on Windows MEM_RESERVE and guard page growth, as the
+  task fibers. Checked under Docker --memory=256m and `ulimit -v`, since
+  some hosts count reservations.
+- A wake of main is a fiber's wake (fiber_wake, then a queue): a worker
+  or the root resumes it, so a parked main moves to an idle worker while
+  the root computes. fiber_main runs main's entry for main's fiber (a
+  marker where a task fiber has its task).
+- A program that never spawns stays single threaded (decision 0077): the
+  pool's records and inject queue are made for main's fiber, but worker
+  threads and the heap's threading (heap_threads) wait for the first
+  spawn, as today.
+- Deadlock detection and the test world's kick: the root asleep with
+  main parked and counted counts as a blocked root, as the root's futex
+  sleep does today.
+- The program's end stays on the C thread after main's thread returns;
+  main's fault boundary (C_BOUNDARY) and root node are set on main's
+  fiber.
+- rootpark in TestRootParkHandOff then passes, and step 0's root_next
+  becomes the root running main's partner on the same thread.
+- XO_MAIN_FIBER=0 keeps main on its thread, as before: a kill switch for
+  one seed cycle, removed after 0.24.0 with a note here (the lead,
+  2026-10-20: two scheduler paths double the test surface).
+- Checked (2026-10-20): every golden on arm64, LLVM and Go; the Wine
+  subset with the amd64 backend (31 of 31); the Docker amd64 sample (42
+  of 42); the scheduler, ThreadSanitizer, fault and traceback, heap guard
+  and debug information tests. Bring-up found and fixed a lock order
+  inversion (gotchas/scheduler-lock-order.md), a race on main's wait word
+  (TSan's runtime mode), and the root's worker record 8 bytes short
+  (poolsetup.xo's own W_SIZE, XO_HEAP_GUARD).
+- Found in bring-up (2026-10-20): main's thread then needs only the
+  root's loop (8 MiB), and main's 1 GiB is reserved in entry.xo main,
+  where the thread's 1 GiB was, before main's thread starts. Reserved
+  later (in the root's start), the mapping failed under `ulimit -v 1.5
+  GiB` where the thread's had not, and main fell back to the root's small
+  thread (a segmentation fault at 1 M deep); reserved early, the fiber
+  and the thread behave the same: 3 M deep recursion at 4 and 1.5 GiB, a
+  clean `fault: out of memory` at 1.4 GiB, and a program in a 256 MiB
+  container runs. The root counts as alive and idle while it loops (the
+  deadlock check's counts) but not against the worker threads' limit
+  (DLK_LOOPS): counted against it, XO_THREADS=1 had no worker at all.
+
+Measured (2026-10-20, single small programs, release arm64, 20
+interleaved runs, Mac at load 34 to 44): spawn unchanged (69.2 against
+69.6 ms; at XO_THREADS=1 20.6 against 19.5); ping pong 27.7 to 33.9 ms
+(+22%, the same at XO_THREADS=1): a parked main helped from its own
+frame (two stack switches a round trip with its partner) and now parks
+into the root's loop (four), about 60 ns a hop, the price of a main that
+can move (Go's main goroutine pays it too). Before it lands the root's
+loop is trimmed of what it does that a worker's does not need (the
+trim, a parked main counted blocked only when its root goes idle,
+gained nothing measurable: the switches are the cost).
+
+On a quiet Mac (load 6 to 7, bench/perf/conc, rounds interleaved,
+medians of 5, ms): ping pong main 24.2, main on a fiber 30.6 to 31.5
+(+26 to 30%, the same at XO_THREADS=1); spawn 246.7 against 238.1 to
+247.1; fan out 94.2 against 90.8 to 92.5. Accepted by the owner
+(2026-10-20): the ping pong microbench's cost for a main that moves,
+spawn and fan out unchanged, the dispatcher stall (rootpark 164 ms) gone.
+In 0.24.0.
+
+## Step 2: stealing (design, 2026-10-20)
+
+After step 0, CI shows queued work reaching free cores (prediction 1).
+Stealing exists (pool.xo steal_round: a random victim's ring, half of it;
+its next slot only on the last round and after NEXT_GRACE_NS, 50 us), so
+step 2 starts with a measurement, not a change: xo trace of the cpuburst
+server at 16 and 24 /cpu loops on the 16 vCPU runner (all workers busy,
+and oversubscribed), and of a fan out whose tasks spawn tasks, looking
+for runnable work waiting while a worker is idle: in a busy worker's next
+slot (a thief takes it only after the grace and on its last round), in a
+ring no idle worker was woken for (a push whose wakep found a spinner
+that then stopped), or in the inject queue. Candidate changes, each kept
+only if the trace shows its case and the benches hold:
+
+- a busy worker's next slot taken at once when its owner has run its
+  current item longer than a slice (a per worker start time, W_RUN_AT),
+  instead of after the grace;
+- a spinner that gives up after its rounds rechecks the inject queue and
+  every next slot once more (any_work does, but go_idle runs it before it
+  sleeps only);
+- the monitor's tick also wakes an idle worker for a ring that has held
+  items longer than a tick, not only for a deferral.
+
+What none of these fixes: every worker busy computing, the queued task
+waits for a handler to end. That is preemption's (step 3), as is
+XO_THREADS=1.
+
 ## Predictions
 
 Each is rechecked after stealing and after preemption, and marked
@@ -97,8 +194,8 @@ Not expected to change: resets under saturation (the kernel's backlog of
 
 | prediction | check | after step 0 (v2) | after main on a fiber | after stealing | after preemption |
 |---|---|---|---|---|---|
-| 1 | harness p50/p99, 8 and 16 CPU loops | partial (Mac trace, load 33: p99 70 to 12.7 ms; CI pending) | | | |
-| 2 | ticker repro (late ticks of 20), timer tests | partial (rootpark 394 to 0 to 164 ms, flaky) | | | |
+| 1 | harness p50/p99, 8 and 16 CPU loops | confirmed (CI run 39486203392 against 39465430589, r8g, load 3 to 7: 8 loops p50/p99 60/86 to 0.19 to 0.24/2.4 to 3.1 ms, 16 loops 60/83 to 86 to 0.18 to 0.33/2.7 to 5.1 ms, A and B alike; Go 0.3 to 0.6/7.5 to 12.5; idle unchanged) | | | |
+| 2 | ticker repro (late ticks of 20), timer tests | partial (rootpark 394 to 0 to 164 ms, flaky) | confirmed (rootpark 0 ms in every run; TestRootParkHandOff with no known failure) | | |
 | 3 | fast request latency behind a slow handler | partial (acceptbusy about 800 to 0 to 2 ms) | | | |
 | 4 | the flaky tests, 50 runs each under load | | | | |
 | 5 | emit wall time and trace of a cold self build | | | | |

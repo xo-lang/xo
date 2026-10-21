@@ -1,0 +1,20 @@
+// main blocks for good on a worker after its root went idle: the deadlock
+// check must still see it (internal/llvm TestMainFiberDeadlock; decision
+// 0286 step 1, from TestCompileProperty seed 7, 2026-10-21)
+
+fn work(k: Int) -> Int {
+  scope s {
+    let h = s.spawn(fn() -> Int { k + 1 })
+    s.spawn_background(fn() {
+      let _x = k * 2
+    })
+    return h.await
+  }
+}
+
+fn main(os: Os) ! {
+  os.stdio.println("work ${work(1)}")
+  let ch = Chan[Int].new(1)
+  let v = ch.recv() ?? -1
+  os.stdio.println("never ${v}")
+}

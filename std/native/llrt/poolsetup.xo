@@ -26,12 +26,13 @@ const P_NCPU = 8
 const P_SPIN_ROUNDS = 16
 const P_FIBERS = 104
 const P_WORKER_MAIN = 112
+const P_DLK = 120
 /// The fiber cache's stack size, page size, and fiber entry (pool.xo
 /// FS_*).
 const FS_STACK = 24
 const FS_PAGE = 32
 const FS_MAIN = 40
-const W_SIZE = 3440
+const W_SIZE = 3448
 const W_LIVE = 2200
 const W_ROOT = 2204
 const TLS_W = 2
@@ -58,8 +59,9 @@ pub fn ready(p: Int) {
 }
 
 fn setup(p: Int) {
-  // one heap record per thread from now on (cabi.xo heap_threads)
-  let _t = rt.call_c2(rt.fn_addr("heap_threads"), 0, 0)
+  // the heap's threading waits for the first spawn (pool.xo
+  // scope_add_at): main's fiber needs the pool, and a program that never
+  // spawns stays single threaded (decision 0286 step 1)
   let st = process.env_real("XO_RTSTATS")
   var on = 0
   if !st.is_empty() && !st[0].is_empty() && bt(st[0], 0) != 48 {
@@ -93,6 +95,11 @@ fn setup(p: Int) {
     pool.defer_off(p)
   }
   fibers_setup(p)
+  // XO_LOCKCHECK=1: the scheduler's lock order checked (pool.xo klock)
+  let lc = process.env_real("XO_LOCKCHECK")
+  if !lc.is_empty() && lc[0] == "1" {
+    rt.slot_store[Int](rt.mem_load(p, P_DLK, 8), pool.DLK_LOCKCHECK, 1, RELEASE)
+  }
   rt.slot_store[Int](p + P_NCPU, 0, n, RELEASE)
 }
 
@@ -129,7 +136,7 @@ fn fibers_setup(p: Int) {
 
 /// The system's page size: Linux's auxiliary vector, macOS's
 /// hw.pagesize, Windows's SYSTEM_INFO.dwPageSize.
-fn page_size() -> Int {
+pub fn page_size() -> Int {
   let b = obj.scratch()
   match target.os {
     TargetOs.Linux => linux.auxval(linux.AT_PAGESZ)

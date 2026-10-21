@@ -1,12 +1,14 @@
 package llvm
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -50,7 +52,7 @@ func TestDeferredWakeBound(t *testing.T) {
 					t.Fatalf("build: %v %v", err, res)
 				}
 				cmd := exec.Command(res.Binaries[xotool.Host()])
-				cmd.Env = append(os.Environ(), "XO_THREADS="+run.threads)
+				cmd.Env = append(os.Environ(), "XO_THREADS="+run.threads, "XO_LOCKCHECK=1")
 				out, err := runCombined(cmd, 2*time.Minute)
 				if err != nil {
 					t.Fatalf("run: %v\n%s", err, out)
@@ -164,11 +166,13 @@ func TestOneThreadSpawnJoin(t *testing.T) {
 	}
 }
 
-// TestRootParkHandOff: a task the root thread runs on its own stack
-// (main's body, or a task main's join runs inline) does not wait for work
-// the root would have run while it was parked (decision 0286 step 0): with
-// a worker idle, the root leaves its queued work to the workers and
-// sleeps. testdata/sched rootpark (a ticker's ticks to the loop task while
+// TestRootParkHandOff: a task the root thread runs (main's body, or a task
+// main's join runs inline) does not wait for work the root would have run
+// while it was parked (decision 0286): acceptbusy guards step 0 (the
+// root leaves queued work to idle workers: an accept loop on the root
+// waited for a computing handler), rootpark step 1 (main's body on a
+// fiber: a dispatcher's send put the computing worker in the root's own
+// next slot, which step 0 alone still ran). testdata/sched rootpark (a ticker's ticks to the loop task while
 // a worker task computes 200 M steps; Xo Publish's repro)
 // and acceptbusy (an HTTP server in main's body with two computing
 // handlers, and a small request timed) print the worst delay; it must stay
@@ -177,12 +181,9 @@ func TestOneThreadSpawnJoin(t *testing.T) {
 // XO_THREADS=1 the one worker is busy, so the root still helps and the
 // delay stays until preemption (decision 0286 step 2).
 //
-// rootpark is a known failure until main's body runs on a fiber (decision
-// 0286, main-on-fiber): step 0 still runs the root's own next item, the
-// fiber its parked task woke, so the loop task's send of a job puts the
-// computing worker there and the root runs it (164 ms once, 2026-10-20).
-// Over the bound it skips with the delay, and it must pass once
-// main-on-fiber lands (remove knownFail then).
+// rootpark passes since main's body runs on a fiber (decision 0286 step
+// 1): step 0 alone still ran the root's own next item, the computing
+// worker a send had woken (164 ms once, 2026-10-20).
 func TestRootParkHandOff(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs two programs per native backend")
@@ -192,7 +193,6 @@ func TestRootParkHandOff(t *testing.T) {
 		backends = append(backends, xotool.BackendArm64)
 	}
 	worst := regexp.MustCompile(`worst (\d+) ms`)
-	knownFail := map[string]bool{"rootpark": true}
 	for _, be := range backends {
 		for _, run := range []struct{ prog, threads string }{{"rootpark", ""}, {"rootpark", "4"}, {"acceptbusy", ""}, {"acceptbusy", "4"}} {
 			prog := run.prog
@@ -206,25 +206,155 @@ func TestRootParkHandOff(t *testing.T) {
 				if err != nil || res.Failed {
 					t.Fatalf("build: %v %v", err, res)
 				}
-				cmd := exec.Command(res.Binaries[xotool.Host()])
-				cmd.Env = append(os.Environ(), "XO_THREADS="+run.threads)
-				out, err := runCombined(cmd, 2*time.Minute)
-				if err != nil {
-					t.Fatalf("run: %v\n%s", err, out)
-				}
-				m := worst.FindStringSubmatch(out)
-				if m == nil {
-					t.Fatalf("output: %s", out)
-				}
-				ms, _ := strconv.Atoi(m[1])
-				if ms >= 150 {
-					if knownFail[prog] {
-						t.Skipf("%s: worst delay %d ms (bound 150 ms): a known failure until main's body runs on a fiber (decision 0286)", prog, ms)
+				// a second try before failing: the bound tells broken (a
+				// delay of the handler's length, about 250 ms, every run)
+				// from working (a few ms), and a loaded machine (the full
+				// LLVM goldens alongside) once took acceptbusy to 225 ms
+				ms := 0
+				for try := 0; try < 2; try++ {
+					cmd := exec.Command(res.Binaries[xotool.Host()])
+					cmd.Env = append(os.Environ(), "XO_THREADS="+run.threads, "XO_LOCKCHECK=1")
+					out, err := runCombined(cmd, 2*time.Minute)
+					if err != nil {
+						t.Fatalf("run: %v\n%s", err, out)
 					}
-					t.Fatalf("%s: worst delay %d ms (bound 150 ms; the root ran the computing work while its task was parked)", prog, ms)
+					m := worst.FindStringSubmatch(out)
+					if m == nil {
+						t.Fatalf("output: %s", out)
+					}
+					ms, _ = strconv.Atoi(m[1])
+					if ms < 150 {
+						break
+					}
+					t.Logf("%s: worst %d ms on try %d", prog, ms, try+1)
+				}
+				if ms >= 150 {
+					t.Fatalf("%s: worst delay %d ms twice (bound 150 ms; the root ran the computing work while its task was parked)", prog, ms)
 				}
 				t.Logf("%s: worst %d ms", prog, ms)
 			})
 		}
+	}
+}
+
+// TestMainFiberAwaitStorm: main, on its fiber (decision 0286 step 1),
+// awaits 16000 short tasks in batches of 8 (testdata/sched awaitstorm), so
+// the tasks' ends signal main while its root goes idle. The root's idle
+// once took the pool's lock and then main's park's while a task's end held
+// the park's and took the pool's (signal, then wakep): xo's own parallel
+// build hung, and awaitstorm hung in 4 of 6 runs (2026-10-20). Each run
+// must end within its minute; five runs per native backend.
+func TestMainFiberAwaitStorm(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs a program per native backend")
+	}
+	backends := []string{xotool.BackendLLVM}
+	if runtime.GOARCH == "arm64" {
+		backends = append(backends, xotool.BackendArm64)
+	}
+	for _, be := range backends {
+		t.Run(be, func(t *testing.T) {
+			if be == xotool.BackendLLVM {
+				if _, err := xotool.Clang(); err != nil {
+					t.Skip("clang not found")
+				}
+			}
+			res, err := xotool.Build([]string{filepath.Join("testdata", "sched", "awaitstorm")}, xotool.Options{Backend: be})
+			if err != nil || res.Failed {
+				t.Fatalf("build: %v %v", err, res)
+			}
+			for i := 0; i < 5; i++ {
+				// the scheduler's lock order checked (pool.xo klock)
+				cmd := exec.Command(res.Binaries[xotool.Host()])
+				cmd.Env = append(os.Environ(), "XO_LOCKCHECK=1")
+				out, err := runCombined(cmd, time.Minute)
+				if err != nil {
+					t.Fatalf("run %d: %v (a hang is the root's lock order)\n%s", i, err, out)
+				}
+				if out != "awaitstorm sum 47999\n" {
+					t.Fatalf("run %d: output %q", i, out)
+				}
+			}
+		})
+	}
+}
+
+// TestRootNoSpin: the root's loop (decision 0286 step 1) steals work it
+// sees queued on a busy worker. Once it saw such work, went to look without
+// stealing, went idle, and saw it again, at 100% CPU (testdata/rt/rc_threads
+// hung for 47 minutes under ThreadSanitizer, 2026-10-20;
+// gotchas/scheduler-lock-order.md). testdata/sched stuckring makes it
+// certain: with one worker (XO_THREADS=1) a task spawns a second and waits
+// for it in a busy loop, so only the root can run the second; the spinning
+// root hung every run of 20, the fixed one passed every run. Three runs per
+// native backend, each within 30 s, with XO_LOCKCHECK.
+func TestRootNoSpin(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs a program per native backend")
+	}
+	backends := []string{xotool.BackendLLVM}
+	if runtime.GOARCH == "arm64" {
+		backends = append(backends, xotool.BackendArm64)
+	}
+	for _, be := range backends {
+		t.Run(be, func(t *testing.T) {
+			if be == xotool.BackendLLVM {
+				if _, err := xotool.Clang(); err != nil {
+					t.Skip("clang not found")
+				}
+			}
+			res, err := xotool.Build([]string{filepath.Join("testdata", "sched", "stuckring")}, xotool.Options{Backend: be})
+			if err != nil || res.Failed {
+				t.Fatalf("build: %v %v", err, res)
+			}
+			for i := 0; i < 3; i++ {
+				cmd := exec.Command(res.Binaries[xotool.Host()])
+				cmd.Env = append(os.Environ(), "XO_THREADS=1", "XO_LOCKCHECK=1")
+				out, err := runCombined(cmd, 30*time.Second)
+				if err != nil || out != "stuckring 10\n" {
+					t.Fatalf("run %d: %v (a root that does not steal never runs the waited for task)\n%s", i, err, out)
+				}
+			}
+		})
+	}
+}
+
+// TestMainFiberDeadlock: main blocked for good on a worker after its root
+// went idle is still a deadlock (decision 0286 step 1). Only the root's
+// idle counted main blocked, so when main parked on another worker after
+// the root slept, the last worker to go idle saw no deadlock and every
+// thread slept (TestCompileProperty seed 7 hung, 2026-10-21); every idle
+// path now counts it (pool.xo count_main). testdata/sched mainblock hung
+// 14 runs of 80 before the fix, none after: 30 runs per native backend,
+// each a deadlock fault (exit 70) within 10 s.
+func TestMainFiberDeadlock(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs a program per native backend")
+	}
+	backends := []string{xotool.BackendLLVM}
+	if runtime.GOARCH == "arm64" {
+		backends = append(backends, xotool.BackendArm64)
+	}
+	for _, be := range backends {
+		t.Run(be, func(t *testing.T) {
+			if be == xotool.BackendLLVM {
+				if _, err := xotool.Clang(); err != nil {
+					t.Skip("clang not found")
+				}
+			}
+			res, err := xotool.Build([]string{filepath.Join("testdata", "sched", "mainblock")}, xotool.Options{Backend: be})
+			if err != nil || res.Failed {
+				t.Fatalf("build: %v %v", err, res)
+			}
+			for i := 0; i < 30; i++ {
+				cmd := exec.Command(res.Binaries[xotool.Host()])
+				cmd.Env = append(os.Environ(), "XO_LOCKCHECK=1")
+				out, err := runCombined(cmd, 10*time.Second)
+				var ee *exec.ExitError
+				if !errors.As(err, &ee) || ee.ExitCode() != 70 || !strings.Contains(out, "deadlock") {
+					t.Fatalf("run %d: %v, want the deadlock fault (exit 70)\n%s", i, err, out)
+				}
+			}
+		})
 	}
 }

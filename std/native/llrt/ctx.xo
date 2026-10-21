@@ -213,11 +213,15 @@ const P_DLK = 120
 const DLK_ROOTS = 0
 
 /// The pool record's size (pool.xo P_*: 16 words, then the 4096 worker
-/// records' addresses) and its deadlock counts' (three words), made by
+/// records' addresses) and its deadlock counts' (four words: the roots,
+/// the blocked, the uncounted, the roots running their loop while main is
+/// on a fiber, pool.xo DLK_LOOPS, XO_LOCKCHECK, DLK_LOCKCHECK, and whether
+/// the first spawn switched the heap's threading, DLK_THREADED, and main's
+/// fiber, DLK_MAINF), made by
 /// init from the runtime's malloc and never freed (were xo_rt.c's
 /// statics `pool` and `dlk`).
 const P_SIZE = 32896
-const DLK_SIZE = 24
+const DLK_SIZE = 56
 
 /// A root context for a thread that runs Xo code outside any task (the
 /// program's main thread; was xo_rt.c ctx): a zeroed context and

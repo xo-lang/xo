@@ -1,0 +1,31 @@
+// awaitstorm (decision 0286 step 1): main, on its fiber, awaits many short
+// tasks in a row, so its wakes from the tasks' ends race its root going
+// idle. The root's idle once took the pool's lock and then main's park's,
+// while a task's end held the park's and took the pool's (wakep): xo's own
+// parallel build deadlocked (2026-10-20). It prints the sum and must end.
+
+fn work(n: Int) -> Int {
+  var x = n
+  var i = 0
+  while i < 200 {
+    x = (x * 1103515245 + 12345) % 2147483648
+    i += 1
+  }
+  x % 7
+}
+
+fn main(os: Os) {
+  var sum = 0
+  for round in 0..2000 {
+    scope sc {
+      var ts = [sc.spawn(fn() { work(round * 8) })]
+      for k in 1..8 {
+        ts.push(sc.spawn(fn() { work(round * 8 + k) }))
+      }
+      for t in ts {
+        sum += t.await
+      }
+    }
+  }
+  os.stdio.println("awaitstorm sum ${sum}")
+}
