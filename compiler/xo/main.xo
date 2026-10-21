@@ -912,12 +912,16 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       lap(os, phases, "print", t)
       continue
     }
+    // the program's assembly files in the build directory, only where
+    // a tool reads them (cc or clang assembling, a cross build's
+    // assembly) or XO_KEEP_ASM=1 keeps them: Xo's assemblers read the
+    // texts in memory, and xo's were 1.1 GB, written again as its parts
+    // (2.2 GB a build; 24.7 GB of the cache in 40 minutes, 2026-10-21)
     let s = "${dir}/prog-${tgoos}.s"
-    write_or_fail(os, dir, s, code.bytes())
+    let keep_asm = (os.env.get("XO_KEEP_ASM") ?? "") == "1"
     if !o.asm_path.is_empty() {
       write_or_fail(os, dir, o.asm_path, code.bytes())
     }
-    t = lap(os, phases, "write", t)
     // --ld=macho links arm64 programs without cc, linux/arm64 ones from
     // any host (decision 0182); with no --ld, the host's darwin/arm64
     // link is macho's when the pack has its runtime and no `use c`
@@ -936,6 +940,14 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       fail(os, "--race on the arm64 backend links with Xo's linker on darwin (not --ld=cc, not ${tg} yet, decision 0273): use --backend=llvm")
     }
     let macho_as = if mac_x86 { o.assembler != "cc" } else { o.assembler == "macho" || (no_cc && o.assembler.is_empty()) }
+    let win = march == "amd64" && tgoos == "windows"
+    let asm_only = !win && tg != host && !(no_cc && tgoos == "linux") && !mac_x86
+    // cc (or clang, windows) reads the whole file when there are no parts
+    let cc_reads = if win { o.assembler == "cc" } else { !macho_as }
+    if keep_asm || asm_only || (cc_reads && p.parts.len() <= 1) {
+      write_or_fail(os, dir, s, code.bytes())
+    }
+    t = lap(os, phases, "write", t)
     if march == "amd64" && tgoos == "windows" {
       // the amd64 backend's windows/amd64 program (decision 0254 6b):
       // clang's assembler and lld-link (win_amd64_link)
@@ -945,7 +957,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         wsrcs = []
         for (i, part) in p.parts.indexed() {
           let ps = "${dir}/prog-${tgoos}.${i}.s"
-          write_or_fail(os, dir, ps, part.bytes())
+          if keep_asm || o.assembler == "cc" {
+            write_or_fail(os, dir, ps, part.bytes())
+          }
           wsrcs.push(ps)
         }
       }
@@ -1021,7 +1035,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       progs = []
       for (i, part) in p.parts.indexed() {
         let ps = "${dir}/prog-${tgoos}.${i}.s"
-        write_or_fail(os, dir, ps, part.bytes())
+        if keep_asm || !macho_as {
+          write_or_fail(os, dir, ps, part.bytes())
+        }
         progs.push(ps)
       }
     }
@@ -1093,6 +1109,15 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         cc_dsym(os, bin)
       }
       store_bin(os, ctx, entry, bin)
+    }
+    if !keep_asm {
+      // linked: cc's assembly files are not read again (the next build
+      // writes them before it keys its link)
+      for ps in progs {
+        if ps.ends_with(".s") {
+          os.fs.remove(ps).ignore_err("not there")
+        }
+      }
     }
     t = lap(os, phases, "cc", t)
     bins.push((tg, bin))

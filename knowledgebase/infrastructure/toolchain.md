@@ -1349,8 +1349,9 @@ Last verified: 2026-10-07
   change. Also `func=N` and `loop=N` (log2 alignment of functions and
   innermost loop tops), `fall=1`, `off=K`, `outer=1`. Unset is the
   default placement; a bad value fails the build. The build directory is
-  keyed by the program, not the layout: copy `prog-darwin.s` before the
-  next build.
+  keyed by the program, not the layout: copy `prog-darwin.s` (kept
+  with `XO_KEEP_ASM=1`, or written anywhere with `--asm-path=FILE`)
+  before the next build.
 - Instruction level profiles on macOS (Xcode 16 `xctrace`, no root;
   Last verified: 2026-10-08). Make the program run for seconds first
   (more rounds in a copy of the bench program), then
@@ -1853,7 +1854,7 @@ sanitizer tests included) add `-fexceptions -funwind-tables` (2026-10-09,
 decision 0085): faults unwind through the runtime's frames and generated
 code's (call frame information, call site tables, `xo_personality`), so
 no C function may be assumed not to unwind. When linking a kept
-`prog-darwin.s` by hand, add the same flags. Last verified: 2026-10-09.
+`prog-darwin.s` (`XO_KEEP_ASM=1`) by hand, add the same flags. Last verified: 2026-10-09.
 
 ## Code generation
 
@@ -2501,8 +2502,8 @@ Last verified: 2026-10-08. Decisions 0049, 0051, and 0054; results
   redefined register, other targets, a fault exit in a latch) leaves the
   code alone; testdata/run/cross_block runs those shapes against the Go
   backend (reviewed 2026-10-11, no bug found besides the flags one of
-  gotchas/arm64-reused-flags-of-dropped-compare.md). To try a code change by hand, edit
-  `<build dir>/arm64/prog-darwin.s` and link it with
+  gotchas/arm64-reused-flags-of-dropped-compare.md). To try a code change by hand, build
+  with `XO_KEEP_ASM=1`, edit `<build dir>/arm64/prog-darwin.s` and link it with
   `cc -O2 prog-darwin.s xo_rt.c` (add `-isysroot <Xcode SDK>` when the
   default SDK does not link; on 2026-10-08 the default MacOSX27.0 SDK
   failed with "tapi error: unknown architecture arm64e.x1" and
