@@ -1,5 +1,21 @@
 # std/big changes
 
+## 2026-10-21: perf: parse and text of large numbers natively
+
+- Kind: perf
+- Commit: (filled in after the push)
+- Found by: measurement against the Go backend (3^300000, 143,137 digits: text 942 ms against Go's 5, parse 3,654 ms against 12)
+- Go reference: math/big arith.go reciprocalWord and divWW, natconv.go scan's digits per word (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/big; internal/llvm/testdata/golden/big_basic
+
+Natively, dividing by a word uses Go's reciprocal (two multiplications
+instead of a 128-by-64 division), `text` divides one copy in place, and
+`parse` takes 18 digits per multiply-add, in place. On 3^300000 (paired
+runs on a busy machine) parse is 18 to 40 times faster and text 3 to 6
+times. quo_rem's change, the reciprocal in its quotient estimate, was
+within the noise. Go's divide-and-conquer conversion is still to come,
+so the Go backend stays faster.
+
 ## 2026-10-21: perf: Karatsuba multiplication natively
 
 - Kind: perf

@@ -131,6 +131,46 @@ fn div_ww(hi: Int, lo: Int, y0: Int) -> (Int, Int) {
   (q, r)
 }
 
+/// Go's reciprocalWord: floor((B^2 - 1) / d') - B for d' = d shifted to
+/// its top bit, the multiplier of div_ww_rec.
+fn reciprocal_word(d: Int) -> Int {
+  let u = d.wrapping_shl(d.leading_zeros())
+  div_ww(~u, -1, u).0
+}
+
+/// Go's divWW: (x1, x0) / y and the remainder for x1 < y, with y's
+/// reciprocal m: two multiplications instead of a division.
+fn div_ww_rec(x1_0: Int, x0_0: Int, y0: Int, m: Int) -> (Int, Int) {
+  let s = y0.leading_zeros()
+  var x1 = x1_0
+  var x0 = x0_0
+  var y = y0
+  if s != 0 {
+    x1 = x1.wrapping_shl(s) | x0.shr_logical(64 - s)
+    x0 = x0.wrapping_shl(s)
+    y = y.wrapping_shl(s)
+  }
+  let t1a = m.mul_hi_unsigned(x1)
+  let t0 = m.wrapping_mul(x1)
+  let (_s0, c) = add_ww(t0, x0, 0)
+  let (t1, _c1) = add_ww(t1a, x1, c)
+  var qq = t1
+  let dq1 = y.mul_hi_unsigned(qq)
+  let dq0 = y.wrapping_mul(qq)
+  let (r0a, b) = sub_ww(x0, dq0, 0)
+  let (r1, _b1) = sub_ww(x1, dq1, b)
+  var r0 = r0a
+  if r1 != 0 {
+    qq = qq.wrapping_add(1)
+    r0 = r0.wrapping_sub(y)
+  }
+  if !r0.lt_unsigned(y) {
+    qq = qq.wrapping_add(1)
+    r0 = r0.wrapping_sub(y)
+  }
+  (qq, r0.shr_logical(s))
+}
+
 // ---------------------------------------------------------------------------
 // Natural numbers (nat.go)
 
@@ -260,15 +300,46 @@ fn nat_mul_add_ww(x: List[Int], w: Int, a: Int) -> List[Int] {
 /// x / w and x % w for a word w != 0.
 fn nat_div_w(x: List[Int], w: Int) -> (List[Int], Int) {
   var q = raw.zero_ints(x.len())
+  let m = reciprocal_word(w)
   var r = 0
   var i = x.len() - 1
   while i >= 0 {
-    let (qi, ri) = div_ww(r, x[i], w)
+    let (qi, ri) = div_ww_rec(r, x[i], w, m)
     q[i] = qi
     r = ri
     i -= 1
   }
   (norm(q), r)
+}
+
+/// x / w in place (its length kept, the top limbs zero) and the
+/// remainder: Go's divW for the conversion loops.
+fn nat_div_w_in(var x: List[Int], n: Int, w: Int, m: Int) -> Int {
+  var r = 0
+  var i = n - 1
+  while i >= 0 {
+    let (qi, ri) = div_ww_rec(r, x[i], w, m)
+    x[i] = qi
+    r = ri
+    i -= 1
+  }
+  r
+}
+
+/// z * w + a in place (Go's mulAddWW): the carry out of the top limb
+/// is pushed as a new limb.
+fn nat_mul_add_in(var z: List[Int], w: Int, a: Int) {
+  var c = a
+  for i in 0..z.len() {
+    let lo = z[i].wrapping_mul(w)
+    let hi = z[i].mul_hi_unsigned(w)
+    let (s, c1) = add_ww(lo, c, 0)
+    z[i] = s
+    c = hi.wrapping_add(c1)
+  }
+  if c != 0 {
+    z.push(c)
+  }
 }
 
 fn nat_shl(x: List[Int], s: Int) -> List[Int] {
@@ -358,6 +429,7 @@ fn nat_divmod(u: List[Int], v: List[Int]) -> (List[Int], List[Int]) {
   var q = raw.zero_ints(m + 1)
   let vtop = vn[n - 1]
   let vsec = vn[n - 2]
+  let rec = reciprocal_word(vtop)
   var j = m
   while j >= 0 {
     // the estimate from the top two words, corrected with the third
@@ -366,7 +438,7 @@ fn nat_divmod(u: List[Int], v: List[Int]) -> (List[Int], List[Int]) {
     if ujn == vtop {
       qhat = -1
     } else {
-      let (q0, r0) = div_ww(ujn, un[j + n - 1], vtop)
+      let (q0, r0) = div_ww_rec(ujn, un[j + n - 1], vtop, rec)
       qhat = q0
       var rhat = r0
       while true {
@@ -875,12 +947,16 @@ fn bigint_text(x: big.BigInt, base: Int) -> Str {
     nd += 1
   }
   let ds = DIGITS.bytes()
+  // the base^nd chunks from the lowest, dividing a copy in place
   var chunks: List[Int] = []
-  var a = xa
-  while !a.is_empty() {
-    let (q, r) = nat_div_w(a, bb)
-    chunks.push(r)
-    a = q
+  var a = xa[0..xa.len()]
+  var n = a.len()
+  let m = reciprocal_word(bb)
+  while n > 0 {
+    chunks.push(nat_div_w_in(a, n, bb, m))
+    while n > 0 && a[n - 1] == 0 {
+      n -= 1
+    }
   }
   var out = BytesBuilder.new()
   if xn {
@@ -966,7 +1042,17 @@ fn parse(s: Str, base: Int) -> big.BigInt ! big.BigErr {
       }
     }
   }
+  // nat.scan: up to nd digits per word, then one multiply-add by bv^k
+  var nd = 1
+  var bn = bv
+  while let Some(next) = bn.checked_mul(bv) {
+    bn = next
+    nd += 1
+  }
   var z: List[Int] = []
+  var di = 0
+  var dn = 0
+  var dpow = 1
   while i < n {
     let ch = Int(b[i])
     if ch == 95 && base == 0 {
@@ -991,8 +1077,19 @@ fn parse(s: Str, base: Int) -> big.BigInt ! big.BigErr {
     }
     prev = 48
     count += 1
-    z = nat_mul_add_ww(z, bv, d)
+    di = di * bv + d
+    dpow = dpow * bv
+    dn += 1
+    if dn == nd {
+      nat_mul_add_in(z, dpow, di)
+      di = 0
+      dn = 0
+      dpow = 1
+    }
     i += 1
+  }
+  if dn > 0 {
+    nat_mul_add_in(z, dpow, di)
   }
   if inval_sep || prev == 95 {
     return bad
