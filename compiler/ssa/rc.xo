@@ -1409,17 +1409,42 @@ fn (var r: Rc) insert(var f: Func, var c: RcFunc) {
   }
 }
 
-/// What edge e needs held: its arguments' leaves and the leaves live into
-/// its target (edgeNeed).
-fn (var r: Rc) edge_need(f: Func, c: RcFunc, e: Int) -> Counted {
+/// What edge e needs held: its arguments' leaves (counted) and the leaves
+/// live into its target, each consumed once (edgeNeed). The target's live
+/// set is read where it is, not copied into a Counted: that was every
+/// leaf live into the target put into three maps at every edge, 11.7 s of
+/// a cold self-build's 156 s CPU (2026-10-21).
+struct EdgeNeed {
+  args: Counted = Counted{}
+  live: Map[Int, Leaf] = {}
+  sorted: List[Leaf] = []
+}
+
+fn (var r: Rc) edge_need(f: Func, c: RcFunc, e: Int) -> EdgeNeed {
   var k = Counted{}
   for l in r.edge_uses(f, e) {
     k.add(l, Mode.Consume)
   }
-  for l in c.live_sorted[f.edges[e].to] {
-    k.add(l, Mode.Consume)
+  let to = f.edges[e].to
+  EdgeNeed{args: k, live: c.live_in[to], sorted: c.live_sorted[to]}
+}
+
+/// The consumes of l on the edge: its arguments' and one if it is live
+/// into the target (Counted.consumes of the old merged count).
+fn (k: EdgeNeed) consumes(l: Leaf) -> Int {
+  k.args.consumes(l) + (if k.live.contains(leaf_key(l)) { 1 } else { 0 })
+}
+
+/// The edge's leaves in the order the merged count had: the arguments'
+/// first, then the target's live leaves sorted, each once.
+fn (k: EdgeNeed) order() -> List[Leaf] {
+  var out = k.args.order
+  for l in k.sorted {
+    if !k.args.cons.contains(leaf_key(l)) {
+      out.push(l)
+    }
   }
-  k
+  out
 }
 
 /// A leaf set ordered by root ID and path (sortedLeaves).
@@ -1447,7 +1472,7 @@ fn (var r: Rc) walk(var f: Func, var c: RcFunc, bl: Int) {
     Jump => {
       let need = r.edge_need(f, c, f.values[term].succs[0])
       var code: List[Int] = []
-      for l in need.order {
+      for l in need.order() {
         var n = need.consumes(l)
         if r.tracked(f, l) {
           live[leaf_key(l)] = l
@@ -1465,10 +1490,10 @@ fn (var r: Rc) walk(var f: Func, var c: RcFunc, bl: Int) {
       }
     }
     Branch => {
-      var needs: List[Counted] = []
+      var needs: List[EdgeNeed] = []
       for e in f.values[term].succs {
         let k = r.edge_need(f, c, e)
-        for l in k.order {
+        for l in k.order() {
           if r.tracked(f, l) {
             live[leaf_key(l)] = l
           }
@@ -1626,7 +1651,7 @@ fn (var r: Rc) walk(var f: Func, var c: RcFunc, bl: Int) {
 }
 
 /// The code successor i of a branch needs on its edge (walk's code).
-fn (var r: Rc) branch_code(var f: Func, need: Counted, held: List[Leaf], first: Bool, site: Int, at: Int) -> List[Int] {
+fn (var r: Rc) branch_code(var f: Func, need: EdgeNeed, held: List[Leaf], first: Bool, site: Int, at: Int) -> List[Int] {
   var out: List[Int] = []
   for l in held {
     if first && site >= 0 && l.root == site {
@@ -1643,7 +1668,7 @@ fn (var r: Rc) branch_code(var f: Func, need: Counted, held: List[Leaf], first: 
       }
     }
   }
-  for l in need.order {
+  for l in need.order() {
     if !r.tracked(f, l) {
       for x in r.rc_ops(f, Op.Retain, l, at, need.consumes(l)) {
         out.push(x)
@@ -1656,7 +1681,7 @@ fn (var r: Rc) branch_code(var f: Func, need: Counted, held: List[Leaf], first: 
 /// Places the code an edge needs: at the start of its target when the
 /// target has no other predecessor and takes no arguments, otherwise in a
 /// new block that splits the edge (edgeCode).
-fn (var r: Rc) edge_code(var f: Func, var c: RcFunc, e: Int, need: Counted, held: List[Leaf], first: Bool, site: Int) {
+fn (var r: Rc) edge_code(var f: Func, var c: RcFunc, e: Int, need: EdgeNeed, held: List[Leaf], first: Bool, site: Int) {
   let to = f.edges[e].to
   let t = f.term(to)
   if t >= 0 && (f.values[t].op is Op.Unreachable | Op.Fault) {
