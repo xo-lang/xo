@@ -22,7 +22,7 @@
 use std/crypto
 use github.com/xo-lang/xo/compiler/check
 
-const FE_CACHE_VERSION = "xo front cache v9"
+const FE_CACHE_VERSION = "xo front cache v11"
 
 /// The front end cache of one build: entries by key (fe_keys), the
 /// entries to store, and counts.
@@ -159,7 +159,7 @@ fn fe_mix(h: Int, s: Str) -> Int {
 /// What a body may change and an entry not replay: when any differs
 /// after the body, it is not cached.
 fn (b: Builder) fe_fixed() -> Str {
-  "${b.gens.len()} ${b.consts.len()} ${b.ifaces.len()} ${b.tids.len()} ${b.sites.len()} ${b.thunks.len()} ${b.natives.len()} ${b.late_tids.len()} ${b.nsyn} ${b.skipped_any} ${b.errs.len()} ${b.seen_err.len()} ${b.why} ${b.c.types.len()} ${b.c.diags.len()}"
+  "${b.gens.len()} ${b.ifaces.len()} ${b.tids.len()} ${b.natives.len()} ${b.late_tids.len()} ${b.nsyn} ${b.skipped_any} ${b.errs.len()} ${b.seen_err.len()} ${b.why} ${b.c.types.len()} ${b.c.diags.len()}"
 }
 
 /// A function object's qualified name: module path, receiver type, name.
@@ -183,6 +183,7 @@ struct FeRec {
   nc: Int
   nvar: Int
   nclos: Int
+  nconst: Int
   mods: Map[Str, Bool]
 }
 
@@ -197,7 +198,8 @@ fn (var b: Builder) fe_begin() -> FeRec {
   b.m.fe_fabsent = {}
   b.fe_flagbits = 0
   b.m.fe_ev = []
-  FeRec{fixed: b.fe_fixed(), nt: b.m.types.len(), nf: b.m.funcs.len(), nq: b.queue.len(), nc: b.checks.len(), nvar: b.nvar, nclos: b.nclos, mods: b.decl_mods}
+  b.fe_site0 = b.sites.len()
+  FeRec{fixed: b.fe_fixed(), nt: b.m.types.len(), nf: b.m.funcs.len(), nq: b.queue.len(), nc: b.checks.len(), nvar: b.nvar, nclos: b.nclos, nconst: b.consts.len(), mods: b.decl_mods}
 }
 
 /// The name of type t in an entry ("" for none); a type its name does
@@ -228,7 +230,7 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
       b.fe_skip("read.${b.fe_touched}")
     } else if b.fe_fixed() != r.fixed {
       // which side table the body changed (XO_FE_STATS)
-      let names = ["gens", "consts", "ifaces", "tids", "sites", "thunks", "natives", "late_tids", "nsyn", "skipped_any", "errs", "seen_err"]
+      let names = ["gens", "ifaces", "tids", "natives", "late_tids", "nsyn", "skipped_any", "errs", "seen_err"]
       let was = r.fixed.split(" ")
       let now = b.fe_fixed().split(" ")
       for (i, n) in names.indexed() {
@@ -381,6 +383,20 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
         e.str(b.fe_tname(t))
       }
       e.bool(cf.catches)
+    } else if k == 6 {
+      // a constant: its function's name, and whether this body made it
+      // (its function is then one of the functions made whole)
+      e.str(b.const_names[x])
+      e.bool(x >= r.nconst)
+    } else if k == 7 {
+      // a thunk: its function's identity and its own name, and whether
+      // this body made it (one of the functions made whole)
+      e.str(b.fe_ident(b.thunk_of.get(x) ?? -1))
+      e.str(b.m.funcs[x].name)
+      e.bool(x >= r.nf)
+    } else if k == 8 {
+      // a spawn site: its number here, renumbered at a commit
+      e.uv(x)
     } else {
       e.str(b.fe_ident(x))
     }
@@ -568,6 +584,9 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
     return b.fe_miss("malformed")
   }
   var evs: List[FeEv] = []
+  var cnew: Map[Str, Bool] = {}
+  var tnew: Map[Str, Bool] = {}
+  var sites: Map[Int, Int] = {}
   var nmt = 0
   var nmf = 0
   for _ in 0..ne {
@@ -606,6 +625,42 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
         return b.fe_miss("malformed")
       }
       evs.push(x)
+    } else if k == 6 {
+      // a constant made here must be new at the commit, one made before
+      // it already there
+      let n = r.str()
+      let made = r.bool()
+      if !r.ok {
+        return b.fe_miss("malformed")
+      }
+      let there = b.consts.contains(n) || cnew.contains(n)
+      if made == there {
+        return b.fe_miss("const")
+      }
+      if made {
+        cnew[n] = true
+      }
+      evs.push(FeEv{k: 6, s: n})
+    } else if k == 7 {
+      let fo = b.fe.by_ident.get(r.str()) ?? -1
+      let n = r.str()
+      let made = r.bool()
+      if !r.ok || fo < 0 {
+        return b.fe_miss("ident")
+      }
+      let key = "${fo}:${b.func_name(fo)}"
+      let there = b.thunks.contains(key) || tnew.contains(key)
+      if made == there {
+        return b.fe_miss("thunk")
+      }
+      if made {
+        tnew[key] = true
+      } else if !tnew.contains(key) && b.m.funcs[b.thunks.get(key) ?? 0].name != n {
+        return b.fe_miss("thunk")
+      }
+      evs.push(FeEv{k: 7, s: n, fo: fo})
+    } else if k == 8 {
+      evs.push(FeEv{k: 8, s: "", fo: r.uv()})
     } else {
       return b.fe_miss("malformed")
     }
@@ -761,6 +816,28 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
         b.queue.push(Job.ClosureReplay(fi: cf, d: subs[ci], key: b.fe.cur_key))
       }
       ci += 1
+    } else if ev.k == 6 {
+      // numbered as the build here numbers constants
+      if !b.consts.contains(ev.s) {
+        let id = b.consts.len()
+        bad = bad || id >= 4096
+        b.consts[ev.s] = id
+        b.const_names.push(ev.s)
+      }
+    } else if ev.k == 7 {
+      let key = "${ev.fo}:${b.func_name(ev.fo)}"
+      if !b.thunks.contains(key) {
+        // made by the body: its function was made whole above
+        let w = b.m.func_at.get(ev.s) ?? -1
+        bad = bad || w < 0
+        b.thunks[key] = w
+        b.thunk_of[w] = ev.fo
+      }
+    } else if ev.k == 8 {
+      // a number no expression's key takes
+      let id = b.sites.len()
+      b.sites[-1 - id] = id
+      sites[ev.fo] = id
     } else {
       let _ = b.declare(ev.fo, [])
     }
@@ -798,6 +875,8 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
         var g = g0
         g.target = tg
         fe_rename(g, renames)
+        b.fe_const_ids(g)
+        fe_site_ids(g, sites)
         b.m.funcs[i] = g
       }
       None => bad = true
@@ -820,6 +899,8 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
   g.name = b.m.funcs[fi].name
   g.target = target
   fe_rename(g, renames)
+  b.fe_const_ids(g)
+  fe_site_ids(g, sites)
   b.m.funcs[fi] = g
   for c in checks {
     b.checks.push(c)
@@ -848,6 +929,48 @@ fn fe_rename(var f: Func, renames: Map[Str, Str]) {
       if let S(s) = f.values[i].aux {
         if let Some(n) = renames.get(s) {
           f.values[i].aux = Aux.S(s: n)
+        }
+      }
+    }
+  }
+}
+
+/// Numbers the constants a committed function reads (rt.const_once of
+/// the constant's function and its number) as this build numbers them.
+fn (b: Builder) fe_const_ids(var f: Func) {
+  for i in 0..f.values.len() {
+    if f.values[i].op != Op.Call || f.values[i].args.len() != 3 {
+      continue
+    }
+    if let S(s) = f.values[i].aux {
+      if s == "rt.const_once" {
+        if let S(n) = f.values[f.values[i].args[0]].aux {
+          if let Some(id) = b.consts.get(n) {
+            f.values[f.values[i].args[2]].aux = Aux.I(n: id)
+          }
+        }
+      }
+    }
+  }
+}
+
+/// Numbers the spawn sites of a committed function (rt.task_spawn_fn's
+/// and rt.task_spawn's seventh argument) as this build numbered them.
+fn fe_site_ids(var f: Func, sites: Map[Int, Int]) {
+  if sites.is_empty() {
+    return
+  }
+  for i in 0..f.values.len() {
+    if f.values[i].op != Op.Call || f.values[i].args.len() != 8 {
+      continue
+    }
+    if let S(s) = f.values[i].aux {
+      if s is "rt.task_spawn_fn" | "rt.task_spawn" {
+        let a = f.values[i].args[6]
+        if let I(n) = f.values[a].aux {
+          if let Some(id) = sites.get(n) {
+            f.values[a].aux = Aux.I(n: id)
+          }
         }
       }
     }

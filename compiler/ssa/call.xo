@@ -669,7 +669,10 @@ fn (var b: Builder) func_value(fo: Int, e: Expr) -> Int {
   if !names.is_empty() {
     key = "${key}[${names.join(", ")}]"
   }
-  b.fe_touch("thunks")
+  if !names.is_empty() {
+    // a generic instance's thunk is named by the instance's name here
+    b.fe_touch("thunks")
+  }
   var w = b.thunks.get(key) ?? -1
   if w < 0 {
     let callee = b.declare(fo, targs)
@@ -694,6 +697,11 @@ fn (var b: Builder) func_value(fo: Int, e: Expr) -> Int {
     let r = b.m.funcs[w].add(0, Op.Call, cres, Aux.S(s: cname), args)
     b.m.funcs[w].add(0, Op.Return, -1, Aux.None, [r])
     b.thunks[key] = w
+  }
+  if b.m.fe_log && names.is_empty() {
+    // the commit finds it, or makes it, by its function's name
+    b.thunk_of[w] = fo
+    b.m.fe_ev.push((7, w))
   }
   b.add(Op.Closure, t, Aux.S(s: b.m.funcs[w].name), [])
 }

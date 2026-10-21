@@ -327,12 +327,18 @@ fn (var b: Builder) is_spawn(fo: Int) -> Bool {
 
 fn (var b: Builder) site_id(e: Expr) -> Int {
   let k = b.c.expr_key_in(b.s.file, e)
-  b.fe_touch("sites")
   if let Some(id) = b.sites.get(k) {
+    if id < b.fe_site0 {
+      b.fe_touch("sites")
+    }
     return id
   }
   let id = b.sites.len()
   b.sites[k] = id
+  if b.m.fe_log {
+    // numbered at the commit as the build there numbers sites
+    b.m.fe_ev.push((8, id))
+  }
   id
 }
 
@@ -531,8 +537,10 @@ fn (var b: Builder) spawn(x: Expr, h: Int, background: Bool, ret: Bool) -> Int {
   if b.consumed(x) {
     flags += 2
   }
-  b.fe_touch("sites")
   let site = b.sites.get(b.c.expr_key_in(b.s.file, x)) ?? -1
+  if site >= 0 && site < b.fe_site0 {
+    b.fe_touch("sites")
+  }
   let it = b.int_t()
   let run = b.add(Op.FuncAddr, it, Aux.S(s: b.runner(ft, tt, err_t >= 0)), [])
   let drop = b.add(Op.FuncAddr, it, Aux.S(s: b.drop_list(rt)), [])

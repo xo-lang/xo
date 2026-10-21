@@ -167,6 +167,8 @@ pub struct Builder {
   /// (the fast path of declare).
   plain: Map[Int, Int] = {}
   thunks: Map[Str, Int] = {}
+  /// A thunk's function object, by the thunk (a recorded body's event 7).
+  thunk_of: Map[Int, Int] = {}
   nclos: Int = 0
   /// The names of types two loaded user modules both declare.
   ambiguous: Map[Str, Bool] = {}
@@ -215,8 +217,11 @@ pub struct Builder {
   pend_skip: Str = ""
   /// Made up variables (negative ids).
   nvar: Int = 0
-  /// The constants of heap types built so far (build_int.go constValue).
-  consts: Map[Int, Int] = {}
+  /// The constants of heap types built so far (build_int.go constValue),
+  /// by the name of the function that builds each, and those names by
+  /// number (a recorded body's event 6).
+  consts: Map[Str, Int] = {}
+  const_names: List[Str] = []
   /// The interface types lowered as xo.iface[I], by SSA type: their
   /// checker type (build_iface.go ifaces).
   ifaces: Map[Int, Int] = {}
@@ -302,6 +307,9 @@ pub struct Builder {
   /// commit cannot replay (a skip reason, "" for none).
   fe_greads: List[(Str, Str)] = []
   fe_touched: Str = ""
+  /// The spawn sites numbered before the recorded body (its own are
+  /// event 8).
+  fe_site0: Int = 0
   /// the one-way flags a recorded body set (set_flag): 1 need_conc, 2
   /// uses_net; a builder that had them already would otherwise hide it
   fe_flagbits: Int = 0

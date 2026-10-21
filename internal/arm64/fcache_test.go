@@ -1002,3 +1002,201 @@ fn main(os: Os) uses stdio {
 		t.Error("the build replaying renumbered closures differs from the cache-off build")
 	}
 }
+
+// TestFrontCacheConsts: bodies that read constants of collection types
+// are cached, the constants numbered at a commit as the build there
+// numbers them (decision 0271's consts relocation).
+func TestFrontCacheConsts(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-feconst-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	own := filepath.Join(work, "p")
+	if err := os.MkdirAll(own, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := `const PRIMES = [2, 3, 5, 7, 11]
+const NAMES: List[Str] = ["a", "b", "c"]
+const WORDS = {"if": 1, "else": 2}
+
+fn sum() -> Int {
+  var s = 0
+  for p in PRIMES {
+    s += p
+  }
+  s + PRIMES.len()
+}
+
+fn label(i: Int) -> Str {
+  "${NAMES[i % NAMES.len()]}${WORDS.get("else") ?? 0}"
+}
+
+fn main(os: Os) uses stdio {
+  os.stdio.println("${sum()} ${label(4)} ${PRIMES[2]} ${WORDS.len()}")
+}
+`
+	if err := os.WriteFile(filepath.Join(own, "main.xo"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dirs := []string{own, filepath.Join("..", "llvm", "testdata", "golden", "native_bytes")}
+	out := filepath.Join(work, "prog")
+	build := func(dir, cache string, env ...string) []byte {
+		t.Helper()
+		os.Remove(out)
+		cmd := exec.Command(xo, "build", "--backend=arm64", "-o", out, ".")
+		cmd.Dir = dir
+		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache), env...)
+		if log, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%s: xo build %v: %v\n%s", filepath.Base(dir), env, err, log)
+		}
+		b, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	for i, d := range dirs {
+		cache := filepath.Join(work, "cache", strconv.Itoa(i))
+		off := build(d, cache, "XO_BACKEND_CACHE=off")
+		build(d, cache, "XO_BACKEND_CACHE=on")
+		if !bytes.Equal(build(d, cache, "XO_BACKEND_CACHE=on"), off) {
+			t.Errorf("%s: the build replaying constants differs from the cache-off build", filepath.Base(d))
+		}
+		if !bytes.Equal(build(d, cache, "XO_BACKEND_CACHE=verify"), off) {
+			t.Errorf("%s: the verify build differs from the cache-off build", filepath.Base(d))
+		}
+	}
+	// constants numbered differently: a function built first now reads a
+	// constant no other body reads, so every replayed body's constants
+	// get other numbers than the ones they were recorded under
+	first := "const FIRST = [9, 8]\n\nfn first() -> Int {\n  FIRST[1]\n}\n\n"
+	src2 := strings.Replace(src, "fn main(os: Os) uses stdio {\n", "fn main(os: Os) uses stdio {\n  let _ = first()\n", 1)
+	if err := os.WriteFile(filepath.Join(own, "main.xo"), []byte(first+src2), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cache := filepath.Join(work, "cache", "0")
+	off := build(own, filepath.Join(work, "cache", "off"), "XO_BACKEND_CACHE=off")
+	if !bytes.Equal(build(own, cache, "XO_BACKEND_CACHE=on"), off) {
+		t.Error("the build replaying renumbered constants differs from the cache-off build")
+	}
+}
+
+// TestFrontCacheSitesThunks: bodies that spawn tasks that can fail and
+// bodies that take functions as values are cached, the spawn sites
+// numbered and the thunks found or made at a commit as the build there
+// does (decision 0271's sites and thunks relocations).
+func TestFrontCacheSitesThunks(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-fesite-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	own := filepath.Join(work, "p")
+	if err := os.MkdirAll(own, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := `enum JobErr {
+  Bad(id: Int)
+}
+
+fn job(id: Int) -> Int ! JobErr {
+  if id == 2 {
+    return Err(JobErr.Bad(id: id))
+  }
+  id * 10
+}
+
+fn double(x: Int) -> Int { x * 2 }
+
+fn inc(x: Int) -> Int { x + 1 }
+
+fn run(n: Int) -> Int ! JobErr {
+  scope s {
+    s.spawn(fn() { job(n) })
+    s.spawn(fn() { job(n + 3) })
+  }
+  n
+}
+
+fn show(r: Result[Int, JobErr]) -> Str {
+  match r {
+    Ok(v) => "ok ${v}"
+    Err(e) => match e {
+      Bad(id) => "bad ${id}"
+    }
+  }
+}
+
+fn main(os: Os) uses stdio {
+  let f = double
+  let xs = [1, 2, 3].map(inc)
+  os.stdio.println("${f(4)} ${xs[2]} ${[5].map(double)[0]}")
+  os.stdio.println("${show(run(4))} ${show(run(2))}")
+}
+`
+	if err := os.WriteFile(filepath.Join(own, "main.xo"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dirs := []string{own, filepath.Join("..", "llvm", "testdata", "golden", "conc_scopes")}
+	out := filepath.Join(work, "prog")
+	build := func(dir, cache string, env ...string) []byte {
+		t.Helper()
+		os.Remove(out)
+		cmd := exec.Command(xo, "build", "--backend=arm64", "-o", out, ".")
+		cmd.Dir = dir
+		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache), env...)
+		if log, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%s: xo build %v: %v\n%s", filepath.Base(dir), env, err, log)
+		}
+		b, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	for i, d := range dirs {
+		cache := filepath.Join(work, "cache", strconv.Itoa(i))
+		off := build(d, cache, "XO_BACKEND_CACHE=off")
+		build(d, cache, "XO_BACKEND_CACHE=on")
+		if !bytes.Equal(build(d, cache, "XO_BACKEND_CACHE=on"), off) {
+			t.Errorf("%s: the build replaying sites and thunks differs from the cache-off build", filepath.Base(d))
+		}
+		if !bytes.Equal(build(d, cache, "XO_BACKEND_CACHE=verify"), off) {
+			t.Errorf("%s: the verify build differs from the cache-off build", filepath.Base(d))
+		}
+	}
+	// numbered differently: a function built first now spawns and makes
+	// a thunk, so the replayed bodies' sites get other numbers and their
+	// thunks are found rather than made
+	first := "fn first() -> Int ! JobErr {\n  let g = inc\n  scope s {\n    s.spawn(fn() { job(g(0)) })\n  }\n  0\n}\n\n"
+	src2 := strings.Replace(src, "fn main(os: Os) uses stdio {\n", "fn main(os: Os) uses stdio {\n  os.stdio.println(show(first()))\n", 1)
+	if err := os.WriteFile(filepath.Join(own, "main.xo"), []byte(first+src2), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cache := filepath.Join(work, "cache", "0")
+	off := build(own, filepath.Join(work, "cache", "off"), "XO_BACKEND_CACHE=off")
+	if !bytes.Equal(build(own, cache, "XO_BACKEND_CACHE=on"), off) {
+		t.Error("the build replaying renumbered sites and found thunks differs from the cache-off build")
+	}
+}

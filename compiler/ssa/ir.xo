@@ -335,7 +335,10 @@ pub struct Module {
   /// The front end cache's recording of a body (fecache.xo), while on:
   /// the types and functions it found by name (their indices: fe_treads,
   /// fe_freads), and what it made, in order (fe_ev: 1 a type, its index;
-  /// 2 an order entry, its type; 3 a function, its index). A declare
+  /// 2 an order entry, its type; 3 a function, its index; 4 a declare,
+  /// its object; 5 a closure, its index; 6 a constant's use, its number,
+  /// Builder.consts; 7 a thunk, its function; 8 a spawn site, its
+  /// number). A declare
   /// pauses it: the commit replays a declare whole.
   pub fe_log: Bool = false
   pub fe_treads: Map[Int, Bool] = {}

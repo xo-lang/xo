@@ -353,3 +353,27 @@ bodies (8,284 of 8,534 before) and fe.build 575 ms (1,092 ms); identity
 whose only uncached bodies made closures (3 of 21 skipped before).
 Remaining skips on xo: generic instances 139 (always built), constants
 32, spawn sites 19, thunks 6.
+
+### Step 1b, the constants, spawn sites and thunks relocations (2026-10-20)
+
+Three more tables a body changed and a commit did not replay:
+
+- Constants of collection types (Builder.consts, keyed by the name of
+  the function that builds each, `xo.const[mod.NAME]`): each use is an
+  event 6 of the entry (that name, and whether the body made it, its
+  function then one of the functions made whole). A commit numbers a
+  constant as the build there numbers constants and writes the number
+  into the body's `rt.const_once` calls (and those of the functions it
+  made whole); a constant the entry says it made must be new there, one
+  it read must be there.
+- Spawn sites (Builder.sites, the spawns whose task can fail): each site
+  a body numbers is an event 8; a commit numbers it next and writes the
+  number into its `rt.task_spawn_fn` (or `rt.task_spawn`) call. A body
+  that reads a site numbered before it is still not cached.
+- Thunks (a function used as a value, `NAME.value`): each is an event 7
+  (the function's identity, the thunk's name, whether the body made it);
+  a commit finds the thunk, or registers the one it made whole. A thunk
+  of a generic instance (named by the instance's name here) still keeps
+  its body out.
+
+FE_CACHE_VERSION v11 (v10 had the constants alone). The skip counts on xo and identity are measured in the end-of-night run (owner, 2026-10-21: testing at the end).
