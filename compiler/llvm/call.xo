@@ -48,7 +48,21 @@ fn (var g: Gen) call(v: Int) {
         let a0 = g.op(args[0])
         // obj.xo's export, with no C level
         let r = g.def("call i64 @xo_x_obj_rl_new_n(i64 ${a0}, i64 ${g.size(et)}) #6")
-        g.set(v, "inttoptr i64 ${r} to ptr")
+        let p = g.def("inttoptr i64 ${r} to ptr")
+        // the header obj.rl_new_n wrote (count 1, length 0, capacity
+        // max(n, 4)), again where LLVM sees it: it then knows the new list
+        // is held only here and how long it is (2026-10-21: nbody's
+        // bodies() list, decision 0322's step C; plain stores, the list
+        // is no other thread's yet)
+        g.emit("store i64 1, ptr ${p}${TBAA_RC}")
+        let lp = g.def("getelementptr %xo.rlist, ptr ${p}, i32 0, i32 1")
+        g.emit("store i64 0, ptr ${lp}${TBAA_HDR}")
+        // max(n, 4): a constant folded here, else llvm.smax (no
+        // `select`: test/codegen consttime forbids one in sc_reduce)
+        let cap = if let Some(k) = Int.parse(a0) { "${k.max(4)}" } else { g.def("call i64 @llvm.smax.i64(i64 ${a0}, i64 4)") }
+        let cp = g.def("getelementptr %xo.rlist, ptr ${p}, i32 0, i32 2")
+        g.emit("store i64 ${cap}, ptr ${cp}${TBAA_HDR}")
+        g.alias(v, p)
         return
       }
       // the shared empty list, immortal: the first push allocates
