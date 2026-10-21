@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """fieldcheck.py [--quick]: checks the generated field code of
 std/native/llrt (x25519.xo's fe64_mul, fe64_sq, fe64_add, and fe64_sub from
-scripts/gen/x25519fe64, nistec.xo's mul4p and sqr4p from
+scripts/gen/x25519fe64, nistec.xo's mul4p, sqr4p, and mul4 from
 scripts/gen/nistecmul4p) by interpreting the generated Xo against Python's
 big integers, on random operands and the fields' edges; then a planted
 mutation (one carry dropped in each function) must be caught, so the
@@ -62,6 +62,8 @@ def ev(e, env):
         d -= ch == ")"
         if d == 0 and e.startswith(" ^ ", i):
             return ev(e[:i], env) ^ ev(e[i + 3:], env)
+        if d == 0 and e.startswith(" + ", i):
+            return (ev(e[:i], env) + ev(e[i + 3:], env)) & M
     if e.startswith("~"):
         return (~ev(e[1:], env)) & M
     mc = method_call(e)
@@ -98,9 +100,11 @@ def body(src, name):
     return [l.strip() for l in m.group(2).split("\n")]
 
 
-def run(lines, f, g):
-    """The words stored through h, or sub_p256's operands (value, top)."""
-    env = {"mem": {1: f, 2: g, 0: [0] * 4}, "h": 0, "f": 1, "g": 2}
+def run(lines, f, g, md=None):
+    """The words stored through h, or sub_p256's or sub_m4's operands
+    (value, top); md the modulus record mul4 reads (MINV at word 0, the
+    limbs from word 1)."""
+    env = {"mem": {1: f, 2: g, 0: [0] * 4, 3: md or []}, "h": 0, "f": 1, "g": 2, "md": 3, "MINV": 0, "MLIMBS": 8}
     for l in lines:
         m = re.fullmatch(r"let (\w+) = (.*)", l)
         if m:
@@ -110,7 +114,7 @@ def run(lines, f, g):
         if m:
             env["mem"][0][int(m.group(1)) // 8] = env[m.group(2)]
             continue
-        m = re.fullmatch(r"sub_p256\(h, (.*)\)", l)
+        m = re.fullmatch(r"sub_(?:p256|m4)\(h, (.*)\)", l)
         if m:
             w = [ev(x, env) for x in split(m.group(1))]
             return sum(x << (64 * i) for i, x in enumerate(w[:4])) + (w[4] << 256), w[4]
@@ -174,6 +178,25 @@ def check_nistec(src, rnd, n):
     return cases, bad
 
 
+def check_nistec_mul4(src, rnd, n):
+    """mul4 (any 4 limb modulus) with P-256's group order and P-224's
+    prime: x y / 2^256 mod m, below 2m, top at most 1."""
+    mul = body(src, "mul4")
+    bad = cases = 0
+    for m in [0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551, 2**224 - 2**96 + 1]:
+        ri = pow(2**256, -1, m)
+        inv = (-pow(m, -1, 2**64)) % 2**64
+        md = [inv] + limbs(m)
+        edge = [0, 1, 2, m - 1, m - 2, m >> 1, 2**64 - 1, 2**128, m - 2**64]
+        vals = edge + [rnd.randrange(m) for _ in range(n)]
+        for x in vals:
+            for y in [rnd.choice(vals) for _ in range(3)] + edge:
+                v, top = run(mul, limbs(x), limbs(y), md)
+                cases += 1
+                bad += v % m != x * y * ri % m or v >= 2 * m or top > 1
+    return cases, bad
+
+
 def mutate(src, name):
     """src with one carry in fn name's body dropped (the sixth chained one)."""
     a = src.index(f"fn {name}(")
@@ -188,7 +211,8 @@ def main():
     n = 300 if "--quick" in sys.argv else 3000
     ok = True
     for path, check, names in [("std/native/llrt/x25519.xo", check_x25519, ["fe64_mul", "fe64_sq", "fe64_add", "fe64_sub"]),
-                               ("std/native/llrt/nistec.xo", check_nistec, ["mul4p", "sqr4p"])]:
+                               ("std/native/llrt/nistec.xo", check_nistec, ["mul4p", "sqr4p"]),
+                               ("std/native/llrt/nistec.xo", check_nistec_mul4, ["mul4"])]:
         src = open(path).read()
         cases, bad = check(src, random.Random(7), n)
         print(f"{path}: {cases} cases, {bad} wrong")
