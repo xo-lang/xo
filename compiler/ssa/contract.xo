@@ -628,7 +628,6 @@ fn (var b: Builder) invariant_func(ct: Int, o: Int, t: Int) -> Str {
 /// loop_tick, at the start of each iteration, counts and faults with
 /// XO-F006 past N, then polls the budget (poll).
 fn (var b: Builder) loop_bound(bound: List[Expr]) -> Int {
-  b.preempt_entry()
   if bound.is_empty() {
     return 0
   }

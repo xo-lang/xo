@@ -187,6 +187,7 @@ fn (var b: Builder) test_body(fi: Int, file: Int, td: parser.TestDecl) {
     b.write_var(vo, b.param(1 + k))
   }
   b.s.polls = true
+  b.s.ppolls = true
   b.poll()
   if let Some(body) = td.body {
     let v = b.block(body)

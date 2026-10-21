@@ -78,10 +78,12 @@ fn lock() {
   if !rt.slot_cas(w, 0, 0, 1, ACQUIRE) {
     pool.lock_slow(w)
   }
+  pool.held(1)
 }
 
 fn unlock() {
   let w = rt.static_word(W_LOCK)
+  pool.held(-1)
   if rt.slot_swap(w, 0, 0, RELEASE) == 2 {
     pool.futex_wake(w)
   }

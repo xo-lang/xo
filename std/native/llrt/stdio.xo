@@ -89,9 +89,15 @@ fn lock(w: Int, m: Int) {
   if m & THREADS != 0 && !rt.slot_cas[Int](w, 2, 0, 1, ACQUIRE) {
     pool.lock_slow(add(w, LOCK))
   }
+  if m & THREADS != 0 {
+    pool.held(1)
+  }
 }
 
 fn unlock(w: Int, m: Int) {
+  if m & THREADS != 0 {
+    pool.held(-1)
+  }
   if m & THREADS != 0 && rt.slot_swap[Int](w, 2, 0, RELEASE) == 2 {
     pool.futex_wake(add(w, LOCK))
   }

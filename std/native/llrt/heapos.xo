@@ -282,10 +282,12 @@ fn clock_take() {
   if !rt.slot_cas(l, 0, 0, 1, ACQUIRE) {
     pool.lock_slow(l)
   }
+  pool.held(1)
 }
 
 fn clock_give() {
   let l = rt.static_word(W_CLOCK)
+  pool.held(-1)
   if rt.slot_swap(l, 0, 0, RELEASE) == 2 {
     pool.futex_wake(l)
   }
@@ -309,11 +311,13 @@ pub fn lock() {
   if !rt.slot_cas(l, 0, 0, 1, ACQUIRE) {
     pool.lock_slow(l)
   }
+  pool.held(1)
 }
 
 /// Releases it.
 pub fn unlock() {
   let l = rt.static_word(W_LOCK)
+  pool.held(-1)
   if rt.slot_swap(l, 0, 0, RELEASE) == 2 {
     pool.futex_wake(l)
   }
@@ -529,10 +533,12 @@ fn hlock_take() {
   if !rt.slot_cas(l, 0, 0, 1, ACQUIRE) {
     pool.lock_slow(l)
   }
+  pool.held(1)
 }
 
 fn hlock_give() {
   let l = rt.static_word(W_HLOCK)
+  pool.held(-1)
   if rt.slot_swap(l, 0, 0, RELEASE) == 2 {
     pool.futex_wake(l)
   }

@@ -122,9 +122,13 @@ const W_POOLHELD = 3440
 /// word 432): preemption (decision 0286 step 3, mon_scan, preempt).
 const W_RUN_AT_I = 431
 const W_PREEMPT_I = 432
+/// How many runtime locks this worker's thread holds (held): preempt
+/// yields only at none (decision 0286 step 3: std's loops poll, and the
+/// runtime calls std with its spin locks held).
+const W_LOCKS = 3464
 /// The record's size; poolsetup.xo's W_SIZE (the root's record) must match
 /// (XO_HEAP_GUARD found it 8 bytes short, 2026-10-20).
-const W_SIZE = 3464
+const W_SIZE = 3472
 const FCACHE = 8
 
 /// xo_runq: head (word 0), tail (word 16).
@@ -363,6 +367,7 @@ pub fn lock(l: Int) {
   if !rt.slot_cas[Int](l, 0, 0, 1, ACQUIRE) {
     lock_slow(l)
   }
+  held(1)
 }
 
 /// lock, counting a slow path as statistic k (one of the ST_LOCK_* of
@@ -372,9 +377,11 @@ pub fn lock_k(l: Int, k: Int) {
     stat(k)
     lock_slow(l)
   }
+  held(1)
 }
 
 pub fn unlock(l: Int) {
+  held(-1)
   if rt.slot_swap(l, 0, 0, RELEASE) == 2 {
     futex_wake(l)
   }
@@ -557,6 +564,7 @@ fn inject_add(p: Int, src: Int, n: Int, x: Int) {
     stat(ST_LOCK_INJECT)
     lock_slow(im)
   }
+  held(1)
   let len = rt.mem_load(p, P_ILEN_AT, 8)
   var cap = rt.mem_load(p, P_ICAP, 8)
   var head = rt.mem_load(p, P_IHEAD, 8)
@@ -606,6 +614,7 @@ fn inject_pop(p: Int, w: Int) -> Int {
     stat(ST_LOCK_INJECT)
     lock_slow(im)
   }
+  held(1)
   let len = rt.mem_load(p, P_ILEN_AT, 8)
   if len > 0 {
     n = (len / rt.mem_load(p, P_NCPU, 8).wrapping_add(1)).wrapping_add(1)
@@ -687,6 +696,7 @@ fn inject_get_scope(p: Int, s: Int) -> Int {
     stat(ST_LOCK_INJECT)
     lock_slow(im)
   }
+  held(1)
   var it = 0
   let len = rt.mem_load(p, P_ILEN_AT, 8)
   if len > 0 {
@@ -976,6 +986,7 @@ fn go_idle(p: Int, w: Int) -> Int {
   if !rt.slot_cas(fs, 0, 0, 1, ACQUIRE) {
     lock_slow(fs)
   }
+  held(1)
   let cached = rt.mem_load(fs, FS_N, 8)
   let ops = rt.mem_load(fs, FS_OPS, 8)
   unlock(fs)
@@ -1074,6 +1085,10 @@ pub fn run_item(p: Int, w: Int, it: Int) {
 fn run_fiber(p: Int, w: Int, f: Int) {
   rt.slot_store(w, W_RUN_AT_I, sysio.mono_ns(), RELAXED)
   let r = sched.fiber_run(w, f)
+  if rt.mem_load(w, W_LOCKS, 8) != 0 && rt.slot_load(rt.mem_load(p, P_DLK, 8), DLK_LOCKCHECK, RELAXED) != 0 {
+    // a fiber switched away holding a runtime lock (XO_LOCKCHECK=1)
+    let _r = rt.call_c2(rt.fn_addr("lock_held_switch"), 0, 0)
+  }
   rt.slot_store(w, W_RUN_AT_I, 0, RELAXED)
   rt.slot_store(w, W_PREEMPT_I, 0, RELAXED)
   if r == 2 {
@@ -1091,6 +1106,17 @@ fn run_fiber(p: Int, w: Int, f: Int) {
   }
 }
 
+/// A runtime lock taken (d 1) or released (d -1) by this thread: its
+/// worker's count (W_LOCKS; a thread without a worker record counts
+/// nothing, and it runs no fiber to preempt). Every spin lock of the
+/// runtime calls it after taking and before releasing.
+pub fn held(d: Int) {
+  let w = rt.tlocal_get(TLS_W)
+  if w != 0 {
+    rt.mem_store(w, W_LOCKS, rt.mem_load(w, W_LOCKS, 8).wrapping_add(d), 8)
+  }
+}
+
 /// The slow path of a preemption poll (generated code's loop back edges
 /// test the static word W_PREEMPT, decision 0286 step 3): yields the
 /// running fiber when the monitor asked this worker to (it has run its
@@ -1103,7 +1129,9 @@ pub fn preempt() {
     return
   }
   let f = rt.tlocal_get(TLS_FIB)
-  if f == 0 {
+  if f == 0 || rt.mem_load(w, W_LOCKS, 8) != 0 {
+    // no fiber, or a runtime lock held (std code the runtime called):
+    // the request stays, for the next poll after the release
     return
   }
   rt.slot_store(w, W_PREEMPT_I, 0, RELAXED)
@@ -1212,6 +1240,7 @@ fn fiber_new(fs: Int, w: Int, t: Int) -> Int {
     if !rt.slot_cas(fs, 0, 0, 1, ACQUIRE) {
       lock_slow(fs)
     }
+    held(1)
     f = rt.mem_load(fs, FS_LIST_AT, 8)
     if f != 0 {
       rt.slot_store(fs, FS_LIST, rt.mem_load(f, F_NEXT, 8), RELAXED)
@@ -1443,6 +1472,7 @@ fn fiber_free(fs: Int, w: Int, f: Int) {
   if !rt.slot_cas(fs, 0, 0, 1, ACQUIRE) {
     lock_slow(fs)
   }
+  held(1)
   let n = rt.mem_load(fs, FS_N, 8)
   if n < FIBER_CACHE {
     rt.mem_store(f, F_NEXT, rt.mem_load(fs, FS_LIST_AT, 8), 8)
@@ -1473,6 +1503,7 @@ fn fiber_trim(fs: Int, ops: Int) {
   if !rt.slot_cas(fs, 0, 0, 1, ACQUIRE) {
     lock_slow(fs)
   }
+  held(1)
   let n = rt.mem_load(fs, FS_N, 8)
   if n <= FIBER_KEEP || rt.mem_load(fs, FS_OPS, 8) != ops {
     unlock(fs)
@@ -1539,6 +1570,7 @@ fn plock(p: Int) {
     stat(ST_LOCK_POOL)
     lock_slow(p)
   }
+  held(1)
   if rt.slot_load(rt.mem_load(p, P_DLK, 8), DLK_LOCKCHECK, RELAXED) != 0 {
     let w = rt.tlocal_get(TLS_W)
     if w != 0 {
@@ -1582,6 +1614,7 @@ fn klock(k: Int) {
     stat(ST_LOCK_PARK)
     lock_slow(k)
   }
+  held(1)
 }
 
 /// The test world's record (twflags.xo, byte offsets): the verdict for
@@ -1695,6 +1728,7 @@ pub fn node_link(n: Int, parent: Int) {
   if !rt.slot_cas(pm, 0, 0, 1, ACQUIRE) {
     lock_slow(pm)
   }
+  held(1)
   rt.mem_store(n, N_PARENT, parent, 8)
   rt.mem_store(n, N_PREV, 0, 8)
   let c = rt.mem_load(parent, N_CHILD, 8)
@@ -1720,6 +1754,7 @@ pub fn node_unlink(n: Int) {
   if !rt.slot_cas(pm, 0, 0, 1, ACQUIRE) {
     lock_slow(pm)
   }
+  held(1)
   let prev = rt.mem_load(n, N_PREV, 8)
   let next = rt.mem_load(n, N_NEXT, 8)
   if prev != 0 {
@@ -1754,6 +1789,7 @@ fn cancel_locked(pl: Int, n: Int) {
     if !rt.slot_cas(cm, 0, 0, 1, ACQUIRE) {
       lock_slow(cm)
     }
+    held(1)
     cancel_locked(pl, c)
     unlock(cm)
     c = rt.mem_load(c, N_NEXT, 8)
@@ -1767,6 +1803,7 @@ pub fn node_cancel(pl: Int, n: Int) {
   if !rt.slot_cas(m, 0, 0, 1, ACQUIRE) {
     lock_slow(m)
   }
+  held(1)
   cancel_locked(pl, n)
   unlock(m)
 }
@@ -1777,6 +1814,7 @@ pub fn node_set_waiter(n: Int, p: Int) {
   if !rt.slot_cas(m, 0, 0, 1, ACQUIRE) {
     lock_slow(m)
   }
+  held(1)
   rt.mem_store(n, N_WAITER, p, 8)
   unlock(m)
 }
@@ -1990,6 +2028,7 @@ pub fn scope_add_at(pl: Int, s: Int, t: Int, w: Int, own: Bool) -> Int {
   if !rt.slot_cas(m, 0, 0, 1, ACQUIRE) {
     lock_slow(m)
   }
+  held(1)
   if rt.mem_load(s, S_CLOSED, 4) != 0 {
     unlock(m)
     return -1
@@ -2098,6 +2137,7 @@ pub fn scope_join(pl: Int, s: Int, c: Int, f: Int, rw: Int) {
     if !rt.slot_cas(m, 0, 0, 1, ACQUIRE) {
       lock_slow(m)
     }
+    held(1)
     var t = rt.mem_load(s, S_LIST, 8)
     unlock(m)
     while t != 0 {

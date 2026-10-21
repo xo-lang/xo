@@ -289,6 +289,28 @@ cooperative preemption before its signals.
   thread takes the slow path once a tick, about 1000 a second); yielding
   to the inject queue's tail against the ring's.
 
+### Step 3: the owner's choice (2026-10-21) and what landed
+
+The owner chose (a+): every loop iteration polls, in the program's own
+code and in std, never in the runtime, guarded by a per worker count of
+the runtime locks held, with XO_PREEMPT=0 as the kill switch.
+
+- The builder polls in every module but the runtime's (ssa budget.xo
+  runtime_mod: native/llrt, native/rt*, native/sys_*), test bodies
+  included; the measurement modes (PREEMPT_MODE 0 to 5) are gone.
+- Every spin lock of the runtime calls pool.held(1) after taking it and
+  held(-1) before releasing it (30 acquire and 14 release sites: the
+  pool, park, inject, fiber cache, scope and node locks, the poller's
+  descriptor locks, the heap's, h2srv's, stdio's, tzhost's, proc's,
+  stop's, libcmem's, the test world's). The count is a word of the
+  worker record (W_LOCKS); preempt yields only at zero and otherwise
+  leaves the request for the next poll after the release. Under
+  XO_LOCKCHECK=1 a fiber that switches away with the count not zero is
+  a fatal "lock held" error (pool.xo run_fiber), so an unbalanced site
+  shows at once.
+- arm64 only (native and LLVM); amd64's polls follow (x86.xo, with Xo
+  lang 4).
+
 ## Predictions
 
 Each is rechecked after stealing and after preemption, and marked

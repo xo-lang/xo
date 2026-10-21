@@ -234,7 +234,6 @@ fn (var b: Builder) for_stmt(st: Stmt) {
   var bytes = -1
   var pair_t = -1
   var inclusive = false
-  var short = false
   let recv = b.indexed_recv(iter)
   if let Some(r) = recv {
     list = b.value(r)
@@ -246,13 +245,9 @@ fn (var b: Builder) for_stmt(st: Stmt) {
     hi = b.call("list.len", it, "", [list])
     b.write_var(idx, b.cint(0))
   } else if let RangeExpr(lo: Some(lo), hi: Some(h), inclusive: inc, ..) = iter {
-    let lov = b.value_as(lo, it)
-    b.write_var(idx, lov)
+    b.write_var(idx, b.value_as(lo, it))
     hi = b.value_as(h, it)
     inclusive = inc
-    let (l0, lok) = b.const_word(lov)
-    let (h0, hok) = b.const_word(hi)
-    short = lok && hok && h0 - l0 <= PREEMPT_SHORT
   } else {
     let lt = b.nat_of(iter)
     if b.tkind(lt) == Kind.Handle && b.m.types[lt].name.starts_with("Chan[") {
@@ -275,7 +270,6 @@ fn (var b: Builder) for_stmt(st: Stmt) {
     }
   }
   let tick = b.loop_bound(bound)
-  b.s.pshort = short
   let head = b.new_block()
   let bodyb = b.new_block()
   let latch = b.new_block()

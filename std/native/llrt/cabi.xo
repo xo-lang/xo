@@ -814,6 +814,15 @@ fn dl_check(p: Int) { pool.dl_check(p) }
 /// the message on standard error, status 70.
 /// A park's lock taken with the pool's held (pool.xo klock, XO_LOCKCHECK=1):
 /// the scheduler's lock order broken, a deadlock waiting to happen.
+/// A fiber switched away holding a runtime lock (pool.xo held, under
+/// XO_LOCKCHECK=1): the lock count preemption trusts is off.
+fn lock_held_switch() {
+  stdio.flush()
+  let m = "xo: lock held: a fiber switched away holding a runtime lock (std/native/llrt/pool.xo held)\n"
+  stdio.write_all(2, raw.data(m), m.len())
+  process.os_exit(70)
+}
+
 fn lock_order() {
   stdio.flush()
   let m = "xo: lock order: a park's lock taken while holding the pool's (std/native/llrt/pool.xo)\n"

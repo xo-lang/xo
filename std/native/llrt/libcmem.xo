@@ -103,9 +103,11 @@ fn lock(s: Int) {
     // 2 tells the holder to wake a waiter (pool.xo's futex on every OS)
     pool.lock_slow(s)
   }
+  pool.held(1)
 }
 
 fn unlock(s: Int) {
+  pool.held(-1)
   if rt.slot_swap(s, 0, 0, RELEASE) == 2 {
     pool.futex_wake(s)
   }

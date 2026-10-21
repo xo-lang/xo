@@ -26,65 +26,19 @@ fn (var b: Builder) is_with_budget(fo: Int) -> Bool {
 /// std/native/llrt/pool.xo W_PREEMPT: the static word of the preemption
 /// flag.
 const PREEMPT_WORD = 76
-/// Where the preemption polls go (decision 0286 step 3's measurements of
-/// the options): 0 none, 1 every iteration, 2 every PREEMPT_EVERY iterations (a
-/// countdown), 3 the outermost loops of a function only, 4 every
-/// iteration but of a range with a constant trip count of at most
-/// PREEMPT_SHORT, 5 every iteration of all code but the runtime's
-/// (std/native/llrt).
-const PREEMPT_MODE = 1
-const PREEMPT_EVERY = 64
-const PREEMPT_SHORT = 4096
 
-/// The preemption poll at a loop's iteration in the program's own code, on
-/// arm64 (decision 0286 step 3): the static word W_PREEMPT tested, a call
-/// of the runtime's xo_preempt_stub when it is set (one that keeps every
-/// register); the word's address is loop invariant.
+/// The preemption poll at a loop's iteration, on arm64 (decision 0286
+/// step 3, the owner's choice (a+) of 2026-10-21): in every module but
+/// the runtime's (runtime_mod: it holds spin locks, and pool.xo preempt
+/// yields only when the worker holds none of them), the static word
+/// W_PREEMPT tested, a call of xo_preempt_stub (which keeps every
+/// register) when it is set; the word's address is loop invariant.
 fn (var b: Builder) preempt_poll() {
-  let pc = b.s.ppoll
-  let short = b.s.pshort
-  b.s.ppoll = 0
-  b.s.pshort = false
-  let on = if PREEMPT_MODE == 5 { b.s.ppolls } else { b.s.polls }
-  if PREEMPT_MODE == 0 || !on || b.wasm || b.goarch != "arm64" || b.is_dead() {
-    return
-  }
-  if PREEMPT_MODE == 3 && !b.s.loops.is_empty() {
-    return // a loop inside another: the outer one polls
-  }
-  if PREEMPT_MODE == 4 && short {
-    return // a range of a few iterations ends soon anyway
-  }
-  if PREEMPT_MODE == 2 && pc != 0 {
-    // every PREEMPT_EVERY iterations: a countdown, the poll when it ends
-    let it = b.int_t()
-    let v = b.add(Op.Sub, it, Aux.None, [b.read(pc), b.cint(1)])
-    b.write_var(pc, v)
-    let (yes, no) = b.branch(b.add(Op.Eq, b.bool_t(), Aux.None, [v, b.cint(0)]))
-    let join = b.new_block()
-    b.s.cur = yes
-    b.write_var(pc, b.cint(PREEMPT_EVERY))
-    let a = b.rt("static_word", it, [b.cint(PREEMPT_WORD)])
-    b.rt("preempt_poll", -1, [a])
-    b.jump(join, [])
-    b.s.cur = no
-    b.jump(join, [])
-    b.seal(join)
-    b.s.cur = join
+  if !b.s.ppolls || b.wasm || b.goarch != "arm64" || b.is_dead() {
     return
   }
   let a = b.rt("static_word", b.int_t(), [b.cint(PREEMPT_WORD)])
   b.rt("preempt_poll", -1, [a])
-}
-
-/// The loop's preemption countdown when PREEMPT_MODE is 2, made at its
-/// entry (loop_bound).
-fn (var b: Builder) preempt_entry() {
-  if PREEMPT_MODE == 2 && b.s.polls && !b.wasm && b.goarch == "arm64" && !b.is_dead() {
-    let pc = b.local()
-    b.write_var(pc, b.cint(PREEMPT_EVERY))
-    b.s.ppoll = pc
-  }
 }
 
 /// The budget poll, when the program uses budgets and the code being

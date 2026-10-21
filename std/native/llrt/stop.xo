@@ -82,10 +82,12 @@ fn lk() {
   if !rt.slot_cas(l, 0, 0, 1, ACQUIRE) {
     pool.lock_slow(l)
   }
+  pool.held(1)
 }
 
 fn unlk() {
   let l = rec()
+  pool.held(-1)
   if rt.slot_swap(l, 0, 0, RELEASE) == 2 {
     pool.futex_wake(l)
   }
