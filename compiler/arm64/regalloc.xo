@@ -531,7 +531,7 @@ fn (var g: G) regalloc() {
   for p in sorted {
     var a = find_leader(leader, p.a)
     var b = find_leader(leader, p.b)
-    if a == b || g.fp[a] != g.fp[b] {
+    if a == b || g.fp[a] != g.fp[b] || g.wide.contains(a) != g.wide.contains(b) {
       continue
     }
     if overlaps(ranges[a], ranges[b]) {
@@ -678,16 +678,19 @@ fn (var g: G) regalloc() {
     }
     for v in by_prio {
       let fp = g.fp[v]
+      // a wide value (decision 0323): caller saved V registers only (a
+      // callee keeps the low halves of v8 to v15, not the upper)
+      let wide = g.wide.contains(v)
       // one allocation per register (concatenating made three)
       var cands: List[Int] = List.with_capacity(fixed[v].len() + partners[v].len() + gp_c.len() + gp_e.len() + fp_c.len() + fp_e.len())
       for r in fixed[v] {
-        if (r >= FP_BASE) == fp {
+        if (r >= FP_BASE) == fp && !(wide && g.is_callee_t(r)) {
           cands.push(r)
         }
       }
       for p in partners[v] {
         let r = g.loc[find_leader(leader, p)].reg
-        if r >= 0 {
+        if r >= 0 && !(wide && g.is_callee_t(r)) {
           cands.push(r)
         }
       }
@@ -695,8 +698,10 @@ fn (var g: G) regalloc() {
         for r in fp_c {
           cands.push(r)
         }
-        for r in fp_e {
-          cands.push(r)
+        if !wide {
+          for r in fp_e {
+            cands.push(r)
+          }
         }
       } else {
         for r in gp_c {
@@ -754,12 +759,25 @@ fn (var g: G) regalloc() {
         // a spill slot no value live at the same time holds (first fit,
         // like the registers; gotchas/arm64-large-frame.md)
         var k = 0
-        while k < slot_occ.len() && overlaps_sorted(slot_occ[k], ranges[v]) {
-          k += 1
-        }
-        if k == slot_occ.len() {
-          slot_occ.push([])
-          g.slots += 1
+        if wide {
+          // two slots, the first even (16 bytes; q_mem copes with any
+          // alignment of the area)
+          while k + 1 < slot_occ.len() && (overlaps_sorted(slot_occ[k], ranges[v]) || overlaps_sorted(slot_occ[k + 1], ranges[v])) {
+            k += 2
+          }
+          while slot_occ.len() < k + 2 {
+            slot_occ.push([])
+            g.slots += 1
+          }
+          insert_ranges(slot_occ, k + 1, ranges[v])
+        } else {
+          while k < slot_occ.len() && overlaps_sorted(slot_occ[k], ranges[v]) {
+            k += 1
+          }
+          if k == slot_occ.len() {
+            slot_occ.push([])
+            g.slots += 1
+          }
         }
         insert_ranges(slot_occ, k, ranges[v])
         g.loc[v] = Loc{reg: -1, slot: k}

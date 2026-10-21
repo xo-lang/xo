@@ -1,0 +1,757 @@
+// slp_f64 (decision 0323, stage 2): pairs of independent, isomorphic
+// Float operations become one 128 bit NEON operation, along the hot
+// chains of the MIR (extended basic blocks: each block the only
+// successor of the last on the hot path, the other exits cold). Each
+// lane of a `.2d` instruction rounds exactly as the scalar instruction
+// does (decision 0287: no fusion, no reassociation), so the results are
+// the scalar code's bit for bit.
+//
+// Seeds are pairs of Float loads from one base at offsets k and k + 8;
+// a pack grows through pairs of the same fadd, fsub, fmul, fdiv (or
+// fsqrt) whose operands are packs, the same scalar in both lanes, or two
+// scalars built into a pack; a pair of stores of a pack's lanes to k and
+// k + 8 becomes one store, and fadd of a pack's two lanes a faddp. A
+// chain's packs are made only when they save instructions after the
+// extracts (a lane read elsewhere) and the builds (two scalars into a
+// pack). A load pack is placed at the earlier load (the only stores
+// between are to the same base at other offsets), an operation or a
+// store pack at its later member, a lane's extract right after its
+// pack, and every other read of a lane must come after that in the
+// chain.
+
+/// One instruction's place: block, index in it, and its order in the
+/// chain (-1 outside).
+struct SPos {
+  b: Int
+  i: Int
+  ord: Int
+}
+
+/// A pack: lane 0 and lane 1 (scalar vregs), how it is made ("load",
+/// "op", "build"), its members' positions (for "op" and "load"), the
+/// vector text, the operands (wide or scalar vregs, filled when made),
+/// and its wide vreg.
+struct SPack {
+  l0: Int
+  l1: Int
+  how: Str
+  m0: SPos = SPos{b: -1, i: -1, ord: -1}
+  m1: SPos = SPos{b: -1, i: -1, ord: -1}
+  op: Str = ""
+  // operand packs (index into the pack list) or -1, and a scalar used
+  // by both lanes (-1 for none), by operand position
+  args: List[Int] = []
+  same: List[Int] = []
+  off: Int = 0
+  base: Int = 0
+  wide: Int = -1
+}
+
+/// A Float load `ldr $d0, [$u0, #k]`: (k, base, def), or None.
+fn (g: G) slp_load(x: Inst) -> Option[(Int, Int, Int)] {
+  if x.kind != K_PLAIN || x.defs.len() != 1 || x.us.len() != 1 || x.has_fault || !x.clobbers.is_empty() {
+    return None
+  }
+  if !x.text.starts_with("ldr $d0, [$u0, #") || !x.text.ends_with("]") || !g.fp[x.defs[0]] || g.wide.contains(x.defs[0]) {
+    return None
+  }
+  if let Some(k) = Int.parse(x.text["ldr $d0, [$u0, #".len()..x.text.len() - 1]) {
+    return Some((k, x.us[0], x.defs[0]))
+  }
+  None
+}
+
+/// A Float store `str $u0, [$u1, #k]`: (k, base, value), or None.
+fn (g: G) slp_store(x: Inst) -> Option[(Int, Int, Int)] {
+  if x.kind != K_PLAIN || !x.defs.is_empty() || x.us.len() != 2 || x.has_fault || !x.clobbers.is_empty() {
+    return None
+  }
+  if !x.text.starts_with("str $u0, [$u1, #") || !x.text.ends_with("]") || !g.fp[x.us[0]] || g.wide.contains(x.us[0]) {
+    return None
+  }
+  if let Some(k) = Int.parse(x.text["str $u0, [$u1, #".len()..x.text.len() - 1]) {
+    return Some((k, x.us[1], x.us[0]))
+  }
+  None
+}
+
+/// A Float operation the pass pairs: its mnemonic, or "".
+fn slp_op(x: Inst) -> Str {
+  if x.kind != K_PLAIN || x.defs.len() != 1 || x.has_fault || !x.clobbers.is_empty() || x.early {
+    return ""
+  }
+  for m in ["fadd", "fsub", "fmul", "fdiv"] {
+    if x.text == "${m} $d0, $u0, $u1" && x.us.len() == 2 {
+      return m
+    }
+  }
+  if x.text == "fsqrt $d0, $u0" && x.us.len() == 1 {
+    return "fsqrt"
+  }
+  ""
+}
+
+/// Whether x may write memory (a store, a call, a template of several
+/// lines or one this pass does not know).
+fn slp_writes(x: Inst) -> Bool {
+  if x.kind == K_CALL || x.kind == K_ENTRY {
+    return true
+  }
+  if x.kind != K_PLAIN {
+    return false
+  }
+  let t = x.text
+  t.contains("\n") || t.starts_with("st") || t.starts_with("swp") || t.starts_with("ld") && t.contains("a") && !t.starts_with("ldr") && !t.starts_with("ldp")
+}
+
+/// The hot chains of the function: lists of blocks, each block in one.
+fn (g: G) slp_chains() -> List[List[Int]] {
+  let n = g.blocks.len()
+  var seen: List[Bool] = []
+  // predecessor counts from the successor lists (MBlock.preds is made
+  // later, by register allocation)
+  var npred: List[Int] = []
+  for _ in 0..n {
+    seen.push(false)
+    npred.push(0)
+  }
+  for b in g.all_blocks() {
+    for s in g.slp_succs(b) {
+      npred[s] += 1
+    }
+  }
+  var out: List[List[Int]] = []
+  for b0 in g.all_blocks() {
+    if seen[b0] || g.blocks[b0].cold {
+      continue
+    }
+    var ch = [b0]
+    seen[b0] = true
+    var b = b0
+    while true {
+      var next = -1
+      for s in g.slp_succs(b) {
+        if !g.blocks[s].cold {
+          if next >= 0 {
+            next = -2
+          } else {
+            next = s
+          }
+        }
+      }
+      if next < 0 || seen[next] || npred[next] != 1 {
+        break
+      }
+      seen[next] = true
+      ch.push(next)
+      b = next
+    }
+    if ch.len() > 0 {
+      out.push(ch)
+    }
+  }
+  out
+}
+
+/// The successors of block b, from its terminator's targets (MBlock.succs
+/// is made later).
+fn (g: G) slp_succs(b: Int) -> List[Int] {
+  let t = g.term_at(b)
+  if t < 0 {
+    return []
+  }
+  g.blocks[b].insts[t].targets
+}
+
+/// The pass: each hot chain on its own. With XO_DUMP_FN naming the
+/// function, its chains' decisions go beside its IR dump (xo-ir-slp-NAME
+/// .txt: each chain's packs, and per group made, or why not).
+fn (var g: G) slp_f64() {
+  if g.x86 {
+    return
+  }
+  // every vreg's definition count and uses (block, index, operand)
+  var ndef: Map[Int, Int] = {}
+  var vuses: Map[Int, List[SPos]] = {}
+  for b in g.all_blocks() {
+    for (i, x) in g.blocks[b].insts.indexed() {
+      for d in x.defs {
+        ndef[d] = (ndef.get(d) ?? 0) + 1
+      }
+      for u in x.us {
+        var l = vuses.get(u) ?? []
+        l.push(SPos{b: b, i: i, ord: -1})
+        vuses[u] = l
+      }
+    }
+  }
+  var tr: List[Str] = []
+  for ch in g.slp_chains() {
+    let r = g.slp_chain(ch, ndef, vuses)
+    tr.push("chain ${ch.len()} from b${ch[0]} to b${ch[ch.len() - 1]}: ${r}")
+  }
+  if g.f.name == g.m.dump_fn {
+    g.dumps.push(("slp-${g.f.name}", tr.join("\n")))
+  }
+}
+
+/// The pass over one chain.
+fn (var g: G) slp_chain(ch: List[Int], ndef: Map[Int, Int], vuses: Map[Int, List[SPos]]) -> Str {
+  // chain order of every instruction
+  var ord: Map[Int, Int] = {}
+  var at: List[SPos] = []
+  for b in ch {
+    for i in 0..g.blocks[b].insts.len() {
+      ord[b * 65536 + i] = at.len()
+      at.push(SPos{b: b, i: i, ord: at.len()})
+    }
+  }
+  let ordof = fn(b: Int, i: Int) -> Int { ord.get(b * 65536 + i) ?? -1 }
+  // the single definition of each vreg defined once in the chain
+  var defat: Map[Int, SPos] = {}
+  for p in at {
+    let x = g.blocks[p.b].insts[p.i]
+    for d in x.defs {
+      if (ndef.get(d) ?? 0) == 1 {
+        defat[d] = p
+      }
+    }
+  }
+  var packs: List[SPack] = []
+  var by_lanes: Map[Str, Int] = {}
+  // each scalar in one pack of loads or operations
+  var paired: Map[Int, Bool] = {}
+  // load seeds: every pair of Float loads of one base 8 apart that may
+  // both happen at the earlier, scored by the pairs of the same
+  // operation among their lanes' users; taken best first, each load in
+  // one pair, none that scores 0 (a pair no operation pairs costs its
+  // extracts: x, y, z, vx at 24 to 48 pair as (24, 32) and (48, 56),
+  // not (40, 48))
+  var cands: List[(Int, SPack)] = []
+  for (j, p) in at.indexed() {
+    let lxo = g.slp_load(g.blocks[p.b].insts[p.i])
+    if lxo.is_none() {
+      continue
+    }
+    let lx = lxo ?? (0, 0, 0)
+    for q in at[j + 1..at.len()] {
+      let lyo = g.slp_load(g.blocks[q.b].insts[q.i])
+      if lyo.is_none() {
+        continue
+      }
+      let ly = lyo ?? (0, 0, 0)
+      if ly.1 != lx.1 || (ndef.get(lx.2) ?? 0) != 1 || (ndef.get(ly.2) ?? 0) != 1 {
+        continue
+      }
+      var k = lx.0
+      var a = lx.2
+      var c = ly.2
+      if ly.0 == lx.0 - 8 {
+        k = ly.0
+        a = ly.2
+        c = lx.2
+      } else if ly.0 != lx.0 + 8 {
+        continue
+      }
+      // the later load (q's, at ly.0) moves up to p
+      if !g.slp_loads_movable(at, p.ord, q.ord, lx.1, ly.0) {
+        continue
+      }
+      let score = g.slp_score(a, c, vuses)
+      if score > 0 {
+        cands.push((score, SPack{l0: a, l1: c, how: "load", m0: p, m1: q, off: k, base: lx.1}))
+      }
+    }
+  }
+  let ranked = cands.sort_by(fn(e) { 0 - e.0 })
+  for (_, pk) in ranked {
+    if paired.contains(pk.l0) || paired.contains(pk.l1) {
+      continue
+    }
+    paired[pk.l0] = true
+    paired[pk.l1] = true
+    by_lanes["${pk.l0},${pk.l1}"] = packs.len()
+    packs.push(pk)
+  }
+  if packs.is_empty() {
+    return "no load pairs"
+  }
+  // grow through operations to a fixed point, with no builds first (a
+  // build registered early would shadow the operation pack the same
+  // lanes become later: (dx*mi, dy*mi)), then once with builds, and
+  // again from what that made
+  var builds = false
+  var grew = true
+  while grew || !builds {
+    if !grew {
+      builds = true
+    }
+    grew = false
+    var pi = 0
+    while pi < packs.len() {
+      let pk = packs[pi]
+      pi += 1
+      for ua in vuses.get(pk.l0) ?? [] {
+        let oa = ordof(ua.b, ua.i)
+        if oa < 0 {
+          continue
+        }
+        let xa = g.blocks[ua.b].insts[ua.i]
+        let m = slp_op(xa)
+        if m.is_empty() || (ndef.get(xa.defs[0]) ?? 0) != 1 {
+          continue
+        }
+        for ub in vuses.get(pk.l1) ?? [] {
+          let ob = ordof(ub.b, ub.i)
+          if ob < 0 || ob == oa {
+            continue
+          }
+          let xb = g.blocks[ub.b].insts[ub.i]
+          if slp_op(xb) != m || (ndef.get(xb.defs[0]) ?? 0) != 1 {
+            continue
+          }
+          let key = "${xa.defs[0]},${xb.defs[0]}"
+          // a build of the same lanes made earlier gives way: the users
+          // that took it get this operation instead
+          let shadow = by_lanes.get(key) ?? -1
+          if (shadow >= 0 && packs[shadow].how != "build") || paired.contains(xa.defs[0]) || paired.contains(xb.defs[0]) {
+            continue
+          }
+          // each operand: a pack of the two, the same scalar, or a build
+          var args: List[Int] = []
+          var same: List[Int] = []
+          var ok = true
+          for k in 0..xa.us.len() {
+            let a = xa.us[k]
+            let c = xb.us[k]
+            if a <= 0 || c <= 0 {
+              // vreg 0 is the zero register
+              ok = false
+            } else if let Some(pj) = by_lanes.get("${a},${c}") {
+              args.push(pj)
+              same.push(-1)
+            } else if a == c {
+              args.push(-1)
+              same.push(a)
+            } else if builds && g.fp[a] && g.fp[c] && !g.wide.contains(a) && !g.wide.contains(c) {
+              // two scalars built into a pack
+              let bk = "${a},${c}"
+              by_lanes[bk] = packs.len()
+              packs.push(SPack{l0: a, l1: c, how: "build"})
+              args.push(packs.len() - 1)
+              same.push(-1)
+            } else {
+              ok = false
+            }
+          }
+          if !ok {
+            continue
+          }
+          paired[xa.defs[0]] = true
+          paired[xb.defs[0]] = true
+          let np = SPack{l0: xa.defs[0], l1: xb.defs[0], how: "op", m0: SPos{b: ua.b, i: ua.i, ord: oa}, m1: SPos{b: ub.b, i: ub.i, ord: ob}, op: m, args: args, same: same}
+          if shadow >= 0 {
+            packs[shadow] = np
+          } else {
+            by_lanes[key] = packs.len()
+            packs.push(np)
+          }
+          grew = true
+        }
+      }
+    }
+  }
+  // the loads the load packs take (they move to the earlier load)
+  var ldmem: Map[Int, Bool] = {}
+  for pk in packs {
+    if pk.how == "load" {
+      ldmem[pk.m0.ord] = true
+      ldmem[pk.m1.ord] = true
+    }
+  }
+  // store pairs of a pack's lanes, and faddp of its two lanes
+  var stores: List[(Int, SPos, SPos)] = []
+  var redus: List[(Int, SPos)] = []
+  for (pj, pk) in packs.indexed() {
+    if pk.how == "build" {
+      continue
+    }
+    for sa in vuses.get(pk.l0) ?? [] {
+      let oa = ordof(sa.b, sa.i)
+      if oa < 0 {
+        continue
+      }
+      let xa = g.blocks[sa.b].insts[sa.i]
+      if slp_op(xa) == "fadd" && xa.us[0] == pk.l0 && xa.us[1] == pk.l1 {
+        redus.push((pj, SPos{b: sa.b, i: sa.i, ord: oa}))
+        continue
+      }
+      let s0o = g.slp_store(xa)
+      if s0o.is_none() {
+        continue
+      }
+      let s0 = s0o ?? (0, 0, 0)
+      if s0.2 != pk.l0 {
+        continue
+      }
+      for sb in vuses.get(pk.l1) ?? [] {
+        let ob = ordof(sb.b, sb.i)
+        if ob < 0 {
+          continue
+        }
+        let s1o = g.slp_store(g.blocks[sb.b].insts[sb.i])
+        if s1o.is_none() {
+          continue
+        }
+        let s1 = s1o ?? (0, 0, 0)
+        if s1.1 == s0.1 && s1.0 == s0.0 + 8 && s1.2 == pk.l1 && g.slp_stores_movable(at, imin(oa, ob), imax(oa, ob), s0.1, s0.0, ldmem) {
+          stores.push((pj, SPos{b: sa.b, i: sa.i, ord: oa}, SPos{b: sb.b, i: sb.i, ord: ob}))
+        }
+      }
+    }
+  }
+  "${packs.len()} packs, ${stores.len()} stores, ${redus.len()} redus: ${g.slp_commit(ch, at, packs, stores, redus, vuses, defat)}"
+}
+
+/// How many pairs of the same paired operation use lanes a and c at the
+/// same operand position.
+fn (g: G) slp_score(a: Int, c: Int, vuses: Map[Int, List[SPos]]) -> Int {
+  var n = 0
+  for ua in vuses.get(a) ?? [] {
+    let xa = g.blocks[ua.b].insts[ua.i]
+    let m = slp_op(xa)
+    if m.is_empty() {
+      continue
+    }
+    for ub in vuses.get(c) ?? [] {
+      let xb = g.blocks[ub.b].insts[ub.i]
+      if slp_op(xb) == m && (ua.b != ub.b || ua.i != ub.i) {
+        for k in 0..xa.us.len() {
+          if xa.us[k] == a && k < xb.us.len() && xb.us[k] == c {
+            n += 1
+          }
+        }
+      }
+    }
+  }
+  n
+}
+
+/// Whether the Float load of base at k at chain order o2 may happen at
+/// o1 < o2 instead: nothing between writes memory but stores to the same
+/// base outside [k, k + 8).
+fn (g: G) slp_loads_movable(at: List[SPos], o1: Int, o2: Int, base: Int, k: Int) -> Bool {
+  let lo = imin(o1, o2)
+  let hi = imax(o1, o2)
+  for p in at[lo + 1..hi] {
+    let x = g.blocks[p.b].insts[p.i]
+    if let Some(s) = g.slp_store(x) {
+      if s.1 == base && (s.0 + 8 <= k || s.0 >= k + 8) {
+        continue
+      }
+      return false
+    }
+    if slp_writes(x) {
+      return false
+    }
+  }
+  true
+}
+
+/// Whether two Float stores to base at k and k + 8, at chain orders lo <
+/// hi, may both happen at hi: nothing between reads or writes that
+/// memory (no load of the base in [k, k + 16), no other write).
+fn (g: G) slp_stores_movable(at: List[SPos], lo: Int, hi: Int, base: Int, k: Int, ldmem: Map[Int, Bool]) -> Bool {
+  for p in at[lo + 1..hi] {
+    let x = g.blocks[p.b].insts[p.i]
+    if ldmem.contains(p.ord) {
+      // a load pack's member: it happens at the pack's earlier load
+      continue
+    }
+    if slp_writes(x) {
+      return false
+    }
+    if let Some(l) = g.slp_load(x) {
+      if l.1 == base && l.0 + 8 > k && l.0 < k + 16 {
+        return false
+      }
+      continue
+    }
+    if x.kind == K_PLAIN && x.text.starts_with("ld") {
+      // another load (a width this pass does not read): it may alias
+      return false
+    }
+  }
+  true
+}
+
+/// The chain's packs made, when they save instructions: the cost model,
+/// the checks that keep every read of a lane after its pack, and the
+/// rewrite of the chain's blocks.
+fn (var g: G) slp_commit(ch: List[Int], at: List[SPos], packs0: List[SPack], stores0: List[(Int, SPos, SPos)], redus0: List[(Int, SPos)], vuses: Map[Int, List[SPos]], defat: Map[Int, SPos]) -> Str {
+  var packs = packs0
+  let np = packs.len()
+  // the groups of packs that feed each other (union of an operation and
+  // its operand packs); each group is made or left on its own
+  var up: List[Int] = []
+  for k in 0..np {
+    up.push(k)
+  }
+  for (pj, pk) in packs.indexed() {
+    for a in pk.args {
+      if a >= 0 {
+        let ra = slp_root(up, a)
+        let rp = slp_root(up, pj)
+        if ra != rp {
+          up[ra] = rp
+        }
+      }
+    }
+  }
+  // each group's saving, cost, and whether its lanes are read only after
+  // their packs (a scalar in two packs leaves its groups as they are)
+  var save: Map[Int, Int] = {}
+  var cost: Map[Int, Int] = {}
+  var bad: Map[Int, Str] = {}
+  for (_, s0, _) in stores0 {
+    let _s = s0
+  }
+  for (pj, _, _) in stores0 {
+    let r = slp_root(up, pj)
+    save[r] = (save.get(r) ?? 0) + 1
+  }
+  var gone: Map[Int, Bool] = {}
+  for pk in packs {
+    if pk.how != "build" {
+      gone[pk.m0.ord] = true
+      gone[pk.m1.ord] = true
+    }
+  }
+  for (_, s0, s1) in stores0 {
+    gone[s0.ord] = true
+    gone[s1.ord] = true
+  }
+  for (_, r) in redus0 {
+    gone[r.ord] = true
+  }
+  var lane_of: Map[Int, Int] = {}
+  for (pj, pk) in packs.indexed() {
+    let r = slp_root(up, pj)
+    if pk.how == "build" {
+      // free when both scalars come from outside the chain: the hoisting
+      // passes build it once, outside the loop
+      if defat.contains(pk.l0) || defat.contains(pk.l1) {
+        cost[r] = (cost.get(r) ?? 0) + 1
+      }
+      continue
+    }
+    save[r] = (save.get(r) ?? 0) + 1
+    for s in pk.same {
+      if s >= 0 && pk.op != "fmul" {
+        cost[r] = (cost.get(r) ?? 0) + 1
+      }
+    }
+    let pos = if pk.how == "load" { imin(pk.m0.ord, pk.m1.ord) } else { imax(pk.m0.ord, pk.m1.ord) }
+    for l in [pk.l0, pk.l1] {
+      if lane_of.contains(l) {
+        bad[r] = "lane v${l} in two packs"
+        bad[slp_root(up, lane_of.get(l) ?? pj)] = "lane v${l} in two packs"
+      }
+      lane_of[l] = pj
+      var read = false
+      for u in vuses.get(l) ?? [] {
+        let o = g.slp_ord(at, u)
+        if o >= 0 && gone.contains(o) {
+          continue
+        }
+        // a read outside the chain, or before the pack: not v1's
+        if o < 0 || o <= pos {
+          bad[r] = "lane v${l} read at ${o} (pack at ${pos}, ${pk.how})"
+        }
+        read = true
+      }
+      if read {
+        cost[r] = (cost.get(r) ?? 0) + 1
+      }
+    }
+  }
+  var made: Map[Int, Bool] = {}
+  var why: List[Str] = []
+  for k in 0..np {
+    if slp_root(up, k) != k {
+      continue
+    }
+    let sv = save.get(k) ?? 0
+    let co = cost.get(k) ?? 0
+    if let Some(b) = bad.get(k) {
+      why.push("group ${k}: ${b}")
+    } else if sv <= co {
+      why.push("group ${k}: save ${sv} cost ${co}")
+    } else {
+      made[k] = true
+      why.push("group ${k}: made, save ${sv} cost ${co}")
+    }
+  }
+  if made.is_empty() {
+    return why.join(", ")
+  }
+  // only the groups made from here on
+  var keep: List[Bool] = []
+  for k in 0..np {
+    keep.push(made.contains(slp_root(up, k)))
+  }
+  var stores: List[(Int, SPos, SPos)] = []
+  for e in stores0 {
+    if keep[e.0] {
+      stores.push(e)
+    }
+  }
+  var redus: List[(Int, SPos)] = []
+  for e in redus0 {
+    if keep[e.0] {
+      redus.push(e)
+    }
+  }
+  gone = {}
+  var extract: Map[Int, Bool] = {}
+  for (pj, pk) in packs.indexed() {
+    if !keep[pj] {
+      packs[pj].how = "skip"
+    } else if pk.how != "build" {
+      gone[pk.m0.ord] = true
+      gone[pk.m1.ord] = true
+    }
+  }
+  for (_, s0, s1) in stores {
+    gone[s0.ord] = true
+    gone[s1.ord] = true
+  }
+  for (_, r) in redus {
+    gone[r.ord] = true
+  }
+  for pk in packs {
+    if pk.how is "skip" | "build" {
+      continue
+    }
+    for l in [pk.l0, pk.l1] {
+      for u in vuses.get(l) ?? [] {
+        let o = g.slp_ord(at, u)
+        if !(o >= 0 && gone.contains(o)) {
+          extract[l] = true
+        }
+      }
+    }
+  }
+  let save_all = why.join(", ")
+  // a wide vreg per pack (a build gets one per use, below)
+  for pj in 0..packs.len() {
+    if !(packs[pj].how is "build" | "skip") {
+      packs[pj].wide = g.new_wide()
+    }
+  }
+  // the instructions to put at each chain order, instead of what is there
+  var put: Map[Int, List[Inst]] = {}
+  for pk in packs {
+    if pk.how is "build" | "skip" {
+      continue
+    }
+    var out: List[Inst] = []
+    if pk.how == "load" {
+      out.push(Inst{kind: K_PLAIN, text: "ldr $qd0, [$u0, #${pk.off}]", defs: [pk.wide], us: [pk.base]})
+    } else {
+      var wargs: List[Int] = []
+      var by_elem = -1
+      for (k, a) in pk.args.indexed() {
+        if a >= 0 {
+          if packs[a].how == "build" {
+            let bw = g.new_wide()
+            // lane 0 of each: one instruction, which hoist_invariants
+            // moves out of a loop when both scalars are invariant
+            out.push(Inst{kind: K_PLAIN, text: "zip1 $vd0.2d, $vu0.2d, $vu1.2d", defs: [bw], us: [packs[a].l0, packs[a].l1]})
+            wargs.push(bw)
+          } else {
+            wargs.push(packs[a].wide)
+          }
+        } else if pk.op == "fmul" && by_elem < 0 {
+          // the scalar both lanes multiply by: by element
+          by_elem = pk.same[k]
+          wargs.push(-1)
+        } else {
+          let dw = g.new_wide()
+          out.push(Inst{kind: K_PLAIN, text: "dup $vd0.2d, $vu0.d[0]", defs: [dw], us: [pk.same[k]]})
+          wargs.push(dw)
+        }
+      }
+      if pk.op == "fsqrt" {
+        out.push(Inst{kind: K_PLAIN, text: "fsqrt $vd0.2d, $vu0.2d", defs: [pk.wide], us: [wargs[0]]})
+      } else if by_elem >= 0 {
+        let w = if wargs[0] >= 0 { wargs[0] } else { wargs[1] }
+        out.push(Inst{kind: K_PLAIN, text: "fmul $vd0.2d, $vu0.2d, $vu1.d[0]", defs: [pk.wide], us: [w, by_elem]})
+      } else {
+        out.push(Inst{kind: K_PLAIN, text: "${pk.op} $vd0.2d, $vu0.2d, $vu1.2d", defs: [pk.wide], us: [wargs[0], wargs[1]]})
+      }
+    }
+    if extract.contains(pk.l0) {
+      out.push(Inst{kind: K_PLAIN, text: "dup $d0, $vu0.d[0]", defs: [pk.l0], us: [pk.wide]})
+    }
+    if extract.contains(pk.l1) {
+      out.push(Inst{kind: K_PLAIN, text: "dup $d0, $vu0.d[1]", defs: [pk.l1], us: [pk.wide]})
+    }
+    let pos = if pk.how == "load" { imin(pk.m0.ord, pk.m1.ord) } else { imax(pk.m0.ord, pk.m1.ord) }
+    var l = put.get(pos) ?? []
+    for x in out {
+      l.push(x)
+    }
+    put[pos] = l
+  }
+  for (pj, s0, s1) in stores {
+    let x = g.blocks[s0.b].insts[s0.i]
+    let k = (g.slp_store(x) ?? (0, 0, 0)).0
+    let pos = imax(s0.ord, s1.ord)
+    var l = put.get(pos) ?? []
+    l.push(Inst{kind: K_PLAIN, text: "str $qu0, [$u1, #${k}]", us: [packs[pj].wide, x.us[1]]})
+    put[pos] = l
+  }
+  for (pj, r) in redus {
+    let x = g.blocks[r.b].insts[r.i]
+    var l = put.get(r.ord) ?? []
+    l.push(Inst{kind: K_PLAIN, text: "faddp $d0, $vu0.2d", defs: [x.defs[0]], us: [packs[pj].wide]})
+    put[r.ord] = l
+  }
+  // the chain's blocks again: each position keeps its instruction unless
+  // a pack took it, then what the packs put there
+  for b in ch {
+    let old = g.take_insts(b)
+    var ins: List[Inst] = []
+    for (i, x) in old.indexed() {
+      let o = g.slp_ord(at, SPos{b: b, i: i, ord: -1})
+      if !gone.contains(o) {
+        ins.push(x)
+      }
+      for y in put.get(o) ?? [] {
+        ins.push(y)
+      }
+    }
+    g.put_insts(b, ins)
+  }
+  save_all
+}
+
+/// The group of pack k: the root of its union chain in up.
+fn slp_root(up: List[Int], k0: Int) -> Int {
+  var k = k0
+  while up[k] != k {
+    k = up[k]
+  }
+  k
+}
+
+/// The chain order of instruction u (its block and index), or -1.
+fn (g: G) slp_ord(at: List[SPos], u: SPos) -> Int {
+  for p in at {
+    if p.b == u.b && p.i == u.i {
+      return p.ord
+    }
+  }
+  -1
+}

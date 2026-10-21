@@ -35,6 +35,7 @@ pub fn passes() -> List[Str] {
     "jump_tables",
     "live_dce",
     "select_compares",
+    "slp_f64",
     "hoist_consts",
     "hoist_invariants",
     "copy_prop",

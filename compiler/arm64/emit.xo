@@ -8,6 +8,8 @@ struct MLoc {
   reg: Int
   base: Str = ""
   off: Int = 0
+  /// a wide value's location (decision 0323): moved 128 bits at a time
+  wide: Bool = false
 }
 
 const M_LOC = 0
@@ -28,6 +30,12 @@ struct MSrc {
 struct Move {
   dst: MLoc
   src: MSrc
+}
+
+/// The 128 bit name of floating point register r: q<n> for a load or
+/// store, v<n> for an arrangement (decision 0323).
+fn vreg_name(r: Int, q: Bool) -> Str {
+  "${if q { "q" } else { "v" }}${r - FP_BASE}"
 }
 
 fn reg_name(r: Int, w: Bool) -> Str {
@@ -120,6 +128,14 @@ fn (g: G) label(b: Int) -> Str {
 
 /// The location of v, or none (a register never allocated).
 fn (g: G) vloc(v: Int) -> (MLoc, Bool) {
+  let (m, ok) = g.vloc0(v)
+  if g.wide.contains(v) {
+    return (MLoc{reg: m.reg, base: m.base, off: m.off, wide: true}, ok)
+  }
+  (m, ok)
+}
+
+fn (g: G) vloc0(v: Int) -> (MLoc, Bool) {
   let l = g.loc[v]
   if l.reg >= 0 {
     return (MLoc{reg: l.reg}, true)
@@ -1108,7 +1124,11 @@ fn (g: G) use_reg(var b: List[Str], v: Int, k: Int) -> Str {
     return reg_name(l.reg, false)
   }
   let r = if g.fp[v] { fp_scratch(k) } else { gp_scratch(k) }
-  b.push("\tldr ${reg_name(r, false)}, [${l.base}, #${l.off}]\n")
+  if g.wide.contains(v) {
+    b.push(q_mem("ldr", r, l))
+  } else {
+    b.push("\tldr ${reg_name(r, false)}, [${l.base}, #${l.off}]\n")
+  }
   reg_name(r, false)
 }
 
@@ -1198,7 +1218,8 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
       continue
     }
     var j = i + 1
-    if j < tn && tb[j] == 'w' {
+    // $w, and decision 0323's $q and $v, name the same operand
+    if j < tn && (tb[j] == 'w' || tb[j] == 'q' || tb[j] == 'v') {
       j += 1
     }
     if j + 1 < tn && tb[j] == 'u' {
@@ -1220,7 +1241,11 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
               r = g.scratch_or_fail(false, ngp, use_reg)
               ngp += 1
             }
-            b.push("\tldr ${reg_name(r, false)}, [${l.base}, #${l.off}]\n")
+            if g.wide.contains(v) {
+              b.push(q_mem("ldr", r, l))
+            } else {
+              b.push("\tldr ${reg_name(r, false)}, [${l.base}, #${l.off}]\n")
+            }
             use_reg[k] = r
           }
         }
@@ -1284,7 +1309,11 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
     taken.push(r)
     def_reg.push(r)
     if ok {
-      stores.push("\tstr ${reg_name(r, false)}, [${l.base}, #${l.off}]\n")
+      if g.wide.contains(d) {
+        stores.push(q_mem("str", r, l))
+      } else {
+        stores.push("\tstr ${reg_name(r, false)}, [${l.base}, #${l.off}]\n")
+      }
     }
   }
   if t == "mov $d0, $u0" && def_reg[0] == use_reg[0] && stores.is_empty() {
@@ -1316,15 +1345,23 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
     }
     var j = i + 1
     var w = false
+    // $q and $v: a V register's 128 bit names (decision 0323's wide
+    // values: `ldr $qd0, [...]`, `fadd $vd0.2d, $vu0.2d, $vu1.2d`)
+    // 0: a scalar name, 1: q<n>, 2: v<n>
+    var vk = 0
     if tb[j] == 'w' {
       w = true
       j += 1
+    } else if tb[j] == 'q' || tb[j] == 'v' {
+      vk = if tb[j] == 'q' { 1 } else { 2 }
+      j += 1
     }
     let (k, end) = operand_num(tb, j + 1)
-    if tb[j] == 'u' {
-      out.write(reg_name(use_reg[k], w))
+    let r = if tb[j] == 'u' { use_reg[k] } else { def_reg[k] }
+    if vk != 0 {
+      out.write(vreg_name(r, vk == 1))
     } else {
-      out.write(reg_name(def_reg[k], w))
+      out.write(reg_name(r, w))
     }
     i = end
     from = i
@@ -1507,8 +1544,34 @@ fn add_sp(var b: List[Str], reg: Str, off: Int) {
   }
 }
 
+/// reg = base + off as text (add_sp's two adds past 4095, a sub for a
+/// negative offset), for q_mem's far slots.
+fn add_text(reg: Str, base: Str, off: Int) -> Str {
+  let op = if off < 0 { "sub" } else { "add" }
+  let n = if off < 0 { 0 - off } else { off }
+  if n <= 4095 {
+    return "\t${op} ${reg}, ${base}, #${n}\n"
+  }
+  let lo = n & 4095
+  "\t${op} ${reg}, ${base}, #${n >> 12}, lsl #12\n${if lo != 0 { "\t${op} ${reg}, ${reg}, #${lo}\n" } else { "" }}"
+}
+
 fn mem_ref(l: MLoc) -> Str {
   "[${l.base}, #${l.off}]"
+}
+
+/// A 128 bit load or store (op "ldr" or "str") of V register r at l
+/// (decision 0323): the scaled form when the offset is a multiple of 16,
+/// the unscaled one within its range, else through x17.
+fn q_mem(op: Str, r: Int, l: MLoc) -> Str {
+  let q = vreg_name(r, true)
+  if l.off % 16 == 0 && l.off >= 0 && l.off < 65536 {
+    return "\t${op} ${q}, [${l.base}, #${l.off}]\n"
+  }
+  if l.off >= -256 && l.off < 256 {
+    return "\t${if op == "ldr" { "ldur" } else { "stur" }} ${q}, [${l.base}, #${l.off}]\n"
+  }
+  "${add_text("x17", l.base, l.off)}\t${op} ${q}, [x17]\n"
 }
 
 /// Puts a source that is not a location in register r (move's put).
@@ -1550,6 +1613,20 @@ fn (g: G) move(var b: List[Str], dst: MLoc, src: MSrc) {
     return
   }
   let sl = src.l
+  if dst.wide || sl.wide {
+    // decision 0323: a wide value, 128 bits (q30 between two slots)
+    if dst.reg >= 0 && sl.reg >= 0 {
+      b.push("\tmov ${vreg_name(dst.reg, false)}.16b, ${vreg_name(sl.reg, false)}.16b\n")
+    } else if dst.reg >= 0 {
+      b.push(q_mem("ldr", dst.reg, sl))
+    } else if sl.reg >= 0 {
+      b.push(q_mem("str", sl.reg, dst))
+    } else {
+      b.push(q_mem("ldr", FP_BASE + 30, sl))
+      b.push(q_mem("str", FP_BASE + 30, dst))
+    }
+    return
+  }
   if dst.reg >= 0 && sl.reg >= 0 {
     let dfp = dst.reg >= FP_BASE
     let sfp = sl.reg >= FP_BASE

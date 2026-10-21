@@ -48,6 +48,11 @@ fn (var g: G) function(fi: Int) {
   if g.on("select_compares") {
     g.select_compares()
   }
+  // decision 0323: before the hoisting passes (a pack of loop invariant
+  // scalars is built once, outside the loop) and cluster_mem
+  if g.on("slp_f64") {
+    g.slp_f64()
+  }
   if g.on("hoist_consts") {
     g.hoist_consts()
   }
@@ -157,6 +162,13 @@ fn (g: G) on(name: Str) -> Bool {
 fn (var g: G) new_vreg(fp: Bool) -> Int {
   g.fp.push(fp)
   g.fp.len() - 1
+}
+
+/// A wide vreg: two doubles in a V register (decision 0323).
+fn (var g: G) new_wide() -> Int {
+  let v = g.new_vreg(true)
+  g.wide[v] = true
+  v
 }
 
 fn (var g: G) new_vregs(lay: List[Bool]) -> List[Int] {

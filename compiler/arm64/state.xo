@@ -267,6 +267,10 @@ struct G {
   dumps: List[(Str, Str)] = []
   /// class of each vreg (index 0 is xzr)
   fp: List[Bool] = []
+  /// the fp vregs that hold two doubles in a V register (decision 0323,
+  /// slp_f64): only caller saved V registers, never live across a call,
+  /// 16 byte spill slots, 128 bit moves
+  wide: Map[Int, Bool] = {}
   blocks: List[MBlock] = []
   hot: List[Int] = []
   cold: List[Int] = []
@@ -441,6 +445,7 @@ fn (var g: G) begin_func(fi: Int) {
   let nv = g.f.values.len()
   let nb = g.f.blocks.len()
   g.fp = [false]
+  g.wide = {}
   g.blocks = []
   g.hot = []
   g.cold = []

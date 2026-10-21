@@ -179,6 +179,16 @@ pub fn encode_op(o: Op) -> Int {
       return simd_word(o.m, o.ops)
     }
   }
+  // decision 0323's two lane double operations (fadd vD.2d, ...), and
+  // faddp dD, vN.2d and ins vD.d[1], vN.d[0]
+  if o.m is "fadd" | "fsub" | "fmul" | "fdiv" | "fsqrt" && n >= 2 {
+    if let Operand.VReg(..) = o.ops[0] {
+      return simd_word(o.m, o.ops)
+    }
+  }
+  if o.m is "faddp" | "ins" | "zip1" {
+    return simd_word(o.m, o.ops)
+  }
   if o.m is "ldr" | "str" | "ldrb" | "strb" | "ldrsw" | "ldrh" | "strh" | "ldur" | "stur" && n == 2 {
     if let Operand.Reg(n: t, kind: kt) = o.ops[0] {
       if let Operand.MemOp(m: mo) = o.ops[1] {
@@ -1200,6 +1210,26 @@ fn simd_word(m: Str, o: List[Operand]) -> Int {
   if n < 2 {
     return -1
   }
+  if m == "faddp" {
+    // faddp dD, vN.2d (decision 0323)
+    let (dd, kd) = rk_of(o[0])
+    let (x, ax) = v_of(o[1])
+    if n != 2 || kd != RD || x < 0 || ax != "2d" {
+      return -1
+    }
+    return 0x7e70d800 | (x * 32) | dd
+  }
+  if m == "dup" {
+    // dup dD, vN.d[i] (a lane as a double, decision 0323)
+    let (dd, kd) = rk_of(o[0])
+    if kd == RD {
+      let (x, ax) = v_of(o[1])
+      if n != 2 || x < 0 || (ax != "d[0]" && ax != "d[1]") {
+        return -1
+      }
+      return (if ax == "d[1]" { 0x5e180400 } else { 0x5e080400 }) | (x * 32) | dd
+    }
+  }
   if m == "umov" {
     // umov xD, vN.d[0] or vN.d[1]
     let (x, kx) = rk_of(o[0])
@@ -1236,6 +1266,35 @@ fn simd_word(m: Str, o: List[Operand]) -> Int {
   let (y, ay) = if n == 3 { v_of(o[2]) } else { (-1, "") }
   let i2 = if n == 3 { imm_of(o[2]) ?? -1 } else { -1 }
   match m {
+    "fadd" | "fsub" | "fmul" | "fdiv" => {
+      // decision 0323: vD.2d, vN.2d, vM.2d; fmul by element vM.d[i]
+      if d < 0 || x < 0 || y < 0 || ad != "2d" || ax != "2d" {
+        return -1
+      }
+      if m == "fmul" && (ay == "d[0]" || ay == "d[1]") {
+        let h = if ay == "d[1]" { 0x800 } else { 0 }
+        return 0x4fc09000 | ((y & 15) * 0x10000) | ((y >> 4) * 0x100000) | h | (x * 32) | d
+      }
+      if ay != "2d" {
+        return -1
+      }
+      let base = match m {
+        "fadd" => 0x4e60d400
+        "fsub" => 0x4ee0d400
+        "fmul" => 0x6e60dc00
+        _ => 0x6e60fc00
+      }
+      base | (y * 0x10000) | (x * 32) | d
+    }
+    "fsqrt" => if n != 2 || d < 0 || x < 0 || ad != "2d" || ax != "2d" { -1 } else { 0x6ee1f800 | (x * 32) | d }
+    "zip1" => if n != 3 || d < 0 || x < 0 || y < 0 || ad != "2d" || ax != "2d" || ay != "2d" { -1 } else { 0x4ec03800 | (y * 0x10000) | (x * 32) | d }
+    "ins" => {
+      // ins vD.d[1], vN.d[0] (decision 0323's builds)
+      if n != 2 || d < 0 || x < 0 || ad != "d[1]" || ax != "d[0]" {
+        return -1
+      }
+      0x6e180400 | (x * 32) | d
+    }
     "add" | "uzp1" | "sha256su1" => {
       if d < 0 || x < 0 || y < 0 || ad != "4s" || ax != "4s" || ay != "4s" {
         return -1
@@ -1278,6 +1337,10 @@ fn simd_word(m: Str, o: List[Operand]) -> Int {
     }
     "eor" => if d < 0 || x < 0 || y < 0 || ad != "16b" || ax != "16b" || ay != "16b" { -1 } else { 0x6e201c00 | (y * 0x10000) | (x * 32) | d }
     "dup" => {
+      if ad == "2d" {
+        // dup vD.2d, vN.d[i] (decision 0323)
+        return if n != 2 || d < 0 || x < 0 || (ax != "d[0]" && ax != "d[1]") { -1 } else { (if ax == "d[1]" { 0x4e180400 } else { 0x4e080400 }) | (x * 32) | d }
+      }
       let (r, kr) = rk_of(o[1])
       if n != 2 || d < 0 || ad != "16b" || kr != RW { -1 } else { 0x4e010c00 | (r * 32) | d }
     }

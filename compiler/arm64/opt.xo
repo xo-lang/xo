@@ -1735,7 +1735,7 @@ fn inst_lines(inst: Inst) -> Int {
 /// The mnemonics hoist_invariants moves: arithmetic of registers that
 /// reads and writes no memory and no flags and cannot fault.
 fn pure_mnemonic(m: Str) -> Bool {
-  m is "add" | "sub" | "mul" | "madd" | "msub" | "lsl" | "lsr" | "asr" | "and" | "orr" | "eor" | "sxtw" | "neg" | "mov"
+  m is "add" | "sub" | "mul" | "madd" | "msub" | "lsl" | "lsr" | "asr" | "and" | "orr" | "eor" | "sxtw" | "neg" | "mov" | "zip1" | "dup"
 }
 
 /// Moves loop invariant arithmetic out of loops into the preheader, as
