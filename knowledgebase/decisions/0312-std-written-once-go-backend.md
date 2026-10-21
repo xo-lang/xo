@@ -129,6 +129,14 @@ not affected.
       calls them through interfaces. std/rt/uuid.go is now just those.
     - The uuid corpus (google/uuid) passes on go, arm64, and LLVM, and
       uuid_basic passes with Go parity.
+  - **Moves after the pilot** (Go backend timing: Go's package, then the
+    module's own rt code, then std/native/M.xo compiled by gen; medians
+    of 5, the same loop and output; MODULE_BENCH is
+    ~/xo-lead/notes/lib1/mvbench.sh):
+    - base32 (2026-10-21): 1 KB encode and decode, 20,000 times: Go's
+      package 97 ms, rt wrapper 86 ms, native Xo through gen 538 ms
+      (native arm64 312 ms). The rt copy was Go's package itself; the
+      cost is gen's code for byte loops (Xo Publish's profile items).
 
 - One implementation per pure module. A fix lands once and reaches every
   backend.
