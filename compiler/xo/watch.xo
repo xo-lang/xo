@@ -34,6 +34,14 @@ fn watched_path(rel: Str) -> Bool {
   base.ends_with(".xo") || base.ends_with(".c") || base.ends_with(".h") || base is "xo.mod" | "xo.lock" | "xo.work" | "xo.work.lock"
 }
 
+/// Moves the built binary next over bin; the reason it could not, or "".
+fn install(fs: Fs, next: Str, bin: Str) -> Str uses fs.write {
+  match fs.rename(next, bin) {
+    Ok(_) => ""
+    Err(e) => "xo run --watch: install ${bin}: ${e}\n"
+  }
+}
+
 /// The watched files under root and their size and modified time.
 fn snapshot(os: Os, root: Str) -> Map[Str, Str] {
   var out: Map[Str, Str] = {}
@@ -237,7 +245,16 @@ fn watch_run(os: Os, o: Opts, args: List[Str]) -> Int {
           let _ = stop_prog(os, r, o.grace)
           running = None
         }
-        os.fs.rename(next, bin).ignore_err("start_prog reports a missing binary")
+        let why = install(os.fs, next, bin)
+        if !why.is_empty() {
+          // the old binary would start again and the cycle say "rebuilt":
+          // report it, and the next change rebuilds and installs again
+          c.build = "failed"
+          c.output = c.output + why
+          report(os, o, dir, c)
+          changed = []
+          continue
+        }
         bin_hash = sha_of(os, bin)
         running = start_prog(os, o, bin)
         if let Some(r) = running {

@@ -1,0 +1,10 @@
+// Tests of xo run --watch's install step.
+
+test "a built binary that cannot be installed is reported, not run as the old one" {
+  os.fs.create_dir_all("w")?
+  os.fs.write("w/next", b"new")?
+  expect(install(os.fs, "w/next", "w/prog")) == ""
+  expect(os.fs.read("w/prog")?) == b"new"
+  // no next (a failed move): the reason, which the cycle reports as failed
+  expect(install(os.fs, "w/next", "w/prog").contains("install w/prog")) == true
+}
