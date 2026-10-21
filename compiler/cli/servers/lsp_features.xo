@@ -221,7 +221,8 @@ fn (var s: Session) prepare_rename(os: Os, params: J) -> J ! (Int, Str) uses (st
     Err(e) => return Err((-32803, e))
   }
   for site in at.site {
-    if !s.renamable(s.resolve(at.f, site)) {
+    let tg = s.resolve(at.f, site)
+    if !s.renamable(tg) {
       return Err((-32803, "cannot rename this name"))
     }
     let sp = site.id.span
@@ -422,7 +423,8 @@ fn (var s: Session) hover(os: Os, params: J) -> J ! Str uses (stdio, fs, env) {
   for site in at.site {
     let sp = site.id.span
     rng.push(range_json(at.t.offset_position(sp.start.offset), at.t.offset_position(sp.end.offset)))
-    let (sig, doc) = s.describe(s.resolve(at.f, site))
+    let tg = s.resolve(at.f, site)
+    let (sig, doc) = s.describe(tg)
     if !sig.is_empty() {
       parts.push("```xo\n${sig}\n```")
     }
