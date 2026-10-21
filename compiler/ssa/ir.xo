@@ -373,6 +373,10 @@ pub struct Module {
   /// The build guards the runtime's records (XO_HEAP_GUARD=1, Builder
   /// heap_guard): in the fn and part cache keys.
   pub heap_guard: Bool = false
+  /// XO_OP_VERIFY=1 (decision 0274 step 3): the arm64 emitter parses each
+  /// instruction line into an Op and fails the build when printing it does
+  /// not give the line back
+  pub op_verify: Bool = false
   /// Map and Set on the log and fork representation (decision 0291,
   /// check.Checker map_log): in the fn and part cache keys.
   pub map_log: Bool = false

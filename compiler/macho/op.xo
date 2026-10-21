@@ -1290,3 +1290,21 @@ fn simd_word(m: Str, o: List[Operand]) -> Int {
     _ => -1
   }
 }
+
+/// For one assembly line l: "" when it is not an instruction (a
+/// directive, label, comment, blank) or its Op prints as written, else
+/// "line => printed" (decision 0274 step 3's XO_OP_VERIFY and the corpus
+/// test).
+pub fn op_round_trip(l: Str) -> Str {
+  if !l.starts_with("\t") || l.starts_with("\t.") {
+    return ""
+  }
+  let body = l[1..l.len()]
+  let bs = body.bytes()
+  var k = 0
+  while k < bs.len() && bs[k] != ' ' {
+    k += 1
+  }
+  let printed = print_op(parse_op(body[0..k], split_operands(bs[k..])))
+  if printed == body { "" } else { "${body} => ${printed}" }
+}

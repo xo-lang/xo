@@ -390,7 +390,7 @@ fn (var a: Asm) parse_line(l0: Bytes) {
 
 /// The operands of an instruction: split at commas outside brackets,
 /// each trimmed.
-fn split_operands(b: Bytes) -> List[Bytes] {
+pub fn split_operands(b: Bytes) -> List[Bytes] {
   var out: List[Bytes] = []
   var depth = 0
   var start = 0

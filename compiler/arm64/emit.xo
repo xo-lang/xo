@@ -352,6 +352,15 @@ fn (var g: G) emit() {
   let ls0 = b.join("").split("\n")
   let ls = if g.x86 { ls0 } else { borrow_flag_peep_l(copy_runs_l(ls0)) }
   let nrefs = label_counts(ls, ext)
+  if g.m.op_verify && !g.x86 {
+    // decision 0274 step 3: the lines reload_reuse_l reads, as Ops (a
+    // function from the backend cache is not emitted again: verify with
+    // XO_BACKEND_CACHE=off)
+    let bad = op_mismatch(ls)
+    if !bad.is_empty() {
+      g.fail("XO_OP_VERIFY: ${g.f.name}: ${bad}")
+    }
+  }
   g.text.push(g.local_empty_l(g.far_tests_l(g.far_slots_l(pair_mem_l(reload_reuse_l(ls, nrefs), nrefs)))))
 }
 

@@ -864,3 +864,33 @@ test "a function without .size gets its extent: to the next named symbol or the 
   expect(sizes.get("g")) == Some(8)
   expect(sizes.get("k")) == Some(12)
 }
+
+test "the emitter's assembly prints back from its Ops (XO_OP_SCAN, decision 0274 step 3)" {
+  // XO_OP_SCAN names .s files (newline separated) written by `xo build
+  // --asm`; every instruction line must print back as written. Skipped
+  // without it (run with `xo test --real` to read them).
+  let list = os.env.get("XO_OP_SCAN") ?? ""
+  if list.is_empty() {
+    return
+  }
+  var seen: Map[Str, Int] = {}
+  for p in list.split("\n") {
+    if p.is_empty() {
+      continue
+    }
+    let text = os.fs.read(p).or_fault("read ${p}").to_str() ?? ""
+    for l in text.split("\n") {
+      let bad = op_round_trip(l)
+      if !bad.is_empty() {
+        seen[bad] = (seen.get(bad) ?? 0) + 1
+      }
+    }
+  }
+  var shown: List[Str] = []
+  for (k, v) in seen {
+    if shown.len() < 50 {
+      shown.push("${v}x ${k}")
+    }
+  }
+  expect(shown) == []
+}

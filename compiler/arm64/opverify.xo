@@ -1,0 +1,23 @@
+// Decision 0274 step 3, its first stage: the arm64 emitter's lines beside
+// their structured form. Under XO_OP_VERIFY=1 (ssa Module.op_verify) each
+// instruction line a function's line passes read is parsed into a
+// compiler/macho Op and printed back; a line that does not come back as
+// written fails the build with both texts, so the Op form is known to say
+// everything the text says before a pass reads Ops instead of text.
+use github.com/xo-lang/xo/compiler/macho
+
+/// The first instruction line of lines whose Op does not print as the
+/// line, as "line => printed", or "" when every one does. A line of
+/// several instructions (resplit's input) is checked one by one;
+/// directives, labels, comments, and blank lines are not instructions.
+fn op_mismatch(lines: List[Str]) -> Str {
+  for l0 in lines {
+    for l in l0.split("\n") {
+      let bad = macho.op_round_trip(l)
+      if !bad.is_empty() {
+        return bad
+      }
+    }
+  }
+  ""
+}

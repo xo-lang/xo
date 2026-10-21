@@ -1191,6 +1191,7 @@ fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Boo
   b.imm_rc = o.backend != "llvm"
   b.m.nolibc_start = !wasm && nolibc(os, o, c, tgoos)
   b.m.nolibc = !wasm && nolibc(os, o, c, tgoos)
+  b.m.op_verify = (os.env.get("XO_OP_VERIFY") ?? "") == "1"
   var t = lap(os, o.phases, "ssa", t0)
   if (os.env.get("XO_FE_STATS") ?? "") == "1" {
     for (k, v) in b.fe_stats {
