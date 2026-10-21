@@ -1587,6 +1587,91 @@ fn same_root(same: Map[Int, Int], v: Int) -> Int {
   r
 }
 
+/// Copies of a register that never changes: a parallel move's b <- a
+/// where b and a each have one definition and a's is in the entry block
+/// or earlier in the move's block (so no later definition of a is read
+/// through b) goes, and b's reads read a (2026-10-20: portable conv
+/// copied the list's element pointer, both spilled, into a second slot
+/// before its inner loop with a pushq and a popq).
+fn (var g: G) copy_prop() {
+  let blocks = g.all_blocks()
+  if blocks.is_empty() {
+    return
+  }
+  let entry = blocks[0]
+  var ndef: Map[Int, Int] = {}
+  // each register's defining block and index there
+  var at: Map[Int, (Int, Int)] = {}
+  for b in blocks {
+    for (k, inst) in g.blocks[b].insts.indexed() {
+      for d in inst.defs {
+        ndef[d] = (ndef.get(d) ?? 0) + 1
+        at[d] = (b, k)
+      }
+    }
+  }
+  var same: Map[Int, Int] = {}
+  for b in blocks {
+    var ins = g.take_insts(b)
+    var changed = false
+    for k in 0..ins.len() {
+      let inst = ins[k]
+      if inst.kind != K_PMOVE || inst.nocoal {
+        continue
+      }
+      var defs: List[Int] = []
+      var srcs: List[Src] = []
+      for (j, d) in inst.defs.indexed() {
+        let s = inst.srcs[j]
+        var drop = false
+        if s.kind == S_REG && s.v != 0 && s.v != d && (ndef.get(d) ?? 0) == 1 && (ndef.get(s.v) ?? 0) == 1 && g.fp[d] == g.fp[s.v] {
+          let (ab, ak) = at.get(s.v) ?? (-1, -1)
+          drop = ab == entry || (ab == b && ak < k)
+        }
+        if drop {
+          same[d] = s.v
+          changed = true
+        } else {
+          defs.push(d)
+          srcs.push(s)
+        }
+      }
+      if changed && defs.len() != inst.defs.len() {
+        var p = inst
+        p.defs = defs
+        p.srcs = srcs
+        p.us = src_regs(srcs)
+        ins[k] = p
+      }
+    }
+    g.put_insts(b, ins)
+  }
+  if same.is_empty() {
+    return
+  }
+  for b in 0..g.blocks.len() {
+    var ins = g.take_insts(b)
+    for k in 0..ins.len() {
+      var inst = ins[k]
+      for i in 0..inst.us.len() {
+        inst.us[i] = same_root(same, inst.us[i])
+      }
+      for i in 0..inst.srcs.len() {
+        if inst.srcs[i].kind == S_REG {
+          inst.srcs[i].v = same_root(same, inst.srcs[i].v)
+        }
+      }
+      for i in 0..inst.fargs.len() {
+        if inst.fargs[i].kind == S_REG {
+          inst.fargs[i].v = same_root(same, inst.fargs[i].v)
+        }
+      }
+      ins[k] = inst
+    }
+    g.put_insts(b, ins)
+  }
+}
+
 /// The most constants hoist_consts moves out of a loop that calls on its
 /// hot path (each lives in a callee saved register or a stack slot).
 const HOIST_CALL_CONSTS = 4

@@ -54,6 +54,9 @@ fn (var g: G) function(fi: Int) {
   if g.on("hoist_invariants") {
     g.hoist_invariants()
   }
+  if g.on("copy_prop") {
+    g.copy_prop()
+  }
   if g.on("reuse_loads") {
     g.reuse_loads()
   }
