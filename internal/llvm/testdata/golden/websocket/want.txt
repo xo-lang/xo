@@ -1,0 +1,147 @@
+exit 0
+--- stdout
+call: 101
+echo: text hi
+echo: binary 00ff10
+echo: 70000 bytes
+late write: websocket: close sent
+subprotocol: chat; text proto=chat
+proto: websocket: close 1006 (abnormal closure): unexpected EOF
+bye: text hello
+bye: websocket: close 1001 (going away): bye
+bye again: websocket: close 1001 (going away): bye
+small: text short
+small: websocket: close 1009 (message too big)
+plain: websocket: bad handshake (true)
+http url: websocket: malformed ws or wss URL
+== not an upgrade
+HTTP/1.1 400 Bad Request
+Content-Type: text/plain; charset=utf-8
+Sec-Websocket-Version: 13
+X-Content-Type-Options: nosniff
+Date: <date>
+Content-Length: 12
+Connection: close
+frames: 42616420526571756573740a
+== no version
+HTTP/1.1 400 Bad Request
+Content-Type: text/plain; charset=utf-8
+Sec-Websocket-Version: 13
+X-Content-Type-Options: nosniff
+Date: <date>
+Content-Length: 12
+Connection: close
+frames: 42616420526571756573740a
+== bad key
+HTTP/1.1 400 Bad Request
+Content-Type: text/plain; charset=utf-8
+Sec-Websocket-Version: 13
+X-Content-Type-Options: nosniff
+Date: <date>
+Content-Length: 12
+Connection: close
+frames: 42616420526571756573740a
+== other origin
+HTTP/1.1 403 Forbidden
+Content-Type: text/plain; charset=utf-8
+Sec-Websocket-Version: 13
+X-Content-Type-Options: nosniff
+Date: <date>
+Content-Length: 10
+Connection: close
+frames: 466f7262696464656e0a
+== post
+HTTP/1.1 405 Method Not Allowed
+Content-Type: text/plain; charset=utf-8
+Sec-Websocket-Version: 13
+X-Content-Type-Options: nosniff
+Date: <date>
+Content-Length: 19
+Connection: close
+frames: 4d6574686f64204e6f7420416c6c6f7765640a
+== any origin
+HTTP/1.1 101 Switching Protocols
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+frames: 8800
+== same origin
+HTTP/1.1 101 Switching Protocols
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+frames: 81008800
+== unmasked
+HTTP/1.1 101 Switching Protocols
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+frames: 880a03ea626164204d41534b
+== reserved bits
+HTTP/1.1 101 Switching Protocols
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+frames: 880a03ea5253563120736574
+== bad opcode
+HTTP/1.1 101 Switching Protocols
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+frames: 880e03ea626164206f70636f64652033
+== long ping
+HTTP/1.1 101 Switching Protocols
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+frames: 881703ea6c656e203e2031323520666f7220636f6e74726f6c
+== fragmented ping
+HTTP/1.1 101 Switching Protocols
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+frames: 881803ea46494e206e6f7420736574206f6e20636f6e74726f6c
+== continuation first
+HTTP/1.1 101 Switching Protocols
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+frames: 881803ea636f6e74696e756174696f6e2061667465722046494e
+== fragments
+HTTP/1.1 101 Switching Protocols
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+frames: 81066869686921218800
+== ping between
+HTTP/1.1 101 Switching Protocols
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+frames: 8a017081036869218800
+== bad close code
+HTTP/1.1 101 Switching Protocols
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+frames: 881403ea62616420636c6f736520636f646520393039
+== bad utf8
+HTTP/1.1 101 Switching Protocols
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+frames: 881d03ef696e76616c6964205554462d3820696e2074657874206672616d65
+== close no code
+HTTP/1.1 101 Switching Protocols
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+frames: 8800
+== close with text
+HTTP/1.1 101 Switching Protocols
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+frames: 880203e8
+done
+--- stderr

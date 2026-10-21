@@ -1181,6 +1181,8 @@ pub fn serve_content(req: Request, name: Str, modtime: Time?, content: Bytes, he
     // 416, Content-Type from headers, name's extension, or the content
 fn (w: BodyWriter) write(data: Bytes) -> () ! IoErr
 fn (w: BodyWriter) flush() -> () ! IoErr
+    // a response with status 101 made by std/websocket's upgrade hands its
+    // connection over: the server writes nothing itself (decision 0313)
 fn (b: BodyReader) read(max: Int = 32768) -> Bytes? ! IoErr   // a handle_stream body's next bytes, None at its end
 fn (b: BodyReader) read_all() -> Bytes ! IoErr                // the rest of it
 fn (r: Response) with_header(name: Str, value: Str) -> Response
@@ -4505,3 +4507,65 @@ fn read_or(fs: Fs, path: Str, default: Bytes) -> Bytes ! FsErr uses fs.read
 ```
 
 <!-- END prelude index -->
+
+## 35. std/websocket
+
+WebSockets (RFC 6455, decision 0313) with gorilla/websocket's behavior
+(v1.5), both sides, on every backend.
+
+```
+struct Message { kind: Kind, data: Bytes }   // a text message's data is valid UTF-8
+enum Kind { Text, Binary }
+enum WsErr {
+  Closed(code: Int, reason: Str)    // the peer's close frame (1005: it had no code), answered
+  Protocol(msg: Str)                // a frame broke the protocol: close 1002 sent (1007 for text not UTF-8); or `close sent`
+  TooBig(limit: Int)                // a message over max_message: close 1009 sent
+  Net(err: NetErr)
+  Handshake(status: Int, msg: Str)  // the server refused the upgrade (status 0: no answer, or not a ws:// URL)
+}
+fn (e: WsErr) display() -> Str      // gorilla's texts: `websocket: close 1001 (going away): bye`
+struct WsConn {}
+fn (c: WsConn) read() -> Message ! WsErr       // a whole message; pings answered, pongs skipped
+fn (c: WsConn) write(m: Message) -> () ! WsErr // one frame
+fn (c: WsConn) write_text(s: Str) -> () ! WsErr
+fn (c: WsConn) ping(data: Bytes = b"") -> () ! WsErr
+fn (c: WsConn) close(code: Int = 1000, reason: Str = "") -> () ! WsErr   // the close frame, then the connection
+fn (c: WsConn) subprotocol() -> Str
+pub fn upgrade[fx: Effects](req: http.Request, f: fn(WsConn) -> () uses fx, protocols: List[Str] = [], origins: List[Str] = [], max_message: Int = 1048576) -> http.Response uses fx
+pub fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str] = [], max_message: Int = 1048576) -> WsConn ! WsErr uses net.dial
+```
+
+- `upgrade` is called in a handler and its response returned. It checks
+  the request as gorilla's Upgrader: `Connection: upgrade` and `Upgrade:
+  websocket` tokens (else 400), GET (405), `Sec-WebSocket-Version: 13`
+  (400), the `Origin` (403), and a key of 16 bytes in base64 (400); a
+  refusal is the status text with `Sec-Websocket-Version: 13`. The
+  `Origin` passes when absent, when its host name is the request's
+  (`req.url.host`; ports are not compared, a Request keeps none), or when
+  `origins` lists its host (with or without the port) or `"*"`. The
+  subprotocol is the first of `protocols` that the client offers.
+- An accepted upgrade is a 101 response that hands the connection over
+  (std.md 4.3): the server writes gorilla's 101 (with
+  `Sec-WebSocket-Accept` and the subprotocol), runs `f` with the
+  connection, and closes it when `f` returns. HTTP/1.1 only.
+  `Router.call` returns the 101 without running `f`.
+- Frames as gorilla reads them: a client's frames must be masked and a
+  server's not; reserved bits, unknown opcodes, a control frame over 125
+  bytes or fragmented, and continuations out of order are `Protocol` with
+  gorilla's texts joined (`RSV1 set, bad MASK`) after a close 1002; a
+  close frame's code must be valid and its reason UTF-8. A text message
+  that is not UTF-8 is close 1007 (gorilla does not check). A read error
+  sticks. The end of the stream is `Closed(1006, "unexpected EOF")`.
+- A write is one final frame (masked with a fresh key from a client)
+  under a lock, so one task may read while another writes; writes after
+  this side's close fail with `Protocol("close sent")`. `close` sends the
+  close frame unless one was sent (also when answering the peer's), then
+  closes the connection; the peer's answering close is not awaited.
+- `dial` takes `ws://host[:port]/path?query` (`wss://` and a timeout are
+  decision 0313's stage 2), sends gorilla's handshake with a random key,
+  the protocols, and `headers`, and fails with `Handshake(status,
+  "websocket: bad handshake")` unless the answer is a 101 with the
+  upgrade tokens and the right `Sec-WebSocket-Accept`.
+- Not provided: permessage-deflate, a message written in pieces, ping
+  timers (use `ping` and a clock), WebSockets over HTTP/2.
+

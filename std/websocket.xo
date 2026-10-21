@@ -1,0 +1,68 @@
+// std/websocket (spec/std.md 35, decision 0313). Declaration file;
+// encoding rules are listed at the top of std/prelude.xo. WebSockets
+// (RFC 6455) with gorilla/websocket's behavior: a handler upgrades its
+// request, a client dials, and either side reads and writes messages.
+use std/http
+
+/// A whole message: its kind and data (a text message's data is valid
+/// UTF-8).
+struct Message {
+  kind: Kind
+  data: Bytes
+}
+
+enum Kind {
+  Text
+  Binary
+}
+
+/// Why a connection stopped or an operation failed. Displays as
+/// gorilla's errors: `websocket: close 1001 (going away): bye`,
+/// `websocket: unknown opcode 3`, `websocket: read limit exceeded`,
+/// `websocket: bad handshake`.
+enum WsErr {
+  /// The peer's close frame (1000 normal, 1001 going away, ...; 1005 when
+  /// it had no code); answered with a close.
+  Closed(code: Int, reason: Str)
+  /// A frame broke the protocol: close 1002 was sent (1007 for text that
+  /// is not UTF-8), or this side already sent its close (`close sent`).
+  Protocol(msg: Str)
+  /// A message longer than max_message: close 1009 was sent.
+  TooBig(limit: Int)
+  Net(err: NetErr)
+  /// The server refused the client's upgrade (status 0: the response
+  /// could not be read, or the URL is not ws://).
+  Handshake(status: Int, msg: Str)
+}
+
+fn (e: WsErr) display() -> Str
+
+/// A WebSocket connection, either side. One task may read while another
+/// writes; writes are whole messages, one at a time.
+struct WsConn {}
+
+/// The next whole message. Pings are answered with pongs and pongs
+/// skipped; a close frame is answered and is `Closed`.
+fn (c: WsConn) read() -> Message ! WsErr
+fn (c: WsConn) write(m: Message) -> () ! WsErr
+fn (c: WsConn) write_text(s: Str) -> () ! WsErr
+fn (c: WsConn) ping(data: Bytes = b"") -> () ! WsErr
+/// Sends a close frame with code and reason (none for 1005) and closes
+/// the connection; later writes fail.
+fn (c: WsConn) close(code: Int = 1000, reason: Str = "") -> () ! WsErr
+/// The subprotocol the server chose ("" for none).
+fn (c: WsConn) subprotocol() -> Str
+
+/// The response that upgrades req to a WebSocket and runs f with it (the
+/// connection closes when f returns), as gorilla's Upgrader: GET,
+/// `Connection: upgrade`, `Upgrade: websocket`, `Sec-WebSocket-Version:
+/// 13`, a key of 16 bytes, and an `Origin` whose host is the request's
+/// (or one of origins; `["*"]` allows any); else 400, 405, or 403 with
+/// the status text. The first of protocols the client offers is the
+/// subprotocol.
+fn upgrade[fx: Effects](req: http.Request, f: fn(WsConn) -> () uses fx, protocols: List[Str] = [], origins: List[Str] = [], max_message: Int = 1048576) -> http.Response uses fx
+
+/// A client connection to url (`ws://host[:port]/path?query`), as
+/// gorilla's Dialer: the handshake with headers and the protocols
+/// offered, the 101 and its Sec-WebSocket-Accept checked.
+fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str] = [], max_message: Int = 1048576) -> WsConn ! WsErr uses net.dial

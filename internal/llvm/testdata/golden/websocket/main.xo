@@ -1,0 +1,195 @@
+// std/websocket (decision 0313): a server and a client in one program on
+// 127.0.0.1:0, as gorilla/websocket behaves: echo of text and binary
+// messages, ping answered, close codes both ways, the subprotocol, a
+// message over max_message (1009), handshakes refused (400, 403, 405,
+// a non-upgrade answer), and raw frames that break the protocol, whose
+// close frames are printed. The Go backend and the native one must agree.
+use std/http
+use std/websocket
+
+fn echo(c: websocket.WsConn) {
+  while true {
+    match c.read() {
+      Ok(m) => {
+        if c.write(m) is Err(_) {
+          return
+        }
+      }
+      Err(_) => return
+    }
+  }
+}
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle("GET /echo", fn(req) { websocket.upgrade(req, echo) })
+  r.handle("GET /proto", fn(req) {
+    websocket.upgrade(req, fn(c) { c.write_text("proto=${c.subprotocol()}").ignore_err("test") }, protocols: ["chat", "superchat"])
+  })
+  r.handle("GET /bye", fn(req) {
+    websocket.upgrade(req, fn(c) {
+      c.write_text("hello").ignore_err("test")
+      c.close(code: 1001, reason: "bye").ignore_err("test")
+    })
+  })
+  r.handle("GET /small", fn(req) { websocket.upgrade(req, echo, max_message: 10) })
+  r.handle("/any", fn(req) { websocket.upgrade(req, echo, origins: ["*"]) })
+  r.handle("GET /plain", fn(_req) { http.text(200, "not a websocket") })
+  r
+}
+
+fn show(m: websocket.Message) -> Str {
+  match m.kind {
+    websocket.Kind.Text => "text ${m.data.to_str() ?? "?"}"
+    websocket.Kind.Binary => "binary ${m.data.to_hex()}"
+  }
+}
+
+fn client(os: Os, addr: Str) -> () ! websocket.WsErr {
+  let c = websocket.dial(os.net, "ws://${addr}/echo")?
+  c.write_text("hi")?
+  os.stdio.println("echo: ${show(c.read()?)}")
+  c.write(websocket.Message{kind: websocket.Kind.Binary, data: Bytes.from_hex("00ff10").or_fault("constant")})?
+  os.stdio.println("echo: ${show(c.read()?)}")
+  c.ping("p".bytes())?
+  let big = "x".repeat(70000)
+  c.write_text(big)?
+  let m = c.read()?
+  os.stdio.println("echo: ${m.data.len()} bytes")
+  c.close(reason: "done")?
+  match c.write_text("late") {
+    Ok(_) => os.stdio.println("late write: ok")
+    Err(e) => os.stdio.println("late write: ${e}")
+  }
+  let p = websocket.dial(os.net, "ws://${addr}/proto", protocols: ["superchat", "chat"])?
+  os.stdio.println("subprotocol: ${p.subprotocol()}; ${show(p.read()?)}")
+  match p.read() {
+    Ok(m) => os.stdio.println("proto: ${show(m)}")
+    Err(e) => os.stdio.println("proto: ${e}")
+  }
+  let b = websocket.dial(os.net, "ws://${addr}/bye")?
+  os.stdio.println("bye: ${show(b.read()?)}")
+  match b.read() {
+    Ok(m) => os.stdio.println("bye: ${show(m)}")
+    Err(e) => os.stdio.println("bye: ${e}")
+  }
+  match b.read() {
+    Ok(m) => os.stdio.println("bye again: ${show(m)}")
+    Err(e) => os.stdio.println("bye again: ${e}")
+  }
+  let s = websocket.dial(os.net, "ws://${addr}/small")?
+  s.write_text("short")?
+  os.stdio.println("small: ${show(s.read()?)}")
+  s.write_text("much too long for it")?
+  match s.read() {
+    Ok(m) => os.stdio.println("small: ${show(m)}")
+    Err(e) => os.stdio.println("small: ${e}")
+  }
+  match websocket.dial(os.net, "ws://${addr}/plain") {
+    Ok(_) => os.stdio.println("plain: upgraded?")
+    Err(e) => os.stdio.println("plain: ${e} (${e is websocket.WsErr.Handshake(200, _)})")
+  }
+  match websocket.dial(os.net, "http://${addr}/echo") {
+    Ok(_) => os.stdio.println("http url: upgraded?")
+    Err(e) => os.stdio.println("http url: ${e}")
+  }
+}
+
+/// The answer without the Date value.
+fn clean(s: Str) -> Str {
+  var out: List[Str] = []
+  for line in s.split("\r\n") {
+    out.push(if line.starts_with("Date: ") { "Date: <date>" } else { line })
+  }
+  out.join("\n")
+}
+
+/// Sends raw on a new connection and prints the answer: the HTTP head as
+/// text, any frames after it in hex.
+fn exchange(os: Os, addr: Str, label: Str, raw: Bytes) {
+  match os.net.dial(addr) {
+    Ok(c) => {
+      c.write(raw).ignore_err("test")
+      var got = BytesBuilder.new()
+      while {
+        match c.read(65536) {
+          Ok(Some(b)) => got.write(b)
+          Ok(None) => break
+          Err(_) => break
+        }
+      }
+      c.close()
+      let all = got.freeze()
+      os.stdio.println("== ${label}")
+      match all.find("\r\n\r\n".bytes()) {
+        Some(i) => {
+          let head = all[0..i].to_str() ?? "?"
+          var lines: List[Str] = []
+          for l in clean(head).split("\n") {
+            // the accept key is fixed by the request's key
+            lines.push(l)
+          }
+          os.stdio.println(lines.join("\n"))
+          let rest = all[i + 4..]
+          if !rest.is_empty() {
+            os.stdio.println("frames: ${rest.to_hex()}")
+          }
+        }
+        None => os.stdio.println("no head: ${all.to_hex()}")
+      }
+    }
+    Err(_) => os.stdio.println("${label}: dial failed")
+  }
+}
+
+/// A handshake with a fixed key, then frames.
+fn upgrade_raw(path: Str, extra: Str) -> Bytes {
+  "GET ${path} HTTP/1.1\r\nHost: h\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n${extra}\r\n".bytes()
+}
+
+fn frames(hex: Str) -> Bytes { Bytes.from_hex(hex).or_fault("constant") }
+
+fn main(os: Os) {
+  let r = routes()
+  let in_process = r.call(http.new_request("GET", "/echo", {"Connection": "Upgrade", "Upgrade": "websocket", "Sec-WebSocket-Version": "13", "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ=="}))
+  os.stdio.println("call: ${in_process.status}")
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      let srv = http.server(l, r)
+      let addr = srv.addr()
+      scope s {
+        s.spawn_background(fn() {
+          match srv.serve() {
+            Ok(_) => ()
+            Err(e) => os.stdio.println("serve failed: ${e}")
+          }
+        })
+        match client(os, addr) {
+          Ok(_) => ()
+          Err(e) => os.stdio.println("client failed: ${e}")
+        }
+        exchange(os, addr, "not an upgrade", "GET /echo HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n".bytes())
+        exchange(os, addr, "no version", "GET /echo HTTP/1.1\r\nHost: h\r\nUpgrade: websocket\r\nConnection: Upgrade, close\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n".bytes())
+        exchange(os, addr, "bad key", "GET /echo HTTP/1.1\r\nHost: h\r\nUpgrade: websocket\r\nConnection: Upgrade, close\r\nSec-WebSocket-Key: c2hvcnQ=\r\nSec-WebSocket-Version: 13\r\n\r\n".bytes())
+        exchange(os, addr, "other origin", "GET /echo HTTP/1.1\r\nHost: h\r\nUpgrade: websocket\r\nConnection: Upgrade, close\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nOrigin: http://evil.example\r\n\r\n".bytes())
+        exchange(os, addr, "post", "POST /any HTTP/1.1\r\nHost: h\r\nUpgrade: websocket\r\nConnection: Upgrade, close\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nContent-Length: 0\r\n\r\n".bytes())
+        exchange(os, addr, "any origin", upgrade_raw("/any", "Origin: http://evil.example\r\n") + frames("8880aabbccdd"))
+        exchange(os, addr, "same origin", upgrade_raw("/echo", "Origin: http://h\r\n") + frames("8180aabbccdd8880aabbccdd"))
+        exchange(os, addr, "unmasked", upgrade_raw("/echo", "") + frames("81026869"))
+        exchange(os, addr, "reserved bits", upgrade_raw("/echo", "") + frames("c180aabbccdd"))
+        exchange(os, addr, "bad opcode", upgrade_raw("/echo", "") + frames("8380aabbccdd"))
+        exchange(os, addr, "long ping", upgrade_raw("/echo", "") + frames("89fe007e00000000") + Bytes.zeroed(126))
+        exchange(os, addr, "fragmented ping", upgrade_raw("/echo", "") + frames("0980aabbccdd"))
+        exchange(os, addr, "continuation first", upgrade_raw("/echo", "") + frames("8080aabbccdd"))
+        exchange(os, addr, "fragments", upgrade_raw("/echo", "") + frames("018200000000686900820000000068698082000000002121") + frames("8880aabbccdd"))
+        exchange(os, addr, "ping between", upgrade_raw("/echo", "") + frames("018200000000686989810000000070808100000000218880aabbccdd"))
+        exchange(os, addr, "bad close code", upgrade_raw("/echo", "") + frames("888200000000038d"))
+        exchange(os, addr, "bad utf8", upgrade_raw("/echo", "") + frames("818200000000c328"))
+        exchange(os, addr, "close no code", upgrade_raw("/echo", "") + frames("8880aabbccdd"))
+        exchange(os, addr, "close with text", upgrade_raw("/echo", "") + frames("888500000000"+"03e8") + "bye".bytes())
+      }
+      os.stdio.println("done")
+    }
+    Err(e) => os.stdio.println("listen failed: ${e}")
+  }
+}

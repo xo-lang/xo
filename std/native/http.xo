@@ -1839,6 +1839,22 @@ fn serve_stream(q: h2srv.H2Req, r: Router) {
 /// names no HTTP/2 code, decision 0244).
 fn respond(hc: rthttp.HConn, req: Request, r: Router) -> (Bool, Response?) {
   let resp = rt.cast[http.Response, Response](call_raw(r, req))
+  if resp.status == 101 {
+    // a connection hand-off (decision 0313, std/websocket's upgrade: its
+    // body is hserve.HANDOFF and the stream registry's entry of a
+    // fn(rthttp.HConn) -> ()): that function owns the connection, which
+    // closes when it returns
+    let t = resp.body.to_str() ?? ""
+    if t.starts_with(hserve.HANDOFF) {
+      let fs = hserve.stream_get(Int.parse(t[hserve.HANDOFF.len()..]) ?? 0, true)
+      if !fs.is_empty() {
+        if let Some(f) = rt.any_get[fn(rthttp.HConn) -> ()](fs[0]) {
+          f(hc)
+        }
+      }
+      return (false, None)
+    }
+  }
   if !req.values.is_empty() {
     // what the handler of a streamed body left: discarded or closing
     // (net/http's writeHeader)

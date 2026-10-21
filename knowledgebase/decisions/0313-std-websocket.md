@@ -73,6 +73,14 @@ bench/results, and interop with a Go gorilla program.
 - A response with status 101 and a streamed body is a connection
   hand-off on both backends (std.md 4.3): its function owns the raw
   connection. Only std/websocket makes one.
+- The native hand-off: native std modules cannot name std/http's
+  internals, so `upgrade` returns a 101 whose body is
+  `hserve.HANDOFF` and the stream registry's id of a
+  `fn(rthttp.HConn) -> ()`; std/native/http.xo respond takes it and runs
+  it with the connection (http1.take_rest gives the input already read).
+  The Go backend's 101 stream gets net/http's ResponseWriter to hijack.
+- Stage 1 landed 2026-10-21 (golden websocket: native identical to the
+  Go backend).
 - Not now: permessage-deflate (waits for streaming flate), a message
   written in pieces (`NextWriter`), WebSockets over HTTP/2 (RFC 8441).
 

@@ -152,6 +152,16 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 				wh["Content-Length"] = []string{strconv.Itoa(n)}
 			}
 		}
+		if resp.F_status == 101 && resp.XStream != nil {
+			// a connection hand-off (decision 0313): the stream's function
+			// hijacks the connection and writes everything itself
+			resp.XStream(reqTask, Http_BodyWriter{w: &bodyWriter{rw: w}})
+			if a != nil {
+				reqTask.arena = nil
+				a.release()
+			}
+			return
+		}
 		w.WriteHeader(int(resp.F_status))
 		if resp.XStream != nil {
 			fl, _ := w.(http.Flusher)

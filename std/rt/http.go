@@ -703,6 +703,9 @@ type bodyWriter struct {
 	mu sync.Mutex
 	w  io.Writer
 	fl interface{ Flush() } // net/http.Flusher
+	// rw: the connection's writer, set for a 101 response's hand-off
+	// (decision 0313: std/websocket hijacks it)
+	rw any // net/http.ResponseWriter
 }
 
 // M_write is `w.write(data)`.

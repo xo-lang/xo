@@ -1719,6 +1719,16 @@ pub fn (var r: Reader) read() -> Req? {
 /// The connection.
 pub fn (r: Reader) conn() -> rthttp.HConn { r.h }
 
+/// The input read past the last request (a connection handed over,
+/// decision 0313), taken: the reader has none left.
+pub fn take_rest(h: rthttp.HConn) -> Bytes {
+  let x = x1_of(h)
+  let n = xl(x, X_N) - xl(x, X_OFF)
+  let out = input(x, n).bytes()
+  xs(x, X_OFF, xl(x, X_N))
+  out
+}
+
 /// The servers' fault probe, a test hook (internal/llvm golden
 /// http_conn_fault): with XO_HTTP_FAULT_PROBE=1, a request for
 /// /xo-fault-probe/<at> faults where this is called (at: "conn", in the

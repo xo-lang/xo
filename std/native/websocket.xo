@@ -1,0 +1,647 @@
+// std/websocket on the native backends (decision 0313): gorilla/websocket's
+// behavior (v1.5: conn.go advanceFrame, NextReader, WriteControl,
+// handleProtocolError; server.go Upgrader.Upgrade; client.go Dialer), the
+// same steps as std/rt/websocket.go. The server side takes the HTTP/1.1
+// connection from std/http's server (a 101 response whose stream is a
+// fn(rthttp.HConn) -> (): http.xo respond); the client side is a Conn.
+use std/base64
+use std/crypto
+use std/http
+use std/task
+use std/websocket
+use native/rt
+use native/rthttp
+use native/llrt/raw
+use native/llrt/hconn
+use native/llrt/hserve
+use native/llrt/http1
+use native/llrt/rand as llrand
+
+const GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+const OP_CONT = 0
+const OP_TEXT = 1
+const OP_BINARY = 2
+const OP_CLOSE = 8
+const OP_PING = 9
+const OP_PONG = 10
+
+/// What a read from the wire got: data, the end of the stream, or an
+/// error's text.
+struct Chunk {
+  data: Bytes
+  end: Bool
+  err: Str
+}
+
+/// The connection under a WsConn, as functions: the server's (the HTTP
+/// connection handed over) or a client's Conn (laundered in dial, whose
+/// net.dial counts there).
+struct Wire {
+  recv: fn(Int) -> Chunk
+  send: fn(Bytes) -> Str
+  close: fn(Int) -> ()
+}
+
+/// The reading side: input not yet used (buf from pos), and the error
+/// that stopped reading (it sticks).
+struct ReadState {
+  buf: Bytes
+  pos: Int
+  err: List[websocket.WsErr]
+}
+
+struct WriteState {
+  close_sent: Bool
+}
+
+struct WsConn {
+  wire: Wire
+  server: Bool
+  max: Int
+  proto: Str
+  rd: Mutex[ReadState]
+  wr: Mutex[WriteState]
+}
+
+fn protocol_err(msg: Str) -> websocket.WsErr { websocket.WsErr.Protocol(msg: msg) }
+
+fn net_err(msg: Str) -> websocket.WsErr { websocket.WsErr.Net(err: NetErr.Io(msg: msg)) }
+
+/// gorilla's CloseError texts.
+fn close_name(code: Int) -> Str {
+  match code {
+    1000 => " (normal)"
+    1001 => " (going away)"
+    1002 => " (protocol error)"
+    1003 => " (unsupported data)"
+    1005 => " (no status)"
+    1006 => " (abnormal closure)"
+    1007 => " (invalid payload data)"
+    1008 => " (policy violation)"
+    1009 => " (message too big)"
+    1010 => " (mandatory extension missing)"
+    1011 => " (internal server error)"
+    1015 => " (TLS handshake error)"
+    _ => ""
+  }
+}
+
+fn wserr_display(e: websocket.WsErr) -> Str {
+  match e {
+    websocket.WsErr.Closed(code, reason) => {
+      let s = "websocket: close ${code}${close_name(code)}"
+      if reason.is_empty() { s } else { "${s}: ${reason}" }
+    }
+    websocket.WsErr.Protocol(msg) => "websocket: ${msg}"
+    websocket.WsErr.TooBig(_) => "websocket: read limit exceeded"
+    websocket.WsErr.Net(err) => "${err}"
+    websocket.WsErr.Handshake(_, msg) => msg
+  }
+}
+
+/// gorilla's isValidReceivedCloseCode.
+fn valid_close_code(code: Int) -> Bool {
+  match code {
+    1000 | 1001 | 1002 | 1003 | 1007 | 1008 | 1009 | 1010 | 1011 | 1012 | 1013 => true
+    _ => code >= 3000 && code <= 4999
+  }
+}
+
+/// gorilla's FormatCloseMessage.
+fn close_message(code: Int, text: Str) -> Bytes {
+  if code == 1005 {
+    return b""
+  }
+  var b = BytesBuilder.with_capacity(2 + text.len())
+  b.write_byte(UInt8((code >> 8) & 255))
+  b.write_byte(UInt8(code & 255))
+  b.write_str(text)
+  b.freeze()
+}
+
+/// Writes one final frame (masked from a client).
+fn (c: WsConn) write_frame(op: Int, data: Bytes) -> () ! websocket.WsErr {
+  c.wr.with(fn(var w: WriteState) -> () ! websocket.WsErr {
+    if w.close_sent {
+      return Err(protocol_err("close sent"))
+    }
+    let n = data.len()
+    var b = BytesBuilder.with_capacity(14 + n)
+    b.write_byte(UInt8(128 | op))
+    let mb = if c.server { 0 } else { 128 }
+    if n <= 125 {
+      b.write_byte(UInt8(mb | n))
+    } else if n <= 65535 {
+      b.write_byte(UInt8(mb | 126))
+      b.write_byte(UInt8((n >> 8) & 255))
+      b.write_byte(UInt8(n & 255))
+    } else {
+      b.write_byte(UInt8(mb | 127))
+      var k = 56
+      while k >= 0 {
+        b.write_byte(UInt8((n >> k) & 255))
+        k -= 8
+      }
+    }
+    if c.server {
+      b.write(data)
+    } else {
+      let key = llrand.next_bytes(4)
+      b.write(key)
+      for i in 0..n {
+        b.write_byte(data[i] ^ key[i & 3])
+      }
+    }
+    if op == OP_CLOSE {
+      w.close_sent = true
+    }
+    let err = c.wire.send(b.freeze())
+    if !err.is_empty() {
+      return Err(net_err(err))
+    }
+  })
+}
+
+/// gorilla's WriteControl: at most 125 bytes.
+fn (c: WsConn) write_control(op: Int, data: Bytes) -> () ! websocket.WsErr {
+  if data.len() > 125 {
+    return Err(protocol_err("invalid control frame"))
+  }
+  c.write_frame(op, data)
+}
+
+/// gorilla's handleProtocolError: a close with code (1002) and msg, then
+/// the error.
+fn (c: WsConn) protocol_error(code: Int, msg: Str) -> websocket.WsErr {
+  var data = close_message(code, msg)
+  if data.len() > 125 {
+    data = data[0..125]
+  }
+  c.write_control(OP_CLOSE, data).ignore_err("the error is the protocol's")
+  protocol_err(msg)
+}
+
+/// The next n bytes of the input; the end of the stream is gorilla's
+/// close 1006.
+fn (c: WsConn) read_n(var st: ReadState, n: Int) -> Bytes ! websocket.WsErr {
+  while st.buf.len() - st.pos < n {
+    let ch = c.wire.recv(65536)
+    if !ch.err.is_empty() {
+      return Err(net_err(ch.err))
+    }
+    if ch.end {
+      return Err(websocket.WsErr.Closed(code: 1006, reason: "unexpected EOF"))
+    }
+    st.buf = if st.pos == st.buf.len() { ch.data } else { st.buf[st.pos..] + ch.data }
+    st.pos = 0
+  }
+  let out = st.buf[st.pos..st.pos + n]
+  st.pos += n
+  out
+}
+
+/// Frames up to a whole message (NextReader and its messageReader), the
+/// control frames between them handled.
+fn (c: WsConn) read_message(var st: ReadState) -> websocket.Message ! websocket.WsErr {
+  var kind = 0
+  var data = BytesBuilder.new()
+  var read_final = true
+  var length = 0
+  while true {
+    let p = c.read_n(st, 2)?
+    let b0 = Int(p[0])
+    let b1 = Int(p[1])
+    let op = b0 & 15
+    let fin = (b0 & 128) != 0
+    let mask = (b1 & 128) != 0
+    var n = b1 & 127
+    var errs: List[Str] = []
+    if (b0 & 64) != 0 {
+      errs.push("RSV1 set")
+    }
+    if (b0 & 32) != 0 {
+      errs.push("RSV2 set")
+    }
+    if (b0 & 16) != 0 {
+      errs.push("RSV3 set")
+    }
+    if op == OP_CLOSE || op == OP_PING || op == OP_PONG {
+      if n > 125 {
+        errs.push("len > 125 for control")
+      }
+      if !fin {
+        errs.push("FIN not set on control")
+      }
+    } else if op == OP_TEXT || op == OP_BINARY {
+      if !read_final {
+        errs.push("data before FIN")
+      }
+      read_final = fin
+    } else if op == OP_CONT {
+      if read_final {
+        errs.push("continuation after FIN")
+      }
+      read_final = fin
+    } else {
+      errs.push("bad opcode ${op}")
+    }
+    if mask != c.server {
+      errs.push("bad MASK")
+    }
+    if !errs.is_empty() {
+      return Err(c.protocol_error(1002, errs.join(", ")))
+    }
+    if n == 126 {
+      let q = c.read_n(st, 2)?
+      n = (Int(q[0]) << 8) | Int(q[1])
+    } else if n == 127 {
+      let q = c.read_n(st, 8)?
+      n = 0
+      for i in 0..8 {
+        n = (n << 8) | Int(q[i])
+      }
+      if n < 0 {
+        return Err(websocket.WsErr.TooBig(limit: c.max))
+      }
+    }
+    var key = b""
+    if mask {
+      key = c.read_n(st, 4)?
+    }
+    if op == OP_TEXT || op == OP_BINARY || op == OP_CONT {
+      length += n
+      if length < 0 || (c.max > 0 && length > c.max) {
+        c.write_control(OP_CLOSE, close_message(1009, "")).ignore_err("the error is the limit's")
+        return Err(websocket.WsErr.TooBig(limit: c.max))
+      }
+    }
+    var payload = c.read_n(st, n)?
+    if mask {
+      var u = BytesBuilder.with_capacity(n)
+      for i in 0..n {
+        u.write_byte(payload[i] ^ key[i & 3])
+      }
+      payload = u.freeze()
+    }
+    if op == OP_PONG {
+      continue
+    }
+    if op == OP_PING {
+      match c.write_control(OP_PONG, payload) {
+        Ok(_) => ()
+        Err(websocket.WsErr.Protocol("close sent")) => ()
+        Err(e) => return Err(e)
+      }
+      continue
+    }
+    if op == OP_CLOSE {
+      var code = 1005
+      var text = ""
+      if payload.len() >= 2 {
+        code = (Int(payload[0]) << 8) | Int(payload[1])
+        if !valid_close_code(code) {
+          return Err(c.protocol_error(1002, "bad close code ${code}"))
+        }
+        match payload[2..].to_str() {
+          Some(t) => text = t
+          None => return Err(c.protocol_error(1002, "invalid utf8 payload in close frame"))
+        }
+      }
+      c.write_control(OP_CLOSE, close_message(code, "")).ignore_err("answering a close")
+      return Err(websocket.WsErr.Closed(code: code, reason: text))
+    }
+    if op == OP_TEXT || op == OP_BINARY {
+      kind = op
+    }
+    data.write(payload)
+    if read_final {
+      let all = data.freeze()
+      if kind == OP_TEXT && all.to_str() is None {
+        return Err(c.protocol_error(1007, "invalid UTF-8 in text frame"))
+      }
+      return websocket.Message{kind: if kind == OP_TEXT { websocket.Kind.Text } else { websocket.Kind.Binary }, data: all}
+    }
+  }
+  Err(protocol_err("unreachable"))
+}
+
+fn (c: WsConn) read() -> websocket.Message ! websocket.WsErr {
+  if task.is_canceled() {
+    return Err(net_err("canceled"))
+  }
+  c.rd.with(fn(var st: ReadState) -> websocket.Message ! websocket.WsErr {
+    if !st.err.is_empty() {
+      return Err(st.err[0])
+    }
+    match c.read_message(st) {
+      Ok(m) => m
+      Err(e) => {
+        st.err = [e]
+        Err(e)
+      }
+    }
+  })
+}
+
+fn (c: WsConn) write(m: websocket.Message) -> () ! websocket.WsErr {
+  c.write_frame(if m.kind is websocket.Kind.Text { OP_TEXT } else { OP_BINARY }, m.data)
+}
+
+fn (c: WsConn) write_text(s: Str) -> () ! websocket.WsErr { c.write_frame(OP_TEXT, s.bytes()) }
+
+fn (c: WsConn) ping(data: Bytes = b"") -> () ! websocket.WsErr { c.write_control(OP_PING, data) }
+
+fn (c: WsConn) close(code: Int = 1000, reason: Str = "") -> () ! websocket.WsErr {
+  var res: List[websocket.WsErr] = []
+  if reason.len() > 123 {
+    res.push(protocol_err("invalid control frame"))
+  } else if !c.wr.with_read(fn(w) { w.close_sent }) {
+    match c.write_control(OP_CLOSE, close_message(code, reason)) {
+      Ok(_) => ()
+      Err(e) => res.push(e)
+    }
+  }
+  c.wire.close(0)
+  if !res.is_empty() {
+    return Err(res[0])
+  }
+}
+
+fn (c: WsConn) subprotocol() -> Str { c.proto }
+
+/// Whether a field of vs lists token (gorilla's tokenListContainsValue).
+fn has_token(vs: List[Str], token: Str) -> Bool {
+  for v in vs {
+    for t in v.split(",") {
+      if t.trim().to_lower() == token {
+        return true
+      }
+    }
+  }
+  false
+}
+
+fn accept_key(key: Str) -> Str { base64.encode(crypto.digest(crypto.Hash.Sha1, (key + GUID).bytes())) }
+
+/// gorilla's isValidChallengeKey.
+fn valid_key(s: Str) -> Bool {
+  if s.is_empty() {
+    return false
+  }
+  match base64.decode(s) {
+    Ok(b) => b.len() == 16
+    Err(_) => false
+  }
+}
+
+/// gorilla's returnError: the status text.
+fn refuse(status: Int) -> http.Response {
+  let text = match status {
+    400 => "Bad Request"
+    403 => "Forbidden"
+    _ => "Method Not Allowed"
+  }
+  http.Response{status: status, headers: {"Sec-Websocket-Version": "13", "Content-Type": "text/plain; charset=utf-8", "X-Content-Type-Options": "nosniff"}, body: "${text}\n".bytes()}
+}
+
+/// The host of a URL (`scheme://host[:port]/...`): (host with its port,
+/// host name), as Go's URL.Host and Hostname(); None when it has no
+/// scheme.
+fn url_host(u: Str) -> (Str, Str)? {
+  let i = u.find("://")?
+  let rest = u[i + 3..]
+  let rb = rest.bytes()
+  var end = rest.len()
+  var j = 0
+  while j < rb.len() {
+    let c = rb[j]
+    if c == 47 || c == 63 || c == 35 {
+      end = j
+      break
+    }
+    j += 1
+  }
+  var host = rest[0..end]
+  if let Some(at) = host.rfind("@") {
+    host = host[at + 1..]
+  }
+  var name = host
+  if host.starts_with("[") {
+    if let Some(e) = host.find("]") {
+      name = host[1..e]
+    }
+  } else if let Some(c) = host.rfind(":") {
+    name = host[0..c]
+  }
+  Some((host, name))
+}
+
+/// gorilla's checkSameOrigin (the host names compared: a Request keeps
+/// no port of its Host field), or an allowed host.
+fn origin_ok(req: http.Request, allowed: List[Str]) -> Bool {
+  let origin = req.header_values("Origin")
+  if origin.is_empty() {
+    return true
+  }
+  match url_host(origin[0]) {
+    Some((host, name)) => {
+      for a in allowed {
+        if a == "*" || a.to_lower() == host.to_lower() || a.to_lower() == name.to_lower() {
+          return true
+        }
+      }
+      name.to_lower() == req.url.host.to_lower()
+    }
+    None => false
+  }
+}
+
+/// gorilla's Subprotocols: the offered tokens.
+fn offered(vs: List[Str]) -> List[Str] {
+  var out: List[Str] = []
+  for v in vs {
+    for t in v.split(",") {
+      let x = t.trim()
+      if !x.is_empty() {
+        out.push(x)
+      }
+    }
+  }
+  out
+}
+
+fn upgrade[fx: Effects](req: http.Request, f: fn(WsConn) -> () uses fx, protocols: List[Str] = [], origins: List[Str] = [], max_message: Int = 1048576) -> http.Response uses fx {
+  if !has_token(req.header_values("Connection"), "upgrade") || !has_token(req.header_values("Upgrade"), "websocket") {
+    return refuse(400)
+  }
+  if req.method != "GET" {
+    return refuse(405)
+  }
+  if !has_token(req.header_values("Sec-Websocket-Version"), "13") {
+    return refuse(400)
+  }
+  if !origin_ok(req, origins) {
+    return refuse(403)
+  }
+  let ks = req.header_values("Sec-Websocket-Key")
+  let key = if ks.is_empty() { "" } else { ks[0] }
+  if !valid_key(key) {
+    return refuse(400)
+  }
+  var proto = ""
+  let client = offered(req.header_values("Sec-Websocket-Protocol"))
+  for sp in protocols {
+    for cp in client {
+      if cp == sp && proto.is_empty() {
+        proto = cp
+      }
+    }
+  }
+  let g = rt.launder1(f)
+  let hand = fn(h: rthttp.HConn) {
+    var head = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept_key(key)}\r\n"
+    if !proto.is_empty() {
+      head = head + "Sec-WebSocket-Protocol: ${proto}\r\n"
+    }
+    head = head + "\r\n"
+    if !hconn.send_at(h, raw.data(head), head.len()) {
+      return
+    }
+    raw.alive_str(head)
+    let wire = Wire{
+      recv: fn(max: Int) -> Chunk {
+        let b = raw.bytes_buf(max)
+        let r = hconn.recv(h, raw.bytes_addr(b), max, true)
+        if r < 0 {
+          return Chunk{data: b"", end: false, err: "connection closed"}
+        }
+        Chunk{data: raw.bytes_len(b, r), end: r == 0, err: ""}
+      },
+      send: fn(d: Bytes) -> Str {
+        let ok = hconn.send_at(h, raw.bytes_addr(d), d.len())
+        raw.alive(d)
+        if ok { "" } else { "write: connection closed" }
+      },
+      close: fn(_x: Int) { hconn.shut_wr(h) },
+    }
+    // what the server read past the request's head is the first input
+    let rest = http1.take_rest(h)
+    g(WsConn{wire: wire, server: true, max: max_message, proto: proto, rd: Mutex[ReadState].new(ReadState{buf: rest, pos: 0, err: []}), wr: Mutex[WriteState].new(WriteState{close_sent: false})})
+  }
+  // the hand-off (http.xo respond): a 101 whose body names the stream
+  // registry's entry of hand
+  http.Response{status: 101, headers: {}, body: "${hserve.HANDOFF}${hserve.stream_put(rt.any_of(hand))}".bytes()}
+}
+
+fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str] = [], max_message: Int = 1048576) -> WsConn ! websocket.WsErr uses net.dial {
+  let malformed = websocket.WsErr.Handshake(status: 0, msg: "websocket: malformed ws or wss URL")
+  if !url.starts_with("ws://") {
+    return Err(malformed)
+  }
+  let (host, name) = url_host(url) ?? ("", "")
+  if host.is_empty() {
+    return Err(malformed)
+  }
+  let after = url[5 + host.len()..]
+  var path = after
+  if let Some(h) = path.find("#") {
+    path = path[0..h]
+  }
+  if path.is_empty() || path.starts_with("?") {
+    path = "/" + path
+  }
+  let has_port = if host.starts_with("[") { host.ends_with("]") == false } else { host.contains(":") }
+  let addr = if has_port { host } else if host.starts_with("[") { "${host}:80" } else { "${name}:80" }
+  let c = match net.dial(addr) {
+    Ok(c) => c
+    Err(e) => return Err(websocket.WsErr.Net(err: e))
+  }
+  let key = base64.encode(llrand.next_bytes(16))
+  var req = "GET ${path} HTTP/1.1\r\nHost: ${host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\n"
+  if !protocols.is_empty() {
+    req = req + "Sec-WebSocket-Protocol: ${protocols.join(", ")}\r\n"
+  }
+  for (k, v) in headers {
+    req = req + "${k}: ${v}\r\n"
+  }
+  req = req + "\r\n"
+  match c.write(req.bytes()) {
+    Ok(_) => ()
+    Err(e) => {
+      c.close()
+      return Err(websocket.WsErr.Net(err: e))
+    }
+  }
+  // the response's head, up to its empty line
+  var got = BytesBuilder.new()
+  var head_end = -1
+  var all = b""
+  while head_end < 0 {
+    match c.read(65536) {
+      Ok(Some(b)) => {
+        got.write(b)
+        all = got.freeze()
+        got = BytesBuilder.new()
+        got.write(all)
+        head_end = (all.find("\r\n\r\n".bytes()) ?? -1)
+        if head_end < 0 && all.len() > 65536 {
+          c.close()
+          return Err(websocket.WsErr.Handshake(status: 0, msg: "websocket: bad handshake"))
+        }
+      }
+      _ => {
+        c.close()
+        return Err(websocket.WsErr.Handshake(status: 0, msg: "websocket: bad handshake"))
+      }
+    }
+  }
+  let head = all[0..head_end].to_str() ?? ""
+  let lines = head.split("\r\n")
+  let sl = lines[0].split(" ")
+  let status = if sl.len() >= 2 && sl[0].starts_with("HTTP/1.") { Int.parse(sl[1]) ?? 0 } else { 0 }
+  if status == 0 {
+    c.close()
+    return Err(websocket.WsErr.Handshake(status: 0, msg: "websocket: bad handshake"))
+  }
+  var upg: List[Str] = []
+  var conn: List[Str] = []
+  var acc = ""
+  var proto = ""
+  for l in lines[1..] {
+    if let Some(i) = l.find(":") {
+      let k = l[0..i].trim().to_lower()
+      let v = l[i + 1..].trim()
+      if k == "upgrade" {
+        upg.push(v)
+      } else if k == "connection" {
+        conn.push(v)
+      } else if k == "sec-websocket-accept" && acc.is_empty() {
+        acc = v
+      } else if k == "sec-websocket-protocol" && proto.is_empty() {
+        proto = v
+      }
+    }
+  }
+  if status != 101 || !has_token(upg, "websocket") || !has_token(conn, "upgrade") || acc != accept_key(key) {
+    c.close()
+    return Err(websocket.WsErr.Handshake(status: status, msg: "websocket: bad handshake"))
+  }
+  let wire = Wire{
+    recv: rt.launder1(fn(max: Int) -> Chunk {
+      match c.read(max) {
+        Ok(Some(b)) => Chunk{data: b, end: false, err: ""}
+        Ok(None) => Chunk{data: b"", end: true, err: ""}
+        Err(e) => Chunk{data: b"", end: false, err: "${e}"}
+      }
+    }),
+    send: rt.launder1(fn(d: Bytes) -> Str {
+      match c.write(d) {
+        Ok(_) => ""
+        Err(e) => "${e}"
+      }
+    }),
+    close: fn(_x: Int) { c.close() },
+  }
+  WsConn{wire: wire, server: false, max: max_message, proto: proto, rd: Mutex[ReadState].new(ReadState{buf: all[head_end + 4..], pos: 0, err: []}), wr: Mutex[WriteState].new(WriteState{close_sent: false})}
+}
