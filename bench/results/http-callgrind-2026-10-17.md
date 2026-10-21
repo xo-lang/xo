@@ -342,3 +342,24 @@ allocations.
 Each copy removed is worth 100 to 250 instructions at these request
 sizes; what is left of the record path (feed's body copy, Gcm.open's
 output, the nonce) is about one more percent.
+
+## TLS records: no strings for the nonce or the tag (2026-10-21, Xo Lang 3)
+
+AES-GCM's seal and open (std/native/llrt aesgcm.xo seal_w, open_w,
+tag_w, ctr_w) take the record nonce as two words that tlsrec.xo nonce_w
+computes from the IV and the sequence number, return the tag as two
+words, and compare it in place (one test of the words' differences, as
+ct.bytes_equal). A record no longer allocates the nonce, the tag, or
+the copy of the received tag. ChaCha20-Poly1305 keeps the byte nonce.
+
+Callgrind (arm64, short mode, ANN, per request; bench/perf/http
+callgrind-docker.sh, the change against its parent f00c1950):
+
+| scenario | parent | change | |
+|---|---|---|---|
+| tls | 36,502 | 34,821 | -4.6% |
+| h2 | 57,970 | 56,695 | -2.2% |
+
+Tests: goldens tls13_rfc8448 (RFC 8448's records byte for byte),
+tls13_go, tls13_server, tls_client, http_tls, http_tls_keys,
+tls12_server and tls12_client on arm64.
