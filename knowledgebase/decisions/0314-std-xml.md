@@ -78,6 +78,24 @@ Xo has neither. The owner put encoding/xml on lib1's queue on
 
 ## Consequences
 
+- Implementation notes (2026-10-21, stage 1):
+  - **API changes from the text above.** `parse` takes `strict` as
+    `tokens` does. `encode` returns `Str ! XmlErr`, because Go's
+    EncodeToken can fail (a comment with `-->`, an `xml` processing
+    instruction after the start). `XmlErr` has line 0 for errors that
+    are not Go's SyntaxError.
+  - **Go's namespace round trip.** encode writes `xmlns` on every element
+    of a namespace and generates attribute prefixes (`_xmlns:media`).
+    Golden xml_basic pins this.
+  - **Native code** (std/native/xml.xo, about 1,300 lines) ports Go's
+    Decoder over the input bytes, with Go's line counting and sticky
+    error, and the printer's EncodeToken path. The `first` and `second`
+    name tables, HTMLEntity, and HTMLAutoClose are generated from Go's
+    xml.go.
+  - **Tests.** The scripts/stdcorpus xml corpus (2,000 documents in three
+    token modes, parse, and encode, plus 200 EscapeText cases) passed
+    on go and arm64 on its first full native run.
+
 - Programs can read and write XML documents of any shape now, with Go's
   results on every backend. Typed decoding into structs waits for stage 2.
   The tree and `child` and `text` cover the usual "read three fields"

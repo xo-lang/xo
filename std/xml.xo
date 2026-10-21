@@ -1,0 +1,77 @@
+// std/xml (spec/std.md 34, decision 0314). Declaration file; encoding
+// rules are listed at the top of std/prelude.xo. Go's encoding/xml: the
+// Decoder's tokens (namespaces resolved, entities and CDATA decoded, Go's
+// errors), an element tree built from them, and the Encoder's output.
+// Pure.
+
+/// An element or attribute name. `space` is the namespace URL once
+/// resolved (the prefix itself in raw tokens); empty for none.
+struct Name {
+  space: Str
+  local: Str
+} derive Eq, Ord, Hash
+
+struct Attr {
+  name: Name
+  value: Str
+} derive Eq
+
+/// Go's xml.Token.
+enum Token {
+  Start(name: Name, attrs: List[Attr])
+  End(name: Name)
+  /// CharData: entities and CDATA decoded
+  Text(s: Str)
+  Comment(s: Str)
+  ProcInst(target: Str, inst: Str)
+  Directive(s: Str)
+} derive Eq
+
+/// Go's SyntaxError (line > 0): displays as `XML syntax error on line N:
+/// MSG`; Go's other errors and parse's own (line 0) as MSG.
+struct XmlErr {
+  line: Int
+  msg: Str
+}
+
+fn (e: XmlErr) display() -> Str
+
+/// Every token of text (Decoder.Token until EOF). strict: false is Go's
+/// Strict = false with AutoClose = HTMLAutoClose and Entity = HTMLEntity.
+fn tokens(text: Str, strict: Bool = true) -> List[Token] ! XmlErr
+/// Decoder.RawToken until EOF: prefixes as written, no start and end
+/// matching.
+fn raw_tokens(text: Str) -> List[Token] ! XmlErr
+
+/// An element and everything inside it.
+struct Element {
+  name: Name
+  attrs: List[Attr]
+  children: List[Node]
+} derive Eq
+
+enum Node {
+  Elem(e: Element)
+  Text(s: Str)
+  Comment(s: Str)
+  ProcInst(target: Str, inst: Str)
+  Directive(s: Str)
+} derive Eq
+
+/// The document's root element; outside it only whitespace, comments,
+/// processing instructions, and directives (`xml: no root element`, `xml:
+/// more than one root element`, `xml: text outside the root element`).
+fn parse(text: Str, strict: Bool = true) -> Element ! XmlErr
+/// The value of the first attribute of that local name.
+fn (e: Element) attr(local: Str) -> Str?
+/// The first child element of that local name.
+fn (e: Element) child(local: Str) -> Element?
+fn (e: Element) children_named(local: Str) -> List[Element]
+/// The character data inside e, its descendants' included, in order.
+fn (e: Element) text() -> Str
+/// The element as Go's Encoder writes its tokens (Indent("", indent) when
+/// indent is not empty), or the Encoder's error (`xml: comment cannot
+/// contain "--"`).
+fn (e: Element) encode(indent: Str = "") -> Str ! XmlErr
+/// Go's EscapeText of s.
+fn escape(s: Str) -> Str

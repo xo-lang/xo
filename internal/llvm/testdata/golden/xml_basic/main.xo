@@ -1,0 +1,40 @@
+// std/xml (decision 0314): Go's encoding/xml tokens and an element tree:
+// namespaces, entities, CDATA, the tree helpers, encode with indent, the
+// lenient HTML mode, and Go's errors.
+use std/xml
+
+const FEED: Str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\" xmlns:media=\"http://search.yahoo.com/mrss/\">\n  <title>Notes &amp; news</title>\n  <entry id=\"1\"><title>First</title><media:thumbnail url=\"a.png\"/></entry>\n  <entry id=\"2\"><title><![CDATA[<b>Second</b>]]></title><!-- draft --></entry>\n</feed>"
+
+fn main(os: Os) {
+  let out = os.stdio
+  match xml.parse(FEED) {
+    Ok(feed) => {
+      out.println("root ${feed.name.space} ${feed.name.local}")
+      out.println("title ${(feed.child("title") ?? feed).text()}")
+      for e in feed.children_named("entry") {
+        let thumb = e.child("thumbnail").map(fn(t) { "${t.name.space} ${t.attr("url") ?? "-"}" }) ?? "-"
+        out.println("entry ${e.attr("id") ?? "?"}: ${(e.child("title") ?? e).text()} thumb ${thumb}")
+      }
+      match feed.encode(indent: "  ") {
+        Ok(s) => out.println(s)
+        Err(e) => out.println("encode: ${e}")
+      }
+    }
+    Err(e) => out.println("parse: ${e}")
+  }
+  match xml.tokens("<a x='1'>t<b/><!--c--><?p q?></a>") {
+    Ok(ts) => out.println("tokens ${ts.len()}")
+    Err(e) => out.println("tokens: ${e}")
+  }
+  match xml.tokens("<p>one<br>two &nbsp;three</p>", strict: false) {
+    Ok(ts) => out.println("lenient ${ts.len()} tokens")
+    Err(e) => out.println("lenient: ${e}")
+  }
+  for bad in ["<a><b></a>", "<a>&bogus;</a>", "<a>\n<b>", "<?xml version=\"1.1\"?><a/>", "", "<a/><b/>"] {
+    match xml.parse(bad) {
+      Ok(_) => out.println("ok?")
+      Err(e) => out.println("error: ${e}")
+    }
+  }
+  out.println(xml.escape("a < b & \"c\"\n"))
+}

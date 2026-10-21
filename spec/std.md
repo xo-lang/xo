@@ -3837,6 +3837,56 @@ fn (x: BigInt) text(base: Int = 10) -> Str;  bytes();  fill_bytes(len);  to_int(
     bits, plus Go's SetString on valid and invalid texts
     (internal/stdtest/testdata/corpus/big, scripts/stdcorpus big).
 
+## 34. std/xml
+
+Status: implemented on every backend (decision 0314, 2026-10-21), stage
+1: tokens and a tree. Go's encoding/xml: the Go backend calls it, and the
+native backends port its Decoder and Encoder (std/native/xml.xo). The
+tokens, trees, encodings, and errors are Go's. Pure.
+
+```
+struct Name { space: Str, local: Str } derive Eq, Ord, Hash
+struct Attr { name: Name, value: Str }
+enum Token { Start(name, attrs), End(name), Text(s), Comment(s), ProcInst(target, inst), Directive(s) }
+struct XmlErr { line: Int, msg: Str }   // line > 0: displays as Go's "XML syntax error on line N: MSG"
+pub fn tokens(text: Str, strict: Bool = true) -> List[Token] ! XmlErr
+pub fn raw_tokens(text: Str) -> List[Token] ! XmlErr
+struct Element { name: Name, attrs: List[Attr], children: List[Node] }
+enum Node { Elem(e), Text(s), Comment(s), ProcInst(target, inst), Directive(s) }
+pub fn parse(text: Str, strict: Bool = true) -> Element ! XmlErr
+fn (e: Element) attr(local) -> Str?;  child(local) -> Element?;  children_named(local);  text() -> Str
+fn (e: Element) encode(indent: Str = "") -> Str ! XmlErr
+pub fn escape(s: Str) -> Str
+```
+
+- `tokens` is Go's Decoder.Token until EOF:
+  - names are resolved against `xmlns` and `xmlns:p` (`space` holds the
+    URL), and start and end tags are matched;
+  - entities and CDATA are decoded, and `\r\n` becomes `\n`.
+- `raw_tokens` is RawToken: prefixes as written, nothing matched.
+- `strict: false` is Go's `Strict = false` with `HTMLAutoClose` and
+  `HTMLEntity`: unquoted attribute values, `&nbsp;`, `<br>` without an
+  end tag.
+- `parse` builds the root element from the tokens. Outside it only
+  whitespace, comments, processing instructions, and directives may
+  appear. Its own errors have line 0: `xml: no root element`,
+  `xml: more than one root element`, and `xml: text outside the root
+  element`.
+- `encode` writes the tree's tokens with Go's Encoder (EncodeToken,
+  Indent("", indent)), so a namespace is written as Go writes it: an
+  `xmlns` on each element of that space, and generated prefixes for
+  attributes. Go's EncodeToken errors (a comment holding `-->`, an `xml`
+  processing instruction after the start) are errors.
+- `escape` is Go's EscapeText.
+- No DTD processing and no external entities, as in Go. Typed decoding
+  into structs (a `derive Xml`) is decision 0314's stage 2.
+- Tests:
+  - Golden `xml_basic` on every backend.
+  - A Go-generated corpus of 2,000 documents (namespaces, entities,
+    CDATA, comments, processing instructions, bad names, cuts), with
+    tokens in all three modes, parse, and encode, plus EscapeText
+    (internal/stdtest/testdata/corpus/xml, scripts/stdcorpus xml).
+
 <!-- BEGIN prelude index: generated from std/prelude.xo by `go run ./scripts/stdindex`; do not edit -->
 
 ## Appendix A. Prelude index

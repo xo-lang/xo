@@ -71,7 +71,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | encoding/csv | std/csv | done | Native port (decision 0164); in memory, no streaming reader. Records match Go's Reader (FieldsPerRecord -1) on 2,022 texts (2026-10-20); error texts and Go's options (Comment, LazyQuotes, TrimLeadingSpace) are Xo's own or missing. |
 | encoding/pem | std/crypto | done | pem_decode, pem_encode (decision 0285). |
 | encoding/asn1 | inside std/native/llrt/asn1.xo | partial | Used by X.509; no public API. |
-| encoding/xml | none | planned | SOAP, SAML, sitemaps, TwiML; lower than JSON gaps. |
+| encoding/xml | std/xml | partial | Go's Decoder tokens (strict, HTML-lenient, raw), an element tree, and the Encoder, on every backend (decision 0314, 2026-10-21). Missing: Marshal and Unmarshal of structs (stage 2), streaming. |
 | encoding/gob | none | not planned | Go specific wire format; Xo programs exchange JSON. |
 | encoding/ascii85 | none | not planned | No backend use (PostScript and PDF). |
 | encoding | none | not planned | Interfaces only; Xo uses derive (Json, SqlRow). |

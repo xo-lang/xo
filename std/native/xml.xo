@@ -1,0 +1,1319 @@
+// std/xml on the native backends (decision 0314): Go's encoding/xml
+// (xml.go's Decoder: rawToken, Token's namespaces and matching, text and
+// entities, names; marshal.go's printer for EncodeToken; go1.26.1),
+// ported over the input bytes with Go's results and error texts. The
+// Unicode name tables and the HTML entities are generated from Go's
+// source (the end of this file).
+use std/xml
+
+fn xmlerr_display(e: xml.XmlErr) -> Str { if e.line > 0 { "XML syntax error on line ${e.line}: ${e.msg}" } else { e.msg } }
+
+const XML_URL: Str = "http://www.w3.org/XML/1998/namespace"
+
+/// The Decoder's error: none, io.EOF, a SyntaxError, or another error.
+enum Fail {
+  No
+  Eof
+  Syn(msg: Str, line: Int)
+  Plain(msg: Str)
+}
+
+/// A stack entry: an open element (kind 0) or a namespace binding it
+/// shadowed (kind 1: name.local the prefix, name.space the old URL, ok
+/// whether there was one).
+struct Stk {
+  kind: Int
+  name: xml.Name
+  ok: Bool = false
+}
+
+struct Dec {
+  src: Bytes
+  pos: Int = 0
+  line: Int = 1
+  strict: Bool = true
+  fail: Fail = Fail.No
+  stk: List[Stk] = []
+  ns: Map[Str, Str] = {}
+  need_close: Bool = false
+  to_close: xml.Name = xml.Name{space: "", local: ""}
+  /// Token's nextToken: zero or one
+  next: List[xml.Token] = []
+}
+
+fn nm(space: Str, local: Str) -> xml.Name { xml.Name{space: space, local: local} }
+
+fn (d: Dec) ok() -> Bool {
+  match d.fail {
+    No => true
+    Eof | Syn(..) | Plain(..) => false
+  }
+}
+
+fn (d: Dec) at_eof() -> Bool {
+  match d.fail {
+    Eof => true
+    No | Syn(..) | Plain(..) => false
+  }
+}
+
+fn (var d: Dec) syn(msg: Str) { d.fail = Fail.Syn(msg: msg, line: d.line) }
+
+/// The next byte, or -1 (the error set: io.EOF at the end).
+fn (var d: Dec) getc() -> Int {
+  if !d.ok() {
+    return -1
+  }
+  if d.pos >= d.src.len() {
+    d.fail = Fail.Eof
+    return -1
+  }
+  let b = Int(d.src[d.pos])
+  d.pos += 1
+  if b == 10 {
+    d.line += 1
+  }
+  b
+}
+
+/// getc where the end is unexpected.
+fn (var d: Dec) mustgetc() -> Int {
+  let b = d.getc()
+  if b < 0 && d.at_eof() {
+    d.syn("unexpected EOF")
+  }
+  b
+}
+
+fn (var d: Dec) ungetc() {
+  d.pos -= 1
+  if d.src[d.pos] == 10 {
+    d.line -= 1
+  }
+}
+
+fn (var d: Dec) space() {
+  while true {
+    let b = d.getc()
+    if b < 0 {
+      return
+    }
+    if !(b == 32 || b == 13 || b == 10 || b == 9) {
+      d.ungetc()
+      return
+    }
+  }
+}
+
+fn bytes_of(l: List[Int]) -> Bytes {
+  var b = BytesBuilder.with_capacity(l.len())
+  for x in l {
+    b.write_byte(UInt8(x))
+  }
+  b.freeze()
+}
+
+fn str_of(l: List[Int]) -> Str { bytes_of(l).to_str() ?? "" }
+
+fn is_name_byte(c: Int) -> Bool {
+  (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || (c >= 48 && c <= 57) || c == 95 || c == 58 || c == 46 || c == 45
+}
+
+/// Whether r is in a table of (lo, hi, stride) triples.
+fn in_table(t: List[Int], r: Int) -> Bool {
+  var lo = 0
+  var hi = t.len() / 3
+  while lo < hi {
+    let m = (lo + hi) / 2
+    if r < t[3 * m] {
+      hi = m
+    } else if r > t[3 * m + 1] {
+      lo = m + 1
+    } else {
+      return (r - t[3 * m]) % t[3 * m + 2] == 0
+    }
+  }
+  false
+}
+
+/// Go's isName: the first rune a Letter, _ or :, the rest NameChars.
+fn is_name(s: Str) -> Bool {
+  if s.is_empty() {
+    return false
+  }
+  for (i, r) in s.runes().indexed() {
+    let c = Int(r)
+    if !in_table(FIRST_RANGES, c) && (i == 0 || !in_table(SECOND_RANGES, c)) {
+      return false
+    }
+  }
+  true
+}
+
+fn in_char_range(r: Int) -> Bool {
+  r == 9 || r == 10 || r == 13 || (r >= 32 && r <= 55295) || (r >= 57344 && r <= 65533) || (r >= 65536 && r <= 1114111)
+}
+
+/// Appends a name's bytes to buf (readName): false when the next byte
+/// cannot start one, or at the end.
+fn (var d: Dec) read_name(var buf: List[Int]) -> Bool {
+  var b = d.mustgetc()
+  if b < 0 {
+    return false
+  }
+  if b < 128 && !is_name_byte(b) {
+    d.ungetc()
+    return false
+  }
+  buf.push(b)
+  while true {
+    b = d.mustgetc()
+    if b < 0 {
+      return false
+    }
+    if b < 128 && !is_name_byte(b) {
+      d.ungetc()
+      break
+    }
+    buf.push(b)
+  }
+  true
+}
+
+fn (var d: Dec) name() -> Str? {
+  var buf: List[Int] = []
+  if !d.read_name(buf) {
+    return None
+  }
+  let s = str_of(buf)
+  if !is_name(s) {
+    d.syn("invalid XML name: ${s}")
+    return None
+  }
+  Some(s)
+}
+
+fn (var d: Dec) nsname() -> xml.Name? {
+  let s = d.name()?
+  if s.split(":").len() > 2 {
+    return None
+  }
+  match s.find(":") {
+    Some(i) => {
+      if i == 0 || i == s.len() - 1 {
+        return Some(nm("", s))
+      }
+      Some(nm(s[0..i], s[i + 1..]))
+    }
+    None => Some(nm("", s))
+  }
+}
+
+fn html_entity(s: Str) -> Str? {
+  for (n, c) in HTML_ENTITY {
+    if n == s {
+      return Some("${Rune.try(c) ?? '\u{FFFD}'}")
+    }
+  }
+  None
+}
+
+fn hex_val(b: Int) -> Int {
+  if b >= 48 && b <= 57 {
+    return b - 48
+  }
+  if b >= 97 && b <= 102 {
+    return b - 87
+  }
+  if b >= 65 && b <= 70 {
+    return b - 55
+  }
+  -1
+}
+
+/// Character data up to quote (an attribute value), or to < (quote -1),
+/// or a CDATA section's to ]]>: entities decoded, \r\n and \r as \n.
+fn (var d: Dec) text(quote: Int, cdata: Bool) -> Str? {
+  var buf: List[Int] = []
+  var b0 = 0
+  var b1 = 0
+  var trunc = 0
+  while true {
+    var b = d.getc()
+    if b < 0 {
+      if cdata {
+        if d.at_eof() {
+          d.syn("unexpected EOF in CDATA section")
+        }
+        return None
+      }
+      break
+    }
+    if quote < 0 && b0 == 93 && b1 == 93 && b == 62 {
+      if cdata {
+        trunc = 2
+        break
+      }
+      d.syn("unescaped ]]> not in CDATA section")
+      return None
+    }
+    if b == 60 && !cdata {
+      if quote >= 0 {
+        d.syn("unescaped < inside quoted string")
+        return None
+      }
+      d.ungetc()
+      break
+    }
+    if quote >= 0 && b == quote {
+      break
+    }
+    if b == 38 && !cdata {
+      let before = buf.len()
+      buf.push(38)
+      var text = ""
+      var have = false
+      b = d.mustgetc()
+      if b < 0 {
+        return None
+      }
+      if b == 35 {
+        buf.push(b)
+        b = d.mustgetc()
+        if b < 0 {
+          return None
+        }
+        var base = 10
+        if b == 120 {
+          base = 16
+          buf.push(b)
+          b = d.mustgetc()
+          if b < 0 {
+            return None
+          }
+        }
+        let start = buf.len()
+        var n = 0
+        while (b >= 48 && b <= 57) || (base == 16 && hex_val(b) >= 0) {
+          buf.push(b)
+          // ParseUint's value, held at most one above MaxRune
+          n = n * base + hex_val(b)
+          if n > 1114112 {
+            n = 1114112
+          }
+          b = d.mustgetc()
+          if b < 0 {
+            return None
+          }
+        }
+        if b != 59 {
+          d.ungetc()
+        } else {
+          let digits = buf.len() - start
+          buf.push(59)
+          if digits > 0 && n <= 1114111 {
+            text = "${Rune.try(n) ?? '\u{FFFD}'}"
+            have = true
+          }
+        }
+      } else {
+        d.ungetc()
+        if !d.read_name(buf) {
+          if !d.ok() {
+            return None
+          }
+        }
+        b = d.mustgetc()
+        if b < 0 {
+          return None
+        }
+        if b != 59 {
+          d.ungetc()
+        } else {
+          let name = str_of(buf[before + 1..buf.len()])
+          buf.push(59)
+          if is_name(name) {
+            if name == "lt" {
+              text = "<"
+              have = true
+            } else if name == "gt" {
+              text = ">"
+              have = true
+            } else if name == "amp" {
+              text = "&"
+              have = true
+            } else if name == "apos" {
+              text = "'"
+              have = true
+            } else if name == "quot" {
+              text = "\""
+              have = true
+            } else if !d.strict {
+              if let Some(t) = html_entity(name) {
+                text = t
+                have = true
+              }
+            }
+          }
+        }
+      }
+      if have {
+        buf = buf[0..before]
+        for c in text.bytes() {
+          buf.push(Int(c))
+        }
+        b0 = 0
+        b1 = 0
+        continue
+      }
+      if !d.strict {
+        b0 = 0
+        b1 = 0
+        continue
+      }
+      var ent = str_of(buf[before..buf.len()])
+      if !ent.ends_with(";") {
+        ent = ent + " (no semicolon)"
+      }
+      d.syn("invalid character entity ${ent}")
+      return None
+    }
+    if b == 13 {
+      buf.push(10)
+    } else if b1 == 13 && b == 10 {
+      // \r\n: the \r already gave \n
+    } else {
+      buf.push(b)
+    }
+    b0 = b1
+    b1 = b
+  }
+  let data = bytes_of(buf[0..buf.len() - trunc])
+  let s = match data.to_str() {
+    Some(t) => t
+    None => {
+      d.syn("invalid UTF-8")
+      return None
+    }
+  }
+  for r in s.runes() {
+    let c = Int(r)
+    if !in_char_range(c) {
+      var h = c.to_str_base(16).to_upper()
+      while h.len() < 4 {
+        h = "0" + h
+      }
+      d.syn("illegal character code U+${h}")
+      return None
+    }
+  }
+  Some(s)
+}
+
+fn (var d: Dec) attrval() -> Str? {
+  var b = d.mustgetc()
+  if b < 0 {
+    return None
+  }
+  if b == 34 || b == 39 {
+    return d.text(b, false)
+  }
+  if d.strict {
+    d.syn("unquoted or missing attribute value in element")
+    return None
+  }
+  d.ungetc()
+  var buf: List[Int] = []
+  while true {
+    b = d.mustgetc()
+    if b < 0 {
+      return None
+    }
+    if (b >= 97 && b <= 122) || (b >= 65 && b <= 90) || (b >= 48 && b <= 57) || b == 95 || b == 58 || b == 45 {
+      buf.push(b)
+    } else {
+      d.ungetc()
+      break
+    }
+  }
+  Some(str_of(buf))
+}
+
+/// Go's procInst: the value of param="..." or '...' in a declaration.
+fn proc_inst(param0: Str, s: Str) -> Str {
+  let param = param0 + "="
+  let b = s.bytes()
+  let lenp = param.len()
+  var i = 0
+  var sep = 0
+  while i < b.len() {
+    let sub = b[i..b.len()]
+    let k = match sub.find(param.bytes()) {
+      Some(x) => x
+      None => return ""
+    }
+    if lenp + k >= sub.len() {
+      return ""
+    }
+    i += lenp + k + 1
+    let c = Int(sub[lenp + k])
+    if c == 39 || c == 34 {
+      sep = c
+      break
+    }
+  }
+  if sep == 0 {
+    return ""
+  }
+  var j = i
+  while j < b.len() && Int(b[j]) != sep {
+    j += 1
+  }
+  if j >= b.len() {
+    return ""
+  }
+  b[i..j].to_str() ?? ""
+}
+
+/// Go's rawToken: None when the error is set (io.EOF at the end).
+fn (var d: Dec) raw() -> xml.Token? {
+  if !d.ok() {
+    return None
+  }
+  if d.need_close {
+    d.need_close = false
+    return Some(xml.Token.End(name: d.to_close))
+  }
+  var b = d.getc()
+  if b < 0 {
+    return None
+  }
+  if b != 60 {
+    d.ungetc()
+    let data = d.text(-1, false)?
+    return Some(xml.Token.Text(s: data))
+  }
+  b = d.mustgetc()
+  if b < 0 {
+    return None
+  }
+  if b == 47 {
+    // </name>
+    let name = match d.nsname() {
+      Some(n) => n
+      None => {
+        if d.ok() {
+          d.syn("expected element name after </")
+        }
+        return None
+      }
+    }
+    d.space()
+    b = d.mustgetc()
+    if b < 0 {
+      return None
+    }
+    if b != 62 {
+      d.syn("invalid characters between </${name.local} and >")
+      return None
+    }
+    return Some(xml.Token.End(name: name))
+  }
+  if b == 63 {
+    // <?target inst?>
+    let target = match d.name() {
+      Some(t) => t
+      None => {
+        if d.ok() {
+          d.syn("expected target name after <?")
+        }
+        return None
+      }
+    }
+    d.space()
+    var buf: List[Int] = []
+    var b0 = 0
+    while true {
+      b = d.mustgetc()
+      if b < 0 {
+        return None
+      }
+      buf.push(b)
+      if b0 == 63 && b == 62 {
+        break
+      }
+      b0 = b
+    }
+    let data = str_of(buf[0..buf.len() - 2])
+    if target == "xml" {
+      let ver = proc_inst("version", data)
+      if !ver.is_empty() && ver != "1.0" {
+        d.fail = Fail.Plain(msg: "xml: unsupported version ${ver.quote()}; only version 1.0 is supported")
+        return None
+      }
+      let enc = proc_inst("encoding", data)
+      if !enc.is_empty() && enc.to_lower() != "utf-8" {
+        d.fail = Fail.Plain(msg: "xml: encoding ${enc.quote()} declared but Decoder.CharsetReader is nil")
+        return None
+      }
+    }
+    return Some(xml.Token.ProcInst(target: target, inst: data))
+  }
+  if b == 33 {
+    b = d.mustgetc()
+    if b < 0 {
+      return None
+    }
+    if b == 45 {
+      // <!-- comment -->
+      b = d.mustgetc()
+      if b < 0 {
+        return None
+      }
+      if b != 45 {
+        d.syn("invalid sequence <!- not part of <!--")
+        return None
+      }
+      var buf: List[Int] = []
+      var b0 = 0
+      var b1 = 0
+      while true {
+        b = d.mustgetc()
+        if b < 0 {
+          return None
+        }
+        buf.push(b)
+        if b0 == 45 && b1 == 45 {
+          if b != 62 {
+            d.syn("invalid sequence \"--\" not allowed in comments")
+            return None
+          }
+          break
+        }
+        b0 = b1
+        b1 = b
+      }
+      return Some(xml.Token.Comment(s: str_of(buf[0..buf.len() - 3])))
+    }
+    if b == 91 {
+      // <![CDATA[ ... ]]>
+      let want = "CDATA[".bytes()
+      for i in 0..6 {
+        b = d.mustgetc()
+        if b < 0 {
+          return None
+        }
+        if b != Int(want[i]) {
+          d.syn("invalid <![ sequence")
+          return None
+        }
+      }
+      let data = d.text(-1, true)?
+      return Some(xml.Token.Text(s: data))
+    }
+    // a directive: to the > outside quotes and nested <...>, comments
+    // inside it as one space
+    var buf: List[Int] = [b]
+    var inquote = 0
+    var depth = 0
+    var pending = -1
+    while true {
+      if pending >= 0 {
+        b = pending
+        pending = -1
+      } else {
+        b = d.mustgetc()
+        if b < 0 {
+          return None
+        }
+        if inquote == 0 && b == 62 && depth == 0 {
+          break
+        }
+      }
+      // HandleB
+      buf.push(b)
+      if b == inquote {
+        inquote = 0
+      } else if inquote != 0 {
+        // inside quotes
+      } else if b == 39 || b == 34 {
+        inquote = b
+      } else if b == 62 {
+        depth -= 1
+      } else if b == 60 {
+        let s = "!--".bytes()
+        var mismatch = false
+        for i in 0..3 {
+          b = d.mustgetc()
+          if b < 0 {
+            return None
+          }
+          if b != Int(s[i]) {
+            for j in 0..i {
+              buf.push(Int(s[j]))
+            }
+            depth += 1
+            pending = b
+            mismatch = true
+            break
+          }
+        }
+        if mismatch {
+          continue
+        }
+        // a comment: drop the <, skip to -->, a space for it
+        buf = buf[0..buf.len() - 1]
+        var b0 = 0
+        var b1 = 0
+        while true {
+          b = d.mustgetc()
+          if b < 0 {
+            return None
+          }
+          if b0 == 45 && b1 == 45 && b == 62 {
+            break
+          }
+          b0 = b1
+          b1 = b
+        }
+        buf.push(32)
+      }
+    }
+    return Some(xml.Token.Directive(s: str_of(buf)))
+  }
+  // <name attr="value" ...> or <name/>
+  d.ungetc()
+  let name = match d.nsname() {
+    Some(n) => n
+    None => {
+      if d.ok() {
+        d.syn("expected element name after <")
+      }
+      return None
+    }
+  }
+  var attrs: List[xml.Attr] = []
+  var empty = false
+  while true {
+    d.space()
+    b = d.mustgetc()
+    if b < 0 {
+      return None
+    }
+    if b == 47 {
+      empty = true
+      b = d.mustgetc()
+      if b < 0 {
+        return None
+      }
+      if b != 62 {
+        d.syn("expected /> in element")
+        return None
+      }
+      break
+    }
+    if b == 62 {
+      break
+    }
+    d.ungetc()
+    let an = match d.nsname() {
+      Some(n) => n
+      None => {
+        if d.ok() {
+          d.syn("expected attribute name in element")
+        }
+        return None
+      }
+    }
+    d.space()
+    b = d.mustgetc()
+    if b < 0 {
+      return None
+    }
+    var value = ""
+    if b != 61 {
+      if d.strict {
+        d.syn("attribute name without = in element")
+        return None
+      }
+      d.ungetc()
+      value = an.local
+    } else {
+      d.space()
+      value = d.attrval()?
+    }
+    attrs.push(xml.Attr{name: an, value: value})
+  }
+  if empty {
+    d.need_close = true
+    d.to_close = name
+  }
+  Some(xml.Token.Start(name: name, attrs: attrs))
+}
+
+fn (d: Dec) translate(n: xml.Name, is_elem: Bool) -> xml.Name {
+  var space = n.space
+  if space == "xmlns" {
+    return n
+  }
+  if space.is_empty() && !is_elem {
+    return n
+  }
+  if space == "xml" {
+    space = XML_URL
+  } else if space.is_empty() && n.local == "xmlns" {
+    return n
+  }
+  match d.ns.get(space) {
+    Some(v) => nm(v, n.local)
+    // DefaultSpace is ""
+    None => nm(space, n.local)
+  }
+}
+
+fn (var d: Dec) push_ns(local: Str) {
+  match d.ns.get(local) {
+    Some(v) => d.stk.push(Stk{kind: 1, name: nm(v, local), ok: true})
+    None => d.stk.push(Stk{kind: 1, name: nm("", local), ok: false})
+  }
+}
+
+/// Go's popElement: the end's name (translated), or None with the error.
+fn (var d: Dec) pop_element(name: xml.Name) -> xml.Name? {
+  if d.stk.is_empty() || d.stk[d.stk.len() - 1].kind != 0 {
+    if !d.stk.is_empty() {
+      let _ns = d.stk.pop()
+    }
+    d.syn("unexpected end element </${name.local}>")
+    return None
+  }
+  let s = d.stk.pop() ?? Stk{kind: 0, name: name}
+  if s.name.local != name.local {
+    if !d.strict {
+      // the open element ends here; the end tag is read again after it
+      d.need_close = true
+      d.to_close = name
+      return Some(s.name)
+    }
+    d.syn("element <${s.name.local}> closed by </${name.local}>")
+    return None
+  }
+  if s.name.space != name.space {
+    let ns = if name.space.is_empty() { "\"\"" } else { name.space }
+    d.syn("element <${s.name.local}> in space ${s.name.space} closed by </${name.local}> in space ${ns}")
+    return None
+  }
+  let t = d.translate(name, true)
+  while !d.stk.is_empty() && d.stk[d.stk.len() - 1].kind != 0 {
+    let e = d.stk.pop() ?? Stk{kind: 0, name: name}
+    if e.ok {
+      d.ns.put(e.name.local, e.name.space)
+    } else {
+      let _old = d.ns.remove(e.name.local)
+    }
+  }
+  Some(t)
+}
+
+fn (d: Dec) auto_close(t: xml.Token) -> xml.Token? {
+  if d.stk.is_empty() || d.stk[d.stk.len() - 1].kind != 0 {
+    return None
+  }
+  let top = d.stk[d.stk.len() - 1].name
+  for s in HTML_AUTO_CLOSE {
+    if s == top.local.to_lower() {
+      let same = match t {
+        xml.Token.End(name) => name.local.to_lower() == s
+        _ => false
+      }
+      if !same {
+        return Some(xml.Token.End(name: top))
+      }
+      break
+    }
+  }
+  None
+}
+
+/// Go's Token: None at the end (fail Eof) or with the error.
+fn (var d: Dec) token() -> xml.Token? {
+  var t = xml.Token.Text(s: "")
+  if !d.next.is_empty() {
+    t = d.next[0]
+    d.next = []
+  } else {
+    match d.raw() {
+      Some(x) => t = x
+      None => {
+        if d.at_eof() && !d.stk.is_empty() {
+          d.syn("unexpected EOF")
+        }
+        return None
+      }
+    }
+  }
+  if !d.strict {
+    if let Some(t1) = d.auto_close(t) {
+      d.next = [t]
+      t = t1
+    }
+  }
+  match t {
+    xml.Token.Start(name, attrs) => {
+      for a in attrs {
+        if a.name.space == "xmlns" {
+          d.push_ns(a.name.local)
+          d.ns.put(a.name.local, a.value)
+        }
+        if a.name.space.is_empty() && a.name.local == "xmlns" {
+          d.push_ns("")
+          d.ns.put("", a.value)
+        }
+      }
+      d.stk.push(Stk{kind: 0, name: name})
+      let n = d.translate(name, true)
+      var tas: List[xml.Attr] = []
+      for a in attrs {
+        tas.push(xml.Attr{name: d.translate(a.name, false), value: a.value})
+      }
+      Some(xml.Token.Start(name: n, attrs: tas))
+    }
+    xml.Token.End(name) => {
+      let n = d.pop_element(name)?
+      Some(xml.Token.End(name: n))
+    }
+    _ => Some(t)
+  }
+}
+
+fn err_of(d: Dec) -> xml.XmlErr {
+  match d.fail {
+    Syn(msg, line) => xml.XmlErr{line: line, msg: msg}
+    Plain(msg) => xml.XmlErr{line: 0, msg: msg}
+    No | Eof => xml.XmlErr{line: 0, msg: "EOF"}
+  }
+}
+
+fn read_all(text: Str, strict: Bool, raw: Bool) -> List[xml.Token] ! xml.XmlErr {
+  var d = Dec{src: text.bytes(), strict: strict}
+  var out: List[xml.Token] = []
+  while true {
+    let t = if raw { d.raw() } else { d.token() }
+    match t {
+      Some(x) => out.push(x)
+      None => {
+        if d.at_eof() {
+          break
+        }
+        return Err(err_of(d))
+      }
+    }
+  }
+  Ok(out)
+}
+
+fn tokens(text: Str, strict: Bool) -> List[xml.Token] ! xml.XmlErr { read_all(text, strict, false) }
+
+fn raw_tokens(text: Str) -> List[xml.Token] ! xml.XmlErr { read_all(text, true, true) }
+
+// ---------------------------------------------------------------------------
+// The tree (std/rt/xml.go builds it the same way)
+
+/// An element under construction: its start and the children so far.
+struct Open {
+  name: xml.Name
+  attrs: List[xml.Attr]
+  children: List[xml.Node] = []
+}
+
+/// Only space, tab, CR, and LF (strings.TrimLeft's set).
+fn blank(s: Str) -> Bool {
+  for c in s.bytes() {
+    if !(c == 32 || c == 9 || c == 13 || c == 10) {
+      return false
+    }
+  }
+  true
+}
+
+fn tree_err(msg: Str) -> xml.XmlErr { xml.XmlErr{line: 0, msg: msg} }
+
+fn parse(text: Str, strict: Bool) -> xml.Element ! xml.XmlErr {
+  let ts = tokens(text, strict)?
+  var stack: List[Open] = []
+  var root: List[xml.Element] = []
+  for t in ts {
+    var node = xml.Node.Text(s: "")
+    match t {
+      xml.Token.Start(name, attrs) => {
+        if stack.is_empty() && !root.is_empty() {
+          return Err(tree_err("xml: more than one root element"))
+        }
+        stack.push(Open{name: name, attrs: attrs})
+        continue
+      }
+      xml.Token.End(_) => {
+        let o = stack.pop() ?? Open{name: nm("", ""), attrs: []}
+        let e = xml.Element{name: o.name, attrs: o.attrs, children: o.children}
+        if stack.is_empty() {
+          root.push(e)
+        } else {
+          var p = stack.pop() ?? o
+          p.children.push(xml.Node.Elem(e: e))
+          stack.push(p)
+        }
+        continue
+      }
+      xml.Token.Text(s) => {
+        if stack.is_empty() {
+          if !blank(s) {
+            return Err(tree_err("xml: text outside the root element"))
+          }
+          continue
+        }
+        node = xml.Node.Text(s: s)
+      }
+      xml.Token.Comment(s) => node = xml.Node.Comment(s: s)
+      xml.Token.ProcInst(target, inst) => node = xml.Node.ProcInst(target: target, inst: inst)
+      xml.Token.Directive(s) => node = xml.Node.Directive(s: s)
+    }
+    if !stack.is_empty() {
+      var p = stack.pop() ?? Open{name: nm("", ""), attrs: []}
+      p.children.push(node)
+      stack.push(p)
+    }
+  }
+  if root.is_empty() {
+    return Err(tree_err("xml: no root element"))
+  }
+  Ok(root[0])
+}
+
+fn element_attr(e: xml.Element, local: Str) -> Str? {
+  for a in e.attrs {
+    if a.name.local == local {
+      return Some(a.value)
+    }
+  }
+  None
+}
+
+fn element_children_named(e: xml.Element, local: Str) -> List[xml.Element] {
+  var out: List[xml.Element] = []
+  for n in e.children {
+    if let xml.Node.Elem(c) = n {
+      if c.name.local == local {
+        out.push(c)
+      }
+    }
+  }
+  out
+}
+
+fn element_child(e: xml.Element, local: Str) -> xml.Element? {
+  for n in e.children {
+    if let xml.Node.Elem(c) = n {
+      if c.name.local == local {
+        return Some(c)
+      }
+    }
+  }
+  None
+}
+
+fn text_into(e: xml.Element, var out: StrBuilder) {
+  for n in e.children {
+    match n {
+      xml.Node.Elem(c) => text_into(c, out)
+      xml.Node.Text(s) => out.write(s)
+      _ => {}
+    }
+  }
+}
+
+fn element_text(e: xml.Element) -> Str {
+  var out = StrBuilder.new()
+  text_into(e, out)
+  out.freeze()
+}
+
+// ---------------------------------------------------------------------------
+// The encoder (marshal.go's printer for EncodeToken, Indent("", indent))
+
+/// Go's escapeText (escape_newline) and EscapeString (true).
+fn escape_text(s: Str, escape_newline: Bool) -> Str {
+  var out = StrBuilder.new()
+  for r in s.runes() {
+    let c = Int(r)
+    if c == 34 {
+      out.write("&#34;")
+    } else if c == 39 {
+      out.write("&#39;")
+    } else if c == 38 {
+      out.write("&amp;")
+    } else if c == 60 {
+      out.write("&lt;")
+    } else if c == 62 {
+      out.write("&gt;")
+    } else if c == 9 {
+      out.write("&#x9;")
+    } else if c == 10 {
+      out.write(if escape_newline { "&#xA;" } else { "\n" })
+    } else if c == 13 {
+      out.write("&#xD;")
+    } else if !in_char_range(c) {
+      out.write("\u{FFFD}")
+    } else {
+      out.write("${r}")
+    }
+  }
+  out.freeze()
+}
+
+fn escape(s: Str) -> Str { escape_text(s, true) }
+
+struct Printer {
+  out: StrBuilder
+  indent: Str
+  depth: Int = 0
+  indented_in: Bool = false
+  put_newline: Bool = false
+  seq: Int = 0
+  /// prefix to URL and URL to prefix of the attribute namespaces declared
+  attr_ns: Map[Str, Str] = {}
+  attr_prefix: Map[Str, Str] = {}
+  prefixes: List[Str] = []
+  tags: List[xml.Name] = []
+  wrote: Bool = false
+}
+
+fn (var p: Printer) write(s: Str) {
+  p.out.write(s)
+  if !s.is_empty() {
+    p.wrote = true
+  }
+}
+
+fn (var p: Printer) write_indent(delta: Int) {
+  if p.indent.is_empty() {
+    return
+  }
+  if delta < 0 {
+    p.depth -= 1
+    if p.indented_in {
+      p.indented_in = false
+      return
+    }
+    p.indented_in = false
+  }
+  if p.put_newline {
+    p.write("\n")
+  } else {
+    p.put_newline = true
+  }
+  for _i in 0..p.depth {
+    p.write(p.indent)
+  }
+  if delta > 0 {
+    p.depth += 1
+    p.indented_in = true
+  }
+}
+
+fn (var p: Printer) create_attr_prefix(url: Str) -> Str {
+  if let Some(x) = p.attr_prefix.get(url) {
+    if !x.is_empty() {
+      return x
+    }
+  }
+  if url == XML_URL {
+    return "xml"
+  }
+  // strings.TrimRight(url, "/")
+  var prefix = url
+  while prefix.ends_with("/") {
+    prefix = prefix[0..prefix.len() - 1]
+  }
+  if let Some(i) = prefix.rfind("/") {
+    prefix = prefix[i + 1..]
+  }
+  if prefix.is_empty() || !is_name(prefix) || prefix.contains(":") {
+    prefix = "_"
+  }
+  let pb = prefix.bytes()
+  if pb.len() >= 3 && (pb[0..3].to_str() ?? "").to_lower() == "xml" {
+    prefix = "_" + prefix
+  }
+  if !(p.attr_ns.get(prefix) ?? "").is_empty() {
+    while true {
+      p.seq += 1
+      let id = "${prefix}_${p.seq}"
+      if (p.attr_ns.get(id) ?? "").is_empty() {
+        prefix = id
+        break
+      }
+    }
+  }
+  p.attr_prefix.put(url, prefix)
+  p.attr_ns.put(prefix, url)
+  p.write("xmlns:${prefix}=\"${escape_text(url, true)}\" ")
+  p.prefixes.push(prefix)
+  prefix
+}
+
+fn (var p: Printer) pop_prefix() {
+  while !p.prefixes.is_empty() {
+    let prefix = p.prefixes.pop() ?? ""
+    if prefix.is_empty() {
+      break
+    }
+    let url = p.attr_ns.get(prefix) ?? ""
+    let _a = p.attr_prefix.remove(url)
+    let _b = p.attr_ns.remove(prefix)
+  }
+}
+
+fn (var p: Printer) write_start(name: xml.Name, attrs: List[xml.Attr]) -> () ! Str {
+  if name.local.is_empty() {
+    return Err("xml: start tag with no name")
+  }
+  p.tags.push(name)
+  p.prefixes.push("")
+  p.write_indent(1)
+  p.write("<${name.local}")
+  if !name.space.is_empty() {
+    p.write(" xmlns=\"${escape_text(name.space, true)}\"")
+  }
+  for a in attrs {
+    if a.name.local.is_empty() {
+      continue
+    }
+    p.write(" ")
+    if !a.name.space.is_empty() {
+      let pre = p.create_attr_prefix(a.name.space)
+      p.write("${pre}:")
+    }
+    p.write("${a.name.local}=\"${escape_text(a.value, true)}\"")
+  }
+  p.write(">")
+}
+
+fn (var p: Printer) write_end(name: xml.Name) -> () ! Str {
+  if name.local.is_empty() {
+    return Err("xml: end tag with no name")
+  }
+  if p.tags.is_empty() || p.tags[p.tags.len() - 1].local.is_empty() {
+    return Err("xml: end tag </${name.local}> without start tag")
+  }
+  let top = p.tags[p.tags.len() - 1]
+  if top != name {
+    if top.local != name.local {
+      return Err("xml: end tag </${name.local}> does not match start tag <${top.local}>")
+    }
+    return Err("xml: end tag </${name.local}> in namespace ${name.space} does not match start tag <${top.local}> in namespace ${top.space}")
+  }
+  let _t = p.tags.pop()
+  p.write_indent(-1)
+  p.write("</${name.local}>")
+  p.pop_prefix()
+}
+
+/// Go's isValidDirective.
+fn valid_directive(dir: Str) -> Bool {
+  let b = dir.bytes()
+  var depth = 0
+  var inquote = 0
+  var incomment = false
+  for i in 0..b.len() {
+    let c = Int(b[i])
+    if incomment {
+      if c == 62 {
+        let n = 1 + i - 3
+        if n >= 0 && (b[n..i + 1].to_str() ?? "") == "-->" {
+          incomment = false
+        }
+      }
+    } else if inquote != 0 {
+      if c == inquote {
+        inquote = 0
+      }
+    } else if c == 39 || c == 34 {
+      inquote = c
+    } else if c == 60 {
+      if i + 4 < b.len() && (b[i..i + 4].to_str() ?? "") == "<!--" {
+        incomment = true
+      } else {
+        depth += 1
+      }
+    } else if c == 62 {
+      if depth == 0 {
+        return false
+      }
+      depth -= 1
+    }
+  }
+  depth == 0 && inquote == 0 && !incomment
+}
+
+fn (var p: Printer) encode_element(e: xml.Element) -> () ! Str {
+  p.write_start(e.name, e.attrs)?
+  for n in e.children {
+    match n {
+      xml.Node.Elem(c) => p.encode_element(c)?
+      xml.Node.Text(s) => p.write(escape_text(s, false))
+      xml.Node.Comment(s) => {
+        if s.contains("-->") {
+          return Err("xml: EncodeToken of Comment containing --> marker")
+        }
+        p.write("<!--${s}-->")
+      }
+      xml.Node.ProcInst(target, inst) => {
+        if target == "xml" && p.wrote {
+          return Err("xml: EncodeToken of ProcInst xml target only valid for xml declaration, first token encoded")
+        }
+        if !is_name(target) {
+          return Err("xml: EncodeToken of ProcInst with invalid Target")
+        }
+        if inst.contains("?>") {
+          return Err("xml: EncodeToken of ProcInst containing ?> marker")
+        }
+        p.write("<?${target}")
+        if !inst.is_empty() {
+          p.write(" ${inst}")
+        }
+        p.write("?>")
+      }
+      xml.Node.Directive(s) => {
+        if !valid_directive(s) {
+          return Err("xml: EncodeToken of Directive containing wrong < or > markers")
+        }
+        p.write("<!${s}>")
+      }
+    }
+  }
+  p.write_end(e.name)
+}
+
+fn element_encode(e: xml.Element, indent: Str) -> Str ! xml.XmlErr {
+  var p = Printer{out: StrBuilder.new(), indent: indent}
+  match p.encode_element(e) {
+    Ok(_) => Ok(p.out.freeze())
+    Err(m) => Err(xml.XmlErr{line: 0, msg: m})
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Generated from Go's encoding/xml xml.go (go1.26.1) tables by a script; do not edit.
+
+/// Go's first RangeTable: (lo, hi, stride) triples, sorted
+const FIRST_RANGES: List[Int] = [58, 58, 1, 65, 90, 1, 95, 95, 1, 97, 122, 1, 192, 214, 1, 216, 246, 1, 248, 255, 1, 256, 305, 1, 308, 318, 1, 321, 328, 1, 330, 382, 1, 384, 451, 1, 461, 496, 1, 500, 501, 1, 506, 535, 1, 592, 680, 1, 699, 705, 1, 902, 902, 1, 904, 906, 1, 908, 908, 1, 910, 929, 1, 931, 974, 1, 976, 982, 1, 986, 992, 2, 994, 1011, 1, 1025, 1036, 1, 1038, 1103, 1, 1105, 1116, 1, 1118, 1153, 1, 1168, 1220, 1, 1223, 1224, 1, 1227, 1228, 1, 1232, 1259, 1, 1262, 1269, 1, 1272, 1273, 1, 1329, 1366, 1, 1369, 1369, 1, 1377, 1414, 1, 1488, 1514, 1, 1520, 1522, 1, 1569, 1594, 1, 1601, 1610, 1, 1649, 1719, 1, 1722, 1726, 1, 1728, 1742, 1, 1744, 1747, 1, 1749, 1749, 1, 1765, 1766, 1, 2309, 2361, 1, 2365, 2365, 1, 2392, 2401, 1, 2437, 2444, 1, 2447, 2448, 1, 2451, 2472, 1, 2474, 2480, 1, 2482, 2482, 1, 2486, 2489, 1, 2524, 2525, 1, 2527, 2529, 1, 2544, 2545, 1, 2565, 2570, 1, 2575, 2576, 1, 2579, 2600, 1, 2602, 2608, 1, 2610, 2611, 1, 2613, 2614, 1, 2616, 2617, 1, 2649, 2652, 1, 2654, 2654, 1, 2674, 2676, 1, 2693, 2699, 1, 2701, 2701, 1, 2703, 2705, 1, 2707, 2728, 1, 2730, 2736, 1, 2738, 2739, 1, 2741, 2745, 1, 2821, 2828, 1, 2831, 2832, 1, 2835, 2856, 1, 2858, 2864, 1, 2866, 2867, 1, 2870, 2873, 1, 2877, 2877, 1, 2908, 2909, 1, 2911, 2913, 1, 2949, 2954, 1, 2958, 2960, 1, 2962, 2965, 1, 2969, 2970, 1, 2972, 2972, 1, 2974, 2975, 1, 2979, 2980, 1, 2984, 2986, 1, 2990, 2997, 1, 2999, 3001, 1, 3077, 3084, 1, 3086, 3088, 1, 3090, 3112, 1, 3114, 3123, 1, 3125, 3129, 1, 3168, 3169, 1, 3205, 3212, 1, 3214, 3216, 1, 3218, 3240, 1, 3242, 3251, 1, 3253, 3257, 1, 3294, 3294, 1, 3296, 3297, 1, 3333, 3340, 1, 3342, 3344, 1, 3346, 3368, 1, 3370, 3385, 1, 3424, 3425, 1, 3585, 3630, 1, 3632, 3632, 1, 3634, 3635, 1, 3648, 3653, 1, 3713, 3714, 1, 3716, 3716, 1, 3719, 3720, 1, 3722, 3725, 3, 3732, 3735, 1, 3737, 3743, 1, 3745, 3747, 1, 3749, 3751, 2, 3754, 3755, 1, 3757, 3758, 1, 3760, 3760, 1, 3762, 3763, 1, 3773, 3773, 1, 3776, 3780, 1, 3904, 3911, 1, 3913, 3945, 1, 4256, 4293, 1, 4304, 4342, 1, 4352, 4352, 1, 4354, 4355, 1, 4357, 4359, 1, 4361, 4361, 1, 4363, 4364, 1, 4366, 4370, 1, 4412, 4416, 2, 4428, 4432, 2, 4436, 4437, 1, 4441, 4441, 1, 4447, 4449, 1, 4451, 4457, 2, 4461, 4462, 1, 4466, 4467, 1, 4526, 4527, 1, 4535, 4536, 1, 4538, 4538, 1, 4540, 4546, 1, 4601, 4601, 1, 7680, 7835, 1, 7840, 7929, 1, 7936, 7957, 1, 7960, 7965, 1, 7968, 8005, 1, 8008, 8013, 1, 8016, 8023, 1, 8029, 8029, 1, 8031, 8061, 1, 8064, 8116, 1, 8118, 8124, 1, 8126, 8126, 1, 8130, 8132, 1, 8134, 8140, 1, 8144, 8147, 1, 8150, 8155, 1, 8160, 8172, 1, 8178, 8180, 1, 8182, 8188, 1, 8486, 8486, 1, 8490, 8491, 1, 8494, 8494, 1, 8576, 8578, 1, 12295, 12295, 1, 12321, 12329, 1, 12353, 12436, 1, 12449, 12538, 1, 12549, 12588, 1, 19968, 40869, 1, 44032, 55203, 1]
+
+/// Go's second RangeTable: (lo, hi, stride) triples, sorted
+const SECOND_RANGES: List[Int] = [45, 46, 1, 48, 57, 1, 183, 183, 1, 720, 721, 1, 768, 837, 1, 864, 865, 1, 903, 903, 1, 1155, 1158, 1, 1425, 1441, 1, 1443, 1465, 1, 1467, 1469, 1, 1471, 1471, 1, 1473, 1474, 1, 1611, 1618, 1, 1632, 1641, 1, 1648, 1648, 1, 1750, 1756, 1, 1757, 1759, 1, 1760, 1764, 1, 1767, 1768, 1, 1770, 1773, 1, 1776, 1785, 1, 2305, 2307, 1, 2364, 2364, 1, 2366, 2380, 1, 2381, 2381, 1, 2385, 2388, 1, 2402, 2403, 1, 2406, 2415, 1, 2433, 2435, 1, 2492, 2492, 1, 2494, 2495, 1, 2496, 2500, 1, 2503, 2504, 1, 2507, 2509, 1, 2519, 2519, 1, 2530, 2531, 1, 2534, 2543, 1, 2622, 2623, 1, 2624, 2626, 1, 2631, 2632, 1, 2635, 2637, 1, 2662, 2671, 1, 2672, 2673, 1, 2689, 2691, 1, 2748, 2748, 1, 2750, 2757, 1, 2759, 2761, 1, 2763, 2765, 1, 2790, 2799, 1, 2817, 2819, 1, 2876, 2876, 1, 2878, 2883, 1, 2887, 2888, 1, 2891, 2893, 1, 2902, 2903, 1, 2918, 2927, 1, 2946, 2947, 1, 3006, 3010, 1, 3014, 3016, 1, 3018, 3021, 1, 3031, 3031, 1, 3047, 3055, 1, 3073, 3075, 1, 3134, 3140, 1, 3142, 3144, 1, 3146, 3149, 1, 3157, 3158, 1, 3174, 3183, 1, 3202, 3203, 1, 3262, 3268, 1, 3270, 3272, 1, 3274, 3277, 1, 3285, 3286, 1, 3302, 3311, 1, 3330, 3331, 1, 3390, 3395, 1, 3398, 3400, 1, 3402, 3405, 1, 3415, 3415, 1, 3430, 3439, 1, 3633, 3633, 1, 3636, 3642, 1, 3654, 3654, 1, 3655, 3662, 1, 3664, 3673, 1, 3761, 3761, 1, 3764, 3769, 1, 3771, 3772, 1, 3782, 3782, 1, 3784, 3789, 1, 3792, 3801, 1, 3864, 3865, 1, 3872, 3881, 1, 3893, 3897, 2, 3902, 3903, 1, 3953, 3972, 1, 3974, 3979, 1, 3984, 3989, 1, 3991, 3991, 1, 3993, 4013, 1, 4017, 4023, 1, 4025, 4025, 1, 8400, 8412, 1, 12330, 12335, 1, 12337, 12341, 1, 12441, 12442, 1, 12445, 12446, 1, 12540, 12542, 1]
+
+/// Go's HTMLEntity: (name, code point)
+const HTML_ENTITY: List[(Str, Int)] = [("nbsp", 160), ("iexcl", 161), ("cent", 162), ("pound", 163), ("curren", 164), ("yen", 165), ("brvbar", 166), ("sect", 167), ("uml", 168), ("copy", 169), ("ordf", 170), ("laquo", 171), ("not", 172), ("shy", 173), ("reg", 174), ("macr", 175), ("deg", 176), ("plusmn", 177), ("sup2", 178), ("sup3", 179), ("acute", 180), ("micro", 181), ("para", 182), ("middot", 183), ("cedil", 184), ("sup1", 185), ("ordm", 186), ("raquo", 187), ("frac14", 188), ("frac12", 189), ("frac34", 190), ("iquest", 191), ("Agrave", 192), ("Aacute", 193), ("Acirc", 194), ("Atilde", 195), ("Auml", 196), ("Aring", 197), ("AElig", 198), ("Ccedil", 199), ("Egrave", 200), ("Eacute", 201), ("Ecirc", 202), ("Euml", 203), ("Igrave", 204), ("Iacute", 205), ("Icirc", 206), ("Iuml", 207), ("ETH", 208), ("Ntilde", 209), ("Ograve", 210), ("Oacute", 211), ("Ocirc", 212), ("Otilde", 213), ("Ouml", 214), ("times", 215), ("Oslash", 216), ("Ugrave", 217), ("Uacute", 218), ("Ucirc", 219), ("Uuml", 220), ("Yacute", 221), ("THORN", 222), ("szlig", 223), ("agrave", 224), ("aacute", 225), ("acirc", 226), ("atilde", 227), ("auml", 228), ("aring", 229), ("aelig", 230), ("ccedil", 231), ("egrave", 232), ("eacute", 233), ("ecirc", 234), ("euml", 235), ("igrave", 236), ("iacute", 237), ("icirc", 238), ("iuml", 239), ("eth", 240), ("ntilde", 241), ("ograve", 242), ("oacute", 243), ("ocirc", 244), ("otilde", 245), ("ouml", 246), ("divide", 247), ("oslash", 248), ("ugrave", 249), ("uacute", 250), ("ucirc", 251), ("uuml", 252), ("yacute", 253), ("thorn", 254), ("yuml", 255), ("fnof", 402), ("Alpha", 913), ("Beta", 914), ("Gamma", 915), ("Delta", 916), ("Epsilon", 917), ("Zeta", 918), ("Eta", 919), ("Theta", 920), ("Iota", 921), ("Kappa", 922), ("Lambda", 923), ("Mu", 924), ("Nu", 925), ("Xi", 926), ("Omicron", 927), ("Pi", 928), ("Rho", 929), ("Sigma", 931), ("Tau", 932), ("Upsilon", 933), ("Phi", 934), ("Chi", 935), ("Psi", 936), ("Omega", 937), ("alpha", 945), ("beta", 946), ("gamma", 947), ("delta", 948), ("epsilon", 949), ("zeta", 950), ("eta", 951), ("theta", 952), ("iota", 953), ("kappa", 954), ("lambda", 955), ("mu", 956), ("nu", 957), ("xi", 958), ("omicron", 959), ("pi", 960), ("rho", 961), ("sigmaf", 962), ("sigma", 963), ("tau", 964), ("upsilon", 965), ("phi", 966), ("chi", 967), ("psi", 968), ("omega", 969), ("thetasym", 977), ("upsih", 978), ("piv", 982), ("bull", 8226), ("hellip", 8230), ("prime", 8242), ("Prime", 8243), ("oline", 8254), ("frasl", 8260), ("weierp", 8472), ("image", 8465), ("real", 8476), ("trade", 8482), ("alefsym", 8501), ("larr", 8592), ("uarr", 8593), ("rarr", 8594), ("darr", 8595), ("harr", 8596), ("crarr", 8629), ("lArr", 8656), ("uArr", 8657), ("rArr", 8658), ("dArr", 8659), ("hArr", 8660), ("forall", 8704), ("part", 8706), ("exist", 8707), ("empty", 8709), ("nabla", 8711), ("isin", 8712), ("notin", 8713), ("ni", 8715), ("prod", 8719), ("sum", 8721), ("minus", 8722), ("lowast", 8727), ("radic", 8730), ("prop", 8733), ("infin", 8734), ("ang", 8736), ("and", 8743), ("or", 8744), ("cap", 8745), ("cup", 8746), ("int", 8747), ("there4", 8756), ("sim", 8764), ("cong", 8773), ("asymp", 8776), ("ne", 8800), ("equiv", 8801), ("le", 8804), ("ge", 8805), ("sub", 8834), ("sup", 8835), ("nsub", 8836), ("sube", 8838), ("supe", 8839), ("oplus", 8853), ("otimes", 8855), ("perp", 8869), ("sdot", 8901), ("lceil", 8968), ("rceil", 8969), ("lfloor", 8970), ("rfloor", 8971), ("lang", 9001), ("rang", 9002), ("loz", 9674), ("spades", 9824), ("clubs", 9827), ("hearts", 9829), ("diams", 9830), ("quot", 34), ("amp", 38), ("lt", 60), ("gt", 62), ("OElig", 338), ("oelig", 339), ("Scaron", 352), ("scaron", 353), ("Yuml", 376), ("circ", 710), ("tilde", 732), ("ensp", 8194), ("emsp", 8195), ("thinsp", 8201), ("zwnj", 8204), ("zwj", 8205), ("lrm", 8206), ("rlm", 8207), ("ndash", 8211), ("mdash", 8212), ("lsquo", 8216), ("rsquo", 8217), ("sbquo", 8218), ("ldquo", 8220), ("rdquo", 8221), ("bdquo", 8222), ("dagger", 8224), ("Dagger", 8225), ("permil", 8240), ("lsaquo", 8249), ("rsaquo", 8250), ("euro", 8364)]
+
+/// Go's HTMLAutoClose
+const HTML_AUTO_CLOSE: List[Str] = ["basefont", "br", "area", "link", "img", "param", "hr", "input", "col", "frame", "isindex", "base", "meta"]
+

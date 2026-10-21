@@ -1,0 +1,30 @@
+exit 0
+--- stdout
+root http://www.w3.org/2005/Atom feed
+title Notes & news
+entry 1: First thumb http://search.yahoo.com/mrss/ a.png
+entry 2: <b>Second</b> thumb -
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns="http://www.w3.org/2005/Atom" xmlns:_xmlns="xmlns" _xmlns:media="http://search.yahoo.com/mrss/">
+  
+  <title xmlns="http://www.w3.org/2005/Atom">Notes &amp; news</title>
+  
+  <entry xmlns="http://www.w3.org/2005/Atom" id="1">
+    <title xmlns="http://www.w3.org/2005/Atom">First</title>
+    <thumbnail xmlns="http://search.yahoo.com/mrss/" url="a.png"></thumbnail>
+  </entry>
+  
+  <entry xmlns="http://www.w3.org/2005/Atom" id="2">
+    <title xmlns="http://www.w3.org/2005/Atom">&lt;b&gt;Second&lt;/b&gt;</title><!-- draft -->
+  </entry>
+
+</feed>
+tokens 7
+lenient 6 tokens
+error: XML syntax error on line 1: element <b> closed by </a>
+error: XML syntax error on line 1: invalid character entity &bogus;
+error: XML syntax error on line 2: unexpected EOF
+error: xml: unsupported version "1.1"; only version 1.0 is supported
+error: xml: no root element
+error: xml: more than one root element
+a &lt; b &amp; &#34;c&#34;&#xA;
+--- stderr

@@ -13,6 +13,7 @@ entries yet.
 - [archive.md](archive.md): std/archive (spec/std.md 18)
 - [compress.md](compress.md): std/compress (spec/std.md 32)
 - [big.md](big.md): std/big (spec/std.md 33)
+- [xml.md](xml.md): std/xml (spec/std.md 34)
 - [url.md](url.md): std/url (spec/std.md 20)
 - [base64.md](base64.md): std/base64 (spec/std.md 21)
 - [base32.md](base32.md): std/base32 (spec/std.md 21)
