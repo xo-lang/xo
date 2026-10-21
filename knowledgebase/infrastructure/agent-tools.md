@@ -28,6 +28,10 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   imports (XO0110) and unused computed values (XO0209) are warnings, so
   only the errors that matter show; check without it before reporting
   done (decision 0293).
+- `xo check --no-gc DIR` for code a native build compiles, test code
+  included: plain `xo check` accepts what only the native backends reject
+  (XO1201, such as a test's own struct converted to `Fs`), which `xo test`
+  then fails to build (gotchas/test-fs-wrapper-not-native.md).
 - `xo vet` takes a `.xo` file, a std directory (`xo vet std/native/llrt`,
   every runtime module in one check, 0.6 s), or `--std-module=M`.
 
