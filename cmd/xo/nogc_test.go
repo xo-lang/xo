@@ -529,3 +529,44 @@ func TestNoAllocDiagnosticSpan(t *testing.T) {
 		t.Errorf("want %q and the function's name, got:\n%s", want, out)
 	}
 }
+
+// TestUserRandShuffle: Rand.shuffle on a user value converted to Rand
+// (decision 0307) is derived from the value's own `int` on every backend
+// (std.md 3.4: Fisher-Yates, one int per step; the user's shuffle method
+// is not called on the Go backend either), so native code, whose record
+// has no place for the generic method, gives the Go backend's order.
+func TestUserRandShuffle(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	cli, err := xoCommand()
+	if err != nil {
+		t.Skip(err)
+	}
+	dir := writeFiles(t, map[string]string{
+		"xo.mod": "module example.com/rs\n",
+		"main.xo": `struct Rev {}
+
+fn (r: Rev) int(lo: Int, hi: Int) -> Int uses rand { lo }
+fn (r: Rev) float() -> Float uses rand { 0.0 }
+fn (r: Rev) bool() -> Bool uses rand { false }
+fn (r: Rev) bytes(n: Int) -> Bytes uses rand { Bytes.zeroed(n) }
+fn (r: Rev) shuffle[T](xs: List[T]) -> List[T] uses rand { xs.reverse() }
+
+fn main(os: Os) {
+  let r: Rand = Rev{}
+  os.stdio.println("int ${r.int(5, 9)}")
+  os.stdio.println("${r.shuffle([1, 2, 3]):?}")
+}
+`,
+	})
+	for _, backend := range []string{"go", "arm64", "llvm"} {
+		cmd := exec.Command(cli[0], append(cli[1:], "run", "--backend="+backend, ".")...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil || string(out) != "int 5\n[2, 3, 1]\n" {
+			t.Errorf("%s: want the Go backend's order from the user's int, got (err %v):\n%s", backend, err, out)
+		}
+	}
+}

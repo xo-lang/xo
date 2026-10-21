@@ -1,5 +1,20 @@
 # prelude changes
 
+## 2026-10-21: feature: a program's own Stdio, Clock, Rand, and Os on the native backends
+
+- Kind: feature
+- Commit: (this commit)
+- Found by: decision 0307's last step (owner, 2026-10-21)
+- Go reference: none (Xo's capability interfaces; the Go backend already behaved so)
+- Test: internal/llvm/testdata/golden/user_void_caps and os_literal (go, arm64, LLVM, wasm the same), cmd/xo testdata/nogc/userfs, TestUserRandShuffle
+
+A type of the program's own converted to `Stdio`, `Clock`, or `Rand`, and
+an `Os` built with a literal, were XO1201 on the native backends; they
+now work as on the Go backend. `Rand.shuffle` on such a value is derived
+from its `int` on every backend, as before on the Go backend. Every native
+capability value's user field shrank from about two words per method of
+the capability (an `Fs` was about 66 words) to two words.
+
 ## 2026-10-21: feature: Str.rfind, Bytes.find, rfind, and zeroed, Map.map, any, and all, read_text_or and read_or
 
 - Kind: feature

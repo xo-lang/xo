@@ -95,7 +95,7 @@ fn rt3_globals() -> Str {
 
 /// The task runtime's functions; main is the index of the program's main
 /// and main_res its result leaves.
-fn rt3_text(var g: Gen, main: Int, main_res: List[Str]) -> Str {
+fn rt3_text(var g: Gen, main: Int, main_res: List[Str], main_args: Str) -> Str {
   let dropsig = g.sig(["i32"], [])
   let runsig = g.sig(["i32", "i32"], [])
   let empty = g.empty_list
@@ -132,7 +132,7 @@ fn rt3_text(var g: Gen, main: Int, main_res: List[Str]) -> Str {
   }
   """
     ;; the program's main as a task's entry function
-    (func $main_entry
+    (func $main_entry${main_args}
       call $f${main}${drops})
 
     (func $plain_free (param $p i32)

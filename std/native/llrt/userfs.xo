@@ -1,10 +1,11 @@
-// A user value converted to Fs, Net, Proc, or Env on the native targets
-// (decision 0307). For Fs:
+// A user value converted to Fs, Net, Proc, Env, Stdio, Clock, or Rand on
+// the native targets (decision 0307). For Fs:
 // the native Fs (xo.Fs: root, mode, user) holds it in its user field as a
 // UserFs, and the native prelude's fs_ functions and std/testing's memfs_
 // functions call it first.
 
 use native/rt
+use std/task
 
 /// The Fs methods of a user value converted to Fs: the same methods as
 /// the prelude's Fs.
@@ -114,6 +115,83 @@ pub interface UserEnv {
   /// ~/Library/Caches, or %LocalAppData%.
   fn cache_dir(self) -> Str ! EnvErr uses env
 }
+
+/// The Stdio methods of a user value converted to Stdio (decision 0307,
+/// the last step): the same methods as the prelude's Stdio. The compiler
+/// calls them at each Stdio method call on a native Stdio that holds one.
+pub interface UserStdio {
+  fn print(self, text: Str) uses stdio
+  fn println(self, text: Str) uses stdio
+  fn eprint(self, text: Str) uses stdio
+  fn eprintln(self, text: Str) uses stdio
+  fn write(self, data: Bytes) -> () ! IoErr uses stdio
+  fn read_line(self) -> Str? ! IoErr uses stdio
+  fn read_all(self) -> Str ! IoErr uses stdio
+  fn lines(self) -> List[Str] ! IoErr uses stdio
+  fn stdin_is_tty(self) -> Bool uses stdio
+  fn stdout_is_tty(self) -> Bool uses stdio
+  fn stderr_is_tty(self) -> Bool uses stdio
+  fn width(self) -> Int? uses stdio
+  fn read_secret(self, prompt: Str) -> Str? ! IoErr uses stdio
+  fn read_bytes(self, max: Int) -> Bytes? ! IoErr uses stdio
+  fn read_all_bytes(self) -> Bytes ! IoErr uses stdio
+}
+
+/// The Clock methods of a user value converted to Clock (decision 0307).
+pub interface UserClock {
+  fn now(self) -> Time uses clock
+  fn sleep(self, d: Duration) uses clock
+  fn sleep_or_cancel(self, d: Duration) -> () ! ClockErr uses clock
+  fn since(self, t: Time) -> Duration uses clock
+}
+
+/// The Rand methods of a user value converted to Rand (decision 0307):
+/// all but the generic shuffle, which a closure record cannot hold and
+/// which is derived from `int` on every backend (std.md 3.4: Fisher-Yates,
+/// one `int` per step; the native prelude's rand_shuffle calls the user
+/// value's int, as std/rt's Rand_shuffle does).
+pub interface UserRand {
+  fn int(self, lo: Int, hi: Int) -> Int uses rand
+  fn float(self) -> Float uses rand
+  fn bool(self) -> Bool uses rand
+  fn bytes(self, n: Int) -> Bytes uses rand
+}
+/// The fields of an Os a program builds (`Os{net: ..., fs: ...}`,
+/// decision 0307): the native Os holds its record in its user field, and
+/// each field read (`o.fs`) calls the record's method of that name.
+pub interface UserOs {
+  fn net(self) -> Net
+  fn fs(self) -> Fs
+  fn clock(self) -> Clock
+  fn rand(self) -> Rand
+  fn env(self) -> Env
+  fn proc(self) -> Proc
+  fn stdio(self) -> Stdio
+  fn tasks(self) -> task.Group
+}
+
+/// An Os literal's fields (each NAME as NAME_v: a field and a method may
+/// not share a name), the value a native Os literal converts to UserOs.
+pub struct OsFields {
+  net_v: Net
+  fs_v: Fs
+  clock_v: Clock
+  rand_v: Rand
+  env_v: Env
+  proc_v: Proc
+  stdio_v: Stdio
+  tasks_v: task.Group
+}
+
+fn (o: OsFields) net() -> Net { o.net_v }
+fn (o: OsFields) fs() -> Fs { o.fs_v }
+fn (o: OsFields) clock() -> Clock { o.clock_v }
+fn (o: OsFields) rand() -> Rand { o.rand_v }
+fn (o: OsFields) env() -> Env { o.env_v }
+fn (o: OsFields) proc() -> Proc { o.proc_v }
+fn (o: OsFields) stdio() -> Stdio { o.stdio_v }
+fn (o: OsFields) tasks() -> task.Group { o.tasks_v }
+
 
 /// The user value f holds; None for the runtime's own Fs. The compiler
 /// replaces a call of it with a read of the native Fs's user field; this

@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+> HOME set: true, PATH set: false
+> write denied: true
+> now: 42
+> > nested, PATH set: true
+task saw 42
+runtime Os: true
+--- stderr

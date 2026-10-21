@@ -12,6 +12,11 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.10
 
+- **User capabilities on every backend** (decision 0307): a program's own
+  type converted to `Fs`, `Proc`, `Env`, `Net`, `Stdio`, `Clock`, or
+  `Rand`, and an `Os` built with a literal, work on the native backends as
+  on the Go backend (they were XO1201); `Rand.shuffle` is derived from
+  the value's `int`.
 - **Raw multi-line strings** (1.6, decision 0320): `r"""..."""` (and
   `r#"""..."""#` to hold `"""`) is a multi-line string with no escapes
   and no interpolation, its common leading indentation removed as for

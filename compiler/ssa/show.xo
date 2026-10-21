@@ -160,7 +160,7 @@ fn (var b: Builder) debug_body(ct: Int, t: Int) {
     b.retv(b.lit(acc, "<fs>"))
     return
   }
-  if b.is_lists(t) {
+  if b.is_lists(t) || b.is_void_cap(t) || b.is_os(t) {
     b.retv(b.lit(acc, "<${lower_name(b.m.types[t].name[3..])}>"))
     return
   }

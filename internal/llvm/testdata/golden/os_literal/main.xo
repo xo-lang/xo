@@ -1,0 +1,63 @@
+// An Os a program builds (decision 0307, the last step): its fields are
+// what the literal gave (attenuated capabilities, a user Stdio, a fixed
+// Clock), read by code written against Os, nested, and across a task; the
+// runtime's own Os is unchanged beside it.
+
+struct Prefix {
+  inner: Stdio
+}
+
+fn (p: Prefix) print(text: Str) uses stdio { p.inner.print("> " + text) }
+fn (p: Prefix) println(text: Str) uses stdio { p.inner.println("> " + text) }
+fn (p: Prefix) eprint(text: Str) uses stdio { p.inner.eprint(text) }
+fn (p: Prefix) eprintln(text: Str) uses stdio { p.inner.eprintln(text) }
+fn (p: Prefix) write(data: Bytes) -> () ! IoErr uses stdio { p.inner.write(data) }
+fn (p: Prefix) read_line() -> Str? ! IoErr uses stdio { Ok(None) }
+fn (p: Prefix) read_all() -> Str ! IoErr uses stdio { Ok("") }
+fn (p: Prefix) lines() -> List[Str] ! IoErr uses stdio { Ok([]) }
+fn (p: Prefix) stdin_is_tty() -> Bool uses stdio { false }
+fn (p: Prefix) stdout_is_tty() -> Bool uses stdio { false }
+fn (p: Prefix) stderr_is_tty() -> Bool uses stdio { false }
+fn (p: Prefix) width() -> Int? uses stdio { None }
+fn (p: Prefix) read_secret(prompt: Str) -> Str? ! IoErr uses stdio { Ok(None) }
+fn (p: Prefix) read_bytes(max: Int) -> Bytes? ! IoErr uses stdio { Ok(None) }
+fn (p: Prefix) read_all_bytes() -> Bytes ! IoErr uses stdio { Ok(b"") }
+
+struct Frozen {
+  at: Time
+}
+
+fn (c: Frozen) now() -> Time uses clock { c.at }
+fn (c: Frozen) sleep(d: Duration) uses clock {}
+fn (c: Frozen) sleep_or_cancel(d: Duration) -> () ! ClockErr uses clock { Ok(()) }
+fn (c: Frozen) since(t: Time) -> Duration uses clock { c.at - t }
+
+/// Code written against Os: it sees only what its caller gave it.
+fn tool(os: Os) uses stdio, env, fs, clock {
+  os.stdio.println("HOME set: ${os.env.get("HOME").is_some()}, PATH set: ${os.env.get("PATH").is_some()}")
+  os.stdio.println("write denied: ${os.fs.write("xo-os-literal-probe.txt", b"x").is_err()}")
+  os.stdio.println("now: ${os.clock.now().unix()}")
+}
+
+fn main(os: Os) {
+  let limited = Os{
+    net: os.net.only(["example.com"]),
+    fs: os.fs.read_only(),
+    clock: Frozen{at: Time.from_unix(42)},
+    rand: os.rand,
+    env: os.env.only(["HOME"]),
+    proc: os.proc.only([]),
+    stdio: Prefix{inner: os.stdio},
+    tasks: os.tasks,
+  }
+  tool(limited)
+  // an Os built from another built Os
+  let inner = Os{net: limited.net, fs: limited.fs, clock: os.clock, rand: limited.rand, env: os.env, proc: limited.proc, stdio: Prefix{inner: limited.stdio}, tasks: limited.tasks}
+  inner.stdio.println("nested, PATH set: ${inner.env.get("PATH").is_some()}")
+  let r = scope s {
+    let t = s.spawn(fn() -> Int { limited.clock.now().unix() })
+    t.await
+  }
+  os.stdio.println("task saw ${r}")
+  os.stdio.println("runtime Os: ${os.clock.now().unix() > 42}")
+}

@@ -111,6 +111,9 @@ fn (var b: Builder) coerce_at(v: Int, t: Int, at: Expr?) -> Int {
     if b.is_lists(t) && !b.is_lists(vt) {
       return b.user_to_lists(v, ct, t, at)
     }
+    if b.is_void_cap(t) && vt != t {
+      return b.user_to_void_cap(v, ct, t, at)
+    }
     if b.is_dyn(t) && !b.is_dyn(vt) {
       return b.to_dyn(v, ct, b.iface_name(e))
     }
@@ -1030,27 +1033,11 @@ fn (var b: Builder) selector(e: Expr) -> Int {
   }
   let v = b.expr(x)
   let vt = b.vty(v)
+  if b.is_os(vt) {
+    return b.os_field(e, x, v, check.text(sel.name))
+  }
   if b.tkind(vt) == Kind.Cap {
-    let t = b.nat_of(e)
-    if b.tkind(t) == Kind.Handle {
-      // os.tasks (core 7.1, decision 0109): the group of the scope around
-      // main (tasks_main)
-      b.set_flag(1)
-      if !b.conc {
-        return b.undef(t)
-      }
-      return b.rt("prog_group", t, [])
-    }
-    if b.is_fs(t) {
-      let root = b.const_str("")
-      return b.add(Op.Struct, t, Aux.None, b.fs_fields(t, root, b.cint(0)))
-    }
-    if b.is_lists(t) {
-      // os.proc, os.env, os.net: no attenuation (decisions 0172, 0175)
-      let lists = b.const_str("")
-      return b.add(Op.Struct, t, Aux.None, b.lists_fields(t, lists))
-    }
-    return b.add(Op.Cap, t, Aux.S(s: check.text(sel.name)), [v])
+    return b.own_os_field(e, v, check.text(sel.name))
   }
   let (i, ft) = b.field_index(vt, check.text(sel.name))
   if i >= 0 {
@@ -1059,6 +1046,62 @@ fn (var b: Builder) selector(e: Expr) -> Int {
   b.unsupported("the selector `.${check.text(sel.name)}`")
   b.undef(b.nat_of(e))
 }
+
+/// Field name of the runtime's own Os v (a void Os, or a lowered Os whose
+/// user field is None): the runtime's own capability (os.fs, os.tasks).
+fn (var b: Builder) own_os_field(e: Expr, v: Int, name: Str) -> Int {
+  let t = b.nat_of(e)
+  if b.tkind(t) == Kind.Handle {
+    // os.tasks (core 7.1, decision 0109): the group of the scope around
+    // main (tasks_main)
+    b.set_flag(1)
+    if !b.conc {
+      return b.undef(t)
+    }
+    return b.rt("prog_group", t, [])
+  }
+  if b.is_fs(t) {
+    let root = b.const_str("")
+    return b.add(Op.Struct, t, Aux.None, b.fs_fields(t, root, b.cint(0)))
+  }
+  if b.is_lists(t) {
+    // os.proc, os.env, os.net: no attenuation (decisions 0172, 0175)
+    let lists = b.const_str("")
+    return b.add(Op.Struct, t, Aux.None, b.lists_fields(t, lists))
+  }
+  if b.is_void_cap(t) {
+    // os.stdio, os.clock, os.rand: the runtime's own (decision 0307)
+    return b.own_void_cap(t)
+  }
+  b.add(Op.Cap, t, Aux.S(s: name), [v])
+}
+
+/// Field name of the lowered Os v (decision 0307): the method of that
+/// name of the UserOs record of an Os the program built, else the
+/// runtime's own capability.
+fn (var b: Builder) os_field(e: Expr, x: Expr, v: Int, name: Str) -> Int {
+  let t = b.nat_of(e)
+  let ot = b.m.types[b.vty(v)].fields[0].ty
+  let u = b.add(Op.Field, ot, Aux.I(n: 0), [v])
+  let join = b.new_block()
+  let res = b.s.f.add_param(join, t)
+  let (yes, no) = b.branch(b.user_held(u))
+  b.s.cur = yes
+  let rec = b.user_rec(u)
+  let uv = b.method_on(name, b.nat_check(x), rec, [], t, b.fail_err(-1), Some(e))
+  if !b.is_dead() {
+    b.jump(join, [uv])
+  }
+  b.s.cur = no
+  let ov = b.own_os_field(e, v, name)
+  if !b.is_dead() {
+    b.jump(join, [ov])
+  }
+  b.seal(join)
+  b.s.cur = join
+  res
+}
+
 
 /// Builds variant name of enum t from field values (variant).
 fn (var b: Builder) variant(t: Int, name: Str, args: List[Int]) -> Int {
@@ -1177,6 +1220,9 @@ fn (var b: Builder) struct_lit(e: Expr) -> Int {
     _ => fault("struct literal")
   }
   let t = b.nat_of(e)
+  if b.is_os(t) {
+    return b.os_lit(fields, t, e)
+  }
   if b.tkind(t) != Kind.Struct {
     b.unsupported("this struct literal")
     return b.undef(t)
@@ -1227,6 +1273,39 @@ fn (var b: Builder) struct_lit(e: Expr) -> Int {
   }
   v
 }
+/// An Os literal (decision 0307): its fields, in source order, as a
+/// native/llrt/userfs OsFields (field NAME as NAME_v), which the lowered Os t holds as a UserOs
+/// record; a field read of it calls the record (os_field).
+fn (var b: Builder) os_lit(fields: List[parser.FieldInit], t: Int, e: Expr) -> Int {
+  let fct = b.user_cap_check("OsFields")
+  if fct < 0 {
+    b.unsupported("an Os literal without the native runtime's OsFields")
+    return b.undef(t)
+  }
+  let ft = b.typ(fct)
+  let n = b.m.types[ft].fields.len()
+  var vals: List[Int] = []
+  for _ in 0..n {
+    vals.push(-1)
+  }
+  for fi in fields {
+    let i = b.m.field_index(ft, "${check.text(fi.name.name)}_v")
+    if i < 0 {
+      b.unsupported("the Os field `${check.text(fi.name.name)}`")
+      continue
+    }
+    vals[i] = b.value_as(fi.value, b.m.types[ft].fields[i].ty)
+  }
+  for i in 0..n {
+    if vals[i] < 0 {
+      b.unsupported("an Os literal without the field `${b.m.types[ft].fields[i].name}`")
+      vals[i] = b.undef(b.m.types[ft].fields[i].ty)
+    }
+  }
+  let fv = b.add(Op.Struct, ft, Aux.None, vals)
+  b.add(Op.Struct, t, Aux.None, [b.user_hold(b.m.types[t].fields[0].ty, fv, fct, Some(e))])
+}
+
 
 /// e of file f (a default value, a constant) as a value of type t.
 fn (var b: Builder) foreign_value(e: Expr, f: Int, t: Int) -> Int {

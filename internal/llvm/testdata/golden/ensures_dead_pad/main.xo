@@ -1,0 +1,18 @@
+// An inlined `ensures` that always fails, with an owned value live
+// across it: the check after the call is unreachable once the branch
+// folds, but the calls on the kept path land on its pad.
+
+fn buggy(n: Int) -> Int
+  ensures result > n
+{
+  n
+}
+
+fn text(n: Int) -> Str {
+  "x${n}"
+}
+
+fn main(os: Os) {
+  let s = text(3)
+  os.stdio.println("${buggy(3)}${s}")
+}

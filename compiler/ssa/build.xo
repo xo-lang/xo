@@ -1061,10 +1061,8 @@ fn (var b: Builder) named_type(t: Int) -> Int {
       "Never" => return b.unit_t()
       "Fs" => return b.fs_type()
       "Proc" | "Env" | "Net" => return b.lists_type(oname)
-      "Os" | "Stdio" | "Clock" | "Rand" => {
-        let (ct, _) = b.m.named(oname, Kind.Cap)
-        return ct
-      }
+      "Stdio" | "Clock" | "Rand" => return b.void_cap_type(oname)
+      "Os" => return b.os_type()
       "List" | "Buf" => {
         let et = b.typ(x.args[0])
         return b.m.list(et)
@@ -1094,6 +1092,12 @@ fn (var b: Builder) named_type(t: Int) -> Int {
       }
       if cap is "Proc" | "Env" | "Net" {
         return b.lists_type(cap)
+      }
+      if cap is "Stdio" | "Clock" | "Rand" {
+        return b.void_cap_type(cap)
+      }
+      if cap == "Os" {
+        return b.os_type()
       }
       let (ct, _) = b.m.named(cap, Kind.Cap)
       return ct
@@ -1285,7 +1289,7 @@ fn (var b: Builder) fs_type() -> Int {
     // UserFs record, None for the runtime's own Fs
     let ut = b.user_fs_check()
     if ut >= 0 {
-      fs.push(SField{name: "user", ty: b.typ(b.prelude_type("Option", [ut]))})
+      fs.push(SField{name: "user", ty: b.user_holder(ut)})
     }
     b.m.types[t].fields = fs
   }
@@ -1329,11 +1333,7 @@ fn (var b: Builder) user_to_fs(v: Int, ct: Int, at: Expr?) -> Int {
     b.unsupported("converting `${b.m.types[b.vty(v)].name}` to `Fs` without the native prelude")
     return b.undef(t)
   }
-  let ot = b.m.types[t].fields[2].ty
-  let some = b.m.variant_index(ot, "Some")
-  let it = b.m.types[ot].variants[some].fields[0].ty
-  let rec = b.to_iface(v, ct, it, at)
-  let u = b.add(Op.Variant, ot, Aux.I(n: some), [rec])
+  let u = b.user_hold(b.m.types[t].fields[2].ty, v, ct, at)
   // root and mode deny everything (as fs_cwd's fallback), so that native
   // code reading them directly instead of calling a method (lock_shared)
   // never treats a user value as the unrestricted Fs
@@ -1365,7 +1365,7 @@ fn (var b: Builder) lists_type(name: Str) -> Int {
     // native/llrt/userfs record, None for the runtime's own
     let ut = b.user_cap_check("User${name}")
     if ut >= 0 {
-      fs.push(SField{name: "user", ty: b.typ(b.prelude_type("Option", [ut]))})
+      fs.push(SField{name: "user", ty: b.user_holder(ut)})
     }
     b.m.types[t].fields = fs
   }
@@ -1391,12 +1391,124 @@ fn (var b: Builder) user_to_lists(v: Int, ct: Int, t: Int, at: Expr?) -> Int {
     b.unsupported("converting `${b.m.types[b.vty(v)].name}` to `${b.m.types[t].name}` without the native prelude")
     return b.undef(t)
   }
-  let ot = b.m.types[t].fields[1].ty
-  let some = b.m.variant_index(ot, "Some")
-  let it = b.m.types[ot].variants[some].fields[0].ty
-  let rec = b.to_iface(v, ct, it, at)
-  let u = b.add(Op.Variant, ot, Aux.I(n: some), [rec])
+  let u = b.user_hold(b.m.types[t].fields[1].ty, v, ct, at)
   b.add(Op.Struct, t, Aux.None, [b.const_str("\u{1}"), u])
+}
+
+/// The lowered Stdio, Clock, or Rand (decision 0307, the last step): one
+/// field, the native/llrt/userfs record of a user value converted to it,
+/// None for the runtime's own, whose methods take no state. A std without
+/// the record interfaces (a seed's) keeps the void capability.
+fn (var b: Builder) void_cap_type(name: Str) -> Int {
+  let ut = b.user_cap_check("User${name}")
+  if ut < 0 {
+    let (ct, _) = b.m.named(name, Kind.Cap)
+    return ct
+  }
+  let (t, created) = b.m.named("xo.${name}", Kind.Struct)
+  if created {
+    b.m.types[t].fields = [SField{name: "user", ty: b.user_holder(ut)}]
+  }
+  t
+}
+
+/// The lowered Os (decision 0307, the last step): one field, the
+/// native/llrt/userfs UserOs record of an Os a program built with a
+/// literal, None for the runtime's own, whose fields are the runtime's
+/// own capabilities. A std without UserOs (a seed's) keeps the void Os.
+fn (var b: Builder) os_type() -> Int {
+  let ut = b.user_cap_check("UserOs")
+  if ut < 0 {
+    let (ct, _) = b.m.named("Os", Kind.Cap)
+    return ct
+  }
+  let (t, created) = b.m.named("xo.Os", Kind.Struct)
+  if created {
+    // lowering UserOs's record lowers task.Group (its tasks method),
+    // which marks the program as using tasks (conc_type); the type alone
+    // does not, and every program lowers Os: keep the flags as they were
+    // (a Group value comes only from os.tasks, Scope.group, or a task
+    // operation, each of which sets them; 2026-10-21: every program was
+    // built with unwinding checks)
+    let need = b.need_conc
+    let bits = b.fe_flagbits
+    let h = b.user_holder(ut)
+    b.need_conc = need
+    b.fe_flagbits = bits
+    b.m.types[t].fields = [SField{name: "user", ty: h}]
+  }
+  t
+}
+
+fn (var b: Builder) is_os(t: Int) -> Bool {
+  b.m.types[t].kind == Kind.Struct && b.m.types[t].name == "xo.Os"
+}
+
+fn (var b: Builder) is_void_cap(t: Int) -> Bool {
+  b.m.types[t].kind == Kind.Struct && (b.m.types[t].name is "xo.Stdio" | "xo.Clock" | "xo.Rand")
+}
+
+/// The index of the user field of a lowered Proc, Env, Net, Stdio, Clock,
+/// or Rand t, or -1 when it has none.
+fn (var b: Builder) cap_user_field(t: Int) -> Int {
+  if b.is_void_cap(t) {
+    return 0
+  }
+  if b.is_lists(t) && b.m.types[t].fields.len() > 1 {
+    return 1
+  }
+  -1
+}
+
+/// The runtime's own Stdio, Clock, or Rand t (a struct whose user field is
+/// None).
+fn (var b: Builder) own_void_cap(t: Int) -> Int {
+  b.add(Op.Struct, t, Aux.None, [b.zero(b.m.types[t].fields[0].ty, [])])
+}
+
+/// v (checker type ct, not the capability) converted to the Stdio, Clock,
+/// or Rand t (decision 0307): t's user field holds v as a record.
+fn (var b: Builder) user_to_void_cap(v: Int, ct: Int, t: Int, at: Expr?) -> Int {
+  b.add(Op.Struct, t, Aux.None, [b.user_hold(b.m.types[t].fields[0].ty, v, ct, at)])
+}
+
+/// The user field of a lowered capability for the interface type ut
+/// (decision 0307): xo.user[R], None (tag 0, so all-zero words are None)
+/// for the runtime's own value, or Some with ut's record R boxed. Two
+/// words, where an Option of the record itself would hold two words a
+/// method in every capability value (an Fs was 66 words).
+fn (var b: Builder) user_holder(ut: Int) -> Int {
+  let rect = b.typ(ut)
+  let bt = b.m.box_of(rect)
+  let (et, created) = b.m.named("xo.user[${b.m.types[rect].name}]", Kind.Enum)
+  if created {
+    b.m.types[et].variants = [SVariant{name: "None"}, SVariant{name: "Some", fields: [SField{name: "v", ty: bt}]}]
+  }
+  et
+}
+
+/// The record type of the user field type lt.
+fn (var b: Builder) user_rect(lt: Int) -> Int {
+  b.m.types[b.m.types[lt].variants[1].fields[0].ty].elems[0]
+}
+
+/// v (checker type ct) as the user field of type lt: Some of its record,
+/// boxed.
+fn (var b: Builder) user_hold(lt: Int, v: Int, ct: Int, at: Expr?) -> Int {
+  let bt = b.m.types[lt].variants[1].fields[0].ty
+  let rec = b.to_iface(v, ct, b.m.types[bt].elems[0], at)
+  b.add(Op.Variant, lt, Aux.I(n: 1), [b.add(Op.Box, bt, Aux.None, [rec])])
+}
+
+/// Whether the user field u holds a record.
+fn (var b: Builder) user_held(u: Int) -> Int {
+  b.is_tag(u, "Some")
+}
+
+/// The record the user field u holds (user_held is true).
+fn (var b: Builder) user_rec(u: Int) -> Int {
+  let bt = b.m.types[b.vty(u)].variants[1].fields[0].ty
+  b.unbox(b.add(Op.Payload, bt, Aux.P(tag: 1, field: 0), [u]))
 }
 
 fn (var b: Builder) is_lists(t: Int) -> Bool {
@@ -1543,6 +1655,18 @@ fn (var b: Builder) ambiguous_type_names() -> Map[Str, Bool] {
         }
       }
       owner[n] = m
+      // a program's own type named like a prelude type (`Conn`, `Cmd`):
+      // the prelude's is interned under the bare name, so the program's
+      // takes its module path (2026-10-21: a user `struct Conn` became the
+      // prelude's Conn handle once Os's UserOs record lowered Net.dial's
+      // result, and its literal was XO1201)
+      if b.c.prelude >= 0 {
+        if let Some(po) = b.c.mods[b.c.prelude].members.get(name) {
+          if b.c.objs[po].kind == check.ObjKind.Type {
+            out[n] = true
+          }
+        }
+      }
     }
   }
   out

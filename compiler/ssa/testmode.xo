@@ -44,7 +44,7 @@ fn (var b: Builder) build_tests() {
   if !b.c.root_mods.is_empty() {
     b.main_mod = b.c.root_mods[0]
   }
-  let (os_t, _) = b.m.named("Os", Kind.Cap)
+  let os_t = b.os_type()
   let err_ct = b.prelude_type("Error", [])
   let rt = b.typ(b.result_of(b.c.unit_ty, err_ct))
   let decls = b.test_decls()
@@ -588,7 +588,7 @@ fn (var b: Builder) run_main(x: Expr, ci: check.CallInfo) -> Int {
     }
   }
   var ft = b.typ(b.apply(b.c.objs[fo].params[0].ty))
-  let (os_t, _) = b.m.named("Os", Kind.Cap)
+  let os_t = b.os_type()
   var main_v = -1
   let nt = b.nat_of(e0)
   if b.tkind(nt) == Kind.Func && b.m.types[nt].elems.len() == 1 && b.tkind(ft) == Kind.Func && b.m.types[nt].ret != b.m.types[ft].ret {

@@ -1,0 +1,4 @@
+exit 70
+--- stdout
+--- stderr
+fault: ensures failed: result > n at main.xo:6:11

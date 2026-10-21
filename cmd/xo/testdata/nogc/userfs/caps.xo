@@ -49,3 +49,58 @@ fn refused(n: Net, addr: Str) -> Bool uses net.dial {
     _ => false
   }
 }
+
+/// A Stdio that prefixes every line and passes the rest on (decision 0307,
+/// the last step: a user struct converted to Stdio, in a test's own
+/// wrapper).
+struct PrefixStdio {
+  inner: Stdio
+  prefix: Str
+}
+
+fn (s: PrefixStdio) print(text: Str) uses stdio { s.inner.print(s.prefix + text) }
+fn (s: PrefixStdio) println(text: Str) uses stdio { s.inner.println(s.prefix + text) }
+fn (s: PrefixStdio) eprint(text: Str) uses stdio { s.inner.eprint(s.prefix + text) }
+fn (s: PrefixStdio) eprintln(text: Str) uses stdio { s.inner.eprintln(s.prefix + text) }
+fn (s: PrefixStdio) write(data: Bytes) -> () ! IoErr uses stdio { s.inner.write(data) }
+fn (s: PrefixStdio) read_line() -> Str? ! IoErr uses stdio { s.inner.read_line() }
+fn (s: PrefixStdio) read_all() -> Str ! IoErr uses stdio { s.inner.read_all() }
+fn (s: PrefixStdio) lines() -> List[Str] ! IoErr uses stdio { s.inner.lines() }
+fn (s: PrefixStdio) stdin_is_tty() -> Bool uses stdio { s.inner.stdin_is_tty() }
+fn (s: PrefixStdio) stdout_is_tty() -> Bool uses stdio { s.inner.stdout_is_tty() }
+fn (s: PrefixStdio) stderr_is_tty() -> Bool uses stdio { s.inner.stderr_is_tty() }
+fn (s: PrefixStdio) width() -> Int? uses stdio { s.inner.width() }
+fn (s: PrefixStdio) read_secret(prompt: Str) -> Str? ! IoErr uses stdio { s.inner.read_secret(prompt) }
+fn (s: PrefixStdio) read_bytes(max: Int) -> Bytes? ! IoErr uses stdio { s.inner.read_bytes(max) }
+fn (s: PrefixStdio) read_all_bytes() -> Bytes ! IoErr uses stdio { s.inner.read_all_bytes() }
+
+/// A Clock running a fixed offset ahead of another.
+struct AheadClock {
+  inner: Clock
+  by: Duration
+}
+
+fn (c: AheadClock) now() -> Time uses clock { c.inner.now() + c.by }
+fn (c: AheadClock) sleep(d: Duration) uses clock { c.inner.sleep(d) }
+fn (c: AheadClock) sleep_or_cancel(d: Duration) -> () ! ClockErr uses clock { c.inner.sleep_or_cancel(d) }
+fn (c: AheadClock) since(t: Time) -> Duration uses clock { c.now() - t }
+
+/// A Rand that always draws the same numbers.
+struct StuckRand {
+  n: Int
+}
+
+fn (r: StuckRand) int(lo: Int, hi: Int) -> Int uses rand { lo + r.n % (hi - lo) }
+fn (r: StuckRand) float() -> Float uses rand { 0.5 }
+fn (r: StuckRand) bool() -> Bool uses rand { true }
+fn (r: StuckRand) bytes(n: Int) -> Bytes uses rand { Bytes.zeroed(n) }
+fn (r: StuckRand) shuffle[T](xs: List[T]) -> List[T] uses rand { xs }
+
+/// Says hello on s.
+fn say(s: Stdio, who: Str) uses stdio { s.println("hello ${who}") }
+
+/// How long ago t was on c.
+fn age(c: Clock, t: Time) -> Duration uses clock { c.since(t) }
+
+/// A die roll on r.
+fn roll(r: Rand) -> Int uses rand { r.int(1, 7) }

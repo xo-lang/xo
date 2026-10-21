@@ -1602,7 +1602,14 @@ fn (var g: G) branch_op(v: Int) {
       let e = if k { x.succs[0] } else { x.succs[1] }
       let (dsts, srcs) = g.edge_moves(e)
       g.pmove(dsts, srcs)
-      let _j = g.add(Inst{kind: K_JUMP, targets: [g.bmap[g.f.edges[e].to]]})
+      var ts = [g.bmap[g.f.edges[e].to]]
+      if !ssa.pads_reached(g.f, v, e) {
+        // a value on the kept path lands on a check of the other edge's
+        // blocks: they stay reachable, as the rt.landing branch's second
+        // target (2026-10-21: an inlined `ensures` that always fails)
+        ts.push(g.bmap[g.f.edges[if k { x.succs[1] } else { x.succs[0] }].to])
+      }
+      let _j = g.add(Inst{kind: K_JUMP, targets: ts})
       return
     }
   }

@@ -1,0 +1,16 @@
+exit 0
+--- stdout
+[tee] hello user
+hello runtime
+[tee] no newline
+Some("line") all ["a", "b"] Some(80)
+true false Some("pw:p") 3
+since 10s
+cancel true
+bytes 4
+shuffle [3, 2, 1, 5, 4]
+[tee] now 1000 int 13 bool false float 0.25
+now 1000 int 14 bool true float 0.25
+[tee] hello task
+real clock moves: true
+--- stderr

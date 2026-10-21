@@ -10,3 +10,37 @@ test "a wrapper Net refuses one host" {
   let n = BlockNet{inner: os.net, blocked: "evil.example"}
   expect(refused(n, "evil.example:443")) == true
 }
+
+test "a wrapper Stdio prefixes each line" {
+  let s = PrefixStdio{inner: os.stdio, prefix: "> "}
+  say(s, "ada")
+  say(os.stdio, "bob")
+  s.write(b"raw\n")?
+  expect(os.stdio.output()) == "> hello ada\nhello bob\nraw\n"
+}
+
+test "a wrapper Clock runs ahead" {
+  let t0 = os.clock.now()
+  let c = AheadClock{inner: os.clock, by: 1h}
+  expect(age(c, t0)) == 1h
+  os.clock.advance(5s)
+  expect(age(c, t0)) == 1h + 5s
+  expect(age(os.clock, t0)) == 5s
+}
+
+test "a user Rand draws its own numbers" {
+  let r = StuckRand{n: 3}
+  expect(roll(r)) == 4
+  expect(roll(StuckRand{n: 10})) == 5
+  let real = roll(os.rand)
+  expect(real >= 1 && real <= 6) == true
+}
+
+test "an Os built from a test's fakes and wrappers" {
+  let o = Os{net: os.net, fs: os.fs, clock: AheadClock{inner: os.clock, by: 2s}, rand: StuckRand{n: 0}, env: os.env, proc: os.proc, stdio: PrefixStdio{inner: os.stdio, prefix: "# "}, tasks: os.tasks}
+  let t0 = os.clock.now()
+  say(o.stdio, "os")
+  expect(age(o.clock, t0)) == 2s
+  expect(roll(o.rand)) == 1
+  expect(os.stdio.output()) == "# hello os\n"
+}

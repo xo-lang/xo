@@ -627,6 +627,15 @@ fn (var g: Gen) rt3_call(v: Int, name: Str) {
   let fname = name.trim_prefix("rt.")
   let id = if rt3_blocking(name) { g.resume_point() } else { -1 }
   let atomic = fname.starts_with("atomic_")
+  if fname == "prog_group" && x.args.is_empty() {
+    // $prog_group takes the place for its fault when the program has no
+    // task group; the SSA's call (os.tasks) passes none, as the native
+    // runtime's takes none (the wasm module did not compile with os.tasks
+    // before, 2026-10-21)
+    let at = if x.pos.is_empty() { g.f.name } else { x.pos }
+    g.e("i32.const ${g.str_obj(at.bytes())}")
+    g.e("i32.const ${at.len()}")
+  }
   for (i, a) in x.args.indexed() {
     g.push(a)
     let ls = g.leaves(g.vty(a))

@@ -456,6 +456,13 @@ fn report(m: Mutex[Stats]) -> Str {
 Predeclared interfaces. `main(os: Os)` receives the real ones; tests receive
 fakes (section 8).
 
+A program's own type that implements one (a wrapper that prefixes every
+line, a clock that runs ahead, a read-only view) is used wherever the
+capability is expected (core 2.10, rule 2), and a program may
+build an `Os` with a literal, `Os{net: ..., fs: ..., stdio: ...}`, to
+hand code written against `Os` attenuated or wrapped capabilities. Both
+work the same on every backend (decision 0307).
+
 ### 3.1 Fs (`uses fs.read` / `fs.write`)
 
 Paths use `/` on every OS. `os.fs` is rooted at the filesystem root, accepts
@@ -768,7 +775,10 @@ fn (r: Rand) shuffle[T](xs: List[T]) -> List[T]
 Native builds (`--no-gc`, decision 0083) draw from the operating system's
 generator (`getentropy`, `getrandom`); `shuffle` draws one `int` per
 step as on the Go backend, so a test's seeded shuffle is the same
-(decision 0107).
+(decision 0107). `shuffle` is derived from `int` on every backend, for a
+program's own Rand too: Fisher-Yates from the end with that value's
+`int`; a `shuffle` method the type declares is not called (decision
+0307).
 
 ### 3.5 Env (`uses env`)
 

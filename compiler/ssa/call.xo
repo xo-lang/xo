@@ -2330,7 +2330,21 @@ fn (var b: Builder) fs_user_call(x: Expr, fo: Int) -> Int? {
     b.unsupported("`fs_user` without the user field of Fs")
     return Some(b.undef(b.nat_of(x)))
   }
-  Some(b.add(Op.Field, b.m.types[t].fields[2].ty, Aux.I(n: 2), [v]))
+  let u = b.add(Op.Field, b.m.types[t].fields[2].ty, Aux.I(n: 2), [v])
+  // the Option[UserFs] userfs.user returns, from the list
+  let ot = b.nat_of(x)
+  let some = b.m.variant_index(ot, "Some")
+  let none = b.m.variant_index(ot, "None")
+  let join = b.new_block()
+  let res = b.s.f.add_param(join, ot)
+  let (yes, no) = b.branch(b.user_held(u))
+  b.s.cur = yes
+  b.jump(join, [b.add(Op.Variant, ot, Aux.I(n: some), [b.user_rec(u)])])
+  b.s.cur = no
+  b.jump(join, [b.add(Op.Variant, ot, Aux.I(n: none), [])])
+  b.seal(join)
+  b.s.cur = join
+  Some(res)
 }
 
 /// The key of e in pinned: its file and span.
@@ -2354,7 +2368,7 @@ fn (var b: Builder) user_cap_call(x: Expr, ci: check.CallInfo) -> Int? {
     return None
   }
   let rname = b.obj_name(r)
-  if !(rname is "Proc" | "Env" | "Net") {
+  if !(rname is "Proc" | "Env" | "Net" | "Stdio" | "Clock" | "Rand") {
     return None
   }
   let recv = ci.recv[0]
@@ -2363,28 +2377,32 @@ fn (var b: Builder) user_cap_call(x: Expr, ci: check.CallInfo) -> Int? {
     // the lowering of the runtime's own value, inside this dispatch
     return None
   }
-  let lt = b.lists_type(rname)
-  if b.m.types[lt].fields.len() < 2 {
+  let lt = if rname is "Proc" | "Env" | "Net" { b.lists_type(rname) } else { b.void_cap_type(rname) }
+  let ui = b.cap_user_field(lt)
+  if ui < 0 {
     return None
   }
   let fname = b.obj_name(fo)
-  let ot = b.m.types[lt].fields[1].ty
-  let some = b.m.variant_index(ot, "Some")
-  let rect = b.m.types[ot].variants[some].fields[0].ty
+  let ot = b.m.types[lt].fields[ui].ty
+  let rect = b.user_rect(ot)
   let j = b.m.field_index(rect, fname)
+  // a method the record has no field for (Rand.shuffle, generic): the
+  // lowering as for the runtime's own value, which for shuffle is the
+  // native prelude's Fisher-Yates over the value's own `int`, as the Go
+  // backend's (std.md 3.4), so a user Rand's int is called
   if j < 0 {
     return None
   }
   let (_, _, args) = call_parts(x)
   let nt = b.nat_of(x)
   let v = b.value_as(recv, lt)
-  let u = b.add(Op.Field, ot, Aux.I(n: 1), [v])
+  let u = b.add(Op.Field, ot, Aux.I(n: ui), [v])
   let join = b.new_block()
   let res = b.s.f.add_param(join, nt)
-  let (yes, no) = b.branch(b.is_tag(u, "Some"))
-  // the user value's method, through its record
+  let (yes, no) = b.branch(b.user_held(u))
   b.s.cur = yes
-  let rec = b.add(Op.Payload, rect, Aux.P(tag: some, field: 0), [u])
+  // the user value's method, through its record
+  let rec = b.user_rec(u)
   let pts = b.m.types[b.m.types[rect].fields[j].ty].elems
   let es = arg_exprs(b.c.objs[fo].params, args)
   var vals: List[Int] = []

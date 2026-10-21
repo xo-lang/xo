@@ -17,6 +17,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   1% slower.
 - WebAssembly: `Stdio.write` wrote nothing (its buffer was never flushed in a
   WASI module); it now writes through, in order with print and println.
+- A program's own Stdio, Clock, and Rand, and an `Os` built with a
+  literal, work on the native backends (decision 0307, complete); the
+  native capability values shrank (an Fs from about 66 words to 5);
+  `os.tasks` compiles on wasm.
 - Raw multi-line strings (decision 0320): `r"""..."""` has no escapes
   and no interpolation and removes common indentation as `"""` does;
   `r#"""..."""#` may contain `"""`.

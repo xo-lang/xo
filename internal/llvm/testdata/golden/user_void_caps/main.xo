@@ -1,0 +1,88 @@
+// User values converted to Stdio, Clock, and Rand (decision 0307, the
+// last step): each call dispatches to the user's method (Rand.shuffle is
+// derived from the value's int); the runtime's own values keep working
+// beside them, in a struct and across a task.
+
+struct Tee {
+  inner: Stdio
+  tag: Str
+}
+
+fn (t: Tee) print(text: Str) uses stdio { t.inner.print("${t.tag}${text}") }
+fn (t: Tee) println(text: Str) uses stdio { t.inner.println("${t.tag}${text}") }
+fn (t: Tee) eprint(text: Str) uses stdio { t.inner.eprint(text) }
+fn (t: Tee) eprintln(text: Str) uses stdio { t.inner.eprintln(text) }
+fn (t: Tee) write(data: Bytes) -> () ! IoErr uses stdio { t.inner.write(data) }
+fn (t: Tee) read_line() -> Str? ! IoErr uses stdio { Ok(Some("line")) }
+fn (t: Tee) read_all() -> Str ! IoErr uses stdio { Ok("all") }
+fn (t: Tee) lines() -> List[Str] ! IoErr uses stdio { Ok(["a", "b"]) }
+fn (t: Tee) stdin_is_tty() -> Bool uses stdio { true }
+fn (t: Tee) stdout_is_tty() -> Bool uses stdio { true }
+fn (t: Tee) stderr_is_tty() -> Bool uses stdio { false }
+fn (t: Tee) width() -> Int? uses stdio { Some(80) }
+fn (t: Tee) read_secret(prompt: Str) -> Str? ! IoErr uses stdio { Ok(Some("pw:${prompt}")) }
+fn (t: Tee) read_bytes(max: Int) -> Bytes? ! IoErr uses stdio { Ok(Some(Bytes.zeroed(max))) }
+fn (t: Tee) read_all_bytes() -> Bytes ! IoErr uses stdio { Ok(b"xyz") }
+
+struct Fixed {
+  at: Time
+}
+
+fn (c: Fixed) now() -> Time uses clock { c.at }
+fn (c: Fixed) sleep(d: Duration) uses clock {}
+fn (c: Fixed) sleep_or_cancel(d: Duration) -> () ! ClockErr uses clock { Err(ClockErr.Canceled) }
+fn (c: Fixed) since(t: Time) -> Duration uses clock { c.at - t }
+
+struct Seq {
+  n: Int
+}
+
+fn (r: Seq) int(lo: Int, hi: Int) -> Int uses rand { lo + r.n % (hi - lo) }
+fn (r: Seq) float() -> Float uses rand { 0.25 }
+fn (r: Seq) bool() -> Bool uses rand { r.n % 2 == 0 }
+fn (r: Seq) bytes(n: Int) -> Bytes uses rand { Bytes.zeroed(n) }
+fn (r: Seq) shuffle[T](xs: List[T]) -> List[T] uses rand { xs.reverse() }
+
+struct Caps {
+  out: Stdio
+  clock: Clock
+  rand: Rand
+}
+
+fn report(c: Caps) uses stdio, clock, rand {
+  c.out.println("now ${c.clock.now().unix()} int ${c.rand.int(10, 20)} bool ${c.rand.bool()} float ${c.rand.float()}")
+}
+
+fn greet(s: Stdio, who: Str) uses stdio {
+  s.println("hello ${who}")
+}
+
+fn main(os: Os) -> () ! IoErr {
+  let tee: Stdio = Tee{inner: os.stdio, tag: "[tee] "}
+  greet(tee, "user")
+  greet(os.stdio, "runtime")
+  tee.print("no newline\n")
+  let line = tee.read_line()?
+  let all = tee.read_all()?
+  let ls = tee.lines()?
+  os.stdio.println("${line:?} ${all} ${ls:?} ${tee.width():?}")
+  let secret = tee.read_secret("p")?
+  let rb = tee.read_all_bytes()?
+  os.stdio.println("${tee.stdin_is_tty()} ${tee.stderr_is_tty()} ${secret:?} ${rb.len()}")
+  let fixed: Clock = Fixed{at: Time.from_unix(1000)}
+  os.stdio.println("since ${fixed.since(Time.from_unix(990))}")
+  fixed.sleep(1s)
+  os.stdio.println("cancel ${fixed.sleep_or_cancel(1s).is_err()}")
+  let seq: Rand = Seq{n: 3}
+  os.stdio.println("bytes ${seq.bytes(4).len()}")
+  // derived from the value's own int on every backend (std.md 3.4)
+  os.stdio.println("shuffle ${seq.shuffle([1, 2, 3, 4, 5]):?}")
+  report(Caps{out: tee, clock: fixed, rand: seq})
+  report(Caps{out: os.stdio, clock: fixed, rand: Seq{n: 4}})
+  scope s {
+    let t = s.spawn(fn() { greet(tee, "task") })
+    t.await
+  }
+  os.stdio.println("real clock moves: ${os.clock.now().unix() > 1000}")
+  Ok(())
+}

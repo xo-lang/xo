@@ -1376,10 +1376,18 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
       main_res.push(l)
     }
   }
+  // main's Os (decision 0307: two words, None when all zero) and any
+  // other parameter: zero words, as the native entries pass
+  var main_args = ""
+  for p in mf.blocks[0].params {
+    for l in g.leaves(mf.values[p].ty) {
+      main_args = main_args + (if l == "f64" { "\n      f64.const 0" } else { "\n      ${l}.const 0" })
+    }
+  }
   g.find_susp()
   g.compute_homes(main)
   if g.conc {
-    rt = rt + rt3_text(g, main, main_res)
+    rt = rt + rt3_text(g, main, main_res, main_args)
   }
   if g.files {
     rt = rt + rt4_text(g, tz)
@@ -1393,7 +1401,7 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
   var start: List[Str] = []
   for p in mf.blocks[0].params {
     let t = mf.values[p].ty
-    if !(g.kind(t) is ssa.Kind.Cap | ssa.Kind.Unit) {
+    if !(g.kind(t) is ssa.Kind.Cap | ssa.Kind.Unit) && g.m.types[t].name != "xo.Os" {
       g.fail("main takes a `${g.m.types[t].name}`")
     }
   }
@@ -1401,6 +1409,11 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
     // main runs as the first task of the scheduler (rt3.xo)
     start.push("call $sched")
   } else {
+    for l in main_args.split("\n") {
+      if !l.trim().is_empty() {
+        start.push(l.trim())
+      }
+    }
     start.push("call $f${main}")
     for _ in main_res {
       start.push("drop")
