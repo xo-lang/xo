@@ -151,6 +151,18 @@ enc_amd64.xo the amd64 emitter's; both are reached only through text
   text and the XInst) and the 3,192 of AMD64_SURVEY (LLVM's x86_64 output
   for the goldens).
 
+- 2026-10-21, step 3 stage 1 for arm64 (branch direct-mc-step3): under
+  XO_OP_VERIFY=1 the emitter parses each instruction line into its Op and
+  fails the build when printing it does not give the line back (the Op
+  keeps an explicit `#0` offset and a condition's spelling, `cs` as
+  written); the line passes start moving to items (arm64 lines.xo: each
+  instruction's Op beside its text): reload_reuse_ops and copy_runs_ops
+  read their slot loads, stores, and word copies from the Op, and under
+  XO_OP_VERIFY their output must equal the text passes', function by
+  function. The text passes still produce the build's output. An
+  XO_OP_VERIFY sweep of half the goldens and the compiler, darwin and
+  linux (236 builds, the backend caches off), found no difference.
+
 ## Step 3 for arm64: design notes (2026-10-21, before the measurement)
 
 What the text costs now, per function (compiler/arm64 emit.xo): selection
