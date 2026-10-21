@@ -12,8 +12,11 @@
 // construct of a later stage), `== rejected <file:line:col: code message>`
 // (the checker's first error), or `== error <message>`.
 // --each builds every directory as a run of its own, each preceded by
-// `=== wasm <dir>`. Fault positions are relative to the directory's
-// module root (the nearest xo.mod, else the directory), as `xo build`
+// `=== wasm <dir>`. Directory arguments are relative to the process's
+// directory; --wd only sets the checker's working directory, so run the
+// tool in it (gotchas/dev-tool-wd-is-not-cwd.md). Fault positions are
+// relative to the directory's module root (the nearest xo.mod, else the
+// directory), as `xo build`
 // prints them. --why reports every construct the backend does not support
 // (separated by `; `), not only the first. --lax builds a module even
 // with runtime calls the backend does not have: each faults when it

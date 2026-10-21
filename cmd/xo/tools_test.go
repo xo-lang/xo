@@ -1321,7 +1321,8 @@ func TestWasmToolRejectedText(t *testing.T) {
 	})
 	std, _ := filepath.Abs(filepath.Join("..", "..", "std"))
 	// run in the directory, as the tool's callers do (an absolute
-	// directory argument reports `no main function`, a separate quirk)
+	// directory argument with --wd elsewhere reads the wrong directory:
+	// gotchas/dev-tool-wd-is-not-cwd.md)
 	run := exec.Command(tool, "--std="+std, ".")
 	run.Dir = dir
 	out, _ := run.CombinedOutput()
