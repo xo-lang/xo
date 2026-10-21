@@ -37,6 +37,7 @@ var generators = map[string]func() string{
 	"multipart": multipartCorpus,
 	"template":  templateCorpus,
 	"url":       urlCorpus,
+	"uuid":      uuidCorpus,
 	"xml":       xmlCorpus,
 	"netip":     netipCorpus,
 }

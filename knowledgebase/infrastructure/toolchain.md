@@ -1489,7 +1489,11 @@ Go's own package (testdata/corpus/MODULE/MODULE_test.xo: Go's results
 on its test file's strings and seeded random inputs, mapped as std/rt
 maps them), and `go run ./scripts/stdcorpus -check` fails when one
 differs from its generator (2026-10-21: mail first; the Go oracle kept
-as data whatever implements a module on the Go backend).
+as data whatever implements a module on the Go backend). std/uuid's
+oracle is github.com/google/uuid, not Go's standard library: its
+generator runs scripts/stdcorpus/uuidoracle, its own module (go.mod
+and go.sum there; the repository's go.mod stays standard library only),
+which needs that module in the Go module cache or the proxy.
 Last verified: 2026-10-21.
 
 ### Gate and fuzz runners (2026-10-18)
