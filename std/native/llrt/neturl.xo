@@ -595,5 +595,3 @@ fn host_escapes(c: Int) -> Bool {
 }
 
 fn is_hex(c: Int) -> Bool { (c >= 48 && c <= 57) || (c >= 97 && c <= 102) || (c >= 65 && c <= 70) }
-
-

@@ -159,8 +159,7 @@ fn open_driver(net: Net, d: sql.Driver, dsn: Str, max_open: Int = 10, max_idle: 
   for _ in 0..max_open {
     permits.send(true)
   }
-  let p = Pool{net: net, drv: d, dsn: dsn, permits: permits, idle: Mutex.new([]), max_idle: max_idle.max(0),
-    max_lifetime: max_lifetime.nanos().max(0)}
+  let p = Pool{net: net, drv: d, dsn: dsn, permits: permits, idle: Mutex.new([]), max_idle: max_idle.max(0), max_lifetime: max_lifetime.nanos().max(0)}
   // connect once now, so a wrong password or host fails at open
   p.ping()?
   let db = new_db({})

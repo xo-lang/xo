@@ -223,7 +223,6 @@ pub fn pd_ready(pd: Int, mode: Int) {
 // shutdown's steps are Xo calls; the event loop's record is this
 // module's (W_EV).
 
-
 /// rt.static_word: the event loop's record (EV_ below), made by poll_svc
 /// (was xo_rt.c's static ev).
 const W_EV = 43
@@ -290,7 +289,6 @@ pub fn poll_svc() -> Int {
 /// The AFD device handle on Windows (0: none, the WSAPoll loop; always 0
 /// elsewhere).
 fn afd() -> Int { if windows() { rt.mem_load(ev(), EV_AFD, 8) } else { 0 } }
-
 
 /// Registers descriptor fd with the poller (for reading, and writing when
 /// write): its record, or minus the errno when the poller refuses it (a
@@ -364,7 +362,6 @@ fn epoll_add(poll: Int, fd: Int, events: Int, pd: Int) -> Int {
   sanhook.release(ev())
   sock.epoll_ctl(poll, 1, fd, e)
 }
-
 
 /// Closes the socket fd (xo_rt.c nx_close).
 fn fd_close(fd: Int) { let _c = sock.close(fd) }

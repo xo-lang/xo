@@ -119,8 +119,7 @@ pub fn config(dsn: Str) -> Config ! sql.SqlErr {
       params.push((k, v))
     }
   }
-  Config{hosts: hosts, ports: ports, user: user, password: s.get("password") ?? "", database: s.get("database") ?? user,
-    sslmode: sslmode, params: params}
+  Config{hosts: hosts, ports: ports, user: user, password: s.get("password") ?? "", database: s.get("database") ?? user, sslmode: sslmode, params: params}
 }
 
 // ---------------------------------------------------------------------------

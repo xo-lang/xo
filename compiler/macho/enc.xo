@@ -157,7 +157,6 @@ fn (var a: Asm) bad(m: Str, ops: List[Bytes]) {
   a.fail("unsupported instruction: ${m} ${parts.join(", ")}")
 }
 
-
 /// The N:immr:imms field (13 bits) of a logical immediate of a register
 /// of size bits, or None when v is not one.
 fn logical_imm(v0: Int, size: Int) -> Int? {

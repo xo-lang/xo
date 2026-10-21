@@ -404,4 +404,3 @@ fn (g: G) w64_weak(var out: List[Str]) {
   }
   out.push("\t.text\n")
 }
-

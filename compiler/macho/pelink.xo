@@ -566,11 +566,16 @@ fn pe_write(bufs: List[List[Int]], rva: List[Int], hdr: Int, entry: Int, o: PEOp
     (rva[PO_PDATA], bufs[PO_PDATA].len()),
     (0, 0),
     (rva[PO_RELOC], bufs[PO_RELOC].len()),
-    (0, 0), (0, 0), (0, 0),
+    (0, 0),
+    (0, 0),
+    (0, 0),
     (if has_tls { rva[PO_RDATA] + tls_dir } else { 0 }, if has_tls { 40 } else { 0 }),
-    (0, 0), (0, 0),
+    (0, 0),
+    (0, 0),
     (if iat_size > 0 { rva[PO_RDATA] + iat_start } else { 0 }, iat_size),
-    (0, 0), (0, 0), (0, 0),
+    (0, 0),
+    (0, 0),
+    (0, 0),
   ]
   for (r, s) in dirs {
     w.u32(r)

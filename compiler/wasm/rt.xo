@@ -94,7 +94,7 @@ fn rt_text(var g: Gen) -> Str {
   let nanmsg = g.litp("cannot convert NaN to Int")
   let oorint = g.litp(" is out of range for Int")
   let fffd = g.litp("\\u{FFFD}")
-  let lofl_s =" out of range for List of length "
+  let lofl_s = " out of range for List of length "
   let lofb_s = " out of range for Bytes of length "
   let lofl_a = g.raw(lofl_s.bytes())
   let lofb_a = g.raw(lofb_s.bytes())

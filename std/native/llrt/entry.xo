@@ -73,7 +73,6 @@ const W_GUARANTEE = 65536
 
 const ACQUIRE = 1
 
-
 /// The runtime's setup before any other Xo runs (cabi_c.xo main; was
 /// xo_rt.c's main and fault_init): the main thread's heap record, fault.xo and ctx.xo (the
 /// personality routine's address), the event loop's record before any
@@ -162,7 +161,6 @@ fn main_fiber_on() -> Bool {
   let e = process.env_real_at("XO_MAIN_FIBER")
   !(e != 0 && raw.byte_at(e, 0) == 48)
 }
-
 
 /// The program's main on its own thread (cabi.xo run_main, the thread's
 /// C function; was xo_rt.c run_main): on Windows the stack the thread

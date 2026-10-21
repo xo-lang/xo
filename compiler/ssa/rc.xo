@@ -1463,7 +1463,6 @@ fn sorted_leaves(f: Func, s: Map[Int, Leaf]) -> List[Leaf] {
   out.sort_by(fn(l) { (l.root, l.path) })
 }
 
-
 /// Inserts RC into block bl, backward from its terminator (walk).
 fn (var r: Rc) walk(var f: Func, var c: RcFunc, bl: Int) {
   let term = f.term(bl)

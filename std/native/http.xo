@@ -2161,7 +2161,6 @@ fn fake_match(kind: Int, i: Int, req: Request, raw: Str) -> (Int, Map[Str, Str])
 // Cookies (std.md 4.3, decision 0288): net/http's cookie.go (go1.26.1)
 // ported; a byte Go drops with a log line is dropped silently.
 
-
 /// Go's Cookie.String.
 fn cookie_display(c: http.Cookie) -> Str {
   if !cookie_token(c.name) {

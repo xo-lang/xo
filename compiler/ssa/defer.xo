@@ -6,7 +6,6 @@
 // whose cleanup runs that code. The scopes open around the code (stage
 // 5, conc.xo) are among the open blocks: a frame whose scope is set.
 
-
 /// A `defer` statement of a block.
 struct DStmt {
   body: Stmt

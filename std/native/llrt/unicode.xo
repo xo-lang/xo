@@ -357,4 +357,3 @@ pub fn quote(b: Bytes) -> Str {
   }
   rt.rs_push_byte(o, 34)
 }
-

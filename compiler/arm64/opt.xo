@@ -365,8 +365,7 @@ fn dce_keep(var insts: List[Inst], live: List[Bool]) {
 /// dominates it.
 fn (var g: G) inherit(from: Int) {
   let src = g.memo_at(from)
-  var m = Memo{blk: g.cur, epoch: src.epoch, lo: src.lo, hi: src.hi, low_zero: src.low_zero, less: src.less, quo: src.quo,
-    lens: src.lens, checked: src.checked, bases: src.bases, loaded: src.loaded, cs: src.cs, len_at: src.len_at}
+  var m = Memo{blk: g.cur, epoch: src.epoch, lo: src.lo, hi: src.hi, low_zero: src.low_zero, less: src.less, quo: src.quo, lens: src.lens, checked: src.checked, bases: src.bases, loaded: src.loaded, cs: src.cs, len_at: src.len_at}
   for (k, v) in src.ci {
     // a constant one instruction makes is not worth a register across
     // blocks (and a fresh one coalesces with a block parameter)
@@ -1256,8 +1255,7 @@ fn (var g: G) thread_cset() {
       continue
     }
     var ins = g.take_insts(p)
-    ins[np - 1] = Inst{kind: K_CONDBR, text: def.text[0..i], us: def.us,
-      cond: cond, targets: g.blocks[j].insts[0].targets}
+    ins[np - 1] = Inst{kind: K_CONDBR, text: def.text[0..i], us: def.us, cond: cond, targets: g.blocks[j].insts[0].targets}
     if !chain.is_empty() {
       ins = copy_moves(ins, chain)
     } else if (nuses.get(r) ?? 0) == 1 {
@@ -1984,13 +1982,11 @@ fn (var g: G) select_compares() {
     }
     if same {
       // the other compare is the first one: its flags pick too
-      insts.push(Inst{kind: K_PLAIN, text: "${shift_uses(pt.text, 1)}\ncset $d0, ${nc}\ncsel $d0, $u0, $d0, eq",
-        defs: [r], us: [a] + pt.us, early: true})
+      insts.push(Inst{kind: K_PLAIN, text: "${shift_uses(pt.text, 1)}\ncset $d0, ${nc}\ncsel $d0, $u0, $d0, eq", defs: [r], us: [a] + pt.us, early: true})
     } else {
       let b = g.new_vreg(false)
       insts.push(Inst{kind: K_PLAIN, text: "${nt.text}\ncset $d0, ${nc}", defs: [b], us: nt.us})
-      insts.push(Inst{kind: K_PLAIN, text: "${shift_uses(pt.text, 2)}\ncsel $d0, $u0, $u1, eq",
-        defs: [r], us: [a, b] + pt.us})
+      insts.push(Inst{kind: K_PLAIN, text: "${shift_uses(pt.text, 2)}\ncsel $d0, $u0, $u1, eq", defs: [r], us: [a, b] + pt.us})
     }
     insts.push(Inst{kind: K_CONDBR, cond: "tbnz", us: [r], targets: [t, f]})
     g.blocks[p].insts = insts

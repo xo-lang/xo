@@ -69,12 +69,12 @@ pub const EAI_SYSTEM: Int = -11
 /// getaddrinfo (cabi_net.xo resolve_libc; UNTESTED on windows).
 pub fn wsa_eai(g: Int) -> Int {
   match g {
-    11001 => EAI_NONAME // WSAHOST_NOT_FOUND
-    11002 => EAI_AGAIN // WSATRY_AGAIN
-    11003 => EAI_FAIL // WSANO_RECOVERY
-    11004 => EAI_NODATA // WSANO_DATA
+    11001 => EAI_NONAME  // WSAHOST_NOT_FOUND
+    11002 => EAI_AGAIN   // WSATRY_AGAIN
+    11003 => EAI_FAIL    // WSANO_RECOVERY
+    11004 => EAI_NODATA  // WSANO_DATA
     10109 => EAI_SERVICE // WSATYPE_NOT_FOUND
-    10047 => EAI_FAMILY // WSAEAFNOSUPPORT
+    10047 => EAI_FAMILY  // WSAEAFNOSUPPORT
     _ => EAI_FAIL
   }
 }

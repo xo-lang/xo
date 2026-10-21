@@ -32,7 +32,6 @@
 // or when overwritten entries and tombstones outnumber live keys, the
 // view is flattened into a fresh table.
 
-
 /// The first chunk's entries; chunk c holds MLOG_CHUNK << c.
 const MLOG_CHUNK = 8
 /// A table's chunk directory is made with room for this many chunks (8
@@ -130,7 +129,7 @@ fn (var b: Builder) mlog_newdir(dt: Int) -> Int {
     var d = b.call("list.new", dt, "", [b.cint(MLOG_DIR + MLOG_PAD)])
     for _ in 0..MLOG_PAD {
       // the shared empty list: list.new with a size allocates
-    d = b.call("list.push", dt, "", [d, b.call("list.new", el, "", [])])
+      d = b.call("list.push", dt, "", [d, b.call("list.new", el, "", [])])
     }
     b.retv(d)
     b.finish_fn()

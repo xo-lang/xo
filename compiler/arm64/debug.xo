@@ -74,19 +74,19 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
   var out = StrBuilder.new()
   // .debug_line
   var hdr = Dw{}
-  hdr.u8(1) // minimum_instruction_length
-  hdr.u8(1) // maximum_operations_per_instruction
-  hdr.u8(1) // default_is_stmt
+  hdr.u8(1)   // minimum_instruction_length
+  hdr.u8(1)   // maximum_operations_per_instruction
+  hdr.u8(1)   // default_is_stmt
   hdr.u8(251) // line_base -5
-  hdr.u8(14) // line_range
-  hdr.u8(13) // opcode_base
+  hdr.u8(14)  // line_range
+  hdr.u8(13)  // opcode_base
   for n in [0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 1] {
     hdr.u8(n)
   }
   // directories: the compile directory, and the one std/'s file names
   // are relative to
   let stdd = !g.m.std_root.is_empty()
-  hdr.u8(1) // directory_entry_format_count
+  hdr.u8(1)   // directory_entry_format_count
   hdr.uleb(1) // DW_LNCT_path
   hdr.uleb(8) // DW_FORM_string
   hdr.uleb(if stdd { 2 } else { 1 })
@@ -94,10 +94,10 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
   if stdd {
     hdr.str(g.m.std_root)
   }
-  hdr.u8(2) // file_name_entry_format_count
-  hdr.uleb(1) // DW_LNCT_path
-  hdr.uleb(8) // DW_FORM_string
-  hdr.uleb(2) // DW_LNCT_directory_index
+  hdr.u8(2)    // file_name_entry_format_count
+  hdr.uleb(1)  // DW_LNCT_path
+  hdr.uleb(8)  // DW_FORM_string
+  hdr.uleb(2)  // DW_LNCT_directory_index
   hdr.uleb(15) // DW_FORM_udata
   hdr.uleb(files.len())
   for f in files {

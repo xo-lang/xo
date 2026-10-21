@@ -235,4 +235,3 @@ fn pelink_main(os: Os, args: List[Str]) -> () ! FsErr {
     Err(e) => fail(os, e)
   }
 }
-

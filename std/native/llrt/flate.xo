@@ -875,7 +875,6 @@ fn (var d: Deflater) deflate() {
   }
 }
 
-
 // ---------------------------------------------------------------------------
 // The decompressor (compress/flate inflate.go), over data[pos:end]
 
@@ -1293,7 +1292,6 @@ pub fn (var f: Inflater) block(fixed: HDec) -> Bool ! Str {
   }
   last
 }
-
 
 // ---------------------------------------------------------------------------
 // Every level (compress/flate deflate.go's init: NoCompression, HuffmanOnly,

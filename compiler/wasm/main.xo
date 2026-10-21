@@ -106,8 +106,7 @@ fn build_one(os: Os, std_dir: Str, wd: Str, dirs: List[Str], out_dir: Str, why: 
   // decision 0291's hybrid Map stays off on wasm until its open wasm
   // bug is fixed; XO_MAP_LOG=1 turns it on to work on that
   c.map_log = (os.env.get("XO_MAP_LOG") ?? "") == "1"
-  c.set_mod_env(wd, os.env.get("XO_MODCACHE") ?? "", os.env.get("HOME") ?? "", os.env.get("XDG_CACHE_HOME") ?? "",
-    os.env.get("XO_OFFLINE") ?? "", os.env.get("XO_WORK") ?? "")
+  c.set_mod_env(wd, os.env.get("XO_MODCACHE") ?? "", os.env.get("HOME") ?? "", os.env.get("XDG_CACHE_HOME") ?? "", os.env.get("XO_OFFLINE") ?? "", os.env.get("XO_WORK") ?? "")
   c.cbind_dir = os.env.get("XO_CBIND_DIR") ?? ""
   match c.check_dirs(dirs) {
     Ok(_) => {}

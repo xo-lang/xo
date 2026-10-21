@@ -181,7 +181,6 @@ fn setitimer(which: Int, new: Int, old: Int) -> Int32
 /// with errno set (std/native/llrt/entry.xo).
 fn sigaction(sig: Int, act: Int, old: Int) -> Int32
 
-
 /// dlsym(3): the address of a symbol (RTLD_DEFAULT, -2: any image
 /// loaded), 0 when none has it (std/native/llrt/tlscert.xo: CoreFoundation's
 /// kCFTypeArrayCallBacks, a data symbol).

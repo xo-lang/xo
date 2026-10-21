@@ -188,4 +188,3 @@ pub fn readdir(d: Int) -> Int {
   rt.mem_store(d, D_POS, addw(rt.mem_load(d, D_POS, 8), rt.mem_load(e, 16, 2)), 8)
   e
 }
-

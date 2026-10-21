@@ -169,11 +169,11 @@ fn fe64_sqn(h: Int, f: Int, k: Int) {
 /// 254 squarings and 11 products (ref10's), in the scratch elements
 /// s0 to s4; h may be z.
 fn fe64_inv(h: Int, z: Int, s0: Int, s1: Int, s2: Int, s3: Int, s4: Int) {
-  fe64_sq(s0, z) // z^2
-  fe64_sqn(s3, s0, 2) // z^8
-  fe64_mul(s1, s3, z) // z^9
+  fe64_sq(s0, z)       // z^2
+  fe64_sqn(s3, s0, 2)  // z^8
+  fe64_mul(s1, s3, z)  // z^9
   fe64_mul(s2, s1, s0) // z^11
-  fe64_sq(s3, s2) // z^22
+  fe64_sq(s3, s2)      // z^22
   fe64_mul(s1, s3, s1) // z^(2^5 - 1)
   fe64_sqn(s3, s1, 5)
   fe64_mul(s1, s3, s1) // z^(2^10 - 1)
@@ -189,8 +189,8 @@ fn fe64_inv(h: Int, z: Int, s0: Int, s1: Int, s2: Int, s3: Int, s4: Int) {
   fe64_mul(s3, s3, s4) // z^(2^200 - 1)
   fe64_sqn(s3, s3, 50)
   fe64_mul(s3, s3, s1) // z^(2^250 - 1)
-  fe64_sqn(s3, s3, 5) // z^(2^255 - 2^5)
-  fe64_mul(h, s3, s2) // z^(2^255 - 21)
+  fe64_sqn(s3, s3, 5)  // z^(2^255 - 2^5)
+  fe64_mul(h, s3, s2)  // z^(2^255 - 21)
 }
 
 /// The public key of scalar: [scalar]9 (RFC 7748 6.1), as Go's
@@ -789,4 +789,3 @@ fn fe64_freeze(h: Int, f: Int) {
   st(h, 16, x21)
   st(h, 24, x22)
 }
-

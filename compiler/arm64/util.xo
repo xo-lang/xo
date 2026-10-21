@@ -157,7 +157,7 @@ fn align16(n: Int) -> Int {
 /// mod d == d - 1; s = p - 64. Only M wraps (wrapping_add).
 fn sdiv_magic(d: Int) -> (Int, Int) {
   let t = (MAX_INT % d + 1) % d // 2^63 mod d
-  let anc = MAX_INT - t // 2^62 <= anc < 2^63
+  let anc = MAX_INT - t         // 2^62 <= anc < 2^63
   // q1, r1: 2^p / anc and 2^p mod anc, from p = 63; big once q1 >= 2^63
   var q1 = 1
   var r1 = MAX_INT - anc + 1

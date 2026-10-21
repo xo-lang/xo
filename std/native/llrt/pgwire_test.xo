@@ -144,7 +144,6 @@ test "scram rejects a nonce the client did not start" {
 // pgx v5.11.0 parseKeywordValueSettingsCorpus; expected results from Go
 // (gokv in the scratchpad). Strings are hex so every byte survives.
 
-
 test "keyword value 0" {
   let got = parse_keyword_value(s("")).map(fn(m) { m.entries().sort() })
   let want: Result[List[(Str, Str)], Str] = Ok([])

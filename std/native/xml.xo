@@ -1317,4 +1317,3 @@ const HTML_ENTITY: List[(Str, Int)] = [("nbsp", 160), ("iexcl", 161), ("cent", 1
 
 /// Go's HTMLAutoClose
 const HTML_AUTO_CLOSE: List[Str] = ["basefont", "br", "area", "link", "img", "param", "hr", "input", "col", "frame", "isindex", "base", "meta"]
-

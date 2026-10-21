@@ -282,4 +282,3 @@ pub fn strncmp(a: Int, b: Int, n: Int) -> Int {
 // ---------------------------------------------------------------------------
 // qsort: a shell sort (the runtime sorts header and channel lists), cmp
 // a C function of two element addresses returning a C int.
-

@@ -431,8 +431,7 @@ enum Sig {
 
 fn sigs() -> List[Sig] {
   var out: List[Sig] = []
-  for h in ["<!DOCTYPE HTML", "<HTML", "<HEAD", "<SCRIPT", "<IFRAME", "<H1", "<DIV", "<FONT", "<TABLE", "<A", "<STYLE",
-      "<TITLE", "<B", "<BODY", "<BR", "<P", "<!--"] {
+  for h in ["<!DOCTYPE HTML", "<HTML", "<HEAD", "<SCRIPT", "<IFRAME", "<H1", "<DIV", "<FONT", "<TABLE", "<A", "<STYLE", "<TITLE", "<B", "<BODY", "<BR", "<P", "<!--"] {
     out.push(Sig.Html(p: h.bytes()))
   }
   out = out + [

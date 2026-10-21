@@ -227,7 +227,6 @@ fn fk_serve(l: Listener, hello: Bytes, answer: fn(Str, Bytes) -> Bytes) -> () ! 
 
 fn fk_hello_trust() -> Bytes { fk_auth_ok() + fk_key_data() + fk_ready() }
 
-
 fn fk_dsn(addr: Str) -> Str { "postgres://app@${addr}/app?sslmode=disable" }
 
 fn fk_query_server(kind: Str, body: Bytes) -> Bytes {

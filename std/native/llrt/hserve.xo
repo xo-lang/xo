@@ -475,8 +475,6 @@ pub fn sink_free(k: Int) {
 
 fn table() -> Int { ctx.svc() + ctx.SV_STREAMS }
 
-
-
 /// Keeps f (an Any of the stream's function): its number.
 pub fn stream_put(f: rt.Any) -> Int {
   // the table is freed at exit (entry.xo, decision 0233)

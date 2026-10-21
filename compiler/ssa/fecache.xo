@@ -1066,7 +1066,6 @@ fn (var b: Builder) fe_miss(why: Str) -> Bool {
   false
 }
 
-
 fn all_kinds() -> List[Kind] {
   [Kind.Unit, Kind.Int, Kind.Float, Kind.Bool, Kind.Str, Kind.Struct, Kind.Enum, Kind.Tuple, Kind.List, Kind.Cap, Kind.Func, Kind.Box, Kind.Handle, Kind.Bad]
 }

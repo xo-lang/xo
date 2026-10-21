@@ -1,4 +1,3 @@
-
 // Go's net/netip (go1.26.1) ParseAddr (with BitLen, As16, Zone, String, the Is
 // predicates, Unmap().Is4, AsSlice) and ParsePrefix (String, Masked, Contains
 // of fixed probes) on netip_test.go style and random inputs (decision 0287).

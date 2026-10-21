@@ -158,7 +158,6 @@ pub fn resize_obj(p: Int, old: Int, n: Int) -> Int { hresize(heap_word(), p, old
 /// A new string object with room for at least n bytes (xo_rt.c rs_new).
 pub fn rs_new_obj(n: Int) -> Int { rs_new_n(n) }
 
-
 /// alloc.free on heap h (one thread): the module's one call site of it
 /// (see halloc), small enough that the inliner copies it into its two
 /// callers (rl_free_n's common case and hfree).

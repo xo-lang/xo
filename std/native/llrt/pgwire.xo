@@ -7,7 +7,7 @@
 // (parseKeywordValueSettings), and parse_url.go (parseURLSettings).
 use std/crypto
 
-pub const PROTOCOL_3_0: Int = 196608      // 3 << 16
+pub const PROTOCOL_3_0: Int = 196608 // 3 << 16
 pub const SSL_REQUEST_CODE: Int = 80877103
 pub const CANCEL_REQUEST_CODE: Int = 80877102
 
@@ -396,7 +396,6 @@ pub fn (s: Scram) finish(server_final: Str) -> () ! ScramErr {
   let want = crypto.hmac_sha256(server_key, s.auth_message.bytes())
   if !crypto.equal(got, want) { return Err(ScramErr.ServerSignature) }
 }
-
 
 // ---------------------------------------------------------------------------
 // Keyword/value connection strings (pgconn config.go)
