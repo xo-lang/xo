@@ -259,12 +259,15 @@ fn call_raw(r: Router, req: Request) -> http.Response {
 fn isolated(f: fn() -> http.Response) -> http.Response {
   match task.isolate(fn() -> http.Response ! () { f() }) {
     Ok(resp) => resp
-    Err(task.Isolated.Faulted(info)) => {
-      log.error("handler fault", {"fault": "${info.msg} at ${info.location}"})
-      json_error(500, "internal error")
-    }
+    Err(task.Isolated.Faulted(info)) => handler_fault(info.msg, info.location)
     Err(_) => json_error(500, "internal error")
   }
+}
+
+/// A handler's fault: logged, and 500.
+fn handler_fault(msg: Str, location: Str) -> http.Response {
+  log.error("handler fault", {"fault": "${msg} at ${location}"})
+  json_error(500, "internal error")
 }
 
 fn literals(rt: Route) -> Int {
@@ -455,8 +458,14 @@ fn dispatch(r: Router, req: Request) -> http.Response {
   let h = route.h
   let q = req with {params: if esc { bind_params(route, parts, uparts) } else { bind_in(route, path, sb) }}
   // a fault in the handler is isolated: 500 (std/rt's isolateHandler,
-  // decision 0085)
-  isolated(fn() -> http.Response { h(q) })
+  // decision 0085). task.isolate's own argument, h(q) on local names: the
+  // native backends call h with q moved in, no closure holding q (which
+  // shared q's heap fields at the call and released them with itself)
+  match task.isolate(fn() -> http.Response { h(q) }) {
+    Ok(resp) => resp
+    Err(task.Isolated.Faulted(info)) => handler_fault(info.msg, info.location)
+    Err(_) => json_error(500, "internal error")
+  }
 }
 
 /// A handler's or middleware's error as a response (std.md 4.2).
