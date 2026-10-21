@@ -308,7 +308,13 @@ fn (c: ModCtx) check_effects(var b: BuildList, locks: Map[Str, check.Lock], root
     if m.workspace {
       continue
     }
-    let cur = c.chk.module_effects(m.dir)
+    let cur = match c.chk.module_effects(m.dir) {
+      Ok(x) => x
+      Err(e) => {
+        add_problem(b, check.unreadable_tree(m.path, m.version, "effects", e))
+        continue
+      }
+    }
     b.effects[m.path] = cur
     for r in roots {
       let l = match locks.get(r.dir) {
@@ -343,10 +349,10 @@ struct Hatch {
 
 /// mod.ModuleHatches: the `use c` lines and the `use go` lines of impure
 /// Go packages in the module's sources.
-fn (c: ModCtx) module_hatches(dir: Str) -> List[Hatch] uses fs.read {
+fn (c: ModCtx) module_hatches(dir: Str) -> List[Hatch] ! Str uses fs.read {
   var out: List[Hatch] = []
-  for p in c.module_sources(dir) {
-    let src = c.os.fs.read(p).ok() ?? b""
+  for p in c.module_sources(dir)? {
+    let src = c.os.fs.read(p).map_err(fn(e) { "read ${p}: ${e}" })?
     let r = parser.parse_file(p.bytes(), src, false)
     for u in r.file.imports {
       let target = check.text(u.path)
@@ -372,7 +378,7 @@ fn (c: ModCtx) module_hatches(dir: Str) -> List[Hatch] uses fs.read {
       out.push(h)
     }
   }
-  out
+  Ok(out)
 }
 
 /// mod checkHatches: XO1316 for every escape hatch of a selected version
@@ -382,7 +388,14 @@ fn (c: ModCtx) check_hatches(var b: BuildList, main: check.ModFile) uses fs.read
     if m.workspace {
       continue
     }
-    for h in c.module_hatches(m.dir) {
+    let hatches = match c.module_hatches(m.dir) {
+      Ok(x) => x
+      Err(e) => {
+        add_problem(b, check.unreadable_tree(m.path, m.version, "escape hatches", e))
+        continue
+      }
+    }
+    for h in hatches {
       var found = false
       var stale: List[check.Vouch] = []
       for v in main.vouches {

@@ -32,26 +32,32 @@ fn (c: ModCtx) tree_walk(dir: Str, rel: Str, var out: List[Str]) uses fs.read {
 /// The source files of the module at dir that mod.ModuleEffects reads:
 /// `.xo` files, not `_test.xo`, outside nested modules, vendor/,
 /// testdata/, and dot directories; absolute paths in walk order.
-fn (c: ModCtx) module_sources(dir: Str) -> List[Str] uses fs.read {
+fn (c: ModCtx) module_sources(dir: Str) -> List[Str] ! Str uses fs.read {
   var out: List[Str] = []
-  c.sources_walk(dir, true, out)
-  out
+  c.sources_walk(dir, true, out)?
+  Ok(out)
 }
 
-fn (c: ModCtx) sources_walk(d: Str, top: Bool, var out: List[Str]) uses fs.read {
-  for e in c.os.fs.read_dir(d).ok() ?? [] {
+fn (c: ModCtx) sources_walk(d: Str, top: Bool, var out: List[Str]) -> () ! Str uses fs.read {
+  let entries = match c.os.fs.read_dir(d) {
+    Ok(es) => es
+    Err(NotFound(_)) => []
+    Err(e) => return Err("read ${d}: ${e}")
+  }
+  for e in entries {
     let p = "${d}/${e.name}"
     if e.is_dir {
       if e.name == "vendor" || e.name == "testdata" || e.name.starts_with(".") || e.name.starts_with("_") || c.exists("${p}/xo.mod") {
         continue
       }
-      c.sources_walk(p, false, out)
+      c.sources_walk(p, false, out)?
       continue
     }
     if e.name.ends_with(".xo") && !e.name.ends_with("_test.xo") {
       out.push(p)
     }
   }
+  Ok(())
 }
 
 fn (c: ModCtx) exists(p: Str) -> Bool uses fs.read {

@@ -474,3 +474,18 @@ test "a directory that cannot be listed fails the check instead of being skipped
   var unread = new_checker(FlakyFs{inner: os.fs, bad: "root/app/main.xo"}, "std")
   expect(unread.check_dirs(["root"]).err().map(fn(e) { e.contains("read root/app/main.xo") })) == Some(true)
 }
+
+test "a dependency tree the effect audit cannot read is an error, not fewer effects" {
+  os.fs.create_dir_all("dep/net")?
+  os.fs.write("dep/a.xo", b"pub fn f() uses fs.read {}\n")?
+  os.fs.write("dep/net/b.xo", b"pub fn g() uses net {}\n")?
+  let c = new_checker(os.fs, "std")
+  expect(c.module_effects("dep")) == Ok(["fs.read", "net"])
+  // the subdirectory with the net function cannot be listed: the audit
+  // must not answer fs.read alone (XO1318)
+  let flaky = new_checker(FlakyFs{inner: os.fs, bad: "dep/net"}, "std")
+  expect(flaky.module_effects("dep").is_err()) == true
+  let unread = new_checker(FlakyFs{inner: os.fs, bad: "dep/net/b.xo"}, "std")
+  expect(unread.module_effects("dep").err().map(fn(e) { e.contains("read dep/net/b.xo") })) == Some(true)
+  expect(unreadable_tree("ex.com/m", "v1.0.0", "effects", "read x: boom").code) == "XO1318"
+}

@@ -1256,7 +1256,13 @@ fn (c: Checker) check_effects(var b: BuildList, locks: Map[Str, Lock], roots: Li
     if m.workspace {
       continue
     }
-    let cur = c.module_effects(m.dir)
+    let cur = match c.module_effects(m.dir) {
+      Ok(x) => x
+      Err(e) => {
+        add_problem(b, unreadable_tree(m.path, m.version, "effects", e))
+        continue
+      }
+    }
     for r in roots {
       let l = match locks.get(r.dir) {
         Some(x) => x
@@ -1281,6 +1287,12 @@ fn (c: Checker) check_effects(var b: BuildList, locks: Map[Str, Lock], roots: Li
   }
 }
 
+/// XO1318: a module tree the effect or escape hatch audit cannot read
+/// (decision 0156's checks would pass on what they did not see).
+pub fn unreadable_tree(path: Str, version: Str, what: Str, e: Str) -> Problem {
+  Problem{code: "XO1318", msg: "${path} ${version}: its ${what} cannot be checked: ${e}", notes: ["an I/O error while reading the module's tree; run the command again, and if it persists check the module cache's files (`xo mod clean` empties the module cache, and the next build fetches them again)"]}
+}
+
 /// mod.EffectsText: labels joined with commas, or `none`.
 pub fn effects_text(ls: List[Str]) -> Str {
   if ls.is_empty() { "none" } else { ls.join(",") }
@@ -1291,12 +1303,18 @@ pub fn effects_text(ls: List[Str]) -> Str {
 /// (nested modules, vendor/, testdata/, dot directories, and _test.xo
 /// files left out), sorted, a sub effect dropped when its parent is in
 /// the set. Computed from syntax.
-pub fn (c: Checker) module_effects(dir: Str) -> List[Str] uses fs.read {
+pub fn (c: Checker) module_effects(dir: Str) -> List[Str] ! Str uses fs.read {
   var set: List[Str] = []
   var todo: List[Str] = [dir]
   while !todo.is_empty() {
     let d = todo.pop() ?? ""
-    let entries = c.fs.read_dir(d).ok() ?? []
+    // a directory or file that cannot be read is an error: the effects
+    // of what it holds would be missing from the set (XO1318)
+    let entries = match c.fs.read_dir(d) {
+      Ok(es) => es
+      Err(NotFound(_)) => []
+      Err(e) => return Err("read ${d}: ${e}")
+    }
     for e in entries {
       let p = join(d, e.name)
       if e.is_dir {
@@ -1309,7 +1327,7 @@ pub fn (c: Checker) module_effects(dir: Str) -> List[Str] uses fs.read {
       if !e.name.ends_with(".xo") || e.name.ends_with("_test.xo") {
         continue
       }
-      let src = c.fs.read(p).ok() ?? b""
+      let src = c.fs.read(p).map_err(fn(e) { "read ${p}: ${e}" })?
       let r = parser.parse_file(p.bytes(), src, false)
       for decl in r.file.decls {
         if let parser.Decl.FnDecl(d: fd) = decl {
@@ -1342,7 +1360,7 @@ pub fn (c: Checker) module_effects(dir: Str) -> List[Str] uses fs.read {
     }
     out.push(l)
   }
-  out.sort()
+  Ok(out.sort())
 }
 
 /// mod.Ceilings: the effect ceilings that apply to calls from the module
