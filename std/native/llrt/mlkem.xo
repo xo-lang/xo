@@ -386,12 +386,18 @@ fn sample_cbd(s: Bytes, b: Int) -> List[Int] {
   while w < 128 {
     let x = rt.bytes_word(bs, w)
     let y = (x & 0x5555555555555555).wrapping_add(x.shr_logical(1) & 0x5555555555555555)
+    // a nibble a step from the low end (constant shifts: a shift by k
+    // was a move into cl and a variable shift twice a coefficient on
+    // amd64), and q added to a negative difference by its sign's mask
+    // (no multiply)
+    var t = y
     var k = 0
-    while k < 64 {
-      let d = (y.shr_logical(k) & 3).wrapping_sub(y.shr_logical(k.wrapping_add(2)) & 3)
-      stc(p, o, d.wrapping_add(d.shr_logical(63).wrapping_mul(Q)))
+    while k < 16 {
+      let d = (t & 3).wrapping_sub(t.shr_logical(2) & 3)
+      stc(p, o, d.wrapping_add((d >> 63) & Q))
+      t = t.shr_logical(4)
       o = add(o, 8)
-      k = add(k, 4)
+      k = add(k, 1)
     }
     w = add(w, 8)
   }
