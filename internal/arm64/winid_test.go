@@ -164,7 +164,11 @@ func ownFuncsNorm(text string, alias map[string]string) map[string]string {
 }
 
 // foldStubs writes a Linux leaf's fault stub (a frame record, the moves,
-// a call, ud2) as Windows writes it (the moves, a jump).
+// a call, ud2) as Windows writes it (the moves, a jump). The Linux stub's
+// frame for the variables a fault report shows (x86emit.xo stub_saves,
+// 3eae41c99: `subq $N, %rsp` and stores of registers to it) has no
+// Windows twin (a Windows leaf's stub jumps with no frame, win_leaf), so
+// it is dropped too.
 func foldStubs(b []string) []string {
 	var r []string
 	for i := 0; i < len(b); {
@@ -174,7 +178,15 @@ func foldStubs(b []string) []string {
 				j++
 			}
 			if j+1 < len(b) && strings.HasPrefix(b[j], "callq ") && b[j+1] == "ud2" {
-				r = append(r, b[i+2:j]...)
+				for _, l := range b[i+2 : j] {
+					if strings.HasPrefix(l, "subq $") && strings.HasSuffix(l, ", %rsp") {
+						continue
+					}
+					if strings.HasPrefix(l, "mov") && strings.HasSuffix(l, "(%rsp)") {
+						continue
+					}
+					r = append(r, l)
+				}
 				r = append(r, "jmp "+b[j][6:])
 				i = j + 2
 				continue

@@ -429,10 +429,14 @@ fn (var g: G) regalloc() {
   // positions where each call lets its callee write the words it takes
   var whint: List[List[Int]] = []
   var wclob: List[List[Int]] = []
-  // x86_64 (2026-10-21) but on Windows (the shadow space above the stack
-  // arguments) and in a function with frameless blocks (shrink
-  // wrapping: rsp differs there)
-  let argslots = pass_on(g.m, "arg_slots") && (!g.x86 || (g.os != "windows" && !g.shrink))
+  // x86_64 (2026-10-21) but in a function with frameless blocks (shrink
+  // wrapping: rsp differs there). Windows too (2026-10-21): Xo's calls are
+  // System V there (decision 0254 6c), the Win64 thunks keep their shadow
+  // space in their own frames and the export shims build their own System
+  // V area, so no Win64 frame lies between a caller's stack words and its
+  // callee (excluded at first only as a precaution;
+  // gotchas/windows-identity-arg-slots.md)
+  let argslots = pass_on(g.m, "arg_slots") && (!g.x86 || !g.shrink)
   if argslots {
     for _ in 0..n {
       whint.push([])
