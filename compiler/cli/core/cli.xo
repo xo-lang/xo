@@ -14,7 +14,7 @@ use github.com/xo-lang/xo/compiler/cli/cmdhelp
 
 /// The toolchain version (cmd/xo version.go; TestSelfhostVersion keeps
 /// them equal).
-pub const VERSION = "0.23.0"
+pub const VERSION = "0.24.0"
 
 /// What every command needs from the environment.
 pub struct Ctx {
