@@ -12,11 +12,12 @@ import (
 // wasmMapGoldens are the Map and Set goldens TestWasmMapHybrid runs.
 var wasmMapGoldens = []string{"map_log_model", "map_log_sets", "maps", "map_small", "map_until", "native_map_eq", "set_hofs", "nested_update", "map_remove_bytes", "big_struct"}
 
-// TestWasmMapHybrid runs the Map goldens on the wasm backend with
-// decision 0291's hybrid Map (XO_MAP_LOG=1; wasm builds the lists by
-// default, which TestSelfhostWasm covers). The hybrid's checks once read
-// the native runtime's object layout there, and a new map looked marked
-// and a log value looked like lists (2026-10-21).
+// TestWasmMapHybrid runs the Map goldens on the wasm backend in both of
+// decision 0291's forms: the hybrid (the default, which TestSelfhostWasm
+// covers for every golden) and the lists alone (XO_MAP_LOG=0). The
+// hybrid's checks once read the native runtime's object layout there,
+// and a new map looked marked and a log value looked like lists
+// (2026-10-21).
 func TestWasmMapHybrid(t *testing.T) {
 	if selfhostTier(t) == tierShort {
 		t.Skip("builds compiler/wasm (merge and full tiers)")
@@ -31,6 +32,12 @@ func TestWasmMapHybrid(t *testing.T) {
 	}
 	root := repoRoot(t)
 	setModEnv(t, root)
+	for _, mode := range []string{"1", "0"} {
+		t.Run("map_log="+mode, func(t *testing.T) { wasmMapRun(t, node, bin, root, mode) })
+	}
+}
+
+func wasmMapRun(t *testing.T, node, bin, root, mode string) {
 	out := t.TempDir()
 	var rel []string
 	for _, g := range wasmMapGoldens {
@@ -38,7 +45,7 @@ func TestWasmMapHybrid(t *testing.T) {
 	}
 	cmd := exec.Command(bin, append([]string{"--std=std", "--wd=" + root, "--each", "--out=" + out}, rel...)...)
 	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "XO_MAP_LOG=1")
+	cmd.Env = append(os.Environ(), "XO_MAP_LOG="+mode)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	res, err := cmd.Output()

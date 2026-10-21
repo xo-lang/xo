@@ -409,11 +409,9 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   c.lazy = native && (os.env.get("XO_CHECK_EAGER") ?? "") != "1"
   // decision 0291 (the switch, owner 2026-10-21): Map and Set are the
   // hybrid (the lists until written while shared twice, then the log);
-  // XO_MAP_LOG=0 builds the lists alone; the wasm backend keeps the
-  // lists unless XO_MAP_LOG=1 asks for the hybrid there too (an overwrite after a copy on write and an iteration
-  // was lost there, 2026-10-21; decision 0291's addendum)
-  let ml = os.env.get("XO_MAP_LOG") ?? ""
-  c.map_log = ml == "1" || (ml != "0" && o.backend != "wasm")
+  // XO_MAP_LOG=0 builds the lists alone (wasm too, since its hybrid's
+  // checks were fixed, 2026-10-21)
+  c.map_log = (os.env.get("XO_MAP_LOG") ?? "") != "0"
   // loops without preemption polls (decision 0286 step 3's opt out)
   c.no_preempt = o.no_preempt || (os.env.get("XO_PREEMPT_POLLS") ?? "") == "off"
   // decision 0318: SIGURG's preemption instead of loop polls

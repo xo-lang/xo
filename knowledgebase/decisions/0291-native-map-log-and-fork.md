@@ -294,6 +294,18 @@ wasm runtime keeps an i32 count beside the list's i32 length (fixed:
 maplog.xo obj_count), and an overwrite after a copy on write and an
 iteration of the map was lost (repro: a literal map copied, a new key
 put into the copy, the copy iterated, then an existing key overwritten;
-native correct). The second is open; wasm switches when it is fixed. HTTP CRUD instructions per
+native correct). The second is open; wasm switches when it is fixed.
+
+Wasm switched the same day (lead, relaying the owner): both problems
+were the hybrid's assumptions about the native layout, not wasm code
+generation. The mark (copied on write once) was "the log field is not
+the immortal empty list", but wasm's list.new allocates, so every new
+map looked marked; and the lists' put fast path took "values held
+once" for lists mode, but a log value's empty values list is held once
+on wasm. The mark is now an empty list of capacity 5 (list_cap), and
+the fast path also needs a non-empty list. Every backend now builds the
+hybrid by default (`XO_MAP_LOG=0` the lists); TestWasmMapHybrid runs
+the Map goldens on wasm in both forms and TestSelfhostWasm every golden
+with the hybrid. HTTP CRUD instructions per
 request (callgrind, arm64): -0.9% at 8 users, -54.9% at 10,000.
 
