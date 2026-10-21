@@ -97,6 +97,14 @@ struct S {
   detail_seen: List[Str] = []
   /// The bounds of loops, by their counter variable.
   bounds: Map[Int, LoopBound] = {}
+  /// The next loop's preemption countdown variable (PREEMPT_MODE 2), 0
+  /// for none, and whether it is a range of a constant trip count of at
+  /// most PREEMPT_SHORT (PREEMPT_MODE 4: no poll).
+  ppoll: Int = 0
+  pshort: Bool = false
+  /// The code is outside the runtime (std/native/llrt): PREEMPT_MODE 5
+  /// polls it as the program's own.
+  ppolls: Bool = false
   /// The function's unwind block (lazy), -1 until needed.
   unwind_b: Int = -1
   /// The success type and the error type (-1: cannot fail), checker types.

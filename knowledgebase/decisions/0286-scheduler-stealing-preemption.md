@@ -164,6 +164,131 @@ What none of these fixes: every worker busy computing, the queued task
 waits for a handler to end. That is preemption's (step 3), as is
 XO_THREADS=1.
 
+Step 2's measurement (Mac, 2026-10-20, xo trace of the cpuburst server on
+12 cores, step 0 in): at 12 /cpu loops dial to response p50/p99 58.6/66.1
+ms, wake to run p99 102.8 ms over 188 wakes; at 18 loops 66.9/81.6 ms, wake
+p99 157.1 ms over 223 wakes (idle time per worker 0 to 1.3 s over the
+whole run). The long waits match the handlers' length, about one handler,
+not a core left idle beside queued work, so none of the candidates above
+has a case in these traces and none lands now.
+
+## Step 3: preemption at loop iterations (2026-10-21)
+
+The owner's direction: a cheap poll of a flag a timer sets, as Go's
+cooperative preemption before its signals.
+
+- The flag: the static word 76 (std/native/llrt/pool.xo W_PREEMPT; the
+  pool's static words moved from 46 to 75 and 76), 1 while the monitor
+  asks some worker to yield. Each worker stores when it started its
+  current fiber (W_RUN_AT, run_fiber) and whether it is asked
+  (W_PREEMPT). The monitor (mon_main, which ticked only for deferrals)
+  is also woken when work is queued with every worker busy (wakep's
+  saturated path, preempt_arm), and keeps ticking every 1 ms while a
+  worker runs and work waits; it asks every worker that has run one fiber
+  SLICE_NS (10 ms, Go's forcePreemptNS), and clears the flag when none is
+  asked.
+- The poll: the SSA builder adds rt.preempt_poll(rt.static_word(76)) at
+  every loop iteration of the program's own code (loop_tick, where the
+  budget poll is), on arm64. The arm64 emitter lowers it to `ldr w16,
+  [addr]` and `cbnz w16` to a stub after the function that calls
+  xo_preempt_stub and comes back (keeping x30 in a frame record where it
+  holds the return address, a leaf or a block without the frame); the
+  LLVM emitter to inline asm with the same three instructions (x16 and lr
+  written). xo_preempt_stub (sched_asm, and a weak naked LLVM function)
+  saves x0 to x17, x18 off Apple, the flags, and q0 to q31 around the
+  runtime's xo_x_preempt: the poll clobbers nothing, so the register
+  allocator sees no call in the loop.
+- xo_x_preempt (pool.xo preempt): when this worker is asked, the running
+  fiber yields (sched.xo fiber_yield, state F_YIELDING); its scheduler
+  puts it at the inject queue's tail once it has switched away (no park
+  holds it, so no waker races the queueing), and the worker's own queue
+  runs first. A thread without a fiber does not yield (a root with
+  XO_MAIN_FIBER=0); main on its fiber does.
+- XO_PREEMPT=0 asks no worker (the kill switch, toolchain.md).
+- Not yet: amd64 (native and LLVM), whose stub saves rax, rcx, rdx, rsi,
+  rdi, r8 to r11, the flags, and xmm0 to xmm15, with Windows' shadow
+  space; std's own loops (only the program's own code polls); wasm has
+  one thread and no polls.
+- Checks: testdata/sched/preempt (XO_THREADS=1: the two threads spin on
+  a flag only a queued task sets; it ends only by preemption, and hangs
+  with XO_PREEMPT=0); acceptbusy at XO_THREADS=1 and the cpuburst trace
+  at 12 and 18 loops; the compute benches' instruction counts against
+  main for the poll's cost.
+- First measurements (Mac, 2026-10-21, native arm64): testdata/sched/
+  preempt ends its five rounds in 63 to 90 ms (about one slice a round)
+  and hangs with XO_PREEMPT=0. The poll is two instructions in the loop
+  (`ldr w16, [x11]`, `cbnz`; the flag's address hoisted out of it). A
+  call free loop of about five instructions (`s = s + i * 3` 100 million
+  times) took 6 to 13% longer, best of 7 runs: 34.8 to 35.8 ms against
+  37.7 to 39.4 ms. That is the cost to decide on before this lands; the
+  ways to cut it, in order: poll every Nth iteration of a counted loop
+  (a counter the loop has already, tested with `tst` on its low bits:
+  one instruction, not two), poll only the outer loop of a nest, or
+  asynchronous preemption by a signal (Go since 1.14: no cost in the
+  loop, a safe point table instead).
+- The placements measured (Mac, 2026-10-21; compiler/ssa budget.xo
+  PREEMPT_MODE, one xo built per mode from the same tree;
+  bench/perf/portable, native arm64, instructions retired from
+  /usr/bin/time -l, the minimum of 5 runs, against mode 0, no polls):
+
+  | workload | 1 every iteration | 2 every 64th (countdown) | 3 outermost loops | 4 skip short constant ranges |
+  |---|---|---|---|---|
+  | arith32 | +5.2% | +5.4% | +0.1% | +5.9% |
+  | arith8 | +8.2% | +8.3% | +0.1% | +8.2% |
+  | u64 | +4.4% | +4.4% | -0.6% | +5.0% |
+  | divmod | +2.6% | +2.7% | +0.2% | +2.6% |
+  | shift | +3.8% | +3.9% | -0.2% | +3.8% |
+  | conv | +3.5% | +4.8% | +0.0% | +3.5% |
+  | str_hash | +2.4% | +2.0% | -0.2% | +2.5% |
+  | unix | +5.4% | +11.1% | +0.1% | +5.6% |
+  | checked | +2.6% | +2.6% | -0.0% | +2.5% |
+  | float32 | +3.9% | +4.1% | -0.0% | +4.0% |
+  | all | +3.5% | +3.9% | -0.1% | +3.6% |
+
+  Best wall time moved within the runs' noise for every mode (-5% to
+  +2%, two outliers of +13% in modes 2 and 3 on one workload each): the
+  M-series runs the load and the branch beside the loop's work. The
+  countdown (2) costs as much as the poll it replaces (a subtract and a
+  branch against a load and a branch) and more where it adds a live
+  register (unix); skipping short constant ranges (4) finds none of
+  these loops. Polling only the outermost loop of each function (3)
+  costs nothing here, and leaves an inner loop that runs long under an
+  outer one that does not iterate unpreempted.
+- HTTP under callgrind (linux/arm64 in Docker, callgrind-docker.sh
+  MODE=short: the server's instructions per request, N=30, one repeat),
+  mode 0 against mode 1: plain 24,216 against 24,099 (-0.5%), tls
+  36,591 against 37,147 (+1.5%, within what TLS's random keys move). The
+  servers' loops are std's, which do not poll; only the program's own
+  code does.
+- Why std does not poll yet, and what it would take (the owner's
+  question, 2026-10-21): without polls in std, a long loop inside std
+  (sorting or hashing a large input, json.parse of a big body, a regexp
+  over a long string, crypto over a large buffer) runs its whole length
+  before the handler that called it can yield, which is a case
+  preemption is meant to cover. The runtime (std/native/llrt) must never
+  poll: it holds the pool's, a park's, and the inject queue's spin locks,
+  and a fiber that yields holding one leaves every other worker spinning
+  on it. The rest of std is only safe to poll if the runtime never calls
+  it with a lock held, which nothing checks today: the guard is Go's
+  m.locks, a count per worker of the runtime locks held (pool.xo plock,
+  klock, lock and their unlocks add and subtract it, about one store
+  each), and preempt yields only when it is 0. PREEMPT_MODE 5 polls every
+  module but llrt, to measure the cost; its numbers are below.
+  Mode 5 (2026-10-21, after runtime_mod: native/llrt, native/rt*, and
+  native/sys_* never poll): bench/perf/portable +3.5% instructions, as
+  mode 1 (its loops are the program's own), wall within noise; HTTP
+  callgrind against mode 0: plain 24,131 against 24,216 (-0.3%), tls
+  36,308 against 36,591 (-0.8%): polling std costs nothing measurable on
+  these servers. So std's loops can poll once the lock count guards the
+  runtime's calls into std.
+- acceptbusy at XO_THREADS=1 (worst fast request of three rounds, three
+  runs each, native arm64): mode 0 447, 662, and 18 ms (a handler's 250
+  ms or more whenever both threads compute); mode 1 29, 21, 21 ms; mode 5
+  21, 11, 11 ms.
+- Open: the slice; a global flag against a per worker one (every busy
+  thread takes the slow path once a tick, about 1000 a second); yielding
+  to the inject queue's tail against the ring's.
+
 ## Predictions
 
 Each is rechecked after stealing and after preemption, and marked

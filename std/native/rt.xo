@@ -244,7 +244,7 @@ fn prefetch(a: Int)
 ///   34-39 std/native/llrt/testworld.xo: its lock, Rand's PCG state, the MemFs lock and state, the state record
 ///   40-43 std/native/llrt/poll.xo: the timer heap's array, length, and capacity, the event loop's record
 ///   44-45 std/native/llrt/nistec_gtab.xo: P-384's and P-521's fixed base tables, made on first use
-///   46 std/native/llrt/pool.xo: the deferred wakes' monitor (decision 0077's addendum), 0 until started
+///   46 free (pool.xo moved to 75-76, 2026-10-21)
 ///   47 std/native/llrt/raw.xo: io_len's chunk size, 0 for 1 GiB (set by std/internal rt_probe "io_chunk" in tests)
 ///   48-51 std/native/llrt/proc.xo: FakeProc.kill's record: its lock and vector (address, length, capacity)
 ///   52-59 std/native/llrt/stdin.xo: the readers' turn, its state record (opened, the fake terminal's width, echo), its poller registration, the buffer (address, length, capacity), the end of input, the read error
@@ -256,6 +256,7 @@ fn prefetch(a: Int)
 ///   67 std/native/llrt/tracerec.xo: the execution trace's record (decision 0240), 0 when off (trace.xo and ctx.xo use tracerec's accessors)
 ///   68 std/native/llrt/hconn.xo: the TLS and HTTP/2 server's table (decision 0244, srvtls.xo install), 0 before Server.with_tls
 ///   69-74 std/native/llrt/http1w.xo: the Date header cache: its sequence, its second, its 29 bytes (put_date)
+///   75-76 std/native/llrt/pool.xo: the deferred wakes' monitor (decision 0077's addendum), 0 until started; the preemption flag generated code polls (decision 0286 step 3)
 ///   64-65 std/native/llrt/fault.xo: the address of cabi.xo fault_raise_msg (decision 0228; word 14 until 2026-10-16), and XO_TRACEBACK's printer (0 not looked up, 1 off, else cabi.xo fault_traceback's address; decision 0239)
 fn static_word(k: Int) -> Int uses realtime
 

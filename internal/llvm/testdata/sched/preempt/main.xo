@@ -1,0 +1,28 @@
+// preempt (decision 0286 step 3): with one worker (XO_THREADS=1), a task
+// spawns a spinner and then the task that sets the flag both wait for,
+// and waits in a busy loop with no call. The root, idle while main waits,
+// steals the spinner from the worker's ring and spins too; the setter is
+// in the worker's next slot, which no thread looks at while both spin.
+// It runs only when the monitor asks the worker past its slice to yield
+// at its loop's poll: without preemption this never ends. Five rounds.
+
+fn main(os: Os) {
+  var done = 0
+  for _ in 0..5 {
+    let flag = Atomic[Int].new(0)
+    scope s {
+      let a = s.spawn(fn() -> Int {
+        scope inner {
+          let _b = inner.spawn(fn() {
+            while flag.get() == 0 {}
+          })
+          let _c = inner.spawn(fn() { flag.set(1) })
+          while flag.get() == 0 {}
+        }
+        1
+      })
+      done += a.await
+    }
+  }
+  os.stdio.println("preempt ${done}")
+}

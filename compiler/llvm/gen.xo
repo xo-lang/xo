@@ -894,6 +894,16 @@ fn (var g: Gen) exports() {
       _ => g.funcs.push("define ${rl} @${f.export}(${ps.join(", ")}) #1 {\n  %r = ${call}\n  ret ${rl} %r\n}\n")
     }
   }
+  if g.emitted.contains("@xo_preempt_stub") {
+    // only inline asm names it and the runtime export it calls (decision
+    // 0286 step 3): LTO would drop both
+    used.push("ptr @xo_preempt_stub")
+    for f in g.m.funcs {
+      if f.export == "xo_x_preempt" {
+        used.push("ptr @xo_x_preempt")
+      }
+    }
+  }
   if !used.is_empty() {
     g.funcs.push("@llvm.used = appending global [${used.len()} x ptr] [${used.join(", ")}], section \"llvm.metadata\"\n")
   }

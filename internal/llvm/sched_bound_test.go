@@ -358,3 +358,39 @@ func TestMainFiberDeadlock(t *testing.T) {
 		})
 	}
 }
+
+// TestPreempt: a fiber that runs past its slice while work waits yields at
+// its loop's poll (decision 0286 step 3). testdata/sched/preempt keeps
+// both threads of XO_THREADS=1 spinning on a flag only a queued task sets:
+// it ends only by preemption (it hangs with XO_PREEMPT=0). Three runs per
+// native backend, each within 20 s, with XO_LOCKCHECK; arm64 only, where
+// the program's loops poll.
+func TestPreempt(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs a program per native backend")
+	}
+	if runtime.GOARCH != "arm64" {
+		t.Skip("loops poll on arm64 only")
+	}
+	for _, be := range []string{xotool.BackendLLVM, xotool.BackendArm64} {
+		t.Run(be, func(t *testing.T) {
+			if be == xotool.BackendLLVM {
+				if _, err := xotool.Clang(); err != nil {
+					t.Skip("clang not found")
+				}
+			}
+			res, err := xotool.Build([]string{filepath.Join("testdata", "sched", "preempt")}, xotool.Options{Backend: be})
+			if err != nil || res.Failed {
+				t.Fatalf("build: %v %v", err, res)
+			}
+			for i := 0; i < 3; i++ {
+				cmd := exec.Command(res.Binaries[xotool.Host()])
+				cmd.Env = append(os.Environ(), "XO_THREADS=1", "XO_LOCKCHECK=1")
+				out, err := runCombined(cmd, 20*time.Second)
+				if err != nil || out != "preempt 5\n" {
+					t.Fatalf("run %d: %v (a spinning fiber was not preempted)\n%s", i, err, out)
+				}
+			}
+		})
+	}
+}

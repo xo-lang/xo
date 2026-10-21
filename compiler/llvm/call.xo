@@ -963,7 +963,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       let obj = g.def("extractvalue %xo.str ${g.op(x.args[0])}, 0")
       g.mk_str(v, obj, g.op(x.args[1]))
     }
-    "rt.slot_load" | "rt.slot_store" | "rt.slot_swap" | "rt.slot_cas" | "rt.slot_add" | "rt.slot_addr" | "rt.fence" | "rt.spin_hint" => g.atomic(v)
+    "rt.slot_load" | "rt.slot_store" | "rt.slot_swap" | "rt.slot_cas" | "rt.slot_add" | "rt.slot_addr" | "rt.fence" | "rt.spin_hint" | "rt.preempt_poll" => g.atomic(v)
     _ => return g.inline_raw(v)
   }
   true
@@ -1179,6 +1179,15 @@ fn (var g: Gen) atomic_result(v: Int, r: Str) {
 fn (var g: Gen) atomic(v: Int) {
   let x = g.f.values[v]
   let name = aux_str(x.aux)
+  if name == "rt.preempt_poll" {
+    // decision 0286 step 3: the flag's word; set, a call of the stub that
+    // keeps every register (the asm writes x16 and lr)
+    g.preempt_stub()
+    let a = g.op(x.args[0])
+    let stub = if g.goos == "darwin" { "_xo_preempt_stub" } else { "xo_preempt_stub" }
+    g.emit("call void asm sideeffect \"ldr w16, [$0]\\0Acbz w16, 1f\\0Abl ${stub}\\0A1:\", \"r,~{x16},~{lr},~{memory}\"(i64 ${a})")
+    return
+  }
   if name == "rt.spin_hint" {
     let asm = spin_hint_asm(g.m.goarch)
     if !asm.is_empty() {

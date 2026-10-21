@@ -32,7 +32,7 @@ const P_DLK = 120
 const FS_STACK = 24
 const FS_PAGE = 32
 const FS_MAIN = 40
-const W_SIZE = 3448
+const W_SIZE = 3464
 const W_LIVE = 2200
 const W_ROOT = 2204
 const TLS_W = 2
@@ -99,6 +99,12 @@ fn setup(p: Int) {
   let lc = process.env_real("XO_LOCKCHECK")
   if !lc.is_empty() && lc[0] == "1" {
     rt.slot_store[Int](rt.mem_load(p, P_DLK, 8), pool.DLK_LOCKCHECK, 1, RELEASE)
+  }
+  // XO_PREEMPT=0: no worker is asked to yield (decision 0286 step 3's
+  // kill switch; the polls stay and never fire)
+  let pe = process.env_real("XO_PREEMPT")
+  if !pe.is_empty() && pe[0] == "0" {
+    rt.slot_store[Int](rt.mem_load(p, P_DLK, 8), pool.DLK_NOPREEMPT, 1, RELEASE)
   }
   rt.slot_store[Int](p + P_NCPU, 0, n, RELEASE)
 }

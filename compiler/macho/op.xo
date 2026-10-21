@@ -871,12 +871,17 @@ pub fn encode_op_fix(o: Op, elf: Bool) -> Enc {
     return none
   }
   if o.m is "mrs" | "msr" && n == 2 {
-    // the thread pointer (decisions 0212, 0243)
+    // the thread pointer (decisions 0212, 0243), and the flags
+    // xo_preempt_stub saves (decision 0286 step 3)
     let (ri, si) = if o.m == "mrs" { (0, 1) } else { (1, 0) }
     let (r, k) = rk_of(o.ops[ri])
-    if let Operand.Raw(b: sr) = o.ops[si] {
-      if k == RX && bstr(sr).to_lower() == "tpidr_el0" {
+    if let Operand.Raw(b: sr0) = o.ops[si] {
+      let sr = bstr(sr0).to_lower()
+      if k == RX && sr == "tpidr_el0" {
         return Enc{w: (if o.m == "mrs" { 0xd53bd040 } else { 0xd51bd040 }) | r}
+      }
+      if k == RX && sr == "nzcv" {
+        return Enc{w: (if o.m == "mrs" { 0xd53b4200 } else { 0xd51b4200 }) | r}
       }
     }
     return none

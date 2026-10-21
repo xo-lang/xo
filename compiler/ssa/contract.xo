@@ -109,6 +109,7 @@ fn (var b: Builder) body_of(fo: Int, fi: Int, sub: Map[Int, Int], with_requires:
   let fd = decl[0]
   let om = b.obj_mod(fo)
   b.s.polls = om >= 0 && !b.c.mods[om].is_std && !b.c.mods[om].native
+  b.s.ppolls = om >= 0 && !runtime_mod(b.c.mods[om].path)
   b.poll()
   if om == b.main_mod && fo == (b.c.mods[b.main_mod].members.get(b"main") ?? -1) && b.user_realtime() {
     // a program with real-time functions: the scheduler's deferred
@@ -627,6 +628,7 @@ fn (var b: Builder) invariant_func(ct: Int, o: Int, t: Int) -> Str {
 /// loop_tick, at the start of each iteration, counts and faults with
 /// XO-F006 past N, then polls the budget (poll).
 fn (var b: Builder) loop_bound(bound: List[Expr]) -> Int {
+  b.preempt_entry()
   if bound.is_empty() {
     return 0
   }
@@ -650,6 +652,7 @@ struct LoopBound {
 }
 
 fn (var b: Builder) loop_tick(cnt: Int) {
+  b.preempt_poll()
   if !b.s.bounds.contains(cnt) {
     b.poll()
     return

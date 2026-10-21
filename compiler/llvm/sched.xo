@@ -8,6 +8,7 @@
 // local's address), over a table of 16 words in a thread_local global
 // that only xo_tlocal_at names (a split build, decision 0168, copies a
 // global into each module that uses it).
+use github.com/xo-lang/xo/compiler/ssa
 
 /// The declaration of llvm.frameaddress and the attributes of a function
 /// that calls rt.frame_addr (decision 0233), at the first use.
@@ -18,6 +19,17 @@ fn (var g: Gen) frame_attrs() {
   g.emitted["@llvm.frameaddress.p0"] = true
   let san = if g.tsan { " sanitize_thread" } else { "" }
   g.helpers.push("declare ptr @llvm.frameaddress.p0(i32)\nattributes #9 = { uwtable${san} noinline \"frame-pointer\"=\"all\" }\n\n")
+}
+
+/// Defines xo_preempt_stub (decision 0286 step 3) at the first use: weak,
+/// so the modules of a split build that each use it keep one.
+fn (var g: Gen) preempt_stub() {
+  if g.emitted.contains("@xo_preempt_stub") {
+    return
+  }
+  g.emitted["@xo_preempt_stub"] = true
+  let body = ssa.preempt_stub_arm64(g.goos).join("\\0A").replace("$", "$$")
+  g.helpers.push("define weak_odr hidden void @xo_preempt_stub() naked noinline nounwind {\n  call void asm sideeffect \"${body}\", \"\"()\n  unreachable\n}\n\n")
 }
 
 /// Defines xo_stack_switch and xo_fiber_entry at the first use.

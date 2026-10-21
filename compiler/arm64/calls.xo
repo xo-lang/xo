@@ -1633,6 +1633,12 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
       g.clobber()
       g.set(v, [])
     }
+    "rt.preempt_poll" => {
+      // decision 0286 step 3: the flag's word, at a loop's iteration
+      let _i = g.add(Inst{kind: K_PLAIN, text: "ldr w16, [$u0]", us: [g.real(g.word(x.args[0]))], poll: true})
+      g.clobber()
+      g.set(v, [])
+    }
     "rt.prefetch" => {
       // decision 0207 stage 3: the heap's free list pops
       g.store("prfm pldl1keep, [$u0]", [g.real(g.word(x.args[0]))])

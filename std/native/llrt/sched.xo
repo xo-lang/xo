@@ -77,6 +77,10 @@ const F_RUNNING = 0
 const F_PARKING = 1
 const F_PARKED = 2
 const F_WOKEN = 3
+/// Preempted (pool.xo preempt, decision 0286 step 3): its scheduler
+/// queues it again once it has switched away (no park holds it, so no
+/// waker races the queueing).
+const F_YIELDING = 4
 
 /// xo_task's state (word 10: 0 queued, 1 running, 2 done) and gone (word
 /// 22); xo_scope's pending count (word 30).
@@ -285,14 +289,21 @@ pub fn fiber_park(f: Int) {
   }
 }
 
+/// Switches fiber f away to be queued again by its scheduler (fiber_run
+/// returns 2): preemption's yield.
+pub fn fiber_yield(f: Int) {
+  rt.slot_store(f, F_STATE, F_YIELDING, RELEASE)
+  fiber_park(f)
+}
+
 /// Makes a parked (or parking) fiber f run again: 1 when the caller must
 /// queue it (it had parked), else 0 (its scheduler sees F_WOKEN).
 pub fn fiber_wake(f: Int) -> Int {
   if rt.slot_swap(f, F_STATE, F_WOKEN, ACQ_REL) == F_PARKED { 1 } else { 0 }
 }
 
-/// Runs fiber f on worker w until it parks (0) or ends (1: the caller
-/// frees it). The thread's current context is restored after (a root
+/// Runs fiber f on worker w until it parks (0), ends (1: the caller
+/// frees it), or yields (2: the caller queues it again). The thread's current context is restored after (a root
 /// thread runs fibers while it waits).
 pub fn fiber_run(w: Int, f: Int) -> Int {
   // the table of this thread, whose scheduler stack never moves to
@@ -319,6 +330,10 @@ pub fn fiber_run(w: Int, f: Int) -> Int {
     if rt.slot_cas(f, F_STATE, F_PARKING, F_PARKED, ACQ_REL) {
       // a waker queues it
       return 0
+    }
+    if rt.slot_load(f, F_STATE, ACQUIRE) == F_YIELDING {
+      rt.slot_store(f, F_STATE, F_PARKED, RELAXED)
+      return 2
     }
     // woken while it parked: run it again
   }

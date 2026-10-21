@@ -9,6 +9,7 @@
 // from the second); the thread locals are 16 words in the thread's
 // static TLS block, reached through a TLV descriptor on Darwin and the
 // local exec model on Linux.
+use github.com/xo-lang/xo/compiler/ssa
 
 /// DW_CFA_undefined x30: the directive that makes a frame outermost for
 /// unwinders (`.cfi_escape`: every assembler Xo uses takes it).
@@ -70,6 +71,7 @@ fn sched_asm(os: Str, split: Bool) -> Str {
   // backtrace of the fiber ends
   let fiber = ["mov x0, x19", "blr x20", "brk #1"]
   b.push(sched_fn(os, "xo_fiber_entry", false, if os == "linux" { [".cfi_startproc", OUTERMOST_CFI] + fiber + [".cfi_endproc"] } else { fiber }))
+  b.push(sched_fn(os, "xo_preempt_stub", true, ssa.preempt_stub_arm64(os)))
   if os == "darwin" {
     // the TLV descriptor's thunk returns the table's address in x0 and
     // keeps every register but x0, x16, x17, and lr (Darwin's TLV

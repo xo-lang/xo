@@ -453,6 +453,9 @@ const ENCODINGS: List[(Str, Int)] = [
   ("dmb ish", 0xd5033bbf),
   ("dmb ishld", 0xd50339bf),
   ("yield", 0xd503203f),
+  ("mrs x9, nzcv", 0xd53b4209),
+  ("msr nzcv, x9", 0xd51b4209),
+  ("mrs x9, tpidr_el0", 0xd53bd049),
   ("stlr x9, [x10]", 0xc89ffd49),
 ]
 

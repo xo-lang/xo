@@ -109,6 +109,10 @@ struct Inst {
   /// the side exit of a checked instruction: when fcond holds after it,
   /// the runtime function ffn is called with fargs (it does not return)
   has_fault: Bool = false
+  /// a preemption poll (decision 0286 step 3): its text loads the flag
+  /// into w16; when it is set a stub calls xo_preempt_stub, which keeps
+  /// every register, and comes back
+  poll: Bool = false
   fcond: Str = ""
   ffn: Str = ""
   fargs: List[Src] = []

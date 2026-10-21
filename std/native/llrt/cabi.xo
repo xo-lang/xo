@@ -551,6 +551,11 @@ fn worker_main(w: Int) -> Int { pool.worker_main(w) }
 /// addendum).
 fn mon_main(p: Int) -> Int { pool.mon_main(p) }
 
+/// A preemption poll's slow path (decision 0286 step 3): the emitters'
+/// xo_preempt_stub saves every register the C convention lets a callee
+/// change and calls this, so a poll site in a loop clobbers nothing.
+fn preempt() { pool.preempt() }
+
 fn park_reset(p: Int) { pool.park_reset(p) }
 
 fn node_link(n: Int, parent: Int) { pool.node_link(n, parent) }

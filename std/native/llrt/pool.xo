@@ -117,9 +117,14 @@ const W_GRACE_WAIT = 3432
 /// Whether this worker's thread holds the pool's lock (plock, checked by
 /// klock when XO_LOCKCHECK=1).
 const W_POOLHELD = 3440
+/// When this worker started running its current fiber (mono ns, 0 between
+/// items; slot word 431), and whether the monitor asked it to yield (slot
+/// word 432): preemption (decision 0286 step 3, mon_scan, preempt).
+const W_RUN_AT_I = 431
+const W_PREEMPT_I = 432
 /// The record's size; poolsetup.xo's W_SIZE (the root's record) must match
 /// (XO_HEAP_GUARD found it 8 bytes short, 2026-10-20).
-const W_SIZE = 3448
+const W_SIZE = 3464
 const FCACHE = 8
 
 /// xo_runq: head (word 0), tail (word 16).
@@ -184,6 +189,9 @@ const WIN_COMMIT = 65536
 /// address of a value (WaitOnAddress, SetThreadStackGuarantee).
 const TLS_CUR = 0
 const TLS_W = 2
+/// The fiber this thread runs now (sched.xo TLS_FIB_AT / 8), 0 on its
+/// scheduler's stack.
+const TLS_FIB = 1
 const TLS_SCRATCH_AT = 32
 
 /// The test world's clock move after a deadlock check, while the clock
@@ -225,6 +233,7 @@ pub const ST_LOCK_HTTP = 32
 pub const ST_LOCK_CHAN = 33
 pub const ST_LOCK_MUTEX = 34
 pub const ST_LOCK_TASK = 35
+const ST_PREEMPT = 36
 
 /// How long a fiber stays in its waker's next before a thief may take
 /// it (xo_rt.c XO_NEXT_GRACE_NS).
@@ -507,6 +516,8 @@ fn wakep(p: Int) {
   }
   let ncpu = rt.mem_load(p, P_NCPU, 8)
   if rt.slot_load(p, P_NIDLE, SEQ_CST) == 0 && workers(p) >= ncpu {
+    // every worker busy: the monitor's ticks preempt one past its slice
+    preempt_arm(p)
     return
   }
   if !rt.slot_cas(p, P_SPINNING, 0, 1, SEQ_CST) {
@@ -1061,13 +1072,43 @@ pub fn run_item(p: Int, w: Int, it: Int) {
 /// Runs fiber f on w until it parks or ends (then its stack is kept;
 /// main's tells its root, root_main).
 fn run_fiber(p: Int, w: Int, f: Int) {
-  if sched.fiber_run(w, f) != 0 {
+  rt.slot_store(w, W_RUN_AT_I, sysio.mono_ns(), RELAXED)
+  let r = sched.fiber_run(w, f)
+  rt.slot_store(w, W_RUN_AT_I, 0, RELAXED)
+  rt.slot_store(w, W_PREEMPT_I, 0, RELAXED)
+  if r == 2 {
+    // preempted: behind everything queued (the inject queue's tail), and
+    // this worker's own ring runs first
+    inject_add(p, 0, 0, f | 1)
+    return
+  }
+  if r != 0 {
     if rt.mem_load(f, F_TASK, 8) == MAIN_TASK {
       main_ended(p, f)
       return
     }
     fiber_free(rt.mem_load(p, P_FIBERS, 8), w, f)
   }
+}
+
+/// The slow path of a preemption poll (generated code's loop back edges
+/// test the static word W_PREEMPT, decision 0286 step 3): yields the
+/// running fiber when the monitor asked this worker to (it has run its
+/// item SLICE_NS while work waits); else returns at once (the flag is the
+/// pool's, every busy thread sees it). A thread without a fiber (a root
+/// with XO_MAIN_FIBER=0, the poller, the monitor) never yields.
+pub fn preempt() {
+  let w = rt.tlocal_get(TLS_W)
+  if w == 0 || rt.slot_load(w, W_PREEMPT_I, RELAXED) == 0 {
+    return
+  }
+  let f = rt.tlocal_get(TLS_FIB)
+  if f == 0 {
+    return
+  }
+  rt.slot_store(w, W_PREEMPT_I, 0, RELAXED)
+  stat(ST_PREEMPT)
+  sched.fiber_yield(f)
 }
 
 // ---------------------------------------------------------------------------
@@ -1488,6 +1529,8 @@ const DLK_THREADED = 5
 /// Main's fiber while it runs on one (decision 0286 step 1), else 0: every
 /// thread going idle counts its counted wait blocked (count_main).
 const DLK_MAINF = 6
+/// XO_PREEMPT=0 (poolsetup.xo setup): the monitor asks no worker to yield.
+pub const DLK_NOPREEMPT = 7
 
 /// Takes the pool's lock (record p's word 0), marking it held by this
 /// thread's worker record when the lock order is checked.
@@ -2110,7 +2153,10 @@ pub fn scope_join(pl: Int, s: Int, c: Int, f: Int, rw: Int) {
 
 /// rt.static_word: the monitor's record (0: not started; 1: deferral
 /// off, defer_off, or the monitor could not start).
-const W_MON = 46
+const W_MON = 75
+/// rt.static_word: the preemption flag generated code polls (1 while some
+/// worker is asked to yield, preempt), set and cleared by the monitor.
+const W_PREEMPT = 76
 /// The record: asleep (a word: 1 while it sleeps without a timeout), its
 /// futex word, and started (claimed by the first deferral).
 const M_ASLEEP = 0
@@ -2124,6 +2170,9 @@ const DEFER_US = 1000
 /// monitor's timer.
 const DEFER_CHECK_NS = 50000
 const MON_IDLE_TICKS = 10
+/// How long a fiber runs while work waits before the monitor asks its
+/// worker to yield (Go's forcePreemptNS).
+const SLICE_NS = 10000000
 
 /// Defers the wake for work w just queued: whether it did (false without
 /// a monitor). With one worker (XO_THREADS=1) a root's deferral is not
@@ -2151,6 +2200,20 @@ fn defer_wake(p: Int, w: Int) -> Bool {
     futex_wake(m.wrapping_add(M_WAKE_AT))
   }
   true
+}
+
+/// Every worker is busy and work was just queued (wakep): the monitor
+/// ticks, to preempt a worker past its slice (mon_scan). One static load
+/// and, when the monitor sleeps, a wake.
+fn preempt_arm(p: Int) {
+  let m = monitor(p)
+  if m == 0 {
+    return
+  }
+  if rt.slot_load(m, M_ASLEEP, RELAXED) != 0 && rt.slot_cas(m, M_ASLEEP, 1, 0, SEQ_CST) {
+    rt.slot_store(m, M_WAKE, 1, RELEASE)
+    futex_wake(m.wrapping_add(M_WAKE_AT))
+  }
 }
 
 /// The monitor's record, started on first use (its thread runs mon_main):
@@ -2221,15 +2284,28 @@ pub fn mon_main(p: Int) -> Int {
 }
 
 /// Wakes an idle worker for every deferral older than DEFER_NS whose
-/// worker still has work queued (clearing the rest): whether any
-/// deferral was pending.
+/// worker still has work queued (clearing the rest), and with work queued
+/// asks every worker that has run its fiber SLICE_NS to yield (decision
+/// 0286 step 3; the flag W_PREEMPT while any is asked): whether any
+/// deferral was pending or any worker runs while work waits (the monitor
+/// keeps ticking).
 fn mon_scan(p: Int) -> Bool {
   let n = rt.slot_load(p, P_NW, SEQ_CST)
   let now = sysio.mono_ns()
   var pending = false
+  let waiting = any_work(p) != 0 && rt.slot_load(rt.mem_load(p, P_DLK, 8), DLK_NOPREEMPT, RELAXED) == 0
+  var asked = false
   var i = 0
   while i < n {
     let w = rt.mem_load(p, P_WS.wrapping_add(i.wrapping_shl(3)), 8)
+    let ra = rt.slot_load(w, W_RUN_AT_I, RELAXED)
+    if waiting && ra != 0 {
+      pending = true
+      if now.wrapping_sub(ra) >= SLICE_NS {
+        rt.slot_store(w, W_PREEMPT_I, 1, RELAXED)
+        asked = true
+      }
+    }
     let at = rt.slot_load(w, W_DEFER_AT_W, SEQ_CST)
     if at != 0 {
       pending = true
@@ -2246,6 +2322,15 @@ fn mon_scan(p: Int) -> Bool {
       }
     }
     i = i.wrapping_add(1)
+  }
+  let pw = rt.static_word(W_PREEMPT)
+  let was = rt.slot_load[Int](pw, 0, RELAXED)
+  if asked {
+    if was == 0 {
+      rt.slot_store[Int](pw, 0, 1, RELEASE)
+    }
+  } else if was != 0 {
+    rt.slot_store[Int](pw, 0, 0, RELAXED)
   }
   pending
 }

@@ -1240,6 +1240,21 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
   out.write(t[from..tn])
   out.write("\n")
   b.push(out.freeze())
+  if inst.poll {
+    // the cold path after the function: where x30 still holds the return
+    // address (a leaf, or a block that runs without the frame, shrink.xo)
+    // the call would overwrite it, so the stub keeps it in a frame record
+    // as a fault stub does
+    g.nstub += 1
+    let l = g.local("${g.lbl_prefix()}_pp${g.nstub}")
+    b.push("\tcbnz w16, ${l}\n${l}_r:\n")
+    let stub = g.sym("xo_preempt_stub")
+    if g.fr.leaf || (g.shrink && g.fl[g.cur]) {
+      g.stubs.push("${l}:\n\tstp x29, x30, [sp, #-16]!\n\tmov x29, sp\n\tbl ${stub}\n\tldp x29, x30, [sp], #16\n\tb ${l}_r\n")
+    } else {
+      g.stubs.push("${l}:\n\tbl ${stub}\n\tb ${l}_r\n")
+    }
+  }
   if inst.has_fault {
     g.nstub += 1
     let l = g.local("${g.lbl_prefix()}_fault${g.nstub}")

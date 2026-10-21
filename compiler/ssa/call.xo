@@ -334,6 +334,8 @@ fn (var b: Builder) closure_body(fi: Int, lit: parser.FnLit, file: Int, result: 
     }
   }
   b.s.polls = polls
+  let om = if owner >= 0 { b.obj_mod(owner) } else { -1 }
+  b.s.ppolls = if om >= 0 { !runtime_mod(b.c.mods[om].path) } else { polls }
   b.poll()
   let v = b.block(lit.body)
   b.ret_at(v, Some(Expr.Block(b: lit.body)))
