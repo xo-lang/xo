@@ -134,8 +134,25 @@ fn cap_env(os: Os, p: prune.Policy, name: Str) -> prune.Policy {
   if max > 0 {
     q.max_bytes = max
   }
+  // a build prunes for at most PRUNE_BUDGET ($XO_CACHE_PRUNE_BUDGET, a
+  // duration; 0 for no limit), the rest left for the next build
+  q.budget = PRUNE_BUDGET
+  let b = (os.env.get("XO_CACHE_PRUNE_BUDGET") ?? "").trim()
+  if !b.is_empty() {
+    match Duration.parse(b) {
+      Ok(d) => {
+        if d.nanos() >= 0 {
+          q.budget = d
+        }
+      }
+      Err(_) => {}
+    }
+  }
   q
 }
+
+/// How long one build may prune a cache (cap_env).
+const PRUNE_BUDGET: Duration = 2s
 
 /// BinCacheDir: $XO_BIN_CACHE, "" (off) when "off"; unset, the user
 /// cache's xo/testbin for a test build (decision 0236: an unchanged test

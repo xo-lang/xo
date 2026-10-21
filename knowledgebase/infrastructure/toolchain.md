@@ -3430,6 +3430,13 @@ hours is removed, so a cache can sit above its cap by that much.
   turns age pruning off (and the checkout pruning).
 - `XO_CACHE_MAX_GB`: GiB, a decimal, default `20`; `0` turns the size cap
   off for `build/` and `gocache/`.
+- `XO_CACHE_PRUNE_BUDGET`: a Go duration, default `2s`; `0` for no
+  limit. A build's prune of build/, gocache/, the bin cache and the
+  back-end cache stops removing after it (the walk is not counted) and
+  leaves the stamp due a minute later, so the next build goes on
+  (2026-10-21: a build falling on an overdue prune of a busy day's cache
+  spent minutes unlinking, and a timed test of one golden timed out;
+  internal/arm64 TestPruneBudget).
 - `rtobj/` keeps its own 512 MiB size trim; `dev/`, `mbedtls/`, `seed/`,
   and `seeds/` are not pruned.
 - Tests: `xo test compiler/prune` (TestSelfhostPruneXoTests, merge tier;

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
@@ -1319,4 +1320,85 @@ func removeFeEntries(cache string) {
 		}
 		return nil
 	})
+}
+
+// TestPruneBudget: a build that falls on an overdue prune of the
+// back-end cache prunes for its budget only (XO_CACHE_PRUNE_BUDGET, 2 s
+// by default; 1ms here, so the stop shows) and leaves the rest for the
+// next build, which goes on: a build of one golden once timed out in
+// the middle of a prune of a busy day's cache (2026-10-21).
+func TestPruneBudget(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := xotool.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-prunebudget-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	cache := filepath.Join(work, "cache")
+	old := time.Now().Add(-10 * 24 * time.Hour)
+	stale := filepath.Join(cache, "zz")
+	if err := os.MkdirAll(stale, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const n = 20000
+	for i := 0; i < n; i++ {
+		p := filepath.Join(stale, strconv.Itoa(i))
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stamp := filepath.Join(cache, "prune-stamp")
+	if err := os.WriteFile(stamp, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(stamp, old, old); err != nil {
+		t.Fatal(err)
+	}
+	left := func() int {
+		es, _ := os.ReadDir(stale)
+		return len(es)
+	}
+	dir := filepath.Join(root, "internal", "gen", "testdata", "golden", "os_tasks")
+	build := func() time.Duration {
+		t.Helper()
+		t0 := time.Now()
+		cmd := exec.Command(xo, "build", "--backend=arm64", "-o", filepath.Join(work, "prog"), ".")
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on", "XO_CACHE_PRUNE_BUDGET=1ms")
+		if log, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("xo build: %v\n%s", err, log)
+		}
+		return time.Since(t0)
+	}
+	d1 := build()
+	n1 := left()
+	if n1 == 0 || n1 == n {
+		t.Fatalf("first build: %d of %d stale entries left, want some removed and some left (its prune stopped at the budget)", n1, n)
+	}
+	// the stopped prune left the stamp due a minute on (prune
+	// PARTIAL_PAUSE): the next build, after that minute, goes on
+	if err := os.Chtimes(stamp, old, old); err != nil {
+		t.Fatal(err)
+	}
+	build()
+	if n2 := left(); n2 >= n1 {
+		t.Errorf("second build: %d stale entries left after %d, want the prune to go on", n2, n1)
+	}
+	t.Logf("first build %v, %d of %d stale entries left", d1, n1, n)
 }

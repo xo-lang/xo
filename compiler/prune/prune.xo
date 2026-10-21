@@ -26,10 +26,17 @@
 // entry. Decision 0223. A cache of files also loses its empty
 // directories below the top level (the back-end cache's pack slots, one
 // per build target) once they are unused for longer than max_age; the
-// top level's (GOCACHE's 00 to ff) stay.
+// top level's (GOCACHE's 00 to ff) stay. A run may have a budget (a
+// time, a number of removals): past it, it stops removing and leaves the
+// stamp due, so the next run goes on (a build falling on a prune after a
+// busy period paid for all of it).
 
 /// An entry used within KEEP is never removed.
 pub const KEEP: Duration = 2h
+
+/// A run stopped at its budget leaves the stamp due again this much
+/// later.
+pub const PARTIAL_PAUSE: Duration = 1m
 
 /// mark_used refreshes an entry's time once it is older than TOUCH.
 pub const TOUCH: Duration = 1h
@@ -58,12 +65,23 @@ pub struct Policy {
   /// since the last prune (note_stored) reach burst, so a burst of
   /// builds cannot grow the cache past the cap for a whole interval.
   pub burst: Int = 0
+  /// Over zero: a run stops removing once it has run this long, and
+  /// leaves the stamp due, so the next run (the next build) goes on
+  /// where it stopped; a build that falls on a prune after a busy period
+  /// paid for all of it (minutes of unlinking, 2026-10-21: a timed test
+  /// building one golden timed out).
+  pub budget: Duration = 0s
+  /// Over zero: a run removes at most this many entries, the same way
+  /// (the rest left for the next run).
+  pub max_remove: Int = 0
 }
 
 /// What one run did: whether it ran (the stamp allowed it), the paths it
 /// removed, and the bytes the cache held afterwards.
 pub struct Stats {
   pub ran: Bool = false
+  /// the run stopped at its budget with entries left to remove
+  pub partial: Bool = false
   pub removed: List[Str] = []
   pub bytes: Int = 0
 }
@@ -156,11 +174,19 @@ pub fn run(fs: Fs, clock: Clock, dir: Str, p: Policy) -> Stats uses (fs.read, fs
   var kept: List[Entry] = []
   var total = 0
   var subdirs: List[Entry] = []
-  for e in entries(fs, clock, dir, p.dirs, p.keep, subdirs) {
+  let all = entries(fs, clock, dir, p.dirs, p.keep, subdirs)
+  // the budget is for the removals: a walk longer than it still lets a
+  // run make progress
+  let start = clock.now()
+  for e in all {
     let idle = clock.since(e.used)
-    if p.max_age.nanos() > 0 && idle > p.max_age && idle >= p.keep && remove(fs, clock, e.path, p.dirs, p.keep) {
-      st.removed.push(e.path)
-      continue
+    if p.max_age.nanos() > 0 && idle > p.max_age && idle >= p.keep {
+      if over_budget(clock, start, p, st.removed.len()) {
+        st.partial = true
+      } else if remove(fs, clock, e.path, p.dirs, p.keep) {
+        st.removed.push(e.path)
+        continue
+      }
     }
     kept.push(e)
     total += e.size
@@ -169,6 +195,10 @@ pub fn run(fs: Fs, clock: Clock, dir: Str, p: Policy) -> Stats uses (fs.read, fs
     for e in kept.sort_by(fn(x) { x.used.unix_millis() }) {
       if total <= p.max_bytes || clock.since(e.used) < p.keep {
         // oldest first: everything left was used within keep
+        break
+      }
+      if over_budget(clock, start, p, st.removed.len()) {
+        st.partial = true
         break
       }
       if remove(fs, clock, e.path, p.dirs, p.keep) {
@@ -190,8 +220,20 @@ pub fn run(fs: Fs, clock: Clock, dir: Str, p: Policy) -> Stats uses (fs.read, fs
       i -= 1
     }
   }
+  if st.partial {
+    // due again in PARTIAL_PAUSE (or every, if shorter): the next build
+    // goes on, not this build's next store
+    let pause = if p.every < PARTIAL_PAUSE { p.every } else { PARTIAL_PAUSE }
+    fs.set_modified(stamp, clock.now() - p.every + pause).ignore_err("the next interval's prune goes on")
+  }
   st.bytes = total
   st
+}
+
+/// Whether a run that started at start and removed n entries has used
+/// up p.budget or p.max_remove.
+fn over_budget(clock: Clock, start: Time, p: Policy, n: Int) -> Bool {
+  (p.budget.nanos() > 0 && clock.since(start) >= p.budget) || (p.max_remove > 0 && n >= p.max_remove)
 }
 
 /// Adds n to the bytes stored in the cache in dir since its last prune

@@ -211,3 +211,42 @@ test "empty directories below the top level go once unused past the age limit" {
   expect(there(os, "c/pack/s2/fn/seg")) == true
   expect(there(os, "c/aa")) == true
 }
+
+test "a run past its budget stops, and the next run goes on where it stopped" {
+  for i in 0..5 {
+    put(os, "c/aa/${i}", 10)
+  }
+  os.clock.advance(30h)
+  let p = Policy{max_remove: 2}
+  let a = run(os.fs, os.clock, "c", p)
+  expect(a.removed.len()) == 2
+  expect(a.partial) == true
+  // the same build's next store does not prune again; the next build
+  // (PARTIAL_PAUSE later) goes on
+  expect(run(os.fs, os.clock, "c", p).ran) == false
+  os.clock.advance(PARTIAL_PAUSE)
+  let b = run(os.fs, os.clock, "c", p)
+  expect(b.ran) == true
+  expect(b.removed.len()) == 2
+  os.clock.advance(PARTIAL_PAUSE)
+  let c = run(os.fs, os.clock, "c", p)
+  expect(c.removed.len()) == 1
+  expect(c.partial) == false
+  // done: the interval holds again
+  os.clock.advance(PARTIAL_PAUSE)
+  expect(run(os.fs, os.clock, "c", p).ran) == false
+}
+
+test "the size cap under a budget: least recently used first, then on" {
+  for i in 0..4 {
+    put(os, "c/aa/${i}", 40)
+    os.clock.advance(3h)
+  }
+  let p = Policy{max_age: 0s, max_bytes: 50, max_remove: 1}
+  expect(run(os.fs, os.clock, "c", p).removed) == ["c/aa/0"]
+  os.clock.advance(PARTIAL_PAUSE)
+  expect(run(os.fs, os.clock, "c", p).removed) == ["c/aa/1"]
+  os.clock.advance(PARTIAL_PAUSE)
+  expect(run(os.fs, os.clock, "c", p).removed) == ["c/aa/2"]
+  expect(there(os, "c/aa/3")) == true
+}

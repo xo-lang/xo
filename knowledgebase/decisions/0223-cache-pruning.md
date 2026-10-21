@@ -96,3 +96,22 @@ entries were under two hours old, so the hourly prune could remove none
 - Size caps alone (the Go driver's trims): a cap set for heavy days keeps
   stale data forever on light ones; the age limit returns it.
 - Access times: unreliable (noatime, relatime), hence explicit times.
+
+## Addendum: a budget per run (2026-10-21, xo-fa)
+
+A build that fell on an overdue prune after a busy period paid for all
+of it: Lib 1's `-short` timed out when TestDevGoldensArm64's build of
+one golden spent its 240 s unlinking back-end cache entries (about 2,000
+of 3,333 stack samples in prune.remove; a rerun took 1 to 2 s). A run now
+has a budget (Policy.budget, a time; Policy.max_remove, a count): past
+it, it stops removing and sets the stamp due PARTIAL_PAUSE (a minute)
+later, so the next build goes on and the same build's later stores do
+not prune again. The time counts from the end of the walk, so a walk
+longer than the budget still lets each run make progress. The driver's
+prunes (build/, gocache/, the bin cache, the back-end cache) take 2 s,
+`XO_CACHE_PRUNE_BUDGET` to change it (0 for none). A prune in a detached
+child was the other option: it needs a process that outlives the build,
+which std's Proc does not start, and the budget bounds the cost alone.
+Tests: compiler/prune (a run past its budget, then the runs that go on;
+the size cap under a budget) and internal/arm64 TestPruneBudget (an
+overdue prune of 20,000 entries during a golden's build).
