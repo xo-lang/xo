@@ -1,0 +1,90 @@
+// A user value converted to Fs on the native targets (decision 0307):
+// the native Fs (xo.Fs: root, mode, user) holds it in its user field as a
+// UserFs, and the native prelude's fs_ functions and std/testing's memfs_
+// functions call it first.
+
+use native/rt
+
+/// The Fs methods of a user value converted to Fs: the same methods as
+/// the prelude's Fs.
+pub interface UserFs {
+  fn sub(self, dir: Str) -> Fs
+  fn cwd(self) -> Fs
+  /// The working directory as an absolute path with / separators, from
+  /// the OS (getcwd), not $PWD (std.md 3.1, decision 0218).
+  fn cwd_path(self) -> Str ! FsErr
+  fn read_only(self) -> Fs
+  fn write_only(self) -> Fs
+  fn case_sensitive(self) -> Bool
+  fn stat(self, path: Str) -> FileInfo? ! FsErr uses fs.read
+  fn exists(self, path: Str) -> Bool ! FsErr uses fs.read
+  fn read(self, path: Str) -> Bytes ! FsErr uses fs.read
+  fn read_text(self, path: Str) -> Str ! FsErr uses fs.read
+  fn read_dir(self, dir: Str) -> List[FileInfo] ! FsErr uses fs.read
+  fn walk(self, dir: Str) -> List[FileInfo] ! FsErr uses fs.read
+  fn write(self, path: Str, data: Bytes) -> () ! FsErr uses fs.write
+  fn create_temp(self, dir: Str, prefix: Str) -> Str ! FsErr uses fs.write
+  fn rename(self, from: Str, to: Str) -> () ! FsErr uses fs.write
+  fn remove(self, path: Str) -> () ! FsErr uses fs.write
+  fn remove_all(self, path: Str) -> () ! FsErr uses fs.write
+  fn create_dir_all(self, dir: Str) -> () ! FsErr uses fs.write
+  fn set_modified(self, path: Str, t: Time) -> () ! FsErr uses fs.write
+  /// A handle that reads the file as a stream (std.md 3.1, decision 0163).
+  fn open(self, path: Str) -> File ! FsErr uses fs.read
+  /// A handle that writes the file, created or truncated.
+  fn create(self, path: Str) -> File ! FsErr uses fs.write
+  /// A handle that writes at the end of the file, created if missing.
+  fn open_append(self, path: Str) -> File ! FsErr uses fs.write
+  /// A handle that writes a new file: Exists(path) when something is
+  /// already at path (O_EXCL; a symbolic link counts, dangling or not).
+  fn create_new(self, path: Str) -> File ! FsErr uses fs.write
+  /// Adds data at the end of the file, created if missing.
+  fn append(self, path: Str, data: Bytes) -> () ! FsErr uses fs.write
+  /// Copies the contents and permission bits of a file.
+  fn copy(self, from: Str, to: Str) -> () ! FsErr uses fs
+  /// The permission bits, 0o644 style.
+  fn mode(self, path: Str) -> Int ! FsErr uses fs.read
+  fn set_mode(self, path: Str, mode: Int) -> () ! FsErr uses fs.write
+  /// Creates a symbolic link at `link` that points to `target`.
+  fn symlink(self, target: Str, link: Str) -> () ! FsErr uses fs.write
+  /// The target of a symbolic link; None when path is not one.
+  fn read_link(self, path: Str) -> Str? ! FsErr uses fs.read
+  /// The paths that match pattern (`*`, `?`, `[a-z]`, `**`), sorted.
+  fn glob(self, pattern: Str) -> List[Str] ! FsErr uses fs.read
+  /// An advisory lock on the file (created if missing); waits for it.
+  fn lock(self, path: Str) -> FileLock ! FsErr uses fs.write
+  /// The lock if no one holds it, else None at once.
+  fn try_lock(self, path: Str) -> FileLock? ! FsErr uses fs.write
+}
+
+/// The user value f holds; None for the runtime's own Fs. The compiler
+/// replaces a call of it with a read of the native Fs's user field; this
+/// body is what a compiler older than decision 0307 builds (a seed
+/// building this std), whose Fs has no such field.
+pub fn user(f: Fs) -> UserFs? {
+  let _ = f
+  None
+}
+
+// The File and FileLock results of a UserFs as the native prelude's own
+// File and FileLock (F, L), which the prelude's types lower to (decision
+// 0083) and which the native prelude cannot name otherwise.
+
+pub fn open_as[F](u: UserFs, p: Str, mode: Int) -> F ! FsErr {
+  let h = match mode {
+    0 => u.open(p)?
+    1 => u.create(p)?
+    2 => u.open_append(p)?
+    _ => u.create_new(p)?
+  }
+  Ok(rt.cast[File, F](h))
+}
+
+pub fn lock_as[L](u: UserFs, p: Str) -> L ! FsErr { Ok(rt.cast[FileLock, L](u.lock(p)?)) }
+
+pub fn try_lock_as[L](u: UserFs, p: Str) -> L? ! FsErr {
+  match u.try_lock(p)? {
+    Some(l) => Ok(Some(rt.cast[FileLock, L](l)))
+    None => Ok(None)
+  }
+}

@@ -14,6 +14,7 @@ use native/llrt/glob
 use native/llrt/pool
 use native/llrt/tasks
 use native/llrt/testworld
+use native/llrt/userfs
 use native/rt
 use native/llrt/raw
 
@@ -401,22 +402,54 @@ fn memfs_op_tag(op: testing.FsOp) -> Int {
 }
 
 fn memfs_sub(f: Fs, dir: Str) -> Fs {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.sub(dir)
+  }
   match memfs_resolve(f, dir) {
     Some(full) => rt.fs_new(full, 1 | (rt.fs_mode(f) & 6))
     None => rt.fs_new("\u{0}denied", 7)
   }
 }
 
-fn memfs_cwd(f: Fs) -> Fs { f }
+fn memfs_cwd(f: Fs) -> Fs {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.cwd()
+  }
+  f
+}
 
 // A MemFs's working directory is its root (memfs_cwd).
-fn memfs_cwd_path(_f: Fs) -> Str ! FsErr { "/" }
+fn memfs_cwd_path(f: Fs) -> Str ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.cwd_path()
+  }
+  "/"
+}
 
-fn memfs_read_only(f: Fs) -> Fs { rt.fs_new(rt.fs_root(f), rt.fs_mode(f) | 2) }
+fn memfs_read_only(f: Fs) -> Fs {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.read_only()
+  }
+  rt.fs_new(rt.fs_root(f), rt.fs_mode(f) | 2)
+}
 
-fn memfs_write_only(f: Fs) -> Fs { rt.fs_new(rt.fs_root(f), rt.fs_mode(f) | 4) }
+fn memfs_write_only(f: Fs) -> Fs {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.write_only()
+  }
+  rt.fs_new(rt.fs_root(f), rt.fs_mode(f) | 4)
+}
 
-fn memfs_case_sensitive(_f: Fs) -> Bool {
+fn memfs_case_sensitive(f: Fs) -> Bool {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.case_sensitive()
+  }
   let st = memfs_load()
   let on = st.case_sensitive
   memfs_store(st)
@@ -447,6 +480,10 @@ fn memfs_stat_in(var st: MemState, f: Fs, full: Str) -> FileInfo? ! FsErr {
 }
 
 fn memfs_stat(f: Fs, p: Str) -> FileInfo? ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.stat(p)
+  }
   let full = memfs_begin(f, p, false)?
   var st = memfs_load()
   let r = memfs_stat_in(st, f, full)
@@ -455,6 +492,10 @@ fn memfs_stat(f: Fs, p: Str) -> FileInfo? ! FsErr {
 }
 
 fn memfs_exists(f: Fs, p: Str) -> Bool ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.exists(p)
+  }
   let fi = memfs_stat(f, p)?
   fi.is_some()
 }
@@ -482,6 +523,10 @@ fn memfs_read_in(var st: MemState, full: Str, p: Str) -> Bytes ! FsErr {
 }
 
 fn memfs_read(f: Fs, p: Str) -> Bytes ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.read(p)
+  }
   let full = memfs_begin(f, p, false)?
   var st = memfs_load()
   let r = memfs_read_in(st, full, p)
@@ -490,6 +535,10 @@ fn memfs_read(f: Fs, p: Str) -> Bytes ! FsErr {
 }
 
 fn memfs_read_text(f: Fs, p: Str) -> Str ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.read_text(p)
+  }
   let b = memfs_read(f, p)?
   rt.cast[Bytes, Str](b)
 }
@@ -521,6 +570,10 @@ fn memfs_walk_into(st: MemState, f: Fs, full: Str, all: Bool, var out: List[File
 }
 
 fn memfs_read_dir(f: Fs, dir: Str) -> List[FileInfo] ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.read_dir(dir)
+  }
   let full = memfs_begin(f, dir, false)?
   var st = memfs_load()
   let r = memfs_list_in(st, f, full, dir, false)
@@ -529,6 +582,10 @@ fn memfs_read_dir(f: Fs, dir: Str) -> List[FileInfo] ! FsErr {
 }
 
 fn memfs_walk(f: Fs, dir: Str) -> List[FileInfo] ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.walk(dir)
+  }
   let full = memfs_begin(f, dir, false)?
   var st = memfs_load()
   let r = memfs_list_in(st, f, full, dir, true)
@@ -555,6 +612,10 @@ fn memfs_write_in(var st: MemState, f: Fs, full: Str, p: Str, data: Bytes) -> ()
 }
 
 fn memfs_write(f: Fs, p: Str, data: Bytes) -> () ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.write(p, data)
+  }
   let full = memfs_begin(f, p, true)?
   var st = memfs_load()
   let r = memfs_write_in(st, f, full, p, data)
@@ -585,6 +646,10 @@ fn memfs_symlink_in(var st: MemState, f: Fs, full: Str, target: Str, link: Str) 
 }
 
 fn memfs_symlink(f: Fs, target: Str, link: Str) -> () ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.symlink(target, link)
+  }
   let full = memfs_begin(f, link, true)?
   var st = memfs_load()
   let r = memfs_symlink_in(st, f, full, target, link)
@@ -593,6 +658,10 @@ fn memfs_symlink(f: Fs, target: Str, link: Str) -> () ! FsErr {
 }
 
 fn memfs_read_link(f: Fs, p: Str) -> Str? ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.read_link(p)
+  }
   let full = memfs_begin(f, p, false)?
   let st = memfs_load()
   let n = memfs_get(st, full)
@@ -685,13 +754,37 @@ fn memfs_open_in(var st: MemState, f: Fs, given: Str, p: Str, write: Bool, trunc
   rt.mem_file(id, p, true)
 }
 
-fn memfs_open(f: Fs, p: Str) -> File ! FsErr { memfs_open_file(f, p, false, false) }
+fn memfs_open(f: Fs, p: Str) -> File ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.open(p)
+  }
+  memfs_open_file(f, p, false, false)
+}
 
-fn memfs_create(f: Fs, p: Str) -> File ! FsErr { memfs_open_file(f, p, true, true) }
+fn memfs_create(f: Fs, p: Str) -> File ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.create(p)
+  }
+  memfs_open_file(f, p, true, true)
+}
 
-fn memfs_open_append(f: Fs, p: Str) -> File ! FsErr { memfs_open_file(f, p, true, false) }
+fn memfs_open_append(f: Fs, p: Str) -> File ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.open_append(p)
+  }
+  memfs_open_file(f, p, true, false)
+}
 
-fn memfs_create_new(f: Fs, p: Str) -> File ! FsErr { memfs_open_file(f, p, true, true, true) }
+fn memfs_create_new(f: Fs, p: Str) -> File ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.create_new(p)
+  }
+  memfs_open_file(f, p, true, true, true)
+}
 
 // memfile_state is std/rt File's checks: canceled, closed, or open for
 // the other direction; the open file.
@@ -792,6 +885,10 @@ fn memfile_close(f: File) -> () ! FsErr {
 }
 
 fn memfs_append(f: Fs, p: Str, data: Bytes) -> () ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.append(p, data)
+  }
   let file = memfs_open_append(f, p)?
   // std/rt's MemFs append: the write's result is not checked
   match memfile_write(file, data) {
@@ -801,6 +898,10 @@ fn memfs_append(f: Fs, p: Str, data: Bytes) -> () ! FsErr {
 }
 
 fn memfs_copy(f: Fs, from: Str, to: Str) -> () ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.copy(from, to)
+  }
   let src = memfs_begin(f, from, false)?
   var st = memfs_load()
   let r = memfs_copy_src(st, src, from)
@@ -844,6 +945,10 @@ fn memfs_perm(n: MemNode) -> Int {
 }
 
 fn memfs_mode(f: Fs, p: Str) -> Int ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.mode(p)
+  }
   let given = memfs_begin(f, p, false)?
   let st = memfs_load()
   let n = memfs_get(st, memfs_follow(st, given) ?? given)
@@ -855,6 +960,10 @@ fn memfs_mode(f: Fs, p: Str) -> Int ! FsErr {
 }
 
 fn memfs_set_mode(f: Fs, p: Str, mode: Int) -> () ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.set_mode(p, mode)
+  }
   let given = memfs_begin(f, p, true)?
   var st = memfs_load()
   let r = memfs_set_mode_in(st, given, p, mode)
@@ -977,13 +1086,23 @@ fn memfs_lock_rec(var st: MemState, f: Fs, full: Str, p: Str) -> Int ! FsErr {
 }
 
 fn memfs_lock(f: Fs, p: Str) -> FileLock ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.lock(p)
+  }
   match memfs_lock_file(f, p, true)? {
     Some(l) => l
     None => Err(FsErr.Canceled)
   }
 }
 
-fn memfs_try_lock(f: Fs, p: Str) -> FileLock? ! FsErr { memfs_lock_file(f, p, false) }
+fn memfs_try_lock(f: Fs, p: Str) -> FileLock? ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.try_lock(p)
+  }
+  memfs_lock_file(f, p, false)
+}
 
 fn memlock_unlock(l: FileLock) {
   var st = memfs_load()
@@ -1031,6 +1150,10 @@ fn memfs_create_temp_in(var st: MemState, f: Fs, full: Str, dir: Str, prefix: St
 }
 
 fn memfs_create_temp(f: Fs, dir: Str, prefix: Str) -> Str ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.create_temp(dir, prefix)
+  }
   let full = memfs_begin(f, dir, true)?
   var st = memfs_load()
   let r = memfs_create_temp_in(st, f, full, dir, prefix)
@@ -1082,6 +1205,10 @@ fn memfs_rename_in(var st: MemState, src: Str, dst: Str, from: Str, to: Str) -> 
 }
 
 fn memfs_rename(f: Fs, from: Str, to: Str) -> () ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.rename(from, to)
+  }
   let src = memfs_begin(f, from, true)?
   let dst = match memfs_resolve(f, to) {
     Some(d) => d
@@ -1111,6 +1238,10 @@ fn memfs_remove_in(var st: MemState, full: Str, p: Str) -> () ! FsErr {
 }
 
 fn memfs_remove(f: Fs, p: Str) -> () ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.remove(p)
+  }
   let full = memfs_begin(f, p, true)?
   var st = memfs_load()
   let r = memfs_remove_in(st, full, p)
@@ -1138,6 +1269,10 @@ fn memfs_remove_all_in(var st: MemState, full: Str) -> () ! FsErr {
 }
 
 fn memfs_remove_all(f: Fs, p: Str) -> () ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.remove_all(p)
+  }
   let full = memfs_begin(f, p, true)?
   var st = memfs_load()
   let r = memfs_remove_all_in(st, full)
@@ -1155,6 +1290,10 @@ fn memfs_create_dir_all_in(var st: MemState, f: Fs, full: Str) -> () ! FsErr {
 }
 
 fn memfs_create_dir_all(f: Fs, p: Str) -> () ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.create_dir_all(p)
+  }
   let full = memfs_begin(f, p, true)?
   var st = memfs_load()
   let r = memfs_create_dir_all_in(st, f, full)
@@ -1174,6 +1313,10 @@ fn memfs_set_modified_in(var st: MemState, full: Str, p: Str, t: Time) -> () ! F
 }
 
 fn memfs_set_modified(f: Fs, p: Str, t: Time) -> () ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.set_modified(p, t)
+  }
   let full = memfs_begin(f, p, true)?
   var st = memfs_load()
   let r = memfs_set_modified_in(st, full, p, t)

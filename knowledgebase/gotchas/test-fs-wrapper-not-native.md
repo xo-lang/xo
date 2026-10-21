@@ -1,6 +1,7 @@
 # A test's own Fs wrapper passed xo check and failed to build natively
 
-Status: Observed (2026-10-21, compiler/check check_test.xo)
+Status: Observed (2026-10-21, compiler/check check_test.xo); fixed for Fs by
+decision 0307 (2026-10-21): a user struct converted to Fs builds natively
 
 Symptom: a test that wrapped the test's file system in its own struct
 implementing `Fs` (to fail one read) passed `xo check`, then `xo test

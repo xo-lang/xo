@@ -37,6 +37,7 @@ use native/llrt/testworld
 use native/llrt/twrun
 use native/llrt/text
 use native/llrt/unicode
+use native/llrt/userfs
 use native/rt
 
 // ---------------------------------------------------------------------------
@@ -937,6 +938,10 @@ fn fs_info_of(f: Fs, op: Str, given: Str, i: sysio.Info) -> FileInfo {
 }
 
 fn fs_sub(f: Fs, dir: Str) -> Fs {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.sub(dir)
+  }
   match fs_resolve(f, dir) {
     Some(op) => rt.fs_new(fs_abs(op), 1 | (rt.fs_mode(f) & 6))
     None => rt.fs_new(fs_join(rt.fs_root(f), "denied"), 7)
@@ -947,6 +952,10 @@ fn fs_sub(f: Fs, dir: Str) -> Fs {
 // directory (WASI preview1 has none): its paths stay relative, so they
 // resolve against the working directory's preopen, not against `/`.
 fn fs_cwd(f: Fs) -> Fs {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.cwd()
+  }
   let w = fspath.cwd()
   rt.fs_new(if w.is_empty() { "." } else { w }, 1 | (rt.fs_mode(f) & 6))
 }
@@ -957,6 +966,10 @@ fn fs_cwd(f: Fs) -> Fs {
 // libc on Darwin, the system call on Linux, GetCurrentDirectoryW on
 // Windows, where $PWD is not consulted). Io when getcwd fails.
 fn fs_cwd_path(f: Fs) -> Str ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.cwd_path()
+  }
   // outside bytes (decision 0259)
   Ok(scan.text(fs_cwd_path_raw(f)?))
 }
@@ -1015,13 +1028,35 @@ fn fs_real_path(p: Str) -> Str {
   if out.is_empty() { "/" } else { out }
 }
 
-fn fs_read_only(f: Fs) -> Fs { rt.fs_new(rt.fs_root(f), rt.fs_mode(f) | 2) }
+fn fs_read_only(f: Fs) -> Fs {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.read_only()
+  }
+  rt.fs_new(rt.fs_root(f), rt.fs_mode(f) | 2)
+}
 
-fn fs_write_only(f: Fs) -> Fs { rt.fs_new(rt.fs_root(f), rt.fs_mode(f) | 4) }
+fn fs_write_only(f: Fs) -> Fs {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.write_only()
+  }
+  rt.fs_new(rt.fs_root(f), rt.fs_mode(f) | 4)
+}
 
-fn fs_case_sensitive(_f: Fs) -> Bool { fsops.case_sensitive() }
+fn fs_case_sensitive(f: Fs) -> Bool {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.case_sensitive()
+  }
+  fsops.case_sensitive()
+}
 
 fn fs_stat(f: Fs, p: Str) -> FileInfo? ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.stat(p)
+  }
   let op = fs_check(f, p, false)?
   let i = sysio.fs_stat(op, true, p)
   let st = i.st
@@ -1035,6 +1070,10 @@ fn fs_stat(f: Fs, p: Str) -> FileInfo? ! FsErr {
 }
 
 fn fs_exists(f: Fs, p: Str) -> Bool ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.exists(p)
+  }
   let fi = fs_stat(f, p)?
   fi.is_some()
 }
@@ -1059,6 +1098,10 @@ fn read_or(fs: Fs, path: Str, default: Bytes) -> Bytes ! FsErr uses fs.read {
 }
 
 fn fs_read(f: Fs, p: Str) -> Bytes ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.read(p)
+  }
   let op = fs_check(f, p, false)?
   let l = sysio.fs_read(op)
   if l.len() == 0 {
@@ -1068,6 +1111,10 @@ fn fs_read(f: Fs, p: Str) -> Bytes ! FsErr {
 }
 
 fn fs_read_text(f: Fs, p: Str) -> Str ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.read_text(p)
+  }
   let b = fs_read(f, p)?
   // outside bytes: U+FFFD for an invalid sequence (decision 0259)
   scan.text_of(b)
@@ -1083,6 +1130,10 @@ fn texts(xs: List[Str]) -> List[Str] {
 }
 
 fn fs_read_dir(f: Fs, dir: Str) -> List[FileInfo] ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.read_dir(dir)
+  }
   let op = fs_check(f, dir, false)?
   let names = fsops.names(op, dir)
   let st = sysio.status()
@@ -1136,6 +1187,10 @@ fn fs_walk_dir(f: Fs, osdir: Str, xodir: Str, var out: List[FileInfo]) -> () ! F
 }
 
 fn fs_walk(f: Fs, dir: Str) -> List[FileInfo] ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.walk(dir)
+  }
   let op = fs_check(f, dir, false)?
   let st = sysio.fs_stat(op, true, dir).st
   if st != 0 {
@@ -1147,6 +1202,10 @@ fn fs_walk(f: Fs, dir: Str) -> List[FileInfo] ! FsErr {
 }
 
 fn fs_write(f: Fs, p: Str, data: Bytes) -> () ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.write(p, data)
+  }
   let op = fs_check(f, p, true)?
   let st = sysio.fs_write(op, data, p)
   if st != 0 {
@@ -1155,6 +1214,10 @@ fn fs_write(f: Fs, p: Str, data: Bytes) -> () ! FsErr {
 }
 
 fn fs_create_temp(f: Fs, dir: Str, prefix: Str) -> Str ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.create_temp(dir, prefix)
+  }
   let op = fs_check(f, dir, true)?
   let name = fspath.create_temp(op, prefix, dir)
   if name == "" {
@@ -1169,6 +1232,10 @@ fn fs_create_temp(f: Fs, dir: Str, prefix: Str) -> Str ! FsErr {
 }
 
 fn fs_rename(f: Fs, from: Str, to: Str) -> () ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.rename(from, to)
+  }
   let a = fs_check(f, from, true)?
   let b = fs_check(f, to, true)?
   let st = fsops.rename(a, b, from)
@@ -1178,6 +1245,10 @@ fn fs_rename(f: Fs, from: Str, to: Str) -> () ! FsErr {
 }
 
 fn fs_remove(f: Fs, p: Str) -> () ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.remove(p)
+  }
   let op = fs_check(f, p, true)?
   let st = fsops.remove(op, p)
   if st != 0 {
@@ -1186,6 +1257,10 @@ fn fs_remove(f: Fs, p: Str) -> () ! FsErr {
 }
 
 fn fs_remove_all(f: Fs, p: Str) -> () ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.remove_all(p)
+  }
   let op = fs_check(f, p, true)?
   let st = fspath.remove_all(op, p)
   if st != 0 {
@@ -1194,6 +1269,10 @@ fn fs_remove_all(f: Fs, p: Str) -> () ! FsErr {
 }
 
 fn fs_create_dir_all(f: Fs, dir: Str) -> () ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.create_dir_all(dir)
+  }
   let op = fs_check(f, dir, true)?
   let st = fspath.mkdir_all(op, dir)
   if st != 0 {
@@ -1202,6 +1281,10 @@ fn fs_create_dir_all(f: Fs, dir: Str) -> () ! FsErr {
 }
 
 fn fs_set_modified(f: Fs, p: Str, t: Time) -> () ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.set_modified(p, t)
+  }
   let op = fs_check(f, p, true)?
   let st = fsops.chtimes(op, (t - Time.UNIX_EPOCH).nanos(), p)
   if st != 0 {
@@ -1238,7 +1321,13 @@ fn fs_open_mode(f: Fs, p: Str, mode: Int) -> File ! FsErr {
   File{h: h, path: p, write: mode != 0}
 }
 
-fn fs_open(f: Fs, p: Str) -> File ! FsErr { fs_open_mode(f, p, 0) }
+fn fs_open(f: Fs, p: Str) -> File ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return userfs.open_as[File](u, p, 0)
+  }
+  fs_open_mode(f, p, 0)
+}
 
 // A test's MemFs handles (rt.mem_file and the others; std/native/
 // testing.xo memfile_* and memlock_*): the parts only this module sees.
@@ -1255,11 +1344,29 @@ fn llrt_mem_lock(id: Int) -> FileLock { FileLock{h: fsops.no_lock(), mem: id} }
 
 fn llrt_mem_lock_id(l: FileLock) -> Int { l.mem }
 
-fn fs_create(f: Fs, p: Str) -> File ! FsErr { fs_open_mode(f, p, 1) }
+fn fs_create(f: Fs, p: Str) -> File ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return userfs.open_as[File](u, p, 1)
+  }
+  fs_open_mode(f, p, 1)
+}
 
-fn fs_open_append(f: Fs, p: Str) -> File ! FsErr { fs_open_mode(f, p, 2) }
+fn fs_open_append(f: Fs, p: Str) -> File ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return userfs.open_as[File](u, p, 2)
+  }
+  fs_open_mode(f, p, 2)
+}
 
-fn fs_create_new(f: Fs, p: Str) -> File ! FsErr { fs_open_mode(f, p, 5) }
+fn fs_create_new(f: Fs, p: Str) -> File ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return userfs.open_as[File](u, p, 3)
+  }
+  fs_open_mode(f, p, 5)
+}
 
 /// The state errors of a handle (std/rt File.M_read): canceled, closed,
 /// or open for the other direction.
@@ -1320,6 +1427,10 @@ fn file_close(f: File) -> () ! FsErr {
 }
 
 fn fs_append(f: Fs, p: Str, data: Bytes) -> () ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.append(p, data)
+  }
   let file = fs_open_mode(f, p, 2)?
   match file_write(file, data) {
     Ok(_) => ()
@@ -1334,6 +1445,10 @@ fn fs_append(f: Fs, p: Str, data: Bytes) -> () ! FsErr {
 }
 
 fn fs_copy(f: Fs, from: Str, to: Str) -> () ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.copy(from, to)
+  }
   let src = fs_check(f, from, false)?
   let dst = fs_check(f, to, true)?
   let st = fsops.copy(src, dst, from, to)
@@ -1343,6 +1458,10 @@ fn fs_copy(f: Fs, from: Str, to: Str) -> () ! FsErr {
 }
 
 fn fs_mode(f: Fs, p: Str) -> Int ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.mode(p)
+  }
   let op = fs_check(f, p, false)?
   let m = fsops.perm(op, p)
   if m < 0 {
@@ -1352,6 +1471,10 @@ fn fs_mode(f: Fs, p: Str) -> Int ! FsErr {
 }
 
 fn fs_set_mode(f: Fs, p: Str, mode: Int) -> () ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.set_mode(p, mode)
+  }
   let op = fs_check(f, p, true)?
   let st = fsops.set_perm(op, mode, p)
   if st != 0 {
@@ -1405,6 +1528,10 @@ fn link_escapes(link: Str, target: Str) -> Bool {
 }
 
 fn fs_symlink(f: Fs, target: Str, link: Str) -> () ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.symlink(target, link)
+  }
   let op = fs_check(f, link, true)?
   if (rt.fs_mode(f) & 1) != 0 && link_escapes(link, target) {
     return Err(FsErr.Denied(path: link))
@@ -1416,6 +1543,10 @@ fn fs_symlink(f: Fs, target: Str, link: Str) -> () ! FsErr {
 }
 
 fn fs_read_link(f: Fs, p: Str) -> Str? ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.read_link(p)
+  }
   let op = fs_check(f, p, false)?
   let l = fsops.read_link(op, p)
   let st = sysio.status()
@@ -1443,13 +1574,23 @@ fn fs_lock_wait(f: Fs, p: Str, wait: Bool) -> FileLock? ! FsErr {
 }
 
 fn fs_lock(f: Fs, p: Str) -> FileLock ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return userfs.lock_as[FileLock](u, p)
+  }
   match fs_lock_wait(f, p, true)? {
     Some(l) => l
     None => Err(FsErr.Canceled)
   }
 }
 
-fn fs_try_lock(f: Fs, p: Str) -> FileLock? ! FsErr { fs_lock_wait(f, p, false) }
+fn fs_try_lock(f: Fs, p: Str) -> FileLock? ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return userfs.try_lock_as[FileLock](u, p)
+  }
+  fs_lock_wait(f, p, false)
+}
 
 fn filelock_unlock(l: FileLock) { fsops.unlock(l.h) }
 
@@ -1727,6 +1868,10 @@ fn glob_walk(f: Fs, segs: List[Str], dir: Str, i: Int, var out: List[Str], var s
 }
 
 fn fs_glob(f: Fs, pattern: Str) -> List[Str] ! FsErr uses fs.read {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.glob(pattern)
+  }
   let pat = pattern.replace("\\", "/")
   let segs = trim_slashes(pat).split("/")
   for s in segs {

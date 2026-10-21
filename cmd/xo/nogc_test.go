@@ -66,7 +66,7 @@ func TestNoGCTests(t *testing.T) {
 	// none; TestTraceback checks it)
 	setenv(t, "XO_TRACEBACK", "0")
 	gen := filepath.Join("..", "..", "internal", "gen", "testdata", "golden")
-	for _, dir := range []string{filepath.Join("testdata", "nogc", "same"), filepath.Join("testdata", "nogc", "prop"), filepath.Join("..", "..", "examples", "notes-service"), filepath.Join("..", "..", "compiler", "check"), filepath.Join(gen, "test_stdin_stop"), filepath.Join(gen, "test_signal_after"), filepath.Join(gen, "test_fakes"), filepath.Join(gen, "test_map_until"), filepath.Join(gen, "test_run_main_void"), filepath.Join(gen, "test_once"), filepath.Join(gen, "test_logs"), filepath.Join(gen, "test_shutdown"), filepath.Join(gen, "test_cli"), filepath.Join(gen, "test_term"), filepath.Join(gen, "test_proc_cmd"), filepath.Join(gen, "test_net_only"), filepath.Join(gen, "test_fakenet_raw"), filepath.Join(gen, "test_smtp"), filepath.Join(gen, "test_unix_kill")} {
+	for _, dir := range []string{filepath.Join("testdata", "nogc", "same"), filepath.Join("testdata", "nogc", "prop"), filepath.Join("testdata", "nogc", "userfs"), filepath.Join("..", "..", "examples", "notes-service"), filepath.Join("..", "..", "compiler", "check"), filepath.Join(gen, "test_stdin_stop"), filepath.Join(gen, "test_signal_after"), filepath.Join(gen, "test_fakes"), filepath.Join(gen, "test_map_until"), filepath.Join(gen, "test_run_main_void"), filepath.Join(gen, "test_once"), filepath.Join(gen, "test_logs"), filepath.Join(gen, "test_shutdown"), filepath.Join(gen, "test_cli"), filepath.Join(gen, "test_term"), filepath.Join(gen, "test_proc_cmd"), filepath.Join(gen, "test_net_only"), filepath.Join(gen, "test_fakenet_raw"), filepath.Join(gen, "test_smtp"), filepath.Join(gen, "test_unix_kill")} {
 		t.Run(filepath.Base(dir), func(t *testing.T) {
 			t.Parallel()
 			goCode, goOut := xoTest(t, "-v", dir)
@@ -144,7 +144,7 @@ func TestNoGCTestLeaks(t *testing.T) {
 	}
 	backends := nativeBackends(t)
 	setenv(t, "XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
-	for _, dir := range []string{filepath.Join("testdata", "nogc", "same"), filepath.Join("testdata", "nogc", "prop"), filepath.Join("..", "..", "examples", "notes-service")} {
+	for _, dir := range []string{filepath.Join("testdata", "nogc", "same"), filepath.Join("testdata", "nogc", "prop"), filepath.Join("testdata", "nogc", "userfs"), filepath.Join("..", "..", "examples", "notes-service")} {
 		n := testBlocks(t, dir)
 		for _, be := range backends {
 			res, err := xotool.Build([]string{dir}, xotool.Options{Mode: xotool.ModeTest, NoGC: true, Backend: be, Out: filepath.Join(t.TempDir(), "tests")})

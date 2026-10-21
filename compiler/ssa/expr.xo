@@ -105,6 +105,9 @@ fn (var b: Builder) coerce_at(v: Int, t: Int, at: Expr?) -> Int {
     if b.is_iface(t) {
       return b.to_iface(v, ct, t, at)
     }
+    if b.is_fs(t) && !b.is_fs(vt) {
+      return b.user_to_fs(v, ct, at)
+    }
     if b.is_dyn(t) && !b.is_dyn(vt) {
       return b.to_dyn(v, ct, b.iface_name(e))
     }
@@ -1032,7 +1035,7 @@ fn (var b: Builder) selector(e: Expr) -> Int {
     }
     if b.is_fs(t) {
       let root = b.const_str("")
-      return b.add(Op.Struct, t, Aux.None, [root, b.cint(0)])
+      return b.add(Op.Struct, t, Aux.None, b.fs_fields(t, root, b.cint(0)))
     }
     if b.is_lists(t) {
       // os.proc, os.env, os.net: no attenuation (decisions 0172, 0175)

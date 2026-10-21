@@ -1,0 +1,103 @@
+// A user struct converted to Fs (decision 0307): a read-only Fs over a
+// map, passed to code written against Fs, across a task, and wrapping
+// the real os.fs.
+
+struct MapFs {
+  files: Map[Str, Str]
+  prefix: Str = ""
+}
+
+fn (m: MapFs) sub(dir: Str) -> Fs { MapFs{files: m.files, prefix: m.prefix + dir + "/"} }
+fn (m: MapFs) cwd() -> Fs { m }
+fn (m: MapFs) cwd_path() -> Str ! FsErr { Ok("/" + m.prefix) }
+fn (m: MapFs) read_only() -> Fs { m }
+fn (m: MapFs) write_only() -> Fs { m }
+fn (m: MapFs) case_sensitive() -> Bool { true }
+fn (m: MapFs) stat(path: Str) -> FileInfo? ! FsErr {
+  match m.files.get(m.prefix + path) {
+    Some(s) => Ok(Some(FileInfo{name: path, path: path, is_dir: false, size: s.len(), modified: Time.from_unix(0)}))
+    None => Ok(None)
+  }
+}
+fn (m: MapFs) exists(path: Str) -> Bool ! FsErr { Ok(m.files.contains(m.prefix + path)) }
+fn (m: MapFs) read(path: Str) -> Bytes ! FsErr { Ok(m.read_text(path)?.bytes()) }
+fn (m: MapFs) read_text(path: Str) -> Str ! FsErr {
+  match m.files.get(m.prefix + path) {
+    Some(s) => Ok(s)
+    None => Err(FsErr.NotFound(path: path))
+  }
+}
+fn (m: MapFs) read_dir(dir: Str) -> List[FileInfo] ! FsErr { Err(FsErr.Denied(path: dir)) }
+fn (m: MapFs) walk(dir: Str) -> List[FileInfo] ! FsErr { Err(FsErr.Denied(path: dir)) }
+fn (m: MapFs) write(path: Str, data: Bytes) -> () ! FsErr { Err(FsErr.Denied(path: path)) }
+fn (m: MapFs) create_temp(dir: Str, prefix: Str) -> Str ! FsErr { Err(FsErr.Denied(path: dir)) }
+fn (m: MapFs) rename(from: Str, to: Str) -> () ! FsErr { Err(FsErr.Denied(path: from)) }
+fn (m: MapFs) remove(path: Str) -> () ! FsErr { Err(FsErr.Denied(path: path)) }
+fn (m: MapFs) remove_all(path: Str) -> () ! FsErr { Err(FsErr.Denied(path: path)) }
+fn (m: MapFs) create_dir_all(dir: Str) -> () ! FsErr { Err(FsErr.Denied(path: dir)) }
+fn (m: MapFs) set_modified(path: Str, t: Time) -> () ! FsErr { Err(FsErr.Denied(path: path)) }
+fn (m: MapFs) open(path: Str) -> File ! FsErr { Err(FsErr.Denied(path: path)) }
+fn (m: MapFs) create(path: Str) -> File ! FsErr { Err(FsErr.Denied(path: path)) }
+fn (m: MapFs) open_append(path: Str) -> File ! FsErr { Err(FsErr.Denied(path: path)) }
+fn (m: MapFs) create_new(path: Str) -> File ! FsErr { Err(FsErr.Denied(path: path)) }
+fn (m: MapFs) append(path: Str, data: Bytes) -> () ! FsErr { Err(FsErr.Denied(path: path)) }
+fn (m: MapFs) copy(from: Str, to: Str) -> () ! FsErr { Err(FsErr.Denied(path: from)) }
+fn (m: MapFs) mode(path: Str) -> Int ! FsErr { Ok(0o444) }
+fn (m: MapFs) set_mode(path: Str, mode: Int) -> () ! FsErr { Err(FsErr.Denied(path: path)) }
+fn (m: MapFs) symlink(target: Str, link: Str) -> () ! FsErr { Err(FsErr.Denied(path: link)) }
+fn (m: MapFs) read_link(path: Str) -> Str? ! FsErr { Ok(None) }
+fn (m: MapFs) glob(pattern: Str) -> List[Str] ! FsErr { Ok(m.files.keys().sort()) }
+fn (m: MapFs) lock(path: Str) -> FileLock ! FsErr { Err(FsErr.Denied(path: path)) }
+fn (m: MapFs) try_lock(path: Str) -> FileLock? ! FsErr { Err(FsErr.Denied(path: path)) }
+
+interface Shape {
+  fn area(self) -> Int
+}
+
+struct Sq {
+  s: Int
+  name: Str
+}
+
+fn (q: Sq) area() -> Int { q.s * q.s }
+
+/// Code written against Fs.
+fn show(f: Fs, path: Str) -> Str uses fs.read {
+  match f.read_text(path) {
+    Ok(s) => s.trim_end()
+    Err(e) => "error: ${e}"
+  }
+}
+
+fn main(os: Os) {
+  let m: Fs = MapFs{files: {"a.txt": "alpha\n", "d/b.txt": "beta\n"}}
+  os.stdio.println(show(m, "a.txt"))
+  os.stdio.println(show(m.sub("d"), "b.txt"))
+  os.stdio.println(show(m, "missing.txt"))
+  os.stdio.println("${m.exists("a.txt").ok() ?? false} ${m.write("x", b"").is_err()} ${(m.glob("*").ok() ?? []).join(",")}")
+  // the runtime's own Fs still works next to it
+  os.stdio.println("${os.fs.exists("/xo-no-such-dir/x").ok() ?? true}")
+  // across a task
+  let r = scope s {
+    let t = s.spawn(fn() -> Str { show(m.sub("d"), "b.txt") })
+    t.await
+  }
+  os.stdio.println(r)
+  var fss: List[Fs] = [m, os.fs.read_only()]
+  os.stdio.println("${fss.len()}")
+  // a user struct in a user interface, across a task
+  let shapes: List[Shape] = [Sq{s: 3, name: "a"}, Sq{s: 2, name: "b"}]
+  let total = scope s {
+    let t = s.spawn(fn() -> Int {
+      var n = 0
+      for x in shapes {
+        n += x.area()
+      }
+      n
+    })
+    t.await
+  }
+  os.stdio.println("${total}")
+  // a write through the user Fs is the user's answer, not the real Fs's
+  os.stdio.println("${m.write_only().write("/xo-no-such-dir/x", b"x").is_err()}")
+}

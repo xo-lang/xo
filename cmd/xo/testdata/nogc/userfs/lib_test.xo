@@ -1,0 +1,8 @@
+test "a wrapper Fs fails one read" {
+  os.fs.write("a.txt", b"a")?
+  os.fs.write("b.txt", b"b")?
+  let f = FlakyFs{inner: os.fs, bad: "b.txt"}
+  expect(failures(f, ["a.txt", "b.txt"])) == 1
+  expect(failures(os.fs, ["a.txt", "b.txt"])) == 0
+  expect(f.read_text("a.txt").ok() ?? "") == "a"
+}

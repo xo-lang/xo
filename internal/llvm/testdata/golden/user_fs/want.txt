@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+alpha
+beta
+error: NotFound(path: "missing.txt")
+true true a.txt,d/b.txt
+false
+beta
+2
+13
+true
+--- stderr

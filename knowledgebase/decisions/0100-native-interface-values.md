@@ -80,7 +80,8 @@ threads, unwinding, and leak checked drop functions in both backends.
 - Hello world size is unchanged (arm64 310208 bytes, LLVM 88272 bytes on
   2026-10-09): nothing is emitted for a program without interface values.
 - Capability interfaces (Fs, Clock, ...) stay capabilities (`KCap`): a
-  user type implementing one is not a capability value natively.
+  user type implementing one is not a capability value natively. Fs since
+  decision 0307 (a `user` field in the native Fs).
 
 ## Alternatives
 

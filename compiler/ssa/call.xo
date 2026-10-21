@@ -101,6 +101,9 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
   if fm >= 0 && !b.c.mods[fm].c_prefix.is_empty() {
     return b.c_call(x, ci)
   }
+  if let Some(v) = b.fs_user_call(x, fo) {
+    return v
+  }
   if b.is_std_mod(fm) {
     let path = b.c.mods[fm].path
     if path.starts_with("native/") {
@@ -1288,8 +1291,9 @@ fn (var b: Builder) intrinsic(x: Expr, ci: check.CallInfo) -> Int {
     let t = b.fs_type()
     let a = b.value_as(es[0] ?? fault("arg"), b.m.types[t].fields[0].ty)
     let c = b.value_as(es[1] ?? fault("arg"), b.m.types[t].fields[1].ty)
-    return b.add(Op.Struct, t, Aux.None, [a, c])
+    return b.add(Op.Struct, t, Aux.None, b.fs_fields(t, a, c))
   }
+
   if name is "proc_lists" | "env_lists" | "net_lists" {
     // the attenuation lists of a Proc, Env, or Net (decisions 0172 and
     // 0175)
@@ -2292,4 +2296,27 @@ fn (var b: Builder) native_waits(fo: Int) -> Bool {
     return false
   }
   "${b.obj_name(r)}.${b.obj_name(fo)}" is "Cmd.output" | "Cmd.run" | "Cmd.spawn" | "Child.write" | "Child.read" | "Child.read_err" | "Child.read_line" | "Child.wait"
+}
+
+/// A call of native/llrt/userfs's user(f) (decision 0307): the user
+/// field of the Fs f; None when fo is another function.
+fn (var b: Builder) fs_user_call(x: Expr, fo: Int) -> Int? {
+  if b.obj_name(fo) != "user" || b.c.objs[fo].recv >= 0 {
+    return None
+  }
+  let om = b.obj_mod(fo)
+  if om < 0 || b.c.mods[om].path != "native/llrt/userfs" {
+    return None
+  }
+  let (_, _, args) = call_parts(x)
+  if args.len() != 1 {
+    return None
+  }
+  let t = b.fs_type()
+  let v = b.value_as(args[0].value, t)
+  if b.m.types[t].fields.len() < 3 {
+    b.unsupported("`fs_user` without the user field of Fs")
+    return Some(b.undef(b.nat_of(x)))
+  }
+  Some(b.add(Op.Field, b.m.types[t].fields[2].ty, Aux.I(n: 2), [v]))
 }

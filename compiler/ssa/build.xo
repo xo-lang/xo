@@ -1244,9 +1244,70 @@ fn (var b: Builder) fs_type() -> Int {
   if created {
     let st = b.str_t()
     let it = b.int_t()
-    b.m.types[t].fields = [SField{name: "root", ty: st}, SField{name: "mode", ty: it}]
+    var fs = [SField{name: "root", ty: st}, SField{name: "mode", ty: it}]
+    // a user value converted to Fs (decision 0307): the native prelude's
+    // UserFs record, None for the runtime's own Fs
+    let ut = b.user_fs_check()
+    if ut >= 0 {
+      fs.push(SField{name: "user", ty: b.typ(b.prelude_type("Option", [ut]))})
+    }
+    b.m.types[t].fields = fs
   }
   t
+}
+
+/// The module native/llrt/userfs (decision 0307), or -1 when the
+/// program has none (the Go backend).
+fn (var b: Builder) userfs_mod() -> Int {
+  for m in b.c.order {
+    if b.c.mods[m].path == "native/llrt/userfs" {
+      return m
+    }
+  }
+  -1
+}
+
+/// The checker type of native/llrt/userfs's UserFs (decision 0307), or -1
+/// when the program has none (the Go backend).
+fn (var b: Builder) user_fs_check() -> Int {
+  let um = b.userfs_mod()
+  if um < 0 {
+    return -1
+  }
+  let o = b.member(um, "UserFs")
+  if o < 0 || b.c.objs[o].kind != check.ObjKind.Type {
+    return -1
+  }
+  b.c.mk_named(o, [])
+}
+
+/// v (checker type ct, not an Fs) converted to Fs (decision 0307): an Fs
+/// whose user field holds v as a UserFs record.
+fn (var b: Builder) user_to_fs(v: Int, ct: Int, at: Expr?) -> Int {
+  let t = b.fs_type()
+  if b.m.types[t].fields.len() < 3 {
+    b.unsupported("converting `${b.m.types[b.vty(v)].name}` to `Fs` without the native prelude")
+    return b.undef(t)
+  }
+  let ot = b.m.types[t].fields[2].ty
+  let some = b.m.variant_index(ot, "Some")
+  let it = b.m.types[ot].variants[some].fields[0].ty
+  let rec = b.to_iface(v, ct, it, at)
+  let u = b.add(Op.Variant, ot, Aux.I(n: some), [rec])
+  // root and mode deny everything (as fs_cwd's fallback), so that native
+  // code reading them directly instead of calling a method (lock_shared)
+  // never treats a user value as the unrestricted Fs
+  b.add(Op.Struct, t, Aux.None, [b.const_str("denied"), b.cint(7), u])
+}
+
+/// The fields of a runtime Fs with root and mode: the user field, when
+/// there is one, None (decision 0307).
+fn (var b: Builder) fs_fields(t: Int, root: Int, mode: Int) -> List[Int] {
+  var vs = [root, mode]
+  if b.m.types[t].fields.len() > 2 {
+    vs.push(b.zero(b.m.types[t].fields[2].ty, []))
+  }
+  vs
 }
 
 fn (var b: Builder) is_fs(t: Int) -> Bool {
