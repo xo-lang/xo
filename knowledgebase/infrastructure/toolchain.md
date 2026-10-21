@@ -2228,6 +2228,16 @@ first, AST based prototype, since deleted) and
   jobs, no LTO unless the environment says otherwise; `XO_LLVM_SPLIT=0`
   for the release configuration). Timings:
   `bench/results/llvm-build-time-2026-10-12.md`.
+- Parse prefetch (decision 0220 addendum stage 2; last verified:
+  2026-10-21): build, run and test builds read the build target's parse
+  list (`<backend cache>/packs/<xx>/<slot>/parse/list`, every file the
+  last check parsed) and parse those files on tasks before the check.
+  The list is written by the target's first check too (the test run
+  cache serves the unchanged builds after it, which check nothing).
+  `--phase-times` prints `cache parse H/N reused`; `XO_PARSE_STATS=1`
+  also lists each file the check parsed itself (`parse miss PATH`).
+  Measured: an edit build of `xo test --std-module=native/path` checked in
+  0.33 to 0.47 s with 185 of 185 parses reused, 0.8 to 1.2 s with none.
 - Test build split (2026-10-21, xo-fa; last verified: 2026-10-21): an
   LLVM `xo test` build with the back-end cache on (and no
   `XO_LLVM_SPLIT`, no --race, the host target) cuts the IR into

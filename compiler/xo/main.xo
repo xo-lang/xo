@@ -482,6 +482,14 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   if !pdir.is_empty() {
     parse_list_store(os, c, pdir)
   }
+  if o.phases {
+    cache_note(os, true, "parse", c.parse_hits, c.parse_hits + c.parse_misses.len())
+    if (os.env.get("XO_PARSE_STATS") ?? "") == "1" {
+      for p in c.parse_misses {
+        os.stdio.eprintln("parse miss ${p}")
+      }
+    }
+  }
   if !c.unsupported.is_empty() {
     fail_unsupported(os, "unsupported: ${c.unsupported}")
   }

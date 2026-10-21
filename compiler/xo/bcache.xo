@@ -1317,16 +1317,12 @@ fn parse_list_store(os: Os, var c: check.Checker, dir: Str) {
         cache_put(os, p, list)
       }
     }
-    Err(_) => {
-      // a target's first build only makes the directory (as the packs
-      // do), so a program built once (a golden) leaves no list
-      // xo:allow XO0903 only the prefetch
-      if os.fs.exists(dir_name(p)).ok() ?? false {
-        cache_put(os, p, list)
-      } else {
-        os.fs.create_dir_all(dir_name(p)).ignore_err("only the prefetch")
-      }
-    }
+    // a target's first build writes it too: the next builds of an
+    // unchanged program hit the test run cache and check nothing, so the
+    // first edit build found no list and parsed every file itself
+    // (2026-10-21: 0 of 185 parses reused in an edit build of
+    // `xo test --std-module=native/path`); a list is a few KB
+    Err(_) => cache_put(os, p, list)
   }
   var keep: Map[Str, check.ParseEntry] = {}
   for (path, e) in c.parse_cache {

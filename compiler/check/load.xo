@@ -292,6 +292,11 @@ pub struct Checker {
   /// The parses of std files to reuse (parse_cached): empty in a fresh
   /// checker; a caller checking several programs passes it on.
   pub parse_cache: Map[Str, ParseEntry] = {}
+  /// parse_cached's reuses, and the paths it parsed itself (--phase-times
+  /// prints them: the parses the prefetch did not cover, on the check's
+  /// critical path)
+  pub parse_hits: Int = 0
+  pub parse_misses: List[Str] = []
   /// The files parsed, by path, and whether as declarations only (the
   /// driver's parse prefetch, compiler/xo bcache.xo).
   pub parsed: List[(Str, Bool)] = []
@@ -801,9 +806,11 @@ pub struct ParseEntry {
 fn (var c: Checker) parse_cached(path: Str, src: Bytes, sig: Bool) -> parser.ParseResult {
   if let Some(e) = c.parse_cache.get(path) {
     if e.sig == sig && e.src == src {
+      c.parse_hits += 1
       return e.r
     }
   }
+  c.parse_misses.push(if sig { "s ${path}" } else { path })
   if !path.starts_with("std/") {
     // a program file's parse is in the cache only when the driver
     // parsed it ahead

@@ -2316,3 +2316,71 @@ func TestStdModuleRunCache(t *testing.T) {
 		t.Errorf("an edit to the module's test file did not build again:\n%s", edit)
 	}
 }
+
+// TestParseListAfterRunCache: a test build's first check writes the build
+// target's parse list, so the first edit build after builds the test run
+// cache served (which check nothing) parses its files ahead on tasks
+// (2026-10-21: it reused 0 of 185 parses, check 0.8 to 1.2 s; with the
+// list 185 of 185, check 0.33 to 0.47 s).
+func TestParseListAfterRunCache(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-parselistrc-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	own := filepath.Join(work, "p")
+	if err := os.MkdirAll(own, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	test := "test \"twice\" {\n  expect(twice(2)) == 4\n}\n"
+	files := map[string]string{
+		"xo.mod":      "module example.com/p\n",
+		"lib.xo":      "pub fn twice(x: Int) -> Int {\n  x * 2\n}\n",
+		"lib_test.xo": test,
+	}
+	for p, s := range files {
+		if err := os.WriteFile(filepath.Join(own, p), []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	parse := regexp.MustCompile(`cache parse (\d+)/(\d+) reused`)
+	run := func() string {
+		t.Helper()
+		cmd := exec.Command(xo, "test", "--backend=arm64", "--phase-times", ".")
+		cmd.Dir = own
+		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_BIN_CACHE="+filepath.Join(work, "bin"))
+		log, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("xo test: %v\n%s", err, log)
+		}
+		return string(log)
+	}
+	run()
+	if second := run(); !strings.Contains(second, "phase run_cache ") {
+		t.Fatalf("the second build was not served by the run cache:\n%s", second)
+	}
+	if err := os.WriteFile(filepath.Join(own, "lib_test.xo"), []byte(test+"\n// edited\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(3 * time.Second) // past the parse memo's 2 s window
+	edit := run()
+	m := parse.FindStringSubmatch(edit)
+	if m == nil {
+		t.Fatalf("no cache parse line:\n%s", edit)
+	}
+	h, _ := strconv.Atoi(m[1])
+	n, _ := strconv.Atoi(m[2])
+	if n == 0 || h < n-1 {
+		t.Errorf("the edit build reused %d of %d parses, want all but at most the edited file", h, n)
+	}
+}
