@@ -293,20 +293,21 @@ pub fn feed(var c: Client, data: Bytes) {
     if c.rin.len() < 5 + n {
       return
     }
-    let hdr = c.rin[0..5]
-    let body = c.rin[5..5 + n]
-    c.rin = c.rin[5 + n..c.rin.len()]
-    record(c, hdr, body)
+    // the record is opened where it is (no header or body slices); the
+    // usual read holds exactly one
+    let buf = c.rin
+    c.rin = if 5 + n == buf.len() { b"" } else { buf[5 + n..buf.len()] }
+    record(c, buf, n)
   }
 }
 
-/// One record.
-fn record(var c: Client, hdr: Bytes, body: Bytes) {
-  let ct = Int(hdr[0])
+/// One record: its header at the start of buf, then its n byte body.
+fn record(var c: Client, buf: Bytes, n: Int) {
+  let ct = Int(buf[0])
   if ct == tlsrec.CT_CCS {
     // the peer's compatibility ChangeCipherSpec, allowed during the
     // handshake only (RFC 8446 5)
-    if c.state == DONE || body.len() != 1 || body[0] != 1 {
+    if c.state == DONE || n != 1 || buf[5] != 1 {
       fail(c, ALERT_UNEXPECTED_MESSAGE, "tls: unexpected message")
     }
     return
@@ -315,7 +316,7 @@ fn record(var c: Client, hdr: Bytes, body: Bytes) {
     fail(c, ALERT_UNEXPECTED_MESSAGE, "tls: unexpected message")
     return
   }
-  let inner = tlsrec.open(c.rk, hdr, body)
+  let inner = tlsrec.open_at(c.rk, buf, 0, n)
   if inner.ct == -1 {
     fail(c, ALERT_BAD_RECORD_MAC, "local error: tls: bad record MAC")
     return
