@@ -71,3 +71,12 @@ TestModuleCheckAuto's build with the front end cache's entries removed
 stopped falling back. The builder now asks `Checker.eager_fns`: the
 bodies check_module checked from the entry's eager list, before the
 passes. Any other body of a skipped module built from source falls back.
+
+Name records are indexed (Observed, 2026-10-21): replaying a skipped
+module's entry removed the zone records of its eagerly checked bodies
+before adding the entry's, but Checker.name_at holds indexes into
+c.names, so every later record moved and the bodies' names resolved to
+other objects (tz_table: `NAMES` read as `os`, 54 XO1201 errors on the
+warm build; TestModuleCheckAuto). c.names is now only appended to: the
+entry's zone records are added unless the eager check made the same one.
+Test: internal/arm64 TestModuleCheckAutoZones.

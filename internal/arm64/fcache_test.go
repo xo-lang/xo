@@ -1402,3 +1402,79 @@ func TestPruneBudget(t *testing.T) {
 	}
 	t.Logf("first build %v, %d of %d stale entries left", d1, n1, n)
 }
+
+// TestModuleCheckAutoZones: a skipped module's eagerly checked bodies
+// that call time.zone keep their names' resolution: replaying the
+// module's entry removed their zone records, which shifted the indexes
+// name_at holds, so their names resolved to other objects and the warm
+// build failed with XO1201 (2026-10-21, the tz_table golden).
+func TestModuleCheckAutoZones(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-chkzones-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	own := filepath.Join(work, "p")
+	if err := os.MkdirAll(own, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := `use std/time
+
+const NAMES: List[Str] = ["Europe/Berlin", "Asia/Kathmandu"]
+
+fn zone_of(name: Str) -> time.Zone {
+  match name {
+    "Europe/Berlin" => time.zone("Europe/Berlin")
+    _ => time.zone("Asia/Kathmandu")
+  }.ok() ?? time.utc()
+}
+
+fn main(os: Os) {
+  for name in NAMES {
+    let z = zone_of(name)
+    os.stdio.println("${name} ${z}")
+  }
+}
+`
+	if err := os.WriteFile(filepath.Join(own, "main.xo"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(work, "prog")
+	build := func(cache string, env ...string) ([]byte, string) {
+		t.Helper()
+		os.Remove(out)
+		cmd := exec.Command(xo, "build", "--backend=arm64", "--phase-times", "-o", out, ".")
+		cmd.Dir = own
+		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache), env...)
+		log, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("xo build %v: %v\n%s", env, err, log)
+		}
+		b, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b, string(log)
+	}
+	off, _ := build(filepath.Join(work, "off"), "XO_BACKEND_CACHE=off")
+	cache := filepath.Join(work, "cache")
+	auto := []string{"XO_BACKEND_CACHE=on", "XO_CHK_CACHE=auto"}
+	build(cache, auto...)
+	warm, log := build(cache, auto...)
+	if !regexp.MustCompile(`cache chk 1/1 modules`).MatchString(log) {
+		t.Fatalf("the warm build skipped no module:\n%s", log)
+	}
+	if !bytes.Equal(warm, off) {
+		t.Error("the warm build with XO_CHK_CACHE=auto differs from the cache-off build")
+	}
+}

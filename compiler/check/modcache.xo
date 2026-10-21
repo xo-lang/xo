@@ -236,14 +236,16 @@ fn (var c: Checker) mod_cache_replay() {
       keep.push(d)
     }
   }
-  // the zone calls of its eagerly checked bodies: the entry's below
-  var names: List[NameRec] = []
+  // the zone calls of its eagerly checked bodies are there already: the
+  // entry's others are added. c.names is only appended to (name_at holds
+  // indexes into it: removing the eager bodies' zone records shifted
+  // them, and the bodies' names resolved to other objects, 2026-10-21)
+  var have: Map[(Str, Int), Bool] = {}
   for rec in c.names {
-    if !skipped.contains(rec.file) || (rec.name.to_str() ?? "") != "zone" {
-      names.push(rec)
+    if skipped.contains(rec.file) && (rec.name.to_str() ?? "") == "zone" {
+      have[(rec.file, rec.offset)] = true
     }
   }
-  c.names = names
   for m in c.order {
     if c.mod_skip.contains(m) {
       let e = c.mod_entries.get(m) ?? ModEntry{}
@@ -251,7 +253,9 @@ fn (var c: Checker) mod_cache_replay() {
         keep.push(d)
       }
       for (file, off, line, col, mp) in e.zones {
-        c.names.push(NameRec{file: file, offset: off, line: line, col: col, name: b"zone", obj: c.zone_obj(mp)})
+        if !have.contains((file, off)) {
+          c.names.push(NameRec{file: file, offset: off, line: line, col: col, name: b"zone", obj: c.zone_obj(mp)})
+        }
       }
     }
   }
