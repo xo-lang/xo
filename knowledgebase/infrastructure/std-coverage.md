@@ -130,7 +130,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | crypto/mlkem | inside std/native/llrt/mlkem.xo | partial | TLS key exchange only. |
 | crypto/hpke | none | planned | After a public AEAD and ECDH. |
 | crypto/x509, crypto/x509/pkix | std/crypto (keys); inside std/native/llrt (x509.xo, x509verify.xo) | partial | Key parsing and marshaling in std/crypto (decision 0285); chain verification for the HTTP client. Missing: a certificate API (parsing, CSRs, generating test certificates). |
-| crypto/tls | std/http (with_tls, with_roots, tls_cert) | partial | TLS 1.2 and 1.3 in Xo (decision 0202), inside HTTP only. Missing: TLS on a Net Conn (dial and listen), needed by Postgres sslmode, SMTP STARTTLS, Redis, any non HTTP protocol; client certificates. |
+| crypto/tls | std/http (with_tls, with_roots, tls_cert), std/tls (client) | partial | TLS 1.2 and 1.3 in Xo (decision 0202); `tls.client` on a dialed Conn (decision 0281: Postgres sslmode, SMTP STARTTLS, Redis). Missing: a server on a Net listener outside HTTP, client certificates. |
 | crypto | none | not planned | The Go registry of hash functions; Xo calls functions directly. |
 | crypto/des, crypto/dsa, crypto/rc4 | none | not planned | Broken or deprecated algorithms. |
 | crypto/fips140 | none | not planned | No FIPS module validation. |
@@ -142,7 +142,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | net | prelude Net (TCP, Unix sockets), DNS in std/native/llrt/dns.xo | partial | listen, dial, attenuation. Missing: UDP, a name lookup API (LookupHost, SRV, TXT, MX), IP and CIDR types, deadlines on a Conn. |
 | net/netip | std/netip | done | Addr, Prefix, ParseAddr, ParsePrefix, Contains, Masked, the Is predicates (decision 0287). Missing: AddrPort, Prefix.Overlaps, Next and Prev. |
 | net/url | std/url, std/http parse_url and Url | partial | Escaping (QueryEscape, PathEscape and their inverses) and Values (ParseQuery, Encode) are done (decision 0279). Request.form and query_all are in std/http. Missing: relative references, userinfo, a full URL type outside std/http. |
-| net/http (server) | std/http | partial | Router, middleware, mount, JSON, streaming, TLS, HTTP/2. Has Request.form (urlencoded) and query_all (decision 0279). Missing: repeated header fields (http.Header: two Set-Cookie fields), cookies, multipart forms, a streaming request body (whole body in memory, 64 MiB natively), ServeContent and FileServer (Range, If-Modified-Since), response compression, MaxBytesReader per route, timeouts per server. |
+| net/http (server) | std/http | partial | Router, middleware, mount, JSON, streaming, TLS, HTTP/2. Has Request.form (urlencoded) and query_all (decision 0279). Has repeated header fields (header_values) and cookies (decision 0288), multipart forms (decision 0282). Missing: a streaming request body (whole body in memory, 64 MiB natively), ServeContent and FileServer (Range, If-Modified-Since), response compression, MaxBytesReader per route, timeouts per server. |
 | net/http (client) | std/http Client | partial | GET, send, post_json, redirects, gzip, HTTP/2, TLS roots. Missing: cookie jar, proxies, streaming response bodies, per request timeouts. |
 | net/http/httptest | std/testing FakeNet, Router.call | done | In process servers and fakes (section 8). |
 | net/http/httputil | none | planned | ReverseProxy and DumpRequest. |
@@ -183,7 +183,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 
 | Go package | Xo | Status | Notes |
 |---|---|---|---|
-| database/sql | std/sql | partial | API, pool limits, transactions, derive SqlRow, an in memory driver; Blob, JsonText, and Array values and SQLSTATE codes (decision 0278 stage A). Missing: any network driver (the Postgres driver is in progress, decision 0278), prepared statements, row streaming. |
+| database/sql | std/sql | partial | API, pool limits, transactions, derive SqlRow, an in memory driver; Blob, JsonText, and Array values and SQLSTATE codes (decision 0278 stage A). A Postgres driver written in Xo, `sql.open(net, "postgres", dsn)` with sslmode through std/tls, on every native target (decision 0278). Missing: other network drivers (MySQL), prepared statements, row streaming. |
 | database/sql/driver | none | planned | A driver interface in Xo so drivers are std/sql modules (Postgres first). |
 | compress/gzip, compress/flate | std/archive gzip, gunzip | done | In memory. Missing: streaming. |
 | compress/zlib | none | planned | Small on top of flate. |
