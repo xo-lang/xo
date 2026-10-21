@@ -1,0 +1,111 @@
+// Streamed request bodies over HTTP/2 (decision 0310 phase 2): a TLS
+// server (HTTP/2 by ALPN; http_tls's test certificate) whose
+// handle_stream routes read the body as DATA frames bring it, and a
+// client posting bodies far over the stream's 64 KiB window (the server
+// gives the window back as its handler reads), a body read in small
+// pieces, one read halfway, and one not read at all (the stream is reset
+// with NO_ERROR after the response). The Go backend (net/http's http2
+// server) and the native one must agree.
+use std/http
+
+fn sum(b: Bytes) -> Int {
+  var t = 0
+  for i in 0..b.len() {
+    t = (t * 31 + Int(b[i])) % 1000000007
+  }
+  t
+}
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle_stream("POST /stream", fn(_req, b) {
+    var out = BytesBuilder.new()
+    var pieces = 0
+    while true {
+      match b.read(1000)? {
+        Some(d) => {
+          out.write(d)
+          pieces += 1
+        }
+        None => break
+      }
+    }
+    let all = out.freeze()
+    http.text(200, "streamed ${all.len()} bytes, sum ${sum(all)}, pieces over 0 ${pieces > 0}")
+  })
+  r.handle_stream("POST /half", fn(_req, b) {
+    var n = 0
+    while n < 70000 {
+      match b.read(4096)? {
+        Some(d) => n += d.len()
+        None => break
+      }
+    }
+    http.text(200, "read at least ${if n >= 70000 { 70000 } else { n }}")
+  })
+  r.handle_stream("POST /ignore", fn(_req, _b) { http.text(200, "ignored") })
+  r.handle("POST /buffered", fn(req) { http.text(200, "buffered ${req.body.len()} bytes, sum ${sum(req.body)}") })
+  r
+}
+
+fn body(n: Int) -> Bytes {
+  var b = BytesBuilder.with_capacity(n)
+  for i in 0..n {
+    b.write_byte(UInt8((i * 7 + 3) % 251))
+  }
+  b.freeze()
+}
+
+fn post(os: Os, c: http.Client, url: Str, label: Str, data: Bytes) {
+  match c.send(http.new_request("POST", url, {}, data)) {
+    Ok(resp) => os.stdio.println("${label}: ${resp.status} ${resp.text() ?? "?"}")
+    Err(e) => os.stdio.println("${label}: ${e}")
+  }
+}
+
+fn main(os: Os) {
+  let cert = match http.tls_cert(good_cert(), good_key()) {
+    Ok(c) => c
+    Err(e) => {
+      os.stdio.println("cert: ${e}")
+      return
+    }
+  }
+  let c = match http.client(os.net).with_roots(ca_pem()) {
+    Ok(c) => c
+    Err(e) => {
+      os.stdio.println("roots: ${e}")
+      return
+    }
+  }
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      let srv = http.server(l, routes()).with_tls([cert])
+      let port = srv.addr().split(":")[1]
+      let base = "https://localhost:${port}"
+      scope s {
+        s.spawn_background(fn() {
+          match srv.serve() {
+            Ok(_) => ()
+            Err(e) => os.stdio.println("serve failed: ${e}")
+          }
+        })
+        let big = body(300000)
+        os.stdio.println("sent: 300000 bytes, sum ${sum(big)}")
+        post(os, c, "${base}/stream", "stream", big)
+        post(os, c, "${base}/stream", "small", "hello".bytes())
+        post(os, c, "${base}/stream", "empty", b"")
+        post(os, c, "${base}/half", "half", big)
+        post(os, c, "${base}/ignore", "ignore", big)
+        post(os, c, "${base}/buffered", "buffered", big)
+        post(os, c, "${base}/stream", "after", body(100000))
+      }
+      os.stdio.println("done")
+    }
+    Err(e) => os.stdio.println("listen failed: ${e}")
+  }
+}
+
+fn ca_pem() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBXTCCAQOgAwIBAgIBAjAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAVMRMwEQYDVQQD\nEwpYbyBUZXN0IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEijw7AWGYTeLp\n/9oDX6t32fPfTkDcI/F29wXFQRBDz+0AxRDpI6PQf9UdiF9aZfB5AM5J3PdtARhw\nCIekwP7z7aNCMEAwDgYDVR0PAQH/BAQDAgKEMA8GA1UdEwEB/wQFMAMBAf8wHQYD\nVR0OBBYEFLrbZ5A0fzzE42xjrFaZTWKJC9Z6MAoGCCqGSM49BAMCA0gAMEUCIHzG\n+C1Oz2qF9sqKv6CMRcep89t3K01Um1dypPN+nE7ZAiEA3+DkafbsP8oH5cfghe/i\nMsgJIwR+YEK89sPkPWqn3nI=\n-----END CERTIFICATE-----\n".bytes() }
+fn good_cert() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBlzCCAT2gAwIBAgIBBDAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAPMQ0wCwYDVQQD\nEwRnb29kMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE9O8DlRiEOqE5kBcoi9Xg\nkTscb94E/jndT7qf0pYOYj1zJGJbD2l1bZAVsrAY5C3Wv2aAF51muJPDyheawAHK\nSqOBgTB/MA4GA1UdDwEB/wQEAwIHgDATBgNVHSUEDDAKBggrBgEFBQcDATAfBgNV\nHSMEGDAWgBS622eQNH88xONsY6xWmU1iiQvWejA3BgNVHREEMDAugglsb2NhbGhv\nc3SCCWdvb2QudGVzdIcEfwAAAYcQAAAAAAAAAAAAAAAAAAAAATAKBggqhkjOPQQD\nAgNIADBFAiAckDQ7jBugRRKa+Ugpt8hKU8GY0WGo4eWxak8QHej1hgIhAORlgKwn\niJ4cvV9cxqu4a2fovArW28G2KaR4WLfzeSBL\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nMIIBXTCCAQOgAwIBAgIBAjAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAVMRMwEQYDVQQD\nEwpYbyBUZXN0IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEijw7AWGYTeLp\n/9oDX6t32fPfTkDcI/F29wXFQRBDz+0AxRDpI6PQf9UdiF9aZfB5AM5J3PdtARhw\nCIekwP7z7aNCMEAwDgYDVR0PAQH/BAQDAgKEMA8GA1UdEwEB/wQFMAMBAf8wHQYD\nVR0OBBYEFLrbZ5A0fzzE42xjrFaZTWKJC9Z6MAoGCCqGSM49BAMCA0gAMEUCIHzG\n+C1Oz2qF9sqKv6CMRcep89t3K01Um1dypPN+nE7ZAiEA3+DkafbsP8oH5cfghe/i\nMsgJIwR+YEK89sPkPWqn3nI=\n-----END CERTIFICATE-----\n".bytes() }
+fn good_key() -> Bytes { "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgRJJMUtA6v5smeBFF\npZ933x7IwE6wYj/9NyjqnMscBwmhRANCAAT07wOVGIQ6oTmQFyiL1eCROxxv3gT+\nOd1Pup/Slg5iPXMkYlsPaXVtkBWysBjkLda/ZoAXnWa4k8PKF5rAAcpK\n-----END PRIVATE KEY-----\n".bytes() }

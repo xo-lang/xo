@@ -68,6 +68,14 @@ Phases:
 - Phase 1 landed 2026-10-21 (std/rt http_body_reader.go, the native
   http1.body_next and body_finish, golden http_stream_body identical on
   both backends).
+- Phase 2 landed 2026-10-21: the native HTTP/2 server (h2srv.xo) hands a
+  handle_stream route's request over at its HEADERS (conn_streaming),
+  keeps DATA in the stream record for body_next, gives the connection's
+  window back at once and the stream's as the handler reads, and resets
+  a stream whose body is still coming with NO_ERROR after the response
+  (handler_done); the BodyReader holds its read and finish functions,
+  so a plain server still links no HTTP/2 code (decision 0244). Golden
+  http_stream_body_h2.
 
 ## Alternatives
 

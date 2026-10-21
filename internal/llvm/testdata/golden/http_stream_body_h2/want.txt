@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+sent: 300000 bytes, sum 221329290
+stream: 200 streamed 300000 bytes, sum 221329290, pieces over 0 true
+small: 200 streamed 5 bytes, sum 99162322, pieces over 0 true
+empty: 200 streamed 0 bytes, sum 0, pieces over 0 false
+half: 200 read at least 70000
+ignore: 200 ignored
+buffered: 200 buffered 300000 bytes, sum 221329290
+after: 200 streamed 100000 bytes, sum 32967780, pieces over 0 true
+done
+--- stderr

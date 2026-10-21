@@ -1043,11 +1043,15 @@ type Next = fn(Request) -> Response
   says `Connection: close` (net/http's `maxPostHandlerReadBytes`); an
   `Expect: 100-continue` body not read to its end closes the connection.
   `XO_HTTP_MAX_BODY` does not apply. `Router.call` streams `req.body`.
-  Middleware see the request without its body. Not yet (decision 0310's
-  phases 2 and 3): the native HTTP/2 server and a recording server
-  (decision 0219) read the body first and stream it from memory; a body
-  is discarded when the handler returns, so a streamed response's
-  function (`http.stream`) cannot read it on the native backends.
+  Middleware see the request without its body. Over HTTP/2 the body
+  comes as DATA frames bring it, and the stream's flow control window
+  is given back as the handler reads (the connection's at once); a body
+  the client is still sending when the handler returns ends with
+  RST_STREAM NO_ERROR after the response, as net/http's. Not yet
+  (decision 0310 phase 3): a recording server (decision 0219) reads the
+  body first and streams it from memory. A body is discarded when the
+  handler returns, so a streamed response's function (`http.stream`)
+  cannot read it on the native backends.
 - Middleware run in registration order, outermost first, and see the final
   response after error mapping.
 - Middleware may fail: `Err(e)` from a middleware is mapped to a response

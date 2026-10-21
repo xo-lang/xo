@@ -135,16 +135,25 @@ struct BodyReader {
   st: Mutex[BodyState]
 }
 
-/// What a BodyReader read: from the connection (conn, the request's
-/// number seq; http1.body_next), else from data at pos (Router.call, a
-/// request made in Xo); a read's error, which sticks; the end seen.
+/// What a BodyReader read: from the connection (next: http1.body_next
+/// on an HTTP/1.1 connection, h2srv.body_next on an HTTP/2 stream; as
+/// functions, so a plain server links no HTTP/2 code, decision 0244),
+/// else from data at pos (Router.call, a request made in Xo); what to do
+/// after the handler (finish: HTTP/1.1's discard; none: HTTP/2's reset
+/// is h2srv's); a read's error, which sticks; the end seen.
 struct BodyState {
-  conn: List[rthttp.HConn]
-  seq: Int
+  next: List[fn(Int) -> http1.BodyPart]
+  finish: List[fn() -> ()]
   data: Bytes
   pos: Int
   err: Str
   end: Bool
+}
+
+/// A request's body read from its connection by next, finish run after
+/// its handler.
+fn conn_body(next: fn(Int) -> http1.BodyPart, finish: List[fn() -> ()]) -> BodyReader {
+  BodyReader{st: Mutex[BodyState].new(BodyState{next: [next], finish: finish, data: b"", pos: 0, err: "", end: false})}
 }
 
 /// The request value that carries a server's unread body to its
@@ -264,19 +273,22 @@ fn body_reader_of(req: Request) -> BodyReader {
       }
     }
   }
-  BodyReader{st: Mutex[BodyState].new(BodyState{conn: [], seq: 0, data: req.body, pos: 0, err: "", end: false})}
+  BodyReader{st: Mutex[BodyState].new(BodyState{next: [], finish: [], data: req.body, pos: 0, err: "", end: false})}
 }
 
-/// The number of req's streamed body on its connection, or 0.
-fn stream_seq(req: Request) -> Int {
+/// Runs what req's streamed body asks for after its handler (finish), if
+/// it has one.
+fn stream_finish(req: Request) {
   for rv in req.values {
     if rv.name == STREAM_BODY {
       if let Some(b) = rt.any_get[BodyReader](rv.v) {
-        return b.st.with_read(fn(s) { s.seq })
+        let fs = b.st.with_read(fn(s) { s.finish })
+        if !fs.is_empty() {
+          fs[0]()
+        }
       }
     }
   }
-  0
 }
 
 fn (b: BodyReader) read(max: Int = 32768) -> Bytes? ! IoErr {
@@ -308,7 +320,7 @@ fn body_read(var s: BodyState, max: Int) -> Bytes? ! IoErr {
   if s.end {
     return None
   }
-  if s.conn.is_empty() {
+  if s.next.is_empty() {
     let n = s.data.len() - s.pos
     if n == 0 {
       s.end = true
@@ -319,7 +331,7 @@ fn body_read(var s: BodyState, max: Int) -> Bytes? ! IoErr {
     s.pos += k
     return Some(out)
   }
-  let p = http1.body_next(s.conn[0], s.seq, if max > READ_MAX { READ_MAX } else { max })
+  let p = s.next[0](if max > READ_MAX { READ_MAX } else { max })
   if !p.err.is_empty() {
     s.err = p.err
     return Err(IoErr.Io(msg: p.err))
@@ -1791,7 +1803,7 @@ fn serve_conn(hc: rthttp.HConn, r: Router, serve_h2: fn(rthttp.HConn, Int, Route
         var req = head_request(rd, q)
         let sq = rd.streamed()
         if sq != 0 {
-          let b = BodyReader{st: Mutex[BodyState].new(BodyState{conn: [hc], seq: sq, data: b"", pos: 0, err: "", end: false})}
+          let b = conn_body(fn(max: Int) -> http1.BodyPart { http1.body_next(hc, sq, max) }, [fn() { http1.body_finish(hc, sq) }])
           req = req with {values: [ReqValue{name: STREAM_BODY, v: rt.any_of(b)}]}
         }
         let (open, resp) = respond(hc, req, r)
@@ -1813,7 +1825,8 @@ fn serve_conn(hc: rthttp.HConn, r: Router, serve_h2: fn(rthttp.HConn, Int, Route
 /// when the connection does. Reached only through Server.h2, which only
 /// with_tls sets (decision 0244).
 fn serve_h2(hc: rthttp.HConn, h2: Int, r: Router) {
-  var hp = h2srv.conn(hc, h2)
+  // a handle_stream route's request comes at its HEADERS (decision 0310)
+  var hp = if r.streamed { h2srv.conn_streaming(hc, h2, fn(m: Str, p: Str) -> Bool { route_streams(r, m, p) }) } else { h2srv.conn(hc, h2) }
   scope s {
     while true {
       match hp.next() {
@@ -1863,10 +1876,7 @@ fn respond(hc: rthttp.HConn, req: Request, r: Router) -> (Bool, Response?) {
   if !req.values.is_empty() {
     // what the handler of a streamed body left: discarded or closing
     // (net/http's writeHeader)
-    let sq = stream_seq(req)
-    if sq != 0 {
-      http1.body_finish(hc, sq)
-    }
+    stream_finish(req)
   }
   if resp.fields.is_empty() {
     for (k, v) in resp.headers {
@@ -1947,7 +1957,15 @@ fn stream_request(q: h2srv.H2Req) -> Request {
     port = Some(p)
   }
   let url = http.Url{scheme: q.scheme, host: http1.host_name(q.host), port: port, path: upath, query: query}
-  Request{method: q.method, path: q.path, url: url, headers: headers, body: q.body, remote_ip: hconn.remote_ip(q.conn), raw_query: q.rawquery, fields: q.fields}
+  let req = Request{method: q.method, path: q.path, url: url, headers: headers, body: q.body, remote_ip: hconn.remote_ip(q.conn), raw_query: q.rawquery, fields: q.fields}
+  if !q.streamed {
+    return req
+  }
+  // the body as DATA frames bring it (decision 0310 phase 2); an unread
+  // rest resets the stream when the handler ends (h2srv handler_done)
+  let st = q.conn
+  let b = conn_body(fn(max: Int) -> http1.BodyPart { h2srv.body_next(st, max) }, [])
+  req with {values: [ReqValue{name: STREAM_BODY, v: rt.any_of(b)}]}
 }
 
 // ---------------------------------------------------------------------------

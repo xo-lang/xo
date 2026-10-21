@@ -1,5 +1,18 @@
 # std/http changes
 
+## 2026-10-21: feature: streamed request bodies over HTTP/2
+
+- Kind: feature
+- Commit: (filled in after the push)
+- Found by: decision 0310 phase 2
+- Go reference: golang.org/x/net/http2 server (requestBody, the stream's inflow returned as the handler reads, RST_STREAM NO_ERROR for an unread body; go1.26.1's bundled h2_bundle.go)
+- Test: internal/llvm/testdata/golden/http_stream_body_h2 (300,000 byte bodies over a 64 KiB stream window, small reads, a body read halfway and one not read; native identical to the Go backend)
+
+A `handle_stream` route on an HTTPS server now reads an HTTP/2 request
+body as its DATA frames arrive: the native server hands the request
+over at its HEADERS and gives the stream's window back as the handler
+reads, as net/http's.
+
 ## 2026-10-21: feature: Router.handle_stream (streamed request bodies)
 
 - Kind: feature

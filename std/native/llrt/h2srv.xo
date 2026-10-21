@@ -195,7 +195,10 @@ const C_SIZE = 616
 /// whether it is in the output list and its link there, the stream task
 /// waiting for its backlog to drain (a park), whether the handler was
 /// dispatched and ended, whether the reset follows the output queued
-/// before it (a handler's fault), and a word h2w.head stores to.
+/// before it (a handler's fault), and a word h2w.head stores to; whether
+/// its route reads the body as it arrives and how much of S_BODY it took
+/// (decision 0310: the request is handed over at its HEADERS, and the
+/// stream's window comes back as body_next takes the body).
 const S_C = 0
 const S_ID = 8
 const S_REFS = 16
@@ -231,7 +234,9 @@ const S_DISPATCHED = 320
 const S_ENDED = 328
 const S_RST_LATE = 336
 const S_RES = 344
-const S_SIZE = 352
+const S_STREAM = 352
+const S_BOFF = 360
+const S_SIZE = 368
 
 // slot atomics' orders (rt.xo)
 const ACQUIRE = 1
@@ -756,6 +761,13 @@ fn handler_done(c: Int, st: Int) {
       sto(st, S_RST, E_INTERNAL + 1)
       sto(st, S_RST_LATE, 1)
       ready(c, st)
+    } else if on(st, S_STREAM) && ld(st, S_STATE) == ST_OPEN && !on(st, S_DEAD) && !on(st, S_RST) {
+      // a streamed body the client is still sending: RST_STREAM
+      // NO_ERROR after the response (net/http's http2 server; RFC 9113
+      // 8.1)
+      sto(st, S_RST, E_NO + 1)
+      sto(st, S_RST_LATE, 1)
+      ready(c, st)
     }
     wake(c)
   }
@@ -915,6 +927,8 @@ pub struct H2Req {
   pub body: Bytes
   /// every field when a name repeats (decision 0288), else []
   pub fields: List[Str] = []
+  /// the body is read as it arrives (body_next; decision 0310)
+  pub streamed: Bool = false
 }
 
 /// The fiber's state of an HTTP/2 server connection: its record, HPACK,
@@ -933,12 +947,21 @@ pub struct H2Conn {
   tgt: List[Str]
   /// the 400 text of the last request checked
   msg: Str
+  /// whether a request's route reads its body itself (decision 0310),
+  /// given its method and path; none: every body is read first
+  streams: List[fn(Str, Str) -> Bool] = []
 }
 
 /// The fiber's state of connection h (hserve.hc_h2 chose HTTP/2; c its
 /// record).
 pub fn conn(h: rthttp.HConn, c: Int) -> H2Conn {
   H2Conn{h: h, c: c, dec: hpack.decoder(hpack.TABLE), enc: hpack.encoder(), sizes: "", names: [], values: [], tgt: [], msg: ""}
+}
+
+/// conn with the routes whose bodies stream (http1.reader_streaming's):
+/// such a request goes to its handler at its HEADERS (decision 0310).
+pub fn conn_streaming(h: rthttp.HConn, c: Int, streams: fn(Str, Str) -> Bool) -> H2Conn {
+  H2Conn{h: h, c: c, dec: hpack.decoder(hpack.TABLE), enc: hpack.encoder(), sizes: "", names: [], values: [], tgt: [], msg: "", streams: [streams]}
 }
 
 fn word(s: Str, v: Int) -> Str { rt.rs_push_word(s, v, 4) }
@@ -996,10 +1019,75 @@ fn req_free(st: Int) {
 /// stream connection.
 fn (h: H2Conn) request_of(st: Int) -> H2Req {
   let p = req_take(st)
-  let body = bstr(st, S_BODY).bytes()
-  bfree(st, S_BODY)
+  // a streamed body stays for body_next (decision 0310)
+  let streamed = on(st, S_STREAM)
+  var body = b""
+  if !streamed {
+    body = bstr(st, S_BODY).bytes()
+    bfree(st, S_BODY)
+  }
   http1.fault_probe(p.path, "frame")
-  H2Req{conn: hconn.stream(h.h, st), method: p.method, path: p.path, scheme: p.scheme, urlhost: p.urlhost, host: p.host, headers: p.headers, query: p.query, rawquery: p.rawquery, body: body, fields: p.fields}
+  H2Req{conn: hconn.stream(h.h, st), method: p.method, path: p.path, scheme: p.scheme, urlhost: p.urlhost, host: p.host, headers: p.headers, query: p.query, rawquery: p.rawquery, body: body, fields: p.fields, streamed: streamed}
+}
+
+/// The next bytes of the streamed body of stream connection h (at most
+/// max, at least one), its end, or an error (decision 0310): what DATA
+/// frames brought, the stream's window given back for what is taken; it
+/// waits for more while the client has not ended the stream.
+pub fn body_next(h: rthttp.HConn, max: Int) -> http1.BodyPart {
+  let st = hconn.h2s(h)
+  if st == 0 {
+    return http1.BodyPart{data: "", end: false, err: "http: invalid Read on closed Body"}
+  }
+  let c = ld(st, S_C)
+  var x = 0
+  lk(c)
+  while true {
+    let avail = ld(st, S_BODY + 8) - ld(st, S_BOFF)
+    if avail > 0 {
+      let n = if avail < max { avail } else { max }
+      let out = raw.str_at(ld(st, S_BODY) + ld(st, S_BOFF), n)
+      inc(st, S_BOFF, n)
+      if ld(st, S_BOFF) == ld(st, S_BODY + 8) {
+        sto(st, S_BOFF, 0)
+        sto(st, S_BODY + 8, 0)
+      }
+      if ld(st, S_STATE) == ST_OPEN && !on(st, S_RST) && !on(st, S_DEAD) {
+        let u = inflow_add(st, S_IN, n)
+        if u > 0 {
+          put_winup(c, ld(st, S_ID), u)
+          wake(c)
+        }
+      }
+      unlk(c)
+      return http1.BodyPart{data: out, end: false, err: ""}
+    }
+    if ld(st, S_STATE) == ST_HCR {
+      unlk(c)
+      return http1.BodyPart{data: "", end: true, err: ""}
+    }
+    if on(st, S_RST) || on(st, S_DEAD) || on(c, C_FAILED) || on(c, C_DEAD) || poll.canceled() {
+      unlk(c)
+      return http1.BodyPart{data: "", end: false, err: "client disconnected"}
+    }
+    if x == 0 {
+      x = ctx.cur()
+    }
+    let park = poll.park_of(x)
+    pool.park_reset(park)
+    sto(st, S_WAITER, park)
+    unlk(c)
+    if tracerec.built() {
+      rt.mem_store(x, ctx.C_WHY, tracerec.WHY_HTTP, 8)
+    }
+    poll.park_wait(x)
+    lk(c)
+    if ld(st, S_WAITER) == park {
+      sto(st, S_WAITER, 0)
+    }
+  }
+  unlk(c)
+  http1.BodyPart{data: "", end: true, err: ""}
 }
 
 /// Runs the connection until a request is ready for a handler (then its
@@ -1481,7 +1569,8 @@ fn (var h: H2Conn) on_headers(sid: Int, flags: Int, prio: Bool, dep: Int) {
     // encoded before the next frame (fragment)
     sto(c, C_WANT100, sid)
   }
-  if end_stream {
+  if end_stream || (on(st, S_STREAM) && kind == h2w.K_APP) {
+    // a streamed body's request goes to its handler now (decision 0310)
     complete(c, st)
   }
 }
@@ -1593,6 +1682,9 @@ fn (var h: H2Conn) request(st: Int, names: List[Str], values: List[Str], truncat
       i += 1
     }
     req_keep(st, rt.any_of(ReqParts{method: method, path: t[4], scheme: t[2], urlhost: t[3], host: host, headers: hdr, query: query, rawquery: t[5], fields: fields}))
+    if !end_stream && !h.streams.is_empty() && h.streams[0](method, t[4]) {
+      sto(st, S_STREAM, 1)
+    }
   }
   flag(st, S_HEAD, method == "HEAD")
   sto(st, S_DECLEN, -1)
@@ -1635,7 +1727,30 @@ fn (var h: H2Conn) on_data(sid: Int, flags: Int, flen: Int, p: Int, dn: Int) {
     stream_err(c, sid, E_PROTOCOL)
     return
   }
-  if flen > 0 {
+  if flen > 0 && on(st, S_STREAM) {
+    // a streamed body (decision 0310): kept for body_next; the
+    // connection's window comes back now, the stream's as the handler
+    // reads (its padding now)
+    if ld(c, C_IN) < flen || ld(st, S_IN) < flen {
+      stream_err(c, sid, E_FLOW)
+      return
+    }
+    inc(c, C_IN, -flen)
+    inc(st, S_IN, -flen)
+    inc(st, S_GOT, dn)
+    put(st, S_BODY, p, dn)
+    var u = inflow_add(c, C_IN, flen)
+    if u > 0 {
+      put_winup(c, 0, u)
+    }
+    if flen > dn && (flags & F_END_STREAM) == 0 {
+      u = inflow_add(st, S_IN, flen - dn)
+      if u > 0 {
+        put_winup(c, sid, u)
+      }
+    }
+    signal_stream(st)
+  } else if flen > 0 {
     if ld(c, C_IN) < flen || ld(st, S_IN) < flen {
       stream_err(c, sid, E_FLOW)
       return
@@ -1670,6 +1785,7 @@ fn (var h: H2Conn) on_data(sid: Int, flags: Int, flen: Int, p: Int, dn: Int) {
   }
   if (flags & F_END_STREAM) != 0 {
     sto(st, S_STATE, ST_HCR)
+    signal_stream(st)
     complete(c, st)
     if on(st, S_END_SENT) && !on(st, S_RST) {
       // the response went out first (431, 400): the stream closes
