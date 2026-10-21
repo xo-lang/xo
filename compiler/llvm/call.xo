@@ -176,7 +176,7 @@ fn (var g: Gen) call(v: Int) {
       let l = g.op(args[0])
       let n = g.list_len(l, md)
       let cp = g.def("getelementptr %xo.rlist, ptr ${l}, i32 0, i32 2")
-      let c = g.def("load i64, ptr ${cp}${TBAA_HDR}${md}")
+      let c = g.def("load i64, ptr ${cp}${HDR_COUNT}${md}")
       let full = g.def("icmp eq i64 ${n}, ${c}")
       let from = g.label
       let grow = g.new_label("grow")

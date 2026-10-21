@@ -302,7 +302,7 @@ fn (var g: Gen) elem_ptr(et: Int, l: Str, i: Str) -> Str {
 /// (noalias.xo), or "".
 fn (var g: Gen) list_len(l: Str, md: Str) -> Str {
   let p = g.def("getelementptr %xo.rlist, ptr ${l}, i32 0, i32 1")
-  g.def("load i64, ptr ${p}${TBAA_HDR}${md}")
+  g.def("load i64, ptr ${p}${HDR_COUNT}${md}")
 }
 
 /// Builds variant tag of enum t from field operands (variant).

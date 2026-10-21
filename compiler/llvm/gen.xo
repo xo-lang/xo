@@ -301,6 +301,11 @@ fn runtime_decls() -> Str {
     "!5 = !{!4, !4, i64 0}",
     "!6 = !{!\"xo.rc\", !1, i64 0}",
     "!7 = !{!6, !6, i64 0}",
+    "; a list's length or capacity: never negative (bit 62 and up clear), so",
+    "; LLVM can prove an index below the length from a signed loop bound",
+    "; (2026-10-21: nbody's bs[j] in `for j in i + 1..n` kept its check and",
+    "; a fault landing in the loop)",
+    "!9 = !{i64 0, i64 4611686018427387904}",
     "",
     "",
   ]
@@ -308,6 +313,9 @@ fn runtime_decls() -> Str {
 }
 
 const TBAA_HDR = ", !tbaa !3"
+/// A load of a list's length or capacity: the header's tag and the range
+/// of a count (!9).
+const HDR_COUNT = ", !tbaa !3, !range !9"
 const TBAA_ELEM = ", !tbaa !5"
 const TBAA_RC = ", !tbaa !7"
 /// The count of literals, never written (decision 0058), as text.
@@ -1579,9 +1587,9 @@ fn (var g: Gen) eq_fn(t: Int) -> Str {
     List => {
       let et = g.m.types[t].elems[0]
       let p0 = e.def("getelementptr %xo.rlist, ptr %a, i32 0, i32 1")
-      let l0 = e.def("load i64, ptr ${p0}${TBAA_HDR}")
+      let l0 = e.def("load i64, ptr ${p0}${HDR_COUNT}")
       let p1 = e.def("getelementptr %xo.rlist, ptr %b, i32 0, i32 1")
-      let l1 = e.def("load i64, ptr ${p1}${TBAA_HDR}")
+      let l1 = e.def("load i64, ptr ${p1}${HDR_COUNT}")
       let same = e.def("icmp eq i64 ${l0}, ${l1}")
       e.emit("br i1 ${same}, label %loop, label %no")
       e.w.push("loop:\n")
