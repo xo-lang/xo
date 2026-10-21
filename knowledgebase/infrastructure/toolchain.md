@@ -831,12 +831,15 @@ and for diffing two builds function by function, not for a first look.
   raw file at `XO_PROF_OUT` (default `xo-prof.xoraw` in the working
   directory; `%p` is the process id; decision 0245) and one line on
   stderr naming it (`XO_PROF_QUIET=1` drops the line). `xo prof FILE
-  [--cpu-out=PATH] [--heap-out=PATH]` writes `xo-cpu.pprof` and a text
-  summary beside it (`.txt` for `.pprof`): the totals, then the top 30
-  functions by flat and by cumulative samples, as `go tool pprof -top`
-  prints. The program named the locations, so `xo prof` needs neither
-  the binary nor its dSYM; it never overwrites a file (a new temporary
-  file, mode 0600, renamed into place). `xo run --profile` and `xo test
+  [--cpu-out=PATH] [--heap-out=PATH]` writes FILE's name with
+  `.cpu.pprof` (and `.heap.pprof`) for its `.xoraw`, `.pb.gz` or `.gz`
+  (`cold.pb.gz` gives `cold.cpu.pprof`; 2026-10-21, it was `xo-cpu.pprof`
+  for every input) and a text summary beside it (`.txt` for `.pprof`):
+  the totals, then the top 30 functions by flat and by cumulative
+  samples, as `go tool pprof -top` prints. The program named the
+  locations, so `xo prof` needs neither the binary nor its dSYM. Its
+  default names are replaced on a rerun; a path given with `--cpu-out`
+  or `--heap-out` is never overwritten (files mode 0600). `xo run --profile` and `xo test
   --profile` do both steps. On windows/amd64 a sampler thread suspends
   each thread that used CPU (no SIGPROF), and names come from the COFF
   symbol table Windows links keep (no lines); to check it on the Mac,

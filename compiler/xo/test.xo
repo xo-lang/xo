@@ -863,7 +863,7 @@ fn prof_tests(os: Os, o: TestOpts) uses (fs, stdio) {
     }
     let pid = n.trim_prefix(".xo-prof-").trim_suffix(".xoraw")
     let raw = "${o.profile_dir}/${n}"
-    match prof_convert(os, raw, "${o.profile_dir}/xo-cpu-${pid}.pprof", "${o.profile_dir}/xo-heap-${pid}.pprof") {
+    match prof_convert(os, raw, "${o.profile_dir}/xo-cpu-${pid}.pprof", "${o.profile_dir}/xo-heap-${pid}.pprof", false, false) {
       Ok(_) => {}
       Err(e) => os.stdio.eprintln("xo test: ${e}")
     }

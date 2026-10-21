@@ -287,7 +287,7 @@ fn main(os: Os) ! {
     if !o.profile.is_empty() {
       // xo:allow XO0903 a path it cannot stat is not a file argument
       if os.fs.exists(raw).ok() ?? false {
-        match prof_convert(os, raw, "xo-cpu.pprof", "xo-heap.pprof") {
+        match prof_convert(os, raw, "xo-cpu.pprof", "xo-heap.pprof", false, false) {
           Ok(_) => {}
           Err(e) => os.stdio.eprintln("xo run: ${e}")
         }

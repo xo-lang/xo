@@ -636,11 +636,14 @@ usage: xo prof FILE [--cpu-out=PATH] [--heap-out=PATH]
 Read the raw profile a native program wrote under XO_PROF (decision
 0238; the file XO_PROF_OUT names, default xo-prof.xoraw; decision 0245)
 and write what `go tool pprof` reads: the CPU profile as PATH (default
-xo-cpu.pprof) with its text summary beside it (.txt: the top 30 by flat
-and by cumulative samples, each with its hottest line), the heap profile
-as xo-heap.pprof and its .txt. The program named its locations already,
-so neither the binary nor its dSYM is needed. A file that exists is not
-overwritten. xo run --profile and xo test --profile run it for you.
+FILE's name with .cpu.pprof for its .xoraw, .pb.gz or .gz: cold.pb.gz
+gives cold.cpu.pprof) with its text summary beside it (.txt: the top 30
+by flat and by cumulative samples, each with its hottest line), the heap
+profile as FILE's name with .heap.pprof and its .txt. The program named
+its locations already, so neither the binary nor its dSYM is needed. The
+default names are replaced on a rerun; a path given with --cpu-out or
+--heap-out is never overwritten. xo run --profile and xo test --profile
+run it for you.
 """
 }
 

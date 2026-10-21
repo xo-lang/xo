@@ -264,7 +264,7 @@ func TestProfHeap(t *testing.T) {
 				t.Fatalf("output: %s", got)
 			}
 			conv(dir)
-			txt, err := os.ReadFile(filepath.Join(dir, "xo-heap.txt"))
+			txt, err := os.ReadFile(filepath.Join(dir, "xo-prof.heap.txt"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -289,7 +289,7 @@ func TestProfHeap(t *testing.T) {
 				t.Fatalf("no start (inlined into churn) by alloc_space:\n%s", txt)
 			}
 			if gobin, err := exec.LookPath("go"); err == nil {
-				p, err := exec.Command(gobin, "tool", "pprof", "-top", "-lines", "-sample_index=alloc_space", filepath.Join(dir, "xo-heap.pprof")).CombinedOutput()
+				p, err := exec.Command(gobin, "tool", "pprof", "-top", "-lines", "-sample_index=alloc_space", filepath.Join(dir, "xo-prof.heap.pprof")).CombinedOutput()
 				if err != nil || !regexp.MustCompile(`start \S*main\.xo:\d+ \(inline\)`).Match(p) {
 					t.Fatalf("go tool pprof -top -lines: no inlined start: %v\n%s", err, p)
 				}
@@ -297,7 +297,7 @@ func TestProfHeap(t *testing.T) {
 			// the default rate (512 KiB): an estimate
 			dir, _ = run("XO_PROF=heap")
 			conv(dir)
-			txt, err = os.ReadFile(filepath.Join(dir, "xo-heap.txt"))
+			txt, err = os.ReadFile(filepath.Join(dir, "xo-prof.heap.txt"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -305,7 +305,7 @@ func TestProfHeap(t *testing.T) {
 				t.Fatalf("allocated %d bytes, want about 40 MB:\n%s", a, txt)
 			}
 			if gobin, err := exec.LookPath("go"); err == nil {
-				p, err := exec.Command(gobin, "tool", "pprof", "-top", "-sample_index=alloc_space", filepath.Join(dir, "xo-heap.pprof")).CombinedOutput()
+				p, err := exec.Command(gobin, "tool", "pprof", "-top", "-sample_index=alloc_space", filepath.Join(dir, "xo-prof.heap.pprof")).CombinedOutput()
 				if err != nil || !strings.Contains(string(p), "churn") {
 					t.Fatalf("go tool pprof -top: %v\n%s", err, p)
 				}
@@ -395,12 +395,17 @@ func TestProfGating(t *testing.T) {
 	if got := run(sup, d); !strings.Contains(got, "could not write") {
 		t.Errorf("a second run over an existing profile: %s", got)
 	}
+	// named after the input (xo-prof.xoraw: xo-prof.cpu.pprof), and
+	// replaced on a rerun; a path given is never overwritten
 	xoProf(t, d, filepath.Join(d, "xo-prof.xoraw"))
-	if fi, err := os.Lstat(filepath.Join(d, "xo-cpu.pprof")); err != nil || fi.Mode().Perm() != 0o600 {
+	if fi, err := os.Lstat(filepath.Join(d, "xo-prof.cpu.pprof")); err != nil || fi.Mode().Perm() != 0o600 {
 		t.Errorf("xo prof's profile: %v %v, want mode 0600", err, fi)
 	}
-	if out, err := xoProfRun(d, filepath.Join(d, "xo-prof.xoraw")); err == nil || !strings.Contains(out, "could not write") {
-		t.Errorf("xo prof over an existing profile: %v %s", err, out)
+	if out, err := xoProfRun(d, filepath.Join(d, "xo-prof.xoraw")); err != nil {
+		t.Errorf("xo prof again, its default names replaced: %v %s", err, out)
+	}
+	if out, err := xoProfRun(d, filepath.Join(d, "xo-prof.xoraw"), "--cpu-out="+filepath.Join(d, "xo-prof.cpu.pprof")); err == nil || !strings.Contains(out, "could not write") {
+		t.Errorf("xo prof over a profile named with --cpu-out: %v %s", err, out)
 	}
 	// a symbolic link where the profile goes is not written through
 	d = t.TempDir()
