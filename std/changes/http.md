@@ -13,6 +13,21 @@ request accepts it. It skips small bodies, compressed content types,
 206s, and responses that already have a Content-Encoding. It adds
 `Vary: Accept-Encoding`, weakens ETags, and compresses streamed bodies
 through a Compressor that each flush reaches.
+## 2026-10-21: feature: http.serve_content
+
+- Kind: feature
+- Commit: (filled in after the push)
+- Found by: owner's request (2026-10-21)
+- Go reference: net/http ServeContent, serveContent, checkPreconditions, scanETag, parseRange (go1.26.1)
+- Test: internal/llvm/testdata/golden/http_serve_content (35 requests: ranges, conditional requests, HEAD, content types; the native backends match the Go backend's net/http byte for byte, the multipart boundary aside)
+
+`http.serve_content(req, name, modtime, content, headers)` returns the
+response Go's ServeContent writes: Range requests (one range as 206
+with Content-Range, several as multipart/byteranges), If-Match,
+If-Unmodified-Since, If-None-Match, If-Modified-Since and If-Range
+against modtime and the ETag in `headers`, 416 for a range outside the
+content, and the Content-Type from `headers`, the name's extension, or
+the content (decision 0306).
 
 ## 2026-10-21: feature: Request.client_ip behind trusted proxies
 

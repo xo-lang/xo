@@ -27,6 +27,7 @@ var (
 	_ func(*Task, string) Result[List[Http_Cookie], Http_CookieErr]                                                                                     = Http_parse_cookie
 	_ func(*Task, string) Result[Http_Cookie, Http_CookieErr]                                                                                           = Http_parse_set_cookie
 	_ func(*Task, string, string, Map[string, string], Bytes) Http_Request                                                                              = Http_new_request
+	_ func(*Task, Http_Request, string, Option[Time], Bytes, Map[string, string]) Http_Response                                                         = Http_serve_content
 	_ func(*Task, int64, string) Http_Response                                                                                                          = Http_text
 	_ func(*Task, int64) Http_Response                                                                                                                  = Http_empty
 	_ func(*Http_BodyWriter, *Task, Bytes) Result[Unit, IoErr]                                                                                          = (*Http_BodyWriter).M_write

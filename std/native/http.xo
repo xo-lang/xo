@@ -16,6 +16,7 @@ use native/llrt/hserve
 use native/rt
 use native/llrt/h2srv
 use native/llrt/http1
+use native/llrt/rand as llrand
 use native/llrt/srvtls
 use native/llrt/tlssrv
 use native/llrt/tlsio
@@ -722,6 +723,485 @@ fn text(status: Int, s: Str) -> http.Response {
 }
 
 fn empty(status: Int) -> http.Response { http.Response{status: status, headers: {}, body: "".bytes()} }
+
+// ---------------------------------------------------------------------------
+// serve_content (decision 0306): net/http fs.go's serveContent,
+// checkPreconditions, the ETag scanners, and parseRange, ported
+
+/// The response Go's ServeContent writes for req from content, with
+/// preset the fields set on its ResponseWriter first.
+fn serve_content(req: http.Request, name: Str, modtime: Time?, content: Bytes, preset: Map[Str, Str] = {}) -> http.Response {
+  var h: Map[Str, Str] = {}
+  for (k, v) in preset {
+    h.put(http1.canonical_key(k), v)
+  }
+  let mt = match modtime {
+    Some(t) => if t.unix() == 0 && t.unix_millis() == 0 { None } else { Some(t) }
+    None => None
+  }
+  // setLastModified
+  if let Some(t) = mt {
+    h.put("Last-Modified", http_time_text(t))
+  }
+  // checkPreconditions (RFC 7232 section 6)
+  var ch = sc_if_match(req, h)
+  if ch == 0 {
+    ch = sc_if_unmodified_since(req, mt)
+  }
+  if ch == 2 {
+    return sc_status(412, h)
+  }
+  let inm = sc_if_none_match(req, h)
+  if inm == 2 {
+    if req.method == "GET" || req.method == "HEAD" {
+      return sc_not_modified(h)
+    }
+    return sc_status(412, h)
+  }
+  if inm == 0 && sc_if_modified_since(req, mt) == 2 {
+    return sc_not_modified(h)
+  }
+  var range_req = req.headers.get("Range") ?? ""
+  if !range_req.is_empty() && sc_if_range(req, h, mt) == 2 {
+    range_req = ""
+  }
+  // the type: the preset field, the name's extension, or the content
+  var ctype = h.get("Content-Type") ?? ""
+  if !h.contains("Content-Type") {
+    ctype = mime.type_by_extension(sc_ext(name)) ?? ""
+    if ctype.is_empty() {
+      ctype = mime.detect_content_type(if content.len() > 512 { content[0..512] } else { content })
+    }
+    h.put("Content-Type", ctype)
+  }
+  let size = content.len()
+  var send = content
+  var code = 200
+  var ranges: List[(Int, Int)] = []
+  match sc_parse_range(range_req, size) {
+    Ok(rs) => ranges = rs
+    Err(e) => {
+      if e == "invalid range: failed to overlap" {
+        if size != 0 {
+          h.put("Content-Range", "bytes */${size}")
+          return sc_error(h, e, 416)
+        }
+      } else {
+        return sc_error(h, e, 416)
+      }
+    }
+  }
+  var total = 0
+  for r in ranges {
+    total += r.1
+  }
+  if total > size {
+    // a dumb client or an attack: the ranges ignored
+    ranges = []
+  }
+  if ranges.len() == 1 {
+    let (st, n) = ranges[0]
+    send = content[st..st + n]
+    code = 206
+    h.put("Content-Range", "bytes ${st}-${st + n - 1}/${size}")
+  } else if ranges.len() > 1 {
+    let boundary = sc_boundary()
+    // multipart.Writer's CreatePart for each range (its fields sorted),
+    // then Close
+    var out = BytesBuilder.new()
+    var first = true
+    for (st, n) in ranges {
+      out.write(if first { "--${boundary}\r\n" } else { "\r\n--${boundary}\r\n" }.bytes())
+      first = false
+      out.write("Content-Range: bytes ${st}-${st + n - 1}/${size}\r\nContent-Type: ${ctype}\r\n\r\n".bytes())
+      out.write(content[st..st + n])
+    }
+    out.write("\r\n--${boundary}--\r\n".bytes())
+    send = out.freeze()
+    code = 206
+    h.put("Content-Type", "multipart/byteranges; boundary=" + boundary)
+  }
+  h.put("Accept-Ranges", "bytes")
+  if ranges.len() > 0 || (h.get("Content-Encoding") ?? "").is_empty() {
+    h.put("Content-Length", "${send.len()}")
+  }
+  http.Response{status: code, headers: h, body: if req.method == "HEAD" { b"" } else { send }}
+}
+
+/// A response of status code with the fields h and no body.
+fn sc_status(code: Int, h: Map[Str, Str]) -> http.Response { http.Response{status: code, headers: h, body: b""} }
+
+/// writeNotModified: 304 without the representation's metadata.
+fn sc_not_modified(h0: Map[Str, Str]) -> http.Response {
+  var h = h0
+  let _a = h.remove("Content-Type")
+  let _b = h.remove("Content-Length")
+  let _c = h.remove("Content-Encoding")
+  if !(h.get("Etag") ?? "").is_empty() {
+    let _d = h.remove("Last-Modified")
+  }
+  sc_status(304, h)
+}
+
+/// serveError: Error's text answer, without the fields meant for the
+/// content (Go's default, httpservecontentkeepheaders unset).
+fn sc_error(h0: Map[Str, Str], text: Str, code: Int) -> http.Response {
+  var h = h0
+  for k in ["Cache-Control", "Content-Encoding", "Etag", "Last-Modified"] {
+    let _x = h.remove(k)
+  }
+  // Error: its own type and length, no ETag's precondition fields
+  let _y = h.remove("Content-Length")
+  h.put("Content-Type", "text/plain; charset=utf-8")
+  h.put("X-Content-Type-Options", "nosniff")
+  http.Response{status: code, headers: h, body: (text + "\n").bytes()}
+}
+
+/// filepath.Ext of a slash separated name.
+fn sc_ext(name: Str) -> Str {
+  let b = name.bytes()
+  var i = b.len() - 1
+  while i >= 0 && b[i] != 47 {
+    if b[i] == 46 {
+      return name[i..]
+    }
+    i -= 1
+  }
+  ""
+}
+
+/// multipart.Writer's boundary: 30 random bytes in hex.
+fn sc_boundary() -> Str {
+  let r = llrand.next_bytes(30)
+  let d = "0123456789abcdef".bytes()
+  var out = b""
+  for c in r {
+    let x = Int(c)
+    out = out + d[x >> 4..(x >> 4) + 1] + d[x & 15..(x & 15) + 1]
+  }
+  out.to_str() ?? ""
+}
+
+/// textproto.TrimString: ASCII spaces and tabs off both ends.
+fn sc_trim(s: Str) -> Str {
+  let b = s.bytes()
+  var i = 0
+  var j = b.len()
+  while i < j && (b[i] == 32 || b[i] == 9) {
+    i += 1
+  }
+  while j > i && (b[j - 1] == 32 || b[j - 1] == 9) {
+    j -= 1
+  }
+  s[i..j]
+}
+
+/// scanETag: a valid ETag at the start of s (W/"x" or "x") and the rest,
+/// or ("", "").
+fn sc_scan_etag(s0: Str) -> (Str, Str) {
+  let s = sc_trim(s0)
+  let b = s.bytes()
+  let start = if s.starts_with("W/") { 2 } else { 0 }
+  if b.len() - start < 2 || b[start] != 34 {
+    return ("", "")
+  }
+  var i = start + 1
+  while i < b.len() {
+    let c = Int(b[i])
+    if c == 34 {
+      return (s[0..i + 1], s[i + 1..])
+    }
+    if !(c == 0x21 || (c >= 0x23 && c <= 0x7E) || c >= 0x80) {
+      return ("", "")
+    }
+    i += 1
+  }
+  ("", "")
+}
+
+fn sc_strong_match(a: Str, b: Str) -> Bool { a == b && !a.is_empty() && a.starts_with("\"") }
+
+fn sc_weak_match(a: Str, b: Str) -> Bool { a.trim_prefix("W/") == b.trim_prefix("W/") }
+
+/// checkIfMatch: 0 none, 1 true, 2 false.
+fn sc_if_match(req: http.Request, h: Map[Str, Str]) -> Int {
+  var im = req.headers.get("If-Match") ?? ""
+  if im.is_empty() {
+    return 0
+  }
+  let etag = h.get("Etag") ?? ""
+  while true {
+    im = sc_trim(im)
+    if im.is_empty() {
+      break
+    }
+    if im.starts_with(",") {
+      im = im[1..]
+      continue
+    }
+    if im.starts_with("*") {
+      return 1
+    }
+    let (e, rest) = sc_scan_etag(im)
+    if e.is_empty() {
+      break
+    }
+    if sc_strong_match(e, etag) {
+      return 1
+    }
+    im = rest
+  }
+  2
+}
+
+/// checkIfNoneMatch: 0 none, 1 true, 2 false.
+fn sc_if_none_match(req: http.Request, h: Map[Str, Str]) -> Int {
+  var buf = req.headers.get("If-None-Match") ?? ""
+  if buf.is_empty() {
+    return 0
+  }
+  let etag = h.get("Etag") ?? ""
+  while true {
+    buf = sc_trim(buf)
+    if buf.is_empty() {
+      break
+    }
+    if buf.starts_with(",") {
+      buf = buf[1..]
+      continue
+    }
+    if buf.starts_with("*") {
+      return 2
+    }
+    let (e, rest) = sc_scan_etag(buf)
+    if e.is_empty() {
+      break
+    }
+    if sc_weak_match(e, etag) {
+      return 2
+    }
+    buf = rest
+  }
+  1
+}
+
+/// checkIfUnmodifiedSince: 0 none, 1 true, 2 false (seconds compared).
+fn sc_if_unmodified_since(req: http.Request, mt: Time?) -> Int {
+  let v = req.headers.get("If-Unmodified-Since") ?? ""
+  let m = match mt {
+    Some(x_) => x_
+    None => return 0
+  }
+  if v.is_empty() {
+    return 0
+  }
+  let t = match http_time(v) {
+    Some(x_) => x_
+    None => return 0
+  }
+  if m.unix() <= t.unix() { 1 } else { 2 }
+}
+
+/// checkIfModifiedSince: 0 none, 1 true, 2 false.
+fn sc_if_modified_since(req: http.Request, mt: Time?) -> Int {
+  if req.method != "GET" && req.method != "HEAD" {
+    return 0
+  }
+  let v = req.headers.get("If-Modified-Since") ?? ""
+  let m = match mt {
+    Some(x_) => x_
+    None => return 0
+  }
+  if v.is_empty() {
+    return 0
+  }
+  let t = match http_time(v) {
+    Some(x_) => x_
+    None => return 0
+  }
+  if m.unix() <= t.unix() { 2 } else { 1 }
+}
+
+/// checkIfRange: 0 none, 1 true, 2 false.
+fn sc_if_range(req: http.Request, h: Map[Str, Str], mt: Time?) -> Int {
+  if req.method != "GET" && req.method != "HEAD" {
+    return 0
+  }
+  let ir = req.headers.get("If-Range") ?? ""
+  if ir.is_empty() {
+    return 0
+  }
+  let (e, _rest) = sc_scan_etag(ir)
+  if !e.is_empty() {
+    return if sc_strong_match(e, h.get("Etag") ?? "") { 1 } else { 2 }
+  }
+  let m = match mt {
+    Some(x_) => x_
+    None => return 2
+  }
+  let t = match http_time(ir) {
+    Some(x_) => x_
+    None => return 2
+  }
+  if t.unix() == m.unix() { 1 } else { 2 }
+}
+
+/// parseRange: the (start, length) ranges of s for a content of size,
+/// or the error's text.
+fn sc_parse_range(s: Str, size: Int) -> List[(Int, Int)] ! Str {
+  if s.is_empty() {
+    return Ok([])
+  }
+  if !s.starts_with("bytes=") {
+    return Err("invalid range")
+  }
+  var out: List[(Int, Int)] = []
+  var no_overlap = false
+  for ra0 in s[6..].split(",") {
+    let ra = sc_trim(ra0)
+    if ra.is_empty() {
+      continue
+    }
+    let dash = match ra.find("-") {
+      Some(x_) => x_
+      None => return Err("invalid range")
+    }
+    let start = sc_trim(ra[0..dash])
+    let end = sc_trim(ra[dash + 1..])
+    if start.is_empty() {
+      if end.is_empty() || end.starts_with("-") {
+        return Err("invalid range")
+      }
+      var i = match sc_int(end) {
+        Some(x_) => x_
+        None => return Err("invalid range")
+      }
+      if i < 0 {
+        return Err("invalid range")
+      }
+      if i > size {
+        i = size
+      }
+      out.push((size - i, i))
+    } else {
+      let i = match sc_int(start) {
+        Some(x_) => x_
+        None => return Err("invalid range")
+      }
+      if i < 0 {
+        return Err("invalid range")
+      }
+      if i >= size {
+        no_overlap = true
+        continue
+      }
+      if end.is_empty() {
+        out.push((i, size - i))
+      } else {
+        var j = match sc_int(end) {
+          Some(x_) => x_
+          None => return Err("invalid range")
+        }
+        if i > j {
+          return Err("invalid range")
+        }
+        if j >= size {
+          j = size - 1
+        }
+        out.push((i, j - i + 1))
+      }
+    }
+  }
+  if no_overlap && out.is_empty() {
+    return Err("invalid range: failed to overlap")
+  }
+  Ok(out)
+}
+
+/// strconv.ParseInt(s, 10, 64): an optional sign then digits, in range.
+fn sc_int(s: Str) -> Int? {
+  let b = s.bytes()
+  if b.is_empty() {
+    return None
+  }
+  var i = 0
+  var neg = false
+  if b[0] == 43 || b[0] == 45 {
+    neg = b[0] == 45
+    i = 1
+    if b.len() == 1 {
+      return None
+    }
+  }
+  var v = 0
+  while i < b.len() {
+    let d = Int(b[i]) - 48
+    if d < 0 || d > 9 || v > (9223372036854775807 - d) / 10 {
+      return None
+    }
+    v = v * 10 + d
+    i += 1
+  }
+  Some(if neg { -v } else { v })
+}
+
+/// TimeFormat: "Mon, 02 Jan 2006 15:04:05 GMT" of t in UTC.
+fn http_time_text(t: Time) -> Str { time.format(t, time.utc(), "{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second} GMT") }
+
+/// http.ParseTime: TimeFormat, RFC 850 ("Monday, 02-Jan-06 15:04:05
+/// GMT"), or ANSIC ("Mon Jan _2 15:04:05 2006"), in UTC.
+fn http_time(v: Str) -> Time? {
+  let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+  let f = v.split(" ").filter(fn(x) { !x.is_empty() })
+  var day = -1
+  var mon = -1
+  var year = -1
+  var clock = ""
+  if f.len() == 6 && f[0].ends_with(",") && f[5] == "GMT" {
+    // TimeFormat
+    if f[1].len() != 2 {
+      return None
+    }
+    day = Int.parse(f[1]) ?? -1
+    mon = months.index_of(f[2]) ?? -1
+    year = if f[3].len() == 4 { Int.parse(f[3]) ?? -1 } else { -1 }
+    clock = f[4]
+  } else if f.len() == 4 && f[0].ends_with(",") && f[3] == "GMT" {
+    // RFC 850
+    let dmy = f[1].split("-")
+    if dmy.len() != 3 || dmy[0].len() != 2 || dmy[2].len() != 2 {
+      return None
+    }
+    day = Int.parse(dmy[0]) ?? -1
+    mon = months.index_of(dmy[1]) ?? -1
+    let yy = Int.parse(dmy[2]) ?? -1
+    year = if yy < 0 { -1 } else if yy >= 69 { 1900 + yy } else { 2000 + yy }
+    clock = f[2]
+  } else if f.len() == 5 && !f[0].ends_with(",") {
+    // ANSIC (a one digit day padded with a space)
+    mon = months.index_of(f[1]) ?? -1
+    day = Int.parse(f[2]) ?? -1
+    year = if f[4].len() == 4 { Int.parse(f[4]) ?? -1 } else { -1 }
+    clock = f[3]
+  } else {
+    return None
+  }
+  let hms = clock.split(":")
+  if mon < 0 || day < 1 || year < 0 || hms.len() != 3 || hms.any(fn(x) { x.len() != 2 }) {
+    return None
+  }
+  let hh = Int.parse(hms[0]) ?? -1
+  let mm = Int.parse(hms[1]) ?? -1
+  let ss = Int.parse(hms[2]) ?? -1
+  if hh < 0 || hh > 23 || mm < 0 || mm > 59 || ss < 0 || ss > 59 {
+    return None
+  }
+  let d = match time.date(year, mon + 1, day) {
+    Ok(x) => x
+    Err(_) => return None
+  }
+  time.instant(d, time.ClockTime{hour: hh, minute: mm, second: ss, nanos: 0}, time.utc()).ok()
+}
 
 fn response_with_header(r: http.Response, name: Str, value: Str) -> http.Response {
   let k = http1.canonical_key(name)

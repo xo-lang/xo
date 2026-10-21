@@ -1,0 +1,70 @@
+// http.serve_content (decision 0306) answers as net/http's ServeContent
+// (the Go backend calls it; the native backends port it): ranges (one,
+// several as multipart/byteranges, suffixes, overlapping the end, none
+// overlapping, malformed), the conditional requests against modtime and
+// an ETag, HEAD, and the type from the name, the preset field, or the
+// content. A multipart boundary is random: it prints as BOUNDARY.
+use std/http
+
+fn show(os: Os, name: Str, r: http.Response) {
+  var parts: List[Str] = []
+  let ct = r.headers.get("Content-Type") ?? ""
+  let b = if ct.starts_with("multipart/byteranges; boundary=") { ct["multipart/byteranges; boundary=".len()..] } else { "" }
+  for k in r.headers.keys().sort() {
+    let v = r.headers.get(k) ?? ""
+    parts.push("${k}=${(if b.is_empty() { v } else { v.replace(b, "BOUNDARY") }).quote()}")
+  }
+  let body = r.body.to_str() ?? "?"
+  os.stdio.println("${name}: ${r.status} [${parts.join(" ")}] ${(if b.is_empty() { body } else { body.replace(b, "BOUNDARY") }).quote()}")
+}
+
+fn get(path: Str, headers: Map[Str, Str]) -> http.Request { http.new_request("GET", "http://h${path}", headers) }
+
+fn main(os: Os) {
+  let body = "0123456789abcdefghij".bytes()
+  // 2009-11-10 23:00:00 UTC
+  let mt = Time.from_unix(1257894000)
+  let cases: List[(Str, Map[Str, Str])] = [
+    ("plain", {}),
+    ("one range", {"Range": "bytes=2-5"}),
+    ("open range", {"Range": "bytes=15-"}),
+    ("suffix", {"Range": "bytes=-3"}),
+    ("suffix past start", {"Range": "bytes=-50"}),
+    ("end past size", {"Range": "bytes=18-40"}),
+    ("two ranges", {"Range": "bytes=0-1,5-6"}),
+    ("no overlap", {"Range": "bytes=30-40"}),
+    ("malformed", {"Range": "bytes=5-2"}),
+    ("not bytes", {"Range": "items=1-2"}),
+    ("sum too large", {"Range": "bytes=0-19,0-19"}),
+    ("if-none-match hit", {"If-None-Match": "\"v1\""}),
+    ("if-none-match weak", {"If-None-Match": "W/\"v1\""}),
+    ("if-none-match miss", {"If-None-Match": "\"v2\", \"v3\""}),
+    ("if-none-match star", {"If-None-Match": "*"}),
+    ("if-match miss", {"If-Match": "\"v2\""}),
+    ("if-match hit", {"If-Match": "\"x\", \"v1\""}),
+    ("if-modified-since later", {"If-Modified-Since": "Wed, 11 Nov 2009 00:00:00 GMT"}),
+    ("if-modified-since earlier", {"If-Modified-Since": "Tue, 10 Nov 2009 00:00:00 GMT"}),
+    ("if-modified-since rfc850", {"If-Modified-Since": "Wednesday, 11-Nov-09 00:00:00 GMT"}),
+    ("if-modified-since ansic", {"If-Modified-Since": "Wed Nov 11 00:00:00 2009"}),
+    ("if-unmodified-since earlier", {"If-Unmodified-Since": "Tue, 10 Nov 2009 00:00:00 GMT"}),
+    ("if-range etag hit", {"Range": "bytes=0-3", "If-Range": "\"v1\""}),
+    ("if-range etag miss", {"Range": "bytes=0-3", "If-Range": "\"v9\""}),
+    ("if-range date hit", {"Range": "bytes=0-3", "If-Range": "Tue, 10 Nov 2009 23:00:00 GMT"}),
+  ]
+  for (name, hs) in cases {
+    show(os, name, http.serve_content(get("/f.txt", hs), "f.txt", Some(mt), body, {"Etag": "\"v1\"", "Cache-Control": "max-age=60"}))
+  }
+  // no ETag preset, no modtime
+  show(os, "bare", http.serve_content(get("/x", {}), "x", None, body))
+  show(os, "bare range", http.serve_content(get("/x", {"Range": "bytes=1-2"}), "x", None, body))
+  // the type: by extension, by content, preset
+  show(os, "html by name", http.serve_content(get("/i", {}), "i.html", None, "<p>hi</p>".bytes()))
+  show(os, "html sniffed", http.serve_content(get("/i", {}), "noext", None, "<html><body>x</body></html>".bytes()))
+  show(os, "binary sniffed", http.serve_content(get("/b", {}), "", None, b"\x00\x01\x02\x03"))
+  show(os, "preset type", http.serve_content(get("/p", {}), "p.txt", None, body, {"Content-Type": "application/x-custom"}))
+  // HEAD, POST with If-None-Match, an empty content with a range
+  show(os, "head", http.serve_content(http.new_request("HEAD", "http://h/f", {"Range": "bytes=0-1"}), "f.txt", None, body))
+  show(os, "post if-none-match", http.serve_content(http.new_request("POST", "http://h/f", {"If-None-Match": "\"v1\""}), "f.txt", None, body, {"Etag": "\"v1\""}))
+  show(os, "empty with range", http.serve_content(get("/e", {"Range": "bytes=5-9"}), "e.txt", None, b""))
+  show(os, "content-encoding", http.serve_content(get("/g", {}), "g.txt", None, body, {"Content-Encoding": "gzip"}))
+}

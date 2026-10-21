@@ -130,6 +130,14 @@ struct Response {
   body: Bytes
 }
 fn json[T: Json](status: Int, v: T) -> Response
+/// The response net/http's ServeContent writes for req from content
+/// (decision 0306): Range requests (206, or multipart/byteranges for
+/// several), the conditional requests against modtime and an ETag in
+/// headers (304, 412), 416 for a range outside the content, the
+/// Content-Type from headers, name's extension, or the content, and
+/// Last-Modified, Accept-Ranges, Content-Length. headers are the fields
+/// a Go handler sets on its ResponseWriter before the call.
+fn serve_content(req: Request, name: Str, modtime: Time?, content: Bytes, headers: Map[Str, Str] = {}) -> Response
 fn text(status: Int, s: Str) -> Response
 fn empty(status: Int) -> Response
 fn stream[fx: Effects](status: Int, f: fn(BodyWriter) -> () ! IoErr uses fx) -> Response uses fx

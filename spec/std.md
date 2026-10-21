@@ -1155,6 +1155,10 @@ pub fn text(status: Int, s: Str) -> Response
 pub fn empty(status: Int) -> Response
 pub fn stream[fx: Effects](status: Int, f: fn(BodyWriter) -> () ! IoErr uses fx) -> Response uses fx
     // the body is produced by `f` while the response is sent (for large exports)
+pub fn serve_content(req: Request, name: Str, modtime: Time?, content: Bytes, headers: Map[Str, Str] = {}) -> Response
+    // Go's ServeContent (decision 0306): Range (206, multipart/byteranges), the
+    // conditional requests against modtime and the ETag in headers (304, 412),
+    // 416, Content-Type from headers, name's extension, or the content
 fn (w: BodyWriter) write(data: Bytes) -> () ! IoErr
 fn (w: BodyWriter) flush() -> () ! IoErr
 fn (r: Response) with_header(name: Str, value: Str) -> Response
