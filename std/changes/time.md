@@ -1,5 +1,16 @@
 # std/time changes
 
+## 2026-10-21: perf: layout items carry an integer field code
+
+- Kind: perf
+- Commit: (filled in after the push)
+- Found by: XO_PROF=cpu (bench/results/regexp-time-csv-vs-go-2026-10-21.md)
+- Test: std module tests native/time on arm64 and LLVM
+
+`format` and `parse` switch on an integer code per layout item instead of
+comparing field names. 300,000 x 2 formats 9,612 M to 7,390 M instructions,
+300,000 parses 4,824 M to 3,768 M. Results and error texts are the same.
+
 ## 2026-10-21: perf: layout fields validated without a list
 
 - Kind: perf

@@ -72,3 +72,17 @@ construction; its time and csv format are std/rt code.)
    entry, then Go's literal-prefix scan and a backtracker for small programs
    (the 7.5x of match is mostly this).
 3. csv: write fields into one builder instead of a string per field.
+
+## Step 1, time (2026-10-21): integer field codes
+
+Each layout item carries an integer code (`field_code`: the name's length and
+first byte pick a candidate and one comparison confirms it), and `format` and
+`parse` switch on the code instead of up to 14 string comparisons per item.
+300,000 x 2 formats: 9,612 M to 7,390 M instructions (-23%; Go 953 M); 300,000
+parses: 4,824 M to 3,768 M (-22%; Go 462 M). The remaining 8x is the layout
+parse itself, done in every call (`layout_items` 40% of format): Go's
+`time.Format` walks the layout string without building items. Parsing once per
+distinct layout needs a place to keep it (Xo has no globals), so the next
+option is a compile-time parse of constant layouts in the compiler (the
+checker already reads them for XO0420) or a cheaper walk without items; not
+done here.

@@ -414,6 +414,76 @@ struct Item {
   lit: Str
   field: Str
   arg: Str
+  /// The field as a number (field_code), so format and parse switch on
+  /// an integer instead of comparing names.
+  code: Int = 0
+}
+
+/// The code of a field name (0 for an unknown one): the length and first
+/// byte pick the candidate and one comparison confirms it.
+fn field_code(name: Str) -> Int {
+  let b = name.bytes()
+  if b.is_empty() {
+    return 0
+  }
+  let c = b[0]
+  var code = 0
+  var want = ""
+  match b.len() {
+    3 => {
+      code = 3
+      want = "day"
+    }
+    4 => {
+      if c == 121 {
+        code = 1
+        want = "year"
+      } else if c == 104 {
+        code = 5
+        want = "hour"
+      } else if c == 97 {
+        code = 7
+        want = "ampm"
+      } else if c == 102 {
+        code = 10
+        want = "frac"
+      } else if c == 122 {
+        code = 12
+        want = "zone"
+      }
+    }
+    5 => {
+      code = 2
+      want = "month"
+    }
+    6 => {
+      if c == 104 {
+        code = 6
+        want = "hour12"
+      } else if c == 109 {
+        code = 8
+        want = "minute"
+      } else if c == 115 {
+        code = 9
+        want = "second"
+      } else if c == 111 {
+        code = 11
+        want = "offset"
+      } else if c == 108 {
+        code = 13
+        want = "lbrace"
+      } else if c == 114 {
+        code = 14
+        want = "rbrace"
+      }
+    }
+    7 => {
+      code = 4
+      want = "weekday"
+    }
+    _ => {}
+  }
+  if code != 0 && name == want { code } else { 0 }
 }
 
 /// The arguments field takes ("" is the field without one), or None for
@@ -440,17 +510,17 @@ fn field_args(name: Str) -> List[Str]? {
 
 /// Whether `{name}` or `{name:arg}` is a field of a layout (field_args
 /// without the list).
-fn field_ok(name: Str, arg: Str, has_arg: Bool) -> Bool {
+fn field_ok(code: Int, arg: Str, has_arg: Bool) -> Bool {
   if has_arg && arg == "" {
     return false
   }
-  match name {
-    "month" => !has_arg || arg is "1" | "short" | "name"
-    "day" => !has_arg || arg == "1"
-    "weekday" => has_arg && arg is "short" | "name"
-    "frac" => !has_arg || (arg.len() == 1 && arg >= "1" && arg <= "9")
-    "offset" => !has_arg || arg == "compact"
-    "year" | "hour" | "hour12" | "ampm" | "minute" | "second" | "zone" | "lbrace" | "rbrace" => !has_arg
+  match code {
+    2 => !has_arg || arg is "1" | "short" | "name"
+    3 => !has_arg || arg == "1"
+    4 => has_arg && arg is "short" | "name"
+    10 => !has_arg || (arg.len() == 1 && arg >= "1" && arg <= "9")
+    11 => !has_arg || arg == "compact"
+    1 | 5 | 6 | 7 | 8 | 9 | 12 | 13 | 14 => !has_arg
     _ => false
   }
 }
@@ -510,26 +580,27 @@ fn layout_items(layout: Str) -> List[Item] ! Str {
     }
     // a valid field is checked without building its argument list; the
     // list is built only for the error text
-    if !field_ok(name, arg, has_arg) {
+    let code = field_code(name)
+    if !field_ok(code, arg, has_arg) {
       match field_args(name) {
         None => return Err("unknown field {${body}}")
         Some(args) => return Err("{${body}}: ${args_text(name, args)}")
       }
     }
-    if name == "lbrace" {
+    if code == 13 {
       lit = lit + "{"
-    } else if name == "rbrace" {
+    } else if code == 14 {
       lit = lit + "}"
     } else {
       if lit != "" {
         items.push(Item{lit: lit, field: "", arg: ""})
         lit = ""
       }
-      items.push(Item{lit: "", field: name, arg: arg})
-      if name == "hour12" {
+      items.push(Item{lit: "", field: name, arg: arg, code: code})
+      if code == 6 {
         hour12 = true
       }
-      if name == "ampm" {
+      if code == 7 {
         ampm = true
       }
     }
@@ -589,14 +660,14 @@ fn format(t: Time, z: Zone, layout: Str, at: rt.Loc) -> Str {
   let hour = rem / 3600
   var out = ""
   for it in items {
-    match it.field {
-      "" => {
+    match it.code {
+      0 => {
         out = out + it.lit
       }
-      "year" => {
+      1 => {
         out = out + pad(d.year, 4)
       }
-      "month" => {
+      2 => {
         if it.arg == "" {
           out = out + pad(d.month % 100, 2)
         } else if it.arg == "1" {
@@ -607,14 +678,14 @@ fn format(t: Time, z: Zone, layout: Str, at: rt.Loc) -> Str {
           out = out + month_name()[d.month - 1]
         }
       }
-      "day" => {
+      3 => {
         if it.arg == "1" {
           out = out + "${d.day}"
         } else {
           out = out + pad(d.day % 100, 2)
         }
       }
-      "weekday" => {
+      4 => {
         let w = weekday_index(days)
         if it.arg == "short" {
           out = out + weekday_short()[w]
@@ -622,30 +693,30 @@ fn format(t: Time, z: Zone, layout: Str, at: rt.Loc) -> Str {
           out = out + weekday_name()[w]
         }
       }
-      "hour" => {
+      5 => {
         out = out + pad(hour, 2)
       }
-      "hour12" => {
+      6 => {
         var h = hour % 12
         if h == 0 {
           h = 12
         }
         out = out + pad(h, 2)
       }
-      "ampm" => {
+      7 => {
         if hour < 12 {
           out = out + "AM"
         } else {
           out = out + "PM"
         }
       }
-      "minute" => {
+      8 => {
         out = out + pad(rem / 60 % 60, 2)
       }
-      "second" => {
+      9 => {
         out = out + pad(rem % 60, 2)
       }
-      "frac" => {
+      10 => {
         var digits = pad(nanos, 9)
         if it.arg == "" {
           while digits.ends_with("0") {
@@ -659,7 +730,7 @@ fn format(t: Time, z: Zone, layout: Str, at: rt.Loc) -> Str {
           out = out + "." + digits
         }
       }
-      "offset" => {
+      11 => {
         if off == 0 && it.arg == "" {
           out = out + "Z"
         } else {
@@ -746,7 +817,7 @@ fn parse(s: Str, layout: Str, z: Zone, at: rt.Loc) -> Time ! time.ParseErr {
   var day_at = 0
   for it in items {
     let start = pos
-    if it.field == "" {
+    if it.code == 0 {
       if !s[pos..].starts_with(it.lit) {
         return perr(s, layout, start, "expected ${it.lit.quote()}")
       }
@@ -759,15 +830,15 @@ fn parse(s: Str, layout: Str, z: Zone, at: rt.Loc) -> Time ! time.ParseErr {
     var hi = 2
     var min = 0
     var max = 0
-    match it.field {
-      "year" => {
+    match it.code {
+      1 => {
         what = "year"
         lo = 4
         hi = 4
         min = 1
         max = 9999
       }
-      "month" => {
+      2 => {
         if it.arg == "" || it.arg == "1" {
           what = "month"
           if it.arg == "1" {
@@ -788,7 +859,7 @@ fn parse(s: Str, layout: Str, z: Zone, at: rt.Loc) -> Time ! time.ParseErr {
           pos += len
         }
       }
-      "day" => {
+      3 => {
         day_at = start
         what = "day"
         if it.arg == "1" {
@@ -797,7 +868,7 @@ fn parse(s: Str, layout: Str, z: Zone, at: rt.Loc) -> Time ! time.ParseErr {
         min = 1
         max = 31
       }
-      "weekday" => {
+      4 => {
         var names = weekday_short()
         if it.arg == "name" {
           names = weekday_name()
@@ -810,16 +881,16 @@ fn parse(s: Str, layout: Str, z: Zone, at: rt.Loc) -> Time ! time.ParseErr {
         weekday_at = start
         pos += len
       }
-      "hour" => {
+      5 => {
         what = "hour"
         max = 23
       }
-      "hour12" => {
+      6 => {
         what = "hour12"
         min = 1
         max = 12
       }
-      "ampm" => {
+      7 => {
         let rest = s[pos..]
         if rest.starts_with("PM") {
           pm = true
@@ -828,15 +899,15 @@ fn parse(s: Str, layout: Str, z: Zone, at: rt.Loc) -> Time ! time.ParseErr {
         }
         pos += 2
       }
-      "minute" => {
+      8 => {
         what = "minute"
         max = 59
       }
-      "second" => {
+      9 => {
         what = "second"
         max = 59
       }
-      "frac" => {
+      10 => {
         var k = 0
         if it.arg != "" {
           k = Int.parse(it.arg) ?? 0
@@ -868,7 +939,7 @@ fn parse(s: Str, layout: Str, z: Zone, at: rt.Loc) -> Time ! time.ParseErr {
           nanos = f
         }
       }
-      "offset" => {
+      11 => {
         var bad = "expected an offset: +hhmm"
         if it.arg == "" {
           bad = "expected an offset: Z or +hh:mm"
