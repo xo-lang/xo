@@ -6,6 +6,8 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [konst-text-not-value.md](konst-text-not-value.md): Observed 2026-10-21: hoist_consts merged constants by template text; Float constants (`fmov $d0, $u0`) all share it, so one loop read one Float for another (native_json 5e+08, list_field_licm 15.0); key on text, operands, and class
 
 - [closure-body-names-no-nat-type.md](closure-body-names-no-nat-type.md): Observed 2026-10-21: lowering `task.isolate(fn() { h(q) })` as the call itself never applied: the checker has no type (nat_check -1) for a name inside a closure body seen from the enclosing function; read the variable (var_of, b.read) and use its SSA type
+- [llvm-metadata-id-ranges.md](llvm-metadata-id-ranges.md): Observed 2026-10-21: LLVM debug metadata numbered from a fixed 1000000 met the noalias scope ids (SCOPE_BASE * (fi + 1)) once xo passed 10,000 functions (clang: Metadata id is already used); derive bases from the ranges below and test disjointness at the boundary sizes
+
 - [branch-fold-drops-shared-landing.md](branch-fold-drops-shared-landing.md): Observed 2026-10-21: folding a branch whose dead side holds a landing check a live call shares (chain_pads) dropped the pad block (fault_unwind: "b95 is used but not defined"); fold only when ssa.pads_reached holds
 
 - [go-backend-dropped-lock-held.md](go-backend-dropped-lock-held.md): a FileLock dropped while held is released natively at once but on the Go backend only when the GC collects it; unlock explicitly (Observed 2026-10-20)
