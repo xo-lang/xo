@@ -760,23 +760,29 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       // a test binary is built at -O0, so with no LTO (decision 0236:
       // examples/notes-service's link 38.7 s at -O2, 5.4 s at -O0)
       split.opt = "-O0"
-      // and split by name into modules whose objects the back-end cache
-      // keeps (XO_LLVM_TEST_SPLIT, 2026-10-21): an edit compiles only
-      // the modules it changed (json's edit build: 1.9 s in clang for the
-      // whole IR)
-      let ts = os.env.get("XO_LLVM_TEST_SPLIT") ?? ""
-      let tn = Int.parse(ts) ?? 8
+      // and split into modules whose objects the back-end cache keeps
+      // (XO_LLVM_TEST_SPLIT, 2026-10-21): an edit compiles only the
+      // modules it changed (json's edit build: 1.9 s in clang for the
+      // whole IR). By default a module per source file, at most 32
+      // (`files`); a number N hashes files into N modules. Measured
+      // (bench/results/llvm-test-split-2026-10-21.md): files edits 352
+      // and 378 ms in clang against 610 and 477 for 8 (json, compiler/ssa),
+      // cold 1982 and 1133 against 1129 and 886
+      let ts0 = os.env.get("XO_LLVM_TEST_SPLIT") ?? ""
+      let ts = if ts0.is_empty() { "files" } else { ts0 }
+      let tn = if ts == "files" { 32 } else { Int.parse(ts) ?? 8 }
       let cdir = backend_cache_dir(os, ctx)
       if split.modules == 1 && ts != "off" && tn > 1 && !cdir.is_empty() && !o.race && ltarget == host {
         split.modules = tn
         split.lto = "none"
         split.stable = true
+        split.by_file = ts == "files"
         split.objcache = cdir
       }
     }
     // a test build's split (stable) is made after a miss of the binary
     // cache, which keys it on the whole IR: a warm build does not split
-    let parts = if split.stable { [code] } else { split_ir(code, split.modules, false) }
+    let parts = if split.stable { [code] } else { split_ir(code, split.modules, false, false) }
     let multi = parts.len() > 1 || split.stable
     var dir = "${bdir}/llvm"
     if o.race {
@@ -788,7 +794,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     if multi {
       // a split build has its own directory (a single module build of
       // the same program may run at the same time)
-      dir = "${dir}-split${if split.stable { split.modules } else { parts.len() }}-${split.lto}"
+      dir = "${dir}-split${if split.stable { split.modules } else { parts.len() }}${if split.by_file { "files" } else { "" }}-${split.lto}"
     }
     write_or_fail(os, dir, "", b"")
     var lls: List[Str] = []
@@ -831,7 +837,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         let mdir = "${dir}-modules"
         write_or_fail(os, mdir, "", b"")
         var mls: List[Str] = []
-        for (i, part) in split_ir(code, split.modules, true).indexed() {
+        for (i, part) in split_ir(code, split.modules, true, split.by_file).indexed() {
           let ll = "${mdir}/prog.${i}.ll"
           write_or_fail(os, mdir, ll, part.bytes())
           mls.push(ll)

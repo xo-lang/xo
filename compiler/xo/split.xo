@@ -31,6 +31,9 @@ struct SplitConfig {
   objcache: Str = ""
   /// the modules taken from objcache (split_build)
   reused: Int = 0
+  /// a stable split with a module per source file (at most modules of
+  /// them; XO_LLVM_TEST_SPLIT=files), not files hashed into modules
+  by_file: Bool = false
 }
 
 /// LLVMSplitConfig from the environment.
@@ -385,7 +388,7 @@ fn decl_of(line: Str) -> Str {
 /// constants and helpers it uses and declarations of the functions of
 /// other modules it calls (internal to hidden linkage for those). n <= 1,
 /// or fewer than two functions, gives the IR back as one module.
-fn split_ir(ir: Str, n0: Int, stable: Bool) -> List[Str] {
+fn split_ir(ir: Str, n0: Int, stable: Bool, by_file: Bool) -> List[Str] {
   if n0 <= 1 {
     return [ir]
   }
@@ -399,7 +402,19 @@ fn split_ir(ir: Str, n0: Int, stable: Bool) -> List[Str] {
   if fns.len() < 2 {
     return [ir]
   }
-  let n = min(n0, fns.len())
+  var n = min(n0, fns.len())
+  // by_file: the files in order, each its own module (wrapping past n)
+  var file_at: Map[Str, Int] = {}
+  if stable && by_file {
+    var keys: Map[Str, Bool] = {}
+    for i in fns {
+      keys[def_file_key(p, p.defs[i])] = true
+    }
+    for (k, key) in keys.keys().sort().indexed() {
+      file_at[key] = k
+    }
+    n = min(n0, file_at.len()).max(1)
+  }
   // largest first (stable: ties keep the order of the IR)
   var keyed: List[(Int, Int)] = []
   for (k, i) in fns.indexed() {
@@ -421,11 +436,16 @@ fn split_ir(ir: Str, n0: Int, stable: Bool) -> List[Str] {
       // by name: the same module whatever the other functions' sizes,
       // and a line added to a file moves the debug lines of that file's
       // functions only
-      var hv = 2166136261
-      for ch in def_file_key(p, p.defs[i]).bytes() {
-        hv = ((hv ^ Int(ch)) * 16777619) % 4294967296
+      let key = def_file_key(p, p.defs[i])
+      if by_file {
+        m = (file_at.get(key) ?? 0) % n
+      } else {
+        var hv = 2166136261
+        for ch in key.bytes() {
+          hv = ((hv ^ Int(ch)) * 16777619) % 4294967296
+        }
+        m = hv % n
       }
-      m = hv % n
     } else {
       for k in 1..n {
         if load[k] < load[m] {
