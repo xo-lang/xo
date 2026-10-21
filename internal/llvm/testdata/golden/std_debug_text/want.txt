@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+Zone(EST)
+Row(a: 1, b: "x", c: 2.5)
+Row(a: 1, b: "x", c: 2.5)
+[Row(a: 1, b: "x", c: 2.5)]
+Holder{row: Row(a: 1, b: "x", c: 2.5), zone: Zone(EST)}
+Row(a: 2, b: null, c: 0.0)
+Row(a: 2, b: null, c: 0.0)
+[Row(a: 2, b: null, c: 0.0)]
+Holder{row: Row(a: 2, b: null, c: 0.0), zone: Zone(EST)}
+--- stderr

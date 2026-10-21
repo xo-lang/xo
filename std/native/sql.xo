@@ -466,6 +466,36 @@ fn (r: Row) get(name: Str) -> sql.SqlValue ! sql.SqlErr {
   Err(sql.SqlErr.NoColumn(name: name))
 }
 
+/// The Debug text: `Row(a: 1, b: "x", c: null)`, each column and its
+/// value as std/rt's XoDebug writes them.
+fn row_debug(r: Row) -> Str {
+  var b = StrBuilder.new()
+  b.write("Row(")
+  for (i, c) in r.cols.indexed() {
+    if i > 0 {
+      b.write(", ")
+    }
+    b.write("${c}: ${value_debug_text(r.vals[i])}")
+  }
+  b.write(")")
+  b.freeze()
+}
+
+/// v's Debug text in a row: NULL is `null`, an array its items in brackets.
+fn value_debug_text(v: sql.SqlValue) -> Str {
+  match v {
+    Null => "null"
+    Integer(n) => n.debug()
+    Text(s) => s.debug()
+    Real(x) => x.debug()
+    Flag(x) => x.debug()
+    At(t) => t.debug()
+    Blob(x) => x.debug()
+    JsonText(s) => s.debug()
+    Array(xs) => "[${xs.map(value_debug_text).join(", ")}]"
+  }
+}
+
 fn type_name(v: sql.SqlValue) -> Str {
   match v {
     Integer(_) => "an integer"

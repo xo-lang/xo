@@ -1,0 +1,24 @@
+// The Debug text of opaque std types with their own Debug (a sql Row, a
+// time Zone) is the same on every backend: directly, through Debug, in a
+// list, and in a struct field.
+use std/sql
+use std/time
+
+struct Holder {
+  row: sql.Row
+  zone: time.Zone
+}
+
+fn main(os: Os) ! {
+  let db = sql.memory("CREATE TABLE t (a INTEGER, b TEXT, c REAL);")?
+  db.exec("INSERT INTO t (a, b, c) VALUES (1, 'x', 2.5), (2, NULL, 0.0)")?
+  let z = time.fixed("EST", -5h)
+  os.stdio.println(z.debug())
+  for r in db.query("SELECT a, b, c FROM t ORDER BY a")? {
+    os.stdio.println(r.debug())
+    let d: Debug = r
+    os.stdio.println(d.debug())
+    os.stdio.println([r].debug())
+    os.stdio.println(Holder{row: r, zone: z}.debug())
+  }
+}

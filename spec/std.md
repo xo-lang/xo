@@ -1744,10 +1744,9 @@ drivers are written in Xo (decision 0278, 10.7): `sql.open(net,
 (`--no-gc`, decision 0083) run the same in memory driver, ported to Xo,
 with the same results and error texts; there `sql.open` always reports an
 unknown driver (no Go drivers), `max_open` does not bound the in memory
-driver (it runs one statement at a time), and a `Row`'s Debug text is
-`<row>` (the Go backend writes its columns and values, `Row(a: 1, b:
-"x")`; natively an opaque std type's Debug text is its name, compiler/ssa
-show.xo, verified 2026-10-20); `value` gives each column's value.
+driver (it runs one statement at a time). A `Row`'s Debug text is its
+columns and values on every backend, `Row(a: 1, b: "x", c: null)`;
+`value` gives each column's value.
 
 ### 10.1 Opening
 

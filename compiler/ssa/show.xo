@@ -342,10 +342,11 @@ fn (var b: Builder) debug_body(ct: Int, t: Int) {
   }
   if b.tkind(t) == Kind.Struct && tk == "struct" {
     if b.c.objs[obj].opaque {
+      // its own Debug text (a native implementation's, as `Row(a: 1)`),
+      // else its name
       let dm = b.method_of(ct, "debug")
-      if dm >= 0 && b.obj_mod(dm) >= 0 && b.c.mods[b.obj_mod(dm)].native {
-        b.unsupported("a native implementation's Debug text")
-        b.retv(acc)
+      if dm >= 0 {
+        b.retv(b.call("str.concat", b.str_t(), "", [acc, b.call_method(dm, ct, v)]))
         return
       }
       b.retv(b.lit(acc, "<${lower_name(oname)}>"))
