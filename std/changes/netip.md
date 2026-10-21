@@ -1,5 +1,19 @@
 # std/netip changes
 
+## 2026-10-21: perf: addresses written without per digit strings
+
+- Kind: perf
+- Commit: (filled in after the push)
+- Found by: XO_PROF=cpu of a parse and display loop (string slices and concatenations per hex digit)
+- Go reference: net/netip (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/netip (go, arm64, LLVM)
+
+An IPv6 address is written into one byte builder (no substring or
+concatenation per hex digit), its parse keeps one zeroed word array and reads
+each digit once. 200,000 loops of two parses, is_private and two displays,
+median of 5: native 126 ms to 72 ms (Go's package 37 ms, which includes its
+Sprintf of the inputs). Results are the same.
+
 ## 2026-10-20: port: std/netip, Go's net/netip addresses and prefixes
 
 - Kind: port

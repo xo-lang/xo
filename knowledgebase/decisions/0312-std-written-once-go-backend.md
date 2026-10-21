@@ -142,6 +142,15 @@ not affected.
       (native arm64 180 ms); 11 times Go's package.
       After the decode table and fast path (std/changes/base64.md): native
       33 ms (Go's package 51 ms), Go backend 172 ms (3.4 times).
+    - base32 after the same fix (std/changes/base32.md): native 74 ms
+      (Go's package 61 ms), Go backend 227 ms (3.7 times).
+    - **Owner decision (2026-10-21):** the 3.4 and 3.7 times are accepted
+      (option a): base32 and base64 stay compiled from Xo on the Go
+      backend, and the escape hatch (a std/rt file and no entry in
+      go_compiled.txt) stays unused. The first measurement, 11 times for
+      base64, was the native code's per-quantum lists, not gen's code; a
+      module is profiled natively (XO_PROF=cpu) before it moves, and its
+      Go-backend ratio goes in the move's commit message.
 
 - One implementation per pure module. A fix lands once and reaches every
   backend.

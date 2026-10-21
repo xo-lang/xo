@@ -3,6 +3,7 @@
 // ParsePrefix, Prefix.Contains and Masked, the Is predicates), ported
 // with the same results and error texts.
 use std/netip
+use native/llrt/raw
 
 fn parseerr_display(e: netip.ParseErr) -> Str { e.msg }
 
@@ -105,10 +106,7 @@ fn parse_ipv6(input: Str) -> netip.Addr ! netip.ParseErr {
     }
     None => ()
   }
-  var ip: List[Int] = []
-  for _ in 0..16 {
-    ip.push(0)
-  }
+  var ip = raw.zero_ints(16)
   var ellipsis = -1
   var b = s.bytes()
   if b.len() >= 2 && b[0] == 58 && b[1] == 58 {
@@ -122,8 +120,12 @@ fn parse_ipv6(input: Str) -> netip.Addr ! netip.ParseErr {
   while i < 16 {
     var off = 0
     var acc = 0
-    while off < b.len() && hexval(b[off]) >= 0 {
-      acc = acc * 16 + hexval(b[off])
+    while off < b.len() {
+      let hv = hexval(b[off])
+      if hv < 0 {
+        break
+      }
+      acc = acc * 16 + hv
       if off > 3 {
         return Err(addr_err(input, "each group must have 4 or less digits", b.to_str() ?? ""))
       }
@@ -326,19 +328,22 @@ fn string4(ip: Bytes) -> Str { "${ip[12]}.${ip[13]}.${ip[14]}.${ip[15]}" }
 
 fn group(ip: Bytes, i: Int) -> Int { Int(ip[2 * i]) * 256 + Int(ip[2 * i + 1]) }
 
-fn hex16(v: Int) -> Str {
-  let h = "0123456789abcdef"
-  var out = ""
+const HEXD: Bytes = b"0123456789abcdef"
+
+/// v (a group of 16 bits) in lower case hex without leading zeros.
+fn write_hex16(var out: BytesBuilder, v: Int) {
   var started = false
-  for sh in [12, 8, 4, 0] {
+  var sh = 12
+  while sh >= 0 {
     let d = (v >> sh) & 15
     if d != 0 || started || sh == 0 {
-      out = out + h[d..d + 1]
+      out.write_byte(HEXD[d])
       started = true
     }
+    sh -= 4
   }
-  out
 }
+
 
 fn string6(a: netip.Addr) -> Str {
   var zs = 255
@@ -356,26 +361,27 @@ fn string6(a: netip.Addr) -> Str {
     }
     i += 1
   }
-  var out = StrBuilder.new()
+  var out = BytesBuilder.with_capacity(40)
   i = 0
   while i < 8 {
     if i == zs {
-      out.write("::")
+      out.write_byte(58)
+      out.write_byte(58)
       i = ze
       if i >= 8 {
         break
       }
     } else if i > 0 {
-      out.write(":")
+      out.write_byte(58)
     }
-    out.write(hex16(group(a.ip, i)))
+    write_hex16(out, group(a.ip, i))
     i += 1
   }
   if !a.zone.is_empty() {
-    out.write("%")
-    out.write(a.zone)
+    out.write_byte(37)
+    out.write_str(a.zone)
   }
-  out.freeze()
+  out.freeze().to_str() ?? ""
 }
 
 fn addr_display(a: netip.Addr) -> Str {
