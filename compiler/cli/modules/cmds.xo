@@ -29,26 +29,33 @@ fn is_remote(path: Str) -> Bool {
 /// mod.Imports: the import paths of the main module in main_dir that name
 /// other modules, sorted (nested modules, vendor/, testdata/, and dot
 /// directories skipped).
-fn (c: ModCtx) imports(main_dir: Str, main_path: Str) -> List[Str] uses fs.read {
+/// A directory or file that cannot be read is an error: tidy would drop
+/// the requirements its imports need (XO1318).
+fn (c: ModCtx) imports(main_dir: Str, main_path: Str) -> List[Str] ! Str uses fs.read {
   var set: Map[Str, Bool] = {}
-  c.imports_walk(main_dir, main_path, set)
-  set.keys().sort()
+  c.imports_walk(main_dir, main_path, set)?
+  Ok(set.keys().sort())
 }
 
-fn (c: ModCtx) imports_walk(d: Str, main_path: Str, var set: Map[Str, Bool]) uses fs.read {
-  for e in c.os.fs.read_dir(d).ok() ?? [] {
+fn (c: ModCtx) imports_walk(d: Str, main_path: Str, var set: Map[Str, Bool]) -> () ! Str uses fs.read {
+  let entries = match c.os.fs.read_dir(d) {
+    Ok(es) => es
+    Err(NotFound(_)) => []
+    Err(e) => return Err("read ${d}: ${fs_msg(e)}")
+  }
+  for e in entries {
     let p = "${d}/${e.name}"
     if e.is_dir {
       if e.name == "vendor" || e.name == "testdata" || e.name.starts_with(".") || e.name.starts_with("_") || c.exists("${p}/xo.mod") {
         continue
       }
-      c.imports_walk(p, main_path, set)
+      c.imports_walk(p, main_path, set)?
       continue
     }
     if !e.name.ends_with(".xo") {
       continue
     }
-    let src = c.os.fs.read(p).ok() ?? b""
+    let src = c.os.fs.read(p).map_err(fn(e) { fs_msg(e) })?
     let r = parser.parse_file(p.bytes(), src, false)
     for u in r.file.imports {
       let path = check.text(u.path)
@@ -58,6 +65,7 @@ fn (c: ModCtx) imports_walk(d: Str, main_path: Str, var set: Map[Str, Bool]) use
       set[path] = true
     }
   }
+  Ok(())
 }
 
 /// mod.Owner: the module of mods holding the package path (the longest
@@ -238,7 +246,10 @@ fn (var c: ModCtx) tidy(main_dir: Str) -> (List[Change], List[check.Problem]) us
     Some(m) => m
     None => return ([], probs)
   }
-  let imports = c.imports(main_dir, main.path)
+  let imports = match c.imports(main_dir, main.path) {
+    Ok(x) => x
+    Err(e) => return ([], [check.Problem{code: "XO1318", file: main.file, msg: "the module's imports cannot be read: ${e}", notes: ["tidy stops rather than drop the requirements of what it could not read; run it again"]}])
+  }
   var changes: List[Change] = []
   var extra: List[check.Require] = []
   let b = c.load(main_dir, Options{no_workspace: true, no_vendor: true, update: true})
@@ -282,7 +293,12 @@ fn (var c: ModCtx) tidy(main_dir: Str) -> (List[Change], List[check.Problem]) us
   if !unused.is_empty() {
     // resolve without them: drop one unless the rest selects a lower
     // version of it (then it is kept, raising that version)
-    let data = (c.os.fs.read(main.file).ok() ?? b"").to_str() ?? ""
+    // never ""-for-unreadable: the trial file and its restore below would
+    // write the module's xo.mod empty
+    let data = match c.os.fs.read(main.file) {
+      Ok(d) => d.to_str() ?? ""
+      Err(e) => return ([], [check.Problem{code: "XO1301", file: main.file, msg: fs_msg(e)}])
+    }
     var trial = data
     for r in unused {
       trial = set_require(trial, r.path, "")

@@ -98,3 +98,33 @@ func TestEffectLock(t *testing.T) {
 		t.Errorf("malformed effects line: %s", got)
 	}
 }
+
+// TestTidyUnreadableTree: `xo mod tidy` whose scan of the module's
+// imports cannot read a directory stops with XO1318 and leaves xo.mod as
+// it was, rather than drop the requirements of the imports it did not
+// see (a listing that failed was an empty directory before 2026-10-21).
+func TestTidyUnreadableTree(t *testing.T) {
+	t.Parallel()
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a mode 000 directory")
+	}
+	app := t.TempDir()
+	mod := "module example.com/app\nedition preview\n\nrequire github.com/acme/tick v1.0.0\n"
+	modtest.WriteFiles(t, app, map[string]string{
+		"xo.mod":       mod,
+		"main/main.xo": "fn main(os: Os) {}\n",
+		"lib/lib.xo":   "use github.com/acme/tick\n\npub fn f() -> Int { tick.pure() }\n",
+	})
+	lib := filepath.Join(app, "lib")
+	if err := os.Chmod(lib, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(lib, 0o755) })
+	r := xo(t, "mod", "tidy", "--json", "--dir", app).want(1)
+	if got := diagCodes(t, r.out); got != "XO1318" {
+		t.Errorf("tidy over an unreadable directory: %s\n%s", got, r.out)
+	}
+	if data, _ := os.ReadFile(filepath.Join(app, "xo.mod")); string(data) != mod {
+		t.Errorf("xo.mod changed:\n%s", data)
+	}
+}
