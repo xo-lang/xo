@@ -2,50 +2,77 @@
 // encoding/binary byte orders (ByteOrder's Put and Uint methods) and
 // varints (varint.go of go1.26: AppendUvarint, AppendVarint, Uvarint,
 // Varint), ported.
+use native/llrt/raw
+use native/rt
 
-fn put(n: Int, size: Int, big: Bool) -> Bytes {
-  var out = BytesBuilder.with_capacity(size)
-  for k in 0..size {
-    let shift = if big { 8 * (size - 1 - k) } else { 8 * k }
-    out.write_byte(UInt8(n.shr_logical(shift) & 255))
-  }
-  out.freeze()
-}
+// The fixed size forms store and load the word in place (little endian
+// machines and wasm: raw memory is little endian), one allocation of the
+// right size and no per byte checks; a big endian value is byte swapped
+// first.
 
-fn get(b: Bytes, at: Int, size: Int, big: Bool) -> Int {
+fn check_at(b: Bytes, at: Int, size: Int) {
   if at < 0 || at + size > b.len() {
     fault("binary: ${size} bytes at ${at} out of range for Bytes of length ${b.len()}")
   }
-  var v = 0
-  for k in 0..size {
-    let i = if big { at + k } else { at + size - 1 - k }
-    v = v.wrapping_shl(8) | Int(b[i])
-  }
-  v
 }
+
+fn swap16(n: Int) -> Int { ((n & 255) << 8) | ((n >> 8) & 255) }
+
+fn swap32(n: Int) -> Int { (swap16(n) << 16) | swap16(n >> 16) }
+
+fn swap64(n: Int) -> Int { swap32(n).wrapping_shl(32) | swap32(n.shr_logical(32)) }
+
+fn u16_le(n: Int) -> Bytes {
+  let b = raw.bytes_buf(2)
+  rt.mem_store(raw.bytes_addr(b), 0, n, 2)
+  b
+}
+
+fn u32_le(n: Int) -> Bytes {
+  let b = raw.bytes_buf(4)
+  rt.mem_store(raw.bytes_addr(b), 0, n, 4)
+  b
+}
+
+fn u64_le(n: Int) -> Bytes {
+  let b = raw.bytes_buf(8)
+  rt.mem_store(raw.bytes_addr(b), 0, n, 8)
+  b
+}
+
+fn u16_be(n: Int) -> Bytes { u16_le(swap16(n)) }
+fn u32_be(n: Int) -> Bytes { u32_le(swap32(n)) }
+fn u64_be(n: Int) -> Bytes { u64_le(swap64(n)) }
+
+fn get_u16_le(b: Bytes, at: Int) -> Int {
+  check_at(b, at, 2)
+  rt.mem_load(raw.bytes_addr(b), at, 2)
+}
+
+fn get_u32_le(b: Bytes, at: Int) -> Int {
+  check_at(b, at, 4)
+  rt.mem_load(raw.bytes_addr(b), at, 4)
+}
+
+fn get_u64_le(b: Bytes, at: Int) -> Int {
+  check_at(b, at, 8)
+  rt.mem_load(raw.bytes_addr(b), at, 8)
+}
+
+fn get_u16_be(b: Bytes, at: Int) -> Int { swap16(get_u16_le(b, at)) }
+fn get_u32_be(b: Bytes, at: Int) -> Int { swap32(get_u32_le(b, at)) }
+fn get_u64_be(b: Bytes, at: Int) -> Int { swap64(get_u64_le(b, at)) }
 
 fn signed(v: Int, bits: Int) -> Int {
   let top = 1 << (bits - 1)
   if v >= top { v - (top << 1) } else { v }
 }
 
-fn u16_be(n: Int) -> Bytes { put(n, 2, true) }
-fn u32_be(n: Int) -> Bytes { put(n, 4, true) }
-fn u64_be(n: Int) -> Bytes { put(n, 8, true) }
-fn u16_le(n: Int) -> Bytes { put(n, 2, false) }
-fn u32_le(n: Int) -> Bytes { put(n, 4, false) }
-fn u64_le(n: Int) -> Bytes { put(n, 8, false) }
 
-fn get_u16_be(b: Bytes, at: Int) -> Int { get(b, at, 2, true) }
-fn get_u32_be(b: Bytes, at: Int) -> Int { get(b, at, 4, true) }
-fn get_u64_be(b: Bytes, at: Int) -> Int { get(b, at, 8, true) }
-fn get_u16_le(b: Bytes, at: Int) -> Int { get(b, at, 2, false) }
-fn get_u32_le(b: Bytes, at: Int) -> Int { get(b, at, 4, false) }
-fn get_u64_le(b: Bytes, at: Int) -> Int { get(b, at, 8, false) }
-fn get_i16_be(b: Bytes, at: Int) -> Int { signed(get(b, at, 2, true), 16) }
-fn get_i32_be(b: Bytes, at: Int) -> Int { signed(get(b, at, 4, true), 32) }
-fn get_i16_le(b: Bytes, at: Int) -> Int { signed(get(b, at, 2, false), 16) }
-fn get_i32_le(b: Bytes, at: Int) -> Int { signed(get(b, at, 4, false), 32) }
+fn get_i16_be(b: Bytes, at: Int) -> Int { signed(get_u16_be(b, at), 16) }
+fn get_i32_be(b: Bytes, at: Int) -> Int { signed(get_u32_be(b, at), 32) }
+fn get_i16_le(b: Bytes, at: Int) -> Int { signed(get_u16_le(b, at), 16) }
+fn get_i32_le(b: Bytes, at: Int) -> Int { signed(get_u32_le(b, at), 32) }
 
 fn uvarint(n: Int) -> Bytes {
   var out = BytesBuilder.with_capacity(10)
