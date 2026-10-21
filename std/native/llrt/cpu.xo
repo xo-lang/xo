@@ -119,6 +119,27 @@ pub fn adc_carry_soft(x: Int, y: Int, cin: Int) -> Int {
   ((x & y) | ((x | y) & ~s)).shr_logical(63)
 }
 
+/// The high word of the 128 bit product of x and y as signed words
+/// (bits.Mul64 corrected for the signs; Go's math/bits has no signed
+/// form): one smulh on arm64, the high half of a one operand imulq on
+/// x86-64, a sign extended i128 multiply on LLVM (2026-10-21, for
+/// ints.fits, checked_mul's overflow test; the owner's approval). An
+/// older xo and wasm run the body.
+pub fn mul_hi_signed(x: Int, y: Int) -> Int { mul_hi_signed_soft(x, y) }
+
+/// mul_hi_signed's body: the unsigned high word, less y when x is
+/// negative and x when y is.
+pub fn mul_hi_signed_soft(x: Int, y: Int) -> Int {
+  var hi = x.mul_hi_unsigned(y)
+  if x < 0 {
+    hi = hi.wrapping_sub(y)
+  }
+  if y < 0 {
+    hi = hi.wrapping_sub(x)
+  }
+  hi
+}
+
 // ---------------------------------------------------------------------------
 // Carry-less multiply (PMULL on arm64, PCLMULQDQ on x86-64)
 
@@ -367,7 +388,7 @@ fn block(b: Bytes) -> List[Int] { [rt.bytes_word(b, 0), rt.bytes_word(b, 8)] }
 /// byte state a, round key b), aes_last (state a, round keys b and c),
 /// sha256_block (the state a as 8 four byte little endian words, the 64
 /// byte block b, the round constants c as sha256_block takes them; the
-/// new state as a was);
+/// new state as a was), mul_hi_signed (the words a and b; the high word);
 /// with `_soft` after the name, the body, on every backend (without it,
 /// the instructions on arm64 and LLVM, on a CPU that has them). None if
 /// unknown.
@@ -400,6 +421,13 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
         o = rt.rs_push_byte(o, k)
       }
       Some(o.bytes())
+    }
+    "mul_hi_signed" => {
+      // the signed high word of a times b (8 byte little endian words)
+      let x = rt.bytes_word(a, 0)
+      let y = rt.bytes_word(b, 0)
+      let h = if soft { mul_hi_signed_soft(x, y) } else { mul_hi_signed(x, y) }
+      Some(rt.rs_push_word(rt.rs_with_cap(8), h, 8).bytes())
     }
     "clmul" => {
       let x = rt.bytes_word(a, 0)

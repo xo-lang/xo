@@ -97,6 +97,17 @@ and the software GHASH multiply. The owner approved three intrinsics
   backends and its name in cpu_call; until then it runs its body.
 - UNTESTED: Linux (AT_HWCAP, the `.arch_extension` header, GNU as),
   x86-64 (CPUID, PCLMULQDQ, AESENC), and Windows.
+- cpu.mul_hi_signed (2026-10-21, Xo lang 4; the owner approved a
+  signed multiply high for checked_mul): the signed high word of a
+  product, smulh on arm64, the one operand imulq's rdx on x86_64 (the
+  retarget of smulh), a sign extended i128 multiply on LLVM, its body
+  (umulh less the operands' sign corrections) on wasm and an older xo.
+  ints.fits (checked_mul, saturating_mul, the `*` of checked_ and
+  saturating_ methods) uses it at once: a function of cpu.xo with a
+  body needs no seed bump, where a bodiless rt.* intrinsic would have
+  (the seed's build of xo would not link). Golden int_checked_mul
+  (checked_mul and saturating_mul over Int's edges, the Go backend's
+  output) and cpu_prims' mulhs lines (instruction against body).
 - The fixed point holds: s1 (seed built) runs the bodies, s2 and s3 the
   instructions, and both s2 and s3 compile cpu.xo the same way.
 

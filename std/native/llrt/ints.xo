@@ -10,6 +10,7 @@
 // lower a sized integer operation inline: the word operation, the range
 // check, and on failure a call of op_fault or conv_fault here, which
 // never return. Decision 0198 deleted the C path (`XO_LLRT_C=ints`).
+use native/llrt/cpu
 use native/llrt/num
 use native/llrt/show
 use native/rt
@@ -160,15 +161,8 @@ pub fn fits(op: Int, a: Int, b: Int) -> Bool {
   }
   if op == 2 {
     // the signed high word of the product is the sign of the low one
-    let lo = a.wrapping_mul(b)
-    var hi = a.mul_hi_unsigned(b)
-    if a < 0 {
-      hi = hi.wrapping_sub(b)
-    }
-    if b < 0 {
-      hi = hi.wrapping_sub(a)
-    }
-    return hi == lo >> 63
+    // (one smulh natively)
+    return cpu.mul_hi_signed(a, b) == a.wrapping_mul(b) >> 63
   }
   b != 0 && !(b == -1 && a == MIN_INT)
 }

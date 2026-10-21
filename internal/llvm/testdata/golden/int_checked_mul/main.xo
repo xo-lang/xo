@@ -1,0 +1,24 @@
+// checked_mul and saturating_mul on the edges of Int (std/native/llrt
+// ints.fits: the signed high word of the product, cpu.mul_hi_signed, one
+// smulh natively since 2026-10-21) against the Go backend's math.
+
+fn main(os: Os) {
+  let max = 9223372036854775807
+  let min = -9223372036854775808
+  let vals = [0, 1, -1, 2, -2, 3, 7, -7, 3037000499, 3037000500, -3037000500, 4294967296, -4294967296, 4611686018427387904, -4611686018427387904, max, min, max - 1, min + 1, max / 2, min / 2]
+  var none = 0
+  for a in vals {
+    for b in vals {
+      let c = a.checked_mul(b)
+      let s = a.saturating_mul(b)
+      match c {
+        Some(p) => os.stdio.println("${a} * ${b} = ${p} sat ${s}")
+        None => {
+          none += 1
+          os.stdio.println("${a} * ${b} overflows sat ${s}")
+        }
+      }
+    }
+  }
+  os.stdio.println("overflows ${none}")
+}

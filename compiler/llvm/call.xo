@@ -671,6 +671,13 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       let p = g.def("mul i128 ${a}, ${b}")
       g.set(v, "trunc i128 ${g.def("lshr i128 ${p}, 64")} to i64")
     }
+    // cpu.mul_hi_signed (2026-10-21): a sign extended i128 multiply
+    "rt.i64_mul_hi" => {
+      let a = g.def("sext i64 ${g.op(x.args[0])} to i128")
+      let b = g.def("sext i64 ${g.op(x.args[1])} to i128")
+      let p = g.def("mul i128 ${a}, ${b}")
+      g.set(v, "trunc i128 ${g.def("ashr i128 ${p}, 64")} to i64")
+    }
     // decision 0231: the carry out of a + b and the borrow out of a - b
     // (std/native/llrt/cpu.xo), which arm64 selects as adds/adcs chains
     "rt.u64_carry" | "rt.u64_borrow" => {

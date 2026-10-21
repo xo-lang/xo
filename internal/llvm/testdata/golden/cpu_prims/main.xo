@@ -42,6 +42,17 @@ fn main(os: Os) {
       os.stdio.println("adc ${x} ${y} ${r.to_hex()} ${rs.to_hex()}")
     }
   }
+  // the signed high word of a product (cpu.mul_hi_signed, 2026-10-21:
+  // smulh, imulq's high half, an i128 multiply) on the edge words
+  for x in edges {
+    for y in edges {
+      let a = Bytes.from_hex(x) ?? b""
+      let b = Bytes.from_hex(y) ?? b""
+      let h = internal.crypto_op("cpu.mul_hi_signed", a, b, b"", b"")
+      let hs = internal.crypto_op("cpu.mul_hi_signed_soft", a, b, b"", b"")
+      os.stdio.println("mulhs ${x} ${y} ${h.to_hex()} ${hs.to_hex()}")
+    }
+  }
   for (i, a) in inputs.indexed() {
     let b = inputs[(i + 7) % inputs.len()]
     os.stdio.println("adc ${i} ${internal.crypto_op("cpu.adc", a, b, b"", b"").to_hex()} ${internal.crypto_op("cpu.adc_soft", a, b, b"", b"").to_hex()}")

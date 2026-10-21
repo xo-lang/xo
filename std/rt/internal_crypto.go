@@ -749,6 +749,20 @@ func cryptoCPU(what string, a, b, c Bytes) (Bytes, bool) {
 			out = append(out, byte(k))
 		}
 		return Bytes(out), true
+	case "mul_hi_signed":
+		// the signed high word of a times b
+		x := binary.LittleEndian.Uint64([]byte(a))
+		y := binary.LittleEndian.Uint64([]byte(b))
+		hi, _ := bits.Mul64(x, y)
+		if int64(x) < 0 {
+			hi -= y
+		}
+		if int64(y) < 0 {
+			hi -= x
+		}
+		out := make([]byte, 8)
+		binary.LittleEndian.PutUint64(out, hi)
+		return Bytes(out), true
 	case "clmul":
 		x := binary.LittleEndian.Uint64([]byte(a))
 		y := binary.LittleEndian.Uint64([]byte(b))

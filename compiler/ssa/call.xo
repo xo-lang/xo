@@ -171,6 +171,7 @@ fn (var b: Builder) cpu_call(x: Expr, ci: check.CallInfo) -> Int? {
     "borrow" => "u64_borrow"
     "adc" => "u64_adc"
     "adc_carry" => "u64_adc_carry"
+    "mul_hi_signed" => "i64_mul_hi"
     "clmul_lo" => "clmul_lo"
     "clmul_hi" => "clmul_hi"
     "aes_round" => "aes_round"
