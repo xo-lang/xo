@@ -865,7 +865,7 @@ test "a function without .size gets its extent: to the next named symbol or the 
   expect(sizes.get("k")) == Some(12)
 }
 
-test "the emitter's assembly prints back from its Ops (XO_OP_SCAN, decision 0274 step 3)" {
+test "the emitter's assembly prints back from its Ops (XO_OP_SCAN, decision 0274 step 3)" uses env, fs.read {
   // XO_OP_SCAN names .s files (newline separated) written by `xo build
   // --asm`; every instruction line must print back as written. Skipped
   // without it (run with `xo test --real` to read them).

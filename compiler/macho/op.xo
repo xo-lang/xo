@@ -19,8 +19,9 @@ pub enum Operand {
   Shift(kind: Int, amt: Int)
   /// a memory operand, a post index's immediate folded in
   MemOp(m: Mem)
-  /// a condition (csel, cset, ccmp and their family)
-  Cond(c: Int)
+  /// a condition (csel, cset, ccmp and their family) and its name as
+  /// written (`cs` and `hs` are one condition, printed back as written)
+  Cond(c: Int, name: Str)
   /// a label or symbol with its relocation operator ("" or PAGE,
   /// PAGEOFF, GOTPAGE, GOTPAGEOFF, TPREL_HI12, TPREL_LO12) and its text
   /// as written (the target's spelling of the operator)
@@ -91,7 +92,7 @@ fn parse_operand(m: Str, t: Bytes) -> Operand {
   if takes_cond(m) {
     let c = cond(t)
     if c >= 0 {
-      return Operand.Cond(c: c)
+      return Operand.Cond(c: c, name: bstr(t))
     }
   }
   if t.len() > 0 && (t[0] == 'L' || t[0] == '_' || t[0] == '.' || t[0] == ':') {
@@ -113,7 +114,6 @@ pub fn print_op(o: Op) -> Str {
   "${o.m} ${parts.join(", ")}"
 }
 
-const COND_NAMES = ["eq", "ne", "hs", "lo", "mi", "pl", "vs", "vc", "hi", "ls", "ge", "lt", "gt", "le", "al", "nv"]
 const SHIFT_NAMES = ["lsl", "lsr", "asr", "ror"]
 
 /// The text of operand x.
@@ -124,7 +124,7 @@ pub fn print_operand(x: Operand) -> Str {
     Imm(v) => "#${v}"
     Shift(kind, amt) => "${SHIFT_NAMES[kind]} #${amt}"
     MemOp(m) => mem_text(m)
-    Cond(c) => COND_NAMES[c]
+    Cond(_, name) => name
     Sym(_, _, text) => bstr(text)
     Raw(b) => bstr(b)
   }
@@ -161,7 +161,7 @@ fn mem_text(m: Mem) -> Str {
         "[${b}, ${r}, lsl #${m.sh}]"
       }
     }
-    _ => if m.off == 0 { "[${b}]" } else { "[${b}, #${m.off}]" }
+    _ => if m.off == 0 && !m.explicit { "[${b}]" } else { "[${b}, #${m.off}]" }
   }
 }
 
@@ -545,7 +545,7 @@ fn mov_imm_word(d: Int, sf: Int, v0: Int) -> Int {
 /// The condition operand x, or -1.
 fn cond_of(x: Operand) -> Int {
   match x {
-    Cond(c) => c
+    Cond(c, _) => c
     Reg(..) | VReg(..) | Imm(..) | Shift(..) | MemOp(..) | Sym(..) | Raw(..) => -1
   }
 }

@@ -363,6 +363,9 @@ struct Mem {
   /// the shift of a register offset, -1 for none
   sh: Int = -1
   ok: Bool
+  /// an offset written out, `[x0, #0]` (the Op prints it back as written,
+  /// decision 0274 step 3)
+  explicit: Bool = false
 }
 
 fn mem_op(ops: List[Bytes], at: Int) -> Mem {
@@ -406,7 +409,7 @@ fn mem_op(ops: List[Bytes], at: Int) -> Mem {
       if parts.len() != 2 {
         return bad
       }
-      return Mem{base: base, mode: if pre { 1 } else { 0 }, off: v, ok: true}
+      return Mem{base: base, mode: if pre { 1 } else { 0 }, off: v, ok: true, explicit: true}
     }
     None => {}
   }
