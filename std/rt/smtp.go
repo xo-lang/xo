@@ -95,37 +95,58 @@ func (c *smtpClient) line() (string, *smtpErr) {
 	}
 }
 
-// reply reads a reply (textproto.Reader.ReadResponse): an error unless
-// its code starts with the digits of expect (0: any).
+// smtpParseCodeLine is textproto's parseCodeLine: the code, whether it
+// goes on, the text, or a protocol error.
+func smtpParseCodeLine(l string) (int, bool, string, string) {
+	if len(l) < 4 || (l[3] != ' ' && l[3] != '-') {
+		return 0, false, "", "short response: " + l
+	}
+	n, e := strconv.Atoi(l[:3])
+	if e != nil || n < 100 {
+		return 0, false, "", "invalid response code: " + l
+	}
+	return n, l[3] == '-', l[4:], ""
+}
+
+func smtpCodeOK(code, expect int) bool {
+	switch {
+	case 1 <= expect && expect < 10:
+		return code/100 == expect
+	case 10 <= expect && expect < 100:
+		return code/10 == expect
+	case 100 <= expect && expect < 1000:
+		return code == expect
+	}
+	return true
+}
+
+// reply reads a reply (textproto.Reader.ReadResponse): a continuation
+// line with another code, or not a code line, is kept whole and reading
+// goes on; an error unless the code meets expect.
 func (c *smtpClient) reply(expect int) (int, string, *smtpErr) {
-	code, msg, first := 0, "", true
-	for {
+	first, err := c.line()
+	if err != nil {
+		return 0, "", err
+	}
+	code, continued, msg, perr := smtpParseCodeLine(first)
+	if perr != "" {
+		return 0, "", &smtpErr{msg: perr}
+	}
+	for continued {
 		l, err := c.line()
 		if err != nil {
 			return 0, "", err
 		}
-		if len(l) < 4 || (l[3] != ' ' && l[3] != '-') {
-			return 0, "", &smtpErr{msg: "short response: " + l}
+		code2, cont2, more, perr2 := smtpParseCodeLine(l)
+		if perr2 != "" || code2 != code {
+			msg += "\n" + l
+			continued = true
+			continue
 		}
-		n, e := strconv.Atoi(l[:3])
-		if e != nil || n < 100 || n > 999 {
-			return 0, "", &smtpErr{msg: "invalid response code: " + l}
-		}
-		if !first && n != code {
-			return 0, "", &smtpErr{msg: "status code mismatch: " + l}
-		}
-		code = n
-		if first {
-			msg = l[4:]
-		} else {
-			msg += "\n" + l[4:]
-		}
-		first = false
-		if l[3] == ' ' {
-			break
-		}
+		msg += "\n" + more
+		continued = cont2
 	}
-	if expect > 0 && !strings.HasPrefix(strconv.Itoa(code), strconv.Itoa(expect)) {
+	if !smtpCodeOK(code, expect) {
 		return code, msg, &smtpErr{code: int64(code), msg: msg}
 	}
 	return code, msg, nil
@@ -143,14 +164,12 @@ func (c *smtpClient) ehlo(name string) *smtpErr {
 	if err != nil {
 		return err
 	}
+	// the names as the server writes them (Go's ext map)
 	ext := map[string]string{}
 	lines := strings.Split(msg, "\n")
 	for _, l := range lines[1:] {
-		if k, v, ok := strings.Cut(l, " "); ok {
-			ext[strings.ToUpper(k)] = v
-		} else {
-			ext[strings.ToUpper(l)] = ""
-		}
+		k, v, _ := strings.Cut(l, " ")
+		ext[k] = v
 	}
 	c.ext = ext
 	return nil
@@ -158,7 +177,8 @@ func (c *smtpClient) ehlo(name string) *smtpErr {
 
 func (c *smtpClient) hello(name string) *smtpErr {
 	if err := c.ehlo(name); err != nil {
-		c.ext = map[string]string{}
+		// no extensions after HELO (Go's c.ext stays nil)
+		c.ext = nil
 		_, _, err := c.cmd(250, "HELO "+name)
 		return err
 	}
@@ -188,40 +208,57 @@ func smtpHostOf(addr string) string {
 	return strings.TrimSuffix(strings.TrimPrefix(h, "["), "]")
 }
 
+// abortAuth is Client.Auth's abort: "*", then QUIT, replies ignored.
+func (c *smtpClient) abortAuth() {
+	c.cmd(501, "*")
+	c.cmd(221, "QUIT")
+}
+
+// auth is Client.Auth with PlainAuth and CRAMMD5Auth: while the server
+// answers 334, the answer to its challenge; 235 ends it; another reply, a
+// challenge that is not base64, or one PLAIN does not expect cancels the
+// exchange.
 func (c *smtpClient) auth(a Smtp_Auth) *smtpErr {
-	if _, ok := c.ext["AUTH"]; !ok {
-		return &smtpErr{msg: "smtp: server doesn't support AUTH"}
-	}
+	var line string
 	switch a.Tag {
 	case 2:
 		p := a.P.(Smtp_Auth_Plain)
 		if !c.isTLS && !smtpLoopback(c.host) {
+			c.cmd(221, "QUIT")
 			return &smtpErr{msg: "unencrypted connection"}
 		}
 		resp := "\x00" + p.F_user + "\x00" + p.F_password.v
-		_, _, err := c.cmd(235, "AUTH PLAIN "+base64.StdEncoding.EncodeToString([]byte(resp)))
-		return err
+		line = "AUTH PLAIN " + base64.StdEncoding.EncodeToString([]byte(resp))
 	case 3:
-		p := a.P.(Smtp_Auth_CramMd5)
-		code, msg, err := c.cmd(0, "AUTH CRAM-MD5")
-		if err != nil {
-			return err
+		line = "AUTH CRAM-MD5"
+	default:
+		return nil
+	}
+	code, msg, err := c.cmd(0, line)
+	for err == nil {
+		if code == 235 {
+			return nil
 		}
 		if code != 334 {
+			c.abortAuth()
 			return &smtpErr{code: int64(code), msg: msg}
 		}
 		challenge, e := base64.StdEncoding.DecodeString(msg)
 		if e != nil {
-			c.cmd(0, "*")
+			c.abortAuth()
 			return &smtpErr{msg: e.Error()}
 		}
+		if a.Tag != 3 {
+			c.abortAuth()
+			return &smtpErr{msg: "unexpected server challenge"}
+		}
+		p := a.P.(Smtp_Auth_CramMd5)
 		d := hmac.New(md5.New, []byte(p.F_secret.v))
 		d.Write(challenge)
 		answer := p.F_user + " " + hex.EncodeToString(d.Sum(nil))
-		_, _, err = c.cmd(235, base64.StdEncoding.EncodeToString([]byte(answer)))
-		return err
+		code, msg, err = c.cmd(0, base64.StdEncoding.EncodeToString([]byte(answer)))
 	}
-	return nil
+	return err
 }
 
 // smtpDotStuff is the message as DATA sends it (textproto.DotWriter).
@@ -239,7 +276,9 @@ func smtpDotStuff(msg []byte) []byte {
 		prevCR = x == '\r'
 		atStart = x == '\n'
 	}
-	if !atStart {
+	// dotWriter.Close: a line in progress, or an empty message (its begin
+	// state), ends with CRLF before the dot
+	if !atStart || len(msg) == 0 {
 		b = append(b, '\r', '\n')
 	}
 	return append(b, '.', '\r', '\n')
@@ -309,7 +348,11 @@ func (c *smtpClient) run(from string, to []string, msg Bytes, auth Smtp_Auth, se
 			return err
 		}
 	}
-	if auth.Tag != 1 {
+	// SendMail: AUTH only after EHLO (c.ext != nil)
+	if auth.Tag != 1 && c.ext != nil {
+		if _, ok := c.ext["AUTH"]; !ok {
+			return &smtpErr{msg: "smtp: server doesn't support AUTH"}
+		}
 		if err := c.auth(auth); err != nil {
 			return err
 		}

@@ -48,6 +48,9 @@ struct Client {
   link: Link
   buf: Bytes = b""
   ext: Map[Str, Str] = {}
+  /// whether EHLO succeeded (Go's c.ext != nil): after the HELO fallback
+  /// there are no extensions, so no AUTH and no BODY=8BITMIME
+  has_ext: Bool = false
   is_tls: Bool = false
   host: Str
 }
@@ -73,39 +76,61 @@ fn (var c: Client) line() -> Str ! smtp.SmtpErr uses net.dial {
   Err(fail(0, "EOF"))
 }
 
-/// A reply (textproto.Reader.ReadResponse): its code and its text, the
-/// lines of a multi-line reply joined by "\n"; an error unless the code
-/// starts with the digits of expect (2: any 2xx, 250: exactly 250, 0:
-/// any).
-fn (var c: Client) reply(expect: Int) -> (Int, Str) ! smtp.SmtpErr uses net.dial {
-  var code = 0
-  var msg = ""
-  var first = true
-  while true {
-    let l = c.line()?
-    let b = l.bytes()
-    if b.len() < 4 || !(b[3] == ' ' || b[3] == '-') {
-      return Err(fail(0, "short response: ${l}"))
-    }
-    let n = Int.parse(l[0..3]) ?? -1
-    if n < 100 || n > 999 {
-      return Err(fail(0, "invalid response code: ${l}"))
-    }
-    if !first && n != code {
-      return Err(fail(0, "status code mismatch: ${l}"))
-    }
-    code = n
-    msg = if first { l[4..] } else { "${msg}\n${l[4..]}" }
-    first = false
-    if b[3] == ' ' {
-      break
-    }
+/// parseCodeLine: the code, whether it goes on, the text, and whether
+/// the line is a protocol error ("short response", "invalid response
+/// code").
+fn parse_code_line(l: Str) -> (Int, Bool, Str, Str) {
+  let b = l.bytes()
+  if b.len() < 4 || !(b[3] == ' ' || b[3] == '-') {
+    return (0, false, "", "short response: ${l}")
   }
-  if expect > 0 {
-    let want = "${expect}"
-    if !"${code}".starts_with(want) {
-      return Err(fail(code, msg))
+  let n = Int.parse(l[0..3]) ?? -1
+  if n < 100 {
+    return (0, false, "", "invalid response code: ${l}")
+  }
+  (n, b[3] == '-', l[4..], "")
+}
+
+/// Whether code meets expect (parseCodeLine: 1 to 9 the first digit, 10
+/// to 99 the first two, 100 to 999 all; 0 any).
+fn code_ok(code: Int, expect: Int) -> Bool {
+  if expect >= 1 && expect < 10 {
+    return code / 100 == expect
+  }
+  if expect >= 10 && expect < 100 {
+    return code / 10 == expect
+  }
+  if expect >= 100 && expect < 1000 {
+    return code == expect
+  }
+  true
+}
+
+/// A reply (textproto.Reader.ReadResponse): its code and its text, the
+/// lines of a multi-line reply joined by "\n" (a continuation line with
+/// another code, or not a code line, is kept whole and reading goes on);
+/// an error unless the code meets expect (code_ok).
+fn (var c: Client) reply(expect: Int) -> (Int, Str) ! smtp.SmtpErr uses net.dial {
+  let first = c.line()?
+  let (code, cont0, msg0, perr) = parse_code_line(first)
+  if !perr.is_empty() {
+    return Err(fail(0, perr))
+  }
+  var msg = msg0
+  var continued = cont0
+  while continued {
+    let l = c.line()?
+    let (code2, cont2, more, perr2) = parse_code_line(l)
+    if !perr2.is_empty() || code2 != code {
+      msg = "${msg}\n${l}"
+      continued = true
+      continue
     }
+    msg = "${msg}\n${more}"
+    continued = cont2
+  }
+  if !code_ok(code, expect) {
+    return Err(fail(code, msg))
   }
   Ok((code, msg))
 }
@@ -119,15 +144,18 @@ fn (var c: Client) cmd(expect: Int, line: Str) -> (Int, Str) ! smtp.SmtpErr uses
 /// EHLO, the extensions from its reply (Client.ehlo).
 fn (var c: Client) ehlo(name: Str) -> () ! smtp.SmtpErr uses net.dial {
   let (_, msg) = c.cmd(250, "EHLO ${name}")?
+  // the names as the server writes them (Go's ext map; SendMail looks
+  // up "AUTH" and "8BITMIME" as written)
   var ext: Map[Str, Str] = {}
   let lines = msg.split("\n")
   for l in lines[1..] {
     match l.find(" ") {
-      Some(i) => ext[l[0..i].to_upper()] = l[i + 1..]
-      None => ext[l.to_upper()] = ""
+      Some(i) => ext[l[0..i]] = l[i + 1..]
+      None => ext[l] = ""
     }
   }
   c.ext = ext
+  c.has_ext = true
   Ok(())
 }
 
@@ -137,6 +165,7 @@ fn (var c: Client) hello(name: Str) -> () ! smtp.SmtpErr uses net.dial {
     Ok(_) => Ok(())
     Err(_) => {
       c.ext = {}
+      c.has_ext = false
       let _ = c.cmd(250, "HELO ${name}")?
       Ok(())
     }
@@ -175,41 +204,63 @@ fn host_of(addr: Str) -> Str {
   h.trim_prefix("[").trim_suffix("]")
 }
 
+/// Client.Auth's abort: "*", then QUIT, their replies ignored.
+fn (var c: Client) abort_auth() uses net.dial {
+  let _ = c.cmd(501, "*").ignore_err("the exchange's own error is the one reported")
+  let _ = c.cmd(221, "QUIT").ignore_err("quitting after a failed AUTH")
+}
+
 /// AUTH (Client.Auth with auth.go's PlainAuth and CRAMMD5Auth): the
-/// mechanism's first response, then each 334 challenge's answer; on an
-/// error the exchange is cancelled with "*".
+/// mechanism and its first response, then while the server answers 334,
+/// the answer to its challenge; 235 ends it; another reply, a challenge
+/// that is not base64, or a challenge PLAIN does not expect cancels the
+/// exchange ("*", then QUIT) and is the error.
 fn (var c: Client) auth(a: smtp.Auth) -> () ! smtp.SmtpErr uses net.dial {
-  if !c.ext.contains("AUTH") {
-    return Err(fail(0, "smtp: server doesn't support AUTH"))
-  }
+  var line = ""
   match a {
-    None => Ok(())
+    None => return Ok(())
     Plain(user, password) => {
       if !c.is_tls && !is_loopback_host(c.host) {
+        // PlainAuth.Start's error: Auth quits
+        let _ = c.cmd(221, "QUIT").ignore_err("quitting after a refused AUTH")
         return Err(fail(0, "unencrypted connection"))
       }
       let resp = b"\x00" + user.bytes() + b"\x00" + password.reveal().bytes()
-      let _ = c.cmd(235, "AUTH PLAIN ${base64.encode(resp)}")?
-      Ok(())
+      line = "AUTH PLAIN ${base64.encode(resp)}"
     }
-    CramMd5(user, secret) => {
-      let (code, msg) = c.cmd(0, "AUTH CRAM-MD5")?
-      if code != 334 {
-        return Err(fail(code, msg))
-      }
-      let challenge = match base64.decode(msg) {
-        Ok(b) => b
-        Err(e) => {
-          let _ = c.cmd(0, "*").ignore_err("cancelling the exchange; the decode error is the one reported")
-          return Err(fail(0, "${e}"))
-        }
-      }
-      let d = crypto.hmac(crypto.Hash.Md5, secret.reveal().bytes(), challenge)
-      let answer = "${user} ${d.to_hex()}"
-      let _ = c.cmd(235, base64.encode(answer.bytes()))?
-      Ok(())
-    }
+    CramMd5(_, _) => line = "AUTH CRAM-MD5"
   }
+  let r0 = c.cmd(0, line)?
+  var code = r0.0
+  var msg = r0.1
+  while true {
+    if code == 235 {
+      // Next(msg, false): both mechanisms are done
+      return Ok(())
+    }
+    if code != 334 {
+      c.abort_auth()
+      return Err(fail(code, msg))
+    }
+    let challenge = match base64.decode(msg) {
+      Ok(x) => x
+      Err(e) => {
+        c.abort_auth()
+        return Err(fail(0, "${e}"))
+      }
+    }
+    let answer = match a {
+      CramMd5(user, secret) => "${user} ${crypto.hmac(crypto.Hash.Md5, secret.reveal().bytes(), challenge).to_hex()}"
+      _ => {
+        c.abort_auth()
+        return Err(fail(0, "unexpected server challenge"))
+      }
+    }
+    let r = c.cmd(0, base64.encode(answer.bytes()))?
+    code = r.0
+    msg = r.1
+  }
+  Ok(())
 }
 
 /// The message as DATA sends it (textproto.DotWriter): CRLF line
@@ -229,7 +280,9 @@ fn dot_stuff(msg: Bytes) -> Bytes {
     prev_cr = x == '\r'
     at_start = x == '\n'
   }
-  if !at_start {
+  // dotWriter.Close: a line in progress, or an empty message (its begin
+  // state), ends with CRLF before the dot
+  if !at_start || msg.is_empty() {
     b.write(b"\r\n")
   }
   b.write(b".\r\n")
@@ -274,14 +327,18 @@ fn run(var c: Client, from: Str, to: List[Str], msg: Bytes, auth: smtp.Auth, sec
     c.buf = b""
     c.ehlo(hello)?
   }
-  if !(auth is None) {
+  // SendMail: AUTH only after EHLO (c.ext != nil)
+  if !(auth is None) && c.has_ext {
+    if !c.ext.contains("AUTH") {
+      return Err(fail(0, "smtp: server doesn't support AUTH"))
+    }
     c.auth(auth)?
   }
   var mail = "MAIL FROM:<${from}>"
-  if c.ext.contains("8BITMIME") {
+  if c.has_ext && c.ext.contains("8BITMIME") {
     mail = mail + " BODY=8BITMIME"
   }
-  if c.ext.contains("SMTPUTF8") {
+  if c.has_ext && c.ext.contains("SMTPUTF8") {
     mail = mail + " SMTPUTF8"
   }
   let _ = c.cmd(250, mail)?
