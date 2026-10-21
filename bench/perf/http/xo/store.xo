@@ -1,3 +1,4 @@
+use std/json
 /// A stored user.
 pub struct User {
   pub id: Int
@@ -94,6 +95,29 @@ fn (s: Store) create(input: NewUser) -> User ! ApiErr {
 
 fn (s: Store) get(id: Int) -> User ! ApiErr {
   s.state.with_read(fn(st) { st.users.get(id) }).or_err(ApiErr.NotFound(id: id))
+}
+
+/// All users ordered by id, as the JSON array GET /users answers,
+/// encoded inside the read lock (owner, 2026-10-21; Xo Lang 2's
+/// xo-mutexr): nothing is copied out, and a writer waits for the
+/// encoding. The map keeps insertion order, which is id order: ids only
+/// grow. Until 2026-10-21 GET /users took list() (a sorted copy) and
+/// encoded it after the lock.
+fn (s: Store) list_json() -> Bytes {
+  s.state.with_read(fn(st) {
+    var b = BytesBuilder.with_capacity(64 * st.users.len() + 2)
+    b.write_byte(91)
+    var first = true
+    for (_, u) in st.users {
+      if !first {
+        b.write_byte(44)
+      }
+      first = false
+      b.write(json.encode(u))
+    }
+    b.write_byte(93)
+    b.freeze()
+  })
 }
 
 /// All users ordered by id.

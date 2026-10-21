@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"sort"
 	"sync"
@@ -79,6 +81,42 @@ func (s *Store) Get(id int) (User, error) {
 		return User{}, errNotFound
 	}
 	return cloneUser(u), nil
+}
+
+// ListJSON returns all users ordered by id as the JSON GET /users
+// answers (json.Encoder's: the array and a newline), encoded under the
+// read lock (owner, 2026-10-21): nothing is cloned out, and a writer
+// waits for the encoding. Until 2026-10-21 GET /users took List (sorted
+// clones) and encoded them after the lock.
+func (s *Store) ListJSON() []byte {
+	t0 := statNow()
+	s.mu.RLock()
+	t1 := statNow()
+	defer func() {
+		t2 := statNow()
+		s.mu.RUnlock()
+		statRecord(opList, t0, t1, t2)
+	}()
+	ids := make([]int, 0, len(s.users))
+	for id := range s.users {
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
+	var b bytes.Buffer
+	b.Grow(64*len(ids) + 3)
+	b.WriteByte('[')
+	enc := json.NewEncoder(&b)
+	for i, id := range ids {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		u := s.users[id]
+		_ = enc.Encode(&u)
+		// Encode ends each value with a newline; the array has none inside
+		b.Truncate(b.Len() - 1)
+	}
+	b.WriteString("]\n")
+	return b.Bytes()
 }
 
 // List returns all users ordered by id.

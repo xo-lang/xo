@@ -18,7 +18,14 @@ const maxBodyBytes = 1 << 20
 func NewHandler(s *Store) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /users", func(w http.ResponseWriter, r *http.Request) { handleCreate(s, w, r) })
-	mux.HandleFunc("GET /users", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, http.StatusOK, s.List()) })
+	// encoded under the read lock (Store.ListJSON; before 2026-10-21:
+	// writeJSON(w, http.StatusOK, s.List()), sorted clones encoded after it)
+	mux.HandleFunc("GET /users", func(w http.ResponseWriter, r *http.Request) {
+		b := s.ListJSON()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(b)
+	})
 	mux.HandleFunc("GET /users/{id}", func(w http.ResponseWriter, r *http.Request) { handleGet(s, w, r) })
 	mux.HandleFunc("PATCH /users/{id}", func(w http.ResponseWriter, r *http.Request) { handlePatch(s, w, r) })
 	mux.HandleFunc("DELETE /users/{id}", func(w http.ResponseWriter, r *http.Request) { handleDelete(s, w, r) })

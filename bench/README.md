@@ -116,6 +116,7 @@ Stage 3 runs:
 - [2026-10-11 prebuilt runtime](results/prebuilt-runtime-2026-10-11.md): the first arm64 build with cold caches takes 0.13 s instead of 1.94 s (darwin) and 0.07 s instead of 3.21 s (linux/arm64) with a release's prebuilt C runtime, an HTTPS server 0.28 s instead of 4.27 s (decision 0157); the linux pack cross compiled with zig cc links with gcc 10 on glibc 2.31; packs and release archives reproducible byte for byte.
 - [2026-10-10 HTTP/2](results/http2-2026-10-10.md): HTTP/2 over TLS on every backend (decision 0121), 32 workers as streams of one connection: native 87.8k req/s at 37 us CPU each, Go backend 58.2k at 51 us; over HTTP/1.1 with 32 TLS connections the same session measured 108k native and 133k Go.
 - [2026-10-17 HTTP instructions per request](results/http-callgrind-2026-10-17.md): the quiet measurement's baseline (callgrind in Docker, linux/arm64, main 0e67542f): plain 35.2k (arm64) and 30.9k (LLVM) instructions per request, a connection per request 44.5k and 38.8k, TLS 116.1k and 104.5k, a full handshake 2.64M and 2.32M, HTTP/2 186k and 161k; HTTP/1.1 repeats agree within 0.7%, HTTP/2 within 7%. The gap between the backends by cause, and the TLS connection copy removed: TLS keep-alive -19% (arm64) and -27% (LLVM).
+- [2026-10-21 GET /users under the read lock](results/http-list-under-lock-2026-10-21.md): encoding the list inside the store's read lock instead of copying and sorting first (owner's decision): list-only load at 1024 connections Xo 5.4k to 13.6k req/s (CPU per request -66%), Go 5.3k to 5.0k (within noise, CPU -14%); mixed CRUD unchanged within noise for both.
 
 ## Quiet HTTP measurement: `bench/perf/http/callgrind-docker.sh`
 
@@ -146,6 +147,23 @@ sets the cycles, SCENARIOS narrows the list. Repeats agree within about
 0.5% for HTTP/1.1 and a few percent for HTTP/2 (its framing depends on
 when reads return). Docker Desktop's VM has no hardware counters, so
 `perf stat` (the CI measure suite) does not work there; callgrind does.
+
+## GET /users of the CRUD servers: encoded under the read lock (2026-10-21)
+
+Since 2026-10-21 (owner's decision) both CRUD servers (`bench/perf/http/xo`,
+`bench/perf/http/go`) encode the GET /users answer while they hold the
+store's read lock (`Store.list_json`, `Store.ListJSON`), in id order. Before
+that, GET /users copied the users out under the lock (Xo: `list()`,
+`users.values().sort_by(id)`; Go: `List()`, cloned users sorted with
+`sort.Slice`) and encoded the copy after releasing it. The answer's bytes
+are the same either way (checked old against new on both servers), but the
+work under the lock, and so what a writer waits for, differs: results
+measured before 2026-10-21 (every file under results/ dated earlier, the
+callgrind baselines included) used the copy-then-encode shape.
+`bench/perf/http/listlock-docker.sh <darwin xo> <out> [BASE]` runs both
+shapes of both servers in the linux/arm64 container (list-only load with
+`bench/perf/http/listload`, and loadgen's mixed CRUD load, 1024
+connections).
 
 ## Constant time: `bench/ct/`
 

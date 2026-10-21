@@ -2,7 +2,10 @@
 # Load benchmark of the task 01 users CRUD API (bench/perf/http): the
 # plain Go solution (go/, a copy of bench/go/plain/01-crud-api) against the
 # Xo solution (xo/, a copy of bench/xo/v0.4/01-crud-api whose Store.get and
-# Store.list use Mutex.with_read since 2026-10-08), built with
+# Store.list use Mutex.with_read since 2026-10-08; since 2026-10-21 both
+# servers encode GET /users under the read lock, Store.list_json and
+# Store.ListJSON, where before they copied and sorted first: bench/README.md
+# "GET /users of the CRUD servers"), built with
 # .tools/bin/xo (or $XO) with and without request scoped arenas (on by
 # default since decision 0066: config xo builds with --no-arenas, xo-arenas
 # with the default). Both copies listen on 127.0.0.1 only. Run from

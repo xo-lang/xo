@@ -1,4 +1,5 @@
 use std/http
+use std/json
 use std/task
 
 const ADA = r#"{"name": "Ada Lovelace", "email": "ada@example.com"}"#
@@ -78,6 +79,20 @@ test "list returns users ordered by id" {
   expect(resp.status) == 200
   let ids = resp.decode_json[List[User]]()?.map(fn(u) { u.id })
   expect(ids) == [1, 2]
+}
+
+test "GET /users encodes list() in id order after deletes and updates" {
+  let store = new_store()
+  let r = routes(store)
+  for i in 0..6 {
+    expect(send(r, "POST", "/users", "{\"name\": \"U<${i}>\", \"email\": \"u${i}@x.io\"}").status) == 201
+  }
+  expect(send(r, "DELETE", "/users/2", "").status) == 204
+  expect(send(r, "PATCH", "/users/4", r#"{"name": "renamed"}"#).status) == 200
+  expect(send(r, "POST", "/users", r#"{"name": "late", "email": "late@x.io"}"#).status) == 201
+  let resp = send(r, "GET", "/users", "")
+  expect(resp.header("Content-Type")) == Some("application/json")
+  expect(resp.body) == json.encode(store.list())
 }
 
 test "concurrent creates assign distinct ids" {

@@ -28,7 +28,9 @@ fn routes(store: Store) -> http.Router {
     http.json(201, u)
   })
 
-  r.handle("GET /users", fn(_req) { http.json(200, store.list()) })
+  // encoded under the read lock (Store.list_json; before 2026-10-21:
+  // http.json(200, store.list()), a sorted copy encoded after it)
+  r.handle("GET /users", fn(_req) { http.Response{status: 200, headers: {"Content-Type": "application/json"}, body: store.list_json()} })
 
   r.handle("GET /users/{id:Int}", fn(req) -> http.Response ! ApiErr {
     let u = store.get(req.param_int("id"))?
