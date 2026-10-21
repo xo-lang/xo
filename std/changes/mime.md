@@ -3,7 +3,7 @@
 ## 2026-10-21: perf: token characters from a table
 
 - Kind: perf
-- Commit: (filled in after the push)
+- Commit: 2e840b6f
 - Found by: XO_PROF=cpu (is_tspecial's fifteen comparisons per byte were 23% of parse_media_type)
 - Go reference: mime/grammar.go isTokenChar (go1.26.1)
 - Test: internal/stdtest/testdata/corpus/mime (go, arm64, LLVM)

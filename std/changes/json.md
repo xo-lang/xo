@@ -3,7 +3,7 @@
 ## 2026-10-21: perf: the Go backend reads JSON values without the token decoder
 
 - Kind: perf
-- Commit: (filled in after the push)
+- Commit: ba3413a3
 - Found by: go pprof of the streaming decoder (bench/results/json-vs-go-2026-10-21.md)
 - Go reference: encoding/json (go1.26.1: the values and error texts are the token decoder's)
 - Test: internal/stdtest/testdata/corpus/json (go, arm64); goldens json_stream, json_value, json_text; std/rt TestJsonParseFastMatchesDecoder
