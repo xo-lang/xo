@@ -427,6 +427,7 @@ pub fn (var g: Gen) generate() -> Str {
     out.push("\n")
   }
   out.push(g.weak_alternates())
+  out.push(g.preempt_asm())
   out.push(g.decls)
   out.push(g.rt_decls.join(""))
   out.push(g.types.join(""))
@@ -897,7 +898,6 @@ fn (var g: Gen) exports() {
   if g.emitted.contains("@xo_preempt_stub") {
     // only inline asm names it and the runtime export it calls (decision
     // 0286 step 3): LTO would drop both
-    used.push("ptr @xo_preempt_stub")
     for f in g.m.funcs {
       if f.export == "xo_x_preempt" {
         used.push("ptr @xo_x_preempt")

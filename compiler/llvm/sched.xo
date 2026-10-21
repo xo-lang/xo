@@ -21,15 +21,35 @@ fn (var g: Gen) frame_attrs() {
   g.helpers.push("declare ptr @llvm.frameaddress.p0(i32)\nattributes #9 = { uwtable${san} noinline \"frame-pointer\"=\"all\" }\n\n")
 }
 
-/// Defines xo_preempt_stub (decision 0286 step 3) at the first use: weak,
-/// so the modules of a split build that each use it keep one.
-fn (var g: Gen) preempt_stub() {
-  if g.emitted.contains("@xo_preempt_stub") {
-    return
+/// Notes the use of xo_preempt_stub (decision 0286 step 3); preempt_asm
+/// defines it.
+fn (var g: Gen) preempt_stub() { g.emitted["@xo_preempt_stub"] = true }
+
+/// xo_preempt_stub's definition as module asm, a weak hidden symbol: only
+/// inline asm calls it, which thin LTO cannot see, so a definition in IR
+/// was internalized or dropped in a split build's parts while another
+/// part's code called it (TestGoldenSplit's thin variants, 2026-10-21);
+/// module asm is kept as written (and a split build puts it in its first
+/// module, split.xo parse_ir).
+fn (g: Gen) preempt_asm() -> Str {
+  if !g.emitted.contains("@xo_preempt_stub") {
+    return ""
   }
-  g.emitted["@xo_preempt_stub"] = true
-  let body = ssa.preempt_stub_arm64(g.goos).join("\\0A").replace("$", "$$")
-  g.helpers.push("define weak_odr hidden void @xo_preempt_stub() naked noinline nounwind {\n  call void asm sideeffect \"${body}\", \"\"()\n  unreachable\n}\n\n")
+  let s = if g.goos == "darwin" { "_xo_preempt_stub" } else { "xo_preempt_stub" }
+  var ls: List[Str] = [".text"]
+  if g.goos == "darwin" {
+    ls = ls + [".globl ${s}", ".weak_definition ${s}", ".private_extern ${s}"]
+  } else if g.goos == "windows" {
+    ls.push(".globl ${s}")
+  } else {
+    ls = ls + [".weak ${s}", ".hidden ${s}", ".type ${s},@function"]
+  }
+  ls = ls + [".p2align 2", "${s}:"] + ssa.preempt_stub_arm64(g.goos)
+  var out = ""
+  for l in ls {
+    out = out + "module asm \"${l}\"\n"
+  }
+  out + "\n"
 }
 
 /// Defines xo_stack_switch and xo_fiber_entry at the first use.
