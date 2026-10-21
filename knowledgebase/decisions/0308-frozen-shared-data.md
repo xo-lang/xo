@@ -1,10 +1,10 @@
 # 0308: Frozen shared data: `Shared[T]`, read without counts or locks, reclaimed at safe points
 
-Status: Accepted (owner, 2026-10-21). Drafted by Xo Lang 2 on the
-owner's direction (explicit opt in frozen values, not automatic sticky
-counts). Stage 1 (runtime counts, freeze and thaw helpers) in progress;
-the checker stage with Xo Publish; the persistent map gets its own
-decision.
+Status: Deferred (owner, 2026-10-21): measured, it buys nothing over
+encoding inside the lock (see the addendum "Deferred: the evidence").
+Was Accepted (owner, 2026-10-21). Reference branches: frozen-s1 (stages 1
+and 2 and the elision prototype, local to Xo Lang 2) and
+wip/0308b-proto on origin (the bench variants and scale-0308.sh).
 
 ## Context
 
@@ -308,3 +308,41 @@ compile time:
 read, the store moved to a `Shared` cell in a variant beside
 bench/perf/http/xo), measured on Docker against main and Go under the same
 list-only load; then the 32-core CI A/B the owner approved.
+
+## Addendum: Deferred (owner, 2026-10-21), the evidence
+
+All three measurements use the CRUD server (bench/perf/http) under a
+list-only load: every keep-alive connection loops GET /users over 1,032
+users.
+
+1. **The runtime sentinel alone (12 vCPUs, Docker).** The store's Mutex
+   value frozen by stage 1's helpers: 48,566 requests against main's
+   70,978; the count helpers' share did not fall (drop Str 29% against
+   33%). The cost is reading ~3,100 scattered count words a list request,
+   not contention, and a frozen count is still read.
+2. **The (b) prototype (12 vCPUs, Docker; two runs each).** Shared with
+   the frozen view's counts elided, GET /users encoded inside the read:
+   119,802 and 126,956 requests; the same restructure on Mutex (encoded
+   inside with_read): 141,996 and 140,830; main 50,736 and 52,652; Go
+   52,330 and 49,178. The 2.7x is the restructure, available with Mutex;
+   Shared was 10 to 15% behind it.
+3. **32 cores (CI run 39622568915, 16 server cores; requests in a 15 s
+   round, two rounds each; ~/xo-lead/notes/lead/ci-0308):**
+
+| connections | main | Mutex, encoded inside | Shared + elision | Go |
+|---|---|---|---|---|
+| 256 | 209,419 / 207,592 | 1,273,570 / 1,275,515 | 1,276,735 / 1,282,688 | 462,321 / 451,498 |
+| 1024 | 207,419 / 205,161 | 1,380,396 / 1,372,886 | 1,376,460 / 1,388,409 | 511,691 / 510,998 |
+| 4096 | 208,692 / 209,036 | 1,365,766 / 1,372,654 | 1,374,959 / 1,369,583 | 546,032 / 526,268 |
+
+   p99: Mutex-encode-inside and Shared alike (7 to 8 ms at 256, 30 to 31
+   ms at 1024, 84 to 91 ms at 4096); Go 101 ms to 1.15 s. Shared is within
+   1% of the Mutex restructure at every connection count: with nothing
+   copied out of the lock, neither the read lock's cost nor the counts
+   matter at 16 cores.
+
+**What would reopen it:** a workload where the result cannot be built
+inside the lock (values must outlive it, e.g. handed to slow consumers or
+other tasks) and many cores read the same shared data at once, measured
+on the 32-core runner against Mutex; or a profile where the RWMutex's
+reader lock itself (its spin lock and grants) is a top cost.
