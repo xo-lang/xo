@@ -4,6 +4,15 @@ Status: Accepted (owner, 2026-10-20). Built behind a flag first; every
 measurement in "Cost" is taken before the switch. No interim change to
 `Mutex.with` (the owner, the same day): this decision is the fix.
 
+Progress: stage 1 landed 2026-10-21 (f00c1950): the log representation
+behind XO_MAP_LOG=1, off by default; goldens map_log_model and
+map_log_sets match on arm64, LLVM, wasm and Go. Measured on the Mac
+(--release arm64, n = 200,000, flag on against off): get 7 to 8 ns
+against 4, iteration under 1 ns per entry for both, copy then put 75 ns
+against about 100 us, put under `Mutex.with` 70 to 80 ns at any size
+against 23 to 85 us. Next: the measurement list below, the fixed point
+with the flag on, then the switch.
+
 ## Context
 
 The spec calls `Map[K, V]` an immutable persistent hash map with value
