@@ -169,6 +169,10 @@ Update the knowledgebase in the same change as the work, not later:
     base) runs with a private `XO_BACKEND_CACHE_DIR` deleted after, so
     its older prune never touches the shared cache (an old xo's prune
     evicted about 25 GB of it the same day).
+  - short runs are gates (lead, 2026-10-21): a measurement or check
+    expected to take under about 2 minutes runs as HEAVY_CLASS=gate, not
+    bulk, so it never waits behind long bulk jobs (two 30 s measurements
+    waited 45 minutes that day).
   - merges before testing (owner, 2026-10-21): heavy.sh serves pushq
     first, then gates, then HEAVY_CLASS=bulk runs (measurements,
     profiles, full suites, deferred checks; set it on every such run).
