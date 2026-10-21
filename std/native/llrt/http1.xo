@@ -296,7 +296,7 @@ pub fn url_parts(s: Str, request: Bool) -> List[Str] {
     }
   }
   let u = neturl.url_parse(t, request)
-  if !u.ok {
+  if !u.ok || frag_error(s, t) != "" {
     return []
   }
   let (name, port) = split_hostport(u.host)
@@ -311,10 +311,21 @@ pub fn url_error(s: Str) -> Str {
     t = rawb.str_slice(s, 0, h)
   }
   let u = neturl.url_parse(t, false)
-  if u.ok {
+  if !u.ok {
+    return "parse " + go_quote(t) + ": " + u.err
+  }
+  let fe = frag_error(s, t)
+  if fe.is_empty() { "" } else { "parse " + go_quote(s) + ": " + fe }
+}
+
+/// Go's setFragment error for the fragment of s after t (t is s before
+/// its first #), "" when there is none or it unescapes.
+fn frag_error(s: Str, t: Str) -> Str {
+  if t.len() == s.len() {
     return ""
   }
-  "parse " + go_quote(t) + ": " + u.err
+  let (_, e) = neturl.go_unescape(rawb.str_slice(s, t.len() + 1, s.len()), neturl.U_FRAG)
+  e
 }
 
 /// url.PathUnescape, "" when an escape is invalid.

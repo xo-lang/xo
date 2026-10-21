@@ -1,5 +1,22 @@
 # std/http changes
 
+## 2026-10-21: fix: parse_url's host and fragment checks and error texts
+
+- Kind: fix
+- Commit: (filled in after the push)
+- Found by: differential test against Go
+- Go reference: net/url Parse, parseHost, unescape (encodeHost, encodeZone), setFragment (go1.26.1)
+- Test: std/native/http_test.xo (1,586 URLs: url_test.go's inputs and 1,500 seeded random ones, with the Go backend's results)
+
+Natively, `parse_url` accepted 11 URLs Go rejects (a bad escape in the
+fragment, which Go's setFragment checks) and rejected an IPv6 literal
+with an escaped zone Go accepts (`[fe80::1%25%65%6e%30]`, RFC 6874), and
+every bad host was `invalid host "..."` instead of Go's reason (`invalid
+port ":0x" after host`, `missing ']' in host`, `invalid character " "
+in host name`, netip's text for a bad IPv6 literal). The native host
+parser is now a port of Go's parseHost; the same texts reach an x509
+certificate's URI name errors.
+
 ## 2026-10-20: feature: header fields with repeated names; fix: Set-Cookie
 
 - Kind: feature

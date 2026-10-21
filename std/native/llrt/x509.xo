@@ -1039,30 +1039,7 @@ fn uri_err(d: Bytes) -> Str {
   }
   let r = neturl.url_parse(u, false)
   if !r.ok {
-    var why = r.err
-    if why.starts_with("invalid host ") {
-      // Go's parseHost says why (neturl.xo's text is xo_http.c's)
-      match u.find("//") {
-        Some(k) => {
-          var auth = raw.str_slice(u, k + 2, u.len())
-          match auth.find("/") {
-            Some(j) => auth = raw.str_slice(auth, 0, j)
-            None => ()
-          }
-          let ab = auth.bytes()
-          var at = ab.len() - 1
-          while at >= 0 && ab[at] != 64 {
-            at -= 1
-          }
-          let g = neturl.go_host_error(raw.str_slice(auth, at + 1, auth.len()))
-          if g != "" {
-            why = g
-          }
-        }
-        None => ()
-      }
-    }
-    return "x509: cannot parse URI ${q}: parse ${u.quote()}: ${why}"
+    return "x509: cannot parse URI ${q}: parse ${u.quote()}: ${r.err}"
   }
   if frag != "" {
     let fb = frag.bytes()

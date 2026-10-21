@@ -25,3 +25,5 @@ entries yet.
 - [prelude.md](prelude.md): the prelude (builtin types and capabilities, spec/std.md 1 to 3)
 - [testing.md](testing.md): std/testing (spec/std.md 8)
 - [csv.md](csv.md): std/csv (spec/std.md 16)
+- [regexp.md](regexp.md): std/regexp (spec/std.md 17)
+- [json.md](json.md): std/json (spec/std.md 5)

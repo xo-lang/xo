@@ -6,6 +6,7 @@
 use native/llrt/http1_tables
 use native/llrt/raw as rawb
 use native/llrt/scan
+use std/netip
 use native/rt
 
 // The byte classes (http1_tables.CLASS) this file reads.
@@ -52,6 +53,8 @@ fn go_quote_c(s: Str) -> Str { "\"" + s + "\"" }
 pub const U_PATH: Int = 0
 pub const U_QUERY: Int = 1
 pub const U_HOST: Int = 2
+pub const U_ZONE: Int = 3
+pub const U_FRAG: Int = 4
 
 /// The end of the bytes of b from lo that unescape keeps as they are.
 fn plain_end(b: Bytes, lo: Int, hi: Int, mode: Int) -> Int {
@@ -257,59 +260,103 @@ fn ipv6_ok(b: Bytes, lo0: Int, hi: Int) -> Bool {
   tp == 16
 }
 
-/// url.parseHost of b[lo..hi]: the host unescaped, or (false, _).
-fn parse_host(b: Bytes, s: Str, lo: Int, hi: Int) -> (Bool, Str) {
-  var ob = -1
-  var i = hi - 1
-  while i >= lo {
-    if b[i] == 91 {
-      ob = i
-      break
-    }
-    i -= 1
-  }
+/// url.parseHost of b[lo..hi] (Go 1.26, strict colons, not postgres):
+/// (true, the host unescaped, "") or (false, "", Go's error text).
+fn parse_host(b: Bytes, s: Str, lo: Int, hi: Int) -> (Bool, Str, Str) {
+  let ob = rfind(b, 91, hi)
   if ob > lo {
-    return (false, "")
+    return (false, "", "invalid IP-literal")
   }
   if ob == lo {
-    var cb = -1
-    var j = hi - 1
-    while j >= lo {
-      if b[j] == 93 {
-        cb = j
-        break
+    let cb = rfind(b, 93, hi)
+    if cb < lo {
+      return (false, "", "missing ']' in host")
+    }
+    if !valid_port(b, cb + 1, hi) {
+      return (false, "", "invalid port " + go_quote(rawb.str_slice(s, cb + 1, hi)) + " after host")
+    }
+    // RFC 6874: %25 starts the zone, which may escape any byte but a
+    // host's forbidden ones
+    let hostname = rawb.str_slice(s, lo + 1, cb)
+    let z = scan.find(hostname, "%25", 0)
+    var name = ""
+    if z >= 0 {
+      let (h, he) = go_unescape(rawb.str_slice(hostname, 0, z), U_HOST)
+      if !he.is_empty() {
+        return (false, "", he)
       }
-      j -= 1
+      let (zp, ze) = go_unescape(rawb.str_slice(hostname, z, hostname.len()), U_ZONE)
+      if !ze.is_empty() {
+        return (false, "", ze)
+      }
+      name = h + zp
+    } else {
+      let (h, he) = go_unescape(hostname, U_HOST)
+      if !he.is_empty() {
+        return (false, "", he)
+      }
+      name = h
     }
-    if cb < 0 || !valid_port(b, cb + 1, hi) {
-      return (false, "")
+    match netip.parse_addr(name) {
+      Err(e) => return (false, "", "invalid host: " + e.msg)
+      Ok(a) => if a.is_4() {
+        return (false, "", "invalid IP-literal")
+      }
     }
-    let (ok, inner) = unescape(b, s, lo + 1, cb, U_HOST)
-    if !ok {
-      return (false, "")
-    }
-    let ib = inner.bytes()
-    // the zone goes; inet_pton reads to the first NUL byte
-    var zn = 0
-    while zn < ib.len() && ib[zn] != 37 && ib[zn] != 0 {
-      zn += 1
-    }
-    if !ipv6_ok(ib, 0, zn) {
-      return (false, "")
-    }
-    return unescape(b, s, lo, hi, U_HOST)
+    return (true, "[" + name + "]" + rawb.str_slice(s, cb + 1, hi), "")
   }
   let colon = find(s, 58, lo, hi)
-  if colon >= 0 {
-    if rfind(b, 58, hi) != colon {
-      // strict colons (Go 1.26): only one colon outside brackets
-      return (false, "")
-    }
-    if !valid_port(b, colon, hi) {
-      return (false, "")
+  if colon >= 0 && !valid_port(b, colon, hi) {
+    return (false, "", "invalid port " + go_quote(rawb.str_slice(s, colon, hi)) + " after host")
+  }
+  let (ok, h) = unescape(b, s, lo, hi, U_HOST)
+  if ok {
+    return (true, h, "")
+  }
+  let (_, e) = go_unescape(rawb.str_slice(s, lo, hi), U_HOST)
+  (false, "", e)
+}
+
+/// Go's unescape(s, mode) for a host (U_HOST), an IPv6 zone (U_ZONE), or
+/// a fragment (U_FRAG): (the text, "") or ("", Go's error text). Bytes
+/// that would not be UTF-8 stay escaped, as unescape's (decision 0259).
+pub fn go_unescape(s: Str, mode: Int) -> (Str, Str) {
+  let b = s.bytes()
+  let n = b.len()
+  var esc = false
+  var i = 0
+  while i < n {
+    let c = Int(b[i])
+    if c == 37 {
+      if i + 2 >= n || !is_hex(Int(b[i + 1])) || !is_hex(Int(b[i + 2])) {
+        let end = if i + 3 < n { i + 3 } else { n }
+        return ("", "invalid URL escape " + go_quote(rawb.str_slice(s, i, end)))
+      }
+      let pct = b[i + 1] == 50 && b[i + 2] == 53
+      if mode == U_HOST && unhex(Int(b[i + 1])) < 8 && !pct {
+        return ("", "invalid URL escape " + go_quote(rawb.str_slice(s, i, i + 3)))
+      }
+      if mode == U_ZONE {
+        let v = (unhex(Int(b[i + 1])) << 4) | unhex(Int(b[i + 2]))
+        if !pct && v != 32 && (v >= 128 || host_escapes(v)) {
+          return ("", "invalid URL escape " + go_quote(rawb.str_slice(s, i, i + 3)))
+        }
+      }
+      esc = true
+      i += 3
+    } else {
+      if (mode == U_HOST || mode == U_ZONE) && c < 128 && host_escapes(c) {
+        return ("", "invalid character " + go_quote(rawb.str_slice(s, i, i + 1)) + " in host name")
+      }
+      i += 1
     }
   }
-  unescape(b, s, lo, hi, U_HOST)
+  if !esc {
+    return (s, "")
+  }
+  // the bytes are checked: U_PATH unescapes them the same way
+  let (_, out) = unescape(b, s, 0, n, U_PATH)
+  (out, "")
 }
 
 /// The error text of a bad escape in b[lo..hi] (url.EscapeError).
@@ -441,10 +488,9 @@ pub fn url_parse(s: Str, via_request: Bool) -> Url {
       k -= 1
     }
     let hlo = if at >= 0 { at + 1 } else { a }
-    let (hok, h) = parse_host(b, s, hlo, ae)
+    let (hok, h, herr) = parse_host(b, s, hlo, ae)
     if !hok {
-      let shown = if ae - hlo > 120 { hlo + 120 } else { ae }
-      return url_fail("invalid host " + go_quote_c(rawb.str_slice(s, hlo, shown)))
+      return url_fail(herr)
     }
     host = h
     if at >= 0 {
@@ -550,78 +596,4 @@ fn host_escapes(c: Int) -> Bool {
 
 fn is_hex(c: Int) -> Bool { (c >= 48 && c <= 57) || (c >= 97 && c <= 102) || (c >= 65 && c <= 70) }
 
-/// Go's unescape(s, encodeHost) error text, "" when it is fine.
-fn host_unescape_error(s: Str) -> Str {
-  let b = s.bytes()
-  var i = 0
-  while i < b.len() {
-    let c = Int(b[i])
-    if c == 37 {
-      if i + 2 >= b.len() || !is_hex(Int(b[i + 1])) || !is_hex(Int(b[i + 2])) {
-        let end = if i + 3 < b.len() { i + 3 } else { b.len() }
-        return "invalid URL escape " + go_quote(rawb.str_slice(s, i, end))
-      }
-      if unhex(Int(b[i + 1])) < 8 && rawb.str_slice(s, i, i + 3) != "%25" {
-        return "invalid URL escape " + go_quote(rawb.str_slice(s, i, i + 3))
-      }
-      i += 3
-    } else {
-      if c < 128 && host_escapes(c) {
-        return "invalid character " + go_quote(rawb.str_slice(s, i, i + 1)) + " in host name"
-      }
-      i += 1
-    }
-  }
-  ""
-}
 
-/// Go's validOptionalPort.
-fn optional_port(p: Str) -> Bool {
-  let b = p.bytes()
-  if b.len() == 0 {
-    return true
-  }
-  if b[0] != 58 {
-    return false
-  }
-  for k in 1..b.len() {
-    if Int(b[k]) < 48 || Int(b[k]) > 57 {
-      return false
-    }
-  }
-  true
-}
-
-/// Go 1.26's url.parseHost error text for host (not postgres, strict
-/// colons): "" when Go takes it. An IPv6 literal netip refuses gives
-/// "invalid host" without netip's own text.
-pub fn go_host_error(host: Str) -> Str {
-  let b = host.bytes()
-  let ob = rfind(b, 91, b.len())
-  if ob > 0 {
-    return "invalid IP-literal"
-  }
-  if ob == 0 {
-    let cb = rfind(b, 93, b.len())
-    if cb < 0 {
-      return "missing ']' in host"
-    }
-    let port = rawb.str_slice(host, cb + 1, b.len())
-    if !optional_port(port) {
-      return "invalid port " + go_quote(port) + " after host"
-    }
-    let e = host_unescape_error(rawb.str_slice(host, 1, cb))
-    if e != "" {
-      return e
-    }
-    return "invalid host"
-  }
-  let first = find(host, 58, 0, b.len())
-  if first >= 0 {
-    let port = rawb.str_slice(host, first, b.len())
-    if !optional_port(port) {
-      return "invalid port " + go_quote(port) + " after host"
-    }
-  }
-  host_unescape_error(host)
-}

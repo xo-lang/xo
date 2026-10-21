@@ -1,5 +1,16 @@
 # std/json changes
 
+## 2026-10-21: test: parse_value against Go's encoding/json
+
+- Kind: test
+- Commit: (filled in after the push)
+- Found by: differential test against Go
+- Go reference: encoding/json Decoder.Token, scanner errors (go1.26.1)
+- Test: std/native/json_test.xo (3,059 texts: encoding/json scanner cases and seeded random ones)
+
+No difference found: the native reader accepts and rejects the same
+texts as the Go backend's, with the same error texts.
+
 ## 2026-10-21: feature: json.Value, JSON of any shape
 
 - Kind: feature
