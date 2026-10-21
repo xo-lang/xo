@@ -22,7 +22,7 @@
 use std/crypto
 use github.com/xo-lang/xo/compiler/check
 
-const FE_CACHE_VERSION = "xo front cache v12"
+const FE_CACHE_VERSION = "xo front cache v13"
 
 /// The front end cache of one build: entries by key (fe_keys), the
 /// entries to store, and counts.
@@ -1140,14 +1140,19 @@ fn fe_const_fn(n: Str) -> Bool { n.starts_with("xo.const[") || n.starts_with("xo
 /// Adds delta to every line of f in its own file: each value's line and
 /// position (`file:line[:col]`), its variables' and their bindings'
 /// (decision 0271 addendum, entries relative to the declaration's line).
+/// Value, variable, and binding lines are packed, line * 4096 + column
+/// (Value.line): the delta moves the line (adding it whole moved the
+/// column, so a body that moved had its debug rows at its old lines with
+/// the columns off by the move; v12, 2026-10-21).
 fn shift_lines(var f: Func, delta: Int) {
   if delta == 0 {
     return
   }
   let pre = "${f.file}:"
+  let d = delta * 4096
   for vi in 0..f.values.len() {
     if f.values[vi].line > 0 {
-      f.values[vi].line += delta
+      f.values[vi].line += d
     }
     if f.values[vi].pos.starts_with(pre) {
       f.values[vi].pos = shift_pos(f.values[vi].pos, pre, delta)
@@ -1155,12 +1160,12 @@ fn shift_lines(var f: Func, delta: Int) {
   }
   for i in 0..f.dvars.len() {
     if f.dvars[i].line > 0 {
-      f.dvars[i].line += delta
+      f.dvars[i].line += d
     }
   }
   for i in 0..f.dbinds.len() {
     if f.dbinds[i].line > 0 {
-      f.dbinds[i].line += delta
+      f.dbinds[i].line += d
     }
   }
 }
@@ -1184,7 +1189,8 @@ fn shift_pos(p: Str, pre: Str, delta: Int) -> Str {
 fn relocatable(f: Func, base: Int) -> Bool {
   let pre = "${f.file}:"
   for x in f.values {
-    if x.line > 0 && x.line < base {
+    // packed lines (line * 4096 + column)
+    if x.line > 0 && x.line / 4096 < base {
       return false
     }
     if x.pos.starts_with(pre) {
@@ -1199,12 +1205,12 @@ fn relocatable(f: Func, base: Int) -> Bool {
     }
   }
   for d in f.dvars {
-    if d.line > 0 && d.line < base {
+    if d.line > 0 && d.line / 4096 < base {
       return false
     }
   }
   for d in f.dbinds {
-    if d.line > 0 && d.line < base {
+    if d.line > 0 && d.line / 4096 < base {
       return false
     }
   }

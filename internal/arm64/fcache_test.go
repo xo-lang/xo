@@ -1871,7 +1871,10 @@ func TestParseListForTests(t *testing.T) {
 // TestFrontCacheMovedBodies: a library's bodies keep their front end
 // cache entries when a line is added above them (an entry's lines are
 // relative to its declaration's, decision 0271 addendum), and the build,
-// its line tables and fault positions included, is the cache-off one.
+// its line tables and fault positions included, is the cache-off one:
+// for linux/arm64 too, whose executable holds its DWARF (a Mach-O one
+// does not, so the host build alone missed debug rows moved into the
+// columns, front cache v12, 2026-10-21).
 func TestFrontCacheMovedBodies(t *testing.T) {
 	if !native() {
 		t.Skip("the host is not arm64")
@@ -1906,10 +1909,15 @@ func TestFrontCacheMovedBodies(t *testing.T) {
 	out := filepath.Join(work, "prog")
 	cache := filepath.Join(work, "cache")
 	hits := regexp.MustCompile(`cache fe (\d+)/(\d+) bodies`)
+	target := ""
 	build := func(env ...string) ([]byte, string) {
 		t.Helper()
 		os.Remove(out)
-		cmd := exec.Command(xo, "build", "--backend=arm64", "--phase-times", "-o", out, ".")
+		args := []string{"build", "--backend=arm64", "--phase-times", "-o", out}
+		if target != "" {
+			args = append(args, "--targets="+target)
+		}
+		cmd := exec.Command(xo, append(args, ".")...)
 		cmd.Dir = own
 		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache), env...)
 		log, err := cmd.CombinedOutput()
@@ -1922,24 +1930,29 @@ func TestFrontCacheMovedBodies(t *testing.T) {
 		}
 		return b, string(log)
 	}
-	build()
-	_, warm := build()
-	w := hits.FindStringSubmatch(warm)
-	if w == nil {
-		t.Fatalf("no cache fe line:\n%s", warm)
-	}
-	// three lines above every body of lib
-	if err := os.WriteFile(filepath.Join(own, "lib", "lib.xo"), []byte("// moved\n// down\n// three lines\n"+lib), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	got, edit := build()
-	e := hits.FindStringSubmatch(edit)
-	if e == nil || e[1] != w[1] {
-		t.Errorf("after lines added above lib's bodies: %v, want the warm build's %s hits", e, w[1])
-	}
-	off, _ := build("XO_BACKEND_CACHE=off")
-	if !bytes.Equal(got, off) {
-		t.Error("the build with moved bodies replayed differs from the cache-off build")
+	for _, target = range []string{"", "linux/arm64"} {
+		if err := os.WriteFile(filepath.Join(own, "lib", "lib.xo"), []byte(lib), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		build()
+		_, warm := build()
+		w := hits.FindStringSubmatch(warm)
+		if w == nil {
+			t.Fatalf("%s: no cache fe line:\n%s", target, warm)
+		}
+		// three lines above every body of lib
+		if err := os.WriteFile(filepath.Join(own, "lib", "lib.xo"), []byte("// moved\n// down\n// three lines\n"+lib), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		got, edit := build()
+		e := hits.FindStringSubmatch(edit)
+		if e == nil || e[1] != w[1] {
+			t.Errorf("%s: after lines added above lib's bodies: %v, want the warm build's %s hits", target, e, w[1])
+		}
+		off, _ := build("XO_BACKEND_CACHE=off")
+		if !bytes.Equal(got, off) {
+			t.Errorf("%s: the build with moved bodies replayed differs from the cache-off build", target)
+		}
 	}
 }
 

@@ -32,3 +32,23 @@ test "verify does not compare where the body was (fe_same: line, pinned)" {
   expect(fe_same(a, head_entry_at("conc=false", "xo-a", 10, true, b"body one"))) == true
   expect(fe_same(a, head_entry_at("conc=false", "xo-a", 42, true, b"body two"))) == false
 }
+
+test "shift_lines moves packed lines by whole lines, columns kept (v13)" {
+  var f = Func{name: "f", file: "a.xo"}
+  f.values.push(Value{op: Op.Const, line: 10 * 4096 + 3, pos: "a.xo:10:3"})
+  f.values.push(Value{op: Op.Const, line: 0, pos: "b.xo:4:1"})
+  f.dvars.push(DVar{name: "x", ty: -1, line: 11 * 4096 + 5})
+  f.dbinds.push(DBind{dvar: 0, value: 0, line: 12 * 4096 + 7})
+  expect(relocatable(f, 10)) == true
+  expect(relocatable(f, 11)) == false
+  shift_lines(f, 2)
+  expect(f.values[0].line) == 12 * 4096 + 3
+  expect(f.values[0].pos) == "a.xo:12:3"
+  expect(f.values[1].line) == 0
+  expect(f.values[1].pos) == "b.xo:4:1"
+  expect(f.dvars[0].line) == 13 * 4096 + 5
+  expect(f.dbinds[0].line) == 14 * 4096 + 7
+  shift_lines(f, -2)
+  expect(f.values[0].line) == 10 * 4096 + 3
+  expect(f.dvars[0].line) == 11 * 4096 + 5
+}

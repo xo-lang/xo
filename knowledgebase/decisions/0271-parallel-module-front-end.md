@@ -414,7 +414,10 @@ declaration; a function it made whole with source lines in another file
 keeps the entry out of the cache, since no key covers that file's
 layout. Test: internal/arm64 TestFrontCacheMovedBodies (hits after three
 lines are added above a library's bodies, binary equal to the cache-off
-build).
+build). Front cache v13 (2026-10-21): the packed lines (line * 4096 +
+column) move by whole lines; v12 added the delta unscaled, so a moved
+body's debug rows kept their old lines with the columns off by the move
+(gotchas/packed-debug-lines.md); the test builds linux/arm64 too.
 
 Addendum (2026-10-21, xo-fa): the std interface hash cuts test bodies
 too, and is kept per file. A warm `xo test --std-module` of path, url
