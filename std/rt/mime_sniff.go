@@ -257,7 +257,7 @@ func (h mimeHTMLSig) match(data []byte, firstNonWS int) string {
 }
 
 var mimeMP4Ftype = []byte("ftyp")
-var mimeMP4 = []byte("mimeMP4")
+var mimeMP4 = []byte("mp4")
 
 type mimeMP4Sig struct{}
 
@@ -280,7 +280,7 @@ func (mimeMP4Sig) match(data []byte, firstNonWS int) string {
 			continue
 		}
 		if bytes.Equal(data[st:st+3], mimeMP4) {
-			return "video/mimeMP4"
+			return "video/mp4"
 		}
 	}
 	return ""
