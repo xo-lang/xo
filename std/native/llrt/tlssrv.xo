@@ -303,7 +303,7 @@ pub fn srv_free(h: Int) {
 /// scheduling between frames, and its rapid reset limit, depend on it).
 struct Conn {
   s: tls13srv.Server
-  s12: tls12srv.Server?
+  s12: List[tls12srv.Server]
   pd: Int
   when: Int
   status: Int
@@ -443,7 +443,7 @@ pub fn conn(h: Int, pd: Int) -> Int {
   rt.mem_store(t, 0, 0, 8)
   rt.mem_store(t, 8, 0, 8)
   cf.handoff = true
-  save(t, Conn{s: tls13srv.server(cf), s12: None, pd: pd, when: 0, status: 0, first: b"", eof: false, done: 0, pend: b""})
+  save(t, Conn{s: tls13srv.server(cf), s12: [], pd: pd, when: 0, status: 0, first: b"", eof: false, done: 0, pend: b""})
   t
 }
 
@@ -605,10 +605,7 @@ pub fn alpn_h2(t: Int) -> Bool {
 /// net/http's GOAWAY text; "" for none (every TLS 1.3 suite).
 pub fn bad_cipher(t: Int) -> Str {
   match load(t) {
-    Some(c) => match c.s12 {
-      Some(x) => if x.suite is 0xc02b | 0xc02f | 0xc02c | 0xc030 | 0xcca9 | 0xcca8 { "" } else { "Prohibited TLS 1.2 Cipher Suite: ${hex(x.suite)}" }
-      None => ""
-    }
+    Some(c) => if c.s12.is_empty() { "" } else if c.s12[0].suite is 0xc02b | 0xc02f | 0xc02c | 0xc030 | 0xcca9 | 0xcca8 { "" } else { "Prohibited TLS 1.2 Cipher Suite: ${hex(c.s12[0].suite)}" }
     None => ""
   }
 }
@@ -634,92 +631,55 @@ pub fn free(h: Int) {
   rt.heap_release(h - 8)
 }
 
-// The TLS 1.3 server, or the TLS 1.2 one after a HANDOFF. Each helper
-// tests s12 for None before it matches: a match on c.s12 duplicated and
-// dropped the Option even when it was None (TLS 1.3, every connection
-// but a TLS 1.2 client's), about 4,000 instructions an HTTP/2 request on
-// arm64 (2026-10-18).
+// The TLS 1.3 server, or the TLS 1.2 one after a HANDOFF (s12, a list of
+// at most one). A list, not an Option: an Option holds the TLS 1.2
+// server's fields inline, so every move of the Conn in and out of its
+// block (each read and write) copied them too, for TLS 1.3 connections
+// as well (about 2,000 instructions an HTTP/2 request on arm64,
+// 2026-10-21). A match on an Option s12 had also duplicated and dropped
+// it even when None (about 4,000, 2026-10-18).
 
-fn done(c: Conn) -> Bool {
-  if c.s12.is_none() {
-    return c.s.state == tls13srv.DONE
-  }
-  match c.s12 {
-    Some(x) => x.state == tls12srv.DONE
-    None => c.s.state == tls13srv.DONE
-  }
-}
+fn done(c: Conn) -> Bool { if c.s12.is_empty() { c.s.state == tls13srv.DONE } else { c.s12[0].state == tls12srv.DONE } }
 
-fn failed(c: Conn) -> Bool {
-  if c.s12.is_none() {
-    return c.s.state == tls13srv.FAILED
-  }
-  match c.s12 {
-    Some(x) => x.state == tls12srv.FAILED
-    None => c.s.state == tls13srv.FAILED
-  }
-}
+fn failed(c: Conn) -> Bool { if c.s12.is_empty() { c.s.state == tls13srv.FAILED } else { c.s12[0].state == tls12srv.FAILED } }
 
-fn closed(c: Conn) -> Bool {
-  if c.s12.is_none() {
-    return c.s.closed
-  }
-  match c.s12 {
-    Some(x) => x.closed
-    None => c.s.closed
-  }
-}
+fn closed(c: Conn) -> Bool { if c.s12.is_empty() { c.s.closed } else { c.s12[0].closed } }
 
 fn take(var c: Conn) -> Bytes {
-  if c.s12.is_none() {
+  if c.s12.is_empty() {
     return tls13srv.take(c.s)
   }
-  match c.s12 {
-    Some(x) => {
-      var y = x
-      let b = tls12srv.take(y)
-      c.s12 = Some(y)
-      b
-    }
-    None => tls13srv.take(c.s)
-  }
+  var y = c.s12[0]
+  let b = tls12srv.take(y)
+  c.s12[0] = y
+  b
 }
 
 fn recv_some(var c: Conn, n: Int) -> Bytes {
-  if c.s12.is_none() {
+  if c.s12.is_empty() {
     return tls13srv.recv_some(c.s, n)
   }
-  match c.s12 {
-    Some(x) => {
-      var y = x
-      let b = tls12srv.recv_some(y, n)
-      c.s12 = Some(y)
-      b
-    }
-    None => tls13srv.recv_some(c.s, n)
-  }
+  var y = c.s12[0]
+  let b = tls12srv.recv_some(y, n)
+  c.s12[0] = y
+  b
 }
 
 fn send(var c: Conn, data: Bytes) {
-  if c.s12.is_none() {
+  if c.s12.is_empty() {
     tls13srv.send(c.s, data)
     return
   }
-  match c.s12 {
-    Some(x) => {
-      var y = x
-      tls12srv.send(y, data)
-      c.s12 = Some(y)
-    }
-    None => tls13srv.send(c.s, data)
-  }
+  var y = c.s12[0]
+  tls12srv.send(y, data)
+  c.s12[0] = y
 }
 
 /// send of the n bytes at p: TLS 1.3 seals them in place (no copy
 /// first). c is a var parameter: passing a local's c.s as var copied
 /// the whole Server in and out (253 instructions a write, 2026-10-20).
 fn send_at(var c: Conn, p: Int, n: Int) {
-  if c.s12.is_none() {
+  if c.s12.is_empty() {
     tls13srv.send_at(c.s, p, n)
     return
   }
@@ -727,62 +687,53 @@ fn send_at(var c: Conn, p: Int, n: Int) {
 }
 
 fn close(var c: Conn) {
-  match c.s12 {
-    Some(x) => {
-      var y = x
-      tls12srv.close(y)
-      c.s12 = Some(y)
-    }
-    None => tls13srv.close(c.s)
+  if c.s12.is_empty() {
+    tls13srv.close(c.s)
+    return
   }
+  var y = c.s12[0]
+  tls12srv.close(y)
+  c.s12[0] = y
 }
 
 fn feed(var c: Conn, data: Bytes) {
-  match c.s12 {
-    Some(x) => {
-      var y = x
-      tls12srv.feed(y, data)
-      c.s12 = Some(y)
-    }
-    None => {
-      tls13srv.feed(c.s, data)
-      if c.s.state == tls13srv.HANDOFF {
-        // a TLS 1.2 client: xo-fa's server, with the certificate Go's
-        // getCertificate picks for its server name
-        let h = tls12srv.parse_hello(c.s.hello)
-        var certs = c.s.conf.certs
-        var key = c.s.conf.key
-        if h.sni != "" {
-          for a in c.s.conf.alts {
-            if !a.certs.is_empty() && certs == c.s.conf.certs {
-              let p = x509.parse(a.certs[0])
-              let first = x509.parse(c.s.conf.certs[0])
-              let first_ok = first.err == "" && tlsname.host_ok(x509verify.names(first.cert), h.sni)
-              if !first_ok && p.err == "" && tlsname.host_ok(x509verify.names(p.cert), h.sni) {
-                certs = a.certs
-                key = a.key
-              }
-            }
+  if !c.s12.is_empty() {
+    var y = c.s12[0]
+    tls12srv.feed(y, data)
+    c.s12[0] = y
+    return
+  }
+  tls13srv.feed(c.s, data)
+  if c.s.state == tls13srv.HANDOFF {
+    // a TLS 1.2 client: xo-fa's server, with the certificate Go's
+    // getCertificate picks for its server name
+    let h = tls12srv.parse_hello(c.s.hello)
+    var certs = c.s.conf.certs
+    var key = c.s.conf.key
+    if h.sni != "" {
+      for a in c.s.conf.alts {
+        if !a.certs.is_empty() && certs == c.s.conf.certs {
+          let p = x509.parse(a.certs[0])
+          let first = x509.parse(c.s.conf.certs[0])
+          let first_ok = first.err == "" && tlsname.host_ok(x509verify.names(first.cert), h.sni)
+          if !first_ok && p.err == "" && tlsname.host_ok(x509verify.names(p.cert), h.sni) {
+            certs = a.certs
+            key = a.key
           }
         }
-        var cf = tls12srv.conf(certs, key)
-        cf.alpn = c.s.conf.alpn
-        cf.max13 = true
-        // RFC 5077 tickets under the server's keys (tlsticket.xo)
-        cf.ticket_keys = c.s.conf.ticket_keys
-        cf.now = c.s.conf.now
-        c.s12 = Some(tls12srv.resume(cf, c.s.hello, c.s.rest))
       }
     }
+    var cf = tls12srv.conf(certs, key)
+    cf.alpn = c.s.conf.alpn
+    cf.max13 = true
+    // RFC 5077 tickets under the server's keys (tlsticket.xo)
+    cf.ticket_keys = c.s.conf.ticket_keys
+    cf.now = c.s.conf.now
+    c.s12 = [tls12srv.resume(cf, c.s.hello, c.s.rest)]
   }
 }
 
-fn alpn(c: Conn) -> Str {
-  match c.s12 {
-    Some(x) => x.alpn
-    None => c.s.alpn
-  }
-}
+fn alpn(c: Conn) -> Str { if c.s12.is_empty() { c.s.alpn } else { c.s12[0].alpn } }
 
 /// Sends what the server has to send: whether it all went.
 fn flush(var c: Conn) -> Bool {
