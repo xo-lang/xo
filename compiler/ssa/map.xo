@@ -453,8 +453,9 @@ fn (var b: Builder) map_put(t: Int) -> Str {
 }
 
 /// map_put of the lists' representation. The hybrid's (decision 0291,
-/// maphyb.xo): when the values list is held once (every put writes it;
-/// a log value's and a new map's are the shared empty list), the lists'
+/// maphyb.xo): when the values list is held once and not empty (every
+/// put writes it; a log value's and a new map's are empty: the shared
+/// empty list on the native backends, a fresh one on wasm), the lists'
 /// put alone; anything else in the cold xo.maph.putrest, which tells a
 /// log value's write, a shared value's copy on write (the second
 /// converts; the first is marked on the result), and the first put of a
@@ -483,7 +484,7 @@ fn (var b: Builder) lists_put(t: Int) -> Str {
   if rest.is_empty() {
     b.put_body(t, mp, k, v, -1, rebuild, hash)
   } else {
-    let (nf, jf) = b.if_then_begin(b.maph_sole(b.mfield(t, 1, mp)))
+    let (nf, jf) = b.if_then_begin(b.maph_lists_own(t, mp, 1))
     b.put_body(t, mp, k, v, -1, rebuild, hash)
     b.if_then_end(nf, jf)
     b.retv(b.call(rest, t, "", [mp, k, v]))
@@ -600,7 +601,7 @@ fn (var b: Builder) lists_remove(t: Int, ot: Int) -> Str {
   if rest.is_empty() {
     b.remove_body(t, ot, mp, k, -1)
   } else {
-    let (nf, jf) = b.if_then_begin(b.maph_sole(b.mfield(t, 2, mp)))
+    let (nf, jf) = b.if_then_begin(b.maph_lists_own(t, mp, 2))
     b.remove_body(t, ot, mp, k, -1)
     b.if_then_end(nf, jf)
     b.retv(b.call(rest, rt, "", [mp, k]))

@@ -1086,6 +1086,17 @@ fn (var b: Builder) obj_count(l: Int) -> Int {
   b.iop(Op.And, w, b.cint(4294967295))
 }
 
+/// The capacity of list l, read in place: word 2 of a native list (obj.xo
+/// rl_new), the i32 at byte 8 of a wasm one (compiler/wasm gen.xo).
+fn (var b: Builder) list_cap(l: Int) -> Int {
+  let it = b.int_t()
+  let a = b.rt("obj_addr", it, [l])
+  if b.wasm {
+    return b.iop(Op.And, b.rt("slot_load", it, [a, b.cint(1), b.cint(0)]), b.cint(4294967295))
+  }
+  b.rt("slot_load", it, [a, b.cint(2), b.cint(0)])
+}
+
 /// obj_count of an immortal object (a literal, the shared empty list).
 fn (var b: Builder) immortal_count() -> Int {
   if b.wasm { b.cint(2147483648) } else { b.iop(Op.Sub, b.cint(-9223372036854775807), b.cint(1)) }

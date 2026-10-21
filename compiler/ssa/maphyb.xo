@@ -227,16 +227,32 @@ fn (var b: Builder) maph_slow(t: Int, mp: Int, l: Int) -> Int {
   b.read(res)
 }
 
-/// Whether the lists of hybrid map mp copied on write once (its log field
-/// is an empty list of its own, not the immortal shared one).
+/// Whether the lists' code may write field f (1, the values; 2, the live
+/// flags) of hybrid map mp in place with no other test: the list is not
+/// empty (a log value's lists are, and a new map's) and held once.
+fn (var b: Builder) maph_lists_own(t: Int, mp: Int, f: Int) -> Int {
+  let l = b.mfield(t, f, mp)
+  b.add(Op.And, b.bool_t(), Aux.None, [b.bop(Op.Gt, b.call("list.len", b.int_t(), "", [l]), b.cint(0)), b.maph_sole(l)])
+}
+
+/// Whether the lists of hybrid map mp copied on write once: its log field
+/// is the mark, an empty list of capacity MAPH_MARK_CAP (maph_mark). Not
+/// the field's identity: a new map's empty list is the immortal shared
+/// one on the native backends but a fresh one on wasm, where every new
+/// map looked marked and converted at its first shared write
+/// (2026-10-21).
 fn (var b: Builder) maph_cowed(t: Int, mp: Int) -> Int {
-  b.bop(Op.Ne, b.obj_count(b.mfield(t, 5, mp)), b.immortal_count())
+  b.bop(Op.Eq, b.list_cap(b.mfield(t, 5, mp)), b.cint(MAPH_MARK_CAP))
 }
 
 /// mp with its copy on write marked (maph_cowed).
 fn (var b: Builder) maph_mark(t: Int, mp: Int) -> Int {
-  b.add(Op.SetField, t, Aux.I(n: 5), [mp, b.call("list.new", b.m.types[t].fields[5].ty, "", [b.cint(1)])])
+  b.add(Op.SetField, t, Aux.I(n: 5), [mp, b.call("list.new", b.m.types[t].fields[5].ty, "", [b.cint(MAPH_MARK_CAP)])])
 }
+
+/// The capacity of the mark (maph_cowed): no other empty list has it (the
+/// runtimes give a list at least 4, an empty literal 0 or 4).
+const MAPH_MARK_CAP = 5
 
 /// The hybrid's start of xo.map.put[T] (m, k, v its parameters): a log
 /// value's put and the conversion go to the cold xo.maph.slowput;
@@ -386,14 +402,18 @@ fn (var b: Builder) maph_kvl(t: Int, mv: Int) -> (Int, Int, Int) {
   let bl = b.m.types[t].fields[2].ty
   let rt = b.m.tuple([kl, vl, bl])
   let lt = b.maph_lt(t)
+  let ll = b.m.types[t].fields[5].ty
   let gkv = b.mlog_kv(lt)
-  let name = "xo.maph.kvl[${b.m.types[t].name}]"
-  let fi = b.thunk_func(name, [t], [rt], [])
+  // the log mode's lists, out of line (xo.maph.logkvl takes the log
+  // field alone: a thunk of the whole map value once lost a borrowed
+  // map's leaves on wasm, 2026-10-21); the lists mode's are its fields,
+  // read here as the lists' kvl reads them
+  let name = "xo.maph.logkvl[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [ll], [rt], [])
   if fi >= 0 {
     let saved = b.begin(fi, b.s.file)
-    let mp = b.param(0)
-    let (nl, jl) = b.if_then_begin(b.maph_is_log(t, mp))
-    let r = b.call(gkv, b.m.tuple([kl, vl]), "", [b.call("list.index", lt, "", [b.mfield(t, 5, mp), b.cint(0)])])
+    let lg = b.param(0)
+    let r = b.call(gkv, b.m.tuple([kl, vl]), "", [b.call("list.index", lt, "", [lg, b.cint(0)])])
     let ks = b.add(Op.Field, kl, Aux.I(n: 0), [r])
     let n = b.call("list.len", it, "", [ks])
     let lv = b.local()
@@ -403,11 +423,17 @@ fn (var b: Builder) maph_kvl(t: Int, mv: Int) -> (Int, Int, Int) {
     b.write_var(lv, b.call("list.push", bl, "", [b.read(lv), b.cbool(true)]))
     b.for_up_to_end(i, iv, head, exit)
     b.retv(b.add(Op.Tuple, rt, Aux.None, [ks, b.add(Op.Field, vl, Aux.I(n: 1), [r]), b.read(lv)]))
-    b.if_then_end(nl, jl)
-    b.retv(b.add(Op.Tuple, rt, Aux.None, [b.mfield(t, 0, mp), b.mfield(t, 1, mp), b.mfield(t, 2, mp)]))
     b.finish_fn()
     b.end(saved)
   }
-  let r = b.call(name, rt, "", [mv])
-  (b.add(Op.Field, kl, Aux.I(n: 0), [r]), b.add(Op.Field, vl, Aux.I(n: 1), [r]), b.add(Op.Field, bl, Aux.I(n: 2), [r]))
+  let join = b.new_block()
+  let res = b.s.f.add_param(join, rt)
+  let (yes, no) = b.branch(b.maph_is_log(t, mv))
+  b.s.cur = yes
+  b.jump(join, [b.call(name, rt, "", [b.mfield(t, 5, mv)])])
+  b.s.cur = no
+  b.jump(join, [b.add(Op.Tuple, rt, Aux.None, [b.mfield(t, 0, mv), b.mfield(t, 1, mv), b.mfield(t, 2, mv)])])
+  b.seal(join)
+  b.s.cur = join
+  (b.add(Op.Field, kl, Aux.I(n: 0), [res]), b.add(Op.Field, vl, Aux.I(n: 1), [res]), b.add(Op.Field, bl, Aux.I(n: 2), [res]))
 }
