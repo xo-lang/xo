@@ -1,130 +1,64 @@
 package rt
 
 import (
-	"strconv"
+	"encoding/csv"
+	"errors"
+	"io"
 	"strings"
 	"unicode/utf8"
 )
 
-// std/csv (std.md 16, decision 0164). The native backends implement the
-// same parser in Xo (std/native/csv.xo); the results and error texts
-// must stay identical (the golden program csv_basic runs on both).
+// std/csv on the Go backend (decisions 0164 and 0298): Go's encoding/csv
+// itself; std/native/csv.xo ports it.
 
-// M_display is `csv: line 3, column 5: msg`.
+// M_display is Go's ParseError.Error.
 func (e Csv_CsvErr) M_display(*Task) string {
-	return "csv: line " + strconv.FormatInt(e.F_line, 10) + ", column " + strconv.FormatInt(e.F_column, 10) + ": " + e.F_msg
-}
-
-func csvErr(line, col int, msg string) *Csv_CsvErr {
-	return &Csv_CsvErr{F_line: int64(line), F_column: int64(col), F_msg: msg}
-}
-
-// csvParse reads the records of text; lines holds the line each record
-// starts on.
-func csvParse(text string, sep rune) (recs [][]string, lines []int, err *Csv_CsvErr) {
-	if sep == '"' || sep == '\r' || sep == '\n' || !utf8.ValidRune(sep) {
-		FaultHere("csv: %s cannot separate fields", strconv.QuoteRune(sep))
+	pe := &csv.ParseError{StartLine: int(e.F_start_line), Line: int(e.F_line), Column: int(e.F_column), Err: errors.New(e.F_msg)}
+	if e.F_msg == csv.ErrFieldCount.Error() {
+		pe.Err = csv.ErrFieldCount
 	}
-	ss := string(sep)
-	i, line, col0 := 0, 1, 0 // col0: offset of the current line's start
-	n := len(text)
-	for i < n {
-		// an empty line is skipped
-		if text[i] == '\n' {
-			i++
-			line++
-			col0 = i
-			continue
+	return pe.Error()
+}
+
+func csvValidDelim(r rune) bool {
+	return r != 0 && r != '"' && r != '\r' && r != '\n' && utf8.ValidRune(r) && r != utf8.RuneError
+}
+
+func csvCheckDelims(sep rune, comment rune) {
+	if !csvValidDelim(sep) || comment != 0 && (comment == sep || !csvValidDelim(comment)) {
+		FaultHere("csv: invalid field or comment delimiter")
+	}
+}
+
+func csvReadAll(text string, sep Rune, comment Rune, fields int64, lazy, trim bool) ([][]string, *Csv_CsvErr) {
+	csvCheckDelims(rune(sep), rune(comment))
+	r := csv.NewReader(strings.NewReader(text))
+	r.Comma = rune(sep)
+	r.Comment = rune(comment)
+	r.FieldsPerRecord = int(fields)
+	r.LazyQuotes = lazy
+	r.TrimLeadingSpace = trim
+	var recs [][]string
+	for {
+		rec, err := r.Read()
+		if err == io.EOF {
+			return recs, nil
 		}
-		// a final \r ends the text as \n would (Go's csv.Reader)
-		if text[i] == '\r' && i+1 == n {
-			i++
-			continue
-		}
-		if text[i] == '\r' && i+1 < n && text[i+1] == '\n' {
-			i += 2
-			line++
-			col0 = i
-			continue
-		}
-		var rec []string
-		start := line
-		for {
-			var field strings.Builder
-			if i < n && text[i] == '"' {
-				ql, qc := line, i-col0+1
-				i++
-				closed := false
-				for i < n {
-					c := text[i]
-					if c == '"' {
-						if i+1 < n && text[i+1] == '"' {
-							field.WriteByte('"')
-							i += 2
-							continue
-						}
-						i++
-						closed = true
-						break
-					}
-					if c == '\r' && i+1 < n && text[i+1] == '\n' {
-						field.WriteByte('\n')
-						i += 2
-						line++
-						col0 = i
-						continue
-					}
-					if c == '\n' {
-						line++
-						col0 = i + 1
-					}
-					field.WriteByte(c)
-					i++
-				}
-				if !closed {
-					return nil, nil, csvErr(ql, qc, "quoted field not closed")
-				}
-				if i < n && !strings.HasPrefix(text[i:], ss) && text[i] != '\n' && !(text[i] == '\r' && i+1 < n && text[i+1] == '\n') && !(text[i] == '\r' && i+1 == n) {
-					return nil, nil, csvErr(line, i-col0+1, "unexpected character after a quoted field")
-				}
-			} else {
-				for i < n {
-					c := text[i]
-					if c == '\n' || c == '\r' && (i+1 == n || text[i+1] == '\n') || strings.HasPrefix(text[i:], ss) {
-						break
-					}
-					if c == '"' {
-						return nil, nil, csvErr(line, i-col0+1, "\" in an unquoted field")
-					}
-					field.WriteByte(c)
-					i++
-				}
+		if err != nil {
+			var pe *csv.ParseError
+			if errors.As(err, &pe) {
+				return nil, &Csv_CsvErr{F_start_line: int64(pe.StartLine), F_line: int64(pe.Line), F_column: int64(pe.Column), F_msg: pe.Err.Error()}
 			}
-			rec = append(rec, field.String())
-			if i < n && strings.HasPrefix(text[i:], ss) {
-				i += len(ss)
-				continue
-			}
-			// the end of the record: \n, \r\n, a final \r, or the end
-			if i < n && text[i] == '\r' {
-				i++
-			}
-			if i < n && text[i] == '\n' {
-				i++
-			}
-			line++
-			col0 = i
-			break
+			return nil, &Csv_CsvErr{F_msg: err.Error()}
 		}
 		recs = append(recs, rec)
-		lines = append(lines, start)
 	}
-	return recs, lines, nil
 }
 
-// Csv_parse is `csv.parse(text, sep)`.
-func Csv_parse(_ *Task, text string, sep Rune) Result[List[List[string]], Csv_CsvErr] {
-	recs, _, err := csvParse(text, rune(sep))
+// Csv_parse is `csv.parse(text, sep, comment, fields, lazy_quotes,
+// trim_leading_space)`.
+func Csv_parse(_ *Task, text string, sep Rune, comment Rune, fields int64, lazy bool, trim bool) Result[List[List[string]], Csv_CsvErr] {
+	recs, err := csvReadAll(text, sep, comment, fields, lazy, trim)
 	if err != nil {
 		return Err[List[List[string]]](*err)
 	}
@@ -135,9 +69,9 @@ func Csv_parse(_ *Task, text string, sep Rune) Result[List[List[string]], Csv_Cs
 	return Ok[List[List[string]], Csv_CsvErr](ListOf(out...))
 }
 
-// Csv_parse_maps is `csv.parse_maps(text, sep)`.
-func Csv_parse_maps(_ *Task, text string, sep Rune) Result[List[Map[string, string]], Csv_CsvErr] {
-	recs, lines, err := csvParse(text, rune(sep))
+// Csv_parse_maps is `csv.parse_maps(...)`: FieldsPerRecord 0.
+func Csv_parse_maps(_ *Task, text string, sep Rune, comment Rune, lazy bool, trim bool) Result[List[Map[string, string]], Csv_CsvErr] {
+	recs, err := csvReadAll(text, sep, comment, 0, lazy, trim)
 	if err != nil {
 		return Err[List[Map[string, string]]](*err)
 	}
@@ -146,10 +80,7 @@ func Csv_parse_maps(_ *Task, text string, sep Rune) Result[List[Map[string, stri
 	}
 	head := recs[0]
 	var out []Map[string, string]
-	for k, r := range recs[1:] {
-		if len(r) != len(head) {
-			return Err[List[Map[string, string]]](*csvErr(lines[k+1], 1, "expected "+strconv.Itoa(len(head))+" fields as in the header, found "+strconv.Itoa(len(r))))
-		}
+	for _, r := range recs[1:] {
 		var m Map[string, string]
 		for j, h := range head {
 			Map_put(nil, &m, h, r[j])
@@ -159,28 +90,26 @@ func Csv_parse_maps(_ *Task, text string, sep Rune) Result[List[Map[string, stri
 	return Ok[List[Map[string, string]], Csv_CsvErr](ListOf(out...))
 }
 
-// Csv_format is `csv.format(rows, sep)`.
-func Csv_format(_ *Task, rows List[List[string]], sep Rune) string {
-	if rune(sep) == '"' || sep == '\r' || sep == '\n' || !utf8.ValidRune(rune(sep)) {
-		FaultHere("csv: %s cannot separate fields", strconv.QuoteRune(rune(sep)))
-	}
-	ss := string(rune(sep))
+// Csv_format is `csv.format(rows, sep, crlf)`: Go's Writer, and the only,
+// empty field of a record quoted (so it reads back as a record).
+func Csv_format(_ *Task, rows List[List[string]], sep Rune, crlf bool) string {
+	csvCheckDelims(rune(sep), 0)
 	var b strings.Builder
 	for _, r := range rows.s {
-		for j, f := range r.s {
-			if j > 0 {
-				b.WriteString(ss)
+		if len(r.s) == 1 && r.s[0] == "" {
+			b.WriteString(`""`)
+			if crlf {
+				b.WriteString("\r\n")
+			} else {
+				b.WriteString("\n")
 			}
-			quote := f == "" && len(r.s) == 1 || strings.Contains(f, ss) || strings.ContainsAny(f, "\"\r\n") || strings.HasPrefix(f, " ") || strings.HasPrefix(f, "\t")
-			if !quote {
-				b.WriteString(f)
-				continue
-			}
-			b.WriteByte('"')
-			b.WriteString(strings.ReplaceAll(f, `"`, `""`))
-			b.WriteByte('"')
+			continue
 		}
-		b.WriteByte('\n')
+		w := csv.NewWriter(&b)
+		w.Comma = rune(sep)
+		w.UseCRLF = crlf
+		w.Write(r.s)
+		w.Flush()
 	}
 	return b.String()
 }

@@ -9,12 +9,12 @@ exit 0
 "a,b\r" -> ["a", "b"]
 "x\ty\tz" -> ["x\ty\tz"]
 tab separated -> ["x", "y", "z"]
-"a,b\"c" -> csv: line 1, column 4: " in an unquoted field (line 1, column 4)
-"\"abc" -> csv: line 1, column 1: quoted field not closed (line 1, column 1)
-"a,\"b\"c\nd" -> csv: line 1, column 6: unexpected character after a quoted field (line 1, column 6)
-"ok\n\"x\"y" -> csv: line 2, column 4: unexpected character after a quoted field (line 2, column 4)
+"a,b\"c" -> parse error on line 1, column 4: bare " in non-quoted-field (line 1, column 4)
+"\"abc" -> parse error on line 1, column 5: extraneous or missing " in quoted-field (line 1, column 5)
+"a,\"b\"c\nd" -> parse error on line 1, column 5: extraneous or missing " in quoted-field (line 1, column 5)
+"ok\n\"x\"y" -> parse error on line 2, column 3: extraneous or missing " in quoted-field (line 2, column 3)
 maps: ann:admin bob:dev
-maps: csv: line 3, column 1: expected 2 fields as in the header, found 1
+maps: record on line 3: wrong number of fields
 empty maps: 0
 id,note
 1,plain

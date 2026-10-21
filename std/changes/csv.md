@@ -1,5 +1,18 @@
 # std/csv changes
 
+## 2026-10-21: behavior: Go's errors and options (decision 0298)
+
+- Kind: behavior
+- Commit: (filled in after the push)
+- Found by: differential test against Go's encoding/csv
+- Go reference: encoding/csv reader.go (readLine, readRecord, ParseError), writer.go (go1.26.1)
+- Test: std/native/csv_test.xo (Go's records and errors on 2,661 texts with every option; Go's Writer on 400 row sets); internal/llvm/testdata/golden/csv_basic
+
+Errors are Go's ParseError (texts, positions, `start_line`); `parse` and
+`parse_maps` take `comment`, `fields`, `lazy_quotes`, and
+`trim_leading_space`; `format` takes `crlf` and quotes as Go's Writer
+(also `\.` and a leading Unicode space).
+
 ## 2026-10-20: fix: a final \r is a line end, as in Go's csv.Reader
 
 - Kind: fix

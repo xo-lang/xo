@@ -106,9 +106,9 @@ var (
 	_ func(*Task, Rand, Crypto_PrivateKey, Crypto_Hash, Bytes) Result[Bytes, Crypto_KeyErr]                                     = Crypto_sign_raw_ecdsa
 	_ func(*Task, Rand, Crypto_KeyAlg) Result[Crypto_PrivateKey, Crypto_KeyErr]                                                 = Crypto_generate_key
 	_ func(*Csv_CsvErr, *Task) string                                                                                           = (*Csv_CsvErr).M_display
-	_ func(*Task, string, Rune) Result[List[List[string]], Csv_CsvErr]                                                          = Csv_parse
-	_ func(*Task, string, Rune) Result[List[Map[string, string]], Csv_CsvErr]                                                   = Csv_parse_maps
-	_ func(*Task, List[List[string]], Rune) string                                                                              = Csv_format
+	_ func(*Task, string, Rune, Rune, int64, bool, bool) Result[List[List[string]], Csv_CsvErr]                                 = Csv_parse
+	_ func(*Task, string, Rune, Rune, bool, bool) Result[List[Map[string, string]], Csv_CsvErr]                                 = Csv_parse_maps
+	_ func(*Task, List[List[string]], Rune, bool) string                                                                        = Csv_format
 	_ func(*Task) Http_Router                                                                                                   = Http_router
 	_ func(*Http_Router, *Task, string, Http_Router)                                                                            = (*Http_Router).M_mount
 	_ func(*Http_Router, *Task, Http_Request) Http_Response                                                                     = (*Http_Router).M_call

@@ -2882,35 +2882,45 @@ fn report(out: Stdio, env: Env, failed: Int) uses (stdio, env) {
 
 ## 16. std/csv
 
-Status: implemented on every backend (decision 0164, 2026-10-11): the
-Go backend in `std/rt/csv.go`, the native backends in
-`std/native/csv.xo`, the same records, text, and errors.
+Status: implemented on every backend (decision 0164, 2026-10-11; Go
+parity decision 0298, 2026-10-21): the Go backend runs Go's encoding/csv
+(`std/rt/csv.go`), the native backends port it (`std/native/csv.xo`);
+Go's records, errors, and positions on 2,661 texts with every option,
+and Go's Writer on 400 row sets (`csv_test.xo`).
 
 ```
-struct CsvErr { line: Int, column: Int, msg: Str }   // displays as `csv: line 3, column 5: msg`
+struct CsvErr { start_line: Int, line: Int, column: Int, msg: Str }   // Go's ParseError
 
-pub fn parse(text: Str, sep: Rune = ',') -> List[List[Str]] ! CsvErr
-pub fn parse_maps(text: Str, sep: Rune = ',') -> List[Map[Str, Str]] ! CsvErr
-pub fn format(rows: List[List[Str]], sep: Rune = ',') -> Str
+pub fn parse(text: Str, sep: Rune = ',', comment: Rune = '\0', fields: Int = -1,
+             lazy_quotes: Bool = false, trim_leading_space: Bool = false) -> List[List[Str]] ! CsvErr
+pub fn parse_maps(text: Str, sep: Rune = ',', comment: Rune = '\0', lazy_quotes: Bool = false,
+                  trim_leading_space: Bool = false) -> List[Map[Str, Str]] ! CsvErr
+pub fn format(rows: List[List[Str]], sep: Rune = ',', crlf: Bool = false) -> Str
 ```
 
-- RFC 4180: a field in double quotes may hold the separator, line
-  breaks, and `""` for a quote; `\r\n` inside quotes reads as `\n`.
-  Records end with `\n`, `\r\n`, or the end of the text; empty lines are
-  skipped. Records may have different numbers of fields. Spaces are part
-  of fields.
-- Errors (line and column are 1-based, the column counts bytes): `" in
-  an unquoted field`, `quoted field not closed` (at the opening quote),
-  `unexpected character after a quoted field`.
+- Go's csv.Reader: `sep` is Comma, `comment` Comment (`'\0'` for none:
+  lines starting with it are skipped), `fields` FieldsPerRecord (-1 any
+  number, the default here where Go's is 0; 0 the first record's; N
+  exactly N), `lazy_quotes` LazyQuotes, `trim_leading_space`
+  TrimLeadingSpace. RFC 4180 quoting; `\r\n` reads as `\n`; empty lines
+  are skipped; a final `\r` ends the text as `\n` would.
+- Errors are Go's ParseError: `msg` is `bare " in non-quoted-field`,
+  `extraneous or missing " in quoted-field`, or `wrong number of
+  fields`; line and column (1-based, bytes) are Go's; `display` is Go's
+  Error() text: `parse error on line 1, column 5: ...`, `record on line
+  2; parse error on line 3, column 1: ...`, `record on line 4: wrong
+  number of fields`.
 - `parse_maps` reads the first record as the header and makes a map per
-  later record, in header order; a record with another number of fields
-  is `expected N fields as in the header, found M` at its first line.
-- `format` writes each record and `\n`; a field is quoted when it holds
-  the separator, a quote, `\r` or `\n`, starts with a space or a tab, or
-  is the only, empty field of a record (else the record would read as an
-  empty line). `parse(format(rows))` gives `rows` back.
-- `sep` is any rune but `"`, `\r`, and `\n` (a fault otherwise); use
-  `'\t'` for tab separated values.
+  later record; every record must have the header's number of fields
+  (FieldsPerRecord 0).
+- `format` is Go's csv.Writer (`crlf`: UseCRLF): a field is quoted when it
+  holds `sep`, a quote, `\r` or `\n`, starts with a space (Unicode), or
+  is `\.`; quotes double. One difference: the only, empty field of a
+  record is written `""` (Go writes an empty line, which reads back as no
+  record), so `parse(format(rows))` gives `rows` back.
+- `sep` and `comment` must be valid delimiters (not `"`, `\r`, `\n`,
+  `\0` for `sep`, and not each other): a fault `csv: invalid field or
+  comment delimiter` otherwise.
 
 ---
 

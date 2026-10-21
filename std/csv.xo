@@ -4,9 +4,15 @@
 // breaks inside quotes, `\n` or `\r\n` between records. Pure: read and
 // write the text with Fs or Stdio.
 
-/// Where and why the text is not valid CSV. Displays as
-/// `csv: line 3, column 5: extra " in a quoted field`.
+/// Where and why the text is not valid CSV (Go's csv.ParseError):
+/// the line the record starts on, the line and 1-based byte column of the
+/// error, and Go's message (`bare " in non-quoted-field`, `extraneous or
+/// missing " in quoted-field`, `wrong number of fields`). Displays as Go's
+/// Error(): `parse error on line 1, column 5: bare " in non-quoted-field`,
+/// `record on line 2; parse error on line 3, column 1: ...`, `record on
+/// line 4: wrong number of fields`.
 struct CsvErr {
+  start_line: Int
   line: Int
   column: Int
   msg: Str
@@ -14,13 +20,18 @@ struct CsvErr {
 
 fn (e: CsvErr) display() -> Str
 
-/// The records of text; records may have different numbers of fields.
-/// `sep` separates fields (`,` by default; `\t` for TSV).
-fn parse(text: Str, sep: Rune = ',') -> List[List[Str]] ! CsvErr
+/// The records of text, as Go's csv.Reader reads them (decision 0298):
+/// `sep` separates fields (Comma), lines starting with `comment` are
+/// skipped (Comment; `'\0'`, the default, for none), `fields` is FieldsPerRecord (-1 any number, the
+/// default here; 0 the first record's; N exactly N), `lazy_quotes`
+/// and `trim_leading_space` are LazyQuotes and TrimLeadingSpace.
+fn parse(text: Str, sep: Rune = ',', comment: Rune = '\0', fields: Int = -1, lazy_quotes: Bool = false, trim_leading_space: Bool = false) -> List[List[Str]] ! CsvErr
 /// The records after the first, each a map from the first record's
-/// fields (the header) to its own; a record with another number of
-/// fields than the header is an error.
-fn parse_maps(text: Str, sep: Rune = ',') -> List[Map[Str, Str]] ! CsvErr
-/// The text of rows: fields quoted when they hold `sep`, a quote, a line
-/// break, or start with a space; each record ends with `\n`.
-fn format(rows: List[List[Str]], sep: Rune = ',') -> Str
+/// fields (the header) to its own; every record must have the header's
+/// number of fields (`wrong number of fields`).
+fn parse_maps(text: Str, sep: Rune = ',', comment: Rune = '\0', lazy_quotes: Bool = false, trim_leading_space: Bool = false) -> List[Map[Str, Str]] ! CsvErr
+/// The text of rows as Go's csv.Writer writes them (`crlf`: UseCRLF): a
+/// field is quoted when it holds `sep`, a quote, `\r`, or `\n`, starts
+/// with a space, or is `\.`; also when it is the only, empty field of a
+/// record (so it reads back as a record, where Go writes an empty line).
+fn format(rows: List[List[Str]], sep: Rune = ',', crlf: Bool = false) -> Str

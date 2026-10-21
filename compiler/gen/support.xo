@@ -177,6 +177,14 @@ fn (var g: Gen) std_default(e: Expr, t: Int) -> Str {
   let r = g.rt()
   match e {
     IntLit(value: value, ..) => return g.int_lit(check.text(value), t)
+    UnaryExpr(op: op, x: x, ..) => {
+      // a negative number (std/csv's fields: Int = -1)
+      if op == Kind.Minus {
+        if let IntLit(value: value, ..) = x {
+          return g.int_lit("-" + check.text(value), t)
+        }
+      }
+    }
     DurationLit(nanos: nanos, ..) => return "${r}Duration(${check.text(nanos)})"
     RuneLit(value: value, ..) => return "${r}Rune(${value})"
     BytesLit(value: value, ..) => return "${r}Bytes(${value.quote()})"
