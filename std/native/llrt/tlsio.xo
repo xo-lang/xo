@@ -11,7 +11,6 @@ use native/llrt/atexit
 use native/llrt/hconn
 use native/llrt/obj
 use native/llrt/poll
-use native/llrt/process
 use native/llrt/raw
 use native/llrt/rc
 use native/llrt/sock
@@ -21,7 +20,6 @@ use native/llrt/tls12
 use native/llrt/tls13
 use native/llrt/tlscert
 use native/llrt/tlsname
-use native/llrt/tzrules
 use native/llrt/x509
 use native/rt
 use native/rthttp
@@ -298,8 +296,10 @@ pub fn client_with(pd: Int, host: Str, roots: Int, dl: Int, protos: List[Str], v
   }
   var cf = tls13.conf(name, certs, sysio.real_ns() / 1000000000)
   cf.apple_svc = apple
-  // Go's texts show the time in time.Local
-  cf.zone_off = local_offset(cf.now)
+  // Go's texts show the time in time.Local, found only when a
+  // verification fails (tls13.zone_of: a readlink and the zone's lookup
+  // every handshake were 5% of a macOS client's samples, 2026-10-21)
+  cf.zone_off = tls13.ZONE_LAZY
   // the http client's: HTTP/2, then HTTP/1.1, as the C's configuration
   // and Go's Transport
   cf.alpn = protos
@@ -342,26 +342,6 @@ pub fn client_with(pd: Int, host: Str, roots: Int, dl: Int, protos: List[Str], v
     return failed(CC_ERR, 4, "tls: first record does not look like a TLS handshake")
   }
   failed(CC_ERR, 4, "EOF")
-}
-
-/// Go's time.Local offset from UTC at now: TZ ("" or UTC: UTC; else that
-/// zone from the host's database), else the machine's zone, else UTC.
-/// tzrules.xo, not tz.xo: the program's zone table is std/time's.
-fn local_offset(now: Int) -> Int {
-  let tzv = process.env_get("TZ")
-  if !tzv.is_empty() {
-    let name = tzv[0].trim_prefix(":")
-    if name == "" || name == "UTC" {
-      return 0
-    }
-    return tzrules.host_offset(name, now) ?? 0
-  }
-  let name = tzrules.local_name()
-  let first = if name != "Local" { tzrules.host_offset(name, now) } else { None }
-  match first {
-    Some(x) => x
-    None => tzrules.host_offset("Local", now) ?? 0
-  }
 }
 
 /// Frees the system's roots record (at exit, before the leak check:

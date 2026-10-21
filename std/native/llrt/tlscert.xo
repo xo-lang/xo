@@ -234,13 +234,32 @@ pub fn apple_trust(_svc: Int, ders: List[Bytes], host: Str) -> AppleRes {
 /// verifies nothing does not load them at start (about 14M instructions
 /// of its launch, bench/results/zero-c-perf-sweep-2026-10-15.md).
 fn fw(name: Str) -> Int {
-  let _h = sys_darwin.dlopen("/System/Library/Frameworks/Security.framework/Security\x00".bytes(), 9)
-  sys_darwin.dlsym(-2, "${name}\x00".bytes())
+  let h = security()
+  if h == 0 {
+    return 0
+  }
+  sys_darwin.dlsym(h, "${name}\x00".bytes())
+}
+
+/// The Security framework's handle, opened once a process (static word
+/// 14; 0 when it did not load). Its symbols, and CoreFoundation's it
+/// depends on, are looked up through it: dlsym(RTLD_DEFAULT) searches
+/// every image, 40 to 51 us a symbol against about 0.5 us through the
+/// handle (2026-10-21, Mac), and a handshake looks up a dozen. Two first
+/// calls at once both open it, which dlopen counts.
+fn security() -> Int {
+  let w = rt.static_word(14)
+  var h = rt.slot_load(w, 0, 1)
+  if h == 0 {
+    h = sys_darwin.dlopen("/System/Library/Frameworks/Security.framework/Security\x00".bytes(), 9)
+    rt.slot_store(w, 0, if h == 0 { -1 } else { h }, 2)
+  }
+  if h == -1 { 0 } else { h }
 }
 
 fn apple_trust_darwin(ders: List[Bytes], host: Str) -> AppleRes {
   let cf_release = fw("CFRelease")
-  let callbacks = sys_darwin.dlsym(-2, "kCFTypeArrayCallBacks\x00".bytes())
+  let callbacks = fw("kCFTypeArrayCallBacks")
   if cf_release == 0 || callbacks == 0 {
     return AppleRes{code: 10, msg: "x509: the Security framework did not load"}
   }

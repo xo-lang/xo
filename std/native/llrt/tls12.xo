@@ -1318,7 +1318,7 @@ fn verify_certificates(var c: Client) -> Bool {
     let vh = if c.conf.chain_only { "" } else { c.conf.host }
     let r = x509verify.verify(leaf, certs[1..certs.len()], c.conf.roots, vh, c.conf.now, x509.EKU_SERVER)
     if r.code != x509verify.OK {
-      fail(c, ALERT_BAD_CERTIFICATE, "tls: failed to verify certificate: ${verify_msg(r, leaf, vh, c.conf.now, c.conf.zone_off)}")
+      fail(c, ALERT_BAD_CERTIFICATE, "tls: failed to verify certificate: ${verify_msg(r, leaf, vh, c.conf.now, tls13.zone_of(c.conf.zone_off, c.conf.now))}")
       return false
     }
   }

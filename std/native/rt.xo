@@ -233,7 +233,7 @@ fn prefetch(a: Int)
 ///   10-11 std/native/llrt/obj.xo: the single threaded heap record, heap_slow's address
 ///   12 std/native/llrt/linux.xo: the auxiliary vector's address (after the start's environment array), or 0
 ///   13 std/native/llrt/prof.xo: the sampling profiler's record (decision 0238), 0 when off
-///   14 free (fault.xo moved to 64-65, 2026-10-16)
+///   14 std/native/llrt/tlscert.xo: the Security framework's dlopen handle on macOS (-1 when it did not load), opened once
 ///   15 std/native/llrt/rtstats.xo: the runtime statistics' record (its switch and counts; was xo_rt.c st and rtstats until decision 0233 step 2)
 ///   16-17 std/native/llrt/ctx.xo: the address of the services record (the pool record, flags), the program's task group (os.tasks; decision 0229)
 ///   18-21 std/native/llrt/tzhost.xo: the kept zones' lock and vector (address, length, capacity)

@@ -22,6 +22,7 @@ use native/llrt/sha256
 use native/llrt/tlscert
 use native/llrt/tlsname
 use native/llrt/tlsrec
+use native/llrt/tzrules
 use native/llrt/x509
 use native/llrt/x25519
 use native/llrt/x509verify
@@ -823,7 +824,34 @@ fn certificate(var c: Client, msg: Bytes) {
 }
 
 /// The text of x509.Verify's error.
-fn verify_msg(r: x509verify.Outcome, leaf: x509.Cert, cf: Conf) -> Str { x509verify.full_text_zone(r, leaf, vhost(cf), cf.now, cf.zone_off) }
+fn verify_msg(r: x509verify.Outcome, leaf: x509.Cert, cf: Conf) -> Str { x509verify.full_text_zone(r, leaf, vhost(cf), cf.now, zone_of(cf.zone_off, cf.now)) }
+
+/// A Conf's zone_off before it is needed: the client's verification
+/// messages find time.Local's offset only when they are made (zone_of).
+pub const ZONE_LAZY = -1000000000
+
+/// off, or time.Local's offset at now when off is ZONE_LAZY.
+pub fn zone_of(off: Int, now: Int) -> Int { if off == ZONE_LAZY { local_offset(now) } else { off } }
+
+/// Go's time.Local offset from UTC at now: TZ ("" or UTC: UTC; else that
+/// zone from the host's database), else the machine's zone, else UTC.
+/// tzrules.xo, not tz.xo: the program's zone table is std/time's.
+pub fn local_offset(now: Int) -> Int {
+  let tzv = process.env_get("TZ")
+  if !tzv.is_empty() {
+    let name = tzv[0].trim_prefix(":")
+    if name == "" || name == "UTC" {
+      return 0
+    }
+    return tzrules.host_offset(name, now) ?? 0
+  }
+  let name = tzrules.local_name()
+  let first = if name != "Local" { tzrules.host_offset(name, now) } else { None }
+  match first {
+    Some(x) => x
+    None => tzrules.host_offset("Local", now) ?? 0
+  }
+}
 
 /// The name the certificate is verified for: none with chain_only.
 fn vhost(cf: Conf) -> Str { if cf.chain_only { "" } else { cf.host } }

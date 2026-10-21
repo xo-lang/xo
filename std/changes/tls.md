@@ -1,5 +1,21 @@
 # std/tls changes
 
+## 2026-10-21: speedup: a TLS client handshake on macOS without a zone lookup or slow symbol lookups
+
+- Kind: speedup
+- Commit: (filled in after the push)
+- Found by: Xo lang 4's profile of the arm64 TLS client (open and readlink in every handshake)
+- Go reference: none
+- Test: internal/llvm/testdata/golden/tls_client, tls13_go, tls12_client, http_tls (the expired certificate texts in time.Local); a local Go server with a self-signed certificate, 500 dials verified by the system (Mac)
+
+Every client handshake (std/tls and std/http's https) read the
+/etc/localtime link and looked up the local zone, which only a failed
+verification's message uses; it is found now when that message is made.
+On macOS the Security framework's functions are looked up through its
+handle, opened once, where each lookup searched every loaded image (40
+to 51 us a symbol, a dozen a handshake). 500 dials whose verification
+fails on the Mac: 506 to 154 ms of CPU, 1,570 to 394 ms of wall time.
+
 ## 2026-10-20: feature: a TLS client on a dialed connection
 
 - Kind: feature
