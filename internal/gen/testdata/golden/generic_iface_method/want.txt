@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+41 zx rev
+21 yx rot1
+--- stderr

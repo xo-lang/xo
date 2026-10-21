@@ -405,6 +405,75 @@ fn (var g: Gen) gen_interface(t: Int) {
     g.pl("\t${go_method(g.oname(m))}${g.sig_tail(m)}")
   }
   g.pl("}\n")
+  g.gen_generic_dispatch(t)
+}
+
+/// The package level function of each generic method of interface t
+/// (Go interfaces have no generic methods): a type switch over the types
+/// of the module that implement t, each case calling that type's method
+/// with the method's type arguments. A type of another module that
+/// implements t is an error (its package imports this one, so the switch
+/// cannot name it).
+fn (var g: Gen) gen_generic_dispatch(t: Int) {
+  let o = g.c.objs[t]
+  if !o.tparams.is_empty() {
+    return
+  }
+  var gens: List[Int] = []
+  for m in o.iface_meths {
+    if !g.type_params(g.own_tparams(m)).is_empty() {
+      gens.push(m)
+    }
+  }
+  if gens.is_empty() {
+    return
+  }
+  let it = g.c.mk_named(t, [])
+  var impls: List[Int] = []
+  for x in 0..g.c.objs.len() {
+    let xo = g.c.objs[x]
+    if xo.kind != check.ObjKind.Type || !xo.tparams.is_empty() || g.ostd(x) || !(xo.tkind is "struct" | "enum" | "newtype") {
+      continue
+    }
+    let xt = g.c.mk_named(x, [])
+    if !g.c.implements(xt, it, no_span()) {
+      continue
+    }
+    if xo.module != o.module {
+      let msg = "`${g.oname(x)}` implements `${g.oname(t)}`, which has generic methods, from another module: the Go backend dispatches them with a type switch in the interface's package (build with the native backend or declare the type beside the interface)"
+      if !g.errs.contains(msg) {
+        g.errorf(Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}}, msg)
+      }
+      continue
+    }
+    impls.push(xt)
+  }
+  let rt = g.rt()
+  for m in gens {
+    let tps = g.own_tparams(m)
+    let sig = replace_first(g.sig_tail(m), "(tk *${rt}Task", "(tk *${rt}Task, recv ${g.local_type_name(t)}")
+    g.pl("func ${g.func_go_name(m)}${g.tparam_decl(tps)}${sig} {")
+    var args = ""
+    for i in 0..g.c.objs[m].params.len() {
+      args = args + ", p${i}"
+    }
+    g.pl("\tswitch v := recv.(type) {")
+    for xt in impls {
+      let (fm, _) = g.find_method(xt, g.oname(m))
+      if fm < 0 {
+        continue
+      }
+      let pr = g.pkg_ref(g.c.objs[fm].module)
+      g.pl("\tcase ${g.go_type(xt)}:")
+      let call = "${pr}${g.func_go_name(fm)}${g.tparam_use(tps)}(tk, v${args})"
+      if g.go_result(m).is_empty() {
+        g.pl("\t\t${call}\n\t\treturn")
+      } else {
+        g.pl("\t\treturn ${call}")
+      }
+    }
+    g.pl("\t}\n\tpanic(\"xo: no implementation of ${g.oname(t)}.${g.oname(m)}\")\n}\n")
+  }
 }
 
 /// Whether the Go form of a declared function returns rt.Result

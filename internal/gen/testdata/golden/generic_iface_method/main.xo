@@ -1,0 +1,51 @@
+// A generic method on a user interface, called through the interface
+// value: the Go backend has no generic Go interface methods, so it
+// dispatches with a type switch over the module's implementing types.
+
+interface Shuffler {
+  fn shuffle[T](self, xs: List[T]) -> List[T]
+  fn pair[A, B](self, a: A, b: B) -> Str
+}
+
+struct Rev {}
+
+struct Rot {
+  by: Int
+}
+
+fn (r: Rev) shuffle[T](xs: List[T]) -> List[T] {
+  var out: List[T] = []
+  var i = xs.len() - 1
+  while i >= 0 {
+    out.push(xs[i])
+    i -= 1
+  }
+  out
+}
+
+fn (r: Rev) pair[A, B](a: A, b: B) -> Str {
+  "rev"
+}
+
+fn (r: Rot) shuffle[T](xs: List[T]) -> List[T] {
+  var out: List[T] = []
+  for i in 0..xs.len() {
+    out.push(xs[(i + r.by) % xs.len()])
+  }
+  out
+}
+
+fn (r: Rot) pair[A, B](a: A, b: B) -> Str {
+  "rot${r.by}"
+}
+
+fn run(s: Shuffler) -> Str {
+  let a = s.shuffle([1, 2, 3, 4])
+  let b = s.shuffle(["x", "y", "z"])
+  "${a[0]}${a[3]} ${b[0]}${b[2]} ${s.pair(1, "k")}"
+}
+
+fn main(os: Os) {
+  os.stdio.println(run(Rev{}))
+  os.stdio.println(run(Rot{by: 1}))
+}
