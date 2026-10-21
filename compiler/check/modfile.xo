@@ -1302,6 +1302,16 @@ fn (c: Checker) check_effects(var b: BuildList, locks: Map[Str, Lock], roots: Li
   }
 }
 
+/// A listing r of a module tree the audits read: none for a directory
+/// that is gone, the error for any other failure (XO1318).
+fn tree_listing(r: Result[List[FileInfo], FsErr], dir: Str) -> List[FileInfo] ! Str {
+  match r {
+    Ok(es) => Ok(es)
+    Err(NotFound(_)) => Ok([])
+    Err(e) => Err("read ${dir}: ${e}")
+  }
+}
+
 /// XO1318: a module tree the effect or escape hatch audit cannot read
 /// (decision 0156's checks would pass on what they did not see).
 pub fn unreadable_tree(path: Str, version: Str, what: Str, e: Str) -> Problem {
@@ -1325,11 +1335,7 @@ pub fn (c: Checker) module_effects(dir: Str) -> List[Str] ! Str uses fs.read {
     let d = todo.pop() ?? ""
     // a directory or file that cannot be read is an error: the effects
     // of what it holds would be missing from the set (XO1318)
-    let entries = match c.fs.read_dir(d) {
-      Ok(es) => es
-      Err(NotFound(_)) => []
-      Err(e) => return Err("read ${d}: ${e}")
-    }
+    let entries = tree_listing(c.fs.read_dir(d), d)?
     for e in entries {
       let p = join(d, e.name)
       if e.is_dir {

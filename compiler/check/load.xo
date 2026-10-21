@@ -414,15 +414,33 @@ fn (var c: Checker) find_module_dirs(dir: Str, top: Bool, var out: List[Str]) {
 /// `xo def` at a repository root answered "no declaration" for the
 /// compiler's own names under memory pressure, 2026-10-21).
 fn (var c: Checker) list_dir(dir: Str) -> List[FileInfo] uses fs.read {
-  match c.fs.read_dir(dir) {
-    Ok(es) => es
-    Err(NotFound(_)) | Err(Denied(_)) | Err(NotDir(_)) => []
-    Err(e) => {
-      if c.walk_err.is_empty() {
-        c.walk_err = "read ${dir}: ${e}"
-      }
-      []
-    }
+  let (es, err) = listing(c.fs.read_dir(dir), dir)
+  if !err.is_empty() && c.walk_err.is_empty() {
+    c.walk_err = err
+  }
+  es
+}
+
+/// A directory listing r of the walk: its entries; none and no error when
+/// dir is gone, unreadable (Denied), or not a directory; none and the
+/// error for any other failure.
+fn listing(r: Result[List[FileInfo], FsErr], dir: Str) -> (List[FileInfo], Str) {
+  match r {
+    Ok(es) => (es, "")
+    Err(NotFound(_)) | Err(Denied(_)) | Err(NotDir(_)) => ([], "")
+    Err(e) => ([], "read ${dir}: ${e}")
+  }
+}
+
+/// A module source read r: the bytes; None and no error for a file
+/// removed since the listing; None and the error for any other failure
+/// (checking the module without the file would answer for a different
+/// program).
+fn source_bytes(r: Result[Bytes, FsErr], p: Str) -> (Bytes?, Str) {
+  match r {
+    Ok(b) => (Some(b), "")
+    Err(NotFound(_)) => (None, "")
+    Err(e) => (None, "read ${p}: ${e}")
   }
 }
 
@@ -786,17 +804,14 @@ fn (var c: Checker) load_dir(dir0: Str) -> Int {
     let p = join(dir, n)
     let src = match c.overlay.get(c.abs(p)) {
       Some(b) => b
-      None => match c.fs.read(p) {
-        Ok(b) => b
-        // removed since the listing: not part of the module
-        Err(NotFound(_)) => continue
-        Err(e) => {
-          // checking the module without this file would answer for a
-          // different program (as list_dir)
-          if c.walk_err.is_empty() {
-            c.walk_err = "read ${p}: ${e}"
-          }
-          continue
+      None => {
+        let (b, err) = source_bytes(c.fs.read(p), p)
+        if !err.is_empty() && c.walk_err.is_empty() {
+          c.walk_err = err
+        }
+        match b {
+          Some(x) => x
+          None => continue
         }
       }
     }

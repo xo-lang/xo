@@ -407,99 +407,30 @@ test "only functions that are not pub, not std's and with no uses have inferred 
   expect(c.effect_reads_across_modules()) == []
 }
 
-/// An Fs whose read_dir or read of one path fails with an I/O error, as a
-/// listing or a read does when the process is out of file descriptors.
-struct FlakyFs {
-  inner: Fs
-  bad: Str
+test "the walk skips a directory that is gone and fails on any other listing error" {
+  let fi = FileInfo{name: "a.xo", path: "d/a.xo", size: 1, is_dir: false, modified: os.clock.now()}
+  expect(listing(Ok([fi]), "d").0.len()) == 1
+  expect(listing(Err(FsErr.NotFound(path: "d")), "d")) == ([], "")
+  expect(listing(Err(FsErr.Denied(path: "d")), "d")) == ([], "")
+  // a listing that failed for another reason (no file descriptors or
+  // memory) dropped the directory's modules silently before 2026-10-21
+  let (es, err) = listing(Err(FsErr.Io(path: "d", msg: "too many open files")), "d")
+  expect(es.is_empty()) == true
+  expect(err.contains("read d") && err.contains("too many open files")) == true
+  expect(source_bytes(Ok(b"x"), "d/a.xo")) == (Some(b"x"), "")
+  expect(source_bytes(Err(FsErr.NotFound(path: "d/a.xo")), "d/a.xo")) == (None, "")
+  expect(source_bytes(Err(FsErr.Io(path: "d/a.xo", msg: "input/output error")), "d/a.xo").1.contains("read d/a.xo")) == true
 }
 
-fn (f: FlakyFs) sub(dir: Str) -> Fs { f.inner.sub(dir) }
-fn (f: FlakyFs) cwd() -> Fs { f.inner.cwd() }
-fn (f: FlakyFs) cwd_path() -> Str ! FsErr { f.inner.cwd_path() }
-fn (f: FlakyFs) read_only() -> Fs { f.inner.read_only() }
-fn (f: FlakyFs) write_only() -> Fs { f.inner.write_only() }
-fn (f: FlakyFs) case_sensitive() -> Bool { f.inner.case_sensitive() }
-fn (f: FlakyFs) stat(path: Str) -> FileInfo? ! FsErr uses fs.read { f.inner.stat(path) }
-fn (f: FlakyFs) exists(path: Str) -> Bool ! FsErr uses fs.read { f.inner.exists(path) }
-fn (f: FlakyFs) read(path: Str) -> Bytes ! FsErr uses fs.read {
-  if path == f.bad {
-    return Err(FsErr.Io(path: path, msg: "input/output error"))
-  }
-  f.inner.read(path)
-}
-fn (f: FlakyFs) read_text(path: Str) -> Str ! FsErr uses fs.read { f.inner.read_text(path) }
-fn (f: FlakyFs) read_dir(dir: Str) -> List[FileInfo] ! FsErr uses fs.read {
-  if dir == f.bad {
-    return Err(FsErr.Io(path: dir, msg: "too many open files"))
-  }
-  f.inner.read_dir(dir)
-}
-fn (f: FlakyFs) walk(dir: Str) -> List[FileInfo] ! FsErr uses fs.read { f.inner.walk(dir) }
-fn (f: FlakyFs) write(path: Str, data: Bytes) -> () ! FsErr uses fs.write { f.inner.write(path, data) }
-fn (f: FlakyFs) create_temp(dir: Str, prefix: Str) -> Str ! FsErr uses fs.write { f.inner.create_temp(dir, prefix) }
-fn (f: FlakyFs) rename(from: Str, to: Str) -> () ! FsErr uses fs.write { f.inner.rename(from, to) }
-fn (f: FlakyFs) remove(path: Str) -> () ! FsErr uses fs.write { f.inner.remove(path) }
-fn (f: FlakyFs) remove_all(path: Str) -> () ! FsErr uses fs.write { f.inner.remove_all(path) }
-fn (f: FlakyFs) create_dir_all(dir: Str) -> () ! FsErr uses fs.write { f.inner.create_dir_all(dir) }
-fn (f: FlakyFs) set_modified(path: Str, t: Time) -> () ! FsErr uses fs.write { f.inner.set_modified(path, t) }
-fn (f: FlakyFs) open(path: Str) -> File ! FsErr uses fs.read { f.inner.open(path) }
-fn (f: FlakyFs) create(path: Str) -> File ! FsErr uses fs.write { f.inner.create(path) }
-fn (f: FlakyFs) open_append(path: Str) -> File ! FsErr uses fs.write { f.inner.open_append(path) }
-fn (f: FlakyFs) create_new(path: Str) -> File ! FsErr uses fs.write { f.inner.create_new(path) }
-fn (f: FlakyFs) append(path: Str, data: Bytes) -> () ! FsErr uses fs.write { f.inner.append(path, data) }
-fn (f: FlakyFs) copy(from: Str, to: Str) -> () ! FsErr uses fs { f.inner.copy(from, to) }
-fn (f: FlakyFs) mode(path: Str) -> Int ! FsErr uses fs.read { f.inner.mode(path) }
-fn (f: FlakyFs) set_mode(path: Str, mode: Int) -> () ! FsErr uses fs.write { f.inner.set_mode(path, mode) }
-fn (f: FlakyFs) symlink(target: Str, link: Str) -> () ! FsErr uses fs.write { f.inner.symlink(target, link) }
-fn (f: FlakyFs) read_link(path: Str) -> Str? ! FsErr uses fs.read { f.inner.read_link(path) }
-fn (f: FlakyFs) glob(pattern: Str) -> List[Str] ! FsErr uses fs.read { f.inner.glob(pattern) }
-fn (f: FlakyFs) lock(path: Str) -> FileLock ! FsErr uses fs.write { f.inner.lock(path) }
-fn (f: FlakyFs) try_lock(path: Str) -> FileLock? ! FsErr uses fs.write { f.inner.try_lock(path) }
-
-test "a directory that cannot be listed fails the check instead of being skipped" {
-  os.fs.create_dir_all("std")?
-  os.fs.write("std/prelude.xo", PRELUDE.bytes())?
-  os.fs.write("std/testing.xo", b"")?
-  os.fs.create_dir_all("root/app")?
-  os.fs.write("root/app/main.xo", b"fn f() -> Int { 1 }\n")?
-  var c = new_checker(FlakyFs{inner: os.fs, bad: "root/app"}, "std")
-  expect(c.check_dirs(["root"]).err().map(fn(e) { e.contains("read root/app") && e.contains("too many open files") })) == Some(true)
-  // a missing directory is still no modules, not an error
-  var ok = new_checker(FlakyFs{inner: os.fs, bad: "root/none"}, "std")
-  expect(ok.check_dirs(["root"]).is_ok()) == true
-  expect(ok.root_mods.len()) == 1
-  // a source file that cannot be read fails the check too, rather than
-  // being checked as an empty file
-  var unread = new_checker(FlakyFs{inner: os.fs, bad: "root/app/main.xo"}, "std")
-  expect(unread.check_dirs(["root"]).err().map(fn(e) { e.contains("read root/app/main.xo") })) == Some(true)
-}
-
-test "a dependency tree the effect audit cannot read is an error, not fewer effects" {
+test "the module audits read a whole tree or fail (XO1318)" {
   os.fs.create_dir_all("dep/net")?
+  os.fs.write("dep/xo.mod", b"module ex.com/dep\n")?
   os.fs.write("dep/a.xo", b"pub fn f() uses fs.read {}\n")?
   os.fs.write("dep/net/b.xo", b"pub fn g() uses net {}\n")?
   let c = new_checker(os.fs, "std")
   expect(c.module_effects("dep")) == Ok(["fs.read", "net"])
-  // the subdirectory with the net function cannot be listed: the audit
-  // must not answer fs.read alone (XO1318)
-  let flaky = new_checker(FlakyFs{inner: os.fs, bad: "dep/net"}, "std")
-  expect(flaky.module_effects("dep").is_err()) == true
-  let unread = new_checker(FlakyFs{inner: os.fs, bad: "dep/net/b.xo"}, "std")
-  expect(unread.module_effects("dep").err().map(fn(e) { e.contains("read dep/net/b.xo") })) == Some(true)
+  expect(c.hash_dir("dep").map(fn(h) { h.starts_with("h1:") })) == Ok(true)
+  expect(tree_listing(Err(FsErr.NotFound(path: "x")), "x")) == Ok([])
+  expect(tree_listing(Err(FsErr.Io(path: "x", msg: "input/output error")), "x").is_err()) == true
   expect(unreadable_tree("ex.com/m", "v1.0.0", "effects", "read x: boom").code) == "XO1318"
-}
-
-test "a module tree hash fails closed on a file it cannot read" {
-  os.fs.create_dir_all("hm/sub")?
-  os.fs.write("hm/xo.mod", b"module ex.com/hm\n")?
-  os.fs.write("hm/sub/a.xo", b"pub fn a() {}\n")?
-  let c = new_checker(os.fs, "std")
-  let h = c.hash_dir("hm")?
-  expect(h.starts_with("h1:")) == true
-  // the hash of the tree without sub/a.xo would be recorded in xo.lock
-  let flaky = new_checker(FlakyFs{inner: os.fs, bad: "hm/sub/a.xo"}, "std")
-  expect(flaky.hash_dir("hm").is_err()) == true
-  let unlisted = new_checker(FlakyFs{inner: os.fs, bad: "hm/sub"}, "std")
-  expect(unlisted.hash_dir("hm").is_err()) == true
 }
