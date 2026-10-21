@@ -874,6 +874,9 @@ fn (g: Gcm) ctr_w(s0: Str, nlo: Int, nhi: Int, ctr0: Int, src: Bytes, n: Int) ->
 /// offset d of s0 (whose room covers d + n + 8); the length is set to
 /// d + n.
 fn (g: Gcm) ctr_o(s0: Str, d: Int, nlo: Int, nhi: Int, ctr0: Int, src: Bytes, so: Int, n: Int) -> Str {
+  if (g.c.hw & cpu.HW_AES) != 0 && cap_of(s0) >= d.wrapping_add(chunk_room(n)) {
+    return g.ctr_at(s0, d, nlo, nhi, ctr0, src, so, n)
+  }
   var s = s0
   var io = [0, 0, 0, 0, 0, 0, 0, 0]
   var ctr = ctr0
@@ -931,6 +934,64 @@ fn (g: Gcm) ctr_o(s0: Str, d: Int, nlo: Int, nhi: Int, ctr0: Int, src: Bytes, so
   rt.rs_set_len(s, d.wrapping_add(n))
 }
 
+/// ctr_o in s0's own room, which reaches d + chunk_room(n): each 64 byte
+/// chunk's counter blocks are written where its output goes, encrypted
+/// there (the CPU's rounds on memory) and xored with src in place, so a
+/// record makes no key stream list (s0 is a new string of its caller's,
+/// not src).
+fn (g: Gcm) ctr_at(s0: Str, d: Int, nlo: Int, nhi: Int, ctr0: Int, src: Bytes, so: Int, n: Int) -> Str {
+  let q0 = raw.data(s0).wrapping_add(d)
+  var ctr = ctr0
+  var i = 0
+  while i < n {
+    let q = q0.wrapping_add(i)
+    var b = 0
+    while b < 4 {
+      rt.mem_store(q, b.wrapping_shl(4), nlo, 8)
+      rt.mem_store(q, b.wrapping_shl(4).wrapping_add(8), nhi | shl((ctr.wrapping_add(b) & 0xFFFFFFFF).swap_bytes() & ~0xFFFFFFFF, 0), 8)
+      b = b.wrapping_add(1)
+    }
+    let left = n.wrapping_sub(i)
+    enc_at(g.c, q, if left >= 64 { 4 } else { left.wrapping_add(15).shr_logical(4) })
+    var k = 0
+    while k < 8 {
+      let off = i.wrapping_add(k.wrapping_shl(3))
+      if off >= n {
+        break
+      }
+      let w = if off.wrapping_add(8) <= n { rt.bytes_word(src, so.wrapping_add(off)) } else { tail_word(src, so.wrapping_add(off), so.wrapping_add(n)) }
+      rt.mem_store(q, k.wrapping_shl(3), w ^ rt.mem_load(q, k.wrapping_shl(3), 8), 8)
+      k = k.wrapping_add(1)
+    }
+    ctr = ctr.wrapping_add(4)
+    i = i.wrapping_add(64)
+  }
+  rt.rs_set_len(s0, d.wrapping_add(n))
+}
+
+/// n rounded up to whole 64 byte chunks: the room ctr_at writes.
+fn chunk_room(n: Int) -> Int { n.wrapping_add(63) & -64 }
+
+/// The capacity of s's buffer (raw.bytes_len's).
+fn cap_of(s: Str) -> Int { rt.mem_load(rt.obj_addr(s), rt.layout(1), 8) }
+
+/// hw_n's rounds on the blocks at address p.
+fn enc_at(c: Cipher, p: Int, blocks: Int) {
+  let kp = addr(c.rk)
+  var st = p
+  let end = p.wrapping_add(16 * blocks)
+  let nr = c.nr
+  while st != end {
+    match nr {
+      10 => cpu.aes_enc10(st, kp)
+      12 => cpu.aes_enc12(st, kp)
+      _ => cpu.aes_enc14(st, kp)
+    }
+    st = st.wrapping_add(16)
+  }
+  keep(c.rk)
+}
+
 /// The bytes of src from off to n (fewer than 8), little endian, zeros
 /// above.
 fn tail_word(src: Bytes, off: Int, n: Int) -> Int {
@@ -959,10 +1020,21 @@ fn (g: Gcm) tag(nonce: Bytes, data: Bytes, n: Int, aad: Bytes) -> Bytes {
 fn (g: Gcm) tag_w(nlo: Int, nhi: Int, data: Bytes, n: Int, aad: Bytes) -> (Int, Int) { g.tag_o(nlo, nhi, data, 0, n, aad, 0, aad.len()) }
 
 /// tag_w of the n bytes of data at do and the an bytes of aad at ao.
-fn (g: Gcm) tag_o(nlo: Int, nhi: Int, data: Bytes, do: Int, n: Int, aad: Bytes, ao: Int, an: Int) -> (Int, Int) {
+fn (g: Gcm) tag_o(nlo: Int, nhi: Int, data: Bytes, do: Int, n: Int, aad: Bytes, ao: Int, an: Int) -> (Int, Int) { g.tag_sp(nlo, nhi, data, do, n, aad, ao, an, 0) }
+
+/// tag_o with sp, when not 0, the address of 16 bytes of scratch room (in
+/// a string the caller made) where the CPU encrypts the counter block, so
+/// no list is made for it.
+fn (g: Gcm) tag_sp(nlo: Int, nhi: Int, data: Bytes, do: Int, n: Int, aad: Bytes, ao: Int, an: Int, sp: Int) -> (Int, Int) {
   let (a1, a0) = g.ghash_o(0, 0, aad, ao, an)
   let (b1, b0) = g.ghash_o(a1, a0, data, do, n)
   let (y1, y0) = g.mul(b1 ^ (8 * an), b0 ^ (8 * n))
+  if sp != 0 && (g.c.hw & cpu.HW_AES) != 0 {
+    rt.mem_store(sp, 0, nlo, 8)
+    rt.mem_store(sp, 8, nhi | shl(0x01000000, 32), 8)
+    enc_at(g.c, sp, 1)
+    return (y1.swap_bytes() ^ rt.mem_load(sp, 0, 8), y0.swap_bytes() ^ rt.mem_load(sp, 8, 8))
+  }
   var io = [nlo, nhi | shl(0x01000000, 32), 0, 0, 0, 0, 0, 0]
   encrypt_n(g.c, io, 1)
   (y1.swap_bytes() ^ io[0], y0.swap_bytes() ^ io[1])
@@ -987,14 +1059,21 @@ pub fn (g: Gcm) open(nonce: Bytes, sealed: Bytes, aad: Bytes) -> Bytes? { g.open
 
 /// seal_w appending to out, whose first an bytes are the additional data
 /// (a TLS record's header): the ciphertext of pt and its tag after them,
-/// in out's room (an + pt.len() + 24 bytes), no other string.
+/// in out's room (an + pt.len() + 24 bytes; seal_room's for no scratch
+/// lists), no other string.
 pub fn (g: Gcm) seal_into(out: Str, an: Int, nlo: Int, nhi: Int, pt: Bytes) -> Str {
   let n = pt.len()
   let s = g.ctr_o(out, an, nlo, nhi, 2, pt, 0, n)
   let b = s.bytes()
-  let (t0, t1) = g.tag_o(nlo, nhi, b, an, n, b, 0, an)
+  // the tag's place is the scratch for its counter block
+  let sp = if cap_of(s) >= an + n + 16 { raw.data(s).wrapping_add(an + n) } else { 0 }
+  let (t0, t1) = g.tag_sp(nlo, nhi, b, an, n, b, 0, an, sp)
   rt.rs_push_word(rt.rs_push_word(s, t0, 8), t1, 8)
 }
+
+/// The room seal_into uses for n bytes of plaintext after an bytes of
+/// additional data with no scratch list: ctr_at's chunks, then the tag.
+pub fn seal_room(an: Int, n: Int) -> Int { an + chunk_room(n) + 16 }
 
 /// open with the nonce as two words (ctr_w): the tag is compared in
 /// place, in constant time (one test of the two words' differences), and
@@ -1021,11 +1100,14 @@ pub fn (g: Gcm) open_from(nlo: Int, nhi: Int, buf: Bytes, at: Int, an: Int, sn: 
     return None
   }
   let so = at + an
-  let (t0, t1) = g.tag_o(nlo, nhi, buf, so, n, buf, at, an)
+  // the plaintext's string, with room for ctr_at's chunks and, after
+  // them, 16 bytes of scratch for the tag's counter block
+  let pt = rt.rs_with_cap(chunk_room(n) + 16)
+  let (t0, t1) = g.tag_sp(nlo, nhi, buf, so, n, buf, at, an, raw.data(pt).wrapping_add(chunk_room(n)))
   if ((t0 ^ rt.bytes_word(buf, so + n)) | (t1 ^ rt.bytes_word(buf, so + n + 8))) != 0 {
     return None
   }
-  g.ctr_o(rt.rs_with_cap(n + 8), 0, nlo, nhi, 2, buf, so, n).bytes()
+  g.ctr_o(pt, 0, nlo, nhi, 2, buf, so, n).bytes()
 }
 
 /// AES-GCM's seal under key.
