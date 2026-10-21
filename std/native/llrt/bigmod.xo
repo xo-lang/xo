@@ -262,8 +262,11 @@ fn final_sub(md: Mod, h: Int, t: Int, top: Int) {
 /// dst[j] += src[j] k plus the carry word for j below len, one pass:
 /// each word's low half added with cpu.adc (decision 0231's addendum)
 /// and the next carry word its high half plus the two carries (it
-/// cannot overflow), unrolled by 4 with wrapping offsets; the carry word
-/// out.
+/// cannot overflow), each added right after the add that makes it
+/// (`adcq $0` from CF on amd64: saved with setb and movzbl for a
+/// three-input adc later, the 4-word round was 130 instructions to 115;
+/// arm64 106 to 104, 2026-10-21), unrolled by 4 with wrapping offsets;
+/// the carry word out.
 pub fn mac_row(dst: Int, src: Int, k: Int, len: Int) -> Int {
   var cw = 0
   var o = 0
@@ -285,33 +288,37 @@ pub fn mac_row(dst: Int, src: Int, k: Int, len: Int) -> Int {
     let h0 = a0.mul_hi_unsigned(k)
     let s0 = cpu.adc(x0, l0, 0)
     let k0 = cpu.adc_carry(x0, l0, 0)
+    let g0 = cpu.adc(h0, 0, k0)
     let t0 = cpu.adc(s0, cw, 0)
     let q0 = cpu.adc_carry(s0, cw, 0)
-    let c0 = cpu.adc(h0, k0, q0)
+    let c0 = cpu.adc(g0, 0, q0)
     st(dst, o, t0)
     let l1 = a1.wrapping_mul(k)
     let h1 = a1.mul_hi_unsigned(k)
     let s1 = cpu.adc(x1, l1, 0)
     let k1 = cpu.adc_carry(x1, l1, 0)
+    let g1 = cpu.adc(h1, 0, k1)
     let t1 = cpu.adc(s1, c0, 0)
     let q1 = cpu.adc_carry(s1, c0, 0)
-    let c1 = cpu.adc(h1, k1, q1)
+    let c1 = cpu.adc(g1, 0, q1)
     st(dst, o1, t1)
     let l2 = a2.wrapping_mul(k)
     let h2 = a2.mul_hi_unsigned(k)
     let s2 = cpu.adc(x2, l2, 0)
     let k2 = cpu.adc_carry(x2, l2, 0)
+    let g2 = cpu.adc(h2, 0, k2)
     let t2 = cpu.adc(s2, c1, 0)
     let q2 = cpu.adc_carry(s2, c1, 0)
-    let c2 = cpu.adc(h2, k2, q2)
+    let c2 = cpu.adc(g2, 0, q2)
     st(dst, o2, t2)
     let l3 = a3.wrapping_mul(k)
     let h3 = a3.mul_hi_unsigned(k)
     let s3 = cpu.adc(x3, l3, 0)
     let k3 = cpu.adc_carry(x3, l3, 0)
+    let g3 = cpu.adc(h3, 0, k3)
     let t3 = cpu.adc(s3, c2, 0)
     let q3 = cpu.adc_carry(s3, c2, 0)
-    cw = cpu.adc(h3, k3, q3)
+    cw = cpu.adc(g3, 0, q3)
     st(dst, o3, t3)
     o = o.wrapping_add(32)
   }
@@ -322,9 +329,10 @@ pub fn mac_row(dst: Int, src: Int, k: Int, len: Int) -> Int {
     let h = a.mul_hi_unsigned(k)
     let s = cpu.adc(x, l, 0)
     let c = cpu.adc_carry(x, l, 0)
+    let g = cpu.adc(h, 0, c)
     let t = cpu.adc(s, cw, 0)
     let q = cpu.adc_carry(s, cw, 0)
-    cw = cpu.adc(h, c, q)
+    cw = cpu.adc(g, 0, q)
     st(dst, o, t)
     o = o.wrapping_add(8)
   }
