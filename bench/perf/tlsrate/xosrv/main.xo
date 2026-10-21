@@ -1,0 +1,40 @@
+// The Xo side of bench/perf/tlsrate: std/http's server over TLS (HTTP/1.1
+// and, by ALPN, HTTP/2) answering GET /hs with 16 bytes and GET /bulk?n=N
+// with N zero bytes written in 64 KiB pieces through http.stream (the
+// Go server's counterpart). CERT and KEY name PEM files, PORT the port.
+use std/http
+
+fn bulk(req: http.Request) -> http.Response {
+  let n = Int.parse(req.query("n") ?? "0") ?? 0
+  http.stream(200, fn(w) -> () ! IoErr {
+    let piece = Bytes.zeroed(65536)
+    var left = n
+    while left > 0 {
+      let k = if left < 65536 { left } else { 65536 }
+      w.write(if k == 65536 { piece } else { piece[0..k] })?
+      left -= k
+    }
+  })
+}
+
+fn main(os: Os) ! {
+  let cert = os.fs.read(os.env.get("CERT") ?? "cert.pem")?
+  let key = os.fs.read(os.env.get("KEY") ?? "key.pem")?
+  let tc = http.tls_cert(cert, key).or_fault("tls_cert")
+  let port = os.env.get("PORT") ?? "18140"
+  let l = os.net.listen("127.0.0.1:${port}").or_fault("listen")
+  var r = http.router()
+  r.handle("GET /hs", fn(_req) { http.text(200, "0123456789abcdef") })
+  r.handle("GET /bulk", bulk)
+  let srv = http.server(l, r).with_tls([tc])
+  scope s {
+    s.spawn_background(fn() {
+      match srv.serve() {
+        Ok(_) => ()
+        Err(e) => os.stdio.println("serve failed: ${e}")
+      }
+    })
+    os.stdio.println("ready")
+    while let Some(_) = os.stdio.read_line().ok() ?? None {}
+  }
+}
