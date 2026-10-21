@@ -2612,12 +2612,27 @@ fn hmac512(key: Bytes, parts: List[Bytes]) -> Bytes {
   if k.len() > 128 {
     k = sha256.sum(sha256.HASH_SHA512, k)
   }
+  // the key zero padded to the block, xored with the pads a word at a
+  // time (2026-10-21: a byte at a time was 128 iterations of two pushes
+  // and an index check; the DRBG's 64 byte keys take 8 words and 8
+  // zero words)
   var ipad = rt.rs_with_cap(128)
   var opad = rt.rs_with_cap(128)
-  for i in 0..128 {
-    let b = if i < k.len() { Int(k[i]) } else { 0 }
-    ipad = rt.rs_push_byte(ipad, b ^ 0x36)
-    opad = rt.rs_push_byte(opad, b ^ 0x5c)
+  var i = 0
+  while i < 128 {
+    var w = 0
+    if i + 8 <= k.len() {
+      w = rt.bytes_word(k, i)
+    } else {
+      var j = i
+      while j < k.len() {
+        w = w | Int(k[j]).wrapping_shl(8 * (j - i))
+        j += 1
+      }
+    }
+    ipad = rt.rs_push_word(ipad, w ^ 0x3636363636363636, 8)
+    opad = rt.rs_push_word(opad, w ^ 0x5c5c5c5c5c5c5c5c, 8)
+    i += 8
   }
   var inner = sha256.new(sha256.HASH_SHA512)
   inner.write(ipad.bytes())
