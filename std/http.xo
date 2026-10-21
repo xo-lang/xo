@@ -151,6 +151,31 @@ struct BodyReader {}
 fn (b: BodyReader) read(max: Int = 32768) -> Bytes? ! IoErr
 /// The rest of the body.
 fn (b: BodyReader) read_all() -> Bytes ! IoErr
+/// The body as `multipart/form-data` parts, read as they arrive
+/// (decision 0310 phase 3; Go's Request.MultipartReader): MultipartErr
+/// as Request.multipart_form's for another Content-Type or no boundary.
+fn (b: BodyReader) multipart(req: Request) -> PartReader ! multipart.MultipartErr
+
+/// A multipart body read part by part (Go's multipart.Reader).
+struct PartReader {}
+/// The next part, the open part's unread data dropped (NextPart); None
+/// after the last part. An error sticks.
+fn (p: PartReader) next() -> StreamPart? ! multipart.MultipartErr
+/// The open part's next bytes (at most max, at least 1; decoded when
+/// quoted-printable, as Go's NextPart), None at its end or before the
+/// first next.
+fn (p: PartReader) read(max: Int = 32768) -> Bytes? ! multipart.MultipartErr
+
+/// A part of a PartReader: multipart.Part's fields but its data, which
+/// PartReader.read reads; headers holds each header's first value.
+struct StreamPart {
+  name: Str
+  filename: Str?
+  headers: Map[Str, Str]
+}
+/// Every value of the part's header name, in order (MIMEHeader's
+/// values); [] when it has none.
+fn (p: StreamPart) header_values(name: Str) -> List[Str]
 
 /// The body of a streamed response (std.md 4.3).
 struct BodyWriter {}

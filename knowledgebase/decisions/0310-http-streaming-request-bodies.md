@@ -77,6 +77,46 @@ Phases:
   so a plain server still links no HTTP/2 code (decision 0244). Golden
   http_stream_body_h2.
 
+## Addendum 2026-10-21: phase 3, multipart parts from the stream
+
+Owner-approved API (with the lead's change: keep repeated headers and
+read like std/multipart's Part):
+
+```
+fn (b: BodyReader) multipart(req: Request) -> PartReader ! multipart.MultipartErr
+struct PartReader {}
+fn (p: PartReader) next() -> StreamPart? ! multipart.MultipartErr
+fn (p: PartReader) read(max: Int = 32768) -> Bytes? ! multipart.MultipartErr
+struct StreamPart { name: Str, filename: Str?, headers: Map[Str, Str] }
+fn (p: StreamPart) header_values(name: Str) -> List[Str]
+```
+
+- `StreamPart` has `multipart.Part`'s fields but `data`, so the two
+  read alike: `headers` holds each header's first value (as Part's),
+  and `header_values` gives every value in order, as Go's MIMEHeader;
+  std/http has no multi-value header type, and the hidden field list
+  (`fields`, Go's `XFields`) is decision 0288's Request and Response
+  pattern.
+- Go backend: `multipart.NewReader` over the BodyReader's source
+  (std/rt http_part_reader.go). Native: std/native/multipart.xo's
+  reader takes its input from a source function and refills its buffer
+  (`more`), so the in-memory parser and the stream share one port of
+  Go's code; a quoted-printable part is decoded whole at its first read
+  (Go decodes a line at a time; the bytes and the errors are the same).
+  std/native/http reaches it through `use native/multipart` (decision
+  0319).
+- Errors are `MultipartErr` with Go's texts; a body read error becomes
+  its text (`unexpected EOF`).
+- Recording streamed bodies (decision 0219) stays deferred unless the
+  owner asks.
+- Golden http_multipart_stream: parts read 5 bytes at a time, repeated
+  headers, a file name's path, quoted-printable data, skipped parts
+  (one with a bad quoted-printable line, after which Go goes on),
+  pipelined requests, a 70,000 byte part, bodies cut inside a part and
+  inside the headers, a body sent 7 bytes per chunk, preamble and
+  epilogue, both Content-Type errors, and Router.call; identical on
+  the Go and native backends.
+
 ## Alternatives
 
 - **Every body lazy** (`req.body` read on first use): keeps one handler

@@ -652,23 +652,37 @@ fn (var c: Checker) load_native() {
     }
     for path in todo.sort() {
       done[path] = true
-      let name = path.trim_prefix("std/")
-      let src = c.fs.read("${c.std_dir}/native/${name}.xo").ok() ?? None
-      let data = match src {
-        Some(b) => b
-        None => continue
-      }
-      let m = c.new_module("native/${name}", name, "std/native", false)
-      c.mods[m].native = true
-      c.mods[m].implements = path
-      c.parse_into(m, "std/native/${name}.xo", data, false)
-      c.load_std_tests(m, "std/native/${name}.xo")
-      c.mods[m].state = 1
-      c.load_imports(m)
-      c.mods[m].state = 2
-      c.order.push(m)
+      let _m = c.load_impl(path)
     }
   }
+}
+
+/// The implementation module std/native/<name>.xo of the std module path
+/// (std/<name>), loaded once; -1 when there is none. load_native loads
+/// them in order, and an implementation module's `use native/<name>`
+/// (decision 0319) loads that one at once: loaded as an intrinsics module
+/// instead, its functions were runtime calls (`rt.new_stream`) when it
+/// sorted after the importer.
+fn (var c: Checker) load_impl(path: Str) -> Int {
+  let name = path.trim_prefix("std/")
+  if let Some(m) = c.mod_index.get("native/${name}") {
+    return m
+  }
+  let src = c.fs.read("${c.std_dir}/native/${name}.xo").ok() ?? None
+  let data = match src {
+    Some(b) => b
+    None => return -1
+  }
+  let m = c.new_module("native/${name}", name, "std/native", false)
+  c.mods[m].native = true
+  c.mods[m].implements = path
+  c.parse_into(m, "std/native/${name}.xo", data, false)
+  c.load_std_tests(m, "std/native/${name}.xo")
+  c.mods[m].state = 1
+  c.load_imports(m)
+  c.mods[m].state = 2
+  c.order.push(m)
+  m
 }
 
 /// Loads the runtime module std/native/llrt/<name>.xo (load.go
@@ -1030,7 +1044,15 @@ fn (var c: Checker) load_imports(m: Int) {
             dep = c.load_runtime_module(p)
           }
         } else if c.mods[m].native || (c.mods[m].is_std && c.mods[m].path.starts_with("native/")) {
-          dep = c.load_native_rt(p)
+          let name = p.trim_prefix("native/")
+          if c.native && c.mods[m].native && c.load_std(name) >= 0 {
+            // another std module's implementation (decision 0319), with
+            // the std module it implements
+            dep = c.load_impl("std/${name}")
+          }
+          if dep < 0 {
+            dep = c.load_native_rt(p)
+          }
         }
       } else if let Some(x) = c.mod_index.get(p) {
         dep = x

@@ -1,0 +1,205 @@
+// Streamed multipart bodies (decision 0310 phase 3): a handle_stream
+// route reads a multipart/form-data body part by part through
+// BodyReader.multipart as it arrives, over raw TCP to an std/http server
+// on 127.0.0.1:0 (the answers printed with the Date value left out). The
+// Go backend (net/http's MultipartReader) and the native server must
+// answer alike: parts read in small pieces, repeated headers, a file
+// name's last path element, a quoted-printable part, parts skipped
+// unread (plain and quoted-printable), a body cut short, a body sent in
+// pieces, the Content-Type errors, and Router.call.
+use std/http
+
+/// Every part of b: its name, file name, headers (sorted), repeated
+/// X-Tag values, and data read max bytes at a time.
+fn parts(req: http.Request, b: http.BodyReader, max: Int, skip: Bool) -> Str {
+  let pr = match b.multipart(req) {
+    Ok(p) => p
+    Err(e) => return "multipart: ${e.msg}"
+  }
+  var out: List[Str] = []
+  // read before the first part: nothing
+  match pr.read(4) {
+    Ok(None) => ()
+    Ok(Some(d)) => out.push("early ${d.len()}")
+    Err(e) => out.push("early error ${e.msg}")
+  }
+  while true {
+    let p = match pr.next() {
+      Ok(Some(p)) => p
+      Ok(None) => break
+      Err(e) => {
+        out.push("next error: ${e.msg}")
+        return out.join("\n")
+      }
+    }
+    var hs: List[Str] = []
+    for k in p.headers.keys().sort() {
+      hs.push("${k}=${p.headers.get(k) ?? ""}")
+    }
+    out.push("part ${p.name.quote()} file ${p.filename ?? "-"} [${hs.join("; ")}] tags ${p.header_values("x-tag").join("|")}")
+    if skip {
+      continue
+    }
+    var data = BytesBuilder.new()
+    var reads = 0
+    while true {
+      match pr.read(max) {
+        Ok(Some(d)) => {
+          if d.len() > max {
+            out.push("read more than max")
+          }
+          reads += 1
+          data.write(d)
+        }
+        Ok(None) => break
+        Err(e) => {
+          out.push("  read error: ${e.msg} after ${data.len()}")
+          return out.join("\n")
+        }
+      }
+    }
+    let d = data.freeze()
+    out.push("  ${d.len()} bytes in ${if reads > 1 { "several" } else { "${reads}" }} reads: ${(d.to_str() ?? "?").quote()}")
+  }
+  // after the last part: still the end
+  match pr.next() {
+    Ok(None) => out.push("end")
+    Ok(Some(_)) => out.push("a part after the end")
+    Err(e) => out.push("after the end: ${e.msg}")
+  }
+  out.join("\n")
+}
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle_stream("POST /parts", fn(req, b) { http.text(200, parts(req, b, 5, false)) })
+  r.handle_stream("POST /big", fn(req, b) { http.text(200, parts(req, b, 100000, false)) })
+  r.handle_stream("POST /skip", fn(req, b) { http.text(200, parts(req, b, 5, true)) })
+  r
+}
+
+/// The answer without the Date value, a line at a time; a long line is
+/// summarized.
+fn clean(s: Str) -> Str {
+  var lines: List[Str] = []
+  for l in s.split("\r\n") {
+    lines = lines + l.split("\n")
+  }
+  var out: List[Str] = []
+  for line in lines {
+    if line.starts_with("Date: ") {
+      out.push("Date: <date>")
+    } else if line.len() > 160 {
+      out.push("<${line.len()} bytes>")
+    } else {
+      out.push(line)
+    }
+  }
+  out.join("\n")
+}
+
+/// Sends raw on a new connection and prints everything the server
+/// answers until it closes the connection.
+fn exchange(os: Os, addr: Str, label: Str, raw: Str) {
+  match os.net.dial(addr) {
+    Ok(c) => {
+      match c.write(raw.bytes()) {
+        Ok(_) => ()
+        Err(_) => os.stdio.println("${label}: write failed")
+      }
+      var got = ""
+      while {
+        match c.read(65536) {
+          Ok(Some(b)) => got = got + (b.to_str() ?? "?")
+          Ok(None) => break
+          Err(_) => break
+        }
+      }
+      c.close()
+      os.stdio.println("== ${label}")
+      os.stdio.println(clean(got))
+    }
+    Err(_) => os.stdio.println("${label}: dial failed")
+  }
+}
+
+/// exchange with raw sent in parts, 20 ms apart: the body arrives while
+/// the handler reads it.
+fn exchange_parts(os: Os, addr: Str, label: Str, parts: List[Str]) {
+  match os.net.dial(addr) {
+    Ok(c) => {
+      for p in parts {
+        match c.write(p.bytes()) {
+          Ok(_) => ()
+          Err(_) => os.stdio.println("${label}: write failed")
+        }
+        os.clock.sleep(20ms)
+      }
+      var got = ""
+      while {
+        match c.read(65536) {
+          Ok(Some(b)) => got = got + (b.to_str() ?? "?")
+          Ok(None) => break
+          Err(_) => break
+        }
+      }
+      c.close()
+      os.stdio.println("== ${label}")
+      os.stdio.println(clean(got))
+    }
+    Err(_) => os.stdio.println("${label}: dial failed")
+  }
+}
+
+/// A request to path with a multipart body of boundary B.
+fn post(path: Str, ct: Str, body: Str, close: Bool = true) -> Str {
+  "POST ${path} HTTP/1.1\r\nHost: h\r\nContent-Type: ${ct}\r\nContent-Length: ${body.len()}\r\n${if close { "Connection: close\r\n" } else { "" }}\r\n${body}"
+}
+
+fn main(os: Os) {
+  let ct = "multipart/form-data; boundary=B"
+  let body = "--B\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nhello multipart world\r\n--B\r\nContent-Disposition: form-data; name=\"up\"; filename=\"dir/sub/a.txt\"\r\nContent-Type: text/plain\r\nX-Tag: one\r\nX-Tag: two\r\n\r\nline one\r\nline two --B not a boundary\r\n\r\n--B\r\nContent-Disposition: form-data; name=\"q\"\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\nsoft=\r\nbreak and =41=42\r\n--B\r\nContent-Disposition: form-data; name=\"empty\"\r\n\r\n\r\n--B--\r\n"
+  let r = routes()
+  // in process: the request's body is the stream
+  let resp = r.call(http.new_request("POST", "/parts", {"Content-Type": ct}, body.bytes()))
+  os.stdio.println("call: ${resp.status}\n${resp.body.to_str() ?? "?"}")
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      let srv = http.server(l, r)
+      let addr = srv.addr()
+      scope s {
+        s.spawn_background(fn() {
+          match srv.serve() {
+            Ok(_) => ()
+            Err(e) => os.stdio.println("serve failed: ${e}")
+          }
+        })
+        exchange(os, addr, "parts", post("/parts", ct, body))
+        exchange(os, addr, "skipped, pipelined", post("/skip", ct, body, false) + post("/parts", ct, body))
+        let big = "x".repeat(70000)
+        exchange(os, addr, "big part", post("/big", ct, "--B\r\nContent-Disposition: form-data; name=\"big\"\r\n\r\n${big}\r\n--B--\r\n"))
+        let cut = "--B\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nabc"
+        exchange(os, addr, "cut short", "POST /parts HTTP/1.1\r\nHost: h\r\nContent-Type: ${ct}\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n${cut.len().to_str_base(16)}\r\n${cut}\r\n0\r\n\r\n")
+        exchange(os, addr, "cut in the headers", post("/parts", ct, "--B\r\nContent-Disposition: form-data; na"))
+        exchange(os, addr, "bad qp skipped", post("/skip", ct, "--B\r\nContent-Disposition: form-data; name=\"q\"\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\nbad \u{1} line\r\nmore\r\n--B\r\nContent-Disposition: form-data; name=\"after\"\r\n\r\nx\r\n--B--\r\n"))
+        exchange(os, addr, "bad qp read", post("/parts", ct, "--B\r\nContent-Disposition: form-data; name=\"q\"\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\nok \u{1} line\r\n--B--\r\n"))
+        exchange(os, addr, "not multipart", post("/parts", "text/plain", "abc"))
+        exchange(os, addr, "no boundary", post("/parts", "multipart/form-data", "abc"))
+        exchange(os, addr, "preamble and epilogue", post("/parts", ct, "preamble\r\n--B\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nv\r\n--B--\r\nepilogue"))
+        let head = "POST /parts HTTP/1.1\r\nHost: h\r\nContent-Type: ${ct}\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+        var pieces = [head]
+        var k = 0
+        while k < body.len() {
+          let e = if k + 7 < body.len() { k + 7 } else { body.len() }
+          let piece = body[k..e]
+          pieces.push("${piece.len().to_str_base(16)}\r\n${piece}\r\n")
+          k = e
+        }
+        pieces.push("0\r\n\r\n")
+        exchange_parts(os, addr, "in pieces", pieces)
+      }
+      os.stdio.println("done")
+    }
+    Err(e) => os.stdio.println("listen failed: ${e}")
+  }
+}

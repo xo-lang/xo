@@ -97,6 +97,54 @@ struct R {
   dash_boundary_dash: Bytes
   dash_boundary: Bytes
   parts_read: Int
+  /// a streamed body's source (decision 0310 phase 3: http's
+  /// BodyReader), [] for a body in memory; whether it ended, and its
+  /// error
+  src: List[fn() -> Feed] = []
+  done: Bool = false
+  src_err: Str = ""
+}
+
+/// What a streamed body's source gave: bytes, its end, or an error.
+pub struct Feed {
+  pub data: Bytes
+  pub end: Bool
+  pub err: Str
+}
+
+/// More input from the source, the unread rest kept at the start of the
+/// buffer: false at its end (or for a body in memory).
+fn (var r: R) more() -> Bool {
+  if r.src.is_empty() || r.done {
+    return false
+  }
+  while true {
+    let f = r.src[0]()
+    if !f.err.is_empty() {
+      r.done = true
+      r.src_err = f.err
+      return false
+    }
+    if f.end {
+      r.done = true
+      return false
+    }
+    if !f.data.is_empty() {
+      r.buf = if r.pos >= r.buf.len() { f.data } else { r.buf[r.pos..] + f.data }
+      r.pos = 0
+      return true
+    }
+  }
+  false
+}
+
+/// Whether the byte at the read position is a space or a tab (the
+/// buffer filled first when it is used up).
+fn (var r: R) at_lwsp() -> Bool {
+  if r.pos >= r.buf.len() && !r.more() {
+    return false
+  }
+  r.buf[r.pos] == 32 || r.buf[r.pos] == 9
 }
 
 fn new_reader(body: Bytes, boundary: Str) -> R {
@@ -107,22 +155,31 @@ fn new_reader(body: Bytes, boundary: Str) -> R {
 /// bufio.Reader.ReadSlice('\n') with a 4096 byte buffer: the line and
 /// "" , "EOF" (no newline before the end), or "bufio: buffer full".
 fn (var r: R) read_slice() -> (Bytes, Str) {
-  let end = if r.buf.len() - r.pos > BUF { r.pos + BUF } else { r.buf.len() }
-  var i = r.pos
-  while i < end {
-    if r.buf[i] == 10 {
-      let line = r.buf[r.pos..i + 1]
-      r.pos = i + 1
-      return (line, "")
+  var off = 0
+  while true {
+    let end = if r.buf.len() - r.pos > BUF { r.pos + BUF } else { r.buf.len() }
+    var i = r.pos + off
+    while i < end {
+      if r.buf[i] == 10 {
+        let line = r.buf[r.pos..i + 1]
+        r.pos = i + 1
+        return (line, "")
+      }
+      i += 1
     }
-    i += 1
+    if end - r.pos >= BUF {
+      let line = r.buf[r.pos..end]
+      r.pos = end
+      return (line, "bufio: buffer full")
+    }
+    off = end - r.pos
+    if !r.more() {
+      let line = r.buf[r.pos..]
+      r.pos = r.buf.len()
+      return (line, if r.src_err.is_empty() { "EOF" } else { r.src_err })
+    }
   }
-  let line = r.buf[r.pos..end]
-  r.pos = end
-  if end == r.buf.len() {
-    return (line, "EOF")
-  }
-  (line, "bufio: buffer full")
+  (b"", "EOF")
 }
 
 fn skip_lwsp(b: Bytes) -> Bytes {
@@ -221,8 +278,14 @@ fn (var r: R) read_part() -> (Bytes, Str) {
   while {
     let (n, e) = r.scan(total, eof)
     if n == 0 && e.is_empty() {
-      // Go peeks one byte more: the body has ended here
-      eof = true
+      // Go peeks one byte more: the body has ended here (or, streamed,
+      // more comes)
+      if !r.more() {
+        if !r.src_err.is_empty() {
+          return (out.freeze(), r.src_err)
+        }
+        eof = true
+      }
       continue
     }
     out.write(r.buf[r.pos..r.pos + n])
@@ -240,12 +303,22 @@ fn (var r: R) read_part() -> (Bytes, Str) {
 /// bufio ReadLine for textproto: the line without its `\n` or `\r\n`;
 /// None at the end of the body.
 fn (var r: R) read_line() -> Bytes? {
-  if r.pos >= r.buf.len() {
+  if r.pos >= r.buf.len() && !r.more() {
     return None
   }
   var i = r.pos
-  while i < r.buf.len() && r.buf[i] != 10 {
-    i += 1
+  while true {
+    while i < r.buf.len() && r.buf[i] != 10 {
+      i += 1
+    }
+    if i < r.buf.len() {
+      break
+    }
+    let off = i - r.pos
+    if !r.more() {
+      break
+    }
+    i = r.pos + off
   }
   if i == r.buf.len() {
     let line = r.buf[r.pos..]
@@ -366,8 +439,8 @@ fn (var r: R) read_continued(lim0: Int) -> Bytes ! Str {
   out.write(trim_lwsp(line))
   var n = trim_lwsp(line).len()
   let lim = if lim0 < 0 { 9223372036854775807 } else { lim0 } - n
-  while r.pos < r.buf.len() && (r.buf[r.pos] == 32 || r.buf[r.pos] == 9) {
-    while r.pos < r.buf.len() && (r.buf[r.pos] == 32 || r.buf[r.pos] == 9) {
+  while r.at_lwsp() {
+    while r.at_lwsp() {
       r.pos += 1
     }
     out.write_byte(32)
@@ -394,7 +467,7 @@ fn (var r: R) read_header(max_memory0: Int, max_headers0: Int) -> Header ! Str {
   var h = Header{keys: [], values: []}
   var max_memory = max_memory0 - 400
   var max_headers = max_headers0
-  if r.pos < r.buf.len() && (r.buf[r.pos] == 32 || r.buf[r.pos] == 9) {
+  if r.at_lwsp() {
     let line = r.read_line() ?? b""
     if line.len() > 80 {
       return Err("message too large")
@@ -636,7 +709,9 @@ fn (var r: R) skip_part(n: Next) {
     let _d = r.read_part()
     return
   }
-  let start = r.pos
+  // the part's raw bytes and the end of each read (a streamed body's
+  // buffer moves as it refills)
+  var raw = BytesBuilder.new()
   var ends: List[Int] = []
   var total = 0
   var eof = false
@@ -644,9 +719,16 @@ fn (var r: R) skip_part(n: Next) {
   while {
     let (k, se) = r.scan(total, eof)
     if k == 0 && se.is_empty() {
-      eof = true
+      if !r.more() {
+        if !r.src_err.is_empty() {
+          e = r.src_err
+          break
+        }
+        eof = true
+      }
       continue
     }
+    raw.write(r.buf[r.pos..r.pos + k])
     r.pos += k
     total += k
     ends.push(total)
@@ -655,13 +737,17 @@ fn (var r: R) skip_part(n: Next) {
       break
     }
   }
-  let (_out, qe, used) = qp_decode_at(r.buf[start..r.pos], e)
+  let rb = raw.freeze()
+  let (_out, qe, used) = qp_decode_at(rb, e)
   if qe.is_empty() || qe == e {
     return
   }
+  // the reader goes on from the end of the read that held the bad line:
+  // the rest of the part is unread again
   for c in ends {
     if c >= used {
-      r.pos = start + c
+      r.buf = rb[c..] + r.buf[r.pos..]
+      r.pos = 0
       return
     }
   }
@@ -797,6 +883,180 @@ fn parse_form(body: Bytes, boundary: Str, max_parts: Int = 1000) -> multipart.Fo
 
 // ---------------------------------------------------------------------------
 // Writing (writer.go)
+
+// ---------------------------------------------------------------------------
+// A body read part by part (decision 0310 phase 3: http's
+// BodyReader.multipart; Go's Reader.NextPart and Part.Read). `pub` is
+// std-internal (decision 0319): std/native/http reaches it through
+// `use native/multipart`.
+
+/// A part's head as NextPart gives it: FormName, FileName, the first
+/// value of each header, and every field as [name, value, ...] in order
+/// (textproto.MIMEHeader's values; Content-Transfer-Encoding removed for
+/// a quoted-printable part, as Go's NextPart).
+pub struct Head {
+  pub name: Str
+  pub filename: Str?
+  pub headers: Map[Str, Str]
+  pub fields: List[Str]
+}
+
+/// The reader of a streamed body and its open part: the part's head (for
+/// a quoted-printable part's skip), whether one is open, how much of its
+/// data was read and whether the body ends there (scan's total and eof),
+/// its end and error; a quoted-printable part's decoded data, read at
+/// pos (decoded whole at its first read); the end of the parts; an error
+/// that sticks.
+pub struct Stream {
+  r: R
+  cur: Next
+  open: Bool
+  total: Int
+  eof: Bool
+  end: Bool
+  err: Str
+  pend: Bytes
+  ppos: Int
+  qp_read: Bool
+  last: Bool
+  failed: Str
+}
+
+/// A Stream of the body src gives, whose parts are separated by
+/// boundary.
+pub fn new_stream(src: fn() -> Feed, boundary: Str) -> Stream {
+  var r = new_reader(b"", boundary)
+  r.src = [src]
+  Stream{r: r, cur: Next{header: Header{keys: [], values: []}, qp: false}, open: false, total: 0, eof: false, end: false, err: "", pend: b"", ppos: 0, qp_read: false, last: false, failed: ""}
+}
+
+/// The next part's head, None after the last part (NextPart's io.EOF),
+/// or the error (which sticks): the open part's rest is read and dropped
+/// first (Part.Close).
+pub fn (var s: Stream) next() -> Head? ! Str {
+  if !s.failed.is_empty() {
+    return Err(s.failed)
+  }
+  if s.last {
+    return None
+  }
+  if s.open {
+    if s.cur.qp && !s.qp_read {
+      s.r.skip_part(s.cur)
+    } else if !s.cur.qp {
+      while !s.end {
+        let (_d, e) = s.chunk(1048576)
+        if !e.is_empty() {
+          break
+        }
+      }
+    }
+    s.open = false
+  }
+  let n = match s.r.next_part(MAX_HEADER_SIZE, MAX_HEADERS) {
+    Ok(Some(n)) => n
+    Ok(None) => {
+      s.last = true
+      return None
+    }
+    Err(m) => {
+      s.failed = if m == "message too large" { TOO_LARGE } else { m }
+      return Err(s.failed)
+    }
+  }
+  s.cur = n
+  s.open = true
+  s.total = 0
+  s.eof = false
+  s.end = false
+  s.err = ""
+  s.pend = b""
+  s.ppos = 0
+  s.qp_read = false
+  let (name, file) = names(n.header)
+  var fields: List[Str] = []
+  for i in 0..n.header.keys.len() {
+    for v in n.header.values[i] {
+      fields.push(n.header.keys[i])
+      fields.push(v)
+    }
+  }
+  Some(Head{name: name, filename: if file.is_empty() { None } else { Some(file) }, headers: first_values(n.header), fields: fields})
+}
+
+/// At most max bytes of the open part's raw data and "", or no bytes and
+/// "" at its end (s.end) or the read error.
+fn (var s: Stream) chunk(max: Int) -> (Bytes, Str) {
+  while true {
+    if s.end {
+      return (b"", s.err)
+    }
+    let (n, e) = s.r.scan(s.total, s.eof)
+    if n == 0 && e.is_empty() {
+      if !s.r.more() {
+        if !s.r.src_err.is_empty() {
+          s.end = true
+          s.err = s.r.src_err
+          return (b"", s.err)
+        }
+        s.eof = true
+      }
+      continue
+    }
+    let k = if n < max { n } else { max }
+    let data = s.r.buf[s.r.pos..s.r.pos + k]
+    s.r.pos += k
+    s.total += k
+    if k == n && !e.is_empty() {
+      s.end = true
+      s.err = if e == "EOF" { "" } else { e }
+    }
+    if k > 0 {
+      return (data, "")
+    }
+  }
+  (b"", "")
+}
+
+/// At most max bytes of the open part's data (decoded when
+/// quoted-printable), None at its end or with no part open, or the read
+/// error (Part.Read).
+pub fn (var s: Stream) read(max: Int) -> Bytes? ! Str {
+  if !s.failed.is_empty() {
+    return Err(s.failed)
+  }
+  if !s.open {
+    return None
+  }
+  if s.cur.qp {
+    if !s.qp_read {
+      s.qp_read = true
+      let (raw, e) = s.r.read_part()
+      let (d, de) = qp_decode(raw, e)
+      s.pend = d
+      s.err = de
+    }
+    let left = s.pend.len() - s.ppos
+    if left == 0 {
+      if !s.err.is_empty() {
+        return Err(s.err)
+      }
+      return None
+    }
+    let k = if left < max { left } else { max }
+    let out = s.pend[s.ppos..s.ppos + k]
+    s.ppos += k
+    return Some(out)
+  }
+  let (d, e) = s.chunk(max)
+  if !d.is_empty() {
+    return Some(d)
+  }
+  if !e.is_empty() {
+    return Err(e)
+  }
+  None
+}
 
 fn escape_quotes(s: Str) -> Str { s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\r", "%0D").replace("\n", "%0A") }
 

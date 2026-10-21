@@ -1,0 +1,143 @@
+exit 0
+--- stdout
+call: 200
+part "title" file - [Content-Disposition=form-data; name="title"] tags 
+  21 bytes in several reads: "hello multipart world"
+part "up" file a.txt [Content-Disposition=form-data; name="up"; filename="dir/sub/a.txt"; Content-Type=text/plain; X-Tag=one] tags one|two
+  39 bytes in several reads: "line one\r\nline two --B not a boundary\r\n"
+part "q" file - [Content-Disposition=form-data; name="q"] tags 
+  16 bytes in several reads: "softbreak and AB"
+part "empty" file - [Content-Disposition=form-data; name="empty"] tags 
+  0 bytes in 0 reads: ""
+end
+== parts
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Date: <date>
+Content-Length: 551
+Connection: close
+
+part "title" file - [Content-Disposition=form-data; name="title"] tags 
+  21 bytes in several reads: "hello multipart world"
+part "up" file a.txt [Content-Disposition=form-data; name="up"; filename="dir/sub/a.txt"; Content-Type=text/plain; X-Tag=one] tags one|two
+  39 bytes in several reads: "line one\r\nline two --B not a boundary\r\n"
+part "q" file - [Content-Disposition=form-data; name="q"] tags 
+  16 bytes in several reads: "softbreak and AB"
+part "empty" file - [Content-Disposition=form-data; name="empty"] tags 
+  0 bytes in 0 reads: ""
+end
+== skipped, pipelined
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Date: <date>
+Content-Length: 350
+
+part "title" file - [Content-Disposition=form-data; name="title"] tags 
+part "up" file a.txt [Content-Disposition=form-data; name="up"; filename="dir/sub/a.txt"; Content-Type=text/plain; X-Tag=one] tags one|two
+part "q" file - [Content-Disposition=form-data; name="q"] tags 
+part "empty" file - [Content-Disposition=form-data; name="empty"] tags 
+endHTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Date: <date>
+Content-Length: 551
+Connection: close
+
+part "title" file - [Content-Disposition=form-data; name="title"] tags 
+  21 bytes in several reads: "hello multipart world"
+part "up" file a.txt [Content-Disposition=form-data; name="up"; filename="dir/sub/a.txt"; Content-Type=text/plain; X-Tag=one] tags one|two
+  39 bytes in several reads: "line one\r\nline two --B not a boundary\r\n"
+part "q" file - [Content-Disposition=form-data; name="q"] tags 
+  16 bytes in several reads: "softbreak and AB"
+part "empty" file - [Content-Disposition=form-data; name="empty"] tags 
+  0 bytes in 0 reads: ""
+end
+== big part
+HTTP/1.1 200 OK
+Content-Length: 70106
+Content-Type: text/plain; charset=utf-8
+Date: <date>
+Connection: close
+
+part "big" file - [Content-Disposition=form-data; name="big"] tags 
+<70034 bytes>
+end
+== cut short
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Date: <date>
+Content-Length: 100
+Connection: close
+
+part "a" file - [Content-Disposition=form-data; name="a"] tags 
+  read error: unexpected EOF after 3
+== cut in the headers
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Date: <date>
+Content-Length: 3
+Connection: close
+
+end
+== bad qp skipped
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Date: <date>
+Content-Length: 139
+Connection: close
+
+part "q" file - [Content-Disposition=form-data; name="q"] tags 
+part "after" file - [Content-Disposition=form-data; name="after"] tags 
+end
+== bad qp read
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Date: <date>
+Content-Length: 138
+Connection: close
+
+part "q" file - [Content-Disposition=form-data; name="q"] tags 
+  read error: quotedprintable: invalid unescaped byte 0x01 in body after 3
+== not multipart
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Date: <date>
+Content-Length: 57
+Connection: close
+
+multipart: request Content-Type isn't multipart/form-data
+== no boundary
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Date: <date>
+Content-Length: 54
+Connection: close
+
+multipart: no multipart boundary param in Content-Type
+== preamble and epilogue
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Date: <date>
+Content-Length: 93
+Connection: close
+
+part "a" file - [Content-Disposition=form-data; name="a"] tags 
+  1 bytes in 1 reads: "v"
+end
+== in pieces
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+Date: <date>
+Content-Length: 551
+Connection: close
+
+part "title" file - [Content-Disposition=form-data; name="title"] tags 
+  21 bytes in several reads: "hello multipart world"
+part "up" file a.txt [Content-Disposition=form-data; name="up"; filename="dir/sub/a.txt"; Content-Type=text/plain; X-Tag=one] tags one|two
+  39 bytes in several reads: "line one\r\nline two --B not a boundary\r\n"
+part "q" file - [Content-Disposition=form-data; name="q"] tags 
+  16 bytes in several reads: "softbreak and AB"
+part "empty" file - [Content-Disposition=form-data; name="empty"] tags 
+  0 bytes in 0 reads: ""
+end
+done
+--- stderr

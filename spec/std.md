@@ -1047,9 +1047,10 @@ type Next = fn(Request) -> Response
   comes as DATA frames bring it, and the stream's flow control window
   is given back as the handler reads (the connection's at once); a body
   the client is still sending when the handler returns ends with
-  RST_STREAM NO_ERROR after the response, as net/http's. Not yet
-  (decision 0310 phase 3): a recording server (decision 0219) reads the
-  body first and streams it from memory. A body is discarded when the
+  RST_STREAM NO_ERROR after the response, as net/http's.
+  `BodyReader.multipart(req)` reads a multipart/form-data body part by
+  part as it arrives (4.4). Not yet: a recording server (decision 0219)
+  reads the body first and streams it from memory. A body is discarded when the
   handler returns, so a streamed response's function (`http.stream`)
   cannot read it on the native backends.
 - Middleware run in registration order, outermost first, and see the final
@@ -1189,6 +1190,10 @@ fn (w: BodyWriter) flush() -> () ! IoErr
     // connection over: the server writes nothing itself (decision 0313)
 fn (b: BodyReader) read(max: Int = 32768) -> Bytes? ! IoErr   // a handle_stream body's next bytes, None at its end
 fn (b: BodyReader) read_all() -> Bytes ! IoErr                // the rest of it
+fn (b: BodyReader) multipart(req: Request) -> PartReader ! multipart.MultipartErr   // the body's multipart/form-data parts as they arrive (decision 0310)
+fn (p: PartReader) next() -> StreamPart? ! multipart.MultipartErr   // the next part (the open one's unread rest dropped), None after the last
+fn (p: PartReader) read(max: Int = 32768) -> Bytes? ! multipart.MultipartErr   // the open part's next bytes, None at its end
+fn (p: StreamPart) header_values(name: Str) -> List[Str]   // every value of a part's header, in order
 fn (r: Response) with_header(name: Str, value: Str) -> Response
 fn (r: Response) header(name: Str) -> Str?          // case insensitive
 fn (r: Response) header_values(name: Str) -> List[Str]   // every field of name, in order (decision 0288)
@@ -1278,6 +1283,21 @@ in `MultipartReader`, is refused too) with a `boundary` (else `no multipart
 boundary param in Content-Type`); the body is read with
 `multipart.parse_form` (26), whose files stay in memory: the body is
 already limited by the server.
+
+`BodyReader.multipart(req)` (decision 0310 phase 3) is Go's
+`Request.MultipartReader` for a `handle_stream` route: the same
+Content-Type checks and errors as `multipart_form()`, then the parts as
+the body arrives, none of it held in memory beyond the part being read.
+`next()` is `NextPart`: a `StreamPart{name, filename: Str?, headers}`
+read as `multipart.Part` reads (form name, file name's last element,
+each header's first value; `header_values(name)` gives every value, as
+textproto's `MIMEHeader`), the previous part's unread data dropped, a
+quoted-printable part decoded and its Content-Transfer-Encoding header
+removed; `None` after the closing boundary. `read(max)` is `Part.Read`
+(at most `max` bytes, at least 1; `None` at the part's end and before
+the first `next()`). Errors are Go's texts (`multipart: NextPart: EOF`,
+`unexpected EOF` for a body cut inside a part, quoted-printable errors)
+and stick.
 
 #### The client's address behind proxies
 

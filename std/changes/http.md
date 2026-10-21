@@ -1,5 +1,19 @@
 # std/http changes
 
+## 2026-10-21: feature: BodyReader.multipart (multipart parts from the stream)
+
+- Kind: feature
+- Commit: (filled in after the push)
+- Found by: decision 0310 phase 3
+- Go reference: net/http Request.MultipartReader; mime/multipart Reader.NextPart and Part.Read; mime/quotedprintable (go1.26.1)
+- Test: internal/llvm/testdata/golden/http_multipart_stream (native identical to the Go backend)
+
+A `handle_stream` route can read a `multipart/form-data` body part by
+part as it arrives: `b.multipart(req)` returns a `PartReader` whose
+`next()` gives each part's name, file name, and headers
+(`header_values` for repeated ones) and whose `read(max)` gives the
+part's data, so an upload is never held in memory whole.
+
 ## 2026-10-21: feature: streamed request bodies over HTTP/2
 
 - Kind: feature

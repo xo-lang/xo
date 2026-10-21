@@ -16,11 +16,13 @@ fn prelude_builtin(name: Str) -> Bool {
 /// Fields of std structs that only the Go runtime reads and writes (the
 /// request's path parameters, parsed form, and raw query, the
 /// response's stream, and both's header field names in order, decision
-/// 0288), appended to the generated struct: (Go type name, field lines).
+/// 0288; a streamed multipart part's fields, decision 0310), appended
+/// to the generated struct: (Go type name, field lines).
 fn rt_extra_fields() -> List[(Str, List[Str])] {
   [
     ("Http_Request", ["\tXParams Map[string, string]", "\tXValues *reqValues", "\tXRawQuery string", "\tXFields []string"]),
     ("Http_Response", ["\tXStream func(*Task, Http_BodyWriter) Result[Unit, IoErr]", "\tXFields []string"]),
+    ("Http_StreamPart", ["\tXFields []string"]),
   ]
 }
 

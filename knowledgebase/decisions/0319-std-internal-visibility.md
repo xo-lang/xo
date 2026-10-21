@@ -46,6 +46,11 @@ gone.
   directions moves the shared part into std/native/llrt (as the HTTP
   connection code is).
 - The Go backend has no such need: std/rt is one Go package.
+- An implementation module's `use native/M` loads M's implementation
+  module at once (check load.xo load_impl), with std/M: loaded later in
+  load_native's order, it was taken for an intrinsics module and its
+  functions became runtime calls (gotchas/native-import-load-order.md,
+  2026-10-21).
 
 ## Alternatives
 

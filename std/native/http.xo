@@ -27,6 +27,7 @@ use native/llrt/testworld
 use native/llrt/twrun
 use native/rthttp
 use native/llrt/raw
+use native/multipart as nmp
 
 // ---------------------------------------------------------------------------
 // Types: the implementations of the std types of the same names
@@ -310,6 +311,90 @@ fn (b: BodyReader) read_all() -> Bytes ! IoErr {
     }
   }
   out.freeze()
+}
+
+/// A multipart body read part by part (decision 0310 phase 3).
+struct PartReader {
+  st: Mutex[nmp.Stream]
+}
+
+/// A part of a PartReader; fields: every header field as [name, value,
+/// ...] (hidden from Xo code, as Request.fields).
+struct StreamPart {
+  name: Str
+  filename: Str?
+  headers: Map[Str, Str]
+  fields: List[Str] = []
+}
+
+/// Go's Request.MultipartReader: the checks of multipart_form, then a
+/// reader over b.
+fn (b: BodyReader) multipart(req: Request) -> PartReader ! multipart.MultipartErr {
+  let not_multipart = multipart.MultipartErr{msg: "request Content-Type isn't multipart/form-data"}
+  let ct = header_get(req.headers, "Content-Type") ?? ""
+  if ct.is_empty() {
+    return Err(not_multipart)
+  }
+  let m = match mime.parse_media_type(ct) {
+    Ok(m) => m
+    Err(_) => return Err(not_multipart)
+  }
+  if m.kind != "multipart/form-data" {
+    return Err(not_multipart)
+  }
+  let boundary = match m.params.get("boundary") {
+    Some(b) => b
+    None => return Err(multipart.MultipartErr{msg: "no multipart boundary param in Content-Type"})
+  }
+  let src = fn() -> nmp.Feed {
+    match b.read(READ_MAX) {
+      Ok(Some(d)) => nmp.Feed{data: d, end: false, err: ""}
+      Ok(None) => nmp.Feed{data: b"", end: true, err: ""}
+      Err(e) => nmp.Feed{data: b"", end: false, err: io_err_text(e)}
+    }
+  }
+  Ok(PartReader{st: Mutex[nmp.Stream].new(nmp.new_stream(src, boundary))})
+}
+
+/// The text of a body read's error, as Go's error from the body.
+fn io_err_text(e: IoErr) -> Str {
+  match e {
+    IoErr.Io(msg: m) => m
+    IoErr.Closed => "http: invalid Read on closed Body"
+    IoErr.Canceled => "context canceled"
+  }
+}
+
+fn (p: PartReader) next() -> StreamPart? ! multipart.MultipartErr {
+  let h = p.st.with(fn(var s: nmp.Stream) -> nmp.Head? ! Str { s.next() })
+  match h {
+    Ok(Some(h)) => Ok(Some(StreamPart{name: h.name, filename: h.filename, headers: h.headers, fields: h.fields}))
+    Ok(None) => Ok(None)
+    Err(m) => Err(multipart.MultipartErr{msg: m})
+  }
+}
+
+fn (p: PartReader) read(max: Int = 32768) -> Bytes? ! multipart.MultipartErr {
+  if max < 1 {
+    fault("PartReader.read: max must be at least 1, got ${max}")
+  }
+  match p.st.with(fn(var s: nmp.Stream) -> Bytes? ! Str { s.read(max) }) {
+    Ok(d) => Ok(d)
+    Err(m) => Err(multipart.MultipartErr{msg: m})
+  }
+}
+
+fn (p: StreamPart) header_values(name: Str) -> List[Str] {
+  let k = http1.canonical_key(name)
+  var vs: List[Str] = []
+  var i = 0
+  while i + 1 < p.fields.len() {
+    if p.fields[i] == k {
+      vs.push(p.fields[i + 1])
+    }
+    i += 2
+  }
+  vs
 }
 
 /// The next bytes of s, at most max.
