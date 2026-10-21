@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+site: 3 files: site/css/main.css, site/index.html, site/logo.bin
+all: 5 files: site/.env, site/_draft/x.html, site/css/main.css, site/index.html, site/logo.bin
+txt: notes/a.txt
+<h1>home</h1>
+logo: ff00, as text: not UTF-8
+css: main.css contains main.css: true
+none: true
+--- stderr

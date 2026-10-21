@@ -30,5 +30,6 @@ entries yet.
 - [regexp.md](regexp.md): std/regexp (spec/std.md 17)
 - [json.md](json.md): std/json (spec/std.md 5)
 - [smtp.md](smtp.md): std/smtp (spec/std.md 29)
+- [embed.md](embed.md): std/embed (spec/std.md 31)
 - [time.md](time.md): std/time (spec/std.md 13)
 - [template.md](template.md): std/template (spec/std.md 30)

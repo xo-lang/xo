@@ -1,0 +1,19 @@
+// Decision 0304: embed.Dir constants: a directory (names starting with .
+// or _ left out), all: (kept), a ** glob, and Dir's methods.
+
+use std/embed
+
+const SITE: embed.Dir = embed("site")
+const ALL: embed.Dir = embed("all:site")
+const TXT: embed.Dir = embed("notes/**/*.txt")
+
+fn main(os: Os) {
+  os.stdio.println("site: ${SITE.len()} files: ${SITE.paths().join(", ")}")
+  os.stdio.println("all: ${ALL.len()} files: ${ALL.paths().join(", ")}")
+  os.stdio.println("txt: ${TXT.paths().join(", ")}")
+  os.stdio.print(SITE.read_text("site/index.html") ?? "missing")
+  os.stdio.println("logo: ${(SITE.read("site/logo.bin") ?? b"").to_hex()}, as text: ${SITE.read_text("site/logo.bin") ?? "not UTF-8"}")
+  let css = SITE.sub("site/css")
+  os.stdio.println("css: ${css.paths().join(", ")} contains main.css: ${css.contains("main.css")}")
+  os.stdio.println("none: ${SITE.read("site/nope.html") == None}")
+}

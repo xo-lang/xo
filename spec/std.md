@@ -3584,6 +3584,28 @@ fn (t: Template) render_named(name: Str, data: json.Value) -> Str ! TemplateErr
 
 <!-- BEGIN prelude index: generated from std/prelude.xo by `go run ./scripts/stdindex`; do not edit -->
 
+## 31. std/embed
+
+Files embedded at build time (decision 0304; core 3.1): a constant
+`const SITE: embed.Dir = embed("static")` holds every file the path or
+glob names, keyed by its slash path relative to the directory of the
+declaring file (`static/index.html`), as Go's embed.FS. The checker fills
+the Dir in; a program does not build one. Its methods read the data in
+the binary and need no capability:
+
+```
+struct Dir { files: Map[Str, Bytes] }
+fn (d: Dir) read(path: Str) -> Bytes?
+fn (d: Dir) read_text(path: Str) -> Str?     // None also when not valid UTF-8
+fn (d: Dir) contains(path: Str) -> Bool
+fn (d: Dir) paths() -> List[Str]             // sorted
+fn (d: Dir) sub(dir: Str) -> Dir             // the files under dir, keyed relative to it
+fn (d: Dir) len() -> Int
+```
+
+A single file embeds as a `Str` or `Bytes` constant instead (core 3.1).
+An `Fs` view of a Dir (for code written against `Fs`) is planned.
+
 ## Appendix A. Prelude index
 
 Every function and method of std/prelude.xo, by type, as declared there

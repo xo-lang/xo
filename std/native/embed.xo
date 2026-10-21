@@ -1,0 +1,30 @@
+// std/embed for the native backends (decision 0304): a Dir is a Map of
+// paths to bytes, so its methods are lookups.
+
+use std/embed
+
+fn dir_read(d: embed.Dir, path: Str) -> Bytes? { d.files.get(path) }
+
+fn dir_read_text(d: embed.Dir, path: Str) -> Str? {
+  match d.files.get(path) {
+    Some(b) => b.to_str()
+    None => None
+  }
+}
+
+fn dir_contains(d: embed.Dir, path: Str) -> Bool { d.files.contains(path) }
+
+fn dir_paths(d: embed.Dir) -> List[Str] { d.files.keys().sort() }
+
+fn dir_sub(d: embed.Dir, dir: Str) -> embed.Dir {
+  let prefix = "${dir.trim_suffix("/")}/"
+  var files: Map[Str, Bytes] = {}
+  for (p, b) in d.files.entries() {
+    if p.starts_with(prefix) {
+      files[p.trim_prefix(prefix)] = b
+    }
+  }
+  embed.Dir{files: files}
+}
+
+fn dir_len(d: embed.Dir) -> Int { d.files.len() }

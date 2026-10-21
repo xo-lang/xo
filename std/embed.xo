@@ -1,0 +1,25 @@
+// std/embed (spec/std.md 31, decision 0304). Declaration file. A Dir is
+// the files a constant embeds at build time:
+// `const SITE: embed.Dir = embed("static")`. The checker fills it in, so
+// a program never builds one itself; its methods read the data in the
+// binary and need no capability.
+
+/// Files embedded at build time, keyed by their slash path relative to
+/// the directory of the file that declares the constant.
+struct Dir {
+  files: Map[Str, Bytes]
+}
+
+/// The bytes of the file at path, or None.
+fn (d: Dir) read(path: Str) -> Bytes?
+/// The text of the file at path, or None when there is none or it is not
+/// valid UTF-8.
+fn (d: Dir) read_text(path: Str) -> Str?
+/// Whether there is a file at path.
+fn (d: Dir) contains(path: Str) -> Bool
+/// Every file's path, sorted.
+fn (d: Dir) paths() -> List[Str]
+/// The files under directory dir, keyed relative to it.
+fn (d: Dir) sub(dir: Str) -> Dir
+/// The number of files.
+fn (d: Dir) len() -> Int
