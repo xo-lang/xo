@@ -608,7 +608,7 @@ fn (var g: G) isel() {
     }
   }
   if g.on("ranges") {
-    g.fold_decided(blocks)
+    g.fold_decided(blocks, idom)
   }
   for b in blocks {
     g.bmap[b] = g.blocks.len()
@@ -1400,14 +1400,15 @@ fn (var g: G) instr1(v: Int) {
 /// reached (ssa.pads_reached: a call on the kept path may land on a check
 /// on the other, chain_pads). The block not taken is still lowered, and
 /// the MIR thread drops it.
-fn (var g: G) fold_decided(blocks: List[Int]) {
+fn (var g: G) fold_decided(blocks: List[Int], idom: List[Int]) {
   for b in blocks {
     let t = g.f.term(b)
     if t < 0 || g.f.values[t].op != ssa.Op.Branch || g.f.values[t].succs.len() != 2 || g.f.values[t].pad >= 0 {
       continue
     }
     let c = g.f.values[t].args[0]
-    if let Some(k) = g.decided(c) {
+    let dk = g.decided(c) ?? g.dom_decided(b, c, idom)
+    if let Some(k) = dk {
       let keep = g.f.values[t].succs[if k { 0 } else { 1 }]
       let drop = g.f.values[t].succs[if k { 1 } else { 0 }]
       if !ssa.pads_reached(g.f, t, keep) {
@@ -1427,6 +1428,59 @@ fn (var g: G) fold_decided(blocks: List[Int]) {
       g.nuses[c] -= 1
     }
   }
+}
+
+/// The outcome of block b's branch on c when a dominating block branches
+/// on the same compare (the same value, or the same operation of the
+/// same operands) and b is reached only through one of its edges: that
+/// edge's block has the dominator as its one predecessor and dominates
+/// b (2026-10-21: portable u64 tested `a >= 0` in ints.u64_rem and again
+/// in the u64_div it calls).
+fn (g: G) dom_decided(b: Int, c: Int, idom: List[Int]) -> Bool? {
+  let cv = g.f.values[c]
+  if b >= idom.len() {
+    return None
+  }
+  var d = idom[b]
+  var steps = 0
+  while d >= 0 && d != b && steps < 32 {
+    let t = g.f.term(d)
+    if t >= 0 && g.f.values[t].op == ssa.Op.Branch && g.f.values[t].succs.len() == 2 && g.f.values[t].pad < 0 {
+      let c2 = g.f.values[t].args[0]
+      let x2 = g.f.values[c2]
+      if c2 == c || (x2.op == cv.op && x2.args == cv.args && (cv.op is ssa.Op.Eq | ssa.Op.Ne | ssa.Op.Lt | ssa.Op.Le | ssa.Op.Gt | ssa.Op.Ge)) {
+        for i in 0..2 {
+          let s = g.f.edges[g.f.values[t].succs[i]].to
+          if g.f.blocks[s].preds.len() == 1 && dominates(idom, s, b) {
+            return Some(i == 0)
+          }
+        }
+        return None
+      }
+    }
+    if idom[d] == d {
+      break
+    }
+    d = idom[d]
+    steps += 1
+  }
+  None
+}
+
+/// Whether block a dominates block b (idom: dominators_of, -1 for the
+/// entry).
+fn dominates(idom: List[Int], a: Int, b: Int) -> Bool {
+  var x = b
+  for _ in 0..idom.len() + 1 {
+    if x == a {
+      return true
+    }
+    if x < 0 || x >= idom.len() || idom[x] == x {
+      return false
+    }
+    x = idom[x]
+  }
+  false
 }
 
 /// The outcome of the Int compare c when its operands' bounds decide it.
