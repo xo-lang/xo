@@ -2261,3 +2261,58 @@ func TestBuildSweepsStaleAsm(t *testing.T) {
 		t.Errorf("the build removed the recent %s", fresh)
 	}
 }
+
+// TestStdModuleRunCache: `xo test --std-module=M` uses the run cache
+// (decision 0236 addendum): a second run with nothing changed skips the
+// check and the build, and an edit to M's test file builds again.
+func TestStdModuleRunCache(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := xotool.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-stdruncache-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	std := filepath.Join(work, "std")
+	if err := os.CopyFS(std, os.DirFS(filepath.Join(root, "std"))); err != nil {
+		t.Fatal(err)
+	}
+	run := func() string {
+		t.Helper()
+		cmd := exec.Command(xo, "test", "--backend=arm64", "--phase-times", "--std-module=native/path")
+		cmd.Dir = work
+		cmd.Env = append(os.Environ(), "XO_STD="+std, "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_BIN_CACHE="+filepath.Join(work, "bin"))
+		log, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("xo test: %v\n%s", err, log)
+		}
+		return string(log)
+	}
+	run()
+	if warm := run(); !strings.Contains(warm, "phase run_cache ") || strings.Contains(warm, "phase check ") {
+		t.Errorf("the second run checked again:\n%s", warm)
+	}
+	tf := filepath.Join(std, "native", "path_test.xo")
+	b, err := os.ReadFile(tf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tf, append(b, []byte("\n// edited\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if edit := run(); !strings.Contains(edit, "phase check ") {
+		t.Errorf("an edit to the module's test file did not build again:\n%s", edit)
+	}
+}

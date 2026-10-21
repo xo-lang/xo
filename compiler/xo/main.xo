@@ -246,9 +246,13 @@ fn main(os: Os) ! {
       os.stdio.eprintln("xo test: --explore needs the Go backend (native builds use the real scheduler)")
       os.proc.exit(2)
     }
-    if o.out.is_empty() && o.std_module.is_empty() && (backend is "arm64" | "amd64" | "llvm") {
+    if o.out.is_empty() && (backend is "arm64" | "amd64" | "llvm") {
       // the run cache (testcache.xo): an unchanged program's binary and
-      // tests without a build
+      // tests without a build; a std module's tests too (--std-module is
+      // on the key's command line and the entry hashes the whole std
+      // tree, its _test.xo included; they were left out when the flag
+      // came, and a warm `xo test --std-module=native/path` checked and
+      // built again, 0.55 to 0.83 s against Go's 0.07 to 0.4, 2026-10-21)
       let t0 = os.clock.now()
       o.run_start = t0.unix_millis()
       o.run_key = run_key(os, ctx, o, args, backend)

@@ -91,3 +91,11 @@ notes-service; -O0 takes 5.4 s.
 - A prebuilt runtime per xo version: the runtime already comes
   prebuilt (decision 0157, `cc` of arm64 0.05 to 0.1 s), so there is
   little left to gain there.
+
+Addendum (2026-10-21, xo-fa): `xo test --std-module=M` uses the run
+cache too. It was left out when the flag came (decision 0262 part 2),
+with no reason recorded; the key has the command line (the flag with
+it) and the entry hashes every file of the std tree (M's _test.xo with
+it), so an edit to M or its tests misses. A warm std module test had
+checked and built again, 0.55 to 0.83 s (std path, url, mime). Test:
+internal/arm64 TestStdModuleRunCache.
