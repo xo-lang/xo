@@ -62,7 +62,9 @@ fn (c: WsConn) subprotocol() -> Str
 /// subprotocol.
 fn upgrade[fx: Effects](req: http.Request, f: fn(WsConn) -> () uses fx, protocols: List[Str] = [], origins: List[Str] = [], max_message: Int = 1048576) -> http.Response uses fx
 
-/// A client connection to url (`ws://host[:port]/path?query`), as
-/// gorilla's Dialer: the handshake with headers and the protocols
-/// offered, the 101 and its Sec-WebSocket-Accept checked.
-fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str] = [], max_message: Int = 1048576) -> WsConn ! WsErr uses net.dial
+/// A client connection to url (`ws://host[:port]/path?query`, or
+/// `wss://` over TLS through std/tls, verified against roots, a PEM
+/// bundle, when given, else the system's), as gorilla's Dialer: the
+/// handshake with headers and the protocols offered, the 101 and its
+/// Sec-WebSocket-Accept checked.
+fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str] = [], max_message: Int = 1048576, roots: Bytes = b"") -> WsConn ! WsErr uses net.dial

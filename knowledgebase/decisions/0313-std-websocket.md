@@ -80,7 +80,8 @@ bench/results, and interop with a Go gorilla program.
   it with the connection (http1.take_rest gives the input already read).
   The Go backend's 101 stream gets net/http's ResponseWriter to hijack.
 - Stage 1 landed 2026-10-21 (golden websocket: native identical to the
-  Go backend).
+  Go backend); stage 2 (wss:// in dial, `roots`) the same day (golden
+  websocket_tls).
 - Not now: permessage-deflate (waits for streaming flate), a message
   written in pieces (`NextWriter`), WebSockets over HTTP/2 (RFC 8441).
 

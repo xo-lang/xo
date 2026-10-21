@@ -8,6 +8,7 @@ use std/base64
 use std/crypto
 use std/http
 use std/task
+use std/tls
 use std/websocket
 use native/rt
 use native/rthttp
@@ -534,16 +535,44 @@ fn upgrade[fx: Effects](req: http.Request, f: fn(WsConn) -> () uses fx, protocol
   http.Response{status: 101, headers: {}, body: "${hserve.HANDOFF}${hserve.stream_put(rt.any_of(hand))}".bytes()}
 }
 
-fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str] = [], max_message: Int = 1048576) -> WsConn ! websocket.WsErr uses net.dial {
+/// A client's connection, plain or TLS (std/smtp's Link).
+enum Link {
+  Plain(c: Conn)
+  Tls(t: tls.TlsConn)
+}
+
+fn (l: Link) read(max: Int) -> Bytes? ! NetErr uses net.dial {
+  match l {
+    Plain(c) => c.read(max)
+    Tls(t) => t.read(max)
+  }
+}
+
+fn (l: Link) write(data: Bytes) -> () ! NetErr uses net.dial {
+  match l {
+    Plain(c) => c.write(data)
+    Tls(t) => t.write(data)
+  }
+}
+
+fn (l: Link) close() {
+  match l {
+    Plain(c) => c.close()
+    Tls(t) => t.close()
+  }
+}
+
+fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str] = [], max_message: Int = 1048576, roots: Bytes = b"") -> WsConn ! websocket.WsErr uses net.dial {
   let malformed = websocket.WsErr.Handshake(status: 0, msg: "websocket: malformed ws or wss URL")
-  if !url.starts_with("ws://") {
+  let secure = url.starts_with("wss://")
+  if !url.starts_with("ws://") && !secure {
     return Err(malformed)
   }
   let (host, name) = url_host(url) ?? ("", "")
   if host.is_empty() {
     return Err(malformed)
   }
-  let after = url[5 + host.len()..]
+  let after = url[(if secure { 6 } else { 5 }) + host.len()..]
   var path = after
   if let Some(h) = path.find("#") {
     path = path[0..h]
@@ -552,10 +581,29 @@ fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str] = 
     path = "/" + path
   }
   let has_port = if host.starts_with("[") { host.ends_with("]") == false } else { host.contains(":") }
-  let addr = if has_port { host } else if host.starts_with("[") { "${host}:80" } else { "${name}:80" }
-  let c = match net.dial(addr) {
+  let dport = if secure { 443 } else { 80 }
+  let addr = if has_port { host } else if host.starts_with("[") { "${host}:${dport}" } else { "${name}:${dport}" }
+  let pc = match net.dial(addr) {
     Ok(c) => c
     Err(e) => return Err(websocket.WsErr.Net(err: e))
+  }
+  var c = Link.Plain(c: pc)
+  if secure {
+    // std/tls's client (no ALPN: the server answers HTTP/1.1)
+    var rs: tls.Roots? = None
+    if !roots.is_empty() {
+      match tls.roots(roots) {
+        Ok(r) => rs = Some(r)
+        Err(e) => {
+          pc.close()
+          return Err(net_err(e.msg))
+        }
+      }
+    }
+    match tls.client(pc, name, roots: rs) {
+      Ok(t) => c = Link.Tls(t: t)
+      Err(e) => return Err(websocket.WsErr.Net(err: e))
+    }
   }
   let key = base64.encode(llrand.next_bytes(16))
   var req = "GET ${path} HTTP/1.1\r\nHost: ${host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\n"
@@ -627,21 +675,22 @@ fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str] = 
     c.close()
     return Err(websocket.WsErr.Handshake(status: status, msg: "websocket: bad handshake"))
   }
+  let link = c
   let wire = Wire{
     recv: rt.launder1(fn(max: Int) -> Chunk {
-      match c.read(max) {
+      match link.read(max) {
         Ok(Some(b)) => Chunk{data: b, end: false, err: ""}
         Ok(None) => Chunk{data: b"", end: true, err: ""}
         Err(e) => Chunk{data: b"", end: false, err: "${e}"}
       }
     }),
     send: rt.launder1(fn(d: Bytes) -> Str {
-      match c.write(d) {
+      match link.write(d) {
         Ok(_) => ""
         Err(e) => "${e}"
       }
     }),
-    close: fn(_x: Int) { c.close() },
+    close: fn(_x: Int) { link.close() },
   }
   WsConn{wire: wire, server: false, max: max_message, proto: proto, rd: Mutex[ReadState].new(ReadState{buf: all[head_end + 4..], pos: 0, err: []}), wr: Mutex[WriteState].new(WriteState{close_sent: false})}
 }

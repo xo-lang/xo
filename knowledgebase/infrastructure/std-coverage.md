@@ -223,7 +223,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | Argon2, BLAKE2b | golang.org/x/crypto | std/crypto | done | Decision 0059. |
 | ChaCha20-Poly1305, HKDF, SHA-3 | golang.org/x/crypto | inside std/native/llrt | partial | TLS only, no API. |
 | bcrypt | golang.org/x/crypto/bcrypt | none | planned | To verify hashes migrated from other systems. |
-| WebSocket | golang.org/x/net/websocket, gorilla, coder/websocket | std/websocket | partial | gorilla's behavior, ws:// both sides (decision 0313). Missing: wss:// in dial (stage 2), permessage-deflate, a message written in pieces. |
+| WebSocket | golang.org/x/net/websocket, gorilla, coder/websocket | std/websocket | partial | gorilla's behavior, ws:// both sides and wss:// in dial (decision 0313). Missing: permessage-deflate, a message written in pieces, the Autobahn run (stage 3). |
 | HTTP/2 | golang.org/x/net/http2 | std/http | done | Decision 0121. |
 | JWT, JOSE | golang-jwt, go-jose | none | planned | HS256 is writable today by hand; RS256 and ES256 need public RSA and ECDSA. |
 | UUID | google/uuid | std/uuid | done | v4 and v7 from Rand and Clock, parsing (decision 0282). |

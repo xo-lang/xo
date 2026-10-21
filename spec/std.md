@@ -4536,7 +4536,7 @@ fn (c: WsConn) ping(data: Bytes = b"") -> () ! WsErr
 fn (c: WsConn) close(code: Int = 1000, reason: Str = "") -> () ! WsErr   // the close frame, then the connection
 fn (c: WsConn) subprotocol() -> Str
 pub fn upgrade[fx: Effects](req: http.Request, f: fn(WsConn) -> () uses fx, protocols: List[Str] = [], origins: List[Str] = [], max_message: Int = 1048576) -> http.Response uses fx
-pub fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str] = [], max_message: Int = 1048576) -> WsConn ! WsErr uses net.dial
+pub fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str] = [], max_message: Int = 1048576, roots: Bytes = b"") -> WsConn ! WsErr uses net.dial
 ```
 
 - `upgrade` is called in a handler and its response returned. It checks
@@ -4565,8 +4565,10 @@ pub fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str
   this side's close fail with `Protocol("close sent")`. `close` sends the
   close frame unless one was sent (also when answering the peer's), then
   closes the connection; the peer's answering close is not awaited.
-- `dial` takes `ws://host[:port]/path?query` (`wss://` and a timeout are
-  decision 0313's stage 2), sends gorilla's handshake with a random key,
+- `dial` takes `ws://host[:port]/path?query` or `wss://` (TLS through
+  std/tls's client, no ALPN, the host name verified against `roots`, a
+  PEM bundle, when given, else the system's; a TLS or roots failure is
+  `Net`), sends gorilla's handshake with a random key,
   the protocols, and `headers`, and fails with `Handshake(status,
   "websocket: bad handshake")` unless the answer is a 101 with the
   upgrade tokens and the right `Sec-WebSocket-Accept`.

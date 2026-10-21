@@ -567,20 +567,46 @@ func wsOriginOK(req Http_Request, origin []string, allowed []string) bool {
 }
 
 // Websocket_dial is `websocket.dial(net, url, ...)`: gorilla's Dialer.
-func Websocket_dial(tk *Task, n Net, rawURL string, headers Map[string, string], protocols List[string], maxMessage int64) Result[Websocket_WsConn, Websocket_WsErr] {
+func Websocket_dial(tk *Task, n Net, rawURL string, headers Map[string, string], protocols List[string], maxMessage int64, roots Bytes) Result[Websocket_WsConn, Websocket_WsErr] {
 	u, err := url.Parse(rawURL)
-	if err != nil || u.Scheme != "ws" || u.Host == "" {
+	if err != nil || (u.Scheme != "ws" && u.Scheme != "wss") || u.Host == "" {
 		return Err[Websocket_WsConn](wsHandshakeErr(0, "websocket: malformed ws or wss URL"))
 	}
 	addr := u.Host
 	if u.Port() == "" {
-		addr = net.JoinHostPort(u.Hostname(), "80")
+		port := "80"
+		if u.Scheme == "wss" {
+			port = "443"
+		}
+		addr = net.JoinHostPort(u.Hostname(), port)
 	}
 	d := n.M_dial(tk, addr)
 	if !d.Ok {
 		return Err[Websocket_WsConn](Websocket_WsErr{Tag: 4, P: Websocket_WsErr_Net{F_err: d.E}})
 	}
 	conn := d.V.c
+	if u.Scheme == "wss" {
+		// std/tls's client (no ALPN: the server answers HTTP/1.1)
+		var r Option[Tls_Roots]
+		if len(roots) > 0 {
+			rr := Tls_roots(tk, roots)
+			if !rr.Ok {
+				conn.Close()
+				return Err[Websocket_WsConn](wsNetErr(errors.New(rr.E.F_msg)))
+			}
+			r = Some(rr.V)
+		}
+		tc := Tls_client(tk, d.V, u.Hostname(), r, Tls_Verify{Tag: 1}, List[string]{})
+		if !tc.Ok {
+			return Err[Websocket_WsConn](Websocket_WsErr{Tag: 4, P: Websocket_WsErr_Net{F_err: tc.E}})
+		}
+		if tc.V.t != nil {
+			conn = tc.V.t
+		} else {
+			// a FakeNet connection: no TLS on the wire
+			conn = tc.V.c
+		}
+	}
 	var kb [16]byte
 	rand.Read(kb[:])
 	key := base64.StdEncoding.EncodeToString(kb[:])
