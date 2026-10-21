@@ -132,7 +132,7 @@ Update the knowledgebase in the same change as the work, not later:
     merge tier and the full tier once on the combined main per batch, bisecting over the batch's
     merge commits when it fails, and the owning agent fixes forward.
   - heavy runs stay on the Mac (owner, 2026-10-20); it has 24 GB, so
-    heavy.sh runs one heavy job at a time (HEAVY_SLOTS=1 since the evening of 2026-10-20; a second slot, if raised, needs 60% of memory free)
+    heavy.sh runs up to two heavy jobs, the second only when 60% of memory is free (HEAVY_MIN_FREE)
     (HEAVY_MIN_FREE). CI is used only with the owner's approval for that
     use: ask the lead, who asks the owner.
   - batch mode is standing (owner, 2026-10-20, after a 4 hour trial:
