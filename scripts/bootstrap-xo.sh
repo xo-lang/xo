@@ -41,6 +41,15 @@
 # older than an intrinsic the sources use builds an intermediate first;
 # "file" takes the hops recorded in scripts/seed-chain.txt).
 #
+# XO_BOOTSTRAP_SEED_IS_S1=1: the seed is this tree's own compiler/xo
+# built by an earlier xo (a gate's `go run ./scripts/xobuild` output), so
+# it is used as s1 instead of building s1 again; s2 and s3 and their
+# comparison are unchanged. It saves one xo build (about 60 to 110 s and
+# a 7.8 GB peak) per gate; 407 fixed points to 2026-10-21 never had s2
+# and s3 differ, and every failure was a stage that could not build xo
+# (owner, 2026-10-21). Only a caller that just built the seed from this
+# tree may set it; seed-cut.sh and CI keep the full three stages.
+#
 # XO_BOOTSTRAP_RTPACK=DIR: use the runtime pack root DIR (a release's
 # lib/xo/rtpack, made by `xo rtpack`) instead of XO_RTPACK=off, so xo1's
 # default linker on darwin is compiler/macho (decision 0182) and the
@@ -175,7 +184,14 @@ if [ -n "${XO_SEED_CHAIN:-}" ]; then
     fi
   done
 fi
-stage 1 "$seed"
+if [ "${XO_BOOTSTRAP_SEED_IS_S1:-}" = 1 ] && [ -z "${XO_SEED_CHAIN:-}" ]; then
+  mkdir -p "$out/s1"
+  cp "$seed" "$out/s1/xo"
+  say "s1: the seed itself (XO_BOOTSTRAP_SEED_IS_S1=1: built from these sources)"
+  echo "s1 0 s (the seed)" >> "$times"
+else
+  stage 1 "$seed"
+fi
 stage 2 "$out/s1/xo"
 stage 3 "$out/s2/xo"
 rc=0

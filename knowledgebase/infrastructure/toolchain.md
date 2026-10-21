@@ -3886,6 +3886,13 @@ GB guidance above; `--clean` removes it). Last verified: 2026-10-12.
 
 ## Bootstrapping without Go (decision 0178 stage 7, decision 0215)
 
+Gates skip a separate s1 (owner, 2026-10-21): `XO_BOOTSTRAP_SEED_IS_S1=1
+scripts/bootstrap-xo.sh SEED` uses SEED as s1 when SEED is this tree's
+compiler/xo just built by `go run ./scripts/xobuild` (scripts/gate.sh's
+fp step sets it), so a gate's fixed point is two xo builds (s2, s3), not
+three. s2 and s3 are still built and compared. Releases, seed-cut.sh and
+CI keep all three stages. Last verified: 2026-10-21.
+
 The bootstrap chain: the first Xo `xo` on a new host is built by the
 previous release's binary (or any self hosted xo1), never by the Go
 compiler again: it was deleted (decision 0215). With no xo at all, the

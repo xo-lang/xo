@@ -101,7 +101,8 @@ for step in "$@"; do
   fp)
     tmp=$(mktemp -d "${TMPDIR:-/tmp}/xo-gate-fp.XXXXXX")
     cp bin/xo "$tmp/seed"
-    if scripts/bootstrap-xo.sh "$tmp/seed" "$tmp/out" >"$logs/fp.txt" 2>&1; then
+    # bin/xo was just built from this tree, so it is s1 (one build less)
+    if XO_BOOTSTRAP_SEED_IS_S1=1 scripts/bootstrap-xo.sh "$tmp/seed" "$tmp/out" >"$logs/fp.txt" 2>&1; then
       echo "fp: $(tail -1 "$logs/fp.txt")"
     else
       failed=1
