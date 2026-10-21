@@ -157,19 +157,6 @@ fn (var a: Asm) bad(m: Str, ops: List[Bytes]) {
   a.fail("unsupported instruction: ${m} ${parts.join(", ")}")
 }
 
-fn (var a: Asm) instruction(m: Str, ops: List[Bytes]) {
-  // every instruction encodes through its Op (decision 0274 step 2,
-  // op.xo encode_op_fix); one it cannot encode is not in the subset
-  let e = encode_op_fix(parse_op(m, ops), a.elf)
-  if e.w < 0 {
-    return a.bad(m, ops)
-  }
-  if e.fx >= 0 {
-    a.word_fix(e.w, e.fx, e.name)
-  } else {
-    a.word(e.w)
-  }
-}
 
 /// The N:immr:imms field (13 bits) of a logical immediate of a register
 /// of size bits, or None when v is not one.

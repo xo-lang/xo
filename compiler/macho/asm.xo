@@ -201,6 +201,11 @@ struct Frame {
 }
 
 pub struct Asm {
+  /// each arm64 instruction line's encoding by its text (decision 0274:
+  /// a build repeats each distinct line about 5 times, so the parse and
+  /// the encoding run once per distinct line; a fixup still records each
+  /// use)
+  enc_memo: Map[Bytes, Enc] = {}
   syms: List[Sym] = []
   names: Map[Bytes, Int] = {}
   sects: List[Sect] = []
@@ -379,13 +384,33 @@ fn (var a: Asm) parse_line(l0: Bytes) {
   if a.elf {
     a.map_code()
   }
+  if let Some(e) = a.enc_memo.get(l) {
+    a.put_enc(e)
+    return
+  }
   // the mnemonic, then the operands split at top level commas
   var k = 0
   while k < l.len() && !is_space(l[k]) {
     k += 1
   }
   let m = bstr(l[0..k])
-  a.instruction(m, split_operands(l[k..]))
+  let ops = split_operands(l[k..])
+  let enc = encode_op_fix(parse_op(m, ops), a.elf)
+  if enc.w < 0 {
+    return a.bad(m, ops)
+  }
+  a.enc_memo[l] = enc
+  a.put_enc(enc)
+}
+
+/// Writes the encoded instruction e (a word, with its fixup when it has
+/// one).
+fn (var a: Asm) put_enc(e: Enc) {
+  if e.fx >= 0 {
+    a.word_fix(e.w, e.fx, e.name)
+  } else {
+    a.word(e.w)
+  }
 }
 
 /// The operands of an instruction: split at commas outside brackets,
