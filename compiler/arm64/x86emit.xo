@@ -1010,17 +1010,34 @@ fn (var g: G) x86_emit_plain(var b: List[Str], inst: Inst) {
       // stubs' unwind rules are the frame's (shrink.xo)
       g.x86_prologue(sb)
     }
+    // the caller saved registers holding variables at the fault, stored
+    // below rsp before the moves (emit.xo; decision 0268's addendum): not
+    // where the fault can land in this function, not in a far frame, not
+    // in a Windows leaf (which jumps)
+    let saves = if g.base == 0 && g.pos >= 0 && inst.pad < 0 && !win_leaf { g.stub_saves(g.pos / 4) } else { [] }
+    var saved: List[(Int, Int)] = []
+    if !saves.is_empty() {
+      let bytes = 16 * ((saves.len() + 1) / 2)
+      sb.push("\tsubq $${bytes}, %rsp\n")
+      for (i, r) in saves.indexed() {
+        sb.push("\tmovq ${x86_reg(r, 8)}, ${8 * i}(%rsp)\n")
+        saved.push((r, 8 * i))
+      }
+      g.stub_sp = bytes
+    }
     var ms = g.x86_call_moves(inst.fargs, -1)
     g.x86_recover_operand(sb, inst, ms)
     g.x86_parallel(sb, ms)
+    let stub_bytes = g.stub_sp
+    g.stub_sp = 0
     // the variables' places over the stub (dwvars.xo DvStub): rsp moved 8
     // by a leaf's frame record; a prologue moved it further (slots left
     // out); a Windows leaf jumps (no return into the stub: none)
     var dv_end = ""
     if g.m.debug_info && g.pos >= 0 && !win_leaf {
       dv_end = g.local("${g.lbl_prefix()}_dvs${g.nstub}")
-      let adj = if g.fr.leaf { 8 } else if g.shrink && g.fl[g.cur] { -1 } else { 0 }
-      g.dv_stubs.push(DvStub{at: g.pos / 4, lo: l, hi: dv_end, adj: adj})
+      let adj = if g.fr.leaf { 8 + stub_bytes } else if g.shrink && g.fl[g.cur] { -1 } else { stub_bytes }
+      g.dv_stubs.push(DvStub{at: g.pos / 4, lo: l, hi: dv_end, adj: adj, saved: saved})
     }
     let after = if dv_end.is_empty() { "" } else { "${dv_end}:\n" }
     if inst.pad >= 0 {

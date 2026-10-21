@@ -110,5 +110,7 @@ those registers before the report reads them.
 - Secrets: the stored values are only read and printed under the opt
   in XO_TRACEBACK=locals, as every other local is; a default fault
   report prints none of them.
-- x86_64 keeps point 4's rule for now (its stubs store nothing); the
-  same change there is a follow up.
+- x86_64 (2026-10-21) does the same: its stubs store rax, rcx, rdx,
+  rsi, rdi, r8, r9, and r10 (r11 is the emitter's scratch) below rsp,
+  described with DW_OP_breg7, under the same exclusions and also not in
+  a Windows leaf (which jumps; windows/amd64 has no DWARF yet).

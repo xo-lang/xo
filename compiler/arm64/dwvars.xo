@@ -84,7 +84,10 @@ fn (var g: G) stub_saves(k: Int) -> List[Int] {
           continue
         }
         let reg = g.loc[rr].reg
-        if reg < 0 || reg > 15 || out.contains(reg) {
+        // caller saved: x0 to x15; rax, rcx, rdx, rsi, rdi, r8 to r10 (r11
+        // is the x86 emitter's scratch)
+        let caller = if g.x86 { reg is 0 | 1 | 2 | 6 | 7 | 8 | 9 | 10 } else { reg >= 0 && reg <= 15 }
+        if !caller || out.contains(reg) {
           continue
         }
         for rg in g.vranges[rr] {
@@ -161,10 +164,14 @@ fn dv_stub_op(op: List[Int], adj: Int, x86: Bool, stored: List[(Int, Int)]) -> L
     if saved {
       return op
     }
-    // a caller saved register the stub stored: its slot
+    // a caller saved register the stub stored: its slot (by encoding;
+    // x86_64's DWARF numbers differ)
     for (r, off) in stored {
       if !x86 && r == n {
         return [0x8f] + sleb_bytes(off)
+      }
+      if x86 && r < X86_DW_GP.len() && X86_DW_GP[r] == n {
+        return [0x77] + sleb_bytes(off)
       }
     }
     return []
