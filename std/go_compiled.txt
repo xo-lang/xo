@@ -8,3 +8,4 @@ xmlcodec
 base32
 base64
 netip
+mail

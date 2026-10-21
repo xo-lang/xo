@@ -6,12 +6,6 @@ package rt
 // The signatures the Go backend calls the hand written std functions
 // with (compiler/gen stdtypes.xo std_sigs).
 var (
-	_ func(*Mail_MailErr, *Task) string                                                                 = (*Mail_MailErr).M_display
-	_ func(*Task, string) Result[Mail_Address, Mail_MailErr]                                            = Mail_parse_address
-	_ func(*Task, string) Result[List[Mail_Address], Mail_MailErr]                                      = Mail_parse_address_list
-	_ func(*Mail_Address, *Task) string                                                                 = (*Mail_Address).M_display
-	_ func(*Task, Bytes) Result[Mail_Message, Mail_MailErr]                                             = Mail_read_message
-	_ func(*Mail_Message, *Task, string) Option[string]                                                 = (*Mail_Message).M_header
-	_ func(*Task, string) Result[Time, Mail_MailErr]                                                    = Mail_parse_date
-	_ func(*Task, Mail_Address, List[Mail_Address], string, string, Option[string], Time, string) Bytes = Mail_compose
+	_ func(*Mail_MailErr, *Task) string = (*Mail_MailErr).M_display
+	_ func(*Mail_Address, *Task) string = (*Mail_Address).M_display
 )

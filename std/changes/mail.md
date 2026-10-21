@@ -1,5 +1,18 @@
 # std/mail changes
 
+## 2026-10-21: behavior: the Go backend runs mail.xo too
+
+- Kind: behavior
+- Commit: (filled in after the push)
+- Found by: decision 0312 (std written once)
+- Go reference: net/mail (go1.26.1), as ported in std/native/mail.xo
+- Test: internal/stdtest/testdata/corpus/mail (go, arm64, LLVM); goldens mail_basic and mail_messages (Go parity)
+
+The Go backend compiles std/native/mail.xo instead of wrapping Go's
+net/mail; only the display methods stay in std/rt/mail.go. Results are the
+same. 200,000 parse_address and display calls on the Go backend: 115 ms
+(Go's package 148 ms, the old wrapper 114 ms).
+
 ## 2026-10-21: fix: parse_date reads fractional seconds, an unclosed quoted local part is Go's error
 
 - Kind: fix

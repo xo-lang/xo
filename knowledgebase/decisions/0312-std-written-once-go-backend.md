@@ -156,12 +156,21 @@ not affected.
       wrapper 49 ms, native Xo through gen 99 ms (1.7 times; native arm64
       79 ms). The Go backend keeps the display methods and the runtime's
       `netipOf` (client_ip) in std/rt/netip.go.
+    - mail (2026-10-21): 200,000 parse_address and display: Go's package
+      148 ms, rt wrapper 114 ms, native Xo through gen 115 ms (0.8 times
+      Go's package; native arm64 210 ms). Only the display methods stay in
+      std/rt/mail.go.
     - Not moved, and why: binary (the native code uses the runtime's
       memory intrinsics for an in-place word, which the Go backend does
       not have); url (the opaque `Values` has a Go runtime type and `var`
       methods, which go_compiled does not map: it needs the Go backend to
       use the native struct for an opaque std type); template (its opaque
-      `Parsed` is the same case).
+      `Parsed` is the same case); mime and multipart (the Go runtime's
+      http.go, gzipresp.go, and http_part_reader.go call
+      `Mime_parse_media_type`, `Mime_detect_content_type`, and
+      `Multipart_parse_form` directly, and the runtime cannot import a
+      generated package); url also because the runtime (http.go,
+      multipart.go) builds `Url_Values` itself.
 
 - One implementation per pure module. A fix lands once and reaches every
   backend.
