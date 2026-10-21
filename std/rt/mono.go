@@ -32,7 +32,9 @@ func CmpO[T Integer | ~string](a, b T) int {
 
 // arithFault is the panic value of a failed typed Int operation: op is
 // '+', '-', '*', '/', '%' (overflow, or division by zero when b is 0 for
-// '/' and '%'), or 'i' (List index a out of range for length b).
+// '/' and '%'), 'i' (List index a out of range for length b), 'b' (the
+// same for Bytes), or 'c' and 'C' (a narrowing conversion of a, signed or
+// unsigned, to the integer type convNames[b]; conv.go).
 type arithFault struct {
 	a, b int64
 	op   byte
@@ -49,6 +51,10 @@ func (x *arithFault) fault() *FaultErr {
 		msg = fmt.Sprintf("index %d out of range for List of length %d", x.a, x.b)
 	case x.op == 'b':
 		msg = fmt.Sprintf("index %d out of range for Bytes of length %d", x.a, x.b)
+	case x.op == 'c':
+		msg = fmt.Sprintf("%d is out of range for %s", x.a, convNames[x.b])
+	case x.op == 'C':
+		msg = fmt.Sprintf("%d is out of range for %s", uint64(x.a), convNames[x.b])
 	case (x.op == '/' || x.op == '%') && x.b == 0:
 		msg = fmt.Sprintf("division by zero: %s %c 0", istr(x.a), x.op)
 	default:

@@ -1005,6 +1005,17 @@ fn (var g: Gen) type_call_code(obj: Int, x: Expr) -> Str {
     // 2026-10-21)
     return "${to}(${v})"
   }
+  let (fs, fu) = int_shape(from)
+  let (ts, _) = int_shape(to)
+  if fs > 0 && ts > 0 {
+    // a conversion that can fail between Go integer types: std/rt's
+    // non-generic helper for the target (conv.go), which inlines, with
+    // the source widened to int64 or uint64 (rt.Conv is generic and is
+    // a call each time; 5% of std/path's clean, 2026-10-21)
+    let wide = if fu { "uint64" } else { "int64" }
+    let arg = if from == wide { v } else { "${wide}(${v})" }
+    return "${g.rt()}Conv${if fu { "U" } else { "S" }}_${to}(${arg}, ${loc})"
+  }
   "${g.rt()}Conv[${to}, ${from}](${v}, ${loc})"
 }
 
