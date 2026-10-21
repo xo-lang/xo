@@ -35,10 +35,11 @@ pub fn executable(env: Env, fs: Fs) -> Str uses (env, fs.read) {
   eval_links(fs, clean(p))
 }
 
-/// The std sources the checker reads: $XO_STD, else lib/xo/std of a
-/// release layout (bin/xo beside lib/), else std beside the binary or in
-/// its parent directory (a binary built into the repository's .tools or
-/// bin), else "std" in the working directory.
+/// The std sources the checker reads: $XO_STD, else lib/xo/std of an
+/// installed layout (bin/xo beside lib/), else std beside the binary or
+/// in its parent directory (a release archive's bin/xo beside std/, as
+/// scripts/release.sh lays it out, or a binary built into the
+/// repository's .tools or bin), else "std" in the working directory.
 pub fn std_dir(env: Env, fs: Fs) -> Str uses (env, fs.read) {
   let e = env.get("XO_STD") ?? ""
   if !e.is_empty() {

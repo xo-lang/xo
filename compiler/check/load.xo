@@ -466,7 +466,7 @@ fn (var c: Checker) load_prelude() {
 /// members). An error of check_dirs, which every command
 /// prints, rather than a fault in prelude_obj during the run.
 fn (c: Checker) prelude_missing() -> Str {
-  let hint = "set XO_STD to the std directory, or run xo from a release layout, bin/xo beside lib/xo/std"
+  let hint = "set XO_STD to the std directory, or run xo from a release archive, bin/xo beside std/ (or lib/xo/std)"
   if c.prelude < 0 {
     return "std library not found: no ${join(c.std_dir, "prelude.xo")} (${hint})"
   }

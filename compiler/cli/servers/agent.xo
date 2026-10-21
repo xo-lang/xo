@@ -254,7 +254,8 @@ fn agent_session(os: Os, dir: Str, preload: List[Str]) -> Session ! Str uses (st
     // a workspace or repository root: the modules under it, as `xo
     // query` and `xo check` find them (decision 0289)
     let v = check_view(os, s.std_dir, wd, {}, [d], preload)
-    if v.files.is_empty() && v.err.is_empty() {
+    // v.files holds the std files the check loaded too
+    if v.err.is_empty() && !v.files.keys().any(fn(p) { p.starts_with("${d.trim_suffix("/")}/") }) {
       return Err("no .xo files in or under ${d}")
     }
     s.use_view(v)
@@ -588,6 +589,24 @@ fn (var s: Session) agent_symbols(os: Os, dir: Str, pub_only: Bool) -> J ! Str {
       }
       out.push(s.decl_json(Found{f: f, site: site, tg: tg, name: name}))
     }
+  }
+  if out.is_empty() && !s.user_files().any(fn(f) { dir_of(abs_of(s.wd, c.files[f].path)) == d }) {
+    // a workspace or repository root: symbols lists one directory's own
+    // declarations, so say which directories have them (agent poll
+    // 2026-10-20: `symbols --dir=.` at a root was a silent [])
+    var below: List[Str] = []
+    for f in s.user_files() {
+      let fd = dir_of(abs_of(s.wd, c.files[f].path))
+      if fd.starts_with("${d.trim_suffix("/")}/") && !below.contains(fd) {
+        below.push(fd)
+      }
+    }
+    if below.is_empty() {
+      return Err("no .xo files in ${d}")
+    }
+    let shown = below[0..below.len().min(5)].map(fn(x) { "--dir=${x[d.trim_suffix("/").len() + 1..]}" })
+    let more = if below.len() > 5 { ", ... (${below.len()} directories)" } else { "" }
+    return Err("no .xo files directly in ${d}: symbols lists one directory's declarations; try ${shown.join(", ")}${more}")
   }
   Ok(jobj(["symbols"], [jarr(out)]))
 }

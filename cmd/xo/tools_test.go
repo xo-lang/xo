@@ -536,6 +536,26 @@ func TestAgentCLI(t *testing.T) {
 	}
 }
 
+// TestAgentRootHints covers the two silent answers of the 2026-10-20
+// poll: symbols of a root with no .xo files of its own names the
+// directories below it, and a directory with no .xo files at all says so
+// instead of "no declaration".
+func TestAgentRootHints(t *testing.T) {
+	t.Parallel()
+	root := writeFiles(t, map[string]string{"app/main.xo": toolsProg})
+	e := agentJSON(t, 1, "symbols", root)["error"].(string)
+	if !strings.Contains(e, "no .xo files directly in") || !strings.Contains(e, "--dir=app") {
+		t.Errorf("symbols at a root: %s", e)
+	}
+	if syms := agentJSON(t, 0, "symbols", filepath.Join(root, "app"))["symbols"].([]any); len(syms) == 0 {
+		t.Errorf("symbols of app: none")
+	}
+	empty := t.TempDir()
+	if e := agentJSON(t, 1, "def", "--dir="+empty, "load")["error"].(string); !strings.Contains(e, "no .xo files in or under") {
+		t.Errorf("def in an empty directory: %s", e)
+	}
+}
+
 // TestAgentNames covers the name forms of the 2026-10-20 tool polls
 // (decision 0289): every tool resolves a name as code writes it, std and
 // runtime modules the program does not import included.
