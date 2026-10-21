@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+children ok 400 bad 0
+--- stderr

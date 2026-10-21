@@ -548,6 +548,7 @@ fn hang_sample(os: Os, cfg: Config, name: Str, pid: Int) -> Str {
   if !ok {
     return ""
   }
+  hang_children(os, path, pid)
   let text = (os.fs.read(path).ok() ?? b"").to_str() ?? ""
   var lines = text.split("\n")
   for (i, l) in lines.indexed() {
@@ -557,6 +558,72 @@ fn hang_sample(os: Os, cfg: Config, name: Str, pid: Int) -> Str {
     }
   }
   "; stack sample ${path}:\n${lines[0..lines.len().min(30)].join("\n")}"
+}
+
+/// Appends to the hang sample at path what the build process pid waits
+/// on (2026-10-21: two hangs showed xo in proc.collect waiting for its
+/// link child's output to end, but the sample was of xo alone): its
+/// descendants (`ps`: state, elapsed time, command), the pipes each of
+/// them and pid hold (`lsof`, which shows who keeps a pipe's write end
+/// open), and a short sample of each descendant.
+fn hang_children(os: Os, path: Str, pid: Int) {
+  var extra: List[Str] = ["", "---- descendants of ${pid} (pid ppid stat elapsed command)"]
+  let ps = match os.proc.cmd("ps", ["-A", "-o", "pid=,ppid=,stat=,etime=,command="]).output() {
+    Ok(out) => out.stdout.to_str() ?? ""
+    Err(_) => ""
+  }
+  var parent: Map[Int, Int] = {}
+  var line_of: Map[Int, Str] = {}
+  for l in ps.split("\n") {
+    let f = l.trim().split(" ").filter(fn(x) { !x.is_empty() })
+    if f.len() >= 2 {
+      let a = Int.parse(f[0]) ?? -1
+      let b = Int.parse(f[1]) ?? -1
+      if a > 0 {
+        parent[a] = b
+        line_of[a] = l.trim()
+      }
+    }
+  }
+  var kids: List[Int] = []
+  for (c, _) in parent {
+    var q = parent.get(c) ?? 0
+    var depth = 0
+    while q > 1 && q != pid && depth < 64 {
+      q = parent.get(q) ?? 0
+      depth += 1
+    }
+    if q == pid {
+      kids.push(c)
+    }
+  }
+  for c in kids {
+    extra.push(line_of.get(c) ?? "${c}")
+  }
+  if kids.is_empty() {
+    extra.push("(none)")
+  }
+  if target.os == TargetOs.Darwin {
+    for q in [pid] + kids {
+      let lo = match os.proc.cmd("lsof", ["-p", "${q}"]).output() {
+        Ok(out) => out.stdout.to_str() ?? ""
+        Err(_) => ""
+      }
+      extra.push("---- pipes of ${q}")
+      for l in lo.split("\n") {
+        if l.contains("PIPE") || l.contains("FIFO") {
+          extra.push(l)
+        }
+      }
+    }
+    for c in kids {
+      let cp = "${path}.child-${c}.txt"
+      let _r = os.proc.cmd("sample", ["${c}", "2", "-file", cp]).output().ignore_err("a hang report's extra sample: best effort")
+      extra.push("---- sample of ${c}: ${cp}")
+    }
+  }
+  let text = (os.fs.read(path).ok() ?? b"").to_str() ?? ""
+  let _w = os.fs.write(path, (text + extra.join("\n") + "\n").bytes()).ignore_err("a hang report's extra lines: best effort")
 }
 
 fn read_times(fs: Fs, path: Str) -> Map[Str, Int] uses fs.read {

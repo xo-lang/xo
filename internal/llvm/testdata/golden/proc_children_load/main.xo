@@ -1,0 +1,44 @@
+// Many short children at once under CPU load (2026-10-21: two hangs of
+// xo in proc.collect, waiting for a link child's output to end): 16 tasks
+// each run 25 children (`sh -c 'echo N; echo N >&2'`) while 4 tasks spin,
+// and every child's output arrives and every wait returns.
+
+fn spin(n: Int) -> Int {
+  var x = 0
+  for i in 0..n {
+    x = (x * 31 + i) % 1000003
+  }
+  x
+}
+
+fn main(os: Os) {
+  let ok = Atomic[Int].new(0)
+  let bad = Atomic[Int].new(0)
+  scope s {
+    for _ in 0..4 {
+      s.spawn(fn() {
+        let _x = spin(20000000)
+      })
+    }
+    for t in 0..16 {
+      s.spawn(fn() {
+        for k in 0..25 {
+          let n = t * 100 + k
+          match os.proc.cmd("sh", ["-c", "echo ${n}; echo ${n} >&2"]).output() {
+            Ok(out) => {
+              if out.code == 0 && (out.stdout.to_str() ?? "") == "${n}\n" && (out.stderr.to_str() ?? "") == "${n}\n" {
+                let _a = ok.add(1)
+              } else {
+                let _b = bad.add(1)
+              }
+            }
+            Err(_) => {
+              let _c = bad.add(1)
+            }
+          }
+        }
+      })
+    }
+  }
+  os.stdio.println("children ok ${ok.get()} bad ${bad.get()}")
+}
