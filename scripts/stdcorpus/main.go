@@ -26,6 +26,8 @@ import (
 
 // generators are the corpora by module.
 var generators = map[string]func() string{
+	"base32":    base32Corpus,
+	"base64":    base64Corpus,
 	"big":       bigCorpus,
 	"compress":  compressCorpus,
 	"json":      jsonCorpus,
