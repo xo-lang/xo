@@ -41,6 +41,10 @@ pub struct Checker {
   /// The functions of the native modules whose bodies run left to
   /// check_lazy (true), and those it checked (false).
   pub lazy_fns: Map[Int, Bool] = {}
+  /// The functions of skipped modules checked before the whole-program
+  /// passes (their entries' eager lists, check_module): the builder may
+  /// build these from source without the module falling back.
+  pub eager_fns: Map[Int, Bool] = {}
   /// The module check cache (modcache.xo): its directory ("" off), the
   /// flags in its keys, the program modules' keys, the modules skipped
   /// (their bodies lazy) and their entries.

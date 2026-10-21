@@ -61,3 +61,13 @@ still keeps a module from being skipped. A checked body naming a lazy
 inferred function of its own module now also makes the build unsafe
 (effect_reads_across_modules). Test: internal/arm64
 TestModuleCheckAutoGeneric.
+
+Which bodies were checked in time (Observed, 2026-10-21): the first
+version let the builder build a skipped module's body from source
+without falling back whenever `Checker.lazy_fns` said the body was no
+longer waiting. That is also true of a body an earlier `check_lazy` call
+checked during the build, after the whole-program passes, so
+TestModuleCheckAuto's build with the front end cache's entries removed
+stopped falling back. The builder now asks `Checker.eager_fns`: the
+bodies check_module checked from the entry's eager list, before the
+passes. Any other body of a skipped module built from source falls back.

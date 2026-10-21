@@ -890,18 +890,13 @@ func TestModuleCheckAuto(t *testing.T) {
 		if skipped.MatchString(log) {
 			nskip++
 			// the front end cache's entries gone, the module entries kept:
-			// the skipped modules' bodies are built from source
-			filepath.WalkDir(cache, func(p string, e fs.DirEntry, err error) error {
-				if err == nil && e.IsDir() && e.Name() == "fe" {
-					os.RemoveAll(p)
-					return filepath.SkipDir
-				}
-				return nil
-			})
-			fb, log := build(d, cache, auto...)
-			if !strings.Contains(log, "module check cache skipped") {
-				t.Errorf("%s: no fallback with the front end cache's entries removed:\n%s", filepath.Base(d), log)
-			}
+			// the skipped modules' bodies are built from source. A golden's
+			// one module has no body the front end cache replays (its root
+			// bodies are on its entry's eager list, checked before the
+			// whole-program passes), so it need not fall back;
+			// TestModuleCheckAutoGeneric has a module that must
+			removeFeEntries(cache)
+			fb, _ := build(d, cache, auto...)
 			if !bytes.Equal(fb, off) {
 				t.Errorf("%s: the build after the fallback differs from the cache-off build", filepath.Base(d))
 			}
@@ -1300,4 +1295,28 @@ fn main(os: Os) uses stdio {
 			t.Errorf("%s: the build with XO_CHK_CACHE=auto differs from the cache-off build", v)
 		}
 	}
+	// the front end cache's entries gone: lib's total, which its entry
+	// left to check lazily, is built from source after the whole-program
+	// passes, so the build falls back and checks lib again
+	removeFeEntries(cache)
+	fb, log := build(cache, auto...)
+	if !strings.Contains(log, "module check cache skipped") {
+		t.Errorf("no fallback with the front end cache's entries removed:\n%s", log)
+	}
+	off, _ := build(filepath.Join(work, "off"), "XO_BACKEND_CACHE=off")
+	if !bytes.Equal(fb, off) {
+		t.Error("the build after the fallback differs from the cache-off build")
+	}
+}
+
+// removeFeEntries removes the front end cache's entries (every fe
+// directory) from the back-end cache dir, keeping the module entries.
+func removeFeEntries(cache string) {
+	filepath.WalkDir(cache, func(p string, e fs.DirEntry, err error) error {
+		if err == nil && e.IsDir() && e.Name() == "fe" {
+			os.RemoveAll(p)
+			return filepath.SkipDir
+		}
+		return nil
+	})
 }

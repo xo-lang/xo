@@ -121,6 +121,9 @@ fn (var c: Checker) check_module(m: Int) {
               c.lazy_fns[fo] = true
               c.check_fn_defaults(fo)
             } else {
+              if !eager.is_empty() {
+                c.eager_fns[fo] = true
+              }
               c.check_fn_decl(fd, fo)
             }
           }
