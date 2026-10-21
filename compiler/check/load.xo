@@ -25,6 +25,11 @@ pub struct Checker {
   pub root_mods: List[Int] = []
   /// Why the run cannot be checked here (`use go`, a parse error), or "".
   pub unsupported: Str = ""
+  /// A directory of the run that could not be listed for a reason other
+  /// than not existing or not being readable (an I/O error, such as no
+  /// file descriptors left), or "": check_dirs fails with it rather than
+  /// check the program without that directory's modules.
+  walk_err: Str = ""
   /// Native mode (check.Options.Native): the implementation modules of
   /// the native backends are loaded and checked too (load_native).
   pub native: Bool = false
@@ -291,6 +296,9 @@ pub fn (var c: Checker) check_dirs(dirs: List[Str]) -> () ! Str uses fs.read {
   for d in dirs {
     c.find_module_dirs(clean(d), true, module_dirs)
   }
+  if !c.walk_err.is_empty() {
+    return Err(c.walk_err)
+  }
   module_dirs = module_dirs.sort()
   // resolve the requirements of every main module before loading, so
   // imports of required modules find their selected versions
@@ -303,6 +311,9 @@ pub fn (var c: Checker) check_dirs(dirs: List[Str]) -> () ! Str uses fs.read {
     let m = c.load_dir(dir)
     c.mods[m].root = true
     c.root_mods.push(m)
+  }
+  if !c.walk_err.is_empty() {
+    return Err(c.walk_err)
   }
   for p in c.preload {
     if p.starts_with("native/llrt/") {
@@ -370,7 +381,7 @@ fn (var c: Checker) load_std_tests(m: Int, file: Str) {
 /// skipping testdata, dot, underscore (decision 0210), and vendor
 /// directories below the top.
 fn (var c: Checker) find_module_dirs(dir: Str, top: Bool, var out: List[Str]) {
-  let entries = c.fs.read_dir(dir).ok() ?? []
+  let entries = c.list_dir(dir)
   var has_xo = false
   for e in entries {
     if !e.is_dir && e.name.ends_with(".xo") {
@@ -394,6 +405,24 @@ fn (var c: Checker) find_module_dirs(dir: Str, top: Bool, var out: List[Str]) {
       continue
     }
     c.find_module_dirs(sub, false, out)
+  }
+}
+
+/// The entries of dir: none when it does not exist or cannot be read
+/// (Denied), and none with walk_err set for any other failure, so a
+/// transient error never drops a directory's modules silently (an
+/// `xo def` at a repository root answered "no declaration" for the
+/// compiler's own names under memory pressure, 2026-10-21).
+fn (var c: Checker) list_dir(dir: Str) -> List[FileInfo] uses fs.read {
+  match c.fs.read_dir(dir) {
+    Ok(es) => es
+    Err(NotFound(_)) | Err(Denied(_)) | Err(NotDir(_)) => []
+    Err(e) => {
+      if c.walk_err.is_empty() {
+        c.walk_err = "read ${dir}: ${e}"
+      }
+      []
+    }
   }
 }
 
@@ -734,7 +763,7 @@ fn (var c: Checker) load_dir(dir0: Str) -> Int {
       c.edition_aliases[c.rel_dir(join(r.dir, "xo.mod"))] = r
     }
   }
-  let entries = c.fs.read_dir(dir).ok() ?? []
+  let entries = c.list_dir(dir)
   var names: List[Str] = []
   for e in entries {
     if !e.is_dir && e.name.ends_with(".xo") {

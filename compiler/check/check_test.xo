@@ -406,3 +406,62 @@ test "only functions that are not pub, not std's and with no uses have inferred 
   expect(names.contains("api")) == false
   expect(c.effect_reads_across_modules()) == []
 }
+
+/// An Fs whose read_dir of one directory fails with an I/O error, as a
+/// directory listing does when the process is out of file descriptors.
+struct FlakyFs {
+  inner: Fs
+  bad: Str
+}
+
+fn (f: FlakyFs) sub(dir: Str) -> Fs { f.inner.sub(dir) }
+fn (f: FlakyFs) cwd() -> Fs { f.inner.cwd() }
+fn (f: FlakyFs) cwd_path() -> Str ! FsErr { f.inner.cwd_path() }
+fn (f: FlakyFs) read_only() -> Fs { f.inner.read_only() }
+fn (f: FlakyFs) write_only() -> Fs { f.inner.write_only() }
+fn (f: FlakyFs) case_sensitive() -> Bool { f.inner.case_sensitive() }
+fn (f: FlakyFs) stat(path: Str) -> FileInfo? ! FsErr uses fs.read { f.inner.stat(path) }
+fn (f: FlakyFs) exists(path: Str) -> Bool ! FsErr uses fs.read { f.inner.exists(path) }
+fn (f: FlakyFs) read(path: Str) -> Bytes ! FsErr uses fs.read { f.inner.read(path) }
+fn (f: FlakyFs) read_text(path: Str) -> Str ! FsErr uses fs.read { f.inner.read_text(path) }
+fn (f: FlakyFs) read_dir(dir: Str) -> List[FileInfo] ! FsErr uses fs.read {
+  if dir == f.bad {
+    return Err(FsErr.Io(path: dir, msg: "too many open files"))
+  }
+  f.inner.read_dir(dir)
+}
+fn (f: FlakyFs) walk(dir: Str) -> List[FileInfo] ! FsErr uses fs.read { f.inner.walk(dir) }
+fn (f: FlakyFs) write(path: Str, data: Bytes) -> () ! FsErr uses fs.write { f.inner.write(path, data) }
+fn (f: FlakyFs) create_temp(dir: Str, prefix: Str) -> Str ! FsErr uses fs.write { f.inner.create_temp(dir, prefix) }
+fn (f: FlakyFs) rename(from: Str, to: Str) -> () ! FsErr uses fs.write { f.inner.rename(from, to) }
+fn (f: FlakyFs) remove(path: Str) -> () ! FsErr uses fs.write { f.inner.remove(path) }
+fn (f: FlakyFs) remove_all(path: Str) -> () ! FsErr uses fs.write { f.inner.remove_all(path) }
+fn (f: FlakyFs) create_dir_all(dir: Str) -> () ! FsErr uses fs.write { f.inner.create_dir_all(dir) }
+fn (f: FlakyFs) set_modified(path: Str, t: Time) -> () ! FsErr uses fs.write { f.inner.set_modified(path, t) }
+fn (f: FlakyFs) open(path: Str) -> File ! FsErr uses fs.read { f.inner.open(path) }
+fn (f: FlakyFs) create(path: Str) -> File ! FsErr uses fs.write { f.inner.create(path) }
+fn (f: FlakyFs) open_append(path: Str) -> File ! FsErr uses fs.write { f.inner.open_append(path) }
+fn (f: FlakyFs) create_new(path: Str) -> File ! FsErr uses fs.write { f.inner.create_new(path) }
+fn (f: FlakyFs) append(path: Str, data: Bytes) -> () ! FsErr uses fs.write { f.inner.append(path, data) }
+fn (f: FlakyFs) copy(from: Str, to: Str) -> () ! FsErr uses fs { f.inner.copy(from, to) }
+fn (f: FlakyFs) mode(path: Str) -> Int ! FsErr uses fs.read { f.inner.mode(path) }
+fn (f: FlakyFs) set_mode(path: Str, mode: Int) -> () ! FsErr uses fs.write { f.inner.set_mode(path, mode) }
+fn (f: FlakyFs) symlink(target: Str, link: Str) -> () ! FsErr uses fs.write { f.inner.symlink(target, link) }
+fn (f: FlakyFs) read_link(path: Str) -> Str? ! FsErr uses fs.read { f.inner.read_link(path) }
+fn (f: FlakyFs) glob(pattern: Str) -> List[Str] ! FsErr uses fs.read { f.inner.glob(pattern) }
+fn (f: FlakyFs) lock(path: Str) -> FileLock ! FsErr uses fs.write { f.inner.lock(path) }
+fn (f: FlakyFs) try_lock(path: Str) -> FileLock? ! FsErr uses fs.write { f.inner.try_lock(path) }
+
+test "a directory that cannot be listed fails the check instead of being skipped" {
+  os.fs.create_dir_all("std")?
+  os.fs.write("std/prelude.xo", PRELUDE.bytes())?
+  os.fs.write("std/testing.xo", b"")?
+  os.fs.create_dir_all("root/app")?
+  os.fs.write("root/app/main.xo", b"fn f() -> Int { 1 }\n")?
+  var c = new_checker(FlakyFs{inner: os.fs, bad: "root/app"}, "std")
+  expect(c.check_dirs(["root"]).err().map(fn(e) { e.contains("read root/app") && e.contains("too many open files") })) == Some(true)
+  // a missing directory is still no modules, not an error
+  var ok = new_checker(FlakyFs{inner: os.fs, bad: "root/none"}, "std")
+  expect(ok.check_dirs(["root"]).is_ok()) == true
+  expect(ok.root_mods.len()) == 1
+}
