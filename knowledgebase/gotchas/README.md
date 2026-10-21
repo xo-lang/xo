@@ -3,6 +3,8 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [konst-text-not-value.md](konst-text-not-value.md): Observed 2026-10-21: hoist_consts merged constants by template text; Float constants (`fmov $d0, $u0`) all share it, so one loop read one Float for another (native_json 5e+08, list_field_licm 15.0); key on text, operands, and class
+
 - [branch-fold-drops-shared-landing.md](branch-fold-drops-shared-landing.md): Observed 2026-10-21: folding a branch whose dead side holds a landing check a live call shares (chain_pads) dropped the pad block (fault_unwind: "b95 is used but not defined"); fold only when ssa.pads_reached holds
 
 - [go-backend-dropped-lock-held.md](go-backend-dropped-lock-held.md): a FileLock dropped while held is released natively at once but on the Go backend only when the GC collects it; unlock explicitly (Observed 2026-10-20)
