@@ -40,10 +40,16 @@ func TestNativeStdCheckErrorsAsThemselves(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	head := "fn parse(text: Str, sep: Rune = ',', at: rt.Loc) -> List[List[Str]] ! csv.CsvErr {\n"
-	if !bytes.Contains(b, []byte(head)) {
-		t.Fatalf("%s has no %q", impl, head)
+	// the first line of csv.parse's body, whatever its parameters
+	i := bytes.Index(b, []byte("\nfn parse("))
+	j := -1
+	if i >= 0 {
+		j = bytes.Index(b[i+1:], []byte("{\n"))
 	}
+	if i < 0 || j < 0 {
+		t.Fatalf("%s has no fn parse( line", impl)
+	}
+	head := string(b[i+1 : i+1+j+2])
 	b = bytes.Replace(b, []byte(head), []byte(head+"  let wrong: Int = \"not an Int\"\n"), 1)
 	if err := os.WriteFile(impl, b, 0o644); err != nil {
 		t.Fatal(err)
