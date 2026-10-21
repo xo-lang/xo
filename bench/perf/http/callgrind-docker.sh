@@ -12,7 +12,8 @@
 # that xo builds bench/perf/http/xo with each BACKEND (default arm64 llvm;
 # LLVM builds only for the host, so the server is built there for both),
 # and callgrind.sh measures each. OUT keeps the binaries, logs, and
-# results.txt. N, REPS, SCENARIOS pass through.
+# results.txt. N, REPS, SCENARIOS pass through, and PRELOAD (callgrind.sh's)
+# and XO_MAP_LOG (the server's build: decision 0291's log Maps, 2026-10-21).
 #
 # MODE=short (2026-10-18, for gates): plain and tls only, one repeat,
 # N=30, a couple of minutes; MODE=full (the default) is every scenario,
@@ -83,7 +84,7 @@ apt-get update > /dev/null 2>&1
 apt-get install -y --no-install-recommends valgrind > /dev/null 2>&1
 servers=""
 for b in $backends; do
-	if ! (cd /work/srv && XO_INLINE_STRICT=1 XO_STD=/work/xo/std XO_BIN_CACHE=off PWD=/work/srv /work/xo/bin/xo build --backend=\$b -o /work/srv-\$b . > /work/build-\$b.log 2>&1); then
+	if ! (cd /work/srv && XO_MAP_LOG=${XO_MAP_LOG:-} XO_INLINE_STRICT=1 XO_STD=/work/xo/std XO_BIN_CACHE=off PWD=/work/srv /work/xo/bin/xo build --backend=\$b -o /work/srv-\$b . > /work/build-\$b.log 2>&1); then
 		echo "callgrind-docker.sh: the \$b server did not build:" >&2
 		tail -5 /work/build-\$b.log >&2
 		exit 1
@@ -91,7 +92,7 @@ for b in $backends; do
 	servers="\$servers \$b=/work/srv-\$b"
 done
 valgrind --version
-ANN=${ANN:-0} KEEP=${KEEP:-0} CGFLAGS='${CGFLAGS:-}' N=${N:-100} REPS=${REPS:-2} SCENARIOS="${SCENARIOS:-plain plain-newconn tls tls-newconn h2}" sh /work/callgrind.sh /work/run /work/loadgen \$servers
+PRELOAD=${PRELOAD:-8} ANN=${ANN:-0} KEEP=${KEEP:-0} CGFLAGS='${CGFLAGS:-}' N=${N:-100} REPS=${REPS:-2} SCENARIOS="${SCENARIOS:-plain plain-newconn tls tls-newconn h2}" sh /work/callgrind.sh /work/run /work/loadgen \$servers
 INSIDE
 chmod +x "$out/inside.sh"
 # not through a pipe: its status is the container's

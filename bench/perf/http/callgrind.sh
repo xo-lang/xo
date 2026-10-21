@@ -10,7 +10,7 @@
 # For each server and scenario the server runs twice under callgrind,
 # loaded by LOADGEN (loadgen/, a separate process) with a fixed count of
 # serial requests (-route cycle: POST, GET, PATCH, GET, DELETE of a new
-# user, and a list every 8th cycle) after 8 preloaded users: N cycles, then
+# user, and a list every 8th cycle) after PRELOAD (8) preloaded users: N cycles, then
 # 2N. It is stopped with SIGTERM (it exits, so callgrind writes its count)
 # and the instructions per request are (Ir(2N) - Ir(N)) / (requests(2N) -
 # requests(N)): startup, preload, and shutdown cancel. Ir counts every
@@ -69,7 +69,7 @@ run() {
 		PORT=$port valgrind --tool=callgrind ${CGFLAGS:-} --callgrind-out-file="$cg" "$srv" > "$out/srv.$port.log" 2> "$out/vg.$port.log" &
 	fi
 	vp=$!
-	reqs=$("$lg" -url "$scheme://127.0.0.1:$port" -preload 8 -route cycle -n "$cycles" $flags | sed 's/[^0-9]//g')
+	reqs=$("$lg" -url "$scheme://127.0.0.1:$port" -preload "${PRELOAD:-8}" -route cycle -n "$cycles" $flags | sed 's/[^0-9]//g')
 	kill -TERM "$vp"
 	wait "$vp" || true
 	ir=$(sed -n 's/.*I *refs: *//p' "$out/vg.$port.log" | tr -d ',')
