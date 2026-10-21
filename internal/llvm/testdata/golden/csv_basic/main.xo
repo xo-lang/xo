@@ -52,4 +52,6 @@ fn main(os: Os) {
   out.print(text)
   out.println("round trip: ${csv.parse(text).ok() == Some(rows)}")
   out.print(csv.format([["a;b", "c"]], sep: ';'))
+  // a final \r ends the text as \n would (Go's csv.Reader)
+  out.println("final cr: ${csv.parse("a,b\r\n\r").map(fn(r) { r.len() }).debug()} ${csv.parse("\r").map(fn(r) { r.len() }).debug()}")
 }

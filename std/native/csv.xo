@@ -35,6 +35,11 @@ fn parse_lines(text: Str, ss: Str) -> (List[List[Str]], List[Int]) ! csv.CsvErr 
       col0 = i
       continue
     }
+    // a final \r ends the text as \n would (Go's csv.Reader)
+    if c0 == 13 && i + 1 == n {
+      i += 1
+      continue
+    }
     if c0 == 13 && i + 1 < n && raw.str_byte(text, i + 1) == 10 {
       i += 2
       line += 1

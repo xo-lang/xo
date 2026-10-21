@@ -65,9 +65,9 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | encoding/json | std/json | partial | `derive Json`, Patch, typed decode with paths. Missing: key names other than the field name (camelCase and keyword keys such as `type`, Go's struct tags), a raw or dynamic value (json.RawMessage, any), streaming decoder, omitempty. |
 | encoding/base64 | std/base64, prelude Bytes | done | Std, Url, RawStd, RawUrl with Go's decoding rules (decision 0279). |
 | encoding/base32 | std/base32 | done | Std, Hex, RawStd, RawHex (decision 0279). |
-| encoding/hex | prelude Bytes | done | to_hex, from_hex. Dump is not offered. |
+| encoding/hex | prelude Bytes | done | to_hex, from_hex, the same as EncodeToString and DecodeString on 1,500 strings (2026-10-20). Dump is not offered. |
 | encoding/binary | std/binary | done | Byte orders on Bytes and varints (decision 0279); no Read and Write of structs (no reflection). |
-| encoding/csv | std/csv | done | Native port (decision 0164); in memory, no streaming reader. |
+| encoding/csv | std/csv | done | Native port (decision 0164); in memory, no streaming reader. Records match Go's Reader (FieldsPerRecord -1) on 2,022 texts (2026-10-20); error texts and Go's options (Comment, LazyQuotes, TrimLeadingSpace) are Xo's own or missing. |
 | encoding/pem | std/crypto | done | pem_decode, pem_encode (decision 0285). |
 | encoding/asn1 | inside std/native/llrt/asn1.xo | partial | Used by X.509; no public API. |
 | encoding/xml | none | planned | SOAP, SAML, sitemaps, TwiML; lower than JSON gaps. |

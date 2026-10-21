@@ -36,6 +36,11 @@ func csvParse(text string, sep rune) (recs [][]string, lines []int, err *Csv_Csv
 			col0 = i
 			continue
 		}
+		// a final \r ends the text as \n would (Go's csv.Reader)
+		if text[i] == '\r' && i+1 == n {
+			i++
+			continue
+		}
 		if text[i] == '\r' && i+1 < n && text[i+1] == '\n' {
 			i += 2
 			line++

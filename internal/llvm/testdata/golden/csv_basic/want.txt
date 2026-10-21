@@ -26,4 +26,5 @@ lines"
 ""
 round trip: true
 "a;b";c
+final cr: Ok(1) Ok(0)
 --- stderr
