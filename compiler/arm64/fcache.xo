@@ -521,8 +521,7 @@ fn fn_key(m: ssa.Module, fi: Int, os: Str, id: Str, taken: Map[Str, Bool], by_na
 /// compiler of identity id, on up to jobs tasks; none for a module of
 /// one part (generated whole, not cached).
 pub fn function_keys(m: ssa.Module, os: Str, id: Str, jobs: Int) -> List[Str] {
-  let bounds = part_bounds(m)
-  if bounds.len() <= 2 {
+  if part_lists(m).len() <= 1 {
     return []
   }
   var g = new_gen(m, os)

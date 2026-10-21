@@ -259,6 +259,30 @@ module code generation (largest gain, largest change).
   one-statement edit (42 of 43 objects reused); user CPU about 130 s to
   about 90 s; the binary with the cache on and off is the same file.
 
+### Addendum: the runtime's parts apart (2026-10-21, xo-fa)
+
+- A split module's functions are first divided into two groups, each in
+  the functions' order: the runtime's (a source file under
+  `native/llrt/`) and the rest. Each group is cut by the contents rule
+  above (64 to 512 functions, the name hash cut, 60,000 SSA values; a
+  short last part joins the one before), and the rest's parts come
+  first. Parts are lists of function indexes, no longer index ranges
+  (compiler/arm64 parallel.xo part_lists; the part cache's key reads the
+  list, PART_CACHE_VERSION v3).
+- Why: functions are ordered by reachability, so the runtime's functions
+  a module reaches first sat in the module's own part. An edit of
+  `xo test --std-module=native/url` regenerated and reassembled a part
+  of 172 functions, 47 of them the url module's and 125 the runtime's;
+  the runtime never changes with an edit of a program or a std module.
+- Measured (2026-10-21, the second edit of a std module test, three
+  pairs against the parent): assemble 53 to 71 ms to 33 to 35 ms (url),
+  43 to 72 ms to 23 to 35 ms (path), objects 3/4 to 4/5 reused; emit
+  about the same (the module's own part is the one regenerated). The
+  code is the same size (http_conn_fault __text 1,985,620 bytes both).
+- Consequences: the function order of a split program's text changes
+  (the rest's functions first), so every part cache entry misses once
+  (v3). Small modules (under 256 functions) are one part as before.
+
 ### Addendum stage B: the assembly per function (implemented 2026-10-14)
 
 - In a split generation (a module of 256 or more functions) each

@@ -123,13 +123,13 @@ fn fn_cache_load(os: Os, ctx: Ctx, m: ssa.Module, tgoos: Str, jobs: Int, release
   let (pents, ppk) = cache_get_packed(os, dir, "part", target, pkeys, jobs)
   var want = keys
   if !verify && !pkeys.is_empty() {
-    let bounds = arm64.part_ranges(m)
+    let plist = arm64.part_ranges(m)
     want = []
     for p in 0..pkeys.len() {
       if !pkeys[p].is_empty() && pents.contains(pkeys[p]) {
         continue
       }
-      for fi in bounds[p]..bounds[p + 1] {
+      for fi in plist[p] {
         want.push(keys[fi])
       }
     }

@@ -5,7 +5,7 @@
 // and their computation from a body; the passes use them in a later step.
 
 /// The facts of a function body the passes after inlining read:
-/// - nvalues: the number of values (compiler/arm64 part_bounds);
+/// - nvalues: the number of values (compiler/arm64 part_lists);
 /// - params: the entry block's parameter types (by_ref_of, func_sig);
 /// - names: each value's function or symbol name (Aux.S), in value
 ///   order, with its opcode and whether it is in a block's instructions
@@ -208,7 +208,7 @@ pub fn (m: Module) taken_names(fi: Int) -> List[Str] {
 }
 
 /// The number of values of function fi, from its facts or its body
-/// (arm64 part_bounds).
+/// (arm64 part_lists).
 pub fn (m: Module) value_count(fi: Int) -> Int {
   match m.facts.get(fi) {
     Some(x) => x.nvalues

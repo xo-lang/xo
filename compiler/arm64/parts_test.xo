@@ -1,0 +1,66 @@
+// The parts a large module is cut into (parallel.xo part_lists).
+
+use github.com/xo-lang/xo/compiler/ssa
+
+/// A module of n functions; every third one the runtime's.
+fn parts_module(n: Int) -> ssa.Module {
+  var m = ssa.Module{}
+  for i in 0..n {
+    let fi = m.new_func("f${i}", [], [])
+    var f = m.funcs[fi]
+    f.file = if i % 3 == 0 { "native/llrt/obj.xo" } else { "main.xo" }
+    m.funcs[fi] = f
+  }
+  m
+}
+
+test "a small module is one part of every function in order" {
+  let m = parts_module(PART_FUNCS - 1)
+  let ps = part_lists(m)
+  expect(ps.len()) == 1
+  expect(ps[0].len()) == PART_FUNCS - 1
+  expect(ps[0][0]) == 0
+  expect(ps[0][PART_FUNCS - 2]) == PART_FUNCS - 2
+}
+
+test "a large module's runtime functions are in parts of their own, after the rest's, each in order" {
+  let m = parts_module(3000)
+  let ps = part_lists(m)
+  expect(ps.len() > 2) == true
+  var seen: List[Bool] = []
+  for _ in 0..3000 {
+    seen.push(false)
+  }
+  var in_rt = false
+  for p in ps {
+    let rt = m.funcs[p[0]].file.starts_with("native/llrt/")
+    // the rest's parts come first, then the runtime's
+    if in_rt {
+      expect(rt) == true
+    }
+    in_rt = rt
+    for (i, fi) in p.indexed() {
+      expect(m.funcs[fi].file.starts_with("native/llrt/")) == rt
+      if i > 0 {
+        expect(fi > p[i - 1]) == true
+      }
+      expect(seen[fi]) == false
+      seen[fi] = true
+    }
+  }
+  expect(seen.all(fn(s) { s })) == true
+}
+
+test "an added function of the rest leaves the runtime's parts as they were" {
+  let a = part_lists(parts_module(3000))
+  var m = parts_module(3000)
+  // one more function of the rest, at the end
+  let fi = m.new_func("added", [], [])
+  var f = m.funcs[fi]
+  f.file = "main.xo"
+  m.funcs[fi] = f
+  let b = part_lists(m)
+  let rta = a.filter(fn(p) { p[0] % 3 == 0 })
+  let rtb = b.filter(fn(p) { p[0] % 3 == 0 && p[0] < 3000 })
+  expect(rtb) == rta
+}

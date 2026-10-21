@@ -9,7 +9,13 @@
 use github.com/xo-lang/xo/compiler/ssa
 
 /// A module of fewer functions than PART_FUNCS is one part. A larger one
-/// is cut by its contents (decision 0220 addendum): after a function whose
+/// is split into two groups, each keeping the functions' order: the
+/// runtime's (std/native/llrt, which an edit of a program or a std
+/// module never changes) and the rest, so an edit regenerates and
+/// reassembles only a part of the rest (a std module test's edit
+/// reassembled a part of 172 functions, 47 of them its module's, the
+/// others the runtime's that the module's functions reach first;
+/// 2026-10-21). Each group is cut by its contents (decision 0220 addendum): after a function whose
 /// name hashes to 0 modulo PART_CUT once the part has PART_MIN functions,
 /// or at PART_MAX functions, or once the part holds PART_VALUES SSA
 /// values (a part of large functions: one of 120 functions held 12% of
@@ -181,41 +187,64 @@ fn (var g: G) gen_want(w: Want) {
   }
 }
 
-/// The first function of each part and, last, the count of functions
-/// (the cuts by contents above); [0, n] is one part.
-pub fn part_bounds(m: ssa.Module) -> List[Int] {
+/// The functions of each part, in order (the groups and cuts above): the
+/// rest's parts, then the runtime's; one part of every function for a
+/// small module.
+pub fn part_lists(m: ssa.Module) -> List[List[Int]] {
   let n = m.funcs.len()
-  if n < PART_FUNCS {
-    return [0, n]
-  }
-  var out = [0]
-  var start = 0
-  var vals = 0
+  var all: List[Int] = []
+  var rest: List[Int] = []
+  var rt: List[Int] = []
   for (fi, f) in m.funcs.indexed() {
-    let k = fi + 1 - start
+    all.push(fi)
+    if f.file.starts_with("native/llrt/") {
+      rt.push(fi)
+    } else {
+      rest.push(fi)
+    }
+  }
+  if n < PART_FUNCS {
+    return [all]
+  }
+  cut_parts(m, rest) + cut_parts(m, rt)
+}
+
+/// Group fis cut into parts by contents (PART_MIN, PART_CUT, PART_MAX,
+/// PART_VALUES); a short last part joins the one before.
+fn cut_parts(m: ssa.Module, fis: List[Int]) -> List[List[Int]] {
+  var out: List[List[Int]] = []
+  var cur: List[Int] = []
+  var vals = 0
+  for (i, fi) in fis.indexed() {
+    cur.push(fi)
     // a function not decoded: its body facts' count (decision 0283 B)
     vals += m.value_count(fi)
-    if fi + 1 < n && ((k >= PART_MIN && (k >= PART_MAX || fnv(f.name) % PART_CUT == 0)) || vals >= PART_VALUES) {
-      out.push(fi + 1)
-      start = fi + 1
+    let k = cur.len()
+    if i + 1 < fis.len() && ((k >= PART_MIN && (k >= PART_MAX || fnv(m.funcs[fi].name) % PART_CUT == 0)) || vals >= PART_VALUES) {
+      out.push(cur)
+      cur = []
       vals = 0
     }
   }
-  if out.len() > 1 && n - start < PART_MIN {
-    out.pop()
+  if !cur.is_empty() {
+    if !out.is_empty() && cur.len() < PART_MIN {
+      let last = out.pop() ?? []
+      out.push(last + cur)
+    } else {
+      out.push(cur)
+    }
   }
-  out.push(n)
   out
 }
 
 /// The label namespace of each part: "p", the hash of its first
 /// function's name, and "_", so a part's labels do not depend on the
 /// parts before it; a repeated one gets the part's index too.
-fn part_names(m: ssa.Module, bounds: List[Int]) -> List[Str] {
+fn part_names(m: ssa.Module, parts: List[List[Int]]) -> List[Str] {
   var seen: Map[Str, Bool] = {}
   var out: List[Str] = []
-  for p in 0..bounds.len() - 1 {
-    var ns = "p${base62(fnv(m.funcs[bounds[p]].name), 6)}_"
+  for p in 0..parts.len() {
+    var ns = "p${base62(fnv(m.funcs[parts[p][0]].name), 6)}_"
     if let Some(_) = seen.get(ns) {
       ns = "${ns}${p}_"
     }
@@ -238,8 +267,8 @@ pub fn generate_parallel(m: ssa.Module, os: Str, jobs: Int) -> Program {
 /// generated (with fc.verify, generated and compared with it).
 pub fn generate_cached(m0: ssa.Module, os: Str, jobs: Int, fc: FnCache) -> Program {
   var m = m0
-  let bounds = part_bounds(m)
-  let np = bounds.len() - 1
+  let plist = part_lists(m)
+  let np = plist.len()
   if np <= 1 {
     ssa.force_lazy(m, [], jobs)
     var g = new_gen(m, os)
@@ -256,7 +285,7 @@ pub fn generate_cached(m0: ssa.Module, os: Str, jobs: Int, fc: FnCache) -> Progr
       if !fc.verify && !pk.is_empty() && fc.part_entries.contains(pk) {
         continue
       }
-      for fi in bounds[p]..bounds[p + 1] {
+      for fi in plist[p] {
         let k = if fi < fc.keys.len() { fc.keys[fi] } else { "" }
         if fc.verify || k.is_empty() || !fc.entries.contains(k) {
           idx.push(fi)
@@ -277,12 +306,12 @@ pub fn generate_cached(m0: ssa.Module, os: Str, jobs: Int, fc: FnCache) -> Progr
     return Program{asm: "", err: "arm64 backend: no main", skipped: []}
   }
   let taken = g.addr_taken
-  let names = part_names(m, bounds)
+  let names = part_names(m, plist)
   var parts: List[Part] = []
   let w = jobs.min(np)
   if w <= 1 {
     for p in 0..np {
-      parts.push(gen_part(m, os, taken, bounds[p], bounds[p + 1], names[p], fc, part_key(fc, p)))
+      parts.push(gen_part(m, os, taken, plist[p], names[p], fc, part_key(fc, p)))
     }
   } else {
     // each task takes the next part until none is left, the largest
@@ -292,7 +321,7 @@ pub fn generate_cached(m0: ssa.Module, os: Str, jobs: Int, fc: FnCache) -> Progr
     var cost: List[(Int, Int)] = []
     for p in 0..np {
       var nv = 0
-      for fi in bounds[p]..bounds[p + 1] {
+      for fi in plist[p] {
         nv += m.value_count(fi)
       }
       cost.push((p, nv))
@@ -310,7 +339,7 @@ pub fn generate_cached(m0: ssa.Module, os: Str, jobs: Int, fc: FnCache) -> Progr
               break
             }
             let p = order[k].0
-            mine.push((p, gen_part(m, os, taken, bounds[p], bounds[p + 1], names[p], fc, part_key(fc, p))))
+            mine.push((p, gen_part(m, os, taken, plist[p], names[p], fc, part_key(fc, p))))
           }
           mine
         }))
@@ -407,11 +436,11 @@ fn part_key(fc: FnCache, p: Int) -> Str {
   if p < fc.part_keys.len() { fc.part_keys[p] } else { "" }
 }
 
-/// Part functions lo..hi of m by an emitter of its own, its labels in
+/// Part fis (functions of m, in order) by an emitter of its own, its labels in
 /// namespace ns and its functions numbered from 0, as a file of its own.
 /// With pkey (partcache.xo), the part is read from its entry when the
 /// cache holds one (not with verify), else generated and encoded for it.
-fn gen_part(m: ssa.Module, os: Str, taken: Map[Str, Bool], lo: Int, hi: Int, ns: Str, fc: FnCache, pkey: Str) -> Part {
+fn gen_part(m: ssa.Module, os: Str, taken: Map[Str, Bool], fis: List[Int], ns: Str, fc: FnCache, pkey: Str) -> Part {
   var g = new_gen(m, os)
   let pentry = if pkey.is_empty() { None } else { fc.part_entries.get(pkey) }
   if !fc.verify {
@@ -420,7 +449,7 @@ fn gen_part(m: ssa.Module, os: Str, taken: Map[Str, Bool], lo: Int, hi: Int, ns:
         var p = p0
         p.part_hit = true
         // its functions, each as if placed from its entry
-        p.reused = hi - lo
+        p.reused = fis.len()
         return p
       }
     }
@@ -433,12 +462,12 @@ fn gen_part(m: ssa.Module, os: Str, taken: Map[Str, Bool], lo: Int, hi: Int, ns:
   var reused = 0
   var mismatches: List[Str] = []
   if fc.keys.is_empty() {
-    for fi in lo..hi {
+    for fi in fis {
       g.function(fi)
     }
   } else {
     g.canon = true
-    for fi in lo..hi {
+    for fi in fis {
       let key = fc.keys[fi]
       let entry = if key.is_empty() { None } else { fc.entries.get(key) }
       if !fc.verify {
