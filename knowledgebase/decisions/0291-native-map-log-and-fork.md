@@ -10,8 +10,16 @@ map_log_sets match on arm64, LLVM, wasm and Go. Measured on the Mac
 (--release arm64, n = 200,000, flag on against off): get 7 to 8 ns
 against 4, iteration under 1 ns per entry for both, copy then put 75 ns
 against about 100 us, put under `Mutex.with` 70 to 80 ns at any size
-against 23 to 85 us. Next: the measurement list below, the fixed point
-with the flag on, then the switch.
+against 23 to 85 us. A table of 8 or fewer entries with no index keeps
+no hashes (lazy hashing, eedeb18b4). HTTP callgrind (arm64, plain,
+bench/perf/http callgrind-docker.sh with PRELOAD and XO_MAP_LOG, main
+495fd9830, 3 runs each, instructions a request), flag on against off:
+8 preloaded users 23,864 against 24,048 (-0.8%), 10,000 users 513,052
+against 1,172,360 (-56.2%). The earlier figures (+4% at 8 users) were
+taken before lazy hashing and on a build with an arm64 miscompile
+(87059821 to e879670d) and are withdrawn. Next: the fixed point with
+the flag on, the Mac measurement (collections, json, xo's self build),
+then the switch.
 
 ## Context
 
