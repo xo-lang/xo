@@ -1750,3 +1750,60 @@ func TestFrontCacheStdCommentEdit(t *testing.T) {
 		t.Error("the build after the comment differs from the cache-off build")
 	}
 }
+
+// TestStdSumMemoPerTree: the std tree hash's memo is one file per std
+// directory, so builds alternating between two std trees (two agents'
+// worktrees) keep both; one shared file made every build hash std again.
+func TestStdSumMemoPerTree(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := xotool.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-stdsum-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	own := filepath.Join(work, "p")
+	if err := os.MkdirAll(own, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(own, "main.xo"), []byte("fn main(os: Os) uses stdio {\n  os.stdio.println(\"hi\")\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cache := filepath.Join(work, "cache")
+	for _, name := range []string{"std1", "std2"} {
+		std := filepath.Join(work, name, "std")
+		if err := os.CopyFS(std, os.DirFS(filepath.Join(root, "std"))); err != nil {
+			t.Fatal(err)
+		}
+		// older than the memo's two-second window
+		old := time.Now().Add(-time.Hour)
+		filepath.WalkDir(std, func(p string, e fs.DirEntry, err error) error {
+			if err == nil && !e.IsDir() {
+				os.Chtimes(p, old, old)
+			}
+			return nil
+		})
+		cmd := exec.Command(xo, "build", "--backend=arm64", "--std="+std, "-o", filepath.Join(work, "prog"), ".")
+		cmd.Dir = own
+		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on")
+		if log, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("xo build with %s: %v\n%s", name, err, log)
+		}
+	}
+	es, err := os.ReadDir(filepath.Join(cache, "stdsums"))
+	if err != nil || len(es) != 2 {
+		t.Fatalf("stdsums memos: %d (%v), want one per std tree, 2", len(es), err)
+	}
+}

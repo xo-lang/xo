@@ -309,7 +309,7 @@ const STD_SUM_VERSION = "xo std sum v2 (interfaces)"
 /// were hashed, so a comment added to json.xo missed every std body of
 /// every program); the edited body's own key, its text, changes. "" when dir cannot be
 /// walked (std bodies then share no key with another build).
-/// The hash is kept in the cache (cache/stdsum) under the files' paths,
+/// The hash is kept in the cache (cache/stdsums/<hash of dir>; not stdsum/, the old single memo file of that name) under the files' paths,
 /// sizes and modification times, and read again only when those differ
 /// or a file changed in the last 2 s (a change within one clock tick).
 fn std_tree_sum(os: Os, dir: Str, cache: Str) -> Str {
@@ -334,7 +334,10 @@ fn std_tree_sum(os: Os, dir: Str, cache: Str) -> Str {
     sig.write("${p} ${stat.get(p) ?? ""}\n")
   }
   let sigh = crypto.sha256(sig.freeze().bytes()).to_hex()
-  let memo = "${cache}/stdsum"
+  // one memo per std tree (2026-10-21: one file for every tree; the
+  // agents' worktrees each have their own std, so each build overwrote
+  // the others' memo and hashed std again, 0.2 s since the hash parses)
+  let memo = "${cache}/stdsums/${crypto.sha256(dir.bytes()).to_hex()[0..32]}"
   if fresh && !cache.is_empty() {
     // xo:allow XO0903 a memo: a failed read hashes the std tree again
     let parts = ((os.fs.read(memo).ok() ?? b"").to_str() ?? "").split(" ")
