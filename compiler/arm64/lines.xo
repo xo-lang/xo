@@ -484,3 +484,54 @@ fn op_reads_x(o: macho.Op, r: Int) -> Bool {
   }
   false
 }
+
+/// far_tests_l on items (emit.xo's text pass; its tests and conditional
+/// branches read from the Op, the inverted forms printed from its
+/// operands).
+fn (g: G) far_tests_ops(xs: List[Line]) -> List[Line] {
+  var n = 0
+  for x in xs {
+    if x.op != None {
+      n += 1
+    }
+  }
+  if n < FAR_TEST_LIMIT {
+    return xs
+  }
+  var out: List[Line] = List.with_capacity(xs.len())
+  var k = 0
+  for x in xs {
+    let o = if let Some(op) = x.op { op } else {
+      out.push(x)
+      continue
+    }
+    if (o.m == "tbz" || o.m == "tbnz") && o.ops.len() == 3 {
+      k += 1
+      let skip = g.local("${g.lbl_prefix()}_far${k}")
+      let inv = if o.m == "tbz" { "tbnz" } else { "tbz" }
+      for y in to_lines(["\t${inv} ${macho.print_operand(o.ops[0])}, ${macho.print_operand(o.ops[1])}, ${skip}", "\tb ${macho.print_operand(o.ops[2])}", "${skip}:"]) {
+        out.push(y)
+      }
+      continue
+    }
+    if n >= FAR_COND_LIMIT && (o.m == "cbz" || o.m == "cbnz") && o.ops.len() == 2 {
+      k += 1
+      let skip = g.local("${g.lbl_prefix()}_far${k}")
+      let inv = if o.m == "cbz" { "cbnz" } else { "cbz" }
+      for y in to_lines(["\t${inv} ${macho.print_operand(o.ops[0])}, ${skip}", "\tb ${macho.print_operand(o.ops[1])}", "${skip}:"]) {
+        out.push(y)
+      }
+      continue
+    }
+    if n >= FAR_COND_LIMIT && o.m.starts_with("b.") && o.ops.len() == 1 && !inv_cond(o.m[2..o.m.len()]).is_empty() {
+      k += 1
+      let skip = g.local("${g.lbl_prefix()}_far${k}")
+      for y in to_lines(["\tb.${inv_cond(o.m[2..o.m.len()])} ${skip}", "\tb ${macho.print_operand(o.ops[0])}", "${skip}:"]) {
+        out.push(y)
+      }
+      continue
+    }
+    out.push(x)
+  }
+  out
+}

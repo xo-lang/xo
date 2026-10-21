@@ -390,7 +390,15 @@ fn (var g: G) emit() {
       g.fail("XO_OP_VERIFY: ${g.f.name}: pair_mem_ops differs from pair_mem_l")
     }
   }
-  g.text.push(g.local_empty_l(g.far_tests_l(g.far_slots_l(pm))))
+  let fs = g.far_slots_l(pm)
+  let ft = g.far_tests_l(fs)
+  if g.m.op_verify && !g.x86 {
+    // decision 0274 step 3: far_tests on items gives the text pass's lines
+    if line_texts(g.far_tests_ops(to_lines(fs))) != flat_lines(ft) {
+      g.fail("XO_OP_VERIFY: ${g.f.name}: far_tests_ops differs from far_tests_l")
+    }
+  }
+  g.text.push(g.local_empty_l(ft))
 }
 
 /// The number of instructions past which a function keeps adrp and add
@@ -458,6 +466,9 @@ const FAR_COND_LIMIT = 240000
 /// instructions, and every b.cond, cbz, and cbnz of one longer than
 /// FAR_COND_LIMIT, as the opposite test around an unconditional branch
 /// (farTests; gotchas/arm64-tbz-range.md).
+/// Ported to items in lines.xo (decision 0274 step 3): until the text pass
+/// goes, a change here is made in its port too, or XO_OP_VERIFY=1 builds
+/// fail (gotchas/arm64-line-pass-port-drift.md).
 fn (g: G) far_tests_l(lines: List[Str]) -> List[Str] {
   var n = 0
   for l in lines {
