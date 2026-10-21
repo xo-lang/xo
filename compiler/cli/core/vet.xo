@@ -304,7 +304,10 @@ fn vet_module(c: check.Checker, m: Int) -> List[Diag] {
           }
           out = out + task_captures(c, f, path, e, args)
         }
-        MatchExpr(_, subject, arms) => {
+        MatchExpr(span, subject, arms) => {
+          if let Some(d) = match_exit(c, f, path, span, subject, arms) {
+            out.push(d)
+          }
           var pats: List[parser.Pattern] = []
           for a in arms {
             pats.push(a.pattern)
@@ -1605,4 +1608,69 @@ fn debug_interps(c: check.Checker, f: Int, file: Str, s: parser.StringLit) -> Li
     }
   }
   out
+}
+
+/// XO0906 (decision 0321): `match x { Some(v) => v  None => return r }`
+/// (or `continue`, `break`), which `x ?? return r` writes in one line.
+fn match_exit(c: check.Checker, f: Int, file: Str, span: parser.Span, subject: parser.Expr, arms: List[parser.MatchArm]) -> Diag? {
+  if arms.len() != 2 {
+    return None
+  }
+  var exit_text = ""
+  var has_some = false
+  for a in arms {
+    if a.guard != None {
+      return None
+    }
+    let body = match a.body {
+      Some(b) => b
+      None => return None
+    }
+    match a.pattern {
+      VariantPat(_, path, parens, fields, _) => {
+        if path.len() != 1 {
+          return None
+        }
+        let n = text_of(path[0].name)
+        if n == "Some" && parens && fields.len() == 1 {
+          // Some(v) => v
+          if let BindPat(_, b) = fields[0].pattern {
+            if let ExprStmt(_, bx) = body {
+              if let Ident(id) = bx {
+                if id.name == b.name {
+                  has_some = true
+                  continue
+                }
+              }
+            }
+          }
+          return None
+        }
+        if n == "None" && !parens {
+          var st = body
+          if let ExprStmt(_, bx) = body {
+            if let Block(b) = bx {
+              if b.stmts.len() == 1 {
+                st = b.stmts[0]
+              }
+            }
+          }
+          match st {
+            ReturnStmt(..) | BreakStmt(..) | ContinueStmt(..) => exit_text = src_text(c, f, stmt_span(st))
+            _ => return None
+          }
+          continue
+        }
+        return None
+      }
+      _ => return None
+    }
+  }
+  if !has_some || exit_text.is_empty() {
+    return None
+  }
+  let short = "${src_text(c, f, parser.expr_span(subject))} ?? ${exit_text}"
+  var d = vdiag("XO0906", true, file, span, "this `match` only unwraps the Option or leaves: `${short}` says the same in one line (decision 0321)")
+  d.fixes.push(check.DFix{title: "write it with `??`", edits: [check.DEdit{span: jspan(file, span), replace: short}]})
+  Some(d)
 }

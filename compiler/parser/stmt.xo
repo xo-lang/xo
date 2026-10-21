@@ -132,7 +132,7 @@ fn (var p: Parser) parse_simple_stmt() -> Stmt {
     Return => {
       p.next()
       var value: Expr? = None
-      if !(p.tok.kind is Newline | RBrace | Eof | Comma) {
+      if !(p.tok.kind is Newline | RBrace | RParen | RBrack | Eof | Comma) {
         let v = p.parse_expr()
         if p.at(Kind.Comma) && !p.bad {
           value = Some(p.foreign_return_list(v))

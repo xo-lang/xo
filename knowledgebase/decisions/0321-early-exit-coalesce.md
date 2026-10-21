@@ -82,6 +82,25 @@ continue }`), which is the pattern repeated most in a loop body and in
   already lower; the spec (core 2.5, 3.5, the grammar) and a formatter
   test.
 
+## Implementation notes (2026-10-21)
+
+- The parser turns `x ?? return v` into `x ?? { return v }`: a Block
+  expression of the one statement, with `Block.exit` set so `xo fmt`
+  prints it back without braces. Nothing below the parser changed: the
+  checker's block typing (a path that ends is `Never`, decision 0300),
+  ssa, gen, and wasm see an ordinary block on the right of `??`.
+- `return`'s value stops at `)` and `]` too, so `f(x ?? return)` parses.
+- `xo vet` XO0906 (a note) finds the four line `match` and offers the
+  rewrite as a fix.
+- Tests: errorcheck coalesce_exit (non-Option left side `XO0406`, a
+  wrong return type `XO0401`, `continue` outside a loop `XO0607`, and a
+  move on the exit path that the continuing path still uses, accepted);
+  golden coalesce_exit on go, arm64, and LLVM.
+- The compiler cannot use the syntax until a seed has it (gotcha
+  new-syntax-needs-a-newer-seed); rewriting the 251 blocks follows the
+  next seed cut.
+- Part 2, the Result form, stays deferred.
+
 ## Alternatives
 
 - **A `guard`/`else` statement**, `let Some(v) = x else { return None }`

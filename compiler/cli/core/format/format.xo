@@ -1384,7 +1384,7 @@ fn (var p: Printer) expr(e: Expr) {
       }
       p.arms(p.find(off(span) + 6, '{'), end_off(span), items)
     }
-    Block(b) => p.block(b)
+    Block(b) => if b.exit { p.stmt(b.stmts[0]) } else { p.block(b) }
     FnLit(f) => p.fn_lit(f)
     WhileExpr(_, body) => {
       p.w("while ")

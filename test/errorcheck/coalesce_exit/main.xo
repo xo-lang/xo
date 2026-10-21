@@ -1,0 +1,38 @@
+// Decision 0321: `x ?? return v`, `?? break`, `?? continue`.
+fn ok_return(xs: List[Int]) -> Int? {
+  let a = xs.first() ?? return None
+  Some(a)
+}
+
+fn ok_loop(xs: List[Int?]) -> Int {
+  var t = 0
+  for x in xs {
+    let v = x ?? continue
+    let w = x ?? break
+    t += v + w
+  }
+  t
+}
+
+fn not_optional(n: Int) -> Int {
+  let a = n ?? return 0 // ERROR XO0406 "needs an optional value"
+  a
+}
+
+fn wrong_type(xs: List[Int]) -> Str? {
+  let a = xs.first() ?? return 5 // ERROR XO0401 "found `Int`"
+  Some("${a}")
+}
+
+fn outside_loop(x: Int?) -> Int {
+  let a = x ?? continue // ERROR XO0607 "outside a loop"
+  a
+}
+
+// the exit path may consume what the continuing path still uses (0300)
+fn moves(b: Bytes?) -> Bytes? {
+  var out = BytesBuilder.new()
+  let v = b ?? return Some(out.freeze())
+  out.write(v)
+  Some(out.freeze())
+}

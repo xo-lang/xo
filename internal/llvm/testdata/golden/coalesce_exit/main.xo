@@ -1,0 +1,35 @@
+fn first(xs: List[Int]) -> Int? {
+  let a = xs.first() ?? return None
+  Some(a + 1)
+}
+
+fn sum_pos(xs: List[Int?]) -> Int {
+  var t = 0
+  for x in xs {
+    let v = x ?? continue
+    if v > 100 {
+      break
+    }
+    t += v
+  }
+  t
+}
+
+fn find(xs: List[Int?]) -> Str {
+  for x in xs {
+    let v = x ?? break
+    if v > 1 {
+      return "big ${v}"
+    }
+  }
+  let z = xs.first() ?? return "empty"
+  "none ${z ?? 0}"
+}
+
+fn main(os: Os) {
+  os.stdio.println("${first([4, 5]) ?? -1} ${first([]) ?? -1}")
+  os.stdio.println("${sum_pos([Some(1), None, Some(2), Some(500), Some(7)])}")
+  os.stdio.println(find([Some(1), Some(5)]))
+  os.stdio.println(find([Some(1), None]))
+  os.stdio.println(find([]))
+}

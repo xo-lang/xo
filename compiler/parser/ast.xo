@@ -382,6 +382,9 @@ pub struct SelectArm {
 pub struct Block {
   pub span: Span
   pub stmts: List[Stmt] = []
+  /// The right side of `x ?? return v`, `?? break`, or `?? continue`
+  /// (decision 0321): one statement that leaves, written without braces.
+  pub exit: Bool = false
 }
 
 /// A closure literal.

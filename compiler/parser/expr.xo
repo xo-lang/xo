@@ -75,6 +75,13 @@ fn (var p: Parser) parse_binary(min_prec: Int) -> Expr {
       x = Expr.RangeExpr(span: p.span_from(expr_span(x).start), lo: Some(x), hi: hi, inclusive: inclusive)
       continue
     }
+    if op == Kind.Coalesce && p.tok.kind is Return | Break | Continue {
+      // `x ?? return v` (decision 0321): a block of the one statement
+      let st = p.parse_simple_stmt()
+      let y = Expr.Block(Block{span: stmt_span(st), stmts: [st], exit: true})
+      x = Expr.BinaryExpr(span: span_to(expr_span(x), expr_span(y)), op: op, x: x, y: y)
+      continue
+    }
     let y = if op == Kind.Coalesce { p.parse_binary(prec) } else { p.parse_binary(prec + 1) }
     x = Expr.BinaryExpr(span: span_to(expr_span(x), expr_span(y)), op: op, x: x, y: y)
   }

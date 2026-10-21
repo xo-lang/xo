@@ -758,7 +758,18 @@ pub interface Store {
   if let Some(e) = user.email { send(e) } else { log.warn("no email") }
   let e = user.email ?? "unknown@example.com"
   let e = user.email.or_err(LoadErr.NotFound(id: user.id))?
+  let e = user.email ?? return None
+  let n = fields.get(k) ?? continue
   ```
+  - The right side of `??` may be `return v`, `break`, or `continue`
+    (decision 0321): an expression of type `Never` that leaves when the
+    left side is `None`, so `let x = opt ?? return r` is the four line
+    `match opt { Some(v) => v  None => return r }`. A `return` is checked
+    against the function's result as a statement `return` is, and
+    `break` and `continue` against an enclosing loop (`XO0607`). It takes
+    only an Option on the left (`XO0406`); a Result keeps `match` and
+    `.or_err(...)?` (the Result form is deferred). `xo vet` suggests it
+    for the four line `match` (`XO0906`).
   `if let e = opt` (without `Some`) is also accepted as shorthand for
   `if let Some(e) = opt`.
 - In a function that returns `U?`, `opt?` yields the value or returns `None`:
@@ -2435,7 +2446,7 @@ test "retries after 503" {
 | `xo serve` | Resident checker on a unix socket; `xo check` and `xo query` use it automatically when it answers |
 | `xo fmt` | Canonical format, no options |
 | `xo fix [--dry-run] [--from=draft-0.N] [--edition=preview]` | Apply all machine fixes until none apply, xo.mod and xo.work lines included (`edition 2026` becomes `edition preview`, `xo 2026` becomes `xo preview`, `XO1315`); `--from` migrates code written for an older draft (interpolation, prelude variants, `let _ =` discards, scope timeouts, Map index reads) |
-| `xo vet` | Advisory checks, never errors (a directory, a `.xo` file's findings, a std directory checked as std, or `--std-module=M`; decision 0289): checker warnings plus `XO0207` (`??` precedence trap), `XO0208` (each `ignore_err` with its reason), `XO0530` (a field's large payload bound and shared, decision 0263), `XO0531` (a large parameter only stored while each caller passes its last use, decision 0263), `XO0532` (a Map value changed through a copy and stored back, `Map.update` instead; decision 0266), `XO0534` (a task capturing a value of 32 or more heap fields, core 5.1; decision 0294), `XO0703` (declared effect never performed), `XO0901` (`dbg` left in code), `XO0902` (`tls.Verify.None`, decision 0281), `XO0903` (an Fs, Net, or Proc error defaulted away by `.ok() ?? d` or `Err(_) => <empty>`; `// xo:allow XO0903 <reason>` silences one), `XO0904` (an embedded file git ignores or does not track; decision 0304), `XO1103` (use of Go packages per module), `XO0535` (`${x.debug()}` written as `${x:?}`, with the fix; decision 0296), `XO0536` (a list element copied out, changed, and stored back; decision 0294) |
+| `xo vet` | Advisory checks, never errors (a directory, a `.xo` file's findings, a std directory checked as std, or `--std-module=M`; decision 0289): checker warnings plus `XO0207` (`??` precedence trap), `XO0208` (each `ignore_err` with its reason), `XO0530` (a field's large payload bound and shared, decision 0263), `XO0531` (a large parameter only stored while each caller passes its last use, decision 0263), `XO0532` (a Map value changed through a copy and stored back, `Map.update` instead; decision 0266), `XO0534` (a task capturing a value of 32 or more heap fields, core 5.1; decision 0294), `XO0703` (declared effect never performed), `XO0901` (`dbg` left in code), `XO0902` (`tls.Verify.None`, decision 0281), `XO0903` (an Fs, Net, or Proc error defaulted away by `.ok() ?? d` or `Err(_) => <empty>`; `// xo:allow XO0903 <reason>` silences one), `XO0904` (an embedded file git ignores or does not track; decision 0304), `XO1103` (use of Go packages per module), `XO0535` (`${x.debug()}` written as `${x:?}`, with the fix; decision 0296), `XO0536` (a list element copied out, changed, and stored back; decision 0294), `XO0906` (a four line `match` that `x ?? return v` writes shorter; decision 0321) |
 | `xo def`, `xo refs`, `xo type`, `xo doc NAME`, `xo symbols` | Agents' lookups on `xo lsp`'s engine (decision 0261): `def NAME`, `refs NAME`, `type FILE:LINE:COL`, `doc NAME` (a name, or a module path and name: `std/tls.client`), `symbols [DIR] [--pub]` (the directory's own declarations, private ones too); a name in any form `xo query def` takes, std and runtime modules included (decision 0289); `--dir` (a workspace root checks the modules under it); text at a terminal, `--json` or `--text` to choose; exit 0 with an answer, 1 for no match, 2 for usage |
 | `xo query <kind> ...` | Semantic queries (10.3): `type`, `def`, `callers`, `effects`, `holes`, `api`, `imports`, `deps` |
 | `xo edit <op> ...` | Semantic edits (10.4) |
@@ -2799,6 +2810,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0901` | warning | vet | `dbg(...)` left in code (core 11.4) |
 | `XO0902` | warning | vet | `tls.Verify.None`: a TLS client that checks no certificate (std.md 27, decision 0281) |
 | `XO0903` | warning | vet | the error of a filesystem, network, or process call turned into a default (`.ok() ?? d`, or `Err(_) => <empty>` with no NotFound arm), so a transient error gives a smaller answer instead of an error; `// xo:allow XO0903 <reason>` on the line or above it allows one |
+| `XO0906` | note | vet | a `match` that only unwraps an Option or leaves, which `x ?? return v` writes in one line (core 2.5, decision 0321) |
 | `XO0904` | warning | vet | a file an embed constant embeds is ignored or untracked by git, so a build of a clean checkout embeds something else or fails (decision 0304) |
 | `XO1001` | error | reserved | `std/sys/<os>` used outside the matching target arm (core 12.2) |
 | `XO1101` | error | checker | Go package cannot be bound (not found, does not build, main package, or binding error) |
@@ -3198,7 +3210,8 @@ WhileStmt   = [ ident ":" ] "while" [ ( Expr | "let" Pattern "=" Expr ) [ "bound
 
 Expr        = IfExpr | MatchExpr | ScopeExpr | SelectExpr | Block | FnLit | Binary
             | "while" Block | "???" .      // infinite loop as an expression, type Never
-Binary      = Operand { BinOp Operand } .
+Binary      = Operand { BinOp Operand } [ "??" Exit ] .
+Exit        = "return" [ Expr ] | "break" [ ident ] | "continue" [ ident ] .   // type Never
 Operand     = Unary [ "is" Pattern ] .            // `is` binds like `==`
 FnLit       = "fn" "(" [ LParam { "," LParam } ] ")" [ "->" Type ] [ ErrSpec ]
               [ "uses" ( EffectList | "(" EffectList ")" ) ] Block .
