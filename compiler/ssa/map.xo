@@ -452,18 +452,24 @@ fn (var b: Builder) map_put(t: Int) -> Str {
   b.lists_put(t)
 }
 
-/// map_put of the lists' representation.
+/// map_put of the lists' representation. The hybrid's (decision 0291,
+/// maphyb.xo): when the values list is held once (every put writes it;
+/// a log value's and a new map's are the shared empty list), the lists'
+/// put alone; anything else in the cold xo.maph.putrest, which tells a
+/// log value's write, a shared value's copy on write (the second
+/// converts; the first is marked on the result), and the first put of a
+/// new map apart.
 fn (var b: Builder) lists_put(t: Int) -> Str {
-  let it = b.int_t()
-  let bt = b.bool_t()
   let kt = map_key(b.m, t)
   let vt = map_val(b.m, t)
   let _scan = b.map_scan(t)
   let _find = b.map_find(t)
   let rebuild = b.map_rebuild(t)
   let hash = b.hash_func(kt)
+  var rest = ""
   if b.m.map_log {
     b.maph_prep(t)
+    rest = b.maph_putrest(t, rebuild, hash)
   }
   let name = "xo.map.put[${b.m.types[t].name}]"
   let fi = b.thunk_func(name, [t, kt, vt], [t], [])
@@ -474,10 +480,45 @@ fn (var b: Builder) lists_put(t: Int) -> Str {
   let k = b.param(1)
   let v = b.param(2)
   let mp = b.param(0)
-  // the hybrid (decision 0291, maphyb.xo): a log value's write, or a
-  // shared one's copy on write (the second converts; the first is marked
-  // on the result, so the lists' code works on the parameter itself)
-  let sh = if b.m.map_log { b.maph_put_pro(t, mp, k, v) } else { -1 }
+  if rest.is_empty() {
+    b.put_body(t, mp, k, v, -1, rebuild, hash)
+  } else {
+    let (nf, jf) = b.if_then_begin(b.maph_sole(b.mfield(t, 1, mp)))
+    b.put_body(t, mp, k, v, -1, rebuild, hash)
+    b.if_then_end(nf, jf)
+    b.retv(b.call(rest, t, "", [mp, k, v]))
+  }
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// xo.maph.putrest[T](m, k, v) -> T (ssa.cold_fn): the hybrid's put when
+/// the values list is not held once (lists_put).
+fn (var b: Builder) maph_putrest(t: Int, rebuild: Str, hash: Str) -> Str {
+  let kt = map_key(b.m, t)
+  let vt = map_val(b.m, t)
+  let name = "xo.maph.putrest[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t, kt, vt], [t], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let mp = b.param(0)
+  let k = b.param(1)
+  let v = b.param(2)
+  let sh = b.maph_put_pro(t, mp, k, v)
+  b.put_body(t, mp, k, v, sh, rebuild, hash)
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// The lists' put of k and v into mp, its every path returning the new
+/// map (maph_marked with sh: -1 when not marked).
+fn (var b: Builder) put_body(t: Int, mp: Int, k: Int, v: Int, sh: Int, rebuild: Str, hash: Str) {
+  let it = b.int_t()
+  let bt = b.bool_t()
   let idx = b.lists_lookup(t, mp, k)
   let (no, join) = b.if_then_begin(b.add(Op.Ge, bt, Aux.None, [idx, b.cint(0)]))
   let vl = b.mfield(t, 1, mp)
@@ -522,9 +563,6 @@ fn (var b: Builder) lists_put(t: Int) -> Str {
   slots = b.insert_slot(slots, h, pos)
   let n1 = b.add(Op.Add, it, Aux.None, [n, b.cint(1)])
   b.retv(b.maph_marked(t, b.mstruct(t, [keys, vals, live, slots, n1], cur), sh))
-  b.finish_fn()
-  b.end(saved)
-  name
 }
 
 /// xo.map.remove[T](m, k) -> (T, V?) (mapRemove).
@@ -532,12 +570,10 @@ fn (var b: Builder) map_remove(t: Int, ot: Int) -> Str {
   b.lists_remove(t, ot)
 }
 
-/// map_remove of the lists' representation.
+/// map_remove of the lists' representation; the hybrid's split as
+/// lists_put's, on the live flags (every removal of a key writes them).
 fn (var b: Builder) lists_remove(t: Int, ot: Int) -> Str {
-  let it = b.int_t()
-  let bt = b.bool_t()
   let kt = map_key(b.m, t)
-  let vt = map_val(b.m, t)
   let _scan = b.map_scan(t)
   let _find = b.map_find(t)
   let rt = b.m.tuple([t, ot])
@@ -548,8 +584,10 @@ fn (var b: Builder) lists_remove(t: Int, ot: Int) -> Str {
     // removed value is a Bytes?: one function per result type
     name = name + "[${b.m.types[ot].name}]"
   }
+  var rest = ""
   if b.m.map_log {
     b.maph_prep_rem(t, ot)
+    rest = b.maph_remrest(t, ot)
   }
   let fi = b.thunk_func(name, [t, kt], [rt], [])
   if fi < 0 {
@@ -558,10 +596,52 @@ fn (var b: Builder) lists_remove(t: Int, ot: Int) -> Str {
   let saved = b.begin(fi, b.s.file)
   let k = b.param(1)
   let mp = b.param(0)
-  // the hybrid (decision 0291, maphyb.xo): a log value's removal, or a
-  // shared one's copy on write (put's)
-  let sh = if b.m.map_log { b.maph_rem_pro(t, ot, mp, k) } else { -1 }
   let _hf = b.hash_func(kt)
+  if rest.is_empty() {
+    b.remove_body(t, ot, mp, k, -1)
+  } else {
+    let (nf, jf) = b.if_then_begin(b.maph_sole(b.mfield(t, 2, mp)))
+    b.remove_body(t, ot, mp, k, -1)
+    b.if_then_end(nf, jf)
+    b.retv(b.call(rest, rt, "", [mp, k]))
+  }
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// xo.maph.remrest[T](m, k) -> (T, V?) (ssa.cold_fn): the hybrid's
+/// removal when the live flags are not held once (lists_remove).
+fn (var b: Builder) maph_remrest(t: Int, ot: Int) -> Str {
+  let kt = map_key(b.m, t)
+  let rt = b.m.tuple([t, ot])
+  var name = "xo.maph.remrest[${b.m.types[t].name}]"
+  let have = b.fidx(name)
+  if have >= 0 && b.m.types[b.m.funcs[have].results[0]].name != b.m.types[rt].name {
+    name = name + "[${b.m.types[ot].name}]"
+  }
+  let _hf = b.hash_func(kt)
+  let fi = b.thunk_func(name, [t, kt], [rt], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let mp = b.param(0)
+  let k = b.param(1)
+  let sh = b.maph_rem_pro(t, ot, mp, k)
+  b.remove_body(t, ot, mp, k, sh)
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// The lists' removal of k from mp, every path returning (the new map,
+/// the removed value) (maph_marked with sh: -1 when not marked).
+fn (var b: Builder) remove_body(t: Int, ot: Int, mp: Int, k: Int, sh: Int) {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let vt = map_val(b.m, t)
+  let rt = b.m.tuple([t, ot])
   let idx = b.lists_lookup(t, mp, k)
   let (no, join) = b.if_then_begin(b.add(Op.Lt, bt, Aux.None, [idx, b.cint(0)]))
   let none = b.add(Op.Variant, ot, Aux.I(n: b.m.variant_index(ot, "None")), [])
@@ -582,9 +662,6 @@ fn (var b: Builder) lists_remove(t: Int, ot: Int) -> Str {
   let nm = b.mstruct(t, [keys, vals, live, slots, n], mp)
   let some = b.add(Op.Variant, ot, Aux.I(n: b.m.variant_index(ot, "Some")), [old])
   b.retv(b.add(Op.Tuple, rt, Aux.None, [b.maph_marked(t, nm, sh), some]))
-  b.finish_fn()
-  b.end(saved)
-  name
 }
 
 /// The function that lists the live entries' keys (what 0), values (1),
