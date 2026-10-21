@@ -54,6 +54,10 @@ struct Held {
   fslot: Map[(Int, Int), (Int, Int)] = {}
   /// the value whose field the pending call writes, by (call, argument)
   fbase: Map[(Int, Int), HKey] = {}
+  /// field homes whose base value is stored into its frame home at the
+  /// call first (it was not held there: the first call of a loop), by
+  /// (call, argument)
+  fstore: Map[(Int, Int), Bool] = {}
   /// set fields the call before them already wrote in place
   set_done: Map[Int, Bool] = {}
   /// set fields of a field of a value held in a memory, stored there in

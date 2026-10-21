@@ -370,6 +370,60 @@ func TestLinuxEmit(t *testing.T) {
 // 0215; compiler/arm64 has its own Xo tests (TestSelfhostArm64 compares
 // its assembly with the recording).
 
+// TestByRefFieldHome: an inlined `var` helper's field argument (take's
+// c.s, golden byref_field_home) is passed at its address in the frame home
+// of the local it is a field of, not copied in and out of a home of the
+// field's own type at every call (compiler/arm64 byref.xo slot_mems,
+// 2026-10-21: frame homes are by type, and another call's field argument
+// made one for the field's type). Measured in main's loop (the region from
+// a label to the latest branch back to it): at most 16 of the 32 byte
+// block copies (`ldp q30, q31`; 24 before) and 225 loads and stores (234
+// before); the loop ran 36% faster (20M iterations, 0.48 s to 0.30 s).
+func TestByRefFieldHome(t *testing.T) {
+	const maxCopies, maxOps = 16, 225
+	got := ownFuncs(asm(t, filepath.Join("..", "llvm", "testdata", "golden", "byref_field_home"), "darwin"))
+	main := got
+	if i := strings.Index(got, "// func main"); i >= 0 {
+		main = got[i:]
+		if j := strings.Index(main[1:], "// func "); j >= 0 {
+			main = main[:j+1]
+		}
+	}
+	lines := strings.Split(main, "\n")
+	at := map[string]int{}
+	for k, l := range lines {
+		if strings.HasSuffix(l, ":") && !strings.HasPrefix(l, "\t") {
+			at[strings.TrimSuffix(l, ":")] = k
+		}
+	}
+	lo, hi := -1, -1
+	for k, l := range lines {
+		f := strings.Fields(l)
+		if len(f) < 2 || !(f[0] == "b" || strings.HasPrefix(f[0], "b.") || f[0] == "cbz" || f[0] == "cbnz" || f[0] == "tbz" || f[0] == "tbnz") {
+			continue
+		}
+		if p, ok := at[f[len(f)-1]]; ok && p < k && (lo < 0 || k-p > hi-lo) {
+			lo, hi = p, k
+		}
+	}
+	if lo < 0 {
+		t.Fatalf("no loop in main:\n%s", main)
+	}
+	copies, ops := 0, 0
+	for _, l := range lines[lo:hi] {
+		f := strings.Fields(l)
+		if strings.Contains(l, "q30, q31") {
+			copies++
+		}
+		if len(f) > 0 && (f[0] == "ldr" || f[0] == "str" || f[0] == "ldp" || f[0] == "stp") {
+			ops++
+		}
+	}
+	if copies > maxCopies || ops > maxOps {
+		t.Errorf("main's loop has %d block copies (want at most %d) and %d loads and stores (want at most %d)", copies, maxCopies, ops, maxOps)
+	}
+}
+
 // TestGoldenRunPoison runs goldens that keep values in frame slots,
 // frame homes, and memory areas, built with XO_POISON_FRAMES=1 (each
 // frame's words filled with 0xdeadbeefdeadbeef in the prologue): a correct
@@ -383,7 +437,7 @@ func TestGoldenRunPoison(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs programs")
 	}
-	names := []string{"byref_home_loop", "byref_held", "byref_struct", "byref_enum", "var_alias", "value_semantics", "structs", "closures", "maps", "conc_scopes", "fault_unwind", "json_text", "tls_nistec", "http_server", "arg_slots"}
+	names := []string{"byref_home_loop", "byref_field_home", "byref_held", "byref_struct", "byref_enum", "var_alias", "value_semantics", "structs", "closures", "maps", "conc_scopes", "fault_unwind", "json_text", "tls_nistec", "http_server", "arg_slots"}
 	for _, name := range names {
 		dir := filepath.Join("..", "llvm", "testdata", "golden", name)
 		if _, err := os.Stat(dir); err != nil {

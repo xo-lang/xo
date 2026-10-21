@@ -1,0 +1,119 @@
+// byref_field_home: a `var` helper passing a field of its `var`
+// parameter on (take's c.s to bump) is inlined where the value is a local
+// (run's c). The local's type takes the by-reference frame home, so the
+// field is passed at its address there, not copied in and out of an area
+// at every call (compiler/arm64 byref.xo frame_homes_of; tlssrv's take of
+// a tls13srv.Server, 2026-10-21). internal/arm64 TestByRefFieldHome
+// checks the assembly; TestGoldenRunPoison runs it with poisoned frames.
+
+struct Big {
+  f0: Int
+  f1: Int
+  f2: Int
+  f3: Int
+  f4: Int
+  f5: Int
+  f6: Int
+  f7: Int
+  f8: Int
+  f9: Int
+  f10: Int
+  f11: Int
+  f12: Int
+  f13: Int
+  f14: Int
+  f15: Int
+  f16: Int
+  f17: Int
+  f18: Int
+  f19: Int
+  f20: Int
+  f21: Int
+  f22: Int
+  f23: Int
+  f24: Int
+  f25: Int
+  f26: Int
+  f27: Int
+  f28: Int
+  f29: Int
+  f30: Int
+  f31: Int
+  f32: Int
+  f33: Int
+  f34: Int
+  f35: Int
+  f36: Int
+  f37: Int
+  f38: Int
+  f39: Int
+  n: Int
+}
+
+struct Conn {
+  s: Big
+  id: Int
+}
+
+fn bump(var b: Big) {
+  b.f0 = b.f0 * 3 + b.f1
+  b.f1 = b.f1 * 3 + b.f2
+  b.f2 = b.f2 * 3 + b.f3
+  b.f3 = b.f3 * 3 + b.f4
+  b.f4 = b.f4 * 3 + b.f5
+  b.f5 = b.f5 * 3 + b.f6
+  b.f6 = b.f6 * 3 + b.f7
+  b.f7 = b.f7 * 3 + b.f8
+  b.f8 = b.f8 * 3 + b.f9
+  b.f9 = b.f9 * 3 + b.f10
+  b.f10 = b.f10 * 3 + b.f11
+  b.f11 = b.f11 * 3 + b.f12
+  b.f12 = b.f12 * 3 + b.f13
+  b.f13 = b.f13 * 3 + b.f14
+  b.f14 = b.f14 * 3 + b.f15
+  b.f15 = b.f15 * 3 + b.f16
+  b.f16 = b.f16 * 3 + b.f17
+  b.f17 = b.f17 * 3 + b.f18
+  b.f18 = b.f18 * 3 + b.f19
+  b.f19 = b.f19 * 3 + b.f20
+  b.f20 = b.f20 * 3 + b.f21
+  b.f21 = b.f21 * 3 + b.f22
+  b.f22 = b.f22 * 3 + b.f23
+  b.f23 = b.f23 * 3 + b.f24
+  b.f24 = b.f24 * 3 + b.f25
+  b.f25 = b.f25 * 3 + b.f26
+  b.f26 = b.f26 * 3 + b.f27
+  b.f27 = b.f27 * 3 + b.f28
+  b.f28 = b.f28 * 3 + b.f29
+  b.f29 = b.f29 * 3 + b.f30
+  b.f30 = b.f30 * 3 + b.f31
+  b.f31 = b.f31 * 3 + b.f32
+  b.f32 = b.f32 * 3 + b.f33
+  b.f33 = b.f33 * 3 + b.f34
+  b.f34 = b.f34 * 3 + b.f35
+  b.f35 = b.f35 * 3 + b.f36
+  b.f36 = b.f36 * 3 + b.f37
+  b.f37 = b.f37 * 3 + b.f38
+  b.f38 = b.f38 * 3 + b.f39
+  b.f39 = b.f39 * 3 + b.f0
+  b.n += 1
+}
+
+fn take(var c: Conn) {
+  bump(c.s)
+}
+
+fn run(k: Int) -> Int {
+  var c = Conn{s: Big{f0: k + 0, f1: k + 1, f2: k + 2, f3: k + 3, f4: k + 4, f5: k + 5, f6: k + 6, f7: k + 7, f8: k + 8, f9: k + 9, f10: k + 10, f11: k + 11, f12: k + 12, f13: k + 13, f14: k + 14, f15: k + 15, f16: k + 16, f17: k + 17, f18: k + 18, f19: k + 19, f20: k + 20, f21: k + 21, f22: k + 22, f23: k + 23, f24: k + 24, f25: k + 25, f26: k + 26, f27: k + 27, f28: k + 28, f29: k + 29, f30: k + 30, f31: k + 31, f32: k + 32, f33: k + 33, f34: k + 34, f35: k + 35, f36: k + 36, f37: k + 37, f38: k + 38, f39: k + 39, n: k}, id: 1}
+  for _ in 0..k {
+    take(c)
+  }
+  var d = c.s
+  bump(d)
+  bump(d)
+  c.s.n + d.f3
+}
+
+fn main(os: Os) {
+  os.stdio.println("${run(os.env.args().len() + 4)}")
+}

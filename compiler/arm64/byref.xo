@@ -190,6 +190,13 @@ fn (var g: G) slot_mems(v: Int, ci: Int) -> List[Int] {
     if br.is_empty() || !br[i] || !g.is_var_param(ci, i) || used.contains(t) {
       continue
     }
+    if g.has_held && g.op(a) == ssa.Op.Field && g.held_mem_of(g.vty(g.f.values[a].args[0])) >= 0 {
+      // a field of a value with a home: passed at its address there
+      // (compute_held's field homes), not copied into a home of the
+      // field's own type, which another call's field argument (of a
+      // value with no home) made (frame homes are by type)
+      continue
+    }
     used[t] = true
     if g.has_held {
       out[i] = g.held_mem_of(t)
@@ -253,8 +260,21 @@ fn (var g: G) compute_held(mems: List[HMem]) {
                 }
                 let c = g.f.values[a].args[0]
                 let m = g.held_mem_of(g.vty(c))
-                if m < 0 || st[m] != g.key_of(c) || fs.contains(m) {
+                if m < 0 || fs.contains(m) {
                   continue
+                }
+                if st[m] != g.key_of(c) {
+                  // not held: a home in the frame takes the value first
+                  // (stored at the call), then holds it as a parameter's
+                  // home would, so a loop's next calls pass the field in
+                  // place (an inlined `var` helper's x.field where x is
+                  // a local, 2026-10-21)
+                  if g.held.mems[m].param >= 0 {
+                    continue
+                  }
+                  g.held.fstore[(v, i)] = true
+                } else if g.held.fstore.contains((v, i)) {
+                  g.held.fstore.remove((v, i))
                 }
                 let (off, _n) = g.field_words(g.vty(c), aux_int(g.f.values[a].aux))
                 g.held.fslot[(v, i)] = (m, off)
@@ -689,12 +709,23 @@ fn (var g: G) frame_homes_of(var mems: List[HMem], var seen: Map[Int, Bool]) {
         if i >= cb.len() || !cb[i] || !g.is_var_param(ci, i) {
           continue
         }
-        let t = g.vty(a)
+        var t = g.vty(a)
+        if g.op(a) == ssa.Op.Field {
+          let bt = g.vty(g.f.values[a].args[0])
+          if seen.contains(bt) {
+            continue // a field of a value with a home: passed at its address there
+          }
+          if g.big_by_ref(bt) {
+            // the value the field is of takes the home, so the field is
+            // passed at its address there: a `var` helper's `x.field`
+            // argument inlined where x is a local (tlssrv's take of
+            // c.s, a tls13srv.Server, was copied in and out at every
+            // call, about 250 instructions; as a parameter it is a home)
+            t = bt
+          }
+        }
         if seen.contains(t) {
           continue
-        }
-        if g.op(a) == ssa.Op.Field && seen.contains(g.vty(g.f.values[a].args[0])) {
-          continue // a field of a value with a home: passed at its address there
         }
         seen[t] = true
         let r = g.new_vreg(false)
@@ -878,6 +909,13 @@ fn (var g: G) by_ref_call(v: Int, ci: Int) {
   // read every operand before anything is stored
   var words: List[List[Int]] = []
   var has_words: List[Bool] = []
+  // the bases of field homes stored first (fstore)
+  var base_words: Map[Int, List[Int]] = {}
+  for (i, a) in args.indexed() {
+    if g.held.fstore.contains((v, i)) {
+      base_words[i] = g.words(g.f.values[a].args[0])
+    }
+  }
   for (i, a) in args.indexed() {
     if (br[i] && sm[i] >= 0 && g.held_at(v, a) == sm[i]) || in_place.contains(i) || g.held.fslot.contains((v, i)) {
       words.push([])
@@ -900,6 +938,9 @@ fn (var g: G) by_ref_call(v: Int, ci: Int) {
       continue
     }
     if let Some((fm, off)) = g.held.fslot.get((v, i)) {
+      if let Some(bw) = base_words.get(i) {
+        g.store_words_at(g.held.mems[fm].ptr, 0, bw)
+      }
       srcs.push(rsrc(g.addr_at(g.held.mems[fm].ptr, 8 * off)))
       continue
     }
