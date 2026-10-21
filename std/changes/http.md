@@ -3,7 +3,7 @@
 ## 2026-10-21: fix: a streamed body's read error sticks
 
 - Kind: fix
-- Commit: (filled in after the push)
+- Commit: b5d9c4c66
 - Found by: review after the websocket close fix (the same Mutex.with pattern)
 - Go reference: net/http body (a read error is returned again)
 - Test: internal/llvm/testdata/golden/http_stream_body (bad chunk), http_multipart_stream

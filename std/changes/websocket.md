@@ -3,7 +3,7 @@
 ## 2026-10-21: fix: a read after a close keeps the close error
 
 - Kind: fix
-- Commit: (filled in after the push)
+- Commit: b5d9c4c66
 - Found by: a flaky golden under load (TestGoldenRun/websocket, Xo lang 4's gate)
 - Go reference: github.com/gorilla/websocket Conn.NextReader (readErr sticks)
 - Test: internal/llvm/testdata/golden/websocket (bye_late: the close frame in a later segment than the message; failed 3 of 3 before, and 12 of 450 runs of the old golden under CPU load)
