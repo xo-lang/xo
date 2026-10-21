@@ -2070,7 +2070,13 @@ fn eval_args(argv: List[Val]) -> Str {
       _ => {}
     }
   }
-  sprint(argv)
+  // printableValue: a nil argument is the string "<no value>"
+  sprint(argv.map(fn(a) {
+    match unbox(a).v {
+      Invalid | NilIface => val(V.StrV(s: "<no value>"))
+      _ => a
+    }
+  }))
 }
 
 fn fn_len(x: Val) -> Val ! Str {
@@ -2184,10 +2190,26 @@ fn fn_slice(item0: Val, indexes: List[Val]) -> Val ! Str {
     return Err("invalid slice index: ${idx[1]} > ${idx[2]}")
   }
   match item.v {
-    StrV(str) => Ok(val(V.StrV(s: str.bytes()[idx[0]..idx[1]].to_str() ?? "")))
+    // a cut inside a rune: U+FFFD for each byte of it (decision 0259)
+    StrV(str) => Ok(val(V.StrV(s: lossy(str.bytes()[idx[0]..idx[1]]))))
     ListV(items) => Ok(val(V.ListV(items: items[idx[0]..idx[1]])))
     _ => Ok(item)
   }
+}
+
+/// Bytes as Str, U+FFFD for each byte of an invalid sequence.
+fn lossy(b: Bytes) -> Str {
+  if let Some(s) = b.to_str() {
+    return s
+  }
+  var out = StrBuilder.new()
+  var i = 0
+  while i < b.len() {
+    let (r, n) = b.decode_rune(i)
+    out.write("${r}")
+    i += n
+  }
+  out.freeze()
 }
 
 // basicKind: 0 invalid, 1 bool, 3 int, 4 float, 5 string, 6 uint
@@ -2237,6 +2259,10 @@ fn fn_eq(a0: Val, rest: List[Val]) -> Bool ! Str {
         _ => {
           let n1 = !valid(a)
           let n2 = !valid(b)
+          // canCompare: a list and a map are different kinds
+          if !n1 && !n2 && ((a.v is ListV(..)) != (b.v is ListV(..))) {
+            return Err("non-comparable types ${fmt_arg(a, 's', Spec{})}: ${type_name(a)}, ${type_name(b)}: ${fmt_arg(b, 'v', Spec{})}")
+          }
           if n1 || n2 {
             t = n1 == n2
           } else {
@@ -2375,13 +2401,19 @@ fn pad(s: Str, sp: Spec, numeric: Bool) -> Str {
     }
     return "0".repeat(fill) + s
   }
+  if sp.zero {
+    // Go's writePadding pads strings and bools with zeros too
+    return "0".repeat(fill) + s
+  }
   " ".repeat(fill) + s
 }
 
-fn bad_verb(verb: Rune, x: Val) -> Str {
+/// fmt's badVerb: the value printed with %v and the verb's flags, width,
+/// and precision.
+fn bad_verb(verb: Rune, x: Val, sp: Spec) -> Str {
   match unbox(x).v {
     Invalid => "%!${verb}(<nil>)"
-    _ => "%!${verb}(${type_name(unbox(x))}=${fmt_v(unbox(x).v, false)})"
+    _ => "%!${verb}(${type_name(unbox(x))}=${fmt_arg(x, 'v', sp)})"
   }
 }
 
@@ -2433,10 +2465,12 @@ fn fmt_int(n: Int, verb: Rune, sp: Spec, ty: Str) -> Str? {
         prefix = "0X"
       }
     }
-    'c' => return Some(pad("${Rune(n)}", sp, false))
-    'q' => return Some(pad(Rune(n).quote(), sp, false))
+    // Go's fmtC and fmtQc: an invalid code point is U+FFFD
+    'c' => return Some(pad("${Rune.try(n) ?? '\u{FFFD}'}", sp, false))
+    'q' => return Some(pad((Rune.try(n) ?? '\u{FFFD}').quote(), sp, false))
     'U' => {
-      var h = n.to_str_base(16).to_upper()
+      // the value as an unsigned 64 bit word, as Go's fmtUnicode
+      var h = (if n < 0 { n.shr_logical(4).to_str_base(16) + (n & 15).to_str_base(16) } else { n.to_str_base(16) }).to_upper()
       while h.len() < 4 {
         h = "0" + h
       }
@@ -2607,7 +2641,109 @@ fn fmt_e_digits(d: Str, dp: Int, prec: Int, upper: Bool) -> Str {
   s + (if upper { "E" } else { "e" }) + sign + es
 }
 
+/// strconv's %x of |f| (fmtX): 0x1.yyyyp+dd, the fraction rounded to prec
+/// hex digits (prec < 0: as few as exact).
+fn hex_float(f: Float, prec: Int, upper: Bool) -> Str {
+  let bits = f.to_bits() & 9223372036854775807
+  var exp = bits.shr_logical(52) & 2047
+  var mant = bits & 4503599627370495
+  if exp == 0 {
+    exp += 1
+  } else {
+    mant = mant | 4503599627370496
+  }
+  exp -= 1023
+  if mant == 0 {
+    exp = 0
+  }
+  // the leading 1 (if any) at bit 60
+  let b60 = 1152921504606846976
+  mant = mant.wrapping_shl(8)
+  while mant != 0 && (mant & b60) == 0 {
+    mant = mant.wrapping_shl(1)
+    exp -= 1
+  }
+  if prec >= 0 && prec < 15 {
+    let shift = prec * 4
+    let extra = mant.wrapping_shl(shift) & (b60 - 1)
+    mant = mant.shr_logical(60 - shift)
+    if (extra | (mant & 1)) > 576460752303423488 {
+      mant += 1
+    }
+    mant = mant.wrapping_shl(60 - shift)
+    if (mant & 2305843009213693952) != 0 {
+      mant = mant.shr_logical(1)
+      exp += 1
+    }
+  }
+  let hex = if upper { "0123456789ABCDEF" } else { "0123456789abcdef" }
+  var out = StrBuilder.new()
+  out.write(if upper { "0X" } else { "0x" })
+  out.write(if (mant.shr_logical(60) & 1) == 1 { "1" } else { "0" })
+  mant = mant.wrapping_shl(4)
+  if prec < 0 && mant != 0 {
+    out.write(".")
+    while mant != 0 {
+      let d = mant.shr_logical(60) & 15
+      out.write(hex[d..d + 1])
+      mant = mant.wrapping_shl(4)
+    }
+  } else if prec > 0 {
+    out.write(".")
+    for _i in 0..prec {
+      let d = mant.shr_logical(60) & 15
+      out.write(hex[d..d + 1])
+      mant = mant.wrapping_shl(4)
+    }
+  }
+  out.write(if upper { "P" } else { "p" })
+  out.write(if exp < 0 { "-" } else { "+" })
+  let e = if exp < 0 { -exp } else { exp }
+  out.write(if e < 10 { "0${e}" } else { "${e}" })
+  out.freeze()
+}
+
+/// fmtFloat's # for %x: a point, and zeros to 6 (or the precision)
+/// significant digits.
+fn sharp_hex(body: Str, prec: Int) -> Str {
+  let p = body.find("p") ?? (body.find("P") ?? body.len())
+  var num = body[0..p]
+  let tail = body[p..]
+  var digits = if prec < 0 { 6 } else { prec }
+  var seen = false
+  for c in num.bytes() {
+    if c == 46 {
+      continue
+    }
+    if c != 48 {
+      seen = true
+    }
+    if seen {
+      digits -= 1
+    }
+  }
+  if !num.contains(".") {
+    num = num + "."
+  }
+  while digits > 0 {
+    num = num + "0"
+    digits -= 1
+  }
+  num + tail
+}
+
 fn fmt_float(f: Float, verb: Rune, sp: Spec) -> Str? {
+  if verb == 'x' || verb == 'X' {
+    if f.is_nan() || f.is_inf() {
+      return fmt_float(f, 'g', sp)
+    }
+    let neg = f < 0.0 || (f == 0.0 && 1.0 / f < 0.0)
+    var body = hex_float(f, sp.prec, verb == 'X')
+    if sp.sharp {
+      body = sharp_hex(body, sp.prec)
+    }
+    return Some(pad(sign_prefix(neg, sp) + body, sp, true))
+  }
   if !(verb is 'v' | 'g' | 'G' | 'e' | 'E' | 'f' | 'F') {
     return None
   }
@@ -2686,21 +2822,30 @@ fn fmt_arg(x: Val, verb: Rune, sp: Spec) -> Str {
     }, sp, false)
   }
   match u.v {
-    Invalid => if verb == 'v' { pad("<nil>", sp, false) } else { bad_verb(verb, x) }
-    NilIface => if verb == 'v' { pad("<nil>", sp, false) } else { bad_verb(verb, x) }
-    Bool(b) => if verb == 't' || verb == 'v' { pad(if b { "true" } else { "false" }, sp, false) } else { bad_verb(verb, x) }
-    IntV(n, ty) => fmt_int(n, verb, sp, ty) ?? bad_verb(verb, x)
-    FloatV(f) => fmt_float(f, verb, sp) ?? bad_verb(verb, x)
+    Invalid => if verb == 'v' { pad("<nil>", sp, false) } else { bad_verb(verb, x, sp) }
+    NilIface => if verb == 'v' { pad("<nil>", sp, false) } else { bad_verb(verb, x, sp) }
+    Bool(b) => if verb == 't' || verb == 'v' { pad(if b { "true" } else { "false" }, sp, false) } else { bad_verb(verb, x, sp) }
+    IntV(n, ty) => fmt_int(n, verb, sp, ty) ?? bad_verb(verb, x, sp)
+    FloatV(f) => fmt_float(f, verb, sp) ?? bad_verb(verb, x, sp)
     ComplexV(re, im) => {
       match (fmt_float(re, verb, Spec{prec: sp.prec}), fmt_float(im, verb, Spec{prec: sp.prec, plus: true})) {
         (Some(a), Some(b)) => pad("(" + a + b + "i)", Spec{minus: sp.minus, width: sp.width}, false)
-        _ => bad_verb(verb, x)
+        _ => bad_verb(verb, x, sp)
       }
     }
-    StrV(s) => fmt_str(s, verb, sp) ?? bad_verb(verb, x)
-    ListV(items) => "[" + items.map(fn(e) { fmt_arg(Val{v: e, boxed: true}, verb, sp) }).join(" ") + "]"
-    MapV(fields) => "map[" + fields.map(fn(f) { fmt_arg(val(V.StrV(s: f.0)), verb, sp) + ":" + fmt_arg(Val{v: f.1, boxed: true}, verb, sp) }).join(" ") + "]"
+    StrV(s) => fmt_str(s, verb, sp) ?? bad_verb(verb, x, sp)
+    ListV(items) => "[" + items.map(fn(e) { fmt_elem(e, verb, sp) }).join(" ") + "]"
+    MapV(fields) => "map[" + fields.map(fn(f) { fmt_arg(val(V.StrV(s: f.0)), verb, sp) + ":" + fmt_elem(f.1, verb, sp) }).join(" ") + "]"
     Missing => "{}"
+  }
+}
+
+/// An element of a list or map: printValue prints a nil interface as
+/// <nil> whatever the verb.
+fn fmt_elem(e: V, verb: Rune, sp: Spec) -> Str {
+  match e {
+    NilIface => pad("<nil>", sp, false)
+    _ => fmt_arg(Val{v: e, boxed: true}, verb, sp)
   }
 }
 

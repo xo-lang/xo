@@ -99,5 +99,6 @@ func (t Template_Template) M_render_named(_ *Task, name string, data Json_Value)
 	if err := set.ExecuteTemplate(&b, name, jsonValueAny(data)); err != nil {
 		return templateErr[string](err)
 	}
-	return Ok[string, Template_TemplateErr](b.String())
+	// outside bytes as Str (decision 0259): a string sliced inside a rune
+	return Ok[string, Template_TemplateErr](textOf(b.String()))
 }
