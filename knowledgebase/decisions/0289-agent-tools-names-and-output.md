@@ -145,6 +145,20 @@ Item 7's rest, built as the design note above planned (landed in 643adbd9):
   clean before and after, so a missed or colliding name rejects the edit.
   cmd/xo TestEditRenameType renames a struct and an enum written in all
   of those places across two files.
+- Members (2026-10-21, Xo Publish, from the agent poll's round 2):
+  `xo edit rename Type.field NEW` and `Enum.Variant NEW` rewrite every
+  identifier the same resolution resolves to the member (declaration,
+  selectors, struct literal keys, constructor arguments, patterns); a
+  struct literal's key resolves by the literal's own type name, so a
+  literal converted to an interface (`[Rect{w: 2}]` as `List[Area]`)
+  counts. A field of a struct that derives Json or SqlRow keeps its name
+  on the wire (decision 0277): its declaration becomes `new as "old"`, or,
+  with a `case:` rule, the edit asks for an explicit key first. A variant
+  of an enum that derives Json is not renamed (its encoding would change).
+  `xo edit rename Iface.m NEW` renames the interface method, the method of
+  that name of every user type that has all of the interface's methods,
+  and every call of them. cmd/xo TestEditRenameMembers: the program checks,
+  prints the same, and keeps its test passing after each rename.
 - Rename speed: the edit's second check (of the edited program) reuses
   the first check's std parses (`Checker.parse_cache`,
   `semantic.load_session_pc`). The poll's 3 to 13 s were mostly the load

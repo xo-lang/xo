@@ -22,8 +22,10 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   `--dir` may be a workspace or repository root. Last verified:
   2026-10-20.
 - `xo edit [--dry-run] rename OLD NEW` renames functions, methods,
-  constants, and types (a type through the editor's identifier
-  resolution, every place it is written); `--dry-run` prints a diff.
+  constants, types, fields and enum variants (`Type.member`), and
+  interface methods (`Iface.m`, with every implementing type's method),
+  every place they are written; a Json or SqlRow field keeps its wire key
+  (`new as "old"`); `--dry-run` prints a diff. Last verified: 2026-10-21.
   The edit's second check reuses the first's std parses.
 - `xo check --wip DIR` while an edit is half done: unused bindings and
   imports (XO0110) and unused computed values (XO0209) are warnings, so

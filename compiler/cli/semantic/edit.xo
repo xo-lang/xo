@@ -437,7 +437,24 @@ fn edit_rename(os: Os, dirs: List[Str], dry: Bool, target: Str, new_name0: Str) 
   if !is_ident(new_name) {
     return Err("${new_name.quote()} is not an identifier")
   }
-  let obj = s.object(target)?
+  let obj = match s.object(target) {
+    Ok(x) => x
+    Err(e) => {
+      // `Type.field` or `Enum.Variant`: a member of a type
+      let j = last_index_of(target, ".")
+      if j > 0 {
+        if let Ok(t) = s.object(target[0..j]) {
+          if s.q.c.objs[t].kind == check.ObjKind.Type {
+            if let Some(r) = s.precheck() {
+              return Ok(r)
+            }
+            return s.rename_member(os, t, target[j + 1..], new_name)
+          }
+        }
+      }
+      return Err(e)
+    }
+  }
   if let Some(r) = s.precheck() {
     return Ok(r)
   }
@@ -445,12 +462,12 @@ fn edit_rename(os: Os, dirs: List[Str], dry: Bool, target: Str, new_name0: Str) 
   var decl_name: parser.Ident? = None
   match o.kind {
     Func => {
+      if o.iface {
+        return s.rename_iface_method(os, obj, new_name)
+      }
       let fd = match o.fn_decl.first() {
         Some(x) => x
-        None => return Err("${target.quote()}: renaming interface methods is not supported yet")
-      }
-      if o.iface {
-        return Err("${target.quote()}: renaming interface methods is not supported yet")
+        None => return Err("${target.quote()} has no declaration to rename")
       }
       decl_name = Some(fd.name)
     }
@@ -535,6 +552,168 @@ fn (var s: EditSession) rename_type(os: Os, obj: Int, new_name: Str) -> EditResu
   }
   if edits.is_empty() {
     return Err("no declaration or use of the type found")
+  }
+  s.apply(os, edits)
+}
+
+/// The rename of the field or variant member of type t: every
+/// identifier the editor's resolution (ident.xo) resolves to it, its
+/// declaration, selectors, struct literal keys, constructor arguments,
+/// and patterns alike; the edit's check before and after rejects a rename
+/// that misses one or collides. A field of a struct that derives Json or
+/// SqlRow keeps its name on the wire (decision 0277): the declaration
+/// becomes `new as "old"`. A variant of an enum that derives Json is not
+/// renamed, since its encoding would change.
+fn (var s: EditSession) rename_member(os: Os, t: Int, member: Str, new_name: Str) -> EditResult ! Str uses env, fs, proc {
+  let o = s.q.c.objs[t]
+  let tname = txt(o.name)
+  var kind = ""
+  var idx = -1
+  for (i, f) in o.fields.indexed() {
+    if txt(f.name) == member {
+      kind = "field"
+      idx = i
+    }
+  }
+  if idx < 0 {
+    for (i, v) in o.variants.indexed() {
+      if txt(v.name) == member {
+        kind = "variant"
+        idx = i
+      }
+    }
+  }
+  if idx < 0 {
+    return Err("${tname} has no field or variant ${member.quote()}")
+  }
+  if member == new_name {
+    s.res.ok = true
+    return Ok(s.res)
+  }
+  for f in o.fields {
+    if txt(f.name) == new_name {
+      return Err("${tname} already has a field ${new_name}")
+    }
+  }
+  for v in o.variants {
+    if txt(v.name) == new_name {
+      return Err("${tname} already has a variant ${new_name}")
+    }
+  }
+  let wire_derive = o.derives.contains("Json") || o.derives.contains("SqlRow")
+  var decl_text = new_name
+  if kind == "variant" && o.derives.contains("Json") {
+    return Err("${tname}.${member}: ${tname} derives Json, which encodes the variant by its name, so renaming it changes the encoding")
+  }
+  if kind == "field" && wire_derive && o.fields[idx].wire.is_empty() {
+    // keep the key on the wire: `new as "old"`, unless a case rule turns
+    // the old name into another key
+    if let Some((_, StructDecl(sd))) = s.q.decl_of(t) {
+      if !sd.derive_args.is_empty() {
+        return Err("${tname}.${member}: ${tname}'s derive has a `case:` rule, so the field's key on the wire is not its name; write its key with `${member} as \"key\"` first (decision 0277), then rename")
+      }
+    }
+    decl_text = "${new_name} as ${member.quote()}"
+  }
+  var r = new_res(s.q.c)
+  var seen: Set[Str] = #{}
+  var edits: List[TextEdit] = []
+  for f in s.user_files() {
+    let path = s.q.c.files[f].path
+    for site in idents_of(s.q.c, f) {
+      if site.id.name.is_empty() {
+        continue
+      }
+      let tg = r.resolve(f, site)
+      if tg.what == kind && tg.oi == t && tg.sub == idx {
+        let decl = (tg.mods & MOD_DECLARATION) != 0
+        add_ident(edits, seen, path, Some(site.id), if decl { decl_text } else { new_name })
+      }
+    }
+  }
+  if edits.is_empty() {
+    return Err("no declaration or use of ${tname}.${member} found")
+  }
+  s.apply(os, edits)
+}
+
+/// The rename of the interface method m: the interface's method, the
+/// method of that name of every user type that has all of the
+/// interface's methods (its implementations), and every call of any of
+/// them. A type that implements the interface only by an equal name of
+/// another interface keeps compiling only if that one is renamed too; the
+/// check after the edit rejects the rename then.
+fn (var s: EditSession) rename_iface_method(os: Os, m: Int, new_name: Str) -> EditResult ! Str uses env, fs, proc {
+  let c = s.q.c
+  let iface = c.objs[m].recv
+  if iface < 0 {
+    return Err("the interface of ${txt(c.objs[m].name)} is unknown")
+  }
+  let mname = c.objs[m].name
+  if txt(mname) == new_name {
+    s.res.ok = true
+    return Ok(s.res)
+  }
+  var need: List[Bytes] = []
+  for im in c.objs[iface].iface_meths {
+    if c.objs[im].name == new_name.bytes() {
+      return Err("${txt(c.objs[iface].name)} already has a method ${new_name}")
+    }
+    need.push(c.objs[im].name)
+  }
+  // the methods of each user type, by receiver
+  var by_recv: Map[Int, List[Int]] = {}
+  for (o, ob) in c.objs.indexed() {
+    if ob.kind != check.ObjKind.Func || ob.recv < 0 || ob.iface || ob.module < 0 || c.mods[ob.module].is_std {
+      continue
+    }
+    var l = by_recv.get(ob.recv) ?? []
+    l.push(o)
+    by_recv[ob.recv] = l
+  }
+  var targets: Set[Int] = #{m}
+  for (r, ms) in by_recv.entries() {
+    var names: Set[Bytes] = #{}
+    var hit = -1
+    for o in ms {
+      names.add(c.objs[o].name)
+      if c.objs[o].name == mname {
+        hit = o
+      }
+    }
+    if hit < 0 {
+      continue
+    }
+    var all = true
+    for n in need {
+      all = all && names.contains(n)
+    }
+    if all {
+      for o in ms {
+        if c.objs[o].name == new_name.bytes() {
+          return Err("${txt(c.objs[r].name)} already has a method ${new_name}")
+        }
+      }
+      targets.add(hit)
+    }
+  }
+  var r = new_res(s.q.c)
+  var seen: Set[Str] = #{}
+  var edits: List[TextEdit] = []
+  for f in s.user_files() {
+    let path = s.q.c.files[f].path
+    for site in idents_of(s.q.c, f) {
+      if site.id.name != mname {
+        continue
+      }
+      let tg = r.resolve(f, site)
+      if tg.what == "func" && targets.contains(tg.oi) {
+        add_ident(edits, seen, path, Some(site.id), new_name)
+      }
+    }
+  }
+  if edits.is_empty() {
+    return Err("no declaration or use of the method found")
   }
   s.apply(os, edits)
 }

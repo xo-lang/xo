@@ -126,3 +126,128 @@ func TestEditRenameType(t *testing.T) {
 		t.Errorf("check after the renames: exit %d: %s%s", code, out.String(), errOut.String())
 	}
 }
+
+// renameMembersProg exercises field, variant, and interface method
+// renames: struct literal keys (one converted to an interface in a list),
+// selectors, constructor arguments, patterns, a Json field that keeps
+// its key, and a type with a same-named method that is not an
+// implementation.
+const renameMembersProg = `use std/json
+
+struct Point {
+  x: Int
+  y: Int
+}
+
+enum Shape {
+  Dot(at: Point)
+  Line(a: Point, b: Point)
+}
+
+interface Area {
+  fn area(self) -> Int
+  fn label(self) -> Str
+}
+
+struct Rect {
+  w: Int
+  h: Int
+}
+
+fn (r: Rect) area() -> Int { r.w * r.h }
+fn (r: Rect) label() -> Str { "rect" }
+
+// area() without label(): not an Area, keeps its name
+struct Wire {
+  n: Int
+}
+
+fn (w: Wire) area() -> Int { w.n }
+
+struct Rec {
+  id: Int
+  full_name: Str
+} derive Json
+
+enum Kind {
+  Small
+  Big
+} derive Json
+
+fn sum(xs: List[Area]) -> Int {
+  var t = 0
+  for x in xs {
+    t += x.area()
+  }
+  t
+}
+
+fn report() -> Str {
+  let p = Point{x: 1, y: 2}
+  let s = Shape.Line(a: p, b: Point{x: 3, y: 4})
+  let q = match s {
+    Shape.Line(a, b) => a.x + b.y
+    Shape.Dot(at: d) => d.x
+  }
+  let rs: List[Area] = [Rect{w: 2, h: 3}]
+  "${sum(rs)} ${Wire{n: 4}.area()} ${json.encode_str(Rec{id: 1, full_name: "ada"})} ${p.x} ${q}"
+}
+
+fn main(os: Os) {
+  os.stdio.println(report())
+}
+`
+
+// TestEditRenameMembers renames fields, an enum variant, and an interface
+// method with its implementations; the program then checks, prints the
+// same, and keeps its test passing. A Json field keeps its key; a Json
+// enum's variant is not renamed.
+func TestEditRenameMembers(t *testing.T) {
+	t.Parallel()
+	dir := writeFiles(t, map[string]string{
+		"xo.mod":       "module example.com/m\n",
+		"main.xo":      renameMembersProg,
+		"main_test.xo": "test \"report\" {\n  expect(report()) == \"6 4 {\\\"id\\\":1,\\\"full_name\\\":\\\"ada\\\"} 1 5\"\n}\n",
+	})
+	runOut := func() string {
+		t.Helper()
+		var out, errOut bytes.Buffer
+		if code := run(t, []string{"run", dir}, &out, &errOut); code != 0 {
+			t.Fatalf("run: exit %d: %s", code, errOut.String())
+		}
+		return out.String()
+	}
+	before := runOut()
+	for _, c := range []struct{ old, new, gone, has string }{
+		{"Point.x", "horiz", "p.x", "a.horiz + b.y"},
+		{"Rect.w", "width", "Rect{w:", "Rect{width: 2"},
+		{"Shape.Line", "Segment", "Shape.Line", "Shape.Segment(a: p"},
+		{"Rec.full_name", "name", "full_name: Str", `name as "full_name": Str`},
+		{"Area.area", "size", "x.area()", "fn (r: Rect) size()"},
+	} {
+		var out, errOut bytes.Buffer
+		if code := run(t, []string{"edit", "--dir=" + dir, "rename", c.old, c.new}, &out, &errOut); code != 0 {
+			t.Fatalf("rename %s %s: exit %d: %s%s", c.old, c.new, code, out.String(), errOut.String())
+		}
+		b, _ := os.ReadFile(filepath.Join(dir, "main.xo"))
+		if strings.Contains(string(b), c.gone) || !strings.Contains(string(b), c.has) {
+			t.Errorf("after rename %s %s (want no %q, a %q):\n%s", c.old, c.new, c.gone, c.has, b)
+		}
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "main.xo"))
+	if !strings.Contains(string(b), "fn (w: Wire) area()") {
+		t.Errorf("Wire.area, not an Area implementation, was renamed:\n%s", b)
+	}
+	if after := runOut(); after != before {
+		t.Errorf("output changed: %q, was %q", after, before)
+	}
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"test", dir}, &out, &errOut); code != 0 {
+		t.Errorf("test after the renames: exit %d: %s%s", code, out.String(), errOut.String())
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := run(t, []string{"edit", "--dir=" + dir, "rename", "Kind.Small", "Tiny"}, &out, &errOut); code == 0 || !strings.Contains(out.String()+errOut.String(), "derives Json") {
+		t.Errorf("renaming a Json enum's variant: exit %d: %s%s", code, out.String(), errOut.String())
+	}
+}

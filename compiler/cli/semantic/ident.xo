@@ -842,6 +842,23 @@ pub fn (var r: Res) field_target(to: Int, name: Bytes, mods: Int) -> LspTarget? 
 }
 
 /// namedObj: the Type object of a named type, or -1.
+/// The type object a struct literal's type expression names (`T`,
+/// `m.T`, either with type arguments), or -1: as type_name resolves it.
+fn (r: Res) lit_type_obj(f: Int, te: Expr) -> Int {
+  var o = -1
+  match te {
+    Ident(x) => o = r.scope_get(r.c.files[f].module, x.name)
+    SelectorExpr(_, Ident(m), sel) => {
+      if let Some(im) = r.c.files[f].imports.get(m.name) {
+        o = r.scope_get(im.module, sel.name)
+      }
+    }
+    TypeArgsExpr(_, x, _) => return r.lit_type_obj(f, x)
+    _ => {}
+  }
+  if o >= 0 && r.c.objs[o].kind == check.ObjKind.Type { o } else { -1 }
+}
+
 pub fn (r: Res) named_obj(t: Int) -> Int {
   if t < 0 {
     return -1
@@ -1019,7 +1036,16 @@ pub fn (var r: Res) resolve(f: Int, site: IdentSite) -> LspTarget {
     FieldInit(g) => {
       if site.field == "Name" {
         for e in g {
-          let to = r.named_obj(r.c.type_in(f, e))
+          // a struct literal's own type name first: the literal's type
+          // can be an interface it is converted to (`List[Area]`'s
+          // `Rect{w: 2}`)
+          var to = -1
+          if let StructLit(typ: te, ..) = e {
+            to = r.lit_type_obj(f, te)
+          }
+          if to < 0 {
+            to = r.named_obj(r.c.type_in(f, e))
+          }
           if to >= 0 {
             if let Some(t) = r.field_target(to, id.name, 0) {
               return t
