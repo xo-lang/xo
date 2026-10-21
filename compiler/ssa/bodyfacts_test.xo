@@ -57,3 +57,15 @@ test "the facts round trip through their encoding" {
   // another version, or cut short: none
   expect(decode_facts(m, d[0..d.len() - 1]) is None) == true
 }
+
+test "block_names and taken_names: the same from facts as from the body" {
+  let (m0, fi) = facts_module()
+  let body_names = m0.block_names(fi)
+  let body_taken = m0.taken_names(fi)
+  expect(body_taken) == ["h"]
+  var m = m0
+  m.facts[fi] = body_facts(m.funcs[fi])
+  m.funcs[fi] = Func{name: "f"}
+  expect(m.block_names(fi).sort()) == body_names.sort()
+  expect(m.taken_names(fi)) == body_taken
+}

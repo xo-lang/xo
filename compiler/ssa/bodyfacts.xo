@@ -165,3 +165,30 @@ pub fn (var m: Module) renumber_shells(keep: List[Int]) {
   }
   m.lazy = lazy
 }
+
+/// The names function fi's block instructions take the address of (a
+/// Closure, FuncAddr or Rebind), from its facts or its body (arm64
+/// find_addr_taken).
+pub fn (m: Module) taken_names(fi: Int) -> List[Str] {
+  var out: List[Str] = []
+  if let Some(x) = m.facts.get(fi) {
+    for (s, op, inb) in x.names {
+      if inb && op is Op.Closure | Op.FuncAddr | Op.Rebind {
+        out.push(s)
+      }
+    }
+    return out
+  }
+  let f = m.funcs[fi]
+  for bl in f.blocks {
+    for v in bl.instrs {
+      let x = f.values[v]
+      if x.op is Op.Closure | Op.FuncAddr | Op.Rebind {
+        if let S(n) = x.aux {
+          out.push(n)
+        }
+      }
+    }
+  }
+  out
+}

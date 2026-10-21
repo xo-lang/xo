@@ -118,16 +118,10 @@ fn (var g: G) kept_results(fi: Int) -> List[Int] {
 fn (var g: G) find_addr_taken() {
   g.addr_taken = {}
   g.by_ref = {}
-  for f in g.m.funcs {
-    for bl in f.blocks {
-      for v in bl.instrs {
-        let x = f.values[v]
-        if x.op is ssa.Op.Closure | ssa.Op.FuncAddr | ssa.Op.Rebind {
-          if let S(n) = x.aux {
-            g.addr_taken[n] = true
-          }
-        }
-      }
+  // a function not decoded by its body facts (decision 0283 stage B)
+  for fi in 0..g.m.funcs.len() {
+    for n in g.m.taken_names(fi) {
+      g.addr_taken[n] = true
     }
   }
 }
