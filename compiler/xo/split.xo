@@ -40,20 +40,33 @@ struct SplitConfig {
 fn split_config(os: Os) -> SplitConfig {
   // a clang of a 90 MB module takes about 3.5 GB (bench/results/fast-builds-2026-10-13.md)
   var c = SplitConfig{jobs: ncores(os).min(mem_gb(os) / 4).max(1)}
-  let n = Int.parse(os.env.get("XO_LLVM_SPLIT") ?? "") ?? 0
+  // a value none of these accepts is an error, not the default (an
+  // XO_LLVM_LTO=off build linked with thin LTO for 90 minutes,
+  // 2026-10-21)
+  let ns = os.env.get("XO_LLVM_SPLIT") ?? ""
+  let n = Int.parse(ns) ?? 0
   if n > 1 {
     c.modules = n
+  } else if !ns.is_empty() && Int.parse(ns).is_none() {
+    c.err = "XO_LLVM_SPLIT=${ns}: the number of modules is a whole number"
   }
-  let j = Int.parse(os.env.get("XO_LLVM_JOBS") ?? "") ?? 0
+  let js = os.env.get("XO_LLVM_JOBS") ?? ""
+  let j = Int.parse(js) ?? 0
   if j > 0 {
     c.jobs = j
+  } else if !js.is_empty() && Int.parse(js).is_none() {
+    c.err = "XO_LLVM_JOBS=${js}: the number of clang jobs is a whole number"
   }
-  let l = os.env.get("XO_LLVM_LTO") ?? ""
+  let l0 = os.env.get("XO_LLVM_LTO") ?? ""
+  // off is none's other name
+  let l = if l0 == "off" { "none" } else { l0 }
   if l == "none" || l == "thin" {
     c.lto = l
   }
   if l is "none" | "thin" | "full" {
     c.single = l
+  } else if !l.is_empty() {
+    c.err = "XO_LLVM_LTO=${l0}: link time optimization is none (or off), thin, or full"
   }
   let o = os.env.get("XO_LLVM_OPT") ?? ""
   if o is "O0" | "O1" | "O2" | "O3" {

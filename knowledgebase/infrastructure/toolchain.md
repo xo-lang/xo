@@ -2221,7 +2221,10 @@ first, AST based prototype, since deleted) and
   `prog.<i>.ll` in `<build>/llvm-split<n>-<lto>/`, compiles them with at
   most `XO_LLVM_JOBS` clang processes per xo process (default min(cores,
   6); a clang on a twelfth of compiler/ssa peaks near 2 GB, on a sixth
-  near 4 GB), and links. `XO_LLVM_LTO=thin` (default) or `none`. Unset,
+  near 4 GB), and links. `XO_LLVM_LTO=thin` (default) or `none` (`off`
+  is the same). Any other value of XO_LLVM_LTO, or a non-number in
+  XO_LLVM_SPLIT or XO_LLVM_JOBS, is an error (since 2026-10-21: `off`
+  silently fell back to thin LTO). Unset,
   `0`, or `1`: one module, whose LTO is `XO_LLVM_LTO` (`full`, `thin`,
   `none`), else none at `-O0` and full otherwise (last verified:
   2026-10-15, `bench/results/llvm-single-lto-2026-10-15.md`). Test processes of
