@@ -80,6 +80,13 @@ fn regs(vs: List[Int]) -> List[Src] {
 /// A machine instruction.
 struct Inst {
   kind: Int
+  /// a call in a cold block: the caller saved general registers live
+  /// across it, each with its spill slot, stored before its argument moves and
+  /// loaded after its results' (regalloc.xo cold_saves)
+  csave: List[(Int, Int)] = []
+  /// a call of a runtime slow path (ssa cold_fn): cold wherever its
+  /// block is, so cold_saves and the hoisting passes treat it as one
+  cold_call: Bool = false
   text: Str = ""
   /// the packed source line it was selected for (ssa Value.line), 0 for
   /// none: a row of the debug line table (decision 0239)

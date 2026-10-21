@@ -326,6 +326,23 @@ fn (var g: G) regalloc() {
     end.push(0)
   }
   var calls: List[Int] = []
+  // the calls of cold blocks that save what they clobber (cold_saves):
+  // position, block, index
+  var cold_calls: List[(Int, Int, Int)] = []
+  // a value kept in a caller saved register across a call of a runtime
+  // slow path (Inst.cold_call: ssa cold_fn, a hot loop's never taken
+  // fallback) is stored
+  // around that call, in the cold block, instead of taking a callee
+  // saved register or a slot for its whole range (2026-10-21: the hybrid
+  // Map's get loop, whose fallback call made every live value callee
+  // saved and its hoisted constants spill, 1.2x the instructions of the
+  // same loop without it; gotchas/arm64-cold-call-in-loop.md). Not
+  // x86_64 (its emitter saves no registers there yet), not a tail call
+  // or one that does not return. Not every call of a cold block: in the
+  // landing pads' cleanups the freed caller saved registers left an
+  // instruction with ten spilled operands no scratch register
+  // (xo.slice[List[x509.Cert]], 2026-10-21)
+  let cold_saves = !g.x86 && pass_on(g.m, "cold_saves")
   // the instructions that write registers besides their definitions:
   // position and registers
   var clobs: List[(Int, List[Int], Bool)] = []
@@ -351,7 +368,11 @@ fn (var g: G) regalloc() {
       let inst = ins[j]
       let at = 4 * (first + j)
       if inst.kind == K_CALL {
-        calls.push(at + 1)
+        if cold_saves && inst.cold_call && !inst.tail && !inst.noret && !inst.svc {
+          cold_calls.push((at + 1, b, j))
+        } else {
+          calls.push(at + 1)
+        }
       }
       if !inst.clobbers.is_empty() {
         clobs.push((at, inst.clobbers, inst.clob_mid))
@@ -615,6 +636,13 @@ fn (var g: G) regalloc() {
         push_rng(occ, r, Rng{s: c, e: c})
       }
     }
+    // a cold call still clobbers the floating point and vector registers
+    // (its saves are 8 byte words, and a vector value is 16 bytes)
+    for (c, _, _) in cold_calls {
+      for r in g.fp_caller_t() {
+        push_rng(occ, r, Rng{s: c, e: c})
+      }
+    }
     for r in 0..64 {
       if occ[r].len() > 1 {
         occ[r] = merge_ranges(occ[r])
@@ -739,6 +767,26 @@ fn (var g: G) regalloc() {
         ncallee += 1
       }
       insert_ranges(occ, chosen, ranges[v])
+    }
+    // each cold call's saves: the values in caller saved registers live
+    // across it, a slot each
+    for (c, cb, cj) in cold_calls {
+      var sv: List[(Int, Int)] = []
+      for v in order {
+        let r = g.loc[v].reg
+        if r < 0 || r >= FP_BASE || g.is_callee_t(r) || !overlaps_sorted(ranges[v], [Rng{s: c, e: c}]) {
+          continue
+        }
+        var have = false
+        for (r2, _) in sv {
+          have = have || r2 == r
+        }
+        if !have {
+          sv.push((r, g.slots))
+          g.slots += 1
+        }
+      }
+      g.blocks[cb].insts[cj].csave = sv
     }
     // a frame past the reach of an sp relative ldr or str: allocate again
     // with x28 kept free, for the addresses of the far slots

@@ -651,6 +651,24 @@ enum OptSome {
 // ---------------------------------------------------------------------------
 // Calls
 
+/// Flags the block's latest call as cold when it calls a runtime slow
+/// path (ssa cold_fn; regalloc.xo cold_saves, the hoisting passes): the
+/// call, not its block, which a hot loop's fallback shares with nothing
+/// else to mark it.
+fn (var g: G) mark_cold_call(name: Str) {
+  if !ssa.cold_fn(name) {
+    return
+  }
+  var k = g.blocks[g.cur].insts.len() - 1
+  while k >= 0 {
+    if g.blocks[g.cur].insts[k].kind == K_CALL {
+      g.blocks[g.cur].insts[k].cold_call = true
+      return
+    }
+    k -= 1
+  }
+}
+
 fn (var g: G) call_op(v: Int) {
   let x = g.f.values[v]
   let name = aux_str(x.aux)
@@ -663,6 +681,7 @@ fn (var g: G) call_op(v: Int) {
   let ci = g.by_name.get(name) ?? -1
   if ci >= 0 && !g.by_ref_of(ci).is_empty() {
     g.by_ref_call(v, ci)
+    g.mark_cold_call(name)
     return
   }
   if ci >= 0 {
@@ -679,6 +698,7 @@ fn (var g: G) call_op(v: Int) {
       }
     }
     g.set(v, g.call(g.fname(name), args, res))
+    g.mark_cold_call(name)
     return
   }
   if name.starts_with("rt.") {
