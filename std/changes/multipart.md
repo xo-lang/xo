@@ -1,5 +1,19 @@
 # std/multipart changes
 
+## 2026-10-21: fix: parse_form skips a bad quoted-printable part as Go does
+
+- Kind: fix
+- Commit: (filled in after the push)
+- Found by: differential test against Go (scripts/stdcorpus multipart, 1,500 generated bodies)
+- Go reference: mime/multipart Part.Close and formdata.go readForm; mime/quotedprintable Reader over bufio (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/multipart; std/native/multipart_test.xo
+
+A part without a form name that parse_form skips is drained through its
+quoted-printable decoder, as Go's Close does: at a bad line the reader
+stops after the read that held it, inside the part, and parsing goes on
+from there (Go then reports `multipart: unexpected line in Next()`).
+Natively the part was skipped to its boundary. 4 of 1,500 bodies differed.
+
 ## 2026-10-20: port: std/multipart, Go's mime/multipart in memory
 
 - Kind: port

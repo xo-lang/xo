@@ -459,11 +459,18 @@ fn is_qp_ws(c: UInt8) -> Bool { c == 10 || c == 13 || c == 32 || c == 9 }
 /// ended ("" at its boundary, else the part's read error), which the
 /// decoder reports after the data, as Go's bufio passes it on.
 fn qp_decode(raw: Bytes, end: Str) -> (Bytes, Str) {
+  let (out, e, _used) = qp_decode_at(raw, end)
+  (out, e)
+}
+
+/// qp_decode, and how much of raw the decoder read: the end of the line
+/// it stopped on (all of raw when it did not stop early).
+fn qp_decode_at(raw: Bytes, end: Str) -> (Bytes, Str, Int) {
   var out = BytesBuilder.with_capacity(raw.len())
   var pos = 0
   while {
     if pos >= raw.len() {
-      return (out.freeze(), end)
+      return (out.freeze(), end, pos)
     }
     // ReadSlice('\n') on a 4096 byte buffer
     var stop = if raw.len() - pos > BUF { pos + BUF } else { raw.len() }
@@ -515,14 +522,14 @@ fn qp_decode(raw: Bytes, end: Str) -> (Bytes, Str) {
           if l.len() - i >= 2 && l[i + 1] != 13 && l[i + 1] != 10 {
             c = 61
           } else {
-            return (out.freeze(), UNEXPECTED_EOF)
+            return (out.freeze(), UNEXPECTED_EOF, pos)
           }
         } else if qp_hex(l[i + 1]) < 0 || qp_hex(l[i + 2]) < 0 {
           if l[i + 1] != 13 && l[i + 1] != 10 {
             c = 61
           } else {
             let x = if qp_hex(l[i + 1]) < 0 { l[i + 1] } else { l[i + 2] }
-            return (out.freeze(), "quotedprintable: invalid hex byte 0x${hex2(x)}")
+            return (out.freeze(), "quotedprintable: invalid hex byte 0x${hex2(x)}", pos)
           }
         } else {
           c = UInt8(qp_hex(l[i + 1]) * 16 + qp_hex(l[i + 2]))
@@ -531,16 +538,16 @@ fn qp_decode(raw: Bytes, end: Str) -> (Bytes, Str) {
       } else if c == 9 || c == 13 || c == 10 || c >= 128 {
         // as it is
       } else if c < 32 || c > 126 {
-        return (out.freeze(), "quotedprintable: invalid unescaped byte 0x${hex2(c)} in body")
+        return (out.freeze(), "quotedprintable: invalid unescaped byte 0x${hex2(c)} in body", pos)
       }
       out.write_byte(c)
       i += 1
     }
     if !bad.is_empty() {
-      return (out.freeze(), bad)
+      return (out.freeze(), bad, pos)
     }
     if !rerr.is_empty() {
-      return (out.freeze(), if rerr == "EOF" { "" } else { rerr })
+      return (out.freeze(), if rerr == "EOF" { "" } else { rerr }, pos)
     }
   }
 }
@@ -617,6 +624,47 @@ fn (var r: R) part_data(n: Next) -> (Bytes, Str) {
     return qp_decode(raw, e)
   }
   (raw, e)
+}
+
+/// Part.Close for a part ReadForm skips: Go drains it through its
+/// decoder and drops the errors. A quoted-printable decoder reads the part
+/// through a bufio.Reader, one partReader read (one scan) at a time, and
+/// stops at a bad line: the reader goes on from the end of the read that
+/// held it, inside the part (so its next line is NextPart's).
+fn (var r: R) skip_part(n: Next) {
+  if !n.qp {
+    let _d = r.read_part()
+    return
+  }
+  let start = r.pos
+  var ends: List[Int] = []
+  var total = 0
+  var eof = false
+  var e = ""
+  while {
+    let (k, se) = r.scan(total, eof)
+    if k == 0 && se.is_empty() {
+      eof = true
+      continue
+    }
+    r.pos += k
+    total += k
+    ends.push(total)
+    if !se.is_empty() {
+      e = if se == "EOF" { "" } else { se }
+      break
+    }
+  }
+  let (_out, qe, used) = qp_decode_at(r.buf[start..r.pos], e)
+  if qe.is_empty() || qe == e {
+    return
+  }
+  for c in ends {
+    if c >= used {
+      r.pos = start + c
+      return
+    }
+  }
 }
 
 /// filepath.Base on a Unix path.
@@ -702,8 +750,7 @@ fn parse_form(body: Bytes, boundary: Str, max_parts: Int = 1000) -> multipart.Fo
     parts_left -= 1
     let (name, file) = names(n.header)
     if name.is_empty() {
-      // Go's Close drains the part, its errors dropped
-      let _d = r.part_data(n)
+      r.skip_part(n)
       continue
     }
     max_memory -= name.len() + 200

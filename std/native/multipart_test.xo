@@ -1453,3 +1453,13 @@ test "write and parse" {
   expect(form_data_content_type("a b")) == "multipart/form-data; boundary=\"a b\""
   expect(form_data_content_type("ab")) == "multipart/form-data; boundary=ab"
 }
+
+test "parse_form skips a nameless quoted-printable part as Go's Close drains it" {
+  // the decoder stops at the bad line, after the partReader read that
+  // held it (up to the non-boundary --MyBoundaryx), so NextPart reads "x"
+  let body = b"--MyBoundary\r\nContent-Disposition: form-data; name*=UTF-8''\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n\x00\xff\r\n--MyBoundaryx\r\ncontent-type: text/plain\r\n\r\nline\r\n--MyBoundary--\r\n"
+  match parse_form(body, "MyBoundary") {
+    Ok(_) => expect("ok") == "an error"
+    Err(e) => expect(e.msg) == "multipart: unexpected line in Next(): \"x\\r\\n\""
+  }
+}
