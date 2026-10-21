@@ -7,6 +7,7 @@ returns canned replies. Run: python3 bench/harness/test_harness.py
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -103,7 +104,9 @@ class TestPrompts(unittest.TestCase):
             tasks = c.TASKS if kind in c.ARMS else c.PLANTED_TASKS
             for t in tasks:
                 text = c.render_prompt(kind, t, 7)
-                self.assertNotIn("{{", text, (kind, t))
+                # no harness directive left unexpanded; the spec's own text
+                # may show "{{" (std/template's actions, spec/std.md 30)
+                self.assertIsNone(re.search(r"\{\{(include|files|max_runs)\b", text), (kind, t))
                 self.assertIn("=== FILE:", text)
                 self.assertIn("# Task %s" % t[:2], text)
                 if kind in c.ARMS:

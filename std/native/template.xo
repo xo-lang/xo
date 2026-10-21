@@ -1188,7 +1188,7 @@ fn (var p: Parser) pipeline(context: Str, end: Int) -> Pipe {
         if i > 0 {
           match c.args[0] {
             BoolA(..) | Dot(..) | NilA(..) | Number(..) | StringA(..) => p.fail("non executable command in pipeline stage ${i + 1}")
-            _ => {}
+            Field(..) | Chain(..) | Ident(..) | PipeA(..) | Variable(..) => {}
           }
         }
       }
@@ -1244,7 +1244,7 @@ fn (var p: Parser) operand() -> Arg? {
         p.fail("unexpected . after term ${go_quote(arg_text(node))}")
         return Some(node)
       }
-      _ => return Some(Arg.Chain(pos: pos, node: [node], field: fields))
+      Chain(..) | Ident(..) | PipeA(..) => return Some(Arg.Chain(pos: pos, node: [node], field: fields))
     }
   }
   Some(node)
@@ -1636,7 +1636,7 @@ fn (var s: Ex) walk(dot: Val, n: Node) -> Int ! Str {
       s.out = s.out + text
       Ok(0)
     }
-    _ => Err(s.err("unknown node: ${node_text(n)}"))
+    End(..) | Else(..) => Err(s.err("unknown node: ${node_text(n)}"))
   }
 }
 
@@ -1691,7 +1691,7 @@ fn (var s: Ex) walk_range(dot: Val, n: Node) -> Int ! Str {
       }
     }
     Invalid => {}
-    _ => ok_kind = false
+    NilIface | Bool(..) | FloatV(..) | ComplexV(..) | StrV(..) | Missing => ok_kind = false
   }
   if !ok_kind {
     return Err(s.err("range can't iterate over ${fmt_v(v.v, false)}"))
@@ -1819,7 +1819,7 @@ fn (var s: Ex) eval_command(dot: Val, c: Cmd, final: Val) -> Val ! Str {
       }
       return s.eval_field_chain(dot, v, first, ident[1..], c.args, final)
     }
-    _ => {}
+    BoolA(..) | Dot(..) | NilA(..) | Number(..) | StringA(..) => {}
   }
   s.at_arg(first)
   s.not_a_function(c.args, final)?
@@ -1829,7 +1829,7 @@ fn (var s: Ex) eval_command(dot: Val, c: Cmd, final: Val) -> Val ! Str {
     NilA(_) => Err(s.err("nil is not a command"))
     Number(_, n) => s.ideal_constant(n)
     StringA(_, _, text) => Ok(val(V.StrV(s: text)))
-    _ => Err(s.err("can't evaluate command ${go_quote(arg_text(first))}"))
+    Field(..) | Chain(..) | Ident(..) | PipeA(..) | Variable(..) => Err(s.err("can't evaluate command ${go_quote(arg_text(first))}"))
   }
 }
 
@@ -2002,7 +2002,7 @@ fn (var s: Ex) eval_string_arg(dot: Val, a: Arg) -> Val ! Str {
         _ => Err(s.err("expected string; found ${arg_text(a)}"))
       }
     }
-    _ => {
+    Field(..) | Chain(..) | Ident(..) | PipeA(..) | Variable(..) | Dot(..) => {
       let v = s.eval_arg(dot, a)?
       match unbox(v).v {
         StrV(..) => Ok(unbox(v))
@@ -2083,7 +2083,7 @@ fn fn_len(x: Val) -> Val ! Str {
     ListV(items) => Ok(val(V.IntV(n: items.len(), ty: "int")))
     MapV(fields) => Ok(val(V.IntV(n: fields.len(), ty: "int")))
     Invalid => Err("reflect: call of reflect.Value.Type on zero Value")
-    _ => Err("len of type ${type_name(unbox(x))}")
+    NilIface | Bool(..) | IntV(..) | FloatV(..) | ComplexV(..) | Missing => Err("len of type ${type_name(unbox(x))}")
   }
 }
 
@@ -2148,7 +2148,7 @@ fn fn_index(item0: Val, indexes: List[Val]) -> Val ! Str {
           item = Val{v: V.NilIface, boxed: true}
         }
       }
-      _ => return Err("can't index item of type ${type_name(item)}")
+      Invalid | NilIface | Bool(..) | IntV(..) | FloatV(..) | ComplexV(..) | Missing => return Err("can't index item of type ${type_name(item)}")
     }
   }
   Ok(item)
@@ -2198,7 +2198,7 @@ fn basic_kind(x: Val) -> Int {
     FloatV(..) => 4
     ComplexV(..) => 2
     StrV(..) => 5
-    _ => 0
+    Invalid | NilIface | ListV(..) | MapV(..) | Missing => 0
   }
 }
 
