@@ -160,7 +160,11 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 ## Coordinating (scripts/lead/README.md)
 
-- Heavy runs: `~/xo-lead/agents/heavy.sh NAME CMD...`.
+- Heavy runs: `~/xo-lead/agents/heavy.sh NAME CMD...`. Slot order:
+  pushq's runs, then gates, then `HEAVY_CLASS=bulk` runs (measurements,
+  profiles, suites). While `~/xo-lead/merge-first` exists, gates are the
+  bare minimum and other checks go to `~/xo-lead/notes/deferred.md`
+  with their commands (CLAUDE.md "merges before testing").
 - Pushes: `~/xo-lead/agents/pushq.sh WORKTREE [--base SHA] [-- GATE...]`.
 - Status: `~/xo-lead/agents/board.sh set|claim|show`, instead of status
   messages.

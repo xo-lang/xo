@@ -146,6 +146,16 @@ Update the knowledgebase in the same change as the work, not later:
     (scripts/gate.sh short arm64 llvm cmd gen fp, LLVM at -O1 with Go
     parity, plus the Docker amd64 goldens), bisects a failure over that
     window's pushes, and the owner of the commit fixes forward.
+  - merges before testing (owner, 2026-10-21): heavy.sh serves pushq
+    first, then gates, then HEAVY_CLASS=bulk runs (measurements,
+    profiles, full suites, deferred checks; set it on every such run).
+    When the lead declares merge-first (the file ~/xo-lead/merge-first
+    exists: a long heavy queue), a gate is only -short's own tests, the
+    one or two proving tests and the fixed point when required; every
+    other check is appended with its exact command to
+    ~/xo-lead/notes/deferred.md, and the lead runs one large test (the
+    full tier plus the deferred list) when the queue drains, then
+    removes the file. Agents keep working while they wait for a slot.
   - arm64 only (owner, 2026-10-14, replaces the platform runs at
     milestones): "testing on just the fastest machine and arch". Agents
     verify on the Mac (arm64); the full tier, when wanted, runs on one
