@@ -164,8 +164,11 @@ pub struct Server {
   vers: Bool
   rin: Bytes
   hs: Bytes
-  app: Bytes
-  out: Bytes
+  // app and out are read and taken by tlssrv.xo in place (its take and
+  // recv_some): passing the Server as a var argument copied it in and
+  // out once inlined into a caller holding the Conn in a local
+  pub app: Bytes
+  pub out: Bytes
   tr: Bytes
   // the transcript's running hash (tr_hash): of its first trn bytes, with
   // hash trk (-1: none yet)
