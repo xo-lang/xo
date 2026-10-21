@@ -1,0 +1,15 @@
+// Tests of the LLVM IR split (split.xo).
+
+test "a split part that defines a function with a personality declares the personality" {
+  // the result type holds a `(` inside a quoted name, which once made the
+  // scan of the define line read its quotes the wrong way round and miss
+  // `personality ptr @pers`: that part had no declaration of it
+  let ir = "target triple = \"arm64-apple-macosx\"\n\ndefine hidden i64 @pers(i64 %a0) #1 {\n  ret i64 0\n}\n\ndefine hidden %\"e.Result[(), Error]\" @\"x.main.main\"(i64 %v0) #1 personality ptr @pers {\n  %v1 = add i64 %v0, 1\n  %v2 = add i64 %v1, 2\n  ret i64 %v2\n}\n"
+  let parts = split_ir(ir, 2, false, false)
+  expect(parts.len()) == 2
+  for p in parts {
+    if p.contains("define hidden %\"e.Result") {
+      expect(p.contains("declare hidden i64 @pers(")) == true
+    }
+  }
+}

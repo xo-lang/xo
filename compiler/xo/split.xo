@@ -246,7 +246,12 @@ fn parse_ir(ir: Str) -> ParsedIR {
       var d = IRItem{name: name, text: body, helper: name.starts_with("@\"xo.")}
       let lb = line.bytes()
       let bb = body.bytes()
-      d.refs = symbol_refs(bb[lb.len()..bb.len()], name) + symbol_refs(lb[index_byte(lb, '(')..lb.len()], name)
+      // the define line from its parameter list on (after the symbol: the
+      // result type before it can hold a `(` inside a quoted name, as
+      // `%"e.Result[(), Error]"`, which made the scan read the line's
+      // quotes the wrong way round and miss the `personality` symbol)
+      let from = index_byte(lb, '@') + name.len()
+      d.refs = symbol_refs(bb[lb.len()..bb.len()], name) + symbol_refs(lb[from..lb.len()], name)
       d.decl = decl_of(line)
       p.def_at[name] = p.defs.len()
       p.defs.push(d)
