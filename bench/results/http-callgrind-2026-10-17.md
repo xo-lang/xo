@@ -363,3 +363,10 @@ callgrind-docker.sh, the change against its parent f00c1950):
 Tests: goldens tls13_rfc8448 (RFC 8448's records byte for byte),
 tls13_go, tls13_server, tls_client, http_tls, http_tls_keys,
 tls12_server and tls12_client on arm64.
+
+Then (721b1350): tlsrec.seal_at, a response's record, writes the header
+into the record's output string and seals the data after it there
+(aesgcm seal_into, with ghash and ctr at offsets; the header is the
+additional data), two strings a record where it made four. Against its
+parent 8de95471: tls 34,982 to 34,750 (-0.7%), h2 56,617 to 56,354 (-0.5%);
+the same eight TLS goldens.
