@@ -9,17 +9,25 @@
 # "instructions retired"; on Linux perf stat's instructions:u.
 #
 # usage: bench/perf/stdio/measure.sh <xo> <out dir> <label=std dir>... -- <backend...>
+#    or: bench/perf/stdio/measure.sh <xo> <out dir> <backend...> (the std
+#        beside the xo, label std: the form bench/perf/sweep.py calls)
 # WORKLOADS overrides the list.
 set -e
 XO=$1
 OUT=$2
 shift 2
 STDS=""
-while [ "$1" != "--" ]; do
-	STDS="$STDS $1"
+if [ $# -gt 0 ] && [ "$1" != "--" ] && [ "${1#*=}" = "$1" ]; then
+	# the form of the other bench/perf directories (bench/perf/sweep.py):
+	# BACKEND..., the std beside the xo
+	STDS="std=$(cd "$(dirname "$XO")/.." && pwd)/std"
+else
+	while [ "$1" != "--" ]; do
+		STDS="$STDS $1"
+		shift
+	done
 	shift
-done
-shift
+fi
 SRC=$(cd "$(dirname "$0")" && pwd)
 OS=$(uname -s)
 mkdir -p "$OUT"
