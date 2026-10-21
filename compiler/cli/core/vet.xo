@@ -262,7 +262,7 @@ fn vet_module(c: check.Checker, m: Int) -> List[Diag] {
           }
         }
         Block(b) => {
-          out = out + copy_store(c, f, path, b)
+          out = out + copy_store(c, f, path, b) + elem_copy_store(c, f, path, b)
         }
         StringLit(s) => {
           out = out + debug_interps(c, f, path, s)
@@ -317,6 +317,58 @@ fn copy_store(c: check.Checker, f: Int, file: Str, b: parser.Block) -> List[Diag
     }
   }
   out
+}
+
+/// XO0536 (decision 0294) in block b: `var x = xs[i]` on a List whose
+/// elements are collections (List, Bytes, Map, Set, Str), then later in the
+/// block `xs[i] = x`. While xs still holds the element, x's first change
+/// copies all of it, at every pass through the block: a loop over the
+/// relocations of a section did that to the whole section (compiler/macho
+/// pelink.xo, 2026-10-20). Changing `xs[i]` in place copies nothing (core
+/// 5.1, decision 0169).
+fn elem_copy_store(c: check.Checker, f: Int, file: Str, b: parser.Block) -> List[Diag] {
+  var out: List[Diag] = []
+  let ss = b.stmts
+  for (i, s) in ss.indexed() {
+    if let VarStmt(_, name, _, value) = s {
+      if let IndexExpr(_, lx, ix) = value {
+        if !c.type_text_in(f, lx).starts_with("List[") {
+          continue
+        }
+        let et = c.type_text_in(f, value)
+        if !(et.starts_with("List[") || et.starts_with("Map[") || et.starts_with("Set[") || et == "Bytes" || et == "Str") {
+          continue
+        }
+        let x = text_of(name.name)
+        let xs = src_text(c, f, parser.expr_span(lx))
+        let k = src_text(c, f, parser.expr_span(ix))
+        for j in i + 1..ss.len() {
+          // `xs[i] = []` after the read takes the element (lsr.xo's
+          // idiom): x is then its only holder and changes in place
+          if assigns_to(c, f, ss[j], xs, k) && !stores_back(c, f, ss[j], x, xs, k) {
+            break
+          }
+          if stores_back(c, f, ss[j], x, xs, k) {
+            var dg = vdiag("XO0536", true, file, stmt_span(s), "`${x}` is copied out of `${xs}[${k}]`, changed, and stored back: while `${xs}` still holds the element, the first change copies all of this `${et}` (core 5.1)")
+            dg.notes.push(check.DNote{message: "change `${xs}[${k}]` in place instead (`${xs}[${k}].push(v)`, or pass `${xs}[${k}]` to a `var` parameter); the store back is then not needed", span: Some(jspan(file, stmt_span(ss[j])))})
+            out.push(dg)
+            break
+          }
+        }
+      }
+    }
+  }
+  out
+}
+
+/// Whether s assigns to `m[k]`.
+fn assigns_to(c: check.Checker, f: Int, s: parser.Stmt, m: Str, k: Str) -> Bool {
+  if let AssignStmt(_, _, target, _) = s {
+    if let IndexExpr(_, mx, kx) = target {
+      return src_text(c, f, parser.expr_span(mx)) == m && src_text(c, f, parser.expr_span(kx)) == k
+    }
+  }
+  false
 }
 
 /// `var x = m.get(k) ?? d` with m a Map: the texts of x, m, k, d.

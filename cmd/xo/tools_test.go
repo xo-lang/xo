@@ -943,3 +943,83 @@ fn main(os: Os) {
 		t.Errorf("XO0535 at %v, want [8 note]\n%s", got, out.String())
 	}
 }
+
+// TestVetElemCopyStore covers XO0536 (decision 0294's addendum): a list
+// element copied out, changed, and stored back is noted (line 3); taking
+// it first, changing it in place, and a struct element are not.
+func TestVetElemCopyStore(t *testing.T) {
+	t.Parallel()
+	src := `fn fill(var bufs: List[List[Int]], k: Int, n: Int) {
+  for i in 0..n {
+    var b = bufs[k]
+    b.push(i)
+    bufs[k] = b
+  }
+}
+
+fn take(var bufs: List[List[Int]], k: Int) {
+  var b = bufs[k]
+  bufs[k] = []
+  b.push(1)
+  bufs[k] = b
+}
+
+fn inplace(var bufs: List[List[Int]], k: Int) {
+  bufs[k].push(1)
+}
+
+struct P {
+  n: Int
+}
+
+fn structs(var ps: List[P], k: Int) {
+  var p = ps[k]
+  p.n += 1
+  ps[k] = p
+}
+
+fn main(os: Os) {
+  var bufs: List[List[Int]] = [[], []]
+  fill(bufs, 0, 3)
+  take(bufs, 1)
+  inplace(bufs, 1)
+  var ps = [P{n: 1}]
+  structs(ps, 0)
+  os.stdio.println("${bufs.len()} ${ps.len()}")
+}
+`
+	dir := writeFiles(t, map[string]string{"main.xo": src})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"vet", "--json", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	var res struct {
+		Diagnostics []struct {
+			Code     string `json:"code"`
+			Severity string `json:"severity"`
+			Message  string `json:"message"`
+			Span     struct {
+				Line int `json:"line"`
+			} `json:"span"`
+		} `json:"diagnostics"`
+		CheckErrors int `json:"check_errors"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &res); err != nil {
+		t.Fatalf("bad JSON: %v\n%s", err, out.String())
+	}
+	if res.CheckErrors != 0 {
+		t.Fatalf("check errors: %d\n%s", res.CheckErrors, out.String())
+	}
+	var got []string
+	for _, d := range res.Diagnostics {
+		if d.Code == "XO0536" {
+			got = append(got, fmt.Sprintf("%d %s", d.Span.Line, d.Severity))
+			if !strings.Contains(d.Message, "`b` is copied out of `bufs[k]`") {
+				t.Errorf("message: %s", d.Message)
+			}
+		}
+	}
+	if strings.Join(got, ", ") != "3 note" {
+		t.Errorf("XO0536 at %v, want [3 note]\n%s", got, out.String())
+	}
+}

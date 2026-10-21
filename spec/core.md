@@ -1611,6 +1611,11 @@ never depend on it, but the time does:
   hundreds of count updates per spawn: capture the fields the task uses
   (`let part = c.field` before the spawn). `xo vet` notes such captures
   (`XO0534`), and a large parameter that is only stored (`XO0531`).
+- `var b = xs[i]`, a change to `b`, then `xs[i] = b` copies the element at
+  the first change, because `xs` still holds it; in a loop that is a copy
+  per pass. Change `xs[i]` in place instead (`xs[i].push(v)`, decision
+  0169). `xo vet` notes it for collection elements (`XO0536`); the Map
+  form has `Map.update` (`XO0532`).
 - A `Mutex.with` body changes the value while the mutex still holds it
   (an error or fault hands it back, decision 0085), so the body's first
   write to each collection in it copies that collection.
@@ -2316,7 +2321,7 @@ test "retries after 503" {
 | `xo serve` | Resident checker on a unix socket; `xo check` and `xo query` use it automatically when it answers |
 | `xo fmt` | Canonical format, no options |
 | `xo fix [--dry-run] [--from=draft-0.N] [--edition=preview]` | Apply all machine fixes until none apply, xo.mod and xo.work lines included (`edition 2026` becomes `edition preview`, `xo 2026` becomes `xo preview`, `XO1315`); `--from` migrates code written for an older draft (interpolation, prelude variants, `let _ =` discards, scope timeouts, Map index reads) |
-| `xo vet` | Advisory checks, never errors (a directory, a `.xo` file's findings, a std directory checked as std, or `--std-module=M`; decision 0289): checker warnings plus `XO0207` (`??` precedence trap), `XO0208` (each `ignore_err` with its reason), `XO0530` (a field's large payload bound and shared, decision 0263), `XO0531` (a large parameter only stored while each caller passes its last use, decision 0263), `XO0532` (a Map value changed through a copy and stored back, `Map.update` instead; decision 0266), `XO0534` (a task capturing a value of 32 or more heap fields, core 5.1; decision 0294), `XO0703` (declared effect never performed), `XO0901` (`dbg` left in code), `XO0902` (`tls.Verify.None`, decision 0281), `XO0903` (an Fs, Net, or Proc error defaulted away by `.ok() ?? d` or `Err(_) => <empty>`; `// xo:allow XO0903 <reason>` silences one), `XO1103` (use of Go packages per module), `XO0535` (`${x.debug()}` written as `${x:?}`, with the fix; decision 0296) |
+| `xo vet` | Advisory checks, never errors (a directory, a `.xo` file's findings, a std directory checked as std, or `--std-module=M`; decision 0289): checker warnings plus `XO0207` (`??` precedence trap), `XO0208` (each `ignore_err` with its reason), `XO0530` (a field's large payload bound and shared, decision 0263), `XO0531` (a large parameter only stored while each caller passes its last use, decision 0263), `XO0532` (a Map value changed through a copy and stored back, `Map.update` instead; decision 0266), `XO0534` (a task capturing a value of 32 or more heap fields, core 5.1; decision 0294), `XO0703` (declared effect never performed), `XO0901` (`dbg` left in code), `XO0902` (`tls.Verify.None`, decision 0281), `XO0903` (an Fs, Net, or Proc error defaulted away by `.ok() ?? d` or `Err(_) => <empty>`; `// xo:allow XO0903 <reason>` silences one), `XO1103` (use of Go packages per module), `XO0535` (`${x.debug()}` written as `${x:?}`, with the fix; decision 0296), `XO0536` (a list element copied out, changed, and stored back; decision 0294) |
 | `xo def`, `xo refs`, `xo type`, `xo doc NAME`, `xo symbols` | Agents' lookups on `xo lsp`'s engine (decision 0261): `def NAME`, `refs NAME`, `type FILE:LINE:COL`, `doc NAME` (a name, or a module path and name: `std/tls.client`), `symbols [DIR] [--pub]` (the directory's own declarations, private ones too); a name in any form `xo query def` takes, std and runtime modules included (decision 0289); `--dir` (a workspace root checks the modules under it); text at a terminal, `--json` or `--text` to choose; exit 0 with an answer, 1 for no match, 2 for usage |
 | `xo query <kind> ...` | Semantic queries (10.3): `type`, `def`, `callers`, `effects`, `holes`, `api`, `imports`, `deps` |
 | `xo edit <op> ...` | Semantic edits (10.4) |
@@ -2653,6 +2658,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0532` | note | vet | a Map value read into a `var`, changed, and stored back; `Map.update` does it in one lookup (decision 0266) |
 | `XO0534` | note | vet | a task captures a value with many heap fields (32 or more), sharing each at the spawn (core 5.1, decision 0294) |
 | `XO0535` | note | vet | `${x.debug()}` in a string, which `${x:?}` writes shorter; its fix rewrites it (core 1.6, decision 0296) |
+| `XO0536` | note | vet | a collection copied out of a list element, changed, and stored back, so its first change copies all of it; change the element in place (core 5.1, decision 0294) |
 | `XO0601` | error | checker | name does not resolve (core 4.3) |
 | `XO0602` | error | checker | import path does not yield a valid local name (core 4.1) |
 | `XO0603` | error | checker | name declared twice in one scope, or a predeclared name redefined (core 3.1, 1.4) |

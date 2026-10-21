@@ -45,3 +45,19 @@ the same, until decision 0291's log makes that copy O(1)).
   captured configs.
 - Documenting it in a knowledgebase page only: agents read the spec for
   semantics, and this is where the copy rule already is.
+
+## Addendum (2026-10-20): list elements copied out and stored back
+
+The release dry run's windows/amd64 link of xo.exe ran for over 24
+minutes in the PE linker: pelink.xo read each output section with
+`var buf = bufs[p.out]`, applied one relocation, and stored it back with
+`bufs[p.out] = buf`, so every relocation copied the whole section (fixed
+in place, f104cabd). The lead asked for the general check: `xo vet` notes
+`XO0536` when `var x = xs[i]` on a List whose elements are collections
+(List, Bytes, Map, Set, Str) is followed in the same block by
+`xs[i] = x`. Taking the element first (`xs[i] = []` between, lsr.xo's
+idiom) is not reported. The grep of compiler/ and std/ found 29 copy-outs
+stored back. Most are struct elements (a struct copy shares its fields,
+and a change copies only the field it changes). The collection elements
+are pelink.xo (fixed), dsym.xo's two (once per link), and lsr.xo (a
+take). spec/core.md 5.1 states the rule.
