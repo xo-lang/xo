@@ -28,51 +28,151 @@ pub struct InlineOut {
   pub mismatches: List[Str] = []
 }
 
+/// The inline keys of a module (inline_keys) and the inliner's view of
+/// it before inlining, which inline_cached reads rather than builds again.
+pub struct InlineKeys {
+  /// one per function, "" for one not cached; [] for none
+  pub keys: List[Str] = []
+  st: InlineState = InlineState{}
+}
+
 /// The inline key of each function of m (before inlining), from the
 /// reference counting keys of its functions (rc_keys, one per function;
 /// "" for one not cached); "" for a function not cached, [] for none.
-pub fn inline_keys(m: ssa.Module, rc_keys: List[Str]) -> List[Str] {
+/// The text of each key is built on up to jobs tasks: a key that names
+/// the inline key of an earlier function is finished after, in order.
+pub fn inline_keys(m: ssa.Module, rc_keys: List[Str], jobs: Int) -> InlineKeys {
   let n = m.funcs.len()
   if rc_keys.len() != n {
-    return []
+    return InlineKeys{}
   }
-  let st = inline_state(m)
+  let st = inline_state_jobs(m, jobs)
   let head = "${INLINE_CACHE_VERSION}\npasses ${m.passes_off.join(",")}\ndeny ${m.inline_deny.join(",")}\n"
+  let texts = key_texts_all(st, rc_keys, head, jobs)
   var keys: List[Str] = []
   for i in 0..n {
-    if rc_keys[i].is_empty() {
-      keys.push("")
-      continue
+    let k = match texts[i] {
+      KeyText.Done(k) => k
+      KeyText.Segs(segs) => key_of_segs(segs, keys)
     }
-    let all = name_closure(st, i)
-    var b = BytesBuilder.new()
-    b.write_str(head)
-    // no function indices (they depend on the whole program, so a std
-    // function's key differed in every program, decision 0272): a callee
-    // is its name, and its place before or after i is the version below
-    b.write_str("self ${rc_keys[i]}\n")
-    var ok = true
-    for s in all.sort() {
-      let ci = st.by_name.get(s) ?? -1
-      let at = if ci < 0 { "-" } else if ci < i { "<" } else if ci > i { ">" } else { "=" }
-      b.write_str("name ${s.len()}:${s} ${at} ${st.small.contains(s)} ${st.loopy.contains(s)} ${st.padded.contains(s)} ${st.fewl.contains(s)}")
-      if ci >= 0 {
-        let g = st.sums[ci]
-        b.write_str(" ${g.indirect} ${g.catches} ${g.nres}")
-        if inlinable(st, s) {
-          let ver = if ci < i { keys[ci] } else if ci > i { rc_keys[ci] } else { "self" }
-          if ver.is_empty() {
-            ok = false
+    keys.push(k)
+  }
+  InlineKeys{keys: keys, st: st}
+}
+
+/// A key's text: the key itself, or text pieces each followed by the
+/// inline key of a function before it (-1 for none), to finish in order.
+enum KeyText {
+  Done(k: Str)
+  Segs(segs: List[(Bytes, Int)])
+}
+
+/// The key of the pieces with the earlier keys put in; "" when one of
+/// them is not cached.
+fn key_of_segs(segs: List[(Bytes, Int)], keys: List[Str]) -> Str {
+  var b = BytesBuilder.new()
+  for (t, ci) in segs {
+    b.write(t)
+    if ci >= 0 {
+      if keys[ci].is_empty() {
+        return ""
+      }
+      b.write_str(" ${keys[ci]}")
+    }
+  }
+  crypto.sha256(b.freeze()).to_hex()
+}
+
+/// key_text of every function, on up to jobs tasks, in function order.
+fn key_texts_all(st: InlineState, rc_keys: List[Str], head: Str, jobs: Int) -> List[KeyText] {
+  let n = rc_keys.len()
+  if jobs <= 1 || n < 512 {
+    var out: List[KeyText] = List.with_capacity(n)
+    for i in 0..n {
+      out.push(key_text(st, rc_keys, head, i))
+    }
+    return out
+  }
+  let next = Atomic[Int].new(0)
+  let done = scope s {
+    var ts = []
+    for _ in 0..jobs.min(n) {
+      ts.push(s.spawn(fn() -> List[(Int, List[KeyText])] {
+        var mine: List[(Int, List[KeyText])] = []
+        while true {
+          let i = next.add(128) - 128
+          if i >= n {
             break
+          }
+          var part: List[KeyText] = []
+          for fi in i..(i + 128).min(n) {
+            part.push(key_text(st, rc_keys, head, fi))
+          }
+          mine.push((i, part))
+        }
+        mine
+      }))
+    }
+    var all: List[(Int, List[KeyText])] = []
+    for t in ts {
+      all = all + t.await
+    }
+    all
+  }
+  var out: List[KeyText] = List.with_capacity(n)
+  for (_, part) in done.sort_by(fn(x) { x.0 }) {
+    out = out + part
+  }
+  out
+}
+
+/// The text of function i's inline key: the inliner's settings (head),
+/// its reference counting key and, for each name it can reach, the
+/// facts the inliner reads of it and the version of an inlinable one's
+/// body (the inline key of an earlier function, the reference counting
+/// key of a later one). Done with the key when it names no earlier
+/// function's inline key, or "" when i or a version it needs is not
+/// cached.
+fn key_text(st: InlineState, rc_keys: List[Str], head: Str, i: Int) -> KeyText {
+  if rc_keys[i].is_empty() {
+    return KeyText.Done(k: "")
+  }
+  var segs: List[(Bytes, Int)] = []
+  var b = BytesBuilder.new()
+  b.write_str(head)
+  // no function indices (they depend on the whole program, so a std
+  // function's key differed in every program, decision 0272): a callee
+  // is its name, and its place before or after i is the version below
+  b.write_str("self ${rc_keys[i]}\n")
+  for s in name_closure(st, i).sort() {
+    let ci = st.by_name.get(s) ?? -1
+    let at = if ci < 0 { "-" } else if ci < i { "<" } else if ci > i { ">" } else { "=" }
+    b.write_str("name ${s.len()}:${s} ${at} ${st.small.contains(s)} ${st.loopy.contains(s)} ${st.padded.contains(s)} ${st.fewl.contains(s)}")
+    if ci >= 0 {
+      let g = st.sums[ci]
+      b.write_str(" ${g.indirect} ${g.catches} ${g.nres}")
+      if inlinable(st, s) {
+        if ci < i {
+          // the inline key of an earlier function, known in order
+          segs.push((b.freeze(), ci))
+          b = BytesBuilder.new()
+        } else {
+          let ver = if ci > i { rc_keys[ci] } else { "self" }
+          if ver.is_empty() {
+            return KeyText.Done(k: "")
           }
           b.write_str(" ${ver}")
         }
       }
-      b.write_str("\n")
     }
-    keys.push(if ok { crypto.sha256(b.freeze()).to_hex() } else { "" })
+    b.write_str("\n")
   }
-  keys
+  let last = b.freeze()
+  if segs.is_empty() {
+    return KeyText.Done(k: crypto.sha256(last).to_hex())
+  }
+  segs.push((last, -1))
+  KeyText.Segs(segs: segs)
 }
 
 /// The names function i's body refers to, closed over the bodies of the
@@ -121,9 +221,10 @@ fn inlinable(st: InlineState, s: Str) -> Bool {
 /// reaches it, so a function it inlines sees every later callee before
 /// inlining, as inline_module does. The computed functions are encoded
 /// on tasks after the walk.
-pub fn inline_cached(var m: ssa.Module, keys: List[Str], entries: Map[Str, Bytes], verify: Bool, break_inline: Bool, jobs: Int) -> InlineOut {
+pub fn inline_cached(var m: ssa.Module, ik: InlineKeys, entries: Map[Str, Bytes], verify: Bool, break_inline: Bool, jobs: Int) -> InlineOut {
   var out = InlineOut{}
-  let st = inline_state(m)
+  let keys = ik.keys
+  let st = ik.st
   // the module's types for the codec, without its functions
   let mt = ssa.Module{types: m.types, type_at: m.type_at, goarch: m.goarch}
   let n = m.funcs.len()

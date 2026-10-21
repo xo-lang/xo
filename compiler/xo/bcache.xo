@@ -507,11 +507,12 @@ fn inline_through_cache(os: Os, var mi: ssa.Module, rc_keys: List[Str], jobs: In
     return arm64.inline_apply(mi, brk)
   }
   var t = os.clock.now()
-  let keys = arm64.inline_keys(mi, rc_keys)
+  let ik = arm64.inline_keys(mi, rc_keys, jobs)
+  let keys = ik.keys
   t = lap(os, phases, "inline.keys", t)
   let (entries, pk) = cache_get_packed(os, dir, "inl", mi.goarch, keys, jobs)
   t = lap(os, phases, "inline.read", t)
-  let out = arm64.inline_cached(mi, keys, entries, backend_cache_mode(os) == "verify", brk, jobs)
+  let out = arm64.inline_cached(mi, ik, entries, backend_cache_mode(os) == "verify", brk, jobs)
   pack_store(os, pk, entries, out.stores)
   var n = 0
   for (k, e) in out.stores {

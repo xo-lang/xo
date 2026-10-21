@@ -68,19 +68,61 @@ pub fn fn_sum(f: ssa.Func) -> FnSum {
 
 /// Every function's summary: a lazy one's from its cache entry, the
 /// others' from their bodies.
-fn module_sums(m: ssa.Module) -> List[FnSum] {
-  var out: List[FnSum] = List.with_capacity(m.funcs.len())
-  for (fi, f) in m.funcs.indexed() {
-    if let Some(l) = m.lazy.get(fi) {
-      match decode_sum(l.sum) {
-        Some(s) => out.push(s)
-        None => fault("arm64.module_sums: the inline summary of ${f.name} (${l.key}) does not decode")
-      }
-    } else {
-      out.push(fn_sum(f))
+fn module_sums(m: ssa.Module) -> List[FnSum] { module_sums_jobs(m, 1) }
+
+/// module_sums on up to jobs tasks, in function order.
+fn module_sums_jobs(m: ssa.Module, jobs: Int) -> List[FnSum] {
+  let n = m.funcs.len()
+  if jobs <= 1 || n < 512 {
+    var out: List[FnSum] = List.with_capacity(n)
+    for fi in 0..n {
+      out.push(sum_at(m, fi))
     }
+    return out
+  }
+  let next = Atomic[Int].new(0)
+  let done = scope s {
+    var ts = []
+    for _ in 0..jobs.min(n) {
+      ts.push(s.spawn(fn() -> List[(Int, List[FnSum])] {
+        var mine: List[(Int, List[FnSum])] = []
+        while true {
+          let i = next.add(256) - 256
+          if i >= n {
+            break
+          }
+          var part: List[FnSum] = []
+          for fi in i..(i + 256).min(n) {
+            part.push(sum_at(m, fi))
+          }
+          mine.push((i, part))
+        }
+        mine
+      }))
+    }
+    var all: List[(Int, List[FnSum])] = []
+    for t in ts {
+      all = all + t.await
+    }
+    all
+  }
+  var out: List[FnSum] = List.with_capacity(n)
+  for (_, part) in done.sort_by(fn(x) { x.0 }) {
+    out = out + part
   }
   out
+}
+
+/// The summary of function fi: its lazy entry's, or its body's.
+fn sum_at(m: ssa.Module, fi: Int) -> FnSum {
+  if let Some(l) = m.lazy.get(fi) {
+    match decode_sum(l.sum) {
+      Some(s) => s
+      None => fault("arm64.module_sums: the inline summary of ${m.funcs[fi].name} (${l.key}) does not decode")
+    }
+  } else {
+    fn_sum(m.funcs[fi])
+  }
 }
 
 /// The cache entry of a summary.

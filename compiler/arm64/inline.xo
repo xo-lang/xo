@@ -397,9 +397,12 @@ struct InlineState {
   rounds: Int = 0
 }
 
-fn inline_state(m: ssa.Module) -> InlineState {
+fn inline_state(m: ssa.Module) -> InlineState { inline_state_jobs(m, 1) }
+
+/// inline_state with the summaries read on up to jobs tasks.
+fn inline_state_jobs(m: ssa.Module, jobs: Int) -> InlineState {
   let by_name = funcs_by_name(m)
-  let sums = module_sums(m)
+  let sums = module_sums_jobs(m, jobs)
   let (small, loopy, padded, fewl) = inlinable_set(m, sums, by_name)
   // XO_PASSES=-inline: no call is inlined (devirtualize, which runs
   // with the call search, neither); the other passes here still run
