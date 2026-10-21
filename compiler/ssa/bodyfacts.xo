@@ -1,0 +1,121 @@
+// What the passes after inlining read of a function without its body
+// (decision 0283 stage B, lazy inline hits): a function the inliner's
+// cache gives back can stay undecoded until something needs its body,
+// if these facts stand in for it. This file is the facts, their codec
+// and their computation from a body; the passes use them in a later step.
+
+/// The facts of a function body the passes after inlining read:
+/// - nvalues: the number of values (compiler/arm64 part_bounds);
+/// - params: the entry block's parameter types (by_ref_of, func_sig);
+/// - names: each value's function or symbol name (Aux.S), in value
+///   order, with its opcode and whether it is in a block's instructions
+///   (dead function removal and addr_taken read those in blocks; fn_key
+///   reads every value's, first appearance first);
+/// - faults: whether an instruction in a block faults by itself
+///   (Module.may_fault's value_self_faults).
+pub struct BodyFacts {
+  pub nvalues: Int = 0
+  pub params: List[Int] = []
+  pub names: List[(Str, Op, Bool)] = []
+  pub faults: Bool = false
+}
+
+/// The version of the facts' encoding.
+pub const BODY_FACTS_VERSION = "xo body facts v1"
+
+/// The facts of f.
+pub fn body_facts(f: Func) -> BodyFacts {
+  var in_block: Map[Int, Bool] = {}
+  var faults = false
+  for bl in f.blocks {
+    for v in bl.instrs {
+      in_block[v] = true
+      if value_self_faults(f.values[v]) {
+        faults = true
+      }
+    }
+  }
+  var names: List[(Str, Op, Bool)] = []
+  for (vi, x) in f.values.indexed() {
+    if let S(s) = x.aux {
+      names.push((s, x.op, in_block.contains(vi)))
+    }
+  }
+  var params: List[Int] = []
+  if !f.blocks.is_empty() {
+    for p in f.blocks[0].params {
+      params.push(f.values[p].ty)
+    }
+  }
+  BodyFacts{nvalues: f.values.len(), params: params, names: names, faults: faults}
+}
+
+/// The facts as bytes (types by name, as encode_func's); none when a
+/// type has no name of its own.
+pub fn encode_facts(m: Module, x: BodyFacts) -> Option[Bytes] {
+  var e = EntryW{b: BytesBuilder.new()}
+  e.uv(x.nvalues)
+  e.types(m, x.params)
+  e.uv(x.names.len())
+  for (s, op, inb) in x.names {
+    e.str(s)
+    e.name(op_name(op))
+    e.bool(inb)
+  }
+  e.bool(x.faults)
+  if !e.ok {
+    return None
+  }
+  let body = e.b.freeze()
+  var h = EntryW{b: BytesBuilder.new()}
+  h.str(BODY_FACTS_VERSION)
+  h.uv(e.table.len())
+  for s in e.table {
+    h.str(s)
+  }
+  h.b.write(body)
+  Some(h.b.freeze())
+}
+
+/// The facts of bytes encode_facts wrote, with m's type ids; none for
+/// bytes of another version or malformed ones.
+pub fn decode_facts(m: Module, d: Bytes) -> Option[BodyFacts] {
+  let ops = ops_by_name()
+  var r = EntryR{d: d}
+  if r.str() != BODY_FACTS_VERSION {
+    return None
+  }
+  let nt = r.uv()
+  if !r.ok || nt > d.len() {
+    return None
+  }
+  for _ in 0..nt {
+    let s = r.str()
+    r.tys.push(m.type_at.get(s) ?? -1)
+    r.ops.push(ops.get(s))
+  }
+  var x = BodyFacts{nvalues: r.uv()}
+  x.params = r.types()
+  let nn = r.uv()
+  if !r.ok || nn > d.len() {
+    return None
+  }
+  for _ in 0..nn {
+    let s = r.str()
+    let oi = r.uv()
+    if !r.ok || oi >= r.ops.len() {
+      return None
+    }
+    let op = match r.ops[oi] {
+      Some(o) => o
+      None => return None
+    }
+    let inb = r.bool()
+    x.names.push((s, op, inb))
+  }
+  x.faults = r.bool()
+  if !r.ok || r.at != d.len() {
+    return None
+  }
+  Some(x)
+}

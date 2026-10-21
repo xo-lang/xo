@@ -1,0 +1,59 @@
+// The body facts (decision 0283 stage B) read from a body and back
+// through their encoding.
+
+/// A function of two parameters calling g twice (once outside any
+/// block: a value the pass left), taking h's address, and faulting.
+fn facts_module() -> (Module, Int) {
+  var m = Module{}
+  let it = m.intern(SType{kind: Kind.Int, name: "Int"})
+  let st = m.intern(SType{kind: Kind.Str, name: "Str"})
+  let _g = m.new_func("g", [], [])
+  let _h = m.new_func("h", [], [])
+  let fi = m.new_func("f", [it, st], [it])
+  var f = m.funcs[fi]
+  let _c = f.add(0, Op.Call, -1, Aux.S(s: "g"), [])
+  let _a = f.add(0, Op.FuncAddr, it, Aux.S(s: "h"), [])
+  let _x = f.add(0, Op.Fault, -1, Aux.None, [])
+  // a value no block holds (as a pass leaves a removed call)
+  f.values.push(Value{op: Op.Call, ty: -1, aux: Aux.S(s: "g"), block: -1})
+  m.funcs[fi] = f
+  (m, fi)
+}
+
+test "the facts of a body: count, parameters, names in order, fault" {
+  let (m, fi) = facts_module()
+  let x = body_facts(m.funcs[fi])
+  expect(x.nvalues) == m.funcs[fi].values.len()
+  expect(x.params) == [m.type_at.get("Int") ?? -1, m.type_at.get("Str") ?? -1]
+  expect(x.names.len()) == 3
+  expect(x.names[0].0) == "g"
+  expect(x.names[0].2) == true
+  expect(x.names[1].0) == "h"
+  expect(x.names[1].1 == Op.FuncAddr) == true
+  expect(x.names[2].0) == "g"
+  expect(x.names[2].2) == false
+  expect(x.faults) == true
+}
+
+test "the facts round trip through their encoding" {
+  let (m, fi) = facts_module()
+  let x = body_facts(m.funcs[fi])
+  let d = encode_facts(m, x) ?? b""
+  expect(d.is_empty()) == false
+  match decode_facts(m, d) {
+    Some(y) => {
+      expect(y.nvalues) == x.nvalues
+      expect(y.params) == x.params
+      expect(y.names.len()) == x.names.len()
+      for i in 0..x.names.len() {
+        expect(y.names[i].0) == x.names[i].0
+        expect(y.names[i].1 == x.names[i].1) == true
+        expect(y.names[i].2) == x.names[i].2
+      }
+      expect(y.faults) == x.faults
+    }
+    None => expect("decoded") == "not decoded"
+  }
+  // another version, or cut short: none
+  expect(decode_facts(m, d[0..d.len() - 1]) is None) == true
+}
