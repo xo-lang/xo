@@ -3,7 +3,7 @@
 ## 2026-10-21: fix: invalid UTF-8 in a text message fails at its fragment
 
 - Kind: fix
-- Commit: (filled in after the push)
+- Commit: 1a6117d1b (per fragment), 5edde9467 (within one frame)
 - Found by: the Autobahn run (cases 6.4.1 to 6.4.4 were NON-STRICT)
 - Go reference: github.com/gorilla/websocket Conn.NextReader (the utf8 check of each fragment, gorilla's utf8 reader)
 - Test: internal/llvm/testdata/golden/websocket (utf8 fail fast, utf8 split ok, utf8 split bad, utf8 unfinished); Autobahn 6.4.x
@@ -12,7 +12,9 @@ On the native backends, a text message was checked for UTF-8 only when
 it was complete, so a bad byte in an early fragment was answered with
 close 1007 at the end of the message. Each fragment is now checked as
 it arrives (a character split across fragments is carried to the next
-one), so the connection fails at the bad fragment.
+one), so the connection fails at the bad fragment. A text frame is also
+checked in the pieces of it that arrive, so a bad sequence in the middle
+of one frame fails before the rest of the frame is read.
 
 ## 2026-10-21: fix: a read after a close keeps the close error
 
