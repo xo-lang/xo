@@ -97,25 +97,25 @@ cache-stats.txt, times-*.txt, suite-*.json, m297.txt.
 
 | pass | wall | failed | backend/ files added | testbin/ files added |
 |---|---|---|---|---|
-| cold (first pass) | 49 s | 0 of 275 | +72,670 (+1.6 GB) | +275 (+0.7 GB) |
+| cold (first pass) | 49 s | 0 of 275 | +72,670 (+1.5 GiB) | +275 (+0.67 GiB) |
 | warm (same xo) | 41 s | 0 of 275 | +1,644 | 0 |
-| after a tool-only change (a comment in compiler/cli/semantic, xo rebuilt in 95 s) | 42 s | 0 of 275 | +2 | +127 (+115 MB) |
+| after a tool-only change (a comment in compiler/cli/semantic, xo rebuilt in 95 s) | 42 s | 0 of 275 | +2 | +127 (+113 MiB) |
 
 What it shows:
 
 - The tool-only change today misses the binary and test-run caches for
-  127 of the 275 tests (testbin/ +127 entries, keyed on xo's identity)
+  127 entries (testbin/ +127, keyed on xo's identity)
   but not the backend caches (+2 entries: 0275's codegen key held). The
   suite's wall stayed 42 s against 41 s warm. On this runner the part
   0297 would save costs about one second of wall, so the
   proposal's gain is not visible here.
-- The first pass was not cold: the runner's cache already held 7.0 GB
+- The first pass was not cold: the runner's cache already held 6.7 GiB
   and 428,614 backend files from other runs, so 49 s is a mostly warm
   start (72,670 new entries were still created). A truly empty cache
   was not measured; the Mac's 767 s cold against 349 s warm is the
   only cold figure.
 - The xo rebuild pruned the backend cache from 502,928 files and
-  22.2 GB to 127,785 files and 17.3 GB before the third pass, without
+  21.1 GiB to 127,785 files and 16.5 GiB before the third pass, without
   costing hits (the third pass added 2 entries). The prune frees by
   file count far more than by size, which is worth its own look.
 - The 2026-10-20 run (2442 s warm against 2414 s cold) was not usable:
