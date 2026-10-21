@@ -14,7 +14,7 @@
 
 use std/crypto
 
-const MOD_CACHE_VERSION = "xo check cache v3"
+const MOD_CACHE_VERSION = "xo check cache v4"
 
 /// Per module: the SHA-256 of its interface closure (above).
 pub fn (c: Checker) iface_closures() -> List[Str] {
@@ -153,6 +153,59 @@ pub struct ModEntry {
   /// reason such as closures, none a generic instance): XO_CHK_CACHE=auto
   /// skips only such a module.
   pub fe_complete: Bool = false
+  /// The functions of the module whose bodies the build built from
+  /// source (a generic function, a body the front end cache skipped, a
+  /// contract's inner body) and the inferred functions of the module
+  /// they read, by eager_name: checked before the whole-program passes
+  /// even when the module is skipped.
+  pub eager: List[Str] = []
+}
+
+/// A function's name in ModEntry.eager: its receiver type's and its own.
+pub fn (c: Checker) eager_name(fo: Int) -> Str {
+  let o = c.objs[fo]
+  let r = if o.recv >= 0 { c.objs[o.recv].name.to_str() ?? "" } else { "" }
+  "${r}.${o.name.to_str() ?? ""}"
+}
+
+/// ModEntry.eager of module m: the functions fos and, in turn, the
+/// inferred functions of m their bodies' effects name.
+fn (c: Checker) eager_of(m: Int, fos: Map[Int, Bool]) -> List[Str] {
+  var all = fos
+  var work: List[Int] = []
+  for (fo, _) in fos {
+    work.push(fo)
+  }
+  while !work.is_empty() {
+    let f = work.pop() ?? -1
+    if f < 0 {
+      continue
+    }
+    var sets = [c.objs[f].body_eff]
+    var seen: Map[Int, Bool] = {}
+    while !sets.is_empty() {
+      let s = sets.pop() ?? -1
+      if s < 0 || s >= c.esets.len() || seen.contains(s) {
+        continue
+      }
+      seen[s] = true
+      for it in c.esets[s] {
+        if it.evar >= 0 && it.evar < c.evars.len() {
+          sets.push(c.evars[it.evar])
+        }
+        let g = it.fn_obj
+        if g >= 0 && c.objs[g].declared < 0 && c.objs[g].module == m && !all.contains(g) {
+          all[g] = true
+          work.push(g)
+        }
+      }
+    }
+  }
+  var out: List[Str] = []
+  for (fo, _) in all {
+    out.push(c.eager_name(fo))
+  }
+  out.sort()
 }
 
 /// The files of module m by path.
@@ -183,6 +236,14 @@ fn (var c: Checker) mod_cache_replay() {
       keep.push(d)
     }
   }
+  // the zone calls of its eagerly checked bodies: the entry's below
+  var names: List[NameRec] = []
+  for rec in c.names {
+    if !skipped.contains(rec.file) || (rec.name.to_str() ?? "") != "zone" {
+      names.push(rec)
+    }
+  }
+  c.names = names
   for m in c.order {
     if c.mod_skip.contains(m) {
       let e = c.mod_entries.get(m) ?? ModEntry{}
@@ -241,7 +302,7 @@ pub fn (c: Checker) mod_cached_scan(m: Int) -> Option[(Bool, Bool)] {
 /// full this time, with no error in its files, by its key, with the SSA
 /// builder's scans of it (scans: module to (tasks, budgets); a module
 /// the builder did not scan is not stored).
-pub fn (c: Checker) mod_cache_entries(scans: Map[Int, (Bool, Bool)], nofe: Map[Int, Bool]) -> List[(Str, Bytes)] {
+pub fn (c: Checker) mod_cache_entries(scans: Map[Int, (Bool, Bool)], nofe: Map[Int, Bool], nofe_fos: Map[Int, Map[Int, Bool]]) -> List[(Str, Bytes)] {
   var out: List[(Str, Bytes)] = []
   if c.mod_cache_dir.is_empty() {
     return out
@@ -276,6 +337,7 @@ pub fn (c: Checker) mod_cache_entries(scans: Map[Int, (Bool, Bool)], nofe: Map[I
     e.tasks = t
     e.budgets = b
     e.fe_complete = !nofe.contains(m)
+    e.eager = c.eager_of(m, nofe_fos.get(m) ?? {})
     e.zones = c.mod_zones(paths)
     out.push((key, encode_mod_entry(e)))
   }
@@ -307,6 +369,10 @@ fn encode_mod_entry(e: ModEntry) -> Bytes {
   put_i(b, if e.tasks { 1 } else { 0 })
   put_i(b, if e.budgets { 1 } else { 0 })
   put_i(b, if e.fe_complete { 1 } else { 0 })
+  put_i(b, e.eager.len())
+  for n in e.eager {
+    put_s(b, n)
+  }
   put_i(b, e.zones.len())
   for (file, off, line, col, mp) in e.zones {
     put_s(b, file)
@@ -397,6 +463,13 @@ fn decode_mod_entry(d: Bytes) -> Option[ModEntry] {
     return None
   }
   var e = ModEntry{tasks: r.i() == 1, budgets: r.i() == 1, fe_complete: r.i() == 1}
+  let ng = r.i()
+  if !r.ok || ng > d.len() {
+    return None
+  }
+  for _ in 0..ng {
+    e.eager.push(r.s())
+  }
   let nz = r.i()
   if !r.ok || nz > d.len() {
     return None
@@ -473,7 +546,7 @@ pub fn (c: Checker) effect_reads_across_modules() -> List[Str] {
         if it.evar >= 0 && it.evar < c.evars.len() {
           work.push(c.evars[it.evar])
         }
-        if it.fn_obj >= 0 && c.objs[it.fn_obj].declared < 0 && c.objs[it.fn_obj].module != m {
+        if it.fn_obj >= 0 && c.objs[it.fn_obj].declared < 0 && (c.objs[it.fn_obj].module != m || (c.lazy_fns.get(it.fn_obj) ?? false)) {
           out.push("${c.display_name(f)} -> ${c.display_name(it.fn_obj)}")
         }
       }

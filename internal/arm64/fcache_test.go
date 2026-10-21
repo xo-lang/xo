@@ -1200,3 +1200,104 @@ fn main(os: Os) uses stdio {
 		t.Error("the build replaying renumbered sites and found thunks differs from the cache-off build")
 	}
 }
+
+// TestModuleCheckAutoGeneric: XO_CHK_CACHE=auto skips a module whose
+// bodies include a generic function (always built from source): its
+// entry lists the function and the inferred function its body reads
+// (ModEntry.eager), checked before the whole-program passes, so the
+// warm build and a build after an edit of another module skip it with
+// no fallback and are the cache-off builds' binaries.
+func TestModuleCheckAutoGeneric(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-chkgen-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	own := filepath.Join(work, "p")
+	if err := os.MkdirAll(filepath.Join(own, "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"xo.mod": "module example.com/p\n",
+		"lib/lib.xo": `fn clamp(i: Int, n: Int) -> Int {
+  if i < 0 { 0 } else if i >= n { n - 1 } else { i }
+}
+
+pub fn pick[T](xs: List[T], i: Int) -> T {
+  xs[clamp(i, xs.len())]
+}
+
+pub fn total(xs: List[Int]) -> Int {
+  var s = 0
+  for x in xs {
+    s += x
+  }
+  s
+}
+`,
+		"main.xo": `use example.com/p/lib
+
+fn main(os: Os) uses stdio {
+  let xs = [4, 5, 6]
+  os.stdio.println("v1 ${lib.pick(xs, 9)} ${lib.pick(["a", "b"], -1)} ${lib.total(xs)}")
+}
+`,
+	}
+	for p, s := range files {
+		if err := os.WriteFile(filepath.Join(own, p), []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := filepath.Join(work, "prog")
+	build := func(cache string, env ...string) ([]byte, string) {
+		t.Helper()
+		os.Remove(out)
+		cmd := exec.Command(xo, "build", "--backend=arm64", "--phase-times", "-o", out, ".")
+		cmd.Dir = own
+		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache), env...)
+		log, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("xo build %v: %v\n%s", env, err, log)
+		}
+		b, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b, string(log)
+	}
+	skipped := regexp.MustCompile(`cache chk ([1-9]\d*)/\d+ modules`)
+	cache := filepath.Join(work, "cache")
+	auto := []string{"XO_BACKEND_CACHE=on", "XO_CHK_CACHE=auto"}
+	for _, v := range []string{"v1", "v2"} {
+		if v == "v2" {
+			// an edit of main's module only: lib's entry still applies
+			m := strings.Replace(files["main.xo"], "v1 ", "v2 ", 1)
+			if err := os.WriteFile(filepath.Join(own, "main.xo"), []byte(m), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			build(cache, auto...)
+		}
+		off, _ := build(filepath.Join(work, "off"), "XO_BACKEND_CACHE=off")
+		warm, log := build(cache, auto...)
+		if strings.Contains(log, "module check cache skipped") {
+			t.Errorf("%s: the build fell back:\n%s", v, log)
+		}
+		if !skipped.MatchString(log) {
+			t.Errorf("%s: no module skipped:\n%s", v, log)
+		}
+		if !bytes.Equal(warm, off) {
+			t.Errorf("%s: the build with XO_CHK_CACHE=auto differs from the cache-off build", v)
+		}
+	}
+}

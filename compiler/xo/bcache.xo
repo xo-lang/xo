@@ -423,7 +423,7 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
   // the module check cache's entries: the modules checked in full now
   var mn = 0
   var mdiff: List[Str] = []
-  for (k, e) in c.mod_cache_entries(b.mod_scans, b.nofe_mods) {
+  for (k, e) in c.mod_cache_entries(b.mod_scans, b.nofe_mods, b.nofe_fos) {
     let p = entry_path(c.mod_cache_dir, "chk", k)
     if c.mod_verify {
       match os.fs.read(p) {

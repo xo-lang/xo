@@ -101,6 +101,14 @@ fn (c: Checker) body_want(x: Int) -> Want {
 fn (var c: Checker) check_module(m: Int) {
   c.cur_mod = m
   let lazy = c.lazy_mod(m)
+  // a skipped module's bodies the build will build from source
+  // (ModEntry.eager): checked now, before the whole-program passes
+  var eager: Map[Str, Bool] = {}
+  if c.mod_skip.contains(m) {
+    for n in (c.mod_entries.get(m) ?? ModEntry{}).eager {
+      eager[n] = true
+    }
+  }
   for f in c.mods[m].files {
     c.set_file(f)
     let decls = c.files[f].ast.decls
@@ -109,7 +117,7 @@ fn (var c: Checker) check_module(m: Int) {
         FnDecl(d: fd) => {
           let fo = c.files[f].decl_objs[i]
           if fo >= 0 && (fd.recv != None || c.is_scope_entry(f, i, fd.name.name)) {
-            if lazy {
+            if lazy && (eager.is_empty() || !eager.contains(c.eager_name(fo))) {
               c.lazy_fns[fo] = true
               c.check_fn_defaults(fo)
             } else {

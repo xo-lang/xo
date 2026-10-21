@@ -36,7 +36,9 @@ fn (var b: Builder) ensures_of(fo: Int) -> List[parser.Clause] {
 /// TestStdChecks reports; the build stops with it.
 fn (var b: Builder) check_lazy(fo: Int) {
   let m = b.c.objs[fo].module
-  if m >= 0 && b.c.mod_skip.contains(m) {
+  if m >= 0 && b.c.mod_skip.contains(m) && (b.c.lazy_fns.get(fo) ?? false) {
+    // a body of a skipped module that was not checked before the
+    // whole-program passes (not in its entry's eager list)
     b.skip_src[m] = true
   }
   let errs = b.c.check_lazy(fo)

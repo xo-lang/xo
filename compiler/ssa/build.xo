@@ -293,10 +293,14 @@ pub struct Builder {
   /// garbage collector"), once each
   pub lazy_diags: List[check.Diag] = []
   lazy_seen: Map[Str, Bool] = {}
-  /// The modules of which a body was built with no front end cache entry
-  /// made or replayed (a skip reason, a generic instance, a contract's
-  /// inner body, a closure): ModEntry.fe_complete is false for them
+  /// The modules of which a closure's body was built with no front end
+  /// cache entry: ModEntry.fe_complete is false for them
   pub nofe_mods: Map[Int, Bool] = {}
+  /// The function objects whose bodies were built with no front end
+  /// cache entry made or replayed (a skip reason, a generic instance, a
+  /// contract's inner body), by module: ModEntry.eager, checked even
+  /// when the module is skipped
+  pub nofe_fos: Map[Int, Map[Int, Bool]] = {}
   /// Per program module: uses_os_tasks and uses_budgets of it, for the
   /// module check cache.
   pub mod_scans: Map[Int, (Bool, Bool)] = {}
@@ -666,7 +670,7 @@ fn (var b: Builder) run_job_fe(j: Job) {
       b.run_job0(j)
       let eo = b.fe_entry(r, fi)
       if eo == None {
-        b.nofe_mods[b.c.objs[fo].module] = true
+        b.nofe_fo(fo)
       }
       if let Some(e) = eo {
         match entry {
@@ -725,15 +729,23 @@ fn (var b: Builder) run_job_fe(j: Job) {
   }
   // built with no entry: a generic instance, a body with no key, a
   // contract's inner body, a test
-  let jm = match j {
-    Body(fo, _, _) => b.c.objs[fo].module
-    Inner(fo, _, _) => b.c.objs[fo].module
-    _ => -1
-  }
-  if jm >= 0 {
-    b.nofe_mods[jm] = true
+  match j {
+    Body(fo, _, _) => b.nofe_fo(fo)
+    Inner(fo, _, _) => b.nofe_fo(fo)
+    _ => {}
   }
   b.run_job0(j)
+}
+
+/// Function object fo's body was built from source (nofe_fos).
+fn (var b: Builder) nofe_fo(fo: Int) {
+  let m = b.c.objs[fo].module
+  if m < 0 {
+    return
+  }
+  var s = b.nofe_fos.get(m) ?? {}
+  s[fo] = true
+  b.nofe_fos[m] = s
 }
 
 fn (var b: Builder) run_job0(j: Job) {

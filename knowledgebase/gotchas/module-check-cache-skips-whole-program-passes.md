@@ -47,3 +47,17 @@ sample, warm and with the front end cache's entries removed, against
 the cache-off binaries). Measured ceiling (XO_CHK_CACHE=1, edits of xo):
 the check phase of a body-only edit 216 to 273 ms against 753 to 867 ms
 without skipping, peak memory about 3.1 GB against 5.3 GB.
+
+Generic functions (2026-10-20): after the closure relocation auto still
+skipped 3 of xo's 21 modules on an edit (load 20 to 25, check 0.87 to
+0.92 s): a generic function's instances are always built from source,
+so every module declaring one had fe_complete false. Since then a module
+entry lists the functions whose bodies its build built from source (a
+generic function, a body the front end cache skipped, a contract's inner
+body) and, in turn, the inferred functions of the module their effects
+name (ModEntry.eager, check cache v4); a skipped module checks those
+bodies before the whole-program passes, and only a closure built apart
+still keeps a module from being skipped. A checked body naming a lazy
+inferred function of its own module now also makes the build unsafe
+(effect_reads_across_modules). Test: internal/arm64
+TestModuleCheckAutoGeneric.
