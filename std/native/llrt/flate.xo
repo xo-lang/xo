@@ -1944,124 +1944,6 @@ fn (var s: InStream) compact() {
 
 fn be32(b: Bytes, i: Int) -> Int { (byte_of(b, i) << 24) | (byte_of(b, i + 1) << 16) | (byte_of(b, i + 2) << 8) | byte_of(b, i + 3) }
 
-// The steps of push: 1 go on, 0 wait for more input (or, with last, the
-// end), or the error.
-
-fn (var s: InStream) gzip_head(last: Bool) -> Int ! Str {
-  match gzip_header(s.f.data, s.f.pos, s.t) {
-    Ok(p) => {
-      s.f.pos = p
-      s.f.start = p
-      s.f.out_start = s.f.out.len()
-      s.sum = 0
-      s.size = 0
-      s.state = 1
-      1
-    }
-    Err(e) => {
-      if e == "EOF" && s.size == -1 {
-        // after a member: the stream may end here
-        if last {
-          s.state = 3
-        }
-        return 0
-      }
-      if !last && (e == "EOF" || e == unexpected_eof()) {
-        return 0
-      }
-      Err(e)
-    }
-  }
-}
-
-fn (var s: InStream) zlib_head(last: Bool) -> Int ! Str {
-  let n = s.f.end
-  if n - s.f.pos < 2 {
-    if last {
-      return Err(unexpected_eof())
-    }
-    return 0
-  }
-  let c0 = byte_of(s.f.data, s.f.pos)
-  let c1 = byte_of(s.f.data, s.f.pos + 1)
-  if (c0 & 15) != 8 || (c0 >> 4) > 7 || ((c0 << 8) | c1) % 31 != 0 {
-    return Err("zlib: invalid header")
-  }
-  var at = s.f.pos + 2
-  if (c1 & 0x20) != 0 {
-    if n - at < 4 {
-      if last {
-        return Err(unexpected_eof())
-      }
-      return 0
-    }
-    if be32(s.f.data, at) != 1 {
-      return Err("zlib: invalid dictionary")
-    }
-    at += 4
-  }
-  s.f.pos = at
-  s.f.start = at
-  s.state = 1
-  1
-}
-
-/// One block, from its start again when its input is short (not last).
-fn (var s: InStream) one_block(last: Bool) -> Int ! Str {
-  let pos = s.f.pos
-  let b = s.f.b
-  let nb = s.f.nb
-  let olen = s.f.out.len()
-  let r = s.f.block(s.fixed)
-  if let Ok(final) = r {
-    if final {
-      s.state = if s.format == 0 { 3 } else { 2 }
-    }
-    return 1
-  }
-  let e = match r {
-    Ok(_) => ""
-    Err(x) => x
-  }
-  if e == unexpected_eof() && !last {
-    s.f.pos = pos
-    s.f.b = b
-    s.f.nb = nb
-    s.f.out = s.f.out[0..olen]
-    return 0
-  }
-  Err(e)
-}
-
-/// The trailer: gzip's CRC-32 and size, zlib's Adler-32.
-fn (var s: InStream) trailer(last: Bool) -> Int ! Str {
-  let need = if s.format == 1 { 8 } else { 4 }
-  if s.f.end - s.f.pos < need {
-    if last {
-      return Err(unexpected_eof())
-    }
-    return 0
-  }
-  if s.format == 1 {
-    if get_u32(s.f.data, s.f.pos) != s.sum || get_u32(s.f.data, s.f.pos + 4) != (s.size & 0xffffffff) {
-      return Err("gzip: invalid checksum")
-    }
-    s.f.pos += 8
-    s.f.b = 0
-    s.f.nb = 0
-    s.state = 0
-    // the next member, or the end
-    s.size = -1
-    return 1
-  }
-  if be32(s.f.data, s.f.pos) != s.ab {
-    return Err("zlib: invalid checksum")
-  }
-  s.f.pos += 4
-  s.state = 3
-  1
-}
-
 /// Decodes what the input allows: the output, or the error. last: no more
 /// input will come (unexpected EOF then ends it).
 pub fn (var s: InStream) push(data: Bytes, last: Bool) -> List[Int] ! Str {
@@ -2072,18 +1954,121 @@ pub fn (var s: InStream) push(data: Bytes, last: Bool) -> List[Int] ! Str {
     s.f.end = s.f.data.len()
   }
   var out: List[Int] = []
-  var go = 1
-  while s.state != 3 && go == 1 {
-    if s.state == 0 {
-      go = if s.format == 1 { s.gzip_head(last)? } else { s.zlib_head(last)? }
-    } else if s.state == 1 {
-      go = s.one_block(last)?
-      for x in s.drain() {
-        out.push(x)
+  while s.state != 3 {
+    let n = s.f.end
+    if s.state == 0 && s.format == 1 {
+      match gzip_header(s.f.data, s.f.pos, s.t) {
+        Ok(p) => {
+          s.f.pos = p
+          s.f.start = p
+          s.f.out_start = s.f.out.len()
+          s.sum = 0
+          s.size = 0
+          s.state = 1
+        }
+        Err(e) => {
+          if e == "EOF" && s.size == -1 {
+            // after a member: the stream may end here
+            if last {
+              s.state = 3
+            }
+            break
+          }
+          if !last && (e == "EOF" || e == unexpected_eof()) {
+            break
+          }
+          return Err(e)
+        }
       }
-    } else {
-      go = s.trailer(last)?
+      continue
     }
+    if s.state == 0 {
+      // zlib: the header (and a preset dictionary's id, 1 for the empty one)
+      if n - s.f.pos < 2 {
+        if last {
+          return Err(unexpected_eof())
+        }
+        break
+      }
+      let c0 = byte_of(s.f.data, s.f.pos)
+      let c1 = byte_of(s.f.data, s.f.pos + 1)
+      if (c0 & 15) != 8 || (c0 >> 4) > 7 || ((c0 << 8) | c1) % 31 != 0 {
+        return Err("zlib: invalid header")
+      }
+      var at = s.f.pos + 2
+      if (c1 & 0x20) != 0 {
+        if n - at < 4 {
+          if last {
+            return Err(unexpected_eof())
+          }
+          break
+        }
+        if be32(s.f.data, at) != 1 {
+          return Err("zlib: invalid dictionary")
+        }
+        at += 4
+      }
+      s.f.pos = at
+      s.f.start = at
+      s.state = 1
+      continue
+    }
+    if s.state == 1 {
+      // one block, from its start again when its input is short (not last)
+      let pos = s.f.pos
+      let b = s.f.b
+      let nb = s.f.nb
+      let olen = s.f.out.len()
+      match s.f.block(s.fixed) {
+        Ok(final) => {
+          if final {
+            s.state = if s.format == 0 { 3 } else { 2 }
+          }
+          for x in s.drain() {
+            out.push(x)
+          }
+        }
+        Err(e) => {
+          if e == unexpected_eof() && !last {
+            s.f.pos = pos
+            s.f.b = b
+            s.f.nb = nb
+            s.f.out = s.f.out[0..olen]
+            for x in s.drain() {
+              out.push(x)
+            }
+            break
+          }
+          return Err(e)
+        }
+      }
+      continue
+    }
+    // the trailer: gzip's CRC-32 and size, zlib's Adler-32
+    let need = if s.format == 1 { 8 } else { 4 }
+    if n - s.f.pos < need {
+      if last {
+        return Err(unexpected_eof())
+      }
+      break
+    }
+    if s.format == 1 {
+      if get_u32(s.f.data, s.f.pos) != s.sum || get_u32(s.f.data, s.f.pos + 4) != (s.size & 0xffffffff) {
+        return Err("gzip: invalid checksum")
+      }
+      s.f.pos += 8
+      s.f.b = 0
+      s.f.nb = 0
+      s.state = 0
+      // the next member, or the end
+      s.size = -1
+      continue
+    }
+    if be32(s.f.data, s.f.pos) != s.ab {
+      return Err("zlib: invalid checksum")
+    }
+    s.f.pos += 4
+    s.state = 3
   }
   s.compact()
   if last && s.state != 3 {
