@@ -363,11 +363,12 @@ fn (var c: Checker) infer(e: Expr, hint: Int) -> Int {
 fn (var c: Checker) infer0(e: Expr, hint: Int) -> Int {
   match e {
     BadExpr(..) => c.bad_ty
-    IntLit(..) => {
-      if hint >= 0 && c.is_int(hint) {
-        return c.resolve(hint)
-      }
-      c.named("Int")
+    IntLit(span: span, raw: raw, value: value) => {
+      let neg = c.neg_lit
+      c.neg_lit = false
+      let t = if hint >= 0 && c.is_int(hint) { c.resolve(hint) } else { c.named("Int") }
+      c.int_fits(span, raw, value, t, neg)
+      t
     }
     FloatLit(..) => {
       if hint >= 0 && c.is_prelude(hint, "Float32") {
@@ -1081,6 +1082,75 @@ fn (var c: Checker) rune_fits(span: Span, raw: Bytes, value: Int, t: Int) {
   }
 }
 
+/// The bounds of the integer type t, as decimal magnitudes: the largest
+/// value and the magnitude of the smallest ("" for none, an unsigned
+/// type); none for a type of no fixed width.
+fn int_bounds(name: Str) -> (Bytes, Bytes, Bool) {
+  match name {
+    "Int" | "Int64" => (b"9223372036854775807", b"9223372036854775808", true)
+    "Int32" => (b"2147483647", b"2147483648", true)
+    "Int16" => (b"32767", b"32768", true)
+    "Int8" => (b"127", b"128", true)
+    "UInt64" => (b"18446744073709551615", b"", true)
+    "UInt32" => (b"4294967295", b"", true)
+    "UInt16" => (b"65535", b"", true)
+    "UInt8" => (b"255", b"", true)
+    _ => (b"", b"", false)
+  }
+}
+
+/// a <= b for decimal magnitudes without leading zeros.
+fn dec_le(a: Bytes, b: Bytes) -> Bool {
+  if a.len() != b.len() {
+    return a.len() < b.len()
+  }
+  a <= b
+}
+
+/// The integer literal (value its decimal digits) fits t, negated when
+/// neg (a minus written on it): error XO0421 otherwise (2026-10-21: an
+/// Int8 300 printed 300 on arm64 and failed the Go build; 2^63 was
+/// XO1201 on the native backends).
+fn (var c: Checker) int_fits(span: Span, raw: Bytes, value: Bytes, t: Int, neg: Bool) {
+  if c.tys[t].kind != TyKind.Named {
+    return
+  }
+  let n = text(c.objs[c.tys[t].obj].name)
+  let (max, min, known) = int_bounds(n)
+  if !known {
+    return
+  }
+  // the digits without leading zeros
+  var i = 0
+  while i + 1 < value.len() && value[i] == 48 {
+    i += 1
+  }
+  let v = value[i..]
+  if neg {
+    if v == b"0" || (!min.is_empty() && dec_le(v, min)) {
+      return
+    }
+    let d = c.error("XO0421", span, "the integer literal -${text(raw)} does not fit `${n}`")
+    if min.is_empty() {
+      c.note(d, "`${n}` is unsigned: its values are 0 to ${text(max)}")
+    } else {
+      c.note(d, "`${n}` holds -${text(min)} to ${text(max)}")
+    }
+    return
+  }
+  if dec_le(v, max) {
+    return
+  }
+  let d = c.error("XO0421", span, "the integer literal ${text(raw)} does not fit `${n}`")
+  if min.is_empty() {
+    c.note(d, "`${n}` holds 0 to ${text(max)}")
+  } else if v == min {
+    c.note(d, "`${n}` holds -${text(min)} to ${text(max)}; its minimum is written with the minus on the literal, `-${text(raw)}`, not `-(${text(raw)})`")
+  } else {
+    c.note(d, "`${n}` holds -${text(min)} to ${text(max)}")
+  }
+}
+
 /// n in upper case hex, at least 4 digits (Go's %04X).
 fn hex4(n: Int) -> Str {
   let digits = "0123456789ABCDEF".bytes()
@@ -1147,7 +1217,13 @@ fn (var c: Checker) unary(span: Span, op: parser.Kind, x: Expr, hint: Int) -> In
       c.named("Bool")
     }
     Minus => {
+      // a minus written on the literal itself makes its type's minimum
+      // (`-128` an Int8); a parenthesized literal must fit alone
+      if let IntLit(..) = x {
+        c.neg_lit = true
+      }
       let t = c.infer(x, hint)
+      c.neg_lit = false
       if c.is_bad(t) {
         return c.bad_ty
       }

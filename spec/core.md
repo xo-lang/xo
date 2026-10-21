@@ -527,6 +527,10 @@ b"raw bytes\x00"                          // Bytes, escapes but no interpolation
   also contain `"`, which makes JSON fixtures easy to write.
 - An integer literal takes the integer type expected in context (`Int32`,
   `UInt8`, ...), defaulting to `Int`. It never becomes a `Float`; write `2.0`.
+  Its value must fit that type: error `XO0421` otherwise (`300` as an
+  `Int8`, a negative literal as an unsigned type). A minus written on the
+  literal makes a negative literal, so a type's minimum is `-128` or
+  `-9223372036854775808`; a parenthesized literal, `-(128)`, must fit alone.
 - A rune literal is a `Rune`, except where an integer type is expected (an
   annotation, a parameter, the other operand of an operator, a pattern on
   an integer, a `const` of an integer type): there it is that type's value
@@ -2648,6 +2652,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0413` | error | checker | unknown derive argument or `case:` value, or an argument on a derive that takes none (core 2.2) |
 | `XO0414` | warning | checker | a wire name on a struct with no derive that maps fields to keys (core 2.2) |
 | `XO0420` | error | checker | constant std/time layout is invalid: unknown field, bad field form, or stray brace (std.md 13.3) |
+| `XO0421` | error | checker | integer literal does not fit the integer type it takes in context (1.6) |
 | `XO0501` | error | checker | var method called on a non var binding (core 3.4) |
 | `XO0502` | error | checker | assignment to an immutable binding or to a captured variable (core 5.2, 3.3) |
 | `XO0503` | error | checker | one variable or overlapping places passed to two `var` parameters of one call (core 5.2, decision 0111) |

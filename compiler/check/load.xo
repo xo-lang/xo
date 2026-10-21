@@ -221,6 +221,8 @@ pub struct Checker {
   /// The type of an expression before implicit conversion (info.go
   /// NaturalType): recorded by infer.
   pub nat_at: Map[Int, Int] = {}
+  /// the next IntLit inferred has a minus written on it (unary, XO0421)
+  pub neg_lit: Bool = false
   /// The variant an identifier, selector, or call constructs (Ctor).
   pub ctor_at: Map[Int, VRef] = {}
   /// The type of a conversion or newtype construction `T(x)` (TypeCall).

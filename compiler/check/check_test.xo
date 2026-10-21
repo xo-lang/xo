@@ -30,6 +30,10 @@ const PRELUDE = """
   fn (var xs: List[T]) push(x: T)
   struct Atomic {}
   fn (a: Atomic) add(n: Int) -> Int
+  struct Int8 {}
+  struct Int32 {}
+  struct UInt8 {}
+  struct UInt64 {}
   """
 
 /// Checks the module in dir after writing files (path, source) and the
@@ -161,6 +165,36 @@ test "a value of the wrong type is XO0401" {
     """)])?
   let ls = lines(out)
   expect(ls.any(fn(l) { l.contains("\"XO0401\"") && l.contains("expected `Str`, found `Int`") })) == true
+}
+
+test "an integer literal must fit its type (XO0421)" {
+  let out = check_files(os, "r", [("r/main.xo", """
+    const MIN: Int = -9223372036854775808
+
+    fn small(b: Int8) -> Int8 { b }
+
+    fn f() -> List[Int] {
+      let ok8: Int8 = -128
+      let big8: Int8 = 300
+      let low8: Int8 = -129
+      let paren8: Int8 = -(128)
+      let neg: UInt8 = -1
+      let zero: UInt8 = -0
+      let top: UInt64 = 18446744073709551615
+      let over = 9223372036854775808
+      let hex: Int32 = 0x8000_0000
+      let call = small(128)
+      [MIN, Int(ok8), Int(big8), Int(low8), Int(paren8), Int(neg), Int(zero), Int(top), over, Int(hex), Int(call)]
+    }
+    """)])?
+  let ls = lines(out).filter(fn(l) { l.contains("\"XO0421\"") })
+  expect(ls.len()) == 7
+  expect(ls.any(fn(l) { l.contains("the integer literal 300 does not fit `Int8`") })) == true
+  expect(ls.any(fn(l) { l.contains("the integer literal -129 does not fit `Int8`") })) == true
+  expect(ls.filter(fn(l) { l.contains("the integer literal 128 does not fit `Int8`") }).len()) == 2
+  expect(ls.any(fn(l) { l.contains("the integer literal -1 does not fit `UInt8`") })) == true
+  expect(ls.any(fn(l) { l.contains("the integer literal 9223372036854775808 does not fit `Int`") })) == true
+  expect(ls.any(fn(l) { l.contains("the integer literal 0x8000_0000 does not fit `Int32`") })) == true
 }
 
 test "a file with a parse error is checked past it, as the Go checker does" {
