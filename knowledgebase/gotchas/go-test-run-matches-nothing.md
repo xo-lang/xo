@@ -20,6 +20,5 @@ must exist; go test treats matching nothing, or fewer tests, as success.
 Fix: in a gate, fail a step whose output says `no tests to run`, and for
 named tests run `-v` and require one `--- PASS: NAME` line per name in the
 filter (anchor it: `-run '^(TestA|TestB)$'`, and spell subtests in full,
-`TestGolden/NAME`). Xo Publish's gates do both
-(~/xo-lead/notes/xo-publish/gates/common.sh: `step` fails on the warning,
-`gotests PKG 'TestA|TestB'` checks each name).
+`TestGolden/NAME`). scripts/lead/gatelib.sh does both (`gotests PKG
+'TestA|TestB'`, `no_tests_check FILE`); source it from a gate script.

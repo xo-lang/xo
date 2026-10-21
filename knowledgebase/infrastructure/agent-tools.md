@@ -183,6 +183,12 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   given out again, even if its branch is dropped (core 10: a code keeps
   its meaning). A code used twice on main fails -short
   (internal/repotest explainCodes and TestSpecListsEveryCode).
+- Gate scripts: `. ~/xo-lead/agents/gatelib.sh` (scripts/lead/gatelib.sh,
+  installed by install.sh), then `gotests PKG 'TestA|TestB'` for the
+  proving tests (exactly those names, -v, one `--- PASS` line each) and
+  `no_tests_check FILE` after any other go test step: a `-run` filter that
+  matches nothing, or only some names, passes otherwise
+  (gotchas/go-test-run-matches-nothing.md). Last verified: 2026-10-21.
 - Rebase or merge conflicts: `~/xo-lead/agents/resolve-addadd FILE...`
   (or `python3 -I ~/xo-lead/agents/resolve-addadd.py FILE...`; source
   scripts/lead/resolve, installed by scripts/lead/install.sh) merges each
