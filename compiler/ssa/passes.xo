@@ -77,25 +77,9 @@ fn (m: Module) may_fault() -> List[Bool] {
 }
 
 /// Whether function fi has an operation that faults, and the user
-/// functions it calls (may_fault's scan of one function).
-fn fault_scan(m: Module, fi: Int) -> (Bool, List[Int]) {
-  let f = m.funcs[fi]
-  var mf = false
-  var cs: List[Int] = []
-  for bl in f.blocks {
-    for v in bl.instrs {
-      let x = f.values[v]
-      if value_self_faults(x) {
-        mf = true
-      }
-      let g = user_callee(m, x)
-      if g >= 0 {
-        cs.push(g)
-      }
-    }
-  }
-  (mf, cs)
-}
+/// functions it calls (may_fault's scan of one function), from its body
+/// facts when it is not decoded (decision 0283 stage B).
+fn fault_scan(m: Module, fi: Int) -> (Bool, List[Int]) { m.fault_facts(fi) }
 
 /// fault_scan of every function, on up to m.jobs tasks, in order.
 fn fault_scans(m: Module) -> List[(Bool, List[Int])] {

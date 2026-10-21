@@ -409,10 +409,9 @@ fn func_sig(m: ssa.Module, n: Str, taken: Map[Str, Bool], by_name: Map[Str, Int]
     b.write(" ${tk_of(tk, r)}")
   }
   b.write(" params")
-  if !f.blocks.is_empty() {
-    for p in f.blocks[0].params {
-      b.write(" ${tk_of(tk, f.values[p].ty)}")
-    }
+  // a function not decoded: its body facts' (decision 0283 stage B)
+  for t in m.param_types(fi) {
+    b.write(" ${tk_of(tk, t)}")
   }
   b.write(" captures")
   for c in f.captures {
@@ -451,17 +450,20 @@ fn fn_key(m: ssa.Module, fi: Int, os: Str, id: Str, taken: Map[Str, Bool], by_na
   b.write("self ${func_sig(m, f.name, taken, by_name, tk)} main=${f.name == "main"}\n")
   var names: List[Str] = []
   var seen: Map[Str, Bool] = {}
+  if f.ckey.is_empty() && m.facts.contains(fi) {
+    // a function not decoded has the key of its entry (decision 0283 B)
+    fault("arm64.fn_key: ${f.name} has body facts but no cache key")
+  }
   if !f.ckey.is_empty() {
     // the function by the back-end cache's key of it (Func.ckey, decision
     // 0220 addendum stage D 2c), which determines what the text below
     // prints and more (its lines always), then the names it uses
     b.write("ckey ${f.ckey}\n")
-    for x in f.values {
-      if let S(s) = x.aux {
-        if !seen.contains(s) {
-          seen[s] = true
-          names.push(s)
-        }
+    // a function not decoded: its body facts' names (decision 0283 B)
+    for s in m.value_names(fi) {
+      if !seen.contains(s) {
+        seen[s] = true
+        names.push(s)
       }
     }
   } else {

@@ -22,11 +22,11 @@ fn (var g: G) by_ref_of(fi: Int) -> List[Bool] {
   var br: List[Bool] = []
   let f = g.m.funcs[fi]
   if !f.indirect && !f.entry && !g.addr_taken.contains(f.name) && f.name != "main" {
-    let ps = f.blocks[0].params
+    // a function not decoded: its body facts' types (decision 0283 B)
     var any = false
     var flags: List[Bool] = []
-    for p in ps {
-      let big = g.big_by_ref(f.values[p].ty)
+    for t in g.m.param_types(fi) {
+      let big = g.big_by_ref(t)
       flags.push(big)
       any = any || big
     }

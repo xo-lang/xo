@@ -201,3 +201,70 @@ pub fn (m: Module) value_count(fi: Int) -> Int {
     None => m.funcs[fi].values.len()
   }
 }
+
+/// The entry block's parameter types of function fi, from its facts or
+/// its body (arm64 func_sig, by_ref_of).
+pub fn (m: Module) param_types(fi: Int) -> List[Int] {
+  if let Some(x) = m.facts.get(fi) {
+    return x.params
+  }
+  let f = m.funcs[fi]
+  var out: List[Int] = []
+  if !f.blocks.is_empty() {
+    for p in f.blocks[0].params {
+      out.push(f.values[p].ty)
+    }
+  }
+  out
+}
+
+/// The names every value of function fi uses (Aux.S), in value order
+/// with repeats, from its facts or its body (arm64 fn_key).
+pub fn (m: Module) value_names(fi: Int) -> List[Str] {
+  var out: List[Str] = []
+  if let Some(x) = m.facts.get(fi) {
+    for (s, _, _) in x.names {
+      out.push(s)
+    }
+    return out
+  }
+  for x in m.funcs[fi].values {
+    if let S(s) = x.aux {
+      out.push(s)
+    }
+  }
+  out
+}
+
+/// Whether an instruction of function fi's blocks faults by itself, and
+/// the user functions those instructions call (Module.may_fault), from
+/// its facts or its body.
+pub fn (m: Module) fault_facts(fi: Int) -> (Bool, List[Int]) {
+  var cs: List[Int] = []
+  if let Some(x) = m.facts.get(fi) {
+    for (s, op, inb) in x.names {
+      if inb && op == Op.Call {
+        let g = m.func_index(s)
+        if g >= 0 {
+          cs.push(g)
+        }
+      }
+    }
+    return (x.faults, cs)
+  }
+  let f = m.funcs[fi]
+  var mf = false
+  for bl in f.blocks {
+    for v in bl.instrs {
+      let x = f.values[v]
+      if value_self_faults(x) {
+        mf = true
+      }
+      let g = user_callee(m, x)
+      if g >= 0 {
+        cs.push(g)
+      }
+    }
+  }
+  (mf, cs)
+}

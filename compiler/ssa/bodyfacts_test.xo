@@ -70,3 +70,21 @@ test "block_names and taken_names: the same from facts as from the body" {
   expect(m.taken_names(fi)) == body_taken
   expect(m.value_count(fi)) == m0.funcs[fi].values.len()
 }
+
+test "param_types, value_names and fault_facts: the same from facts as from the body" {
+  let (m0, fi) = facts_module()
+  let pt = m0.param_types(fi)
+  let vn = m0.value_names(fi)
+  let (mf, cs) = m0.fault_facts(fi)
+  expect(vn) == ["g", "h", "g"]
+  expect(mf) == true
+  expect(cs) == [m0.func_index("g")]
+  var m = m0
+  m.facts[fi] = body_facts(m.funcs[fi])
+  m.funcs[fi] = Func{name: "f"}
+  expect(m.param_types(fi)) == pt
+  expect(m.value_names(fi)) == vn
+  let (mf2, cs2) = m.fault_facts(fi)
+  expect(mf2) == mf
+  expect(cs2) == cs
+}
