@@ -34,3 +34,23 @@ No case fails, so std/websocket meets decision 0313's stage 3 bar
 optional fail-fast ones: std/websocket checks a text message's UTF-8
 when the message is complete, so a bad first fragment is answered
 (close 1007) at the end of the message, not at the fragment.
+
+## After the UTF-8 fail-fast (2026-10-21, main 5edde9467)
+
+A text message is now validated per fragment (1a6117d1b) and per piece
+of a frame as it arrives (5edde9467), native and Go backend. Same
+harness (`bench/websocket/autobahn/run.sh OUT both`, BACKEND=go for the
+Go rows), 300 cases each way:
+
+| side | backend | result |
+|---|---|---|
+| server (fuzzingclient) | arm64 | INFORMATIONAL 3, OK 297 |
+| client (fuzzingserver) | arm64 | INFORMATIONAL 3, OK 297 |
+| server (fuzzingclient) | go | INFORMATIONAL 3, OK 297 |
+| client (fuzzingserver) | go | INFORMATIONAL 3, OK 297 |
+
+6.4.1 to 6.4.4 are OK on every row; no case is NON-STRICT. The three
+informational cases are the same as above (7.1.6, 7.13.1, 7.13.2).
+One arm64 server run stopped after 9.2.1 with the fuzzing client's
+`User timeout caused connection failure` while other jobs loaded the
+Mac; its rerun passed all 300.
