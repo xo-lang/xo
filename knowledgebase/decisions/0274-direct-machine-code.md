@@ -239,3 +239,39 @@ changes either is wrong, however good its output looks.
   Xo.
 - A per template parse cache only (step 3 without Ops): removes most of
   the parse, but the text is still built, joined, and rewritten.
+
+## Measurement before stage 4 (2026-10-21)
+
+The cold build profile the design notes asked for, after every line pass
+had its item port (still checked only under XO_OP_VERIFY; the text passes
+produce the output): `XO_BACKEND_CACHE=off XO_FE_CACHE=off XO_BIN_CACHE=off
+XO_PROF=cpu xo build --backend=arm64 --phase-times ./xo` in compiler/, main
+at 0ca5d4b8c, darwin/arm64 Mac. The machine was shared with other agents'
+jobs (47.6 s wall, 149.9 s user, 4.69 GB max RSS; 133.9 s of CPU
+sampled), so the shares below matter more than the seconds, which the
+earlier quiet run measured lower.
+
+| where | CPU | of 133.9 s |
+|---|---|---|
+| arm64.G.function (selection to text) | 58.83 s | 43.9% |
+| of it arm64.G.emit | 25.27 s | 18.9% |
+| macho.assemble (parse 7.48: parse_line 5.65) | 8.24 s | 6.2% |
+| copy_runs_l | 5.69 s | 4.2% |
+| emit_inst (text of each instruction) | 4.27 s | 3.2% |
+| reload_reuse_l | 2.27 s | 1.7% |
+| scan.split (splitting text into lines) | 1.91 s | 1.4% |
+| G.label | 1.86 s | 1.4% |
+| far_tests_l, local_empty_l, pair_mem_l | 1.03, 0.72, 0.68 s | 1.8% |
+| ssa insert_rc (Rc.rc_func) | 40.51 s | 30.2% |
+
+Phases (wall, loaded): check 2.71 s, ssa 1.70 s, insert_rc 10.38 s,
+inline 3.89 s, inline.verify 4.25 s, emit 20.31 s, assemble 1.96 s, link
+0.55 s.
+
+What stage 4 can remove: the assembler's parse (7.48 s), the printing of
+each instruction (4.27 s), and splitting and joining (about 2 s): about
+14 s, 10% of this build's CPU. The line passes themselves (10.4 s, 7.8%)
+move to items; whether they get cheaper there is measured with the
+stage, pass by pass (copy_runs_l alone is 4.2%). Reference counting
+insertion (30%) stays the largest single cost and is out of this
+decision's scope.
