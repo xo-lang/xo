@@ -3,7 +3,7 @@
 ## 2026-10-21: fix: a driver transaction stays done when its commit or rollback fails
 
 - Kind: fix
-- Commit: (filled in after the push)
+- Commit: 26fb491f
 - Found by: Xo Lang 3's Mutex.with rule (core 5.4: an Err out of the closure undoes its writes)
 - Go reference: database/sql Tx.Commit and Rollback (done set before the driver call)
 - Test: internal/llvm/testdata/golden/sql_tx_driver_err

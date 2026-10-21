@@ -3,7 +3,7 @@
 ## 2026-10-21: perf: decode through a table, eight symbols at a time
 
 - Kind: perf
-- Commit: (filled in after the push)
+- Commit: 4706a035
 - Found by: XO_PROF=cpu (the per quantum lists were 40% of the native decode)
 - Go reference: encoding/base32 decode (go1.26.1)
 - Test: internal/stdtest/testdata/corpus/base32 (go, arm64, LLVM); golden base64_basic
@@ -18,7 +18,7 @@ same.
 ## 2026-10-21: behavior: the Go backend runs base32.xo too
 
 - Kind: behavior
-- Commit: (filled in after the push)
+- Commit: f1100ad6
 - Found by: decision 0312 (std written once)
 - Go reference: encoding/base32 (go1.26.1), as ported in std/native/base32.xo
 - Test: internal/stdtest/testdata/corpus/base32 (go, arm64, LLVM); internal/llvm/testdata/golden/base64_basic (Go parity)

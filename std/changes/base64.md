@@ -3,7 +3,7 @@
 ## 2026-10-21: perf: decode through a table, four symbols at a time
 
 - Kind: perf
-- Commit: (filled in after the push)
+- Commit: a021bbfb
 - Found by: XO_PROF=cpu of the native decode (61% in decode, 25% in a per quantum list and its frees)
 - Go reference: encoding/base64 decode and its fast path (go1.26.1)
 - Test: internal/stdtest/testdata/corpus/base64 (go, arm64, LLVM); golden base64_basic
@@ -18,7 +18,7 @@ error offsets are the same.
 ## 2026-10-21: behavior: the Go backend runs base64.xo too
 
 - Kind: behavior
-- Commit: (filled in after the push)
+- Commit: bdada12f
 - Found by: decision 0312 (std written once)
 - Go reference: encoding/base64 (go1.26.1), as ported in std/native/base64.xo
 - Test: internal/stdtest/testdata/corpus/base64 (go, arm64, LLVM); internal/llvm/testdata/golden/base64_basic (Go parity)

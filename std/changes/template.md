@@ -3,7 +3,7 @@
 ## 2026-10-21: perf: a Template keeps its parsed set
 
 - Kind: perf
-- Commit: (filled in after the push)
+- Commit: 69271e2a
 - Found by: XO_PROF=cpu (a render parsed the set again: 52% of what was left after the error text fix)
 - Go reference: text/template (go1.26.1: Parse once, Execute many)
 - Test: internal/stdtest/testdata/corpus/template (go, arm64, LLVM); golden template_basic
@@ -18,7 +18,7 @@ text/template 0.22 s). The Go backend is unchanged (text/template itself).
 ## 2026-10-21: perf: error context written only for errors
 
 - Kind: perf
-- Commit: (filled in after the push)
+- Commit: cdfa66e6
 - Found by: XO_PROF=cpu of 200,000 renders (the text of every visited node, pipeline, and command was built for the error message `executing "t" at <...>`, 40% of a render)
 - Go reference: text/template exec.go state.at and errorf (go1.26.1)
 - Test: internal/stdtest/testdata/corpus/template (go, arm64, LLVM)

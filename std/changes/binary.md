@@ -3,7 +3,7 @@
 ## 2026-10-21: perf: fixed size words stored and loaded in place
 
 - Kind: perf
-- Commit: (filled in after the push)
+- Commit: f0088114
 - Found by: Xo Lang 2's allocator report (a per byte builder paid a uniqueness, capacity, and bounds check for each of the 4 bytes)
 - Go reference: encoding/binary ByteOrder (go1.26.1)
 - Test: internal/stdtest/testdata/corpus/binary (arm64, LLVM); golden binary_basic

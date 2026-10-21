@@ -3,7 +3,7 @@
 ## 2026-10-21: behavior: the Go backend runs smtp.xo too
 
 - Kind: behavior
-- Commit: (filled in after the push)
+- Commit: 8c5bf765
 - Found by: decision 0312 (std written once)
 - Go reference: net/smtp (go1.26.1), as ported in std/native/smtp.xo
 - Test: internal/stdtest/testdata/corpus/smtp (go, arm64, LLVM); golden test_smtp

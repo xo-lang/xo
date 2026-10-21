@@ -3,7 +3,7 @@
 ## 2026-10-21: behavior: the Go backend runs mail.xo too
 
 - Kind: behavior
-- Commit: (filled in after the push)
+- Commit: c471ed8d
 - Found by: decision 0312 (std written once)
 - Go reference: net/mail (go1.26.1), as ported in std/native/mail.xo
 - Test: internal/stdtest/testdata/corpus/mail (go, arm64, LLVM); goldens mail_basic and mail_messages (Go parity)

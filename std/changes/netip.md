@@ -3,7 +3,7 @@
 ## 2026-10-21: behavior: the Go backend runs netip.xo too
 
 - Kind: behavior
-- Commit: (filled in after the push)
+- Commit: 2f7d03c8
 - Found by: decision 0312 (std written once)
 - Go reference: net/netip (go1.26.1), as ported in std/native/netip.xo
 - Test: internal/stdtest/testdata/corpus/netip (go, arm64, LLVM); golden http_client_ip (Go parity)
@@ -17,7 +17,7 @@ wrapper 49 ms): 1.7 times Go's package.
 ## 2026-10-21: perf: addresses written without per digit strings
 
 - Kind: perf
-- Commit: (filled in after the push)
+- Commit: 3a2d9f52
 - Found by: XO_PROF=cpu of a parse and display loop (string slices and concatenations per hex digit)
 - Go reference: net/netip (go1.26.1)
 - Test: internal/stdtest/testdata/corpus/netip (go, arm64, LLVM)
