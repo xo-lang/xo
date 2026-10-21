@@ -213,68 +213,30 @@ fn refill_alloc(h: Int, n: Int, c: Int, size: Int) -> Int {
   alloc(h, n)
 }
 
-/// alloc's common cases, small enough for the arm64 inliner: a block of
-/// n bytes (at most SMALL_MAX) popped from its class's free list, or
-/// carved from the chunk when it has room, and counted as alloc counts
-/// it; else 0 (the caller then calls alloc: a new chunk, a real-time
-/// section, or the heap profile's next sample). It makes no call, so a caller that inlines it keeps its
-/// values in registers with no frame on these paths (obj.xo try_new,
-/// bench/results/string-list-objects-2026-10-14.md).
-pub fn alloc_fast(h: Int, n: Int) -> Int {
-  if rt.mem_load(h, RT_DEPTH, 8) != 0 {
-    return 0
-  }
-  var c = n.wrapping_add(15).shr_logical(4)
-  if c == 0 {
-    c = 1
-  }
-  let size = c.wrapping_shl(4)
-  let fl = h.wrapping_add(c.wrapping_shl(3))
-  var r = rt.mem_load(fl, FREE_LISTS, 8)
-  if r != 0 {
-    let next = rt.mem_load(r, 0, 8)
-    rt.mem_store(fl, FREE_LISTS, next, 8)
-    rt.mem_store(fl, NFREE, rt.mem_load(fl, NFREE, 8).wrapping_sub(1), 8)
-    rt.prefetch(next)
-  } else {
-    let need = size.wrapping_add(8)
-    let cur = rt.mem_load(h, BUMP_CUR, 8)
-    if rt.mem_load(h, BUMP_END, 8).wrapping_sub(cur) < need {
-      return 0
-    }
-    rt.mem_store(h, BUMP_CUR, cur.wrapping_add(need), 8)
-    rt.mem_store(cur, 0, c, 8)
-    r = cur.wrapping_add(8)
-  }
-  rt.mem_store(h, LAST, size, 8)
-  if rt.mem_load(h, COUNT, 8) != 0 {
-    if rt.mem_load(h, ABYTES, 8).wrapping_add(n) >= rt.mem_load(h, SAMPLE_AT, 8) {
-      // the heap profile's next sample: the block goes back to its
-      // class's list (a carved one is a free block of its class too) and
-      // the caller's slow path takes it through alloc, which samples it;
-      // alloc_fast stays without a call, so a caller that inlines it
-      // keeps no frame (a call here gave rl_new_n and rs_new_n one)
-      rt.mem_store(r, 0, rt.mem_load(fl, FREE_LISTS, 8), 8)
-      rt.mem_store(fl, FREE_LISTS, r, 8)
-      rt.mem_store(fl, NFREE, rt.mem_load(fl, NFREE, 8).wrapping_add(1), 8)
-      return 0
-    }
-    rt.mem_store(h, ALLOCS, rt.mem_load(h, ALLOCS, 8).wrapping_add(1), 8)
-    rt.mem_store(h, ABYTES, rt.mem_load(h, ABYTES, 8).wrapping_add(n), 8)
-  }
-  r
-}
+/// alloc's common case with one thread: a block of n bytes (at most
+/// SMALL_MAX) popped from its class's free list; else 0, and the caller
+/// calls alloc (the chunk's bump, a new chunk, a magazine, a real-time
+/// section, counting, the heap profile's next sample). It makes no call
+/// and reads no counter, so it is a leaf of under 40 instructions that
+/// the inliner takes at every call site, and a caller keeps its values
+/// in registers with no frame on this path (obj.xo try_new,
+/// bench/results/string-list-objects-2026-10-14.md). 2026-10-21: with
+/// the bump and the counting in it, it was 76 instructions and a call
+/// from obj.try_new, rl_new_n and rs_new_n on every allocation. The
+/// same as alloc_pop, which reads the calling thread's heap.
+pub fn alloc_fast(h: Int, n: Int) -> Int { alloc_pop(h, n) }
 
-/// alloc_fast with other threads running (2026-10-19: the plain HTTP
-/// server, which has threads, took obj.halloc and alloc for all 34
-/// allocations a request): a block of n bytes (at most SMALL_MAX) popped
-/// from its class's free list on heap h, the calling thread's, and
-/// counted as alloc counts it; else 0. An empty list goes to alloc, which
-/// takes back a magazine of blocks other threads freed before carving
-/// from the chunk. Apart from alloc_fast so the one thread case keeps its
-/// code (a flag argument cost it two instructions an allocation).
+/// A block of n bytes (at most SMALL_MAX) popped from its class's free
+/// list on heap h (the calling thread's when others run: 2026-10-19, the
+/// plain HTTP server, which has threads, took obj.halloc and alloc for
+/// all 34 allocations a request); else 0, and the caller calls alloc,
+/// which takes back a magazine of blocks other threads freed before
+/// carving from the chunk, and counts (alloc_fast).
 pub fn alloc_pop(h: Int, n: Int) -> Int {
-  if rt.mem_load(h, RT_DEPTH, 8) != 0 {
+  // a real-time section or counting: 0, for the caller's alloc
+  // (alloc_fast; at 61 instructions it was a call from obj.try_pop,
+  // rs_new_mt, and tlssrv.send)
+  if (rt.mem_load(h, RT_DEPTH, 8) | rt.mem_load(h, COUNT, 8)) != 0 {
     return 0
   }
   var c = n.wrapping_add(15).shr_logical(4)
@@ -291,18 +253,6 @@ pub fn alloc_pop(h: Int, n: Int) -> Int {
   rt.mem_store(fl, NFREE, rt.mem_load(fl, NFREE, 8).wrapping_sub(1), 8)
   rt.prefetch(next)
   rt.mem_store(h, LAST, c.wrapping_shl(4), 8)
-  if rt.mem_load(h, COUNT, 8) != 0 {
-    if rt.mem_load(h, ABYTES, 8).wrapping_add(n) >= rt.mem_load(h, SAMPLE_AT, 8) {
-      // the heap profile's next sample: back on the list, for alloc
-      // (alloc_fast)
-      rt.mem_store(r, 0, next, 8)
-      rt.mem_store(fl, FREE_LISTS, r, 8)
-      rt.mem_store(fl, NFREE, rt.mem_load(fl, NFREE, 8).wrapping_add(1), 8)
-      return 0
-    }
-    rt.mem_store(h, ALLOCS, rt.mem_load(h, ALLOCS, 8).wrapping_add(1), 8)
-    rt.mem_store(h, ABYTES, rt.mem_load(h, ABYTES, 8).wrapping_add(n), 8)
-  }
   r
 }
 
