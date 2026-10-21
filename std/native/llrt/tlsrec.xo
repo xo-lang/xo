@@ -228,5 +228,8 @@ pub fn open(var k: Keys, hdr: Bytes, body: Bytes) -> Inner {
   if i < 0 {
     return Inner{ct: -3, data: b""}
   }
-  Inner{ct: Int(pt[i]), data: pt[0..i]}
+  let ct = Int(pt[i])
+  // the plaintext's own string, shortened past the type and padding
+  // (pt[0..i] copied it)
+  Inner{ct: ct, data: raw.bytes_len(pt, i)}
 }
