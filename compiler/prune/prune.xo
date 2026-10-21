@@ -693,8 +693,13 @@ fn remove(fs: Fs, clock: Clock, path: Str, dir: Bool, keep: Duration) -> Bool us
         return false
       }
     }
-    _ => return false
+    // gone already (a concurrent prune removed it): its bytes left the
+    // cache too, so it counts; counting it as kept made concurrent runs
+    // each remove the next oldest entries in its place, and they took a
+    // cache far below its cap (2026-10-21: 29 GB to 3.55 GB under 16)
+    Ok(None) => return true
+    Err(_) => return false
   }
   let r = if dir { fs.remove_all(path) } else { fs.remove(path) }
-  r.is_ok()
+  r.is_ok() || !(fs.exists(path).ok() ?? true)
 }

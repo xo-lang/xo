@@ -2117,3 +2117,70 @@ func TestIfaceLexMatchesParse(t *testing.T) {
 		t.Logf("%s: %s", d, strings.TrimSpace(string(out)))
 	}
 }
+
+// TestPruneVersionGuard: a back-end cache stamped by a newer prune
+// (DIR/prune-version above this xo's) is left alone by this xo's prune,
+// at any cap; an older xo pruning a cache a newer one manages took it to
+// 3.55 GB under a 16 GiB cap on 2026-10-21.
+func TestPruneVersionGuard(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := xotool.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-pruneversion-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	cache := filepath.Join(work, "cache")
+	old := time.Now().Add(-10 * 24 * time.Hour)
+	stale := filepath.Join(cache, "00", "aa")
+	if err := os.MkdirAll(stale, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const n = 50
+	for i := 0; i < n; i++ {
+		p := filepath.Join(stale, strconv.Itoa(i))
+		if err := os.WriteFile(p, make([]byte, 1024), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, f := range []string{"prune-stamp", "prune-version"} {
+		body := []byte(nil)
+		if f == "prune-version" {
+			body = []byte("999\n")
+		}
+		if err := os.WriteFile(filepath.Join(cache, f), body, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chtimes(filepath.Join(cache, "prune-stamp"), old, old); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "internal", "gen", "testdata", "golden", "os_tasks")
+	cmd := exec.Command(xo, "build", "--backend=arm64", "-o", filepath.Join(work, "prog"), ".")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on", "XO_PRUNE_DETACH=off", "XO_BACKEND_CACHE_MAX=1")
+	if log, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("xo build: %v\n%s", err, log)
+	}
+	if es, _ := os.ReadDir(stale); len(es) != n {
+		t.Errorf("%d of %d stale entries left in a cache a newer prune manages, want all", len(es), n)
+	}
+	if b, _ := os.ReadFile(filepath.Join(cache, "prune-version")); strings.TrimSpace(string(b)) != "999" {
+		t.Errorf("prune-version %q, want the newer 999 kept", b)
+	}
+}

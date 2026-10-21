@@ -3499,7 +3499,14 @@ hours is removed, so a cache can sit above its cap by that much.
   shard each run (60 s budget) and then evicts the least recently used
   entries across the whole cache, so it acts on current sizes (300 ms
   slices and per-shard shares left the cache at 49 GB, and a shard's
-  share overflowed Int, 2026-10-21). A run holds
+  share overflowed Int, 2026-10-21).
+  An entry already gone (another prune removed it) counts as removed:
+  counted as kept, concurrent runs each removed the next oldest in its
+  place. `DIR/prune-version` (bcache.xo BACKEND_PRUNE_VERSION, 4) names
+  the newest prune that managed the cache; an xo with an older version
+  does not prune it (it still reads and writes entries): on 2026-10-21
+  xos from that morning (8 GiB cap, no prune-log) beside today's took the
+  cache from about 29 GB to 3.55 GB under its 16 GiB cap. A run holds
   `DIR/prune-lock`; one older than 10 minutes was left by a killed run
   and no longer blocks. A new cache directory gets its stamp, not a
   prune (a test's cache is never pruned while it is removed). Packs

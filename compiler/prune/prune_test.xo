@@ -437,3 +437,11 @@ test "a slice of a cache twice its cap does not overshoot it" {
   }
   expect(du(os, "c") <= 10000 && du(os, "c") >= 9000) == true
 }
+
+test "an entry another prune removed counts as removed" {
+  put(os, "c/aa/x", 10)
+  os.clock.advance(3h)
+  os.fs.remove("c/aa/x").or_fault("remove")
+  // gone: its bytes left the cache, so a run counts it and stops sooner
+  expect(remove(os.fs, os.clock, "c/aa/x", false, 1m)) == true
+}

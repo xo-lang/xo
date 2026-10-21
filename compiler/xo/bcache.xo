@@ -842,7 +842,7 @@ fn prune_backend_cache(os: Os, dir: Str, stored: Int) {
   if !prune.due(os.fs, os.clock, dir, p) {
     return
   }
-  if !backend_prune_allowed(os, dir, p) {
+  if !backend_prune_allowed(os, dir, p) || !prune_version_ok(os, dir) {
     return
   }
   if (os.env.get("XO_PRUNE_DETACH") ?? "") == "off" || host_os(os) == "windows" {
@@ -875,6 +875,30 @@ fn backend_prune_allowed(os: Os, dir: Str, p: prune.Policy) -> Bool {
   dir.trim_suffix("/") != "${user_cache_dir(os, host)}/xo/backend"
 }
 
+/// The back-end cache's prune policy version (prune_version_ok): raised
+/// with every change to how the cache is pruned (its cap, its accounting).
+/// 4: whole-walk LRU, gone entries counted (2026-10-21).
+const BACKEND_PRUNE_VERSION: Int = 4
+
+/// Whether this xo may prune the back-end cache in dir: a cache whose
+/// DIR/prune-version is newer than BACKEND_PRUNE_VERSION is managed by a
+/// newer xo, and an older one leaves it alone (it still reads and writes
+/// entries). An older or missing version is replaced by this one.
+/// (2026-10-21: xos from that morning, with an 8 GiB cap and a prune that
+/// logged nothing, ran beside today's and took the cache to 3.55 GB.)
+fn prune_version_ok(os: Os, dir: Str) -> Bool {
+  let p = "${dir}/prune-version"
+  // xo:allow XO0903 no file: no prune has stamped the cache yet
+  let v = Int.parse(((os.fs.read(p).ok() ?? b"").to_str() ?? "").trim()) ?? 0
+  if v > BACKEND_PRUNE_VERSION {
+    return false
+  }
+  if v < BACKEND_PRUNE_VERSION {
+    cache_put(os, p, "${BACKEND_PRUNE_VERSION}\n".bytes())
+  }
+  true
+}
+
 /// The smallest cap the user's own back-end cache is pruned to
 /// (backend_prune_allowed).
 const BACKEND_MIN_CAP: Int = 64 * 1024 * 1024
@@ -898,7 +922,7 @@ const BACKEND_EVERY: Duration = 1m
 /// passed); the child prune_backend_cache starts.
 fn prune_backend_child(os: Os, dir: Str) -> Int {
   var p = backend_policy(os)
-  if !backend_prune_allowed(os, dir, p) {
+  if !backend_prune_allowed(os, dir, p) || !prune_version_ok(os, dir) {
     return 1
   }
   // no removal budget and no interval: the child is the only runner;
