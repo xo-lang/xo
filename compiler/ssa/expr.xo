@@ -1116,6 +1116,14 @@ fn (var b: Builder) string_lit(x: parser.StringLit) -> Int {
       Some(pe) => {
         let ct = b.nat_check(pe)
         var v = b.expr(pe)
+        if p.debug {
+          // `${x:?}` (decision 0296): as `x.debug()`
+          if acc < 0 {
+            acc = b.const_str("")
+          }
+          acc = b.append_debug(acc, v, ct)
+          continue
+        }
         if b.is_prelude_named(ct, ["Duration", "Time", "Bytes", "UInt64", "Rune"]) || !b.is_builtin_kind(b.vty(v)) {
           if acc < 0 {
             acc = b.const_str("")

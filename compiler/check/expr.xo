@@ -388,6 +388,14 @@ fn (var c: Checker) infer0(e: Expr, hint: Int) -> Int {
       for p in s.parts {
         if let Some(x) = p.expr {
           let t = c.infer(x, -1)
+          if p.debug {
+            // `${x:?}` (decision 0296): every type implements Debug
+            // (std.md 1), so this reports only what has no text at all
+            if !c.implements_name(t, "Debug", parser.expr_span(x)) {
+              c.error("XO0404", parser.expr_span(x), "`${c.show(t)}` does not implement `Debug`, so `:?` cannot format it")
+            }
+            continue
+          }
           if !c.implements_name(t, "Display", parser.expr_span(x)) {
             let d = c.error("XO0404", parser.expr_span(x), "`${c.show(t)}` does not implement `Display`, so it cannot be interpolated")
             if c.is_prelude(t, "Bytes") {

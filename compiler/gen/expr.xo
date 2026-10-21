@@ -414,7 +414,10 @@ fn (var g: Gen) string_lit(x: parser.StringLit) -> Str {
             }
           }
         }
-        if g.borrow_ok(pe, others) {
+        if p.debug {
+          // `${x:?}` (decision 0296): as `x.debug()`
+          code = g.rt() + "Debug(" + g.val(pe) + ")"
+        } else if g.borrow_ok(pe, others) {
           // only formatted: a borrow (own.xo)
           let b = g.borrow(pe)
           code = g.display(b, g.type_of(pe))

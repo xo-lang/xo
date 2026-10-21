@@ -1046,8 +1046,8 @@ fn (var p: Parser) parse_string() -> StringLit {
       s.parts.push(StringPart{text: part.text, expr: None})
       continue
     }
-    let e = p.parse_interp(part.span)
-    s.parts.push(StringPart{text: b"", expr: Some(e)})
+    let (e, debug) = p.parse_interp_part(part.span)
+    s.parts.push(StringPart{text: b"", expr: Some(e), debug: debug})
   }
   s
 }
@@ -1056,9 +1056,22 @@ fn (var p: Parser) parse_string() -> StringLit {
 /// file's; its errors do not suppress the enclosing statement's (a parser
 /// of its own, as in internal/parser parseInterp).
 fn (var p: Parser) parse_interp(sp: Span) -> Expr {
+  let (e, _) = p.parse_interp_part(sp)
+  e
+}
+
+/// parse_interp, and whether the expression ends with `:?`, the Debug
+/// text's form `${x:?}` (decision 0296).
+fn (var p: Parser) parse_interp_part(sp: Span) -> (Expr, Bool) {
   let r = lexer.lex_range(p.src, sp.start, sp.end.offset)
   var sub = Parser{file: p.file, src: p.src, toks: r.tokens, tok: r.tokens[0], sig: p.sig, diags: r.diags}
   let e = sub.parse_expr()
+  var debug = false
+  if !sub.failed() && sub.at(Kind.Colon) && sub.peek(1).kind == Kind.Question && sub.peek(2).kind == Kind.Eof {
+    debug = true
+    sub.next()
+    sub.next()
+  }
   if !sub.failed() && !sub.at(Kind.Eof) {
     sub.fail(UNEXPECTED_TOKEN, sub.tok.span, "unexpected ${describe(sub.tok)} in interpolation; expected `}`")
   }
@@ -1068,7 +1081,7 @@ fn (var p: Parser) parse_interp(sp: Span) -> Expr {
   if sub.hard {
     p.hard = true
   }
-  e
+  (e, debug)
 }
 
 /// Python's `[elem for pat in iter if cond]`.

@@ -437,6 +437,9 @@ fn string_json(s: parser.StringLit) -> Str {
     var po = Obj{fields: [("kind", jstr("StringPart"))]}
     po.str("text", p.text)
     po.opt("expr", oexpr(p.expr))
+    if p.debug {
+      po.put("debug", "true")
+    }
     po.done()
   }))
   o.done()

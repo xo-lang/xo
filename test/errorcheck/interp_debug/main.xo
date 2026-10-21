@@ -1,0 +1,9 @@
+// `${x:?}` (decision 0296): the Debug text of any value, where `${x}`
+// needs Display; `:?` is the only format spec.
+fn main(os: Os) {
+  let opt: Int? = Some(1)
+  let r: Result[Int, Str] = Err("no")
+  let xs = [1, 2]
+  os.stdio.println("${opt:?} ${r:?} ${xs:?} ${xs.len() + 1:?} ${"a":?}")
+  os.stdio.println("${opt}") // ERROR XO0404 "does not implement `Display`"
+}

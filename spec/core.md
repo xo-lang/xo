@@ -12,6 +12,10 @@ programs for any OS with fast, structured, unambiguous feedback.
 
 ## Changes in 0.10
 
+- **Debug interpolation** (1.6, decision 0296): `${x:?}` writes the Debug
+  text of `x`, as `x.debug()` does, so a `Result`, `List`, or `Option`
+  needs no `.debug()`. `xo vet` notes `${x.debug()}` with the fix
+  (`XO0535`).
 - **Discarded pure results** (2.6, decision 0258): an expression statement
   that drops the value of a call that only computes it (`xs.reverse()`,
   `s.trim()`, a function with no effects) is error `XO0209`, fixed by
@@ -511,6 +515,14 @@ b"raw bytes\x00"                          // Bytes, escapes but no interpolation
 
 - `${expr}` interpolates any expression whose type implements `Display`.
   `Secret[T]` values render as `<redacted>`. `$` not followed by `{` is literal.
+- `${expr:?}` interpolates the Debug text of `expr` instead (decision 0296),
+  the text `expr.debug()` returns: `"${xs:?}"` is `[1, 2]`, `"${r:?}"`
+  is `Err(NotFound)`, `"${name:?}"` is `"ann"` with its quotes. Every type
+  implements `Debug` (std.md 1), so any expression may be formatted this
+  way; a type with no Debug text is `XO0404` ("`T` does not implement
+  `Debug`, so `:?` cannot format it"). `:?` is the only format spec: it
+  follows the whole expression, so `${a + b:?}` formats the sum, and any
+  other text after the expression (`${x:.2}`) is `XO0160`.
 - Raw strings `r"..."` have no escapes and no interpolation. `r#"..."#` may
   also contain `"`, which makes JSON fixtures easy to write.
 - An integer literal takes the integer type expected in context (`Int32`,
@@ -2304,7 +2316,7 @@ test "retries after 503" {
 | `xo serve` | Resident checker on a unix socket; `xo check` and `xo query` use it automatically when it answers |
 | `xo fmt` | Canonical format, no options |
 | `xo fix [--dry-run] [--from=draft-0.N] [--edition=preview]` | Apply all machine fixes until none apply, xo.mod and xo.work lines included (`edition 2026` becomes `edition preview`, `xo 2026` becomes `xo preview`, `XO1315`); `--from` migrates code written for an older draft (interpolation, prelude variants, `let _ =` discards, scope timeouts, Map index reads) |
-| `xo vet` | Advisory checks, never errors (a directory, a `.xo` file's findings, a std directory checked as std, or `--std-module=M`; decision 0289): checker warnings plus `XO0207` (`??` precedence trap), `XO0208` (each `ignore_err` with its reason), `XO0530` (a field's large payload bound and shared, decision 0263), `XO0531` (a large parameter only stored while each caller passes its last use, decision 0263), `XO0532` (a Map value changed through a copy and stored back, `Map.update` instead; decision 0266), `XO0534` (a task capturing a value of 32 or more heap fields, core 5.1; decision 0294), `XO0703` (declared effect never performed), `XO0901` (`dbg` left in code), `XO0902` (`tls.Verify.None`, decision 0281), `XO0903` (an Fs, Net, or Proc error defaulted away by `.ok() ?? d` or `Err(_) => <empty>`; `// xo:allow XO0903 <reason>` silences one), `XO1103` (use of Go packages per module) |
+| `xo vet` | Advisory checks, never errors (a directory, a `.xo` file's findings, a std directory checked as std, or `--std-module=M`; decision 0289): checker warnings plus `XO0207` (`??` precedence trap), `XO0208` (each `ignore_err` with its reason), `XO0530` (a field's large payload bound and shared, decision 0263), `XO0531` (a large parameter only stored while each caller passes its last use, decision 0263), `XO0532` (a Map value changed through a copy and stored back, `Map.update` instead; decision 0266), `XO0534` (a task capturing a value of 32 or more heap fields, core 5.1; decision 0294), `XO0703` (declared effect never performed), `XO0901` (`dbg` left in code), `XO0902` (`tls.Verify.None`, decision 0281), `XO0903` (an Fs, Net, or Proc error defaulted away by `.ok() ?? d` or `Err(_) => <empty>`; `// xo:allow XO0903 <reason>` silences one), `XO1103` (use of Go packages per module), `XO0535` (`${x.debug()}` written as `${x:?}`, with the fix; decision 0296) |
 | `xo def`, `xo refs`, `xo type`, `xo doc NAME`, `xo symbols` | Agents' lookups on `xo lsp`'s engine (decision 0261): `def NAME`, `refs NAME`, `type FILE:LINE:COL`, `doc NAME` (a name, or a module path and name: `std/tls.client`), `symbols [DIR] [--pub]` (the directory's own declarations, private ones too); a name in any form `xo query def` takes, std and runtime modules included (decision 0289); `--dir` (a workspace root checks the modules under it); text at a terminal, `--json` or `--text` to choose; exit 0 with an answer, 1 for no match, 2 for usage |
 | `xo query <kind> ...` | Semantic queries (10.3): `type`, `def`, `callers`, `effects`, `holes`, `api`, `imports`, `deps` |
 | `xo edit <op> ...` | Semantic edits (10.4) |
@@ -2640,6 +2652,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0531` | warning | vet | a large parameter is only stored while each caller passes its last use, so its heap fields are shared and dropped again (decision 0263) |
 | `XO0532` | note | vet | a Map value read into a `var`, changed, and stored back; `Map.update` does it in one lookup (decision 0266) |
 | `XO0534` | note | vet | a task captures a value with many heap fields (32 or more), sharing each at the spawn (core 5.1, decision 0294) |
+| `XO0535` | note | vet | `${x.debug()}` in a string, which `${x:?}` writes shorter; its fix rewrites it (core 1.6, decision 0296) |
 | `XO0601` | error | checker | name does not resolve (core 4.3) |
 | `XO0602` | error | checker | import path does not yield a valid local name (core 4.1) |
 | `XO0603` | error | checker | name declared twice in one scope, or a predeclared name redefined (core 3.1, 1.4) |
@@ -3106,6 +3119,8 @@ Parsing rules the grammar alone does not settle:
 - Only `while { }` (no condition) may appear in expression position.
 - Triple quoted strings support escapes and interpolation; a blank first and
   last line are dropped; the common indentation is measured on the source.
+- An interpolation is `"${" Expr [ ":?" ] "}"` (1.6): `:?` asks for the
+  Debug text (decision 0296).
 
 ---
 

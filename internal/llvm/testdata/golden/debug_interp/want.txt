@@ -1,0 +1,20 @@
+exit 0
+--- stdout
+int: 42
+str: "a\"b"
+float: 2.5
+bool: true
+rune: 'x'
+bytes: b"hi"
+duration: 1.5s
+opt: Some(3) None
+result: Ok(1) Err("bad")
+list: [1, 2, 3]
+map: {"a": 1}
+struct: Point{x: 1, y: -2}
+enum: Dot Circle(r: 2)
+tuple: (1, "two", 3.5)
+iface: Dog{n: "rex"}
+expr: 4
+mixed: n=3 xs=[1, 2, 3] s=q "q"
+--- stderr

@@ -117,6 +117,7 @@
       "endCaptures": { "0": { "name": "punctuation.section.interpolation.end.xo" } },
       "contentName": "source.xo.embedded",
       "patterns": [
+        { "comment": "${x:?}: the Debug text (decision 0296)", "match": ":\\?(?=\\s*\\})", "name": "storage.modifier.format.debug.xo" },
         { "include": "#braces" },
         { "include": "$self" }
       ]

@@ -150,6 +150,19 @@ test "errors and habits of other languages are rejected" {
   expect(first_code("fn f() {\n  @\n}\n")) == "XO0150"
 }
 
+test "`:?` asks for the Debug text of an interpolation (decision 0296)" {
+  expect(accepts("fn f() {\n  \"\${a:?} \${a + b:?} \${a}\"\n}\n")) == true
+  let text = dump("t.xo", b"fn f() {\n  \"x \${a:?}\"\n}\n", false)
+  expect(text.contains("text=\"\" debug\n")) == true
+  expect(first_code("fn f() {\n  \"\${a:.2}\"\n}\n")) == "XO0160"
+  expect(first_code("fn f() {\n  \"\${a:?:?}\"\n}\n")) == "XO0160"
+  // Rust's `{:?}` and `{name:?}`, and Python's `{x!r}`, recover as `${x:?}`
+  let rs = parse("fn f() {\n  format!(\"{:?} {b:?}\", a)\n}\n")
+  expect(rs.diags[0].fixes[0].edits[0].replace) == b"\"\${a:?} \${b:?}\""
+  let py = parse("fn f() {\n  f\"v {x!r}\"\n}\n")
+  expect(py.diags[0].fixes[0].edits[0].replace) == b"\"v \${x:?}\""
+}
+
 test "Go's for range is kept for the checker, marked go_range" {
   let text = dump("t.xo", b"fn f() {\n  for i, x := range xs {\n  }\n}\n", false)
   expect(text.contains("ForStmt 2:3:11-3:4:37 go_range")) == true

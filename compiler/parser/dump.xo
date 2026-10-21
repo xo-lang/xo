@@ -524,6 +524,9 @@ fn dump_string_lit(var out: StrBuilder, depth: Int, label: Str, s: StringLit) {
     }
     out.write("parts[${i}]: StringPart")
     attr(out, "text", part.text)
+    if part.debug {
+      out.write(" debug")
+    }
     out.write("\n")
     dump_expr_opt(out, depth + 2, "expr", part.expr)
   }

@@ -1,0 +1,54 @@
+// `${x:?}` (decision 0296) writes the Debug text, the same as
+// `x.debug()`, for every kind of value, beside Display interpolation.
+enum Shape {
+  Dot
+  Circle(r: Int)
+}
+
+struct Point {
+  x: Int
+  y: Int
+}
+
+interface Named {
+  fn name(self) -> Str
+}
+
+struct Dog {
+  n: Str
+}
+
+fn (d: Dog) name() -> Str { d.n }
+
+fn check(os: Os, label: Str, got: Str, want: Str) {
+  os.stdio.println("${label}: ${got}${if got == want { "" } else { " MISMATCH ${want}" }}")
+}
+
+fn main(os: Os) {
+  let opt: Int? = Some(3)
+  let none: Int? = None
+  let ok: Result[Int, Str] = Ok(1)
+  let err: Result[Int, Str] = Err("bad")
+  let xs = [1, 2, 3]
+  let m = {"a": 1}
+  let p = Point{x: 1, y: -2}
+  let t = (1, "two", 3.5)
+  let d: Named = Dog{n: "rex"}
+  check(os, "int", "${42:?}", 42.debug())
+  check(os, "str", "${"a\"b":?}", "a\"b".debug())
+  check(os, "float", "${2.5:?}", 2.5.debug())
+  check(os, "bool", "${true:?}", true.debug())
+  check(os, "rune", "${'x':?}", 'x'.debug())
+  check(os, "bytes", "${b"hi":?}", b"hi".debug())
+  check(os, "duration", "${1500ms:?}", 1500ms.debug())
+  check(os, "opt", "${opt:?} ${none:?}", "${opt.debug()} ${none.debug()}")
+  check(os, "result", "${ok:?} ${err:?}", "${ok.debug()} ${err.debug()}")
+  check(os, "list", "${xs:?}", xs.debug())
+  check(os, "map", "${m:?}", m.debug())
+  check(os, "struct", "${p:?}", p.debug())
+  check(os, "enum", "${Shape.Dot:?} ${Shape.Circle(r: 2):?}", "${Shape.Dot.debug()} ${Shape.Circle(r: 2).debug()}")
+  check(os, "tuple", "${t:?}", t.debug())
+  check(os, "iface", "${d:?}", d.debug())
+  check(os, "expr", "${xs.len() + 1:?}", (xs.len() + 1).debug())
+  check(os, "mixed", "n=${xs.len()} xs=${xs:?} s=${"q"} ${"q":?}", "n=3 xs=${xs.debug()} s=q ${"q".debug()}")
+}

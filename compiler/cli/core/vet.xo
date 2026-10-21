@@ -264,6 +264,9 @@ fn vet_module(c: check.Checker, m: Int) -> List[Diag] {
         Block(b) => {
           out = out + copy_store(c, f, path, b)
         }
+        StringLit(s) => {
+          out = out + debug_interps(c, f, path, s)
+        }
         SelectorExpr(span, _, sel) => {
           if let Some(d) = verify_none(c, f, path, e, span, sel) {
             out.push(d)
@@ -1133,6 +1136,7 @@ fn walk_expr(e: parser.Expr, var out: List[parser.Expr]) {
       }
     }
     StringLit(s) => {
+      out.push(e)
       for p in s.parts {
         if let Some(x) = p.expr {
           walk_expr(x, out)
@@ -1449,6 +1453,42 @@ fn store_only_params(c: check.Checker, m: Int) -> List[Diag] {
         var dg = vdiag("XO0531", false, c.files[f].path, p.name.span, "`${name}` is borrowed, so storing it shares the ${n} heap fields of `${c.show(t)}`, and each caller drops its own copy after the call")
         dg.notes.push(check.DNote{message: "store the value at the caller's last use, or return it from here, so it moves instead (decision 0263)"})
         out.push(dg)
+      }
+    }
+  }
+  out
+}
+
+/// XO0535 (decision 0296): each `${x.debug()}` in s, whose shorter form
+/// is `${x:?}`, with the fix. Only the prelude's Debug: a type's own
+/// `debug` method is left alone.
+fn debug_interps(c: check.Checker, f: Int, file: Str, s: parser.StringLit) -> List[Diag] {
+  var out: List[Diag] = []
+  for p in s.parts {
+    if p.debug {
+      continue
+    }
+    let call = match p.expr {
+      Some(x) => x
+      None => continue
+    }
+    if let CallExpr(span, fun, args) = call {
+      if !args.is_empty() {
+        continue
+      }
+      if let SelectorExpr(_, x, sel) = fun {
+        if check.text(sel.name) != "debug" {
+          continue
+        }
+        if let Some(ci) = c.call_in(f, call) {
+          if ci.fn_obj >= 0 && !c.mods[c.objs[ci.fn_obj].module].is_prelude {
+            continue
+          }
+        }
+        let xe = parser.expr_span(x).end
+        var d = vdiag("XO0535", true, file, span, "`.debug()` in an interpolation is `:?`: `\${x:?}` writes the Debug text (core 1.6)")
+        d.fixes.push(check.DFix{title: "write `:?`", edits: [check.DEdit{span: check.JSpan{file: file, line: xe.line, col: xe.col, end_line: span.end.line, end_col: span.end.col}, replace: ":?"}]})
+        out.push(d)
       }
     }
   }

@@ -1119,6 +1119,9 @@ fn (var c: Enc) string_lit(var b: BytesBuilder, s: parser.StringLit) {
     open(b, "StringPart")
     str(b, p.text)
     c.opt_expr(b, p.expr)
+    if p.debug {
+      open(b, "Debug")
+    }
   }
 }
 

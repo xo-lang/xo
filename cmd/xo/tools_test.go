@@ -869,3 +869,77 @@ fn main(os: Os) {
 		t.Errorf("XO0903 at %v, want %s\n%s", got, want, out.String())
 	}
 }
+
+// TestVetDebugInterp covers XO0535 (decision 0296): `${xs.debug()}` gets
+// a note whose fix writes `:?` (line 8), while `${xs:?}` itself and a
+// type's own debug method do not.
+func TestVetDebugInterp(t *testing.T) {
+	t.Parallel()
+	src := `struct P {
+  n: Int
+}
+
+fn (p: P) debug() -> Str { "P" }
+
+fn show(xs: List[Int], p: P) -> Str {
+  "a ${xs.debug()} b ${xs:?} c ${p.debug()}"
+}
+
+fn main(os: Os) {
+  os.stdio.println(show([1], P{n: 1}))
+}
+`
+	dir := writeFiles(t, map[string]string{"main.xo": src})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"vet", "--json", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	var res struct {
+		Diagnostics []struct {
+			Code     string `json:"code"`
+			Severity string `json:"severity"`
+			Span     struct {
+				Line int `json:"line"`
+				Col  int `json:"col"`
+			} `json:"span"`
+			Fixes []struct {
+				Edits []struct {
+					Span struct {
+						Line   int `json:"line"`
+						Col    int `json:"col"`
+						EndCol int `json:"end_col"`
+					} `json:"span"`
+					Replace string `json:"replace"`
+				} `json:"edits"`
+			} `json:"fixes"`
+		} `json:"diagnostics"`
+		CheckErrors int `json:"check_errors"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &res); err != nil {
+		t.Fatalf("bad JSON: %v\n%s", err, out.String())
+	}
+	if res.CheckErrors != 0 {
+		t.Fatalf("check errors: %d\n%s", res.CheckErrors, out.String())
+	}
+	var got []string
+	for _, d := range res.Diagnostics {
+		if d.Code != "XO0535" {
+			continue
+		}
+		got = append(got, fmt.Sprintf("%d %s", d.Span.Line, d.Severity))
+		// `${xs.debug()}`: the edit replaces `.debug()` (columns 10 to 18
+		// of line 8) with `:?`
+		if len(d.Fixes) != 1 || len(d.Fixes[0].Edits) != 1 {
+			t.Fatalf("fixes: %+v", d.Fixes)
+		}
+		e := d.Fixes[0].Edits[0]
+		line := strings.Split(src, "\n")[e.Span.Line-1]
+		fixed := line[:e.Span.Col-1] + e.Replace + line[e.Span.EndCol-1:]
+		if fixed != `  "a ${xs:?} b ${xs:?} c ${p.debug()}"` {
+			t.Errorf("fixed line %q", fixed)
+		}
+	}
+	if strings.Join(got, ", ") != "8 note" {
+		t.Errorf("XO0535 at %v, want [8 note]\n%s", got, out.String())
+	}
+}

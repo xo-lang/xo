@@ -1,0 +1,5 @@
+// `:?` is the only format spec of an interpolation (decision 0296).
+fn main(os: Os) {
+  let x = 1.5
+  os.stdio.println("${x:.2}") // ERROR XO0160 "in interpolation"
+}

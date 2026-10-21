@@ -314,6 +314,9 @@ pub struct StringLit {
 pub struct StringPart {
   pub text: Bytes
   pub expr: Expr?
+  /// `${x:?}`: the Debug text of expr instead of its Display text
+  /// (decision 0296).
+  pub debug: Bool = false
 }
 
 pub struct MapEntry {

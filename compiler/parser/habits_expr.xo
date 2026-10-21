@@ -474,12 +474,20 @@ fn (var p: Parser) f_string() -> Expr {
       if j < 0 {
         ok = false
       } else {
-        let expr = inner[i + 1..j]
+        var expr = inner[i + 1..j]
+        // `{x!r}`, the repr, is the Debug text: `${x:?}` (decision 0296)
+        let debug = expr.len() > 2 && expr[expr.len() - 2] == '!' && expr[expr.len() - 1] == 'r'
+        if debug {
+          expr = expr[0..expr.len() - 2]
+        }
         if (find_bytes(expr, b":", 0) >= 0 || find_bytes(expr, b"!", 0) >= 0) && find_bytes(expr, b"::", 0) < 0 {
           ok = false
         } else {
           b.write(b"\${")
           b.write(expr)
+          if debug {
+            b.write(b":?")
+          }
           b.write(b"}")
           if lit.len() > 0 {
             parts.push(StringPart{text: lit.freeze(), expr: None})
@@ -489,7 +497,7 @@ fn (var p: Parser) f_string() -> Expr {
           let pos = Pos{offset: off, line: st.span.start.line, col: st.span.start.col + 1 + i + 1}
           let end = Pos{offset: off + expr.len(), line: pos.line, col: pos.col + expr.len()}
           let e = p.parse_interp(Span{start: pos, end: end})
-          parts.push(StringPart{text: b"", expr: Some(e)})
+          parts.push(StringPart{text: b"", expr: Some(e), debug: debug})
           i = j
         }
       }
@@ -601,7 +609,8 @@ fn (var p: Parser) macro_args() -> List[Expr] {
 }
 
 /// Rust's `format!("{} {}", a, b)`, recovered as an interpolated string
-/// when every placeholder is a plain `{}` or `{name}`.
+/// when every placeholder is a plain `{}` or `{name}`, or their Debug forms
+/// `{:?}` and `{name:?}` (`${x:?}`, decision 0296).
 fn (var p: Parser) format_string(d: Int, name: Token, args: List[Expr]) -> Expr {
   let sp = p.span_from(name.span.start)
   if args.is_empty() {
@@ -641,7 +650,12 @@ fn (var p: Parser) format_string(d: Int, name: Token, args: List[Expr]) -> Expr 
       if j < 0 {
         fixable = false
       } else {
-        let inner = text[i + 1..j]
+        var inner = text[i + 1..j]
+        let debug = inner.len() >= 2 && inner[inner.len() - 2] == ':' && inner[inner.len() - 1] == '?'
+        if debug {
+          inner = inner[0..inner.len() - 2]
+        }
+        let spec: Bytes = if debug { b":?" } else { b"" }
         if cur.len() > 0 {
           parts.push(StringPart{text: cur.freeze(), expr: None})
           cur = BytesBuilder.new()
@@ -649,14 +663,16 @@ fn (var p: Parser) format_string(d: Int, name: Token, args: List[Expr]) -> Expr 
         if inner.is_empty() && !rest.is_empty() {
           out.write(b"\${")
           out.write(p.src_text(expr_span(rest[0]).start, expr_span(rest[0]).end))
+          out.write(spec)
           out.write(b"}")
-          parts.push(StringPart{text: b"", expr: Some(rest[0])})
+          parts.push(StringPart{text: b"", expr: Some(rest[0]), debug: debug})
           rest = rest[1..]
         } else if !inner.is_empty() && find_bytes(inner, b":", 0) < 0 && find_bytes(inner, b"?", 0) < 0 {
           out.write(b"\${")
           out.write(inner)
+          out.write(spec)
           out.write(b"}")
-          parts.push(StringPart{text: b"", expr: Some(Expr.Ident(Ident{span: lit_span, name: inner}))})
+          parts.push(StringPart{text: b"", expr: Some(Expr.Ident(Ident{span: lit_span, name: inner})), debug: debug})
         } else {
           fixable = false
         }
