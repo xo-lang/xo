@@ -24,20 +24,26 @@ func TestInlineFallbackLoud(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte("fn main(os: Os) uses (stdio) {\n  os.stdio.println(\"hi\")\n}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	brk := ""
 	build := func(strict string) (string, error) {
 		args := append(append([]string{}, cli[1:]...), "build", "--backend=arm64", "-o", filepath.Join(dir, "prog"), ".")
 		cmd := exec.Command(cli[0], args...)
 		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), "XO_INLINE_BREAK=1", "XO_INLINE_STRICT="+strict)
+		cmd.Env = append(os.Environ(), "XO_INLINE_BREAK="+brk, "XO_INLINE_STRICT="+strict, "XO_BACKEND_CACHE_DIR="+filepath.Join(dir, "cache"))
 		out, err := cmd.CombinedOutput()
 		return string(out), err
 	}
-	out, err := build("1")
-	if err == nil || !strings.Contains(out, "does not verify") || !strings.Contains(out, "XO_INLINE_STRICT=1") {
-		t.Fatalf("strict: want a failed build that says the inlined module does not verify, got %v:\n%s", err, out)
-	}
-	out, err = build("0")
-	if err != nil || !strings.Contains(out, "does not verify") || !strings.Contains(out, "built without inlining") {
-		t.Fatalf("normal: want a build that says it went on without inlining, got %v:\n%s", err, out)
+	// 1: verified as it is inlined; late: the verification deferred
+	// until after dead function removal (main.xo defer_inline_verify),
+	// with the per-function cache on
+	for _, brk = range []string{"1", "late"} {
+		out, err := build("1")
+		if err == nil || !strings.Contains(out, "does not verify") || !strings.Contains(out, "XO_INLINE_STRICT=1") {
+			t.Fatalf("%s strict: want a failed build that says the inlined module does not verify, got %v:\n%s", brk, err, out)
+		}
+		out, err = build("0")
+		if err != nil || !strings.Contains(out, "does not verify") || !strings.Contains(out, "built without inlining") {
+			t.Fatalf("%s normal: want a build that says it went on without inlining, got %v:\n%s", brk, err, out)
+		}
 	}
 }

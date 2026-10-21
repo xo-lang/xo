@@ -28,7 +28,12 @@ Since 2026-10-15 the fallback is loud: a build says it on standard
 error (the first verification error names the function), and fails
 with XO_INLINE_STRICT=1, which internal/xotool sets for the Go tests
 (TestInlineFallbackLoud breaks the module on purpose with
-XO_INLINE_BREAK=1).
+XO_INLINE_BREAK=1). Since 2026-10-21 a build whose per-function cache is
+used verifies the inlined module after dead function removal, with the
+cache's function keys (computed once for both; compiler/xo main.xo
+defer_inline_verify); XO_INLINE_BREAK=1 keeps the old order (its break
+may land in a function the removal drops) and XO_INLINE_BREAK=late
+breaks the module after the removal, the test of the deferred path.
 
 Observed again (2026-10-17, Xo Lang 2): an SSA reference counting change
 read as a 16% cut of the TLS client's code in `xo asm`, which was the

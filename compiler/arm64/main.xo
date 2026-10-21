@@ -205,6 +205,10 @@ pub fn inline_apply(var m: ssa.Module, break_inline: Bool) -> Bool {
   true
 }
 
+/// XO_INLINE_BREAK=late's damage (compiler/xo, after dead function
+/// removal, for the deferred verification): inline_break's.
+pub fn break_inlined(var m: ssa.Module) -> Bool { inline_break(m) }
+
 /// XO_INLINE_BREAK=1's damage (inline_check): an argument added to the
 /// first branch's edge, so the module does not verify; true.
 fn inline_break(var m: ssa.Module) -> Bool {

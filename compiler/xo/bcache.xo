@@ -98,7 +98,9 @@ fn self_id(os: Os) -> Str {
 /// FnCache, "") when the cache is off, for a --release build, or for a
 /// module of one part. The entries come through the target's pack
 /// (cache_get_packed), which fn_cache_store updates.
-fn fn_cache_load(os: Os, ctx: Ctx, m: ssa.Module, tgoos: Str, jobs: Int, release: Bool) -> (arm64.FnCache, Str, Pack) {
+/// pre: the keys when the caller has them (verify_after_dce's, of this
+/// module), else [].
+fn fn_cache_load(os: Os, ctx: Ctx, m: ssa.Module, tgoos: Str, jobs: Int, release: Bool, pre: List[Str]) -> (arm64.FnCache, Str, Pack) {
   let dir = backend_cache_dir(os, ctx)
   if dir.is_empty() || release {
     return (arm64.FnCache{}, "", Pack{})
@@ -107,7 +109,7 @@ fn fn_cache_load(os: Os, ctx: Ctx, m: ssa.Module, tgoos: Str, jobs: Int, release
   if id.is_empty() {
     return (arm64.FnCache{}, "", Pack{})
   }
-  let keys = arm64.function_keys(m, tgoos, id, jobs)
+  let keys = if pre.is_empty() { arm64.function_keys(m, tgoos, id, jobs) } else { pre }
   if keys.is_empty() {
     return (arm64.FnCache{}, "", Pack{})
   }
@@ -564,6 +566,31 @@ fn verify_inlined(os: Os, var mi: ssa.Module, tgoos: Str, jobs: Int, release: Bo
   if keys.is_empty() {
     return mi.verify_all_jobs(jobs)
   }
+  verify_by_keys(os, mi, keys, dir, id, jobs)
+}
+
+/// verify_inlined of the module made ready for generation (main.xo
+/// gen_module: dead functions removed, flags set), by the per-function
+/// cache's keys of it, which it returns for fn_cache_load ([] when it
+/// computed none).
+fn verify_after_dce(os: Os, var mi: ssa.Module, tgoos: Str, jobs: Int) -> (List[Str], List[Str]) {
+  let host = host_os(os)
+  let dir = backend_cache_dir(os, Ctx{goos: host, std: "", xo: "", cache: user_cache_dir(os, host)})
+  let id = cache_id(os)
+  if dir.is_empty() || id.is_empty() {
+    return (mi.verify_all_jobs(jobs), [])
+  }
+  let keys = arm64.function_keys(mi, tgoos, id, jobs)
+  if keys.is_empty() {
+    return (mi.verify_all_jobs(jobs), [])
+  }
+  (verify_by_keys(os, mi, keys, dir, id, jobs), keys)
+}
+
+/// verify_inlined's work with the function keys: a function whose
+/// verify key verified before is skipped, and the set is rewritten with
+/// this build's after a clean verification that found new ones.
+fn verify_by_keys(os: Os, var mi: ssa.Module, keys: List[Str], dir: Str, id: Str, jobs: Int) -> List[Str] {
   let vk = mi.verify_keys(keys)
   let path = "${dir}/ver/${id}"
   var known: Map[Str, Bool] = {}
