@@ -1,6 +1,6 @@
 # 0324: Idle workers poll the network themselves (Go's netpoller model)
 
-Status: Proposed (Xo Lang 2, 2026-10-21; for the owner's review before it is built)
+Status: Accepted (owner, 2026-10-21): Linux (epoll) and macOS (kqueue) first, Windows' completion ports a later step of their own
 
 ## Context
 
