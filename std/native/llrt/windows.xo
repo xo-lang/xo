@@ -1080,7 +1080,11 @@ pub fn pipe_write(h: Int, a: Int, n: Int) -> Int {
   let b = raw.bytes_buf(8)
   let done = raw.bytes_addr(b)
   rt.mem_store(done, 0, 0, 8)
-  let k = if n > 2147483647 { 2147483647 } else { n }
+  // a PIPE_NOWAIT write larger than the pipe's free space writes nothing
+  // (never a part), so a 200000 byte stdin into a 64 KiB pipe could never
+  // start: at most a page at a time (2026-10-21, proc_cmd's `wc -c` hung
+  // on windows/amd64)
+  let k = if n > 4096 { 4096 } else { n }
   if Int(sys_windows.WriteFile(h, a, k, done, 0)) == 0 {
     return -dos_errno(Int(sys_windows.GetLastError()))
   }
