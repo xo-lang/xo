@@ -22,20 +22,10 @@ fn alphabet(enc: base64.Base64) -> Bytes {
 
 fn padded(enc: base64.Base64) -> Bool { enc is Std | Url }
 
-/// The value of c in the alphabet, or -1.
-fn value(c: UInt8, url: Bool) -> Int {
-  if c >= 65 && c <= 90 { return Int(c) - 65 }
-  if c >= 97 && c <= 122 { return Int(c) - 71 }
-  if c >= 48 && c <= 57 { return Int(c) + 4 }
-  if url {
-    if c == 45 { return 62 }
-    if c == 95 { return 63 }
-  } else {
-    if c == 43 { return 62 }
-    if c == 47 { return 63 }
-  }
-  -1
-}
+/// The value of each byte in the alphabet, or 255 (also for `=` and the
+/// newlines, which decode handles itself).
+const DEC_STD: Bytes = b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\x3e\xff\xff\xff\x3f\x34\x35\x36\x37\x38\x39\x3a\x3b\x3c\x3d\xff\xff\xff\xff\xff\xff\xff\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\xff\xff\xff\xff\xff\xff\x1a\x1b\x1c\x1d\x1e\x1f\x20\x21\x22\x23\x24\x25\x26\x27\x28\x29\x2a\x2b\x2c\x2d\x2e\x2f\x30\x31\x32\x33\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"
+const DEC_URL: Bytes = b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\x3e\xff\xff\x34\x35\x36\x37\x38\x39\x3a\x3b\x3c\x3d\xff\xff\xff\xff\xff\xff\xff\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\xff\xff\xff\xff\x3f\xff\x1a\x1b\x1c\x1d\x1e\x1f\x20\x21\x22\x23\x24\x25\x26\x27\x28\x29\x2a\x2b\x2c\x2d\x2e\x2f\x30\x31\x32\x33\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"
 
 fn encode(data: Bytes, enc: base64.Base64 = base64.Base64.Std) -> Str {
   let a = alphabet(enc)
@@ -74,18 +64,35 @@ fn is_nl(c: UInt8) -> Bool { c == 10 || c == 13 }
 
 fn decode(s: Str, enc: base64.Base64 = base64.Base64.Std) -> Bytes ! base64.DecodeErr {
   let src = s.bytes()
-  let url = enc is Url | RawUrl
+  let tbl = if enc is Url | RawUrl { DEC_URL } else { DEC_STD }
   let pad = padded(enc)
-  var out = BytesBuilder.with_capacity(src.len() / 4 * 3 + 3)
+  let n = src.len()
+  var out = BytesBuilder.with_capacity(n / 4 * 3 + 3)
   var si = 0
-  while si < src.len() {
-    // decodeQuantum: up to four symbols, skipping \r and \n
-    var d = [0, 0, 0, 0]
+  while si < n {
+    // four plain symbols, the usual case (Go's decode fast path)
+    if si + 4 <= n {
+      let a = Int(tbl[Int(src[si])])
+      let b = Int(tbl[Int(src[si + 1])])
+      let c = Int(tbl[Int(src[si + 2])])
+      let d = Int(tbl[Int(src[si + 3])])
+      if (a | b | c | d) < 64 {
+        let val = (a << 18) | (b << 12) | (c << 6) | d
+        out.write_byte(UInt8(val >> 16))
+        out.write_byte(UInt8((val >> 8) & 255))
+        out.write_byte(UInt8(val & 255))
+        si += 4
+        continue
+      }
+    }
+    // decodeQuantum: up to four symbols, skipping \r and \n; acc holds
+    // the j symbols read, 6 bits each
+    var acc = 0
     var dlen = 4
     var j = 0
     var stop = false
     while j < 4 {
-      if si == src.len() {
+      if si == n {
         if j == 0 {
           // only newlines after the last quantum
           dlen = 0
@@ -99,9 +106,9 @@ fn decode(s: Str, enc: base64.Base64 = base64.Base64.Std) -> Bytes ! base64.Deco
       }
       let c = src[si]
       si += 1
-      let v = value(c, url)
-      if v >= 0 {
-        d.set(j, v)
+      let v = Int(tbl[Int(c)])
+      if v != 255 {
+        acc = (acc << 6) | v
         j += 1
         continue
       }
@@ -116,23 +123,24 @@ fn decode(s: Str, enc: base64.Base64 = base64.Base64.Std) -> Bytes ! base64.Deco
         return Err(base64.DecodeErr{at: si - 1})
       }
       if j == 2 {
-        while si < src.len() && is_nl(src[si]) { si += 1 }
-        if si == src.len() {
-          return Err(base64.DecodeErr{at: src.len()})
+        while si < n && is_nl(src[si]) { si += 1 }
+        if si == n {
+          return Err(base64.DecodeErr{at: n})
         }
         if src[si] != 61 {
           return Err(base64.DecodeErr{at: si - 1})
         }
         si += 1
       }
-      while si < src.len() && is_nl(src[si]) { si += 1 }
-      if si < src.len() {
+      while si < n && is_nl(src[si]) { si += 1 }
+      if si < n {
         stop = true
       }
       dlen = j
       break
     }
-    let val = (d[0] << 18) | (d[1] << 12) | (d[2] << 6) | d[3]
+    // the missing symbols are zero bits
+    let val = acc << (6 * (4 - j))
     if dlen >= 2 { out.write_byte(UInt8((val >> 16) & 255)) }
     if dlen >= 3 { out.write_byte(UInt8((val >> 8) & 255)) }
     if dlen == 4 { out.write_byte(UInt8(val & 255)) }

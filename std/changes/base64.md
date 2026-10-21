@@ -1,5 +1,20 @@
 # std/base64 changes
 
+## 2026-10-21: perf: decode through a table, four symbols at a time
+
+- Kind: perf
+- Commit: (filled in after the push)
+- Found by: XO_PROF=cpu of the native decode (61% in decode, 25% in a per quantum list and its frees)
+- Go reference: encoding/base64 decode and its fast path (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/base64 (go, arm64, LLVM); golden base64_basic
+
+Decode looks each byte up in a 256 byte table (no branches per symbol),
+reads four plain symbols at once as Go's fast path does, and keeps the slow
+quantum (newlines, padding, errors) with the symbols in one integer instead
+of a list. 1 KB encode and decode, 20,000 times, median of 5: native 169 ms
+to 33 ms (Go's package 51 ms), the Go backend 591 ms to 172 ms. Results and
+error offsets are the same.
+
 ## 2026-10-21: behavior: the Go backend runs base64.xo too
 
 - Kind: behavior

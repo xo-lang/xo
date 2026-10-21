@@ -140,6 +140,8 @@ not affected.
     - base64 (2026-10-21): 1 KB encode and decode, 20,000 times: Go's
       package 53 ms, rt wrapper 37 ms, native Xo through gen 593 ms
       (native arm64 180 ms); 11 times Go's package.
+      After the decode table and fast path (std/changes/base64.md): native
+      33 ms (Go's package 51 ms), Go backend 172 ms (3.4 times).
 
 - One implementation per pure module. A fix lands once and reaches every
   backend.
