@@ -27,6 +27,9 @@ implementation the language started with was deleted (decision 0215).
   (a type's methods), and `xo symbols [--all]`, with `--dir=DIR` and
   `--json`, instead of grep for declarations, references, types, and
   available methods; exit 1 means no match, 2 a usage error.
+  Try them before grep every time (owner, 2026-10-21: half the agents
+  still reached for grep by habit); when one falls short, say so in your
+  report so the tool gets fixed.
 
 - `spec/core.md`: the language specification. Source of truth for syntax and
   semantics.
