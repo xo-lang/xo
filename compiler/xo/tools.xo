@@ -87,15 +87,15 @@ fn user_cache_dir(os: Os, goos: Str) -> Str {
 /// there is none.
 fn look_path(os: Os, name: Str) -> Str {
   if is_windows() {
-    return look_path_windows(os, name)
+    return look_path_windows(os.env, os.fs, name)
   }
   if name.contains("/") {
-    return if is_exec(os, name) { name } else { "" }
+    return if is_exec(os.fs, name) { name } else { "" }
   }
   for d in (os.env.get("PATH") ?? "").split(":") {
     let dir = if d.is_empty() { "." } else { d }
     let p = "${dir}/${name}"
-    if is_exec(os, p) {
+    if is_exec(os.fs, p) {
       return p
     }
   }
@@ -106,17 +106,17 @@ fn look_path(os: Os, name: Str) -> Str {
 /// as written when it has an extension and with each extension of
 /// %PATHEXT%; else each directory of %PATH% (; separated) in turn. The
 /// result uses / separators.
-fn look_path_windows(os: Os, name: Str) -> Str {
+fn look_path_windows(env: Env, fs: Fs, name: Str) -> Str uses env, fs.read {
   let n = name.replace("\\", "/")
   if n.contains("/") || n.contains(":") {
-    return find_exe_windows(os, n)
+    return find_exe_windows(env, fs, n)
   }
-  for d0 in (os.env.get("PATH") ?? "").split(";") {
+  for d0 in (env.get("PATH") ?? "").split(";") {
     let d = d0.trim_prefix("\"").trim_suffix("\"").replace("\\", "/").trim_suffix("/")
     if d.is_empty() {
       continue
     }
-    let p = find_exe_windows(os, "${d}/${n}")
+    let p = find_exe_windows(env, fs, "${d}/${n}")
     if !p.is_empty() {
       return p
     }
@@ -127,14 +127,14 @@ fn look_path_windows(os: Os, name: Str) -> Str {
 /// exec's findExecutable on Windows: p when its last element has an
 /// extension and it exists, else p with the first extension of %PATHEXT%
 /// that exists; "" when none does.
-fn find_exe_windows(os: Os, p: Str) -> Str {
+fn find_exe_windows(env: Env, fs: Fs, p: Str) -> Str uses env, fs.read {
   let last = base_name(p)
-  if last.contains(".") && is_exec(os, p) {
+  if last.contains(".") && is_exec(fs, p) {
     return p
   }
-  let pe = os.env.get("PATHEXT") ?? ""
+  let pe = env.get("PATHEXT") ?? ""
   for e in (if pe.is_empty() { ".com;.exe;.bat;.cmd" } else { pe }).split(";") {
-    if !e.is_empty() && is_exec(os, p + e.to_lower()) {
+    if !e.is_empty() && is_exec(fs, p + e.to_lower()) {
       return p + e.to_lower()
     }
   }
@@ -144,8 +144,8 @@ fn find_exe_windows(os: Os, p: Str) -> Str {
 /// A file that is not a directory (the native Fs has no permission bits
 /// yet, decision 0163, so the execute bit LookPath also wants is not
 /// checked).
-fn is_exec(os: Os, p: Str) -> Bool {
-  match os.fs.stat(p) {
+fn is_exec(fs: Fs, p: Str) -> Bool uses fs.read {
+  match fs.stat(p) {
     Ok(Some(fi)) => !fi.is_dir
     _ => false
   }

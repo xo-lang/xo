@@ -67,7 +67,11 @@ func EnableTestClangCache() (func(), error) {
 	if err != nil {
 		return none, err
 	}
-	bin := filepath.Join(dir, "clang")
+	// clang.exe on Windows: xo looks $XO_CLANG up as exec.LookPath does,
+	// which takes a file there only with an extension of %PATHEXT%; a
+	// wrapper named clang made every LLVM golden fail with "needs clang"
+	// on the Windows runner while clang.exe was on PATH (2026-10-21)
+	bin := filepath.Join(dir, exeName("clang"))
 	cmd := exec.Command("go", "build", "-o", bin, "github.com/xo-lang/xo/internal/xotool/clangcache")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		os.RemoveAll(dir)

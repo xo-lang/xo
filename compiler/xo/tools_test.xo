@@ -1,0 +1,30 @@
+// Tests of the tool lookups (exec.LookPath's Windows rules).
+
+test "look_path_windows finds clang.exe in %PATH% with or without %PATHEXT%" {
+  // a file with no permission bits (Windows has none): only its existence
+  // and extension count
+  os.fs.create_dir_all("C:/Program Files/LLVM/bin")?
+  os.fs.write("C:/Program Files/LLVM/bin/clang.exe", b"")?
+  os.fs.create_dir_all("C:/Windows/System32")?
+  os.env.set("PATH", "C:\\Windows\\System32;\"C:\\Program Files\\LLVM\\bin\\\";")
+  os.env.set("PATHEXT", ".COM;.EXE;.BAT;.CMD")
+  expect(look_path_windows(os.env, os.fs, "clang")) == "C:/Program Files/LLVM/bin/clang.exe"
+  os.env.set("PATHEXT", "")
+  expect(look_path_windows(os.env, os.fs, "clang")) == "C:/Program Files/LLVM/bin/clang.exe"
+  // a path ($XO_CLANG): as written with an extension, else with one
+  expect(look_path_windows(os.env, os.fs, "C:\\Program Files\\LLVM\\bin\\clang.exe")) == "C:/Program Files/LLVM/bin/clang.exe"
+  expect(look_path_windows(os.env, os.fs, "C:/Program Files/LLVM/bin/clang")) == "C:/Program Files/LLVM/bin/clang.exe"
+  expect(look_path_windows(os.env, os.fs, "nothere")) == ""
+}
+
+test "look_path_windows does not take a file without an extension" {
+  // exec.LookPath's rule, and CreateProcess runs only .exe files: the
+  // test clang cache once named its wrapper `clang` on Windows, so
+  // $XO_CLANG pointed at a file xo1 rejected and every LLVM golden failed
+  // with "needs clang" while clang.exe was on PATH (2026-10-21)
+  os.fs.create_dir_all("C:/Temp/xo-clangcache-1")?
+  os.fs.write("C:/Temp/xo-clangcache-1/clang", b"")?
+  expect(look_path_windows(os.env, os.fs, "C:/Temp/xo-clangcache-1/clang")) == ""
+  os.fs.write("C:/Temp/xo-clangcache-1/clang.exe", b"")?
+  expect(look_path_windows(os.env, os.fs, "C:/Temp/xo-clangcache-1/clang")) == "C:/Temp/xo-clangcache-1/clang.exe"
+}

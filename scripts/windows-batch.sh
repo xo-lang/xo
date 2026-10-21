@@ -47,6 +47,23 @@ if want 1; then
 fi
 
 if want 2; then
+  # preflight: one golden (arith) through the same test first, so a
+  # broken toolchain is one error instead of a failure per golden
+  # (2026-10-21: the test's clang cache wrapper was not found, and all
+  # 271 goldens failed with "needs clang"); the same go test path, since
+  # the test binary sets $XO_CLANG itself
+  pline=$(XO_GOLDEN_WANT=1 XO_GOLDEN_WANT_XO=$(cygpath -m "$xo1") \
+    go test -count=1 -timeout 10m -run 'TestGoldenWant$/^arith$' -v ./internal/llvm 2>&1 | tee "$HOME/batch-preflight.log" | grep -E 'golden (summary|arith)')
+  pre_ok=0
+  case "$pline" in
+  *" 1 pass,"*) pre_ok=1 ;;
+  *)
+    say "2 FAIL: preflight (golden arith through TestGoldenWant): ${pline:-no summary; see $HOME/batch-preflight.log}"
+    grep -m3 -E 'needs clang|FAIL|error' "$HOME/batch-preflight.log" | sed 's/^ */batch:   /'
+    failed=$((failed + 1))
+    ;;
+  esac
+  if [ "$pre_ok" = 1 ]; then
   for t in windows/amd64 windows/arm64; do
     tgt=""
     [ "$t" = windows/arm64 ] && tgt=$t
@@ -58,6 +75,7 @@ if want 2; then
     awk '/output differs from want.txt/ {p=1} /^ *--- (PASS|FAIL|SKIP)|^=== / {p=0} p' "$HOME/batch-goldens-${t#*/}.log"
     case "$line" in *" 0 fail"*) ;; *) failed=$((failed + 1)) ;; esac
   done
+  fi
 fi
 
 if want 3; then
