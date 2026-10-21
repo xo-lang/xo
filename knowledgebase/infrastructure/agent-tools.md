@@ -60,6 +60,10 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   private access (decision 0262); internal/stdtest runs every std module
   that has tests. Tests under std/ and compiler/ live only in `_test.xo`
   files.
+- `go run ./scripts/stdindex` after changing std/prelude.xo: spec/std.md
+  Appendix A lists every prelude function and method by type (look there
+  for a method's exact name and signature); TestStdIndexCurrent fails
+  while it is stale.
 - `go run ./scripts/stdgen` after changing a std type (a struct, enum,
   newtype, or interface in std/*.xo) or a std function's signature:
   regenerates std/rt/std_gen.go, the Go backend's declarations of the std

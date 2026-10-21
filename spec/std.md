@@ -1728,8 +1728,10 @@ native target is in progress (10.7 to 10.9 follow when it lands). Native builds
 (`--no-gc`, decision 0083) run the same in memory driver, ported to Xo,
 with the same results and error texts; there `sql.open` always reports an
 unknown driver (no Go drivers), `max_open` does not bound the in memory
-driver (it runs one statement at a time), and a `Row`'s Debug text is its
-fields.
+driver (it runs one statement at a time), and a `Row`'s Debug text is
+`<row>` (the Go backend writes its columns and values, `Row(a: 1, b:
+"x")`; natively an opaque std type's Debug text is its name, compiler/ssa
+show.xo, verified 2026-10-20).
 
 ### 10.1 Opening
 
@@ -3241,3 +3243,597 @@ fn (p: Prefix) display() -> Str
   bytes, then the zone).
 - A typical use, the client address behind trusted proxies:
   `trusted.any(fn(p) { p.contains(peer) })`.
+
+<!-- BEGIN prelude index: generated from std/prelude.xo by `go run ./scripts/stdindex`; do not edit -->
+
+## Appendix A. Prelude index
+
+Every function and method of std/prelude.xo, by type, as declared there
+(the sections above explain them); interface methods take `self`.
+339 declarations.
+
+### Range
+
+```
+fn (r: Range[Int]) to_list() -> List[Int]
+```
+
+### Display
+
+```
+fn display(self) -> Str
+```
+
+### Error
+
+```
+fn display(self) -> Str
+```
+
+### Debug
+
+```
+fn debug(self) -> Str
+```
+
+### Int
+
+```
+fn (static: Int) parse(s: Str) -> Int?
+fn (static: Int) parse_base(s: Str, base: Int) -> Int?
+fn (n: Int) to_str_base(base: Int) -> Str
+fn (n: Int) abs() -> Int
+fn (n: Int) pow(e: Int) -> Int
+fn (n: Int) wrapping_add(m: Int) -> Int
+fn (n: Int) wrapping_sub(m: Int) -> Int
+fn (n: Int) wrapping_mul(m: Int) -> Int
+fn (n: Int) wrapping_shl(k: Int) -> Int
+fn (n: Int) shr_logical(k: Int) -> Int
+fn (n: Int) rotate_right(k: Int) -> Int
+fn (n: Int) rotate_right32(k: Int) -> Int
+fn (n: Int) swap_bytes() -> Int
+fn (n: Int) mul_hi_unsigned(m: Int) -> Int
+fn (n: Int) lt_unsigned(m: Int) -> Bool
+fn (n: Int) le_unsigned(m: Int) -> Bool
+fn (n: Int) leading_zeros() -> Int
+fn (n: Int) trailing_zeros() -> Int
+fn (n: Int) ones_count() -> Int
+fn (n: Int) saturating_add(m: Int) -> Int
+fn (n: Int) saturating_sub(m: Int) -> Int
+fn (n: Int) saturating_mul(m: Int) -> Int
+fn (n: Int) checked_add(m: Int) -> Int?
+fn (n: Int) checked_sub(m: Int) -> Int?
+fn (n: Int) checked_mul(m: Int) -> Int?
+fn (n: Int) checked_div(m: Int) -> Int?
+```
+
+### Bool
+
+```
+fn (static: Bool) parse(s: Str) -> Bool?
+```
+
+### Float
+
+```
+fn (static: Float) parse(s: Str) -> Float?
+fn (f: Float) floor() -> Float
+fn (f: Float) ceil() -> Float
+fn (f: Float) round() -> Float
+fn (f: Float) trunc() -> Float
+fn (f: Float) abs() -> Float
+fn (f: Float) sqrt() -> Float
+fn (f: Float) is_nan() -> Bool
+fn (f: Float) pow(y: Float) -> Float
+fn (f: Float) exp() -> Float
+fn (f: Float) exp2() -> Float
+fn (f: Float) expm1() -> Float
+fn (f: Float) log() -> Float
+fn (f: Float) log2() -> Float
+fn (f: Float) log10() -> Float
+fn (f: Float) log1p() -> Float
+fn (f: Float) sin() -> Float
+fn (f: Float) cos() -> Float
+fn (f: Float) tan() -> Float
+fn (f: Float) asin() -> Float
+fn (f: Float) acos() -> Float
+fn (f: Float) atan() -> Float
+fn (f: Float) sinh() -> Float
+fn (f: Float) cosh() -> Float
+fn (f: Float) tanh() -> Float
+fn (f: Float) cbrt() -> Float
+fn (f: Float) atan2(x: Float) -> Float
+fn (f: Float) hypot(y: Float) -> Float
+fn (f: Float) mod(y: Float) -> Float
+fn (f: Float) is_inf() -> Bool
+fn (f: Float) to_bits() -> Int
+fn (static: Float) from_bits(b: Int) -> Float
+```
+
+### Int8
+
+```
+fn (static: Int8) try(x: Int) -> Int8?
+```
+
+### Int16
+
+```
+fn (static: Int16) try(x: Int) -> Int16?
+```
+
+### Int32
+
+```
+fn (static: Int32) try(x: Int) -> Int32?
+```
+
+### Int64
+
+```
+fn (static: Int64) try(x: Int) -> Int64?
+```
+
+### UInt8
+
+```
+fn (static: UInt8) try(x: Int) -> UInt8?
+```
+
+### UInt16
+
+```
+fn (static: UInt16) try(x: Int) -> UInt16?
+```
+
+### UInt32
+
+```
+fn (static: UInt32) try(x: Int) -> UInt32?
+```
+
+### UInt64
+
+```
+fn (static: UInt64) try(x: Int) -> UInt64?
+```
+
+### Rune
+
+```
+fn (static: Rune) try(x: Int) -> Rune?
+fn (r: Rune) is_digit() -> Bool
+fn (r: Rune) is_letter() -> Bool
+fn (r: Rune) is_space() -> Bool
+fn (r: Rune) to_lower() -> Rune
+fn (r: Rune) to_upper() -> Rune
+fn (r: Rune) is_print() -> Bool
+fn (r: Rune) quote() -> Str
+```
+
+### Str
+
+```
+fn (s: Str) len() -> Int
+fn (s: Str) rune_count() -> Int
+fn (s: Str) is_empty() -> Bool
+fn (s: Str) contains(sub: Str) -> Bool
+fn (s: Str) starts_with(p: Str) -> Bool
+fn (s: Str) ends_with(p: Str) -> Bool
+fn (s: Str) find(sub: Str) -> Int?
+fn (s: Str) split(sep: Str) -> List[Str]
+fn (s: Str) lines() -> List[Str]
+fn (s: Str) trim() -> Str
+fn (s: Str) trim_start() -> Str
+fn (s: Str) trim_end() -> Str
+fn (s: Str) trim_prefix(p: Str) -> Str
+fn (s: Str) trim_suffix(p: Str) -> Str
+fn (s: Str) to_lower() -> Str
+fn (s: Str) to_upper() -> Str
+fn (s: Str) replace(old: Str, new: Str) -> Str
+fn (s: Str) repeat(n: Int) -> Str
+fn (s: Str) runes() -> List[Rune]
+fn (s: Str) bytes() -> Bytes
+fn (s: Str) quote() -> Str
+fn (s: Str) unquote() -> Str?
+```
+
+### Bytes
+
+```
+fn (b: Bytes) len() -> Int
+fn (b: Bytes) is_empty() -> Bool
+fn (b: Bytes) to_str() -> Str?
+fn (b: Bytes) to_hex() -> Str
+fn (b: Bytes) to_base64() -> Str
+fn (static: Bytes) from_hex(s: Str) -> Bytes?
+fn (static: Bytes) from_base64(s: Str) -> Bytes?
+fn (b: Bytes) rune_count() -> Int
+fn (b: Bytes) decode_rune(i: Int) -> (Rune, Int)
+fn (b: Bytes) quote() -> Str
+```
+
+### List
+
+```
+fn (static: List[T]) with_capacity(n: Int) -> List[T]
+fn (xs: List[T]) len() -> Int
+fn (xs: List[T]) is_empty() -> Bool
+fn (xs: List[T]) get(i: Int) -> T?
+fn (xs: List[T]) first() -> T?
+fn (xs: List[T]) last() -> T?
+fn (xs: List[T]) contains(x: T) -> Bool
+fn (xs: List[T]) index_of(x: T) -> Int?
+fn (xs: List[T]) indexed() -> List[(Int, T)]
+fn (xs: List[T]) map[U, E, fx: Effects](f: fn(T) -> U ! E uses fx) -> List[U] ! E uses fx
+fn (xs: List[T]) filter[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> List[T] ! E uses fx
+fn (xs: List[T]) fold[A, E, fx: Effects](init: A, f: fn(A, T) -> A ! E uses fx) -> A ! E uses fx
+fn (xs: List[T]) find[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> T? ! E uses fx
+fn (xs: List[T]) any[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> Bool ! E uses fx
+fn (xs: List[T]) all[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> Bool ! E uses fx
+fn (xs: List[T]) sort() -> List[T]
+fn (xs: List[T]) sort_by[K: Ord, E, fx: Effects](key: fn(T) -> K ! E uses fx) -> List[T] ! E uses fx
+fn (xs: List[T]) reverse() -> List[T]
+fn (xs: List[T]) to_set() -> Set[T]
+fn (xs: List[Str]) join(sep: Str) -> Str
+fn (var xs: List[T]) push(x: T)
+fn (var xs: List[T]) pop() -> T?
+fn (var xs: List[T]) insert(i: Int, x: T)
+fn (var xs: List[T]) remove_at(i: Int) -> T
+fn (var xs: List[T]) set(i: Int, x: T)
+```
+
+### Map
+
+```
+fn (m: Map[K, V]) len() -> Int
+fn (m: Map[K, V]) is_empty() -> Bool
+fn (m: Map[K, V]) get(k: K) -> V?
+fn (m: Map[K, V]) get_or_fault(k: K, reason: Str) -> V
+fn (m: Map[K, V]) contains(k: K) -> Bool
+fn (m: Map[K, V]) keys() -> List[K]
+fn (m: Map[K, V]) values() -> List[V]
+fn (m: Map[K, V]) entries() -> List[(K, V)]
+fn (m: Map[K, V]) filter[E, fx: Effects](f: fn(K, V) -> Bool ! E uses fx) -> Map[K, V] ! E uses fx
+fn (var m: Map[K, V]) put(k: K, v: V)
+fn (var m: Map[K, V]) remove(k: K) -> V?
+fn (var m: Map[K, V]) update[R, E, fx: Effects](k: K, init: V, f: fn(var V) -> R ! E uses fx) -> R ! E uses fx
+```
+
+### Set
+
+```
+fn (s: Set[T]) len() -> Int
+fn (s: Set[T]) is_empty() -> Bool
+fn (s: Set[T]) contains(x: T) -> Bool
+fn (s: Set[T]) union(o: Set[T]) -> Set[T]
+fn (s: Set[T]) intersect(o: Set[T]) -> Set[T]
+fn (s: Set[T]) difference(o: Set[T]) -> Set[T]
+fn (s: Set[T]) to_list() -> List[T]
+fn (s: Set[T]) any[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> Bool ! E uses fx
+fn (s: Set[T]) all[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> Bool ! E uses fx
+fn (s: Set[T]) filter[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> Set[T] ! E uses fx
+fn (s: Set[T]) map[U, E, fx: Effects](f: fn(T) -> U ! E uses fx) -> Set[U] ! E uses fx
+fn (var s: Set[T]) add(x: T)
+fn (var s: Set[T]) remove(x: T) -> Bool
+```
+
+### Option
+
+```
+fn (o: Option[T]) is_some() -> Bool
+fn (o: Option[T]) is_none() -> Bool
+fn (o: Option[T]) or_err[E](e: E) -> Result[T, E]
+fn (o: Option[T]) map[U, fx: Effects](f: fn(T) -> U uses fx) -> U? uses fx
+fn (o: Option[T]) and_then[U, fx: Effects](f: fn(T) -> U? uses fx) -> U? uses fx
+fn (o: Option[T]) or_fault(msg: Str) -> T
+```
+
+### Result
+
+```
+fn (r: Result[T, E]) is_ok() -> Bool
+fn (r: Result[T, E]) is_err() -> Bool
+fn (r: Result[T, E]) map[U, fx: Effects](f: fn(T) -> U uses fx) -> Result[U, E] uses fx
+fn (r: Result[T, E]) map_err[F, fx: Effects](f: fn(E) -> F uses fx) -> Result[T, F] uses fx
+fn (r: Result[T, E]) ok() -> T?
+fn (r: Result[T, E]) err() -> E?
+fn (r: Result[T, E]) or_fault(msg: Str) -> T
+fn (r: Result[T, E]) ignore_err(reason: Str) -> T?
+```
+
+### Duration
+
+```
+fn (static: Duration) from_secs(s: Float) -> Duration
+fn (static: Duration) from_secs_int(s: Int) -> Duration
+fn (static: Duration) from_millis(ms: Int) -> Duration
+fn (static: Duration) from_nanos(ns: Int) -> Duration
+fn (static: Duration) parse(s: Str) -> Duration ! DurationErr
+fn (d: Duration) seconds() -> Float
+fn (d: Duration) millis() -> Int
+fn (d: Duration) nanos() -> Int
+fn (d: Duration) scale(f: Float) -> Duration
+fn (d: Duration) ceil_seconds() -> Int
+fn (d: Duration) abs() -> Duration
+```
+
+### DurationErr
+
+```
+fn (e: DurationErr) display() -> Str
+```
+
+### Time
+
+```
+fn (static: Time) UNIX_EPOCH() -> Time
+fn (static: Time) from_unix(secs: Int) -> Time
+fn (static: Time) from_unix_millis(ms: Int) -> Time
+fn (static: Time) parse_rfc3339(s: Str) -> Time?
+fn (t: Time) unix() -> Int
+fn (t: Time) unix_millis() -> Int
+fn (t: Time) format_rfc3339() -> Str
+```
+
+### Chan
+
+```
+fn (static: Chan[T]) new(cap: Int = 0) -> Chan[T]
+fn (c: Chan[T]) send(x: T)
+fn (c: Chan[T]) recv() -> T?
+fn (c: Chan[T]) try_send(x: T) -> Bool
+fn (c: Chan[T]) try_recv() -> T?
+fn (c: Chan[T]) close()
+fn (c: Chan[T]) len() -> Int
+```
+
+### Mutex
+
+```
+fn (static: Mutex[T]) new(v: T) -> Mutex[T]
+fn (m: Mutex[T]) with[R, E, fx: Effects](f: fn(var T) -> R ! E uses fx) -> R ! E uses fx
+fn (m: Mutex[T]) with_read[R, E, fx: Effects](f: fn(T) -> R ! E uses fx) -> R ! E uses fx
+```
+
+### Atomic
+
+```
+fn (static: Atomic[T]) new(v: T) -> Atomic[T]
+fn (a: Atomic[T]) get() -> T
+fn (a: Atomic[T]) set(v: T)
+fn (a: Atomic[Int]) add(n: Int) -> Int
+fn (a: Atomic[Int]) max(n: Int) -> Int
+fn (a: Atomic[T]) swap(v: T) -> T
+fn (a: Atomic[T]) compare_and_swap(old: T, new: T) -> Bool
+```
+
+### Scope
+
+```
+fn (s: Scope) spawn[T, E, fx: Effects](f: fn() -> T ! E uses fx) -> Task[T, E] uses fx
+fn (s: Scope) spawn_background[T, E, fx: Effects](f: fn() -> T ! E uses fx) -> Task[T, E] uses fx
+fn (s: Scope) cancel()
+fn (s: Scope) group() -> task.Group
+```
+
+### Task
+
+```
+fn (t: Task[T, E]) await() -> T ! E
+```
+
+### Buf
+
+```
+fn (static: Buf[T]) new() -> Buf[T]
+fn (static: Buf[T]) with_capacity(n: Int) -> Buf[T]
+fn (var b: Buf[T]) push(x: T)
+fn (b: Buf[T]) len() -> Int
+fn (b: Buf[T]) freeze() -> List[T]
+```
+
+### StrBuilder
+
+```
+fn (static: StrBuilder) new() -> StrBuilder
+fn (var b: StrBuilder) write(s: Str)
+fn (b: StrBuilder) len() -> Int
+fn (b: StrBuilder) freeze() -> Str
+```
+
+### BytesBuilder
+
+```
+fn (static: BytesBuilder) new() -> BytesBuilder
+fn (static: BytesBuilder) with_capacity(n: Int) -> BytesBuilder
+fn (var b: BytesBuilder) write(data: Bytes)
+fn (var b: BytesBuilder) write_byte(x: UInt8)
+fn (var b: BytesBuilder) write_str(s: Str)
+fn (var b: BytesBuilder) write_rune(r: Rune)
+fn (b: BytesBuilder) len() -> Int
+fn (b: BytesBuilder) freeze() -> Bytes
+```
+
+### Secret
+
+```
+fn (static: Secret[T]) new(v: T) -> Secret[T]
+fn (s: Secret[T]) reveal() -> T
+```
+
+### Fs
+
+```
+fn sub(self, dir: Str) -> Fs
+fn cwd(self) -> Fs
+fn cwd_path(self) -> Str ! FsErr
+fn read_only(self) -> Fs
+fn write_only(self) -> Fs
+fn case_sensitive(self) -> Bool
+fn stat(self, path: Str) -> FileInfo? ! FsErr uses fs.read
+fn exists(self, path: Str) -> Bool ! FsErr uses fs.read
+fn read(self, path: Str) -> Bytes ! FsErr uses fs.read
+fn read_text(self, path: Str) -> Str ! FsErr uses fs.read
+fn read_dir(self, dir: Str) -> List[FileInfo] ! FsErr uses fs.read
+fn walk(self, dir: Str) -> List[FileInfo] ! FsErr uses fs.read
+fn write(self, path: Str, data: Bytes) -> () ! FsErr uses fs.write
+fn create_temp(self, dir: Str, prefix: Str) -> Str ! FsErr uses fs.write
+fn rename(self, from: Str, to: Str) -> () ! FsErr uses fs.write
+fn remove(self, path: Str) -> () ! FsErr uses fs.write
+fn remove_all(self, path: Str) -> () ! FsErr uses fs.write
+fn create_dir_all(self, dir: Str) -> () ! FsErr uses fs.write
+fn set_modified(self, path: Str, t: Time) -> () ! FsErr uses fs.write
+fn open(self, path: Str) -> File ! FsErr uses fs.read
+fn create(self, path: Str) -> File ! FsErr uses fs.write
+fn open_append(self, path: Str) -> File ! FsErr uses fs.write
+fn create_new(self, path: Str) -> File ! FsErr uses fs.write
+fn append(self, path: Str, data: Bytes) -> () ! FsErr uses fs.write
+fn copy(self, from: Str, to: Str) -> () ! FsErr uses fs
+fn mode(self, path: Str) -> Int ! FsErr uses fs.read
+fn set_mode(self, path: Str, mode: Int) -> () ! FsErr uses fs.write
+fn symlink(self, target: Str, link: Str) -> () ! FsErr uses fs.write
+fn read_link(self, path: Str) -> Str? ! FsErr uses fs.read
+fn glob(self, pattern: Str) -> List[Str] ! FsErr uses fs.read
+fn lock(self, path: Str) -> FileLock ! FsErr uses fs.write
+fn try_lock(self, path: Str) -> FileLock? ! FsErr uses fs.write
+```
+
+### File
+
+```
+fn (f: File) read(max: Int) -> Bytes? ! FsErr uses fs.read
+fn (f: File) read_line() -> Str? ! FsErr uses fs.read
+fn (f: File) write(data: Bytes) -> () ! FsErr uses fs.write
+fn (f: File) close() -> () ! FsErr
+```
+
+### FileLock
+
+```
+fn (l: FileLock) unlock()
+```
+
+### Listener
+
+```
+fn (l: Listener) addr() -> Str
+fn (l: Listener) accept() -> Conn ! NetErr uses net.listen
+fn (l: Listener) close()
+```
+
+### Conn
+
+```
+fn (c: Conn) read(max: Int) -> Bytes? ! NetErr uses net
+fn (c: Conn) write(data: Bytes) -> () ! NetErr uses net
+fn (c: Conn) close()
+```
+
+### Net
+
+```
+fn listen(self, addr: Str) -> Listener ! NetErr uses net.listen
+fn dial(self, addr: Str) -> Conn ! NetErr uses net.dial
+fn only(self, hosts: List[Str]) -> Net
+```
+
+### Clock
+
+```
+fn now(self) -> Time uses clock
+fn sleep(self, d: Duration) uses clock
+fn sleep_or_cancel(self, d: Duration) -> () ! ClockErr uses clock
+fn since(self, t: Time) -> Duration uses clock
+```
+
+### Rand
+
+```
+fn int(self, lo: Int, hi: Int) -> Int uses rand
+fn float(self) -> Float uses rand
+fn bool(self) -> Bool uses rand
+fn bytes(self, n: Int) -> Bytes uses rand
+fn shuffle[T](self, xs: List[T]) -> List[T] uses rand
+```
+
+### Env
+
+```
+fn get(self, name: Str) -> Str? uses env
+fn vars(self) -> Map[Str, Str] uses env
+fn args(self) -> List[Str] uses env
+fn program(self) -> Str uses env
+fn home(self) -> Str ! EnvErr uses env
+fn only(self, names: List[Str]) -> Env
+fn config_dir(self) -> Str ! EnvErr uses env
+fn cache_dir(self) -> Str ! EnvErr uses env
+```
+
+### Stdio
+
+```
+fn print(self, text: Str) uses stdio
+fn println(self, text: Str) uses stdio
+fn eprint(self, text: Str) uses stdio
+fn eprintln(self, text: Str) uses stdio
+fn write(self, data: Bytes) -> () ! IoErr uses stdio
+fn read_line(self) -> Str? ! IoErr uses stdio
+fn read_all(self) -> Str ! IoErr uses stdio
+fn lines(self) -> List[Str] ! IoErr uses stdio
+fn stdin_is_tty(self) -> Bool uses stdio
+fn stdout_is_tty(self) -> Bool uses stdio
+fn stderr_is_tty(self) -> Bool uses stdio
+fn width(self) -> Int? uses stdio
+fn read_secret(self, prompt: Str) -> Str? ! IoErr uses stdio
+fn read_bytes(self, max: Int) -> Bytes? ! IoErr uses stdio
+fn read_all_bytes(self) -> Bytes ! IoErr uses stdio
+```
+
+### Proc
+
+```
+fn exit(self, code: Int) -> Never uses proc
+fn set_grace(self, d: Duration) uses proc
+fn run(self, cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr uses proc
+fn only(self, cmds: List[Str]) -> Proc
+fn cmd(self, name: Str, args: List[Str] = []) -> Cmd
+fn pipeline(self, cmds: List[Cmd]) -> ProcOutput ! ProcErr uses proc
+fn kill(self, pid: Int, signal: Str = "TERM") -> () ! ProcErr uses proc
+```
+
+### Cmd
+
+```
+fn (c: Cmd) dir(path: Str) -> Cmd
+fn (c: Cmd) env(e: Env) -> Cmd uses env
+fn (c: Cmd) set_env(name: Str, value: Str) -> Cmd
+fn (c: Cmd) stdin(data: Bytes) -> Cmd
+fn (c: Cmd) inherit() -> Cmd
+fn (c: Cmd) merge_stderr() -> Cmd
+fn (c: Cmd) output() -> ProcOutput ! ProcErr uses proc
+fn (c: Cmd) run() -> Int ! ProcErr uses proc
+fn (c: Cmd) spawn() -> Child ! ProcErr uses proc
+```
+
+### Child
+
+```
+fn (c: Child) pid() -> Int
+fn (c: Child) write(data: Bytes) -> () ! ProcErr uses proc
+fn (c: Child) close_stdin()
+fn (c: Child) read(max: Int) -> Bytes? ! ProcErr uses proc
+fn (c: Child) read_err(max: Int) -> Bytes? ! ProcErr uses proc
+fn (c: Child) read_line() -> Str? ! ProcErr uses proc
+fn (c: Child) wait() -> Int ! ProcErr uses proc
+fn (c: Child) kill()
+```
+
+### Functions
+
+```
+fn fault(msg: Str) -> Never
+fn dbg[T](x: T) -> T
+```
+
+<!-- END prelude index -->

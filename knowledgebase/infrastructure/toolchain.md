@@ -365,6 +365,7 @@ XO_RANGE_SEEDS=25 go test ./internal/gen -run TestRangeDifferential   # slow: mo
 XO_LIST_SEEDS=40 go test ./internal/gen -run TestListModel   # slow: more random List value semantics programs vs a deep copy model (XO_LIST_DUMP=<dir> keeps them)
 XO_COMPILE_PROPS=1000 go test ./internal/gen -run TestCompileProperty   # every checked program builds (decision 0110): random programs over the optional syntax, built on Go and --no-gc and run alike (24 with -short, 150 in the full suite, about 4 min for 1000; XO_COMPILE_PROP_SEED=S one seed, XO_COMPILE_PROP_KEEP=<dir> keeps them; last verified: 2026-10-09)
 go run ./scripts/stdgen [-check]                       # regenerate std/rt/std_gen.go and std_sigs_gen.go from std/*.xo (-check: exit 1 when stale)
+go run ./scripts/stdindex                              # rewrite spec/std.md Appendix A, the prelude index (every function and method of std/prelude.xo by type, internal/stdindex), after changing the prelude; internal/repotest TestStdIndexCurrent (-short) fails while it is stale (last verified: 2026-10-20)
 go run ./cmd/xo lexdump [--bench=N] <files...>              # hidden: canonical token dump of the Go lexer (or lexing time), same text as compiler/lexer
 go run ./cmd/xo run compiler/lexer -- [--bench=N] <files...>   # the self hosted (Xo) lexer: same dump or timing
 go run ./cmd/xo build --backend=arm64 -o .tools/xolex compiler/lexer   # native build of the Xo lexer (also --backend=llvm)
