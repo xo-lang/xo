@@ -1,5 +1,19 @@
 # std/websocket changes
 
+## 2026-10-21: fix: a read after a close keeps the close error
+
+- Kind: fix
+- Commit: (filled in after the push)
+- Found by: a flaky golden under load (TestGoldenRun/websocket, Xo lang 4's gate)
+- Go reference: github.com/gorilla/websocket Conn.NextReader (readErr sticks)
+- Test: internal/llvm/testdata/golden/websocket (bye_late: the close frame in a later segment than the message; failed 3 of 3 before, and 12 of 450 runs of the old golden under CPU load)
+
+On the native backends, a read after the connection's close frame read
+the connection again (an `unexpected EOF` close 1006, or a reset)
+instead of giving the same close error, when the close frame had
+arrived after the message before it; a failed send also forgot that a
+close frame was sent.
+
 ## 2026-10-21: feature: wss:// in websocket.dial
 
 - Kind: feature

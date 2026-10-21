@@ -123,7 +123,9 @@ fn close_message(code: Int, text: Str) -> Bytes {
 
 /// Writes one final frame (masked from a client).
 fn (c: WsConn) write_frame(op: Int, data: Bytes) -> () ! websocket.WsErr {
-  c.wr.with(fn(var w: WriteState) -> () ! websocket.WsErr {
+  // the outcome as the closure's value: an Err from with's closure would
+  // undo close_sent (spec 5.4)
+  let outcome = c.wr.with(fn(var w: WriteState) -> Result[(), websocket.WsErr] {
     if w.close_sent {
       return Err(protocol_err("close sent"))
     }
@@ -161,7 +163,9 @@ fn (c: WsConn) write_frame(op: Int, data: Bytes) -> () ! websocket.WsErr {
     if !err.is_empty() {
       return Err(net_err(err))
     }
+    Ok(())
   })
+  outcome?
 }
 
 /// gorilla's WriteControl: at most 125 bytes.
@@ -331,18 +335,22 @@ fn (c: WsConn) read() -> websocket.Message ! websocket.WsErr {
   if task.is_canceled() {
     return Err(net_err("canceled"))
   }
-  c.rd.with(fn(var st: ReadState) -> websocket.Message ! websocket.WsErr {
+  // the outcome as the closure's value: an Err from with's closure would
+  // undo the read (the bytes consumed, the error that sticks; spec 5.4),
+  // so a read after a close frame read the connection again
+  let outcome = c.rd.with(fn(var st: ReadState) -> Result[websocket.Message, websocket.WsErr] {
     if !st.err.is_empty() {
       return Err(st.err[0])
     }
     match c.read_message(st) {
-      Ok(m) => m
+      Ok(m) => Ok(m)
       Err(e) => {
         st.err = [e]
         Err(e)
       }
     }
   })
+  outcome?
 }
 
 fn (c: WsConn) write(m: websocket.Message) -> () ! websocket.WsErr {

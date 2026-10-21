@@ -1,5 +1,17 @@
 # std/http changes
 
+## 2026-10-21: fix: a streamed body's read error sticks
+
+- Kind: fix
+- Commit: (filled in after the push)
+- Found by: review after the websocket close fix (the same Mutex.with pattern)
+- Go reference: net/http body (a read error is returned again)
+- Test: internal/llvm/testdata/golden/http_stream_body (bad chunk), http_multipart_stream
+
+On the native backends, `BodyReader.read` after a failed read, and
+`PartReader.next` or `read` after a failed one, read the connection
+again instead of returning the same error.
+
 ## 2026-10-21: feature: BodyReader.multipart (multipart parts from the stream)
 
 - Kind: feature

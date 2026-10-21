@@ -20,7 +20,7 @@ fn echo(c: websocket.WsConn) {
   }
 }
 
-fn routes() -> http.Router {
+fn routes(clock: Clock) -> http.Router {
   var r = http.router()
   r.handle("GET /echo", fn(req) { websocket.upgrade(req, echo) })
   r.handle("GET /proto", fn(req) {
@@ -30,6 +30,15 @@ fn routes() -> http.Router {
     websocket.upgrade(req, fn(c) {
       c.write_text("hello").ignore_err("test")
       c.close(code: 1001, reason: "bye").ignore_err("test")
+    })
+  })
+  // the close frame in a later segment than the message (the client's
+  // buffer refilled between them): the error still sticks
+  r.handle("GET /bye_late", fn(req) {
+    websocket.upgrade(req, fn(c) {
+      c.write_text("hello").ignore_err("test")
+      clock.sleep(50ms)
+      c.close(code: 1001, reason: "late").ignore_err("test")
     })
   })
   r.handle("GET /small", fn(req) { websocket.upgrade(req, echo, max_message: 10) })
@@ -76,6 +85,13 @@ fn client(os: Os, addr: Str) -> () ! websocket.WsErr {
   match b.read() {
     Ok(m) => os.stdio.println("bye again: ${show(m)}")
     Err(e) => os.stdio.println("bye again: ${e}")
+  }
+  let bl = websocket.dial(os.net, "ws://${addr}/bye_late")?
+  for i in 0..3 {
+    match bl.read() {
+      Ok(m) => os.stdio.println("bye late ${i}: ${show(m)}")
+      Err(e) => os.stdio.println("bye late ${i}: ${e}")
+    }
   }
   let s = websocket.dial(os.net, "ws://${addr}/small")?
   s.write_text("short")?
@@ -150,7 +166,7 @@ fn upgrade_raw(path: Str, extra: Str) -> Bytes {
 fn frames(hex: Str) -> Bytes { Bytes.from_hex(hex).or_fault("constant") }
 
 fn main(os: Os) {
-  let r = routes()
+  let r = routes(os.clock)
   let in_process = r.call(http.new_request("GET", "/echo", {"Connection": "Upgrade", "Upgrade": "websocket", "Sec-WebSocket-Version": "13", "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ=="}))
   os.stdio.println("call: ${in_process.status}")
   match os.net.listen("127.0.0.1:0") {

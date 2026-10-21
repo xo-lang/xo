@@ -299,7 +299,10 @@ fn (b: BodyReader) read(max: Int = 32768) -> Bytes? ! IoErr {
   if task.is_canceled() {
     return Err(IoErr.Canceled)
   }
-  b.st.with(fn(var s: BodyState) -> Bytes? ! IoErr { body_read(s, max) })
+  // the outcome as the closure's value: an Err from with's closure would
+  // undo the read's state (the error that sticks; spec 5.4)
+  let outcome = b.st.with(fn(var s: BodyState) -> Result[Bytes?, IoErr] { body_read(s, max) })
+  outcome?
 }
 
 fn (b: BodyReader) read_all() -> Bytes ! IoErr {
@@ -366,7 +369,8 @@ fn io_err_text(e: IoErr) -> Str {
 }
 
 fn (p: PartReader) next() -> StreamPart? ! multipart.MultipartErr {
-  let h = p.st.with(fn(var s: nmp.Stream) -> nmp.Head? ! Str { s.next() })
+  // the outcome as the closure's value, as BodyReader.read's
+  let h = p.st.with(fn(var s: nmp.Stream) -> Result[nmp.Head?, Str] { s.next() })
   match h {
     Ok(Some(h)) => Ok(Some(StreamPart{name: h.name, filename: h.filename, headers: h.headers, fields: h.fields}))
     Ok(None) => Ok(None)
@@ -378,7 +382,7 @@ fn (p: PartReader) read(max: Int = 32768) -> Bytes? ! multipart.MultipartErr {
   if max < 1 {
     fault("PartReader.read: max must be at least 1, got ${max}")
   }
-  match p.st.with(fn(var s: nmp.Stream) -> Bytes? ! Str { s.read(max) }) {
+  match p.st.with(fn(var s: nmp.Stream) -> Result[Bytes?, Str] { s.read(max) }) {
     Ok(d) => Ok(d)
     Err(m) => Err(multipart.MultipartErr{msg: m})
   }

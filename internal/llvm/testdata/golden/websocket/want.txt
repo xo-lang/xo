@@ -10,6 +10,9 @@ proto: websocket: close 1006 (abnormal closure): unexpected EOF
 bye: text hello
 bye: websocket: close 1001 (going away): bye
 bye again: websocket: close 1001 (going away): bye
+bye late 0: text hello
+bye late 1: websocket: close 1001 (going away): late
+bye late 2: websocket: close 1001 (going away): late
 small: text short
 small: websocket: close 1009 (message too big)
 plain: websocket: bad handshake (true)
