@@ -141,6 +141,7 @@ var codegenFS = map[string]string{
 	"cli/bind/clang.xo":         "C bindings: program input",
 	"cli/core/format/main.xo":   "the formatter's own files",
 	"tzsel/tzsel.xo":            "time zone data the program embeds: program input",
+	"check/embed.xo":            "embedded files (decision 0304): their digest is in the module's interface closure (iface_closures embed_digest), which keys the module check cache and front-end entries",
 	"cli/cmdhelp/cmdhelp.xo":    "help text",
 	"cli/cmdhelp/main.xo":       "help text",
 	"macho/pelink.xo":           "the link (binary cache, self_id)",
