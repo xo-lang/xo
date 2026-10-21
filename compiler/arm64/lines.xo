@@ -178,8 +178,16 @@ fn reload_reuse_ops(lines: List[Line], nrefs: Map[Str, Int]) -> List[Line] {
       continue
     }
     if writes_scratch(l) {
-      h16 = -1
-      h17 = -1
+      // only the register the line writes, when that is all it does (a
+      // load into x17 from a base in x16 keeps x16: 2026-10-21,
+      // http.dispatch's record copy reloaded the base for every word)
+      let (w16, w17) = scratch_written(l)
+      if w16 {
+        h16 = -1
+      }
+      if w17 {
+        h17 = -1
+      }
     }
     out.push(x)
   }

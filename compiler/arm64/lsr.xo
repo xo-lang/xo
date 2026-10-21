@@ -757,6 +757,9 @@ fn copy_runs(text: Str) -> Str { copy_runs_l(text.split("\n")).join("\n") }
 /// by word copy read; and neither x16 nor x17 is read after the run
 /// before it is written (scratch_dead). Before reload_reuse, which takes
 /// x16 to hold the run's last word's slot after it.
+/// Ported to items in lines.xo (decision 0274 step 3): until the text pass
+/// goes, a change here is made in its port too, or XO_OP_VERIFY=1 builds
+/// fail (gotchas/arm64-line-pass-port-drift.md).
 fn copy_runs_l(lines: List[Str]) -> List[Str] {
   if !any_has(lines, "\tstr x16, [") && !any_has(lines, "\tstr x17, [") {
     return lines
@@ -1282,6 +1285,9 @@ pub fn label_counts(lines: List[Str], ext: Str) -> Map[Str, Int] {
   nrefs
 }
 
+/// Ported to items in lines.xo (decision 0274 step 3): until the text pass
+/// goes, a change here is made in its port too, or XO_OP_VERIFY=1 builds
+/// fail (gotchas/arm64-line-pass-port-drift.md).
 fn reload_reuse_l(lines: List[Str], nrefs: Map[Str, Int]) -> List[Str] {
   // per label, the references seen so far and what x16 and x17 held at
   // them (the intersection)
