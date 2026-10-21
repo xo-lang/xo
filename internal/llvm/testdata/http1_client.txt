@@ -49,7 +49,7 @@
 48 Protocol Head "http://ADDR/r/48": net/http: HTTP/1.x transport connection broken: malformed HTTP status code
 49 Protocol Get "/r/49": stopped after 10 redirects
 50 Protocol Get "mailto:x": unsupported protocol scheme "mailto"
-51 Protocol parse "http://[::1": invalid host "[::1"
+51 Protocol parse "http://[::1": missing ']' in host
 52 404 [Content-Length: 0] 0 
 53 302 [Content-Length: 0|Location: ] 0 
 54 404 [Content-Length: 0] 0 
