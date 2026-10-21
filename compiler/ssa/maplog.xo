@@ -1,0 +1,1134 @@
+// Map and Set on the log and fork representation (decision 0291; std/rt
+// map.go is the Go backend's, and its soundness argument is this one's),
+// behind check.Checker map_log until the switch. A Map[K, V] is the struct
+//
+//   dir     List[List[E]]  the table's entry log in chunks of 8, 16, 32,
+//                          ... entries after MLOG_PAD empty slots; the
+//                          directory (made with room for MLOG_DIR chunks)
+//                          and the chunks never move, so
+//                          every value of the table reads what the owner
+//                          appends (an index slot can name an entry past a
+//                          value's view: its key and prev are read)
+//   idx     List[Int]      the table's index (open addressing: a slot is
+//                          an own entry's position minus base plus one, 0
+//                          empty), [] while the table has at most
+//                          MLOG_SMALL keys (they are scanned); shared, its
+//                          slots written with rt.slot_store
+//   used    List[Int]      one cell: the log length some value claimed
+//                          (rt.slot_cas), [] for a map with no table
+//   base    Int            the position of the table's first entry
+//   n       Int            live keys (field 4, as the lists' form)
+//   len     Int            the end of this value's view of the table
+//   keys    Int            distinct keys of the table (its owner's count)
+//   parents List[Level]    the views this table forked from, nearest first
+//
+// with E = MapEntry[K, V] {h, prev, org, k, v} (prev: the previous entry
+// of k in the table, or -1; org: the position that gives k its place in
+// insertion order, -1 for a tombstone) and Level {dir, idx, base, len}.
+// A put claims the next position of its table (rt.slot_cas from len to
+// len + 1) and appends in place (log.push: the chunk is shared); a value
+// that loses the claim (another copy appended first) forks a table whose
+// parent is its view, O(1). Forks nest at most MLOG_DEPTH deep; deeper,
+// or when overwritten entries and tombstones outnumber live keys, the
+// view is flattened into a fresh table.
+
+
+/// The first chunk's entries; chunk c holds MLOG_CHUNK << c.
+const MLOG_CHUNK = 8
+/// A table's chunk directory is made with room for this many chunks (8
+/// (2^40 - 1) entries) and never grows: every value of the table reads
+/// the chunks the owner appends (log.push), as Go's newest log array.
+const MLOG_DIR = 40
+/// The empty directory slots before the first chunk (its slot is 3: the
+/// top bit of 8, mlog_slot8).
+const MLOG_PAD = 3
+/// A table with at most this many keys has no index (its log is scanned).
+const MLOG_SMALL = 8
+/// Forks nest at most this deep.
+const MLOG_DEPTH = 8
+/// The bit that separates a find's level from its position.
+const MLOG_LEVEL = 1099511627776
+/// rt.slot_* orders (C11's).
+const MLOG_ACQ = 1
+const MLOG_REL = 2
+const MLOG_ACQ_REL = 3
+
+/// The entry type of the log map type t (fields: h, prev, org, k, v).
+fn mlog_entry_of(m: Module, t: Int) -> Int { m.types[m.types[m.types[t].fields[0].ty].elems[0]].elems[0] }
+
+/// The key and value types of the log map type t.
+fn mlog_key(m: Module, t: Int) -> Int { m.types[mlog_entry_of(m, t)].fields[3].ty }
+
+fn mlog_val(m: Module, t: Int) -> Int { m.types[mlog_entry_of(m, t)].fields[4].ty }
+
+/// The log representation of Map[k, v] (or Set[k], v unit) named name.
+fn (var b: Builder) mlog_type(name: Str, k: Int, v: Int) -> Int {
+  let (t, created) = b.m.named(name, Kind.Struct)
+  if created {
+    let it = b.int_t()
+    let (et, enew) = b.m.named("xo.MapEntry[${b.m.types[k].name}, ${b.m.types[v].name}]", Kind.Struct)
+    if enew {
+      b.m.types[et].fields = [SField{name: "h", ty: it}, SField{name: "prev", ty: it}, SField{name: "org", ty: it}, SField{name: "k", ty: k}, SField{name: "v", ty: v}]
+    }
+    let dt = b.m.list(b.m.list(et))
+    let il = b.m.list(it)
+    let (lv, lnew) = b.m.named("xo.MapLevel[${b.m.types[k].name}, ${b.m.types[v].name}]", Kind.Struct)
+    if lnew {
+      b.m.types[lv].fields = [SField{name: "dir", ty: dt}, SField{name: "idx", ty: il}, SField{name: "base", ty: it}, SField{name: "len", ty: it}]
+    }
+    b.m.types[t].coll = true
+    b.m.types[t].fields = [SField{name: "dir", ty: dt}, SField{name: "idx", ty: il}, SField{name: "used", ty: il}, SField{name: "base", ty: it}, SField{name: "n", ty: it}, SField{name: "len", ty: it}, SField{name: "keys", ty: it}, SField{name: "parents", ty: b.m.list(lv)}]
+  }
+  t
+}
+
+fn (var b: Builder) mf(t: Int, i: Int, v: Int) -> Int { b.add(Op.Field, b.m.types[t].fields[i].ty, Aux.I(n: i), [v]) }
+
+fn (var b: Builder) iop(op: Op, x: Int, y: Int) -> Int { b.add(op, b.int_t(), Aux.None, [x, y]) }
+
+fn (var b: Builder) iwrap(op: Op, x: Int, y: Int) -> Int { b.add(op, b.int_t(), Aux.S(s: "wrap"), [x, y]) }
+
+fn (var b: Builder) bop(op: Op, x: Int, y: Int) -> Int { b.add(op, b.bool_t(), Aux.None, [x, y]) }
+
+/// A Map or Set with no entries and no table.
+fn (var b: Builder) mlog_empty(t: Int) -> Int {
+  var fs: List[Int] = []
+  for i in 0..8 {
+    let ft = b.m.types[t].fields[i].ty
+    fs.push(if b.tkind(ft) == Kind.List { b.call("list.new", ft, "", []) } else { b.cint(0) })
+  }
+  b.add(Op.Struct, t, Aux.None, fs)
+}
+
+/// The directory slot and offset of own entry i (i >= 0): slot c (c >= 3,
+/// the directory's first MLOG_PAD slots are empty) holds the 2^c entries
+/// [2^c - 8, 2^(c+1) - 8).
+fn (var b: Builder) mlog_slot(i: Int) -> (Int, Int) {
+  b.mlog_slot8(b.iop(Op.Add, i, b.cint(MLOG_CHUNK)))
+}
+
+/// mlog_slot of j - 8: the slot is j's top bit and the offset j without
+/// it (five operations, so the inlined xo.mlog.find stays small).
+fn (var b: Builder) mlog_slot8(j: Int) -> (Int, Int) {
+  let it = b.int_t()
+  let top = b.iop(Op.Sub, b.cint(63), b.rt("clz", it, [j]))
+  (top, b.iop(Op.Xor, j, b.iop(Op.Shl, b.cint(1), top)))
+}
+
+/// A new chunk directory: room for MLOG_DIR chunks after MLOG_PAD empty
+/// slots (so an entry's slot is its position's top bit, mlog_slot8),
+/// made by xo.mlog.newdir: a call's result has no known length in the
+/// caller, where log.push then grows it in place (built inline, the
+/// pushes' known length 3 held in the flatten's loop and a chunk went in
+/// the wrong slot on arm64; gotchas/arm64-list-length-cache-in-place-growth.md).
+fn (var b: Builder) mlog_newdir(dt: Int) -> Int {
+  let name = "xo.mlog.newdir[${b.m.types[dt].name}]"
+  let fi = b.thunk_func(name, [], [dt], [])
+  if fi >= 0 {
+    let saved = b.begin(fi, b.s.file)
+    let el = b.m.types[dt].elems[0]
+    var d = b.call("list.new", dt, "", [b.cint(MLOG_DIR + MLOG_PAD)])
+    for _ in 0..MLOG_PAD {
+      d = b.call("list.push", dt, "", [d, b.call("list.new", el, "", [b.cint(0)])])
+    }
+    b.retv(d)
+    b.finish_fn()
+    b.end(saved)
+  }
+  b.call(name, dt, "", [])
+}
+
+/// Own entry i of the log dir.
+fn (var b: Builder) mlog_at(et: Int, dir: Int, i: Int) -> Int {
+  let (c, off) = b.mlog_slot(i)
+  let chunk = b.call("list.index", b.m.types[b.vty(dir)].elems[0], "", [dir, c])
+  b.call("list.index", et, "", [chunk, off])
+}
+
+/// The home slot of hash h in an index of n slots (a power of two): its
+/// low bits, as the lists' table (hash_func mixes its keys already).
+fn (var b: Builder) mlog_home(h: Int, n: Int) -> Int { b.iop(Op.And, h, b.iop(Op.Sub, n, b.cint(1))) }
+
+/// xo.mlog.probe[T](dir, idx, base, L, k, h) -> (slot, j): in the table
+/// (dir, idx, base), the newest own entry of k below L (j, or -1) and the
+/// slot of k in idx (its slot, or the empty one where it would go; -1 with
+/// no index, when the log is scanned).
+fn (var b: Builder) mlog_probe(t: Int) -> Str {
+  let it = b.int_t()
+  let et = mlog_entry_of(b.m, t)
+  let kt = mlog_key(b.m, t)
+  let rt = b.m.tuple([it, it])
+  let name = "xo.mlog.probe[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [b.m.types[t].fields[0].ty, b.m.types[t].fields[1].ty, it, it, kt, it], [rt], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let dir = b.param(0)
+  let idx = b.param(1)
+  let base = b.param(2)
+  let lim = b.param(3)
+  let k = b.param(4)
+  let h = b.param(5)
+  let n = b.call("list.len", it, "", [idx])
+  let (no, join) = b.if_then_begin(b.bop(Op.Eq, n, b.cint(0)))
+  // no index: the log scanned from its end
+  let iv = b.local()
+  b.write_var(iv, b.iop(Op.Sub, lim, b.cint(1)))
+  let head = b.new_block()
+  b.jump(head, [])
+  b.s.cur = head
+  let i = b.read(iv)
+  let (miss, more) = b.if_then_begin(b.bop(Op.Lt, i, base))
+  b.retv(b.add(Op.Tuple, rt, Aux.None, [b.cint(-1), b.cint(-1)]))
+  b.if_then_end(miss, more)
+  let e = b.mlog_at(et, dir, b.iop(Op.Sub, i, base))
+  let same_h = b.bop(Op.Eq, b.add(Op.Field, it, Aux.I(n: 0), [e]), h)
+  let (n1, j1) = b.if_then_begin(same_h)
+  let (n2, j2) = b.if_then_begin(b.eq_values(b.add(Op.Field, kt, Aux.I(n: 3), [e]), k))
+  b.retv(b.add(Op.Tuple, rt, Aux.None, [b.cint(-1), i]))
+  b.if_then_end(n2, j2)
+  b.if_then_end(n1, j1)
+  b.write_var(iv, b.iop(Op.Sub, i, b.cint(1)))
+  b.jump(head, [])
+  b.seal(head)
+  b.dead()
+  b.add(Op.Unreachable, -1, Aux.None, [])
+  b.if_then_end(no, join)
+  // the index: the newest own entry of k, then back to below L
+  let pv = b.local()
+  b.write_var(pv, b.mlog_home(h, n))
+  let head2 = b.new_block()
+  b.jump(head2, [])
+  b.s.cur = head2
+  let p = b.read(pv)
+  let s = b.rt("slot_load", it, [idx, p, b.cint(MLOG_ACQ)])
+  let (ne, je) = b.if_then_begin(b.bop(Op.Eq, s, b.cint(0)))
+  b.retv(b.add(Op.Tuple, rt, Aux.None, [p, b.cint(-1)]))
+  b.if_then_end(ne, je)
+  let pos = b.iop(Op.Add, base, b.iop(Op.Sub, s, b.cint(1)))
+  let e2 = b.mlog_at(et, dir, b.iop(Op.Sub, pos, base))
+  let (n3, j3) = b.if_then_begin(b.bop(Op.Eq, b.add(Op.Field, it, Aux.I(n: 0), [e2]), h))
+  let (n4, j4) = b.if_then_begin(b.eq_values(b.add(Op.Field, kt, Aux.I(n: 3), [e2]), k))
+  // follow prev below the view's end
+  let jv = b.local()
+  b.write_var(jv, pos)
+  let head3 = b.new_block()
+  let done3 = b.new_block()
+  b.jump(head3, [])
+  b.s.cur = head3
+  let j = b.read(jv)
+  let above = b.bop(Op.Ge, j, lim)
+  let step = b.new_block()
+  b.s.f.branch(b.s.cur, above, step, done3)
+  b.seal(step)
+  b.s.cur = step
+  let ej = b.mlog_at(et, dir, b.iop(Op.Sub, j, base))
+  b.write_var(jv, b.add(Op.Field, it, Aux.I(n: 1), [ej]))
+  b.jump(head3, [])
+  b.seal(head3)
+  b.seal(done3)
+  b.s.cur = done3
+  b.retv(b.add(Op.Tuple, rt, Aux.None, [p, b.read(jv)]))
+  b.if_then_end(n4, j4)
+  b.if_then_end(n3, j3)
+  b.write_var(pv, b.iop(Op.And, b.iop(Op.Add, p, b.cint(1)), b.iop(Op.Sub, n, b.cint(1))))
+  b.jump(head2, [])
+  b.seal(head2)
+  b.dead()
+  b.add(Op.Unreachable, -1, Aux.None, [])
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// The newest own entry of k below lim in the table (dir, idx, base), or
+/// -1, emitted inline (xo.mlog.probe without the slot): find's path for
+/// a map with no parents.
+fn (var b: Builder) mlog_probe_j(t: Int, dir: Int, idx: Int, base: Int, lim: Int, k: Int, h: Int) -> Int {
+  let it = b.int_t()
+  let et = mlog_entry_of(b.m, t)
+  let kt = mlog_key(b.m, t)
+  let join = b.new_block()
+  let res = b.s.f.add_param(join, it)
+  let n = b.call("list.len", it, "", [idx])
+  let (scan, indexed) = b.branch(b.bop(Op.Eq, n, b.cint(0)))
+  // no index: the log scanned from its end
+  b.s.cur = scan
+  let iv = b.local()
+  b.write_var(iv, b.iop(Op.Sub, lim, b.cint(1)))
+  let head = b.new_block()
+  b.jump(head, [])
+  b.s.cur = head
+  let i = b.read(iv)
+  let (miss, more) = b.branch(b.bop(Op.Lt, i, base))
+  b.s.cur = miss
+  b.jump(join, [b.cint(-1)])
+  b.s.cur = more
+  let e = b.mlog_at(et, dir, b.iop(Op.Sub, i, base))
+  let (hit_h, next) = b.branch(b.bop(Op.Eq, b.add(Op.Field, it, Aux.I(n: 0), [e]), h))
+  b.s.cur = hit_h
+  let (hit, next2) = b.branch(b.eq_values(b.add(Op.Field, kt, Aux.I(n: 3), [e]), k))
+  b.s.cur = hit
+  b.jump(join, [i])
+  let step = b.new_block()
+  b.s.cur = next
+  b.jump(step, [])
+  b.s.cur = next2
+  b.jump(step, [])
+  b.seal(step)
+  b.s.cur = step
+  b.write_var(iv, b.iop(Op.Sub, i, b.cint(1)))
+  b.jump(head, [])
+  b.seal(head)
+  // the index: the newest own entry of k, then back below lim
+  b.s.cur = indexed
+  let pv = b.local()
+  b.write_var(pv, b.mlog_home(h, n))
+  let head2 = b.new_block()
+  b.jump(head2, [])
+  b.s.cur = head2
+  let p = b.read(pv)
+  let s = b.rt("slot_load", it, [idx, p, b.cint(MLOG_ACQ)])
+  let (empty, full) = b.branch(b.bop(Op.Eq, s, b.cint(0)))
+  b.s.cur = empty
+  b.jump(join, [b.cint(-1)])
+  b.s.cur = full
+  let pos = b.iop(Op.Add, base, b.iop(Op.Sub, s, b.cint(1)))
+  let e2 = b.mlog_at(et, dir, b.iop(Op.Sub, s, b.cint(1)))
+  let (h2, n2) = b.branch(b.bop(Op.Eq, b.add(Op.Field, it, Aux.I(n: 0), [e2]), h))
+  b.s.cur = h2
+  let (k2, n3) = b.branch(b.eq_values(b.add(Op.Field, kt, Aux.I(n: 3), [e2]), k))
+  b.s.cur = k2
+  let jv = b.local()
+  b.write_var(jv, pos)
+  let head3 = b.new_block()
+  b.jump(head3, [])
+  b.s.cur = head3
+  let j = b.read(jv)
+  let (above, below) = b.branch(b.bop(Op.Ge, j, lim))
+  b.s.cur = above
+  b.write_var(jv, b.add(Op.Field, it, Aux.I(n: 1), [b.mlog_at(et, dir, b.iop(Op.Sub, j, base))]))
+  b.jump(head3, [])
+  b.seal(head3)
+  b.s.cur = below
+  b.jump(join, [j])
+  let step2 = b.new_block()
+  b.s.cur = n2
+  b.jump(step2, [])
+  b.s.cur = n3
+  b.jump(step2, [])
+  b.seal(step2)
+  b.s.cur = step2
+  b.write_var(pv, b.iop(Op.And, b.iop(Op.Add, p, b.cint(1)), b.iop(Op.Sub, n, b.cint(1))))
+  b.jump(head2, [])
+  b.seal(head2)
+  b.seal(join)
+  b.s.cur = join
+  res
+}
+
+/// xo.mlog.find[T](m, k, h) -> Int: k's live entry in m's view as level *
+/// MLOG_LEVEL + position (level 0: m's table, i: m.parents[i - 1]), or -1.
+/// Small enough for the arm64 inliner (INLINE_MAX_INSTRS): an indexed
+/// table with no parents whose newest entry of k is in the view; every
+/// other case (a scan, a fork, an entry past the view) is xo.mlog.findx.
+fn (var b: Builder) mlog_find(t: Int) -> Str {
+  let it = b.int_t()
+  let et = mlog_entry_of(b.m, t)
+  let kt = mlog_key(b.m, t)
+  let slow = b.mlog_findx(t)
+  let name = "xo.mlog.find[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t, kt, it], [it], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let mp = b.param(0)
+  let k = b.param(1)
+  let h = b.param(2)
+  let idx = b.mf(t, 1, mp)
+  let n = b.call("list.len", it, "", [idx])
+  let slow_b = b.new_block()
+  let (none, fast) = b.branch(b.bop(Op.Eq, n, b.cint(0)))
+  b.s.cur = none
+  b.jump(slow_b, [])
+  b.s.cur = fast
+  let dir = b.mf(t, 0, mp)
+  let mask = b.iop(Op.Sub, n, b.cint(1))
+  let pv = b.local()
+  b.write_var(pv, b.iop(Op.And, h, mask))
+  let head = b.new_block()
+  b.jump(head, [])
+  b.s.cur = head
+  let p = b.read(pv)
+  let s = b.rt("slot_load", it, [idx, p, b.cint(MLOG_ACQ)])
+  let (empty, full) = b.branch(b.bop(Op.Eq, s, b.cint(0)))
+  // a miss in m's own table is the answer unless m has parents
+  b.s.cur = empty
+  let (own, up) = b.branch(b.bop(Op.Eq, b.call("list.len", it, "", [b.mf(t, 7, mp)]), b.cint(0)))
+  b.s.cur = own
+  b.retv(b.cint(-1))
+  b.s.cur = up
+  b.jump(slow_b, [])
+  b.s.cur = full
+  let (c, off) = b.mlog_slot8(b.iop(Op.Add, s, b.cint(MLOG_CHUNK - 1)))
+  let chunk = b.call("list.index", b.m.types[b.vty(dir)].elems[0], "", [dir, c])
+  let e = b.call("list.index", et, "", [chunk, off])
+  let next = b.new_block()
+  // an Int key is its own hash's input: the key compare alone decides
+  if b.tkind(kt) != Kind.Int {
+    let (hh, step) = b.branch(b.bop(Op.Eq, b.add(Op.Field, it, Aux.I(n: 0), [e]), h))
+    b.s.cur = step
+    b.jump(next, [])
+    b.s.cur = hh
+  }
+  let (hit, step2) = b.branch(b.eq_values(b.add(Op.Field, kt, Aux.I(n: 3), [e]), k))
+  b.s.cur = step2
+  b.jump(next, [])
+  b.s.cur = hit
+  let pos = b.iop(Op.Add, b.mf(t, 3, mp), b.iop(Op.Sub, s, b.cint(1)))
+  // past the view (another value appended): xo.mlog.findx follows prev
+  let (past, inview) = b.branch(b.bop(Op.Ge, pos, b.mf(t, 5, mp)))
+  b.s.cur = past
+  b.jump(slow_b, [])
+  b.s.cur = inview
+  let (live, dead) = b.branch(b.bop(Op.Ge, b.add(Op.Field, it, Aux.I(n: 2), [e]), b.cint(0)))
+  b.s.cur = live
+  b.retv(pos)
+  b.s.cur = dead
+  b.retv(b.cint(-1))
+  b.seal(next)
+  b.s.cur = next
+  b.write_var(pv, b.iop(Op.And, b.iop(Op.Add, p, b.cint(1)), mask))
+  b.jump(head, [])
+  b.seal(head)
+  b.seal(slow_b)
+  b.s.cur = slow_b
+  b.retv(b.call(slow, it, "", [mp, k, h]))
+  b.dead()
+  b.add(Op.Unreachable, -1, Aux.None, [])
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// xo.mlog.findx[T](m, k, h): xo.mlog.find for every map.
+fn (var b: Builder) mlog_findx(t: Int) -> Str {
+  let it = b.int_t()
+  let et = mlog_entry_of(b.m, t)
+  let kt = mlog_key(b.m, t)
+  let probe = b.mlog_probe(t)
+  let name = "xo.mlog.findx[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t, kt, it], [it], [])
+  if fi < 0 {
+    return name
+  }
+  let pt = b.m.tuple([it, it])
+  let saved = b.begin(fi, b.s.file)
+  let mp = b.param(0)
+  let k = b.param(1)
+  let h = b.param(2)
+  let np0 = b.call("list.len", it, "", [b.mf(t, 7, mp)])
+  let (nr, jr) = b.if_then_begin(b.bop(Op.Eq, np0, b.cint(0)))
+  // no parents: one table, probed inline
+  let rdir = b.mf(t, 0, mp)
+  let rbase = b.mf(t, 3, mp)
+  let rj = b.mlog_probe_j(t, rdir, b.mf(t, 1, mp), rbase, b.mf(t, 5, mp), k, h)
+  let (nf0, jf0) = b.if_then_begin(b.bop(Op.Ge, rj, b.cint(0)))
+  let (nl0, jl0) = b.if_then_begin(b.bop(Op.Ge, b.add(Op.Field, it, Aux.I(n: 2), [b.mlog_at(et, rdir, b.iop(Op.Sub, rj, rbase))]), b.cint(0)))
+  b.retv(rj)
+  b.if_then_end(nl0, jl0)
+  b.if_then_end(nf0, jf0)
+  b.retv(b.cint(-1))
+  b.if_then_end(nr, jr)
+  // m's own table, read through the borrowed value (no List is a loop
+  // variable: a List carried along an edge would make m owned, and every
+  // get would count its Lists up and down)
+  let parents = b.mf(t, 7, mp)
+  let lvt = b.m.types[b.vty(parents)].elems[0]
+  let odir = b.mf(t, 0, mp)
+  let obase = b.mf(t, 3, mp)
+  let olim = b.mf(t, 5, mp)
+  let (nv0, jn0) = b.if_then_begin(b.bop(Op.Gt, olim, obase))
+  let r0 = b.call(probe, pt, "", [odir, b.mf(t, 1, mp), obase, olim, k, h])
+  let j0 = b.add(Op.Field, it, Aux.I(n: 1), [r0])
+  let (nf0b, jf0b) = b.if_then_begin(b.bop(Op.Ge, j0, b.cint(0)))
+  let (nl0b, jl0b) = b.if_then_begin(b.bop(Op.Ge, b.add(Op.Field, it, Aux.I(n: 2), [b.mlog_at(et, odir, b.iop(Op.Sub, j0, obase))]), b.cint(0)))
+  b.retv(j0)
+  b.if_then_end(nl0b, jl0b)
+  b.retv(b.cint(-1))
+  b.if_then_end(nf0b, jf0b)
+  b.if_then_end(nv0, jn0)
+  // the parents, newest first: a level's view ends at its child's base
+  let lv = b.local()
+  let levv = b.local()
+  b.write_var(lv, obase)
+  b.write_var(levv, b.cint(0))
+  let np = b.call("list.len", it, "", [parents])
+  let head = b.new_block()
+  b.jump(head, [])
+  b.s.cur = head
+  let lim = b.read(lv)
+  let lev = b.read(levv)
+  let (nd, jd) = b.if_then_begin(b.bop(Op.Ge, lev, np))
+  b.retv(b.cint(-1))
+  b.if_then_end(nd, jd)
+  let lvl = b.call("list.index", lvt, "", [parents, lev])
+  let dir = b.add(Op.Field, b.m.types[lvt].fields[0].ty, Aux.I(n: 0), [lvl])
+  let base = b.add(Op.Field, it, Aux.I(n: 2), [lvl])
+  let (nv, jn) = b.if_then_begin(b.bop(Op.Gt, lim, base))
+  let r = b.call(probe, pt, "", [dir, b.add(Op.Field, b.m.types[lvt].fields[1].ty, Aux.I(n: 1), [lvl]), base, lim, k, h])
+  let j = b.add(Op.Field, it, Aux.I(n: 1), [r])
+  let (nf, jf) = b.if_then_begin(b.bop(Op.Ge, j, b.cint(0)))
+  let e = b.mlog_at(et, dir, b.iop(Op.Sub, j, base))
+  let (nl, jl) = b.if_then_begin(b.bop(Op.Ge, b.add(Op.Field, it, Aux.I(n: 2), [e]), b.cint(0)))
+  b.retv(b.iop(Op.Add, b.iop(Op.Mul, b.iop(Op.Add, lev, b.cint(1)), b.cint(MLOG_LEVEL)), j))
+  b.if_then_end(nl, jl)
+  b.retv(b.cint(-1))
+  b.if_then_end(nf, jf)
+  b.if_then_end(nv, jn)
+  b.write_var(lv, base)
+  b.write_var(levv, b.iop(Op.Add, lev, b.cint(1)))
+  b.jump(head, [])
+  b.seal(head)
+  b.dead()
+  b.add(Op.Unreachable, -1, Aux.None, [])
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// The entry of a find's result w (>= 0) in the map value mv.
+fn (var b: Builder) mlog_entry_at(t: Int, mv: Int, w: Int) -> Int {
+  let it = b.int_t()
+  let et = mlog_entry_of(b.m, t)
+  let lev = b.iop(Op.Div, w, b.cint(MLOG_LEVEL))
+  let pos = b.iop(Op.Sub, w, b.iop(Op.Mul, lev, b.cint(MLOG_LEVEL)))
+  let parents = b.mf(t, 7, mv)
+  let lvt = b.m.types[b.vty(parents)].elems[0]
+  let join = b.new_block()
+  let res = b.s.f.add_param(join, et)
+  let (own, up) = b.branch(b.bop(Op.Eq, lev, b.cint(0)))
+  b.s.cur = own
+  b.jump(join, [b.mlog_at(et, b.mf(t, 0, mv), b.iop(Op.Sub, pos, b.mf(t, 3, mv)))])
+  b.s.cur = up
+  let lvl = b.call("list.index", lvt, "", [parents, b.iop(Op.Sub, lev, b.cint(1))])
+  let ldir = b.add(Op.Field, b.m.types[lvt].fields[0].ty, Aux.I(n: 0), [lvl])
+  let lbase = b.add(Op.Field, it, Aux.I(n: 2), [lvl])
+  b.jump(join, [b.mlog_at(et, ldir, b.iop(Op.Sub, pos, lbase))])
+  b.seal(join)
+  b.s.cur = join
+  res
+}
+
+/// The value of a find's result w (>= 0) in the map value mv.
+fn (var b: Builder) mlog_value_at(t: Int, mv: Int, w: Int) -> Int {
+  let e = b.mlog_entry_at(t, mv, w)
+  b.add(Op.Field, mlog_val(b.m, t), Aux.I(n: 4), [e])
+}
+
+/// The index of the own entries [base, lim) of the log dir: each key's
+/// newest entry, in slots twice the keys (at least 16).
+fn (var b: Builder) mlog_build_index(t: Int, dir: Int, base: Int, lim: Int, keys: Int) -> Int {
+  let it = b.int_t()
+  let et = mlog_entry_of(b.m, t)
+  let kt = mlog_key(b.m, t)
+  let il = b.m.types[t].fields[1].ty
+  let cv = b.local()
+  b.write_var(cv, b.cint(16))
+  let h0 = b.new_block()
+  let grow = b.new_block()
+  let done = b.new_block()
+  b.jump(h0, [])
+  b.s.cur = h0
+  let c = b.read(cv)
+  b.s.f.branch(b.s.cur, b.bop(Op.Lt, c, b.iop(Op.Mul, keys, b.cint(2))), grow, done)
+  b.seal(grow)
+  b.s.cur = grow
+  b.write_var(cv, b.iop(Op.Mul, c, b.cint(2)))
+  b.jump(h0, [])
+  b.seal(h0)
+  b.seal(done)
+  b.s.cur = done
+  let n = b.read(cv)
+  let sv = b.local()
+  b.write_var(sv, b.call("list.new", il, "", [n]))
+  let zv = b.local()
+  let (z, zh, zx) = b.for_up_to_begin(n, zv)
+  b.write_var(sv, b.call("list.push", il, "", [b.read(sv), b.cint(0)]))
+  b.for_up_to_end(z, zv, zh, zx)
+  let slots = b.read(sv)
+  let iv = b.local()
+  let (i, head, exit) = b.for_up_to_begin(b.iop(Op.Sub, lim, base), iv)
+  let e = b.mlog_at(et, dir, i)
+  let h = b.add(Op.Field, it, Aux.I(n: 0), [e])
+  let k = b.add(Op.Field, kt, Aux.I(n: 3), [e])
+  // k's slot (an older entry of k) or the first empty one
+  let pv = b.local()
+  b.write_var(pv, b.mlog_home(h, n))
+  let ph = b.new_block()
+  let found = b.new_block()
+  b.jump(ph, [])
+  b.s.cur = ph
+  let p = b.read(pv)
+  let s = b.call("list.index", it, "", [slots, p])
+  let empty = b.bop(Op.Eq, s, b.cint(0))
+  let check = b.new_block()
+  b.s.f.branch(b.s.cur, empty, found, check)
+  b.seal(check)
+  b.s.cur = check
+  let e2 = b.mlog_at(et, dir, b.iop(Op.Sub, s, b.cint(1)))
+  let same = b.bop(Op.Eq, b.add(Op.Field, it, Aux.I(n: 0), [e2]), h)
+  let cmpk = b.new_block()
+  let next = b.new_block()
+  b.s.f.branch(b.s.cur, same, cmpk, next)
+  b.seal(cmpk)
+  b.s.cur = cmpk
+  let eqk = b.eq_values(b.add(Op.Field, kt, Aux.I(n: 3), [e2]), k)
+  b.s.f.branch(b.s.cur, eqk, found, next)
+  b.seal(next)
+  b.s.cur = next
+  b.write_var(pv, b.iop(Op.And, b.iop(Op.Add, p, b.cint(1)), b.iop(Op.Sub, n, b.cint(1))))
+  b.jump(ph, [])
+  b.seal(ph)
+  b.seal(found)
+  b.s.cur = found
+  b.rt("slot_store", -1, [slots, b.read(pv), b.iop(Op.Add, i, b.cint(1)), b.cint(MLOG_REL)])
+  b.for_up_to_end(i, iv, head, exit)
+  slots
+}
+
+/// The live entries of m's view in insertion order with their current
+/// values, as fresh entries (prev and org -1): the flatten and the
+/// iterations.
+fn (var b: Builder) mlog_each(t: Int) -> Str {
+  let it = b.int_t()
+  let et = mlog_entry_of(b.m, t)
+  let kt = mlog_key(b.m, t)
+  let find = b.mlog_find(t)
+  let el = b.m.list(et)
+  let name = "xo.mlog.each[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t], [el], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let mp = b.param(0)
+  let n = b.mf(t, 4, mp)
+  let out = b.local()
+  b.write_var(out, b.call("list.new", el, "", [n]))
+  let parents = b.mf(t, 7, mp)
+  let lvt = b.m.types[b.vty(parents)].elems[0]
+  let np = b.call("list.len", it, "", [parents])
+  // a root table (base 0): with no garbage every entry is live and its
+  // own origin, in order; else Go's eachRoot: an entry is current when no
+  // later entry's prev names it, and current live entries go by origin
+  let (nr, jr) = b.if_then_begin(b.bop(Op.Eq, np, b.cint(0)))
+  let rdir = b.mf(t, 0, mp)
+  let rlim = b.mf(t, 5, mp)
+  let (ng, jg) = b.if_then_begin(b.bop(Op.Eq, rlim, n))
+  let fv = b.local()
+  let (fi0, fh, fx) = b.for_up_to_begin(n, fv)
+  let fe = b.mlog_at(et, rdir, fi0)
+  let fk = b.add(Op.Field, kt, Aux.I(n: 3), [fe])
+  let ffresh = b.add(Op.Struct, et, Aux.None, [b.add(Op.Field, it, Aux.I(n: 0), [fe]), b.cint(-1), b.cint(-1), fk, b.add(Op.Field, mlog_val(b.m, t), Aux.I(n: 4), [fe])])
+  b.write_var(out, b.call("list.push", el, "", [b.read(out), ffresh]))
+  b.for_up_to_end(fi0, fv, fh, fx)
+  b.retv(b.read(out))
+  b.if_then_end(ng, jg)
+  let bl = b.m.list(b.bool_t())
+  let il = b.m.list(it)
+  let supv = b.local()
+  b.write_var(supv, b.call("list.new", bl, "", [rlim]))
+  let ordv = b.local()
+  b.write_var(ordv, b.call("list.new", il, "", [rlim]))
+  let zv = b.local()
+  let (z, zh, zx) = b.for_up_to_begin(rlim, zv)
+  b.write_var(supv, b.call("list.push", bl, "", [b.read(supv), b.cbool(false)]))
+  b.write_var(ordv, b.call("list.push", il, "", [b.read(ordv), b.cint(0)]))
+  b.for_up_to_end(z, zv, zh, zx)
+  let sv = b.local()
+  let (s, sh, sx) = b.for_up_to_begin(rlim, sv)
+  let sp = b.add(Op.Field, it, Aux.I(n: 1), [b.mlog_at(et, rdir, s)])
+  let (nps, jps) = b.if_then_begin(b.bop(Op.Ge, sp, b.cint(0)))
+  b.write_var(supv, b.call("list.set", bl, "", [b.read(supv), sp, b.cbool(true)]))
+  b.if_then_end(nps, jps)
+  b.for_up_to_end(s, sv, sh, sx)
+  let ov = b.local()
+  let (o, oh, ox) = b.for_up_to_begin(rlim, ov)
+  let oe = b.mlog_at(et, rdir, o)
+  let oorg = b.add(Op.Field, it, Aux.I(n: 2), [oe])
+  let cur_live = b.add(Op.And, b.bool_t(), Aux.None, [b.add(Op.Not, b.bool_t(), Aux.None, [b.call("list.index", b.bool_t(), "", [b.read(supv), o])]), b.bop(Op.Ge, oorg, b.cint(0))])
+  let (nol, jol) = b.if_then_begin(cur_live)
+  b.write_var(ordv, b.call("list.set", il, "", [b.read(ordv), oorg, b.iop(Op.Add, o, b.cint(1))]))
+  b.if_then_end(nol, jol)
+  b.for_up_to_end(o, ov, oh, ox)
+  let ords = b.read(ordv)
+  let wv = b.local()
+  let (w0, wh, wx) = b.for_up_to_begin(rlim, wv)
+  let x = b.call("list.index", it, "", [ords, w0])
+  let (nx, jx) = b.if_then_begin(b.bop(Op.Ne, x, b.cint(0)))
+  let ce = b.mlog_at(et, rdir, b.iop(Op.Sub, x, b.cint(1)))
+  let cfresh = b.add(Op.Struct, et, Aux.None, [b.add(Op.Field, it, Aux.I(n: 0), [ce]), b.cint(-1), b.cint(-1), b.add(Op.Field, kt, Aux.I(n: 3), [ce]), b.add(Op.Field, mlog_val(b.m, t), Aux.I(n: 4), [ce])])
+  b.write_var(out, b.call("list.push", el, "", [b.read(out), cfresh]))
+  b.if_then_end(nx, jx)
+  b.for_up_to_end(w0, wv, wh, wx)
+  b.retv(b.read(out))
+  b.if_then_end(nr, jr)
+  // the levels from the oldest (np) to m's table (0); a level's end is
+  // its child's base
+  let levv = b.local()
+  b.write_var(levv, np)
+  let head = b.new_block()
+  let fin = b.new_block()
+  b.jump(head, [])
+  b.s.cur = head
+  let lev = b.read(levv)
+  let body = b.new_block()
+  b.s.f.branch(b.s.cur, b.bop(Op.Ge, lev, b.cint(0)), body, fin)
+  b.seal(body)
+  b.s.cur = body
+  let dv = b.local()
+  let bv = b.local()
+  let ev = b.local()
+  let (own, up) = b.branch(b.bop(Op.Eq, lev, b.cint(0)))
+  let ready = b.new_block()
+  b.s.cur = own
+  b.write_var(dv, b.mf(t, 0, mp))
+  b.write_var(bv, b.mf(t, 3, mp))
+  b.write_var(ev, b.mf(t, 5, mp))
+  b.jump(ready, [])
+  b.s.cur = up
+  let lvl = b.call("list.index", lvt, "", [parents, b.iop(Op.Sub, lev, b.cint(1))])
+  b.write_var(dv, b.add(Op.Field, b.m.types[lvt].fields[0].ty, Aux.I(n: 0), [lvl]))
+  b.write_var(bv, b.add(Op.Field, it, Aux.I(n: 2), [lvl]))
+  // a parent's view ends where the level below it begins
+  let (top, below) = b.branch(b.bop(Op.Eq, lev, b.cint(1)))
+  let got = b.new_block()
+  b.s.cur = top
+  b.write_var(ev, b.mf(t, 3, mp))
+  b.jump(got, [])
+  b.s.cur = below
+  let lower = b.call("list.index", lvt, "", [parents, b.iop(Op.Sub, lev, b.cint(2))])
+  b.write_var(ev, b.add(Op.Field, it, Aux.I(n: 2), [lower]))
+  b.jump(got, [])
+  b.seal(got)
+  b.s.cur = got
+  b.jump(ready, [])
+  b.seal(ready)
+  b.s.cur = ready
+  let dir = b.read(dv)
+  let base = b.read(bv)
+  let iv = b.local()
+  let (i, ih, ix) = b.for_up_to_begin(b.iop(Op.Sub, b.read(ev), base), iv)
+  let e = b.mlog_at(et, dir, i)
+  let pos = b.iop(Op.Add, base, i)
+  // an origin entry: its key's current entry in m's view, if live and
+  // still from this origin
+  let (no, jo) = b.if_then_begin(b.bop(Op.Eq, b.add(Op.Field, it, Aux.I(n: 2), [e]), pos))
+  let h = b.add(Op.Field, it, Aux.I(n: 0), [e])
+  let k = b.add(Op.Field, kt, Aux.I(n: 3), [e])
+  let w = b.call(find, it, "", [mp, k, h])
+  let (nw, jw) = b.if_then_begin(b.bop(Op.Ge, w, b.cint(0)))
+  let cur = b.mlog_entry_at(t, mp, w)
+  let (ns, js) = b.if_then_begin(b.bop(Op.Eq, b.add(Op.Field, it, Aux.I(n: 2), [cur]), pos))
+  let fresh = b.add(Op.Struct, et, Aux.None, [h, b.cint(-1), b.cint(-1), k, b.add(Op.Field, mlog_val(b.m, t), Aux.I(n: 4), [cur])])
+  b.write_var(out, b.call("list.push", el, "", [b.read(out), fresh]))
+  b.if_then_end(ns, js)
+  b.if_then_end(nw, jw)
+  b.if_then_end(no, jo)
+  b.for_up_to_end(i, iv, ih, ix)
+  b.write_var(levv, b.iop(Op.Sub, lev, b.cint(1)))
+  b.jump(head, [])
+  b.seal(head)
+  b.seal(fin)
+  b.s.cur = fin
+  b.retv(b.read(out))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// A fresh table holding entries es (fresh, in insertion order) with
+/// room for extra more, claimed through position es.len() + claim.
+fn (var b: Builder) mlog_table(t: Int, es: Int, claim: Int) -> Int {
+  let it = b.int_t()
+  let et = mlog_entry_of(b.m, t)
+  let el = b.m.list(et)
+  let dt = b.m.types[t].fields[0].ty
+  let il = b.m.types[t].fields[1].ty
+  let n = b.call("list.len", it, "", [es])
+  let dv = b.local()
+  b.write_var(dv, b.mlog_newdir(dt))
+  let iv = b.local()
+  let (i, ih, ix) = b.for_up_to_begin(n, iv)
+  let e0 = b.call("list.index", et, "", [es, i])
+  let e = b.add(Op.SetField, et, Aux.I(n: 2), [e0, i])
+  let (c, _off) = b.mlog_slot(i)
+  let dir = b.read(dv)
+  let (nn, jn) = b.if_then_begin(b.bop(Op.Eq, c, b.call("list.len", it, "", [dir])))
+  let chunk = b.call("list.new", el, "", [b.iop(Op.Shl, b.cint(1), c)])
+  b.call("log.push", -1, "", [b.read(dv), chunk])
+  b.if_then_end(nn, jn)
+  let d2 = b.read(dv)
+  b.call("log.push", -1, "", [b.call("list.index", el, "", [d2, c]), e])
+  b.for_up_to_end(i, iv, ih, ix)
+  let dir2 = b.read(dv)
+  let xv = b.local()
+  b.write_var(xv, b.call("list.new", il, "", []))
+  let (ns, js) = b.if_then_begin(b.bop(Op.Gt, n, b.cint(MLOG_SMALL)))
+  b.write_var(xv, b.mlog_build_index(t, dir2, b.cint(0), n, n))
+  b.if_then_end(ns, js)
+  var used = b.call("list.new", il, "", [b.cint(1)])
+  used = b.call("list.push", il, "", [used, b.iop(Op.Add, n, claim)])
+  let parents = b.call("list.new", b.m.types[t].fields[7].ty, "", [])
+  b.add(Op.Struct, t, Aux.None, [dir2, b.read(xv), used, b.cint(0), n, n, n, parents])
+}
+
+/// xo.mlog.claim[T](m) -> T: m owning the next position of its table (it
+/// won the claim, or forked or flattened into a table only it has).
+fn (var b: Builder) mlog_claim(t: Int) -> Str {
+  let it = b.int_t()
+  let each = b.mlog_each(t)
+  let name = "xo.mlog.claim[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t], [t], [])
+  if fi < 0 {
+    return name
+  }
+  let il = b.m.types[t].fields[1].ty
+  let saved = b.begin(fi, b.s.file)
+  let mp = b.param(0)
+  let used = b.mf(t, 2, mp)
+  let lim = b.mf(t, 5, mp)
+  let (nt, jt) = b.if_then_begin(b.bop(Op.Eq, b.call("list.len", it, "", [used]), b.cint(0)))
+  // no table yet: a fresh one, position 0 claimed
+  var u0 = b.call("list.new", il, "", [b.cint(1)])
+  u0 = b.call("list.push", il, "", [u0, b.cint(1)])
+  let d0 = b.mlog_newdir(b.m.types[t].fields[0].ty)
+  b.retv(b.add(Op.SetField, t, Aux.I(n: 0), [b.add(Op.SetField, t, Aux.I(n: 2), [mp, u0]), d0]))
+  b.if_then_end(nt, jt)
+  let won = b.rt("slot_cas", b.bool_t(), [used, b.cint(0), lim, b.iop(Op.Add, lim, b.cint(1)), b.cint(MLOG_ACQ_REL)])
+  let (nw, jw) = b.if_then_begin(won)
+  b.retv(mp)
+  b.if_then_end(nw, jw)
+  let parents = b.mf(t, 7, mp)
+  let lvt = b.m.types[b.vty(parents)].elems[0]
+  let np = b.call("list.len", it, "", [parents])
+  let (nd, jd) = b.if_then_begin(b.bop(Op.Ge, np, b.cint(MLOG_DEPTH)))
+  // too deep: a flattened table, its next position claimed
+  let es = b.call(each, b.m.list(mlog_entry_of(b.m, t)), "", [mp])
+  b.retv(b.mlog_table(t, es, b.cint(1)))
+  b.if_then_end(nd, jd)
+  // a fork: a table whose parent is m's view
+  let lvl = b.add(Op.Struct, lvt, Aux.None, [b.mf(t, 0, mp), b.mf(t, 1, mp), b.mf(t, 3, mp), lim])
+  let plt = b.vty(parents)
+  let pv = b.local()
+  b.write_var(pv, b.call("list.new", plt, "", [b.iop(Op.Add, np, b.cint(1))]))
+  b.write_var(pv, b.call("list.push", plt, "", [b.read(pv), lvl]))
+  let iv = b.local()
+  let (i, ih, ix) = b.for_up_to_begin(np, iv)
+  b.write_var(pv, b.call("list.push", plt, "", [b.read(pv), b.call("list.index", lvt, "", [parents, i])]))
+  b.for_up_to_end(i, iv, ih, ix)
+  var u1 = b.call("list.new", il, "", [b.cint(1)])
+  u1 = b.call("list.push", il, "", [u1, b.iop(Op.Add, lim, b.cint(1))])
+  let dir = b.mlog_newdir(b.m.types[t].fields[0].ty)
+  let idx = b.call("list.new", il, "", [])
+  b.retv(b.add(Op.Struct, t, Aux.None, [dir, idx, u1, lim, b.mf(t, 4, mp), lim, b.cint(0), b.read(pv)]))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// xo.mlog.record[T](m, h, k, v, del) -> T: an entry of k (a tombstone when
+/// del, v then the removed value) appended at the position m claimed.
+fn (var b: Builder) mlog_record(t: Int) -> Str {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let et = mlog_entry_of(b.m, t)
+  let el = b.m.list(et)
+  let kt = mlog_key(b.m, t)
+  let vt = mlog_val(b.m, t)
+  let probe = b.mlog_probe(t)
+  let find = b.mlog_find(t)
+  let each = b.mlog_each(t)
+  let name = "xo.mlog.record[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t, it, kt, vt, bt], [t], [])
+  if fi < 0 {
+    return name
+  }
+  let pt = b.m.tuple([it, it])
+  let saved = b.begin(fi, b.s.file)
+  let mp = b.param(0)
+  let h = b.param(1)
+  let k = b.param(2)
+  let v = b.param(3)
+  let del = b.param(4)
+  let base = b.mf(t, 3, mp)
+  let lim = b.mf(t, 5, mp)
+  let i = b.iop(Op.Sub, lim, base)
+  let xv = b.local()
+  b.write_var(xv, b.mf(t, 1, mp))
+  let keysv = b.local()
+  b.write_var(keysv, b.mf(t, 6, mp))
+  let dv = b.local()
+  b.write_var(dv, b.mf(t, 0, mp))
+  let r0 = b.call(probe, pt, "", [b.read(dv), b.read(xv), base, lim, k, h])
+  let j = b.add(Op.Field, it, Aux.I(n: 1), [r0])
+  let slotv = b.local()
+  b.write_var(slotv, b.add(Op.Field, it, Aux.I(n: 0), [r0]))
+  // the origin: k's own newest entry's, else its parent view's
+  let orgv = b.local()
+  b.write_var(orgv, b.cint(-1))
+  let (nj, jj) = b.if_then_begin(b.bop(Op.Ge, j, b.cint(0)))
+  b.write_var(orgv, b.add(Op.Field, it, Aux.I(n: 2), [b.mlog_at(et, b.read(dv), b.iop(Op.Sub, j, base))]))
+  b.if_then_end(nj, jj)
+  let parents = b.mf(t, 7, mp)
+  let has_parent = b.bop(Op.Gt, b.call("list.len", it, "", [parents]), b.cint(0))
+  let (np, jp) = b.if_then_begin(b.add(Op.And, bt, Aux.None, [b.bop(Op.Lt, j, b.cint(0)), has_parent]))
+  // a view of the parents alone: m with no entries of its own
+  let pm = b.add(Op.SetField, t, Aux.I(n: 5), [mp, base])
+  let w = b.call(find, it, "", [pm, k, h])
+  let (nw, jw) = b.if_then_begin(b.bop(Op.Ge, w, b.cint(0)))
+  b.write_var(orgv, b.add(Op.Field, it, Aux.I(n: 2), [b.mlog_entry_at(t, pm, w)]))
+  b.if_then_end(nw, jw)
+  b.if_then_end(np, jp)
+  // a new key of the table: counted, the index made or grown
+  let (nk, jk) = b.if_then_begin(b.bop(Op.Lt, j, b.cint(0)))
+  let keys1 = b.iop(Op.Add, b.read(keysv), b.cint(1))
+  b.write_var(keysv, keys1)
+  let nidx = b.call("list.len", it, "", [b.read(xv)])
+  let make = b.bop(Op.Gt, keys1, b.cint(MLOG_SMALL))
+  let full = b.bop(Op.Gt, b.iop(Op.Mul, keys1, b.cint(2)), nidx)
+  let (ng, jg) = b.if_then_begin(b.add(Op.And, bt, Aux.None, [make, full]))
+  b.write_var(xv, b.mlog_build_index(t, b.read(dv), base, lim, keys1))
+  let r1 = b.call(probe, pt, "", [b.read(dv), b.read(xv), base, lim, k, h])
+  b.write_var(slotv, b.add(Op.Field, it, Aux.I(n: 0), [r1]))
+  b.if_then_end(ng, jg)
+  b.if_then_end(nk, jk)
+  let nv = b.local()
+  b.write_var(nv, b.mf(t, 4, mp))
+  let (nd, jd) = b.if_then_begin(del)
+  b.write_var(nv, b.iop(Op.Sub, b.read(nv), b.cint(1)))
+  b.write_var(orgv, b.cint(-1))
+  b.if_then_end(nd, jd)
+  let (no, jo) = b.if_then_begin(b.add(Op.And, bt, Aux.None, [b.bop(Op.Lt, b.read(orgv), b.cint(0)), b.add(Op.Not, bt, Aux.None, [del])]))
+  b.write_var(nv, b.iop(Op.Add, b.read(nv), b.cint(1)))
+  b.write_var(orgv, lim)
+  b.if_then_end(no, jo)
+  let e = b.add(Op.Struct, et, Aux.None, [h, j, b.read(orgv), k, v])
+  // the entry: a new chunk first when this position starts one
+  let (c, _off) = b.mlog_slot(i)
+  let (nc, jc) = b.if_then_begin(b.bop(Op.Eq, c, b.call("list.len", it, "", [b.read(dv)])))
+  let chunk = b.call("list.new", el, "", [b.iop(Op.Shl, b.cint(1), c)])
+  b.call("log.push", -1, "", [b.read(dv), chunk])
+  b.if_then_end(nc, jc)
+  let dir = b.read(dv)
+  b.call("log.push", -1, "", [b.call("list.index", el, "", [dir, c]), e])
+  let idx = b.read(xv)
+  let (nx, jx) = b.if_then_begin(b.bop(Op.Gt, b.call("list.len", it, "", [idx]), b.cint(0)))
+  b.rt("slot_store", -1, [idx, b.read(slotv), b.iop(Op.Add, i, b.cint(1)), b.cint(MLOG_REL)])
+  b.if_then_end(nx, jx)
+  let lim1 = b.iop(Op.Add, lim, b.cint(1))
+  let n1 = b.read(nv)
+  let m1 = b.add(Op.Struct, t, Aux.None, [dir, idx, b.mf(t, 2, mp), base, n1, lim1, b.read(keysv), parents])
+  // too much garbage: flattened (a root's log past twice its keys and 32,
+  // a fork's own entries past its keys and 32)
+  let own1 = b.iop(Op.Add, i, b.cint(1))
+  let root_g = b.add(Op.And, bt, Aux.None, [b.add(Op.Not, bt, Aux.None, [has_parent]), b.bop(Op.Gt, lim1, b.iop(Op.Add, b.iop(Op.Mul, n1, b.cint(2)), b.cint(32)))])
+  let fork_g = b.add(Op.And, bt, Aux.None, [has_parent, b.bop(Op.Gt, own1, b.iop(Op.Add, n1, b.cint(32)))])
+  let (nf, jf) = b.if_then_begin(b.add(Op.Or, bt, Aux.None, [root_g, fork_g]))
+  let es = b.call(each, el, "", [m1])
+  b.retv(b.mlog_table(t, es, b.cint(0)))
+  b.if_then_end(nf, jf)
+  b.retv(m1)
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// xo.mlog.put[T](m, k, v) -> T.
+fn (var b: Builder) mlog_put(t: Int) -> Str {
+  let it = b.int_t()
+  let kt = mlog_key(b.m, t)
+  let vt = mlog_val(b.m, t)
+  let claim = b.mlog_claim(t)
+  let record = b.mlog_record(t)
+  let hash = b.hash_func(kt)
+  let name = "xo.mlog.put[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t, kt, vt], [t], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let mp = b.param(0)
+  let k = b.param(1)
+  let v = b.param(2)
+  let h = b.call(hash, it, "", [k])
+  let m1 = b.call(claim, t, "", [mp])
+  b.retv(b.call(record, t, "", [m1, h, k, v, b.cbool(false)]))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// xo.mlog.remove[T](m, k) -> (T, V?).
+fn (var b: Builder) mlog_remove(t: Int, ot: Int) -> Str {
+  let it = b.int_t()
+  let kt = mlog_key(b.m, t)
+  let find = b.mlog_find(t)
+  let claim = b.mlog_claim(t)
+  let record = b.mlog_record(t)
+  let hash = b.hash_func(kt)
+  let rt = b.m.tuple([t, ot])
+  var name = "xo.mlog.remove[${b.m.types[t].name}]"
+  let have = b.fidx(name)
+  if have >= 0 && b.m.types[b.m.funcs[have].results[0]].name != b.m.types[rt].name {
+    name = name + "[${b.m.types[ot].name}]"
+  }
+  let fi = b.thunk_func(name, [t, kt], [rt], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let mp = b.param(0)
+  let k = b.param(1)
+  let h = b.call(hash, it, "", [k])
+  let w = b.call(find, it, "", [mp, k, h])
+  let (no, join) = b.if_then_begin(b.bop(Op.Lt, w, b.cint(0)))
+  let none = b.add(Op.Variant, ot, Aux.I(n: b.m.variant_index(ot, "None")), [])
+  b.retv(b.add(Op.Tuple, rt, Aux.None, [mp, none]))
+  b.if_then_end(no, join)
+  let old = b.mlog_value_at(t, mp, w)
+  let m1 = b.call(claim, t, "", [mp])
+  let m2 = b.call(record, t, "", [m1, h, k, old, b.cbool(true)])
+  let some = b.add(Op.Variant, ot, Aux.I(n: b.m.variant_index(ot, "Some")), [old])
+  b.retv(b.add(Op.Tuple, rt, Aux.None, [m2, some]))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// The find of k in the map value mv (of the log type t): -1 or a result
+/// for mlog_value_at.
+fn (var b: Builder) mlog_lookup(t: Int, mv: Int, k: Int) -> Int {
+  let it = b.int_t()
+  let h = b.call(b.hash_func(mlog_key(b.m, t)), it, "", [k])
+  b.call(b.mlog_find(t), it, "", [mv, k, h])
+}
+
+/// xo.mlog.iterdir[T](m) -> List[List[E]]: m's live entries in order, in
+/// the log's chunk layout (entry i at mlog_at), for a loop: a root table
+/// with no garbage is its own log (no copy), any other view its xo.mlog.each
+/// entries cut into chunks.
+fn (var b: Builder) mlog_iterdir(t: Int) -> Str {
+  let it = b.int_t()
+  let et = mlog_entry_of(b.m, t)
+  let each = b.mlog_each(t)
+  let el = b.m.list(et)
+  let dt = b.m.types[t].fields[0].ty
+  let name = "xo.mlog.iterdir[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t], [dt], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let mp = b.param(0)
+  let n = b.mf(t, 4, mp)
+  let clean = b.add(Op.And, b.bool_t(), Aux.None, [b.bop(Op.Eq, b.call("list.len", it, "", [b.mf(t, 7, mp)]), b.cint(0)), b.bop(Op.Eq, b.mf(t, 5, mp), n)])
+  let (nc, jc) = b.if_then_begin(clean)
+  b.retv(b.mf(t, 0, mp))
+  b.if_then_end(nc, jc)
+  let es = b.call(each, el, "", [mp])
+  let dv = b.local()
+  b.write_var(dv, b.mlog_newdir(dt))
+  let cv = b.local()
+  b.write_var(cv, b.call("list.new", el, "", [b.cint(MLOG_CHUNK)]))
+  let iv = b.local()
+  let (i, head, exit) = b.for_up_to_begin(n, iv)
+  let (c, off) = b.mlog_slot(i)
+  // a chunk is full at its last offset: the next entry starts chunk c + 1
+  b.write_var(cv, b.call("list.push", el, "", [b.read(cv), b.call("list.index", et, "", [es, i])]))
+  let last = b.iop(Op.Sub, b.iop(Op.Shl, b.cint(1), c), b.cint(1))
+  let (nf, jf) = b.if_then_begin(b.bop(Op.Eq, off, last))
+  b.write_var(dv, b.call("list.push", dt, "", [b.read(dv), b.read(cv)]))
+  b.write_var(cv, b.call("list.new", el, "", [b.iop(Op.Shl, b.cint(2), c)]))
+  b.if_then_end(nf, jf)
+  b.for_up_to_end(i, iv, head, exit)
+  b.retv(b.call("list.push", dt, "", [b.read(dv), b.read(cv)]))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// xo.mlog.kv[T](m) -> (List[K], List[V]): the live entries' keys and
+/// values in order, from one pass (map.xo map_kvl).
+fn (var b: Builder) mlog_kv(t: Int) -> Str {
+  let it = b.int_t()
+  let et = mlog_entry_of(b.m, t)
+  let kt = mlog_key(b.m, t)
+  let vt = mlog_val(b.m, t)
+  let each = b.mlog_each(t)
+  let kl = b.m.list(kt)
+  let vl = b.m.list(vt)
+  let rt = b.m.tuple([kl, vl])
+  let name = "xo.mlog.kv[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t], [rt], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let mp = b.param(0)
+  let es = b.call(each, b.m.list(et), "", [mp])
+  let n = b.call("list.len", it, "", [es])
+  let ks = b.local()
+  let vs = b.local()
+  b.write_var(ks, b.call("list.new", kl, "", [n]))
+  b.write_var(vs, b.call("list.new", vl, "", [n]))
+  let iv = b.local()
+  let (i, head, exit) = b.for_up_to_begin(n, iv)
+  let e = b.call("list.index", et, "", [es, i])
+  b.write_var(ks, b.call("list.push", kl, "", [b.read(ks), b.add(Op.Field, kt, Aux.I(n: 3), [e])]))
+  b.write_var(vs, b.call("list.push", vl, "", [b.read(vs), b.add(Op.Field, vt, Aux.I(n: 4), [e])]))
+  b.for_up_to_end(i, iv, head, exit)
+  b.retv(b.add(Op.Tuple, rt, Aux.None, [b.read(ks), b.read(vs)]))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// The function that lists the live entries' keys (what 0), values (1),
+/// or (key, value) tuples (2) in order.
+fn (var b: Builder) mlog_list(t: Int, what: Int) -> Str {
+  let it = b.int_t()
+  let et = mlog_entry_of(b.m, t)
+  let kt = mlog_key(b.m, t)
+  let vt = mlog_val(b.m, t)
+  let each = b.mlog_each(t)
+  let pair = b.m.tuple([kt, vt])
+  let xt = [kt, vt, pair][what]
+  let lt = b.m.list(xt)
+  let name = "${["xo.mlog.keys[", "xo.mlog.values[", "xo.mlog.entries["][what]}${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t], [lt], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let mp = b.param(0)
+  let es = b.call(each, b.m.list(et), "", [mp])
+  let n = b.call("list.len", it, "", [es])
+  let out = b.local()
+  b.write_var(out, b.call("list.new", lt, "", [n]))
+  let iv = b.local()
+  let (i, head, exit) = b.for_up_to_begin(n, iv)
+  let e = b.call("list.index", et, "", [es, i])
+  let k = b.add(Op.Field, kt, Aux.I(n: 3), [e])
+  let v = b.add(Op.Field, vt, Aux.I(n: 4), [e])
+  let x = [k, v, b.add(Op.Tuple, pair, Aux.None, [k, v])][what]
+  b.write_var(out, b.call("list.push", lt, "", [b.read(out), x]))
+  b.for_up_to_end(i, iv, head, exit)
+  b.retv(b.read(out))
+  b.finish_fn()
+  b.end(saved)
+  name
+}

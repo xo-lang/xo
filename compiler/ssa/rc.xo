@@ -102,6 +102,10 @@ fn runtime_modes(name: Str) -> List[Mode]? {
     "str.concat_float" => Some([c, n])
     "list.set" => Some([c, n, c])
     "list.push" => Some([c, c])
+    // a Map log's shared chunk (decision 0291): the list is borrowed
+    // (several Map values hold it; each appends past every other's
+    // view, into room made when it was), the element moves in
+    "log.push" => Some([w, c])
     "list.pop" => Some([c])
     "list.take" => Some([c, n])
     "rt.task_spawn" | "rt.task_spawn_fn" => Some([w, c, n, n, n, n, n, w])

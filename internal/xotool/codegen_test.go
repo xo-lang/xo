@@ -35,6 +35,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_INLINE_DENY":          {"keyed", "deny ${m.inline_deny"},
 	"XO_PASSES":               {"bypass", "!gm.passes_off.is_empty()"},
 	"XO_NATIVE_RACE":          {"bypass", "gm.race"},
+	"XO_MAP_LOG":              {"keyed", "maplog=${m.map_log}"},
 	"XO_INLINE_BREAK":         {"none", ""}, // breaks the inlined module on purpose; verify then fails the build
 	"XO_DCE":                  {"content", ""},
 	"XO_LLRT_C":               {"content", ""},

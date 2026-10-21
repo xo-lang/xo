@@ -70,47 +70,52 @@ backends, in place of the four lists:
   results are unchanged (golden parity with the Go backend, which already
   has this representation, is the behavior test).
 
-## Native design (2026-10-20, Xo Lang 3)
+## Native design (2026-10-20, Xo Lang 3; as built)
 
 The Go backend's tables are mutated in place while other headers read
 them, and Go's collector keeps an outgrown array alive for a reader that
-still holds it. The native port keeps the same views and claims, with
-three choices that replace the collector:
+still holds it. The native port keeps the same views and claims, built
+entirely in SSA (compiler/ssa maplog.xo) from Lists, with no new runtime
+object:
 
-- **A table is a counted runtime object** (std/native/llrt maplog.xo,
-  raw memory), not a struct of Lists: its claimed length (atomic), the
-  entry log, the index, the parent view (a counted table and a length),
-  the fork depth, and the garbage count. A Map value (SSA) is the struct
-  (table, length, live count); copying it increments the table's count
-  only.
-- **The log is chunked**: entries live in fixed-size chunks that never
-  move (a directory of chunk pointers grows by copying the directory,
-  and the old directory stays allocated until the table is freed), so a
-  reader of an older view on another thread never reads freed memory.
-  An entry is (key, value, prev, origin, hash, tombstone flag), keys and
-  values stored by their native layout and counted (dup on put, drop
-  when the table is freed).
-- **The index is open addressing over entry positions**, rebuilt into a
-  new block when it grows (the old block retired like old directories);
-  a lookup re-reads the index pointer once per operation.
+- **A Map value is a struct of eight fields**: dir (List[List[E]], the
+  entry log in chunks), idx (List[Int], the index), used (List[Int], one
+  slot: the table's claimed length), base, n (the view's length), len
+  (live keys), keys (the table's key count, for index growth), parents
+  (List[Level], the views this table forked from, newest first). An entry
+  E is xo.MapEntry {h, prev, org, k, v}; a removal is an entry with org
+  -1. Copying a Map counts its Lists only.
+- **Chunks never move.** Chunk c holds 8 << c entries; the directory is
+  made with room for 40 chunks and never grows, and both are shared by
+  every value of the table: a reader of a shorter view reads entries the
+  owner appends, and an index slot may name an entry past a view (its key
+  and prev are read, as in Go). The one new backend operation is
+  `log.push` (arm64, LLVM, wasm): append into a List's spare capacity in
+  place, never reallocating, so other holders see the element.
+- **Claim and index are atomic**: rt.slot_cas (acquire/release) on used
+  claims the next position; index slots are written with slot_store
+  (release) and read with slot_load (acquire), so ThreadSanitizer sees
+  the publication. The index is open addressing over positions + 1,
+  built at 9 entries (twice the keys, at least 16 slots) and rebuilt
+  when it fills.
+- **Forks and flattening as in Go**: a stale header forks a fresh table
+  whose parents are its view's levels (each a Level {dir, idx, base,
+  len}); a lookup probes its own table, then each level, following prev
+  below the level's length. At depth 8, or when garbage passes the live
+  keys, the view is flattened into a fresh table.
+- **Iteration** (xo.mlog.each): a root table with no garbage lists its
+  entries in order; with garbage, Go's eachRoot (an entry is current when
+  no later entry's prev names it, ordered by origin); a forked view walks
+  the levels oldest first.
 
-Code generation (compiler/ssa map.xo): the per-type functions
-(xo.map.find, put, remove, scan, rebuild, keys, values, entries) keep
-their names and signatures; behind the flag their bodies call the
-maplog runtime for the claim, append, index probe and growth, and load
-and compare keys inline (the probe loop compares the stored hash before
-the key, so most misses never call the key equality). json.xo, show.xo
-and iface.xo iterate through xo.map.scan instead of reading the old
-struct's fields. The flag (XO_MAP_LOG=1, a module setting in the fn
-cache key header) lets goldens, the model test and the benchmarks run
-both representations from one xo until the switch.
-
-Order of work: (1) maplog.xo with Int keys and values and a private
-test against a reference model (std/rt map_model_test.go's operations on
-copies); (2) generic entries (layouts, dup and drop) and the SSA bodies
-behind the flag; (3) goldens on both representations, the fixed point
-with the flag on; (4) the measurements below; (5) the switch, the old
-lists removed.
+The flag (XO_MAP_LOG=1, Module.map_log, in the fe and fn cache keys)
+lets goldens, the tests and the benchmarks run both representations
+from one xo until the switch. Test programs (scratch, to land as goldens
+with the switch): the model test (Go's map_model_test ported: 40 seeds
+x 3000 random put, update, remove and copy steps over four values
+against a list reference), a deep-fork test (1000 alternating forks,
+gets unchanged at 10 ns), and a two-task race test under --race (no
+TSan reports, each copy sees only its own writes).
 
 ## Cost
 

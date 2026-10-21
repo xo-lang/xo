@@ -200,6 +200,21 @@ fn (var g: Gen) call(v: Int) {
       g.emit("store i64 ${n1}, ptr ${lp}${TBAA_HDR}${md}")
       g.alias(v, lm)
     }
+    "log.push" => {
+      // decision 0291: list.push into a borrowed list with room (a Map
+      // log's chunk): no growth, no result
+      let et = g.vty(args[1])
+      let l = g.op(args[0])
+      let n = g.list_len(l, md)
+      if g.kind(et) != ssa.Kind.Unit {
+        let p = g.elem_ptr(et, l, n)
+        let t1 = g.typed(args[1])
+        g.emit("store ${t1}, ptr ${p}${TBAA_ELEM}${md}")
+      }
+      let n1 = g.def("add nuw nsw i64 ${n}, 1")
+      let lp = g.def("getelementptr %xo.rlist, ptr ${l}, i32 0, i32 1")
+      g.emit("store i64 ${n1}, ptr ${lp}${TBAA_HDR}${md}")
+    }
     "list.pop" => {
       let lt = g.vty(args[0])
       let et = g.m.types[lt].elems[0]

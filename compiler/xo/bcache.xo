@@ -343,7 +343,7 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
   }
   var t = os.clock.now()
   var fe = ssa.FeCache{on: true, verify: backend_cache_mode(os) == "verify", break_name: os.env.get("XO_FE_BREAK") ?? "", recorder: self_id(os)}
-  fe.keys = ssa.fe_keys(c, "${id}\n${ssa.fe_flags(root, tests, release, real, tgoos, tgoarch, wasm, nolibc, prof, trace, soft_cpu, heap_guard)}", stamp_root(root, stamps), std_tree_sum(os, c.std_root(), dir))
+  fe.keys = ssa.fe_keys(c, "${id}\nmaplog=${c.map_log}\n${ssa.fe_flags(root, tests, release, real, tgoos, tgoarch, wasm, nolibc, prof, trace, soft_cpu, heap_guard)}", stamp_root(root, stamps), std_tree_sum(os, c.std_root(), dir))
   t = lap(os, phases, "fe.keys", t)
   // the own flags the last build of this program ended with (a hint):
   // read that variant and start as it did; with none (its first build)

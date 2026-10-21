@@ -370,6 +370,9 @@ pub struct Module {
   /// The build guards the runtime's records (XO_HEAP_GUARD=1, Builder
   /// heap_guard): in the fn and part cache keys.
   pub heap_guard: Bool = false
+  /// Map and Set on the log and fork representation (decision 0291,
+  /// check.Checker map_log): in the fn and part cache keys.
+  pub map_log: Bool = false
   /// Functions the arm64 inliner leaves out, by name, or by prefix for
   /// an entry ending in `*` ($XO_INLINE_DENY, comma separated): a
   /// measurement knob, each callee's speed against its text
@@ -986,7 +989,11 @@ fn float_text(x: Float) -> Str {
 /// map's rebuild (a table that grows) inlined into its put made every put
 /// save and spill for the rare growth: update, putget and copymut 1.9 to
 /// 2.6% fewer instructions out of line (2026-10-17; LLVM unchanged).
+/// The log map's findx (forks, scans; decision 0291) inlined into its
+/// small find made find 292 instructions and a get 3 times slower
+/// (2026-10-20). Its newdir stays a call so the directory's length is
+/// not known where log.push grows it (2026-10-21).
 pub fn cold_fn(name: Str) -> Bool {
   name is "pool.lock_slow" | "pool.futex_wake" | "budget.tick_slow" | "mutex.held_add_slow" | "obj.reserve_slow" | "obj.push_slow" | "obj.rl_free_n_slow" | "stdio.out_slow" ||
-    name.starts_with("xo.map.rebuild[")
+    name.starts_with("xo.map.rebuild[") || name.starts_with("xo.mlog.findx[") || name.starts_with("xo.mlog.newdir[")
 }

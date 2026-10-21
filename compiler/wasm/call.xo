@@ -213,6 +213,21 @@ fn (var g: Gen) call(v: Int) {
         g.store_leaves(a, 0, g.loc(x.args[1]), el)
       }
     }
+    "log.push" => {
+      // decision 0291: list.push into a borrowed list with room (a Map
+      // log's chunk: rl_slot does not move it); no result
+      let et = g.vty(x.args[1])
+      let el = g.leaves(et)
+      let a = g.scratch(["i32"])
+      g.push(x.args[0])
+      g.e("i32.const ${g.size(et)}")
+      g.e("call $rl_slot")
+      g.set(a)
+      g.e("drop")
+      if !el.is_empty() {
+        g.store_leaves(a, 0, g.loc(x.args[1]), el)
+      }
+    }
     "list.pop" => {
       let l = x.args[0]
       let et = g.m.types[g.vty(l)].elems[0]

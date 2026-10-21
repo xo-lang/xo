@@ -778,6 +778,25 @@ fn (var g: G) call_op(v: Int) {
       g.cm.lens[lm] = n1
       g.set(v, [lm])
     }
+    "log.push" => {
+      // decision 0291: list.push into a borrowed list with room (a Map
+      // log's chunk, made with its capacity): no growth, no result
+      let l = g.word(x.args[0])
+      let et = g.vty(x.args[1])
+      let w = g.store_words(x.args[1])
+      let n = g.list_len(l)
+      if g.esize(et) > 0 {
+        g.store_elem(at_base(g.elem_base(l, n, g.esize(et))), et, w)
+      }
+      let n1 = g.def1(false, "add $d0, $u0, #1", [n])
+      g.store("str $u0, [$u1, #8]", [n1, l])
+      let _m = g.m_()
+      // the list grew in place: its known length is the new one (a stale
+      // one reaches the list's loop parameter and the next push writes
+      // over the last element; the padded Map directory, 2026-10-21)
+      g.cm.lens[l] = n1
+      let _r = g.cm.len_at.remove(l)
+    }
     "list.pop" => {
       let l = g.word(x.args[0])
       let et = g.m.types[g.vty(x.args[0])].elems[0]

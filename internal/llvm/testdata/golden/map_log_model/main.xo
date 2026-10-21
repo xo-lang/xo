@@ -1,0 +1,307 @@
+// decision 0291: the Map against a reference of plain lists (std/rt
+// map_model_test.go ported): random put, update, remove and copy steps
+// over four values, Int and Str keys, then deep alternating forks.
+
+struct Ref {
+  keys: List[Int]
+  vals: List[Int]
+}
+
+fn (r: Ref) find(k: Int) -> Int {
+  for (i, x) in r.keys.indexed() {
+    if x == k {
+      return i
+    }
+  }
+  -1
+}
+
+fn put(var r: Ref, k: Int, v: Int) {
+  let i = r.find(k)
+  if i >= 0 {
+    r.vals[i] = v
+  } else {
+    r.keys.push(k)
+    r.vals.push(v)
+  }
+}
+
+fn remove(var r: Ref, k: Int) -> Int? {
+  let i = r.find(k)
+  if i < 0 {
+    return None
+  }
+  let v = r.vals[i]
+  var ks: List[Int] = []
+  var vs: List[Int] = []
+  for j in 0..r.keys.len() {
+    if j != i {
+      ks.push(r.keys[j])
+      vs.push(r.vals[j])
+    }
+  }
+  r.keys = ks
+  r.vals = vs
+  Some(v)
+}
+
+fn check(m: Map[Int, Int], r: Ref, keys: Int, at: Str) -> Str {
+  if m.len() != r.keys.len() {
+    return "${at}: len ${m.len()}, want ${r.keys.len()}"
+  }
+  var i = 0
+  for (k, v) in m {
+    if i >= r.keys.len() || r.keys[i] != k || r.vals[i] != v {
+      return "${at}: entry ${i} is ${k}=${v}, want order ${r.keys.map(fn(x) { "${x}" }).join(",")}"
+    }
+    i += 1
+  }
+  for k in 0..keys {
+    let got = m.get(k)
+    let ri = r.find(k)
+    let want: Int? = if ri >= 0 { Some(r.vals[ri]) } else { None }
+    if got != want {
+      return "${at}: get(${k}) = ${got ?? -1}, want ${want ?? -1}"
+    }
+  }
+  if m.keys().len() != r.keys.len() || m.values().len() != r.vals.len() {
+    return "${at}: keys/values lengths"
+  }
+  ""
+}
+
+/// xorshift64*, the run's own random numbers
+fn next(var s: Int) -> Int {
+  s = s ^ (s.wrapping_shl(13))
+  s = s ^ (s >> 7)
+  s = s ^ (s.wrapping_shl(17))
+  s & 4611686018427387903
+}
+
+struct SRef {
+  keys: List[Str]
+  vals: List[Int]
+}
+
+fn (r: SRef) find(k: Str) -> Int {
+  for (i, x) in r.keys.indexed() {
+    if x == k {
+      return i
+    }
+  }
+  -1
+}
+
+fn sput(var r: SRef, k: Str, v: Int) {
+  let i = r.find(k)
+  if i >= 0 {
+    r.vals[i] = v
+  } else {
+    r.keys.push(k)
+    r.vals.push(v)
+  }
+}
+
+fn sremove(var r: SRef, k: Str) -> Int? {
+  let i = r.find(k)
+  if i < 0 {
+    return None
+  }
+  let v = r.vals[i]
+  var ks: List[Str] = []
+  var vs: List[Int] = []
+  for j in 0..r.keys.len() {
+    if j != i {
+      ks.push(r.keys[j])
+      vs.push(r.vals[j])
+    }
+  }
+  r.keys = ks
+  r.vals = vs
+  Some(v)
+}
+
+fn scheck(m: Map[Str, Int], r: SRef, keys: Int, at: Str) -> Str {
+  if m.len() != r.keys.len() {
+    return "${at}: len ${m.len()}, want ${r.keys.len()}"
+  }
+  var i = 0
+  for (k, v) in m {
+    if i >= r.keys.len() || r.keys[i] != k || r.vals[i] != v {
+      return "${at}: entry ${i} is ${k}=${v}, want order ${r.keys.join(",")}"
+    }
+    i += 1
+  }
+  for kn in 0..keys {
+    let k = "key${kn}"
+    let got = m.get(k)
+    let ri = r.find(k)
+    let want: Int? = if ri >= 0 { Some(r.vals[ri]) } else { None }
+    if got != want {
+      return "${at}: get(${k}) = ${got ?? -1}, want ${want ?? -1}"
+    }
+  }
+  if m.keys().len() != r.keys.len() || m.values().len() != r.vals.len() {
+    return "${at}: keys/values lengths"
+  }
+  ""
+}
+
+fn run_int() -> Int {
+  var failures = 0
+  for seed in 1..41 {
+    var rs = seed * 7919 + 17
+    var pool: List[Map[Int, Int]] = [{}, {}, {}, {}]
+    var refs: List[Ref] = [Ref{keys: [], vals: []}, Ref{keys: [], vals: []}, Ref{keys: [], vals: []}, Ref{keys: [], vals: []}]
+    rs = next(rs)
+    let keys = 1 + rs % 60
+    var bad = ""
+    for step in 0..3000 {
+      rs = next(rs)
+      let i = rs % 4
+      rs = next(rs)
+      let k = rs % keys
+      rs = next(rs)
+      let op = rs % 10
+      rs = next(rs)
+      let v = rs % 1000000
+      if op < 5 {
+        pool[i].put(k, v)
+        put(refs[i], k, v)
+      } else if op < 6 {
+        pool[i].update(k, 5, fn(var x) {
+          x += 3
+        })
+        let ri = refs[i].find(k)
+        let old = if ri >= 0 { refs[i].vals[ri] } else { 5 }
+        put(refs[i], k, old + 3)
+      } else if op < 7 {
+        let got = pool[i].remove(k)
+        let want = remove(refs[i], k)
+        if got != want {
+          bad = "seed ${seed} step ${step}: remove(${k}) = ${got ?? -1}, want ${want ?? -1}"
+        }
+      } else if op < 8 {
+        let j = v % 4
+        pool[j] = pool[i]
+        refs[j] = refs[i]
+      }
+      if bad.is_empty() {
+        for x in 0..4 {
+          let r = check(pool[x], refs[x], keys, "seed ${seed} step ${step} value ${x}")
+          if !r.is_empty() {
+            bad = r
+            break
+          }
+        }
+      }
+      if !bad.is_empty() {
+        break
+      }
+    }
+    if !bad.is_empty() {
+      failures += 1
+    }
+  }
+  failures
+}
+
+fn run_str() -> Int {
+  var failures = 0
+  for seed in 1..41 {
+    var rs = seed * 7919 + 17
+    var pool: List[Map[Str, Int]] = [{}, {}, {}, {}]
+    var refs: List[SRef] = [SRef{keys: [], vals: []}, SRef{keys: [], vals: []}, SRef{keys: [], vals: []}, SRef{keys: [], vals: []}]
+    rs = next(rs)
+    let keys = 1 + rs % 60
+    var bad = ""
+    for step in 0..3000 {
+      rs = next(rs)
+      let i = rs % 4
+      rs = next(rs)
+      let k = "key${rs % keys}"
+      rs = next(rs)
+      let op = rs % 10
+      rs = next(rs)
+      let v = rs % 1000000
+      if op < 5 {
+        pool[i].put(k, v)
+        sput(refs[i], k, v)
+      } else if op < 6 {
+        pool[i].update(k, 5, fn(var x) {
+          x += 3
+        })
+        let ri = refs[i].find(k)
+        let old = if ri >= 0 { refs[i].vals[ri] } else { 5 }
+        sput(refs[i], k, old + 3)
+      } else if op < 7 {
+        let got = pool[i].remove(k)
+        let want = sremove(refs[i], k)
+        if got != want {
+          bad = "seed ${seed} step ${step}: remove(${k}) = ${got ?? -1}, want ${want ?? -1}"
+        }
+      } else if op < 8 {
+        let j = v % 4
+        pool[j] = pool[i]
+        refs[j] = refs[i]
+      }
+      if bad.is_empty() {
+        for x in 0..4 {
+          let r = scheck(pool[x], refs[x], keys, "seed ${seed} step ${step} value ${x}")
+          if !r.is_empty() {
+            bad = r
+            break
+          }
+        }
+      }
+      if !bad.is_empty() {
+        break
+      }
+    }
+    if !bad.is_empty() {
+      failures += 1
+    }
+  }
+  failures
+}
+
+/// copies that write alternately fork each other's tables (forks nest at
+/// most 8 deep, then flatten): every value keeps exactly its own writes
+fn deep_forks() -> Str {
+  let n = 300
+  var a: Map[Int, Int] = {}
+  for i in 0..n {
+    a.put(i, i)
+  }
+  var b = a
+  var keep: List[Map[Int, Int]] = []
+  for round in 0..400 {
+    a.put(round % n, round)
+    b.put((round + 1) % n, -round)
+    if round % 50 == 0 {
+      keep.push(a)
+    }
+    let c = b
+    b = a
+    a = c
+  }
+  var sa = 0
+  var sb = 0
+  for i in 0..n {
+    sa += a.get(i) ?? 1000000
+    sb += b.get(i) ?? 1000000
+  }
+  var sk = 0
+  for m in keep {
+    for (_, v) in m {
+      sk += v
+    }
+  }
+  "deep forks: ${a.len()} ${b.len()} ${sa} ${sb} ${keep.len()} ${sk}"
+}
+
+fn main(os: Os) {
+  os.stdio.println("Int keys: ${run_int()} failed seeds")
+  os.stdio.println("Str keys: ${run_str()} failed seeds")
+  os.stdio.println(deep_forks())
+}

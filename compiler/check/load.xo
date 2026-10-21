@@ -34,6 +34,10 @@ pub struct Checker {
   /// run; a build reaches a small part of the runtime. Off for `xo check`
   /// and the checker's own runs, which check every body.
   pub lazy: Bool = false
+  /// Map and Set on the log and fork representation (decision 0291,
+  /// XO_MAP_LOG=1 until the switch): the builder's map_type and map.xo
+  /// read it
+  pub map_log: Bool = false
   /// The functions of the native modules whose bodies run left to
   /// check_lazy (true), and those it checked (false).
   pub lazy_fns: Map[Int, Bool] = {}

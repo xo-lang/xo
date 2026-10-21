@@ -305,9 +305,7 @@ fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
     if oname == "Map" && b.tkind(kt) != Kind.Str {
       b.unsupported("JSON for a Map whose keys are not Str")
     }
-    let keys = b.mfield(t, 0, v)
-    let vals = b.mfield(t, 1, v)
-    let live = b.mfield(t, 2, v)
+    let (keys, vals, live) = b.map_kvl(t, v)
     let av = b.local()
     let first = b.local()
     let open = if oname == "Set" { "[" } else { "{" }
@@ -317,7 +315,7 @@ fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
     let iv = b.local()
     let n = b.call("list.len", it, "", [keys])
     let (i, head, exit) = b.for_up_to_begin(n, iv)
-    let (no, join) = b.if_then_begin(b.call("list.index", bt, "", [live, i]))
+    let (no, join) = b.if_then_begin(b.map_live(live, i))
     let (no2, join2) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.read(first)]))
     b.write_var(av, b.lit(b.read(av), ","))
     b.if_then_end(no2, join2)

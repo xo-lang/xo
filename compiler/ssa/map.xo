@@ -16,11 +16,17 @@ use github.com/xo-lang/xo/compiler/parser
 
 /// The key type of the Map or Set struct t (mapKey).
 fn map_key(m: Module, t: Int) -> Int {
+  if m.map_log {
+    return mlog_key(m, t)
+  }
   m.types[m.types[t].fields[0].ty].elems[0]
 }
 
 /// The value type of the Map or Set struct t (mapVal).
 fn map_val(m: Module, t: Int) -> Int {
+  if m.map_log {
+    return mlog_val(m, t)
+  }
   m.types[m.types[t].fields[1].ty].elems[0]
 }
 
@@ -157,6 +163,9 @@ fn (var b: Builder) hash_func(t: Int) -> Str {
 
 /// A Map or Set with no entries (emptyMap).
 fn (var b: Builder) empty_map(t: Int) -> Int {
+  if b.m.map_log {
+    return b.mlog_empty(t)
+  }
   var fs: List[Int] = []
   for i in 0..4 {
     fs.push(b.call("list.new", b.m.types[t].fields[i].ty, "", []))
@@ -287,7 +296,7 @@ fn (var b: Builder) map_rebuild(t: Int) -> Str {
   let iv = b.local()
   let n0 = b.call("list.len", it, "", [keys])
   let (i, head, exit) = b.for_up_to_begin(n0, iv)
-  let (no, join) = b.if_then_begin(b.call("list.index", bt, "", [live, i]))
+  let (no, join) = b.if_then_begin(b.map_live(live, i))
   let ck = b.read(nk)
   let ek = b.call("list.index", kt, "", [keys, i])
   b.write_var(nk, b.call("list.push", klt, "", [ck, ek]))
@@ -404,6 +413,9 @@ fn (var b: Builder) map_scan(t: Int) -> Str {
 /// its hash and xo.map.find, so a lookup in a map with a table is what it
 /// was (find stays small enough for the arm64 inliner).
 fn (var b: Builder) map_lookup(t: Int, mv: Int, k: Int) -> Int {
+  if b.m.map_log {
+    return b.mlog_lookup(t, mv, k)
+  }
   let it = b.int_t()
   let bt = b.bool_t()
   let scan = b.map_scan(t)
@@ -429,6 +441,9 @@ fn (var b: Builder) map_lookup(t: Int, mv: Int, k: Int) -> Int {
 /// new entry at the end (mapPut); a small map's entry with no hash
 /// (SMALL_MAP).
 fn (var b: Builder) map_put(t: Int) -> Str {
+  if b.m.map_log {
+    return b.mlog_put(t)
+  }
   let it = b.int_t()
   let bt = b.bool_t()
   let kt = map_key(b.m, t)
@@ -497,6 +512,9 @@ fn (var b: Builder) map_put(t: Int) -> Str {
 
 /// xo.map.remove[T](m, k) -> (T, V?) (mapRemove).
 fn (var b: Builder) map_remove(t: Int, ot: Int) -> Str {
+  if b.m.map_log {
+    return b.mlog_remove(t, ot)
+  }
   let it = b.int_t()
   let bt = b.bool_t()
   let kt = map_key(b.m, t)
@@ -547,8 +565,11 @@ fn (var b: Builder) map_remove(t: Int, ot: Int) -> Str {
 /// The function that lists the live entries' keys (what 0), values (1),
 /// or (key, value) tuples (2) in order (mapList).
 fn (var b: Builder) map_list(t: Int, what: Int) -> Str {
+  if b.m.map_log {
+    return b.mlog_list(t, what)
+  }
   let it = b.int_t()
-  let bt = b.bool_t()
+  let _bt = b.bool_t()
   let kt = map_key(b.m, t)
   let vt = map_val(b.m, t)
   let pair = b.m.tuple([kt, vt])
@@ -571,7 +592,7 @@ fn (var b: Builder) map_list(t: Int, what: Int) -> Str {
   let iv = b.local()
   let n0 = b.call("list.len", it, "", [keys])
   let (i, head, exit) = b.for_up_to_begin(n0, iv)
-  let (no, join) = b.if_then_begin(b.call("list.index", bt, "", [live, i]))
+  let (no, join) = b.if_then_begin(b.map_live(live, i))
   var e = -1
   if what == 0 {
     e = b.call("list.index", kt, "", [keys, i])
@@ -619,6 +640,35 @@ fn (var b: Builder) map_lit(t: Int, keys: List[Expr], vals: List[Expr], set: Boo
 /// The index of k's live entry in the map mv (of struct t) (mapCall's
 /// find).
 fn (var b: Builder) map_index(t: Int, mv: Int, k: Int) -> Int { b.map_lookup(t, mv, k) }
+
+/// The value of k's entry idx (a map_lookup result, >= 0) in mv.
+fn (var b: Builder) map_value(t: Int, mv: Int, idx: Int) -> Int {
+  if b.m.map_log {
+    return b.mlog_value_at(t, mv, idx)
+  }
+  b.call("list.index", map_val(b.m, t), "", [b.mfield(t, 1, mv), idx])
+}
+
+/// The keys, values, and live flags of mv's entries, for a loop over i
+/// that skips an entry unless map_live(live, i); with the log
+/// representation the lists of the live entries (live -1).
+fn (var b: Builder) map_kvl(t: Int, mv: Int) -> (Int, Int, Int) {
+  if b.m.map_log {
+    let kl = b.m.list(map_key(b.m, t))
+    let vl = b.m.list(map_val(b.m, t))
+    let r = b.call(b.mlog_kv(t), b.m.tuple([kl, vl]), "", [mv])
+    return (b.add(Op.Field, kl, Aux.I(n: 0), [r]), b.add(Op.Field, vl, Aux.I(n: 1), [r]), -1)
+  }
+  (b.mfield(t, 0, mv), b.mfield(t, 1, mv), b.mfield(t, 2, mv))
+}
+
+/// Whether entry i is live (map_kvl).
+fn (var b: Builder) map_live(live: Int, i: Int) -> Int {
+  if live < 0 {
+    return b.cbool(true)
+  }
+  b.call("list.index", b.bool_t(), "", [live, i])
+}
 
 /// A method of Map or Set; None for one it does not lower (mapCall).
 fn (var b: Builder) map_call(x: Expr, ci: check.CallInfo) -> Int? {
@@ -694,8 +744,7 @@ fn (var b: Builder) map_call(x: Expr, ci: check.CallInfo) -> Int? {
       let res = b.s.f.add_param(join, nt)
       let (yes, no) = b.branch(b.add(Op.Ge, bt, Aux.None, [idx, b.cint(0)]))
       b.s.cur = yes
-      let vl = b.mfield(t, 1, mv)
-      let v = b.call("list.index", map_val(b.m, t), "", [vl, idx])
+      let v = b.map_value(t, mv, idx)
       b.jump(join, [b.variant(nt, "Some", [v])])
       b.s.cur = no
       b.jump(join, [b.variant(nt, "None", [])])
@@ -726,8 +775,7 @@ fn (var b: Builder) map_call(x: Expr, ci: check.CallInfo) -> Int? {
       msg = b.call("str.concat", st, "", [msg, reason])
       b.fault(msg, b.pos_line(span))
       b.s.cur = ok
-      let vl = b.mfield(t, 1, mv)
-      return Some(b.call("list.index", map_val(b.m, t), "", [vl, idx]))
+      return Some(b.map_value(t, mv, idx))
     }
     "Map.keys" | "Set.to_list" => {
       let f = b.map_list(t, 0)
@@ -776,8 +824,7 @@ fn (var b: Builder) map_update(x: Expr, var p: Place, args: List[Expr?]) -> Int 
   let cur = b.local()
   b.write_var(cur, init)
   let (no, join) = b.if_then_begin(b.add(Op.Ge, bt, Aux.None, [idx, b.cint(0)]))
-  let vl = b.mfield(t, 1, mp)
-  b.write_var(cur, b.call("list.index", vt, "", [vl, idx]))
+  b.write_var(cur, b.map_value(t, mp, idx))
   b.if_then_end(no, join)
   let fty = b.vty(fv)
   let cv = b.read(cur)
@@ -879,9 +926,11 @@ fn (var b: Builder) for_map(label: Bytes, p: Pattern, bound: List[Expr], body: p
   let it = b.int_t()
   let bt = b.bool_t()
   let t = b.vty(mv)
-  let keys = b.mfield(t, 0, mv)
-  let vals = b.mfield(t, 1, mv)
-  let live = b.mfield(t, 2, mv)
+  if b.m.map_log {
+    b.for_mlog(label, p, bound, body, mv)
+    return
+  }
+  let (keys, vals, live) = b.map_kvl(t, mv)
   let set = b.m.types[t].name.starts_with("Set[")
   let n = b.call("list.len", it, "", [keys])
   let idx = b.local()
@@ -898,7 +947,7 @@ fn (var b: Builder) for_map(label: Bytes, p: Pattern, bound: List[Expr], body: p
   b.s.f.branch(b.s.cur, b.add(Op.Lt, bt, Aux.None, [i, n]), tst, exit)
   b.seal(tst)
   b.s.cur = tst
-  b.s.f.branch(b.s.cur, b.call("list.index", bt, "", [live, i]), bodyb, latch)
+  b.s.f.branch(b.s.cur, b.map_live(live, i), bodyb, latch)
   b.seal(bodyb)
   b.s.cur = bodyb
   b.loop_tick(tick)
@@ -909,6 +958,74 @@ fn (var b: Builder) for_map(label: Bytes, p: Pattern, bound: List[Expr], body: p
   if !set {
     let vt = map_val(b.m, t)
     let v = b.call("list.index", vt, "", [vals, i])
+    var els: List[Pattern] = []
+    if let TuplePat(elems: es, ..) = p {
+      els = es
+    }
+    if els.len() == 2 {
+      // `(k, v)` binds the key and the value apart, both borrowed from
+      // the map's lists (a tuple consumed them; stmt.xo's indexed loop)
+      b.pattern(k, els[0], fail)
+      b.pattern(v, els[1], fail)
+      elem = -1
+    } else {
+      elem = b.add(Op.Tuple, b.m.tuple([kt, vt]), Aux.None, [k, v])
+    }
+  }
+  if elem >= 0 {
+    b.pattern(elem, p, fail)
+  }
+  b.end_fail(fail)
+  b.s.loops.push(LoopCtx{label: label, brk: exit, cont: latch, exits: b.s.exits.len()})
+  b.block(body)
+  b.s.loops.pop()
+  b.jump(latch, [])
+  b.seal(latch)
+  b.s.cur = latch
+  let ci = b.read(idx)
+  b.write_var(idx, b.add(Op.Add, it, Aux.None, [ci, b.cint(1)]))
+  b.jump(head, [])
+  b.seal(head)
+  b.seal(exit)
+  b.s.cur = exit
+}
+
+/// for_map over a map on the log representation (decision 0291): its
+/// entries in their chunks (xo.mlog.iterdir), with no copy of a clean table.
+fn (var b: Builder) for_mlog(label: Bytes, p: Pattern, bound: List[Expr], body: parser.Block, mv: Int) {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let t = b.vty(mv)
+  let et = mlog_entry_of(b.m, t)
+  let src = b.call(b.mlog_iterdir(t), b.m.types[t].fields[0].ty, "", [mv])
+  let set = b.m.types[t].name.starts_with("Set[")
+  let n = b.mf(t, 4, mv)
+  let idx = b.local()
+  b.write_var(idx, b.cint(0))
+  let tick = b.loop_bound(bound)
+  let head = b.new_block()
+  let tst = b.new_block()
+  let bodyb = b.new_block()
+  let latch = b.new_block()
+  let exit = b.new_block()
+  b.jump(head, [])
+  b.s.cur = head
+  let i = b.read(idx)
+  b.s.f.branch(b.s.cur, b.add(Op.Lt, bt, Aux.None, [i, n]), tst, exit)
+  b.seal(tst)
+  b.s.cur = tst
+  b.jump(bodyb, [])
+  b.seal(bodyb)
+  b.s.cur = bodyb
+  b.loop_tick(tick)
+  let kt = map_key(b.m, t)
+  let e = b.mlog_at(et, src, i)
+  let k = b.add(Op.Field, kt, Aux.I(n: 3), [e])
+  var elem = k
+  let fail = b.new_block()
+  if !set {
+    let vt = map_val(b.m, t)
+    let v = b.add(Op.Field, vt, Aux.I(n: 4), [e])
     var els: List[Pattern] = []
     if let TuplePat(elems: es, ..) = p {
       els = es
@@ -1005,9 +1122,7 @@ fn (var b: Builder) map_values_hof(x: Expr, ci: check.CallInfo) -> Int? {
   let it = b.int_t()
   let bt = b.bool_t()
   let is_any = fname == "any"
-  let keys = b.mfield(t, 0, mv)
-  let vals = b.mfield(t, 1, mv)
-  let live = b.mfield(t, 2, mv)
+  let (keys, vals, live) = b.map_kvl(t, mv)
   let n = b.call("list.len", it, "", [keys])
   let idx = b.local()
   b.write_var(idx, b.cint(0))
@@ -1027,7 +1142,7 @@ fn (var b: Builder) map_values_hof(x: Expr, ci: check.CallInfo) -> Int? {
   b.jump(exit, [b.cbool(!is_any)])
   b.seal(tst)
   b.s.cur = tst
-  b.s.f.branch(b.s.cur, b.call("list.index", bt, "", [live, i]), bodyb, latch)
+  b.s.f.branch(b.s.cur, b.map_live(live, i), bodyb, latch)
   b.seal(bodyb)
   b.s.cur = bodyb
   if ps[0] >= 0 {
