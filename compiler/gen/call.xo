@@ -987,7 +987,45 @@ fn (var g: Gen) type_call_code(obj: Int, x: Expr) -> Str {
   if from_float {
     return "${g.rt()}FloatToInt[${to}](${v}, ${loc})"
   }
+  if widens(from, to) {
+    // every value of from fits in to (UInt8 to Int, Int32 to Int): a
+    // plain Go conversion, which inlines, instead of rt.Conv's checked
+    // generic call (std/path's clean spent 8% in Conv[int64, uint8],
+    // 2026-10-21)
+    return "${to}(${v})"
+  }
   "${g.rt()}Conv[${to}, ${from}](${v}, ${loc})"
+}
+
+/// Whether every value of the Go integer type from fits in the Go integer
+/// type to: an unsigned type into a wider signed one or an unsigned one
+/// at least as wide, a signed type into a signed one at least as wide.
+fn widens(from: Str, to: Str) -> Bool {
+  let (fs, fu) = int_shape(from)
+  let (ts, tu) = int_shape(to)
+  if fs == 0 || ts == 0 {
+    return false
+  }
+  if fu {
+    return if tu { ts >= fs } else { ts > fs }
+  }
+  !tu && ts >= fs
+}
+
+/// The size in bytes of the Go integer type t and whether it is
+/// unsigned; 0 for any other type.
+fn int_shape(t: Str) -> (Int, Bool) {
+  match t {
+    "int8" => (1, false)
+    "int16" => (2, false)
+    "int32" => (4, false)
+    "int64" => (8, false)
+    "uint8" => (1, true)
+    "uint16" => (2, true)
+    "uint32" => (4, true)
+    "uint64" => (8, true)
+    _ => (0, false)
+  }
 }
 
 /// `a.min(b)`, `a.max(b)`, `a.clamp(lo, hi)` on an Ord type (ordCall).

@@ -47,6 +47,8 @@ func (x *arithFault) fault() *FaultErr {
 	switch {
 	case x.op == 'i':
 		msg = fmt.Sprintf("index %d out of range for List of length %d", x.a, x.b)
+	case x.op == 'b':
+		msg = fmt.Sprintf("index %d out of range for Bytes of length %d", x.a, x.b)
 	case (x.op == '/' || x.op == '%') && x.b == 0:
 		msg = fmt.Sprintf("division by zero: %s %c 0", istr(x.a), x.op)
 	default:

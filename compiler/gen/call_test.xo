@@ -1,0 +1,20 @@
+// widens: an integer conversion that cannot fail is a plain Go
+// conversion (2026-10-21).
+
+test "widens: every value of from fits in to" {
+  expect(widens("uint8", "int64")) == true
+  expect(widens("uint8", "uint8")) == true
+  expect(widens("uint16", "int32")) == true
+  expect(widens("int32", "int64")) == true
+  expect(widens("int8", "int8")) == true
+}
+
+test "widens: a conversion that can fail keeps the check" {
+  expect(widens("int64", "uint8")) == false
+  expect(widens("int64", "int32")) == false
+  expect(widens("uint32", "int32")) == false
+  expect(widens("uint64", "int64")) == false
+  expect(widens("int8", "uint8")) == false
+  expect(widens("int64", "uint64")) == false
+  expect(widens("rt.Rune", "int64")) == false
+}

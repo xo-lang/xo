@@ -48,10 +48,13 @@ func BytesSlice(b Bytes, lo, hi int64, hasLo, hasHi bool, at string) Bytes {
 	return b[lo:hi]
 }
 
-// BytesAt is `b[i]`.
+// BytesAt is `b[i]`. The fault is an inline panic (as List_AtM's), so
+// BytesAt inlines into the generated code: with Faultf's call it cost 81
+// against Go's budget of 80, a call for every byte read (2026-10-21,
+// std/path's clean spent 15% of its time in it).
 func BytesAt(b Bytes, i int64, at string) uint8 {
-	if i < 0 || i >= int64(len(b)) {
-		Faultf(at, "index %d out of range for Bytes of length %d", i, len(b))
+	if uint64(i) >= uint64(len(b)) {
+		panic(&arithFault{i, int64(len(b)), 'b', at})
 	}
 	return b[i]
 }
