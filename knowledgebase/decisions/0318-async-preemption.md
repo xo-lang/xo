@@ -232,3 +232,28 @@ gains an allocating loop (a list grown and dropped each iteration in
 program code) preempted thousands of times with another allocating
 fiber on the same worker (XO_THREADS=1), checked by the leak checker and
 the heap's own checks (XO_HEAP_GUARD).
+
+Sequences the emitter lowers inline, not from an inlined runtime body
+(so not in the table), and why each is safe to interrupt anywhere:
+
+- Reference count updates (dup and drop's inline paths): a count above 0
+  is local, its object reachable from one task only (crossing to another
+  task marks it shared, decision 0058), so a plain load, add, and store
+  interrupted midway is resumed by the same task with nobody else having
+  touched it. A shared count is updated atomically: one LSE instruction
+  on darwin (`ldaddal`, `stadd`), and on Linux an exclusive load and
+  store loop, which an interruption only makes retry (the exclusive
+  monitor is cleared on the return from the signal). A drop that reaches
+  zero then calls the runtime to free (the runtime section); interrupted
+  between the store and the call, the object is still the task's own.
+  The in place update test (a count of 1) reads a local count likewise.
+- Allocation: the emitter does not lower an allocator fast path inline;
+  generated code calls the runtime (xo_x_obj_*: the runtime section).
+  The free list pops (alloc_fast, alloc_pop) reach the program's text
+  only through the inliner, which the table covers.
+- Stack checks: native functions have no stack limit check in their
+  prologues (fiber stacks have guard pages); a check added later reads
+  the fiber's own limit, which pinning keeps valid.
+- Thread local table reads in std's native modules (rt.tlocal_get
+  outside the runtime): pinned to the same thread, the table is the
+  same.
