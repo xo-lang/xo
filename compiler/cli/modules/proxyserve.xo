@@ -159,7 +159,7 @@ fn (c: ModCtx) proxy_answer(req: http.Request, root: Str, fetch: Bool) -> http.R
 /// left out), sorted, under "<path>@<version>/", mode 0644.
 fn (c: ModCtx) zip_module(dir: Str, mod_path: Str, version: Str) -> Bytes ! Str uses fs.read {
   var entries: List[archive.Entry] = []
-  for f in c.tree_files(dir) {
+  for f in c.tree_files(dir)? {
     let data = c.os.fs.read("${dir}/${f}").map_err(fs_msg)?
     entries.push(archive.file("${mod_path}@${version}/${f}", data))
   }

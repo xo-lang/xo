@@ -761,7 +761,7 @@ fn fetch_problem(mod_path: Str, version: Str, err: Str, notes: List[Str]) -> che
 /// mod.Record: the checksum log record of the tree in dir, its two xo.lock
 /// lines.
 fn (c: ModCtx) record(dir: Str, mod_path: Str, version: Str) -> List[Str] ! Str uses fs.read {
-  let tree = c.chk.hash_dir(dir)
+  let tree = c.chk.hash_dir(dir)?
   let modh = match c.chk.hash_mod_file(dir) {
     Some(h) => h
     None => return Err("open ${dir}/xo.mod: no such file or directory")
@@ -873,7 +873,7 @@ fn (c: ModCtx) proxy_fetch(base: Str, mod_path: Str, version: Str, dst: Str) -> 
     Ok(l) => l
     Err(_) => return Ok(())
   }
-  let got = c.chk.hash_dir(dst)
+  let got = c.chk.hash_dir(dst).map_err(fn(e) { (false, e) })?
   for l in (lock.to_str() ?? "").split("\n") {
     let f = check.fields(l)
     if f.len() == 3 && f[0] == mod_path && f[1] == version && f[2] != got {

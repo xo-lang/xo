@@ -179,7 +179,13 @@ fn (var c: ModCtx) load(main_dir0: Str, opts: Options) -> BuildList uses (fs, pr
     let v = selected.get(p) ?? ""
     let key = "${p} ${v}"
     let dir = dirs.get(key) ?? ""
-    b.hashes[key] = c.chk.hash_dir(dir)
+    match c.chk.hash_dir(dir) {
+      Ok(h) => b.hashes[key] = h
+      Err(e) => {
+        add_problem(b, check.unreadable_tree(p, v, "content hash", e))
+        continue
+      }
+    }
     b.modules.push(check.DepModule{path: p, version: v, dir: dir, direct: direct.contains(p)})
   }
   if let Some(w) = b.work {
@@ -268,7 +274,13 @@ fn (var c: ModCtx) load_vendor(var b: BuildList, main: check.ModFile, opts: Opti
       add_problem(b, check.Problem{code: "XO1307", module: m.path, file: main.file, msg: "vendored ${key}: lstat ${m.dir}: no such file or directory", notes: ["run `xo vendor`"]})
       continue
     }
-    let h = c.chk.hash_dir(m.dir)
+    let h = match c.chk.hash_dir(m.dir) {
+      Ok(x) => x
+      Err(e) => {
+        add_problem(b, check.unreadable_tree(m.path, m.version, "content hash", e))
+        continue
+      }
+    }
     b.hashes[key] = h
     match lock.entries.get(key) {
       None => {

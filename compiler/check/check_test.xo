@@ -489,3 +489,17 @@ test "a dependency tree the effect audit cannot read is an error, not fewer effe
   expect(unread.module_effects("dep").err().map(fn(e) { e.contains("read dep/net/b.xo") })) == Some(true)
   expect(unreadable_tree("ex.com/m", "v1.0.0", "effects", "read x: boom").code) == "XO1318"
 }
+
+test "a module tree hash fails closed on a file it cannot read" {
+  os.fs.create_dir_all("hm/sub")?
+  os.fs.write("hm/xo.mod", b"module ex.com/hm\n")?
+  os.fs.write("hm/sub/a.xo", b"pub fn a() {}\n")?
+  let c = new_checker(os.fs, "std")
+  let h = c.hash_dir("hm")?
+  expect(h.starts_with("h1:")) == true
+  // the hash of the tree without sub/a.xo would be recorded in xo.lock
+  let flaky = new_checker(FlakyFs{inner: os.fs, bad: "hm/sub/a.xo"}, "std")
+  expect(flaky.hash_dir("hm").is_err()) == true
+  let unlisted = new_checker(FlakyFs{inner: os.fs, bad: "hm/sub"}, "std")
+  expect(unlisted.hash_dir("hm").is_err()) == true
+}

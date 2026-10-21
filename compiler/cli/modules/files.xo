@@ -7,26 +7,27 @@ use github.com/xo-lang/xo/compiler/check
 /// The regular files under dir as slash paths relative to it, sorted,
 /// skipping directories below dir that hold their own xo.mod (nested
 /// modules), as mod.HashDir and mod.ZipModule list them.
-fn (c: ModCtx) tree_files(dir: Str) -> List[Str] uses fs.read {
+fn (c: ModCtx) tree_files(dir: Str) -> List[Str] ! Str uses fs.read {
   var out: List[Str] = []
-  c.tree_walk(dir, "", out)
-  out.sort()
+  c.tree_walk(dir, "", out)?
+  Ok(out.sort())
 }
 
-fn (c: ModCtx) tree_walk(dir: Str, rel: Str, var out: List[Str]) uses fs.read {
+fn (c: ModCtx) tree_walk(dir: Str, rel: Str, var out: List[Str]) -> () ! Str uses fs.read {
   let here = if rel.is_empty() { dir } else { "${dir}/${rel}" }
-  let entries = c.os.fs.read_dir(here).ok() ?? []
+  let entries = c.os.fs.read_dir(here).map_err(fn(e) { "read ${here}: ${fs_msg(e)}" })?
   for e in entries {
     let r = if rel.is_empty() { e.name } else { "${rel}/${e.name}" }
     if e.is_dir {
       if c.exists("${dir}/${r}/xo.mod") {
         continue
       }
-      c.tree_walk(dir, r, out)
+      c.tree_walk(dir, r, out)?
     } else {
       out.push(r)
     }
   }
+  Ok(())
 }
 
 /// The source files of the module at dir that mod.ModuleEffects reads:

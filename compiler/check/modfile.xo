@@ -909,33 +909,36 @@ pub fn (c: Checker) read_lock(dir: Str) -> (Lock, List[Problem]) uses fs.read {
 
 /// The regular files under dir, as slash paths relative to it, skipping
 /// directories below dir that hold their own xo.mod (nested modules).
-fn (c: Checker) tree_files(dir: Str, rel: Str, var out: List[Str]) {
+fn (c: Checker) tree_files(dir: Str, rel: Str, var out: List[Str]) -> () ! Str {
   let here = if rel.is_empty() { dir } else { join(dir, rel) }
-  let entries = c.fs.read_dir(here).ok() ?? []
+  let entries = c.fs.read_dir(here).map_err(fn(e) { "read ${here}: ${e}" })?
   for e in entries {
     let r = if rel.is_empty() { e.name } else { "${rel}/${e.name}" }
     if e.is_dir {
       if c.exists(join(join(dir, r), "xo.mod")) {
         continue
       }
-      c.tree_files(dir, r, out)
+      c.tree_files(dir, r, out)?
     } else {
       out.push(r)
     }
   }
+  Ok(())
 }
 
 /// mod.HashDir: "h1:" and the base64 SHA-256 of the lines "<sha256 hex>
-/// <slash path>" of every file of the tree, sorted by path.
-pub fn (c: Checker) hash_dir(dir: Str) -> Str uses fs.read {
+/// <slash path>" of every file of the tree, sorted by path. A directory
+/// or file that cannot be read is an error, never the hash of a partial
+/// tree (which a command that records hashes would write to xo.lock).
+pub fn (c: Checker) hash_dir(dir: Str) -> Str ! Str uses fs.read {
   var files: List[Str] = []
-  c.tree_files(dir, "", files)
+  c.tree_files(dir, "", files)?
   var sum = BytesBuilder.new()
   for f in files.sort() {
-    let data = c.fs.read(join(dir, f)).ok() ?? b""
+    let data = c.fs.read(join(dir, f)).map_err(fn(e) { "read ${join(dir, f)}: ${e}" })?
     sum.write("${crypto.sha256(data).to_hex()}  ${f}\n".bytes())
   }
-  "h1:${crypto.sha256(sum.freeze()).to_base64()}"
+  Ok("h1:${crypto.sha256(sum.freeze()).to_base64()}")
 }
 
 /// mod.HashModFile: the hash of a version's xo.mod alone.
@@ -1124,7 +1127,13 @@ fn (var c: Checker) load_build_list(main_dir: Str) -> BuildList {
     }
     let key = "${p} ${v}"
     let dir = dirs.get(key) ?? ""
-    b.hashes[key] = c.hash_dir(dir)
+    match c.hash_dir(dir) {
+      Ok(h) => b.hashes[key] = h
+      Err(e) => {
+        add_problem(b, unreadable_tree(p, v, "content hash", e))
+        continue
+      }
+    }
     b.modules.push(DepModule{path: p, version: v, dir: dir, direct: direct.contains(p)})
   }
   if let Some(w) = work {
@@ -1229,7 +1238,13 @@ fn (var c: Checker) load_vendor(var b: BuildList, main: ModFile) {
       add_problem(b, Problem{code: "XO1307", module: m.path, file: main.file, msg: "vendored ${key}: lstat ${c.abs(m.dir)}: no such file or directory", notes: ["run `xo vendor`"]})
       continue
     }
-    let h = c.hash_dir(m.dir)
+    let h = match c.hash_dir(m.dir) {
+      Ok(x) => x
+      Err(e) => {
+        add_problem(b, unreadable_tree(m.path, m.version, "content hash", e))
+        continue
+      }
+    }
     b.hashes[key] = h
     match lock.entries.get(key) {
       None => {
