@@ -1,5 +1,19 @@
 # std/template changes
 
+## 2026-10-21: perf: error context written only for errors
+
+- Kind: perf
+- Commit: (filled in after the push)
+- Found by: XO_PROF=cpu of 200,000 renders (the text of every visited node, pipeline, and command was built for the error message `executing "t" at <...>`, 40% of a render)
+- Go reference: text/template exec.go state.at and errorf (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/template (go, arm64, LLVM)
+
+The executor keeps the node it is at and writes its text only when it builds
+an error, as Go's state.at keeps the node. 200,000 renders of a template
+with a range, an if, and four fields: native CPU 2,640 ms to 1,660 ms. A
+render still parses the set each time (a Template holds sources, not
+trees), which is now half of it; Go parses once.
+
 ## 2026-10-21: fix: printf, the escapers, eq, and slice as Go's text/template
 
 - Kind: fix

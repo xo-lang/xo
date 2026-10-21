@@ -1534,6 +1534,26 @@ struct Var {
   value: Val
 }
 
+/// The node an error is reported at, kept as the node and written out
+/// only when an error is built (state.errorf).
+enum Ctx {
+  Nothing
+  OfNode(n: Node)
+  OfPipe(p: Pipe)
+  OfArg(a: Arg)
+  OfCmd(c: Cmd)
+}
+
+fn ctx_text(c: Ctx) -> Str {
+  match c {
+    Nothing => ""
+    OfNode(n) => node_text(n)
+    OfPipe(p) => pipe_text(p)
+    OfArg(a) => arg_text(a)
+    OfCmd(c) => cmd_text(c)
+  }
+}
+
 /// One template of the set as the executor sees it.
 struct Ex {
   trees: List[Tree]
@@ -1542,23 +1562,23 @@ struct Ex {
   vars: List[Var] = []
   depth: Int = 0
   node_pos: Int = -1
-  node_ctx: Str = ""
+  node_ctx: Ctx = Ctx.Nothing
   out: Str = ""
 }
 
 fn (var s: Ex) at_arg(a: Arg) {
   s.node_pos = arg_pos(a)
-  s.node_ctx = arg_text(a)
+  s.node_ctx = Ctx.OfArg(a)
 }
 
 fn (var s: Ex) at_node(n: Node) {
   s.node_pos = node_pos(n)
-  s.node_ctx = node_text(n)
+  s.node_ctx = Ctx.OfNode(n)
 }
 
 fn (var s: Ex) at_pipe(p: Pipe) {
   s.node_pos = p.pos
-  s.node_ctx = pipe_text(p)
+  s.node_ctx = Ctx.OfPipe(p)
 }
 
 /// state.errorf: Go's text with the location and the node.
@@ -1577,7 +1597,7 @@ fn (s: Ex) err(msg: Str) -> Str {
     }
   }
   let col = if last_nl < 0 { pos } else { pos - (last_nl + 1) }
-  "template: ${s.tree.parse_name}:${lines}:${col}: executing ${go_quote(s.tree.name)} at <${s.node_ctx}>: ${msg}"
+  "template: ${s.tree.parse_name}:${lines}:${col}: executing ${go_quote(s.tree.name)} at <${ctx_text(s.node_ctx)}>: ${msg}"
 }
 
 fn (var s: Ex) var_value(name: Str) -> Val ! Str {
@@ -1805,7 +1825,7 @@ fn (var s: Ex) eval_command(dot: Val, c: Cmd, final: Val) -> Val ! Str {
       let recv = s.eval_arg(dot, node[0])?
       return s.eval_field_chain(dot, recv, first, field, c.args, final)
     }
-    Ident(_, name) => return s.eval_function(dot, first, name, c.args, final, c.pos, cmd_text(c))
+    Ident(_, name) => return s.eval_function(dot, first, name, c.args, final, c.pos, Ctx.OfCmd(c))
     PipeA(p) => {
       s.not_a_function(c.args, final)?
       return s.eval_pipeline(dot, p[0])
@@ -1906,7 +1926,7 @@ fn (var s: Ex) eval_arg(dot: Val, a: Arg) -> Val ! Str {
       s.eval_field_chain(dot, v, a, ident[1..], [], val(V.Missing))
     }
     PipeA(p) => s.eval_pipeline(dot, p[0])
-    Ident(_, name) => s.eval_function(dot, a, name, [a], val(V.Missing), arg_pos(a), arg_text(a))
+    Ident(_, name) => s.eval_function(dot, a, name, [a], val(V.Missing), arg_pos(a), Ctx.OfArg(a))
     Chain(_, node, field) => {
       let recv = s.eval_arg(dot, node[0])?
       s.eval_field_chain(dot, recv, a, field, [], val(V.Missing))
@@ -1933,7 +1953,7 @@ fn builtin_shape(name: Str) -> (Int, Bool) {
   }
 }
 
-fn (var s: Ex) eval_function(dot: Val, node: Arg, name: Str, args0: List[Arg], final: Val, cmd_pos: Int, cmd_ctx: Str) -> Val ! Str {
+fn (var s: Ex) eval_function(dot: Val, node: Arg, name: Str, args0: List[Arg], final: Val, cmd_pos: Int, cmd_ctx: Ctx) -> Val ! Str {
   s.at_arg(node)
   let args = if args0.is_empty() { args0 } else { args0[1..] }
   let (fixed, variadic) = builtin_shape(name)
