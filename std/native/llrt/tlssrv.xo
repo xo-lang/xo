@@ -331,21 +331,34 @@ fn load(h: Int) -> Conn? {
 }
 
 /// The connection of block h moved out (not copied, so it changes in
-/// place; the block holds none until save puts it back). A read and a
-/// write took a copy and dropped the old one, a dup and a drop of every
-/// buffer of the TLS state per call
-/// (bench/results/http-callgrind-2026-10-17.md).
+/// place; the block keeps the empty list, which read and write push it
+/// back into: no list made and freed a call). A read and a write took a
+/// copy and dropped the old one, a dup and a drop of every buffer of the
+/// TLS state per call (bench/results/http-callgrind-2026-10-17.md).
 fn take_conn(h: Int) -> Conn? {
-  let w = rt.mem_load(h, 0, 8)
-  if w == 0 {
+  if rt.mem_load(h, 0, 8) == 0 {
     return None
   }
-  // the block's reference becomes l's: l is the list's only one, so the
-  // pop moves the Conn out
-  var l = rt.obj_at[List[Conn]](w)
+  // l is the list's only reference, so the pop moves the Conn out
+  var l = block_list(h)
+  let c = l.pop()
+  // the block's reference again (l is borrowed there: its release comes
+  // after)
+  let _w = keep_list(l)
+  c
+}
+
+/// The list of block h, taking the block's reference (the word still
+/// holds it: the caller puts a reference back with keep_list); a new
+/// list when the block has none.
+fn block_list(h: Int) -> List[Conn] {
+  let w = rt.mem_load(h, 0, 8)
+  if w == 0 {
+    return []
+  }
+  let l = rt.obj_at[List[Conn]](w)
   let _last = rc.dec(w)
-  rt.mem_store(h, 0, 0, 8)
-  l.pop()
+  l
 }
 
 /// Puts c in block h, and its handshake state in word 1 (handshake's
@@ -376,12 +389,15 @@ fn keep_list(l: List[Conn]) -> Int {
   w
 }
 
-/// Releases the connection of block h, if any (take_conn's, dropped;
-/// tested first: an empty block's None is a Conn? of 2.5 KB zeroed and
-/// dropped, about 650 instructions at every read and write).
+/// Releases the list of block h and the connection in it, if any (the
+/// list's drop; no Conn? taken: an empty block's None is a Conn? of 2.5 KB
+/// zeroed and dropped, about 650 instructions).
 fn release_conn(h: Int) {
   if rt.mem_load(h, 0, 8) != 0 {
-    let _c = take_conn(h)
+    let l = block_list(h)
+    rt.mem_store(h, 0, 0, 8)
+    // l's drop, after its last use here
+    let _n = l.len()
   }
 }
 
@@ -530,9 +546,10 @@ fn read(t: Int, p: Int, n: Int, nb: Bool) -> Int {
   // and this frame then dropped them all: about 5,600 instructions a
   // call on arm64, 2026-10-18)
   rt.mem_store(t, 8, c.done, 8)
-  var l: List[Conn] = []
+  // back into the block's list (take_conn left it there, empty)
+  var l = block_list(t)
   l.push(c)
-  stash(t, l)
+  rt.mem_store(t, 0, keep_list(l), 8)
   out
 }
 
@@ -554,9 +571,10 @@ pub fn write(t: Int, p: Int, n: Int) -> Int {
   // and this frame then dropped them all: about 5,600 instructions a
   // call on arm64, 2026-10-18)
   rt.mem_store(t, 8, c.done, 8)
-  var l: List[Conn] = []
+  // back into the block's list (take_conn left it there, empty)
+  var l = block_list(t)
   l.push(c)
-  stash(t, l)
+  rt.mem_store(t, 0, keep_list(l), 8)
   if ok { CC_OK } else if st == 0 { CC_ERR } else { st }
 }
 

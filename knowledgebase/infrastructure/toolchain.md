@@ -1426,6 +1426,11 @@ run) has two modes (2026-10-18):
   checkouts measured plain +0.51% and tls -0.85% (2026-10-18), so
   `cmp OUT1/srv-arm64 OUT2/srv-arm64` before reading a difference under
   1% as the change's. The default for a gate touching HTTP or the runtime.
+  On 2026-10-21 (Xo Lang 3) tls repeats of one tree spread more: 34,717
+  to 35,339 (1.8%) and 34,302 to 34,716 (1.2%) a request, h2 56,110 to
+  57,276 (2.1%); for a change under 2%, run SCENARIOS="tls h2" REPS=3
+  on the change and on its parent and compare the means (and the
+  ranges: claim it only when they do not overlap, or say they do).
 - `MODE=full` (the default): all five scenarios (plain, plain-newconn,
   tls, tls-newconn, h2), REPS=2, N=100: 25 to 45 minutes. Run it nightly,
   per batch, and for a change in:
