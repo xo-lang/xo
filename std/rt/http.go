@@ -715,7 +715,7 @@ func (w Http_BodyWriter) M_write(tk *Task, data Bytes) Result[Unit, IoErr] {
 	}
 	w.w.mu.Lock()
 	defer w.w.mu.Unlock()
-	if _, err := io.WriteString(w.w.w, string(data)); err != nil {
+	if _, err := w.w.w.Write(data); err != nil {
 		return Err[Unit](IoErr{Tag: 2, P: IoErr_Io{F_msg: err.Error()}})
 	}
 	return Ok[Unit, IoErr](Unit{})

@@ -1,5 +1,19 @@
 # std/http changes
 
+## 2026-10-21: perf: a large streamed write goes out as one chunk
+
+- Kind: perf
+- Commit: (filled in after the push)
+- Found by: bench/perf/tlsrate (TLS bulk over HTTP/1.1: Xo 220 MB/s against Go's 2,000 MB/s on the same TLS code; HTTP/2 downloads were at parity)
+- Go reference: net/http response.Write through bufio.Writer.Write (a write larger than the buffer's room goes around an empty buffer)
+- Test: internal/llvm/testdata/golden/http_stream (a 3000 byte write: one chunk bb8, not 800 and 3b8)
+
+BodyWriter.write was bufio's WriteString: it filled a 2 KiB buffer and
+sent a chunk (head, data, CRLF: three TLS records over TLS) per 2 KiB, so
+a body written in 64 KiB pieces made 32 chunks each. It now follows
+Write: a write larger than the room left goes out whole when the buffer
+is empty (HTTP/1.1 one chunk, HTTP/2 DATA frames of the same data).
+
 ## 2026-10-21: fix: a streamed body's read error sticks
 
 - Kind: fix

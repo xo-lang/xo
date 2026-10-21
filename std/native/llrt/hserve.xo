@@ -388,10 +388,18 @@ pub fn sink_write(s: rthttp.Sink, data: Bytes) -> Bool {
     put(k, p, n)
     return data.len() >= 0
   }
-  // bufio.Writer.WriteString (std/rt writes strings): no write goes
-  // around the buffer, since chunkWriter has no WriteString
+  // bufio.Writer.Write (the response's Write of a []byte): a write
+  // larger than the buffer's room goes around an empty buffer as one
+  // chunk (or DATA frames), as net/http does; before 2026-10-21 it was
+  // WriteString's, which fills the buffer and emits 2 KiB chunks (10x
+  // slower for a streamed body of 64 KiB writes)
   let size = if ld(ld(k, SK_HC), hconn.HC_H2S) != 0 { 4096 } else { 2048 }
   while n > size - ld(k, SK_N) {
+    if ld(k, SK_N) == 0 {
+      emit(k, p, n)
+      n = 0
+      break
+    }
     let m = size - ld(k, SK_N)
     put(k, p, m)
     p += m
