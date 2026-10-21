@@ -1,0 +1,29 @@
+// Router matching (std.md 4.1) over paths with empty segments, slashes
+// at both ends, escapes, Int and rest parameters, and each method: the
+// native Router matches a path without escapes in place (byte ranges)
+// and one with escapes by its unescaped parts; both must answer alike.
+use std/http
+
+fn main(os: Os) {
+  var r = http.router()
+  r.handle("GET /", fn(q: http.Request) -> http.Response { http.text(200, "root") })
+  r.handle("GET /users", fn(q: http.Request) -> http.Response { http.text(200, "list") })
+  r.handle("GET /users/{id:Int}", fn(q: http.Request) -> http.Response { http.text(200, "user ${q.param_int("id")}") })
+  r.handle("PATCH /users/{id:Int}", fn(q: http.Request) -> http.Response { http.text(200, "patch ${q.param("id")}") })
+  r.handle("GET /users/me", fn(q: http.Request) -> http.Response { http.text(200, "me") })
+  r.handle("GET /a/{x}/b/{y}", fn(q: http.Request) -> http.Response { http.text(200, "ab [${q.param("x")}] [${q.param("y")}]") })
+  r.handle("GET /files/{p...}", fn(q: http.Request) -> http.Response { http.text(200, "files [${q.param("p")}]") })
+  r.handle("/any/{v}", fn(q: http.Request) -> http.Response { http.text(200, "any ${q.method} [${q.param("v")}]") })
+  r.handle("GET /x//y", fn(q: http.Request) -> http.Response { http.text(200, "xy") })
+  let paths = ["/", "", "//", "/users", "/users/", "//users//", "/users/7", "/users/07", "/users/x", "/users/me", "/users/7/extra",
+    "/a/1/b/2", "/a//b/2", "/a/1/b/", "/a/1/b", "/a/%41/b/%2F", "/files", "/files/", "/files/a/b//c/", "/files/a%2Fb/c",
+    "/any/q", "/any/", "/any", "/x//y", "/x/y", "/x///y", "/users/%37", "/USERS", "/users/-3", "/users/99999999999999999999", "/a/1/b/2/3"]
+  for m in ["GET", "PATCH", "POST", "get"] {
+    for p in paths {
+      let u = http.Url{scheme: "http", host: "h", port: None, path: p, query: {}}
+      let req = http.Request{method: m, path: p, url: u, headers: {}, body: b"", remote_ip: ""}
+      let resp = r.call(req)
+      os.stdio.println("${m} ${p} -> ${resp.status} ${resp.body.to_str() ?? ""}")
+    }
+  }
+}

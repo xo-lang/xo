@@ -1,0 +1,127 @@
+exit 0
+--- stdout
+GET / -> 200 root
+GET  -> 200 root
+GET // -> 200 root
+GET /users -> 200 list
+GET /users/ -> 200 list
+GET //users// -> 200 list
+GET /users/7 -> 200 user 7
+GET /users/07 -> 200 user 7
+GET /users/x -> 400 {"error":"path segment `id` must be an Int"}
+GET /users/me -> 200 me
+GET /users/7/extra -> 404 {"error":"not found"}
+GET /a/1/b/2 -> 200 ab [1] [2]
+GET /a//b/2 -> 200 ab [] [2]
+GET /a/1/b/ -> 404 {"error":"not found"}
+GET /a/1/b -> 404 {"error":"not found"}
+GET /a/%41/b/%2F -> 200 ab [A] [/]
+GET /files -> 200 files []
+GET /files/ -> 200 files []
+GET /files/a/b//c/ -> 200 files [a/b//c]
+GET /files/a%2Fb/c -> 200 files [a%2Fb/c]
+GET /any/q -> 200 any GET [q]
+GET /any/ -> 404 {"error":"not found"}
+GET /any -> 404 {"error":"not found"}
+GET /x//y -> 200 xy
+GET /x/y -> 404 {"error":"not found"}
+GET /x///y -> 404 {"error":"not found"}
+GET /users/%37 -> 200 user 7
+GET /USERS -> 404 {"error":"not found"}
+GET /users/-3 -> 200 user -3
+GET /users/99999999999999999999 -> 400 {"error":"path segment `id` must be an Int"}
+GET /a/1/b/2/3 -> 404 {"error":"not found"}
+PATCH / -> 405 {"error":"method not allowed"}
+PATCH  -> 405 {"error":"method not allowed"}
+PATCH // -> 405 {"error":"method not allowed"}
+PATCH /users -> 405 {"error":"method not allowed"}
+PATCH /users/ -> 405 {"error":"method not allowed"}
+PATCH //users// -> 405 {"error":"method not allowed"}
+PATCH /users/7 -> 200 patch 7
+PATCH /users/07 -> 200 patch 07
+PATCH /users/x -> 400 {"error":"path segment `id` must be an Int"}
+PATCH /users/me -> 400 {"error":"path segment `id` must be an Int"}
+PATCH /users/7/extra -> 404 {"error":"not found"}
+PATCH /a/1/b/2 -> 405 {"error":"method not allowed"}
+PATCH /a//b/2 -> 405 {"error":"method not allowed"}
+PATCH /a/1/b/ -> 404 {"error":"not found"}
+PATCH /a/1/b -> 404 {"error":"not found"}
+PATCH /a/%41/b/%2F -> 405 {"error":"method not allowed"}
+PATCH /files -> 405 {"error":"method not allowed"}
+PATCH /files/ -> 405 {"error":"method not allowed"}
+PATCH /files/a/b//c/ -> 405 {"error":"method not allowed"}
+PATCH /files/a%2Fb/c -> 405 {"error":"method not allowed"}
+PATCH /any/q -> 200 any PATCH [q]
+PATCH /any/ -> 404 {"error":"not found"}
+PATCH /any -> 404 {"error":"not found"}
+PATCH /x//y -> 405 {"error":"method not allowed"}
+PATCH /x/y -> 404 {"error":"not found"}
+PATCH /x///y -> 404 {"error":"not found"}
+PATCH /users/%37 -> 200 patch 7
+PATCH /USERS -> 404 {"error":"not found"}
+PATCH /users/-3 -> 200 patch -3
+PATCH /users/99999999999999999999 -> 400 {"error":"path segment `id` must be an Int"}
+PATCH /a/1/b/2/3 -> 404 {"error":"not found"}
+POST / -> 405 {"error":"method not allowed"}
+POST  -> 405 {"error":"method not allowed"}
+POST // -> 405 {"error":"method not allowed"}
+POST /users -> 405 {"error":"method not allowed"}
+POST /users/ -> 405 {"error":"method not allowed"}
+POST //users// -> 405 {"error":"method not allowed"}
+POST /users/7 -> 405 {"error":"method not allowed"}
+POST /users/07 -> 405 {"error":"method not allowed"}
+POST /users/x -> 405 {"error":"method not allowed"}
+POST /users/me -> 405 {"error":"method not allowed"}
+POST /users/7/extra -> 404 {"error":"not found"}
+POST /a/1/b/2 -> 405 {"error":"method not allowed"}
+POST /a//b/2 -> 405 {"error":"method not allowed"}
+POST /a/1/b/ -> 404 {"error":"not found"}
+POST /a/1/b -> 404 {"error":"not found"}
+POST /a/%41/b/%2F -> 405 {"error":"method not allowed"}
+POST /files -> 405 {"error":"method not allowed"}
+POST /files/ -> 405 {"error":"method not allowed"}
+POST /files/a/b//c/ -> 405 {"error":"method not allowed"}
+POST /files/a%2Fb/c -> 405 {"error":"method not allowed"}
+POST /any/q -> 200 any POST [q]
+POST /any/ -> 404 {"error":"not found"}
+POST /any -> 404 {"error":"not found"}
+POST /x//y -> 405 {"error":"method not allowed"}
+POST /x/y -> 404 {"error":"not found"}
+POST /x///y -> 404 {"error":"not found"}
+POST /users/%37 -> 405 {"error":"method not allowed"}
+POST /USERS -> 404 {"error":"not found"}
+POST /users/-3 -> 405 {"error":"method not allowed"}
+POST /users/99999999999999999999 -> 405 {"error":"method not allowed"}
+POST /a/1/b/2/3 -> 404 {"error":"not found"}
+get / -> 200 root
+get  -> 200 root
+get // -> 200 root
+get /users -> 200 list
+get /users/ -> 200 list
+get //users// -> 200 list
+get /users/7 -> 200 user 7
+get /users/07 -> 200 user 7
+get /users/x -> 400 {"error":"path segment `id` must be an Int"}
+get /users/me -> 200 me
+get /users/7/extra -> 404 {"error":"not found"}
+get /a/1/b/2 -> 200 ab [1] [2]
+get /a//b/2 -> 200 ab [] [2]
+get /a/1/b/ -> 404 {"error":"not found"}
+get /a/1/b -> 404 {"error":"not found"}
+get /a/%41/b/%2F -> 200 ab [A] [/]
+get /files -> 200 files []
+get /files/ -> 200 files []
+get /files/a/b//c/ -> 200 files [a/b//c]
+get /files/a%2Fb/c -> 200 files [a%2Fb/c]
+get /any/q -> 200 any get [q]
+get /any/ -> 404 {"error":"not found"}
+get /any -> 404 {"error":"not found"}
+get /x//y -> 200 xy
+get /x/y -> 404 {"error":"not found"}
+get /x///y -> 404 {"error":"not found"}
+get /users/%37 -> 200 user 7
+get /USERS -> 404 {"error":"not found"}
+get /users/-3 -> 200 user -3
+get /users/99999999999999999999 -> 400 {"error":"path segment `id` must be an Int"}
+get /a/1/b/2/3 -> 404 {"error":"not found"}
+--- stderr

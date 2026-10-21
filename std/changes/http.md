@@ -1,5 +1,20 @@
 # std/http changes
 
+## 2026-10-21: speedup: Router matching without a string per path segment
+
+- Kind: speedup
+- Commit: (filled in after the push)
+- Found by: per-line callgrind of bench/perf/http (Xo Lang 3)
+- Go reference: none
+- Test: internal/llvm/testdata/golden/http_router_paths (124 method and path cases, the same answers as before the change)
+
+Natively, a request path without escapes is matched against the routes
+where it is: its segments' offsets are found once and each route's
+literals compared in place, so no segment strings or unescaped copies
+are made (a path with escapes is matched as before). The plain HTTP
+server's router code took 177 fewer instructions a request (callgrind,
+arm64).
+
 ## 2026-10-21: fix: a request's repeated Set-Cookie fields
 
 - Kind: fix
