@@ -1,3 +1,6 @@
+exit 0
+--- stdout
 Int keys: 0 failed seeds
 Str keys: 0 failed seeds
 deep forks: 300 300 59351 59850 8 366900
+--- stderr
