@@ -86,6 +86,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_BORROW_CHECK":         {"none", ""}, // runs the full inference too and compares; the flags are the same
 	"XO_KEEP_ASM":             {"none", ""}, // writes and keeps the assembly files only
 	"XO_CACHE_PRUNE_BUDGET":   {"none", ""}, // how long a build prunes its caches
+	"XO_PRUNE_DETACH":         {"cache", ""},
 	"XO_OP_VERIFY":            {"none", ""}, // only fails a build (decision 0274 step 3); a cache hit skips the check: verify with XO_BACKEND_CACHE=off
 }
 

@@ -23,6 +23,8 @@ fn dev_cmd(os: Os, args: List[Str]) -> Int {
   match args[0] {
     "dump" => dump_cmd(os, args[1..])
     "build-each" => build_each_cmd(os, args[1..])
+    // the back-end cache's detached prune (bcache.xo prune_backend_cache)
+    "prune-backend" => if args.len() == 2 { prune_backend_child(os, args[1]) } else { 2 }
     _ => {
       let goos = host_os(os)
       let h = dev.Host{

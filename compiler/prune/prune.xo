@@ -44,6 +44,14 @@ pub const TOUCH: Duration = 1h
 /// The bytes of a GiB.
 pub const GB: Int = 1024 * 1024 * 1024
 
+/// A run holds DIR/prune-lock while it walks and removes; a lock older
+/// than LOCK_STALE was left by a run that was killed (a build timed out
+/// during a walk of a large cache), and no longer blocks the next run.
+/// The stamp is written when a run ends: a killed run used to leave a
+/// fresh stamp and block every prune for an interval (2026-10-21: the
+/// back-end cache grew to 62 GB under a 16 GiB cap).
+pub const LOCK_STALE: Duration = 10m
+
 /// What a prune removes.
 pub struct Policy {
   /// Entries unused for longer go; zero keeps entries of any age.
@@ -74,6 +82,18 @@ pub struct Policy {
   /// Over zero: a run removes at most this many entries, the same way
   /// (the rest left for the next run).
   pub max_remove: Int = 0
+  /// Over zero (a cache of files, not dirs): a run walks only a slice of
+  /// the cache, the shards (the directories two levels down, such as
+  /// fn/ab) after DIR/prune-cursor, until it has walked this long, and
+  /// keeps each shard's bytes in DIR/prune-sizes; the cap is applied to
+  /// the sum of those, each walked shard evicting its least recently
+  /// used entries down to its share of the cap (run_sliced). A whole
+  /// walk of a busy cache took 45 s (2026-10-21, 500,000 files), and a
+  /// build that fell on it stalled.
+  pub walk_budget: Duration = 0s
+  /// Over zero: a sliced run walks at most this many shards (as
+  /// walk_budget, by count; both may be set).
+  pub slice_shards: Int = 0
 }
 
 /// What one run did: whether it ran (the stamp allowed it), the paths it
@@ -84,6 +104,9 @@ pub struct Stats {
   pub partial: Bool = false
   pub removed: List[Str] = []
   pub bytes: Int = 0
+  /// a sliced run: the shards the sizes ledger has no size for yet (its
+  /// bytes count those as empty)
+  pub unmeasured: Int = 0
 }
 
 struct Entry {
@@ -153,26 +176,20 @@ pub fn run(fs: Fs, clock: Clock, dir: Str, p: Policy) -> Stats uses (fs.read, fs
     }
     _ => return st
   }
-  let stamp = "${dir}/prune-stamp"
-  match fs.stat(stamp) {
-    Ok(Some(fi)) => {
-      let since = clock.since(fi.modified)
-      // a run that left the cache over its cap could remove nothing more
-      // (every entry used within keep): a burst waits until keep has
-      // passed (a busy day's back-end cache set one off on every build,
-      // each walking all 332,535 files, 2026-10-21)
-      let futile = fs.exists("${dir}/prune-over").ok() ?? false
-      if since < p.every && (p.burst <= 0 || stored(fs, dir) < p.burst || (futile && since < p.keep)) {
-        return st
-      }
-    }
-    _ => {}
+  if !due(fs, clock, dir, p) {
+    return st
   }
-  // the stamp first: a concurrent process sees it and skips the walk
-  match fs.write(stamp, b"") {
-    Ok(_) => fs.set_modified(stamp, clock.now()).ignore_err("the stamp only limits prunes")
+  if sliced(p) {
+    return run_sliced(fs, clock, dir, p)
+  }
+  let stamp = "${dir}/prune-stamp"
+  let lock = "${dir}/prune-lock"
+  // the lock first: a concurrent process sees it and skips the walk
+  match fs.write(lock, b"") {
+    Ok(_) => fs.set_modified(lock, clock.now()).ignore_err("the lock only limits prunes")
     Err(_) => {}
   }
+  let t0 = clock.now()
   if p.burst > 0 {
     fs.remove("${dir}/prune-stored").ignore_err("none stored since the last prune")
   }
@@ -184,6 +201,10 @@ pub fn run(fs: Fs, clock: Clock, dir: Str, p: Policy) -> Stats uses (fs.read, fs
   // the budget is for the removals: a walk longer than it still lets a
   // run make progress
   let start = clock.now()
+  var before = 0
+  for e in all {
+    before += e.size
+  }
   for e in all {
     let idle = clock.since(e.used)
     if p.max_age.nanos() > 0 && idle > p.max_age && idle >= p.keep {
@@ -232,14 +253,269 @@ pub fn run(fs: Fs, clock: Clock, dir: Str, p: Policy) -> Stats uses (fs.read, fs
   } else {
     fs.remove("${dir}/prune-over").ignore_err("none")
   }
+  match fs.write(stamp, b"") {
+    Ok(_) => fs.set_modified(stamp, clock.now()).ignore_err("the stamp only limits prunes")
+    Err(_) => {}
+  }
   if st.partial {
     // due again in PARTIAL_PAUSE (or every, if shorter): the next build
     // goes on, not this build's next store
     let pause = if p.every < PARTIAL_PAUSE { p.every } else { PARTIAL_PAUSE }
     fs.set_modified(stamp, clock.now() - p.every + pause).ignore_err("the next interval's prune goes on")
   }
+  fs.remove(lock).ignore_err("another run's lock went stale")
   st.bytes = total
+  // one line per run: what the walk found and what the run left
+  let line = "${clock.now().unix()} walk ${start.unix_millis() - t0.unix_millis()} ms, ${all.len()} entries, ${before} bytes before, ${total} after, ${st.removed.len()} removed${if st.partial { ", partial" } else { "" }}, cap ${p.max_bytes}\n"
+  fs.append("${dir}/prune-log", line.bytes()).ignore_err("only the log")
   st
+}
+
+/// Whether a run of the cache in dir is due under p (run's own check,
+/// without the walk): its stamp is older than p.every, or the bytes
+/// stored since reach p.burst (not while a run that left the cache over
+/// its cap could remove nothing more, until p.keep passed), and no run
+/// holds the lock (one younger than LOCK_STALE).
+pub fn due(fs: Fs, clock: Clock, dir: Str, p: Policy) -> Bool uses (fs.read, clock) {
+  if p.max_age.nanos() <= 0 && p.max_bytes <= 0 {
+    return false
+  }
+  if let Ok(Some(fi)) = fs.stat("${dir}/prune-lock") {
+    if clock.since(fi.modified) < LOCK_STALE {
+      return false
+    }
+  }
+  if sliced(p) && !(fs.exists("${dir}/prune-stamp").ok() ?? false) {
+    // a sliced cache's first store: its stamp, not a prune (a test's
+    // cache directory would get a detached prune while it is removed)
+    return false
+  }
+  match fs.stat("${dir}/prune-stamp") {
+    Ok(Some(fi)) => {
+      let since = clock.since(fi.modified)
+      // a run that left the cache over its cap could remove nothing more
+      // (every entry used within keep): a burst waits until keep has
+      // passed (a busy day's back-end cache set one off on every build,
+      // each walking all 332,535 files, 2026-10-21)
+      let futile = fs.exists("${dir}/prune-over").ok() ?? false
+      !(since < p.every && (p.burst <= 0 || stored(fs, dir) < p.burst || (futile && since < p.keep)))
+    }
+    _ => true
+  }
+}
+
+/// Whether p prunes a slice of the shards per run (walk_budget,
+/// slice_shards).
+fn sliced(p: Policy) -> Bool {
+  !p.dirs && (p.walk_budget.nanos() > 0 || p.slice_shards > 0)
+}
+
+/// run with p.walk_budget: one slice of the shards, the cap applied to
+/// the sizes ledger (Policy.walk_budget).
+fn run_sliced(fs: Fs, clock: Clock, dir: Str, p: Policy) -> Stats uses (fs.read, fs.write, clock) {
+  var st = Stats{ran: true}
+  let stamp = "${dir}/prune-stamp"
+  let lock = "${dir}/prune-lock"
+  match fs.write(lock, b"") {
+    Ok(_) => fs.set_modified(lock, clock.now()).ignore_err("the lock only limits prunes")
+    Err(_) => {}
+  }
+  if p.burst > 0 {
+    fs.remove("${dir}/prune-stored").ignore_err("none stored since the last prune")
+  }
+  let t0 = clock.now()
+  let shards = shard_list(fs, dir)
+  var sizes = read_sizes(fs, dir)
+  // the shards from the cursor on, until the walk budget (at least one)
+  let cursor = (fs.read_text("${dir}/prune-cursor").ok() ?? "").trim()
+  var first = 0
+  for (k, s) in shards.indexed() {
+    if s > cursor {
+      first = k
+      break
+    }
+  }
+  var walked: List[(Str, List[Entry])] = []
+  var k = 0
+  var last = cursor
+  while k < shards.len() && (k == 0 || ((p.walk_budget.nanos() <= 0 || clock.since(t0) < p.walk_budget) && (p.slice_shards <= 0 || k < p.slice_shards))) {
+    let s = shards[(first + k) % shards.len()]
+    var fis: List[FileInfo] = []
+    if s.contains("/") {
+      walk_into(fs, "${dir}/${s}", fis)
+    } else if let Ok(l) = fs.read_dir("${dir}/${s}") {
+      // a top level directory's own files (its directories are shards)
+      for fi in l {
+        if !fi.is_dir {
+          var f = fi
+          f.path = "${dir}/${s}/${fi.name}"
+          fis.push(f)
+        }
+      }
+    }
+    var es: List[Entry] = []
+    var bytes = 0
+    for fi in fis {
+      if fi.is_dir {
+        continue
+      }
+      if fi.name.contains(".tmp") {
+        if clock.since(fi.modified) > p.keep {
+          fs.remove(fi.path).ignore_err("another process may own it")
+        }
+        continue
+      }
+      es.push(Entry{path: fi.path, size: fi.size, used: fi.modified})
+      bytes += fi.size
+    }
+    sizes[s] = bytes
+    walked.push((s, es))
+    last = s
+    k += 1
+  }
+  let walk_ms = clock.since(t0).millis()
+  // shards gone since the ledger was written
+  var live: Map[Str, Bool] = {}
+  for s in shards {
+    live[s] = true
+  }
+  var total = 0
+  var kept_sizes: Map[Str, Int] = {}
+  for (s, n) in sizes {
+    if live.contains(s) {
+      kept_sizes[s] = n
+      total += n
+    }
+  }
+  st.unmeasured = shards.len() - kept_sizes.len()
+  let before = total
+  let start = clock.now()
+  // the shard a run stopped in at its budget: the next run starts there
+  var stopped = ""
+  for (s, es) in walked {
+    if st.partial {
+      break
+    }
+    var size = kept_sizes.get(s) ?? 0
+    // the shard's share of the cap: its bytes scaled by cap / total
+    let share = if p.max_bytes > 0 && total > p.max_bytes { size * p.max_bytes / total } else { size }
+    var rest: List[Entry] = []
+    for e in es {
+      let idle = clock.since(e.used)
+      if p.max_age.nanos() > 0 && idle > p.max_age && idle >= p.keep && !st.partial {
+        if over_budget(clock, start, p, st.removed.len()) {
+          st.partial = true
+          stopped = s
+        } else if remove(fs, clock, e.path, false, p.keep) {
+          st.removed.push(e.path)
+          size -= e.size
+          continue
+        }
+      }
+      rest.push(e)
+    }
+    if size > share {
+      for e in rest.sort_by(fn(x) { x.used.unix_millis() }) {
+        if size <= share || clock.since(e.used) < p.keep {
+          break
+        }
+        if over_budget(clock, start, p, st.removed.len()) {
+          st.partial = true
+          stopped = s
+          break
+        }
+        if remove(fs, clock, e.path, false, p.keep) {
+          st.removed.push(e.path)
+          size -= e.size
+        }
+      }
+    }
+    total = total - (kept_sizes.get(s) ?? 0) + size
+    kept_sizes[s] = size
+  }
+  write_sizes(fs, dir, kept_sizes)
+  if !stopped.is_empty() {
+    // the cursor names the shard before: a run starts after its cursor
+    last = ""
+    for (k, s) in shards.indexed() {
+      if s == stopped {
+        last = if k == 0 { "" } else { shards[k - 1] }
+      }
+    }
+  }
+  fs.write("${dir}/prune-cursor", last.bytes()).ignore_err("the next run starts over")
+  // over the cap with the whole cache walked since: the burst backs off
+  if p.max_bytes > 0 && total > p.max_bytes && !st.partial && walked.len() >= shards.len() {
+    fs.write("${dir}/prune-over", b"").ignore_err("the burst may prune again")
+  } else {
+    fs.remove("${dir}/prune-over").ignore_err("none")
+  }
+  match fs.write(stamp, b"") {
+    Ok(_) => fs.set_modified(stamp, clock.now()).ignore_err("the stamp only limits prunes")
+    Err(_) => {}
+  }
+  if st.partial || (p.max_bytes > 0 && total > p.max_bytes) {
+    // over the cap: the next slice is due in PARTIAL_PAUSE (or every)
+    let pause = if p.every < PARTIAL_PAUSE { p.every } else { PARTIAL_PAUSE }
+    fs.set_modified(stamp, clock.now() - p.every + pause).ignore_err("the next slice goes on")
+  }
+  fs.remove(lock).ignore_err("another run's lock went stale")
+  st.bytes = total
+  let line = "${clock.now().unix()} slice ${walked.len()}/${shards.len()} shards from ${cursor.quote()}, walk ${walk_ms} ms, ${before} bytes before, ${total} after, ${st.removed.len()} removed${if st.partial { ", partial" } else { "" }}, cap ${p.max_bytes}\n"
+  fs.append("${dir}/prune-log", line.bytes()).ignore_err("only the log")
+  st
+}
+
+/// The shards of the cache in dir, sorted: each directory one level
+/// below a top level directory (`fn/ab`, `packs/ab`), and each top level
+/// directory holding files of its own (`stdsums`: those files alone).
+fn shard_list(fs: Fs, dir: Str) -> List[Str] uses fs.read {
+  var out: List[Str] = []
+  let top = match fs.read_dir(dir) {
+    Ok(l) => l
+    Err(_) => return out
+  }
+  for t in top {
+    if !t.is_dir {
+      continue
+    }
+    if let Ok(l) = fs.read_dir("${dir}/${t.name}") {
+      var files = false
+      for c in l {
+        if c.is_dir {
+          out.push("${t.name}/${c.name}")
+        } else {
+          files = true
+        }
+      }
+      if files {
+        out.push(t.name)
+      }
+    }
+  }
+  out.sort()
+}
+
+/// The sizes ledger (DIR/prune-sizes): a line `bytes shard` per shard.
+fn read_sizes(fs: Fs, dir: Str) -> Map[Str, Int] uses fs.read {
+  var m: Map[Str, Int] = {}
+  for line in (fs.read_text("${dir}/prune-sizes").ok() ?? "").split("\n") {
+    let parts = line.split(" ")
+    if parts.len() == 2 {
+      if let Some(n) = Int.parse(parts[0]) {
+        m[parts[1]] = n
+      }
+    }
+  }
+  m
+}
+
+fn write_sizes(fs: Fs, dir: Str, m: Map[Str, Int]) uses fs.write {
+  var b = StrBuilder.new()
+  for s in m.keys().sort() {
+    b.write("${m.get(s) ?? 0} ${s}\n")
+  }
+  fs.write("${dir}/prune-sizes", b.freeze().bytes()).ignore_err("the next slice measures again")
 }
 
 /// Whether a run that started at start and removed n entries has used
@@ -297,10 +573,11 @@ fn entries(fs: Fs, clock: Clock, dir: Str, dirs: Bool, keep: Duration, var subdi
     }
     return out
   }
-  let all = match fs.walk(dir) {
-    Ok(l) => l
-    Err(_) => return out
-  }
+  // not fs.walk: one directory removed between its listing and its walk
+  // (another build compacting a pack) failed the whole walk, and the run
+  // saw an empty cache
+  var all: List[FileInfo] = []
+  walk_into(fs, dir, all)
   for fi in all {
     let rel = fi.path.trim_prefix("${dir}/")
     if fi.is_dir && rel.contains("/") {
@@ -318,6 +595,24 @@ fn entries(fs: Fs, clock: Clock, dir: Str, dirs: Bool, keep: Duration, var subdi
     out.push(Entry{path: fi.path, size: fi.size, used: fi.modified})
   }
   out
+}
+
+/// The files and directories below dir, depth first, each with its path
+/// (fs.walk's), skipping any directory that cannot be read (removed
+/// since its parent was listed).
+fn walk_into(fs: Fs, dir: Str, var out: List[FileInfo]) uses fs.read {
+  let l = match fs.read_dir(dir) {
+    Ok(l) => l
+    Err(_) => return
+  }
+  for fi in l {
+    var f = fi
+    f.path = "${dir}/${fi.name}"
+    out.push(f)
+    if fi.is_dir {
+      walk_into(fs, f.path, out)
+    }
+  }
 }
 
 /// Removes the entry at path unless it was used within keep (restated

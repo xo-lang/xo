@@ -3454,7 +3454,7 @@ hours is removed, so a cache can sit above its cap by that much.
 | `<user cache>/xo/build` (not a `$XO_BUILD_DIR`) | each `<hash>` directory | build_dir, at most hourly | `XO_CACHE_MAX_AGE` | `XO_BUILD_DIR_MAX` bytes, else `XO_CACHE_MAX_GB` |
 | `$XO_GOCACHE` (`<user cache>/xo/gocache`) | each file below the top level | after a go build, at most hourly | `XO_CACHE_MAX_AGE` | `XO_GOCACHE_MAX` bytes, else `XO_CACHE_MAX_GB` |
 | `$XO_BIN_CACHE` (unset: `<user cache>/xo/testbin` for `xo test`, off for other builds, decision 0236; `off` turns it off; `run/` holds native `xo test`'s run cache, compiler/xo testcache.xo) | each file below the top level | after a store (a binary or a run entry), at most every 2 minutes | `XO_CACHE_MAX_AGE` | `XO_BIN_CACHE_MAX` bytes, else `XO_CACHE_MAX_GB`, else 4 GiB; entries used within 10 minutes stay (not two hours), marked used at most once a minute (last verified: 2026-10-15) |
-| `<user cache>/xo/backend` (`XO_BACKEND_CACHE_DIR`; fn/, inl/, obj/, rc/, sum/, pack/ capped together) | each file below the top level (a pack segment is one entry) | after a store, hourly or once an eighth of the cap was stored since the last prune (`DIR/prune-stored`) | `XO_CACHE_MAX_AGE`, else a week | `XO_BACKEND_CACHE_MAX` bytes, else `XO_CACHE_MAX_GB`, else 16 GiB (8 until 2026-10-21: below the agents' working set, so prunes thrashed); entries used within 2 minutes stay (not two hours), marked used at most once a minute (last verified: 2026-10-16) |
+| `<user cache>/xo/backend` (`XO_BACKEND_CACHE_DIR`; fn/, inl/, obj/, rc/, sum/, packs/ capped together) | each file below the top level (a pack segment is one entry), walked a slice of shards at a time (below) | after a store, every minute or once an eighth of the cap was stored since the last prune (`DIR/prune-stored`), in a detached `xo dev prune-backend DIR` | `XO_CACHE_MAX_AGE`, else a week | `XO_BACKEND_CACHE_MAX` bytes, else `XO_CACHE_MAX_GB`, else 16 GiB (8 until 2026-10-21: below the agents' working set, so prunes thrashed); entries used within 2 minutes stay (not two hours), marked used at most once a minute (last verified: 2026-10-16) |
 | `<cache base>/checkout/<key>` (xotool) | each key directory | xotool Ensure, at most hourly | `XO_CACHE_MAX_AGE`, past the newest `XO_CHECKOUT_KEEP` (default 4) | none |
 
 - `XO_CACHE_MAX_AGE`: a Go duration (`6h`, `90m`), default `24h`; `0`
@@ -3468,6 +3468,28 @@ hours is removed, so a cache can sit above its cap by that much.
   (2026-10-21: a build falling on an overdue prune of a busy day's cache
   spent minutes unlinking, and a timed test of one golden timed out;
   internal/arm64 TestPruneBudget).
+- The back-end cache's prune (2026-10-21, xo-fa; last verified:
+  2026-10-21): it walked the whole cache, 44 to 48 s for about 500,000
+  files under load (96% of it lstat), a build that fell on it stalled
+  (two dev goldens timed out at 240 s), and a killed build left a fresh
+  stamp that blocked every prune for an hour (the cache reached 62.5 GB
+  under its 16 GiB cap). Now a build that finds it due starts `xo dev
+  prune-backend DIR` detached (`/bin/sh -c '... &'`, at most one a
+  minute, `DIR/prune-spawned`; `XO_PRUNE_DETACH=off` or Windows: one
+  slice in the build). Each run walks the shards (the directories two
+  levels down: `fn/ab`, `packs/ab`; a top level directory's own files
+  are one shard) from `DIR/prune-cursor` for 300 ms, keeps each
+  shard's bytes in `DIR/prune-sizes`, applies the cap to their sum by
+  evicting the least recently used entries of each walked shard down to
+  its share of the cap, and appends a line to `DIR/prune-log` (walk
+  time, bytes before and after, removed). The child runs slices until
+  the cache is under the cap, for at most a minute. A run holds
+  `DIR/prune-lock`; one older than 10 minutes was left by a killed run
+  and no longer blocks. A new cache directory gets its stamp, not a
+  prune (a test's cache is never pruned while it is removed). Packs
+  live under `packs/<xx>/<slot>/` (pack/ held 138,000 slots in one
+  directory). Tests: `xo test compiler/prune` (slices, convergence
+  under the cap, the stale lock), internal/arm64 TestPruneBudget.
 - `rtobj/` keeps its own 512 MiB size trim; `dev/`, `mbedtls/`, `seed/`,
   and `seeds/` are not pruned.
 - Tests: `xo test compiler/prune` (TestSelfhostPruneXoTests, merge tier;

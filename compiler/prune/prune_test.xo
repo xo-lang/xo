@@ -271,3 +271,71 @@ test "a burst does not prune again a cache it could not bring under its cap unti
   expect(b.bytes <= 1000) == true
   expect(there(os, "c/prune-over")) == false
 }
+
+/// A sliced cache of 8 shards (s/0 to s/7) of 4 entries of 100 bytes,
+/// each entry its own minute older than the next, and its stamp.
+fn sliced_cache(os: testing.TestOs) {
+  for e in 0..4 {
+    for s in 0..8 {
+      put(os, "c/s/${s}/e${e}", 100)
+    }
+    os.clock.advance(1m)
+  }
+  put(os, "c/prune-stamp", 0)
+  os.clock.advance(3h)
+}
+
+test "a sliced run walks at most its slice of the shards" {
+  sliced_cache(os)
+  let p = Policy{max_age: 0s, max_bytes: GB, every: 0s, slice_shards: 2}
+  // under its cap: the run only measures, two shards at a time
+  let st = run(os.fs, os.clock, "c", p)
+  expect(st.ran) == true
+  let sizes = os.fs.read_text("c/prune-sizes").or_fault("sizes")
+  expect(sizes) == "400 s/0\n400 s/1\n"
+  let st2 = run(os.fs, os.clock, "c", p)
+  expect(st2.ran) == true
+  expect(os.fs.read_text("c/prune-sizes").or_fault("sizes")) == "400 s/0\n400 s/1\n400 s/2\n400 s/3\n"
+  // the cursor wraps after the last shard
+  for _ in 0..2 {
+    let _s = run(os.fs, os.clock, "c", p)
+  }
+  expect(os.fs.read_text("c/prune-cursor").or_fault("cursor")) == "s/7"
+  let _s = run(os.fs, os.clock, "c", p)
+  expect(os.fs.read_text("c/prune-cursor").or_fault("cursor")) == "s/1"
+}
+
+test "sliced runs converge under the cap, the oldest entries first" {
+  sliced_cache(os)
+  // 3,200 bytes against a cap of 1,600: a rotation measures, the next
+  // brings each shard to its share
+  let p = Policy{max_age: 0s, max_bytes: 1600, every: 0s, keep: 1m, slice_shards: 3}
+  var last = 0
+  for _ in 0..8 {
+    let st = run(os.fs, os.clock, "c", p)
+    last = st.bytes
+  }
+  expect(last <= 1600) == true
+  var total = 0
+  for s in 0..8 {
+    // each shard kept its newest entries
+    expect(there(os, "c/s/${s}/e3")) == true
+    for e in 0..4 {
+      if there(os, "c/s/${s}/e${e}") {
+        total += 100
+      }
+    }
+  }
+  expect(total <= 1600) == true
+  expect(total >= 800) == true
+}
+
+test "a lock younger than LOCK_STALE holds off a run, an older one does not" {
+  sliced_cache(os)
+  let p = Policy{max_age: 0s, max_bytes: 100, every: 0s, slice_shards: 8}
+  put(os, "c/prune-lock", 0)
+  expect(run(os.fs, os.clock, "c", p).ran) == false
+  os.clock.advance(LOCK_STALE + 1s)
+  expect(run(os.fs, os.clock, "c", p).ran) == true
+  expect(there(os, "c/prune-lock")) == false
+}

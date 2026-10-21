@@ -186,7 +186,7 @@ func TestBackendCacheEditIdentity(t *testing.T) {
 			// the second build of each target wrote its pack (decision
 			// 0220 addendum stage D 2d); without the loose entries the
 			// edit's build must still reuse functions, from the packs
-			segs, _ := filepath.Glob(filepath.Join(work, "cache", "pack", "*", "*", "s-*"))
+			segs, _ := filepath.Glob(filepath.Join(work, "cache", "packs", "*", "*", "*", "s-*"))
 			if len(segs) < 4 {
 				t.Fatalf("after the second builds: %d pack segments, want at least rc and fn for each target", len(segs))
 			}
@@ -1394,7 +1394,7 @@ func TestPruneBudget(t *testing.T) {
 	defer os.RemoveAll(work)
 	cache := filepath.Join(work, "cache")
 	old := time.Now().Add(-10 * 24 * time.Hour)
-	stale := filepath.Join(cache, "zz")
+	stale := filepath.Join(cache, "00stale") // first among the shards: a run walks a slice of them
 	if err := os.MkdirAll(stale, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1425,7 +1425,7 @@ func TestPruneBudget(t *testing.T) {
 		t0 := time.Now()
 		cmd := exec.Command(xo, "build", "--backend=arm64", "-o", filepath.Join(work, "prog"), ".")
 		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on", "XO_CACHE_PRUNE_BUDGET=1ms")
+		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on", "XO_CACHE_PRUNE_BUDGET=1ms", "XO_PRUNE_DETACH=off")
 		if log, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("xo build: %v\n%s", err, log)
 		}
@@ -1858,7 +1858,7 @@ func TestParseListForTests(t *testing.T) {
 			t.Fatalf("xo test (%d): %v\n%s", i, err, log)
 		}
 	}
-	lists, _ := filepath.Glob(filepath.Join(cache, "pack", "*", "parse", "list"))
+	lists, _ := filepath.Glob(filepath.Join(cache, "packs", "*", "*", "parse", "list"))
 	if len(lists) == 0 {
 		t.Fatal("no parse list after two test builds")
 	}
@@ -1941,4 +1941,79 @@ func TestFrontCacheMovedBodies(t *testing.T) {
 	if !bytes.Equal(got, off) {
 		t.Error("the build with moved bodies replayed differs from the cache-off build")
 	}
+}
+
+// TestPruneDetached: a build that finds the back-end cache's prune due
+// starts it in a detached `xo dev prune-backend` (decision 0223
+// addendum, 2026-10-21): the build does not wait for the walk, and the
+// child logs its run and brings the cache toward its cap.
+func TestPruneDetached(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := xotool.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-prunedetach-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	cache := filepath.Join(work, "cache")
+	old := time.Now().Add(-10 * 24 * time.Hour)
+	stale := filepath.Join(cache, "00", "aa")
+	if err := os.MkdirAll(stale, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const n = 200
+	for i := 0; i < n; i++ {
+		p := filepath.Join(stale, strconv.Itoa(i))
+		if err := os.WriteFile(p, make([]byte, 1024), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stamp := filepath.Join(cache, "prune-stamp")
+	if err := os.WriteFile(stamp, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(stamp, old, old); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "internal", "gen", "testdata", "golden", "os_tasks")
+	cmd := exec.Command(xo, "build", "--backend=arm64", "-o", filepath.Join(work, "prog"), ".")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on", "XO_PRUNE_DETACH=", "XO_BACKEND_CACHE_MAX=1")
+	if log, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("xo build: %v\n%s", err, log)
+	}
+	logf := filepath.Join(cache, "prune-log")
+	deadline := time.Now().Add(60 * time.Second)
+	var b []byte
+	for time.Now().Before(deadline) {
+		b, _ = os.ReadFile(logf)
+		_, lerr := os.Stat(filepath.Join(cache, "prune-lock"))
+		if len(b) > 0 && os.IsNotExist(lerr) {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if len(b) == 0 {
+		t.Fatal("no prune-log line within a minute of the build: the detached prune did not run")
+	}
+	es, _ := os.ReadDir(stale)
+	if len(es) >= n {
+		t.Errorf("%d of %d stale entries left after the detached prune:\n%s", len(es), n, b)
+	}
+	t.Logf("prune-log:\n%s", b)
 }

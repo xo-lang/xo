@@ -129,3 +129,20 @@ default cap is now 16 GiB (bcache.xo BACKEND_CAP_GB), above that working
 set; XO_BACKEND_CACHE_MAX and XO_CACHE_MAX_GB still override it. With the
 run budget above (2 s of removals a run) and a pack compaction counting
 only what it adds, a prune no longer dominates a build.
+
+Addendum (2026-10-21, xo-fa): the back-end cache is pruned a slice at a
+time, off the build. A whole walk of a busy cache took 44 to 48 s (about
+500,000 files, mostly lstat); a build that fell on it stalled, and a
+build killed during it left a fresh stamp that blocked prunes for an
+hour, so the cache reached 62.5 GB under its 16 GiB cap. Now a due
+prune runs in a detached `xo dev prune-backend` child. Each run walks
+the shards (`fn/ab`, `packs/ab`) after a cursor for 300 ms
+(prune.Policy.walk_budget, slice_shards), keeps per-shard sizes in a
+ledger, and evicts each walked shard's least recently used entries down
+to its share of the cap (shards are uniform: keys are SHA-256). A run
+holds a lock that goes stale after 10 minutes; the stamp is written when
+a run ends; a log line records each run. Pack slots move under
+packs/<xx>/. Alternatives: a size ledger updated on every store (an
+append per store from many processes, and every removal by another
+process to account for), or keeping the in-build whole walk with a
+longer interval (the build that falls on it still stalls).
