@@ -32,6 +32,7 @@ var generators = map[string]func() string{
 	"mail":      mailCorpus,
 	"mime":      mimeCorpus,
 	"multipart": multipartCorpus,
+	"netip":     netipCorpus,
 }
 
 func main() {
