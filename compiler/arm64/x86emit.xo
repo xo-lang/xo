@@ -686,6 +686,16 @@ fn (g: G) x86_scratch(fp: Bool, n: Int, taken: List[Int], own: Bool) -> Int {
   -1
 }
 
+/// Whether l is `movq %R, %R`, a 64-bit copy into the same register.
+fn x86_self_move(l: Str) -> Bool {
+  let t = l.trim()
+  if !t.starts_with("movq %") {
+    return false
+  }
+  let ps = t["movq ".len()..t.len()].split(", ")
+  ps.len() == 2 && ps[0] == ps[1]
+}
+
 /// A register the instruction does not use, borrowed for a spilled
 /// operand when none is free (x86_scratch -1): emit_plain saves it in the
 /// red zone below rsp (System V keeps 128 bytes there from signal
@@ -852,6 +862,11 @@ fn (var g: G) x86_emit_plain(var b: List[Str], inst: Inst) {
       }
     }
   }
+  // the template's own registers are no scratch and no borrowed one (a
+  // spilled factor in rax would be written by the first factor's move)
+  for r in inst.clobbers {
+    taken.push(r)
+  }
   var i = 0
   while i < tn {
     if tb[i] != '$' {
@@ -972,7 +987,16 @@ fn (var g: G) x86_emit_plain(var b: List[Str], inst: Inst) {
     text = text[1..text.len()]
   }
   // a copy into the same register is nothing
-  if def_reg.is_empty() || text != "\tmovq ${x86_reg(def_reg[0], 8)}, ${x86_reg(def_reg[0], 8)}\n" {
+  if inst.clob_mid {
+    var keep: List[Str] = []
+    for l in text.split("\n") {
+      if !l.is_empty() && !x86_self_move(l) {
+        keep.push(l)
+      }
+    }
+    text = if keep.is_empty() { "" } else { keep.join("\n") + "\n" }
+  }
+  if (def_reg.is_empty() || text != "\tmovq ${x86_reg(def_reg[0], 8)}, ${x86_reg(def_reg[0], 8)}\n") && !text.is_empty() {
     b.push(text)
   }
   // the spilled definitions' stores and the borrowed registers back
@@ -1268,6 +1292,10 @@ fn (g: G) x86_move(var b: List[Str], dst: MLoc, src: MSrc) {
     }
     if src.kind == M_ZERO {
       b.push("\tmovq $0, ${x86_mem_ref(dst)}\n")
+      return
+    }
+    if src.kind == M_IMM && imm32(src.imm) {
+      b.push("\tmovq $${src.imm}, ${x86_mem_ref(dst)}\n")
       return
     }
     g.x86_put(b, XR_SCRATCH, src)

@@ -321,15 +321,28 @@ fn fold_const_branches(var f: Func) -> Bool {
       }
       continue
     }
-    // equality only: an ordering of an unsigned type's constants is not
-    // Int's
-    if v.block < 0 || v.args.len() != 2 || !(v.op is Op.Eq | Op.Ne) {
+    if v.block < 0 || v.args.len() != 2 || !(v.op is Op.Eq | Op.Ne | Op.Lt | Op.Le | Op.Gt | Op.Ge) {
       continue
     }
     if let Some(x) = const_int(f, v.args[0]) {
       if let Some(y) = const_int(f, v.args[1]) {
+        // an ordering only of two constants at least 0, which order the
+        // same signed or not (an unsigned type's word above 2^63 is
+        // negative as Int's; 2026-10-20: ints.u64_rem's `b > 0` stayed a
+        // compare of two constants in portable u64's loop)
+        if !(v.op is Op.Eq | Op.Ne) && (x < 0 || y < 0) {
+          continue
+        }
+        let r = match v.op {
+          Eq => x == y
+          Ne => x != y
+          Lt => x < y
+          Le => x <= y
+          Gt => x > y
+          _ => x >= y
+        }
         f.values[vi].op = Op.Const
-        f.values[vi].aux = Aux.B(b: (x == y) == (v.op == Op.Eq))
+        f.values[vi].aux = Aux.B(b: r)
         f.values[vi].args = []
       }
     }

@@ -2206,6 +2206,17 @@ fn (var g: G) x86_mul_pair() {
       p.defs = [lo, hi]
       p.x86 = true
       p.clobbers = [XR_AX, XR_DX]
+      // the factors and halves in rax and rdx where they can be (the
+      // moves go): the first factor and the low half in rax, the high
+      // half in rdx; the second factor not in rax (the first's move
+      // writes it) unless it is the first, the low half not in rdx (the
+      // high half's move reads it after)
+      p.clob_mid = true
+      p.reg_hints = [(0, XR_AX), (-1, XR_AX), (-2, XR_DX)]
+      p.reg_bars = [(-1, XR_DX)]
+      if p.us[1] != p.us[0] {
+        p.reg_bars.push((1, XR_AX))
+      }
       ins[i] = p
       gone[found] = true
       i += 1
@@ -2257,8 +2268,43 @@ fn (var g: G) x86_const_imm() {
     var ins = g.take_insts(b)
     for k in 0..ins.len() {
       var inst = ins[k]
-      // a plain line, or a branch's compare (`cmpq $u1, $u0`)
-      if (inst.kind == K_PLAIN || (inst.kind == K_CONDBR && !inst.text.is_empty())) && inst.x86 && !inst.has_fault && inst.recover.is_empty() {
+      // a plain line, or a branch's compare (`cmpq $u1, $u0`); with a
+      // fault too: its stub reads the fault arguments (fargs, read again
+      // past the template's uses), not the template's registers
+      if (inst.kind == K_PLAIN || (inst.kind == K_CONDBR && !inst.text.is_empty())) && inst.x86 {
+        if inst.has_fault {
+          // a constant fault argument as the immediate (its register
+          // need not live to the stub): the use set_fault added for it,
+          // one the template does not name, goes
+          for (j, a) in inst.fargs.indexed() {
+            let n = if a.kind == S_REG { kval.get(a.v) ?? MIN_INT } else { MIN_INT }
+            if n == MIN_INT || (ndef.get(a.v) ?? 0) != 1 {
+              continue
+            }
+            var u = inst.us.len() - 1
+            while u >= 0 && !(inst.us[u] == a.v && x86_tok_count(inst.text, "u${u}") == 0) {
+              u -= 1
+            }
+            if u < 0 {
+              continue
+            }
+            var us: List[Int] = []
+            for (i, w) in inst.us.indexed() {
+              if i != u {
+                us.push(w)
+              }
+            }
+            var text = inst.text
+            for i in u + 1..inst.us.len() {
+              text = x86_tok_rename(text, i, i - 1)
+            }
+            inst.text = text
+            inst.us = us
+            inst.reg_hints = x86_drop_use(inst.reg_hints, u)
+            inst.reg_bars = x86_drop_use(inst.reg_bars, u)
+            inst.fargs[j] = Src{kind: S_IMM, imm: n}
+          }
+        }
         var again = true
         while again {
           again = false
@@ -2283,11 +2329,31 @@ fn (var g: G) x86_const_imm() {
             }
             inst.text = text
             inst.us = us
+            inst.reg_hints = x86_drop_use(inst.reg_hints, u)
+            inst.reg_bars = x86_drop_use(inst.reg_bars, u)
             again = true
             break
           }
         }
         ins[k] = inst
+      }
+      if ins[k].kind == K_PMOVE && ins[k].x86 {
+        // a constant copied (a loop variable's start, 2026-10-20: portable
+        // conv's h = 0 went `pushq 144(%rsp)`, `popq 24(%rsp)` from the
+        // hoisted zero's slot): the move writes the immediate
+        var p = ins[k]
+        var changed = false
+        for (j, a) in p.srcs.indexed() {
+          let n = if a.kind == S_REG { kval.get(a.v) ?? MIN_INT } else { MIN_INT }
+          if n != MIN_INT && (ndef.get(a.v) ?? 0) == 1 && imm32(n) && !g.fp[p.defs[j]] {
+            p.srcs[j] = Src{kind: S_IMM, imm: n}
+            changed = true
+          }
+        }
+        if changed {
+          p.us = src_regs(p.srcs)
+          ins[k] = p
+        }
       }
       for u in ins[k].us {
         nuse[u] = (nuse.get(u) ?? 0) + 1
@@ -2313,6 +2379,19 @@ fn (var g: G) x86_const_imm() {
     }
     g.put_insts(b, out)
   }
+}
+
+/// Inst.reg_hints or reg_bars with use u gone (the uses past it one
+/// lower).
+fn x86_drop_use(l: List[(Int, Int)], u: Int) -> List[(Int, Int)] {
+  var out: List[(Int, Int)] = []
+  for (k, r) in l {
+    if k == u {
+      continue
+    }
+    out.push((if k > u { k - 1 } else { k }, r))
+  }
+  out
 }
 
 /// The constant a one line `movl $N, $wd0`, `movq $N, $d0`, or `movabsq

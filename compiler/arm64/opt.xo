@@ -1402,13 +1402,23 @@ fn count_true(xs: List[Bool]) -> Int {
 
 /// Moves the instructions that make constants out of loops, into the
 /// loop's preheader, innermost loops first. A constant that feeds a
-/// parallel move, a call, or a return stays.
+/// parallel move, a call, or a return stays. Constants a preheader gets
+/// twice (the same text) are one register: each inlined copy of a
+/// function made its own (2026-10-20: portable u64's loop inlined
+/// ints.u64_rem three times, and x86_64 kept 9 words in spill slots for
+/// 3 values).
 fn (var g: G) hoist_consts() {
   let blocks = g.all_blocks()
   let preds = g.mpreds_all(blocks)
   var moved: Map[Int, Bool] = {}
+  var ndef: Map[Int, Int] = {}
+  // a merged constant's register -> the one kept
+  var same: Map[Int, Int] = {}
   for b in blocks {
     for inst in g.blocks[b].insts {
+      for d in inst.defs {
+        ndef[d] = (ndef.get(d) ?? 0) + 1
+      }
       // a constant a move, call, or return takes is made straight into
       // its register in place
       if inst.kind == K_PMOVE || inst.kind == K_CALL || inst.kind == K_RET {
@@ -1519,8 +1529,62 @@ fn (var g: G) hoist_consts() {
     }
     let ins = g.blocks[pre].insts
     let n = ins.len()
-    g.blocks[pre].insts = ins[0..n - 1] + hoisted + [ins[n - 1]]
+    // the preheader's constants (already there, then hoisted) by text
+    var by_text: Map[Str, Int] = {}
+    for inst in ins {
+      if inst.konst && inst.defs.len() == 1 && (ndef.get(inst.defs[0]) ?? 0) == 1 && !moved.contains(inst.defs[0]) {
+        by_text[inst.text] = inst.defs[0]
+      }
+    }
+    var keep: List[Inst] = []
+    for inst in hoisted {
+      if inst.defs.len() == 1 && (ndef.get(inst.defs[0]) ?? 0) == 1 {
+        let k = by_text.get(inst.text) ?? -1
+        if k >= 0 && k != inst.defs[0] {
+          same[inst.defs[0]] = k
+          continue
+        }
+        by_text[inst.text] = inst.defs[0]
+      }
+      keep.push(inst)
+    }
+    g.blocks[pre].insts = ins[0..n - 1] + keep + [ins[n - 1]]
   }
+  if same.is_empty() {
+    return
+  }
+  // each merged register's reads, the kept one's (a chain: merged in an
+  // inner loop's preheader, then again in the outer one's)
+  for b in 0..g.blocks.len() {
+    var ins = g.take_insts(b)
+    for k in 0..ins.len() {
+      var inst = ins[k]
+      for i in 0..inst.us.len() {
+        inst.us[i] = same_root(same, inst.us[i])
+      }
+      for i in 0..inst.srcs.len() {
+        if inst.srcs[i].kind == S_REG {
+          inst.srcs[i].v = same_root(same, inst.srcs[i].v)
+        }
+      }
+      for i in 0..inst.fargs.len() {
+        if inst.fargs[i].kind == S_REG {
+          inst.fargs[i].v = same_root(same, inst.fargs[i].v)
+        }
+      }
+      ins[k] = inst
+    }
+    g.put_insts(b, ins)
+  }
+}
+
+/// The register a merged constant's register reads as (hoist_consts).
+fn same_root(same: Map[Int, Int], v: Int) -> Int {
+  var r = v
+  while let Some(n) = same.get(r) {
+    r = n
+  }
+  r
 }
 
 /// The most constants hoist_consts moves out of a loop that calls on its

@@ -328,7 +328,7 @@ fn (var g: G) regalloc() {
   var calls: List[Int] = []
   // the instructions that write registers besides their definitions:
   // position and registers
-  var clobs: List[(Int, List[Int])] = []
+  var clobs: List[(Int, List[Int], Bool)] = []
   // the registers live at the point of the backward walk of a block: from
   // the block's live out set to its live in set, which clears it again
   var live = new_bits(n)
@@ -354,7 +354,7 @@ fn (var g: G) regalloc() {
         calls.push(at + 1)
       }
       if !inst.clobbers.is_empty() {
-        clobs.push((at, inst.clobbers))
+        clobs.push((at, inst.clobbers, inst.clob_mid))
       }
       for d in inst.defs {
         if d == 0 {
@@ -395,8 +395,11 @@ fn (var g: G) regalloc() {
   // hints: registers a vreg would like (ABI registers), and pairs of
   // registers joined by a move
   var fixed: List[List[Int]] = []
+  // registers a vreg must not take (Inst.reg_bars)
+  var barred: List[List[Int]] = []
   for _ in 0..n {
     fixed.push([])
+    barred.push([])
   }
   var pairs: List[Pair] = []
   // stack words a register is copied to or from (spill slot hints, the
@@ -419,6 +422,18 @@ fn (var g: G) regalloc() {
     for (ik, inst) in g.blocks[b].insts.indexed() {
       if argslots {
         g.word_hints(inst, g.blocks[b].start + 4 * ik, whint, wclob)
+      }
+      for (k, r) in inst.reg_hints {
+        let v = if k >= 0 { inst.us[k] } else { inst.defs[-1 - k] }
+        if v != 0 {
+          push_int(fixed, v, r)
+        }
+      }
+      for (k, r) in inst.reg_bars {
+        let v = if k >= 0 { inst.us[k] } else { inst.defs[-1 - k] }
+        if v != 0 {
+          push_int(barred, v, r)
+        }
       }
       if inst.kind == K_PMOVE && !inst.nocoal {
         for (k, d) in inst.defs.indexed() {
@@ -515,6 +530,10 @@ fn (var g: G) regalloc() {
     for r in fb {
       push_int(fixed, a, r)
     }
+    let bb = barred[b]
+    for r in bb {
+      push_int(barred, a, r)
+    }
     let pb = partners[b]
     for r in pb {
       push_int(partners, a, r)
@@ -580,9 +599,10 @@ fn (var g: G) regalloc() {
       occ[g.base] = [Rng{s: 0, e: 4 * g.ninst + 3}]
     }
     // a template's own registers: no value used, defined, or live there
-    for (at, rs) in clobs {
+    // (its middle only: no value live across it)
+    for (at, rs, mid) in clobs {
       for r in rs {
-        push_rng(occ, r, Rng{s: at, e: at + 2})
+        push_rng(occ, r, if mid { Rng{s: at + 1, e: at + 1} } else { Rng{s: at, e: at + 2} })
       }
     }
     // a call clobbers every caller saved register (the full sets: the
@@ -658,13 +678,13 @@ fn (var g: G) regalloc() {
       var chosen = -1
       for r0 in cands {
         var r = r0
-        if overlaps_sorted(occ[r], ranges[v]) || (nc && !g.is_callee_t(r)) {
+        if overlaps_sorted(occ[r], ranges[v]) || (nc && !g.is_callee_t(r)) || barred[v].contains(r) {
           continue
         }
         if g.is_callee_t(r) && !used_callee[r] {
           // a callee saved register already saved before a fresh one
           for r2 in cands {
-            if g.is_callee_t(r2) && used_callee[r2] && !overlaps_sorted(occ[r2], ranges[v]) {
+            if g.is_callee_t(r2) && used_callee[r2] && !overlaps_sorted(occ[r2], ranges[v]) && !barred[v].contains(r2) {
               r = r2
               break
             }

@@ -89,6 +89,14 @@ struct Inst {
   /// physical registers its text writes besides its definitions (an
   /// atomic's status register): no value is given one across it
   clobbers: List[Int] = []
+  /// the clobbers hold only between the template's reads and writes
+  /// (x86_mul_pair): an operand that dies at it, or a definition, may
+  /// take one. reg_hints are registers its operands would like, reg_bars
+  /// registers they must not take, each (operand, register), the operand
+  /// k >= 0 for us[k] and -1 - k for defs[k]
+  clob_mid: Bool = false
+  reg_hints: List[(Int, Int)] = []
+  reg_bars: List[(Int, Int)] = []
   defs: List[Int] = []
   /// template uses first, then the vregs of srcs and fault args
   us: List[Int] = []
