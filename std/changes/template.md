@@ -3,7 +3,7 @@
 ## 2026-10-21: fix: printf, the escapers, eq, and slice as Go's text/template
 
 - Kind: fix
-- Commit: (filled in after the push)
+- Commit: dfaf6b05
 - Found by: differential test against Go (scripts/stdcorpus template: 3,000 generated templates)
 - Go reference: text/template exec.go, funcs.go (evalArgs, printableValue, eq, canCompare); fmt print.go and format.go (badVerb, printValue, fmtFloat); strconv ftoa.go fmtX (go1.26.1)
 - Test: internal/stdtest/testdata/corpus/template

@@ -3,7 +3,7 @@
 ## 2026-10-21: fix: replies, HELO, AUTH, and an empty message as Go's net/smtp
 
 - Kind: fix
-- Commit: (filled in after the push)
+- Commit: 52e13d37
 - Found by: differential test against Go (scripts/stdcorpus smtp: net/smtp's SendMail and std/smtp against the same scripted server, 500 sessions)
 - Go reference: net/smtp smtp.go (SendMail, hello, ehlo, Auth), auth.go; net/textproto reader.go ReadResponse, writer.go dotWriter (go1.26.1)
 - Test: internal/stdtest/testdata/corpus/smtp

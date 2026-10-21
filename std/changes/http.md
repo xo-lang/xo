@@ -3,7 +3,7 @@
 ## 2026-10-21: feature: Router.handle_stream (streamed request bodies)
 
 - Kind: feature
-- Commit: (filled in after the push)
+- Commit: f2358842
 - Found by: owner's request (2026-10-21), decision 0310
 - Go reference: net/http's Request.Body (body, chunkedReader, expectContinueReader, chunkWriter.writeHeader's discard; go1.26.1)
 - Test: internal/llvm/testdata/golden/http_stream_body (17 exchanges: Content-Length and chunked bodies read 3 bytes at a time, in parts as they arrive, read_all, unread bodies small and large, 100-continue read and unread, malformed chunks; native identical to the Go backend)
@@ -30,7 +30,7 @@ through a Compressor that each flush reaches.
 ## 2026-10-21: feature: http.serve_content
 
 - Kind: feature
-- Commit: (filled in after the push)
+- Commit: 5ff295e6
 - Found by: owner's request (2026-10-21)
 - Go reference: net/http ServeContent, serveContent, checkPreconditions, scanETag, parseRange (go1.26.1)
 - Test: internal/llvm/testdata/golden/http_serve_content (35 requests: ranges, conditional requests, HEAD, content types; the native backends match the Go backend's net/http byte for byte, the multipart boundary aside)

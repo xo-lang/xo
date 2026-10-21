@@ -3,7 +3,7 @@
 ## 2026-10-21: feature: std/websocket
 
 - Kind: feature
-- Commit: (filled in after the push)
+- Commit: 933b1b96
 - Found by: owner's request (2026-10-21), decision 0313
 - Go reference: github.com/gorilla/websocket v1.5 (conn.go, server.go, client.go)
 - Test: internal/llvm/testdata/golden/websocket (a server and a client: echo, ping, close codes, subprotocol, a message over max_message, refused handshakes, 13 raw frames that break the protocol; native identical to the Go backend)

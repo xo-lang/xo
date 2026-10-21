@@ -3,7 +3,7 @@
 ## 2026-10-21: port: std/xml, Go's encoding/xml tokens and a tree
 
 - Kind: port
-- Commit: (filled in after the push)
+- Commit: 2a2edc53
 - Found by: survey (SOAP, SAML, sitemaps, TwiML, S3 bodies; decision 0314)
 - Go reference: encoding/xml xml.go (Decoder: Token, RawToken, text, names, the HTML tables), marshal.go (EncodeToken, Indent) (go1.26.1)
 - Test: internal/stdtest/testdata/corpus/xml; internal/llvm/testdata/golden/xml_basic

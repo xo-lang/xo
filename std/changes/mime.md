@@ -3,7 +3,7 @@
 ## 2026-10-21: fix: detect_content_type finds MP4 on the Go backend
 
 - Kind: fix
-- Commit: (filled in after the push)
+- Commit: f72d02b2
 - Found by: differential test against Go (scripts/stdcorpus mime: 2,500 media types, 600 formats, 1,500 sniffed prefixes)
 - Go reference: net/http/sniff.go mp4Sig (go1.26.1)
 - Test: internal/stdtest/testdata/corpus/mime

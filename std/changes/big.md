@@ -3,7 +3,7 @@
 ## 2026-10-21: perf: Karatsuba multiplication natively
 
 - Kind: perf
-- Commit: (filled in after the push)
+- Commit: e2bed9a0
 - Found by: decision 0311 stage 2
 - Go reference: math/big nat.go karatsuba, karatsubaThreshold 40 (go1.26.1)
 - Test: internal/stdtest/testdata/corpus/big (now with 2,600 to 8,000 bit operands)
@@ -15,7 +15,7 @@ of 5, the same output). Squaring in `exp` and every `mul` use it.
 ## 2026-10-21: port: std/big, Go's math/big Int
 
 - Kind: port
-- Commit: (filled in after the push)
+- Commit: 432d314e
 - Found by: survey (gap 10: public RSA and ECDSA keys, big integers; decision 0311)
 - Go reference: math/big int.go, nat.go, natdiv.go, natconv.go (scan), prime.go (ProbablyPrime, probablyPrimeLucas); math/bits Div64 (go1.26.1)
 - Test: internal/stdtest/testdata/corpus/big; internal/llvm/testdata/golden/big_basic

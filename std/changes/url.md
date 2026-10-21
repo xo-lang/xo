@@ -3,7 +3,7 @@
 ## 2026-10-21: fix: unescape errors and parse_query's semicolon error as Go's
 
 - Kind: fix
-- Commit: (filled in after the push)
+- Commit: 60c8372e
 - Found by: differential test against Go (scripts/stdcorpus url: 1,500 escape texts, 1,200 queries)
 - Go reference: net/url url.go EscapeError.Error, parseQuery (go1.26.1)
 - Test: internal/stdtest/testdata/corpus/url

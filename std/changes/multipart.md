@@ -3,7 +3,7 @@
 ## 2026-10-21: fix: parse_form skips a bad quoted-printable part as Go does
 
 - Kind: fix
-- Commit: (filled in after the push)
+- Commit: bc998b26
 - Found by: differential test against Go (scripts/stdcorpus multipart, 1,500 generated bodies)
 - Go reference: mime/multipart Part.Close and formdata.go readForm; mime/quotedprintable Reader over bufio (go1.26.1)
 - Test: internal/stdtest/testdata/corpus/multipart; std/native/multipart_test.xo

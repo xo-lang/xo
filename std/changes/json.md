@@ -3,7 +3,7 @@
 ## 2026-10-21: feature: omitempty and json.Decoder
 
 - Kind: feature
-- Commit: (filled in after the push)
+- Commit: 88b70a44
 - Found by: decision 0309 (approved by the owner, 2026-10-21)
 - Go reference: encoding/json `,omitempty` (TestOmitEmpty) and json.Decoder over a stream of values
 - Test: internal/llvm/testdata/golden/json_omitempty, internal/llvm/testdata/golden/json_stream, test/errorcheck/wire_names
