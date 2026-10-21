@@ -3,7 +3,7 @@
 ## 2026-10-21: perf: a large streamed write goes out as one chunk
 
 - Kind: perf
-- Commit: (filled in after the push)
+- Commit: f0aae00e5
 - Found by: bench/perf/tlsrate (TLS bulk over HTTP/1.1: Xo 220 MB/s against Go's 2,000 MB/s on the same TLS code; HTTP/2 downloads were at parity)
 - Go reference: net/http response.Write through bufio.Writer.Write (a write larger than the buffer's room goes around an empty buffer)
 - Test: internal/llvm/testdata/golden/http_stream (a 3000 byte write: one chunk bb8, not 800 and 3b8)
