@@ -347,3 +347,29 @@ Not expected to change: resets under saturation (the kernel's backlog of
 | 4 | the flaky tests, 50 runs each under load | | | | |
 | 5 | emit wall time and trace of a cold self build | | | | |
 | 6 | dev-goldens timeouts over a day of runs | | | | |
+
+## Addendum (2026-10-21): the poll's cost under load
+
+The +3.5% measured for step 3 came from loads where the poll flag was
+rarely set. Under steady load (Docker linux/arm64, 12 vCPUs shared with
+the client; the CRUD server, bench/perf/http, under a list-only load: 1024
+keep-alive connections each looping GET /users over 1,032 users), the
+flag stayed set: the monitor asks a worker whenever work waits and none is
+idle, and one global word told every worker's polls to call the stub,
+which saves all registers before pool.preempt finds this worker was not
+asked. xo_preempt_stub was 26% of the server's CPU (flat) and the server
+did 49,124 requests in 8 s with XO_PREEMPT=1 against 68,844 with
+XO_PREEMPT=0.
+
+Fix: the stub first loads this worker's ask (its record through
+xo_tlocal: x16 only, plus x17 on Darwin, whose TLV thunk changes it; the
+LLVM poll's clobbers gain x17) and returns saving nothing when it was not
+asked; W_PREEMPT counts the asks out (the asked worker's preempt, or the
+monitor's withdrawal of an ask unserved for a slice, takes one back)
+instead of staying set while work waits. Same load, one run each, back to
+back (Docker varies about 20% between runs, so compare within a run):
+
+| XO_PREEMPT | before | after |
+|---|---|---|
+| 1 | 46,903 requests (1,203 us CPU each) | 51,894 (1,027 us) |
+| 0 | 57,022 (1,019 us) | 61,506 (892 us) |
