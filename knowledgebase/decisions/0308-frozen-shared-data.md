@@ -259,3 +259,52 @@ Two facts shape the design:
   entry and exit (on a worker local line, cheap, but not zero), and two
   counter arrays per cell. Kept as the fallback if quiescent state
   tracking proves fragile.
+
+## Addendum (2026-10-21, owner: option (b)): reads that touch no counts
+
+**Measurement that changed the design.** Docker linux/arm64, 12 vCPUs
+shared with the client; the CRUD server (bench/perf/http) under a
+list-only load (1024 keep-alive connections each looping GET /users over
+1,032 users), XO_PREEMPT=0, fresh XO_PROF profiles:
+
+| server | requests in 8 s | drop Str | dup Str? | dropp User |
+|---|---|---|---|---|
+| main | 70,978 | 33% | 16% | 4% |
+| the store's Mutex value frozen (stage 1 helpers, a local hack) | 48,566 | 29% | 17% | 9% |
+
+The runtime sentinel did not reduce the count helpers' time: at this
+core count the cost is reading each of ~3,100 string objects' count
+words a list request (its cache line, one per object, after the
+encoder's pass or before it), not the atomic write. A frozen count is
+still read. (Not measured yet: 16 and more cores, where atomic writes
+also move each line between cores; frozen counts stay clean.)
+
+**Redesign.** Reads of a Shared cell touch no count at all, decided at
+compile time:
+
+1. Inside a `read` closure the view and every value reached from it
+   (fields, payloads, elements by index or iteration, map lookups, and
+   the values those are moved or copied into while they stay in the
+   closure) are frozen by construction. The reference counting pass
+   (compiler/ssa rc.xo) marks the closure's view parameter frozen; a
+   retain or release of a value derived from it is omitted. A copy that
+   leaves the closure is still thawed (item 4), so only escaping data
+   costs anything.
+2. Code the closure calls does not know its argument is frozen (a std
+   function such as `Map.values` or `sort_by` retains what it copies):
+   stage 1 of this addendum covers the closure body only; callees get
+   the same treatment later by specializing a function for a frozen
+   argument (a copy of it compiled with that parameter marked), the way
+   generic functions are instantiated.
+3. The runtime sentinel (item 3) stays: it makes the omitted operations
+   safe for values that reach code that was not specialized (a callee's
+   retain of a frozen object changes nothing), and thaw (item 4) and
+   reclamation (item 5) use it.
+4. The idiom that gets the whole benefit: serialize or aggregate inside
+   the read (`s.read(fn(st) { json.encode(st.users) })`), so the result
+   is one new string and nothing frozen escapes.
+
+**Next.** A prototype of point 1 for one closure (the CRUD server's list
+read, the store moved to a `Shared` cell in a variant beside
+bench/perf/http/xo), measured on Docker against main and Go under the same
+list-only load; then the 32-core CI A/B the owner approved.
