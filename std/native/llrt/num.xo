@@ -27,22 +27,23 @@ const MIN_INT: Int = -9223372036854775807 - 1
 /// below 2^14, x * 103 >> 10 is x / 10 below 100). append_int has a copy
 /// of it, so that its common case calls nothing but the append.
 fn digits8(v: Int) -> Int {
-  // the masks change nothing for 0 <= v < 10^8 but give the native
-  // backends' value ranges what they need to prove no product overflows
-  // (and they are logical immediates on arm64)
+  // the masks change nothing for 0 <= v < 10^8 (and they are logical
+  // immediates on arm64); the lanes are bounded, so wrapping arithmetic,
+  // whose checked forms' overflow tests the native backends' value
+  // ranges did not all remove (2026-10-21, append_int)
   let x = v & 0x7FFFFFF
   let hi = x / 10000
   let lo = x % 10000
   // hi in the low 32 bit lane, lo in the high one
-  let m = (hi & 0x3FFF) | ((lo & 0x3FFF) << 32)
-  let h = ((m * 10486) >> 20) & 0x7F0000007F
-  let l = m - h * 100
+  let m = (hi & 0x3FFF) | (lo & 0x3FFF).wrapping_shl(32)
+  let h = m.wrapping_mul(10486).shr_logical(20) & 0x7F0000007F
+  let l = m.wrapping_sub(h.wrapping_mul(100))
   // four lanes of 16 bits: hi / 100, hi % 100, lo / 100, lo % 100
-  let m2 = (h | (l << 16)) & 0x7F007F007F007F
-  let h2 = ((m2 * 103) >> 10) & 0xF000F000F000F
-  let l2 = m2 - h2 * 10
+  let m2 = (h | l.wrapping_shl(16)) & 0x7F007F007F007F
+  let h2 = m2.wrapping_mul(103).shr_logical(10) & 0xF000F000F000F
+  let l2 = m2.wrapping_sub(h2.wrapping_mul(10))
   // a digit is below 0x10, so | is + of "0"
-  h2 | ((l2 & 0xF000F000F000F) << 8) | 0x3030303030303030
+  h2 | (l2 & 0xF000F000F000F).wrapping_shl(8) | 0x3030303030303030
 }
 
 /// The number of decimal digits of v (0 <= v < 10^8).
@@ -83,23 +84,27 @@ pub fn append_int(out: Str, v: Int) -> Str {
     } else if u < 10000000 {
       k = 7
     }
-    // digits8(u)
+    // digits8(u), in wrapping arithmetic: every lane is bounded (u below
+    // 10^8), so no product or shift overflows, and the checked forms'
+    // overflow tests were most of the difference to LLVM, which proves
+    // them away (2026-10-21: bench/perf/llvm strings, append_int 280 M
+    // instructions on arm64, LLVM 252 M)
     let x = u & 0x7FFFFFF
     let hi = x / 10000
     let lo = x % 10000
-    let m = (hi & 0x3FFF) | ((lo & 0x3FFF) << 32)
-    let h = ((m * 10486) >> 20) & 0x7F0000007F
-    let l = m - h * 100
-    let m2 = (h | (l << 16)) & 0x7F007F007F007F
-    let h2 = ((m2 * 103) >> 10) & 0xF000F000F000F
-    let l2 = m2 - h2 * 10
-    let d = h2 | ((l2 & 0xF000F000F000F) << 8) | 0x3030303030303030
+    let m = (hi & 0x3FFF) | (lo & 0x3FFF).wrapping_shl(32)
+    let h = m.wrapping_mul(10486).shr_logical(20) & 0x7F0000007F
+    let l = m.wrapping_sub(h.wrapping_mul(100))
+    let m2 = (h | l.wrapping_shl(16)) & 0x7F007F007F007F
+    let h2 = m2.wrapping_mul(103).shr_logical(10) & 0xF000F000F000F
+    let l2 = m2.wrapping_sub(h2.wrapping_mul(10))
+    let d = h2 | (l2 & 0xF000F000F000F).wrapping_shl(8) | 0x3030303030303030
     // the k digits, after "-" when v < 0 (k is 7 at most then)
-    let w = d >> (((8 - (k & 15)) & 7) << 3)
+    let w = d.shr_logical(((8 - (k & 15)) & 7).wrapping_shl(3))
     if v >= 0 {
       return rt.rs_push_word(out, w, k)
     }
-    return rt.rs_push_word(out, ((w & 0x7FFFFFFFFFFFFF) << 8) | 45, k + 1)
+    return rt.rs_push_word(out, (w & 0x7FFFFFFFFFFFFF).wrapping_shl(8) | 45, k + 1)
   }
   append_wide(out, v)
 }
