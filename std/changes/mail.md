@@ -3,7 +3,7 @@
 ## 2026-10-21: fix: parse_date reads fractional seconds, an unclosed quoted local part is Go's error
 
 - Kind: fix
-- Commit: (filled in after the push)
+- Commit: 4f542fe1
 - Found by: differential test against Go (the new corpus)
 - Go reference: net/mail ParseDate (time.Parse reads a fractional second after the seconds though the layout has none), addrParser.consumeAddrSpec (go1.26.1)
 - Test: internal/stdtest/testdata/corpus/mail (scripts/stdcorpus mail: 2,500 addresses, 1,000 lists, 2,000 dates, and 600 messages, random and from net/mail's tests, with Go's results; TestStdCorpora on go, arm64, and LLVM)
@@ -18,7 +18,7 @@ now so does the native port.
 ## 2026-10-20: port: messages, dates, and a message builder
 
 - Kind: port
-- Commit: (filled in after the push)
+- Commit: 100730e6
 - Found by: survey (rank 7: services send mail; decision 0290)
 - Go reference: net/mail message.go ReadMessage, readHeader, ParseDate; net/textproto ReadContinuedLine; mime/quotedprintable writer.go; mime QEncoding; mime/multipart Writer (go1.26.1)
 - Test: std/native/mail_test.xo (Go's results on Go's test inputs, 3,000 random dates, 21 messages); internal/llvm/testdata/golden/mail_messages (every backend; compose byte for byte as Go's writers)

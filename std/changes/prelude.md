@@ -3,7 +3,7 @@
 ## 2026-10-21: feature: Str.rfind, Bytes.find, rfind, and zeroed, Map.map, any, and all, read_text_or and read_or
 
 - Kind: feature
-- Commit: (filled in after the push)
+- Commit: 6abd8dd2
 - Found by: the agent poll of 2026-10-20 (approved by the owner, 2026-10-21)
 - Go reference: strings.LastIndex, bytes.Index, bytes.LastIndex, make([]byte, n), errors.Is(err, fs.ErrNotExist) (go1.26.1)
 - Test: internal/llvm/testdata/golden/prelude_additions (go, arm64, LLVM, and wasm the same)

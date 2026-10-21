@@ -3,7 +3,7 @@
 ## 2026-10-21: fix: the sign of an offset under a minute
 
 - Kind: fix
-- Commit: (filled in after the push)
+- Commit: dd2e401a
 - Found by: differential test against Go
 - Go reference: time.Time.Format's zone offset (format.go, go1.26.1)
 - Test: std/native/time_test.xo (1,200 random instants in fixed zones, both layouts covering every field, against Go's Format); internal/llvm/testdata/golden/time_fixed_offsets (arm64, LLVM, and the Go backend agree)

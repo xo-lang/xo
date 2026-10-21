@@ -3,7 +3,7 @@
 ## 2026-10-21: feature: http.gzip_responses
 
 - Kind: feature
-- Commit: (filled in after the push)
+- Commit: 4cddcc7b
 - Found by: decision 0305 (approved by the owner, 2026-10-21)
 - Go reference: none in Go's standard library; the rules of klauspost/compress gzhttp
 - Test: internal/llvm/testdata/golden/http_gzip_responses
@@ -32,7 +32,7 @@ the content (decision 0306).
 ## 2026-10-21: feature: Request.client_ip behind trusted proxies
 
 - Kind: feature
-- Commit: (filled in after the push)
+- Commit: b37efc91
 - Found by: survey (client addresses behind load balancers; with Xo Lang 3)
 - Go reference: net/netip (Prefix.Contains, Addr.Unmap); RFC 7239; the walk of chi's and gorilla's proxy headers middleware
 - Test: internal/llvm/testdata/golden/http_client_ip (every backend)
@@ -45,7 +45,7 @@ unknown, or does not parse; reviewed with Xo Lang 3).
 ## 2026-10-21: feature: the client keeps HTTP/1.1 connections alive
 
 - Kind: feature
-- Commit: (filled in after the push)
+- Commit: 04ea3e47
 - Found by: per-line profile of bench/perf/httpclient (Xo Lang 3)
 - Go reference: net/http Transport (getConn, tryPutIdleConn, persistConn.readLoop, shouldClose, isReplayable, shouldRetryRequest; go1.26.1)
 - Test: internal/llvm/testdata/golden/http_client_keepalive (connections a raw server accepted, request by request, as the Go backend's); TestHTTP1ClientDiff (457 responses, llvm, go, arm64)
@@ -64,7 +64,7 @@ instructions for 3000 requests (decision 0303).
 ## 2026-10-21: fix: the native client reads responses as net/http does
 
 - Kind: fix
-- Commit: (filled in after the push)
+- Commit: c9dad995
 - Found by: differential test against Go
 - Go reference: net/http ReadResponse, readTransfer (parseTransferEncoding, fixLength, fixTrailer, shouldClose), internal/chunked.go; net/textproto readMIMEHeader (go1.26.1)
 - Test: internal/llvm/testdata/golden/http_client_responses (349 raw responses: net/http's parsing cases and 300 random header blocks; arm64, LLVM, and the Go backend agree); internal/llvm TestHTTP1ClientDiff's 457 random responses now agree with the Go backend on every one
@@ -93,7 +93,7 @@ is the Go backend's).
 ## 2026-10-21: speedup: Router matching without a string per path segment
 
 - Kind: speedup
-- Commit: (filled in after the push)
+- Commit: 73612e39
 - Found by: per-line callgrind of bench/perf/http (Xo Lang 3)
 - Go reference: none
 - Test: internal/llvm/testdata/golden/http_router_paths (124 method and path cases, the same answers as before the change)

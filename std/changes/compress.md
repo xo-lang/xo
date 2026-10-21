@@ -3,7 +3,7 @@
 ## 2026-10-21: feature: streaming Compressor and Decompressor
 
 - Kind: feature
-- Commit: (filled in after the push)
+- Commit: 11919936
 - Found by: decision 0305
 - Go reference: compress/flate Writer (Write, Flush, Close) and Reader, compress/gzip, compress/zlib (go1.26.1)
 - Test: internal/stdtest/testdata/corpus/compress (160 chunked Compressors with flushes against Go's bytes; 431 streams fed to a Decompressor in pieces against the whole decoders)
@@ -17,7 +17,7 @@ gives. Both are move only, as the builders are (core 5.3).
 ## 2026-10-21: feature: std/compress, Go's gzip, flate, and zlib with max_size
 
 - Kind: feature
-- Commit: (filled in after the push)
+- Commit: 6e3bdf2c
 - Found by: the std coverage table (decision 0276; owner approval 2026-10-21, decision 0305)
 - Go reference: compress/flate (deflate.go, deflatefast.go, huffman_bit_writer.go, inflate.go), compress/gzip, compress/zlib, hash/adler32 (go1.26.1)
 - Test: internal/stdtest/testdata/corpus/compress (scripts/stdcorpus compress: 720 writes over every level, 431 decoder cases with Go's results)

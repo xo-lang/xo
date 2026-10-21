@@ -3,7 +3,7 @@
 ## 2026-10-21: behavior: Go's errors and options (decision 0298)
 
 - Kind: behavior
-- Commit: (filled in after the push)
+- Commit: 7b944931
 - Found by: differential test against Go's encoding/csv
 - Go reference: encoding/csv reader.go (readLine, readRecord, ParseError), writer.go (go1.26.1)
 - Test: std/native/csv_test.xo (Go's records and errors on 2,661 texts with every option; Go's Writer on 400 row sets); internal/llvm/testdata/golden/csv_basic
