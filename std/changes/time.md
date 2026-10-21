@@ -1,5 +1,16 @@
 # std/time changes
 
+## 2026-10-21: perf: layout fields validated without a list
+
+- Kind: perf
+- Commit: (filled in after the push)
+- Found by: XO_PROF=cpu (bench/results/regexp-time-csv-vs-go-2026-10-21.md)
+- Test: std module tests native/time on arm64 and LLVM
+
+A layout field is checked without building its argument list; the list is
+built only for the error text. 300,000 formats: 9,612 M to 8,725 M
+instructions; parses 4,824 M to 4,382 M. Results and error texts are the same.
+
 ## 2026-10-21: fix: the sign of an offset under a minute
 
 - Kind: fix

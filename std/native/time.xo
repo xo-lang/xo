@@ -438,6 +438,23 @@ fn field_args(name: Str) -> List[Str]? {
   }
 }
 
+/// Whether `{name}` or `{name:arg}` is a field of a layout (field_args
+/// without the list).
+fn field_ok(name: Str, arg: Str, has_arg: Bool) -> Bool {
+  if has_arg && arg == "" {
+    return false
+  }
+  match name {
+    "month" => !has_arg || arg is "1" | "short" | "name"
+    "day" => !has_arg || arg == "1"
+    "weekday" => has_arg && arg is "short" | "name"
+    "frac" => !has_arg || (arg.len() == 1 && arg >= "1" && arg <= "9")
+    "offset" => !has_arg || arg == "compact"
+    "year" | "hour" | "hour12" | "ampm" | "minute" | "second" | "zone" | "lbrace" | "rbrace" => !has_arg
+    _ => false
+  }
+}
+
 fn args_text(name: Str, args: List[Str]) -> Str {
   if name == "frac" {
     return "the forms are {frac}, {frac:1} to {frac:9}"
@@ -491,12 +508,12 @@ fn layout_items(layout: Str) -> List[Item] ! Str {
       }
       None => {}
     }
-    match field_args(name) {
-      None => return Err("unknown field {${body}}")
-      Some(args) => {
-        if has_arg && arg == "" || !has_arg && !args.contains("") || has_arg && !args.contains(arg) {
-          return Err("{${body}}: ${args_text(name, args)}")
-        }
+    // a valid field is checked without building its argument list; the
+    // list is built only for the error text
+    if !field_ok(name, arg, has_arg) {
+      match field_args(name) {
+        None => return Err("unknown field {${body}}")
+        Some(args) => return Err("{${body}}: ${args_text(name, args)}")
       }
     }
     if name == "lbrace" {
