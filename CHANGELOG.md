@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- HTTP server: a connection marks itself idle and checks whether the
+  server stops with atomics instead of the server's lock, twice a
+  request (40% fewer contended lock slow paths at 32 connections);
+  XO_RTSTATS counts futex calls and slow lock paths by lock.
 - main's body runs on a fiber (decision 0286 step 1): a parked main
   moves to an idle worker while main's thread computes, so a program
   that sends work to a computing task no longer has its timers and wakes

@@ -300,7 +300,7 @@ pub fn wl_wait_as(c: Int, mu: Int, l: Int, cancelable: Bool, writer: Int) -> Boo
   wl_add(l, e)
   pool.unlock(mu)
   park_wait(c, cancelable)
-  pool.lock(mu)
+  pool.lock_k(mu, pool.ST_LOCK_TASK)
   wl_del(l, e)
   !(cancelable && budget.canceled(c))
 }
@@ -331,7 +331,7 @@ pub fn task_done(t: Int, rl: Int, failed: Int) {
 /// every task (core 7.1, child failure).
 fn fail_scope(t: Int, off: Int) {
   let s = ld(t, T_SCOPE)
-  pool.lock(s + S_MU)
+  pool.lock_k(s + S_MU, pool.ST_LOCK_TASK)
   let first = ld(s, off) == 0
   if first {
     rc.inc(t)
@@ -392,7 +392,7 @@ pub fn task_await(t: Int, lp: Int, ln: Int) -> Int {
       tsan(RT_TSAN_ACQUIRE, t)
       run_claimed(t, 2)
     }
-    pool.lock(t + T_MU)
+    pool.lock_k(t + T_MU, pool.ST_LOCK_TASK)
     while rt.slot_load[Int](t + T_STATE, 0, ACQUIRE) != T_DONE {
       if tracerec.built() {
         rt.mem_store(c, ctx.C_WHY, tracerec.WHY_JOIN, 8)
@@ -454,7 +454,7 @@ pub fn scope_group(s: Int) -> Int {
 pub fn scope_cancel(s: Int) {
   let fresh = rt.heap_large(56) - 8
   rt.mem_set(fresh, 0, 56)
-  pool.lock(s + S_MU)
+  pool.lock_k(s + S_MU, pool.ST_LOCK_TASK)
   let old = ld(s, S_TASKS)
   let n = ld4(s, S_NOLD)
   let a0 = ld(s, S_OLD)
@@ -694,7 +694,7 @@ pub fn scope_close(s: Int, mode: Int) -> Int {
     poll.timer_end(ld(s, S_DEADLINE))
     st(s, S_DEADLINE, 0)
   }
-  pool.lock(s + S_MU)
+  pool.lock_k(s + S_MU, pool.ST_LOCK_TASK)
   // no pruning from here: the helpers below walk the list unlocked
   st4(s, S_CLOSING, 1)
   if mode == 0 {
@@ -725,7 +725,7 @@ pub fn scope_close(s: Int, mode: Int) -> Int {
   // every task's end (its release of s) happens before the scope's close
   tsan(RT_TSAN_ACQUIRE, s)
   budget.resume(c)
-  pool.lock(s + S_MU)
+  pool.lock_k(s + S_MU, pool.ST_LOCK_TASK)
   st4(s, S_CLOSED, 1)
   var list = ld(s, S_LIST)
   st(s, S_LIST, 0)
@@ -948,7 +948,7 @@ pub fn run_claimed(t: Int, units: Int) {
   // (their acquires)
   tsan(RT_TSAN_RELEASE, t)
   tsan(RT_TSAN_RELEASE, s)
-  pool.lock(t + T_MU)
+  pool.lock_k(t + T_MU, pool.ST_LOCK_TASK)
   rt.slot_store[Int](t + T_STATE, 0, T_DONE, RELEASE)
   wl_wake(t + T_WAITERS)
   pool.unlock(t + T_MU)

@@ -252,7 +252,7 @@ fn send_body(c: Int, l: Int, lp: Int, ln: Int) {
     release(c, l)
     return
   }
-  pool.lock(c + CH_MU)
+  pool.lock_k(c + CH_MU, pool.ST_LOCK_CHAN)
   if ld4(c, CH_CLOSED) != 0 {
     pool.unlock(c + CH_MU)
     // the fault unwinds the sender (decision 0085)
@@ -286,7 +286,7 @@ fn send_body(c: Int, l: Int, lp: Int, ln: Int) {
       break
     }
     if budget.canceled(x) {
-      pool.lock(c + CH_MU)
+      pool.lock_k(c + CH_MU, pool.ST_LOCK_CHAN)
       if claim(fired) {
         cq_del(c + CH_SENDQ, e)
         pool.unlock(c + CH_MU)
@@ -300,7 +300,7 @@ fn send_body(c: Int, l: Int, lp: Int, ln: Int) {
     }
   }
   // the waker's writes
-  pool.lock(c + CH_MU)
+  pool.lock_k(c + CH_MU, pool.ST_LOCK_CHAN)
   let shut = ld4(e, E_SHUT)
   pool.unlock(c + CH_MU)
   if shut != 0 {
@@ -326,7 +326,7 @@ fn recv_body(c: Int) -> Int {
     st4(x, ctx.C_UNWINDING, 1)
     return tasks.empty_list()
   }
-  pool.lock(c + CH_MU)
+  pool.lock_k(c + CH_MU, pool.ST_LOCK_CHAN)
   // the common case inline: a value in the ring and no sender waiting
   let n = ld(c, CH_LEN)
   if n > 0 && ld(c + CH_SENDQ, Q_HEAD) == 0 {
@@ -359,7 +359,7 @@ fn recv_body(c: Int) -> Int {
       break
     }
     if budget.canceled(x) {
-      pool.lock(c + CH_MU)
+      pool.lock_k(c + CH_MU, pool.ST_LOCK_CHAN)
       if claim(fired) {
         cq_del(c + CH_RECVQ, e)
         pool.unlock(c + CH_MU)
@@ -371,7 +371,7 @@ fn recv_body(c: Int) -> Int {
       break
     }
   }
-  pool.lock(c + CH_MU)
+  pool.lock_k(c + CH_MU, pool.ST_LOCK_CHAN)
   let out = ld(e, E_ITEM)
   pool.unlock(c + CH_MU)
   if out != 0 { out } else { tasks.empty_list() }
@@ -388,7 +388,7 @@ pub fn try_send(c: Int, l: Int) -> Int {
 
 fn try_send_body(c: Int, l: Int) -> Int {
   pool.defer_check()
-  pool.lock(c + CH_MU)
+  pool.lock_k(c + CH_MU, pool.ST_LOCK_CHAN)
   let ok = ld4(c, CH_CLOSED) == 0 && try_send_locked(c, l)
   pool.unlock(c + CH_MU)
   if !ok {
@@ -408,7 +408,7 @@ pub fn try_recv(c: Int) -> Int {
 
 fn try_recv_body(c: Int) -> Int {
   pool.defer_check()
-  pool.lock(c + CH_MU)
+  pool.lock_k(c + CH_MU, pool.ST_LOCK_CHAN)
   let (ok, got) = try_recv_locked(c)
   pool.unlock(c + CH_MU)
   if ok && got != 0 { got } else { tasks.empty_list() }
@@ -424,7 +424,7 @@ pub fn close(c: Int) {
 }
 
 fn close_body(c: Int) {
-  pool.lock(c + CH_MU)
+  pool.lock_k(c + CH_MU, pool.ST_LOCK_CHAN)
   if ld4(c, CH_CLOSED) == 0 {
     st4(c, CH_CLOSED, 1)
     var e = cq_take(c + CH_RECVQ)
@@ -445,7 +445,7 @@ fn close_body(c: Int) {
 
 /// `ch.len()` (xo_chan_len).
 pub fn len(c: Int) -> Int {
-  pool.lock(c + CH_MU)
+  pool.lock_k(c + CH_MU, pool.ST_LOCK_CHAN)
   let n = ld(c, CH_LEN)
   pool.unlock(c + CH_MU)
   n

@@ -164,6 +164,7 @@ fn stat(k: Int) { rtstats.count(k) }
 /// Takes and releases the lock word at l (xo_rt.c lk and unlk).
 fn lk(l: Int) {
   if !rt.slot_cas(l, 0, 0, 1, ACQUIRE) {
+    stat(pool.ST_LOCK_PD)
     pool.lock_slow(l)
   }
 }

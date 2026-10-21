@@ -143,7 +143,7 @@ fn wait_body(s: Int, lp: Int, ln: Int) -> Int {
   st(s, SE_CHOSEN, -1)
   pool.park_reset(x + ctx.C_PARK)
   for i in 0..nc {
-    pool.lock(ld(cs, 8 * i) + chan.CH_MU)
+    pool.lock_k(ld(cs, 8 * i) + chan.CH_MU, pool.ST_LOCK_CHAN)
   }
   var done = -1
   var shut = false
@@ -221,7 +221,7 @@ fn wait_body(s: Int, lp: Int, ln: Int) -> Int {
     // take the arms off every queue; the waker's writes are visible
     // under the channel locks
     for j in 0..nc {
-      pool.lock(ld(cs, 8 * j) + chan.CH_MU)
+      pool.lock_k(ld(cs, 8 * j) + chan.CH_MU, pool.ST_LOCK_CHAN)
     }
     for j in 0..n {
       let a = arms + A_SIZE * j

@@ -72,7 +72,7 @@ fn srvtls_h2(hc: Int, t: Int) -> Int {
   if s != 0 {
     hconn.lock(s)
     st(hc, hconn.HC_H2, c)
-    if ld(s, hconn.SR_STOPPING) != 0 {
+    if hconn.stopping_at(s) {
       h2srv.conn_stop(c)
     }
     hconn.unlock(s)

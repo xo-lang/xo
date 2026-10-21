@@ -105,14 +105,15 @@ pub fn srv_stop(s: rthttp.Srv) { stop_at(srec(s)) }
 
 fn stop_at(a: Int) {
   hconn.lock(a)
-  st(a, hconn.SR_STOPPING, 1)
+  // stopping first, then each connection's mark (hconn.stopping_at)
+  hconn.set_stopping(a)
   var hc = ld(a, hconn.SR_CONNS)
   while hc != 0 {
     let h2 = ld(hc, hconn.HC_H2)
     if h2 != 0 {
       // GOAWAY, then the streams in flight finish
       let _s = rt.call_c2(hconn.tls_op(hconn.TO_H2_STOP), h2, 0)
-    } else if ld(hc, hconn.HC_IDLE) != 0 {
+    } else if hconn.idle_at(hc) {
       poll.pd_close(hconn.conn_pd(hc))
     }
     hc = ld(hc, hconn.HC_NEXT)
@@ -234,7 +235,7 @@ pub fn hc_new(s: rthttp.Srv, c: ServerConn) -> rthttp.HConn {
   if tls != 0 {
     st(hc, hconn.HC_TLS, rt.call_c2(hconn.tls_op(hconn.TO_CONN), tls, pd))
   }
-  if ld(a, hconn.SR_STOPPING) != 0 {
+  if hconn.stopping_at(a) {
     poll.pd_close(pd)
   }
   hconn.unlock(a)
@@ -253,13 +254,11 @@ pub fn hc_h2(h: rthttp.HConn) -> Int {
   }
   let s = ld(hc, hconn.HC_SRV)
   if s != 0 {
-    hconn.lock(s)
-    if ld(s, hconn.SR_STOPPING) != 0 {
-      hconn.unlock(s)
+    // the mark first, then stopping (hconn.stopping_at)
+    hconn.set_idle(hc, true)
+    if hconn.stopping_at(s) {
       return 0
     }
-    st(hc, hconn.HC_IDLE, 1)
-    hconn.unlock(s)
   }
   // the handshake and HTTP/2's setup (cabi_tls.xo srvtls_h2)
   rt.call_c2(hconn.tls_op(hconn.TO_H2), hc, tls)
@@ -483,7 +482,7 @@ pub fn stream_put(f: rt.Any) -> Int {
   let a = rt.obj_addr(f)
   rc.inc(a)
   let t = table()
-  pool.lock(t + ST_MU)
+  pool.lock_k(t + ST_MU, pool.ST_LOCK_HTTP)
   let n = ld(t, ST_N)
   if n == 0 || (n >= 4 && (n & (n - 1)) == 0) {
     st(t, ST_FS, raw.c_resize(ld(t, ST_FS), 8 * (if n == 0 { 4 } else { 2 * n })))
@@ -498,7 +497,7 @@ pub fn stream_put(f: rt.Any) -> Int {
 /// take removes it from the table.
 pub fn stream_get(id: Int, take: Bool) -> List[rt.Any] {
   let t = table()
-  pool.lock(t + ST_MU)
+  pool.lock_k(t + ST_MU, pool.ST_LOCK_HTTP)
   var f = 0
   if id >= 1 && id <= ld(t, ST_N) {
     let fs = ld(t, ST_FS)
@@ -524,7 +523,7 @@ pub fn stream_get(id: Int, take: Bool) -> List[rt.Any] {
 /// connections (hclient.xo; the leak check).
 pub fn streams_free() {
   let t = table()
-  pool.lock(t + ST_MU)
+  pool.lock_k(t + ST_MU, pool.ST_LOCK_HTTP)
   let fs = ld(t, ST_FS)
   let n = ld(t, ST_N)
   st(t, ST_FS, 0)

@@ -32,6 +32,9 @@ use native/rthttp
 /// and their count; whether it stops; the wait list of srv_wait (tasks.xo
 /// WL_*, two words); the scope of the connection tasks (a reference);
 /// whether srv_close ran.
+/// The slot atomics' sequentially consistent order (rt.xo).
+const SEQ_CST = 4
+
 pub const SR_TLS = 16
 pub const SR_MU = 24
 pub const SR_CONNS = 32
@@ -157,7 +160,7 @@ pub fn deadline(d: Int) -> Int {
   if d > 0 && now > 9223372036854775807 - d { 9223372036854775807 } else { now + d }
 }
 
-pub fn lock(s: Int) { pool.lock(s + SR_MU) }
+pub fn lock(s: Int) { pool.lock_k(s + SR_MU, pool.ST_LOCK_HTTP) }
 
 pub fn unlock(s: Int) { pool.unlock(s + SR_MU) }
 
@@ -227,15 +230,30 @@ pub fn unregister(hc: Int) {
   unlock(s)
 }
 
+/// Whether server record s is stopping. Stopping and a connection's idle
+/// mark are sequentially consistent atomics, not under the server's lock
+/// (2026-10-21: recv took that lock twice a request, every connection's
+/// on one lock: a slow path in 2.4% of requests at 32 connections, and
+/// the line moved between cores on every request). A reader marks
+/// itself idle and then reads stopping; srv_stop stores stopping and then
+/// reads each connection's mark: at least one of them sees the other's
+/// store, so an idle connection is never missed by a stop (both may see
+/// both: the reader gives up and the stop closes its descriptor, which
+/// pd_close does once).
+pub fn stopping_at(s: Int) -> Bool { rt.slot_load(s, SR_STOPPING / 8, SEQ_CST) != 0 }
+
+/// Marks server record s stopping (srv_stop, its lock held).
+pub fn set_stopping(s: Int) { rt.slot_store(s, SR_STOPPING / 8, 1, SEQ_CST) }
+
+/// Whether connection record hc waits for a request's first byte.
+pub fn idle_at(hc: Int) -> Bool { rt.slot_load(hc, HC_IDLE / 8, SEQ_CST) != 0 }
+
 /// Marks record hc as waiting for a request's first byte (idle) or not.
 pub fn set_idle(hc: Int, idle: Bool) {
-  let s = ld(hc, HC_SRV)
-  if s == 0 {
+  if ld(hc, HC_SRV) == 0 {
     return
   }
-  lock(s)
-  st(hc, HC_IDLE, if idle { 1 } else { 0 })
-  unlock(s)
+  rt.slot_store(hc, HC_IDLE / 8, if idle { 1 } else { 0 }, SEQ_CST)
 }
 
 /// Reads at most cap bytes to the address p (http1.xo fill): the count,
@@ -246,13 +264,11 @@ pub fn recv(h: rthttp.HConn, p: Int, cap: Int, idle: Bool) -> Int {
   let hc = rec(h)
   let s = ld(hc, HC_SRV)
   if s != 0 {
-    lock(s)
-    if idle && ld(s, SR_STOPPING) != 0 {
-      unlock(s)
+    // the mark first, then stopping (stopping_at)
+    set_idle(hc, idle)
+    if idle && stopping_at(s) {
       return -1
     }
-    st(hc, HC_IDLE, if idle { 1 } else { 0 })
-    unlock(s)
   }
   var r = -1
   let tls = ld(hc, HC_TLS)
@@ -325,10 +341,7 @@ pub fn stopping(h: rthttp.HConn) -> Bool {
   if s == 0 {
     return false
   }
-  lock(s)
-  let r = ld(s, SR_STOPPING) != 0
-  unlock(s)
-  r
+  stopping_at(s)
 }
 
 /// Shuts down the sending side (after a 431 answer).

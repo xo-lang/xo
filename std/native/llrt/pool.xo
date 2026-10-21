@@ -212,6 +212,19 @@ const ST_LOCK_SLOW = 10
 const ST_MON_TICK = 23
 const ST_MON_WAKE = 24
 const ST_DEFER = 25
+/// futex (ulock, WaitOnAddress) calls, and the slow paths of the
+/// inject queue's, a descriptor's (poll.xo), the pool's, and a park's
+/// locks (2026-10-21: which handoff costs the futex calls)
+const ST_FUTEX_WAIT = 26
+const ST_FUTEX_WAKE = 27
+const ST_LOCK_INJECT = 28
+pub const ST_LOCK_PD = 29
+const ST_LOCK_POOL = 30
+const ST_LOCK_PARK = 31
+pub const ST_LOCK_HTTP = 32
+pub const ST_LOCK_CHAN = 33
+pub const ST_LOCK_MUTEX = 34
+pub const ST_LOCK_TASK = 35
 
 /// How long a fiber stays in its waker's next before a thief may take
 /// it (xo_rt.c XO_NEXT_GRACE_NS).
@@ -252,6 +265,7 @@ fn stat(k: Int) {
 /// Sleeps while the 32 bit word at a holds v (or until a wake up, or
 /// spuriously).
 pub fn futex_wait(a: Int, v: Int) {
+  stat(ST_FUTEX_WAIT)
   match layer() {
     1 => {
       // FUTEX_WAIT_PRIVATE
@@ -272,6 +286,7 @@ pub fn futex_wait(a: Int, v: Int) {
 
 /// futex_wait for at most about us microseconds.
 fn futex_wait_us(a: Int, v: Int, us: Int) {
+  stat(ST_FUTEX_WAIT)
   match layer() {
     1 => {
       // a relative struct timespec in the thread's scratch words
@@ -295,6 +310,7 @@ fn futex_wait_us(a: Int, v: Int, us: Int) {
 
 /// Wakes a thread sleeping on the word at a.
 pub fn futex_wake(a: Int) {
+  stat(ST_FUTEX_WAKE)
   match layer() {
     1 => {
       // FUTEX_WAKE_PRIVATE
@@ -336,6 +352,15 @@ pub fn lock_slow(l: Int) {
 /// Takes the lock word l (xo_rt.c lk).
 pub fn lock(l: Int) {
   if !rt.slot_cas[Int](l, 0, 0, 1, ACQUIRE) {
+    lock_slow(l)
+  }
+}
+
+/// lock, counting a slow path as statistic k (one of the ST_LOCK_* of
+/// the runtime's modules, under XO_RTSTATS=1).
+pub fn lock_k(l: Int, k: Int) {
+  if !rt.slot_cas[Int](l, 0, 0, 1, ACQUIRE) {
+    stat(k)
     lock_slow(l)
   }
 }
@@ -518,6 +543,7 @@ fn inject_add(p: Int, src: Int, n: Int, x: Int) {
   let im = p.wrapping_add(P_IMU)
   let all = if x != 0 { n.wrapping_add(1) } else { n }
   if !rt.slot_cas(im, 0, 0, 1, ACQUIRE) {
+    stat(ST_LOCK_INJECT)
     lock_slow(im)
   }
   let len = rt.mem_load(p, P_ILEN_AT, 8)
@@ -566,6 +592,7 @@ fn inject_pop(p: Int, w: Int) -> Int {
   var n = 0
   var first = 0
   if !rt.slot_cas(im, 0, 0, 1, ACQUIRE) {
+    stat(ST_LOCK_INJECT)
     lock_slow(im)
   }
   let len = rt.mem_load(p, P_ILEN_AT, 8)
@@ -646,6 +673,7 @@ fn inject_get_scope(p: Int, s: Int) -> Int {
   }
   let im = p.wrapping_add(P_IMU)
   if !rt.slot_cas(im, 0, 0, 1, ACQUIRE) {
+    stat(ST_LOCK_INJECT)
     lock_slow(im)
   }
   var it = 0
@@ -1465,6 +1493,7 @@ const DLK_MAINF = 6
 /// thread's worker record when the lock order is checked.
 fn plock(p: Int) {
   if !rt.slot_cas(p, 0, 0, 1, ACQUIRE) {
+    stat(ST_LOCK_POOL)
     lock_slow(p)
   }
   if rt.slot_load(rt.mem_load(p, P_DLK, 8), DLK_LOCKCHECK, RELAXED) != 0 {
@@ -1507,6 +1536,7 @@ fn klock(k: Int) {
     let _r = rt.call_c2(rt.fn_addr("lock_order"), 0, 0)
   }
   if !rt.slot_cas(k, 0, 0, 1, ACQUIRE) {
+    stat(ST_LOCK_PARK)
     lock_slow(k)
   }
 }

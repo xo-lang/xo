@@ -251,7 +251,7 @@ fn lock_body(m: Int, lp: Int, ln: Int) -> Int {
   let c = ctx.cur()
   let w = "with"
   held_add(c, m, raw.data(w), 4, lp, ln)
-  pool.lock(m + M_MU)
+  pool.lock_k(m + M_MU, pool.ST_LOCK_MUTEX)
   if ld4(m, M_WRITER) != 0 || ld(m, M_READERS) > 0 {
     st(m, M_WWAIT, ld(m, M_WWAIT) + 1)
     while ld4(m, M_WRITER) != 0 || ld(m, M_READERS) > 0 {
@@ -286,7 +286,7 @@ pub fn unlock(m: Int, l: Int) {
 
 fn unlock_body(m: Int, l: Int) {
   pool.defer_check()
-  pool.lock(m + M_MU)
+  pool.lock_k(m + M_MU, pool.ST_LOCK_MUTEX)
   st(m, M_SLOT, l)
   st4(m, M_WRITER, 0)
   wake(m, true)
@@ -310,7 +310,7 @@ fn rlock_body(m: Int, lp: Int, ln: Int) -> Int {
   let c = ctx.cur()
   let w = "with_read"
   held_add(c, m, raw.data(w), 9, lp, ln)
-  pool.lock(m + M_MU)
+  pool.lock_k(m + M_MU, pool.ST_LOCK_MUTEX)
   if ld4(m, M_WRITER) != 0 || ld(m, M_WWAIT) > 0 {
     let e = c + ctx.C_WENT
     st(e, E_PARK, c + ctx.C_PARK)
@@ -332,7 +332,7 @@ fn rlock_body(m: Int, lp: Int, ln: Int) -> Int {
         rc.inc(l)
         return l
       }
-      pool.lock(m + M_MU)
+      pool.lock_k(m + M_MU, pool.ST_LOCK_MUTEX)
       if ld4(e, E_GRANTED) != 0 {
         break
       }
@@ -370,7 +370,7 @@ fn runlock_body(m: Int, l: Int) {
     // not reached: the Mutex holds the value
     let _d = rt.call_c2(ld(m, M_DROP), l, 0)
   }
-  pool.lock(m + M_MU)
+  pool.lock_k(m + M_MU, pool.ST_LOCK_MUTEX)
   let r = ld(m, M_READERS) - 1
   st(m, M_READERS, r)
   if r == 0 {
@@ -390,7 +390,7 @@ pub fn free(m: Int) {
 /// lock: std/internal rt_probe's "writers" and "readers" (decision 0241,
 /// the handoff test).
 pub fn queued(m: Int, writers: Bool) -> Int {
-  pool.lock(m + M_MU)
+  pool.lock_k(m + M_MU, pool.ST_LOCK_MUTEX)
   let n = rt.mem_load(m, if writers { M_WWAIT } else { M_RWAIT }, 8)
   pool.unlock(m + M_MU)
   n
