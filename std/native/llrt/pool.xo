@@ -2333,7 +2333,11 @@ fn mon_scan(p: Int) -> Bool {
   let n = rt.slot_load(p, P_NW, SEQ_CST)
   let now = sysio.mono_ns()
   var pending = false
-  let waiting = any_work(p) != 0 && rt.slot_load(rt.mem_load(p, P_DLK, 8), DLK_NOPREEMPT, RELAXED) == 0
+  // work waits, no worker is idle to take it, and no other can start
+  // (wakep wakes or starts one then: preempting then only moved the waiting task
+  // onto the long runner's thread, TestRuntimeTasks' magazines, whose
+  // spawner spins while another worker frees)
+  let waiting = any_work(p) != 0 && rt.slot_load(p, P_NIDLE, SEQ_CST) == 0 && workers(p) >= rt.mem_load(p, P_NCPU, 8) && rt.slot_load(rt.mem_load(p, P_DLK, 8), DLK_NOPREEMPT, RELAXED) == 0
   var asked = false
   var i = 0
   while i < n {
