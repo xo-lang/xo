@@ -336,7 +336,7 @@ the stress programs on every backend and are in the Docker amd64
 sample. darwin/amd64 is untested (no Intel Mac in the gates: best
 effort).
 
-## Addendum (2026-10-21): the LLVM backend (stage 4, proposed)
+## Addendum (2026-10-21): the LLVM backend (stage 4; Accepted, owner 2026-10-21)
 
 Owner and lead, 2026-10-21: LLVM builds go poll-free too. Xo lang 4's
 measurement: nbody at O3 with the approved list fixes runs 1,169 M
@@ -373,20 +373,32 @@ when it must not be interrupted, with a count kept per fiber.
    inline, not through the noinline xo_tlocal_get) and ends, on every
    return, by taking one away through the same fiber pointer, so a
    function that parks and resumes on another thread still decrements
-   its own fiber. A compiler barrier (`asm sideeffect "", "~{memory}"`)
-   follows the increment and precedes the decrement, so no load or store
-   of the guarded body moves out when LLVM inlines it. A thread with no
+   its own fiber. The count's updates are volatile, and an
+   `asm sideeffect "", "~{memory}"` follows the increment and precedes
+   the decrement: an opaque instruction that may read and write all
+   memory, which LLVM moves no load or store across (stronger in practice
+   than a `fence syncscope("singlethread")`, which orders atomic
+   operations; xo_tlocal_get relies on the same barrier), so no load or
+   store of the guarded body moves out when LLVM inlines it. A thread with no
    fiber skips both (it is never preempted). The count is per fiber,
    not per thread: a fiber that parks inside a marked function (a
    channel wait inlined into the program) leaves its own count up while
    others run on the thread.
+   Not guarded, and kept out of program functions instead (`noinline`):
+   a marked function that runs program code or switches stacks (a
+   closure call, rt.sched_run_task, rt.stack_switch: the task runners
+   and fiber_run, which would otherwise hold the count for a whole task
+   body), and one that can raise (an unwind would skip the decrement).
+   The handler's own entries (on_urg, on_wpark, async_signal,
+   async_wpark) are exempt.
 3. **The handler** (unchanged otherwise) declines when the current
-   fiber's F_NOPRE is not 0, and when the PC is outside the Xo text: in
-   LLVM builds every Xo function, runtime included, is placed in a
-   section of its own (`__TEXT,__xo_text` on darwin, `xo_text` on ELF,
-   whose `__start_`/`__stop_` and `section$start$` symbols the linkers
+   fiber's F_NOPRE is not 0, and when the PC is outside the program's text: in LLVM builds the
+   program's functions (not the runtime's) are placed in a section of
+   their own (`__TEXT,__xo_text` on darwin, `xo_text` on ELF, whose
+   `section$start$` and `__start_`/`__stop_` symbols the linkers
    define), and static word 77's list holds one table: that section, no
-   ranges. The C library, compiler-rt, and the signal trampolines are
+   ranges. Runtime functions not inlined stay in the ordinary text, so
+   they are declined as the native backend's are. The C library, compiler-rt, and the signal trampolines are
    outside it, so an interrupted malloc or memmove is declined.
 4. **Polls off** for `--backend=llvm` on darwin and Linux, not --race
    (ThreadSanitizer, item 5). Windows LLVM follows stage 3.
