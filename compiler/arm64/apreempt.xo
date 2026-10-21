@@ -1,0 +1,134 @@
+// Decision 0318: asynchronous preemption's unsafe ranges. SIGURG's
+// handler (std/native/llrt apreempt.xo) declines when the interrupted PC
+// is in code that may be in the middle of updating a worker's own
+// structures: the runtime's functions, and the runtime code the inliner
+// copied into the program's. The emitter brackets each such block with
+// two labels (`_du<2k>` and `_du<2k+1>`, which the line passes keep as
+// rows), and each file of the program (each part of a split build) gets
+// a table of its ranges, offsets from a base label at its functions'
+// text's start:
+//
+//   xo_unsafe_<ns>: .quad base, .quad the text's size, .quad n, then n
+//                   pairs of .long start, end
+//
+// Preemptible code is only a file's functions' text (base to base plus
+// size) outside its ranges: the last file of a split build (the entry,
+// the exports, the count helpers, the scheduler's stubs) has no table, so
+// it is never interrupted. The last file lists every table
+// (xo_unsafe_parts: .quad count, then the tables' addresses), which
+// static word 77 holds (gen.xo end_data) for the handler.
+
+/// Whether a source path is the runtime's (compiler/ssa runtime_mod's
+/// modules: native/llrt, native/rt, native/sys_*), as Func.file and
+/// InlSite.file spell it (relative to the line root).
+fn rt_path(p: Str) -> Bool {
+  p.contains("native/llrt/") || p.ends_with("native/rt.xo") || p.contains("native/sys_")
+}
+
+/// Whether the current function is the runtime's own.
+fn (g: G) f_rt() -> Bool { rt_path(g.f.file) }
+
+/// Whether an instruction was copied from a runtime function by the
+/// inliner: its inline site, or one it was inlined through, is the
+/// runtime's.
+fn (g: G) inst_rt(inst: Inst) -> Bool {
+  var k = inst.inl
+  var depth = 0
+  while k >= 0 && k < g.f.inl_sites.len() && depth < 64 {
+    if rt_path(g.f.inl_sites[k].file) {
+      return true
+    }
+    k = g.f.inl_sites[k].parent
+    depth += 1
+  }
+  false
+}
+
+/// The instructions of a block of a program function that asynchronous
+/// preemption must not interrupt, (first, last) or (-1, -1): from the
+/// first instruction the inliner copied from the runtime to the last,
+/// everything between included, and one more on each side (a line pass
+/// may move a row label across one instruction: pair_mem puts the rows
+/// between the two halves of a pair before it). A runtime function is
+/// unsafe whole (emit brackets its text).
+fn (g: G) unsafe_span(mb: Int) -> (Int, Int) {
+  if g.f_rt() {
+    return (-1, -1)
+  }
+  let ins = g.blocks[mb].insts
+  var first = -1
+  var last = -1
+  for (k, inst) in ins.indexed() {
+    if g.inst_rt(inst) {
+      if first < 0 {
+        first = k
+      }
+      last = k
+    }
+  }
+  if first < 0 {
+    return (-1, -1)
+  }
+  ((first - 1).max(0), (last + 1).min(ins.len() - 1))
+}
+
+/// The labels before and after a file's functions' text and its unsafe
+/// range table, for text (the functions, as placed: entries from the
+/// caches included): the `_du` labels in order, paired.
+fn (var g: G) unsafe_table(text: Str, ns: Str) -> (Str, Str, Str) {
+  let base = g.sym("xo_utext_${ns}")
+  let end = g.sym("xo_utend_${ns}")
+  let tbl = g.sym("xo_unsafe_${ns}")
+  var labs: List[Str] = []
+  for l in text.split("\n") {
+    // local labels only (L on darwin, .L elsewhere: g.local), so no
+    // symbol that happens to contain `_du` shifts the pairs
+    if l.ends_with(":") && (l.starts_with("L") || l.starts_with(".L")) && l.contains("_du") {
+      let name = l[0..l.len() - 1]
+      let at = name.find("_du") ?? -1
+      if at >= 0 && at + 3 < name.len() && is_digits(name[at + 3..name.len()]) {
+        labs.push(name)
+      }
+    }
+  }
+  var b: List[Str] = ["${g.section("data")}${g.hidden_global(tbl)}\t.p2align 3\n${tbl}:\n\t.quad ${base}\n\t.quad ${end} - ${base}\n\t.quad ${labs.len() / 2}\n"]
+  var i = 0
+  while i + 1 < labs.len() {
+    // a start (`_du<2k>`) and its end (`_du<2k+1>`, the same function):
+    // anything else shifts every later pair, so it fails the build
+    if !du_pair(labs[i], labs[i + 1]) {
+      g.fail("asynchronous preemption: unsafe range labels ${labs[i]} and ${labs[i + 1]} are not a pair (decision 0318)")
+      break
+    }
+    b.push("\t.long ${labs[i]} - ${base}\n\t.long ${labs[i + 1]} - ${base}\n")
+    i += 2
+  }
+  if labs.len() % 2 != 0 && g.err.is_empty() {
+    g.fail("asynchronous preemption: an unsafe range label without its end (decision 0318)")
+  }
+  ("${g.hidden_global(base)}${base}:\n", "${g.hidden_global(end)}${end}:\n", b.join(""))
+}
+
+/// Whether labels a and b are a range's start and end: one prefix, a's
+/// number even and b's the next.
+fn du_pair(a: Str, b: Str) -> Bool {
+  let ia = a.rfind("_du") ?? -1
+  let ib = b.rfind("_du") ?? -1
+  if ia < 0 || ib < 0 || a[0..ia] != b[0..ib] {
+    return false
+  }
+  let na = Int.parse(a[ia + 3..a.len()]) ?? -1
+  let nb = Int.parse(b[ib + 3..b.len()]) ?? -1
+  na >= 0 && na % 2 == 0 && nb == na + 1
+}
+
+/// The list of every file's table (the last file's), held in static word
+/// 77 (end_data).
+fn (g: G) unsafe_parts(nss: List[Str]) -> Str {
+  let s = g.sym("xo_unsafe_parts")
+  var b: List[Str] = ["${g.section("data")}${g.hidden_global(s)}\t.p2align 3\n${s}:\n\t.quad ${nss.len()}\n"]
+  for ns in nss {
+    b.push("\t.quad ${g.sym("xo_unsafe_${ns}")}\n")
+  }
+  b.join("")
+}

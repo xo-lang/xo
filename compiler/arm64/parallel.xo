@@ -387,6 +387,9 @@ pub fn generate_cached(m0: ssa.Module, os: Str, jobs: Int, fc: FnCache) -> Progr
   out.push(g.debug_sections(g.static_ref))
   g.shared_code(out)
   g.data(out)
+  if m.async_preempt {
+    out.push(g.unsafe_parts(names))
+  }
   g.end_data(out)
   files.push(out.join(""))
   // the module's own symbols are not weak (weak_ref), each file on a
@@ -477,10 +480,17 @@ fn gen_part(m: ssa.Module, os: Str, taken: Map[Str, Bool], lo: Int, hi: Int, ns:
   var out: List[Str] = []
   g.file_header(out)
   out.push(g.section("text"))
-  out.push(g.text.join(""))
+  let text = g.text.join("")
+  // decision 0318: the functions' text between two labels, and its unsafe
+  // ranges' table
+  let (ubase, uend, utbl) = if m.async_preempt { g.unsafe_table(text, ns) } else { ("", "", "") }
+  out.push(ubase)
+  out.push(text)
+  out.push(uend)
   out.push(g.lsdas.join(""))
   out.push(g.debug_sections(false))
   g.data(out)
+  out.push(utbl)
   if os == "linux" {
     out.push("\t.section .note.GNU-stack,\"\",@progbits\n")
   }

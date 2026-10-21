@@ -257,3 +257,63 @@ Sequences the emitter lowers inline, not from an inlined runtime body
 - Thread local table reads in std's native modules (rt.tlocal_get
   outside the runtime): pinned to the same thread, the table is the
   same.
+
+## Addendum (2026-10-21): stage 1 as built (arm64 darwin and Linux, native backend)
+
+- **Tables, not a runtime section.** The emitter (compiler/arm64
+  apreempt.xo) brackets unsafe code with local `_du<2k>` and `_du<2k+1>`
+  labels, which every line pass keeps as rows (lsr.xo is_row_label). A
+  runtime function (Func.file under native/llrt, native/rt.xo, or
+  native/sys_*: runtime_mod's modules) is one range, prologue and fault
+  stubs included. In a program function a block's range runs from its
+  first instruction whose inline site chain (InlSite.file, .parent)
+  reaches a runtime file to its last, everything between included, with
+  one instruction more on each side (pair_mem moves the rows between the
+  two halves of a pair before it). Each file of a build (each part of a
+  split build, cache hits included, since the labels are in the placed
+  text) gets `xo_unsafe_<ns>`: its functions' text start, its size, the
+  range count, and the ranges as 32 bit offset pairs in order; the last
+  file lists them in `xo_unsafe_parts`, held in static word 77. The last
+  file's code (entry, exports, count helpers, the scheduler's stubs) is
+  in no table, so it is never interrupted, and neither are the C library
+  and the signal trampolines. An unpaired label fails the build. Ranges
+  are found by a binary search per file.
+- **Switch.** On for `--backend=arm64` (the native default on arm64)
+  targeting darwin or linux, not `--race`; `XO_ASYNC_PREEMPT=0` keeps the
+  loop polls (decision 0286 step 3), `--no-preempt` and
+  `XO_PREEMPT_POLLS=off` turn both off. Keyed in the front end, function
+  and part caches (`async=`). LLVM keeps its polls (its inliner keeps no
+  provenance for the tables).
+- **Runtime (pool.xo).** The monitor installs SIGURG's handler
+  (SA_SIGINFO, SA_RESTART, on the interrupted stack) when it starts; each
+  worker records its thread (pthread_self, gettid) in its loop's start
+  (worker_main, root_main). An ask (mon_scan) sends pthread_kill or
+  tgkill, and is sent again each tick while it is out. The handler
+  (cabi.xo on_urg, pool.async_signal) declines unless the thread runs a
+  fiber in a worker loop with no runtime lock, an ask is out, the PC is in
+  a table's text outside its ranges, and the stack has 48 KiB above the
+  mapping's start; then it serves the ask, unblocks SIGURG (the worker's
+  other fibers stay preemptible; sigreturn restores the interrupted
+  mask), and yields. run_fiber puts such a fiber on its worker's pinned
+  list (W_PIN, linked by F_NEXT), which take_local reads after the ring.
+  A pinned fiber counts as waiting work for its worker in mon_scan: when
+  it did not, a fiber preempted while another took its place waited for
+  that one to end (2 preemptions instead of about 100 in the register
+  test).
+- **Measured.** Instructions on linux/arm64 (callgrind, Docker):
+  sieve 1,682,418,179 against 1,682,418,157 with `--no-preempt`
+  (2,110,917,208 with the polls), sort 1,356,668,664 against
+  1,356,668,642 (1,515,515,249), nbody 2,905,036,037 against
+  2,905,035,449 (3,165,035,146), fib equal; collatz (no callgrind count)
+  0.51 to 0.53 s user against 0.50 to 0.53 on the Mac. Tests
+  (internal/llvm TestAsyncPreempt, darwin and Linux): every register
+  restored across 1,800 to 2,900 interruptions per 20 runs; an
+  allocating loop interrupted 640 to 1,150 times per 100 runs with the
+  leak check and XO_HEAP_GUARD; the profiler's SIGPROF alongside;
+  TestPreempt, TestPreemptMigrate (plain and --race) unchanged.
+- **Limit.** An inlined runtime value with no line takes its call's
+  site (inline.xo), so it counts as program code; inside a sequence the
+  first-to-last span covers it, so only a runtime sequence whose first
+  or last side effect has no line would escape (stores and atomics come
+  from source lines). A loop whose every block is inlined runtime code
+  is not preemptible (a runtime loop, bounded).

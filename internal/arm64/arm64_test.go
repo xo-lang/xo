@@ -505,12 +505,27 @@ func TestGoldenRunSpill(t *testing.T) {
 // 0286 step 3's opt out for tight loop benchmarks) sieve's own loops have
 // no preemption poll (no `_ppN` stub label, no xo_preempt_stub call);
 // without it they have one.
+// TestNoPreemptPolls: the native arm64 backend preempts by signal
+// (decision 0318): no loop polls by default, and the unsafe range tables;
+// XO_ASYNC_PREEMPT=0 brings the polls back (decision 0286 step 3), and
+// XO_PREEMPT_POLLS=off removes them again.
 func TestNoPreemptPolls(t *testing.T) {
 	dir := filepath.Join(benchDir, "sieve")
 	poll := regexp.MustCompile(`_pp[0-9]+\b`)
-	with := ownFuncs(asm(t, dir, "darwin"))
-	if !poll.MatchString(with) {
-		t.Fatalf("sieve's loops have no poll by default:\n%s", with)
+	full := asm(t, dir, "darwin")
+	if def := ownFuncs(full); poll.MatchString(def) || strings.Contains(def, "xo_preempt_stub") {
+		t.Fatalf("sieve's loops poll by default (decision 0318):\n%s", def)
+	}
+	if !strings.Contains(full, "_xo_unsafe_parts:") {
+		t.Fatalf("no unsafe range tables by default (decision 0318)")
+	}
+	t.Setenv("XO_ASYNC_PREEMPT", "0")
+	with := asm(t, dir, "darwin")
+	if !poll.MatchString(ownFuncs(with)) {
+		t.Fatalf("XO_ASYNC_PREEMPT=0: sieve's loops have no poll:\n%s", ownFuncs(with))
+	}
+	if strings.Contains(with, "_xo_unsafe_parts:") {
+		t.Fatalf("XO_ASYNC_PREEMPT=0: the unsafe range tables are still there")
 	}
 	t.Setenv("XO_PREEMPT_POLLS", "off")
 	without := ownFuncs(asm(t, dir, "darwin"))

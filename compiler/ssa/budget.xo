@@ -34,7 +34,7 @@ const PREEMPT_WORD = 76
 /// W_PREEMPT tested, a call of xo_preempt_stub (which keeps every
 /// register) when it is set; the word's address is loop invariant.
 fn (var b: Builder) preempt_poll() {
-  if !b.s.ppolls || b.m.no_preempt || b.wasm || !(b.goarch is "arm64" | "amd64") || b.is_dead() {
+  if !b.s.ppolls || b.m.no_preempt || b.m.async_preempt || b.wasm || !(b.goarch is "arm64" | "amd64") || b.is_dead() {
     return
   }
   let a = b.rt("static_word", b.int_t(), [b.cint(PREEMPT_WORD)])

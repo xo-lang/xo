@@ -254,10 +254,19 @@ fn (var g: G) emit() {
     }
     let head = g.check_head(mb)
     let ins = g.blocks[mb].insts
+    // decision 0318: the instructions asynchronous preemption must not
+    // interrupt (apreempt.xo), between two `_du` labels
+    let (us, ue) = if g.m.async_preempt { g.unsafe_span(mb) } else { (-1, -1) }
+    var uopen = false
     g.ended = false
     for (k, inst) in ins.indexed() {
       if g.ended {
         break // past a tail call
+      }
+      if k == us {
+        b.push("${g.local("${g.lbl_prefix()}_du${g.du_n}")}:\n")
+        g.du_n += 1
+        uopen = true
       }
       g.pos = g.blocks[mb].start + 4 * k
       if dv_next < dvp.need.len() && dvp.need[dv_next] <= g.pos / 4 {
@@ -283,6 +292,15 @@ fn (var g: G) emit() {
       if k == 0 && head {
         b.push("${g.label(mb)}_c:\n") // past the check (rotate_jump)
       }
+      if k == ue && uopen {
+        b.push("${g.local("${g.lbl_prefix()}_du${g.du_n}")}:\n")
+        g.du_n += 1
+        uopen = false
+      }
+    }
+    if uopen {
+      b.push("${g.local("${g.lbl_prefix()}_du${g.du_n}")}:\n")
+      g.du_n += 1
     }
   }
   if g.fr.leaf && !g.stubs.is_empty() {
@@ -412,7 +430,16 @@ fn (var g: G) emit() {
       g.fail("XO_OP_VERIFY: ${g.f.name}: local_empty_ops differs from local_empty_l")
     }
   }
-  g.text.push(le)
+  if g.m.async_preempt && g.f_rt() {
+    // decision 0318: a runtime function is unsafe whole, its prologue
+    // and fault stubs too (apreempt.xo)
+    let a = g.local("${g.lbl_prefix()}_du${g.du_n}")
+    let z = g.local("${g.lbl_prefix()}_du${g.du_n + 1}")
+    g.du_n += 2
+    g.text.push("${a}:\n${le}${z}:\n")
+  } else {
+    g.text.push(le)
+  }
 }
 
 /// The number of instructions past which a function keeps adrp and add

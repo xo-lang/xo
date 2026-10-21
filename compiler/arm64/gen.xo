@@ -85,13 +85,23 @@ fn (var g: G) generate() -> Program {
   var out: List[Str] = []
   g.file_header(out)
   out.push(g.section("text"))
-  out.push(g.text.join(""))
+  let text = g.text.join("")
+  // decision 0318: the functions' text between two labels (not the
+  // helpers and stubs after it), and its unsafe ranges' table
+  let (ubase, uend, utbl) = if g.m.async_preempt { g.unsafe_table(text, "main") } else { ("", "", "") }
+  out.push(ubase)
+  out.push(text)
+  out.push(uend)
   out.push(g.helpers.join(""))
   g.trampolines(out)
   out.push(g.lsdas.join(""))
   out.push(g.debug_sections(g.static_ref))
   g.shared_code(out)
   g.data(out)
+  out.push(utbl)
+  if g.m.async_preempt {
+    out.push(g.unsafe_parts(["main"]))
+  }
   g.end_data(out)
   Program{asm: g.win_text(g.drop_own_weak(out.join(""))), err: g.err, skipped: g.skipped, dumps: g.dumps}
 }
@@ -166,6 +176,10 @@ fn (g: G) shared_code(var out: List[Str]) {
 /// The words of rt.static_word's table (xo_static).
 const STATIC_WORDS = 256
 
+/// rt.static_word 77 (std/native/rt.xo's table): decision 0318's unsafe
+/// range tables (std/native/llrt apreempt.xo).
+const UNSAFE_WORD = 77
+
 /// The process words of rt.sys_words and rt.static_word, and the end of an ELF file.
 fn (g: G) end_data(var out: List[Str]) {
   // the immortal placeholders first, at the data's start (page offset
@@ -193,8 +207,14 @@ fn (g: G) end_data(var out: List[Str]) {
     // process globals (64 until decision 0237), zero at start (.quad
     // lines: compiler/macho's assembler has no .zero)
     out.push("${g.section("data")}${g.tramp_def("xo_static")}\t.p2align 3\n${g.tramp("xo_static")}:\n")
-    for _ in 0..STATIC_WORDS {
-      out.push("\t.quad 0\n")
+    for k in 0..STATIC_WORDS {
+      // word 77: the unsafe range tables of asynchronous preemption
+      // (decision 0318, apreempt.xo), the one word set at start
+      if k == UNSAFE_WORD && g.m.async_preempt {
+        out.push("\t.quad ${g.sym("xo_unsafe_parts")}\n")
+      } else {
+        out.push("\t.quad 0\n")
+      }
     }
   }
   if g.os == "linux" && g.m.nolibc {

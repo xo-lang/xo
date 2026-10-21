@@ -1,0 +1,37 @@
+// preempt_alloc (decision 0318): asynchronous preemption interrupts loops
+// that allocate and free in program code (lists, strings, maps built and
+// dropped each iteration) while other tasks on the same worker
+// (XO_THREADS=1) allocate too; the sums match and nothing leaks.
+
+fn churn(seed: Int, rounds: Int) -> Int {
+  var sum = 0
+  for r in 0..rounds {
+    var xs: List[Int] = []
+    for k in 0..40 {
+      xs.push(k * seed + r)
+    }
+    var m: Map[Int, Str] = {}
+    for x in xs {
+      if x % 3 == 0 {
+        m[x % 17] = "v${x}"
+      }
+    }
+    var s = ""
+    for (k, v) in m {
+      s = s + v
+      sum = sum.wrapping_add(k)
+    }
+    sum = sum.wrapping_add(s.len()).wrapping_add(xs.len())
+  }
+  sum
+}
+
+fn main(os: Os) {
+  let n = 60000
+  scope s {
+    let t1 = s.spawn(fn() -> Int { churn(1, n) })
+    let t2 = s.spawn(fn() -> Int { churn(2, n) })
+    let t3 = s.spawn(fn() -> Int { churn(3, n) })
+    os.stdio.println("${t1.await} ${t2.await} ${t3.await}")
+  }
+}

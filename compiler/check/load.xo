@@ -53,6 +53,10 @@ pub struct Checker {
   /// it; the wasm backend and its playground keep the lists): the
   /// builder's map_type and map.xo read it
   pub map_log: Bool = false
+  /// asynchronous preemption may replace the loop polls (decision 0318):
+  /// the native arm64 backend, not --race, XO_ASYNC_PREEMPT not 0; the
+  /// builder decides per target (darwin and linux arm64)
+  pub async_preempt_ok: Bool = false
   /// no preemption polls in loops (decision 0286 step 3): `--no-preempt`
   /// or XO_PREEMPT_POLLS=off, for tight loop benchmarks; a task that
   /// loops without calling the runtime can then starve its worker

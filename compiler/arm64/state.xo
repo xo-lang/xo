@@ -215,6 +215,8 @@ struct G {
   dv_copies_at: Map[Int, List[Int]] = {}
   dv_copies_made: Bool = false
   dl_n: Int = 0
+  /// decision 0318: the function's `_du` labels so far
+  du_n: Int = 0
   ncs: Int = 0
   personality_ref: Bool = false
   /// rt.sys_restorer was used: the rt_sigreturn trampoline is emitted
@@ -431,6 +433,7 @@ fn (var g: G) begin_func(fi: Int) {
   g.kints = {}
   g.ksyms = {}
   g.dl_n = 0
+  g.du_n = 0
   g.tl_v = -1
   g.tl_blk = -1
   g.fi = fi

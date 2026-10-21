@@ -364,8 +364,8 @@ func TestMainFiberDeadlock(t *testing.T) {
 // its loop's poll (decision 0286 step 3). testdata/sched/preempt keeps
 // both threads of XO_THREADS=1 spinning on a flag only a queued task sets:
 // it ends only by preemption (it hangs with XO_PREEMPT=0). Three runs per
-// native backend, each within 20 s, with XO_LOCKCHECK; arm64 only, where
-// the program's loops poll.
+// native backend, each within 20 s, with XO_LOCKCHECK; arm64 only (LLVM's
+// loops poll; the native backend preempts by signal, decision 0318).
 func TestPreempt(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs a program per native backend")
@@ -391,6 +391,56 @@ func TestPreempt(t *testing.T) {
 				if err != nil || out != "preempt 5\n" {
 					t.Fatalf("run %d: %v (a spinning fiber was not preempted)\n%s", i, err, out)
 				}
+			}
+		})
+	}
+}
+
+// TestAsyncPreempt: the native arm64 backend preempts by signal
+// (decision 0318), with no loop polls. testdata/sched/preempt_regs runs
+// three loops that keep twelve integers and eight floats live on one
+// worker (XO_THREADS=1): every interruption must restore every register,
+// so the sums match the uninterrupted ones. testdata/sched/preempt_alloc
+// interrupts loops that allocate and free in program code while the other
+// tasks on the worker allocate too, under the leak check and the heap's
+// overrun check (XO_HEAP_GUARD=1). Both must be preempted (XO_RTSTATS's
+// preempt count).
+func TestAsyncPreempt(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs two programs")
+	}
+	if runtime.GOARCH != "arm64" {
+		t.Skip("asynchronous preemption: arm64")
+	}
+	preempts := regexp.MustCompile(`preempt=([0-9]+)`)
+	for _, c := range []struct{ dir, want, env string }{
+		{"preempt_regs", "6742598953838690335 5.718645907036417\n-3850883126600505201 5.718645907036417\n-1443683438953606781 5.718645907036417\n", ""},
+		{"preempt_alloc", "13452742 13453550 7098632\n", "XO_HEAP_GUARD=1"},
+	} {
+		t.Run(c.dir, func(t *testing.T) {
+			if c.env != "" {
+				k, v, _ := strings.Cut(c.env, "=")
+				t.Setenv(k, v)
+			}
+			res, err := xotool.Build([]string{filepath.Join("testdata", "sched", c.dir)}, xotool.Options{Backend: xotool.BackendArm64})
+			if err != nil || res.Failed {
+				t.Fatalf("build: %v %v", err, res)
+			}
+			total := 0
+			for i := 0; i < 3; i++ {
+				cmd := exec.Command(res.Binaries[xotool.Host()])
+				cmd.Env = append(os.Environ(), "XO_THREADS=1", "XO_LOCKCHECK=1", "XO_LEAKCHECK=1", "XO_RTSTATS=1")
+				out, err := runCombined(cmd, 60*time.Second)
+				if err != nil || !strings.HasPrefix(out, c.want) || !strings.Contains(out, "xo leakcheck: 0 live") {
+					t.Fatalf("run %d: %v\n%s", i, err, out)
+				}
+				if m := preempts.FindStringSubmatch(out); m != nil {
+					n, _ := strconv.Atoi(m[1])
+					total += n
+				}
+			}
+			if total < 10 {
+				t.Fatalf("%d preemptions in three runs: the loops were not interrupted", total)
 			}
 		})
 	}

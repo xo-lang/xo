@@ -125,6 +125,12 @@ fn pthread_attr_setdetachstate(attr: Int, state: Int) -> Int32
 fn pthread_attr_destroy(attr: Int) -> Int32
 /// pthread_create: the thread runs the C function at f with arg.
 fn pthread_create(tid: Int, attr: Int, f: Int, arg: Int) -> Int32
+/// pthread_self, pthread_kill, and pthread_sigmask (how: SIG_BLOCK 1,
+/// SIG_UNBLOCK 2, SIG_SETMASK 3; a 4 byte set): asynchronous preemption's
+/// signal (std/native/llrt/pool.xo, decision 0318).
+fn pthread_self() -> Int
+fn pthread_kill(t: Int, sig: Int) -> Int32
+fn pthread_sigmask(how: Int, set: Int, old: Int) -> Int32
 /// pthread_join: waits for the thread tid to end (ret: 0, its result not
 /// kept).
 fn pthread_join(tid: Int, ret: Int) -> Int32

@@ -1550,7 +1550,8 @@ fn is_row_label(name: Str) -> Bool {
   }
   // (`_dvs`: a fault stub's variable range, and the body's end before
   // the stubs)
-  k < bs.len() && k >= 3 && (name[k - 3..k] == "_dl" || name[k - 3..k] == "_dv" || (k >= 4 && name[k - 4..k] == "_dvs"))
+  // (`_du`: an asynchronous preemption unsafe range's ends, decision 0318)
+  k < bs.len() && k >= 3 && (name[k - 3..k] == "_dl" || name[k - 3..k] == "_dv" || name[k - 3..k] == "_du" || (k >= 4 && name[k - 4..k] == "_dvs"))
 }
 
 /// The name of the label line l defines (`L<letters, digits, _>:`, or

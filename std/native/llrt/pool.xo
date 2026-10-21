@@ -127,9 +127,21 @@ const W_PREEMPT_I = 432
 /// yields only at none (decision 0286 step 3: std's loops poll, and the
 /// runtime calls std with its spin locks held).
 const W_LOCKS = 3464
+/// Asynchronous preemption (decision 0318): the fibers this worker
+/// preempted with SIGURG (head and tail, linked by F_NEXT), which only it
+/// resumes; its thread (darwin's pthread_t, Linux's thread id) for the
+/// monitor's signal; 1 while its run loop runs fibers (worker_main,
+/// root_main); 1 between the handler's yield and run_fiber's requeue;
+/// SIGURG's bit in a signal set (the handler's unblock).
+const W_PIN = 3472
+const W_PIN_TAIL = 3480
+const W_THREAD = 3488
+const W_APOK = 3496
+const W_ASYNC = 3504
+const W_URGSET = 3512
 /// The record's size; poolsetup.xo's W_SIZE (the root's record) must match
 /// (XO_HEAP_GUARD found it 8 bytes short, 2026-10-20).
-const W_SIZE = 3472
+const W_SIZE = 3520
 const FCACHE = 8
 
 /// xo_runq: head (word 0), tail (word 16).
@@ -792,6 +804,10 @@ fn take_local(w: Int) -> Int {
     owner_check(w)
     t = sched.rq_get(w)
   }
+  if t == 0 && rt.mem_load(w, W_PIN, 8) != 0 {
+    // a fiber SIGURG preempted (decision 0318): only this worker runs it
+    t = pin_pop(w) | 1
+  }
   if t != 0 && rt.slot_load(w, W_DEFER_AT_W, RELAXED) != 0 {
     // this worker runs its own work: no wake is owed
     rt.slot_store(w, W_DEFER_AT_W, 0, RELAXED)
@@ -1037,6 +1053,7 @@ pub fn worker_main(w: Int) -> Int {
   // the thread (decision 0232)
   stat_hooks(w)
   sanhook.worker_start(w)
+  async_thread(w)
   // wakep started it as a spinning worker
   var spinning = 1
   while true {
@@ -1106,6 +1123,14 @@ fn run_fiber(p: Int, w: Int, f: Int) {
   rt.slot_store(w, W_RUN_AT_I, 0, RELAXED)
   rt.slot_store(w, W_PREEMPT_I, 0, RELAXED)
   if r == 2 {
+    if rt.mem_load(w, W_ASYNC, 8) != 0 {
+      // preempted by SIGURG (decision 0318): its registers and the values
+      // it derived from this thread are in the signal frame on its stack,
+      // so it resumes here, after this worker's queued work
+      rt.mem_store(w, W_ASYNC, 0, 8)
+      pin_push(w, f)
+      return
+    }
     // preempted: behind everything queued (the inject queue's tail), and
     // this worker's own ring runs first
     inject_add(p, 0, 0, f | 1)
@@ -1155,6 +1180,193 @@ pub fn preempt() {
     let _d = rt.slot_add[Int](rt.static_word(W_PREEMPT), 0, -1, RELEASE)
   }
   stat(ST_PREEMPT)
+  sched.fiber_yield(f)
+}
+
+// ---------------------------------------------------------------------------
+// Asynchronous preemption (decision 0318): with no loop polls (the native
+// arm64 backend on darwin and Linux, not --race), the monitor sends SIGURG
+// to a worker that ran its fiber a slice while work waits, and the
+// handler yields from inside itself: the kernel's signal frame on the
+// fiber's stack is the continuation, restored exactly by sigreturn when
+// the fiber runs again (pinned to its worker). The handler declines at a
+// PC outside the program's code: the emitter's tables (compiler/arm64
+// apreempt.xo) list each file's functions' text and the unsafe ranges in
+// it (the runtime's functions and the runtime code inlined into the
+// program's).
+
+/// rt.static_word: the list of the unsafe range tables (the emitter sets
+/// it; 0: no asynchronous preemption, the program polls).
+const W_UNSAFE = 77
+const SIGURG_DARWIN = 16
+const SIGURG_LINUX = 23
+/// The stack a handler needs above the fiber's mapping start (its guard
+/// page, up to 16 KiB): the signal frame (about 1 KiB on Linux, 0.8 on
+/// darwin, the vector registers included) and the switch.
+const ASYNC_ROOM = 49152
+
+/// Whether the program preempts asynchronously.
+fn async_on() -> Bool {
+  layer_arch() == 1 && (layer() == 1 || layer() == 2) && rt.mem_load(rt.static_word(W_UNSAFE), 0, 8) != 0
+}
+
+/// SIGURG's handler (cabi.xo on_urg), SA_SIGINFO and SA_RESTART, on the
+/// interrupted stack (no SA_ONSTACK), nothing else blocked while it runs.
+fn async_install() {
+  let h = rt.fn_addr("on_urg")
+  match layer() {
+    1 => {
+      let _r = linux.sigaction(SIGURG_LINUX, h, 4 | 268435456)
+    }
+    2 => {
+      // struct sigaction: the handler, the mask (4 bytes), the flags
+      let sa = rt.heap_large(16)
+      rt.mem_store(sa, 0, h, 8)
+      rt.mem_store(sa, 8, 0, 4)
+      rt.mem_store(sa, 12, 64 | 2, 4)
+      let _r = sys_darwin.sigaction(SIGURG_DARWIN, sa, 0)
+      rt.heap_release(sa - 8)
+    }
+    _ => {}
+  }
+}
+
+/// Records the calling thread in worker record w for the monitor's
+/// signal, and that its loop runs fibers.
+fn async_thread(w: Int) {
+  if !async_on() {
+    return
+  }
+  match layer() {
+    1 => {
+      // gettid(2)
+      rt.mem_store(w, W_THREAD, rt.sys6(178, 0, 0, 0, 0, 0, 0), 8)
+      rt.mem_store(w, W_URGSET, (1).wrapping_shl(SIGURG_LINUX - 1), 8)
+    }
+    _ => {
+      rt.mem_store(w, W_THREAD, sys_darwin.pthread_self(), 8)
+      rt.mem_store(w, W_URGSET, (1).wrapping_shl(SIGURG_DARWIN - 1), 8)
+    }
+  }
+  rt.mem_store(w, W_APOK, 1, 8)
+}
+
+/// The monitor's ask to worker w: SIGURG to its thread.
+fn async_kick(w: Int) {
+  let t = rt.mem_load(w, W_THREAD, 8)
+  if t == 0 {
+    return
+  }
+  match layer() {
+    1 => {
+      // tgkill(getpid(), tid, SIGURG)
+      let pid = rt.sys6(172, 0, 0, 0, 0, 0, 0)
+      let _r = rt.sys6(131, pid, t, SIGURG_LINUX, 0, 0, 0)
+    }
+    _ => {
+      let _r = sys_darwin.pthread_kill(t, SIGURG_DARWIN)
+    }
+  }
+}
+
+/// Puts fiber f, preempted by SIGURG, on w's own list.
+fn pin_push(w: Int, f: Int) {
+  rt.mem_store(f, F_NEXT, 0, 8)
+  let tail = rt.mem_load(w, W_PIN_TAIL, 8)
+  if tail == 0 {
+    rt.mem_store(w, W_PIN, f, 8)
+  } else {
+    rt.mem_store(tail, F_NEXT, f, 8)
+  }
+  rt.mem_store(w, W_PIN_TAIL, f, 8)
+}
+
+/// Takes the first fiber of w's list (not empty).
+fn pin_pop(w: Int) -> Int {
+  let f = rt.mem_load(w, W_PIN, 8)
+  let next = rt.mem_load(f, F_NEXT, 8)
+  rt.mem_store(w, W_PIN, next, 8)
+  if next == 0 {
+    rt.mem_store(w, W_PIN_TAIL, 0, 8)
+  }
+  rt.mem_store(f, F_NEXT, 0, 8)
+  f
+}
+
+/// Whether pc is in the program's own code outside every unsafe range:
+/// in some file's functions' text (tables: base, size, the ranges' count,
+/// then (start, end) offsets as 32 bit pairs, in order), not in a range.
+fn async_pc_ok(pc: Int) -> Bool {
+  let parts = rt.mem_load(rt.static_word(W_UNSAFE), 0, 8)
+  let n = rt.mem_load(parts, 0, 8)
+  var i = 0
+  while i < n {
+    let t = rt.mem_load(parts, 8 + 8 * i, 8)
+    let base = rt.mem_load(t, 0, 8)
+    let off = pc.wrapping_sub(base)
+    if off >= 0 && off < rt.mem_load(t, 8, 8) {
+      // the last range starting at or before off
+      var lo = 0
+      var hi = rt.mem_load(t, 16, 8)
+      while lo < hi {
+        let mid = (lo + hi) / 2
+        if rt.mem_load(t, 24 + 8 * mid, 4) <= off {
+          lo = mid + 1
+        } else {
+          hi = mid
+        }
+      }
+      return lo == 0 || off >= rt.mem_load(t, 24 + 8 * (lo - 1) + 4, 4)
+    }
+    i += 1
+  }
+  false
+}
+
+/// SIGURG's handler (cabi.xo on_urg) with the interrupted thread's
+/// ucontext uc: yields the fiber when the monitor asked this worker to and
+/// the interrupted code is the program's own (decision 0318), else
+/// returns at once (the monitor asks again).
+pub fn async_signal(uc: Int) {
+  let w = rt.tlocal_get(TLS_W)
+  if w == 0 || uc == 0 || rt.mem_load(w, W_APOK, 8) == 0 || rt.slot_load(w, W_PREEMPT_I, RELAXED) == 0 {
+    return
+  }
+  let f = rt.tlocal_get(TLS_FIB)
+  if f == 0 || rt.mem_load(w, W_LOCKS, 8) != 0 {
+    return
+  }
+  // the interrupted pc and sp (darwin: the arm_thread_state64 at 16 in
+  // uc_mcontext, a pointer at 48; Linux: the sigcontext at 176)
+  var pc = 0
+  var sp = 0
+  if layer() == 2 {
+    let ss = rt.mem_load(uc, 48, 8) + 16
+    sp = rt.mem_load(ss, 248, 8)
+    pc = rt.mem_load(ss, 256, 8) & 281474976710655
+  } else {
+    sp = rt.mem_load(uc, 432, 8)
+    pc = rt.mem_load(uc, 440, 8)
+  }
+  let mem = rt.mem_load(f, F_MEM, 8)
+  if mem == 0 || sp.wrapping_sub(mem) < ASYNC_ROOM || !async_pc_ok(pc) {
+    return
+  }
+  // the ask served (preempt's accounting)
+  let a = rt.slot_load(w, W_PREEMPT_I, RELAXED)
+  if a == 0 || !rt.slot_cas(w, W_PREEMPT_I, a, 0, RELAXED) {
+    return
+  }
+  let _d = rt.slot_add[Int](rt.static_word(W_PREEMPT), 0, -1, RELEASE)
+  // SIGURG unblocked for the worker's other fibers; this one's sigreturn
+  // restores the interrupted code's mask
+  if layer() == 2 {
+    let _m = sys_darwin.pthread_sigmask(2, w + W_URGSET, 0)
+  } else {
+    let _m = linux.rt_sigprocmask(1, w + W_URGSET, 0)
+  }
+  stat(ST_PREEMPT)
+  rt.mem_store(w, W_ASYNC, 1, 8)
   sched.fiber_yield(f)
 }
 
@@ -1341,6 +1553,7 @@ pub fn root_main(p: Int, w: Int, mf: Int) {
   let dlk = rt.mem_load(p, P_DLK, 8)
   rt.slot_add(dlk, DLK_LOOPS, 1, SEQ_CST)
   rt.slot_add(p, P_ALIVE, 1, SEQ_CST)
+  async_thread(w)
   var it = mf | 1
   var spinning = 0
   while rt.slot_load(mf, F_ENDED_I, ACQUIRE) == 0 {
@@ -2292,6 +2505,10 @@ fn monitor(p: Int) -> Int {
   if r == 0 {
     let n = rt.heap_large(M_SIZE)
     rt.mem_set(n, 0, M_SIZE)
+    if async_on() {
+      // the monitor preempts with SIGURG (decision 0318)
+      async_install()
+    }
     if thread_start(rt.fn_addr("mon_main"), p) {
       r = n
     } else {
@@ -2360,12 +2577,17 @@ fn mon_scan(p: Int) -> Bool {
   // (wakep wakes or starts one then: preempting then only moved the waiting task
   // onto the long runner's thread, TestRuntimeTasks' magazines, whose
   // spawner spins while another worker frees)
+  let async = async_on()
   let waiting = any_work(p) != 0 && rt.slot_load(p, P_NIDLE, SEQ_CST) == 0 && workers(p) >= rt.mem_load(p, P_NCPU, 8) && rt.slot_load(rt.mem_load(p, P_DLK, 8), DLK_NOPREEMPT, RELAXED) == 0
   var i = 0
   while i < n {
     let w = rt.mem_load(p, P_WS.wrapping_add(i.wrapping_shl(3)), 8)
     let ra = rt.slot_load(w, W_RUN_AT_I, RELAXED)
     let ask = rt.slot_load(w, W_PREEMPT_I, RELAXED)
+    // a fiber SIGURG preempted waits for its own worker (decision 0318),
+    // which no other worker can help: work waits for it alone (a plain
+    // read of the worker's word, a hint)
+    let waiting = waiting || (async && rt.mem_load(w, W_PIN, 8) != 0)
     if ask != 0 {
       pending = true
       // an ask not served in a slice (the worker blocked, or no work
@@ -2373,11 +2595,17 @@ fn mon_scan(p: Int) -> Bool {
       // polls call the stub
       if (!waiting || now.wrapping_sub(ask) >= SLICE_NS) && rt.slot_cas(w, W_PREEMPT_I, ask, 0, RELAXED) {
         let _d = rt.slot_add[Int](rt.static_word(W_PREEMPT), 0, -1, RELEASE)
+      } else if async {
+        // the handler declined (runtime code, a lock held): again
+        async_kick(w)
       }
     } else if waiting && ra != 0 {
       pending = true
       if now.wrapping_sub(ra) >= SLICE_NS && rt.slot_cas(w, W_PREEMPT_I, 0, now, RELAXED) {
         let _i = rt.slot_add[Int](rt.static_word(W_PREEMPT), 0, 1, RELEASE)
+        if async {
+          async_kick(w)
+        }
       }
     }
     let at = rt.slot_load(w, W_DEFER_AT_W, SEQ_CST)
