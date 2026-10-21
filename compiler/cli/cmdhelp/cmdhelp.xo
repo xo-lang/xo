@@ -271,7 +271,7 @@ a JSON line, the last also in .xo/watch/last.json (decision 0267).
 
 fn check_text() -> Str {
   """
-usage: xo check [--json] [--no-gc] [--fix] <dirs...>
+usage: xo check [--json] [--no-gc] [--fix] [--wip] <dirs...>
 
 Resolve names and type check the modules under each directory (every
 directory holding .xo files is a module; imports are resolved through
@@ -280,6 +280,10 @@ xo.mod and the embedded std). --json prints {"modules": [...],
 builds (XO1201 for what they cannot build yet, or ever; decision 0083).
 --fix first applies every unambiguous machine fix (as xo fix) and
 reformats the changed files, then reports what remains (decision 0096).
+--wip reports the errors of code still being written, an unused binding
+or import (XO0110) and an unused computed value (XO0209), as warnings,
+so a check passes mid edit; a normal check and every build keep them
+errors (decision 0293).
 Exit status is 1 when any error is reported (warnings such as holes do
 not count), 2 on usage errors.
 """

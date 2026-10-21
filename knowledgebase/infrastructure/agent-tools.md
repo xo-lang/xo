@@ -24,6 +24,10 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   constants, and types (a type through the editor's identifier
   resolution, every place it is written); `--dry-run` prints a diff.
   The edit's second check reuses the first's std parses.
+- `xo check --wip DIR` while an edit is half done: unused bindings and
+  imports (XO0110) and unused computed values (XO0209) are warnings, so
+  only the errors that matter show; check without it before reporting
+  done (decision 0293).
 - `xo vet` takes a `.xo` file, a std directory (`xo vet std/native/llrt`,
   every runtime module in one check, 0.6 s), or `--std-module=M`.
 

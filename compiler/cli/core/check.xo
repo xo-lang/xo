@@ -163,6 +163,7 @@ fn run_check(os: Os, ctx: Ctx, args: List[Str]) -> Int {
   fl.bool_flag("json", "print diagnostics as JSON")
   fl.bool_flag("no-gc", "also run the no GC check of native builds (XO1201, decision 0083)")
   fl.bool_flag("fix", "first apply every unambiguous machine fix (as `xo fix`) and reformat the changed files, then report what remains (decision 0096)")
+  fl.bool_flag("wip", "report unused bindings and imports (XO0110) and unused computed values (XO0209) as warnings, for checking code mid edit; a normal check and every build keep them errors (decision 0293)")
   if !fl.parse(os, args) {
     return 2
   }
@@ -187,6 +188,9 @@ fn run_check(os: Os, ctx: Ctx, args: List[Str]) -> Int {
       os.stdio.eprintln("xo check: ${e}")
       return 2
     }
+  }
+  if fl.get_bool("wip") {
+    s.diags = soften_wip(s.diags)
   }
   var errs = 0
   var warns = 0

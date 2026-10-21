@@ -5,6 +5,31 @@ use github.com/xo-lang/xo/compiler/check
 
 pub type Diag = check.Diag
 
+/// Whether `xo check --wip` reports code as a warning (decision 0293):
+/// the errors of code still being written, an unused binding or import
+/// (XO0110) and a computed value not used yet (XO0209). A normal check and
+/// every build keep them errors.
+pub fn wip_soft(code: Str) -> Bool {
+  code is "XO0110" | "XO0209"
+}
+
+/// ds with each wip_soft error made a warning, with a note saying a
+/// normal check rejects it.
+pub fn soften_wip(ds: List[Diag]) -> List[Diag] {
+  var out: List[Diag] = []
+  for d in ds {
+    if !d.warning && wip_soft(d.code) {
+      var w = d
+      w.warning = true
+      w.notes.push(check.DNote{message: "an error outside `xo check --wip`"})
+      out.push(w)
+    } else {
+      out.push(d)
+    }
+  }
+  out
+}
+
 /// "error", "warning", or "note".
 pub fn severity(d: Diag) -> Str {
   if d.note_sev { "note" } else if d.warning { "warning" } else { "error" }

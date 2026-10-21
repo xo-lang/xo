@@ -910,7 +910,9 @@ const DEFAULT = Config{port: 8080}
   constants, struct and enum construction, and collection literals of those.
 - Unused local bindings, local constants, and imports are errors (`XO0110`). Not covered:
   function and closure parameters, names starting with `_`, and `_` itself.
-  `xo fix` removes unused bindings.
+  `xo fix` removes unused bindings. `xo check --wip` reports `XO0110` and
+  `XO0209` (section 2.6) as warnings, for checking code still being written;
+  a normal check and every build reject them (decision 0293).
 - Shadowing in the same block is an error. Shadowing in a nested block is
   allowed.
 
