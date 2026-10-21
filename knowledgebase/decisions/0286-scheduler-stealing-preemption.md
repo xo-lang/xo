@@ -373,3 +373,21 @@ back (Docker varies about 20% between runs, so compare within a run):
 |---|---|---|
 | 1 | 46,903 requests (1,203 us CPU each) | 51,894 (1,027 us) |
 | 0 | 57,022 (1,019 us) | 61,506 (892 us) |
+
+Then the remaining cost, with the fix on main (b7f56be67): the same load,
+the client now recording latency, each server twice in one container
+run (preemption off; on; a preempted fiber at the tail of its own
+worker's ring instead of the inject queue's; a 20 ms slice):
+
+| server | run 1 | run 2 |
+|---|---|---|
+| XO_PREEMPT=0 | 52,135 requests, p50 142 ms, p99 510 ms | 46,191, p50 163 ms, p99 539 ms |
+| XO_PREEMPT=1 (main) | 52,419, p50 148 ms, p99 427 ms | 47,941, p50 152 ms, p99 538 ms |
+| own ring's tail | 42,617, p99 786 ms | 45,985, p99 537 ms |
+| 20 ms slice | 45,404, p99 733 ms, max 2.2 s | 40,090, p99 933 ms, max 2.0 s |
+
+Preemption as on main now costs nothing measurable on this load
+(throughput and p99 within run to run variance, CPU per request equal);
+the "15%" seen before compared against an older build. Requeueing on the
+worker's own ring and a longer slice were both worse, so the inject
+queue's tail and 10 ms stay.
