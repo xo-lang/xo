@@ -90,6 +90,13 @@ fn grant_readers(m: Int) {
   // a freshly woken worker without the lock's cache lines (decision
   // 0077's addendum, the known RWMutex gap)
   pool.grace_begin()
+  // the readers go to this worker's ring without a wake each, and one
+  // wake starts the chain after them (pool.xo batch_wake)
+  let w = rt.tlocal_get(TLS_W)
+  if w != 0 {
+    st(w, W_NONEXT, 2)
+  }
+  var woke = false
   var e = ld(l, WL_FIRST)
   while e != 0 {
     let next = ld(e, E_NEXT)
@@ -103,9 +110,20 @@ fn grant_readers(m: Int) {
       // the waiter's acquire load pairs with (a fence and a plain store
       // were a race to ThreadSanitizer, decision 0241's addendum)
       rt.slot_store(e, E_WRITER_W, GRANTED, RELEASE)
-      signal(p)
+      if w != 0 {
+        tasks.park_signal(p)
+        woke = true
+      } else {
+        signal(p)
+      }
     }
     e = next
+  }
+  if w != 0 {
+    st(w, W_NONEXT, 0)
+    if woke {
+      pool.batch_wake(ctx.pool())
+    }
   }
 }
 

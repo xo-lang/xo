@@ -764,9 +764,22 @@ fn push(p: Int, t: Int, handoff: Bool) {
     }
   } else {
     rq_put(p, w, t)
+    if rt.mem_load(w, W_NONEXT, 8) == 2 {
+      // a batch of wakes (mutex.xo grant_readers): one wakep after it
+      return
+    }
   }
   wakep(p)
 }
+
+/// The wake after a batch of pushes that skipped theirs (W_NONEXT 2): a
+/// spinning worker that finds work wakes the next (find_work), so one
+/// starts the chain, and the wakes happen on the workers taking the
+/// work, not one by one on the pushing thread (bench/perf/http at 1024
+/// connections: an RWMutex writer's unlock woke each waiting reader with
+/// its own futex call, 35% of the server's CPU in ulock_wake,
+/// 2026-10-21).
+pub fn batch_wake(p: Int) { wakep(p) }
 
 /// Takes w's own work: next, then the head of its ring.
 fn take_local(w: Int) -> Int {
