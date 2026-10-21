@@ -165,7 +165,8 @@ fn (var b: Builder) budget_exceeded(k: Int, nt: Int, ei: Int, bud_t: Int, join: 
 /// emitters define it, compiler/arm64 sched.xo and compiler/llvm): a preemption poll's
 /// slow path, which keeps every register the C convention lets a callee
 /// change (x0 to x17, x18 off Apple, the flags, all of q0 to q31: the
-/// callee keeps only d8 to d15's low halves) around the runtime's
+/// callee keeps only d8 to d15's low halves; x18 is restored as found:
+/// Windows' TEB pointer) around the runtime's
 /// xo_x_preempt, so a poll in a loop clobbers nothing; x30 is the
 /// caller's to keep (the poll's stub).
 pub fn preempt_stub_arm64(os: Str) -> List[Str] {
@@ -179,6 +180,13 @@ pub fn preempt_stub_arm64(os: Str) -> List[Str] {
   var b: List[Str] = []
   if os == "darwin" {
     b = ["stp x0, x30, [sp, #-16]!", "adrp x0, _xo_tlocal@TLVPPAGE", "ldr x0, [x0, _xo_tlocal@TLVPPAGEOFF]", "ldr x16, [x0]", "blr x16", "ldr x16, [x0, #16]", "ldp x0, x30, [sp], #16"]
+  } else if os == "windows" {
+    // windows/arm64 (the LLVM backend): the TEB's ThreadLocalStoragePointer
+    // (x18 + 88) at the module's _tls_index, then xo_tlocal's offset in
+    // the TLS section (secrel; ELF's tprel relocations do not exist on
+    // COFF, lld-link: "relocation specifier :tprel_hi12: unsupported", CI
+    // run 39671368960); x17 too, which the LLVM poll's call clobbers
+    b = ["ldr x16, [x18, #88]", "adrp x17, _tls_index", "ldr w17, [x17, :lo12:_tls_index]", "ldr x16, [x16, x17, lsl #3]", "add x16, x16, :secrel_hi12:xo_tlocal", "add x16, x16, :secrel_lo12:xo_tlocal", "ldr x16, [x16, #16]"]
   } else {
     b = ["mrs x16, tpidr_el0", "add x16, x16, :tprel_hi12:xo_tlocal", "add x16, x16, :tprel_lo12_nc:xo_tlocal", "ldr x16, [x16, #16]"]
   }
