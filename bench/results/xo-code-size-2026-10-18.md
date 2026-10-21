@@ -513,3 +513,29 @@ LLVM speed checks.
 | 7724ca1e | 31.78 MB | 50.56 MB (1.59x) |
 | main b48b8156 | (unchanged) | 51.51 MB |
 | this change | (unchanged) | 32.59 MB (1.03x) |
+
+## The 2026-10-21 codegen stack (Xo lang 4, 2026-10-21)
+
+The same source, main 100730e6's compiler/xo and std, built by two
+compilers on the Mac: this morning's xo (06399412, before the
+overnight amd64 and arm64 codegen stack 87059821..4d93d9ae, with
+db3fcf3a cherry picked: the LLVM debug metadata numbering fix, without
+which its LLVM build of xo failed, "Metadata id is already used"; it
+changes no arm64 code) and main's. Every commit between them is in the
+difference, not only codegen: the allocator fast paths (7cef24e4,
+e33962ab), the arm64 scratch definitions (41108904), and other agents'
+std and compiler changes compile the same source differently only
+through the compiler, since the source is fixed. LLVM with
+`XO_LLVM_SPLIT=12 XO_LLVM_JOBS=3 XO_LLVM_LTO=none` at -O2.
+
+| xo `__text` | 06399412 + db3fcf3a | main 100730e6 | change |
+|---|---|---|---|
+| arm64 | 38,707,264 | 38,405,096 | -302,168 (-0.78%) |
+| LLVM, split 12, no LTO | 38,554,348 | 38,441,008 | -113,340 (-0.29%) |
+
+Binaries 42,862,742 to 42,547,750 (arm64) and 58,970,008 to
+58,806,344 (LLVM) bytes. Build time, wall: arm64 157 s (the first
+build, cold caches) and 78 s; LLVM 1,191 s and 1,039 s; peak RSS 4.7
+to 6.5 GB. Script: Xo lang 4's cs.sh (`xo build --backend=B
+--std=<main>/std ./compiler/xo` from main's checkout with each xo,
+`size -m`).
