@@ -199,7 +199,7 @@ go vet ./...
 gofmt -l internal cmd std                # must print nothing
 .tools/bin/staticcheck ./...             # must print nothing
 go run ./cmd/xo parse [--json] [--ast] [--sig] <files or dirs...>
-go run ./cmd/xo check [--json] [--no-gc] [--fix] [--wip] <dirs...>   # --fix: apply machine fixes first (decision 0096); --wip: XO0110 and XO0209 as warnings while editing (decision 0293)
+go run ./cmd/xo check [--json] [--no-gc] [--fix] [--wip] [--dir=DIR] <dirs...>   # --fix: apply machine fixes first (decision 0096); --wip: XO0110 and XO0209 as warnings while editing (decision 0293)
 go run ./cmd/xo rtpack [--target=os/arch] [--cc="cmd args"] [--ar="cmd args"] [-o lib/xo/rtpack] | --status | --key [--target=os/arch]   # hidden: build the prebuilt runtime of the arm64 backend into <dir>/<os>-<arch> (default the host's cc; linux/arm64 from a Mac: --cc="zig cc -target aarch64-linux-gnu.2.31" --ar="zig ar"); --status: the pack used for the host or why none; --key: the key a pack must have (decision 0157; last verified: 2026-10-11)
 xo1 rtpack [same flags]   # (deleted 2026-10-16, decision 0234) the same command in Xo (compiler/xo rtpack.xo, decision 0178 switch point B): the same pack files byte for byte for the same compiler and sources (cmd/xo TestRTPackXoSame with XO_CLI), so scripts/release.sh can run the self hosted xo (last verified: 2026-10-12)
 scripts/release.sh [version]             # release archives into dist/, bin/xo = xo1 (decisions 0157, 0178; needs zig 0.15.1 as $ZIG; never publishes)

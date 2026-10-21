@@ -279,7 +279,7 @@ a JSON line, the last also in .xo/watch/last.json (decision 0267).
 
 fn check_text() -> Str {
   """
-usage: xo check [--json] [--no-gc] [--fix] [--wip] <dirs...>
+usage: xo check [--json] [--no-gc] [--fix] [--wip] [--dir=DIR] <dirs...>
 
 Resolve names and type check the modules under each directory (every
 directory holding .xo files is a module; imports are resolved through
@@ -292,6 +292,8 @@ reformats the changed files, then reports what remains (decision 0096).
 or import (XO0110) and an unused computed value (XO0209), as warnings,
 so a check passes mid edit; a normal check and every build keep them
 errors (decision 0293).
+--dir=DIR checks DIR as def, refs, and doc take it (the same as giving it
+as an argument; both together check both).
 Exit status is 1 when any error is reported (warnings such as holes do
 not count), 2 on usage errors.
 """

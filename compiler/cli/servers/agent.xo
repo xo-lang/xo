@@ -284,6 +284,41 @@ fn position_of(target: Str) -> (Str, Int, Int)? {
   Some((parts[0..n - 2].join(":"), line, col))
 }
 
+/// The most .xo files, and directory entries looked at, under a --dir
+/// that is not itself a module directory (the xo checkout has about
+/// 1,800 .xo files).
+const MAX_DIR_XO = 6000
+const MAX_DIR_ENTRIES = 60000
+
+/// Why dir d holds too much to check as one workspace, or None: a bounded
+/// walk counting its .xo files and entries, and naming the first
+/// directories when it is over.
+fn too_wide(os: Os, d: Str) -> Str? uses fs.read {
+  var stack = [d.trim_suffix("/")]
+  var xo = 0
+  var seen = 0
+  while let Some(cur) = stack.pop() {
+    let es = match os.fs.read_dir(cur) {
+      Ok(x) => x
+      Err(_) => continue
+    }
+    for fi in es {
+      seen += 1
+      if fi.is_dir {
+        if !fi.name.starts_with(".") {
+          stack.push(cur + "/" + fi.name)
+        }
+      } else if fi.name.ends_with(".xo") {
+        xo += 1
+      }
+      if xo > MAX_DIR_XO || seen > MAX_DIR_ENTRIES {
+        return Some("${d} holds more than ${MAX_DIR_XO} .xo files or ${MAX_DIR_ENTRIES} entries: give a module or repository directory with --dir, not a scratch or home directory (a check of it would load every tree under it)")
+      }
+    }
+  }
+  None
+}
+
 /// A Session over the .xo files of dir, checked as `xo lsp` checks open
 /// documents, with nothing written to standard output.
 fn agent_session(os: Os, dir: Str, preload: List[Str]) -> Session ! Str uses (stdio, fs, env) {
@@ -302,6 +337,12 @@ fn agent_session(os: Os, dir: Str, preload: List[Str]) -> Session ! Str uses (st
     }
   }
   if s.docs.is_empty() {
+    // a stray --dir (a scratch or home directory) would load every tree
+    // under it: refuse one with more than MAX_DIR_XO files or entries
+    // (2026-10-21: `xo doc --dir=/private/tmp` took 220 GB)
+    if let Some(why) = too_wide(os, d) {
+      return Err(why)
+    }
     // a workspace or repository root: the modules under it, as `xo
     // query` and `xo check` find them (decision 0289)
     var v = check_view(os, s.std_dir, wd, {}, [d], preload)
@@ -434,7 +475,23 @@ fn (var s: Session) declarations(name: Str) -> List[Found] {
 /// The declarations of the members of type name (`Counter.next` for
 /// `Counter`).
 fn (var s: Session) members(name: Str) -> List[Found] {
-  s.declared(fn(full: Str) { full.starts_with(name + ".") })
+  var files = s.search_files()
+  // a prelude type's methods (Map.get, Str.trim) are declared in the
+  // prelude's files, which no name preloads (2026-10-21: `xo doc Map`
+  // listed none)
+  let c = s.res[0].c
+  if c.prelude >= 0 {
+    if let Some(o) = c.mods[c.prelude].members.get(name.bytes()) {
+      if c.objs[o].kind == check.ObjKind.Type {
+        for f in c.mods[c.prelude].files {
+          if !files.contains(f) {
+            files.push(f)
+          }
+        }
+      }
+    }
+  }
+  s.declared_in(files, fn(full: Str) { full.starts_with(name + ".") })
 }
 
 /// The files declared() searches: the user files, then those of the std
@@ -463,9 +520,14 @@ fn (s: Session) preloaded(m: Int) -> Bool {
 /// top level declaration also by its module's name (`pool.park_wait` for
 /// park_wait of native/llrt/pool).
 fn (var s: Session) declared(matches: fn(Str) -> Bool) -> List[Found] {
+  s.declared_in(s.search_files(), matches)
+}
+
+/// declared over the files given.
+fn (var s: Session) declared_in(files: List[Int], matches: fn(Str) -> Bool) -> List[Found] {
   let c = s.res[0].c
   var out: List[Found] = []
-  for f in s.search_files() {
+  for f in files {
     for site in s.sites_of(f) {
       if site.id.name.is_empty() {
         continue
