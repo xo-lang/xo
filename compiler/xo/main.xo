@@ -825,7 +825,10 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   var cur_rk = lo.rc_keys
   var mi = cur.m
   let later = defer_inline_verify(os, o, march, release)
-  let (inl0, pend0) = inline_or_defer(os, mi, emit_jobs(os), phases, cur_os, release, cur_rk, later)
+  // the inline cache's hits left undecoded until read (decision 0283
+  // stage B), where the per-function cache is used
+  let lazy_inl = march == "arm64" && !o.race && !release && o.cmd != "asm" && passes_off(os).is_empty() && backend_cache_mode(os) != "verify" && (os.env.get("XO_LAZY_INLINE") ?? "") != "off"
+  let (inl0, pend0) = inline_or_defer(os, mi, emit_jobs(os), phases, cur_os, release, cur_rk, later, lazy_inl)
   var inl = inl0
   var pend = pend0
   t = lap(os, phases, "inline", t)
@@ -840,7 +843,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       cur_os = tgoos
       cur_rk = l.rc_keys
       mi = cur.m
-      let (inl2, pend2) = inline_or_defer(os, mi, emit_jobs(os), phases, cur_os, release, cur_rk, later)
+      let (inl2, pend2) = inline_or_defer(os, mi, emit_jobs(os), phases, cur_os, release, cur_rk, later, lazy_inl)
       inl = inl2
       pend = pend2
       t = lap(os, phases, "inline", l.t)
@@ -1444,15 +1447,16 @@ fn passes_off(os: Os) -> List[Str] {
 /// (gotchas/arm64-inline-verify-fallback.md). XO_INLINE_BREAK=1 breaks
 /// the inlined module on purpose (internal/arm64 TestInlineFallbackLoud).
 fn inline_or_say(os: Os, var mi: ssa.Module, jobs: Int, phases: Bool, tgoos: Str, release: Bool, rc_keys: List[Str]) -> Bool {
-  let (ok, _) = inline_or_defer(os, mi, jobs, phases, tgoos, release, rc_keys, false)
+  let (ok, _) = inline_or_defer(os, mi, jobs, phases, tgoos, release, rc_keys, false, false)
   ok
 }
 
 /// inline_or_say, or with later, when the module changed, its
 /// verification left to the caller (verify_after_dce): whether the
 /// inlined module is to be generated, and whether its verification is
-/// pending.
-fn inline_or_defer(os: Os, var mi: ssa.Module, jobs: Int, phases: Bool, tgoos: Str, release: Bool, rc_keys: List[Str], later: Bool) -> (Bool, Bool) {
+/// pending. With lazy the inline cache's hits are left undecoded (arm64
+/// inline_cached, decision 0283 stage B).
+fn inline_or_defer(os: Os, var mi: ssa.Module, jobs: Int, phases: Bool, tgoos: Str, release: Bool, rc_keys: List[Str], later: Bool, lazy: Bool) -> (Bool, Bool) {
   let deny = os.env.get("XO_INLINE_DENY") ?? ""
   if !deny.is_empty() {
     mi.inline_deny = deny.split(",")
@@ -1468,7 +1472,7 @@ fn inline_or_defer(os: Os, var mi: ssa.Module, jobs: Int, phases: Bool, tgoos: S
   }
   // arm64.inline_check(mi, jobs, ...), its two halves timed
   var t = os.clock.now()
-  let changed = inline_through_cache(os, mi, rc_keys, jobs, release, (os.env.get("XO_INLINE_BREAK") ?? "") == "1", phases)
+  let changed = inline_through_cache(os, mi, rc_keys, jobs, release, (os.env.get("XO_INLINE_BREAK") ?? "") == "1", phases, lazy)
   t = lap(os, phases, "inline.apply", t)
   if changed && later {
     return (true, true)
@@ -1485,8 +1489,9 @@ fn inline_or_defer(os: Os, var mi: ssa.Module, jobs: Int, phases: Bool, tgoos: S
 fn gen_module(os: Os, o: Opts, ctx: Ctx, c: check.Checker, m: ssa.Module, tgoos: Str, release: Bool, jobs: Int, phases: Bool, t0: Time) -> (ssa.Module, Time) {
   var gm = m
   var t = t0
-  // the module without inlining holds the undecoded functions still
-  ssa.force_lazy(gm, [], jobs)
+  // the module without inlining holds the undecoded functions still (the
+  // inline cache's hits stay undecoded: their readers force them)
+  ssa.force_lazy_unfacted(gm, jobs)
   // whole program dead function removal (arm64 reach.xo); not for `xo
   // asm`, which shows every function (xo dev codegen reads inlined ones)
   if o.cmd != "asm" && (os.env.get("XO_DCE") ?? "") != "off" {

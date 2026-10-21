@@ -1,0 +1,56 @@
+// The inline cache's entries (v7, decision 0283 stage B): the changed
+// flag, the body facts and the function; a hit left undecoded is a shell
+// with the function's fields before its body, and its facts.
+
+use github.com/xo-lang/xo/compiler/ssa
+
+/// f calls g and returns (types are ssa's own tests' matter).
+fn entry_module() -> (ssa.Module, Int) {
+  var m = ssa.Module{}
+  let _g = m.new_func("g", [], [])
+  let fi = m.new_func("f", [], [])
+  var f = m.funcs[fi]
+  let _c = f.add(0, ssa.Op.Call, -1, ssa.Aux.S(s: "g"), [])
+  let _r = f.add(0, ssa.Op.Return, -1, ssa.Aux.None, [])
+  f.var_params = [0]
+  m.funcs[fi] = f
+  (m, fi)
+}
+
+test "an inline entry gives back the function, or a shell with its facts" {
+  let (m, fi) = entry_module()
+  let f = m.funcs[fi]
+  let e = inline_entry(m, f, true) ?? b""
+  expect(e.is_empty()) == false
+  // decoded in full
+  match inline_of_entry(m, e, ssa.op_names()) {
+    Some((g, ch)) => {
+      expect(ch) == true
+      expect(g.name) == "f"
+      expect(g.values.len()) == f.values.len()
+    }
+    None => expect("decoded") == "not decoded"
+  }
+  // left undecoded: the shell's fields, the facts, the lazy entry
+  match lazy_hit(m, e, "K") {
+    Some((shell, x, l, ch)) => {
+      expect(ch) == true
+      expect(shell.name) == "f"
+      expect(shell.var_params) == [0]
+      expect(shell.results) == f.results
+      expect(shell.values.len()) == 0
+      expect(shell.ckey) == "inl K"
+      expect(x.nvalues) == f.values.len()
+      expect(x.params) == ssa.body_facts(f).params
+      expect(l.ckey) == "inl K"
+      // the lazy entry decodes to the function
+      match ssa.func_of_entry(m, l.entry, ssa.op_names()) {
+        Some(g) => expect(g.values.len()) == f.values.len()
+        None => expect("decoded") == "not decoded"
+      }
+    }
+    None => expect("shell") == "none"
+  }
+  // a cut entry: none
+  expect(entry_parts(e[0..1]) is None) == true
+}

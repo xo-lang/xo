@@ -568,7 +568,7 @@ fn cache_note(os: Os, on: Bool, what: Str, hits: Int, total: Int) {
 /// inline_apply without rc_keys (the cache off, --release, a small
 /// module). verify inlines every function and fails the build when an
 /// entry differs. Whether the module changed.
-fn inline_through_cache(os: Os, var mi: ssa.Module, rc_keys: List[Str], jobs: Int, release: Bool, brk: Bool, phases: Bool) -> Bool {
+fn inline_through_cache(os: Os, var mi: ssa.Module, rc_keys: List[Str], jobs: Int, release: Bool, brk: Bool, phases: Bool, lazy: Bool) -> Bool {
   let host = host_os(os)
   let dir = backend_cache_dir(os, Ctx{goos: host, std: "", xo: "", cache: user_cache_dir(os, host)})
   if dir.is_empty() || release || rc_keys.is_empty() {
@@ -580,7 +580,7 @@ fn inline_through_cache(os: Os, var mi: ssa.Module, rc_keys: List[Str], jobs: In
   t = lap(os, phases, "inline.keys", t)
   let (entries, pk) = cache_get_packed(os, dir, "inl", mi.goarch, keys, jobs)
   t = lap(os, phases, "inline.read", t)
-  let out = arm64.inline_cached(mi, ik, entries, backend_cache_mode(os) == "verify", brk, jobs)
+  let out = arm64.inline_cached(mi, ik, entries, backend_cache_mode(os) == "verify", brk, jobs, lazy)
   pack_store(os, pk, entries, out.stores)
   var n = 0
   for (k, e) in out.stores {
@@ -616,14 +616,17 @@ fn verify_inlined(os: Os, var mi: ssa.Module, tgoos: Str, jobs: Int, release: Bo
   let host = host_os(os)
   let dir = backend_cache_dir(os, Ctx{goos: host, std: "", xo: "", cache: user_cache_dir(os, host)})
   if dir.is_empty() || release || backend_cache_mode(os) == "verify" {
+    ssa.force_lazy(mi, [], jobs)
     return mi.verify_all_jobs(jobs)
   }
   let id = cache_id(os)
   if id.is_empty() {
+    ssa.force_lazy(mi, [], jobs)
     return mi.verify_all_jobs(jobs)
   }
   let keys = arm64.function_keys(mi, tgoos, id, jobs)
   if keys.is_empty() {
+    ssa.force_lazy(mi, [], jobs)
     return mi.verify_all_jobs(jobs)
   }
   verify_by_keys(os, mi, keys, dir, id, jobs)
@@ -638,10 +641,12 @@ fn verify_after_dce(os: Os, var mi: ssa.Module, tgoos: Str, jobs: Int) -> (List[
   let dir = backend_cache_dir(os, Ctx{goos: host, std: "", xo: "", cache: user_cache_dir(os, host)})
   let id = cache_id(os)
   if dir.is_empty() || id.is_empty() {
+    ssa.force_lazy(mi, [], jobs)
     return (mi.verify_all_jobs(jobs), [])
   }
   let keys = arm64.function_keys(mi, tgoos, id, jobs)
   if keys.is_empty() {
+    ssa.force_lazy(mi, [], jobs)
     return (mi.verify_all_jobs(jobs), [])
   }
   (verify_by_keys(os, mi, keys, dir, id, jobs), keys)
@@ -670,6 +675,15 @@ fn verify_by_keys(os: Os, var mi: ssa.Module, keys: List[Str], dir: Str, id: Str
       fresh += 1
     }
   }
+  // the functions to verify, decoded (the inline cache's hits left
+  // undecoded, decision 0283 stage B, are skipped or read here)
+  var vidx: List[Int] = []
+  for (fi, s) in skip.indexed() {
+    if !s {
+      vidx.push(fi)
+    }
+  }
+  ssa.force_lazy(mi, vidx, jobs)
   let errs = mi.verify_jobs_skip(jobs, skip)
   if errs.is_empty() && fresh > 0 {
     // the keys of earlier builds too (an edit and its revert), until

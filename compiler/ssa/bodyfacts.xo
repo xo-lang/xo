@@ -18,6 +18,9 @@ pub struct BodyFacts {
   pub params: List[Int] = []
   pub names: List[(Str, Op, Bool)] = []
   pub faults: Bool = false
+  /// the immortal fields of its one returned struct, [] for none
+  /// (immortal_returns: the verifier and its keys read them)
+  pub imm: List[Bool] = []
 }
 
 /// The version of the facts' encoding.
@@ -47,7 +50,7 @@ pub fn body_facts(f: Func) -> BodyFacts {
       params.push(f.values[p].ty)
     }
   }
-  BodyFacts{nvalues: f.values.len(), params: params, names: names, faults: faults}
+  BodyFacts{nvalues: f.values.len(), params: params, names: names, faults: faults, imm: imm_return_of(f)}
 }
 
 /// The facts as bytes (types by name, as encode_func's); none when a
@@ -63,6 +66,10 @@ pub fn encode_facts(m: Module, x: BodyFacts) -> Option[Bytes] {
     e.bool(inb)
   }
   e.bool(x.faults)
+  e.uv(x.imm.len())
+  for b in x.imm {
+    e.bool(b)
+  }
   if !e.ok {
     return None
   }
@@ -114,6 +121,13 @@ pub fn decode_facts(m: Module, d: Bytes) -> Option[BodyFacts] {
     x.names.push((s, op, inb))
   }
   x.faults = r.bool()
+  let ni = r.uv()
+  if !r.ok || ni > d.len() {
+    return None
+  }
+  for _ in 0..ni {
+    x.imm.push(r.bool())
+  }
   if !r.ok || r.at != d.len() {
     return None
   }

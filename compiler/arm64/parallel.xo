@@ -217,12 +217,39 @@ pub fn generate_parallel(m: ssa.Module, os: Str, jobs: Int) -> Program {
 /// generate_parallel with the per-function cache fc (fcache.xo): a
 /// function whose key fc holds an entry for is placed from it instead of
 /// generated (with fc.verify, generated and compared with it).
-pub fn generate_cached(m: ssa.Module, os: Str, jobs: Int, fc: FnCache) -> Program {
+pub fn generate_cached(m0: ssa.Module, os: Str, jobs: Int, fc: FnCache) -> Program {
+  var m = m0
   let bounds = part_bounds(m)
   let np = bounds.len() - 1
   if np <= 1 {
+    ssa.force_lazy(m, [], jobs)
     var g = new_gen(m, os)
     return g.generate()
+  }
+  // the functions generated from their bodies, decoded (the inline
+  // cache's hits left undecoded, decision 0283 stage B): those of a part
+  // its entry does not give whose own entry the cache lacks, main (the
+  // entry calls it) and the exports (their wrappers read the parameters)
+  if !m.lazy.is_empty() {
+    var idx: List[Int] = []
+    for p in 0..np {
+      let pk = part_key(fc, p)
+      if !fc.verify && !pk.is_empty() && fc.part_entries.contains(pk) {
+        continue
+      }
+      for fi in bounds[p]..bounds[p + 1] {
+        let k = if fi < fc.keys.len() { fc.keys[fi] } else { "" }
+        if fc.verify || k.is_empty() || !fc.entries.contains(k) {
+          idx.push(fi)
+        }
+      }
+    }
+    for (fi, f) in m.funcs.indexed() {
+      if f.name == "main" || !f.export.is_empty() {
+        idx.push(fi)
+      }
+    }
+    ssa.force_lazy(m, idx, jobs)
   }
   var g = new_gen(m, os)
   g.find_addr_taken()

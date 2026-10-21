@@ -1319,35 +1319,58 @@ fn imm_value(x: Value) -> Bool {
 fn immortal_returns(fs: List[Func]) -> Map[Str, List[Bool]] {
   var out: Map[Str, List[Bool]] = {}
   for f in fs {
-    var ret = -1
-    var n = 0
-    for bl in f.blocks {
-      for v in bl.instrs {
-        if f.values[v].op == Op.Return {
-          n += 1
-          ret = v
-        }
-      }
-    }
-    if n != 1 || f.values[ret].args.len() != 1 {
-      continue
-    }
-    let s = f.values[f.values[ret].args[0]]
-    if s.op != Op.Struct {
-      continue
-    }
-    var flags: List[Bool] = []
-    var any = false
-    for a in s.args {
-      let b = imm_value(f.values[a])
-      flags.push(b)
-      any = any || b
-    }
-    if any {
+    let flags = imm_return_of(f)
+    if !flags.is_empty() {
       out[f.name] = flags
     }
   }
   out
+}
+
+/// immortal_returns of m's functions, a function not decoded by its body
+/// facts (decision 0283 stage B).
+pub fn (m: Module) immortal_returns_m() -> Map[Str, List[Bool]] {
+  var out: Map[Str, List[Bool]] = {}
+  for (fi, f) in m.funcs.indexed() {
+    let flags = match m.facts.get(fi) {
+      Some(x) => x.imm
+      None => imm_return_of(f)
+    }
+    if !flags.is_empty() {
+      out[f.name] = flags
+    }
+  }
+  out
+}
+
+/// The immortal fields of f's one returned struct ([] for none: more
+/// than one return, a result that is not a struct, or no immortal field).
+fn imm_return_of(f: Func) -> List[Bool] {
+  var ret = -1
+  var n = 0
+  for bl in f.blocks {
+    for v in bl.instrs {
+      if f.values[v].op == Op.Return {
+        n += 1
+        ret = v
+      }
+    }
+  }
+  if n != 1 || f.values[ret].args.len() != 1 {
+    return []
+  }
+  let s = f.values[f.values[ret].args[0]]
+  if s.op != Op.Struct {
+    return []
+  }
+  var flags: List[Bool] = []
+  var any = false
+  for a in s.args {
+    let b = imm_value(f.values[a])
+    flags.push(b)
+    any = any || b
+  }
+  if any { flags } else { [] }
 }
 
 fn (var r: Rc) insert(var f: Func, var c: RcFunc) {

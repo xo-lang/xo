@@ -16,7 +16,7 @@ use std/crypto
 use github.com/xo-lang/xo/compiler/ssa
 
 /// The version of the keys and entries.
-const INLINE_CACHE_VERSION = "xo inline cache v6"
+const INLINE_CACHE_VERSION = "xo inline cache v7"
 
 /// What inline_cached did: the entries to store (key, entry), the
 /// functions read from entries, the functions whose computed result
@@ -221,7 +221,10 @@ fn inlinable(st: InlineState, s: Str) -> Bool {
 /// reaches it, so a function it inlines sees every later callee before
 /// inlining, as inline_module does. The computed functions are encoded
 /// on tasks after the walk.
-pub fn inline_cached(var m: ssa.Module, ik: InlineKeys, entries: Map[Str, Bytes], verify: Bool, break_inline: Bool, jobs: Int) -> InlineOut {
+/// With lazy (decision 0283 stage B), a hit no computed function can
+/// inline stays undecoded: a shell with its body facts and its entry in
+/// m.lazy, until a reader forces it (ssa.force_lazy).
+pub fn inline_cached(var m: ssa.Module, ik: InlineKeys, entries: Map[Str, Bytes], verify: Bool, break_inline: Bool, jobs: Int, lazy: Bool) -> InlineOut {
   var out = InlineOut{}
   let keys = ik.keys
   let st = ik.st
@@ -242,27 +245,61 @@ pub fn inline_cached(var m: ssa.Module, ik: InlineKeys, entries: Map[Str, Bytes]
   for _ in 0..n {
     post.push(None)
   }
-  for (fi, g, ch) in decode_all(mt, hits, jobs) {
-    post[fi] = Some((g, ch))
+  var is_hit: Map[Int, Bool] = {}
+  for (fi, _) in hits {
+    is_hit[fi] = true
   }
   // the bodies the walk reads (decision 0220 addendum stage D 2b): each
   // function computed here and each it can inline (its name closure);
   // a function read from its entry needs neither its own body before
   // inlining nor, unless a computed one inlines it, decoding at all
-  if !m.lazy.is_empty() {
-    var need: Map[Int, Bool] = {}
-    for fi in 0..n {
-      if post[fi] is Some(_) {
-        continue
-      }
-      need[fi] = true
-      for s in name_closure(st, fi) {
-        let ci = st.by_name.get(s) ?? -1
-        if ci >= 0 {
-          need[ci] = true
-        }
+  var need: Map[Int, Bool] = {}
+  for fi in 0..n {
+    if is_hit.contains(fi) {
+      continue
+    }
+    need[fi] = true
+    for s in name_closure(st, fi) {
+      let ci = st.by_name.get(s) ?? -1
+      if ci >= 0 {
+        need[ci] = true
       }
     }
+  }
+  // with lazy, the hits no computed function reads stay undecoded
+  var dec: List[(Int, Bytes)] = []
+  var shells: List[Option[(ssa.Func, ssa.BodyFacts, ssa.LazyFn, Bool)]] = []
+  for _ in 0..n {
+    shells.push(None)
+  }
+  for (fi, e) in hits {
+    if lazy && !need.contains(fi) {
+      if let Some(h) = lazy_hit(mt, e, keys[fi]) {
+        shells[fi] = Some(h)
+        continue
+      }
+    }
+    dec.push((fi, e))
+  }
+  let decoded = decode_all(mt, dec, jobs)
+  if decoded.len() < dec.len() {
+    // an entry that does not decode is computed, and may inline any hit:
+    // decode them all
+    for fi in 0..n {
+      if let Some(_) = shells[fi] {
+        shells[fi] = None
+        dec.push((fi, entries.get(keys[fi]) ?? b""))
+      }
+    }
+    for (fi, g, ch) in decode_all(mt, dec, jobs) {
+      post[fi] = Some((g, ch))
+    }
+  } else {
+    for (fi, g, ch) in decoded {
+      post[fi] = Some((g, ch))
+    }
+  }
+  if !m.lazy.is_empty() {
     var idx: List[Int] = []
     for (fi, _) in need {
       if m.lazy.contains(fi) {
@@ -279,6 +316,14 @@ pub fn inline_cached(var m: ssa.Module, ik: InlineKeys, entries: Map[Str, Bytes]
       m.funcs[fi] = g
       m.lazy.remove(fi)
       m.funcs[fi].ckey = "inl ${keys[fi]}"
+      out.changed = out.changed || ch
+      out.reused += 1
+      continue
+    }
+    if let Some((shell, x, l, ch)) = shells[fi] {
+      m.funcs[fi] = shell
+      m.facts[fi] = x
+      m.lazy[fi] = l
       out.changed = out.changed || ch
       out.reused += 1
       continue
@@ -301,8 +346,13 @@ pub fn inline_cached(var m: ssa.Module, ik: InlineKeys, entries: Map[Str, Bytes]
       None => out.stores.push((k, enc))
     }
   }
-  // none should be left; any is decoded rather than built as a shell
-  ssa.force_lazy(m, [], jobs)
+  // none should be left but the hits left undecoded (lazy); any other is
+  // decoded rather than built as a shell
+  if lazy {
+    ssa.force_lazy_unfacted(m, jobs)
+  } else {
+    ssa.force_lazy(m, [], jobs)
+  }
   if break_inline {
     out.changed = inline_break(m) || out.changed
   }
@@ -380,11 +430,21 @@ fn encode_all(mt: ssa.Module, m: ssa.Module, computed: List[(Int, Bool)], jobs: 
 
 /// Function f after inlining and whether the pass changed it, as an
 /// entry; none when the codec cannot hold f.
+/// The entry is the changed flag ("1" or "0"), the length of the body
+/// facts (an unsigned varint) and the facts (ssa bodyfacts.xo, decision
+/// 0283 stage B: what the passes after inlining read of a function left
+/// undecoded), then the function (ssa.func_entry).
 fn inline_entry(m: ssa.Module, f: ssa.Func, ch: Bool) -> Option[Bytes] {
+  let facts = match ssa.encode_facts(m, ssa.body_facts(f)) {
+    Some(x) => x
+    None => return None
+  }
   match ssa.func_entry(m, f) {
     Some(e) => {
       var b = BytesBuilder.new()
       b.write_str(if ch { "1" } else { "0" })
+      put_uv(b, facts.len())
+      b.write(facts)
       b.write(e)
       Some(b.freeze())
     }
@@ -392,12 +452,77 @@ fn inline_entry(m: ssa.Module, f: ssa.Func, ch: Bool) -> Option[Bytes] {
   }
 }
 
-fn inline_of_entry(m: ssa.Module, e: Bytes, ops: Map[Str, ssa.Op]) -> Option[(ssa.Func, Bool)] {
+/// An inline entry's parts: the changed flag, the facts' bytes and the
+/// function's bytes; none for a malformed one.
+fn entry_parts(e: Bytes) -> Option[(Bool, Bytes, Bytes)] {
   if e.is_empty() {
     return None
   }
-  match ssa.func_of_entry(m, e[1..e.len()], ops) {
-    Some(g) => Some((g, e[0] == 0x31))
+  let (nf, at) = get_uv(e, 1)
+  if at < 0 || nf > e.len() - at {
+    return None
+  }
+  Some((e[0] == 0x31, e[at..at + nf], e[at + nf..e.len()]))
+}
+
+fn inline_of_entry(m: ssa.Module, e: Bytes, ops: Map[Str, ssa.Op]) -> Option[(ssa.Func, Bool)] {
+  match entry_parts(e) {
+    Some((ch, _, fb)) => {
+      match ssa.func_of_entry(m, fb, ops) {
+        Some(g) => Some((g, ch))
+        None => None
+      }
+    }
     None => None
   }
+}
+
+/// A hit left undecoded (decision 0283 stage B): the shell of its
+/// function (every field before the body), its body facts, the lazy
+/// entry force_lazy decodes, and the changed flag; none when the entry
+/// does not hold them.
+fn lazy_hit(m: ssa.Module, e: Bytes, key: Str) -> Option[(ssa.Func, ssa.BodyFacts, ssa.LazyFn, Bool)] {
+  let (ch, xb, fb) = match entry_parts(e) {
+    Some(p) => p
+    None => return None
+  }
+  let x = match ssa.decode_facts(m, xb) {
+    Some(x) => x
+    None => return None
+  }
+  match ssa.func_head_of_entry(m, fb) {
+    Some(h) => {
+      var shell = h
+      shell.ckey = "inl ${key}"
+      Some((shell, x, ssa.LazyFn{key: key, entry: fb, sum: b"", ckey: "inl ${key}"}, ch))
+    }
+    None => None
+  }
+}
+
+fn put_uv(var b: BytesBuilder, n: Int) {
+  var x = n
+  while x >= 128 {
+    b.write_byte(UInt8(128 | (x & 127)))
+    x = x >> 7
+  }
+  b.write_byte(UInt8(x))
+}
+
+/// The unsigned varint at d[at..] and the position after it ((0, -1)
+/// when cut short).
+fn get_uv(d: Bytes, at0: Int) -> (Int, Int) {
+  var x = 0
+  var sh = 0
+  var at = at0
+  while at < d.len() && sh < 63 {
+    let c = Int(d[at])
+    at += 1
+    x = x | ((c & 127) << sh)
+    if c < 128 {
+      return (x, at)
+    }
+    sh += 7
+  }
+  (0, -1)
 }

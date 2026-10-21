@@ -38,6 +38,9 @@ pub struct LazyFn {
   pub key: Str
   pub entry: Bytes
   pub sum: Bytes
+  /// the decoded function's Func.ckey: "rc KEY" when empty (an inline
+  /// hit's is "inl KEY", decision 0283 stage B)
+  pub ckey: Str = ""
 }
 
 /// What stands in the module for a lazy function: its name and the
@@ -88,7 +91,7 @@ pub fn force_lazy(var m: Module, idx: List[Int], jobs: Int) {
             match decode_func(mt, l.entry, ops) {
               Some(g0) => {
                 var g = g0
-                g.ckey = "rc ${l.key}"
+                g.ckey = if l.ckey.is_empty() { "rc ${l.key}" } else { l.ckey }
                 mine.push((fi, g))
               }
               None => fault("ssa.force_lazy: the cache entry of ${l.key} no longer decodes")
@@ -107,6 +110,22 @@ pub fn force_lazy(var m: Module, idx: List[Int], jobs: Int) {
   for (fi, g) in done {
     m.funcs[fi] = g
     m.lazy.remove(fi)
+    m.facts.remove(fi)
+  }
+}
+
+/// force_lazy of the lazy functions with no body facts (the reference
+/// counting cache's shells); those with facts (the inline cache's,
+/// decision 0283 stage B) stay until a reader forces them.
+pub fn force_lazy_unfacted(var m: Module, jobs: Int) {
+  var idx: List[Int] = []
+  for (fi, _) in m.lazy {
+    if !m.facts.contains(fi) {
+      idx.push(fi)
+    }
+  }
+  if !idx.is_empty() {
+    force_lazy(m, idx, jobs)
   }
 }
 
@@ -664,7 +683,15 @@ fn (var r: EntryR) types() -> List[Int] {
 
 /// The function of an entry with this module's type ids; none for a
 /// malformed entry, another version, or a type or opcode not known.
-fn decode_func(m: Module, d: Bytes, ops: Map[Str, Op]) -> Option[Func] {
+fn decode_func(m: Module, d: Bytes, ops: Map[Str, Op]) -> Option[Func] { decode_func_at(m, d, ops, false) }
+
+/// The function of an entry func_entry wrote without its body: every
+/// field before the blocks (name, results, `var` parameters, flags,
+/// unwind exit, captures, export, file, borrowed, skip), for the shell
+/// of a function not decoded (decision 0283 stage B).
+pub fn func_head_of_entry(m: Module, d: Bytes) -> Option[Func] { decode_func_at(m, d, ops_by_name(), true) }
+
+fn decode_func_at(m: Module, d: Bytes, ops: Map[Str, Op], head_only: Bool) -> Option[Func] {
   var r = EntryR{d: d}
   if r.str() != RC_CACHE_VERSION {
     return None
@@ -703,6 +730,9 @@ fn decode_func(m: Module, d: Bytes, ops: Map[Str, Op]) -> Option[Func] {
     f.borrowed.push(r.bool())
   }
   f.skip = r.str()
+  if head_only {
+    return if r.ok { Some(f) } else { None }
+  }
   let nb = r.uv()
   if !r.ok || nb > d.len() {
     return None
@@ -974,7 +1004,7 @@ pub fn type_keys(m: Module) -> List[Str] {
 /// results. "" where keys[fi] is "" (always verified).
 pub fn (m: Module) verify_keys(keys: List[Str]) -> List[Str] {
   let faults = m.may_fault()
-  let imm = immortal_returns(m.funcs)
+  let imm = m.immortal_returns_m()
   var last: Map[Str, Int] = {}
   for (i, f) in m.funcs.indexed() {
     last[f.name] = i
@@ -988,22 +1018,21 @@ pub fn (m: Module) verify_keys(keys: List[Str]) -> List[Str] {
     var b = BytesBuilder.new()
     b.write_str("xo verify key v1\n${keys[fi]}\nself ${faults[fi]} ${f.catches} ${bools_text(f.borrowed)}\n")
     var seen: Map[Str, Bool] = {}
-    for x in f.values {
-      if let S(s) = x.aux {
-        if !seen.contains(s) {
-          seen[s] = true
-          b.write_str("name ${s.len()}:${s}")
-          for ci in [m.func_index(s), last.get(s) ?? -1] {
-            if ci >= 0 {
-              let g = m.funcs[ci]
-              b.write_str(" ${ci} ${faults[ci]} ${g.catches} ${bools_text(g.borrowed)}")
-            } else {
-              b.write_str(" -")
-            }
+    // (a function not decoded: its body facts' names, decision 0283 B)
+    for s in m.value_names(fi) {
+      if !seen.contains(s) {
+        seen[s] = true
+        b.write_str("name ${s.len()}:${s}")
+        for ci in [m.func_index(s), last.get(s) ?? -1] {
+          if ci >= 0 {
+            let g = m.funcs[ci]
+            b.write_str(" ${ci} ${faults[ci]} ${g.catches} ${bools_text(g.borrowed)}")
+          } else {
+            b.write_str(" -")
           }
-          let ir = if let Some(fs) = imm.get(s) { bools_text(fs) } else { "-" }
-          b.write_str(" ${ir}\n")
         }
+        let ir = if let Some(fs) = imm.get(s) { bools_text(fs) } else { "-" }
+        b.write_str(" ${ir}\n")
       }
     }
     out.push(crypto.sha256(b.freeze()).to_hex())

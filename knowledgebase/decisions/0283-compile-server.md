@@ -186,3 +186,26 @@ fails the build when they differ; --phase-times prints `cache borrows
 KEPT/TOTAL kept`. Test: internal/arm64 TestBorrowIncremental (a callee
 edited from consuming its list to not and back, each build checked and
 compared with the cache-off build).
+
+## Stage B: inline hits left undecoded (2026-10-21, xo-fa)
+
+A warm edit of xo decoded every inline cache hit (10,207 functions;
+ssa.decode_func 0.72 s of CPU) though one function's code changed. Now
+an inline entry (v7) holds the function's body facts (ssa bodyfacts.xo:
+its value count, entry parameter types, each value's name with its
+opcode and whether a block holds it, whether an instruction faults by
+itself, its immortal return fields) next to the function, and a hit no
+computed function inlines stays undecoded: a shell with the fields
+before its body (ssa func_head_of_entry), its facts in Module.facts, its
+entry in Module.lazy. The readers after inlining take the facts through
+accessors (block_names, taken_names, value_count, param_types,
+value_names, fault_facts, immortal_returns_m): dead function removal,
+addr_taken, part_bounds, fn_key and func_sig, by_ref_of, may_fault, the
+verifier's keys and its immortal returns. A function is decoded
+(force_lazy) where its body is read: the functions the verifier checks
+(their verify keys not seen before), and in generate_cached the
+functions of a part whose part entry misses and whose own fn entry
+misses, main, and the exports. Only where the per-function cache is
+used (arm64, no XO_PASSES or --race, not --release, verify or `xo asm`);
+XO_LAZY_INLINE=off turns it off. fn_key faults on a function with facts
+and no cache key (its key prints the body).
