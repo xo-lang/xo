@@ -35,7 +35,9 @@ fn main(os: Os) {
       Ok(r) => {
         var hs: List[Str] = []
         for k in r.headers.keys().sort() {
-          hs.push("${k}: ${r.headers.get(k) ?? ""}")
+          // every field of the name, as Go's Header.Values: the Map
+          // holds a repeated Set-Cookie's first field (decision 0288)
+          hs.push("${k}: ${r.header_values(k).join(", ")}")
         }
         os.stdio.println("${i} ${r.status} [${hs.join("|")}] ${r.body.len()} ${r.body.to_hex()}")
       }
