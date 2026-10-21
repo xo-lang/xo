@@ -197,6 +197,67 @@ func TestFaultLocalsFaultingFrame(t *testing.T) {
 	}
 }
 
+// faultPadProgram faults in scan, which owns a list, so its fault stubs
+// have a landing pad (the list's drop).
+const faultPadProgram = `fn scan(n: Int) -> Int {
+  if n > 1000 {
+    // never taken: a call of itself keeps scan out of line
+    return scan(n - 1)
+  }
+  let xs = [10, 20, 30]
+  var sum = 0
+  var i = 0
+  while i <= n {
+    let k = i * 2
+    sum += xs[k]
+    i += 1
+  }
+  sum
+}
+
+fn main(os: Os) {
+  os.stdio.println("${scan(3)}")
+}
+`
+
+// TestFaultLocalsFaultingFramePad: the faulting frame's variables in
+// caller saved registers when its fault stub has a landing pad
+// (2026-10-21: such a stub stored none, since the pad resumed with sp
+// below the saves, so i and k printed <unavailable>; now the call site
+// lands on the pad's entry, which resets sp: emit.xo pad_entry).
+func TestFaultLocalsFaultingFramePad(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a program")
+	}
+	if runtime.GOARCH != "arm64" || (runtime.GOOS != "darwin" && runtime.GOOS != "linux") {
+		t.Skip("the arm64 backend's DWARF, on Linux and macOS")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte(faultPadProgram), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module example.com/faultpad\nedition preview\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := xotool.Build([]string{dir}, xotool.Options{Backend: xotool.BackendArm64})
+	if err != nil || res.Failed {
+		t.Fatalf("build: %v %v", err, res.Output)
+	}
+	cmd := exec.Command(res.Binaries[xotool.Host()])
+	cmd.Env = append(os.Environ(), "XO_TRACEBACK=locals")
+	testtmp.Lifeline(t, cmd, 2*time.Minute)
+	out, _ := cmd.CombinedOutput()
+	got := string(out)
+	if !strings.Contains(got, "fault: index 4 out of range") {
+		t.Fatalf("no fault report:\n%s", got)
+	}
+	for _, w := range []string{"n = 3", "xs = [10, 20, 30]", "sum = 40", "i = 2", "k = 4"} {
+		if !strings.Contains(got, "      "+w+"\n") {
+			t.Errorf("XO_TRACEBACK=locals: scan's frame lacks %q:\n%s", w, got)
+		}
+	}
+}
+
 // faultInlinedProgram faults in pick, which the inliner puts into main:
 // pick's own variables are described under its DW_TAG_inlined_subroutine
 // (2026-10-20: dwvars.xo skipped every inlined variable, so the frame

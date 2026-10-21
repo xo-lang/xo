@@ -1281,10 +1281,14 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
     // below sp before the moves take x0 to x7 (decision 0268's
     // addendum: a fault report shows them; the same code with and
     // without debug information)
-    // not where the fault can land in this function (a landing pad
-    // resumes with sp as at the stub's call, and its slots would be off by
-    // the saves), nor in a far frame (slots through x28)
-    let saves = if g.base == 0 && g.pos >= 0 && inst.pad < 0 { g.stub_saves(g.pos / 4) } else { [] }
+    // not in a far frame (slots through x28). Where the fault can land
+    // in this function, the landing pad resumes with sp as at the stub's
+    // call, below the saves: the call site then lands on the pad's entry,
+    // which first puts sp back at x29 less the frame record's offset
+    // (pad_entry; 2026-10-21: half the stubs had pads and saved nothing,
+    // so a fault in a function owning a list showed its locals in caller
+    // saved registers <unavailable>)
+    let saves = if g.base == 0 && g.pos >= 0 && (inst.pad < 0 || g.pad_entry_ok()) { g.stub_saves(g.pos / 4) } else { [] }
     var saved: List[(Int, Int)] = []
     if !saves.is_empty() {
       let bytes = 16 * ((saves.len() + 1) / 2)
@@ -1319,7 +1323,9 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
     let after = if dv_end.is_empty() { "" } else { "${dv_end}:\n" }
     if inst.pad >= 0 {
       let (from2, to2) = g.call_site_labels()
-      g.stub_sites.push(CallSite{from: from2, to: to2, pad: g.pad_of(inst.pad)})
+      let pad = g.pad_of(inst.pad)
+      let entry = if saved.is_empty() { "" } else { g.pad_entry(pad) }
+      g.stub_sites.push(CallSite{from: from2, to: to2, pad: pad, entry: entry})
       sb.push("${from2}:\n\tbl ${inst.ffn}\n${to2}:\n${after}\tbrk #1\n")
     } else {
       sb.push("\tbl ${inst.ffn}\n${after}\tbrk #1\n")
@@ -1557,6 +1563,29 @@ fn (g: G) pad_of(pad: Int) -> Int {
   b
 }
 
+/// Whether a fault stub with a landing pad may save registers below sp
+/// (pad_entry): a frame with its record, sp x29 less a fixed offset in
+/// the body (not a leaf, whose stubs make the record; not a block that
+/// runs without the frame, shrink.xo).
+fn (g: G) pad_entry_ok() -> Bool {
+  !g.fr.leaf && !(g.shrink && g.fl[g.cur]) && g.fr.rec <= 4095
+}
+
+/// The entry of landing pad block pad for the call sites of fault stubs
+/// that saved registers: it puts sp back where the body keeps it (x29
+/// less the frame record's offset, prologue) and jumps to the pad. One
+/// per pad, among the stubs.
+fn (var g: G) pad_entry(pad: Int) -> Str {
+  if let Some(l) = g.pad_entries.get(pad) {
+    return l
+  }
+  let l = g.local("${g.lbl_prefix()}_pe${pad}")
+  let set = if g.fr.rec == 0 { "\tmov sp, x29\n" } else { "\tsub sp, x29, #${g.fr.rec}\n" }
+  g.stubs.push("${l}:\n${set}\tb ${g.label(g.fwd(pad))}\n")
+  g.pad_entries[pad] = l
+  l
+}
+
 /// The labels around the `bl` of a call that unwinds to a landing pad
 /// (decision 0085).
 fn (var g: G) call_site_labels() -> (Str, Str) {
@@ -1666,7 +1695,7 @@ fn (var g: G) lsda(sites: List[CallSite]) {
   let end = g.local("${g.lbl_prefix()}_cste")
   b.push("\t.p2align 2\n${g.lsda_label()}:\n\t.byte 255\n\t.byte 255\n\t.byte 1\n\t.uleb128 ${end}-${beg}\n${beg}:\n")
   for c in sites {
-    let pad = g.label(g.fwd(c.pad))
+    let pad = if c.entry.is_empty() { g.label(g.fwd(c.pad)) } else { c.entry }
     b.push("\t.uleb128 ${c.from}-${fb}\n\t.uleb128 ${c.to}-${c.from}\n\t.uleb128 ${pad}-${fb}\n\t.byte 0\n")
   }
   b.push("${end}:\n")

@@ -105,6 +105,19 @@ those registers before the report reads them.
   0085), so its stubs store nothing and its caller saved values stay
   `<unavailable>` (every stub of the fib and sieve asm goldens is such
   a one); the saves cover the functions without pads.
+  Lifted on arm64 (2026-10-21, Xo lang 4, poll item: three agents saw
+  the faulting frame's locals `<unavailable>`, a division by zero in a
+  loop and an index fault in main): a stub with a landing pad stores
+  too, and its call site in the LSDA names the pad's entry instead of
+  the pad, `mov sp, x29` or `sub sp, x29, #rec` then a branch to the
+  pad (emit.xo pad_entry), one per pad among the stubs, so the pad runs
+  with sp where the body keeps it. Only in a frame with its record and
+  sp a fixed offset below x29 (not a leaf, not a shrink wrapped block,
+  the record's offset under 4096). In bench/perf/http/xo 3,198 of the
+  6,402 stubs have a pad; arm64 instructions 403,449 to 407,579
+  (+1.0%, all in stubs: 1,255 more stubs store, 492 pad entries); no
+  instruction of a body changes. TestFaultLocalsFaultingFramePad.
+  x86_64 keeps the exclusion for now.
 - Cost: xo's __text 35.36 to 35.43 MB (+0.20%); the arm64 sweep flat
   (stubs are cold).
 - Secrets: the stored values are only read and printed under the opt

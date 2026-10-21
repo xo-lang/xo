@@ -17,6 +17,9 @@ struct CallSite {
   from: Str
   to: Str
   pad: Int
+  /// the pad's entry that first resets sp, for a fault stub that saved
+  /// registers below it (emit.xo pad_entry); "" for the pad itself
+  entry: Str = ""
 }
 
 /// What a memory holds (byref.xo hkey): an SSA value (k -1), or result k
@@ -363,6 +366,9 @@ struct G {
   pads: List[Bool] = []
   sites: List[CallSite] = []
   stub_sites: List[CallSite] = []
+  /// per landing pad block, its entry for the fault stubs that saved
+  /// registers (emit.xo pad_entry)
+  pad_entries: Map[Int, Str] = {}
   /// large `var` parameters passed by reference (byref.xo)
   held: Held = Held{}
   has_held: Bool = false
@@ -486,6 +492,7 @@ fn (var g: G) begin_func(fi: Int) {
   g.cur_pad = -1
   g.sites = []
   g.stub_sites = []
+  g.pad_entries = {}
   g.held = Held{}
   g.has_held = false
   g.ref_ptr = {}

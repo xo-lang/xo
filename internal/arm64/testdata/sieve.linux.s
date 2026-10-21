@@ -280,7 +280,12 @@ xo_f_sieve:
 	bl xo_x_fault_raise_overflow
 .LpGL1jtk_f2_cs1b:
 	brk #1
+.LpGL1jtk_f2_pe16:
+	mov sp, x29
+	b .LpGL1jtk_f2_b19
 .LpGL1jtk_f2_fault2:
+	sub sp, sp, #16
+	str x11, [sp, #0]
 	mov x0, x11
 	mov x1, x19
 	adrp x2, .Lxo_pGL1jtk_loc3
@@ -290,6 +295,8 @@ xo_f_sieve:
 .LpGL1jtk_f2_cs2b:
 	brk #1
 .LpGL1jtk_f2_fault3:
+	sub sp, sp, #16
+	str x11, [sp, #0]
 	mov x17, #1
 	sub x15, x20, x17
 	mov x0, x15
@@ -302,6 +309,8 @@ xo_f_sieve:
 .LpGL1jtk_f2_cs3b:
 	brk #1
 .LpGL1jtk_f2_fault4:
+	sub sp, sp, #16
+	stp x9, x11, [sp, #0]
 	mov x0, x11
 	mov x2, x11
 	mov x1, #42
@@ -311,7 +320,12 @@ xo_f_sieve:
 	bl xo_x_fault_raise_overflow
 .LpGL1jtk_f2_cs4b:
 	brk #1
+.LpGL1jtk_f2_pe20:
+	mov sp, x29
+	b .LpGL1jtk_f2_b23
 .LpGL1jtk_f2_fault5:
+	sub sp, sp, #16
+	stp x9, x11, [sp, #0]
 	mov x0, x9
 	mov x1, x19
 	adrp x2, .Lxo_pGL1jtk_loc6
@@ -320,7 +334,12 @@ xo_f_sieve:
 	bl xo_x_fault_raise_index
 .LpGL1jtk_f2_cs5b:
 	brk #1
+.LpGL1jtk_f2_pe22:
+	mov sp, x29
+	b .LpGL1jtk_f2_b25
 .LpGL1jtk_f2_fault6:
+	sub sp, sp, #16
+	stp x9, x11, [sp, #0]
 	sub x15, x9, x11
 	mov x0, x15
 	mov x2, x11
