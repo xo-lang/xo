@@ -61,6 +61,23 @@ func TestSelfhostWasm(t *testing.T) {
 	if err != nil || len(dirs) == 0 {
 		t.Fatalf("no goldens: %v", err)
 	}
+	// XO_WASM_GOLDENS: comma separated globs of golden names to run (the
+	// hourly main check's subset, 2026-10-21), else every golden
+	if pats := os.Getenv("XO_WASM_GOLDENS"); pats != "" {
+		var keep []string
+		for _, d := range dirs {
+			for _, p := range strings.Split(pats, ",") {
+				if ok, _ := filepath.Match(strings.TrimSpace(p), filepath.Base(d)); ok {
+					keep = append(keep, d)
+					break
+				}
+			}
+		}
+		if len(keep) == 0 {
+			t.Fatalf("XO_WASM_GOLDENS=%q matches no golden", pats)
+		}
+		dirs = keep
+	}
 	out := t.TempDir()
 	var rel []string
 	for _, d := range dirs {
@@ -130,7 +147,7 @@ func TestSelfhostWasm(t *testing.T) {
 	for _, w := range why {
 		t.Logf("unsupported %s", w)
 	}
-	if pass < wasmMinPass {
+	if os.Getenv("XO_WASM_GOLDENS") == "" && pass < wasmMinPass {
 		t.Errorf("%d goldens pass, want at least %d (wasmMinPass)", pass, wasmMinPass)
 	}
 }
