@@ -53,6 +53,8 @@ const CENTRAL = 64
 const LAST = 72
 const FREE_LISTS = 80
 const NFREE = 664
+/// The classes' words: (NFREE - FREE_LISTS) / 8.
+const CLASSES = 73
 const MAG = 1248
 /// Each class's magazine size (at h + MAG_CAP + 8 * c): the blocks of
 /// MAG_BYTES, at least 8 (heapos.xo mag_caps writes them when it makes
@@ -64,8 +66,11 @@ const MAG_CAP = 10368
 /// them) and on again for every record at a budget's first stretch
 /// (budget.xo reads ABYTES): heapos.xo counting_off, counting_on
 /// (2026-10-16: about 6 instructions an allocation; alloc small 0.979,
-/// text split 0.986). FREES is always counted: guarding it too moved
-/// the inliner's choices and made maps and mixed slower.
+/// text split 0.986). FREES is counted under the same switch (2026-10-21:
+/// its update was a load and store chain through the heap record on every
+/// free, 18% of a 4-byte allocation loop's cycles with NFREE's; on
+/// 2026-10-16 guarding it moved the inliner's choices and made maps and
+/// mixed slower: measured again across bench/perf).
 const COUNT = 1864
 /// The heap profile (heapprof.xo, decision 0238): sampled while counting
 /// (COUNT) once ABYTES reaches SAMPLE_AT (the largest Int when not
@@ -223,8 +228,32 @@ fn refill_alloc(h: Int, n: Int, c: Int, size: Int) -> Int {
 /// bench/results/string-list-objects-2026-10-14.md). 2026-10-21: with
 /// the bump and the counting in it, it was 76 instructions and a call
 /// from obj.try_new, rl_new_n and rs_new_n on every allocation. The
-/// same as alloc_pop, which reads the calling thread's heap.
-pub fn alloc_fast(h: Int, n: Int) -> Int { alloc_pop(h, n) }
+/// single threaded heap's (obj.xo HEAP): alloc_pop without the list's
+/// length, which only the magazines of a program with threads read
+/// (free_push, free_mt); recount sets it when threads start; and without
+/// LAST, whose reload right after was a store to load wait: a caller that
+/// needs the block's size computes it (obj.xo class_size) (2026-10-21:
+/// its update was a load and store chain through the heap record on every
+/// allocation and free, with FREES 18% of a 4-byte allocation loop's
+/// cycles).
+pub fn alloc_fast(h: Int, n: Int) -> Int {
+  if (rt.mem_load(h, RT_DEPTH, 8) | rt.mem_load(h, COUNT, 8)) != 0 {
+    return 0
+  }
+  var c = n.wrapping_add(15).shr_logical(4)
+  if c == 0 {
+    c = 1
+  }
+  let fl = h.wrapping_add(c.wrapping_shl(3))
+  let r = rt.mem_load(fl, FREE_LISTS, 8)
+  if r == 0 {
+    return 0
+  }
+  let next = rt.mem_load(r, 0, 8)
+  rt.mem_store(fl, FREE_LISTS, next, 8)
+  rt.prefetch(next)
+  r
+}
 
 /// A block of n bytes (at most SMALL_MAX) popped from its class's free
 /// list on heap h (the calling thread's when others run: 2026-10-19, the
@@ -256,10 +285,13 @@ pub fn alloc_pop(h: Int, n: Int) -> Int {
   r
 }
 
-/// Gives back block p to heap h (xo_rt.c free_in): onto its class's free
-/// list, or to heapos.xo for a big block. Counts the free.
+/// Gives back block p to the single threaded heap h (xo_rt.c free_in):
+/// onto its class's free list, or to heapos.xo for a big block. Counts the
+/// free when counting; leaves the list's length (alloc_fast, recount).
 pub fn free(h: Int, p: Int) {
-  rt.mem_store(h, FREES, rt.mem_load(h, FREES, 8).wrapping_add(1), 8)
+  if rt.mem_load(h, COUNT, 8) != 0 {
+    rt.mem_store(h, FREES, rt.mem_load(h, FREES, 8).wrapping_add(1), 8)
+  }
   let b = p.wrapping_sub(8)
   let c = rt.mem_load(b, 0, 8)
   if c < 0 {
@@ -269,7 +301,24 @@ pub fn free(h: Int, p: Int) {
   let fl = h.wrapping_add(c.wrapping_shl(3))
   rt.mem_store(p, 0, rt.mem_load(fl, FREE_LISTS, 8), 8)
   rt.mem_store(fl, FREE_LISTS, p, 8)
-  rt.mem_store(fl, NFREE, rt.mem_load(fl, NFREE, 8).wrapping_add(1), 8)
+}
+
+/// Sets each class's list length of heap h from its list (the single
+/// threaded heap's, which alloc_fast and free leave, when threads start:
+/// obj.xo heap_init), once.
+pub fn recount(h: Int) {
+  var c = 1
+  while c < CLASSES {
+    let fl = h.wrapping_add(c.wrapping_shl(3))
+    var n = 0
+    var p = rt.mem_load(fl, FREE_LISTS, 8)
+    while p != 0 {
+      n = n.wrapping_add(1)
+      p = rt.mem_load(p, 0, 8)
+    }
+    rt.mem_store(fl, NFREE, n, 8)
+    c = c.wrapping_add(1)
+  }
 }
 
 /// Before an allocation of n bytes on a heap of a program with threads
@@ -354,7 +403,9 @@ pub fn free_push(h: Int, p: Int) -> Bool {
   if nf >= rt.mem_load(fl, MAG_CAP, 8) {
     return false
   }
-  rt.mem_store(h, FREES, rt.mem_load(h, FREES, 8).wrapping_add(1), 8)
+  if rt.mem_load(h, COUNT, 8) != 0 {
+    rt.mem_store(h, FREES, rt.mem_load(h, FREES, 8).wrapping_add(1), 8)
+  }
   rt.mem_store(p, 0, rt.mem_load(fl, FREE_LISTS, 8), 8)
   rt.mem_store(fl, FREE_LISTS, p, 8)
   rt.mem_store(fl, NFREE, nf, 8)
@@ -366,7 +417,9 @@ pub fn free_push(h: Int, p: Int) -> Bool {
 /// size becomes the heap's spare magazine, and the spare it replaces
 /// goes to the central list.
 pub fn free_mt(h: Int, p: Int) {
-  rt.mem_store(h, FREES, rt.mem_load(h, FREES, 8).wrapping_add(1), 8)
+  if rt.mem_load(h, COUNT, 8) != 0 {
+    rt.mem_store(h, FREES, rt.mem_load(h, FREES, 8).wrapping_add(1), 8)
+  }
   let b = p.wrapping_sub(8)
   let c = rt.mem_load(b, 0, 8)
   if c < 0 {
@@ -476,7 +529,9 @@ pub fn resize(h: Int, p: Int, old: Int, n: Int, mt: Int) -> Int {
   rt.mem_store(h, LAST, size, 8)
   rt.mem_copy(q, p, if old < n { old } else { n })
   // free's push of p
-  rt.mem_store(h, FREES, rt.mem_load(h, FREES, 8).wrapping_add(1), 8)
+  if rt.mem_load(h, COUNT, 8) != 0 {
+    rt.mem_store(h, FREES, rt.mem_load(h, FREES, 8).wrapping_add(1), 8)
+  }
   let pl = h.wrapping_add(hdr.wrapping_shl(3))
   rt.mem_store(p, 0, rt.mem_load(pl, FREE_LISTS, 8), 8)
   rt.mem_store(pl, FREE_LISTS, p, 8)

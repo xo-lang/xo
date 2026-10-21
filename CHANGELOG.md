@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Allocation and free on one thread: the frees count (for XO_LEAKCHECK,
+  XO_HEAPSTATS, XO_RTSTATS) only while counting is on, the free lists'
+  lengths are left to the magazines of a program with threads (recounted
+  once when threads start), and a string's capacity is computed instead
+  of reread from the heap: each was a load and store chain through the
+  heap record on every allocation or free. A loop allocating a 4-byte
+  Bytes runs in 20% fewer cycles natively; bench/perf on LLVM 35 of 114
+  workloads faster (HMAC 0.84), none slower; arm64 21 faster, two about
+  1% slower.
 - WebAssembly: `Stdio.write` wrote nothing (its buffer was never flushed in a
   WASI module); it now writes through, in order with print and println.
 - Raw multi-line strings (decision 0320): `r"""..."""` has no escapes

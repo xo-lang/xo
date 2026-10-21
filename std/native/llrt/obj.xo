@@ -555,6 +555,12 @@ pub fn solo_heap() -> Int { rt.mem_load(rt.static_word(HEAP), 0, 8) }
 /// heap record; xo_rt_threads_begin with 0, before a second thread runs).
 pub fn heap_init(h: Int, slow: Int) {
   let w = rt.static_word(HEAP)
+  let old = rt.mem_load(w, 0, 8)
+  if h == 0 && old != 0 {
+    // the single threaded heap left its lists' lengths (alloc.alloc_fast,
+    // free): the magazines of threads read them
+    alloc.recount(old)
+  }
   rt.mem_store(w, 0, h, 8)
   rt.mem_store(w, H_SLOW, slow, 8)
 }
@@ -714,6 +720,11 @@ fn rs_new(hw: Int, n: Int) -> Int {
   s
 }
 
+/// The size of the class of a block of b bytes (16 to SMALL_MAX): what
+/// alloc.alloc_pop and alloc_fast return, computed rather than read back
+/// from the heap's LAST.
+fn class_size(b: Int) -> Int { b.wrapping_add(15) & -16 }
+
 /// rs_new from the calling thread's heap: a small block from its free
 /// list or chunk without a call (alloc.alloc_fast) when one thread runs,
 /// from its free list when others do (2026-10-18: the plain HTTP server,
@@ -727,7 +738,7 @@ fn rs_new_n(n: Int) -> Int {
       let s = alloc.alloc_fast(h, b)
       if s != 0 {
         rt.mem_store(s, 0, 1, 8)
-        rt.mem_store(s, 8, subw(rt.mem_load(h, H_LAST, 8), S_HDR), 8)
+        rt.mem_store(s, 8, subw(class_size(b), S_HDR), 8)
         return s
       }
     }
@@ -744,7 +755,7 @@ fn rs_new_mt(n: Int) -> Int {
     let s = alloc.alloc_pop(t, b)
     if s != 0 {
       rt.mem_store(s, 0, 1, 8)
-      rt.mem_store(s, 8, subw(rt.mem_load(t, H_LAST, 8), S_HDR), 8)
+      rt.mem_store(s, 8, subw(class_size(b), S_HDR), 8)
       return s
     }
   }
