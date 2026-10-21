@@ -188,7 +188,17 @@ func diffHandler(w http.ResponseWriter, hr *http.Request) {
 		if i > 0 {
 			b.WriteString("|")
 		}
-		b.WriteString(validText(k) + ": " + validText(strings.Join(hr.Header[k], ", ")))
+		joined := validText(strings.Join(hr.Header[k], ", "))
+		b.WriteString(validText(k) + ": " + joined)
+		// every field of a repeated name, as http1DiffProgram prints it
+		// (req.header_values, decision 0288; 3065af16 added it there)
+		if vs := hr.Header[k]; len(vs) != 1 || validText(vs[0]) != joined {
+			fs := make([]string, len(vs))
+			for i, v := range vs {
+				fs[i] = validText(v)
+			}
+			b.WriteString("|" + validText(k) + " fields: " + strings.Join(fs, " ;; "))
+		}
 	}
 	b.WriteString("\nbody=" + hex.EncodeToString(body) + "\n")
 	status := 200

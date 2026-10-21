@@ -46,6 +46,8 @@ fn describe(req: http.Request) -> http.Response {
   for k in req.headers.keys().sort() {
     hs.push("${k}: ${req.headers.get(k) ?? ""}")
     let vs = req.header_values(k)
+    // (http_diff_test.go goServe, TestHTTPParseDiff's net/http side,
+    // prints the same: change both)
     if vs.len() != 1 || vs[0] != (req.headers.get(k) ?? "") {
       hs.push("${k} fields: ${vs.join(" ;; ")}")
     }
