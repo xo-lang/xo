@@ -43,8 +43,9 @@ pub struct Program {
   pub err: Str
   pub skipped: List[Str]
   /// the assembly cut into files that assemble apart, whose objects link
-  /// into the program (generate_parallel), or none; asm is their text
-  /// joined
+  /// into the program (generate_parallel), or none; with more than one,
+  /// asm is empty (their text joined was xo's whole 1.1 GB again, which
+  /// Xo's assembler does not read): text() joins them
   pub parts: List[Str] = []
   /// the per-function cache (fcache.xo, generate_cached): the entries to
   /// store (key, entry), the functions placed from entries, and the
@@ -58,6 +59,11 @@ pub struct Program {
   pub part_stores: List[(Str, Bytes)] = []
   pub parts_reused: Int = 0
   pub part_mismatches: List[Int] = []
+}
+
+/// The program's whole assembly: asm, or its parts joined.
+pub fn (p: Program) text() -> Str {
+  if p.parts.len() > 1 { p.parts.join("") } else { p.asm }
 }
 
 /// Lowers the module (after reference counting) to AArch64 assembly

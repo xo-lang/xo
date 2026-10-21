@@ -2644,17 +2644,26 @@ fn (var g: G) weak_ref(sym: Str) {
 /// assembler ("changed binding to STB_GLOBAL").
 /// One pass over text (2026-10-17: a replace over the whole text per
 /// export was quadratic, 46 minutes for the compiler with DWARF types).
-fn (g: G) drop_own_weak(text: Str) -> Str {
+fn (g: G) drop_own_weak(text: Str) -> Str { drop_weak_in(g.own_exports(), g.os, text) }
+
+/// The symbols of the functions the module exports (drop_own_weak).
+fn (g: G) own_exports() -> Map[Str, Bool] {
   var own: Map[Str, Bool] = {}
   for f in g.m.funcs {
     if !f.export.is_empty() {
       own[g.sym(f.export)] = true
     }
   }
+  own
+}
+
+/// drop_own_weak's pass over text for the exported symbols own, the
+/// assembly of os.
+fn drop_weak_in(own: Map[Str, Bool], os: Str, text: Str) -> Str {
   if own.is_empty() {
     return text
   }
-  let d = if g.os == "darwin" { ".weak_reference" } else { ".weak" }
+  let d = if os == "darwin" { ".weak_reference" } else { ".weak" }
   let pb = "\t${d} ".bytes()
   let tb = text.bytes()
   let n = tb.len()

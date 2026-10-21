@@ -897,9 +897,10 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     if !p.skipped.is_empty() {
       fail_unsupported(os, "the emitter skipped ${p.skipped[0]}")
     }
+    // the whole text: empty with parts (p.text() joins them where read)
     let code = p.asm
     if o.cmd == "asm" {
-      os.stdio.print(code)
+      os.stdio.print(p.text())
       lap(os, phases, "print", t)
       continue
     }
@@ -911,7 +912,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     let s = "${dir}/prog-${tgoos}.s"
     let keep_asm = (os.env.get("XO_KEEP_ASM") ?? "") == "1"
     if !o.asm_path.is_empty() {
-      write_or_fail(os, dir, o.asm_path, code.bytes())
+      write_or_fail(os, dir, o.asm_path, p.text().bytes())
     }
     // --ld=macho links arm64 programs without cc, linux/arm64 ones from
     // any host (decision 0182); with no --ld, the host's darwin/arm64
@@ -936,7 +937,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // cc (or clang, windows) reads the whole file when there are no parts
     let cc_reads = if win { o.assembler == "cc" } else { !macho_as }
     if keep_asm || asm_only || (cc_reads && p.parts.len() <= 1) {
-      write_or_fail(os, dir, s, code.bytes())
+      write_or_fail(os, dir, s, p.text().bytes())
     }
     t = lap(os, phases, "write", t)
     if march == "amd64" && tgoos == "windows" {

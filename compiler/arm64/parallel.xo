@@ -341,12 +341,14 @@ pub fn generate_cached(m: ssa.Module, os: Str, jobs: Int, fc: FnCache) -> Progra
   g.data(out)
   g.end_data(out)
   files.push(out.join(""))
-  // the module's own symbols are not weak (weak_ref)
+  // the module's own symbols are not weak (weak_ref), each file on a
+  // task (a serial pass over xo's 1.1 GB was 0.3 s of an edit build)
   var own: List[Str] = []
-  for f in files {
-    own.push(g.win_text(g.drop_own_weak(f)))
+  for f in drop_weak_all(g.own_exports(), g.os, files, jobs) {
+    own.push(g.win_text(f))
   }
-  Program{asm: own.join(""), err: g.err, skipped: skipped + g.skipped, parts: own, stores: stores, reused: reused, mismatches: mismatches, part_stores: part_stores, parts_reused: parts_reused, part_mismatches: part_mismatches}
+  // with parts, no whole text (Program.text joins them when wanted)
+  Program{asm: if own.len() > 1 { "" } else { own.join("") }, err: g.err, skipped: skipped + g.skipped, parts: own, stores: stores, reused: reused, mismatches: mismatches, part_stores: part_stores, parts_reused: parts_reused, part_mismatches: part_mismatches}
 }
 
 /// The part cache's key of part p, "" for none.
@@ -444,4 +446,43 @@ fn gen_part(m: ssa.Module, os: Str, taken: Map[Str, Bool], lo: Int, hi: Int, ns:
     }
   }
   part
+}
+
+/// drop_weak_in over each of files, on up to jobs tasks, in order.
+fn drop_weak_all(own: Map[Str, Bool], os: Str, files: List[Str], jobs: Int) -> List[Str] {
+  let n = files.len()
+  if own.is_empty() || jobs <= 1 || n < 2 {
+    var out: List[Str] = []
+    for f in files {
+      out.push(drop_weak_in(own, os, f))
+    }
+    return out
+  }
+  let next = Atomic[Int].new(0)
+  let done = scope s {
+    var ts = []
+    for _ in 0..jobs.min(n) {
+      ts.push(s.spawn(fn() -> List[(Int, Str)] {
+        var mine: List[(Int, Str)] = []
+        while true {
+          let i = next.add(1) - 1
+          if i >= n {
+            break
+          }
+          mine.push((i, drop_weak_in(own, os, files[i])))
+        }
+        mine
+      }))
+    }
+    var all: List[(Int, Str)] = []
+    for t in ts {
+      all = all + t.await
+    }
+    all
+  }
+  var out: List[Str] = []
+  for (_, f) in done.sort_by(fn(x) { x.0 }) {
+    out.push(f)
+  }
+  out
 }
