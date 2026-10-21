@@ -83,7 +83,7 @@ fn run_vet(os: Os, ctx: Ctx, args: List[Str]) -> Int {
       }
     }
     let (d, n) = vet_session(s.c, s.diags)
-    ds = ds + d
+    ds = ds + d + embed_untracked(os, s.c)
     check_errors += n
     mods = mods + s.mods
   }
@@ -185,6 +185,66 @@ fn vet_modules(c: check.Checker, diags: List[Diag], ms: List[Int], own: Bool) ->
     ds = ds + vet_module(c, m)
   }
   (ds, check_errors)
+}
+
+/// XO0904 (decision 0304): the files the root modules' embed constants
+/// embed that git ignores or does not track, so a build of a clean
+/// checkout would embed something else or fail. Nothing when git is
+/// missing or the module is in no git work tree.
+fn embed_untracked(os: Os, c: check.Checker) -> List[Diag] uses proc {
+  var out: List[Diag] = []
+  for (f, es) in c.embeds.entries() {
+    if es.is_empty() || !c.mods[c.files[f].module].root {
+      continue
+    }
+    let file = c.files[f].path
+    let dir0 = dir_of(file)
+    let dir = if dir0.is_empty() { "." } else { dir0 }
+    let inside = match os.proc.run("git", ["-C", dir, "rev-parse", "--is-inside-work-tree"]) {
+      Ok(r) => r.code == 0 && (r.stdout.to_str() ?? "").trim() == "true"
+      // xo:allow XO0903 no git: the check is skipped, as outside a work tree
+      Err(_) => false
+    }
+    if !inside {
+      continue
+    }
+    var rels: List[Str] = []
+    for e in es {
+      if !rels.contains(e.rel) {
+        rels.push(e.rel)
+      }
+    }
+    var tracked: Set[Str] = #{}
+    if let Ok(r) = os.proc.run("git", ["-C", dir, "ls-files", "-z", "--"] + rels) {
+      for p in (r.stdout.to_str() ?? "").split("\u{0}") {
+        if !p.is_empty() {
+          tracked.add(p)
+        }
+      }
+    }
+    let untracked = rels.filter(fn(r) { !tracked.contains(r) })
+    if untracked.is_empty() {
+      continue
+    }
+    var ignored: Set[Str] = #{}
+    if let Ok(r) = os.proc.run("git", ["-C", dir, "check-ignore", "--"] + untracked) {
+      for p in (r.stdout.to_str() ?? "").lines() {
+        if !p.is_empty() {
+          ignored.add(p)
+        }
+      }
+    }
+    for e in es {
+      if !untracked.contains(e.rel) {
+        continue
+      }
+      let why = if ignored.contains(e.rel) { "git ignores it" } else { "git does not track it" }
+      var d = Diag{code: "XO0904", file: file, line: e.line, col: e.col, end_line: e.line, end_col: e.col, message: "the embedded file `${e.rel}` is in no clean checkout: ${why}, so a build there embeds something else or fails", warning: true}
+      d.notes.push(check.DNote{message: "add the file to git, or embed only files the repository holds (decision 0304)"})
+      out.push(d)
+    }
+  }
+  out
 }
 
 /// A std module as `xo test --std-module` names it: json is std/json.

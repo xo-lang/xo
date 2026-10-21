@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1021,5 +1022,63 @@ fn main(os: Os) {
 	}
 	if strings.Join(got, ", ") != "3 note" {
 		t.Errorf("XO0536 at %v, want [3 note]\n%s", got, out.String())
+	}
+}
+
+// TestVetEmbedUntracked covers XO0904 (decision 0304): of three embedded
+// files, the one git ignores and the one git does not track get the
+// warning at their constants (lines 3 and 4); the tracked one does not.
+func TestVetEmbedUntracked(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git")
+	}
+	dir := writeFiles(t, map[string]string{
+		"xo.mod":        "module example.com/e\n",
+		".gitignore":    "secret.txt\n",
+		"tracked.txt":   "a\n",
+		"secret.txt":    "b\n",
+		"untracked.txt": "c\n",
+		"main.xo": `const A: Str = embed("tracked.txt")
+
+const B: Str = embed("secret.txt")
+const C: Str = embed("untracked.txt")
+
+fn main(os: Os) {
+  os.stdio.println(A + B + C)
+}
+`,
+	})
+	for _, args := range [][]string{{"init", "-q"}, {"add", "xo.mod", ".gitignore", "tracked.txt", "main.xo"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"vet", "--json", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	var res struct {
+		Diagnostics []struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+			Span    struct {
+				Line int `json:"line"`
+			} `json:"span"`
+		} `json:"diagnostics"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &res); err != nil {
+		t.Fatalf("bad JSON: %v\n%s", err, out.String())
+	}
+	var got []string
+	for _, d := range res.Diagnostics {
+		if d.Code == "XO0904" {
+			got = append(got, fmt.Sprintf("%d %t", d.Span.Line, strings.Contains(d.Message, "ignores")))
+		}
+	}
+	if want := "3 true, 4 false"; strings.Join(got, ", ") != want {
+		t.Errorf("XO0904 at %v, want %s\n%s", got, want, out.String())
 	}
 }

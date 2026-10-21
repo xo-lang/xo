@@ -12,6 +12,9 @@ use std/crypto
 pub struct EmbedFile {
   pub rel: Str
   pub sha: Str
+  /// Where the constant that embeds it is (xo vet's XO0904 points there).
+  pub line: Int = 0
+  pub col: Int = 0
 }
 
 /// The largest embed, and all of a program's embeds together.
@@ -172,7 +175,7 @@ fn (var c: Checker) expand_embeds(m: Int) uses fs.read {
       }
       c.embed_total += size
       for (rel, b) in files {
-        recs.push(EmbedFile{rel: rel, sha: crypto.sha256(b).to_hex()})
+        recs.push(EmbedFile{rel: rel, sha: crypto.sha256(b).to_hex(), line: cd.span.start.line, col: cd.span.start.col})
       }
       if ty == "Str" {
         let s = match files[0].1.to_str() {
