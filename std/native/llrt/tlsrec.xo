@@ -116,14 +116,15 @@ fn nonce_w(k: Keys) -> (Int, Int) {
 
 /// A record header: the type, legacy version (0x0301 for a first
 /// ClientHello, else 0x0303), and the length.
-pub fn header(ct: Int, version: Int, n: Int) -> Bytes {
-  var s = rt.rs_with_cap(5)
-  s = rt.rs_push_byte(s, ct)
+pub fn header(ct: Int, version: Int, n: Int) -> Bytes { push_header(rt.rs_with_cap(5), ct, version, n).bytes() }
+
+/// header's five bytes pushed onto s.
+fn push_header(s0: Str, ct: Int, version: Int, n: Int) -> Str {
+  var s = rt.rs_push_byte(s0, ct)
   s = rt.rs_push_byte(s, version >> 8)
   s = rt.rs_push_byte(s, version & 255)
   s = rt.rs_push_byte(s, n >> 8)
-  s = rt.rs_push_byte(s, n & 255)
-  s.bytes()
+  rt.rs_push_byte(s, n & 255)
 }
 
 /// The records carrying data of content type ct, in pieces of at most
@@ -174,14 +175,16 @@ pub fn seal_at(var k: Keys, ct: Int, p: Int, n: Int, version: Int) -> Bytes {
   var inner = rt.rs_set_len(rt.rs_with_cap(n + 1), n)
   rt.mem_copy(raw.data(inner), p, n)
   inner = rt.rs_push_byte(inner, ct)
-  let hdr = header(CT_APP, 0x0303, n + 17)
-  let sealed = match k.gcm {
-    Some(g) => {
-      let (nlo, nhi) = nonce_w(k)
-      g.seal_w(nlo, nhi, inner.bytes(), hdr)
-    }
-    None => chacha.seal(k.key, nonce(k), inner.bytes(), hdr)
+  if let Some(g) = k.gcm {
+    // the header, then the ciphertext and tag sealed after it in the
+    // same string (aesgcm seal_into: the header is the additional data)
+    let (nlo, nhi) = nonce_w(k)
+    k.seq += 1
+    let out = push_header(rt.rs_with_cap(n + 32), CT_APP, 0x0303, n + 17)
+    return g.seal_into(out, 5, nlo, nhi, inner.bytes()).bytes()
   }
+  let hdr = header(CT_APP, 0x0303, n + 17)
+  let sealed = chacha.seal(k.key, nonce(k), inner.bytes(), hdr)
   k.seq += 1
   var out = rt.rs_with_cap(n + 22)
   out = rt.rs_append_bytes(out, hdr, 0, 5, 0)

@@ -683,7 +683,7 @@ fn reduce(v0a: Int, v1a: Int, v2a: Int, v3a: Int) -> (Int, Int) {
 /// ghash with the CPU's carry-less multiply: a free function over H's
 /// words (no Gcm passed per block), the products and the reduction in
 /// the loop, wrapping indexes.
-fn ghash_hw(g: Gcm, y1a: Int, y0a: Int, b: Bytes, n: Int) -> (Int, Int) {
+fn ghash_hw(g: Gcm, y1a: Int, y0a: Int, b: Bytes, o: Int, n: Int) -> (Int, Int) {
   var y1 = y1a
   var y0 = y0a
   var i = 0
@@ -692,7 +692,7 @@ fn ghash_hw(g: Gcm, y1a: Int, y0a: Int, b: Bytes, n: Int) -> (Int, Int) {
   // and the data read by address, one block's products at a time (few
   // values live)
   let hp = addr(g.hk)
-  let bp = raw.bytes_addr(b)
+  let bp = raw.bytes_addr(b).wrapping_add(o)
   while i.wrapping_add(64) <= n {
     let d = bp.wrapping_add(i)
     let x1_0 = y1 ^ rt.mem_load(d, 0, 8).swap_bytes()
@@ -771,14 +771,16 @@ fn ghash_hw(g: Gcm, y1a: Int, y0a: Int, b: Bytes, n: Int) -> (Int, Int) {
   while i < n {
     var w1 = 0
     var w0 = 0
+    let bi = o.wrapping_add(i)
+    let bn = o.wrapping_add(n)
     if i.wrapping_add(16) <= n {
-      w1 = be64(b, i)
-      w0 = be64(b, i.wrapping_add(8))
+      w1 = be64(b, bi)
+      w0 = be64(b, bi.wrapping_add(8))
     } else {
       // the last block, zero padded
       let j = i.wrapping_add(8)
-      w1 = if j <= n { be64(b, i) } else { tail_word(b, i, n).swap_bytes() }
-      w0 = if j < n { tail_word(b, j, n).swap_bytes() } else { 0 }
+      w1 = if j <= n { be64(b, bi) } else { tail_word(b, bi, bn).swap_bytes() }
+      w0 = if j < n { tail_word(b, bi.wrapping_add(8), bn).swap_bytes() } else { 0 }
     }
     let x1 = y1 ^ w1
     let x0 = y0 ^ w0
@@ -807,21 +809,24 @@ fn ghash_hw(g: Gcm, y1a: Int, y0a: Int, b: Bytes, n: Int) -> (Int, Int) {
 
 /// GHASH of the first n bytes of b (zero padded to a block) after the
 /// state (y1, y0).
-fn (g: Gcm) ghash(y1a: Int, y0a: Int, b: Bytes, n: Int) -> (Int, Int) {
+fn (g: Gcm) ghash(y1a: Int, y0a: Int, b: Bytes, n: Int) -> (Int, Int) { g.ghash_o(y1a, y0a, b, 0, n) }
+
+/// ghash of the n bytes of b at offset o.
+fn (g: Gcm) ghash_o(y1a: Int, y0a: Int, b: Bytes, o: Int, n: Int) -> (Int, Int) {
   if (g.hw & cpu.HW_CLMUL) != 0 {
-    return ghash_hw(g, y1a, y0a, b, n)
+    return ghash_hw(g, y1a, y0a, b, o, n)
   }
   var y1 = y1a
   var y0 = y0a
   var i = 0
   while n - i >= 16 {
-    let (a1, a0) = g.mul(y1 ^ be64(b, i), y0 ^ be64(b, i + 8))
+    let (a1, a0) = g.mul(y1 ^ be64(b, o + i), y0 ^ be64(b, o + i + 8))
     y1 = a1
     y0 = a0
     i += 16
   }
   if i < n {
-    var t = rt.rs_append_bytes(rt.rs_with_cap(16), b, i, n, 0)
+    var t = rt.rs_append_bytes(rt.rs_with_cap(16), b, o + i, o + n, 0)
     for _ in 0..16 - (n - i) {
       t = rt.rs_push_byte(t, 0)
     }
@@ -863,7 +868,12 @@ fn (g: Gcm) ctr(s0: Str, nonce: Bytes, ctr0: Int, src: Bytes, n: Int) -> Str { g
 
 /// ctr with the nonce as its two little endian words: bytes 0 to 7, and
 /// 8 to 11 in the low half.
-fn (g: Gcm) ctr_w(s0: Str, nlo: Int, nhi: Int, ctr0: Int, src: Bytes, n: Int) -> Str {
+fn (g: Gcm) ctr_w(s0: Str, nlo: Int, nhi: Int, ctr0: Int, src: Bytes, n: Int) -> Str { g.ctr_o(s0, 0, nlo, nhi, ctr0, src, 0, n) }
+
+/// ctr_w reading the n bytes of src at offset so and writing them at
+/// offset d of s0 (whose room covers d + n + 8); the length is set to
+/// d + n.
+fn (g: Gcm) ctr_o(s0: Str, d: Int, nlo: Int, nhi: Int, ctr0: Int, src: Bytes, so: Int, n: Int) -> Str {
   var s = s0
   var io = [0, 0, 0, 0, 0, 0, 0, 0]
   var ctr = ctr0
@@ -883,14 +893,14 @@ fn (g: Gcm) ctr_w(s0: Str, nlo: Int, nhi: Int, ctr0: Int, src: Bytes, n: Int) ->
       rt.mem_store(p, 48, nlo, 8)
       rt.mem_store(p, 56, nhi | shl((ctr.wrapping_add(3) & 0xFFFFFFFF).swap_bytes() & ~0xFFFFFFFF, 0), 8)
       hw4(g.c, io)
-      s = rt.rs_put_word(s, i, rt.bytes_word(src, i) ^ rt.mem_load(p, 0, 8))
-      s = rt.rs_put_word(s, i.wrapping_add(8), rt.bytes_word(src, i.wrapping_add(8)) ^ rt.mem_load(p, 8, 8))
-      s = rt.rs_put_word(s, i.wrapping_add(16), rt.bytes_word(src, i.wrapping_add(16)) ^ rt.mem_load(p, 16, 8))
-      s = rt.rs_put_word(s, i.wrapping_add(24), rt.bytes_word(src, i.wrapping_add(24)) ^ rt.mem_load(p, 24, 8))
-      s = rt.rs_put_word(s, i.wrapping_add(32), rt.bytes_word(src, i.wrapping_add(32)) ^ rt.mem_load(p, 32, 8))
-      s = rt.rs_put_word(s, i.wrapping_add(40), rt.bytes_word(src, i.wrapping_add(40)) ^ rt.mem_load(p, 40, 8))
-      s = rt.rs_put_word(s, i.wrapping_add(48), rt.bytes_word(src, i.wrapping_add(48)) ^ rt.mem_load(p, 48, 8))
-      s = rt.rs_put_word(s, i.wrapping_add(56), rt.bytes_word(src, i.wrapping_add(56)) ^ rt.mem_load(p, 56, 8))
+      s = rt.rs_put_word(s, d.wrapping_add(i), rt.bytes_word(src, so.wrapping_add(i)) ^ rt.mem_load(p, 0, 8))
+      s = rt.rs_put_word(s, d.wrapping_add(i.wrapping_add(8)), rt.bytes_word(src, so.wrapping_add(i.wrapping_add(8))) ^ rt.mem_load(p, 8, 8))
+      s = rt.rs_put_word(s, d.wrapping_add(i.wrapping_add(16)), rt.bytes_word(src, so.wrapping_add(i.wrapping_add(16))) ^ rt.mem_load(p, 16, 8))
+      s = rt.rs_put_word(s, d.wrapping_add(i.wrapping_add(24)), rt.bytes_word(src, so.wrapping_add(i.wrapping_add(24))) ^ rt.mem_load(p, 24, 8))
+      s = rt.rs_put_word(s, d.wrapping_add(i.wrapping_add(32)), rt.bytes_word(src, so.wrapping_add(i.wrapping_add(32))) ^ rt.mem_load(p, 32, 8))
+      s = rt.rs_put_word(s, d.wrapping_add(i.wrapping_add(40)), rt.bytes_word(src, so.wrapping_add(i.wrapping_add(40))) ^ rt.mem_load(p, 40, 8))
+      s = rt.rs_put_word(s, d.wrapping_add(i.wrapping_add(48)), rt.bytes_word(src, so.wrapping_add(i.wrapping_add(48))) ^ rt.mem_load(p, 48, 8))
+      s = rt.rs_put_word(s, d.wrapping_add(i.wrapping_add(56)), rt.bytes_word(src, so.wrapping_add(i.wrapping_add(56))) ^ rt.mem_load(p, 56, 8))
       ctr = ctr.wrapping_add(4)
       i = i.wrapping_add(64)
     }
@@ -911,14 +921,14 @@ fn (g: Gcm) ctr_w(s0: Str, nlo: Int, nhi: Int, ctr0: Int, src: Bytes, n: Int) ->
       if off >= n {
         break
       }
-      let w = if off.wrapping_add(8) <= n { rt.bytes_word(src, off) } else { tail_word(src, off, n) }
-      s = rt.rs_put_word(s, off, w ^ io[k])
+      let w = if off.wrapping_add(8) <= n { rt.bytes_word(src, so.wrapping_add(off)) } else { tail_word(src, so.wrapping_add(off), so.wrapping_add(n)) }
+      s = rt.rs_put_word(s, d.wrapping_add(off), w ^ io[k])
       k = k.wrapping_add(1)
     }
     ctr = ctr.wrapping_add(4)
     i = i.wrapping_add(64)
   }
-  rt.rs_set_len(s, n)
+  rt.rs_set_len(s, d.wrapping_add(n))
 }
 
 /// The bytes of src from off to n (fewer than 8), little endian, zeros
@@ -946,10 +956,13 @@ fn (g: Gcm) tag(nonce: Bytes, data: Bytes, n: Int, aad: Bytes) -> Bytes {
 
 /// tag's two little endian words, the nonce as ctr_w's: no string for
 /// the nonce or the tag (a TLS record's seal and open).
-fn (g: Gcm) tag_w(nlo: Int, nhi: Int, data: Bytes, n: Int, aad: Bytes) -> (Int, Int) {
-  let (a1, a0) = g.ghash(0, 0, aad, aad.len())
-  let (b1, b0) = g.ghash(a1, a0, data, n)
-  let (y1, y0) = g.mul(b1 ^ (8 * aad.len()), b0 ^ (8 * n))
+fn (g: Gcm) tag_w(nlo: Int, nhi: Int, data: Bytes, n: Int, aad: Bytes) -> (Int, Int) { g.tag_o(nlo, nhi, data, 0, n, aad, 0, aad.len()) }
+
+/// tag_w of the n bytes of data at do and the an bytes of aad at ao.
+fn (g: Gcm) tag_o(nlo: Int, nhi: Int, data: Bytes, do: Int, n: Int, aad: Bytes, ao: Int, an: Int) -> (Int, Int) {
+  let (a1, a0) = g.ghash_o(0, 0, aad, ao, an)
+  let (b1, b0) = g.ghash_o(a1, a0, data, do, n)
+  let (y1, y0) = g.mul(b1 ^ (8 * an), b0 ^ (8 * n))
   var io = [nlo, nhi | shl(0x01000000, 32), 0, 0, 0, 0, 0, 0]
   encrypt_n(g.c, io, 1)
   (y1.swap_bytes() ^ io[0], y0.swap_bytes() ^ io[1])
@@ -971,6 +984,17 @@ pub fn (g: Gcm) seal_w(nlo: Int, nhi: Int, pt: Bytes, aad: Bytes) -> Bytes {
 /// The plaintext of ciphertext and tag sealed, or None when the tag does
 /// not match (cipher.AEAD's Open). The body is read in place.
 pub fn (g: Gcm) open(nonce: Bytes, sealed: Bytes, aad: Bytes) -> Bytes? { g.open_w(rt.bytes_word(nonce, 0), le32(nonce, 8), sealed, aad) }
+
+/// seal_w appending to out, whose first an bytes are the additional data
+/// (a TLS record's header): the ciphertext of pt and its tag after them,
+/// in out's room (an + pt.len() + 24 bytes), no other string.
+pub fn (g: Gcm) seal_into(out: Str, an: Int, nlo: Int, nhi: Int, pt: Bytes) -> Str {
+  let n = pt.len()
+  let s = g.ctr_o(out, an, nlo, nhi, 2, pt, 0, n)
+  let b = s.bytes()
+  let (t0, t1) = g.tag_o(nlo, nhi, b, an, n, b, 0, an)
+  rt.rs_push_word(rt.rs_push_word(s, t0, 8), t1, 8)
+}
 
 /// open with the nonce as two words (ctr_w): the tag is compared in
 /// place, in constant time (one test of the two words' differences), and
