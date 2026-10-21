@@ -200,6 +200,13 @@ struct G {
   dl_stub_rows: List[Str] = []
   /// The fault stubs' location ranges (dwvars.xo DvStub)
   dv_stubs: List[DvStub] = []
+  /// How far a fault stub moved sp below the body's (its saves): vloc's
+  /// slots are that much further from it
+  stub_sp: Int = 0
+  /// Per register, its single definition copies (dwvars.xo dv_copies),
+  /// made on the function's first fault stub
+  dv_copies_at: Map[Int, List[Int]] = {}
+  dv_copies_made: Bool = false
   dl_n: Int = 0
   ncs: Int = 0
   personality_ref: Bool = false
@@ -395,6 +402,9 @@ fn (var g: G) begin_func(fi: Int) {
   g.dl_rows = []
   g.dl_stub_rows = []
   g.dv_stubs = []
+  g.stub_sp = 0
+  g.dv_copies_at = {}
+  g.dv_copies_made = false
   g.vranges = []
   g.kints = {}
   g.ksyms = {}

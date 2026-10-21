@@ -128,7 +128,7 @@ fn (g: G) vloc(v: Int) -> (MLoc, Bool) {
     // Go's zero mloc: register 0
     return (MLoc{reg: 0}, false)
   }
-  (MLoc{reg: -1, base: "sp", off: slot_off(g.fr, l.slot)}, true)
+  (MLoc{reg: -1, base: "sp", off: slot_off(g.fr, l.slot) + g.stub_sp}, true)
 }
 
 fn (var g: G) emit() {
@@ -294,6 +294,18 @@ fn (var g: G) emit() {
       b.push("\t.cfi_endproc\n\t.cfi_startproc\n")
     }
     b.push("\t.cfi_def_cfa w29, 16\n\t.cfi_offset w30, -8\n\t.cfi_offset w29, -16\n")
+  }
+  // the body's end, before the fault stubs: the variables' ranges past
+  // its last instruction end here (at the function's end, past the
+  // stubs, a register's range covered them, and the stub's own entries
+  // came second: 2026-10-20)
+  if g.m.debug_info && !g.dl_rows.is_empty() && dv_next < dvp.need.len() {
+    let body_end = g.local("${g.lbl_prefix()}_dvs0")
+    b.push("${body_end}:\n")
+    while dv_next < dvp.need.len() {
+      dv_labels[dvp.need[dv_next]] = body_end
+      dv_next += 1
+    }
   }
   b.push(g.stubs.join(""))
   if g.fr.leaf && !g.stubs.is_empty() && pads {
@@ -1203,17 +1215,44 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
       // stubs' unwind rules are the frame's (shrink.xo)
       g.prologue(sb)
     }
+    // the caller saved registers holding variables at the fault, stored
+    // below sp before the moves take x0 to x7 (decision 0268's
+    // addendum: a fault report shows them; the same code with and
+    // without debug information)
+    // not where the fault can land in this function (a landing pad
+    // resumes with sp as at the stub's call, and its slots would be off by
+    // the saves), nor in a far frame (slots through x28)
+    let saves = if g.base == 0 && g.pos >= 0 && inst.pad < 0 { g.stub_saves(g.pos / 4) } else { [] }
+    var saved: List[(Int, Int)] = []
+    if !saves.is_empty() {
+      let bytes = 16 * ((saves.len() + 1) / 2)
+      sb.push("\tsub sp, sp, #${bytes}\n")
+      var i = 0
+      while i < saves.len() {
+        if i + 1 < saves.len() {
+          sb.push("\tstp ${reg_name(saves[i], false)}, ${reg_name(saves[i + 1], false)}, [sp, #${8 * i}]\n")
+          saved.push((saves[i + 1], 8 * i + 8))
+        } else {
+          sb.push("\tstr ${reg_name(saves[i], false)}, [sp, #${8 * i}]\n")
+        }
+        saved.push((saves[i], 8 * i))
+        i += 2
+      }
+      g.stub_sp = bytes
+    }
     var ms = g.call_moves(inst.fargs, "sp", 0)
     g.recover_operand(sb, inst, ms)
     g.parallel(sb, ms)
+    let stub_bytes = g.stub_sp
+    g.stub_sp = 0
     // the variables' places over the stub, to its call's return (the
     // faulting frame's pc in a traceback): its index, labels, and how sp
     // moved (decision 0268's locals, dwvars.xo dv_stub_expr)
     var dv_end = ""
     if g.m.debug_info && g.pos >= 0 {
       dv_end = g.local("${g.lbl_prefix()}_dvs${g.nstub}")
-      let adj = if g.fr.leaf { 16 } else if g.shrink && g.fl[g.cur] { -1 } else { 0 }
-      g.dv_stubs.push(DvStub{at: g.pos / 4, lo: l, hi: dv_end, adj: adj})
+      let adj = if g.fr.leaf { 16 + stub_bytes } else if g.shrink && g.fl[g.cur] { -1 } else { stub_bytes }
+      g.dv_stubs.push(DvStub{at: g.pos / 4, lo: l, hi: dv_end, adj: adj, saved: saved})
     }
     let after = if dv_end.is_empty() { "" } else { "${dv_end}:\n" }
     if inst.pad >= 0 {

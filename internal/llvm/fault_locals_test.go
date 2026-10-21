@@ -186,10 +186,11 @@ func TestFaultLocalsFaultingFrame(t *testing.T) {
 		}
 	}
 	frame = strings.Join(lines[:end], "\n") + "\n"
-	// k and x live across depth's call (callee saved registers); xs is
-	// read through its data and length only, and s's latest sum is in a
-	// caller saved register the fault path does not keep
-	for _, w := range []string{"k = 0", "x = 1"} {
+	// k and x live across depth's call (callee saved registers); s's
+	// latest sum is in a caller saved register the fault stub stores
+	// (decision 0268's addendum); xs is read through its data and length
+	// only
+	for _, w := range []string{"k = 0", "x = 1", "s = 1"} {
 		if !strings.Contains(frame, "      "+w+"\n") {
 			t.Errorf("XO_TRACEBACK=locals: total's frame lacks %q:\n%s", w, got)
 		}

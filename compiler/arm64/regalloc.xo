@@ -453,9 +453,11 @@ fn (var g: G) regalloc() {
     }
   }
 
-  if g.m.debug_info && !g.f.dvars.is_empty() {
+  if !g.f.dvars.is_empty() {
     // each register's own ranges, for its variable's locations (coalescing
-    // merges them into the leader's; decision 0252)
+    // merges them into the leader's; decision 0252), and in every build for
+    // the fault stubs' saves (emit.xo stub_saves: debug information must
+    // not change the code)
     g.vranges = ranges
   }
   // coalescing: registers joined by a move whose ranges do not overlap

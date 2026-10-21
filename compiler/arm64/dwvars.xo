@@ -47,6 +47,83 @@ struct DvStub {
   lo: Str
   hi: Str
   adj: Int
+  /// the caller saved registers the stub stored, by their offset from sp
+  /// at its call (emit.xo stub_saves)
+  saved: List[(Int, Int)] = []
+}
+
+/// The caller saved registers (x0 to x15) holding a word of a source
+/// variable's binding at instruction index k, at most 8, by number:
+/// what a fault stub stores so the fault report shows them.
+fn (var g: G) stub_saves(k: Int) -> List[Int] {
+  if g.vranges.is_empty() {
+    return []
+  }
+  if !g.dv_copies_made {
+    g.dv_copies_made = true
+    g.dv_copies_at = g.dv_copies()
+  }
+  var out: List[Int] = []
+  for d in g.f.dbinds {
+    if !g.has_val[d.value] {
+      continue
+    }
+    for r in g.vals[d.value] {
+      var regs = [r]
+      var at = 0
+      while at < regs.len() && regs.len() < 8 {
+        for c in g.dv_copies_at.get(regs[at]) ?? [] {
+          if !regs.contains(c) {
+            regs.push(c)
+          }
+        }
+        at += 1
+      }
+      for rr in regs {
+        if rr <= 0 || rr >= g.loc.len() || rr >= g.vranges.len() {
+          continue
+        }
+        let reg = g.loc[rr].reg
+        if reg < 0 || reg > 15 || out.contains(reg) {
+          continue
+        }
+        for rg in g.vranges[rr] {
+          if (rg.s + 3) / 4 <= k && k < rg.e / 4 + 1 {
+            out.push(reg)
+            break
+          }
+        }
+      }
+    }
+  }
+  let sorted = out.sort()
+  if sorted.len() > 8 { sorted[0..8] } else { sorted }
+}
+
+/// Per register, the registers whose one definition is a parallel move
+/// from it (dv_plan's copies).
+fn (g: G) dv_copies() -> Map[Int, List[Int]] {
+  var ndefs: Map[Int, Int] = {}
+  var copy_of: Map[Int, Int] = {}
+  for blk in g.blocks {
+    for ins in blk.insts {
+      for (i, d) in ins.defs.indexed() {
+        ndefs[d] = (ndefs.get(d) ?? 0) + 1
+        if ins.kind == K_PMOVE && i < ins.srcs.len() && ins.srcs[i].kind == S_REG && ins.srcs[i].v > 0 {
+          copy_of[d] = ins.srcs[i].v
+        }
+      }
+    }
+  }
+  var copies: Map[Int, List[Int]] = {}
+  for (d, r) in copy_of.entries() {
+    if (ndefs.get(d) ?? 0) == 1 {
+      var l = copies.get(r) ?? []
+      l.push(d)
+      copies[r] = l
+    }
+  }
+  copies
 }
 
 /// The DWARF register numbers of x86_64's general registers by their
@@ -77,11 +154,20 @@ fn (g: G) x86_dv_op(l: Loc) -> List[Int] {
 /// callee saved registers (x19 to x29; rbx, rbp, r12 to r15) and sp at
 /// the call (decision 0268 point 4), not the registers the stub's moves
 /// and the fault function overwrite.
-fn dv_stub_op(op: List[Int], adj: Int, x86: Bool) -> List[Int] {
+fn dv_stub_op(op: List[Int], adj: Int, x86: Bool, stored: List[(Int, Int)]) -> List[Int] {
   if op.len() == 1 && op[0] >= 0x50 && op[0] < 0x70 {
     let n = op[0] - 0x50
     let saved = if x86 { n is 3 | 6 | 12 | 13 | 14 | 15 } else { n >= 19 && n <= 29 }
-    return if saved { op } else { [] }
+    if saved {
+      return op
+    }
+    // a caller saved register the stub stored: its slot
+    for (r, off) in stored {
+      if !x86 && r == n {
+        return [0x8f] + sleb_bytes(off)
+      }
+    }
+    return []
   }
   // DW_OP_breg31 (sp) or DW_OP_breg7 (rsp), plus how far the stub moved it
   let sp_op = if x86 { 0x77 } else { 0x8f }
@@ -136,7 +222,7 @@ fn dv_stub_expr(mine: List[DvBind], s: DvStub, nw: Int, x86: Bool) -> List[Int] 
     var op: List[Int] = []
     for sp in w {
       if sp.lo <= s.at && sp.hi > s.at {
-        op = dv_stub_op(sp.op, s.adj, x86)
+        op = dv_stub_op(sp.op, s.adj, x86, s.saved)
       }
     }
     any = any || !op.is_empty()

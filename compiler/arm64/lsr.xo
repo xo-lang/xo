@@ -1457,7 +1457,9 @@ fn is_row_label(name: Str) -> Bool {
   while k > 0 && Int(bs[k - 1]) >= 48 && Int(bs[k - 1]) <= 57 {
     k -= 1
   }
-  k < bs.len() && k >= 3 && (name[k - 3..k] == "_dl" || name[k - 3..k] == "_dv")
+  // (`_dvs`: a fault stub's variable range, and the body's end before
+  // the stubs)
+  k < bs.len() && k >= 3 && (name[k - 3..k] == "_dl" || name[k - 3..k] == "_dv" || (k >= 4 && name[k - 4..k] == "_dvs"))
 }
 
 /// The name of the label line l defines (`L<letters, digits, _>:`, or

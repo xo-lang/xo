@@ -81,3 +81,34 @@ and never in a signal handler.
   tests compare, and makes every fault slower.
 - **Print only the faulting frame**: cheaper, but a fault in a helper
   (an index out of bounds in a std function) needs the caller's values.
+
+## Addendum (2026-10-20, Xo lang 4): the faulting frame's caller saved values
+
+Point 4 gave the faulting frame of a software fault only its callee
+saved registers, fp, and sp: a variable in a caller saved register at
+the fault (a leaf's, or a value just computed) printed `<unavailable>`,
+since the fault stub's argument moves and the fault function overwrite
+those registers before the report reads them.
+
+- On arm64 the fault stub stores the caller saved registers (x0 to x15)
+  that hold a word of a source variable's binding live at the faulting
+  instruction (at most 8), below sp before its moves (`sub sp, sp, #N`;
+  `stp`/`str`), and its DWARF entries over the stub place those words
+  at the stored slots. The report reads them as it reads any sp slot.
+- The same code with and without debug information: which registers a
+  stub stores depends on the binding records and live ranges every
+  build has, not on --debug-info (TestDebugInfoSameCode).
+- Not in a stub whose fault can land in the same function (a landing
+  pad resumes with sp as at the stub's call, and its slots would be off
+  by the saves), nor in a far frame (slots through x28). A function that
+  holds references has cleanup landing pads on its checks (decision
+  0085), so its stubs store nothing and its caller saved values stay
+  `<unavailable>` (every stub of the fib and sieve asm goldens is such
+  a one); the saves cover the functions without pads.
+- Cost: xo's __text 35.36 to 35.43 MB (+0.20%); the arm64 sweep flat
+  (stubs are cold).
+- Secrets: the stored values are only read and printed under the opt
+  in XO_TRACEBACK=locals, as every other local is; a default fault
+  report prints none of them.
+- x86_64 keeps point 4's rule for now (its stubs store nothing); the
+  same change there is a follow up.

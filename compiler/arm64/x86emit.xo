@@ -262,6 +262,15 @@ fn (var g: G) x86_emit_once() {
     // a leaf function's fault stubs make a frame record before their call
     b.push("\t.cfi_def_cfa %rbp, 16\n\t.cfi_offset %rbp, -16\n")
   }
+  // the body's end, before the fault stubs (emit.xo)
+  if g.m.debug_info && !g.dl_rows.is_empty() && dv_next < dvp.need.len() {
+    let body_end = g.local("${g.lbl_prefix()}_dvs0")
+    b.push("${body_end}:\n")
+    while dv_next < dvp.need.len() {
+      dv_labels[dvp.need[dv_next]] = body_end
+      dv_next += 1
+    }
+  }
   b.push(g.stubs.join(""))
   if g.m.debug_info && !g.dl_rows.is_empty() {
     let end = g.local("${g.lbl_prefix()}_dend")
