@@ -227,6 +227,11 @@ fn test_threads(r: Run, iter: Int) {
 fn test_waves(r: Run, iter: Int) {
   let rounds = iter / 100 + 4
   var before = 0
+  // the rounds whose two waves were both freed on other threads: main
+  // spins while it waits, and preemption (decision 0286 step 3's polls,
+  // decision 0318's signal) may yield it so its own thread frees a wave,
+  // so a round may not; one at least must
+  var off_rounds = 0
   for round in 0..rounds {
     if round == 2 {
       before = probe("chunks", 0, 0, 0, 0)
@@ -266,8 +271,11 @@ fn test_waves(r: Run, iter: Int) {
         while done.get() < 2 {}
       }
     }
-    r.check(r.workers == 1 || off.get() == 2, "waves: ${2 - off.get()} freed on the allocating thread")
+    if off.get() == 2 {
+      off_rounds += 1
+    }
   }
+  r.check(r.workers == 1 || off_rounds > 0, "waves: no round of ${rounds} freed both waves on other threads")
   // each round allocates 896 KB, a chunk every 4.7 rounds without the
   // central lists; a freeing thread keeps at most two magazines (128
   // KB) in the heap it leaves behind, a chunk every 16 rounds for the
