@@ -290,7 +290,7 @@ fn (var g: G) x86_emit_once() {
   if g.os == "windows" {
     g.seh_end(b, sites)
     b.push("\n")
-    g.text.push(x86_r11_reuse(x86_copy_runs(x86_reload_peep(b.join("")))))
+    g.text.push(x86_r11_reuse(x86_imul3(x86_copy_runs(x86_reload_peep(b.join(""))))))
     return
   }
   b.push("\t.cfi_endproc\n")
@@ -302,7 +302,7 @@ fn (var g: G) x86_emit_once() {
     g.lsda(sites)
   }
   b.push("\n")
-  g.text.push(x86_r11_reuse(x86_copy_runs(x86_reload_peep(b.join("")))))
+  g.text.push(x86_r11_reuse(x86_imul3(x86_copy_runs(x86_reload_peep(b.join(""))))))
 }
 
 /// The frame: rbp and the callee saved registers pushed, the rest of
@@ -1649,6 +1649,42 @@ fn x86_r11_dead(ls: List[Str], i: Int) -> Bool {
 /// Whether s is a 64 bit general register (%rax ... %r15).
 fn gp64(s: Str) -> Bool {
   s.starts_with("%r") && !s.ends_with("d") && !s.ends_with("w") && !s.ends_with("b") && !s.contains("(")
+}
+
+/// A pass over a function's emitted text: a copy into r11 multiplied by
+/// a constant, `movq X, %r11` then `imulq $N, %r11, %r11` (madd's and
+/// msub's product, decision 0254's templates), is imul's three operand
+/// form `imulq $N, X, %r11` (X a register or memory; 2026-10-21: 287
+/// pairs in bench/perf/tls, Barrett reductions in ML-KEM's NTT loops).
+/// Before x86_r11_reuse, which then sees r11 written. Debug labels are
+/// not boundaries (x86_lift_dbg).
+fn x86_imul3(text: Str) -> Str {
+  let (ls, pre) = x86_lift_dbg(text)
+  var out: List[Str] = List.with_capacity(ls.len())
+  var i = 0
+  while i < ls.len() {
+    let l = ls[i]
+    let (src, dst, ok) = movq_ops(l)
+    // (not a %rip operand: its displacement would need the immediate's
+    // bytes after it counted)
+    if ok && dst == "%r11" && !src.starts_with("$") && !src.contains("%rip") && i + 1 < ls.len() {
+      let n = ls[i + 1]
+      if n.starts_with("\timulq $") && n.ends_with(", %r11, %r11") {
+        let imm = n["\timulq ".len()..n.len() - ", %r11, %r11".len()]
+        if !imm.contains(",") {
+          x86_put_pre(out, pre, i, i + 2)
+          out.push("\timulq ${imm}, ${src}, %r11")
+          i += 2
+          continue
+        }
+      }
+    }
+    x86_put_pre(out, pre, i, i + 1)
+    out.push(l)
+    i += 1
+  }
+  x86_put_pre(out, pre, ls.len(), ls.len() + 1)
+  out.join("\n")
 }
 
 /// A pass over a function's emitted text: a reload of a slot into r11
