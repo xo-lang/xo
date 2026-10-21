@@ -1,0 +1,96 @@
+// std/big (spec/std.md 33, decision 0311). Declaration file; encoding
+// rules are listed at the top of std/prelude.xo. Go's math/big Int as an
+// immutable value: every operation returns a new BigInt, with Go's results
+// and error texts. Variable time: not for secrets. Pure.
+
+/// An integer of any size. `key` encodes it so that the derived order is
+/// the numeric one: zero is [0]; a number of n 64 bit limbs is n (-n when
+/// negative), then its limbs from the most significant, each xor the sign
+/// bit (xor 2^63 - 1 when negative). Build one with the functions below,
+/// not a literal.
+struct BigInt {
+  key: List[Int]
+} derive Eq, Ord, Hash
+
+/// `invalid number "12x" in base 10`, `invalid base 63` (Go's SetString
+/// reports only false).
+struct BigErr {
+  msg: Str
+}
+
+fn (e: BigErr) display() -> Str
+
+/// n (Go's NewInt).
+fn from_int(n: Int) -> BigInt
+/// The number s in base 2 to 62 (Go's SetString): an optional sign, then
+/// digits; base 0 reads a 0b, 0o, 0, or 0x prefix and `_` between digits.
+fn parse(s: Str, base: Int = 10) -> BigInt ! BigErr
+/// The unsigned big-endian number b (Go's SetBytes).
+fn from_bytes(b: Bytes) -> BigInt
+
+fn (x: BigInt) add(y: BigInt) -> BigInt
+fn (x: BigInt) sub(y: BigInt) -> BigInt
+fn (x: BigInt) mul(y: BigInt) -> BigInt
+/// x / y truncated toward zero (Go's Quo); a fault when y is 0.
+fn (x: BigInt) quo(y: BigInt) -> BigInt
+/// x - y * x.quo(y), with x's sign (Go's Rem).
+fn (x: BigInt) rem(y: BigInt) -> BigInt
+fn (x: BigInt) quo_rem(y: BigInt) -> (BigInt, BigInt)
+/// Euclidean division (Go's Div): the remainder is never negative.
+fn (x: BigInt) div(y: BigInt) -> BigInt
+/// x mod y in 0 to |y| - 1 (Go's Mod).
+fn (x: BigInt) mod(y: BigInt) -> BigInt
+fn (x: BigInt) div_mod(y: BigInt) -> (BigInt, BigInt)
+/// x to the y, mod |m| when m is given and not 0 (Go's Exp): y <= 0 gives
+/// 1 without m; with m, a negative y uses x's inverse mod m, a fault when
+/// there is none (Go returns nil).
+fn (x: BigInt) exp(y: BigInt, m: BigInt? = None) -> BigInt
+/// The greatest common divisor of |x| and |y|; 0 when both are 0.
+fn (x: BigInt) gcd(y: BigInt) -> BigInt
+/// x's inverse mod m, None when gcd(x, m) is not 1 (Go's ModInverse).
+fn (x: BigInt) mod_inverse(m: BigInt) -> BigInt?
+/// The floor of the square root; a fault when x < 0.
+fn (x: BigInt) sqrt() -> BigInt
+fn (x: BigInt) neg() -> BigInt
+fn (x: BigInt) abs() -> BigInt
+/// -1, 0, or 1.
+fn (x: BigInt) sign() -> Int
+/// -1, 0, or 1 as x <, ==, > y (also the operators).
+fn (x: BigInt) cmp(y: BigInt) -> Int
+fn (x: BigInt) cmp_abs(y: BigInt) -> Int
+/// x * 2^n; a fault when n < 0.
+fn (x: BigInt) lsh(n: Int) -> BigInt
+/// x / 2^n rounded toward negative infinity (Go's Rsh); a fault when n < 0.
+fn (x: BigInt) rsh(n: Int) -> BigInt
+/// The bitwise operations on two's complement, as Go's And, Or, Xor,
+/// AndNot, Not.
+fn (x: BigInt) and(y: BigInt) -> BigInt
+fn (x: BigInt) or(y: BigInt) -> BigInt
+fn (x: BigInt) xor(y: BigInt) -> BigInt
+fn (x: BigInt) and_not(y: BigInt) -> BigInt
+fn (x: BigInt) not() -> BigInt
+/// Bit i of x's two's complement (0 or 1); a fault when i < 0.
+fn (x: BigInt) bit(i: Int) -> Int
+/// The length of |x| in bits; 0 for 0.
+fn (x: BigInt) bit_len() -> Int
+/// The number of zero bits below the lowest one of |x|; 0 for 0.
+fn (x: BigInt) trailing_zeros() -> Int
+/// Whether x is probably prime: n Miller-Rabin rounds with Go's
+/// pseudorandom bases plus a Baillie-PSW test (Go's ProbablyPrime); a
+/// fault when n < 0.
+fn (x: BigInt) probably_prime(n: Int) -> Bool
+/// x in base 2 to 62: digits, then a to z, then A to Z (Go's Text); a
+/// fault for another base.
+fn (x: BigInt) text(base: Int = 10) -> Str
+/// |x| big-endian, no leading zeros (Go's Bytes).
+fn (x: BigInt) bytes() -> Bytes
+/// |x| big-endian in len bytes, zeros first; a fault when it does not fit
+/// (Go's FillBytes).
+fn (x: BigInt) fill_bytes(len: Int) -> Bytes
+/// x as an Int, None when it does not fit (Go's IsInt64 and Int64).
+fn (x: BigInt) to_int() -> Int?
+/// The Float nearest x (Go's Float64; out of range is +Inf or -Inf).
+fn (x: BigInt) to_float() -> Float
+/// x in base 10.
+fn (x: BigInt) display() -> Str
+fn (x: BigInt) debug() -> Str
