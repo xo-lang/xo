@@ -470,15 +470,23 @@ fn (var g: G) dv_plan() -> DvPlan {
 /// at it (or at the next emitted instruction, or the end).
 fn (var g: G) dv_field(p: DvPlan, labels: Map[Int, Str]) -> Str {
   var out: List[Str] = []
+  // each variable's bindings, in the plan's order, found in one pass
+  // (2026-10-21: a scan of every binding for each variable, and of every
+  // binding's spans for each interval, made this 3% of a cold self
+  // build's CPU, decision 0274's profile)
+  var by_var: Map[Int, List[Int]] = {}
+  for (bi, b) in p.binds.indexed() {
+    var l = by_var.get(b.dvar) ?? []
+    l.push(bi)
+    by_var[b.dvar] = l
+  }
   for (vi, dv) in g.f.dvars.indexed() {
     if !g.dv_type_ok(dv.ty) {
       continue
     }
     var mine: List[DvBind] = []
-    for b in p.binds {
-      if b.dvar == vi {
-        mine.push(b)
-      }
+    for bi in by_var.get(vi) ?? [] {
+      mine.push(p.binds[bi])
     }
     // the elementary intervals between every boundary of its spans
     var cuts: Map[Int, Bool] = {}
@@ -496,6 +504,35 @@ fn (var g: G) dv_field(p: DvPlan, labels: Map[Int, Str]) -> Str {
     }
     cs = cs.sort()
     let nw = g.layout(dv.ty).len()
+    // for each elementary interval [cs[i], cs[i + 1]), the binding defined
+    // last among those with a word over it (the first of equals): a span
+    // covers exactly the intervals between the indices of its ends, every
+    // end being a cut
+    var at: Map[Int, Int] = {}
+    for (i, c) in cs.indexed() {
+      at[c] = i
+    }
+    var bests: List[Int] = []
+    for _ in cs {
+      bests.push(-1)
+    }
+    for (bi, b) in mine.indexed() {
+      var cover: Map[Int, Bool] = {}
+      for w in b.words {
+        for s in w {
+          let i0 = at.get(s.lo) ?? 0
+          let i1 = at.get(s.hi) ?? 0
+          for i in i0..i1 {
+            cover[i] = true
+          }
+        }
+      }
+      for (i, _) in cover {
+        if bests[i] < 0 || b.def > mine[bests[i]].def {
+          bests[i] = bi
+        }
+      }
+    }
     var entries: List[Str] = []
     var last_end = ""
     var last_op = ""
@@ -505,21 +542,7 @@ fn (var g: G) dv_field(p: DvPlan, labels: Map[Int, Str]) -> Str {
       }
       let a = cs[i]
       let z = cs[i + 1]
-      // the binding defined last among those with a word here
-      var best = -1
-      for (bi, b) in mine.indexed() {
-        var here = false
-        for w in b.words {
-          for s in w {
-            if s.lo <= a && s.hi >= z {
-              here = true
-            }
-          }
-        }
-        if here && (best < 0 || b.def > mine[best].def) {
-          best = bi
-        }
-      }
+      let best = bests[i]
       if best < 0 {
         continue
       }
