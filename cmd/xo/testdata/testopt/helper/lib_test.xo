@@ -1,0 +1,12 @@
+fn helper(n: Int) -> Int ! Error {
+  find(n)? + 1
+}
+
+fn plain(n: Int) -> Int {
+  find(n)? + 1
+}
+
+test "uses helper" {
+  expect(helper(0)?) == 1
+  expect(plain(0)) == 1
+}

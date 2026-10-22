@@ -789,7 +789,8 @@ pub interface Store {
   }
   ```
   Using `?` on an `Option` in a function that returns a `Result` is error
-  `XO0204`, with a fix that inserts `.or_err(...)`.
+  `XO0204`, with a fix that inserts `.or_err(...)`. A test body is the
+  exception (9.2): there `opt?` fails the test.
 
 ### 2.6 Results, errors, and explicit failure
 
@@ -2490,6 +2491,22 @@ test "retries after 503" {
     that does not change the binary (a test, inline or not, a comment)
     never restarts it (decision 0267).
 - A test body has type `() ! Error`, so `?` fails the test with the error.
+- `opt?` on an Option directly in a test body (at any depth of blocks,
+  `if`, `match`, and loops in it, property tests included) yields the
+  value or fails the test as `opt.or_err("missing value: opt")?` would,
+  `opt` being the source text of the operand (decision 0347):
+  ```
+  test "finds the user" {
+    let u = store.find(7)?   // --- FAIL: ... then: error: missing value: store.find(7)
+    expect(u.name) == "Ada"
+  }
+  ```
+  An Option's `?` and a Result's `?` in the same test both fail it; their
+  error types are not unified. A `?` inside a fn literal written in a
+  test keeps that function's own rules (2.5), and a helper function in a
+  `_test.xo` file is not a test body: `opt?` there is still `XO0204` or
+  `XO0205`, with a note. A property test's missing value is a failed
+  case, shrunk like any other.
 - Inside a test block, and anywhere in a `_test.xo` file for `expect` and
   `testing`, three names are predeclared:
   - `os: TestOs` with fake capabilities (in memory filesystem, virtual clock,

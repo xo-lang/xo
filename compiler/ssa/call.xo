@@ -927,6 +927,19 @@ fn (var b: Builder) try_expr(e: Expr) -> Int {
         b.ret(b.add(Op.Variant, want, Aux.I(n: wi), [ce]))
       }
     }
+  } else if let Some(tm) = b.c.test_missing.get(b.c.expr_key_in(b.s.file, e)) {
+    // a test body's `x?` on an Option: `x.or_err("missing value: x")?`
+    // (decision 0347)
+    let sv = b.add(Op.Const, b.str_t(), Aux.Bs(b: tm.msg.bytes()), [])
+    let ce = b.coerce_err(sv, tm.str_ty, b.s.err_t, Some(e))
+    let wi = b.m.variant_index(want, "Err")
+    let fs = b.m.types[want].variants[wi].fields
+    if fs.len() == 2 && fs[1].name == TRACE_FIELD {
+      let tr = b.push_frame(b.empty_trace(), span)
+      b.ret(b.add(Op.Variant, want, Aux.I(n: wi), [ce, tr]))
+    } else {
+      b.ret(b.add(Op.Variant, want, Aux.I(n: wi), [ce]))
+    }
   } else {
     let rt = b.typ(b.s.res)
     if b.option_elem(b.s.res) < 0 {

@@ -1,0 +1,7 @@
+pub fn find(n: Int) -> Int? {
+  if n > 0 { None } else { Some(n) }
+}
+
+fn prod(n: Int) -> Int ! Error {
+  find(n)? + 1
+}

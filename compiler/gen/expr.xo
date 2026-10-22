@@ -1309,6 +1309,14 @@ fn (var g: Gen) try_expr(e: Expr) -> Str {
   }
   g.line("if !${v}.Some {")
   g.f.ind += 1
+  if let Some(tm) = g.c.test_missing.get(g.c.expr_key_in(g.f.file, e)) {
+    // a test body's `x?` on an Option: `x.or_err("missing value: x")?`
+    // (decision 0347)
+    g.propagate(tm.msg.quote(), "nil", tm.str_ty, span)
+    g.f.ind -= 1
+    g.line("}")
+    return v + ".V"
+  }
   let r = g.rt()
   let none = "${r}None[${g.go_type(g.option_elem(g.fr().res_t))}]()"
   g.emit_return_value(g.ok_value(none))

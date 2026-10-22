@@ -1,0 +1,54 @@
+fn f(n: Int) -> Int ! Error {
+  if n > 0 { return Err("boom ${n}") }
+  n
+}
+
+fn find(n: Int) -> Int? {
+  if n > 0 { None } else { Some(n) }
+}
+
+test "some passes" {
+  let v = find(0)?
+  expect(v) == 0
+}
+
+test "none fails" {
+  let v = find(5)?
+  expect(v) == 5
+}
+
+test "nested" {
+  if true {
+    match 1 {
+      1 => {
+        let m: Map[Str, Int] = {"a": 1}
+        expect(m.get("a")?) == 1
+        let w = m.get("zz")?
+        expect(w) == 0
+      }
+      _ => {}
+    }
+  }
+}
+
+test "mixed" {
+  let a = find(0)?
+  let b = f(a)?
+  let c = find(b + 1)?
+  expect(c) == 1
+}
+
+test "prop" for n: Int {
+  let v = find(n)?
+  expect(v) <= 0
+}
+
+test "closure keeps its rules" {
+  let g = fn(k: Int) { find(k)? + 1 }
+  expect(g(0)) == Some(1)
+  expect(g(1)) == None
+}
+
+fn main(os: Os) {
+  os.stdio.println("${find(0) ?? 1}")
+}

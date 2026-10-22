@@ -9,6 +9,15 @@ use github.com/xo-lang/xo/compiler/parser
 
 /// The checker: its tables (objects.xo), the state of the walk
 /// (resolve.xo), and what it recorded.
+/// A test body's `x?` on an Option (decision 0347): it fails the test
+/// as `x.or_err(msg)?` would.
+pub struct TestMissing {
+  /// `missing value: ` and the source text of x.
+  pub msg: Str
+  /// Str's type, the error's type before it converts to Error.
+  pub str_ty: Int
+}
+
 pub struct Checker {
   fs: Fs
   /// Where the std declaration files are read from.
@@ -253,6 +262,9 @@ pub struct Checker {
   /// The index in diags of the XO0205 of each optional chain, by key
   /// (habits.go safeNavDiag).
   safe_nav_diag: Map[Int, Int] = {}
+  /// `x?` on an Option directly in a test body (decision 0347), by key
+  /// of the `?`.
+  pub test_missing: Map[Int, TestMissing] = {}
   /// Calls of declared functions (by key) and their function; calls
   /// that construct a variant or newtype (for XO0408).
   fn_calls: Map[Int, Int] = {}

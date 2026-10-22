@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `opt?` on an Option directly in a test block fails the test with
+  `error: missing value: opt` instead of `XO0204` (decision 0347, owner):
+  `let u = store.find(7)?` reads as in an Option function and still
+  names the expression that came back empty. Property tests shrink such
+  a failure like any other. Helper functions and fn literals keep the
+  usual rules; in a `_test.xo` helper, `XO0204` and `XO0205` now note
+  that the form is allowed directly in test blocks.
+
 - darwin executables carry their DWARF (decision 0346, owner): Xo's
   Mach-O linker writes it uncompressed into a `__DWARF` segment of the
   executable instead of a `NAME.dSYM` beside it, so a copied, cached,

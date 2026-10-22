@@ -672,10 +672,19 @@ fn (var c: Checker) try_expr(span: Span, x: Expr) -> Int {
   let el = c.option_elem(r)
   if el >= 0 {
     let ctx = c.ctxs[c.ctx]
+    if ctx.is_test && !ctx.closure {
+      // the test body itself fails the test (decision 0347): lowered as
+      // `x.or_err("missing value: x")?`, a Str converting to its Error
+      let xs = parser.expr_span(x)
+      let src = c.files[c.cur_file].src[xs.start.offset..xs.end.offset]
+      c.test_missing[c.key_of(span, 23)] = TestMissing{msg: "missing value: ${src.to_str() ?? "?"}", str_ty: c.named("Str")}
+      return el
+    }
     if (ctx.err >= 0 && !c.is_open_var(ctx.err)) || (ctx.err_var >= 0 && c.tys[ctx.err_var].ref >= 0) {
       let d = c.error("XO0204", span, "`?` on an optional value in a function that returns a Result")
       if d >= 0 {
         c.note(d, "convert the optional to a Result first: `.or_err(e)?` (core 2.5)")
+        c.test_helper_note(d)
         c.fix(d, "convert with .or_err(...)", [c.insert_edit(parser.expr_span(x).end, ".or_err(???)")])
       }
       return el
@@ -690,6 +699,7 @@ fn (var c: Checker) try_expr(span: Span, x: Expr) -> Int {
     let d = c.error("XO0205", span, "`?` on an optional value needs a function that returns an optional, but `${ctx.name}` returns `${c.show(ctx.result)}`")
     if d >= 0 {
       c.note(d, "use `??` to supply a default, `if let`, or `match` (core 2.5)")
+      c.test_helper_note(d)
       let src = c.files[c.cur_file].src
       if span.end.offset < src.len() && src[span.end.offset] == '.' {
         // `x?.f` (decision 0087)
@@ -706,6 +716,14 @@ fn (var c: Checker) try_expr(span: Span, x: Expr) -> Int {
   }
   c.error("XO0401", span, "`?` needs a Result or an optional value, found `${c.show(t)}`")
   c.bad_ty
+}
+
+/// In a `_test.xo` file, outside a test block: diagnostic d's note that
+/// `opt?` fails the test only directly in a test block (decision 0347).
+fn (var c: Checker) test_helper_note(d: Int) {
+  if c.cur_file >= 0 && c.files[c.cur_file].is_test && !c.ctxs[c.ctx].is_test {
+    c.note(d, "`?` on an optional value is allowed directly in test blocks (decision 0347); here use `.or_err(...)?`")
+  }
 }
 
 /// Checks that an error of type et can leave the current function (by
