@@ -3,7 +3,7 @@
 ## 2026-10-21: feature: std/debug, live profiles and scheduler counters
 
 - Kind: feature
-- Commit: (filled in after the push)
+- Commit: 0c17dba55
 - Found by: decision 0325 (the owner's language poll)
 - Go reference: net/http/pprof (`/debug/pprof/profile?seconds=`, `/heap`)
 - Test: internal/llvm/testdata/golden/debug_routes (auth refused, counters, heap, a one second profile, a second request during it refused, a profile again; arm64, LLVM, Go parity)
