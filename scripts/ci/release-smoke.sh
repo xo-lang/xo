@@ -14,7 +14,8 @@
 # writer handoff) and the time zone golden (zone data from the archive's
 # lib/xo/std/tzdata) through scripts/golden-run.sh; `xo test` of a small
 # module; and the released xo building compiler/xo (its own sources,
-# threads and memory under load) and that xo's version. $XO_CI_OUT/
+# threads and memory under load) and that xo's version (XO_SMOKE_SELF=0
+# skips it: the owner's Intel laptop builds no xo). $XO_CI_OUT/
 # release-smoke.txt has a line per check; exit 1 on any failure.
 set -uo pipefail
 archive=${1:?usage: release-smoke.sh ARCHIVE SHA256 [COMMIT]}
@@ -98,8 +99,10 @@ printf 'test "add" {\n  expect(add(2, 3)) == 5\n}\n' > "$o/modt/calc/calc_test.x
 run xo-test sh -c 'cd "$1" && "$2" test ./calc' _ "$o/modt" "$xo"
 
 # the released xo builds its own compiler (several minutes)
-run self-build "$xo" build -o "$(np "$o/xo2$exe")" "$(np "$root/compiler/xo")"
-[ -f "$o/xo2$exe" ] && run self-build-version "$o/xo2$exe" version
+if [ "${XO_SMOKE_SELF:-1}" != 0 ]; then
+  run self-build "$xo" build -o "$(np "$o/xo2$exe")" "$(np "$root/compiler/xo")"
+  [ -f "$o/xo2$exe" ] && run self-build-version "$o/xo2$exe" version
+fi
 
 echo "release-smoke: $fails failed" | tee -a "$sum"
 [ "$fails" = 0 ]
