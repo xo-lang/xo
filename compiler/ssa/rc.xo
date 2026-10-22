@@ -146,6 +146,8 @@ fn runtime_modes(name: Str) -> List[Mode]? {
     "rt.chan_try_send" => Some([w, c])
     "rt.mutex_new" => Some([c, n])
     "rt.mutex_unlock" => Some([w, c])
+    // consumes the read share's list, which native rlock did not count
+    // (decision 0334): the one consume ends the share's reference
     "rt.mutex_runlock" => Some([w, c])
     "rt.select_send" => Some([w, w, c])
     "rt.any_new" => Some([c, n, w])

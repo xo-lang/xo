@@ -830,6 +830,13 @@ fn (var b: Builder) mutex_with(x: Expr, h: Int, et: Int, read: Bool) -> Int {
   if fv < 0 {
     return b.undef(nt)
   }
+  if packed && read {
+    // the packed path pops and pushes the share's list, which native
+    // rlock did not count (decision 0334); the checker refuses a `var`
+    // parameter for with_read (XO0401), so this is never reached
+    b.unsupported("a `var` parameter in `with_read`")
+    return b.undef(nt)
+  }
   var lock_fn = "mutex_lock"
   var unlock_fn = "mutex_unlock"
   if read {
@@ -879,6 +886,9 @@ fn (var b: Builder) mutex_with(x: Expr, h: Int, et: Int, read: Bool) -> Int {
     b.check("")
     return res
   }
+  // native: a read share's list is not counted (decision 0334), so l
+  // must reach exactly one rt.mutex_runlock (here or the unwind path's)
+  // and nothing else may keep, return, store or update it
   let v = b.call("list.index", et, "", [l, b.cint(0)])
   let fvt = b.vty(fv)
   let r = b.add(Op.CallValue, b.m.types[fvt].ret, Aux.None, [fv, v])

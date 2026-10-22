@@ -12,7 +12,6 @@ use native/llrt/ctx
 use native/llrt/fault
 use native/llrt/pool
 use native/llrt/raw
-use native/llrt/rc
 use native/llrt/tasks
 use native/llrt/tracerec
 use native/llrt/sanhook
@@ -356,10 +355,12 @@ fn unlock_body(m: Int, l: Int) {
   held_del(ctx.cur(), m)
 }
 
-/// Takes m shared for `with_read` (xo_mutex_rlock) and returns a
-/// reference to its value. A reader that waits is handed m by a writer's
-/// release (grant_readers); a cancellation unwinds unless m was handed
-/// over first.
+/// Takes m shared for `with_read` (xo_mutex_rlock) and returns its value
+/// list, not counted (decision 0334): a writer takes or replaces the list
+/// only while no share is held, and the compiler gives the list to exactly
+/// one rt.mutex_runlock (ssa conc.xo mutex_with), so the share bounds the
+/// reference. A reader that waits is handed m by a writer's release
+/// (grant_readers); a cancellation unwinds unless m was handed over first.
 pub fn rlock(m: Int, lp: Int, ln: Int) -> Int {
   let r = rlock_body(m, lp, ln)
   // the last unlock happens before the critical section (decision 0273)
@@ -375,9 +376,7 @@ fn rlock_body(m: Int, lp: Int, ln: Int) -> Int {
   // no writer holds or waits: the share without m's lock (the add's
   // acquire pairs with the last writer's clearing of the bit)
   if (rt.slot_add(m, R_W, 1, ACQ_REL) & R_WRITER) == 0 {
-    let l0 = ld(m, M_SLOT)
-    rc.inc(l0)
-    return l0
+    return ld(m, M_SLOT)
   }
   // a writer holds or waits: give the add back (the last out wakes it)
   // and take the locked path
@@ -400,9 +399,7 @@ fn rlock_body(m: Int, lp: Int, ln: Int) -> Int {
       if rt.slot_load(e, E_WRITER_W, ACQUIRE) == GRANTED {
         // the last writer set the value under m's lock before the grant,
         // and none can change it while this share is held
-        let l = ld(m, M_SLOT)
-        rc.inc(l)
-        return l
+        return ld(m, M_SLOT)
       }
       pool.lock_k(m + M_MU, pool.ST_LOCK_MUTEX)
       if ld4(e, E_GRANTED) != 0 {
@@ -423,13 +420,12 @@ fn rlock_body(m: Int, lp: Int, ln: Int) -> Int {
     let _r = rt.slot_add(m, R_W, 1, ACQ_REL)
   }
   let l = ld(m, M_SLOT)
-  rc.inc(l)
   pool.unlock(m + M_MU)
   l
 }
 
-/// Gives back a reader's reference l and its share of m
-/// (xo_mutex_runlock).
+/// Gives back a reader's share of m (xo_mutex_runlock); its list l was
+/// not counted (rlock).
 pub fn runlock(m: Int, l: Int) {
   // the critical section happens before the next lock (decision 0273)
   sanhook.release(m)
@@ -438,10 +434,6 @@ pub fn runlock(m: Int, l: Int) {
 
 fn runlock_body(m: Int, l: Int) {
   pool.defer_check()
-  if rc.dec(l) != 0 {
-    // not reached: the Mutex holds the value
-    let _d = rt.call_c2(ld(m, M_DROP), l, 0)
-  }
   reader_out(m)
   held_del(ctx.cur(), m)
 }

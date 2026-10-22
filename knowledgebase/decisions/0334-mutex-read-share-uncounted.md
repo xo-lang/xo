@@ -1,7 +1,7 @@
 # 0334: A Mutex read share does not count its reference
 
-Status: Proposed (Xo Lang 2, 2026-10-22; for the owner's morning
-summary)
+Status: Accepted (lead, owner's overnight delegation, 2026-10-22).
+Implemented the same day (Xo Lang 2; reviewed by Xo lang 4)
 
 ## Context
 
@@ -50,6 +50,22 @@ tables and TestTSanSharedMaps pass.
   so; the RC verifier, which sees the token as owned and consumed, still
   catches a second consume or a missing one.
 - The Go backend (std/rt) and wasm keep their own Mutex; unaffected.
+
+## Verification (2026-10-22)
+
+- XO_RC_CHECK=1 over the conc_, map_, native_map_ and fault_tasks goldens
+  (25 programs): pass on arm64 and LLVM. TestRaceSyncTable,
+  TestRaceSyncTableArm64 and TestTSanSharedMaps pass. XO_LEAKCHECK=1: 0
+  live on a reader program whose readers keep values aliasing the Mutex's
+  value past the share while writers replace it (arm64 and LLVM), and on
+  the 12 task RW stress (three runs, no torn read). A self build passes.
+- A `var` parameter cannot reach the packed path of with_read: a closure
+  literal is refused by the checker (XO0401), a named function or function
+  value by XO1201 (not supported natively yet). conc.xo refuses the packed
+  path for a read outright, so a future native function value with a `var`
+  parameter cannot pop the uncounted list in place.
+- Measured in the quiet-window sweep with the reader fast path (CRUD
+  server at 1, 3 and 6 cores).
 
 ## Alternatives
 
