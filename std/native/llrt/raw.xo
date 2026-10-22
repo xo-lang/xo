@@ -199,7 +199,7 @@ pub fn str_slice(s: Str, lo0: Int, hi0: Int) -> Str {
   // `s[lo..hi]` requires; a cut inside a sequence (callers slice bytes,
   // and a Str may hold an invalid one) still copies
   let d = data(s)
-  if (lo < n && rt.mem_load(d, lo, 1) & 0xC0 == 0x80) || (hi < n && rt.mem_load(d, hi, 1) & 0xC0 == 0x80) {
+  if (lo < n && (rt.mem_load(d, lo, 1) & 0xC0) == 0x80) || (hi < n && (rt.mem_load(d, hi, 1) & 0xC0) == 0x80) {
     return str_at(d + lo, hi - lo)
   }
   s[lo..hi]
