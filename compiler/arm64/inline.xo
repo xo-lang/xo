@@ -630,7 +630,11 @@ fn find_call(f: ssa.Func, m: ssa.Module, small: Map[Str, Bool], by_name: Map[Str
         continue
       }
       let name = aux_str(x.aux)
-      if !small.contains(name) {
+      // never f itself, as find_closure_call and find_loop_call: a call of
+      // f appears in f once a closure that calls it is inlined (generics'
+      // count[T] through fold's callback), which the inlinable sets' cycle
+      // walk cannot see, and inline_one holds f out of m.funcs
+      if !small.contains(name) || name == f.name {
         continue
       }
       let ci = by_name.get(name) ?? -1
