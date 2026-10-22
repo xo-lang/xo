@@ -206,13 +206,17 @@ case "$suite" in
     sc=${1:?script: PATH}; shift
     [ -f "$sc" ] || { echo "script: no $sc in the checkout"; exit 2; }
     np() { if command -v cygpath >/dev/null; then cygpath -w "$1"; else echo "$1"; fi; }
-    step "xo (scripts/xobuild)"; XO_CLI=$(np "$(go run ./scripts/xobuild)"); end
+    out=$PWD/.tools/script-out; rm -rf "$out"; mkdir -p "$out"
+    # a crashing xo leaves NAME.xocrash in the temp directory (on the
+    # xo-windows runner C:\Windows\SystemTemp): kept in the uploaded
+    # output, since the runner cannot be reached (run 39776978669)
+    keep_crashes() { for d in "${TEMP:-}" "${TMPDIR:-}" /tmp /c/Windows/SystemTemp; do [ -n "$d" ] && [ -d "$d" ] && find "$d" -maxdepth 1 -name '*.xocrash' -mmin -120 -exec cp {} "$out/" \; 2>/dev/null; done; true; }
+    step "xo (scripts/xobuild)"; XO_CLI=$(np "$(go run ./scripts/xobuild)") || { keep_crashes; exit 1; }; end
     "$XO_CLI" version
     step "std of $base"
     bt=$PWD/.tools/base-tree
     git worktree remove --force "$bt" 2>/dev/null || rm -rf "$bt"
     git worktree add -q --detach "$bt" "$base"; end
-    out=$PWD/.tools/script-out; rm -rf "$out"; mkdir -p "$out"
     export XO_CLI XO_CI_STD XO_CI_BASE_STD XO_CI_OUT
     XO_CI_STD=$(np "$PWD/std") XO_CI_BASE_STD=$(np "$bt/std") XO_CI_OUT=$(np "$out")
     step "$sc $*"; rc=0
@@ -223,6 +227,7 @@ case "$suite" in
     esac
     end
     git worktree remove --force "$bt"
+    keep_crashes
     exit $rc ;;
   windows)
     step "scripts/windows-batch.sh"; rc=0; scripts/windows-batch.sh || rc=$?; end; exit $rc ;;
