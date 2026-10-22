@@ -1,5 +1,22 @@
 # prelude changes
 
+## 2026-10-22: perf: a large Map copied and written forks instead of copying (native)
+
+- Kind: perf
+- Commit: 06a1f657c
+- Found by: bench/perf/xo branch (`var c = m; c.put(k, v)` from one 50,000-entry Map): 63 ms native against 4.9 ms on the Go backend's log
+- Go reference: none (Go's map has no value semantics; the Go backend's std/rt Map log is the model)
+- Test: golden map_branch; TestMapBranch (the Map goldens without branching, XO_MAP_LOG=1); TestTSanSharedMaps; fixed point
+
+On the native backends a Map or Set of 1024 or more entries that is
+written while another value shares it no longer copies its lists: the
+written copy becomes a fork that reads the shared lists in place
+(decision 0291 branching addendum), and goes back to lists of its own
+after 64 writes by its only holder. `xo bench --ab`, bench/perf/xo:
+branch 0.071 of the wall time (65.6 to 4.7 ms) and 0.733 of the peak
+RSS; copymut, get, update and iter unchanged; the HTTP CRUD server
+within noise at 64 and 10,000 users. `XO_MAP_LOG=1` builds without it.
+wasm does not branch.
 ## 2026-10-22: perf: Fs.cwd and the working directory on macOS take $PWD when it names it
 
 - Kind: perf
