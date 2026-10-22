@@ -1,0 +1,8 @@
+fn main(os: Os) {
+  var n = 0
+  for (i, c) in b"hello".indexed() {
+    n += i * Int(c)
+    os.stdio.println("${i}:${c}")
+  }
+  os.stdio.println("${n} ${b"".indexed().len()}")
+}

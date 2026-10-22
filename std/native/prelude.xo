@@ -191,6 +191,14 @@ fn bytes_find(b: Bytes, sub: Bytes) -> Int? {
   None
 }
 
+fn bytes_indexed(b: Bytes) -> List[(Int, UInt8)] {
+  var out: List[(Int, UInt8)] = []
+  for i in 0..b.len() {
+    out.push((i, b[i]))
+  }
+  out
+}
+
 fn bytes_rfind(b: Bytes, sub: Bytes) -> Int? {
   var i = b.len() - sub.len()
   while i >= 0 {

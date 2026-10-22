@@ -288,6 +288,7 @@ fn (b: Bytes) quote() -> Str
 fn (b: Bytes) find(sub: Bytes) -> Int?
 /// The offset of the last sub (bytes.LastIndex); Some(b.len()) for an empty sub.
 fn (b: Bytes) rfind(sub: Bytes) -> Int?
+fn (b: Bytes) indexed() -> List[(Int, UInt8)]
 /// n zero bytes (Go's make([]byte, n)); a fault for n < 0.
 fn (static: Bytes) zeroed(n: Int) -> Bytes
 fn (s: Str) quote() -> Str

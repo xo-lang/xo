@@ -95,6 +95,15 @@ func Bytes_rfind(_ *Task, b, sub Bytes) Option[int64] {
 	return Some(int64(i))
 }
 
+// Bytes_indexed is `b.indexed()`: each byte with its offset.
+func Bytes_indexed(_ *Task, b Bytes) List[Tuple2[int64, uint8]] {
+	out := make([]Tuple2[int64, uint8], len(b))
+	for i := 0; i < len(b); i++ {
+		out[i] = Tuple2[int64, uint8]{int64(i), b[i]}
+	}
+	return ListOf(out...)
+}
+
 // Bytes_zeroed is `Bytes.zeroed(n)`: make([]byte, n).
 func Bytes_zeroed(_ *Task, n int64) Bytes {
 	if n < 0 {

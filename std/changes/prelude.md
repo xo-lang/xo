@@ -1,5 +1,16 @@
 # prelude changes
 
+## 2026-10-21: feature: Bytes.indexed
+
+- Kind: feature
+- Commit: (filled in after the push)
+- Found by: the 2026-10-21 language poll (`for (i, c) in b.indexed()` was missing; List has it)
+- Go reference: none
+- Test: golden bytes_indexed (go, arm64, LLVM)
+
+`b.indexed()` is `List[(Int, UInt8)]`: each byte with its offset, as
+`List.indexed`.
+
 ## 2026-10-21: feature: List.group_by
 
 - Kind: feature
