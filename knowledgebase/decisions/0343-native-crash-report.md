@@ -1,8 +1,10 @@
 # 0343: Native crash reports for hardware faults
 
-Status: Proposed (Xo Lang 4, 2026-10-22; the owner approved building the
-tool on 2026-10-22, after 0.25.1's windows/amd64 xo.exe crashed on every
-build and left only a minidump)
+Status: Accepted (owner, 2026-10-22: keep the signal's exit status, so
+core files and WER dumps keep working; one xo-windows CI run approved for
+stage 2). Proposed the same day by Xo Lang 4; the owner approved building
+the tool after 0.25.1's windows/amd64 xo.exe crashed on every build and
+left only a minidump.
 
 ## Context
 
