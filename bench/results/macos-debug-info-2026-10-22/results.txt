@@ -13,7 +13,7 @@ xo 0.25.2 darwin/arm64
 
 == go: hello-default
 $ ls -l hello-default
--rwxr-xr-x  1 josephspurrier  staff  1749250 Oct 22 15:54 hello-default
+-rwxr-xr-x  1 josephspurrier  staff  1749250 Oct 22 16:10 hello-default
 
 $ otool -l hello-default | grep sectname | grep debug
 __zdebug_abbrev __zdebug_line __zdebug_frame __debug_gdb_scri __zdebug_info __zdebug_loc __zdebug_ranges 
@@ -46,7 +46,7 @@ hello-default
 
 == go: hello-plain
 $ ls -l hello-plain
--rwxr-xr-x  1 josephspurrier  staff  2888578 Oct 22 15:54 hello-plain
+-rwxr-xr-x  1 josephspurrier  staff  2888578 Oct 22 16:10 hello-plain
 
 $ otool -l hello-plain | grep sectname | grep debug
 __debug_abbrev __debug_line __debug_frame __debug_gdb_scri __debug_info __debug_loc __debug_ranges 
@@ -61,7 +61,7 @@ hello-plain:	file format Mach-O arm64
 .debug_line contents:
 debug_line[0x00000000]
 Line table prologue:
-    total_length: 0x000000f3
+    total_length: 0x000000f7
 
 $ lldb -b -o image lookup -v -n main.greet hello-plain
 (lldb) target create "hello-plain"
@@ -85,7 +85,7 @@ hello-plain
 darwin/arm64: $OUT/xo/hello
 == xo: hello
 $ ls -l hello
--rwxr-xr-x  1 josephspurrier  wheel  706242 Oct 22 15:54 hello
+-rwxr-xr-x  1 josephspurrier  wheel  706242 Oct 22 16:11 hello
 
 $ ls hello.dSYM/Contents/Resources/DWARF
 hello
@@ -123,15 +123,30 @@ Current executable set to '$OUT/xo/hello' (arm64).
       LineEntry: [0x00000001000007f0-0x00000001000007f8): $OUT/xo/main.xo:3:3
 
 $ ls -l hello.dSYM/Contents/Resources/DWARF/hello
--rw-r--r--  1 josephspurrier  wheel  1404699 Oct 22 15:54 hello.dSYM/Contents/Resources/DWARF/hello
+-rw-r--r--  1 josephspurrier  wheel  1404699 Oct 22 16:11 hello.dSYM/Contents/Resources/DWARF/hello
+
+# hello.dSYM deleted: only what is in the executable is left
+$ atos -o hello -arch arm64 0x00000001000007f0
+xo_f_greet (in hello) (main.xo:3)
+
+$ lldb -b -o image lookup -v -n xo_f_greet hello
+(lldb) target create "hello"
+Current executable set to '$OUT/xo/hello' (arm64).
+(lldb) image lookup -v -n xo_f_greet
+1 match found in $OUT/xo/hello:
+        Address: hello[0x00000001000007f0] (hello.__TEXT.__text + 368)
+        Summary: hello`xo_f_greet
+         Module: file = "$OUT/xo/hello", arch = "arm64"
+         Symbol: id = {0x0000004c}, range = [0x00000001000007f0-0x0000000100000844), name="xo_f_greet"
+
 
 == other formats: Go cross builds for linux/arm64 and windows/amd64, Xo for linux/arm64
 $ objdump -h hello-linux | grep debug
  15 .debug_abbrev      00000160 0000000000000000 DEBUG
- 16 .debug_line        0001a148 0000000000000000 DEBUG
+ 16 .debug_line        0001a144 0000000000000000 DEBUG
  17 .debug_frame       00005824 0000000000000000 DEBUG
  18 .debug_gdb_scripts 0000002a 0000000000000000 DEBUG
- 19 .debug_info        0003654e 0000000000000000 DEBUG
+ 19 .debug_info        00036550 0000000000000000 DEBUG
  20 .debug_loclists    00014760 0000000000000000 DEBUG
  21 .debug_rnglists    0000bb70 0000000000000000 DEBUG
  22 .debug_addr        00000c96 0000000000000000 DEBUG
@@ -146,10 +161,10 @@ Contents of section .debug_abbrev:
 
 $ objdump -h hello-windows.exe | grep debug
   5 .zdebug_abbrev     00000154 000000014016f000 DATA
-  6 .zdebug_line       0001e031 0000000140170000 DATA
+  6 .zdebug_line       0001e038 0000000140170000 DATA
   7 .zdebug_frame      000059d4 000000014018f000 DATA
   8 .debug_gdb_scripts 0000002a 0000000140195000 DATA, DEBUG
-  9 .zdebug_info       000343a4 0000000140196000 DATA
+  9 .zdebug_info       000343a6 0000000140196000 DATA
  10 .zdebug_loclists   00014509 00000001401cb000 DATA
  11 .zdebug_rnglists   0000d18a 00000001401e0000 DATA
  12 .zdebug_addr       00000bcf 00000001401ee000 DATA
@@ -177,12 +192,12 @@ $ otool -l hello | grep sectname | grep debug   # nothing: ld leaves DWARF in he
 0
 
 $ nm -ap hello | grep OSO   # the debug map: where the DWARF is
-000000006ada69ee - 00 0001   OSO $OUT/c/hello.o
+000000006ada6df8 - 00 0001   OSO $OUT/c/hello.o
 
 $ dsymutil hello
 
 $ ls -l hello.dSYM/Contents/Resources/DWARF/hello
--rw-r--r--  1 josephspurrier  wheel  9224 Oct 22 15:54 hello.dSYM/Contents/Resources/DWARF/hello
+-rw-r--r--  1 josephspurrier  wheel  9232 Oct 22 16:11 hello.dSYM/Contents/Resources/DWARF/hello
 
 # hello.o deleted: the DWARF is now only in hello.dSYM
 $ atos -o hello -arch arm64 0x0000000100000460

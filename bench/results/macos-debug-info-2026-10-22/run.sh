@@ -78,6 +78,10 @@ show atos -o hello.dSYM -arch arm64 "0x$addr"
 LINES_MAX=6 show dwarfdump --debug-line hello.dSYM
 show lldb -b -o "image lookup -v -n $sym" hello
 show ls -l hello.dSYM/Contents/Resources/DWARF/hello
+rm -rf hello.dSYM
+echo "# hello.dSYM deleted: only what is in the executable is left"
+show atos -o hello -arch arm64 "0x$addr"
+LINES_MAX=14 show lldb -b -o "image lookup -v -n $sym" hello
 echo "== other formats: Go cross builds for linux/arm64 and windows/amd64, Xo for linux/arm64"
 cd "$out/go"
 GOOS=linux GOARCH=arm64 go build -o hello-linux .
