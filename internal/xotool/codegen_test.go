@@ -89,6 +89,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_TEST_JOBS":            {"none", ""},
 	"XO_TEST_ONLY":            {"none", ""},
 	"XO_TRACEBACK":            {"none", ""},
+	"XO_MAX_MEM":              {"none", ""},
 	"XO_WARNINGS":             {"none", ""},
 	"XO_LAZY_INLINE":          {"none", ""}, // off decodes every inline hit at once; the module is the same
 	"XO_BORROW_CHECK":         {"none", ""}, // runs the full inference too and compares; the flags are the same

@@ -1,0 +1,100 @@
+// The memory budget (decision 0349): the bytes the heap has mapped from
+// the system and not given back (heapos.xo map and unmap add to it), the
+// budget past which the process stops, and the label its report prints.
+// A leaf of heapos.xo: nothing here maps or allocates, so the stop can
+// run while the heap is full; heapos.xo maps the label's buffer and
+// hands it over.
+use native/llrt/process
+use native/llrt/stdio
+use native/rt
+
+/// rt.static_word: the bytes mapped, the budget (0: none), the label's
+/// buffer (0: none; a mapping whose first byte is the label's length),
+/// and a byte for the stop's digits.
+const W_MAPPED = 84
+const W_BUDGET = 85
+const W_LABEL = 86
+const W_DIGIT = 87
+
+const RELAXED = 0
+const ACQUIRE = 1
+const ACQ_REL = 3
+
+/// Adds d bytes to the count (negative for a mapping given back) and
+/// stops the process when a mapping takes it past the budget.
+pub fn add(d: Int) {
+  let total = rt.slot_add(rt.static_word(W_MAPPED), 0, d, RELAXED).wrapping_add(d)
+  if d > 0 {
+    let b = rt.slot_load(rt.static_word(W_BUDGET), 0, RELAXED)
+    if b > 0 && total > b {
+      over_budget(total, b)
+    }
+  }
+}
+
+/// The bytes mapped and not given back.
+pub fn mapped() -> Int { rt.slot_load(rt.static_word(W_MAPPED), 0, RELAXED) }
+
+/// Sets the budget in bytes (0 or less: none).
+pub fn set_budget(b: Int) { rt.slot_store(rt.static_word(W_BUDGET), 0, if b > 0 { b } else { 0 }, RELAXED) }
+
+/// The label's buffer, 0 before the first label.
+pub fn label_buf() -> Int { rt.slot_load(rt.static_word(W_LABEL), 0, ACQUIRE) }
+
+/// Takes m (a fresh mapping of at least 256 bytes) as the label's
+/// buffer: false when another thread's came first (the caller unmaps m).
+pub fn adopt_label_buf(m: Int) -> Bool { rt.slot_cas(rt.static_word(W_LABEL), 0, 0, m, ACQ_REL) }
+
+/// Copies at most 255 of the n bytes at p into the label (0 clears it).
+pub fn write_label(p: Int, n0: Int) {
+  let buf = label_buf()
+  if buf == 0 {
+    return
+  }
+  let n = if n0 > 255 { 255 } else if n0 < 0 { 0 } else { n0 }
+  var i = 0
+  while i < n {
+    rt.mem_store(buf, 1 + i, rt.mem_load(p, i, 1), 1)
+    i += 1
+  }
+  rt.mem_store(buf, 0, n, 1)
+}
+
+/// "fatal error: memory budget exceeded: ..." and the label, then the
+/// end of the process (status 70, as heapos.xo oom).
+fn over_budget(total: Int, b: Int) {
+  let head = "fatal error: memory budget exceeded: "
+  stdio.err(raw_data(head), head.len(), false)
+  write_mb(total)
+  let mid = " MB mapped, more than XO_MAX_MEM ("
+  stdio.err(raw_data(mid), mid.len(), false)
+  write_mb(b)
+  let tail = " MB)"
+  stdio.err(raw_data(tail), tail.len(), true)
+  let buf = label_buf()
+  if buf != 0 && rt.mem_load(buf, 0, 1) > 0 {
+    let w = "  while: "
+    stdio.err(raw_data(w), w.len(), false)
+    stdio.err(buf + 1, rt.mem_load(buf, 0, 1), true)
+  }
+  process.os_exit(70)
+}
+
+/// The address of a constant Str's bytes (raw.xo data).
+fn raw_data(s: Str) -> Int { rt.obj_addr(s) + rt.layout(0) }
+
+/// Writes n bytes as whole MiB in decimal to standard error, a digit at a
+/// time through a static word.
+fn write_mb(n: Int) {
+  let v = n / 1048576
+  var div = 1
+  while div.wrapping_mul(10) <= v && div < 1000000000000000000 {
+    div = div.wrapping_mul(10)
+  }
+  let d = rt.static_word(W_DIGIT)
+  while div > 0 {
+    rt.mem_store(d, 0, 48 + (v / div) % 10, 1)
+    stdio.err(d, 1, false)
+    div = div / 10
+  }
+}

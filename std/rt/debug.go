@@ -93,3 +93,17 @@ func Debug_router(tk *Task, clock Clock, auth func(*Task, Http_Request) Result[b
 // Debug_heap_start is `debug.heap_start(rate)`: Go samples the heap
 // always, so there is nothing to start.
 func Debug_heap_start(_ *Task, _ int64) bool { return false }
+
+// Debug_mem_budget is `debug.mem_budget(bytes)` (decision 0349): native
+// backends only; a Go program has GOMEMLIMIT.
+func Debug_mem_budget(_ *Task, _ int64) {}
+
+// Debug_mem_label is `debug.mem_label(text)`: nothing to label here.
+func Debug_mem_label(_ *Task, _ string) {}
+
+// Debug_mem_mapped is `debug.mem_mapped()`: 0 on the Go backend.
+func Debug_mem_mapped(_ *Task) int64 { return 0 }
+
+// Debug_mem_total is `debug.mem_total()`: 0 on the Go backend.
+func Debug_mem_total(_ *Task) int64 { return 0 }
+

@@ -24,6 +24,7 @@
 // Nothing here allocates Xo values or faults: out of memory ends the
 // process as the C's xo_oom did (status 70).
 use native/llrt/linux
+use native/llrt/membudget
 use native/llrt/pool
 use native/llrt/process
 use native/llrt/raw
@@ -112,6 +113,7 @@ pub fn map(size: Int) -> Int {
   if m == 0 {
     oom()
   }
+  mapped(size)
   m
 }
 
@@ -123,11 +125,64 @@ fn libc_map(size: Int) -> Int {
     oom()
   }
   let _n = rt.slot_add(rt.static_word(W_LIBC_MAPS), 0, 1, RELAXED)
+  mapped(size)
   m
 }
 
+/// Counts size bytes mapped for the memory budget (decision 0349,
+/// membudget.xo), which stops the process past it.
+fn mapped(size: Int) { membudget.add(size) }
+
+/// The bytes the heap has mapped and not given back (decision 0349).
+pub fn mapped_bytes() -> Int { membudget.mapped() }
+
+/// Sets the budget in bytes (0: none).
+pub fn set_budget(b: Int) { membudget.set_budget(b) }
+
+/// Records the label the budget's stop prints (at most 255 bytes of the
+/// n at p; n 0 clears it). Its buffer is mapped here once, counted.
+pub fn set_label(p: Int, n: Int) {
+  if membudget.label_buf() == 0 {
+    if n == 0 {
+      return
+    }
+    let m = map(GRAIN)
+    if !membudget.adopt_label_buf(m) {
+      unmap(m, GRAIN)
+    }
+  }
+  membudget.write_label(p, n)
+}
+
+/// The machine's physical memory in bytes, 0 when unknown (decision 0349:
+/// xo's default budget is half of it; Windows reads none yet).
+pub fn phys_mem() -> Int {
+  match target.os {
+    TargetOs.Darwin => {
+      let b = map(GRAIN)
+      rt.mem_store(b, 8, 8, 8)
+      let name = b"hw.memsize\x00"
+      let ok = Int(sys_darwin.sysctlbyname(name, b, b + 8, 0, 0)) == 0
+      let n = if ok { rt.mem_load(b, 0, 8) } else { 0 }
+      unmap(b, GRAIN)
+      n
+    }
+    TargetOs.Linux => {
+      let b = map(GRAIN)
+      let r = linux.sysinfo(b)
+      let unit = rt.mem_load(b, 104, 4)
+      let n = if r == 0 { rt.mem_load(b, 32, 8).wrapping_mul(if unit > 0 { unit } else { 1 }) } else { 0 }
+      unmap(b, GRAIN)
+      n
+    }
+    TargetOs.Windows | TargetOs.Wasi => 0
+  }
+}
+
+
 /// Gives back the mapping of size bytes at m.
 pub fn unmap(m: Int, size: Int) {
+  membudget.add(0 - size)
   match target.os {
     TargetOs.Linux => {
       if sanhook.sanitized() {

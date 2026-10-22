@@ -252,6 +252,10 @@ pub fn start(argc: Int, argv: Int, envp: Int) {
     trace.start()
   }
   fault.init_traceback(rt.fn_addr("fault_traceback"))
+  // XO_MAX_MEM (decision 0349): the heap's budget, none when unset
+  if let Some(e) = process.env_real("XO_MAX_MEM").get(0) {
+    heapos.set_budget(parse_size(e))
+  }
   // hardware faults (decision 0343): reported, then the default action
   crash.install()
   if process.env_real_at("XO_TEST") != 0 {
@@ -563,3 +567,24 @@ pub fn on_overflow(e: Int) -> Int {
   let _t = sys_windows.TerminateProcess(THIS_PROCESS, 2)
   0
 }
+
+/// A size of XO_MAX_MEM (decision 0349): "12G" is 12884901888, "512M",
+/// "64K", "4096" bytes (powers of 1024); 0 for "off", "0", or a text
+/// that is not a size.
+pub fn parse_size(s0: Str) -> Int {
+  let s = s0.trim()
+  if s.is_empty() {
+    return 0
+  }
+  let suf = s[s.len() - 1..s.len()]
+  let mul = match suf {
+    "K" | "k" => 1024
+    "M" | "m" => 1048576
+    "G" | "g" => 1073741824
+    _ => 1
+  }
+  let digits = if mul == 1 { s } else { s[0..s.len() - 1] }
+  let n = Int.parse(digits) ?? 0
+  if n < 0 { 0 } else { n * mul }
+}
+

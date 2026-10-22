@@ -31,3 +31,22 @@ fn router(clock: Clock, auth: fn(http.Request) -> Bool) -> http.Router uses cloc
 /// It cannot be stopped: its cost (a sample every `rate` bytes and a
 /// table of the sampled objects) stays for the life of the process.
 fn heap_start(rate: Int = 0) -> Bool
+
+/// Sets the heap's memory budget (decision 0349): past `bytes` mapped
+/// from the system the program stops with status 70, "fatal error:
+/// memory budget exceeded" and the label below; 0 turns it off.
+/// `XO_MAX_MEM` sets it at start. Native backends only (the Go backend
+/// ignores it).
+fn mem_budget(bytes: Int)
+
+/// Records the text the budget's stop prints after `while:` (at most 255
+/// bytes; "" clears it): what the program is doing, for the report.
+fn mem_label(text: Str)
+
+/// The bytes the heap has mapped from the system and not given back
+/// (what the budget measures); 0 on the Go backend.
+fn mem_mapped() -> Int
+
+/// The machine's physical memory in bytes, 0 when unknown (Windows and
+/// the Go backend for now).
+fn mem_total() -> Int

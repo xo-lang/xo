@@ -260,6 +260,7 @@ fn prefetch(a: Int)
 ///   78-81 std/native/llrt/sanhook.xo: windows --race's arena (its next address, its lock), the race heap's table, whether ThreadSanitizer started (decision 0273's Windows addendum)
 ///   82 std/native/llrt/racesym.xo: windows --race's function name table (0 none yet, 1 being made)
 ///   83 std/native/llrt/crash.xo: the crash record of hardware fault reports (decision 0343), 0 when no handler is installed
+///   84-87 std/native/llrt/membudget.xo: the memory budget (decision 0349): the bytes mapped, the budget, the label's buffer, the stop's digit
 ///   64-65 std/native/llrt/fault.xo: the address of cabi.xo fault_raise_msg (decision 0228; word 14 until 2026-10-16), and XO_TRACEBACK's printer (0 not looked up, 1 off, else cabi.xo fault_traceback's address; decision 0239)
 fn static_word(k: Int) -> Int uses realtime
 

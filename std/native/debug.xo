@@ -2,7 +2,9 @@
 // over llrt/prof's live profiler and the scheduler's counters.
 use std/http
 use native/rt
+use native/llrt/heapos
 use native/llrt/prof
+use native/llrt/raw
 use native/llrt/rtstats
 
 /// The names of the runtime counters in the order of rtstats' record
@@ -116,3 +118,11 @@ pub fn router(clock: Clock, auth: fn(http.Request) -> Bool) -> http.Router uses 
 pub fn heap_start(rate: Int = 0) -> Bool {
   prof.heap_live_start(rate)
 }
+
+pub fn mem_budget(bytes: Int) { heapos.set_budget(bytes) }
+
+pub fn mem_label(text: Str) { heapos.set_label(raw.data(text), text.len()) }
+
+pub fn mem_mapped() -> Int { heapos.mapped_bytes() }
+
+pub fn mem_total() -> Int { heapos.phys_mem() }

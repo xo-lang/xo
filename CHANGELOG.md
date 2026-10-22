@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- A memory budget for native programs and for xo (decision 0349, owner):
+  `XO_MAX_MEM=12G` (or `512M`, bytes; `off`) stops a program whose heap
+  maps more, with status 70, `fatal error: memory budget exceeded: ...`
+  and what it was doing (`debug.mem_label`). xo sets half of physical
+  memory by default (macOS, Linux) and labels its phases, so a runaway
+  build stops with the phase named instead of swapping the machine.
+  `debug.mem_budget`, `debug.mem_label`, `debug.mem_mapped` and
+  `debug.mem_total` are new in std/debug.
+
 - Native runtime: `List.join`, `Bytes.zeroed`-style buffers and
   `to_hex` producing more than 4 GiB fault ("strings: Join output over
   4 GiB", "Str or Bytes longer than 4 GiB") instead of returning a cut

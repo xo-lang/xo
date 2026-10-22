@@ -4664,6 +4664,10 @@ gives it an `auth` function.
 ```xo
 fn router(clock: Clock, auth: fn(http.Request) -> Bool) -> http.Router uses clock
 fn heap_start(rate: Int = 0) -> Bool
+fn mem_budget(bytes: Int)
+fn mem_label(text: Str)
+fn mem_mapped() -> Int
+fn mem_total() -> Int
 ```
 
 - `GET /profile?seconds=N&hz=H`: a CPU profile of the next N seconds
@@ -4688,6 +4692,16 @@ fn heap_start(rate: Int = 0) -> Bool
   router costs nothing.
 - A live profile running when the program exits is dropped, with no file
   (the `XO_PROF` file profile is separate: it still writes at exit).
+- The memory budget (decision 0349, native backends): `mem_budget(bytes)`
+  stops the program with status 70 when the bytes its heap has mapped
+  from the system pass `bytes` (0: none), writing `fatal error: memory
+  budget exceeded: N MB mapped, more than XO_MAX_MEM (M MB)` and
+  `  while: LABEL`, the last `mem_label(text)` (at most 255 bytes).
+  `XO_MAX_MEM` (bytes, or with K, M, G; `off`) sets the budget at start.
+  `mem_mapped()` is the count the budget compares, `mem_total()` the
+  machine's physical memory (macOS and Linux; 0 elsewhere). xo sets half
+  of physical memory when XO_MAX_MEM is unset. The Go backend ignores the
+  budget and its label, and both counts are 0 there.
 
 ## 37. std/metrics
 

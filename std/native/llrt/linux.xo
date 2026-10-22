@@ -574,6 +574,10 @@ pub fn read_at(fd: Int, a: Int, n: Int) -> Int { rt.sys6(nr(63, 0), fd, a, raw.i
 /// mask's bytes written, or -errno.
 pub fn sched_getaffinity(a: Int, n: Int) -> Int { rt.sys6(nr(123, 204), 0, n, a, 0, 0, 0) }
 
+/// sysinfo(2) into the struct sysinfo at p (112 bytes): totalram at 32,
+/// mem_unit (a u32) at 104.
+pub fn sysinfo(p: Int) -> Int { rt.sys6(nr(179, 99), p, 0, 0, 0, 0, 0) }
+
 /// renameat(2) of a to b (as written: "" is no file, as for the C
 /// runtime's rename).
 pub fn rename(a: Str, b: Str) -> Int {

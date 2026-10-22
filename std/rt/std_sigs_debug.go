@@ -8,4 +8,8 @@ package rt
 var (
 	_ func(*Task, Clock, func(*Task, Http_Request) Result[bool, Never]) Http_Router = Debug_router
 	_ func(*Task, int64) bool                                                       = Debug_heap_start
+	_ func(*Task, int64)                                                            = Debug_mem_budget
+	_ func(*Task, string)                                                           = Debug_mem_label
+	_ func(*Task) int64                                                             = Debug_mem_mapped
+	_ func(*Task) int64                                                             = Debug_mem_total
 )
