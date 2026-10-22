@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"reflect"
@@ -408,7 +409,84 @@ func jsonParse(data []byte) (any, *Json_DecodeErr) {
 	if x, ok := jsonParseFast(data); ok {
 		return x, nil
 	}
+	if err := jsonSyntaxErr(data); err != nil {
+		return nil, err
+	}
 	return jsonParseSlow(data)
+}
+
+// jsonQuoteChar is encoding/json's quoteChar: the byte as a rune in single
+// quotes.
+func jsonQuoteChar(c byte) string {
+	if c == '\'' {
+		return `'\''`
+	}
+	if c == '"' {
+		return `'"'`
+	}
+	s := strconv.Quote(string(rune(c)))
+	return "'" + s[1:len(s)-1] + "'"
+}
+
+// jsonEOFErr is the token decoder's error for a text that ends early:
+// io.EOF where it ends between tokens (white space, a delimiter, a
+// closed string, a whole number or literal), io.ErrUnexpectedEOF inside one.
+func jsonEOFErr(data []byte) *Json_DecodeErr {
+	inStr := false
+	for i := 0; i < len(data); i++ {
+		switch {
+		case inStr && data[i] == '\\':
+			i++
+		case data[i] == '"':
+			inStr = !inStr
+		}
+	}
+	d := bytes.TrimRight(data, " \t\r\n")
+	if inStr {
+		return JsonErr("$", "invalid JSON: unexpected EOF")
+	}
+	if len(d) == 0 {
+		return JsonErr("$", "invalid JSON: EOF")
+	}
+	switch d[len(d)-1] {
+	case '{', '[', ',', ':', '}', ']', '"':
+		return JsonErr("$", "invalid JSON: EOF")
+	}
+	i := len(d)
+	for i > 0 && (d[i-1] == '+' || d[i-1] == '-' || d[i-1] == '.' || d[i-1] >= '0' && d[i-1] <= '9' || d[i-1] >= 'a' && d[i-1] <= 'z' || d[i-1] >= 'A' && d[i-1] <= 'Z') {
+		i--
+	}
+	if json.Valid(d[i:]) {
+		return JsonErr("$", "invalid JSON: EOF")
+	}
+	return JsonErr("$", "invalid JSON: unexpected EOF")
+}
+
+// jsonSyntaxErr is jsonParseSlow's error for text the scanner of
+// encoding/json rejects, found by that scan alone (Go's Unmarshal checks
+// the syntax before it decodes) without the token decoder building the
+// value up to the error; nil for text that is valid, or whose error text
+// the token decoder words differently (a token after the value, a bad
+// object key), which jsonParseSlow answers.
+func jsonSyntaxErr(data []byte) *Json_DecodeErr {
+	var skip struct{}
+	var se *json.SyntaxError
+	if !errors.As(json.Unmarshal(data, &skip), &se) {
+		return nil
+	}
+	msg := se.Error()
+	if strings.Contains(msg, "after top-level value") || strings.HasSuffix(msg, "looking for beginning of object key string") {
+		return nil
+	}
+	if msg == "unexpected end of JSON input" {
+		return jsonEOFErr(data)
+	}
+	// the scan of a text that ends inside a literal or a number feeds a
+	// space: the byte the error names must be the one at its offset
+	if i := int(se.Offset) - 1; strings.HasPrefix(msg, "invalid character ") && (i < 0 || i >= len(data) || !strings.HasPrefix(msg[len("invalid character "):], jsonQuoteChar(data[i]))) {
+		return jsonEOFErr(data)
+	}
+	return JsonErr("$", "invalid JSON: "+msg)
 }
 
 // jsonParseSlow is jsonParse by the token decoder: any text, and the
@@ -506,8 +584,14 @@ func Json_encode_str[T any](tk *Task, v T) string { return string(Json_encode(tk
 // Json_decode is `json.decode[T](data)`.
 func Json_decode[T any](tk *Task, data Bytes) Result[T, Json_DecodeErr] {
 	var fast T
-	if jsonDecodeFast(tk, []byte(data), &fast) {
+	ok, valid := jsonDecodeFast(tk, []byte(data), &fast)
+	if ok {
 		return Ok[T, Json_DecodeErr](fast)
+	}
+	if !valid {
+		if err := jsonSyntaxErr([]byte(data)); err != nil {
+			return Err[T](*err)
+		}
 	}
 	x, err := jsonParse([]byte(data))
 	if err != nil {

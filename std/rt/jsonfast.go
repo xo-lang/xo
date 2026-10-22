@@ -230,17 +230,19 @@ func JsonRead[T any](tk *Task, r *JsonR, dst *T) bool {
 	return JsonDec(tk, dst, x, "$") == nil
 }
 
-// jsonDecodeFast is the fast path of Json_decode.
-func jsonDecodeFast[T any](tk *Task, data []byte, dst *T) bool {
+// jsonDecodeFast is the fast path of Json_decode; valid is false when the
+// text is not valid JSON, which Json_decode answers by the scanner's error
+// without the value reader or the parse tree.
+func jsonDecodeFast[T any](tk *Task, data []byte, dst *T) (ok, valid bool) {
 	if !json.Valid(data) {
-		return false
+		return false, false
 	}
 	r := JsonR{b: data}
 	if !JsonRead(tk, &r, dst) {
-		return false
+		return false, true
 	}
 	r.ws()
-	return r.i == len(data)
+	return r.i == len(data), true
 }
 
 // XoJsonRead reads an array.

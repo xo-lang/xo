@@ -1,5 +1,22 @@
 # std/json changes
 
+## 2026-10-22: perf: the Go backend answers invalid JSON from the scanner
+
+- Kind: perf
+- Commit: this commit
+- Found by: the Go gap ranking (bench/results/go-backend-gap-2026-10-22.md: json invalid 10.2x Go)
+- Go reference: encoding/json (go1.26.1: Unmarshal checks the syntax first; the error texts are the scanner's)
+- Test: std/rt TestJsonSyntaxErrMatchesDecoder, TestJsonParseFastTrailingJunk
+
+On the Go backend a decode of text that is not valid JSON read it three times
+(`json.Valid`, the fast reader, then `json.Decoder.Token` building the value
+up to the error). It now takes the scanner's error from one `json.Unmarshal`
+check, with the token decoder's texts for an early end (`EOF`, `unexpected
+EOF`); the token decoder still answers a token after the value and a bad
+object key. bench/perf/json invalid: 1,707 M to 670 M instructions (Go's
+`json.Unmarshal` 205 M), `xo bench --ab` instructions 0.420 of before;
+bench/results/json-invalid-go-backend-2026-10-22.md.
+
 ## 2026-10-22: perf: the Go backend's fast JSON reader reads surrogate pairs
 
 - Kind: perf
