@@ -1803,29 +1803,13 @@ fn (var c: Checker) report_unused() {
   }
 }
 
-/// Whether block b may be built twice (ssa for_map's two loops): at most
-/// max nodes (expressions, statements and blocks), and no closure or
-/// defer anywhere (each would be made twice).
+/// Whether block b is small enough to be built twice (ssa for_map's two
+/// loops): at most max nodes (the calls, `if`s, assignments and bindings
+/// pre_block lists). Closures and defers are not among those nodes:
+/// for_map finds them while it builds the body (a closure or a defer
+/// made there keeps one loop).
 pub fn twice_ok(b: Block, max: Int) -> Bool {
   var nodes: List[Node] = []
   pre_block(b, false, nodes)
-  if nodes.len() > max {
-    return false
-  }
-  for n in nodes {
-    match n {
-      NExpr(e) => {
-        if let FnLit(..) = e {
-          return false
-        }
-      }
-      NStmt(st) => {
-        if let DeferStmt(..) = st {
-          return false
-        }
-      }
-      NBlock(_) => {}
-    }
-  }
-  true
+  nodes.len() <= max
 }

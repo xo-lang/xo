@@ -1041,9 +1041,9 @@ fn (var b: Builder) closure_with(lit: parser.FnLit, ct: check.Ty, et: Int) -> In
 /// (xo.maph.logkvl) copy every entry, a dup of each key and value per
 /// loop (a GET of a store's map under a read lock: the counts of every
 /// value's strings fought over by the cores, 2026-10-21). The body is
-/// built for both loops when it is small (MAP_WALK_TWICE nodes) and has
-/// no closure or defer (check.twice_ok); a larger one keeps the lists'
-/// loop alone (every body built twice grew xo's text 0.44%).
+/// built for both loops when it is small (MAP_WALK_TWICE nodes,
+/// check.twice_ok) and building it made no closure or defer; otherwise
+/// the lists' loop alone (every body built twice grew xo's text 0.44%).
 fn (var b: Builder) for_map(label: Bytes, p: Pattern, bound: List[Expr], body: parser.Block, mv: Int) {
   let t = b.vty(mv)
   if !b.m.map_log || !check.twice_ok(body, MAP_WALK_TWICE) {
@@ -1061,23 +1061,42 @@ fn (var b: Builder) for_map(label: Bytes, p: Pattern, bound: List[Expr], body: p
   // view with a base reads through its parents)
   let root = b.add(Op.And, b.bool_t(), Aux.None, [b.bop(Op.Eq, b.call("list.len", b.int_t(), "", [b.mf(lt, 7, tbl)]), b.cint(0)), b.bop(Op.Eq, b.mf(lt, 3, tbl), b.cint(0))])
   let (rb, fb) = b.branch(root)
-  b.s.cur = rb
-  b.for_mlog_root(label, p, bound, body, t, tbl)
-  if !b.is_dead() {
-    b.jump(done, [])
-  }
   b.s.cur = fb
   b.jump(lists, [])
   b.s.cur = nb
   b.jump(lists, [])
-  b.seal(lists)
+  // the lists' loop first, its block left unsealed: when building its
+  // body made a closure or a defer (each would be made a second time by
+  // the walk), the walk's branch goes to it too
   b.s.cur = lists
+  let c0 = b.nclos
+  let d0 = b.defer_stmts()
   b.for_map_lists(label, p, bound, body, mv)
   if !b.is_dead() {
     b.jump(done, [])
   }
+  let once = b.nclos != c0 || b.defer_stmts() != d0
+  b.s.cur = rb
+  if once {
+    b.jump(lists, [])
+  } else {
+    b.for_mlog_root(label, p, bound, body, t, tbl)
+    if !b.is_dead() {
+      b.jump(done, [])
+    }
+  }
+  b.seal(lists)
   b.seal(done)
   b.s.cur = done
+}
+
+/// The deferred statements recorded in the function so far (for_map).
+fn (b: Builder) defer_stmts() -> Int {
+  var n = 0
+  for fr in b.s.frames {
+    n += fr.stmts.len()
+  }
+  n
 }
 
 /// The most nodes of a loop body for_map builds twice (its in-place walk

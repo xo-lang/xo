@@ -80,6 +80,20 @@ fn big_body(var m: Map[Int, Int]) -> Str {
   "${s.freeze()}${t}"
 }
 
+/// A closure in the body: the body is built once (the lists' loop), the
+/// closures see the entries all the same.
+fn closures(m: Map[Int, Int]) -> Int {
+  var fs: List[fn() -> Int] = []
+  for (k, v) in m {
+    fs.push(fn() { k * 100 + v })
+  }
+  var t = 0
+  for f in fs {
+    t += f()
+  }
+  t
+}
+
 fn main(os: Os) {
   let (m0, l) = log_map(20)
   var m = m0
@@ -131,4 +145,5 @@ fn main(os: Os) {
   os.stdio.println("break: ${upto(m2, 9)}")
   var m3 = m2
   os.stdio.println("big: ${big_body(m3)}")
+  os.stdio.println("closures: ${closures(m2)}")
 }
