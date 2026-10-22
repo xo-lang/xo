@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+proved [99 11 21 7] [0 10 20] [0 5]
+defer xs [11 12 55] keep [0 10]
+ok 2
+defer xs [0 10 55] keep [0 10]
+fault: index 2 out of range for List of length 1
+--- stderr

@@ -97,7 +97,8 @@ each fact dropped on a counterexample until none changes.
   rule now rejects as a second use at the same point.
 - The fixed point holds (scripts/gate.sh fp, s2 and s3 identical).
 - Follow-up: the prelude's list_insert and list_remove_at outs are not
-  proved unique, so their callers check again after them.
+  proved unique, so their callers check again after them (done: the
+  addendum below).
 - Incremental builds: a caller flipping a callee's fact between unique and
   shared, and back, gives the same output with the caches on, off, and in
   verify mode, on arm64 and LLVM.
@@ -110,3 +111,44 @@ each fact dropped on a counterexample until none changes.
 - A non-atomic count load in the check so that LLVM folds it (the
   experiment's first version): a race with another thread's decrement of
   a shared list; the lead ruled it out.
+
+## Addendum (2026-10-21): what a callee hands back
+
+The follow-up above: a caller's update of a `var` out or a List result
+that its callee hands back unique (uniq_facts' out and ret: unique at
+every Return but a fault exit's) gets its reuse marked like the entry
+one, instead of checking again after the call.
+
+- insert_rc's reuse step still inserts the reuse before the update (the
+  mark every later pass reads, gotcha reuse-is-the-uniqueness-mark) and
+  marks it proved (aux 2; checked, aux 1, under XO_RC_CHECK=1) when
+  Rc.handed_unique holds: the updated leaf is the call itself (a List
+  result) or one field of it (`.k`, the k-th `var` out), not a list
+  inside one, not retained in the caller, its callee's fact true, and
+  the update's block runs only past the call's landing check.
+- One test of a call's field for both analyses: uniqvar.xo
+  call_hands_unique (the fact and past_landing), used by origin and by
+  Rc.handed_unique.
+- past_landing finds a call's landing check by its pad, else the first
+  rt.landing after it in its block that no value's pad names (the
+  builder sets pad only on a block's last instruction; prune_landings
+  removes a trivial check and clears the pad, and a later value's check
+  in the same block is that value's: gotcha landing-of-another-value).
+- The facts (Rc.uq, by function index) come from every function's body
+  in every build (a candidate now needs a body: a function with none has
+  no Return to disprove its facts) and are part of each caller's rc_key
+  (the callee lines), so cached and cold builds mark the same reuses.
+  No Func field and no cache entry format change.
+- Why not drop the reuse: the first version made Rc.uniq true for such a
+  field. The verifier after the arm64 inliner then failed compiler/ssa's
+  shift_pos, where str.split had been inlined and its result was no
+  longer a call (the build fell back to no inlining).
+
+Verified (2026-10-21): golden uniq_call_outs (a caller's updates of a
+handed back out and List result past the landing, and the same out
+updated by deferred code on the fault path while an alias holds the
+list the callee was given: it must copy) and uniq_var_params on arm64
+and LLVM, plain and XO_RC_CHECK=1; compiler/ssa's xo tests (13/13, no
+post-inline verification warning); internal/arm64 TestGoldenRun;
+internal/llvm TestGolden with XO_RC_CHECK=1 (every golden: no checked
+reuse found a shared list).

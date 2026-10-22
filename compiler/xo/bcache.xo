@@ -207,7 +207,7 @@ fn rc_cached(os: Os, var b: ssa.Builder, release: Bool, jobs: Int, phases: Bool,
   let bpath = borrow_record_path(os, dir, b.m.goarch)
   let full_mode = backend_cache_mode(os) == "verify"
   let check = (os.env.get("XO_BORROW_CHECK") ?? "") == "1"
-  let (r, rec, nd, same) = if full_mode { (b.rc_prepare(jobs), {}, b.m.funcs.len(), true) } else { b.rc_prepare_incr(jobs, id, borrow_record_read(os, bpath), check) }
+  let (r0, rec, nd, same) = if full_mode { (b.rc_prepare(jobs), {}, b.m.funcs.len(), true) } else { b.rc_prepare_incr(jobs, id, borrow_record_read(os, bpath), check) }
   if !same {
     fail(os, "XO_BORROW_CHECK=1: the incremental borrow inference differs from the full one (${nd} of ${b.m.funcs.len()} functions inferred)")
   }
@@ -218,6 +218,7 @@ fn rc_cached(os: Os, var b: ssa.Builder, release: Bool, jobs: Int, phases: Bool,
     os.stdio.eprintln("cache borrows ${b.m.funcs.len() - nd}/${b.m.funcs.len()} kept")
   }
   t = lap(os, phases, "insert_rc.borrows", t)
+  var r = r0
   if !full_mode {
     // decision 0322 (rc_prepare applies it itself)
     r.apply_uniq(b.m)

@@ -49,7 +49,9 @@ fn list_read(name: Str) -> Bool {
 fn uniq_candidates(funcs: List[Func], fidx: Map[Str, Int]) -> List[Bool] {
   var ok: List[Bool] = []
   for f in funcs {
-    ok.push(!f.entry && f.export.is_empty() && !f.indirect && !f.catches && f.captures.is_empty() && !f.target)
+    // (a function with no body here, made elsewhere, has no Returns to
+    // disprove its facts)
+    ok.push(!f.entry && f.export.is_empty() && !f.indirect && !f.catches && f.captures.is_empty() && !f.target && !f.blocks.is_empty())
   }
   for f in funcs {
     for x in f.values {
@@ -283,15 +285,7 @@ fn (r: Rc) origin1(funcs: List[Func], fi: Int, s: UFn, uf: UniqFacts, v: Int, va
         return k == 0
       }
       let ci = r.fidx.get(name) ?? -1
-      if ci < 0 || k < 0 {
-        return false
-      }
-      let past = past_landing(f, s, c, x.block)
-      if k == 0 {
-        return uf.ret[ci] && past
-      }
-      let outs = uf.out[ci]
-      return k - 1 < outs.len() && outs[k - 1] && past
+      return ci >= 0 && call_hands_unique(f, s.idom, uf.facts(ci), c, k, x.block)
     }
     Rebind => {
       let a = x.args[0]
@@ -317,30 +311,63 @@ fn (r: Rc) origin1(funcs: List[Func], fi: Int, s: UFn, uf: UniqFacts, v: Int, va
   false
 }
 
-/// Whether block b runs only after call c did not land: c's block ends
-/// in `br landed, fault, ok` on the value of its `lands`, and b is
-/// dominated by ok. A call that cannot land: b dominated by c's block.
-fn past_landing(f: Func, s: UFn, c: Int, b: Int) -> Bool {
+/// The facts of function ci: [0] its List result, [1 + k] its k-th
+/// `var` out (Rc.uq).
+fn (uf: UniqFacts) facts(ci: Int) -> List[Bool] {
+  [uf.ret[ci]] + uf.out[ci]
+}
+
+/// Whether the k-th Field of call c (0 its List result, 1 + k its k-th
+/// `var` out), with facts its callee's (UniqFacts.facts), is unique in
+/// block b:
+/// the fact holds and b runs only past c's landing check. The one test
+/// of a Field of a call for this analysis (origin) and insert_rc's
+/// (Rc.handed_unique).
+fn call_hands_unique(f: Func, idom: List[Int], facts: List[Bool], c: Int, k: Int, b: Int) -> Bool {
+  k >= 0 && k < facts.len() && facts[k] && past_landing(f, idom, c, b)
+}
+
+/// Whether block b runs only after call c did not land: c's landing
+/// check (Value.pad, else the first `rt.landing` or `rt.unwinding` after
+/// c in c's block that no value's pad names: the builder sets pad only
+/// on the block's last instruction, and insert_rc puts counting code
+/// between a call and its check; a check another value's pad names is
+/// that value's, c's own having been pruned) is the value c's block ends
+/// in `br landed, fault, ok` on, and b is dominated by ok. A call with no
+/// landing check: b dominated by c's block.
+fn past_landing(f: Func, idom: List[Int], c: Int, b: Int) -> Bool {
   let cb = f.values[c].block
   let ins = f.blocks[cb].instrs
-  if ins.is_empty() {
+  var u = f.values[c].pad
+  if u < 0 {
+    var after_c = false
+    for v in ins {
+      if v == c {
+        after_c = true
+      } else if after_c && f.values[v].op == Op.Call && (aux_name(f.values[v].aux) is "rt.landing" | "rt.unwinding") {
+        var claimed = false
+        for w in ins {
+          claimed = claimed || f.values[w].pad == v
+        }
+        if !claimed {
+          u = v
+        }
+        break
+      }
+    }
+  }
+  if u < 0 {
+    return udom(idom, cb, b)
+  }
+  let l = f.values[u]
+  if l.block != cb || l.op != Op.Call || aux_name(l.aux) != "rt.landing" {
     return false
   }
   let t = f.values[ins[ins.len() - 1]]
-  let ci = s.pos[c]
-  // a landing check: `vL = call rt.landing` right after c, and the
-  // block's branch on it
-  if ci + 1 < ins.len() {
-    let l = f.values[ins[ci + 1]]
-    if l.op == Op.Call && aux_name(l.aux) == "rt.landing" {
-      if t.op != Op.Branch || t.args.is_empty() || t.args[0] != ins[ci + 1] || t.succs.len() != 2 {
-        return false
-      }
-      let ok = f.edges[t.succs[1]].to
-      return udom(s.idom, ok, b)
-    }
+  if t.op != Op.Branch || t.args.is_empty() || t.args[0] != u || t.succs.len() != 2 {
+    return false
   }
-  udom(s.idom, cb, b)
+  udom(idom, f.edges[t.succs[1]].to, b)
 }
 
 /// Whether the Return r0 of f is a fault exit (its block calls
@@ -504,13 +531,26 @@ fn zeros(n: Int) -> List[Int] {
 /// that every pass that knows a Reuse result is unique (the verifier,
 /// insert_rc's uniq, the arm64 field and in-place passes) still does,
 /// and the mark is part of the body every cache key hashes.
+/// Each function's facts of what its calls hand back go into its
+/// r.uq, by index (none when every one is false), for insert_rc's
+/// reuse step: a caller's update of a unique `var` out or List result
+/// past the call's landing check gets its reuse marked like the entry
+/// one (Rc.handed_unique). The facts are made from every function's body
+/// in every build and are part of each caller's key (rc_key), so a build
+/// through the caches gets the marks a cold one does.
 /// XO_PASSES=-uniq_var_params turns it off.
-pub fn (r: Rc) apply_uniq(var m: Module) {
+pub fn (var r: Rc) apply_uniq(var m: Module) {
   if m.passes_off.contains("uniq_var_params") {
     return
   }
   let uf = r.uniq_facts(m.funcs)
   let mark = if m.rc_check { REUSE_CHECKED } else { REUSE_PROVED }
+  r.uq = []
+  for fi in 0..m.funcs.len() {
+    let fs = uf.facts(fi)
+    r.uq.push(if fs.contains(true) { fs } else { [] })
+  }
+  r.uq_mark = mark
   for fi in 0..m.funcs.len() {
     let es = uf.entry[fi]
     if !es.contains(true) {

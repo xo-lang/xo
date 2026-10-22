@@ -98,6 +98,12 @@ struct Rc {
   skip_imm: Bool = false
   /// the numbers of leaf paths (Rc.leaf, leaf_key): "" is 0
   pids: Map[Str, Int] = {}
+  /// decision 0322's facts of what each function's calls hand back, by
+  /// index (apply_uniq, UniqFacts.facts: [0] its List result, [1 + k]
+  /// its k-th `var` out; empty for none), and the mark of a reuse they
+  /// prove unneeded (REUSE_PROVED, or REUSE_CHECKED under XO_RC_CHECK=1)
+  uq: List[List[Bool]] = []
+  uq_mark: Int = 0
 }
 
 /// The leaf of root at path, its path numbered (leaf_key).
@@ -2021,10 +2027,13 @@ fn (var r: Rc) touches(f: Func, w: Int, an: List[Int]) -> Bool {
 // Uniqueness and reuse
 
 /// The state of the uniqueness analysis (unique): the retained leaves,
-/// and the block parameters' leaves still believed unique.
+/// the block parameters' leaves still believed unique, and f's
+/// dominators when it calls a function with decision 0322 facts (r.uq;
+/// else empty, handed_unique).
 struct Uniq {
   retained: Map[Int, Bool] = {}
   param: Map[Int, Bool] = {}
+  idom: List[Int] = []
 }
 
 /// Whether List leaf l is provably unique where it is used (unique's
@@ -2088,14 +2097,22 @@ fn (var r: Rc) uniq(f: Func, u: Uniq, l: Leaf) -> Bool {
 /// parameters, optimistic and falsified to a fixpoint (unique).
 fn (var r: Rc) unique(f: Func) -> Uniq {
   var u = Uniq{}
+  var facts = false
   for bl in f.blocks {
     for v in bl.instrs {
-      if f.values[v].op == Op.Retain {
-        for l in r.leaves(f, f.values[v].args[0]) {
+      let x = f.values[v]
+      if x.op == Op.Retain {
+        for l in r.leaves(f, x.args[0]) {
           u.retained[leaf_key(l)] = true
         }
+      } else if x.op == Op.Call && !facts {
+        let ci = r.fidx.get(aux_name(x.aux)) ?? -1
+        facts = ci >= 0 && ci < r.uq.len() && !r.uq[ci].is_empty()
       }
     }
+  }
+  if facts {
+    u.idom = dominators(f)
   }
   var ps: List[Leaf] = []
   for bi in 1..f.blocks.len() {
@@ -2125,6 +2142,32 @@ fn (var r: Rc) unique(f: Func) -> Uniq {
     }
   }
   u
+}
+
+/// Whether List leaf l, used in block at, is a `var` out or the List
+/// result of a direct call, read past the call's landing check, that the
+/// callee hands back unique (decision 0322's facts, r.uq; uniqvar.xo
+/// call_hands_unique): only the call's own field, not a list inside one,
+/// and not retained in f.
+fn (var r: Rc) handed_unique(f: Func, u: Uniq, l: Leaf, at: Int) -> Bool {
+  if u.idom.is_empty() || u.retained.contains(leaf_key(l)) {
+    return false
+  }
+  let x = f.values[l.root]
+  if x.op != Op.Call {
+    return false
+  }
+  let ci = r.fidx.get(aux_name(x.aux)) ?? -1
+  if ci < 0 || ci >= r.uq.len() {
+    return false
+  }
+  var k = -1
+  if l.path.is_empty() {
+    k = if r.is_list(x.ty) { 0 } else { -1 }
+  } else if !l.path[1..l.path.len()].contains(".") {
+    k = Int.parse(l.path[1..l.path.len()]) ?? -1
+  }
+  call_hands_unique(f, u.idom, r.uq[ci], l.root, k, at)
 }
 
 /// Makes a List parameter of a loop header unique on the edges into the
@@ -2239,8 +2282,13 @@ fn (var r: Rc) reuse(var f: Func) {
     for v in f.blocks[bl].instrs {
       if f.values[v].op == Op.Call && is_update_call(aux_name(f.values[v].aux)) {
         let a = f.values[v].args[0]
-        if !r.uniq(f, u, r.leaves(f, a)[0]) {
-          let x = new_value(f, bl, Op.Reuse, f.values[a].ty, Aux.None, [a])
+        let l = r.leaves(f, a)[0]
+        if !r.uniq(f, u, l) {
+          // a list its callee handed back unique: the reuse stays (the
+          // mark every later pass and the verifier read), marked so the
+          // backends lower it to nothing (decision 0322)
+          let ax = if r.handed_unique(f, u, l, bl) { Aux.I(n: r.uq_mark) } else { Aux.None }
+          let x = new_value(f, bl, Op.Reuse, f.values[a].ty, ax, [a])
           out.push(x)
           f.values[v].args[0] = x
         }

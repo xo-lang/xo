@@ -1,0 +1,94 @@
+// Decision 0322 follow-up: a caller's update of a `var` out or List
+// result that its callee hands back unique (every Return but a fault
+// exit's) skips the copy-on-write check, but only past the call's landing
+// check. Each case prints an alias that would see a missed copy.
+use std/task
+
+fn show(xs: List[Int]) -> Str {
+  var t = "["
+  for (i, x) in xs.indexed() {
+    if i > 0 {
+      t = t + " "
+    }
+    t = t + "${x}"
+  }
+  t + "]"
+}
+
+fn fresh(n: Int) -> List[Int] {
+  var xs: List[Int] = []
+  for i in 0..n {
+    xs.push(i * 10)
+  }
+  xs
+}
+
+// hands back a new list on every normal return: its out is unique
+fn rebuild(var xs: List[Int]) {
+  var ys: List[Int] = []
+  for x in xs {
+    ys.push(x + 1)
+  }
+  xs = ys
+}
+
+// a unique List result
+fn made(n: Int) -> List[Int] {
+  var ys: List[Int] = []
+  for i in 0..n {
+    ys.push(i)
+  }
+  ys
+}
+
+// unique on a normal return only: the fault exit hands back the list it
+// was given, which the caller's alias still holds
+fn rebuild_or_fault(var xs: List[Int], fail: Bool) {
+  if fail {
+    let ks = [1]
+    xs[0] = ks[xs.len()]
+  }
+  var ys: List[Int] = []
+  for x in xs {
+    ys.push(x + 2)
+  }
+  xs = ys
+}
+
+// the caller updates the out past the landing: no copy needed, and its
+// alias keeps the list it passed
+fn proved() -> Str {
+  var xs = fresh(3)
+  let keep = xs
+  rebuild(xs)
+  xs[0] = 99
+  xs.push(7)
+  var r = made(2)
+  r[1] = 5
+  "${show(xs)} ${show(keep)} ${show(r)}"
+}
+
+// the out of a call that faulted, updated by the caller's deferred code
+// (the landing path): it must copy, so keep stays as it was
+fn on_fault(out: Stdio, fail: Bool) -> Int {
+  var xs = fresh(2)
+  let keep = xs
+  defer {
+    xs.push(55)
+    out.println("defer xs ${show(xs)} keep ${show(keep)}")
+  }
+  rebuild_or_fault(xs, fail)
+  xs[0] = 11
+  xs.len()
+}
+
+fn main(os: Os) {
+  let out = os.stdio
+  out.println("proved ${proved()}")
+  out.println("ok ${on_fault(out, false)}")
+  match task.isolate(fn() -> Int ! () { on_fault(out, true) }) {
+    Ok(v) => out.println("fault: none ${v}")
+    Err(task.Isolated.Faulted(info)) => out.println("fault: ${info.msg}")
+    Err(_) => out.println("fault: failed")
+  }
+}

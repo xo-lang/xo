@@ -196,7 +196,7 @@ pub fn (var b: Builder) insert_rc_apply(plan: RcPlan, entries: Map[Str, Bytes], 
 /// The key of function fi (before its reference counting): the SHA-256
 /// of the compiler's identity, the target, the function in full with its
 /// types by key, its borrowed parameters, and those of every function it
-/// names.
+/// names, with their immortal results and decision 0322 facts (r.uq).
 fn rc_key(m: Module, fi: Int, r: Rc, tk: List[Str], id: Str) -> Str {
   let f = m.funcs[fi]
   var b = BytesBuilder.new()
@@ -212,7 +212,9 @@ fn rc_key(m: Module, fi: Int, r: Rc, tk: List[Str], id: Str) -> Str {
         let bs = if ci >= 0 { bools_text(r.borrowed[ci]) } else { "none" }
         // its immortal fields too (immortal_returns, read by immortal_leaf)
         let ir = if let Some(fs) = r.imm_ret.get(s) { bools_text(fs) } else { "-" }
-        b.write_str("callee ${s.len()}:${s} ${bs} ${ir}\n")
+        // and what it hands back unique (decision 0322, Rc.handed_unique)
+        let uq = if ci >= 0 && ci < r.uq.len() { bools_text(r.uq[ci]) } else { "-" }
+        b.write_str("callee ${s.len()}:${s} ${bs} ${ir} ${uq}\n")
       }
     }
   }
