@@ -1,0 +1,93 @@
+// The arm64 linker's branch islands: three objects whose calls are past
+// a bl's reach (LinkOpts.branch_reach made small, 8 KiB, so the program
+// stays small) go through veneers, followed from each bl to its target.
+
+const ISL_A = "\t.section __TEXT,__text,regular,pure_instructions\n\t.globl _main\n\t.p2align 2\n_main:\n\tmovz x1, #777\n\tbl _far\n\tret\n"
+const ISL_B = "\t.section __TEXT,__text,regular,pure_instructions\n\t.globl _mid\n\t.p2align 2\n_mid:\n\tret\n"
+
+/// 1500 nops (6000 bytes): a gap of code (.zero is not taken in __text).
+fn isl_gap() -> Str {
+  var b: List[Str] = []
+  for _ in 0..1500 {
+    b.push("\tnop\n")
+  }
+  b.join("")
+}
+
+const ISL_C = "\t.section __TEXT,__text,regular,pure_instructions\n\t.globl _far\n\t.p2align 2\n_far:\n\tmovz x0, #4242\n\tbl _main\n\tret\n"
+
+/// The target of the bl at address p (file offset at) of exe, through a
+/// veneer (adrp x16, add x16, br x16) if it lands on one; and whether it
+/// did.
+fn isl_follow(exe: Bytes, text: Int, text_off: Int, p: Int) -> (Int, Bool) {
+  let at = text_off + p - text
+  var imm = rd32(exe, at) & 0x3ffffff
+  if imm >= 0x2000000 {
+    imm -= 0x4000000
+  }
+  let v = p + 4 * imm
+  let vo = text_off + v - text
+  let w0 = rd32(exe, vo)
+  if (w0 & 0x9f00001f) != 0x90000010 || rd32(exe, vo + 8) != 0xd61f0200 {
+    return (v, false)
+  }
+  var page = ((w0 >> 29) & 3) | (((w0 >> 5) & 0x7ffff) * 4)
+  if page >= 0x100000 {
+    page -= 0x200000
+  }
+  let lo = (rd32(exe, vo + 4) >> 10) & 4095
+  ((v & ~4095) + page * 4096 + lo, true)
+}
+
+test "an arm64 link reaches calls past a bl's reach through branch islands" {
+  var ins: List[LinkInput] = []
+  for (name, src) in [("a.o", ISL_A + isl_gap()), ("b.o", ISL_B + isl_gap()), ("c.o", ISL_C)] {
+    match assemble(src.bytes()) {
+      Ok(o) => ins.push(LinkInput{path: name, data: o})
+      Err(e) => fault(e)
+    }
+  }
+  let exe = match link(ins, LinkOpts{name: "t", branch_reach: 8192}) {
+    Ok(b) => b
+    Err(e) => fault(e)
+  }
+  let (text, text_off, size) = exe_sect(exe, "__TEXT", "__text")
+  // _main first; _far by its first instruction, movz x0, #4242
+  let main_ins = 0xd2800000 | (777 * 32) | 1
+  let far_ins = 0xd2800000 | (4242 * 32)
+  expect(rd32(exe, text_off)) == main_ins
+  var far = -1
+  var a = 0
+  while a < size {
+    if rd32(exe, text_off + a) == far_ins {
+      far = text + a
+    }
+    a += 4
+  }
+  expect(far > text + 8192) == true
+  // both calls through a veneer, each to its callee
+  let (t1, via1) = isl_follow(exe, text, text_off, text + 4)
+  expect(via1) == true
+  expect(t1) == far
+  let (t2, via2) = isl_follow(exe, text, text_off, far + 4)
+  expect(via2) == true
+  expect(t2) == text
+}
+
+test "an arm64 link within a bl's reach adds no branch islands" {
+  var ins: List[LinkInput] = []
+  for (name, src) in [("a.o", ISL_A + isl_gap()), ("c.o", ISL_C)] {
+    match assemble(src.bytes()) {
+      Ok(o) => ins.push(LinkInput{path: name, data: o})
+      Err(e) => fault(e)
+    }
+  }
+  let exe = match link(ins, LinkOpts{name: "t"}) {
+    Ok(b) => b
+    Err(e) => fault(e)
+  }
+  let (text, text_off, _) = exe_sect(exe, "__TEXT", "__text")
+  let (t1, via1) = isl_follow(exe, text, text_off, text + 4)
+  expect(via1) == false
+  expect(rd32(exe, text_off + t1 - text)) == 0xd2800000 | (4242 * 32)
+}

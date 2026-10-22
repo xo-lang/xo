@@ -22,6 +22,9 @@ use std/crypto
 
 const IMAGE_BASE = 0x100000000
 const PAGE = 0x4000
+
+/// The reach of an arm64 bl or b (BRANCH26): ±128 MiB.
+const BRANCH_REACH = 0x8000000
 const MH_EXECUTE = 2
 const MH_NOUNDEFS = 0x1
 const MH_DYLDLINK = 0x4
@@ -52,6 +55,10 @@ pub struct LinkOpts {
   /// No local symbols in the symbol table (`xo build -s`, as `ld -x`):
   /// the exports, the imports, and __mh_execute_header stay
   pub strip: Bool = false
+  /// The reach of a bl or b the branch islands assume, 0 for the
+  /// instruction's ±128 MiB (BRANCH_REACH): a test's smaller value makes
+  /// islands in a small program
+  pub branch_reach: Int = 0
 }
 
 /// An input file: its path (for messages) and contents.
@@ -160,6 +167,15 @@ struct Linker {
   uuid: Bytes = zeros(0)
   /// an x86_64 link (every object x86_64)
   x86: Bool = false
+  /// branch islands (islands): the __text output section, each island's
+  /// input section (object, section), its veneers by branch_key, the
+  /// island each __text input section's far branches use, and the
+  /// veneers written
+  isl_text: Int = -1
+  isl_sects: List[(Int, Int)] = []
+  isl_ix: List[Map[Str, Int]] = []
+  isl_of: Map[(Int, Int), Int] = {}
+  isl_done: Set[Int] = #{}
   err: Str = ""
 }
 
@@ -207,6 +223,10 @@ pub fn link_debug(inputs: List[LinkInput], opts: LinkOpts) -> Result[(Bytes, Byt
     return Err(l.err)
   }
   l.layout()
+  l.islands()
+  if !l.err.is_empty() {
+    return Err(l.err)
+  }
   l.relocate()
   if !l.err.is_empty() {
     return Err(l.err)
@@ -790,8 +810,11 @@ fn (var l: Linker) relocate() {
           if t.imp >= 0 {
             dest = l.stub_addr(t.imp)
           }
-          let d = dest - p
-          if d < -134217728 || d >= 134217728 {
+          var d = dest - p
+          if d < -l.reach() || d >= l.reach() {
+            d = l.veneer(o, k, r, if has_addend { addend } else { 0 }, dest) - p
+          }
+          if d < -l.reach() || d >= l.reach() {
             l.fail("${l.objs[o].path}: branch out of range")
             return
           }
@@ -904,6 +927,161 @@ fn (var l: Linker) relocate() {
     }
     l.osects[l.s_stubs].synth = o.done()
   }
+}
+
+/// The identity of a branch's target, the same before and after the
+/// islands move the addresses: the symbol (or import, or section) and the
+/// addend.
+fn (l: Linker) branch_key(o: Int, r: IReloc, addend: Int) -> Str {
+  if !r.ext {
+    return "s${o}.${r.sym}+${addend}"
+  }
+  let (d, i) = l.def_of(o, r.sym)
+  if d < 0 {
+    return "i${i}+${addend}"
+  }
+  "d${d}.${i}+${addend}"
+}
+
+/// The reach of a bl or b (LinkOpts.branch_reach, BRANCH_REACH).
+fn (l: Linker) reach() -> Int {
+  if l.opts.branch_reach > 0 { l.opts.branch_reach } else { BRANCH_REACH }
+}
+
+/// Branch islands (ld64's): an arm64 __text past 7/8 of a branch's reach
+/// gets a section of veneers after each half reach of its input sections,
+/// for the bl and b whose target is past the reach (xo with every
+/// optional pass off: 182 MB of text, 2026-10-22). Each island follows
+/// the input section that ends past the next half reach and holds a
+/// veneer for every target of a branch in the sections before it (the
+/// last ones: the island before them) farther than the reach less 1/8
+/// before the islands go in; the islands together stay under that 1/8,
+/// the most they move a target. Then the output is laid out again.
+fn (var l: Linker) islands() {
+  if l.x86 {
+    return
+  }
+  let slack = l.reach() / 8
+  let spacing = l.reach() / 2
+  let far = l.reach() - slack
+  var ti = -1
+  for (i, s) in l.osects.indexed() {
+    if s.seg == "__TEXT" && s.name == "__text" {
+      ti = i
+    }
+  }
+  if ti < 0 || l.osects[ti].size <= l.reach() - slack {
+    return
+  }
+  let chunks = l.osects[ti].chunks
+  // the input sections each island follows
+  var cuts: List[Int] = []
+  var next = spacing
+  for (j, (o, k)) in chunks.indexed() {
+    let s = l.objs[o].sects[k]
+    if s.off + s.size >= next && j < chunks.len() - 1 {
+      cuts.push(j)
+      next = s.off + s.size + spacing
+    }
+  }
+  if cuts.is_empty() {
+    return
+  }
+  var region = 0
+  for (j, (o, k)) in chunks.indexed() {
+    l.isl_of.put((o, k), imin(region, cuts.len() - 1))
+    if region < cuts.len() && j == cuts[region] {
+      region += 1
+    }
+  }
+  // the far branches' targets, by island
+  var ix: List[Map[Str, Int]] = []
+  for _ in cuts {
+    ix.push({})
+  }
+  let base = l.osects[ti].addr
+  for (o, k) in chunks {
+    let s = l.objs[o].sects[k]
+    let isl = l.isl_of.get((o, k)) ?? 0
+    var addend = 0
+    var has_addend = false
+    for r in s.relocs {
+      if r.typ == R_ADDEND {
+        addend = sext24(r.sym)
+        has_addend = true
+        continue
+      }
+      if r.typ == R_BRANCH26 {
+        let a = if has_addend { addend } else { 0 }
+        let t = l.target(o, r, a)
+        let dest = if t.imp >= 0 { l.stub_addr(t.imp) } else { t.addr }
+        let d = dest - (base + s.off + r.addr)
+        if d <= -far || d >= far {
+          let key = l.branch_key(o, r, a)
+          if !ix[isl].contains(key) {
+            ix[isl].put(key, ix[isl].len())
+          }
+        }
+      }
+      has_addend = false
+    }
+  }
+  // the islands: input sections of an object of their own, after their
+  // cuts
+  let (o0, k0) = chunks[0]
+  var iobj = IObj{path: "<branch islands>"}
+  var total = 0
+  for m in ix {
+    let n = 12 * m.len()
+    total += n
+    iobj.sects.push(ISect{seg: "__TEXT", name: "__text", addr: 0, size: n, align: 2, flags: l.objs[o0].sects[k0].flags, data: zeros(n), out: ti})
+  }
+  if total >= slack {
+    l.fail("branch islands of ${total} bytes (more than ${slack})")
+    return
+  }
+  let io = l.objs.len()
+  l.objs.push(iobj)
+  var nc: List[(Int, Int)] = []
+  var c = 0
+  for (j, ch) in chunks.indexed() {
+    nc.push(ch)
+    if c < cuts.len() && j == cuts[c] {
+      nc.push((io, c))
+      l.isl_sects.push((io, c))
+      c += 1
+    }
+  }
+  l.osects[ti].chunks = nc
+  l.isl_text = ti
+  l.isl_ix = ix
+  l.tlv_start = -1
+  l.layout()
+}
+
+/// The address of the veneer for a far branch of input section (o, k) to
+/// dest (islands), written once: adrp x16, add x16, br x16 (x16 is the
+/// intra procedure call scratch register a call may clobber). dest itself
+/// when there is none.
+fn (var l: Linker) veneer(o: Int, k: Int, r: IReloc, addend: Int, dest: Int) -> Int {
+  let isl = l.isl_of.get((o, k)) ?? -1
+  if isl < 0 {
+    return dest
+  }
+  let n = l.isl_ix[isl].get(l.branch_key(o, r, addend)) ?? -1
+  if n < 0 {
+    return dest
+  }
+  let (io, ik) = l.isl_sects[isl]
+  let v = l.osects[l.isl_text].addr + l.objs[io].sects[ik].off + 12 * n
+  if !l.isl_done.contains(v) {
+    l.isl_done.add(v)
+    let imm = ((dest >> 12) - (v >> 12)) & 0x1fffff
+    l.patch(v, 4, 0x90000010 | ((imm & 3) * 0x20000000) | ((imm >> 2) * 32))
+    l.patch(v + 4, 4, 0x91000210 | ((dest & 4095) * 1024))
+    l.patch(v + 8, 4, 0xd61f0200)
+  }
+  v
 }
 
 fn (l: Linker) stub_addr(imp: Int) -> Int {
