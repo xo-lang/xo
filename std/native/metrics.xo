@@ -237,3 +237,20 @@ fn registry_handler(r: metrics.Registry) -> fn(http.Request) -> http.Response {
     http.Response{status: 200, headers: {"Content-Type": "text/plain; version=0.0.4; charset=utf-8"}, body: registry_text(r).bytes()}
   }
 }
+
+fn registry_middleware(r: metrics.Registry, clock: Clock, label: fn(http.Request) -> Str) -> fn(http.Request, http.Next) -> http.Response uses clock {
+  let reqs = registry_counter(r, "http_requests_total", "Requests by method, route and status.", ["method", "route", "status"])
+  let lat = registry_histogram(r, "http_request_seconds", "Request latency in seconds.", ["route"], latency_buckets())
+  let inflight = registry_gauge(r, "http_in_flight", "Requests being served.")
+  fn(req, next) -> http.Response {
+    let route = label(req)
+    gauge_add(inflight, 1.0)
+    let t0 = clock.now()
+    let resp = next(req)
+    let secs = clock.since(t0).seconds()
+    gauge_add(inflight, -1.0)
+    counter_inc(reqs, [req.method, route, "${resp.status}"])
+    histogram_observe(lat, secs, [route])
+    resp
+  }
+}

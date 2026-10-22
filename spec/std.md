@@ -4709,6 +4709,10 @@ fn (r: Registry) handler() -> fn(http.Request) -> http.Response
 - An instrument holds at most 10,000 series: later new ones are dropped
   and counted in `xo_metrics_dropped_total`, which `text()` always ends
   with.
+- `reg.middleware(clock, label)` is a middleware for `router.wrap` that
+  counts requests in `http_requests_total{method,route,status}`, times
+  them in `http_request_seconds{route}` and tracks `http_in_flight`;
+  `label` maps a request to the (bounded) route label.
 - `text()` writes `# HELP` and `# TYPE` per instrument in the order they
   were made, its series sorted by label values, a histogram as
   cumulative `_bucket{le="..."}` (then `le="+Inf"`), `_sum` and `_count`,

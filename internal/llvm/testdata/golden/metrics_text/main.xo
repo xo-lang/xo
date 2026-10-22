@@ -68,4 +68,19 @@ fn main(os: Os) {
   router.handle("GET /metrics", r2.handler())
   let resp = router.call(http.new_request("GET", "/metrics"))
   os.stdio.println("handler: ${resp.status} ${resp.headers.get("Content-Type") ?? "-"} ${resp.body.len() > 100}")
+
+  // the middleware: counts by method, route and status, times, in flight
+  let r3 = metrics.registry()
+  var app = http.router()
+  app.wrap(r3.middleware(os.clock, fn(req) { if req.path.starts_with("/items/") { "/items/:id" } else { req.path } }))
+  app.handle("GET /items/{id:Int}", fn(req) { http.text(200, "item") })
+  app.handle("GET /boom", fn(_req) { http.text(500, "x") })
+  app.call(http.new_request("GET", "/items/1"))
+  app.call(http.new_request("GET", "/items/2"))
+  app.call(http.new_request("GET", "/boom"))
+  for l in r3.text().split("\n") {
+    if l.starts_with("http_requests_total{") || l.starts_with("http_in_flight ") || l.starts_with("http_request_seconds_count") {
+      os.stdio.println(l)
+    }
+  }
 }

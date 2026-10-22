@@ -81,3 +81,11 @@ fn (r: Registry) text() -> Str
 /// A handler answering `text()` as `text/plain; version=0.0.4`:
 /// `router.handle("GET /metrics", reg.handler())`.
 fn (r: Registry) handler() -> fn(http.Request) -> http.Response
+
+/// A middleware (`router.wrap(reg.middleware(clock, label))`) that counts
+/// every request in `http_requests_total{method,route,status}`, times it
+/// in `http_request_seconds{route}` (the default buckets) and tracks
+/// `http_in_flight`. `label` names the route of a request for the `route`
+/// label: pass a function that returns a bounded set (the matched pattern,
+/// or the path with ids cut), never the raw path of an API with ids.
+fn (r: Registry) middleware(clock: Clock, label: fn(http.Request) -> Str) -> fn(http.Request, http.Next) -> http.Response uses clock
