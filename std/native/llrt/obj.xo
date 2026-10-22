@@ -774,9 +774,10 @@ fn reserve(a: Int, an: Int, k: Int) -> Int {
   let need = addw(an & LEN_MASK, k)
   // the count with a relaxed atomic load (no cost on arm64): a shared
   // string's count changes on other threads, and a plain load of it is a
-  // data race (ThreadSanitizer, decision 0241); a view (an above LEN_MASK)
+  // data race (ThreadSanitizer, decision 0241); a view (an's high word not 0,
+  // its sign bit set past 2 GiB, so not a signed `an > LEN_MASK`)
   // is never unique, whatever its count
-  if rt.slot_load(a, 0, 0) == 1 && rt.mem_load(a, 8, 8) >= need && an <= LEN_MASK {
+  if rt.slot_load(a, 0, 0) == 1 && rt.mem_load(a, 8, 8) >= need && an >> 32 == 0 {
     return a
   }
   reserve_slow(a, an, need)
@@ -794,7 +795,7 @@ fn reserve_slow(a: Int, an: Int, need: Int) -> Int {
   }
   let hw = heap_word()
   let len = an & LEN_MASK
-  let off = an >> 32
+  let off = an.shr_logical(32)
   if off == 0 && rc.claim(a) != 0 {
     let cap = rt.mem_load(a, 8, 8)
     if cap >= need {
@@ -853,7 +854,7 @@ pub fn rs_push_byte(a: Int, an: Int, x: Int) -> Int {
 /// of 32.
 pub fn rs_push_word(a: Int, an: Int, w: Int) -> Int {
   var s = a
-  if rt.slot_load(a, 0, 0) != 1 || an > LEN_MASK || subw(rt.mem_load(a, 8, 8), an) < 8 {
+  if rt.slot_load(a, 0, 0) != 1 || an >> 32 != 0 || subw(rt.mem_load(a, 8, 8), an) < 8 {
     s = push_slow(a, an, 8, 32)
   }
   rt.mem_store(addw(s, S_HDR), an & LEN_MASK, w, 8)
@@ -865,7 +866,7 @@ pub fn rs_push_word(a: Int, an: Int, w: Int) -> Int {
 /// before, so 32 bytes of room.
 pub fn rs_push_words(a: Int, an: Int, w0: Int, w1: Int, w2: Int, w3: Int, lens: Int) -> Int {
   var s = a
-  if rt.slot_load(a, 0, 0) != 1 || an > LEN_MASK || subw(rt.mem_load(a, 8, 8), an) < 32 {
+  if rt.slot_load(a, 0, 0) != 1 || an >> 32 != 0 || subw(rt.mem_load(a, 8, 8), an) < 32 {
     s = push_slow(a, an, 32, 64)
   }
   var d = addw(addw(s, S_HDR), an & LEN_MASK)

@@ -344,8 +344,10 @@ fn rt_exit(np: Int, n: Int, lp: Int, ln: Int) { rtsec.exit(np, n, lp, ln) }
 
 // Decision 0330: the length words an and bn of a Str or Bytes are
 // len | (off << 32); a is consumed whole (a view of it is copied), and b's
-// bytes start off bytes into the object's bytes.
-fn view_data(b: Int, bn: Int) -> Int { b.wrapping_add(16).wrapping_add(bn >> 32) }
+// bytes start off bytes into the object's bytes. off is unsigned: a view
+// 2 GiB or more into its string has the word's sign bit set, and `>>`
+// (arithmetic) made its bytes start 4 GiB early (gotchas/str-view-offset-sign.md).
+fn view_data(b: Int, bn: Int) -> Int { b.wrapping_add(16).wrapping_add(bn.shr_logical(32)) }
 
 /// The fault for a length over the 4 GiB a Str or Bytes may hold (the
 /// length is 32 bits of the second word, decision 0330). Callers test the
@@ -405,7 +407,7 @@ fn obj_rs_append_bytes(a: Int, an: Int, b: Int, bn: Int, lo: Int, hi: Int, mode:
     len_over()
   }
   rt.mem_store(lenp, 0, n, 8)
-  obj.rs_append_bytes(a, an, b.wrapping_add(bn >> 32), lo, hi, mode)
+  obj.rs_append_bytes(a, an, b.wrapping_add(bn.shr_logical(32)), lo, hi, mode)
 }
 
 fn obj_rs_with_cap(n: Int, lenp: Int) -> Int {

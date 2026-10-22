@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime: a `Str` or `Bytes` slice 2 GiB or more into its
+  string read the wrong memory (a crash, or zeroed text), and appending
+  to such a slice could overwrite the start of the string. A huge
+  windows/amd64 build failed in the assembler because xo's own 3.2 GB
+  assembly text came out with 1 GB of NUL bytes.
 - Fixes from a 0.25.2 field report:
   - The Go backend refuses a program that listens or dials for
     wasip1/wasm, as the wasm backend does (WASI preview1 has no sockets);
