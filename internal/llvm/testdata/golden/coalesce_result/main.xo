@@ -1,0 +1,59 @@
+// Decision 0321 part 2: `r ?? e => body` unwraps a Result, naming its
+// error in body; a Never body (return, break, continue, fault) leaves.
+
+enum AppErr {
+  Parse(text: Str)
+  Wrapped(inner: Str)
+}
+
+fn parse(s: Str) -> Result[Int, Str] {
+  match Int.parse(s) {
+    Some(n) => Ok(n)
+    None => Err("bad number: ${s}")
+  }
+}
+
+fn double(s: Str) -> Result[Int, AppErr] {
+  let n = parse(s) ?? e => return Err(AppErr.Wrapped(inner: e))
+  Ok(n * 2)
+}
+
+fn sum_good(xs: List[Str]) -> Int {
+  var t = 0
+  for s in xs {
+    let n = parse(s) ?? _ => continue
+    t += n
+  }
+  t
+}
+
+fn first_bad(xs: List[Str]) -> Str {
+  var last = ""
+  for s in xs {
+    last = s
+    let _ = parse(s) ?? _ => break
+  }
+  last
+}
+
+fn or_len(s: Str) -> Int {
+  parse(s) ?? e => e.len()
+}
+
+fn show(r: Result[Int, AppErr]) -> Str {
+  match r {
+    Ok(n) => "ok ${n}"
+    Err(AppErr.Wrapped(inner: m)) => "wrapped: ${m}"
+    Err(AppErr.Parse(text: t)) => "parse: ${t}"
+  }
+}
+
+fn main(os: Os) {
+  os.stdio.println(show(double("21")))
+  os.stdio.println(show(double("x1")))
+  os.stdio.println("${sum_good(["1", "a", "2", "b", "3"])}")
+  os.stdio.println(first_bad(["1", "2", "z", "4"]))
+  os.stdio.println("${or_len("7")} ${or_len("seven")}")
+  let v = parse("q") ?? e => fault("unreachable in practice: ${e}")
+  os.stdio.println("${v}")
+}

@@ -1,0 +1,9 @@
+exit 70
+--- stdout
+ok 42
+wrapped: bad number: x1
+6
+z
+7 17
+--- stderr
+fault: unreachable in practice: bad number: q at main.xo:57:30

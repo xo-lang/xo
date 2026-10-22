@@ -773,9 +773,8 @@ pub interface Store {
     `match opt { Some(v) => v  None => return r }`. A `return` is checked
     against the function's result as a statement `return` is, and
     `break` and `continue` against an enclosing loop (`XO0607`). It takes
-    only an Option on the left (`XO0406`); a Result keeps `match` and
-    `.or_err(...)?` (the Result form is deferred). `xo vet` suggests it
-    for the four line `match` (`XO0906`).
+    only an Option on the left (`XO0406`); the Result form is below
+    (2.6). `xo vet` suggests it for the four line `match` (`XO0906`).
   `if let e = opt` (without `Some`) is also accepted as shorthand for
   `if let Some(e) = opt`.
 - In a function that returns `U?`, `opt?` yields the value or returns `None`:
@@ -813,6 +812,19 @@ pub interface Store {
   ```
   If `T` is itself a `Result`, success must be written `Ok(x)` explicitly
   (error `XO0203` otherwise).
+- `r ?? e => body` unwraps a Result and names its error (decision 0321):
+  ```
+  let v = fetch(id) ?? e => return Err(LoadErr.Fetch(e))
+  let n = parse(s) ?? _ => continue
+  let w = parse(s) ?? e => fallback(e)
+  ```
+  It is `match r { Ok(v) => v  Err(e) => body }`: the value is the
+  success value, and `body` (an expression, a block, or `return`,
+  `break`, `continue`) runs with `e` bound to the error and either gives
+  a value of the success type or leaves. `_` discards the error; an
+  unused `e` is `XO0110` as in any match arm. The left side must be a
+  Result (`XO0406`), and `r ?? default` with no arm on a Result stays
+  `XO0406`, so an error is never dropped silently.
 - Each arm of a tail `if` or `match` is in return position, so arms may mix
   `T` values and `Err(e)`: `match x { 0 => 1  _ => Err("no") }`.
 - **Propagating.** `expr?` on a `Result[T, E2]` yields the `T` or returns the
@@ -3236,7 +3248,8 @@ WhileStmt   = [ ident ":" ] "while" [ ( Expr | "let" Pattern "=" Expr ) [ "bound
 
 Expr        = IfExpr | MatchExpr | ScopeExpr | SelectExpr | Block | FnLit | Binary
             | "while" Block | "???" .      // infinite loop as an expression, type Never
-Binary      = Operand { BinOp Operand } [ "??" Exit ] .
+Binary      = Operand { BinOp Operand } [ "??" ( Exit | ErrArm ) ] .
+ErrArm      = ident "=>" ( Expr | Stmt ) .   // r ?? e => body (decision 0321)
 Exit        = "return" [ Expr ] | "break" [ ident ] | "continue" [ ident ] .   // type Never
 Operand     = Unary [ "is" Pattern ] .            // `is` binds like `==`
 FnLit       = "fn" "(" [ LParam { "," LParam } ] ")" [ "->" Type ] [ ErrSpec ]

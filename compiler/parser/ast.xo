@@ -367,6 +367,9 @@ pub struct MatchArm {
   pub pattern: Pattern
   pub guard: Expr?
   pub body: Stmt?
+  /// The `e => body` of `r ?? e => body` (decision 0321): the Err arm of
+  /// the match the parser makes of it.
+  pub coalesce: Bool = false
 }
 
 /// `name = op => body`, `op => body`, or `after d => body`.

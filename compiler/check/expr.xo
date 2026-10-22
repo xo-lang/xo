@@ -963,6 +963,14 @@ fn (var c: Checker) match_expr(span: Span, subject: Expr, arms: List[parser.Matc
     c.error("XO0405", parser.expr_span(subject), "the type of the matched value must be known here")
     st = c.bad_ty
   }
+  if arms.len() == 2 && arms[1].coalesce && !c.is_bad(st) && !c.is_never(st) && !c.is_result(st) {
+    // `r ?? e => body` (decision 0321): the arm names a Result's error
+    let d = c.error("XO0406", parser.expr_span(subject), "`?? e => ...` needs a Result on the left, found `${c.show(st)}`")
+    if c.option_elem(st) >= 0 {
+      c.note(d, "an Option has no error to name: write `x ?? default` or `x ?? return v` (core 2.5)")
+    }
+    st = c.bad_ty
+  }
   var ts: List[Int] = []
   var spans: List[Span] = []
   var rows: List[IPat] = []
@@ -1328,7 +1336,7 @@ fn (var c: Checker) binary(span: Span, op: parser.Kind, x: Expr, y: Expr, hint: 
       if !c.is_bad(xt) && !c.safe_nav(x) {
         let d = c.error("XO0406", span, "`??` needs an optional value on the left, found `${c.show(xt)}`")
         if c.is_result(xt) {
-          c.note(d, "for a Result, use `.ok() ?? default` or `match`")
+          c.note(d, "for a Result, name the error: `r ?? e => default` or `r ?? e => return Err(e)` (core 2.5); `r.ok() ?? default` drops it")
         }
       }
       return c.bad_ty

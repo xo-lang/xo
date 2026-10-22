@@ -102,6 +102,14 @@ continue }`), which is the pattern repeated most in a loop body and in
   next seed cut.
 - Part 2, the Result form: accepted (owner, 2026-10-21); same tests as
   part 1 for the Result side, on go, arm64, and LLVM.
+- Part 2 (implemented 2026-10-21): the parser turns `r ?? e => body`
+  into `match r { Ok(ok) => ok  Err(e) => body }` and marks the Err arm
+  (`MatchArm.coalesce`), so `xo fmt` prints it back and the checker
+  reports a left side that is not a Result as `XO0406` (with a note for
+  an Option); everything below the checker sees an ordinary match. `_`
+  in place of `e` discards the error (an unused `e` is `XO0110`, as in a
+  match arm). Tests: errorcheck coalesce_result, golden coalesce_result
+  (go, arm64, LLVM), a format test.
 
 ## Alternatives
 

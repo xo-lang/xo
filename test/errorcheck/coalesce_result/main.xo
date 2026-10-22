@@ -1,0 +1,48 @@
+// Decision 0321 part 2: `r ?? e => body`, the Result form of `??`.
+fn parse(s: Str) -> Result[Int, Str] {
+  Int.parse(s).or_err("bad: ${s}")
+}
+
+fn ok_forms(xs: List[Str]) -> Result[Int, Str] {
+  var t = 0
+  for s in xs {
+    let a = parse(s) ?? _ => continue
+    let b = parse(s) ?? e => {
+      t += e.len()
+      break
+    }
+    t += a + b
+  }
+  let c = parse("1") ?? e => return Err("wrapped: ${e}")
+  let d = parse("2") ?? e => e.len()
+  Ok(t + c + d)
+}
+
+fn on_option(x: Int?) -> Int {
+  x ?? _ => 0 // ERROR XO0406 "needs a Result on the left"
+}
+
+fn on_int(n: Int) -> Int {
+  n ?? _ => 0 // ERROR XO0406 "needs a Result on the left"
+}
+
+fn wrong_return(s: Str) -> Int? {
+  let a = parse(s) ?? e => return e // ERROR XO0401 "found `Str`"
+  Some(a)
+}
+
+fn wrong_value(s: Str) -> Int {
+  parse(s) ?? e => e // ERROR XO0401
+}
+
+fn unused(s: Str) -> Int {
+  parse(s) ?? e => 0 // ERROR XO0110 "never used"
+}
+
+fn no_arm(s: Str) -> Int {
+  parse(s) ?? 0 // ERROR XO0406
+}
+
+fn main(os: Os) {
+  os.stdio.println("${ok_forms(["1", "x"]) ?? _ => 0}")
+}

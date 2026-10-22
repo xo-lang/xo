@@ -19,7 +19,8 @@ Last verified: 2026-10-21 (spec/core.md and spec/std.md at main).
   `Buf[T]` is the mutable, move-only buffer (5.3).
 - `T?` (Option, 2.5) and `Result[T, E]` written `T ! E` (2.6); `?`
   propagates, `??` supplies a default and since 0321 an early exit
-  (`x ?? return v`, `?? break`, `?? continue`).
+  (`x ?? return v`, `?? break`, `?? continue`), and on a Result names
+  the error: `r ?? e => return Err(Wrap(e))`, `r ?? _ => continue`.
 - Tuples `(A, B)` with `t.0`, `t.1`; structs with field defaults; enums
   (sum types) with payloads; interfaces; generics (2.7); type aliases and
   newtypes (2.8); `Secret[T]` (redacted everywhere).

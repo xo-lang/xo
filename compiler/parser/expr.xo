@@ -82,6 +82,10 @@ fn (var p: Parser) parse_binary(min_prec: Int) -> Expr {
       x = Expr.BinaryExpr(span: span_to(expr_span(x), expr_span(y)), op: op, x: x, y: y)
       continue
     }
+    if op == Kind.Coalesce && p.tok.kind == Kind.Ident && p.peek(1).kind == Kind.FatArrow {
+      x = p.coalesce_arm(x)
+      continue
+    }
     let y = if op == Kind.Coalesce { p.parse_binary(prec) } else { p.parse_binary(prec + 1) }
     x = Expr.BinaryExpr(span: span_to(expr_span(x), expr_span(y)), op: op, x: x, y: y)
   }
@@ -720,6 +724,27 @@ fn (var p: Parser) parse_match() -> Expr {
     p.braces_close(br)
   }
   Expr.MatchExpr(span: p.span_from(start), subject: subject, arms: arms)
+}
+
+/// `r ?? e => body` (decision 0321 part 2), with the parser at `e`: the
+/// match `match r { Ok(v) => v  Err(e) => body }`, its Err arm marked
+/// `coalesce` so `xo fmt` prints it back and the checker asks for a Result.
+fn (var p: Parser) coalesce_arm(r: Expr) -> Expr {
+  let name = Ident{span: p.tok.span, name: p.tok.text}
+  p.next() // e
+  p.next() // =>
+  let body = p.parse_simple_stmt()
+  let rs = expr_span(r)
+  let ok = Ident{span: rs, name: b"ok"}
+  let ok_pat = Pattern.VariantPat(span: rs, path: [Ident{span: rs, name: b"Ok"}], parens: true, fields: [PatField{span: rs, name: None, pattern: Pattern.BindPat(span: rs, name: ok)}], rest: false)
+  let err_span = span_to(name.span, stmt_span(body))
+  let e_pat = if name.name == b"_" { Pattern.WildcardPat(name.span) } else { Pattern.BindPat(span: name.span, name: name) }
+  let err_pat = Pattern.VariantPat(span: name.span, path: [Ident{span: name.span, name: b"Err"}], parens: true, fields: [PatField{span: name.span, name: None, pattern: e_pat}], rest: false)
+  let arms = [
+    MatchArm{span: rs, pattern: ok_pat, guard: None, body: Some(Stmt.ExprStmt(span: rs, x: Expr.Ident(ok)))},
+    MatchArm{span: err_span, pattern: err_pat, guard: None, body: Some(body), coalesce: true},
+  ]
+  Expr.MatchExpr(span: span_to(rs, stmt_span(body)), subject: r, arms: arms)
 }
 
 fn (var p: Parser) parse_select() -> Expr {

@@ -1362,6 +1362,21 @@ fn (var p: Printer) expr(e: Expr) {
     TryExpr(..) => p.postfix(e)
     WithExpr(..) => p.postfix(e)
     IfExpr(x) => p.if_expr(x)
+    MatchExpr(_, subject, arms) if arms.len() == 2 && arms[1].coalesce => {
+      // `r ?? e => body` (decision 0321)
+      p.expr(subject)
+      p.w(" ?? ")
+      if let VariantPat(fields: fs, ..) = arms[1].pattern {
+        match fs[0].pattern {
+          BindPat(name: n, ..) => p.w(name_of(n))
+          _ => p.w("_")
+        }
+      }
+      p.w(" => ")
+      if let Some(b) = arms[1].body {
+        p.stmt(b)
+      }
+    }
     MatchExpr(span, subject, arms) => {
       p.w("match ")
       p.expr(subject)

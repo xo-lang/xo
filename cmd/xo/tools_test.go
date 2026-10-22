@@ -50,6 +50,22 @@ func TestFmt(t *testing.T) {
 	}
 }
 
+// TestFmtCoalesceArm: `r ?? e => body` (decision 0321) prints back in
+// its one line form, not as the match the parser makes of it.
+func TestFmtCoalesceArm(t *testing.T) {
+	t.Parallel()
+	src := "fn f(r: Result[Int, Str]) -> Result[Int, Str] {\n  let v = r ??  e=>return Err(e)\n  let w = r ?? _ =>  {\n    0\n  }\n  Ok(v + w)\n}\n"
+	want := "fn f(r: Result[Int, Str]) -> Result[Int, Str] {\n  let v = r ?? e => return Err(e)\n  let w = r ?? _ => {\n    0\n  }\n  Ok(v + w)\n}\n"
+	dir := writeFiles(t, map[string]string{"a.xo": src})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"fmt", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("fmt exit %d: %s", code, errOut.String())
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "a.xo")); string(data) != want {
+		t.Errorf("a.xo = %q, want %q", data, want)
+	}
+}
+
 func TestFmtSyntaxError(t *testing.T) {
 	t.Parallel()
 	dir := writeFiles(t, map[string]string{"bad.xo": "fn f( {\n", "ok.xo": "fn g()  {}\n"})
