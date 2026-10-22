@@ -1990,6 +1990,16 @@ fn rune_at(s: Str, pos: Int) -> Int {
 
 /// Go's backtrack: the search by backtracking with a visited bit for each
 /// (instruction, position), for small programs and texts.
+/// Whether every match must start at the beginning of the text: the
+/// program begins, after nops and captures, with `\A` (Go's startCond).
+fn anchored_start(g: Prog) -> Bool {
+  var pc = g.start
+  while pc != 0 && (g.op[pc] == I_NOP || g.op[pc] == I_CAPTURE) {
+    pc = g.out[pc]
+  }
+  pc != 0 && g.op[pc] == I_EMPTY && (g.arg[pc] & E_BEGIN_TEXT) != 0
+}
+
 fn backtrack(g: Prog, s: Str, pos0: Int, ncap: Int, prefix: Str) -> List[Int] {
   let end = s.len()
   let nprog = g.op.len()
@@ -2001,6 +2011,17 @@ fn backtrack(g: Prog, s: Str, pos0: Int, ncap: Int, prefix: Str) -> List[Int] {
     i += 1
   }
   var pos = pos0
+  if anchored_start(g) {
+    // a match can only start at 0 (Go's anchored search)
+    if pos0 != 0 {
+      return []
+    }
+    b.cap[0] = 0
+    if try_backtrack(g, s, b, g.start, 0) {
+      return b.matchcap
+    }
+    return []
+  }
   while pos <= end {
     if !prefix.is_empty() {
       let at = scan.find(s, prefix, pos)

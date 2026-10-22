@@ -1,5 +1,16 @@
 # std/regexp changes
 
+## 2026-10-21: perf: patterns anchored at the start try one position
+
+- Kind: perf
+- Commit: (filled in after the push)
+- Found by: bench/results/regexp-time-csv-vs-go-2026-10-21.md
+- Go reference: regexp/backtrack.go startCond (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/regexp (go, arm64, LLVM)
+
+A pattern starting with `^` (without the multiline flag) is tried at position 0
+only. Anchored short-text matching is 1.35 times fewer instructions.
+
 ## 2026-10-21: perf: literal-prefix scan and the bit-state backtracker
 
 - Kind: perf

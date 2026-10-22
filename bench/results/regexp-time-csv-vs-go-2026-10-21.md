@@ -157,3 +157,14 @@ the per-call layout item list (an `Item` of three Strs and an Int for each
 field and literal, then a copy of each while iterating), which a Go-style
 walk would avoid only with integer state and no Str per chunk; with Str
 slices copying (decision 0330) that port stays costly until views land.
+
+## Step 8, regexp: the start-anchor shortcut (one-pass not ported)
+
+A pattern that begins with `\A` (after nops and captures) tries only position
+0 (Go's startCond). Anchored patterns on short texts, 200,000 x (a date
+capture, a route capture with two groups, a non-matching is_match), native:
+5,809 M to 4,308 M instructions (Go 2,226 M with its Sprintf of the inputs).
+The profile of what remains is the backtracker's own work (try_backtrack,
+push, should_visit), not a missing one-pass: Go's one-pass matcher also needs
+an anchored pattern with unambiguous branches and helps most on big inputs,
+so it is not ported.
