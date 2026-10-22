@@ -19,13 +19,64 @@
 
 const MH_DSYM = 0xa
 
+/// The DWARF sections joined, in this order (the executable's __DWARF
+/// segment and the dSYM's).
+fn dwarf_names() -> List[Str] { ["__debug_line", "__debug_abbrev", "__debug_info", "__debug_aranges", "__debug_loclists", "__debug_addr", "__debug_str", "__debug_line_str"] }
+
+/// The sizes dwarf_data's sections will have, known before the
+/// relocations (layout reserves the executable's __DWARF segment): the
+/// inputs' sections joined, and .debug_aranges a 48 byte set more per
+/// compile unit of the arm64 emitter's; all 0 when no input has DWARF.
+fn (l: Linker) dwarf_sizes() -> List[Int] {
+  let names = dwarf_names()
+  var sizes: List[Int] = []
+  for _ in names {
+    sizes.push(0)
+  }
+  var any = false
+  for o in 0..l.objs.len() {
+    if !l.objs[o].live || !l.xo_dwarf(o) {
+      continue
+    }
+    for s in l.objs[o].sects {
+      if s.seg != "__DWARF" {
+        continue
+      }
+      for (i, nm) in names.indexed() {
+        if s.name == nm {
+          sizes[i] = sizes[i] + s.data.len()
+          any = true
+          if i == 2 {
+            // its unit's address range set (dwarf_data)
+            sizes[3] = sizes[3] + 48
+          }
+        }
+      }
+    }
+  }
+  if !any {
+    return []
+  }
+  sizes
+}
+
 /// The dSYM file, or empty bytes when no input has DWARF.
 fn (var l: Linker) dsym() -> Bytes {
+  let data = l.dwarf_data()
+  if data.is_empty() {
+    return zeros(0)
+  }
+  l.dsym_file(data)
+}
+
+/// The DWARF sections of dwarf_names, joined (empty when no input has
+/// DWARF).
+fn (var l: Linker) dwarf_data() -> List[List[Int]] {
   // only the arm64 emitter's objects (a compile unit with producer
   // "xo"): another compiler's Mach-O DWARF refers between its sections by
   // offsets in its own object, with no relocations, which joining would
   // break (ld64 leaves them in the objects for dsymutil)
-  let names = ["__debug_line", "__debug_abbrev", "__debug_info", "__debug_aranges", "__debug_loclists", "__debug_addr", "__debug_str", "__debug_line_str"]
+  let names = dwarf_names()
   // per section: the joined bytes, and per object the chunk's offset
   var data: List[List[Int]] = []
   var at: List[Map[Int, Int]] = []
@@ -68,7 +119,7 @@ fn (var l: Linker) dsym() -> Bytes {
     at.push(offs)
   }
   if !any {
-    return zeros(0)
+    return []
   }
   // the xo compile units: their abbreviation and line offsets, and an
   // address range each
@@ -123,6 +174,12 @@ fn (var l: Linker) dsym() -> Bytes {
   data[0] = line
   data[2] = info
   data[3] = ar
+  data
+}
+
+/// The dSYM file of the joined DWARF data.
+fn (var l: Linker) dsym_file(data: List[List[Int]]) -> Bytes {
+  let names = dwarf_names()
   // MH_DSYM: header, LC_UUID, the executable's segments and sections
   // without contents (lldb maps addresses through them, as in a dSYM of
   // dsymutil), then LC_SEGMENT_64 __DWARF with the DWARF sections
@@ -130,7 +187,8 @@ fn (var l: Linker) dsym() -> Bytes {
   var segs: List[OSeg] = []
   var vend = 0
   for g in l.segs {
-    if g.name != "__LINKEDIT" {
+    // (the executable's own __DWARF, decision 0346, is this file's)
+    if g.name != "__LINKEDIT" && g.name != "__DWARF" {
       segs.push(g)
     }
     if g.vmaddr + g.vmsize > vend {

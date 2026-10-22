@@ -221,8 +221,9 @@ fn load_dsym(lo: Int, hi: Int, var out: Lines) {
   }
 }
 
-/// macOS: the debug sections of the dSYM and the image's slide (ok false
-/// without a dSYM whose LC_UUID is the running image's).
+/// macOS: the debug sections of the program and the image's slide (ok
+/// false without any): the executable's own __DWARF segment (decision
+/// 0346), else PROG.dSYM's whose LC_UUID is the running image's.
 fn dsym_sects() -> (Sects, Int, Bool) {
   let mh = sys_darwin._dyld_get_image_header(0)
   if mh == 0 || u32(mh) != 4277009103 {
@@ -243,13 +244,24 @@ fn dsym_sects() -> (Sects, Int, Bool) {
   if exe.is_empty() {
     return (Sects{}, 0, false)
   }
-  let data = read_raw("${exe}.dSYM/Contents/Resources/DWARF/${base(exe)}")
+  let (own, ok) = macho_dwarf(exe, uuid)
+  if ok && own.line_n > 0 {
+    return (own, slide, true)
+  }
+  let (s, same) = macho_dwarf("${exe}.dSYM/Contents/Resources/DWARF/${base(exe)}", uuid)
+  (s, slide, same)
+}
+
+/// The __DWARF sections of the Mach-O file at path, and whether its
+/// LC_UUID is uuid (the running image's).
+fn macho_dwarf(path: Str, uuid: Str) -> (Sects, Bool) {
+  let data = read_raw(path)
   if data.len() < 32 {
-    return (Sects{}, 0, false)
+    return (Sects{}, false)
   }
   let f = raw.bytes_addr(data)
   if u32(f) != 4277009103 {
-    return (Sects{}, 0, false)
+    return (Sects{}, false)
   }
   let ncmds = u32(f + 16)
   var lc = f + 32
@@ -257,7 +269,7 @@ fn dsym_sects() -> (Sects, Int, Bool) {
   var s = Sects{data: data}
   for _ in 0..ncmds {
     if lc + 8 > f + data.len() {
-      return (Sects{}, 0, false)
+      return (Sects{}, false)
     }
     let cmd = u32(lc)
     if cmd == 27 {
@@ -285,7 +297,7 @@ fn dsym_sects() -> (Sects, Int, Bool) {
     }
     lc += u32(lc + 4)
   }
-  (s, slide, same)
+  (s, same)
 }
 
 /// Windows: the sections of the program's file by name, placed by the
@@ -1392,7 +1404,7 @@ pub fn vars_load() -> Vars {
     TargetOs.Windows | TargetOs.Wasi => {}
   }
   if !ok || s.info_n == 0 || s.abbrev_n == 0 {
-    return Vars{why: "no DWARF (a release build, or no dSYM beside the executable)"}
+    return Vars{why: "no DWARF (a release or stripped build)"}
   }
   var v = Vars{s: s, bias: bias}
   parse_vars(v)

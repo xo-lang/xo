@@ -59,6 +59,9 @@ pub struct LinkOpts {
   /// instruction's ±128 MiB (BRANCH_REACH): a test's smaller value makes
   /// islands in a small program
   pub branch_reach: Int = 0
+  /// The DWARF in the executable's own __DWARF segment (decision 0346),
+  /// uncompressed, before __LINKEDIT, mapped with no access
+  pub embed_dwarf: Bool = true
 }
 
 /// An input file: its path (for messages) and contents.
@@ -165,6 +168,8 @@ struct Linker {
   cmds_size: Int = 0
   /// the output's LC_UUID (write), which its dSYM carries too
   uuid: Bytes = zeros(0)
+  /// the __DWARF segment's sections' sizes (dwarf_sizes; empty: none)
+  dw_sizes: List[Int] = []
   /// an x86_64 link (every object x86_64)
   x86: Bool = false
   /// branch islands (islands): the __text output section, each island's
@@ -664,12 +669,21 @@ fn (var l: Linker) layout() {
       l.segs.push(g)
     }
   }
+  // the DWARF (decision 0346): a segment of its own before __LINKEDIT,
+  // not an output section (its addresses are absolute, with no fixups)
+  if l.opts.embed_dwarf {
+    l.dw_sizes = l.dwarf_sizes()
+    if !l.dw_sizes.is_empty() {
+      l.segs.push(OSeg{name: "__DWARF", prot: 0})
+    }
+  }
   l.segs.push(OSeg{name: "__LINKEDIT", prot: 1})
   // the header and load commands (sizes only)
   var ns = 0
   for g in l.segs {
     ns += g.sects.len()
   }
+  ns += l.dw_sizes.len()
   var cmds = 72 * l.segs.len() + 80 * ns + 16 + 16 + 24 + 80 + 32 + 24 + 24 + 24 + 16
   for d in l.opts.dylibs {
     cmds += align_up(24 + d.len() + 1, 8)
@@ -681,6 +695,18 @@ fn (var l: Linker) layout() {
     var g = l.segs[gi]
     g.vmaddr = vm
     g.fileoff = fo
+    if g.name == "__DWARF" {
+      var total = 0
+      for n in l.dw_sizes {
+        total += n
+      }
+      g.vmsize = align_up(total, PAGE)
+      g.filesize = align_up(total, PAGE)
+      l.segs[gi] = g
+      vm += g.vmsize
+      fo += g.filesize
+      continue
+    }
     var a = if g.name == "__TEXT" { 32 + cmds } else { 0 }
     var filesz = a
     for i in g.sects {
@@ -1347,9 +1373,29 @@ fn (var l: Linker) write() -> Bytes {
   l.segs[le].vmsize = align_up(l.segs[le].filesize, PAGE)
 
   // the contents of the segments before __LINKEDIT
+  var dw: List[List[Int]] = []
+  if !l.dw_sizes.is_empty() {
+    dw = l.dwarf_data()
+    for (i, d) in dw.indexed() {
+      if i >= l.dw_sizes.len() || d.len() != l.dw_sizes[i] {
+        l.fail("internal: DWARF section ${i} is ${d.len()} bytes, ${l.dw_sizes[i]} reserved")
+        return "".bytes()
+      }
+    }
+  }
   var body = new_out(le_off + link_bytes.len())
   for gi in 1..le {
     let g = l.segs[gi]
+    if g.name == "__DWARF" {
+      body.zeros(g.fileoff - body.n)
+      for d in dw {
+        for c in d {
+          body.u8(c)
+        }
+      }
+      body.zeros(g.fileoff + g.filesize - body.n)
+      continue
+    }
     for i in g.sects {
       let s = l.osects[i]
       if s.fileoff == 0 {
@@ -1381,6 +1427,39 @@ fn (var l: Linker) write() -> Bytes {
   h.u32(flags)
   h.u32(0)
   for g in l.segs {
+    if g.name == "__DWARF" {
+      // no access (as Go's), its sections the joined DWARF, each with
+      // S_ATTR_DEBUG
+      let names = dwarf_names()
+      h.u32(LC_SEGMENT_64)
+      h.u32(72 + 80 * names.len())
+      h.name(g.name, 16)
+      h.u64(g.vmaddr)
+      h.u64(g.vmsize)
+      h.u64(g.fileoff)
+      h.u64(g.filesize)
+      h.u32(0)
+      h.u32(0)
+      h.u32(names.len())
+      h.u32(0)
+      var off = g.fileoff
+      for (i, nm) in names.indexed() {
+        h.name(nm, 16)
+        h.name("__DWARF", 16)
+        h.u64(g.vmaddr + off - g.fileoff)
+        h.u64(l.dw_sizes[i])
+        h.u32(off)
+        h.u32(0)
+        h.u32(0)
+        h.u32(0)
+        h.u32(S_ATTR_DEBUG_FLAG)
+        h.u32(0)
+        h.u32(0)
+        h.u32(0)
+        off += l.dw_sizes[i]
+      }
+      continue
+    }
     h.u32(LC_SEGMENT_64)
     h.u32(72 + 80 * g.sects.len())
     h.name(g.name, 16)

@@ -1,7 +1,21 @@
 # 0346: DWARF embedded in Mach-O executables
 
 Status: Accepted (owner, 2026-10-22). Proposed the same day by Xo Lang 1
-at the owner's request through the lead.
+at the owner's request through the lead. Stage 1 implemented
+2026-10-22: Xo's Mach-O linker writes the `__DWARF` segment (prot 0,
+before `__LINKEDIT`; compiler/macho link.xo, dsym.xo dwarf_data shared
+with the bundle) and the runtime reads the executable first (dwline.xo
+dsym_sects). With no dSYM present: the crash report's traceback, `xo dev
+symbolize`, atos (`xo_f_poke (in cp) (main.xo:5)`) and lldb (a breakpoint
+at main.xo:9, a line lookup) name file and line; `dwarfdump --verify`
+finds no error; `codesign -v --strict` passes. Measured: hello 2,126,114
+bytes (its DWARF, 1,401,811 bytes, page aligned in the executable); xo
+60.6 MB to 102.7 MB (its dSYM is 40.6 MB); the link phase 637 to 911 ms
+before and 912 to 1,116 ms after, the dSYM still written too until stage
+4 makes it `--dsym`'s; `-s` and `--release` leave both out as before. A
+link through ld64 (`use c`, the LLVM backend) has no segment: atos and
+lldb find its lines through ld64's debug map (the build directory's
+objects), the runtime through its dSYM (stage 3).
 
 ## Context
 
