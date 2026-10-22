@@ -1,7 +1,8 @@
 # 0325: Production observability in std: live profiles, traces, metrics
 
-Status: Proposed (2026-10-21, Xo Lang 3; from the owner's language poll,
-for the owner to read before anything is built)
+Status: Accepted (owner, 2026-10-21; Xo Lang 3's note from the language
+poll). Built in stages 1 to 3 below (Xo Lang 2 reviews the runtime change
+of stage 1).
 
 ## Context
 
