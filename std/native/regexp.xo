@@ -2155,6 +2155,13 @@ fn compile(pattern: Str) -> Regex ! regexp.RegexErr {
   Regex{expr: pattern, prog: g, names: names}
 }
 
+/// ascii_set: sets rune r's bit in the bitmap at base b when r is ASCII.
+fn ascii_set(var a: List[Int], b: Int, r: Int) {
+  if r >= 0 && r < 128 {
+    a[b + (r >> 5)] = a[b + (r >> 5)] | (1 << (r & 31))
+  }
+}
+
 /// ascii_bytes: the ASCII bitmap of every rune instruction.
 fn (var g: Prog) ascii_bytes() {
   let n = g.op.len()
@@ -2163,21 +2170,42 @@ fn (var g: Prog) ascii_bytes() {
   while pc < n {
     let op = g.op[pc]
     if op == I_RUNE || op == I_RUNE1 || op == I_ANY || op == I_ANY_NOT_NL {
-      var c = 0
-      while c < 128 {
-        var ok = true
-        if op == I_RUNE {
-          ok = rune_matches(g, pc, c)
-        } else if op == I_RUNE1 {
-          ok = c == g.rune[pc][0]
-        } else if op == I_ANY_NOT_NL {
-          ok = c != 10
+      let b = pc * 4
+      if op == I_RUNE {
+        let rs = g.rune[pc]
+        if rs.len() == 1 {
+          let r0 = rs[0]
+          ascii_set(a, b, r0)
+          if g.fold[pc] {
+            var r1 = simple_fold(r0)
+            while r1 != r0 {
+              ascii_set(a, b, r1)
+              r1 = simple_fold(r1)
+            }
+          }
+        } else {
+          var i = 0
+          while i < rs.len() && rs[i] < 128 {
+            let lo = rs[i]
+            var c = lo
+            let hi = if rs[i + 1] < 127 { rs[i + 1] } else { 127 }
+            while c <= hi {
+              a[b + (c >> 5)] = a[b + (c >> 5)] | (1 << (c & 31))
+              c += 1
+            }
+            i += 2
+          }
         }
-        if ok {
-          let w = pc * 4 + (c >> 5)
-          a[w] = a[w] | (1 << (c & 31))
+      } else if op == I_RUNE1 {
+        ascii_set(a, b, g.rune[pc][0])
+      } else {
+        var c = 0
+        while c < 128 {
+          if op == I_ANY || c != 10 {
+            a[b + (c >> 5)] = a[b + (c >> 5)] | (1 << (c & 31))
+          }
+          c += 1
         }
-        c += 1
       }
     }
     pc += 1
@@ -2207,20 +2235,10 @@ fn (var g: Prog) first_bytes() {
     } else if op == I_MATCH {
       return
     } else if op == I_RUNE || op == I_RUNE1 || op == I_ANY || op == I_ANY_NOT_NL {
-      var c = 0
-      while c < 128 {
-        var ok = true
-        if op == I_RUNE {
-          ok = rune_matches(g, pc, c)
-        } else if op == I_RUNE1 {
-          ok = c == g.rune[pc][0]
-        } else if op == I_ANY_NOT_NL {
-          ok = c != 10
-        }
-        if ok {
-          first[c >> 5] = first[c >> 5] | (1 << (c & 31))
-        }
-        c += 1
+      var w = 0
+      while w < 4 {
+        first[w] = first[w] | g.ascii[pc * 4 + w]
+        w += 1
       }
     }
   }

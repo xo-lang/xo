@@ -1,5 +1,23 @@
 # std/regexp changes
 
+## 2026-10-22: perf: compiling builds the ASCII bitmaps from the class ranges
+
+- Kind: perf
+- Commit: this commit
+- Found by: XO_PROF of the compile row (half the time was in the ASCII bitmap and first byte setup)
+- Go reference: none (Go has no ASCII bitmaps; this is Xo's own table, built cheaper)
+- Test: std/native/regexp_test.xo, internal/llvm testdata golden regexp_table, internal/stdtest corpus regexp; timing row against Go: bench/results/regexp-ascii-bitmap-inline-2026-10-22.md
+
+Compiling a pattern built each rune instruction's 128 bit ASCII bitmap by
+testing every byte with a binary search over the class, and the first byte
+filter did the same again. The bitmap is now set from the class's ranges
+(clipped to ASCII), and the first byte filter ORs the bitmaps. Matching is
+unchanged.
+
+Instructions, `xo bench --ab --rounds=5`, new over old (B / A): compile 0.400
+(wall 0.513), alt_compile 0.481. Against Go (Xo / Go): compile 1.48x (was
+3.57x), alt_compile 1.72x (was 3.30x).
+
 ## 2026-10-22: perf: the parser factors common prefixes out of alternations
 
 - Kind: perf

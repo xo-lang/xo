@@ -133,3 +133,17 @@ repeats; 100 texts, first match and groups from Go) pass; the three
 onepass_test.go patterns that were not one-pass (`^(?:a|(?:aa))$` and two
 like it) now are, so all 37 agree with Go on whether a pattern is one-pass.
 
+
+## Sixth step: the ASCII bitmaps from the class ranges (compile rows)
+
+XO_PROF of `compile` put half the time in `Prog.ascii_bytes` and
+`rune_matches` / `in_class` (128 binary searches per rune instruction, then
+the same again in `first_bytes`). The bitmap is now set from the class's
+ranges, and `first_bytes` ORs the bitmaps.
+
+`xo bench --ab --rounds=5`, new over old (B / A), instructions: compile 0.400
+(5,153 M to 2,060 M; wall 0.513), alt_compile 0.481 (11,824 M to 5,689 M).
+Against Go (Xo / Go, 5 rounds): compile 2,061 M against 1,397 M (1.48x, was
+3.57x), alt_compile 5,689 M against 3,315 M (1.72x, was 3.30x). Matching rows
+are untouched (the bitmaps are equal). The remaining profile is flat
+(allocation, `Prog.inst`, `Prog.cap`, parser nodes).
