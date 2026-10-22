@@ -3,7 +3,7 @@
 ## 2026-10-22: perf: a server's connection fibers no longer hold 2 MiB each of resident memory
 
 - Kind: perf
-- Commit: this commit
+- Commit: d08537802
 - Found by: bench/perf/netgo comparison (CRUD server peak RSS at 1024 connections: Xo 2.1 to 2.3 GB, Go 66 to 78 MB)
 - Go reference: none (goroutine stacks start small)
 - Test: none (a memory figure of the Linux runtime: /proc/PID/smaps, gotchas/fiber-stacks-huge-pages.md)
