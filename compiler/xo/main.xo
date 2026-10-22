@@ -244,12 +244,12 @@ fn main(os: Os) ! {
       }
     }
   }
-  if o.hybrid && o.cmd == "build" && !o.json {
+  if o.hybrid {
     // decision 0084's Go assembler mode of the arm64 backend
-    // (internal/arm64 goasm.go) is not in compiler/arm64: the build is
-    // the plain Go build that `xo build --hybrid` falls back to, and the
-    // report says why, as the Go driver's does when its assembly fails
-    os.stdio.eprintln("hybrid: no assembly (the self hosted arm64 backend has no Go assembler mode yet)")
+    // (internal/arm64 goasm.go) is not in compiler/arm64, so the build is
+    // a plain Go build: deprecated (owner, 2026-10-22; removed later),
+    // with a warning on every use, --json too (on standard error)
+    os.stdio.eprintln("xo: --hybrid is deprecated and will be removed: it is a plain Go backend build (no assembly since the Go compiler's removal, decision 0215); use --backend=go, or the native backend, the default")
   }
   if backend == "go" && !o.std_module.is_empty() {
     fail(os, "--std-module needs a native backend (arm64, amd64, or llvm): the Go backend's std is std/rt, in Go")

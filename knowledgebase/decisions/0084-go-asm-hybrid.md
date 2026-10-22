@@ -1,6 +1,9 @@
 # 0084: Hybrid builds: hot leaf functions as Go assembler, an option
 
-Status: Accepted (2026-10-09); amended 2026-10-10 by decision 0131
+Status: Deprecated (owner, 2026-10-22): `--hybrid` warns and is a plain
+Go backend build, since compiler/arm64 has no Go assembler mode (the Go
+compiler was deleted, decision 0215); the flag will be removed. Was:
+Accepted (2026-10-09); amended 2026-10-10 by decision 0131
 (loops poll for preemption: the "cannot be preempted" items below are
 resolved). Extends decisions 0040 (performance path),
 0049 (arm64 backend), 0054, 0060, 0075. Implemented in

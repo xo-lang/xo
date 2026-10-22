@@ -35,8 +35,8 @@ on run and test) builds with ThreadSanitizer on the LLVM backend. --stamp (repea
 sets a `const NAME: Str` of the main module for this build (XO1501
 otherwise). std/time zone data is embedded per use (decision 0094);
 --tzdata=system (also on run and test) reads the host's database
-instead. --hybrid compiles hot leaf functions of a Go backend build to
-native assembly (decision 0084).
+instead. --hybrid is deprecated: a plain Go backend build with a
+warning (decision 0084).
 
 A directory means that directory alone; DIR/... covers the directories
 below it too, up to 6,000 .xo files or 60,000 entries (decision 0345).

@@ -2755,7 +2755,9 @@ Last verified: 2026-10-10. Decisions 0084, 0131; results
 `bench/results/go-asm-hybrid-2026-10-09.md`,
 `bench/results/hybrid-preemption-2026-10-10.md`.
 
-- `xo build --hybrid` (Go backend, Build mode): `internal/build/hybrid.go`
+- Deprecated since 2026-10-22 (owner): `--hybrid` is a plain Go backend
+  build with a warning (no Go assembler mode in compiler/arm64), to be
+  removed. What it was: `xo build --hybrid` (Go backend, Build mode): `internal/build/hybrid.go`
   runs the native check, SSA with reference counting, and
   `arm64.GenerateGo` (Go mode, `internal/arm64/goasm.go`); a program
   outside the SSA subset builds as plain Go (`HybridInfo.Err`). The CLI

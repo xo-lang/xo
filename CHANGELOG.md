@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `--hybrid` is deprecated (owner, 2026-10-22) and warns on every use:
+  since the Go compiler's removal it has been a plain Go backend build.
+  Use `--backend=go`, or the native backend (the default). It will be
+  removed.
+
 - Native programs print a fault's frames by default (owner,
   2026-10-22): an uncaught fault's one line report is followed by
   `traceback:` and `  FUNCTION (FILE:LINE)` per frame down to main, as a

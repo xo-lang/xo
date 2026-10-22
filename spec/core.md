@@ -266,8 +266,9 @@ Decisions 0041 (Go packages) and 0042 (two phase shutdown).
 - A rune literal where an integer type is expected is its code point
   (1.6); `Int(r)`, `Rune(n)`, and `Rune.try(n)` convert between `Rune` and
   the integer types (2.1; decision 0079).
-- `xo build --hybrid` compiles hot leaf loops to native assembly inside Go
-  backend builds (10.1; decision 0084).
+- `xo build --hybrid` compiled hot leaf loops to native assembly inside Go
+  backend builds (10.1; decision 0084); deprecated since 2026-10-22 (owner):
+  it is a plain Go backend build with a warning, and will be removed.
 - The native backends check `ensures` and struct invariants and unwind
   faults (deferred code, scopes, Mutexes, `task.isolate`, a 500 from an
   HTTP handler) as the Go backend does (3.5, 8, 9.1; decision 0085).
@@ -2678,7 +2679,11 @@ on the real clock there), contract fuzzing (9.1) is reported as skipped
 traces are recorded natively but printed only in main's error report
 (decision 0104), and fault frames are not recorded natively.
 
-**Hybrid builds.** `xo build --hybrid` (Go backend) compiles the hot leaf
+**Hybrid builds (deprecated).** Since 2026-10-22 (owner) `--hybrid` is a
+plain Go backend build that warns that it is deprecated and will be
+removed: compiler/arm64 has no Go assembler mode, so nothing below
+happens. As decision 0084 described it, `xo build --hybrid` (Go backend)
+compiled the hot leaf
 functions of the main module (a loop over `Int`, `Float`, `Bool`, and
 `List`s of those or of structs of `Int` and `Float` fields, with no
 allocation) to native assembly linked into the Go program; everything
