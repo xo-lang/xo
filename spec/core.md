@@ -1782,7 +1782,9 @@ never depend on it, but the time does:
   binding is mutated and is not stored again after its last mutation. Storing
   means passing the whole value as a call argument (`m.put(k, b)`,
   `save(b)`) or assigning it as a whole (`m[k] = b`). Reading or returning it
-  does not count, because the collection still holds the old value. This
+  does not count, because the collection still holds the old value. A plain
+  `b = value` replaces the copy rather than changing it, so it is not a
+  mutation (`l = f.values[l].args[0]` walking a chain). This
   catches `var b = m.get(k) ?? new_bucket(); b.take(now)` without
   `m.put(k, b)`, and a PATCH handler that returns the edited copy but never
   stores it. For an intentional scratch copy, copy through a local first

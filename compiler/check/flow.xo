@@ -1345,11 +1345,16 @@ fn (var c: Checker) lost_updates(sites: List[FlowSite], nodes: List[Node]) {
   if cands.is_empty() {
     return
   }
-  // mutation sites: assignment targets, var receivers, var arguments
+  // mutation sites: assignment targets, var receivers, var arguments; a
+  // plain `x = value` of the whole binding replaces the copy instead of
+  // changing it (`l = f.values[l].args[0]` walking a chain of Ints)
   var mutating: Map[Int, Bool] = {}
   for n in nodes {
     match n {
-      NStmt(AssignStmt(target: target, ..)) => {
+      NStmt(AssignStmt(op: op, target: target, ..)) => {
+        if op == parser.Kind.Assign && unparen(target) is Ident(..) {
+          continue
+        }
         if let Some(id) = place_root(target) {
           mutating[c.name_key(id.span.start.offset)] = true
         }

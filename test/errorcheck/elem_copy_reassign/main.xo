@@ -1,0 +1,37 @@
+// XO0520 (core 5.2): a copy of a collection element changed and never
+// stored again. A plain `x = value` replaces the copy instead of changing
+// it, so walking a chain of Ints through a list is not a lost update.
+struct Value {
+  args: List[Int]
+}
+
+struct Func {
+  values: List[Value]
+}
+
+fn root(f: Func, x: Int) -> Int {
+  let v = f.values[x]
+  var l = v.args[0]
+  while l > 0 {
+    l = f.values[l].args[0]
+  }
+  l
+}
+
+fn bump(counts: Map[Str, Int], k: Str) -> Int {
+  var n = counts.get(k) ?? 0
+  n += 1 // ERROR XO0520 "never written back"
+  0
+}
+
+fn rename(var users: List[Value]) {
+  var u = users[0]
+  u.args.push(1) // ERROR XO0520
+}
+
+fn main(os: Os) {
+  let f = Func{values: [Value{args: [0]}, Value{args: [0]}, Value{args: [1]}]}
+  var us = [Value{args: []}]
+  rename(us)
+  os.stdio.println("${root(f, 2)} ${bump({"a": 1}, "a")}")
+}
