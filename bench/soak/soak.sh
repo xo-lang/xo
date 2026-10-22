@@ -5,6 +5,8 @@
 # bench/perf/http/callgrind-docker.sh) and runs both in the Docker
 # container (servers on cores 0-3, the client on 4-7).
 #   DURATION (1h) RATE (500/s) EVERY (10s) BACKEND (arm64)
+#   WARMUP (0.1: the fraction of the run before drift is judged; the
+#   connection pool and the heap grow in steps for the first 40 minutes)
 # The server runs with XO_LEAKCHECK=1 and gets SIGTERM at the end, so its
 # leak report is in OUT/server.log. Exit status: the drift verdict.
 set -eu
@@ -15,6 +17,7 @@ dur=${DURATION:-1h}
 rate=${RATE:-500}
 every=${EVERY:-10s}
 be=${BACKEND:-arm64}
+warm=${WARMUP:-0.1}
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
 mkdir -p "$out/srv"
@@ -37,7 +40,7 @@ cd /work
 NOTES_TOKEN=soak-token NOTES_ADDR=127.0.0.1:18700 XO_LEAKCHECK=1 taskset -c 0-3 ./notes > server.log 2>&1 &
 p=\$!
 sleep 2
-taskset -c 4-7 ./soak -url http://127.0.0.1:18700 -token soak-token -pid \$p -rate $rate -d $dur -every $every -out /work/result
+taskset -c 4-7 ./soak -url http://127.0.0.1:18700 -token soak-token -pid \$p -rate $rate -d $dur -every $every -warmup $warm -out /work/result
 st=\$?
 kill \$p; wait \$p 2>/dev/null
 exit \$st
@@ -52,7 +55,7 @@ NOTES_TOKEN=soak-token NOTES_ADDR=127.0.0.1:18700 XO_LEAKCHECK=1 "$out/notes" > 
 p=$!
 sleep 2
 st=0
-"$out/soak" -url http://127.0.0.1:18700 -token soak-token -pid "$p" -rate "$rate" -d "$dur" -every "$every" -out "$out/result" || st=$?
+"$out/soak" -url http://127.0.0.1:18700 -token soak-token -pid "$p" -rate "$rate" -d "$dur" -every "$every" -warmup "$warm" -out "$out/result" || st=$?
 kill "$p" 2>/dev/null || true
 wait "$p" 2>/dev/null || true
 cp "$out/server.log" "$out/result/" 2>/dev/null || true

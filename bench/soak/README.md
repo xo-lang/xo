@@ -20,7 +20,7 @@ approval).
   errors, drops, p50/p99/p99.9 of the interval, the server's RSS, open
   fds and CPU microseconds per request (from /proc on Linux, ps and lsof
   on macOS).
-- At the end `drift.txt` judges, after a 10% warmup: RSS growth per
+- At the end `drift.txt` judges, after a warmup (10% by default; WARMUP=0.4 for a 2 hour run: the fd count and RSS rise in steps while the connection pool and heap settle, 40 minutes in the native run of 2026-10-21): RSS growth per
   hour (limit 10% of the warmup-end value), open fds slope (limit 1
   per hour), the p99 of the last quarter against the first quarter
   (limit +20%), and the error rate (limit 0.1%); the exit status is 1
