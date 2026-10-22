@@ -349,7 +349,8 @@ fn (var g: G) x86_emit_once() {
     let fnm = g.fname(g.f.name)
     b.push("\t.size ${fnm}, .-${fnm}\n")
   }
-  if !sites.is_empty() {
+  // the table cfi_start named (emit's: empty when no call site has a pad)
+  if pads || !sites.is_empty() {
     g.lsda(sites)
   }
   b.push("\n")
