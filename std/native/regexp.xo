@@ -1317,6 +1317,11 @@ struct Prog {
   fold: List[Bool]
   start: Int
   num_cap: Int
+  // the ASCII bytes a match can start with (bit c & 31 of first[c >> 5]),
+  // when first_ok: no match is empty, so a start at another ASCII byte
+  // cannot match. A non-ASCII byte always counts as a candidate.
+  first_ok: Bool
+  first: List[Int]
 }
 
 /// A fragment: its first instruction (0 a failure), its patch list's head
@@ -1619,13 +1624,75 @@ fn compile(pattern: Str) -> Regex ! regexp.RegexErr {
     j += 1
   }
   let sroot = p.simplify(root)
-  var g = Prog{op: [], out: [], arg: [], rune: [], fold: [], start: 0, num_cap: 2}
+  var g = Prog{op: [], out: [], arg: [], rune: [], fold: [], start: 0, num_cap: 2, first_ok: false, first: []}
   g.inst(I_FAIL)
   let f = g.compile(p, sroot)
   let m = g.inst(I_MATCH)
   g.patch(f.head, m.i)
   g.start = f.i
+  g.first_bytes()
   Regex{expr: pattern, prog: g, names: names}
+}
+
+/// first_bytes: walks the instructions a match can begin with and sets the
+/// first byte filter (a start filter beyond Go's literal prefix: a match
+/// cannot start at an ASCII byte no first instruction accepts).
+fn (var g: Prog) first_bytes() {
+  var seen = raw.zero_ints(g.op.len())
+  var stack = [g.start]
+  var first = raw.zero_ints(4)
+  while stack.len() > 0 {
+    let pc = stack.pop() ?? 0
+    if pc == 0 || seen[pc] != 0 {
+      continue
+    }
+    seen[pc] = 1
+    let op = g.op[pc]
+    if op == I_ALT {
+      stack.push(g.out[pc])
+      stack.push(g.arg[pc])
+    } else if op == I_NOP || op == I_CAPTURE || op == I_EMPTY {
+      stack.push(g.out[pc])
+    } else if op == I_MATCH {
+      return
+    } else if op == I_RUNE || op == I_RUNE1 || op == I_ANY || op == I_ANY_NOT_NL {
+      var c = 0
+      while c < 128 {
+        var ok = true
+        if op == I_RUNE {
+          ok = rune_matches(g, pc, c)
+        } else if op == I_RUNE1 {
+          ok = c == g.rune[pc][0]
+        } else if op == I_ANY_NOT_NL {
+          ok = c != 10
+        }
+        if ok {
+          first[c >> 5] = first[c >> 5] | (1 << (c & 31))
+        }
+        c += 1
+      }
+    }
+  }
+  g.first_ok = true
+  g.first = first
+}
+
+/// The first position at or after pos where a match can start (g.first_ok),
+/// or -1.
+fn next_start(g: Prog, s: Str, pos0: Int) -> Int {
+  let end = s.len()
+  var pos = pos0
+  while pos < end {
+    let c = byte_at(s, pos)
+    if c >= 128 {
+      return pos
+    }
+    if ((g.first[c >> 5] >> (c & 31)) & 1) != 0 {
+      return pos
+    }
+    pos += 1
+  }
+  -1
 }
 
 fn must(pattern: Str, at: rt.Loc) -> Regex {
@@ -1846,9 +1913,7 @@ fn literal_prefix(g: Prog) -> Str {
 struct BT {
   end: Int
   visited: List[Int]
-  jpc: List[Int]
-  jpos: List[Int]
-  jarg: List[Int]
+  jobs: List[Int]
   jn: Int
   cap: List[Int]
   matchcap: List[Int]
@@ -1867,15 +1932,14 @@ fn (var b: BT) should_visit(pc: Int, pos: Int) -> Bool {
   true
 }
 
+/// A job is one Int: pos << 12 | pc << 1 | arg (backtrack runs only for
+/// programs of at most 500 instructions, so pc << 1 | arg is under 4096).
 fn (var b: BT) job(pc: Int, pos: Int, arg: Int) {
-  if b.jn < b.jpc.len() {
-    b.jpc[b.jn] = pc
-    b.jpos[b.jn] = pos
-    b.jarg[b.jn] = arg
+  let j = (pos << 12) | (pc << 1) | arg
+  if b.jn < b.jobs.len() {
+    b.jobs[b.jn] = j
   } else {
-    b.jpc.push(pc)
-    b.jpos.push(pos)
-    b.jarg.push(arg)
+    b.jobs.push(j)
   }
   b.jn += 1
 }
@@ -1894,9 +1958,10 @@ fn try_backtrack(g: Prog, s: Str, var b: BT, pc0: Int, pos0: Int) -> Bool {
   while b.jn > 0 {
     b.jn -= 1
     // (through a let: a var copied from an element is XO0520)
-    let pc0 = b.jpc[b.jn]
-    let pos0 = b.jpos[b.jn]
-    let arg0 = b.jarg[b.jn]
+    let j = b.jobs[b.jn]
+    let pc0 = (j >> 1) & 2047
+    let pos0 = j >> 12
+    let arg0 = j & 1
     var pc = pc0
     var pos = pos0
     var arg = arg0
@@ -2003,7 +2068,7 @@ fn anchored_start(g: Prog) -> Bool {
 fn backtrack(g: Prog, s: Str, pos0: Int, ncap: Int, prefix: Str) -> List[Int] {
   let end = s.len()
   let nprog = g.op.len()
-  var b = BT{end: end, visited: raw.zero_ints((nprog * (end + 1) + 31) / 32), jpc: [], jpos: [], jarg: [], jn: 0, cap: raw.zero_ints(ncap), matchcap: raw.zero_ints(ncap), nprog: nprog}
+  var b = BT{end: end, visited: raw.zero_ints((nprog * (end + 1) + 31) / 32), jobs: [], jn: 0, cap: raw.zero_ints(ncap), matchcap: raw.zero_ints(ncap), nprog: nprog}
   var i = 0
   while i < ncap {
     b.cap[i] = -1
@@ -2025,6 +2090,12 @@ fn backtrack(g: Prog, s: Str, pos0: Int, ncap: Int, prefix: Str) -> List[Int] {
   while pos <= end {
     if !prefix.is_empty() {
       let at = scan.find(s, prefix, pos)
+      if at < 0 {
+        return []
+      }
+      pos = at
+    } else if g.first_ok {
+      let at = next_start(g, s, pos)
       if at < 0 {
         return []
       }
@@ -2081,10 +2152,11 @@ fn exec(g: Prog, s: Str, pos0: Int, ncap: Int) -> List[Int] {
     if runq.len == 0 && matched {
       break
     }
-    if runq.len == 0 && !prefix.is_empty() {
+    if runq.len == 0 && (!prefix.is_empty() || (g.first_ok && !(r >= 0 && r < 128 && ((g.first[r >> 5] >> (r & 31)) & 1) != 0))) {
       // no thread is alive: no match can start before the next occurrence
-      // of the literal prefix (Go's prefix scan)
-      let at = scan.find(s, prefix, pos)
+      // of the literal prefix (Go's prefix scan), or at a byte no first
+      // instruction accepts
+      let at = if prefix.is_empty() { next_start(g, s, pos) } else { scan.find(s, prefix, pos) }
       if at < 0 {
         break
       }

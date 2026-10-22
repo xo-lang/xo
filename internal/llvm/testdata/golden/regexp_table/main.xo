@@ -37,12 +37,14 @@ fn main(os: Os) {
     r"(?U)a+", r"(?U)a+?", r"\x41\x{42}\101\n", r"\Qa.b*c\E+", r"\pL+", r"\PL+", r"\p{Nd}+", r"\p{^L}", r"[\p{L}\d]+",
     r"héllo|wörld", r"[é-ü]+", r".", r"(?i)ǅ", r"\$\.\^", r"\A\w", r"\w\z", r"a|b|c|ab", r"(?:a|b)+c", r"((a)|b)+",
     r"(a)|(b)", r"(?i:A)a", r"[]a]+", r"[a-]+", r"[\]]", r"\_",
+    // first byte filter: classes, folds to ASCII, empty matches, assertions
+    r"(?i)ſ", r"(?i)k", r"\d{4}-\d{2}", r"(?m)^b|c$", r"b*$", r"\bé", r"(?:)x", r"[^\n]b", r"é|b", r"(?:\z|c)",
     // errors
     r"(a", r"a)", r"a**", r"a++", r"*a", r"+", r"a{1001}", r"a{3,2}", r"(?P<>x)", r"(?P<na-me>x)", r"(?<n", r"[a",
     r"[z-a]", r"\8", r"\1", r"x\", r"\C", r"(?z)", r"(?i-)", r"\p{Foo}", r"\pX", r"[[:foo:]]", r"\x{110000}", r"\xZZ",
     r"a{2}{3}", r"(a{500}){3}", r"\Q",
   ]
-  let inputs = ["", "aaa", "abcd", "ab", "abc", "foo bar\nbaz", "a\nb", "2026-10-11 x 1999-01-02", "Hello HELLO hello", "STRASSE straße", "foo foobar barfoo", "xyz", "héllo wörld ü", "a1 b2  c3", "kK\u{212a}", "x\u{1c5}y", "$.^", "]]a-a"]
+  let inputs = ["", "aaa", "abcd", "ab", "abc", "foo bar\nbaz", "a\nb", "2026-10-11 x 1999-01-02", "Hello HELLO hello", "STRASSE straße", "foo foobar barfoo", "xyz", "héllo wörld ü", "a1 b2  c3", "kK\u{212a}", "x\u{1c5}y", "$.^", "]]a-a", "xx ſ Kk é\u{e9}b\nbc", "__2024-05-17__ cb\n"]
   for pat in patterns {
     match regexp.compile(pat) {
       Err(e) => out.println("${pat.quote()}: ${e}")

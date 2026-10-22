@@ -1,5 +1,19 @@
 # std/regexp changes
 
+## 2026-10-22: perf: a first byte filter and one Int per backtrack job
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/results/regexp-time-csv-vs-go-2026-10-21.md, re-measured in bench/results/regexp-first-byte-2026-10-22.md
+- Go reference: regexp/backtrack.go (bitState jobs); the first byte filter is Xo's own (Go's prefix scan only covers literal prefixes)
+- Test: internal/llvm/testdata/golden/regexp_table (extended: folds to ASCII, empty matches, assertions), internal/stdtest corpus regexp
+
+The compiled program records the ASCII bytes a match can start with (when no
+match is empty); both matchers skip start positions at other ASCII bytes
+(non-ASCII bytes are always tried). The backtracker's three job lists are one
+list of packed Ints. `xo bench --ab`: match wall 0.757x, find_all 0.911x,
+captures 0.636x; replace is flat (+0.9% instructions, wall within noise).
+
 ## 2026-10-21: perf: patterns anchored at the start try one position
 
 - Kind: perf
