@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"math"
 	"reflect"
@@ -469,8 +468,8 @@ func jsonEOFErr(data []byte) *Json_DecodeErr {
 // the token decoder words differently (a bad object key), which jsonParseSlow answers.
 func jsonSyntaxErr(data []byte) *Json_DecodeErr {
 	var skip struct{}
-	var se *json.SyntaxError
-	if !errors.As(json.Unmarshal(data, &skip), &se) {
+	se, ok := json.Unmarshal(data, &skip).(*json.SyntaxError)
+	if !ok {
 		return nil
 	}
 	msg := se.Error()
@@ -586,16 +585,17 @@ func Json_encode_str[T any](tk *Task, v T) string { return string(Json_encode(tk
 // Json_decode is `json.decode[T](data)`.
 func Json_decode[T any](tk *Task, data Bytes) Result[T, Json_DecodeErr] {
 	var fast T
-	ok, valid := jsonDecodeFast(tk, []byte(data), &fast)
+	b := []byte(data)
+	ok, valid := jsonDecodeFast(tk, b, &fast)
 	if ok {
 		return Ok[T, Json_DecodeErr](fast)
 	}
 	if !valid {
-		if err := jsonSyntaxErr([]byte(data)); err != nil {
+		if err := jsonSyntaxErr(b); err != nil {
 			return Err[T](*err)
 		}
 	}
-	x, err := jsonParse([]byte(data))
+	x, err := jsonParse(b)
 	if err != nil {
 		return Err[T](*err)
 	}

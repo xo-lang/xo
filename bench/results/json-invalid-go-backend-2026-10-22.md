@@ -50,8 +50,23 @@ random and 28,000 mutated texts, seven seeds run by hand) compares every text
 `jsonSyntaxErr` answers with `jsonParseSlow`'s; `TestJsonParseFastTrailingJunk`
 the byte after a value.
 
-## What is left (3.3x, before the update above)
+## After the trailing byte change, and one more cut (2026-10-22, later)
 
-Two scans of the text on the error path (`json.Valid`, then `Unmarshal`'s
-own) and the allocations of `Unmarshal` itself. Next: an error path that keeps
-the scanner's state from the first scan (a copy of `checkValid`'s loop).
+Re-measured on main at 31d67996d (a byte after the value now an error, so the
+first kind is answered by the scanner too): `invalid` 536 M instructions
+total, 463 M less the 73 M setup, 2.3x Go's 205 M. `Json_decode` now converts
+the text to bytes once (it did twice on the error path) and
+`jsonSyntaxErr` type-asserts the error instead of `errors.As`: 486 M total
+(413 M net, 2.0x Go), `xo bench --ab --rounds=7` instructions 0.908
+(0.904 to 0.913), wall within noise.
+
+## What is left (2.0x)
+
+The two scans of the text (`json.Valid`, then `Unmarshal`'s own check, each
+stopping at the error byte): measured in std/rt as 250 ns and 480 ns a text
+against 330 ns for Go's single `Unmarshal`. A single scan needs a scanner
+that gives encoding/json's error text without `Valid`: `json.Compact` is as
+costly as `Unmarshal` into an empty struct (452 against 493 ns on the first
+text), so only a copy of `checkValid`'s state machine in std/rt would remove
+one scan (about 60 lines plus the error texts, with TestJsonSyntaxErrMatchesDecoder
+as its proof).
