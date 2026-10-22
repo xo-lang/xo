@@ -224,7 +224,13 @@ pub fn install() {
   st(r, R_TS + 8, 100000000)
   st(rt.static_word(W_CRASH), 0, r)
   if windows() {
-    st(r, R_PREV, sys_windows.SetUnhandledExceptionFilter(rt.fn_addr("on_crash_win")))
+    // (found in kernel32's exports at run time, not imported: an xo whose
+    // PE linker's import table predates it, the seed among them, could
+    // not link any windows/amd64 program, CI 39826368911)
+    let set_filter = k32_proc(r, "SetUnhandledExceptionFilter")
+    if set_filter != 0 {
+      st(r, R_PREV, rt.call_c2(set_filter, rt.fn_addr("on_crash_win"), 0))
+    }
     let _v = sys_windows.AddVectoredExceptionHandler(0, rt.fn_addr("on_crash_veh"))
     return
   }
@@ -233,6 +239,89 @@ pub fn install() {
   for sig in [SIGSEGV, sigbus(), SIGILL, SIGFPE, SIGTRAP] {
     set(r, sig, h, flags())
   }
+}
+
+/// The address of kernel32's export name (one forwarder followed, to
+/// kernelbase), or 0: its PE export directory searched, the module names
+/// written as UTF-16 in the record's buffer (before any report uses it).
+fn k32_proc(r: Int, name: Str) -> Int {
+  let m = module_w(r, raw.data("kernel32.dll"), 12, false)
+  if m == 0 {
+    return 0
+  }
+  export_of(r, m, raw.data(name), name.len(), true)
+}
+
+/// GetModuleHandleW of the n ASCII bytes at a (with ".dll" after them
+/// when dll), or 0.
+fn module_w(r: Int, a: Int, n: Int, dll: Bool) -> Int {
+  let b = r + R_BUF
+  for i in 0..n {
+    rt.mem_store(b, 2 * i, rt.mem_load(a, i, 1), 2)
+  }
+  var k = n
+  if dll {
+    // ".dll"
+    for c in [46, 100, 108, 108] {
+      rt.mem_store(b, 2 * k, c, 2)
+      k += 1
+    }
+  }
+  rt.mem_store(b, 2 * k, 0, 2)
+  sys_windows.GetModuleHandleW(b)
+}
+
+/// The address of the export of the module at m named by the n bytes at
+/// want, or 0; a forwarder ("DLL.NAME", an RVA inside the export
+/// directory) followed once when follow.
+fn export_of(r: Int, m: Int, want: Int, n: Int, follow: Bool) -> Int {
+  let pe = m + rt.mem_load(m, 60, 4)
+  // the export directory: data directory 0 of PE32+'s optional header
+  let rva = rt.mem_load(pe + 24, 112, 4)
+  let size = rt.mem_load(pe + 24, 116, 4)
+  if rva == 0 {
+    return 0
+  }
+  let ed = m + rva
+  let count = rt.mem_load(ed, 24, 4)
+  let funcs = m + rt.mem_load(ed, 28, 4)
+  let names = m + rt.mem_load(ed, 32, 4)
+  let ords = m + rt.mem_load(ed, 36, 4)
+  for i in 0..count {
+    let s = m + rt.mem_load(names, 4 * i, 4)
+    var same = rt.mem_load(s, n, 1) == 0
+    var k = 0
+    while same && k < n {
+      same = rt.mem_load(s, k, 1) == rt.mem_load(want, k, 1)
+      k += 1
+    }
+    if !same {
+      continue
+    }
+    let f = rt.mem_load(funcs, 4 * rt.mem_load(ords, 2 * i, 2), 4)
+    if f < rva || f >= rva + size {
+      return m + f
+    }
+    if !follow {
+      return 0
+    }
+    // a forwarder: the DLL's name, a dot, the export's name
+    let fw = m + f
+    var dot = 0
+    while dot < 64 && rt.mem_load(fw, dot, 1) != 46 && rt.mem_load(fw, dot, 1) != 0 {
+      dot += 1
+    }
+    if rt.mem_load(fw, dot, 1) != 46 {
+      return 0
+    }
+    var len = 0
+    while len < 128 && rt.mem_load(fw, dot + 1 + len, 1) != 0 {
+      len += 1
+    }
+    let m2 = module_w(r, fw, dot, true)
+    return if m2 == 0 { 0 } else { export_of(r, m2, fw + dot + 1, len, false) }
+  }
+  0
 }
 
 /// Gives this thread an alternate signal stack (entry.xo, and each

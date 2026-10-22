@@ -49,3 +49,17 @@ std/native/http.xo stopped the build of xo itself at the seed
 std module xo compiles must use only the seed's intrinsics. The change
 went into compiler/ssa instead (small maps with no table), which needs
 no std change.
+
+Observed again, for Windows imports (2026-10-22, decision 0343 stage 2,
+18efab744): crash.xo called a new Windows function,
+SetUnhandledExceptionFilter, through sys_windows.xo. Xo's PE linker
+resolves imports by a table compiled into xo (compiler/macho
+peimports.xo), so the seed (0.25.0) and every cached xo built before
+that commit failed to link any windows/amd64 program ("undefined symbol
+SetUnhandledExceptionFilter"), and the CI windows job's xobuild found no
+builder (run 39826368911). Fix without a new seed: crash.xo finds the
+function in kernel32's export table at run time (k32_proc, one
+forwarder followed) and calls it through rt.call_c2. A new
+sys_windows.xo function is usable only once the seed's peimports.xo has
+it; check with the seed: `xo build --std=NEW_STD --backend=amd64
+--target=windows/amd64 hello`.
