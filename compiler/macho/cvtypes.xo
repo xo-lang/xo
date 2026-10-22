@@ -1,0 +1,398 @@
+// The PDB's types (decision 0344 stage 4): the DWARF types the program's
+// variables have, as CodeView type records for the TPI stream. Base
+// types are CodeView's primitive indices (T_INT8, T_UINT4, T_REAL64,
+// T_BOOL08, ...); a pointer to one is its 64 bit pointer form (0x600 |
+// the type); every structure, by name, gets a forward reference that
+// pointers, arrays and members name, then its LF_FIELDLIST of LF_MEMBERs
+// and its full LF_STRUCTURE, which a reader finds from the forward
+// reference by the name's hash (the TPI hash stream: hash_v1 of the name
+// for a full definition, the record's JamCRC for the rest, as LLVM's
+// hashTypeRecord). A typedef is its type; anything else is T_NOTYPE.
+
+use github.com/xo-lang/xo/compiler/debug
+
+const LF_POINTER = 0x1002
+const LF_FIELDLIST = 0x1203
+const LF_ARRAY = 0x1503
+const LF_STRUCTURE = 0x1505
+const LF_MEMBER = 0x150d
+const LF_ULONG = 0x8004
+
+/// ClassOptions: a forward reference.
+const CO_FWDREF = 0x80
+
+/// The type records (from index 0x1000), each one's hash bucket value,
+/// and the CodeView index of each DWARF type offset converted.
+struct CvTypes {
+  recs: List[Bytes] = []
+  hashes: List[Int] = []
+  of: Map[Int, Int] = {}
+  /// each structure's forward reference, by name
+  fwd: Map[Str, Int] = {}
+}
+
+/// The types of info: every structure's forward reference, then the
+/// types its variables need, then each structure's members and full
+/// definition.
+fn cv_types(info: debug.Info) -> CvTypes {
+  var t = CvTypes{}
+  var structs: List[(Str, Int)] = []
+  var offs: List[Int] = []
+  for (off, _) in info.types {
+    offs.push(off)
+  }
+  for off in offs.sort() {
+    let ty = info.types.get(off) ?? debug.Type{tag: 0, name: "", size: 0, enc: 0, of: -1, members: []}
+    if ty.tag == 0x13 && !ty.name.is_empty() && !t.fwd.contains(ty.name) {
+      var w = new_out(16 + ty.name.len())
+      // count, options, field list, derived from, vshape, size, name
+      w.u16(0)
+      w.u16(CO_FWDREF)
+      w.u32(0)
+      w.u32(0)
+      w.u32(0)
+      numeric(w, 0)
+      w.bytes(cstr_bytes(ty.name))
+      t.fwd[ty.name] = add_type(t, LF_STRUCTURE, w.done(), -1)
+      structs.push((ty.name, off))
+    }
+  }
+  for f in info.funcs {
+    for v in f.vars {
+      let _i = cv_index(t, info, v.ty)
+    }
+    for c in f.inlined {
+      for v in c.vars {
+        let _i = cv_index(t, info, v.ty)
+      }
+    }
+  }
+  // each structure's members and full definition
+  for (name, off) in structs {
+    let ty = info.types.get(off) ?? debug.Type{tag: 0, name: "", size: 0, enc: 0, of: -1, members: []}
+    var fl = new_out(32 * ty.members.len())
+    for m in ty.members {
+      let mi = cv_index(t, info, m.ty)
+      var mw = new_out(16 + m.name.len())
+      // LF_MEMBER: attributes (public), type, offset, name
+      mw.u16(LF_MEMBER)
+      mw.u16(3)
+      mw.u32(mi)
+      numeric(mw, m.offset)
+      mw.bytes(cstr_bytes(m.name))
+      lf_pad(mw)
+      fl.bytes(mw.done())
+    }
+    let fli = add_type(t, LF_FIELDLIST, fl.done(), -1)
+    var w = new_out(24 + name.len())
+    w.u16(ty.members.len())
+    w.u16(0)
+    w.u32(fli)
+    w.u32(0)
+    w.u32(0)
+    numeric(w, ty.size)
+    w.bytes(cstr_bytes(name))
+    let _f = add_type(t, LF_STRUCTURE, w.done(), hash_v1(name))
+  }
+  t
+}
+
+/// The CodeView index of the DWARF type at off (converted once).
+fn cv_index(var t: CvTypes, info: debug.Info, off: Int) -> Int {
+  if off < 0 {
+    return 0
+  }
+  if let Some(i) = t.of.get(off) {
+    return i
+  }
+  let ty = match info.types.get(off) {
+    Some(x) => x
+    None => return 0
+  }
+  // a cycle through typedefs or pointers ends at T_NOTYPE
+  t.of[off] = 0
+  let i = match ty.tag {
+    0x24 => primitive(ty.enc, ty.size)
+    0x16 => cv_index(t, info, ty.of)
+    0x13 => t.fwd.get(ty.name) ?? 0
+    0x0f => {
+      let p = if ty.of < 0 { 3 } else { cv_index(t, info, ty.of) }
+      if p < 0x1000 && p != 0 {
+        0x600 | p
+      } else if p == 0 {
+        // void * (T_64PVOID)
+        0x603
+      } else {
+        var w = new_out(8)
+        // the referent, attributes: a 64 bit near pointer of 8 bytes
+        w.u32(p)
+        w.u32(0xc | (8 << 13))
+        add_type(t, LF_POINTER, w.done(), -1)
+      }
+    }
+    0x01 => {
+      let e = cv_index(t, info, ty.of)
+      var size = ty.size
+      if size == 0 && ty.count > 0 {
+        size = ty.count * type_size(info, ty.of)
+      }
+      var w = new_out(16)
+      // the element type, the index type (T_UQUAD), the size, no name
+      w.u32(e)
+      w.u32(0x23)
+      numeric(w, size)
+      w.bytes(cstr_bytes(""))
+      add_type(t, LF_ARRAY, w.done(), -1)
+    }
+    _ => 0
+  }
+  t.of[off] = i
+  i
+}
+
+/// A DWARF type's size, through typedefs.
+fn type_size(info: debug.Info, off: Int) -> Int {
+  var o = off
+  for _ in 0..16 {
+    let ty = match info.types.get(o) {
+      Some(x) => x
+      None => return 0
+    }
+    if ty.tag != 0x16 {
+      return ty.size
+    }
+    o = ty.of
+  }
+  0
+}
+
+/// A base type's primitive index: DW_ATE_boolean 2, float 4, signed 5,
+/// signed_char 6, unsigned 7, unsigned_char 8, UTF 0x10.
+fn primitive(enc: Int, size: Int) -> Int {
+  match enc {
+    2 => 0x30
+    4 => if size == 4 { 0x40 } else { 0x41 }
+    5 | 6 => match size {
+      1 => 0x68
+      2 => 0x72
+      4 => 0x74
+      _ => 0x76
+    }
+    7 | 8 => match size {
+      1 => 0x69
+      2 => 0x73
+      4 => 0x75
+      _ => 0x77
+    }
+    0x10 => 0x7b
+    _ => 0
+  }
+}
+
+/// Appends a type record (its length, kind, data, LF_PAD bytes to 4) and
+/// its hash (h, or the record's JamCRC when h < 0); its index.
+fn add_type(var t: CvTypes, kind: Int, data: Bytes, h: Int) -> Int {
+  var w = new_out(data.len() + 8)
+  let len = 2 + data.len()
+  let padded = (len + 2 + 3) / 4 * 4 - 2
+  w.u16(padded)
+  w.u16(kind)
+  w.bytes(data)
+  var left = padded - len
+  while left > 0 {
+    w.u8(0xf0 + left)
+    left -= 1
+  }
+  let rec = w.done()
+  t.recs.push(rec)
+  t.hashes.push((if h >= 0 { h } else { jam_crc(rec) }) % 0x3ffff)
+  0x1000 + t.recs.len() - 1
+}
+
+/// A numeric leaf: the value itself under 0x8000, else LF_ULONG and 4
+/// bytes.
+fn numeric(var w: Out, v: Int) {
+  if v >= 0 && v < 0x8000 {
+    w.u16(v)
+  } else {
+    w.u16(LF_ULONG)
+    w.u32(v)
+  }
+}
+
+/// LF_PAD bytes after a field list member, to 4 bytes.
+fn lf_pad(var w: Out) {
+  while w.n % 4 != 0 {
+    w.u8(0xf0 + (4 - w.n % 4))
+  }
+}
+
+/// A TPI or IPI stream of records recs with their hashes: the header
+/// naming the hash stream hs (its hash values, then the first record's
+/// index offset), the records; and the hash stream.
+fn type_stream(recs: List[Bytes], hashes: List[Int], hs: Int) -> (Bytes, Bytes) {
+  var body = new_out(64 * recs.len())
+  for r in recs {
+    body.bytes(r)
+  }
+  let data = body.done()
+  var h = new_out(4 * hashes.len() + 8)
+  for x in hashes {
+    h.u32(x)
+  }
+  if !hashes.is_empty() {
+    h.u32(0x1000)
+    h.u32(0)
+  }
+  let hash = h.done()
+  var w = new_out(56 + data.len())
+  w.u32(20040203)
+  w.u32(56)
+  w.u32(0x1000)
+  w.u32(0x1000 + recs.len())
+  w.u32(data.len())
+  w.u16(if hashes.is_empty() { 0xffff } else { hs })
+  w.u16(0xffff)
+  w.u32(4)
+  w.u32(0x3ffff)
+  // hash values, index offsets, hash adjusters: offset and length each
+  w.u32(0)
+  w.u32(4 * hashes.len())
+  w.u32(4 * hashes.len())
+  w.u32(if hashes.is_empty() { 0 } else { 8 })
+  w.u32(hash.len())
+  w.u32(0)
+  w.bytes(data)
+  (w.done(), hash)
+}
+
+// ---------------------------------------------------------------------------
+// Locals (decision 0344 stage 4): each variable's S_LOCAL and the
+// S_DEFRANGE records of its DWARF locations
+
+const S_LOCAL = 0x113e
+const S_DEFRANGE_REGISTER = 0x1141
+const S_DEFRANGE_SUBFIELD_REGISTER = 0x1143
+const S_DEFRANGE_REGISTER_REL = 0x1145
+
+/// A variable of a procedure or inline site: its S_LOCAL's type, whether
+/// a parameter, its name, and its S_DEFRANGE records (kind, body).
+struct PdbLocal {
+  name: Str
+  ty: Int
+  param: Bool
+  defs: List[(Int, Bytes)]
+}
+
+/// The locals of vars: each location range (an exprloc: every range of
+/// whole) and piece in a register (S_DEFRANGE_REGISTER, or
+/// S_DEFRANGE_SUBFIELD_REGISTER for a piece of a value in several) or in
+/// memory at a register and an offset (S_DEFRANGE_REGISTER_REL, the
+/// piece's offset in its value in the flags); a constant, a global's
+/// address or an unread expression has none (a variable with no record
+/// is left out). A range is in one section, split at 0xffff bytes.
+fn cv_locals(var t: CvTypes, info: debug.Info, vars: List[debug.Var], whole: List[(Int, Int)], sects: List[PdbSect], base: Int) -> List[PdbLocal] {
+  var out: List[PdbLocal] = []
+  for v in vars {
+    var defs: List[(Int, Bytes)] = []
+    for l in v.locs {
+      let spans = if l.lo == 0 && l.hi == -1 { whole } else { [(l.lo, l.hi)] }
+      let multi = l.pieces.len() > 1
+      var poff = 0
+      for pc in l.pieces {
+        match pc.place {
+          debug.Place.Reg(r) => {
+            let cr = cv_reg(r)
+            if cr != 0 {
+              for (lo, hi) in spans {
+                for (so, seg, n) in cv_ranges(sects, base, lo, hi) {
+                  var w = new_out(16)
+                  w.u16(cr)
+                  w.u16(0)
+                  if multi {
+                    w.u32(poff & 0xfff)
+                  }
+                  w.u32(so)
+                  w.u16(seg)
+                  w.u16(n)
+                  defs.push((if multi { S_DEFRANGE_SUBFIELD_REGISTER } else { S_DEFRANGE_REGISTER }, w.done()))
+                }
+              }
+            }
+          }
+          debug.Place.Breg(r, o) => {
+            let cr = cv_reg(r)
+            if cr != 0 {
+              for (lo, hi) in spans {
+                for (so, seg, n) in cv_ranges(sects, base, lo, hi) {
+                  var w = new_out(16)
+                  w.u16(cr)
+                  // the piece's offset in its value, bits 4 to 15
+                  w.u16((poff & 0xfff) << 4)
+                  w.u32(o & 0xffffffff)
+                  w.u32(so)
+                  w.u16(seg)
+                  w.u16(n)
+                  defs.push((S_DEFRANGE_REGISTER_REL, w.done()))
+                }
+              }
+            }
+          }
+          _ => {}
+        }
+        poff += pc.size
+      }
+    }
+    if !defs.is_empty() {
+      out.push(PdbLocal{name: v.name, ty: cv_index(t, info, v.ty), param: v.param, defs: defs})
+    }
+  }
+  out
+}
+
+/// [lo, hi) as CodeView address ranges: (section offset, section, length)
+/// each at most 0xffff bytes; none outside the image's sections.
+fn cv_ranges(sects: List[PdbSect], base: Int, lo: Int, hi: Int) -> List[(Int, Int, Int)] {
+  var out: List[(Int, Int, Int)] = []
+  let (seg, off) = seg_off(sects, lo - base)
+  if seg == 0 || hi <= lo {
+    return out
+  }
+  var a = off
+  let end = off + (hi - lo)
+  while a < end {
+    let n = if end - a > 0xffff { 0xffff } else { end - a }
+    out.push((a, seg, n))
+    a += n
+  }
+  out
+}
+
+/// The CodeView (CV_AMD64) register of DWARF register r of x86_64, or 0.
+fn cv_reg(r: Int) -> Int {
+  match r {
+    0 => 328
+    1 => 331
+    2 => 330
+    3 => 329
+    4 => 332
+    5 => 333
+    6 => 334
+    7 => 335
+    _ => if r >= 8 && r <= 15 { 336 + r - 8 } else if r >= 17 && r <= 24 { 154 + r - 17 } else if r >= 25 && r <= 32 { 252 + r - 25 } else { 0 }
+  }
+}
+
+/// A local's records: S_LOCAL (its type, flags: a parameter 1, name),
+/// then its S_DEFRANGEs.
+fn local_records(l: PdbLocal) -> List[(Int, Bytes)] {
+  var w = new_out(8 + l.name.len())
+  w.u32(l.ty)
+  w.u16(if l.param { 1 } else { 0 })
+  w.bytes(cstr_bytes(l.name))
+  var out = [(S_LOCAL, w.done())]
+  for d in l.defs {
+    out.push(d)
+  }
+  out
+}

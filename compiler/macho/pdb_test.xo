@@ -128,3 +128,18 @@ test "compressed annotation numbers" {
   ba_op(w, 0x4000)
   expect(w.done()) == b"\x7f\x80\x80\xc0\x00\x40\x00"
 }
+
+test "CodeView registers, primitives, numeric leaves and ranges" {
+  // rax, rdx, rbp, r8, r15, xmm0, xmm8; an unknown register
+  expect([cv_reg(0), cv_reg(1), cv_reg(6), cv_reg(8), cv_reg(15), cv_reg(17), cv_reg(25), cv_reg(99)]) == [328, 331, 334, 336, 343, 154, 252, 0]
+  // Int, UInt8, Bool, Float64, Int32, a rune
+  expect([primitive(5, 8), primitive(8, 1), primitive(2, 1), primitive(4, 8), primitive(5, 4), primitive(0x10, 4)]) == [0x76, 0x69, 0x30, 0x41, 0x74, 0x7b]
+  var w = new_out(8)
+  numeric(w, 0x7fff)
+  numeric(w, 0x8000)
+  expect(w.done()) == b"\xff\x7f\x04\x80\x00\x80\x00\x00"
+  // a range past 0xffff bytes is split; outside the sections, none
+  let sects = [PdbSect{rva: 0x1000, vsize: 0x30000, chars: 0, header: b""}]
+  expect(cv_ranges(sects, 0x140000000, 0x140001010, 0x140021010)) == [(0x10, 1, 0xffff), (0x1000f, 1, 0xffff), (0x2000e, 1, 2)]
+  expect(cv_ranges(sects, 0x140000000, 0x150000000, 0x150000010)) == []
+}

@@ -53,6 +53,10 @@ cmp_trace() {
 }
 cmp_trace segv 0
 cmp_trace task 6
+# the locals dbghelp finds at each segv frame (stage 4; logged, not
+# checked: the runtime's report has no locals to compare with yet)
+"$w/pdbframes.exe" -locals "$(np "$k/crash.exe")" < "$k/segv.err" > "$o/segv-locals.txt" 2>&1
+note "segv locals (logged in segv-locals.txt): $(grep -c '^      ' "$o/segv-locals.txt") variables"
 cdb=""
 for c in "/c/Program Files (x86)/Windows Kits/10/Debuggers/x64/cdb.exe" "/c/Program Files/Windows Kits/10/Debuggers/x64/cdb.exe"; do
   [ -x "$c" ] && cdb=$c && break

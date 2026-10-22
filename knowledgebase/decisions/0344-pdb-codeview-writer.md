@@ -31,6 +31,18 @@ it looks for the site holding an address; llvm-pdbutil prints both as
 "code"), and a site's first entry needs a line operation even when the
 line does not change (LLVM's reader takes the site's line from it and
 drops a frame without one, and every frame after it).
+Stage 4 implemented 2026-10-22 (compiler/macho cvtypes.xo): the TPI
+stream from the variables' DWARF types (base types as primitive indices,
+a forward reference per structure name that pointers, arrays and
+members name, then its LF_FIELDLIST and LF_STRUCTURE; the hash stream:
+the name's hash_v1 for a full definition, JamCRC for the rest), and
+S_LOCAL with S_DEFRANGE_REGISTER, S_DEFRANGE_SUBFIELD_REGISTER (a piece
+of a value in several registers, as Str's pointer and length) and
+S_DEFRANGE_REGISTER_REL from the DWARF location lists, for procedures and
+inline sites. llvm-pdbutil resolves every forward reference to its
+definition through the hash; Wine's dbghelp lists each frame's variables
+with their parameter flags. Values in a debugger are cdb's `dv`, in the
+next approved Windows run.
 
 ## Context
 

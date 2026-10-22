@@ -8,7 +8,11 @@
 // compares its output with the report's own traceback, which the runtime
 // names from the DWARF.
 //
-//	pdbframes PROG.exe < REPORT
+//	pdbframes [-locals] PROG.exe < REPORT
+//
+// With -locals each physical frame's variables follow it, as dbghelp
+// finds them at the frame's pc (SymSetContext, SymEnumSymbols): `      NAME
+// (param) reg R` for a register, `[reg R+OFF]` for memory.
 package main
 
 import (
@@ -33,17 +37,26 @@ var (
 	symQueryInlineTrace      = dbghelp.NewProc("SymQueryInlineTrace")
 	symFromInlineContextW    = dbghelp.NewProc("SymFromInlineContextW")
 	symGetLineFromInlineCtxW = dbghelp.NewProc("SymGetLineFromInlineContextW")
+	symSetContext            = dbghelp.NewProc("SymSetContext")
+	symEnumSymbolsW          = dbghelp.NewProc("SymEnumSymbolsW")
 )
+
+var locals bool
 
 // the preferred base Xo's PE linker gives every image
 const base = 0x140000000
 
 func main() {
-	if len(os.Args) != 2 {
-		fmt.Fprintln(os.Stderr, "usage: pdbframes PROG.exe < REPORT")
+	args := os.Args[1:]
+	if len(args) > 0 && args[0] == "-locals" {
+		locals = true
+		args = args[1:]
+	}
+	if len(args) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: pdbframes [-locals] PROG.exe < REPORT")
 		os.Exit(2)
 	}
-	exe, _ := filepath.Abs(os.Args[1])
+	exe, _ := filepath.Abs(args[0])
 	loaded, pcs, err := report(os.Stdin)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "pdbframes:", err)
@@ -100,7 +113,44 @@ func frame(h uintptr, a uint64) bool {
 	} else {
 		fmt.Printf("  %s (%s:%d)\n", name, file, line)
 	}
+	if locals {
+		printLocals(h, a)
+	}
 	return name == "main"
+}
+
+// printLocals prints the variables dbghelp finds at a.
+func printLocals(h uintptr, a uint64) {
+	// IMAGEHLP_STACK_FRAME: InstructionOffset first (the rest zero)
+	var frame [160]byte
+	*(*uint64)(unsafe.Pointer(&frame[0])) = a
+	symSetContext.Call(h, uintptr(unsafe.Pointer(&frame[0])), 0)
+	var lines []string
+	cb := syscall.NewCallback(func(info, size, ctx uintptr) uintptr {
+		// (a pointer dbghelp passes: not Go memory)
+		s := (*symbol)(unsafe.Add(unsafe.Pointer(nil), info))
+		flags := *(*uint32)(unsafe.Pointer(&s.b[40]))
+		reg := *(*uint32)(unsafe.Pointer(&s.b[64]))
+		addr := *(*uint64)(unsafe.Pointer(&s.b[56]))
+		kind := ""
+		if flags&0x40 != 0 {
+			kind = " (param)"
+		}
+		where := ""
+		switch {
+		case flags&0x10 != 0:
+			where = fmt.Sprintf("[reg %d%+d]", reg, int64(addr))
+		case flags&0x8 != 0:
+			where = fmt.Sprintf("reg %d", reg)
+		}
+		lines = append(lines, fmt.Sprintf("      %s%s %s", s.name(), kind, where))
+		return 1
+	})
+	mask, _ := syscall.UTF16PtrFromString("*")
+	symEnumSymbolsW.Call(h, 0, uintptr(unsafe.Pointer(mask)), cb, 0)
+	for _, l := range lines {
+		fmt.Println(l)
+	}
 }
 
 // symbol is a SYMBOL_INFOW (88 bytes) with room for its name.

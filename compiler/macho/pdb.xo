@@ -35,7 +35,9 @@ const PS_GLOBALS = 9
 const PS_SYMS = 10
 /// the IPI stream's hash values and index offsets
 const PS_IPIHASH = 11
-const PS_COUNT = 12
+/// the TPI stream's hash values and index offsets
+const PS_TPIHASH = 12
+const PS_COUNT = 13
 
 /// CodeView symbol kinds.
 const S_END = 0x0006
@@ -75,6 +77,7 @@ struct PdbProc {
   /// its first address and its inline sites, parents before children
   lo: Int = 0
   sites: List[PdbSite] = []
+  locals: List[PdbLocal] = []
 }
 
 /// A call inlined into a function: the callee's name, the enclosing
@@ -86,6 +89,9 @@ struct PdbSite {
   parent: Int
   ranges: List[(Int, Int)]
   entries: List[(Int, Int, Int)]
+  /// the call's variables (debug.Inlined.vars), then their locals
+  vars: List[debug.Var] = []
+  locals: List[PdbLocal] = []
 }
 
 /// The C13 subsection kinds.
@@ -161,6 +167,7 @@ pub fn pe_pdb(img: Bytes) -> Result[(Bytes, Bytes), Str] {
   for (i, f) in lns.files.indexed() {
     file_of[f] = i
   }
+  var types = cv_types(info)
   var procs: List[PdbProc] = []
   for f in info.funcs {
     if f.hi <= f.lo {
@@ -177,7 +184,13 @@ pub fn pe_pdb(img: Bytes) -> Result[(Bytes, Bytes), Str] {
           calls.push((c.ranges, cf, c.call_line))
         }
       }
-      procs.push(PdbProc{name: f.name, seg: seg, off: off, size: f.hi - f.lo, rows: fn_rows(lns, by_addr, f.lo, f.hi, calls), lo: f.lo, sites: inline_sites(lns, by_addr, file_of, f)})
+      var sites = inline_sites(lns, by_addr, file_of, f)
+      for i in 0..sites.len() {
+        var st = sites[i]
+        st.locals = cv_locals(types, info, st.vars, st.ranges, sects, base)
+        sites[i] = st
+      }
+      procs.push(PdbProc{name: f.name, seg: seg, off: off, size: f.hi - f.lo, rows: fn_rows(lns, by_addr, f.lo, f.hi, calls), lo: f.lo, sites: sites, locals: cv_locals(types, info, f.vars, [(f.lo, f.hi)], sects, base)})
     }
   }
   // the publics: the COFF symbol table's functions
@@ -188,7 +201,7 @@ pub fn pe_pdb(img: Bytes) -> Result[(Bytes, Bytes), Str] {
       pubs.push(PdbProc{name: n, seg: seg, off: off, size: 0})
     }
   }
-  Ok((out, pdb_file(guid, stamp, sects, procs, pubs, lns.files)))
+  Ok((out, pdb_file(guid, stamp, sects, procs, pubs, lns.files, types)))
 }
 
 /// The inline sites of f (decision 0344 stage 3): each inlined call,
@@ -269,7 +282,7 @@ fn site_walk(lns: debug.Lines, by_addr: List[(Int, Int)], file_of: Map[Str, Int]
       continue
     }
     let me = out.len()
-    out.push(PdbSite{name: c.name, parent: ps, ranges: c.ranges.sort(), entries: entries})
+    out.push(PdbSite{name: c.name, parent: ps, ranges: c.ranges.sort(), entries: entries, vars: c.vars})
     site_walk(lns, by_addr, file_of, f, idx, parent, i, me, out, at)
   }
 }
@@ -388,7 +401,7 @@ fn seg_off(sects: List[PdbSect], rva: Int) -> (Int, Int) {
 }
 
 /// The PDB's bytes: its streams in the MSF container.
-fn pdb_file(guid: Bytes, stamp: Int, sects: List[PdbSect], procs: List[PdbProc], pubs: List[PdbProc], dfiles: List[Str]) -> Bytes {
+fn pdb_file(guid: Bytes, stamp: Int, sects: List[PdbSect], procs: List[PdbProc], pubs: List[PdbProc], dfiles: List[Str], types: CvTypes) -> Bytes {
   var streams: List[Bytes] = []
   for _ in 0..PS_COUNT {
     streams.push(b"")
@@ -432,7 +445,9 @@ fn pdb_file(guid: Bytes, stamp: Int, sects: List[PdbSect], procs: List[PdbProc],
   let (modsyms, proc_at) = module_stream(procs, c13, fid, inlinees, fidx)
   let (recs, pub_at, ref_at) = sym_records(procs, proc_at, pubs)
   streams[PS_INFO] = info_stream(guid, stamp)
-  streams[PS_TPI] = tpi_stream()
+  let (tpi, tpihash) = type_stream(types.recs, types.hashes, PS_TPIHASH)
+  streams[PS_TPI] = tpi
+  streams[PS_TPIHASH] = tpihash
   let (ipi, ipihash) = ipi_stream(inlinees)
   streams[PS_IPI] = ipi
   streams[PS_IPIHASH] = ipihash
@@ -679,6 +694,14 @@ fn module_stream(procs: List[PdbProc], c13: Bytes, fid: Map[Str, Int], inlinees:
     bodies.push(pb.done())
     parents.push(-1)
     ends.push(-1)
+    for l in p.locals {
+      for (k, b) in local_records(l) {
+        kinds.push(k)
+        bodies.push(b)
+        parents.push(-1)
+        ends.push(-1)
+      }
+    }
     // the sites: a stack of open ones (site index, record)
     var open: List[(Int, Int)] = []
     for (si, st) in p.sites.indexed() {
@@ -702,6 +725,14 @@ fn module_stream(procs: List[PdbProc], c13: Bytes, fid: Map[Str, Int], inlinees:
       parents.push(enclosing)
       ends.push(-1)
       open.push((si, r))
+      for l in st.locals {
+        for (k, b) in local_records(l) {
+          kinds.push(k)
+          bodies.push(b)
+          parents.push(-1)
+          ends.push(-1)
+        }
+      }
     }
     while !open.is_empty() {
       let (_, r) = open.pop() ?? (0, 0)
