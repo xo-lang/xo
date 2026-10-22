@@ -71,7 +71,7 @@ fn main(os: Os) {
       return
     }
   }
-  let c = match http.client(os.net).with_roots(ca_pem()) {
+  let c = match http.client(os.net, timeout: 120s).with_roots(ca_pem()) {
     Ok(c) => c
     Err(e) => {
       os.stdio.println("roots: ${e}")
