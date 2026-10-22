@@ -1,0 +1,190 @@
+== tools
+$ go version
+go version go1.26.1 darwin/arm64
+
+$ sw_vers -productVersion
+27.0.1
+
+$ xcrun --find atos
+/usr/bin/atos
+
+$ ~/godev/claude-space/xolang/wt-h2dl/bin/xo version
+xo 0.25.2 darwin/arm64
+
+== go: hello-default
+$ ls -l hello-default
+-rwxr-xr-x  1 josephspurrier  staff  1749250 Oct 22 15:54 hello-default
+
+$ otool -l hello-default | grep sectname | grep debug
+__zdebug_abbrev __zdebug_line __zdebug_frame __debug_gdb_scri __zdebug_info __zdebug_loc __zdebug_ranges 
+
+main.greet at 0x0000000100070ab0
+$ atos -o hello-default -arch arm64 0x0000000100070ab0
+main.greet (in hello-default) + 0
+
+$ dwarfdump --debug-line hello-default
+hello-default:	file format Mach-O arm64
+
+.debug_line contents:
+
+$ lldb -b -o image lookup -v -n main.greet hello-default
+(lldb) target create "hello-default"
+Current executable set to '$OUT/go/hello-default' (arm64).
+(lldb) image lookup -v -n main.greet
+1 match found in $OUT/go/hello-default:
+        Address: hello-default[0x0000000100070ab0] (hello-default.__TEXT.__text + 457392)
+        Summary: hello-default`main.greet
+         Module: file = "$OUT/go/hello-default", arch = "arm64"
+         Symbol: id = {0x000000b5}, range = [0x0000000100070ab0-0x0000000100070b10), name="main.greet"
+
+
+$ dsymutil hello-default -o hello-default.dSYM
+warning: no debug symbols in executable (-arch arm64)
+
+$ ls hello-default.dSYM/Contents/Resources/DWARF
+hello-default
+
+== go: hello-plain
+$ ls -l hello-plain
+-rwxr-xr-x  1 josephspurrier  staff  2888578 Oct 22 15:54 hello-plain
+
+$ otool -l hello-plain | grep sectname | grep debug
+__debug_abbrev __debug_line __debug_frame __debug_gdb_scri __debug_info __debug_loc __debug_ranges 
+
+main.greet at 0x0000000100070ab0
+$ atos -o hello-plain -arch arm64 0x0000000100070ab0
+main.greet (in hello-plain) (main.go:4)
+
+$ dwarfdump --debug-line hello-plain
+hello-plain:	file format Mach-O arm64
+
+.debug_line contents:
+debug_line[0x00000000]
+Line table prologue:
+    total_length: 0x000000f3
+
+$ lldb -b -o image lookup -v -n main.greet hello-plain
+(lldb) target create "hello-plain"
+Current executable set to '$OUT/go/hello-plain' (arm64).
+(lldb) image lookup -v -n main.greet
+1 match found in $OUT/go/hello-plain:
+        Address: hello-plain[0x0000000100070ab0] (hello-plain.__TEXT.__text + 457392)
+        Summary: hello-plain`main.greet
+         Module: file = "$OUT/go/hello-plain", arch = "arm64"
+    CompileUnit: id = {0x00000000}, file = "main", language = "go"
+      LineEntry: [0x0000000100070ab0-0x0000000100070abc): $OUT/go/main.go:4
+         Symbol: id = {0x000000b5}, range = [0x0000000100070ab0-0x0000000100070b10), name="main.greet"
+
+
+$ dsymutil hello-plain -o hello-plain.dSYM
+warning: no debug symbols in executable (-arch arm64)
+
+$ ls hello-plain.dSYM/Contents/Resources/DWARF
+hello-plain
+
+darwin/arm64: $OUT/xo/hello
+== xo: hello
+$ ls -l hello
+-rwxr-xr-x  1 josephspurrier  wheel  706242 Oct 22 15:54 hello
+
+$ ls hello.dSYM/Contents/Resources/DWARF
+hello
+
+$ otool -l hello | grep sectname | grep debug
+
+
+xo_f_greet at 0x00000001000007f0
+$ atos -o hello -arch arm64 0x00000001000007f0
+xo_f_greet (in hello) (main.xo:3)
+
+$ atos -o hello.dSYM -arch arm64 0x00000001000007f0
+greet (in hello) (main.xo:3)
+
+$ dwarfdump --debug-line hello.dSYM
+hello.dSYM/Contents/Resources/DWARF/hello:	file format Mach-O arm64
+
+.debug_line contents:
+debug_line[0x00000000]
+Line table prologue:
+    total_length: 0x0000591a
+
+$ lldb -b -o image lookup -v -n xo_f_greet hello
+(lldb) target create "hello"
+Current executable set to '$OUT/xo/hello' (arm64).
+(lldb) image lookup -v -n xo_f_greet
+1 match found in $OUT/xo/hello:
+        Address: hello[0x00000001000007f0] (hello.__TEXT.__text + 368)
+        Summary: hello`greet at main.xo:3:3
+         Module: file = "$OUT/xo/hello", arch = "arm64"
+    CompileUnit: id = {0x00000000}, file = "$OUT/xo/main.xo", language = "c99"
+       Function: id = {0x0000108c}, name = "greet", range = [0x00000001000007f0-0x0000000100000844)
+       FuncType: id = {0x0000108c}, byte-size = 0, compiler_type = "void (struct Str, long)"
+         Blocks: id = {0x0000108c}, range = [0x1000007f0-0x100000844)
+      LineEntry: [0x00000001000007f0-0x00000001000007f8): $OUT/xo/main.xo:3:3
+
+$ ls -l hello.dSYM/Contents/Resources/DWARF/hello
+-rw-r--r--  1 josephspurrier  wheel  1404699 Oct 22 15:54 hello.dSYM/Contents/Resources/DWARF/hello
+
+== other formats: Go cross builds for linux/arm64 and windows/amd64, Xo for linux/arm64
+$ objdump -h hello-linux | grep debug
+ 15 .debug_abbrev      00000160 0000000000000000 DEBUG
+ 16 .debug_line        0001a148 0000000000000000 DEBUG
+ 17 .debug_frame       00005824 0000000000000000 DEBUG
+ 18 .debug_gdb_scripts 0000002a 0000000000000000 DEBUG
+ 19 .debug_info        0003654e 0000000000000000 DEBUG
+ 20 .debug_loclists    00014760 0000000000000000 DEBUG
+ 21 .debug_rnglists    0000bb70 0000000000000000 DEBUG
+ 22 .debug_addr        00000c96 0000000000000000 DEBUG
+
+# an ELF SHF_COMPRESSED section starts with Elf64_Chdr: ch_type 1 is zlib, then the size, then 78 01 (zlib's header)
+$ objdump -s -j .debug_abbrev hello-linux
+
+hello-linux:	file format elf64-littleaarch64
+Contents of section .debug_abbrev:
+ 0000 01000000 00000000 66020000 00000000  ........f.......
+ 0010 01000000 00000000 78015490 ddae1231  ........x.T....1
+
+$ objdump -h hello-windows.exe | grep debug
+  5 .zdebug_abbrev     00000154 000000014016f000 DATA
+  6 .zdebug_line       0001e031 0000000140170000 DATA
+  7 .zdebug_frame      000059d4 000000014018f000 DATA
+  8 .debug_gdb_scripts 0000002a 0000000140195000 DATA, DEBUG
+  9 .zdebug_info       000343a4 0000000140196000 DATA
+ 10 .zdebug_loclists   00014509 00000001401cb000 DATA
+ 11 .zdebug_rnglists   0000d18a 00000001401e0000 DATA
+ 12 .zdebug_addr       00000bcf 00000001401ee000 DATA
+
+linux/arm64: $OUT/xo/hello-linux
+$ objdump -h hello-linux | grep debug   # xo
+ 12 .debug_line       0004d979 0000000000000000 DEBUG
+ 13 .debug_abbrev     000003c5 0000000000000000 DEBUG
+ 14 .debug_info       00056102 0000000000000000 DEBUG
+ 15 .debug_loclists   000c5cb2 0000000000000000 DEBUG
+ 16 .debug_addr       000003e8 0000000000000000 DEBUG
+ 17 .debug_str        00002800 0000000000000000 DEBUG
+ 18 .debug_line_str   00002800 0000000000000000 DEBUG
+ 19 .debug_aranges    000000f0 0000000000000000 DEBUG
+
+$ objdump -s -j .debug_abbrev hello-linux
+
+hello-linux:	file format elf64-littleaarch64
+Contents of section .debug_abbrev:
+ 0000 01110110 17110112 01250813 058c0117  .........%......
+ 0010 73171b0e 03080000 022e0103 08110112  s...............
+
+== Apple's own model: a C hello with clang -g, linked by ld
+$ otool -l hello | grep sectname | grep debug   # nothing: ld leaves DWARF in hello.o
+0
+
+$ nm -ap hello | grep OSO   # the debug map: where the DWARF is
+000000006ada69ee - 00 0001   OSO $OUT/c/hello.o
+
+$ dsymutil hello
+
+$ ls -l hello.dSYM/Contents/Resources/DWARF/hello
+-rw-r--r--  1 josephspurrier  wheel  9224 Oct 22 15:54 hello.dSYM/Contents/Resources/DWARF/hello
+
+# hello.o deleted: the DWARF is now only in hello.dSYM
+$ atos -o hello -arch arm64 0x0000000100000460
+greet (in hello) (hello.c:4)
+
