@@ -20,6 +20,18 @@ fn map_key(m: Module, t: Int) -> Int {
 }
 
 /// The value type of the Map or Set struct t (mapVal).
+/// The part of a Map helper's name that tells its result option ot (a
+/// get's V?, a remove's removed value) from the map type's own value
+/// option: Map[K, Bytes] lowers to Map[K, Str], whose helpers then return
+/// a Bytes?, so they need a name of their own. "" for vt's own option,
+/// "[Bytes?]" for the other. It depends on the types only, never on which
+/// instance a build made first: an order dependent name let a cached
+/// caller call the plain name for a Str? while this build made it the
+/// Bytes? one (gotcha helper-name-creation-order).
+fn opt_suffix(m: Module, vt: Int, ot: Int) -> Str {
+  if m.types[ot].name == "${m.types[vt].name}?" { "" } else { "[${m.types[ot].name}]" }
+}
+
 fn map_val(m: Module, t: Int) -> Int {
   m.types[m.types[t].fields[1].ty].elems[0]
 }
@@ -578,13 +590,7 @@ fn (var b: Builder) lists_remove(t: Int, ot: Int) -> Str {
   let _scan = b.map_scan(t)
   let _find = b.map_find(t)
   let rt = b.m.tuple([t, ot])
-  var name = "xo.map.remove[${b.m.types[t].name}]"
-  let have = b.fidx(name)
-  if have >= 0 && b.m.types[b.m.funcs[have].results[0]].name != b.m.types[rt].name {
-    // Map[K, Bytes] lowers to the Map[K, Str] of Str values, but its
-    // removed value is a Bytes?: one function per result type
-    name = name + "[${b.m.types[ot].name}]"
-  }
+  let name = "xo.map.remove[${b.m.types[t].name}]${opt_suffix(b.m, map_val(b.m, t), ot)}"
   var rest = ""
   if b.m.map_log {
     b.maph_prep_rem(t, ot)
@@ -616,11 +622,7 @@ fn (var b: Builder) lists_remove(t: Int, ot: Int) -> Str {
 fn (var b: Builder) maph_remrest(t: Int, ot: Int) -> Str {
   let kt = map_key(b.m, t)
   let rt = b.m.tuple([t, ot])
-  var name = "xo.maph.remrest[${b.m.types[t].name}]"
-  let have = b.fidx(name)
-  if have >= 0 && b.m.types[b.m.funcs[have].results[0]].name != b.m.types[rt].name {
-    name = name + "[${b.m.types[ot].name}]"
-  }
+  let name = "xo.maph.remrest[${b.m.types[t].name}]${opt_suffix(b.m, map_val(b.m, t), ot)}"
   let _hf = b.hash_func(kt)
   let fi = b.thunk_func(name, [t, kt], [rt], [])
   if fi < 0 {

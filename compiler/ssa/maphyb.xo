@@ -108,12 +108,7 @@ fn (var b: Builder) maph_get(t: Int, mv: Int, k: Int, nt: Int) -> Int {
 fn (var b: Builder) maph_logget(t: Int, nt: Int) -> Str {
   let kt = map_key(b.m, t)
   let lt = b.maph_lt(t)
-  var name = "xo.maph.logget[${b.m.types[t].name}]"
-  let have = b.fidx(name)
-  if have >= 0 && b.m.types[b.m.funcs[have].results[0]].name != b.m.types[nt].name {
-    // Map[K, Bytes] lowers to Map[K, Str], but its get is a Bytes?
-    name = name + "[${b.m.types[nt].name}]"
-  }
+  let name = "xo.maph.logget[${b.m.types[t].name}]${opt_suffix(b.m, map_val(b.m, t), nt)}"
   let fi = b.thunk_func(name, [t, kt], [nt], [])
   if fi < 0 {
     return name
@@ -339,11 +334,7 @@ fn (var b: Builder) maph_slowrem(t: Int, ot: Int) -> Str {
   let conv = b.maph_tolog(t)
   let rt = b.m.tuple([t, ot])
   let lrt = b.m.tuple([lt, ot])
-  var name = "xo.maph.slowrem[${b.m.types[t].name}]"
-  let have = b.fidx(name)
-  if have >= 0 && b.m.types[b.m.funcs[have].results[0]].name != b.m.types[rt].name {
-    name = name + "[${b.m.types[ot].name}]"
-  }
+  let name = "xo.maph.slowrem[${b.m.types[t].name}]${opt_suffix(b.m, map_val(b.m, t), ot)}"
   let fi = b.thunk_func(name, [t, kt], [rt], [])
   if fi < 0 {
     return name

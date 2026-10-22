@@ -1185,11 +1185,7 @@ fn (var b: Builder) mlog_remove(t: Int, ot: Int) -> Str {
   let claim = b.mlog_claim(t)
   let record = b.mlog_record(t)
   let rt = b.m.tuple([t, ot])
-  var name = "xo.mlog.remove[${b.m.types[t].name}]"
-  let have = b.fidx(name)
-  if have >= 0 && b.m.types[b.m.funcs[have].results[0]].name != b.m.types[rt].name {
-    name = name + "[${b.m.types[ot].name}]"
-  }
+  let name = "xo.mlog.remove[${b.m.types[t].name}]${opt_suffix(b.m, mlog_val(b.m, t), ot)}"
   let fi = b.thunk_func(name, [t, kt], [rt], [])
   if fi < 0 {
     return name
