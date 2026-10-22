@@ -195,23 +195,7 @@ fn refill_alloc(h: Int, n: Int, c: Int, size: Int) -> Int {
   }
   if m != 0 {
     rt.mem_store(fl, FREE_LISTS, m, 8)
-    // a magazine is full: MAG_BYTES / size blocks, at least 8 (by long
-    // division: no `/`, which can fault)
-    var q = 0
-    var rem = MAG_BYTES
-    var k = 12
-    while k >= 0 {
-      let d = size.wrapping_shl(k)
-      if d <= rem {
-        rem = rem.wrapping_sub(d)
-        q = q | (1).wrapping_shl(k)
-      }
-      k = k.wrapping_sub(1)
-    }
-    if q < 8 {
-      q = 8
-    }
-    rt.mem_store(fl, NFREE, q, 8)
+    rt.mem_store(fl, NFREE, mag_count(size), 8)
   }
   // again: from the magazine, or, when another thread took the central
   // one first (the slot read 0 under the lock), from the bump
@@ -367,8 +351,15 @@ pub fn refill(h: Int, n: Int) {
     }
   }
   rt.mem_store(fl, FREE_LISTS, m, 8)
-  // a magazine is full: MAG_BYTES / size blocks, at least 8 (by long
-  // division: no `/`, which can fault)
+  rt.mem_store(fl, NFREE, mag_count(size), 8)
+}
+
+/// The blocks of a full magazine of size byte blocks: MAG_BYTES / size,
+/// at least 8 (by long division: no `/`, which can fault). A call
+/// (ssa.cold_fn): inlined into alloc through refill_alloc, LLVM's -O3
+/// hoisted its 13 unrolled steps above the free list test, about 80
+/// instructions on every allocation (strings +15%, 2026-10-21).
+fn mag_count(size: Int) -> Int {
   var q = 0
   var rem = MAG_BYTES
   var k = 12
@@ -383,7 +374,7 @@ pub fn refill(h: Int, n: Int) {
   if q < 8 {
     q = 8
   }
-  rt.mem_store(fl, NFREE, q, 8)
+  q
 }
 
 /// free_mt's common case, a leaf small enough for the inliner at every
