@@ -3,7 +3,7 @@
 ## 2026-10-22: speedup: TLS 1.2 AES-GCM records sealed in place from the caller's buffer
 
 - Kind: speedup
-- Commit: this commit
+- Commit: 01f86921c
 - Found by: XO_PROF=cpu of the tlsrate bulk server in Docker, TLS 1.2 against TLS 1.3 (Xo Lang 3): libcstr.copy_words and asn1.cat only in the 1.2 profile, server CPU 372 against 298 us/MB
 - Go reference: crypto/tls conn.go (halfConn.encrypt seals in the record buffer)
 - Test: native/llrt/tls12 module test (seal_at equals seal, byte for byte, for both key sizes, 27 lengths up to 64 KiB and three sequence numbers, and the records open), tls12_client, http_tls and http_tls_keys goldens (arm64, LLVM with Go parity), TestTLSDiff
