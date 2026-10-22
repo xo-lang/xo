@@ -191,7 +191,7 @@ func NewScope(tk *Task) *Scope {
 	// share its arena (see Arena)
 	s.body = &Task{w: tk.w, held: tk.held, shield: tk.shield, arena: tk.arena, stop: tk.stop, th: tk.th, bud: tk.bud}
 	bn := &cnode{parent: tk.node, done: make(chan struct{}), w: tk.w, seq: nodeSeq.Add(1), kind: nodeBody, tk: s.body}
-	runtime.Callers(2, bn.site[:])
+	runtime.Callers(2, bn.site[:2])
 	s.bodyNode = bn.link()
 	s.body.node = s.bodyNode
 	s.tasksNode = newNodeOf(s.bodyNode, tk.w, nodeTasks, nil)
@@ -356,7 +356,7 @@ func spawnWith[T, E any](tk *Task, s *Scope, f func(*Task) Result[T, E], backgro
 	}
 	node := child.node
 	th := child.th
-	runtime.Callers(2, th.site[:])
+	runtime.Callers(2, th.site[:2])
 	h.th = th
 	s.tasks = append(s.tasks, &taskRec{node: node, background: background, done: h.done, th: th})
 	if s.running == 0 {
