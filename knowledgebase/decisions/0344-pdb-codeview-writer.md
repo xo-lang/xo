@@ -44,7 +44,11 @@ definition through the hash; Wine's dbghelp lists each frame's variables
 with their parameter flags. Values in a debugger are cdb's `dv`, in the
 next approved Windows run.
 Measured on xo.exe: a 61 MB PDB (1.7 MB with stage 1's names only; the
-location records are most of it) and a 1.9 s link phase. CI 39831734067
+location records are most of it) and a 1.9 s link phase. Each place's ranges are
+now merged and written with CodeView gaps (a location list repeats a
+stack slot in every entry where another piece moves): 20.7 MB, the
+S_DEFRANGE_REGISTER_REL records from 2.1 million (42 MB) to 135,321,
+the link phase 2.0 s. CI 39831734067
 (stages 1 to 3 on real Windows): cdb loaded the PDB ("pdb symbols") and
 named poke; Windows' own dbghelp, through scripts/pdbframes, found no
 PDB. The debug directory named it with forward slashes (xo's paths),

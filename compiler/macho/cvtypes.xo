@@ -284,68 +284,147 @@ struct PdbLocal {
   defs: List[(Int, Bytes)]
 }
 
-/// The locals of vars: each location range (an exprloc: every range of
-/// whole) and piece in a register (S_DEFRANGE_REGISTER, or
+/// The locals of vars: each place a variable's DWARF locations put it or
+/// a piece of it, in a register (S_DEFRANGE_REGISTER, or
 /// S_DEFRANGE_SUBFIELD_REGISTER for a piece of a value in several) or in
 /// memory at a register and an offset (S_DEFRANGE_REGISTER_REL, the
 /// piece's offset in its value in the flags); a constant, a global's
 /// address or an unread expression has none (a variable with no record
-/// is left out). A range is in one section, split at 0xffff bytes.
+/// is left out). A place's ranges (an exprloc: every range of whole) are
+/// merged, then written as few records as CodeView allows: each covers
+/// at most 0xffff bytes of one section, its holes as gaps (a location
+/// list repeats a stack slot in every entry where another piece moves:
+/// xo.exe had 2.1 million S_DEFRANGE_REGISTER_REL, 42 MB, before).
 fn cv_locals(var t: CvTypes, info: debug.Info, vars: List[debug.Var], whole: List[(Int, Int)], sects: List[PdbSect], base: Int) -> List[PdbLocal] {
   var out: List[PdbLocal] = []
   for v in vars {
-    var defs: List[(Int, Bytes)] = []
+    // the places in first seen order (kind, register, offset, the
+    // piece's offset in its value) and their ranges
+    var keys: List[(Int, Int, Int, Int)] = []
+    var spans: List[List[(Int, Int)]] = []
     for l in v.locs {
-      let spans = if l.lo == 0 && l.hi == -1 { whole } else { [(l.lo, l.hi)] }
+      let rs = if l.lo == 0 && l.hi == -1 { whole } else { [(l.lo, l.hi)] }
       let multi = l.pieces.len() > 1
       var poff = 0
       for pc in l.pieces {
+        var key = (0, 0, 0, 0)
         match pc.place {
           debug.Place.Reg(r) => {
-            let cr = cv_reg(r)
-            if cr != 0 {
-              for (lo, hi) in spans {
-                for (so, seg, n) in cv_ranges(sects, base, lo, hi) {
-                  var w = new_out(16)
-                  w.u16(cr)
-                  w.u16(0)
-                  if multi {
-                    w.u32(poff & 0xfff)
-                  }
-                  w.u32(so)
-                  w.u16(seg)
-                  w.u16(n)
-                  defs.push((if multi { S_DEFRANGE_SUBFIELD_REGISTER } else { S_DEFRANGE_REGISTER }, w.done()))
-                }
-              }
-            }
+            key = (if multi { S_DEFRANGE_SUBFIELD_REGISTER } else { S_DEFRANGE_REGISTER }, cv_reg(r), 0, poff)
           }
           debug.Place.Breg(r, o) => {
-            let cr = cv_reg(r)
-            if cr != 0 {
-              for (lo, hi) in spans {
-                for (so, seg, n) in cv_ranges(sects, base, lo, hi) {
-                  var w = new_out(16)
-                  w.u16(cr)
-                  // the piece's offset in its value, bits 4 to 15
-                  w.u16((poff & 0xfff) << 4)
-                  w.u32(o & 0xffffffff)
-                  w.u32(so)
-                  w.u16(seg)
-                  w.u16(n)
-                  defs.push((S_DEFRANGE_REGISTER_REL, w.done()))
-                }
-              }
-            }
+            key = (S_DEFRANGE_REGISTER_REL, cv_reg(r), o, poff)
           }
           _ => {}
         }
+        if key.0 != 0 && key.1 != 0 {
+          var k = -1
+          for (i, x) in keys.indexed() {
+            if x == key {
+              k = i
+            }
+          }
+          if k < 0 {
+            k = keys.len()
+            keys.push(key)
+            spans.push([])
+          }
+          var sp = spans[k]
+          for r in rs {
+            sp.push(r)
+          }
+          spans[k] = sp
+        }
         poff += pc.size
+      }
+    }
+    var defs: List[(Int, Bytes)] = []
+    for (i, (kind, cr, o, poff)) in keys.indexed() {
+      for (so, seg, n, gaps) in cv_spans(sects, base, merge_spans(spans[i])) {
+        var w = new_out(16 + 4 * gaps.len())
+        w.u16(cr)
+        if kind == S_DEFRANGE_REGISTER_REL {
+          // the piece's offset in its value, bits 4 to 15
+          w.u16((poff & 0xfff) << 4)
+          w.u32(o & 0xffffffff)
+        } else {
+          w.u16(0)
+          if kind == S_DEFRANGE_SUBFIELD_REGISTER {
+            w.u32(poff & 0xfff)
+          }
+        }
+        w.u32(so)
+        w.u16(seg)
+        w.u16(n)
+        for (g, gn) in gaps {
+          w.u16(g)
+          w.u16(gn)
+        }
+        defs.push((kind, w.done()))
       }
     }
     if !defs.is_empty() {
       out.push(PdbLocal{name: v.name, ty: cv_index(t, info, v.ty), param: v.param, defs: defs})
     }
+  }
+  out
+}
+
+/// Ranges sorted, with the ones that touch or overlap joined.
+fn merge_spans(rs: List[(Int, Int)]) -> List[(Int, Int)] {
+  var out: List[(Int, Int)] = []
+  for (lo, hi) in rs.sort() {
+    if hi <= lo {
+      continue
+    }
+    if !out.is_empty() && lo <= out[out.len() - 1].1 {
+      let (plo, phi) = out[out.len() - 1]
+      out[out.len() - 1] = (plo, if hi > phi { hi } else { phi })
+    } else {
+      out.push((lo, hi))
+    }
+  }
+  out
+}
+
+/// Merged ranges as CodeView records' ranges: (section offset, section,
+/// length, the gaps (offset from the start, length)), each at most 0xffff
+/// bytes long in one section, a longer range cut; a range outside the
+/// sections is left out.
+fn cv_spans(sects: List[PdbSect], base: Int, rs0: List[(Int, Int)]) -> List[(Int, Int, Int, List[(Int, Int)])] {
+  var rs = rs0
+  var out: List[(Int, Int, Int, List[(Int, Int)])] = []
+  var i = 0
+  while i < rs.len() {
+    let (lo, _) = rs[i]
+    let (seg, off) = seg_off(sects, lo - base)
+    if seg == 0 {
+      i += 1
+      continue
+    }
+    let sect_end = lo + sects[seg - 1].vsize - off
+    let limit = if lo + 0xffff < sect_end { lo + 0xffff } else { sect_end }
+    var end = lo
+    var gaps: List[(Int, Int)] = []
+    while i < rs.len() && rs[i].0 < limit {
+      let (a, b) = rs[i]
+      if a > end {
+        // a record stays under 0xffff bytes: at most 1000 gaps
+        if gaps.len() >= 1000 {
+          break
+        }
+        gaps.push((end - lo, a - end))
+      }
+      if b > limit {
+        // the rest starts the next record
+        end = limit
+        rs[i] = (limit, b)
+        break
+      }
+      end = b
+      i += 1
+    }
+    out.push((off, seg, end - lo, gaps))
   }
   out
 }

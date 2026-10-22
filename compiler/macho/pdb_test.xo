@@ -143,3 +143,13 @@ test "CodeView registers, primitives, numeric leaves and ranges" {
   expect(cv_ranges(sects, 0x140000000, 0x140001010, 0x140021010)) == [(0x10, 1, 0xffff), (0x1000f, 1, 0xffff), (0x2000e, 1, 2)]
   expect(cv_ranges(sects, 0x140000000, 0x150000000, 0x150000010)) == []
 }
+
+test "a place's ranges merged, written with gaps, cut at 0xffff bytes" {
+  expect(merge_spans([(10, 20), (20, 30), (40, 50), (45, 60), (5, 5)])) == [(10, 30), (40, 60)]
+  let sects = [PdbSect{rva: 0x1000, vsize: 0x30000, chars: 0, header: b""}]
+  let b = 0x140000000
+  // two ranges with a hole: one record, one gap
+  expect(cv_spans(sects, b, [(b + 0x1010, b + 0x1020), (b + 0x1030, b + 0x1040)])) == [(0x10, 1, 0x30, [(0x10, 0x10)])]
+  // a range past 0xffff bytes: cut, the rest a record of its own
+  expect(cv_spans(sects, b, [(b + 0x1000, b + 0x11000)])) == [(0, 1, 0xffff, []), (0xffff, 1, 1, [])]
+}
