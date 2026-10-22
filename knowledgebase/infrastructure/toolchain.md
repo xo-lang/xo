@@ -158,6 +158,17 @@ needs Go, the host's clang, and a clean tree
 (`XO_RELEASE_ALLOW_DIRTY=1` to try it); 992 s and 9.3 GB peak RSS (release run 7) on
 the development Mac with other agents running (2026-10-12). Nothing
 publishes them; releases are on hold (owner).
+Since 2026-10-22 it first builds ThreadSanitizer's runtime for native
+`--race` (decision 0273) into the checkout's git ignored `lib/xo/race`,
+which each archive copies: darwin-arm64 on the host and linux-arm64 in
+Docker (`scripts/race-runtime.sh WORK <checkout> linux-arm64`), so it
+refuses to start when Docker is not running. `XO_RELEASE_RACE_WORK`
+(default `$TMPDIR/xo-release-race`) holds the LLVM sources and build;
+`XO_RELEASE_RACE=reuse` keeps a runtime already in `lib/xo/race` (and
+then needs no Docker for linux-arm64). `XO_RELEASE_DRY_RUN=1` runs the
+checks (host, clean tree, Docker, the Windows tools) and prints each
+step's command without building, writing, or deleting anything. Last
+verified: 2026-10-22 (the dry run, the refusal with no Docker, reuse).
 `scripts/release-verify.sh ARCHIVE [OUTDIR]` checks an archive on its
 host from a checkout of the same commit: unpacked clean, with no Go on
 PATH `xo version`, `rtpack --status`, `check`, and a hello program on
