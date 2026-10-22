@@ -4,6 +4,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
 - [check-cache-builder-reads-names.md](check-cache-builder-reads-names.md): Observed and fixed 2026-10-22: the SSA builder's main_unnamed read the checker's names, which a module skipped by XO_CHK_CACHE=auto never records, so warm builds kept main's user capability dispatch (TestModuleCheckAuto failed); the module check entry now records it.
+- [go-own-mark-receiver-not-addressable.md](go-own-mark-receiver-not-addressable.md): Observed and fixed 2026-10-22: after 0335 an own-marked receiver (a Request or Embed.Dir, holding a Map) was a Go call result, and std/rt's pointer methods (M_client_ip, M_paths) did not compile on it; go_recv passes it through rt.Addr.
 - [intrinsic-mapped-before-lowered.md](intrinsic-mapped-before-lowered.md): Observed 2026-10-21: an xo built (by xocheck) after compiler/ssa mapped cpu.chacha_blocks4 but before the backends lowered it built a bin/xo calling the missing C symbol xo_chacha_blocks4 (dyld: Symbol not found); lower before mapping, or delete the intermediate bin/xo and its cache entry
 
 - [rosetta-fork-threads-hang.md](rosetta-fork-threads-hang.md): Observed 2026-10-22: proc_children_load (16 threads forking children) hangs under Docker Desktop's Rosetta on Rosetta's own PI locks, passes under qemu-x86_64 and natively on linux/arm64; linux-goldens.sh skips it under Rosetta.

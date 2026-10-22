@@ -97,6 +97,12 @@ func MarkP[T any](p *T) {
 	}
 }
 
+// Addr is a pointer to a copy of v: the generated code calls a Go method
+// on a receiver that is not addressable (an own-marked copy, decision
+// 0335) through it, since a std type's method may have a pointer
+// receiver (Http_Request.M_client_ip, Embed_Dir.M_paths).
+func Addr[T any](v T) *T { return &v }
+
 // Own marks the lists held by v and returns it: generated code wraps a
 // value of a type parameter in Own where it copies it out of a place.
 //

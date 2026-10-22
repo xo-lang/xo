@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The Go backend compiles a std method call on a value holding a Map
+  again (`Request.client_ip`, `Embed.Dir.paths`): since decision 0335 the
+  own-marked receiver was not addressable for std/rt's pointer methods.
 - `XO_CHK_CACHE=auto` warm builds are the cache-off build's binary
   again: a skipped main module's check entry records whether main is
   named only by its declaration (check cache v6), so main's own Os is

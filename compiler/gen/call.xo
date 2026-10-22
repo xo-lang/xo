@@ -566,7 +566,7 @@ fn (var g: Gen) emit_call(fo: Int, sub: Map[Int, Int], recv0: Str, args: List[St
   var call = ""
   var recv = recv0
   if o.iface && g.method_is_go_method(fo) {
-    call = "${recv}.${go_method(g.oname(fo))}(tk${prefix_comma(args)})"
+    call = "${g.go_recv(recv)}.${go_method(g.oname(fo))}(tk${prefix_comma(args)})"
   } else if g.ostd(fo) {
     call = g.std_call(fo, sub, recv, args)
     let from = if at { g.log_from(fo) } else { "" }
@@ -580,7 +580,7 @@ fn (var g: Gen) emit_call(fo: Int, sub: Map[Int, Int], recv0: Str, args: List[St
     let pr = g.pkg_ref(o.module)
     call = "${pr}F_${g.oname(fo)}${g.targs_code(o.tparams, sub)}(tk${prefix_comma(args)})"
   } else if g.method_is_go_method(fo) {
-    call = "${recv}.${go_method(g.oname(fo))}(tk${prefix_comma(args)})"
+    call = "${g.go_recv(recv)}.${go_method(g.oname(fo))}(tk${prefix_comma(args)})"
   } else {
     if o.recv_var {
       recv = "&" + recv
@@ -589,6 +589,19 @@ fn (var g: Gen) emit_call(fo: Int, sub: Map[Int, Int], recv0: Str, args: List[St
     call = "${pr}${g.func_go_name(fo)}${g.targs_code(o.tparams, sub)}(tk, ${recv}${prefix_comma(args)})"
   }
   g.call_result(fo, sub, call)
+}
+
+/// The receiver code of a Go method call: an own-marked copy (own_code's
+/// `func(v T) T {...}(x)`, decision 0335) is not addressable, and Go
+/// calls a pointer method only on an addressable value, so it goes
+/// through a pointer to it (rt.Addr), which calls value methods too
+/// (2026-10-22: Request.client_ip, Embed.Dir.paths on a Request or Dir
+/// holding a Map).
+fn (var g: Gen) go_recv(code: Str) -> Str {
+  if code.starts_with("func(v ") {
+    return "${g.rt()}Addr(${code})"
+  }
+  code
 }
 
 /// The native implementation of std function fo when the Go backend
@@ -675,7 +688,7 @@ fn (var g: Gen) std_call(fo: Int, sub: Map[Int, Int], recv0: Str, args: List[Str
     return "${r}${g.std_prefix(rm)}${g.oname(o.recv)}_${g.oname(fo)}${g.targs_code(o.tparams, sub)}(tk${prefix_comma(args)})"
   }
   if g.method_is_go_method(fo) {
-    return "${recv0}.${go_method(g.oname(fo))}(tk${prefix_comma(args)})"
+    return "${g.go_recv(recv0)}.${go_method(g.oname(fo))}(tk${prefix_comma(args)})"
   }
   var recv = recv0
   if o.recv_var {
