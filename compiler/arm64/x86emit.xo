@@ -179,7 +179,7 @@ fn (var g: G) x86_emit_once() {
   // instructions a call: x25519.fe64_sq, 2026-10-21). The borrowed
   // registers' saves go below them (x86_borrow_at).
   let rest = fr.size - pushed
-  if g.os != "windows" && !fr.leaf && !calls && !g.out && rest > 0 && rest <= 96 && g.x86_rz_ok() {
+  if g.os != "windows" && !fr.leaf && !calls && !g.out && rest > 0 && rest <= 96 && pass_on(g.m, "x86_red_zone") && g.x86_rz_ok() {
     fr.rz = rest
   }
   g.fr = fr

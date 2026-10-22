@@ -53,6 +53,8 @@ pub fn passes() -> List[Str] {
     "x86_sink_loads",
     "x86_fold_loads",
     "x86_carry_fuse",
+    // System V leaf frames in the red zone below rsp (x86emit.xo Frame.rz)
+    "x86_red_zone",
   ]
 }
 

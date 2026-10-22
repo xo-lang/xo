@@ -32,8 +32,10 @@ var winIdentityAllowed = map[string]bool{"byref_struct/merged": true, "cli_parse
 // golden's own functions and the compiler's instances (not std's, whose
 // runtime differs by OS) is linux/amd64's, as decision 0254 6c makes Xo's
 // calls System V on both. Shrink wrapping is off for Linux too (Windows
-// has it off: one prologue per function) and inlining off for both (the
-// runtime inlined differs by OS). Normalized: directives (.seh against
+// has it off: one prologue per function), and the red zone frames
+// (x86_red_zone, 0136b3ce8: a System V leaf keeps its frame below rsp,
+// which Windows has not), and inlining off for both (the runtime inlined
+// differs by OS). Normalized: directives (.seh against
 // .cfi), labels, the export calls' targets (Windows calls the function,
 // Linux the export's alias of it), the C runtime's functions Windows
 // with no C runtime calls as Xo's (cabi_wincrt.fmod for fmod), thunk names, a leaf's fault stub
@@ -57,7 +59,7 @@ func TestWindowsAmd64Identity(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			dir := filepath.Join("..", "llvm", "testdata", "golden", name)
-			lin := winAsm(t, dir, "linux/amd64", "-shrink_split,-inline")
+			lin := winAsm(t, dir, "linux/amd64", "-shrink_split,-inline,-x86_red_zone")
 			win := winAsm(t, dir, "windows/amd64", "-inline")
 			alias := exportAliases(lin)
 			a := ownFuncsNorm(lin, alias)
