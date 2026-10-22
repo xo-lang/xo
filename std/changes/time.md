@@ -1,5 +1,17 @@
 # std/time changes
 
+## 2026-10-21: perf: layout fields recognized in bytes
+
+- Kind: perf
+- Commit: (filled in after the push)
+- Found by: bench/results/regexp-time-csv-vs-go-2026-10-21.md
+- Test: std module tests native/time on arm64 and LLVM
+
+A layout field and its argument are recognized by comparing the layout's bytes
+(no Str per field name), and `format` builds its text in one StrBuilder.
+300,000 x 2 formats 7,390 M to 6,206 M instructions, 300,000 parses 3,768 M to
+3,300 M. Results and error texts are the same.
+
 ## 2026-10-21: perf: layout items carry an integer field code
 
 - Kind: perf

@@ -508,6 +508,104 @@ fn field_args(name: Str) -> List[Str]? {
   }
 }
 
+/// Whether b[lo..hi] is the bytes want.
+fn eq_range(b: Bytes, lo: Int, hi: Int, want: Bytes) -> Bool {
+  if hi - lo != want.len() {
+    return false
+  }
+  for k in 0..want.len() {
+    if b[lo + k] != want[k] {
+      return false
+    }
+  }
+  true
+}
+
+/// field_code over b[lo..hi]: the length and first byte pick the candidate
+/// and its bytes are compared in place (no Str for the name).
+fn field_code_b(b: Bytes, lo: Int, hi: Int) -> Int {
+  let n = hi - lo
+  if n < 3 || n > 7 {
+    return 0
+  }
+  let c = b[lo]
+  if n == 3 {
+    return if eq_range(b, lo, hi, b"day") { 3 } else { 0 }
+  }
+  if n == 5 {
+    return if eq_range(b, lo, hi, b"month") { 2 } else { 0 }
+  }
+  if n == 7 {
+    return if eq_range(b, lo, hi, b"weekday") { 4 } else { 0 }
+  }
+  if n == 4 {
+    if c == 121 {
+      return if eq_range(b, lo, hi, b"year") { 1 } else { 0 }
+    }
+    if c == 104 {
+      return if eq_range(b, lo, hi, b"hour") { 5 } else { 0 }
+    }
+    if c == 97 {
+      return if eq_range(b, lo, hi, b"ampm") { 7 } else { 0 }
+    }
+    if c == 102 {
+      return if eq_range(b, lo, hi, b"frac") { 10 } else { 0 }
+    }
+    if c == 122 {
+      return if eq_range(b, lo, hi, b"zone") { 12 } else { 0 }
+    }
+    return 0
+  }
+  // length 6
+  if c == 104 {
+    return if eq_range(b, lo, hi, b"hour12") { 6 } else { 0 }
+  }
+  if c == 109 {
+    return if eq_range(b, lo, hi, b"minute") { 8 } else { 0 }
+  }
+  if c == 115 {
+    return if eq_range(b, lo, hi, b"second") { 9 } else { 0 }
+  }
+  if c == 111 {
+    return if eq_range(b, lo, hi, b"offset") { 11 } else { 0 }
+  }
+  if c == 108 {
+    return if eq_range(b, lo, hi, b"lbrace") { 13 } else { 0 }
+  }
+  if c == 114 {
+    return if eq_range(b, lo, hi, b"rbrace") { 14 } else { 0 }
+  }
+  0
+}
+
+/// The argument b[lo..hi] as a literal when it is one of the arguments some
+/// field takes, else None.
+fn arg_literal(b: Bytes, lo: Int, hi: Int) -> Str? {
+  if hi == lo + 1 && b[lo] >= 49 && b[lo] <= 57 {
+    return Some(match b[lo] {
+      49 => "1"
+      50 => "2"
+      51 => "3"
+      52 => "4"
+      53 => "5"
+      54 => "6"
+      55 => "7"
+      56 => "8"
+      _ => "9"
+    })
+  }
+  if eq_range(b, lo, hi, b"short") {
+    return Some("short")
+  }
+  if eq_range(b, lo, hi, b"name") {
+    return Some("name")
+  }
+  if eq_range(b, lo, hi, b"compact") {
+    return Some("compact")
+  }
+  None
+}
+
 /// Whether `{name}` or `{name:arg}` is a field of a layout (field_args
 /// without the list).
 fn field_ok(code: Int, arg: Str, has_arg: Bool) -> Bool {
@@ -566,22 +664,33 @@ fn layout_items(layout: Str) -> List[Item] ! Str {
     if j >= n || b[j] == 123 {
       return Err("unclosed { (a literal brace is written {lbrace})")
     }
-    let body = layout[i + 1..j]
-    var name = body
-    var arg = ""
-    var has_arg = false
-    match body.find(":") {
-      Some(k) => {
-        name = body[0..k]
-        arg = body[k + 1..]
-        has_arg = true
+    // the field is recognized in the layout's bytes, without slicing a
+    // name or an argument; Strs are made only for an error
+    var colon = -1
+    var cj = i + 1
+    while cj < j {
+      if b[cj] == 58 {
+        colon = cj
+        break
       }
-      None => {}
+      cj += 1
     }
-    // a valid field is checked without building its argument list; the
-    // list is built only for the error text
-    let code = field_code(name)
-    if !field_ok(code, arg, has_arg) {
+    let nend = if colon >= 0 { colon } else { j }
+    let code = field_code_b(b, i + 1, nend)
+    var arg = ""
+    var arg_known = true
+    if colon >= 0 {
+      match arg_literal(b, colon + 1, j) {
+        Some(a) => arg = a
+        None => arg_known = false
+      }
+    }
+    if !arg_known || !field_ok(code, arg, colon >= 0) {
+      let body = layout[i + 1..j]
+      var name = body
+      if colon >= 0 {
+        name = layout[i + 1..colon]
+      }
       match field_args(name) {
         None => return Err("unknown field {${body}}")
         Some(args) => return Err("{${body}}: ${args_text(name, args)}")
@@ -596,7 +705,7 @@ fn layout_items(layout: Str) -> List[Item] ! Str {
         items.push(Item{lit: lit, field: "", arg: ""})
         lit = ""
       }
-      items.push(Item{lit: "", field: name, arg: arg, code: code})
+      items.push(Item{lit: "", field: "", arg: arg, code: code})
       if code == 6 {
         hour12 = true
       }
@@ -658,63 +767,63 @@ fn format(t: Time, z: Zone, layout: Str, at: rt.Loc) -> Str {
   let rem = local - days * 86400
   let d = date_of(days)
   let hour = rem / 3600
-  var out = ""
+  var out = StrBuilder.new()
   for it in items {
     match it.code {
       0 => {
-        out = out + it.lit
+        out.write(it.lit)
       }
       1 => {
-        out = out + pad(d.year, 4)
+        out.write(pad(d.year, 4))
       }
       2 => {
         if it.arg == "" {
-          out = out + pad(d.month % 100, 2)
+          out.write(pad(d.month % 100, 2))
         } else if it.arg == "1" {
-          out = out + "${d.month}"
+          out.write("${d.month}")
         } else if it.arg == "short" {
-          out = out + month_short()[d.month - 1]
+          out.write(month_short()[d.month - 1])
         } else {
-          out = out + month_name()[d.month - 1]
+          out.write(month_name()[d.month - 1])
         }
       }
       3 => {
         if it.arg == "1" {
-          out = out + "${d.day}"
+          out.write("${d.day}")
         } else {
-          out = out + pad(d.day % 100, 2)
+          out.write(pad(d.day % 100, 2))
         }
       }
       4 => {
         let w = weekday_index(days)
         if it.arg == "short" {
-          out = out + weekday_short()[w]
+          out.write(weekday_short()[w])
         } else {
-          out = out + weekday_name()[w]
+          out.write(weekday_name()[w])
         }
       }
       5 => {
-        out = out + pad(hour, 2)
+        out.write(pad(hour, 2))
       }
       6 => {
         var h = hour % 12
         if h == 0 {
           h = 12
         }
-        out = out + pad(h, 2)
+        out.write(pad(h, 2))
       }
       7 => {
         if hour < 12 {
-          out = out + "AM"
+          out.write("AM")
         } else {
-          out = out + "PM"
+          out.write("PM")
         }
       }
       8 => {
-        out = out + pad(rem / 60 % 60, 2)
+        out.write(pad(rem / 60 % 60, 2))
       }
       9 => {
-        out = out + pad(rem % 60, 2)
+        out.write(pad(rem % 60, 2))
       }
       10 => {
         var digits = pad(nanos, 9)
@@ -727,12 +836,13 @@ fn format(t: Time, z: Zone, layout: Str, at: rt.Loc) -> Str {
           digits = digits[0..k]
         }
         if digits != "" {
-          out = out + "." + digits
+          out.write(".")
+          out.write(digits)
         }
       }
       11 => {
         if off == 0 && it.arg == "" {
-          out = out + "Z"
+          out.write("Z")
         } else {
           // Go's sign is the offset's in whole minutes: -59s is +00:00
           var o = off
@@ -743,19 +853,20 @@ fn format(t: Time, z: Zone, layout: Str, at: rt.Loc) -> Str {
           if o < 0 {
             o = -o
           }
-          out = out + sign + pad(o / 3600 % 100, 2)
+          out.write(sign)
+          out.write(pad(o / 3600 % 100, 2))
           if it.arg == "" {
-            out = out + ":"
+            out.write(":")
           }
-          out = out + pad(o / 60 % 60, 2)
+          out.write(pad(o / 60 % 60, 2))
         }
       }
       _ => {
-        out = out + abbr_at(z, sec)
+        out.write(abbr_at(z, sec))
       }
     }
   }
-  out
+  out.freeze()
 }
 
 /// The digits of b at pos, at most hi: (value, count).

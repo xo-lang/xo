@@ -137,3 +137,14 @@ integer state would avoid but at a size comparable to rewriting format and
 parse. Left as it was after step 1. The remaining 7.7x on format needs a
 byte-level field recognizer (no Str for the name) or compile-time parsing of
 constant layouts.
+
+## Step 6, time: a byte-level field recognizer (kept)
+
+`layout_items` recognizes a field in the layout's bytes (`field_code_b` and
+`arg_literal` compare bytes in place; the argument is a literal constant), so
+no Str is sliced for a field name or argument unless the layout is bad;
+`format` writes into one StrBuilder. 300,000 x 2 formats: 7,390 M to 6,206 M
+instructions; 300,000 parses: 3,768 M to 3,300 M (Go 953 M and 462 M, now
+6.5x and 7.1x). What is left is mostly the item list and the small padded
+number strings (`pad`), which a Go-style append of digits into the builder
+would avoid.
