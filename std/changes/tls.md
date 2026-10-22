@@ -1,5 +1,20 @@
 # std/tls changes
 
+## 2026-10-22: speedup: AES-GCM response records sealed from the caller's bytes, GHASH fused with the CTR pass
+
+- Kind: speedup
+- Commit: this commit
+- Found by: profile (Xo Lang 3, bulk TLS 1.3 download: libcstr.copy_words 10%, CTR and GHASH as two passes)
+- Go reference: crypto/internal/fips140/aes/gcm gcm_arm64.s (gcmAesEnc: one pass over each block)
+- Test: std/native/llrt/tlsrec_test.xo (seal_at equals seal for sizes around the 64 byte chunks, the record opens); tls, tls12, tls13, http_tls, websocket_tls, crypto goldens (arm64, LLVM); wasm TLS and Map goldens
+
+A TLS 1.3 AES-GCM response record was copied into an inner plaintext
+string, encrypted into the record, then hashed in a second pass. It is now
+encrypted straight from the caller's bytes (no copy) and each 64 byte
+chunk of ciphertext is hashed right after it is written, while it is in
+cache. Server CPU samples of a 3 x 256 MiB bulk download in Docker
+(linux/arm64, loaded machine): 703 ms to 508 ms.
+
 ## 2026-10-21: speedup: ChaCha20 four blocks at a time in vector registers
 
 - Kind: speedup

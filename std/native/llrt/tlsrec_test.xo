@@ -1,0 +1,31 @@
+// Tests of tlsrec.xo's record protection (decision 0262): `xo test
+// --std-module=native/llrt/tlsrec`, run by internal/stdtest.
+
+use native/llrt/raw
+
+fn pattern(n: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  for i in 0..n {
+    b.write_byte(UInt8((i * 7 + 3) & 255))
+  }
+  b.freeze()
+}
+
+test "seal_at makes the bytes seal does, and the record opens" {
+  let secret = pattern(32)
+  let sizes = [0, 1, 7, 8, 9, 15, 16, 17, 62, 63, 64, 65, 100, 127, 128, 129, 191, 255, 1000, 4096, 16383, 16384]
+  for n in sizes {
+    let data = pattern(n)
+    var k1 = keys(0x1301, secret)
+    var k2 = keys(0x1301, secret)
+    var k3 = keys(0x1301, secret)
+    let a = seal(k1, 22, data, 0x0303)
+    let p = if n == 0 { 0 } else { raw.bytes_addr(data) }
+    let b = seal_at(k2, 22, p, n, 0x0303)
+    expect(b.len() == a.len())
+    expect(b == a)
+    let got = open(k3, b[0..5], b[5..b.len()])
+    expect(got.ct == 22)
+    expect(got.data == data)
+  }
+}
