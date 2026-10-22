@@ -30,11 +30,13 @@ The rule applies to every method call that reaches the general path:
 methods of the program's types (generic ones too) and calls through an
 interface value. The Go backend orders the operands the same way and
 puts each non trivial argument in a temporary first, since Go leaves the
-order of a variable's read and a call open. The standard library's own
-List, Map, Str, and similar methods keep the order they have (their
-lowerings read the receiver themselves); the cases that matter, a std
-method whose argument changes the receiver's own variable, are `var`
-methods (`xs.push(f())`, 0142) or rare.
+order of a variable's read and a call open. The standard library's
+methods follow it too, including the ones the native backends lower
+inline (`List.get`, `Map.get` and `contains`, `Set.contains`, the `Int`,
+`Float`, and `Str` methods, `min`, `max`, `clamp`): the Go backend
+already read their receiver after the arguments, so
+`xs.get(take_last(xs))` printed 7 natively and -1 on Go before this
+decision (found 2026-10-21 by Xo lang 4's review case).
 
 XO0537 is retired: its shape is now defined, so a note about it would
 mislead. The code stays reserved (spec section 10: a code is never reused).
@@ -46,8 +48,9 @@ mislead. The code stays reserved (spec section 10: a code is never reused).
   rule (fixed point identical); the 19 former XO0537 sites now do what they
   read like, so none needed a rewrite.
 - Spec core 5.2, Changes in 0.10, and the gotcha are updated.
-- The golden var_recv_after_args covers a variable, a field path, and an
-  interface value on every backend.
+- The golden var_recv_after_args covers a variable, a field path, an
+  interface value, and std's List.get, Map.get, and Int.max on every
+  backend.
 
 ## Alternatives
 
