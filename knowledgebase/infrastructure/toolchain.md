@@ -842,7 +842,9 @@ two settings (`--env-a/--env-b`, `--args-a/--args-b`), in interleaved
 rounds (the order alternates each round) and prints per metric each
 side's median and interquartile spread, the ratio B/A with a 95%
 percentile bootstrap interval over the rounds, and a verdict (better,
-worse, within noise; too few rounds under 5). Metrics: wall_ms, cpu_ms,
+worse, within noise; too few rounds under 5; no ratio when A's median
+is 0 and B's is not, both 0 is ratio 1; too coarse when both medians are
+under 10x the metric's resolution, cpu_ms being 10 ms). Metrics: wall_ms, cpu_ms,
 cpu_us_per_op, instructions (macOS only), max_rss_kb, and every number on
 the program's last JSON line (`loadgen`'s rps, p99_us, requests, ...).
 Before each run it waits for the guards: the quiet window file

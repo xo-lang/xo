@@ -66,11 +66,22 @@ pub struct Ratio {
   pub ratio: Float
   pub lo: Float
   pub hi: Float
+  /// false when A's median is 0 and B's is not: no ratio exists (the
+  /// fields are 0). Both 0 is ratio 1 (defined).
+  pub defined: Bool = true
 }
 
 pub fn bootstrap_ratio(a: List[Float], b: List[Float], resamples: Int, seed: Int, alpha: Float) -> Ratio {
   let n = a.len()
-  let base = median(b) / median(a)
+  let med_a = median(a)
+  let med_b = median(b)
+  if med_a == 0.0 {
+    if med_b == 0.0 {
+      return Ratio{ratio: 1.0, lo: 1.0, hi: 1.0}
+    }
+    return Ratio{ratio: 0.0, lo: 0.0, hi: 0.0, defined: false}
+  }
+  let base = med_b / med_a
   var g = rng(seed)
   var ratios: List[Float] = []
   for _ in 0..resamples {
@@ -102,6 +113,9 @@ pub fn verdict(r: Ratio, rounds: Int, lower_better: Bool) -> Str {
   if rounds < MIN_ROUNDS {
     return "too few rounds"
   }
+  if !r.defined {
+    return "no ratio"
+  }
   if r.lo > 1.0 {
     return if lower_better { "worse" } else { "better" }
   }
@@ -121,4 +135,27 @@ pub fn higher_better(name: Str) -> Bool {
     }
   }
   false
+}
+
+/// A metric is "too coarse" for a verdict when both medians are under
+/// COARSE_TIMES of its resolution (a 10 ms clock cannot rank 30 ms).
+pub const COARSE_TIMES = 10.0
+
+/// coarse is true when both medians are below COARSE_TIMES * res (res is
+/// 0 or less for a metric of unlimited resolution).
+pub fn coarse(med_a: Float, med_b: Float, res: Float) -> Bool {
+  if res <= 0.0 {
+    return false
+  }
+  let lim = COARSE_TIMES * res
+  med_a < lim && med_b < lim
+}
+
+/// resolution is the step of a metric's clock in its own unit: cpu_ms
+/// comes from /usr/bin/time (centiseconds), others are fine grained.
+pub fn resolution(name: Str) -> Float {
+  if name == "cpu_ms" {
+    return 10.0
+  }
+  0.0
 }

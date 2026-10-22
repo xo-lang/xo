@@ -37,3 +37,16 @@ test "options" {
     Err(e) => expect(e == "")
   }
 }
+
+test "fmt and jnum guard NaN and infinity" {
+  let zero = 0.0
+  let nan = zero / zero
+  let inf = 1.0 / zero
+  expect(fmt(nan) == "n/a")
+  expect(fmt(inf) == "inf")
+  expect(fmt(-inf) == "-inf")
+  expect(fmt(1.0e20) != "")
+  expect(jnum(nan) == "null")
+  expect(jnum(inf) == "null")
+  expect(jnum(1.5) == "1.5")
+}

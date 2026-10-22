@@ -348,11 +348,32 @@ fn side_args(o: Opts, side_a: Bool) -> List[Str] {
   out
 }
 
+fn finite(v: Float) -> Bool {
+  v == v && v.abs() < 1.0e300
+}
+
+/// jnum is a JSON number; NaN and infinities are null.
+fn jnum(v: Float) -> Str {
+  if finite(v) {
+    return "${v}"
+  }
+  "null"
+}
+
 fn fmt(v: Float) -> Str {
+  if v != v {
+    return "n/a"
+  }
+  if !finite(v) {
+    return if v < 0.0 { "-inf" } else { "inf" }
+  }
   if v == 0.0 {
     return "0"
   }
   let a = v.abs()
+  if a >= 1.0e15 {
+    return "${v}"
+  }
   if a >= 1000.0 {
     return "${Int(v.round())}"
   }
@@ -400,6 +421,18 @@ fn rows_of(o: Opts, rounds: List[Round]) -> List[Row] {
   for k in rest {
     all.push(k)
   }
+  var cpu_a: List[Float] = []
+  var cpu_b: List[Float] = []
+  for r in rounds {
+    if let Some(va) = r.a.vals.get("cpu_ms") {
+      if let Some(vb) = r.b.vals.get("cpu_ms") {
+        cpu_a.push(va)
+        cpu_b.push(vb)
+      }
+    }
+  }
+  let cpu_med_a = if cpu_a.is_empty() { 0.0 } else { median(cpu_a) }
+  let cpu_med_b = if cpu_b.is_empty() { 0.0 } else { median(cpu_b) }
   var rows: List[Row] = []
   for k in all {
     if !o.metrics.is_empty() && !o.metrics.contains(k) {
@@ -419,7 +452,14 @@ fn rows_of(o: Opts, rounds: List[Round]) -> List[Row] {
       continue
     }
     let rt = bootstrap_ratio(xa, xb, 10000, o.seed, o.alpha)
-    rows.push(Row{name: k, n: xa.len(), med_a: median(xa), med_b: median(xb), spread_a: spread_pct(xa), spread_b: spread_pct(xb), r: rt, verdict: verdict(rt, xa.len(), !higher_better(k))})
+    let ma = median(xa)
+    let mb = median(xb)
+    var vd = verdict(rt, xa.len(), !higher_better(k))
+    let src = if k == "cpu_us_per_op" { "cpu_ms" } else { k }
+    if vd != "too few rounds" && coarse(if src == k { ma } else { cpu_med_a }, if src == k { mb } else { cpu_med_b }, resolution(src)) {
+      vd = "too coarse"
+    }
+    rows.push(Row{name: k, n: xa.len(), med_a: ma, med_b: mb, spread_a: spread_pct(xa), spread_b: spread_pct(xb), r: rt, verdict: vd})
   }
   rows
 }
@@ -436,7 +476,7 @@ fn table(rows: List[Row]) -> Str {
   var out = StrBuilder.new()
   out.write("${pad("metric", 22)}${pad("A median", 12)}${pad("B median", 12)}${pad("spread A/B", 18)}${pad("B / A", 8)}${pad("95% interval", 18)}verdict\n")
   for r in rows {
-    out.write("${pad(r.name, 22)}${pad(fmt(r.med_a), 12)}${pad(fmt(r.med_b), 12)}${pad("${fmt(r.spread_a)}% ${fmt(r.spread_b)}%", 18)}${pad(fmt(r.r.ratio), 8)}${pad("${fmt(r.r.lo)} to ${fmt(r.r.hi)}", 18)}${r.verdict} (n=${r.n})\n")
+    out.write("${pad(r.name, 22)}${pad(fmt(r.med_a), 12)}${pad(fmt(r.med_b), 12)}${pad("${fmt(r.spread_a)}% ${fmt(r.spread_b)}%", 18)}${pad(if r.r.defined { fmt(r.r.ratio) } else { "n/a" }, 8)}${pad(if r.r.defined { "${fmt(r.r.lo)} to ${fmt(r.r.hi)}" } else { "n/a" }, 18)}${r.verdict} (n=${r.n})\n")
   }
   out.freeze()
 }
@@ -450,7 +490,7 @@ fn json_out(o: Opts, rounds: List[Round], used: Int, rows: List[Row]) -> Str {
       out.write(",")
     }
     first = false
-    out.write("${r.name.quote()}:{\"n\":${r.n},\"median_a\":${r.med_a},\"median_b\":${r.med_b},\"spread_a_pct\":${r.spread_a},\"spread_b_pct\":${r.spread_b},\"ratio\":${r.r.ratio},\"lo\":${r.r.lo},\"hi\":${r.r.hi},\"verdict\":${r.verdict.quote()}}")
+    out.write("${r.name.quote()}:{\"n\":${r.n},\"median_a\":${jnum(r.med_a)},\"median_b\":${jnum(r.med_b)},\"spread_a_pct\":${jnum(r.spread_a)},\"spread_b_pct\":${jnum(r.spread_b)},\"ratio\":${if r.r.defined { jnum(r.r.ratio) } else { "null" }},\"lo\":${if r.r.defined { jnum(r.r.lo) } else { "null" }},\"hi\":${if r.r.defined { jnum(r.r.hi) } else { "null" }},\"verdict\":${r.verdict.quote()}}")
   }
   out.write("},\"per_round\":[")
   var i = 0
@@ -459,7 +499,7 @@ fn json_out(o: Opts, rounds: List[Round], used: Int, rows: List[Row]) -> Str {
       out.write(",")
     }
     i += 1
-    out.write("{\"load_a\":${r.load_a},\"load_b\":${r.load_b},\"a_first\":${r.a_first},\"loaded\":${r.loaded},\"a\":${vals_json(r.a.vals)},\"b\":${vals_json(r.b.vals)}}")
+    out.write("{\"load_a\":${jnum(r.load_a)},\"load_b\":${jnum(r.load_b)},\"a_first\":${r.a_first},\"loaded\":${r.loaded},\"a\":${vals_json(r.a.vals)},\"b\":${vals_json(r.b.vals)}}")
   }
   out.write("]}")
   out.freeze()
@@ -474,7 +514,7 @@ fn vals_json(m: Map[Str, Float]) -> Str {
       out.write(",")
     }
     first = false
-    out.write("${k.quote()}:${m.get(k) ?? 0.0}")
+    out.write("${k.quote()}:${jnum(m.get(k) ?? 0.0)}")
   }
   out.write("}")
   out.freeze()

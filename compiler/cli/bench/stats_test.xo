@@ -48,3 +48,27 @@ test "direction by name" {
   expect(higher_better("MBps_median"))
   expect(!higher_better("p99_us"))
 }
+
+test "zero medians on both sides is ratio 1" {
+  let z = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  let r = bootstrap_ratio(z, z, 1000, 1, 0.05)
+  expect(r.defined)
+  expect(r.ratio == 1.0 && r.lo == 1.0 && r.hi == 1.0)
+  expect(verdict(r, 6, true) == "within noise")
+}
+
+test "zero against nonzero has no ratio" {
+  let r = bootstrap_ratio([0.0, 0.0, 0.0, 0.0, 0.0], [5.0, 6.0, 5.0, 7.0, 5.0], 1000, 1, 0.05)
+  expect(!r.defined)
+  expect(r.ratio == r.ratio)
+  expect(verdict(r, 5, true) == "no ratio")
+  expect(verdict(r, 3, true) == "too few rounds")
+}
+
+test "coarse metrics" {
+  expect(coarse(30.0, 40.0, 10.0))
+  expect(!coarse(30.0, 400.0, 10.0))
+  expect(!coarse(0.0, 0.0, 0.0))
+  expect(resolution("cpu_ms") == 10.0)
+  expect(resolution("wall_ms") == 0.0)
+}
