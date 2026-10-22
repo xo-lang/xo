@@ -25,5 +25,6 @@ program reads them itself (std/native/llrt dwline.xo pe_sects, from its
 file): fault tracebacks (XO_TRACEBACK=1) show file:line and inlined
 frames, and --race reports their lines. llvm-dwarfdump --verify passes on
 the PE. Windows debuggers still want CodeView and a PDB; gdb and lldb
-read the DWARF. A debug build is larger (tsan_race.exe 0.9 to 6.8 MB,
+read the DWARF. Since decision 0344 (2026-10-22) Xo's PE linker writes
+PROG.pdb from that DWARF (function names first, then lines). A debug build is larger (tsan_race.exe 0.9 to 6.8 MB,
 mostly .debug_loclists); --release or --strip leaves it out.

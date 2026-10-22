@@ -4035,7 +4035,15 @@ scripts/win-import-table.py SYSROOT > compiler/macho/peimports.xo` from
 an SDK's import libraries when std/native/sys_windows.xo gains a
 function. Wine under Box64 on 2026-10-19: hello 460 KB (1.4 MB with the
 C runtime); every golden 194 of 202 (the seven known Wine gaps and
-sys_c, since fixed). Last verified: 2026-10-19.
+sys_c, since fixed). Last verified: 2026-10-19. A program with DWARF (not
+--release or --strip) also gets PROG.pdb next to PROG.exe, named by the
+image's CodeView debug directory (decision 0344, compiler/macho pdb.xo):
+WinDbg, cdb, Visual Studio and llvm-symbolizer read its function names.
+A new sys_windows.xo function is usable only once the seed's
+peimports.xo has it (gotchas/seed-older-than-intrinsics.md). Check a PDB
+in Docker: `llvm-pdbutil dump --all PROG.pdb` and
+`llvm-pdbutil dump --globals --global-name=NAME PROG.pdb` (the
+xo-linux-test image). Last verified: 2026-10-22.
 
 ### Windows programs under Wine in Docker
 

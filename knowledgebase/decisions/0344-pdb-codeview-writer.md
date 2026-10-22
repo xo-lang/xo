@@ -1,7 +1,13 @@
 # 0344: A PDB and CodeView writer for the PE linker
 
 Status: Proposed (Xo Lang 4, 2026-10-22; the owner approved building the
-writer the same day, after decision 0343's crash report).
+writer the same day, after decision 0343's crash report). Stage 1
+implemented 2026-10-22 (compiler/macho pdb.xo): llvm-pdbutil 19 dumps
+every stream without an error and finds globals by name through the GSI
+hash; llvm-symbolizer names functions from the PDB alone. Measured on
+xo.exe (140 MB): a 1.7 MB PDB, 6,996 procedures and 14,638 publics, and
+the link phase within its run to run noise (0.9 to 1.4 s with and
+without).
 
 ## Context
 
