@@ -1,0 +1,125 @@
+// A `var` receiver or `var` argument whose binding the other arguments
+// change: the arguments are computed first and the method sees their
+// changes (decision 0142). The native backends read the receiver before
+// the arguments and dropped the pushes the arguments made (found by the
+// self hosted checker: `c.implements(t, c.named("Display"))`, where
+// `named` pushes onto the type table `implements` then reads). A receiver
+// that is not `var` and is a variable or a field path is read after the
+// arguments too (spec 5.2, decision 0326, which replaced the old rule of
+// gotchas/receiver-read-before-args.md): `size` sees the item `add`
+// pushes. A receiver that is a call is still evaluated first.
+
+struct Table {
+  items: List[Int] = []
+}
+
+fn (var t: Table) add(v: Int) -> Int {
+  t.items.push(v)
+  t.items.len() - 1
+}
+
+fn (var t: Table) get(i: Int) -> Int {
+  t.items[i]
+}
+
+fn (t: Table) size(i: Int) -> Int {
+  t.items.len() * 10 + i
+}
+
+fn (var t: Table) put(i: Int, v: Int) {
+  t.items[i] = v
+}
+
+fn bump(var t: Table, i: Int) {
+  t.items[i] += 1
+}
+
+fn main(os: Os) {
+  var t = Table{}
+  let a = t.get(t.add(7))
+  os.stdio.println("${a} ${t.items.len()}")
+  t.put(t.add(1), t.add(2) * 10)
+  os.stdio.println(show(t.items))
+  bump(t, t.add(5))
+  os.stdio.println(show(t.items))
+  var xs = [1]
+  xs.push({
+    xs.push(2)
+    3
+  })
+  os.stdio.println(show(xs))
+  var r = Reg{}
+  let n = r.m.update(r.key(), 0, fn(var v) {
+    v += 1
+    v
+  })
+  os.stdio.println("${n} ${r.m.len()} ${r.m.get("z") ?? 0}")
+  var u = Table{}
+  let s = u.size(u.add(4))
+  os.stdio.println("${s} ${u.items.len()}")
+  // a field path, and an interface value
+  var w = Wrap{t: Table{}}
+  let s2 = w.t.size(w.t.add(1))
+  os.stdio.println("${s2} ${w.t.items.len()}")
+  var sz: Sizer = Table{}
+  let s3 = sz.size(grow(sz))
+  os.stdio.println("${s3}")
+  // std methods too: List.get, Map.get, Int.max
+  var ys = [10, 20, 30, 7]
+  let g = ys.get(take_last(ys))
+  os.stdio.println("${g ?? -1} ${ys.len()}")
+  var m: Map[Str, Int] = {"a": 1}
+  let mg = m.get(add_key(m))
+  os.stdio.println("${mg ?? -1}")
+  var k = 1
+  let km = k.max(set5(k))
+  os.stdio.println("${km}")
+}
+
+// pops the last element and returns it
+fn take_last(var xs: List[Int]) -> Int {
+  let v = xs[xs.len() - 1]
+  xs.pop()
+  v
+}
+
+fn add_key(var m: Map[Str, Int]) -> Str {
+  m["b"] = 2
+  "b"
+}
+
+fn set5(var k: Int) -> Int {
+  k = 5
+  0
+}
+
+struct Wrap {
+  t: Table
+}
+
+interface Sizer {
+  fn size(self, i: Int) -> Int
+}
+
+// replaces sz with a table of three items and returns 0
+fn grow(var sz: Sizer) -> Int {
+  sz = Table{items: [1, 2, 3]}
+  0
+}
+
+struct Reg {
+  m: Map[Str, Int] = {}
+}
+
+fn (var r: Reg) key() -> Str {
+  r.m["z"] = 9
+  "k"
+}
+
+fn show(xs: List[Int]) -> Str {
+  var parts: List[Str] = []
+  for x in xs {
+    parts.push("${x}")
+  }
+  parts.join(" ")
+}
