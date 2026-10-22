@@ -193,9 +193,25 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
     // (DW_LNS_set_prologue_end), where lldb and gdb stop for a breakpoint
     // on the function, as on clang's tables (without it they skipped to
     // the second line, past the first statement)
+    // A first statement inside an inlined call gives the prologue the
+    // outermost call's line in the function's own file: the callee's
+    // position there named code no inlined subroutine covers (fault.raise
+    // at unwind.xo:583 in its tracebacks and PDB, 2026-10-22).
     var rows = fr.rows
     if !rows.is_empty() {
-      rows.insert(0, DbgRow{label: fr.begin, line: rows[0].line, file: rows[0].file, site: rows[0].site})
+      var pfile = rows[0].file
+      var pline = rows[0].line
+      var s = rows[0].site
+      if s >= 0 && s < fr.sites.len() {
+        var hops = 0
+        while fr.sites[s].parent >= 0 && fr.sites[s].parent < fr.sites.len() && hops < 64 {
+          s = fr.sites[s].parent
+          hops += 1
+        }
+        pfile = fr.file
+        pline = fr.sites[s].call_line
+      }
+      rows.insert(0, DbgRow{label: fr.begin, line: pline, file: pfile, site: -1})
     }
     for (ri, row) in rows.indexed() {
       let ln = row.line / 4096
