@@ -1,0 +1,16 @@
+// Tests of the back-end cache (bcache.xo).
+
+test "a build target's words leave out flags and the values of flags" {
+  // scripts/xobuild's command line: the stamps change with every tree
+  // key and must not make each one a new build target (its pack)
+  let a = pack_words(["build", "--backend=arm64", "--std=/w/std", "-o", "/c/xo.1.tmp", "--stamp", "XO_COMMIT=abc", "--stamp", "XO_SOURCE_KEY=k1", "/w/compiler/xo"])
+  let b = pack_words(["build", "--backend=arm64", "--std=/w/std", "-o", "/c/xo.2.tmp", "--stamp", "XO_COMMIT=def", "--stamp", "XO_SOURCE_KEY=k2", "/w/compiler/xo"])
+  expect(a) == ["build", "/w/compiler/xo"]
+  expect(b) == a
+  // a value flag written with `=` takes no next argument, a boolean flag
+  // never does
+  expect(pack_words(["test", "--run=X", "--phase-times", "./pkg"])) == ["test", "./pkg"]
+  expect(pack_words(["test", "-run", "X", "-v", "./pkg"])) == ["test", "./pkg"]
+  // a program's arguments still name the target
+  expect(pack_words(["run", ".", "--", "serve"])) == ["run", ".", "serve"]
+}

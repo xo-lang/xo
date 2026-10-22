@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The back-end cache names a build target without its flags' values:
+  `--stamp NAME=VALUE` (scripts/xobuild stamps the commit and the
+  source key) made every self-build a new target that wrote a 678 MB
+  parts pack no later build read. A second stamped self-build now
+  reuses 115 of 116 parts (9.5 s against 11.0 s) and leaves half the
+  packs (666 against 1,295 MB).
 - `xo vet --cost` XO0908 also notes a loop handing struct elements to a
   function value and the prelude's callback walks (`xs.any(fn ...)`,
   `map`, `filter`, `find`, `all`, `fold`) over elements holding heap

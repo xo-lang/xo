@@ -1057,21 +1057,35 @@ struct Pack {
 fn pack_dir(os: Os, dir: Str, kind: Str, target: Str) -> Str {
   // xo:allow XO0903 the working directory only names the build in the cache
   let cwd = os.fs.cwd_path().ok() ?? ""
-  var words: List[Str] = []
-  var skip = false
-  for a in os.env.args() {
-    if skip {
-      skip = false
-    } else if a == "-o" {
-      skip = true
-    } else if !a.starts_with("-") {
-      words.push(a)
-    }
-  }
+  let words = pack_words(os.env.args())
   let id = crypto.sha256("${PACK_VERSION}\n${cwd}\n${words.join("\n")}\n${target}\n".bytes()).to_hex()
   // under packs/<two hex>/ (2026-10-21): the prune walks the cache in
   // slices of such shards, and pack/ held 138,000 slots in one directory
   "${dir}/packs/${id[0..2]}/${id[2..32]}/${kind}"
+}
+
+/// The words of a command line that name its build target: not the flags,
+/// and not the value of a flag that takes one as the next argument (`-o
+/// OUT`, `--stamp NAME=VALUE`, `--std DIR`, value_flags). scripts/xobuild
+/// stamps the commit and the source key (`--stamp XO_SOURCE_KEY=...`), so
+/// each tree key was a new target: its first build wrote xo's whole parts
+/// pack (678 MB) and no later build found it (2026-10-22: 56 such
+/// segments, 8.3 GB of the 16 GiB cap, none read again).
+fn pack_words(args: List[Str]) -> List[Str] {
+  let vals = value_flags()
+  var words: List[Str] = []
+  var skip = false
+  for a in args {
+    if skip {
+      skip = false
+    } else if a.starts_with("-") {
+      let name = a.trim_prefix("-").trim_prefix("-")
+      skip = !name.contains("=") && vals.contains(name)
+    } else {
+      words.push(a)
+    }
+  }
+  words
 }
 
 /// cache_get_all through the build target's pack (above): the entries
