@@ -785,11 +785,20 @@ fn symbols(lo: Int, hi: Int) -> Syms {
     TargetOs.Windows => coff_symbols(lo, hi, addrs, names)
     TargetOs.Linux | TargetOs.Wasi => elf_symbols(lo, hi, addrs, names)
   }
-  // sort by address: (offset in the text << 24) | index
+  // sort by address: (offset from the lowest symbol << 24) | index. Not
+  // from lo: trace_text passes 1, and the offset of a Linux PIE's address
+  // (about 2^47) shifted by 24 wraps; the order held only while every
+  // symbol had the same bits above bit 39
+  var low = 0
+  for (i, a) in addrs.indexed() {
+    if i == 0 || a < low {
+      low = a
+    }
+  }
   var keys: List[Int] = []
   for i in 0..addrs.len() {
     if i < 16777216 {
-      keys.push((addrs[i] - lo).wrapping_shl(24) | i)
+      keys.push((addrs[i] - low).wrapping_shl(24) | i)
     }
   }
   keys = keys.sort()
