@@ -559,9 +559,21 @@ fn (var g: G) str_data(ws: List[Int]) -> Int {
   g.def1(false, "add $d0, $u0, #16", [g.real(ws[0])])
 }
 
+/// Whether Str and Bytes values may be views (decision 0330 step 3): the
+/// second word is then len | (off << 32). Off until slicing makes views, so
+/// the mask below is not emitted and the output is unchanged.
+const STR_VIEWS: Bool = false
+
 /// The length of the Str or Bytes value whose words are ws (decision 0330):
-/// the second word today, its low half under layout C.
-fn (g: G) str_len(ws: List[Int]) -> Int { ws[1] }
+/// the second word, or its low half once values may be views. Every emitter
+/// site that does arithmetic on a length, or hands it to C, goes through
+/// here; calls into obj.xo pass the word as it is and the runtime masks it.
+fn (var g: G) str_len(ws: List[Int]) -> Int {
+  if STR_VIEWS {
+    return g.def1(false, "and $d0, $u0, #4294967295", [g.real(ws[1])])
+  }
+  ws[1]
+}
 
 /// Loads byte i (SSA value iv, register i) of the Bytes object in
 /// register obj0; the data address, and data + j for i = j + c (0 < c <
@@ -880,7 +892,7 @@ fn (var g: G) call_op(v: Int) {
     "str.concat" => {
       let a = g.words(x.args[0])
       let b = g.words(x.args[1])
-      let n = g.def1(false, "add $d0, $u0, $u1", [a[1], b[1]])
+      let n = g.def1(false, "add $d0, $u0, $u1", [g.str_len(a), g.str_len(b)])
       // obj.xo's rs_append through its export, with no C level
       let obj = g.rt("xo_x_obj_rs_concat", regs([a[0], a[1], b[0], b[1]]), [false])
       g.set(v, [obj[0], n])
@@ -926,11 +938,13 @@ fn (var g: G) call_op(v: Int) {
         // obj.str_cmp in line: memcmp of the shorter length, then the
         // lengths; -1, 0, 1 (the export was a call into a call of
         // memcmp: maxby's Str key, 2026-10-17)
-        let n = g.def1(false, "cmp $u0, $u1\ncsel $d0, $u0, $u1, lt", [a[1], b[1]])
+        let an = g.str_len(a)
+        let bn = g.str_len(b)
+        let n = g.def1(false, "cmp $u0, $u1\ncsel $d0, $u0, $u1, lt", [an, bn])
         let r = g.rt("memcmp", regs([xd, yd, n]), [false])
         let c = g.def1(false, "sxtw $d0, $wu0", [r[0]])
         let s1 = g.def1(false, "cmp $u0, #0\ncset $d0, ne\ncneg $d0, $d0, lt", [c])
-        let s2 = g.def1(false, "cmp $u0, $u1\ncset $d0, ne\ncneg $d0, $d0, lt", [a[1], b[1]])
+        let s2 = g.def1(false, "cmp $u0, $u1\ncset $d0, ne\ncneg $d0, $d0, lt", [an, bn])
         g.set(v, [g.def1(false, "cmp $u0, #0\ncsel $d0, $u1, $u2, ne", [c, s1, s2])])
         return
       }
@@ -940,7 +954,7 @@ fn (var g: G) call_op(v: Int) {
     "Stdio.print" | "Stdio.println" | "Stdio.eprint" | "Stdio.eprintln" => {
       let a = g.words(x.args[1])
       let d = g.str_data(a)
-      let _r = g.rt("xo_${name.trim_prefix("Stdio.")}", regs([d, a[1]]), [])
+      let _r = g.rt("xo_${name.trim_prefix("Stdio.")}", regs([d, g.str_len(a)]), [])
       g.set(v, [])
     }
     "Int.min" | "Int.max" => {
@@ -997,19 +1011,20 @@ fn (var g: G) call_op(v: Int) {
           k = bs.len()
         }
       }
-      if !x.pos.is_empty() && !g.proved_index(x.args[1], a[1], k) {
+      let alen = g.str_len(a)
+      if !x.pos.is_empty() && !g.proved_index(x.args[1], alen, k) {
         let lb = g.loc_label(x.pos)
-        g.check("cmp $u0, $u1", [i, a[1]], "hs", "xo_fault_bytes_index", [rsrc(i), rsrc(a[1]), symsrc(lb)])
+        g.check("cmp $u0, $u1", [i, alen], "hs", "xo_fault_bytes_index", [rsrc(i), rsrc(alen), symsrc(lb)])
       }
       if !x.pos.is_empty() {
         // what the check (or the proof) says holds after it
         g.index_facts(i)
-        g.less_fact(x.args[1], a[1])
+        g.less_fact(x.args[1], alen)
       }
       g.set(v, [g.bytes_load(a[0], x.args[1], i)])
     }
-    "Str.len" => g.set(v, [g.words(x.args[0])[1]])
-    "Str.is_empty" => g.set(v, [g.def1(false, "cmp $u0, #0\ncset $d0, eq", [g.real(g.words(x.args[0])[1])])])
+    "Str.len" => g.set(v, [g.str_len(g.words(x.args[0]))])
+    "Str.is_empty" => g.set(v, [g.def1(false, "cmp $u0, #0\ncset $d0, eq", [g.real(g.str_len(g.words(x.args[0])))])])
     _ => {
       g.fail("runtime call `${name}`")
       g.set(v, g.zeros(x.ty))
@@ -2664,7 +2679,7 @@ fn (var g: G) rt_call(v: Int) {
         } else {
           let d = g.str_data(ws)
           args.push(rsrc(d))
-          args.push(rsrc(ws[1]))
+          args.push(rsrc(g.str_len(ws)))
         }
       }
       // a closure as its two words, code and environment (rt.task_spawn)

@@ -8,8 +8,22 @@ use github.com/xo-lang/xo/compiler/ssa
 fn (var g: Gen) str_parts(x: Str) -> (Str, Str, Str) {
   let obj = g.def("extractvalue %xo.str ${x}, 0")
   let data = g.def("getelementptr i8, ptr ${obj}, i64 16")
-  let n = g.def("extractvalue %xo.str ${x}, 1")
+  let n = g.str_len_of(x)
   (obj, data, n)
+}
+
+/// Whether Str and Bytes values may be views (decision 0330 step 3): the
+/// second word is then len | (off << 32). Off until slicing makes views.
+const STR_VIEWS: Bool = false
+
+/// The length of the Str or Bytes value x: its second word, or the low half
+/// of it once values may be views.
+fn (var g: Gen) str_len_of(x: Str) -> Str {
+  let w1 = g.def("extractvalue %xo.str ${x}, 1")
+  if STR_VIEWS {
+    return g.def("and i64 ${w1}, 4294967295")
+  }
+  w1
 }
 
 fn (var g: Gen) mk_str(v: Int, obj: Str, n: Str) {
@@ -444,11 +458,16 @@ fn (var g: Gen) call(v: Int) {
     }
     "Str.len" => {
       let a0 = g.op(args[0])
-      g.set(v, "extractvalue %xo.str ${a0}, 1")
+      if STR_VIEWS {
+        let w1 = g.def("extractvalue %xo.str ${a0}, 1")
+        g.set(v, "and i64 ${w1}, 4294967295")
+      } else {
+        g.set(v, "extractvalue %xo.str ${a0}, 1")
+      }
     }
     "Str.is_empty" => {
       let a0 = g.op(args[0])
-      let n = g.def("extractvalue %xo.str ${a0}, 1")
+      let n = g.str_len_of(a0)
       g.set(v, "icmp eq i64 ${n}, 0")
     }
     _ => g.fail("the SSA lowering does not support the runtime call `${name}`")
