@@ -86,7 +86,7 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
 /// lib/xo/std), a seed's or checkout's lib/xo/race (std in std/,
 /// scripts/race-runtime.sh writes it there).
 fn race_runtime(os: Os, ctx: Ctx, tgoos: Str, march: Str) -> (Str, Str) {
-  let file = if tgoos == "darwin" { "libclang_rt.tsan_osx_dynamic.dylib" } else { "libclang_rt.tsan-aarch64.a" }
+  let file = if tgoos == "darwin" { "libclang_rt.tsan_osx_dynamic.dylib" } else if march == "amd64" { "libclang_rt.tsan-x86_64.a" } else { "libclang_rt.tsan-aarch64.a" }
   let env = os.env.get("XO_RACE_RUNTIME") ?? ""
   if !env.is_empty() {
     return (env, "")

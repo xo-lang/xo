@@ -2591,8 +2591,12 @@ fn (var g: G) atomic(v: Int) {
       let op = if name == "rt.slot_swap" { "swp" } else { "ldadd" }
       if g.x86 {
         // xchg and lock xadd: sequentially consistent, every order's
+        // (an x86 template, which race.xo does not read: the order told
+        // around it, as the outline atomics below)
         let t = if name == "rt.slot_swap" { "xchgq" } else { "lock xaddq" }
+        g.race_release(v, ord, a)
         g.atomic_result(v, g.x86_atomic_def("movq $u0, $d0\n${t} $d0, ($u1)", [val, a], []))
+        g.race_acquire(v, ord, a)
       } else if g.os == "darwin" {
         g.atomic_result(v, g.atomic_def("${op}${sfx} $u0, $d0, [$u1]", [val, a]))
       } else {
@@ -2607,7 +2611,9 @@ fn (var g: G) atomic(v: Int) {
       let old = g.word(x.args[2])
       let new = g.word(x.args[3])
       if g.x86 {
+        g.race_release(v, ord, a)
         g.set(v, [g.x86_atomic_def("movq $u0, %rax\nlock cmpxchgq $u1, ($u2)\nsete $bd0\nmovzbl $bd0, $wd0", [old, new, a], [0])])
+        g.race_acquire(v, ord, a)
       } else if g.os == "darwin" {
         g.set(v, [g.atomic_def("mov $d0, $u0\ncas${sfx} $d0, $u1, [$u2]\ncmp $d0, $u0\ncset $d0, eq", [old, new, a])])
       } else {

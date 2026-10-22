@@ -240,3 +240,30 @@ built on it):
   the same command with OUT the checkout puts it where release.sh takes
   lib/xo/race/PLATFORM from. xo finds it next to std by default;
   $XO_RACE_RUNTIME stays an override.
+
+## Addendum (2026-10-21): amd64 (owner-queued item 2)
+
+- Instrumentation: the arm64 pass (compiler/arm64 race.xo) runs for
+  --backend=amd64 too. It works on the MIR's arm64 templates before
+  x86_retarget, so its address arithmetic and __tsan_* calls are
+  retargeted like any other instruction. The x86 atomics (xchg, lock
+  xadd, lock cmpxchg) are x86 templates race.xo does not read: calls.xo
+  calls __tsan_release before and __tsan_acquire after them by their
+  order, as the Linux arm64 outline atomics do. Plain loads and stores,
+  ldar and stlr are parsed as on arm64. The hand written multi-line
+  templates (crypto) stay uninstrumented, as on arm64. Without --race the
+  output is unchanged (both additions are under the race flag).
+- Runtime: scripts/race-runtime.sh builds linux-amd64
+  (libclang_rt.tsan-x86_64.a, in Docker linux/amd64, with
+  -ftls-model=initial-exec: sanitizer_coverage's thread local was general
+  dynamic, an R_X86_64_TLSGD Xo's ELF linker does not relax) and
+  darwin-amd64 (the dylib, cross built on the arm64 Mac); seed-cut.sh
+  packs both into their seeds. Xo's linkers link them as on arm64.
+- windows/amd64 --race is refused (compiler-rt's ThreadSanitizer has no
+  Windows port; item 3 explores Go's route).
+- Verified on the owner's Intel Mac (darwin/amd64, binaries cross built
+  here): the race_sync table (TestRaceSyncTable's 40 cases) all as
+  expected, and tsan_race reports the race between two task fibers. Linux
+  amd64 links but was not run: ThreadSanitizer, clang's own C programs
+  included, does not start under Docker's x86 emulation on this Mac
+  (gotchas/tsan-amd64-not-on-arm64-mac.md).

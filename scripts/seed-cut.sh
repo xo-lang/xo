@@ -26,8 +26,9 @@
 #      scripts/seed-pack.sh
 #   6. linux-arm64, linux-amd64, windows-amd64, darwin-amd64: cross built
 #      by that xo with the Go backend, packed with the checkout's std;
-#      linux-arm64 also with ThreadSanitizer's static runtime, built in
-#      Docker (scripts/race-runtime.sh ... linux-arm64; Docker must run)
+#      linux-arm64, linux-amd64 and darwin-amd64 also with
+#      ThreadSanitizer's runtime (scripts/race-runtime.sh ... PLATFORM:
+#      the Linux archives built in Docker, which must run)
 #   7. WORKDIR/out holds the five tarballs, their .sha256, manifest.txt,
 #      and SEED (the seed's name, VERSION-<commit, 8 hex>)
 #
@@ -184,11 +185,13 @@ for p in linux/arm64 linux/amd64 windows/amd64 darwin/amd64; do
   bin/xo build --backend=go --targets="$p" --std="$tree/std" -o "$d/bin/$exe" compiler/xo > "$log/cross-$plat.log" 2>&1 ||
     { tail "$log/cross-$plat.log"; die "cross build $plat failed"; }
   (git ls-files -z -- std | tar -c -f - --null -T -) | tar -xf - -C "$d"
-  if [ "$plat" = linux-arm64 ]; then
-    # ThreadSanitizer's static runtime for native --race (decision 0273's
-    # linux/arm64 addendum) into $d/lib/xo/race, which seed-pack.sh packs
-    bash scripts/race-runtime.sh "$work/race-linux" "$d" linux-arm64 > "$log/race-runtime-linux.log" 2>&1 ||
-      { tail "$log/race-runtime-linux.log"; die "race-runtime.sh linux-arm64 failed"; }
+  if [ "$plat" != windows-amd64 ]; then
+    # ThreadSanitizer's runtime for native --race (decision 0273's linux
+    # and amd64 addenda) into $d/lib/xo/race, which seed-pack.sh packs:
+    # the Linux static archives built in Docker, darwin-amd64's dylib
+    # cross built here (Windows has no ThreadSanitizer)
+    bash scripts/race-runtime.sh "$work/race-$plat" "$d" "$plat" > "$log/race-runtime-$plat.log" 2>&1 ||
+      { tail "$log/race-runtime-$plat.log"; die "race-runtime.sh $plat failed"; }
   fi
   XO_SEED_VERSION=$version XO_SEED_PLATFORM=$plat XO_SEED_COMMIT=$commit \
     XO_SEED_NOTE="cross built by the darwin-arm64 $version xo with --backend=go --targets=$p (seed-cut.sh)" \

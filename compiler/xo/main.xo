@@ -238,8 +238,9 @@ fn main(os: Os) ! {
   }
   // the arm64 backend's --race (decision 0273 parts 2 and 3): its
   // ThreadSanitizer calls, linked by Xo's linker with the runtime
-  // race_runtime finds; amd64 is not instrumented yet
-  if o.race && !(backend is "llvm" | "arm64") {
+  // race_runtime finds; amd64's on darwin and Linux (compiler-rt's
+  // ThreadSanitizer has no Windows port)
+  if o.race && !(backend is "llvm" | "arm64" | "amd64") {
     fail(os, "the ${backend} backend does not support --race: use --backend=llvm (ThreadSanitizer) or --backend=go (Go's race detector)")
   }
   if o.holes {
@@ -1024,8 +1025,11 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     if o.linker.is_empty() && (tg == host || tgoos == "linux" || mac_x86) {
       no_cc = default_ld(os, ctx, o, c, tgoos, code, uses_time)
     }
-    if o.race && march == "arm64" && !no_cc {
-      fail(os, "--race on the arm64 backend links with Xo's linker (not --ld=cc, decision 0273): darwin/arm64 and linux/arm64")
+    if o.race && tgoos == "windows" {
+      fail(os, "--race: ThreadSanitizer has no windows runtime (decision 0273): use --backend=go")
+    }
+    if o.race && !no_cc {
+      fail(os, "--race on the ${march} backend links with Xo's linker (not --ld=cc, decision 0273): darwin and linux")
     }
     let macho_as = if mac_x86 { o.assembler != "cc" } else { o.assembler == "macho" || (no_cc && o.assembler.is_empty()) }
     let win = march == "amd64" && tgoos == "windows"

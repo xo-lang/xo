@@ -66,8 +66,10 @@ fn (var g: G) function(fi: Int) {
     g.reuse_loads()
   }
   // ThreadSanitizer's calls (decision 0273), before the passes that
-  // assume a call free stretch (reuse_flags, mark_tails, shrink_split)
-  if g.m.race && !g.x86 {
+  // assume a call free stretch (reuse_flags, mark_tails, shrink_split);
+  // on x86_64 too: its calls and address arithmetic are arm64 templates
+  // that x86_retarget rewrites as it does the rest
+  if g.m.race {
     g.race_instrument()
   }
   if g.x86 {

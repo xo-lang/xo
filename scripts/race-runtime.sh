@@ -4,7 +4,7 @@
 # the release archive and the seeds; a maintainer step, never run on
 # users' machines.
 #
-#   scripts/race-runtime.sh WORKDIR OUTDIR [linux-arm64]
+#   scripts/race-runtime.sh WORKDIR OUTDIR [linux-arm64|linux-amd64|darwin-amd64]
 #
 # Downloads the pinned sources into WORKDIR (checked against the pinned
 # SHA-256 sums), builds with clang, cmake, and ninja (cmake and ninja from
@@ -20,6 +20,9 @@
 # argument does that itself: the script copied into WORKDIR, run there in
 # Docker as root, the archive and the license copied to OUTDIR/lib/xo/race
 # (seed-cut.sh's linux-arm64 seed; before release.sh, OUTDIR the checkout).
+# linux-amd64 does the same in Docker linux/amd64 (libclang_rt.tsan-x86_64.a
+# for the amd64 backend's --race), and darwin-amd64 on an arm64 Mac builds
+# the x86_64 dylib (lib/xo/race/darwin-amd64).
 set -euo pipefail
 
 # 23.1.3: 21.1.8's runtime crashed at start on macOS 27 (a null atomic
@@ -36,25 +39,38 @@ mkdir -p "$work" "$out"
 work=$(cd "$work" && pwd)
 out=$(cd "$out" && pwd)
 
-if [ "${3:-}" = linux-arm64 ] && [ "$(uname -s)" = Darwin ]; then
-  here=$(cd "$(dirname "$0")" && pwd)
-  cp "$0" "$work/race-runtime.sh"
-  XO_DOCKER_ROOT=1 nice -n 10 "$here/docker-linux.sh" arm64 "$work" -- bash /work/race-runtime.sh /work/w /work/out
-  a="$work/out/lib/xo/race/linux-arm64/libclang_rt.tsan-aarch64.a"
-  [ -s "$a" ] || { echo "race-runtime.sh: Docker build wrote no $a" >&2; exit 1; }
-  mkdir -p "$out/lib/xo/race"
-  rm -rf "${out:?}/lib/xo/race/linux-arm64"
-  cp -R "$work/out/lib/xo/race/linux-arm64" "$out/lib/xo/race/"
-  cp "$work/out/lib/xo/race/LICENSE.TXT" "$out/lib/xo/race/"
-  echo "$out/lib/xo/race/linux-arm64/libclang_rt.tsan-aarch64.a"
-  exit 0
+if [ "${3:-}" = linux-arm64 ] || [ "${3:-}" = linux-amd64 ]; then
+  if [ "$(uname -s)" = Darwin ]; then
+    here=$(cd "$(dirname "$0")" && pwd)
+    da=${3#linux-}
+    an=$([ "$da" = arm64 ] && echo aarch64 || echo x86_64)
+    cp "$0" "$work/race-runtime.sh"
+    XO_DOCKER_ROOT=1 nice -n 10 "$here/docker-linux.sh" "$da" "$work" -- bash /work/race-runtime.sh /work/w /work/out
+    a="$work/out/lib/xo/race/$3/libclang_rt.tsan-$an.a"
+    [ -s "$a" ] || { echo "race-runtime.sh: Docker build wrote no $a" >&2; exit 1; }
+    mkdir -p "$out/lib/xo/race"
+    rm -rf "${out:?}/lib/xo/race/$3"
+    cp -R "$work/out/lib/xo/race/$3" "$out/lib/xo/race/"
+    cp "$work/out/lib/xo/race/LICENSE.TXT" "$out/lib/xo/race/"
+    echo "$out/lib/xo/race/$3/libclang_rt.tsan-$an.a"
+    exit 0
+  fi
 fi
 
 case "$(uname -s)-$(uname -m)" in
   Darwin-arm64) goos=darwin goarch=arm64 lib=libclang_rt.tsan_osx_dynamic.dylib target=clang_rt.tsan_osx_dynamic libdir=darwin ;;
   Linux-aarch64) goos=linux goarch=arm64 lib=libclang_rt.tsan-aarch64.a target=clang_rt.tsan-aarch64 libdir=linux ;;
-  *) echo "race-runtime.sh: darwin/arm64 and linux/arm64 only so far (decision 0273)" >&2; exit 2 ;;
+  Linux-x86_64) goos=linux goarch=amd64 lib=libclang_rt.tsan-x86_64.a target=clang_rt.tsan-x86_64 libdir=linux ;;
+  *) echo "race-runtime.sh: darwin and linux, arm64 and x86_64 hosts only (decision 0273)" >&2; exit 2 ;;
 esac
+# darwin-amd64 on an arm64 Mac: the x86_64 dylib, cross built
+darch=arm64
+if [ "$goos" = darwin ] && [ "${3:-}" = darwin-amd64 ]; then
+  goarch=amd64 darch=x86_64
+fi
+if [ -n "${3:-}" ] && [ "$3" != "$goos-$goarch" ]; then
+  echo "race-runtime.sh: cannot build $3 on this host ($goos-$goarch)" >&2; exit 2
+fi
 missing=""
 for t in clang cmake ninja curl xz; do command -v $t >/dev/null || missing=1; done
 if [ "$goos" = linux ] && [ -n "$missing" ]; then
@@ -84,7 +100,13 @@ fi
 build="$work/build"
 rm -rf "${build:?}"
 platform=()
-if [ "$goos" = linux ]; then
+if [ "$goos" = linux ] && [ "$goarch" = amd64 ]; then
+  # no thread safe statics (as arm64's below); initial exec TLS, which
+  # Xo's ELF linker relaxes to local exec (sanitizer_coverage's
+  # __sancov_lowest_stack was general dynamic: an R_X86_64_TLSGD and a
+  # __tls_get_addr call)
+  platform=("-DCMAKE_C_FLAGS=-ftls-model=initial-exec" "-DCMAKE_CXX_FLAGS=-fno-threadsafe-statics -ftls-model=initial-exec")
+elif [ "$goos" = linux ]; then
   # no outline atomics: the inline ARMv8.0 loops, so the archive calls no
   # libgcc __aarch64_* helper (Xo's ELF linker synthesizes only some); no
   # thread safe statics: no __cxa_guard_* from a C++ runtime Xo does not
@@ -93,7 +115,7 @@ if [ "$goos" = linux ]; then
 fi
 if [ "$goos" = darwin ]; then
   platform=(-DCOMPILER_RT_ENABLE_IOS=OFF -DCOMPILER_RT_ENABLE_WATCHOS=OFF -DCOMPILER_RT_ENABLE_TVOS=OFF
-    -DCOMPILER_RT_ENABLE_XROS=OFF -DCMAKE_OSX_ARCHITECTURES=arm64 -DDARWIN_osx_ARCHS=arm64)
+    -DCOMPILER_RT_ENABLE_XROS=OFF -DCMAKE_OSX_ARCHITECTURES=$darch -DDARWIN_osx_ARCHS=$darch)
 fi
 cmake -G Ninja -S "$src/compiler-rt" -B "$build" \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
