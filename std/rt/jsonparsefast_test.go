@@ -70,3 +70,25 @@ func TestJsonParseFastMatchesDecoder(t *testing.T) {
 		t.Fatalf("only %d of the mutated texts were read by the fast reader", agreed)
 	}
 }
+
+// TestJsonParseFastSurrogatePairs: a \u escaped surrogate pair is read by
+// the fast reader (one rune, as the decoder reads it), so a document with
+// one emoji escape does not go through the token decoder; a lone or
+// reversed surrogate is still left to the decoder (U+FFFD there).
+func TestJsonParseFastSurrogatePairs(t *testing.T) {
+	for _, s := range []string{`"😀"`, `["x 😀 y","𝄞"]`, `{"k":"😀😀"}`} {
+		fast, ok := jsonParseFast([]byte(s))
+		if !ok {
+			t.Fatalf("the fast reader gave up on %s", s)
+		}
+		slow, err := jsonParseSlow([]byte(s))
+		if err != nil || !reflect.DeepEqual(fast, slow) {
+			t.Fatalf("%s: fast %#v, decoder %#v (%v)", s, fast, slow, err)
+		}
+	}
+	for _, s := range []string{`"\ud83d"`, `"\ude00\ud83d"`, `"\ud83d x"`, `"\ud83dA"`, `"\ud83d\ud83d"`, `"\ud83d\ude0"`} {
+		if _, ok := jsonParseFast([]byte(s)); ok {
+			t.Errorf("the fast reader accepted %s (the decoder's U+FFFD case)", s)
+		}
+	}
+}

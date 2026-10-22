@@ -2,6 +2,7 @@ package rt
 
 import (
 	"encoding/json"
+	"unicode/utf16"
 	"unicode/utf8"
 )
 
@@ -231,11 +232,28 @@ func (p *jsonFast) str() (string, bool) {
 				out = append(out, '\t')
 			case 'u':
 				r, ok := jsonHex4(b[i+1:])
-				if !ok || (r >= 0xD800 && r <= 0xDFFF) {
+				if !ok {
 					return "", false
 				}
-				out = utf8.AppendRune(out, r)
 				i += 4
+				if r >= 0xD800 && r <= 0xDFFF {
+					// a high surrogate followed by a \u low one is one
+					// rune, as the decoder reads it; anything else (a lone
+					// surrogate, which the decoder turns into U+FFFD) is
+					// left to the decoder. Giving up here sent a whole
+					// document with one emoji escape through the decoder:
+					// bench/perf/json parse 23.8 times native.
+					if r >= 0xDC00 || i+6 >= len(b) || b[i+1] != '\\' || b[i+2] != 'u' {
+						return "", false
+					}
+					lo, ok := jsonHex4(b[i+3:])
+					if !ok || lo < 0xDC00 || lo > 0xDFFF {
+						return "", false
+					}
+					r = utf16.DecodeRune(r, lo)
+					i += 6
+				}
+				out = utf8.AppendRune(out, r)
 			default:
 				return "", false
 			}

@@ -1,5 +1,19 @@
 # std/json changes
 
+## 2026-10-22: perf: the Go backend's fast JSON reader reads surrogate pairs
+
+- Kind: perf
+- Commit: (filled in after the push)
+- Found by: go pprof of bench/perf/json parse on the Go backend (bench/results/go-backend-gap-2026-10-22.md)
+- Go reference: encoding/json (go1.26.1: a `\u` high surrogate followed by a `\u` low one is one rune; a lone one is U+FFFD)
+- Test: std/rt TestJsonParseFastSurrogatePairs, TestJsonParseFastMatchesDecoder
+
+On the Go backend the fast JSON reader gave up at any `\u` escaped
+surrogate, so a document with one emoji escape was read by
+`json.Decoder.Token`. It now decodes a surrogate pair as the decoder does
+and leaves a lone surrogate to the decoder: bench/perf/json parse 5,646 M
+to 1,648 M instructions, `xo bench --ab` wall 0.315 of before (266 to 84 ms).
+
 ## 2026-10-21: perf: the Go backend reads JSON values without the token decoder
 
 - Kind: perf
