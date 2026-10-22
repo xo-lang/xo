@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+fault: XO-F009: a constant is used during its own initialization
+fault: XO-F009: a constant is used during its own initialization
+--- stderr

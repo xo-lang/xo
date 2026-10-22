@@ -16,6 +16,7 @@ use native/llrt/ctx
 use native/llrt/fault
 use native/llrt/pool
 use native/llrt/raw
+use native/llrt/sanhook
 use native/llrt/tasks
 use native/rt
 
@@ -36,14 +37,19 @@ const FAULTED = 2
 
 /// The table's parts, in words: the slots, the drop functions, the
 /// context running each initializer, the stored faults' messages and
-/// locations, then the wait list (two words) and its lock.
+/// locations, the wait list (two words) and its lock, then the parked
+/// readers (NWAIT pairs of a context and the constant it waits for), for
+/// finding a cycle of waits across tasks.
 const DROPS = 4096
 const RUNNERS = 8192
 const MSGS = 12288
 const LOCS = 16384
 const WAIT = 20480
 const LOCK = 20482
-const TABLE = 163848
+const WAITERS = 20483
+const NWAIT = 256
+/// 8 * (WAITERS + 2 * NWAIT) bytes.
+const TABLE = 167960
 
 /// The table, made at first use.
 fn table() -> Int {
@@ -75,6 +81,9 @@ pub fn once(f: Int, drop: Int, id: Int) -> Int {
   let t = table()
   let l0 = rt.slot_load[Int](t, id, ACQUIRE)
   if l0 > FAULTED {
+    // the build happens before this read (a --race build: the runtime
+    // is not instrumented, decision 0273)
+    sanhook.acquire(t + 8 * id)
     return l0
   }
   slow(t, f, drop, id)
@@ -92,6 +101,7 @@ fn slow(t: Int, f: Int, drop: Int, id: Int) -> Int {
     let s = ld(t, id)
     if s > FAULTED {
       pool.unlock(mu)
+      sanhook.acquire(t + 8 * id)
       return s
     }
     if s == FAULTED {
@@ -108,12 +118,16 @@ fn slow(t: Int, f: Int, drop: Int, id: Int) -> Int {
       pool.lock_k(mu, pool.ST_LOCK_TASK)
       continue
     }
-    if ld(t, RUNNERS + id) == c {
-      // the runner reads the constant it is building (XO-F009)
+    if waits_on_self(t, c, id) {
+      // the runner reads the constant it is building, itself or through
+      // runners that wait for each other (XO-F009)
       pool.unlock(mu)
       raise_msg("XO-F009: a constant is used during its own initialization")
     }
-    if !tasks.wl_wait_as(c, mu, t + 8 * WAIT, true, 0) {
+    let k = wait_add(t, c, id)
+    let woken = tasks.wl_wait_as(c, mu, t + 8 * WAIT, true, 0)
+    wait_del(t, k)
+    if !woken {
       pool.unlock(mu)
       rt.mem_store(c, ctx.C_UNWINDING, 1, 4)
       return tasks.empty_list()
@@ -128,6 +142,7 @@ fn slow(t: Int, f: Int, drop: Int, id: Int) -> Int {
   if rt.mem_load(l, 8, 8) > 0 {
     rt.mem_store(l, 0, IMMORTAL, 8)
     st(t, DROPS + id, drop)
+    sanhook.release(t + 8 * id)
     rt.slot_store[Int](t, id, l, RELEASE)
     tasks.wl_wake(t + 8 * WAIT)
     pool.unlock(mu)
@@ -149,13 +164,66 @@ fn slow(t: Int, f: Int, drop: Int, id: Int) -> Int {
   tasks.empty_list()
 }
 
+/// Whether waiting for constant id would wait for c itself: the chain of
+/// id's runner, the constant that runner waits for, its runner, and so on
+/// (the table's lock held), reaches c.
+fn waits_on_self(t: Int, c: Int, id: Int) -> Bool {
+  var cur = id
+  var steps = 0
+  while steps <= NWAIT {
+    let r = ld(t, RUNNERS + cur)
+    if r == 0 {
+      return false
+    }
+    if r == c {
+      return true
+    }
+    var next = -1
+    for k in 0..NWAIT {
+      if ld(t, WAITERS + 2 * k) == r {
+        next = ld(t, WAITERS + 2 * k + 1)
+        break
+      }
+    }
+    if next < 0 {
+      return false
+    }
+    cur = next
+    steps += 1
+  }
+  false
+}
+
+/// Records that c waits for constant id: its entry, -1 when every entry
+/// is taken (the wait is then not part of a cycle check).
+fn wait_add(t: Int, c: Int, id: Int) -> Int {
+  for k in 0..NWAIT {
+    if ld(t, WAITERS + 2 * k) == 0 {
+      st(t, WAITERS + 2 * k, c)
+      st(t, WAITERS + 2 * k + 1, id)
+      return k
+    }
+  }
+  -1
+}
+
+fn wait_del(t: Int, k: Int) {
+  if k >= 0 {
+    st(t, WAITERS + 2 * k, 0)
+  }
+}
+
 /// Raises the fault stored for constant id again (its message and
 /// location, copied by the raise).
 fn raise_stored(t: Int, id: Int) {
   let m = ld(t, MSGS + id)
   let l = ld(t, LOCS + id)
-  if m == 0 || l == 0 {
+  if m == 0 {
     raise_msg("fault")
+  }
+  if l == 0 {
+    let q = "?"
+    fault.raise(m, raw.cstr_len(m), raw.data(q), 1)
   }
   fault.raise_cstrs(m, l)
 }

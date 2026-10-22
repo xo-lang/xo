@@ -145,6 +145,27 @@ fn atomic_case(os: Os, shared: Bytes, sync: Bool, add: Bool) {
   }
 }
 
+fn build_table() -> List[Int] {
+  var xs: List[Int] = []
+  for i in 0..64 {
+    xs.push(i * 3)
+  }
+  xs
+}
+
+// a constant built at run time (decision 0332): its build happens before
+// every read, in the task that built it or another (no unsynchronized
+// form: XO_RACE_SYNC=0 runs the same reads)
+const RACE_TABLE = build_table()
+
+fn lazy_const_case() {
+  scope s {
+    let a = s.spawn(fn() { RACE_TABLE[63] })
+    let b = s.spawn(fn() { RACE_TABLE[1] })
+    let _sum = a.await + b.await
+  }
+}
+
 fn main(os: Os) {
   var bb = BytesBuilder.with_capacity(8)
   for _ in 0..8 {
@@ -163,6 +184,7 @@ fn main(os: Os) {
     "await_done" => await_done_case(os, shared, sync)
     "atomic" => atomic_case(os, shared, sync, false)
     "atomic_add" => atomic_case(os, shared, sync, true)
+    "lazy_const" => lazy_const_case()
     _ => os.stdio.println("unknown case")
   }
   os.stdio.println("done")

@@ -1,0 +1,53 @@
+// Decision 0332: two constants whose initializers read each other, first
+// read at once by two tasks (each builds one and waits for the other):
+// the second wait closes a cycle and faults (XO-F009) instead of hanging,
+// and the other read then raises the stored fault too.
+use std/task
+
+fn spin(n: Int) -> Int {
+  var acc = 0
+  for i in 0..n {
+    acc = (acc + i) % 1000003
+  }
+  acc
+}
+
+fn make_x() -> Int {
+  spin(3000000) + Y
+}
+
+fn make_y() -> Int {
+  spin(3000000) + X
+}
+
+const X = make_x()
+const Y = make_y()
+
+fn read_x() -> Int {
+  X
+}
+
+fn read_y() -> Int {
+  Y
+}
+
+fn show(r: Result[Int, task.Isolated[Never]]) -> Str {
+  match r {
+    Ok(n) => "ok ${n}"
+    Err(task.Isolated.Faulted(info)) => "fault: ${info.msg}"
+    Err(_) => "failed"
+  }
+}
+
+fn main(os: Os) {
+  var out: List[Str] = []
+  scope s {
+    let a = s.spawn(fn() { show(task.isolate(read_x)) })
+    let b = s.spawn(fn() { show(task.isolate(read_y)) })
+    out.push(a.await)
+    out.push(b.await)
+  }
+  for line in out {
+    os.stdio.println(line)
+  }
+}

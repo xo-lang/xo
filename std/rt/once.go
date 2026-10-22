@@ -157,34 +157,72 @@ func (s *onceState[T, E]) handOff() {
 // 0332): built by F once, at its first read, by Task_Once's rules (the
 // readers that come while it runs wait; a fault is stored and raised
 // again at every read; a canceled builder hands the run on). A read after
-// the build is one atomic load; a read by the task building it faults
+// the build is one atomic load. A read that would wait for its own task,
+// directly or through builders that wait for each other, faults
 // (XO-F009). F is set by the package's init function.
 type LazyConst[T any] struct {
 	F      func(*Task) T
 	done   atomic.Bool
 	val    T
-	runner atomic.Pointer[Task]
-	mu     sync.Mutex
 	once   Task_Once[T, struct{}]
+	runner *Task // under lazyMu
 }
+
+// lazyMu guards every LazyConst's runner and lazyWaits, the constant each
+// waiting reader waits for, for finding a cycle of waits.
+var (
+	lazyMu    sync.Mutex
+	lazyWaits = map[*Task]lazyRunner{}
+)
+
+type lazyRunner interface{ lazyRunner() *Task }
+
+func (c *LazyConst[T]) lazyRunner() *Task { return c.runner }
 
 // Get is a read of the constant.
 func (c *LazyConst[T]) Get(tk *Task) T {
 	if c.done.Load() {
 		return c.val
 	}
-	if tk != nil && c.runner.Load() == tk {
-		Fault(tk, "XO-F009: a constant is used during its own initialization", "?")
-	}
-	c.mu.Lock()
+	lazyMu.Lock()
 	if c.once.s == nil {
 		c.once = Task_once[T, struct{}](nil)
 	}
+	var cur lazyRunner = c
+	for i := 0; cur != nil && i <= len(lazyWaits); i++ {
+		r := cur.lazyRunner()
+		if r == nil {
+			break
+		}
+		if r == tk {
+			lazyMu.Unlock()
+			Fault(tk, "XO-F009: a constant is used during its own initialization", "?")
+		}
+		cur = lazyWaits[r]
+	}
+	// recorded as waiting until it becomes the builder (which removes
+	// it) or M_get returns: a builder that starts after the check above
+	// still sees this wait
+	lazyWaits[tk] = c
 	once := c.once
-	c.mu.Unlock()
+	lazyMu.Unlock()
+	defer func() {
+		lazyMu.Lock()
+		if lazyWaits[tk] == lazyRunner(c) {
+			delete(lazyWaits, tk)
+		}
+		lazyMu.Unlock()
+	}()
 	return once.M_get(tk, func(tk *Task) Result[T, struct{}] {
-		c.runner.Store(tk)
-		defer c.runner.Store(nil)
+		lazyMu.Lock()
+		c.runner = tk
+		delete(lazyWaits, tk)
+		lazyMu.Unlock()
+		defer func() {
+			lazyMu.Lock()
+			c.runner = nil
+			lazyMu.Unlock()
+		}()
 		v := c.F(tk)
 		c.val = v
 		c.done.Store(true)

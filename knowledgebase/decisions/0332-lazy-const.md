@@ -184,22 +184,36 @@ keyed by layout text is a separate decision).
   builds; a fault's message and location move out of the context
   (`fault.move_out`) into the table and are raised again at every read.
   `rt.const_once`'s signature is unchanged, so code of an older xo (whose
-  entry functions cannot fail) runs on it.
+  entry functions cannot fail) runs on it. A reader about to wait follows
+  the chain of runners and the constants they wait for (the parked
+  readers are recorded in the table); reaching itself is `XO-F009`, so
+  two tasks whose constants read each other fault instead of hanging.
+  The build is a release and a read an acquire for `--race`
+  (`sanhook`, as tasks.xo does; the runtime is not instrumented).
+  Reviewed by Xo Lang 2 (2026-10-21): the table's size, the `--race`
+  annotations, and the cross-task cycle came from that review.
 - wasm (rt4.xo `$const_once`): the same states (single threaded, no
   waiting); `rt.const_once` is followed by a fault check (call.xo), as
   wasm faults are a flag the caller tests.
 - Go (gen decl.xo, std/rt once.go `LazyConst`): the constant's builder is
   set in an `init` function (as a variable initializer, a builder that
   reads the constant through a function is a Go initialization cycle)
-  and read through `Get(tk)`: an atomic flag, then `Task_Once`'s rules.
+  and read through `Get(tk)`: an atomic flag, then `Task_Once`'s rules,
+  with the same wait-chain check (a package-level record of waiting
+  tasks).
 - Not yet: `XO-F009` reports the location `?` (rt.const_once takes no
-  location); a task started inside an initializer that reads the same
-  constant waits instead of faulting (the runner is checked, not its
-  tasks); std/time's named layouts (Lib1); `xo vet --cost` listing.
+  location); a task started inside an initializer that reads the
+  constant being built waits forever if the initializer waits for that
+  task (the wait chain follows constants, not scope joins); wasm, single
+  threaded, faults at once on a read of a constant another task is
+  building (possible only if the initializer yields); std/time's named
+  layouts (Lib1); `xo vet --cost` listing.
 - Tests: errorcheck lazy_const (`XO0415`, `XO0416`, `XO0408` for a block
   const), goldens lazy_const (64 tasks read a constant built once, `dbg`
   in the initializer shows each build; a faulting constant read twice)
-  and lazy_const_cycle (`XO-F009`) on go, arm64, LLVM, and wasm.
+  lazy_const_cycle (`XO-F009`), and lazy_const_cycle_tasks (two tasks,
+  two constants that read each other) on go, arm64, LLVM, and wasm;
+  race_sync's lazy_const case (TestRaceSyncTableArm64: no race reported).
 
 ## Alternatives
 

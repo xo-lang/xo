@@ -572,10 +572,15 @@ func raceBuild(t *testing.T, name, backend string) string {
 }
 
 func raceSyncTable(t *testing.T, bin string) {
-	cases := []string{"spawn", "join", "scope", "chan", "chan_buffered", "select", "mutex", "await_done", "atomic", "atomic_add"}
+	cases := []string{"spawn", "join", "scope", "chan", "chan_buffered", "select", "mutex", "await_done", "atomic", "atomic_add", "lazy_const"}
+	// cases with no unsynchronized form: only "no race" is checked
+	syncOnly := map[string]bool{"lazy_const": true}
 	for _, c := range cases {
 		for _, threads := range []string{"1", ""} {
 			for _, sync := range []string{"1", "0"} {
+				if sync == "0" && syncOnly[c] {
+					continue
+				}
 				cmd := exec.Command(bin)
 				cmd.Env = append(os.Environ(), "TSAN_OPTIONS=halt_on_error=0", "XO_THREADS="+threads, "XO_RACE_CASE="+c, "XO_RACE_SYNC="+sync)
 				var stdout, stderr bytes.Buffer
