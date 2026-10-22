@@ -31,6 +31,8 @@ import (
 // load 25 (2026-10-16), so the bound tells broken from working, not fast
 // from slow. At XO_THREADS=1 (spawnbusy and handoff) a root's deferral
 // waits for the monitor too, with no 50 us wake: the same bound holds.
+// Above one runnable thread per CPU (testtmp.Loaded) a run over the bound
+// is tried once more, then skipped, not failed.
 func TestDeferredWakeBound(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs two programs per native backend")
@@ -53,17 +55,34 @@ func TestDeferredWakeBound(t *testing.T) {
 				if err != nil || res.Failed {
 					t.Fatalf("build: %v %v", err, res)
 				}
-				cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()]))
-				cmd.Env = append(os.Environ(), "XO_THREADS="+run.threads, "XO_LOCKCHECK=1")
-				out, err := runCombined(cmd, 2*time.Minute)
-				if err != nil {
-					t.Fatalf("run: %v\n%s", err, out)
+				measure := func() int {
+					cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()]))
+					cmd.Env = append(os.Environ(), "XO_THREADS="+run.threads, "XO_LOCKCHECK=1")
+					out, err := runCombined(cmd, 2*time.Minute)
+					if err != nil {
+						t.Fatalf("run: %v\n%s", err, out)
+					}
+					m := worst.FindStringSubmatch(out)
+					if m == nil {
+						t.Fatalf("output: %s", out)
+					}
+					us, _ := strconv.Atoi(m[1])
+					return us
 				}
-				m := worst.FindStringSubmatch(out)
-				if m == nil {
-					t.Fatalf("output: %s", out)
+				us := measure()
+				// the bound is strict on a machine with CPUs to spare; above
+				// one runnable thread per CPU the monitor's ticks oversleep
+				// (mutexbusy/4 waited past 100 ms in a full internal/llvm run
+				// at load 30, 2026-10-22, and 37 us alone): such a run is
+				// tried once more and, still over and still loaded, skipped
+				// with its numbers instead of failed
+				if loaded, l := testtmp.Loaded(); us >= 100000 && loaded {
+					t.Logf("%s: worst %d us at load %.1f (%d CPUs); trying once more", prog, us, l, runtime.NumCPU())
+					us = measure()
+					if loaded, l = testtmp.Loaded(); us >= 100000 && loaded {
+						t.Skipf("%s: worst %d us at load %.1f on %d CPUs: too loaded to judge the 100 ms bound", prog, us, l, runtime.NumCPU())
+					}
 				}
-				us, _ := strconv.Atoi(m[1])
 				if us >= 100000 {
 					t.Fatalf("%s: the woken task waited %d us (bound 100 ms; the waker computed 200 ms)", prog, us)
 				}

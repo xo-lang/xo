@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"testing"
 	"time"
@@ -54,5 +55,16 @@ func TestSweep(t *testing.T) {
 		if got := err == nil; got != c.want {
 			t.Errorf("%s exists = %v, want %v", filepath.Base(c.dir), got, c.want)
 		}
+	}
+}
+
+// TestLoad1: where the load can be read it is a number of at least 0.
+func TestLoad1(t *testing.T) {
+	l, ok := Load1()
+	if (runtime.GOOS == "darwin" || runtime.GOOS == "linux") && !ok {
+		t.Fatal("Load1: not read")
+	}
+	if ok && l < 0 {
+		t.Errorf("Load1 = %v", l)
 	}
 }
