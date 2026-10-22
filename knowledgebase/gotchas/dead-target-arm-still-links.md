@@ -40,3 +40,15 @@ and netconn.os, against a literal) lower only the arm taken, and a block
 stops lowering after a return, so another OS's code after an early
 return is not built either. A choice made at run time (a word set at
 start) still keeps every OS's code; write it as a `target` test.
+
+Observed again (2026-10-22, decision 0343 stage 1, e3f6b42be): crash.xo
+`set` chose Linux's struct sigaction with `if darwin() { ...; return }`,
+a helper call the builders do not fold, so its Linux half, with
+`rt.sys_restorer()` (the trampoline xo_sigreturn, emitted only for
+Linux), was built for windows/amd64 too and every native Windows link
+failed with "undefined symbol xo_sigreturn". The darwin and linux gates
+could not see it. Fix: `match target.os` with an arm per OS. A
+check for a std/native change that names an rt intrinsic or a
+trampoline of one OS: cross link hello for windows/amd64
+(`xo build --backend=amd64 --target=windows/amd64`, no Windows SDK
+needed for a program without `use c`).

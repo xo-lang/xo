@@ -108,23 +108,29 @@ fn map(n: Int) -> Int {
 
 /// Sets sig's handler h (0 the default) with flags, through the struct
 /// sigaction at the record's R_SA (no allocation: the handler calls it).
+/// (A match on the OS, not darwin(): only the target's arm is built, and
+/// rt.sys_restorer, Linux's xo_sigreturn, is undefined on Windows.)
 fn set(r: Int, sig: Int, h: Int, flags: Int) {
   let sa = r + R_SA
-  if darwin() {
-    // the handler, the mask (4 bytes), the flags (4)
-    st(sa, 0, h)
-    rt.mem_store(sa, 8, 0, 4)
-    rt.mem_store(sa, 12, flags, 4)
-    let _r = sys_darwin.sigaction(sig, sa, 0)
-    return
+  match target.os {
+    TargetOs.Darwin => {
+      // the handler, the mask (4 bytes), the flags (4)
+      st(sa, 0, h)
+      rt.mem_store(sa, 8, 0, 4)
+      rt.mem_store(sa, 12, flags, 4)
+      let _r = sys_darwin.sigaction(sig, sa, 0)
+    }
+    TargetOs.Linux => {
+      // the kernel's: the handler, the flags (SA_RESTORER 0x04000000),
+      // the restorer, the mask
+      st(sa, 0, h)
+      st(sa, 8, flags | 67108864)
+      st(sa, 16, rt.sys_restorer())
+      st(sa, 24, 0)
+      let _r = linux.rt_sigaction(sig, sa, 0)
+    }
+    TargetOs.Windows | TargetOs.Wasi => {}
   }
-  // the kernel's: the handler, the flags (SA_RESTORER 0x04000000), the
-  // restorer, the mask
-  st(sa, 0, h)
-  st(sa, 8, flags | 67108864)
-  st(sa, 16, rt.sys_restorer())
-  st(sa, 24, 0)
-  let _r = linux.rt_sigaction(sig, sa, 0)
 }
 
 /// The handlers' flags: SA_SIGINFO, SA_ONSTACK, SA_RESETHAND and
