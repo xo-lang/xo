@@ -569,6 +569,18 @@ fn (var g: G) str_data(ws: List[Int]) -> Int {
   g.def1(false, "add $d0, $u0, #16", [g.real(ws[0])])
 }
 
+/// The object pointer plus a view's offset (STR_VIEWS only): the address the
+/// object's bytes start at less the header.
+fn (var g: G) str_obj_at(ws: List[Int]) -> Int {
+  let obj = g.real(ws[0])
+  let w1 = g.real(ws[1])
+  if g.x86 {
+    let off = g.def1(false, "lsr $d0, $u0, #32", [w1])
+    return g.def1(false, "add $d0, $u0, $u1", [obj, off])
+  }
+  g.def1(false, "add $d0, $u0, $u1, lsr #32", [obj, w1])
+}
+
 /// str_data once per block for a value (STR_VIEWS only): the memo is the
 /// one bytes_load keeps.
 fn (var g: G) str_base(ws: List[Int]) -> Int {
@@ -1792,7 +1804,17 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
       let r = g.rt("memcmp", regs([g.word(x.args[0]), g.word(x.args[1]), g.word(x.args[2])]), [false])
       g.set(v, [g.def1(false, "sxtw $d0, $wu0", [r[0]])])
     }
-    "rt.obj_addr" => g.set(v, [g.words(x.args[0])[0]])
+    "rt.obj_addr" => {
+      // the address of a Str's object, plus a view's offset (decision 0330), so
+      // llrt's raw.data and bytes_addr need no offset of their own; the header
+      // reads on a builder (capacity, count) see off 0
+      let ws = g.words(x.args[0])
+      if STR_VIEWS && ws.len() == 2 {
+        g.set(v, [g.str_obj_at(ws)])
+      } else {
+        g.set(v, [ws[0]])
+      }
+    }
     "rt.obj_at" => {
       let a = g.real(g.word(x.args[0]))
       g.retain(x.ty, [a])

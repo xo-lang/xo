@@ -448,9 +448,10 @@ fn put_int(p: Int, n: Int, v: Int) {
 /// its length (an plus the digits') stored at lenp.
 pub fn rs_concat_int(a: Int, an: Int, v: Int, lenp: Int) -> Int {
   let n = int_text_len(v)
-  rt.mem_store(lenp, 0, addw(an, n), 8)
+  let len = an & LEN_MASK
+  rt.mem_store(lenp, 0, addw(len, n), 8)
   let s = reserve(a, an, n)
-  put_int(addw(addw(s, S_HDR), an), n, v)
+  put_int(addw(addw(s, S_HDR), len), n, v)
   s
 }
 
@@ -708,6 +709,11 @@ pub fn rc_defer(h: Int, obj: Int, drop: Int) {
 /// The header bytes of a string object.
 const S_HDR = 16
 
+/// The length half of a Str or Bytes value's second word (decision 0330):
+/// len | (off << 32). Builders hold off 0; the first argument of the
+/// entries below, when it is a Str being appended to, may be a view.
+const LEN_MASK = 4294967295
+
 /// The heap record's word with the size class of its last allocation
 /// (alloc.xo LAST): a string's capacity is that less the header.
 const H_LAST = 72
@@ -765,11 +771,12 @@ fn rs_new_mt(n: Int) -> Int {
 /// The string a (an bytes, consumed) with room for k more bytes, unique:
 /// a itself when its count is 1 and it has the room.
 fn reserve(a: Int, an: Int, k: Int) -> Int {
-  let need = addw(an, k)
+  let need = addw(an & LEN_MASK, k)
   // the count with a relaxed atomic load (no cost on arm64): a shared
   // string's count changes on other threads, and a plain load of it is a
-  // data race (ThreadSanitizer, decision 0241)
-  if rt.slot_load(a, 0, 0) == 1 && rt.mem_load(a, 8, 8) >= need {
+  // data race (ThreadSanitizer, decision 0241); a view (an above LEN_MASK)
+  // is never unique, whatever its count
+  if rt.slot_load(a, 0, 0) == 1 && rt.mem_load(a, 8, 8) >= need && an <= LEN_MASK {
     return a
   }
   reserve_slow(a, an, need)
@@ -786,7 +793,9 @@ fn reserve_slow(a: Int, an: Int, need: Int) -> Int {
     return reserve_slow(a, an, 0) // not taken: the inliner's cycle
   }
   let hw = heap_word()
-  if rc.claim(a) != 0 {
+  let len = an & LEN_MASK
+  let off = an >> 32
+  if off == 0 && rc.claim(a) != 0 {
     let cap = rt.mem_load(a, 8, 8)
     if cap >= need {
       return a
@@ -795,12 +804,12 @@ fn reserve_slow(a: Int, an: Int, need: Int) -> Int {
     if want < need {
       want = need
     }
-    let s = hresize(hw, a, addw(S_HDR, an), addw(S_HDR, want))
+    let s = hresize(hw, a, addw(S_HDR, len), addw(S_HDR, want))
     rt.mem_store(s, 8, subw(rt.mem_load(hw & -2, H_LAST, 8), S_HDR), 8)
     return s
   }
   let s = rs_new(hw, if need < 16 { 16 } else { need })
-  rt.mem_copy(addw(s, S_HDR), addw(a, S_HDR), an)
+  rt.mem_copy(addw(s, S_HDR), addw(addw(a, S_HDR), off), len)
   // a literal (common: `"w${i}"` appends to one), or one with other
   // references, or a shared one freed here when the others went
   if count(a) != IMMORTAL && rc.dec(a) != 0 {
@@ -813,7 +822,7 @@ fn reserve_slow(a: Int, an: Int, need: Int) -> Int {
 /// string the caller holds, so the bytes are moved after the reserve.
 pub fn rs_append(a: Int, an: Int, p: Int, n: Int) -> Int {
   let s = reserve(a, an, n)
-  move_at(addw(addw(s, S_HDR), an), p, n)
+  move_at(addw(addw(s, S_HDR), an & LEN_MASK), p, n)
   s
 }
 
@@ -834,7 +843,7 @@ fn move_at(d: Int, p: Int, n: Int) {
 /// a + the byte x (xo_rs_push_byte).
 pub fn rs_push_byte(a: Int, an: Int, x: Int) -> Int {
   let s = reserve(a, an, 1)
-  rt.mem_store(addw(s, S_HDR), an, x, 1)
+  rt.mem_store(addw(s, S_HDR), an & LEN_MASK, x, 1)
   s
 }
 
@@ -844,10 +853,10 @@ pub fn rs_push_byte(a: Int, an: Int, x: Int) -> Int {
 /// of 32.
 pub fn rs_push_word(a: Int, an: Int, w: Int) -> Int {
   var s = a
-  if rt.slot_load(a, 0, 0) != 1 || subw(rt.mem_load(a, 8, 8), an) < 8 {
+  if rt.slot_load(a, 0, 0) != 1 || an > LEN_MASK || subw(rt.mem_load(a, 8, 8), an) < 8 {
     s = push_slow(a, an, 8, 32)
   }
-  rt.mem_store(addw(s, S_HDR), an, w, 8)
+  rt.mem_store(addw(s, S_HDR), an & LEN_MASK, w, 8)
   s
 }
 
@@ -856,10 +865,10 @@ pub fn rs_push_word(a: Int, an: Int, w: Int) -> Int {
 /// before, so 32 bytes of room.
 pub fn rs_push_words(a: Int, an: Int, w0: Int, w1: Int, w2: Int, w3: Int, lens: Int) -> Int {
   var s = a
-  if rt.slot_load(a, 0, 0) != 1 || subw(rt.mem_load(a, 8, 8), an) < 32 {
+  if rt.slot_load(a, 0, 0) != 1 || an > LEN_MASK || subw(rt.mem_load(a, 8, 8), an) < 32 {
     s = push_slow(a, an, 32, 64)
   }
-  var d = addw(addw(s, S_HDR), an)
+  var d = addw(addw(s, S_HDR), an & LEN_MASK)
   rt.mem_store(d, 0, w0, 8)
   d = addw(d, lens & 15)
   rt.mem_store(d, 0, w1, 8)
@@ -876,7 +885,7 @@ fn push_slow(a: Int, an: Int, k: Int, fresh: Int) -> Int {
   if an == 0 && count(a) == IMMORTAL {
     return rs_new_n(fresh)
   }
-  reserve_slow(a, an, addw(an, k))
+  reserve_slow(a, an, addw(an & LEN_MASK, k))
 }
 
 /// a + the bytes lo..hi of the string or Bytes object b, their ASCII
@@ -884,7 +893,7 @@ fn push_slow(a: Int, an: Int, k: Int, fresh: Int) -> Int {
 pub fn rs_append_bytes(a: Int, an: Int, b: Int, lo: Int, hi: Int, mode: Int) -> Int {
   let n = subw(hi, lo)
   let s = reserve(a, an, n)
-  let d = addw(addw(s, S_HDR), an)
+  let d = addw(addw(s, S_HDR), an & LEN_MASK)
   move_at(d, addw(addw(b, S_HDR), lo), n)
   if mode != 0 {
     fold(d, n, mode)

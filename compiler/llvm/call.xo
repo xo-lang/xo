@@ -1152,7 +1152,14 @@ fn (var g: Gen) inline_raw(v: Int) -> Bool {
     "rt.obj_addr" => {
       var o = g.op(x.args[0])
       if g.m.types[g.vty(x.args[0])].kind == ssa.Kind.Str {
+        let whole = o
         o = g.def("extractvalue %xo.str ${o}, 0")
+        if STR_VIEWS {
+          // a view's offset (decision 0330), as arm64 does
+          let w1 = g.def("extractvalue %xo.str ${whole}, 1")
+          let off = g.def("lshr i64 ${w1}, 32")
+          o = g.def("getelementptr i8, ptr ${o}, i64 ${off}")
+        }
       }
       g.set(v, "ptrtoint ptr ${o} to i64")
     }
