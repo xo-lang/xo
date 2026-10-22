@@ -679,6 +679,28 @@ fn (var c: Checker) habit_method(bt: Int, r: Int, sspan: Span, x: Expr, sel: Ide
         return (elem, true)
       }
     }
+    "or" | "unwrap_or" | "get_or_else" | "value_or" | "or_else" => {
+      // Rust, Kotlin, Java, Scala, C++ defaults: Xo's `??` (core 2.5)
+      if opt >= 0 && args.len() == 1 && args[0].name == None {
+        let d = c.error("XO0601", sel.span, report)
+        let lazy = name == "or_else"
+        c.habit_note(d, "`.${name}(${if lazy { "f" } else { "x" }})` is a default for a missing value in Rust, Kotlin, Java, Scala, and C++; Xo writes `opt ?? ${if lazy { "f()" } else { "x" }}`, and the right side runs only when `opt` is None (core 2.5)")
+        let lhs = c.src_of(parser.expr_span(x))
+        if !lazy {
+          c.fix(d, "write `?? ...`", [c.replace_edit(Span{start: parser.expr_span(x).start, end: span.end}, "${lhs} ?? ${c.arg_src(args, 0)}")])
+          c.check_ty(args[0].value, opt)
+        } else {
+          match args[0].value {
+            FnLit(..) => { c.infer(args[0].value, -1) }
+            _ => {
+              c.fix(d, "write `?? f()`", [c.replace_edit(Span{start: parser.expr_span(x).start, end: span.end}, "${lhs} ?? ${c.operand_src(args[0].value)}()")])
+              c.infer(args[0].value, -1)
+            }
+          }
+        }
+        return (opt, true)
+      }
+    }
     "or_err" => {
       // Option's `or_err` on what is already a Result: replace the error
       if res && args.len() == 1 && args[0].name == None {

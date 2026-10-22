@@ -51,7 +51,7 @@
 #                                                        native --race and its license
 #                                                        (decision 0273; darwin/arm64
 #                                                        and linux/arm64, built first)
-#   xo-<version>-<os>-<arch>/README.md, CHANGELOG.md, LICENSE,
+#   xo-<version>-<os>-<arch>/README.md (getting started from scripts/release-readme.md, then the repository README.md), CHANGELOG.md, LICENSE,
 #                                                        THIRD_PARTY_NOTICES (the binaries
 #                                                        carry Go's and musl's code, whose
 #                                                        licenses ask for their notices)
@@ -248,7 +248,14 @@ layout() {
 	[ "${target%/*}" = windows ] && exe=.exe
 	GOOS="${target%/*}" GOARCH="${target#*/}" CGO_ENABLED=0 \
 		go build -trimpath -o "$stage/bin/xo-gobind$exe" ./cmd/xo-gobind
-	cp README.md CHANGELOG.md LICENSE THIRD_PARTY_NOTICES "$stage/"
+	cp CHANGELOG.md LICENSE THIRD_PARTY_NOTICES "$stage/"
+	# the archive's README: getting started for this archive
+	# (scripts/release-readme.md, plain text that reads as Markdown too),
+	# then the repository's README
+	{
+		sed -e "s/@VERSION@/$version/g" -e "s/@PLATFORM@/${target%/*}-${target#*/}/g" scripts/release-readme.md
+		cat README.md
+	} > "$stage/README.md"
 	# ThreadSanitizer's runtime for native --race (decision 0273 part 3),
 	# when scripts/race-runtime.sh built it for this target into the
 	# checkout's lib/xo/race, with its license

@@ -6,6 +6,21 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `opt.or(x)`, `.unwrap_or(x)`, `.get_or_else(x)`, `.value_or(x)` and
+  `.or_else(f)` on an Option stay `XO0601`, now with the note that Xo
+  writes `opt ?? x` and a fix that rewrites the call
+  (`os.env.get("PORT") ?? "8090"`); `.or_else` with a fn literal gets
+  the note only.
+- A guide for Go programmers, knowledgebase/guides/option-result-for-go.md:
+  Go's `(T, error)` and `(T, bool)` habits against `??`, `?`, `.or_err`,
+  `.map_err`, `.ok()`, `.err()`, `r ?? e =>` and `if let`, and the first
+  errors (`XO0204`, `XO0205`, `XO0406`, `XO0601`), whose `xo explain`
+  text links it.
+- Each release archive's README.md starts with getting started for that
+  archive: `bin` on the PATH, `xo version`, a three line hello world
+  with `xo run .`, then `xo doc NAME`, `xo explain CODE` and the
+  website's docs (scripts/release-readme.md).
+
 - `opt?` on an Option directly in a test block fails the test with
   `error: missing value: opt` instead of `XO0204` (decision 0347, owner):
   `let u = store.find(7)?` reads as in an Option function and still
