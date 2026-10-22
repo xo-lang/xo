@@ -539,7 +539,9 @@ fn (var b: Builder) contract_check(cond: Expr, prefix: Str) {
 }
 
 /// Hands the runtime the line printed under a failed contract: each name
-/// cond reads (outside calls) and its Debug text (faultDetail).
+/// cond reads, call arguments and receivers included (`ok(result)`,
+/// `result.len()`; a 0.25.2 field report: those printed nothing), but
+/// not inside a fn literal, and its Debug text (faultDetail).
 fn (var b: Builder) fault_detail(cond: Expr) {
   b.s.detail_acc = -1
   b.s.detail_seen = []
@@ -553,7 +555,7 @@ fn (var b: Builder) fault_detail(cond: Expr) {
 
 fn (var b: Builder) detail(e: Expr) {
   match e {
-    CallExpr(..) => return
+    FnLit(..) => return
     Ident(id) => {
       let vo = b.c.var_of(b.s.file, id)
       let name = check.text(id.name)

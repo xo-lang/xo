@@ -39,6 +39,13 @@ fn run_query(os: Os, args: List[Str]) -> Int {
     os.stdio.eprint(query_usage())
     return 2
   }
+  if kind == "holes" && rest.len() == 1 && !dir_set {
+    // `xo query holes DIR`: the directory, as --dir names it (a field
+    // report of 0.25.2 wrote `xo query holes .`)
+    dir = rest[0]
+    dir_set = true
+    rest = []
+  }
   let want = if kind == "holes" { 0 } else { 1 }
   if rest.len() != want {
     os.stdio.eprint("xo query ${kind}: want ${want} argument(s)\n\n${query_usage()}")

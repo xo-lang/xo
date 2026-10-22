@@ -137,6 +137,7 @@ var codegenFS = map[string]string{
 	"lexer/main.xo":             "reads the program's sources",
 	"check/bindmiss.xo":         "module loading: program input",
 	"check/cli.xo":              "module loading: program input",
+	"check/call.xo":             "a diagnostic note only (an unimported std module's file exists): no code",
 	"check/cimport.xo":          "C bindings: program input",
 	"check/decl.xo":             "module loading: program input",
 	"check/deps.xo":             "module loading: program input",

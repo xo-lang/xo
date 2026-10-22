@@ -504,7 +504,8 @@ fn (var g: Gen) gen_requires(cl: parser.Clause) {
 }
 
 /// The values of the identifiers in a contract expression, printed when
-/// it fails (contractVals).
+/// it fails (contractVals): call arguments and receivers included, not
+/// a fn literal's body (as compiler/ssa contract.xo detail).
 fn (var g: Gen) contract_vals(e: Expr) -> Str {
   var parts: List[Str] = []
   var seen: Map[Str, Bool] = {}
@@ -524,7 +525,7 @@ fn (var g: Gen) contract_vals(e: Expr) -> Str {
               }
             }
           }
-          CallExpr(..) => {
+          FnLit(..) => {
             i = ns[i].end
             continue
           }

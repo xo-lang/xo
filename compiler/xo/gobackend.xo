@@ -126,6 +126,14 @@ fn build_go(os: Os, ctx: Ctx, o: Opts) ! {
   if targets.len() > 1 && !out.is_empty() {
     os.fs.create_dir_all(out)?
   }
+  // WASI preview1 has no sockets: Go's wasip1 net is an in-memory fake,
+  // so a server there "listened" on nothing and spun at full CPU (a
+  // 0.25.2 field report); refused as the wasm backend refuses it
+  // (compiler/wasm call.xo), and std/rt fails listen and dial on wasip1
+  let net_call = if prog.files.any(fn(f) { f.text.contains(".M_listen(") }) { "net.listen" } else if prog.files.any(fn(f) { f.text.contains(".M_dial(") }) { "net.dial" } else { "" }
+  if !net_call.is_empty() && targets.any(fn(t) { t.starts_with("wasip1/") }) {
+    fail(os, "the Go backend does not support the network on wasip1/wasm (`${net_call}`): WASI preview1 has no sockets")
+  }
   var bins: List[(Str, Str)] = []
   for tg in targets {
     let bin = bin_path(tree, out, name, tg, targets.len() > 1)

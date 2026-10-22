@@ -1,7 +1,7 @@
 exit 1
 --- stdout
 --- FAIL: lost update (main_test.xo:1:1, seed 2)
-    explored seeds 1 to 2: seed 2 fails; reproduce with `xo test --seed=2`, or pin it with `test "lost update" seed 2`
+    explored seeds 1 to 2: seed 2 fails; reproduce with `xo test --backend=go --seed=2 --run='lost update'`, or pin it with `test "lost update" seed 2`
     expect failed: expect(balance.with(fn(v) { v })) == 30 at main_test.xo:7:3
           left:  10
           right: 30

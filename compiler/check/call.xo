@@ -143,8 +143,32 @@ fn (var c: Checker) ident(id: Ident, hint: Int) -> Int {
     return t
   }
   let d = c.unresolved(id.span, "name", text(name), c.visible_value_names())
+  c.std_import_hint(d, text(name))
   c.qualified_hint(d, text(name))
   c.bad_ty
+}
+
+/// When an unresolved name is a std module this file does not import
+/// (`json.encode(x)` without `use std/json`): the note and fix that add
+/// the `use`, ahead of qualified_hint's members of imported modules
+/// that share the name (`http.json`), which are rarely what was meant.
+fn (var c: Checker) std_import_hint(d: Int, name: Str) {
+  if d < 0 || c.cur_file < 0 || name.is_empty() || name.contains("/") || name.contains(".") {
+    return
+  }
+  let imps = c.files[c.cur_file].ast.imports
+  if imps.any(fn(u) { text(u.path) == "std/${name}" }) {
+    return
+  }
+  if (c.fs.read("${c.std_dir}/${name}.xo").ok() ?? None) == None {
+    return
+  }
+  c.note(d, "`${name}` is the std module `std/${name}`: add `use std/${name}`")
+  if imps.is_empty() {
+    c.fix(d, "add `use std/${name}`", [c.insert_edit(parser.Pos{line: 1, col: 1, offset: 0}, "use std/${name}\n\n")])
+  } else {
+    c.fix(d, "add `use std/${name}`", [c.insert_edit(imps[imps.len() - 1].span.end, "\nuse std/${name}")])
+  }
 }
 
 /// Notes where an unresolved name is declared when it exists in a std

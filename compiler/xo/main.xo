@@ -590,7 +590,9 @@ fn in_scope(os: Os, o: Opts, ds: List[check.Diag]) -> List[check.Diag] {
   let abs = fn(p: Str) -> Str { if p.starts_with("/") { p } else { "${wd}/${p}".replace("/./", "/") } }
   var roots: List[Str] = []
   for d in o.dirs {
-    roots.push(abs(d.trim_suffix("/...").trim_suffix("/.").trim_suffix("/")) + "/")
+    // "." and "./x" too: the root ends in "/", so abs's "/./" cleanup
+    // sees it (`xo build .` counted its own warnings as outside, 0.25.2)
+    roots.push(abs("${d.trim_suffix("/...").trim_suffix("/")}/"))
   }
   if roots.is_empty() {
     roots.push("${wd}/")
@@ -601,7 +603,8 @@ fn in_scope(os: Os, o: Opts, ds: List[check.Diag]) -> List[check.Diag] {
     var shown = !d.warning || d.file.is_empty()
     let f = abs(d.file)
     for r in roots {
-      // a directory covers the directories below it (decision 0210)
+      // a file of the directory, or of one below it (a DIR/... walk,
+      // decision 0345; a plain DIR loads no file below it)
       shown = shown || f.starts_with(r) || "${f}/" == r
     }
     if shown {

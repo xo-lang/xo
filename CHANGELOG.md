@@ -6,6 +6,31 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Fixes from a 0.25.2 field report:
+  - The Go backend refuses a program that listens or dials for
+    wasip1/wasm, as the wasm backend does (WASI preview1 has no sockets);
+    such a server printed "listening", took no port (Go's wasip1 net is
+    an in-memory fake), and spun at full CPU. std/rt's listen and dial
+    fail there too.
+  - A std module used without its `use` (`json.encode` without
+    `use std/json`) is XO0601 with the note and fix that add the `use`,
+    ahead of members of imported modules that share the name
+    (`http.json`).
+  - A failed contract prints the values its condition reads inside calls
+    and methods too: `ensures(ok(result))` and
+    `ensures(result.len() == xs.len())` printed nothing.
+  - `xo test --explore`'s failing seed names the exact command:
+    `xo test --backend=go --seed=N --run='NAME'` (`--seed` alone runs
+    natively, where only Rand is seeded).
+  - `xo build .` no longer counts its own files' warnings as outside the
+    directories built.
+  - `xo edit add-field` makes the new field `pub` when every field of the
+    struct is.
+  - `xo query holes DIR` takes the directory (`xo query holes .`).
+  - `xo run` sends a stop request it gets on to the program as SIGTERM
+    when standard input is not a terminal (process managers, IDEs,
+    Docker, scripts).
+
 - `xo build` and `xo run` (and `--watch`) no longer read `_test.xo`
   files (decision 0348, owner): a type error in a test file no longer
   fails a build, a helper declared only in a test file is not visible to

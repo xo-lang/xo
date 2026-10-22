@@ -785,8 +785,11 @@ fn edit_add_field(os: Os, dirs: List[Str], dry: Bool, target: Str, spec: Str) ->
   }
   let src = s.q.c.files[file].src
   var edits: List[TextEdit] = []
+  // the struct's pattern: when every field is `pub`, the new one is too
+  // (a field report of 0.25.2: a pub struct's new field was private)
+  let kw = if pub_kw.is_empty() && !decl.fields.is_empty() && decl.fields.all(fn(f) { f.is_pub }) { "pub " } else { pub_kw }
   // the declaration: a new line after the last field, or inside `{}`
-  let line = "${pub_kw}${fname}: ${ftype}"
+  let line = "${kw}${fname}: ${ftype}"
   if !decl.fields.is_empty() {
     let last = decl.fields[decl.fields.len() - 1]
     var at = last.span.end.offset

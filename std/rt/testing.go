@@ -136,7 +136,11 @@ func runTests(args []string, tables [][]TestCase) int {
 						o := runOneTest(tc, first+int64(i), *timeout)
 						if o.status == "fail" {
 							s = first + int64(i)
-							o.msg = fmt.Sprintf("explored seeds %d to %d: seed %d fails; reproduce with `xo test --seed=%d`, or pin it with `test %q seed %d`\n%s", first, s, s, s, tc.Name, s, o.msg)
+							// the exact command: --backend=go, since --explore
+							// chose it and only it has the deterministic
+							// scheduler (native `xo test --seed=N` seeds only
+							// Rand, so it passed again; a 0.25.2 field report)
+							o.msg = fmt.Sprintf("explored seeds %d to %d: seed %d fails; reproduce with `xo test --backend=go --seed=%d --run=%s`, or pin it with `test %q seed %d`\n%s", first, s, s, s, shellQuote(tc.Name), tc.Name, s, o.msg)
 							out = o
 							break
 						}
@@ -1805,4 +1809,14 @@ func (f Testing_MemFs) M_files(*Task) Map[string, Bytes] {
 		}
 	}
 	return m
+}
+
+// shellQuote quotes s for a POSIX shell when it needs quoting.
+func shellQuote(s string) string {
+	if s != "" && strings.IndexFunc(s, func(r rune) bool {
+		return !(r == '-' || r == '_' || r == '.' || r == '/' || r == ':' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z')
+	}) < 0 {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

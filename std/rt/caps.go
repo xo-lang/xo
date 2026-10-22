@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -677,9 +678,18 @@ func (n realNet) M_listen(tk *Task, addr string) Result[Listener, NetErr] {
 	return fx(tk, "net.listen", false, func() []any { return []any{addr} }, func() Result[Listener, NetErr] { return n.listen(tk, addr) })
 }
 
+// noSockets is the error of a listen or dial on wasip1, where Go's net
+// package is an in-memory fake: a listener there took no port and its
+// accept loop spun at full CPU (a 0.25.2 field report), and the wasm
+// backend refuses the same program (compiler/wasm call.xo).
+const noSockets = "WASI preview1 has no sockets"
+
 func (realNet) listen(tk *Task, addr string) Result[Listener, NetErr] {
 	if tk.Canceled() {
 		return Err[Listener](netErr(5, ""))
+	}
+	if runtime.GOOS == "wasip1" {
+		return Err[Listener](netErr(4, "listen "+addr+": "+noSockets))
 	}
 	if path, ok := unixPath(addr); ok {
 		// a Unix domain socket (decision 0190); closing the listener
@@ -704,6 +714,9 @@ func (n realNet) M_dial(tk *Task, addr string) Result[Conn, NetErr] {
 func (realNet) dial(tk *Task, addr string) Result[Conn, NetErr] {
 	if tk.Canceled() {
 		return Err[Conn](netErr(5, ""))
+	}
+	if runtime.GOOS == "wasip1" {
+		return Err[Conn](netErr(4, "dial "+addr+": "+noSockets))
 	}
 	network := "tcp"
 	if path, ok := unixPath(addr); ok {
