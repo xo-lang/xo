@@ -1,0 +1,15 @@
+exit 0
+--- stdout
+given: 200 abc-123 body abc-123
+made: 16 true
+invalid replaced: true
+fail: 503
+spans: 3
+request 503 true true
+db.query 0 true true
+request 200 true true
+slow: 0
+limit 1: 1 503
+json: 200 true true
+auth refused: 403
+--- stderr

@@ -1,0 +1,84 @@
+// std/trace on the native backends and, through std/go_compiled.txt, the
+// Go backend (decisions 0312 and 0325): one source.
+use std/http
+use std/trace
+
+fn ring(cap: Int = 1000) -> trace.Ring {
+  trace.Ring{buf: Mutex[List[trace.Span]].new([]), cap: if cap < 1 { 1 } else { cap }}
+}
+
+fn key() -> http.Key[Str] {
+  http.key("xo.request_id")
+}
+
+fn id(req: http.Request) -> Str {
+  req.value(key()) ?? ""
+}
+
+/// 1 to 64 printable ASCII characters, no spaces.
+fn valid_id(s: Str) -> Bool {
+  if s.is_empty() || s.len() > 64 {
+    return false
+  }
+  for c in s.bytes() {
+    if Int(c) <= 32 || Int(c) >= 127 {
+      return false
+    }
+  }
+  true
+}
+
+fn ring_record(r: trace.Ring, id: Str, name: Str, start: Time, d: Duration) {
+  push(r, trace.Span{id: id, name: name, start_ms: start.unix_millis(), micros: d.nanos() / 1000, status: 0})
+}
+
+fn push(r: trace.Ring, s: trace.Span) {
+  let cap = r.cap
+  r.buf.with(fn(var l: List[trace.Span]) {
+    l.push(s)
+    if l.len() > cap {
+      l = l[l.len() - cap..]
+    }
+  })
+}
+
+fn ring_middleware(r: trace.Ring, rand: Rand, clock: Clock) -> fn(http.Request, http.Next) -> http.Response uses (rand, clock) {
+  fn(req, next) -> http.Response {
+    let given = req.header("X-Request-Id") ?? ""
+    let rid = if valid_id(given) { given } else { rand.bytes(8).to_hex() }
+    let t0 = clock.now()
+    var resp = next(req.with_value(key(), rid))
+    let d = clock.since(t0)
+    push(r, trace.Span{id: rid, name: "request", start_ms: t0.unix_millis(), micros: d.nanos() / 1000, status: resp.status})
+    resp.headers.put("X-Request-Id", rid)
+    resp
+  }
+}
+
+fn ring_spans(r: trace.Ring, min: Duration, n: Int) -> List[trace.Span] {
+  let all = r.buf.with_read(fn(l: List[trace.Span]) -> List[trace.Span] { l })
+  var out: List[trace.Span] = []
+  var i = all.len()
+  while i > 0 {
+    i -= 1
+    let s = all[i]
+    if s.micros * 1000 >= min.nanos() {
+      out.push(s)
+      if n > 0 && out.len() >= n {
+        break
+      }
+    }
+  }
+  out
+}
+
+fn ring_handler(r: trace.Ring, auth: fn(http.Request) -> Bool) -> fn(http.Request) -> http.Response {
+  fn(req) -> http.Response {
+    if !auth(req) {
+      return http.text(403, "forbidden\n")
+    }
+    let slow = Int.parse(req.query("slow") ?? "") ?? 0
+    let n = Int.parse(req.query("n") ?? "") ?? 100
+    http.json(200, ring_spans(r, Duration.from_millis(slow), n))
+  }
+}

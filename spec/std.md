@@ -4719,3 +4719,31 @@ fn (r: Registry) handler() -> fn(http.Request) -> http.Response
   integral values without a fraction, and label values escaped (`\\`,
   `\"`, `\n`). `handler()` answers it as
   `text/plain; version=0.0.4; charset=utf-8`.
+
+## 38. std/trace
+
+Request ids and a bounded ring of spans (decision 0325), with no
+exporter: a program's handler reads the ring.
+
+```xo
+struct Span { id: Str, name: Str, start_ms: Int, micros: Int, status: Int } derive Json
+fn ring(cap: Int = 1000) -> Ring
+fn (r: Ring) middleware(rand: Rand, clock: Clock) -> fn(http.Request, http.Next) -> http.Response
+fn id(req: http.Request) -> Str
+fn (r: Ring) record(id: Str, name: Str, start: Time, d: Duration)
+fn (r: Ring) spans(min: Duration, n: Int) -> List[Span]
+fn (r: Ring) handler(auth: fn(http.Request) -> Bool) -> fn(http.Request) -> http.Response
+```
+
+- The middleware takes the id from the `X-Request-Id` header when it is 1
+  to 64 printable characters without spaces, else makes a random 64 bit
+  one (16 hex digits); the request carries it (`id(req)`), the response
+  gets the `X-Request-Id` header, and a `request` span (the request's id,
+  start in Unix milliseconds, duration in microseconds, response status)
+  is recorded.
+- `record` adds a span of the program's own (status 0): time the work
+  with the clock and record it with the request's id.
+- The ring keeps the last `cap` spans; `spans(min, n)` returns the spans
+  of at least `min` newest first, at most `n` (all when n <= 0).
+  `handler(auth)` answers them as JSON (`?slow=MILLIS&n=N`, defaults 0 and
+  100); 403 when `auth` answers false.

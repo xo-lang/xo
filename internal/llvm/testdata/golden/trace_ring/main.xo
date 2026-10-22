@@ -1,0 +1,46 @@
+// std/trace (decision 0325): request ids from a header or random, the
+// X-Request-Id answer, the request span, a program's own spans, the ring's
+// bound, and the JSON handler.
+use std/http
+use std/trace
+
+fn main(os: Os) {
+  let ring = trace.ring(3)
+  var r = http.router()
+  r.wrap(ring.middleware(os.rand, os.clock))
+  r.handle("GET /id", fn(req) { http.text(200, trace.id(req)) })
+  r.handle("GET /fail", fn(_req) { http.text(503, "x") })
+
+  let a = r.call(http.new_request("GET", "/id", {"X-Request-Id": "abc-123"}))
+  os.stdio.println("given: ${a.status} ${a.headers.get("X-Request-Id") ?? "-"} body ${a.body.to_str() ?? "-"}")
+  let b = r.call(http.new_request("GET", "/id"))
+  let bid = b.headers.get("X-Request-Id") ?? ""
+  os.stdio.println("made: ${bid.len()} ${bid == (b.body.to_str() ?? "")}")
+  let c = r.call(http.new_request("GET", "/id", {"X-Request-Id": "has space"}))
+  os.stdio.println("invalid replaced: ${(c.headers.get("X-Request-Id") ?? "") != "has space"}")
+  let t0 = os.clock.now()
+  ring.record("abc-123", "db.query", t0, 5ms)
+  let d = r.call(http.new_request("GET", "/fail"))
+  os.stdio.println("fail: ${d.status}")
+
+  // the ring keeps the last 3, newest first
+  let all = ring.spans(0s, 0)
+  os.stdio.println("spans: ${all.len()}")
+  for s in all {
+    os.stdio.println("${s.name} ${s.status} ${s.micros >= 0} ${s.start_ms > 0}")
+  }
+  let slow = ring.spans(1s, 0)
+  os.stdio.println("slow: ${slow.len()}")
+  let one = ring.spans(0s, 1)
+  os.stdio.println("limit 1: ${one.len()} ${one[0].status}")
+
+  // the handler
+  var dbg = http.router()
+  dbg.handle("GET /requests", ring.handler(fn(_req) { true }))
+  let j = dbg.call(http.new_request("GET", "/requests?n=2"))
+  let body = j.body.to_str() ?? ""
+  os.stdio.println("json: ${j.status} ${body.starts_with("[")} ${body.contains("\"name\":\"request\"")}")
+  var no = http.router()
+  no.handle("GET /requests", ring.handler(fn(_req) { false }))
+  os.stdio.println("auth refused: ${no.call(http.new_request("GET", "/requests")).status}")
+}

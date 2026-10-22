@@ -11,3 +11,4 @@ netip
 mail
 smtp
 metrics
+trace

@@ -39,3 +39,4 @@ entries yet.
 - [websocket.md](websocket.md): std/websocket (spec/std.md 35)
 - [debug.md](debug.md): std/debug (spec/std.md 36)
 - [metrics.md](metrics.md): std/metrics (spec/std.md 37)
+- [trace.md](trace.md): std/trace (spec/std.md 38)

@@ -1,0 +1,51 @@
+// std/trace (spec/std.md 38, decision 0325). Declaration file; encoding
+// rules are listed at the top of std/prelude.xo. Request ids and a
+// bounded ring of spans (what took how long inside a request), with no
+// exporter: a handler reads the ring. A `traceparent`-style exporter is a
+// program's own code over `Ring.spans`.
+use std/http
+
+/// One timed piece of work of a request: the request's id, the span's name
+/// (`request` for the whole request, a program's own for the rest), when it
+/// started (Unix milliseconds), how long it took (microseconds), and the
+/// response status for `request` spans (0 otherwise).
+struct Span {
+  id: Str
+  name: Str
+  start_ms: Int
+  micros: Int
+  status: Int
+} derive Json
+
+/// A bounded ring of the last `cap` spans. Cloning shares it. Its fields
+/// are internal.
+struct Ring {
+  buf: Mutex[List[Span]]
+  cap: Int
+}
+
+/// A ring of the last `cap` spans (default 1000).
+fn ring(cap: Int = 1000) -> Ring
+
+/// The request id middleware (`router.wrap(ring.middleware(rand, clock))`):
+/// takes the id from the `X-Request-Id` header (when it is 1 to 64
+/// printable characters) or makes a random 64 bit one, puts it in the
+/// request (`id(req)`), answers it in the `X-Request-Id` header, and
+/// records a `request` span.
+fn (r: Ring) middleware(rand: Rand, clock: Clock) -> fn(http.Request, http.Next) -> http.Response uses (rand, clock)
+
+/// The id of a request that passed through the middleware, else "".
+fn id(req: http.Request) -> Str
+
+/// Records a span of the work started at `start` that took `d`, for the
+/// request `id`.
+fn (r: Ring) record(id: Str, name: Str, start: Time, d: Duration)
+
+/// The spans, newest first, of at most `n` (all when n <= 0) whose
+/// duration is at least `min`.
+fn (r: Ring) spans(min: Duration, n: Int) -> List[Span]
+
+/// A handler answering the spans as JSON (`?slow=MILLIS&n=N`; defaults 0
+/// and 100): `router.handle("GET /debug/requests", ring.handler(auth))`;
+/// a request for which `auth` answers false gets 403.
+fn (r: Ring) handler(auth: fn(http.Request) -> Bool) -> fn(http.Request) -> http.Response
