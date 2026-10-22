@@ -11,6 +11,7 @@
 // The server's TLS connections are tlssrv.xo's (decision 0202). The
 // Windows arms are UNTESTED on
 // windows: written on macOS and checked by the cross build only.
+use native/llrt/layout
 use native/llrt/dns
 use native/llrt/obj
 use native/llrt/poll
@@ -74,8 +75,7 @@ const IP_MAX = 45
 /// The xo_conn record's poll descriptor (xo_rt.c, asserted), and the
 /// descriptor's fd (poll.xo D_FD, a C int).
 const CN_PD = 16
-const D_FD = 8
-
+const D_FD = layout.D_FD
 /// MSG_NOSIGNAL of Linux's send (sock.send ignores it elsewhere).
 const NOSIGNAL = 16384
 

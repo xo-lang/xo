@@ -157,3 +157,12 @@ PK_SIGNALED to PK_FIBER and PK_SIZE (32, the C_PARK field's size) moved to
 layout.xo from pool.xo; dump.xo's PK_FIBER copy uses it. Checked as
 step 3: 27 of 27 programs identical.
 
+## Step 7 (2026-10-22): the poll descriptor
+
+D_MU to D_NEXT, D_SIZE, D_FD, D_CLOSED, D_OPS moved to layout.xo from
+poll.xo (the owner), with the Windows words past D_SIZE as DW_IOSB to
+DW_DYING and DW_SIZE (poll.xo keeps them as D_IOSB to D_DYING and
+D_SIZE_WIN: the test wants a record's fields below its size, and D_SIZE is
+the size off Windows). hconn.xo's D_FD copy uses it; libcio.xo's D_FD is
+its file record's, marked `// own:`. Checked as step 3: 27 of 27 programs identical.
+

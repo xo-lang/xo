@@ -34,7 +34,7 @@ const FILE_SIZE = 16
 /// A DIR: the descriptor, the next entry's offset, the bytes read, then
 /// getdents64's buffer (glibc's struct dirent on 64 bit Linux is the
 /// kernel's linux_dirent64).
-const D_FD = 0
+const D_FD = 0 // own: libcio's file record, not the poll descriptor
 const D_POS = 8
 const D_LEN = 16
 const D_BUF = 24

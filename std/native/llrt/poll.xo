@@ -9,6 +9,7 @@
 // from the C runtime's malloc (rt.heap_large). The event loop's lock
 // (EV_MU) is held around every call of the heap's. Nothing here
 // allocates Xo values or faults.
+use native/llrt/layout
 use native/llrt/budget
 use native/llrt/ctx
 use native/llrt/heapos
@@ -135,12 +136,12 @@ pub fn timer_first() -> Int {
 // running, readiness that came while nobody waited (read, write), the
 // parks waiting (read, write), and the link of the dead list.
 
-const D_MU = 0
-const D_RREADY = 20
-const D_WREADY = 24
-const D_RWAIT = 32
-const D_WWAIT = 40
-const D_NEXT = 48
+const D_MU = layout.D_MU
+const D_RREADY = layout.D_RREADY
+const D_WREADY = layout.D_WREADY
+const D_RWAIT = layout.D_RWAIT
+const D_WWAIT = layout.D_WWAIT
+const D_NEXT = layout.D_NEXT
 
 /// A timer's park, C function, and fired flag (xo_rt.c struct xo_timer).
 const T_PARK = 16
@@ -286,13 +287,11 @@ const NP_TICK_MIN = 500000
 const NP_TICK_MAX = 10000000
 const NP_QUIET = 10
 
-/// A descriptor record's size off Windows (without the AFD words of
-/// D_SIZE_WIN).
-const D_SIZE = 56
-
-const D_FD = 8
-const D_CLOSED = 12
-const D_OPS = 16
+/// A descriptor record's size and fields: layout.xo's.
+const D_SIZE = layout.D_SIZE
+const D_FD = layout.D_FD
+const D_CLOSED = layout.D_CLOSED
+const D_OPS = layout.D_OPS
 
 /// A timer record's size (its words end at 48).
 const T_SIZE = 64
@@ -1398,18 +1397,13 @@ fn read_fd(fd: Int, a: Int, n: Int) -> Int {
 // (ev_init), registering a descriptor (pd_new: its base socket), and the
 // WSAPoll loop used when the device cannot be opened.
 
-/// A descriptor record's Windows words (D_SIZE_WIN): the poll's
-/// IO_STATUS_BLOCK (its status a 32 bit NTSTATUS), the poll's buffer
-/// (AFD_POLL_INFO: the timeout, the count, exclusive, then one handle,
-/// its events, and its status), the socket's base handle, the events of
-/// the poll in flight (0 none), whether to poll again once it ends, and
-/// whether its completion frees the record (pd_free ran).
-const D_IOSB = 56
-const D_INFO = 72
-const D_BASE = 104
-const D_ARMED = 112
-const D_REARM = 116
-const D_DYING = 120
+/// A descriptor record's Windows words (layout.xo DW_SIZE).
+const D_IOSB = layout.DW_IOSB
+const D_INFO = layout.DW_INFO
+const D_BASE = layout.DW_BASE
+const D_ARMED = layout.DW_ARMED
+const D_REARM = layout.DW_REARM
+const D_DYING = layout.DW_DYING
 
 /// The AFD events of reading and writing (xo_rt.c XO_AFD_READ, WRITE:
 /// receive, expedited, disconnect, abort, local close, accept, connect
@@ -1573,9 +1567,8 @@ pub fn poll_main_win(iocp: Int, mu: Int, dead: Int, sigs: Int) {
 // zero-C audit's B22 Windows pass, 2026-10-15: were xo_rt.c ev_init_win,
 // afd_open, pd_new, and poller_main's WSAPoll loop). UNTESTED on windows.
 
-/// A descriptor record's size on Windows (xo_rt.c xo_pd with its AFD
-/// words, D_IOSB to D_DYING).
-const D_SIZE_WIN = 128
+/// A descriptor record's size on Windows: layout.xo's.
+const D_SIZE_WIN = layout.DW_SIZE
 
 /// SIO_BASE_HANDLE (_WSAIORW(IOC_WS2, 34)), SYNCHRONIZE, FILE_SHARE_READ
 /// | FILE_SHARE_WRITE, FILE_OPEN, FILE_SKIP_SET_EVENT_ON_HANDLE.
