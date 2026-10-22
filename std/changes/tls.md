@@ -3,7 +3,7 @@
 ## 2026-10-22: speedup: AES-GCM counter, rounds and xor in one fused kernel
 
 - Kind: speedup
-- Commit: this commit
+- Commit: a804aed61
 - Found by: bench/perf/aesgcm after the fused GHASH step: the scalar counter stores and word xor around the per call AES intrinsic (Xo Lang 3; kernel by Xo Lang 1, 47312b2f7)
 - Go reference: crypto/cipher's GCM (gcmAesEnc fuses CTR, AES and GHASH)
 - Test: tls_test (seal_at over chunk boundaries), tls12_client, http_tls, http_tls_keys and crypto_prims goldens (arm64, LLVM with Go parity); TestTLSDiff, TestCryptoXoDiff, TestConstantTimeLLVM
