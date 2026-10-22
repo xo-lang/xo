@@ -593,13 +593,15 @@ func TestSecondHop(t *testing.T) {
 	dir := t.TempDir()
 	calls := filepath.Join(dir, "calls")
 	// a fake xo: `version --json` reports COMMIT; `build ... -o OUT ...`
-	// logs who built and writes a fake xo of HEAD's commit at OUT
+	// logs who built compiler/xo and writes a fake xo of HEAD's commit at
+	// OUT
 	fake := func(name, commit string) string {
 		p := filepath.Join(dir, name)
 		src := "#!/bin/sh\n" +
 			"if [ \"$1\" = version ]; then echo '{\"version\":\"0.0.0\",\"commit\":\"" + commit + "\"}'; exit 0; fi\n" +
 			"if [ \"$1\" = build ]; then out=; prev=; for a in \"$@\"; do [ \"$prev\" = -o ] && out=$a; prev=$a; done\n" +
-			"  echo \"$0\" >> " + calls + "\n" +
+			// only builds of compiler/xo count (SmokeXo's builds a program)
+			"  case \"$prev\" in */compiler/xo) echo \"$0\" >> " + calls + ";; esac\n" +
 			"  sed 's/\"commit\":\"[0-9a-f]*\"/\"commit\":\"" + git("rev-parse", "HEAD") + "\"/' \"$0\" > \"$out\"; chmod +x \"$out\"; exit 0; fi\n" +
 			"exit 2\n"
 		if err := os.WriteFile(p, []byte(src), 0o755); err != nil {
@@ -637,5 +639,30 @@ func TestSecondHop(t *testing.T) {
 		if isFile(filepath.Join(filepath.Dir(out), exeName("xo-hop1"))) {
 			t.Errorf("%s: the first hop's xo was left behind", c.name)
 		}
+	}
+}
+
+// TestSmokeXo: a built xo builds the small program SmokeXo writes, with
+// the checkout's std and the native backend; a fake that fails does not
+// pass.
+func TestSmokeXo(t *testing.T) {
+	cli := os.Getenv("XO_CLI")
+	if cli == "" {
+		t.Skip("XO_CLI not set (a built xo)")
+	}
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SmokeXo(root, cli); err != nil {
+		t.Errorf("SmokeXo(%s): %v", cli, err)
+	}
+	if runtime.GOOS == "windows" {
+		return
+	}
+	bad := filepath.Join(t.TempDir(), "xo")
+	os.WriteFile(bad, []byte("#!/bin/sh\necho 'x.xo:1:1: error XO1201: refused' >&2\nexit 1\n"), 0o755)
+	if err := SmokeXo(root, bad); err == nil || !strings.Contains(err.Error(), "XO1201") {
+		t.Errorf("SmokeXo of a failing xo: %v, want its XO1201 error", err)
 	}
 }

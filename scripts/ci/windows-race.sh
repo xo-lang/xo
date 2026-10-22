@@ -34,6 +34,13 @@ export XO_RACE_RUNTIME
 XO_RACE_RUNTIME=$(np "$(up "$rt")")
 sum="$o/windows-race.txt"
 : > "$sum"
+# which xo, and whether it builds a native program at all without --race:
+# separates a broken xo from a --race problem (run 39772751654 failed every
+# build with XO1201 and said neither)
+"$XO_CLI" version --json | tee -a "$sum"
+if ! "$XO_CLI" build --backend=amd64 -o "$(np "$o/plain_tsan_race.exe")" internal/llvm/testdata/tsan_race > "$o/build-plain.txt" 2>&1; then
+  echo "FAIL build tsan_race without --race: $(grep -m 3 ' error ' "$o/build-plain.txt")" | tee -a "$sum"
+fi
 fail=0
 for p in tsan_race race_sync race_stacks; do
   if ! "$XO_CLI" build --race --backend=amd64 -o "$(np "$o/$p.exe")" "internal/llvm/testdata/$p" > "$o/build-$p.txt" 2>&1; then

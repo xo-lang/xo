@@ -526,6 +526,13 @@ func buildLocked(root, out string, log io.Writer) error {
 				continue
 			}
 		}
+		// a broken builder (a miscompiled xo recorded as a clean build) is
+		// skipped in seconds
+		if serr := SmokeXo(root, s.Path); serr != nil {
+			fmt.Fprintf(log, "xotool: %s cannot build a small program (%s); trying the next seed\n", s.Why, summary(serr))
+			errs = append(errs, s.Why+": its smoke build: "+serr.Error())
+			continue
+		}
 		fmt.Fprintf(log, "xotool: building xo (compiler/xo of %s) with %s (%s), a few minutes, into %s\n", root, s.Why, s.Path, out)
 		t0 := time.Now()
 		err := BuildXo(root, s.Path, out)
@@ -728,6 +735,38 @@ func ancestorBuild(root string, ms []string) string {
 		}
 	}
 	return best
+}
+
+// SmokeXo has xo build a small program with root's std and the host
+// architecture's native backend, the runtime of std/native included: an error when it cannot.
+// Windows CI 39772751654: an xo that ran (`xo version`) refused all of
+// std/native with XO1201, and as a recorded build of a near commit it
+// would have been the next build's seed.
+func SmokeXo(root, xo string) error {
+	dir, err := os.MkdirTemp("", "xo-smoke-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	if err := os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module smoke\n"), 0o644); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte("fn main(os: Os) {\n  os.stdio.println(\"smoke\")\n}\n"), 0o644); err != nil {
+		return err
+	}
+	// the native backend of the host's architecture even where xo itself
+	// is built with the Go backend (Windows): the native SSA builder is
+	// what a miscompiled xo broke there
+	backend := "arm64"
+	if runtime.GOARCH == "amd64" {
+		backend = "amd64"
+	}
+	_, env := hostBackend()
+	o, err := runIn(dir, env, xo, "build", "--backend="+backend, "--std="+xoPath(filepath.Join(root, "std")), "-o", xoPath(filepath.Join(dir, exeName("smoke"))), xoPath(dir))
+	if err != nil {
+		return fmt.Errorf("%v\n%s", err, firstErrors(o, 10))
+	}
+	return nil
 }
 
 // SecondHop builds root's compiler/xo again into out with the xo at out,
@@ -968,6 +1007,11 @@ func BuildXo(root, seed, out string) error {
 	// loader reports (`dyld: Symbol not found: _xo_x_preempt`, 2026-10-22)
 	if vo, err := runIn(root, nil, tmp, "version"); err != nil {
 		return fmt.Errorf("the built xo does not run (%v)\n%s", err, lastLines(vo, 5))
+	}
+	// an xo that runs can still be miscompiled: one that cannot build a
+	// small program is no build, and is not cached (SmokeXo)
+	if err := SmokeXo(root, tmp); err != nil {
+		return fmt.Errorf("the built xo cannot build a program: %v", err)
 	}
 	return os.Rename(tmp, out)
 }
