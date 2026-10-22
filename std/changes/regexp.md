@@ -3,7 +3,7 @@
 ## 2026-10-22: perf: the Pike matcher's threads without a call or a copy loop
 
 - Kind: perf
-- Commit: this commit
+- Commit: 6370baa83
 - Found by: bench/results/regexp-ascii-bitmap-inline-2026-10-22.md (replace 1.68x Go)
 - Go reference: regexp/exec.go add (go1.26.1)
 - Test: internal/llvm/testdata/golden/regexp_table, internal/stdtest corpus regexp, std/native/regexp_test.xo; timing row against Go in the result file
@@ -16,7 +16,7 @@ bench --ab` instructions against the previous step: find_all 0.887x, replace
 ## 2026-10-22: perf: ASCII bitmaps and inlined hot calls in both matchers
 
 - Kind: perf
-- Commit: this commit
+- Commit: a5d648ddc
 - Found by: bench/results/regexp-first-byte-2026-10-22.md (match 1.87x, replace 1.98x Go)
 - Go reference: regexp/backtrack.go (shouldVisit, push) and regexp/exec.go (add), whose calls Go's compiler inlines
 - Test: internal/llvm/testdata/golden/regexp_table, internal/stdtest corpus regexp, std/native/regexp_test.xo; timing row against Go: bench/results/regexp-ascii-bitmap-inline-2026-10-22.md
