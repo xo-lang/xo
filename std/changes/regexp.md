@@ -1,5 +1,21 @@
 # std/regexp changes
 
+## 2026-10-22: perf: ASCII bitmaps and inlined hot calls in both matchers
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/results/regexp-first-byte-2026-10-22.md (match 1.87x, replace 1.98x Go)
+- Go reference: regexp/backtrack.go (shouldVisit, push) and regexp/exec.go (add), whose calls Go's compiler inlines
+- Test: internal/llvm/testdata/golden/regexp_table, internal/stdtest corpus regexp, std/native/regexp_test.xo; timing row against Go: bench/results/regexp-ascii-bitmap-inline-2026-10-22.md
+
+The compiled program keeps a bitmap of the ASCII bytes each rune instruction
+accepts and its literal prefix (rebuilt on every call before); the backtracker
+appends ALT and capture-restore jobs without a push call and checks the visited
+bit inline; the Pike queue's membership test is inline in `add`. `xo bench
+--ab` instructions: match 0.567x, find_all 0.807x, replace 0.849x, captures
+0.694x (match 1.87x to 1.06x Go's instructions, captures 0.84x Go); output
+unchanged.
+
 ## 2026-10-22: perf: a first byte filter and one Int per backtrack job
 
 - Kind: perf

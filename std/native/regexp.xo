@@ -1322,6 +1322,11 @@ struct Prog {
   // cannot match. A non-ASCII byte always counts as a candidate.
   first_ok: Bool
   first: List[Int]
+  // the ASCII bytes each rune instruction accepts (bit c & 31 of
+  // ascii[pc * 4 + (c >> 5)]), so an ASCII byte needs no class search
+  ascii: List[Int]
+  // literal_prefix, computed once
+  prefix: Str
 }
 
 /// A fragment: its first instruction (0 a failure), its patch list's head
@@ -1624,14 +1629,46 @@ fn compile(pattern: Str) -> Regex ! regexp.RegexErr {
     j += 1
   }
   let sroot = p.simplify(root)
-  var g = Prog{op: [], out: [], arg: [], rune: [], fold: [], start: 0, num_cap: 2, first_ok: false, first: []}
+  var g = Prog{op: [], out: [], arg: [], rune: [], fold: [], start: 0, num_cap: 2, first_ok: false, first: [], ascii: [], prefix: ""}
   g.inst(I_FAIL)
   let f = g.compile(p, sroot)
   let m = g.inst(I_MATCH)
   g.patch(f.head, m.i)
   g.start = f.i
+  g.ascii_bytes()
   g.first_bytes()
+  g.prefix = literal_prefix(g)
   Regex{expr: pattern, prog: g, names: names}
+}
+
+/// ascii_bytes: the ASCII bitmap of every rune instruction.
+fn (var g: Prog) ascii_bytes() {
+  let n = g.op.len()
+  var a = raw.zero_ints(n * 4)
+  var pc = 1
+  while pc < n {
+    let op = g.op[pc]
+    if op == I_RUNE || op == I_RUNE1 || op == I_ANY || op == I_ANY_NOT_NL {
+      var c = 0
+      while c < 128 {
+        var ok = true
+        if op == I_RUNE {
+          ok = rune_matches(g, pc, c)
+        } else if op == I_RUNE1 {
+          ok = c == g.rune[pc][0]
+        } else if op == I_ANY_NOT_NL {
+          ok = c != 10
+        }
+        if ok {
+          let w = pc * 4 + (c >> 5)
+          a[w] = a[w] | (1 << (c & 31))
+        }
+        c += 1
+      }
+    }
+    pc += 1
+  }
+  g.ascii = a
 }
 
 /// first_bytes: walks the instructions a match can begin with and sets the
@@ -1753,7 +1790,7 @@ fn step_at(s: Str, pos: Int) -> Int {
   if pos >= s.len() {
     return -8
   }
-  let c = byte_at(s, pos)
+  let c = raw.byte_at(raw.data(s), pos)
   if c < 0x80 {
     return c * 8 + 1
   }
@@ -1826,13 +1863,19 @@ fn rune_matches(g: Prog, pc: Int, r: Int) -> Bool {
 fn add(g: Prog, var q: Queue, pc0: Int, pos: Int, var cap: List[Int], cond: Int) {
   var pc = pc0
   while true {
-    if pc == 0 || q.contains(pc) {
+    if pc == 0 {
       return
     }
-    q.sparse[pc] = q.len
-    q.pcs[q.len] = pc
-    q.has[q.len] = 0
-    q.len += 1
+    // q.contains(pc), inline
+    let sj = q.sparse[pc]
+    let n = q.len
+    if sj < n && q.pcs[sj] == pc {
+      return
+    }
+    q.sparse[pc] = n
+    q.pcs[n] = pc
+    q.has[n] = 0
+    q.len = n + 1
     let op = g.op[pc]
     if op == I_FAIL {
       return
@@ -1925,10 +1968,11 @@ fn (var b: BT) should_visit(pc: Int, pos: Int) -> Bool {
   let n = pc * (b.end + 1) + pos
   let w = n >> 5
   let bit = 1 << (n & 31)
-  if (b.visited[w] & bit) != 0 {
+  let v = b.visited[w]
+  if (v & bit) != 0 {
     return false
   }
-  b.visited[w] = b.visited[w] | bit
+  b.visited[w] = v | bit
   true
 }
 
@@ -1954,6 +1998,8 @@ fn (var b: BT) push(g: Prog, pc: Int, pos: Int, arg: Int) {
 /// pos, its positions in b.matchcap.
 fn try_backtrack(g: Prog, s: Str, var b: BT, pc0: Int, pos0: Int) -> Bool {
   let ncap = b.cap.len()
+  let sd = raw.data(s)
+  let end1 = b.end + 1
   b.push(g, pc0, pos0, 0)
   while b.jn > 0 {
     b.jn -= 1
@@ -1967,8 +2013,16 @@ fn try_backtrack(g: Prog, s: Str, var b: BT, pc0: Int, pos0: Int) -> Bool {
     var arg = arg0
     var check = false
     while true {
-      if check && !b.should_visit(pc, pos) {
-        break
+      if check {
+        // b.should_visit(pc, pos), inline
+        let n = pc * end1 + pos
+        let w = n >> 5
+        let bit = 1 << (n & 31)
+        let v = b.visited[w]
+        if (v & bit) != 0 {
+          break
+        }
+        b.visited[w] = v | bit
       }
       check = true
       if pc == 0 {
@@ -1980,12 +2034,24 @@ fn try_backtrack(g: Prog, s: Str, var b: BT, pc0: Int, pos0: Int) -> Bool {
           arg = 0
           pc = g.arg[pc]
         } else {
-          b.push(g, pc, pos, 1)
+          // push(pc, pos, 1) without its checks: pc is an ALT
+          b.job(pc, pos, 1)
           pc = g.out[pc]
         }
         continue
       }
       if op == I_RUNE || op == I_RUNE1 || op == I_ANY || op == I_ANY_NOT_NL {
+        if pos < b.end {
+          let c = raw.byte_at(sd, pos)
+          if c < 128 {
+            if ((g.ascii[pc * 4 + (c >> 5)] >> (c & 31)) & 1) == 0 {
+              break
+            }
+            pos += 1
+            pc = g.out[pc]
+            continue
+          }
+        }
         let st = step_at(s, pos)
         let r = if st < 0 { -1 } else { st >> 3 }
         var ok = false
@@ -2012,7 +2078,7 @@ fn try_backtrack(g: Prog, s: Str, var b: BT, pc0: Int, pos0: Int) -> Bool {
         }
         let a = g.arg[pc]
         if a < ncap {
-          b.push(g, pc, b.cap[a], 1)
+          b.job(pc, b.cap[a], 1)
           b.cap[a] = pos
         }
         pc = g.out[pc]
@@ -2068,7 +2134,7 @@ fn anchored_start(g: Prog) -> Bool {
 fn backtrack(g: Prog, s: Str, pos0: Int, ncap: Int, prefix: Str) -> List[Int] {
   let end = s.len()
   let nprog = g.op.len()
-  var b = BT{end: end, visited: raw.zero_ints((nprog * (end + 1) + 31) / 32), jobs: [], jn: 0, cap: raw.zero_ints(ncap), matchcap: raw.zero_ints(ncap), nprog: nprog}
+  var b = BT{end: end, visited: raw.zero_ints((nprog * (end + 1) + 31) / 32), jobs: raw.zero_ints(32), jn: 0, cap: raw.zero_ints(ncap), matchcap: raw.zero_ints(ncap), nprog: nprog}
   var i = 0
   while i < ncap {
     b.cap[i] = -1
@@ -2119,7 +2185,7 @@ fn backtrack(g: Prog, s: Str, pos0: Int, ncap: Int, prefix: Str) -> List[Int] {
 fn exec(g: Prog, s: Str, pos0: Int, ncap: Int) -> List[Int] {
   let n = g.op.len()
   if n <= 500 && s.len() < 262144 / n {
-    return backtrack(g, s, pos0, ncap, literal_prefix(g))
+    return backtrack(g, s, pos0, ncap, g.prefix)
   }
   var runq = new_queue(n, ncap)
   var nextq = new_queue(n, ncap)
@@ -2147,7 +2213,7 @@ fn exec(g: Prog, s: Str, pos0: Int, ncap: Int) -> List[Int] {
     }
   }
   var cond = empty_context(rune_before(s, pos), r)
-  let prefix = literal_prefix(g)
+  let prefix = g.prefix
   while true {
     if runq.len == 0 && matched {
       break
@@ -2190,7 +2256,9 @@ fn exec(g: Prog, s: Str, pos0: Int, ncap: Int) -> List[Int] {
         let pc = runq.pcs[j]
         let op = g.op[pc]
         var ok = false
-        if op == I_MATCH {
+        if r >= 0 && r < 128 && op != I_MATCH {
+          ok = ((g.ascii[pc * 4 + (r >> 5)] >> (r & 31)) & 1) != 0
+        } else if op == I_MATCH {
           var m = raw.zero_ints(ncap)
           var mi = 0
           while mi < ncap {
