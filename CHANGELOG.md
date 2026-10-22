@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo build --targets=all` (and any target list mixing architectures)
+  builds each target with its own native backend: 0.25.2 failed with
+  "the arm64 backend builds for darwin/arm64 and linux/arm64, not
+  linux/amd64". With no `--backend`, `all` is the six targets a native
+  backend builds; windows/arm64 needs `--backend=go`, whose `all` still
+  builds all seven (owner, 2026-10-22). Native builds for several targets also gave
+  every binary the same name, so one overwrote another; they are now
+  `NAME-OS-ARCH`, as the Go backend's.
+- `xo build --targets=windows/amd64 -o app` writes `app.exe` (0.25.2
+  wrote `app`, which Windows does not run).
 - Native runtime: a `Str` or `Bytes` slice 2 GiB or more into its
   string read the wrong memory (a crash, or zeroed text), and appending
   to such a slice could overwrite the start of the string. A huge

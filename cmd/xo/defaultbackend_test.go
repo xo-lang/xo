@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -30,7 +32,12 @@ func TestDefaultBackendAmd64(t *testing.T) {
 			if code := run(t, args, &stdout, &stderr); code != 0 {
 				t.Fatalf("xo %v: exit %d\n%s%s", args, code, stdout.String(), stderr.String())
 			}
-			b, err := os.ReadFile(out)
+			// -o NAME for windows writes NAME.exe
+			got := out
+			if strings.HasPrefix(tg, "windows/") {
+				got += ".exe"
+			}
+			b, err := os.ReadFile(got)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -41,5 +48,99 @@ func TestDefaultBackendAmd64(t *testing.T) {
 		if !bytes.Equal(def, amd) {
 			t.Errorf("%s: the default backend's binary (%d bytes) differs from --backend=amd64's (%d bytes)", tg, len(def), len(amd))
 		}
+	}
+}
+
+// TestTargetsAllNative builds a program with --targets=all and no
+// --backend: the six targets a native backend builds, each with its own
+// (0.25.2 failed with "the arm64 backend builds for darwin/arm64 and
+// linux/arm64, not linux/amd64"), each binary under its own name in -o's
+// directory (the native backend named every target's binary alike, so
+// darwin/arm64's and linux/arm64's overwrote each other), a note that
+// windows/arm64 needs --backend=go, and exit 0 (owner, 2026-10-22,
+// decision 0270 addendum); windows/arm64 named with no --backend is an
+// error after the rest are built; and -o NAME for windows/amd64 writes
+// NAME.exe (0.25.2 wrote NAME).
+func TestTargetsAllNative(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	t.Parallel()
+	// the binaries are named after the directory
+	dir := filepath.Join(t.TempDir(), "hello")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte("fn main(os: Os) {\n  os.stdio.println(\"hi\")\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, dir)
+	out := filepath.Join(dir, "out")
+	var stdout, stderr bytes.Buffer
+	if code := run(t, []string{"build", "--targets=all", "--json", "-o", out, "."}, &stdout, &stderr); code != 0 {
+		t.Fatalf("xo build --targets=all: exit %d\n%s%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "windows/arm64 needs --backend=go") {
+		t.Errorf("stderr has no note that windows/arm64 needs --backend=go:\n%s", stderr.String())
+	}
+	var rep struct {
+		Binaries map[string]string `json:"binaries"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &rep); err != nil {
+		t.Fatalf("--json: %v\n%s", err, stdout.String())
+	}
+	// each target's file and its format's magic
+	want := map[string]struct{ file, magic string }{
+		"darwin/arm64":  {"hello-darwin-arm64", "\xcf\xfa\xed\xfe\x0c\x00\x00\x01"},
+		"darwin/amd64":  {"hello-darwin-amd64", "\xcf\xfa\xed\xfe\x07\x00\x00\x01"},
+		"linux/arm64":   {"hello-linux-arm64", "\x7fELF"},
+		"linux/amd64":   {"hello-linux-amd64", "\x7fELF"},
+		"windows/amd64": {"hello-windows-amd64.exe", "MZ"},
+		"wasip1/wasm":   {"hello-wasip1-wasm.wasm", "\x00asm"},
+	}
+	if len(rep.Binaries) != len(want) {
+		t.Errorf("binaries %v, want %d targets", rep.Binaries, len(want))
+	}
+	for tg, w := range want {
+		p := filepath.Join(out, w.file)
+		if rep.Binaries[tg] != p {
+			t.Errorf("%s: reported %q, want %q", tg, rep.Binaries[tg], p)
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Errorf("%s: %v", tg, err)
+			continue
+		}
+		if !bytes.HasPrefix(b, []byte(w.magic)) {
+			t.Errorf("%s: %s starts % x, want % x", tg, p, b[:min(len(b), 8)], w.magic)
+		}
+	}
+	// windows/arm64 named: the others built, then an error
+	stdout.Reset()
+	stderr.Reset()
+	if code := run(t, []string{"build", "--targets=linux/arm64,windows/arm64", "-o", filepath.Join(dir, "out2"), "."}, &stdout, &stderr); code != 1 {
+		t.Errorf("xo build --targets=linux/arm64,windows/arm64: exit %d, want 1\n%s%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "no native backend builds windows/arm64: build it with --backend=go") {
+		t.Errorf("windows/arm64 named: stderr does not name --backend=go:\n%s", stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "out2", "hello-linux-arm64")); err != nil {
+		t.Errorf("windows/arm64 named: linux/arm64 not built: %v", err)
+	}
+	// -o NAME for windows: NAME.exe
+	stdout.Reset()
+	stderr.Reset()
+	exe := filepath.Join(dir, "app")
+	if code := run(t, []string{"build", "--targets=windows/amd64", "-o", exe, "."}, &stdout, &stderr); code != 0 {
+		t.Fatalf("xo build --targets=windows/amd64 -o app: exit %d\n%s%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(exe + ".exe"); err != nil {
+		t.Errorf("-o app for windows/amd64: %v (want app.exe)", err)
+	}
+	if _, err := os.Stat(exe); err == nil {
+		t.Errorf("-o app for windows/amd64 wrote app too")
 	}
 }

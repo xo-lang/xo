@@ -86,6 +86,10 @@ struct Opts {
   /// More than one target: XO_CHK_CACHE=auto does not skip (the fallback
   /// covers the first target's build only)
   many_targets: Bool = false
+  /// One backend's share of a build whose targets need several
+  /// (build_by_backend): build_native leaves the report of the binaries
+  /// to its caller.
+  part_of_many: Bool = false
   topts: TestOpts = TestOpts{}
   /// --std-module=MODULE (test, decision 0262): the std module whose
   /// _test.xo tests run, as `use` names it below std (`json`,

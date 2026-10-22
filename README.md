@@ -113,7 +113,9 @@ Linux, Windows), with Xo's own assemblers and linkers; `--backend=llvm`
 (clang needed) is the choice for `--race`. `--backend=go`
 builds through the Go toolchain, which `use go` bindings need, and
 `--backend=wasm` builds a WASI preview1 module. `xo build --targets=all`
-cross compiles for linux, darwin, windows, and wasi.
+cross compiles natively for linux and darwin (amd64 and arm64),
+windows/amd64, and wasi; `--backend=go --targets=all` adds
+windows/arm64.
 
 ## Commands
 

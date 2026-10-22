@@ -130,6 +130,11 @@ fn bin_path(dir: Str, out: Str, name: Str, t: Str, many: Bool) -> Str {
     return "${out}${name}${exe}"
   }
   if !out.is_empty() {
+    // -o NAME for windows with no extension: NAME.exe, which Windows
+    // needs to run it (0.25.2 wrote NAME)
+    if parts[0] == "windows" && !base_name(out).contains(".") {
+      return "${out}.exe"
+    }
     return out
   }
   "${dir}/bin/${name}${exe}"

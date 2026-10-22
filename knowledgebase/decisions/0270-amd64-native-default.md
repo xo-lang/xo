@@ -93,3 +93,19 @@ work on them continues.
   one program, and the measured paths (servers) are release builds.
 - Keep LLVM on amd64 for good: leaves amd64 hosts needing clang while
   arm64 hosts do not.
+
+## Addendum: --targets=all with the native default (owner, 2026-10-22)
+
+0.25.2's `xo build --targets=all` failed with no `--backend`: one native
+backend was chosen for every target, and the arm64 backend rejected
+linux/amd64. Now each target builds with the native backend of its
+architecture (compiler/xo main.xo backend_groups, build_by_backend:
+arm64, amd64, and wasm for wasip1/wasm), and with no `--backend`, `all`
+means the six targets a native backend builds: linux/amd64, linux/arm64,
+darwin/amd64, darwin/arm64, windows/amd64 and wasip1/wasm. windows/arm64
+has no native backend; a note on stderr says it needs `--backend=go`,
+and the build exits 0. `--backend=go --targets=all` keeps all seven. The
+owner chose this over building the rest and failing on windows/arm64,
+which would have made the README's `xo build --targets=all` always exit
+1. Naming windows/arm64 explicitly with no `--backend` is still an error
+(after the other targets are built). Test: cmd/xo TestTargetsAllNative.

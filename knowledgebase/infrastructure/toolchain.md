@@ -703,8 +703,15 @@ in `http_nonet.go`, so the binary does not link Go's net/http (hello world
 verified: 2026-10-09). It prints one
 `os/arch: path` line per binary. `--targets=all` is linux/amd64,
 linux/arm64, darwin/amd64, darwin/arm64, windows/amd64, windows/arm64, and
-`wasi/wasm32` (Go's wasip1/wasm). Binaries go to `-o` (a file for one
-target, a directory for several) or the build directory's `bin/`. `xo run`
+`wasi/wasm32` (Go's wasip1/wasm) with --backend=go; with no --backend
+`all` is the six a native backend builds, each with its own (main.xo
+backend_groups and build_by_backend: arm64, amd64, wasm), and a note
+says windows/arm64 needs --backend=go (decision 0270 addendum, owner
+2026-10-22); windows/arm64 named in a list with no --backend is an error
+after the rest are built (exit 1). Binaries go
+to `-o` (a file for one target, a directory for several, each
+`NAME-OS-ARCH[.exe|.wasm]`) or the build directory's `bin/`; `-o NAME`
+for windows with no extension writes NAME.exe. Last verified: 2026-10-22. `xo run`
 builds for the host and runs with the arguments after the directory or
 `--`, passing the exit status through. `xo test` builds the test blocks of
 every root module into one test binary and runs it: it prints failures (and

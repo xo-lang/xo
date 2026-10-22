@@ -295,6 +295,22 @@ fn main(os: Os) ! {
       lap(os, o.phases, "run_cache_miss", t0)
     }
   }
+  if o.cmd == "build" && o.backend.is_empty() && !o.race {
+    // with no --backend, each target with its own native backend
+    // (arm64, amd64 and wasm); --targets=all is then the targets one
+    // builds, without windows/arm64 (owner, 2026-10-22, decision 0270
+    // addendum; --backend=go --targets=all keeps all seven)
+    var ts = parse_targets(os, o.targets, "${ctx.goos}/${host_arch()}")
+    if o.targets == "all" {
+      ts = ts.filter(fn(t) { !target_backend(t).is_empty() })
+      os.stdio.eprintln("xo build: --targets=all builds the targets a native backend builds; windows/arm64 needs --backend=go")
+    }
+    let groups = backend_groups(ts)
+    if groups.len() > 1 || (groups.len() == 1 && groups[0].0.is_empty()) {
+      build_by_backend(os, ctx, o, groups)
+      return
+    }
+  }
   let nb = build_native(os, ctx, o, backend)
   if o.cmd == "test" {
     var to = o.topts
@@ -347,10 +363,81 @@ fn main(os: Os) ! {
 /// target only) and the tests of a test binary.
 struct Native {
   bin: Str = ""
+  /// The binaries built, (target, path).
+  bins: List[(Str, Str)] = []
   tests: List[TestInfo] = []
   /// The checker's std parses, for the next build of the process
   /// (`xo dev build-each`, decision 0209).
   pc: Map[Str, check.ParseEntry] = {}
+}
+
+/// The native backend that builds target tg ("" for none): arm64 for
+/// darwin/arm64 and linux/arm64, amd64 for linux, darwin and windows
+/// amd64 (decision 0254), wasm for wasip1/wasm.
+fn target_backend(tg: Str) -> Str {
+  match tg {
+    "darwin/arm64" | "linux/arm64" => "arm64"
+    "linux/amd64" | "darwin/amd64" | "windows/amd64" => "amd64"
+    "wasip1/wasm" => "wasm"
+    _ => ""
+  }
+}
+
+/// targets by the native backend that builds them, in the order of each
+/// backend's first target; "" collects the targets none builds.
+fn backend_groups(targets: List[Str]) -> List[(Str, List[Str])] {
+  var gs: List[(Str, List[Str])] = []
+  for tg in targets {
+    let b = target_backend(tg)
+    var found = false
+    for (i, g) in gs.indexed() {
+      if g.0 == b {
+        var ts = g.1
+        ts.push(tg)
+        gs[i] = (b, ts)
+        found = true
+      }
+    }
+    if !found {
+      gs.push((b, [tg]))
+    }
+  }
+  gs
+}
+
+/// A build whose targets need several native backends (--targets=all
+/// with no --backend; 0.25.2 failed with "the arm64 backend builds for
+/// darwin/arm64 and linux/arm64, not linux/amd64"): each backend's
+/// targets as one build_native, then one report of every binary; a
+/// target no native backend builds (windows/arm64, when named:
+/// --targets=all leaves it out) is an error naming --backend=go, after
+/// the others are built.
+fn build_by_backend(os: Os, ctx: Ctx, o: Opts, groups: List[(Str, List[Str])]) {
+  var bins: List[(Str, Str)] = []
+  var none: List[Str] = []
+  for (b, ts) in groups {
+    if b.is_empty() {
+      none = none + ts
+      continue
+    }
+    var og = o
+    og.targets = ts.join(",")
+    og.many_targets = true
+    og.part_of_many = true
+    let nb = build_native(os, ctx, og, b)
+    bins = bins + nb.bins
+  }
+  if o.json {
+    os.stdio.print(build_json(none.is_empty(), bins, []))
+  } else {
+    for (tg, p) in bins.sort_by(fn(x) { x.0 }) {
+      os.stdio.println("${tg}: ${p}")
+    }
+  }
+  if !none.is_empty() {
+    os.stdio.eprintln("xo build: no native backend builds ${none.join(", ")}: build it with --backend=go (the other targets are built)")
+    os.proc.exit(1)
+  }
 }
 
 /// The targets of --targets (internal/build ParseTargets): the host when
@@ -674,7 +761,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   let march = if backend == "amd64" { "amd64" } else { "arm64" }
   let host = if backend == "llvm" { "${goos}/${host_arch()}" } else { "${goos}/${march}" }
   let targets = parse_targets(os, o.targets, host)
-  o.many_targets = targets.len() > 1
+  o.many_targets = o.many_targets || targets.len() > 1
   // the LLVM backend: the host, or one other target clang cross
   // compiles for with the host's SDK (llvm_cross_triple: windows/arm64 on
   // windows/amd64, decision 0197), or Windows from any host given a
@@ -769,8 +856,21 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   let tu = lo.tu
   if backend == "wasm" {
     // the zone data std/time reads (as the native link embeds it)
-    build_wasm(os, ctx, b.m, o.out, o.wd, o.dirs[0], tzsel.tz_select(os, ctx.std, tu, o.tzdata))
-    return Native{pc: c.parse_cache}
+    // one of several targets: NAME-wasip1-wasm.wasm in -o's directory,
+    // else the working directory, as bin_path names the others
+    var wout = o.out
+    if o.many_targets {
+      let base = "${prog_name(o.wd, o.dirs)}-wasip1-wasm.wasm"
+      if o.out.is_empty() {
+        wout = abs_of(o.wd, base)
+      } else {
+        let od = abs_of(o.wd, o.out).trim_suffix("/")
+        write_or_fail(os, od, "", b"")
+        wout = "${od}/${base}"
+      }
+    }
+    build_wasm(os, ctx, b.m, wout, o.wd, o.dirs[0], tzsel.tz_select(os, ctx.std, tu, o.tzdata))
+    return Native{bins: if wout.is_empty() { [] } else { [("wasip1/wasm", wout)] }, pc: c.parse_cache}
   }
   // the build directory (buildDir, then the backend's subdirectory)
   let mode = if tests { 1 } else { 0 }
@@ -915,7 +1015,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       write_or_fail(os, dir, o.asm_path, code.bytes())
     }
     t = lap(os, phases, "write", t)
-    let bin = bin_path(dir, out, name, ltarget, false)
+    let bin = bin_path(dir, out, name, ltarget, o.many_targets)
     var lk = link_inputs(os, ctx, o, c, dir, code, uses_time, tu, false, lctx.tgoos, tgoarch)
     lk.flags = cross + lk.flags
     if o.race {
@@ -1131,7 +1231,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     if march == "amd64" && tgoos == "windows" {
       // the amd64 backend's windows/amd64 program (decision 0254 6b):
       // clang's assembler and lld-link (win_amd64_link)
-      let wbin = bin_path(dir, out, name, tg, false)
+      let wbin = bin_path(dir, out, name, tg, o.many_targets)
       var wsrcs = [s]
       if p.parts.len() > 1 {
         wsrcs = []
@@ -1224,7 +1324,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         fail(os, "the arm64 backend needs a C compiler to assemble and link: install one (macOS: xcode-select --install; Debian or Ubuntu: apt-get install gcc, or clang) or set XO_CC")
       }
     }
-    let bin = bin_path(dir, out, name, tg, false)
+    let bin = bin_path(dir, out, name, tg, o.many_targets)
     let lk = link_inputs(os, ctx, o, c, dir, code, uses_time, cur_tu, no_cc, tgoos, march)
     let flags = ["-O2"] + lk.flags
     // the program's assembly: one file, or the files of a parallel
@@ -1503,7 +1603,7 @@ fn finish(os: Os, ctx: Ctx, o: Opts, c: check.Checker, root: Str, bins: List[(St
     }
     return Native{bin: host_bin, tests: ts, pc: c.parse_cache}
   }
-  if o.cmd == "build" {
+  if o.cmd == "build" && !o.part_of_many {
     if o.json {
       os.stdio.print(build_json(true, bins, c.diags))
     } else {
@@ -1512,7 +1612,7 @@ fn finish(os: Os, ctx: Ctx, o: Opts, c: check.Checker, root: Str, bins: List[(St
       }
     }
   }
-  Native{bin: host_bin, pc: c.parse_cache}
+  Native{bin: host_bin, bins: bins, pc: c.parse_cache}
 }
 
 /// The sources and flags a native link adds to the program's code
