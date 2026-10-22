@@ -1,5 +1,19 @@
 # std/tls changes
 
+## 2026-10-22: speedup: AES-GCM hashes a 64 byte chunk with cpu.ghash4
+
+- Kind: speedup
+- Commit: this commit
+- Found by: profile (Xo Lang 3, bulk TLS 1.3 download: ghash64 26% of server CPU)
+- Go reference: none (Go's crypto/internal/fips140/aes/gcm uses pmull on arm64)
+- Test: std/native/llrt/tlsrec_test.xo; tls, tls12, tls13, http_tls, websocket_tls, crypto goldens (arm64, LLVM); wasm TLS and Map goldens
+
+ghash_hw and ctr_at_a's fused loop call cpu.ghash4 (decision 0339: NEON
+pmull on arm64, the portable body elsewhere) with the state in a two
+word list, in place of the ghash64 body written out in the loop.
+valgrind callgrind, linux/arm64, 16 MiB TLS 1.3 download: 141.53 M to
+123.77 M instructions (-12.6%).
+
 ## 2026-10-22: speedup: a server read forgets stale readiness first
 
 - Kind: speedup
