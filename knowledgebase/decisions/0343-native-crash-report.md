@@ -10,7 +10,10 @@ LLVM on darwin/arm64; linux/arm64 checked in Docker). Stage 2
 (windows/amd64) implemented 2026-10-22: a vectored handler joins the
 unhandled filter (below: Xo's fiber stacks never reach the filter),
 checked under Wine (Box64) with a scratch fault in Xo code; the approved
-CI run is scripts/ci/windows-crash.sh.
+CI run is scripts/ci/windows-crash.sh. Stage 3 implemented 2026-10-22:
+`xo dev symbolize` (compiler/cli/dev symbolize.xo, PE support in
+compiler/debug pe.xo), the same traceback as the report's own on
+darwin/arm64, linux/arm64 and amd64, and windows/amd64.
 
 ## Context
 
@@ -193,6 +196,11 @@ traceback:
 3. Offline resolution: `xo dev symbolize BINARY < report` resolves the
    `module+0xOFFSET` frames of a phase-1-only report (a stripped release
    binary, or symbolization that faulted) with compiler/debug's readers.
+   As built: it reads only the report's `pc ... (image base B)` and
+   `frames:` lines, moves each pc from the load address to the file's
+   (Mach-O __TEXT's address, PE ImageBase; ELF's B is the bias), and
+   prints the runtime's format, inlined calls first, symbol names
+   decoded as prof.xo does, ending at main.
 4. The spec (section 8, next to the fault report) and toolchain.md
    describe the report, `XO_CRASH_REPORT` and `XO_CRASH_TIMEOUT`.
 

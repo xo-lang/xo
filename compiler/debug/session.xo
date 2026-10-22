@@ -29,7 +29,8 @@ pub fn vframes(info: Info, l: Lines, tab: Tables, frames: List[UFrame]) -> List[
   var out: List[VFrame] = []
   for (k, f) in frames.indexed() {
     // a caller's line is its call's: the instruction before the return
-    let look = if k == 0 { f.pc } else { f.pc - 4 }
+    // (pc - 1 is inside it on arm64 and x86_64 alike)
+    let look = if k == 0 { f.pc } else { f.pc - 1 }
     var file = ""
     var line = 0
     if let Some((fl, ln)) = l.at(look) {

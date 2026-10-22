@@ -24,7 +24,7 @@ pub struct Sections {
   pub loclists: Bytes = b""
   pub rnglists: Bytes = b""
   pub line: Bytes = b""
-  /// the file's format: "elf" or "macho"
+  /// the file's format: "elf", "macho" or "pe"
   pub format: Str = ""
 }
 
@@ -43,9 +43,9 @@ fn (var s: Sections) set(name: Str, b: Bytes) {
   }
 }
 
-/// The debug sections of an ELF executable or object, or of a Mach-O
-/// file (a dSYM's DWARF file, or an object); an error for another format
-/// or a file with no .debug_info.
+/// The debug sections of an ELF executable or object, of a Mach-O file
+/// (a dSYM's DWARF file, or an object), or of a PE image; an error for
+/// another format or a file with no .debug_info.
 pub fn sections(data: Bytes) -> Result[Sections, Str] {
   if data.len() < 64 {
     return Err("too short for an object file")
@@ -108,8 +108,19 @@ pub fn sections(data: Bytes) -> Result[Sections, Str] {
       }
       lc += rd32(data, lc + 4)
     }
+  } else if is_pe(data) {
+    s.format = "pe"
+    let img = match pe_image(data) {
+      Ok(x) => x
+      Err(e) => return Err(e)
+    }
+    for sc in img.sections {
+      if sc.name.starts_with(".debug_") {
+        s.set(sc.name[7..], data[sc.off..sc.off + sc.size])
+      }
+    }
   } else {
-    return Err("not an ELF or 64 bit Mach-O file (a universal binary: pick its arm64 slice)")
+    return Err("not an ELF, 64 bit Mach-O or PE file (a universal binary: pick its arm64 slice)")
   }
   if s.info.is_empty() {
     return Err("no .debug_info")

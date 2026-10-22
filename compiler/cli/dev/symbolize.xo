@@ -1,0 +1,221 @@
+// `xo dev symbolize [--dwarf FILE] BINARY < REPORT`: the traceback of a
+// native program's crash report (decision 0343 stage 3) from its
+// `frames:` line, for a report whose own traceback is missing (phase 2
+// timed out or faulted) or a stripped binary whose unstripped copy is
+// at hand. The report's pcs are absolute; `pc ... (image base B)` gives
+// where the image was loaded, so each pc is moved to the file's own
+// addresses (Mach-O: from the header's address to __TEXT's; ELF: B is
+// the load bias; PE: from B to the image's preferred base) and named by
+// the DWARF (BINARY's own, its BINARY.dSYM on macOS, or --dwarf) and the
+// symbol table, in the report's format: `  FUNCTION (FILE:LINE)`, the
+// calls inlined at a pc first, `  BINARY+0xOFFSET` for a pc no table
+// names.
+
+use github.com/xo-lang/xo/compiler/cli/core
+use github.com/xo-lang/xo/compiler/debug
+
+fn symbolize_cmd(os: Os, args: List[Str]) -> Int uses (fs.read, stdio) {
+  var fl = core.new_flags("dev symbolize")
+  fl.str_flag("dwarf", "", "the DWARF file (default BINARY's own, or BINARY.dSYM's)")
+  if !fl.parse(os, args) {
+    return 2
+  }
+  if fl.args.len() != 1 {
+    os.stdio.eprintln("usage: xo dev symbolize [--dwarf FILE] BINARY < REPORT")
+    return 2
+  }
+  let bin = fl.args[0]
+  let exe = match os.fs.read(bin) {
+    Ok(d) => d
+    Err(e) => {
+      os.stdio.eprintln("xo dev symbolize: ${e}")
+      return 1
+    }
+  }
+  var dpath = fl.get_str("dwarf")
+  if dpath.is_empty() {
+    let parts = bin.split("/")
+    let dsym = "${bin}.dSYM/Contents/Resources/DWARF/${parts[parts.len() - 1]}"
+    dpath = if os.fs.read(dsym) is Ok(_) { dsym } else { bin }
+  }
+  let ddata = if dpath == bin { exe } else {
+    match os.fs.read(dpath) {
+      Ok(d) => d
+      Err(e) => {
+        os.stdio.eprintln("xo dev symbolize: ${e}")
+        return 1
+      }
+    }
+  }
+  let report = match os.stdio.read_all() {
+    Ok(t) => t
+    Err(e) => {
+      os.stdio.eprintln("xo dev symbolize: ${e}")
+      return 1
+    }
+  }
+  let r = match parse_report(report) {
+    Ok(x) => x
+    Err(e) => {
+      os.stdio.eprintln("xo dev symbolize: the report: ${e}")
+      return 1
+    }
+  }
+  let tab = debug.tables(exe)
+  var info = debug.Info{}
+  var lines = debug.Lines{}
+  match debug.sections(ddata) {
+    Ok(s) => {
+      info = debug.read(s)
+      lines = debug.lines(s)
+    }
+    Err(e) => os.stdio.eprintln("xo dev symbolize: ${dpath}: ${e} (naming by symbols only)")
+  }
+  let slide = r.base - file_base(exe, tab)
+  let bparts = bin.split("/")
+  os.stdio.print(traceback(info, lines, tab, r.pcs, slide, bparts[bparts.len() - 1], r.base))
+  0
+}
+
+/// What symbolize reads from a report: the image's load address and the
+/// frames' pcs, a run `pc (xN)` expanded.
+struct Report {
+  base: Int
+  pcs: List[Int]
+}
+
+fn parse_report(text: Str) -> Result[Report, Str] {
+  var base = -1
+  var pcs: List[Int] = []
+  var have = false
+  for line in text.split("\n") {
+    let l = line.trim()
+    if l.starts_with("pc ") && l.contains("(image base ") {
+      let rest = l.split("(image base ")[1]
+      base = hex_int(rest.trim_suffix(")")) ?? -1
+    } else if l.starts_with("frames:") {
+      have = true
+      let toks = l[7..].trim().split(" ")
+      for t in toks {
+        if t.starts_with("0x") {
+          pcs.push(hex_int(t) ?? 0)
+        } else if t.starts_with("(x") && t.ends_with(")") && !pcs.is_empty() {
+          let n = Int.parse(t[2..t.len() - 1]) ?? 1
+          for _ in 1..n {
+            pcs.push(pcs[pcs.len() - 1])
+          }
+        }
+      }
+    }
+  }
+  if !have {
+    return Err("no `frames:` line")
+  }
+  if base < 0 {
+    return Err("no `pc ... (image base 0x...)` line")
+  }
+  Ok(Report{base: base, pcs: pcs})
+}
+
+/// 0x and hex digits as a number, or None.
+fn hex_int(s: Str) -> Int? {
+  if !s.starts_with("0x") || s.len() < 3 {
+    return None
+  }
+  var v = 0
+  for c in s[2..].bytes() {
+    let d = if c >= 48 && c <= 57 { Int(c) - 48 } else if c >= 97 && c <= 102 { Int(c) - 87 } else if c >= 65 && c <= 70 { Int(c) - 55 } else { -1 }
+    if d < 0 {
+      return None
+    }
+    v = v * 16 + d
+  }
+  Some(v)
+}
+
+/// The address the report's image base stands for in the file: a
+/// Mach-O header's (its __TEXT segment's address) and a PE image's
+/// preferred base; 0 for ELF, whose report gives the load bias.
+fn file_base(exe: Bytes, tab: debug.Tables) -> Int {
+  if exe.len() >= 4 && exe[0] == 0x7f && exe[1] == 69 {
+    return 0
+  }
+  tab.base
+}
+
+/// The traceback of pcs (loaded at slide past the file's addresses): the
+/// report's format; a pc no table names as NAME+0xOFFSET from the
+/// report's image base.
+fn traceback(info: debug.Info, lines: debug.Lines, tab: debug.Tables, pcs: List[Int], slide: Int, name: Str, base: Int) -> Str {
+  var frames: List[debug.UFrame] = []
+  for pc in pcs {
+    frames.push(debug.UFrame{pc: pc - slide, regs: {}, how: "report"})
+  }
+  var b = StrBuilder.new()
+  b.write("traceback:\n")
+  for f in debug.vframes(info, lines, tab, frames) {
+    let n = shown(f.name)
+    // LLVM inlines main into xo_entry: the inlined main is the last
+    // frame, shown as a function, as the runtime's traceback does
+    let last = n == "main"
+    let inl = f.inlined && !last
+    if n.is_empty() || n == "?" {
+      b.write("  ${name}+0x${hex(f.pc + slide - base)}\n")
+    } else if f.file.is_empty() {
+      b.write("  ${n}${if inl { " [inlined]" } else { "" }}\n")
+    } else {
+      b.write("  ${n} (${f.file}:${f.line})${if inl { " [inlined]" } else { "" }}\n")
+    }
+    // the program's main ends it, as the runtime's traceback
+    if last {
+      break
+    }
+  }
+  b.freeze()
+}
+
+/// A frame's name as the runtime's traceback shows it (prof.xo
+/// demangle): a symbol without its offset (debug.Tables sym_at's
+/// `+N`), a generated function's symbol (xo_f_ and _HH escapes, __ an
+/// underscore) decoded, xo_x_ and x. dropped, and xo_entry, into which
+/// LLVM inlines the program's main, as main.
+fn shown(name0: Str) -> Str {
+  var name = name0
+  if let Some(i) = name.find("+") {
+    name = name[0..i]
+  }
+  if name == "xo_entry" {
+    return "main"
+  }
+  if name.starts_with("x.") {
+    return name[2..]
+  }
+  if name.starts_with("xo_x_") {
+    return name[5..]
+  }
+  if !name.starts_with("xo_f_") {
+    return name
+  }
+  let b = name.bytes()
+  var o = BytesBuilder.with_capacity(b.len())
+  var i = 5
+  while i < b.len() {
+    let c = Int(b[i])
+    if c == 95 && i + 1 < b.len() && Int(b[i + 1]) == 95 {
+      o.write_byte(UInt8(95))
+      i += 2
+    } else if c == 95 && i + 2 < b.len() && hexv(Int(b[i + 1])) >= 0 && hexv(Int(b[i + 2])) >= 0 {
+      o.write_byte(UInt8(16 * hexv(Int(b[i + 1])) + hexv(Int(b[i + 2]))))
+      i += 3
+    } else {
+      o.write_byte(UInt8(c))
+      i += 1
+    }
+  }
+  o.freeze().to_str() ?? name
+}
+
+/// A lower case hex digit's value, or -1.
+fn hexv(c: Int) -> Int {
+  if c >= 48 && c <= 57 { c - 48 } else if c >= 97 && c <= 102 { c - 87 } else { -1 }
+}

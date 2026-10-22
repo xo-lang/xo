@@ -12,6 +12,8 @@
 //   xo dev dwarf [--func=NAME] FILE   the functions, variables, locations, and
 //                                     types of FILE's DWARF (decision 0253)
 //   xo dev unwind --snap FILE EXE     the backtrace of a recorded thread
+//   xo dev symbolize BINARY < REPORT  a crash report's traceback from its
+//                                     frames' pcs (decision 0343)
 //   xo dev debug --snap FILE -c CMD EXE  xo debug --batch on a recorded thread
 //   xo dev new-code XOnnnn --title=T  explain_data.xo and core 10.6 rows and an
 //                                     errorcheck case for a new code (scaffold.xo)
@@ -38,7 +40,7 @@ pub struct Host {
 }
 
 pub fn usage() -> Str {
-  "usage: xo dev goldens|errorcheck|codegen|bisect-pass|dwarf|unwind|debug|compare|new-code|new-golden|dump|record [flags] ..."
+  "usage: xo dev goldens|errorcheck|codegen|bisect-pass|dwarf|unwind|symbolize|debug|compare|new-code|new-golden|dump|record [flags] ..."
 }
 
 /// run runs `xo dev <args>` for the commands of this module and returns
@@ -55,6 +57,7 @@ pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, f
     "bisect-pass" => bisect_cmd(os, h, args[1..])
     "dwarf" => dwarf_cmd(os, args[1..])
     "unwind" => unwind_cmd(os, args[1..])
+    "symbolize" => symbolize_cmd(os, args[1..])
     "debug" => debug_cmd(os, args[1..])
     "compare" => compare_cmd(os, args[1..])
     "new-code" => new_code_cmd(os, args[1..])

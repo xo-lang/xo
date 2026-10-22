@@ -1,0 +1,105 @@
+// PE32+ executables (windows/amd64 and arm64) for `xo dev symbolize`
+// (decision 0343 stage 3): the image's preferred base, its sections
+// (a name past 8 bytes is "/" and its offset in the COFF string table,
+// after the symbol table: the .debug_ sections), and the COFF symbols
+// lld-link writes with /debug:symtab. std/native/llrt/dwline.xo reads the
+// same sections from a running program's own file.
+
+/// A section of a PE image: its name, address (the preferred base plus
+/// its RVA), file offset and size (VirtualSize, not the raw data's
+/// padded size), and whether it holds code.
+pub struct PeSection {
+  pub name: Str
+  pub addr: Int
+  pub off: Int
+  pub size: Int
+  pub exec: Bool
+}
+
+/// A PE image's preferred base (the optional header's ImageBase), its
+/// sections, and its COFF symbol table's offset and count (0 when it has
+/// none).
+pub struct PeImage {
+  pub base: Int
+  pub sections: List[PeSection]
+  pub symoff: Int
+  pub nsyms: Int
+}
+
+/// Whether data starts like a PE file (an MZ header).
+pub fn is_pe(data: Bytes) -> Bool { data.len() >= 64 && data[0] == 77 && data[1] == 90 }
+
+/// The image of the PE file data, or why it cannot be read.
+pub fn pe_image(data: Bytes) -> Result[PeImage, Str] {
+  if !is_pe(data) {
+    return Err("not a PE file")
+  }
+  let pe = rd32(data, 60)
+  if pe + 24 + 112 > data.len() || rd32(data, pe) != 0x4550 {
+    return Err("bad PE header")
+  }
+  // the COFF header: sections 2, symbol table 8, symbols 12, optional
+  // header's size 16; PE32+ (magic 0x20b) has ImageBase at 24 of the
+  // optional header
+  let coff = pe + 4
+  let opt = coff + 20
+  if rd16(data, opt) != 0x20b {
+    return Err("not a PE32+ (64 bit) image")
+  }
+  let nsec = rd16(data, coff + 2)
+  let symoff = rd32(data, coff + 8)
+  let nsyms = rd32(data, coff + 12)
+  let strs = symoff + 18 * nsyms
+  let sec = opt + rd16(data, coff + 16)
+  let base = rd64(data, opt + 24)
+  if sec + 40 * nsec > data.len() {
+    return Err("bad PE section headers")
+  }
+  var out: List[PeSection] = []
+  for i in 0..nsec {
+    // IMAGE_SECTION_HEADER: Name 0, VirtualSize 8, VirtualAddress 12,
+    // PointerToRawData 20, Characteristics 36 (IMAGE_SCN_MEM_EXECUTE)
+    let sh = sec + 40 * i
+    var name = cstr(data, sh, sh + 8)
+    if name.starts_with("/") {
+      let k = Int.parse(name[1..]) ?? -1
+      if k < 4 || symoff == 0 || strs + k >= data.len() {
+        continue
+      }
+      name = cstr(data, strs + k, data.len())
+    }
+    let size = rd32(data, sh + 8)
+    let off = rd32(data, sh + 20)
+    if off + size > data.len() {
+      continue
+    }
+    out.push(PeSection{name: name, addr: base + rd32(data, sh + 12), off: off, size: size, exec: rd32(data, sh + 36) & 0x20000000 != 0})
+  }
+  Ok(PeImage{base: base, sections: out, symoff: if strs <= data.len() { symoff } else { 0 }, nsyms: nsyms})
+}
+
+/// The functions of the COFF symbol table of img (data's): each external
+/// or static symbol of a code section but the sections' own, by address.
+fn pe_syms(data: Bytes, img: PeImage) -> List[(Int, Str)] {
+  var out: List[(Int, Str)] = []
+  if img.symoff == 0 {
+    return out
+  }
+  let strs = img.symoff + 18 * img.nsyms
+  var k = 0
+  while k < img.nsyms {
+    // IMAGE_SYMBOL: Name 0 (or 0 and a string table offset at 4), Value
+    // 8, SectionNumber 12 (1 based), StorageClass 16, aux records 17
+    let e = img.symoff + 18 * k
+    let sn = rd16(data, e + 12)
+    let class = Int(data[e + 16])
+    if sn >= 1 && sn <= img.sections.len() && (class == 2 || class == 3) && img.sections[sn - 1].exec {
+      let name = if rd32(data, e) == 0 { cstr(data, strs + rd32(data, e + 4), data.len()) } else { cstr(data, e, e + 8) }
+      if !name.starts_with(".") && !name.is_empty() {
+        out.push((img.sections[sn - 1].addr + rd32(data, e + 8), name))
+      }
+    }
+    k += 1 + Int(data[e + 17])
+  }
+  out
+}

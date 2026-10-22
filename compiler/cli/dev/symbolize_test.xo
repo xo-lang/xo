@@ -1,0 +1,28 @@
+// Tests of xo dev symbolize (decision 0343 stage 3); the command against
+// real reports is internal/arm64 TestCrashReport's.
+
+test "a report's image base and frames, a run expanded" {
+  let r = parse_report("fatal error: SIGSEGV: segmentation violation (code 2) at address 0x10\npc 0x1000 (image base 0x400)\n\nregisters:\n  x0  0x0000000000000010\n\nframes: 0x1000 0x2004 (x3) 0x30a8\n\ntraceback:\n  main (main.xo:1)\n")
+  match r {
+    Ok(x) => {
+      expect(x.base) == 0x400
+      expect(x.pcs) == [0x1000, 0x2004, 0x2004, 0x2004, 0x30a8]
+    }
+    Err(e) => expect(e) == ""
+  }
+}
+
+test "a report without frames or image base is an error" {
+  expect(parse_report("fatal error: SIGSEGV\n") is Err(_)) == true
+  expect(parse_report("frames: 0x10\n") is Err(_)) == true
+}
+
+test "names as the runtime's traceback shows them" {
+  expect(shown("xo_f_xo_2erun_5bTask_5d")) == "xo.run[Task]"
+  expect(shown("xo_f_cabi_2epoll__ev__start")) == "cabi.poll_ev_start"
+  expect(shown("crashc_write+4")) == "crashc_write"
+  expect(shown("xo_entry+20")) == "main"
+  expect(shown("xo_x_personality")) == "personality"
+  expect(hex_int("0x1f")) == Some(31)
+  expect(hex_int("1f")) == None
+}

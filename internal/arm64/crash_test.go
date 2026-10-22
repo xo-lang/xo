@@ -77,6 +77,9 @@ func testCrashReport(t *testing.T, be string) {
 	if !strings.HasPrefix(got, "fatal error: SIGSEGV") {
 		t.Errorf("segv: the report does not start with its first line:\n%s", got)
 	}
+	// xo dev symbolize (stage 3): the same traceback from the report's
+	// frames and the binary alone
+	symbolize(t, bin, got)
 	// the trap instruction: brk on arm64 (SIGTRAP)
 	_, got, sig = run("XO_CRASH_KIND=trap")
 	if sig != syscall.SIGTRAP || !strings.HasPrefix(got, "fatal error: SIGTRAP: trace trap (code ") || strings.Contains(got, "crash report faulted") || !regexp.MustCompile(`crashc_trap\n  poke \(main\.xo:1[45]\)\n`).MatchString(got) {
@@ -96,5 +99,28 @@ func testCrashReport(t *testing.T, be string) {
 	_, got, sig = run("XO_CRASH_KIND=segv", "XO_CRASH_REPORT=0")
 	if got != "" || sig != syscall.SIGSEGV {
 		t.Errorf("XO_CRASH_REPORT=0: signal %v, stderr:\n%s", sig, got)
+	}
+}
+
+// symbolize checks that `xo dev symbolize BIN` names report's frames as
+// the report's own traceback does.
+func symbolize(t *testing.T, bin, report string) {
+	t.Helper()
+	i := strings.Index(report, "traceback:\n")
+	if i < 0 {
+		t.Errorf("symbolize: the report has no traceback:\n%s", report)
+		return
+	}
+	want := report[i:]
+	// the report without its traceback: what phase 1 alone leaves
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := testtmp.Guard(exec.Command(xo, "dev", "symbolize", bin))
+	cmd.Stdin = strings.NewReader(report[:i])
+	out, err := cmd.CombinedOutput()
+	if err != nil || string(out) != want {
+		t.Errorf("xo dev symbolize: %v\n%s\nwant:\n%s", err, out, want)
 	}
 }

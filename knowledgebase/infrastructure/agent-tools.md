@@ -60,6 +60,12 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 ## Debugging a wrong program or a fault
 
+- A native program that dies on a hardware fault (SIGSEGV, SIGILL, an
+  access violation) prints a crash report (decision 0343): the first
+  line, the registers, `frames:` and a `traceback:` with files and
+  lines. When the traceback is missing (it timed out or faulted) or the
+  binary was stripped, `xo dev symbolize PROG < REPORT` names the
+  frames from the unstripped PROG (2026-10-22).
 - `XO_PASSES=-name,...` turns optional passes off; `xo dev bisect-pass
   DIR` finds the first pass that changes a program's output.
 - `XO_LOWER=-name,...` turns optional SSA builder lowerings off

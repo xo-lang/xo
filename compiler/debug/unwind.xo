@@ -16,7 +16,7 @@ pub struct Tables {
   pub eh_addr: Int = 0
   pub ui: Bytes = b""
   /// the image's base (the __TEXT segment's address), which compact
-  /// unwind function offsets count from
+  /// unwind function offsets count from; a PE image's preferred base
   pub base: Int = 0
   /// the code (__TEXT,__text) and its address, for the first frame's
   /// check of whether its function's frame is set up yet
@@ -186,6 +186,24 @@ pub fn tables(data: Bytes) -> Tables {
       lc += rd32(data, lc + 4)
     }
     sort_syms(t)
+  } else if is_pe(data) {
+    // PE: the code sections and the COFF symbols (no .eh_frame: the
+    // functions' unwind data is .pdata, which only symbolize's naming
+    // needs none of)
+    if let Ok(img) = pe_image(data) {
+      t.base = img.base
+      for sc in img.sections {
+        if sc.exec && sc.size > 0 {
+          t.code.push((sc.addr, sc.addr + sc.size))
+        }
+        if sc.name == ".text" {
+          t.text = data[sc.off..sc.off + sc.size]
+          t.text_addr = sc.addr
+        }
+      }
+      t.syms = pe_syms(data, img)
+      sort_syms(t)
+    }
   }
   t
 }
