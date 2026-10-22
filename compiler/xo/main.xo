@@ -859,7 +859,13 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         no.push(c.mods[m].path)
       }
     }
-    os.stdio.eprintln("xo: warning: the module check cache skipped ${no.len()} module(s) a body of which was built from source (${no.sort().join(", ")}${if c.skip_unsafe { "; effects read across modules: ${c.effect_reads_across_modules().join(", ")}" } else { "" }}); checking them again")
+    // a note for --phase-times or an explicit XO_CHK_CACHE only: since
+    // auto is the default (2026-10-22) the fallback is ordinary (a
+    // program built for another target first, whose bodies the front end
+    // cache keys apart), and a warning on every such build was noise
+    if o.phases || !(os.env.get("XO_CHK_CACHE") ?? "").is_empty() {
+      os.stdio.eprintln("xo: note: the module check cache skipped ${no.len()} module(s) a body of which was built from source (${no.sort().join(", ")}${if c.skip_unsafe { "; effects read across modules: ${c.effect_reads_across_modules().join(", ")}" } else { "" }}); checking them again")
+    }
     o.chk_noskip = o.chk_noskip + no
     c = check_program(os, o, true)
     lo = lower(os, o, c, root, tests, release, uses_time, tgoos, tgoarch, backend == "wasm", backend is "arm64" | "amd64", t)
