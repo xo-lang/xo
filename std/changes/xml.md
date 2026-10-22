@@ -3,7 +3,7 @@
 ## 2026-10-22: perf: parse reads spaces, names and plain text without a call per byte
 
 - Kind: perf
-- Commit: this commit
+- Commit: 9c3403e02
 - Found by: XO_PROF=cpu (Dec.getc 19% and read_name, mustgetc 15%, the per-rune checks of text)
 - Go reference: encoding/xml xml.go (Decoder.getc, name, text) (go1.26.1)
 - Test: internal/stdtest/testdata/corpus/xml and internal/llvm/testdata/golden/xml_basic (arm64, LLVM, go)
