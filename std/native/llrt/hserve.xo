@@ -23,6 +23,7 @@
 //
 // The Windows arms are UNTESTED on windows: written on macOS and checked
 // by the cross build only.
+use native/llrt/layout
 use std/task
 use native/llrt/atexit
 use native/llrt/ctx
@@ -69,9 +70,8 @@ const WAIT_NS = 30000000000
 
 /// The wait list entry of a context (tasks.xo E_*): the park, the links,
 /// the writer flag.
-const E_PARK = 0
-const E_WRITER = 24
-
+const E_PARK = layout.E_PARK
+const E_WRITER = layout.E_WRITER
 fn ld(p: Int, off: Int) -> Int { rt.mem_load(p, off, 8) }
 
 fn st(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 8) }

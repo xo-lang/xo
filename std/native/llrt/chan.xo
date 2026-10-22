@@ -32,8 +32,8 @@ pub const E_ITEM = 16
 pub const E_SHUT = 24
 pub const E_IDX = 32
 pub const E_CHOSEN = 40
-const E_PREV = 48
-const E_NEXT = 56
+const E_PREV = 48 // own: xo_cent's queue link, not the wait list entry's
+const E_NEXT = 56 // own: xo_cent's queue link, not the wait list entry's
 
 /// xo_chan (104 bytes): the header, the lock, the capacity, the ring's
 /// head and length, the ring (malloc'd: the C's chan_free frees it),

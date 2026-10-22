@@ -114,13 +114,12 @@ const N_CANCELED = layout.N_CANCELED
 /// bytes, the context's own: ctx.xo C_WENT, a context waits on one list
 /// at a time): the park, the previous and next entry, writer and granted
 /// (C ints, the Mutex's).
-const WL_FIRST = 0
-const WL_LAST = 8
-const E_PARK = 0
-const E_PREV = 8
-const E_NEXT = 16
-const E_WRITER = 24
-
+const WL_FIRST = layout.WL_FIRST
+const WL_LAST = layout.WL_LAST
+const E_PARK = layout.E_PARK
+const E_PREV = layout.E_PREV
+const E_NEXT = layout.E_NEXT
+const E_WRITER = layout.E_WRITER
 /// The C's services (pool.xo RT_*).
 /// tsan's ops: a release, an acquire (sanhook.xo, decision 0232).
 const RT_TSAN_RELEASE = 22

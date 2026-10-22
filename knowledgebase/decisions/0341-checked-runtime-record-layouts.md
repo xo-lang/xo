@@ -142,3 +142,12 @@ is N_CANCELED, and its word uses are N_CANCELED_W. twrun.xo allocates 64
 bytes for a node, not 56 (a margin from the C runtime): that constant,
 N_SIZE there, is N_ALLOC now, the same value. Checked as step 3: 27 of 27 programs identical.
 
+## Step 5 (2026-10-22): the wait list and its entry
+
+WL_FIRST, WL_LAST, WL_SIZE (xo_wl) and E_PARK to E_GRANTED, E_WRITER_W,
+E_SIZE (xo_went, the context's wait list entry) moved to layout.xo from
+tasks.xo (the owner) and mutex.xo (copies, with hserve.xo's two). chan.xo's
+E_* are xo_cent's, a different record: its E_PREV and E_NEXT, which share
+names with this one's but not values, are marked `// own:`. Checked as
+step 3: 27 of 27 programs identical.
+

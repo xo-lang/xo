@@ -47,13 +47,13 @@ const IO_LOCKS = 8
 
 /// A wait list's first entry, an entry's park, next, writer, and granted
 /// (tasks.xo E_*).
-const WL_FIRST = 0
-const E_PARK = 0
-const E_NEXT = 16
-const E_WRITER = 24
+const WL_FIRST = layout.WL_FIRST
+const E_PARK = layout.E_PARK
+const E_NEXT = layout.E_NEXT
+const E_WRITER = layout.E_WRITER
 /// E_WRITER as a word index (the slot atomics).
-const E_WRITER_W = 3
-const E_GRANTED = 28
+const E_WRITER_W = layout.E_WRITER_W
+const E_GRANTED = layout.E_GRANTED
 /// The word at E_WRITER of a granted reader's entry: writer 0, granted 1.
 const GRANTED = 4294967296
 
