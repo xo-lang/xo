@@ -555,8 +555,8 @@ fn (var g: G) same_facts(a: Int, n: Int) {
 /// second word is then len | (off << 32) and the data starts off bytes into
 /// the object's bytes. Off until slicing makes views, so the code below that
 /// reads the offset and masks the length is not emitted and the output is
-/// unchanged.
-const STR_VIEWS: Bool = false
+/// unchanged. On since step 3: `s[lo..hi]` is rt.str_view.
+const STR_VIEWS: Bool = true
 
 /// The data address of the Str or Bytes value whose words are ws (decision
 /// 0330): the object's bytes, plus the offset of a view. Every emitter site
@@ -982,7 +982,7 @@ fn (var g: G) call_op(v: Int) {
       let yd = g.str_data(b)
       if name == "str.cmp" && g.x86 {
         // x86_64 retargets no cneg yet: the export
-        g.set(v, g.rt("xo_x_obj_str_cmp", regs([xd, a[1], yd, b[1]]), [false]))
+        g.set(v, g.rt("xo_x_obj_str_cmp", regs([xd, g.str_len(a), yd, g.str_len(b)]), [false]))
         return
       }
       if name == "str.cmp" {
@@ -999,7 +999,7 @@ fn (var g: G) call_op(v: Int) {
         g.set(v, [g.def1(false, "cmp $u0, #0\ncsel $d0, $u1, $u2, ne", [c, s1, s2])])
         return
       }
-      let r = g.rt("xo_x_obj_str_eq", regs([xd, a[1], yd, b[1]]), [false])
+      let r = g.rt("xo_x_obj_str_eq", regs([xd, g.str_len(a), yd, g.str_len(b)]), [false])
       g.set(v, [g.def1(false, "cmp $wu0, #0\ncset $d0, ne", [r[0]])])
     }
     "Stdio.print" | "Stdio.println" | "Stdio.eprint" | "Stdio.eprintln" => {
@@ -1839,6 +1839,21 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
       } else {
         g.set(v, [ws[0]])
       }
+    }
+    "rt.str_view" => {
+      // s[lo..hi] with the range already checked (decision 0330 step 3): the
+      // same object, counted once more, and w1 = (hi - lo) | ((off + lo) << 32)
+      let ws = g.words(x.args[0])
+      let lo = g.real(g.word(x.args[1]))
+      let hi = g.real(g.word(x.args[2]))
+      let obj = g.real(ws[0])
+      let w1 = g.real(ws[1])
+      g.inc(obj)
+      let n = g.def1(false, "sub $d0, $u0, $u1", [hi, lo])
+      let off = g.def1(false, "lsr $d0, $u0, #32", [w1])
+      let off2 = g.def1(false, "add $d0, $u0, $u1", [off, lo])
+      let sh = g.def1(false, "lsl $d0, $u0, #32", [off2])
+      g.set(v, [obj, g.def1(false, "orr $d0, $u0, $u1", [sh, n])])
     }
     "rt.obj_at" => {
       let a = g.real(g.word(x.args[0]))

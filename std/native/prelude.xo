@@ -2759,6 +2759,20 @@ fn llrt_exit(code: Int) {
 
 /// `s[lo..hi]` on a Str (compiler/ssa expr.xo; was xo_bytes.c's): the
 /// range must be one of s, its ends on UTF-8 boundaries.
+fn llrt_str_slice_chk(s: Str, lo: Int, hi: Int, loc: Str) {
+  slice_check(lo, hi, s.len(), "Str", loc)
+  let p = raw.data(s)
+  let n = s.len()
+  if (lo < n && rt.mem_load(p, lo, 1) & 0xC0 == 0x80) || (hi < n && rt.mem_load(p, hi, 1) & 0xC0 == 0x80) {
+    fault.raise_str_at("slice ${lo}..${hi} of Str splits a UTF-8 sequence", raw.data(loc), loc.len())
+  }
+}
+
+/// The check of `b[lo..hi]` on Bytes (the compiler then builds the view).
+fn llrt_bytes_slice_chk(b: Bytes, lo: Int, hi: Int, loc: Str) {
+  slice_check(lo, hi, b.len(), "Bytes", loc)
+}
+
 fn llrt_str_slice_at(s: Str, lo: Int, hi: Int, loc: Str) -> Str {
   slice_check(lo, hi, s.len(), "Str", loc)
   let p = raw.data(s)

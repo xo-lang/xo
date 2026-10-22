@@ -227,6 +227,9 @@ pub fn str_repeat(s: Str, k: Int) -> Str {
   if n > 9223372036854775807 / k {
     fault("strings: Repeat output length overflow")
   }
+  if n * k > 4294967295 {
+    fault("strings: Repeat output over 4 GiB")
+  }
   let out = rt.rs_set_len(rt.rs_with_cap(n * k), n * k)
   let d = data(out)
   for i in 0..k {

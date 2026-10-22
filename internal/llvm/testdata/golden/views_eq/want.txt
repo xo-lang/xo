@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+true false true true true true
+1 2 -1
+2 10
+hello world 10 5 true
+✓ok 5 true 7
+true true 3
+true false

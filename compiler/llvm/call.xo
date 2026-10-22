@@ -6,7 +6,7 @@ use github.com/xo-lang/xo/compiler/ssa
 
 /// Whether Str and Bytes values may be views (decision 0330 step 3): the
 /// second word is then len | (off << 32). Off until slicing makes views.
-const STR_VIEWS: Bool = false
+const STR_VIEWS: Bool = true
 
 /// The object, data pointer, and length of a Str (strParts). The data of a
 /// view starts off bytes into the object's bytes (decision 0330).
@@ -317,27 +317,31 @@ fn (var g: Gen) call(v: Int) {
       let (ao, _, an) = g.str_parts(a0)
       let a1 = g.op(args[1])
       let (bo, _, bn) = g.str_parts(a1)
-      // obj.xo's export, with no C level
+      // obj.xo's export, with no C level; it takes the packed words (the
+      // offset of a view is needed to copy it), the sum the lengths
       let pa = g.def("ptrtoint ptr ${ao} to i64")
       let pb = g.def("ptrtoint ptr ${bo} to i64")
-      let r = g.def("call i64 @xo_x_obj_rs_concat(i64 ${pa}, i64 ${an}, i64 ${pb}, i64 ${bn}) #6")
+      let aw = g.def("extractvalue %xo.str ${a0}, 1")
+      let bw = g.def("extractvalue %xo.str ${a1}, 1")
+      let r = g.def("call i64 @xo_x_obj_rs_concat(i64 ${pa}, i64 ${aw}, i64 ${pb}, i64 ${bw}) #6")
       let obj = g.def("inttoptr i64 ${r} to ptr")
       let n = g.def("add i64 ${an}, ${bn}")
       g.mk_str(v, obj, n)
     }
     "str.concat_int" | "str.concat_float" => {
       let a0 = g.op(args[0])
-      let (ao, _, an) = g.str_parts(a0)
+      let (ao, _, _) = g.str_parts(a0)
       let slot = g.alloca("i64")
       let a1 = g.op(args[1])
       // obj.xo and cabi.xo through their exports, not inlined (the C
       // entries stay for code of earlier compilers)
       let pa = g.def("ptrtoint ptr ${ao} to i64")
       let ps = g.def("ptrtoint ptr ${slot} to i64")
+      let aw = g.def("extractvalue %xo.str ${a0}, 1")
       let r = if name == "str.concat_int" {
-        g.def("call i64 @xo_x_obj_rs_concat_int(i64 ${pa}, i64 ${an}, i64 ${a1}, i64 ${ps}) #8")
+        g.def("call i64 @xo_x_obj_rs_concat_int(i64 ${pa}, i64 ${aw}, i64 ${a1}, i64 ${ps}) #8")
       } else {
-        g.def("call i64 @xo_x_obj_rs_concat_float(i64 ${pa}, i64 ${an}, double ${a1}, i64 ${ps}) #8")
+        g.def("call i64 @xo_x_obj_rs_concat_float(i64 ${pa}, i64 ${aw}, double ${a1}, i64 ${ps}) #8")
       }
       let obj = g.def("inttoptr i64 ${r} to ptr")
       let n = g.def("load i64, ptr ${slot}")
@@ -1196,6 +1200,21 @@ fn (var g: Gen) inline_raw(v: Int) -> Bool {
       }
       g.set(v, "ptrtoint ptr ${o} to i64")
     }
+    "rt.str_view" => {
+      // s[lo..hi] with the range already checked (decision 0330 step 3), as arm64
+      let s = g.op(x.args[0])
+      let obj = g.def("extractvalue %xo.str ${s}, 0")
+      let w1 = g.def("extractvalue %xo.str ${s}, 1")
+      let lo = g.op(x.args[1])
+      let hi = g.op(x.args[2])
+      g.emit("call void ${g.rc_fn("dup", x.ty)}(ptr ${obj})")
+      let n = g.def("sub i64 ${hi}, ${lo}")
+      let off = g.def("lshr i64 ${w1}, 32")
+      let off2 = g.def("add i64 ${off}, ${lo}")
+      let sh = g.def("shl i64 ${off2}, 32")
+      let nw = g.def("or i64 ${sh}, ${n}")
+      g.mk_str(v, obj, nw)
+    }
     "rt.obj_at" => {
       let p = g.raw_ptr(x.args[0])
       g.emit("call void ${g.rc_fn("dup", x.ty)}(ptr ${p})")
@@ -1426,8 +1445,10 @@ fn (var g: Gen) rt_call(v: Int) {
       }
       Str => {
         let o0 = g.op(a)
-        let (o, d0, n) = g.str_parts(o0)
+        let (o, d0, n0) = g.str_parts(o0)
         let d = if obj { o } else { d0 }
+        // an object goes with its packed word (the builder paths mask it)
+        let n = if obj { g.def("extractvalue %xo.str ${o0}, 1") } else { n0 }
         params.push("ptr")
         params.push("i64")
         args.push("ptr ${d}")

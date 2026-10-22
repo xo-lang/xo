@@ -15,7 +15,7 @@ use github.com/xo-lang/xo/compiler/ssa
 const MAX_INT = 9223372036854775807
 
 /// A bound of the length of a Str or Bytes value (2^48).
-const MAX_STR_LEN = 281474976710656
+const MAX_STR_LEN = 4294967295
 
 /// How many facts narrowing an operand looks at (ranges.go maxFactWalk).
 const MAX_FACT_WALK = 32

@@ -418,7 +418,7 @@ fn (g: G) range_of(v: Int) -> (Interval, Bool) {
 }
 
 /// A bound of the length of a Str or Bytes value.
-const MAX_STR_LEN = 281474976710656
+const MAX_STR_LEN = 4294967295
 
 /// The interval of Int value v.
 fn (g: G) ssa_range(v: Int) -> Interval {

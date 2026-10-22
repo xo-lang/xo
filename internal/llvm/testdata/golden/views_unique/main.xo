@@ -1,0 +1,49 @@
+// Decision 0330 step 3: a slice shares its parent's object, so no append may
+// write into it in place while another value reads it.
+fn mk(n: Int) -> Str {
+  var s = ""
+  for i in 0..n {
+    s = s + "${i % 10}"
+  }
+  s
+}
+
+fn tail(s: Str) -> Str { s[3..s.len()] }
+
+fn main(os: Os) {
+  var s = mk(12)
+  let p = s[0..4]
+  s = s + "!"
+  os.stdio.println("${p} ${s}")
+  let q = p + "Q"
+  os.stdio.println("${p} ${q} ${s}")
+  // the parent is gone: the prefix view is the only holder
+  var u = mk(10)[0..6]
+  u = u + "x"
+  u = u + "y"
+  os.stdio.println(u)
+  // a view with an offset is never unique
+  let t = tail(mk(9))
+  var t2 = t + "z"
+  t2 = t2 + "w"
+  os.stdio.println("${t} ${t2}")
+  // views of views
+  let base = mk(20)
+  let a = base[5..15]
+  let b = a[2..8]
+  let c = b[1..3]
+  os.stdio.println("${a} ${b} ${c} ${c.len()} ${base[7..9] == c}")
+  // Bytes
+  var bb = BytesBuilder.new()
+  bb.write("0123456789".bytes())
+  let whole = bb.freeze()
+  let mid = whole[2..6]
+  var bb2 = BytesBuilder.new()
+  bb2.write(mid)
+  bb2.write("!".bytes())
+  let out = bb2.freeze()
+  os.stdio.println("${mid.len()} ${out.len()} ${mid[0]} ${mid[3]} ${out[4]} ${whole.len()}")
+  // empty views
+  let e = s[3..3]
+  os.stdio.println("[${e}] ${e.len()} ${e.is_empty()} ${(e + "k")}")
+}

@@ -859,10 +859,19 @@ fn (var b: Builder) slice(span: Span, x: Expr, lo0: Expr?, hi0: Expr?, inclusive
     Str => {
       var name = "str_slice_at"
       let xt = b.nat_check(x)
+      var is_bytes = false
       if b.is_prelude_named(xt, ["Bytes"]) {
         name = "bytes_slice_at"
+        is_bytes = true
       }
-      return b.llrt_or_rt(name, bt, [base, lo, hi, b.const_str(b.pos(span))])
+      let at = b.const_str(b.pos(span))
+      // native: the range is checked by the prelude, then the result is a view
+      // of the same object (decision 0330 step 3, no copy)
+      let chk = if is_bytes { "bytes_slice_chk" } else { "str_slice_chk" }
+      if let Some(_) = b.llrt_or_none(chk, -1, [base, lo, hi, at]) {
+        return b.rt("str_view", bt, [base, lo, hi])
+      }
+      return b.llrt_or_rt(name, bt, [base, lo, hi, at])
     }
     List => {
       let f = b.list_slice(bt)

@@ -373,8 +373,9 @@ fn (var g: G) x86_eq_at(var b: List[Str], t: Int, ra: Str, rb: Str, off: Int, no
       b.push("\tmovsd ${off}(${ra}), %xmm0\n\tucomisd ${off}(${rb}), %xmm0\n\tjne ${no}\n\tjp ${no}\n")
     }
     Str => {
-      b.push("\tmovq ${off}(${ra}), %rdi\n\taddq $16, %rdi\n\tmovq ${off + 8}(${ra}), %rsi\n")
-      b.push("\tmovq ${off}(${rb}), %rdx\n\taddq $16, %rdx\n\tmovq ${off + 8}(${rb}), %rcx\n")
+      // a view: data off bytes in, length the low half of the second word
+      b.push("\tmovq ${off}(${ra}), %rdi\n\tmovq ${off + 8}(${ra}), %rsi\n\tmovq %rsi, %r11\n\tshrq $32, %r11\n\taddq %r11, %rdi\n\taddq $16, %rdi\n\tmovl %esi, %esi\n")
+      b.push("\tmovq ${off}(${rb}), %rdx\n\tmovq ${off + 8}(${rb}), %rcx\n\tmovq %rcx, %r11\n\tshrq $32, %r11\n\taddq %r11, %rdx\n\taddq $16, %rdx\n\tmovl %ecx, %ecx\n")
       b.push("\tcallq ${g.sym("xo_x_obj_str_eq")}\n\ttestl %eax, %eax\n\tjz ${no}\n")
     }
     List | Box => {

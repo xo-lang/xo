@@ -343,31 +343,43 @@ fn rt_exit(np: Int, n: Int, lp: Int, ln: Int) { rtsec.exit(np, n, lp, ln) }
 // bytes start off bytes into the object's bytes.
 fn view_data(b: Int, bn: Int) -> Int { b.wrapping_add(16).wrapping_add(bn >> 32) }
 
-fn obj_rs_concat(a: Int, an: Int, b: Int, bn: Int) -> Int { obj.rs_append(a, an, view_data(b, bn), bn & 4294967295) }
+/// n, or a fault when it is over the 4 GiB a Str or Bytes may hold (the
+/// length is 32 bits of the second word, decision 0330).
+fn len_cap(n: Int) -> Int {
+  if n > 4294967295 || n < 0 {
+    fault.raise_str_at("Str or Bytes longer than 4 GiB (4294967295 bytes)", 0, 0)
+  }
+  n
+}
+
+fn obj_rs_concat(a: Int, an: Int, b: Int, bn: Int) -> Int {
+  len_cap((an & 4294967295).wrapping_add(bn & 4294967295))
+  obj.rs_append(a, an, view_data(b, bn), bn & 4294967295)
+}
 
 fn obj_rs_append(a: Int, an: Int, b: Int, bn: Int, lenp: Int) -> Int {
-  rt.mem_store(lenp, 0, (an & 4294967295).wrapping_add(bn & 4294967295), 8)
+  rt.mem_store(lenp, 0, len_cap((an & 4294967295).wrapping_add(bn & 4294967295)), 8)
   obj.rs_append(a, an, view_data(b, bn), bn & 4294967295)
 }
 
 fn obj_rs_push_byte(a: Int, an: Int, x: Int, lenp: Int) -> Int {
-  rt.mem_store(lenp, 0, an.wrapping_add(1), 8)
+  rt.mem_store(lenp, 0, len_cap((an & 4294967295).wrapping_add(1)), 8)
   obj.rs_push_byte(a, an, x)
 }
 
 fn obj_rs_push_word(a: Int, an: Int, w: Int, n: Int, lenp: Int) -> Int {
-  rt.mem_store(lenp, 0, an.wrapping_add(n), 8)
+  rt.mem_store(lenp, 0, len_cap((an & 4294967295).wrapping_add(n)), 8)
   obj.rs_push_word(a, an, w)
 }
 
 fn obj_rs_push_words(a: Int, an: Int, w0: Int, w1: Int, w2: Int, w3: Int, lens: Int, lenp: Int) -> Int {
   let k = ((lens & 15).wrapping_add((lens >> 4) & 15)).wrapping_add(((lens >> 8) & 15).wrapping_add((lens >> 12) & 15))
-  rt.mem_store(lenp, 0, an.wrapping_add(k), 8)
+  rt.mem_store(lenp, 0, len_cap((an & 4294967295).wrapping_add(k)), 8)
   obj.rs_push_words(a, an, w0, w1, w2, w3, lens)
 }
 
 fn obj_rs_append_bytes(a: Int, an: Int, b: Int, bn: Int, lo: Int, hi: Int, mode: Int, lenp: Int) -> Int {
-  rt.mem_store(lenp, 0, (an & 4294967295).wrapping_add(hi.wrapping_sub(lo)), 8)
+  rt.mem_store(lenp, 0, len_cap((an & 4294967295).wrapping_add(hi.wrapping_sub(lo))), 8)
   obj.rs_append_bytes(a, an, b.wrapping_add(bn >> 32), lo, hi, mode)
 }
 

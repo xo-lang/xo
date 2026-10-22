@@ -289,7 +289,7 @@ fn (var g: G) eq_aggregate(v: Int) -> Bool {
     let b = g.words(x.args[1])
     let xd = g.str_data(a)
     let yd = g.str_data(b)
-    let res = g.rt("xo_x_obj_str_eq", regs([xd, a[1], yd, b[1]]), [false])
+    let res = g.rt("xo_x_obj_str_eq", regs([xd, g.str_len(a), yd, g.str_len(b)]), [false])
     r = g.def1(false, "cmp $wu0, #0\ncset $d0, ne", [res[0]])
   } else if k is ssa.Kind.List | ssa.Kind.Box {
     let h = g.eq_helper(t)
@@ -421,8 +421,10 @@ fn (var g: G) eq_at(var b: List[Str], t: Int, ra: Str, rb: Str, off: Int, no: St
       b.push("\tldr d0, [${ra}, #${off}]\n\tldr d1, [${rb}, #${off}]\n\tfcmp d0, d1\n\tb.ne ${no}\n")
     }
     Str => {
-      b.push("\tldr x0, [${ra}, #${off}]\n\tadd x0, x0, #16\n\tldr x1, [${ra}, #${off + 8}]\n")
-      b.push("\tldr x2, [${rb}, #${off}]\n\tadd x2, x2, #16\n\tldr x3, [${rb}, #${off + 8}]\n")
+      // the data of a view starts off bytes in, its length is the low half of
+      // the second word (decision 0330)
+      b.push("\tldr x0, [${ra}, #${off}]\n\tldr x1, [${ra}, #${off + 8}]\n\tadd x0, x0, x1, lsr #32\n\tadd x0, x0, #16\n\tmov w1, w1\n")
+      b.push("\tldr x2, [${rb}, #${off}]\n\tldr x3, [${rb}, #${off + 8}]\n\tadd x2, x2, x3, lsr #32\n\tadd x2, x2, #16\n\tmov w3, w3\n")
       b.push("\tbl ${g.sym("xo_x_obj_str_eq")}\n\tcbz w0, ${no}\n")
     }
     List | Box => {

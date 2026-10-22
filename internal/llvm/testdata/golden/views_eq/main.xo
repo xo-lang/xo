@@ -1,0 +1,33 @@
+// Decision 0330 step 3: equal strings at different offsets are equal, hash
+// alike, and order alike.
+fn mk(n: Int) -> Str {
+  var s = ""
+  for i in 0..n {
+    s = s + "${i % 10}"
+  }
+  s
+}
+
+fn main(os: Os) {
+  let big = "xxhello worldyy" + mk(3)
+  let h = big[2..7]
+  os.stdio.println("${h == "hello"} ${h != "hello"} ${"hello" == h} ${h < "hellp"} ${h > "hell"} ${h <= "hello"}")
+  var m: Map[Str, Int] = {}
+  m["hello"] = 1
+  m["world"] = 2
+  os.stdio.println("${m.get(h) ?? -1} ${m.get(big[8..13]) ?? -1} ${m.get(big[7..12]) ?? -1}")
+  m[h] = 10
+  os.stdio.println("${m.len()} ${m.get("hello") ?? -1}")
+  let w = big[8..13]
+  os.stdio.println("${h + " " + w} ${(h + w).len()} ${h.len()} ${w.contains("or")}")
+  let n = "é✓ok"
+  let v = n[2..n.len()]
+  os.stdio.println("${v} ${v.len()} ${v == "✓ok"} ${n.len()}")
+  var keys: List[Str] = []
+  keys.push(big[2..4])
+  keys.push("he")
+  keys.push(big[2..4] + "")
+  os.stdio.println("${keys[0] == keys[1]} ${keys[1] == keys[2]} ${keys.len()}")
+  let z = mk(12)
+  os.stdio.println("${z[2..5] == z[12 - 10..5]} ${z[0..3] == z[10..12] + "0"}")
+}
