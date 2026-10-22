@@ -1257,11 +1257,19 @@ An `UpperCamel` name in a pattern always refers to a variant; bindings are
   (byte offsets; slicing a `Str` inside a UTF-8 sequence faults). Slices of
   immutable values are O(1) and share storage: on native targets the result
   of slicing a `Str` or `Bytes` is a view of the same buffer (no copy), so a
-  small view keeps its whole buffer alive. A `Str` or `Bytes` value holds at
-  most 4294967295 bytes (4 GiB
+  small view keeps its whole buffer alive (as a Go substring does; there is
+  no automatic compaction of a stored view, and `s.repeat(1)` copies when
+  the piece must outlive a large source). A view is never changed in place:
+  appending to one, or building on one, copies. A `Str` or `Bytes` value
+  holds at most 4294967295 bytes (4 GiB
   less one); an operation that would make a longer one (concatenation,
-  `repeat`, appending to a builder) faults with "Str or Bytes longer than
-  4 GiB".
+  appending to a builder) faults with "Str or Bytes longer than
+  4 GiB", and `repeat` with "strings: Repeat output over 4 GiB". WebAssembly
+  and the Go backend copy a slice (no views) but keep the same limit and
+  results. A C ABI export of the native runtime (`xo_x_` names, decision
+  0207) may not return a `Str`, because the second word of a view carries
+  its offset: the compiler refuses it ("a C ABI export with a `Str`
+  result"). Decision 0330.
 
 ### 3.7 Holes
 

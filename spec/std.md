@@ -179,6 +179,8 @@ fn (s: Str) split(sep: Str) -> List[Str]
 fn (s: Str) lines() -> List[Str]             // splits on \n, strips \r
 fn (s: Str) trim() -> Str                    // also trim_start, trim_end
 fn (s: Str) trim_prefix(p: Str) -> Str       // also trim_suffix
+// split, lines, trim*, trim_prefix and trim_suffix return views of s on native
+// targets (O(1) per piece, no copy; a piece keeps s alive), as slices do (core 3.6)
 fn (s: Str) to_lower() -> Str                // also to_upper (Unicode aware)
 fn (s: Str) replace(old: Str, new: Str) -> Str
 fn (s: Str) repeat(n: Int) -> Str
