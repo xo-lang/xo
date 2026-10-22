@@ -1,5 +1,23 @@
 # std/tls changes
 
+## 2026-10-22: speedup: AES-GCM records eight blocks a round on arm64
+
+- Kind: speedup
+- Commit: (this commit)
+- Found by: Xo Lang 3's bench/perf/aesgcm against Go's crypto/cipher (Go 1.73x seal, 1.83x open after the four block kernel)
+- Go reference: crypto/internal/fips140/aes/gcm/gcm_arm64.s gcmAesEnc and gcmAesDec (round keys in registers, eight blocks, Karatsuba, one reduction per 128 bytes)
+- Test: cpu_prims golden (672 aes_gcm8 lines against the portable body and Go's reference), tls*, crypto* goldens (arm64, LLVM with Go parity), TestCryptoXoDiff, TestTLSDiff, TestConstantTimeLLVM
+
+The AES-GCM key now holds H^8 to H (`Gcm.hk`, H^8 first; the four block
+kernels and GHASH read from H^4, `HK4`), and on arm64 a record's 128 byte
+multiple runs through `cpu.aes_gcm8` (compiler/ssa a64aesgcm8.xo), a last
+64 bytes through the four block kernel. `xo bench --ab` on the Mac (16 KiB
+records, B / A): seal cpu 0.851 (0.792 to 0.913), instructions 0.918; open
+cpu 0.851 (0.833 to 0.955), instructions 0.921; wall within noise (load).
+Against Go's twin Xo still runs 1.58x (seal) and 1.66x (open) the
+instructions, about a fifth of them the bench's new key per record
+(`new_gcm`, which Go's loop does once; TLS keeps its key).
+
 ## 2026-10-22: speedup: TLS 1.2 AES-GCM records sealed in place from the caller's buffer
 
 - Kind: speedup
