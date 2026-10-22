@@ -3,6 +3,7 @@ package arm64
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/xo-lang/xo/internal/testtmp"
@@ -73,5 +74,45 @@ func TestStrViewPast2GiB(t *testing.T) {
 	}
 	if res.exit != 0 || res.stdout != bigStrWant {
 		t.Errorf("exit %d, stdout:\n%s\nwant:\n%s\nstderr:\n%s", res.exit, res.stdout, bigStrWant, res.stderr)
+	}
+}
+
+// bigJoinSrc joins two strings of 2 GiB + 1 MiB: past the 4 GiB a Str
+// holds, so it faults; raw.str_join set the length's low 32 bits, and the
+// result came out silently cut (xo's 4.3 GB location lists of a 24,000
+// line function lost their end label; gotchas/str-over-4gib-truncated.md).
+const bigJoinSrc = `fn main(os: Os) {
+  let s = "abcdefgh".repeat(268566528)
+  let j = [s, s].join("")
+  os.stdio.println("joined ${j.len()}")
+}
+`
+
+// TestStrJoinPast4GiB runs bigJoinSrc (about 2.2 GB of memory: the
+// check comes before the join's allocation).
+func TestStrJoinPast4GiB(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds a program that allocates 2.2 GB")
+	}
+	dir, err := testtmp.Dir("xo-bigjoin-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	if err := os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module bigjoin\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte(bigJoinSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := buildRun(t, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.exit == 0 || strings.Contains(res.stdout, "joined") || !strings.Contains(res.stderr, "strings: Join output over 4 GiB") {
+		t.Errorf("exit %d, stdout %q, want the join's 4 GiB fault; stderr:\n%s", res.exit, res.stdout, res.stderr)
 	}
 }

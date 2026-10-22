@@ -52,6 +52,9 @@ struct DvStub {
   /// the caller saved registers the stub stored, by their offset from sp
   /// at its call (emit.xo stub_saves)
   saved: List[(Int, Int)] = []
+  /// its text's index in g.stubs: a stub whose index is the one before's
+  /// plus one follows it directly, so their entries can join
+  slot: Int = -1
 }
 
 /// The caller saved registers (x0 to x15) holding a word of a source
@@ -547,6 +550,7 @@ fn (var g: G) dv_field(p: DvPlan, labels: Map[Int, Str]) -> Str {
     l.push(bi)
     by_var[b.dvar] = l
   }
+  var total = 0
   for (vi, dv) in g.f.dvars.indexed() {
     if !g.dv_type_ok(dv.ty) {
       continue
@@ -682,17 +686,42 @@ fn (var g: G) dv_field(p: DvPlan, labels: Map[Int, Str]) -> Str {
       last_end = lz
       last_op = ops
     }
-    // over each fault stub: the places the faulting frame keeps
+    // over each fault stub: the places the faulting frame keeps. A run
+    // of stubs placed one after another with the same place is one entry
+    // over them all (a function of 12,000 overflow checks and 12,000
+    // variables in spill slots wrote an entry per variable per stub, 3 GB
+    // of assembly; gotchas/dwarf-stub-locations-quadratic.md)
+    var prev_slot = -2
+    var prev_ops = ""
     for s in g.dv_stubs {
       let expr = dv_stub_expr(mine, s, nw, g.x86)
       if expr.is_empty() {
+        prev_slot = -2
         continue
       }
       var bs: List[Str] = []
       for x in expr {
         bs.push(if x < 0 { p.syms[-1 - x] } else { "${x}" })
       }
-      entries.push("${s.lo} ${s.hi} ${bs.join(",")}")
+      let ops = bs.join(",")
+      if s.slot >= 0 && s.slot == prev_slot + 1 && ops == prev_ops && !entries.is_empty() {
+        let prev = entries.pop() ?? ""
+        let ps = prev.split(" ")
+        entries.push("${ps[0]} ${s.hi} ${ops}")
+      } else {
+        entries.push("${s.lo} ${s.hi} ${ops}")
+      }
+      prev_slot = s.slot
+      prev_ops = ops
+    }
+    // a bound on the function's entries, so no build writes gigabytes of
+    // location lists (about 50 bytes of assembly each; a 24,000 line
+    // function wrote 144 million before the stubs' entries joined, and
+    // its build grew to 37 GB; gotchas/dwarf-stub-locations-quadratic.md)
+    total += entries.len()
+    if total > DV_MAX_ENTRIES {
+      g.fail("debug information: the variables of this function need more than ${DV_MAX_ENTRIES} location list entries; build with -s to leave debug information out, or split the function")
+      return ""
     }
     let tn = g.m.types[dv.ty].name
     // the sixth field: its inline site (debug.xo nests it in that site's
@@ -701,6 +730,10 @@ fn (var g: G) dv_field(p: DvPlan, labels: Map[Int, Str]) -> Str {
   }
   out.join(";")
 }
+
+/// The most location list entries one function's variables may take
+/// (dv_field).
+const DV_MAX_ENTRIES = 2000000
 
 /// The offset from sp of a spill slot's location (DW_OP_breg31 and its
 /// SLEB128), or -1 for another location.

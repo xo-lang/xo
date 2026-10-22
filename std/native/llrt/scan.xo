@@ -593,7 +593,7 @@ pub fn to_hex(b: Bytes) -> Str {
   if n == 0 {
     return ""
   }
-  var out = rt.rs_with_cap(addw(shl(n, 1), 16))
+  var out = rt.rs_with_cap(addw(raw.len_ok(shl(n, 1)), 16))
   var i = 0
   let last = n - 8
   while i <= last {

@@ -12,11 +12,22 @@ pub fn data(s: Str) -> Int { rt.obj_addr(s) + rt.layout(0) }
 /// are one type to the SSA builders, so rt.cast is no instruction.
 pub fn bytes_addr(b: Bytes) -> Int { rt.obj_addr(rt.cast[Bytes, Str](b)) + rt.layout(0) }
 
+/// n, after a fault when it is past the 4 GiB a Str or Bytes holds (its
+/// length is 32 bits of its second word, decision 0330): rs_set_len
+/// keeps the low 32 bits, so a longer result came out silently cut (a
+/// 4.3 GB join lost its end; gotchas/str-over-4gib-truncated.md).
+pub fn len_ok(n: Int) -> Int {
+  if n > 4294967295 {
+    fault("Str or Bytes longer than 4 GiB (4294967295 bytes)")
+  }
+  n
+}
+
 /// A unique Bytes of n bytes (none for n < 0) for a system call to fill
 /// (not zeroed: what the call does not fill is cut off with bytes_len, or
 /// written first).
 pub fn bytes_buf(n: Int) -> Bytes {
-  let k = if n < 0 { 0 } else { n }
+  let k = if n < 0 { 0 } else { len_ok(n) }
   rt.cast[Str, Bytes](rt.rs_set_len(rt.rs_with_cap(k), k))
 }
 
@@ -43,7 +54,7 @@ pub fn put_cstr(a: Int, s: Str) -> Int {
 
 /// A new string of the n bytes at address a.
 pub fn str_at(a: Int, n: Int) -> Str {
-  let s = rt.rs_set_len(rt.rs_with_cap(n), n)
+  let s = rt.rs_set_len(rt.rs_with_cap(len_ok(n)), n)
   rt.mem_copy(data(s), a, n)
   s
 }
@@ -57,7 +68,7 @@ pub fn byte_str(b: Int) -> Str {
 
 /// A string of n copies of the byte b.
 pub fn fill(b: Int, n: Int) -> Str {
-  let s = rt.rs_set_len(rt.rs_with_cap(n), n)
+  let s = rt.rs_set_len(rt.rs_with_cap(len_ok(n)), n)
   rt.mem_set(data(s), b, n)
   s
 }
@@ -210,6 +221,9 @@ pub fn str_join(xs: List[Str], sep: Str) -> Str {
   var total = 0
   for (i, x) in xs.indexed() {
     total += x.len() + (if i > 0 { sep.len() } else { 0 })
+  }
+  if total > 4294967295 {
+    fault("strings: Join output over 4 GiB")
   }
   let s = rt.rs_set_len(rt.rs_with_cap(total), total)
   let d = data(s)

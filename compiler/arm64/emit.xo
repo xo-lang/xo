@@ -1478,7 +1478,7 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
     if g.m.debug_info && g.pos >= 0 {
       dv_end = g.local("${g.lbl_prefix()}_dvs${g.nstub}")
       let adj = if g.fr.leaf { 16 + stub_bytes } else if g.shrink && g.fl[g.cur] { -1 } else { stub_bytes }
-      g.dv_stubs.push(DvStub{at: g.pos / 4, lo: l, hi: dv_end, adj: adj, saved: saved})
+      g.dv_stubs.push(DvStub{at: g.pos / 4, lo: l, hi: dv_end, adj: adj, saved: saved, slot: g.stubs.len()})
     }
     let after = if dv_end.is_empty() { "" } else { "${dv_end}:\n" }
     if inst.pad >= 0 {

@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime: `List.join`, `Bytes.zeroed`-style buffers and
+  `to_hex` producing more than 4 GiB fault ("strings: Join output over
+  4 GiB", "Str or Bytes longer than 4 GiB") instead of returning a cut
+  result.
+- Debug information for functions with thousands of overflow checks
+  and variables shares one location entry across a run of fault stubs:
+  a generated 24,000 line function wrote over 4 GiB of assembly.
 - Crash bundles go to `<user cache>/xo/crash` (macOS
   `~/Library/Caches/xo/crash`) instead of the system temporary
   directory, where they were easy to lose (owner, 2026-10-22). The
