@@ -1396,3 +1396,91 @@ fn main(os: Os) {
 		t.Errorf("XO0537 at %v, want [15 warning]\n%s", got, out.String())
 	}
 }
+
+// vetCostProg has a loop over a log-mode Map (decision 0291: written
+// twice while copies held it) whose body has a closure, so the loop
+// copies every entry first (XO0907, line 23), and the same loop with a
+// small body, which walks the table in place (no note).
+const vetCostProg = `fn log_map(n: Int) -> (Map[Int, Str], Int) {
+  var a: Map[Int, Str] = {}
+  for i in 0..n {
+    a[i] = "v${i}"
+  }
+  var b = a
+  b[n] = "n"
+  var c = b
+  c[n + 1] = "n1"
+  var keep = 0
+  for (_, v) in a {
+    keep += v.len()
+  }
+  for (_, v) in b {
+    keep += v.len()
+  }
+  (c, keep)
+}
+
+fn copying(m: Map[Int, Str]) -> Int {
+  var t = 0
+  var fs: List[fn() -> Int] = []
+  for (k, v) in m {
+    fs.push(fn() { k + v.len() })
+  }
+  for f in fs {
+    t += f()
+  }
+  t
+}
+
+fn walking(m: Map[Int, Str]) -> Int {
+  var t = 0
+  for (k, v) in m {
+    t += k + v.len()
+  }
+  t
+}
+
+fn main(os: Os) {
+  let (m, l) = log_map(20)
+  os.stdio.println("${copying(m)} ${walking(m)} ${l}")
+}
+`
+
+// TestVetCostMapCopy: `xo vet --cost` notes the loop that copies a
+// log-mode map's entries (XO0907) and not the one that walks it in
+// place; `xo vet` alone reports no cost notes (decision 0327).
+func TestVetCostMapCopy(t *testing.T) {
+	t.Parallel()
+	dir := writeFiles(t, map[string]string{"main.xo": vetCostProg})
+	lines := func(args ...string) []int {
+		t.Helper()
+		var out, errOut bytes.Buffer
+		if code := run(t, append([]string{"vet", "--json"}, append(args, dir)...), &out, &errOut); code != 0 {
+			t.Fatalf("exit %d: %s", code, errOut.String())
+		}
+		var res struct {
+			Diagnostics []struct {
+				Code string `json:"code"`
+				Span struct {
+					Line int `json:"line"`
+				} `json:"span"`
+			} `json:"diagnostics"`
+		}
+		if err := json.Unmarshal(out.Bytes(), &res); err != nil {
+			t.Fatalf("bad JSON: %v\n%s", err, out.String())
+		}
+		var ls []int
+		for _, d := range res.Diagnostics {
+			if d.Code == "XO0907" {
+				ls = append(ls, d.Span.Line)
+			}
+		}
+		return ls
+	}
+	if got := lines("--cost"); len(got) != 1 || got[0] != 23 {
+		t.Errorf("vet --cost: XO0907 at lines %v, want [23]", got)
+	}
+	if got := lines(); len(got) != 0 {
+		t.Errorf("vet without --cost: XO0907 at lines %v, want none", got)
+	}
+}

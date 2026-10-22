@@ -1,0 +1,63 @@
+// `xo vet --cost` (decision 0327): the program's directories built as
+// `xo build` builds them for the host, up to insert_rc (no inlining,
+// code, or link), and ssa.cost_notes over the root module's functions,
+// as vet findings (notes). A program that does not check gets none: vet
+// reports its check errors itself.
+
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/ssa
+
+/// Whether args is `vet ... --cost ...`.
+fn vet_cost_cmd(args: List[Str]) -> Bool {
+  !args.is_empty() && args[0] == "vet" && args.contains("--cost")
+}
+
+/// The cost notes of the program directories args names (vet's operands;
+/// "." when none), as vet's findings.
+fn vet_cost(os: Os, args: List[Str]) -> List[check.Diag] {
+  var dirs: List[Str] = []
+  for a in args[1..args.len()] {
+    if !a.starts_with("-") {
+      // a .xo file: its directory (vet keeps the findings of that file)
+      dirs.push(if a.ends_with(".xo") { dir_name(a) } else { a })
+    }
+  }
+  if dirs.is_empty() {
+    dirs = ["."]
+  }
+  var bargs = ["build"]
+  for d in dirs {
+    bargs.push(d)
+  }
+  let o = parse_args(os, bargs)
+  var c = check.new_checker(os.fs, o.std)
+  c.native = true
+  c.lazy = (os.env.get("XO_CHECK_EAGER") ?? "") != "1"
+  c.map_log = (os.env.get("XO_MAP_LOG") ?? "") != "0"
+  match c.check_dirs(o.dirs) {
+    Ok(_) => {}
+    // xo:allow XO0903 vet reports the program's own problems
+    Err(_) => return []
+  }
+  if blocks(c.diags, false) || !c.unsupported.is_empty() {
+    return []
+  }
+  var uses_time = false
+  for m in c.mods {
+    uses_time = uses_time || m.path == "native/time"
+  }
+  let root = line_root(os, o.wd, o.dirs[0])
+  let lo = lower(os, o, c, root, false, false, uses_time, host_os(os), host_arch(), false, false, os.clock.now())
+  // the root modules' own files, as the functions name them
+  var keep: List[Str] = []
+  for m in c.root_mods {
+    for f in c.mods[m].files {
+      keep.push(c.files[f].path)
+    }
+  }
+  var out: List[check.Diag] = []
+  for n in ssa.cost_notes(lo.b.m, keep) {
+    out.push(check.Diag{code: n.code, file: n.file, line: n.line, col: n.col, end_line: n.line, end_col: n.col, message: n.msg, warning: true, note_sev: true})
+  }
+  out
+}

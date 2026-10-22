@@ -91,6 +91,10 @@ fn main(os: Os) ! {
     // the build stamps (decision 0264)
     os.proc.exit(code)
   }
+  if vet_cost_cmd(args) {
+    // the cost notes need the compiled program (decision 0327)
+    os.proc.exit(core.run_extra(os, args, vet_cost(os, args)))
+  }
   if core.is_command(args) {
     os.proc.exit(core.run(os, args))
   }

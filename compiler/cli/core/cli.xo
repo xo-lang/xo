@@ -37,6 +37,12 @@ pub fn is_command(args: List[Str]) -> Bool {
 /// Runs the command line args (the command first) and returns the exit
 /// status.
 pub fn run(os: Os, args0: List[Str]) -> Int uses fs, env, stdio, proc, clock, net, rand {
+  run_extra(os, args0, [])
+}
+
+/// run with extra findings for `xo vet` (its --cost notes, which the
+/// driver computes from the compiled program: decision 0327).
+pub fn run_extra(os: Os, args0: List[Str], extra: List[Diag]) -> Int uses fs, env, stdio, proc, clock, net, rand {
   var std_dir = os.env.get("XO_STD") ?? ""
   var wd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
   var args = args0
@@ -95,7 +101,7 @@ pub fn run(os: Os, args0: List[Str]) -> Int uses fs, env, stdio, proc, clock, ne
     "init" => run_init(os, ctx, rest)
     "fmt" => run_fmt(os, rest)
     "fix" => run_fix(os, ctx, rest)
-    "vet" => run_vet(os, ctx, rest)
+    "vet" => run_vet(os, ctx, rest, extra)
     "doc" => run_doc(os, ctx, rest)
     "help" | "-h" | "--help" => {
       os.stdio.print(cmdhelp.top())

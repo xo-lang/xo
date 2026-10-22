@@ -8,9 +8,11 @@ use github.com/xo-lang/xo/compiler/check
 use github.com/xo-lang/xo/compiler/lexer
 use github.com/xo-lang/xo/compiler/parser
 
-fn run_vet(os: Os, ctx: Ctx, args: List[Str]) -> Int {
+fn run_vet(os: Os, ctx: Ctx, args: List[Str], extra: List[Diag]) -> Int {
   var fl = new_flags("vet")
   fl.bool_flag("json", "print the findings as JSON")
+  // the driver computes these notes and passes them in (extra)
+  fl.bool_flag("cost", "also note costs the compiled program has in loops that its source does not show (decision 0327)")
   fl.str_flag("std-module", "", "vet one std or runtime module as `xo test --std-module` checks it, with its private declarations (json, native/http, native/llrt/pool)")
   if !fl.parse(os, args) {
     return 2
@@ -122,6 +124,7 @@ fn run_vet(os: Os, ctx: Ctx, args: List[Str]) -> Int {
     ds = ds + d
     check_errors += n
   }
+  ds = ds + extra
   if !files.is_empty() {
     ds = ds.filter(fn(d: Diag) -> Bool { files.contains(abs_path(ctx, d.file)) || files.contains(join_path(dir_of(std_root), d.file)) })
   }

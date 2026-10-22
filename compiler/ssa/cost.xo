@@ -1,0 +1,172 @@
+// `xo vet --cost` (decision 0327): notes on what the compiled program
+// does that its source does not show, found in the SSA after insert_rc
+// (before inlining): a loop that copies a collection's entries first
+// (XO0907). Notes only, never errors; the driver turns them into vet's
+// findings (compiler/xo vetcost.xo).
+
+/// A cost note at a source position of function fn_name.
+pub struct CostNote {
+  pub code: Str
+  pub fn_name: Str
+  pub file: Str
+  pub line: Int
+  pub col: Int
+  pub msg: Str
+}
+
+/// The notes of every function of m whose file is one of keep (the root
+/// module's own, as the checker names them: a function names its file
+/// relative to the program's root, so a keep path that ends in it
+/// matches), each at keep's name of its file.
+pub fn cost_notes(m: Module, keep: List[Str]) -> List[CostNote] {
+  var out: List[CostNote] = []
+  for f in m.funcs {
+    if f.blocks.is_empty() || f.file.is_empty() {
+      continue
+    }
+    var file = ""
+    for k in keep {
+      if k == f.file || k.ends_with("/${f.file}") {
+        file = k
+      }
+    }
+    if file.is_empty() {
+      continue
+    }
+    let inloop = loop_blocks(f)
+    for n in copy_feeds_loop(f, inloop) {
+      var n2 = n
+      n2.file = file
+      out.push(n2)
+    }
+  }
+  out
+}
+
+/// Whether each block of f is inside a natural loop: the blocks that
+/// reach a back edge's source without passing its header, and the header.
+fn loop_blocks(f: Func) -> List[Bool] {
+  var inl: List[Bool] = []
+  for _ in f.blocks {
+    inl.push(false)
+  }
+  let idom = dominators(f)
+  for (b, bl) in f.blocks.indexed() {
+    if bl.instrs.is_empty() {
+      continue
+    }
+    for e in f.values[bl.instrs[bl.instrs.len() - 1]].succs {
+      let h = f.edges[e].to
+      if !udom(idom, h, b) {
+        continue
+      }
+      // back edge b -> h: the body is h and what reaches b without h
+      inl[h] = true
+      var work = [b]
+      while !work.is_empty() {
+        let x = work.pop() ?? -1
+        if x < 0 || inl[x] {
+          continue
+        }
+        inl[x] = true
+        for pe in f.blocks[x].preds {
+          work.push(f.edges[pe].from)
+        }
+      }
+    }
+  }
+  inl
+}
+
+/// The thunks that copy a collection's entries into fresh lists: a
+/// log-mode Map's lists (decision 0291) and its entries.
+fn copies_entries(name: Str) -> Bool {
+  name.starts_with("xo.maph.logkvl[") || name.starts_with("xo.mlog.each[")
+}
+
+/// XO0907: a call that copies a collection's entries whose result a
+/// loop reads (each key and value counted up when copied and down after
+/// the loop: on a map shared across threads, atomic counts every core
+/// fights over).
+fn copy_feeds_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
+  var out: List[CostNote] = []
+  var users: List[List[Int]] = []
+  for _ in f.values {
+    users.push([])
+  }
+  for bl in f.blocks {
+    for v in bl.instrs {
+      for a in f.values[v].args {
+        if a >= 0 && a < users.len() {
+          users[a].push(f.values[v].block)
+        }
+      }
+    }
+  }
+  for ed in f.edges {
+    for a in ed.args {
+      if a >= 0 && a < users.len() {
+        users[a].push(ed.to)
+      }
+    }
+  }
+  // a loop that walks its map in place (ssa map.xo for_mlog_root) keeps
+  // the copy only for a forked view: its line has an eachpos call
+  var walked: Map[Int, Bool] = {}
+  for x in f.values {
+    if x.op == Op.Call && aux_name(x.aux).starts_with("xo.mlog.eachpos[") {
+      walked[x.line / 4096] = true
+    }
+  }
+  var seen: Map[Int, Bool] = {}
+  for (vi, x) in f.values.indexed() {
+    if x.op != Op.Call || !copies_entries(aux_name(x.aux)) || walked.contains(x.line / 4096) {
+      continue
+    }
+    // the copy, or what carries it (a tuple's fields, a block parameter),
+    // read inside a loop
+    if !reaches_loop(f, vi, users, inloop) {
+      continue
+    }
+    let line = x.line / 4096
+    if line <= 0 || seen.contains(line) {
+      continue
+    }
+    seen[line] = true
+    out.push(CostNote{code: "XO0907", fn_name: f.name, file: f.file, line: line, col: x.line % 4096, msg: "this loop copies every entry of the map before it starts (a log-mode map read through a forked view, or a loop body with a closure, a defer, or over 64 nodes): each key and value is counted up and down once per loop, atomically on a map shared across threads; iterate the map directly in a small body, or read the entries once outside an outer loop"})
+  }
+  out
+}
+
+/// Whether value v, or a value made from it (its fields, a block
+/// parameter it flows into), is read in a block inside a loop.
+fn reaches_loop(f: Func, v: Int, users: List[List[Int]], inloop: List[Bool]) -> Bool {
+  var work = [v]
+  var seen: Map[Int, Bool] = {}
+  while !work.is_empty() {
+    let x = work.pop() ?? -1
+    if x < 0 || seen.contains(x) {
+      continue
+    }
+    seen[x] = true
+    for b in users[x] {
+      if b >= 0 && b < inloop.len() && inloop[b] {
+        return true
+      }
+    }
+    // the values that take x apart or carry it on
+    for (wi, w) in f.values.indexed() {
+      if w.op is Op.Field | Op.Rebind && w.args.contains(x) {
+        work.push(wi)
+      }
+    }
+    for ed in f.edges {
+      for (k, a) in ed.args.indexed() {
+        if a == x && k < f.blocks[ed.to].params.len() {
+          work.push(f.blocks[ed.to].params[k])
+        }
+      }
+    }
+  }
+  false
+}
