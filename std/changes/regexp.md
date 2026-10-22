@@ -1,5 +1,20 @@
 # std/regexp changes
 
+## 2026-10-22: perf: the Pike matcher skips empty width contexts it cannot use
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/results/regexp-ascii-bitmap-inline-2026-10-22.md (replace 1.53x Go; profile: add 51%, exec 30%, empty_context and is_word_char 8%)
+- Go reference: regexp/exec.go (the context of each position is only needed by empty width instructions)
+- Test: internal/llvm/testdata/golden/regexp_table, internal/stdtest corpus regexp, std/native/regexp_test.xo; timing row against Go: bench/results/regexp-ascii-bitmap-inline-2026-10-22.md
+
+The compiled program records whether any instruction is an empty width
+assertion (^, $, \b); when none is, the Pike loop no longer computes the
+before and after context at every position, and the step copies a thread's
+first two group positions without a loop. `xo bench --ab` instructions
+against the previous step: find_all 0.968x, replace 0.965x (replace 1.47x Go's
+instructions); the backtracker's rows moved within 0.3%; output unchanged.
+
 ## 2026-10-22: perf: the Pike matcher's threads without a call or a copy loop
 
 - Kind: perf

@@ -1327,6 +1327,9 @@ struct Prog {
   ascii: List[Int]
   // literal_prefix, computed once
   prefix: Str
+  // whether any instruction is an empty width assertion (^ $ \b ...):
+  // when false, exec skips the context of each position
+  has_empty: Bool
 }
 
 /// A fragment: its first instruction (0 a failure), its patch list's head
@@ -1629,7 +1632,7 @@ fn compile(pattern: Str) -> Regex ! regexp.RegexErr {
     j += 1
   }
   let sroot = p.simplify(root)
-  var g = Prog{op: [], out: [], arg: [], rune: [], fold: [], start: 0, num_cap: 2, first_ok: false, first: [], ascii: [], prefix: ""}
+  var g = Prog{op: [], out: [], arg: [], rune: [], fold: [], start: 0, num_cap: 2, first_ok: false, first: [], ascii: [], prefix: "", has_empty: false}
   g.inst(I_FAIL)
   let f = g.compile(p, sroot)
   let m = g.inst(I_MATCH)
@@ -1638,6 +1641,13 @@ fn compile(pattern: Str) -> Regex ! regexp.RegexErr {
   g.ascii_bytes()
   g.first_bytes()
   g.prefix = literal_prefix(g)
+  var hp = 1
+  while hp < g.op.len() {
+    if g.op[hp] == I_EMPTY {
+      g.has_empty = true
+    }
+    hp += 1
+  }
   Regex{expr: pattern, prog: g, names: names}
 }
 
@@ -2236,7 +2246,8 @@ fn exec(g: Prog, s: Str, pos0: Int, ncap: Int) -> List[Int] {
       width1 = st1 & 7
     }
   }
-  var cond = empty_context(rune_before(s, pos), r)
+  let he = g.has_empty
+  var cond = if he { empty_context(rune_before(s, pos), r) } else { 0 }
   let prefix = g.prefix
   while true {
     if runq.len == 0 && matched {
@@ -2264,7 +2275,9 @@ fn exec(g: Prog, s: Str, pos0: Int, ncap: Int) -> List[Int] {
             width1 = st1 & 7
           }
         }
-        cond = empty_context(rune_before(s, pos), r)
+        if he {
+          cond = empty_context(rune_before(s, pos), r)
+        }
       }
     }
     if !matched {
@@ -2272,7 +2285,7 @@ fn exec(g: Prog, s: Str, pos0: Int, ncap: Int) -> List[Int] {
       cap[0] = pos
       add(g, runq, g.start, pos, cap, cond)
     }
-    let next_cond = empty_context(r, r1)
+    let next_cond = if he { empty_context(r, r1) } else { 0 }
     // step
     var j = 0
     while j < runq.len {
@@ -2305,9 +2318,12 @@ fn exec(g: Prog, s: Str, pos0: Int, ncap: Int) -> List[Int] {
           ok = r >= 0 && r != 10
         }
         if ok {
-          var ti = 0
+          let tb = j * ncap
+          tc[0] = runq.caps[tb]
+          tc[1] = runq.caps[tb + 1]
+          var ti = 2
           while ti < ncap {
-            tc[ti] = runq.caps[j * ncap + ti]
+            tc[ti] = runq.caps[tb + ti]
             ti += 1
           }
           add(g, nextq, g.out[pc], pos + width, tc, next_cond)

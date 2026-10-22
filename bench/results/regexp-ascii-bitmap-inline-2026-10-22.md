@@ -56,3 +56,18 @@ instructions: find_all 3,696 M (0.93x Go), replace 2,309 M (1.53x Go).
 Tried and not kept: the same inline thread in the step loop (the next
 instruction's thread copied straight from the running one, no `tc` copy):
 replace 2,386 M against 2,309 M, worse.
+
+## Third step: no empty width context without an assertion
+
+Profile of replace (XO_PROF=cpu, 300 passes): add 51%, exec 30%, empty_context
+and is_word_char 8%. `Prog.has_empty` (any I_EMPTY instruction) lets exec skip
+`empty_context` at every position when the pattern has none, and the step's
+thread copy takes its first two entries without a loop. `xo bench --ab`
+instructions against the second step (7 rounds): find_all 0.968 (0.968 to
+0.968), replace 0.965 (0.965 to 0.965), match 1.003 and captures 1.002 (code
+layout; the backtracker is unchanged); outputs the same. Against Go's
+instructions: find_all 3,577 M (0.90x Go), replace 2,227 M (1.47x Go).
+
+Tried and not kept: the capture instruction's recursive `add` replaced by a
+saved-position stack in the queue (restore at the call's end): find_all 1.079x,
+replace 1.024x instructions, worse.
