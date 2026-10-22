@@ -398,6 +398,15 @@ func TestAncestorBuild(t *testing.T) {
 	if got := ancestorBuild(root, []string{norecord, other, mine}); got != mine {
 		t.Errorf("ancestorBuild = %q, want the main ancestor %q", got, mine)
 	}
+	// the nearest ancestor, not the most recently written: a newer build of
+	// an older commit (a worktree detached at a, 2026-10-22) loses to a
+	// build of c
+	git("commit", "-q", "--allow-empty", "-m", "d")
+	c := git("rev-parse", "HEAD~1")
+	near := build("k4", c)
+	if got := ancestorBuild(root, []string{mine, near}); got != near {
+		t.Errorf("ancestorBuild = %q, want the nearest ancestor %q", got, near)
+	}
 	if got := ancestorBuild(root, []string{norecord, other}); got != "" {
 		t.Errorf("no ancestor: ancestorBuild = %q", got)
 	}

@@ -316,7 +316,14 @@ fn (var g: Gen) map_last_use(e: Expr) -> Bool {
     Ident(id) => g.var_of(id)
     _ => -1
   }
-  if v < 0 || g.is_param_or_recv(v) || g.fr().iife > 0 || !g.is_prelude(g.mono_type(g.nat(e)), "Map") {
+  if v < 0 || g.is_param_or_recv(v) || g.fr().iife > 0 {
+    return false
+  }
+  // the type first: mono_type adds to g's types, which an xo older than
+  // decision 0326 read for is_prelude before the argument
+  // (gotchas/xobuild-ancestor-older-semantics.md)
+  let t = g.mono_type(g.nat(e))
+  if !g.is_prelude(t, "Map") {
     return false
   }
   let fo = g.fr().fo

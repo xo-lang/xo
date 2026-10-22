@@ -61,6 +61,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -669,21 +670,27 @@ func sourcesClean(root string) bool {
 	return err == nil && len(strings.TrimSpace(string(out))) == 0
 }
 
-// ancestorBuild is the newest of the cached builds ms (newest first)
-// whose recorded commit (the commit file recordCommit writes beside it,
-// with the clean file) is an ancestor of root's HEAD, or "". A build of
-// another branch can emit calls into a runtime this checkout's std does
-// not have (on a shared CI runner, 2026-10-14, run 38632539643), and so
-// can a build of a dirty tree (2026-10-16); a build with no record, no
-// clean file (a dirty tree's, or one recorded before 2026-10-16), or
-// outside a git checkout cannot be placed, so none of those is used.
+// ancestorBuild is the cached build of ms (newest first) whose recorded
+// commit (the commit file recordCommit writes beside it, with the clean
+// file) is the nearest ancestor of root's HEAD (the fewest commits
+// between), or "". A build of another branch can emit calls into a
+// runtime this checkout's std does not have (on a shared CI runner,
+// 2026-10-14, run 38632539643), and so can a build of a dirty tree
+// (2026-10-16); a build with no record, no clean file (a dirty tree's, or
+// one recorded before 2026-10-16), or outside a git checkout cannot be
+// placed, so none of those is used. The nearest, not the most recently
+// written: a worktree detached at an old commit rebuilds an old xo
+// whose language can predate what the sources need (decision 0326's
+// evaluation order: an xo 70 commits old built a d5c2c17f7 xo that
+// faulted in gen, 2026-10-22, gotchas/xobuild-ancestor-older-semantics.md).
 func ancestorBuild(root string, ms []string) string {
 	head := headCommit(root)
 	if head == "" {
 		return ""
 	}
+	best, bestN := "", -1
 	for i, m := range ms {
-		if i == 20 {
+		if i == 40 {
 			break
 		}
 		if _, err := os.Stat(filepath.Join(filepath.Dir(m), "clean")); err != nil {
@@ -694,11 +701,22 @@ func ancestorBuild(root string, ms []string) string {
 		if err != nil || c == "" {
 			continue
 		}
-		if exec.Command("git", "-C", root, "merge-base", "--is-ancestor", c, head).Run() == nil {
-			return m
+		if exec.Command("git", "-C", root, "merge-base", "--is-ancestor", c, head).Run() != nil {
+			continue
+		}
+		out, err := exec.Command("git", "-C", root, "rev-list", "--count", c+".."+head).Output()
+		if err != nil {
+			continue
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(string(out)))
+		if err != nil {
+			continue
+		}
+		if bestN < 0 || n < bestN {
+			best, bestN = m, n
 		}
 	}
-	return ""
+	return best
 }
 
 // headCommit is root's HEAD commit, or "" outside a git checkout.
