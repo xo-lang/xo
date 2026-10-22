@@ -69,9 +69,28 @@ new binaries above, argument `parse`, 2026-10-22 09:34):
 | instructions | 5,574,934,230 | 1,634,315,290 | 0.293 | 0.293 to 0.293 | better |
 | max_rss_kb | 39,512 | 38,336 | 0.97 | 0.963 to 0.981 | better |
 
-## 2. ctx mutex (next)
+## 2. ctx mutex: fixed
 
-bench/perf/ctx `mutex`: 20,469 M against 1,103 M. Not profiled yet.
+bench/perf/ctx `mutex`: 20,469 M against 1,103 M native. Cause (pprof of
+the generated program): every `Mutex.with` recorded where it was taken
+for the re-entrancy and deadlock reports, as `runtime.Callers` over 14
+frames into a 14-slot site, and that walk was 64% of the instructions.
+The caller of `Mutex_with` is generated code, whose first frame is the Xo
+frame the report names, so the site now keeps two frames (std/rt
+sync.go heldSite).
+
+`xo bench --ab` (decides; 10 rounds, a bulk slot, both sides built by the
+same xo with the std before and after, argument `mutex`, 2026-10-22
+09:34):
+
+| metric | before (median) | after (median) | after / before | 95% interval | verdict |
+|---|---|---|---|---|---|
+| wall_ms | 903.1 | 300.9 | 0.333 | 0.309 to 0.359 | better |
+| cpu_ms | 890.0 | 280.0 | 0.315 | 0.308 to 0.331 | better |
+| instructions | 20,462,681,357 | 7,271,319,606 | 0.355 | 0.355 to 0.357 | better |
+| max_rss_kb | 26,984 | 26,960 | 0.999 | 0.996 to 1.001 | within noise |
+
+ctx mutex is now 6.6x native (7,271 M against 1,103 M).
 
 ## 3. atomic: fixed
 

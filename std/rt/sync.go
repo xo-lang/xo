@@ -242,13 +242,15 @@ func (l *lock) wakeLocked() {
 }
 
 // heldSite is where a task acquired a mutex: the caller's program
-// counters, resolved to `file.xo:line` only when a re-entrant use is
-// reported (formatting the location on every `with` cost an allocation
-// and a full stack walk). 14 frames keep the value small enough to be
-// stored inline in the map; the caller of Mutex_with is generated code,
-// whose first frame is an Xo frame.
+// counters, resolved to `file.xo:line` only when a re-entrant use or a
+// deadlock is reported (formatting the location on every `with` cost an
+// allocation and a full stack walk). The caller of Mutex_with is
+// generated code, whose first frame is an Xo frame, so two frames are
+// enough: walking 14 on every `with` was 64% of bench/perf/ctx mutex's
+// instructions on the Go backend
+// (bench/results/go-backend-gap-2026-10-22.md).
 type heldSite struct {
-	pcs [14]uintptr
+	pcs [2]uintptr
 	n   int
 }
 

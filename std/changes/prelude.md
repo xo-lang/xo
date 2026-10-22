@@ -1,9 +1,24 @@
 # prelude changes
 
-## 2026-10-22: perf: Atomic on the Go backend is lock free
+## 2026-10-22: perf: Mutex.with on the Go backend records a 2-frame site
 
 - Kind: perf
 - Commit: (filled in after the push)
+- Found by: go pprof of bench/perf/ctx mutex on the Go backend (bench/results/go-backend-gap-2026-10-22.md, item 2)
+- Go reference: runtime.Callers
+- Test: std/rt lock tests (-race); goldens conc_*, deadlock and mutex through TestGoldenGoParity
+
+Each `Mutex.with` on the Go backend records where the lock was taken, for
+the re-entrancy and deadlock reports. It walked 14 stack frames per call
+(64% of the instructions of a lock heavy loop); the first frame, the Xo
+caller the report names, is all it uses, so it now walks two.
+bench/perf/ctx mutex, `xo bench --ab`: wall 0.333 of before (903 to 301
+ms). The reports are unchanged.
+
+## 2026-10-22: perf: Atomic on the Go backend is lock free
+
+- Kind: perf
+- Commit: 37c5a2ad4
 - Found by: the Go backend gap ranking (bench/results/go-backend-gap-2026-10-22.md, item 3)
 - Go reference: sync/atomic.Int64
 - Test: std/rt atomic_test.go (-race); golden atomic_ops and conc_* through TestGoldenGoParity; bench/perf/atomic
