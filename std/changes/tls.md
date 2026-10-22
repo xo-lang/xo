@@ -1,18 +1,18 @@
 # std/tls changes
 
-## 2026-10-22: speedup: AES-GCM hashes a 64 byte chunk with cpu.ghash4
+## 2026-10-22: perf: AES-GCM goes back to its own GHASH body (cpu.ghash4 was slower in the loop)
 
-- Kind: speedup
-- Commit: b9092b2b6
-- Found by: profile (Xo Lang 3, bulk TLS 1.3 download: ghash64 26% of server CPU)
-- Go reference: none (Go's crypto/internal/fips140/aes/gcm uses pmull on arm64)
-- Test: std/native/llrt/tlsrec_test.xo; tls, tls12, tls13, http_tls, websocket_tls, crypto goldens (arm64, LLVM); wasm TLS and Map goldens
+- Kind: perf
+- Commit: this commit
+- Found by: tlsrate bulk (Xo Lang 3, quiet Docker linux/arm64)
+- Go reference: none
+- Test: std/native/llrt/tlsrec_test.xo; tls, crypto goldens (arm64)
 
-ghash_hw and ctr_at_a's fused loop call cpu.ghash4 (decision 0339: NEON
-pmull on arm64, the portable body elsewhere) with the state in a two
-word list, in place of the ghash64 body written out in the loop.
-valgrind callgrind, linux/arm64, 16 MiB TLS 1.3 download: 141.53 M to
-123.77 M instructions (-12.6%).
+The change that called cpu.ghash4 from ghash_hw and ctr_at_a (b9092b2b6)
+cut the instruction count 12.6% (callgrind, 16 MiB TLS 1.3 download) but
+cut throughput 24% (bulk TLS 1.3, 256 MiB, two interleaved rounds:
+1830 and 1858 MBps before, 1398 and 1405 after). It is reverted: the
+inlined body is back in the fused loop. cpu.ghash4 stays in cpu.xo.
 
 ## 2026-10-22: speedup: a server read forgets stale readiness first
 
