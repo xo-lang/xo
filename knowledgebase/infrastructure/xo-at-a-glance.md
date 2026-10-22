@@ -72,7 +72,7 @@ template, embed, compress, big, base64/base32, binary, uuid, path,
 crypto, archive, log, task, testing, cli, term, go (`use go` bindings).
 Prelude collections include `sort`, `sort_by`, `group_by`, `zip`,
 `fold`, `sum`, `contains`, `indexed`, `to_set`, `reverse`, `join`,
-`split`; `xo doc List` lists the rest.
+`split`; Bytes has `indexed` and `find`; `xo doc List` lists the rest.
 
 ## Tools (spec 10, agent-tools.md)
 
