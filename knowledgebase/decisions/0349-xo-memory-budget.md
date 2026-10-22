@@ -99,3 +99,20 @@ the end with `XO_MAX_MEM=off`.
   failed mapping with no message.
 - **Only heavy.sh's limit.** Not enough: it covers only jobs run under
   it, and kills without saying which function grew.
+
+## Addendum (2026-10-22, evening): what is counted, and no default yet
+
+The first measure, every mapping's size, overstated the heap: a growing
+large block maps twice its size in reserve, and the default of half of
+physical memory (12 GB here) stopped every self build of xo
+(gotchas/mapped-bytes-overstate-memory.md). 75296384b removed the
+default. The budget now counts chunks and records as mapped and large
+blocks by the bytes handed out (heapos.xo large_room, large_resize,
+release); `debug.mem_peak()` gives the high-water mark and `xo build
+--phase-times` prints the heap and its peak after each phase. A cold self
+build of xo peaks at 9,909 MB counted against 9,141 MiB of maximum
+resident set (bench/results/memory-budget-measure-2026-10-22.md). xo sets
+no default until the LLVM build of xo (the full tier) and a gate are
+measured the same way and the owner approves the number; `XO_MAX_MEM`
+works as described above.
+

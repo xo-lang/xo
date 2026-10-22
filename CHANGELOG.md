@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The memory budget (decision 0349) counts what the heap uses (large
+  blocks by the bytes handed out, not the room a growing block reserves),
+  which tracks the resident set: a cold self build of xo peaks at 9.9 GB
+  counted against 9.1 GiB RSS. `xo build --phase-times` prints the heap
+  and its peak after each phase, and `debug.mem_peak()` is new. xo sets
+  no default budget for now.
+
 - `xo build` and `xo run` with one target skip checking an unchanged
   module whose bodies the front end cache replays, by default (owner,
   2026-10-22; decision 0220 addendum): a warm build's check drops from
@@ -41,9 +48,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - A memory budget for native programs and for xo (decision 0349, owner):
   `XO_MAX_MEM=12G` (or `512M`, bytes; `off`) stops a program whose heap
   maps more, with status 70, `fatal error: memory budget exceeded: ...`
-  and what it was doing (`debug.mem_label`). xo sets half of physical
-  memory by default (macOS, Linux) and labels its phases, so a runaway
-  build stops with the phase named instead of swapping the machine.
+  and what it was doing (`debug.mem_label`). xo labels its phases, so a
+  runaway build stops with the phase named; it sets no default budget yet
+  (the first default, half of physical memory, was removed the same day).
   `debug.mem_budget`, `debug.mem_label`, `debug.mem_mapped` and
   `debug.mem_total` are new in std/debug.
 

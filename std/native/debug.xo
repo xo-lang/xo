@@ -126,3 +126,5 @@ pub fn mem_label(text: Str) { heapos.set_label(raw.data(text), text.len()) }
 pub fn mem_mapped() -> Int { heapos.mapped_bytes() }
 
 pub fn mem_total() -> Int { heapos.phys_mem() }
+
+pub fn mem_peak() -> Int { heapos.peak_bytes() }

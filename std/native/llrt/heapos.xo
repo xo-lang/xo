@@ -77,6 +77,16 @@ pub fn libc_maps() -> Int { rt.slot_load(rt.static_word(W_LIBC_MAPS), 0, RELAXED
 /// Windows build must not reference the C library's mmap, which it lacks
 /// (its link fails), and target.os folds there.
 pub fn map(size: Int) -> Int {
+  let m = map_os(size)
+  mapped(size)
+  m
+}
+
+/// map without the memory budget's count: a large block's mapping, which
+/// the budget counts by the bytes handed out instead (decision 0349's
+/// 2026-10-22 hotfix: a growing block maps twice its size, pages that are
+/// reserved, not used, so mapping sizes ran far past the resident set).
+fn map_os(size: Int) -> Int {
   var m = 0
   match target.os {
     TargetOs.Linux => {
@@ -113,7 +123,6 @@ pub fn map(size: Int) -> Int {
   if m == 0 {
     oom()
   }
-  mapped(size)
   m
 }
 
@@ -125,7 +134,6 @@ fn libc_map(size: Int) -> Int {
     oom()
   }
   let _n = rt.slot_add(rt.static_word(W_LIBC_MAPS), 0, 1, RELAXED)
-  mapped(size)
   m
 }
 
@@ -133,8 +141,11 @@ fn libc_map(size: Int) -> Int {
 /// membudget.xo), which stops the process past it.
 fn mapped(size: Int) { membudget.add(size) }
 
-/// The bytes the heap has mapped and not given back (decision 0349).
+/// The bytes the heap uses as the budget counts them (decision 0349).
 pub fn mapped_bytes() -> Int { membudget.mapped() }
+
+/// The most they have been.
+pub fn peak_bytes() -> Int { membudget.peak() }
 
 /// Sets the budget in bytes (0: none).
 pub fn set_budget(b: Int) { membudget.set_budget(b) }
@@ -183,6 +194,11 @@ pub fn phys_mem() -> Int {
 /// Gives back the mapping of size bytes at m.
 pub fn unmap(m: Int, size: Int) {
   membudget.add(0 - size)
+  unmap_os(m, size)
+}
+
+/// unmap without the budget's count (a large block's mapping).
+fn unmap_os(m: Int, size: Int) {
   match target.os {
     TargetOs.Linux => {
       if sanhook.sanitized() {
@@ -253,10 +269,12 @@ fn large_room(n: Int, room: Int) -> Int {
   var m = take(need)
   if m == 0 {
     let size = room.wrapping_add(16).wrapping_add(GRAIN - 1) & (0 - GRAIN)
-    m = map(size)
+    m = map_os(size)
     rt.mem_store(m, 0, size, 8)
   }
   rt.mem_store(m, 8, (0).wrapping_sub(n), 8)
+  // the budget counts the bytes handed out (decision 0349)
+  membudget.add(n)
   m.wrapping_add(16)
 }
 
@@ -266,6 +284,7 @@ fn large_room(n: Int, room: Int) -> Int {
 pub fn large_resize(b: Int, n: Int) -> Int {
   let m = b.wrapping_sub(8)
   if n.wrapping_add(16) <= rt.mem_load(m, 0, 8) {
+    membudget.add(n.wrapping_add(rt.mem_load(b, 0, 8)))
     rt.mem_store(b, 0, (0).wrapping_sub(n), 8)
     return b.wrapping_add(8)
   }
@@ -293,8 +312,9 @@ pub fn release(b: Int) {
     return
   }
   let size = rt.mem_load(m, 0, 8)
+  membudget.add(rt.mem_load(b, 0, 8))
   if !keep(m, size) {
-    unmap(m, size)
+    unmap_os(m, size)
   }
 }
 

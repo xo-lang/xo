@@ -107,3 +107,5 @@ func Debug_mem_mapped(_ *Task) int64 { return 0 }
 // Debug_mem_total is `debug.mem_total()`: 0 on the Go backend.
 func Debug_mem_total(_ *Task) int64 { return 0 }
 
+// Debug_mem_peak is `debug.mem_peak()`: 0 on the Go backend.
+func Debug_mem_peak(_ *Task) int64 { return 0 }

@@ -1828,7 +1828,8 @@ fn lap(os: Os, on: Bool, name: Str, t: Time) -> Time {
   // 0349): the one after the phase that just ended
   debug.mem_label("building, past phase ${name}")
   if on {
-    os.stdio.eprintln("phase ${name} ${os.clock.since(t).millis()} ms")
+    // with the heap's use so far (decision 0349's measure, in MiB)
+    os.stdio.eprintln("phase ${name} ${os.clock.since(t).millis()} ms (heap ${debug.mem_mapped() / 1048576} MB, peak ${debug.mem_peak() / 1048576} MB)")
   }
   os.clock.now()
 }

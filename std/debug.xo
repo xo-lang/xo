@@ -43,9 +43,14 @@ fn mem_budget(bytes: Int)
 /// bytes; "" clears it): what the program is doing, for the report.
 fn mem_label(text: Str)
 
-/// The bytes the heap has mapped from the system and not given back
-/// (what the budget measures); 0 on the Go backend.
+/// The bytes the heap uses (what the budget measures: its chunks and
+/// records as mapped, its large blocks as handed out, not the room a
+/// growing block reserves); 0 on the Go backend.
 fn mem_mapped() -> Int
+
+/// The most mem_mapped has been (the high-water mark); 0 on the Go
+/// backend.
+fn mem_peak() -> Int
 
 /// The machine's physical memory in bytes, 0 when unknown (Windows and
 /// the Go backend for now).

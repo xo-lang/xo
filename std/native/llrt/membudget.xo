@@ -1,5 +1,5 @@
-// The memory budget (decision 0349): the bytes the heap has mapped from
-// the system and not given back (heapos.xo map and unmap add to it), the
+// The memory budget (decision 0349): the bytes the heap uses (heapos.xo:
+// its chunks and records as mapped, its large blocks as handed out), the
 // budget past which the process stops, and the label its report prints.
 // A leaf of heapos.xo: nothing here maps or allocates, so the stop can
 // run while the heap is full; heapos.xo maps the label's buffer and
@@ -15,6 +15,8 @@ const W_MAPPED = 84
 const W_BUDGET = 85
 const W_LABEL = 86
 const W_DIGIT = 87
+/// The most the count has been (the high-water mark).
+const W_PEAK = 88
 
 const RELAXED = 0
 const ACQUIRE = 1
@@ -25,6 +27,11 @@ const ACQ_REL = 3
 pub fn add(d: Int) {
   let total = rt.slot_add(rt.static_word(W_MAPPED), 0, d, RELAXED).wrapping_add(d)
   if d > 0 {
+    // the high-water mark: a racing larger store may be lost, which
+    // only makes the peak a little low under contention
+    if total > rt.slot_load(rt.static_word(W_PEAK), 0, RELAXED) {
+      rt.slot_store(rt.static_word(W_PEAK), 0, total, RELAXED)
+    }
     let b = rt.slot_load(rt.static_word(W_BUDGET), 0, RELAXED)
     if b > 0 && total > b {
       over_budget(total, b)
@@ -32,8 +39,11 @@ pub fn add(d: Int) {
   }
 }
 
-/// The bytes mapped and not given back.
+/// The bytes in use as the budget counts them.
 pub fn mapped() -> Int { rt.slot_load(rt.static_word(W_MAPPED), 0, RELAXED) }
+
+/// The most they have been.
+pub fn peak() -> Int { rt.slot_load(rt.static_word(W_PEAK), 0, RELAXED) }
 
 /// Sets the budget in bytes (0 or less: none).
 pub fn set_budget(b: Int) { rt.slot_store(rt.static_word(W_BUDGET), 0, if b > 0 { b } else { 0 }, RELAXED) }
