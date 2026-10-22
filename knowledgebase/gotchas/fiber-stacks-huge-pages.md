@@ -25,10 +25,18 @@ map_stack calls madvise(MADV_NOHUGEPAGE) on the mapping (std/native/llrt
 pool.xo). At 1024 connections the peak RSS is 47 to 57 MB (Go: 66 to 78
 MB); throughput did not change within the run to run noise.
 
-Not covered: the --race path (sanhook.stack_map, the C library maps the
-stack under ThreadSanitizer) and worker thread stacks (libc's pthread maps
-them, a few per process); a race build under THP `always` still pays 2 MiB
-per fiber.
+The --race path (sanhook.stack_map, the C library maps the stack under
+ThreadSanitizer) needs no madvise (measured 2026-10-22, linux/arm64 Docker,
+THP always, --race CRUD server at 256 connections, with and without the
+call: 255 and 263 MB RSS, the same within noise). Its stacks are mappings
+of about 4 MiB, not 64 MiB, each 8 KB resident (/proc/PID/smaps), and the
+RSS is ThreadSanitizer's shadow memory (mappings of 1792, 1024 and 256
+KB).
+
+Not covered, on purpose: worker thread stacks. libc's pthread maps them (a
+few per process, THREAD_STACK reserved), so at most 2 MiB resident each,
+fixed and not per connection; covering them would mean mapping the stack
+ourselves and passing pthread_attr_setstack.
 
 ## How to avoid
 
