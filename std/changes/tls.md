@@ -1,5 +1,21 @@
 # std/tls changes
 
+## 2026-10-22: speedup: AES-GCM counter, rounds and xor in one fused kernel
+
+- Kind: speedup
+- Commit: this commit
+- Found by: bench/perf/aesgcm after the fused GHASH step: the scalar counter stores and word xor around the per call AES intrinsic (Xo Lang 3; kernel by Xo Lang 1, 47312b2f7)
+- Go reference: crypto/cipher's GCM (gcmAesEnc fuses CTR, AES and GHASH)
+- Test: tls_test (seal_at over chunk boundaries), tls12_client, http_tls, http_tls_keys and crypto_prims goldens (arm64, LLVM with Go parity); TestTLSDiff, TestCryptoXoDiff, TestConstantTimeLLVM
+
+`ctr_at` and `ctr_at_a` hand the whole 64 byte chunks of a record to
+`cpu.aes_ctr10`, `aes_ctr12` or `aes_ctr14` in one call (counters built in
+vector registers, four AES chains, the xor with the data, the round keys
+held in registers); the unrolled scalar loop is removed and the tail still
+goes through `enc_at`. `xo bench --ab` on the Mac (B / A), bench/perf/aesgcm
+16 KiB records: seal wall 0.935 (95% 0.919 to 0.940), instructions 0.755;
+open wall 0.938, instructions 0.765. bench/results/aesgcm-2026-10-22.md.
+
 ## 2026-10-22: speedup: AES-GCM hashes with the fused GHASH loop and unrolls its whole chunks
 
 - Kind: speedup

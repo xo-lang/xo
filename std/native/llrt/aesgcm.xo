@@ -872,6 +872,21 @@ fn (g: Gcm) ctr_o(s0: Str, d: Int, nlo: Int, nhi: Int, ctr0: Int, src: Bytes, so
   rt.rs_set_len(s, d.wrapping_add(n))
 }
 
+/// The fused CPU kernel over the first whole bytes (a multiple of 64) of
+/// the key stream from counter ctr: counter blocks, rounds and the xor
+/// with the data at sp in one loop, into q0 (sp may be q0).
+fn (g: Gcm) ctr_run(q0: Int, sp: Int, nlo: Int, nhi: Int, ctr: Int, whole: Int) {
+  let iv = [nlo, nhi | (ctr & 0xFFFFFFFF).swap_bytes() & ~0xFFFFFFFF]
+  let kp = addr(g.c.rk)
+  match g.c.nr {
+    10 => cpu.aes_ctr10(q0, sp, kp, addr(iv), whole)
+    12 => cpu.aes_ctr12(q0, sp, kp, addr(iv), whole)
+    _ => cpu.aes_ctr14(q0, sp, kp, addr(iv), whole)
+  }
+  keep(iv)
+  keep(g.c.rk)
+}
+
 /// ctr_o in s0's own room, which reaches d + chunk_room(n): each 64 byte
 /// chunk's counter blocks are written where its output goes, encrypted
 /// there (the CPU's rounds on memory) and xored with src in place, so a
@@ -882,30 +897,13 @@ fn (g: Gcm) ctr_at(s0: Str, d: Int, nlo: Int, nhi: Int, ctr0: Int, src: Bytes, s
   let sp = raw.bytes_addr(src).wrapping_add(so)
   var ctr = ctr0
   var i = 0
-  // whole chunks: the four counter blocks and the eight words unrolled
-  // (src's bytes read by address, in range as n <= src's length from so)
-  while i.wrapping_add(64) <= n {
-    let q = q0.wrapping_add(i)
-    let t = sp.wrapping_add(i)
-    rt.mem_store(q, 0, nlo, 8)
-    rt.mem_store(q, 8, nhi | (ctr & 0xFFFFFFFF).swap_bytes() & ~0xFFFFFFFF, 8)
-    rt.mem_store(q, 16, nlo, 8)
-    rt.mem_store(q, 24, nhi | (ctr.wrapping_add(1) & 0xFFFFFFFF).swap_bytes() & ~0xFFFFFFFF, 8)
-    rt.mem_store(q, 32, nlo, 8)
-    rt.mem_store(q, 40, nhi | (ctr.wrapping_add(2) & 0xFFFFFFFF).swap_bytes() & ~0xFFFFFFFF, 8)
-    rt.mem_store(q, 48, nlo, 8)
-    rt.mem_store(q, 56, nhi | (ctr.wrapping_add(3) & 0xFFFFFFFF).swap_bytes() & ~0xFFFFFFFF, 8)
-    enc_at(g.c, q, 4)
-    rt.mem_store(q, 0, rt.mem_load(t, 0, 8) ^ rt.mem_load(q, 0, 8), 8)
-    rt.mem_store(q, 8, rt.mem_load(t, 8, 8) ^ rt.mem_load(q, 8, 8), 8)
-    rt.mem_store(q, 16, rt.mem_load(t, 16, 8) ^ rt.mem_load(q, 16, 8), 8)
-    rt.mem_store(q, 24, rt.mem_load(t, 24, 8) ^ rt.mem_load(q, 24, 8), 8)
-    rt.mem_store(q, 32, rt.mem_load(t, 32, 8) ^ rt.mem_load(q, 32, 8), 8)
-    rt.mem_store(q, 40, rt.mem_load(t, 40, 8) ^ rt.mem_load(q, 40, 8), 8)
-    rt.mem_store(q, 48, rt.mem_load(t, 48, 8) ^ rt.mem_load(q, 48, 8), 8)
-    rt.mem_store(q, 56, rt.mem_load(t, 56, 8) ^ rt.mem_load(q, 56, 8), 8)
-    ctr = ctr.wrapping_add(4)
-    i = i.wrapping_add(64)
+  // whole chunks in one fused kernel (src's bytes read by address, in
+  // range as n <= src's length from so)
+  let whole = n & -64
+  if whole > 0 {
+    g.ctr_run(q0, sp, nlo, nhi, ctr, whole)
+    ctr = ctr.wrapping_add(whole.shr_logical(4))
+    i = whole
   }
   keep_bytes(src)
   while i < n {
@@ -949,29 +947,13 @@ fn (g: Gcm) ctr_at_a(s0: Str, d: Int, nlo: Int, nhi: Int, ctr0: Int, sa: Int, m:
   let q0 = raw.data(s0).wrapping_add(d)
   var ctr = ctr0
   var i = 0
-  // whole chunks of the data (not the one with the last byte): unrolled
-  while i.wrapping_add(64) < m {
-    let q = q0.wrapping_add(i)
-    let t = sa.wrapping_add(i)
-    rt.mem_store(q, 0, nlo, 8)
-    rt.mem_store(q, 8, nhi | (ctr & 0xFFFFFFFF).swap_bytes() & ~0xFFFFFFFF, 8)
-    rt.mem_store(q, 16, nlo, 8)
-    rt.mem_store(q, 24, nhi | (ctr.wrapping_add(1) & 0xFFFFFFFF).swap_bytes() & ~0xFFFFFFFF, 8)
-    rt.mem_store(q, 32, nlo, 8)
-    rt.mem_store(q, 40, nhi | (ctr.wrapping_add(2) & 0xFFFFFFFF).swap_bytes() & ~0xFFFFFFFF, 8)
-    rt.mem_store(q, 48, nlo, 8)
-    rt.mem_store(q, 56, nhi | (ctr.wrapping_add(3) & 0xFFFFFFFF).swap_bytes() & ~0xFFFFFFFF, 8)
-    enc_at(g.c, q, 4)
-    rt.mem_store(q, 0, rt.mem_load(t, 0, 8) ^ rt.mem_load(q, 0, 8), 8)
-    rt.mem_store(q, 8, rt.mem_load(t, 8, 8) ^ rt.mem_load(q, 8, 8), 8)
-    rt.mem_store(q, 16, rt.mem_load(t, 16, 8) ^ rt.mem_load(q, 16, 8), 8)
-    rt.mem_store(q, 24, rt.mem_load(t, 24, 8) ^ rt.mem_load(q, 24, 8), 8)
-    rt.mem_store(q, 32, rt.mem_load(t, 32, 8) ^ rt.mem_load(q, 32, 8), 8)
-    rt.mem_store(q, 40, rt.mem_load(t, 40, 8) ^ rt.mem_load(q, 40, 8), 8)
-    rt.mem_store(q, 48, rt.mem_load(t, 48, 8) ^ rt.mem_load(q, 48, 8), 8)
-    rt.mem_store(q, 56, rt.mem_load(t, 56, 8) ^ rt.mem_load(q, 56, 8), 8)
-    ctr = ctr.wrapping_add(4)
-    i = i.wrapping_add(64)
+  // whole chunks of the data (not the one with the last byte): one fused
+  // kernel
+  let whole = m.wrapping_sub(1) & -64
+  if whole > 0 {
+    g.ctr_run(q0, sa, nlo, nhi, ctr, whole)
+    ctr = ctr.wrapping_add(whole.shr_logical(4))
+    i = whole
   }
   while i < m {
     let q = q0.wrapping_add(i)
