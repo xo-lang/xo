@@ -15,10 +15,22 @@
 # (exit 66), every race_sync case clean when synchronized and reported when
 # not (lazy_const clean both ways), race_stacks' 200 isolated faults caught
 # and its race reported with its stacks. $XO_CI_OUT/windows-race.txt has a
-# line per run; exit 1 on any mismatch.
+# line per run; exit 1 on any mismatch. Each run is bounded by
+# RUN_TIMEOUT seconds (default 120; a hung race binary otherwise holds the
+# job to the workflow's 90 minute limit): a run that outlives it is
+# stopped and counted a FAIL with exit=timeout. After MAX_HANGS (3) hung runs
+# the rest are skipped (one SKIP line, exit 1): a systematic hang would
+# otherwise cost 234 x RUN_TIMEOUT, past the job limit.
 set -uo pipefail
 RT_SHA256=cbab2689849964a299312a7d5de5e2c0553c1b27bf90fca5a5f488fcb7826b11
 REPS=${REPS:-3}
+RUN_TIMEOUT=${RUN_TIMEOUT:-120}
+MAX_HANGS=${MAX_HANGS:-3}
+hangs=0
+# timeout (MSYS coreutils on the runner) exits 124 when it stopped the
+# command, 137 when it needed -k's KILL; without it a run is unbounded.
+if command -v timeout >/dev/null; then tmo() { timeout -k 10 "$RUN_TIMEOUT" "$@"; }; else
+  echo "windows-race: no timeout command, runs are unbounded"; tmo() { "$@"; }; fi
 out=${XO_CI_OUT:?XO_CI_OUT}
 np() { if command -v cygpath >/dev/null; then cygpath -w "$1"; else echo "$1"; fi; }
 up() { if command -v cygpath >/dev/null; then cygpath -u "$1"; else echo "$1"; fi; }
@@ -52,19 +64,28 @@ done
 # one run: NAME EXE WANT_EXIT WANT_RACES(+ for at least one, 0 for none) [GREP]
 check() {
   local name=$1 exe=$2 want=$3 races=$4 grep=${5:-}
-  "$o/$exe" > "$o/run.out" 2> "$o/run.err"
+  tmo "$o/$exe" > "$o/run.out" 2> "$o/run.err"
   local rc=$? n
+  local hung=0
+  if [ "$rc" = 124 ] || [ "$rc" = 137 ]; then hung=1; hangs=$((hangs + 1)); fi
   n=$(grep -c "WARNING: DATA RACE" "$o/run.err")
   local ok=1
+  [ $hung = 0 ] || ok=0
   [ "$rc" = "$want" ] || ok=0
   if [ "$races" = 0 ]; then [ "$n" = 0 ] || ok=0; else [ "$n" -ge 1 ] || ok=0; fi
   # (grep the files: with pipefail, cat | grep -q fails on cat's SIGPIPE)
   if [ -n "$grep" ]; then grep -q -- "$grep" "$o/run.out" "$o/run.err" || ok=0; fi
   local line="$name exit=$rc races=$n"
+  [ $hung = 0 ] || line="$name exit=timeout(${RUN_TIMEOUT}s) races=$n"
   if [ $ok = 1 ]; then echo "ok   $line" >> "$sum"; else
     echo "FAIL $line (want exit $want, races $races${grep:+, \"$grep\"})" | tee -a "$sum"
     tail -20 "$o/run.err" | sed 's/^/     /' >> "$sum"
     fail=1
+  fi
+  if [ "$hangs" -ge "$MAX_HANGS" ]; then
+    echo "SKIP the remaining runs: $hangs timeouts (last: $name)" | tee -a "$sum"
+    echo "windows-race: $(grep -c '^ok' "$sum") ok, $(grep -c '^FAIL' "$sum") failed, rest skipped"
+    exit 1
   fi
 }
 cases="spawn join scope chan chan_buffered select mutex await_done atomic atomic_add map_grow"
