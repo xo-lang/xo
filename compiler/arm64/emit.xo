@@ -120,6 +120,29 @@ fn (g: G) out_arg_bytes() -> Int {
   out
 }
 
+/// The size of this function's own stack argument area in its caller's
+/// frame, past its frame: the stack parameters, and the result words
+/// past the registers (MAX_FRAME leaves 4 KiB of sp's reach for it).
+fn (g: G) in_arg_bytes() -> Int {
+  var n = 0
+  for b in g.order {
+    for inst in g.blocks[b].insts {
+      var ls: List[Loc] = []
+      if inst.kind == K_ENTRY {
+        ls = g.param_locs(regs(inst.defs)) + g.abi_locs(regs(inst.defs))
+      } else if inst.kind == K_RET {
+        ls = g.abi_locs(inst.srcs)
+      }
+      for l in ls {
+        if l.reg < 0 {
+          n = imax(n, l.slot + 1)
+        }
+      }
+    }
+  }
+  8 * n
+}
+
 /// An upper bound of the frame emit lays out with saved callee saved
 /// registers.
 fn (g: G) frame_bound(saved: Int) -> Int {

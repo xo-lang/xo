@@ -811,8 +811,12 @@ fn (var g: G) regalloc() {
       g.blocks[cb].insts[cj].csave = sv
     }
     // a frame past the reach of an sp relative ldr or str: allocate again
-    // with x28 kept free, for the addresses of the far slots
-    if g.base != 0 || g.x86 || g.frame_bound(ncallee) <= MAX_FRAME {
+    // with x28 kept free, for the addresses of the far slots; also a frame
+    // whose stack parameters or results reach past the 4 KiB MAX_FRAME
+    // leaves for them (2026-10-22: with every optional pass off, xo's
+    // self-build failed in the assembler on str x17, [sp, #32768])
+    let bound = g.frame_bound(ncallee)
+    if g.base != 0 || g.x86 || (bound <= MAX_FRAME && bound + g.in_arg_bytes() <= MAX_FRAME + 4096) {
       g.occ_regs = occ
       break
     }
