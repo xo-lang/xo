@@ -92,3 +92,9 @@ intrinsics on arm64 too (both backends); wasm keeps the portable bodies.
   arm64 gates now run the vector lines (crypto_mlkem's known answers,
   the TLS 1.3 goldens with ML-KEM, cpu_prims), so the Consequences' "the
   arm64 gates run the portable bodies only" holds for wasm only.
+- `xo bench --ab` (decision 0340), crypto_mlkem built by ac992d4e5's xo
+  (A) and 177602f83's (B), 10 interleaved rounds each, none loaded
+  (2026-10-22): native arm64 wall 41.5 to 34.6 ms, B/A 0.833 (95%
+  interval 0.816 to 0.849), better; LLVM -O2 wall 40.4 to 34.7 ms, B/A
+  0.86 (0.824 to 0.881), better. CPU time is at its 10 ms resolution
+  (30 and 30 ms) in runs this short, so wall time decides.
