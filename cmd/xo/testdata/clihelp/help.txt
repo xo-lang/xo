@@ -28,6 +28,7 @@ commands:
   replay    rerun a recorded trace or crash bundle offline
   prof      pprof files and summaries of a native program's profile
   trace     Perfetto JSON and a summary of a native execution trace
+  bench     interleaved A/B measurement with a confidence interval (--ab)
   lsp       Language Server Protocol server on stdin/stdout
   mcp       Model Context Protocol server on stdin/stdout
   serve     keep checked programs in memory for check and query

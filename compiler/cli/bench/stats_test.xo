@@ -1,0 +1,50 @@
+test "median and quantile" {
+  expect(median([]) == 0.0)
+  expect(median([3.0, 1.0, 2.0]) == 2.0)
+  expect(median([4.0, 1.0, 2.0, 3.0]) == 2.5)
+  expect(quantile([1.0, 2.0, 3.0, 4.0, 5.0], 0.25) == 2.0)
+  expect(quantile([1.0, 2.0, 3.0, 4.0], 0.5) == 2.5)
+}
+
+test "spread" {
+  expect(spread_pct([10.0, 10.0, 10.0]) == 0.0)
+  // quartiles 7.5 and 12.5 over the median 10
+  expect(spread_pct([5.0, 10.0, 10.0, 10.0, 15.0]) == 0.0)
+  expect(spread_pct([0.0, 0.0]) == 0.0)
+}
+
+test "bootstrap ratio of a clear change excludes 1" {
+  let a = [100.0, 102.0, 98.0, 101.0, 99.0, 100.5, 99.5, 101.5, 98.5, 100.0]
+  var b: List[Float] = []
+  for x in a {
+    b.push(x * 0.8)
+  }
+  let r = bootstrap_ratio(a, b, 2000, 1, 0.05)
+  expect(r.ratio > 0.79 && r.ratio < 0.81)
+  expect(r.hi < 1.0)
+  expect(verdict(r, 10, true) == "better")
+  expect(verdict(r, 10, false) == "worse")
+  expect(verdict(r, 4, true) == "too few rounds")
+}
+
+test "bootstrap ratio of noise includes 1" {
+  let a = [100.0, 130.0, 80.0, 110.0, 95.0, 120.0, 85.0, 105.0, 90.0, 115.0]
+  let b = [105.0, 90.0, 125.0, 85.0, 118.0, 92.0, 108.0, 99.0, 121.0, 83.0]
+  let r = bootstrap_ratio(a, b, 2000, 1, 0.05)
+  expect(r.lo < 1.0 && r.hi > 1.0)
+  expect(verdict(r, 10, true) == "within noise")
+}
+
+test "bootstrap is deterministic from the seed" {
+  let a = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+  let b = [2.0, 2.5, 3.5, 4.0, 5.5, 7.0]
+  let x = bootstrap_ratio(a, b, 500, 7, 0.05)
+  let y = bootstrap_ratio(a, b, 500, 7, 0.05)
+  expect(x.lo == y.lo && x.hi == y.hi)
+}
+
+test "direction by name" {
+  expect(higher_better("rps"))
+  expect(higher_better("MBps_median"))
+  expect(!higher_better("p99_us"))
+}

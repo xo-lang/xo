@@ -1,0 +1,124 @@
+// The statistics of `xo bench --ab` (decision 0340): medians, spread, and a
+// percentile bootstrap interval for the ratio of the medians of paired
+// rounds, with a verdict from the interval.
+
+/// The median of xs (the mean of the middle two for an even count); 0.0
+/// for none.
+pub fn median(xs: List[Float]) -> Float {
+  if xs.is_empty() {
+    return 0.0
+  }
+  let s = xs.sort()
+  let n = s.len()
+  if n % 2 == 1 {
+    s[n / 2]
+  } else {
+    (s[n / 2 - 1] + s[n / 2]) / 2.0
+  }
+}
+
+/// The q quantile (0.0 to 1.0) of xs by linear interpolation between the
+/// order statistics; 0.0 for none.
+pub fn quantile(xs: List[Float], q: Float) -> Float {
+  if xs.is_empty() {
+    return 0.0
+  }
+  let s = xs.sort()
+  let pos = q * Float(s.len() - 1)
+  let lo = Int(pos.floor())
+  let hi = Int(pos.ceil())
+  let f = pos - pos.floor()
+  s[lo] + (s[hi] - s[lo]) * f
+}
+
+/// The interquartile range of xs as a percentage of its median (0.0 when
+/// the median is 0).
+pub fn spread_pct(xs: List[Float]) -> Float {
+  let m = median(xs)
+  if m == 0.0 {
+    return 0.0
+  }
+  (quantile(xs, 0.75) - quantile(xs, 0.25)) / m.abs() * 100.0
+}
+
+/// A small deterministic generator (Park and Miller's minimal standard),
+/// so a report is reproducible from its seed.
+pub struct Rng {
+  pub state: Int
+}
+
+pub fn rng(seed: Int) -> Rng {
+  let s = seed % 2147483646
+  Rng{state: (if s < 0 { 0 - s } else { s }) + 1}
+}
+
+/// next returns a value in 0 until n (n at least 1).
+pub fn (var r: Rng) next(n: Int) -> Int {
+  r.state = r.state * 48271 % 2147483647
+  r.state % n
+}
+
+/// The ratio of the median of bs to the median of as over the whole
+/// rounds, and the (alpha/2, 1 - alpha/2) percentile interval of that
+/// ratio over `resamples` bootstrap resamples of the rounds (a round's
+/// pair stays together). as and bs have the same length, at least 1.
+pub struct Ratio {
+  pub ratio: Float
+  pub lo: Float
+  pub hi: Float
+}
+
+pub fn bootstrap_ratio(a: List[Float], b: List[Float], resamples: Int, seed: Int, alpha: Float) -> Ratio {
+  let n = a.len()
+  let base = median(b) / median(a)
+  var g = rng(seed)
+  var ratios: List[Float] = []
+  for _ in 0..resamples {
+    var xa: List[Float] = []
+    var xb: List[Float] = []
+    for _ in 0..n {
+      let i = g.next(n)
+      xa.push(a[i])
+      xb.push(b[i])
+    }
+    let ma = median(xa)
+    if ma != 0.0 {
+      ratios.push(median(xb) / ma)
+    }
+  }
+  if ratios.is_empty() {
+    return Ratio{ratio: base, lo: base, hi: base}
+  }
+  Ratio{ratio: base, lo: quantile(ratios, alpha / 2.0), hi: quantile(ratios, 1.0 - alpha / 2.0)}
+}
+
+/// The fewest rounds a verdict is given for.
+pub const MIN_ROUNDS = 5
+
+/// verdict is "better" when the interval lies wholly on the good side of
+/// 1.0, "worse" when wholly on the bad side, else "within noise"; "too few
+/// rounds" below MIN_ROUNDS. lower_better says which side is good.
+pub fn verdict(r: Ratio, rounds: Int, lower_better: Bool) -> Str {
+  if rounds < MIN_ROUNDS {
+    return "too few rounds"
+  }
+  if r.lo > 1.0 {
+    return if lower_better { "worse" } else { "better" }
+  }
+  if r.hi < 1.0 {
+    return if lower_better { "better" } else { "worse" }
+  }
+  "within noise"
+}
+
+/// higher_better is true for a reported metric whose name says a larger
+/// value is better (rates and throughput); all others are lower is better.
+pub fn higher_better(name: Str) -> Bool {
+  let n = name.to_lower()
+  for w in ["rps", "mbps", "per_sec", "throughput", "ops_s"] {
+    if n.contains(w) {
+      return true
+    }
+  }
+  false
+}

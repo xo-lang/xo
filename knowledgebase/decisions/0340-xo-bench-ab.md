@@ -100,6 +100,17 @@ std.md 3.8 addition with its own change log and the three backends'
 lowering; it is a separate decision when the wrapper's limits (the
 extra exec, the missing Linux instruction count) matter.
 
+**Default guard (lead, 2026-10-22).** Without `--no-guard` and `--guard`
+a run first waits while the quiet window file (`XO_QUIET_FILE`, default
+`~/xo-lead/quiet`) holds a future epoch, so an A/B never adds load to
+another session's measurement; the per-round load is printed beside the
+table.
+
+**Implemented (2026-10-22).** `compiler/cli/bench/{bench,stats}.xo` with
+tests; `xo bench` in `xo help`; the Docker image gains GNU `time` (tag
+`-4`). Resolution: `time` prints CPU in centiseconds, so a run of under
+about 100 ms has a coarse `cpu_ms`.
+
 ## Consequences
 
 - One tool and one verdict rule for the perf decisions; a result file

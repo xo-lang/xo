@@ -1,0 +1,555 @@
+// `xo bench --ab` (decision 0340): two programs, or one under two
+// settings, run in interleaved rounds; per metric the medians, the spread,
+// a bootstrap interval for the ratio, and a verdict.
+//
+//   xo bench --ab [flags] A [B] [-- ARGS...]
+
+use std/regexp
+use std/task
+
+/// What the caller (compiler/xo) knows about the running xo.
+pub struct Host {
+  /// GOOS of the host ("darwin", "linux", ...).
+  pub goos: Str
+}
+
+pub fn usage() -> Str {
+  [
+    "usage: xo bench --ab [--rounds=N] [--warmup=N] [--env-a=K=V] [--env-b=K=V] [--args-a=WORDS] [--args-b=WORDS]",
+    "                     [--max-load=X] [--load-wait=D] [--guard=CMD] [--no-guard] [--ops=N]",
+    "                     [--metrics=a,b] [--keep-loaded] [--allow-fail] [--timeout=D]",
+    "                     [--alpha=P] [--seed=N] [--json] A [B] [-- ARGS...]",
+  ].join("\n")
+}
+
+struct Opts {
+  rounds: Int = 10
+  warmup: Int = 1
+  env_a: List[Str] = []
+  env_b: List[Str] = []
+  args_a: List[Str] = []
+  args_b: List[Str] = []
+  common: List[Str] = []
+  max_load: Float = 0.0
+  load_wait: Duration = Duration.from_secs_int(600)
+  guard: Str = ""
+  no_guard: Bool = false
+  ops: Float = 0.0
+  metrics: List[Str] = []
+  keep_loaded: Bool = false
+  allow_fail: Bool = false
+  timeout: Duration = Duration.from_secs_int(600)
+  alpha: Float = 0.05
+  seed: Int = 1
+  json: Bool = false
+  progs: List[Str] = []
+}
+
+/// One measured run: the metrics by name.
+struct Sample {
+  vals: Map[Str, Float]
+  ok: Bool
+  why: Str
+}
+
+/// One round: both sides' samples and the load before each run.
+struct Round {
+  a: Sample
+  b: Sample
+  load_a: Float
+  load_b: Float
+  a_first: Bool
+  loaded: Bool
+}
+
+fn flag_val(a: Str, name: Str) -> Str? {
+  if a.starts_with("--${name}=") {
+    return Some(a[name.len() + 3..])
+  }
+  None
+}
+
+fn words(s: Str) -> List[Str] {
+  var out: List[Str] = []
+  for w in s.split(" ") {
+    if !w.is_empty() {
+      out.push(w)
+    }
+  }
+  out
+}
+
+fn parse_opts(args: List[Str]) -> Opts ! Str {
+  var o = Opts{}
+  var ab = false
+  var i = 0
+  while i < args.len() {
+    let a = args[i]
+    i += 1
+    if a == "--" {
+      while i < args.len() {
+        o.common.push(args[i])
+        i += 1
+      }
+      break
+    }
+    if a == "--ab" {
+      ab = true
+    } else if a == "--json" {
+      o.json = true
+    } else if a == "--keep-loaded" {
+      o.keep_loaded = true
+    } else if a == "--allow-fail" {
+      o.allow_fail = true
+    } else if a == "--no-guard" {
+      o.no_guard = true
+    } else if let Some(v) = flag_val(a, "rounds") {
+      o.rounds = Int.parse(v) ?? return Err("--rounds needs an integer")
+    } else if let Some(v) = flag_val(a, "warmup") {
+      o.warmup = Int.parse(v) ?? return Err("--warmup needs an integer")
+    } else if let Some(v) = flag_val(a, "env-a") {
+      o.env_a.push(v)
+    } else if let Some(v) = flag_val(a, "env-b") {
+      o.env_b.push(v)
+    } else if let Some(v) = flag_val(a, "args-a") {
+      o.args_a = words(v)
+    } else if let Some(v) = flag_val(a, "args-b") {
+      o.args_b = words(v)
+    } else if let Some(v) = flag_val(a, "max-load") {
+      o.max_load = Float.parse(v) ?? return Err("--max-load needs a number")
+    } else if let Some(v) = flag_val(a, "load-wait") {
+      o.load_wait = Duration.parse(v).ok() ?? return Err("--load-wait needs a duration such as 10m")
+    } else if let Some(v) = flag_val(a, "guard") {
+      o.guard = v
+    } else if let Some(v) = flag_val(a, "ops") {
+      o.ops = Float.parse(v) ?? return Err("--ops needs a number")
+    } else if let Some(v) = flag_val(a, "metrics") {
+      o.metrics = v.split(",")
+    } else if let Some(v) = flag_val(a, "timeout") {
+      o.timeout = Duration.parse(v).ok() ?? return Err("--timeout needs a duration such as 10m")
+    } else if let Some(v) = flag_val(a, "alpha") {
+      o.alpha = Float.parse(v) ?? return Err("--alpha needs a number")
+    } else if let Some(v) = flag_val(a, "seed") {
+      o.seed = Int.parse(v) ?? return Err("--seed needs an integer")
+    } else if a.starts_with("--") {
+      return Err("unknown flag ${a}")
+    } else {
+      o.progs.push(a)
+    }
+  }
+  if !ab {
+    return Err("only --ab is implemented")
+  }
+  if o.progs.is_empty() || o.progs.len() > 2 {
+    return Err("give one or two programs")
+  }
+  if o.progs.len() == 1 && o.env_a.is_empty() && o.env_b.is_empty() && o.args_a == o.args_b {
+    return Err("one program needs --env-a/--env-b or --args-a/--args-b to differ")
+  }
+  if o.rounds < 1 {
+    return Err("--rounds must be at least 1")
+  }
+  o
+}
+
+/// The 1 minute load average (0.0 when unreadable).
+fn load1(os: Os, goos: Str) -> Float uses (fs.read, proc) {
+  if goos == "linux" {
+    let t = os.fs.read_text("/proc/loadavg").ok() ?? ""
+    return Float.parse(words(t).first() ?? "0") ?? 0.0
+  }
+  // macOS: sysctl -n vm.loadavg prints "{ 1.23 4.56 7.89 }"
+  match os.proc.run("sysctl", ["-n", "vm.loadavg"]) {
+    Ok(r) => {
+      let w = words((r.stdout.to_str() ?? "").trim())
+      if w.len() > 1 { Float.parse(w[1]) ?? 0.0 } else { 0.0 }
+    }
+    Err(_) => 0.0
+  }
+}
+
+/// quiet_file is the lead's quiet window file: a future epoch inside it
+/// means another session is measuring and no load may be generated.
+fn quiet_file(os: Os) -> Str uses env {
+  match os.env.get("XO_QUIET_FILE") {
+    Some(p) => p
+    None => "${os.env.get("HOME") ?? ""}/xo-lead/quiet"
+  }
+}
+
+fn window_open(os: Os) -> Bool uses (clock, env, fs.read) {
+  let t = (os.fs.read_text(quiet_file(os)).ok() ?? "").trim()
+  match Int.parse(t) {
+    Some(until) => until > os.clock.now().unix()
+    None => false
+  }
+}
+
+/// wait_ok waits until the guards allow a run: the quiet window closed,
+/// the load under max_load, the guard command successful. It returns false
+/// when load_wait passes first (the round runs, marked loaded).
+fn wait_ok(os: Os, h: Host, o: Opts) -> Bool uses (clock, env, fs.read, proc) {
+  let t0 = os.clock.now()
+  while true {
+    var busy = false
+    if !o.no_guard && o.guard.is_empty() && window_open(os) {
+      busy = true
+    }
+    if o.max_load > 0.0 && load1(os, h.goos) >= o.max_load {
+      busy = true
+    }
+    if !o.guard.is_empty() {
+      let code = os.proc.cmd("sh", ["-c", o.guard]).run().ok() ?? 1
+      if code != 0 {
+        busy = true
+      }
+    }
+    if !busy {
+      return true
+    }
+    if os.clock.since(t0) > o.load_wait {
+      return false
+    }
+    os.clock.sleep(Duration.from_secs_int(5))
+  }
+  false
+}
+
+/// The numbers `"key": 1.5` of the last JSON object line of s.
+fn reported(s: Str) -> Map[Str, Float] {
+  var out: Map[Str, Float] = {}
+  var last = ""
+  for l in s.split("\n") {
+    if l.trim().starts_with("{") {
+      last = l
+    }
+  }
+  let re = regexp.must("\"[A-Za-z0-9_]+\"\\s*:\\s*-?[0-9][0-9.eE+-]*")
+  for m in re.find_all(last) {
+    let kv = m.split(":")
+    let k = kv[0].trim().trim_prefix("\"").trim_suffix("\"")
+    if let Some(v) = Float.parse(kv[1].trim()) {
+      out[k] = v
+    }
+  }
+  out
+}
+
+fn num_before(l: Str, suffix: Str) -> Float? {
+  let t = l.trim()
+  if t.ends_with(suffix) {
+    return Float.parse(words(t.trim_suffix(suffix).trim())[0])
+  }
+  None
+}
+
+/// The rusage figures `/usr/bin/time` printed on stderr: cpu_ms,
+/// max_rss_kb, and (macOS) instructions.
+fn rusage(goos: Str, err: Str) -> Map[Str, Float] {
+  var out: Map[Str, Float] = {}
+  for l in err.split("\n") {
+    let t = l.trim()
+    if goos == "darwin" {
+      // "0.40 real         0.31 user         0.02 sys"
+      if t.ends_with(" sys") && t.contains(" real") {
+        let w = words(t)
+        if w.len() >= 6 {
+          out["cpu_ms"] = ((Float.parse(w[2]) ?? 0.0) + (Float.parse(w[4]) ?? 0.0)) * 1000.0
+        }
+      }
+      if let Some(v) = num_before(t, " maximum resident set size") {
+        out["max_rss_kb"] = v / 1024.0
+      }
+      if let Some(v) = num_before(t, " instructions retired") {
+        out["instructions"] = v
+      }
+    } else {
+      if t.starts_with("User time (seconds):") || t.starts_with("System time (seconds):") {
+        let v = Float.parse(t.split(":")[1].trim()) ?? 0.0
+        out["cpu_ms"] = (out.get("cpu_ms") ?? 0.0) + v * 1000.0
+      }
+      if t.starts_with("Maximum resident set size (kbytes):") {
+        out["max_rss_kb"] = Float.parse(t.split(":")[1].trim()) ?? 0.0
+      }
+    }
+  }
+  out
+}
+
+/// timed_cmd wraps prog in the platform's time(1).
+fn timed_cmd(os: Os, h: Host, o: Opts, prog: Str, args: List[Str], env: List[Str]) -> Cmd {
+  var argv: List[Str] = []
+  var tool = "/usr/bin/time"
+  if h.goos == "darwin" {
+    argv.push("-l")
+  } else {
+    argv.push("-v")
+  }
+  argv.push(prog)
+  for a in args {
+    argv.push(a)
+  }
+  var c = os.proc.cmd(tool, argv)
+  for kv in env {
+    let p = kv.split("=")
+    c = c.set_env(p[0], kv[p[0].len() + 1..])
+  }
+  c
+}
+
+fn run_once(os: Os, h: Host, o: Opts, prog: Str, args: List[Str], env: List[Str]) -> Sample uses (clock, env, proc) {
+  let c = timed_cmd(os, h, o, prog, args, env)
+  let t0 = os.clock.now()
+  let r = task.with_timeout(os.clock, o.timeout, fn() { c.output() })
+  let wall = Float(os.clock.since(t0).nanos()) / 1000000.0
+  match r {
+    Ok(out) => {
+      let err = out.stderr.to_str() ?? ""
+      if out.code != 0 {
+        return Sample{vals: {}, ok: false, why: "exit ${out.code}"}
+      }
+      var m = reported(out.stdout.to_str() ?? "")
+      let ru = rusage(h.goos, err)
+      for k in ru.keys() {
+        m[k] = ru.get(k) ?? 0.0
+      }
+      m["wall_ms"] = wall
+      var ops = o.ops
+      if ops == 0.0 {
+        for k in ["ops", "requests", "all_requests"] {
+          if ops == 0.0 {
+            ops = m.get(k) ?? 0.0
+          }
+        }
+      }
+      if ops > 0.0 {
+        if let Some(c) = m.get("cpu_ms") {
+          m["cpu_us_per_op"] = c * 1000.0 / ops
+        }
+        if let Some(n) = m.get("instructions") {
+          m["instructions_per_op"] = n / ops
+        }
+      }
+      Sample{vals: m, ok: true, why: ""}
+    }
+    Err(task.Timed.TimedOut) => Sample{vals: {}, ok: false, why: "timed out"}
+    Err(task.Timed.Failed(e)) => Sample{vals: {}, ok: false, why: "${e}"}
+  }
+}
+
+fn side_args(o: Opts, side_a: Bool) -> List[Str] {
+  var out: List[Str] = []
+  for a in (if side_a { o.args_a } else { o.args_b }) {
+    out.push(a)
+  }
+  for a in o.common {
+    out.push(a)
+  }
+  out
+}
+
+fn fmt(v: Float) -> Str {
+  if v == 0.0 {
+    return "0"
+  }
+  let a = v.abs()
+  if a >= 1000.0 {
+    return "${Int(v.round())}"
+  }
+  let p = if a >= 100.0 { 10.0 } else if a >= 10.0 { 100.0 } else { 1000.0 }
+  "${(v * p).round() / p}"
+}
+
+struct Row {
+  name: Str
+  n: Int
+  med_a: Float
+  med_b: Float
+  spread_a: Float
+  spread_b: Float
+  r: Ratio
+  verdict: Str
+}
+
+fn rows_of(o: Opts, rounds: List[Round]) -> List[Row] {
+  var names: List[Str] = []
+  for r in rounds {
+    for k in r.a.vals.keys() {
+      if !names.contains(k) {
+        names.push(k)
+      }
+    }
+  }
+  let order = ["wall_ms", "cpu_ms", "cpu_us_per_op", "instructions", "instructions_per_op", "max_rss_kb"]
+  var rest: List[Str] = []
+  var first: List[Str] = []
+  for k in order {
+    if names.contains(k) {
+      first.push(k)
+    }
+  }
+  for k in names.sort() {
+    if !order.contains(k) {
+      rest.push(k)
+    }
+  }
+  var all: List[Str] = []
+  for k in first {
+    all.push(k)
+  }
+  for k in rest {
+    all.push(k)
+  }
+  var rows: List[Row] = []
+  for k in all {
+    if !o.metrics.is_empty() && !o.metrics.contains(k) {
+      continue
+    }
+    var xa: List[Float] = []
+    var xb: List[Float] = []
+    for r in rounds {
+      if let Some(va) = r.a.vals.get(k) {
+        if let Some(vb) = r.b.vals.get(k) {
+          xa.push(va)
+          xb.push(vb)
+        }
+      }
+    }
+    if xa.is_empty() {
+      continue
+    }
+    let rt = bootstrap_ratio(xa, xb, 10000, o.seed, o.alpha)
+    rows.push(Row{name: k, n: xa.len(), med_a: median(xa), med_b: median(xb), spread_a: spread_pct(xa), spread_b: spread_pct(xb), r: rt, verdict: verdict(rt, xa.len(), !higher_better(k))})
+  }
+  rows
+}
+
+fn pad(s: Str, n: Int) -> Str {
+  var t = s
+  while t.len() < n {
+    t = t + " "
+  }
+  t
+}
+
+fn table(rows: List[Row]) -> Str {
+  var out = StrBuilder.new()
+  out.write("${pad("metric", 22)}${pad("A median", 12)}${pad("B median", 12)}${pad("spread A/B", 18)}${pad("B / A", 8)}${pad("95% interval", 18)}verdict\n")
+  for r in rows {
+    out.write("${pad(r.name, 22)}${pad(fmt(r.med_a), 12)}${pad(fmt(r.med_b), 12)}${pad("${fmt(r.spread_a)}% ${fmt(r.spread_b)}%", 18)}${pad(fmt(r.r.ratio), 8)}${pad("${fmt(r.r.lo)} to ${fmt(r.r.hi)}", 18)}${r.verdict} (n=${r.n})\n")
+  }
+  out.freeze()
+}
+
+fn json_out(o: Opts, rounds: List[Round], used: Int, rows: List[Row]) -> Str {
+  var out = StrBuilder.new()
+  out.write("{\"rounds\":${o.rounds},\"used\":${used},\"alpha\":${o.alpha},\"seed\":${o.seed},\"metrics\":{")
+  var first = true
+  for r in rows {
+    if !first {
+      out.write(",")
+    }
+    first = false
+    out.write("${r.name.quote()}:{\"n\":${r.n},\"median_a\":${r.med_a},\"median_b\":${r.med_b},\"spread_a_pct\":${r.spread_a},\"spread_b_pct\":${r.spread_b},\"ratio\":${r.r.ratio},\"lo\":${r.r.lo},\"hi\":${r.r.hi},\"verdict\":${r.verdict.quote()}}")
+  }
+  out.write("},\"per_round\":[")
+  var i = 0
+  for r in rounds {
+    if i > 0 {
+      out.write(",")
+    }
+    i += 1
+    out.write("{\"load_a\":${r.load_a},\"load_b\":${r.load_b},\"a_first\":${r.a_first},\"loaded\":${r.loaded},\"a\":${vals_json(r.a.vals)},\"b\":${vals_json(r.b.vals)}}")
+  }
+  out.write("]}")
+  out.freeze()
+}
+
+fn vals_json(m: Map[Str, Float]) -> Str {
+  var out = StrBuilder.new()
+  out.write("{")
+  var first = true
+  for k in m.keys().sort() {
+    if !first {
+      out.write(",")
+    }
+    first = false
+    out.write("${k.quote()}:${m.get(k) ?? 0.0}")
+  }
+  out.write("}")
+  out.freeze()
+}
+
+/// run is `xo bench ARGS` and returns the exit status.
+pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, proc, stdio) {
+  let o = match parse_opts(args) {
+    Ok(o) => o
+    Err(e) => {
+      os.stdio.eprintln("xo bench: ${e}\n${usage()}")
+      return 2
+    }
+  }
+  let pa = o.progs[0]
+  let pb = if o.progs.len() == 2 { o.progs[1] } else { pa }
+  let aa = side_args(o, true)
+  let ab = side_args(o, false)
+  var rounds: List[Round] = []
+  var failed = false
+  for n in 0..(o.warmup + o.rounds) {
+    let a_first = n % 2 == 0
+    var ra: Sample = Sample{vals: {}, ok: false, why: ""}
+    var rb: Sample = Sample{vals: {}, ok: false, why: ""}
+    var la = 0.0
+    var lb = 0.0
+    var loaded = false
+    for k in 0..2 {
+      let is_a = (k == 0) == a_first
+      let calm = wait_ok(os, h, o)
+      if !calm {
+        loaded = true
+      }
+      let ld = load1(os, h.goos)
+      if is_a {
+        la = ld
+        ra = run_once(os, h, o, pa, aa, o.env_a)
+      } else {
+        lb = ld
+        rb = run_once(os, h, o, pb, ab, o.env_b)
+      }
+    }
+    if !ra.ok || !rb.ok {
+      os.stdio.eprintln("xo bench: round ${n}: ${if !ra.ok { "A: ${ra.why}" } else { "B: ${rb.why}" }}")
+      if !o.allow_fail {
+        return 1
+      }
+      failed = true
+      continue
+    }
+    if n >= o.warmup {
+      rounds.push(Round{a: ra, b: rb, load_a: la, load_b: lb, a_first: a_first, loaded: loaded})
+      if !o.json {
+        os.stdio.eprintln("round ${n - o.warmup + 1}/${o.rounds}: load ${fmt(la)} / ${fmt(lb)}${if loaded { " (loaded)" } else { "" }}")
+      }
+    }
+  }
+  var used: List[Round] = []
+  for r in rounds {
+    if o.keep_loaded || !r.loaded {
+      used.push(r)
+    }
+  }
+  let rows = rows_of(o, used)
+  if o.json {
+    os.stdio.println(json_out(o, rounds, used.len(), rows))
+  } else {
+    os.stdio.println("A: ${pa} ${aa.join(" ")} ${o.env_a.join(" ")}")
+    os.stdio.println("B: ${pb} ${ab.join(" ")} ${o.env_b.join(" ")}")
+    os.stdio.println("${used.len()} of ${rounds.len()} rounds used (${rounds.len() - used.len()} loaded), loads A/B per round: ${rounds.map(fn(r: Round) -> Str { "${fmt(r.load_a)}/${fmt(r.load_b)}" }).join(" ")}\n")
+    if rows.is_empty() {
+      os.stdio.println("no round was usable: every round ran under load (see --max-load, --guard, --load-wait, --keep-loaded)")
+    } else {
+      os.stdio.print(table(rows))
+    }
+  }
+  if failed { 1 } else { 0 }
+}

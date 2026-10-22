@@ -44,6 +44,7 @@ pub fn commands() -> List[Command] {
     Command{name: "replay", purpose: "rerun a recorded trace or crash bundle offline"},
     Command{name: "prof", purpose: "pprof files and summaries of a native program's profile"},
     Command{name: "trace", purpose: "Perfetto JSON and a summary of a native execution trace"},
+    Command{name: "bench", purpose: "interleaved A/B measurement with a confidence interval (--ab)"},
     Command{name: "lsp", purpose: "Language Server Protocol server on stdin/stdout"},
     Command{name: "mcp", purpose: "Model Context Protocol server on stdin/stdout"},
     Command{name: "serve", purpose: "keep checked programs in memory for check and query"},
@@ -114,6 +115,7 @@ pub fn usage(name: Str) -> Str {
     "replay" => replay_text()
     "prof" => prof_text()
     "trace" => trace_text()
+    "bench" => bench_text()
     "lsp" => lsp_text()
     "mcp" => mcp_text()
     "serve" => serve_text()
@@ -628,6 +630,43 @@ Print the toolchain version and the host target. --json and -v add
 what the binary was built from: the commit, whether the tree had
 uncommitted changes (and a hash of them), the source key, and the xo
 that built it (decision 0264).
+"""
+}
+
+fn bench_text() -> Str {
+  """
+usage: xo bench --ab [flags] A [B] [-- ARGS...]
+
+Run program A and program B (B defaults to A) in interleaved rounds and
+report, per metric, each side's median and spread, the ratio B/A with a
+95% bootstrap interval, and a verdict: better, worse, or within noise
+(decision 0340). One build under two settings:
+`xo bench --ab ./srv --env-b XO_THREADS=1`.
+
+Metrics: wall_ms, cpu_ms (user plus system, children included),
+cpu_us_per_op, instructions (macOS), max_rss_kb, and every number on the
+last JSON line the program prints (rps, ops, ...; names with rps, mbps,
+per_sec or throughput are higher is better).
+
+  --rounds=N         rounds measured (10); --warmup=N discarded first (1)
+  --env-a=K=V        environment for A (repeatable); --env-b=K=V for B
+  --args-a=WORDS     arguments for A only; --args-b=WORDS for B; after --
+                     they go to both
+  --max-load=X       before each run wait until the 1 minute load is under X
+  --guard=CMD        before each run wait until `sh -c CMD` exits 0
+  --load-wait=D      longest wait (10m), then the round runs marked loaded
+  --no-guard         do not wait for the quiet window file
+  --ops=N            operations per run, for cpu_us_per_op
+  --metrics=a,b      only these metrics
+  --keep-loaded      count loaded rounds in the statistics
+  --allow-fail       a failed run drops its round instead of ending the run
+  --timeout=D        longest run (10m)
+  --alpha=P          interval level (0.05); --seed=N bootstrap seed (1)
+  --json             one JSON object: parameters, rounds, loads, metrics
+
+Runs wait while the quiet window file (XO_QUIET_FILE, default
+~/xo-lead/quiet) holds a future time. The processes run under
+/usr/bin/time. Exit 0 whatever the verdict, 1 on a failed run, 2 on usage.
 """
 }
 

@@ -39,14 +39,15 @@ mkdir -p "$work"
 work=$(cd "$work" && pwd)
 base=${XO_DOCKER_BASE:-debian:trixie-slim}
 # the -3: the Dockerfile below changed (-2: compiler-rt's sanitizer
-# runtimes; -3: yara, for internal/arm64 TestXProtectRules)
-image=xo-linux-test:$arch-$(echo "$base" | tr ':/' '--')-3
+# runtimes; -3: yara, for internal/arm64 TestXProtectRules; -4: GNU time,
+# for xo bench)
+image=xo-linux-test:$arch-$(echo "$base" | tr ':/' '--')-4
 if ! docker image inspect "$image" >/dev/null 2>&1; then
   docker build --platform "linux/$arch" --build-arg BASE="$base" -t "$image" - >&2 <<'DOCKERFILE'
 ARG BASE=debian:trixie-slim
 FROM $BASE
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    clang lld llvm make file binutils ca-certificates procps yara \
+    clang lld llvm make file binutils ca-certificates procps yara time \
   && (apt-get install -y --no-install-recommends libclang-rt-dev || true) \
   && rm -rf /var/lib/apt/lists/*
 DOCKERFILE

@@ -1,0 +1,39 @@
+test "rusage reads macOS time -l" {
+  let err = "        0.40 real         0.31 user         0.02 sys\n             8306688  maximum resident set size\n  25632703  instructions retired\n"
+  let m = rusage("darwin", err)
+  expect(m.get("cpu_ms") == Some(330.0))
+  expect(m.get("max_rss_kb") == Some(8112.0))
+  expect(m.get("instructions") == Some(25632703.0))
+}
+
+test "rusage reads GNU time -v" {
+  let err = "\tCommand being timed: \"x\"\n\tUser time (seconds): 0.25\n\tSystem time (seconds): 0.05\n\tMaximum resident set size (kbytes): 9000\n"
+  let m = rusage("linux", err)
+  expect(m.get("cpu_ms") == Some(300.0))
+  expect(m.get("max_rss_kb") == Some(9000.0))
+  expect(m.get("instructions") == None)
+}
+
+test "reported takes the numbers of the last JSON line" {
+  let m = reported("log\n{\"ops\": 1, \"x\": 2}\nmore\n{\"requests\": 500, \"rps\":1.5e3, \"name\": \"a\", \"p99_us\": 20.5}\n")
+  expect(m.get("requests") == Some(500.0))
+  expect(m.get("rps") == Some(1500.0))
+  expect(m.get("p99_us") == Some(20.5))
+  expect(m.get("ops") == None)
+  expect(m.get("name") == None)
+}
+
+test "options" {
+  expect(parse_opts(["--ab", "a", "b"]).is_ok())
+  expect(parse_opts(["a", "b"]).is_err())
+  expect(parse_opts(["--ab", "a"]).is_err())
+  expect(parse_opts(["--ab", "--env-b=X=1", "a"]).is_ok())
+  expect(parse_opts(["--ab", "--rounds=x", "a", "b"]).is_err())
+  expect(parse_opts(["--ab", "--bogus", "a", "b"]).is_err())
+  match parse_opts(["--ab", "--rounds=7", "--env-a=K=V", "--args-b=-x 1", "p", "q", "--", "z"]) {
+    Ok(o) => {
+      expect(o.rounds == 7 && o.env_a == ["K=V"] && o.args_b == ["-x", "1"] && o.common == ["z"] && o.progs == ["p", "q"])
+    }
+    Err(e) => expect(e == "")
+  }
+}

@@ -135,6 +135,11 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 ## Measuring
 
+- Two builds or two settings, a verdict with an interval: `xo bench --ab
+  A [B] [--env-b=K=V] [--max-load=X] -- ARGS` (decision 0340,
+  toolchain.md "A/B measurement"): interleaved rounds, median, spread, a
+  95% interval for B/A, "within noise" when it includes 1.0. Use it
+  instead of a hand rolled loop; it waits for the quiet window file.
 - The compiler's own edit-build time: `xo build --backend=arm64
   --phase-times ./xo` in compiler/ prints each phase, its sub-phases
   (insert_rc.plan|read|apply, inline.apply|verify) and the cache's hits

@@ -834,6 +834,29 @@ codec), hooks in `caps.go`, `http.go`, `sched.go`, `main.go`, `stop.go`,
   each also on a -race build) on `internal/gen/testdata/replay/*`;
   `cmd/xo/replay_test.go` `TestRecordReplayCLI`.
 
+## A/B measurement: xo bench --ab
+
+`xo bench --ab [flags] A [B] [-- ARGS...]` (decision 0340,
+compiler/cli/bench, 2026-10-22) runs two programs, or one program under
+two settings (`--env-a/--env-b`, `--args-a/--args-b`), in interleaved
+rounds (the order alternates each round) and prints per metric each
+side's median and interquartile spread, the ratio B/A with a 95%
+percentile bootstrap interval over the rounds, and a verdict (better,
+worse, within noise; too few rounds under 5). Metrics: wall_ms, cpu_ms,
+cpu_us_per_op, instructions (macOS only), max_rss_kb, and every number on
+the program's last JSON line (`loadgen`'s rps, p99_us, requests, ...).
+Before each run it waits for the guards: the quiet window file
+(`XO_QUIET_FILE`, default `~/xo-lead/quiet`; a future epoch in it means
+another session is measuring; `--no-guard` skips this), `--max-load X`
+(1 minute load average) and `--guard CMD` (`sh -c`, exit 0 to go); after
+`--load-wait` (10 min) the round runs marked loaded and is left out of
+the statistics unless `--keep-loaded`. The load before every run is
+printed and in `--json`. Stage 1 measures through `/usr/bin/time -l`
+(macOS, centisecond CPU resolution, instructions retired) or GNU
+`time -v` (Linux; the Docker image has it since tag `-4`), so runs of
+under about 100 ms are dominated by that resolution: make a run do more
+work or use wall. Last verified: 2026-10-22.
+
 ## Profiling
 
 Last verified: 2026-10-16
