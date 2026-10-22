@@ -3,7 +3,7 @@
 ## 2026-10-22: perf: a first byte filter and one Int per backtrack job
 
 - Kind: perf
-- Commit: this commit
+- Commit: efc7374be
 - Found by: bench/results/regexp-time-csv-vs-go-2026-10-21.md, re-measured in bench/results/regexp-first-byte-2026-10-22.md
 - Go reference: regexp/backtrack.go (bitState jobs); the first byte filter is Xo's own (Go's prefix scan only covers literal prefixes)
 - Test: internal/llvm/testdata/golden/regexp_table (extended: folds to ASCII, empty matches, assertions), internal/stdtest corpus regexp

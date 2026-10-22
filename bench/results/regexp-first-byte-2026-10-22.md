@@ -25,3 +25,21 @@ job stack is one list of `pos << 12 | pc << 1 | arg`.
 Still above Go: match 1.9x (the backtracker's visited-bit check and list
 bounds checks dominate the profile: should_visit 36%, push 18%), replace 2x
 (the Pike path with a pattern whose first set is nearly every byte).
+
+## Tried and not kept (same day, `xo bench --ab --rounds=7` against the pushed build)
+
+- Pike loop without the per-position empty width context for a program with
+  no `^ $ \b` instruction: instructions 0.99x on replace and find_all 0.985x,
+  wall 1.01x (worse or flat): the profile's 30% on empty_context was sample
+  noise at 10 samples; a longer run (157 samples) puts `add` at 51% and the
+  step loop at 19%.
+- One packed Int per instruction (op, out, arg) in `add`, the step loop: 0.99x
+  instructions on replace, wall within noise.
+- The backtracker over a window of 64 positions (then 4x) instead of the Pike
+  search for a long text, falling back to Pike on overflow: replace
+  instructions 0.938x but wall 1.12x (worse), and the window fields in the
+  backtracker's hot path made the short text modes worse (match instructions
+  1.146x, captures 1.092x).
+
+The Pike cost is in `add` (thread copies, the sparse set); the next candidate
+is Go's one-pass matcher for anchored patterns, which `replace` here is not.
