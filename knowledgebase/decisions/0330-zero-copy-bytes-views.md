@@ -165,6 +165,32 @@ place, so `rs_*` builders (unique) are untouched.
 **Not affected.** The Go backend (strings and byte slices are views already),
 the C ABI exports taking (address, length), List, Map.
 
+**Hazards found reading the string runtime (obj.xo).** Anything that
+treats the object as the value's own buffer must see only `off == 0`:
+
+- `reserve`/`reserve_slow` (obj.xo:767 to 810), behind `rs_concat`, `rs_append`,
+  `rs_push_*`, `rs_concat_int`: they append in place when the count is 1 and
+  `cap >= need`, copy from `a + S_HDR`, and take the length as an argument.
+  A unique view (its parent already dropped) has off > 0, so its bytes are not
+  at `a + S_HDR`: the entry points must receive the packed word, decode (off,
+  len), copy from `a + S_HDR + off`, and grow in place only when off == 0.
+  The generated code's `xo_x_obj_rs_concat` calls pass (obj, len) today; they
+  pass (obj, w1) after step 2.
+- Casts that give a Str's object to a builder (`rt.rs_set_len`,
+  `raw.bytes_len` shorten a unique object in place): applied only to values
+  that came from `rs_with_cap`/`rs_new` (off 0); a debug assert on w1 >> 32
+  in `bytes_len` and `rs_set_len` catches a view reaching them.
+- Every site that passes a Str's second word to a runtime function as a
+  length (Stdio.print, str_eq/cmp, fault messages, syscall buffers): it must
+  pass the masked length; these are the `ws[1]` uses next to a `#16` data
+  add in calls.xo (554, 896 to 920, 1315 to 1476, 2614 to 2625, 2854 to
+  2864), closures.xo (290, 424), isel.xo:1351 and the matching LLVM and
+  wasm sites.
+- Hashing and equality of Map/Set keys (`obj.str_eq`, string hash) take
+  (data, len): fine once callers pass them.
+- Equality shortcut `a[0] == b[0] && a[1] == b[1]` (same object, same word):
+  correct for views (same off and len means same bytes) and stays valid.
+
 ## Steps (each gated by identity, the codegen patterns, the wasm sample,
 arm64 and LLVM goldens, and the mime/multipart/time baseline)
 
