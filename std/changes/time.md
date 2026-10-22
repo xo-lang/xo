@@ -1,5 +1,24 @@
 # std/time changes
 
+## 2026-10-22: perf: format looks the zone up once
+
+- Kind: perf
+- Commit: this commit
+- Found by: the std Go ranking (Layout.format 1.7x Go's time.Format), XO_PROF=cpu
+- Go reference: time.Format
+- Test: std module tests native/time (arm64, llvm); goldens time_format, time_zones
+
+`Layout.format` and `format` called the zone twice per call that printed a zone
+name (the offset, then the abbreviation, each walking the footer rule with
+`tzset`). A new `tz.lookup` returns the offset and the name's position in one
+walk and `{zone}` builds the string only when printed. Number fields of width
+2 and 4 write their digits without the division loop, and the output buffer
+starts with room for a typical result. Same output. 300,000 ISO in UTC and
+300,000 long layouts in America/New_York: 1,707 M to 1,467 M instructions
+(native arm64; `xo bench --ab` wall 0.798, instructions 0.859); Go's
+`time.Format` on the same loop: 983 M, so 1.74x to 1.49x Go.
+bench/results/time-format-2026-10-22.md.
+
 ## 2026-10-22: perf: parse no longer builds strings it does not use
 
 - Kind: perf

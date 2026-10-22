@@ -798,13 +798,19 @@ fn format_items(items: List[Item], t: Time, z: Zone) -> Str {
   if nanos < 0 {
     nanos += 1000000000
   }
-  let off = offset_secs(z, sec)
+  var off = z.secs
+  var name_pos = -1
+  if !z.fixed {
+    let (o, np) = tz.lookup(z.rules, sec)
+    off = o
+    name_pos = np
+  }
   let local = sec + off
   let days = floor_div(local, 86400)
   let rem = local - days * 86400
   let d = date_of(days)
   let hour = rem / 3600
-  var out = BytesBuilder.new()
+  var out = BytesBuilder.with_capacity(40)
   for it in items {
     match it.code {
       0 => out.write_str(it.lit)
@@ -883,7 +889,7 @@ fn format_items(items: List[Item], t: Time, z: Zone) -> Str {
           put_num(out, o / 60 % 60, 2)
         }
       }
-      _ => out.write_str(abbr_at(z, sec))
+      _ => out.write_str(if z.fixed { z.label } else { tz.name(z.rules, name_pos) })
     }
   }
   rt.cast[Bytes, Str](out.freeze())
@@ -904,6 +910,20 @@ fn put_name(var out: BytesBuilder, names: Str, i: Int) {
 /// n in decimal, zero padded to w digits (a negative n is "-" and the
 /// digits of -n padded to w - 1), as pad.
 fn put_num(var out: BytesBuilder, n: Int, w: Int) {
+  if w == 2 && n >= 0 && n < 100 {
+    out.write_byte(UInt8(48 + n / 10))
+    out.write_byte(UInt8(48 + n % 10))
+    return
+  }
+  if w == 4 && n >= 0 && n < 10000 {
+    let hi = n / 100
+    let lo = n % 100
+    out.write_byte(UInt8(48 + hi / 10))
+    out.write_byte(UInt8(48 + hi % 10))
+    out.write_byte(UInt8(48 + lo / 10))
+    out.write_byte(UInt8(48 + lo % 10))
+    return
+  }
   if n < 0 {
     out.write_byte(45)
     put_num(out, -n, w - 1)

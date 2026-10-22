@@ -52,3 +52,7 @@ pub fn local_name() -> Str { tzrules.local_name() }
 pub fn offset(r: tzrules.Rules, sec: Int) -> Int { tzrules.offset(r, sec) }
 
 pub fn abbr(r: tzrules.Rules, sec: Int) -> Str { tzrules.abbr(r, sec) }
+
+pub fn lookup(r: tzrules.Rules, sec: Int) -> (Int, Int) { tzrules.lookup(r, sec) }
+
+pub fn name(r: tzrules.Rules, pos: Int) -> Str { tzrules.name(r, pos) }

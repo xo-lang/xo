@@ -212,6 +212,37 @@ pub fn offset(r: Rules, sec: Int) -> Int {
   w[zone_at(w, w[H_LEN + 2 * i + 1])]
 }
 
+/// The offset and the name position of the zone at sec in one lookup
+/// (the name is built by `name`, only when wanted).
+pub fn lookup(r: Rules, sec: Int) -> (Int, Int) {
+  let w = r.w
+  if w.len() == 0 {
+    return (0, -1)
+  }
+  if w[H_CACHE] != 0 && w[H_CSTART] <= sec && sec < w[H_CEND] {
+    return (w[H_COFF], w[H_CNAME])
+  }
+  let i = tx_at(w, sec)
+  if i < 0 {
+    let zp = zone_at(w, w[H_FIRST])
+    return (w[zp], w[zp + 1])
+  }
+  if i == w[H_NTX] - 1 && w[H_EXT] != 0 {
+    let (name, off, _, _) = tzset(w, w[H_LEN + 2 * i], sec)
+    return (off, name)
+  }
+  let zp = zone_at(w, w[H_LEN + 2 * i + 1])
+  (w[zp], w[zp + 1])
+}
+
+/// The name at the position lookup returned (-1 is UTC's).
+pub fn name(r: Rules, pos: Int) -> Str {
+  if pos < 0 {
+    return "UTC"
+  }
+  name_at(r.w, pos)
+}
+
 /// The abbreviation of the zone at sec ("CET", "-05").
 pub fn abbr(r: Rules, sec: Int) -> Str {
   let w = r.w
