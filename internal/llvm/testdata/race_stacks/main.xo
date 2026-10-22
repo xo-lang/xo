@@ -1,0 +1,39 @@
+// TestRaceStacksArm64 (decision 0273's stacks): a race between main and
+// a task, reported with the calls that led to it (each function's entry
+// and exit, compiler/arm64 race.xo race_func_hooks), after 200 faults
+// caught in place by task.isolate, whose unwound frames' exits the catch
+// gives back (std/native/llrt cabi_racefn.xo race_unwind_to): main's
+// stack is touch, main, and nothing left over from the faults.
+use std/internal
+use std/task
+
+fn deep3(xs: List[Int], n: Int) -> Int { xs[n] }
+
+fn deep2(xs: List[Int], n: Int) -> Int { deep3(xs, n) + 1 }
+
+fn deep1(xs: List[Int], n: Int) -> Int { deep2(xs, n) + 1 }
+
+fn touch(shared: Bytes) {
+  let _r = internal.crypto_op("sysc.race_write", shared, b"", b"", b"")
+}
+
+fn main(os: Os) {
+  let xs = [1, 2, 3]
+  var faults = 0
+  for i in 0..200 {
+    match task.isolate(fn() -> Result[Int, Str] { Ok(deep1(xs, 5 + i)) }) {
+      Ok(_) => {}
+      Err(_) => faults += 1
+    }
+  }
+  var bb = BytesBuilder.with_capacity(8)
+  for _ in 0..8 {
+    bb.write_byte(0)
+  }
+  let shared = bb.freeze()
+  scope s {
+    s.spawn(fn() { touch(shared) })
+    touch(shared)
+  }
+  os.stdio.println("faults ${faults}")
+}

@@ -11,6 +11,7 @@ use native/llrt/cabi_wincrt
 use native/llrt/cabi_nolibc
 use native/llrt/cabi_poll
 use native/llrt/cabi_race
+use native/llrt/cabi_racefn
 use native/llrt/cabi_tw
 use native/llrt/fault
 use native/llrt/fsops

@@ -87,7 +87,12 @@ pub const C_TRACE = 344
 /// where a wait is when no fiber holds it (a root thread's, or a task run
 /// inline on one), for `xo dump` (decision 0251)
 pub const C_PARK_FP = 352
-pub const C_SIZE = 360
+/// --race: the instrumented calls this context is in (cabi_racefn.xo:
+/// each function's entry adds one, its exit takes one off), so the catch
+/// of a fault (task.isolate) gives ThreadSanitizer the exits of the
+/// frames the fault unwound
+pub const C_RACE_DEPTH = 360
+pub const C_SIZE = 368
 
 /// rt.static_word: the address of the services record (SV_*), made by
 /// init.

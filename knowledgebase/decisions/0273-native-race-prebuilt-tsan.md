@@ -355,3 +355,57 @@ Windows. Xo would use that flavor on windows/amd64.
   unsynchronized (lazy_const, which has no race, nothing either way).
   Threads are untested until the Windows CI run (owner approval).
   gotchas/tsan-go-flavor-windows.md has the traps.
+
+## Addendum (2026-10-22): stacks (function entry and exit), every native target
+
+Status: Accepted (lead, owner's overnight delegation, 2026-10-22).
+
+Context: the native backends' --race (parts 2 and 3 and the addenda)
+reported one frame per access: no target called ThreadSanitizer's
+function entry and exit, so a report had no caller, the previous access
+none either (its stack comes from the entry/exit events TSan recorded,
+so an unwinder at report time cannot rebuild it), and "created at"
+stacks failed. LLVM builds turn the entry/exit pads off
+(gotchas/tsan-func-exit-pads.md: they resume through libgcc).
+
+Decision: compiler/arm64 race.xo race_func_hooks gives every instrumented
+function (not std/native/llrt, as for accesses) a call of
+std/native/llrt cabi_racefn.xo's race_func_entry after its entry, with
+its caller's pc (the frame record's return address: x29 + 8, rbp + 8),
+and of race_func_exit before each return. The exports call the C
+flavor's __tsan_func_entry and __tsan_func_exit (darwin, linux) or the Go
+flavor's __tsan_func_enter and __tsan_func_exit with the task's
+ThreadState (windows/amd64), and count the running context's depth
+(ctx.xo C_RACE_DEPTH). A fault caught in place (task.isolate, a call of
+xo_x_fault_take in the catching function) skipped the exits of the
+frames it unwound: race_func_entry returns the depth, and after the catch
+race_unwind_to(depth) gives back the missing exits. A fault that ends its
+task needs nothing: each task has its own TSan context (task_new,
+task_gone).
+
+Consequences: reports show the call chain (darwin/arm64: crypto_op <-
+touch main.xo:11 <- main.fn2 main.xo:29 <- run[Task] <- tasks.run_entry;
+windows/amd64 the same through the Go flavor). Cost: about 11 ns a call
+on the M-series Mac (fib(30), 2.7 million calls: +0.03 s user), in race
+builds only. 200 faults isolated in a loop leave main's stack as it was
+(internal/llvm TestRaceStacksArm64; without race_unwind_to each left a
+frame). A created-at stack ends at the spawn's runtime frames: tasks.spawn
+is not instrumented, so the program's call site of spawn is missing.
+
+Known issue (2026-10-22, before this addendum, windows/amd64 only):
+task.isolate's catch was lost after a landing pad. testdata/race_stacks
+under Wine exited 70 where the non-race build printed "faults 200". The
+pad's race instrumentation calls cabi_race.xo's exports while the context
+is still unwinding (before fault_take), and the export's call of
+racesym.ensure, which can fault, is followed by the compiler's unwinding
+check, which then continues the fault from the pad, where no call site
+catches it. darwin and linux call ThreadSanitizer's C functions directly
+and are not affected. Fix in progress: the exports call ensure only when
+the table is missing and the context is not unwinding.
+
+Alternatives: the unwinder calling the exit of each instrumented frame it
+unwinds (needs a table of instrumented functions; the depth word is
+simpler and exact); direct calls of the TSan functions from generated code
+on darwin and linux (no depth, so the isolate drift stays); a per context
+stack of frame pointers (exact without a catch site call, but more memory
+and work per call).

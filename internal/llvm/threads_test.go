@@ -470,6 +470,31 @@ func TestTSanSameThreadRaceArm64(t *testing.T) {
 	sameThreadRace(t, raceBuild(t, "tsan_race", xotool.BackendArm64))
 }
 
+// TestRaceStacksArm64: a report's stacks (testdata/race_stacks): both
+// accesses show touch's call site, the task's its closure, and main's
+// stack holds no frame the 200 isolated faults left (each would repeat
+// main's line of the isolate call).
+func TestRaceStacksArm64(t *testing.T) {
+	cmd := testtmp.Guard(exec.Command(raceBuild(t, "race_stacks", xotool.BackendArm64)))
+	cmd.Env = append(os.Environ(), "TSAN_OPTIONS=halt_on_error=0")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	_ = cmd.Run()
+	text := stderr.String()
+	if !strings.Contains(stdout.String(), "faults 200") {
+		t.Fatalf("stdout %q, want faults 200:\n%s", stdout.String(), text)
+	}
+	rep, _, _ := strings.Cut(text, "Location is")
+	for _, want := range []string{"xo_f_touch main.xo:", "xo_f_main_2efn", "xo_f_main main.xo:"} {
+		if !strings.Contains(rep, want) {
+			t.Errorf("report lacks %q:\n%s", want, text)
+		}
+	}
+	if n := strings.Count(rep, "xo_f_main main.xo:"); n > 2 {
+		t.Errorf("main has %d frames in the report (frames the isolated faults left):\n%s", n, text)
+	}
+}
+
 func sameThreadRace(t *testing.T, bin string) {
 	cmd := testtmp.Guard(exec.Command(bin))
 	cmd.Env = append(os.Environ(), "TSAN_OPTIONS=halt_on_error=0", "XO_THREADS=1")

@@ -48,6 +48,12 @@ fn weak___tsan_write(thr: Int, addr: Int, pc: Int)
 fn weak___tsan_read_range(thr: Int, addr: Int, size: Int, pc: Int)
 fn weak___tsan_write_range(thr: Int, addr: Int, size: Int, pc: Int)
 fn weak___tsan_malloc(thr: Int, pc: Int, p: Int, size: Int)
+fn weak___tsan_func_enter(thr: Int, pc: Int)
+/// the Go flavor's exit takes the ThreadState; the C flavor's
+/// __tsan_func_exit() takes nothing (the argument is ignored there)
+fn weak___tsan_func_exit(thr: Int)
+/// the C flavor's entry, with the caller's pc
+fn weak___tsan_func_entry(pc: Int)
 fn weak_xo_tsan_go_acquire(thr: Int, addr: Int)
 fn weak_xo_tsan_go_release(thr: Int, addr: Int)
 

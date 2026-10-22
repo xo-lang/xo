@@ -377,4 +377,45 @@ fn (var g: G) race_instrument() {
     }
     g.blocks[b].insts = out
   }
+  g.race_func_hooks()
+}
+
+/// The function's entry and exit for ThreadSanitizer's stacks, through
+/// std/native/llrt cabi_racefn.xo: after its entry, race_func_entry with
+/// its caller's pc (the return address in the frame record, decision
+/// 0233: x29 + 8, rbp + 8 on x86_64), and race_func_exit before each
+/// return, so a report shows the calls that led to each access. A fault
+/// caught in place (task.isolate: a call of xo_x_fault_take) skipped the
+/// exits of the frames it unwound: after the catch, race_unwind_to with
+/// the depth the entry left gives them back.
+fn (var g: G) race_func_hooks() {
+  let take = g.sym("xo_x_fault_take")
+  var catches = false
+  for b in 0..g.blocks.len() {
+    for x in g.blocks[b].insts {
+      catches = catches || (x.kind == K_CALL && x.sym == take)
+    }
+  }
+  let depth = g.new_vreg(false)
+  for b in 0..g.blocks.len() {
+    let ins = g.blocks[b].insts
+    var out: List[Inst] = []
+    for x in ins {
+      if x.kind == K_RET {
+        out.push(Inst{kind: K_CALL, sym: g.sym("xo_x_race_func_exit"), line: x.line})
+      }
+      out.push(x)
+      if x.kind == K_ENTRY {
+        let fp = g.new_vreg(false)
+        let pc = g.new_vreg(false)
+        out.push(Inst{kind: K_PLAIN, text: "mov $d0, x29", defs: [fp], frame: true, line: x.line})
+        out.push(Inst{kind: K_PLAIN, text: "ldr $d0, [$u0, #8]", defs: [pc], us: [fp], line: x.line})
+        out.push(Inst{kind: K_CALL, sym: g.sym("xo_x_race_func_entry"), srcs: [rsrc(pc)], us: [pc], defs: if catches { [depth] } else { [] }, line: x.line})
+      }
+      if catches && x.kind == K_CALL && x.sym == take {
+        out.push(Inst{kind: K_CALL, sym: g.sym("xo_x_race_unwind_to"), srcs: [rsrc(depth)], us: [depth], line: x.line})
+      }
+    }
+    g.blocks[b].insts = out
+  }
 }

@@ -1,0 +1,56 @@
+// The C ABI exports a --race build's functions call at their entry and
+// exit (decision 0273: compiler/arm64 race.xo race_func_hooks), for
+// ThreadSanitizer's stacks: the C flavor's __tsan_func_entry and
+// __tsan_func_exit, the Go flavor's __tsan_func_enter and
+// __tsan_func_exit with the task's ThreadState (windows/amd64). Each
+// keeps the running context's depth (ctx.xo C_RACE_DEPTH): a fault
+// caught in place (task.isolate) skipped the exits of the frames it
+// unwound, and the catch gives them back (race_unwind_to). Not
+// instrumented (std/native/llrt); nothing here may fault or allocate.
+use native/llrt/ctx
+use native/llrt/racesym
+use native/llrt/sanhook
+use native/rt
+use native/sys_c
+
+/// A function's entry with its caller's pc: the context's depth after it.
+fn race_func_entry(pc: Int) -> Int {
+  if sanhook.gorace() {
+    racesym.ensure()
+    sys_c.weak___tsan_func_enter(sanhook.race_thr(), pc)
+  } else {
+    sys_c.weak___tsan_func_entry(pc)
+  }
+  let c = rt.tlocal_get(0)
+  if c == 0 {
+    return 0
+  }
+  let d = rt.mem_load(c, ctx.C_RACE_DEPTH, 8) + 1
+  rt.mem_store(c, ctx.C_RACE_DEPTH, d, 8)
+  d
+}
+
+/// A function's exit.
+fn race_func_exit() {
+  sys_c.weak___tsan_func_exit(if sanhook.gorace() { sanhook.race_thr() } else { 0 })
+  let c = rt.tlocal_get(0)
+  if c != 0 {
+    rt.mem_store(c, ctx.C_RACE_DEPTH, rt.mem_load(c, ctx.C_RACE_DEPTH, 8) - 1, 8)
+  }
+}
+
+/// After a fault's catch in a function whose entry left depth d: the
+/// exits of the instrumented frames the fault unwound.
+fn race_unwind_to(d: Int) {
+  let c = rt.tlocal_get(0)
+  if c == 0 {
+    return
+  }
+  var n = rt.mem_load(c, ctx.C_RACE_DEPTH, 8)
+  while n > d {
+    sys_c.weak___tsan_func_exit(if sanhook.gorace() { sanhook.race_thr() } else { 0 })
+    n -= 1
+  }
+  rt.mem_store(c, ctx.C_RACE_DEPTH, n, 8)
+}
+
