@@ -162,7 +162,10 @@ var (
 
 // Time_format is `time.format(t, z, layout)`.
 func Time_format(_ *Task, t Time, z Time_Zone, layout string) string {
-	items := timeLayout("format", layout)
+	return formatItems(timeLayout("format", layout), t, z)
+}
+
+func formatItems(items []tlItem, t Time, z Time_Zone) string {
 	gt := goTime(t, z)
 	abbr, off := gt.Zone()
 	var b strings.Builder
@@ -310,7 +313,10 @@ func digitText(lo, hi int) string {
 
 // Time_parse is `time.parse(s, layout, z)`: strict, exactly the layout.
 func Time_parse(_ *Task, s, layout string, z Time_Zone) Result[Time, Time_ParseErr] {
-	items := timeLayout("parse", layout)
+	return parseItems(timeLayout("parse", layout), s, layout, z)
+}
+
+func parseItems(items []tlItem, s, layout string, z Time_Zone) Result[Time, Time_ParseErr] {
 	p := &timeParser{s: s, layout: layout}
 	year, month, day := int64(1970), int64(1), int64(1)
 	var hour, minute, second, nanos, hour12 int64
@@ -537,4 +543,36 @@ func Time_parse(_ *Task, s, layout string, z Time_Zone) Result[Time, Time_ParseE
 		return p.fail(0, "%s is outside the range of Time (1678 to 2262)", at())
 	}
 	return Ok[Time, Time_ParseErr](Time(secs*1e9 + nanos))
+}
+
+// Time_Layout is time.Layout: a layout parsed once (decision 0332).
+type Time_Layout struct {
+	text  string
+	items []tlItem
+}
+
+// Time_layout is `time.layout(text)`; a bad layout faults.
+func Time_layout(_ *Task, text string) Time_Layout {
+	return Time_Layout{text: text, items: timeLayout("layout", text)}
+}
+
+func (l Time_Layout) XoEq(x any) bool {
+	o, ok := x.(Time_Layout)
+	return ok && o.text == l.text
+}
+
+func (l Time_Layout) XoHash() uint64 { return Hash(l.text) }
+
+func (l Time_Layout) XoDebug(b *strings.Builder) {
+	b.WriteString("Layout(" + strconv.Quote(l.text) + ")")
+}
+
+func (l Time_Layout) M_debug(*Task) string { return Debug(l) }
+
+func (l Time_Layout) M_display(*Task) string { return l.text }
+
+func (l Time_Layout) M_format(_ *Task, t Time, z Time_Zone) string { return formatItems(l.items, t, z) }
+
+func (l Time_Layout) M_parse(_ *Task, s string, z Time_Zone) Result[Time, Time_ParseErr] {
+	return parseItems(l.items, s, l.text, z)
 }

@@ -31,6 +31,10 @@ var (
 	_ func(*Time_Date, *Task, int64) Time_Date                                                      = (*Time_Date).M_add_months
 	_ func(*Time_Date, *Task, Time_Date) int64                                                      = (*Time_Date).M_days_until
 	_ func(*Time_Date, *Task) string                                                                = (*Time_Date).M_display
+	_ func(*Task, string) Time_Layout                                                               = Time_layout
+	_ func(*Time_Layout, *Task) string                                                              = (*Time_Layout).M_display
+	_ func(*Time_Layout, *Task, Time, Time_Zone) string                                             = (*Time_Layout).M_format
+	_ func(*Time_Layout, *Task, string, Time_Zone) Result[Time, Time_ParseErr]                      = (*Time_Layout).M_parse
 	_ func(*Time_ParseErr, *Task) string                                                            = (*Time_ParseErr).M_display
 	_ func(*Time_LayoutErr, *Task) string                                                           = (*Time_LayoutErr).M_display
 	_ func(*Task, Time, Time_Zone, string) string                                                   = Time_format

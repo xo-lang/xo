@@ -116,6 +116,25 @@ const RFC1123: Str = "{weekday:short}, {day} {month:short} {year} {hour}:{minute
 const DATE: Str = "{year}-{month}-{day}"
 const TIME: Str = "{hour}:{minute}:{second}"
 
+/// A layout parsed once: `const ISO: Layout = layout("{year}-{month}-{day}")`
+/// parses it on first use (decision 0332), and `format` and `parse` then
+/// skip the layout walk. Displays as the layout text; equal when the texts
+/// are.
+struct Layout {}
+
+/// Faults on a bad layout (a constant layout is checked at compile time).
+fn layout(text: Str) -> Layout
+fn (l: Layout) display() -> Str
+/// Same text as `time.format(t, z, text)`.
+fn (l: Layout) format(t: Time, z: Zone) -> Str
+/// Same result as `time.parse(s, text, z)`.
+fn (l: Layout) parse(s: Str, z: Zone) -> Time ! ParseErr
+
+const RFC3339_LAYOUT: Layout = layout(RFC3339)
+const RFC1123_LAYOUT: Layout = layout(RFC1123)
+const DATE_LAYOUT: Layout = layout(DATE)
+const TIME_LAYOUT: Layout = layout(TIME)
+
 /// Displays as `at byte 5 of "2026-1x-09": expected 2 digit month`.
 struct ParseErr {
   input: Str

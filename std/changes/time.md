@@ -1,5 +1,26 @@
 # std/time changes
 
+## 2026-10-22: feature: time.Layout, a layout parsed once
+
+- Kind: feature
+- Commit: this commit
+- Found by: bench/results/time-layout-parse-cost-2026-10-21.md
+- Test: std module tests native/time ("a Layout formats and parses as its text")
+
+`time.layout(text)` returns a `Layout` (faults on a bad layout; a constant
+layout is checked at compile time), `Layout.format(t, z)` and
+`Layout.parse(s, z)` give the results of `format` and `parse` with that text,
+and `RFC3339_LAYOUT`, `RFC1123_LAYOUT`, `DATE_LAYOUT` and `TIME_LAYOUT` are the
+named layouts. Held in a `const` (decision 0332) the layout is parsed once per
+process on first use. std/http keeps its literal layout until a seed has
+decision 0332 (the compiler's own build imports it).
+The Str functions are unchanged. 600,000 formats: 6,202 M to 2,375 M
+instructions (native arm64; Go's time.Format 955 M, so 6.5x to 2.5x Go);
+600,000 parses: 3,291 M to 1,586 M (Go 471 M, 7.0x to 3.4x). The Go backend
+gains little (5,666 M to 5,522 M format). `RFC1123_LAYOUT` prints the zone as
+UTC (the `{zone}` field), unlike Go's abbreviation; HTTP dates keep a literal
+GMT layout.
+
 ## 2026-10-21: perf: layout fields recognized in bytes
 
 - Kind: perf

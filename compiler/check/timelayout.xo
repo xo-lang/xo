@@ -71,7 +71,7 @@ fn time_layout_param(name: Bytes) -> Int {
   if name == b"parse" {
     return 1
   }
-  if name == b"check_layout" {
+  if name == b"check_layout" || name == b"layout" {
     return 0
   }
   -1

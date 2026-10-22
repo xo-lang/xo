@@ -741,6 +741,24 @@ fn check_layout(layout: Str) -> () ! time.LayoutErr {
   }
 }
 
+/// time.Layout: a layout parsed once (decision 0332); `time.layout` in a
+/// const runs once per process, and every format or parse of it skips the
+/// layout walk.
+struct Layout {
+  text: Str
+  items: List[Item]
+}
+
+fn layout(text: Str, at: rt.Loc) -> Layout { Layout{text: text, items: layout_or_fault("layout", text, at)} }
+
+fn (l: Layout) display() -> Str { l.text }
+
+fn layout_debug(l: Layout) -> Str { "Layout(${l.text.quote()})" }
+
+fn (l: Layout) format(t: Time, z: Zone) -> Str { format_items(l.items, t, z) }
+
+fn (l: Layout) parse(s: Str, z: Zone) -> Time ! time.ParseErr { parse_items(l.items, s, l.text, z) }
+
 fn layouterr_display(e: time.LayoutErr) -> Str { "bad layout ${e.layout.quote()}: ${e.msg}" }
 
 fn parseerr_display(e: time.ParseErr) -> Str { "at byte ${e.at} of ${e.input.quote()}: ${e.msg}" }
@@ -754,7 +772,10 @@ fn weekday_short() -> List[Str] { ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Su
 fn weekday_name() -> List[Str] { ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] }
 
 fn format(t: Time, z: Zone, layout: Str, at: rt.Loc) -> Str {
-  let items = layout_or_fault("format", layout, at)
+  format_items(layout_or_fault("format", layout, at), t, z)
+}
+
+fn format_items(items: List[Item], t: Time, z: Zone) -> Str {
   let ns = ns_of(t)
   let sec = floor_div(ns, 1000000000)
   var nanos = ns % 1000000000
@@ -905,7 +926,10 @@ fn digit_text(lo: Int, hi: Int) -> Str {
 }
 
 fn parse(s: Str, layout: Str, z: Zone, at: rt.Loc) -> Time ! time.ParseErr {
-  let items = layout_or_fault("parse", layout, at)
+  parse_items(layout_or_fault("parse", layout, at), s, layout, z)
+}
+
+fn parse_items(items: List[Item], s: Str, layout: Str, z: Zone) -> Time ! time.ParseErr {
   let b = s.bytes()
   let n = b.len()
   var pos = 0

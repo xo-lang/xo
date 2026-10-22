@@ -1222,3 +1222,25 @@ test "format as Go's Format in fixed zones, every field" {
   }
   expect(bad[0..(if bad.len() < 20 { bad.len() } else { 20 })]) == []
 }
+
+const LAYOUT1: time.Layout = time.layout(L1)
+const LAYOUT2: time.Layout = time.layout(L2)
+
+test "a Layout formats and parses as its text" {
+  var bad: List[(Int, Int, Str, Str)] = []
+  for (secs, nanos, name, off, _) in GO_FORMAT {
+    let z = if name == "UTC" && off == 0 { time.utc() } else { time.fixed(name, Duration.from_secs_int(off)) }
+    let t = Time.from_unix(secs) + Duration.from_nanos(nanos)
+    let a = LAYOUT1.format(t, z)
+    let b = time.format(t, z, L1)
+    if a != b || LAYOUT2.format(t, z) != time.format(t, z, L2) {
+      bad.push((secs, nanos, a, b))
+    }
+  }
+  expect(bad.len()) == 0
+  let t = Time.from_unix(1700000000)
+  expect(time.RFC3339_LAYOUT.format(t, time.utc())) == time.format(t, time.utc(), time.RFC3339)
+  expect(time.DATE_LAYOUT.display()) == time.DATE
+  let got = time.RFC3339_LAYOUT.parse("2023-11-14T22:13:20Z", time.utc())
+  expect(got) == time.parse("2023-11-14T22:13:20Z", time.RFC3339, time.utc())
+}
