@@ -368,8 +368,10 @@ fn x86_sched_asm_windows() -> Str {
   b.push(w64_sched_fn("xo_tlocal_get", tp + ["movq (%rax,%rdi,8), %rax", "retq"]))
   b.push(w64_sched_fn("xo_tlocal_set", tp + ["movq %rsi, (%rax,%rdi,8)", "retq"]))
   b.push(w64_sched_fn("xo_tlocal_addr", tp + ["retq"]))
+  // 18 words: the 16 of every table (std/native/llrt sched.xo) and
+  // --race's ThreadState and Processor (sanhook.xo TL_RACE_THR)
   b.push("\t.section .tls$,\"dw\"\n\t.globl xo_tlocal\n\t.p2align 3\nxo_tlocal:\n")
-  b.push("\t.quad 0\n".repeat(16))
+  b.push("\t.quad 0\n".repeat(18))
   b.push("\t.text\n")
   b.join("")
 }

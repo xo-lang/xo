@@ -20,6 +20,9 @@ import (
 // does not own fails here: tasks.xo once took word 12, sysio.xo's file
 // operation message, and every fs error then handed a message string to
 // run_claimed as its spare context (gotchas/thread-local-word-collision.md).
+// Words 16 and 17 are only in windows/amd64's table (compiler/arm64
+// x86win.xo): sanhook.xo's --race ThreadState and Processor, which once
+// took words 6 and 10 (sysio.xo's clock, libcsys.xo's errno).
 var tlocalOwners = map[int][]string{
 	4:  {"pool.xo", "sanhook.xo"},
 	5:  {"sysio.xo"},
@@ -32,6 +35,8 @@ var tlocalOwners = map[int][]string{
 	13: {"tasks.xo"},
 	14: {"libcmem.xo"},
 	15: {"prof.xo"},
+	16: {"sanhook.xo"},
+	17: {"sanhook.xo"},
 }
 
 var (
@@ -108,7 +113,7 @@ func TestThreadLocalWordOwners(t *testing.T) {
 		if w < 4 {
 			continue
 		}
-		if w > 15 {
+		if w > 15 && tlocalOwners[w] == nil {
 			t.Errorf("thread local word %d is past the table's 16 words (used by %v)", w, keys(used[w]))
 			continue
 		}

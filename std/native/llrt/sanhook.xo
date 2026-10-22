@@ -55,10 +55,13 @@ pub fn gorace() -> Bool {
 }
 
 /// The thread table's words (rt.tlocal_get) of a gorace build: the
-/// running context's ThreadState, the thread's Processor; and the scratch
-/// word an out parameter goes to (pool.xo TLS_SCRATCH_AT).
-const TL_RACE_THR = 6
-const TL_RACE_PROC = 10
+/// running context's ThreadState, the thread's Processor (words 16 and
+/// 17, which only windows/amd64's table has: x86win.xo; 6 and 10 were
+/// sysio.xo's clock and libcsys.xo's errno, which a no-C-library program
+/// writes); and the scratch word an out parameter goes to (pool.xo
+/// TLS_SCRATCH_AT).
+const TL_RACE_THR = 16
+const TL_RACE_PROC = 17
 const TL_SCRATCH = 4
 
 /// The running context's ThreadState (gorace), made for a thread that

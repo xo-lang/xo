@@ -28,3 +28,13 @@ native runtime touches (rt.tlocal_get and tlocal_set arguments, byte
 offsets from rt.tlocal_addr) to the files touching it and fails when a
 file uses a word it does not own (it fails on word 12 in tasks.xo).
 Read sched.xo's table before taking a word.
+
+Observed again (2026-10-22): windows/amd64 --race (c0d8bef75) took words
+6 and 10 for ThreadSanitizer's ThreadState and Processor, sysio.xo's
+clock and libcsys.xo's errno (a Windows race build has no C library, so
+an errno store would overwrite the Processor). Every word of the 16 was
+owned; the test was not in the push's checks then (pushq's fast checks
+run it since). Fix: windows/amd64's table has 18 words (compiler/arm64
+x86win.xo) and sanhook.xo uses 16 and 17; no other table grew, since
+only that target links the Go flavor. With no free word, grow the
+table of the targets that need one rather than share a word.

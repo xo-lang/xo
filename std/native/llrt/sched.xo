@@ -35,7 +35,9 @@ const SEQ_CST = 4
 /// the last file operation (status, path and message); 13 tasks.xo's
 /// spare context (run_claimed); 14 libcmem.xo's cache of the runtime's
 /// records (heap_large); 15 prof.xo's unwind record of the thread
-/// (the sampling profiler, decision 0238). internal/repotest
+/// (the sampling profiler, decision 0238); windows/amd64's table has 18
+/// words (compiler/arm64 x86win.xo): 16 and 17 sanhook.xo's ThreadState
+/// and Processor of --race (ThreadSanitizer's Go flavor). internal/repotest
 /// TestThreadLocalWordOwners checks who uses each word.
 pub const TLS_CUR: Int = 0
 pub const TLS_FIB: Int = 1
