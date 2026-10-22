@@ -837,6 +837,21 @@ func cryptoCPU(what string, a, b, c Bytes) (Bytes, bool) {
 		}
 		o, _ := cryptoCPU("aes_last", Bytes(s), b[144:160], b[160:176])
 		return o, true
+	case "aes_enc4":
+		// four blocks a (64 bytes) under the round keys b (176, 208 or
+		// 240 bytes: AES-128, -192, -256)
+		nr := len(b)/16 - 1
+		var out []byte
+		for k := 0; k < 4; k++ {
+			s := []byte(a[16*k : 16*k+16])
+			for r := 0; r < nr-1; r++ {
+				o, _ := cryptoCPU("aes_round", Bytes(s), b[16*r:16*r+16], "")
+				s = []byte(o)
+			}
+			o, _ := cryptoCPU("aes_last", Bytes(s), b[16*(nr-1):16*nr], b[16*nr:16*nr+16])
+			out = append(out, o...)
+		}
+		return Bytes(out), true
 	case "aes_round", "aes_last":
 		var s [16]byte
 		for i := range s {

@@ -219,6 +219,39 @@ pub fn aes_enc12(st: Int, rk: Int) { aes_enc_soft(st, rk, 12) }
 
 pub fn aes_enc14(st: Int, rk: Int) { aes_enc_soft(st, rk, 14) }
 
+/// Four 16 byte blocks, the 64 bytes at st, encrypted in place with the
+/// same nr + 1 round keys at rk. The arm64 emitter and LLVM there run
+/// the four states side by side (one AESE and AESMC chain each, the
+/// round key loaded once): a block's rounds are a chain of dependent
+/// instructions, so four independent ones fill the pipeline that one
+/// leaves idle. Elsewhere four aes_enc calls (AESENC on x86-64).
+pub fn aes_enc10x4(st: Int, rk: Int) { aes_enc_x4(st, rk, 10) }
+
+pub fn aes_enc12x4(st: Int, rk: Int) { aes_enc_x4(st, rk, 12) }
+
+pub fn aes_enc14x4(st: Int, rk: Int) { aes_enc_x4(st, rk, 14) }
+
+/// aes_enc10x4's, aes_enc12x4's, and aes_enc14x4's body: the blocks one
+/// at a time through the one block intrinsics.
+fn aes_enc_x4(st: Int, rk: Int, nr: Int) {
+  for b in 0..4 {
+    let p = st.wrapping_add(16 * b)
+    match nr {
+      10 => aes_enc10(p, rk)
+      12 => aes_enc12(p, rk)
+      _ => aes_enc14(p, rk)
+    }
+  }
+}
+
+/// The four block functions' portable body (the cpu_prims golden's
+/// reference).
+pub fn aes_enc_x4_soft(st: Int, rk: Int, nr: Int) {
+  for b in 0..4 {
+    aes_enc_soft(st.wrapping_add(16 * b), rk, nr)
+  }
+}
+
 /// aes_enc10's, aes_enc12's, and aes_enc14's body.
 pub fn aes_enc_soft(st: Int, rk: Int, nr: Int) {
   for r in 0..nr - 1 {
@@ -451,6 +484,35 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
       keep(st)
       keep(k)
       Some(r)
+    }
+    "aes_enc4" => {
+      // four 16 byte blocks a (64 bytes) under the round keys b: 176
+      // bytes (AES-128), 208 (AES-192) or 240 (AES-256)
+      var st: List[Int] = []
+      for i in 0..8 {
+        st.push(rt.bytes_word(a, 8 * i))
+      }
+      let nr = b.len() / 16 - 1
+      var k: List[Int] = []
+      for i in 0..b.len() / 8 {
+        k.push(rt.bytes_word(b, 8 * i))
+      }
+      if soft {
+        aes_enc_x4_soft(addr(st), addr(k), nr)
+      } else if nr == 10 {
+        aes_enc10x4(addr(st), addr(k))
+      } else if nr == 12 {
+        aes_enc12x4(addr(st), addr(k))
+      } else {
+        aes_enc14x4(addr(st), addr(k))
+      }
+      var o = rt.rs_with_cap(64)
+      for i in 0..8 {
+        o = rt.rs_push_word(o, rt.mem_load(addr(st), 8 * i, 8), 8)
+      }
+      keep(st)
+      keep(k)
+      Some(o.bytes())
     }
     "aes_round" | "aes_last" => {
       let st = block(a)

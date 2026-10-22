@@ -90,4 +90,19 @@ fn main(os: Os) {
       os.stdio.println("${i}${sfx} carry ${k.to_hex()} clmul ${m.to_hex()} round ${r.to_hex()} last ${l.to_hex()} enc ${e.to_hex()}")
     }
   }
+  // four blocks at once (cpu.aes_enc10x4, 12x4, 14x4): the four states
+  // side by side on arm64 and LLVM, against the portable body; 11, 13
+  // and 15 round keys from the inputs
+  for (i, a) in inputs.indexed() {
+    let blocks = a + inputs[(i + 1) % inputs.len()] + inputs[(i + 2) % inputs.len()] + inputs[(i + 3) % inputs.len()]
+    for nk in [11, 13, 15] {
+      var ks = b""
+      for j in 0..nk {
+        ks = ks + inputs[(i + 4 + j) % inputs.len()]
+      }
+      let e = internal.crypto_op("cpu.aes_enc4", blocks, ks, b"", b"")
+      let es = internal.crypto_op("cpu.aes_enc4_soft", blocks, ks, b"", b"")
+      os.stdio.println("enc4 ${i} ${nk} ${e.to_hex()} ${if e == es { "same" } else { "soft ${es.to_hex()}" }}")
+    }
+  }
 }
