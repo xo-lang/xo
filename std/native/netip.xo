@@ -92,6 +92,9 @@ fn hexval(c: UInt8) -> Int {
   -1
 }
 
+/// The text of b from p (an error's `at`).
+fn rest_text(b: Bytes, p: Int) -> Str { b[p..].to_str() ?? "" }
+
 fn parse_ipv6(input: Str) -> netip.Addr ! netip.ParseErr {
   var s = input
   var zone = ""
@@ -105,13 +108,15 @@ fn parse_ipv6(input: Str) -> netip.Addr ! netip.ParseErr {
     }
     None => ()
   }
-  var ip = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+  var tmp = BytesBuilder.with_capacity(16)
   var ellipsis = -1
-  var b = s.bytes()
-  if b.len() >= 2 && b[0] == 58 && b[1] == 58 {
+  let b = s.bytes()
+  let n = b.len()
+  var p = 0
+  if n >= 2 && b[0] == 58 && b[1] == 58 {
     ellipsis = 0
-    b = b[2..]
-    if b.is_empty() {
+    p = 2
+    if p == n {
       return netip.Addr{bits: 128, ip: zero16().freeze(), zone: zone}
     }
   }
@@ -119,91 +124,85 @@ fn parse_ipv6(input: Str) -> netip.Addr ! netip.ParseErr {
   while i < 16 {
     var off = 0
     var acc = 0
-    while off < b.len() {
-      let hv = hexval(b[off])
+    while p + off < n {
+      let hv = hexval(b[p + off])
       if hv < 0 {
         break
       }
       acc = acc * 16 + hv
       if off > 3 {
-        return Err(addr_err(input, "each group must have 4 or less digits", b.to_str() ?? ""))
+        return Err(addr_err(input, "each group must have 4 or less digits", rest_text(b, p)))
       }
       if acc > 65535 {
-        return Err(addr_err(input, "IPv6 field has value >=2^16", b.to_str() ?? ""))
+        return Err(addr_err(input, "IPv6 field has value >=2^16", rest_text(b, p)))
       }
       off += 1
     }
     if off == 0 {
-      return Err(addr_err(input, "each colon-separated field must have at least one digit", b.to_str() ?? ""))
+      return Err(addr_err(input, "each colon-separated field must have at least one digit", rest_text(b, p)))
     }
-    if off < b.len() && b[off] == 46 {
+    if p + off < n && b[p + off] == 46 {
       if ellipsis < 0 && i != 12 {
-        return Err(addr_err(input, "embedded IPv4 address must replace the final 2 fields of the address", b.to_str() ?? ""))
+        return Err(addr_err(input, "embedded IPv4 address must replace the final 2 fields of the address", rest_text(b, p)))
       }
       if i + 4 > 16 {
-        return Err(addr_err(input, "too many hex fields to fit an embedded IPv4 at the end of the address", b.to_str() ?? ""))
+        return Err(addr_err(input, "too many hex fields to fit an embedded IPv4 at the end of the address", rest_text(b, p)))
       }
       var end = input.len()
       if zone.len() > 0 {
         end -= zone.len() + 1
       }
-      let f = ipv4_fields(input, end - b.len(), end)?
-      for k in 0..4 {
-        ip.set(i + k, Int(f[k]))
-      }
-      b = b""
+      let f = ipv4_fields(input, end - (n - p), end)?
+      tmp.write(f)
+      p = n
       i += 4
       break
     }
-    ip.set(i, acc >> 8)
-    ip.set(i + 1, acc & 255)
+    tmp.write_byte(UInt8(acc >> 8))
+    tmp.write_byte(UInt8(acc & 255))
     i += 2
-    b = b[off..]
-    if b.is_empty() {
+    p += off
+    if p == n {
       break
     }
-    if b[0] != 58 {
-      return Err(addr_err(input, "unexpected character, want colon", b.to_str() ?? ""))
+    if b[p] != 58 {
+      return Err(addr_err(input, "unexpected character, want colon", rest_text(b, p)))
     }
-    if b.len() == 1 {
-      return Err(addr_err(input, "colon must be followed by more characters", b.to_str() ?? ""))
+    if n - p == 1 {
+      return Err(addr_err(input, "colon must be followed by more characters", rest_text(b, p)))
     }
-    b = b[1..]
-    if b[0] == 58 {
+    p += 1
+    if b[p] == 58 {
       if ellipsis >= 0 {
-        return Err(addr_err(input, "multiple :: in address", b.to_str() ?? ""))
+        return Err(addr_err(input, "multiple :: in address", rest_text(b, p)))
       }
       ellipsis = i
-      b = b[1..]
-      if b.is_empty() {
+      p += 1
+      if p == n {
         break
       }
     }
   }
-  if !b.is_empty() {
-    return Err(addr_err(input, "trailing garbage after address", b.to_str() ?? ""))
+  if p < n {
+    return Err(addr_err(input, "trailing garbage after address", rest_text(b, p)))
   }
+  let t = tmp.freeze()
   if i < 16 {
     if ellipsis < 0 {
       return Err(addr_err(input, "address string too short", ""))
     }
-    let n = 16 - i
-    var j = i - 1
-    while j >= ellipsis {
-      ip.set(j + n, ip[j])
-      j -= 1
+    var out = BytesBuilder.with_capacity(16)
+    out.write(t[0..ellipsis])
+    for _ in 0..16 - i {
+      out.write_byte(0)
     }
-    for k in ellipsis..ellipsis + n {
-      ip.set(k, 0)
-    }
-  } else if ellipsis >= 0 {
+    out.write(t[ellipsis..])
+    return netip.Addr{bits: 128, ip: out.freeze(), zone: zone}
+  }
+  if ellipsis >= 0 {
     return Err(addr_err(input, "the :: must expand to at least one field of zeros", ""))
   }
-  var out = BytesBuilder.with_capacity(16)
-  for v in ip {
-    out.write_byte(UInt8(v))
-  }
-  netip.Addr{bits: 128, ip: out.freeze(), zone: zone}
+  netip.Addr{bits: 128, ip: t, zone: zone}
 }
 
 fn parse_addr(s: Str) -> netip.Addr ! netip.ParseErr {
@@ -323,7 +322,29 @@ fn addr_bytes(a: netip.Addr) -> Bytes {
   b""
 }
 
-fn string4(ip: Bytes) -> Str { "${ip[12]}.${ip[13]}.${ip[14]}.${ip[15]}" }
+/// The octet v in decimal.
+fn write_octet(var out: BytesBuilder, v: UInt8) {
+  let n = Int(v)
+  if n >= 100 {
+    out.write_byte(UInt8(48 + n / 100))
+  }
+  if n >= 10 {
+    out.write_byte(UInt8(48 + n / 10 % 10))
+  }
+  out.write_byte(UInt8(48 + n % 10))
+}
+
+fn string4(ip: Bytes) -> Str {
+  var out = BytesBuilder.with_capacity(15)
+  write_octet(out, ip[12])
+  out.write_byte(46)
+  write_octet(out, ip[13])
+  out.write_byte(46)
+  write_octet(out, ip[14])
+  out.write_byte(46)
+  write_octet(out, ip[15])
+  out.freeze().to_str() ?? ""
+}
 
 fn group(ip: Bytes, i: Int) -> Int { Int(ip[2 * i]) * 256 + Int(ip[2 * i + 1]) }
 
@@ -331,16 +352,16 @@ const HEXD: Bytes = b"0123456789abcdef"
 
 /// v (a group of 16 bits) in lower case hex without leading zeros.
 fn write_hex16(var out: BytesBuilder, v: Int) {
-  var started = false
-  var sh = 12
-  while sh >= 0 {
-    let d = (v >> sh) & 15
-    if d != 0 || started || sh == 0 {
-      out.write_byte(HEXD[d])
-      started = true
-    }
-    sh -= 4
+  if v >= 4096 {
+    out.write_byte(HEXD[v >> 12])
   }
+  if v >= 256 {
+    out.write_byte(HEXD[(v >> 8) & 15])
+  }
+  if v >= 16 {
+    out.write_byte(HEXD[(v >> 4) & 15])
+  }
+  out.write_byte(HEXD[v & 15])
 }
 
 
@@ -357,6 +378,7 @@ fn string6(a: netip.Addr) -> Str {
     if l >= 2 && l > ze - zs {
       zs = i
       ze = j
+      i = j
     }
     i += 1
   }

@@ -1,0 +1,16 @@
+use std/netip
+
+const ADDRS: List[Str] = ["10.1.2.3", "192.168.77.200", "2001:db8::1:2:3", "fe80::a:b:c:d", "::ffff:1.2.3.4", "fd12:3456:789a::1", "8.8.8.8", "2606:4700:4700::1111"]
+
+fn main(os: Os) {
+  var n = 0
+  for i in 0..200000 {
+    let a = netip.parse_addr(ADDRS[i % 8]).ok() ?? fault("parse")
+    let b = netip.parse_addr(ADDRS[(i + 3) % 8]).ok() ?? fault("parse")
+    if a.is_private() {
+      n += 1
+    }
+    n += a.display().len() + b.display().len()
+  }
+  os.stdio.println("netip ${n}")
+}
