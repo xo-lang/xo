@@ -93,12 +93,14 @@ var (
 	_ func(*Task, string) string                                    = Str_to_upper
 	_ func(*Task, string, string, string) string                    = Str_replace
 	_ func(*Task, string, int64) string                             = Str_repeat
+	_ func(*Task, string) string                                    = Str_clone
 	_ func(*Task, string) List[Rune]                                = Str_runes
 	_ func(*Task, string) Bytes                                     = Str_bytes
 	_ func(*Task, Bytes) int64                                      = Bytes_len
 	_ func(*Task, Bytes) bool                                       = Bytes_is_empty
 	_ func(*Task, Bytes) Option[string]                             = Bytes_to_str
 	_ func(*Task, Bytes) string                                     = Bytes_to_hex
+	_ func(*Task, Bytes) Bytes                                      = Bytes_clone
 	_ func(*Task, Bytes) string                                     = Bytes_to_base64
 	_ func(*Task, string) Option[Bytes]                             = Bytes_from_hex
 	_ func(*Task, string) Option[Bytes]                             = Bytes_from_base64
@@ -106,8 +108,6 @@ var (
 	_ func(*Task, Bytes, int64) Tuple2[Rune, int64]                 = Bytes_decode_rune
 	_ func(*Task, Bytes) string                                     = Bytes_quote
 	_ func(*Task, Bytes, Bytes) Option[int64]                       = Bytes_find
-	_ func(*Task, Bytes) Bytes                                      = Bytes_clone
-	_ func(*Task, string) string                                    = Str_clone
 	_ func(*Task, Bytes, Bytes) Option[int64]                       = Bytes_rfind
 	_ func(*Task, Bytes) List[Tuple2[int64, uint8]]                 = Bytes_indexed
 	_ func(*Task, int64) Bytes                                      = Bytes_zeroed
