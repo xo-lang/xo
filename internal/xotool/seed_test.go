@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -559,4 +560,82 @@ func must[T any](v T, err error) T {
 		panic(err)
 	}
 	return v
+}
+
+// TestSecondHop: an xo built by a builder far behind HEAD (or one that
+// records no commit) builds compiler/xo again, as the bootstrap's second
+// stage (Windows CI 39772751654: a cached build 214 commits back made an
+// xo that refused std/native with XO1201); a near builder's is kept.
+func TestSecondHop(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script builders")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git")
+	}
+	root := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", root, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"}, args...)...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("init", "-q", "-b", "main")
+	git("commit", "-q", "--allow-empty", "-m", "old")
+	old := git("rev-parse", "HEAD")
+	for i := 0; i < HopMax+1; i++ {
+		git("commit", "-q", "--allow-empty", "-m", "c"+strconv.Itoa(i))
+	}
+	near := git("rev-parse", "HEAD~1")
+	dir := t.TempDir()
+	calls := filepath.Join(dir, "calls")
+	// a fake xo: `version --json` reports COMMIT; `build ... -o OUT ...`
+	// logs who built and writes a fake xo of HEAD's commit at OUT
+	fake := func(name, commit string) string {
+		p := filepath.Join(dir, name)
+		src := "#!/bin/sh\n" +
+			"if [ \"$1\" = version ]; then echo '{\"version\":\"0.0.0\",\"commit\":\"" + commit + "\"}'; exit 0; fi\n" +
+			"if [ \"$1\" = build ]; then out=; prev=; for a in \"$@\"; do [ \"$prev\" = -o ] && out=$a; prev=$a; done\n" +
+			"  echo \"$0\" >> " + calls + "\n" +
+			"  sed 's/\"commit\":\"[0-9a-f]*\"/\"commit\":\"" + git("rev-parse", "HEAD") + "\"/' \"$0\" > \"$out\"; chmod +x \"$out\"; exit 0; fi\n" +
+			"exit 2\n"
+		if err := os.WriteFile(p, []byte(src), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	for _, c := range []struct {
+		name, commit string
+		hops         int
+	}{
+		{"far", old, 1},
+		{"unknown", "", 1},
+		{"near", near, 0},
+	} {
+		os.Remove(calls)
+		seed := fake("seed-"+c.name, c.commit)
+		out := filepath.Join(dir, c.name, exeName("xo"))
+		os.MkdirAll(filepath.Dir(out), 0o755)
+		// the first hop, as Ensure's BuildXo
+		if err := BuildXo(root, seed, out); err != nil {
+			t.Fatalf("%s: first hop: %v", c.name, err)
+		}
+		var log strings.Builder
+		if err := SecondHop(root, seed, c.name, out, &log); err != nil {
+			t.Fatalf("%s: SecondHop: %v\n%s", c.name, err, log.String())
+		}
+		b, _ := os.ReadFile(calls)
+		if got := strings.Count(string(b), "\n") - 1; got != c.hops {
+			t.Errorf("%s builder: %d second hops, want %d (calls %q, log %q)", c.name, got, c.hops, b, log.String())
+		}
+		if !isFile(out) {
+			t.Errorf("%s: no xo at %s after SecondHop", c.name, out)
+		}
+		if isFile(filepath.Join(filepath.Dir(out), exeName("xo-hop1"))) {
+			t.Errorf("%s: the first hop's xo was left behind", c.name)
+		}
+	}
 }

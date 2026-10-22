@@ -554,6 +554,17 @@ func buildLocked(root, out string, log io.Writer) error {
 				continue
 			}
 		}
+		// a builder far behind HEAD can miscompile newer compiler sources
+		// (an evaluation order or semantics change the compiler's own code
+		// uses): the xo it built then builds them again, as the bootstrap's
+		// second stage does (Windows CI 39772751654: a cached build 214
+		// commits back made an xo that refused all of std/native with
+		// XO1201, gotchas/xobuild-ancestor-older-semantics.md)
+		if err := SecondHop(root, s.Path, s.Why, out, log); err != nil {
+			fmt.Fprintf(log, "xotool: the second hop from %s failed (%s); trying the next seed\n", s.Why, summary(err))
+			errs = append(errs, s.Why+" (second hop): "+err.Error())
+			continue
+		}
 		fmt.Fprintf(log, "xotool: built in %.0f s with %s\n", time.Since(t0).Seconds(), s.Why)
 		recordCommit(root, filepath.Dir(out))
 		return nil
@@ -717,6 +728,66 @@ func ancestorBuild(root string, ms []string) string {
 		}
 	}
 	return best
+}
+
+// SecondHop builds root's compiler/xo again into out with the xo at out,
+// which seed (described by why) built, when seed is more than HopMax
+// commits behind HEAD or how far is unknown (commitsBehind); else it does
+// nothing.
+func SecondHop(root, seed, why, out string, log io.Writer) error {
+	n := commitsBehind(root, seed)
+	if n >= 0 && n <= HopMax {
+		return nil
+	}
+	behind := "an unknown number of commits"
+	if n >= 0 {
+		behind = fmt.Sprintf("%d commits", n)
+	}
+	fmt.Fprintf(log, "xotool: %s is %s behind HEAD (more than %d): building again with the xo it built\n", why, behind, HopMax)
+	x1 := filepath.Join(filepath.Dir(out), exeName("xo-hop1"))
+	os.Remove(x1)
+	if err := os.Rename(out, x1); err != nil {
+		return err
+	}
+	defer os.Remove(x1)
+	return BuildXo(root, x1, out)
+}
+
+// HopMax is how many commits behind HEAD a builder of compiler/xo may be
+// before Ensure builds again with the xo it built (a second hop).
+const HopMax = 50
+
+// commitsBehind is how many commits the xo seed's recorded commit (`xo
+// version --json`, decision 0264) is behind root's HEAD, or -1 when that
+// is unknown: no record (an older xo), a commit this checkout does not
+// have or that is not an ancestor of HEAD, or no git.
+func commitsBehind(root, seed string) int {
+	head := headCommit(root)
+	if head == "" {
+		return -1
+	}
+	o, err := runIn(root, nil, seed, "version", "--json")
+	if err != nil {
+		return -1
+	}
+	var v struct {
+		Commit string `json:"commit"`
+	}
+	if json.Unmarshal([]byte(strings.TrimSpace(o)), &v) != nil || v.Commit == "" {
+		return -1
+	}
+	if exec.Command("git", "-C", root, "merge-base", "--is-ancestor", v.Commit, head).Run() != nil {
+		return -1
+	}
+	out, err := exec.Command("git", "-C", root, "rev-list", "--count", v.Commit+".."+head).Output()
+	if err != nil {
+		return -1
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return -1
+	}
+	return n
 }
 
 // headCommit is root's HEAD commit, or "" outside a git checkout.

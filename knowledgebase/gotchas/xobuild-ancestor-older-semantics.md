@@ -29,3 +29,17 @@ map_last_use binds the type before the call. Code in compiler/ must not
 depend on a language change newer than the builds xobuild may pick; a
 change of evaluation order or semantics that the compiler's own sources
 use needs a version bump and a seed (CLAUDE.md, seeds).
+
+Observed again (2026-10-22, Windows CI run 39772751654): the nearest
+ancestor is only as near as the cache allows. The xo-windows runner had
+last built xo the evening before, so its nearest cached ancestor was at
+least 214 commits behind main. xobuild built main's compiler with it in
+one hop, and the xo it made refused nearly all of std/native with XO1201
+("not available without a garbage collector (`--no-gc`) yet": names,
+calls, assignments, tuple patterns), so every --race build failed. The
+same build cross compiled from the Mac (a near ancestor cached) was fine.
+Fix: when the builder is more than HopMax (50) commits behind HEAD, or
+records no commit (`xo version --json`), Ensure builds compiler/xo again
+with the xo it built, as the bootstrap's second stage
+(internal/xotool SecondHop, TestSecondHop). A miscompiled first hop then
+either builds a correct xo or fails, and the next seed is tried.
