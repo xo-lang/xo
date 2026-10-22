@@ -199,7 +199,10 @@ const LIST_HDR = 24
 /// base + i is one add (addr_base), and each access its immediate, where
 /// [base, t] needs t = i + c an add each (copy_words: 18 instructions a
 /// 32 bytes, now 2 ldp, 2 stp after pair_mem). None leaves the access
-/// as it was (x86 has [base + i + c] itself).
+/// as it was (x86 has [base + i + c] itself), and so does an i that every
+/// access uses with no immediate: [base, i] is the access's own addressing
+/// (ML-KEM's ntt: an add per butterfly load and store, 15 instructions a
+/// butterfly against LLVM's 13).
 fn (var g: G) addr_fold(base: Int, off: Int, w: Int) -> (Int, Int)? {
   if g.x86 || g.cur_sb < 0 {
     return None
@@ -214,16 +217,22 @@ fn (var g: G) addr_fold(base: Int, off: Int, w: Int) -> (Int, Int)? {
     c = c1
   }
   let (_, ic) = g.const_int(i)
-  if ic || g.addr_uses(base, i) < 2 {
+  if ic {
+    return None
+  }
+  let (n, imm) = g.addr_uses(base, i)
+  if n < 2 || !imm {
     return None
   }
   Some((g.addr_base(base, i), c))
 }
 
 /// The rt.mem_load and rt.mem_store calls of the SSA block being
-/// selected at base + i or base + i + c (c a constant), up to 2.
-fn (var g: G) addr_uses(base: Int, i: Int) -> Int {
+/// selected at base + i or base + i + c (c a constant), up to 2 once one
+/// has a c, and whether one has.
+fn (var g: G) addr_uses(base: Int, i: Int) -> (Int, Bool) {
   var n = 0
+  var imm = false
   for u in g.f.blocks[g.cur_sb].instrs {
     let y = g.f.values[u]
     if y.op != ssa.Op.Call || y.args.len() < 3 || y.args[0] != base {
@@ -234,18 +243,19 @@ fn (var g: G) addr_uses(base: Int, i: Int) -> Int {
       continue
     }
     let off = y.args[1]
-    let j = match g.x86_disp(off) {
-      Some((j1, _)) => j1
-      None => off
+    let (j, c) = match g.x86_disp(off) {
+      Some((j1, c1)) => (j1, c1)
+      None => (off, 0)
     }
     if j == i {
       n += 1
-      if n >= 2 {
-        return n
+      imm = imm || c != 0
+      if n >= 2 && imm {
+        return (n, imm)
       }
     }
   }
-  n
+  (n, imm)
 }
 
 /// A register holding base + i, made once a block (addr_fold).
