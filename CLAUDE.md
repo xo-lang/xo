@@ -174,7 +174,8 @@ Update the knowledgebase in the same change as the work, not later:
     TestCodegenInputsClassified; owner, 2026-10-21), and no overlap
     gate (owner, 2026-10-21: the hourly run or the next agent's gate
     catches a bad combination); go test -short and the full fixed point
-    run hourly on main (~/xo-lead/agents/hourly.sh), and the lead
+    run every 2 hours on main (~/xo-lead/agents/hourly.sh; owner,
+    2026-10-22, was hourly), and the lead
     bisects a failure to the commit's owner, who fixes forward. An
     agent still runs any repo test its change obviously affects (e.g.
     TestCodegenInputsClassified for a new XO_* variable) in its gate.
@@ -223,12 +224,12 @@ Update the knowledgebase in the same change as the work, not later:
     amd64 goldens (scripts/docker-amd64-sample.txt, 42 of 201, about 15
     minutes; owner 2026-10-20) with every optional pass on, plus a run
     of the program it targets, before it pushes; the full 201 run in
-    the lead's 4-hourly full tier. Every merge touching what the self build
+    the lead's 8-hourly full tier. Every merge touching what the self build
     compiles or runs builds xo once, with the current xo (`go run
     ./scripts/xobuild`), and runs its proving tests with that xo: no
     fixed point per push (owner, 2026-10-21). The full self rebuild
     fixed point (scripts/bootstrap-xo.sh, s2 and s3 identical) runs
-    hourly on main (~/xo-lead/agents/hourly.sh, with go test -short; bisected to the
+    every 2 hours on main (~/xo-lead/agents/hourly.sh, with go test -short; bisected to the
     owner of the guilty commit, who fixes forward) and in releases,
     seed-cut.sh and CI, so a miscompile cannot build the next released
     compiler. The paths: compiler/ (but not
