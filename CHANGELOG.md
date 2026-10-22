@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `XO_CHK_CACHE=auto` warm builds are the cache-off build's binary
+  again: a skipped main module's check entry records whether main is
+  named only by its declaration (check cache v6), so main's own Os is
+  folded to the runtime's capabilities as on a cold build.
 - The back-end cache stores module check entries (chk) only when a
   build reads them (`XO_CHK_CACHE=1|auto` or verify); `--phase-times`
   says `cache chk off` otherwise. Every store appends a line with its

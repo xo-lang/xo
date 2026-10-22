@@ -14,7 +14,7 @@
 
 use std/crypto
 
-const MOD_CACHE_VERSION = "xo check cache v5"
+const MOD_CACHE_VERSION = "xo check cache v6"
 
 /// Per module: the SHA-256 of its interface closure (above).
 pub fn (c: Checker) iface_closures() -> List[Str] {
@@ -143,6 +143,36 @@ pub struct ModEntry {
   /// they read, by eager_name: checked before the whole-program passes
   /// even when the module is skipped.
   pub eager: List[Str] = []
+  /// The module's `main`, if it has one, is named by no identifier but
+  /// its declaration (names_only_decl): the SSA builder folds main's own
+  /// Os to the runtime's capabilities only then, and a skipped module
+  /// records no names (2026-10-22: a warm XO_CHK_CACHE=auto build kept
+  /// the user capability dispatch the cold build folded away).
+  pub main_unnamed: Bool = false
+}
+
+/// Whether no identifier the check recorded names the function fo but
+/// its own declaration (false for an object with no declaration).
+pub fn (c: Checker) names_only_decl(fo: Int) -> Bool {
+  if fo < 0 || c.objs[fo].fn_decl.is_empty() {
+    return false
+  }
+  let at = c.objs[fo].fn_decl[0].name.span.start.offset
+  for n in c.names {
+    if n.obj == fo && n.offset != at {
+      return false
+    }
+  }
+  true
+}
+
+/// ModEntry.main_unnamed of module m when it was skipped: Some, or None
+/// when its check ran (the names are the checker's).
+pub fn (c: Checker) mod_cached_main_unnamed(m: Int) -> Option[Bool] {
+  if !c.mod_skip.contains(m) {
+    return None
+  }
+  Some((c.mod_entries.get(m) ?? ModEntry{}).main_unnamed)
 }
 
 /// A function's name in ModEntry.eager: its receiver type's and its own.
@@ -327,6 +357,7 @@ pub fn (c: Checker) mod_cache_entries(scans: Map[Int, (Bool, Bool)], nofe: Map[I
     e.fe_complete = !nofe.contains(m)
     e.eager = c.eager_of(m, nofe_fos.get(m) ?? {})
     e.zones = c.mod_zones(paths)
+    e.main_unnamed = c.names_only_decl(c.mods[m].members.get(b"main") ?? -1)
     out.push((key, encode_mod_entry(e)))
   }
   out
@@ -357,6 +388,7 @@ fn encode_mod_entry(e: ModEntry) -> Bytes {
   put_i(b, if e.tasks { 1 } else { 0 })
   put_i(b, if e.budgets { 1 } else { 0 })
   put_i(b, if e.fe_complete { 1 } else { 0 })
+  put_i(b, if e.main_unnamed { 1 } else { 0 })
   put_i(b, e.eager.len())
   for n in e.eager {
     put_s(b, n)
@@ -450,7 +482,7 @@ fn decode_mod_entry(d: Bytes) -> Option[ModEntry] {
   if r.s() != MOD_CACHE_VERSION {
     return None
   }
-  var e = ModEntry{tasks: r.i() == 1, budgets: r.i() == 1, fe_complete: r.i() == 1}
+  var e = ModEntry{tasks: r.i() == 1, budgets: r.i() == 1, fe_complete: r.i() == 1, main_unnamed: r.i() == 1}
   let ng = r.i()
   if !r.ok || ng > d.len() {
     return None

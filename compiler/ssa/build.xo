@@ -1569,21 +1569,11 @@ fn (var b: Builder) main_os(x: Expr) -> Bool {
 /// Whether no identifier of the program names main, so only the entry
 /// calls it (a call `main(Os{stdio: tee, ...})` passes a user value). A
 /// main module whose check came from the module cache recorded no names:
-/// main counts as named.
+/// its entry's answer (ModEntry.main_unnamed) is taken.
 fn (var b: Builder) main_unnamed() -> Bool {
   if b.main_named < 0 {
-    b.main_named = 1
-    let mfo = b.main_fo_of()
-    if mfo >= 0 && !b.c.mod_skip.contains(b.main_mod) && !b.c.objs[mfo].fn_decl.is_empty() {
-      let at = b.c.objs[mfo].fn_decl[0].name.span.start.offset
-      b.main_named = 0
-      for n in b.c.names {
-        if n.obj == mfo && n.offset != at {
-          b.main_named = 1
-          break
-        }
-      }
-    }
+    let un = b.c.mod_cached_main_unnamed(b.main_mod) ?? b.c.names_only_decl(b.main_fo_of())
+    b.main_named = if un { 0 } else { 1 }
   }
   b.main_named == 0
 }
