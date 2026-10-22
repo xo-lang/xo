@@ -61,6 +61,9 @@ struct Rc {
   heaps: Map[Int, Bool] = {}
   fidx: Map[Str, Int] = {}
   borrowed: List[List[Bool]] = []
+  /// each function's parameter 0 type (-1 with none): an indirect
+  /// function's closure type, checked against its value calls (0337)
+  fparam0: List[Int] = []
   fi: Int = -1
   // chain_pads runs (XO_PASSES=-chain_pads turns it off)
   chain: Bool = true
@@ -366,8 +369,25 @@ fn (var r: Rc) modes(f: Func, v: Int) -> List[Mode] {
     Struct | Tuple | Variant | Return | Release | Reuse | Closure | Rebind | Box => ms = fill_modes(n, Mode.Consume)
     Fault | Retain | Eq | Ne | Capture | Unbox | Share => ms = fill_modes(n, Mode.Borrow)
     CallValue => {
-      ms = fill_modes(n, Mode.Consume)
-      ms[0] = Mode.Borrow
+      // the closure borrowed; each argument borrowed unless its type is
+      // the result's (decision 0337, fv_arg_owned)
+      ms = fill_modes(n, Mode.Borrow)
+      let ft = f.values[x.args[0]].ty
+      let c = f.values[x.args[0]]
+      if c.op == Op.Closure {
+        // the body's convention is its parameter 0's type: the same
+        // type as the closure's, or one side takes what the other lent
+        if let Some(ci) = r.fidx.get(aux_name(c.aux)) {
+          if ci < r.fparam0.len() && r.fparam0[ci] >= 0 && r.fparam0[ci] != ft {
+            fault("internal: a call of closure ${aux_name(c.aux)} through a value of another function type (decision 0337)")
+          }
+        }
+      }
+      for i in 1..n {
+        if fv_arg_owned(r.types, ft, i - 1) {
+          ms[i] = Mode.Consume
+        }
+      }
     }
     Payload => {
       if r.heap(x.ty) {
@@ -547,18 +567,28 @@ fn (var r: Rc) infer_borrows(funcs: List[Func], jobs: Int) {
 }
 
 /// Every function's flags before inference: each heap parameter borrowed
-/// (the closure of an indirect function, none of an entry function's).
+/// (of an indirect function the closure and the arguments fv_arg_owned
+/// does not own, fixed; none of an entry function's).
 fn (var r: Rc) init_borrows(funcs: List[Func]) {
   r.borrowed = []
+  r.fparam0 = []
   for f in funcs {
     let ps = f.blocks[0].params
+    r.fparam0.push(if ps.is_empty() { -1 } else { f.values[ps[0]].ty })
     var bs: List[Bool] = []
     for (i, p) in ps.indexed() {
       var bw = r.heap(f.values[p].ty) && !f.var_params.contains(i)
       if f.indirect {
-        // callers through a function value pass the closure borrowed and
-        // the arguments owned
-        bw = i == 0
+        // callers through a function value pass the closure and the
+        // arguments the function type does not own borrowed (decision
+        // 0337); the convention is the type's, so no scan changes it.
+        // The caller reads it from the closure's type: a body whose
+        // parameter 0 is another type would take what it was lent
+        let ct = f.values[ps[0]].ty
+        if ct < 0 || ct >= r.types.len() || r.types[ct].kind != Kind.Func {
+          fault("internal: indirect function ${f.name}'s parameter 0 is not of a function type (decision 0337)")
+        }
+        bw = i == 0 || (r.heap(f.values[p].ty) && !fv_arg_owned(r.types, ct, i - 1))
       }
       if f.entry {
         // the runtime hands over every argument
@@ -568,6 +598,36 @@ fn (var r: Rc) init_borrows(funcs: List[Func]) {
     }
     r.borrowed.push(bs)
   }
+}
+
+/// Whether a call through a function value of type ft hands over its
+/// argument i (decision 0337): when the argument's type is the result's,
+/// or one of a tuple result's (an accumulator threaded through, `fold`'s
+/// `fn(A, T) -> A`; Map.update's and Mutex.with's `fn(var T)` closures,
+/// which return (result, new value)), so the body updates it in place.
+/// Any other argument is borrowed: the caller keeps it for the call and a
+/// body that keeps it counts it up (borrowed parameters consumed on a
+/// path, decision 0149). A function of the type alone, so callers and
+/// bodies agree without knowing each other: both pass ft, the type of
+/// the closure (init_borrows faults on an indirect function whose
+/// parameter 0 has another type, the CallValue's modes on a closure of
+/// a known function of another type). An argument past the type's
+/// parameters is handed over, as before decision 0337: no caller passes
+/// one (value_call checks the count against the type) and the default
+/// keeps a body's parameter it does not know of owned on both sides.
+pub fn fv_arg_owned(types: List[SType], ft: Int, i: Int) -> Bool {
+  if ft < 0 || ft >= types.len() || types[ft].kind != Kind.Func {
+    fault("internal: fv_arg_owned of a type that is not a function's (decision 0337)")
+  }
+  if i < 0 || i >= types[ft].elems.len() {
+    return true
+  }
+  let pt = types[ft].elems[i]
+  let rt = types[ft].ret
+  if pt == rt {
+    return true
+  }
+  rt >= 0 && types[rt].kind == Kind.Tuple && types[rt].elems.contains(pt)
 }
 
 /// The callers of each function (by r.fidx: the functions each name).
@@ -667,7 +727,7 @@ fn (var r: Rc) infer_borrows_incr(funcs: List[Func], jobs: Int, hs: List[Str], p
   for fi in 0..n {
     if dirty[fi] {
       nd += 1
-    } else {
+    } else if !funcs[fi].indirect {
       r.borrowed[fi] = prev.get(hs[fi]) ?? r.borrowed[fi]
     }
   }
@@ -721,6 +781,10 @@ fn (r: Rc) borrow_round(funcs: List[Func], todo: List[Int], jobs: Int) -> List[(
 /// by r.borrowed (inferBorrows' scan of one function).
 fn (var r: Rc) borrow_scan(f: Func, fi: Int) -> List[Int] {
   r.fi = fi
+  if f.indirect {
+    // fixed by its type (init_borrows): a consuming path retains
+    return []
+  }
   // the blocks that consume each borrowed parameter
   var cons: Map[Int, List[Bool]] = {}
   for bi in 0..f.blocks.len() {

@@ -1,9 +1,8 @@
 # 0337: Function values borrow their arguments; no borrow syntax
 
-Status: Proposed (Xo Publish, 2026-10-22, for the owner's review; the
-language poll's second theme, "borrowed iteration", queued by the lead
-under the owner's overnight delegation). Design only: nothing below is
-implemented. Refines decision 0046 (reference counting) and 0149
+Status: Accepted (owner, 2026-10-22; proposed by Xo Publish the same
+day, the language poll's second theme, "borrowed iteration").
+Implemented 2026-10-22 (see "Implementation" at the end). Refines decision 0046 (reference counting) and 0149
 (borrowed parameters consumed on some paths) for functions called
 through a function value; leaves 0186 (loop elements borrow from their
 container) and the 0291 addendum (a Map or Set loop walks its table in
@@ -105,7 +104,7 @@ has two Retains per iteration (the two strings) before `callv`, and the
 callee releases them; list_any, list_filter, and list_fold do the same
 for their `f(x)`.
 
-## Decision (proposed)
+## Decision
 
 1. **No borrow syntax.** No `for &x in xs`, no `fn(&T)`. A `for` loop
    already borrows whenever the body does not consume its list (0186),
@@ -187,7 +186,7 @@ for their `f(x)`.
   unchanged. The per function caches that hold insert_rc's output
   (rccache, fecache, the arm64 inliner's) bump their versions.
 
-## Plan (if accepted)
+## Plan
 
 1. Audit every producer of `Op.CallValue` (compiler/ssa call.xo,
    conc.xo, iface.xo, map.xo's update callback, show.xo, budget.xo,
@@ -258,3 +257,71 @@ for their `f(x)`.
 - **Keep owned arguments and fix only `xo vet --cost`.** Rejected as the
   answer to the poll: it would report the cost at every callback without
   a way to avoid it short of rewriting each one as a `for` loop.
+
+## Implementation (2026-10-22)
+
+- compiler/ssa rc.xo `fv_arg_owned(types, ft, i)`: argument i of a
+  function value of type ft is handed over when its type is the
+  result's, or one of a tuple result's; any other is borrowed. The
+  `var` exception needs no rule of its own: a `fn(var T)` closure
+  (Map.update, Mutex.with; closure_with) has the SSA type
+  `fn(T) -> (R, T)`, so its value is in the tuple result. The tuple case
+  also hands over an element a callback returns in a tuple
+  (`xs.map(fn(u) { (u.id, u) })`): the caller's count goes into the
+  result instead of a retain in the body.
+- init_borrows gives an indirect function the closure and the arguments
+  fv_arg_owned does not own as borrowed; borrow_scan returns no
+  demotion for it (the flags are its type's), so a body that consumes a
+  borrowed argument on a path retains it there (insert_rc's existing
+  retain of a consumed untracked leaf, as for 0149's enum parameters);
+  infer_borrows_incr never gives an indirect function the last build's
+  flags. The CallValue's modes use fv_arg_owned on the closure
+  argument's type: types are interned by name, so the caller's and the
+  body's are the same type. RC cache v9, borrow record v2.
+- A mismatch is an internal compiler error, not a silent double
+  release (Xo Lang 2's review): init_borrows faults on an indirect
+  function whose parameter 0 is not of a function type, fv_arg_owned on
+  a type that is not a function's, and a CallValue of a Closure of a
+  known function faults unless the closure's type is that function's
+  parameter 0 type (Rc.fparam0; also in the verifier's checker). The
+  last is also what makes arm64's devirtualize safe.
+- Every target of a CallValue is an SSA function marked indirect
+  (closures, `NAME.value` thunks, the interface and Show thunks,
+  closure_with); no C or assembly calls an Xo closure with arguments.
+  The `NAME.value` thunk needs no change: its call of the named function
+  uses that function's inferred modes, so a named function that owns a
+  parameter gets it retained by the thunk. arm64's devirtualize (a
+  CallValue of a known closure becomes a Call, after insert_rc) sees the
+  callee's flags, which are the rule's.
+- Not done, by the type rule: a fallible accumulator (`fn(A, T) -> A !
+  E`, whose SSA result is an enum holding A) is borrowed, so its update
+  copies; no prelude or compiler callback has that shape. Move only
+  types are not visible in the SSA types (StrBuilder lowers to Str, Buf
+  to List): a borrowed one stays correct because their writes copy a
+  shared value first.
+- `xo vet --cost` XO0908 now notes only the elements handed to a
+  function value that takes them (fv_arg_owned): `xs.map(fn(u: User) ->
+  User { ... })`, not `xs.any(fn(u) { ... })`.
+- Tests: compiler/ssa fvborrow_test.xo (the rule, the fixed flags, the
+  CallValue's modes); the golden borrow_callbacks (any, all, filter,
+  fold, map that keeps, a List accumulator of 10,000 pushes, an owned
+  accumulator every borrowed element also holds (the first push
+  copies, the elements keep the original), bodies
+  that capture their argument in a closure and a task, a named function
+  that keeps its parameter used as a value, a failing callback,
+  Map.update and Mutex.with closures, two tasks over one shared list):
+  arm64, LLVM, Go parity, wasm; 0 live of 21,112 allocations under
+  XO_LEAKCHECK; XO_RC_CHECK=1; cmd/xo TestVetCost*; the fixed point.
+  `XO_DUMP_FN` shows a capturing body retaining the captured field
+  (`retain` of `field 1` before `closure`) and fold's accumulator
+  updated in place (`reuse` of the List parameter, then `list.push`).
+- Measured (bench/results/callbacks-0337-2026-10-22.md,
+  bench/perf/callbacks): any over 1000 users of two strings, 20 M
+  visits, 1,759 M to 1,160 M instructions native (-34%), 2,066 M to
+  1,507 M LLVM (-27%); filter and fold the same; two tasks over one
+  shared list 4,067 M to 2,306 M (-43%) native, 5,959 M to 3,003 M
+  (-50%) LLVM, wall 191 ms to 75 ms native; the for loop and the Int
+  rows unchanged. The rest of the gap to the for loop is the call itself
+  (about 31 instructions a visit native, 56 LLVM, more than the 7 to 10
+  estimated above): specializing the prelude's callback methods at a
+  closure literal (Alternatives) is the follow up.

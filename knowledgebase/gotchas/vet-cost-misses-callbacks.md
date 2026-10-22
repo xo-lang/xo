@@ -22,6 +22,11 @@ functions only.
 
 ## Fix
 
+Since decision 0337 (implemented 2026-10-22) a callback that only reads
+its element borrows it: the cost below is gone, and XO0908 notes only a
+function value that takes its element (one of its result's type). What
+follows is the history.
+
 Fixed 2026-10-22 (decision 0327 addendum): XO0908 now follows a field's
 Retain to its element and notes the prelude's callback walks at the
 call (not sort_by or group_by). Before that fix, and still for the

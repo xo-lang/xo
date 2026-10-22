@@ -176,7 +176,8 @@ fn reaches_loop(f: Func, v: Int, users: List[List[Int]], inloop: List[Bool]) -> 
 
 /// XO0908: in a loop, an element of a collection made outside it (a
 /// list.index, or a field of one) counted up (Retain) for a function
-/// value, which cannot borrow it and drops it after. An element that a
+/// value that takes it (its type is the function's result type,
+/// fv_arg_owned: decision 0337 borrows the others) and drops it after. An element that a
 /// use keeps (a call, a push, a struct, a return: on any path) is a real
 /// copy and not reported; a direct call's parameter is borrowed unless
 /// the callee keeps it (infer_borrows).
@@ -241,7 +242,7 @@ fn elem_count_per_iter(f: Func, inloop: List[Bool]) -> List[CostNote] {
         continue
       }
       seen[line] = true
-      out.push(CostNote{code: "XO0908", fn_name: f.name, file: f.file, line: line, col: f.values[at].line % 4096, msg: "each iteration counts this element up and down: it goes to a function value, which cannot borrow it (atomically, when the collection is shared across threads); call a named function that only reads it, or hoist the call"})
+      out.push(CostNote{code: "XO0908", fn_name: f.name, file: f.file, line: line, col: f.values[at].line % 4096, msg: "each iteration counts this element up and down: it goes to a function value whose result has its type, so the call hands it over (decision 0337; atomically, when the collection is shared across threads); call a named function that only reads it, or hoist the call"})
     }
   }
   out
@@ -264,11 +265,13 @@ fn callback_walk(name: Str) -> (Bool, Int) {
 }
 
 /// XO0908 at the call: a prelude method that walks a collection and
-/// hands each element to a function value (`xs.any(fn(u) { ... })`)
-/// counts each element's heap fields up and down per element, as a loop
-/// passing elements to a function value does; the loop is the prelude's,
-/// which cost_notes does not read, so the note is at the call. Only when
-/// an element parameter of the function value holds heap memory.
+/// hands each element to a function value that takes it (an element
+/// parameter of the result's type, fv_arg_owned: `xs.map(fn(u: User) ->
+/// User { ... })`) counts each element's heap fields up and down per
+/// element, as a loop passing elements to such a function value does;
+/// the loop is the prelude's, which cost_notes does not read, so the note
+/// is at the call. Only when that parameter holds heap memory: since
+/// decision 0337 the others are borrowed (`xs.any(fn(u) { ... })`).
 fn callback_walks(m: Module, f: Func) -> List[CostNote] {
   var out: List[CostNote] = []
   var seen: Map[Int, Bool] = {}
@@ -289,7 +292,7 @@ fn callback_walks(m: Module, f: Func) -> List[CostNote] {
           continue
         }
         for (i, p) in m.types[t].elems.indexed() {
-          if i != acc && m.heap(p) {
+          if i != acc && m.heap(p) && fv_arg_owned(m.types, t, i) {
             heap = true
           }
         }
@@ -299,7 +302,7 @@ fn callback_walks(m: Module, f: Func) -> List[CostNote] {
         continue
       }
       seen[line] = true
-      out.push(CostNote{code: "XO0908", fn_name: f.name, file: f.file, line: line, col: x.line % 4096, msg: "this call counts each element up and down: it hands every element to a function value, which cannot borrow it (atomically, when the collection is shared across threads); a `for` loop over the collection borrows its elements (decision 0186), or call a named function that only reads them"})
+      out.push(CostNote{code: "XO0908", fn_name: f.name, file: f.file, line: line, col: x.line % 4096, msg: "this call counts each element up and down: it hands every element to a function value whose result has the element's type, which takes it (decision 0337; atomically, when the collection is shared across threads); a `for` loop over the collection borrows its elements (decision 0186), or call a named function that only reads them"})
     }
   }
   out

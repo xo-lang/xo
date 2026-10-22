@@ -1,0 +1,92 @@
+// Decision 0337: function values borrow their arguments, except one of
+// the result's type (or a tuple result's: an accumulator, a `var`
+// closure's value), the same for the body (init_borrows) and the caller
+// (the CallValue's modes).
+
+struct FvMod {
+  m: Module
+  str_t: Int
+  list_t: Int
+  /// fn(Str) -> Bool, fn(List[Str], Str) -> List[Str], fn(Str) -> (Int, Str)
+  pred: Int
+  acc: Int
+  pack: Int
+}
+
+fn fv_mod() -> FvMod {
+  var m = Module{}
+  let s = m.builtin(Kind.Str)
+  let b = m.builtin(Kind.Bool)
+  let i = m.builtin(Kind.Int)
+  let l = m.list(s)
+  let pred = m.func_type([s], b)
+  let acc = m.func_type([l, s], l)
+  let pack = m.func_type([s], m.tuple([i, s]))
+  FvMod{m: m, str_t: s, list_t: l, pred: pred, acc: acc, pack: pack}
+}
+
+/// An indirect function of type ft whose body returns (consumes) its
+/// parameter keep (or a constant when keep < 1).
+fn fv_body(var m: Module, name: Str, ft: Int, keep: Int) {
+  var ps = [ft]
+  for p in m.types[ft].elems {
+    ps.push(p)
+  }
+  let fi = m.new_func(name, ps, [m.types[ft].ret])
+  m.funcs[fi].indirect = true
+  var f = m.funcs[fi]
+  if keep >= 1 {
+    let _r = f.add(0, Op.Return, -1, Aux.None, [f.blocks[0].params[keep]])
+  } else {
+    let _r = f.add(0, Op.Unreachable, -1, Aux.None, [])
+  }
+  m.funcs[fi] = f
+}
+
+fn fv_rc(m: Module) -> Rc {
+  var r = Rc{types: m.types}
+  for (i, f) in m.funcs.indexed() {
+    r.fidx[f.name] = i
+  }
+  r.infer_borrows(m.funcs, 1)
+  r
+}
+
+test "fv_arg_owned: borrowed unless the result's type or a tuple result's" {
+  let x = fv_mod()
+  expect(fv_arg_owned(x.m.types, x.pred, 0)) == false
+  expect(fv_arg_owned(x.m.types, x.acc, 0)) == true
+  expect(fv_arg_owned(x.m.types, x.acc, 1)) == false
+  expect(fv_arg_owned(x.m.types, x.pack, 0)) == true
+  // past the parameters: handed over (a type that is not a function's
+  // is an internal error)
+  expect(fv_arg_owned(x.m.types, x.pred, 1)) == true
+}
+
+test "an indirect function's flags are its type's, fixed by no scan" {
+  var x = fv_mod()
+  fv_body(x.m, "p", x.pred, 0)
+  fv_body(x.m, "a", x.acc, 1)
+  fv_body(x.m, "k", x.pack, 0)
+  // a body returning its borrowed List: still borrowed (it retains)
+  let ks = x.m.func_type([x.list_t], x.m.builtin(Kind.Bool))
+  fv_body(x.m, "keep", ks, 1)
+  let r = fv_rc(x.m)
+  expect(r.borrowed[x.m.func_index("p")]) == [true, true]
+  expect(r.borrowed[x.m.func_index("a")]) == [true, false, true]
+  expect(r.borrowed[x.m.func_index("k")]) == [true, false]
+  expect(r.borrowed[x.m.func_index("keep")]) == [true, true]
+}
+
+test "a call through a function value borrows what the body borrows" {
+  var x = fv_mod()
+  let fi = x.m.new_func("caller", [x.acc, x.list_t, x.str_t], [x.list_t])
+  var f = x.m.funcs[fi]
+  let ps = f.blocks[0].params
+  let cv = f.add(0, Op.CallValue, x.list_t, Aux.None, [ps[0], ps[1], ps[2]])
+  let _r = f.add(0, Op.Return, -1, Aux.None, [cv])
+  x.m.funcs[fi] = f
+  var r = fv_rc(x.m)
+  r.fi = fi
+  expect(r.modes(f, cv)) == [Mode.Borrow, Mode.Consume, Mode.Borrow]
+}

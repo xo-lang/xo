@@ -1568,10 +1568,20 @@ func TestVetCostMapCopy(t *testing.T) {
 	}
 }
 
-// vetCostElemProg: an element passed to a function value is counted up
-// and down each iteration (XO0908, line 3); passed to a named function
-// that only reads it, or pushed into a list kept after, it is not.
-const vetCostElemProg = `fn via_value(xs: List[Str], f: fn(Str) -> Int) -> Int {
+// vetCostElemProg: an element passed to a function value whose result
+// has its type is handed over, so counted up and down each iteration
+// (XO0908, line 3); passed to a function value that borrows it (decision
+// 0337, line 11), to a named function that only reads it, or pushed into
+// a list kept after, it is not.
+const vetCostElemProg = `fn via_value(xs: List[Str], f: fn(Str) -> Str) -> Int {
+  var t = 0
+  for x in xs {
+    t += f(x).len()
+  }
+  t
+}
+
+fn via_borrow(xs: List[Str], f: fn(Str) -> Int) -> Int {
   var t = 0
   for x in xs {
     t += f(x)
@@ -1601,7 +1611,7 @@ fn kept(xs: List[Str]) -> List[Str] {
 
 fn main(os: Os) {
   let xs = ["a", "bb", "ccc"]
-  os.stdio.println("${via_value(xs, fn(s) { s.len() })} ${direct(xs)} ${kept(xs).len()}")
+  os.stdio.println("${via_value(xs, fn(s) { "${s.len()}" })} ${via_borrow(xs, fn(s) { s.len() })} ${direct(xs)} ${kept(xs).len()}")
 }
 `
 
@@ -1637,19 +1647,22 @@ func TestVetCostElemCount(t *testing.T) {
 }
 
 // vetCostCallbackProg: a loop handing struct elements to a function value
-// (line 9: their fields are retained, the call takes the struct), the
-// prelude's callback walks over heap elements (lines 15, 19, 23), and
-// neither the same walks over Int elements or with a heap accumulator
-// only (lines 27, 31) nor a for loop (line 35).
+// whose result is their type (line 9: their fields are retained, the
+// call takes the struct) and a prelude map with such a function (line
+// 52) are noted; since decision 0337 not the prelude's callback walks
+// whose function value borrows the heap elements (lines 15, 19, 23), the
+// same walks over Int elements or with a heap accumulator only (lines
+// 27, 31), a for loop (line 35), or a loop handing the elements to a
+// function value that borrows them (line 46).
 const vetCostCallbackProg = `struct User {
   id: Int
   name: Str
 }
 
-fn via_value(xs: List[User], f: fn(User) -> Int) -> Int {
+fn via_value(xs: List[User], f: fn(User) -> User) -> Int {
   var t = 0
   for u in xs {
-    t += f(u)
+    t += f(u).id
   }
   t
 }
@@ -1683,16 +1696,29 @@ fn by_loop(xs: List[User], want: Str) -> Bool {
   false
 }
 
+fn via_borrow(xs: List[User], f: fn(User) -> Int) -> Int {
+  var t = 0
+  for u in xs {
+    t += f(u)
+  }
+  t
+}
+
+fn renamed(xs: List[User]) -> Int {
+  xs.map(fn(u: User) -> User { User{id: u.id, name: "x"} }).len()
+}
+
 fn main(os: Os) {
   let xs = [User{id: 1, name: "a"}, User{id: 2, name: "bb"}]
-  os.stdio.println("${via_value(xs, fn(u) { u.id })} ${named(xs, "a")} ${evens(xs)} ${total(xs)} ${ints([1, 3])} ${collect([1]).len()} ${by_loop(xs, "a")}")
+  os.stdio.println("${via_value(xs, fn(u) { User{id: u.id, name: "y"} })} ${named(xs, "a")} ${evens(xs)} ${total(xs)} ${ints([1, 3])} ${collect([1]).len()} ${by_loop(xs, "a")} ${via_borrow(xs, fn(u) { u.id })} ${renamed(xs)}")
 }
 `
 
 // TestVetCostCallbacks: XO0908 notes a loop handing struct elements to a
-// function value and the prelude's callback walks over heap elements
-// (gotchas/vet-cost-misses-callbacks.md), and not Int elements, a heap
-// accumulator alone, or a for loop.
+// function value that takes them and a prelude walk whose function value
+// takes them (gotchas/vet-cost-misses-callbacks.md), and not the walks
+// whose function value borrows its element (decision 0337), Int elements,
+// a heap accumulator alone, or a for loop.
 func TestVetCostCallbacks(t *testing.T) {
 	t.Parallel()
 	dir := writeFiles(t, map[string]string{"main.xo": vetCostCallbackProg})
@@ -1718,8 +1744,8 @@ func TestVetCostCallbacks(t *testing.T) {
 		}
 	}
 	sort.Ints(lines)
-	if fmt.Sprint(lines) != "[9 15 19 23]" {
-		t.Errorf("XO0908 at lines %v, want [9 15 19 23]\n%s", lines, out.String())
+	if fmt.Sprint(lines) != "[9 52]" {
+		t.Errorf("XO0908 at lines %v, want [9 52]\n%s", lines, out.String())
 	}
 }
 

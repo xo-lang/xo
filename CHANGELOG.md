@@ -6,6 +6,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- A function value borrows its arguments (decision 0337): a callback
+  that only reads an element (`xs.any(fn(u) { u.name == n })`,
+  `filter`, `fold`, a `fn` parameter) no longer counts its heap fields
+  up and down per call, except an argument of the function's result
+  type (an accumulator) or a `var` closure's value, still handed over
+  and updated in place. Callback walks over structs of two strings:
+  -34% instructions native, -27% LLVM, -43% and -50% on a list shared by
+  two tasks (bench/results/callbacks-0337-2026-10-22.md). `xo vet
+  --cost` XO0908 now notes only the callbacks that still take their
+  element.
+
 - The back-end cache's objects and parts name no directory, so a build
   in another worktree at the same commit reuses them (xo: 0/117 objects
   before): the arm64 emitter's DWARF names the compile directory and

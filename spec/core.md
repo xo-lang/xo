@@ -1760,6 +1760,15 @@ never depend on it, but the time does:
   handle) by counting it up. The cost is the number of heap fields,
   counted through nested structs, never the size of their contents. A
   parameter that is only read is borrowed and costs nothing.
+- An argument passed to a function value (a closure, a `fn` parameter, a
+  named function used as a value) is borrowed too, unless its type is
+  the function's result type or one of a tuple result's (an accumulator
+  threaded through, `fold`'s `fn(A, T) -> A`, or a `fn(var T)` closure's
+  value): that one is handed over, so the body can update it in place.
+  The rule depends on the function type alone (decision 0337); a body
+  that keeps a borrowed argument (returns, stores, or captures it)
+  counts it up then. A move only value of a borrowed position stays the
+  caller's for the call; its first write in the body copies it.
 - Writing a collection or string that another value still shares copies
   it first, O(n), and the writer then holds its own: later writes to it
   are in place (a `push` amortized O(1)). One that nothing else holds is
@@ -2886,7 +2895,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0903` | warning | vet | the error of a filesystem, network, or process call turned into a default (`.ok() ?? d`, or `Err(_) => <empty>` with no NotFound arm), so a transient error gives a smaller answer instead of an error; `// xo:allow XO0903 <reason>` on the line or above it allows one |
 | `XO0906` | note | vet | a `match` that only unwraps an Option or a Result or leaves, which `x ?? return v` (`r ?? e => return v`) writes in one line (core 2.5, 2.6, decision 0321) |
 | `XO0907` | note | vet --cost | a loop that copies every entry of a map before it starts (a log-mode map through a forked view, or a body the in-place walk does not take; decision 0327) |
-| `XO0908` | note | vet --cost | in a loop, an element of a collection made outside it is counted up and down each iteration (passed to a function value, which cannot borrow it), or a prelude method hands each element holding heap memory to a function value (`map`, `filter`, `find`, `any`, `all`, `fold` of a List, Map, or Set; decision 0327) |
+| `XO0908` | note | vet --cost | in a loop, an element of a collection made outside it is counted up and down each iteration (passed to a function value whose result has its type, which takes it), or a prelude method hands each element holding heap memory to such a function value (`map`, `filter`, `find`, `any`, `all`, `fold` of a List, Map, or Set; decisions 0327, 0337) |
 | `XO0909` | note | vet --cost | a list update in a loop that copies the whole list every iteration: the list is also kept in the same iteration (stored, captured, or a name used after the update), so it is shared when the update runs (decision 0327) |
 | `XO0910` | note | vet --cost | a value over 8 words copied where the source shows no copy: captured by a closure, or, in a loop, an element of a collection wrapped whole in an Option or enum value (decision 0327) |
 | `XO0904` | warning | vet | a file an embed constant embeds is ignored or untracked by git, so a build of a clean checkout embeds something else or fails (decision 0304) |

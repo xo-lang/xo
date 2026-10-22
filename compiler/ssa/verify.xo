@@ -1120,6 +1120,8 @@ fn rc_checker(m: Module) -> Rc {
   for (i, f) in m.funcs.indexed() {
     r.fidx[f.name] = i
     r.borrowed.push(f.borrowed)
+    let ps = if f.blocks.is_empty() { [] } else { f.blocks[0].params }
+    r.fparam0.push(if ps.is_empty() || ps[0] >= f.values.len() { -1 } else { f.values[ps[0]].ty })
   }
   r
 }

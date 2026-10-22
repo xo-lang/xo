@@ -10,7 +10,7 @@
 use std/crypto
 
 /// The version of the entries and keys.
-const RC_CACHE_VERSION = "xo rc cache v8"
+const RC_CACHE_VERSION = "xo rc cache v9"
 
 /// What insert_rc_plan computed for the cache: the key of each function
 /// ("" for one not cached), and the pass's state after borrow inference.
@@ -284,7 +284,7 @@ fn borrow_hash(m: Module, fi: Int, r: Rc, tk: List[Str], id: Str) -> Str {
 }
 
 /// The version of the incremental borrow inference's record and hashes.
-pub const BORROW_REC_VERSION = "xo borrow record v1"
+pub const BORROW_REC_VERSION = "xo borrow record v2"
 
 fn bools_text(xs: List[Bool]) -> Str {
   var b = StrBuilder.new()

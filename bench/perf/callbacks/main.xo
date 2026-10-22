@@ -1,0 +1,129 @@
+// Callback walks (decision 0337): a list of 1000 users walked 20,000
+// times for a name never found (20 M element visits), each walk in its
+// own function, by a for loop and through the prelude's callbacks; the
+// same over users of three Ints; and two tasks walking one list shared
+// across threads. Usage: callbacks <workload>; prints
+// "<workload> <checksum> <elapsed microseconds>".
+
+const N = 1000
+const WALKS = 20000
+
+struct User {
+  id: Int
+  name: Str
+  email: Str
+}
+
+struct IUser {
+  id: Int
+  a: Int
+  b: Int
+}
+
+fn users() -> List[User] {
+  var xs: List[User] = []
+  for i in 0..N {
+    xs.push(User{id: i, name: "user${i}", email: "u${i}@example.com"})
+  }
+  xs
+}
+
+fn iusers() -> List[IUser] {
+  var xs: List[IUser] = []
+  for i in 0..N {
+    xs.push(IUser{id: i, a: i * 2, b: i * 3})
+  }
+  xs
+}
+
+fn by_for(xs: List[User], want: Str) -> Bool {
+  for u in xs {
+    if u.name == want {
+      return true
+    }
+  }
+  false
+}
+
+fn by_any(xs: List[User], want: Str) -> Bool {
+  xs.any(fn(u) { u.name == want })
+}
+
+fn by_filter(xs: List[User], want: Str) -> Int {
+  xs.filter(fn(u) { u.name == want }).len()
+}
+
+fn by_fold(xs: List[User], want: Str) -> Int {
+  xs.fold(0, fn(t, u) { if u.name == want { t + 1 } else { t } })
+}
+
+fn i_for(xs: List[IUser], want: Int) -> Bool {
+  for u in xs {
+    if u.a == want {
+      return true
+    }
+  }
+  false
+}
+
+fn i_any(xs: List[IUser], want: Int) -> Bool {
+  xs.any(fn(u) { u.a == want })
+}
+
+fn i_fold(xs: List[IUser], want: Int) -> Int {
+  xs.fold(0, fn(t, u) { if u.a == want { t + 1 } else { t } })
+}
+
+fn walk(xs: List[User], w: Str, want: Str) -> Int {
+  var n = 0
+  for _ in 0..WALKS {
+    if w == "for" && by_for(xs, want) {
+      n += 1
+    } else if w == "any" && by_any(xs, want) {
+      n += 1
+    } else if w == "filter" {
+      n += by_filter(xs, want)
+    } else if w == "fold" {
+      n += by_fold(xs, want)
+    }
+  }
+  n + WALKS
+}
+
+fn iwalk(xs: List[IUser], w: Str) -> Int {
+  var n = 0
+  for _ in 0..WALKS {
+    if w == "ifor" && i_for(xs, -1) {
+      n += 1
+    } else if w == "iany" && i_any(xs, -1) {
+      n += 1
+    } else if w == "ifold" {
+      n += i_fold(xs, -1)
+    }
+  }
+  n + WALKS
+}
+
+fn main(os: Os) {
+  let args = os.env.args()
+  let w = args.get(0) ?? "any"
+  let xs = users()
+  let ixs = iusers()
+  let want = "nobody"
+  let t0 = os.clock.now()
+  var sum = 0
+  if w.starts_with("i") {
+    sum = iwalk(ixs, w)
+  } else if w.starts_with("two_") {
+    let k = w[4..w.len()]
+    scope s {
+      let a = s.spawn(fn() -> Int { walk(xs, k, want) })
+      let b = s.spawn(fn() -> Int { walk(xs, k, want) })
+      sum = a.await + b.await
+    }
+  } else {
+    sum = walk(xs, w, want)
+  }
+  let us = os.clock.since(t0).nanos() / 1000
+  os.stdio.println("${w} ${sum} ${us}")
+}

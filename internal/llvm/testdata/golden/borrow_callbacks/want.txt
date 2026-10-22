@@ -1,0 +1,16 @@
+exit 0
+--- stdout
+any true all true
+filter 143 count 100
+fold 6890
+map user5 u6@x 3 user2
+acc 10000 user999.9
+alias 6 3 3 3
+getters user998 user999
+tasks 9 13
+kept 1000 user3
+bad nine1000 nine1000
+update 334 user5
+with 5 u4@x
+shared 382
+--- stderr

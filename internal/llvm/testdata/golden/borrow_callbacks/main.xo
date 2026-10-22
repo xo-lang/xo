@@ -1,0 +1,135 @@
+// Function values borrow their arguments (decision 0337): any, filter,
+// map and fold over heap elements; a fold whose List accumulator (the
+// result type) is handed over and updated in place 10,000 times; bodies
+// that keep a borrowed argument (return it, push it, capture it in a
+// closure or a spawned task, store it in a struct) and so count it up;
+// a callback that fails with its argument borrowed; Map.update's and
+// Mutex.with's `var` closures; a named function that keeps its
+// parameter passed as a value; the same walk by two tasks over one list
+// shared across threads. TestGolden's XO_LEAKCHECK=1 run checks every
+// value is freed.
+struct User {
+  id: Int
+  name: Str
+  email: Str
+}
+
+struct Box1 {
+  u: User
+}
+
+struct Holder {
+  l: List[Int]
+}
+
+fn keep_name(s: Str) -> List[Str] {
+  [s, s]
+}
+
+fn users(n: Int) -> List[User] {
+  var xs: List[User] = []
+  for i in 0..n {
+    xs.push(User{id: i, name: "user${i}", email: "u${i}@x"})
+  }
+  xs
+}
+
+fn count_with(xs: List[User], f: fn(User) -> Bool) -> Int {
+  var n = 0
+  for u in xs {
+    if f(u) {
+      n += 1
+    }
+  }
+  n
+}
+
+fn parse_all(xs: List[Str], parse: fn(Str) -> Int ! Str) -> Int ! Str {
+  var t = 0
+  for x in xs {
+    t += parse(x)?
+  }
+  t
+}
+
+fn main(os: Os) {
+  let xs = users(1000)
+  let want = "user777"
+  // read only: borrowed, nothing counted
+  os.stdio.println("any ${xs.any(fn(u) { u.name == want })} all ${xs.all(fn(u) { u.email.len() > 3 })}")
+  os.stdio.println("filter ${xs.filter(fn(u) { u.id % 7 == 0 }).len()} count ${count_with(xs, fn(u) { u.name.ends_with("9") })}")
+  os.stdio.println("fold ${xs.fold(0, fn(t, u) { t + u.name.len() })}")
+  // keeps: map returns a field, a struct, the argument itself
+  let names = xs.map(fn(u) { u.name })
+  let boxed = xs.map(fn(u) { Box1{u: u} })
+  let same = xs.filter(fn(u) { u.id < 3 }).map(fn(u: User) -> User { u })
+  os.stdio.println("map ${names[5]} ${boxed[6].u.email} ${same.len()} ${same[2].name}")
+  // the accumulator is the result type: handed over, pushed in place
+  let all = xs.fold([], fn(acc: List[Str], u: User) -> List[Str] {
+    var a = acc
+    for k in 0..10 {
+      a.push("${u.name}.${k}")
+    }
+    a
+  })
+  os.stdio.println("acc ${all.len()} ${all[9999]}")
+  // an owned accumulator that a borrowed element also holds: the first
+  // push copies it (the element still holds it), the next ones are in
+  // place, and the elements keep the original
+  let base = [1, 2, 3]
+  let hs = [Holder{l: base}, Holder{l: base}, Holder{l: base}]
+  let grown = hs.fold(base, fn(acc: List[Int], h: Holder) -> List[Int] {
+    var a = acc
+    a.push(h.l.len())
+    a
+  })
+  os.stdio.println("alias ${grown.len()} ${grown[5]} ${base.len()} ${hs[2].l.len()}")
+  // a body that keeps its borrowed argument in a closure and a task
+  let getters = xs.filter(fn(u) { u.id >= 998 }).map(fn(u: User) -> fn() -> Str { fn() -> Str { u.name } })
+  os.stdio.println("getters ${getters[0]()} ${getters[1]()}")
+  let lens = xs.map(fn(u: User) -> Int {
+    var n = 0
+    scope s {
+      let t = s.spawn(fn() -> Int { u.name.len() + u.email.len() })
+      n = t.await
+    }
+    n
+  })
+  os.stdio.println("tasks ${lens[0]} ${lens[999]}")
+  // a named function that keeps its parameter, passed as a value
+  let kept = names.map(keep_name)
+  os.stdio.println("kept ${kept.len()} ${kept[3][1]}")
+  // a failing callback: its argument is still the caller's
+  let digits = fn(s: Str) -> Int ! Str {
+    if s == "one" {
+      return 1
+    }
+    Err("bad ${s}")
+  }
+  let words = ["one", "one", "nine${xs.len()}"]
+  match parse_all(words, digits) {
+    Ok(n) => os.stdio.println("ok ${n}")
+    Err(e) => os.stdio.println("${e} ${words[2]}")
+  }
+  // var closures: Map.update and Mutex.with own their value
+  var m: Map[Str, List[Str]] = {}
+  for u in xs {
+    m.update("k${u.id % 3}", [], fn(var l) { l.push(u.name) })
+  }
+  let k0 = m.get("k0") ?? []
+  let k2 = m.get("k2") ?? []
+  os.stdio.println("update ${k0.len()} ${k2[1]}")
+  let mu = Mutex[List[Str]].new([])
+  for u in xs.filter(fn(u) { u.id < 5 }) {
+    mu.with(fn(var l) { l.push(u.email) })
+  }
+  os.stdio.println("with ${mu.with_read(fn(l) { l.len() })} ${mu.with_read(fn(l) { l[4] })}")
+  // two tasks walking one shared list through callbacks
+  var hits = 0
+  scope s {
+    let a = s.spawn(fn() -> Int { xs.filter(fn(u) { u.name.contains("5") }).len() })
+    let b = s.spawn(fn() -> Int { xs.fold(0, fn(t, u) { if u.email.starts_with("u1") { t + 1 } else { t } }) })
+    hits = a.await + b.await
+  }
+  os.stdio.println("shared ${hits}")
+}
