@@ -1,0 +1,81 @@
+#!/bin/bash
+# scripts/ci/windows-race.sh: windows/amd64 --race with threads (decision
+# 0273's Windows addendum), the CI run its Wine checks could not be
+# (XO_THREADS=1 there; gotchas/tsan-go-flavor-windows.md). For suite=script
+# on the xo-windows runner:
+#   gh workflow run ci.yml -f suite=script -f runner=xo-windows \
+#     -f packages="scripts/ci/windows-race.sh"
+# ThreadSanitizer's Go flavor (race_windows_amd64.syso, scripts/race-runtime.sh
+# windows-amd64: MinGW in Docker, which the runner lacks) comes from
+# $XO_RACE_RUNTIME, else ci/race/race_windows_amd64.syso of the seed bucket
+# ($XO_SEED_BUCKET, the runner's read only instance profile), checked
+# against RT_SHA256. Builds internal/llvm/testdata's tsan_race, race_sync and
+# race_stacks with --race --backend=amd64 and runs each with XO_THREADS
+# unset (one worker per CPU), 4 and 1, REPS times: the planted race found
+# (exit 66), every race_sync case clean when synchronized and reported when
+# not (lazy_const clean both ways), race_stacks' 200 isolated faults caught
+# and its race reported with its stacks. $XO_CI_OUT/windows-race.txt has a
+# line per run; exit 1 on any mismatch.
+set -uo pipefail
+RT_SHA256=cbab2689849964a299312a7d5de5e2c0553c1b27bf90fca5a5f488fcb7826b11
+REPS=${REPS:-3}
+out=${XO_CI_OUT:?XO_CI_OUT}
+np() { if command -v cygpath >/dev/null; then cygpath -w "$1"; else echo "$1"; fi; }
+up() { if command -v cygpath >/dev/null; then cygpath -u "$1"; else echo "$1"; fi; }
+o=$(up "$out")
+rt=${XO_RACE_RUNTIME:-}
+if [ -z "$rt" ]; then
+  rt="$o/race_windows_amd64.syso"
+  aws s3 cp --only-show-errors "s3://${XO_SEED_BUCKET:?XO_SEED_BUCKET}/ci/race/race_windows_amd64.syso" "$(np "$rt")" || { echo "windows-race: the runtime is not in the bucket (ci/race/race_windows_amd64.syso)"; exit 2; }
+fi
+got=$(sha256sum "$(up "$rt")" | cut -d' ' -f1)
+[ "$got" = "$RT_SHA256" ] || { echo "windows-race: runtime SHA-256 $got, want $RT_SHA256"; exit 2; }
+export XO_RACE_RUNTIME
+XO_RACE_RUNTIME=$(np "$(up "$rt")")
+sum="$o/windows-race.txt"
+: > "$sum"
+fail=0
+for p in tsan_race race_sync race_stacks; do
+  if ! "$XO_CLI" build --race --backend=amd64 -o "$(np "$o/$p.exe")" "internal/llvm/testdata/$p" > "$o/build-$p.txt" 2>&1; then
+    echo "FAIL build $p: $(tail -3 "$o/build-$p.txt")" | tee -a "$sum"
+    fail=1
+  fi
+done
+[ $fail = 0 ] || exit 1
+# one run: NAME EXE WANT_EXIT WANT_RACES(+ for at least one, 0 for none) [GREP]
+check() {
+  local name=$1 exe=$2 want=$3 races=$4 grep=${5:-}
+  "$o/$exe" > "$o/run.out" 2> "$o/run.err"
+  local rc=$? n
+  n=$(grep -c "WARNING: DATA RACE" "$o/run.err")
+  local ok=1
+  [ "$rc" = "$want" ] || ok=0
+  if [ "$races" = 0 ]; then [ "$n" = 0 ] || ok=0; else [ "$n" -ge 1 ] || ok=0; fi
+  # (grep the files: with pipefail, cat | grep -q fails on cat's SIGPIPE)
+  if [ -n "$grep" ]; then grep -q -- "$grep" "$o/run.out" "$o/run.err" || ok=0; fi
+  local line="$name exit=$rc races=$n"
+  if [ $ok = 1 ]; then echo "ok   $line" >> "$sum"; else
+    echo "FAIL $line (want exit $want, races $races${grep:+, \"$grep\"})" | tee -a "$sum"
+    tail -20 "$o/run.err" | sed 's/^/     /' >> "$sum"
+    fail=1
+  fi
+}
+cases="spawn join scope chan chan_buffered select mutex await_done atomic atomic_add map_grow"
+for threads in "" 4 1; do
+  if [ -n "$threads" ]; then export XO_THREADS=$threads; else unset XO_THREADS; fi
+  t=${threads:-cpus}
+  for r in $(seq 1 "$REPS"); do
+    check "t=$t r=$r tsan_race" tsan_race.exe 66 +
+    for c in $cases; do
+      XO_RACE_CASE=$c XO_RACE_SYNC=1 check "t=$t r=$r race_sync $c sync=1" race_sync.exe 0 0
+      XO_RACE_CASE=$c XO_RACE_SYNC=0 check "t=$t r=$r race_sync $c sync=0" race_sync.exe 66 +
+    done
+    for s in 1 0; do
+      XO_RACE_CASE=lazy_const XO_RACE_SYNC=$s check "t=$t r=$r race_sync lazy_const sync=$s" race_sync.exe 0 0
+    done
+    check "t=$t r=$r race_stacks" race_stacks.exe 66 + "faults 200"
+    grep -q "touch()" "$o/run.err" && grep -q "created at" "$o/run.err" || { echo "FAIL t=$t r=$r race_stacks: no touch() frame or created at stack" | tee -a "$sum"; fail=1; }
+  done
+done
+echo "windows-race: $(grep -c '^ok' "$sum") ok, $(grep -c '^FAIL' "$sum") failed"
+exit $fail
