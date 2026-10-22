@@ -140,6 +140,9 @@ pub struct Gen {
   nlabel: Int = 0
   /// Per block: the LLVM block its terminator is in, and its text.
   ends: List[Str] = []
+  /// The blocks whose terminator closes a loop with Float arithmetic
+  /// (ssa.float_loop_latches): its br carries !llvm.loop (decision 0338)
+  unroll_latch: List[Bool] = []
   texts: List[Str] = []
   /// Per value: a release whose retain was cancelled.
   cancel: List[Bool] = []

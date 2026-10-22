@@ -135,3 +135,22 @@ figure; wall time is not (the machine's load differed between runs).
 The -O3 build was stopped to free the slot (lead, 2026-10-22 00:45) and
 is queued for a quiet window. The max RSS difference runs the other way
 from the CPU time; with one run each it is not taken as a result.
+
+## Decision 0338's per-loop marks instead (2026-10-22)
+
+The same build with the loops with Float arithmetic marked
+`llvm.loop.unroll.full` (-pragma-unroll-threshold=300, at threshold 150
+otherwise; a clang wrapper rewriting the IR, the prototype of 0338),
+paired in one bulk slot with the -O2 before 0333 (the flag stripped):
+
+| build | user CPU | wall | max RSS | __text |
+| --- | ---: | ---: | ---: | ---: |
+| -O2, 0338's marks | 2,075 s | 2,713 s | 8.3 G | 2,395,012 |
+| -O2 (before 0333) | 2,336 s | 3,927 s | 6.6 G | 2,395,012 |
+
+xo's text is the same size with the marks (17 of its 8,801 loops have
+Float arithmetic; none unrolls into more code). The two -O2 controls
+(1,924 s here before, 2,336 s now) show the machine's noise: the marks
+cost nothing measurable. nbody with 0338 (the gate's xo): 1,159.7 M
+instructions, 0333's speed; collatz, fib, interp, sieve, sort and
+strings within 0.1% of 0333, outputs identical.

@@ -170,24 +170,32 @@ fn single_lto_flags(mode: Str) -> List[Str] {
   }
 }
 
-/// The loop unroll threshold of an -O2 build (decision 0333): -O3's 300
-/// instead of -O2's 150, for compiling and for an LTO link (lto, the
-/// build's mode), which unrolls again: neither Apple's clang nor
-/// Debian's passes `-mllvm` to the linker's LTO, so darwin's ld64 gets
-/// `-mllvm` and a Linux linker the plugin's option (which GNU ld refuses
-/// without LTO). nbody at -O3's speed (2,308 to 1,160 M instructions),
-/// the rest flat, the TLS program's text +1.6%
-/// (bench/results/llvm-o2-unroll-2026-10-21.md). Among the link flags,
-/// so the binary cache keys on it and split_build compiles with it.
+/// The limits of the loops the IR marks for full unrolling (decision
+/// 0338: the loops with Float arithmetic, llvm func.xo loop_md): an
+/// unrolled size of 300, -O3's unroll threshold, instead of LLVM's 16,384
+/// for a marked loop, and at most 32 iterations instead of 1,000,000 (a
+/// marked loop of 20,000 iterations around inlined loops kept clang's
+/// compile of a small program busy for over 13 minutes); every other loop
+/// keeps the level's own threshold (decision 0333's module wide 300 cost
+/// xo's own build 12.8% more CPU). For compiling and
+/// for an LTO link (lto, the build's mode), which unrolls again: neither
+/// Apple's clang nor Debian's passes `-mllvm` to the linker's LTO, so
+/// darwin's ld64 gets `-mllvm` and a Linux linker the plugin's option
+/// (which GNU ld refuses without LTO). nbody at -O3's speed (2,318 to
+/// 1,160 M instructions). Among the link flags, so the binary cache keys
+/// on it and split_build compiles with it.
 fn unroll_flags(opt: Str, goos: Str, lto: Str) -> List[Str] {
-  if opt != "-O2" {
+  if opt == "-O0" {
     return []
   }
-  let u = "-unroll-threshold=300"
-  if lto == "none" {
-    return ["-mllvm", u]
+  var out: List[Str] = []
+  for u in ["-pragma-unroll-threshold=300", "-pragma-unroll-full-max-iterations=32"] {
+    out = out + ["-mllvm", u]
+    if lto != "none" {
+      out.push(if goos == "darwin" { "-Wl,-mllvm,${u}" } else { "-Wl,-plugin-opt=${u}" })
+    }
   }
-  if goos == "darwin" { ["-mllvm", u, "-Wl,-mllvm,${u}"] } else { ["-mllvm", u, "-Wl,-plugin-opt=${u}"] }
+  out
 }
 
 /// ltoFlags of a split build.

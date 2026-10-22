@@ -1,6 +1,6 @@
 # 0333: LLVM -O2 builds unroll at threshold 300
 
-Status: Accepted (owner, 2026-10-21). Implementation: Xo lang 4.
+Status: Superseded by 0338 (2026-10-22: the loops with Float arithmetic are marked for full unrolling instead of a module wide threshold). Was: Accepted (owner, 2026-10-21). Implementation: Xo lang 4.
 
 ## Context
 

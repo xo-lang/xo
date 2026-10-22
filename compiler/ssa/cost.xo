@@ -462,6 +462,56 @@ fn loop_of(f: Func, idom: List[Int], h: Int) -> List[Bool] {
   if any { inl } else { [] }
 }
 
+/// The blocks of f whose terminator is a back edge of a natural loop with
+/// Float arithmetic (an Add, Sub, Mul, or Div of a Float) in its body:
+/// the LLVM backend marks those loops for full unrolling (decision 0338).
+pub fn float_loop_latches(m: Module, f: Func) -> List[Bool] {
+  var out: List[Bool] = []
+  for _ in f.blocks {
+    out.push(false)
+  }
+  var fl: List[Bool] = []
+  for bl in f.blocks {
+    var has = false
+    for v in bl.instrs {
+      let x = f.values[v]
+      if x.op is Op.Add | Op.Sub | Op.Mul | Op.Div && m.types[x.ty].kind == Kind.Float {
+        has = true
+      }
+    }
+    fl.push(has)
+  }
+  if !fl.contains(true) {
+    return out
+  }
+  let idom = dominators(f)
+  for (h, bl) in f.blocks.indexed() {
+    if idom[h] < 0 {
+      continue
+    }
+    let inl = loop_of(f, idom, h)
+    if inl.is_empty() {
+      continue
+    }
+    var has = false
+    for (b, i) in inl.indexed() {
+      if i && fl[b] {
+        has = true
+      }
+    }
+    if !has {
+      continue
+    }
+    for e in bl.preds {
+      let b = f.edges[e].from
+      if b >= 0 && udom(idom, h, b) {
+        out[b] = true
+      }
+    }
+  }
+  out
+}
+
 /// The values over this many words (a cache line) are noted when a
 /// closure captures one or an Option or enum value holds one (XO0910).
 const LARGE_WORDS = 8

@@ -442,6 +442,7 @@ fn (var g: Gen) lower_func(fi: Int) {
   for _ in 0..g.f.values.len() {
     g.blk.push(-1)
   }
+  g.unroll_latch = ssa.float_loop_latches(g.m, g.f)
   g.ends = []
   g.texts = []
   for b in 0..g.f.blocks.len() {
@@ -1321,18 +1322,35 @@ fn (var g: Gen) instr_body(v: Int) {
       g.set(v, "phi ptr [ ${c0}, %${from} ], [ ${cp}, %${slow} ]")
     }
     Jump => {
-      g.emit("br label %${bname(g.edge_to(x.succs[0]))}")
+      let md = g.loop_md(g.blk[v])
+      g.emit("br label %${bname(g.edge_to(x.succs[0]))}${md}")
       g.ends[g.blk[v]] = g.label
     }
     Branch => {
       let a0 = g.op(args[0])
-      g.emit("br i1 ${a0}, label %${bname(g.edge_to(x.succs[0]))}, label %${bname(g.edge_to(x.succs[1]))}")
+      let md = g.loop_md(g.blk[v])
+      g.emit("br i1 ${a0}, label %${bname(g.edge_to(x.succs[0]))}, label %${bname(g.edge_to(x.succs[1]))}${md}")
       g.ends[g.blk[v]] = g.label
     }
     Return => g.ret(v)
     Unreachable => g.emit("unreachable")
     _ => g.fail("the SSA lowering does not support `${ssa.op_name(x.op)}`")
   }
+}
+
+/// The !llvm.loop of block b's terminator: a loop of its own (distinct,
+/// so LLVM tells the loops apart after inlining) marked for full
+/// unrolling when b closes a loop with Float arithmetic (decision 0338;
+/// the size limit is the link's -pragma-unroll-threshold, split.xo
+/// unroll_flags), else nothing.
+fn (var g: Gen) loop_md(b: Int) -> Str {
+  if b < 0 || b >= g.unroll_latch.len() || !g.unroll_latch[b] {
+    return ""
+  }
+  let full = g.dbg_node("!{!\"llvm.loop.unroll.full\"}")
+  let k = g.dbg_n + 1
+  let _ = g.dbg_node("distinct !{!${k}, !${full}}")
+  ", !llvm.loop !${k}"
 }
 
 /// A field read (OpField).
