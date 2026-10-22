@@ -7,7 +7,7 @@
 // nothing, and that a copy left elsewhere has its source's value.
 //
 // Records here: the context (ctx.xo, decision 0229), the deadlock counts
-// (pool.xo, ctx.xo).
+// (pool.xo, ctx.xo), the pool and worker records (pool.xo).
 
 /// The context record (ctx.xo; xo_ctx in the C runtime it came from,336 bytes, 16 aligned; the owner of each field in decision 0229):
 /// the innermost cancellation node (a scope body or the task's node).
@@ -118,3 +118,105 @@ pub const DLK_NPBLK = 8
 pub const DLK_MNOYIELD = 9
 /// the record's bytes (ten words)
 pub const DLK_SIZE = 80
+
+/// The pool record (pool.xo; made by ctx.xo init; word indexes for the slot atomics and
+/// byte offsets for loads): its lock (pool.mu: the idle list,
+/// starting workers), the CPUs, the spin rounds, the records used, the
+/// worker threads alive, idle, and spinning, the idle list, the inject
+/// queue's lock, buffer, head, length, and capacity, the fiber cache's
+/// record, the address of xo_x_worker_main, and the records from word 16.
+pub const P_MU = 0
+pub const P_NCPU = 8
+pub const P_SPIN_ROUNDS = 16
+pub const P_NW = 3
+pub const P_ALIVE = 4
+pub const P_NIDLE = 5
+pub const P_SPINNING = 6
+pub const P_IDLE = 56
+pub const P_IMU = 64
+pub const P_IBUF = 72
+pub const P_IHEAD = 80
+pub const P_ILEN = 11
+pub const P_ILEN_AT = 88
+pub const P_ICAP = 96
+pub const P_FIBERS = 104
+pub const P_WORKER_MAIN = 112
+pub const P_DLK = 120
+pub const P_WS = 128
+
+/// xo_worker (byte offsets): the ring (sched.xo), next and when it was
+/// put there, live, the hooks word, the idle futex word (word 279), the
+/// idle list's link, the steal rounds' random state, nonext, the fiber
+/// cache and its count, the pool, and a scratch batch of RUNQ / 2 + 1
+/// words (a steal's, the inject queue's share, a full ring's half).
+pub const W_NEXT = 2184
+pub const W_NEXT_I = 273
+pub const W_NEXT_AT = 2192
+pub const W_LIVE = 2200
+pub const W_HOOKS = 2216
+pub const W_WAKEW = 2232
+pub const W_WAKEW_I = 279
+pub const W_IDLE_NEXT = 2240
+pub const W_RNG = 2248
+pub const W_NONEXT = 2256
+pub const W_FCACHE = 2264
+pub const W_NFCACHE = 2328
+pub const W_POOL = 2360
+pub const W_BATCH = 2368
+/// When this worker took a deferred wake (defer_wake), 0 for none.
+pub const W_DEFER_AT = 3400
+/// A root's record (poolsetup.xo W_ROOT: main's thread, not a worker).
+pub const W_ROOT = 2204
+/// W_DEFER_AT as a word index (the slot atomics; a constant: `W_DEFER_AT
+/// / 8` was divided at run time, 2026-10-16).
+pub const W_DEFER_AT_W = 425
+/// The waker's runtime calls since (defer_check reads the clock every
+/// 16th).
+pub const W_DEFER_N = 3408
+/// The execution trace's current chunk of this worker (trace.xo
+/// W_CHUNK, decision 0240), 0 when off.
+pub const W_TRACE = 3416
+/// When this worker last granted readers a RWMutex (mutex.xo
+/// grant_readers; ns): a thief leaves its ring alone for GRACE_NS after
+/// (steal_round), so the granted readers run here, with the lock's cache
+/// lines and the value, when this worker gets to them in time.
+pub const W_GRACE_AT = 3424
+pub const W_GRACE_AT_W = 428
+/// The least time a steal round of this worker found left on another's
+/// grace (ns, 0 when none): find_work waits it out once, the bound on how
+/// long a grant can wait for a worker that keeps computing.
+pub const W_GRACE_WAIT = 3432
+/// Whether this worker's thread holds the pool's lock (plock, checked by
+/// klock when XO_LOCKCHECK=1).
+pub const W_POOLHELD = 3440
+/// When this worker started running its current fiber (mono ns, 0 between
+/// items; slot word 431), and when the monitor asked it to yield (mono
+/// ns, 0 for not asked; slot word 432): preemption (decision 0286 step 3,
+/// mon_scan, preempt).
+pub const W_RUN_AT_I = 431
+pub const W_PREEMPT_I = 432
+/// How many runtime locks this worker's thread holds (held): preempt
+/// yields only at none (decision 0286 step 3: std's loops poll, and the
+/// runtime calls std with its spin locks held).
+pub const W_LOCKS = 3464
+/// Asynchronous preemption (decision 0318): the fibers this worker
+/// preempted with SIGURG (head and tail, linked by F_NEXT), which only it
+/// resumes; its thread (darwin's pthread_t, Linux's thread id) for the
+/// monitor's signal; 1 while its run loop runs fibers (worker_main,
+/// root_main); 1 between the handler's yield and run_fiber's requeue;
+/// SIGURG's bit in a signal set (the handler's unblock).
+pub const W_PIN = 3472
+pub const W_PIN_TAIL = 3480
+pub const W_THREAD = 3488
+pub const W_APOK = 3496
+pub const W_ASYNC = 3504
+pub const W_URGSET = 3512
+/// The fiber this worker runs (run_fiber; 0 between fibers): Windows'
+/// preemption reads it from the monitor's thread (decision 0318).
+pub const W_RUNF = 3520
+/// The record's size; poolsetup.xo's W_SIZE (the root's record) must match
+/// (XO_HEAP_GUARD found it 8 bytes short, 2026-10-20).
+pub const W_SIZE = 3528
+/// The pool record's size (pool.xo P_*: 16 words, then the 4096 worker
+/// records' addresses; ctx.xo makes it).
+pub const P_SIZE = 32896

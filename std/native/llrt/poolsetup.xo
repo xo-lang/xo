@@ -5,6 +5,7 @@
 // thread's record, which it makes on first use. Not in pool.xo: these
 // read the environment through process.xo, which stdio.xo's imports
 // reach, and stdio.xo imports pool.xo.
+use native/llrt/layout
 use native/llrt/ctx
 use native/llrt/linux
 use native/llrt/obj
@@ -21,20 +22,20 @@ use native/sys_windows
 /// spin rounds (pool.xo P_*); a worker record's size, live and root
 /// flags (pool.xo W_*); the thread local of the worker record (sched.xo
 /// TLS_W).
-const P_MU = 0
-const P_NCPU = 8
-const P_SPIN_ROUNDS = 16
-const P_FIBERS = 104
-const P_WORKER_MAIN = 112
-const P_DLK = 120
+const P_MU = layout.P_MU
+const P_NCPU = layout.P_NCPU
+const P_SPIN_ROUNDS = layout.P_SPIN_ROUNDS
+const P_FIBERS = layout.P_FIBERS
+const P_WORKER_MAIN = layout.P_WORKER_MAIN
+const P_DLK = layout.P_DLK
 /// The fiber cache's stack size, page size, and fiber entry (pool.xo
 /// FS_*).
 const FS_STACK = 24
 const FS_PAGE = 32
 const FS_MAIN = 40
-const W_SIZE = 3528
-const W_LIVE = 2200
-const W_ROOT = 2204
+const W_SIZE = layout.W_SIZE
+const W_LIVE = layout.W_LIVE
+const W_ROOT = layout.W_ROOT
 const TLS_W = 2
 
 const ACQUIRE = 1

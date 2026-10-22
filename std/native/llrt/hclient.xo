@@ -467,13 +467,13 @@ const P_HP = 104
 const P_BROKEN = 112
 const P_GOAWAY = 116
 const P_SPENT = 120
-const P_IDLE = 128
+const P_IDLE = 128 // own: an HTTP/2 connection's idle time, not the pool record's
 const P_OUT = 136
 const P_OUT_N = 144
 /// 1 for an HTTP/1.1 connection (decision 0303: pooled between requests,
 /// no HTTP/2 state), 0 for HTTP/2
 const P_H1 = 152
-const P_SIZE = 160
+const P_SIZE = 160 // own: an HTTP/2 connection record's size, not the pool record's
 
 /// An exchange on a connection (r's h2, an obj.xo object): the
 /// connection, whether it came from the pool (a failure before an answer

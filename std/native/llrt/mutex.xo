@@ -7,6 +7,7 @@
 //
 // Generated code calls the exports (cabi.xo mutex_*) directly; the C
 // entry points forward for older xo's code.
+use native/llrt/layout
 use native/llrt/budget
 use native/llrt/ctx
 use native/llrt/fault
@@ -59,7 +60,7 @@ const GRANTED = 4294967296
 /// The thread's worker record's flag that puts the fibers it wakes in
 /// its ring, not its next (pool.xo W_NONEXT), and its thread local
 /// (sched.xo TLS_W).
-const W_NONEXT = 2256
+const W_NONEXT = layout.W_NONEXT
 const TLS_W = 2
 
 const RELAXED = 0

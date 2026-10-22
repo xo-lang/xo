@@ -181,7 +181,7 @@ fn root_out(k: Int) -> Int {
 /// the pool record's word of the deadlock counts (pool.xo P_DLK), and
 /// the counts' word of the roots made.
 const N_BYTES = 56
-const P_DLK = 120
+const P_DLK = layout.P_DLK
 const DLK_ROOTS = layout.DLK_ROOTS
 
 /// The pool record's size (pool.xo P_*: 16 words, then the 4096 worker
@@ -194,7 +194,7 @@ const DLK_ROOTS = layout.DLK_ROOTS
 /// XO_MUTEX_YIELD=0, DLK_MNOYIELD), made by
 /// init from the runtime's malloc and never freed (were xo_rt.c's
 /// statics `pool` and `dlk`).
-const P_SIZE = 32896
+const P_SIZE = layout.P_SIZE
 const DLK_SIZE = layout.DLK_SIZE
 
 /// A root context for a thread that runs Xo code outside any task (the

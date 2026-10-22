@@ -10,6 +10,7 @@
 //
 // Generated code calls the exports (cabi.xo) directly; the C entry
 // points forward for older xo's code.
+use native/llrt/layout
 use native/llrt/budget
 use native/llrt/ctx
 use native/llrt/fault
@@ -97,7 +98,7 @@ const H_FREE = 8
 /// The pool record's worker count (pool.xo P_NCPU: 0 until the pool's
 /// setup ran) and the thread locals of the fiber and worker record
 /// (sched.xo TLS_FIB, TLS_W).
-const P_NCPU = 8
+const P_NCPU = layout.P_NCPU
 const TLS_FIB = 1
 /// The thread local word of the thread's spare context (run_claimed;
 /// sched.xo's table of the words).

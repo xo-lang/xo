@@ -112,3 +112,23 @@ step 1 method (lay-ident3.sh on this tree, line numbers in the embedded
 locations normalized): 27 of 27 programs the same by disassembly; the
 arm64 runtime goldens (task, chan, conc, mutex, fault, scope, select,
 panic, isolate) pass.
+
+## Step 3 (2026-10-22): the pool and worker records
+
+P_MU to P_WS, P_SIZE (the pool record) and W_NEXT to W_SIZE (the worker
+record, with its word index names W_*_I and W_*_W) moved to layout.xo from
+pool.xo (which keeps them as aliases). The copies in ctx.xo (P_DLK,
+P_SIZE), poolsetup.xo (nine), sanhook.xo (W_HOOKS, W_POOL, P_FIBERS),
+sched.xo, mutex.xo and tasks.xo use layout.xo; tracerec.xo's W_CHUNK, a
+second name for the worker's trace field, is layout.W_TRACE. Three
+constants that only share a name are marked `// own:` (hclient.xo P_IDLE
+and P_SIZE, twrun.xo P_SIZE); two static word indices that shared a worker
+field's name are renamed (testworld.xo W_RNG to W_TWRNG, tracerec.xo W_TRACE
+to W_TRACEREC: TestStaticWords wants the number on the const's line).
+Checked as step 2, except that the disassembly comparison also ignores the
+literal pool offsets that follow a location string whose line number changed
+length (the same instructions; `add x3, x3, #0x9c9` against `#0x9ca`):
+26 of 27 programs identical; json_wire_names differs in one `adrp` page
+(46 against 47), the data after the shifted strings crossing a 4 KiB boundary.
+
+

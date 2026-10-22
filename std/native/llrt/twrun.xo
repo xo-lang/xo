@@ -102,7 +102,7 @@ const P_WCLOSED = 24
 const P_RCLOSED = 32
 const P_WAITERS = 40
 const P_REFS = 56
-const P_SIZE = 64
+const P_SIZE = 64 // own: the in-memory pipe record's size, not the pool record's
 const PIPE_CAP = 65536
 
 /// One end of a raw in memory connection: the pipe it reads, the pipe it

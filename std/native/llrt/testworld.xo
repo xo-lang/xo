@@ -40,7 +40,7 @@ use native/sys_windows
 /// the lock, Rand's PCG state (high, low), the MemFs lock and state (an
 /// rt.Any's object, or 0), and the state record.
 const W_LOCK = 34
-const W_RNG = 35
+const W_TWRNG = 35
 const W_MEMFS_LOCK = 37
 const W_MEMFS = 38
 const W_STATE = 39
@@ -338,7 +338,7 @@ pub fn init() -> Int {
       seed = first_number(s)
     }
   }
-  let g = rt.static_word(W_RNG)
+  let g = rt.static_word(W_TWRNG)
   rt.mem_store(g, 0, seed, 8)
   rt.mem_store(g, 8, seed ^ -7046029254386353131, 8)
   twflags.set(bits)
@@ -526,7 +526,7 @@ pub fn reset_test(seed: Int, prop: Bool, case_seed: Int) {
   blk_free(rt.mem_load(s, S_IN, 8))
   rt.mem_store(s, S_IN, 0, 8)
   rt.mem_store(s, S_IN_OFF, 0, 8)
-  let g = rt.static_word(W_RNG)
+  let g = rt.static_word(W_TWRNG)
   rt.mem_store(g, 0, seed, 8)
   rt.mem_store(g, 8, seed ^ -7046029254386353131, 8)
   unlock()
@@ -658,7 +658,7 @@ pub fn rand_u64() -> Int {
     pool.lock_slow(l)
   }
   pool.held(1)
-  let v = pcg(rt.static_word(W_RNG))
+  let v = pcg(rt.static_word(W_TWRNG))
   pool.held(-1)
   if rt.slot_swap(l, 0, 0, RELEASE) == 2 {
     pool.futex_wake(l)

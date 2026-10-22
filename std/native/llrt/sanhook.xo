@@ -10,6 +10,7 @@
 // (gotchas/tsan-fiber-switch-in-callee.md). UNTESTED on Linux and
 // Windows. On windows/amd64 --race the Go flavor of ThreadSanitizer
 // (gorace, decision 0273's Windows addendum).
+use native/llrt/layout
 use native/llrt/rtstats
 use native/rt
 use native/sys_c
@@ -18,7 +19,7 @@ use native/sys_windows
 /// xo_worker's fields (xo_rt.c, asserted there as sched.xo W_*): the
 /// hooks word, the scheduler's ThreadSanitizer fiber, AddressSanitizer's
 /// scheduler stack (its bottom and size) and fake stack.
-const W_HOOKS = 2216
+const W_HOOKS = layout.W_HOOKS
 const W_TSAN = 2224
 const W_ASAN_BOTTOM = 2336
 const W_ASAN_SIZE = 2344
@@ -31,8 +32,8 @@ const F_TSAN = 56
 const F_ASAN_FAKE = 72
 /// The worker's pool record, the pool's fiber cache record, and its
 /// stack's bytes (pool.xo W_POOL, P_FIBERS, FS_STACK).
-const W_POOL = 2360
-const P_FIBERS = 104
+const W_POOL = layout.W_POOL
+const P_FIBERS = layout.P_FIBERS
 const FS_STACK = 24
 /// The statistic of a park (xo_rt.c st's fiber_park, rt.sched_rt op 0).
 const ST_FIBER_PARK = 6

@@ -15,6 +15,7 @@
 // arithmetic (rt.int_wrap; a checked add could fault), and calls only of
 // intrinsics and of the C hooks below, so this code runs on any stack,
 // with or without a current context, and never unwinds.
+use native/llrt/layout
 use native/rt
 
 /// C11's orders of the slot atomics.
@@ -61,8 +62,7 @@ const RQ_SLOT = 17
 /// pointer, and whether the fiber code calls xo_sched_hook (byte
 /// offsets).
 const W_SCHED_SP = 2208
-const W_HOOKS = 2216
-
+const W_HOOKS = layout.W_HOOKS
 /// xo_fiber: the saved stack pointer (byte 0), the task, the context
 /// running on it, the state (word 5), whether it ended.
 const F_TASK = 24
