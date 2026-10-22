@@ -1,0 +1,14 @@
+// Tests of the DWARF path slots (debug.xo, decision 0253): a part's
+// .debug_str and .debug_line_str hold placeholders, filled in text for
+// any assembler but compiler/macho's (whose objects dw_slots_obj
+// patches).
+
+test "dw_slots_text fills both slots of assembly text" {
+  let text = "\t.section .debug_str\nxo_dwcomp_0:\n${dw_slot_text(DW_SLOT_COMP)}xo_dwstd_0:\n${dw_slot_text(DW_SLOT_STD)}"
+  let got = dw_slots_text(text, "/w", "/s")
+  expect(got.contains(dw_slot_text("/w"))) == true
+  expect(got.contains(dw_slot_text("/s"))) == true
+  expect(got.contains(dw_slot_text(DW_SLOT_COMP))) == false
+  // no slots: the text unchanged
+  expect(dw_slots_text("\tret\n", "/w", "/s")) == "\tret\n"
+}

@@ -38,11 +38,16 @@ fn dw_slot_text(s0: Str) -> Str {
 /// The generated text with the real paths in its .debug_str slots, for
 /// an assembler other than compiler/macho's, an assembly file, or
 /// `xo asm`.
+/// (The slots are `.byte` lines, so the check is for a slot's line, not
+/// the placeholder's text, which the assembly never holds: until
+/// 2026-10-22 it was, and every text assembled since 94113d918, the
+/// windows/amd64 COFF objects among them, kept the placeholders.)
 pub fn dw_slots_text(text: Str, comp_dir: Str, std_root: Str) -> Str {
-  if !text.contains(DW_SLOT_COMP) {
+  let comp = dw_slot_text(DW_SLOT_COMP)
+  if !text.contains(comp) {
     return text
   }
-  text.replace(dw_slot_text(DW_SLOT_COMP), dw_slot_text(if comp_dir.is_empty() { "." } else { comp_dir })).replace(dw_slot_text(DW_SLOT_STD), dw_slot_text(std_root))
+  text.replace(comp, dw_slot_text(if comp_dir.is_empty() { "." } else { comp_dir })).replace(dw_slot_text(DW_SLOT_STD), dw_slot_text(std_root))
 }
 
 /// An object assembled from the generated text with the real paths in
