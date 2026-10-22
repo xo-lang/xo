@@ -1,5 +1,19 @@
 # std/regexp changes
 
+## 2026-10-22: perf: the Pike step adds threads straight from the run queue's group positions
+
+- Kind: perf
+- Commit: this commit
+- Found by: XO_PROF of the replace row (`add` and `exec`, the Pike matcher)
+- Go reference: none (Go copies each thread's captures; this reads them in place)
+- Test: std/native/regexp_test.xo, internal/llvm testdata golden regexp_table, internal/stdtest corpus regexp; timing row against Go: bench/results/regexp-ascii-bitmap-inline-2026-10-22.md
+
+Stepping a thread copied its group positions into a scratch list, and
+`add` copied them again into the next queue. `add` now takes the source
+list and an offset and reads the run queue's positions in place (a capture
+instruction sets and restores its slot there), so a surviving thread is
+copied once. Matches are unchanged.
+
 ## 2026-10-22: perf: compiling builds the ASCII bitmaps from the class ranges
 
 - Kind: perf

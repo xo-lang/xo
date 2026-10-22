@@ -2392,7 +2392,7 @@ fn rune_matches(g: Prog, pc: Int, r: Int) -> Bool {
 
 /// add: the threads that pc leads to at pos, in priority order, with the
 /// group positions cap.
-fn add(g: Prog, var q: Queue, pc0: Int, pos: Int, var cap: List[Int], cond: Int) {
+fn add(g: Prog, var q: Queue, pc0: Int, pos: Int, var cap: List[Int], cb: Int, cond: Int) {
   var pc = pc0
   while true {
     if pc == 0 {
@@ -2425,15 +2425,15 @@ fn add(g: Prog, var q: Queue, pc0: Int, pos: Int, var cap: List[Int], cond: Int)
         q.len = on + 1
         let nc = q.ncap
         let base = on * nc
-        q.caps[base] = cap[0]
-        q.caps[base + 1] = cap[1]
+        q.caps[base] = cap[cb]
+        q.caps[base + 1] = cap[cb + 1]
         var i = 2
         while i < nc {
-          q.caps[base + i] = cap[i]
+          q.caps[base + i] = cap[cb + i]
           i += 1
         }
       } else {
-        add(g, q, o, pos, cap, cond)
+        add(g, q, o, pos, cap, cb, cond)
       }
       pc = g.arg[pc]
       continue
@@ -2451,11 +2451,11 @@ fn add(g: Prog, var q: Queue, pc0: Int, pos: Int, var cap: List[Int], cond: Int)
     }
     if op == I_CAPTURE {
       let a = g.arg[pc]
-      if a < cap.len() {
-        let old = cap[a]
-        cap[a] = pos
-        add(g, q, g.out[pc], pos, cap, cond)
-        cap[a] = old
+      if a < q.ncap {
+        let old = cap[cb + a]
+        cap[cb + a] = pos
+        add(g, q, g.out[pc], pos, cap, cb, cond)
+        cap[cb + a] = old
         return
       }
       pc = g.out[pc]
@@ -2466,11 +2466,11 @@ fn add(g: Prog, var q: Queue, pc0: Int, pos: Int, var cap: List[Int], cond: Int)
     q.has[j] = 1
     let nc = q.ncap
     let base = j * nc
-    q.caps[base] = cap[0]
-    q.caps[base + 1] = cap[1]
+    q.caps[base] = cap[cb]
+    q.caps[base + 1] = cap[cb + 1]
     var i = 2
     while i < nc {
-      q.caps[base + i] = cap[i]
+      q.caps[base + i] = cap[cb + i]
       i += 1
     }
     return
@@ -3188,7 +3188,6 @@ fn exec(g: Prog, s: Str, pos0: Int, ncap: Int) -> List[Int] {
   var nextq = new_queue(n, ncap)
   var matchcap: List[Int] = []
   var cap = raw.zero_ints(ncap)
-  var tc = raw.zero_ints(ncap)
   var k = 0
   while k < ncap {
     matchcap.push(-1)
@@ -3246,7 +3245,7 @@ fn exec(g: Prog, s: Str, pos0: Int, ncap: Int) -> List[Int] {
     if !matched {
       // matchcap is all -1 until the first match, and add restores cap
       cap[0] = pos
-      add(g, runq, g.start, pos, cap, cond)
+      add(g, runq, g.start, pos, cap, 0, cond)
     }
     let next_cond = if he { empty_context(r, r1) } else { 0 }
     // step
@@ -3281,15 +3280,7 @@ fn exec(g: Prog, s: Str, pos0: Int, ncap: Int) -> List[Int] {
           ok = r >= 0 && r != 10
         }
         if ok {
-          let tb = j * ncap
-          tc[0] = runq.caps[tb]
-          tc[1] = runq.caps[tb + 1]
-          var ti = 2
-          while ti < ncap {
-            tc[ti] = runq.caps[tb + ti]
-            ti += 1
-          }
-          add(g, nextq, g.out[pc], pos + width, tc, next_cond)
+          add(g, nextq, g.out[pc], pos + width, runq.caps, j * ncap, next_cond)
         }
       }
       j += 1

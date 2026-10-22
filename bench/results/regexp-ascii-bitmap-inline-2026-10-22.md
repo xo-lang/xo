@@ -147,3 +147,12 @@ Against Go (Xo / Go, 5 rounds): compile 2,061 M against 1,397 M (1.48x, was
 3.57x), alt_compile 5,689 M against 3,315 M (1.72x, was 3.30x). Matching rows
 are untouched (the bitmaps are equal). The remaining profile is flat
 (allocation, `Prog.inst`, `Prog.cap`, parser nodes).
+
+
+## Seventh step: Pike `add` reads the run queue's captures in place (replace row)
+
+`xo bench --ab --rounds=5`, new over old (B / A), replace: instructions 0.979
+(2,229 M to 2,184 M), wall 0.972. Against Go (Xo / Go, 5 rounds): replace
+2,182 M against 1,508 M (1.447x, was 1.47x), wall 91.6 ms against 59.0 ms.
+Max RSS 3.2 MB against Go's 10.1 MB. The rest of the gap is the per-thread
+cost of `add` and the step loop, which Go's Pike matcher shares in shape.
