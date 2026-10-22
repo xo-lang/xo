@@ -1082,6 +1082,9 @@ fn (var b: Builder) own_os_field(e: Expr, v: Int, name: Str) -> Int {
 fn (var b: Builder) os_field(e: Expr, x: Expr, v: Int, name: Str) -> Int {
   let t = b.nat_of(e)
   let ot = b.m.types[b.vty(v)].fields[0].ty
+  if b.main_os(x) || b.known_none(v, 0) {
+    return b.own_os_field(e, v, name)
+  }
   let u = b.add(Op.Field, ot, Aux.I(n: 0), [v])
   let join = b.new_block()
   let res = b.s.f.add_param(join, t)

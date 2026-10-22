@@ -438,6 +438,30 @@ fn (var g: G) elem_helper(kind: Str, t: Int) -> Str {
 /// Whether retain v can be dropped together with a release later in its
 /// block (cancelRC, ssa.CancelledRelease); the release is marked in
 /// cancel.
+/// Whether v is a variant with no fields, or such a variant read out of
+/// a struct built here: its release frees nothing.
+fn (g: G) bare_variant(v: Int) -> Bool {
+  var w = v
+  while g.op(w) == ssa.Op.Field {
+    let s = g.arg(w, 0)
+    let i = match g.f.values[w].aux {
+      I(n) => n
+      _ => -1
+    }
+    if g.op(s) != ssa.Op.Struct || i < 0 || i >= g.f.values[s].args.len() {
+      return false
+    }
+    w = g.arg(s, i)
+  }
+  if g.op(w) != ssa.Op.Variant || !g.f.values[w].args.is_empty() {
+    return false
+  }
+  match g.f.values[w].aux {
+    I(tag) => g.m.types[g.vty(w)].variants[tag].fields.is_empty()
+    _ => false
+  }
+}
+
 fn (var g: G) cancel_rc(v: Int) -> Bool {
   let r = g.cancelled_release(v)
   if r < 0 {

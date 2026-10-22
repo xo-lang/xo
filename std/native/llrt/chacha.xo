@@ -5,9 +5,7 @@
 // 32 bit words; Poly1305 is poly1305-donna's five 26 bit limbs, its final
 // reduction picked with a mask. Branches and indexes depend on lengths
 // only; open compares the tag with ct.bytes_equal before it decrypts.
-use native/llrt/cpu
 use native/llrt/ct
-use native/llrt/raw
 use native/rt
 
 const M32 = 0xFFFFFFFF
@@ -65,30 +63,6 @@ fn xor_stream(s0: Str, key: Bytes, ctr0: Int, nonce: Bytes, src: Bytes) -> Str {
   var s = s0
   var ctr = ctr0 & M32
   var i = 0
-  // four blocks at a time (decision 0329, cpu.chacha_blocks4: vector
-  // registers on arm64 and LLVM), written into s's own room and xored
-  // there, then the length set; the rest a block at a time below
-  let n = src.len()
-  let d = s.len()
-  if n >= 256 && room_of(s) >= d + (n & -256) {
-    let sb = rt.rs_with_cap(80)
-    let st = raw.data(sb)
-    for (k, w) in [c0, c1, c2, c3, k0, k1, k2, k3, k4, k5, k6, k7, ctr, n0, n1, n2].indexed() {
-      rt.mem_store(st, 4 * k, w, 4)
-    }
-    let out = raw.data(s).wrapping_add(d)
-    let inp = raw.bytes_addr(src)
-    while n - i >= 256 {
-      // the four blocks' counters after the state
-      for b in 0..4 {
-        rt.mem_store(st, 64 + 4 * b, (ctr + b) & M32, 4)
-      }
-      cpu.chacha_blocks4(out.wrapping_add(i), inp.wrapping_add(i), st)
-      ctr = (ctr + 4) & M32
-      i += 256
-    }
-    s = rt.rs_set_len(s, d + i)
-  }
   while i < src.len() {
     var x0 = c0
     var x1 = c1
@@ -185,9 +159,6 @@ fn xor_stream(s0: Str, key: Bytes, ctr0: Int, nonce: Bytes, src: Bytes) -> Str {
   }
   s
 }
-
-/// The capacity of s's buffer (aesgcm's cap_of).
-fn room_of(s: Str) -> Int { rt.mem_load(rt.obj_addr(s), rt.layout(1), rt.layout(7)) }
 
 /// s after the bytes of src from off (at most 8 of them) xor those of w.
 fn push_xor(s: Str, src: Bytes, off: Int, w: Int) -> Str {

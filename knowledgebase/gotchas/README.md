@@ -3,8 +3,6 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
-- [intrinsic-mapped-before-lowered.md](intrinsic-mapped-before-lowered.md): Observed 2026-10-21: an xo built (by xocheck) after compiler/ssa mapped cpu.chacha_blocks4 but before the backends lowered it built a bin/xo calling the missing C symbol xo_chacha_blocks4 (dyld: Symbol not found); lower before mapping, or delete the intermediate bin/xo and its cache entry
-
 - [std-port-costly-go-idioms.md](std-port-costly-go-idioms.md): Observed 2026-10-21: native std ports matched Go's output but ran 3 to 10x slower: they skipped Go's fast paths (regexp prefix/backtracker, template parse once, base64 tables) or used idioms free in Go but costly in Xo (Str/Bytes slicing copies, small Lists allocate, no package-level caches); port the fast paths, index bytes, time every port against Go
 - [reuse-is-the-uniqueness-mark.md](reuse-is-the-uniqueness-mark.md): Observed 2026-10-21: removing a `var` parameter's entry reuse (decision 0322's first version) failed the inlined module's verification and built nbody without inlining (+10.7%): the verifier, insert_rc's uniq and the arm64 field and in-place passes read a reuse result as the uniqueness mark; mark it proved and lower it to its argument instead
 

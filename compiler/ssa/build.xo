@@ -179,6 +179,7 @@ pub struct Builder {
   natives: Map[Str, Int] = {}
   /// The module holding main.
   main_mod: Int = -1
+  main_named: Int = -1
   /// The program uses a concurrency construct: the Go builder builds it
   /// again with unwinding checks (conc), as build_program does; the
   /// constructs themselves are outside stage 1.
@@ -1503,6 +1504,69 @@ fn (var b: Builder) user_hold(lt: Int, v: Int, ct: Int, at: Expr?) -> Int {
 /// Whether the user field u holds a record.
 fn (var b: Builder) user_held(u: Int) -> Int {
   b.is_tag(u, "Some")
+}
+
+/// Whether user field idx of w is statically None, the runtime's own
+/// value: w is a capability struct built here from a None (the runtime's
+/// own Stdio, Clock, Rand, Fs ... made by own_os_field). The dispatch on
+/// a user value is then dropped, not left to the optimizer behind a join
+/// (2026-10-21: every main called through its Os, goldens fib and
+/// sieve). It is asked before the field is read: a read of it would be
+/// released, a runtime call left in main.
+fn (var b: Builder) known_none(w: Int, idx: Int) -> Bool {
+  let f = b.s.f
+  let wv = f.values[w]
+  if wv.op == Op.Struct && idx < wv.args.len() {
+    let a = f.values[wv.args[idx]]
+    if a.op == Op.Variant && a.args.is_empty() {
+      if let I(n) = a.aux {
+        return n == 0
+      }
+    }
+  }
+  false
+}
+
+/// Whether x, in main, is main's own Os parameter (not `var`) and no code
+/// names main: the entry passes the runtime's own Os, so its user field
+/// is None. Asked of the expression, since the builder threads the value
+/// through loops as a block parameter.
+fn (var b: Builder) main_os(x: Expr) -> Bool {
+  if b.s.f.name != "main" {
+    return false
+  }
+  let vo = match x {
+    Ident(id) => b.c.var_of(b.s.file, id)
+    _ => -1
+  }
+  let mfo = b.main_fo_of()
+  if vo < 0 || mfo < 0 || b.c.objs[vo].local != "param" {
+    return false
+  }
+  let ps = b.c.param_vars.get(mfo) ?? []
+  !ps.is_empty() && ps[0] == vo && b.main_unnamed()
+}
+
+/// Whether no identifier of the program names main, so only the entry
+/// calls it (a call `main(Os{stdio: tee, ...})` passes a user value). A
+/// main module whose check came from the module cache recorded no names:
+/// main counts as named.
+fn (var b: Builder) main_unnamed() -> Bool {
+  if b.main_named < 0 {
+    b.main_named = 1
+    let mfo = b.main_fo_of()
+    if mfo >= 0 && !b.c.mod_skip.contains(b.main_mod) && !b.c.objs[mfo].fn_decl.is_empty() {
+      let at = b.c.objs[mfo].fn_decl[0].name.span.start.offset
+      b.main_named = 0
+      for n in b.c.names {
+        if n.obj == mfo && n.offset != at {
+          b.main_named = 1
+          break
+        }
+      }
+    }
+  }
+  b.main_named == 0
 }
 
 /// The record the user field u holds (user_held is true).

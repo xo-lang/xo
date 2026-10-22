@@ -189,9 +189,6 @@ fn (var b: Builder) cpu_call(x: Expr, ci: check.CallInfo) -> Int? {
     "aes_enc12" => "aes_enc12"
     "aes_enc14" => "aes_enc14"
     "sha256_block" => "sha256_block"
-    // decision 0329: arm64 only (NEON, and LLVM's vectors there); amd64
-    // runs the portable body until it has its own lowering
-    "chacha_blocks4" => if b.goarch == "arm64" { "chacha_blocks4" } else { "" }
     "cpuid1_ecx" => "cpuid1_ecx"
     "cpuid7_ebx" => "cpuid7_ebx"
     "lowered" => "lowered"
@@ -2333,11 +2330,14 @@ fn (var b: Builder) fs_user_call(x: Expr, fo: Int) -> Int? {
     b.unsupported("`fs_user` without the user field of Fs")
     return Some(b.undef(b.nat_of(x)))
   }
-  let u = b.add(Op.Field, b.m.types[t].fields[2].ty, Aux.I(n: 2), [v])
   // the Option[UserFs] userfs.user returns, from the list
   let ot = b.nat_of(x)
   let some = b.m.variant_index(ot, "Some")
   let none = b.m.variant_index(ot, "None")
+  if b.known_none(v, 2) {
+    return Some(b.add(Op.Variant, ot, Aux.I(n: none), []))
+  }
+  let u = b.add(Op.Field, b.m.types[t].fields[2].ty, Aux.I(n: 2), [v])
   let join = b.new_block()
   let res = b.s.f.add_param(join, ot)
   let (yes, no) = b.branch(b.user_held(u))
@@ -2399,6 +2399,13 @@ fn (var b: Builder) user_cap_call(x: Expr, ci: check.CallInfo) -> Int? {
   let (_, _, args) = call_parts(x)
   let nt = b.nat_of(x)
   let v = b.value_as(recv, lt)
+  if b.known_none(v, ui) {
+    // the runtime's own value: the lowering as before, receiver evaluated
+    b.pinned[key] = v
+    let rv = b.call_expr(x)
+    b.pinned.remove(key)
+    return Some(rv)
+  }
   let u = b.add(Op.Field, ot, Aux.I(n: ui), [v])
   let join = b.new_block()
   let res = b.s.f.add_param(join, nt)

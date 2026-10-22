@@ -1,20 +1,5 @@
 # std/tls changes
 
-## 2026-10-21: speedup: ChaCha20 four blocks at a time in vector registers
-
-- Kind: speedup
-- Commit: this commit
-- Found by: profile (Xo Lang 3, bench/results/tls-h2-vs-go-2026-10-21.md)
-- Go reference: golang.org/x/crypto/chacha20 chacha_arm64.s (four blocks in NEON)
-- Test: internal/llvm/testdata/golden/chacha_blocks4 (every length class around 256 bytes, against Go's ChaCha20); crypto_prims, tls12_server, tls12_client, tls13 goldens
-
-TLS ChaCha20-Poly1305 records computed one 64 byte block at a time in
-scalar code. Decision 0329: four blocks (256 bytes) at a time in vector
-registers (NEON on arm64, LLVM vectors), written straight into the
-record's buffer. ChaCha20 itself takes a quarter of the instructions on
-arm64 (2,000 x 16 KB: 837 to 197 million native, 881 to 192 million
-LLVM); amd64 and wasm run the same portable code as before.
-
 ## 2026-10-21: speedup: a TLS client handshake on macOS without a zone lookup or slow symbol lookups
 
 - Kind: speedup

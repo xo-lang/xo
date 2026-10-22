@@ -1369,6 +1369,9 @@ fn (var g: G) instr1(v: Int) {
         return
       }
       let a = x.args[0]
+      if g.bare_variant(a) {
+        return // holds no heap value (main's own Stdio after the 0307 fold)
+      }
       let t = g.vty(a)
       if (g.kind(t) is ssa.Kind.Struct | ssa.Kind.Tuple) && 8 * g.nwords(t) <= 32760 {
         // a whole struct or tuple (ssa group_releases): its leaves

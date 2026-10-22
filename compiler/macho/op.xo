@@ -181,18 +181,12 @@ pub fn encode_op(o: Op) -> Int {
   }
   // decision 0323's two lane double operations (fadd vD.2d, ...), and
   // faddp dD, vN.2d and ins vD.d[1], vN.d[0]
-  // decision 0329's ChaCha20 core: shl and sri by an immediate on .4s
-  if o.m is "shl" | "sri" && n == 3 {
-    if let Operand.VReg(..) = o.ops[0] {
-      return simd_word(o.m, o.ops)
-    }
-  }
   if o.m is "fadd" | "fsub" | "fmul" | "fdiv" | "fsqrt" && n >= 2 {
     if let Operand.VReg(..) = o.ops[0] {
       return simd_word(o.m, o.ops)
     }
   }
-  if o.m is "faddp" | "ins" | "zip1" | "trn1" | "trn2" {
+  if o.m is "faddp" | "ins" | "zip1" {
     return simd_word(o.m, o.ops)
   }
   if o.m is "ldr" | "str" | "ldrb" | "strb" | "ldrsw" | "ldrh" | "strh" | "ldur" | "stur" && n == 2 {
@@ -1293,24 +1287,6 @@ fn simd_word(m: Str, o: List[Operand]) -> Int {
       base | (y * 0x10000) | (x * 32) | d
     }
     "fsqrt" => if n != 2 || d < 0 || x < 0 || ad != "2d" || ax != "2d" { -1 } else { 0x6ee1f800 | (x * 32) | d }
-    "shl" | "sri" => {
-      // shl vD.4s, vN.4s, #s (0 to 31); sri vD.4s, vN.4s, #s (1 to 32)
-      if n != 3 || d < 0 || x < 0 || ad != "4s" || ax != "4s" || i2 < 0 {
-        return -1
-      }
-      if m == "shl" {
-        return if i2 > 31 { -1 } else { 0x4f205400 | ((32 + i2) * 0x10000) | (x * 32) | d }
-      }
-      if i2 < 1 || i2 > 32 { -1 } else { 0x6f204400 | ((64 - i2) * 0x10000) | (x * 32) | d }
-    }
-    "trn1" | "trn2" => {
-      // trn1/trn2 vD.4s or .2d (decision 0329's transposes)
-      if n != 3 || d < 0 || x < 0 || y < 0 || ad != ax || ad != ay || !(ad is "4s" | "2d") {
-        return -1
-      }
-      let base = if ad == "4s" { 0x4e802800 } else { 0x4ec02800 }
-      base | (if m == "trn2" { 0x4000 } else { 0 }) | (y * 0x10000) | (x * 32) | d
-    }
     "zip1" => if n != 3 || d < 0 || x < 0 || y < 0 || ad != "2d" || ax != "2d" || ay != "2d" { -1 } else { 0x4ec03800 | (y * 0x10000) | (x * 32) | d }
     "ins" => {
       // ins vD.d[1], vN.d[0] (decision 0323's builds)
@@ -1337,10 +1313,6 @@ fn simd_word(m: Str, o: List[Operand]) -> Int {
       if n != 3 || d < 0 || x < 0 || ad != "2d" || ax != want || i2 != 0 { -1 } else { (if m == "ushll" { 0x2f20a400 } else { 0x6f20a400 }) | (x * 32) | d }
     }
     "rev32" | "mov" => {
-      if m == "rev32" && ad == "8h" {
-        // rev32 vD.8h, vN.8h: a 32 bit lane rotated by 16 (decision 0329)
-        return if n != 2 || d < 0 || x < 0 || ax != "8h" { -1 } else { 0x6e600800 | (x * 32) | d }
-      }
       if n != 2 || d < 0 || x < 0 || ad != "16b" || ax != "16b" {
         return -1
       }
@@ -1365,11 +1337,6 @@ fn simd_word(m: Str, o: List[Operand]) -> Int {
     }
     "eor" => if d < 0 || x < 0 || y < 0 || ad != "16b" || ax != "16b" || ay != "16b" { -1 } else { 0x6e201c00 | (y * 0x10000) | (x * 32) | d }
     "dup" => {
-      if ad == "4s" && ax.starts_with("s[") {
-        // dup vD.4s, vN.s[j] (decision 0329)
-        let j = Int.parse(ax[2..ax.len() - 1]) ?? -1
-        return if n != 2 || d < 0 || x < 0 || j < 0 || j > 3 { -1 } else { 0x4e040400 | ((j * 8 + 4) * 0x10000) | (x * 32) | d }
-      }
       if ad == "2d" {
         // dup vD.2d, vN.d[i] (decision 0323)
         return if n != 2 || d < 0 || x < 0 || (ax != "d[0]" && ax != "d[1]") { -1 } else { (if ax == "d[1]" { 0x4e180400 } else { 0x4e080400 }) | (x * 32) | d }
