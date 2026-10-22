@@ -93,9 +93,13 @@ pub fn race_proc() -> Int {
 
 /// A new ThreadState whose creation parent (0 for none) orders before
 /// everything it does, as a goroutine's start.
-fn race_go(parent: Int) -> Int {
+fn race_go(parent: Int) -> Int { race_go_at(parent, 0) }
+
+/// race_go with the pc its "created at" stack ends with (a spawn's call
+/// site, task_new).
+fn race_go_at(parent: Int, pc: Int) -> Int {
   let _p = race_proc()
-  sys_c.weak___tsan_go_start(parent, rt.tlocal_addr().wrapping_add(8 * TL_SCRATCH), 0)
+  sys_c.weak___tsan_go_start(parent, rt.tlocal_addr().wrapping_add(8 * TL_SCRATCH), pc)
   rt.tlocal_get(TL_SCRATCH)
 }
 
@@ -380,14 +384,20 @@ pub fn task_enter(fib: Int, w: Int, made: Int) -> Int {
 
 /// A task's ThreadSanitizer context, made at its spawn by the spawner
 /// (task_enter takes it), or 0 outside a --race build.
-pub fn task_new() -> Int {
+pub fn task_new(pc: Int) -> Int {
   if gorace() {
-    return race_go(race_thr())
+    return race_go_at(race_thr(), pc)
   }
   if !user_mode() {
     return 0
   }
-  sys_c.weak___tsan_create_fiber(0)
+  // the spawn's call site as the creation stack's last frame of the
+  // program (tasks.xo task_spawn_fn's return address; the runtime is not
+  // instrumented, so the program's frame of the spawn was missing)
+  sys_c.weak___tsan_func_entry(pc)
+  let f = sys_c.weak___tsan_create_fiber(0)
+  sys_c.weak___tsan_func_exit(0)
+  f
 }
 
 /// A task freed before it ran: its context, if it has one, goes.

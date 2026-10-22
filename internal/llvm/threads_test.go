@@ -490,6 +490,11 @@ func TestRaceStacksArm64(t *testing.T) {
 			t.Errorf("report lacks %q:\n%s", want, text)
 		}
 	}
+	// the task's creation stack ends at main's spawn (cabi.xo
+	// task_spawn_fn's return address, sanhook.xo task_new)
+	if _, created, ok := strings.Cut(text, "created by thread"); !ok || !strings.Contains(strings.SplitN(created, "\n\n", 2)[0], "xo_f_main main.xo:") {
+		t.Errorf("the task's creation stack lacks main's spawn site:\n%s", text)
+	}
 	if n := strings.Count(rep, "xo_f_main main.xo:"); n > 2 {
 		t.Errorf("main has %d frames in the report (frames the isolated faults left):\n%s", n, text)
 	}

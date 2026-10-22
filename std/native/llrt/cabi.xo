@@ -762,7 +762,12 @@ fn prog_group() -> Int { tasks.prog_group() }
 
 fn task_wanted(t: Int) -> Int { if tasks.task_wanted(t) { 1 } else { 0 } }
 
-fn task_spawn_fn(s: Int, code: Int, env: Int, run: Int, drop: Int, fdrop: Int, flags: Int, site: Int, lp: Int, ln: Int) -> Int { tasks.task_spawn_fn(s, code, env, run, drop, fdrop, flags, site, lp, ln) }
+/// (with the program's call site, this export's return address, for
+/// --race's "created at" stack: sanhook.task_new)
+fn task_spawn_fn(s: Int, code: Int, env: Int, run: Int, drop: Int, fdrop: Int, flags: Int, site: Int, lp: Int, ln: Int) -> Int {
+  let pc = if sanhook.gorace() || sanhook.user_mode() { rt.mem_load(rt.frame_addr(), 8, 8) } else { 0 }
+  tasks.task_spawn_fn(s, code, env, run, drop, fdrop, flags, site, lp, ln, pc)
+}
 
 fn scope_open() -> Int { tasks.scope_open() }
 

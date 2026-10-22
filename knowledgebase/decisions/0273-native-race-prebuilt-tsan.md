@@ -393,8 +393,12 @@ windows/amd64 the same through the Go flavor). Cost: about 11 ns a call
 on the M-series Mac (fib(30), 2.7 million calls: +0.03 s user), in race
 builds only. 200 faults isolated in a loop leave main's stack as it was
 (internal/llvm TestRaceStacksArm64; without race_unwind_to each left a
-frame). A created-at stack ends at the spawn's runtime frames: tasks.spawn
-is not instrumented, so the program's call site of spawn is missing.
+frame). A task's "created at" stack ends at the program's spawn (2026-10-22,
+the same day): cabi.xo's task_spawn_fn export passes its return address
+to sanhook.task_new, which gives it to __tsan_go_start (Go flavor) or
+wraps __tsan_create_fiber in an entry and exit at it (C flavor); the
+runtime is not instrumented, so that frame was missing (darwin:
+"created by thread T3 at ... xo_f_main main.xo:35").
 
 Known issue (2026-10-22, before this addendum, windows/amd64 only):
 task.isolate's catch was lost after a landing pad. testdata/race_stacks

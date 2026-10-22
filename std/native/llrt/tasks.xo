@@ -562,9 +562,9 @@ fn stat(k: Int) { rtstats.count(k) }
 /// tells the scope which spawn failed.
 /// (The list of one form, rt.task_spawn, went with seed 0.19.0, which
 /// calls this.)
-pub fn task_spawn_fn(s: Int, code: Int, env: Int, run: Int, drop: Int, fdrop: Int, flags: Int, site: Int, lp: Int, ln: Int) -> Int { spawn(s, code, env, run, drop, flags, site, lp, ln) }
+pub fn task_spawn_fn(s: Int, code: Int, env: Int, run: Int, drop: Int, fdrop: Int, flags: Int, site: Int, lp: Int, ln: Int, pc: Int) -> Int { spawn(s, code, env, run, drop, flags, site, lp, ln, pc) }
 
-fn spawn(s: Int, fl: Int, env: Int, run: Int, drop: Int, flags: Int, site: Int, lp: Int, ln: Int) -> Int {
+fn spawn(s: Int, fl: Int, env: Int, run: Int, drop: Int, flags: Int, site: Int, lp: Int, ln: Int, pc: Int) -> Int {
   let pl = pool_ready()
   stat(ST_SPAWN)
   var w = rt.tlocal_get(TLS_W)
@@ -602,7 +602,7 @@ fn spawn(s: Int, fl: Int, env: Int, run: Int, drop: Int, flags: Int, site: Int, 
   // its own ThreadSanitizer context (a --race build): made here, so what
   // the spawner did before the spawn happens before the task, and nothing
   // the spawner does after it
-  st(t, T_TSAN, sanhook.task_new())
+  st(t, T_TSAN, sanhook.task_new(pc))
   // linked into s, counted, and queued (pool.xo scope_add): the tasks it
   // pruned from s's list, or -1 when s has ended
   let r = pool.scope_add_at(pl, s, t, w, own)
