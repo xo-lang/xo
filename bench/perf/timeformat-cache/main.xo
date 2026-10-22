@@ -1,0 +1,67 @@
+use std/time
+
+const ISO: time.Layout = time.layout("{year}-{month}-{day}T{hour}:{minute}:{second}{offset}")
+const LONG: time.Layout = time.layout("{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second} {zone}")
+
+/// A Mutex held Map from layout text to the parsed Layout (the variant ADR
+/// 0332 compares with a lazy const).
+struct Cache {
+  m: Mutex[Map[Str, time.Layout]]
+}
+
+fn (c: Cache) get(text: Str) -> time.Layout {
+  let hit = c.m.with_read(fn(m: Map[Str, time.Layout]) -> time.Layout? { m.get(text) })
+  match hit {
+    Some(l) => l
+    None => {
+      let l = time.layout(text)
+      c.m.with(fn(var m: Map[Str, time.Layout]) { m.put(text, l) })
+      l
+    }
+  }
+}
+
+fn main(os: Os) {
+  let args = os.env.args()
+  let mode = if args.len() > 0 { args[0] } else { "none" }
+  let ny = time.zone("America/New_York").ok() ?? fault("zone")
+  let utc = time.utc()
+  var n = 0
+  if mode == "format" {
+    for i in 0..300000 {
+      let t = Time.from_unix(1760000000 + i * 37)
+      n += time.format(t, utc, "{year}-{month}-{day}T{hour}:{minute}:{second}{offset}").len()
+      n += time.format(t, ny, "{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second} {zone}").len()
+    }
+  }
+  if mode == "format_cache" {
+    let cache = Cache{m: Mutex.new({})}
+    for i in 0..300000 {
+      let t = Time.from_unix(1760000000 + i * 37)
+      n += cache.get("{year}-{month}-{day}T{hour}:{minute}:{second}{offset}").format(t, utc).len()
+      n += cache.get("{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second} {zone}").format(t, ny).len()
+    }
+  }
+  if mode == "format_layout" {
+    for i in 0..300000 {
+      let t = Time.from_unix(1760000000 + i * 37)
+      n += ISO.format(t, utc).len()
+      n += LONG.format(t, ny).len()
+    }
+  }
+  if mode == "parse" {
+    for i in 0..300000 {
+      let s = "2026-10-${10 + i % 20}T12:34:56Z"
+      let t = time.parse(s, "{year}-{month}-{day}T{hour}:{minute}:{second}{offset}", utc).ok() ?? fault("parse")
+      n += t.unix() % 7
+    }
+  }
+  if mode == "parse_layout" {
+    for i in 0..300000 {
+      let s = "2026-10-${10 + i % 20}T12:34:56Z"
+      let t = ISO.parse(s, utc).ok() ?? fault("parse")
+      n += t.unix() % 7
+    }
+  }
+  os.stdio.println("${mode} ${n}")
+}
