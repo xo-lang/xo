@@ -777,3 +777,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [race-isolate-drift.md](race-isolate-drift.md): Observed 2026-10-22: --race stacks: a fault caught by task.isolate skipped its frames' TSan exits; the hooks count depth and the catch gives them back
 - [x86-windows-reemit-debug-rows.md](x86-windows-reemit-debug-rows.md): Observed 2026-10-22: windows/amd64's second emission of a function (borrowed register words) kept the first's DWARF rows: ".L..._dl0 is used but not defined"
 - [dead-trap-load.md](dead-trap-load.md): Observed 2026-10-22: a debugging trap written as an unused rt.mem_load of a bad address is dropped by the compiler; trap with a store
+- [llvm-unroll-full-pragma-iterations.md](llvm-unroll-full-pragma-iterations.md): Observed: `llvm.loop.unroll.full` on a loop of a known large trip count (20,000) kept clang busy for minutes; cap it with `-pragma-unroll-full-max-iterations` (decision 0338)
