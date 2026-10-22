@@ -464,8 +464,8 @@ fn (var b: Builder) maph_kvl(t: Int, mv: Int) -> (Int, Int, Int) {
 }
 
 // ---------------------------------------------------------------------------
-// Branching (decision 0291, branching addendum; XO_MAP_LOG=branch, a
-// prototype). A lists value copied and written once, again and again
+// Branching (decision 0291, branching addendum; the default on the
+// native backends since 2026-10-22, XO_MAP_LOG=1 turns it off). A lists value copied and written once, again and again
 // from the same base (`var c = m; c.put(k, v)` per request), copied all
 // of its lists at each write: the mark is on the copy, never the base. A
 // lists value of MAPH_BRANCH_MIN or more entries written while shared

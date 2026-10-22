@@ -17,9 +17,9 @@ import (
 // TestTSanSharedMaps: Maps shared between tasks under a Mutex (read with
 // with_read, written with with, values and whole snapshots used outside
 // the lock; testdata/tsan_maps) under ThreadSanitizer, in both Map forms
-// (XO_MAP_LOG=0, the lists; 1, decision 0291's hybrid; branch, its
-// branching prototype, where the 1,600-entry recs Map forks its lists
-// under the snapshots). The log form once
+// (XO_MAP_LOG=0, the lists; 1, decision 0291's hybrid without
+// branching; branch, the default since 2026-10-22, where the 1,600-entry
+// recs Map forks its lists under the snapshots). The log form once
 // stored new entries into chunks already marked shared, so other threads
 // counted their strings without atomics and the heap broke under
 // concurrent HTTP load (2026-10-21,

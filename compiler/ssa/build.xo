@@ -438,7 +438,9 @@ fn program_builder(c: check.Checker, line_root: Str, tests: Bool, release: Bool,
   b.fe = fe
   b.heap_guard = heap_guard
   b.m.map_log = c.map_log
-  b.m.map_branch = c.map_log && c.map_branch
+  // branching is unmeasured and untested on wasm (decision 0291
+  // branching addendum)
+  b.m.map_branch = c.map_log && c.map_branch && !wasm
   b.m.no_preempt = c.no_preempt
   b.soft_cpu = soft_cpu
   b.prof = prof

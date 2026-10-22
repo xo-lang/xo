@@ -348,10 +348,29 @@ check.twice_ok: at most 64 nodes).
   goldens on arm64, LLVM and wasm, TestTSanSharedMaps with a walk under
   with_read.
 
-## Addendum (2026-10-22, Xo Publish): branching, behind XO_MAP_LOG=branch
+## Addendum (2026-10-22, Xo Publish): branching, the default
 
-Status: prototype, off by default; the owner decides the default on the
-numbers below.
+Status: on by default on the native backends (owner, 2026-10-22: on if
+one `xo bench --ab` of the HTTP CRUD server, flag off against on, shows
+no loss; it showed none, below). Shipped first behind XO_MAP_LOG=branch
+(2d73bc374). XO_MAP_LOG=1 now builds the hybrid without branching, and
+XO_MAP_LOG=0 still builds the lists alone. wasm does not branch: it is
+neither measured nor tested there.
+
+**The default's measurement.** The plain CRUD server (bench/perf/http/xo,
+arm64 native, one xo, built without and with the flag), loaded by
+bench/perf/http/loadgen (32 connections, 1 s warmup) in `xo bench --ab`
+rounds, hybrid (A) against branching (B), B/A with the 95% interval:
+
+| Users preloaded | Rounds | rps | CPU a request | p99 | peak RSS |
+|---|---|---|---|---|---|
+| 64 | 8 of 5 s | 1.052 [0.95, 1.21] | 0.915 [0.74, 1.15] | 0.908 [0.66, 1.25] | 1.043 [0.88, 1.07] |
+| 10,000 | 16 of 8 s | 0.986 [0.67, 1.11] | 1.004 [0.99, 1.12] | 1.032 [0.66, 1.99] | 0.999 [0.97, 1.02] |
+
+All within noise. An earlier 8 round run at 10,000 users with the Mac
+at load 17 gave rps 0.825 [0.42, 1.94], too noisy to read; the 16 round
+run waited for a load under 12. (Logs: the lead's agents/crudab-cmd.log
+and crudab3-cmd.log.)
 
 **The gap.** bench/perf/xo `branch` (2,000 rounds of `var c = m;
 c.put(KEYS + i, i)` from one 50,000-entry Map) took 63 ms native against
@@ -412,6 +431,8 @@ hybrid against branch: PRELOAD=8: 24,702 to 25,040 against 24,687 to
   nested forks, the base written after branches, keys and values, Str
   keys, Sets. want.txt is the Go backend's output.
 - TestMapBranch runs it and six Map goldens on arm64 with the flag.
+  Since the default branches, TestMapBranch runs them with XO_MAP_LOG=1
+  (the hybrid without branching), and every golden branches.
 - TestTSanSharedMaps adds a map_log=branch run: its 1,600-entry Map forks
   under snapshots, with no reports.
 - XO_LEAKCHECK shows 0 live on the golden and on the benchmark.

@@ -424,9 +424,12 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   // decision 0291 (the switch, owner 2026-10-21): Map and Set are the
   // hybrid (the lists until written while shared twice, then the log);
   // XO_MAP_LOG=0 builds the lists alone (wasm too, since its hybrid's
-  // checks were fixed, 2026-10-21)
+  // checks were fixed, 2026-10-21); the hybrid branches (decision 0291
+  // branching addendum, the default since the owner's 2026-10-22 rule:
+  // HTTP CRUD xo bench --ab showed no loss) except on wasm, and
+  // XO_MAP_LOG=1 builds the hybrid without branching
   c.map_log = (os.env.get("XO_MAP_LOG") ?? "") != "0"
-  c.map_branch = (os.env.get("XO_MAP_LOG") ?? "") == "branch"
+  c.map_branch = (os.env.get("XO_MAP_LOG") ?? "") != "1"
   // the SSA builder's lowerings $XO_LOWER turns off (miscompile triage)
   let (lower_off, lower_err) = ssa.parse_lowerings(os.env.get("XO_LOWER") ?? "")
   if !lower_err.is_empty() {
