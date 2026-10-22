@@ -74,6 +74,13 @@ fn (var b: Builder) mlog_type(name: Str, k: Int, v: Int) -> Int {
     let (lv, lnew) = b.m.named("xo.MapLevel[${b.m.types[k].name}, ${b.m.types[v].name}]", Kind.Struct)
     if lnew {
       b.m.types[lv].fields = [SField{name: "dir", ty: dt}, SField{name: "idx", ty: il}, SField{name: "base", ty: it}, SField{name: "len", ty: it}]
+      if b.m.map_branch {
+        // a lists level (maphyb.xo maph_fork_lists): a hybrid lists
+        // value's keys, values, live flags, slots and live count, the
+        // oldest level of a fork (positions 0 to len); empty in a log
+        // level
+        b.m.types[lv].fields = b.m.types[lv].fields + [SField{name: "lk", ty: b.m.list(k)}, SField{name: "lv", ty: b.m.list(v)}, SField{name: "ll", ty: b.m.list(b.bool_t())}, SField{name: "ls", ty: il}, SField{name: "ln", ty: it}]
+      }
     }
     b.m.types[t].coll = true
     b.m.types[t].fields = [SField{name: "dir", ty: dt}, SField{name: "idx", ty: il}, SField{name: "used", ty: il}, SField{name: "base", ty: it}, SField{name: "n", ty: it}, SField{name: "len", ty: it}, SField{name: "keys", ty: it}, SField{name: "parents", ty: b.m.list(lv)}]
@@ -143,6 +150,108 @@ fn (var b: Builder) mlog_at(et: Int, dir: Int, i: Int) -> Int {
   let (c, off) = b.mlog_slot(i)
   let chunk = b.call("list.index", b.m.types[b.vty(dir)].elems[0], "", [dir, c])
   b.call("list.index", et, "", [chunk, off])
+}
+
+/// A log level of level type lvt: dir, idx, base, len, and with
+/// map_branch an empty lists part.
+fn (var b: Builder) mlog_level(lvt: Int, dir: Int, idx: Int, base: Int, lim: Int) -> Int {
+  var fs = [dir, idx, base, lim]
+  if b.m.map_branch {
+    for i in 4..8 {
+      fs.push(b.call("list.new", b.m.types[lvt].fields[i].ty, "", []))
+    }
+    fs.push(b.cint(0))
+  }
+  b.add(Op.Struct, lvt, Aux.None, fs)
+}
+
+/// Whether level lvl (of type lvt) is a lists level (map_branch).
+fn (var b: Builder) mlog_lvl_lists(lvt: Int, lvl: Int) -> Int {
+  b.bop(Op.Gt, b.call("list.len", b.int_t(), "", [b.add(Op.Field, b.m.types[lvt].fields[4].ty, Aux.I(n: 4), [lvl])]), b.cint(0))
+}
+
+/// The entry at own index i of level lvl (of type lvt) of log map type t:
+/// its log's, or for a lists level one made from the lists (no hash,
+/// no prev, its own origin when live, else a removal's -1).
+fn (var b: Builder) mlog_lvl_at(t: Int, lvt: Int, lvl: Int, i: Int) -> Int {
+  let et = mlog_entry_of(b.m, t)
+  let dir = b.add(Op.Field, b.m.types[lvt].fields[0].ty, Aux.I(n: 0), [lvl])
+  if !b.m.map_branch {
+    return b.mlog_at(et, dir, i)
+  }
+  let lf = b.m.types[lvt].fields
+  let join = b.new_block()
+  let res = b.s.f.add_param(join, et)
+  let (ls, lg) = b.branch(b.mlog_lvl_lists(lvt, lvl))
+  b.s.cur = ls
+  let orgv = b.local()
+  b.write_var(orgv, b.cint(-1))
+  let (nl, jl) = b.if_then_begin(b.call("list.index", b.bool_t(), "", [b.add(Op.Field, lf[6].ty, Aux.I(n: 6), [lvl]), i]))
+  b.write_var(orgv, i)
+  b.if_then_end(nl, jl)
+  let k = b.call("list.index", mlog_key(b.m, t), "", [b.add(Op.Field, lf[4].ty, Aux.I(n: 4), [lvl]), i])
+  let v = b.call("list.index", mlog_val(b.m, t), "", [b.add(Op.Field, lf[5].ty, Aux.I(n: 5), [lvl]), i])
+  b.jump(join, [b.add(Op.Struct, et, Aux.None, [b.cint(0), b.cint(-1), b.read(orgv), k, v])])
+  b.s.cur = lg
+  b.jump(join, [b.mlog_at(et, dir, i)])
+  b.seal(join)
+  b.s.cur = join
+  res
+}
+
+/// xo.mlog.lprobe[T](keys, live, slots, k, h) -> Int: k's live entry in a
+/// lists level (the lists' find: slots by h, linear probing, dead entries
+/// skipped; a scan with no slots), or -1.
+fn (var b: Builder) mlog_lprobe(t: Int, lvt: Int) -> Str {
+  let it = b.int_t()
+  let kt = mlog_key(b.m, t)
+  let lf = b.m.types[lvt].fields
+  let name = "xo.mlog.lprobe[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [lf[4].ty, lf[6].ty, lf[7].ty, kt, it], [it], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let keys = b.param(0)
+  let live = b.param(1)
+  let slots = b.param(2)
+  let k = b.param(3)
+  let h = b.param(4)
+  let n = b.call("list.len", it, "", [slots])
+  let (ns, js) = b.if_then_begin(b.bop(Op.Eq, n, b.cint(0)))
+  let sv = b.local()
+  let (i, ih, ix) = b.for_up_to_begin(b.call("list.len", it, "", [keys]), sv)
+  let (nk, jk) = b.if_then_begin(b.add(Op.And, b.bool_t(), Aux.None, [b.call("list.index", b.bool_t(), "", [live, i]), b.eq_values(b.call("list.index", kt, "", [keys, i]), k)]))
+  b.retv(i)
+  b.if_then_end(nk, jk)
+  b.for_up_to_end(i, sv, ih, ix)
+  b.retv(b.cint(-1))
+  b.if_then_end(ns, js)
+  let mask = b.iop(Op.Sub, n, b.cint(1))
+  let pv = b.local()
+  b.write_var(pv, b.iop(Op.And, h, mask))
+  let head = b.new_block()
+  b.jump(head, [])
+  b.s.cur = head
+  let p = b.read(pv)
+  let sl = b.call("list.index", it, "", [slots, p])
+  let (ne, je) = b.if_then_begin(b.bop(Op.Eq, sl, b.cint(0)))
+  b.retv(b.cint(-1))
+  b.if_then_end(ne, je)
+  let j = b.iop(Op.Sub, sl, b.cint(1))
+  let (nh, jh) = b.if_then_begin(b.call("list.index", b.bool_t(), "", [live, j]))
+  let (nq, jq) = b.if_then_begin(b.eq_values(b.call("list.index", kt, "", [keys, j]), k))
+  b.retv(j)
+  b.if_then_end(nq, jq)
+  b.if_then_end(nh, jh)
+  b.write_var(pv, b.iop(Op.And, b.iop(Op.Add, p, b.cint(1)), mask))
+  b.jump(head, [])
+  b.seal(head)
+  b.dead()
+  b.add(Op.Unreachable, -1, Aux.None, [])
+  b.finish_fn()
+  b.end(saved)
+  name
 }
 
 /// The home slot of hash h in an index of n slots (a power of two): its
@@ -470,6 +579,17 @@ fn (var b: Builder) mlog_findx(t: Int) -> Str {
   b.retv(b.cint(-1))
   b.if_then_end(nd, jd)
   let lvl = b.call("list.index", lvt, "", [parents, lev])
+  if b.m.map_branch {
+    // a lists level, always the oldest: the lists' find
+    let lf = b.m.types[lvt].fields
+    let (nls, jls) = b.if_then_begin(b.mlog_lvl_lists(lvt, lvl))
+    let lj = b.call(b.mlog_lprobe(t, lvt), it, "", [b.add(Op.Field, lf[4].ty, Aux.I(n: 4), [lvl]), b.add(Op.Field, lf[6].ty, Aux.I(n: 6), [lvl]), b.add(Op.Field, lf[7].ty, Aux.I(n: 7), [lvl]), k, h])
+    let (nlh, jlh) = b.if_then_begin(b.bop(Op.Ge, lj, b.cint(0)))
+    b.retv(b.iop(Op.Add, b.iop(Op.Mul, b.iop(Op.Add, lev, b.cint(1)), b.cint(MLOG_LEVEL)), lj))
+    b.if_then_end(nlh, jlh)
+    b.retv(b.cint(-1))
+    b.if_then_end(nls, jls)
+  }
   let dir = b.add(Op.Field, b.m.types[lvt].fields[0].ty, Aux.I(n: 0), [lvl])
   let base = b.add(Op.Field, it, Aux.I(n: 2), [lvl])
   let (nv, jn) = b.if_then_begin(b.bop(Op.Gt, lim, base))
@@ -509,9 +629,8 @@ fn (var b: Builder) mlog_entry_at(t: Int, mv: Int, w: Int) -> Int {
   b.jump(join, [b.mlog_at(et, b.mf(t, 0, mv), b.iop(Op.Sub, pos, b.mf(t, 3, mv)))])
   b.s.cur = up
   let lvl = b.call("list.index", lvt, "", [parents, b.iop(Op.Sub, lev, b.cint(1))])
-  let ldir = b.add(Op.Field, b.m.types[lvt].fields[0].ty, Aux.I(n: 0), [lvl])
   let lbase = b.add(Op.Field, it, Aux.I(n: 2), [lvl])
-  b.jump(join, [b.mlog_at(et, ldir, b.iop(Op.Sub, pos, lbase))])
+  b.jump(join, [b.mlog_lvl_at(t, lvt, lvl, b.iop(Op.Sub, pos, lbase))])
   b.seal(join)
   b.s.cur = join
   res
@@ -717,7 +836,22 @@ fn (var b: Builder) mlog_each(t: Int) -> Str {
   let base = b.read(bv)
   let iv = b.local()
   let (i, ih, ix) = b.for_up_to_begin(b.iop(Op.Sub, b.read(ev), base), iv)
-  let e = b.mlog_at(et, dir, i)
+  var e = -1
+  if b.m.map_branch {
+    // a level's entry through mlog_lvl_at (a lists level has no log)
+    let ej = b.new_block()
+    let er = b.s.f.add_param(ej, et)
+    let (eo, eu) = b.branch(b.bop(Op.Eq, lev, b.cint(0)))
+    b.s.cur = eo
+    b.jump(ej, [b.mlog_at(et, dir, i)])
+    b.s.cur = eu
+    b.jump(ej, [b.mlog_lvl_at(t, lvt, b.call("list.index", lvt, "", [parents, b.iop(Op.Sub, lev, b.cint(1))]), i)])
+    b.seal(ej)
+    b.s.cur = ej
+    e = er
+  } else {
+    e = b.mlog_at(et, dir, i)
+  }
   let pos = b.iop(Op.Add, base, i)
   // an origin entry: its key's current entry in m's view, if live and
   // still from this origin
@@ -901,7 +1035,7 @@ fn (var b: Builder) mlog_claim(t: Int) -> Str {
   b.retv(b.mlog_table(t, es, b.cint(1)))
   b.if_then_end(nd, jd)
   // a fork: a table whose parent is m's view
-  let lvl = b.add(Op.Struct, lvt, Aux.None, [b.mf(t, 0, mp), b.mf(t, 1, mp), b.mf(t, 3, mp), lim])
+  let lvl = b.mlog_level(lvt, b.mf(t, 0, mp), b.mf(t, 1, mp), b.mf(t, 3, mp), lim)
   let plt = b.vty(parents)
   let pv = b.local()
   b.write_var(pv, b.call("list.new", plt, "", [b.iop(Op.Add, np, b.cint(1))]))

@@ -426,6 +426,7 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   // XO_MAP_LOG=0 builds the lists alone (wasm too, since its hybrid's
   // checks were fixed, 2026-10-21)
   c.map_log = (os.env.get("XO_MAP_LOG") ?? "") != "0"
+  c.map_branch = (os.env.get("XO_MAP_LOG") ?? "") == "branch"
   // the SSA builder's lowerings $XO_LOWER turns off (miscompile triage)
   let (lower_off, lower_err) = ssa.parse_lowerings(os.env.get("XO_LOWER") ?? "")
   if !lower_err.is_empty() {

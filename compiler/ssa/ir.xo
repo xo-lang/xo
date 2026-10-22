@@ -385,6 +385,10 @@ pub struct Module {
   /// Map and Set on the log and fork representation (decision 0291,
   /// check.Checker map_log): in the fn and part cache keys.
   pub map_log: Bool = false
+  /// XO_MAP_LOG=branch (decision 0291, branching addendum; a
+  /// prototype): a large lists Map caches a log table that its copies
+  /// fork in O(1) (maphyb.xo maph_branch): in the fn and part cache keys.
+  pub map_branch: Bool = false
   /// Functions the arm64 inliner leaves out, by name, or by prefix for
   /// an entry ending in `*` ($XO_INLINE_DENY, comma separated): a
   /// measurement knob, each callee's speed against its text

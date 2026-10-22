@@ -1,0 +1,109 @@
+// Branching from a large Map (decision 0291 branching addendum): copies
+// written once, many times, written all over, removes, iteration, Sets,
+// Str keys and values, the base written after branches.
+
+fn sum(m: Map[Int, Int]) -> Int {
+  var s = 0
+  var i = 0
+  for (k, v) in m {
+    s += (k + 1) * v + i
+    i += 1
+  }
+  s + m.len()
+}
+
+fn sig(m: Map[Str, Str]) -> Str {
+  var s = ""
+  var i = 0
+  for (k, v) in m {
+    if i < 3 || i >= m.len() - 3 {
+      s = s + k + "=" + v + ","
+    }
+    i += 1
+  }
+  "${m.len()}:${s}"
+}
+
+fn main(os: Os) uses (stdio) {
+  var m: Map[Int, Int] = {}
+  for i in 0..3000 {
+    m.put(i, i * 3)
+  }
+  // one-key branches
+  var total = 0
+  for i in 0..50 {
+    var c = m
+    c.put(5000 + i, i)
+    c.put(i, -1)
+    total += sum(c) + (c.get(i) ?? 7) + (c.get(5000 + i) ?? 7) + (c.get(4999) ?? 7)
+  }
+  os.stdio.println("branches ${total} base ${sum(m)}")
+  // a branch written all over (goes back to the lists)
+  var c2 = m
+  for k in 0..3000 {
+    c2.put(k, k + 1)
+  }
+  c2.put(9999, 1)
+  os.stdio.println("allover ${sum(c2)} base ${sum(m)} ${c2.get(17) ?? 0} ${m.get(17) ?? 0}")
+  // removes in a branch, then puts
+  var c3 = m
+  for k in 0..100 {
+    let _r = c3.remove(k * 7)
+  }
+  for k in 0..200 {
+    c3.put(10000 + k, k)
+  }
+  c3.put(7, 70)
+  os.stdio.println("removes ${sum(c3)} ${c3.len()} ${c3.get(14) ?? -5} ${c3.get(7) ?? -5} base ${sum(m)}")
+  // a branch of a branch
+  var c4 = c3
+  c4.put(1, 111)
+  var c5 = c4
+  c5.put(2, 222)
+  os.stdio.println("nested ${sum(c3)} ${sum(c4)} ${sum(c5)}")
+  // the base written after branches, then branched again
+  for k in 0..300 {
+    m.put(k, k)
+  }
+  let _r2 = m.remove(5)
+  var c6 = m
+  c6.put(5, 5)
+  os.stdio.println("base after ${sum(m)} ${sum(c6)} ${m.len()} ${c6.len()}")
+  // keys, values, entries of branches
+  var c7 = m
+  c7.put(123456, 9)
+  let ks = c7.keys()
+  let vs = c7.values()
+  os.stdio.println("lists ${ks.len()} ${ks[0]} ${ks[ks.len() - 1]} ${vs[vs.len() - 1]}")
+  // Str keys and values
+  var sm: Map[Str, Str] = {}
+  for i in 0..2000 {
+    sm.put("k${i}", "v${i}")
+  }
+  var out = ""
+  for i in 0..20 {
+    var b = sm
+    b.put("k${i}", "w${i}")
+    b.put("new${i}", "n")
+    out = sig(b)
+  }
+  var b2 = sm
+  for i in 0..500 {
+    b2.put("k${i * 3}", "x")
+  }
+  os.stdio.println("str ${out} ${sig(sm)} ${sig(b2)}")
+  // Sets
+  var st: Set[Int] = #{}
+  for i in 0..2000 {
+    st.add(i)
+  }
+  var hits = 0
+  for i in 0..30 {
+    var s2 = st
+    s2.add(100000 + i)
+    if s2.contains(100000 + i) && !st.contains(100000 + i) {
+      hits += s2.len()
+    }
+  }
+  os.stdio.println("sets ${hits} ${st.len()}")
+}

@@ -460,6 +460,37 @@ func TestGoldenRunPoison(t *testing.T) {
 	}
 }
 
+// TestMapBranch builds the Map goldens with XO_MAP_LOG=branch (decision
+// 0291's branching prototype: a lists Map of 1024 or more entries written
+// while shared forks its lists, and a fork its only holder writes 64
+// times goes back to them); map_branch exercises both, with removes,
+// nested forks, the base written after its branches, Str keys and Sets.
+func TestMapBranch(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds and runs programs")
+	}
+	for _, name := range []string{"map_branch", "maps", "map_log_model", "map_log_sets", "map_log_iter", "map_inplace_copies", "set_hofs"} {
+		dir := filepath.Join("..", "llvm", "testdata", "golden", name)
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got, err := buildRunWith(t, dir, xotool.Options{Backend: xotool.BackendArm64, Env: []string{"XO_MAP_LOG=branch"}})
+			if err != nil {
+				t.Fatalf("build: %v", err)
+			}
+			want, err := os.ReadFile(filepath.Join(dir, "want.txt"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(want) != got.String() {
+				t.Errorf("output differs from want.txt with XO_MAP_LOG=branch\n--- want\n%s\n--- got\n%s", want, got)
+			}
+		})
+	}
+}
+
 // TestGoldenRunSpill builds golden programs whose code has long straight
 // blocks, multi-operand templates (the adc chains of cpu_prims and P-256,
 // add_with_flag's adds and cset), and faults with the register allocator

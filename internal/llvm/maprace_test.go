@@ -17,7 +17,9 @@ import (
 // TestTSanSharedMaps: Maps shared between tasks under a Mutex (read with
 // with_read, written with with, values and whole snapshots used outside
 // the lock; testdata/tsan_maps) under ThreadSanitizer, in both Map forms
-// (XO_MAP_LOG=0, the lists; 1, decision 0291's hybrid). The log form once
+// (XO_MAP_LOG=0, the lists; 1, decision 0291's hybrid; branch, its
+// branching prototype, where the 1,600-entry recs Map forks its lists
+// under the snapshots). The log form once
 // stored new entries into chunks already marked shared, so other threads
 // counted their strings without atomics and the heap broke under
 // concurrent HTTP load (2026-10-21,
@@ -44,7 +46,7 @@ func TestTSanSharedMaps(t *testing.T) {
 		}
 		env = append(env, "XO_RACE_RUNTIME="+strings.TrimSpace(string(out)))
 	}
-	for _, mode := range []string{"0", "1"} {
+	for _, mode := range []string{"0", "1", "branch"} {
 		t.Run("map_log="+mode, func(t *testing.T) {
 			bin := filepath.Join(t.TempDir(), "prog")
 			r, err := xotool.Build([]string{filepath.Join("testdata", "tsan_maps")}, xotool.Options{Backend: xotool.BackendArm64, Race: true, Out: bin, Env: append(env, "XO_MAP_LOG="+mode)})

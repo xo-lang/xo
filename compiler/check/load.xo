@@ -60,6 +60,8 @@ pub struct Checker {
   /// the playground's too; compiler/xo main.xo turns it off for
   /// XO_MAP_LOG=0): the builder's map_type and map.xo read it
   pub map_log: Bool = true
+  /// XO_MAP_LOG=branch: ssa.Module map_branch
+  pub map_branch: Bool = false
   /// asynchronous preemption may replace the loop polls (decision 0318):
   /// a native backend (arm64, amd64), not --race, XO_ASYNC_PREEMPT not 0;
   /// the builder decides per target (darwin and linux)

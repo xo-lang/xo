@@ -32,7 +32,7 @@ pub fn part_keys(m: ssa.Module, os: Str, fkeys: List[Str]) -> List[Str] {
   let names = part_names(m, plist)
   let np = plist.len()
   var head = StrBuilder.new()
-  head.write("${PART_CACHE_VERSION}\n${FN_CACHE_VERSION}\n${os} ${m.goarch} regs=${m.arm64_regs} poison=${m.poison_frames} guard=${m.heap_guard} debug=${m.debug_info} dwaddr=${m.dw_data_addrs} nolibc=${m.nolibc} maplog=${m.map_log} nopreempt=${m.no_preempt} async=${m.async_preempt}${if m.dump_fn.is_empty() { "" } else { " dumpfn=${m.dump_fn}" }}\n")
+  head.write("${PART_CACHE_VERSION}\n${FN_CACHE_VERSION}\n${os} ${m.goarch} regs=${m.arm64_regs} poison=${m.poison_frames} guard=${m.heap_guard} debug=${m.debug_info} dwaddr=${m.dw_data_addrs} nolibc=${m.nolibc} maplog=${m.map_log} mapbr=${m.map_branch} nopreempt=${m.no_preempt} async=${m.async_preempt}${if m.dump_fn.is_empty() { "" } else { " dumpfn=${m.dump_fn}" }}\n")
   // no part count, part index, or function indexes (v2): a part's
   // output reads none of them (its labels count from 0 in its
   // namespace), and a cut that moves (a value cut, an added function)

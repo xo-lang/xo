@@ -347,3 +347,82 @@ check.twice_ok: at most 64 nodes).
   build's output, and XO_LEAKCHECK shows 0 live in both), the Map
   goldens on arm64, LLVM and wasm, TestTSanSharedMaps with a walk under
   with_read.
+
+## Addendum (2026-10-22, Xo Publish): branching, behind XO_MAP_LOG=branch
+
+Status: prototype, off by default; the owner decides the default on the
+numbers below.
+
+**The gap.** bench/perf/xo `branch` (2,000 rounds of `var c = m;
+c.put(KEYS + i, i)` from one 50,000-entry Map) took 63 ms native against
+0.18 ms on the Go backend. XO_PROF put every sample in memmove under
+xo.maph.putrest: the hybrid marks a value only after that value copied
+on write, and the mark is stored on the copy, never on the base. So
+every branch from an unmarked base copied its keys, values, live flags
+and slots (about 1.6 MB), then grew the copied keys (a second memmove,
+60% of the samples).
+
+**Design (maphyb.xo maph_fork_lists, maph_goback; maplog.xo lists
+levels).**
+- A lists value of MAPH_BRANCH_MIN (1024) or more live entries, written
+  while its lists are shared, becomes a log fork whose one parent level
+  is its own lists. There is no copy, so the write is O(1).
+- A Level gains a lists part: keys, values, live flags, slots and live
+  count, read in place.
+  - xo.mlog.lprobe is the lists' find on it.
+  - mlog_lvl_at makes an entry from it (no hash, no prev; its own origin
+    when live, else -1).
+  - findx, entry_at and each read lists levels through these.
+- A lists level is always the oldest level. Its lists stay shared, so the
+  base never writes them in place under a fork; the base's own write
+  while forks live forks too.
+- A fork that its only holder writes MAPH_GOBACK (64) times goes back to
+  the lists. It replays its puts after the lists level through the
+  lists' put alone (maph_listput; the first copies on write), then
+  writes in place. A fork with a removal stays a fork.
+- So a copy written all over (copymut) pays the lists' one copy as
+  before, plus 64 log puts.
+- Smaller Maps, and values already in log mode, keep the hybrid as it
+  was.
+- Types and code are unchanged without the flag. The flag is keyed as
+  `mapbr=` in the front end, fn and part caches.
+
+**Measured.** `xo bench --ab --rounds=10 --warmup=1`, A main's build, B
+the flag on, the same xo; Mac, a gate slot.
+
+| workload | instructions B/A | wall B/A | max RSS B/A |
+|---|---|---|---|
+| branch | 0.039 | 0.071 (65.6 to 4.7 ms) | 0.733 |
+| copymut | 1.006 | 0.998 (noise) | 0.992 |
+| putget | 1.000 | 1.035; 1.019 (0.97 to 1.032, noise) in a 15-round rerun | 1.002 |
+| get | 1.000 | 1.000 | 0.995 |
+| update | 1.000 | 1.004 | 0.994 |
+| iter | 1.000 | 1.038 (noise) | 0.995 |
+
+In-program timer: branch takes 223 us native against 179 us on the Go
+backend.
+
+HTTP CRUD callgrind (arm64, plain, N=100, 3 runs, instructions a
+request; bench/perf/http/callgrind-docker.sh, PRELOAD and XO_MAP_LOG),
+hybrid against branch: PRELOAD=8: 24,702 to 25,040 against 24,687 to
+24,896; PRELOAD=10,000: 486,685 to 490,459 against 485,699 to 491,766. Unchanged: the store's first shared write now forks its lists instead of copying them, and it stays a log value as before. (Logs: the lead's notes, xo-publish/mapbr-crud.)
+
+**Tests.**
+- Golden map_branch: one-key branches, a branch written all over, removes,
+  nested forks, the base written after branches, keys and values, Str
+  keys, Sets. want.txt is the Go backend's output.
+- TestMapBranch runs it and six Map goldens on arm64 with the flag.
+- TestTSanSharedMaps adds a map_log=branch run: its 1,600-entry Map forks
+  under snapshots, with no reports.
+- XO_LEAKCHECK shows 0 live on the golden and on the benchmark.
+- The LLVM backend gives the same output.
+- With the flag off, the output is unchanged: scripts/identity against the parent compared 154 programs (77, darwin and linux arm64), 0 differing.
+
+**Rejected on the way.** A first prototype cached a log table built from
+the lists in a cell on the base and forked that table. Branch dropped
+to 0.047x of the instructions, but building the 50,000-entry table cost
+copymut +8.4% instructions and +48% RSS, and its lists-mode `get` +2.9%
+(a stricter log test). A list copy that keeps the source's capacity
+(rl_copy, so the copied keys need no second copy to grow) gave branch
+0.82x of the instructions and +15% RSS. Branching makes that moot, so it
+was dropped.

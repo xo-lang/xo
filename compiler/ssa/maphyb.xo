@@ -217,7 +217,12 @@ fn (var b: Builder) maph_slow(t: Int, mp: Int, l: Int) -> Int {
   b.write_var(res, b.maph_is_log(t, mp))
   b.if_then_end(ne, je)
   let (ns, js) = b.if_then_begin(b.maph_shared(l))
-  b.write_var(res, b.maph_cowed(t, mp))
+  if b.m.map_branch {
+    // or MAPH_BRANCH_MIN entries: a fork of its lists (maph_fork_lists)
+    b.write_var(res, b.add(Op.Or, b.bool_t(), Aux.None, [b.maph_cowed(t, mp), b.bop(Op.Ge, b.add(Op.Field, it, Aux.I(n: 4), [mp]), b.cint(MAPH_BRANCH_MIN))]))
+  } else {
+    b.write_var(res, b.maph_cowed(t, mp))
+  }
   b.if_then_end(ns, js)
   b.read(res)
 }
@@ -285,6 +290,10 @@ fn (var b: Builder) maph_slowput(t: Int) -> Str {
   let lt = b.maph_lt(t)
   let gput = b.mlog_put(lt)
   let conv = b.maph_tolog(t)
+  var gb = ""
+  if b.m.map_branch {
+    gb = b.maph_goback(t)
+  }
   let name = "xo.maph.slowput[${b.m.types[t].name}]"
   let fi = b.thunk_func(name, [t, kt, vt], [t], [])
   if fi < 0 {
@@ -295,9 +304,27 @@ fn (var b: Builder) maph_slowput(t: Int) -> Str {
   let k = b.param(1)
   let v = b.param(2)
   let ll = b.m.types[t].fields[5].ty
+  if !gb.is_empty() {
+    // a large lists value written while shared: a fork of its lists
+    let (nb, jb) = b.if_then_begin(b.maph_branches(t, mp))
+    b.retv(b.maph_of_log(t, b.call(gput, lt, "", [b.maph_fork_lists(t, mp), k, v])))
+    b.if_then_end(nb, jb)
+  }
   let (nl, jl) = b.if_then_begin(b.maph_is_log(t, mp))
   let tk = b.call("list.take", b.m.tuple([ll, lt]), "", [b.mfield(t, 5, mp), b.cint(0)])
-  let lv2 = b.call(gput, lt, "", [b.add(Op.Field, lt, Aux.I(n: 1), [tk]), k, v])
+  let lvt = b.add(Op.Field, lt, Aux.I(n: 1), [tk])
+  if !gb.is_empty() {
+    // a fork written by its only holder: back to the lists after
+    // MAPH_GOBACK writes (maph_goback), then the lists' put
+    let due = b.add(Op.And, b.bool_t(), Aux.None, [b.bop(Op.Gt, b.call("list.len", it, "", [b.mf(lt, 7, lvt)]), b.cint(0)), b.mlog_sole(b.mf(lt, 0, lvt))])
+    let (np, jp) = b.if_then_begin(due)
+    let gr = b.call(gb, b.m.tuple([t, b.bool_t()]), "", [lvt])
+    let (ng, jg) = b.if_then_begin(b.add(Op.Field, b.bool_t(), Aux.I(n: 1), [gr]))
+    b.retv(b.call("xo.map.put[${b.m.types[t].name}]", t, "", [b.add(Op.Field, t, Aux.I(n: 0), [gr]), k, v]))
+    b.if_then_end(ng, jg)
+    b.if_then_end(np, jp)
+  }
+  let lv2 = b.call(gput, lt, "", [lvt, k, v])
   let lg2 = b.call("list.set", ll, "", [b.add(Op.Field, ll, Aux.I(n: 0), [tk]), b.cint(0), lv2])
   let n2 = b.add(Op.Field, it, Aux.I(n: 4), [b.call("list.index", lt, "", [lg2, b.cint(0)])])
   b.retv(b.add(Op.SetField, t, Aux.I(n: 4), [b.add(Op.SetField, t, Aux.I(n: 5), [mp, lg2]), n2]))
@@ -343,6 +370,13 @@ fn (var b: Builder) maph_slowrem(t: Int, ot: Int) -> Str {
   let mp = b.param(0)
   let k = b.param(1)
   let ll = b.m.types[t].fields[5].ty
+  if b.m.map_branch {
+    // a large lists value written while shared: a fork of its lists
+    let (nb, jb) = b.if_then_begin(b.maph_branches(t, mp))
+    let rb = b.call(grem, lrt, "", [b.maph_fork_lists(t, mp), k])
+    b.retv(b.add(Op.Tuple, rt, Aux.None, [b.maph_of_log(t, b.add(Op.Field, lt, Aux.I(n: 0), [rb])), b.add(Op.Field, ot, Aux.I(n: 1), [rb])]))
+    b.if_then_end(nb, jb)
+  }
   let (nl, jl) = b.if_then_begin(b.maph_is_log(t, mp))
   let tk = b.call("list.take", b.m.tuple([ll, lt]), "", [b.mfield(t, 5, mp), b.cint(0)])
   let r = b.call(grem, lrt, "", [b.add(Op.Field, lt, Aux.I(n: 1), [tk]), k])
@@ -427,4 +461,161 @@ fn (var b: Builder) maph_kvl(t: Int, mv: Int) -> (Int, Int, Int) {
   b.seal(join)
   b.s.cur = join
   (b.add(Op.Field, kl, Aux.I(n: 0), [res]), b.add(Op.Field, vl, Aux.I(n: 1), [res]), b.add(Op.Field, bl, Aux.I(n: 2), [res]))
+}
+
+// ---------------------------------------------------------------------------
+// Branching (decision 0291, branching addendum; XO_MAP_LOG=branch, a
+// prototype). A lists value copied and written once, again and again
+// from the same base (`var c = m; c.put(k, v)` per request), copied all
+// of its lists at each write: the mark is on the copy, never the base. A
+// lists value of MAPH_BRANCH_MIN or more entries written while shared
+// becomes instead a fork whose oldest level is its lists (maplog.xo
+// mlog_level's lists part: read in place, no copy), O(1). The lists stay
+// shared, so the base never writes them in place under a fork. A fork
+// its only holder then writes MAPH_GOBACK times goes back to the lists
+// (maph_goback): the lists' copy on write, once, then their speed (a copy
+// written all over, bench/perf/xo copymut).
+
+/// The live entries from which a lists value written while shared forks
+/// its lists.
+const MAPH_BRANCH_MIN = 1024
+/// A fork's writes, by its only holder, that send it back to the lists.
+const MAPH_GOBACK = 64
+
+/// Whether hybrid map mp is a lists value that forks its lists when
+/// written while shared.
+fn (var b: Builder) maph_branches(t: Int, mp: Int) -> Int {
+  let it = b.int_t()
+  b.add(Op.And, b.bool_t(), Aux.None, [b.bop(Op.Gt, b.call("list.len", it, "", [b.mfield(t, 0, mp)]), b.cint(0)), b.bop(Op.Ge, b.add(Op.Field, it, Aux.I(n: 4), [mp]), b.cint(MAPH_BRANCH_MIN))])
+}
+
+/// The log table of lists value mp as a fork whose one parent is mp's
+/// lists (positions 0 to their length), its next position unclaimed.
+fn (var b: Builder) maph_fork_lists(t: Int, mp: Int) -> Int {
+  let it = b.int_t()
+  let lt = b.maph_lt(t)
+  let dt = b.m.types[lt].fields[0].ty
+  let il = b.m.types[lt].fields[1].ty
+  let plt = b.m.types[lt].fields[7].ty
+  let lvt = b.m.types[plt].elems[0]
+  let lim = b.call("list.len", it, "", [b.mfield(t, 0, mp)])
+  let n = b.add(Op.Field, it, Aux.I(n: 4), [mp])
+  let lvl = b.add(Op.Struct, lvt, Aux.None, [b.call("list.new", dt, "", []), b.call("list.new", il, "", []), b.cint(0), lim, b.mfield(t, 0, mp), b.mfield(t, 1, mp), b.mfield(t, 2, mp), b.mfield(t, 3, mp), n])
+  var ps = b.call("list.new", plt, "", [b.cint(1)])
+  ps = b.call("list.push", plt, "", [ps, lvl])
+  var used = b.call("list.new", il, "", [b.cint(1)])
+  used = b.call("list.push", il, "", [used, lim])
+  b.add(Op.Struct, lt, Aux.None, [b.mlog_newdir(dt), b.call("list.new", il, "", []), used, lim, n, lim, b.cint(0), ps])
+}
+
+/// xo.maph.entry[T](lv, p) -> E: the entry at position p of log table
+/// lv's view (its own, else the nearest parent level holding p).
+fn (var b: Builder) maph_entry(t: Int) -> Str {
+  let it = b.int_t()
+  let lt = b.maph_lt(t)
+  let et = mlog_entry_of(b.m, lt)
+  let name = "xo.maph.entry[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [lt, it], [et], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let lv = b.param(0)
+  let p = b.param(1)
+  let base = b.mf(lt, 3, lv)
+  let (no, jo) = b.if_then_begin(b.bop(Op.Ge, p, base))
+  b.retv(b.mlog_at(et, b.mf(lt, 0, lv), b.iop(Op.Sub, p, base)))
+  b.if_then_end(no, jo)
+  let parents = b.mf(lt, 7, lv)
+  let lvt = b.m.types[b.vty(parents)].elems[0]
+  let iv = b.local()
+  let (i, ih, ix) = b.for_up_to_begin(b.call("list.len", it, "", [parents]), iv)
+  let lvl = b.call("list.index", lvt, "", [parents, i])
+  let lb = b.add(Op.Field, it, Aux.I(n: 2), [lvl])
+  let (nl, jl) = b.if_then_begin(b.bop(Op.Ge, p, lb))
+  b.retv(b.mlog_lvl_at(lt, lvt, lvl, b.iop(Op.Sub, p, lb)))
+  b.if_then_end(nl, jl)
+  b.for_up_to_end(i, iv, ih, ix)
+  b.retv(b.mlog_at(et, b.mf(lt, 0, lv), b.cint(0)))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// xo.maph.goback[T](lv) -> (T, Bool) (ssa.cold_fn): the lists value of
+/// fork lv, whose directory has one holder: its oldest level's lists with
+/// the puts after them, when that level is a lists level, MAPH_GOBACK or
+/// more entries follow it and none is a removal; else (an empty map,
+/// false).
+fn (var b: Builder) maph_goback(t: Int) -> Str {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let lt = b.maph_lt(t)
+  let et = mlog_entry_of(b.m, lt)
+  let plt = b.m.types[lt].fields[7].ty
+  let lvt = b.m.types[plt].elems[0]
+  let lf = b.m.types[lvt].fields
+  let ent = b.maph_entry(t)
+  let put = b.maph_listput(t)
+  let rt = b.m.tuple([t, bt])
+  let name = "xo.maph.goback[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [lt], [rt], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let lv = b.param(0)
+  var fs: List[Int] = []
+  for i in 0..4 {
+    fs.push(b.call("list.new", b.m.types[t].fields[i].ty, "", []))
+  }
+  let none = b.add(Op.Tuple, rt, Aux.None, [b.add(Op.Struct, t, Aux.None, fs + [b.cint(0), b.call("list.new", b.m.types[t].fields[5].ty, "", [])]), b.cbool(false)])
+  let parents = b.mf(lt, 7, lv)
+  let old = b.call("list.index", lvt, "", [parents, b.iop(Op.Sub, b.call("list.len", it, "", [parents]), b.cint(1))])
+  let (nn, jn) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.mlog_lvl_lists(lvt, old)]))
+  b.retv(none)
+  b.if_then_end(nn, jn)
+  let at = b.add(Op.Field, it, Aux.I(n: 3), [old])
+  let cnt = b.iop(Op.Sub, b.mf(lt, 5, lv), at)
+  let (nf, jf) = b.if_then_begin(b.bop(Op.Lt, cnt, b.cint(MAPH_GOBACK)))
+  b.retv(none)
+  b.if_then_end(nf, jf)
+  let iv = b.local()
+  let (i, ih, ix) = b.for_up_to_begin(cnt, iv)
+  let e = b.call(ent, et, "", [lv, b.iop(Op.Add, at, i)])
+  let (nr, jr) = b.if_then_begin(b.bop(Op.Lt, b.add(Op.Field, it, Aux.I(n: 2), [e]), b.cint(0)))
+  b.retv(none)
+  b.if_then_end(nr, jr)
+  b.for_up_to_end(i, iv, ih, ix)
+  let mv = b.local()
+  b.write_var(mv, b.add(Op.Struct, t, Aux.None, [b.add(Op.Field, lf[4].ty, Aux.I(n: 4), [old]), b.add(Op.Field, lf[5].ty, Aux.I(n: 5), [old]), b.add(Op.Field, lf[6].ty, Aux.I(n: 6), [old]), b.add(Op.Field, lf[7].ty, Aux.I(n: 7), [old]), b.add(Op.Field, it, Aux.I(n: 8), [old]), b.call("list.new", b.m.types[t].fields[5].ty, "", [])]))
+  let jv = b.local()
+  let (j, jh, jx) = b.for_up_to_begin(cnt, jv)
+  let e2 = b.call(ent, et, "", [lv, b.iop(Op.Add, at, j)])
+  b.write_var(mv, b.call(put, t, "", [b.read(mv), b.add(Op.Field, b.m.types[et].fields[3].ty, Aux.I(n: 3), [e2]), b.add(Op.Field, b.m.types[et].fields[4].ty, Aux.I(n: 4), [e2])]))
+  b.for_up_to_end(j, jv, jh, jx)
+  b.retv(b.add(Op.Tuple, rt, Aux.None, [b.read(mv), b.cbool(true)]))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// xo.maph.listput[T](m, k, v) -> T: the lists' put alone (the first
+/// copies the shared lists on write; maph_goback's replay, which the
+/// hybrid's put would fork again).
+fn (var b: Builder) maph_listput(t: Int) -> Str {
+  let kt = map_key(b.m, t)
+  let vt = map_val(b.m, t)
+  let rebuild = b.map_rebuild(t)
+  let hash = b.hash_func(kt)
+  let name = "xo.maph.listput[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t, kt, vt], [t], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  b.put_body(t, b.param(0), b.param(1), b.param(2), -1, rebuild, hash)
+  b.finish_fn()
+  b.end(saved)
+  name
 }
