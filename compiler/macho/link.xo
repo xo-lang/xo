@@ -1619,6 +1619,13 @@ fn (var l: Linker) symbols() -> (Bytes, Bytes, Int, Int, Int, Bytes) {
       if c == 'l' || c == 'L' {
         continue
       }
+      // a part's text markers (arm64 apreempt.xo unsafe_table) share
+      // their address with a function, and atos names no symbol at an
+      // address with two (xo_f_main, the first function, gave
+      // "0x100000948 (in hello)", 2026-10-22)
+      if s.name.len() > 10 && s.name[4] == 'u' && (bstr(s.name[0..10]) is "_xo_utext_" | "_xo_utend_") {
+        continue
+      }
       let sect = l.objs[o].sects[s.sect - 1]
       if sect.out < 0 {
         continue

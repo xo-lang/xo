@@ -788,10 +788,15 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // DWARF line tables (decision 0239), as for arm64 below
     var lm = b.m
     lm.debug_info = o.cmd != "asm" && !o.strip && (!release || o.debug_info)
-    // xo:allow XO0903 DWARF's compilation directory from $PWD when getcwd fails
-    lm.comp_dir = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
+    // the line root (the sources' names are relative to it: ssa file_name)
+    // is the compilation directory, not the working directory, which
+    // differs for `xo build DIR` (lldb opened the working directory's
+    // main.xo, 2026-10-22); std's directory is relative to the latter
+    // xo:allow XO0903 the working directory from $PWD when getcwd fails
+    let cwd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
+    lm.comp_dir = abs_line_root(os, cwd, o.dirs[0])
     let lsd = dir_name(ctx.std.trim_suffix("/"))
-    lm.std_root = if lsd.starts_with("/") { lsd } else { "${lm.comp_dir}/${lsd}" }
+    lm.std_root = if lsd.starts_with("/") { lsd } else { "${cwd}/${lsd}" }
     // whole program dead function removal, as for the native backends
     // below: a function only a folded target arm called (sanhook's
     // ThreadSanitizer threads, which call pthread and mmap) is not
@@ -1757,10 +1762,15 @@ fn gen_module(os: Os, o: Opts, ctx: Ctx, c: check.Checker, m: ssa.Module, tgoos:
   // dsymutil (a cc link on macOS), which relocates it as the function's
   let own_ld = o.linker == "macho" || (o.linker.is_empty() && default_ld(os, ctx, o, c, tgoos, "", false))
   gm.dw_data_addrs = gm.debug_info && (tgoos != "darwin" || own_ld)
-  // xo:allow XO0903 DWARF's compilation directory from $PWD when getcwd fails
-  gm.comp_dir = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
+  // the line root (the sources' names are relative to it: ssa file_name)
+  // is the compilation directory, not the working directory, which
+  // differs for `xo build DIR` (lldb opened the working directory's
+  // main.xo, 2026-10-22); std's directory is relative to the latter
+  // xo:allow XO0903 the working directory from $PWD when getcwd fails
+  let cwd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
+  gm.comp_dir = abs_line_root(os, cwd, o.dirs[0])
   let sd = dir_name(ctx.std.trim_suffix("/"))
-  gm.std_root = if sd.starts_with("/") { sd } else { "${gm.comp_dir}/${sd}" }
+  gm.std_root = if sd.starts_with("/") { sd } else { "${cwd}/${sd}" }
   (gm, t)
 }
 

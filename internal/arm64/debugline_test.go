@@ -50,18 +50,20 @@ func TestDebugLineDarwin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	build := func(name string, extra ...string) string {
+	// buildIn builds src from the directory wd
+	buildIn := func(wd, name string, extra ...string) string {
 		bin := filepath.Join(out, name)
 		args := append([]string{"build", "--backend=arm64"}, extra...)
-		args = append(args, "-o", bin, ".")
+		args = append(args, "-o", bin, src)
 		cmd := testtmp.Guard(exec.Command(xo, args...))
-		cmd.Dir = src
-		cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off")
+		cmd.Dir = wd
+		cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+wd, "XO_BIN_CACHE=off")
 		if b, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("xo %v: %v\n%s", args, err, b)
 		}
 		return bin
 	}
+	build := func(name string, extra ...string) string { return buildIn(src, name, extra...) }
 	bin := build("p")
 	if _, err := os.Stat(bin + ".dSYM"); err == nil {
 		t.Errorf("a build without --dsym wrote %s.dSYM", bin)
@@ -88,6 +90,41 @@ func TestDebugLineDarwin(t *testing.T) {
 	}
 	if v, err := exec.Command("dwarfdump", "--verify", dsym).CombinedOutput(); err != nil || !strings.Contains(string(v), "No errors.") {
 		t.Errorf("dwarfdump --verify: %v\n%s", err, v)
+	}
+	// atos names the program's first function, which a part's text
+	// marker (xo_utext_) shared its address with (2026-10-22)
+	if _, err := exec.LookPath("atos"); err == nil {
+		syms, err := exec.Command("nm", bin).CombinedOutput()
+		if err != nil {
+			t.Fatalf("nm: %v\n%s", err, syms)
+		}
+		a := regexp.MustCompile(`(?m)^([0-9a-f]+) t _xo_f_main$`).FindSubmatch(syms)
+		if a == nil {
+			t.Fatalf("no _xo_f_main in\n%s", syms)
+		}
+		if strings.Contains(string(syms), "_xo_utext_") {
+			t.Errorf("the symbol table has a part's text marker:\n%s", syms)
+		}
+		at, err := exec.Command("atos", "-o", bin, "0x"+string(a[1])).CombinedOutput()
+		if err != nil || !strings.Contains(string(at), "(main.xo:") {
+			t.Errorf("atos -o %s 0x%s: %v\n%s", bin, a[1], err, at)
+		}
+	}
+	// a build from another directory: DW_AT_comp_dir is the module's
+	// directory (the sources' names are relative to it), not the working
+	// directory, where lldb looked for main.xo (2026-10-22)
+	other := buildIn(out, "o")
+	ci, err := exec.Command("dwarfdump", "--debug-info", other).CombinedOutput()
+	if err != nil {
+		t.Fatalf("dwarfdump: %v\n%s", err, ci)
+	}
+	cd := regexp.MustCompile(`DW_AT_comp_dir\s+\("([^"]*)"\)`).FindSubmatch(ci)
+	if cd == nil {
+		t.Fatalf("no DW_AT_comp_dir in\n%s", ci)
+	}
+	want, _ := filepath.EvalSymlinks(src)
+	if got, _ := filepath.EvalSymlinks(string(cd[1])); got != want {
+		t.Errorf("a build from %s: DW_AT_comp_dir %s, want %s", out, cd[1], src)
 	}
 	withDsym := build("d", "--dsym")
 	d := filepath.Join(withDsym+".dSYM", "Contents", "Resources", "DWARF", "d")

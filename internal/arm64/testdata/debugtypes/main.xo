@@ -35,5 +35,19 @@ fn main(os: Os) {
   let xs = [10, 20, 30]
   let it = Item{name: "box", tags: [7, 8]}
   let sh = if xs.len() > 2 { Shape.Rect(w: 4, h: 5) } else { Shape.Circle(r: 1) }
-  os.stdio.println("${report("hello", xs, m, sh, it)}")
+  os.stdio.println("${report("hello", xs, m, sh, it)} ${marks(xs.len())}")
+}
+
+// types with no words (a List[()]'s items, a field of type ()): an empty
+// structure each, not a reference to offset 0 (dwarfdump --verify)
+struct Mark { v: () }
+
+fn marks(n: Int) -> Int {
+  var us: List[()] = []
+  for _ in 0..n {
+    us.push(())
+  }
+  let k = Mark{v: ()}
+  let _u = k.v
+  us.len()
 }

@@ -590,7 +590,7 @@ fn (g: G) dw_type(var die: Dw, var tys: DwTys, n: Str) -> Int {
   }
   let t = g.m.type_at.get(n) ?? -1
   if t < 0 {
-    return 0
+    return g.dw_struct(die, tys, n, 0, [])
   }
   let x = g.m.types[t]
   match x.kind {
@@ -640,7 +640,10 @@ fn (g: G) dw_type(var die: Dw, var tys: DwTys, n: Str) -> Int {
       }
       g.dw_struct(die, tys, n, g.dw_words(t), ms)
     }
-    Unit | Cap | Bad => 0
+    // no words: an empty structure, since a reference to offset 0 (a
+    // List[()]'s items, a field of type ()) is one dwarfdump --verify
+    // rejects (101 in xo itself, 2026-10-22)
+    Unit | Cap | Bad => g.dw_struct(die, tys, n, 0, [])
   }
 }
 
