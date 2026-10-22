@@ -923,6 +923,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   var cur_os = tgoos
   var cur_rk = lo.rc_keys
   var mi = cur.m
+  t = check_assumptions(os, mi, phases, t)
   let later = defer_inline_verify(os, o, march, release)
   // the inline cache's hits left undecoded until read (decision 0283
   // stage B), where the per-function cache is used
@@ -942,10 +943,11 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       cur_os = tgoos
       cur_rk = l.rc_keys
       mi = cur.m
+      let ta = check_assumptions(os, mi, phases, l.t)
       let (inl2, pend2) = inline_or_defer(os, mi, emit_jobs(os), phases, cur_os, release, cur_rk, later, lazy_inl)
       inl = inl2
       pend = pend2
-      t = lap(os, phases, "inline", l.t)
+      t = lap(os, phases, "inline", ta)
     }
     // arm64.generate_module(cur.m, tgoos, false), timed
     let jobs = emit_jobs(os)
@@ -1702,6 +1704,32 @@ fn gen_module(os: Os, o: Opts, ctx: Ctx, c: check.Checker, m: ssa.Module, tgoos:
   let sd = dir_name(ctx.std.trim_suffix("/"))
   gm.std_root = if sd.starts_with("/") { sd } else { "${gm.comp_dir}/${sd}" }
   (gm, t)
+}
+
+/// Decision 0342: every call, closure, and field access of the module to
+/// generate agrees with this build's definitions (ssa
+/// check_assumptions); XO1510 and exit 1 on a mismatch, since a cached
+/// piece is stale. XO_ASSUME_CHECK=off skips it (its cost is measured
+/// with xo bench --ab).
+fn check_assumptions(os: Os, var m: ssa.Module, phases: Bool, t: Time) -> Time {
+  if (os.env.get("XO_ASSUME_CHECK") ?? "") == "off" {
+    return t
+  }
+  if (os.env.get("XO_ASSUME_BREAK") ?? "") == "1" {
+    let _b = m.break_a_call()
+  }
+  let errs = m.check_assumptions()
+  let t2 = lap(os, phases, "assume", t)
+  if errs.is_empty() {
+    return t2
+  }
+  var ds: List[check.Diag] = []
+  for e in errs[0..errs.len().min(5)] {
+    ds.push(check.Diag{code: "XO1510", file: "", line: 0, col: 0, end_line: 0, end_col: 0, message: "a function disagrees with this build's definitions (a stale cached piece; decision 0342): ${e}; rebuild with XO_BACKEND_CACHE=off and report it"})
+  }
+  print_diags(os, ds)
+  os.proc.exit(1)
+  t2
 }
 
 /// Whether the inlined module verified (errs empty); else says so on

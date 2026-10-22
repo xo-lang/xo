@@ -2939,6 +2939,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO1507` | error | checker | an `embed` path leaves the module: absolute, `..`, `.`, an empty segment, or a symbolic link (decision 0304) |
 | `XO1508` | error | checker | a `Str` embed constant's file is not valid UTF-8; declare it `Bytes` (decision 0304) |
 | `XO1509` | error | checker | `embed` used other than as the initializer of a constant typed `Str`, `Bytes`, or `embed.Dir`, with one plain string literal (decision 0304) |
+| `XO1510` | error | build | a function the native backends are about to generate disagrees with this build's definitions: a call's argument or result types, a closure, or a field or payload access do not match the callee or type (decision 0342: a stale cached piece, such as a front end body naming a helper this build defines otherwise); rebuild with `XO_BACKEND_CACHE=off` and report it |
 
 `XO1001` is reserved: no `std/sys/<os>` module exists yet (14), so it is
 never reported.

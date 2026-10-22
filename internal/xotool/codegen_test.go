@@ -83,6 +83,8 @@ var codegenEnv = map[string]inputClass{
 	"XO_RC_CHECK":             {"none", ""}, // decision 0322's checks: marks Reuse values in the SSA bodies every cache key hashes
 	"XO_DUMP_DIR":             {"none", ""}, // where those files go
 	"XO_INLINE_STRICT":        {"none", ""},
+	"XO_ASSUME_CHECK":         {"none", ""}, // decision 0342's check, off for its --ab
+	"XO_ASSUME_BREAK":         {"none", ""}, // its test's damage
 	"XO_TEST_BATCH":           {"none", ""},
 	"XO_TEST_JOBS":            {"none", ""},
 	"XO_TEST_ONLY":            {"none", ""},

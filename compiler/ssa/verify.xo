@@ -1298,6 +1298,58 @@ pub fn (var m: Module) verify_jobs_skip(jobs: Int, skip: List[Bool]) -> List[Str
   []
 }
 
+/// Decision 0342: the calls, closures, and field and payload accesses of
+/// every decoded function checked against this module's definitions
+/// (check_types), before code generation. A function whose body a cache
+/// kept (the front end's, decision 0220) assumes the types it was built
+/// with; when this build defines a name it calls with other types, as
+/// an order dependent helper name did (gotchas/
+/// helper-name-creation-order.md), the build must stop, not emit the
+/// call. The first mismatch of each function, "NAME: bN: vM ...: why".
+pub fn (var m: Module) check_assumptions() -> List[Str] {
+  var errs: List[Str] = []
+  for f in m.funcs {
+    var bad = false
+    for (bi, bl) in f.blocks.indexed() {
+      for v in bl.instrs {
+        let op = f.values[v].op
+        if op == Op.Call || op == Op.Closure || op == Op.Field || op == Op.SetField || op == Op.Payload {
+          let msg = m.check_types(f, v)
+          if !msg.is_empty() {
+            errs.push("${f.name}: ${bname(bi)}: ${m.long_string(f, v)}: ${msg}")
+            bad = true
+            break
+          }
+        }
+      }
+      if bad {
+        break
+      }
+    }
+  }
+  errs
+}
+
+/// XO_ASSUME_BREAK=1's damage, for check_assumptions' test: the first
+/// call of a known function gets another result type, as a stale cached
+/// caller would have it; whether one was found.
+pub fn (var m: Module) break_a_call() -> Bool {
+  let bt = m.builtin(Kind.Bool)
+  let it = m.builtin(Kind.Int)
+  for fi in 0..m.funcs.len() {
+    for b in m.funcs[fi].blocks {
+      for v in b.instrs {
+        let x = m.funcs[fi].values[v]
+        if x.op == Op.Call && x.ty >= 0 && m.func_index(aux_name(x.aux)) >= 0 {
+          m.funcs[fi].values[v].ty = if x.ty == bt { it } else { bt }
+          return true
+        }
+      }
+    }
+  }
+  false
+}
+
 pub fn (var m: Module) verify_all() -> List[Str] {
   var errs: List[Str] = []
   for f in m.funcs {
