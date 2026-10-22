@@ -13,7 +13,10 @@ targets: the result shares the buffer (the second word of the value holds
 the length in its low 32 bits and the offset in its high 32 bits). Every
 value is limited to 4294967295 bytes; concatenating, repeating or appending
 past it faults. A view of a large buffer keeps the buffer alive. wasm and
-the Go backend are unchanged (they copy, or Go slices).
+the Go backend are unchanged (they copy, or Go slices). Native arm64,
+instructions: mime.parse_media_type 1,798 M to 1,338 M (-25.6%),
+multipart.parse -16.1%; time Layout.format +15.8% (byte indexing pays the
+offset and mask; step 4). bench/results/views-step3-measured-2026-10-22.md.
 
 ## 2026-10-22: perf: Map overwrites a key in place on the Go backend
 
