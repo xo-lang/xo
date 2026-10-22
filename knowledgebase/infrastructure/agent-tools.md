@@ -178,6 +178,14 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   Arm64 tail calls (`b`) bill a callee to the caller's caller; for call
   sites by address run with `CGFLAGS=--dump-instr=yes` (both formats
   read).
+  An edge marked `[!]` (JSON `"suspect"`) costs over 4x a call what the
+  callee's cheapest edge costs: probably a fiber switch billed to the
+  interrupted frame (callgrind runs threads one at a time and charges the
+  next fiber's work to the call in progress), not work the callee did.
+  On 2026-10-22 `rl_copy_n` showed 9,035 instructions a call from
+  `H2Conn.fragment` (15.6% of an h2 request) that a list reuse change and
+  `xo bench --ab` showed did not exist. Confirm any such cost with
+  `xo bench --ab` before acting.
 - Which build an xo is: `xo version --json` (or `-v`): commit, dirty
   diff hash, source key, the xo that built it (decision 0264). The bench
   runners (bench/perf/run.sh, llvm/native.sh, conc/run.sh,

@@ -1,0 +1,16 @@
+// Tests of the --callers suspect flag (the fiber switch artifact).
+
+test "an edge far above the callee's others is suspect" {
+  let rows = [
+    PerfCaller{caller: "a", callee: "rl_copy_n", calls: 1.0, incl: 9044.0},
+    PerfCaller{caller: "b", callee: "rl_copy_n", calls: 2.0, incl: 1700.0},
+    PerfCaller{caller: "c", callee: "rl_copy_n", calls: 1.0, incl: 850.0},
+    PerfCaller{caller: "d", callee: "rl_copy_n", calls: 3.0, incl: 2400.0},
+    PerfCaller{caller: "a", callee: "other", calls: 1.0, incl: 9000.0},
+  ]
+  let out = perf_suspect(rows)
+  expect(out[0].suspect)
+  expect(!out[1].suspect && !out[2].suspect && !out[3].suspect)
+  // a callee with fewer than three edges has nothing to compare with
+  expect(!out[4].suspect)
+}

@@ -114,6 +114,45 @@ struct PerfCaller {
   callee: Str
   calls: Float
   incl: Float
+  /// The edge costs far more a call than the callee's other edges: see
+  /// perf_suspect.
+  suspect: Bool = false
+}
+
+/// An edge's cost a call that is this many times the cheapest of the
+/// callee's edges (at least PERF_SUSPECT_EDGES of them) is flagged. The
+/// cheapest, not the median: an artifact inflates several edges at once
+/// (rl_copy_n's Store.create, delete and update edges cost 4,400 a call
+/// beside 300 for the maps, 2026-10-22).
+const PERF_SUSPECT_TIMES = 4.0
+const PERF_SUSPECT_EDGES = 3
+
+/// perf_suspect marks the rows whose instructions a call are over
+/// PERF_SUSPECT_TIMES the cheapest of the same callee's rows. A fiber
+/// switch inside a call (or a tail call, see agent-tools.md) bills the
+/// next fiber's work to the interrupted frame, so an edge can carry cost
+/// its callee never spent: rl_copy_n showed 8,900 instructions a call
+/// from H2Conn.fragment against about 140 of its own (2026-10-22).
+fn perf_suspect(rows: List[PerfCaller]) -> List[PerfCaller] {
+  var by: Map[Str, List[Float]] = {}
+  for r in rows {
+    if r.calls > 0.0 {
+      var l = by.get(r.callee) ?? []
+      l.push(r.incl / r.calls)
+      by[r.callee] = l
+    }
+  }
+  var out: List[PerfCaller] = []
+  for r in rows {
+    var x = r
+    let l = by.get(r.callee) ?? []
+    if l.len() >= PERF_SUSPECT_EDGES && r.calls > 0.0 {
+      let low = l.sort()[0]
+      x.suspect = low > 0.0 && r.incl / r.calls > PERF_SUSPECT_TIMES * low
+    }
+    out.push(x)
+  }
+  out
 }
 
 fn perf_callers(os: Os, dir: Str, sc: Str, re: regexp.Regex, top: Int) -> (Float, Float, List[PerfCaller])? {
@@ -157,6 +196,7 @@ fn perf_callers(os: Os, dir: Str, sc: Str, re: regexp.Regex, top: Int) -> (Float
     }
     rows.push(PerfCaller{caller: parts[0], callee: parts[1], calls: c, incl: i})
   }
+  rows = perf_suspect(rows)
   rows = rows.sort_by(fn(r: PerfCaller) -> Str { r.caller })
   rows = rows.sort_by(fn(r: PerfCaller) -> Int { 0 - perf_round(r.calls * 100.0) })
   rows = rows.sort_by(fn(r: PerfCaller) -> Int { 0 - perf_round(r.incl) })
@@ -195,16 +235,21 @@ fn callers_cmd(os: Os, pattern: Str, args: List[Str], top: Int, json: Bool) -> I
           if i > 0 {
             b.write(",")
           }
-          b.write("{\"caller\":${r.caller.quote()},\"callee\":${r.callee.quote()},\"calls\":${perf_two(r.calls)},\"instructions\":${perf_round(r.incl)}}")
+          b.write("{\"caller\":${r.caller.quote()},\"callee\":${r.callee.quote()},\"calls\":${perf_two(r.calls)},\"instructions\":${perf_round(r.incl)},\"suspect\":${r.suspect}}")
         }
         b.write("]}")
         os.stdio.println(b.freeze())
       } else {
         var b = StrBuilder.new()
+        var flagged = false
         b.write("== ${sc}: ${perf_two(tc)} calls, ${perf_round(ti)} instructions a request into /${pattern}/\n")
         for r in rows {
           let c = perf_two(r.calls)
-          b.write("${" ".repeat(if c.len() < 7 { 7 - c.len() } else { 0 })}${c} ${perf_num(r.incl, 8)}  ${r.caller} -> ${r.callee}\n")
+          b.write("${" ".repeat(if c.len() < 7 { 7 - c.len() } else { 0 })}${c} ${perf_num(r.incl, 8)}  ${r.caller} -> ${r.callee}${if r.suspect { "  [!]" } else { "" }}\n")
+          flagged = flagged || r.suspect
+        }
+        if flagged {
+          b.write("  [!] costs over ${perf_two(PERF_SUSPECT_TIMES)}x a call what the callee's cheapest edge costs: possibly a fiber switch billed to this frame (callgrind attributes the next fiber's work to the interrupted call); confirm with `xo bench --ab` before believing it\n")
         }
         os.stdio.print(b.freeze())
       }
