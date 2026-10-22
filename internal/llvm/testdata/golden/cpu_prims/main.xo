@@ -57,6 +57,22 @@ fn main(os: Os) {
     let b = inputs[(i + 7) % inputs.len()]
     os.stdio.println("adc ${i} ${internal.crypto_op("cpu.adc", a, b, b"", b"").to_hex()} ${internal.crypto_op("cpu.adc_soft", a, b, b"", b"").to_hex()}")
   }
+  // GHASH of 64 bytes (cpu.ghash4, decision 0339): the state a, the H
+  // powers (p0, p1 a block), four blocks; NEON on arm64, the body
+  // elsewhere
+  for (i, a) in inputs.indexed() {
+    var hk = b""
+    for j in 1..5 {
+      hk = hk + inputs[(i + j) % inputs.len()]
+    }
+    var blk = b""
+    for j in 7..11 {
+      blk = blk + inputs[(i + j) % inputs.len()]
+    }
+    let g = internal.crypto_op("cpu.ghash4", a, hk, blk, b"")
+    let gs = internal.crypto_op("cpu.ghash4_soft", a, hk, blk, b"")
+    os.stdio.println("ghash4 ${i} ${g.to_hex()} ${gs.to_hex()}")
+  }
   for (i, a) in inputs.indexed() {
     let b = inputs[(i + 3) % inputs.len()]
     let c = inputs[(i + 5) % inputs.len()]

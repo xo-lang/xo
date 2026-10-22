@@ -782,6 +782,20 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       g.set(v, "extractelement <2 x i64> ${r}, i32 ${if aux_str(x.aux) == "rt.clmul_lo" { 0 } else { 1 }}")
     }
     "rt.chacha_blocks4" => g.chacha4(g.raw_ptr(x.args[0]), g.raw_ptr(x.args[1]), g.raw_ptr(x.args[2]))
+    "rt.ghash4" => {
+      // arm64 only (ssa cpu_call, decision 0339): ssa.ghash4_neon_lines
+      // as inline asm, its V registers clobbered
+      var t = [".arch_extension crypto"]
+      for l in ssa.ghash4_neon_lines("$0", "$1", "$2") {
+        t.push(l)
+      }
+      var clob = "r,r,r"
+      for r in ssa.ghash4_neon_vregs() {
+        clob = clob + ",~{q${r}}"
+      }
+      clob = clob + ",~{memory}"
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, ptr ${g.raw_ptr(x.args[2])})")
+    }
     "rt.aes_round" | "rt.aes_last" => {
       let last = aux_str(x.aux) == "rt.aes_last"
       let p = g.raw_ptr(x.args[0])

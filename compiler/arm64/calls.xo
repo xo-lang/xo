@@ -1312,6 +1312,17 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.store("ldr q30, [$u0, xzr]\nldr q31, [$u1, xzr]\naese v30.16b, v31.16b\nldr q31, [$u2, xzr]\neor v30.16b, v30.16b, v31.16b\nstr q30, [$u0, xzr]", [g.real(g.word(x.args[0])), g.real(g.word(x.args[1])), g.real(g.word(x.args[2]))])
       g.set(v, [])
     }
+    "rt.ghash4" => {
+      // decision 0339: ssa.ghash4_neon_lines, $u0 the state, $u1 the H
+      // powers, $u2 the 64 bytes; its V registers clobbered
+      var cl: List[Int] = []
+      for r in ssa.ghash4_neon_vregs() {
+        cl.push(FP_BASE + r)
+      }
+      let _i = g.add(Inst{kind: K_PLAIN, text: ssa.ghash4_neon_lines("$u0", "$u1", "$u2").join("\n"), us: [g.real(g.word(x.args[0])), g.real(g.word(x.args[1])), g.real(g.word(x.args[2]))], clobbers: cl})
+      g.clobber()
+      g.set(v, [])
+    }
     "rt.chacha_blocks4" => {
       // decision 0329: the four blocks in vector registers, one 32 bit
       // lane each (chacha_neon), clobbering the caller saved V registers

@@ -763,6 +763,54 @@ func cryptoCPU(what string, a, b, c Bytes) (Bytes, bool) {
 		out := make([]byte, 8)
 		binary.LittleEndian.PutUint64(out, hi)
 		return Bytes(out), true
+	case "ghash4":
+		// GHASH of the 64 bytes c into the state a (y1, y0 as little endian
+		// words) with the H powers b (8 little endian words: p0, p1 a block;
+		// p2 = p0 ^ p1), as cpu.xo's op lays them out: the products summed,
+		// then one reduction, as ghash4_soft
+		w := func(x Bytes, i int) uint64 { return binary.LittleEndian.Uint64([]byte(x[8*i:])) }
+		mul := func(x, y uint64) (uint64, uint64) {
+			var lo, hi uint64
+			for i := 0; i < 64; i++ {
+				if y>>i&1 != 0 {
+					lo ^= x << i
+					if i > 0 {
+						hi ^= x >> (64 - i)
+					}
+				}
+			}
+			return lo, hi
+		}
+		var a0, b0, a1, b1, c0, c1 uint64
+		for j := 0; j < 4; j++ {
+			x1 := bits.ReverseBytes64(w(c, 2*j))
+			x0 := bits.ReverseBytes64(w(c, 2*j+1))
+			if j == 0 {
+				x1 ^= w(a, 0)
+				x0 ^= w(a, 1)
+			}
+			p0, p1 := w(b, 2*j), w(b, 2*j+1)
+			l, h := mul(x0, p0)
+			a0, b0 = a0^l, b0^h
+			l, h = mul(x1, p1)
+			a1, b1 = a1^l, b1^h
+			l, h = mul(x0^x1, p0^p1)
+			c0, c1 = c0^l, c1^h
+		}
+		z2l, z2h := c0^a0^a1, c1^b0^b1
+		v1a, v2a := b0^z2l, a1^z2h
+		s3 := b1<<1 | v2a>>63
+		s2 := v2a<<1 | v1a>>63
+		s1 := v1a<<1 | a0>>63
+		s0 := a0 << 1
+		s2 ^= s0 ^ s0>>1 ^ s0>>2 ^ s0>>7
+		s1 ^= s0<<63 ^ s0<<62 ^ s0<<57
+		y1 := s3 ^ s1 ^ s1>>1 ^ s1>>2 ^ s1>>7
+		y0 := s2 ^ s1<<63 ^ s1<<62 ^ s1<<57
+		out := make([]byte, 16)
+		binary.LittleEndian.PutUint64(out, y1)
+		binary.LittleEndian.PutUint64(out[8:], y0)
+		return Bytes(out), true
 	case "clmul":
 		x := binary.LittleEndian.Uint64([]byte(a))
 		y := binary.LittleEndian.Uint64([]byte(b))

@@ -171,7 +171,7 @@ fn mem_text(m: Mem) -> Str {
 /// stay on the text path).
 pub fn encode_op(o: Op) -> Int {
   let n = o.ops.len()
-  if o.m is "cnt" | "addv" | "dup" | "movi" | "cmeq" | "cmlt" | "shrn" | "pmull" | "pmull2" | "umov" | "aese" | "aesd" | "aesmc" | "aesimc" | "uzp1" | "ushll" | "ushll2" | "rev32" | "sha256h" | "sha256h2" | "sha256su0" | "sha256su1" {
+  if o.m is "cnt" | "addv" | "dup" | "movi" | "cmeq" | "cmlt" | "shrn" | "pmull" | "pmull2" | "umov" | "aese" | "aesd" | "aesmc" | "aesimc" | "uzp1" | "ushll" | "ushll2" | "rev32" | "rev64" | "ext" | "sha256h" | "sha256h2" | "sha256su0" | "sha256su1" {
     return simd_word(o.m, o.ops)
   }
   if o.m is "mov" | "add" | "eor" && n >= 2 {
@@ -181,8 +181,9 @@ pub fn encode_op(o: Op) -> Int {
   }
   // decision 0323's two lane double operations (fadd vD.2d, ...), and
   // faddp dD, vN.2d and ins vD.d[1], vN.d[0]
-  // decision 0329's ChaCha20 core: shl and sri by an immediate on .4s
-  if o.m is "shl" | "sri" && n == 3 {
+  // decision 0329's ChaCha20 core: shl and sri by an immediate on .4s;
+  // decision 0339's GHASH: shl and ushr on .2d
+  if o.m is "shl" | "sri" | "ushr" && n == 3 {
     if let Operand.VReg(..) = o.ops[0] {
       return simd_word(o.m, o.ops)
     }
@@ -1216,6 +1217,17 @@ fn simd_word(m: Str, o: List[Operand]) -> Int {
   if n < 2 {
     return -1
   }
+  if m == "ext" {
+    // ext vD.16b, vN.16b, vM.16b, #i (decision 0339)
+    let (d, ad) = v_of(o[0])
+    let (x, ax) = v_of(o[1])
+    let (y, ay) = if n == 4 { v_of(o[2]) } else { (-1, "") }
+    let i = if n == 4 { imm_of(o[3]) ?? -1 } else { -1 }
+    if d < 0 || x < 0 || y < 0 || ad != "16b" || ax != "16b" || ay != "16b" || i < 0 || i > 15 {
+      return -1
+    }
+    return 0x6e000000 | (y * 0x10000) | (i * 0x800) | (x * 32) | d
+  }
   if m == "faddp" {
     // faddp dD, vN.2d (decision 0323)
     let (dd, kd) = rk_of(o[0])
@@ -1293,9 +1305,22 @@ fn simd_word(m: Str, o: List[Operand]) -> Int {
       base | (y * 0x10000) | (x * 32) | d
     }
     "fsqrt" => if n != 2 || d < 0 || x < 0 || ad != "2d" || ax != "2d" { -1 } else { 0x6ee1f800 | (x * 32) | d }
-    "shl" | "sri" => {
-      // shl vD.4s, vN.4s, #s (0 to 31); sri vD.4s, vN.4s, #s (1 to 32)
-      if n != 3 || d < 0 || x < 0 || ad != "4s" || ax != "4s" || i2 < 0 {
+    "shl" | "sri" | "ushr" => {
+      // shl vD.4s, vN.4s, #s (0 to 31); sri vD.4s, vN.4s, #s (1 to 32);
+      // shl vD.2d, vN.2d, #s (0 to 63); ushr vD.2d, vN.2d, #s (1 to 64)
+      if n != 3 || d < 0 || x < 0 || ad != ax || i2 < 0 {
+        return -1
+      }
+      if ad == "2d" {
+        if m == "shl" {
+          return if i2 > 63 { -1 } else { 0x4f405400 | ((i2 & 63) * 0x10000) | (x * 32) | d }
+        }
+        if m == "ushr" {
+          return if i2 < 1 || i2 > 64 { -1 } else { 0x6f400400 | (((128 - i2) & 63) * 0x10000) | (x * 32) | d }
+        }
+        return -1
+      }
+      if ad != "4s" || m == "ushr" {
         return -1
       }
       if m == "shl" {
@@ -1313,11 +1338,13 @@ fn simd_word(m: Str, o: List[Operand]) -> Int {
     }
     "zip1" => if n != 3 || d < 0 || x < 0 || y < 0 || ad != "2d" || ax != "2d" || ay != "2d" { -1 } else { 0x4ec03800 | (y * 0x10000) | (x * 32) | d }
     "ins" => {
-      // ins vD.d[1], vN.d[0] (decision 0323's builds)
-      if n != 2 || d < 0 || x < 0 || ad != "d[1]" || ax != "d[0]" {
+      // ins vD.d[i], vN.d[j] (decision 0323's builds, 0339's lane moves)
+      if n != 2 || d < 0 || x < 0 || !(ad is "d[0]" | "d[1]") || !(ax is "d[0]" | "d[1]") {
         return -1
       }
-      0x6e180400 | (x * 32) | d
+      let i = if ad == "d[1]" { 1 } else { 0 }
+      let j = if ax == "d[1]" { 1 } else { 0 }
+      0x6e080400 | (i * 0x100000) | (j * 0x4000) | (x * 32) | d
     }
     "add" | "uzp1" | "sha256su1" => {
       if d < 0 || x < 0 || y < 0 || ad != "4s" || ax != "4s" || ay != "4s" {
@@ -1336,6 +1363,7 @@ fn simd_word(m: Str, o: List[Operand]) -> Int {
       let want = if m == "ushll" { "2s" } else { "4s" }
       if n != 3 || d < 0 || x < 0 || ad != "2d" || ax != want || i2 != 0 { -1 } else { (if m == "ushll" { 0x2f20a400 } else { 0x6f20a400 }) | (x * 32) | d }
     }
+    "rev64" => if n != 2 || d < 0 || x < 0 || ad != "16b" || ax != "16b" { -1 } else { 0x4e200800 | (x * 32) | d }
     "rev32" | "mov" => {
       if m == "rev32" && ad == "8h" {
         // rev32 vD.8h, vN.8h: a 32 bit lane rotated by 16 (decision 0329)

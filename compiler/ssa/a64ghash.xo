@@ -1,0 +1,90 @@
+// GHASH four blocks at a time on arm64 with NEON (decision 0339): the
+// instruction sequence both arm64 lowerings use (compiler/arm64 calls.xo,
+// compiler/llvm call.xo) for rt.ghash4 (std/native/llrt/cpu.xo ghash4).
+
+/// The V registers ghash4_neon_lines writes: v16 to v28, v30 and v31, caller
+/// saved (a callee keeps only v8 to v15's low halves).
+pub fn ghash4_neon_vregs() -> List[Int] { [16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 30, 31] }
+
+/// GHASH of the 64 bytes at d into the state at y (y1 then y0) with the H
+/// powers at hp (p0, p1 used, p2 not), as cpu.ghash4_soft computes it. A
+/// block loaded and rev64'd holds X = (x1, x0); with H = (p0, p1) loaded
+/// as one register and Hs = (p1, p0) by ext, pmull and pmull2 of X by Hs
+/// give x1 p1 (a1, b1) and x0 p0 (a0, b0), of X by H the cross products
+/// x1 p0 and x0 p1, whose sum is the middle term (z2: Karatsuba's (x0 ^
+/// x1)(p0 ^ p1) ^ a ^ b without the extra adds), summed over the blocks
+/// in v20 (a0, b0), v21 (a1, b1) and v23 (z2): blocks 1 to 3 first, then
+/// block 0, xored with the state, so the chain from one call's state to
+/// the next is short. The 256 bit product (a0, b0 ^ z2l, a1 ^ z2h, b1) in
+/// v20 (low) and v21 (high) is shifted left by one and reduced in two
+/// steps of a pmull by 0xc200000000000000 (v30) each, the first (by s0 =
+/// a0 << 1) started before the shift: the result (y0, y1) in v26, stored
+/// swapped. v31 holds zero.
+pub fn ghash4_neon_lines(y: Str, hp: Str, d: Str) -> List[Str] {
+  var t = ["movi v31.16b, #0", "movi v30.16b, #194", "shl v30.2d, v30.2d, #56", "ldr q16, [${y}]"]
+  for j in [1, 2, 3, 0] {
+    t.push(if j == 0 { "ldr q17, [${d}]" } else { "ldr q17, [${d}, #${16 * j}]" })
+    t.push(if j == 0 { "ldr q18, [${hp}]" } else { "ldur q18, [${hp}, #${24 * j}]" })
+    t.push("rev64 v17.16b, v17.16b")
+    t.push("ext v19.16b, v18.16b, v18.16b, #8")
+    if j == 0 {
+      t.push("eor v17.16b, v17.16b, v16.16b")
+    }
+    if j == 1 {
+      t = t + [
+        "pmull2 v20.1q, v17.2d, v19.2d",
+        "pmull v21.1q, v17.1d, v19.1d",
+        "pmull v23.1q, v17.1d, v18.1d",
+        "pmull2 v24.1q, v17.2d, v18.2d",
+        "eor v23.16b, v23.16b, v24.16b",
+      ]
+    } else {
+      t = t + [
+        "pmull2 v24.1q, v17.2d, v19.2d",
+        "pmull v25.1q, v17.1d, v19.1d",
+        "pmull v26.1q, v17.1d, v18.1d",
+        "pmull2 v27.1q, v17.2d, v18.2d",
+        "eor v20.16b, v20.16b, v24.16b",
+        "eor v21.16b, v21.16b, v25.16b",
+        "eor v26.16b, v26.16b, v27.16b",
+        "eor v23.16b, v23.16b, v26.16b",
+      ]
+    }
+  }
+  t + [
+    // the first reduction step's product: s0 = a0 << 1 (lane 0) by C
+    "shl v27.2d, v20.2d, #1",
+    "pmull v28.1q, v27.1d, v30.1d",
+    // (a0, b0 ^ z2l) and (a1 ^ z2h, b1)
+    "ext v24.16b, v31.16b, v23.16b, #8",
+    "ext v25.16b, v23.16b, v31.16b, #8",
+    "eor v20.16b, v20.16b, v24.16b",
+    "eor v21.16b, v21.16b, v25.16b",
+    // the 256 bits shifted left by one: (s0, s1) in v20, (s2, s3) in v21
+    "ushr v24.2d, v20.2d, #63",
+    "ushr v25.2d, v21.2d, #63",
+    "shl v20.2d, v20.2d, #1",
+    "shl v21.2d, v21.2d, #1",
+    "ext v26.16b, v31.16b, v24.16b, #8",
+    "ext v24.16b, v24.16b, v25.16b, #8",
+    "eor v20.16b, v20.16b, v26.16b",
+    "eor v21.16b, v21.16b, v24.16b",
+    // the reduction, two steps of one word w each: (w's next two words)
+    // ^= w C, C = 0xc200000000000000 (the low word of the carry-less
+    // product is w << 63 ^ w << 62 ^ w << 57, the high one w >> 1 ^ w >> 2
+    // ^ w >> 7), and the second of them ^= w: (s1, s2) by s0, then (s2,
+    // s3) by s1
+    "ext v25.16b, v20.16b, v21.16b, #8",
+    "ext v26.16b, v31.16b, v27.16b, #8",
+    "eor v25.16b, v25.16b, v28.16b",
+    "eor v25.16b, v25.16b, v26.16b",
+    "pmull v24.1q, v25.1d, v30.1d",
+    "trn2 v26.2d, v25.2d, v21.2d",
+    "ext v27.16b, v31.16b, v25.16b, #8",
+    "eor v26.16b, v26.16b, v24.16b",
+    "eor v26.16b, v26.16b, v27.16b",
+    // (y0, y1), stored as (y1, y0)
+    "ext v26.16b, v26.16b, v26.16b, #8",
+    "str q26, [${y}]",
+  ]
+}

@@ -203,6 +203,8 @@ fn (var b: Builder) cpu_call(x: Expr, ci: check.CallInfo) -> Int? {
     // runs the portable body until it has its own lowering
     "chacha_blocks4" => if b.goarch == "arm64" { "chacha_blocks4" } else { "" }
     // SSE2 on amd64 (x86mlkem.xo); arm64 runs the portable body
+    // decision 0339: NEON on arm64; amd64 runs the portable body
+    "ghash4" => if b.goarch == "arm64" { "ghash4" } else { "" }
     "mlkem_ntt" => if b.goarch == "amd64" { "mlkem_ntt" } else { "" }
     "mlkem_inverse_ntt" => if b.goarch == "amd64" { "mlkem_inverse_ntt" } else { "" }
     "mlkem_mul_acc" => if b.goarch == "amd64" { "mlkem_mul_acc" } else { "" }
