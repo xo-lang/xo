@@ -33,6 +33,13 @@
 # The native checks use the host's backend (arm64, or amd64 on an Intel
 # Mac and linux/amd64).
 #
+# A windows archive is checked on any host for what does not need
+# Windows: its layout and the Authenticode signatures of bin/xo.exe and
+# bin/xo-gobind.exe (scripts/verify-windows-sig.sh: osslsigncode against
+# Microsoft's roots, the timestamp, XO_WIN_SIGNER when set;
+# XO_VERIFY_UNSIGNED=1 reports them as UNSUPPORTED). Running it is
+# scripts/ci/release-smoke.sh's job on the Windows runner.
+#
 # Prints "PASS name", "FAIL name", or "UNSUPPORTED name" per check and a
 # summary line; exit status 0 when nothing failed.
 set -u
@@ -64,6 +71,24 @@ check() {
   fi
 }
 echo "host $host; archive $(basename "$archive"); $(uname -sr)"
+case "$(basename "$archive")" in
+  *-windows-*)
+    for f in xo.exe xo-gobind.exe; do
+      if [ -f "$rel/bin/$f" ]; then pass "layout-$f"; else fail "layout-$f"; continue; fi
+      if [ "${XO_VERIFY_UNSIGNED:-}" = 1 ]; then
+        echo "UNSUPPORTED signed-$f (XO_VERIFY_UNSIGNED=1)"
+      elif bash "$root/scripts/verify-windows-sig.sh" "$rel/bin/$f" > "$out/sign-$f.txt" 2>&1; then
+        pass "signed-$f ($(sed -n 's/.*: ok //p' "$out/sign-$f.txt"))"
+      else fail "signed-$f"; sed 's/^/  /' "$out/sign-$f.txt"; fi
+    done
+    for f in lib/xo/std/prelude.xo LICENSE THIRD_PARTY_NOTICES; do
+      if [ -f "$rel/$f" ]; then pass "layout-$f"; else fail "layout-$f"; fi
+    done
+    echo "release-verify: $fails failed (a windows archive: run it with scripts/ci/release-smoke.sh on Windows)"
+    [ "$fails" = 0 ]
+    exit
+    ;;
+esac
 printf 'fn main(os: Os) uses (stdio) {\n  os.stdio.println("hello from the released xo")\n}\n' > "$out/hello/main.xo"
 printf 'module ex\n' > "$out/usego/xo.mod"
 printf 'use go "strings"\n\nfn main(os: Os) uses (stdio, go) {\n  os.stdio.println(strings.to_upper("hello from use go"))\n}\n' > "$out/usego/app/main.xo"

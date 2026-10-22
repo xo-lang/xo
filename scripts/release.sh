@@ -76,6 +76,15 @@
 # online on first run. XO_RELEASE_UNSIGNED=1 skips signing (trials), and
 # XO_RELEASE_NO_NOTARIZE=1 signs without notarizing.
 #
+# The windows executables (bin/xo.exe, bin/xo-gobind.exe) are signed
+# with Azure Artifact Signing (scripts/sign-windows.sh, code-signing.md
+# "Windows"; each signature is billed): the six AZURE_* variables come
+# from the environment, or from the mode 600 file $XO_AZURE_ENV, read in
+# the subshell that signs and nowhere else; JSIGN_JAR names jsign's jar
+# and JAVA a Java runtime. The credentials are checked before the build
+# (sign-windows.sh --check-auth, a token only). XO_RELEASE_UNSIGNED=1
+# skips this too; XO_RELEASE_WIN_UNSIGNED=1 skips only Windows signing.
+#
 # The script then writes dist/xo-<version>-<os>-<arch>.tar.gz
 # (scripts/disttar: the same bytes for the same inputs) and
 # dist/SHA256SUMS. It never tags, pushes, or uploads
@@ -145,6 +154,27 @@ fi
 win=${XO_RELEASE_WINDOWS:-native}
 [ "$win" = 1 ] && win=native
 case $win in native|llvm|0) ;; *) echo "release.sh: XO_RELEASE_WINDOWS is native (the default), llvm, or 0" >&2; exit 1 ;; esac
+# win_sign ARGS...: scripts/sign-windows.sh with the Azure credentials of
+# the environment or $XO_AZURE_ENV, which only this subshell reads
+win_sign() {
+	(
+		if [ -n "${XO_AZURE_ENV:-}" ]; then
+			set -a
+			# shellcheck disable=SC1090
+			. "$XO_AZURE_ENV" || exit 2
+			set +a
+		fi
+		bash scripts/sign-windows.sh "$@"
+	)
+}
+winsign=0
+if [ "$win" != 0 ] && [ "$sign" = 1 ] && [ "${XO_RELEASE_WIN_UNSIGNED:-}" != 1 ]; then
+	winsign=1
+	if ! win_sign --check-auth >&2; then
+		echo "release.sh: Windows signing needs working Azure Artifact Signing credentials: the six AZURE_* variables (or XO_AZURE_ENV, a mode 600 file of them), JSIGN_JAR and JAVA (code-signing.md \"Windows\"); XO_RELEASE_WIN_UNSIGNED=1 builds unsigned Windows executables" >&2
+		exit 1
+	fi
+fi
 if [ "$win" = llvm ]; then
 	win_clang="${XO_WIN_CLANG:-}"
 	if [ -z "$win_clang" ] || ! "$win_clang" --version >/dev/null 2>&1 || [ ! -x "$(dirname "$win_clang")/lld-link" ]; then
@@ -295,6 +325,13 @@ if [ "$sign" = 1 ]; then
 	[ "${XO_RELEASE_NO_NOTARIZE:-}" = 1 ] && notarize=
 	echo "== darwin: sign ${#signed[@]} files${notarize:+ and notarize them}" >&2
 	XO_SIGN_IDENTITY="$XO_SIGN_ID" run bash scripts/sign-macos.sh $notarize "${signed[@]}" >&2
+fi
+# sign the windows executables (Authenticode, RFC 3161 timestamp), before
+# they are archived; sign-windows.sh checks each signature it made
+if [ "$winsign" = 1 ]; then
+	wst=$(stage_of windows/amd64)
+	echo "== windows: sign bin/xo.exe and bin/xo-gobind.exe (Azure Artifact Signing)" >&2
+	run win_sign "$wst/bin/xo.exe" "$wst/bin/xo-gobind.exe" >&2
 fi
 
 for target in $targets; do

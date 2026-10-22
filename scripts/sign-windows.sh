@@ -4,6 +4,11 @@
 # (knowledgebase/infrastructure/code-signing.md "Windows").
 #
 #   JSIGN_JAR=PATH/jsign-7.5.jar [JAVA=PATH/java] scripts/sign-windows.sh FILE.exe...
+#   ... scripts/sign-windows.sh --check-auth
+#
+# --check-auth only requests an access token (no signature, nothing
+# billed) and exits 0 when the credentials work: release.sh runs it
+# before its long build, so a bad secret stops it at once.
 #
 # Credentials come only from the environment: AZURE_TENANT_ID,
 # AZURE_CLIENT_ID, AZURE_CLIENT_SECRET (an app registration with the
@@ -17,8 +22,17 @@
 # seldom.
 set -euo pipefail
 
-if [ $# -eq 0 ]; then
-  echo "usage: JSIGN_JAR=... sign-windows.sh FILE.exe..." >&2
+check_auth=0
+if [ "${1:-}" = --check-auth ]; then
+  check_auth=1
+  shift
+fi
+if [ $# -eq 0 ] && [ $check_auth = 0 ]; then
+  echo "usage: JSIGN_JAR=... sign-windows.sh FILE.exe... | --check-auth" >&2
+  exit 2
+fi
+if [ ! -f "${JSIGN_JAR:-}" ]; then
+  echo "sign-windows.sh: JSIGN_JAR names no file (jsign-7.5.jar, code-signing.md \"The tools\")" >&2
   exit 2
 fi
 for v in AZURE_TENANT_ID AZURE_CLIENT_ID AZURE_CLIENT_SECRET AZURE_CODE_SIGNING_ENDPOINT AZURE_CODE_SIGNING_ACCOUNT AZURE_CODE_SIGNING_PROFILE JSIGN_JAR; do
@@ -61,6 +75,10 @@ open(sys.argv[2], "w").write(d["access_token"])
   exit 1
 fi
 rm -f "$tmp/token.json"
+if [ $check_auth = 1 ]; then
+  echo "sign-windows.sh: the credentials give a token"
+  exit 0
+fi
 
 for f in "$@"; do
   "$java" -jar "$JSIGN_JAR" --storetype TRUSTEDSIGNING \

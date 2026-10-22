@@ -186,8 +186,55 @@ refuse the call (the owner then runs it). Rehearse with a self-signed
 certificate first (jsign `--keystore KEY.p12 --storetype PKCS12`, the
 same output layout). Last verified: 2026-10-19
 
+### Releases (2026-10-22)
+
+scripts/release.sh signs the windows/amd64 archive's `bin/xo.exe` and
+`bin/xo-gobind.exe` after the build and before the archive is written
+(owner, 2026-10-22: Windows signing in the next release after 0.25.2).
+
+- **Credentials:** the six `AZURE_*` variables in the environment, or
+  `XO_AZURE_ENV`, the path of the mode 600 file above. Only the
+  subshell that signs reads it. Also `JSIGN_JAR` (jsign-7.5.jar,
+  checked against the SHA-1 above) and `JAVA`
+  (`$(brew --prefix openjdk)/bin/java`).
+- **Early check:** `sign-windows.sh --check-auth` requests a token
+  (nothing is signed or billed) before the long build. A bad secret or
+  a missing jar stops release.sh at once.
+- **Opting out:** `XO_RELEASE_WIN_UNSIGNED=1` builds unsigned Windows
+  executables; `XO_RELEASE_UNSIGNED=1` skips all signing.
+- **Checks after signing:**
+  - sign-windows.sh checks each signature it made (signer, timestamp).
+  - scripts/release-verify.sh on a windows archive checks the layout
+    and both signatures on any host with scripts/verify-windows-sig.sh.
+  - scripts/ci/release-smoke.sh on the Windows runner asks Windows
+    itself: `Get-AuthenticodeSignature` must say Valid, with a
+    timestamp.
+  - `XO_VERIFY_UNSIGNED=1` turns the signature checks into UNSUPPORTED
+    for unsigned trial archives.
+
+`scripts/verify-windows-sig.sh FILE.exe...` runs osslsigncode verify
+against Microsoft's roots in scripts/windows-codesign-roots.pem: the
+digest, the chain, and the RFC 3161 timestamp, so the signing
+certificate (valid for days) is checked at the signing time.
+`XO_WIN_SIGNER` adds a check of the signer's subject.
+
+- **osslsigncode:** taken from PATH, else a debian:trixie-slim
+  container installs it (osslsigncode 2.9). Homebrew has no bottle for
+  macOS 27, and building it from source needs cmake from source too.
+- **CRLs:** online CRL checks are off (`-ignore-crl`). The fetch failed
+  from the container, and without it the timestamp check fell back to
+  the current time, so an expired signer certificate failed.
+- **Tested** (2026-10-22): a Microsoft-signed vc_redist.x64.exe passes
+  (chain to Root 2011, timestamp to Root 2010); 0.25.2's unsigned
+  xo.exe fails with "No signature found".
+- **Not tested yet:** an Artifact Signing signature (chain to the
+  Identity Verification Root 2020) through this script, and the
+  Windows smoke's PowerShell check. Both need the first signed release
+  build and an owner-approved xo-windows CI run.
+
 ### Verification
 
+    scripts/verify-windows-sig.sh FILE.exe                  # any host: osslsigncode, Microsoft's roots
     java -jar jsign-7.5.jar extract --format PEM FILE.exe   # writes FILE.exe.sig.pem
     openssl pkcs7 -in FILE.exe.sig.pem -print_certs -noout  # the signer and its chain
     openssl asn1parse -in FILE.exe.sig.pem | grep 1.3.6.1.4.1.311.3.3.1   # the RFC 3161 timestamp

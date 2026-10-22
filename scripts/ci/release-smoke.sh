@@ -9,7 +9,10 @@
 # seed bucket ($XO_SEED_BUCKET, the runner's read only instance profile),
 # checked against SHA256. COMMIT, when given, is the commit `xo version
 # --json` must report (release.sh stamps it). Checks: version and its
-# stamp; check, build and run of a hello program with the default (native)
+# stamp; on Windows, the Authenticode signatures of bin/xo.exe and
+# bin/xo-gobind.exe (Get-AuthenticodeSignature: Valid, with a timestamp;
+# XO_VERIFY_UNSIGNED=1 skips them); check, build and run of a hello
+# program with the default (native)
 # backend; goldens with threads (channels, mutexes, scopes, a reader and
 # writer handoff) and the time zone golden (zone data from the archive's
 # lib/xo/std/tzdata) through scripts/golden-run.sh; `xo test` of a small
@@ -88,6 +91,21 @@ commit=$(sed -n 's/.*"commit":"\([0-9a-f]*\)".*/\1/p' "$o/version.json")
 if [ -z "$commit" ]; then fail "stamp: no commit in xo version --json"
 elif [ -n "$want_commit" ] && [ "$commit" != "$want_commit" ]; then fail "stamp: commit $commit, want $want_commit"
 else pass "stamp ($commit)"; fi
+# Windows' own check of the release's Authenticode signatures
+# (scripts/sign-windows.sh); XO_VERIFY_UNSIGNED=1 for an unsigned trial
+if [ -n "$exe" ]; then
+  for f in xo.exe xo-gobind.exe; do
+    if [ "${XO_VERIFY_UNSIGNED:-}" = 1 ]; then
+      echo "UNSUPPORTED signed-$f (XO_VERIFY_UNSIGNED=1)" | tee -a "$sum"
+      continue
+    fi
+    sig=$(powershell.exe -NoProfile -NonInteractive -Command "\$s = Get-AuthenticodeSignature -LiteralPath '$(np "$rel/bin/$f")'; '' + \$s.Status + ' ' + \$s.SignerCertificate.Subject + ' timestamp ' + [bool]\$s.TimeStamperCertificate" 2>&1 | tr -d '\r')
+    case "$sig" in
+      "Valid "*"timestamp True") pass "signed-$f ($sig)" ;;
+      *) fail "signed-$f ($sig)" ;;
+    esac
+  done
+fi
 
 mkdir -p "$w/hello" "$w/modt/calc"
 printf 'fn main(os: Os) uses (stdio) {\n  os.stdio.println("hello from the released xo")\n}\n' > "$w/hello/main.xo"

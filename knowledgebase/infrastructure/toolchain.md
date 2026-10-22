@@ -201,10 +201,19 @@ For the first public binary release (0.25.1, 2026-10-22) release.sh also:
   variables (code-signing.md). Neither a bare Mach-O nor a tar.gz can carry
   a stapled ticket; Gatekeeper looks it up online. `XO_RELEASE_UNSIGNED=1`
   and `XO_RELEASE_NO_NOTARIZE=1` are for trials.
+- **Signs** the windows bin/xo.exe and bin/xo-gobind.exe with Azure
+  Artifact Signing (scripts/sign-windows.sh; since 2026-10-22, after
+  0.25.2): the `AZURE_*` variables or the file `XO_AZURE_ENV`, with
+  `JSIGN_JAR` and `JAVA`, checked with a token request before the build.
+  `XO_RELEASE_WIN_UNSIGNED=1` skips it (code-signing.md "Releases" under
+  Windows). Last verified: 2026-10-22 (dry run; no signed build yet).
 
 release-verify.sh then also checks that the stamped commit is the checkout's
 HEAD and, on darwin, the Developer ID signature and notarization
-(`XO_VERIFY_UNSIGNED=1` for a trial archive). It uses the host's native
+(`XO_VERIFY_UNSIGNED=1` for a trial archive). Given a windows archive on
+any host, it checks only the layout and the Authenticode signatures
+(scripts/verify-windows-sig.sh); release-smoke.sh on Windows runs it and
+asks Get-AuthenticodeSignature. It uses the host's native
 backend, amd64 on an Intel Mac or linux/amd64. Go is missing is checked
 with `--backend=go`, since native is the default. The owner publishes with
 `scripts/release-publish.sh [--draft] TAG DIST NOTES.md` from the
