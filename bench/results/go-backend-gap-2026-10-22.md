@@ -21,7 +21,7 @@ ratios here count everything the process retired.
 | 1 | json parse | 5,594 M | 271 M | 23.8x |
 | 2 | ctx mutex | 20,469 M | 1,103 M | 18.8x |
 | 3 | atomic set, get, flag, cas | 169 to 349 M | 23 to 37 M | 12.4x to 16.6x |
-| 4 | collection copymut | 47,959 us | 4,638 us | 10.3x |
+| 4 | collection copymut (improved, section 4) | 47,959 us | 4,638 us | 10.3x |
 | 5 | json invalid | 1,764 M | 204 M | 10.2x |
 | 6 | atomic swap, contended | 257 M, 452 M | 37 M, 70 M | 9.9x, 7.5x |
 | 7 | portable arith8, divmod, shift, arith32 | 247 to 844 M | 50 to 155 M | 5.3x to 6.1x |
@@ -137,6 +137,53 @@ not the operation; its instructions fell to 0.27.
 NaN to Int"): both medians were 0 (rusage's 10 ms resolution) and the
 ratio 0/0 reached the formatter. The cpu_ms rows above it (10 against 0,
 "better") are below the metric's resolution and say nothing.
+
+## 4. collection copymut: improved, 0.75x
+
+The workload: ten rounds of `var c = m`, a put of every key of the copy
+(50,000 overwrites), and a read of every key of the original.
+
+**Cause** (pprof of a 200-round variant: mtable_probe, mtable_grow,
+mfind and Map_write lead).
+- The copy is a fork of the original's table. Each of its 50,000
+  writes probes its own index, looks up the parent for the key's
+  origin, and appends; its index grows from 4 slots by doubling.
+- A fork flattens only past `n + 32` own entries, which a copy written
+  once all over never reaches.
+- Flattening earlier through Map_flatten made it worse (+8%
+  instructions): its walk (Map_each) does a find per entry.
+
+**Fix** (std/rt map.go Map_flattenFork).
+- A fork of a root table whose view has no garbage becomes a root table
+  of its own at its 64th own entry.
+- The parent's entries [0, base) are copied as they are (written once,
+  never changed after), and an index is built from their stored hashes.
+- The fork's own entries are recorded again in order. The owner of an
+  unshared root then overwrites in place (decision 0335).
+- A parent view with an overwrite or a tombstone keeps the old path.
+
+**Tests.**
+- TestMapFlattenFork: a fork written 192 times with puts, new keys and
+  removals is checked against a model at the 64th write and after. The
+  original and the copy that claimed the parent's log keep their values.
+  A parent view with garbage stays a fork.
+- TestMapModel.
+- The Map goldens of internal/gen.
+- TestGoldenGoParity of the Map goldens.
+
+`xo bench --ab --rounds=8`, Go backend, old map.go against new (Mac,
+loaded):
+
+| workload | instructions B/A | wall B/A |
+|---|---|---|
+| copymut | 0.777 | 0.745 (0.662 to 0.877) |
+| branch, putget, get, update, iter, insrem | 0.998 to 1.001 | noise |
+
+copymut on the Go backend: 28 ms to 18 ms (in-program timer, one quiet
+run each). Native takes 4.9 ms and Go's maps.Clone 10 ms. What remains:
+- the fork's first 64 writes and the copy of the parent's entries;
+- Go's generic Map code (Eq through an interface shape);
+- the collector's threads, counted in the instructions.
 
 ## Not measured
 

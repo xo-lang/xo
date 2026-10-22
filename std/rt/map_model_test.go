@@ -334,3 +334,61 @@ func TestMapHashCollisions(t *testing.T) {
 		}
 	}
 }
+
+// TestMapFlattenFork: a fork of a root table written forkOwnMax times
+// becomes a root table of its own (Map_flattenFork): its parent's view
+// copied and its own entries recorded again, overwrites, new keys and
+// removals in their order; the original and the copy that claimed the
+// parent's log keep their values. With garbage in the parent's view
+// (an overwrite the shared root appended) the fork stays a fork.
+func TestMapFlattenFork(t *testing.T) {
+	for _, garbage := range []bool{false, true} {
+		for seed := range uint64(8) {
+			rng := rand.New(rand.NewPCG(seed, 11))
+			const keys = 300
+			var m Map[int64, int64]
+			rm := mmodel{vals: map[int64]int64{}}
+			for k := range int64(200) {
+				Map_put(nil, &m, k, k)
+				rm.put(k, k)
+			}
+			if garbage {
+				// m shared, then overwritten: the root's log gains garbage
+				keep := Map_Own(m)
+				Map_put(nil, &m, 3, 33)
+				rm.put(3, 33)
+				_ = keep
+			}
+			c1 := Map_Own(m)
+			r1 := rm.clone()
+			Map_put(nil, &c1, 250, 1) // claims m's log
+			r1.put(250, 1)
+			c2 := Map_Own(m) // forks at its first write
+			r2 := rm.clone()
+			for step := range 3 * forkOwnMax {
+				k := rng.Int64N(keys)
+				if rng.IntN(5) == 0 {
+					got := Map_remove(nil, &c2, k)
+					want, ok := r2.vals[k]
+					if got.Some != ok || got.V != want {
+						t.Fatalf("garbage %v seed %d step %d: remove(%d) = %v, want %d %v", garbage, seed, step, k, got, want, ok)
+					}
+					r2.remove(k)
+				} else {
+					v := rng.Int64()
+					Map_put(nil, &c2, k, v)
+					r2.put(k, v)
+				}
+				if step%5 == 0 || step == forkOwnMax-1 || step == forkOwnMax {
+					checkModel(t, "fork", c2, r2, keys)
+				}
+			}
+			if !garbage && c2.t.parent != nil {
+				t.Fatalf("seed %d: the fork is still a fork after %d writes", seed, 3*forkOwnMax)
+			}
+			checkModel(t, "fork", c2, r2, keys)
+			checkModel(t, "original", m, rm, keys)
+			checkModel(t, "claimer", c1, r1, keys)
+		}
+	}
+}

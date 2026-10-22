@@ -343,7 +343,61 @@ func Map_write[K, V any](m *Map[K, V], ix *mindex, pos uint64, j int, h uint64, 
 	ix.slots[pos].Store(int32(i + 1))
 	if t.parent == nil && L+1 > 2*m.n+32 || t.parent != nil && i+1 > m.n+32 {
 		Map_flatten(m, m.n+32)
+	} else if t.parent != nil && i+1 == forkOwnMax {
+		// a copy written all over (`var c = m`, then a put of every key):
+		// a root table of its own, which its owner then overwrites in
+		// place, instead of a fork whose every write probes its parent
+		Map_flattenFork(m)
 	}
+}
+
+// forkOwnMax is the count of own entries at which a fork of a root
+// table becomes a root table of its own (Map_flattenFork).
+const forkOwnMax = 64
+
+// Map_flattenFork makes m, a fork whose parent is a root table, a root
+// table of its own: the parent's view copied (its entries never change
+// once written, decision 0291's argument), an index built from their
+// hashes, then m's own entries recorded again, in place where they
+// overwrite. It does nothing when the parent's view has garbage (an
+// overwritten entry or a tombstone): Map_flatten's walk is needed then.
+func Map_flattenFork[K, V any](m *Map[K, V]) {
+	t := m.t
+	p := t.parent
+	if p.parent != nil {
+		return
+	}
+	base := t.base
+	pa := *p.arr.Load()
+	for j := 0; j < base; j++ {
+		if e := &pa[j]; int(e.org) != j || e.prev >= 0 {
+			return
+		}
+	}
+	own := len(m.es)
+	a := make([]mentry[K, V], base+own+32)
+	copy(a, pa[:base])
+	nt := &mtable[K, V]{}
+	ix := mtable_newIdx(nt, base+own)
+	mask := uint64(len(ix.slots) - 1)
+	for j := 0; j < base; j++ {
+		q := ix.home(a[j].h)
+		for ix.slots[q].Load() != 0 {
+			q = (q + 1) & mask
+		}
+		ix.slots[q].Store(int32(j + 1))
+	}
+	nt.keys = base
+	mtable_setArr(nt, a)
+	nt.idx.Store(ix)
+	nt.used.Store(int64(base))
+	r := Map[K, V]{t: nt, es: a[:base], n: base}
+	for i := range own {
+		e := &m.es[i]
+		Map_claim(&r)
+		Map_record(&r, e.h, e.k, e.v, e.org < 0)
+	}
+	*m = r
 }
 
 // grow doubles the index, publishing the new one; old readers keep the old
