@@ -85,6 +85,24 @@ cost. Consequence for the layout:
   price of changing value passing in the SSA, three emitters, wasm, and the
   llrt ABI.
 
+## Layout decision (owner, 2026-10-21): option C
+
+Xo Lang 2 noted that a Str (and Bytes) is already two words in the emitters
+(object pointer, length; data at obj+16). Option C packs a view's offset
+into the length word (len | off << 32; data = obj + 16 + (w1 >> 32)): a
+slice allocates nothing (a new pair, the parent's count + 1), owned values
+are unchanged (offset 0), and the header and call ABI stay as they are. In a
+hot byte loop (2 index ops per iteration, 1M iterations) the emulated cost
+over the loop's baseline was 17.3 M instructions today, 20.8 M for C
+(unhoisted mask, shift, add) and 25.2 M for a one-word view object (B).
+
+The owner accepted C with a **4 GiB cap** on one Str or Bytes value (a
+language-visible limit; spec core states it with the change; a larger value
+faults at construction). Supersedes items 1 and 5 of the proposed decision
+(the three-word value and the Bytes-first staging): Str and Bytes share one
+representation, so they move together. Owner: Xo Lang Lib 1, with Xo Lang 2
+reviewing every emitter and runtime change.
+
 ## Alternatives
 
 - **Keep copying and rewrite hot ports with byte indexing** (what was done

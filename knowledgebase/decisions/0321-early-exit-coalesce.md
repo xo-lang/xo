@@ -2,8 +2,9 @@
 
 Status: Accepted for part 1 (owner, 2026-10-21): `return`, `break`, and
 `continue` as `Never` expressions on the right of `??` (the Option form).
-Part 2, the Result form (`?? e => ...`), is deferred: Result code keeps
-`match` and `.or_err(...)?`. Drafted by Xo Lang Lib 1 after the agents'
+Part 2, the Result form (`?? e => ...`), accepted later the same day
+(owner, 2026-10-21, after the language poll: four of six agents asked for
+it); Xo Publish implements it after decision 0331. Drafted by Xo Lang Lib 1 after the agents'
 poll of 2026-10-21.
 
 Measure (2026-10-21, origin/main): 251 one-arm `match` blocks of the shape
@@ -99,7 +100,8 @@ continue }`), which is the pattern repeated most in a loop body and in
 - The compiler cannot use the syntax until a seed has it (gotcha
   new-syntax-needs-a-newer-seed); rewriting the 251 blocks follows the
   next seed cut.
-- Part 2, the Result form, stays deferred.
+- Part 2, the Result form: accepted (owner, 2026-10-21); same tests as
+  part 1 for the Result side, on go, arm64, and LLVM.
 
 ## Alternatives
 
