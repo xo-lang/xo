@@ -3,7 +3,7 @@
 ## 2026-10-22: perf: Go's one-pass matcher for patterns anchored with \A
 
 - Kind: perf
-- Commit: this commit
+- Commit: 7c1a454e5
 - Found by: bench/results/regexp-ascii-bitmap-inline-2026-10-22.md (the one-pass matcher was the last of Go's matchers not ported; anchored row 1.20x Go's instructions)
 - Go reference: regexp/onepass.go, regexp/exec.go doOnePass (go1.26.1); onepass_test.go's patterns
 - Test: std/native/regexp_test.xo (4,760 anchored cases from Go), internal/llvm/testdata/golden/regexp_table, internal/stdtest corpus regexp; timing row against Go: bench/results/regexp-ascii-bitmap-inline-2026-10-22.md
