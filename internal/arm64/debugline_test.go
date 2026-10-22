@@ -246,11 +246,13 @@ func TestDebugLineInlined(t *testing.T) {
 	if v, err := exec.Command("dwarfdump", "--verify", dsym).CombinedOutput(); err != nil || !strings.Contains(string(v), "No errors.") {
 		t.Errorf("dwarfdump --verify: %v\n%s", err, v)
 	}
+	// a frame's parameters follow its name when it has any with debug
+	// information (main's os, 2026-10-22: "main(os=<unavailable>) at")
 	bt, err := lldb(t, true, "-b", "-o", "b scale", "-o", "run", "-o", "bt 4", bin)
 	if err != nil {
 		t.Fatalf("lldb: %v\n%s", err, bt)
 	}
-	if !regexp.MustCompile(`frame #0: .*scale(\(.*\))? at main\.xo:[56]:\d+ .*\[inlined\]`).Match(bt) || !regexp.MustCompile(`frame #1: .*main at main\.xo:12:\d+`).Match(bt) {
+	if !regexp.MustCompile(`frame #0: .*scale(\(.*\))? at main\.xo:[56]:\d+ .*\[inlined\]`).Match(bt) || !regexp.MustCompile(`frame #1: .*main(\(.*\))? at main\.xo:12:\d+`).Match(bt) {
 		t.Errorf("lldb's backtrace lacks the inlined frame of scale above main at line 12:\n%s", bt)
 	}
 }
