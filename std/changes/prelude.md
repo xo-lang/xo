@@ -3,7 +3,7 @@
 ## 2026-10-22: perf: Mutex.with on the Go backend records a 2-frame site
 
 - Kind: perf
-- Commit: (filled in after the push)
+- Commit: 47745250c
 - Found by: go pprof of bench/perf/ctx mutex on the Go backend (bench/results/go-backend-gap-2026-10-22.md, item 2)
 - Go reference: runtime.Callers
 - Test: std/rt lock tests (-race); goldens conc_*, deadlock and mutex through TestGoldenGoParity
