@@ -1065,6 +1065,9 @@ fn (var c: Checker) call_method(bt: Int, sspan: Span, x: Expr, sel: Ident, targs
     c.require_mutable(x, "XO0501", "method `${text(name)}`")
   }
   let t = c.call_func(m, pre, targs, has_targs, call, hint, [x])
+  if is_named && (name == b"read" || name == b"read_text" || name == b"contains") && c.is_embed_dir(r) {
+    c.embed_path_check(x, args)
+  }
   if c.is_prelude(r, "Scope") && (name == b"spawn" || name == b"spawn_background") {
     c.record_spawn(x, call, t)
   }

@@ -1,0 +1,22 @@
+// XO1511: a literal path an embed.Dir constant does not hold.
+
+use std/embed
+
+const SITE: embed.Dir = embed("static")
+
+fn page(name: Str) -> Bytes {
+  // computed at run time: not checked
+  SITE.read(name) ?? b""
+}
+
+fn main(os: Os) {
+  let a = SITE.read("static/index.html") ?? b""
+  let b = SITE.read("index.html") ?? b"" // ERROR XO1511 "did you mean .static/index.html."
+  let c = SITE.read_text("nope.txt") ?? "" // ERROR XO1511 "no embedded file .nope.txt."
+  let d = SITE.contains("css/site.css") // ERROR XO1511 "did you mean .static/css/site.css."
+  let s = SITE.sub("static")
+  let e = SITE.sub("static").read("index.html") ?? b""
+  let f = SITE.sub("static").read("static/index.html") ?? b"" // ERROR XO1511 "no embedded file"
+  let g = s.read("index.html") ?? b""
+  os.stdio.println("${a.len()} ${b.len()} ${c} ${d} ${e.len()} ${f.len()} ${g.len()} ${page("x").len()}")
+}

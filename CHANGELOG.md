@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- New warning `XO1511`: `SITE.read("index.html")`, `read_text` or
+  `contains` on an `embed.Dir` constant (or a literal `.sub` of one) with
+  a literal path the constant does not hold. It caught a server that
+  served a blank page because the key was `static/index.html`; when one
+  key ends with the path it is offered as a fix, with a note that
+  `SITE.sub("static")` drops the prefix. Paths computed at run time are
+  not checked.
+
 - `--race` with no `--backend` uses the native backend (arm64 or amd64)
   wherever a prebuilt ThreadSanitizer runtime ships (darwin/arm64,
   linux/arm64, linux/amd64, windows/amd64), so it needs no clang (owner,

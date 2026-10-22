@@ -42,6 +42,9 @@ pub struct Checker {
   /// the program's embedded bytes so far.
   pub embeds: Map[Int, List[EmbedFile]] = {}
   embed_total: Int = 0
+  /// The paths each embed.Dir constant holds, by "module\nname"
+  /// (XO1511).
+  embed_dir_keys: Map[Str, List[Str]] = {}
   mv_frames: List[MvFrame] = []
   /// A directory of the run that could not be listed for a reason other
   /// than not existing or not being readable (an I/O error, such as no

@@ -1051,7 +1051,12 @@ const DEFAULT = Config{port: 8080}
   reads it. An embed may hold 64 MiB and a program's embeds 256 MiB. A
   module that declares its own `embed` uses it. Errors: `XO1506` (no file,
   too many, too large), `XO1507` (outside the module), `XO1508` (a `Str`
-  that is not UTF-8), `XO1509` (any other use).
+  that is not UTF-8), `XO1509` (any other use). An `embed.Dir`'s keys
+  are those relative paths, so `embed("static")` holds
+  `static/index.html`; `read`, `read_text`, or `contains` on such a
+  constant (or a literal `.sub` of one) with a literal path it does not
+  hold is the warning `XO1511`, with the key that ends with the path as a
+  fix. A path computed at run time is not checked.
 - Unused local bindings, local constants, and imports are errors (`XO0110`). Not covered:
   function and closure parameters, names starting with `_`, and `_` itself.
   `xo fix` removes unused bindings. `xo check --wip` reports `XO0110` and
@@ -2987,6 +2992,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO1508` | error | checker | a `Str` embed constant's file is not valid UTF-8; declare it `Bytes` (decision 0304) |
 | `XO1509` | error | checker | `embed` used other than as the initializer of a constant typed `Str`, `Bytes`, or `embed.Dir`, with one plain string literal (decision 0304) |
 | `XO1510` | error | build | a function the native backends are about to generate disagrees with this build's definitions: a call's argument or result types, a closure, or a field or payload access do not match the callee or type (decision 0342: a stale cached piece, such as a front end body naming a helper this build defines otherwise); rebuild with `XO_BACKEND_CACHE=off` and report it |
+| `XO1511` | warning | checker | `read`, `read_text`, or `contains` on an `embed.Dir` constant, or a literal `.sub` of one, with a literal path it holds no file at; a key ending in the path is offered as a fix (decision 0304) |
 
 `XO1001` is reserved: no `std/sys/<os>` module exists yet (14), so it is
 never reported.

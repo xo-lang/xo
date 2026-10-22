@@ -191,6 +191,7 @@ fn (var c: Checker) expand_embeds(m: Int) uses fs.read {
       } else if ty == "Bytes" {
         lit = Expr.BytesLit(span: sp, value: files[0].1)
       } else {
+        c.embed_dir_keys["${c.files[f].module}\n${text(cd.name.name)}"] = files.map(fn(p) { p.0 })
         var entries: List[parser.MapEntry] = []
         for (rel, b) in files {
           entries.push(parser.MapEntry{span: sp, key: Expr.StringLit(s: parser.StringLit{span: sp, kind: parser.StringKind.Plain, parts: [parser.StringPart{text: rel.bytes(), expr: None}]}), value: Expr.BytesLit(span: sp, value: b)})
@@ -289,4 +290,93 @@ fn (c: Checker) embed_add(bdir: Str, p: Str, all: Bool, top: Bool, var out: List
     c.embed_add(bdir, join(p, e.name), all, false, out, seen)?
   }
   Ok(())
+}
+
+/// Whether t is std/embed's Dir.
+fn (c: Checker) is_embed_dir(t: Int) -> Bool {
+  let o = c.named_obj(t)
+  o >= 0 && c.objs[o].module >= 0 && c.mods[c.objs[o].module].path == "std/embed" && c.objs[o].name == b"Dir"
+}
+
+/// The text of a plain string literal (no interpolation), or None.
+fn plain_lit(e: Expr) -> Str? {
+  match e {
+    StringLit(s) => {
+      if s.parts.is_empty() {
+        return Some("")
+      }
+      if s.parts.len() == 1 && s.parts[0].expr == None {
+        return s.parts[0].text.to_str()
+      }
+      None
+    }
+    ParenExpr(x: x, ..) => plain_lit(x)
+    _ => None
+  }
+}
+
+/// The paths of the embed.Dir value x when it is known while checking:
+/// a constant of this module declared `embed.Dir` (not shadowed), or
+/// `.sub("lit")` of one; None otherwise.
+fn (c: Checker) embed_dir_paths(x: Expr) -> List[Str]? {
+  match x {
+    Ident(id) => {
+      if c.lookup_local(id.name) >= 0 {
+        return None
+      }
+      c.embed_dir_keys.get("${c.cur_mod}\n${text(id.name)}")
+    }
+    ParenExpr(x: inner, ..) => c.embed_dir_paths(inner)
+    CallExpr(fun: fun, args: args, ..) => {
+      match fun {
+        SelectorExpr(x: inner, sel: sel, ..) => {
+          if sel.name != b"sub" || args.len() != 1 {
+            return None
+          }
+          let d = plain_lit(args[0].value)?
+          let all = c.embed_dir_paths(inner)?
+          let pre = "${d.trim_suffix("/")}/"
+          Some(all.filter(fn(p) { p.starts_with(pre) }).map(fn(p) { p.trim_prefix(pre) }))
+        }
+        _ => None
+      }
+    }
+    _ => None
+  }
+}
+
+/// XO1511: `D.read("p")`, `read_text`, or `contains` with a literal path
+/// that the embed.Dir constant D (or a literal `.sub` of it) does not
+/// hold: read gives None at run time. A warning, since the result is an
+/// Option; a path computed at run time is not checked.
+fn (var c: Checker) embed_path_check(x: Expr, args: List[parser.Arg]) {
+  if args.len() != 1 {
+    return
+  }
+  let p = match plain_lit(args[0].value) {
+    Some(s) => s
+    None => return
+  }
+  let paths = match c.embed_dir_paths(x) {
+    Some(ps) => ps
+    None => return
+  }
+  if paths.contains(p) {
+    return
+  }
+  let sp = parser.expr_span(args[0].value)
+  let d = c.warn("XO1511", sp, "no embedded file `${p}`: this embed.Dir holds ${paths.len()} file(s), so the call finds nothing at run time")
+  if d < 0 {
+    return
+  }
+  let near = paths.filter(fn(k) { k.ends_with("/${p}") })
+  if near.len() == 1 {
+    let k = near[0]
+    c.note(d, "did you mean `${k}`? Keys are paths relative to the directory of the file that declares the constant (decision 0304)")
+    let dir = k.trim_suffix("/${p}")
+    c.note(d, "`.sub(\"${dir}\")` of the constant drops the `${dir}/` prefix from every key")
+    c.fix(d, "use `${k}`", [c.replace_edit(sp, k.quote())])
+  } else if paths.len() <= 8 {
+    c.note(d, "its files: ${paths.map(fn(k) { "`${k}`" }).join(", ")}")
+  }
 }
