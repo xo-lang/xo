@@ -169,6 +169,56 @@ then needs no Docker for linux-arm64). `XO_RELEASE_DRY_RUN=1` runs the
 checks (host, clean tree, Docker, the Windows tools) and prints each
 step's command without building, writing, or deleting anything. Last
 verified: 2026-10-22 (the dry run, the refusal with no Docker, reuse).
+
+For the first public binary release (0.25.1, 2026-10-22) release.sh also:
+
+- **Stamps** every xo1 with the provenance of decision 0264 (`xo version
+  -v` and `--json`: commit, source key, code generation key; the flags
+  come from `go run ./scripts/xobuild --stamp-args=SEED`), and refuses the
+  private checkout (it has scripts/lead) unless `XO_RELEASE_PRIVATE=1`: a
+  release is built in the published tree, `../xo-publish` after
+  `publish.sh prepare` (decision 0249), so the stamped commit is a public
+  one and the archives carry the scrubbed std and docs.
+- **Builds darwin/amd64** with the amd64 backend (`--backend=amd64
+  --target=darwin/amd64`), with its race dylib (`race-runtime.sh ...
+  darwin-amd64`).
+- **Builds windows/amd64 natively** by default: `--backend=amd64
+  --targets=windows/amd64`, linked by Xo's PE linker with no C runtime,
+  so no Microsoft SDK is needed (owner, 2026-10-22). The race runtime
+  comes from `race-runtime.sh ... windows-amd64` (MinGW in Docker).
+  `XO_RELEASE_WINDOWS=llvm` keeps the LLVM and lld-link recipe, and `0`
+  skips Windows. `scripts/ci/release-smoke.sh ARCHIVE SHA256 [COMMIT]`
+  runs the archive on its host (CI suite=script on xo-windows, the
+  archive from ci/release/ of the seed bucket).
+- **Signs** the darwin bin/xo, bin/xo-gobind, and race dylibs with the
+  Developer ID named by `XO_SIGN_ID` (the identity's SHA-1 from `security
+  find-identity -v -p codesigning`; never written into a tracked file)
+  and notarizes them in one submission (scripts/sign-macos.sh) with the
+  keychain profile `XO_NOTARY_PROFILE` (made once by the owner, `xcrun
+  notarytool store-credentials NAME`) or the App Store Connect key
+  variables (code-signing.md). Neither a bare Mach-O nor a tar.gz can carry
+  a stapled ticket; Gatekeeper looks it up online. `XO_RELEASE_UNSIGNED=1`
+  and `XO_RELEASE_NO_NOTARIZE=1` are for trials.
+
+release-verify.sh then also checks that the stamped commit is the checkout's
+HEAD and, on darwin, the Developer ID signature and notarization
+(`XO_VERIFY_UNSIGNED=1` for a trial archive). It uses the host's native
+backend, amd64 on an Intel Mac or linux/amd64. Go is missing is checked
+with `--backend=go`, since native is the default. The owner publishes with
+`scripts/release-publish.sh [--draft] TAG DIST NOTES.md` from the
+published tree, after `publish.sh push` has pushed the tag. It runs only
+from a terminal and checks that the tag on xo-lang/xo is the tree's HEAD,
+that SHA256SUMS matches the archives, and that the host archive's stamped
+commit is right. Then it asks for the word `release` and runs `gh release
+create`. The order:
+
+1. a private commit bumps the version;
+2. tag `vX.Y.Z`;
+3. `publish.sh prepare`;
+4. in `../xo-publish`, `scripts/release.sh`, then release-verify.sh per
+   host;
+5. the owner runs `publish.sh push`;
+6. the owner runs `release-publish.sh`.
 `scripts/release-verify.sh ARCHIVE [OUTDIR]` checks an archive on its
 host from a checkout of the same commit: unpacked clean, with no Go on
 PATH `xo version`, `rtpack --status`, `check`, and a hello program on
@@ -213,7 +263,8 @@ go run ./cmd/xo parse [--json] [--ast] [--sig] <files or dirs...>
 go run ./cmd/xo check [--json] [--no-gc] [--fix] [--wip] [--dir=DIR] <dirs...>   # --fix: apply machine fixes first (decision 0096); --wip: XO0110 and XO0209 as warnings while editing (decision 0293)
 go run ./cmd/xo rtpack [--target=os/arch] [--cc="cmd args"] [--ar="cmd args"] [-o lib/xo/rtpack] | --status | --key [--target=os/arch]   # hidden: build the prebuilt runtime of the arm64 backend into <dir>/<os>-<arch> (default the host's cc; linux/arm64 from a Mac: --cc="zig cc -target aarch64-linux-gnu.2.31" --ar="zig ar"); --status: the pack used for the host or why none; --key: the key a pack must have (decision 0157; last verified: 2026-10-11)
 xo1 rtpack [same flags]   # (deleted 2026-10-16, decision 0234) the same command in Xo (compiler/xo rtpack.xo, decision 0178 switch point B): the same pack files byte for byte for the same compiler and sources (cmd/xo TestRTPackXoSame with XO_CLI), so scripts/release.sh can run the self hosted xo (last verified: 2026-10-12)
-scripts/release.sh [version]             # release archives into dist/, bin/xo = xo1 (decisions 0157, 0178; needs zig 0.15.1 as $ZIG; never publishes)
+scripts/release.sh [version]             # release archives into dist/, bin/xo = xo1 (decisions 0157, 0178), stamped and signed, from the published tree (see "Versions and releases"; never publishes)
+scripts/release-publish.sh [--draft] TAG DIST NOTES.md   # the owner's GitHub Release of TAG's archives (terminal only, typed confirmation)
 scripts/release-verify.sh ARCHIVE [OUTDIR]   # check a release archive on its host: no-Go native checks, Go backend and use go, cmd/xo's suite with XO_CLI (see "Versions and releases"; last verified 2026-10-12)
 bench/perf/rtpack/first-build.sh <xo> [runs]   # first arm64 build, cold caches, local runtime compile vs pack (bench/results/prebuilt-runtime-2026-10-11.md)
 go run ./cmd/xo build [--targets=all|os/arch,...] [-o out] [--json] [--no-mono] [--no-arenas] [--backend=go|llvm|arm64] [--no-gc] [--hybrid] [--ci] [--release [--error-args=false]] [dir...]   # --ci: fail before building on an unformatted file or a dbg left in code (core 10.5, 11.4; 2026-10-09); --release: requires(debug)/ensures(debug) compiled out, XO1308 on workspace overrides (core 8, decision 0099; --ci does not imply it); --error-args=false: error frames without parameter values (decision 0092)

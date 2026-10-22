@@ -60,6 +60,21 @@ path into a tracked file (the repository is public). Every submission
 appears in the team's notary history: submit seldom, several binaries in
 one zip.
 
+## Releases (2026-10-22)
+
+scripts/release.sh signs the darwin archives' bin/xo, bin/xo-gobind, and
+race dylibs with `XO_SIGN_ID` and notarizes them through sign-macos.sh
+(toolchain.md "Versions and releases"). For notarization, sign-macos.sh
+also takes `XO_NOTARY_PROFILE`, a notarytool keychain profile. The owner
+makes it once, interactively:
+
+    xcrun notarytool store-credentials xo-notary
+
+The password or key goes into the login keychain and never passes through
+a script or an agent. Pass the identity as its SHA-1 hash, from `security
+find-identity -v -p codesigning`, read at run time. The hash and the team
+ID stay out of tracked files (decision 0249).
+
 ## Verification commands
 
     codesign -dvv FILE                     # Authority chain, Timestamp, TeamIdentifier, flags=0x10000(runtime)
