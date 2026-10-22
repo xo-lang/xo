@@ -551,14 +551,14 @@ fn wakep(p: Int) {
 // (poll.xo's token); the poller thread is their fallback. Through the
 // exports cabi.xo np_poll and np_break: poll.xo imports this module.
 
-/// w polls once (block: waiting for the next event or timer), the fibers
-/// it readies pushed to its ring with no wake each (W_NONEXT 2), then
-/// spread (np_spread): the events and timers handled, or -1 when it did
-/// not poll.
-fn np_poll(p: Int, w: Int, block: Bool) -> Int {
+/// w polls once (wait: at most that many ns for the next event or timer,
+/// -1 no limit), the fibers it readies pushed to its ring with no wake
+/// each (W_NONEXT 2), then spread (np_spread): the events and timers
+/// handled, or -1 when it did not poll.
+fn np_poll(p: Int, w: Int, wait: Int) -> Int {
   let was = rt.mem_load(w, W_NONEXT, 8)
   rt.mem_store(w, W_NONEXT, 2, 8)
-  let n = rt.call_c2(rt.fn_addr("np_poll"), if block { 1 } else { 0 }, 0)
+  let n = rt.call_c2(rt.fn_addr("np_poll"), wait, 0)
   rt.mem_store(w, W_NONEXT, was, 8)
   if n > 0 {
     np_spread(p, w)
@@ -589,14 +589,20 @@ fn np_block(p: Int, w: Int, mf: Int) -> Int {
   let dlk = rt.mem_load(p, P_DLK, 8)
   rt.slot_add(dlk, DLK_NPBLK, 1, SEQ_CST)
   // a push (or main's end) before the count went up broke no wait: look
-  if any_work(p) != 0 || mf != 0 && rt.slot_load(mf, F_ENDED_I, SEQ_CST) != 0 {
+  let aw = any_work(p)
+  if aw == 1 || mf != 0 && rt.slot_load(mf, F_ENDED_I, SEQ_CST) != 0 {
     rt.slot_add(dlk, DLK_NPBLK, -1, SEQ_CST)
     return 0
   }
   plock(p)
   dl_check(p)
   punlock(p)
-  let n = np_poll(p, w, true)
+  // a run-next slot in its grace (aw 2) is its worker's to take: wait
+  // out the grace in the poller, then steal it. Looking again at once
+  // spun the idle workers through 2.7 million empty polls in three
+  // HTTP/2 downloads of 256 MiB on linux/arm64 (2026-10-22); epoll rounds
+  // the wait up to 1 ms
+  let n = np_poll(p, w, if aw == 2 { NEXT_GRACE_NS } else { -1 })
   rt.slot_add(dlk, DLK_NPBLK, -1, SEQ_CST)
   n
 }
@@ -927,21 +933,34 @@ pub fn steal_round(p: Int, w: Int, last: Int) -> Int {
 }
 
 /// Whether some queue holds an item (a worker about to sleep looks again
-/// after it counted itself idle): 1 or 0.
+/// after it counted itself idle): 1, 2 when the only items are run-next
+/// slots still in their grace (NEXT_GRACE_NS: no other worker may take
+/// them yet), or 0.
 pub fn any_work(p: Int) -> Int {
   if rt.slot_load(p, P_ILEN, SEQ_CST) > 0 {
     return 1
   }
   let n = rt.slot_load(p, P_NW, SEQ_CST)
+  var now = 0
+  var r = 0
   var i = 0
   while i < n {
     let v = rt.mem_load(p, P_WS.wrapping_add(i.wrapping_shl(3)), 8)
-    if rt.slot_load(v, W_NEXT_I, SEQ_CST) != 0 || rt.slot_load(v, 0, SEQ_CST) != rt.slot_load(v, RQ_TAIL, SEQ_CST) {
+    if rt.slot_load(v, 0, SEQ_CST) != rt.slot_load(v, RQ_TAIL, SEQ_CST) {
       return 1
+    }
+    if rt.slot_load(v, W_NEXT_I, SEQ_CST) != 0 {
+      if now == 0 {
+        now = sysio.mono_ns()
+      }
+      if now.wrapping_sub(rt.slot_load(v, W_NEXT_AT / 8, RELAXED)) > NEXT_GRACE_NS {
+        return 1
+      }
+      r = 2
     }
     i = i.wrapping_add(1)
   }
-  0
+  r
 }
 
 /// Looks for an item for w: its own, the inject queue, then, if spinning
@@ -952,7 +971,7 @@ pub fn find_work(p: Int, w: Int, spinning: Int) -> Int {
   if t == 0 {
     t = inject_pop(p, w)
   }
-  if t == 0 && np_poll(p, w, false) > 0 {
+  if t == 0 && np_poll(p, w, 0) > 0 {
     // the network's ready fibers, on this worker (decision 0324)
     t = take_local(w)
   }
@@ -1036,7 +1055,13 @@ fn go_idle(p: Int, w: Int) -> Int {
     kick()
   }
   // a push before the count went up was not seen by its wakep: look
-  if any_work(p) != 0 {
+  let aw = any_work(p)
+  if aw == 2 && rt.slot_load(w, W_WAKEW_I, ACQUIRE) == 0 {
+    // only run-next slots in their grace: wait it out (or a wakep) on
+    // the futex, then look for them as np_block does in the poller
+    futex_wait_us(w.wrapping_add(W_WAKEW), 0, NEXT_GRACE_NS / 1000)
+  }
+  if aw != 0 {
     plock(p)
     var prev = 0
     var x = rt.mem_load(p, P_IDLE, 8)

@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime: idle workers no longer loop on a run-next slot they
+  may not take yet (its 50 us grace); they wait the grace out in the
+  poller or on their futex. An HTTP/2 download server on linux/arm64
+  uses 0.664x the CPU (`xo bench --ab`), at Go's rate with 1.21x Go's
+  CPU (bench/results/h2-idle-loop-2026-10-22.md).
 - `opt.or(x)`, `.unwrap_or(x)`, `.get_or_else(x)`, `.value_or(x)` and
   `.or_else(f)` on an Option stay `XO0601`, now with the note that Xo
   writes `opt ?? x` and a fix that rewrites the call
