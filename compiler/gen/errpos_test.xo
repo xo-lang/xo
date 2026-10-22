@@ -1,0 +1,22 @@
+// A generation failure with no node of its own names the Xo function it
+// was generating (fn_at; the language poll, 2026-10-21).
+
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
+
+test "an error with no span names the function being generated" {
+  var c = check.new_checker(os.fs, "")
+  c.objs.push(check.Obj{kind: check.ObjKind.Func, name: b"area", file: "/src/app/main.xo", line: 4, col: 1})
+  var g = Gen{c: c, opts: Opts{}}
+  g.f = F{frames: [Frame{fo: c.objs.len() - 1}]}
+  g.errorf(Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}}, "function value `area` without a function type")
+  expect(g.errs) == ["/src/app/main.xo:4:1: in `area`: function value `area` without a function type"]
+  g.unsupported("a construct of a later stage")
+  expect(g.skip) == "/src/app/main.xo:4:1: in `area`: a construct of a later stage"
+}
+
+test "outside a function the message stays as it is" {
+  var g = Gen{c: check.new_checker(os.fs, ""), opts: Opts{}}
+  g.errorf(Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}}, "no `fn main` found")
+  expect(g.errs) == ["no `fn main` found"]
+}

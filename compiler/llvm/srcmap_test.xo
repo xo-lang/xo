@@ -1,0 +1,36 @@
+// A clang error on the generated IR is mapped back to the Xo function
+// (srcmap.xo).
+
+use github.com/xo-lang/xo/compiler/ssa
+
+test "clang_ir_refs reads each .ll line once" {
+  let msg = "/tmp/b/prog.ll:12:7: error: use of undefined value '%v9'\n  %r = add i64 %v9, 1\n/tmp/b/prog.ll:12:7: note: again\n/tmp/b/m/prog.1.ll:3:1: error: expected instruction opcode\n"
+  let refs = clang_ir_refs(msg)
+  expect(refs.len()) == 2
+  expect(refs[0].0) == "/tmp/b/prog.ll"
+  expect(refs[0].1) == 12
+  expect(refs[1].0) == "/tmp/b/m/prog.1.ll"
+  expect(refs[1].1) == 3
+}
+
+test "ir_line_source names the Xo function holding the line" {
+  var f = ssa.Func{name: "main.area", file: "/src/app/main.xo"}
+  f.values = [ssa.Value{op: ssa.Op.Const, line: 7 * 4096 + 3}]
+  var m = ssa.Module{}
+  m.funcs = [ssa.Func{name: "main.main"}, f]
+  let ir = "; header\ndefine internal i64 @\"x.main.area\"(i64 %p0) #0 {\nentry:\n  %r = add i64 %v9, 1\n  ret i64 %r\n}\n\ndefine void @xo_entry() #1 {\n  ret void\n}\n"
+  expect(ir_line_source(m, ir, 4, "clang rejected it")) == "/src/app/main.xo:7:3: in `main.area`: clang rejected it"
+  // a line outside every Xo function: the message alone
+  expect(ir_line_source(m, ir, 9, "clang rejected it")) == "clang rejected it"
+  expect(ir_line_source(m, ir, 1, "clang rejected it")) == "clang rejected it"
+}
+
+test "an emitter failure names the Xo file, line, and function" {
+  var g = new_gen(ssa.Module{})
+  g.f = ssa.Func{name: "main.area", file: "/src/app/main.xo"}
+  g.cur_line = 7 * 4096 + 3
+  g.fail("the SSA lowering does not support `op`")
+  expect(g.err) == "/src/app/main.xo:7:3: in `main.area`: the SSA lowering does not support `op`"
+  g.unsupported("a parameter passed by reference (decision 0145)")
+  expect(g.skip) == "/src/app/main.xo:7:3: in `main.area`: a parameter passed by reference (decision 0145)"
+}

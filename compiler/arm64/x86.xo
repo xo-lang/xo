@@ -1429,7 +1429,7 @@ fn (var g: G) x86_retarget() {
           for p in parts {
             let x = g.x86_tpl(p, [])
             if !x.err.is_empty() {
-              g.skipped.push("amd64 template: ${x.err} (`${p.text}`)")
+              g.skipped.push(g.f.at_source(inst.line, inst.inl, "amd64 template: ${x.err} (`${p.text}`)"))
               continue
             }
             var ni = p
@@ -1468,7 +1468,7 @@ fn (var g: G) x86_retarget() {
         if !x.err.is_empty() {
           // every untranslated template is listed (the function is not
           // emitted), not only the first
-          g.skipped.push("amd64 template: ${x.err} (`${inst.text.replace("\n", "; ").replace("\t", "")}`)")
+          g.skipped.push(g.f.at_source(inst.line, inst.inl, "amd64 template: ${x.err} (`${inst.text.replace("\n", "; ").replace("\t", "")}`)"))
           out.push(inst)
           continue
         }

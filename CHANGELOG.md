@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- A code generator failure names the Xo source: the native emitters'
+  internal errors and amd64 template failures, the LLVM emitter's
+  unsupported constructs, a clang error on the generated IR (mapped from
+  the IR line to its function), and the Go generator's errors with no node
+  of their own now start `file:line:col: in \`function\`:` (the line of
+  the value being lowered, or the function's first; an inlined callee is
+  named in its own file). The SSA builder's were already XO1201
+  diagnostics at the expression.
+
 - Linux builds with `--backend=llvm` link and run again: since asynchronous
   preemption for LLVM (decision 0318 stage 4) every one failed to link
   with ld.bfd's LLVM plugin and lld ("__start_xo_text can not be

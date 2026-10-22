@@ -12,7 +12,7 @@ test "fail records the function's IR once" {
   expect(g.dumps[0].0) == "pkg.broken"
   expect(g.dumps[0].1.contains("== ssa")) == true
   expect(g.dumps[0].1.contains("== mir")) == true
-  expect(g.err) == "arm64 backend: internal: pkg.broken reads virtual register 3 before it is written"
+  expect(g.err) == "in `pkg.broken`: arm64 backend: internal: pkg.broken reads virtual register 3 before it is written"
 }
 
 test "dump_named records only the named function" {
@@ -40,4 +40,12 @@ test "no free scratch register fails the function with its IR, not the process" 
 
 test "x86_borrow says none when every register is taken" {
   expect(x86_borrow(false, [10, 9, 8, 1, 2, 6, 7, 0, 3, 12, 13, 14, 15])) == -1
+}
+
+test "a failure names the Xo file, line, and function" {
+  var g = G{m: ssa.Module{}, os: "darwin"}
+  g.f = ssa.Func{name: "main.area", file: "/src/app/main.xo"}
+  g.cur_line = 7 * 4096 + 3
+  g.fail("internal: main.area reads virtual register 3 before it is written")
+  expect(g.err) == "/src/app/main.xo:7:3: in `main.area`: arm64 backend: internal: main.area reads virtual register 3 before it is written"
 }

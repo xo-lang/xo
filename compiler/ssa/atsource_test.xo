@@ -1,0 +1,21 @@
+// A backend failure names the Xo source (Func.at_source; the language
+// poll, 2026-10-21).
+
+test "at_source names the value's line and the function" {
+  var f = Func{name: "main.area", file: "/src/app/main.xo"}
+  f.values = [Value{op: Op.Const}, Value{op: Op.Const, line: 9 * 4096 + 5}]
+  expect(f.at_source(12 * 4096 + 3, -1, "boom")) == "/src/app/main.xo:12:3: in `main.area`: boom"
+  // no line yet: the function's first
+  expect(f.at_source(0, -1, "boom")) == "/src/app/main.xo:9:5: in `main.area`: boom"
+}
+
+test "at_source names an inlined callee in its own file" {
+  var f = Func{name: "main.main", file: "/src/app/main.xo"}
+  f.inl_sites = [InlSite{callee: "geo.area", file: "/src/geo/geo.xo", call_line: 3 * 4096 + 1}]
+  expect(f.at_source(20 * 4096 + 7, 0, "boom")) == "/src/geo/geo.xo:20:7: in `geo.area` (inlined into `main.main`): boom"
+}
+
+test "at_source leaves generated code's message as it is" {
+  expect(Func{name: ""}.at_source(0, -1, "boom")) == "boom"
+  expect(Func{name: "xo.helper"}.at_source(0, -1, "boom")) == "in `xo.helper`: boom"
+}

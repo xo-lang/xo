@@ -784,6 +784,38 @@ pub fn (var f: Func) branch(b: Int, cond: Int, yes: Int, no: Int) -> Int {
   t
 }
 
+/// A backend failure in f as diagnostics are written: "file:line:col: in
+/// `name`: msg" at the packed line (Value.line) of the value being
+/// lowered and its inline site (Value.inl), else at the function's first
+/// line; msg alone for generated code. A failure past the checker then
+/// points at the Xo source (the language poll, 2026-10-21).
+pub fn (f: Func) at_source(line: Int, inl: Int, msg: Str) -> Str {
+  var l = line
+  var site = inl
+  if l == 0 {
+    site = -1
+    for v in f.values {
+      if v.line != 0 && v.inl < 0 {
+        l = v.line
+        break
+      }
+    }
+  }
+  var file = f.file
+  var name = "`${f.name}`"
+  if site >= 0 && site < f.inl_sites.len() {
+    file = f.inl_sites[site].file
+    name = "`${f.inl_sites[site].callee}` (inlined into `${f.name}`)"
+  }
+  if file.is_empty() {
+    return if f.name.is_empty() { msg } else { "in ${name}: ${msg}" }
+  }
+  if l == 0 {
+    return "${file}: in ${name}: ${msg}"
+  }
+  "${file}:${l / 4096}:${l % 4096}: in ${name}: ${msg}"
+}
+
 /// The terminator of block b, or -1.
 pub fn (f: Func) term(b: Int) -> Int {
   let ins = f.blocks[b].instrs

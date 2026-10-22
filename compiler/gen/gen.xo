@@ -323,17 +323,33 @@ const GO_TUPLE_MAX = 64
 /// file (errorf).
 fn (var g: Gen) errorf(sp: Span, msg: Str) {
   if sp.start.line == 0 && sp.end.offset == 0 {
-    g.errs.push(msg)
+    g.errs.push("${g.fn_at()}${msg}")
     return
   }
   g.errs.push("${g.file_path(g.f.file)}:${sp.start.line}:${sp.start.col}: ${msg}")
+}
+
+/// Where the function being generated is declared, as a prefix of a
+/// failure with no node of its own: "file:line:col: in `name`: ", or ""
+/// outside a function (the language poll, 2026-10-21: an error past the
+/// checker names the Xo source).
+fn (g: Gen) fn_at() -> Str {
+  if g.f.frames.is_empty() {
+    return ""
+  }
+  let fo = g.f.frames[0].fo
+  if fo < 0 || fo >= g.c.objs.len() || g.c.objs[fo].file.is_empty() {
+    return ""
+  }
+  let o = g.c.objs[fo]
+  "${o.file}:${o.line}:${o.col}: in `${g.c.display_name(fo)}`: "
 }
 
 /// Marks the declaration being generated as skipped: a construct of a
 /// later stage of decision 0167.
 fn (var g: Gen) unsupported(why: Str) {
   if g.skip.is_empty() {
-    g.skip = why
+    g.skip = "${g.fn_at()}${why}"
   }
 }
 

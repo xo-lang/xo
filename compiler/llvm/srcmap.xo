@@ -1,0 +1,76 @@
+// From a clang error on the generated IR back to the Xo source: clang
+// names a line of a .ll file; the `define` above it is an Xo function
+// (fname's `@"x.NAME"`), whose file and first line the module has (the
+// language poll, 2026-10-21: errors past the checker name the source).
+
+use github.com/xo-lang/xo/compiler/ssa
+
+/// The (path, line) of each `PATH.ll:LINE:` clang's output msg names,
+/// once each, in order.
+pub fn clang_ir_refs(msg: Str) -> List[(Str, Int)] {
+  var out: List[(Str, Int)] = []
+  for l in msg.split("\n") {
+    let i = l.find(".ll:") ?? -1
+    if i < 0 {
+      continue
+    }
+    var s = i
+    while s > 0 && l[s - 1..s] != " " && l[s - 1..s] != "\t" {
+      s -= 1
+    }
+    let path = l[s..i + 3]
+    var j = i + 4
+    var n = 0
+    while j < l.len() && "0123456789".contains(l[j..j + 1]) {
+      n = n * 10 + ("0123456789".find(l[j..j + 1]) ?? 0)
+      j += 1
+    }
+    if j == i + 4 || n <= 0 {
+      continue
+    }
+    var seen = false
+    for (p, k) in out {
+      seen = seen || (p == path && k == n)
+    }
+    if !seen {
+      out.push((path, n))
+    }
+  }
+  out
+}
+
+/// Where line n (1-based) of the IR text ir comes from in the Xo source,
+/// as msg prefixed by ssa Func.at_source ("file:line:col: in `name`: "):
+/// the Xo function whose `define` holds the line. msg alone when the
+/// line is outside every Xo function (a helper, the runtime's own
+/// declarations).
+pub fn ir_line_source(m: ssa.Module, ir: Str, n: Int, msg: Str) -> Str {
+  let lines = ir.split("\n")
+  var k = if n > lines.len() { lines.len() } else { n }
+  while k > 0 {
+    let l = lines[k - 1]
+    if l.starts_with("}") && k != n {
+      return msg
+    }
+    if l.starts_with("define ") {
+      let i = l.find("@\"x.") ?? -1
+      if i < 0 {
+        return msg
+      }
+      let rest = l[i + 4..l.len()]
+      let e = rest.find("\"(") ?? -1
+      if e < 0 {
+        return msg
+      }
+      let name = rest[0..e]
+      for f in m.funcs {
+        if f.name == name {
+          return f.at_source(0, -1, msg)
+        }
+      }
+      return msg
+    }
+    k -= 1
+  }
+  msg
+}

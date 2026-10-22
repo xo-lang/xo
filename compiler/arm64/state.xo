@@ -410,10 +410,11 @@ struct G {
 }
 
 /// Records a failure: the program cannot be generated (the Go emitter's
-/// fail). Generation goes on with placeholder registers.
+/// fail). Generation goes on with placeholder registers. The message
+/// names the Xo function and the line of the value being lowered.
 fn (var g: G) fail(msg: Str) {
   if g.err.is_empty() {
-    g.err = "arm64 backend: ${msg}"
+    g.err = g.f.at_source(g.cur_line, g.cur_inl, "arm64 backend: ${msg}")
     // the failing function's SSA and MIR, which the driver writes to a
     // file and names (2026-10-21, the owner's approval: an internal
     // error named a register and nothing else)

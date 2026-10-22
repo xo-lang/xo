@@ -119,6 +119,9 @@ pub struct Gen {
   /// The variables bound to one value only in the function
   dbg_once: Map[Int, Bool] = {}
   cur_line: Int = 0
+  /// the inline site of the value cur_line is from (ssa Value.inl), for
+  /// the position of a failure (ssa Func.at_source)
+  cur_inl: Int = -1
 
   // The function being lowered (sfn).
   f: ssa.Func = ssa.Func{name: ""}
@@ -226,17 +229,18 @@ fn dbg_first(nfuncs: Int) -> Int {
 /// functions (dbg_first).
 const DBG_BASE = 1000000
 
-/// Records the first construct the lowering does not support (fail).
+/// Records the first construct the lowering does not support (fail), at
+/// the Xo function and line being lowered.
 fn (var g: Gen) fail(msg: Str) {
   if g.err.is_empty() {
-    g.err = msg
+    g.err = g.f.at_source(g.cur_line, g.cur_inl, msg)
   }
 }
 
 /// Leaves the current function unlowered: a construct of a later stage.
 fn (var g: Gen) unsupported(why: Str) {
   if g.skip.is_empty() {
-    g.skip = why
+    g.skip = g.f.at_source(g.cur_line, g.cur_inl, why)
   }
 }
 

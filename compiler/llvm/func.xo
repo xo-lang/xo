@@ -417,6 +417,8 @@ fn (var g: Gen) reverse_postorder() -> List[Int] {
 fn (var g: Gen) lower_func(fi: Int) {
   g.f = g.m.funcs[fi]
   g.fi = fi
+  g.cur_line = 0
+  g.cur_inl = -1
   g.debug_func()
   g.allocas = []
   g.body = []
@@ -628,7 +630,7 @@ fn (var g: Gen) lower_func(fi: Int) {
   out.push(g.pads.join(""))
   out.push("}\n\n")
   if !g.skip.is_empty() {
-    g.skipped.push("${g.f.name}: ${g.skip}")
+    g.skipped.push(g.skip)
     return
   }
   g.funcs.push(if mark == APRE_GUARD { apre_leave(out.join("")) } else { out.join("") })
@@ -827,6 +829,7 @@ fn (var g: Gen) same_projection(a0: Int, b0: Int) -> Bool {
 fn (var g: Gen) instr(v: Int) {
   if g.f.values[v].line != 0 {
     g.cur_line = g.f.values[v].line
+    g.cur_inl = g.f.values[v].inl
   }
   let pad = g.f.values[v].pad
   if pad >= 0 {

@@ -892,7 +892,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       }
       if !msg.is_empty() {
         os.stdio.eprint(msg)
-        fail(os, "${cc} failed")
+        fail(os, "${cc} failed${ir_failure_sources(os, lm, msg)}")
       }
       if dsym {
         cc_dsym(os, bin)
@@ -1538,6 +1538,25 @@ fn write_dumps(os: Os, dumps: List[(Str, Str)]) {
       Err(e) => os.stdio.eprintln("xo: could not write the IR of ${name} to ${path}: ${e}")
     }
   }
+}
+
+/// The Xo functions holding the lines of the generated IR a failed clang
+/// names (llvm.clang_ir_refs): ", in the IR of file:line:col: in `f`"
+/// per line, "" when it names none (a code generator bug that points at
+/// the Xo source, the language poll, 2026-10-21).
+fn ir_failure_sources(os: Os, m: ssa.Module, msg: Str) -> Str {
+  var out = StrBuilder.new()
+  for (path, n) in llvm.clang_ir_refs(msg) {
+    match os.fs.read(path) {
+      Ok(b) => {
+        let at = llvm.ir_line_source(m, b.to_str() ?? "", n, "${path}:${n}")
+        out.write("\n  the generated IR of ${at}")
+      }
+      // xo:allow XO0903 a part that cannot be read back names no function; clang's own message stays
+      Err(_) => {}
+    }
+  }
+  out.freeze()
 }
 
 fn fail(os: Os, msg: Str) -> Never {
