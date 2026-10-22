@@ -164,6 +164,9 @@ dist="$repo/dist"
 run rm -rf "$dist"
 run mkdir -p "$dist"
 unset XO_STD XO_RTPACK XO_CLI
+# a release's inlined module must verify; no silent slower build
+# (decision 0342)
+export XO_INLINE_STRICT=1
 # the seed: an existing xo (decision 0215: no Go compiler to build one)
 if [ -n "${XO_SEED:-}" ]; then
 	host_xo="$XO_SEED"

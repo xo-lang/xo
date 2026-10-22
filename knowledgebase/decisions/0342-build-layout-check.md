@@ -1,6 +1,8 @@
 # 0342: Compiled pieces record what they assumed, and the build checks it
 
-Status: Proposed (owner approved the tool, 2026-10-22; Xo Publish).
+Status: Accepted (owner, 2026-10-22). Proposed the same day (owner
+approved the tool; Xo Publish). Plan step 4 (XO_INLINE_STRICT=1 in
+gate.sh, release.sh, hourly.sh) done.
 
 ## Context
 

@@ -47,7 +47,9 @@ t0=$(date +%s)
 rm -f bin/xo
 go run ./scripts/xobuild >"$logs/xobuild.txt" 2>&1 || { echo "XOBUILD-FAIL ($logs/xobuild.txt)"; exit 1; }
 echo "xobuild $(($(date +%s) - t0)) s"
-export XO_CLI=$wt/bin/xo XO_BACKEND_CACHE=off
+# XO_INLINE_STRICT=1: an inlined module that does not verify fails the
+# step instead of building slower with a warning (decision 0342)
+export XO_CLI=$wt/bin/xo XO_BACKEND_CACHE=off XO_INLINE_STRICT=1
 failed=0
 full() { # NAME PKG [go test args]: one package's full tests
   n=$1; p=$2; shift 2
