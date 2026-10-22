@@ -3,7 +3,7 @@
 ## 2026-10-22: speedup: AES-GCM records eight blocks a round on arm64
 
 - Kind: speedup
-- Commit: (this commit)
+- Commit: 386339233 (the kernel 560fdacae before it)
 - Found by: Xo Lang 3's bench/perf/aesgcm against Go's crypto/cipher (Go 1.73x seal, 1.83x open after the four block kernel)
 - Go reference: crypto/internal/fips140/aes/gcm/gcm_arm64.s gcmAesEnc and gcmAesDec (round keys in registers, eight blocks, Karatsuba, one reduction per 128 bytes)
 - Test: cpu_prims golden (672 aes_gcm8 lines against the portable body and Go's reference), tls*, crypto* goldens (arm64, LLVM with Go parity), TestCryptoXoDiff, TestTLSDiff, TestConstantTimeLLVM
