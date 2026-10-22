@@ -99,6 +99,8 @@ pub struct Stat {
   pub mode: Int
   pub size: Int
   pub mtime: Int
+  pub dev: Int
+  pub ino: Int
 }
 
 /// Whether st is a directory (S_IFDIR).
@@ -119,17 +121,20 @@ pub fn fstat(fd: Int) -> (Stat, Int) {
   facts(buf, ret(Int(sys_darwin.fstat64(fd, buf))))
 }
 
-/// The facts of the struct stat at address buf (st_mode a 16 bit field at 4,
-/// st_mtimespec at 48, st_size at 96), or the errno of r < 0.
+/// The facts of the struct stat at address buf (st_dev a 32 bit field at 0,
+/// st_mode a 16 bit field at 4, st_ino at 8, st_mtimespec at 48, st_size at
+/// 96), or the errno of r < 0.
 fn facts(buf: Int, r: Int) -> (Stat, Int) {
   if r < 0 {
-    return (Stat{mode: 0, size: 0, mtime: 0}, -r)
+    return (Stat{mode: 0, size: 0, mtime: 0, dev: 0, ino: 0}, -r)
   }
   let mode = (rt.mem_load(buf, 0, 8) >> 32) & 65535
   let size = rt.mem_load(buf, 96, 8)
   let sec = rt.mem_load(buf, 48, 8)
   let nsec = rt.mem_load(buf, 56, 8)
-  (Stat{mode: mode, size: size, mtime: sec * 1000000000 + nsec}, 0)
+  let dev = rt.mem_load(buf, 0, 8) & 4294967295
+  let ino = rt.mem_load(buf, 8, 8)
+  (Stat{mode: mode, size: size, mtime: sec * 1000000000 + nsec, dev: dev, ino: ino}, 0)
 }
 
 // ---------------------------------------------------------------------------
@@ -216,8 +221,18 @@ pub fn readlink(path: Str) -> (Str, Int) {
 }
 
 /// getcwd(3): the working directory, "." when the system has none to
-/// give (as the C runtime's).
+/// give (as the C runtime's). $PWD when it names the same directory as "."
+/// (os.Getwd: two stat calls), because libc's getcwd opens "." and asks
+/// the kernel for its path, 6 times the cost.
 pub fn getcwd() -> Str {
+  let pwd = rt.env_get("PWD").get(0) ?? ""
+  if pwd.starts_with("/") {
+    let (a, ea) = stat(".", true)
+    let (b, eb) = stat(pwd, true)
+    if ea == 0 && eb == 0 && a.ino == b.ino && a.dev == b.dev {
+      return pwd
+    }
+  }
   let buf = raw.bytes_buf(4096)
   let a = raw.bytes_addr(buf)
   if sys_darwin.getcwd(a, 4096) == 0 {

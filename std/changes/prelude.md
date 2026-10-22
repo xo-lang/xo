@@ -1,5 +1,21 @@
 # prelude changes
 
+## 2026-10-22: perf: Fs.cwd and the working directory on macOS take $PWD when it names it
+
+- Kind: perf
+- Commit: this commit
+- Found by: the Go backend gap ranking (bench/results/go-backend-gap-2026-10-22.md), fsproc cwd at 0.14x of the Go backend
+- Go reference: os.Getwd (go1.26.1)
+- Test: golden fs_cwd_path (a stale PWD is not used); bench/results/native-cwd-darwin-2026-10-22.md
+
+On macOS libc's getcwd opens `.` and asks the kernel for its path (90% of
+the profile of 20,000 `os.fs.cwd()` calls). The native working directory
+now does what Go's os.Getwd does first: $PWD when it is absolute and
+stat of it and of `.` name the same device and inode, else getcwd. A
+stale $PWD (a different directory) is never used. bench/perf/fsproc cwd,
+`xo bench --ab`: wall 0.158 of before (227 to 36 ms), instructions 0.156,
+system time 0.21 s to 0.02 s; the Go backend 35 ms.
+
 ## 2026-10-22: perf: Mutex.with on the Go backend records a 2-frame site
 
 - Kind: perf
