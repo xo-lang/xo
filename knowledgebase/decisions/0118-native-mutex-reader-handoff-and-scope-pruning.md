@@ -173,3 +173,20 @@ Alternatives measured (not pushed):
 - Spin before parking (Go's active spin): it never spun, because Go's
   canSpin rule refuses whenever the worker has queued work, which with
   many tasks is always; no gain.
+
+Correction (2026-10-22 08:40, Xo Lang 2): the mechanism above is wrong;
+the numbers stand. The yield does not break the convoy. Counted with an
+XO_RTSTATS probe of readers that park while no writer holds the Mutex
+(wt-mfree, not pushed): CRUD on the Mac 0.33 per request with the yield
+and 0.33 without, bench/perf/conc rwmutex 190k with and 187k without of
+256k operations, and the Mutex parks stay as many (CRUD linux/arm64 at 6
+cores, agents/myq-cmd.log: sig_mutex 1.17 to 1.30, fiber_park 2.44 to
+3.37 per request). What falls is the workers' sleeping: futex_wait 1.18
+to 0.25 and idle_sleep 0.66 to 0.09 per request. A woken writer queued
+in the ring made an idle worker wake (a futex call) to take it, then
+sleep again; run at once on the releasing worker, it needs no other
+worker. That is also why the rwmutex loop pays: there no worker sleeps,
+so the yield is only an extra switch per write. A yield rule keyed on
+free Mutex parks would not separate the two workloads; the next
+experiment keys on whether an idle worker would have to be woken
+(P_NIDLE > 0 at the release).
