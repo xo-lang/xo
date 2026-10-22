@@ -22,3 +22,8 @@ of their deferred statements) when the operation is added, and
 landing's cleanup is lowered against both (`internal/ssa/landing.go`
 flushLanding). Code that adds an instruction and then writes variables
 before the next one must keep going through `s.add` and `s.writeVar`.
+
+2026-10-21: the cleanup is now a shared block (deferred-code-copied-per-landing.md)
+that reads the variables through the faulting operation's block when it
+is sealed, so flush_landing leaves that block with the definitions from
+before the operation and moves the later ones to the continuation block.

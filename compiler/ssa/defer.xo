@@ -244,6 +244,46 @@ fn (var b: Builder) fault_cont(fr: Int, j: Int) -> Int {
   blk
 }
 
+/// The block a fault in top level deferred statement d goes to, with the
+/// blocks at open (flush_landing): the blocks opened inside the statement
+/// run their deferred code first, innermost first; a fault in it
+/// continues the statement's too (run_defers sees the statement's
+/// landing: nested), where it went past it with no landing before
+/// 2026-10-17; then the statement's fault continues (fault_cont). Made
+/// once per statement and open blocks (unwind_key) and sealed when the
+/// function ends, as unwind_block's.
+fn (var b: Builder) defer_fault_block(d: DLand, at: List[Int]) -> Int {
+  let key = "d${d.fr}.${d.j}.${d.tok}.${d.base}.${d.lvl}${b.unwind_key(at)}"
+  if let Some(c) = b.s.unwinds.get(key) {
+    return c
+  }
+  let blk = b.new_block()
+  b.s.unwinds[key] = blk
+  b.s.conts.push(blk)
+  let cur = b.s.cur
+  let exits = b.s.exits
+  let land = b.s.defer_land
+  b.s.cur = blk
+  b.s.defer_land = [d]
+  var i = at.len() - 1
+  while i >= d.base && !b.is_dead() {
+    b.s.exits = at[0..i]
+    b.run_defers(at[i])
+    i -= 1
+  }
+  b.s.exits = exits
+  if !b.is_dead() {
+    if d.tok >= 0 {
+      b.rt("shield_abort", -1, [d.tok])
+    }
+    let c = b.fault_cont(d.fr, d.j)
+    b.jump(c, [])
+  }
+  b.s.defer_land = land
+  b.s.cur = cur
+  blk
+}
+
 /// Seals the fault continuations once every landing that jumps to them is
 /// built (sealConts).
 fn (var b: Builder) seal_conts() {
@@ -389,37 +429,17 @@ fn (var b: Builder) flush_landing() {
   if !dl.is_empty() {
     // a fault in deferred code: its shield ends, the rest of the cleanup
     // runs (fault_cont)
-    let d = dl[0]
-    let land = b.s.defer_land
-    // the blocks opened inside the statement run their deferred code
-    // first, innermost first; a fault in it continues the statement's
-    // too (run_defers sees the statement's landing: nested), where it
-    // went past it with no landing before 2026-10-17
-    b.s.defer_land = dl
-    var i = at.len() - 1
-    while i >= d.base && !b.is_dead() {
-      b.s.exits = at[0..i]
-      b.run_defers(at[i])
-      i -= 1
-    }
-    b.s.exits = saved_exits
-    if !b.is_dead() {
-      if d.tok >= 0 {
-        b.rt("shield_abort", -1, [d.tok])
-      }
-      let c = b.fault_cont(d.fr, d.j)
-      b.jump(c, [])
-    }
-    b.s.defer_land = land
+    let c = b.defer_fault_block(dl[0], at)
+    b.jump(c, [])
   } else {
     b.unwind()
   }
+  // the definitions made since w are the continuation's: w's block keeps
+  // the values from before it, which the shared unwind blocks
+  // (unwind_block) read through it when they are sealed
   for (vo, v) in now {
-    let k = def_key(vo, wb)
-    if v < 0 {
-      b.s.defs.remove(k)
-    } else {
-      b.s.defs[k] = v
+    if v >= 0 {
+      b.s.defs[def_key(vo, no)] = v
     }
   }
   b.s.exits = saved_exits

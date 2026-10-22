@@ -3,11 +3,14 @@ package gen
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/xo-lang/xo/internal/progen"
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -74,6 +77,42 @@ func TestDeferFaultProperty(t *testing.T) {
 				t.Errorf("seed %d: the native build runs differently\n--- go\n%s\n--- %s\n%s\n--- program\n%s%s", seed, gr, native, nr, numbered(src), triage("deferfault", int64(seed), files, native, false))
 			}
 		})
+	}
+}
+
+// TestDeferFaultBlocks bounds the blocks the SSA builder makes for
+// deferfault seed 8's case2 (deferred code nested three deep, faults in
+// it and around it): a copy of the deferred code at every landing made
+// 225,753 blocks, a 30 GB arm64 build that outlived its test's timeout
+// (2026-10-21); the shared unwind blocks (compiler/ssa unwind_block,
+// defer_fault_block) make 4,288.
+func TestDeferFaultBlocks(t *testing.T) {
+	t.Parallel()
+	cli, err := xotool.Command()
+	if err != nil {
+		t.Skip(err)
+	}
+	dir := t.TempDir()
+	for name, text := range map[string]string{"xo.mod": "module example.com/deferfault\n", "main.xo": progen.DeferFaultProgram(8)} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	args := append(append([]string{}, cli[1:]...), "dev", "dump", "ssa", "--fn=case2", "--stage=build", ".")
+	cmd := testtmp.Guard(exec.Command(cli[0], args...))
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("xo dev dump ssa: %v\n%s", err, out)
+	}
+	n := 0
+	for _, line := range strings.Split(string(out), "\n") {
+		if len(line) > 1 && line[0] == 'b' && line[1] >= '0' && line[1] <= '9' {
+			n++
+		}
+	}
+	if n == 0 || n > 8000 {
+		t.Fatalf("case2 has %d blocks after the SSA build, want 1 to 8000", n)
 	}
 }
 

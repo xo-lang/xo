@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+
+	"github.com/xo-lang/xo/internal/testtmp"
 )
 
 // The backends of `xo build --backend=` and the modes of Build.
@@ -186,7 +188,9 @@ func Build(dirs []string, o Options) (*Result, error) {
 			}
 		}
 	}
-	cmd := exec.Command(cli[0], args...)
+	// guarded: a `go test -timeout` panic runs no cleanup, and an orphaned
+	// build of a program the compiler blew up on grew to 30 GB (2026-10-21)
+	cmd := testtmp.Guard(exec.Command(cli[0], args...))
 	cmd.Dir = o.Dir
 	wd := o.Dir
 	if wd == "" {
@@ -234,7 +238,7 @@ func Build(dirs []string, o Options) (*Result, error) {
 		if o.NoGC {
 			cargs = append(cargs, "--no-gc")
 		}
-		c := exec.Command(cli[0], append(cargs, dirs...)...)
+		c := testtmp.Guard(exec.Command(cli[0], append(cargs, dirs...)...))
 		c.Dir, c.Env = cmd.Dir, cmd.Env
 		out, _ := c.Output()
 		var r struct {
@@ -398,7 +402,7 @@ func asmEnv(dir, backend, target string, env []string, flags ...string) ([]byte,
 	if target != "" {
 		args = append(args, "--target="+target)
 	}
-	cmd := exec.Command(cli[0], append(args, dir)...)
+	cmd := testtmp.Guard(exec.Command(cli[0], append(args, dir)...))
 	cmd.Env = append(append(os.Environ(), "XO_LLVM_SPLIT=1"), env...)
 	if os.Getenv("XO_NOLIBC") == "" {
 		// the tests link this code with clang and the C library (the
@@ -425,7 +429,7 @@ func Check(dirs []string, flags ...string) ([]Diagnostic, error) {
 	}
 	args := append(append([]string{}, cli[1:]...), "check", "--json")
 	args = append(append(args, flags...), dirs...)
-	cmd := exec.Command(cli[0], args...)
+	cmd := testtmp.Guard(exec.Command(cli[0], args...))
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

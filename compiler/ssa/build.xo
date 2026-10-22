@@ -89,6 +89,8 @@ struct S {
   /// the fault continuations made so far.
   defer_land: List[DLand] = []
   conts: List[Int] = []
+  /// The shared unwind blocks of ordinary code, by unwind_key.
+  unwinds: Map[Str, Int] = {}
   /// The values of the `old(...)` calls of the ensures clauses being
   /// checked, by the key of the call.
   olds: Map[Int, Int] = {}
@@ -3042,6 +3044,16 @@ fn (var b: Builder) check_then(callee: Str, cleanup: Cleanup) {
 /// scope's unwind block (which closes it and goes on), or the function's
 /// (build_defer.go unwind).
 fn (var b: Builder) unwind() {
+  if b.s.shield == 0 && b.s.defer_land.is_empty() {
+    // ordinary code: one shared block per open block and its deferred
+    // statements (unwind_block); a copy per landing nested deferred code
+    // grew one function to 225,753 blocks (progen deferfault seed 8)
+    if !b.is_dead() {
+      let t = b.unwind_block(b.s.exits)
+      b.jump(t, [])
+    }
+    return
+  }
   let saved = b.s.exits
   var i = saved.len() - 1
   while i >= 0 && b.s.frames[saved[i]].sc < 0 && !b.is_dead() {
@@ -3055,6 +3067,67 @@ fn (var b: Builder) unwind() {
   }
   let t = b.unwind_target()
   b.jump(t, [])
+}
+
+/// The block that unwinds ordinary code with the open blocks exits: the
+/// innermost block's deferred code, then the unwind block of the blocks
+/// around it, down to a scope (its unwind block, unwind_target). Made
+/// once per open blocks, their deferred statements and the open scopes
+/// (unwind_key), and sealed when the function ends, as fault_cont's: the
+/// code reads the variables through its predecessors.
+fn (var b: Builder) unwind_block(exits: List[Int]) -> Int {
+  var i = exits.len() - 1
+  while i >= 0 && b.s.frames[exits[i]].sc < 0 && b.s.frames[exits[i]].stmts.is_empty() {
+    i -= 1
+  }
+  if i < 0 || b.s.frames[exits[i]].sc >= 0 {
+    let saved = b.s.exits
+    b.s.exits = exits[0..i + 1]
+    let t = b.unwind_target()
+    b.s.exits = saved
+    return t
+  }
+  let key = b.unwind_key(exits[0..i + 1])
+  if let Some(c) = b.s.unwinds.get(key) {
+    return c
+  }
+  if b.s.pending >= 0 {
+    b.flush_landing()
+  }
+  let blk = b.new_block()
+  b.s.unwinds[key] = blk
+  b.s.conts.push(blk)
+  let cur = b.s.cur
+  let saved = b.s.exits
+  b.s.cur = blk
+  b.s.exits = exits[0..i]
+  b.run_defers(exits[i])
+  if !b.is_dead() {
+    let next = b.unwind_block(exits[0..i])
+    b.jump(next, [])
+  }
+  b.s.cur = cur
+  b.s.exits = saved
+  blk
+}
+
+/// The open blocks and scopes as unwind_block tells them apart: each
+/// block's scope or its deferred statements (by position, since every
+/// landing copies the frames, snapshot), and the open scopes.
+fn (b: Builder) unwind_key(exits: List[Int]) -> Str {
+  var k = ""
+  for e in exits {
+    let fr = b.s.frames[e]
+    k = k + "|${fr.sc}"
+    for d in fr.stmts {
+      k = k + ",${d.span.start.offset}"
+    }
+  }
+  k = k + "/"
+  for sc in b.s.scopes {
+    k = k + "${sc},"
+  }
+  k
 }
 
 /// Emits the function's unwind block: the fault goes on to the caller,
