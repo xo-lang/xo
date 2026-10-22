@@ -193,21 +193,35 @@ fn (var c: Checker) coerce_to(t: Int, w: Want, sp: Span, e: List[Expr]) -> Int {
   if c.assignable(t, w.t, sp) {
     return w.t
   }
-  c.mismatch(sp, w.t, t, !e.is_empty())
+  let d = c.mismatch_d(sp, w.t, t, !e.is_empty())
+  if d >= 0 && !e.is_empty() && c.is_prelude(c.resolve(w.t), "Set") {
+    if let MapLit(entries: entries, ..) = e[0] {
+      if entries.is_empty() {
+        // `{}` is the empty Map; the empty Set is `#{}` (decision 0328 withdrawn)
+        c.note(d, "an empty Set is `#{}`; `{}` is an empty Map (core 2.7)")
+        c.fix(d, "write `#{}`", [c.insert_edit(sp.start, "#")])
+      }
+    }
+  }
   c.bad_ty
 }
 
 /// XO0401 with its notes and fixes (expr.go mismatch); has_e: the value
 /// is an expression of the source (a fix may rewrite it).
 fn (var c: Checker) mismatch(sp: Span, w: Int, g: Int, has_e: Bool) {
+  let _ = c.mismatch_d(sp, w, g, has_e)
+}
+
+/// mismatch, giving the diagnostic (-1 when none was reported).
+fn (var c: Checker) mismatch_d(sp: Span, w: Int, g: Int, has_e: Bool) -> Int {
   if c.contains_bad(w) || c.contains_bad(g) {
-    return
+    return -1
   }
   let ws = c.show(w)
   let gs = c.show(g)
   let d = c.error("XO0401", sp, "expected `${ws}`, found `${gs}`")
   if d < 0 {
-    return
+    return -1
   }
   if c.is_numeric(w) && c.is_numeric(g) {
     c.note(d, "there are no implicit numeric conversions; convert explicitly with `${ws}(...)` (core 2.1)")
@@ -228,6 +242,7 @@ fn (var c: Checker) mismatch(sp: Span, w: Int, g: Int, has_e: Bool) {
   if gi >= 0 && c.option_elem(w) < 0 && c.assignable(gi, w, Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}}) {
     c.note(d, "the value is optional; unwrap it with `??`, `?`, `if let`, or `match` (core 2.5)")
   }
+  d
 }
 
 /// Whether a `?` can propagate here: the function or closure has an

@@ -1,0 +1,17 @@
+// An empty Set is `#{}`; `{}` is an empty Map, also where a Set is
+// expected (decision 0328, withdrawn: XO0401 notes `#{}` instead).
+struct Tags {
+  names: Set[Str] = #{}
+}
+
+fn count(s: Set[Str]) -> Int {
+  s.len()
+}
+
+fn main(os: Os) {
+  let a: Set[Str] = {} // ERROR XO0401 "found `Map"
+  let b = count({}) // ERROR XO0401
+  let c: Set[Str] = #{}
+  let t = Tags{}
+  os.stdio.println("${a.len()} ${b} ${c.len()} ${t.names.len()}")
+}

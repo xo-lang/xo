@@ -1,8 +1,7 @@
 # 0332: lazy `const` (a value computed once per process on first use)
 
-Status: Accepted in direction (owner, 2026-10-21, after the language poll).
-Design below: Proposed (Xo Publish, 2026-10-21), for the owner to accept
-before implementation.
+Status: Accepted (owner, 2026-10-21; in direction after the language poll,
+the design below the same evening). Design: Xo Publish.
 
 ## Context
 
