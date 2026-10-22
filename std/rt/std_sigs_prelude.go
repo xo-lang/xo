@@ -107,6 +107,7 @@ var (
 	_ func(*Task, Bytes) string                                     = Bytes_quote
 	_ func(*Task, Bytes, Bytes) Option[int64]                       = Bytes_find
 	_ func(*Task, Bytes, Bytes) Option[int64]                       = Bytes_rfind
+	_ func(*Task, Bytes) List[Tuple2[int64, uint8]]                 = Bytes_indexed
 	_ func(*Task, int64) Bytes                                      = Bytes_zeroed
 	_ func(*Task, string) string                                    = Str_quote
 	_ func(*Task, string) Option[string]                            = Str_unquote

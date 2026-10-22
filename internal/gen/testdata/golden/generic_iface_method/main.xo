@@ -7,6 +7,11 @@ interface Shuffler {
   fn pair[A, B](self, a: A, b: B) -> Str
 }
 
+// No type implements Picker: its dispatch has no case.
+interface Picker {
+  fn pick[T](self, xs: List[T]) -> T
+}
+
 struct Rev {}
 
 struct Rot {
