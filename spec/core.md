@@ -1255,7 +1255,13 @@ An `UpperCamel` name in a pattern always refers to a variant; bindings are
 - `Str` cannot be indexed by position (use `runes()` or slicing).
 - Ranges slice: `xs[1..]`, `xs[..n]`, `xs[a..b]` on `List`, `Bytes`, and `Str`
   (byte offsets; slicing a `Str` inside a UTF-8 sequence faults). Slices of
-  immutable values are O(1) and share storage.
+  immutable values are O(1) and share storage: on native targets the result
+  of slicing a `Str` or `Bytes` is a view of the same buffer (no copy), so a
+  small view keeps its whole buffer alive. A `Str` or `Bytes` value holds at
+  most 4294967295 bytes (4 GiB
+  less one); an operation that would make a longer one (concatenation,
+  `repeat`, appending to a builder) faults with "Str or Bytes longer than
+  4 GiB".
 
 ### 3.7 Holes
 

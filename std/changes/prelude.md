@@ -1,5 +1,20 @@
 # prelude changes
 
+## 2026-10-22: perf: Str and Bytes slices are views (decision 0330)
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/results/regexp-time-csv-vs-go-2026-10-21.md, decision 0330
+- Go reference: Go's string and byte slices
+- Test: goldens views_unique, views_eq (arm64, LLVM, Go)
+
+`s[lo..hi]` on a `Str` or `Bytes` no longer allocates or copies on native
+targets: the result shares the buffer (the second word of the value holds
+the length in its low 32 bits and the offset in its high 32 bits). Every
+value is limited to 4294967295 bytes; concatenating, repeating or appending
+past it faults. A view of a large buffer keeps the buffer alive. wasm and
+the Go backend are unchanged (they copy, or Go slices).
+
 ## 2026-10-22: perf: Map overwrites a key in place on the Go backend
 
 - Kind: perf

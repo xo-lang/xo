@@ -103,6 +103,19 @@ faults at construction). Supersedes items 1 and 5 of the proposed decision
 representation, so they move together. Owner: Xo Lang Lib 1, with Xo Lang 2
 reviewing every emitter and runtime change.
 
+## Implementation note (step 3, 2026-10-22)
+
+Slicing is `rt.str_view` after the prelude's `llrt_str_slice_chk` /
+`llrt_bytes_slice_chk` (range and UTF-8 boundary checks): the object gets one
+more count and the value is (object, (hi - lo) | ((off + lo) << 32)). Views
+are always on (STR_VIEWS) on arm64, x86 and LLVM; wasm and no-prelude builds
+copy as before. Builders and in-place paths see only off 0: a value with
+off != 0 is never unique (obj.xo reserve), and the inline push compares the
+packed word unsigned against the capacity so a view takes the call. The cap
+faults at concat, append, push and repeat (cabi len_cap). A small view keeps
+its whole parent alive (a 10 byte token keeps a 100 MB read buffer), as in
+Go. Known gap: a user `export fn` returning a Str gives C the packed word.
+
 ## Alternatives
 
 - **Keep copying and rewrite hot ports with byte indexing** (what was done
