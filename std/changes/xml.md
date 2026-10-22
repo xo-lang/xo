@@ -1,5 +1,21 @@
 # std/xml changes
 
+## 2026-10-22: perf: parse reads spaces, names and plain text without a call per byte
+
+- Kind: perf
+- Commit: this commit
+- Found by: XO_PROF=cpu (Dec.getc 19% and read_name, mustgetc 15%, the per-rune checks of text)
+- Go reference: encoding/xml xml.go (Decoder.getc, name, text) (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/xml and internal/llvm/testdata/golden/xml_basic (arm64, LLVM, go)
+
+`parse` and the token reader skip spaces in one loop, take an ASCII name
+and plain character data (printable ASCII, tab, newline) as slices of the
+text, and fall back to the byte by byte reading of Go's decoder for anything
+else (an entity, `]`, `\r`, non-ASCII bytes, CDATA). A 1.7 MB document,
+parsed 8 times, native arm64: 574 ms to 258 ms wall (`xo bench --ab`, 0.449,
+interval 0.438 to 0.490); 8,004 M to 3,768 M instructions, Go's Token loop 3,760 M.
+Results are the same.
+
 ## 2026-10-21: feature: derive Xml, Go's Marshal and Unmarshal for structs
 
 - Kind: feature
