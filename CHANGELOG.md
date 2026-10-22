@@ -13,6 +13,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   start. Checked in Docker on linux/arm64 and linux/amd64 with both
   linkers.
 
+- A by value receiver that is a variable or a field path is read after the
+  call's arguments, as a `var` receiver always was (decision 0326):
+  `t.size(t.add(v))` sees the item `add` pushed. `xo vet`'s XO0537, which
+  reported the old order, is retired.
 - Allocation and free on one thread: the frees count (for XO_LEAKCHECK,
   XO_HEAPSTATS, XO_RTSTATS) only while counting is on, the free lists'
   lengths are left to the magazines of a program with threads (recounted

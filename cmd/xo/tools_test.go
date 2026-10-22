@@ -1347,11 +1347,10 @@ func TestWasmToolRejectedText(t *testing.T) {
 	}
 }
 
-// TestVetRecvOrder covers XO0537 (gotchas/receiver-read-before-args.md):
-// `t.size(t.add(v))` with a by value `size` and a `var` `add` is reported
-// (line 15); a `var` receiver and an argument that changes another value
-// are not.
-func TestVetRecvOrder(t *testing.T) {
+// TestVetRecvOrderRetired: XO0537 was retired with decision 0326, which
+// defines `t.size(t.add(v))` (a by value receiver is read after the
+// arguments); xo vet reports nothing for it.
+func TestVetRecvOrderRetired(t *testing.T) {
 	t.Parallel()
 	src := `struct Table {
   items: List[Int]
@@ -1364,16 +1363,8 @@ fn (var t: Table) add(v: Int) -> Int {
 
 fn (t: Table) size(i: Int) -> Int { t.items[i] }
 
-fn (var t: Table) vsize(i: Int) -> Int { t.items[i] }
-
 fn bad(var t: Table, v: Int) -> Int {
   t.size(t.add(v))
-}
-
-fn good(var t: Table, var u: Table, v: Int) -> Int {
-  let a = t.vsize(t.add(v))
-  let b = t.size(u.add(v))
-  a + b
 }
 
 fn main(os: Os) {
@@ -1386,30 +1377,8 @@ fn main(os: Os) {
 	if code := run(t, []string{"vet", "--json", dir}, &out, &errOut); code != 0 {
 		t.Fatalf("exit %d: %s", code, errOut.String())
 	}
-	var res struct {
-		Diagnostics []struct {
-			Code     string `json:"code"`
-			Severity string `json:"severity"`
-			Span     struct {
-				Line int `json:"line"`
-			} `json:"span"`
-		} `json:"diagnostics"`
-		CheckErrors int `json:"check_errors"`
-	}
-	if err := json.Unmarshal(out.Bytes(), &res); err != nil {
-		t.Fatalf("bad JSON: %v\n%s", err, out.String())
-	}
-	if res.CheckErrors != 0 {
-		t.Fatalf("check errors: %d\n%s", res.CheckErrors, out.String())
-	}
-	var got []string
-	for _, d := range res.Diagnostics {
-		if d.Code == "XO0537" {
-			got = append(got, fmt.Sprintf("%d %s", d.Span.Line, d.Severity))
-		}
-	}
-	if strings.Join(got, ", ") != "15 warning" {
-		t.Errorf("XO0537 at %v, want [15 warning]\n%s", got, out.String())
+	if strings.Contains(out.String(), "XO0537") {
+		t.Errorf("xo vet still reports XO0537:\n%s", out.String())
 	}
 }
 

@@ -1,5 +1,7 @@
 # A by value receiver is read before the call's arguments
 
+**Fixed by decision 0326 (2026-10-21)**: a by value receiver that is a variable or a field path is now read after the arguments, so this trap no longer exists; the text below is the history. XO0537 is retired.
+
 Status: Observed (2026-10-10, porting internal/ssa to compiler/ssa)
 
 Symptom: the Xo SSA builder faulted with `index 3442 out of range for

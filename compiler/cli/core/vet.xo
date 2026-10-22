@@ -306,9 +306,6 @@ fn vet_module(c: check.Checker, m: Int) -> List[Diag] {
             out.push(d)
           }
           out = out + task_captures(c, f, path, e, args)
-          if let Some(d) = recv_order(c, f, path, e, span, fun, args) {
-            out.push(d)
-          }
         }
         MatchExpr(span, subject, arms) => {
           if let Some(d) = match_exit(c, f, path, span, subject, arms) {
@@ -386,61 +383,6 @@ fn copy_store(c: check.Checker, f: Int, file: Str, b: parser.Block) -> List[Diag
     }
   }
   out
-}
-
-/// XO0537 (gotchas/receiver-read-before-args.md): `x.m(.., x.n(..), ..)`
-/// where m takes its receiver by value and n is a `var` method of the same
-/// root value. The call reads the by value receiver before its arguments
-/// run (decision 0142; a `var` receiver is read after them), so m sees x as
-/// it was before n changed it. Reported once per call, for the first such
-/// argument; a closure argument is skipped (it runs later, if at all).
-fn recv_order(c: check.Checker, f: Int, file: Str, call: parser.Expr, span: parser.Span, fun: parser.Expr, args: List[parser.Arg]) -> Diag? {
-  let x = match fun {
-    SelectorExpr(_, x, _) => x
-    _ => return None
-  }
-  let root = root_name(x)
-  if root.is_empty() || args.is_empty() {
-    return None
-  }
-  let ci = match c.call_in(f, call) {
-    Some(v) => v
-    None => return None
-  }
-  let fo = ci.fn_obj
-  if fo < 0 || c.objs[fo].recv < 0 || c.objs[fo].recv_var || c.objs[fo].is_static {
-    return None
-  }
-  for a in args {
-    if let FnLit(_) = a.value {
-      continue
-    }
-    var nodes: List[parser.Expr] = []
-    walk_expr(a.value, nodes)
-    for n in nodes {
-      if let CallExpr(_, nfun, _) = n {
-        let rx = match nfun {
-          SelectorExpr(_, rx, _) => rx
-          _ => continue
-        }
-        if root_name(rx) != root {
-          continue
-        }
-        let ni = match c.call_in(f, n) {
-          Some(v) => v
-          None => continue
-        }
-        if ni.fn_obj < 0 || !c.objs[ni.fn_obj].recv_var {
-          continue
-        }
-        let mname = text_of(c.objs[fo].name)
-        let nname = text_of(c.objs[ni.fn_obj].name)
-        let rtext = src_text(c, f, parser.expr_span(x))
-        return Some(vdiag("XO0537", false, file, span, "`${mname}` takes `${rtext}` by value, so the call reads it before its argument `${nname}(..)`, a `var` method of `${root}`, runs and sees it as it was before (decision 0142): bind the argument first (`let a = ...`), or make `${mname}` a `var` method"))
-      }
-    }
-  }
-  None
 }
 
 /// XO0536 (decision 0294) in block b: `var x = xs[i]` on a List whose
