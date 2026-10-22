@@ -96,3 +96,20 @@ Instructions (M), Go in brackets: match 29,759 to 17,354 (3,943); find_all
 18,697 to 9,704 (6,615); replace_all 16,033 to 8,772 (5,000); captures 1,919
 to 1,130 (434). Still 2.0 to 4.4 times Go: next are Go's literal-prefix scan,
 the one-pass matcher, and the bit-state backtracker.
+
+## Step 3, regexp (2026-10-21): literal-prefix scan and the bit-state backtracker
+
+Go's two fast paths that apply to the benchmark's patterns, ported from
+regexp/backtrack.go and Prog.Prefix: (1) when no thread is alive, jump to the
+next occurrence of the literal text every match starts with; (2) for a program
+of at most 500 instructions and a text shorter than 262,144 / program length,
+search by backtracking with a visited bit for each (instruction, position)
+(`BT`, `try_backtrack`), leaving the Pike VM for large texts. One-pass is not
+ported. Instructions (M), Go in brackets: match 17,354 to 8,186 (3,943);
+captures 1,130 to 1,103 (434; this text is over the backtracker's limit);
+find_all 9,704 to 9,754 and replace_all 8,772 to 8,802 (6,615 and 5,000; the
+150 KB text is also over it, so they stay on the Pike VM). Total against the
+start of the day: match 29,759 to 8,186 (7.6 to 2.1 times Go), find_all 18,697
+to 9,754 (2.8 to 1.5), replace_all 16,033 to 8,802 (3.2 to 1.8), captures
+1,919 to 1,103 (4.4 to 2.5). The corpus (260 patterns, 40 texts including a
+48 KB one for the Pike VM) passes on go, arm64, LLVM.

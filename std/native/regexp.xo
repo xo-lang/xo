@@ -1821,10 +1821,210 @@ fn with_at(l: List[Int], i: Int, v: Int) -> List[Int] {
 /// l, as a value of its own (a thread's group positions to update).
 fn own(l: List[Int]) -> List[Int] { l }
 
+/// The literal text every match starts with (Prog.Prefix of Go's regexp):
+/// the single runes the program begins with after nops and captures, or
+/// "".
+fn literal_prefix(g: Prog) -> Str {
+  var pc = g.start
+  while pc != 0 && (g.op[pc] == I_NOP || g.op[pc] == I_CAPTURE) {
+    pc = g.out[pc]
+  }
+  var b = BytesBuilder.new()
+  while pc != 0 && g.op[pc] == I_RUNE1 {
+    b.write_rune(Rune(g.rune[pc][0]))
+    pc = g.out[pc]
+    while pc != 0 && (g.op[pc] == I_NOP || g.op[pc] == I_CAPTURE) {
+      pc = g.out[pc]
+    }
+  }
+  b.freeze().to_str() ?? ""
+}
+
+/// Go's bitState (backtrack.go): the backtracker's visited bits, job stack
+/// (instruction, position, and a flag for "continue a visit"), and group
+/// positions.
+struct BT {
+  end: Int
+  visited: List[Int]
+  jpc: List[Int]
+  jpos: List[Int]
+  jarg: List[Int]
+  jn: Int
+  cap: List[Int]
+  matchcap: List[Int]
+  nprog: Int
+}
+
+/// Whether (pc, pos) is new, marking it visited.
+fn (var b: BT) should_visit(pc: Int, pos: Int) -> Bool {
+  let n = pc * (b.end + 1) + pos
+  let w = n >> 5
+  let bit = 1 << (n & 31)
+  if (b.visited[w] & bit) != 0 {
+    return false
+  }
+  b.visited[w] = b.visited[w] | bit
+  true
+}
+
+fn (var b: BT) job(pc: Int, pos: Int, arg: Int) {
+  if b.jn < b.jpc.len() {
+    b.jpc[b.jn] = pc
+    b.jpos[b.jn] = pos
+    b.jarg[b.jn] = arg
+  } else {
+    b.jpc.push(pc)
+    b.jpos.push(pos)
+    b.jarg.push(arg)
+  }
+  b.jn += 1
+}
+
+fn (var b: BT) push(g: Prog, pc: Int, pos: Int, arg: Int) {
+  if pc != 0 && g.op[pc] != I_FAIL && (arg == 1 || b.should_visit(pc, pos)) {
+    b.job(pc, pos, arg)
+  }
+}
+
+/// tryBacktrack: the first match (leftmost-first priority) starting at
+/// pos, its positions in b.matchcap.
+fn try_backtrack(g: Prog, s: Str, var b: BT, pc0: Int, pos0: Int) -> Bool {
+  let ncap = b.cap.len()
+  b.push(g, pc0, pos0, 0)
+  while b.jn > 0 {
+    b.jn -= 1
+    var pc = b.jpc[b.jn]
+    var pos = b.jpos[b.jn]
+    var arg = b.jarg[b.jn]
+    var check = false
+    while true {
+      if check && !b.should_visit(pc, pos) {
+        break
+      }
+      check = true
+      if pc == 0 {
+        break
+      }
+      let op = g.op[pc]
+      if op == I_ALT {
+        if arg == 1 {
+          arg = 0
+          pc = g.arg[pc]
+        } else {
+          b.push(g, pc, pos, 1)
+          pc = g.out[pc]
+        }
+        continue
+      }
+      if op == I_RUNE || op == I_RUNE1 || op == I_ANY || op == I_ANY_NOT_NL {
+        let st = step_at(s, pos)
+        let r = if st < 0 { -1 } else { st >> 3 }
+        var ok = false
+        if op == I_RUNE {
+          ok = r >= 0 && rune_matches(g, pc, r)
+        } else if op == I_RUNE1 {
+          ok = r >= 0 && r == g.rune[pc][0]
+        } else if op == I_ANY {
+          ok = r >= 0
+        } else {
+          ok = r >= 0 && r != 10
+        }
+        if !ok {
+          break
+        }
+        pos += st & 7
+        pc = g.out[pc]
+        continue
+      }
+      if op == I_CAPTURE {
+        if arg == 1 {
+          b.cap[g.arg[pc]] = pos
+          break
+        }
+        let a = g.arg[pc]
+        if a < ncap {
+          b.push(g, pc, b.cap[a], 1)
+          b.cap[a] = pos
+        }
+        pc = g.out[pc]
+        continue
+      }
+      if op == I_EMPTY {
+        let cond = empty_context(rune_before(s, pos), rune_at(s, pos))
+        if (g.arg[pc] & (0 - 1 - cond)) != 0 {
+          break
+        }
+        pc = g.out[pc]
+        continue
+      }
+      if op == I_NOP {
+        pc = g.out[pc]
+        continue
+      }
+      if op == I_MATCH {
+        b.cap[1] = pos
+        if b.matchcap[1] == -1 {
+          var i = 0
+          while i < ncap {
+            b.matchcap[i] = b.cap[i]
+            i += 1
+          }
+        }
+        return true
+      }
+      break
+    }
+  }
+  false
+}
+
+/// The rune at pos, or -1 at the end.
+fn rune_at(s: Str, pos: Int) -> Int {
+  let st = step_at(s, pos)
+  if st < 0 { -1 } else { st >> 3 }
+}
+
+/// Go's backtrack: the search by backtracking with a visited bit for each
+/// (instruction, position), for small programs and texts.
+fn backtrack(g: Prog, s: Str, pos0: Int, ncap: Int, prefix: Str) -> List[Int] {
+  let end = s.len()
+  let nprog = g.op.len()
+  var b = BT{end: end, visited: raw.zero_ints((nprog * (end + 1) + 31) / 32), jpc: [], jpos: [], jarg: [], jn: 0, cap: raw.zero_ints(ncap), matchcap: raw.zero_ints(ncap), nprog: nprog}
+  var i = 0
+  while i < ncap {
+    b.cap[i] = -1
+    b.matchcap[i] = -1
+    i += 1
+  }
+  var pos = pos0
+  while pos <= end {
+    if !prefix.is_empty() {
+      let at = scan.find(s, prefix, pos)
+      if at < 0 {
+        return []
+      }
+      pos = at
+    }
+    b.cap[0] = pos
+    if try_backtrack(g, s, b, g.start, pos) {
+      return b.matchcap
+    }
+    let st = step_at(s, pos)
+    if st < 0 {
+      break
+    }
+    pos += st & 7
+  }
+  []
+}
+
 /// The group positions of the leftmost first match at or after pos (ncap
 /// of them, at least 2), or the empty list.
 fn exec(g: Prog, s: Str, pos0: Int, ncap: Int) -> List[Int] {
   let n = g.op.len()
+  if n <= 500 && s.len() < 262144 / n {
+    return backtrack(g, s, pos0, ncap, literal_prefix(g))
+  }
   var runq = new_queue(n, ncap)
   var nextq = new_queue(n, ncap)
   var matchcap: List[Int] = []
@@ -1851,9 +2051,34 @@ fn exec(g: Prog, s: Str, pos0: Int, ncap: Int) -> List[Int] {
     }
   }
   var cond = empty_context(rune_before(s, pos), r)
+  let prefix = literal_prefix(g)
   while true {
     if runq.len == 0 && matched {
       break
+    }
+    if runq.len == 0 && !prefix.is_empty() {
+      // no thread is alive: no match can start before the next occurrence
+      // of the literal prefix (Go's prefix scan)
+      let at = scan.find(s, prefix, pos)
+      if at < 0 {
+        break
+      }
+      if at != pos {
+        pos = at
+        let st0 = step_at(s, pos)
+        r = if st0 < 0 { -1 } else { st0 >> 3 }
+        width = if st0 < 0 { 0 } else { st0 & 7 }
+        r1 = -1
+        width1 = 0
+        if r >= 0 {
+          let st1 = step_at(s, pos + width)
+          if st1 >= 0 {
+            r1 = st1 >> 3
+            width1 = st1 & 7
+          }
+        }
+        cond = empty_context(rune_before(s, pos), r)
+      }
     }
     if !matched {
       // matchcap is all -1 until the first match, and add restores cap

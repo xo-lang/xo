@@ -1,5 +1,20 @@
 # std/regexp changes
 
+## 2026-10-21: perf: literal-prefix scan and the bit-state backtracker
+
+- Kind: perf
+- Commit: (filled in after the push)
+- Found by: bench/results/regexp-time-csv-vs-go-2026-10-21.md
+- Go reference: regexp/backtrack.go, Prog.Prefix (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/regexp (go, arm64, LLVM)
+
+Texts shorter than 262,144 divided by the program's length (programs up to 500
+instructions) are searched by backtracking with a visited bit per state, as
+Go does; a literal prefix of the pattern is searched for when no thread is
+alive. `is_match` on short strings is 2.1 times faster than before the
+afternoon's work in total (29,759 M to 8,186 M instructions; Go 3,943 M).
+Results are the same on the corpus.
+
 ## 2026-10-21: test: a Go-generated corpus for regexp
 
 - Kind: test

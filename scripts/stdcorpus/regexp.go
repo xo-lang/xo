@@ -47,6 +47,8 @@ func regexpPatterns(r *rand.Rand) []string {
 func regexpInputs(r *rand.Rand) []string {
 	in := []string{"", "a", "abc", "aaa", "ab", "abcabc", "foo bar", "xfoo foo foox", "a\nb\nc", "2026-10-21", "k=v one=two", "bob@example.com x", "é日本", "ǆ", "aXbXc"}
 	alpha := []string{"a", "b", "c", "x", "A", "B", " ", "\n", "1", "2", "é", "日", "_", "-", "@", ".", "=", "ǅ"}
+	// a long text: the Pike VM, which the backtracker leaves to big inputs
+	in = append(in, strings.Repeat("abc xfoo 2026-10-21 k=v \u00e9\n", 2000))
 	for len(in) < 40 {
 		var b strings.Builder
 		for i, n := 0, r.Intn(10); i < n; i++ {
@@ -64,7 +66,11 @@ func regexpResult(re *regexp.Regexp, s string) string {
 	} else {
 		parts = append(parts, "-")
 	}
-	parts = append(parts, strings.Join(re.FindAllString(s, -1), "\x01"))
+	if len(s) > 10000 {
+		parts = append(parts, "")
+	} else {
+		parts = append(parts, strings.Join(re.FindAllString(s, -1), "\x01"))
+	}
 	if m := re.FindStringSubmatchIndex(s); m != nil {
 		var cs []string
 		for i := 0; i+1 < len(m); i += 2 {
@@ -77,6 +83,11 @@ func regexpResult(re *regexp.Regexp, s string) string {
 		parts = append(parts, strings.Join(cs, "\x01"))
 	} else {
 		parts = append(parts, "-")
+	}
+	if len(s) > 10000 {
+		// long text: the counts only
+		parts = append(parts, fmt.Sprint(len(re.FindAllString(s, -1))))
+		return strings.Join(parts, "\x03")
 	}
 	parts = append(parts, re.ReplaceAllString(s, "<$1>"), re.ReplaceAllLiteralString(s, "<$1>"), strings.Join(re.Split(s, -1), "\x01"))
 	return strings.Join(parts, "\x03")
@@ -121,11 +132,15 @@ fn result(re: regexp.Regex, s: Str) -> Str {
     Some((a, b)) => "${a},${b}"
     None => "-"
   })
-  parts.push(joined(re.find_all(s)))
+  parts.push(if s.len() > 10000 { "" } else { joined(re.find_all(s)) })
   parts.push(match re.captures(s) {
     Some(cs) => joined(cs.map(fn(c) { c ?? "\u{2}" }))
     None => "-"
   })
+  if s.len() > 10000 {
+    parts.push("${re.find_all(s).len()}")
+    return parts.join("\u{3}")
+  }
   parts.push(re.replace_all(s, "<$1>"))
   parts.push(re.replace_all_literal(s, "<$1>"))
   parts.push(joined(re.split(s)))
