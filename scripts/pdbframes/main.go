@@ -10,6 +10,11 @@
 //
 //	pdbframes [-locals] PROG.exe < REPORT
 //
+// $PDBFRAMES_DBGHELP names the dbghelp.dll to load (the Windows SDK
+// debugger's, beside cdb.exe), else Windows' own. On standard error: the
+// dbghelp loaded, the module's symbol type and PDB (SymGetModuleInfoW64),
+// and the first failed lookup's error.
+//
 // With -locals each physical frame's variables follow it, as dbghelp
 // finds them at the frame's pc (SymSetContext, SymEnumSymbols): `      NAME
 // (param) reg R` for a register, `[reg R+OFF]` for memory.
@@ -27,7 +32,7 @@ import (
 )
 
 var (
-	dbghelp                  = syscall.NewLazyDLL("dbghelp.dll")
+	dbghelp                  = syscall.NewLazyDLL(dbghelpPath())
 	symSetOptions            = dbghelp.NewProc("SymSetOptions")
 	symInitializeW           = dbghelp.NewProc("SymInitializeW")
 	symLoadModuleExW         = dbghelp.NewProc("SymLoadModuleExW")
@@ -39,7 +44,32 @@ var (
 	symGetLineFromInlineCtxW = dbghelp.NewProc("SymGetLineFromInlineContextW")
 	symSetContext            = dbghelp.NewProc("SymSetContext")
 	symEnumSymbolsW          = dbghelp.NewProc("SymEnumSymbolsW")
+	symGetModuleInfoW64      = dbghelp.NewProc("SymGetModuleInfoW64")
+	symUnloadModule64        = dbghelp.NewProc("SymUnloadModule64")
 )
+
+// imageSize is the PE image's SizeOfImage (0 when unreadable).
+func imageSize(exe string) uint32 {
+	b, err := os.ReadFile(exe)
+	if err != nil || len(b) < 64 {
+		return 0
+	}
+	pe := int(*(*uint32)(unsafe.Pointer(&b[60])))
+	if pe+24+60 > len(b) {
+		return 0
+	}
+	return *(*uint32)(unsafe.Pointer(&b[pe+24+56]))
+}
+
+// failed: whether a lookup's error was printed already
+var failed bool
+
+func dbghelpPath() string {
+	if p := os.Getenv("PDBFRAMES_DBGHELP"); p != "" {
+		return p
+	}
+	return "dbghelp.dll"
+}
 
 var locals bool
 
@@ -63,9 +93,9 @@ func main() {
 		os.Exit(1)
 	}
 	h := uintptr(0x584f) // any value identifies the session
-	// SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES |
-	// SYMOPT_FAIL_CRITICAL_ERRORS | SYMOPT_NO_PROMPTS
-	symSetOptions.Call(0x2 | 0x4 | 0x10 | 0x200 | 0x80000)
+	// SYMOPT_UNDNAME | SYMOPT_LOAD_LINES | SYMOPT_FAIL_CRITICAL_ERRORS |
+	// SYMOPT_NO_PROMPTS (not deferred: the PDB loads, or fails, here)
+	symSetOptions.Call(0x2 | 0x10 | 0x200 | 0x80000)
 	dir, _ := syscall.UTF16PtrFromString(filepath.Dir(exe))
 	if r, _, e := symInitializeW.Call(h, uintptr(unsafe.Pointer(dir)), 0); r == 0 {
 		fmt.Fprintln(os.Stderr, "pdbframes: SymInitializeW:", e)
@@ -75,6 +105,16 @@ func main() {
 	if r, _, e := symLoadModuleExW.Call(h, 0, uintptr(unsafe.Pointer(img)), 0, base, 0, 0, 0); r == 0 {
 		fmt.Fprintln(os.Stderr, "pdbframes: SymLoadModuleExW:", e)
 		os.Exit(1)
+	}
+	if moduleInfo(h) != 3 {
+		// no PDB through the image's debug directory: the PDB beside it,
+		// loaded at the image's place
+		symUnloadModule64.Call(h, base)
+		pdb, _ := syscall.UTF16PtrFromString(strings.TrimSuffix(exe, filepath.Ext(exe)) + ".pdb")
+		if r, _, e := symLoadModuleExW.Call(h, 0, uintptr(unsafe.Pointer(pdb)), 0, base, uintptr(imageSize(exe)), 0, 0); r == 0 {
+			fmt.Fprintln(os.Stderr, "pdbframes: SymLoadModuleExW of the PDB:", e)
+		}
+		moduleInfo(h)
 	}
 	fmt.Println("traceback:")
 	for i, pc := range pcs {
@@ -122,16 +162,16 @@ func frame(h uintptr, a uint64) bool {
 // printLocals prints the variables dbghelp finds at a.
 func printLocals(h uintptr, a uint64) {
 	// IMAGEHLP_STACK_FRAME: InstructionOffset first (the rest zero)
-	var frame [160]byte
-	*(*uint64)(unsafe.Pointer(&frame[0])) = a
+	var frame [20]uint64
+	frame[0] = a
 	symSetContext.Call(h, uintptr(unsafe.Pointer(&frame[0])), 0)
 	var lines []string
 	cb := syscall.NewCallback(func(info, size, ctx uintptr) uintptr {
 		// (a pointer dbghelp passes: not Go memory)
 		s := (*symbol)(unsafe.Add(unsafe.Pointer(nil), info))
-		flags := *(*uint32)(unsafe.Pointer(&s.b[40]))
-		reg := *(*uint32)(unsafe.Pointer(&s.b[64]))
-		addr := *(*uint64)(unsafe.Pointer(&s.b[56]))
+		flags := *(*uint32)(unsafe.Pointer(&s.bytes()[40]))
+		reg := *(*uint32)(unsafe.Pointer(&s.bytes()[64]))
+		addr := *(*uint64)(unsafe.Pointer(&s.bytes()[56]))
 		kind := ""
 		if flags&0x40 != 0 {
 			kind = " (param)"
@@ -153,31 +193,64 @@ func printLocals(h uintptr, a uint64) {
 	}
 }
 
-// symbol is a SYMBOL_INFOW (88 bytes) with room for its name.
-type symbol struct {
-	b [88 + 2*1024]byte
+// moduleInfo prints which dbghelp is loaded and what it found for the
+// module: its symbol type (SymPdb 3, SymExport 4, SymDeferred 5, ...) and
+// PDB (IMAGEHLP_MODULEW64, 3264 bytes: SymType at 32, LoadedPdbName at
+// 1124, PdbUnmatched at 3224).
+func moduleInfo(h uintptr) uint32 {
+	if err := dbghelp.Load(); err == nil {
+		var buf [520]uint16
+		k32 := syscall.NewLazyDLL("kernel32.dll").NewProc("GetModuleFileNameW")
+		n, _, _ := k32.Call(dbghelp.Handle(), uintptr(unsafe.Pointer(&buf[0])), 520)
+		fmt.Fprintf(os.Stderr, "pdbframes: dbghelp %s\n", syscall.UTF16ToString(buf[:n]))
+	}
+	var mu [3264 / 8]uint64
+	m := (*[3264]byte)(unsafe.Pointer(&mu[0]))
+	*(*uint32)(unsafe.Pointer(&m[0])) = 3264
+	r, _, e := symGetModuleInfoW64.Call(h, base, uintptr(unsafe.Pointer(&m[0])))
+	if r == 0 {
+		fmt.Fprintf(os.Stderr, "pdbframes: SymGetModuleInfoW64: %v\n", e)
+		return 0
+	}
+	pdb := syscall.UTF16ToString(unsafe.Slice((*uint16)(unsafe.Pointer(&m[1124])), 256))
+	t := *(*uint32)(unsafe.Pointer(&m[32]))
+	fmt.Fprintf(os.Stderr, "pdbframes: symbol type %d, pdb %q, unmatched %d\n", t, pdb, *(*uint32)(unsafe.Pointer(&m[3224])))
+	return t
 }
+
+// symbol is a SYMBOL_INFOW (88 bytes) with room for its name, 8 byte
+// aligned (its 64 bit fields).
+type symbol struct {
+	u [(88 + 2*1024) / 8]uint64
+}
+
+// b is the symbol's bytes.
+func (s *symbol) bytes() *[88 + 2*1024]byte { return (*[88 + 2*1024]byte)(unsafe.Pointer(&s.u[0])) }
 
 func newSymbol() *symbol {
 	s := &symbol{}
-	*(*uint32)(unsafe.Pointer(&s.b[0])) = 88
-	*(*uint32)(unsafe.Pointer(&s.b[80])) = 1024
+	*(*uint32)(unsafe.Pointer(&s.bytes()[0])) = 88
+	*(*uint32)(unsafe.Pointer(&s.bytes()[80])) = 1024
 	return s
 }
 
 func (s *symbol) name() string {
-	n := *(*uint32)(unsafe.Pointer(&s.b[76]))
+	n := *(*uint32)(unsafe.Pointer(&s.bytes()[76]))
 	if n > 1024 {
 		n = 1024
 	}
-	u := unsafe.Slice((*uint16)(unsafe.Pointer(&s.b[84])), n)
+	u := unsafe.Slice((*uint16)(unsafe.Pointer(&s.bytes()[84])), n)
 	return syscall.UTF16ToString(u)
 }
 
 func nameAt(h uintptr, a uint64) string {
 	s := newSymbol()
 	var disp uint64
-	if r, _, _ := symFromAddrW.Call(h, uintptr(a), uintptr(unsafe.Pointer(&disp)), uintptr(unsafe.Pointer(&s.b[0]))); r == 0 {
+	if r, _, e := symFromAddrW.Call(h, uintptr(a), uintptr(unsafe.Pointer(&disp)), uintptr(unsafe.Pointer(&s.bytes()[0]))); r == 0 {
+		if !failed {
+			failed = true
+			fmt.Fprintf(os.Stderr, "pdbframes: SymFromAddrW(0x%x): %v\n", a, e)
+		}
 		return fmt.Sprintf("?+0x%x", a-base)
 	}
 	return s.name()
@@ -186,7 +259,7 @@ func nameAt(h uintptr, a uint64) string {
 func nameCtx(h uintptr, a uint64, ctx uint32) string {
 	s := newSymbol()
 	var disp uint64
-	if r, _, _ := symFromInlineContextW.Call(h, uintptr(a), uintptr(ctx), uintptr(unsafe.Pointer(&disp)), uintptr(unsafe.Pointer(&s.b[0]))); r == 0 {
+	if r, _, _ := symFromInlineContextW.Call(h, uintptr(a), uintptr(ctx), uintptr(unsafe.Pointer(&disp)), uintptr(unsafe.Pointer(&s.bytes()[0]))); r == 0 {
 		return "?"
 	}
 	return s.name()

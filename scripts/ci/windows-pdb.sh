@@ -36,6 +36,17 @@ if ! go build -o "$(np "$w/pdbframes.exe")" ./scripts/pdbframes > "$o/pdbframes-
   note "FAIL build pdbframes: $(tail -5 "$o/pdbframes-build.txt")"
   exit 1
 fi
+# cdb, when the Windows SDK's debugger is on the runner: its dbghelp
+# reads the PDB (CI 39831734067: Windows' own, loaded by pdbframes, named
+# nothing while cdb named poke)
+cdb=""
+for c in "/c/Program Files (x86)/Windows Kits/10/Debuggers/x64/cdb.exe" "/c/Program Files/Windows Kits/10/Debuggers/x64/cdb.exe"; do
+  [ -x "$c" ] && cdb=$c && break
+done
+if [ -n "$cdb" ] && [ -f "$(dirname "$cdb")/dbghelp.dll" ]; then
+  export PDBFRAMES_DBGHELP
+  PDBFRAMES_DBGHELP=$(np "$(dirname "$cdb")/dbghelp.dll")
+fi
 # NAME LINES: the report's traceback (its first LINES lines, all when 0)
 # against pdbframes'
 cmp_trace() {
@@ -57,10 +68,6 @@ cmp_trace task 6
 # checked: the runtime's report has no locals to compare with yet)
 "$w/pdbframes.exe" -locals "$(np "$k/crash.exe")" < "$k/segv.err" > "$o/segv-locals.txt" 2>&1
 note "segv locals (logged in segv-locals.txt): $(grep -c '^      ' "$o/segv-locals.txt") variables"
-cdb=""
-for c in "/c/Program Files (x86)/Windows Kits/10/Debuggers/x64/cdb.exe" "/c/Program Files/Windows Kits/10/Debuggers/x64/cdb.exe"; do
-  [ -x "$c" ] && cdb=$c && break
-done
 if [ -n "$cdb" ]; then
   pc=$(sed -n 's/^frames: \(0x[0-9a-f]*\).*/\1/p' "$k/segv.err")
   ib=$(sed -n 's/^pc .*(image base \(0x[0-9a-f]*\)).*/\1/p' "$k/segv.err")

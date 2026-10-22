@@ -375,7 +375,10 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, stamps: List[(Str, Str)], race: B
     }
   }
   let pdb = if dwarf { "${bin.trim_suffix(".exe")}.pdb" } else { "" }
-  match macho.link_pe(objs, macho.PEOpts{entry: "xo_win_start", imports: macho.pe_imports(), resources: pe_resources(bin, stamps), fixed_base: race, pdb: pdb}) {
+  // the debug directory names it with backslashes, as MSVC's and lld's
+  // linkers do: dbghelp finds a PDB moved since by its base name, which
+  // an older one takes after the last backslash only
+  match macho.link_pe(objs, macho.PEOpts{entry: "xo_win_start", imports: macho.pe_imports(), resources: pe_resources(bin, stamps), fixed_base: race, pdb: pdb.replace("/", "\\")}) {
     Ok(img0) => {
       var img = img0
       if dwarf {
