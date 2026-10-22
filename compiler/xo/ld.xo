@@ -73,16 +73,40 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
   }
 }
 
+/// The targets a ThreadSanitizer runtime ships for (lib/xo/race/GOOS-ARCH/,
+/// scripts/race-runtime.sh and release.sh) and its file there: the one
+/// list race_runtime and the --race messages read.
+fn race_files() -> List[(Str, Str)] {
+  [("darwin/arm64", "libclang_rt.tsan_osx_dynamic.dylib"), ("darwin/amd64", "libclang_rt.tsan_osx_dynamic.dylib"), ("linux/arm64", "libclang_rt.tsan-aarch64.a"), ("linux/amd64", "libclang_rt.tsan-x86_64.a"), ("windows/amd64", "race_windows_amd64.syso")]
+}
+
+/// race_files' targets as prose: "darwin/arm64, ... and windows/amd64".
+fn race_targets() -> Str {
+  var ts: List[Str] = []
+  for (t, _) in race_files() {
+    ts.push(t)
+  }
+  "${ts[0..ts.len() - 1].join(", ")} and ${ts[ts.len() - 1]}"
+}
+
 /// ThreadSanitizer's runtime for a native --race executable of tgoos and
 /// march (decision 0273 part 3), or why there is none: $XO_RACE_RUNTIME,
 /// else race/GOOS-ARCH/ beside xo's std: a release's lib/xo/race (std in
 /// lib/xo/std), a seed's or checkout's lib/xo/race (std in std/,
 /// scripts/race-runtime.sh writes it there).
 fn race_runtime(os: Os, ctx: Ctx, tgoos: Str, march: Str) -> (Str, Str) {
-  let file = if tgoos == "darwin" { "libclang_rt.tsan_osx_dynamic.dylib" } else if tgoos == "windows" { "race_windows_amd64.syso" } else if march == "amd64" { "libclang_rt.tsan-x86_64.a" } else { "libclang_rt.tsan-aarch64.a" }
   let env = os.env.get("XO_RACE_RUNTIME") ?? ""
   if !env.is_empty() {
     return (env, "")
+  }
+  var file = ""
+  for (t, f) in race_files() {
+    if t == "${tgoos}/${march}" {
+      file = f
+    }
+  }
+  if file.is_empty() {
+    return ("", "--race: no ThreadSanitizer runtime ships for ${tgoos}/${march} (${race_targets()} have one; XO_RACE_RUNTIME names one): use --backend=llvm")
   }
   let root = dir_name(ctx.std.trim_suffix("/"))
   let rel = "${tgoos}-${march}/${file}"

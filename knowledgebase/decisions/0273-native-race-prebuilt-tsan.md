@@ -440,8 +440,9 @@ Owner decision, through the lead; supersedes decision 0270's "`--race`
 still chooses LLVM". `xo build|run|test --race` with no `--backend`
 builds with the native backend (arm64 or amd64, native_backend) wherever
 a prebuilt ThreadSanitizer runtime ships for the target: race_runtime
-finds it under lib/xo/race/ (darwin/arm64, linux/arm64, linux/amd64,
-windows/amd64 in the 0.25 archives; XO_RACE_RUNTIME names another). Only
+finds it under lib/xo/race/ (darwin/arm64, darwin/amd64, linux/arm64,
+linux/amd64, windows/amd64 in the 0.25 archives; compiler/xo ld.xo
+race_files lists them, and the fallback's error names that list; XO_RACE_RUNTIME names another). Only
 a target with none falls back to LLVM, and a missing clang there says
 that no native ThreadSanitizer runtime ships for the target, rather than
 the generic "the LLVM backend needs clang". Before, 0.25.2 failed `xo

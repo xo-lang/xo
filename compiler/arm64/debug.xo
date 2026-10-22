@@ -171,14 +171,31 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
   if stdd {
     hdr.offset(if mac { "${DW_SLOT}" } else { lstd_lab })
   }
-  hdr.u8(2)    // file_name_entry_format_count
-  hdr.uleb(1)  // DW_LNCT_path
-  hdr.uleb(8)  // DW_FORM_string
-  hdr.uleb(2)  // DW_LNCT_directory_index
-  hdr.uleb(15) // DW_FORM_udata
+  // the file names are DW_FORM_line_strp too, after the two slots in
+  // .debug_line_str (Mach-O: offsets from the object's section, which
+  // dsym.xo rebases; elsewhere a label per name): macOS 26's
+  // CoreSymbolication crashed (SIGSEGV in parse_dwarf5_path_list's
+  // FORM_string) on DW_FORM_string names after line_strp directories, so
+  // atos and every --race report on macOS 26 named nothing
+  // (gotchas/dwarf-line-dirs-strp-atos.md, 2026-10-22)
+  hdr.u8(2)      // file_name_entry_format_count
+  hdr.uleb(1)    // DW_LNCT_path
+  hdr.uleb(0x1f) // DW_FORM_line_strp
+  hdr.uleb(2)    // DW_LNCT_directory_index
+  hdr.uleb(15)   // DW_FORM_udata
   hdr.uleb(files.len())
-  for f in files {
-    hdr.str(f)
+  var fstrs = Dw{}
+  var foff = 2 * DW_SLOT
+  for (i, f) in files.indexed() {
+    if mac {
+      hdr.offset("${foff}")
+    } else {
+      let fl = g.local("xo_dwlf${i}_${g.ns}")
+      hdr.offset(fl)
+      fstrs.lines.push("${fl}:\n")
+    }
+    fstrs.str(f)
+    foff += f.len() + 1
     hdr.uleb(if stdd && f.starts_with("std/") { 1 } else { 0 })
   }
   var prog = Dw{}
@@ -466,6 +483,7 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
   // .debug_line_str: the same slots, for the line table's directories
   out.write(if mac { "\t.section __DWARF,__debug_line_str,regular,debug\n" } else { "\t.section .debug_line_str,\"MS\",@progbits,1\n" })
   out.write("${lcomp_lab}:\n${dw_slot_text(DW_SLOT_COMP)}${lstd_lab}:\n${dw_slot_text(DW_SLOT_STD)}")
+  out.write(fstrs.text())
   out.write(g.section("text"))
   out.freeze()
 }

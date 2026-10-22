@@ -721,7 +721,8 @@ func TestRaceDefaultNative(t *testing.T) {
 	fb := testtmp.Guard(exec.Command(xo, "build", "--race", "-o", filepath.Join(tmp, "fb"), filepath.Join("testdata", "race_stacks")))
 	fb.Env = env
 	b, err := fb.CombinedOutput()
-	if err == nil || !strings.Contains(string(b), "no native ThreadSanitizer runtime ships for darwin/arm64") {
+	// the targets come from race_files, so a shipped one cannot go missing
+	if err == nil || !strings.Contains(string(b), "no native ThreadSanitizer runtime ships for darwin/arm64") || !strings.Contains(string(b), "darwin/arm64, darwin/amd64, linux/arm64, linux/amd64 and windows/amd64 have one") {
 		t.Errorf("xo build --race with no runtime and no clang: %v, want the no native runtime error:\n%s", err, b)
 	}
 }

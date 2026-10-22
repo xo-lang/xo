@@ -91,6 +91,7 @@ func TestDebugLineDarwin(t *testing.T) {
 	if v, err := exec.Command("dwarfdump", "--verify", dsym).CombinedOutput(); err != nil || !strings.Contains(string(v), "No errors.") {
 		t.Errorf("dwarfdump --verify: %v\n%s", err, v)
 	}
+	checkLinePaths(t, dsym)
 	// atos names the program's first function, which a part's text
 	// marker (xo_utext_) shared its address with (2026-10-22)
 	if _, err := exec.LookPath("atos"); err == nil {
@@ -377,4 +378,33 @@ func lldb(t *testing.T, run bool, args ...string) ([]byte, error) {
 func devToolsDisabled() bool {
 	b, err := exec.Command("DevToolsSecurity", "-status").CombinedOutput()
 	return err == nil && strings.Contains(string(b), "disabled")
+}
+
+// checkLinePaths checks that every line table names its directories and
+// files with DW_FORM_line_strp, each resolving to a path (-v: without
+// it dwarfdump prints either form as the string): macOS 26's
+// CoreSymbolication (atos, the --race reports' symbolizer) crashed on
+// DW_FORM_string file names after line_strp directories, and a wrong
+// rebase in dsym.xo's join would name garbage in a later unit
+// (gotchas/dwarf-line-dirs-strp-atos.md, 2026-10-22).
+func checkLinePaths(t *testing.T, bin string) {
+	t.Helper()
+	b, err := exec.Command("dwarfdump", "-v", "--debug-line", bin).CombinedOutput()
+	if err != nil {
+		t.Fatalf("dwarfdump -v --debug-line %s: %v\n%.2000s", bin, err, b)
+	}
+	lines := string(b)
+	if m := regexp.MustCompile(`(?m)^\s*(name: +|include_directories\[\s*\d+\] = +)"[^"]*"`).FindString(lines); m != "" {
+		t.Errorf("%s: a line table path is not DW_FORM_line_strp: %q", bin, m)
+	}
+	names := regexp.MustCompile(`(?m)^\s+name: +\.debug_line_str\[0x[0-9a-f]+\] = "([^"]*)"`).FindAllStringSubmatch(lines, -1)
+	units := strings.Count(lines, "Line table prologue:")
+	if len(names) == 0 || units == 0 {
+		t.Fatalf("%s: no line_strp file names in %d line tables:\n%.2000s", bin, units, lines)
+	}
+	for _, n := range names {
+		if !strings.HasSuffix(n[1], ".xo") && n[1] != "<generated>" {
+			t.Errorf("%s: file name %q is not a .xo path (a wrong __debug_line_str rebase?)", bin, n[1])
+		}
+	}
 }

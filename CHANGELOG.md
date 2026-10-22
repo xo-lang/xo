@@ -20,10 +20,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `SITE.sub("static")` drops the prefix. Paths computed at run time are
   not checked.
 
+- macOS 26's `atos` crashed on every native darwin executable's DWARF,
+  so `--race` reports there named no Xo function, file or line: the
+  line table's file names are now encoded the way clang encodes them
+  (DW_FORM_line_strp). macOS 27's `atos` was not affected.
 - `--race` with no `--backend` uses the native backend (arm64 or amd64)
   wherever a prebuilt ThreadSanitizer runtime ships (darwin/arm64,
-  linux/arm64, linux/amd64, windows/amd64), so it needs no clang (owner,
-  2026-10-22, decision 0273 addendum). In 0.25.2 `xo build --race .`
+  darwin/amd64, linux/arm64, linux/amd64, windows/amd64), so it needs
+  no clang (owner, 2026-10-22, decision 0273 addendum). In 0.25.2 `xo build --race .`
   picked the LLVM backend and failed without clang, although `--race
   --backend=arm64` worked. Other targets still use LLVM, and a missing
   clang there says no native race runtime ships for the target.

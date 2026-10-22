@@ -797,7 +797,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       cc = find_clang(os)
       if cc.is_empty() {
         if o.backend_auto && o.race {
-          fail(os, "--race: no native ThreadSanitizer runtime ships for ${ltarget} (lib/xo/race/; darwin/arm64, linux/arm64, linux/amd64 and windows/amd64 have one), so it builds with the LLVM backend, which needs clang: install it or set XO_CLANG")
+          fail(os, "--race: no native ThreadSanitizer runtime ships for ${ltarget} (lib/xo/race/; ${race_targets()} have one), so it builds with the LLVM backend, which needs clang: install it or set XO_CLANG")
         }
         if o.backend_auto {
           // the default backend on this host (decision 0248)

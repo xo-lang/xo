@@ -170,6 +170,24 @@ fn (var l: Linker) dwarf_data() -> List[List[Int]] {
     if line[off + 33] == 2 && off + 42 <= line.len() {
       put32(line, off + 38, get32(line, off + 38) + so)
     }
+    // the file names (line_strp since 2026-10-22, after the slots):
+    // format count 2, (path, line_strp), (directory index, udata), the
+    // count, then each name's offset and its directory index
+    var p = off + 34 + 4 * line[off + 33]
+    if p + 5 > line.len() || line[p] != 2 || line[p + 1] != 1 || line[p + 2] != 0x1f {
+      continue
+    }
+    p += 5
+    let (n, q) = get_uleb(line, p)
+    p = q
+    for _ in 0..n {
+      if p + 4 > line.len() {
+        break
+      }
+      put32(line, p, get32(line, p) + so)
+      let (_, r) = get_uleb(line, p + 4)
+      p = r
+    }
   }
   data[0] = line
   data[2] = info
@@ -293,6 +311,23 @@ fn (l: Linker) xo_dwarf(o: Int) -> Bool {
     }
   }
   false
+}
+
+/// The ULEB128 at b[o] and the offset after it.
+fn get_uleb(b: List[Int], o: Int) -> (Int, Int) {
+  var v = 0
+  var sh = 0
+  var p = o
+  while p < b.len() {
+    let c = b[p]
+    p += 1
+    v = v | shl(c & 0x7f, sh)
+    sh += 7
+    if c < 0x80 {
+      break
+    }
+  }
+  (v, p)
 }
 
 fn get64(b: List[Int], o: Int) -> Int {

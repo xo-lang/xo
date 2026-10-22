@@ -2640,7 +2640,8 @@ such a program is a usage error naming it. The flags only the Go backend
 has (`--hybrid`, `--holes`, `xo test --explore`, `xo run --seed` and
 `--record`) choose it when no backend is given. `--race` keeps the
 native backend where a ThreadSanitizer runtime ships for the target
-(darwin/arm64, linux/arm64, linux/amd64, windows/amd64) and otherwise
+(darwin/arm64, darwin/amd64, linux/arm64, linux/amd64, windows/amd64)
+and otherwise
 takes the LLVM backend's (decision 0273 addendum). Contract fuzzing (9.2) runs on every backend
 (decision 0250): the same targets, cases, and seeds, the same tests named
 `contract fuzz: MODULE.F` (which `--run` matches like any test name), and
