@@ -140,3 +140,17 @@ test "a section with few relocations has no extended relocation entry" {
     }
   }
 }
+
+test "a prologue past 255 bytes is an error, not a wrapped UNWIND_INFO" {
+  // an x86 frame probed a page at a time: 20 pages, about 300 bytes
+  var b = StrBuilder.new()
+  b.write("\t.text\n\t.globl f\nf:\n\t.seh_proc f\n\tpushq %rbp\n\t.seh_pushreg %rbp\n")
+  for _ in 0..20 {
+    b.write("\tsubq $4096, %rsp\n\tmovq $0, (%rsp)\n")
+  }
+  b.write("\t.seh_stackalloc 81920\n\t.seh_endprologue\n\tretq\n\t.seh_endproc\n")
+  match assemble_coff_amd64(b.freeze().bytes()) {
+    Ok(_) => fault("assembled a prologue past 255 bytes")
+    Err(e) => expect(e.contains("UNWIND_INFO")) == true
+  }
+}

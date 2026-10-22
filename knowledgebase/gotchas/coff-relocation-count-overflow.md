@@ -29,3 +29,13 @@ an ELF build of the same program (1,887 against 1,889 after the fix;
 Any 16 bit or 32 bit count in an object or image format (COFF symbols,
 Mach-O nreloc is 32, ELF is 64) is worth a test at its limit when a
 program the size of xo goes through it.
+
+Also one byte (2026-10-22 review of the object writers' small fields):
+UNWIND_INFO's SizeOfProlog and each unwind code's prologue offset. An x86
+frame probed a page at a time (x86emit.xo x86_prologue) past about 68 KiB
+has a prologue past 255 bytes, which wrapped silently; coff.xo seh_info
+now fails the assembly instead (coff_test.xo, a 20 page prologue). The
+fix for such frames is a fixed size probe loop. Checked and safe at xo's
+sizes: section counts and symbols' section numbers (COFF, PE, ELF), Mach-O
+nlist's n_sect (8 bits), the chained fixups' page_count (16 bits, 1 GiB
+of a segment), DWARF's DW_AT_count (2 bytes, 256 so far).

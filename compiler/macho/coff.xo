@@ -327,10 +327,22 @@ fn (var a: Asm) seh_info(k: Int) {
   let back = a.cur
   a.coff_section(".xdata", IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ, 2)
   let s = a.sehs[k]
+  // UNWIND_INFO's SizeOfProlog and each code's offset are one byte: a
+  // longer prologue (an x86 frame probed a page at a time past about 68
+  // KiB) would wrap and the unwinder misread the frame (LLVM refuses it
+  // too; gotchas/coff-relocation-count-overflow.md, the 16 bit counts)
+  if s.prolog > 255 {
+    a.fail("a prologue of ${s.prolog} bytes: UNWIND_INFO holds at most 255")
+    return
+  }
   var slots: List[Int] = []
   var i = s.codes.len() - 1
   while i >= 0 {
     let (off, op, info, extra) = s.codes[i]
+    if off > 255 {
+      a.fail("an unwind code at prologue byte ${off}: UNWIND_INFO holds at most 255")
+      return
+    }
     slots.push(off | ((op | (info << 4)) << 8))
     for x in extra {
       slots.push(x)
