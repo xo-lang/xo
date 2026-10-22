@@ -16,7 +16,9 @@ use native/sys_c
 /// A function's entry with its caller's pc: the context's depth after it.
 fn race_func_entry(pc: Int) -> Int {
   if sanhook.gorace() {
-    racesym.ensure()
+    if racesym.need() {
+      racesym.ensure()
+    }
     sys_c.weak___tsan_func_enter(sanhook.race_thr(), pc)
   } else {
     sys_c.weak___tsan_func_entry(pc)

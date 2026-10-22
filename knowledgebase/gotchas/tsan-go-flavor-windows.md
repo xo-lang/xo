@@ -51,6 +51,16 @@ XO_THREADS=1).
    big blocks are past MID_MAX). Found when file:line's DWARF loading
    (map inserts at the first access) crashed every race program.
 
+6. Symptom: under --race, task.isolate's catch was lost: a fault the
+   non-race build caught escaped (exit 70). Cause: a landing pad's
+   instrumented accesses call cabi_race.xo's exports while the context
+   unwinds (before fault_take); the export's call of racesym.ensure can
+   fault, so the compiler put its unwinding check after it, which saw the
+   pad's own unwinding and continued the fault from the pad, where no call
+   site catches. Fix: call ensure only when racesym.need() (loads alone, no
+   call, no check). Code a pad can reach before its catch must make no
+   call that can fault.
+
 Also: the Go flavor's __tsan_release is a store (ReleaseStore), the C
 flavor's a merge (Release); the runtime's release goes through
 race-windows.cpp's xo_tsan_go_release, which calls __tsan_release_merge.

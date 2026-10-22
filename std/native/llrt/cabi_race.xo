@@ -14,52 +14,72 @@ use native/llrt/sanhook
 use native/rt
 
 fn race_read1(a: Int) {
-  racesym.ensure()
+  if racesym.need() {
+    racesym.ensure()
+  }
   sanhook.race_access(a, 1, false, rt.mem_load(rt.frame_addr(), 8, 8))
 }
 
 fn race_read2(a: Int) {
-  racesym.ensure()
+  if racesym.need() {
+    racesym.ensure()
+  }
   sanhook.race_access(a, 2, false, rt.mem_load(rt.frame_addr(), 8, 8))
 }
 
 fn race_read4(a: Int) {
-  racesym.ensure()
+  if racesym.need() {
+    racesym.ensure()
+  }
   sanhook.race_access(a, 4, false, rt.mem_load(rt.frame_addr(), 8, 8))
 }
 
 fn race_read8(a: Int) {
-  racesym.ensure()
+  if racesym.need() {
+    racesym.ensure()
+  }
   sanhook.race_access(a, 8, false, rt.mem_load(rt.frame_addr(), 8, 8))
 }
 
 fn race_read16(a: Int) {
-  racesym.ensure()
+  if racesym.need() {
+    racesym.ensure()
+  }
   sanhook.race_access(a, 16, false, rt.mem_load(rt.frame_addr(), 8, 8))
 }
 
 fn race_write1(a: Int) {
-  racesym.ensure()
+  if racesym.need() {
+    racesym.ensure()
+  }
   sanhook.race_access(a, 1, true, rt.mem_load(rt.frame_addr(), 8, 8))
 }
 
 fn race_write2(a: Int) {
-  racesym.ensure()
+  if racesym.need() {
+    racesym.ensure()
+  }
   sanhook.race_access(a, 2, true, rt.mem_load(rt.frame_addr(), 8, 8))
 }
 
 fn race_write4(a: Int) {
-  racesym.ensure()
+  if racesym.need() {
+    racesym.ensure()
+  }
   sanhook.race_access(a, 4, true, rt.mem_load(rt.frame_addr(), 8, 8))
 }
 
 fn race_write8(a: Int) {
-  racesym.ensure()
+  if racesym.need() {
+    racesym.ensure()
+  }
   sanhook.race_access(a, 8, true, rt.mem_load(rt.frame_addr(), 8, 8))
 }
 
 fn race_write16(a: Int) {
-  racesym.ensure()
+  if racesym.need() {
+    racesym.ensure()
+  }
   sanhook.race_access(a, 16, true, rt.mem_load(rt.frame_addr(), 8, 8))
 }
 

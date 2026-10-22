@@ -11,6 +11,7 @@
 // name per function, sorted by start. The line table: the count, then an
 // address, a NUL ended file (0 past a sequence's end) and a line per row,
 // sorted by address.
+use native/llrt/ctx
 use native/llrt/dwline
 use native/llrt/prof
 use native/llrt/raw
@@ -23,6 +24,21 @@ use native/sys_windows
 const W_RACE_SYMS = 82
 const ACQUIRE = 1
 const RELEASE = 2
+
+/// Whether a caller should make the table now (ensure): it is not made
+/// yet and the running context is not unwinding. A landing pad's
+/// instrumented accesses run while the context unwinds, before the catch
+/// (fault_take); there a call of ensure, which can fault, is followed by
+/// the compiler's unwinding check, which continued the fault from the pad
+/// and lost task.isolate's catch (decision 0273's stacks addendum, known
+/// issue). Loads only: no call, so no check follows it.
+pub fn need() -> Bool {
+  if rt.slot_load(rt.static_word(W_RACE_SYMS), 0, ACQUIRE) != 0 {
+    return false
+  }
+  let c = rt.tlocal_get(0)
+  c != 0 && rt.mem_load(c, ctx.C_UNWINDING, 4) == 0
+}
 
 /// Makes the table, once (the first caller; the others go on without it
 /// until it is made).

@@ -333,8 +333,8 @@ Windows. Xo would use that flavor on windows/amd64.
   std/native/llrt/cabi_race.xo's exports (xo_x_race_read8 ...), called as
   System V functions with the address, which add the task's ThreadState
   and the pc (the export's return address); declared only in a windows
-  --race build (Checker.race). No func_enter/exit yet: a report has one
-  frame per access, named by its function (std/native/llrt racesym.xo: a
+  --race build (Checker.race). Each frame of a report (the calls come
+  from the stacks addendum below) is named by its function (std/native/llrt racesym.xo: a
   table made at the first instrumented access from the program's COFF
   symbol table, which race_cb reads without allocating: a report holds the
   thread registry lock a new arena mapping takes), with its file and line
@@ -404,8 +404,10 @@ is still unwinding (before fault_take), and the export's call of
 racesym.ensure, which can fault, is followed by the compiler's unwinding
 check, which then continues the fault from the pad, where no call site
 catches it. darwin and linux call ThreadSanitizer's C functions directly
-and are not affected. Fix in progress: the exports call ensure only when
-the table is missing and the context is not unwinding.
+and are not affected. Fixed the same day: the exports call ensure only
+when racesym.need() (the table missing and the context not unwinding, by
+loads alone, so no check follows); race_stacks under Wine catches its 200
+faults and reports the race with its stacks.
 
 Alternatives: the unwinder calling the exit of each instrumented frame it
 unwinds (needs a table of instrumented functions; the depth word is
