@@ -22,6 +22,10 @@ pub struct Tables {
   /// check of whether its function's frame is set up yet
   pub text: Bytes = b""
   pub text_addr: Int = 0
+  /// every section of instructions, [start, end): __text and the LLVM
+  /// backend's __xo_text (decision 0318 stage 4 puts the program's
+  /// functions there), for naming a frame by its symbol
+  pub code: List[(Int, Int)] = []
   /// the defined function symbols, sorted by address (Mach-O's without
   /// their leading `_`), for frames with no DWARF
   pub syms: List[(Int, Str)] = []
@@ -31,7 +35,15 @@ pub struct Tables {
 /// offset (`xo_entry+12`), or "?" (also for a pc outside the
 /// executable's code: a system library's).
 pub fn (t: Tables) sym_at(pc: Int) -> Str {
-  if !t.text.is_empty() && (pc < t.text_addr || pc >= t.text_addr + t.text.len()) {
+  if !t.code.is_empty() {
+    var inside = false
+    for (a, b) in t.code {
+      inside = inside || (pc >= a && pc < b)
+    }
+    if !inside {
+      return "?"
+    }
+  } else if !t.text.is_empty() && (pc < t.text_addr || pc >= t.text_addr + t.text.len()) {
     return "?"
   }
   var lo = 0
@@ -87,6 +99,11 @@ pub fn tables(data: Bytes) -> Tables {
         continue
       }
       let sname = cstr(data, strs + rd32(data, sh), data.len())
+      if rd64(data, sh + 8) & 4 != 0 && size > 0 {
+        // SHF_EXECINSTR: .text, xo_text
+        let a = rd64(data, sh + 16)
+        t.code.push((a, a + size))
+      }
       if sname == ".eh_frame" {
         t.eh = data[off..off + size]
         t.eh_addr = rd64(data, sh + 16)
@@ -132,6 +149,10 @@ pub fn tables(data: Bytes) -> Tables {
           let off = rd32(data, sc + 48)
           if off <= 0 || off + size > data.len() {
             continue
+          }
+          if rd32(data, sc + 64) & 0x80000000 != 0 && size > 0 {
+            // S_ATTR_PURE_INSTRUCTIONS: __text, __xo_text, __stubs
+            t.code.push((addr, addr + size))
           }
           if name == "__eh_frame" {
             t.eh = data[off..off + size]

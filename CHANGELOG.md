@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo dev unwind` and `xo dev debug` name a frame without DWARF in any
+  instruction section, not only `__text`: an LLVM build's functions in
+  `__xo_text` (decision 0318 stage 4) showed as `?`, and `frame N`
+  selected the wrong frame.
 - `XO_TRACEBACK=locals` prints an inlined call's variables under its
   `[inlined]` frame instead of the caller's (LLVM printed every frame's
   under main), each line once, a Str missing its length as
