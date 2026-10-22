@@ -191,6 +191,33 @@ treats the object as the value's own buffer must see only `off == 0`:
 - Equality shortcut `a[0] == b[0] && a[1] == b[1]` (same object, same word):
   correct for views (same off and len means same bytes) and stays valid.
 
+**Review points (Xo Lang 2, 2026-10-21), adopted.**
+
+- Rule: a value with off != 0 is never unique. The uniqueness tests (the
+  runtime's `count == 1` in reserve, rs_set_len, bytes_len, and the
+  emitters' inline ones, including 0322's uniq_var_params reuse) also test
+  the w1 high half; step 1 lists them all (`xo refs` on rc.claim, reserve,
+  and the Reuse op) before any edit. Golden `views_unique`: slice a big
+  Bytes, drop the parent, push to the view, check both contents.
+- Whole-word uses of w1 (closures.xo equality, isel Str compares, Map key
+  hash and compare, switch on string, literal dedup) mask the length.
+- fieldlicm.xo:452 and opt.xo:581 match the helper's AND after step 1; the
+  maxby and lexer rows must not regress.
+- wasm keeps copying (off always 0); shared llrt code reaches w1 through the
+  helper, which folds to the length on wasm.
+- The cap fault has a clear message, a spec line in core, and a std
+  change-log entry; x86 edits (x86rt.xo, isel) run the 42 golden Docker
+  amd64 sample.
+- Threshold measured (instructions per slice of an 8 KB Bytes, native
+  arm64): 16 bytes 166, 32 174, 64 176, 128 188, 256 205. A copy costs the
+  same ~160 instructions of allocation plus 0.15 per byte; a view costs one
+  count increment now and a decrement later (atomic once threads run, 20 to
+  40 cycles shared). In instructions the break-even is below 16 bytes; in
+  cycles under sharing it is the atomic against the allocation and free (a
+  heap round trip of hundreds of cycles), so views win at every size; the
+  compaction rule (item 3) bounds the pinning. Decide the threshold from
+  the mime/multipart rows after step 3, starting at 0.
+
 ## Steps (each gated by identity, the codegen patterns, the wasm sample,
 arm64 and LLVM goldens, and the mime/multipart/time baseline)
 
