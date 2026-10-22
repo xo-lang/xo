@@ -1,0 +1,73 @@
+// The function names of windows/amd64 --race's reports (decision 0273's
+// Windows addendum): ThreadSanitizer's Go flavor asks the runtime's
+// callback (cabi_race.xo race_cb) for each pc's function. The callback
+// runs inside a report, which holds the sanitizer's thread registry lock
+// that a new arena mapping (sanhook.xo race_arena, MapShadow) takes, so it
+// must not allocate: the table is made once before, at the first
+// instrumented access (the program's COFF symbol table, prof.xo
+// func_symbols), as raw memory from the race heap: the count, then a
+// start and a NUL ended name per function, sorted by start.
+use native/llrt/prof
+use native/llrt/raw
+use native/llrt/sanhook
+use native/rt
+use native/sys_windows
+
+/// The table's process global (rt.static_word): 0 before it is made, 1
+/// while one thread makes it, then its address.
+const W_RACE_SYMS = 82
+const ACQUIRE = 1
+const RELEASE = 2
+
+/// Makes the table, once (the first caller; the others go on without it
+/// until it is made).
+pub fn ensure() {
+  let w = rt.static_word(W_RACE_SYMS)
+  if rt.slot_load(w, 0, ACQUIRE) != 0 || !rt.slot_cas(w, 0, 0, 1, ACQUIRE) {
+    return
+  }
+  // the image's range: its base and the PE header's SizeOfImage
+  let image = sys_windows.GetModuleHandleW(0)
+  let size = rt.mem_load(image.wrapping_add(rt.mem_load(image, 60, 4)), 80, 4)
+  let (starts, names) = prof.func_symbols(image, image.wrapping_add(size))
+  let n = starts.len()
+  // race_block's first word is its size: the table from the second
+  let t = sanhook.race_block(16 * n + 16)
+  if t == 0 {
+    return
+  }
+  rt.mem_store(t, 8, n, 8)
+  for i in 0..n {
+    let s = names[i]
+    let b = sanhook.race_block(s.len() + 9)
+    var z = 0
+    if b != 0 {
+      z = b.wrapping_add(8)
+      rt.mem_copy(z, raw.data(s), s.len())
+      rt.mem_store(z, s.len(), 0, 1)
+    }
+    rt.mem_store(t, 16 + 16 * i, starts[i], 8)
+    rt.mem_store(t, 24 + 16 * i, z, 8)
+  }
+  rt.slot_store(w, 0, t, RELEASE)
+}
+
+/// The NUL ended name of the function holding pc, or 0 (no table yet,
+/// or before the first function). Allocates nothing.
+pub fn lookup(pc: Int) -> Int {
+  let t = rt.slot_load(rt.static_word(W_RACE_SYMS), 0, ACQUIRE)
+  if t <= 1 {
+    return 0
+  }
+  var a = 0
+  var b = rt.mem_load(t, 8, 8)
+  while a < b {
+    let m = (a + b) / 2
+    if rt.mem_load(t, 16 + 16 * m, 8) <= pc {
+      a = m + 1
+    } else {
+      b = m
+    }
+  }
+  if a == 0 { 0 } else { rt.mem_load(t, 24 + 16 * (a - 1), 8) }
+}

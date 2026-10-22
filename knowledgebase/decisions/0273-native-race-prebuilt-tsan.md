@@ -334,8 +334,11 @@ Windows. Xo would use that flavor on windows/amd64.
   System V functions with the address, which add the task's ThreadState
   and the pc (the export's return address); declared only in a windows
   --race build (Checker.race). No func_enter/exit yet: a report has one
-  frame per access, and no names (race_cb answers SymbolizeCode with
-  none).
+  frame per access, named by its function (std/native/llrt racesym.xo: a
+  table made at the first instrumented access from the program's COFF
+  symbol table, which race_cb reads without allocating: a report holds the
+  thread registry lock a new arena mapping takes); no file or line yet
+  (Xo's PE linker drops the DWARF sections).
 - Runtime: sanhook.xo gorace() (rt.sym_present("__tsan_go_start"),
   folded by the builder to the --race flag on Windows). The running
   context's ThreadState in thread table word 6, the Processor in word 10;

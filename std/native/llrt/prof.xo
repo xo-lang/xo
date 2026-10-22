@@ -769,6 +769,13 @@ struct Syms {
   names: List[Str]
 }
 
+/// The starts (sorted) and demangled names of the program's functions
+/// within [lo, hi), for windows --race's reports (racesym.xo).
+pub fn func_symbols(lo: Int, hi: Int) -> (List[Int], List[Str]) {
+  let s = symbols(lo, hi)
+  (s.starts, s.names)
+}
+
 /// The program's function symbols within [lo, hi).
 fn symbols(lo: Int, hi: Int) -> Syms {
   var addrs: List[Int] = []
