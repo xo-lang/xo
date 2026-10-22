@@ -328,7 +328,7 @@ fn vet_module(c: check.Checker, m: Int) -> List[Diag] {
           }
         }
         Block(b) => {
-          out = out + copy_store(c, f, path, b) + elem_copy_store(c, f, path, b)
+          out = out + copy_store(c, f, path, b) + elem_copy_store(c, f, path, b) + stale_captures(c, f, path, b)
         }
         StringLit(s) => {
           out = out + debug_interps(c, f, path, s)
@@ -379,6 +379,147 @@ fn copy_store(c: check.Checker, f: Int, file: Str, b: parser.Block) -> List[Diag
         }
         dg.fixes.push(check.DFix{title: "use `${m}.update`", edits: [check.DEdit{span: jspan(file, sp), replace: "${m}.update(${k}, ${d}, fn(var ${x}) {\n${body}${ind}})"}]})
         out.push(dg)
+      }
+    }
+  }
+  out
+}
+
+/// The identifier at the root of a chain of selectors and indexes.
+fn root_ident(e: parser.Expr) -> parser.Ident? {
+  match e {
+    Ident(id) => Some(id)
+    SelectorExpr(_, x, _) => root_ident(x)
+    IndexExpr(_, x, _) => root_ident(x)
+    ParenExpr(_, x) => root_ident(x)
+    _ => None
+  }
+}
+
+/// Whether call is a call of a `var` method on the local v (`v.push(x)`,
+/// `v.items.put(k, x)`).
+fn var_method_on(c: check.Checker, f: Int, call: parser.Expr, v: Int) -> Bool {
+  if let CallExpr(_, fun, _) = call {
+    if let SelectorExpr(_, recv, _) = fun {
+      if let Some(id) = root_ident(recv) {
+        if c.var_of(f, id) == v {
+          if let Some(ci) = c.call_in(f, call) {
+            return ci.fn_obj >= 0 && c.objs[ci.fn_obj].recv_var
+          }
+        }
+      }
+    }
+  }
+  false
+}
+
+/// The offset of the first write to the local v in statement s (an
+/// assignment to it or a part of it, or a call of a `var` method on it),
+/// anywhere in s, or -1.
+fn first_write(c: check.Checker, f: Int, s: parser.Stmt, v: Int) -> Int {
+  var nodes: List[parser.Expr] = []
+  walk_stmt(s, nodes)
+  var best = -1
+  if let AssignStmt(sp, _, target, _) = s {
+    if let Some(id) = root_ident(target) {
+      if c.var_of(f, id) == v {
+        best = sp.start.offset
+      }
+    }
+  }
+  for e in nodes {
+    var at = -1
+    match e {
+      Block(b) => {
+        for bs in b.stmts {
+          if let AssignStmt(sp, _, target, _) = bs {
+            if let Some(id) = root_ident(target) {
+              if c.var_of(f, id) == v {
+                at = sp.start.offset
+              }
+            }
+          }
+        }
+      }
+      CallExpr(sp, ..) => {
+        if var_method_on(c, f, e, v) {
+          at = sp.start.offset
+        }
+      }
+      _ => {}
+    }
+    if at >= 0 && (best < 0 || at < best) {
+      best = at
+    }
+  }
+  best
+}
+
+/// XO0538: in block b, `let name = fn(..) { .. }` whose body reads a `var`
+/// local of the enclosing function that a later statement writes, and
+/// name is used after that write. A closure takes its captures by value
+/// when it is created (core 5.1), so the use sees the value from before the
+/// write: the slp_root bug of 2026-10-21 (a union find parent list
+/// assigned after the closure that walks it).
+fn stale_captures(c: check.Checker, f: Int, file: Str, b: parser.Block) -> List[Diag] {
+  var out: List[Diag] = []
+  for (i, s) in b.stmts.indexed() {
+    let (nm, fl) = match s {
+      LetStmt(_, BindPat(_, n), _, FnLit(x)) => (n, x)
+      _ => continue
+    }
+    let cid = c.var_of(f, nm)
+    if cid < 0 {
+      continue
+    }
+    var inner: List[parser.Expr] = []
+    walk_block(fl.body, inner)
+    var seen: Map[Int, Bool] = {}
+    for e in inner {
+      let id = match e {
+        Ident(x) => x
+        _ => continue
+      }
+      let v = c.var_of(f, id)
+      if v < 0 || seen.contains(v) || !c.objs[v].mutable {
+        continue
+      }
+      let o = c.objs[v]
+      if o.line > fl.span.start.line || (o.line == fl.span.start.line && o.col >= fl.span.start.col) {
+        continue
+      }
+      seen[v] = true
+      var j = i + 1
+      while j < b.stmts.len() {
+        let at = first_write(c, f, b.stmts[j], v)
+        if at >= 0 {
+          // a use of the closure after the write, in this or a later
+          // statement
+          var used = -1
+          var k = j
+          while k < b.stmts.len() && used < 0 {
+            var ns: List[parser.Expr] = []
+            walk_stmt(b.stmts[k], ns)
+            for ne in ns {
+              if let Ident(uid) = ne {
+                if uid.span.start.offset > at && c.var_of(f, uid) == cid {
+                  used = uid.span.start.offset
+                  break
+                }
+              }
+            }
+            k += 1
+          }
+          if used >= 0 {
+            let name = check.text(id.name)
+            let sp = parser.stmt_span(b.stmts[j])
+            var d = vdiag("XO0538", false, file, sp, "`${name}` is written here after the closure `${check.text(nm.name)}` (line ${fl.span.start.line}) captured it: the closure keeps the value `${name}` had when it was created and sees none of this write (core 5.1)")
+            d.notes.push(check.DNote{message: "pass `${name}` to the closure as a parameter, or move the closure after the writes"})
+            out.push(d)
+          }
+          break
+        }
+        j += 1
       }
     }
   }

@@ -487,7 +487,7 @@ parent for a sub effect; implicit effect variables are never reported),
 XO0207 (`x ?? [].f()`: a selector chain on the right of `??` whose base is
 a literal, with a fix that parenthesizes the `??`), XO0208 (note: every
 prelude `.ignore_err(reason)` call with its reason and the Result type),
-XO1103 (note, one per module: `use go` packages and the functions whose
+XO0538 (warning, 2026-10-21: a `let f = fn(..)` closure reading a `var` local that a later statement writes before `f` is used again, the closure having copied it), XO1103 (note, one per module: `use go` packages and the functions whose
 performed effects include `go`), XO0901 (`dbg(...)` with a fix that keeps
 the argument). Human output goes to stdout, the summary to stderr.
 
