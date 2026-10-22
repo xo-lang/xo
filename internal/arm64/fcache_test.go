@@ -2412,3 +2412,80 @@ func TestParseListAfterRunCache(t *testing.T) {
 		t.Errorf("the edit build reused %d of %d parts, want all but the edited one", ph, pn)
 	}
 }
+
+// TestCacheStoreLog: with the module skip off (no XO_CHK_CACHE, the
+// default) a build stores no module check entries (each build wrote them
+// and none read them, 2026-10-22) and says so, and every store appends
+// `UNIX store KIND BYTES id ID` to the cache's store-log: a cold build
+// logs its fn entries under one id, a warm one stores no fn entry.
+func TestCacheStoreLog(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-storelog-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	src := filepath.Join(work, "src")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prog := "fn twice(n: Int) -> Int {\n  n * 2\n}\n\nfn main(os: Os) {\n  os.stdio.println(\"${twice(21)}\")\n}\n"
+	if err := os.WriteFile(filepath.Join(src, "main.xo"), []byte(prog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cache := filepath.Join(work, "cache")
+	env := []string{"XO_BACKEND_CACHE_DIR=" + cache, "XO_BACKEND_CACHE=on"}
+	for _, e := range os.Environ() {
+		if !strings.HasPrefix(e, "XO_CHK_CACHE=") {
+			env = append(env, e)
+		}
+	}
+	logged := func() []string {
+		b, _ := os.ReadFile(filepath.Join(cache, "store-log"))
+		return strings.Split(strings.TrimSpace(string(b)), "\n")
+	}
+	line := regexp.MustCompile(`^\d+ store (fe|fn|inl|rc|sum|obj|chk|pack/[a-z]+) \d+ id [0-9a-f]{12}$`)
+	n := 0
+	for _, run := range []string{"cold", "warm"} {
+		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "--phase-times", "-o", filepath.Join(work, "prog"), "."))
+		cmd.Dir = src
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s build: %v\n%s", run, err, out)
+		}
+		if !strings.Contains(string(out), "cache chk off") {
+			t.Errorf("%s build: no `cache chk off`:\n%s", run, out)
+		}
+		ls := logged()
+		ids := map[string]bool{}
+		fns := 0
+		for _, l := range ls[n:] {
+			if !line.MatchString(l) {
+				t.Errorf("%s build: store-log line %q", run, l)
+				continue
+			}
+			f := strings.Fields(l)
+			ids[f[5]] = true
+			if f[2] == "fn" {
+				fns++
+			}
+		}
+		if run == "cold" && (fns == 0 || len(ids) != 1) {
+			t.Errorf("cold build: %d fn stores under %d ids, want some under one:\n%s", fns, len(ids), strings.Join(ls[n:], "\n"))
+		}
+		if run == "warm" && fns != 0 {
+			t.Errorf("warm build stored fn entries:\n%s", strings.Join(ls[n:], "\n"))
+		}
+		n = len(ls)
+	}
+	if fs, _ := filepath.Glob(filepath.Join(cache, "chk", "*", "*")); len(fs) != 0 {
+		t.Errorf("%d module check entries stored with the module skip off", len(fs))
+	}
+}

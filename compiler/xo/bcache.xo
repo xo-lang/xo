@@ -174,7 +174,7 @@ fn fn_cache_store(os: Os, dir: Str, pk: Pack, fc: arm64.FnCache, stores: List[(S
     cache_put(os, entry_path(dir, "fn", k), e)
     n += e.len()
   }
-  prune_backend_cache(os, dir, n)
+  prune_backend_cache(os, "fn", dir, n)
 }
 
 /// insert_rc through the per-function cache (stage C, compiler/ssa
@@ -255,7 +255,7 @@ fn rc_cached(os: Os, var b: ssa.Builder, release: Bool, jobs: Int, phases: Bool,
     }
     pack_store(os, spk, sums, new_sums)
     if sn > 0 {
-      prune_backend_cache(os, dir, sn)
+      prune_backend_cache(os, "sum", dir, sn)
     }
     if phases {
       os.stdio.eprintln("cache rc ${b.m.lazy.len()}/${plan.keys.len()} undecoded")
@@ -268,7 +268,7 @@ fn rc_cached(os: Os, var b: ssa.Builder, release: Bool, jobs: Int, phases: Bool,
     n += e.len()
   }
   if !out.stores.is_empty() {
-    prune_backend_cache(os, dir, n)
+    prune_backend_cache(os, "rc", dir, n)
   }
   cache_note(os, phases, "rc", out.reused, plan.keys.len())
   if !out.mismatches.is_empty() {
@@ -503,7 +503,7 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
   }
   pack_store(os, pk, entries, b.fe.stores)
   if n > 0 {
-    prune_backend_cache(os, dir, n)
+    prune_backend_cache(os, "fe", dir, n)
   }
   if phases {
     os.stdio.eprintln("cache fe ${b.fe.hits}/${b.fe.hits + b.fe.misses} bodies")
@@ -511,10 +511,14 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
   if !b.fe.mismatches.is_empty() {
     fail(os, "XO_BACKEND_CACHE=verify: ${b.fe.mismatches.len()} function bodies' SSA differs from their front end cache entries, the first ${b.fe.mismatches[0]}")
   }
-  // the module check cache's entries: the modules checked in full now
+  // the module check cache's entries: the modules checked in full now,
+  // only when a build reads them (XO_CHK_CACHE=1 or auto, or verify):
+  // with the module skip off by default every build wrote entries no
+  // build read (cache chk 0/21 on each xo build, 2026-10-22)
+  let chk_on = c.mod_skip_on || c.mod_verify
   var mn = 0
   var mdiff: List[Str] = []
-  for (k, e) in c.mod_cache_entries(b.mod_scans, b.nofe_mods, b.nofe_fos) {
+  for (k, e) in if chk_on { c.mod_cache_entries(b.mod_scans, b.nofe_mods, b.nofe_fos) } else { [] } {
     let p = entry_path(c.mod_cache_dir, "chk", k)
     if c.mod_verify {
       match os.fs.read(p) {
@@ -539,10 +543,14 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
     fail(os, "XO_BACKEND_CACHE=verify: ${mdiff.len()} modules' check differs from their cache entries, the first ${mdiff[0]}")
   }
   if mn > 0 {
-    prune_backend_cache(os, dir, mn)
+    prune_backend_cache(os, "chk", dir, mn)
   }
   if phases {
-    os.stdio.eprintln("cache chk ${c.mod_skip.len()}/${c.mod_keys.len()} modules")
+    if chk_on {
+      os.stdio.eprintln("cache chk ${c.mod_skip.len()}/${c.mod_keys.len()} modules")
+    } else {
+      os.stdio.eprintln("cache chk off (XO_CHK_CACHE)")
+    }
   }
   b
 }
@@ -612,7 +620,7 @@ fn inline_through_cache(os: Os, var mi: ssa.Module, rc_keys: List[Str], jobs: In
     n += e.len()
   }
   if !out.stores.is_empty() {
-    prune_backend_cache(os, dir, n)
+    prune_backend_cache(os, "inl", dir, n)
   }
   var nk = 0
   for k in keys {
@@ -843,8 +851,9 @@ const BACKEND_CAP_GB = 16
 /// two dev goldens timed out at 240 s inside a prune's walk of 500,000
 /// files); $XO_PRUNE_DETACH=off, or a host without /bin/sh, prunes in
 /// the build, one slice.
-fn prune_backend_cache(os: Os, dir: Str, stored: Int) {
+fn prune_backend_cache(os: Os, kind: Str, dir: Str, stored: Int) {
   prune.note_stored(os.fs, dir, stored)
+  note_store(os, kind, dir, stored)
   let p = backend_policy(os)
   if !(os.fs.exists("${dir}/prune-stamp").ok() ?? false) {
     // a new cache: its stamp (prune.due), its first prune an interval on
@@ -1269,6 +1278,20 @@ fn pack_store(os: Os, p: Pack, entries: Map[Str, Bytes], stores: List[(Str, Byte
   }
 }
 
+/// One line of DIR/store-log per store: `UNIX store KIND BYTES id ID`,
+/// ID the first 12 hex digits of the hash of the cache identity
+/// (cache_id: the code generation key), so the prune's churn splits into
+/// the entries of new keys (a push that changed code generation) and
+/// repeats of known ones (2026-10-22). KIND is fe, fn, inl, rc, sum,
+/// obj, chk, or pack/KIND for a pack segment.
+fn note_store(os: Os, kind: Str, dir: Str, n: Int) {
+  if n <= 0 {
+    return
+  }
+  let id = crypto.sha256(cache_id(os).bytes()).to_hex()[0..12]
+  os.fs.append("${dir}/store-log", "${os.clock.now().unix()} store ${kind} ${n} id ${id}\n".bytes()).ignore_err("only the log")
+}
+
 /// Writes items as a new segment of p.
 fn pack_write(os: Os, p: Pack, items: List[(Str, Bytes)]) { pack_write_counted(os, p, items, 0) }
 
@@ -1292,7 +1315,7 @@ fn pack_write_counted(os: Os, p: Pack, items: List[(Str, Bytes)], replaced: Int)
   }
   let data = w.freeze()
   cache_put(os, "${p.dir}/s-${os.rand.bytes(8).to_hex()}", data)
-  prune_backend_cache(os, p.root, (data.len() - replaced).max(0))
+  prune_backend_cache(os, "pack/${base_name(p.dir)}", p.root, (data.len() - replaced).max(0))
 }
 
 /// The file of the build target's parse list (parse_prefetch).

@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The back-end cache stores module check entries (chk) only when a
+  build reads them (`XO_CHK_CACHE=1|auto` or verify); `--phase-times`
+  says `cache chk off` otherwise. Every store appends a line with its
+  kind, bytes and code generation key to the cache's `store-log`, so
+  the prune's churn can be attributed to new keys or repeats.
 - `go run ./scripts/xobuild` builds an older commit (a bisect step) with
   the newest prebuilt seed cut from an ancestor of HEAD, skips a bin/xo
   built from a newer commit, and rejects a built xo that cannot run:

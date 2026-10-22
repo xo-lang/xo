@@ -220,7 +220,7 @@ fn cached_macho_objects(os: Os, ctx: Ctx, srcs: List[Str], elf: Bool, amd64: Boo
       Err(_) => {}
     }
   }
-  prune_backend_cache(os, dir, n)
+  prune_backend_cache(os, "obj", dir, n)
   (out, miss.len())
 }
 
@@ -282,6 +282,6 @@ fn cached_cc_assemble(os: Os, ctx: Ctx, cc: Str, flags: List[Str], srcs: List[St
       Err(_) => {}
     }
   }
-  prune_backend_cache(os, dir, n)
+  prune_backend_cache(os, "obj", dir, n)
   (objs, "", miss.len())
 }
