@@ -18,7 +18,7 @@ LICENSE and std/LICENSE.
    HTTP/1.1 and HTTP/2, DNS, regexp, text/template (with fmt's printing),
    math and strconv, net/netip, net/smtp's SendMail, net/url's escaping
    and Values, encoding/base64, base32, binary, and pem, x509's key
-   parsing, mime and net/http's content sniffing, net/mail addresses,
+   parsing, encoding/json's scanner, mime and net/http's content sniffing, net/mail addresses,
    messages, and dates, mime/multipart with net/textproto's header reader
    and mime/quotedprintable's decoder and encoder, time zone rules, and
    the Unicode tables; and the Go backend's runtime in std/rt.

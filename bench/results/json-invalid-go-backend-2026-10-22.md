@@ -60,13 +60,22 @@ the text to bytes once (it did twice on the error path) and
 (413 M net, 2.0x Go), `xo bench --ab --rounds=7` instructions 0.908
 (0.904 to 0.913), wall within noise.
 
-## What is left (2.0x)
+## One scan: encoding/json's scanner copied into std/rt (2026-10-22, later)
 
-The two scans of the text (`json.Valid`, then `Unmarshal`'s own check, each
-stopping at the error byte): measured in std/rt as 250 ns and 480 ns a text
-against 330 ns for Go's single `Unmarshal`. A single scan needs a scanner
-that gives encoding/json's error text without `Valid`: `json.Compact` is as
-costly as `Unmarshal` into an empty struct (452 against 493 ns on the first
-text), so only a copy of `checkValid`'s state machine in std/rt would remove
-one scan (about 60 lines plus the error texts, with TestJsonSyntaxErrMatchesDecoder
-as its proof).
+`std/rt/jsonscan.go` is the scanner of encoding/json (go1.26, BSD, listed in
+THIRD_PARTY_NOTICES) with its names prefixed `js`, and `jsCheck` is its
+`checkValid`. `jsonDecodeFast` calls it in place of `json.Valid` and hands its
+error to `Json_decode` (`jsonErrOf`), so a text that is not valid is scanned
+once, and `json.Unmarshal` is not called for the error. Same texts:
+`TestJsonSyntaxErrMatchesDecoder` and `TestJsonTrailingBytes` run on the copy.
+
+`invalid`, instructions less the 73 M setup: 415 M (main, 488 M total) to 235 M
+(308 M total), Go's `json.Unmarshal` 205 M: 2.0x to 1.15x Go.
+`xo bench --ab --rounds=7`: instructions 0.631 (0.629 to 0.633), wall 0.674
+(0.491 to 0.771), RSS 0.801, all better. Valid text: `small` instructions
+0.986 (0.982 to 0.990, better), `strings` 0.991 and `parse` 0.999 within noise.
+
+## What is left (1.15x)
+
+The Go side is one scan and the error text; what remains is the Xo side of a
+failed decode (the `Result`, the error value, the text concatenation).

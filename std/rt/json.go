@@ -467,11 +467,15 @@ func jsonEOFErr(data []byte) *Json_DecodeErr {
 // value up to the error; nil for text that is valid, or whose error text
 // the token decoder words differently (a bad object key), which jsonParseSlow answers.
 func jsonSyntaxErr(data []byte) *Json_DecodeErr {
-	var skip struct{}
-	se, ok := json.Unmarshal(data, &skip).(*json.SyntaxError)
-	if !ok {
+	se := jsCheck(data)
+	if se == nil {
 		return nil
 	}
+	return jsonErrOf(se, data)
+}
+
+// jsonErrOf is jsonSyntaxErr for the error se of jsCheck(data).
+func jsonErrOf(se *jsSyntaxError, data []byte) *Json_DecodeErr {
 	msg := se.Error()
 	if strings.HasSuffix(msg, "looking for beginning of object key string") {
 		return nil
@@ -586,12 +590,12 @@ func Json_encode_str[T any](tk *Task, v T) string { return string(Json_encode(tk
 func Json_decode[T any](tk *Task, data Bytes) Result[T, Json_DecodeErr] {
 	var fast T
 	b := []byte(data)
-	ok, valid := jsonDecodeFast(tk, b, &fast)
+	ok, se := jsonDecodeFast(tk, b, &fast)
 	if ok {
 		return Ok[T, Json_DecodeErr](fast)
 	}
-	if !valid {
-		if err := jsonSyntaxErr(b); err != nil {
+	if se != nil {
+		if err := jsonErrOf(se, b); err != nil {
 			return Err[T](*err)
 		}
 	}

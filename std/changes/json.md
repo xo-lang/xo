@@ -32,8 +32,10 @@ up to the error). It now takes the scanner's error from one `json.Unmarshal`
 check, with the token decoder's texts for an early end (`EOF`, `unexpected
 EOF`); the token decoder still answers a bad object key. bench/perf/json invalid: 1,707 M to 670 M instructions (Go's
 `json.Unmarshal` 205 M), `xo bench --ab` instructions 0.420 of before;
-bench/results/json-invalid-go-backend-2026-10-22.md (a later cut: one
-byte conversion and a type assertion, `--ab` instructions 0.908).
+bench/results/json-invalid-go-backend-2026-10-22.md (later cuts: one
+byte conversion and a type assertion, `--ab` instructions 0.908; then a copy
+of encoding/json's scanner in std/rt so the text is scanned once, 2.0x to
+1.15x Go, `--ab` instructions 0.631).
 
 ## 2026-10-22: perf: the Go backend's fast JSON reader reads surrogate pairs
 
