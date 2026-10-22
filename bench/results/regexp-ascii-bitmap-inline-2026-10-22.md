@@ -43,3 +43,16 @@ Still above Go: replace 1.68x (Pike `add` is 60% of its profile: a call per
 thread, the capture copy per thread). Go's one-pass matcher applies only to
 patterns anchored with `^`, which none of these three is, so it would not move
 these rows; it needs its own anchored row.
+
+## Second step: the Pike thread without a call
+
+`add` copies the first two group positions without a loop and adds the thread
+of an ALT's first branch inline when that branch is a rune instruction not yet
+queued (the `\w+` loop's case). `xo bench --ab` against the first step:
+find_all instructions 0.887 (0.886 to 0.888), replace 0.911 (0.911 to 0.911),
+wall replace 0.947 (0.943 to 0.947); outputs the same. Against Go's
+instructions: find_all 3,696 M (0.93x Go), replace 2,309 M (1.53x Go).
+
+Tried and not kept: the same inline thread in the step loop (the next
+instruction's thread copied straight from the running one, no `tc` copy):
+replace 2,386 M against 2,309 M, worse.

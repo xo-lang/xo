@@ -1881,7 +1881,28 @@ fn add(g: Prog, var q: Queue, pc0: Int, pos: Int, var cap: List[Int], cond: Int)
       return
     }
     if op == I_ALT {
-      add(g, q, g.out[pc], pos, cap, cond)
+      let o = g.out[pc]
+      let on = q.len
+      let osj = q.sparse[o]
+      let oop = g.op[o]
+      if o != 0 && oop >= I_RUNE && !(osj < on && q.pcs[osj] == o) {
+        // the first branch is a rune instruction: its thread, without a call
+        q.sparse[o] = on
+        q.pcs[on] = o
+        q.has[on] = 1
+        q.len = on + 1
+        let nc = q.ncap
+        let base = on * nc
+        q.caps[base] = cap[0]
+        q.caps[base + 1] = cap[1]
+        var i = 2
+        while i < nc {
+          q.caps[base + i] = cap[i]
+          i += 1
+        }
+      } else {
+        add(g, q, o, pos, cap, cond)
+      }
       pc = g.arg[pc]
       continue
     }
@@ -1911,9 +1932,12 @@ fn add(g: Prog, var q: Queue, pc0: Int, pos: Int, var cap: List[Int], cond: Int)
     // a thread waits here
     let j = q.len - 1
     q.has[j] = 1
-    let base = j * q.ncap
-    var i = 0
-    while i < q.ncap {
+    let nc = q.ncap
+    let base = j * nc
+    q.caps[base] = cap[0]
+    q.caps[base + 1] = cap[1]
+    var i = 2
+    while i < nc {
       q.caps[base + i] = cap[i]
       i += 1
     }

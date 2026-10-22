@@ -1,5 +1,18 @@
 # std/regexp changes
 
+## 2026-10-22: perf: the Pike matcher's threads without a call or a copy loop
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/results/regexp-ascii-bitmap-inline-2026-10-22.md (replace 1.68x Go)
+- Go reference: regexp/exec.go add (go1.26.1)
+- Test: internal/llvm/testdata/golden/regexp_table, internal/stdtest corpus regexp, std/native/regexp_test.xo; timing row against Go in the result file
+
+`add` copies a thread's first two group positions without a loop and queues the
+thread of an ALT's first branch directly when it is a rune instruction. `xo
+bench --ab` instructions against the previous step: find_all 0.887x, replace
+0.911x (find_all now 0.93x Go's instructions, replace 1.53x); output unchanged.
+
 ## 2026-10-22: perf: ASCII bitmaps and inlined hot calls in both matchers
 
 - Kind: perf
