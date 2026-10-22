@@ -163,7 +163,8 @@ pub fn pending(s: Server) -> Int { s.rin.len() }
 /// Sends application data (after the handshake).
 pub fn send(var s: Server, data: Bytes) {
   if s.state == DONE && data.len() > 0 {
-    s.out = cat2(s.out, tls12.seal(s.wk, tls12.CT_APP, data, 0x0303))
+    let rec = tls12.seal(s.wk, tls12.CT_APP, data, 0x0303)
+    s.out = if s.out.len() == 0 { rec } else { cat2(s.out, rec) }
   }
 }
 

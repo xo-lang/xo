@@ -336,18 +336,37 @@ pub fn seal(var k: Keys, ct: Int, data: Bytes, version: Int) -> Bytes {
     } else {
       let sq = u64(k.seq)
       let aad = asn1.cat([sq, u8(ct), u16(version), u16(part.len())])
-      let body = match k.gcm {
-        Some(g) => cat2(sq, g.seal(cat2(k.iv, sq), part, aad))
-        None => chacha.seal(k.key, xor_nonce(k.iv, k.seq), part, aad)
+      if let Some(g) = k.gcm {
+        // the header, the explicit nonce, the ciphertext and the tag in
+        // the one string
+        // the nonce: the 4 byte salt, then the sequence number
+        let nonce = cat2(k.iv, sq)
+        let nlo = rt.bytes_word(nonce, 0)
+        let nhi = Int(nonce[8]) | (Int(nonce[9]) << 8) | (Int(nonce[10]) << 16) | (Int(nonce[11]) << 24)
+        let n = part.len()
+        var rec = rt.rs_with_cap(13 + aesgcm.chunk_room(n) + 16)
+        rec = rt.rs_push_byte(rec, ct)
+        rec = rt.rs_push_byte(rec, version >> 8)
+        rec = rt.rs_push_byte(rec, version & 255)
+        rec = rt.rs_push_byte(rec, (n + 24) >> 8)
+        rec = rt.rs_push_byte(rec, (n + 24) & 255)
+        rec = rt.rs_append_bytes(rec, sq, 0, 8, 0)
+        k.seq += 1
+        out.push(g.seal_into_aad(rec, 13, nlo, nhi, part, aad).bytes())
+      } else {
+        let body = chacha.seal(k.key, xor_nonce(k.iv, k.seq), part, aad)
+        k.seq += 1
+        out.push(header(ct, version, body.len()))
+        out.push(body)
       }
-      k.seq += 1
-      out.push(header(ct, version, body.len()))
-      out.push(body)
     }
     off = end
     if off >= data.len() {
       break
     }
+  }
+  if out.len() == 1 {
+    return out[0]
   }
   asn1.cat(out)
 }

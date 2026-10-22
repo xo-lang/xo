@@ -1102,7 +1102,7 @@ fn tail_at(sa: Int, off: Int, m: Int, last: Int) -> Int {
 }
 
 /// n rounded up to whole 64 byte chunks: the room ctr_at writes.
-fn chunk_room(n: Int) -> Int { n.wrapping_add(63) & -64 }
+pub fn chunk_room(n: Int) -> Int { n.wrapping_add(63) & -64 }
 
 /// The capacity of s's buffer (raw.bytes_len's).
 fn cap_of(s: Str) -> Int { rt.mem_load(rt.obj_addr(s), rt.layout(1), rt.layout(7)) }
@@ -1113,6 +1113,16 @@ fn enc_at(c: Cipher, p: Int, blocks: Int) {
   var st = p
   let end = p.wrapping_add(16 * blocks)
   let nr = c.nr
+  if blocks == 4 {
+    // four independent chains in one intrinsic
+    match nr {
+      10 => cpu.aes_enc10x4(st, kp)
+      12 => cpu.aes_enc12x4(st, kp)
+      _ => cpu.aes_enc14x4(st, kp)
+    }
+    keep(c.rk)
+    return
+  }
   while st != end {
     match nr {
       10 => cpu.aes_enc10(st, kp)
@@ -1207,6 +1217,19 @@ pub fn (g: Gcm) seal_into(out: Str, an: Int, nlo: Int, nhi: Int, pt: Bytes) -> S
   // the tag's place is the scratch for its counter block
   let sp = if cap_of(s) >= an + n + 16 { raw.data(s).wrapping_add(an + n) } else { 0 }
   let (t0, t1) = g.tag_sp(nlo, nhi, b, an, n, b, 0, an, sp)
+  rt.rs_push_word(rt.rs_push_word(s, t0, 8), t1, 8)
+}
+
+/// seal_into with the additional data apart from out: the ciphertext of pt
+/// goes at offset d of out (whose first d bytes the caller wrote: TLS 1.2's
+/// header and explicit nonce, in out's room d + chunk_room(n) + 16), the
+/// tag after it.
+pub fn (g: Gcm) seal_into_aad(out: Str, d: Int, nlo: Int, nhi: Int, pt: Bytes, aad: Bytes) -> Str {
+  let n = pt.len()
+  let s = g.ctr_o(out, d, nlo, nhi, 2, pt, 0, n)
+  let b = s.bytes()
+  let sp = if cap_of(s) >= d + n + 16 { raw.data(s).wrapping_add(d + n) } else { 0 }
+  let (t0, t1) = g.tag_sp(nlo, nhi, b, d, n, aad, 0, aad.len(), sp)
   rt.rs_push_word(rt.rs_push_word(s, t0, 8), t1, 8)
 }
 

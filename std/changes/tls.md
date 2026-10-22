@@ -1,5 +1,27 @@
 # std/tls changes
 
+## 2026-10-22: speedup: AES-GCM rounds four blocks at once, TLS 1.2 records sealed in one string
+
+- Kind: speedup
+- Commit: this commit
+- Found by: tlsrate bulk on main 35d244cce (quiet Docker linux/arm64): TLS 1.3 AES-GCM 0.50 of Go, TLS 1.2 AES-GCM 0.35 (arm64) and 0.41 (LLVM) (Xo Lang 3; bench/perf/aesgcm splits it)
+- Go reference: crypto/aes and crypto/cipher's GCM (assembly, CTR and GHASH fused)
+- Test: tls_test (seal and open over record sizes), tls12_client, http_tls and crypto_prims goldens (arm64, LLVM with Go parity); TestTLSDiff, TestCryptoXoDiff, TestConstantTimeLLVM
+
+`enc_at` calls `cpu.aes_encNNx4` (Xo Lang 1, 8e0a72d4c) for a full chunk of
+four counter blocks: four independent AESE chains instead of one
+dependent chain four times. TLS 1.2 `seal` writes the header, explicit
+nonce, ciphertext and tag into one string (`Gcm.seal_into_aad`, before:
+`Gcm.seal`, `cat2` of the nonce and `asn1.cat` of the record, two 16 KiB
+copies) and returns a lone record as is; `tls12srv.send` skips the
+`cat2` onto an empty out buffer. `xo bench --ab` on the Mac (B / A):
+bench/perf/aesgcm seal wall 0.879, open 0.874 (instructions 0.90); TLS
+1.2 AES-GCM 256 MiB bulk through the tlsrate server (wall, 10 rounds)
+0.939. Still 3 to 4x Go's instruction count per record: GHASH (scalar
+carry-less multiplies through general registers) and the counter and xor
+loop are next (a fused NEON kernel).
+bench/results/aesgcm-2026-10-22.md.
+
 ## 2026-10-22: speedup: Poly1305 absorbs two blocks per step
 
 - Kind: speedup

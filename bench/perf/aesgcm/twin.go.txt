@@ -1,0 +1,55 @@
+// The Go twin of main.xo (build as main.go): the same 16 KiB records
+// through crypto/aes and crypto/cipher's GCM. Usage: twin <workload>, N in
+// the environment.
+package main
+
+import (
+	"crypto/aes"
+	"crypto/cipher"
+	"fmt"
+	"os"
+	"strconv"
+)
+
+func main() {
+	w := "seal"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	n := 20000
+	if v, err := strconv.Atoi(os.Getenv("N")); err == nil {
+		n = v
+	}
+	key := make([]byte, 16)
+	for i := range key {
+		key[i] = byte(i*7 + 1)
+	}
+	nonce := []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}
+	pt := make([]byte, 16384)
+	for i := range pt {
+		pt[i] = byte(i % 251)
+	}
+	aad := []byte{0x17, 3, 3, 0x40, 0, 0, 0, 0, 0, 0, 0, 1, 0}
+	b, _ := aes.NewCipher(key)
+	a, _ := cipher.NewGCM(b)
+	sum := 0
+	switch w {
+	case "seal":
+		dst := make([]byte, 0, len(pt)+16)
+		for i := 0; i < n; i++ {
+			s := a.Seal(dst[:0], nonce, pt, aad)
+			sum += int(s[len(s)-1]) + len(s)
+		}
+	case "open":
+		s := a.Seal(nil, nonce, pt, aad)
+		dst := make([]byte, 0, len(pt))
+		for i := 0; i < n; i++ {
+			r, err := a.Open(dst[:0], nonce, s, aad)
+			if err != nil {
+				panic(err)
+			}
+			sum += len(r)
+		}
+	}
+	fmt.Println(w, sum)
+}
