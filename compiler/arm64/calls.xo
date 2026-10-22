@@ -1339,6 +1339,31 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.store(t, [g.real(g.word(x.args[0])), g.real(g.word(x.args[1]))])
       g.set(v, [])
     }
+    "rt.mlkem_ntt" | "rt.mlkem_inverse_ntt" => {
+      // SSE2, two coefficients a register (ssa.mlkem_ntt_sse2_lines):
+      // xmm0 to xmm5 and six general registers clobbered, xmm14 and
+      // r11 the emitter's scratch
+      var cl = [XR_AX, XR_CX, XR_DX, 8, 9, 10]
+      for r in 0..6 {
+        cl.push(FP_BASE + r)
+      }
+      let t = (if aux_str(x.aux) == "rt.mlkem_ntt" { ssa.mlkem_ntt_sse2_lines("$u0", "$u1") } else { ssa.mlkem_inverse_ntt_sse2_lines("$u0", "$u1") }).join("\n")
+      let _i = g.add(Inst{kind: K_PLAIN, text: t, us: [g.real(g.word(x.args[0])), g.real(g.word(x.args[1]))], x86: true, clobbers: cl})
+      g.clobber()
+      g.set(v, [])
+    }
+    "rt.mlkem_mul_acc" => {
+      // SSE2, two products an iteration (ssa.mlkem_mul_acc_sse2_lines):
+      // the clobbers of rt.mlkem_ntt, xmm14, xmm15 the emitter's scratch
+      var cl = [XR_AX, XR_CX, XR_DX, 8, 9, 10]
+      for r in 0..6 {
+        cl.push(FP_BASE + r)
+      }
+      let t = ssa.mlkem_mul_acc_sse2_lines("$u0", "$u1", "$u2", "$u3").join("\n")
+      let _i = g.add(Inst{kind: K_PLAIN, text: t, us: [g.real(g.word(x.args[0])), g.real(g.word(x.args[1])), g.real(g.word(x.args[2])), g.real(g.word(x.args[3]))], x86: true, clobbers: cl})
+      g.clobber()
+      g.set(v, [])
+    }
     "rt.sha256_block" if g.x86 => {
       // SHA-NI (cpu.hw()'s HW_SHA256 from CPUID leaf 7): xmm0 to xmm10
       // saved below rsp and restored, as the arm64 template saves v16

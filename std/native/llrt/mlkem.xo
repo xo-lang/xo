@@ -9,6 +9,7 @@
 // 3329, Barrett reduction, no branch or index on a secret; the
 // rejection sampling of the matrix A reads only the public seed.
 use native/llrt/asn1
+use native/llrt/cpu
 use native/llrt/ct
 use native/llrt/nistec
 use native/llrt/rand
@@ -191,45 +192,8 @@ fn const_words(c: List[Int]) -> Int { rt.obj_addr(c).wrapping_add(rt.layout(2)) 
 /// last layer (len 2, written out) reduces its outputs below q. Offsets
 /// are in bytes (lb = 8 len, zo = 8 k).
 fn ntt(f0: List[Int]) -> List[Int] {
-  let zp = const_words(ZETAS)
   var f = f0
-  let p = coeffs(f)
-  var zo = 8
-  var lb = 1024
-  while lb >= 32 {
-    var j0 = 0
-    while j0 < 2048 {
-      let z = ldc(zp, zo)
-      zo = add(zo, 8)
-      var j = j0
-      let end = add(j0, lb)
-      while j < end {
-        let jl = add(j, lb)
-        let t = bred(mul(z, ldc(p, jl)))
-        let fj = ldc(p, j)
-        stc(p, jl, add(sub(fj, t), 2 * Q))
-        stc(p, j, add(fj, t))
-        j = add(j, 8)
-      }
-      j0 = add(end, lb)
-    }
-    lb = lb.shr_logical(1)
-  }
-  // len 2: the butterflies (j, j + 2) and (j + 1, j + 3)
-  var j = 0
-  while j < 2048 {
-    let z = ldc(zp, zo)
-    zo = add(zo, 8)
-    let t0 = bred(mul(z, ldc(p, add(j, 16))))
-    let f0 = ldc(p, j)
-    stc(p, add(j, 16), bfull(add(sub(f0, t0), 2 * Q)))
-    stc(p, j, bfull(add(f0, t0)))
-    let t1 = bred(mul(z, ldc(p, add(j, 24))))
-    let f1 = ldc(p, add(j, 8))
-    stc(p, add(j, 24), bfull(add(sub(f1, t1), 2 * Q)))
-    stc(p, add(j, 8), bfull(add(f1, t1)))
-    j = add(j, 32)
-  }
+  cpu.mlkem_ntt(coeffs(f), const_words(ZETAS))
   f
 }
 
@@ -242,69 +206,15 @@ fn ntt(f0: List[Int]) -> List[Int] {
 /// 128^-1 (3303) folded in: (f[j] + f[j + len]) 3303 and (zeta 3303 mod
 /// q) (f[j + len] - f[j] + b), each below 2^31, reduced below q.
 fn inverse_ntt(f0: List[Int]) -> List[Int] {
-  let zp = const_words(ZETAS)
   var f = f0
-  let p = coeffs(f)
-  // zetas[127] down to zetas[2] for len 2 to 64
-  var zo = 8 * 127
-  var lb = 16
-  var b = Q
-  while lb <= 512 {
-    var j0 = 0
-    while j0 < 2048 {
-      let z = ldc(zp, zo)
-      zo = sub(zo, 8)
-      var j = j0
-      let end = add(j0, lb)
-      while j < end {
-        let jl = add(j, lb)
-        let t = ldc(p, j)
-        let u = ldc(p, jl)
-        stc(p, j, add(t, u))
-        stc(p, jl, bred(mul(z, add(sub(u, t), b))))
-        j = add(j, 8)
-      }
-      j0 = add(end, lb)
-    }
-    lb = add(lb, lb)
-    b = add(b, b)
-  }
-  // len 128 with zetas[1]
-  let z = bfull(mul(ldc(zp, 8), 3303))
-  var j = 0
-  while j < 1024 {
-    let t = ldc(p, j)
-    let u = ldc(p, add(j, 1024))
-    stc(p, j, bfull(mul(add(t, u), 3303)))
-    stc(p, add(j, 1024), bfull(mul(z, add(sub(u, t), b))))
-    j = add(j, 8)
-  }
+  cpu.mlkem_inverse_ntt(coeffs(f), const_words(ZETAS))
   f
 }
 
 /// h += f * g in the NTT domain, in place (the sums of products of
 /// K-PKE, without a product's own list).
 fn ntt_mul_acc(var h: List[Int], f: List[Int], g: List[Int]) {
-  let gp = const_words(GAMMAS)
-  let ph = coeffs(h)
-  let pf = coeffs_read(f)
-  let pg = coeffs_read(g)
-  // byte offsets: a pair of coefficients a step, gammas[o / 16]
-  var o = 0
-  var gi = 0
-  while o < 8 * N {
-    let o1 = add(o, 8)
-    let a0 = ldc(pf, o)
-    let a1 = ldc(pf, o1)
-    let b0 = ldc(pg, o)
-    let b1 = ldc(pg, o1)
-    // a1 b1 to [0, 2q); each sum below q^2 + 2q^2 + q < 2^26
-    let r = bred(mul(a1, b1))
-    stc(ph, o, bfull(add(add(mul(a0, b0), mul(r, ldc(gp, gi))), ldc(ph, o))))
-    stc(ph, o1, bfull(add(add(mul(a0, b1), mul(a1, b0)), ldc(ph, o1))))
-    o = add(o, 16)
-    gi = add(gi, 8)
-  }
+  cpu.mlkem_mul_acc(coeffs(h), coeffs_read(f), coeffs_read(g), const_words(GAMMAS))
 }
 
 // ---------------------------------------------------------------------------

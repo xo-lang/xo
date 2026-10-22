@@ -202,6 +202,10 @@ fn (var b: Builder) cpu_call(x: Expr, ci: check.CallInfo) -> Int? {
     // decision 0329: arm64 only (NEON, and LLVM's vectors there); amd64
     // runs the portable body until it has its own lowering
     "chacha_blocks4" => if b.goarch == "arm64" { "chacha_blocks4" } else { "" }
+    // SSE2 on amd64 (x86mlkem.xo); arm64 runs the portable body
+    "mlkem_ntt" => if b.goarch == "amd64" { "mlkem_ntt" } else { "" }
+    "mlkem_inverse_ntt" => if b.goarch == "amd64" { "mlkem_inverse_ntt" } else { "" }
+    "mlkem_mul_acc" => if b.goarch == "amd64" { "mlkem_mul_acc" } else { "" }
     "cpuid1_ecx" => "cpuid1_ecx"
     "cpuid7_ebx" => "cpuid7_ebx"
     "lowered" => "lowered"

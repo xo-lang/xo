@@ -830,6 +830,39 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       }
       g.emit("store <16 x i8> ${s}, ptr ${p}, align 1")
     }
+    "rt.mlkem_mul_acc" => {
+      // amd64 only, as rt.mlkem_ntt
+      var t: List[Str] = []
+      for l in ssa.mlkem_mul_acc_sse2_lines("@0@", "@1@", "@2@", "@3@") {
+        t.push(l.replace("$", "$$").replace("@0@", "$0").replace("@1@", "$1").replace("@2@", "$2").replace("@3@", "$3"))
+      }
+      var clob = "r,r,r,r"
+      for r in ssa.mlkem_ntt_sse2_gprs() {
+        clob = clob + ",~{${r}}"
+      }
+      for r in [0, 1, 2, 3, 4, 5, 14, 15] {
+        clob = clob + ",~{xmm${r}}"
+      }
+      clob = clob + ",~{memory},~{dirflag},~{fpsr},~{flags}"
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, ptr ${g.raw_ptr(x.args[2])}, ptr ${g.raw_ptr(x.args[3])})")
+    }
+    "rt.mlkem_ntt" | "rt.mlkem_inverse_ntt" => {
+      // amd64 only (ssa cpu_call): ssa.mlkem_ntt_sse2_lines as inline asm
+      var t: List[Str] = []
+      let ls = if aux_str(x.aux) == "rt.mlkem_ntt" { ssa.mlkem_ntt_sse2_lines("@0@", "@1@") } else { ssa.mlkem_inverse_ntt_sse2_lines("@0@", "@1@") }
+      for l in ls {
+        t.push(l.replace("$", "$$").replace("@0@", "$0").replace("@1@", "$1"))
+      }
+      var clob = "r,r"
+      for r in ssa.mlkem_ntt_sse2_gprs() + ["r11"] {
+        clob = clob + ",~{${r}}"
+      }
+      for r in [0, 1, 2, 3, 4, 5, 14, 15] {
+        clob = clob + ",~{xmm${r}}"
+      }
+      clob = clob + ",~{memory},~{dirflag},~{fpsr},~{flags}"
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])})")
+    }
     "rt.sha256_block" => {
       // arm64: the state as two <4 x i32> SSA values (abcd, efgh) through
       // the sixteen four round steps of SHA256H and SHA256H2, the

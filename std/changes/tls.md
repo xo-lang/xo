@@ -15,6 +15,20 @@ chunk of ciphertext is hashed right after it is written, while it is in
 cache. Server CPU samples of a 3 x 256 MiB bulk download in Docker
 (linux/arm64, loaded machine): 703 ms to 508 ms.
 
+## 2026-10-22: speedup: ML-KEM's NTT loops in SSE2 on x86-64
+
+- Kind: speedup
+- Commit: this commit
+- Found by: profile (Xo Lang 4, tls-newconn amd64 Docker callgrind per function)
+- Go reference: none (Go's crypto/mlkem is scalar Go)
+- Test: crypto_mlkem, tls13_server, tls13_go, tls_client, tls_mlkem_off goldens (arm64 and LLVM on the Mac, native amd64 in Docker)
+
+The X25519MLKEM768 key share's NTT, inverse NTT and NTT domain products
+ran as scalar loops on x86-64. Decision 0336: two coefficients an SSE2
+register on both x86-64 backends. A tls-newconn handshake per request on
+linux/amd64: native 3,202,802 to 3,115,327 instructions, the three loops
+43% fewer; arm64 and wasm run the same portable code as before.
+
 ## 2026-10-21: speedup: ChaCha20 four blocks at a time in vector registers
 
 - Kind: speedup

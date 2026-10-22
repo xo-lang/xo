@@ -554,3 +554,125 @@ fn chacha_qr(var x: List[Int], a: Int, b: Int, c: Int, d: Int) {
   x[c] = x[c].wrapping_add(x[d]) & 0xFFFFFFFF
   x[b] = (x[b] ^ x[c]).rotate_right32(25)
 }
+
+// ---------------------------------------------------------------------------
+// ML-KEM's NTT (SSE2 on x86-64)
+
+/// ML-KEM's forward NTT (FIPS 203 Algorithm 9), in place, of the 256
+/// coefficients at p (8 byte words, each below q = 3329), with the 128
+/// zetas at zp (8 byte words); every result below q. The x86-64 emitters
+/// compute two coefficients an xmm register (compiler/ssa x86mlkem.xo);
+/// this is the portable body (arm64, LLVM's arm64, wasm).
+pub fn mlkem_ntt(p: Int, zp: Int) { mlkem_ntt_soft(p, zp) }
+
+/// x mod 3329 up to one extra 3329, for 0 <= x < 2^32 (a Barrett step
+/// with floor(2^32 / 3329) = 1290167: mlkem.xo's bred).
+fn mlkem_bred(x: Int) -> Int {
+  x.wrapping_sub(x.wrapping_mul(1290167).shr_logical(32).wrapping_mul(3329))
+}
+
+/// mlkem_ntt's body: mlkem.xo's lazy layers (offsets in bytes: lb = 8
+/// len, zo = 8 k), the last (len 2) with every output reduced below q.
+pub fn mlkem_ntt_soft(p: Int, zp: Int) {
+  var zo = 8
+  var lb = 1024
+  while lb >= 16 {
+    var j0 = 0
+    while j0 < 2048 {
+      let z = rt.mem_load(zp, zo, 8)
+      zo = zo.wrapping_add(8)
+      var j = j0
+      let end = j0.wrapping_add(lb)
+      while j < end {
+        let jl = j.wrapping_add(lb)
+        let t = mlkem_bred(z.wrapping_mul(rt.mem_load(p, jl, 8)))
+        let fj = rt.mem_load(p, j, 8)
+        rt.mem_store(p, jl, fj.wrapping_sub(t).wrapping_add(6658), 8)
+        rt.mem_store(p, j, fj.wrapping_add(t), 8)
+        j = j.wrapping_add(8)
+      }
+      j0 = end.wrapping_add(lb)
+    }
+    lb = lb.shr_logical(1)
+  }
+  var o = 0
+  while o < 2048 {
+    let r = mlkem_bred(rt.mem_load(p, o, 8)).wrapping_sub(3329)
+    rt.mem_store(p, o, r.wrapping_add(r.shr_logical(63).wrapping_mul(3329)), 8)
+    o = o.wrapping_add(8)
+  }
+}
+
+/// ML-KEM's inverse NTT (FIPS 203 Algorithm 10), in place, of the 256
+/// coefficients at p (8 byte words, each below q) with the zetas at zp,
+/// the scaling by 128^-1 folded into the last layer; every result below
+/// q. SSE2 on x86-64 as mlkem_ntt.
+pub fn mlkem_inverse_ntt(p: Int, zp: Int) { mlkem_inverse_ntt_soft(p, zp) }
+
+/// x mod 3329, for 0 <= x < 2^32 (mlkem.xo's bfull).
+fn mlkem_bfull(x: Int) -> Int {
+  let r = mlkem_bred(x).wrapping_sub(3329)
+  r.wrapping_add(r.shr_logical(63).wrapping_mul(3329))
+}
+
+/// mlkem_inverse_ntt's body: mlkem.xo's lazy layers, len 2 to 64 with
+/// every coefficient below b entering a layer (b = q, 2q, ...), then len
+/// 128 with 3303 = 128^-1 mod q folded in.
+pub fn mlkem_inverse_ntt_soft(p: Int, zp: Int) {
+  var zo = 8 * 127
+  var lb = 16
+  var b = 3329
+  while lb <= 512 {
+    var j0 = 0
+    while j0 < 2048 {
+      let z = rt.mem_load(zp, zo, 8)
+      zo = zo.wrapping_sub(8)
+      var j = j0
+      let end = j0.wrapping_add(lb)
+      while j < end {
+        let jl = j.wrapping_add(lb)
+        let t = rt.mem_load(p, j, 8)
+        let u = rt.mem_load(p, jl, 8)
+        rt.mem_store(p, j, t.wrapping_add(u), 8)
+        rt.mem_store(p, jl, mlkem_bred(z.wrapping_mul(u.wrapping_sub(t).wrapping_add(b))), 8)
+        j = j.wrapping_add(8)
+      }
+      j0 = end.wrapping_add(lb)
+    }
+    lb = lb.wrapping_add(lb)
+    b = b.wrapping_add(b)
+  }
+  let z = mlkem_bfull(rt.mem_load(zp, 8, 8).wrapping_mul(3303))
+  var j = 0
+  while j < 1024 {
+    let t = rt.mem_load(p, j, 8)
+    let u = rt.mem_load(p, j.wrapping_add(1024), 8)
+    rt.mem_store(p, j, mlkem_bfull(t.wrapping_add(u).wrapping_mul(3303)), 8)
+    rt.mem_store(p, j.wrapping_add(1024), mlkem_bfull(z.wrapping_mul(u.wrapping_sub(t).wrapping_add(b))), 8)
+    j = j.wrapping_add(8)
+  }
+}
+
+/// h += f g in ML-KEM's NTT domain (FIPS 203 Algorithms 11 and 12, the
+/// sums of products of K-PKE): 256 coefficients each at h, f and g (8
+/// byte words, each below q), the 128 gammas at gp; every result below
+/// q. SSE2 on x86-64 as mlkem_ntt.
+pub fn mlkem_mul_acc(h: Int, f: Int, g: Int, gp: Int) { mlkem_mul_acc_soft(h, f, g, gp) }
+
+/// mlkem_mul_acc's body: mlkem.xo's pairs, each sum below 2^26.
+pub fn mlkem_mul_acc_soft(h: Int, f: Int, g: Int, gp: Int) {
+  var o = 0
+  var gi = 0
+  while o < 2048 {
+    let o1 = o.wrapping_add(8)
+    let a0 = rt.mem_load(f, o, 8)
+    let a1 = rt.mem_load(f, o1, 8)
+    let b0 = rt.mem_load(g, o, 8)
+    let b1 = rt.mem_load(g, o1, 8)
+    let r = mlkem_bred(a1.wrapping_mul(b1))
+    rt.mem_store(h, o, mlkem_bfull(a0.wrapping_mul(b0).wrapping_add(r.wrapping_mul(rt.mem_load(gp, gi, 8))).wrapping_add(rt.mem_load(h, o, 8))), 8)
+    rt.mem_store(h, o1, mlkem_bfull(a0.wrapping_mul(b1).wrapping_add(a1.wrapping_mul(b0)).wrapping_add(rt.mem_load(h, o1, 8))), 8)
+    o = o.wrapping_add(16)
+    gi = gi.wrapping_add(8)
+  }
+}

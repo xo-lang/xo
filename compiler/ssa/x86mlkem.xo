@@ -1,0 +1,240 @@
+// ML-KEM's NTT on x86-64 with SSE2: the instruction sequence both native
+// x86-64 lowerings use (compiler/arm64 calls.xo, compiler/llvm call.xo)
+// for rt.mlkem_ntt (std/native/llrt/cpu.xo mlkem_ntt).
+
+/// The registers mlkem_ntt_sse2_lines writes besides xmm14, xmm15 and r11
+/// (the native emitter's scratch registers): rax, rcx, rdx, r8, r9, r10
+/// and xmm0 to xmm5, caller saved on System V and Windows both.
+pub fn mlkem_ntt_sse2_gprs() -> List[Str] { ["rax", "rcx", "rdx", "r8", "r9", "r10"] }
+
+/// The forward NTT of the 256 coefficients at p (8 byte words) with the
+/// 128 zetas at zp (8 byte words), as cpu.mlkem_ntt_soft computes it: two
+/// coefficients an xmm register, one in each 64 bit lane, for pmuludq's
+/// 32 by 32 bit products (every coefficient below 2^16 and every product
+/// below 2^28 in the lazy layers, the Barrett quotient's product below
+/// 2^47). The layers len 128 to 2 (lb, in bytes, in rcx) with the
+/// butterfly t = bred(z f[j + len]), f[j] + t, f[j] - t + 2q; then every
+/// coefficient reduced below q (bfull: the sign of x - q in each lane by
+/// psrad, the values fitting 32 bits). rdx walks the coefficients, rax
+/// ends a group, r9 the zetas, r10 ends the polynomial; xmm5 holds
+/// 1290167 (Barrett's floor(2^32 / q)), xmm4 q, xmm3 2q, xmm2 the zeta.
+pub fn mlkem_ntt_sse2_lines(p: Str, zp: Str) -> List[Str] {
+  [
+    "movq ${p}, %r8",
+    "leaq 8(${zp}), %r9",
+    "leaq 2048(%r8), %r10",
+    "movl $1290167, %eax",
+    "movq %rax, %xmm5",
+    "punpcklqdq %xmm5, %xmm5",
+    "movl $3329, %eax",
+    "movq %rax, %xmm4",
+    "punpcklqdq %xmm4, %xmm4",
+    "movl $6658, %eax",
+    "movq %rax, %xmm3",
+    "punpcklqdq %xmm3, %xmm3",
+    "movl $1024, %ecx",
+    "1:",
+    "movq %r8, %rdx",
+    "2:",
+    "movq (%r9), %xmm2",
+    "punpcklqdq %xmm2, %xmm2",
+    "addq $8, %r9",
+    "leaq (%rdx,%rcx), %rax",
+    "3:",
+    "movdqu (%rdx,%rcx), %xmm1",
+    "pmuludq %xmm2, %xmm1",
+    "movdqa %xmm1, %xmm0",
+    "pmuludq %xmm5, %xmm0",
+    "psrlq $32, %xmm0",
+    "pmuludq %xmm4, %xmm0",
+    "psubq %xmm0, %xmm1",
+    "movdqu (%rdx), %xmm14",
+    "movdqa %xmm14, %xmm0",
+    "paddq %xmm1, %xmm0",
+    "psubq %xmm1, %xmm14",
+    "paddq %xmm3, %xmm14",
+    "movdqu %xmm0, (%rdx)",
+    "movdqu %xmm14, (%rdx,%rcx)",
+    "addq $16, %rdx",
+    "cmpq %rax, %rdx",
+    "jb 3b",
+    "addq %rcx, %rdx",
+    "cmpq %r10, %rdx",
+    "jb 2b",
+    "shrq $1, %rcx",
+    "cmpq $16, %rcx",
+    "jae 1b",
+    "movq %r8, %rdx",
+    "4:",
+    "movdqu (%rdx), %xmm0",
+    "movdqa %xmm0, %xmm1",
+    "pmuludq %xmm5, %xmm1",
+    "psrlq $32, %xmm1",
+    "pmuludq %xmm4, %xmm1",
+    "psubq %xmm1, %xmm0",
+    "psubq %xmm4, %xmm0",
+    "movdqa %xmm0, %xmm1",
+    "psrad $31, %xmm1",
+    "pand %xmm4, %xmm1",
+    "paddq %xmm1, %xmm0",
+    "movdqu %xmm0, (%rdx)",
+    "addq $16, %rdx",
+    "cmpq %r10, %rdx",
+    "jb 4b",
+  ]
+}
+
+/// bfull on both lanes of x (xmm5 1290167, xmm4 q): x mod q for x below
+/// 2^32, through tmp.
+fn mlkem_bfull_sse2(x: Str, tmp: Str) -> List[Str] {
+  ["movdqa ${x}, ${tmp}", "pmuludq %xmm5, ${tmp}", "psrlq $32, ${tmp}", "pmuludq %xmm4, ${tmp}", "psubq ${tmp}, ${x}", "psubq %xmm4, ${x}", "movdqa ${x}, ${tmp}", "psrad $31, ${tmp}", "pand %xmm4, ${tmp}", "paddq ${tmp}, ${x}"]
+}
+
+/// The inverse NTT of the 256 coefficients at p with the zetas at zp, as
+/// cpu.mlkem_inverse_ntt_soft computes it, in mlkem_ntt_sse2_lines's
+/// registers: the layers len 2 to 64 (zetas 127 down to 2, r9 walking
+/// down) with f[j] + f[j + len] and bred(z (f[j + len] - f[j] + b)), b in
+/// xmm3 doubling a layer from q; then len 128 with 128^-1 (3303, in
+/// xmm15) folded in: bfull((f[j] + f[j + 128]) 3303) and bfull(z' (f[j +
+/// 128] - f[j] + b)), z' = bfull(zetas[1] 3303) in xmm2.
+pub fn mlkem_inverse_ntt_sse2_lines(p: Str, zp: Str) -> List[Str] {
+  var t = [
+    "movq ${p}, %r8",
+    "leaq 1016(${zp}), %r9",
+    "leaq 2048(%r8), %r10",
+    "movl $1290167, %eax",
+    "movq %rax, %xmm5",
+    "punpcklqdq %xmm5, %xmm5",
+    "movl $3329, %eax",
+    "movq %rax, %xmm4",
+    "punpcklqdq %xmm4, %xmm4",
+    "movdqa %xmm4, %xmm3",
+    "movl $3303, %eax",
+    "movq %rax, %xmm15",
+    "punpcklqdq %xmm15, %xmm15",
+    "movl $16, %ecx",
+    "1:",
+    "movq %r8, %rdx",
+    "2:",
+    "movq (%r9), %xmm2",
+    "punpcklqdq %xmm2, %xmm2",
+    "subq $8, %r9",
+    "leaq (%rdx,%rcx), %rax",
+    "3:",
+    "movdqu (%rdx), %xmm0",
+    "movdqu (%rdx,%rcx), %xmm1",
+    "movdqa %xmm1, %xmm14",
+    "paddq %xmm0, %xmm14",
+    "movdqu %xmm14, (%rdx)",
+    "psubq %xmm0, %xmm1",
+    "paddq %xmm3, %xmm1",
+    "pmuludq %xmm2, %xmm1",
+    "movdqa %xmm1, %xmm0",
+    "pmuludq %xmm5, %xmm0",
+    "psrlq $32, %xmm0",
+    "pmuludq %xmm4, %xmm0",
+    "psubq %xmm0, %xmm1",
+    "movdqu %xmm1, (%rdx,%rcx)",
+    "addq $16, %rdx",
+    "cmpq %rax, %rdx",
+    "jb 3b",
+    "addq %rcx, %rdx",
+    "cmpq %r10, %rdx",
+    "jb 2b",
+    "paddq %xmm3, %xmm3",
+    "addq %rcx, %rcx",
+    "cmpq $512, %rcx",
+    "jbe 1b",
+    // r9 is at zetas[1]
+    "movq (%r9), %xmm2",
+    "punpcklqdq %xmm2, %xmm2",
+    "pmuludq %xmm15, %xmm2",
+  ]
+  t = t + mlkem_bfull_sse2("%xmm2", "%xmm0")
+  t = t + [
+    "movq %r8, %rdx",
+    "leaq 1024(%r8), %rax",
+    "5:",
+    "movdqu (%rdx), %xmm0",
+    "movdqu 1024(%rdx), %xmm1",
+    "movdqa %xmm0, %xmm14",
+    "paddq %xmm1, %xmm14",
+    "psubq %xmm0, %xmm1",
+    "paddq %xmm3, %xmm1",
+    "pmuludq %xmm2, %xmm1",
+    "pmuludq %xmm15, %xmm14",
+  ]
+  t = t + mlkem_bfull_sse2("%xmm14", "%xmm0")
+  t.push("movdqu %xmm14, (%rdx)")
+  t = t + mlkem_bfull_sse2("%xmm1", "%xmm0")
+  t + ["movdqu %xmm1, 1024(%rdx)", "addq $16, %rdx", "cmpq %rax, %rdx", "jb 5b"]
+}
+
+/// h += f g in the NTT domain (the 128 degree one products with the
+/// gammas at gp), as cpu.mlkem_mul_acc_soft computes it: two products an
+/// iteration, their coefficients split into lanes (A0 = the a0s, A1 the
+/// a1s, by punpcklqdq and punpckhqdq) and joined again for the stores;
+/// even = a0 b0 + bred(a1 b1) gamma + h0, odd = a0 b1 + a1 b0 + h1, each
+/// below 2^26, reduced below q (bfull). rax walks h, rcx f, rdx g, r8
+/// the gammas, r9 ends h.
+pub fn mlkem_mul_acc_sse2_lines(h: Str, f: Str, g: Str, gp: Str) -> List[Str] {
+  var t = [
+    "movq ${h}, %rax",
+    "movq ${f}, %rcx",
+    "movq ${g}, %rdx",
+    "movq ${gp}, %r8",
+    "leaq 2048(%rax), %r9",
+    "movl $1290167, %r10d",
+    "movq %r10, %xmm5",
+    "punpcklqdq %xmm5, %xmm5",
+    "movl $3329, %r10d",
+    "movq %r10, %xmm4",
+    "punpcklqdq %xmm4, %xmm4",
+    "1:",
+    "movdqu (%rcx), %xmm0",
+    "movdqu 16(%rcx), %xmm1",
+    "movdqa %xmm0, %xmm2",
+    "punpcklqdq %xmm1, %xmm0",
+    "punpckhqdq %xmm1, %xmm2",
+    "movdqu (%rdx), %xmm1",
+    "movdqu 16(%rdx), %xmm3",
+    "movdqa %xmm1, %xmm14",
+    "punpcklqdq %xmm3, %xmm1",
+    "punpckhqdq %xmm3, %xmm14",
+    "movdqa %xmm2, %xmm3",
+    "pmuludq %xmm14, %xmm3",
+    "movdqa %xmm3, %xmm15",
+    "pmuludq %xmm5, %xmm15",
+    "psrlq $32, %xmm15",
+    "pmuludq %xmm4, %xmm15",
+    "psubq %xmm15, %xmm3",
+    "movdqu (%r8), %xmm15",
+    "pmuludq %xmm15, %xmm3",
+    "pmuludq %xmm1, %xmm2",
+    "pmuludq %xmm0, %xmm14",
+    "paddq %xmm14, %xmm2",
+    "pmuludq %xmm1, %xmm0",
+    "paddq %xmm3, %xmm0",
+    "movdqu (%rax), %xmm1",
+    "movdqu 16(%rax), %xmm3",
+    "movdqa %xmm1, %xmm14",
+    "punpcklqdq %xmm3, %xmm1",
+    "punpckhqdq %xmm3, %xmm14",
+    "paddq %xmm1, %xmm0",
+    "paddq %xmm14, %xmm2",
+  ]
+  t = t + mlkem_bfull_sse2("%xmm0", "%xmm1") + mlkem_bfull_sse2("%xmm2", "%xmm1")
+  t + [
+    "movdqa %xmm0, %xmm1",
+    "punpcklqdq %xmm2, %xmm0",
+    "punpckhqdq %xmm2, %xmm1",
+    "movdqu %xmm0, (%rax)",
+    "movdqu %xmm1, 16(%rax)",
+    "addq $32, %rax",
+    "addq $32, %rcx",
+    "addq $32, %rdx",
+    "addq $16, %r8",
+    "cmpq %r9, %rax",
+    "jb 1b",
+  ]
+}
