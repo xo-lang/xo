@@ -6,14 +6,23 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
-- 0.25.1 (2026-10-22), the first binary release: archives for
+- 0.25.2 (2026-10-22), the first binary release: archives for
   darwin/arm64, darwin/amd64 (signed and notarized), linux/arm64,
   linux/amd64 and windows/amd64, each `xo` stamped with the commit it was
-  built from (`xo version -v`). RSA's secret exponent loop
-  (bigmod.exp_into) allocates nothing, so the constant-time checks
-  (TestConstantTimeLLVM, test/codegen/consttime) see no select in it at
-  clang -O2; no secret-dependent select was found and RSA's output is
-  unchanged (74eb6a305).
+  built from (`xo version -v`). 0.25.1 is a tag with no binaries: its
+  windows/amd64 xo.exe faulted on every build, because the COFF writer
+  wrote a section of 65,535 relocations or more with a wrapped 16 bit count;
+  it now writes the extended count (IMAGE_SCN_LNK_NRELOC_OVFL), as LLVM's
+  does (3cd6e6d3e). Also since 0.25.0: RSA's secret exponent loop
+  (bigmod.exp_into) allocates nothing, so the constant-time checks see no
+  select in it at clang -O2; no secret-dependent select was found and
+  RSA's output is unchanged (74eb6a305). `json.decode` and `parse_value`
+  reject a byte after the value, as RFC 8259 and Go do (f910b349c). Map
+  helpers of `Map[K, Bytes]` are named by their types, not by which a build
+  made first, which had let a cached caller call one with the other's
+  result type (3b8975312). The arm64 inliner no longer inlines a function
+  into itself after a callback brings its own call in (a compiler fault on
+  generics, 1201c3153).
 - Diagnostics: an unknown method on a Set suggests `add` and `remove`
   (`insert`, `push`, `put`, `discard`, `delete`); `sub`, `add`,
   `elapsed` and the like on a Time or Duration suggest the operators or,
