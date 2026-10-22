@@ -43,3 +43,11 @@ records no commit (`xo version --json`), Ensure builds compiler/xo again
 with the xo it built, as the bootstrap's second stage
 (internal/xotool SecondHop, TestSecondHop). A miscompiled first hop then
 either builds a correct xo or fails, and the next seed is tried.
+Neither an old builder nor a Go backend built xo reproduced it on the Mac
+(both made a working xo), so the runner's own cause is still open; and
+its broken xo was then cached as a clean build of 517e6e03c, which the
+next build would have taken as its nearest ancestor. So xobuild also
+smoke tests (SmokeXo, TestSmokeXo): a candidate seed and every xo it
+builds must build a small program with the checkout's std and the native
+backend, or it is skipped and not cached. scripts/ci/windows-race.sh
+prints the xo it got and builds a program without --race first.
