@@ -576,10 +576,23 @@ pub fn from_mont(md: Mod, x: List[Int]) -> List[Int] {
 /// x^e (Montgomery in and out), e the limbs of a secret exponent: a
 /// fixed window of 4 bits over all of e's limbs (their count is public),
 /// each step 4 squarings and a product with a table entry chosen under a
-/// mask from all 16.
+/// mask from all 16 (exp_into).
 pub fn exp(md: Mod, x: List[Int], e: List[Int]) -> List[Int] {
   let n = md.n
-  let tab = zero(16 * n)
+  let acc = zero(n)
+  exp_into(md, x, e, zero(16 * n), acc, zero(n))
+  acc
+}
+
+/// exp's work in the table tab (16 n limbs), acc (n, the result) and sel
+/// (n, the entry chosen), split out of exp as mlkem.implicit_reject is
+/// out of decaps_key: the lists' allocation, inlined, has a select on
+/// their public length (rl_new_n's capacity of at least 4), which the
+/// constant time checks (test/codegen/consttime, TestConstantTimeLLVM)
+/// cannot tell from a select on the secret; here every word is read and
+/// written by address.
+fn exp_into(md: Mod, x: List[Int], e: List[Int], tab: List[Int], acc: List[Int], sel: List[Int]) {
+  let n = md.n
   let pt = addr(tab)
   let px = addr(x)
   rt.mem_copy(pt, one_at(md), 8 * n)
@@ -587,8 +600,6 @@ pub fn exp(md: Mod, x: List[Int], e: List[Int]) -> List[Int] {
     mul_at(md, pt + 8 * n * i, pt + 8 * n * (i - 1), px)
   }
   let stride = 8 * n
-  let acc = zero(n)
-  let sel = zero(n)
   let pa = addr(acc)
   let ps = addr(sel)
   rt.mem_copy(pa, one_at(md), 8 * n)
@@ -627,9 +638,9 @@ pub fn exp(md: Mod, x: List[Int], e: List[Int]) -> List[Int] {
   }
   keep(tab)
   keep(sel)
+  keep(acc)
   keep(x)
   keep(md.w)
-  acc
 }
 
 /// x^e (Montgomery in and out) for a public exponent e > 0: square and

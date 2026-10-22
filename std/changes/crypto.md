@@ -1,5 +1,20 @@
 # std/crypto changes
 
+## 2026-10-22: security: RSA's private exponentiation checked free of selects again
+
+- Kind: security
+- Commit: (filled in after the push)
+- Found by: TestConstantTimeLLVM (full) failing on the Mac, Xo Lang 4's rerun of the 2026-10-22 full tier
+- Go reference: none (crypto/internal/fips140/bigmod's Nat.Exp is the same fixed window under masks)
+- Test: internal/llvm TestConstantTimeLLVM; xo dev codegen test/codegen (consttime, arm64 and LLVM); TestRSADiff; tls_rsa, crypto_keys, tls12_server, tls13_server, tls_x509, http_tls_keys goldens (arm64, LLVM)
+
+bigmod.exp's window table, accumulator and selection now live in
+exp_into, which allocates nothing: clang inlined the lists' allocation
+into exp, whose capacity (at least 4, a public length) became a
+conditional select that the constant time checks cannot tell from one on
+the secret exponent. No secret-dependent select was found; the checks
+pass again and RSA's output is unchanged.
+
 ## 2026-10-20: security: hedged ECDSA nonces, the TLS server's signatures too
 
 - Kind: security

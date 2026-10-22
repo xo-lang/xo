@@ -192,7 +192,7 @@ var ctChecks = []ctCheck{
 	{fn: "ed25519.sc_muladd", noSelect: true, full: true},
 	{fn: "mlkem.compress", branchFree: true, noSelect: true, full: true},
 	{fn: "mlkem.implicit_reject", noSelect: true, full: true},
-	{fn: "bigmod.exp", noSelect: true, full: true},
+	{fn: "bigmod.exp_into", noSelect: true, full: true},
 }
 
 // TestConstantTimeLLVM compiles the LLVM IR xo emits for ctLLVMProg with

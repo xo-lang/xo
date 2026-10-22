@@ -62,7 +62,7 @@ fn main(os: Os) {
 // shifts for the quotient, never a division: KyberSlash) and its
 // decapsulation's implicit rejection (a mask from the whole ciphertext
 // compare, the key picked under it), and RSA's private exponentiation
-// (bigmod.exp's window table under masks). The branches left are loops
+// (bigmod.exp_into's window table under masks). The branches left are loops
 // over public counts and bounds checks on public indices.
 // func nistec.pt_mul
 // arm64: -"csel" -"cset"
@@ -79,6 +79,6 @@ fn main(os: Os) {
 // func mlkem.implicit_reject
 // arm64: -"csel" -"cset"
 // llvm: "call i64 @\"x.ct.pick\"" -"select"
-// func bigmod.exp
+// func bigmod.exp_into
 // arm64: -"csel" -"cset"
 // llvm: -"select"
