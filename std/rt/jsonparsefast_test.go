@@ -1,6 +1,7 @@
 package rt
 
 import (
+	"encoding/json"
 	"math/rand"
 	"reflect"
 	"strings"
@@ -151,19 +152,34 @@ func TestJsonSyntaxErrMatchesDecoder(t *testing.T) {
 	}
 }
 
-// TestJsonParseFastTrailingJunk: a byte after the value that starts no
-// token leaves the value as the decoder reads it; one that starts a token
-// is left to the decoder.
-func TestJsonParseFastTrailingJunk(t *testing.T) {
-	for _, tail := range []string{"x", " q", "\n)", "\x01", "é", "+", ".", "T", "}", "1", "[", "\"", "-", "t", ":", ","} {
-		s := `{"a":[1,2],"b":"c"}` + tail
-		slow, err := jsonParseSlow([]byte(s))
-		fast, ok := jsonParseFast([]byte(s))
-		if ok && (err != nil || !reflect.DeepEqual(fast, slow)) {
-			t.Errorf("%q: fast %#v, decoder %#v (%v)", s, fast, slow, err)
+// TestJsonTrailingBytes: one value and white space only; any other byte
+// after the value is encoding/json's error, on the fast reader, the token
+// decoder and the scanner's check alike.
+func TestJsonTrailingBytes(t *testing.T) {
+	for _, tail := range []string{"x", " q", "\n)", "\x01", "\u00e9", "+", ".", "T", "}", "]", ":", ",", "1", "[", "{", "\"", "-", "t", "'", "\u00ff"} {
+		for _, head := range []string{`{"a":[1,2],"b":"c"}`, `[]`, `7`, `"s"`, `null`, `true`} {
+			s := head + " \n" + tail
+			var v any
+			want := json.Unmarshal([]byte(s), &v)
+			if want == nil {
+				t.Fatalf("%q: Unmarshal accepts it", s)
+			}
+			if _, ok := jsonParseFast([]byte(s)); ok {
+				t.Errorf("%q: the fast reader accepts it", s)
+			}
+			_, slow := jsonParseSlow([]byte(s))
+			scan := jsonSyntaxErr([]byte(s))
+			if slow == nil || scan == nil || slow.F_msg != "invalid JSON: "+want.Error() || scan.F_msg != slow.F_msg {
+				t.Errorf("%q: Unmarshal %q, decoder %v, scanner %v", s, want, slow, scan)
+			}
+			if _, err := jsonParse([]byte(s)); err == nil || err.F_msg != slow.F_msg {
+				t.Errorf("%q: jsonParse %v", s, err)
+			}
 		}
-		if !ok && strings.ContainsAny(tail[len(tail)-1:], "xq)\x01+.T") {
-			t.Errorf("%q: the fast reader gave up", s)
+	}
+	for _, s := range []string{`{"a":1} `, "[1]\n\t\r ", ` 7`} {
+		if _, err := jsonParse([]byte(s)); err != nil {
+			t.Errorf("%q: %v", s, err)
 		}
 	}
 }

@@ -1,5 +1,23 @@
 # std/json changes
 
+## 2026-10-22: security: decode and parse_value reject a byte after the value
+
+- Kind: security
+- Commit: this commit
+- Found by: a Go gap check of the invalid JSON path (bench/results/json-invalid-go-backend-2026-10-22.md); decision by the lead, 2026-10-22
+- Go reference: encoding/json (go1.26.1: RFC 8259 allows one value and white space; `{"a":1}x` is "invalid character 'x' after top-level value")
+- Test: std/rt TestJsonTrailingBytes; goldens json_text, json_value, json_fast (arm64, LLVM, Go backend)
+
+`json.decode`, `decode_str`, `parse_value` and `Request.json` accepted a
+complete value followed by a byte that starts no token (`{"a":1}x`, `1 +`):
+the native parser and the Go backend's token decoder read the value and
+dropped the rest, which hides truncated, concatenated or corrupted input.
+They now reject any byte after the value and white space with Go's text,
+`invalid character 'x' after top-level value`, on every backend; a token
+after the value (`1 2`, `{} {}`, `[1]]`) gets the same text where it said
+`trailing data` before, so the error text of those changed too.
+`json.decoder()` (a stream of values) is unchanged.
+
 ## 2026-10-22: perf: the Go backend answers invalid JSON from the scanner
 
 - Kind: perf
@@ -12,8 +30,7 @@ On the Go backend a decode of text that is not valid JSON read it three times
 (`json.Valid`, the fast reader, then `json.Decoder.Token` building the value
 up to the error). It now takes the scanner's error from one `json.Unmarshal`
 check, with the token decoder's texts for an early end (`EOF`, `unexpected
-EOF`); the token decoder still answers a token after the value and a bad
-object key. bench/perf/json invalid: 1,707 M to 670 M instructions (Go's
+EOF`); the token decoder still answers a bad object key. bench/perf/json invalid: 1,707 M to 670 M instructions (Go's
 `json.Unmarshal` 205 M), `xo bench --ab` instructions 0.420 of before;
 bench/results/json-invalid-go-backend-2026-10-22.md.
 

@@ -23,18 +23,7 @@ func jsonParseFast(data []byte) (any, bool) {
 	}
 	p.skip()
 	if p.i != len(p.b) {
-		// jsonParseSlow reads a token after the value and rejects the text
-		// only when there is one: a byte that starts none (the decoder
-		// reports it as an error) leaves the value as it is
-		switch c := p.b[p.i]; {
-		case c == '[' || c == '{' || c == '"' || c == '-' || c == 't' || c == 'f' || c == 'n' || c >= '0' && c <= '9':
-			return nil, false
-		case c == ']' || c == '}' || c == ':' || c == ',':
-			return nil, false
-		case c >= utf8.RuneSelf:
-			return nil, false
-		}
-		return v, true
+		return nil, false
 	}
 	return v, true
 }

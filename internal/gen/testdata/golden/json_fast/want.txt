@@ -13,7 +13,7 @@ error at $.ids[0]: expected integer
 error at $.ids[0]: expected integer
 {"name":"n","nick":null,"ids":[],"inner":null,"ratio":-1500,"edit":null}
 {"name":"n","nick":null,"ids":[],"inner":null,"ratio":1,"edit":"v"}
-error at $: invalid JSON: trailing data
+error at $: invalid JSON: invalid character '{' after top-level value
 {"name":"escaped key","nick":null,"ids":[],"inner":null,"ratio":1}
 error at $.ratio: expected number
 error at $: expected object

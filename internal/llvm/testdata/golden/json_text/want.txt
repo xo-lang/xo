@@ -8,19 +8,23 @@ err at $: invalid JSON: invalid character '1' after object key
 err at $: invalid JSON: unexpected EOF
 err at $: invalid JSON: invalid character 'x' in literal null (expecting 'l')
 err at $: invalid JSON: invalid character 'x' in string escape code
-err at $: invalid JSON: trailing data
-err at $: invalid JSON: trailing data
-err at $: expected object
+err at $: invalid JSON: invalid character '2' after top-level value
+err at $: invalid JSON: invalid character '{' after top-level value
+err at $: invalid JSON: invalid character ']' after top-level value
 err at $: invalid JSON: EOF
 err at $: invalid JSON: EOF
 err at $: invalid JSON: EOF
 err at $: invalid JSON: unexpected EOF
 err at $: invalid JSON: unexpected EOF
-err at $: invalid JSON: trailing data
+err at $: invalid JSON: invalid character '1' after top-level value
 err at $: invalid JSON: unexpected EOF
 err at $: invalid JSON: unexpected EOF
 err at $: invalid JSON: invalid character '1'
 err at $: invalid JSON: invalid character '2' after array element
+err at $: invalid JSON: invalid character 'x' after top-level value
+err at $: invalid JSON: invalid character ']' after top-level value
+err at $: invalid JSON: invalid character '{' after top-level value
+err at $: invalid JSON: invalid character 'Ã' after top-level value
 err at $: invalid JSON: invalid character '}' looking for beginning of object key string
 err at $: expected object
 err at $: expected object

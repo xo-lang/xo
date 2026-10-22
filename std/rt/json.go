@@ -466,8 +466,7 @@ func jsonEOFErr(data []byte) *Json_DecodeErr {
 // encoding/json rejects, found by that scan alone (Go's Unmarshal checks
 // the syntax before it decodes) without the token decoder building the
 // value up to the error; nil for text that is valid, or whose error text
-// the token decoder words differently (a token after the value, a bad
-// object key), which jsonParseSlow answers.
+// the token decoder words differently (a bad object key), which jsonParseSlow answers.
 func jsonSyntaxErr(data []byte) *Json_DecodeErr {
 	var skip struct{}
 	var se *json.SyntaxError
@@ -475,7 +474,7 @@ func jsonSyntaxErr(data []byte) *Json_DecodeErr {
 		return nil
 	}
 	msg := se.Error()
-	if strings.Contains(msg, "after top-level value") || strings.HasSuffix(msg, "looking for beginning of object key string") {
+	if strings.HasSuffix(msg, "looking for beginning of object key string") {
 		return nil
 	}
 	if msg == "unexpected end of JSON input" {
@@ -498,8 +497,11 @@ func jsonParseSlow(data []byte) (any, *Json_DecodeErr) {
 	if err != nil {
 		return nil, JsonErr("$", "invalid JSON: "+strings.TrimPrefix(err.Error(), "json: "))
 	}
-	if _, err := dec.Token(); err == nil {
-		return nil, JsonErr("$", "invalid JSON: trailing data")
+	// one value and white space (RFC 8259; Unmarshal's checkValid)
+	for i := int(dec.InputOffset()); i < len(data); i++ {
+		if c := data[i]; c != ' ' && c != '\t' && c != '\r' && c != '\n' {
+			return nil, JsonErr("$", "invalid JSON: invalid character "+jsonQuoteChar(c)+" after top-level value")
+		}
 	}
 	return x, nil
 }

@@ -23,12 +23,16 @@ with the scanner's own error (`jsonSyntaxErr`: `json.Unmarshal` into an empty
 struct, which checks the syntax before it decodes) without the reader or the
 token decoder. The texts of the error are the token decoder's: the scanner's
 for a bad byte, `EOF` or `unexpected EOF` for a text that ends early
-(`jsonEOFErr` tells between tokens from inside one). Three cases still go to
-the token decoder because it words them differently or accepts them: a token
-after the value, a bad object key, and a string that ends the text. The fast
-reader also leaves a value alone when a byte that starts no token follows it
-(the decoder reports that byte as an error and `jsonParseSlow` accepts the
-value), as `{"a":1}x`, instead of giving up.
+(`jsonEOFErr` tells between tokens from inside one). One case still goes to the token decoder because it words it differently: a
+bad object key.
+
+*Update, same day (ec2857303):* a byte after a complete value is now an error
+on every backend (decision by the lead: RFC 8259, Go rejects it; std/changes/json.md),
+so the text of the first of the four kinds (a document with a byte after it)
+is answered by the scanner too, and the fast reader no longer keeps such a
+value. The table below was measured before that change, when this kind
+decoded the whole document and succeeded; the numbers after it are not
+measured yet.
 
 | | instructions | vs Go |
 |---|---|---|
@@ -46,18 +50,8 @@ random and 28,000 mutated texts, seven seeds run by hand) compares every text
 `jsonSyntaxErr` answers with `jsonParseSlow`'s; `TestJsonParseFastTrailingJunk`
 the byte after a value.
 
-## What is left (3.3x)
+## What is left (3.3x, before the update above)
 
-The remaining cost is the texts the token decoder still answers (a byte after
-a valid document decodes the whole document through the fast reader and the
-generic decoder, as before) and two scans of the text on the error path
-(`json.Valid`, then `Unmarshal`'s own). Next: an error path that keeps the
-scanner's state from the first scan (a copy of `checkValid`'s loop), and a
-fast path for `value + junk` that decodes straight into the struct.
-
-## Behavior noted, not changed
-
-Text with a byte after a complete value that starts no token (`{"a":1}x`)
-decodes without an error on every backend (the native scanner and
-`jsonParseSlow` agree); Go's `json.Unmarshal` rejects it. It is the existing
-behavior (the native `scan` comment says so); decision for the lead.
+Two scans of the text on the error path (`json.Valid`, then `Unmarshal`'s
+own) and the allocations of `Unmarshal` itself. Next: an error path that keeps
+the scanner's state from the first scan (a copy of `checkValid`'s loop).

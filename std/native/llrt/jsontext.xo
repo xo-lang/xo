@@ -61,13 +61,11 @@ const S_OBJ_COMMA: Int = 8
 /// The states in which a value may start, as bits.
 const VALUE_STATES: Int = 0x87
 
-// Errors: 0 none, E_UEOF "unexpected EOF", E_EOF "EOF", E_TRAILING
-// "trailing data", or (context << 8) | byte for "invalid character
-// <byte> <context>" (contexts below; C_LIT + 8 * literal + k is "in
+// Errors: 0 none, E_UEOF "unexpected EOF", E_EOF "EOF", or (context << 8) |
+// byte for "invalid character <byte> <context>" (contexts below; C_LIT + 8 * literal + k is "in
 // literal <true, false, null> (expecting '<its byte k>')").
 const E_UEOF: Int = 1
 const E_EOF: Int = 2
-const E_TRAILING: Int = 3
 
 const C_VALUE: Int = 1
 const C_ARR_ELEM: Int = 2
@@ -81,6 +79,7 @@ const C_STRING: Int = 9
 const C_NUM: Int = 10
 const C_DOT: Int = 11
 const C_EXP: Int = 12
+const C_TOP: Int = 13
 const C_LIT: Int = 16
 
 /// Decoder.tokenError's context per state (0 to 8). encoding/json has
@@ -417,28 +416,14 @@ fn scan(b: Bytes) -> (List[Int], Int) {
     cnt += 1
     state = if arr { S_ARR_COMMA } else { S_OBJ_COMMA }
   }
-  // std/rt rejects a token after the value ("trailing data"), but not an
-  // error or the end
+  // one value and white space (RFC 8259; encoding/json's checkValid): any
+  // other byte is "invalid character <byte> after top-level value"
   while p < n {
     let c = Int(b[p])
     if c > 32 || (c != 32 && c != 10 && c != 13 && c != 9) {
-      break
+      return (tape, (C_TOP << 8) | c)
     }
     p += 1
-  }
-  if p >= n {
-    return (tape, 0)
-  }
-  let c = Int(b[p])
-  if c == 91 || c == 123 {
-    return (tape, E_TRAILING)
-  }
-  if c == 93 || c == 125 || c == 58 || c == 44 {
-    return (tape, 0)
-  }
-  let e = if c == 34 { str_end(b, p + 1, n) } else { scalar_end(b, p, n, c) }
-  if e >= 0 {
-    return (tape, E_TRAILING)
   }
   (tape, 0)
 }
@@ -470,9 +455,6 @@ fn err_text(e: Int) -> Str {
   if e == E_EOF {
     return "EOF"
   }
-  if e == E_TRAILING {
-    return "trailing data"
-  }
   let ctx = e >> 8
   let m = "invalid character " + quote_char(e & 255)
   if ctx >= C_LIT {
@@ -494,6 +476,7 @@ fn err_text(e: Int) -> Str {
     10 => "in numeric literal"
     11 => "after decimal point in numeric literal"
     12 => "in exponent of numeric literal"
+    13 => "after top-level value"
     _ => ""
   }
   if s == "" {

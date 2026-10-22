@@ -18,7 +18,7 @@ exit 0
 "{" -> at $: invalid JSON: EOF
 "[1,]" -> at $: invalid JSON: invalid character ']' looking for beginning of value
 "tru" -> at $: invalid JSON: unexpected EOF
-"1 2" -> at $: invalid JSON: trailing data
+"1 2" -> at $: invalid JSON: invalid character '2' after top-level value
 "\"\\x\"" -> at $: invalid JSON: invalid character 'x' in string escape code
 {"name":"Zoë","age":41,"tags":["a","b"],"score":2.5,"boss":null}
 Some(Str(s: "Zoë")) Some("[\"a\",\"b\"]") None None
