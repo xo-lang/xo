@@ -231,6 +231,9 @@ Update the knowledgebase in the same change as the work, not later:
     internal/llvm tests when every changed file is native backend only
     (compiler/arm64, compiler/macho, internal/arm64, docs, bench
     results; owner, 2026-10-18): scripts/gate.sh's llvm step does this,
+    and otherwise runs only the LLVM goldens the change touches (owner,
+    2026-10-22: the full package took 46 to 56 minutes per gate; the full
+    set runs in the lead's full tier),
     XO_GATE_LLVM=1 forces it. internal/llvm's goldens build at -O1
     with no LTO except an -O2 sample (llvm_test.go o2Goldens; owner,
     2026-10-18); XO_TEST_LLVM_OPT=O2 builds every golden at -O2, for a
