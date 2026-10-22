@@ -112,3 +112,70 @@ reviewing every emitter and runtime change.
   streaming parsers; `Str` slicing stays O(n).
 - **A separate `BytesView` type.** No ABI change, but a second type in every
   API and conversions at each boundary.
+
+## Implementation map (step 1, 2026-10-21, for Xo Lang 2's review)
+
+Layout C: a Str or Bytes is (object, w1) with w1 = len | (off << 32);
+data = object + 16 + off (wasm: + 8 + off), len = w1 & 0xffffffff. Owned
+strings, builders, and literals have off = 0, so their w1 is the length.
+`rt.cast` Bytes/Str stays free. Slicing returns (object, new w1) and counts
+the parent once (the Retain of a copy).
+
+**Compiler (Str length and data readers).** Verified by reading and `xo refs`:
+
+- SSA: the single length call is `Str.len` (also `Bytes.len`, `StrBuilder.len`,
+  `BytesBuilder.len` map to it, ssa/call.xo:2168 and 2208); the string calls are
+  `str.eq`, `str.cmp`, `str.concat`, `str.concat_int`, `str.concat_float`,
+  `str.of_int`, `str.of_float`, `str.of_bool` (ssa/expr.xo and others
+  build them). The layout table is `layout_value` (ssa/call.xo:1571: data
+  offset 16 native, 8 wasm). Range facts: `Str.len` is 0 to MAX_STR_LEN =
+  2^48 in arm64/ranges.xo:410 and llvm/ranges.xo:18 (a 4 GiB cap only
+  tightens it).
+- arm64: `Str.len` is `g.words(x)[1]` (calls.xo:989) -> becomes `and w, w1,
+  #0xffffffff`; `str.eq`/`str.cmp` add 16 to word 0 for the data (calls.xo:896
+  to 915) -> add the shifted offset too; the same shape in closures.xo (21
+  `words(` uses), isel.xo (41), rc.xo (14, release only needs word 0), byref.xo
+  (16), x86rt.xo (14, the x86 retargeting of the same ops), x86win.xo, gen.xo (12),
+  inplace.xo, fieldlicm.xo:452 and opt.xo:581 (both match `Str.len` and must keep
+  working on the masked form), lsr.xo, shrink.xo, debug.xo (8: DWARF names).
+- LLVM: `str_parts` (llvm/call.xo:8) is the one place that GEPs the data
+  (obj + 16) and takes the length (field 1); `Str.len` at call.xo:445;
+  str.eq/str.cmp at call.xo:323 and 335; gen.xo (8 `Kind.Str` sites), func.xo,
+  noalias.xo.
+- wasm: rt2.xo and rt.xo implement `$str_eq`, `$str_cmp`, `$sapp*` over (ptr,
+  len) i32 pairs; wasm/call.xo:301 to 319 route the calls; home.xo (3
+  `Kind.Str`), gen.xo (2), func.xo (1). A wasm Str has a 32 bit length, so its
+  packing is len | (off << 16)?? -- to decide: wasm32 values are 32 bit;
+  options are a 16/16 split (64 KiB strings) or a two word w1 on wasm. Open
+  question for the review.
+
+**Runtime (llrt, Xo code).** Functions that take a `Str` read the value's
+length through `s.len()` (-> `Str.len`), so they follow the compiler's
+change for free; those that touch the object directly must add the offset:
+`raw.bytes_addr`/`data` (raw.xo:13 to 15: `obj_addr + layout(0)`) and the 34
+`rt.layout(0)` readers in std/native (digest.xo, dwline.xo, raw.xo and the
+`obj_addr` users: 245 lines across aesgcm, bigmod, ed25519, fsops, h2srv,
+hclient, hconn, hserve, mlkem, netconn, nistec, proc, sha256, sha3, tasks,
+testworld). System call buffers and hashing take (address, length), so the
+fix is in `bytes_addr` plus the callers that compute `obj_addr` by hand.
+Header fields of a string object (count, len, cap) are for the owner; a view
+never mutates the object, and an object with count > 1 is never modified in
+place, so `rs_*` builders (unique) are untouched.
+
+**Not affected.** The Go backend (strings and byte slices are views already),
+the C ABI exports taking (address, length), List, Map.
+
+## Steps (each gated by identity, the codegen patterns, the wasm sample,
+arm64 and LLVM goldens, and the mime/multipart/time baseline)
+
+1. `Str.len`, `str.eq`/`cmp` and the data address through two helper
+   functions in each emitter (so every other site changes by calling them),
+   offset always 0: no output change; identity proves it.
+2. `raw.bytes_addr`/`data` and the llrt readers add the offset.
+3. The slice call (`llrt_str_slice_at`, `llrt_bytes_slice_at`) returns a
+   view when the range is inside the object and the result is >= 16 bytes
+   (small slices keep copying: a 16 byte copy is cheaper than a count
+   bump), with the cap fault at construction.
+4. Hot ports drop their byte-index workarounds one by one, each with its
+   timing row.
+
