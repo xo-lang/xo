@@ -180,7 +180,7 @@ fn root_out(k: Int) -> Int {
 /// The bytes of a cancellation node (xo_rt.c xo_node, asserted there),
 /// the pool record's word of the deadlock counts (pool.xo P_DLK), and
 /// the counts' word of the roots made.
-const N_BYTES = 56
+const N_BYTES = layout.N_SIZE
 const P_DLK = layout.P_DLK
 const DLK_ROOTS = layout.DLK_ROOTS
 

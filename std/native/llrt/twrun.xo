@@ -118,10 +118,10 @@ const L_MEM = 32
 /// A context's node, and its unwinding flag (an int; ctx.xo).
 const C_NODE = layout.C_NODE
 const C_UNWINDING = layout.C_UNWINDING
-/// A node's canceled word (byte offset), and the bytes of a node
-/// (xo_rt.c xo_node, at most).
-const N_CANCELED = 32
-const N_SIZE = 64
+/// A node's canceled word (byte offset), and the bytes this module
+/// allocates for one (layout.xo N_SIZE is 56; 64 was xo_rt.c's at most).
+const N_CANCELED = layout.N_CANCELED
+const N_ALLOC = 64
 
 const ACQUIRE = 1
 const RELEASE = 2
@@ -333,8 +333,8 @@ fn node_canceled(n: Int) -> Bool { rt.slot_load[Int](n + N_CANCELED, 0, ACQUIRE)
 pub fn main_begin(args: List[Str]) {
   testworld.set_args(args)
   let c = ctx.cur()
-  let n = rt.heap_large(N_SIZE)
-  rt.mem_set(n, 0, N_SIZE)
+  let n = rt.heap_large(N_ALLOC)
+  rt.mem_set(n, 0, N_ALLOC)
   pool.node_link(n, ld(c, C_NODE))
   let s = state()
   st(s, R_OUTER, ld(c, C_NODE))

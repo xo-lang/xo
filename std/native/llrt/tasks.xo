@@ -109,8 +109,7 @@ const TLS_W = 2
 const ST_SPAWN = 0
 
 /// A cancellation node's canceled word (pool.xo N_CANCELED).
-const N_CANCELED = 32
-
+const N_CANCELED = layout.N_CANCELED
 /// A wait list (xo_wl): its first and last entry. An entry (xo_went, 32
 /// bytes, the context's own: ctx.xo C_WENT, a context waits on one list
 /// at a time): the park, the previous and next entry, writer and granted

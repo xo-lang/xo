@@ -131,4 +131,14 @@ length (the same instructions; `add x3, x3, #0x9c9` against `#0x9ca`):
 26 of 27 programs identical; json_wire_names differs in one `adrp` page
 (46 against 47), the data after the shifted strings crossing a 4 KiB boundary.
 
+## Step 4 (2026-10-22): the cancellation node
+
+N_PARENT to N_MU, N_CANCELED (byte offset 32), N_CANCELED_W (its word
+index 4, which pool.xo had named N_CANCELED while its other users used
+the byte offset under that name) and N_SIZE (56) moved to layout.xo from
+pool.xo. dump.xo, budget.xo, tasks.xo, twrun.xo and ctx.xo (N_BYTES) use
+layout.xo; pool.xo's N_CANCELED_AT, a second name for the byte offset,
+is N_CANCELED, and its word uses are N_CANCELED_W. twrun.xo allocates 64
+bytes for a node, not 56 (a margin from the C runtime): that constant,
+N_SIZE there, is N_ALLOC now, the same value. Checked as step 3: 27 of 27 programs identical.
 

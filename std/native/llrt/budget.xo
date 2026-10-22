@@ -14,6 +14,7 @@
 // The budget record is malloc'd (the C releases the references of
 // scopes and tasks, release below through cabi.xo); the context's
 // fields are ctx.xo's C_BUD_*.
+use native/llrt/layout
 use native/llrt/ctx
 use native/llrt/fault
 use native/llrt/heapos
@@ -53,8 +54,7 @@ const S_BUD = 456
 const H_ABYTES = 16
 
 /// A cancellation node's canceled word (pool.xo N_CANCELED).
-const N_CANCELED = 32
-
+const N_CANCELED = layout.N_CANCELED
 pub const QUANTUM = 1024
 /// Polls between looks for a budget when there is none.
 const NONE = 4611686018427387904

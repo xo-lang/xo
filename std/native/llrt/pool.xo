@@ -2087,16 +2087,16 @@ pub fn dl_check(p: Int) {
   let _d = rt.call_c2(rt.fn_addr("deadlock"), 0, 0)
 }
 
-/// xo_node (byte offsets; canceled is word 4): parent, child, prev,
-/// next, canceled, the waiter's park, its lock.
-const N_PARENT = 0
-const N_CHILD = 8
-const N_PREV = 16
-const N_NEXT = 24
-const N_CANCELED = 4
-const N_CANCELED_AT = 32
-const N_WAITER = 40
-const N_MU = 48
+/// xo_node's layout is layout.xo's (decision 0341): N_CANCELED_W is its
+/// canceled word's index for the slot atomics (N_CANCELED / 8).
+const N_PARENT = layout.N_PARENT
+const N_CHILD = layout.N_CHILD
+const N_PREV = layout.N_PREV
+const N_NEXT = layout.N_NEXT
+const N_CANCELED = layout.N_CANCELED
+const N_CANCELED_W = layout.N_CANCELED_W
+const N_WAITER = layout.N_WAITER
+const N_MU = layout.N_MU
 
 /// xo_ctx (byte offsets): its innermost node, the shield count (a C
 /// int), its park.
@@ -2154,7 +2154,7 @@ fn signal(pl: Int, p: Int, handoff: Bool) {
 }
 
 /// Whether node n is canceled.
-fn node_canceled(n: Int) -> Bool { rt.slot_load(n, N_CANCELED, ACQUIRE) != 0 }
+fn node_canceled(n: Int) -> Bool { rt.slot_load(n, N_CANCELED_W, ACQUIRE) != 0 }
 
 /// Adds n below parent (canceled at once when parent is).
 pub fn node_link(n: Int, parent: Int) {
@@ -2171,8 +2171,8 @@ pub fn node_link(n: Int, parent: Int) {
     rt.mem_store(c, N_PREV, n, 8)
   }
   rt.mem_store(parent, N_CHILD, n, 8)
-  if rt.mem_load(parent, N_CANCELED_AT, 8) != 0 {
-    rt.slot_store(n, N_CANCELED, 1, RELEASE)
+  if rt.mem_load(parent, N_CANCELED, 8) != 0 {
+    rt.slot_store(n, N_CANCELED_W, 1, RELEASE)
   }
   unlock(pm)
 }
@@ -2209,8 +2209,8 @@ pub fn node_unlink(n: Int) {
 /// from the node down to the one it visits, so locks are always taken
 /// parent first.
 fn cancel_locked(pl: Int, n: Int) {
-  if rt.mem_load(n, N_CANCELED_AT, 8) == 0 {
-    rt.slot_store(n, N_CANCELED, 1, RELEASE)
+  if rt.mem_load(n, N_CANCELED, 8) == 0 {
+    rt.slot_store(n, N_CANCELED_W, 1, RELEASE)
   }
   // a canceled node's subtree may have gained children since: walk it
   let w = rt.mem_load(n, N_WAITER, 8)

@@ -8,6 +8,7 @@
 // handler on_quit woke it), so it may allocate and lock. The walk is best
 // effort, as the Go backend's: each node's children are read under its
 // lock, and a task's state and context may change while they are read.
+use native/llrt/layout
 use native/llrt/ctx
 use native/llrt/dwline
 use native/llrt/linux
@@ -24,11 +25,11 @@ use native/sys_darwin
 
 /// xo_node (pool.xo N_*): parent, first child, next sibling, the
 /// canceled word, the lock.
-const N_PARENT = 0
-const N_CHILD = 8
-const N_NEXT = 24
-const N_CANCELED = 32
-const N_MU = 48
+const N_PARENT = layout.N_PARENT
+const N_CHILD = layout.N_CHILD
+const N_NEXT = layout.N_NEXT
+const N_CANCELED = layout.N_CANCELED
+const N_MU = layout.N_MU
 /// An object's header (tasks.xo H_*): its free function.
 const H_FREE = 8
 /// A task's and a scope's node (tasks.xo T_NODE, S_BODY) and a task's

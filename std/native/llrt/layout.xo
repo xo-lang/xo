@@ -7,7 +7,7 @@
 // nothing, and that a copy left elsewhere has its source's value.
 //
 // Records here: the context (ctx.xo, decision 0229), the deadlock counts
-// (pool.xo, ctx.xo), the pool and worker records (pool.xo).
+// (pool.xo, ctx.xo), the pool and worker records (pool.xo), the cancellation node (pool.xo).
 
 /// The context record (ctx.xo; xo_ctx in the C runtime it came from,336 bytes, 16 aligned; the owner of each field in decision 0229):
 /// the innermost cancellation node (a scope body or the task's node).
@@ -220,3 +220,19 @@ pub const W_SIZE = 3528
 /// The pool record's size (pool.xo P_*: 16 words, then the 4096 worker
 /// records' addresses; ctx.xo makes it).
 pub const P_SIZE = 32896
+
+/// xo_node, a cancellation node (pool.xo; xo_rt.c before; ctx.xo makes the
+/// context's, twrun.xo and pool.xo the others): its parent, first child,
+/// previous and next sibling, the canceled word, the waiter's park, and
+/// its lock.
+pub const N_PARENT = 0
+pub const N_CHILD = 8
+pub const N_PREV = 16
+pub const N_NEXT = 24
+pub const N_CANCELED = 32
+/// N_CANCELED as a word index (the slot atomics).
+pub const N_CANCELED_W = 4
+pub const N_WAITER = 40
+pub const N_MU = 48
+/// the record's bytes
+pub const N_SIZE = 56
