@@ -473,6 +473,19 @@ pub fn pd_begin(pd: Int) -> Bool {
   ok
 }
 
+/// Forgets a readiness that the next read will cover: call it before a
+/// read, so an edge that came before the read (its data is in the socket)
+/// does not wake the next wait for a read that finds nothing (EAGAIN).
+/// An edge after the call keeps the flag.
+/// Invariant: the caller reads until EAGAIN before any wait (the poller
+/// is edge triggered: a partial read leaves data that no new edge
+/// announces, which a stale flag used to cover).
+pub fn pd_clear_read(pd: Int) {
+  lk(addw(pd, D_MU))
+  rt.mem_store(pd, D_RREADY, 0, 4)
+  unlk(addw(pd, D_MU))
+}
+
 /// The descriptor's fd now, unless taken to close it (-1).
 fn take_fd(pd: Int) -> Int {
   let fd = rt.mem_load(pd, D_FD, 4)

@@ -1,5 +1,21 @@
 # std/tls changes
 
+## 2026-10-22: speedup: a server read forgets stale readiness first
+
+- Kind: speedup
+- Commit: this commit
+- Found by: strace per request (Xo Lang 3, HTTP/2 one stream: 1.8 EAGAIN reads a request against Go's 1.1)
+- Go reference: none (Go's netFD reads first and waits on EAGAIN)
+- Test: tls, tls12, tls13, http_tls, websocket_tls, http2, crypto goldens (arm64, LLVM); wasm TLS and Map goldens
+
+The edge that announced data stays set in the descriptor until a wait
+consumes it, so a read that had already taken the data left a flag that
+made the next wait return at once for a read that found nothing. fill
+now clears the flag before its read (an edge after the clear keeps it).
+strace, linux/arm64, HTTP/2 one stream, tlsrate: syscalls per request
+10.5 to 8.4, reads 2.9 to 2.0 (EAGAIN 1.8 to 1.1), epoll_pwait 2.9 to
+2.5, futex 3.6 to 3.0.
+
 ## 2026-10-22: speedup: GHASH of a 64 byte chunk written out in the fused CTR loop
 
 - Kind: speedup

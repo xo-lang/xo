@@ -809,6 +809,7 @@ fn fill(var c: Conn, nb: Bool) -> Bool {
   let fd = rt.mem_load(c.pd, 8, 4)
   let buf = raw.bytes_buf(16384)
   var ok = false
+  poll.pd_clear_read(c.pd)
   while true {
     let r = sock.read(fd, raw.bytes_addr(buf), 16384)
     if r > 0 {
