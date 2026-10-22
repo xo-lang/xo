@@ -46,10 +46,12 @@ pub fn dw_slots_text(text: Str, comp_dir: Str, std_root: Str) -> Str {
 }
 
 /// An object assembled from the generated text with the real paths in
-/// its .debug_str slots (an object from the back-end cache too).
+/// its .debug_str and .debug_line_str slots (an object from the back-end
+/// cache too).
 pub fn dw_slots_obj(obj: Bytes, comp_dir: Str, std_root: Str) -> Bytes {
   var b = obj
-  for (mark, path) in [(DW_SLOT_COMP, if comp_dir.is_empty() { "." } else { comp_dir }), (DW_SLOT_STD, std_root)] {
+  // each path twice: .debug_str's slot, then .debug_line_str's
+  for (mark, path) in [(DW_SLOT_COMP, if comp_dir.is_empty() { "." } else { comp_dir }), (DW_SLOT_STD, std_root), (DW_SLOT_COMP, if comp_dir.is_empty() { "." } else { comp_dir }), (DW_SLOT_STD, std_root)] {
     let at = b.find(mark.bytes()) ?? -1
     if at < 0 || at + DW_SLOT > b.len() {
       continue
@@ -130,10 +132,14 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
   }
   var out = StrBuilder.new()
   // the paths: DW_FORM_strp into the part's .debug_str slots
-  // (DW_SLOT_COMP, DW_SLOT_STD), by offset within the object on Mach-O
-  // (compiler/macho dsym.xo rebases them) and by label on ELF
+  // (DW_SLOT_COMP, DW_SLOT_STD) for the compile unit, DW_FORM_line_strp
+  // into copies in .debug_line_str for the line table's directories, by
+  // offset within the object on Mach-O (compiler/macho dsym.xo rebases
+  // them) and by label on ELF
   let comp_lab = g.local("xo_dwcomp_${g.ns}")
   let std_lab = g.local("xo_dwstd_${g.ns}")
+  let lcomp_lab = g.local("xo_dwlcomp_${g.ns}")
+  let lstd_lab = g.local("xo_dwlstd_${g.ns}")
   // .debug_line
   var hdr = Dw{}
   hdr.u8(1)   // minimum_instruction_length
@@ -151,11 +157,14 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
   // (the paths at bytes 34 and 38 of the table, for dsym.xo)
   hdr.u8(1)      // directory_entry_format_count
   hdr.uleb(1)    // DW_LNCT_path
-  hdr.uleb(0x0e) // DW_FORM_strp
+  // DW_FORM_line_strp: a line table's strp directories made
+  // CoreSymbolication (atos, the --race reports' symbolizer) fail with
+  // "Attempt to set cursor outside bounds" (2026-10-22)
+  hdr.uleb(0x1f) // DW_FORM_line_strp
   hdr.uleb(if stdd { 2 } else { 1 })
-  hdr.offset(if mac { "0" } else { comp_lab })
+  hdr.offset(if mac { "0" } else { lcomp_lab })
   if stdd {
-    hdr.offset(if mac { "${DW_SLOT}" } else { std_lab })
+    hdr.offset(if mac { "${DW_SLOT}" } else { lstd_lab })
   }
   hdr.u8(2)    // file_name_entry_format_count
   hdr.uleb(1)  // DW_LNCT_path
@@ -431,6 +440,9 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
   // .debug_str: the path slots (placeholders, dw_slots_obj)
   out.write(if mac { "\t.section __DWARF,__debug_str,regular,debug\n" } else { "\t.section .debug_str,\"\",@progbits\n" })
   out.write("${comp_lab}:\n${dw_slot_text(DW_SLOT_COMP)}${std_lab}:\n${dw_slot_text(DW_SLOT_STD)}")
+  // .debug_line_str: the same slots, for the line table's directories
+  out.write(if mac { "\t.section __DWARF,__debug_line_str,regular,debug\n" } else { "\t.section .debug_line_str,\"\",@progbits\n" })
+  out.write("${lcomp_lab}:\n${dw_slot_text(DW_SLOT_COMP)}${lstd_lab}:\n${dw_slot_text(DW_SLOT_STD)}")
   out.write(g.section("text"))
   out.freeze()
 }

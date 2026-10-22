@@ -25,7 +25,7 @@ fn (var l: Linker) dsym() -> Bytes {
   // "xo"): another compiler's Mach-O DWARF refers between its sections by
   // offsets in its own object, with no relocations, which joining would
   // break (ld64 leaves them in the objects for dsymutil)
-  let names = ["__debug_line", "__debug_abbrev", "__debug_info", "__debug_aranges", "__debug_loclists", "__debug_addr", "__debug_str"]
+  let names = ["__debug_line", "__debug_abbrev", "__debug_info", "__debug_aranges", "__debug_loclists", "__debug_addr", "__debug_str", "__debug_line_str"]
   // per section: the joined bytes, and per object the chunk's offset
   var data: List[List[Int]] = []
   var at: List[Map[Int, Int]] = []
@@ -106,13 +106,13 @@ fn (var l: Linker) dsym() -> Bytes {
     put64(ar, at0 + 16, lo)
     put64(ar, at0 + 24, hi - lo)
   }
-  // the paths (DW_FORM_strp into the object's __debug_str slots,
-  // 2026-10-22): the line table's directories at bytes 34 and 38 (their
-  // count at 33, the form at 32)
+  // the paths (DW_FORM_line_strp into the object's __debug_line_str
+  // slots, 2026-10-22): the line table's directories at bytes 34 and 38
+  // (their count at 33, the form at 32)
   var line = data[0]
   for (o, off) in at[0] {
-    let so = at[6].get(o) ?? 0
-    if off + 38 > line.len() || line[off + 32] != 0x0e {
+    let so = at[7].get(o) ?? 0
+    if off + 38 > line.len() || line[off + 32] != 0x1f {
       continue
     }
     put32(line, off + 34, get32(line, off + 34) + so)
