@@ -17,6 +17,13 @@ reads and writes its buffers by address (mlkem.implicit_reject out of
 decaps_key; bigmod.exp_into out of exp), and point both checks
 (TestConstantTimeLLVM's ctChecks, test/codegen/consttime's `// func`)
 at it. Bisecting such a failure: verify GOOD first (scripts/bisect.sh
-does since 31e5fa9e1); the commit that put the select in bigmod.exp is
-named here once the bisect from 4ae585f11 (where the check was added and
-passed) ends.
+does since 31e5fa9e1).
+
+Introduced by e5a34b0c3 (2026-10-21, Xo Lang 4: the LLVM backend stores
+a new list's header, count, length and capacity max(n, 4), where LLVM
+sees it, so clang folds and inlines it): the capacity's max became the
+csel in bigmod.exp (scripts/bisect.sh from 4ae585f11, where the check
+was added and passed, to 4bea3162a; 11 steps). Fixed forward by
+74eb6a305. A change that exposes more of an allocation to clang can do
+this to any checked function that allocates; run TestConstantTimeLLVM
+without -short for such a change.
