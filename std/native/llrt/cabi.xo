@@ -20,6 +20,7 @@ use native/llrt/budget
 use native/llrt/dump
 use native/llrt/chan
 use native/llrt/consts
+use native/llrt/crash
 use native/llrt/ctx
 use native/llrt/entry
 use native/llrt/fault
@@ -158,7 +159,10 @@ fn fault_raise_msg(m: Int, loc: Int) {
 /// Standard input's pump thread on Windows (stdin.xo pump_main): its
 /// address is the services record's (ctx.xo SV_STDIN_PUMP), a
 /// CreateThread entry taking the pump's record.
-fn stdin_pump_main(rec: Int) -> Int { stdin.pump_main(rec) }
+fn stdin_pump_main(rec: Int) -> Int {
+  crash.thread_init()
+  stdin.pump_main(rec)
+}
 
 /// The hooks around a fiber switch (sanhook.xo hook, decision 0232):
 /// rt.sched_hook of sched.xo calls this export.
@@ -424,6 +428,7 @@ fn cffi_str(p: Int, n: Int, lenp: Int) -> Int {
 /// Where the poller thread starts (pool.thread_start of its address, from
 /// the services record; never returns).
 fn poll_thread(a: Int) -> Int {
+  crash.thread_init()
   poll.poll_thread()
   a
 }
@@ -518,6 +523,13 @@ fn on_prof(sig: Int, info: Int, uc: Int) {
   }
 }
 
+/// The hardware fault handler that crash.xo installs (decision 0343;
+/// SA_SIGINFO: the signal, its siginfo, the faulting thread's ucontext).
+fn on_crash(sig: Int, info: Int, uc: Int) { crash.on_crash(sig, info, uc) }
+
+/// The crash report's watchdog (SIGALRM, crash.xo on_alarm).
+fn on_crash_alarm(sig: Int) { crash.on_alarm(sig) }
+
 /// SIGURG's handler (decision 0318, pool.xo async_install): asynchronous
 /// preemption.
 fn on_urg(sig: Int, info: Int, uc: Int) {
@@ -580,6 +592,7 @@ fn stop_set_grace(d: Int) { stop.set_grace(d) }
 /// The C function main's threads run (entry.xo run_main, the fault
 /// boundary), with xo_entry's address.
 fn run_main(entry_fn: Int) -> Int {
+  crash.thread_init()
   entry.run_main(entry_fn)
   0
 }
@@ -588,6 +601,7 @@ fn run_main(entry_fn: Int) -> Int {
 /// (entry.xo run_main_fiber, decision 0286 step 1), with entry.xo main's
 /// record.
 fn run_main_fiber(rec: Int) -> Int {
+  crash.thread_init()
   entry.run_main_fiber(rec)
   0
 }
@@ -609,11 +623,17 @@ fn lock_slow(l: Int) { pool.lock_slow(l) }
 
 fn futex_wake(a: Int) { pool.futex_wake(a) }
 
-fn worker_main(w: Int) -> Int { pool.worker_main(w) }
+fn worker_main(w: Int) -> Int {
+  crash.thread_init()
+  pool.worker_main(w)
+}
 
 /// The deferred wakes' monitor thread (pool.xo mon_main, decision 0077's
 /// addendum).
-fn mon_main(p: Int) -> Int { pool.mon_main(p) }
+fn mon_main(p: Int) -> Int {
+  crash.thread_init()
+  pool.mon_main(p)
+}
 
 /// A preemption poll's slow path (decision 0286 step 3): the emitters'
 /// xo_preempt_stub saves every register the C convention lets a callee

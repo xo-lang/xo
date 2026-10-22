@@ -2006,6 +2006,20 @@ fn walk_regs(s: Int, out: Int, max: Int, lo: Int, hi: Int, darwin: Bool, leaf: B
   n
 }
 
+/// The offset of the pc in a register set (crash.xo).
+pub const PC_AT = PC
+
+/// The registers of the context a fault signal interrupted, from its
+/// ucontext uc into regs (DWARF numbering, the pc at PC_AT; crash.xo,
+/// decision 0343). Async signal safe. Whether this target has a layout.
+pub fn crash_regs(uc: Int, regs: Int) -> Bool {
+  let darwin = match target.os {
+    TargetOs.Darwin => true
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => false
+  }
+  prof_regs(uc, regs, darwin)
+}
+
 /// Copies the interrupted registers from ucontext uc into the register
 /// set regs (DWARF numbering, the pc at PC). Whether this target has a
 /// layout here.

@@ -2382,6 +2382,18 @@ failed `Int32(x)` conversion, evaluated hole, explicit `fault("msg")`.
   code, scopes, Mutexes, and references are released on the way); they
   print the fault without its frames, write no crash bundle, and
   `Fault.frames` of `task.isolate` is empty there.
+- A hardware fault (an access violation, a bus error, an illegal
+  instruction, a trap) is not a fault: it is a bug below the language or
+  in C code behind `use c`, and nothing unwinds. A native program on
+  Linux or macOS reports it on standard error (decision 0343):
+  `fatal error: SIGNAL: TEXT (code N)`, with `at address A` for SIGSEGV
+  and SIGBUS, then the pc and the image's load address, the registers,
+  the frames' pcs (`frames:`) and the `traceback:` above; then the
+  signal's default action ends the program, with the same exit status
+  and core file as without the report. `XO_CRASH_REPORT=0` turns it off;
+  `XO_CRASH_TIMEOUT` (seconds, 5 by default) bounds the naming of the
+  frames. Sanitizer builds report through their own runtimes; Windows
+  does not report yet.
 
 There is no undefined behavior. Debug and release builds have identical
 semantics; release builds may only disable contract checks that are explicitly

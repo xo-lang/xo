@@ -12,6 +12,7 @@
 // from the program's heap (the leak check counts every block): scratch
 // memory is rt.heap_large's, from malloc.
 use native/llrt/atexit
+use native/llrt/crash
 use native/llrt/ctx
 use native/llrt/fault
 use native/llrt/heapos
@@ -251,6 +252,8 @@ pub fn start(argc: Int, argv: Int, envp: Int) {
     trace.start()
   }
   fault.init_traceback(rt.fn_addr("fault_traceback"))
+  // hardware faults (decision 0343): reported, then the default action
+  crash.install()
   if process.env_real_at("XO_TEST") != 0 {
     // a test binary's main starts the test world itself (the native
     // prelude's llrt_tw_start)

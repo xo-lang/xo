@@ -683,6 +683,17 @@ pub fn execve(file: Int, argv: Int, envp: Int) -> Int { rt.sys6(nr(221, 59), fil
 /// kill(2) of signal sig to pid: 0, or the negative errno.
 pub fn kill(pid: Int, sig: Int) -> Int { rt.sys6(nr(129, 62), pid, sig, 0, 0, 0, 0) }
 
+/// getpid(2) (std/native/llrt/crash.xo).
+pub fn getpid() -> Int { rt.sys6(nr(172, 39), 0, 0, 0, 0, 0, 0) }
+
+/// sigaltstack(2) with the stack_t at ss (and old, or 0): 0, or the
+/// negative errno (std/native/llrt/crash.xo, decision 0343).
+pub fn sigaltstack(ss: Int, old: Int) -> Int { rt.sys6(nr(132, 131), ss, old, 0, 0, 0, 0) }
+
+/// setitimer(2): which (ITIMER_REAL 0), the struct itimerval at new and
+/// old (or 0): 0, or the negative errno.
+pub fn setitimer(which: Int, new: Int, old: Int) -> Int { rt.sys6(nr(103, 38), which, new, old, 0, 0, 0) }
+
 pub fn getcwd() -> Str {
   let buf = raw.bytes_buf(4096)
   let a = raw.bytes_addr(buf)

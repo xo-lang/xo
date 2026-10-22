@@ -23,6 +23,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   result type (3b8975312). The arm64 inliner no longer inlines a function
   into itself after a callback brings its own call in (a compiler fault on
   generics, 1201c3153).
+- A native program on Linux or macOS reports a hardware fault (SIGSEGV,
+  SIGBUS, SIGILL, SIGFPE, SIGTRAP: a miscompile, a runtime bug, or C code
+  behind `use c`) before the signal's default action ends it, with the
+  same exit status and core file: the signal and address, the pc, the
+  registers, and the frames named from the program's DWARF (decision
+  0343; `XO_CRASH_REPORT=0` turns it off). Windows follows.
 - Diagnostics: an unknown method on a Set suggests `add` and `remove`
   (`insert`, `push`, `put`, `discard`, `delete`); `sub`, `add`,
   `elapsed` and the like on a Time or Duration suggest the operators or,

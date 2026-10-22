@@ -4,7 +4,9 @@ Status: Accepted (owner, 2026-10-22: keep the signal's exit status, so
 core files and WER dumps keep working; one xo-windows CI run approved for
 stage 2). Proposed the same day by Xo Lang 4; the owner approved building
 the tool after 0.25.1's windows/amd64 xo.exe crashed on every build and
-left only a minidump.
+left only a minidump. Stage 1 (Linux and macOS) implemented 2026-10-22:
+std/native/llrt crash.xo; test internal/arm64 TestCrashReport (arm64 and
+LLVM on darwin/arm64; linux/arm64 checked in Docker).
 
 ## Context
 
@@ -81,27 +83,37 @@ Reporting and attached debuggers see the same crash they see today.
 
 ### What is reported
 
+As built in stage 1 (TestCrashReport's program, darwin/arm64):
+
 ```
-fatal error: SIGSEGV: segmentation violation (SEGV_MAPERR) at address 0x10
-pc 0x100003a1c (prog+0x3a1c) in xo_f_main_2efill (main.xo:12)
-thread 3 (worker 2)
+fatal error: SIGSEGV: segmentation violation (code 2) at address 0x10
+pc 0x1044479d4 (image base 0x1043d8000)
 
 registers:
-  x0  0x0000000000000010  x1  0x0000000000000003  ...
-  fp  0x000000016fdfe9f0  lr  0x0000000100003b40  sp  0x000000016fdfe9d0
+  x0  0x0000000000000010 x1  0x0000000000000004 ...
+  ...
+  x28 0x0000000104449778 fp  0x0000007040003ee0 lr  0x00000001043d8af0 sp  0x0000007040003ee0
+
+frames: 0x1044479d4 0x1043d8b9c 0x1043d8af0 (x2) 0x1043d8908 ...
 
 traceback:
-  main.fill (main.xo:12)
-  main.main (main.xo:30)
+  crashc_write
+  poke (main.xo:12)
+  poke (main.xo:8)
+  poke (main.xo:8)
+  main (main.xo:22)
 ```
 
-- The first line: the signal or exception name, its sub-code (si_code;
-  for an access violation, read, write or execute), and the faulting
-  data address where the system gives one (si_addr,
+- The first line: the signal or exception name, its sub-code (si_code
+  as a number; on Windows, read, write or execute), and the faulting
+  data address for SIGSEGV and SIGBUS (si_addr; Windows
   ExceptionInformation[1]).
-- The pc as an absolute address and as module plus offset (the
-  executable's name, or the shared library's for a pc outside the
-  program's text), so a report without symbols can be resolved later.
+- The pc and the image's load address (macOS: its Mach-O header; Linux:
+  the load bias, 0 for Xo's non-PIE executables), so a report without
+  symbols can be resolved later (`atos -l`, `addr2line`). The thread is
+  not named yet.
+- `frames:`, every frame's pc (a run of one pc, a recursion, as
+  `pc (xN)`), written in phase 1.
 - The registers of the faulting context, by architecture.
 - `traceback:` in the format of decision 0239 (`  FUNCTION (FILE:LINE)`,
   the callees inlined at a pc first), with `  module+0xOFFSET` for a
@@ -122,9 +134,9 @@ traceback:
 2. **Symbolization.** The frames are named with prof.xo's symbol tables
    and dwline.xo, which read files and allocate. A crashing process may
    hold the heap's lock or have a corrupt heap, so this phase is
-   guarded: a fault inside it reaches the same handler, which sees the
-   phase in the crash record, prints `(symbolization faulted)` and goes
-   to the default action; a deadlock is ended by a watchdog (Unix:
+   guarded: a fault inside it reaches the same handler on the same
+   thread (the record's claim holds the thread's address), which prints
+   `(the crash report faulted: SIGNAL)` and goes to the default action; a deadlock is ended by a watchdog (Unix:
    alarm(XO_CRASH_TIMEOUT, 5 s by default), whose handler restores the
    original signal's default action and raises it; Windows: a thread
    started at phase 2 that waits that long). Either way phase 1's lines
@@ -132,8 +144,10 @@ traceback:
 
 ### How it ends
 
-- Unix: the handler returns. SA_RESETHAND restored the default action,
-  so the faulting instruction runs again and the kernel ends the process
+- Unix: the handler sets the signal's action to the default (SA_RESETHAND
+  does that too, except for SIGILL and SIGTRAP on macOS,
+  gotchas/darwin-sa-resethand-sigtrap.md) and returns, so the faulting
+  instruction runs again and the kernel ends the process
   with the same signal (status 128+signal, a core file where enabled).
   A signal sent by another process (si_code SI_USER or SI_QUEUE) does not
   repeat on return, so the handler raises it itself.
@@ -172,8 +186,9 @@ report serves the log.
 - Exit status, core files, WER and debuggers behave as before.
 - Every runtime thread maps a 64 KiB alternate stack (address space,
   touched only on a fault).
-- The handler code is in every native binary (estimated under 8 KiB of
-  text; measured in stage 1 against hello's size).
+- The handler code is in every native binary: hello's __text grew 12,376
+  bytes (440,124 to 452,500, 2.8%) and its file 17 KiB on darwin/arm64
+  (2026-10-22, against b8c6fd647), above the 8 KiB estimated.
 - Phase 2 can still hang or fault in a badly corrupted process; the
   guard limits that to a missing traceback, never a missing first line
   or a changed exit status.

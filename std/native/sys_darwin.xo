@@ -179,6 +179,12 @@ fn getpid() -> Int32
 /// old (or 0): 0, or -1 with errno set (std/native/llrt/prof.xo).
 fn setitimer(which: Int, new: Int, old: Int) -> Int32
 
+/// sigaltstack(2) with the stack_t at ss (ss_sp, ss_size, ss_flags) and
+/// old (or 0): 0, or -1 with errno set (std/native/llrt/crash.xo).
+fn sigaltstack(ss: Int, old: Int) -> Int32
+/// usleep(3) for us microseconds.
+fn usleep(us: Int) -> Int32
+
 /// sigaction(2) with the struct sigaction at the address act (the
 /// handler, the mask's 4 bytes, the flags' 4) and old (or 0): 0, or -1
 /// with errno set (std/native/llrt/entry.xo).
