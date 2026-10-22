@@ -9,7 +9,7 @@
 # XO is the xo binary (its std at XO/../../std), BACKEND arm64, amd64 or
 # llvm, or default (no --backend: the native one, decision 0270),
 # OUTDIR gets the binaries, build logs, and summary.txt (one `ok NAME`,
-# `FAIL NAME`, or `BUILD NAME` line each). NAMEs restrict the run to
+# `FAIL NAME`, `BUILD NAME`, or `skip NAME` line each). NAMEs restrict the run to
 # those goldens. Exits 1 when any failed.
 set -u
 xo=$1
@@ -24,10 +24,24 @@ names=$*
 if [ -z "$names" ]; then
   names=$(cd "$goldens" && ls)
 fi
+# Goldens that hang under Docker Desktop's Rosetta (linux/amd64 emulated
+# on Apple silicon) and pass on Linux and under qemu-x86_64: many
+# threads forking children at once leave every thread waiting on
+# Rosetta's own locks (gotchas/rosetta-fork-threads-hang.md). Under
+# Rosetta they are skipped (`skip NAME` in summary.txt).
+rosetta_hangs="proc_children_load"
+rosetta=0
+if grep -q /run/rosetta /proc/self/maps 2>/dev/null; then
+  rosetta=1
+fi
 bad=0
 for n in $names; do
   d=$goldens/$n
   [ -f "$d/want.txt" ] || continue
+  if [ $rosetta = 1 ] && case " $rosetta_hangs " in *" $n "*) true ;; *) false ;; esac; then
+    echo "skip $n (hangs under Rosetta)" | tee -a "$out/summary.txt"
+    continue
+  fi
   if [ "$backend" = default ]; then set -- ; else set -- --backend="$backend"; fi
   if ! (cd "$d" && "$xo" build "$@" -o "$out/bin/$n" .) >"$out/log/$n.build" 2>&1; then
     echo "BUILD $n" | tee -a "$out/summary.txt"
@@ -43,5 +57,5 @@ for n in $names; do
     bad=1
   fi
 done
-echo "$(grep -c '^ok ' "$out/summary.txt") ok, $(grep -c '^FAIL ' "$out/summary.txt") failed, $(grep -c '^BUILD ' "$out/summary.txt") did not build"
+echo "$(grep -c '^ok ' "$out/summary.txt") ok, $(grep -c '^FAIL ' "$out/summary.txt") failed, $(grep -c '^BUILD ' "$out/summary.txt") did not build, $(grep -c '^skip ' "$out/summary.txt") skipped"
 exit $bad
