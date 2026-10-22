@@ -855,6 +855,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       lk.flags = lk.flags + ["-fsanitize=thread", "-mllvm", "-tsan-instrument-func-entry-exit=0"]
     }
     let lto1 = single_lto(split)
+    lk.flags = lk.flags + unroll_flags(split.opt, lctx.tgoos, if multi { split.lto } else { lto1 })
     var mode_flags = ["llvm", split.opt]
     if multi {
       mode_flags = mode_flags + ["split", split.lto]
