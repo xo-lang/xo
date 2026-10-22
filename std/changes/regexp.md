@@ -3,7 +3,7 @@
 ## 2026-10-22: perf: the parser factors common prefixes out of alternations
 
 - Kind: perf
-- Commit: this commit
+- Commit: 64973154a
 - Found by: bench/results/regexp-ascii-bitmap-inline-2026-10-22.md (three of onepass_test.go's one-pass patterns were not one-pass here; Go's parser factors `a|aa`)
 - Go reference: regexp/syntax/parse.go (maybeConcat, factor, swapVerticalBar, cleanAlt, mergeCharClass; go1.26.1)
 - Test: std/native/regexp_test.xo (11,508 alternation cases from Go), internal/llvm/testdata/golden/regexp_table, internal/stdtest corpus regexp; timing row against Go: bench/results/regexp-ascii-bitmap-inline-2026-10-22.md
