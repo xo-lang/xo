@@ -777,7 +777,8 @@ pub interface Store {
     against the function's result as a statement `return` is, and
     `break` and `continue` against an enclosing loop (`XO0607`). It takes
     only an Option on the left (`XO0406`); the Result form is below
-    (2.6). `xo vet` suggests it for the four line `match` (`XO0906`).
+    (2.6). `xo vet` suggests it for the four line `match` (`XO0906`), on
+    an Option and on a Result.
   `if let e = opt` (without `Some`) is also accepted as shorthand for
   `if let Some(e) = opt`.
 - In a function that returns `U?`, `opt?` yields the value or returns `None`:
@@ -827,7 +828,9 @@ pub interface Store {
   a value of the success type or leaves. `_` discards the error; an
   unused `e` is `XO0110` as in any match arm. The left side must be a
   Result (`XO0406`), and `r ?? default` with no arm on a Result stays
-  `XO0406`, so an error is never dropped silently.
+  `XO0406`, so an error is never dropped silently. `xo vet` suggests it
+  for `match r { Ok(v) => v  Err(e) => return w }` and the `break` and
+  `continue` forms (`XO0906`).
 - Each arm of a tail `if` or `match` is in return position, so arms may mix
   `T` values and `Err(e)`: `match x { 0 => 1  _ => Err("no") }`.
 - **Propagating.** `expr?` on a `Result[T, E2]` yields the `T` or returns the
@@ -2498,7 +2501,7 @@ test "retries after 503" {
 | `xo serve` | Resident checker on a unix socket; `xo check` and `xo query` use it automatically when it answers |
 | `xo fmt` | Canonical format, no options |
 | `xo fix [--dry-run] [--from=draft-0.N] [--edition=preview]` | Apply all machine fixes until none apply, xo.mod and xo.work lines included (`edition 2026` becomes `edition preview`, `xo 2026` becomes `xo preview`, `XO1315`); `--from` migrates code written for an older draft (interpolation, prelude variants, `let _ =` discards, scope timeouts, Map index reads) |
-| `xo vet` | Advisory checks, never errors (a directory, a `.xo` file's findings, a std directory checked as std, or `--std-module=M`; decision 0289): checker warnings plus `XO0207` (`??` precedence trap), `XO0208` (each `ignore_err` with its reason), `XO0530` (a field's large payload bound and shared, decision 0263), `XO0531` (a large parameter only stored while each caller passes its last use, decision 0263), `XO0532` (a Map value changed through a copy and stored back, `Map.update` instead; decision 0266), `XO0534` (a task capturing a value of 32 or more heap fields, core 5.1; decision 0294), `XO0703` (declared effect never performed), `XO0901` (`dbg` left in code), `XO0902` (`tls.Verify.None`, decision 0281), `XO0903` (an Fs, Net, or Proc error defaulted away by `.ok() ?? d` or `Err(_) => <empty>`; `// xo:allow XO0903 <reason>` silences one), `XO0904` (an embedded file git ignores or does not track; decision 0304), `XO1103` (use of Go packages per module), `XO0535` (`${x.debug()}` written as `${x:?}`, with the fix; decision 0296), `XO0536` (a list element copied out, changed, and stored back; decision 0294), `XO0906` (a four line `match` that `x ?? return v` writes shorter; decision 0321), `XO0538` (a closure's capture written after its creation). `--cost` (decision 0327) builds the program up to its reference counting and adds notes on costs its source does not show: `XO0907` (a loop that copies a map's entries first), `XO0908` (an element counted up and down each iteration), `XO0909` (a list updated in a loop while a holder made in the same iteration keeps it shared, so each update copies it), `XO0910` (a value over 8 words copied into a closure, or out of a collection into an Option in a loop). |
+| `xo vet` | Advisory checks, never errors (a directory, a `.xo` file's findings, a std directory checked as std, or `--std-module=M`; decision 0289): checker warnings plus `XO0207` (`??` precedence trap), `XO0208` (each `ignore_err` with its reason), `XO0530` (a field's large payload bound and shared, decision 0263), `XO0531` (a large parameter only stored while each caller passes its last use, decision 0263), `XO0532` (a Map value changed through a copy and stored back, `Map.update` instead; decision 0266), `XO0534` (a task capturing a value of 32 or more heap fields, core 5.1; decision 0294), `XO0703` (declared effect never performed), `XO0901` (`dbg` left in code), `XO0902` (`tls.Verify.None`, decision 0281), `XO0903` (an Fs, Net, or Proc error defaulted away by `.ok() ?? d` or `Err(_) => <empty>`; `// xo:allow XO0903 <reason>` silences one), `XO0904` (an embedded file git ignores or does not track; decision 0304), `XO1103` (use of Go packages per module), `XO0535` (`${x.debug()}` written as `${x:?}`, with the fix; decision 0296), `XO0536` (a list element copied out, changed, and stored back; decision 0294), `XO0906` (a four line `match` that `x ?? return v` or `r ?? e => return v` writes shorter; decision 0321), `XO0538` (a closure's capture written after its creation). `--cost` (decision 0327) builds the program up to its reference counting and adds notes on costs its source does not show: `XO0907` (a loop that copies a map's entries first), `XO0908` (an element counted up and down each iteration), `XO0909` (a list updated in a loop while a holder made in the same iteration keeps it shared, so each update copies it), `XO0910` (a value over 8 words copied into a closure, or out of a collection into an Option in a loop). |
 | `xo def`, `xo refs`, `xo type`, `xo doc NAME`, `xo symbols` | Agents' lookups on `xo lsp`'s engine (decision 0261): `def NAME`, `refs NAME`, `type FILE:LINE:COL`, `doc NAME` (a name, or a module path and name: `std/tls.client`), `symbols [DIR] [--pub]` (the directory's own declarations, private ones too); a name in any form `xo query def` takes, std and runtime modules included (decision 0289); `--dir` (a workspace root checks the modules under it); text at a terminal, `--json` or `--text` to choose; exit 0 with an answer, 1 for no match, 2 for usage |
 | `xo query <kind> ...` | Semantic queries (10.3): `type`, `def`, `callers`, `effects`, `holes`, `api`, `imports`, `deps` |
 | `xo edit <op> ...` | Semantic edits (10.4) |
@@ -2867,7 +2870,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0901` | warning | vet | `dbg(...)` left in code (core 11.4) |
 | `XO0902` | warning | vet | `tls.Verify.None`: a TLS client that checks no certificate (std.md 27, decision 0281) |
 | `XO0903` | warning | vet | the error of a filesystem, network, or process call turned into a default (`.ok() ?? d`, or `Err(_) => <empty>` with no NotFound arm), so a transient error gives a smaller answer instead of an error; `// xo:allow XO0903 <reason>` on the line or above it allows one |
-| `XO0906` | note | vet | a `match` that only unwraps an Option or leaves, which `x ?? return v` writes in one line (core 2.5, decision 0321) |
+| `XO0906` | note | vet | a `match` that only unwraps an Option or a Result or leaves, which `x ?? return v` (`r ?? e => return v`) writes in one line (core 2.5, 2.6, decision 0321) |
 | `XO0907` | note | vet --cost | a loop that copies every entry of a map before it starts (a log-mode map through a forked view, or a body the in-place walk does not take; decision 0327) |
 | `XO0908` | note | vet --cost | in a loop, an element of a collection made outside it is counted up and down each iteration (passed to a function value, which cannot borrow it; decision 0327) |
 | `XO0909` | note | vet --cost | a list update in a loop that copies the whole list every iteration: the list is also kept in the same iteration (stored, captured, or a name used after the update), so it is shared when the update runs (decision 0327) |

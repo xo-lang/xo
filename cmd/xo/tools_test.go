@@ -890,6 +890,103 @@ fn main(os: Os) {
 	}
 }
 
+// TestVetMatchExit covers XO0906 (decision 0321): the four line `match`
+// that only unwraps an Option (line 2) or a Result (lines 12 and 18) or
+// leaves gets a note whose fix writes it with `??`; a Result arm that
+// does not leave (line 24) and a three arm match (line 28) do not.
+func TestVetMatchExit(t *testing.T) {
+	t.Parallel()
+	src := `fn first(xs: List[Int]) -> Int {
+  let x = match xs.first() {
+    Some(v) => v
+    None => return 0
+  }
+  x
+}
+
+fn total(ss: List[Str]) -> Int ! Str {
+  var sum = 0
+  for s in ss {
+    let n = match num(s) {
+      Ok(v) => v
+      Err(_) => continue
+    }
+    sum += n
+  }
+  let m = match num("7") {
+    Ok(v) => v
+    Err(e) => {
+      return Err("bad ${e:?}")
+    }
+  }
+  let d = match num("8") {
+    Ok(v) => v
+    Err(_) => 0
+  }
+  let k = match num("9") {
+    Ok(v) => v
+    Err(_) if sum > 0 => return Err("guarded")
+    Err(_) => return Err("unguarded")
+  }
+  Ok(sum + m + d + k)
+}
+
+fn main(os: Os) {
+  os.stdio.println("${first([1])} ${total(["1"]) ?? _ => 0}")
+}
+
+fn num(s: Str) -> Int ! Str {
+  if s.is_empty() {
+    return Err("empty")
+  }
+  s.len()
+}
+`
+	dir := writeFiles(t, map[string]string{"main.xo": src})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"vet", "--json", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	var res struct {
+		Diagnostics []struct {
+			Code string `json:"code"`
+			Span struct {
+				Line int `json:"line"`
+			} `json:"span"`
+			Fixes []struct {
+				Edits []struct {
+					Replace string `json:"replace"`
+				} `json:"edits"`
+			} `json:"fixes"`
+		} `json:"diagnostics"`
+		CheckErrors int `json:"check_errors"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &res); err != nil {
+		t.Fatalf("bad JSON: %v\n%s", err, out.String())
+	}
+	if res.CheckErrors != 0 {
+		t.Fatalf("check errors: %d\n%s", res.CheckErrors, out.String())
+	}
+	var got []string
+	for _, d := range res.Diagnostics {
+		if d.Code != "XO0906" {
+			continue
+		}
+		if len(d.Fixes) != 1 || len(d.Fixes[0].Edits) != 1 {
+			t.Fatalf("fixes: %+v", d.Fixes)
+		}
+		got = append(got, fmt.Sprintf("%d %s", d.Span.Line, d.Fixes[0].Edits[0].Replace))
+	}
+	want := []string{
+		"2 xs.first() ?? return 0",
+		"12 num(s) ?? _ => continue",
+		`18 num("7") ?? e => return Err("bad ${e:?}")`,
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("XO0906:\n%s\nwant:\n%s\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"), out.String())
+	}
+}
+
 // TestVetDebugInterp covers XO0535 (decision 0296): `${xs.debug()}` gets
 // a note whose fix writes `:?` (line 8), while `${xs:?}` itself and a
 // type's own debug method do not.

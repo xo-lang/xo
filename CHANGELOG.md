@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo vet`'s `XO0906` also notes the four line Result `match`
+  (`Ok(v) => v` and `Err(e) => return w`, `break`, or `continue`), with
+  the fix `r ?? e => return w` (`Err(_)` gives `_ =>`; decision 0321).
+
 - A code generator failure names the Xo source: the native emitters'
   internal errors and amd64 template failures, the LLVM emitter's
   unsupported constructs, a clang error on the generated IR (mapped from

@@ -110,6 +110,10 @@ continue }`), which is the pattern repeated most in a loop body and in
   in place of `e` discards the error (an unused `e` is `XO0110`, as in a
   match arm). Tests: errorcheck coalesce_result, golden coalesce_result
   (go, arm64, LLVM), a format test.
+- 2026-10-22: `XO0906` also covers the Result form: `match r { Ok(v) => v
+  Err(e) => return w }` (or `break`, `continue`; `Err(_)` gives `_ =>`)
+  gets the fix `r ?? e => return w`, when the subject's type is a Result
+  (vet.xo match_exit, cmd/xo TestVetMatchExit).
 
 ## Alternatives
 
