@@ -1,7 +1,8 @@
 // `xo vet --cost` (decision 0327): notes on what the compiled program
 // does that its source does not show, found in the SSA after insert_rc
 // (before inlining): a loop that copies a collection's entries first
-// (XO0907), an element counted up and down every iteration (XO0908). Notes only, never errors; the driver turns them into vet's
+// (XO0907), an element counted up and down every iteration (XO0908), a
+// value over 8 words captured or wrapped inline (XO0910). Notes only, never errors; the driver turns them into vet's
 // findings (compiler/xo vetcost.xo).
 
 /// A cost note at a source position of function fn_name.
@@ -20,6 +21,7 @@ pub struct CostNote {
 /// matches), each at keep's name of its file.
 pub fn cost_notes(m: Module, keep: List[Str]) -> List[CostNote] {
   var out: List[CostNote] = []
+  var nwords: Map[Int, Int] = {}
   for f in m.funcs {
     if f.blocks.is_empty() || f.file.is_empty() {
       continue
@@ -34,7 +36,7 @@ pub fn cost_notes(m: Module, keep: List[Str]) -> List[CostNote] {
       continue
     }
     let inloop = loop_blocks(f)
-    for n in copy_feeds_loop(f, inloop) + elem_count_per_iter(f, inloop) {
+    for n in copy_feeds_loop(f, inloop) + elem_count_per_iter(f, inloop) + large_copies(m, f, inloop, nwords) {
       var n2 = n
       n2.file = file
       out.push(n2)
@@ -254,4 +256,127 @@ fn elem_of_outside(f: Func, x0: Int, inloop: List[Bool]) -> Bool {
   }
   let b = f.values[x].block
   f.values[x].op == Op.Param || b < 0 || !inloop[b]
+}
+
+/// The values over this many words (a cache line) are noted when a
+/// closure captures one or an Option or enum value holds one (XO0910).
+const LARGE_WORDS = 8
+
+/// The words of a value of type t (compiler/arm64 gen.xo layout, as
+/// chainpads.xo's Rc.words), memoized in nw.
+fn type_words(m: Module, var nw: Map[Int, Int], t: Int, depth: Int) -> Int {
+  if t < 0 || t >= m.types.len() || depth > 64 {
+    return 0
+  }
+  if let Some(n) = nw.get(t) {
+    return n
+  }
+  let x = m.types[t]
+  var n = match x.kind {
+    Unit | Cap | Struct | Tuple | Enum => 0
+    Str | Func => 2
+    Int | Float | Bool | List | Box | Handle | Bad => 1
+  }
+  if x.kind == Kind.Struct {
+    for fd in x.fields {
+      n += type_words(m, nw, fd.ty, depth + 1)
+    }
+  } else if x.kind == Kind.Tuple {
+    for e in x.elems {
+      n += type_words(m, nw, e, depth + 1)
+    }
+  } else if x.kind == Kind.Enum {
+    var w = 0
+    for vt in x.variants {
+      var k = 0
+      for fd in vt.fields {
+        k += type_words(m, nw, fd.ty, depth + 1)
+      }
+      w = w.max(k)
+    }
+    n = 1 + w
+  }
+  nw[t] = n
+  n
+}
+
+/// XO0910: a value over LARGE_WORDS words that the program copies where
+/// the source shows no copy: captured by a closure (copied into its
+/// environment when the closure is made, each heap field shared), or an
+/// element of a list read in a loop wrapped whole in an Option or enum
+/// value (`return Some(x)` in a search: copied out of the
+/// collection, each heap field shared). Options made from a value built
+/// in place (a constructor, a returned record) are not noted: there is
+/// nothing to copy from.
+fn large_copies(m: Module, f: Func, inloop: List[Bool], var nw: Map[Int, Int]) -> List[CostNote] {
+  var out: List[CostNote] = []
+  var seen: Map[Int, Bool] = {}
+  for bl in f.blocks {
+    for v in bl.instrs {
+      let x = f.values[v]
+      let line = x.line / 4096
+      if line <= 0 || seen.contains(line) {
+        continue
+      }
+      var msg = ""
+      if x.op == Op.Closure && aux_name(x.aux).starts_with("${f.name}.fn") {
+        for a in x.args {
+          let t = f.values[a].ty
+          let n = type_words(m, nw, t, 0)
+          if n > LARGE_WORDS && msg.is_empty() {
+            msg = "the closure copies a `${type_label(m, t)}` (${n} words) into its environment when it is made, sharing each of its heap fields; bind the fields the body reads first and capture those"
+          }
+        }
+      } else if x.op == Op.Variant && x.args.len() == 1 && list_elem_in_loop(f, x.args[0], inloop) {
+        let n = type_words(m, nw, f.values[x.args[0]].ty, 0)
+        if n > LARGE_WORDS {
+          msg = "this `${type_label(m, x.ty)}` holds ${n} words inline: making it copies them and shares each heap field of the payload, and every copy of it does again; return or keep what the caller needs (an index, a field) instead"
+        }
+      }
+      if msg.is_empty() {
+        continue
+      }
+      seen[line] = true
+      out.push(CostNote{code: "XO0910", fn_name: f.name, file: f.file, line: line, col: x.line % 4096, msg: msg})
+    }
+  }
+  out
+}
+
+/// Whether x is an element of a list read in a loop: a list.index (through
+/// fields) in a loop block whose list, through fields, is a parameter or
+/// is made outside the loop, and is not itself an element (a map's
+/// directory chunk: a lookup builds its Option in place).
+fn list_elem_in_loop(f: Func, x0: Int, inloop: List[Bool]) -> Bool {
+  let x = below_fields(f, x0)
+  if x < 0 || x >= f.values.len() {
+    return false
+  }
+  let v = f.values[x]
+  if v.op != Op.Call || aux_name(v.aux) != "list.index" || v.args.is_empty() || v.block < 0 || !inloop[v.block] {
+    return false
+  }
+  let l = below_fields(f, v.args[0])
+  if l < 0 || l >= f.values.len() {
+    return false
+  }
+  let lv = f.values[l]
+  if lv.op == Op.Call && aux_name(lv.aux) == "list.index" {
+    return false
+  }
+  lv.op == Op.Param || lv.block < 0 || !inloop[lv.block]
+}
+
+/// The value x is a field (or a field of a field) of, or x.
+fn below_fields(f: Func, x0: Int) -> Int {
+  var x = x0
+  while x >= 0 && x < f.values.len() && f.values[x].op == Op.Field {
+    x = f.values[x].args[0]
+  }
+  x
+}
+
+/// The name of type t as notes show it.
+fn type_label(m: Module, t: Int) -> Str {
+  m.types[t].name
 }

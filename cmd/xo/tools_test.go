@@ -1568,3 +1568,85 @@ func TestVetCostElemCount(t *testing.T) {
 		t.Errorf("XO0908 at lines %v, want [3]\n%s", lines, out.String())
 	}
 }
+
+// vetCostLargeProg: a closure capturing a 9-word struct (XO0910, line 14)
+// and an Option holding one (line 25); a closure capturing one field of
+// it and an Option of its index are not noted.
+const vetCostLargeProg = `struct Big {
+  a: Int
+  b: Int
+  c: Int
+  d: Int
+  e: Int
+  f: Int
+  g: Int
+  h: Int
+  i: Int
+}
+
+fn adder(big: Big) -> fn(Int) -> Int {
+  fn(k: Int) -> Int { big.a + k }
+}
+
+fn adder_field(big: Big) -> fn(Int) -> Int {
+  let a = big.a
+  fn(k: Int) -> Int { a + k }
+}
+
+fn find(xs: List[Big], n: Int) -> Big? {
+  for x in xs {
+    if x.a == n {
+      return Some(x)
+    }
+  }
+  None
+}
+
+fn find_index(xs: List[Big], n: Int) -> Int? {
+  for (i, x) in xs.indexed() {
+    if x.a == n {
+      return Some(i)
+    }
+  }
+  None
+}
+
+fn main(os: Os) {
+  let big = Big{a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8, i: 9}
+  let found = find([big], 1)
+  let at = find_index([big], 1)
+  os.stdio.println("${adder(big)(1)} ${adder_field(big)(2)} ${found.is_some()} ${at.is_some()}")
+}
+`
+
+// TestVetCostLarge: `xo vet --cost` notes a closure capturing a value
+// over 8 words and an Option holding one inline (XO0910), and not their
+// fixed forms.
+func TestVetCostLarge(t *testing.T) {
+	t.Parallel()
+	dir := writeFiles(t, map[string]string{"main.xo": vetCostLargeProg})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"vet", "--json", "--cost", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	var res struct {
+		Diagnostics []struct {
+			Code string `json:"code"`
+			Span struct {
+				Line int `json:"line"`
+			} `json:"span"`
+		} `json:"diagnostics"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &res); err != nil {
+		t.Fatalf("bad JSON: %v\n%s", err, out.String())
+	}
+	var lines []int
+	for _, d := range res.Diagnostics {
+		if d.Code == "XO0910" {
+			lines = append(lines, d.Span.Line)
+		}
+	}
+	if len(lines) != 2 || lines[0] != 14 || lines[1] != 25 {
+		t.Errorf("XO0910 at lines %v, want [14 25]\n%s", lines, out.String())
+	}
+}

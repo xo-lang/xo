@@ -1,8 +1,8 @@
 # 0327: `xo vet --cost`, notes on costs the source does not show
 
 Status: Accepted (owner, 2026-10-21, from the agents' language poll; design
-reviewed by the lead). Implemented: XO0907 (stage 1), XO0908. XO0909 and
-XO0910 claimed, to follow.
+reviewed by the lead). Implemented: XO0907 (stage 1), XO0908, XO0910.
+XO0909 claimed, to follow (Xo Lang 3).
 
 ## Context
 
@@ -42,8 +42,19 @@ Notes (spec section 10), each about a loop unless said:
 - XO0909 (to do): a copy on write that can copy every iteration (a Reuse
   of a loop-carried list uniq cannot prove unique, naming the other
   holder).
-- XO0910 (to do): a value over 8 words held inline (an Option or record
-  of an interface) or copied whole into a closure.
+- XO0910: a value over 8 words (compiler/arm64 layout) copied where the
+  source shows no copy: a capture of a closure literal (anywhere: made
+  once per call, each heap field shared), or a Variant (`Some(x)`) whose
+  payload is an element read in a loop (a list.index in a loop block of
+  a list that is a parameter or made outside the loop, not a map's
+  directory chunk); the Variant itself may be in the loop's exit block
+  (`return Some(x)` in a search). The first version noted any Option or
+  enum value over 8 words: 11 notes over compiler/xo, most Options built
+  in place (a constructor, a returned record) with nothing to copy from.
+  The shipped rule gives 6 there (4 closure captures: ssa.Module 73
+  words, Opts 88, ParsedIR 25, TestOpts 17; 2 values copied out of a map
+  in a loop, test.xo) and 1 in the CRUD server (a 9-word UserPatch
+  captured by the Mutex.with closure).
 
 ## Consequences
 
