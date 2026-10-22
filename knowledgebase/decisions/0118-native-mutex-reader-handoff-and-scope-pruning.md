@@ -100,3 +100,76 @@ server.
 - **Moving half a list when it grows past a limit**: tried first; the
   walk to split the list plus the lock made `spawn` 30 and `fanout` 43
   percent slower, magazines 15 and 24.
+
+## Addendum 2026-10-22: a release yields to the writer it wakes
+
+Status: Implemented (owner, 2026-10-22: ship as the default). Writer
+preference and spec/std.md 2.7 are unchanged. Code: std/native/llrt
+mutex.xo `wake` (returns whether to yield), `unlock_body`, `reader_out`,
+`M_READ`; pool.xo `mutex_yield`, `yield_now`, `run_item` (W_ASYNC 2),
+`DLK_MNOYIELD`; poolsetup.xo `XO_MUTEX_YIELD`.
+
+Context. The CRUD server (bench/perf/http) parked a task on its store
+Mutex about 0.9 times per request, on 1 core as on 6 (XO_RTSTATS
+sig_mutex), with or without the list endpoint's long read. A release woke
+the next waiting writer into the ring (decision 0082's `mutex_signal`).
+Until that writer ran, the Mutex was free, yet the waiting writer kept the
+writer bit set, so every reader that arrived parked behind it. Each park
+needs a wake, and the pattern fed itself: about one park per operation. A
+micro test (512 tasks on 4 threads, 1 write to 3 reads, tiny sections)
+parked 102k times for 102k operations, and none on 1 thread. The Go
+backend had the same convoy on 2026-10-08
+(gotchas/lock-convoy-runnext-wake.md) and fixed it with
+`runtime.Gosched()` after the wake.
+
+Decision. A release that wakes a writer (a writer's unlock, or the last
+reader's) puts it in the worker's next and yields the releasing fiber to
+the back of the worker's own ring (run_item, W_ASYNC 2), so the woken
+writer runs at once on this thread and the releaser right after this
+worker's queued work. Only on a Mutex that `with_read` has taken (M_READ):
+the convoy is readers queued behind a woken writer, and on a writers only
+Mutex the yield bought nothing and cost a task switch per release. Not
+with one CPU (the pool's P_NCPU), where the yield only delays the
+releaser. `XO_MUTEX_YIELD=0` turns it off. Reader grants (grant_readers)
+are unchanged.
+
+Numbers. CRUD linux/arm64 in Docker, interleaved, quiet windows; old
+release against this one:
+| cores | rps | CPU us/req | p99 ms |
+|---|---|---|---|
+| 1 | 101.0k to 103.1k (no yield with one CPU) | 12.8 to 12.6 | 23.3 to 22.2 |
+| 3 | 88.6k to 190.8k (2.15x) | 24.9 to 17.0 | 53.8 to 15.6 |
+| 6 | 70.5k to 136.0k (1.93x) | 37.5 to 27.1 | 65.7 to 27.0 |
+(3 and 6 cores: 2 reps, agents/myq4-cmd.log; 1 core: 4 reps of the same
+rule, agents/myq-cmd.log. The first form, yielding to the inject queue's
+tail on every Mutex, gave 203.9k and 161.8k at 3 and 6 cores, but
+bench/perf/conc mutex 3.4x and rwmutex 3.7x the CPU.)
+
+bench/perf/conc on the Mac (3 interleaved rounds, agents/myq4-cmd.log,
+myq5-cmd.log): mutex CPU 21.0 to 21.1 ms before, 20.5 to 21.5 after
+(unchanged); spawn unchanged; rwmutex, a loop of tasks that only lock and
+read, wall 41.8 to 44.5 ms before, 51.6 to 53.8 after (+19 to 24%), CPU
+109 to 120 ms before, 140 to 157 after (+19 to 28%). This is the known
+cost: the next experiment yields only when a reader actually parked
+behind the signaled writer.
+
+Writer starvation (8 readers re-entering with_read with no gap, about 35
+us each, one writer timing 200 `with` waits; Mac, 4 and 8 threads, 3 runs
+each): before p50 35 to 41 us, max 50 to 180 us; with the yield p50 0 to
+35 us, max 45 to 81 us. Writer preference holds as before.
+
+Cost when uncontended: no waiter, no yield (1 thread: no parks and the
+same time either way, 0.023 to 0.035 s for 25.6k operations).
+
+Alternatives measured (not pushed):
+- Readers pass a waiting writer while no writer holds the Mutex, bounded
+  at 1 ms of the oldest writer's wait (Go's starvation bound): parks -97%
+  on the micro test, CRUD 1.45x and 1.49x at 3 and 6 cores, but a spec
+  change (std.md 2.7), and under a continuous read stream the writer then
+  waited its full 1 ms every time (p50 1020 us).
+- Hand the Mutex to the woken writer at the release (owned, never free):
+  no gain, since readers still queue behind the writer's wake (CRUD 0.96x
+  at 6 cores).
+- Spin before parking (Go's active spin): it never spun, because Go's
+  canSpin rule refuses whenever the worker has queued work, which with
+  many tasks is always; no gain.

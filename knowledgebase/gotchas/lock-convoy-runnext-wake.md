@@ -36,3 +36,18 @@ Fix there: `mutex_signal` puts the woken waiter in the ring, where a
 spinning worker takes it (p99 900 to 800 us on bench/perf/http, decision
 0082). Channel and task wake ups keep `next` (ping pong hands over on one
 thread).
+
+Update 2026-10-22 (Observed, native backends): the ring did not end the
+convoy for writers. A release woke the next waiting writer into the ring;
+until it ran, the Mutex was free, yet the waiting writer kept readers
+out, so every arriving reader parked (CRUD: about 0.9 Mutex parks per
+request on 1 core as on 6; a micro test, one park per operation on 4
+threads and none on 1). Spinning never helped (Go's spin rule refuses
+while the worker has queued work), and handing the Mutex to the woken
+writer did not either (readers still queue behind its wake). Fix: the
+release puts the woken writer in next and yields to the back of its own
+ring, the native form of the Gosched fix above, only on a Mutex that
+with_read has taken (decision 0118's 2026-10-22 addendum: CRUD 2.15x and
+1.93x at 3 and 6 cores). To find it: XO_RTSTATS=1 sig_mutex per request
+near 1 at any core count, and an execution trace (XO_TRACE) whose parks
+by reason are mostly `mutex`.
