@@ -1413,7 +1413,7 @@ Last verified: 2026-10-07
   innermost loop tops), `fall=1`, `off=K`, `outer=1`. Unset is the
   default placement; a bad value fails the build. The build directory is
   keyed by the program, not the layout: copy `prog-darwin.s` (kept
-  with `XO_KEEP_ASM=1`, or written anywhere with `--asm-path=FILE`)
+  with `XO_KEEP_ASM=1`, or written anywhere with `--asm=FILE`)
   before the next build.
 - Instruction level profiles on macOS (Xcode 16 `xctrace`, no root;
   Last verified: 2026-10-08). Make the program run for seconds first
@@ -1633,6 +1633,38 @@ the golden programs. Since 2026-10-19 (owner approved, Xo lang 4):
   `xo dev goldens --backend=go` reads want_go.txt the same way
   (compiler/cli/dev/goldens.xo, 2026-10-21).
 - **TestGoldenSplit**: no LTO, ThinLTO too for shortGoldens only.
+- **A gate's goldens** (owner, 2026-10-22: the whole package cost 46 to
+  56 minutes a gate): scripts/gate.sh's llvm step runs TestGolden,
+  TestGoldenSplit, TestGoldenGoParity and TestDebugInfoSameOutputLLVM
+  only for the golden programs the change touches, named in `XO_LLVM_GOLDENS` (comma separated; `none`
+  for no golden; unset runs every one; the o2Goldens sample joins any
+  selection). A golden is touched when its directory changed or its LLVM
+  IR did: TestGoldenIRManifest (`XO_LLVM_IR_MANIFEST=FILE`) emits every
+  golden's IR with TestGolden's options and a clang that fails at once
+  (`--asm=FILE`, about a second a golden), replaces the repository's path,
+  and writes each golden's SHA-256; the step makes it with the branch's xo
+  and with the merge base's (built in a worktree of its own, the branch's
+  manifest test copied in; kept by commit in `$XO_LLVM_IR_CACHE`, default
+  `<user cache>/xo/llvm-ir`) and compares them. Every golden runs for
+  `XO_GATE_LLVM=all`, a change to internal/llvm's tests, internal/xotool,
+  compiler/xo (what builds and links them past the IR) or compiler/llvm
+  debug.xo (the --debug-info IR), or a manifest that could not be made; the log line says which and how many
+  (`llvm goldens: N of T goldens, ...`). The package's other tests (the
+  diff tests, TestLeakCheck, TestGoldenTasks and TestGoldenASan, which
+  build with runtimes of their own, ...) run as before. The IR is hashed
+  without the lines and columns of std files and of the debug metadata
+  (normalizeIR): a golden's output names only its own main.xo's
+  positions, and a function added to the prelude moves every program's
+  std lines (Str.clone, 44099405f: 300 of 300 goldens before, 1 of
+  300 after: views_clone, the golden it added). Measured 2026-10-22 on
+  the Mac under load (gate class, each manifest about 100 s): the whole
+  package 4,158 s; 44099405f (std) 1 of 300 goldens, 2,092 s;
+  177602f83 (compiler/llvm and ssa, ML-KEM's NEON) 41 of 299, 3,044 s;
+  a deliberate break of base64 encode 4 of 300 (base64_basic,
+  crypto_keys, websocket, websocket_tls), and TestGolden, TestGoldenSplit
+  and TestGoldenTasks failed on base64_basic, crypto_keys and websocket.
+  The rest of the step's time is the package's other tests.
+  Last verified: 2026-10-22.
 - **TestDebugInfoSameOutputLLVM**: o2Goldens as --release with and without
   --debug-info; the rest -s against a plain -O1 build (TestGolden's,
   from the cache).

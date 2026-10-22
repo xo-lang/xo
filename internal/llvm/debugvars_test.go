@@ -94,6 +94,7 @@ func TestDebugInfoSameOutputLLVM(t *testing.T) {
 	for _, dir := range dirs {
 		dir := dir
 		t.Run(filepath.Base(dir), func(t *testing.T) {
+			skipUnselected(t, dir)
 			t.Parallel()
 			var runs [2]runResult
 			// release builds (-O2, decision 0220) without and with

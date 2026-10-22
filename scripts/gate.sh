@@ -13,7 +13,10 @@
 #            the branch changes is native backend only (owner,
 #            2026-10-18; see native_only below); XO_GATE_LLVM=1 runs it;
 #            with TestGoldenGoParity (XO_TEST_GO_PARITY=1) when the
-#            branch changes compiler/gen or std/rt (go_backend)
+#            branch changes compiler/gen or std/rt (go_backend). Its
+#            golden programs are only those the change touches (owner,
+#            2026-10-22; llvm_goldens below): XO_GATE_LLVM=all runs
+#            every one
 #   cmd      the full tests of cmd/xo
 #   gen      the full tests of internal/gen
 #   alloff   internal/arm64's goldens with every optional pass off
@@ -77,6 +80,65 @@ go_backend() {
   base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
   { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | grep -q -E '^(compiler/gen/|std/rt/)'
 }
+# llvm_goldens: the golden programs the llvm step runs (owner,
+# 2026-10-22: the whole package cost 46 to 56 minutes a gate), "all" or
+# XO_LLVM_GOLDENS's list (internal/llvm golden_select_test.go): those
+# whose LLVM IR differs between this xo and the merge base's
+# (TestGoldenIRManifest: every golden's IR, no clang, hashed) or whose
+# directory the branch changes; "none" when no golden did (the package's
+# other tests still run; TestGoldenTasks and TestGoldenASan build with
+# runtimes of their own and run every golden). Every golden for
+# XO_GATE_LLVM=all, for a change to what builds or runs them past the IR
+# (internal/llvm's tests, internal/xotool, compiler/xo: clang's flags, the
+# link, the split; compiler/llvm debug.xo: TestDebugInfoSameOutputLLVM's
+# --debug-info IR), and
+# when a manifest cannot be made. The merge base's manifest is made once
+# (its xo built in a worktree of its own) and kept in
+# $XO_LLVM_IR_CACHE (default <user cache>/xo/llvm-ir) by commit and
+# manifest code. Writes
+# a line for the log to $logs/llvm-select.txt.
+llvm_goldens() {
+  sel_note="$logs/llvm-select.txt"
+  if [ "${XO_GATE_LLVM:-}" = all ]; then
+    echo "every golden (XO_GATE_LLVM=all)" >"$sel_note"; echo all; return
+  fi
+  base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
+  files=$(git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-)
+  if echo "$files" | grep -q -E '^(internal/llvm/[^/]+$|internal/xotool/|compiler/xo/|compiler/llvm/debug\.xo)'; then
+    echo "every golden (the change touches internal/llvm's tests, internal/xotool, compiler/xo or the LLVM debug information)" >"$sel_note"; echo all; return
+  fi
+  if [ "$(uname)" = Darwin ]; then ucache=$HOME/Library/Caches; else ucache=${XDG_CACHE_HOME:-$HOME/.cache}; fi
+  cache=${XO_LLVM_IR_CACHE:-$ucache/xo/llvm-ir}
+  mkdir -p "$cache"
+  # by commit and by the manifest code (its normalization) that made it
+  bm="$cache/$(git rev-parse "$base")-$(git hash-object internal/llvm/golden_select_test.go | cut -c1-12).txt"
+  if [ ! -s "$bm" ]; then
+    pw=$(mktemp -d "${TMPDIR:-/tmp}/xo-gate-ir.XXXXXX")
+    # the branch's manifest test in the base's tree: both sides hashed
+    # by the same code (a base older than the test has none)
+    if git worktree add -q --detach "$pw/tree" "$base" >"$logs/llvm-ir-base.txt" 2>&1 &&
+      cp internal/llvm/golden_select_test.go "$pw/tree/internal/llvm/" &&
+      (cd "$pw/tree" && go run ./scripts/xobuild) >>"$logs/llvm-ir-base.txt" 2>&1 &&
+      (cd "$pw/tree" && XO_CLI=$pw/tree/bin/xo XO_LLVM_IR_MANIFEST="$bm.tmp$$" go test -count=1 -timeout 60m -parallel 4 -run '^TestGoldenIRManifest$' ./internal/llvm) >>"$logs/llvm-ir-base.txt" 2>&1; then
+      mv "$bm.tmp$$" "$bm"
+    fi
+    rm -f "$bm.tmp$$"
+    git worktree remove --force "$pw/tree" >/dev/null 2>&1
+    rm -rf "${pw:?}"
+  fi
+  nm="$logs/llvm-ir.txt"
+  rm -f "$nm"
+  if [ ! -s "$bm" ] || ! XO_LLVM_IR_MANIFEST=$nm go test -count=1 -timeout 60m -parallel 4 -run '^TestGoldenIRManifest$' ./internal/llvm >"$logs/llvm-ir-head.txt" 2>&1 || [ ! -s "$nm" ]; then
+    echo "every golden (no IR manifest: $logs/llvm-ir-base.txt, $logs/llvm-ir-head.txt)" >"$sel_note"; echo all; return
+  fi
+  names=$( { comm -3 "$bm" "$nm" | awk '{print $1}'; echo "$files" | sed -n 's|^internal/llvm/testdata/golden/\([^/]*\)/.*|\1|p'; } | sort -u | grep . )
+  total=$(wc -l <"$nm" | tr -d ' ')
+  if [ -z "$names" ]; then
+    echo "0 of $total goldens (no golden's IR or directory changed)" >"$sel_note"; echo none; return
+  fi
+  echo "$(echo "$names" | wc -l | tr -d ' ') of $total goldens, and the -O2 sample: $(echo "$names" | paste -sd' ' -)" >"$sel_note"
+  echo "$names" | paste -sd, -
+}
 for step in "$@"; do
   case $step in
   short)
@@ -86,12 +148,18 @@ for step in "$@"; do
     echo "short fails: $k" ;;
   arm64) full arm64 ./internal/arm64 ;;
   llvm)
-    if [ "${XO_GATE_LLVM:-}" != 1 ] && native_only; then
+    if [ -z "${XO_GATE_LLVM:-}" ] && native_only; then
       echo "llvm: skipped (native backend only change; XO_GATE_LLVM=1 runs it)"
-    elif go_backend; then
-      XO_TEST_GO_PARITY=1 full llvm ./internal/llvm
     else
-      full llvm ./internal/llvm
+      sel=$(llvm_goldens)
+      echo "llvm goldens: $(cat "$logs/llvm-select.txt")"
+      if [ "$sel" = all ]; then unset XO_LLVM_GOLDENS; else export XO_LLVM_GOLDENS=$sel; fi
+      if go_backend; then
+        XO_TEST_GO_PARITY=1 full llvm ./internal/llvm
+      else
+        full llvm ./internal/llvm
+      fi
+      unset XO_LLVM_GOLDENS
     fi ;;
   cmd) full cmd ./cmd/xo ;;
   gen) full gen ./internal/gen ;;

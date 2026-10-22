@@ -19,6 +19,6 @@ cc (or clang for windows/amd64) assembling, which takes the parts' files
 when there are parts and the whole file otherwise, and a cross build
 that stops at its assembly (it prints the path). cc's files are removed
 after the link. `XO_KEEP_ASM=1` writes and keeps them all;
-`--asm-path=FILE` and `xo asm` give the text anywhere. Directories made
+`--asm=FILE` and `xo asm` give the text anywhere. Directories made
 before the fix still hold their files until the cache prune removes
 them.

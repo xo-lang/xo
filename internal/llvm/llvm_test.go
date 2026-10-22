@@ -273,6 +273,7 @@ func TestGolden(t *testing.T) {
 			if testing.Short() && !shortGoldens[filepath.Base(dir)] {
 				t.Skip("builds every golden program twice: -short runs shortGoldens")
 			}
+			skipUnselected(t, dir)
 			t.Parallel()
 			llRes, b := buildRun(t, dir, xotool.Options{Backend: xotool.BackendLLVM, Env: goldenEnv(dir)})
 			if llRes.exit == 0 {
@@ -327,6 +328,7 @@ func TestGoldenGoParity(t *testing.T) {
 	for _, dir := range dirs {
 		dir := dir
 		t.Run(filepath.Base(dir), func(t *testing.T) {
+			skipUnselected(t, dir)
 			t.Parallel()
 			res := buildAndRun(t, dir, xotool.Options{Backend: xotool.BackendGo})
 			name := "want_go.txt"
@@ -372,6 +374,7 @@ func TestGoldenSplit(t *testing.T) {
 			if testing.Short() && !shortGoldens[filepath.Base(dir)] {
 				t.Skip("builds every golden program: -short runs shortGoldens")
 			}
+			skipUnselected(t, dir)
 			t.Parallel()
 			res, b := buildRun(t, dir, xotool.Options{Backend: xotool.BackendLLVM, Env: []string{"XO_LLVM_SPLIT=3", "XO_LLVM_JOBS=3", "XO_LLVM_LTO=" + lto, goldenOpt(dir)}})
 			want, err := os.ReadFile(filepath.Join(dir, "want.txt"))

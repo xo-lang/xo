@@ -114,7 +114,7 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   different modules do not conflict there; the -short `TestStdGenCurrent`
   fails until it is run. Never edit those files by hand, and resolve a
   conflict in one by regenerating.
-- `scripts/gate.sh WORKTREE STEP...`: an agent's gate as named steps.
+- `scripts/gate.sh WORKTREE STEP...`: an agent's gate as named steps (its llvm step runs only the LLVM goldens the change touches, toolchain.md "A gate's goldens").
 - `scripts/bisect.sh [--pkg=PKG] [--timeout=D] [--keep] [--skip-verify]
   TEST GOOD BAD`:
   the first commit between GOOD (passes) and BAD (fails) where TEST
