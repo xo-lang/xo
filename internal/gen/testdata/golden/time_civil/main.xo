@@ -52,6 +52,16 @@ fn main(os: Os) {
   at(os, d(2026, 3, 29), clock(2, 15), berlin, time.Ambiguity.Earlier)
   at(os, d(2026, 10, 25), clock(2, 15), berlin, time.Ambiguity.Reject)
   at(os, d(2026, 10, 25), clock(2, 15), berlin, time.Ambiguity.Later)
+  // Earlier is never after Later, in a gap or an overlap, with whole hour
+  // and 30 minute changes (Lord Howe), in both hemispheres
+  let sydney = time.zone("Australia/Sydney").or_fault("sydney")
+  let howe = time.zone("Australia/Lord_Howe").or_fault("howe")
+  os.stdio.println("order")
+  for (name, z, y, m, day, h, mi) in [("ny gap", ny, 2026, 3, 8, 2, 30), ("ny overlap", ny, 2026, 11, 1, 1, 30), ("berlin gap", berlin, 2026, 3, 29, 2, 15), ("berlin overlap", berlin, 2026, 10, 25, 2, 15), ("sydney gap", sydney, 2026, 10, 4, 2, 30), ("sydney overlap", sydney, 2026, 4, 5, 2, 30), ("howe gap", howe, 2026, 10, 4, 2, 15), ("howe overlap", howe, 2026, 4, 5, 1, 45)] {
+    let e = time.instant(d(y, m, day), clock(h, mi), z, time.Ambiguity.Earlier).or_fault("earlier")
+    let l = time.instant(d(y, m, day), clock(h, mi), z, time.Ambiguity.Later).or_fault("later")
+    os.stdio.println("  ${name}: ${time.format(e, z, "{hour}:{minute} {zone}")} ${time.format(l, z, "{hour}:{minute} {zone}")} ${e <= l} ${l - e}")
+  }
   // ordinary times are unique, so the rule does not matter
   os.stdio.println("unique")
   at(os, d(2026, 7, 4), clock(12, 0), ny, time.Ambiguity.Reject)

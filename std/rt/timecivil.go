@@ -174,9 +174,9 @@ func civilInstant(local int64, z Time_Zone) (early, late int64, kind int) {
 	case okA:
 		return ta, ta, 0
 	}
-	// a gap: Earlier uses the offset before the change, Later the one
-	// after (std.md 13.2)
-	return tb, ta, 2
+	// a gap: Earlier is the earlier instant (the offset after the change
+	// applied), Later the later one (std.md 13.2)
+	return min(tb, ta), max(tb, ta), 2
 }
 
 // Time_instant is `time.instant(date, time, z, ambiguity)`.

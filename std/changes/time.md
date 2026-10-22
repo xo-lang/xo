@@ -1,5 +1,23 @@
 # std/time changes
 
+## 2026-10-22: fix: Earlier and Later in a daylight saving gap were swapped
+
+- Kind: fix
+- Commit: this commit
+- Found by: a field report (02:30 on 2026-03-08 in New York gave Earlier 03:30 EDT and Later 01:30 EST, so Earlier was after Later)
+- Go reference: none (Go's time.Date picks one instant and documents no choice); Temporal's `disambiguation: "earlier"` and `"later"`
+- Test: internal/gen/testdata/golden/time_civil ("order": gaps and overlaps in New York, Berlin, Sydney and Lord Howe's 30 minute change, Earlier never after Later, and the distance between the two), internal/llvm/testdata/golden/tz_table (arm64, LLVM, and the Go backend agree)
+
+`instant` with `Ambiguity.Earlier` in a spring forward gap used the offset
+before the change, which gives the later instant, and `Later` the offset after
+it. The overlap case was right. Both now give the earlier and the later
+instant: 02:30 on 2026-03-08 in New York is 01:30 EST with `Earlier` and 03:30
+EDT with `Later`; in Lord Howe's gap (02:00 to 02:30) 02:15 is 01:45 and 02:45.
+spec/std.md 13.2 said the offset before and after the change (Python's `fold`),
+which is the reverse of the names; it now says the earlier and the later
+instant. A program that relied on the old gap result swaps the two arguments.
+The native `civil_instant` and the Go backend's `civilInstant` changed alike.
+
 ## 2026-10-22: perf: format looks the zone up once
 
 - Kind: perf

@@ -15,17 +15,26 @@ weekday Thursday Friday Saturday Monday true
 order true true true
 gap New York
   2026-03-08 2:30 -> 2026-03-08T02:30:00 America/New_York does not exist (skipped by a daylight saving change)
-  2026-03-08 2:30 -> 2026-03-08T07:30:00Z (03:30 EDT)
   2026-03-08 2:30 -> 2026-03-08T06:30:00Z (01:30 EST)
+  2026-03-08 2:30 -> 2026-03-08T07:30:00Z (03:30 EDT)
 overlap New York
   2026-11-01 1:30 -> 2026-11-01T01:30:00 America/New_York happens twice (repeated by a daylight saving change)
   2026-11-01 1:30 -> 2026-11-01T05:30:00Z (01:30 EDT)
   2026-11-01 1:30 -> 2026-11-01T06:30:00Z (01:30 EST)
 gap and overlap Berlin
   2026-03-29 2:15 -> 2026-03-29T02:15:00 Europe/Berlin does not exist (skipped by a daylight saving change)
-  2026-03-29 2:15 -> 2026-03-29T01:15:00Z (03:15 CEST)
+  2026-03-29 2:15 -> 2026-03-29T00:15:00Z (01:15 CET)
   2026-10-25 2:15 -> 2026-10-25T02:15:00 Europe/Berlin happens twice (repeated by a daylight saving change)
   2026-10-25 2:15 -> 2026-10-25T01:15:00Z (02:15 CET)
+order
+  ny gap: 01:30 EST 03:30 EDT true 1h0m0s
+  ny overlap: 01:30 EDT 01:30 EST true 1h0m0s
+  berlin gap: 01:15 CET 03:15 CEST true 1h0m0s
+  berlin overlap: 02:15 CEST 02:15 CET true 1h0m0s
+  sydney gap: 01:30 AEST 03:30 AEDT true 1h0m0s
+  sydney overlap: 02:30 AEDT 02:30 AEST true 1h0m0s
+  howe gap: 01:45 +1030 02:45 +11 true 30m0s
+  howe overlap: 01:45 +11 01:45 +1030 true 30m0s
 unique
   2026-07-04 12:0 -> 2026-07-04T16:00:00Z (12:00 EDT)
   2026-07-04 12:0 -> 2026-07-04T10:00:00Z (12:00 CEST)

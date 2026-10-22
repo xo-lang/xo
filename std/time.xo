@@ -75,7 +75,11 @@ enum Weekday {
 } derive Display, Ord, Json
 
 /// What `instant` does with a civil time that falls in a daylight saving
-/// gap (does not exist) or overlap (exists twice).
+/// gap (does not exist) or overlap (exists twice). `Earlier` gives the
+/// earlier instant and `Later` the later one, so `Earlier` is never after
+/// `Later`: for a gap, 02:30 on 2026-03-08 in New York is 01:30 EST
+/// (`Earlier`, the clock moved back by the gap) or 03:30 EDT (`Later`);
+/// for an overlap, 01:30 on 2026-11-01 is 01:30 EDT or 01:30 EST.
 enum Ambiguity {
   Earlier
   Later

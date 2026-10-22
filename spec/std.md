@@ -2656,7 +2656,8 @@ fn (d: Date) display() -> Str                    // "2026-10-09"
 `instant` with `Reject` returns `Skipped` for a time inside a spring
 forward gap and `Repeated` for one inside a fall back overlap; `Earlier`
 and `Later` pick the first or second instant (for a gap, the instant the
-offset before or after the change gives). Arithmetic on `Time` stays exact
+offset after or before the change gives, so `Earlier` is never after
+`Later`). Arithmetic on `Time` stays exact
 (`t + 24h` is always 24 hours); calendar arithmetic is on `Date`.
 
 ### 13.3 Formatting and parsing
@@ -2746,9 +2747,10 @@ Settled while implementing; examples are in the goldens
   to 9999; `Time` covers about 1678 to 2262, and `instant` outside it is
   `CivilErr.Invalid`. Date methods on a `Date` built with a struct
   literal and out of range fields normalize it (month 13 is January of the
-  next year). For a gap, `Earlier` uses the offset before the change and
-  `Later` the one after: 02:30 on 2026-03-08 in New York is 03:30 EDT
-  with `Earlier` and 01:30 EST with `Later` (Python's `fold=0` and `1`).
+  next year). For a gap, `Earlier` is the earlier instant and `Later` the later one
+  (Temporal's `earlier` and `later`): 02:30 on 2026-03-08 in New York is
+  01:30 EST with `Earlier` (the clock moved back by the gap) and 03:30 EDT
+  with `Later`.
   Error display text, one sentence each, no trailing period:
   `ZoneErr.Unknown` is `unknown time zone "Mars/Olympus"`, `NoLocal` is
   `cannot determine the local time zone: <msg>`; `CivilErr.Invalid` is

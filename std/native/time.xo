@@ -317,8 +317,13 @@ fn civil_instant(local: Int, z: Zone) -> (Int, Int, Int) {
   if ok_a {
     return (ta, ta, 0)
   }
-  // a gap: Earlier uses the offset before the change, Later the one after
-  (tb, ta, 2)
+  // a gap: Earlier is the earlier instant (the offset after the change
+  // applied, 01:30 EST for 02:30), Later the later one (the offset before,
+  // 03:30 EDT), as Temporal's disambiguation and the overlap case
+  if tb < ta {
+    return (tb, ta, 2)
+  }
+  (ta, tb, 2)
 }
 
 fn instant(d: time.Date, c: time.ClockTime, z: Zone, ambiguity: time.Ambiguity = time.Ambiguity.Reject) -> Time ! time.CivilErr {
