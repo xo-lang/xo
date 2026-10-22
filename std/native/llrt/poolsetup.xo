@@ -193,13 +193,32 @@ fn env_int(name: Str) -> Int {
   atoi(v[0])
 }
 
-/// The processors online (sysconf(_SC_NPROCESSORS_ONLN)): Linux's
-/// /sys/devices/system/cpu/online, macOS's hw.activecpu, Windows's
-/// active processors of every group; 1 when it cannot be read.
+/// The processors this program may run on: on Linux the CPUs of its
+/// affinity mask (sched_getaffinity, as Go's GOMAXPROCS: taskset and a
+/// container's cpuset limit it), else /sys/devices/system/cpu/online;
+/// macOS's hw.activecpu, Windows's active processors of every group; 1
+/// when it cannot be read.
 fn cpu_count() -> Int {
   let b = obj.scratch()
   match target.os {
     TargetOs.Linux => {
+      // 128 bytes: 1024 CPUs
+      let m = linux.sched_getaffinity(b, 128)
+      if m > 0 {
+        var c = 0
+        var i = 0
+        while i < m {
+          var x = rt.mem_load(b, i, 1)
+          while x != 0 {
+            c += x & 1
+            x = x >> 1
+          }
+          i += 1
+        }
+        if c > 0 {
+          return c
+        }
+      }
       let fd = linux.open("/sys/devices/system/cpu/online", 0, 0)
       if fd < 0 {
         return 1

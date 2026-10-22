@@ -570,6 +570,10 @@ fn o_directory() -> Int {
 /// read(2) of at most n bytes to the address a.
 pub fn read_at(fd: Int, a: Int, n: Int) -> Int { rt.sys6(nr(63, 0), fd, a, raw.io_len(n), 0, 0, 0) }
 
+/// sched_getaffinity(2) of the calling thread into the n bytes at a: the
+/// mask's bytes written, or -errno.
+pub fn sched_getaffinity(a: Int, n: Int) -> Int { rt.sys6(nr(123, 204), 0, n, a, 0, 0, 0) }
+
 /// renameat(2) of a to b (as written: "" is no file, as for the C
 /// runtime's rename).
 pub fn rename(a: Str, b: Str) -> Int {
