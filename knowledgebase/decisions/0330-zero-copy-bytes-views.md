@@ -114,7 +114,7 @@ off != 0 is never unique (obj.xo reserve), and the inline push compares the
 packed word unsigned against the capacity so a view takes the call. The cap
 faults at concat, append, push and repeat (cabi len_cap). A small view keeps
 its whole parent alive (a 10 byte token keeps a 100 MB read buffer), as in
-Go. C ABI exports (cabi*.xo, `xo_x_` names) are the runtime's own: none returns a Str today, and a Str result would carry the packed word to its Xo caller unchanged (checked 2026-10-22; there is no user level export), so the export wrappers need no copy.
+Go. C ABI exports (cabi*.xo, `xo_x_` names) are the runtime's own: none returns a Str today, and a Str result would carry the packed word to its Xo caller unchanged (checked 2026-10-22; there is no user level export), so the export wrappers need no copy. The SSA builder refuses an export with a Str result (the export declarations in ssa/build.xo), so a future one cannot hand C the packed word.
 
 ## Alternatives
 

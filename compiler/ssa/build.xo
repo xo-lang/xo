@@ -657,7 +657,11 @@ fn (var b: Builder) declare_exports_of(mi: Int, bare: Bool) {
     let rs = b.m.funcs[fi].results
     if rs.len() != 1 || !b.m.funcs[fi].var_params.is_empty() {
       b.unsupported("a C ABI export with `var` parameters")
-    } else if !(b.tkind(rs[0]) is Kind.Int | Kind.Float | Kind.Str | Kind.Unit) {
+    } else if b.tkind(rs[0]) == Kind.Str {
+      // a Str may be a view (decision 0330): its second word packs the
+      // offset, which C would read as part of the length
+      b.unsupported("a C ABI export with a `Str` result (a Str may be a view of a larger buffer, decision 0330)")
+    } else if !(b.tkind(rs[0]) is Kind.Int | Kind.Float | Kind.Unit) {
       b.unsupported("a C ABI export with a `${b.m.types[rs[0]].name}` result")
     }
   }
