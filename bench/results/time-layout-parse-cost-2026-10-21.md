@@ -43,7 +43,7 @@ other time changes.
 
 Program: bench/perf/timeformat/main.xo (modes `none`, `format`, `parse`,
 `civil`, `duration`; the `format` mode is the 600,000 calls above). Commit
-measured: 80d74035b (main when the figures were taken); the program is
+measured: 026416cbf (the parent of the commit that added this file); the program is
 committed in the commit that adds this section.
 
 ```
