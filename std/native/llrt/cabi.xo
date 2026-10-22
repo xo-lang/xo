@@ -219,8 +219,10 @@ fn heap_big_resize(b: Int, n: Int) -> Int {
 fn heap_big_release(b: Int) {
   let c = rt.mem_load(b, 0, 8)
   // (in a --race build every block is big: minus a small size
-  // is its prefix, not a sampled block's class)
-  if prof.supported() && c < 0 && c > -128 && !sanhook.user_mode() {
+  // is its prefix, not a sampled block's class; windows --race's too,
+  // whose small blocks were pushed on a class's free list as sampled
+  // ones, the race heap's memory in the program's heap, 2026-10-22)
+  if prof.supported() && c < 0 && c > -128 && !sanhook.user_mode() && !sanhook.gorace() {
     heapprof.freed(b + 8)
     rt.mem_store(b, 0, 0 - c, 8)
     let h = obj.heap()

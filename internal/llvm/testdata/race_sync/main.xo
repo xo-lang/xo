@@ -158,6 +158,20 @@ fn build_table() -> List[Int] {
 // form: XO_RACE_SYNC=0 runs the same reads)
 const RACE_TABLE = build_table()
 
+// spawn's, after a Map grew (its rebuilds give back many small blocks:
+// windows --race once put the race heap's small blocks on the program
+// heap's free lists, which the first spawn's recount found corrupt)
+fn map_grow_case(shared: Bytes, sync: Bool) {
+  var m: Map[Str, Int] = {}
+  for i in 0..50 {
+    m["key${i}"] = i
+  }
+  if m.len() != 50 {
+    return
+  }
+  spawn_case(shared, sync)
+}
+
 fn lazy_const_case() {
   scope s {
     let a = s.spawn(fn() { RACE_TABLE[63] })
@@ -185,6 +199,7 @@ fn main(os: Os) {
     "atomic" => atomic_case(os, shared, sync, false)
     "atomic_add" => atomic_case(os, shared, sync, true)
     "lazy_const" => lazy_const_case()
+    "map_grow" => map_grow_case(shared, sync)
     _ => os.stdio.println("unknown case")
   }
   os.stdio.println("done")

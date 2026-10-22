@@ -572,7 +572,7 @@ func raceBuild(t *testing.T, name, backend string) string {
 }
 
 func raceSyncTable(t *testing.T, bin string) {
-	cases := []string{"spawn", "join", "scope", "chan", "chan_buffered", "select", "mutex", "await_done", "atomic", "atomic_add", "lazy_const"}
+	cases := []string{"spawn", "join", "scope", "chan", "chan_buffered", "select", "mutex", "await_done", "atomic", "atomic_add", "lazy_const", "map_grow"}
 	// cases with no unsynchronized form: only "no race" is checked
 	syncOnly := map[string]bool{"lazy_const": true}
 	for _, c := range cases {
