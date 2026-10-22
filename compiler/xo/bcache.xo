@@ -135,7 +135,7 @@ fn fn_cache_load(os: Os, ctx: Ctx, m: ssa.Module, tgoos: Str, jobs: Int, release
     }
   }
   let (entries, pk) = cache_get_packed(os, dir, "fn", target, want, jobs)
-  (arm64.FnCache{keys: keys, entries: entries, verify: verify, part_keys: pkeys, part_entries: pents}, dir, Pack{root: pk.root, dir: pk.dir, segs: pk.segs, held: pk.held, from_pack: pk.from_pack, fresh: pk.fresh, parts: ppk})
+  (arm64.FnCache{keys: keys, entries: entries, verify: verify, part_keys: pkeys, part_entries: pents}, dir, Pack{root: pk.root, dir: pk.dir, segs: pk.segs, held: pk.held, from_pack: pk.from_pack, fresh: pk.fresh, seen: pk.seen, wait: pk.wait, parts: ppk})
 }
 
 /// Stores the entries a cached generation made (fn_cache_load's dir),
@@ -994,10 +994,12 @@ fn prune_backend_child(os: Os, dir: Str) -> Int {
 // the entries it used that its pack lacked; past PACK_SEGS segments, or
 // a pack holding over twice what the build used, it writes one segment
 // of what it used and removes the segments it read. A target's first
-// build only creates the directory, so a program built once (a golden)
-// costs no second copy; except the parts of a module of PART_PACK_FIRST
-// parts or more, which have no loose copies, so the first edit after a
-// cold build would make every part again. Segments are written whole
+// build only creates the directory and counts it, and the second counts
+// again, so a program built once or twice (a golden) costs no second
+// copy (the third writes the segments, 2026-10-21); the parts have no
+// loose copies, so they are packed on the second build, and those of a
+// module of PART_PACK_FIRST parts or more on the first, or the first
+// edit after a cold build would make every part again. Segments are written whole
 // and renamed into place (cache_put); a segment another build removed
 // while this one listed it reads as missing, and its keys come from the
 // loose files.
@@ -1011,6 +1013,12 @@ const PACK_VERSION = "xo pack v1"
 /// hello program 3 (m.funcs holds the runtime), 2026-10-20.
 const PART_PACK_FIRST = 16
 const PACK_SEGS = 4
+/// The builds of a target that only count before its pack is written: the
+/// first creates the directory, the second counts, the third writes. The
+/// second build used to write every entry again as segments (12.6 GiB
+/// and 1,645 files for the golden run, no faster than cold, 2026-10-21);
+/// a target built twice, as a test run's goldens are, never pays for it.
+const PACK_AFTER = 2
 
 /// One kind's pack for a build target, as cache_get_packed read it.
 struct Pack {
@@ -1026,6 +1034,12 @@ struct Pack {
   from_pack: Map[Str, Bool] = {}
   /// The target's first build: no pack directory yet.
   fresh: Bool = false
+  /// The builds of this target that left the pack empty (the file "seen"
+  /// in its directory): segments are written once PACK_AFTER were counted.
+  seen: Int = 0
+  /// Count the builds before writing (every kind but the parts, which
+  /// have no loose copies to serve in the meantime).
+  wait: Bool = false
   /// Rewrite the pack with the entries used, dropping the rest (an entry
   /// that did not replay must not be read again).
   compact: Bool = false
@@ -1062,7 +1076,7 @@ fn pack_dir(os: Os, dir: Str, kind: Str, target: Str) -> Str {
 /// cache_get_all through the build target's pack (above): the entries
 /// of keys the pack holds, the rest from the loose files.
 fn cache_get_packed(os: Os, dir: Str, kind: Str, target: Str, keys: List[Str], jobs: Int) -> (Map[Str, Bytes], Pack) {
-  var p = Pack{root: dir, dir: pack_dir(os, dir, kind, target)}
+  var p = Pack{root: dir, dir: pack_dir(os, dir, kind, target), wait: kind != "part"}
   var want: Map[Str, Bool] = {}
   for k in keys {
     if !k.is_empty() {
@@ -1072,6 +1086,9 @@ fn cache_get_packed(os: Os, dir: Str, kind: Str, target: Str, keys: List[Str], j
   var entries: Map[Str, Bytes] = {}
   match os.fs.read_dir(p.dir) {
     Ok(list) => {
+      if let Ok(b) = os.fs.read("${p.dir}/seen") {
+        p.seen = Int.parse(b.to_str() ?? "") ?? 0
+      }
       for fi in list {
         if !fi.name.starts_with("s-") || fi.name.contains(".") {
           continue
@@ -1180,8 +1197,16 @@ fn pack_store(os: Os, p: Pack, entries: Map[Str, Bytes], stores: List[(Str, Byte
   if p.dir.is_empty() {
     return
   }
+  if p.fresh && p.wait {
+    cache_put(os, "${p.dir}/seen", "1".bytes())
+    return
+  }
   if p.fresh {
     os.fs.create_dir_all(p.dir).ignore_err("no pack: the loose files serve")
+    return
+  }
+  if p.wait && p.segs.is_empty() && p.seen < PACK_AFTER {
+    cache_put(os, "${p.dir}/seen", "${p.seen + 1}".bytes())
     return
   }
   var used: List[(Str, Bytes)] = []

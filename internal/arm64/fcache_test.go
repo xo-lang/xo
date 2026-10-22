@@ -182,13 +182,14 @@ func TestBackendCacheEditIdentity(t *testing.T) {
 				t.Errorf("%s %s: no function left undecoded, so the lazy path is not tested:\n%s", s.name, target, log)
 			}
 		}
-		if s.name == "again" {
-			// the second build of each target wrote its pack (decision
-			// 0220 addendum stage D 2d); without the loose entries the
-			// edit's build must still reuse functions, from the packs
+		if s.name == "edit" {
+			// the third build of each target wrote its pack (decision
+			// 0220 addendum stage D 2d; the first two only count, 2026-10-21);
+			// without the loose entries the next build must still reuse
+			// functions, from the packs
 			segs, _ := filepath.Glob(filepath.Join(work, "cache", "packs", "*", "*", "*", "s-*"))
 			if len(segs) < 4 {
-				t.Fatalf("after the second builds: %d pack segments, want at least rc and fn for each target", len(segs))
+				t.Fatalf("after the third builds: %d pack segments, want at least rc and fn for each target", len(segs))
 			}
 			for _, kind := range []string{"rc", "inl", "fn", "sum", "part", "fe"} {
 				if err := os.RemoveAll(filepath.Join(work, "cache", kind)); err != nil {
