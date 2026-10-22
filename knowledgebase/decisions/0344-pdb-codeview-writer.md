@@ -18,6 +18,19 @@ random addresses of a program, llvm-symbolizer from the PDB alone gives
 DWARF's outermost frame's function and file:line at 266 of 268 (the two
 others: code of another file with no DW_TAG_inlined_subroutine, where
 the PDB keeps the function's own line).
+Stage 3 implemented 2026-10-22: S_INLINESITE and S_INLINESITE_END
+nested in each procedure, LF_FUNC_ID records in the IPI stream (with its
+hash stream: JamCRC of each record modulo the buckets, as LLVM's
+writer), DEBUG_S_INLINEELINES. Over the same 400 addresses llvm-symbolizer
+from the PDB alone gives DWARF's whole inline chain (each frame's
+function, file and line) at 265 of 268, and Wine's dbghelp (scripts/
+pdbframes) prints a crash report's traceback, inline frame included,
+exactly as the runtime does from the DWARF. Two traps: ChangeCodeOffset
+is opcode 3 (2 is ChangeCodeOffsetBase, which LLVM's reader skips when
+it looks for the site holding an address; llvm-pdbutil prints both as
+"code"), and a site's first entry needs a line operation even when the
+line does not change (LLVM's reader takes the site's line from it and
+drops a frame without one, and every frame after it).
 
 ## Context
 

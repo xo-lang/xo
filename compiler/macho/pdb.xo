@@ -33,7 +33,9 @@ const PS_SECTHDR = 7
 const PS_PUBLICS = 8
 const PS_GLOBALS = 9
 const PS_SYMS = 10
-const PS_COUNT = 11
+/// the IPI stream's hash values and index offsets
+const PS_IPIHASH = 11
+const PS_COUNT = 12
 
 /// CodeView symbol kinds.
 const S_END = 0x0006
@@ -41,6 +43,21 @@ const S_OBJNAME = 0x1101
 const S_PUB32 = 0x110e
 const S_GPROC32 = 0x1110
 const S_PROCREF = 0x1125
+const S_INLINESITE = 0x114d
+const S_INLINESITE_END = 0x114e
+
+/// LF_FUNC_ID, an IPI record naming an inlined function.
+const LF_FUNC_ID = 0x1601
+
+/// The binary annotations of an inline site (cvinfo.h; ChangeCodeOffset
+/// is 3: 2 is ChangeCodeOffsetBase, which LLVM's reader ignores when it
+/// looks for the site holding an address
+/// BinaryAnnotationOpcode).
+const BA_CODE_OFFSET = 3
+const BA_CODE_LENGTH = 4
+const BA_FILE = 5
+const BA_LINE_OFFSET = 6
+const BA_CODE_AND_LINE = 0xb
 
 /// IMAGE_DEBUG_TYPE_CODEVIEW, and the RSDS record's size before its path.
 const DEBUG_TYPE_CODEVIEW = 2
@@ -55,11 +72,26 @@ struct PdbProc {
   off: Int
   size: Int
   rows: List[(Int, Int, Int, Bool)] = []
+  /// its first address and its inline sites, parents before children
+  lo: Int = 0
+  sites: List[PdbSite] = []
+}
+
+/// A call inlined into a function: the callee's name, the enclosing
+/// site (-1: the function), its address ranges, and its line entries
+/// (address, file (a DWARF file index), line), the code of a call
+/// inlined into it at that call's line.
+struct PdbSite {
+  name: Str
+  parent: Int
+  ranges: List[(Int, Int)]
+  entries: List[(Int, Int, Int)]
 }
 
 /// The C13 subsection kinds.
 const DEBUG_S_LINES = 0xf2
 const DEBUG_S_FILECHKSMS = 0xf4
+const DEBUG_S_INLINEELINES = 0xf6
 
 /// A PE section as the PDB needs it: its address (RVA), size in memory,
 /// characteristics, and the raw 40 byte header.
@@ -145,7 +177,7 @@ pub fn pe_pdb(img: Bytes) -> Result[(Bytes, Bytes), Str] {
           calls.push((c.ranges, cf, c.call_line))
         }
       }
-      procs.push(PdbProc{name: f.name, seg: seg, off: off, size: f.hi - f.lo, rows: fn_rows(lns, by_addr, f.lo, f.hi, calls)})
+      procs.push(PdbProc{name: f.name, seg: seg, off: off, size: f.hi - f.lo, rows: fn_rows(lns, by_addr, f.lo, f.hi, calls), lo: f.lo, sites: inline_sites(lns, by_addr, file_of, f)})
     }
   }
   // the publics: the COFF symbol table's functions
@@ -157,6 +189,89 @@ pub fn pe_pdb(img: Bytes) -> Result[(Bytes, Bytes), Str] {
     }
   }
   Ok((out, pdb_file(guid, stamp, sects, procs, pubs, lns.files)))
+}
+
+/// The inline sites of f (decision 0344 stage 3): each inlined call,
+/// its parent the call of one less depth whose ranges hold its first
+/// address, in address order with parents first; each site's entries
+/// its ranges' rows as fn_rows maps a function's.
+fn inline_sites(lns: debug.Lines, by_addr: List[(Int, Int)], file_of: Map[Str, Int], f: debug.Func) -> List[PdbSite] {
+  // the calls by depth, then by first address
+  var order: List[(Int, Int, Int)] = []
+  for (i, c) in f.inlined.indexed() {
+    if !c.ranges.is_empty() {
+      order.push((c.depth, c.ranges[0].0, i))
+    }
+  }
+  var idx: List[Int] = []
+  for (_, _, i) in order.sort() {
+    idx.push(i)
+  }
+  // each call's parent (an index of f.inlined, -1: f)
+  var parent: Map[Int, Int] = {}
+  for i in idx {
+    let c = f.inlined[i]
+    var p = -1
+    if c.depth > 1 {
+      let a = c.ranges[0].0
+      for j in idx {
+        let d = f.inlined[j]
+        if d.depth == c.depth - 1 {
+          for (rlo, rhi) in d.ranges {
+            if a >= rlo && a < rhi {
+              p = j
+            }
+          }
+        }
+      }
+      if p < 0 {
+        // no enclosing call: not placed
+        continue
+      }
+    }
+    parent[i] = p
+  }
+  // the sites in depth first order, each parent before its children
+  var out: List[PdbSite] = []
+  var at: Map[Int, Int] = {}
+  site_walk(lns, by_addr, file_of, f, idx, parent, -1, -1, out, at)
+  out
+}
+
+/// Appends the sites whose parent is call p (site index ps) and their
+/// children.
+fn site_walk(lns: debug.Lines, by_addr: List[(Int, Int)], file_of: Map[Str, Int], f: debug.Func, idx: List[Int], parent: Map[Int, Int], p: Int, ps: Int, var out: List[PdbSite], var at: Map[Int, Int]) {
+  var kids: List[(Int, Int)] = []
+  for i in idx {
+    if parent.contains(i) && (parent.get(i) ?? -2) == p {
+      kids.push((f.inlined[i].ranges[0].0, i))
+    }
+  }
+  for (_, i) in kids.sort() {
+    let c = f.inlined[i]
+    // the calls inlined into this one: their code at their call's line
+    var calls: List[(List[(Int, Int)], Int, Int)] = []
+    for j in idx {
+      if (parent.get(j) ?? -2) == i {
+        let d = f.inlined[j]
+        calls.push((d.ranges, file_of.get(lns.call_file(d.unit_line, d.call_file)) ?? -1, d.call_line))
+      }
+    }
+    var entries: List[(Int, Int, Int)] = []
+    for (rlo, rhi) in c.ranges.sort() {
+      let rows = fn_rows(lns, by_addr, rlo, rhi, calls)
+      for (k, (off, file, line, _)) in rows.indexed() {
+        // the range's first entry at its start
+        entries.push((if k == 0 { rlo } else { rlo + off }, file, line))
+      }
+    }
+    if entries.is_empty() {
+      continue
+    }
+    let me = out.len()
+    out.push(PdbSite{name: c.name, parent: ps, ranges: c.ranges.sort(), entries: entries})
+    site_walk(lns, by_addr, file_of, f, idx, parent, i, me, out, at)
+  }
 }
 
 /// The rows of [lo, hi) (by_addr: the rows' addresses and indexes, in
@@ -289,14 +404,38 @@ fn pdb_file(guid: Bytes, stamp: Int, sects: List[PdbSect], procs: List[PdbProc],
         files.push(dfiles[f])
       }
     }
+    for st in p.sites {
+      for (_, f, _) in st.entries {
+        if !fidx.contains(f) {
+          fidx[f] = files.len()
+          files.push(dfiles[f])
+        }
+      }
+    }
+  }
+  // each inlined function's LF_FUNC_ID (its type index) and its first
+  // site's first entry: the file and line its sites' annotations start
+  // from (DEBUG_S_INLINEELINES)
+  var fid: Map[Str, Int] = {}
+  var inlinees: List[(Str, Int, Int)] = []
+  for p in procs {
+    for st in p.sites {
+      if !fid.contains(st.name) {
+        fid[st.name] = 0x1000 + inlinees.len()
+        let (_, f, l) = st.entries[0]
+        inlinees.push((st.name, f, l))
+      }
+    }
   }
   let (names, name_at) = names_table(files)
-  let c13 = c13_lines(procs, fidx, name_at)
-  let (modsyms, proc_at) = module_stream(procs, c13)
+  let c13 = c13_lines(procs, fidx, name_at, inlinees)
+  let (modsyms, proc_at) = module_stream(procs, c13, fid, inlinees, fidx)
   let (recs, pub_at, ref_at) = sym_records(procs, proc_at, pubs)
   streams[PS_INFO] = info_stream(guid, stamp)
   streams[PS_TPI] = tpi_stream()
-  streams[PS_IPI] = tpi_stream()
+  let (ipi, ipihash) = ipi_stream(inlinees)
+  streams[PS_IPI] = ipi
+  streams[PS_IPIHASH] = ipihash
   streams[PS_NAMES] = names
   streams[PS_MOD] = modsyms
   var sh = BytesBuilder.new()
@@ -404,7 +543,7 @@ fn names_table(strs: List[Str]) -> (Bytes, List[Int]) {
 /// function with rows (its offset, segment and size, then a block per
 /// run of rows in one file: the file's checksum entry, the rows' offsets
 /// and lines with the statement bit).
-fn c13_lines(procs: List[PdbProc], fidx: Map[Int, Int], name_at: List[Int]) -> Bytes {
+fn c13_lines(procs: List[PdbProc], fidx: Map[Int, Int], name_at: List[Int], inlinees: List[(Str, Int, Int)]) -> Bytes {
   var w = new_out(1024)
   var ck = new_out(8 * name_at.len())
   for off in name_at {
@@ -414,6 +553,18 @@ fn c13_lines(procs: List[PdbProc], fidx: Map[Int, Int], name_at: List[Int]) -> B
     ck.u16(0)
   }
   subsection(w, DEBUG_S_FILECHKSMS, ck.done())
+  if !inlinees.is_empty() {
+    // the inlinees' source lines: the signature (0), then each one's
+    // LF_FUNC_ID, file (its checksum entry) and first line
+    var il = new_out(4 + 12 * inlinees.len())
+    il.u32(0)
+    for (i, (_, f, l)) in inlinees.indexed() {
+      il.u32(0x1000 + i)
+      il.u32(8 * (fidx.get(f) ?? 0))
+      il.u32(l)
+    }
+    subsection(w, DEBUG_S_INLINEELINES, il.done())
+  }
   for p in procs {
     if p.rows.is_empty() {
       continue
@@ -486,27 +637,35 @@ fn cstr_bytes(s: Str) -> Bytes {
 }
 
 /// The module's stream: the CodeView signature (4, C13), S_OBJNAME, and
-/// each function's S_GPROC32 and S_END; the C13 line information c13;
-/// the global references' size (0). Also each S_GPROC32's offset.
-fn module_stream(procs: List[PdbProc], c13: Bytes) -> (Bytes, List[Int]) {
-  var w = new_out(64 + 64 * procs.len())
-  w.u32(4)
+/// each function's S_GPROC32, its inline sites (S_INLINESITE, nested as
+/// the calls are, each closed by S_INLINESITE_END), and S_END; the C13
+/// line information c13; the global references' size (0). Also each
+/// S_GPROC32's offset. A procedure's and a site's parent and end are the
+/// offsets of the enclosing record and of their closing one.
+fn module_stream(procs: List[PdbProc], c13: Bytes, fid: Map[Str, Int], inlinees: List[(Str, Int, Int)], fidx: Map[Int, Int]) -> (Bytes, List[Int]) {
+  // the records: kind, body, the record holding the parent, the
+  // closing record (-1: none), and whether the body starts with the two
+  // offsets
+  var kinds: List[Int] = []
+  var bodies: List[Bytes] = []
+  var parents: List[Int] = []
+  var ends: List[Int] = []
   var ob = new_out(16)
   ob.u32(0)
   ob.bytes(cstr_bytes("xo"))
-  sym_record(w, S_OBJNAME, ob.done())
-  var at: List[Int] = []
+  kinds.push(S_OBJNAME)
+  bodies.push(ob.done())
+  parents.push(-1)
+  ends.push(-1)
+  var proc_rec: List[Int] = []
   for p in procs {
-    at.push(w.n)
-    let name = cstr_bytes(p.name)
-    // the S_END follows: its offset is this record's end
-    let body_len = 35 + name.len()
-    let end = w.n + (4 + body_len + 3) / 4 * 4
-    var pb = new_out(body_len)
-    // parent, end, next, code size, debug start and end, type (none),
-    // offset, segment, flags, name
+    let pr = kinds.len()
+    proc_rec.push(pr)
+    var pb = new_out(40 + p.name.len())
+    // parent, end (patched), next, code size, debug start and end, type
+    // (none), offset, segment, flags, name
     pb.u32(0)
-    pb.u32(end)
+    pb.u32(0)
     pb.u32(0)
     pb.u32(p.size)
     pb.u32(0)
@@ -515,13 +674,222 @@ fn module_stream(procs: List[PdbProc], c13: Bytes) -> (Bytes, List[Int]) {
     pb.u32(p.off)
     pb.u16(p.seg)
     pb.u8(0)
-    pb.bytes(name)
-    sym_record(w, S_GPROC32, pb.done())
-    sym_record(w, S_END, b"")
+    pb.bytes(cstr_bytes(p.name))
+    kinds.push(S_GPROC32)
+    bodies.push(pb.done())
+    parents.push(-1)
+    ends.push(-1)
+    // the sites: a stack of open ones (site index, record)
+    var open: List[(Int, Int)] = []
+    for (si, st) in p.sites.indexed() {
+      while !open.is_empty() && open[open.len() - 1].0 != st.parent {
+        let (_, r) = open.pop() ?? (0, 0)
+        ends[r] = kinds.len()
+        kinds.push(S_INLINESITE_END)
+        bodies.push(b"")
+        parents.push(-1)
+        ends.push(-1)
+      }
+      let enclosing = if open.is_empty() { pr } else { open[open.len() - 1].1 }
+      var sb = new_out(16 + 4 * st.entries.len())
+      sb.u32(0)
+      sb.u32(0)
+      sb.u32(fid.get(st.name) ?? 0)
+      sb.bytes(annotations(p.lo, st, inlinees[(fid.get(st.name) ?? 0x1000) - 0x1000], fidx))
+      let r = kinds.len()
+      kinds.push(S_INLINESITE)
+      bodies.push(sb.done())
+      parents.push(enclosing)
+      ends.push(-1)
+      open.push((si, r))
+    }
+    while !open.is_empty() {
+      let (_, r) = open.pop() ?? (0, 0)
+      ends[r] = kinds.len()
+      kinds.push(S_INLINESITE_END)
+      bodies.push(b"")
+      parents.push(-1)
+      ends.push(-1)
+    }
+    ends[pr] = kinds.len()
+    kinds.push(S_END)
+    bodies.push(b"")
+    parents.push(-1)
+    ends.push(-1)
+  }
+  // the records' offsets (after the signature), then the stream
+  var offs: List[Int] = []
+  var o = 4
+  for body in bodies {
+    offs.push(o)
+    o += (4 + body.len() + 3) / 4 * 4
+  }
+  var w = new_out(o + c13.len() + 8)
+  w.u32(4)
+  for (i, body) in bodies.indexed() {
+    if kinds[i] == S_GPROC32 || kinds[i] == S_INLINESITE {
+      var pb = new_out(body.len())
+      pb.u32(if parents[i] >= 0 { offs[parents[i]] } else { 0 })
+      pb.u32(if ends[i] >= 0 { offs[ends[i]] } else { 0 })
+      pb.bytes(body[8..body.len()])
+      sym_record(w, kinds[i], pb.done())
+    } else {
+      sym_record(w, kinds[i], body)
+    }
   }
   w.bytes(c13)
   w.u32(0)
+  var at: List[Int] = []
+  for r in proc_rec {
+    at.push(offs[r])
+  }
   (w.done(), at)
+}
+
+/// An inline site's binary annotations, as LLVM's MCCodeView encodes
+/// them: from the function's start, the inlinee's first file and line
+/// (inl), each entry a code offset and line delta (one combined op when
+/// both are small), a file change before an entry in another file, and
+/// each range's end as its code length; zeros to 4 bytes.
+fn annotations(flo: Int, st: PdbSite, inl: (Str, Int, Int), fidx: Map[Int, Int]) -> Bytes {
+  var w = new_out(8 + 4 * st.entries.len())
+  let (_, f0, l0) = inl
+  var cur_off = 0
+  var cur_line = l0
+  var cur_file = f0
+  var ei = 0
+  var first = true
+  for (rlo, rhi) in st.ranges {
+    var any = false
+    while ei < st.entries.len() && st.entries[ei].0 < rhi {
+      let (addr, file, line) = st.entries[ei]
+      ei += 1
+      if addr < rlo {
+        continue
+      }
+      any = true
+      if file != cur_file {
+        ba_op(w, BA_FILE)
+        ba_op(w, 8 * (fidx.get(file) ?? 0))
+        cur_file = file
+      }
+      let ld = line - cur_line
+      let enc = if ld >= 0 { ld << 1 } else { ((0 - ld) << 1) | 1 }
+      let cd = addr - flo - cur_off
+      if enc < 8 && cd <= 15 {
+        ba_op(w, BA_CODE_AND_LINE)
+        ba_op(w, (enc << 4) | cd)
+      } else {
+        // the first entry's line even when unchanged: LLVM's reader
+        // (NativeInlineSiteSymbol::getLineOffset) takes a site's line from
+        // its first line operation, and skips a frame without one
+        if ld != 0 || first {
+          ba_op(w, BA_LINE_OFFSET)
+          ba_op(w, enc)
+        }
+        ba_op(w, BA_CODE_OFFSET)
+        ba_op(w, cd)
+      }
+      cur_line = line
+      cur_off = addr - flo
+      first = false
+    }
+    if any {
+      ba_op(w, BA_CODE_LENGTH)
+      ba_op(w, rhi - flo - cur_off)
+      cur_off = rhi - flo
+    }
+  }
+  w.pad(4)
+  w.done()
+}
+
+/// A binary annotation's compressed number: 1 byte under 0x80, 2 under
+/// 0x4000, else 4, big endian with the length in the top bits.
+fn ba_op(var w: Out, v: Int) {
+  if v < 0x80 {
+    w.u8(v)
+  } else if v < 0x4000 {
+    w.u8((v >> 8) | 0x80)
+    w.u8(v & 0xff)
+  } else {
+    w.u8(((v >> 24) & 0x1f) | 0xc0)
+    w.u8((v >> 16) & 0xff)
+    w.u8((v >> 8) & 0xff)
+    w.u8(v & 0xff)
+  }
+}
+
+/// The IPI stream of the inlinees' LF_FUNC_ID records (no parent scope,
+/// no type), its header naming the hash stream, and the hash stream: each
+/// record's JamCRC (LLVM hashTypeRecord) modulo the buckets, then the
+/// index offsets (the first record's).
+fn ipi_stream(inlinees: List[(Str, Int, Int)]) -> (Bytes, Bytes) {
+  var recs = new_out(32 * inlinees.len())
+  var hashes: List[Int] = []
+  for (name, _, _) in inlinees {
+    var r = new_out(16 + name.len())
+    r.u32(0)
+    r.u32(0)
+    r.bytes(cstr_bytes(name))
+    // LF_PAD bytes (0xf0 plus the bytes left) to 4
+    let len = 2 + r.n
+    let padded = (len + 2 + 3) / 4 * 4 - 2
+    var whole = new_out(padded + 2)
+    whole.u16(padded)
+    whole.u16(LF_FUNC_ID)
+    whole.bytes(r.done())
+    var left = padded - len
+    while left > 0 {
+      whole.u8(0xf0 + left)
+      left -= 1
+    }
+    let rec = whole.done()
+    hashes.push(jam_crc(rec) % 0x3ffff)
+    recs.bytes(rec)
+  }
+  let body = recs.done()
+  var h = new_out(4 * hashes.len() + 8)
+  for x in hashes {
+    h.u32(x)
+  }
+  if !hashes.is_empty() {
+    h.u32(0x1000)
+    h.u32(0)
+  }
+  let hash = h.done()
+  var w = new_out(56 + body.len())
+  w.u32(20040203)
+  w.u32(56)
+  w.u32(0x1000)
+  w.u32(0x1000 + inlinees.len())
+  w.u32(body.len())
+  w.u16(if hashes.is_empty() { 0xffff } else { PS_IPIHASH })
+  w.u16(0xffff)
+  w.u32(4)
+  w.u32(0x3ffff)
+  // hash values, index offsets, hash adjusters: offset and length each
+  w.u32(0)
+  w.u32(4 * hashes.len())
+  w.u32(4 * hashes.len())
+  w.u32(if hashes.is_empty() { 0 } else { 8 })
+  w.u32(hash.len())
+  w.u32(0)
+  w.bytes(body)
+  (w.done(), hash)
+}
+
+/// CRC-32 (reflected, 0xedb88320) from 0 with no final inversion: LLVM's
+/// JamCRC(0).
+fn jam_crc(b: Bytes) -> Int {
+  var crc = 0
+  for x in b {
+    crc = crc ^ Int(x)
+    for _ in 0..8 {
+      crc = if (crc & 1) != 0 { (crc >> 1) ^ 0xedb88320 } else { crc >> 1 }
+    }
+  }
+  crc & 0xffffffff
 }
 
 /// The symbol record stream: each public's S_PUB32 (a function), then

@@ -109,3 +109,22 @@ test "the /names table finds each string by its hash" {
   }
   expect(le_b(t, 32 + 4 * nb, 4)) == 3
 }
+
+test "an inline site's annotations: offsets from the function, lines from its first" {
+  // one range [0x110, 0x130) of a function at 0x100: entries at 0x110
+  // (line 7, the inlinee's first) and 0x118 (line 8), file 0
+  let st = PdbSite{name: "f", parent: -1, ranges: [(0x110, 0x130)], entries: [(0x110, 0, 7), (0x118, 0, 8)]}
+  let a = annotations(0x100, st, ("f", 0, 7), {0: 0})
+  // ChangeLineOffset 0 (the first entry's line), ChangeCodeOffset (3,
+  // not ChangeCodeOffsetBase 2) 0x10, then a combined op (line +1 is 2
+  // encoded, code +8), the range's length 0x18, zeros to 4 bytes
+  expect(a) == b"\x06\x00\x03\x10\x0b\x28\x04\x18"
+}
+
+test "compressed annotation numbers" {
+  var w = new_out(8)
+  ba_op(w, 0x7f)
+  ba_op(w, 0x80)
+  ba_op(w, 0x4000)
+  expect(w.done()) == b"\x7f\x80\x80\xc0\x00\x40\x00"
+}
