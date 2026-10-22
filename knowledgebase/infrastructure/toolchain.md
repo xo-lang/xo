@@ -2442,6 +2442,8 @@ first, AST based prototype, since deleted) and
   spinning workers, root threads that run queued work while they wait
   (decision 0077; `XO_RTSTATS=1` counts scheduler events,
   `XO_SPIN_ROUNDS=n` tunes spinning, default 0 since decision 0077's addendum, 16 before;
+  `XO_MUTEX_YIELD=0` turns off a Mutex release's yield to the writer it
+  woke (decision 0118's 2026-10-22 addendum; off anyway with one CPU);
   `XO_NETPOLL=0` turns off decision 0324's workers polling the network
   themselves on darwin and Linux, back to the poller thread alone, last
   verified: 2026-10-21), futex based locks and

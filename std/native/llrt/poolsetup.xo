@@ -88,6 +88,13 @@ fn setup(p: Int) {
     spin = atoi(sr[0])
   }
   rt.mem_store(p, P_SPIN_ROUNDS, spin, 8)
+  // XO_MUTEX_YIELD=0: a Mutex release that wakes a writer does not yield
+  // to it (pool.xo mutex_yield; the kill switch of decision 0118's
+  // 2026-10-22 addendum)
+  let my = process.env_real("XO_MUTEX_YIELD")
+  if !my.is_empty() && my[0] == "0" {
+    rt.slot_store[Int](rt.mem_load(p, P_DLK, 8), pool.DLK_MNOYIELD, 1, RELEASE)
+  }
   // XO_DEFER_WAKE=0: every wake at once, none deferred (decision 0077's
   // addendum)
   let dw = process.env_real("XO_DEFER_WAKE")

@@ -1223,6 +1223,15 @@ fn run_fiber(p: Int, w: Int, f: Int) {
   rt.slot_store(w, W_RUN_AT_I, 0, RELAXED)
   rt.slot_store(w, W_PREEMPT_I, 0, RELAXED)
   if r == 2 {
+    if rt.mem_load(w, W_ASYNC, 8) == 2 {
+      // a Mutex release's yield to the writer it woke into next
+      // (yield_now): behind this worker's own ring, not the inject
+      // queue's tail, whose lock every such release took (bench/perf/conc
+      // mutex 3.4x the CPU, 2026-10-22)
+      rt.mem_store(w, W_ASYNC, 0, 8)
+      rq_put(p, w, f | 1)
+      return
+    }
     if rt.mem_load(w, W_ASYNC, 8) != 0 {
       // preempted by SIGURG (decision 0318): its registers and the values
       // it derived from this thread are in the signal frame on its stack,
@@ -2017,6 +2026,31 @@ pub const DLK_NOPREEMPT = 7
 /// idle by the deadlock check, and wakep breaks their wait when no other
 /// worker can take the work (ctx.xo DLK_SIZE).
 const DLK_NPBLK = 8
+/// XO_MUTEX_YIELD=0 (poolsetup.xo setup): a Mutex release that wakes a
+/// writer does not yield to it (mutex_yield).
+pub const DLK_MNOYIELD = 9
+
+/// Whether a Mutex release that wakes a writer puts it in next and yields
+/// to it (mutex.xo wake, decision 0118's 2026-10-22 addendum): not with
+/// one CPU, where the yield only delays the releaser, nor under
+/// XO_MUTEX_YIELD=0.
+pub fn mutex_yield(p: Int) -> Bool {
+  rt.mem_load(p, P_NCPU, 8) > 1 && rt.slot_load(rt.mem_load(p, P_DLK, 8), DLK_MNOYIELD, RELAXED) == 0
+}
+
+/// Yields the running fiber to the back of its worker's ring (W_ASYNC 2,
+/// run_item) now: mutex.xo's release that woke a writer into next, as
+/// the Go backend's Gosched after a wake (gotchas/lock-convoy-runnext-
+/// wake.md); not on a thread without a fiber or with a runtime lock held.
+pub fn yield_now() {
+  let w = rt.tlocal_get(TLS_W)
+  let f = rt.tlocal_get(TLS_FIB)
+  if w == 0 || f == 0 || rt.mem_load(w, W_LOCKS, 8) != 0 {
+    return
+  }
+  rt.mem_store(w, W_ASYNC, 2, 8)
+  sched.fiber_yield(f)
+}
 
 /// Takes the pool's lock (record p's word 0), marking it held by this
 /// thread's worker record when the lock order is checked.
