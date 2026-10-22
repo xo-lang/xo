@@ -4094,6 +4094,34 @@ seed is the xo1 of the `go-compiler-final` tag (87873aa5), then the hops of scri
 that commit's cmd/xo, which builds that commit's compiler/xo with its
 own driver.
 
+Bisecting a failure over commits (2026-10-22):
+
+    HEAVY_CLASS=bulk ~/xo-lead/agents/heavy.sh NAME scripts/bisect.sh TestModuleCheckAutoGeneric c7d2445ff 2719f79a0
+    scripts/bisect.sh --pkg=./internal/arm64 'TestGoldenRun/closures' GOOD BAD
+    scripts/bisect.sh 'bin/xo build test/foo && ./foo' GOOD BAD
+
+runs `git bisect run` in a shared clone of the checkout (in
+`$XO_BISECT_WORK`, else `$TMPDIR/xo-bisect.PID`, removed at the end
+unless `--keep`). Each step builds its xo with this checkout's
+scripts/xobuild, so with today's seed choice (an ancestor's seed or
+cached build, FetchSeedFor) even for a commit whose own xobuild chose
+wrongly, into the shared checkout cache by source key; then runs the
+test in the step's tree with `XO_CLI` that xo and `XO_CLI_STALE_OK=1`.
+A go test pattern (no space; `TestA|TestB` runs as `^(TestA|TestB)$`,
+one with a `/` as given) runs `go test -count=1 -timeout 30m` in the
+package of its first name at BAD (`--pkg` overrides); a step where it
+matches no test is skipped. A shell command exits 0 good, 125 skip,
+anything else bad. A step whose xo does not build is skipped. xo's
+back-end cache, build directory, Go cache, and test binaries are private
+per step (`XO_BACKEND_CACHE_DIR`, `XO_BUILD_DIR`, `XO_GOCACHE`,
+`XO_BIN_CACHE=off`), so an old xo's prune never reaches the shared ones.
+Prints each step's verdict (a bad step with its test log's last lines),
+the first bad commit, and its author line. Proved on 2026-10-22's
+TestModuleCheckAutoGeneric failure: c7d2445ff good to 2719f79a0 bad,
+508 commits, 9 steps in 8 minutes (each step's xo built from a cached
+ancestor build or seed), first bad 129b19af7, the commit the hand bisect
+found. Last verified: 2026-10-22.
+
 A checkout's xo (the one the Go tests run, internal/xotool):
 
     go run ./scripts/xobuild                  # prints <repo>/bin/xo
