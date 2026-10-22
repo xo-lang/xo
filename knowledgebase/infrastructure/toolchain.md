@@ -2425,7 +2425,10 @@ first, AST based prototype, since deleted) and
   (one per CPU, `XO_THREADS=n` overrides), Go style run queues and
   spinning workers, root threads that run queued work while they wait
   (decision 0077; `XO_RTSTATS=1` counts scheduler events,
-  `XO_SPIN_ROUNDS=n` tunes spinning, default 0 since decision 0077's addendum, 16 before), futex based locks and
+  `XO_SPIN_ROUNDS=n` tunes spinning, default 0 since decision 0077's addendum, 16 before;
+  `XO_NETPOLL=0` turns off decision 0324's workers polling the network
+  themselves on darwin and Linux, back to the poller thread alone, last
+  verified: 2026-10-21), futex based locks and
   parks (`__ulock_wait` on Darwin), awaits and scope joins that run tasks nobody started, a cancellation
   tree, channels, select, Mutex (readers and writer, writers preferred),
   Atomic, and deadlock detection (XO-F001). Since decision 0069 every task

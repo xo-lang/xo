@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+slept 3000
+--- stderr

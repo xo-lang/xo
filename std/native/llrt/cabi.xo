@@ -401,6 +401,18 @@ fn poll_timer_del(t: Int) { poll.timer_del(t) }
 /// park is signaled or it is canceled, not counted as blocked.
 fn poll_park_wait(c: Int) { tasks.park_wait_n(c, true, false) }
 
+/// A worker's poll of the network (decision 0324, pool.xo np_poll):
+/// block not 0 waits for the next event or timer; the events handled, or
+/// -1 when it did not poll.
+fn np_poll(block: Int, a: Int) -> Int { poll.np_poll(block != 0) }
+
+/// Breaks a worker's wait in the network poller (decision 0324, pool.xo
+/// np_break).
+fn np_break(a: Int, b: Int) -> Int {
+  poll.np_break()
+  a
+}
+
 // The clock and cancellation checks of generated code (compiler/ssa
 // exports.xo; xo_rt.c's xo_clock_now and the rest stay for code of
 // compilers up to 0.12.0).

@@ -319,7 +319,7 @@ pub fn futex_wait(a: Int, v: Int) {
 }
 
 /// futex_wait for at most about us microseconds.
-fn futex_wait_us(a: Int, v: Int, us: Int) {
+pub fn futex_wait_us(a: Int, v: Int, us: Int) {
   stat(ST_FUTEX_WAIT)
   match layer() {
     1 => {
@@ -544,7 +544,9 @@ fn wakep(p: Int) {
   }
   let ncpu = rt.mem_load(p, P_NCPU, 8)
   if rt.slot_load(p, P_NIDLE, SEQ_CST) == 0 && workers(p) >= ncpu {
-    // every worker busy: the monitor's ticks preempt one past its slice
+    // every worker busy: one waiting in the poller takes it (decision
+    // 0324), and the monitor's ticks preempt one past its slice
+    np_break(p)
     preempt_arm(p)
     return
   }
@@ -570,6 +572,70 @@ fn wakep(p: Int) {
   punlock(p)
   if !started {
     rt.slot_add(p, P_SPINNING, -1, SEQ_CST)
+    np_break(p)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Workers polling the network themselves (decision 0324, Go's netpoller
+// model): a worker out of work polls without waiting (find_work), an idle
+// one waits in the poller instead of its futex (go_idle), one at a time
+// (poll.xo's token); the poller thread is their fallback. Through the
+// exports cabi.xo np_poll and np_break: poll.xo imports this module.
+
+/// w polls once (block: waiting for the next event or timer), the fibers
+/// it readies pushed to its ring with no wake each (W_NONEXT 2), then
+/// spread (np_spread): the events and timers handled, or -1 when it did
+/// not poll.
+fn np_poll(p: Int, w: Int, block: Bool) -> Int {
+  let was = rt.mem_load(w, W_NONEXT, 8)
+  rt.mem_store(w, W_NONEXT, 2, 8)
+  let n = rt.call_c2(rt.fn_addr("np_poll"), if block { 1 } else { 0 }, 0)
+  rt.mem_store(w, W_NONEXT, was, 8)
+  if n > 0 {
+    np_spread(p, w)
+  }
+  n
+}
+
+/// After a poll queued k fibers on w's ring with no wake each: one wakep
+/// when more than one did, and a woken worker that finds work wakes the
+/// next (find_work), as Go's injectglist with no idle P. Waking an idle
+/// worker for each (Go's rule with idle Ps) cut inject but raised the
+/// wakes and futex calls a request by 12 to 19% on bench/perf http
+/// (2026-10-21).
+fn np_spread(p: Int, w: Int) {
+  let k = rt.slot_load(w, RQ_TAIL, SEQ_CST).wrapping_sub(rt.slot_load(w, 0, SEQ_CST))
+  if k > 1 {
+    wakep(p)
+  }
+}
+
+/// An idle w waits in the poller instead of its futex, off the idle
+/// list and counted by DLK_NPBLK: -1 when it could not (the token is
+/// taken, workers do not poll), else the events and timers it handled
+/// (0: look again).
+fn np_block(p: Int, w: Int) -> Int {
+  let dlk = rt.mem_load(p, P_DLK, 8)
+  rt.slot_add(dlk, DLK_NPBLK, 1, SEQ_CST)
+  // a push before the count went up broke no wait: look
+  if any_work(p) != 0 {
+    rt.slot_add(dlk, DLK_NPBLK, -1, SEQ_CST)
+    return 0
+  }
+  plock(p)
+  dl_check(p)
+  punlock(p)
+  let n = np_poll(p, w, true)
+  rt.slot_add(dlk, DLK_NPBLK, -1, SEQ_CST)
+  n
+}
+
+/// Breaks the wait of a worker in the poller, if one waits (wakep found
+/// no other worker for the work).
+fn np_break(p: Int) {
+  if rt.slot_load(rt.mem_load(p, P_DLK, 8), DLK_NPBLK, SEQ_CST) > 0 {
+    let _b = rt.call_c2(rt.fn_addr("np_break"), 0, 0)
   }
 }
 
@@ -915,6 +981,10 @@ pub fn find_work(p: Int, w: Int, spinning: Int) -> Int {
   if t == 0 {
     t = inject_pop(p, w)
   }
+  if t == 0 && np_poll(p, w, false) > 0 {
+    // the network's ready fibers, on this worker (decision 0324)
+    t = take_local(w)
+  }
   if t != 0 || spinning == 0 {
     return t
   }
@@ -978,6 +1048,10 @@ pub fn grace_begin() {
 /// spinning).
 fn go_idle(p: Int, w: Int) -> Int {
   count_main(p)
+  // decision 0324: wait in the network poller when no one does
+  if np_block(p, w) >= 0 {
+    return 0
+  }
   plock(p)
   rt.slot_store(w, W_WAKEW_I, 0, RELAXED)
   rt.mem_store(w, W_IDLE_NEXT, rt.mem_load(p, P_IDLE, 8), 8)
@@ -1907,6 +1981,10 @@ const DLK_THREADED = 5
 const DLK_MAINF = 6
 /// XO_PREEMPT=0 (poolsetup.xo setup): the monitor asks no worker to yield.
 pub const DLK_NOPREEMPT = 7
+/// The workers waiting in the network poller (decision 0324): counted
+/// idle by the deadlock check, and wakep breaks their wait when no other
+/// worker can take the work (ctx.xo DLK_SIZE).
+const DLK_NPBLK = 8
 
 /// Takes the pool's lock (record p's word 0), marking it held by this
 /// thread's worker record when the lock order is checked.
@@ -1983,7 +2061,7 @@ pub fn dl_check(p: Int) {
   if roots <= 0 || rt.slot_load(dlk, DLK_BLOCKED, SEQ_CST) != roots {
     return
   }
-  if rt.slot_load(p, P_NIDLE, SEQ_CST) != rt.slot_load(p, P_ALIVE, SEQ_CST) {
+  if rt.slot_load(p, P_NIDLE, SEQ_CST).wrapping_add(rt.slot_load(dlk, DLK_NPBLK, SEQ_CST)) != rt.slot_load(p, P_ALIVE, SEQ_CST) {
     return
   }
   if rt.slot_load(dlk, DLK_UNCOUNTED, SEQ_CST) != 0 || any_work(p) != 0 {

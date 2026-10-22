@@ -1,0 +1,16 @@
+// A task sleeping briefly in a loop while every worker is idle: a worker
+// waiting in the network poller fires the due timer itself (decision 0324).
+fn main(os: Os) {
+  let done = Chan[Int].new(cap: 1)
+  scope sc {
+    sc.spawn(fn() {
+      var n = 0
+      for _ in 0..3000 {
+        os.clock.sleep(10us)
+        n += 1
+      }
+      done.send(n)
+    })
+  }
+  os.stdio.println("slept ${done.recv() ?? 0}")
+}

@@ -217,11 +217,12 @@ const DLK_ROOTS = 0
 /// the blocked, the uncounted, the roots running their loop while main is
 /// on a fiber, pool.xo DLK_LOOPS, XO_LOCKCHECK, DLK_LOCKCHECK, and whether
 /// the first spawn switched the heap's threading, DLK_THREADED, and main's
-/// fiber, DLK_MAINF, and XO_PREEMPT=0, DLK_NOPREEMPT), made by
+/// fiber, DLK_MAINF, XO_PREEMPT=0, DLK_NOPREEMPT, and the workers
+/// waiting in the network poller, DLK_NPBLK, decision 0324), made by
 /// init from the runtime's malloc and never freed (were xo_rt.c's
 /// statics `pool` and `dlk`).
 const P_SIZE = 32896
-const DLK_SIZE = 64
+const DLK_SIZE = 72
 
 /// A root context for a thread that runs Xo code outside any task (the
 /// program's main thread; was xo_rt.c ctx): a zeroed context and

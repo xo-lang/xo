@@ -15,6 +15,7 @@ use native/llrt/heapos
 use native/llrt/linux
 use native/llrt/obj
 use native/llrt/pool
+use native/llrt/process
 use native/llrt/raw
 use native/llrt/rtstats
 use native/llrt/sanhook
@@ -158,6 +159,7 @@ const ST_POLL_WAKE = 17
 const RELAXED = 0
 const ACQUIRE = 1
 const RELEASE = 2
+const SEQ_CST = 4
 
 fn stat(k: Int) { rtstats.count(k) }
 
@@ -226,8 +228,9 @@ pub fn pd_ready(pd: Int, mode: Int) {
 /// rt.static_word: the event loop's record (EV_ below), made by poll_svc
 /// (was xo_rt.c's static ev).
 const W_EV = 43
-/// Its size: the words below, Windows' last.
-const EV_SIZE = 112
+/// Its size: the words below, Windows', then the network poll's of
+/// decision 0324.
+const EV_SIZE = 152
 
 /// The event loop's record's words: the start's state
 /// (0 not started, 1 starting, 2 running), the lock word, the self
@@ -255,6 +258,31 @@ const EV_NREG = 88
 const EV_CREG = 96
 /// SIGQUITs not yet handled (`xo dump`, decision 0251)
 const EV_QUITS = 104
+/// Decision 0324 (idle workers poll the network themselves): the poll
+/// token (TOK_*: who polls now), the monotonic ns of the last poll, the
+/// poller thread's sleep word (1: asleep until a blocking worker gives
+/// the token back, 2: woken), the shared event buffer of the token's
+/// holder, and whether workers poll (1: Linux and macOS, not the test
+/// world's virtual clock, XO_NETPOLL not 0).
+const EV_TOK = 112
+const EV_LAST = 120
+const EV_PSLEEP = 128
+const EV_BUF = 136
+const EV_ON = 144
+const TOK_FREE = 0
+const TOK_WORKER = 1
+const TOK_BLOCKED = 2
+const TOK_POLLER = 3
+/// The poller thread's tick while workers poll (ns): NP_TICK_MIN after a
+/// poll of its own found something, doubled up to NP_TICK_MAX while it
+/// finds nothing to do (Go's sysmon, 20 us to 10 ms; a fixed 10 ms let
+/// busy workers, which poll only when out of work, leave the listener
+/// unpolled long enough for a burst of connections to overflow macOS's
+/// accept queue of 128, 2026-10-21); and the ticks with no poll before
+/// it waits in the poller itself (a quiet program).
+const NP_TICK_MIN = 500000
+const NP_TICK_MAX = 10000000
+const NP_QUIET = 10
 
 /// A descriptor record's size off Windows (without the AFD words of
 /// D_SIZE_WIN).
@@ -935,6 +963,9 @@ fn ev_init() {
       heapos.oom()
     }
   }
+  // decision 0324: the token holder's event buffer (as poll_main's)
+  rt.mem_store(e, EV_BUF, rt.heap_large(addw(NEVENTS.wrapping_mul(32), 16 + 64)), 8)
+  rt.mem_store(e, EV_ON, if np_wanted() { 1 } else { 0 }, 8)
   if !pool.thread_start(rt.fn_addr("poll_thread"), 0) {
     heapos.oom()
   }
@@ -1074,57 +1105,185 @@ const NEVENTS = 64
 /// lock word (ev.mu), dead the address of the list of descriptors to
 /// free (each from rt.heap_large: pd_open), sigs the address of the
 /// count of signals not handled yet (each a step of stop.xo's
-/// shutdown).
+/// shutdown); poll_round reads them from the record. With workers
+/// polling (decision 0324) the thread is their fallback: asleep while a
+/// worker waits in the poller, a tick (NP_TICK_MIN to NP_TICK_MAX) while they poll, a
+/// poll without waiting when none did for a tick (every worker busy:
+/// their events and timers go through the inject queue, as Go's sysmon's
+/// poll), and after NP_QUIET such ticks it waits in the poller itself
+/// until something happens (a quiet program costs no ticks).
 pub fn poll_main(poll: Int, pipe_r: Int, mu: Int, dead: Int, sigs: Int) {
   // the events (struct kevent of 32 bytes, struct epoll_event of 16 or
   // 12), a struct timespec, and the pipe's drain buffer
   let evs = rt.heap_large(addw(NEVENTS.wrapping_mul(32), 16 + 64))
-  let ts = addw(evs, NEVENTS.wrapping_mul(32))
-  let drain = addw(ts, 16)
+  let e = ev()
+  if rt.mem_load(e, EV_ON, 8) == 0 {
+    while true {
+      let _n = poll_round(e, evs, -1, false)
+    }
+  }
+  let tok = addw(e, EV_TOK)
+  let sl = addw(e, EV_PSLEEP)
+  var quiet = 0
+  var tick = NP_TICK_MIN
   while true {
-    lk(mu)
-    var pd = rt.mem_load(dead, 0, 8)
-    while pd != 0 {
-      let next = rt.mem_load(pd, D_NEXT, 8)
-      rt.heap_release(subw(pd, 8))
-      pd = next
-    }
-    rt.mem_store(dead, 0, 0, 8)
-    let now = sysio.mono_ns()
-    var t = timer_first()
-    while t != 0 && dl(t) <= now {
-      timer_remove(t)
-      fire(t, mu)
-      t = timer_first()
-    }
-    let first = timer_first()
-    let wait = if first == 0 { -1 } else { subw(dl(first), now) }
-    unlk(mu)
-    let n = wait_events(poll, evs, ts, wait)
-    if tracerec.built() && tracerec.on() {
-      tracerec.ev(tracerec.K_POLL, 0, n, 0)
-    }
-    stat(ST_POLL_RETURN)
-    var i = 0
-    while i < n {
-      let (p, mode) = event(evs, i)
-      if p != 0 {
-        pd_ready(p, mode)
-      } else {
-        // the self pipe: drain it, then the signals that wrote to it
-        while read_fd(pipe_r, drain, 64) > 0 {}
-        var k = rt.slot_swap(sigs, 0, 0, ACQ_REL)
-        while k > 0 {
-          stop.signal()
-          k = subw(k, 1)
-        }
-        // SIGQUIT: the task tree, on this thread (cabi.xo dump_now)
-        if rt.slot_swap(addw(sigs, EV_QUITS - EV_SIGS), 0, 0, ACQ_REL) > 0 {
-          let _d = rt.call_c2(rt.fn_addr("dump_now"), 0, 0)
+    if rt.slot_load(tok, 0, ACQUIRE) == TOK_BLOCKED {
+      // a worker waits in the poller: sleep until it gives the token
+      // back (np_poll wakes this thread then)
+      rt.slot_store(sl, 0, 1, SEQ_CST)
+      if rt.slot_load(tok, 0, SEQ_CST) == TOK_BLOCKED {
+        while rt.slot_load(sl, 0, ACQUIRE) == 1 {
+          pool.futex_wait(sl, 1)
         }
       }
-      i = addw(i, 1)
+      rt.slot_store(sl, 0, 0, RELAXED)
+      quiet = 0
+      tick = NP_TICK_MIN
+      continue
     }
+    pool.futex_wait_us(sl, 0, tick / 1000)
+    if subw(sysio.mono_ns(), rt.slot_load(e, EV_LAST / 8, RELAXED)) < tick {
+      // the workers poll
+      quiet = 0
+      tick = if tick < NP_TICK_MAX / 2 { tick.wrapping_shl(1) } else { NP_TICK_MAX }
+      continue
+    }
+    if !rt.slot_cas(tok, 0, TOK_FREE, TOK_POLLER, ACQUIRE) {
+      continue
+    }
+    quiet = addw(quiet, 1)
+    let n = poll_round(e, evs, if quiet >= NP_QUIET && tick >= NP_TICK_MAX { -1 } else { 0 }, false)
+    rt.slot_store(e, EV_LAST / 8, sysio.mono_ns(), RELAXED)
+    rt.slot_store(tok, 0, TOK_FREE, RELEASE)
+    if n > 0 {
+      quiet = 0
+      tick = NP_TICK_MIN
+    } else {
+      tick = if tick < NP_TICK_MAX / 2 { tick.wrapping_shl(1) } else { NP_TICK_MAX }
+    }
+  }
+}
+
+/// One round of the poller (its caller holds the token, or is the poller
+/// thread with workers not polling): frees the closed descriptors, fires
+/// the due timers, waits for events into evs (at most until the first
+/// timer, and at most maxwait ns; -1 no limit, 0 no wait; no wait when a
+/// timer fired on a worker), and hands each to its waiters, the self
+/// pipe's to the signals' steps: the events and timers handled. worker:
+/// a worker's poll, whose readied fibers go to its own ring with no wake
+/// (pool.xo np_poll).
+fn poll_round(e: Int, evs: Int, maxwait: Int, worker: Bool) -> Int {
+  let poll = s32(rt.mem_load(e, EV_POLL, 4))
+  let pipe_r = s32(rt.mem_load(e, EV_PIPE_R, 4))
+  let mu = addw(e, EV_MU)
+  let dead = addw(e, EV_DEAD)
+  let sigs = addw(e, EV_SIGS)
+  let ts = addw(evs, NEVENTS.wrapping_mul(32))
+  let drain = addw(ts, 16)
+  var fired = 0
+  lk(mu)
+  var pd = rt.mem_load(dead, 0, 8)
+  while pd != 0 {
+    let next = rt.mem_load(pd, D_NEXT, 8)
+    rt.heap_release(subw(pd, 8))
+    pd = next
+  }
+  rt.mem_store(dead, 0, 0, 8)
+  let now = sysio.mono_ns()
+  var t = timer_first()
+  while t != 0 && dl(t) <= now {
+    timer_remove(t)
+    fire(t, mu)
+    fired = addw(fired, 1)
+    t = timer_first()
+  }
+  let first = timer_first()
+  var wait = if first == 0 { -1 } else { subw(dl(first), now) }
+  if maxwait >= 0 && (wait < 0 || wait > maxwait) {
+    wait = maxwait
+  }
+  if fired > 0 && worker {
+    // the fired timers' fibers wait on this worker's ring: a blocking
+    // wait left them there with nothing to end it (a build's waitpid
+    // sleep loop hung, 2026-10-21)
+    wait = 0
+  }
+  unlk(mu)
+  let n = wait_events(poll, evs, ts, wait)
+  if tracerec.built() && tracerec.on() {
+    tracerec.ev(tracerec.K_POLL, 0, n, 0)
+  }
+  stat(ST_POLL_RETURN)
+  var i = 0
+  while i < n {
+    let (p, mode) = event(evs, i)
+    if p != 0 {
+      pd_ready(p, mode)
+    } else {
+      // the self pipe: drain it, then the signals that wrote to it
+      while read_fd(pipe_r, drain, 64) > 0 {}
+      var k = rt.slot_swap(sigs, 0, 0, ACQ_REL)
+      while k > 0 {
+        stop.signal()
+        k = subw(k, 1)
+      }
+      // SIGQUIT: the task tree, on this thread (cabi.xo dump_now)
+      if rt.slot_swap(addw(sigs, EV_QUITS - EV_SIGS), 0, 0, ACQ_REL) > 0 {
+        let _d = rt.call_c2(rt.fn_addr("dump_now"), 0, 0)
+      }
+    }
+    i = addw(i, 1)
+  }
+  addw(n, fired)
+}
+
+/// Whether workers poll the network themselves (decision 0324): Linux and
+/// macOS, not the test world's virtual clock (twrun moves its timers),
+/// and XO_NETPOLL not 0.
+fn np_wanted() -> Bool {
+  let os_ok = match target.os {
+    TargetOs.Darwin | TargetOs.Linux => true
+    TargetOs.Windows | TargetOs.Wasi => false
+  }
+  if !os_ok || virt() {
+    return false
+  }
+  let v = process.env_real("XO_NETPOLL")
+  v.is_empty() || v[0] != "0"
+}
+
+/// A worker's poll (decision 0324, through cabi.xo np_poll): with the
+/// token free, one round, waiting for the next event or timer when block,
+/// the fibers it readies pushed from the calling worker (pool.xo
+/// np_poll): the events and timers handled, or -1 when it did not poll
+/// (workers do not poll here, the event loop is not started, another
+/// thread holds the token).
+pub fn np_poll(block: Bool) -> Int {
+  let e = ev()
+  if e == 0 || rt.slot_load(addw(e, EV_ONCE), 0, ACQUIRE) != 2 || rt.mem_load(e, EV_ON, 8) == 0 {
+    return -1
+  }
+  let tok = addw(e, EV_TOK)
+  if rt.slot_load(tok, 0, RELAXED) != TOK_FREE || !rt.slot_cas(tok, 0, TOK_FREE, if block { TOK_BLOCKED } else { TOK_WORKER }, ACQUIRE) {
+    return -1
+  }
+  let n = poll_round(e, rt.mem_load(e, EV_BUF, 8), if block { -1 } else { 0 }, true)
+  rt.slot_store(e, EV_LAST / 8, sysio.mono_ns(), RELAXED)
+  rt.slot_store(tok, 0, TOK_FREE, SEQ_CST)
+  let sl = addw(e, EV_PSLEEP)
+  if rt.slot_load(sl, 0, SEQ_CST) == 1 && rt.slot_cas(sl, 0, 1, 2, ACQ_REL) {
+    pool.futex_wake(sl)
+  }
+  n
+}
+
+/// Breaks a worker's wait in the poller (decision 0324, through cabi.xo
+/// np_break: work was pushed while every other worker is busy): a byte in
+/// the self pipe when a worker waits there.
+pub fn np_break() {
+  let e = ev()
+  if e != 0 && rt.slot_load(addw(e, EV_TOK), 0, SEQ_CST) == TOK_BLOCKED {
+    poke()
   }
 }
 

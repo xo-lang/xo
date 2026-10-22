@@ -33,8 +33,9 @@ which parks within the request, and the worker, out of work, parks
 933,196 for 933,290 requests at 6 cores), and with more free cores more
 of them land on a parked worker on another core.
 
-Step 1 (spinning before parking, 64 rounds by default with more than
-one worker; measured in the same runs: 6 cores 55.8k to 73.7k requests a
+Step 1 (spinning before parking, XO_SPIN_ROUNDS; 64 rounds were
+measured but are not the default: on the Mac they cost 7% more CPU a
+request on bench/perf http, 2026-10-21, so the default stays 0; measured in the same runs: 6 cores 55.8k to 73.7k requests a
 second, 13% less CPU a request) shortens the idle gaps but leaves the
 futex calls at about 0.38 a request and 6 cores still below 3.
 
@@ -74,6 +75,33 @@ Go's netpoller model: an idle worker waits in the poller itself.
 - Measured before it lands: the pinned 1, 3, 6 core runs with
   XO_RTSTATS (two interleaved rounds), bench/perf http, conc, and the
   async preemption tests; TSan's shared map test under --race.
+
+## Implementation (2026-10-21, darwin and Linux)
+
+- poll.xo: the token (EV_TOK: free, a worker's poll, a worker waiting,
+  the poller thread), poll_round (one round of the old loop), np_poll
+  and np_break (called through cabi.xo exports: poll.xo imports
+  pool.xo). pool.xo: find_work polls without waiting after the inject
+  queue; go_idle waits in the poller (np_block, counted by DLK_NPBLK,
+  which the deadlock check counts as idle); wakep breaks the wait when
+  every other worker is busy. XO_NETPOLL=0 keeps the poller thread path.
+- After a poll that readied more than one fiber: one wakep, not a wake
+  for each idle worker. Waking one per fiber cut inject to 0.28 a
+  request but raised wakes and futex calls 12 to 19% over the old path.
+- The poller thread ticks from 0.5 to 10 ms while workers poll (doubling
+  while it finds nothing), sleeps while a worker waits in the poller, and
+  waits in the poller itself after 10 empty ticks at 10 ms.
+- A worker's poll never waits after it fired a timer: the timer's fiber
+  is on the worker's own ring (gotchas/worker-poll-fires-timer-then-blocks.md).
+- Measured (bench/perf http on the Mac, 256 connections, 8 runs a mode
+  in two ABBA sets): inject 0.71 to 0.0003 a request, worker wakes -28
+  to -34%, futex calls -25 to -30%, CPU a request -7 to -11%; requests a
+  second -6.5% and +33% in the two sets, within the loaded Mac's noise.
+  The connection resets the load generator sometimes reports (a 256
+  connection burst against macOS's listen queue of 128) occur in both
+  modes.
+- Not yet: roots (root_idle) do not wait in the poller; Linux pinned 1,
+  3 and 6 core runs (Docker) follow.
 
 ## Alternatives
 
