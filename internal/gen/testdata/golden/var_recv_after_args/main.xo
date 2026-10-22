@@ -64,6 +64,33 @@ fn main(os: Os) {
   var sz: Sizer = Table{}
   let s3 = sz.size(grow(sz))
   os.stdio.println("${s3}")
+  // std methods too: List.get, Map.get, Int.max
+  var ys = [10, 20, 30, 7]
+  let g = ys.get(take_last(ys))
+  os.stdio.println("${g ?? -1} ${ys.len()}")
+  var m: Map[Str, Int] = {"a": 1}
+  let mg = m.get(add_key(m))
+  os.stdio.println("${mg ?? -1}")
+  var k = 1
+  let km = k.max(set5(k))
+  os.stdio.println("${km}")
+}
+
+// pops the last element and returns it
+fn take_last(var xs: List[Int]) -> Int {
+  let v = xs[xs.len() - 1]
+  xs.pop()
+  v
+}
+
+fn add_key(var m: Map[Str, Int]) -> Str {
+  m["b"] = 2
+  "b"
+}
+
+fn set5(var k: Int) -> Int {
+  k = 5
+  0
 }
 
 struct Wrap {

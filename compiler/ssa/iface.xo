@@ -507,9 +507,12 @@ fn (var b: Builder) iface_call(x: Expr, ci: check.CallInfo) -> Int {
   }
   let recv = ci.recv[0]
   let ct = b.nat_check(recv)
-  let v = b.expr(recv)
+  // a receiver that is a variable or a field path is read after the
+  // arguments (decision 0326); until then only its type is needed
+  let late = recv_after_args(recv) && !args.is_empty()
+  let v = if late { -1 } else { b.expr(recv) }
   let st = b.str_t()
-  let vt = b.vty(v)
+  let vt = if late { b.typ(ct) } else { b.vty(v) }
   if b.is_dyn(vt) && args.is_empty() {
     if fname == "debug" {
       return b.dyn_debug(b.const_str(""), v)
@@ -550,12 +553,7 @@ fn (var b: Builder) iface_call(x: Expr, ci: check.CallInfo) -> Int {
     let (_, et) = b.result_parts(b.nat_check(x))
     to_err = et
   }
-  // a receiver that is a variable or a field path is read after the
-  // arguments (decision 0326): the first read gave its type
-  var rv = v
-  if recv_after_args(recv) && !vals.is_empty() {
-    rv = b.expr(recv)
-  }
+  let rv = if late { b.expr(recv) } else { v }
   let r = b.method_on(fname, ct, rv, vals, nt, b.fail_err(to_err), Some(x))
   b.call_result(r, x)
 }

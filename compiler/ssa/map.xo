@@ -831,6 +831,20 @@ fn (var b: Builder) map_call(x: Expr, ci: check.CallInfo) -> Int? {
     }
     return None
   }
+  // a variable or field path receiver is read after the key and the
+  // reason (decision 0326)
+  var lk = -1
+  var lr = -1
+  if recv_after_args(ci.recv[0]) && (key is "Map.contains" | "Set.contains" | "Map.get" | "Map.get_or_fault") {
+    let t0 = b.nat_of(ci.recv[0])
+    if !b.m.types[t0].coll {
+      return None
+    }
+    lk = b.value_as(args[0] ?? fault("arg"), map_key(b.m, t0))
+    if key == "Map.get_or_fault" {
+      lr = b.value_as(args[1] ?? fault("arg"), b.str_t())
+    }
+  }
   let mv = b.expr(ci.recv[0])
   let t = b.vty(mv)
   if !b.m.types[t].coll {
@@ -843,12 +857,12 @@ fn (var b: Builder) map_call(x: Expr, ci: check.CallInfo) -> Int? {
       return Some(b.add(Op.Eq, bt, Aux.None, [n, b.cint(0)]))
     }
     "Map.contains" | "Set.contains" => {
-      let k = b.value_as(args[0] ?? fault("arg"), map_key(b.m, t))
+      let k = if lk >= 0 { lk } else { b.value_as(args[0] ?? fault("arg"), map_key(b.m, t)) }
       let idx = b.map_index(t, mv, k)
       return Some(b.add(Op.Ge, bt, Aux.None, [idx, b.cint(0)]))
     }
     "Map.get" => {
-      let k = b.value_as(args[0] ?? fault("arg"), map_key(b.m, t))
+      let k = if lk >= 0 { lk } else { b.value_as(args[0] ?? fault("arg"), map_key(b.m, t)) }
       if b.m.map_log {
         return Some(b.maph_get(t, mv, k, nt))
       }
@@ -867,8 +881,8 @@ fn (var b: Builder) map_call(x: Expr, ci: check.CallInfo) -> Int? {
     }
     "Map.get_or_fault" => {
       let st = b.str_t()
-      let k = b.value_as(args[0] ?? fault("arg"), map_key(b.m, t))
-      let reason = b.value_as(args[1] ?? fault("arg"), st)
+      let k = if lk >= 0 { lk } else { b.value_as(args[0] ?? fault("arg"), map_key(b.m, t)) }
+      let reason = if lr >= 0 { lr } else { b.value_as(args[1] ?? fault("arg"), st) }
       let idx = b.map_index(t, mv, k)
       let (bad, ok) = b.branch(b.add(Op.Lt, bt, Aux.None, [idx, b.cint(0)]))
       b.s.cur = bad

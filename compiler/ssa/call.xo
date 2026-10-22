@@ -43,16 +43,26 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
       if let SelectorExpr(x: recv, sel: sel, ..) = fun {
         let sn = sel.name
         if (args.len() == 1 && (sn == b"min" || sn == b"max")) || (args.len() == 2 && sn == b"clamp") {
-          let a = b.expr(recv)
+          // a variable or field path receiver is read after the
+          // arguments (decision 0326)
+          let late = recv_after_args(recv)
+          var a = if late { -1 } else { b.expr(recv) }
+          let at = if late { b.nat_of(recv) } else { b.vty(a) }
           if sn == b"clamp" {
-            let lo = b.value_as(args[0].value, b.vty(a))
-            let hi = b.value_as(args[1].value, b.vty(a))
+            let lo = b.value_as(args[0].value, at)
+            let hi = b.value_as(args[1].value, at)
+            if late {
+              a = b.expr(recv)
+            }
             let r = b.ord_min_max("max", a, lo)
             if r >= 0 {
               return b.ord_min_max("min", r, hi)
             }
           } else {
-            let o = b.value_as(args[0].value, b.vty(a))
+            let o = b.value_as(args[0].value, at)
+            if late {
+              a = b.expr(recv)
+            }
             let r = b.ord_min_max(check.text(sn), a, o)
             if r >= 0 {
               return r
@@ -1896,13 +1906,19 @@ fn (var b: Builder) std_call(x: Expr, ci: check.CallInfo) -> Int {
           }
         }
       } else {
+        // a variable or field path receiver is read after the index
+        // (decision 0326)
+        var li = -1
+        if fname == "get" && args.len() == 1 && recv_after_args(ci.recv[0]) {
+          li = b.value_as(args[0].value, it)
+        }
         let l = b.expr(ci.recv[0])
         if b.tkind(b.vty(l)) == Kind.List {
           match fname {
             "len" => return b.call("list.len", it, "", [l])
             "is_empty" => return b.add(Op.Eq, bt, Aux.None, [b.call("list.len", it, "", [l]), b.cint(0)])
             "get" => {
-              let i = b.value_as(args[0].value, it)
+              let i = if li >= 0 { li } else { b.value_as(args[0].value, it) }
               return b.call("list.get", nt, "", [l, i])
             }
             "first" => return b.call("list.get", nt, "", [l, b.cint(0)])
@@ -1971,10 +1987,16 @@ fn (var b: Builder) std_call(x: Expr, ci: check.CallInfo) -> Int {
       }
     }
     "Int" | "Float" | "Str" => {
-      let v = b.expr(ci.recv[0])
-      var vs = [v]
+      // a variable or field path receiver is read after the arguments
+      // (decision 0326)
+      let late = recv_after_args(ci.recv[0])
+      let v0 = if late { -1 } else { b.expr(ci.recv[0]) }
+      var vs = [v0]
       for a in args {
         vs.push(b.expr(a.value))
+      }
+      if late {
+        vs[0] = b.expr(ci.recv[0])
       }
       var pos = ""
       if rname == "Int" && fname == "abs" {
