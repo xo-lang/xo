@@ -1857,6 +1857,10 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
       let r = g.rt("memcmp", regs([g.word(x.args[0]), g.word(x.args[1]), g.word(x.args[2])]), [false])
       g.set(v, [g.def1(false, "sxtw $d0, $wu0", [r[0]])])
     }
+    "rt.list_esize" => {
+      let et = g.m.types[g.vty(x.args[0])].elems[0]
+      g.set(v, [g.imm(g.esize(et))])
+    }
     "rt.obj_addr" => {
       // the address of a Str's object, plus a view's offset (decision 0330), so
       // llrt's raw.data and bytes_addr need no offset of their own; the header

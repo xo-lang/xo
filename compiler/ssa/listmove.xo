@@ -1,0 +1,155 @@
+// List.insert and List.remove_at on the native backends: one
+// rt.mem_move instead of the prelude's element by element shift (each
+// step an index, a set, and the counts of a counted element). The
+// helpers are built here, not in std/native/prelude.xo, because they ask
+// the emitter for the element size (rt.list_esize), which an older xo
+// does not know: the seed builds the prelude (gotchas/
+// seed-older-than-intrinsics.md). An index the fast path does not take
+// (the end, or out of range) calls the prelude's function, which pushes,
+// pops, or faults with its message.
+
+use github.com/xo-lang/xo/compiler/check
+
+/// `xs.insert(i, x)` and `xs.remove_at(i)` on a List place through
+/// xo.list.insert and xo.list.remove_at, or None (another call, wasm,
+/// which keeps the prelude's functions, or a receiver that is not a
+/// place).
+fn (var b: Builder) list_move_call(x: Expr, ci: check.CallInfo) -> Int? {
+  let fo = ci.fn_obj
+  let r = b.c.objs[fo].recv
+  if b.wasm || r < 0 || b.obj_name(r) != "List" || !b.c.objs[fo].recv_var || ci.recv.is_empty() {
+    return None
+  }
+  let fname = b.obj_name(fo)
+  if !(fname is "insert" | "remove_at") {
+    return None
+  }
+  let impl = b.impl_of(fo)
+  let tps = b.type_params(fo)
+  if impl < 0 || tps.len() != 1 {
+    return None
+  }
+  let ect = b.apply(ci.subst.get(tps[0]) ?? -1)
+  if ect < 0 {
+    return None
+  }
+  let (span, _, args) = call_parts(x)
+  let need = if fname == "insert" { 2 } else { 1 }
+  if args.len() != need {
+    return None
+  }
+  var p = b.place(ci.recv[0])
+  if !p.ok || b.tkind(p.t()) != Kind.List {
+    return None
+  }
+  let lt = p.t()
+  let et = b.m.types[lt].elems[0]
+  let it = b.int_t()
+  // declared first: b.m.funcs is read before its index (decision 0326)
+  let callee = b.declare(impl, [ect])
+  let slow = b.m.funcs[callee].name
+  let ot = b.typ(b.prelude_type("Option", [ect]))
+  let loc = b.const_str(b.pos_line(span))
+  // the arguments, then the receiver (decision 0326)
+  let i = b.value_as(args[0].value, it)
+  if fname == "insert" {
+    let v = b.value_as(args[1].value, et)
+    let f = b.list_insert_fn(lt, ot, slow)
+    let l = b.place_get(p)
+    let nl = b.call(f, lt, "", [l, i, v, loc])
+    b.check(f)
+    b.place_set(p, nl)
+    return Some(b.unit())
+  }
+  let f = b.list_remove_at_fn(lt, ot, slow)
+  let l = b.place_get(p)
+  let res = b.call(f, b.m.tuple([et, lt]), "", [l, i, loc])
+  b.check(f)
+  b.place_set(p, b.add(Op.Field, lt, Aux.I(n: 1), [res]))
+  Some(b.add(Op.Field, et, Aux.I(n: 0), [res]))
+}
+
+/// The address of element i of the list l (its object's element offset
+/// plus i elements of es bytes).
+fn (var b: Builder) list_elem_at(l: Int, i: Int, es: Int) -> Int {
+  let it = b.int_t()
+  let base = b.iop(Op.Add, b.rt("obj_addr", it, [l]), b.cint(layout_value(2, b.wasm)))
+  b.iop(Op.Add, base, b.iop(Op.Mul, i, es))
+}
+
+/// xo.list.insert[List[T]](l, i, x, loc) -> List[T]: for 0 <= i < len, x
+/// pushed twice makes l unique with x at n and n + 1, a count each; the
+/// elements then move as bits with no count changes: slots i..n-1 one
+/// place right (one rt.mem_move, over x's slot n), x's bits from slot n
+/// + 1 into slot i, and the pop of slot n + 1 releases the count the
+/// overwritten slot n held. ot is Option[T] (the pop's), slow the
+/// prelude's list_insert.
+fn (var b: Builder) list_insert_fn(lt: Int, ot: Int, slow: Str) -> Str {
+  let it = b.int_t()
+  let et = b.m.types[lt].elems[0]
+  let name = "xo.list.insert[${b.m.types[lt].name}]"
+  let fi = b.thunk_func(name, [lt, it, et, b.str_t()], [lt], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let l = b.param(0)
+  let i = b.param(1)
+  let x = b.param(2)
+  let n = b.call("list.len", it, "", [l])
+  let out = b.bop(Op.Or, b.bop(Op.Lt, i, b.cint(0)), b.bop(Op.Ge, i, n))
+  let (no, jn) = b.if_then_begin(out)
+  let st = b.m.tuple([b.unit_t(), lt])
+  let r = b.call(slow, st, "", [l, i, x, b.param(3)])
+  b.retv(b.add(Op.Field, lt, Aux.I(n: 1), [r]))
+  b.if_then_end(no, jn)
+  let l2 = b.call("list.push", lt, "", [b.call("list.push", lt, "", [l, x]), x])
+  let es = b.rt("list_esize", it, [l2])
+  let a = b.list_elem_at(l2, i, es)
+  let m = b.iop(Op.Mul, b.iop(Op.Sub, n, i), es)
+  b.rt("mem_move", -1, [b.iop(Op.Add, a, es), a, m])
+  b.rt("mem_copy", -1, [a, b.iop(Op.Add, b.iop(Op.Add, a, m), es), es])
+  let p = b.call("list.pop", b.m.tuple([lt, ot]), "", [l2])
+  b.retv(b.add(Op.Field, lt, Aux.I(n: 0), [p]))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// xo.list.remove_at[List[T]](l, i, loc) -> (T, List[T]): for 0 <= i <
+/// len - 1, element i pushed makes l unique with its value at n, a count
+/// of its own; slots i+1..n move one place left as bits (one
+/// rt.mem_move over slot i, whose count slot n's stale bits keep), the
+/// result is read from slot n (counted once more), and the two pops
+/// release slot n's and slot n-1's counts. ot is Option[T] (the pops'),
+/// slow the prelude's list_remove_at.
+fn (var b: Builder) list_remove_at_fn(lt: Int, ot: Int, slow: Str) -> Str {
+  let it = b.int_t()
+  let et = b.m.types[lt].elems[0]
+  let rt = b.m.tuple([et, lt])
+  let name = "xo.list.remove_at[${b.m.types[lt].name}]"
+  let fi = b.thunk_func(name, [lt, it, b.str_t()], [rt], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let l = b.param(0)
+  let i = b.param(1)
+  let n = b.call("list.len", it, "", [l])
+  let out = b.bop(Op.Or, b.bop(Op.Lt, i, b.cint(0)), b.bop(Op.Ge, b.iop(Op.Add, i, b.cint(1)), n))
+  let (no, jn) = b.if_then_begin(out)
+  b.retv(b.call(slow, rt, "", [l, i, b.param(2)]))
+  b.if_then_end(no, jn)
+  let l1 = b.call("list.push", lt, "", [l, b.call("list.index", et, "", [l, i])])
+  let es = b.rt("list_esize", it, [l1])
+  let a = b.list_elem_at(l1, i, es)
+  b.rt("mem_move", -1, [a, b.iop(Op.Add, a, es), b.iop(Op.Mul, b.iop(Op.Sub, n, i), es)])
+  let v = b.call("list.index", et, "", [l1, n])
+  let pt = b.m.tuple([lt, ot])
+  let p1 = b.call("list.pop", pt, "", [l1])
+  let p2 = b.call("list.pop", pt, "", [b.add(Op.Field, lt, Aux.I(n: 0), [p1])])
+  b.retv(b.add(Op.Tuple, rt, Aux.None, [v, b.add(Op.Field, lt, Aux.I(n: 0), [p2])]))
+  b.finish_fn()
+  b.end(saved)
+  name
+}

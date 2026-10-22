@@ -156,6 +156,9 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
     if let Some(v) = b.word_method(x, ci) {
       return v
     }
+    if let Some(v) = b.list_move_call(x, ci) {
+      return v
+    }
     let impl = b.impl_of(fo)
     if impl >= 0 {
       // a dependency's log record carries the dependency (decision

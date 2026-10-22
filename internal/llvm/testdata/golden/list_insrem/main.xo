@@ -1,0 +1,120 @@
+// List.insert and List.remove_at at every position, on unique and shared
+// lists, for elements of every size: Int, Bool, Str (counted), a struct
+// with counted fields, and an enum. Native moves the elements with one
+// rt.mem_move (std/native/prelude.xo list_insert, list_remove_at).
+
+struct User {
+  id: Int
+  name: Str
+  tags: List[Str]
+}
+
+enum Shape {
+  Dot
+  Circle(r: Int)
+  Label(text: Str)
+}
+
+fn show_users(us: List[User]) -> Str {
+  us.map(fn(u) { "${u.id}:${u.name}:${u.tags.join("+")}" }).join(",")
+}
+
+fn show_shape(s: Shape) -> Str {
+  match s {
+    Dot => "."
+    Circle(r) => "o${r}"
+    Label(text) => "'${text}'"
+  }
+}
+
+fn ints(n: Int) -> List[Int] {
+  var xs: List[Int] = []
+  for i in 0..n {
+    xs.push(i * 10)
+  }
+  xs
+}
+
+fn main(os: Os) {
+  // every position of every length up to 9, with a check after each
+  var bad = 0
+  for n in 0..10 {
+    for i in 0..n + 1 {
+      var xs = ints(n)
+      xs.insert(i, -1)
+      var want: List[Int] = []
+      for k in 0..n + 1 {
+        if k < i {
+          want.push(k * 10)
+        } else if k == i {
+          want.push(-1)
+        } else {
+          want.push((k - 1) * 10)
+        }
+      }
+      if xs != want {
+        bad += 1
+      }
+      let back = xs.remove_at(i)
+      if back != -1 || xs != ints(n) {
+        bad += 1
+      }
+    }
+  }
+  os.stdio.println("int positions bad ${bad}")
+
+  // a shared list is left as it was
+  let base = ["a", "b", "c", "d"]
+  var c1 = base
+  c1.insert(1, "x")
+  var c2 = base
+  let r = c2.remove_at(2)
+  os.stdio.println("${base.join("")} ${c1.join("")} ${c2.join("")} ${r}")
+
+  // counted elements: Strs built at run time, inserted and removed many times
+  var ss: List[Str] = []
+  for i in 0..200 {
+    ss.insert(i / 2, "s${i}")
+  }
+  var removed = 0
+  while ss.len() > 3 {
+    let s = ss.remove_at(ss.len() / 3)
+    removed += s.len()
+  }
+  os.stdio.println("strs ${ss.join(",")} removed ${removed}")
+
+  // a struct of three words with counted fields
+  var us: List[User] = []
+  for i in 0..6 {
+    us.insert(0, User{id: i, name: "u${i}", tags: ["t${i}", "k"]})
+  }
+  us.insert(3, User{id: 99, name: "mid", tags: []})
+  let u = us.remove_at(1)
+  let kept = us
+  us.insert(us.len(), User{id: 7, name: "end", tags: ["e"]})
+  os.stdio.println(show_users(us))
+  os.stdio.println("removed ${u.id}:${u.name} kept ${kept.len()}")
+
+  // Bool (one byte natively) and an enum
+  var bs = [true, false, true]
+  bs.insert(1, true)
+  bs.insert(0, false)
+  let b = bs.remove_at(2)
+  os.stdio.println("bools ${bs.map(fn(x) { if x { "t" } else { "f" } }).join("")} ${b}")
+  var shapes = [Shape.Dot, Shape.Circle(r: 2)]
+  shapes.insert(1, Shape.Label(text: "hi"))
+  shapes.insert(0, Shape.Circle(r: 5))
+  let sh = shapes.remove_at(2)
+  os.stdio.println("shapes ${shapes.map(show_shape).join(" ")} ${show_shape(sh)}")
+
+  // a long list: insert at the front and remove from the middle
+  var big: List[Int] = []
+  for i in 0..20000 {
+    big.insert(0, i)
+  }
+  var sum = 0
+  for _ in 0..10000 {
+    sum += big.remove_at(big.len() / 2)
+  }
+  os.stdio.println("big ${big.len()} ${big[0]} ${big[big.len() - 1]} ${sum}")
+}

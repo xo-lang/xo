@@ -1,0 +1,11 @@
+exit 0
+--- stdout
+int positions bad 0
+abcd axbcd abd c
+strs s1,s2,s0 removed 684
+5:u5:t5+k,3:u3:t3+k,99:mid:,2:u2:t2+k,1:u1:t1+k,0:u0:t0+k,7:end:e
+removed 4:u4 kept 6
+bools ftft true
+shapes o5 . o2 'hi'
+big 10000 19999 0 99995000
+--- stderr

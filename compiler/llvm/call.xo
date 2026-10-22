@@ -1219,6 +1219,7 @@ fn (var g: Gen) inline_raw(v: Int) -> Bool {
       let r = g.def("call i32 @memcmp(ptr ${a}, ptr ${b}, i64 ${g.op(x.args[2])})")
       g.set(v, "sext i32 ${r} to i64")
     }
+    "rt.list_esize" => g.alias(v, "${g.size(g.m.types[g.vty(x.args[0])].elems[0])}")
     "rt.obj_addr" => {
       var o = g.op(x.args[0])
       if g.m.types[g.vty(x.args[0])].kind == ssa.Kind.Str {
