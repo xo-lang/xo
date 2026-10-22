@@ -1338,8 +1338,9 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     "rt.chacha_blocks4" => {
       // decision 0329: the four blocks in vector registers, one 32 bit
       // lane each (chacha_neon), clobbering the caller saved V registers
-      // it uses (never v8 to v15, whose low halves a callee keeps)
-      var cl: List[Int] = []
+      // it uses (never v8 to v15, whose low halves a callee keeps), and
+      // x9, x10 (its rotation table's halves)
+      var cl: List[Int] = [9, 10]
       for r in 0..8 {
         cl.push(FP_BASE + r)
       }
@@ -3178,7 +3179,20 @@ fn chacha_neon() -> Str {
   var t = StrBuilder.new()
   // the words' registers and the free ones
   var reg: List[Int] = [16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 0, 1, 2]
-  var free: List[Int] = [3, 4, 5, 6, 7, 29, 30, 31]
+  var free: List[Int] = [3, 4, 5, 6, 7, 30, 31]
+  // the byte table of a 32 bit lane's rotation left by 8 (TBL indices:
+  // each lane's bytes 3, 0, 1, 2) in v29, built through x9 and x10
+  for (r, w) in [("x9", 0x0605040702010003), ("x10", 0x0E0D0C0F0A09080B)] {
+    neon_line(t, "movz ${r}, #${w & 0xffff}")
+    for k in 1..4 {
+      neon_line(t, "movk ${r}, #${(w >> (16 * k)) & 0xffff}, lsl #${16 * k}")
+    }
+  }
+  // (Xo's assembler has fmov dD, xN and ins between V registers; v30 is
+  // free until the state is loaded)
+  neon_line(t, "fmov d29, x9")
+  neon_line(t, "fmov d30, x10")
+  neon_line(t, "ins v29.d[1], v30.d[0]")
   // the state: rows into free registers, each word broadcast to its four
   // lanes; word 12 is the four counters
   for r in 0..4 {
@@ -3218,12 +3232,9 @@ fn chacha_neon() -> Str {
         neon_line(t, "add v${reg[q[0]]}.4s, v${reg[q[0]]}.4s, v${reg[q[1]]}.4s")
         neon_line(t, "eor v${reg[q[3]]}.16b, v${reg[q[3]]}.16b, v${reg[q[0]]}.16b")
       }
+      // d <<<= 8 in one TBL a register (shl and sri took two)
       for q in qs {
-        let n = free.pop() ?? 31
-        neon_line(t, "shl v${n}.4s, v${reg[q[3]]}.4s, #8")
-        neon_line(t, "sri v${n}.4s, v${reg[q[3]]}.4s, #24")
-        free.insert(0, reg[q[3]])
-        reg[q[3]] = n
+        neon_line(t, "tbl v${reg[q[3]]}.16b, {v${reg[q[3]]}.16b}, v29.16b")
       }
       // c += d; b ^= c; b <<<= 7
       for q in qs {

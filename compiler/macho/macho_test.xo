@@ -398,6 +398,9 @@ const ENCODINGS: List[(Str, Int)] = [
   ("ins v25.d[0], v31.d[0]", 0x6e0807f9),
   ("ins v25.d[1], v26.d[1]", 0x6e184759),
   ("ins v3.d[0], v4.d[1]", 0x6e084483),
+  // tbl with one table register (ChaCha20's rotation by 8), from clang
+  ("tbl v28.16b, {v28.16b}, v29.16b", 0x4e1d039c),
+  ("tbl v3.16b, {v17.16b}, v31.16b", 0x4e1f0223),
   ("ldur q18, [x1, #24]", 0x3cc18032),
   ("ldr d19, [x1, #40]", 0xfd401433),
   ("sha256h q16, q17, v31.4s", 0x5e1f4230),
