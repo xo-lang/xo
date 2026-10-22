@@ -21,6 +21,15 @@ const IMAGE_SCN_CNT_INITIALIZED_DATA = 0x40
 const IMAGE_SCN_CNT_UNINITIALIZED_DATA = 0x80
 const IMAGE_SCN_LNK_INFO = 0x200
 const IMAGE_SCN_LNK_REMOVE = 0x800
+/// A section with 0xffff relocations or more: its header's 16 bit count is
+/// 0xffff and the first relocation's VirtualAddress holds the number of
+/// relocations, that one included (the PE format's extended relocations;
+/// LLVM's COFF writer). Without it xo.exe's largest part lost every
+/// relocation past the count modulo 65536 (0.25.1's windows/amd64 xo.exe
+/// faulted in every build, 2026-10-22).
+pub const IMAGE_SCN_LNK_NRELOC_OVFL = 0x01000000
+/// The relocation count past which a section's count overflows.
+const COFF_NRELOC_MAX = 0xffff
 const IMAGE_SCN_MEM_EXECUTE = 0x20000000
 const IMAGE_SCN_MEM_READ = 0x40000000
 const IMAGE_SCN_MEM_WRITE = 0x80000000
@@ -551,7 +560,7 @@ fn (var a: Asm) write_coff() -> Bytes {
     data_at.push(if size == 0 { 0 } else { off })
     off += size
     rel_at.push(if s.relocs.is_empty() { 0 } else { off })
-    off += 10 * s.relocs.len()
+    off += 10 * (s.relocs.len() + (if s.relocs.len() >= COFF_NRELOC_MAX { 1 } else { 0 }))
   }
   let symtab = off
   var o = new_out(off + 18 * n + strs.len())
@@ -577,13 +586,20 @@ fn (var a: Asm) write_coff() -> Bytes {
     o.u32(data_at[i])
     o.u32(rel_at[i])
     o.u32(0)
-    o.u16(s.relocs.len())
+    let ovfl = s.relocs.len() >= COFF_NRELOC_MAX
+    o.u16(if ovfl { COFF_NRELOC_MAX } else { s.relocs.len() })
     o.u16(0)
-    o.u32(s.cchar | ((s.align + 1) << 20))
+    o.u32(s.cchar | ((s.align + 1) << 20) | (if ovfl { IMAGE_SCN_LNK_NRELOC_OVFL } else { 0 }))
   }
   for (i, s) in a.sects.indexed() {
     if data_at[i] != 0 {
       o.bytes(a.coff_bytes(s))
+    }
+    if s.relocs.len() >= COFF_NRELOC_MAX {
+      // the count, the extra entry included
+      o.u32(s.relocs.len() + 1)
+      o.u32(0)
+      o.u16(0)
     }
     for r in s.relocs {
       o.u32(r.addr)
@@ -609,7 +625,7 @@ fn (var a: Asm) write_coff() -> Bytes {
       let bss = (sc.cchar & IMAGE_SCN_CNT_UNINITIALIZED_DATA) != 0
       let b = a.coff_bytes(sc)
       o.u32(if bss { sc.size } else { b.len() })
-      o.u16(sc.relocs.len())
+      o.u16(if sc.relocs.len() >= COFF_NRELOC_MAX { COFF_NRELOC_MAX } else { sc.relocs.len() })
       o.u16(0)
       o.u32(if bss { 0 } else { jamcrc(b) })
       o.u16(s.sect + 1)

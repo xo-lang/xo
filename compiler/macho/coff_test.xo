@@ -91,3 +91,52 @@ test "JamCRC: zero bytes are 0, as LLVM's COFF checksums" {
   expect(jamcrc("".bytes())) == 0
   expect(jamcrc(int_bytes([0, 0, 0, 0, 0, 0, 0, 0]))) == 0
 }
+
+test "a section with more than 65535 relocations keeps them all (extended relocations)" {
+  // 70000 calls of an external function: 70000 REL32 relocations in .text,
+  // past the section header's 16 bit count (0.25.1's xo.exe lost those
+  // past 65536 and faulted in every build)
+  var b = StrBuilder.new()
+  b.write("\t.text\n\t.globl f\nf:\n")
+  for _ in 0..70000 {
+    b.write("\tcallq ext\n")
+  }
+  b.write("\tretq\n")
+  let obj = match assemble_coff_amd64(b.freeze().bytes()) {
+    Ok(o) => o
+    Err(e) => fault(e)
+  }
+  let c = match read_coff("t.obj", obj) {
+    Ok(x) => x
+    Err(e) => fault(e)
+  }
+  var text = -1
+  for (i, s) in c.sects.indexed() {
+    if s.name == ".text" {
+      text = i
+    }
+  }
+  expect(text >= 0) == true
+  expect(c.sects[text].relocs.len()) == 70000
+  expect((c.sects[text].chars & IMAGE_SCN_LNK_NRELOC_OVFL) != 0) == true
+  // each relocation at its call's field (the first at byte 1)
+  expect(c.sects[text].relocs[0].addr) == 1
+  expect(c.sects[text].relocs[69999].addr) == 5 * 69999 + 1
+}
+
+test "a section with few relocations has no extended relocation entry" {
+  let obj = match assemble_coff_amd64("\t.text\n\t.globl f\nf:\n\tcallq ext\n\tretq\n".bytes()) {
+    Ok(o) => o
+    Err(e) => fault(e)
+  }
+  let c = match read_coff("t.obj", obj) {
+    Ok(x) => x
+    Err(e) => fault(e)
+  }
+  for s in c.sects {
+    if s.name == ".text" {
+      expect(s.relocs.len()) == 1
+      expect((s.chars & IMAGE_SCN_LNK_NRELOC_OVFL) != 0) == false
+    }
+  }
+}

@@ -95,7 +95,15 @@ pub fn read_coff(path: Str, b: Bytes) -> Result[CObj, Str] {
     let chars = rd32(b, h + 36)
     let uninit = (chars & IMAGE_SCN_CNT_UNINITIALIZED_DATA) != 0
     var relocs: List[CReloc] = []
-    for k in 0..nrel {
+    // extended relocations (coff.xo IMAGE_SCN_LNK_NRELOC_OVFL): the first
+    // entry's VirtualAddress is the count, itself included
+    var first = 0
+    var count = nrel
+    if (chars & IMAGE_SCN_LNK_NRELOC_OVFL) != 0 && nrel == 0xffff && rptr != 0 {
+      count = rd32(b, rptr)
+      first = 1
+    }
+    for k in first..count {
       let r = rptr + 10 * k
       relocs.push(CReloc{addr: rd32(b, r), sym: rd32(b, r + 4), typ: rd16(b, r + 8)})
     }
