@@ -12,6 +12,7 @@ use native/llrt/ctx
 use native/llrt/fault
 use native/llrt/pool
 use native/llrt/raw
+use native/llrt/rtstats
 use native/llrt/tasks
 use native/llrt/tracerec
 use native/llrt/sanhook
@@ -108,6 +109,7 @@ fn signal(p: Int) {
   if w != 0 {
     st(w, W_NONEXT, 1)
   }
+  rtstats.count(rtstats.SIG_MUTEX)
   tasks.park_signal(p)
   if w != 0 {
     st(w, W_NONEXT, 0)
@@ -146,6 +148,7 @@ fn grant_readers(m: Int) {
       // were a race to ThreadSanitizer, decision 0241's addendum)
       rt.slot_store(e, E_WRITER_W, GRANTED, RELEASE)
       if w != 0 {
+        rtstats.count(rtstats.SIG_MUTEX)
         tasks.park_signal(p)
         woke = true
       } else {

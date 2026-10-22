@@ -14,8 +14,17 @@ const W_REC = 15
 /// poolsetup.xo and rtsec.xo read XO_RTSTATS), then the counts from byte
 /// 8, in entry.xo STAT_NAMES' order (the modules' ST_* are indexes).
 const COUNTS = 8
-const REC_SIZE = 8 + 8 * 37
+const REC_SIZE = 8 + 8 * 48
 const UNREAD = 4294967295
+/// park signals by waker (2026-10-22, the 6 core churn's push wakes):
+/// a descriptor's readiness (poll.xo pd_ready), a Mutex grant, a channel's
+/// hand off, a task's end or a scope's join (tasks.xo), an HTTP/2
+/// connection's or stream's waiter (h2srv.xo)
+pub const SIG_READY = 43
+pub const SIG_MUTEX = 44
+pub const SIG_CHAN = 45
+pub const SIG_TASK = 46
+pub const SIG_H2 = 47
 /// fiber stacks mapped now (always counted) and at most at once
 /// (gotchas/linux-tsan-fiber-stacks.md)
 const ST_FIBER_LIVE = 21

@@ -195,6 +195,7 @@ pub fn pd_ready(pd: Int, mode: Int) {
     let w = rt.mem_load(pd, D_RWAIT, 8)
     if w != 0 {
       stat(ST_POLL_WAKE)
+      stat(rtstats.SIG_READY)
       signal(w)
       rt.mem_store(pd, D_RWAIT, 0, 8)
     } else {
@@ -205,6 +206,7 @@ pub fn pd_ready(pd: Int, mode: Int) {
     let w = rt.mem_load(pd, D_WWAIT, 8)
     if w != 0 {
       stat(ST_POLL_WAKE)
+      stat(rtstats.SIG_READY)
       signal(w)
       rt.mem_store(pd, D_WWAIT, 0, 8)
     } else {

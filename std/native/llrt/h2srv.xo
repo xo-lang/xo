@@ -43,6 +43,7 @@ use native/llrt/http1
 use native/llrt/http1w
 use native/llrt/poll
 use native/llrt/pool
+use native/llrt/rtstats
 use native/llrt/scan
 use native/llrt/raw
 use native/llrt/rc
@@ -390,6 +391,7 @@ fn conn_window(c: Int, n: Int) -> Bool {
 fn wake(c: Int) {
   let w = ld(c, C_WAITER)
   if w != 0 {
+    rtstats.count(rtstats.SIG_H2)
     poll.park_signal(w)
     sto(c, C_WAITER, 0)
   } else {
@@ -447,6 +449,7 @@ fn ready(c: Int, st: Int) {
 fn signal_stream(st: Int) {
   let w = ld(st, S_WAITER)
   if w != 0 {
+    rtstats.count(rtstats.SIG_H2)
     poll.park_signal(w)
     sto(st, S_WAITER, 0)
   }

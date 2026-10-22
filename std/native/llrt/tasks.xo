@@ -865,6 +865,7 @@ fn run_entry(c: Int, t: Int, fl: Int, env: Int) {
 pub fn wl_wake(l: Int) {
   var e = ld(l, 0)
   while e != 0 {
+    stat(rtstats.SIG_TASK)
     park_signal(ld(e, E_PARK))
     e = ld(e, E_NEXT)
   }
@@ -957,6 +958,7 @@ pub fn run_claimed(t: Int, units: Int) {
   // the last touch of s: the scope's join may free it after
   if sched.scope_units_done(s, units) != 0 {
     // the joiner waits for this signal, so s is still there
+    stat(rtstats.SIG_TASK)
     park_signal(ld(s, S_JOINER))
   }
   sanhook.task_exit(tfib, tw, tctx)

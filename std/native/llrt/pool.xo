@@ -259,6 +259,16 @@ pub const ST_LOCK_CHAN = 33
 pub const ST_LOCK_MUTEX = 34
 pub const ST_LOCK_TASK = 35
 const ST_PREEMPT = 36
+/// wakep's calls by site (2026-10-22, the 6 core churn: most are pushes):
+/// a worker's chain wake, a poll's spread, a push, the monitor's
+/// deferred wake; and an idle worker that could wait in the poller or
+/// could not (the token taken)
+const ST_WAKE_CHAIN = 37
+const ST_WAKE_SPREAD = 38
+const ST_WAKE_PUSH = 39
+const ST_WAKE_MON = 40
+const ST_IDLE_NOPOLL = 41
+const ST_IDLE_NPBLOCK = 42
 
 /// How long a fiber stays in its waker's next before a thief may take
 /// it (xo_rt.c XO_NEXT_GRACE_NS).
@@ -607,6 +617,7 @@ fn np_poll(p: Int, w: Int, block: Bool) -> Int {
 fn np_spread(p: Int, w: Int) {
   let k = rt.slot_load(w, RQ_TAIL, SEQ_CST).wrapping_sub(rt.slot_load(w, 0, SEQ_CST))
   if k > 1 {
+    stat(ST_WAKE_SPREAD)
     wakep(p)
   }
 }
@@ -857,6 +868,7 @@ fn push(p: Int, t: Int, handoff: Bool) {
       return
     }
   }
+  stat(ST_WAKE_PUSH)
   wakep(p)
 }
 
@@ -1051,8 +1063,10 @@ fn go_idle(p: Int, w: Int) -> Int {
   count_main(p)
   // decision 0324: wait in the network poller when no one does
   if np_block(p, w, 0) >= 0 {
+    stat(ST_IDLE_NPBLOCK)
     return 0
   }
+  stat(ST_IDLE_NOPOLL)
   plock(p)
   rt.slot_store(w, W_WAKEW_I, 0, RELAXED)
   rt.mem_store(w, W_IDLE_NEXT, rt.mem_load(p, P_IDLE, 8), 8)
@@ -1146,6 +1160,7 @@ pub fn worker_main(w: Int) -> Int {
         spinning = 0
         // the last spinner found work: another one looks for more
         if rt.slot_add(p, P_SPINNING, -1, SEQ_CST) == 1 {
+          stat(ST_WAKE_CHAIN)
           wakep(p)
         }
       }
@@ -1758,6 +1773,7 @@ pub fn root_main(p: Int, w: Int, mf: Int) {
         spinning = 0
         // wakep counted it spinning: another one looks for more
         if rt.slot_add(p, P_SPINNING, -1, SEQ_CST) == 1 && it != 0 {
+          stat(ST_WAKE_CHAIN)
           wakep(p)
         }
       }
@@ -2928,6 +2944,7 @@ pub fn defer_off(p: Int) {
     let w = rt.mem_load(p, P_WS.wrapping_add(i.wrapping_shl(3)), 8)
     let at = rt.slot_load(w, W_DEFER_AT_W, SEQ_CST)
     if at != 0 && rt.slot_cas(w, W_DEFER_AT_W, at, 0, SEQ_CST) && queued(w) {
+      stat(ST_WAKE_MON)
       wakep(p)
     }
     i = i.wrapping_add(1)

@@ -19,6 +19,21 @@ window; XO_SPIN_ROUNDS sets the rounds at run time, nothing else differs.
 | 6 | 16 | 69,300 | 40.16 | 1.022 | 1.07 |
 | 6 | 64 | 73,276 | 40.59 | 1.033 | 0.96 |
 
+## CRUD server again, second quiet window (05:35-05:48, load median 9.8 with a runaway clang; base interleaved with a rejected lever, 4 reps)
+
+| cores | spin | rps | server CPU us a request | CPU against spin 0 | rps against spin 0 | wake a request |
+|---|---|---|---|---|---|---|
+| 1 | 0 | 96,267 | 13.49 | 1.000 | 1.000 | 0.0001 |
+| 1 | 64 | 89,491 | 14.56 | 1.079 | 0.930 | 0.0002 |
+| 3 | 0 | 86,853 | 25.66 | 1.000 | 1.000 | 0.181 |
+| 3 | 64 | 84,225 | 26.86 | 1.047 | 0.970 | 0.115 |
+| 6 | 0 | 69,619 | 38.89 | 1.000 | 1.000 | 0.573 |
+| 6 | 64 | 75,950 | 38.69 | 0.995 | 1.091 | 0.488 |
+
+Under load, 64 rounds cost 1 and 3 cores 3 to 7% throughput and 5 to 8% CPU
+and gave 6 cores +9% throughput at the same CPU: the 6 core gain repeats
+(first window +9%), the 1 and 3 core rows differ from the first window's.
+
 ## bench/perf/http (the CRUD server on the Mac, arm64, 3 interleaved reps of 5 s, 03:47, load 24 falling)
 
 | spin | rps | p50 us | p99 us | p99.9 us | server CPU us a request | CPU against spin 0 |
@@ -45,5 +60,7 @@ more iterations, or instruction counts), in a later quiet window.
 - rwmutex looks 1.2x CPU at 64 (coarse), the regression that set the
   default to 0; 16 rounds show no rwmutex cost here (also coarse).
 - Not decided overnight (the owner's decision): a candidate is 16 rounds
-  (most of the throughput, CPU within 3% everywhere measured), pending a
-  precise conc row.
+  (most of the throughput, CPU within 3% everywhere measured in the first
+  window; 16 was not in the second window's row), pending a precise conc row.
+  The second window repeats 64's 6 core gain (+9%) but shows 1 and 3 cores
+  3 to 7% slower at 64 under load.

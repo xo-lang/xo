@@ -15,6 +15,7 @@ use native/llrt/ctx
 use native/llrt/fault
 use native/llrt/obj
 use native/llrt/pool
+use native/llrt/rtstats
 use native/llrt/tasks
 use native/llrt/tracerec
 use native/llrt/sanhook
@@ -129,6 +130,7 @@ pub fn hand(e: Int) {
   if chosen != 0 {
     rt.slot_store[Int](chosen, 0, ld(e, E_IDX), RELEASE)
   }
+  rtstats.count(rtstats.SIG_CHAN)
   tasks.park_signal_handoff(ld(e, E_PARK))
 }
 
