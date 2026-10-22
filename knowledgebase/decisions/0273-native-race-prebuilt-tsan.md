@@ -315,3 +315,40 @@ Windows. Xo would use that flavor on windows/amd64.
   race with the callback's frames and nothing for the synchronized pair.
   The Go flavor's shadow layout works under Box64's Wine, where the C
   flavor does not start under Docker's x86 emulation.
+
+### Implementation (2026-10-22, Xo Lang 2)
+
+- Runtime object: `scripts/race-runtime.sh WORK OUT windows-amd64`
+  (pinned compiler-rt 23.1.3, MinGW-w64 in Docker linux/arm64) writes
+  lib/xo/race/windows-amd64/race_windows_amd64.syso; scripts/race-windows.cpp
+  adds what MinGW's C runtime would (DumpProcessMap, __popcountdi2, _errno,
+  exit) and three wrappers: xo_tsan_go_acquire, xo_tsan_go_release (a merge,
+  as the C flavor's release) and xo_tsan_go_init (__tsan_init with
+  cabi_race.xo's callback). seed-cut.sh puts it in the windows-amd64 seed.
+- Link: Xo's PE linker with the object, its imports in compiler/macho
+  peimports.xo (win-import-table.py's RACE list), the image at its fixed
+  base with no ASLR (PEOpts.fixed_base), .bss in no file bytes (15 MiB in
+  the object).
+- Lowering: race.xo race_sym: on windows the calls go to
+  std/native/llrt/cabi_race.xo's exports (xo_x_race_read8 ...), called as
+  System V functions with the address, which add the task's ThreadState
+  and the pc (the export's return address); declared only in a windows
+  --race build (Checker.race). No func_enter/exit yet: a report has one
+  frame per access, and no names (race_cb answers SymbolizeCode with
+  none).
+- Runtime: sanhook.xo gorace() (rt.sym_present("__tsan_go_start"),
+  folded by the builder to the --race flag on Windows). The running
+  context's ThreadState in thread table word 6, the Processor in word 10;
+  workers, fibers and tasks get theirs from __tsan_go_start, switched at
+  the scheduler's hooks; a thread with none gets one at its first use.
+  Memory: one 64 GiB arena reserved at 0x00c0_0000_0000, taken upward in
+  128 KiB granules, each shadowed as it is taken (heapos.xo map, fiber
+  stacks); every block from the race heap (heapos large_room, libcmem
+  malloc_tc), its shadow reset. __tsan_fini at an exit with status 0
+  (66 when a race was reported).
+- Verified under Wine (Box64, XO_THREADS=1, single threaded, as the
+  owner allows for Wine): tsan_race reports its planted race (exit 66);
+  race_sync's 11 cases each report nothing synchronized and the race
+  unsynchronized (lazy_const, which has no race, nothing either way).
+  Threads are untested until the Windows CI run (owner approval).
+  gotchas/tsan-go-flavor-windows.md has the traps.

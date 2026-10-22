@@ -82,7 +82,7 @@ repo=$(git rev-parse --show-toplevel)
 # runs old paths and steps: run it from a checkout of origin/main
 # (2026-10-18: a pre-rename copy read selfhost/ paths and failed)
 git -C "$repo" fetch -q origin
-git -C "$repo" diff --quiet "$ref" -- scripts/seed-cut.sh scripts/seed-pack.sh scripts/seed-upload.sh scripts/race-runtime.sh ||
+git -C "$repo" diff --quiet "$ref" -- scripts/seed-cut.sh scripts/seed-pack.sh scripts/seed-upload.sh scripts/race-runtime.sh scripts/race-windows.cpp ||
   die "this checkout's seed scripts differ from $ref's: run seed-cut.sh from a worktree of $ref"
 case "$work" in "$repo"/*) die "WORKDIR must be outside the repository" ;; esac
 mkdir -p "$work"
@@ -185,14 +185,12 @@ for p in linux/arm64 linux/amd64 windows/amd64 darwin/amd64; do
   bin/xo build --backend=go --targets="$p" --std="$tree/std" -o "$d/bin/$exe" compiler/xo > "$log/cross-$plat.log" 2>&1 ||
     { tail "$log/cross-$plat.log"; die "cross build $plat failed"; }
   (git ls-files -z -- std | tar -c -f - --null -T -) | tar -xf - -C "$d"
-  if [ "$plat" != windows-amd64 ]; then
-    # ThreadSanitizer's runtime for native --race (decision 0273's linux
-    # and amd64 addenda) into $d/lib/xo/race, which seed-pack.sh packs:
-    # the Linux static archives built in Docker, darwin-amd64's dylib
-    # cross built here (Windows has no ThreadSanitizer)
-    bash scripts/race-runtime.sh "$work/race-$plat" "$d" "$plat" > "$log/race-runtime-$plat.log" 2>&1 ||
-      { tail "$log/race-runtime-$plat.log"; die "race-runtime.sh $plat failed"; }
-  fi
+  # ThreadSanitizer's runtime for native --race (decision 0273's linux,
+  # amd64 and Windows addenda) into $d/lib/xo/race, which seed-pack.sh
+  # packs: the Linux static archives and Windows' Go flavor object built
+  # in Docker, darwin-amd64's dylib cross built here
+  bash scripts/race-runtime.sh "$work/race-$plat" "$d" "$plat" > "$log/race-runtime-$plat.log" 2>&1 ||
+    { tail "$log/race-runtime-$plat.log"; die "race-runtime.sh $plat failed"; }
   XO_SEED_VERSION=$version XO_SEED_PLATFORM=$plat XO_SEED_COMMIT=$commit \
     XO_SEED_NOTE="cross built by the darwin-arm64 $version xo with --backend=go --targets=$p (seed-cut.sh)" \
     bash scripts/seed-pack.sh "$d/bin/$exe" "$out" > "$log/pack-$plat.log"

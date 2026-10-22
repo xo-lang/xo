@@ -9,6 +9,7 @@
 use native/llrt/entry
 use native/llrt/libcmath
 use native/llrt/libcstr
+use native/llrt/sanhook
 use native/rt
 use native/sys_windows
 
@@ -42,7 +43,11 @@ fn xo_win_start() -> Int {
   entry.init()
   let code = entry.main(0, 0, 0, rt.sym_addr("xo_entry"), 1)
   match target.os {
-    TargetOs.Windows => sys_windows.ExitProcess(code)
+    TargetOs.Windows => {
+      // windows --race: ThreadSanitizer's end and status
+      sanhook.race_exit(code)
+      sys_windows.ExitProcess(code)
+    }
     TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi => {}
   }
   code

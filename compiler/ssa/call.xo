@@ -1411,7 +1411,8 @@ fn (var b: Builder) intrinsic(x: Expr, ci: check.CallInfo) -> Int {
 /// weakly referenced (sys_c.xo's `weak_` declarations), was linked: the
 /// call `rt.pc.cp.<name>`, its address compared with 0; false in a wasm
 /// module, and on Windows for a sanitizer's symbol (`__tsan_`,
-/// `__sanitizer_`: no sanitizer runtime links there), a result of the
+/// `__sanitizer_`: no sanitizer runtime links there; `__tsan_go_start`,
+/// ThreadSanitizer's Go flavor, is a --race build's), a result of the
 /// target that fold_known_calls folds (so the TSan helpers' pthread calls
 /// go, gotchas/windows-llvm-split-link.md). The argument is a string
 /// literal.
@@ -1423,6 +1424,12 @@ fn (var b: Builder) sym_present(x: Expr, es: List[Expr?]) -> Int {
   if sym.is_empty() {
     b.unsupported("rt.sym_present of anything but a string literal")
     return b.cbool(false)
+  }
+  if !b.wasm && b.target_os() == "windows" && sym == "__tsan_go_start" {
+    // ThreadSanitizer's Go flavor, which a windows --race build links
+    // (sanhook.xo gorace, decision 0273's Windows addendum): known
+    b.s.f.target = true
+    return b.cbool(b.c.race)
   }
   if b.wasm || (b.target_os() == "windows" && (sym.starts_with("__tsan_") || sym.starts_with("__sanitizer_"))) {
     b.s.f.target = true

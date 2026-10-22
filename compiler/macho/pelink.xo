@@ -34,6 +34,10 @@ pub struct PEOpts {
   pub subsystem: Int = 3
   pub stack: Int = 1048576
   pub resources: List[PERes] = []
+  /// loaded at its base, PE_BASE (no DYNAMIC_BASE, HIGH_ENTROPY_VA):
+  /// a --race program (decision 0273's Windows addendum), whose image
+  /// ThreadSanitizer's Go flavor shadows below 0xe0_0000_0000
+  pub fixed_base: Bool = false
 }
 
 /// An input section's place: its output section and offset there.
@@ -85,6 +89,10 @@ fn pe_align(chars: Int) -> Int {
 
 fn pe_up(v: Int, a: Int) -> Int { (v + a - 1) / a * a }
 
+/// Output section k's size in memory: .data's with the uninitialized
+/// data (bss bytes) after it.
+fn pe_vsize(bufs: List[List[Int]], k: Int, bss: Int) -> Int { if k == PO_DATA { bufs[k].len() + bss } else { bufs[k].len() } }
+
 fn put_le(var b: List[Int], at: Int, v: Int, n: Int) {
   for k in 0..n {
     b[at + k] = (v >> (8 * k)) & 0xff
@@ -107,12 +115,24 @@ pub fn link_pe(objs: List[CObj], o: PEOpts) -> Result[Bytes, Str] {
   // the input sections' places, in object order
   var bufs: List[List[Int]] = [[], [], [], [], [], [], []]
   var places: List[List[PEPlace]] = []
+  // the uninitialized data (.bss) after .data's bytes, in no file bytes
+  // (ThreadSanitizer's object, decision 0273, has 15 MiB of it): its
+  // size, and the places to move past .data's bytes once they are known
+  var bss = 0
+  var bss_places: List[(Int, Int)] = []
   for ob in objs {
     var ps: List[PEPlace] = []
     for s in ob.sects {
       let k = pe_out(s)
       if k < 0 {
         ps.push(PEPlace{out: -1, off: 0})
+        continue
+      }
+      if k == PO_DATA && s.data.is_empty() && (s.chars & IMAGE_SCN_CNT_UNINITIALIZED_DATA) != 0 {
+        bss = pe_up(bss, pe_align(s.chars))
+        bss_places.push((places.len(), ps.len()))
+        ps.push(PEPlace{out: k, off: bss})
+        bss += s.size
         continue
       }
       while bufs[k].len() % pe_align(s.chars) != 0 {
@@ -242,6 +262,12 @@ pub fn link_pe(objs: List[CObj], o: PEOpts) -> Result[Bytes, Str] {
   for _ in 0..8 {
     bufs[PO_DATA].push(0)
   }
+  while bufs[PO_DATA].len() % 64 != 0 {
+    bufs[PO_DATA].push(0)
+  }
+  for (oi, pi) in bss_places {
+    places[oi][pi].off += bufs[PO_DATA].len()
+  }
   // .rdata's linker tables: the IAT first (as lld-link), then the import
   // directory, the lookup tables, the names, and the TLS directory
   while bufs[PO_RDATA].len() % 8 != 0 {
@@ -320,7 +346,7 @@ pub fn link_pe(objs: List[CObj], o: PEOpts) -> Result[Bytes, Str] {
       continue
     }
     rva[k] = next
-    next = pe_up(next + bufs[k].len(), PE_SECT_ALIGN)
+    next = pe_up(next + pe_vsize(bufs, k, bss), PE_SECT_ALIGN)
   }
   // .rsrc (its data entries hold RVAs: built at its place)
   if !o.resources.is_empty() {
@@ -450,12 +476,12 @@ pub fn link_pe(objs: List[CObj], o: PEOpts) -> Result[Bytes, Str] {
   if entry < 0 {
     return Err("the entry ${o.entry} is not defined")
   }
-  Ok(pe_write(bufs, rva, hdr, entry, o, has_tls, tls_dir, idir, dlls.len(), iat_start, iat_size, objs, places))
+  Ok(pe_write(bufs, rva, hdr, entry, o, has_tls, tls_dir, idir, dlls.len(), iat_start, iat_size, objs, places, bss))
 }
 
 /// The image: the DOS header, the PE headers and section table, the
 /// sections, then the COFF symbol table and string table.
-fn pe_write(bufs: List[List[Int]], rva: List[Int], hdr: Int, entry: Int, o: PEOpts, has_tls: Bool, tls_dir: Int, idir: Int, ndll: Int, iat_start: Int, iat_size: Int, objs: List[CObj], places: List[List[PEPlace]]) -> Bytes {
+fn pe_write(bufs: List[List[Int]], rva: List[Int], hdr: Int, entry: Int, o: PEOpts, has_tls: Bool, tls_dir: Int, idir: Int, ndll: Int, iat_start: Int, iat_size: Int, objs: List[CObj], places: List[List[PEPlace]], bss: Int) -> Bytes {
   let names = [".text", ".rdata", ".data", ".pdata", ".tls", ".rsrc", ".reloc"]
   let chars = [IMAGE_SCN_CNT_CODE + IMAGE_SCN_MEM_EXECUTE + IMAGE_SCN_MEM_READ, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ + IMAGE_SCN_MEM_WRITE, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ + IMAGE_SCN_MEM_WRITE, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ + IMAGE_SCN_MEM_DISCARDABLE]
   var present: List[Int] = []
@@ -527,7 +553,7 @@ fn pe_write(bufs: List[List[Int]], rva: List[Int], hdr: Int, entry: Int, o: PEOp
   }
   var image = PE_SECT_ALIGN
   for k in present {
-    image = rva[k] + pe_up(bufs[k].len(), PE_SECT_ALIGN)
+    image = rva[k] + pe_up(pe_vsize(bufs, k, bss), PE_SECT_ALIGN)
   }
   w.u16(0x20b)
   w.u8(14)
@@ -551,7 +577,9 @@ fn pe_write(bufs: List[List[Int]], rva: List[Int], hdr: Int, entry: Int, o: PEOp
   w.u32(hdr)
   w.u32(0)
   w.u16(o.subsystem)
-  w.u16(0x8160)
+  // TERMINAL_SERVER_AWARE, NX_COMPAT, and unless fixed_base
+  // DYNAMIC_BASE and HIGH_ENTROPY_VA
+  w.u16(if o.fixed_base { 0x8100 } else { 0x8160 })
   w.u64(o.stack)
   w.u64(0x1000)
   w.u64(0x100000)
@@ -583,7 +611,7 @@ fn pe_write(bufs: List[List[Int]], rva: List[Int], hdr: Int, entry: Int, o: PEOp
   }
   for k in present {
     w.name(names[k], 8)
-    w.u32(bufs[k].len())
+    w.u32(pe_vsize(bufs, k, bss))
     w.u32(rva[k])
     w.u32(pe_up(bufs[k].len(), PE_FILE_ALIGN))
     w.u32(foff[k])

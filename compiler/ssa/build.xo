@@ -578,6 +578,13 @@ fn (var b: Builder) declare_exports() {
       // the C names every native program defines (main, decision 0234),
       // in place of std/llrt's C
       b.declare_exports_of(mi, true)
+    } else if p == "native/llrt/cabi_race" {
+      // --race on windows (decision 0273's Windows addendum): the
+      // functions the instrumented code calls (compiler/arm64 race.xo
+      // race_sym) and ThreadSanitizer's callback
+      if b.c.race && b.goos == "windows" {
+        b.declare_exports_of(mi, false)
+      }
     } else if p == "native/llrt/cabi_tw" {
       // the test world's (std/native/llrt/testworld.xo, the zero-C
       // audit's B14): the C calls them only in a test binary, and other

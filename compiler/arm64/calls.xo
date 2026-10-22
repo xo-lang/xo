@@ -2604,13 +2604,13 @@ fn (g: G) race_checks(v: Int) -> Bool {
 
 fn (var g: G) race_release(v: Int, ord: Int, a: Int) {
   if ord >= 2 && g.race_checks(v) {
-    let _r = g.rt("__tsan_release", [rsrc(a)], [])
+    let _r = g.rt(g.race_sym("__tsan_release"), [rsrc(a)], [])
   }
 }
 
 fn (var g: G) race_acquire(v: Int, ord: Int, a: Int) {
   if (ord == 1 || ord >= 3) && g.race_checks(v) {
-    let _r = g.rt("__tsan_acquire", [rsrc(a)], [])
+    let _r = g.rt(g.race_sym("__tsan_acquire"), [rsrc(a)], [])
   }
 }
 

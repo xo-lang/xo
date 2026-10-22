@@ -304,7 +304,21 @@ fn (var g: G) race_addr(a: RaceAccess, var out: List[Inst]) -> Int {
 
 /// A call of ThreadSanitizer's function name with the address in vreg d.
 fn (g: G) race_call(name: Str, d: Int, line: Int) -> Inst {
-  Inst{kind: K_CALL, sym: g.sym(name), srcs: [rsrc(d)], us: [d], line: line}
+  Inst{kind: K_CALL, sym: g.sym(g.race_sym(name)), srcs: [rsrc(d)], us: [d], line: line}
+}
+
+/// The function a call of ThreadSanitizer's name goes to: on windows
+/// (decision 0273's Windows addendum) the Go flavor's functions take the
+/// task's ThreadState and a pc too, and its __tsan_acquire and
+/// __tsan_release are those, so the calls go to std/native/llrt
+/// cabi_race.xo's exports (__tsan_read8 to xo_x_race_read8), which add
+/// them; called as System V functions with the same one address
+/// argument (x86win.xo win_text calls an export's function directly).
+fn (g: G) race_sym(name: Str) -> Str {
+  if g.os == "windows" {
+    return "xo_x_race_${name.trim_prefix("__tsan_")}"
+  }
+  name
 }
 
 /// ThreadSanitizer's access function for a: __tsan_read8, __tsan_write2.

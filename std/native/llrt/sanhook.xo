@@ -8,10 +8,12 @@
 // here allocates or faults; the Xo code is not instrumented, so the
 // fiber switch calls are made from no instrumented frame
 // (gotchas/tsan-fiber-switch-in-callee.md). UNTESTED on Linux and
-// Windows.
+// Windows. On windows/amd64 --race the Go flavor of ThreadSanitizer
+// (gorace, decision 0273's Windows addendum).
 use native/llrt/rtstats
 use native/rt
 use native/sys_c
+use native/sys_windows
 
 /// xo_worker's fields (xo_rt.c, asserted there as sched.xo W_*): the
 /// hooks word, the scheduler's ThreadSanitizer fiber, AddressSanitizer's
@@ -38,6 +40,255 @@ const ST_FIBER_PARK = 6
 /// Whether ThreadSanitizer's runtime is linked.
 pub fn tsan() -> Bool { rt.sym_present("__tsan_switch_to_fiber") }
 
+/// Whether ThreadSanitizer's Go flavor is linked: a windows/amd64 --race
+/// build (decision 0273's Windows addendum, race_windows_amd64.syso).
+/// tsan, user_mode and sanitized stay false there (their paths call the C
+/// library). Every Go flavor call names the running task's ThreadState,
+/// kept in the thread's table (TL_RACE_THR) and switched with the task
+/// (the C flavor's fiber switches), and the thread's Processor
+/// (TL_RACE_PROC, race_proc).
+pub fn gorace() -> Bool {
+  match target.os {
+    TargetOs.Windows => rt.sym_present("__tsan_go_start")
+    TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi => false
+  }
+}
+
+/// The thread table's words (rt.tlocal_get) of a gorace build: the
+/// running context's ThreadState, the thread's Processor; and the scratch
+/// word an out parameter goes to (pool.xo TLS_SCRATCH_AT).
+const TL_RACE_THR = 6
+const TL_RACE_PROC = 10
+const TL_SCRATCH = 4
+
+/// The running context's ThreadState (gorace), made for a thread that
+/// has none yet: the Go flavor has no thread's own context, as the C
+/// flavor has, and a thread runs code before its first switch (main's
+/// fiber starts on a thread of its own, entry.xo run_main_fiber).
+pub fn race_thr() -> Int {
+  let t = rt.tlocal_get(TL_RACE_THR)
+  if t != 0 {
+    return t
+  }
+  race_init()
+  let n = race_go(0)
+  rt.tlocal_set(TL_RACE_THR, n)
+  n
+}
+
+/// The thread's Processor, made at its first use (ThreadSanitizer's
+/// GetProc callback, cabi_race.xo race_cb; the main thread's is
+/// __tsan_init's).
+pub fn race_proc() -> Int {
+  var p = rt.tlocal_get(TL_RACE_PROC)
+  if p == 0 {
+    sys_c.weak___tsan_proc_create(rt.tlocal_addr().wrapping_add(8 * TL_RACE_PROC))
+    p = rt.tlocal_get(TL_RACE_PROC)
+  }
+  p
+}
+
+/// A new ThreadState whose creation parent (0 for none) orders before
+/// everything it does, as a goroutine's start.
+fn race_go(parent: Int) -> Int {
+  let _p = race_proc()
+  sys_c.weak___tsan_go_start(parent, rt.tlocal_addr().wrapping_add(8 * TL_SCRATCH), 0)
+  rt.tlocal_get(TL_SCRATCH)
+}
+
+/// The process globals of a gorace build (rt.static_word): the arena's
+/// next free address (0 before it is reserved), its lock, the race
+/// heap's table (race_block).
+const W_ARENA = 78
+const W_ARENA_LOCK = 79
+const W_RACE_HEAP = 80
+/// Whether race_init ran (gorace).
+const W_RACE_INIT = 81
+/// The arena (gorace): every mapping the runtime makes for the program's
+/// memory (heapos.xo map, the race heap, fiber stacks), reserved at once
+/// at Go's heap hint, 0x00c0_0000_0000, and taken upward, so each
+/// shadow mapping is above the last (the Go flavor's meta shadow only
+/// grows) and below ThreadSanitizer's application end, 0xe0_0000_0000;
+/// 64 GiB of addresses, never given back.
+const ARENA = 824633720832
+const ARENA_SIZE = 68719476736
+/// a mapping's granule: its meta shadow (half its size) then fills whole
+/// 64 KiB units, so each mapping's meta ends above the last one's
+/// (tsan_rtl.cpp MapShadow's CHECK_GT(meta_end, mapped_meta_end))
+const ARENA_GRAIN = 131072
+const RELAXED = 0
+const ACQUIRE = 1
+const RELEASE = 2
+
+/// size bytes of the arena (gorace), rounded up to 128 KiB, shadowed, and
+/// committed (readable and writable) when commit: its address, or 0 when
+/// the arena is used up or the system refuses.
+pub fn race_arena(size: Int, commit: Bool) -> Int {
+  race_init()
+  let n = size.wrapping_add(ARENA_GRAIN - 1) & (0 - ARENA_GRAIN)
+  arena_lock()
+  let w = rt.static_word(W_ARENA)
+  var a = rt.mem_load(w, 0, 8)
+  // MEM_RESERVE, PAGE_READWRITE
+  if a == 0 && sys_windows.VirtualAlloc(ARENA, ARENA_SIZE, 8192, 4) == ARENA {
+    a = ARENA
+  }
+  var m = 0
+  // MEM_COMMIT
+  if a != 0 && n <= ARENA.wrapping_add(ARENA_SIZE).wrapping_sub(a) && (!commit || sys_windows.VirtualAlloc(a, n, 4096, 4) != 0) {
+    race_map(a, n)
+    m = a
+    a = a.wrapping_add(n)
+  }
+  rt.mem_store(w, 0, a, 8)
+  arena_unlock()
+  m
+}
+
+fn arena_lock() {
+  let l = rt.static_word(W_ARENA_LOCK)
+  while !rt.slot_cas(l, 0, 0, 1, ACQUIRE) {
+    rt.spin_hint()
+  }
+}
+
+fn arena_unlock() { rt.slot_store(rt.static_word(W_ARENA_LOCK), 0, 0, RELEASE) }
+
+/// The race heap (gorace; heapos.xo large_room and release, every block
+/// a big one there, as Linux's --race takes every block from malloc): a
+/// block of at least need bytes from the arena, its first word its size
+/// (a power of two, at least 32), the rest for the caller; its shadow
+/// reset, so a block another task freed is not a race with its new owner.
+/// Freed blocks go on their size's list (race_free); blocks up to 1 MiB
+/// are carved from 1 MiB chunks. 0 when the arena is used up. The table:
+/// a list head per power of two, then the chunk's next and end.
+pub fn race_block(need: Int) -> Int {
+  var size = 32
+  var k = 5
+  while size < need {
+    size = size.wrapping_shl(1)
+    k = k + 1
+  }
+  var t = rt.slot_load(rt.static_word(W_RACE_HEAP), 0, ACQUIRE)
+  if t == 0 {
+    let nt = race_arena(ARENA_GRAIN, true)
+    if nt == 0 {
+      return 0
+    }
+    // false when another thread made it first: these 128 KiB stay unused
+    let _won = rt.slot_cas(rt.static_word(W_RACE_HEAP), 0, 0, nt, RELEASE)
+    t = rt.slot_load(rt.static_word(W_RACE_HEAP), 0, ACQUIRE)
+  }
+  arena_lock()
+  var m = rt.mem_load(t, 8 * k, 8)
+  if m != 0 {
+    rt.mem_store(t, 8 * k, rt.mem_load(m, 8, 8), 8)
+  } else if size < 1048576 {
+    var cur = rt.mem_load(t, 8 * 64, 8)
+    if rt.mem_load(t, 8 * 65, 8).wrapping_sub(cur) < size {
+      arena_unlock()
+      let c = race_arena(1048576, true)
+      arena_lock()
+      if c == 0 {
+        arena_unlock()
+        return 0
+      }
+      cur = c
+      rt.mem_store(t, 8 * 65, c.wrapping_add(1048576), 8)
+    }
+    m = cur
+    rt.mem_store(t, 8 * 64, cur.wrapping_add(size), 8)
+  }
+  arena_unlock()
+  if m == 0 {
+    m = race_arena(size, true)
+    if m == 0 {
+      return 0
+    }
+  }
+  rt.mem_store(m, 0, size, 8)
+  race_alloc(m, size)
+  m
+}
+
+/// Puts back a block race_block returned (its size in its first word).
+pub fn race_free(m: Int) {
+  var k = 5
+  while (1).wrapping_shl(k) < rt.mem_load(m, 0, 8) {
+    k = k + 1
+  }
+  let t = rt.slot_load(rt.static_word(W_RACE_HEAP), 0, ACQUIRE)
+  arena_lock()
+  rt.mem_store(m, 8, rt.mem_load(t, 8 * k, 8), 8)
+  rt.mem_store(t, 8 * k, m, 8)
+  arena_unlock()
+}
+
+/// ThreadSanitizer's start in a gorace build, at its first use (the
+/// first mapping or context, on the main thread): the main context's
+/// ThreadState and the thread's Processor, the callback (cabi_race.xo
+/// race_cb, passed by race-windows.cpp's xo_tsan_go_init, so no build
+/// without the export names it), and the
+/// program's image (at its fixed base, compiler/macho pelink.xo
+/// fixed_base) as the shadow's first mapping, which the Go flavor takes
+/// for the data and bss; heapos.xo's arena maps the rest after it.
+pub fn race_init() {
+  // once, at the first use (before the runtime's first allocation, on
+  // the main thread: rt.heap_large's records come before heapos.xo
+  // main_record)
+  if rt.slot_load(rt.static_word(W_RACE_INIT), 0, ACQUIRE) != 0 {
+    return
+  }
+  rt.slot_store(rt.static_word(W_RACE_INIT), 0, 1, RELEASE)
+  // the image's size: the PE header's SizeOfImage (e_lfanew at 0x3c, the
+  // optional header's word at 80 past the signature)
+  let image = sys_windows.GetModuleHandleW(0)
+  let size = rt.mem_load(image.wrapping_add(rt.mem_load(image, 60, 4)), 80, 4)
+  let tl = rt.tlocal_addr()
+  sys_c.weak_xo_tsan_go_init(tl.wrapping_add(8 * TL_RACE_THR), tl.wrapping_add(8 * TL_RACE_PROC))
+  sys_c.weak___tsan_map_shadow(image, size)
+}
+
+/// The process ends with status code (gorace): with 0, ThreadSanitizer's
+/// end first, which ends it with 66 when it reported a race, else 0
+/// (Go's racefini at main's return); another status is the program's.
+pub fn race_exit(code: Int) {
+  if gorace() && code == 0 {
+    sys_c.weak___tsan_fini()
+  }
+}
+
+/// ThreadSanitizer's shadow for size bytes at a (gorace): each mapping
+/// above the last one (the Go flavor's meta shadow grows upward).
+pub fn race_map(a: Int, size: Int) {
+  sys_c.weak___tsan_map_shadow(a, size)
+}
+
+/// A block of n bytes at p is new (gorace): its shadow reset, so the
+/// accesses of the task that freed it are not a race with its new
+/// owner's (Go's racemalloc).
+pub fn race_alloc(p: Int, n: Int) {
+  sys_c.weak___tsan_malloc(race_thr(), 0, p, n)
+}
+
+/// An access of size bytes at a from the instrumented code whose return
+/// address is pc (cabi_race.xo): the Go flavor's one byte access, as Go's
+/// compiler instruments, or a range above a word.
+pub fn race_access(a: Int, size: Int, write: Bool, pc: Int) {
+  let t = race_thr()
+  if size > 8 {
+    if write {
+      sys_c.weak___tsan_write_range(t, a, size, pc)
+    } else {
+      sys_c.weak___tsan_read_range(t, a, size, pc)
+    }
+  } else if write {
+    sys_c.weak___tsan_write(t, a, pc)
+  } else {
+    sys_c.weak___tsan_read(t, a, pc)
+  }
+}
+
 /// A --race build (decision 0273, mode 2): ThreadSanitizer finds races
 /// between the program's tasks, two of one thread too; the runtime is not
 /// instrumented (compiler/llvm func.xo race_unchecked) and says what
@@ -57,7 +308,12 @@ pub fn asan() -> Bool { !tsan() && rt.sym_present("__sanitizer_start_switch_fibe
 /// statistics): its ThreadSanitizer fiber, and hooks on in a sanitizer
 /// build, so fiber switches call hook.
 pub fn worker_start(w: Int) {
-  if tsan() {
+  if gorace() {
+    let t = race_go(rt.tlocal_get(TL_RACE_THR))
+    rt.mem_store(w, W_TSAN, t, 8)
+    rt.tlocal_set(TL_RACE_THR, t)
+    rt.mem_store(w, W_HOOKS, 1, 8)
+  } else if tsan() {
     rt.mem_store(w, W_TSAN, sys_c.weak___tsan_get_current_fiber(), 8)
     rt.mem_store(w, W_HOOKS, 1, 8)
   } else if asan() {
@@ -67,14 +323,18 @@ pub fn worker_start(w: Int) {
 
 /// Fiber f got a new stack: its ThreadSanitizer fiber.
 pub fn fiber_new(f: Int) {
-  if tsan() {
+  if gorace() {
+    rt.mem_store(f, F_TSAN, race_go(race_thr()), 8)
+  } else if tsan() {
     rt.mem_store(f, F_TSAN, sys_c.weak___tsan_create_fiber(0), 8)
   }
 }
 
 /// Fiber f's stack goes: its ThreadSanitizer fiber too.
 pub fn fiber_free(f: Int) {
-  if tsan() {
+  if gorace() {
+    sys_c.weak___tsan_go_end(rt.mem_load(f, F_TSAN, 8))
+  } else if tsan() {
     sys_c.weak___tsan_destroy_fiber(rt.mem_load(f, F_TSAN, 8))
   }
 }
@@ -89,6 +349,16 @@ pub fn fiber_free(f: Int) {
 /// a park's switches read (the fiber's, else the worker's). The context
 /// it ran in, for task_exit.
 pub fn task_enter(fib: Int, w: Int, made: Int) -> Int {
+  if gorace() {
+    let old = race_thr()
+    let nf = if made != 0 { made } else { race_go(old) }
+    let slot = task_slot(fib, w)
+    if slot != 0 {
+      rt.mem_store(slot, 0, nf, 8)
+    }
+    rt.tlocal_set(TL_RACE_THR, nf)
+    return old
+  }
   if !user_mode() {
     return 0
   }
@@ -108,6 +378,9 @@ pub fn task_enter(fib: Int, w: Int, made: Int) -> Int {
 /// A task's ThreadSanitizer context, made at its spawn by the spawner
 /// (task_enter takes it), or 0 outside a --race build.
 pub fn task_new() -> Int {
+  if gorace() {
+    return race_go(race_thr())
+  }
   if !user_mode() {
     return 0
   }
@@ -116,13 +389,25 @@ pub fn task_new() -> Int {
 
 /// A task freed before it ran: its context, if it has one, goes.
 pub fn task_gone(f: Int) {
-  if f != 0 {
+  if f != 0 && gorace() {
+    sys_c.weak___tsan_go_end(f)
+  } else if f != 0 {
     sys_c.weak___tsan_destroy_fiber(f)
   }
 }
 
 /// The task's run ends: back to context old, the task's freed.
 pub fn task_exit(fib: Int, w: Int, old: Int) {
+  if gorace() {
+    let cur = race_thr()
+    let slot = task_slot(fib, w)
+    if slot != 0 {
+      rt.mem_store(slot, 0, old, 8)
+    }
+    rt.tlocal_set(TL_RACE_THR, old)
+    sys_c.weak___tsan_go_end(cur)
+    return
+  }
   if !user_mode() {
     return
   }
@@ -148,13 +433,17 @@ fn task_slot(fib: Int, w: Int) -> Int {
 /// ThreadSanitizer's release of a and acquire of a (the queues and parks
 /// in Xo are not instrumented).
 pub fn release(a: Int) {
-  if tsan() {
+  if gorace() {
+    sys_c.weak_xo_tsan_go_release(race_thr(), a)
+  } else if tsan() {
     sys_c.weak___tsan_release(a)
   }
 }
 
 pub fn acquire(a: Int) {
-  if tsan() {
+  if gorace() {
+    sys_c.weak_xo_tsan_go_acquire(race_thr(), a)
+  } else if tsan() {
     sys_c.weak___tsan_acquire(a)
   }
 }
@@ -172,6 +461,20 @@ fn switch_flag() -> Int { if user_mode() { 1 } else { 0 } }
 /// ends, 2 it parks, 3 it was resumed after parking, 4 a worker switches
 /// to it, 5 the worker is back. w is the worker, f the fiber.
 pub fn hook(kind: Int, w: Int, f: Int) {
+  if gorace() {
+    // the switches of the running ThreadState (no fiber API): to the
+    // worker's when a fiber ends or parks, to the fiber's (its task's
+    // while one runs on it) when the worker switches to it
+    if kind == 1 || kind == 2 {
+      if kind == 2 {
+        rtstats.count(ST_FIBER_PARK)
+      }
+      rt.tlocal_set(TL_RACE_THR, rt.mem_load(w, W_TSAN, 8))
+    } else if kind == 4 {
+      rt.tlocal_set(TL_RACE_THR, rt.mem_load(f, F_TSAN, 8))
+    }
+    return
+  }
   let t = tsan()
   let a = !t && rt.sym_present("__sanitizer_start_switch_fiber")
   match kind {

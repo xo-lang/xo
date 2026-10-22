@@ -1576,8 +1576,9 @@ fn map_stack(size: Int, page: Int, hooks: Int) -> Int {
     }
     3 => {
       // MEM_RESERVE, then MEM_COMMIT of the top and of a PAGE_GUARD page
-      // below it (PAGE_READWRITE)
-      let m = sys_windows.VirtualAlloc(0, size, 8192, 4)
+      // below it (PAGE_READWRITE); windows --race reserves it in
+      // ThreadSanitizer's arena (sanhook.xo race_arena)
+      let m = if hooks != 0 && sanhook.gorace() { sanhook.race_arena(size, false) } else { sys_windows.VirtualAlloc(0, size, 8192, 4) }
       if m == 0 {
         rt.tlocal_set(4, 0)
         return 0
@@ -1616,8 +1617,10 @@ fn unmap_stack(m: Int, size: Int, hooks: Int) {
       let _r = sys_darwin.munmap(m, size)
     }
     3 => {
-      // MEM_RELEASE
-      let _r = sys_windows.VirtualFree(m, 0, 32768)
+      // MEM_RELEASE; the arena's are kept (windows --race)
+      if !(hooks != 0 && sanhook.gorace()) {
+        let _r = sys_windows.VirtualFree(m, 0, 32768)
+      }
     }
     _ => {}
   }

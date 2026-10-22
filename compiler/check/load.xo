@@ -71,6 +71,10 @@ pub struct Checker {
   /// or XO_PREEMPT_POLLS=off, for tight loop benchmarks; a task that
   /// loops without calling the runtime can then starve its worker
   pub no_preempt: Bool = false
+  /// --race (decision 0273): set by the driver; on windows the builder
+  /// declares std/native/llrt/cabi_race.xo's exports, the functions the
+  /// instrumented code calls
+  pub race: Bool = false
   /// The functions of the native modules whose bodies run left to
   /// check_lazy (true), and those it checked (false).
   pub lazy_fns: Map[Int, Bool] = {}

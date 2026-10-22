@@ -1,0 +1,51 @@
+// The C ABI exports of a windows/amd64 --race build (decision 0273's
+// Windows addendum): ThreadSanitizer's Go flavor takes the running
+// task's ThreadState and a pc with every access, so the instrumented
+// code calls these (compiler/arm64 race.xo race_sym: __tsan_read8 is
+// xo_x_race_read8, called as a System V function with the address), which
+// add them (sanhook.xo race_access); and the runtime's callback. The
+// builder declares them only in such a build (compiler/ssa build.xo
+// declare_exports). Not instrumented (std/native/llrt), nothing here may
+// fault or allocate. Every top level function here is an export, so
+// each access export finds its pc itself: its frame record's second
+// word, the return address in the instrumented function.
+use native/llrt/sanhook
+use native/rt
+
+fn race_read1(a: Int) { sanhook.race_access(a, 1, false, rt.mem_load(rt.frame_addr(), 8, 8)) }
+
+fn race_read2(a: Int) { sanhook.race_access(a, 2, false, rt.mem_load(rt.frame_addr(), 8, 8)) }
+
+fn race_read4(a: Int) { sanhook.race_access(a, 4, false, rt.mem_load(rt.frame_addr(), 8, 8)) }
+
+fn race_read8(a: Int) { sanhook.race_access(a, 8, false, rt.mem_load(rt.frame_addr(), 8, 8)) }
+
+fn race_read16(a: Int) { sanhook.race_access(a, 16, false, rt.mem_load(rt.frame_addr(), 8, 8)) }
+
+fn race_write1(a: Int) { sanhook.race_access(a, 1, true, rt.mem_load(rt.frame_addr(), 8, 8)) }
+
+fn race_write2(a: Int) { sanhook.race_access(a, 2, true, rt.mem_load(rt.frame_addr(), 8, 8)) }
+
+fn race_write4(a: Int) { sanhook.race_access(a, 4, true, rt.mem_load(rt.frame_addr(), 8, 8)) }
+
+fn race_write8(a: Int) { sanhook.race_access(a, 8, true, rt.mem_load(rt.frame_addr(), 8, 8)) }
+
+fn race_write16(a: Int) { sanhook.race_access(a, 16, true, rt.mem_load(rt.frame_addr(), 8, 8)) }
+
+/// An atomic's orders (race.xo: after an acquire, before a release).
+fn race_acquire(a: Int) { sanhook.acquire(a) }
+
+fn race_release(a: Int) { sanhook.release(a) }
+
+/// ThreadSanitizer's callback (tsan_go.cpp go_runtime_cb), with cmd 0
+/// the thread's Processor stored at ctx (sanhook.race_proc), 1 a pc to
+/// symbolize (SymbolizeCodeContext: pc, func, file, line, off, res): no
+/// names yet, one frame per pc (res 1 and the pc unchanged), 2 a data
+/// address: none (res stays 0).
+fn race_cb(cmd: Int, ctx: Int) {
+  if cmd == 0 {
+    rt.mem_store(ctx, 0, sanhook.race_proc(), 8)
+  } else if cmd == 1 {
+    rt.mem_store(ctx, 40, 1, 8)
+  }
+}

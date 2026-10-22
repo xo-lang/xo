@@ -425,6 +425,9 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   c.lower_off = lower_off
   // loops without preemption polls (decision 0286 step 3's opt out)
   c.no_preempt = o.no_preempt || (os.env.get("XO_PREEMPT_POLLS") ?? "") == "off"
+  // --race: the builder declares a windows program's race exports
+  // (native/llrt/cabi_race)
+  c.race = o.race
   // decision 0318: SIGURG's preemption instead of loop polls
   c.async_preempt_ok = (o.backend is "arm64" | "amd64" | "llvm") && !o.race && (os.env.get("XO_ASYNC_PREEMPT") ?? "") != "0"
   c.async_preempt_llvm = o.backend == "llvm"
@@ -1025,10 +1028,10 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     if o.linker.is_empty() && (tg == host || tgoos == "linux" || mac_x86) {
       no_cc = default_ld(os, ctx, o, c, tgoos, code, uses_time)
     }
-    if o.race && tgoos == "windows" {
-      fail(os, "--race: ThreadSanitizer has no windows runtime (decision 0273): use --backend=go")
+    if o.race && tgoos == "windows" && !nolibc(os, o, c, tgoos) {
+      fail(os, "--race on windows links with Xo's PE linker and no C runtime (decision 0273's Windows addendum): not with XO_WIN_NOCRT=0")
     }
-    if o.race && !no_cc {
+    if o.race && !no_cc && tgoos != "windows" {
       fail(os, "--race on the ${march} backend links with Xo's linker (not --ld=cc, decision 0273): darwin and linux")
     }
     let macho_as = if mac_x86 { o.assembler != "cc" } else { o.assembler == "macho" || (no_cc && o.assembler.is_empty()) }
@@ -1086,7 +1089,16 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
             Err(e) => fail(os, "${e}")
           }
         }
-        let why = pe_link(os, wsrcs + zsrcs, wbin, o.stamps)
+        if o.race {
+          // ThreadSanitizer's Go flavor object (decision 0273's Windows
+          // addendum)
+          let (rp, rwhy) = race_runtime(os, ctx, tgoos, march)
+          if !rwhy.is_empty() {
+            fail(os, rwhy)
+          }
+          zsrcs.push(rp)
+        }
+        let why = pe_link(os, wsrcs + zsrcs, wbin, o.stamps, o.race)
         if !why.is_empty() {
           fail(os, why)
         }

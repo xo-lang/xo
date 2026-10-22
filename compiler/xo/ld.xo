@@ -86,7 +86,7 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
 /// lib/xo/std), a seed's or checkout's lib/xo/race (std in std/,
 /// scripts/race-runtime.sh writes it there).
 fn race_runtime(os: Os, ctx: Ctx, tgoos: Str, march: Str) -> (Str, Str) {
-  let file = if tgoos == "darwin" { "libclang_rt.tsan_osx_dynamic.dylib" } else if march == "amd64" { "libclang_rt.tsan-x86_64.a" } else { "libclang_rt.tsan-aarch64.a" }
+  let file = if tgoos == "darwin" { "libclang_rt.tsan_osx_dynamic.dylib" } else if tgoos == "windows" { "race_windows_amd64.syso" } else if march == "amd64" { "libclang_rt.tsan-x86_64.a" } else { "libclang_rt.tsan-aarch64.a" }
   let env = os.env.get("XO_RACE_RUNTIME") ?? ""
   if !env.is_empty() {
     return (env, "")
@@ -350,8 +350,11 @@ fn tz_object_coff(os: Os, dir: Str, sel: tzsel.TZSel) -> Str ! FsErr {
 
 /// Links the windows/amd64 COFF objects at paths into bin with Xo's PE
 /// linker (decision 0254 6b step 4): the entry xo_win_start
-/// (cabi_wincrt.xo), the imports by macho.pe_imports. "" or why not.
-fn pe_link(os: Os, paths: List[Str], bin: Str, stamps: List[(Str, Str)]) -> Str {
+/// (cabi_wincrt.xo), the imports by macho.pe_imports. race: a --race
+/// program, at its fixed base (ThreadSanitizer's application range ends
+/// at 0xe0_0000_0000; Go's linker turns ASLR off for it too). "" or why
+/// not.
+fn pe_link(os: Os, paths: List[Str], bin: Str, stamps: List[(Str, Str)], race: Bool) -> Str {
   var objs: List[macho.CObj] = []
   for p in paths {
     let b = match os.fs.read(p) {
@@ -363,7 +366,7 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, stamps: List[(Str, Str)]) -> Str 
       Err(e) => return e
     }
   }
-  match macho.link_pe(objs, macho.PEOpts{entry: "xo_win_start", imports: macho.pe_imports(), resources: pe_resources(bin, stamps)}) {
+  match macho.link_pe(objs, macho.PEOpts{entry: "xo_win_start", imports: macho.pe_imports(), resources: pe_resources(bin, stamps), fixed_base: race}) {
     Ok(img) => {
       match os.fs.write(bin, img) {
         Ok(_) => ""

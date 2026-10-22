@@ -29,6 +29,28 @@ fn weak_free(p: Int)
 /// (decision 0273 mode 1, sanhook.xo user_mode)
 fn weak_xo_tsan_runtime() -> Int
 
+/// ThreadSanitizer's Go flavor (windows/amd64 --race, decision 0273's
+/// Windows addendum: race_windows_amd64.syso): every call names a
+/// task's ThreadState (thr), out parameters are addresses of words, a pc
+/// may be 0. Its __tsan_acquire and __tsan_release take thr too, so they
+/// are reached through scripts/race-windows.cpp's xo_tsan_go_acquire and
+/// xo_tsan_go_release (a merge, as the C flavor's release), and
+/// __tsan_init through xo_tsan_go_init, which adds the callback
+/// (cabi_race.xo race_cb).
+fn weak_xo_tsan_go_init(thrp: Int, procp: Int)
+fn weak___tsan_map_shadow(addr: Int, size: Int)
+fn weak___tsan_fini()
+fn weak___tsan_go_start(parent: Int, thrp: Int, pc: Int)
+fn weak___tsan_go_end(thr: Int)
+fn weak___tsan_proc_create(procp: Int)
+fn weak___tsan_read(thr: Int, addr: Int, pc: Int)
+fn weak___tsan_write(thr: Int, addr: Int, pc: Int)
+fn weak___tsan_read_range(thr: Int, addr: Int, size: Int, pc: Int)
+fn weak___tsan_write_range(thr: Int, addr: Int, size: Int, pc: Int)
+fn weak___tsan_malloc(thr: Int, pc: Int, p: Int, size: Int)
+fn weak_xo_tsan_go_acquire(thr: Int, addr: Int)
+fn weak_xo_tsan_go_release(thr: Int, addr: Int)
+
 /// AddressSanitizer's fiber API: which stack runs.
 fn weak___sanitizer_start_switch_fiber(fake_stack_save: Int, bottom: Int, size: Int)
 fn weak___sanitizer_finish_switch_fiber(fake_stack_save: Int, bottom_old: Int, size_old: Int)

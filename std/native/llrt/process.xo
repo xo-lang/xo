@@ -18,6 +18,7 @@
 // 0108).
 use native/llrt/linux
 use native/llrt/raw
+use native/llrt/sanhook
 use native/llrt/stdio
 use native/rt
 use native/llrt/testworld
@@ -52,7 +53,10 @@ pub fn os_exit(code: Int) {
       let _r = linux.exit_group(code)
     }
     TargetOs.Darwin => sys_darwin.exit(code)
-    TargetOs.Windows => sys_windows.ExitProcess(code)
+    TargetOs.Windows => {
+      sanhook.race_exit(code)
+      sys_windows.ExitProcess(code)
+    }
     TargetOs.Wasi => {}
   }
 }

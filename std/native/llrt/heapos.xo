@@ -99,8 +99,13 @@ pub fn map(size: Int) -> Int {
       }
     }
     TargetOs.Windows => {
-      // MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE
-      m = sys_windows.VirtualAlloc(0, size, 12288, 4)
+      if sanhook.gorace() {
+        // ThreadSanitizer's arena (windows --race)
+        m = sanhook.race_arena(size, true)
+      } else {
+        // MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE
+        m = sys_windows.VirtualAlloc(0, size, 12288, 4)
+      }
     }
     TargetOs.Wasi => {}
   }
@@ -139,8 +144,10 @@ pub fn unmap(m: Int, size: Int) {
       let _r = sys_darwin.munmap(m, size)
     }
     TargetOs.Windows => {
-      // MEM_RELEASE
-      let _r = sys_windows.VirtualFree(m, 0, 32768)
+      // MEM_RELEASE; the arena's are kept (windows --race)
+      if !sanhook.gorace() {
+        let _r = sys_windows.VirtualFree(m, 0, 32768)
+      }
     }
     TargetOs.Wasi => {}
   }
@@ -159,6 +166,17 @@ pub fn large(n: Int) -> Int { large_room(n, n) }
 /// A large block of n bytes in a mapping with room for at least room
 /// (at least n) bytes.
 fn large_room(n: Int, room: Int) -> Int {
+  if sanhook.gorace() {
+    // windows --race: the race heap's block (sanhook.xo race_block, its
+    // shadow reset as malloc's interceptor does on Linux), the same
+    // layout, its size word the block's
+    let m = sanhook.race_block(n.wrapping_add(16))
+    if m == 0 {
+      oom()
+    }
+    rt.mem_store(m, 8, (0).wrapping_sub(n), 8)
+    return m.wrapping_add(16)
+  }
   if sanhook.user_mode() {
     // a --race build's heap (decision 0273 mode 2): every block from
     // the C library's malloc, whose interceptor resets its shadow memory,
@@ -211,6 +229,10 @@ pub fn large_resize(b: Int, n: Int) -> Int {
 /// the system when the cache is full.
 pub fn release(b: Int) {
   let m = b.wrapping_sub(8)
+  if sanhook.gorace() {
+    sanhook.race_free(m)
+    return
+  }
   if sanhook.user_mode() {
     sys_c.weak_free(m)
     return
@@ -386,7 +408,7 @@ pub fn main_record() -> Int {
   // a --race build (decision 0273 mode 2): every block a big one (alloc.xo's classes,
   // free lists, chunks and magazines unused), from the C library's
   // malloc (large_room)
-  rt.mem_store(h, H_MID_MAX, if sanhook.user_mode() { 0 } else { MID_MAX }, 8)
+  rt.mem_store(h, H_MID_MAX, if sanhook.user_mode() || sanhook.gorace() { 0 } else { MID_MAX }, 8)
   rt.mem_store(h, H_COUNT, 1, 8)
   rt.mem_store(h, H_SAMPLE_AT, NEVER, 8)
   rt.mem_store(h, H_CENTRAL, map(8 * NCLASS1), 8)

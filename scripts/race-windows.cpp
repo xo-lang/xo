@@ -25,4 +25,20 @@ int __popcountdi2(unsigned long long a) {
 static int xo_race_errno;
 int *_errno(void) { return &xo_race_errno; }
 void exit(int code) { ExitProcess((UINT)code); }
+
+// the Go flavor's __tsan_acquire and __tsan_release take the task's
+// ThreadState, so Xo's runtime, whose std/native/sys_c.xo declares the C
+// flavor's one argument forms under those names, calls these
+// (sanhook.xo); the release a merge, as the C flavor's __tsan_release
+// (the Go flavor's __tsan_release is a store)
+void __tsan_acquire(void *thr, void *addr);
+void __tsan_release_merge(void *thr, void *addr);
+void xo_tsan_go_acquire(void *thr, void *addr) { __tsan_acquire(thr, addr); }
+void xo_tsan_go_release(void *thr, void *addr) { __tsan_release_merge(thr, addr); }
+
+// __tsan_init with std/native/llrt/cabi_race.xo's callback, an export
+// only a --race build has, so the runtime names it only through here
+void __tsan_init(void **thrp, void **procp, void (*cb)(unsigned long long, void *));
+void xo_x_race_cb(unsigned long long cmd, void *ctx);
+void xo_tsan_go_init(void **thrp, void **procp) { __tsan_init(thrp, procp, xo_x_race_cb); }
 }

@@ -371,6 +371,17 @@ fn drain(t: Int, c: Int) {
 /// malloc through the thread's cache: a 16 byte aligned block of at
 /// least n bytes, or 0.
 fn malloc_tc(n: Int) -> Int {
+  if sanhook.gorace() {
+    // windows --race: the race heap's block (sanhook.xo race_block, its
+    // shadow reset), its first word the race heap's, then the header
+    // as a big block's
+    let m = sanhook.race_block(addw(n, 24))
+    if m == 0 {
+      return 0
+    }
+    rt.mem_store(m, 8, subw(0, addw(n, 16)), 8)
+    return addw(m, 24)
+  }
   if sanhook.user_mode() {
     // a --race build (decision 0273 mode 2): the C library's malloc,
     // whose interceptor resets the block's shadow memory (heapos.xo
@@ -403,6 +414,10 @@ fn malloc_tc(n: Int) -> Int {
 
 /// free through the thread's cache.
 fn free_tc(p: Int) {
+  if sanhook.gorace() {
+    sanhook.race_free(subw(p, 24))
+    return
+  }
   if sanhook.user_mode() {
     sys_c.weak_free(subw(p, 16))
     return
