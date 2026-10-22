@@ -1562,6 +1562,10 @@ fn map_stack(size: Int, page: Int, hooks: Int) -> Int {
       }
       // mprotect(PROT_NONE)
       let _r = rt.sys6(if layer_arch() == 1 { 226 } else { 10 }, m, page, 0, 0, 0, 0)
+      // madvise(MADV_NOHUGEPAGE): with transparent huge pages "always" the
+      // first touch of a stack's top faulted in 2 MiB, so a connection's
+      // fiber held 2 MiB of resident memory for a few KiB of frames
+      let _h = rt.sys6(if layer_arch() == 1 { 233 } else { 28 }, m, size, 15, 0, 0, 0)
       m
     }
     2 => {

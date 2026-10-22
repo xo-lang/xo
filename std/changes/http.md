@@ -1,5 +1,21 @@
 # std/http changes
 
+## 2026-10-22: perf: a server's connection fibers no longer hold 2 MiB each of resident memory
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/netgo comparison (CRUD server peak RSS at 1024 connections: Xo 2.1 to 2.3 GB, Go 66 to 78 MB)
+- Go reference: none (goroutine stacks start small)
+- Test: none (a memory figure of the Linux runtime: /proc/PID/smaps, gotchas/fiber-stacks-huge-pages.md)
+
+Each fiber has a 64 MiB reserved stack. On a Linux with transparent huge
+pages set to `always` (Docker Desktop's VM and the default of several
+distributions) the first touch of a stack's top faulted in a whole 2 MiB
+page, so every live connection cost 2 MiB of resident memory. The runtime
+now marks fiber stacks MADV_NOHUGEPAGE: the CRUD server at 1024
+connections holds 47 to 57 MB (64 connections: 21 MB against 158 MB), and
+its throughput did not change within the run to run noise.
+
 ## 2026-10-21: perf: a large streamed write goes out as one chunk
 
 - Kind: perf
