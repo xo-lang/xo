@@ -837,8 +837,8 @@ and for diffing two builds function by function, not for a first look.
   unwinder's tables. At exit (main's end or os.proc.exit) it writes a
   raw file at `XO_PROF_OUT` (default `xo-prof.xoraw` in the working
   directory; `%p` is the process id; decision 0245) and one line on
-  stderr naming it (`XO_PROF_QUIET=1` drops the line). `xo prof FILE
-  [--cpu-out=PATH] [--heap-out=PATH]` writes FILE's name with
+  stderr naming it (`XO_PROF_QUIET=1` drops the line). `xo prof FILE|URL
+  [--raw-out=PATH] [--cpu-out=PATH] [--heap-out=PATH]` writes FILE's name with
   `.cpu.pprof` (and `.heap.pprof`) for its `.xoraw`, `.pb.gz` or `.gz`
   (`cold.pb.gz` gives `cold.cpu.pprof`; 2026-10-21, it was `xo-cpu.pprof`
   for every input) and a text summary beside it (`.txt` for `.pprof`):
@@ -846,7 +846,10 @@ and for diffing two builds function by function, not for a first look.
   samples, as `go tool pprof -top` prints. The program named the
   locations, so `xo prof` needs neither the binary nor its dSYM. Its
   default names are replaced on a rerun; a path given with `--cpu-out`
-  or `--heap-out` is never overwritten (files mode 0600). `xo run --profile` and `xo test
+  or `--heap-out` is never overwritten (files mode 0600). A URL (a running server's std/debug
+  `/debug/profile?seconds=N` or `/debug/heap`, decision 0325) is fetched
+  into `xo-prof.xoraw` (or `--raw-out`) first; `/debug/sched` is printed.
+  `xo run --profile` and `xo test
   --profile` do both steps. XO_PROF and XO_TRACE apply to the process that reads
   them (owner, 2026-10-21): the runtime drops the switch from its own
   environment once armed, so the processes it starts (a test binary,

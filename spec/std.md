@@ -4657,7 +4657,8 @@ fn heap_start(rate: Int = 0) -> Bool
   (default 30, 1 to 300) at H samples per CPU second (default 100, 1 to
   1000). The native backends answer decision 0240's container
   (`Content-Type: application/x-xo-profile`; `xo prof FILE` converts a
-  saved answer to pprof files and a text summary); the Go backend answers
+  saved answer to pprof files and a text summary, and `xo prof URL`
+  fetches and converts it); the Go backend answers
   runtime/pprof's profile (`X-Profile-Format: pprof`) and ignores `hz`.
   One profile runs at a time: a request during one is 409. 501 where
   profiles cannot be taken (windows, wasm, a native build without

@@ -14,6 +14,8 @@
 // Fs.create_new (O_EXCL: Exists when anything is at the path, a symbolic
 // link too) makes it, set to 0600 while it is empty (prof_write).
 
+use std/http
+
 /// Section types (std/native/llrt/prof.xo writes them).
 const PS_CPU = 16
 const PS_HEAP = 17
@@ -184,10 +186,11 @@ fn prof_parse(b: Bytes) -> (ProfCpu?, ProfHeap?) ! Str {
   Ok((cpu, heap))
 }
 
-/// `xo prof FILE [--cpu-out=PATH] [--heap-out=PATH]` (main.xo): its exit
-/// status.
-fn prof_cmd(os: Os, args: List[Str]) -> Int uses (fs, stdio) {
+/// `xo prof FILE|URL [--raw-out=PATH] [--cpu-out=PATH] [--heap-out=PATH]`
+/// (main.xo): its exit status.
+fn prof_cmd(os: Os, args: List[Str]) -> Int uses (fs, stdio, net.dial) {
   var file = ""
+  var raw_out = ""
   var cpu_out = ""
   var heap_out = ""
   for a in args {
@@ -195,6 +198,8 @@ fn prof_cmd(os: Os, args: List[Str]) -> Int uses (fs, stdio) {
       cpu_out = a.trim_prefix("--cpu-out=")
     } else if a.starts_with("--heap-out=") {
       heap_out = a.trim_prefix("--heap-out=")
+    } else if a.starts_with("--raw-out=") {
+      raw_out = a.trim_prefix("--raw-out=")
     } else if a == "-h" || a == "--help" {
       os.stdio.println(PROF_USAGE)
       return 0
@@ -208,6 +213,24 @@ fn prof_cmd(os: Os, args: List[Str]) -> Int uses (fs, stdio) {
   if file.is_empty() {
     os.stdio.eprintln(PROF_USAGE)
     return 2
+  }
+  // a URL (decision 0325: a running server's std/debug endpoint) is
+  // fetched into a raw file first, then read like any other; a text
+  // answer (/debug/sched, /debug/threads) is printed as it is
+  if file.starts_with("http://") || file.starts_with("https://") {
+    let replace_raw = raw_out.is_empty()
+    if replace_raw {
+      raw_out = "xo-prof.xoraw"
+    }
+    match prof_fetch(os, file, raw_out, replace_raw) {
+      Ok(true) => return 0
+      Ok(false) => {}
+      Err(e) => {
+        os.stdio.eprintln("xo prof: ${e}")
+        return 1
+      }
+    }
+    file = raw_out
   }
   // named after the input by default (FILE's name without .xoraw,
   // .pb.gz or .gz: cold.cpu.pprof beside cold.pb.gz), and those names
@@ -242,7 +265,54 @@ fn prof_base(path: Str) -> Str {
   path
 }
 
-const PROF_USAGE = "usage: xo prof FILE [--cpu-out=PATH] [--heap-out=PATH]"
+const PROF_USAGE = "usage: xo prof FILE|URL [--raw-out=PATH] [--cpu-out=PATH] [--heap-out=PATH]"
+
+/// The seconds a std/debug profile URL asks for (the query's seconds=N,
+/// 0 when it names none).
+fn prof_url_seconds(url: Str) -> Int {
+  let at = url.find("seconds=") ?? -1
+  if at < 0 {
+    return 0
+  }
+  var n = 0
+  for c in url[at + 8..].bytes() {
+    if c < 48 || c > 57 || n > 100000 {
+      break
+    }
+    n = n * 10 + (Int(c) - 48)
+  }
+  n
+}
+
+/// Gets url (a std/debug endpoint: /debug/profile?seconds=N, /debug/heap)
+/// and writes the XORAW answer to raw_out (replace: a default name, kept
+/// by a rerun). Ok(true): the answer was text (/debug/sched), printed
+/// and nothing more to convert; Ok(false): raw_out holds the profile.
+fn prof_fetch(os: Os, url: Str, raw_out: Str, replace: Bool) -> Bool ! Str uses (fs, stdio, net.dial) {
+  // the server answers a profile after its seconds: wait for them
+  let cl = http.client(os.net, timeout: Duration.from_secs_int(prof_url_seconds(url) + 60))
+  let resp = match cl.get(url) {
+    Ok(r) => r
+    Err(e) => return Err("Get ${url}: ${e}")
+  }
+  if resp.status != 200 {
+    var msg = (resp.body.to_str() ?? "").trim()
+    if msg.len() > 200 {
+      msg = msg[0..200]
+    }
+    return Err("${url} answered ${resp.status}: ${msg}")
+  }
+  let kind = resp.headers.get("Content-Type") ?? ""
+  if kind.starts_with("text/") {
+    os.stdio.print(resp.body.to_str() ?? "")
+    return Ok(true)
+  }
+  if !prof_write(os, raw_out, resp.body, replace) {
+    return Err("cannot write ${raw_out}")
+  }
+  os.stdio.eprintln("xo prof: ${resp.body.len()} bytes from ${url} to ${raw_out}")
+  Ok(false)
+}
 
 /// Writes the profiles of the raw file at path (the CPU one to cpu_out
 /// and cpu_out's .txt, the heap one to heap_out and its .txt), each with

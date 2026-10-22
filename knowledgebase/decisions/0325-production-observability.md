@@ -191,9 +191,13 @@ Stage 1 0c17dba55 (std/debug, the restartable profiler), stage 2
 81c91200c and b9b44a29f (std/metrics, `Registry.middleware`), stage 3
 dd2628eb7 (std/trace). Differences from the plan above:
 
-- `xo prof URL` is not built: the compiler would need an HTTP client.
-  `curl -o p.xoraw http://HOST/debug/profile?seconds=30` then `xo prof
-  p.xoraw` does the same.
+- `xo prof URL` (2026-10-21, after stage 3): the compiler already links
+  std/http (the module fetch), so `xo prof http://HOST/debug/profile?seconds=30`
+  gets the answer into `xo-prof.xoraw` (`--raw-out=PATH`; the default name
+  is replaced on a rerun) and converts it like `xo prof FILE`; a text
+  answer (`/debug/sched`) is printed; a non-200 answer is an error naming
+  the status; the client waits `seconds` plus 60. Test: TestProfURL
+  (cmd/xo) against a server with std/debug and a CPU burner.
 - `with_metrics` on the server is `Registry.middleware(clock, label)` for
   `router.wrap`: a middleware needs no server change, and the `route`
   label is the program's own bounded name for a request.

@@ -633,7 +633,7 @@ that built it (decision 0264).
 
 fn prof_text() -> Str {
   """
-usage: xo prof FILE [--cpu-out=PATH] [--heap-out=PATH]
+usage: xo prof FILE|URL [--raw-out=PATH] [--cpu-out=PATH] [--heap-out=PATH]
 
 Read the raw profile a native program wrote under XO_PROF (decision
 0238; the file XO_PROF_OUT names, default xo-prof.xoraw; decision 0245)
@@ -646,6 +646,12 @@ its locations already, so neither the binary nor its dSYM is needed. The
 default names are replaced on a rerun; a path given with --cpu-out or
 --heap-out is never overwritten. xo run --profile and xo test --profile
 run it for you.
+
+A URL (http:// or https://) is a running server's std/debug endpoint
+(decision 0325): xo prof http://HOST/debug/profile?seconds=30 or
+http://HOST/debug/heap fetches the raw profile into xo-prof.xoraw (or
+--raw-out=PATH; the default name is replaced on a rerun) and converts it
+as above. A text answer, /debug/sched or /debug/threads, is printed.
 """
 }
 
