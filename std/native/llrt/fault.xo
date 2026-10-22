@@ -157,14 +157,22 @@ pub fn clear(c: Int) {
   drop_trace(c)
 }
 
-/// Frees the context c's trace block and the report text it holds.
+/// Frees the context c's trace block and the report text it holds: both
+/// from rt.heap_large, which heap_release takes by its prefix (b - 8).
+/// drop's heap_release(b) freed nothing, so each fault caught under
+/// XO_TRACEBACK kept its block (200,000 task.isolate faults: 203 MB
+/// against 2.8 MB without, 2026-10-22).
 fn drop_trace(c: Int) {
   let b = rt.mem_load(c, C_FAULT_TRACE, 8)
-  if b != 0 && rt.mem_load(b, 16, 8) > 0 {
+  if b == 0 {
+    return
+  }
+  if rt.mem_load(b, 16, 8) > 0 {
     rt.heap_release(rt.mem_load(b, 16, 8) - 8)
     rt.mem_store(b, 16, 0, 8)
   }
-  drop(c, C_FAULT_TRACE)
+  rt.heap_release(b - 8)
+  rt.mem_store(c, C_FAULT_TRACE, 0, 8)
 }
 
 /// Catches the fault unwinding the context c (task.isolate): 1 and the

@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime: a fault caught by `task.isolate` (an HTTP handler's
+  500 included) under `XO_TRACEBACK` no longer leaks its trace: the
+  block was released at the wrong address, about 1 KB a fault (200,000
+  faults: 203 MB against 2.8 MB).
+
 - `xo build --targets=all` (and any target list mixing architectures)
   builds each target with its own native backend: 0.25.2 failed with
   "the arm64 backend builds for darwin/arm64 and linux/arm64, not
