@@ -250,6 +250,14 @@ fn (var b: Builder) expr_at(e: Expr) -> Int {
       return b.add(Op.Const, b.float_t(), Aux.F(f: f), [])
     }
     StringLit(s) => return b.string_lit(s)
+    HoleExpr(span: span) => {
+      // `???` under --holes (core 3.7): a fault when evaluated, the Go
+      // backend's message (std/rt Hole); natively since 2026-10-22
+      // (owner), where --holes chose the Go backend
+      b.fault(b.const_str("evaluated a hole `???`"), b.pos(span))
+      b.dead()
+      return b.undef(b.nat_of(e))
+    }
     DurationLit(nanos: nanos, ..) => {
       var n = 0
       for ch in nanos {

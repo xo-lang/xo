@@ -1286,7 +1286,9 @@ An `UpperCamel` name in a pattern always refers to a variant; bindings are
   type, the effects in scope, and in scope values or functions that fit
   (diagnostic `XO0900`, see section 10).
 - `xo build` rejects programs with holes. `xo run --holes` and `xo test --holes`
-  allow them and fault if a hole is evaluated.
+  allow them and fault if a hole is evaluated (`evaluated a hole \`???\``),
+  on the native backends and the Go backend alike (natively since
+  2026-10-22, owner; `--holes` chose the Go backend before).
 
 Holes let an agent write a type correct skeleton first and fill it in steps.
 
@@ -2638,8 +2640,8 @@ diagnostic with an exact fix never costs a run (decision 0096). The MCP
 needs clang) otherwise. `--backend=go` compiles through the Go toolchain
 and is required by a program with a `use go` package; with no `--backend`
 such a program is a usage error naming it. The flags only the Go backend
-has (`--hybrid`, `--holes`, `xo test --explore`, `xo run --seed` and
-`--record`) choose it when no backend is given. `--race` keeps the
+has (`--hybrid`, `xo test --explore`, `xo run --seed` and `--record`)
+choose it when no backend is given. `--race` keeps the
 native backend where a ThreadSanitizer runtime ships for the target
 (darwin/arm64, darwin/amd64, linux/arm64, linux/amd64, windows/amd64)
 and otherwise

@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo run --holes` and `xo test --holes` build natively (owner,
+  2026-10-22): an evaluated `???` faults with `evaluated a hole \`???\``
+  as on the Go backend, so `--holes` no longer needs Go installed.
+
 - `--hybrid` is deprecated (owner, 2026-10-22) and warns on every use:
   since the Go compiler's removal it has been a plain Go backend build.
   Use `--backend=go`, or the native backend (the default). It will be
