@@ -3,7 +3,7 @@
 ## 2026-10-22: perf: AES-GCM goes back to its own GHASH body (cpu.ghash4 was slower in the loop)
 
 - Kind: perf
-- Commit: this commit
+- Commit: 344764528
 - Found by: tlsrate bulk (Xo Lang 3, quiet Docker linux/arm64)
 - Go reference: none
 - Test: std/native/llrt/tlsrec_test.xo; tls, crypto goldens (arm64)
