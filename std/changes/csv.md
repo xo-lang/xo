@@ -1,5 +1,16 @@
 # std/csv changes
 
+## 2026-10-21: perf: quoted fields are written in runs
+
+- Kind: perf
+- Commit: (filled in after the push)
+- Found by: bench/results/regexp-time-csv-vs-go-2026-10-21.md
+- Test: std module tests native/csv on arm64 and LLVM
+
+`format` writes a quoted field in runs of plain bytes instead of a string per
+rune: 20,000 rows x 10: 1,386 M to 621 M instructions (Go's encoding/csv 740
+M). Output is the same.
+
 ## 2026-10-21: behavior: Go's errors and options (decision 0298)
 
 - Kind: behavior

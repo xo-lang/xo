@@ -113,3 +113,13 @@ start of the day: match 29,759 to 8,186 (7.6 to 2.1 times Go), find_all 18,697
 to 9,754 (2.8 to 1.5), replace_all 16,033 to 8,802 (3.2 to 1.8), captures
 1,919 to 1,103 (4.4 to 2.5). The corpus (260 patterns, 40 texts including a
 48 KB one for the Pike VM) passes on go, arm64, LLVM.
+
+## Step 4, csv format (2026-10-21)
+
+A quoted field was written one rune at a time through a string built for
+each rune; it is now written in runs of plain bytes, with only the quote, CR,
+and LF rewritten. Format: 1,386 M to 621 M instructions (Go 740 M, now 0.84
+times Go's encoding/csv). Parse is Go's reader ported line by line and stays
+at 1.67 times (1,315 M against 787 M); a profile of it (7 samples, too short to
+rank) shows read_line, index_rune, and utf8_valid, so a gain needs a rewrite of
+read_record's byte scanning, not done.

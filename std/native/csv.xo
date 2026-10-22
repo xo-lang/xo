@@ -308,18 +308,30 @@ fn format(rows: List[List[Str]], sep: Rune = ',', crlf: Bool = false, at: rt.Loc
         continue
       }
       b.write("\"")
-      for c in f.runes() {
-        if c == '"' {
-          b.write("\"\"")
-        } else if c == '\r' {
-          if !crlf {
-            b.write("\r")
+      // runs of plain bytes are written whole; only the quote, CR and LF
+      // (single bytes) are rewritten
+      let fb = f.bytes()
+      var start = 0
+      for i in 0..fb.len() {
+        let c = fb[i]
+        if c == 34 || c == 13 || c == 10 {
+          if i > start {
+            b.write(f[start..i])
           }
-        } else if c == '\n' {
-          b.write(if crlf { "\r\n" } else { "\n" })
-        } else {
-          b.write("${c}")
+          start = i + 1
+          if c == 34 {
+            b.write("\"\"")
+          } else if c == 13 {
+            if !crlf {
+              b.write("\r")
+            }
+          } else {
+            b.write(if crlf { "\r\n" } else { "\n" })
+          }
         }
+      }
+      if fb.len() > start {
+        b.write(f[start..])
       }
       b.write("\"")
     }
