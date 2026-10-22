@@ -3,7 +3,7 @@
 ## 2026-10-21: perf: a read profile gives its ring back
 
 - Kind: perf
-- Commit: this commit
+- Commit: 99c1c8a64
 - Found by: decision 0325 follow-up
 - Test: internal/llvm/testdata/golden/debug_routes (two profiles in a row; arm64, LLVM)
 

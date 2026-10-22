@@ -3,7 +3,7 @@
 ## 2026-10-22: feature: time.Layout, a layout parsed once
 
 - Kind: feature
-- Commit: this commit
+- Commit: 3d8c505f0
 - Found by: bench/results/time-layout-parse-cost-2026-10-21.md
 - Test: std module tests native/time ("a Layout formats and parses as its text")
 

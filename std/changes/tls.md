@@ -3,7 +3,7 @@
 ## 2026-10-22: speedup: AES-GCM response records sealed from the caller's bytes, GHASH fused with the CTR pass
 
 - Kind: speedup
-- Commit: this commit
+- Commit: 93f258200
 - Found by: profile (Xo Lang 3, bulk TLS 1.3 download: libcstr.copy_words 10%, CTR and GHASH as two passes)
 - Go reference: crypto/internal/fips140/aes/gcm gcm_arm64.s (gcmAesEnc: one pass over each block)
 - Test: std/native/llrt/tlsrec_test.xo (seal_at equals seal for sizes around the 64 byte chunks, the record opens); tls, tls12, tls13, http_tls, websocket_tls, crypto goldens (arm64, LLVM); wasm TLS and Map goldens
@@ -18,7 +18,7 @@ cache. Server CPU samples of a 3 x 256 MiB bulk download in Docker
 ## 2026-10-22: speedup: ML-KEM's NTT loops in SSE2 on x86-64
 
 - Kind: speedup
-- Commit: this commit
+- Commit: 56e4f2338
 - Found by: profile (Xo Lang 4, tls-newconn amd64 Docker callgrind per function)
 - Go reference: none (Go's crypto/mlkem is scalar Go)
 - Test: crypto_mlkem, tls13_server, tls13_go, tls_client, tls_mlkem_off goldens (arm64 and LLVM on the Mac, native amd64 in Docker)
@@ -32,7 +32,7 @@ linux/amd64: native 3,202,802 to 3,115,327 instructions, the three loops
 ## 2026-10-21: speedup: ChaCha20 four blocks at a time in vector registers
 
 - Kind: speedup
-- Commit: this commit
+- Commit: 7f6e6c203
 - Found by: profile (Xo Lang 3, bench/results/tls-h2-vs-go-2026-10-21.md)
 - Go reference: golang.org/x/crypto/chacha20 chacha_arm64.s (four blocks in NEON)
 - Test: internal/llvm/testdata/golden/chacha_blocks4 (every length class around 256 bytes, against Go's ChaCha20); crypto_prims, tls12_server, tls12_client, tls13 goldens
