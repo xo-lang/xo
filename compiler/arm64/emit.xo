@@ -94,6 +94,10 @@ struct Frame {
   rec: Int = 0
   size: Int = 0
   leaf: Bool = false
+  /// x86_64 System V: the bytes of the frame below the pushed registers
+  /// left in the red zone instead of subtracted from rsp (x86_emit_once:
+  /// a function with no call); every rsp offset is this much lower
+  rz: Int = 0
 }
 
 /// The size of the stack argument area of the calls: the stack

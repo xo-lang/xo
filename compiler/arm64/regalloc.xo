@@ -1150,10 +1150,10 @@ fn (g: G) word_hints(inst: Inst, at: Int, var whint: List[List[Int]], var wclob:
 /// word of the calls, or one of this function's own).
 fn slot_off(fr: Frame, s: Int) -> Int {
   if s >= SLOT_OUT {
-    return 8 * (s - SLOT_OUT)
+    return 8 * (s - SLOT_OUT) - fr.rz
   }
   if s >= SLOT_IN {
-    return fr.size + 8 * (s - SLOT_IN)
+    return fr.size + 8 * (s - SLOT_IN) - fr.rz
   }
-  fr.spill_base + 8 * s
+  fr.spill_base + 8 * s - fr.rz
 }

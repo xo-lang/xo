@@ -84,13 +84,20 @@ fn (g: G) x86_in_arg(k: Int) -> Int {
   if g.fr.leaf {
     return 8 + 8 * k
   }
-  g.fr.size + 16 + 8 * k
+  g.fr.size + 16 + 8 * k - g.fr.rz
 }
 
 fn (var g: G) x86_emit() {
   g.nfunc += 1
   if g.os != "windows" {
+    let text = g.text.len()
     g.x86_emit_once()
+    // the frame in the red zone (Frame.rz) needs a body that neither
+    // calls nor pushes (x86_rz_ok checked its templates) and at most four
+    // borrowed registers at once (x86_borrow_at)
+    if g.fr.rz > 0 && x86_rz_unsafe(g.text[text..g.text.len()].join(""), 1 + g.saved.len()) {
+      g.fail("internal: amd64: ${g.f.name} calls or pushes with its frame in the red zone")
+    }
     return
   }
   // windows/amd64 keeps frame words for borrowed registers only in a
@@ -149,6 +156,16 @@ fn (var g: G) x86_emit_once() {
   fr.save_base = fr.size - pushed
   if fr.leaf {
     fr.size = 0
+  }
+  // System V keeps 128 bytes below rsp from signal handlers (decision
+  // 0318's preemption puts its frame below them too), and a fault stub
+  // steps over them before its call: a function that calls nothing keeps
+  // its spill slots and memory there instead of moving rsp (two
+  // instructions a call: x25519.fe64_sq, 2026-10-21). The borrowed
+  // registers' saves go below them (x86_borrow_at).
+  let rest = fr.size - pushed
+  if g.os != "windows" && !fr.leaf && !calls && !g.out && rest > 0 && rest <= 96 && g.x86_rz_ok() {
+    fr.rz = rest
   }
   g.fr = fr
   if g.os == "windows" {
@@ -349,7 +366,7 @@ fn (g: G) x86_prologue(var b: List[Str]) {
       b.push("\t.seh_pushreg ${x86_reg(r, 8)}\n")
     }
   }
-  let rest = fr.size - 8 * g.saved.len()
+  let rest = fr.size - 8 * g.saved.len() - fr.rz
   if rest > 0 {
     if rest >= 4096 {
       // touch each page on the way down (the guard page)
@@ -394,8 +411,11 @@ fn (g: G) x86_unframe(var b: List[Str]) {
     b.push("\tleave\n")
     return
   }
-  // to the pushed registers, popped in reverse
-  b.push("\tleaq -${8 * g.saved.len()}(%rbp), %rsp\n")
+  // to the pushed registers, popped in reverse (rsp is there already
+  // when the frame's words are in the red zone)
+  if fr.size - 8 * g.saved.len() != fr.rz {
+    b.push("\tleaq -${8 * g.saved.len()}(%rbp), %rsp\n")
+  }
   var k = g.saved.len() - 1
   while k >= 0 {
     b.push("\tpopq ${x86_reg(g.saved[k], 8)}\n")
@@ -997,7 +1017,7 @@ fn (var g: G) x86_emit_plain(var b: List[Str], inst: Inst) {
     }
     if t[i..tn].starts_with("$OUT") {
       out.write(t[from..i])
-      out.write("${g.fr.out_off}")
+      out.write("${g.fr.out_off - g.fr.rz}")
       i += 4
       from = i
       continue
@@ -1167,11 +1187,69 @@ const X86_BORROWS = 3
 /// zone (-8 (k + 1), System V keeps 128 bytes below rsp from signal
 /// handlers), or on windows/amd64, which has none, the frame's words
 /// past the spill slots.
-fn (g: G) x86_borrow_at(k: Int) -> Int {
+fn (var g: G) x86_borrow_at(k: Int) -> Int {
   if g.os == "windows" {
     return g.borrow_at + 8 * k
   }
-  -8 * (k + 1)
+  let off = -g.fr.rz - 8 * (k + 1)
+  if off < -128 {
+    // a red zone frame is at most 96 bytes: four borrowed registers fit
+    g.fail("amd64: more than ${(128 - g.fr.rz) / 8} borrowed registers in one instruction of a red zone frame")
+  }
+  off
+}
+
+/// Whether no instruction's template calls or pushes (a red zone frame,
+/// x86_emit_once): bl, blr, call, push as a line's first word.
+fn (g: G) x86_rz_ok() -> Bool {
+  for b in g.order {
+    for inst in g.blocks[b].insts {
+      // a fault stub calls the raise (and stores the saved registers)
+      // with rsp where the prologue left it, over the frame
+      if inst.has_fault {
+        return false
+      }
+      if inst.text.is_empty() {
+        continue
+      }
+      // a template that moves rsp itself (SHA-NI's xmm saves below rsp)
+      if inst.text.contains("%rsp") {
+        return false
+      }
+      for l in inst.text.split("\n") {
+        let t = l.trim()
+        if t.starts_with("bl ") || t.starts_with("blr ") || t.starts_with("call") || t.starts_with("push") {
+          return false
+        }
+      }
+    }
+  }
+  true
+}
+
+/// Whether a function's text, emitted with its frame in the red zone,
+/// calls or pushes anything past its prologue's pushes (pushes of them),
+/// or moves rsp down other than over the red zone: a return address, a
+/// pushed word or a store below the new rsp would land on the frame.
+fn x86_rz_unsafe(text: Str, pushes: Int) -> Bool {
+  var n = 0
+  // between these rsp is below the red zone (a memory to memory move)
+  var over = false
+  for l in text.split("\n") {
+    let t = l.trim()
+    if t == "leaq -128(%rsp), %rsp" {
+      over = true
+    } else if t == "leaq 128(%rsp), %rsp" {
+      over = false
+    } else if !over && t.starts_with("call") {
+      return true
+    } else if !over && t.starts_with("push") {
+      n += 1
+    } else if !over && t.ends_with(", %rsp") && (t.starts_with("sub") || t.starts_with("lea") || t.starts_with("and")) {
+      return true
+    }
+  }
+  n > pushes
 }
 
 /// Whether a label (`name:`, a numeric local label) starts at byte i.
@@ -1340,9 +1418,9 @@ fn (g: G) x86_put(var b: List[Str], r: Int, src: MSrc) {
   } else if src.kind == M_SYM {
     b.push("\tleaq ${src.sym}(%rip), ${x86_reg(r, 8)}\n")
   } else if src.kind == M_FRAME {
-    b.push("\tleaq ${g.fr.out_off}(%rsp), ${x86_reg(r, 8)}\n")
+    b.push("\tleaq ${g.fr.out_off - g.fr.rz}(%rsp), ${x86_reg(r, 8)}\n")
   } else if src.kind == M_MEM {
-    b.push("\tleaq ${g.fr.mem_off + src.imm}(%rsp), ${x86_reg(r, 8)}\n")
+    b.push("\tleaq ${g.fr.mem_off + src.imm - g.fr.rz}(%rsp), ${x86_reg(r, 8)}\n")
   }
 }
 
@@ -1381,8 +1459,13 @@ fn (g: G) x86_move(var b: List[Str], dst: MLoc, src: MSrc) {
     // memory to memory with no register: r11 may hold a parallel move
     // cycle's saved value (arm64 has x16 for that and x17 for this; a
     // pop to an rsp relative address computes it after the increment, so
-    // both offsets are rsp's before the push)
-    b.push("\tpushq ${x86_mem_ref(sl)}\n\tpopq ${x86_mem_ref(dst)}\n")
+    // both offsets are rsp's before the push); with the frame in the red
+    // zone the push would write a slot there, so rsp steps over it first
+    if g.fr.rz > 0 {
+      b.push("\tleaq -128(%rsp), %rsp\n\tpushq ${sl.off + 128}(%rsp)\n\tpopq ${dst.off + 128}(%rsp)\n\tleaq 128(%rsp), %rsp\n")
+    } else {
+      b.push("\tpushq ${x86_mem_ref(sl)}\n\tpopq ${x86_mem_ref(dst)}\n")
+    }
   }
 }
 

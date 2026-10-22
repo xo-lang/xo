@@ -915,17 +915,26 @@ fn (var g: G) x86_flagop(inst: Inst, var x: XT, m: Str, ops: List[Str], single: 
     "sbcs" | "sbc" => "sbb"
     _ => "adc"
   }
-  var b = xop(ops[2], size)
-  if ops[2] == "xzr" || ops[2] == "wzr" {
+  // a carry out into a word of its own (adc d, xzr, hi: 0 + hi + C) is
+  // the sum the other way round, hi + 0 + C, which ties d to hi:
+  // `adcq $0, d` and no `mov $0, d` first (four in x25519.fe64_sq)
+  var at = ops[1]
+  var bt = ops[2]
+  if (op is "add" | "adc") && (at == "xzr" || at == "wzr") && bt != "xzr" && bt != "wzr" && !bt.starts_with("#") {
+    at = ops[2]
+    bt = ops[1]
+  }
+  var b = xop(bt, size)
+  if bt == "xzr" || bt == "wzr" {
     b = "$0"
   }
   if ops[0] == "xzr" {
     // only the flags (adcs xzr, a, b): in the scratch register
-    let a = if ops[1] == "xzr" { "$0" } else { xop(ops[1], 8) }
+    let a = if at == "xzr" { "$0" } else { xop(at, 8) }
     x.lines.push("movq ${a}, %r11")
     x.lines.push("${op}q ${b}, %r11")
   } else {
-    g.x86_binop(inst, x, ops[0], ops[1], b, "${op}${sfx(size)}", single)
+    g.x86_binop(inst, x, ops[0], at, b, "${op}${sfx(size)}", single)
   }
   x.kind = if m is "subs" | "sbcs" | "sbc" { "sub" } else { "add" }
   true
