@@ -3,7 +3,7 @@
 ## 2026-10-22: security: decode and parse_value reject a byte after the value
 
 - Kind: security
-- Commit: this commit
+- Commit: f910b349c
 - Found by: a Go gap check of the invalid JSON path (bench/results/json-invalid-go-backend-2026-10-22.md); decision by the lead, 2026-10-22
 - Go reference: encoding/json (go1.26.1: RFC 8259 allows one value and white space; `{"a":1}x` is "invalid character 'x' after top-level value")
 - Test: std/rt TestJsonTrailingBytes; goldens json_text, json_value, json_fast (arm64, LLVM, Go backend)
