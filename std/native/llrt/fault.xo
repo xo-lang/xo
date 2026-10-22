@@ -281,9 +281,14 @@ pub fn init(raise_msg: Int) { rt.mem_store(rt.static_word(RAISE), 0, raise_msg, 
 /// address of the function that prints a traceback.
 pub fn init_traceback(print: Int) {
   let e = process.env_real("XO_TRACEBACK")
-  var w = 1
-  if !(e.is_empty() || e[0].is_empty() || e[0] == "0") {
-    w = if e[0] == "locals" { print + 1 } else { print }
+  // on unless XO_TRACEBACK=0 (owner, 2026-10-22: frames by default, as
+  // a hardware fault's report has them, decision 0343; a caught fault
+  // pays about 0.5 us for its trace, bench/results/fault-frames-default-2026-10-22.md)
+  var w = print
+  if !e.is_empty() && e[0] == "0" {
+    w = 1
+  } else if !e.is_empty() && e[0] == "locals" {
+    w = print + 1
   }
   rt.mem_store(rt.static_word(TB), 0, w, 8)
 }

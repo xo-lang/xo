@@ -134,8 +134,19 @@ func fullRun(t *testing.T, dir, be string) string {
 		}
 		code = ee.ExitCode()
 	}
+	// a fault's frames (on by default since 2026-10-22, XO_TRACEBACK)
+	// are not in the Go backend's want.txt: the block is left out
 	var keep []string
+	inTrace := false
 	for _, l := range strings.Split(stderr.String(), "\n") {
+		if l == "traceback:" {
+			inTrace = true
+			continue
+		}
+		if inTrace && strings.HasPrefix(l, " ") {
+			continue
+		}
+		inTrace = false
 		if !strings.HasPrefix(l, "crash bundle:") {
 			keep = append(keep, l)
 		}

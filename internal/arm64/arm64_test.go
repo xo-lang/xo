@@ -152,7 +152,7 @@ func stableStderr(s string) string {
 	s = timeRE.ReplaceAllString(s, "<time>")
 	var out []string
 	for _, l := range strings.Split(s, "\n") {
-		if l == "" || strings.HasPrefix(l, " ") || strings.HasPrefix(l, "\t") || strings.HasPrefix(l, "crash bundle:") || strings.HasPrefix(l, "xo leakcheck:") {
+		if l == "" || strings.HasPrefix(l, " ") || strings.HasPrefix(l, "\t") || strings.HasPrefix(l, "crash bundle:") || l == "traceback:" || strings.HasPrefix(l, "xo leakcheck:") {
 			continue
 		}
 		out = append(out, l)

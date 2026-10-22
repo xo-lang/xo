@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native programs print a fault's frames by default (owner,
+  2026-10-22): an uncaught fault's one line report is followed by
+  `traceback:` and `  FUNCTION (FILE:LINE)` per frame down to main, as a
+  hardware fault's report already was. `XO_TRACEBACK=0` turns it off.
+  Each fault pays about 0.55 us for its trace; the binary is unchanged.
+
 - Messages: XO1201's note says to build with `--backend=go` (it said
   "build without --no-gc", also on default native builds that passed no
   `--no-gc`); "needs a native backend" names arm64, amd64, and llvm;

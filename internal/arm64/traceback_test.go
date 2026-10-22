@@ -12,11 +12,11 @@ import (
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
-// TestTraceback: with XO_TRACEBACK=1 an uncaught fault's report is
-// followed by its frames (decision 0239: fault.xo trace, prof.xo
-// trace_text), innermost first, each a function and its .xo line from
-// the program's DWARF line tables, down to main; without it the report
-// is the one line it always was.
+// TestTraceback: an uncaught fault's report is followed by its frames
+// (decision 0239: fault.xo trace, prof.xo trace_text), innermost first,
+// each a function and its .xo line from the program's DWARF line
+// tables, down to main: by default since 2026-10-22 (owner) and with
+// XO_TRACEBACK=1; with XO_TRACEBACK=0 the report is the one line.
 func TestTraceback(t *testing.T) {
 	if !native() {
 		t.Skip("the host is not arm64")
@@ -58,8 +58,12 @@ func testTraceback(t *testing.T, be string) {
 		return errb.String()
 	}
 	const report = "fault: index 7 out of range for List of length 3 at main.xo:5:12\n"
-	if got := run(); got != report {
-		t.Fatalf("without XO_TRACEBACK:\n%s", got)
+	if got := run("XO_TRACEBACK=0"); got != report {
+		t.Fatalf("with XO_TRACEBACK=0:\n%s", got)
+	}
+	// on by default (owner, 2026-10-22)
+	if got := run(); !strings.HasPrefix(got, report+"traceback:\n") {
+		t.Fatalf("without XO_TRACEBACK (the default):\n%s", got)
 	}
 	got := run("XO_TRACEBACK=1")
 	if !strings.HasPrefix(got, report+"traceback:\n") {

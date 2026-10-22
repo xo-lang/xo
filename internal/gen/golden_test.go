@@ -80,7 +80,7 @@ func stableStderr(s string) string {
 			out = append(out, l)
 			continue
 		}
-		if l == "" || strings.HasPrefix(l, " ") || strings.HasPrefix(l, "\t") || strings.HasPrefix(l, "crash bundle:") {
+		if l == "" || strings.HasPrefix(l, " ") || strings.HasPrefix(l, "\t") || strings.HasPrefix(l, "crash bundle:") || l == "traceback:" {
 			continue
 		}
 		out = append(out, l)

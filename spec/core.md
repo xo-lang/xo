@@ -2374,12 +2374,12 @@ failed `Int32(x)` conversion, evaluated hole, explicit `fault("msg")`.
   `index 7 out of range for List of length 5 at users.xo:41:18`.
 - A fault reaching `main` is reported on standard error as one line,
   `fault: MESSAGE at FILE:LINE:COL` (and a detail line for a failed
-  contract). With `XO_TRACEBACK` set (not empty or `0`), native builds
-  follow it with `traceback:` and a line per frame, innermost first,
-  `  FUNCTION (FILE:LINE)` down to `main` (the line from the program's
-  DWARF line tables, decision 0239; inlined calls show the caller's
-  line). `xo test` sets it for the tests it runs unless it is already
-  set. With `XO_TRACEBACK=locals` each frame is followed by its
+  contract). Native builds follow it with `traceback:` and a line per
+  frame, innermost first, `  FUNCTION (FILE:LINE)` down to `main` (the
+  line from the program's DWARF line tables, decision 0239; inlined calls
+  show the caller's line), by default since 2026-10-22 (owner; a hardware
+  fault's report has its frames too, decision 0343); `XO_TRACEBACK=0`
+  leaves the frames out. With `XO_TRACEBACK=locals` each frame is followed by its
   variables, `      NAME = VALUE` (decision 0268: from the program's
   DWARF, read at the fault; `<unavailable>` where the frame does not
   keep the value; numbers, `Bool`, `Str` text, a list's first elements,
