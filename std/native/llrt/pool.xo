@@ -614,12 +614,13 @@ fn np_spread(p: Int, w: Int) {
 /// An idle w waits in the poller instead of its futex, off the idle
 /// list and counted by DLK_NPBLK: -1 when it could not (the token is
 /// taken, workers do not poll), else the events and timers it handled
-/// (0: look again).
-fn np_block(p: Int, w: Int) -> Int {
+/// (0: look again). The root passes main's fiber mf (else 0): main
+/// ending breaks the wait too (main_ended).
+fn np_block(p: Int, w: Int, mf: Int) -> Int {
   let dlk = rt.mem_load(p, P_DLK, 8)
   rt.slot_add(dlk, DLK_NPBLK, 1, SEQ_CST)
-  // a push before the count went up broke no wait: look
-  if any_work(p) != 0 {
+  // a push (or main's end) before the count went up broke no wait: look
+  if any_work(p) != 0 || mf != 0 && rt.slot_load(mf, F_ENDED_I, SEQ_CST) != 0 {
     rt.slot_add(dlk, DLK_NPBLK, -1, SEQ_CST)
     return 0
   }
@@ -1049,7 +1050,7 @@ pub fn grace_begin() {
 fn go_idle(p: Int, w: Int) -> Int {
   count_main(p)
   // decision 0324: wait in the network poller when no one does
-  if np_block(p, w) >= 0 {
+  if np_block(p, w, 0) >= 0 {
     return 0
   }
   plock(p)
@@ -1809,6 +1810,11 @@ fn count_main(p: Int) {
 
 fn root_idle(p: Int, w: Int, mf: Int) -> Int {
   count_main(p)
+  // decision 0324: wait in the network poller when no one does (a
+  // program that never spawns has no worker to)
+  if rt.slot_load(mf, F_ENDED_I, ACQUIRE) == 0 && np_block(p, w, mf) >= 0 {
+    return 0
+  }
   plock(p)
   if rt.slot_load(mf, F_ENDED_I, ACQUIRE) != 0 {
     punlock(p)
@@ -1870,8 +1876,11 @@ fn idle_unlist(p: Int, w: Int) -> Bool {
 fn main_ended(p: Int, f: Int) {
   let w = rt.mem_load(f, F_ROOT, 8)
   plock(p)
-  rt.slot_store(f, F_ENDED_I, 1, RELEASE)
+  rt.slot_store(f, F_ENDED_I, 1, SEQ_CST)
   punlock(p)
+  // the root may wait in the poller (np_block reads the end after its
+  // count went up)
+  np_break(p)
   if idle_unlist(p, w) {
     rt.slot_store(w, W_WAKEW_I, 2, RELEASE)
     futex_wake(w.wrapping_add(W_WAKEW))

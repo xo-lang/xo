@@ -100,8 +100,36 @@ Go's netpoller model: an idle worker waits in the poller itself.
   The connection resets the load generator sometimes reports (a 256
   connection burst against macOS's listen queue of 128) occur in both
   modes.
-- Not yet: roots (root_idle) do not wait in the poller; Linux pinned 1,
-  3 and 6 core runs (Docker) follow.
+- Roots wait in the poller too (root_idle through np_block with main's
+  fiber, so a program that never spawns waits there): main's end breaks
+  that wait (main_ended calls np_break; np_block rereads main's end after
+  its count went up). Golden rt_poll_root (main's own sleeps, then main
+  ending while the root may wait in the poller): 0.51 and 0.32 s to 0.20
+  and 0.14 s on the Mac.
+- np_break also writes the self pipe while the token is free: a worker
+  counted in DLK_NPBLK that has looked for work but not yet taken the
+  token would otherwise wait with the push unseen (found by reading; a
+  pusher with no worker record could leave it there until the next
+  event). With a worker or the poller thread holding the token, that
+  worker waits on its futex instead, where go_idle's check sees the push.
+- Linux (Docker linux/arm64 on the Mac, 12 CPUs; the CRUD server
+  bench/perf/http/xo pinned with taskset, loadgen on 6 other CPUs, 1024
+  connections, 4 interleaved runs a cell, with the worker count from the
+  affinity mask, gotchas/worker-count-ignored-cpu-affinity.md): 1 core
+  +35% requests a second (4 of 4 pairs), CPU a request 25.0 to 16.9 us,
+  futex waits 0.054 to 0.021 a request; 3 and 6 cores -4% and -2% (2 of
+  4 pairs lower each, within noise), CPU a request the same, futex calls
+  +25 to 28% and steals +60 to 83% a request (the fibers a poll readies
+  land on one worker's ring and the others steal them). Inject 0.07 to
+  0.23 a request to under 0.006 everywhere. A quiet server: 0 CPU ticks
+  in 20 s both ways. At 3 and 6 cores the server used about half of its
+  CPUs; a load generator on 9 CPUs gave the same (3 cores: about 50k
+  both ways, netpoll ahead in 3 of 4 pairs, CPU a request -9%), so the
+  client is not the limit: the server idles about half its CPU at 3 and 6
+  cores, a serialization inside it (its store's lock: lock_slow 0.05 to
+  0.08 a request) rather than the scheduler's polling.
+- Before the affinity fix (12 workers on every pinning) the same table
+  read 1 core +8.5%, 3 cores -14%, 6 cores even.
 
 ## Alternatives
 

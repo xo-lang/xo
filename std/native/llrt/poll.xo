@@ -1279,11 +1279,19 @@ pub fn np_poll(block: Bool) -> Int {
 
 /// Breaks a worker's wait in the poller (decision 0324, through cabi.xo
 /// np_break: work was pushed while every other worker is busy): a byte in
-/// the self pipe when a worker waits there.
+/// the self pipe when a worker waits there, or may be about to: the
+/// token still free while a worker counted in the poller's wait (pool.xo
+/// DLK_NPBLK, which the caller checked) has looked for work and not yet
+/// taken it; the byte then ends its wait at once. A worker or the poller
+/// thread holding the token makes that worker wait on its futex instead,
+/// where go_idle's own check after listing sees the push.
 pub fn np_break() {
   let e = ev()
-  if e != 0 && rt.slot_load(addw(e, EV_TOK), 0, SEQ_CST) == TOK_BLOCKED {
-    poke()
+  if e != 0 {
+    let t = rt.slot_load(addw(e, EV_TOK), 0, SEQ_CST)
+    if t == TOK_BLOCKED || t == TOK_FREE {
+      poke()
+    }
   }
 }
 

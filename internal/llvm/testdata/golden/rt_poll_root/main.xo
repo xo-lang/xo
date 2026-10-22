@@ -1,0 +1,30 @@
+// Main sleeping briefly in a loop with no task: the root thread waits in
+// the network poller and fires the due timer itself (decision 0324).
+// Then tasks sleep too, so main resumes and ends on any thread while the
+// root may wait in the poller: main's end breaks that wait.
+fn main(os: Os) {
+  var n = 0
+  for _ in 0..2000 {
+    os.clock.sleep(10us)
+    n += 1
+  }
+  let done = Chan[Int].new(cap: 4)
+  scope sc {
+    for t in 0..4 {
+      sc.spawn(fn() {
+        var k = 0
+        for _ in 0..300 {
+          os.clock.sleep(20us)
+          k += 1
+        }
+        done.send(k + t - t)
+      })
+    }
+  }
+  var total = 0
+  for _ in 0..4 {
+    total += done.recv() ?? 0
+  }
+  os.clock.sleep(1ms)
+  os.stdio.println("slept ${n} and ${total}")
+}
