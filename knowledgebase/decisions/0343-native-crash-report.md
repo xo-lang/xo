@@ -6,7 +6,11 @@ stage 2). Proposed the same day by Xo Lang 4; the owner approved building
 the tool after 0.25.1's windows/amd64 xo.exe crashed on every build and
 left only a minidump. Stage 1 (Linux and macOS) implemented 2026-10-22:
 std/native/llrt crash.xo; test internal/arm64 TestCrashReport (arm64 and
-LLVM on darwin/arm64; linux/arm64 checked in Docker).
+LLVM on darwin/arm64; linux/arm64 checked in Docker). Stage 2
+(windows/amd64) implemented 2026-10-22: a vectored handler joins the
+unhandled filter (below: Xo's fiber stacks never reach the filter),
+checked under Wine (Box64) with a scratch fault in Xo code; the approved
+CI run is scripts/ci/windows-crash.sh.
 
 ## Context
 
@@ -74,8 +78,23 @@ Reporting and attached debuggers see the same crash they see today.
   guard page (an overflowed fiber or thread stack) is still reported.
 - Windows: SetUnhandledExceptionFilter, for every exception code but
   EXCEPTION_STACK_OVERFLOW (on_overflow keeps it). An unhandled filter,
-  not a vectored handler: a vectored handler runs first and would report
-  exceptions that C code behind `use c` catches with its own SEH.
+  not a vectored handler alone: a vectored handler runs first and would
+  report exceptions that C code behind `use c` catches with its own SEH.
+  Stage 2 found the filter alone reports nothing for Xo code: Xo runs on
+  fiber stacks (main-on-fiber, the pool's tasks), whose frames end at the
+  fiber's entry, with no RtlUserThreadStart and its `__except` (which
+  calls the filter) below, so Windows ends the process with no filter
+  call (seen under Wine with `WINEDEBUG=+seh`: "Unhandled exception").
+  So a vectored handler, registered last, reports an error exception
+  (severity 3, or a breakpoint, single step or misaligned data) only when
+  the faulting pc and every frame to the end of the stack are the
+  program's and no frame has a handler but Xo's personality
+  (unwind.xo `win_unhandled`, RtlVirtualUnwind with UNW_FLAG_EHANDLER
+  over the image's .pdata): nothing could take it. Anything else (a
+  fault in a DLL, a C `__try` frame, a thread start or callback from
+  another module) is left to its handlers and then to the filter, as
+  decided. After a report both return EXCEPTION_CONTINUE_SEARCH, so the
+  exit code stays the NTSTATUS.
 - Not installed under `--race` and `--asan`: the sanitizer runtimes
   install their own SEGV handlers and report with their own stacks.
 - `XO_CRASH_REPORT=0` installs nothing (for C code that wants the
@@ -139,7 +158,9 @@ traceback:
    `(the crash report faulted: SIGNAL)` and goes to the default action; a deadlock is ended by a watchdog (Unix:
    alarm(XO_CRASH_TIMEOUT, 5 s by default), whose handler restores the
    original signal's default action and raises it; Windows: a thread
-   started at phase 2 that waits that long). Either way phase 1's lines
+   started at phase 2 that waits that long and then ends the process with
+   the exception's code; it cannot start while the faulting thread holds
+   the loader's lock). Either way phase 1's lines
    are already on standard error.
 
 ### How it ends
@@ -165,8 +186,8 @@ traceback:
    checks the first line, the faulting Xo frame's file and line, that
    the exit status is the signal's, and that `XO_CRASH_REPORT=0` prints
    nothing.
-2. Windows (amd64): the unhandled filter, phase 1 from the CONTEXT,
-   phase 2 with the PE's DWARF. Verified by one approved CI windows run
+2. Windows (amd64): the unhandled filter and the checked vectored
+   handler, phase 1 from the CONTEXT, phase 2 with the PE's DWARF. Verified by one approved CI windows run
    (Wine runs only single-threaded smoke tests); the test asserts the
    same lines.
 3. Offline resolution: `xo dev symbolize BINARY < report` resolves the

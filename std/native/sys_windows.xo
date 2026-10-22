@@ -230,6 +230,12 @@ fn SetConsoleCtrlHandler(h: Int, add: Int) -> Int32
 /// AddVectoredExceptionHandler: the handler at the address h, first
 /// (first 1) or last; a handle, or 0.
 fn AddVectoredExceptionHandler(first: Int, h: Int) -> Int
+/// SetUnhandledExceptionFilter: the filter at the address h runs for an
+/// exception no handler took (std/native/llrt/crash.xo); the previous
+/// filter's address, or 0.
+fn SetUnhandledExceptionFilter(h: Int) -> Int
+/// Sleep: ms milliseconds.
+fn Sleep(ms: Int)
 /// SetConsoleOutputCP: the console's output code page (CP_UTF8 65001).
 fn SetConsoleOutputCP(cp: Int) -> Int32
 /// GetCommandLineW: the address of the process's UTF-16 command line.

@@ -19,8 +19,20 @@
 // (its signal's handler is the default by then). Either way phase 1's
 // lines are already written.
 //
+// Windows (x86_64): the last vectored exception handler (on_crash_veh)
+// reports an exception nothing could handle (Xo code runs on fiber
+// stacks, below which no frame calls the unhandled filter), and an
+// unhandled exception filter (on_crash_win) the rest that no handler
+// took, but a stack overflow (entry.xo on_overflow ends the program on
+// that one), from the faulting CONTEXT:
+// the frames walked with the image's .pdata (unwind.xo win_walk, the
+// profiler's walk of a suspended thread), the same two phases, a watchdog
+// thread for phase 2, and then EXCEPTION_CONTINUE_SEARCH (after the
+// filter it replaced, if any), so Windows Error Reporting and the exit
+// code (the NTSTATUS) see the exception as before.
+//
 // Off with XO_CRASH_REPORT=0, and in sanitizer builds (their runtimes
-// report faults themselves). Windows (stage 2) and wasi have none yet.
+// report faults themselves). wasi and windows/arm64 have none.
 use native/llrt/linux
 use native/llrt/process
 use native/llrt/prof
@@ -30,6 +42,7 @@ use native/llrt/stdio
 use native/llrt/unwind
 use native/rt
 use native/sys_darwin
+use native/sys_windows
 
 /// rt.static_word: the crash record, 0 when no handler is installed.
 const W_CRASH = 83
@@ -50,6 +63,15 @@ const R_POS = 40
 const R_N = 48
 const R_TIMEOUT = 56
 const R_SA = 64
+/// Windows: WriteFile's count, phase 2's end (the watchdog's flag), and
+/// the unhandled exception filter install replaced (R_SA's struct
+/// sigaction is Unix only)
+const R_WN = 96
+const R_DONE = 104
+const R_PREV = 112
+/// Windows: 1 once a report is written (the filter, called after the
+/// vectored handler reported, writes none)
+const R_REPORTED = 120
 const R_TV = 128
 /// a timespec of 0.1 s (written once by install)
 const R_TS = 160
@@ -75,7 +97,15 @@ const SIGBUS_LINUX = 7
 const SIGBUS_DARWIN = 10
 
 const ACQUIRE = 1
+const RELEASE = 2
 const ACQ_REL = 3
+
+/// Windows: EXCEPTION_STACK_OVERFLOW (entry.xo on_overflow's), the size
+/// of an x86_64 CONTEXT, its Rip, and STD_ERROR_HANDLE.
+const EXC_STACK_OVERFLOW = 3221225725
+const CONTEXT_SIZE = 1232
+const CX_RIP = 248
+const STD_ERROR = -12
 
 fn ld(p: Int, o: Int) -> Int { rt.mem_load(p, o, 8) }
 
@@ -85,6 +115,13 @@ fn darwin() -> Bool {
   match target.os {
     TargetOs.Darwin => true
     TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => false
+  }
+}
+
+fn windows() -> Bool {
+  match target.os {
+    TargetOs.Windows => true
+    TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi => false
   }
 }
 
@@ -98,7 +135,9 @@ fn map(n: Int) -> Int {
   let m = match target.os {
     TargetOs.Darwin => sys_darwin.mmap(0, n, 3, 2 | 4096, -1, 0)
     TargetOs.Linux => linux.mmap(0, n, 3, 2 | 32, -1, 0)
-    TargetOs.Windows | TargetOs.Wasi => 0
+    // MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE
+    TargetOs.Windows => sys_windows.VirtualAlloc(0, n, 12288, 4)
+    TargetOs.Wasi => 0
   }
   if m == 0 || (m < 0 && m > -4096) {
     return 0
@@ -145,11 +184,16 @@ fn flags() -> Int {
 }
 
 /// Installs the handlers (entry.xo start, every program and test binary
-/// on Linux and macOS), unless XO_CRASH_REPORT=0 or a sanitizer runs.
+/// on Linux, macOS and windows/amd64), unless XO_CRASH_REPORT=0 or a
+/// sanitizer runs.
 pub fn install() {
   match target.os {
     TargetOs.Linux | TargetOs.Darwin => {}
-    TargetOs.Windows | TargetOs.Wasi => return
+    TargetOs.Windows => match target.arch {
+      TargetArch.Amd64 => {}
+      TargetArch.Arm64 | TargetArch.Wasm32 => return
+    }
+    TargetOs.Wasi => return
   }
   let v = process.env_real_at("XO_CRASH_REPORT")
   if v != 0 && rt.mem_load(v, 0, 1) == 48 && rt.mem_load(v, 1, 1) == 0 {
@@ -179,6 +223,11 @@ pub fn install() {
   st(r, R_TIMEOUT, t)
   st(r, R_TS + 8, 100000000)
   st(rt.static_word(W_CRASH), 0, r)
+  if windows() {
+    st(r, R_PREV, sys_windows.SetUnhandledExceptionFilter(rt.fn_addr("on_crash_win")))
+    let _v = sys_windows.AddVectoredExceptionHandler(0, rt.fn_addr("on_crash_veh"))
+    return
+  }
   thread_init()
   let h = rt.fn_addr("on_crash")
   for sig in [SIGSEGV, sigbus(), SIGILL, SIGFPE, SIGTRAP] {
@@ -190,7 +239,7 @@ pub fn install() {
 /// runtime thread's start in cabi.xo), when the handlers are installed.
 /// The stack stays mapped after the thread ends.
 pub fn thread_init() {
-  if record() == 0 {
+  if windows() || record() == 0 {
     return
   }
   let m = map(GUARD + ALT)
@@ -219,6 +268,9 @@ pub fn thread_init() {
 fn image_base() -> Int {
   if darwin() {
     return sys_darwin._dyld_get_image_header(0)
+  }
+  if windows() {
+    return sys_windows.GetModuleHandleW(0)
   }
   let ph = linux.auxval(linux.AT_PHDR)
   let n = linux.auxval(linux.AT_PHNUM)
@@ -295,6 +347,206 @@ pub fn on_alarm(sig: Int) {
   }
 }
 
+/// Windows' vectored exception handler (cabi.xo on_crash_veh, the last
+/// one: entry.xo on_overflow runs first). Xo code runs on fiber stacks,
+/// whose frames end at the fiber's entry with no RtlUserThreadStart and
+/// its __except below, so the unhandled exception filter is never
+/// called for their faults: Windows ends the process silently. This
+/// handler reports an exception at a pc of the program whose frames, to
+/// the end of the stack, are all the program's with no handler but Xo's
+/// personality (unwind.xo win_unhandled), as no handler will take it;
+/// any other it leaves to its handlers and the filter. e is the
+/// EXCEPTION_POINTERS; EXCEPTION_CONTINUE_SEARCH (0) always.
+pub fn on_crash_veh(e: Int) -> Int {
+  let r = record()
+  if r == 0 || ld(r, R_REPORTED) != 0 {
+    return 0
+  }
+  let code = rt.mem_load(ld(e, 0), 0, 4)
+  // errors (severity 3) and the breakpoint, single step and misaligned
+  // data warnings; not a stack overflow, nor an informational code
+  // (OutputDebugString's, a thread's name)
+  if code == EXC_STACK_OVERFLOW || (code < 3221225472 && code != 2147483650 && code != 2147483651 && code != 2147483652) {
+    return 0
+  }
+  let pc = ld(ld(e, 8), CX_RIP)
+  if pc < ld(r, R_LO) || pc >= ld(r, R_HI) {
+    return 0
+  }
+  report_win(r, e, true)
+  0
+}
+
+/// Windows' unhandled exception filter (cabi.xo on_crash_win): an
+/// exception no handler took on a thread's own stack (one of C code's,
+/// or a thread's start outside the program, which on_crash_veh leaves
+/// to its handlers). Every exception but a stack overflow is reported;
+/// then the filter install replaced runs, and its answer
+/// (EXCEPTION_CONTINUE_SEARCH, 0, without one) lets Windows end the
+/// process as before.
+pub fn on_crash_win(e: Int) -> Int {
+  let r = record()
+  if r == 0 {
+    return 0
+  }
+  if rt.mem_load(ld(e, 0), 0, 4) != EXC_STACK_OVERFLOW && ld(r, R_REPORTED) == 0 {
+    report_win(r, e, false)
+  }
+  next_filter(r, e)
+}
+
+/// Reports the exception of the EXCEPTION_POINTERS e, holding the
+/// record's claim; with check, only when unwind.xo win_unhandled finds
+/// no handler for it (else the claim is let go).
+fn report_win(r: Int, e: Int, check: Bool) {
+  let er = ld(e, 0)
+  let code = rt.mem_load(er, 0, 4)
+  let cx = ld(e, 8)
+  // (a thread id, not rt.tlocal_addr: a thread C code started has no
+  // runtime record)
+  let me = Int(sys_windows.GetCurrentThreadId()) + 1
+  while !rt.slot_cas[Int](r, R_CLAIM / 8, 0, me, ACQ_REL) {
+    if rt.slot_load[Int](r, R_CLAIM / 8, ACQUIRE) == me {
+      // an exception inside this thread's report: end the process with
+      // the first one's code
+      st(r, R_POS, 0)
+      w_str(r, "(the crash report faulted: ")
+      w_str(r, exc_name(code))
+      w_str(r, ")\n")
+      flush(r)
+      let _t = sys_windows.TerminateProcess(-1, ld(r, R_SIG))
+      return
+    }
+    // another thread reports (and ends the process) or checks
+    sys_windows.Sleep(100)
+  }
+  if check {
+    let s = r + R_UNW
+    rt.mem_copy(unwind.win_context(s), cx, CONTEXT_SIZE)
+    if !unwind.win_unhandled(s, rt.fn_addr("personality")) {
+      rt.slot_store[Int](r, R_CLAIM / 8, 0, RELEASE)
+      return
+    }
+  }
+  st(r, R_SIG, code)
+  st(r, R_POS, 0)
+  stdio.flush_try()
+  phase1_win(r, er, cx)
+  phase2(r)
+  st(r, R_REPORTED, 1)
+}
+
+/// The answer of the unhandled exception filter install replaced, or
+/// EXCEPTION_CONTINUE_SEARCH.
+fn next_filter(r: Int, e: Int) -> Int {
+  let f = ld(r, R_PREV)
+  if f == 0 {
+    return 0
+  }
+  rt.call_c2(f, e, 0) & 4294967295
+}
+
+/// Windows' phase 1: the exception, the pc, the registers (from the
+/// CONTEXT cx, in DWARF order), the frames' pcs (unwind.xo win_walk on a
+/// copy of cx: the system still reads the original).
+fn phase1_win(r: Int, er: Int, cx: Int) {
+  let code = rt.mem_load(er, 0, 4)
+  w_str(r, "fatal error: ")
+  w_str(r, exc_name(code))
+  w_str(r, ": ")
+  w_str(r, exc_text(code))
+  w_str(r, " (code ")
+  w_hex(r, code)
+  // an access violation or an in-page error: ExceptionInformation[0]
+  // (0 read, 1 write, 8 execute) and [1], the address
+  let av = code == 3221225477 || code == 3221225478
+  if av && rt.mem_load(er, 24, 4) >= 2 {
+    w_str(r, match ld(er, 32) {
+      0 => ", read"
+      1 => ", write"
+      8 => ", execute"
+      _ => ""
+    })
+  }
+  w_str(r, ")")
+  if av && rt.mem_load(er, 24, 4) >= 2 {
+    w_str(r, " at address ")
+    w_hex(r, ld(er, 40))
+  }
+  w_str(r, "\n")
+  let regs = r + R_REGS
+  rt.mem_set(regs, 0, unwind.PC_AT + 8)
+  for i in 0..16 {
+    st(regs, 8 * i, ld(cx, win_reg(i)))
+  }
+  st(regs, unwind.PC_AT, ld(cx, CX_RIP))
+  w_regs(r)
+  var n = 0
+  if ld(r, R_LO) != 0 {
+    let s = r + R_UNW
+    let c = unwind.win_context(s)
+    rt.mem_copy(c, cx, CONTEXT_SIZE)
+    n = unwind.win_walk(s, r + R_PCS, DEPTH, true)
+  }
+  if n == 0 {
+    st(r, R_PCS, ld(cx, CX_RIP))
+    n = 1
+  }
+  w_frames(r, n)
+}
+
+/// The CONTEXT offset of DWARF register i (Rax at 120, then Rcx, Rdx,
+/// Rbx, Rsp, Rbp, Rsi, Rdi, R8 to R15).
+fn win_reg(i: Int) -> Int {
+  match i {
+    0 => 120
+    1 => 136
+    2 => 128
+    3 => 144
+    4 => 168
+    5 => 176
+    6 => 160
+    7 => 152
+    _ => 184 + 8 * (i - 8)
+  }
+}
+
+/// An exception code's name.
+fn exc_name(code: Int) -> Str {
+  match code {
+    3221225477 => "EXCEPTION_ACCESS_VIOLATION"
+    3221225478 => "EXCEPTION_IN_PAGE_ERROR"
+    3221225501 => "EXCEPTION_ILLEGAL_INSTRUCTION"
+    3221225622 => "EXCEPTION_PRIV_INSTRUCTION"
+    3221225620 => "EXCEPTION_INT_DIVIDE_BY_ZERO"
+    3221225621 => "EXCEPTION_INT_OVERFLOW"
+    3221225612 => "EXCEPTION_ARRAY_BOUNDS_EXCEEDED"
+    2147483651 => "EXCEPTION_BREAKPOINT"
+    2147483652 => "EXCEPTION_SINGLE_STEP"
+    2147483650 => "EXCEPTION_DATATYPE_MISALIGNMENT"
+    3221226356 => "STATUS_HEAP_CORRUPTION"
+    _ => if code >= 3221225613 && code <= 3221225619 { "EXCEPTION_FLT" } else { "exception" }
+  }
+}
+
+/// An exception code's description.
+fn exc_text(code: Int) -> Str {
+  match code {
+    3221225477 => "access violation"
+    3221225478 => "in-page error"
+    3221225501 => "illegal instruction"
+    3221225622 => "privileged instruction"
+    3221225620 => "integer divide by zero"
+    3221225621 => "integer overflow"
+    3221225612 => "array bounds exceeded"
+    2147483651 => "breakpoint"
+    2147483652 => "single step"
+    2147483650 => "misaligned data"
+    3221226356 => "heap corruption"
+    _ => if code >= 3221225613 && code <= 3221225619 { "floating point exception" } else { "unhandled exception" }
+  }
+}
+
 /// The first line, the pc, the registers, the frames' pcs.
 fn phase1(r: Int, sig: Int, info: Int, uc: Int) {
   let code = s32(rt.mem_load(info, 8, 4))
@@ -316,6 +568,22 @@ fn phase1(r: Int, sig: Int, info: Int, uc: Int) {
     flush(r)
     return
   }
+  w_regs(r)
+  // the frames (prof_walk starts from the registers again)
+  var n = 0
+  let lo = ld(r, R_LO)
+  if lo != 0 {
+    n = unwind.prof_walk(r + R_UNW, uc, r + R_PCS, DEPTH, lo, ld(r, R_HI))
+  } else {
+    st(r, R_PCS, ld(regs, unwind.PC_AT))
+    n = 1
+  }
+  w_frames(r, n)
+}
+
+/// The pc, the image base, and the registers at the record's R_REGS.
+fn w_regs(r: Int) {
+  let regs = r + R_REGS
   w_str(r, "pc ")
   w_hex(r, ld(regs, unwind.PC_AT))
   w_str(r, " (image base ")
@@ -342,15 +610,10 @@ fn phase1(r: Int, sig: Int, info: Int, uc: Int) {
     }
   }
   flush(r)
-  // the frames (prof_walk starts from the registers again)
-  var n = 0
-  let lo = ld(r, R_LO)
-  if lo != 0 {
-    n = unwind.prof_walk(r + R_UNW, uc, r + R_PCS, DEPTH, lo, ld(r, R_HI))
-  } else {
-    st(r, R_PCS, ld(regs, unwind.PC_AT))
-    n = 1
-  }
+}
+
+/// The n frames' pcs at the record's R_PCS.
+fn w_frames(r: Int, n: Int) {
   st(r, R_N, n)
   // the frames' pcs, a run of one pc (a recursion) as `pc (xN)`
   w_str(r, "\nframes:")
@@ -380,8 +643,7 @@ fn phase2(r: Int) {
   if n == 0 || ld(r, R_LO) == 0 {
     return
   }
-  set(r, SIGALRM, rt.fn_addr("on_crash_alarm"), 0)
-  alarm(r, ld(r, R_TIMEOUT))
+  watch(r, true)
   var pcs: List[Int] = []
   for i in 0..n {
     // trace_text looks a return address's call up at pc - 1; the
@@ -391,7 +653,39 @@ fn phase2(r: Int) {
   }
   let s = prof.trace_text(pcs)
   stdio.write_all(2, raw.data(s), s.len())
-  alarm(r, 0)
+  watch(r, false)
+}
+
+/// Starts (on) or stops phase 2's watchdog: Unix ITIMER_REAL, whose
+/// SIGALRM handler is on_alarm; Windows a thread (on_watch).
+fn watch(r: Int, on: Bool) {
+  if windows() {
+    if on {
+      // (a thread can start only while the loader's lock is free: one
+      // the faulting thread held leaves phase 2 unguarded)
+      let _t = sys_windows.CreateThread(0, 65536, rt.fn_addr("on_crash_watch"), r, 0, 0)
+    } else {
+      rt.slot_store[Int](r, R_DONE / 8, 1, RELEASE)
+    }
+    return
+  }
+  if on {
+    set(r, SIGALRM, rt.fn_addr("on_crash_alarm"), 0)
+  }
+  alarm(r, if on { ld(r, R_TIMEOUT) } else { 0 })
+}
+
+/// Windows' watchdog thread (cabi.xo on_crash_watch, a CreateThread
+/// entry): after XO_CRASH_TIMEOUT seconds an unfinished phase 2 ends
+/// the process with the exception's code.
+pub fn on_watch(r: Int) -> Int {
+  sys_windows.Sleep(1000 * ld(r, R_TIMEOUT))
+  if rt.slot_load[Int](r, R_DONE / 8, ACQUIRE) == 0 {
+    let s = "(the traceback timed out)\n"
+    let _w = sys_windows.WriteFile(sys_windows.GetStdHandle(STD_ERROR), raw.data(s), s.len(), r + R_WN, 0)
+    let _t = sys_windows.TerminateProcess(-1, ld(r, R_SIG))
+  }
+  0
 }
 
 /// ITIMER_REAL in s seconds (0: off).
@@ -520,7 +814,13 @@ fn x64_name(i: Int) -> Str {
 // The text buffer (the record's R_BUF, BUF bytes): no allocation.
 
 fn flush(r: Int) {
-  stdio.write_all(2, r + R_BUF, ld(r, R_POS))
+  if windows() {
+    // (not stdio's write, whose count is obj.scratch's, which may
+    // allocate)
+    let _w = sys_windows.WriteFile(sys_windows.GetStdHandle(STD_ERROR), r + R_BUF, ld(r, R_POS), r + R_WN, 0)
+  } else {
+    stdio.write_all(2, r + R_BUF, ld(r, R_POS))
+  }
   st(r, R_POS, 0)
 }
 

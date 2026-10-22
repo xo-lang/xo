@@ -28,7 +28,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   behind `use c`) before the signal's default action ends it, with the
   same exit status and core file: the signal and address, the pc, the
   registers, and the frames named from the program's DWARF (decision
-  0343; `XO_CRASH_REPORT=0` turns it off). Windows follows.
+  0343; `XO_CRASH_REPORT=0` turns it off). windows/amd64 programs report
+  an unhandled exception the same way (`fatal error:
+  EXCEPTION_ACCESS_VIOLATION: access violation (code 0xc0000005, write)
+  at address 0x10`), and keep the NTSTATUS as exit code.
 - Diagnostics: an unknown method on a Set suggests `add` and `remove`
   (`insert`, `push`, `put`, `discard`, `delete`); `sub`, `add`,
   `elapsed` and the like on a Time or Duration suggest the operators or,

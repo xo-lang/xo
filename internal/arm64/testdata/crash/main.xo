@@ -1,6 +1,8 @@
 // TestCrashReport's program (decision 0343): a hardware fault two Xo
-// frames down, chosen by XO_CRASH_KIND (segv, trap, overflow), reported
-// by the runtime's crash handler before the signal's default action.
+// frames down, chosen by XO_CRASH_KIND (segv, trap, overflow; task: segv
+// in a task), reported by the runtime's crash handler before the
+// signal's default action (scripts/ci/windows-crash.sh runs it on
+// Windows).
 use c "crashc.h" link "crashc.c"
 
 fn poke(kind: Str, n: Int) -> Int {
@@ -19,5 +21,13 @@ fn poke(kind: Str, n: Int) -> Int {
 fn main(os: Os) {
   let kind = os.env.get("XO_CRASH_KIND") ?? "segv"
   os.stdio.println("before")
+  if kind == "task" {
+    scope s {
+      s.spawn(fn() {
+        let _n = poke("segv", 2)
+      })
+    }
+    return
+  }
   os.stdio.println("${poke(kind, 2)}")
 }

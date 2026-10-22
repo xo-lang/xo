@@ -530,6 +530,16 @@ fn on_crash(sig: Int, info: Int, uc: Int) { crash.on_crash(sig, info, uc) }
 /// The crash report's watchdog (SIGALRM, crash.xo on_alarm).
 fn on_crash_alarm(sig: Int) { crash.on_alarm(sig) }
 
+/// Windows' unhandled exception filter (crash.xo on_crash_win; the
+/// EXCEPTION_POINTERS, the filter's answer).
+fn on_crash_win(e: Int) -> Int { crash.on_crash_win(e) }
+
+/// Windows' last vectored exception handler (crash.xo on_crash_veh).
+fn on_crash_veh(e: Int) -> Int { crash.on_crash_veh(e) }
+
+/// Windows' crash report watchdog thread (crash.xo on_watch).
+fn on_crash_watch(r: Int) -> Int { crash.on_watch(r) }
+
 /// SIGURG's handler (decision 0318, pool.xo async_install): asynchronous
 /// preemption.
 fn on_urg(sig: Int, info: Int, uc: Int) {

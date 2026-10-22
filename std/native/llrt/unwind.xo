@@ -2192,6 +2192,53 @@ pub fn win_walk(s: Int, out: Int, max: Int, first0: Bool) -> Int {
   n
 }
 
+/// Whether nothing would handle the exception whose CONTEXT is record
+/// s's (win_context; walked and changed here) but the end of the stack
+/// (crash.xo's vectored handler): every frame from the faulting pc down
+/// is the program's, none has an exception handler but Xo's personality
+/// (pers, which takes no hardware exception), and the walk ends in the
+/// program (a fiber's or thread's first frame, a zero or wild return
+/// address). False for a fault outside the program, a handler of C code
+/// (__try), or a caller in another module (a DLL that called back into
+/// the program, a thread's start in kernel32): their handlers decide,
+/// and the unhandled exception filter sees what they leave.
+pub fn win_unhandled(s: Int, pers: Int) -> Bool {
+  let cx = s + W_CX
+  let lo = rt.mem_load(s, W_PLO, 8)
+  let hi = rt.mem_load(s, W_PHI, 8)
+  var first = true
+  for _ in 0..4096 {
+    let pc = rt.mem_load(cx, WX_PC, 8)
+    let sp = rt.mem_load(cx, WX_SP, 8)
+    if pc == 0 || sp == 0 {
+      return true
+    }
+    if pc < lo || pc >= hi {
+      return false
+    }
+    if !first && !after_call(pc, lo, hi) {
+      return true
+    }
+    let f = pdata_find(s, if first { pc } else { pc - 1 })
+    if f == 0 {
+      rt.mem_store(cx, WX_PC, rt.mem_load(sp, 0, 8), 8)
+      rt.mem_store(cx, WX_SP, sp + 8, 8)
+    } else {
+      // UNW_FLAG_EHANDLER: the frame's exception handler, or 0
+      let h = sys_windows.RtlVirtualUnwind(1, rt.mem_load(s, W_PBASE, 8), pc, f, cx, s + W_DATA, s + W_EST, 0)
+      if h != 0 && h != pers {
+        return false
+      }
+      let nsp = rt.mem_load(cx, WX_SP, 8)
+      if nsp <= sp || nsp - sp > PROF_SPAN {
+        return true
+      }
+    }
+    first = false
+  }
+  true
+}
+
 /// Whether ra is a return address in the program's text: it follows a
 /// call (E8 rel32, or FF /2 with a register, a memory operand, or a
 /// displacement).
