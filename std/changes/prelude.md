@@ -3,7 +3,7 @@
 ## 2026-10-22: perf: split, lines, trim and trim_prefix/suffix return views (decision 0330)
 
 - Kind: perf
-- Commit: this commit
+- Commit: d644daae2
 - Found by: decision 0330's step list (hot ports), the std survey of 2026-10-22
 - Go reference: strings.Split, TrimSpace, TrimPrefix (substrings share the string)
 - Test: golden views_split (arm64, LLVM, Go); bench/results/views-split-2026-10-22.md
