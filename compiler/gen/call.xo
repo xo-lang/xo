@@ -316,7 +316,10 @@ fn (var g: Gen) decl_call1(x: Expr, ci: check.CallInfo) -> (Str, Int) {
   let aidx = g.arg_index(fo, args)
   // evaluation order: receiver, then arguments as written
   var order: List[Int] = []
-  if !recv_e.is_empty() {
+  // a by value receiver that is a variable or a field path is read after
+  // the arguments (core 5.2, decision 0326)
+  let recv_late = !recv_e.is_empty() && !g.c.objs[fo].recv_var && recv_after_args(recv_e[0])
+  if !recv_e.is_empty() && !recv_late {
     order.push(-1)
   }
   for j in 0..args.len() {
@@ -329,6 +332,9 @@ fn (var g: Gen) decl_call1(x: Expr, ci: check.CallInfo) -> (Str, Int) {
     if pi >= 0 {
       order.push(pi)
     }
+  }
+  if recv_late {
+    order.push(-1)
   }
   var recv_code = ""
   var arg_codes: List[Str] = []
@@ -345,6 +351,18 @@ fn (var g: Gen) decl_call1(x: Expr, ci: check.CallInfo) -> (Str, Int) {
   let user_fn = !g.ostd(fo) && !fd.is_empty() && fd[0].body != None
   var ops = Ops{}
   for i in order {
+    if recv_late && i < 0 {
+      // the arguments run before the receiver is read: Go leaves the order
+      // of a variable's read and a call among the operands open, so each
+      // argument that is more than a name or constant goes to a temporary
+      for j in 0..ops.codes.len() {
+        if !ops.keep[j] && !trivial_code(ops.codes[j]) {
+          let tmp = g.tmp("a")
+          g.line("${tmp} := ${ops.codes[j]}")
+          ops.codes[j] = tmp
+        }
+      }
+    }
     let sv = g.cap_begin()
     var code = ""
     var keep = false
@@ -423,6 +441,18 @@ fn (var g: Gen) decl_call1(x: Expr, ci: check.CallInfo) -> (Str, Int) {
     }
   }
   (code, kind)
+}
+
+/// Whether a by value receiver expression is read after the call's
+/// arguments (decision 0326): a variable or a field path of one. The SSA
+/// builder's recv_after_args is the same rule.
+fn recv_after_args(e: Expr) -> Bool {
+  match e {
+    Ident(_) => true
+    SelectorExpr(_, x, _) => recv_after_args(x)
+    ParenExpr(_, x) => recv_after_args(x)
+    _ => false
+  }
 }
 
 /// The other operands of a call while operand skip (-1: the receiver,

@@ -550,7 +550,13 @@ fn (var b: Builder) iface_call(x: Expr, ci: check.CallInfo) -> Int {
     let (_, et) = b.result_parts(b.nat_check(x))
     to_err = et
   }
-  let r = b.method_on(fname, ct, v, vals, nt, b.fail_err(to_err), Some(x))
+  // a receiver that is a variable or a field path is read after the
+  // arguments (decision 0326): the first read gave its type
+  var rv = v
+  if recv_after_args(recv) && !vals.is_empty() {
+    rv = b.expr(recv)
+  }
+  let r = b.method_on(fname, ct, rv, vals, nt, b.fail_err(to_err), Some(x))
   b.call_result(r, x)
 }
 

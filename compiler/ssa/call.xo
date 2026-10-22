@@ -1006,6 +1006,19 @@ fn (var b: Builder) call_as(x: Expr, ci: check.CallInfo, impl: Int) -> Int {
   b.call_as_via(x, ci, impl, -1)
 }
 
+/// Whether a by value receiver expression is read after the call's
+/// arguments (core 5.2, decision 0326): a variable or a field path of
+/// one, whose read has no effect of its own. Any other receiver (a call, an
+/// index) is evaluated first, in source order.
+pub fn recv_after_args(e: Expr) -> Bool {
+  match e {
+    Ident(_) => true
+    SelectorExpr(_, x, _) => recv_after_args(x)
+    ParenExpr(_, x) => recv_after_args(x)
+    _ => false
+  }
+}
+
 /// call_as calling, when real >= 0, the real Fs wrapper of the declared
 /// implementation and real (callAsVia with realFsWrapper).
 fn (var b: Builder) call_as_via(x: Expr, ci: check.CallInfo, impl: Int, real: Int) -> Int {
@@ -1037,6 +1050,7 @@ fn (var b: Builder) call_as_via(x: Expr, ci: check.CallInfo, impl: Int, real: In
   var vargs: List[Int] = []
   var places: List[Place] = []
   var recv_place = -1
+  var recv_deferred = false
   if is_method {
     if ci.recv.is_empty() {
       b.unsupported("this method call")
@@ -1049,6 +1063,11 @@ fn (var b: Builder) call_as_via(x: Expr, ci: check.CallInfo, impl: Int, real: In
       }
       places.push(p)
       recv_place = 0
+      vargs.push(-1)
+    } else if recv_after_args(ci.recv[0]) {
+      // a by value receiver that is a variable or a field path is read
+      // after the arguments (decision 0326)
+      recv_deferred = true
       vargs.push(-1)
     } else {
       vargs.push(b.value_as(ci.recv[0], ps[0]))
@@ -1110,6 +1129,9 @@ fn (var b: Builder) call_as_via(x: Expr, ci: check.CallInfo, impl: Int, real: In
     if arg_places[i] >= 0 {
       places.push(aplaces[arg_places[i]])
     }
+  }
+  if recv_deferred {
+    vargs[0] = b.value_as(ci.recv[0], ps[0])
   }
   if recv_place >= 0 {
     var rp = places[0]
