@@ -1,6 +1,5 @@
 // std/debug on the native backends (decision 0325): the profile routes
 // over llrt/prof's live profiler and the scheduler's counters.
-use std/debug
 use std/http
 use native/rt
 use native/llrt/prof
@@ -33,17 +32,10 @@ fn plain(status: Int, s: Str) -> http.Response {
 
 /// The CPU profile route: the begin, the wait, the stop and the wait for
 /// a handler that was running, the read. busy makes it one at a time.
-fn profile(clock: Clock, busy: Mutex[Bool], req: http.Request) -> http.Response uses clock {
+fn profile(clock: Clock, busy: Atomic[Bool], req: http.Request) -> http.Response uses clock {
   let secs = clamp(query_int(req, "seconds", 30), 1, MAX_SECONDS)
   let hz = clamp(query_int(req, "hz", 100), 1, 1000)
-  let got = busy.with(fn(var b: Bool) -> Bool {
-    if b {
-      false
-    } else {
-      b = true
-      true
-    }
-  })
+  let got = busy.compare_and_swap(false, true)
   if !got {
     return plain(409, "a profile is running already")
   }
@@ -70,9 +62,7 @@ fn profile(clock: Clock, busy: Mutex[Bool], req: http.Request) -> http.Response 
       http.Response{status: 200, headers: {"Content-Type": PROFILE_TYPE}, body: data}
     }
   }
-  busy.with(fn(var b: Bool) -> () {
-    b = false
-  })
+  busy.set(false)
   resp
 }
 
@@ -96,7 +86,7 @@ fn sched(req: http.Request) -> http.Response {
 }
 
 pub fn router(clock: Clock, auth: fn(http.Request) -> Bool) -> http.Router uses clock {
-  let busy = Mutex[Bool].new(false)
+  let busy = Atomic[Bool].new(false)
   var r = http.router()
   r.handle("GET /profile", fn(req) -> http.Response {
     if !auth(req) {
