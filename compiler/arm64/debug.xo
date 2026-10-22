@@ -437,11 +437,13 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
   for a in addr_syms {
     out.write("\t.quad ${a}\n")
   }
-  // .debug_str: the path slots (placeholders, dw_slots_obj)
-  out.write(if mac { "\t.section __DWARF,__debug_str,regular,debug\n" } else { "\t.section .debug_str,\"\",@progbits\n" })
+  // .debug_str: the path slots (placeholders, dw_slots_obj); on ELF
+  // mergeable strings ("MS", entry size 1), the flags clang's assembler
+  // gives the section and requires of every .section of it
+  out.write(if mac { "\t.section __DWARF,__debug_str,regular,debug\n" } else { "\t.section .debug_str,\"MS\",@progbits,1\n" })
   out.write("${comp_lab}:\n${dw_slot_text(DW_SLOT_COMP)}${std_lab}:\n${dw_slot_text(DW_SLOT_STD)}")
   // .debug_line_str: the same slots, for the line table's directories
-  out.write(if mac { "\t.section __DWARF,__debug_line_str,regular,debug\n" } else { "\t.section .debug_line_str,\"\",@progbits\n" })
+  out.write(if mac { "\t.section __DWARF,__debug_line_str,regular,debug\n" } else { "\t.section .debug_line_str,\"MS\",@progbits,1\n" })
   out.write("${lcomp_lab}:\n${dw_slot_text(DW_SLOT_COMP)}${lstd_lab}:\n${dw_slot_text(DW_SLOT_STD)}")
   out.write(g.section("text"))
   out.freeze()
