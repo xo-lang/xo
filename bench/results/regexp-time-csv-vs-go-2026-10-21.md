@@ -123,3 +123,17 @@ times Go's encoding/csv). Parse is Go's reader ported line by line and stays
 at 1.67 times (1,315 M against 787 M); a profile of it (7 samples, too short to
 rank) shows read_line, index_rune, and utf8_valid, so a gain needs a rewrite of
 read_record's byte scanning, not done.
+
+## Step 5, time layout walk without items (tried, not kept)
+
+A direct walk of the layout (a `Lw` cursor yielding literal and field chunks,
+no item list, as Go's nextStdChunk) with the same codes was built and passed
+the time module tests, but measured slower: format 7,390 M to 7,655 M, parse
+3,768 M to 6,208 M (parse walks twice: once to validate, because a bad
+layout must fault before any ParseErr). The cost is not the list: it is the
+Str slices and compares made for each field name (body slice, find(":"),
+name comparison) and the cursor's string fields, which a loop over bytes with
+integer state would avoid but at a size comparable to rewriting format and
+parse. Left as it was after step 1. The remaining 7.7x on format needs a
+byte-level field recognizer (no Str for the name) or compile-time parsing of
+constant layouts.
