@@ -1454,6 +1454,19 @@ fn (var e: E) emit(s: Str) {
   e.w.push("  ${s}\n")
 }
 
+/// The data pointer of the Str x (decision 0330: past the offset of a view),
+/// the helper form of Gen.str_parts for the code written into a helper.
+fn (var e: E) str_data_ptr(x: Str) -> Str {
+  let o = e.def("extractvalue %xo.str ${x}, 0")
+  if STR_VIEWS {
+    let w1 = e.def("extractvalue %xo.str ${x}, 1")
+    let off = e.def("lshr i64 ${w1}, 32")
+    let at = e.def("getelementptr i8, ptr ${o}, i64 ${off}")
+    return e.def("getelementptr i8, ptr ${at}, i64 16")
+  }
+  e.def("getelementptr i8, ptr ${o}, i64 16")
+}
+
 fn (var e: E) def(s: Str) -> Str {
   let r = e.tmp()
   e.emit("${r} = ${s}")
@@ -1512,11 +1525,9 @@ fn (var g: Gen) eq_fn(t: Int) -> Str {
       e.w.push("yes:\n  ret i1 true\n")
     }
     Str => {
-      let oa = e.def("extractvalue %xo.str %a, 0")
-      let da = e.def("getelementptr i8, ptr ${oa}, i64 16")
+      let da = e.str_data_ptr("%a")
       let na = e.def("extractvalue %xo.str %a, 1")
-      let ob = e.def("extractvalue %xo.str %b, 0")
-      let db = e.def("getelementptr i8, ptr ${ob}, i64 16")
+      let db = e.str_data_ptr("%b")
       let nb = e.def("extractvalue %xo.str %b, 1")
       let pa = e.def("ptrtoint ptr ${da} to i64")
       let pb = e.def("ptrtoint ptr ${db} to i64")

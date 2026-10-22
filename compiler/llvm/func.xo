@@ -1248,9 +1248,7 @@ fn (var g: Gen) instr_body(v: Int) {
     }
     Fault => {
       let m = g.op(args[0])
-      let obj = g.def("extractvalue %xo.str ${m}, 0")
-      let n = g.def("extractvalue %xo.str ${m}, 1")
-      let data = g.def("getelementptr i8, ptr ${obj}, i64 16")
+      let (_, data, n) = g.str_parts(m)
       let l = g.loc(v)
       let pd = g.def("ptrtoint ptr ${data} to i64")
       g.emit("call void @xo_x_fault_raise_text(i64 ${pd}, i64 ${n}, i64 ptrtoint (ptr ${l} to i64))")
