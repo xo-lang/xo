@@ -402,7 +402,11 @@ fn (var g: G) emit() {
   b.push("\t.cfi_endproc\n")
   let sites = g.sites + g.stub_sites
   var ext = ""
-  if !sites.is_empty() {
+  // cfi_start named the table whenever an instruction has a pad, also
+  // when no call site with one was emitted (2026-10-22: with every
+  // optional pass off, G.str_data's table was missing and the link failed
+  // on a difference with an undefined label): an empty table then
+  if pads || !sites.is_empty() {
     g.lsda(sites)
     ext = g.lsdas[g.lsdas.len() - 1]
   }
