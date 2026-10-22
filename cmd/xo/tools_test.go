@@ -1650,3 +1650,101 @@ func TestVetCostLarge(t *testing.T) {
 		t.Errorf("XO0910 at lines %v, want [14 25]\n%s", lines, out.String())
 	}
 }
+
+// vetCostReuseProg: a list updated while a snapshot of it is kept in the
+// same iteration (XO0909, line 6); a snapshot made before the loop, a
+// conditional push to a unique list, a list made in each iteration, a
+// var parameter, and a copy updated under another name are not noted.
+const vetCostReuseProg = `fn snap(n: Int) -> Int {
+  var xs: List[Int] = []
+  var snaps: List[List[Int]] = []
+  for i in 0..n {
+    snaps.push(xs)
+    xs.push(i)
+  }
+  snaps.len() + xs.len()
+}
+
+fn before_loop(n: Int) -> Int {
+  var ys: List[Int] = []
+  let before = ys
+  for i in 0..n {
+    ys.push(i)
+  }
+  ys.len() + before.len()
+}
+
+fn conditional(n: Int) -> Int {
+  var ks: List[Int] = []
+  for i in 0..n {
+    if i % 2 == 0 {
+      ks.push(i)
+    }
+  }
+  ks.len()
+}
+
+fn fresh(n: Int) -> Int {
+  var total = 0
+  for i in 0..n {
+    var t: List[Int] = []
+    t.push(i)
+    total += t.len()
+  }
+  total
+}
+
+fn param(var xs: List[Int], n: Int) -> Int {
+  for i in 0..n {
+    xs.push(i)
+  }
+  xs.len()
+}
+
+fn copy_each(best: List[Int], n: Int) -> Int {
+  var total = 0
+  for i in 0..n {
+    var cand = best
+    cand.push(i)
+    total += cand.len()
+  }
+  total
+}
+
+fn main(os: Os) {
+  var e: List[Int] = []
+  os.stdio.println("${snap(3)} ${before_loop(3)} ${conditional(3)} ${fresh(3)} ${param(e, 3)} ${copy_each([1], 3)}")
+}
+`
+
+// TestVetCostReuse: `xo vet --cost` notes a list updated while the loop
+// keeps a holder of it (XO0909), and not the shapes that copy once or
+// not at all.
+func TestVetCostReuse(t *testing.T) {
+	t.Parallel()
+	dir := writeFiles(t, map[string]string{"main.xo": vetCostReuseProg})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"vet", "--json", "--cost", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	var res struct {
+		Diagnostics []struct {
+			Code string `json:"code"`
+			Span struct {
+				Line int `json:"line"`
+			} `json:"span"`
+		} `json:"diagnostics"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &res); err != nil {
+		t.Fatalf("bad JSON: %v\n%s", err, out.String())
+	}
+	var lines []int
+	for _, d := range res.Diagnostics {
+		if d.Code == "XO0909" {
+			lines = append(lines, d.Span.Line)
+		}
+	}
+	if len(lines) != 1 || lines[0] != 6 {
+		t.Errorf("XO0909 at lines %v, want [6]\n%s", lines, out.String())
+	}
+}

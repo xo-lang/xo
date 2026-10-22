@@ -2,7 +2,8 @@
 // does that its source does not show, found in the SSA after insert_rc
 // (before inlining): a loop that copies a collection's entries first
 // (XO0907), an element counted up and down every iteration (XO0908), a
-// value over 8 words captured or wrapped inline (XO0910). Notes only, never errors; the driver turns them into vet's
+// value over 8 words captured or wrapped inline (XO0910), a list update
+// that may copy the whole list every iteration (XO0909). Notes only, never errors; the driver turns them into vet's
 // findings (compiler/xo vetcost.xo).
 
 /// A cost note at a source position of function fn_name.
@@ -36,7 +37,7 @@ pub fn cost_notes(m: Module, keep: List[Str]) -> List[CostNote] {
       continue
     }
     let inloop = loop_blocks(f)
-    for n in copy_feeds_loop(f, inloop) + elem_count_per_iter(f, inloop) + large_copies(m, f, inloop, nwords) {
+    for n in copy_feeds_loop(f, inloop) + elem_count_per_iter(f, inloop) + reuse_in_loop(f, inloop) + large_copies(m, f, inloop, nwords) {
       var n2 = n
       n2.file = file
       out.push(n2)
@@ -256,6 +257,136 @@ fn elem_of_outside(f: Func, x0: Int, inloop: List[Bool]) -> Bool {
   }
   let b = f.values[x].block
   f.values[x].op == Op.Param || b < 0 || !inloop[b]
+}
+
+/// XO0909: a list update in a loop whose list a holder made in the same
+/// iteration keeps alive, so the Reuse in front of the update (copy
+/// unless the count is 1) copies the whole list every iteration: O(n^2)
+/// (`snapshots.push(xs)` or `let prev = xs` kept, then `xs.push(...)`).
+/// A holder made outside the loop costs one copy, after which the loop's
+/// list is unique again; a loop that updates on every iteration has its
+/// Reuse hoisted to the loop's entry (rc.xo hoist_reuse). So a note needs
+/// a Reuse in a loop block whose list is a loop-carried parameter or made
+/// outside the loop, and a Retain of that same list in a loop block (the
+/// count insert_rc takes when the list is kept as well as updated).
+fn reuse_in_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
+  var out: List[CostNote] = []
+  let idom = dominators(f)
+  // the loop-carried lists: a parameter of a loop header; its loop's blocks
+  var body: Map[Int, List[Bool]] = {}
+  var seen: Map[Int, Bool] = {}
+  for (vi, x) in f.values.indexed() {
+    if x.op != Op.Reuse || x.args.is_empty() || x.block < 0 || !inloop[x.block] {
+      continue
+    }
+    let root = below_fields(f, x.args[0])
+    if root < 0 || root >= f.values.len() || f.values[root].op != Op.Param || f.values[root].block < 0 {
+      continue
+    }
+    let h = f.values[root].block
+    var inl: List[Bool] = []
+    if let Some(c) = body.get(h) {
+      inl = c
+    } else {
+      inl = loop_of(f, idom, h)
+      body[h] = inl
+    }
+    if inl.is_empty() || !inl[x.block] {
+      continue
+    }
+    // a holder made in the loop: the same list counted up in its blocks
+    var kept = false
+    for y in f.values {
+      if y.op == Op.Retain && !y.args.is_empty() && y.block >= 0 && inl[y.block] && below_fields(f, y.args[0]) == root {
+        kept = true
+      }
+    }
+    if !kept {
+      continue
+    }
+    // the update call that takes the Reuse: its line is the note's
+    for (ui, u) in f.values.indexed() {
+      if u.op != Op.Call || u.args.is_empty() || u.args[0] != vi {
+        continue
+      }
+      let line = u.line / 4096
+      if line <= 0 || seen.contains(line) || !carried_back(f, root, inl, ui) {
+        continue
+      }
+      seen[line] = true
+      out.push(CostNote{code: "XO0909", fn_name: f.name, file: f.file, line: line, col: u.line % 4096, msg: "this list update copies the whole list on every iteration: the list is also kept in this iteration (stored, captured, or bound to a name used after the update), so it is shared when the update runs; update a copy you own, or keep the other holder out of the loop"})
+    }
+  }
+  out
+}
+
+/// Whether the result of the update u (or a value made from it by Rebind
+/// or Field) is passed back to the header parameter root along an edge of
+/// its loop: the loop's own list is the one updated (`xs = xs.push(..)`),
+/// not a copy bound to another name (`var c = xs; c[i] = ...`, which
+/// copies by the language's meaning).
+fn carried_back(f: Func, root: Int, inl: List[Bool], u: Int) -> Bool {
+  let h = f.values[root].block
+  var k = -1
+  for (i, p) in f.blocks[h].params.indexed() {
+    if p == root {
+      k = i
+    }
+  }
+  if k < 0 {
+    return false
+  }
+  var work = [u]
+  var done: Map[Int, Bool] = {}
+  while !work.is_empty() {
+    let x = work.pop() ?? -1
+    if x < 0 || done.contains(x) {
+      continue
+    }
+    done[x] = true
+    for e in f.blocks[h].preds {
+      let ed = f.edges[e]
+      if ed.from >= 0 && inl[ed.from] && k < ed.args.len() && ed.args[k] == x {
+        return true
+      }
+    }
+    for (wi, w) in f.values.indexed() {
+      if w.op is Op.Rebind | Op.Field && w.args.contains(x) {
+        work.push(wi)
+      }
+    }
+  }
+  false
+}
+
+/// The blocks of the natural loop of header h (its back edges' sources and
+/// what reaches them without passing h), empty when h is no loop header.
+fn loop_of(f: Func, idom: List[Int], h: Int) -> List[Bool] {
+  var inl: List[Bool] = []
+  for _ in f.blocks {
+    inl.push(false)
+  }
+  var any = false
+  for e in f.blocks[h].preds {
+    let b = f.edges[e].from
+    if b < 0 || !udom(idom, h, b) {
+      continue
+    }
+    any = true
+    inl[h] = true
+    var work = [b]
+    while !work.is_empty() {
+      let x = work.pop() ?? -1
+      if x < 0 || inl[x] {
+        continue
+      }
+      inl[x] = true
+      for pe in f.blocks[x].preds {
+        work.push(f.edges[pe].from)
+      }
+    }
+  }
+  if any { inl } else { [] }
 }
 
 /// The values over this many words (a cache line) are noted when a

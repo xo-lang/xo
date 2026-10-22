@@ -1,8 +1,8 @@
 # 0327: `xo vet --cost`, notes on costs the source does not show
 
 Status: Accepted (owner, 2026-10-21, from the agents' language poll; design
-reviewed by the lead). Implemented: XO0907 (stage 1), XO0908, XO0910.
-XO0909 claimed, to follow (Xo Lang 3).
+reviewed by the lead). Implemented: XO0907 (stage 1), XO0908, XO0909, XO0910.
+XO0909 (Xo Lang 3).
 
 ## Context
 
@@ -39,9 +39,18 @@ Notes (spec section 10), each about a loop unless said:
   return, on any path) is a real copy and not reported. Over compiler/xo
   the first version (any release in the loop) noted 17 loops that store
   the element on one path; this one notes none there.
-- XO0909 (to do): a copy on write that can copy every iteration (a Reuse
-  of a loop-carried list uniq cannot prove unique, naming the other
-  holder).
+- XO0909: a list update that copies the whole list every iteration: a
+  Reuse (copy unless the count is 1) in a loop block whose list is a
+  parameter of a loop header, the update's result passed back to that
+  parameter, and a Retain of the same list in the loop's own blocks (the
+  holder made in the iteration: `snaps.push(xs)`, a kept name). Not
+  noted: a holder made before the loop (one copy, then the loop's list is
+  unique), a loop updating on every iteration (rc.xo hoist_reuse moves
+  the one copy to the entry), a list made fresh in the iteration, and a
+  `var c = xs; c[i] = ...` copy (the language's meaning). A first version
+  noting any Reuse left in a loop gave 14 notes over compiler/xo, all
+  conditional pushes to a unique list (the count is 1 at run time); this
+  one gives none there and none in the CRUD server.
 - XO0910: a value over 8 words (compiler/arm64 layout) copied where the
   source shows no copy: a capture of a closure literal (anywhere: made
   once per call, each heap field shared), or a Variant (`Some(x)`) whose
