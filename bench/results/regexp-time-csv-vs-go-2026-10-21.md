@@ -148,3 +148,12 @@ instructions; 300,000 parses: 3,768 M to 3,300 M (Go 953 M and 462 M, now
 6.5x and 7.1x). What is left is mostly the item list and the small padded
 number strings (`pad`), which a Go-style append of digits into the builder
 would avoid.
+
+## Step 7, time: padded numbers written in place (tried, not kept)
+
+`pad` strings replaced by `write_pad` appending digits to the builder:
+6,206 M to 6,188 M, within noise; not kept. What remains of format's 6.5x is
+the per-call layout item list (an `Item` of three Strs and an Int for each
+field and literal, then a copy of each while iterating), which a Go-style
+walk would avoid only with integer state and no Str per chunk; with Str
+slices copying (decision 0330) that port stays costly until views land.
