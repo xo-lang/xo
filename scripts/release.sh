@@ -22,7 +22,10 @@
 #   linux/amd64  the darwin xo1: --backend=go --targets=linux/amd64 (no
 #                native backend for amd64: compiler/gen and the Go
 #                toolchain)
-#   windows/amd64 (only with XO_RELEASE_WINDOWS=1, decision 0197) the
+#   windows/amd64 the darwin xo1: --backend=amd64 --targets=windows/amd64,
+#                linked by Xo's PE linker with no C runtime (decision 0254
+#                6b step 4; owner 2026-10-22: no Microsoft SDK); with
+#                XO_RELEASE_WINDOWS=llvm instead (decision 0197) the
 #                darwin xo1: --backend=llvm --targets=windows/amd64, split
 #                modules ($XO_RELEASE_WIN_SPLIT, default 16; LTO
 #                $XO_RELEASE_WIN_LTO, default thin; jobs
@@ -90,8 +93,9 @@
 #
 # Environment: XO_SEED (the xo that builds the first
 # xo1), XO_RELEASE_ALLOW_DIRTY=1 (build from a
-# modified tree, for trying the script), XO_RELEASE_WINDOWS=1 with
-# XO_WIN_CLANG and XO_WINSYSROOT (the windows/amd64 archive, above),
+# modified tree, for trying the script), XO_RELEASE_WINDOWS=0 (no
+# windows/amd64 archive) or llvm with XO_WIN_CLANG and XO_WINSYSROOT
+# (above),
 # XO_RELEASE_DRY_RUN=1 (run the checks, then print each step's command
 # instead of running it: nothing is built, written, or deleted).
 set -euo pipefail
@@ -135,14 +139,17 @@ elif [ "${XO_RELEASE_NO_NOTARIZE:-}" != 1 ] && [ -z "${XO_NOTARY_PROFILE:-}" ] &
 	echo "release.sh: notarizing needs XO_NOTARY_PROFILE (xcrun notarytool store-credentials NAME, the owner) or APPLE_API_KEY, APPLE_API_KEY_ID, APPLE_API_ISSUER; XO_RELEASE_NO_NOTARIZE=1 signs only" >&2
 	exit 1
 fi
-if [ "${XO_RELEASE_WINDOWS:-}" = 1 ]; then
+win=${XO_RELEASE_WINDOWS:-native}
+[ "$win" = 1 ] && win=native
+case $win in native|llvm|0) ;; *) echo "release.sh: XO_RELEASE_WINDOWS is native (the default), llvm, or 0" >&2; exit 1 ;; esac
+if [ "$win" = llvm ]; then
 	win_clang="${XO_WIN_CLANG:-}"
 	if [ -z "$win_clang" ] || ! "$win_clang" --version >/dev/null 2>&1 || [ ! -x "$(dirname "$win_clang")/lld-link" ]; then
-		echo "release.sh: XO_RELEASE_WINDOWS=1 needs XO_WIN_CLANG, an upstream clang with lld-link beside it (LLVM 23.1.3 was measured)" >&2
+		echo "release.sh: XO_RELEASE_WINDOWS=llvm needs XO_WIN_CLANG, an upstream clang with lld-link beside it (LLVM 23.1.3 was measured)" >&2
 		exit 1
 	fi
 	if [ ! -d "${XO_WINSYSROOT:-}/Windows Kits/10/Lib" ]; then
-		echo "release.sh: XO_RELEASE_WINDOWS=1 needs XO_WINSYSROOT, a Windows sysroot (xwin --accept-license splat --use-winsysroot-style --preserve-ms-arch-notation --output DIR)" >&2
+		echo "release.sh: XO_RELEASE_WINDOWS=llvm needs XO_WINSYSROOT, a Windows sysroot (xwin --accept-license splat --use-winsysroot-style --preserve-ms-arch-notation --output DIR)" >&2
 		exit 1
 	fi
 fi
@@ -171,7 +178,9 @@ fi
 # the checkout's lib/xo/race, which layout copies: the host's dylib and
 # linux/arm64's static archive (built in Docker)
 race_work="${XO_RELEASE_RACE_WORK:-${TMPDIR:-/tmp}/xo-release-race}"
-for plat in darwin-arm64 darwin-amd64 linux-arm64; do
+race_plats="darwin-arm64 darwin-amd64 linux-arm64"
+[ "$win" != 0 ] && race_plats="$race_plats windows-amd64"
+for plat in $race_plats; do
 	if race_reuse "$plat"; then
 		echo "== race runtime $plat: kept lib/xo/race/$plat (XO_RELEASE_RACE=reuse)" >&2
 		continue
@@ -216,7 +225,7 @@ layout() {
 }
 
 targets="darwin/arm64 darwin/amd64 linux/arm64 linux/amd64"
-[ "${XO_RELEASE_WINDOWS:-}" = 1 ] && targets="$targets windows/amd64"
+[ "$win" != 0 ] && targets="$targets windows/amd64"
 for target in $targets; do
 	layout "$target"
 done
@@ -252,7 +261,11 @@ run "$xo1" build --backend=amd64 "${stamp[@]}" \
 echo "== linux/amd64: xo1 builds xo1 with the Go backend" >&2
 run "$xo1" build --backend=go "${stamp[@]}" --targets=linux/amd64 -o "$linux_amd64/bin/xo" compiler/xo >&2
 
-if [ "${XO_RELEASE_WINDOWS:-}" = 1 ]; then
+if [ "$win" = native ]; then
+	echo "== windows/amd64: xo1 cross builds xo1 with the amd64 backend and Xo's PE linker" >&2
+	run "$xo1" build --backend=amd64 "${stamp[@]}" --targets=windows/amd64 \
+		-o "$(stage_of windows/amd64)/bin/xo.exe" compiler/xo >&2
+elif [ "$win" = llvm ]; then
 	echo "== windows/amd64: xo1 cross builds xo1 with the LLVM backend" >&2
 	# bench/results/windows-2026-10-12.md, "xo1 built by Xo for Windows"
 	XO_CLANG="$win_clang" XO_AR="$(dirname "$win_clang")/llvm-ar" XO_WINSYSROOT="$XO_WINSYSROOT" \
