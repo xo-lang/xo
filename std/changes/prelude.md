@@ -1,5 +1,21 @@
 # prelude changes
 
+## 2026-10-22: perf: List.insert and List.remove_at move elements with one memmove (native)
+
+- Kind: perf
+- Commit: d57e5aa76
+- Found by: bench/perf/xo insrem, 80 ms native against 19 ms on the Go backend and 23 ms in Go (XO_PROF: all of it in the prelude's shift loops)
+- Go reference: slices.Insert and slices.Delete (copy, one memmove)
+- Test: golden list_insrem (every position, shared lists, Int, Bool, Str, a struct, an enum) on arm64 and LLVM against the Go backend's output, 0 leaks; fixed point
+
+On arm64 and LLVM, `xs.insert(i, x)` and `xs.remove_at(i)` with an
+index inside the list move the elements after it with one memmove
+instead of an index and a set per element (compiler/ssa listmove.xo).
+Inserting at the end, removing the last element, and out of range
+indexes behave as before. `xo bench --ab`, bench/perf/xo insrem: wall
+0.268 (73.4 to 19.7 ms), instructions 0.144, RSS unchanged. wasm keeps
+the element loop.
+
 ## 2026-10-22: perf: a large Map copied and written forks instead of copying (native)
 
 - Kind: perf
