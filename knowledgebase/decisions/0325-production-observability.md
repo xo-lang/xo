@@ -184,3 +184,24 @@ the owner's approval. See `bench/soak/README.md`.
   becomes restartable); the leak and scheduler counters gain readers.
 - Cost when unused: none (nothing registered, `/debug` unmounted, the
   rings unmapped).
+
+## Built (2026-10-21)
+
+Stage 1 0c17dba55 (std/debug, the restartable profiler), stage 2
+81c91200c and b9b44a29f (std/metrics, `Registry.middleware`), stage 3
+dd2628eb7 (std/trace). Differences from the plan above:
+
+- `xo prof URL` is not built: the compiler would need an HTTP client.
+  `curl -o p.xoraw http://HOST/debug/profile?seconds=30` then `xo prof
+  p.xoraw` does the same.
+- `with_metrics` on the server is `Registry.middleware(clock, label)` for
+  `router.wrap`: a middleware needs no server change, and the `route`
+  label is the program's own bounded name for a request.
+- The runtime counters (`xo_sched_*`) are not exported by `/metrics`; the
+  scheduler's counters are `GET /debug/sched`.
+- `/debug/requests` is `Ring.handler(auth)` of std/trace, mounted by the
+  program.
+- No program wide default registry: Xo has no program state, so main
+  makes one and passes it.
+- The profiler's ring stays mapped after a live profile (17 MB virtual);
+  madvise of the used span is a follow-up (no binding yet).
