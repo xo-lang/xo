@@ -1368,6 +1368,8 @@ fn pin_pop(w: Int) -> Int {
 /// Whether pc is in the program's own code outside every unsafe range:
 /// in some file's functions' text (tables: base, size, the ranges' count,
 /// then (start, end) offsets as 32 bit pairs, in order), not in a range.
+/// A count of -1 (the LLVM backend's one table, compiler/llvm
+/// apreempt.xo): the second word is the text's end, and no ranges.
 fn async_pc_ok(pc: Int) -> Bool {
   let parts = rt.mem_load(rt.static_word(W_UNSAFE), 0, 8)
   let n = rt.mem_load(parts, 0, 8)
@@ -1376,10 +1378,15 @@ fn async_pc_ok(pc: Int) -> Bool {
     let t = rt.mem_load(parts, 8 + 8 * i, 8)
     let base = rt.mem_load(t, 0, 8)
     let off = pc.wrapping_sub(base)
-    if off >= 0 && off < rt.mem_load(t, 8, 8) {
+    let nr = rt.mem_load(t, 16, 8)
+    let size = if nr < 0 { rt.mem_load(t, 8, 8).wrapping_sub(base) } else { rt.mem_load(t, 8, 8) }
+    if off >= 0 && off < size {
+      if nr < 0 {
+        return true
+      }
       // the last range starting at or before off
       var lo = 0
-      var hi = rt.mem_load(t, 16, 8)
+      var hi = nr
       while lo < hi {
         let mid = (lo + hi) / 2
         if rt.mem_load(t, 24 + 8 * mid, 4) <= off {

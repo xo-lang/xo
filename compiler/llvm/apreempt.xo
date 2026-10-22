@@ -122,6 +122,30 @@ fn (var g: Gen) apre_mark() {
     }
     g.apre.push(m)
   }
+  // a build with no C library starts in cabi_nolibc.xo before the main
+  // thread has its thread pointer (xo_nolibc.c's _start): nothing it
+  // reaches may read the thread local table, a guard included (its read
+  // faulted at start on Linux, 2026-10-21); that code runs before any
+  // fiber and reads no thread's structures
+  var pre: List[Bool] = List.with_capacity(n)
+  var work: List[Int] = []
+  for fi in 0..n {
+    let start = g.m.funcs[fi].file.ends_with("cabi_nolibc.xo")
+    pre.push(start)
+    if start {
+      work.push(fi)
+    }
+  }
+  while !work.is_empty() {
+    let fi = work.pop() ?? 0
+    g.apre[fi] = 0
+    for k in callees[fi] {
+      if !pre[k] {
+        pre[k] = true
+        work.push(k)
+      }
+    }
+  }
   // a guarded function that only guarded functions call runs under their
   // count: its own guard goes (each level of rs_push_word, reserve, and
   // reserve_slow counted again, 14% of maxby's instructions). Program
@@ -214,7 +238,11 @@ fn apre_leave(text: Str) -> Str {
 
 /// The unsafe range tables of LLVM builds (decision 0318 stage 4): one
 /// table, the program's own section, no ranges; every module defines
-/// them alike (weak), and static word 77 holds the list's address.
+/// them alike (weak), and static word 77 holds the list's address. The
+/// table holds the section's end, not its size, and -1 for the ranges'
+/// count, which says so (pool.xo async_pc_ok): GNU gold's LTO plugin
+/// refuses a difference of the linker defined __start_ and __stop_
+/// symbols in an initializer, and each alone links with gold, bfd, and lld.
 fn (var g: Gen) apre_tables() -> Str {
   let (start, stop) = if g.os() == "darwin" {
     ("@\"\\01section$start$__TEXT$__xo_text\"", "@\"\\01section$end$__TEXT$__xo_text\"")
@@ -222,7 +250,7 @@ fn (var g: Gen) apre_tables() -> Str {
     ("@__start_xo_text", "@__stop_xo_text")
   }
   "${start} = external hidden global i8\n${stop} = external hidden global i8\n" +
-    "@xo.unsafe.t = weak hidden constant [3 x i64] [i64 ptrtoint (ptr ${start} to i64), i64 sub (i64 ptrtoint (ptr ${stop} to i64), i64 ptrtoint (ptr ${start} to i64)), i64 0], align 8\n" +
+    "@xo.unsafe.t = weak hidden constant [3 x i64] [i64 ptrtoint (ptr ${start} to i64), i64 ptrtoint (ptr ${stop} to i64), i64 -1], align 8\n" +
     "@xo.unsafe.parts = weak hidden constant [2 x i64] [i64 1, i64 ptrtoint (ptr @xo.unsafe.t to i64)], align 8\n\n"
 }
 

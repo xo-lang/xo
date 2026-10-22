@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Linux builds with `--backend=llvm` link and run again: since asynchronous
+  preemption for LLVM (decision 0318 stage 4) every one failed to link
+  with ld.bfd's LLVM plugin and lld ("__start_xo_text can not be
+  undefined in a subtraction expression"), and with that fixed crashed at
+  start. Checked in Docker on linux/arm64 and linux/amd64 with both
+  linkers.
+
 - Allocation and free on one thread: the frees count (for XO_LEAKCHECK,
   XO_HEAPSTATS, XO_RTSTATS) only while counting is on, the free lists'
   lengths are left to the magazines of a program with threads (recounted
