@@ -215,6 +215,20 @@ keyed by layout text is a separate decision).
   two constants that read each other) on go, arm64, LLVM, and wasm;
   race_sync's lazy_const case (TestRaceSyncTableArm64: no race reported).
 
+## Addendum (2026-10-22): the two estimates, measured
+
+bench/results/time-format-cache-variants-2026-10-22.md measures what the
+Context section estimated (program bench/perf/timeformat-cache, `xo bench
+--ab`): 600,000 formats take 5,344 M instructions with the layout text each
+call, 1,995 M with a Mutex held `Map[Str, Layout]` (0.373x instructions,
+0.263x wall) and 1,710 M with a lazy `const` Layout (a further 0.856x
+instructions, 0.822x wall); Go's time.Format 983 M. Both estimates were
+high (2,500 M and 2,400 M). Choice: std callers with a fixed layout use a
+lazy const `time.Layout`; the Mutex Map cache stays the pattern only for
+layout text known at run time. The HTTP date (native/http.xo
+HTTP_DATE_LAYOUT) is the first std caller moved: Set-Cookie with an Expires
+3,079 M to 1,320 M instructions, wall 0.427x.
+
 ## Alternatives
 
 - **Compile time evaluation of any effect-free initializer**: no runtime

@@ -1406,7 +1406,10 @@ fn sc_int(s: Str) -> Int? {
 }
 
 /// TimeFormat: "Mon, 02 Jan 2006 15:04:05 GMT" of t in UTC.
-fn http_time_text(t: Time) -> Str { time.format(t, time.utc(), "{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second} GMT") }
+/// TimeFormat, parsed once (a lazy const, decision 0332: bench/results/time-format-cache-variants-2026-10-22.md).
+const HTTP_DATE_LAYOUT: time.Layout = time.layout("{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second} GMT")
+
+fn http_time_text(t: Time) -> Str { HTTP_DATE_LAYOUT.format(t, time.utc()) }
 
 /// http.ParseTime: TimeFormat, RFC 850 ("Monday, 02-Jan-06 15:04:05
 /// GMT"), or ANSIC ("Mon Jan _2 15:04:05 2006"), in UTC.
@@ -2272,7 +2275,7 @@ fn cookie_display(c: http.Cookie) -> Str {
   if let Some(t) = c.expires {
     if time.civil(t, time.utc()).date.year >= 1601 {
       b.write("; Expires=")
-      b.write(time.format(t, time.utc(), "{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second} GMT"))
+      b.write(http_time_text(t))
     }
   }
   if c.max_age > 0 {

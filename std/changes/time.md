@@ -1,5 +1,20 @@
 # std/time changes
 
+## 2026-10-22: guidance: std formats with a lazy const Layout, not the layout text
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/results/time-format-cache-variants-2026-10-22.md (ADR 0332's two estimates, measured)
+- Go reference: none
+- Test: none (std's own callers: native/http.xo HTTP_DATE_LAYOUT, native/mail.xo DATE_LAYOUT)
+
+`time.format(t, z, text)` and `time.parse` parse the layout text on every call
+(5,344 M instructions for 600,000 formats). A Mutex held Map from text to
+Layout costs 1,995 M (`xo bench --ab` 0.373x instructions) and a lazy
+`const L: time.Layout = time.layout(text)` 1,710 M (a further 0.856x
+instructions, 0.822x wall); Go's time.Format is 983 M. The const is the
+shipped choice: std callers with a fixed layout (the HTTP date) use one.
+
 ## 2026-10-22: perf: format writes digits into one byte buffer
 
 - Kind: perf

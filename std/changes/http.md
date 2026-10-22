@@ -1,5 +1,19 @@
 # std/http changes
 
+## 2026-10-22: perf: the HTTP date layout is parsed once
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/results/time-format-cache-variants-2026-10-22.md (the layout parse was 62% of a text-layout format)
+- Go reference: none (Go's time.Format has no parsed layout type; this is the lazy const of decision 0332)
+- Test: golden http_cookies (the Expires text), http_serve_content (Last-Modified)
+
+`Cookie.display`'s Expires and the Last-Modified header format their date with
+a lazy `const HTTP_DATE_LAYOUT: time.Layout` instead of parsing the layout
+text on every call. Set-Cookie with an Expires over 300,000 cookies: 3,079 M
+to 1,320 M instructions, `xo bench --ab` wall 0.427x (interval 0.403 to 0.465),
+the same output.
+
 ## 2026-10-22: perf: a server's connection fibers no longer hold 2 MiB each of resident memory
 
 - Kind: perf
