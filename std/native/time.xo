@@ -417,6 +417,22 @@ struct Item {
   /// The field as a number (field_code), so format and parse switch on
   /// an integer instead of comparing names.
   code: Int = 0
+  /// The argument as a number (item_mode), so format never compares it.
+  mode: Int = 0
+}
+
+/// The argument of field code as a number for format: month 0 two digits,
+/// 1 plain, 2 short name, 3 name; day 1 plain; weekday 1 short; frac -1
+/// trimmed else the digit count; offset 1 without a colon.
+fn item_mode(code: Int, arg: Str) -> Int {
+  match code {
+    2 => if arg == "" { 0 } else if arg == "1" { 1 } else if arg == "short" { 2 } else { 3 }
+    3 => if arg == "1" { 1 } else { 0 }
+    4 => if arg == "short" { 1 } else { 0 }
+    10 => if arg == "" { -1 } else { Int.parse(arg) ?? 9 }
+    11 => if arg == "" { 0 } else { 1 }
+    _ => 0
+  }
 }
 
 /// The code of a field name (0 for an unknown one): the length and first
@@ -705,7 +721,7 @@ fn layout_items(layout: Str) -> List[Item] ! Str {
         items.push(Item{lit: lit, field: "", arg: ""})
         lit = ""
       }
-      items.push(Item{lit: "", field: "", arg: arg, code: code})
+      items.push(Item{lit: "", field: "", arg: arg, code: code, mode: item_mode(code, arg)})
       if code == 6 {
         hour12 = true
       }
@@ -788,106 +804,128 @@ fn format_items(items: List[Item], t: Time, z: Zone) -> Str {
   let rem = local - days * 86400
   let d = date_of(days)
   let hour = rem / 3600
-  var out = StrBuilder.new()
+  var out = BytesBuilder.new()
   for it in items {
     match it.code {
-      0 => {
-        out.write(it.lit)
-      }
-      1 => {
-        out.write(pad(d.year, 4))
-      }
+      0 => out.write_str(it.lit)
+      1 => put_num(out, d.year, 4)
       2 => {
-        if it.arg == "" {
-          out.write(pad(d.month % 100, 2))
-        } else if it.arg == "1" {
-          out.write("${d.month}")
-        } else if it.arg == "short" {
-          out.write(month_short()[d.month - 1])
+        if it.mode == 0 {
+          put_num(out, d.month % 100, 2)
+        } else if it.mode == 1 {
+          put_num(out, d.month, 1)
+        } else if it.mode == 2 {
+          put_name(out, MONTHS_SHORT, d.month - 1)
         } else {
-          out.write(month_name()[d.month - 1])
+          out.write_str(month_name()[d.month - 1])
         }
       }
-      3 => {
-        if it.arg == "1" {
-          out.write("${d.day}")
-        } else {
-          out.write(pad(d.day % 100, 2))
-        }
-      }
+      3 => put_num(out, d.day % 100, if it.mode == 1 { 1 } else { 2 })
       4 => {
         let w = weekday_index(days)
-        if it.arg == "short" {
-          out.write(weekday_short()[w])
+        if it.mode == 1 {
+          put_name(out, WEEKDAYS_SHORT, w)
         } else {
-          out.write(weekday_name()[w])
+          out.write_str(weekday_name()[w])
         }
       }
-      5 => {
-        out.write(pad(hour, 2))
-      }
+      5 => put_num(out, hour, 2)
       6 => {
         var h = hour % 12
         if h == 0 {
           h = 12
         }
-        out.write(pad(h, 2))
+        put_num(out, h, 2)
       }
       7 => {
-        if hour < 12 {
-          out.write("AM")
-        } else {
-          out.write("PM")
-        }
+        out.write_byte(if hour < 12 { 65 } else { 80 })
+        out.write_byte(77)
       }
-      8 => {
-        out.write(pad(rem / 60 % 60, 2))
-      }
-      9 => {
-        out.write(pad(rem % 60, 2))
-      }
+      8 => put_num(out, rem / 60 % 60, 2)
+      9 => put_num(out, rem % 60, 2)
       10 => {
-        var digits = pad(nanos, 9)
-        if it.arg == "" {
-          while digits.ends_with("0") {
-            digits = digits[0..digits.len() - 1]
+        // the digits of the nanoseconds, trailing zeros cut when mode is -1
+        var w = it.mode
+        var v = nanos
+        if w < 0 {
+          w = 9
+          while w > 0 && v % 10 == 0 {
+            v = v / 10
+            w -= 1
           }
         } else {
-          let k = Int.parse(it.arg) ?? 9
-          digits = digits[0..k]
+          var k = 9
+          while k > w {
+            v = v / 10
+            k -= 1
+          }
         }
-        if digits != "" {
-          out.write(".")
-          out.write(digits)
+        if w > 0 {
+          out.write_byte(46)
+          put_num(out, v, w)
         }
       }
       11 => {
-        if off == 0 && it.arg == "" {
-          out.write("Z")
+        if off == 0 && it.mode == 0 {
+          out.write_byte(90)
         } else {
           // Go's sign is the offset's in whole minutes: -59s is +00:00
           var o = off
-          var sign = "+"
-          if o / 60 < 0 {
-            sign = "-"
-          }
+          let neg = o / 60 < 0
           if o < 0 {
             o = -o
           }
-          out.write(sign)
-          out.write(pad(o / 3600 % 100, 2))
-          if it.arg == "" {
-            out.write(":")
+          out.write_byte(if neg { 45 } else { 43 })
+          put_num(out, o / 3600 % 100, 2)
+          if it.mode == 0 {
+            out.write_byte(58)
           }
-          out.write(pad(o / 60 % 60, 2))
+          put_num(out, o / 60 % 60, 2)
         }
       }
-      _ => {
-        out.write(abbr_at(z, sec))
-      }
+      _ => out.write_str(abbr_at(z, sec))
     }
   }
-  out.freeze()
+  rt.cast[Bytes, Str](out.freeze())
+}
+
+const MONTHS_SHORT: Str = "JanFebMarAprMayJunJulAugSepOctNovDec"
+
+const WEEKDAYS_SHORT: Str = "MonTueWedThuFriSatSun"
+
+/// The 3 byte name number i of names.
+fn put_name(var out: BytesBuilder, names: Str, i: Int) {
+  let nb = names.bytes()
+  out.write_byte(nb[i * 3])
+  out.write_byte(nb[i * 3 + 1])
+  out.write_byte(nb[i * 3 + 2])
+}
+
+/// n in decimal, zero padded to w digits (a negative n is "-" and the
+/// digits of -n padded to w - 1), as pad.
+fn put_num(var out: BytesBuilder, n: Int, w: Int) {
+  if n < 0 {
+    out.write_byte(45)
+    put_num(out, -n, w - 1)
+    return
+  }
+  var div = 1
+  var digits = 1
+  while div <= n / 10 {
+    div = div * 10
+    digits += 1
+  }
+  var z = w - digits
+  while z > 0 {
+    out.write_byte(48)
+    z -= 1
+  }
+  var v = n
+  while div > 0 {
+    out.write_byte(UInt8(48 + v / div))
+    v = v % div
+    div = div / 10
+  }
 }
 
 /// The digits of b at pos, at most hi: (value, count).

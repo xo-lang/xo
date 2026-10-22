@@ -1244,3 +1244,16 @@ test "a Layout formats and parses as its text" {
   let got = time.RFC3339_LAYOUT.parse("2023-11-14T22:13:20Z", time.utc())
   expect(got) == time.parse("2023-11-14T22:13:20Z", time.RFC3339, time.utc())
 }
+
+test "every format field and argument form" {
+  // the output of the Str layout formatter before the byte buffer rewrite
+  // (2,625 combinations of layouts, zones, times and nanoseconds agreed)
+  let a = Time.from_unix(951782400) + Duration.from_nanos(123456789)
+  let z = time.fixed("A", 5h + 30m)
+  expect(time.format(a, z, "{year}-{month}-{day}T{hour}:{minute}:{second}{frac}{offset}")) == "2000-02-29T05:30:00.123456789+05:30"
+  expect(time.format(a, z, "{year}-{month:1}-{day:1} {hour12}:{minute}:{second}{ampm} {zone}")) == "2000-2-29 05:30:00AM A"
+  expect(time.format(a, z, "{weekday:short}, {day} {month:short} {year} {offset:compact}")) == "Tue, 29 Feb 2000 +0530"
+  expect(time.format(a, z, "{weekday:name} {month:name} {frac:1}|{frac:3}|{frac:9}|{frac:2}")) == "Tuesday February .1|.123|.123456789|.12"
+  expect(time.format(Time.from_unix(0), time.utc(), "{year}{lbrace}{rbrace}{frac}{offset}")) == "1970{}Z"
+  expect(time.format(Time.from_unix(-2208988800), time.fixed("C", -(59s)), "{year} {offset}")) == "1899 +00:00"
+}

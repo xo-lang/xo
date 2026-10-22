@@ -1,5 +1,18 @@
 # std/mail changes
 
+## 2026-10-22: perf: the Date header uses a time.Layout
+
+- Kind: perf
+- Commit: this commit
+- Found by: Xo Lead's survey of constant layouts (std/changes/time.md)
+- Go reference: net/mail Header Date (time.RFC1123Z)
+- Test: std module tests native/mail; goldens mail_basic and mail_messages
+
+`compose` formats the Date with a module level `time.layout(...)` constant
+instead of hand written civil date code. mail.compose, 200,000 messages:
+1,954 M to 1,911 M instructions (-2%); with the earlier formatter the
+layout was 13% slower.
+
 ## 2026-10-21: behavior: the Go backend runs mail.xo too
 
 - Kind: behavior

@@ -1,5 +1,21 @@
 # std/time changes
 
+## 2026-10-22: perf: format writes digits into one byte buffer
+
+- Kind: perf
+- Commit: this commit
+- Found by: the mail Date header measurement (a Layout formatter was 13% slower than a hand written one), Xo Lead
+- Go reference: time.Time.appendFormat (appendInt, appendNano)
+- Test: std module tests native/time ("every format field and argument form"; 2,625 layout, zone and time combinations agreed with the old text)
+
+`Layout.format` and `time.format` build the text in a byte buffer with the
+digits written straight in (no `"${n}"` strings, no padding by
+concatenation, no name lists built per call), and each item carries its
+argument as a number instead of comparing it. Same text. 600,000 formats
+of a Layout: 2,390 M to 1,637 M instructions (-31.5%, native arm64; Go's
+955 M, so 2.5x to 1.7x Go); the Str layout form 6,232 M to 5,626 M (it
+parses the layout on every call). bench/results/time-format-bytes-2026-10-22.md.
+
 ## 2026-10-22: feature: time.Layout, a layout parsed once
 
 - Kind: feature

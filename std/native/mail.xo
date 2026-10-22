@@ -6,6 +6,7 @@
 // error texts.
 use std/crypto
 use std/mail
+use std/time
 
 fn mailerr_display(e: mail.MailErr) -> Str { e.msg }
 
@@ -1350,27 +1351,9 @@ fn qp_encode(data: Bytes) -> Bytes {
 
 fn two(n: Int) -> Str { if n < 10 { "0${n}" } else { "${n}" } }
 
-/// t in UTC as time.RFC1123Z: `Mon, 02 Jan 2006 15:04:05 +0000`.
-fn rfc1123z(t: Time) -> Str {
-  let secs = t.unix()
-  let days = if secs >= 0 { secs / 86400 } else { (secs - 86399) / 86400 }
-  let rem = secs - days * 86400
-  // civil from days (Howard Hinnant's algorithm)
-  let z = days + 719468
-  let era = if z >= 0 { z / 146097 } else { (z - 146096) / 146097 }
-  let doe = z - era * 146097
-  let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
-  let doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
-  let mp = (5 * doy + 2) / 153
-  let d = doy - (153 * mp + 2) / 5 + 1
-  let m = if mp < 10 { mp + 3 } else { mp - 9 }
-  let y = yoe + era * 400 + (if m <= 2 { 1 } else { 0 })
-  let wd = ((days % 7) + 7 + 4) % 7
-  let names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
-  let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-  let ys = if y < 10 { "000${y}" } else if y < 100 { "00${y}" } else if y < 1000 { "0${y}" } else { "${y}" }
-  "${names[wd]}, ${two(d)} ${months[m - 1]} ${ys} ${two(rem / 3600)}:${two(rem % 3600 / 60)}:${two(rem % 60)} +0000"
-}
+const DATE_LAYOUT: time.Layout = time.layout("{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second} +0000")
+
+fn rfc1123z(t: Time) -> Str { DATE_LAYOUT.format(t, time.utc()) }
 
 fn compose(from: mail.Address, to: List[mail.Address], subject: Str, text: Str, html: Str? = None, date: Time, id: Str) -> Bytes {
   var b = BytesBuilder.new()
