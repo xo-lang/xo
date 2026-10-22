@@ -31,11 +31,19 @@ func seedDir(t *testing.T, v string, files map[string]string) string {
 	dir := t.TempDir()
 	t.Setenv("XO_SEED_URL", "file://"+dir)
 	t.Setenv("XO_CHECKOUT_CACHE", t.TempDir())
-	vd := filepath.Join(dir, "seeds", v)
-	if err := os.MkdirAll(vd, 0o755); err != nil {
+	addSeed(t, dir, v, files)
+	if err := os.WriteFile(filepath.Join(dir, "seeds", "latest.txt"), []byte(v+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "seeds", "latest.txt"), []byte(v+"\n"), 0o644); err != nil {
+	return dir
+}
+
+// addSeed writes seed v (its tarball of files and .sha256) under the
+// local seed location dir, leaving latest.txt as it is.
+func addSeed(t *testing.T, dir, v string, files map[string]string) {
+	t.Helper()
+	vd := filepath.Join(dir, "seeds", v)
+	if err := os.MkdirAll(vd, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
@@ -61,7 +69,6 @@ func seedDir(t *testing.T, v string, files map[string]string) string {
 	if err := os.WriteFile(filepath.Join(vd, plat+".tar.gz.sha256"), []byte(hex.EncodeToString(sum[:])+"  "+plat+".tar.gz\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	return dir
 }
 
 func seedFiles() map[string]string {
@@ -463,4 +470,84 @@ func TestRecordCommitDirty(t *testing.T) {
 	if got := ancestorBuild(root, []string{op}); got != op {
 		t.Fatalf("a change outside compiler/ and std/: ancestorBuild = %q, want %q", got, op)
 	}
+}
+
+// TestFetchSeedForAncestor: building a commit older than the newest
+// seed's (a bisect step) uses the newest seed cut from an ancestor of
+// HEAD, and skips a bin/xo built from a commit that is not an ancestor
+// (2026-10-22: seed 0.24.0 and a newer bin/xo built an xo of d33656fda
+// that called _xo_x_preempt, which its std did not have yet).
+func TestFetchSeedForAncestor(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git")
+	}
+	root := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", root, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"}, args...)...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("init", "-q", "-b", "main")
+	git("commit", "-q", "--allow-empty", "-m", "a")
+	a := git("rev-parse", "HEAD")
+	git("commit", "-q", "--allow-empty", "-m", "old")
+	old := git("rev-parse", "HEAD")
+	git("commit", "-q", "--allow-empty", "-m", "b")
+	b := git("rev-parse", "HEAD")
+	va, vb := "0.9.0-"+a[:8], "0.10.0-"+b[:8]
+	dir := seedDir(t, vb, seedFiles())
+	addSeed(t, dir, va, seedFiles())
+	var log bytes.Buffer
+	if got, err := FetchSeedFor(root, &log); err != nil || got != seedBin(vb) {
+		t.Fatalf("at the newest seed's commit: FetchSeedFor = %q, %v; want %q\n%s", got, err, seedBin(vb), log.String())
+	}
+	git("checkout", "-q", "--detach", old)
+	if got, err := FetchSeedFor(root, &log); err != nil || got != seedBin(va) {
+		t.Fatalf("before the newest seed's commit: FetchSeedFor = %q, %v; want %q\n%s", got, err, seedBin(va), log.String())
+	}
+	if !strings.Contains(log.String(), "using seed "+va) {
+		t.Errorf("no note of the older seed:\n%s", log.String())
+	}
+	// a seed whose commit the repository lacks (a shallow clone) is used
+	t.Setenv("XO_SEED_URL", "file://"+seedDir(t, "0.11.0-0123abcd", seedFiles()))
+	if got, err := FetchSeedFor(root, &log); err != nil || got != seedBin("0.11.0-0123abcd") {
+		t.Errorf("unknown seed commit: FetchSeedFor = %q, %v", got, err)
+	}
+
+	// bin/xo of a newer commit is no seed; of an ancestor (or with no
+	// record) it is
+	t.Setenv("XO_SEED", "")
+	t.Setenv("XO_SEED_URL", "off")
+	t.Setenv("XO_SEED_BUCKET", "")
+	t.Setenv("XO_SEED_FALLBACK", "")
+	t.Setenv("PATH", t.TempDir()+string(os.PathListSeparator)+filepath.Dir(must(exec.LookPath("git"))))
+	git("checkout", "-q", "--detach", old)
+	bin := filepath.Join(root, "bin", exeName("xo"))
+	os.MkdirAll(filepath.Dir(bin), 0o755)
+	os.WriteFile(bin, []byte("x"), 0o755)
+	for _, c := range []struct {
+		commit string
+		want   bool
+	}{{b, false}, {a, true}, {"", true}} {
+		os.WriteFile(filepath.Join(root, "bin", "xo.commit"), []byte(c.commit+"\n"), 0o644)
+		seeds, err := Seeds(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := len(seeds) > 0 && seeds[0].Path == bin
+		if got != c.want {
+			t.Errorf("bin/xo of %q: a seed %v, want %v", c.commit, got, c.want)
+		}
+	}
+}
+
+func must[T any](v T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+	return v
 }

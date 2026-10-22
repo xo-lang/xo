@@ -615,7 +615,13 @@ func Seeds(root string) ([]Seed, error) {
 		out = append(out, Seed{Path: p, Why: why})
 	}
 	add(os.Getenv("XO_SEED"), "$XO_SEED")
-	add(filepath.Join(root, "bin", exeName("xo")), "the checkout's earlier bin/xo")
+	// not a bin/xo built from a commit that is not an ancestor of HEAD (a
+	// newer one, after checking out an older commit to bisect): its
+	// output calls runtime exports the older std lacks
+	// (gotchas/xobuild-seed-newer-than-commit.md)
+	if c, err := os.ReadFile(filepath.Join(root, "bin", "xo.commit")); err != nil || !knownCommit(root, strings.TrimSpace(string(c))) || isAncestor(root, strings.TrimSpace(string(c))) {
+		add(filepath.Join(root, "bin", exeName("xo")), "the checkout's earlier bin/xo")
+	}
 	if base, err := cacheBase(); err == nil {
 		ms, _ := filepath.Glob(filepath.Join(base, "checkout", "*", exeName("xo")))
 		sort.Slice(ms, func(i, j int) bool { return modTime(ms[i]).After(modTime(ms[j])) })
@@ -628,7 +634,7 @@ func Seeds(root string) ([]Seed, error) {
 	}
 	if loc := SeedURL(); loc != "off" {
 		// one hop from the newest seed (decision 0216 item 1)
-		out = append(out, Seed{Why: "the prebuilt seed of " + loc, Resolve: FetchSeed, NoChain: true})
+		out = append(out, Seed{Why: "the prebuilt seed of " + loc, Resolve: func(log io.Writer) (string, error) { return FetchSeedFor(root, log) }, NoChain: true})
 	}
 	if SeedFallback() == "chain" {
 		out = append(out, rootSeed)
@@ -867,6 +873,12 @@ func BuildXo(root, seed, out string) error {
 	}
 	if !isFile(tmp) {
 		return fmt.Errorf("no binary written\n%s", lastLines(o, 20))
+	}
+	// an xo that cannot start is no build: a seed newer than root's std
+	// links calls to runtime exports it lacks, which only the dynamic
+	// loader reports (`dyld: Symbol not found: _xo_x_preempt`, 2026-10-22)
+	if vo, err := runIn(root, nil, tmp, "version"); err != nil {
+		return fmt.Errorf("the built xo does not run (%v)\n%s", err, lastLines(vo, 5))
 	}
 	return os.Rename(tmp, out)
 }

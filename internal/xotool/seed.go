@@ -105,7 +105,12 @@ func (s seedStore) aws(timeout time.Duration, args ...string) ([]byte, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "aws", append(args, "--region", region, "--only-show-errors")...)
+	args = append(args, "--region", region)
+	if len(args) > 1 && args[1] == "cp" {
+		// s3 cp only (s3 ls rejects it)
+		args = append(args, "--only-show-errors")
+	}
+	cmd := exec.CommandContext(ctx, "aws", args...)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	if err := cmd.Run(); err != nil {
@@ -120,6 +125,35 @@ func (s seedStore) read(rel string) ([]byte, error) {
 		return os.ReadFile(filepath.Join(d, filepath.FromSlash(rel)))
 	}
 	return s.aws(2*time.Minute, "s3", "cp", s.loc+"/"+rel, "-")
+}
+
+// list returns the names of the entries under the prefix dir.
+func (s seedStore) list(dir string) ([]string, error) {
+	if d := s.local(); d != "" {
+		es, err := os.ReadDir(filepath.Join(d, filepath.FromSlash(dir)))
+		if err != nil {
+			return nil, err
+		}
+		var out []string
+		for _, e := range es {
+			if e.IsDir() {
+				out = append(out, e.Name())
+			}
+		}
+		return out, nil
+	}
+	b, err := s.aws(2*time.Minute, "s3", "ls", s.loc+"/"+dir+"/")
+	if err != nil {
+		return nil, err
+	}
+	// "                           PRE 0.24.0-e2a31201/"
+	var out []string
+	for _, l := range strings.Split(string(b), "\n") {
+		if f := strings.Fields(l); len(f) == 2 && f[0] == "PRE" {
+			out = append(out, strings.TrimSuffix(f[1], "/"))
+		}
+	}
+	return out, nil
 }
 
 // fetch copies the object rel to the file dst.
@@ -167,6 +201,114 @@ func FetchSeed(log io.Writer) (string, error) {
 		return "", err
 	}
 	return fetchSeedVersion(base, v, plat, log)
+}
+
+// FetchSeedFor is FetchSeed for building root: when the newest seed was
+// cut from a commit that is not an ancestor of root's HEAD (a bisect step
+// or an older branch), it is the newest seed whose commit is, from the
+// seeds unpacked in the cache and those at the seed location. A seed
+// newer than the sources emits calls into runtime exports their std does
+// not have yet (`dyld: Symbol not found: _xo_x_preempt` for a commit
+// before the 0.24.0 seed, 2026-10-22, gotchas/xobuild-seed-newer-than-commit.md).
+// A seed whose commit this repository does not have (a shallow clone)
+// cannot be placed and is not chosen over the newest.
+func FetchSeedFor(root string, log io.Writer) (string, error) {
+	base, err := cacheBase()
+	if err != nil {
+		return "", err
+	}
+	plat := HostPlatform()
+	v, err := LatestSeedVersion()
+	if err != nil {
+		if c := newestCachedSeedFor(root, base, plat); c != "" {
+			fmt.Fprintf(log, "xotool: %v; using the seed already unpacked at %s\n", err, c)
+			return c, nil
+		}
+		return "", err
+	}
+	c := seedCommit(v)
+	if c == "" || !knownCommit(root, c) || isAncestor(root, c) {
+		return fetchSeedVersion(base, v, plat, log)
+	}
+	names := cachedSeeds(base, plat)
+	if more, err := (seedStore{SeedURL()}).list("seeds"); err == nil {
+		names = append(names, more...)
+	} else {
+		fmt.Fprintf(log, "xotool: listing the seeds of %s: %v\n", SeedURL(), err)
+	}
+	if best := newestAncestorSeed(root, names); best != "" {
+		fmt.Fprintf(log, "xotool: seed %s is newer than %s (its commit is not an ancestor of HEAD); using seed %s\n", v, root, best)
+		return fetchSeedVersion(base, best, plat, log)
+	}
+	return "", fmt.Errorf("the newest seed %s was cut after %s's HEAD and no seed at %s or in %s comes from an ancestor of it", v, root, SeedURL(), filepath.Join(base, "seeds"))
+}
+
+// seedCommit is the commit part of a seed name (<version>-<8 hex>), or "".
+func seedCommit(v string) string {
+	i := strings.LastIndex(v, "-")
+	if i < 0 {
+		return ""
+	}
+	c := v[i+1:]
+	if len(c) < 7 || strings.Trim(c, "0123456789abcdef") != "" {
+		return ""
+	}
+	return c
+}
+
+// knownCommit reports whether root's repository has commit c.
+func knownCommit(root, c string) bool {
+	return exec.Command("git", "-C", root, "rev-parse", "--verify", "-q", c+"^{commit}").Run() == nil
+}
+
+// isAncestor reports whether commit c is an ancestor of root's HEAD (or
+// HEAD itself).
+func isAncestor(root, c string) bool {
+	return exec.Command("git", "-C", root, "merge-base", "--is-ancestor", c, "HEAD").Run() == nil
+}
+
+// newestAncestorSeed is the highest version of the seed names whose
+// commit is an ancestor of root's HEAD, or "".
+func newestAncestorSeed(root string, names []string) string {
+	best := ""
+	for _, n := range names {
+		if !seedNameRE.MatchString(n) || (best != "" && !versionLess(seedVersion(best), seedVersion(n))) {
+			continue
+		}
+		if c := seedCommit(n); c != "" && isAncestor(root, c) {
+			best = n
+		}
+	}
+	return best
+}
+
+// seedVersion is the version part of a seed name.
+func seedVersion(n string) string {
+	if c := seedCommit(n); c != "" {
+		return strings.TrimSuffix(n, "-"+c)
+	}
+	return n
+}
+
+// cachedSeeds are the names of the seeds unpacked in base/seeds for plat.
+func cachedSeeds(base, plat string) []string {
+	ms, _ := filepath.Glob(filepath.Join(base, "seeds", "*", plat, "tree", "xo", "bin", seedExe()))
+	var out []string
+	for _, m := range ms {
+		if isFile(m) {
+			out = append(out, filepath.Base(filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(m)))))))
+		}
+	}
+	return out
+}
+
+// newestCachedSeedFor is newestCachedSeed, preferring the newest seed
+// whose commit is an ancestor of root's HEAD.
+func newestCachedSeedFor(root, base, plat string) string {
+	if n := newestAncestorSeed(root, cachedSeeds(base, plat)); n != "" {
+		return filepath.Join(base, "seeds", n, plat, "tree", "xo", "bin", seedExe())
+	}
+	return newestCachedSeed(base, plat)
 }
 
 func seedExe() string { return exeName("xo") }

@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `go run ./scripts/xobuild` builds an older commit (a bisect step) with
+  the newest prebuilt seed cut from an ancestor of HEAD, skips a bin/xo
+  built from a newer commit, and rejects a built xo that cannot run:
+  a commit before seed 0.24.0 got an xo that stopped at `dyld: Symbol
+  not found: _xo_x_preempt`.
 - `xo dev unwind` and `xo dev debug` name a frame without DWARF in any
   instruction section, not only `__text`: an LLVM build's functions in
   `__xo_text` (decision 0318 stage 4) showed as `?`, and `frame N`
