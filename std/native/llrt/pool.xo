@@ -594,6 +594,13 @@ fn np_block(p: Int, w: Int, mf: Int) -> Int {
     rt.slot_add(dlk, DLK_NPBLK, -1, SEQ_CST)
     return 0
   }
+  if aw == 2 && layer() == 3 {
+    // Windows: a timed wait rounds up to the system timer (15.6 ms by
+    // default), so the grace is spun out instead (grace_spin)
+    grace_spin(p)
+    rt.slot_add(dlk, DLK_NPBLK, -1, SEQ_CST)
+    return 0
+  }
   plock(p)
   dl_check(p)
   punlock(p)
@@ -932,6 +939,21 @@ pub fn steal_round(p: Int, w: Int, last: Int) -> Int {
   0
 }
 
+/// Waits out a run-next slot's grace by spinning, until it has passed or
+/// the only work is no longer slots in their grace (any_work 2): on
+/// Windows, where a timed wait (WaitOnAddress, GetQueuedCompletionStatusEx)
+/// rounds up to the system timer's 15.6 ms, 300 times the grace (Xo Lang
+/// 3's IOCP review, 2026-10-22).
+fn grace_spin(p: Int) {
+  let until = sysio.mono_ns().wrapping_add(NEXT_GRACE_NS)
+  while sysio.mono_ns() < until && any_work(p) == 2 {
+    rt.spin_hint()
+    rt.spin_hint()
+    rt.spin_hint()
+    rt.spin_hint()
+  }
+}
+
 /// Whether some queue holds an item (a worker about to sleep looks again
 /// after it counted itself idle): 1, 2 when the only items are run-next
 /// slots still in their grace (NEXT_GRACE_NS: no other worker may take
@@ -1058,8 +1080,14 @@ fn go_idle(p: Int, w: Int) -> Int {
   let aw = any_work(p)
   if aw == 2 && rt.slot_load(w, W_WAKEW_I, ACQUIRE) == 0 {
     // only run-next slots in their grace: wait it out (or a wakep) on
-    // the futex, then look for them as np_block does in the poller
-    futex_wait_us(w.wrapping_add(W_WAKEW), 0, NEXT_GRACE_NS / 1000)
+    // the futex, then look for them as np_block does in the poller;
+    // Windows' WaitOnAddress takes whole milliseconds, rounded up to the
+    // system timer, so there the grace is spun out
+    if layer() == 3 {
+      grace_spin(p)
+    } else {
+      futex_wait_us(w.wrapping_add(W_WAKEW), 0, NEXT_GRACE_NS / 1000)
+    }
   }
   if aw != 0 {
     plock(p)
