@@ -51,3 +51,9 @@ with_read has taken (decision 0118's 2026-10-22 addendum: CRUD 2.15x and
 1.93x at 3 and 6 cores). To find it: XO_RTSTATS=1 sig_mutex per request
 near 1 at any core count, and an execution trace (XO_TRACE) whose parks
 by reason are mostly `mutex`.
+Correction (2026-10-22 08:40): the yield's gain is not the convoy's end.
+Readers parked behind a free Mutex and the Mutex parks stay as many with
+the yield; what falls is workers sleeping and being woken to take the
+woken writer (futex_wait 1.18 to 0.25 per request at 6 cores; decision
+0118's correction). Count before naming a mechanism: an XO_RTSTATS probe
+of the event the explanation needs is a few lines.
