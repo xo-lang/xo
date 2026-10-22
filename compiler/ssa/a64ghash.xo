@@ -88,3 +88,79 @@ pub fn ghash4_neon_lines(y: Str, hp: Str, d: Str) -> List[Str] {
     "str q26, [${y}]",
   ]
 }
+
+/// The V registers ghash_loop_lines clobbers: v0 to v7 (the four H powers
+/// and their swapped halves, held across the loop) and ghash4's.
+pub fn ghash_loop_vregs() -> List[Int] { [0, 1, 2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 30, 31] }
+
+/// cpu.ghash_blocks on arm64 (Xo Lang 3's AES-GCM profile, 2026-10-22:
+/// ghash4 a call per 64 bytes, its state and H powers through memory each
+/// time, ran slower than the scalar ghash64): the GHASH of the n bytes at
+/// d (a multiple of 64) into the state at y, ghash4's step in a loop with
+/// the state in v16 and the H powers at hp in v0 to v7 throughout; p and
+/// c are scratch registers for the data pointer and the bytes left.
+pub fn ghash_loop_lines(y: Str, hp: Str, d: Str, n: Str, p: Str, c: Str) -> List[Str] {
+  var t = ["movi v31.16b, #0", "movi v30.16b, #194", "shl v30.2d, v30.2d, #56", "ldr q16, [${y}]"]
+  for j in 0..4 {
+    t.push(if j == 0 { "ldr q${j}, [${hp}]" } else { "ldur q${j}, [${hp}, #${24 * j}]" })
+    t.push("ext v${4 + j}.16b, v${j}.16b, v${j}.16b, #8")
+  }
+  t = t + ["mov ${p}, ${d}", "mov ${c}, ${n}", "cbz ${c}, 2f", "1:"]
+  for j in [1, 2, 3, 0] {
+    t.push(if j == 0 { "ldr q17, [${p}]" } else { "ldr q17, [${p}, #${16 * j}]" })
+    t.push("rev64 v17.16b, v17.16b")
+    if j == 0 {
+      t.push("eor v17.16b, v17.16b, v16.16b")
+    }
+    let h = "v${j}"
+    let hx = "v${4 + j}"
+    if j == 1 {
+      t = t + [
+        "pmull2 v20.1q, v17.2d, ${hx}.2d",
+        "pmull v21.1q, v17.1d, ${hx}.1d",
+        "pmull v23.1q, v17.1d, ${h}.1d",
+        "pmull2 v24.1q, v17.2d, ${h}.2d",
+        "eor v23.16b, v23.16b, v24.16b",
+      ]
+    } else {
+      t = t + [
+        "pmull2 v24.1q, v17.2d, ${hx}.2d",
+        "pmull v25.1q, v17.1d, ${hx}.1d",
+        "pmull v26.1q, v17.1d, ${h}.1d",
+        "pmull2 v27.1q, v17.2d, ${h}.2d",
+        "eor v20.16b, v20.16b, v24.16b",
+        "eor v21.16b, v21.16b, v25.16b",
+        "eor v26.16b, v26.16b, v27.16b",
+        "eor v23.16b, v23.16b, v26.16b",
+      ]
+    }
+  }
+  // ghash4_neon_lines' reduction, the result (y1, y0) left in v16
+  t = t + [
+    "shl v27.2d, v20.2d, #1",
+    "pmull v28.1q, v27.1d, v30.1d",
+    "ext v24.16b, v31.16b, v23.16b, #8",
+    "ext v25.16b, v23.16b, v31.16b, #8",
+    "eor v20.16b, v20.16b, v24.16b",
+    "eor v21.16b, v21.16b, v25.16b",
+    "ushr v24.2d, v20.2d, #63",
+    "ushr v25.2d, v21.2d, #63",
+    "shl v20.2d, v20.2d, #1",
+    "shl v21.2d, v21.2d, #1",
+    "ext v26.16b, v31.16b, v24.16b, #8",
+    "ext v24.16b, v24.16b, v25.16b, #8",
+    "eor v20.16b, v20.16b, v26.16b",
+    "eor v21.16b, v21.16b, v24.16b",
+    "ext v25.16b, v20.16b, v21.16b, #8",
+    "ext v26.16b, v31.16b, v27.16b, #8",
+    "eor v25.16b, v25.16b, v28.16b",
+    "eor v25.16b, v25.16b, v26.16b",
+    "pmull v24.1q, v25.1d, v30.1d",
+    "trn2 v26.2d, v25.2d, v21.2d",
+    "ext v27.16b, v31.16b, v25.16b, #8",
+    "eor v26.16b, v26.16b, v24.16b",
+    "eor v26.16b, v26.16b, v27.16b",
+    "ext v16.16b, v26.16b, v26.16b, #8",
+  ]
+  t + ["add ${p}, ${p}, #64", "subs ${c}, ${c}, #64", "b.hi 1b", "2:", "str q16, [${y}]"]
+}

@@ -558,6 +558,31 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
       keep(blk)
       Some(r)
     }
+    "ghash_blocks" => {
+      // the state a (16 bytes), the H powers b (64 bytes, as ghash4),
+      // the data c (a multiple of 64 bytes); the new state
+      let st = block(a)
+      var k: List[Int] = []
+      for i in 0..4 {
+        let p0 = rt.bytes_word(b, 16 * i)
+        let p1 = rt.bytes_word(b, 16 * i + 8)
+        k = k + [p0, p1, p0 ^ p1]
+      }
+      var blk: List[Int] = []
+      for i in 0..c.len() / 8 {
+        blk.push(rt.bytes_word(c, 8 * i))
+      }
+      if soft {
+        ghash_blocks_soft(addr(st), addr(k), addr(blk), c.len())
+      } else {
+        ghash_blocks(addr(st), addr(k), addr(blk), c.len())
+      }
+      let r = words16(rt.mem_load(addr(st), 0, 8), rt.mem_load(addr(st), 8, 8))
+      keep(st)
+      keep(k)
+      keep(blk)
+      Some(r)
+    }
     "sha256_block" => {
       var st: List[Int] = []
       for i in 0..8 {
@@ -604,6 +629,31 @@ pub fn ghash4(y: Int, hp: Int, d: Int) { ghash4_soft(y, hp, d) }
 fn ghash_shl(x: Int, s: Int) -> Int { x.wrapping_shl(s) }
 
 fn ghash_shr(x: Int, s: Int) -> Int { x.shr_logical(s) }
+
+/// The GHASH of the n bytes at d (a multiple of 64) into the state at y,
+/// 64 bytes at a time as ghash4, with the same H powers at hp. arm64 and
+/// LLVM there run one loop with the state and the powers in vector
+/// registers (ssa a64ghash.xo ghash_loop_lines); elsewhere a ghash4 per
+/// 64 bytes.
+pub fn ghash_blocks(y: Int, hp: Int, d: Int, n: Int) { ghash_blocks_by4(y, hp, d, n) }
+
+/// ghash_blocks' body on the targets that do not lower it.
+fn ghash_blocks_by4(y: Int, hp: Int, d: Int, n: Int) {
+  var i = 0
+  while i + 64 <= n {
+    ghash4(y, hp, d.wrapping_add(i))
+    i += 64
+  }
+}
+
+/// ghash_blocks' portable body (the cpu_prims golden's reference).
+pub fn ghash_blocks_soft(y: Int, hp: Int, d: Int, n: Int) {
+  var i = 0
+  while i + 64 <= n {
+    ghash4_soft(y, hp, d.wrapping_add(i))
+    i += 64
+  }
+}
 
 /// ghash4's body.
 pub fn ghash4_soft(y: Int, hp: Int, d: Int) {

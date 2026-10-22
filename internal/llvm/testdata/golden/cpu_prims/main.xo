@@ -90,6 +90,24 @@ fn main(os: Os) {
       os.stdio.println("${i}${sfx} carry ${k.to_hex()} clmul ${m.to_hex()} round ${r.to_hex()} last ${l.to_hex()} enc ${e.to_hex()}")
     }
   }
+  // the GHASH loop (cpu.ghash_blocks): several 64 byte steps with the
+  // state and H powers in registers on arm64 and LLVM, against the
+  // portable body
+  for (i, a) in inputs.indexed() {
+    var hk = b""
+    for j in 1..5 {
+      hk = hk + inputs[(i + j) % inputs.len()]
+    }
+    for nb in [0, 1, 2, 4, 16] {
+      var data = b""
+      for j in 0..4 * nb {
+        data = data + inputs[(i + 5 + j) % inputs.len()]
+      }
+      let g = internal.crypto_op("cpu.ghash_blocks", a, hk, data, b"")
+      let gs = internal.crypto_op("cpu.ghash_blocks_soft", a, hk, data, b"")
+      os.stdio.println("ghashn ${i} ${64 * nb} ${g.to_hex()} ${if g == gs { "same" } else { "soft ${gs.to_hex()}" }}")
+    }
+  }
   // four blocks at once (cpu.aes_enc10x4, 12x4, 14x4): the four states
   // side by side on arm64 and LLVM, against the portable body; 11, 13
   // and 15 round keys from the inputs

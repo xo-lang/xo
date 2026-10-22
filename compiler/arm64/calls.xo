@@ -1323,6 +1323,18 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.clobber()
       g.set(v, [])
     }
+    "rt.ghash_blocks" => {
+      // ssa.ghash_loop_lines: $u0 the state, $u1 the H powers, $u2 the
+      // data, $u3 its length; x9 and x10 its pointer and count, its V
+      // registers clobbered
+      var cl = [9, 10]
+      for r in ssa.ghash_loop_vregs() {
+        cl.push(FP_BASE + r)
+      }
+      let _i = g.add(Inst{kind: K_PLAIN, text: ssa.ghash_loop_lines("$u0", "$u1", "$u2", "$u3", "x9", "x10").join("\n"), us: [g.real(g.word(x.args[0])), g.real(g.word(x.args[1])), g.real(g.word(x.args[2])), g.real(g.word(x.args[3]))], clobbers: cl})
+      g.clobber()
+      g.set(v, [])
+    }
     "rt.chacha_blocks4" => {
       // decision 0329: the four blocks in vector registers, one 32 bit
       // lane each (chacha_neon), clobbering the caller saved V registers

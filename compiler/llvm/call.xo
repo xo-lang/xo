@@ -796,6 +796,20 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       clob = clob + ",~{memory}"
       g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, ptr ${g.raw_ptr(x.args[2])})")
     }
+    "rt.ghash_blocks" => {
+      // arm64 only (ssa call.xo): ssa.ghash_loop_lines as inline asm, x9,
+      // x10 and its V registers clobbered
+      var t = [".arch_extension crypto"]
+      for l in ssa.ghash_loop_lines("$0", "$1", "$2", "$3", "x9", "x10") {
+        t.push(l)
+      }
+      var clob = "r,r,r,r,~{x9},~{x10}"
+      for r in ssa.ghash_loop_vregs() {
+        clob = clob + ",~{q${r}}"
+      }
+      clob = clob + ",~{memory},~{cc}"
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, ptr ${g.raw_ptr(x.args[2])}, i64 ${g.op(x.args[3])})")
+    }
     "rt.aes_round" | "rt.aes_last" => {
       let last = aux_str(x.aux) == "rt.aes_last"
       let p = g.raw_ptr(x.args[0])

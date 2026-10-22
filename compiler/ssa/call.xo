@@ -210,6 +210,7 @@ fn (var b: Builder) cpu_call(x: Expr, ci: check.CallInfo) -> Int? {
     "chacha_blocks4" => if b.goarch == "arm64" { "chacha_blocks4" } else { "" }
     // decision 0339: NEON on arm64; amd64 runs the portable body
     "ghash4" => if b.goarch == "arm64" { "ghash4" } else { "" }
+    "ghash_blocks" => if b.goarch == "arm64" { "ghash_blocks" } else { "" }
     // SSE2 on amd64 (x86mlkem.xo), NEON on arm64 (a64mlkem.xo)
     "mlkem_ntt" | "mlkem_inverse_ntt" | "mlkem_mul_acc" => if b.goarch == "amd64" || b.goarch == "arm64" { b.obj_name(fo) } else { "" }
     "cpuid1_ecx" => "cpuid1_ecx"

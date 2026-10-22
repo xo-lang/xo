@@ -763,6 +763,14 @@ func cryptoCPU(what string, a, b, c Bytes) (Bytes, bool) {
 		out := make([]byte, 8)
 		binary.LittleEndian.PutUint64(out, hi)
 		return Bytes(out), true
+	case "ghash_blocks":
+		// ghash4 over each 64 bytes of c in turn (cpu.ghash_blocks)
+		st := a
+		for i := 0; i+64 <= len(c); i += 64 {
+			o, _ := cryptoCPU("ghash4", st, b, c[i:i+64])
+			st = o
+		}
+		return st, true
 	case "ghash4":
 		// GHASH of the 64 bytes c into the state a (y1, y0 as little endian
 		// words) with the H powers b (8 little endian words: p0, p1 a block;
