@@ -102,9 +102,12 @@ fn (var g: G) x86_emit() {
   }
   // windows/amd64 keeps frame words for borrowed registers only in a
   // function that borrows one (x86_scratch_b): emitted again with them
-  // when the first emission borrowed
+  // when the first emission borrowed (its debug records, rows and labels
+  // dropped with its text: the second's rows named the first's labels)
   let text = g.text.len()
   let (stubs, nstub, sites, stub_sites, ncs) = (g.stubs, g.nstub, g.sites, g.stub_sites, g.ncs)
+  let (dbgs, dl_last, dl_last_inl, dl_rows, dl_stub_rows, dl_n, du_n) = (g.dbgs.len(), g.dl_last, g.dl_last_inl, g.dl_rows, g.dl_stub_rows, g.dl_n, g.du_n)
+  let (dv_stubs, stub_sp, dv_copies_at, dv_copies_made, vranges) = (g.dv_stubs, g.stub_sp, g.dv_copies_at, g.dv_copies_made, g.vranges)
   g.borrow_words = false
   g.borrow_short = false
   g.x86_emit_once()
@@ -115,6 +118,18 @@ fn (var g: G) x86_emit() {
     g.sites = sites
     g.stub_sites = stub_sites
     g.ncs = ncs
+    g.dbgs = g.dbgs[0..dbgs]
+    g.dl_last = dl_last
+    g.dl_last_inl = dl_last_inl
+    g.dl_rows = dl_rows
+    g.dl_stub_rows = dl_stub_rows
+    g.dl_n = dl_n
+    g.du_n = du_n
+    g.dv_stubs = dv_stubs
+    g.stub_sp = stub_sp
+    g.dv_copies_at = dv_copies_at
+    g.dv_copies_made = dv_copies_made
+    g.vranges = vranges
     g.borrow_words = true
     g.borrow_short = false
     g.x86_emit_once()

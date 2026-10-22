@@ -71,7 +71,7 @@ fn race_release(a: Int) { sanhook.release(a) }
 /// ThreadSanitizer's callback (tsan_go.cpp go_runtime_cb), with cmd 0
 /// the thread's Processor stored at ctx (sanhook.race_proc), 1 a pc to
 /// symbolize (SymbolizeCodeContext: pc, func, file, line, off, res): its
-/// function's name from racesym.xo's table (no file or line yet), one
+/// function's name, file and line from racesym.xo's tables, one
 /// frame per pc (res 1 and the pc unchanged), 2 a data address: none (res
 /// stays 0). It runs inside a report: nothing here allocates.
 fn race_cb(cmd: Int, ctx: Int) {
@@ -79,6 +79,7 @@ fn race_cb(cmd: Int, ctx: Int) {
     rt.mem_store(ctx, 0, sanhook.race_proc(), 8)
   } else if cmd == 1 {
     rt.mem_store(ctx, 8, racesym.lookup(rt.mem_load(ctx, 0, 8)), 8)
+    racesym.line(rt.mem_load(ctx, 0, 8), ctx + 16)
     rt.mem_store(ctx, 40, 1, 8)
   }
 }

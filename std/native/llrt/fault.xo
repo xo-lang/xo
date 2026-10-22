@@ -113,7 +113,13 @@ fn trace(c: Int) {
   // the block: the frame count, the words a frame, then the frames (a
   // return address, and its registers for XO_TRACEBACK=locals)
   let f = rt.mem_load(rt.static_word(TB), 0, 8)
-  let rw = if (f & 1) == 1 { TB_REGS } else { 0 }
+  // (windows/amd64's walk keeps no registers, unwind.xo trace_frames:
+  // its frames alone, where asking for them gave an empty traceback)
+  let regs = (f & 1) == 1 && match target.os {
+    TargetOs.Windows => false
+    TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi => true
+  }
+  let rw = if regs { TB_REGS } else { 0 }
   let b = rt.heap_large(TB_HDR + 8 * (1 + rw) * TB_DEPTH)
   let n = unwind.trace_frames(b + TB_HDR, TB_DEPTH, rw)
   rt.mem_store(b, 0, n, 8)

@@ -7,8 +7,12 @@
 // SECREL); a call of an imported function goes through a `jmp *IAT` thunk;
 // .reloc holds the base relocations; the COFF symbol table follows the
 // sections as lld-link's /debug:symtab writes it (the profiler and the
-// fault traceback read it, std/native/llrt/prof.xo coff_symbols). Which
-// DLL exports an imported function is the caller's (PEOpts.imports).
+// fault traceback read it, std/native/llrt/prof.xo coff_symbols). The
+// objects' DWARF (.debug_line and the rest) is kept, merged by name into
+// discardable sections after .reloc, named through the string table
+// ("/4"), as MinGW's linkers write them: the program reads its own
+// (std/native/llrt/dwline.xo) for the lines of its reports. Which DLL
+// exports an imported function is the caller's (PEOpts.imports).
 
 const PE_BASE = 0x140000000
 const PE_SECT_ALIGN = 0x1000
@@ -24,6 +28,8 @@ const PO_PDATA = 3
 const PO_TLS = 4
 const PO_RSRC = 5
 const PO_RELOC = 6
+/// the first .debug_ section (the others after it, in first seen order)
+const PO_DEBUG = 7
 
 /// The link's settings: the entry symbol, the DLL of each function the
 /// program may import (by symbol), the subsystem (3: the console), the
@@ -120,10 +126,25 @@ pub fn link_pe(objs: List[CObj], o: PEOpts) -> Result[Bytes, Str] {
   // size, and the places to move past .data's bytes once they are known
   var bss = 0
   var bss_places: List[(Int, Int)] = []
+  // the .debug_ sections' names, by output section from PO_DEBUG
+  var dnames: List[Str] = []
   for ob in objs {
     var ps: List[PEPlace] = []
     for s in ob.sects {
-      let k = pe_out(s)
+      var k = pe_out(s)
+      if s.name.starts_with(".debug_") && (s.chars & IMAGE_SCN_LNK_REMOVE) == 0 {
+        k = -1
+        for (di, d) in dnames.indexed() {
+          if d == s.name {
+            k = PO_DEBUG + di
+          }
+        }
+        if k < 0 {
+          k = PO_DEBUG + dnames.len()
+          dnames.push(s.name)
+          bufs.push([])
+        }
+      }
       if k < 0 {
         ps.push(PEPlace{out: -1, off: 0})
         continue
@@ -337,9 +358,12 @@ pub fn link_pe(objs: List[CObj], o: PEOpts) -> Result[Bytes, Str] {
   }
   // layout: the headers, then each section that has contents (.reloc's
   // size known after the relocations: placed last)
-  let nsect_max = 7
+  let nsect_max = PO_DEBUG + dnames.len()
   let hdr = pe_up(64 + 4 + 20 + 240 + 40 * nsect_max, PE_FILE_ALIGN)
-  var rva: List[Int] = [0, 0, 0, 0, 0, 0, 0]
+  var rva: List[Int] = []
+  for _ in 0..nsect_max {
+    rva.push(0)
+  }
   var next = PE_SECT_ALIGN
   for k in [PO_TEXT, PO_RDATA, PO_DATA, PO_PDATA, PO_TLS] {
     if bufs[k].is_empty() {
@@ -393,13 +417,16 @@ pub fn link_pe(objs: List[CObj], o: PEOpts) -> Result[Bytes, Str] {
         } else if r.typ == IMAGE_REL_AMD64_ADDR64 {
           let a = get_le(bufs[p.out], at, 8)
           put_le(bufs[p.out], at, if t.abs { t.off + a } else { PE_BASE + sym_rva(t) + a }, 8)
-          if !t.abs {
+          // (DWARF's addresses are not loaded: no base relocation; its
+          // reader adds the image's distance from PE_BASE)
+          if !t.abs && p.out < PO_DEBUG {
             based.push(site)
           }
         } else if r.typ == IMAGE_REL_AMD64_ADDR32NB {
           put_le(bufs[p.out], at, sym_rva(t) + get_le(bufs[p.out], at, 4), 4)
         } else if r.typ == IMAGE_REL_AMD64_SECREL {
-          // the offset in the target's output section (the TLS block)
+          // the offset in the target's output section (the TLS block,
+          // or a .debug_ section)
           let p2 = places[t.obj][t.sect]
           put_le(bufs[p.out], at, p2.off + t.off + get_le(bufs[p.out], at, 4), 4)
         } else {
@@ -467,6 +494,12 @@ pub fn link_pe(objs: List[CObj], o: PEOpts) -> Result[Bytes, Str] {
     i = j
     n = 0
   }
+  // the .debug_ sections after .reloc
+  next = pe_up(next + bufs[PO_RELOC].len(), PE_SECT_ALIGN)
+  for di in 0..dnames.len() {
+    rva[PO_DEBUG + di] = next
+    next = pe_up(next + bufs[PO_DEBUG + di].len(), PE_SECT_ALIGN)
+  }
   // the entry
   var entry = -1
   if let Some((eo, es)) = globals.get(o.entry) {
@@ -476,22 +509,27 @@ pub fn link_pe(objs: List[CObj], o: PEOpts) -> Result[Bytes, Str] {
   if entry < 0 {
     return Err("the entry ${o.entry} is not defined")
   }
-  Ok(pe_write(bufs, rva, hdr, entry, o, has_tls, tls_dir, idir, dlls.len(), iat_start, iat_size, objs, places, bss))
+  Ok(pe_write(bufs, rva, hdr, entry, o, has_tls, tls_dir, idir, dlls.len(), iat_start, iat_size, objs, places, bss, dnames))
 }
 
 /// The image: the DOS header, the PE headers and section table, the
 /// sections, then the COFF symbol table and string table.
-fn pe_write(bufs: List[List[Int]], rva: List[Int], hdr: Int, entry: Int, o: PEOpts, has_tls: Bool, tls_dir: Int, idir: Int, ndll: Int, iat_start: Int, iat_size: Int, objs: List[CObj], places: List[List[PEPlace]], bss: Int) -> Bytes {
-  let names = [".text", ".rdata", ".data", ".pdata", ".tls", ".rsrc", ".reloc"]
-  let chars = [IMAGE_SCN_CNT_CODE + IMAGE_SCN_MEM_EXECUTE + IMAGE_SCN_MEM_READ, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ + IMAGE_SCN_MEM_WRITE, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ + IMAGE_SCN_MEM_WRITE, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ + IMAGE_SCN_MEM_DISCARDABLE]
+fn pe_write(bufs: List[List[Int]], rva: List[Int], hdr: Int, entry: Int, o: PEOpts, has_tls: Bool, tls_dir: Int, idir: Int, ndll: Int, iat_start: Int, iat_size: Int, objs: List[CObj], places: List[List[PEPlace]], bss: Int, dnames: List[Str]) -> Bytes {
+  var names = [".text", ".rdata", ".data", ".pdata", ".tls", ".rsrc", ".reloc"]
+  var chars = [IMAGE_SCN_CNT_CODE + IMAGE_SCN_MEM_EXECUTE + IMAGE_SCN_MEM_READ, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ + IMAGE_SCN_MEM_WRITE, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ + IMAGE_SCN_MEM_WRITE, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ + IMAGE_SCN_MEM_DISCARDABLE]
+  for d in dnames {
+    names.push(d)
+    chars.push(IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ + IMAGE_SCN_MEM_DISCARDABLE)
+  }
   var present: List[Int] = []
-  for k in 0..7 {
+  var foff: List[Int] = []
+  for k in 0..bufs.len() {
+    foff.push(0)
     if !bufs[k].is_empty() {
       present.push(k)
     }
   }
   // file offsets
-  var foff: List[Int] = [0, 0, 0, 0, 0, 0, 0]
   var at = hdr
   for k in present {
     foff[k] = at
@@ -508,7 +546,7 @@ fn pe_write(bufs: List[List[Int]], rva: List[Int], hdr: Int, entry: Int, o: PEOp
         continue
       }
       let p = places[oi][s.sect - 1]
-      if p.out < 0 || s.name.starts_with(".") || s.name.is_empty() {
+      if p.out < 0 || p.out >= PO_DEBUG || s.name.starts_with(".") || s.name.is_empty() {
         continue
       }
       var num = 0
@@ -524,6 +562,11 @@ fn pe_write(bufs: List[List[Int]], rva: List[Int], hdr: Int, entry: Int, o: PEOp
   for (n, _, _, _) in syms {
     if n.len() > 8 {
       long.push(n.bytes())
+    }
+  }
+  for d in dnames {
+    if d.len() > 8 {
+      long.push(d.bytes())
     }
   }
   let (strs, stroff) = coff_strtab(long)
@@ -610,7 +653,7 @@ fn pe_write(bufs: List[List[Int]], rva: List[Int], hdr: Int, entry: Int, o: PEOp
     w.u32(s)
   }
   for k in present {
-    w.name(names[k], 8)
+    w.name(if names[k].len() > 8 { "/${stroff.get(names[k].bytes()) ?? 0}" } else { names[k] }, 8)
     w.u32(pe_vsize(bufs, k, bss))
     w.u32(rva[k])
     w.u32(pe_up(bufs[k].len(), PE_FILE_ALIGN))

@@ -1,7 +1,9 @@
 // The program's DWARF line tables (decision 0239), read back for the
 // profiler (prof.xo) and fault reports: Linux, the .debug_line of the
 // program's file (/proc/self/exe); macOS, the __DWARF of PROG.dSYM next
-// to the executable when its LC_UUID is the running image's. Version 4
+// to the executable when its LC_UUID is the running image's; Windows,
+// the .debug_ sections of the program's file (pelink.xo keeps them,
+// named through the COFF string table). Version 4
 // and 5 line programs (the arm64 emitter's and LLVM's), every opcode,
 // rows sorted by address, placed by the load bias. Read when asked, not
 // at start and never in a signal handler; files are read by plain
@@ -9,8 +11,10 @@
 // which a fault's report cannot wait on: the traceback hung).
 use native/llrt/linux
 use native/llrt/raw
+use native/llrt/windows
 use native/rt
 use native/sys_darwin
+use native/sys_windows
 
 /// The rows: address, file (an index of files, -1 at a sequence's end),
 /// and line, sorted by address.
@@ -121,7 +125,8 @@ pub fn load(lo: Int, hi: Int) -> Lines {
   match target.os {
     TargetOs.Linux => load_elf(lo, hi, out)
     TargetOs.Darwin => load_dsym(lo, hi, out)
-    TargetOs.Windows | TargetOs.Wasi => {}
+    TargetOs.Windows => load_pe(lo, hi, out)
+    TargetOs.Wasi => {}
   }
   out
 }
@@ -283,8 +288,104 @@ fn dsym_sects() -> (Sects, Int, Bool) {
   (s, slide, same)
 }
 
-/// The bytes of the file at path by plain system calls (empty when it
-/// cannot be read).
+/// Windows: the sections of the program's file by name, placed by the
+/// image's distance from the ImageBase it was linked at.
+fn load_pe(lo: Int, hi: Int, var out: Lines) {
+  let (s, bias, ok) = pe_sects()
+  if ok && s.line_n > 0 {
+    parse(s, bias, lo, hi, out)
+    parse_info(s, bias, out)
+  }
+}
+
+/// Windows: the .debug_ sections of the program's file (a name past 8
+/// bytes is "/" and its offset in the string table after the symbol
+/// table) and the load bias (ok false when the file cannot be read).
+fn pe_sects() -> (Sects, Int, Bool) {
+  let data = read_self()
+  let n = data.len()
+  if n < 64 {
+    return (Sects{}, 0, false)
+  }
+  let f = raw.bytes_addr(data)
+  let pe = u32(f + 60)
+  if pe + 24 + 112 > n {
+    return (Sects{}, 0, false)
+  }
+  // the COFF header: sections 2, symbol table 8, symbols 12, optional
+  // header's size 16; PE32+'s ImageBase at 24 of the optional header
+  let coff = f + pe + 4
+  let nsec = u16(coff + 2)
+  let strs = u32(coff + 8) + 18 * u32(coff + 12)
+  let sec = coff + 20 + u16(coff + 16)
+  let bias = sys_windows.GetModuleHandleW(0) - ld(coff + 20, 24)
+  if sec + 40 * nsec > f + n {
+    return (Sects{}, 0, false)
+  }
+  var s = Sects{data: data}
+  for i in 0..nsec {
+    // IMAGE_SECTION_HEADER: VirtualSize 8, PointerToRawData 20
+    let sh = sec + 40 * i
+    var name = cstr(sh, 8)
+    if name.starts_with("/") {
+      let k = Int.parse(name[1..name.len()]) ?? -1
+      if k < 4 || u32(coff + 8) == 0 || strs + k >= n {
+        continue
+      }
+      name = cstr(f + strs + k, 64)
+    }
+    let size = u32(sh + 8)
+    let off = u32(sh + 20)
+    if off + size > n {
+      continue
+    }
+    if name.starts_with(".debug_") {
+      s.set(name[7..name.len()], f + off, size)
+    }
+  }
+  (s, bias, true)
+}
+
+/// Windows: the bytes of the program's file (empty when it cannot be
+/// read). The profiler's symbols (prof.xo coff_symbols) read it too.
+pub fn read_self() -> Bytes {
+  // 32,767 UTF-16 units and the NUL, written in place
+  var z = BytesBuilder.with_capacity(65536)
+  for _ in 0..65536 {
+    z.write_byte(UInt8(0))
+  }
+  let path = z.freeze()
+  let n = Int(sys_windows.GetModuleFileNameW(0, raw.bytes_addr(path), 32767))
+  if n == 0 || n >= 32767 {
+    return b""
+  }
+  // GENERIC_READ, shared for reading, writing and deleting, OPEN_EXISTING
+  let h = sys_windows.CreateFileW(path, 2147483648, 7, 0, 3, 128, 0)
+  if h == -1 {
+    return b""
+  }
+  let size = windows.file_size(h)
+  if size <= 0 {
+    let _c = windows.close(h)
+    return b""
+  }
+  var b = BytesBuilder.with_capacity(size)
+  var zb = BytesBuilder.with_capacity(65536)
+  for _ in 0..65536 {
+    zb.write_byte(UInt8(0))
+  }
+  let buf = zb.freeze()
+  while true {
+    let r = windows.read(h, buf, 0, 65536)
+    if r <= 0 {
+      break
+    }
+    b.write(buf[0..r])
+  }
+  let _c = windows.close(h)
+  b.freeze()
+}
+
 fn read_raw(path: Str) -> Bytes {
   let buf = rt.heap_large(65536)
   var b = BytesBuilder.new()

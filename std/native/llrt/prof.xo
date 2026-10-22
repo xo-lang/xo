@@ -1326,7 +1326,9 @@ pub fn trace_text_at(pcs: List[Int], regs: List[Int]) -> Str {
     // a return address: its call is at pc - 1
     let f = func_of(syms, pc - 1, names)
     let name = names[f]
-    if !started && (name.starts_with("fault.") || name.starts_with("fault_") || name.starts_with("cabi.fault") || name.starts_with("unwind.") || name.starts_with("xo_fault")) {
+    // (windows: the Win64 thunks the trace and the fault went through,
+    // xo_w64_RtlCaptureContext and xo_w64_xo_callc2)
+    if !started && (name.starts_with("fault.") || name.starts_with("fault_") || name.starts_with("cabi.fault") || name.starts_with("unwind.") || name.starts_with("xo_fault") || name.starts_with("xo_w64_")) {
       continue
     }
     started = true
@@ -1689,7 +1691,7 @@ fn win_close(w: Int) {
 /// a symbol of type 0x20 (a function), or an external or static one in a
 /// code section, without auxiliary records, its name not a section's.
 fn coff_symbols(lo: Int, hi: Int, var addrs: List[Int], var names: List[Str]) {
-  let f = read_self()
+  let f = dwline.read_self()
   if f.len() < 64 {
     return
   }
@@ -1729,7 +1731,9 @@ fn coff_symbols(lo: Int, hi: Int, var addrs: List[Int], var names: List[Str]) {
       continue
     }
     let name = if u32(f, p) == 0 { zstr(f, strs + u32(f, p + 4)) } else { zstr_n(f, p, 8) }
-    if name.is_empty() || name.starts_with(".") || name.starts_with("$") {
+    // (xo_utext_: a part's first text label, at its first function: the
+    // function's own name is the frame's)
+    if name.is_empty() || name.starts_with(".") || name.starts_with("$") || name.starts_with("xo_utext_") {
       continue
     }
     addrs.push(a)
@@ -1762,41 +1766,3 @@ fn zstr_n(b: Bytes, o: Int, n: Int) -> Str {
   b[o..e].to_str() ?? ""
 }
 
-/// Windows: the program's own file (GetModuleFileNameW), or empty.
-fn read_self() -> Bytes {
-  // 32,767 UTF-16 units and the NUL, written in place
-  var z = BytesBuilder.with_capacity(65536)
-  for _ in 0..65536 {
-    z.write_byte(UInt8(0))
-  }
-  let path = z.freeze()
-  let n = Int(sys_windows.GetModuleFileNameW(0, raw.bytes_addr(path), 32767))
-  if n == 0 || n >= 32767 {
-    return b""
-  }
-  // GENERIC_READ, shared for reading, writing and deleting, OPEN_EXISTING
-  let h = sys_windows.CreateFileW(path, 2147483648, 7, 0, 3, 128, 0)
-  if h == -1 {
-    return b""
-  }
-  let size = windows.file_size(h)
-  if size <= 0 {
-    let _c = windows.close(h)
-    return b""
-  }
-  var b = BytesBuilder.with_capacity(size)
-  var zb = BytesBuilder.with_capacity(65536)
-  for _ in 0..65536 {
-    zb.write_byte(UInt8(0))
-  }
-  let buf = zb.freeze()
-  while true {
-    let r = windows.read(h, buf, 0, 65536)
-    if r <= 0 {
-      break
-    }
-    b.write(buf[0..r])
-  }
-  let _c = windows.close(h)
-  b.freeze()
-}

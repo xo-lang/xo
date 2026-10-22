@@ -1,12 +1,17 @@
-// The function names of windows/amd64 --race's reports (decision 0273's
-// Windows addendum): ThreadSanitizer's Go flavor asks the runtime's
-// callback (cabi_race.xo race_cb) for each pc's function. The callback
+// The function names, files and lines of windows/amd64 --race's reports
+// (decision 0273's Windows addendum): ThreadSanitizer's Go flavor asks
+// the runtime's callback (cabi_race.xo race_cb) for each pc's function
+// and line. The callback
 // runs inside a report, which holds the sanitizer's thread registry lock
 // that a new arena mapping (sanhook.xo race_arena, MapShadow) takes, so it
 // must not allocate: the table is made once before, at the first
 // instrumented access (the program's COFF symbol table, prof.xo
-// func_symbols), as raw memory from the race heap: the count, then a
-// start and a NUL ended name per function, sorted by start.
+// func_symbols, and its DWARF line rows, dwline.xo), as raw memory from
+// the race heap: the count, the line table, then a start and a NUL ended
+// name per function, sorted by start. The line table: the count, then an
+// address, a NUL ended file (0 past a sequence's end) and a line per row,
+// sorted by address.
+use native/llrt/dwline
 use native/llrt/prof
 use native/llrt/raw
 use native/llrt/sanhook
@@ -32,24 +37,54 @@ pub fn ensure() {
   let (starts, names) = prof.func_symbols(image, image.wrapping_add(size))
   let n = starts.len()
   // race_block's first word is its size: the table from the second
-  let t = sanhook.race_block(16 * n + 16)
+  let t = sanhook.race_block(16 * n + 24)
   if t == 0 {
     return
   }
   rt.mem_store(t, 8, n, 8)
+  rt.mem_store(t, 16, lines(image, image.wrapping_add(size)), 8)
   for i in 0..n {
-    let s = names[i]
-    let b = sanhook.race_block(s.len() + 9)
-    var z = 0
-    if b != 0 {
-      z = b.wrapping_add(8)
-      rt.mem_copy(z, raw.data(s), s.len())
-      rt.mem_store(z, s.len(), 0, 1)
-    }
-    rt.mem_store(t, 16 + 16 * i, starts[i], 8)
-    rt.mem_store(t, 24 + 16 * i, z, 8)
+    rt.mem_store(t, 24 + 16 * i, starts[i], 8)
+    rt.mem_store(t, 32 + 16 * i, cstr(names[i]), 8)
   }
   rt.slot_store(w, 0, t, RELEASE)
+}
+
+/// The line table of the image [lo, hi), or 0 (no DWARF).
+fn lines(lo: Int, hi: Int) -> Int {
+  let l = dwline.load(lo, hi)
+  let m = l.addrs.len()
+  if m == 0 {
+    return 0
+  }
+  var files: List[Int] = []
+  for s in l.names {
+    files.push(cstr(s))
+  }
+  let t = sanhook.race_block(24 * m + 16)
+  if t == 0 {
+    return 0
+  }
+  rt.mem_store(t, 8, m, 8)
+  for i in 0..m {
+    let f = l.files[i]
+    rt.mem_store(t, 16 + 24 * i, l.addrs[i], 8)
+    rt.mem_store(t, 24 + 24 * i, if f < 0 || l.lines[i] <= 0 { 0 } else { files[f] }, 8)
+    rt.mem_store(t, 32 + 24 * i, l.lines[i], 8)
+  }
+  t
+}
+
+/// s as a NUL ended string in the race heap, or 0.
+fn cstr(s: Str) -> Int {
+  let b = sanhook.race_block(s.len() + 9)
+  if b == 0 {
+    return 0
+  }
+  let z = b.wrapping_add(8)
+  rt.mem_copy(z, raw.data(s), s.len())
+  rt.mem_store(z, s.len(), 0, 1)
+  z
 }
 
 /// The NUL ended name of the function holding pc, or 0 (no table yet,
@@ -59,15 +94,42 @@ pub fn lookup(pc: Int) -> Int {
   if t <= 1 {
     return 0
   }
+  let i = below(t + 24, 16, rt.mem_load(t, 8, 8), pc)
+  if i < 0 { 0 } else { rt.mem_load(t, 32 + 16 * i, 8) }
+}
+
+/// Stores the NUL ended file and the line of pc at f and f + 8 (0 and 0
+/// when no row holds it). Allocates nothing.
+pub fn line(pc: Int, f: Int) {
+  rt.mem_store(f, 0, 0, 8)
+  rt.mem_store(f, 8, 0, 8)
+  let t = rt.slot_load(rt.static_word(W_RACE_SYMS), 0, ACQUIRE)
+  if t <= 1 {
+    return
+  }
+  let l = rt.mem_load(t, 16, 8)
+  if l == 0 {
+    return
+  }
+  let i = below(l + 16, 24, rt.mem_load(l, 8, 8), pc)
+  if i >= 0 && rt.mem_load(l, 24 + 24 * i, 8) != 0 {
+    rt.mem_store(f, 0, rt.mem_load(l, 24 + 24 * i, 8), 8)
+    rt.mem_store(f, 8, rt.mem_load(l, 32 + 24 * i, 8), 8)
+  }
+}
+
+/// The index of the last of n entries (each `size` bytes from p, keyed
+/// by their first word, sorted) at or below pc, or -1.
+fn below(p: Int, size: Int, n: Int, pc: Int) -> Int {
   var a = 0
-  var b = rt.mem_load(t, 8, 8)
+  var b = n
   while a < b {
     let m = (a + b) / 2
-    if rt.mem_load(t, 16 + 16 * m, 8) <= pc {
+    if rt.mem_load(p, size * m, 8) <= pc {
       a = m + 1
     } else {
       b = m
     }
   }
-  if a == 0 { 0 } else { rt.mem_load(t, 24 + 16 * (a - 1), 8) }
+  a - 1
 }

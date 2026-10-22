@@ -467,7 +467,9 @@ fn (var a: Asm) coff_x86_fix(f: XFx) {
 }
 
 /// A data word naming sym (+ k): an 8 byte address (ADDR64) or a 4 byte
-/// image relative one (ADDR32NB); the value in the contents.
+/// image relative one (ADDR32NB), or in a .debug_ section a 4 byte
+/// offset in the target's section (SECREL: DWARF's references between
+/// its sections, as LLVM's .secrel32); the value in the contents.
 fn (var a: Asm) coff_data_reloc(si: Int, off: Int, n: Int, sym: Int, k: Int) -> Int {
   let s = a.syms[sym]
   var target = sym
@@ -478,7 +480,8 @@ fn (var a: Asm) coff_data_reloc(si: Int, off: Int, n: Int, sym: Int, k: Int) -> 
   }
   a.register(target)
   a.syms[target].used = true
-  a.sects[si].relocs.push(Reloc{addr: off, typ: if n == 8 { IMAGE_REL_AMD64_ADDR64 } else { IMAGE_REL_AMD64_ADDR32NB }, pcrel: false, len: if n == 8 { 3 } else { 2 }, sym: target})
+  let typ = if n == 8 { IMAGE_REL_AMD64_ADDR64 } else if a.sects[si].name.starts_with(".debug_") { IMAGE_REL_AMD64_SECREL } else { IMAGE_REL_AMD64_ADDR32NB }
+  a.sects[si].relocs.push(Reloc{addr: off, typ: typ, pcrel: false, len: if n == 8 { 3 } else { 2 }, sym: target})
   v
 }
 
@@ -560,7 +563,13 @@ fn (var a: Asm) write_coff() -> Bytes {
   o.u16(0)
   o.u16(0)
   for (i, s) in a.sects.indexed() {
-    o.name(s.name, 8)
+    // a name past 8 bytes (.debug_abbrev) is "/" and its offset in the
+    // string table (its section symbol put it there)
+    if s.name.len() > 8 {
+      o.name("/${stroff.get(s.name.bytes()) ?? 0}", 8)
+    } else {
+      o.name(s.name, 8)
+    }
     o.u32(0)
     o.u32(0)
     let bss = (s.cchar & IMAGE_SCN_CNT_UNINITIALIZED_DATA) != 0

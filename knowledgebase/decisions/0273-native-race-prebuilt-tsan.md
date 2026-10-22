@@ -337,11 +337,15 @@ Windows. Xo would use that flavor on windows/amd64.
   frame per access, named by its function (std/native/llrt racesym.xo: a
   table made at the first instrumented access from the program's COFF
   symbol table, which race_cb reads without allocating: a report holds the
-  thread registry lock a new arena mapping takes); no file or line yet
-  (Xo's PE linker drops the DWARF sections).
+  thread registry lock a new arena mapping takes), with its file and line
+  since 2026-10-22 (a line table made with it from the program's own
+  DWARF: Xo's PE linker keeps the .debug_ sections, std/native/llrt
+  dwline.xo reads them from the executable's file).
 - Runtime: sanhook.xo gorace() (rt.sym_present("__tsan_go_start"),
   folded by the builder to the --race flag on Windows). The running
-  context's ThreadState in thread table word 6, the Processor in word 10;
+  context's ThreadState in thread table word 16, the Processor in word 17
+  (only windows/amd64's table has them: 18 words; 6 and 10 at first, which
+  sysio.xo and libcsys.xo own);
   workers, fibers and tasks get theirs from __tsan_go_start, switched at
   the scheduler's hooks; a thread with none gets one at its first use.
   Memory: one 64 GiB arena reserved at 0x00c0_0000_0000, taken upward in
