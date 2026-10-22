@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- 0.25.1 (2026-10-22), the first binary release: archives for
+  darwin/arm64, darwin/amd64 (signed and notarized), linux/arm64,
+  linux/amd64 and windows/amd64, each `xo` stamped with the commit it was
+  built from (`xo version -v`). RSA's secret exponent loop
+  (bigmod.exp_into) allocates nothing, so the constant-time checks
+  (TestConstantTimeLLVM, test/codegen/consttime) see no select in it at
+  clang -O2; no secret-dependent select was found and RSA's output is
+  unchanged (74eb6a305).
 - Diagnostics: an unknown method on a Set suggests `add` and `remove`
   (`insert`, `push`, `put`, `discard`, `delete`); `sub`, `add`,
   `elapsed` and the like on a Time or Duration suggest the operators or,

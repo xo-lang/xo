@@ -9,7 +9,7 @@
 
 /// The toolchain version lsp reports in serverInfo: cmd/xo version.go's
 /// `version` (TestXo1ServersVersion compares them).
-pub const XO_VERSION = "0.25.0"
+pub const XO_VERSION = "0.25.1"
 
 /// The version mcp reports in serverInfo (internal/mcp's Server.Version,
 /// set by cmd/xo).
