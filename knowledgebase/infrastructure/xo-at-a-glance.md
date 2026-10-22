@@ -70,8 +70,8 @@ streaming decoder), xml (tokens, tree, derive), sql (Postgres driver),
 csv, toml, regexp, time, url, netip, mime, mail, smtp, multipart,
 template, embed, compress, big, base64/base32, binary, uuid, path,
 crypto, archive, log, task, testing, cli, term, go (`use go` bindings).
-Prelude collections include `sort`, `sort_by`, `group_by`, `zip`,
-`fold`, `sum`, `contains`, `indexed`, `to_set`, `reverse`, `join`,
+Prelude collections include `sort`, `sort_by`, `group_by`,
+`fold`, `contains`, `indexed` (List and Bytes), `to_set`, `reverse`, `join`,
 `split`; Bytes has `indexed` and `find`; `xo doc List` lists the rest.
 
 ## Tools (spec 10, agent-tools.md)
