@@ -67,12 +67,12 @@ func TestModules(t *testing.T) {
 	})
 
 	// no xo.lock yet: XO1305 on the require line
-	r := xo(t, "check", "--json", app).want(1)
+	r := xo(t, "check", "--json", app+"/...").want(1)
 	if got := diagCodes(t, r.out); got != "XO1305,XO1305,XO1305,XO1305" {
 		t.Errorf("check without a lock: %s", got)
 	}
 	xo(t, "mod", "tidy", "--dir", app).want(0)
-	r = xo(t, "check", "--json", app).want(0)
+	r = xo(t, "check", "--json", app+"/...").want(0)
 	// the imported module resolves through the selected version
 	r = xo(t, "query", "def", "--json", "--dir="+app, "cents").want(0)
 	if !strings.Contains(r.out, "n * 100") && !strings.Contains(r.out, "money@v1.1.0") {
@@ -95,11 +95,11 @@ func TestModules(t *testing.T) {
 	}
 
 	// offline: from the cache; an empty cache is XO1303
-	xo(t, "check", "--offline", app).want(0)
+	xo(t, "check", "--offline", app+"/...").want(0)
 	if err := env.CleanCache(); err != nil {
 		t.Fatal(err)
 	}
-	r = xo(t, "check", "--offline", "--json", app).want(1)
+	r = xo(t, "check", "--offline", "--json", app+"/...").want(1)
 	if got := diagCodes(t, r.out); !strings.HasPrefix(got, "XO1303") {
 		t.Errorf("offline with an empty cache: %s", got)
 	}
@@ -112,14 +112,14 @@ func TestModules(t *testing.T) {
 	if err := env.CleanCache(); err != nil {
 		t.Fatal(err)
 	}
-	xo(t, "check", "--offline", app).want(0)
+	xo(t, "check", "--offline", app+"/...").want(0)
 	if err := os.RemoveAll(filepath.Join(app, "vendor")); err != nil {
 		t.Fatal(err)
 	}
 
 	// xo get: a downgrade request; MVS keeps what the graph needs
 	xo(t, "get", "--dir", app, "github.com/acme/billing@v1.0.0").want(0)
-	r = xo(t, "check", "--json", app).want(0)
+	r = xo(t, "check", "--json", app+"/...").want(0)
 	r = xo(t, "get", "--json", "--dir", app, "github.com/acme/billing").want(0)
 	if !strings.Contains(r.out, `"new": "v1.2.0"`) {
 		t.Errorf("get latest: %s", r.out)
@@ -127,7 +127,7 @@ func TestModules(t *testing.T) {
 
 	// an unrequired import is XO1306
 	modtest.WriteFiles(t, app, map[string]string{"extra/extra.xo": "use github.com/acme/money\n\npub fn f() -> Int { money.cents(1) }\n"})
-	r = xo(t, "check", "--json", app).want(1)
+	r = xo(t, "check", "--json", app+"/...").want(1)
 	if got := diagCodes(t, r.out); got != "XO1306" {
 		t.Errorf("unrequired import: %s", got)
 	}
@@ -140,7 +140,7 @@ func TestModules(t *testing.T) {
 		"xo.work":                    "xo preview\nuse ./app\nuse ./billing\n",
 	})
 	lock, _ := os.ReadFile(filepath.Join(app, "xo.lock"))
-	xo(t, "check", app).want(0)
+	xo(t, "check", app+"/...").want(0)
 	if !testing.Short() {
 		r = xo(t, "run", filepath.Join(app, "main")).want(0)
 		if r.out != "7\n" {
@@ -172,7 +172,7 @@ func TestModules(t *testing.T) {
 		t.Errorf("xo.lock changed in a workspace")
 	}
 	// --workspace=off: the required v1.2.0 again, which has no grand_total
-	r = xo(t, "check", "--workspace=off", "--json", app).want(1)
+	r = xo(t, "check", "--workspace=off", "--json", app+"/...").want(1)
 	if got := diagCodes(t, r.out); !strings.Contains(got, "XO0601") {
 		t.Errorf("--workspace=off: %s", got)
 	}

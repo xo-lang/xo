@@ -39,6 +39,22 @@ pub struct Checker {
   /// file descriptors left), or "": check_dirs fails with it rather than
   /// check the program without that directory's modules.
   walk_err: Str = ""
+  /// The directories (absolute) a command named as DIR/..., whose
+  /// directories below check_dirs walks (decision 0345); a directory
+  /// named plainly is that directory alone.
+  pub walk: List[Str] = []
+  /// Every directory given is walked, as DIR/... (the editor's and the
+  /// agent tools' checks of a workspace or repository root, decision
+  /// 0289).
+  pub walk_all: Bool = false
+  /// Entries and .xo files the walks of check_dirs have looked at, for
+  /// the bound of decision 0345.
+  walk_seen: Int = 0
+  walk_xo: Int = 0
+  /// How many of check_dirs' directories the command line named, or -1
+  /// for all: the ones after them are workspace modules (workspace_dirs),
+  /// and one with no .xo file of its own is left out, not an error.
+  pub named_dirs: Int = -1
   /// Optional SSA builder lowerings turned off, by name ($XO_LOWER,
   /// `-name` entries, comma separated; compiler/ssa lowerings.xo): miscompile
   /// triage inside one commit, as XO_PASSES is for the native passes.
@@ -367,7 +383,7 @@ pub fn (var c: Checker) check_dirs(dirs: List[Str]) -> () ! Str uses fs.read {
     }
   }
   var module_dirs: List[Str] = []
-  for d in dirs {
+  for (di, d) in dirs.indexed() {
     if c.runtime_files && !c.std_dir.is_empty() && c.abs(clean(d)) == c.abs(join(join(c.std_dir, "native"), "llrt")) {
       // the runtime directory itself: each file is its own module
       // (native/llrt/pool), checked with its body, never one directory
@@ -385,7 +401,21 @@ pub fn (var c: Checker) check_dirs(dirs: List[Str]) -> () ! Str uses fs.read {
       }
       continue
     }
-    c.find_module_dirs(clean(d), true, module_dirs)
+    let cd = clean(d)
+    if c.walk_all || c.walk.contains(c.abs(cd)) {
+      c.walk_seen = 0
+      c.walk_xo = 0
+      c.find_module_dirs(cd, true, module_dirs)
+      if c.walk_seen > MAX_WALK_ENTRIES || c.walk_xo > MAX_WALK_XO {
+        return Err(walk_limit_error(if cd == "/" { "/..." } else { "${cd}/..." }))
+      }
+    } else if c.list_dir(cd).any(fn(e) { !e.is_dir && e.name.ends_with(".xo") }) {
+      if !module_dirs.contains(cd) {
+        module_dirs.push(cd)
+      }
+    } else if c.walk_err.is_empty() && (c.named_dirs < 0 || di < c.named_dirs) {
+      return Err(no_sources_error(cd))
+    }
   }
   if !c.walk_err.is_empty() {
     return Err(c.walk_err)
@@ -476,11 +506,16 @@ fn (var c: Checker) load_std_tests(m: Int, file: Str) {
 /// skipping testdata, dot, underscore (decision 0210), and vendor
 /// directories below the top.
 fn (var c: Checker) find_module_dirs(dir: Str, top: Bool, var out: List[Str]) {
+  if c.walk_seen > MAX_WALK_ENTRIES || c.walk_xo > MAX_WALK_XO {
+    return
+  }
   let entries = c.list_dir(dir)
+  c.walk_seen += entries.len()
   var has_xo = false
   for e in entries {
     if !e.is_dir && e.name.ends_with(".xo") {
       has_xo = true
+      c.walk_xo += 1
     }
   }
   if has_xo && !out.contains(dir) {
@@ -510,6 +545,23 @@ fn (var c: Checker) find_module_dirs(dir: Str, top: Bool, var out: List[Str]) {
     }
     c.find_module_dirs(sub, false, out)
   }
+}
+
+/// The most .xo files, and directory entries, a DIR/... walk looks at
+/// before it refuses (decision 0345; agent.xo's --dir bound): the xo
+/// checkout has about 1,800 .xo files, and `xo build /...` or
+/// `$HOME/...` would load every tree below.
+pub const MAX_WALK_XO = 6000
+pub const MAX_WALK_ENTRIES = 60000
+
+/// The error of a walk of pattern (DIR/...) over the bound.
+pub fn walk_limit_error(pattern: Str) -> Str {
+  "${pattern} holds more than ${MAX_WALK_XO} .xo files or ${MAX_WALK_ENTRIES} entries, the limit of a DIR/... walk (decision 0345): name a module or repository directory"
+}
+
+/// The error of a directory named plainly that holds no .xo file.
+pub fn no_sources_error(dir: Str) -> Str {
+  "${dir} has no .xo files: a directory means that directory alone; ${if dir == "/" { "/..." } else { "${dir}/..." }} covers the directories below it (decision 0345)"
 }
 
 /// The entries of dir: none when it does not exist or cannot be read

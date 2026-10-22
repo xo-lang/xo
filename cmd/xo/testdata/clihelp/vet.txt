@@ -10,5 +10,6 @@ A .xo file vets its directory and reports that file's findings. A
 directory of std (std, std/native, std/native/llrt) or a file in one is
 checked as std, its modules together.
 
-A directory covers the directories below it, so DIR/... is DIR (decision
-0210); a DIR/... with no .xo file at or below DIR is an error.
+A directory means that directory alone; DIR/... covers the directories
+below it too, up to 6,000 .xo files or 60,000 entries (decision 0345).
+A DIR/... with no .xo file at or below DIR is an error.

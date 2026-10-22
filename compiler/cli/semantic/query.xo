@@ -44,6 +44,9 @@ pub fn load_session_pc(os: Os, dirs0: List[Str], exact: Bool, overlay: Map[Str, 
   c.cbind_dir = os.env.get("XO_CBIND_DIR") ?? ""
   c.gobind_dir = os.env.get("XO_GOBIND_DIR") ?? ""
   c.set_overlay(overlay)
+  // xo query and xo edit cover the modules below a workspace or
+  // repository root (decision 0289), within the walk's bound (0345)
+  c.walk_all = true
   let dirs = if exact { dirs0 } else { c.workspace_dirs(dirs0) }
   c.check_dirs_bound(os, dirs)?
   if !c.unsupported.is_empty() {

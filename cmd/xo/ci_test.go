@@ -88,3 +88,49 @@ func TestBuildRelease(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildOutPaths covers where a build writes (2026-10-22, the
+// owner's 0.25.2 reports): -o naming an existing directory writes
+// DIR/NAME (and NAME.dSYM) inside it, as go build -o does; a failed
+// write leaves no OUT.tmp and says why in words; xo run leaves nothing
+// in the project.
+func TestBuildOutPaths(t *testing.T) {
+	t.Parallel()
+	dir := writeFiles(t, map[string]string{
+		"webserver/main.xo": "fn main(os: Os) {\n  os.stdio.println(\"hi\")\n}\n",
+		"out/.keep":         "",
+		"busy/webserver/x":  "a directory where the binary would go\n",
+	})
+	app := filepath.Join(dir, "webserver")
+	chdir(t, app)
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"build", "-o", filepath.Join(dir, "out"), "."}, &out, &errOut); code != 0 {
+		t.Fatalf("-o DIR: exit %d\n%s", code, errOut.String())
+	}
+	if fi, err := os.Stat(filepath.Join(dir, "out", "webserver")); err != nil || fi.IsDir() {
+		t.Errorf("-o DIR did not write DIR/webserver: %v", err)
+	}
+	errOut.Reset()
+	if code := run(t, []string{"build", "-o", filepath.Join(dir, "busy"), "."}, &out, &errOut); code == 0 {
+		t.Fatalf("-o DIR with DIR/webserver a directory: exit 0")
+	}
+	if strings.Contains(errOut.String(), "IsDir(") || !strings.Contains(errOut.String(), "cannot write the program") {
+		t.Errorf("want a readable error:\n%s", errOut.String())
+	}
+	ents, _ := os.ReadDir(filepath.Join(dir, "busy"))
+	for _, e := range ents {
+		if e.Name() != "webserver" {
+			t.Errorf("a failed build left %s", e.Name())
+		}
+	}
+	errOut.Reset()
+	if code := run(t, []string{"run", "."}, &out, &errOut); code != 0 {
+		t.Fatalf("run: exit %d\n%s", code, errOut.String())
+	}
+	ents, _ = os.ReadDir(app)
+	for _, e := range ents {
+		if e.Name() != "main.xo" {
+			t.Errorf("xo run left %s in the project", e.Name())
+		}
+	}
+}

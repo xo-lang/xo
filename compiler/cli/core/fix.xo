@@ -2,6 +2,7 @@
 // the machine fixes of check diagnostics applied round after round until
 // none apply, then the changed files reformatted.
 
+use github.com/xo-lang/xo/compiler/check
 use github.com/xo-lang/xo/compiler/lexer
 use github.com/xo-lang/xo/compiler/cli/core/format
 
@@ -399,8 +400,8 @@ fn offset_of(src: Bytes, line: Int, col: Int) -> (Int, Bool) {
   (off, true)
 }
 
-/// The .xo and xo.mod files under dirs, skipping testdata and dot
-/// directories below the named ones, plus the xo.mod of the module around
+/// The .xo and xo.mod files of dirs (and below a dir named as DIR/...,
+/// skipping testdata and dot directories), plus the xo.mod of the module around
 /// each dir and the xo.work that applies to it, sorted (fix.sourceFiles).
 fn source_files(os: Os, ctx: Ctx, dirs: List[Str]) -> List[Str] ! Str {
   var out: List[Str] = []
@@ -433,23 +434,30 @@ fn source_files(os: Os, ctx: Ctx, dirs: List[Str]) -> List[Str] ! Str {
         out.push(p)
       }
     }
-    walk_sources(os, d, d, out, seen)?
+    var n = WalkCount{}
+    walk_sources(os, d, d, ctx.walk.contains(abs_path(ctx, d)), out, seen, n)?
   }
   Ok(out.sort())
 }
 
-fn walk_sources(os: Os, top: Str, dir: Str, var out: List[Str], var seen: Map[Str, Bool]) -> () ! Str {
+/// Appends dir's .xo and xo.mod files, and with walk those of the
+/// directories below it (DIR/..., decision 0345), bounded.
+fn walk_sources(os: Os, top: Str, dir: Str, walk: Bool, var out: List[Str], var seen: Map[Str, Bool], var n: WalkCount) -> () ! Str {
   let entries = match os.fs.read_dir(dir) {
     Ok(es) => es
     Err(e) => return Err(stat_err(dir, e))
   }
+  n.seen += entries.len()
+  if n.seen > check.MAX_WALK_ENTRIES {
+    return Err(walk_limit(top))
+  }
   for e in entries {
     let p = join_path(dir, e.name)
     if e.is_dir {
-      if e.name == "testdata" || e.name.starts_with(".") || e.name.starts_with("_") {
+      if !walk || e.name == "testdata" || e.name.starts_with(".") || e.name.starts_with("_") {
         continue
       }
-      walk_sources(os, top, p, out, seen)?
+      walk_sources(os, top, p, walk, out, seen, n)?
     } else if (p.ends_with(".xo") || e.name == "xo.mod") && !seen.contains(p) {
       seen[p] = true
       out.push(p)

@@ -423,7 +423,10 @@ fn run_locked(os: Os, ex: Exec, s: Server, args: List[Str], dir: Str) -> Resp us
     match loads {
       Some(ds) => {
         var abs: List[Str] = []
-        for d in ds {
+        for d0 in ds {
+          // DIR/... stamps DIR's tree (decision 0345); a plain DIR's tree
+          // too, which only refreshes the entry more often
+          let d = if d0 == "/..." { "/" } else { d0.trim_suffix("/...") }
           abs.push(if d.starts_with("/") { d } else if d == "." { dir } else { join(dir, d.trim_prefix("./")) })
         }
         key = dir + "\u{0}" + ds.join("\u{0}")

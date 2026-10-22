@@ -115,7 +115,7 @@ var scAttacks = []scAttack{
 				"main/main.xo": "use evil.test/beacon\n\nfn main(os: Os) {\n  os.stdio.println(\"${beacon.report(os.net, os.env)}\")\n}\n",
 			})
 			xo(t, "mod", "tidy", "--dir", app).want(0)
-			if xo(t, "check", app).code != 0 {
+			if xo(t, "check", app+"/...").code != 0 {
 				return scStageCheck, "unexpected check failure"
 			}
 			// the reach is visible in the signature and recorded in the
@@ -210,7 +210,7 @@ var scAttacks = []scAttack{
 				"main/main.xo": "use evil.test/hook\n\nfn main(os: Os) {\n  os.stdio.println(\"${hook.safe()}\")\n}\n",
 			})
 			xo(t, "mod", "tidy", "--dir", app).want(0)
-			xo(t, "check", app).want(0)
+			xo(t, "check", app+"/...").want(0)
 			return scStageFetch, "no fetch, install, or build hook exists (core 4.2: no code runs at fetch or build setup); a dependency's code runs only when the consumer calls it"
 		},
 	},
@@ -230,7 +230,7 @@ var scAttacks = []scAttack{
 				"main/main.xo": "use evil.test/typo\n\nfn main(os: Os) {\n  os.stdio.println(\"${typo.f()}\")\n}\n",
 			})
 			xo(t, "mod", "tidy", "--dir", app).want(0)
-			r := xo(t, "check", "--json", app)
+			r := xo(t, "check", "--json", app+"/...")
 			if r.code != 0 {
 				return scStageCheck, "a top-level statement in a dependency is a compile error (" + firstCode(t, r.out) + "); Xo has no module init or import-time execution"
 			}
@@ -266,7 +266,7 @@ var scAttacks = []scAttack{
 				"main/main.xo": "use evil.test/logleak\n\nfn main(os: Os) {\n  logleak.audit(\"secret\")\n}\n",
 			})
 			xo(t, "mod", "tidy", "--dir", app).want(0)
-			xo(t, "check", app).want(0)
+			xo(t, "check", app+"/...").want(0)
 			return scStageNone, "the `log` effect makes it visible in the API (uses log) and a ceiling can forbid it, but when the consumer allows log the record is still written"
 		},
 	},
@@ -285,7 +285,7 @@ var scAttacks = []scAttack{
 				"main/main.xo": "use evil.test/czip\n\nfn main(os: Os) {\n  os.stdio.println(\"${czip.level()}\")\n}\n",
 			})
 			xo(t, "mod", "tidy", "--dir", app).want(0)
-			r := xo(t, "check", "--no-gc", "--json", app)
+			r := xo(t, "check", "--no-gc", "--json", app+"/...")
 			if r.code != 0 && strings.Contains(r.out, "XO1316") {
 				return scStageCheck, "the dependency's own `use c ... uses none` does not count: the consumer must vouch (XO1316), and the unvouched binding is charged its worst-case effect (ffi)"
 			}
@@ -307,7 +307,7 @@ var scAttacks = []scAttack{
 				"main/main.xo": "use evil.test/czip\n\nfn main(os: Os) {\n  os.stdio.println(\"${czip.level()}\")\n}\n",
 			})
 			xo(t, "mod", "tidy", "--dir", app).want(0)
-			xo(t, "check", "--no-gc", app).want(0)
+			xo(t, "check", "--no-gc", app+"/...").want(0)
 			return scStageNone, "a vouch is a human review; a consumer that vouches `uses none` for C that actually does I/O is not protected (Xo cannot see into C). The vouch records who attested it"
 		},
 	},
@@ -372,7 +372,7 @@ var scAttacks = []scAttack{
 				"main/main.xo": "use evil.test/pay\n\nfn main(os: Os) {\n  os.stdio.println(\"${pay.payee(\"alice\")}\")\n}\n",
 			})
 			xo(t, "mod", "tidy", "--dir", app).want(0)
-			xo(t, "check", app).want(0)
+			xo(t, "check", app+"/...").want(0)
 			return scStageNone, "pure computation performs no effect; returning the wrong value is not an authority misuse, so no effect/capability defense applies (contracts and tests are the defense, not the supply-chain layer)"
 		},
 	},
@@ -389,7 +389,7 @@ var scAttacks = []scAttack{
 				"main/main.xo": "use evil.test/spin\n\nfn main(os: Os) {\n  os.stdio.println(\"${spin.work(10)}\")\n}\n",
 			})
 			xo(t, "mod", "tidy", "--dir", app).want(0)
-			xo(t, "check", app).want(0)
+			xo(t, "check", app+"/...").want(0)
 			return scStageNone, "a CPU/time DoS performs no capability effect, so no ceiling applies; with no budget the loop runs (task.with_budget bounds it, next row)"
 		},
 	},
@@ -435,7 +435,7 @@ func scBudgeted(t *testing.T, budget, resource string, flags []string) (string, 
 // code is among the diagnostics, else not blocked.
 func scStageFromCheck(t *testing.T, app, code string) (string, string) {
 	t.Helper()
-	r := xo(t, "check", "--json", app)
+	r := xo(t, "check", "--json", app+"/...")
 	if r.code != 0 && diagHas(t, r.out, code) {
 		return scStageCheck, "blocked at `xo check` with " + code
 	}

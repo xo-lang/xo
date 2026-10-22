@@ -95,6 +95,10 @@ struct Opts {
   grace: Duration = 5s
   /// The directories (build, test, asm) or the one directory of run.
   dirs: List[Str] = []
+  /// Those of dirs (absolute) given as DIR/..., which cover the
+  /// directories below them (decision 0345); any other is that directory
+  /// alone.
+  walk: List[Str] = []
   /// run: the program's arguments (after the directory, or after --).
   prog_args: List[Str] = []
   /// The std parses of an earlier build of this process (`xo dev
@@ -219,11 +223,20 @@ fn front(os: Os, args: List[Str]) -> Front {
         os.stdio.eprintln(cmdhelp.pattern_error(cmd, a))
         return Front{code: 2}
       }
-      if is_dir(os, abs_in(wd, d)) && !has_sources(os, abs_in(wd, d)) {
-        os.stdio.eprintln(cmdhelp.no_match_error(cmd, a))
-        return Front{code: 1}
+      if is_dir(os, abs_in(wd, d)) {
+        var n = 0
+        if !has_sources(os, abs_in(wd, d), n) {
+          os.stdio.eprintln(if n > check.MAX_WALK_ENTRIES { "xo ${cmd}: ${check.walk_limit_error(a)}" } else { cmdhelp.no_match_error(cmd, a) })
+          return Front{code: 1}
+        }
       }
-      out.push(os_path(d))
+      // the pattern itself: the command walks DIR (decision 0345)
+      out.push(os_path(a))
+    } else if cmd == "run" && !program && a.ends_with(".xo") && !is_dir(os, abs_in(wd, a)) {
+      // a module is a directory (core 1.1): run the file's directory
+      let d = if a.contains("/") { a[0..(a.rfind("/") ?? 0)] } else { "." }
+      os.stdio.eprintln("xo run: ${a} is a file, not a directory (a module is a directory, core 1.1)\n  fix: xo run ${if d.is_empty() { "/" } else { d }}")
+      return Front{code: 2}
     } else {
       out.push(if dirs { os_path(a) } else { a })
     }
@@ -272,10 +285,15 @@ fn is_dir(os: Os, p: Str) -> Bool {
 
 /// Whether dir or a directory below it holds a .xo file, below the top
 /// skipping what the commands' walks skip: testdata, vendor, and names
-/// starting with . or _ (decision 0210).
-fn has_sources(os: Os, dir: Str) -> Bool {
+/// starting with . or _ (decision 0210); n counts the entries looked at,
+/// and the walk gives up past the bound of decision 0345.
+fn has_sources(os: Os, dir: Str, var n: Int) -> Bool {
   // xo:allow XO0903 a directory it cannot list has no sources: the command reports none
   let entries = os.fs.read_dir(dir).ok() ?? []
+  n += entries.len()
+  if n > check.MAX_WALK_ENTRIES {
+    return false
+  }
   for e in entries {
     if !e.is_dir && e.name.ends_with(".xo") {
       return true
@@ -283,12 +301,57 @@ fn has_sources(os: Os, dir: Str) -> Bool {
   }
   for e in entries {
     if e.is_dir && !(e.name is "testdata" | "vendor") && !e.name.starts_with(".") && !e.name.starts_with("_") {
-      if has_sources(os, "${dir}/${e.name}") {
+      if has_sources(os, "${dir}/${e.name}", n) {
         return true
       }
     }
   }
   false
+}
+
+/// Whether dir holds a .xo file of its own.
+fn own_xo_files(os: Os, dir: Str) -> Bool {
+  // xo:allow XO0903 an unreadable directory: the checker reports it
+  (os.fs.read_dir(dir).ok() ?? []).any(fn(e) { !e.is_dir && e.name.ends_with(".xo") })
+}
+
+/// The error of `xo run DIR` when DIR has no program (why: "has no .xo
+/// files", "has no main function"): xo run runs exactly that directory
+/// and never one below it (decision 0345); the note names the
+/// subdirectories directly below whose files declare main, as a hint.
+fn run_no_main(os: Os, wd: Str, dir: Str, why: Str) -> Str {
+  var b = StrBuilder.new()
+  b.write("xo run: ${dir} ${why}: xo run runs exactly the directory it is given, never one below it (decision 0345)")
+  let top = abs_of(wd, dir)
+  var found: List[Str] = []
+  // xo:allow XO0903 an unreadable directory has no hint to give
+  for e in os.fs.read_dir(top).ok() ?? [] {
+    if !e.is_dir || e.name.starts_with(".") || e.name.starts_with("_") || e.name == "testdata" {
+      continue
+    }
+    // xo:allow XO0903 an unreadable subdirectory is left out of the hint
+    for f in os.fs.read_dir("${top}/${e.name}").ok() ?? [] {
+      if f.is_dir || !f.name.ends_with(".xo") || f.name.ends_with("_test.xo") {
+        continue
+      }
+      let src = match os.fs.read("${top}/${e.name}/${f.name}") {
+        Ok(bs) => bs.to_str() ?? ""
+        // an unreadable file is left out of the hint
+        Err(_) => ""
+      }
+      if src.starts_with("fn main(") || src.contains("\nfn main(") {
+        found.push(if dir == "." { e.name } else { "${dir.trim_suffix("/")}/${e.name}" })
+        break
+      }
+    }
+    if found.len() >= 8 {
+      break
+    }
+  }
+  if !found.is_empty() {
+    b.write("\n  note: programs in the directories below: ${found.join(", ")}\n  fix: xo run ${found[0]}")
+  }
+  b.freeze()
 }
 
 /// help prints the usage of the command cmd on standard output and exits
@@ -383,6 +446,11 @@ fn parse_args(os: Os, args: List[Str]) -> Opts {
     }
     o.dirs = [dir]
     o.prog_args = r
+    if !own_xo_files(os, abs_of(o.wd, dir)) && is_dir(os, abs_of(o.wd, dir)) {
+      // xo run never looks below the directory (decision 0345)
+      os.stdio.eprintln(run_no_main(os, o.wd, dir, "has no .xo files"))
+      os.proc.exit(1)
+    }
     return o
   }
   if !o.std_module.is_empty() {
@@ -397,8 +465,27 @@ fn parse_args(os: Os, args: List[Str]) -> Opts {
     o.dirs = [o.std]
     return o
   }
-  o.dirs = if rest.is_empty() { ["."] } else { rest }
+  o.dirs = []
+  for a in (if rest.is_empty() { ["."] } else { rest }) {
+    if cmdhelp.is_pattern(a) {
+      // DIR/... (front took any other pattern form): DIR, walked
+      let d = cmdhelp.pattern_dir(a)
+      o.walk.push(abs_of(o.wd, d))
+      o.dirs.push(d)
+    } else {
+      o.dirs.push(a)
+    }
+  }
   o
+}
+
+/// o.dirs as a command line gives them: DIR/... for a walked one.
+fn dir_words(o: Opts) -> List[Str] {
+  var out: List[Str] = []
+  for d in o.dirs {
+    out.push(if o.walk.contains(abs_of(o.wd, d)) { if d == "/" { "/..." } else { "${d}/..." } } else { d })
+  }
+  out
 }
 
 fn set_value(os: Os, var o: Opts, name: Str, v: Str) {

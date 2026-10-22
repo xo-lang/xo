@@ -48,18 +48,9 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
     Ok((b, dsym)) => {
       // a new file, renamed over the old: the kernel caches the
       // signature of a file it ran
-      let tmp = "${out}.tmp"
-      match os.fs.write(tmp, b) {
-        Ok(_) => {}
-        Err(e) => return "${tmp}: ${e}"
-      }
-      match os.fs.set_mode(tmp, 0o755) {
-        Ok(_) => {}
-        Err(e) => return "${tmp}: ${e}"
-      }
-      match os.fs.rename(tmp, out) {
-        Ok(_) => {}
-        Err(e) => return "${out}: ${e}"
+      let werr = write_exe(os, out, b)
+      if !werr.is_empty() {
+        return werr
       }
       if !dsym.is_empty() {
         // the DWARF line tables (decision 0239), where lldb and the
@@ -67,11 +58,11 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
         let dir = "${out}.dSYM/Contents/Resources/DWARF"
         match os.fs.create_dir_all(dir) {
           Ok(_) => {}
-          Err(e) => return "${dir}: ${e}"
+          Err(e) => return "cannot write the debug information to ${out}.dSYM: ${fs_reason(e)}"
         }
         match os.fs.write("${dir}/${base_name(out)}", dsym) {
           Ok(_) => {}
-          Err(e) => return "${dir}: ${e}"
+          Err(e) => return "cannot write the debug information to ${out}.dSYM: ${fs_reason(e)}"
         }
       }
       ""
@@ -149,18 +140,9 @@ fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, stati
   }
   match macho.link_elf(ins, macho.ElfLinkOpts{static: static, strip: strip}) {
     Ok(b) => {
-      let tmp = "${out}.tmp"
-      match os.fs.write(tmp, b) {
-        Ok(_) => {}
-        Err(e) => return "${tmp}: ${e}"
-      }
-      match os.fs.set_mode(tmp, 0o755) {
-        Ok(_) => {}
-        Err(e) => return "${tmp}: ${e}"
-      }
-      match os.fs.rename(tmp, out) {
-        Ok(_) => {}
-        Err(e) => return "${out}: ${e}"
+      let werr = write_exe(os, out, b)
+      if !werr.is_empty() {
+        return werr
       }
       ""
     }
@@ -433,4 +415,43 @@ fn pe_resources(bin: Str, stamps: List[(Str, Str)]) -> List[macho.PERes] {
   }
   let strings = [("FileDescription", name), ("FileVersion", text), ("InternalName", name), ("OriginalFilename", file), ("ProductName", name), ("ProductVersion", text)]
   [macho.PERes{typ: 24, id: 1, data: macho.pe_manifest()}, macho.PERes{typ: 16, id: 1, data: macho.pe_version(parts, strings)}]
+}
+
+/// Writes the program b to out: a new file OUT.tmp, made executable and
+/// renamed over out (the kernel caches the signature of a file it ran).
+/// On any failure OUT.tmp is removed and the error says what went wrong
+/// in words, "" on success.
+fn write_exe(os: Os, out: Str, b: Bytes) -> Str {
+  let tmp = "${out}.tmp"
+  var r = os.fs.write(tmp, b)
+  if r.is_ok() {
+    r = os.fs.set_mode(tmp, 0o755)
+  }
+  if r.is_ok() {
+    r = os.fs.rename(tmp, out)
+  }
+  match r {
+    Ok(_) => ""
+    Err(e) => {
+      os.fs.remove(tmp).ignore_err("a failed write leaves nothing behind; a tmp that was never made is NotFound")
+      match e {
+        IsDir(_) => "cannot write the program to ${out}: it is a directory (-o DIR writes DIR/NAME when DIR exists)"
+        _ => "cannot write the program to ${out}: ${fs_reason(e)}"
+      }
+    }
+  }
+}
+
+/// An Fs error in words, without the record's syntax.
+fn fs_reason(e: FsErr) -> Str {
+  match e {
+    NotFound(p) => "${p}: no such file or directory"
+    Exists(p) => "${p}: file exists"
+    NotEmpty(p) => "${p}: directory not empty"
+    NotDir(p) => "${p}: a parent is not a directory"
+    IsDir(p) => "${p}: is a directory"
+    Denied(p) => "${p}: permission denied"
+    Io(p, msg) => "${p}: ${msg}"
+    Canceled => "canceled"
+  }
 }

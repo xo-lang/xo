@@ -1,6 +1,8 @@
 # 0210: The ./... package pattern
 
-Status: Accepted (owner, 2026-10-13). Implemented in selfhost/ (xo1);
+Status: Accepted (owner, 2026-10-13); its implicit walk (a directory
+covering the directories below it) is superseded by 0345 (2026-10-22).
+Implemented in selfhost/ (xo1);
 the Go `cmd/xo` is frozen (decision 0178 stage 7 step 1) and does not
 take the pattern.
 

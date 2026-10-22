@@ -6,8 +6,9 @@
 // to exit, then SIGKILL, then the new binary. A failed build keeps the
 // old program running. Each cycle builds in a child `xo build` (a build
 // that fails exits its process); the on-disk caches keep it fast.
-// --json prints one object a cycle, also written to
-// <module root>/.xo/watch/last.json. A stop request (SIGINT, SIGTERM;
+// --json prints one object a cycle, also written to last.json in the
+// watch's cache directory (watch_dir), which also holds the builds: the
+// watch writes nothing into the project. A stop request (SIGINT, SIGTERM;
 // core 7.5) stops the program as a restart would and ends the watch.
 
 use github.com/xo-lang/xo/compiler/check
@@ -35,11 +36,25 @@ fn watched_path(rel: Str) -> Bool {
 }
 
 /// Moves the built binary next over bin; the reason it could not, or "".
-fn install(fs: Fs, next: Str, bin: Str) -> Str uses fs.write {
+fn install(fs: Fs, next: Str, bin: Str) -> Str uses (fs.read, fs.write) {
   match fs.rename(next, bin) {
-    Ok(_) => ""
-    Err(e) => "xo run --watch: install ${bin}: ${e}\n"
+    Ok(_) => {}
+    Err(e) => return "xo run --watch: install ${bin}: ${e}\n"
   }
+  // the debug information beside the binary under its name (NAME.dSYM),
+  // where lldb and the symbolizer look
+  fs.remove_all("${bin}.dSYM").ignore_err("an old one may not exist")
+  if fs.exists("${next}.dSYM").ok() ?? false {
+    fs.rename("${next}.dSYM", "${bin}.dSYM").ignore_err("only the debugger's view of the frames")
+  }
+  ""
+}
+
+/// The cache directory of a watch of the module at root:
+/// <user cache>/xo/watch/<hash of root>, holding its builds and
+/// last.json, so a watch writes nothing into the project.
+fn watch_dir(os: Os, root: Str) -> Str {
+  "${user_cache_dir(os, host_os(os))}/xo/watch/${crypto.sha256(root.bytes()).to_hex()[0..16]}"
 }
 
 /// The watched files under root and their size and modified time.
@@ -262,16 +277,21 @@ fn report(os: Os, o: Opts, dir: Str, c: Cycle) {
 fn watch_run(os: Os, o: Opts, args: List[Str]) -> Int {
   let xo_bin = check.executable(os.env, os.fs)
   let root = abs_path(o.wd, line_root(os, o.wd, o.dirs[0]))
-  let dir = "${root}/.xo/watch"
-  match os.fs.create_dir_all(dir) {
-    Ok(_) => {}
-    Err(e) => {
-      os.stdio.eprintln("xo run --watch: ${dir}: ${e}")
-      return 1
+  let dir = watch_dir(os, root)
+  for d in ["${dir}/build", "${dir}/run"] {
+    match os.fs.create_dir_all(d) {
+      Ok(_) => {}
+      Err(e) => {
+        os.stdio.eprintln("xo run --watch: ${d}: ${e}")
+        return 1
+      }
     }
   }
-  let bin = "${dir}/prog"
-  let next = "${dir}/next"
+  // the program's own name (ps, crash reports), built in build/ and
+  // moved to run/ with its NAME.dSYM
+  let name = prog_name(o.wd, o.dirs)
+  let bin = "${dir}/run/${name}"
+  let next = "${dir}/build/${name}"
   let flags = build_flags(args)
   var n = 0
   var running: Running? = None
@@ -517,7 +537,7 @@ fn test_cycle_json(c: TestCycle) -> Str {
 /// Runs the selected tests (all when only is None) in a child xo test;
 /// its status and, with --json, its result lines.
 fn run_test_child(os: Os, o: Opts, xo_bin: Str, flags: List[Str], only: List[Str]?) -> (Int, List[Str]) {
-  var words = ["test"] + flags + (if o.json { ["--json"] } else { [] }) + o.dirs
+  var words = ["test"] + flags + (if o.json { ["--json"] } else { [] }) + dir_words(o)
   var cmd = os.proc.cmd(xo_bin, words).dir(o.wd).set_env("PWD", o.wd).set_env("XO_STD", o.std)
   if let Some(names) = only {
     cmd = cmd.set_env("XO_TEST_ONLY", names.join("\n"))
@@ -548,7 +568,7 @@ fn run_test_child(os: Os, o: Opts, xo_bin: Str, flags: List[Str], only: List[Str
 fn watch_test(os: Os, o: Opts, args: List[Str]) -> Int {
   let xo_bin = check.executable(os.env, os.fs)
   let root = abs_path(o.wd, line_root(os, o.wd, o.dirs[0]))
-  let dir = "${root}/.xo/watch"
+  let dir = watch_dir(os, root)
   os.fs.create_dir_all(dir).ignore_err("last.json is a convenience")
   let flags = build_flags(args)
   // lines typed on standard input: `a` (or `all`) reruns every test

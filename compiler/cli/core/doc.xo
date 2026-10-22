@@ -70,7 +70,11 @@ fn run_doc(os: Os, ctx: Ctx, args: List[Str]) -> Int {
     let dir = fl.get_str("dir")
     // a std or runtime module loads whether the program imports it or not
     let pre = if target.starts_with("std/") || target.starts_with("native/llrt/") { [target] } else { [] }
-    let s = match load_with(os, ctx, [dir], false, {}, pre) {
+    // a lookup by import path: the modules below --dir, as the agent
+    // tools find them (decisions 0289, 0345), within the walk's bound
+    var lctx = ctx
+    lctx.walk.push(abs_path(ctx, dir))
+    let s = match load_with(os, lctx, [dir], false, {}, pre) {
       Ok(x) => x
       Err(e) => {
         os.stdio.eprintln("xo doc: ${e}")

@@ -32,7 +32,7 @@ func TestParseOK(t *testing.T) {
 		"ignored.go": "package x\n",
 	})
 	var out, errOut bytes.Buffer
-	if code := run(t, []string{"parse", dir}, &out, &errOut); code != 0 {
+	if code := run(t, []string{"parse", dir + "/..."}, &out, &errOut); code != 0 {
 		t.Fatalf("exit %d: %s", code, errOut.String())
 	}
 	if !strings.Contains(errOut.String(), "2 file(s), 0 error(s)") {
@@ -118,7 +118,7 @@ func TestCheckJSON(t *testing.T) {
 		"app/main.xo": "enum E { A }\nfn g() -> Int ! E { 1 }\nfn main(os: Os) {\n  g()\n}\n",
 	})
 	var out, errOut bytes.Buffer
-	if code := run(t, []string{"check", "--json", dir}, &out, &errOut); code != 1 {
+	if code := run(t, []string{"check", "--json", dir + "/..."}, &out, &errOut); code != 1 {
 		t.Fatalf("exit %d, want 1: %s", code, errOut.String())
 	}
 	var res struct {
@@ -146,7 +146,7 @@ func TestCheckOK(t *testing.T) {
 		"app/x.go":    "package x\n",
 	})
 	var out, errOut bytes.Buffer
-	if code := run(t, []string{"check", dir}, &out, &errOut); code != 0 {
+	if code := run(t, []string{"check", dir + "/..."}, &out, &errOut); code != 0 {
 		t.Fatalf("exit %d: %s", code, errOut.String())
 	}
 	if !strings.Contains(errOut.String(), "1 module(s), 0 error(s), 0 warning(s)") {

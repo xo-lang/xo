@@ -20,7 +20,7 @@ fn run_parse(os: Os, ctx: Ctx, args: List[Str]) -> Int {
     os.stdio.eprintln("xo parse: no files or directories given")
     return 2
   }
-  let files = match collect(os, fl.args, false) {
+  let files = match collect(os, ctx, fl.args, false) {
     Ok(fs) => fs
     Err(e) => {
       os.stdio.eprintln("xo parse: ${e}")
@@ -71,10 +71,11 @@ fn run_parse(os: Os, ctx: Ctx, args: List[Str]) -> Int {
   if has_err { 1 } else { 0 }
 }
 
-/// The .xo files of paths: a file as named, a directory's .xo files at any
-/// depth (dot directories skipped when skip_dot, as `xo fmt` does), all
-/// sorted (cmd/xo collect, collectFmt).
-pub fn collect(os: Os, paths: List[Str], skip_dot: Bool) -> List[Str] ! Str uses fs.read {
+/// The .xo files of paths: a file as named, a directory's own .xo files,
+/// and for a directory named as DIR/... (in ctx.walk, decision 0345) its
+/// .xo files at any depth (dot directories skipped when skip_dot, as `xo
+/// fmt` does), all sorted (cmd/xo collect, collectFmt).
+pub fn collect(os: Os, ctx: Ctx, paths: List[Str], skip_dot: Bool) -> List[Str] ! Str uses fs.read {
   var out: List[Str] = []
   for p in paths {
     let info = match os.fs.stat(p) {
@@ -86,17 +87,55 @@ pub fn collect(os: Os, paths: List[Str], skip_dot: Bool) -> List[Str] ! Str uses
       out.push(p)
       continue
     }
-    walk_xo(os, p, true, skip_dot, out)?
+    if !ctx.walk.contains(abs_path(ctx, p)) {
+      for f in own_xo(os, p)? {
+        out.push(f)
+      }
+      continue
+    }
+    var n = WalkCount{}
+    walk_xo(os, p, true, skip_dot, out, n)?
   }
   Ok(out.sort())
 }
 
-/// Appends the .xo files under dir in the order filepath.WalkDir visits
-/// them, with paths joined as it joins them.
-fn walk_xo(os: Os, dir: Str, top: Bool, skip_dot: Bool, var out: List[Str]) -> () ! Str {
+/// The entries and .xo files a DIR/... walk has looked at (the bound of
+/// decision 0345).
+struct WalkCount {
+  seen: Int = 0
+  xo: Int = 0
+}
+
+/// The .xo files directly in dir.
+fn own_xo(os: Os, dir: Str) -> List[Str] ! Str uses fs.read {
   let entries = match os.fs.read_dir(dir) {
     Ok(es) => es
     Err(e) => return Err(stat_err(dir, e))
+  }
+  var out: List[Str] = []
+  for e in entries {
+    if !e.is_dir && e.name.ends_with(".xo") {
+      out.push(join_path(dir, e.name))
+    }
+  }
+  Ok(out)
+}
+
+/// The error of a DIR/... walk from top over the bound.
+fn walk_limit(top: Str) -> Str {
+  check.walk_limit_error(if top == "/" { "/..." } else { "${top.trim_suffix("/")}/..." })
+}
+
+/// Appends the .xo files under dir in the order filepath.WalkDir visits
+/// them, with paths joined as it joins them.
+fn walk_xo(os: Os, dir: Str, top: Bool, skip_dot: Bool, var out: List[Str], var n: WalkCount) -> () ! Str {
+  let entries = match os.fs.read_dir(dir) {
+    Ok(es) => es
+    Err(e) => return Err(stat_err(dir, e))
+  }
+  n.seen += entries.len()
+  if n.seen > check.MAX_WALK_ENTRIES {
+    return Err(walk_limit(dir))
   }
   for e in entries {
     let p = join_path(dir, e.name)
@@ -104,9 +143,13 @@ fn walk_xo(os: Os, dir: Str, top: Bool, skip_dot: Bool, var out: List[Str]) -> (
       if skip_dot && (e.name.starts_with(".") || e.name.starts_with("_")) {
         continue
       }
-      walk_xo(os, p, false, skip_dot, out)?
+      walk_xo(os, p, false, skip_dot, out, n)?
     } else if p.ends_with(".xo") {
       out.push(p)
+      n.xo += 1
+      if n.xo > check.MAX_WALK_XO {
+        return Err(walk_limit(dir))
+      }
     }
   }
   Ok(())
@@ -146,6 +189,14 @@ pub fn load_with(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map[St
   c.overlay = overlay
   c.preload = preload
   let all = if exact { dirs } else { c.workspace_dirs(dirs) }
+  // the workspace's other modules: walked when a named directory is
+  // (DIR/...), left out when they hold no .xo file of their own
+  c.named_dirs = dirs.len()
+  if dirs.any(fn(d) { c.walk.contains(abs_path(ctx, d)) }) {
+    for d in all[dirs.len()..] {
+      c.walk.push(abs_path(ctx, d))
+    }
+  }
   c.check_dirs_fetching(os, all, fn(p: Str, v: Str) -> Str ! check.Problem { modules.fetch(os, ctx.wd, p, v) })?
   if !c.unsupported.is_empty() {
     return Err("not supported by the self hosted checker: ${c.unsupported}")

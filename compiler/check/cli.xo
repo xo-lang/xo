@@ -49,7 +49,9 @@ pub fn (c: Checker) workspace_dirs(dirs: List[Str]) -> List[Str] uses fs.read {
     let md = c.abs(m.dir)
     var covered = false
     for d in have {
-      if d == md || md.starts_with("${d}/") {
+      // a module below a directory walked as DIR/... is among its
+      // modules already; below a plain one it is not (decision 0345)
+      if d == md || (md.starts_with("${d}/") && (c.walk_all || c.walk.contains(d))) {
         covered = true
       }
     }

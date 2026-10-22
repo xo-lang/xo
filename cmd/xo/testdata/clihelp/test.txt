@@ -19,7 +19,9 @@ the tests, then after each change to the sources only the tests it
 reaches (a new or edited test, the tests of a changed _test.xo file,
 and the tests that name a function whose definition, or one it uses,
 changed); typing a and Enter runs them all. With --json each cycle is
-a JSON line, the last also in .xo/watch/last.json (decision 0267).
+a JSON line, the last also in last.json under <user cache>/xo/watch
+(decision 0267).
 
-A directory covers the directories below it, so DIR/... is DIR (decision
-0210); a DIR/... with no .xo file at or below DIR is an error.
+A directory means that directory alone; DIR/... covers the directories
+below it too, up to 6,000 .xo files or 60,000 entries (decision 0345).
+A DIR/... with no .xo file at or below DIR is an error.

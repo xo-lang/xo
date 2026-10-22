@@ -164,6 +164,8 @@ fn (var c: ModCtx) publish_verify(var r: semantic.PublishResult, dir: Str) uses 
   chk.set_mod_env(c.wd, c.getenv("XO_MODCACHE"), c.getenv("HOME"), c.getenv("XDG_CACHE_HOME"), c.getenv("XO_OFFLINE"), "off")
   chk.cbind_dir = c.getenv("XO_CBIND_DIR")
   chk.gobind_dir = c.getenv("XO_GOBIND_DIR")
+  // the whole module being published, within the walk's bound (0345)
+  chk.walk_all = true
   let os = c.os
   let wd = c.wd
   match chk.check_dirs_fetching(os, [root], fn(p: Str, v: Str) -> Str ! check.Problem { fetch(os, wd, p, v) }) {

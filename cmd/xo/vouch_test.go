@@ -43,7 +43,7 @@ func TestVouches(t *testing.T) {
 		"main/main.xo": "use github.com/acme/osx\nuse github.com/acme/strx\n\nfn main(os: Os) {\n  os.stdio.println(\"${osx.pid() > 0} ${strx.up(\"a\")}\")\n}\n",
 	})
 	xo(t, "mod", "tidy", "--dir", app).want(0)
-	r := xo(t, "check", "--json", app).want(1)
+	r := xo(t, "check", "--json", app+"/...").want(1)
 	if got := diagCodes(t, r.out); got != "XO1316" {
 		t.Fatalf("unvouched use go: %s\n%s", got, r.out)
 	}
@@ -53,7 +53,7 @@ func TestVouches(t *testing.T) {
 	// a dependency's own vouch does not count
 	// (its xo.mod is fetched, so this is the consumer's line)
 	os.WriteFile(filepath.Join(app, "xo.mod"), []byte(xomod+"\nvouch github.com/acme/osx v1.0.0 go \"os\"\n"), 0o644)
-	xo(t, "check", app).want(0)
+	xo(t, "check", app+"/...").want(0)
 	// an upgrade makes the vouch stale: xo get refuses it before writing,
 	// even with --accept-effects (it accepts effects, not escape hatches)
 	modBefore, _ := os.ReadFile(filepath.Join(app, "xo.mod"))
@@ -72,17 +72,17 @@ func TestVouches(t *testing.T) {
 	// a hand edit to the new version: the check reports the stale vouch
 	os.WriteFile(filepath.Join(app, "xo.mod"), []byte(strings.Replace(string(modBefore), "osx v1.0.0\n", "osx v1.1.0\n", 1)), 0o644)
 	xo(t, "mod", "tidy", "--dir", app).want(0)
-	r = xo(t, "check", "--json", app).want(1)
+	r = xo(t, "check", "--json", app+"/...").want(1)
 	if got := diagCodes(t, r.out); got != "XO1316" || !strings.Contains(r.out, "reviewed github.com/acme/osx v1.0.0") {
 		t.Errorf("stale vouch: %s\n%s", got, r.out)
 	}
 	// vouching for the new version lets xo get through
 	os.WriteFile(filepath.Join(app, "xo.mod"), []byte(string(modBefore)+"vouch github.com/acme/osx v1.1.0 go \"os\"\n"), 0o644)
 	xo(t, "get", "--dir", app, "github.com/acme/osx@v1.1.0").want(0)
-	xo(t, "check", app).want(0)
+	xo(t, "check", app+"/...").want(0)
 	// malformed vouch lines are XO1301
 	os.WriteFile(filepath.Join(app, "xo.mod"), []byte(xomod+"\nvouch github.com/acme/osx latest go os\n"), 0o644)
-	r = xo(t, "check", "--json", app).want(1)
+	r = xo(t, "check", "--json", app+"/...").want(1)
 	if got := diagCodes(t, r.out); !strings.Contains(got, "XO1301") {
 		t.Errorf("malformed vouch: %s", got)
 	}
@@ -113,7 +113,7 @@ func TestVouchesC(t *testing.T) {
 		"main/main.xo": "use github.com/acme/cz\n\nfn main(os: Os) {\n  os.stdio.println(\"${cz.add(2, 40)}\")\n}\n",
 	})
 	xo(t, "mod", "tidy", "--dir", app).want(0)
-	r := xo(t, "check", "--no-gc", "--json", app).want(1)
+	r := xo(t, "check", "--no-gc", "--json", app+"/...").want(1)
 	if got := diagCodes(t, r.out); got != "XO1316,XO0701" && got != "XO0701,XO1316" {
 		t.Fatalf("unvouched use c: %s\n%s", got, r.out)
 	}
@@ -123,7 +123,7 @@ func TestVouchesC(t *testing.T) {
 		{"vouch github.com/acme/cz v1.0.0 c \"tiny.h\" uses net", "XO0701"}, // the consumer disagrees
 	} {
 		os.WriteFile(filepath.Join(app, "xo.mod"), []byte(xomod+"\n"+tc.vouch+"\n"), 0o644)
-		r := xo(t, "check", "--no-gc", "--json", app)
+		r := xo(t, "check", "--no-gc", "--json", app+"/...")
 		if got := diagCodes(t, r.out); got != tc.want {
 			t.Errorf("%s: %s, want %q\n%s", tc.vouch, got, tc.want, r.out)
 		}

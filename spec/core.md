@@ -2529,7 +2529,7 @@ test "retries after 503" {
 | Command | Purpose |
 |---|---|
 | `xo build [--targets=all\|os/arch,...] [--no-gc] [--tzdata=embedded\|system] [--ci] [--release [--error-args=false]] [--stamp NAME=VALUE]...` | Build static binaries; `--stamp` (repeatable, also `xo run`) sets a `const NAME: Str = "..."` of the main module to VALUE for this build, else `XO1501`, and is recorded in the build information so `xo replay` rebuilds the same program (decision 0165); `--no-gc` on a native backend without a garbage collector (below); `--tzdata=system` reads time zones from the host instead of embedding the ones the program uses (std.md 13); `--ci` fails before building on an unformatted file (10.5) or a `dbg` left in code (11.4); `--release` is a release build (8): `requires(debug)` and `ensures(debug)` compiled out, and the native runtime's profiler and execution trace recorder left out unless `--profile-support` or `--trace-support` (decisions 0238, 0240); `--release --error-args=false` drops parameter values from error frames (11.1); `-s` leaves debug information and local symbols out of a native binary. Builds are debug builds otherwise, and `xo run` and `xo test` always are |
-| `xo run` | Build and run for the host; `--profile=cpu\|heap\|cpu,heap` (XO_PROF, decision 0238) and `--trace=FILE` (XO_TRACE, decision 0240) on a native backend; `--watch [--grace=D]` rebuilds after a source change and restarts the program only when the built binary changed (SIGTERM, up to `--grace`, default 5s, then SIGKILL; decision 0267) |
+| `xo run [DIR]` | Build and run for the host the program in exactly DIR (default `.`), never one below it (decision 0345); `--profile=cpu\|heap\|cpu,heap` (XO_PROF, decision 0238) and `--trace=FILE` (XO_TRACE, decision 0240) on a native backend; `--watch [--grace=D]` rebuilds after a source change and restarts the program only when the built binary changed (SIGTERM, up to `--grace`, default 5s, then SIGKILL; decision 0267) |
 | `xo trace FILE [--json OUT] [--text]` | The execution trace a native program wrote under XO_TRACE as Chrome trace event JSON (Perfetto) and a summary (decision 0240) |
 | `xo check [--no-gc] [--fix]` | Parse and type check all targets, no codegen; `--no-gc` adds the native build check (XO1201); `--fix` first applies the machine fixes (below) |
 | `xo test [--seed=N] [--explore=N] [--cases=N] [--timeout=D] [--real] [--watch]` | Tests, contract fuzzing, property tests (`--cases` per property test and fuzzed function, default 100; `--timeout` the real time each test may take, default 60s, 0 for none, 9.2); deterministic scheduling. `--watch` reruns, after each change, only the tests the change reaches (decision 0267). Doc comment examples are [P2] (1.2) |
@@ -2564,21 +2564,33 @@ stdout with exit status 0. `xo` alone prints the command list on stderr
 and exits 2. An unknown flag, a missing argument, or an unknown command
 is a usage error: the error and the usage on stderr, exit status 2.
 
-**Directories and `DIR/...`.** A directory argument covers the
-directories below it: `check`, `vet`, `doc`, `test`, `build`, and
-`audit` take every directory with `.xo` files at or below it (one module
-each, or one program for `build` and `test`), skipping `testdata`,
-`vendor/` (with `modules.txt`), and names starting with `.` or `_`;
-`fmt` and `fix` take the files below it, skipping names starting with
-`.` or `_` (and `fix` `testdata`); `parse` takes every file. The package
-pattern `DIR/...` (`./...`, `cmd/...`) is accepted by every command that
-takes directories (`check`, `test`, `build`, `vet`, `doc`, `fmt`,
-`fix`, `parse`, `audit`) and means DIR, so `xo check ./...` and
-`xo check .` agree; an `xo.work` workspace applies to it as to DIR. A
-`DIR/...` with no `.xo` file at or below DIR (with the skips above) is
-an error, `xo CMD: DIR/... matched no directory with .xo files`, exit
-status 1. Other forms (`...` alone, `a/.../b`) and `xo run DIR/...` are
-usage errors (decision 0210).
+**Directories and `DIR/...`.** A directory argument means that
+directory alone (decision 0345, superseding 0210's implicit walk):
+`check`, `vet`, `doc`, `test`, `build`, and `audit` take the module in
+it (plus the modules it imports, and for `check` the other modules of
+its `xo.work` workspace), and `fmt`, `fix`, and `parse` its own `.xo`
+files. A directory with no `.xo` file is an error that names `DIR/...`.
+Only the package pattern `DIR/...` (`./...`, `cmd/...`, accepted by
+`check`, `test`, `build`, `vet`, `doc`, `fmt`, `fix`, `parse`, `audit`)
+covers the directories below DIR: every directory with `.xo` files at or
+below it (one module each, or one program for `build` and `test`),
+skipping `testdata`, `vendor/` (with `modules.txt`), and names starting
+with `.` or `_`; `fmt` and `fix` take the files below it, skipping names
+starting with `.` or `_` (and `fix` `testdata`); `parse` takes every
+file. A `DIR/...` walk stops past 6,000 `.xo` files or 60,000 directory
+entries with an error naming the limit, so `xo build /...` or
+`xo check $HOME/...` refuses. A `DIR/...` with no `.xo` file at or below
+DIR (with the skips above) is an error, `xo CMD: DIR/... matched no
+directory with .xo files`, exit status 1. Other forms (`...` alone,
+`a/.../b`) are usage errors (decision 0210).
+
+`xo run` takes one directory (`.` when none is given) and runs the
+program in exactly that directory: it never looks below it, since
+running code found by walking would run whatever a directory tree
+holds. A directory with no `.xo` file or no `main` is an error, whose
+note lists the subdirectories directly below that declare `main`, as a
+hint; a `.xo` file, `xo run DIR/...`, and any other pattern are errors
+(a module is a directory, 1.1), the file's with the fix `xo run DIR`.
 
 **Check and fix.** `xo check` is read only. `xo check --fix` first
 applies every unambiguous machine fix, the same set `xo fix` applies

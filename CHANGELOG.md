@@ -6,6 +6,23 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- A directory argument means that directory alone (decision 0345,
+  owner): `xo run` runs exactly the directory it is given, never a
+  program found below it (in a parent of two programs `xo run .` ran the
+  first it found), and says which subdirectories hold a program; `build`,
+  `check`, `test`, `vet`, `doc`, `fmt`, `fix`, `parse`, and `audit` cover
+  subdirectories only with `DIR/...`, which stops past 6,000 .xo files or
+  60,000 entries (`xo build /...` refuses). A plain directory with no .xo
+  file is an error naming `DIR/...`; `xo run FILE.xo` gives the fix `xo
+  run DIR`. Write `xo check ./...` where `xo check .` covered the tree.
+- Build outputs (the owner's 0.25.2 reports): `-o DIR` naming an existing
+  directory writes `DIR/NAME` and `DIR/NAME.dSYM`, as `go build -o`
+  does; a failed write removes its `OUT.tmp` and says why in words (it
+  printed `IsDir(path: ...)` and left the file); `xo run --watch` and
+  `xo test --watch` build and keep `last.json` in
+  `<user cache>/xo/watch/HASH`, not `.xo/watch` in the project, with the
+  debug information named after the binary; `xo init` adds `/.xo/` (the
+  `use go` and `use c` binding caches) to `.gitignore`.
 - 0.25.2 (2026-10-22), the first binary release: archives for
   darwin/arm64, darwin/amd64 (signed and notarized), linux/arm64,
   linux/amd64 and windows/amd64, each `xo` stamped with the commit it was

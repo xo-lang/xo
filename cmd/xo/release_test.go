@@ -40,7 +40,7 @@ func TestEffectCeilings(t *testing.T) {
 		"main/main.xo": "use github.com/acme/tick\n\nfn main(os: Os) {\n  let n = tick.apply(fn() -> Int {\n    os.stdio.println(\"x\")\n    tick.now()\n  })\n  os.stdio.println(\"${n}\")\n}\n",
 	})
 	xo(t, "mod", "tidy", "--dir", app).want(0)
-	xo(t, "check", app).want(0)
+	xo(t, "check", app+"/...").want(0)
 
 	// the upgrade adds `uses env` to now: the effect lock refuses it
 	// (XO1317, decision 0156); accepted, xo get says so, the call fails
@@ -56,7 +56,7 @@ func TestEffectCeilings(t *testing.T) {
 	if !strings.Contains(string(data), "require github.com/acme/tick v1.1.0 uses none") {
 		t.Errorf("xo get dropped the ceiling:\n%s", data)
 	}
-	r = xo(t, "check", "--json", app).want(1)
+	r = xo(t, "check", "--json", app+"/...").want(1)
 	if got := diagCodes(t, r.out); got != "XO1309" {
 		t.Fatalf("call above the ceiling: %s\n%s", got, r.out)
 	}
@@ -65,7 +65,7 @@ func TestEffectCeilings(t *testing.T) {
 	}
 	// raising the ceiling accepts it
 	os.WriteFile(filepath.Join(app, "xo.mod"), []byte("module example.com/app\nedition preview\n\nrequire github.com/acme/tick v1.1.0 uses (env, fs.read)\n"), 0o644)
-	xo(t, "check", app).want(0)
+	xo(t, "check", app+"/...").want(0)
 	// xo get -u upgrades every requirement and reports no changes for
 	// one already latest (v2 is another module path)
 	r = xo(t, "get", "-u", "--json", "--dir", app).want(0)
@@ -74,7 +74,7 @@ func TestEffectCeilings(t *testing.T) {
 	}
 	// a malformed ceiling is XO1301
 	os.WriteFile(filepath.Join(app, "xo.mod"), []byte("module example.com/app\nedition preview\n\nrequire github.com/acme/tick v1.1.0 uses telepathy\n"), 0o644)
-	r = xo(t, "check", "--json", app).want(1)
+	r = xo(t, "check", "--json", app+"/...").want(1)
 	if got := diagCodes(t, r.out); !strings.HasPrefix(got, "XO1301") {
 		t.Errorf("malformed ceiling: %s", got)
 	}
@@ -86,7 +86,7 @@ func TestEffectCeilings(t *testing.T) {
 		"tick/tick.xo": "pub fn now() -> Int uses net { 1 }\n\npub fn apply[fx: Effects](f: fn() -> Int uses fx) -> Int uses fx { f() }\n",
 		"xo.work":      "xo preview\nuse ./app\nuse ./tick uses none\n",
 	})
-	r = xo(t, "check", "--json", app).want(1)
+	r = xo(t, "check", "--json", app+"/...").want(1)
 	if got := diagCodes(t, r.out); got != "XO1309" || !strings.Contains(r.out, "xo.work") || !strings.Contains(r.out, "`net`") {
 		t.Errorf("workspace ceiling: %s\n%s", got, r.out)
 	}
@@ -96,10 +96,10 @@ func TestEffectCeilings(t *testing.T) {
 	os.WriteFile(filepath.Join(app, "xo.mod"), []byte("module example.com/app\nedition preview\n\nrequire github.com/acme/tick/v2 v2.0.0 uses none\n"), 0o644)
 	os.WriteFile(filepath.Join(app, "main", "main.xo"), []byte("use github.com/acme/tick/v2\n\nfn main(os: Os) {\n  os.stdio.println(\"${tick.now()}\")\n}\n"), 0o644)
 	xo(t, "mod", "tidy", "--dir", app).want(0)
-	r = xo(t, "check", "--json", app).want(0)
+	r = xo(t, "check", "--json", app+"/...").want(0)
 	// v2 under the path without a suffix is XO1301
 	os.WriteFile(filepath.Join(app, "xo.mod"), []byte("module example.com/app\nedition preview\n\nrequire github.com/acme/tick v2.0.0\n"), 0o644)
-	r = xo(t, "check", "--json", app).want(1)
+	r = xo(t, "check", "--json", app+"/...").want(1)
 	if got := diagCodes(t, r.out); !strings.HasPrefix(got, "XO1301") || !strings.Contains(r.out, "github.com/acme/tick/v2") {
 		t.Errorf("v2 without /v2: %s\n%s", got, r.out)
 	}
@@ -213,8 +213,9 @@ func TestPublish(t *testing.T) {
 	}
 }
 
-// TestInit checks `xo init`: xo.mod, and xo.work in .gitignore for a
-// single module repository but not under a workspace.
+// TestInit checks `xo init`: xo.mod, .xo/ (the binding caches) in
+// .gitignore, and xo.work too for a single module repository but not
+// under a workspace.
 func TestInit(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -224,7 +225,7 @@ func TestInit(t *testing.T) {
 		t.Errorf("xo.mod:\n%s", data)
 	}
 	ig, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))
-	if !strings.Contains(string(ig), "/xo.work\n") {
+	if !strings.Contains(string(ig), "/xo.work\n") || !strings.Contains(string(ig), "/.xo/\n") {
 		t.Errorf(".gitignore:\n%s", ig)
 	}
 	xo(t, "init", "--dir", dir, "github.com/acme/new").want(1)
@@ -234,7 +235,7 @@ func TestInit(t *testing.T) {
 	modtest.WriteFiles(t, mono, map[string]string{"xo.work": "xo preview\n"})
 	sub := filepath.Join(mono, "svc")
 	xo(t, "init", "--dir", sub, "github.com/acme/svc").want(0)
-	if _, err := os.Stat(filepath.Join(sub, ".gitignore")); err == nil {
-		t.Errorf("xo init under a workspace wrote .gitignore")
+	if ig, _ := os.ReadFile(filepath.Join(sub, ".gitignore")); strings.Contains(string(ig), "xo.work") || !strings.Contains(string(ig), "/.xo/\n") {
+		t.Errorf("xo init under a workspace: .gitignore (want /.xo/, not xo.work):\n%s", ig)
 	}
 }

@@ -26,7 +26,7 @@ func TestFmt(t *testing.T) {
 		"notes/read.md": "not xo\n",
 	})
 	var out, errOut bytes.Buffer
-	if code := run(t, []string{"fmt", "--check", dir}, &out, &errOut); code != 1 {
+	if code := run(t, []string{"fmt", "--check", dir + "/..."}, &out, &errOut); code != 1 {
 		t.Fatalf("--check exit %d, want 1: %s", code, errOut.String())
 	}
 	if got := out.String(); !strings.Contains(got, "a.xo") || !strings.Contains(got, "c.xo") || strings.Contains(got, "b.xo") || strings.Contains(got, "skip.xo") {
@@ -36,7 +36,7 @@ func TestFmt(t *testing.T) {
 		t.Errorf("--check changed a file")
 	}
 	out.Reset()
-	if code := run(t, []string{"fmt", dir}, &out, &errOut); code != 0 {
+	if code := run(t, []string{"fmt", dir + "/..."}, &out, &errOut); code != 0 {
 		t.Fatalf("fmt exit %d: %s", code, errOut.String())
 	}
 	if data, _ := os.ReadFile(filepath.Join(dir, "a.xo")); string(data) != "fn f(a: Int) -> Int {\n  a + 1\n}\n" {
@@ -46,7 +46,7 @@ func TestFmt(t *testing.T) {
 		t.Errorf("dot directory was formatted")
 	}
 	out.Reset()
-	if code := run(t, []string{"fmt", "--check", dir}, &out, &errOut); code != 0 || out.Len() != 0 {
+	if code := run(t, []string{"fmt", "--check", dir + "/..."}, &out, &errOut); code != 0 || out.Len() != 0 {
 		t.Errorf("second --check: exit %d, out %q", code, out.String())
 	}
 }

@@ -8,5 +8,6 @@ it passes into dependencies; and the check's diagnostics. JSON when
 --json or stdout is not a terminal. Exit 1 when the check has errors.
 --no-gc checks as a native build (use c).
 
-A directory covers the directories below it, so DIR/... is DIR (decision
-0210); a DIR/... with no .xo file at or below DIR is an error.
+A directory means that directory alone; DIR/... covers the directories
+below it too, up to 6,000 .xo files or 60,000 entries (decision 0345).
+A DIR/... with no .xo file at or below DIR is an error.

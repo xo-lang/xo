@@ -287,8 +287,8 @@ fn position_of(target: Str) -> (Str, Int, Int)? {
 /// The most .xo files, and directory entries looked at, under a --dir
 /// that is not itself a module directory (the xo checkout has about
 /// 1,800 .xo files).
-const MAX_DIR_XO = 6000
-const MAX_DIR_ENTRIES = 60000
+const MAX_DIR_XO = check.MAX_WALK_XO
+const MAX_DIR_ENTRIES = check.MAX_WALK_ENTRIES
 
 /// Why dir d holds too much to check as one workspace, or None: a bounded
 /// walk counting its .xo files and entries, and naming the first

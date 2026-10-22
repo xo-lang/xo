@@ -9,5 +9,6 @@ With a NAME that is not a directory or an import path (`Map`,
 `std/tls.client`), the declaration's doc comment and, for a type, its
 methods, as xo def finds it.
 
-A directory covers the directories below it, so DIR/... is DIR (decision
-0210); a DIR/... with no .xo file at or below DIR is an error.
+A directory means that directory alone; DIR/... covers the directories
+below it too, up to 6,000 .xo files or 60,000 entries (decision 0345).
+A DIR/... with no .xo file at or below DIR is an error.

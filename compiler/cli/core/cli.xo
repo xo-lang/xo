@@ -23,6 +23,9 @@ pub struct Ctx {
   /// XO_OFFLINE and XO_WORK after --offline and --workspace.
   pub offline: Str
   pub work: Str
+  /// The directories (absolute) the command line named as DIR/...: only
+  /// they cover the directories below them (decision 0345).
+  pub walk: List[Str] = []
 }
 
 /// The commands this package runs.
@@ -88,6 +91,11 @@ pub fn run_extra(os: Os, args0: List[Str], extra: List[Diag]) -> Int uses fs, en
         os.stdio.eprintln("xo ${args[0]}: --workspace=${v}: want off or on")
         return 2
       }
+    } else if cmdhelp.takes_dirs(args[0]) && cmdhelp.is_pattern(a) {
+      // DIR/... (the front end took any other pattern form): DIR, walked
+      let d = cmdhelp.pattern_dir(a)
+      ctx.walk.push(abs_path(ctx, d))
+      rest.push(d)
     } else {
       rest.push(a)
     }
@@ -99,7 +107,7 @@ pub fn run_extra(os: Os, args0: List[Str], extra: List[Diag]) -> Int uses fs, en
     "explain" => run_explain(os, rest)
     "version" | "--version" => run_version(os, rest)
     "init" => run_init(os, ctx, rest)
-    "fmt" => run_fmt(os, rest)
+    "fmt" => run_fmt(os, ctx, rest)
     "fix" => run_fix(os, ctx, rest)
     "vet" => run_vet(os, ctx, rest, extra)
     "doc" => run_doc(os, ctx, rest)
@@ -127,6 +135,7 @@ pub fn new_checker(os: Os, ctx: Ctx) -> check.Checker uses fs.read, env {
   c.set_mod_env(ctx.wd, os.env.get("XO_MODCACHE") ?? "", os.env.get("HOME") ?? "", os.env.get("XDG_CACHE_HOME") ?? "", ctx.offline, ctx.work)
   c.cbind_dir = os.env.get("XO_CBIND_DIR") ?? ""
   c.gobind_dir = os.env.get("XO_GOBIND_DIR") ?? ""
+  c.walk = ctx.walk
   c
 }
 
@@ -262,7 +271,6 @@ fn run_init(os: Os, ctx: Ctx, args: List[Str]) -> Int {
   let w = nearest_work(os, ctx, dir)
   if !w.is_empty() {
     os.stdio.println("the workspace ${w} is above it; add `use ${dir}` to it to build the module from here")
-    return 0
   }
   let ignore = join_path(dir, ".gitignore")
   var s = ""
@@ -275,16 +283,28 @@ fn run_init(os: Os, ctx: Ctx, args: List[Str]) -> Int {
       }
     }
   }
+  var has_work = !w.is_empty()
+  var has_dot = false
   for l in s.split("\n") {
     let t = l.trim()
-    if t == "xo.work" || t == "/xo.work" {
-      return 0
-    }
+    has_work = has_work || t is "xo.work" | "/xo.work"
+    has_dot = has_dot || t is ".xo" | ".xo/" | "/.xo" | "/.xo/"
+  }
+  if has_work && has_dot {
+    return 0
   }
   if !s.is_empty() && !s.ends_with("\n") {
     s = s + "\n"
   }
-  s = s + "# a local xo.work workspace (decision 0086) is not committed in a single module repository\n/xo.work\n"
+  var added: List[Str] = []
+  if !has_work {
+    s = s + "# a local xo.work workspace (decision 0086) is not committed in a single module repository\n/xo.work\n"
+    added.push("xo.work")
+  }
+  if !has_dot {
+    s = s + "# xo's caches in the module: the use go and use c bindings (.xo/gobind, .xo/cbind)\n/.xo/\n"
+    added.push(".xo/")
+  }
   match os.fs.write(ignore, s.bytes()) {
     Ok(_) => {}
     Err(e) => {
@@ -292,7 +312,7 @@ fn run_init(os: Os, ctx: Ctx, args: List[Str]) -> Int {
       return 1
     }
   }
-  os.stdio.println("added xo.work to ${ignore}")
+  os.stdio.println("added ${added.join(" and ")} to ${ignore}")
   0
 }
 

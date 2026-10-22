@@ -105,6 +105,14 @@ fn (var c: ModCtx) run_audit(args: List[Str]) -> Int uses (fs, net, proc, stdio,
   if !fl.args.is_empty() {
     dir = fl.args[0]
   }
+  // DIR/...: the module's directories below its root too (decision 0345)
+  let walk = dir.ends_with("/...")
+  if walk {
+    dir = dir.trim_suffix("/...")
+    if dir.is_empty() {
+      dir = "/"
+    }
+  }
   let root = match c.mod_root_of(dir, "audit") {
     Some(r) => r
     None => return 2
@@ -113,11 +121,22 @@ fn (var c: ModCtx) run_audit(args: List[Str]) -> Int uses (fs, net, proc, stdio,
   chk.set_mod_env(c.wd, c.getenv("XO_MODCACHE"), c.getenv("HOME"), c.getenv("XDG_CACHE_HOME"), c.getenv("XO_OFFLINE"), c.getenv("XO_WORK"))
   chk.cbind_dir = c.getenv("XO_CBIND_DIR")
   chk.gobind_dir = c.getenv("XO_GOBIND_DIR")
+  if walk {
+    chk.walk = [c.abs(root)]
+  }
   var dirs = [root]
   if fl.on("no-gc") {
     chk.native = true
   } else {
     dirs = c.workspace_dirs(dirs)
+    // the workspace's other modules: walked with DIR/..., left out when
+    // they hold no .xo file of their own (decision 0345)
+    chk.named_dirs = 1
+    if walk {
+      for d in dirs[1..] {
+        chk.walk.push(c.abs(d))
+      }
+    }
   }
   let os = c.os
   let wd = c.wd

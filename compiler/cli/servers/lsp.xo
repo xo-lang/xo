@@ -474,6 +474,10 @@ fn new_lsp_checker(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes]) -> c
   var c = check.new_checker(os.fs, std_dir)
   c.overlay = overlay
   c.set_mod_env(wd, os.env.get("XO_MODCACHE") ?? "", os.env.get("HOME") ?? "", os.env.get("XDG_CACHE_HOME") ?? "", os.env.get("XO_OFFLINE") ?? "", os.env.get("XO_WORK") ?? "")
+  // the editor's and the agent tools' checks cover the modules below a
+  // workspace or repository root (decision 0289), within the walk's
+  // bound (decision 0345)
+  c.walk_all = true
   c
 }
 

@@ -148,8 +148,13 @@ func TestRunWatch(t *testing.T) {
 	if alive(second) {
 		t.Errorf("the program %d still runs after xo ended", second)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".xo", "watch", "last.json")); err != nil {
-		t.Errorf("last.json: %v", err)
+	// the builds and last.json are in the user cache: nothing in the
+	// project but the sources the test wrote
+	ents, _ := os.ReadDir(dir)
+	for _, e := range ents {
+		if e.Name() != "main.xo" && e.Name() != "main_test.xo" {
+			t.Errorf("xo run --watch left %s in the project", e.Name())
+		}
 	}
 }
 

@@ -52,6 +52,10 @@ fn build_go(os: Os, ctx: Ctx, o: Opts) ! {
   var out = o.out
   if !out.is_empty() {
     out = abs_of(wd, out)
+    if is_dir(os, out) {
+      // -o DIR, an existing directory: DIR/NAME, as go build -o does
+      out = "${out.trim_suffix("/")}/"
+    }
   }
   var tree = o.go_tree
   if tree.is_empty() {

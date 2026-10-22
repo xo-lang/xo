@@ -107,7 +107,8 @@ fn build_dir(os: Os, ctx: Ctx, wd: Str, dirs: List[Str], mode: Int, mono: Bool, 
   Ok(dir)
 }
 
-/// binPath: the binary of target t ("os/arch"): out, else dir/bin/name;
+/// binPath: the binary of target t ("os/arch"): out (OUT/name when out
+/// ends in /, an existing directory), else dir/bin/name;
 /// with several targets name-os-arch in out (a directory) or dir/bin.
 fn bin_path(dir: Str, out: Str, name: Str, t: Str, many: Bool) -> Str {
   let parts = t.split("/")
@@ -120,9 +121,13 @@ fn bin_path(dir: Str, out: Str, name: Str, t: Str, many: Bool) -> Str {
   if many {
     let base = "${name}-${parts[0]}-${parts[1]}${exe}"
     if !out.is_empty() {
-      return "${out}/${base}"
+      return "${out.trim_suffix("/")}/${base}"
     }
     return "${dir}/bin/${base}"
+  }
+  if out.ends_with("/") {
+    // -o naming an existing directory (main.xo): the program inside it
+    return "${out}${name}${exe}"
   }
   if !out.is_empty() {
     return out

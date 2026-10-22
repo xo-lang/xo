@@ -73,17 +73,17 @@ func TestModProxy(t *testing.T) {
 	emptyCache(t)
 	setenv(t, "XO_PROXY", srv)
 	xo(t, "mod", "tidy", "--dir", app).want(0)
-	xo(t, "check", app).want(0)
+	xo(t, "check", app+"/...").want(0)
 	xo(t, "get", "--dir", app, "github.com/acme/money@v1.3.0").want(0)
 	// a second client with an empty cache and no repositories in reach:
 	// everything comes through the proxy
 	emptyCache(t)
 	setenv(t, "XO_GIT_BASE", filepath.Join(ws, "no-repositories"))
-	xo(t, "check", app).want(0)
+	xo(t, "check", app+"/...").want(0)
 
 	setenv(t, "XO_PROXY", "nonsense")
 	emptyCache(t)
-	r := xo(t, "check", "--json", app).want(1)
+	r := xo(t, "check", "--json", app+"/...").want(1)
 	if got := diagCodes(t, r.out); got == "" || got[:6] != "XO1314" {
 		t.Errorf("malformed XO_PROXY: %s", got)
 	}

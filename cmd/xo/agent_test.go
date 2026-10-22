@@ -233,7 +233,7 @@ func TestMCPSession(t *testing.T) {
 		}
 	}
 
-	chk, isErr := c.tool("check", map[string]any{"dirs": []string{dir}})
+	chk, isErr := c.tool("check", map[string]any{"dirs": []string{dir + "/..."}})
 	diags, _ := chk["diagnostics"].([]any)
 	if isErr || chk["ok"] != false || len(diags) != 1 {
 		t.Fatalf("check = %v", chk)
@@ -259,7 +259,7 @@ func TestMCPSession(t *testing.T) {
 		t.Errorf("explain = %v", ex)
 	}
 
-	f, isErr := c.tool("fmt", map[string]any{"paths": []string{dir}})
+	f, isErr := c.tool("fmt", map[string]any{"paths": []string{dir + "/..."}})
 	if isErr || f["written"] != false {
 		t.Errorf("fmt = %v", f)
 	}
@@ -270,7 +270,7 @@ func TestMCPSession(t *testing.T) {
 
 	// check with fix=true applies the machine fixes (decision 0096)
 	fixDir := writeFiles(t, map[string]string{"app/main.xo": "fn f(n: Int) -> Int {\n  if n > 0 {\n    return 1\n  }\n  else {\n    return 2\n  }\n}\nfn main(os: Os) {\n  os.stdio.println(\"${f(1)}\")\n}\n"})
-	fx, isErr := c.tool("check", map[string]any{"dirs": []string{fixDir}, "fix": true})
+	fx, isErr := c.tool("check", map[string]any{"dirs": []string{fixDir + "/..."}, "fix": true})
 	if applied, _ := fx["applied"].([]any); isErr || fx["ok"] != true || len(applied) != 1 {
 		t.Errorf("check fix = %v", fx)
 	}

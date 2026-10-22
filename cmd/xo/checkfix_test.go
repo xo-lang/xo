@@ -18,7 +18,7 @@ func TestCheckFix(t *testing.T) {
 	dir := writeFiles(t, map[string]string{"app/main.xo": src})
 	file := filepath.Join(dir, "app", "main.xo")
 	var out, errOut bytes.Buffer
-	if code := run(t, []string{"check", "--json", dir}, &out, &errOut); code != 1 {
+	if code := run(t, []string{"check", "--json", dir + "/..."}, &out, &errOut); code != 1 {
 		t.Fatalf("plain check: exit %d, want 1: %s%s", code, out.String(), errOut.String())
 	}
 	if strings.Contains(out.String(), `"applied"`) {
@@ -29,7 +29,7 @@ func TestCheckFix(t *testing.T) {
 	}
 	out.Reset()
 	errOut.Reset()
-	if code := run(t, []string{"check", "--fix", "--json", dir}, &out, &errOut); code != 0 {
+	if code := run(t, []string{"check", "--fix", "--json", dir + "/..."}, &out, &errOut); code != 0 {
 		t.Fatalf("check --fix: exit %d: %s%s", code, out.String(), errOut.String())
 	}
 	var res struct {
@@ -51,11 +51,11 @@ func TestCheckFix(t *testing.T) {
 	}
 	// Nothing left to fix: an empty list, not an absent one.
 	out.Reset()
-	if code := run(t, []string{"check", "--fix", "--json", dir}, &out, &errOut); code != 0 || !strings.Contains(out.String(), `"applied": []`) {
+	if code := run(t, []string{"check", "--fix", "--json", dir + "/..."}, &out, &errOut); code != 0 || !strings.Contains(out.String(), `"applied": []`) {
 		t.Errorf("second run: exit %d\n%s", code, out.String())
 	}
 	errOut.Reset()
-	if code := run(t, []string{"check", "--fix", dir}, &out, &errOut); code != 0 || !strings.Contains(errOut.String(), "0 fix(es) applied") {
+	if code := run(t, []string{"check", "--fix", dir + "/..."}, &out, &errOut); code != 0 || !strings.Contains(errOut.String(), "0 fix(es) applied") {
 		t.Errorf("human: exit %d\n%s", code, errOut.String())
 	}
 }
@@ -69,11 +69,11 @@ func TestCheckWIP(t *testing.T) {
 	src := "fn f(n: Int) -> Int {\n  let unused = n * 2\n  n.abs()\n  n\n}\nfn main(os: Os) {\n  os.stdio.println(\"${f(1)}\")\n}\n"
 	dir := writeFiles(t, map[string]string{"app/main.xo": src})
 	var out, errOut bytes.Buffer
-	if code := run(t, []string{"check", dir}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "error XO0110") || !strings.Contains(errOut.String(), "error XO0209") {
+	if code := run(t, []string{"check", dir + "/..."}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "error XO0110") || !strings.Contains(errOut.String(), "error XO0209") {
 		t.Fatalf("plain check: exit %d, want 1 with XO0110 and XO0209 errors:\n%s", code, errOut.String())
 	}
 	errOut.Reset()
-	if code := run(t, []string{"check", "--wip", dir}, &out, &errOut); code != 0 {
+	if code := run(t, []string{"check", "--wip", dir + "/..."}, &out, &errOut); code != 0 {
 		t.Fatalf("check --wip: exit %d, want 0:\n%s", code, errOut.String())
 	}
 	for _, want := range []string{"warning XO0110", "warning XO0209", "note: an error outside `xo check --wip`", "0 error(s), 2 warning(s)"} {
@@ -82,12 +82,12 @@ func TestCheckWIP(t *testing.T) {
 		}
 	}
 	out.Reset()
-	if code := run(t, []string{"check", "--wip", "--json", dir}, &out, &errOut); code != 0 || strings.Contains(out.String(), `"severity": "error"`) || !strings.Contains(out.String(), `"severity": "warning"`) {
+	if code := run(t, []string{"check", "--wip", "--json", dir + "/..."}, &out, &errOut); code != 0 || strings.Contains(out.String(), `"severity": "error"`) || !strings.Contains(out.String(), `"severity": "warning"`) {
 		t.Errorf("check --wip --json: exit %d\n%s", code, out.String())
 	}
 	bad := writeFiles(t, map[string]string{"app/main.xo": "fn main(os: Os) {\n  let unused = 1\n  os.stdio.println(missing)\n}\n"})
 	errOut.Reset()
-	if code := run(t, []string{"check", "--wip", bad}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "error XO0601") || !strings.Contains(errOut.String(), "warning XO0110") {
+	if code := run(t, []string{"check", "--wip", bad + "/..."}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "error XO0601") || !strings.Contains(errOut.String(), "warning XO0110") {
 		t.Errorf("check --wip with an unresolved name: exit %d, want 1:\n%s", code, errOut.String())
 	}
 }

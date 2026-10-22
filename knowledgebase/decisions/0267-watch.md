@@ -107,3 +107,11 @@ Agreed scope (owner, 2026-10-18):
   overflowed queues); polling a small list is cheap enough.
 - Restart on any change to a non-test file: the simple rule the owner's
   "restart only when the built program changed" replaces.
+
+## Addendum (2026-10-22)
+
+The watch's builds and `last.json` moved out of the project, to
+`<user cache>/xo/watch/<hash of the module root>/` (build/NAME, run/NAME
+with NAME.dSYM beside it, last.json): the owner found `.xo/watch/prog`
+and `next.dSYM` in a project after `xo run --watch`, and a dSYM named
+`next` beside `prog` hid the frames from lldb and the symbolizer.

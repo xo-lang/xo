@@ -8,5 +8,6 @@ draft first. An xo.mod line edition 2026 becomes edition preview
 --dry-run writes nothing. Exit status 0 even when errors remain (they
 are listed); 2 on usage errors. Default: .
 
-A directory covers the directories below it, so DIR/... is DIR (decision
-0210); a DIR/... with no .xo file at or below DIR is an error.
+A directory means that directory alone; DIR/... covers the directories
+below it too, up to 6,000 .xo files or 60,000 entries (decision 0345).
+A DIR/... with no .xo file at or below DIR is an error.

@@ -234,16 +234,33 @@ func TestCLIPattern(t *testing.T) {
 		code := execCLI(t, cli, args, &out, &errOut)
 		return fmt.Sprintf("exit %d\n--- stdout\n%s--- stderr\n%s", code, out.String(), errOut.String())
 	}
-	for _, c := range [][]string{
-		{"check", "."}, {"check", "sub"}, {"check", "--json", "broken"}, {"vet", "sub"}, {"doc", "sub"},
-		{"fmt", "--check", "sub"}, {"fix", "--dry-run", "sub"}, {"parse", "sub"}, {"test", "sub"},
-		{"build", "-o", filepath.Join(root, "bin"), "sub/.."},
+	// a plain directory is that directory alone; DIR/... covers the
+	// directories below it too (decision 0345)
+	for _, c := range []struct {
+		args       []string
+		plain, pat string
+	}{
+		{[]string{"check", "sub"}, "1 module(s), 0 error(s)", "2 module(s), 0 error(s)"},
+		{[]string{"vet", "sub"}, "1 module(s)", "2 module(s)"},
+		{[]string{"parse", "sub"}, "1 file(s), 0 error(s)", "2 file(s), 0 error(s)"},
+		{[]string{"check", "."}, "exit 0\n", "broken/deep/c.xo"},
 	} {
-		plain := xo(c...)
-		pat := append(append([]string{}, c[:len(c)-1]...), c[len(c)-1]+"/...")
-		if got := xo(pat...); got != plain {
-			t.Errorf("xo %s:\n%s\nwant (xo %s):\n%s", strings.Join(pat, " "), got, strings.Join(c, " "), plain)
+		if got := xo(c.args...); !strings.Contains(got, c.plain) {
+			t.Errorf("xo %s (that directory alone, want %q):\n%s", strings.Join(c.args, " "), c.plain, got)
 		}
+		pat := append(append([]string{}, c.args[:len(c.args)-1]...), c.args[len(c.args)-1]+"/...")
+		if got := xo(pat...); !strings.Contains(got, c.pat) {
+			t.Errorf("xo %s (want %q):\n%s", strings.Join(pat, " "), c.pat, got)
+		}
+	}
+	// a plain directory with no .xo file names DIR/...
+	for _, c := range []string{"check", "vet", "test", "fix"} {
+		if got := xo(c, "broken"); !strings.Contains(got, "broken has no .xo files") || !strings.Contains(got, "broken/... covers the directories below it") {
+			t.Errorf("xo %s broken:\n%s", c, got)
+		}
+	}
+	if got := xo("check", "--json", "broken/..."); !strings.HasPrefix(got, "exit 1\n") || !strings.Contains(got, "broken/deep/c.xo") {
+		t.Errorf("xo check --json broken/...:\n%s", got)
 	}
 	got := xo("check", "./...")
 	if !strings.HasPrefix(got, "exit 1\n") || !strings.Contains(got, "broken/deep/c.xo") || strings.Contains(got, "_skip") || strings.Contains(got, ".hidden") || strings.Contains(got, "testdata") {
@@ -253,6 +270,72 @@ func TestCLIPattern(t *testing.T) {
 		want := "exit 1\n--- stdout\n--- stderr\nxo " + c + ": empty/... matched no directory with .xo files\n"
 		if got := xo(c, "empty/..."); got != want {
 			t.Errorf("xo %s empty/...:\n%s\nwant:\n%s", c, got, want)
+		}
+	}
+}
+
+// TestCLIRunNoWalk covers decision 0345: xo run runs exactly the
+// directory it is given and never a program found below it, and a DIR/...
+// walk stops at its bound.
+func TestCLIRunNoWalk(t *testing.T) {
+	t.Parallel()
+	cli := shippedXo(t)
+	root := t.TempDir()
+	files := map[string]string{
+		"p/xo.mod":    "module example.com/p\nedition preview\n",
+		"p/a/main.xo": "fn main(os: Os) {\n  os.stdio.println(\"ran a\")\n}\n",
+		"p/b/main.xo": "fn main(os: Os) {\n  os.stdio.println(\"ran b\")\n}\n",
+		"p/lib/l.xo":  "pub fn f() -> Int {\n  1\n}\n",
+	}
+	for name, src := range files {
+		p := filepath.Join(root, name)
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	chdir(t, filepath.Join(root, "p"))
+	setenv(t, "XO_BUILD_DIR", filepath.Join(root, "build"))
+	xo := func(args ...string) (int, string) {
+		var out, errOut bytes.Buffer
+		code := execCLI(t, cli, args, &out, &errOut)
+		return code, out.String() + errOut.String()
+	}
+	// a parent of two programs: an error naming them, neither runs
+	for _, args := range [][]string{{"run"}, {"run", "."}} {
+		code, got := xo(args...)
+		if code != 1 || strings.Contains(got, "ran ") || !strings.Contains(got, "has no .xo files") || !strings.Contains(got, "programs in the directories below: a, b") || !strings.Contains(got, "fix: xo run a") {
+			t.Errorf("xo %s: exit %d:\n%s", strings.Join(args, " "), code, got)
+		}
+	}
+	if code, got := xo("run", "lib"); code != 1 || !strings.Contains(got, "lib has no main function") {
+		t.Errorf("xo run lib: exit %d:\n%s", code, got)
+	}
+	if code, got := xo("run", "a/main.xo"); code != 2 || !strings.Contains(got, "a/main.xo is a file, not a directory") || !strings.Contains(got, "fix: xo run a") {
+		t.Errorf("xo run a/main.xo: exit %d:\n%s", code, got)
+	}
+	if code, got := xo("run", "./..."); code != 2 || strings.Contains(got, "ran ") {
+		t.Errorf("xo run ./...: exit %d:\n%s", code, got)
+	}
+	if code, got := xo("run", "b"); code != 0 || got != "ran b\n" {
+		t.Errorf("xo run b: exit %d:\n%s", code, got)
+	}
+	// the bound: more than 60,000 entries below DIR refuses
+	wide := filepath.Join(root, "wide")
+	for i := 0; i < 61; i++ {
+		d := filepath.Join(wide, fmt.Sprintf("d%02d", i))
+		os.MkdirAll(d, 0o755)
+		for j := 0; j < 1000; j++ {
+			if err := os.WriteFile(filepath.Join(d, fmt.Sprintf("f%d.txt", j)), nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	os.WriteFile(filepath.Join(wide, "d60", "main.xo"), []byte(files["p/a/main.xo"]), 0o644)
+	for _, c := range []string{"check", "fmt", "parse"} {
+		code, got := xo(c, wide+"/...")
+		if code == 0 || !strings.Contains(got, "the limit of a DIR/... walk") {
+			t.Errorf("xo %s WIDE/...: exit %d:\n%s", c, code, got)
 		}
 	}
 }

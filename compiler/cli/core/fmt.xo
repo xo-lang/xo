@@ -3,7 +3,7 @@
 use github.com/xo-lang/xo/compiler/check
 use github.com/xo-lang/xo/compiler/cli/core/format
 
-fn run_fmt(os: Os, args: List[Str]) -> Int {
+fn run_fmt(os: Os, ctx: Ctx, args: List[Str]) -> Int {
   var fl = new_flags("fmt")
   fl.bool_flag("check", "list unformatted files and exit 1 if any; change nothing")
   fl.bool_flag("json", "print the result as JSON")
@@ -14,7 +14,7 @@ fn run_fmt(os: Os, args: List[Str]) -> Int {
   if paths.is_empty() {
     paths = ["."]
   }
-  let files = match collect(os, paths, true) {
+  let files = match collect(os, ctx, paths, true) {
     Ok(fs) => fs
     Err(e) => {
       os.stdio.eprintln("xo fmt: ${e}")

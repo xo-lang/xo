@@ -1,4 +1,5 @@
 usage: xo init [--dir=<dir>] <module path>
 
-Write xo.mod for a new module and add xo.work to .gitignore (unless a
-workspace above already covers the directory).
+Write xo.mod for a new module and add xo.work (unless a workspace above
+already covers the directory) and .xo/, xo's binding caches, to
+.gitignore.

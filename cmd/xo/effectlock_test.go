@@ -43,7 +43,7 @@ func TestEffectLock(t *testing.T) {
 	}
 	xo(t, "mod", "tidy", "--dir", app).want(0)
 	lockHas("github.com/acme/tick effects fs.read")
-	xo(t, "check", app).want(0)
+	xo(t, "check", app+"/...").want(0)
 
 	// an upgrade that adds net.dial fails and writes nothing
 	modBefore, _ := os.ReadFile(filepath.Join(app, "xo.mod"))
@@ -59,7 +59,7 @@ func TestEffectLock(t *testing.T) {
 	// a lock recorded narrower than the version: every load fails
 	data, _ := os.ReadFile(lockFile)
 	os.WriteFile(lockFile, []byte(strings.Replace(string(data), "tick effects fs.read", "tick effects none", 1)), 0o644)
-	r = xo(t, "check", "--json", app).want(1)
+	r = xo(t, "check", "--json", app+"/...").want(1)
 	if got := diagCodes(t, r.out); got != "XO1317" {
 		t.Errorf("check with a widened dependency: %s\n%s", got, r.out)
 	}
@@ -68,7 +68,7 @@ func TestEffectLock(t *testing.T) {
 		t.Errorf("accept-effects: %s", r.out)
 	}
 	lockHas("github.com/acme/tick effects fs.read")
-	xo(t, "check", app).want(0)
+	xo(t, "check", app+"/...").want(0)
 
 	// --accept-effects on get accepts the upgrade's effects
 	xo(t, "get", "--accept-effects", "--dir", app, "github.com/acme/tick@v1.1.0").want(0)
@@ -87,13 +87,13 @@ func TestEffectLock(t *testing.T) {
 		}
 	}
 	os.WriteFile(lockFile, []byte(strings.Join(keep, "\n")), 0o644)
-	xo(t, "check", app).want(0)
+	xo(t, "check", app+"/...").want(0)
 	xo(t, "mod", "tidy", "--dir", app).want(0)
 	lockHas("github.com/acme/tick effects net.dial")
 	// a malformed effects line is XO1301
 	data, _ = os.ReadFile(lockFile)
 	os.WriteFile(lockFile, []byte(strings.Replace(string(data), "tick effects net.dial", "tick effects telepathy", 1)), 0o644)
-	r = xo(t, "check", "--json", app).want(1)
+	r = xo(t, "check", "--json", app+"/...").want(1)
 	if got := diagCodes(t, r.out); got != "XO1301" {
 		t.Errorf("malformed effects line: %s", got)
 	}

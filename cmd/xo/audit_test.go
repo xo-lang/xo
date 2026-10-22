@@ -39,7 +39,7 @@ fn main(os: Os) {
 `,
 	})
 	xo(t, "mod", "tidy", "--dir", app).want(0)
-	r := xo(t, "audit", "--json", "--dir", app).want(0)
+	r := xo(t, "audit", "--json", "--dir", app+"/...").want(0)
 	var rep auditReport
 	if err := json.Unmarshal([]byte(r.out), &rep); err != nil {
 		t.Fatalf("bad JSON: %v\n%s", err, r.out)
@@ -72,7 +72,7 @@ fn main(os: Os) {
 	lock := filepath.Join(app, "xo.lock")
 	data, _ := os.ReadFile(lock)
 	os.WriteFile(lock, []byte(strings.Replace(string(data), "weather effects env,net.dial", "weather effects env", 1)), 0o644)
-	r = xo(t, "audit", "--json", "--dir", app).want(1)
+	r = xo(t, "audit", "--json", "--dir", app+"/...").want(1)
 	rep = auditReport{}
 	json.Unmarshal([]byte(r.out), &rep)
 	if rep.Summary.Unvouched != 1 || rep.Summary.Widened != 1 || rep.Dependencies[1].Lock != "widened" || strings.Join(rep.Dependencies[1].Added, ",") != "net.dial" {

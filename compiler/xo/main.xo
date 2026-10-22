@@ -500,6 +500,7 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   c.set_mod_env(o.wd, os.env.get("XO_MODCACHE") ?? "", os.env.get("HOME") ?? "", os.env.get("XDG_CACHE_HOME") ?? "", offline, work)
   c.cbind_dir = os.env.get("XO_CBIND_DIR") ?? ""
   c.gobind_dir = os.env.get("XO_GOBIND_DIR") ?? ""
+  c.walk = o.walk
   // binds a `use go` or `use c` missing from the cache first, as the
   // Go checker does (decision 0178 stage 6)
   // and fetches a module version missing from the module cache
@@ -749,6 +750,10 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   var out = o.out
   if !out.is_empty() {
     out = abs_of(o.wd, out)
+    if is_dir(os, out) {
+      // -o DIR, an existing directory: DIR/NAME, as go build -o does
+      out = "${out.trim_suffix("/")}/"
+    }
   }
   if backend == "llvm" {
     if cc.is_empty() {
@@ -1337,6 +1342,10 @@ fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Boo
     }
   }
   if !b.why.is_empty() {
+    if o.cmd == "run" && b.why.starts_with("no `main`") {
+      os.stdio.eprintln(run_no_main(os, o.wd, o.dirs[0], "has no main function"))
+      os.proc.exit(1)
+    }
     fail_unsupported(os, b.why)
   }
   if !b.errs.is_empty() || !b.lazy_diags.is_empty() {

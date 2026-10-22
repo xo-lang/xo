@@ -34,6 +34,7 @@ fn vet_cost(os: Os, args: List[Str]) -> List[check.Diag] {
   c.native = true
   c.lazy = (os.env.get("XO_CHECK_EAGER") ?? "") != "1"
   c.map_log = (os.env.get("XO_MAP_LOG") ?? "") != "0"
+  c.walk = o.walk
   match c.check_dirs(o.dirs) {
     Ok(_) => {}
     // xo:allow XO0903 vet reports the program's own problems
