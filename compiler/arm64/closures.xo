@@ -287,8 +287,8 @@ fn (var g: G) eq_aggregate(v: Int) -> Bool {
   if k == ssa.Kind.Str {
     let a = g.words(x.args[0])
     let b = g.words(x.args[1])
-    let xd = g.def1(false, "add $d0, $u0, #16", [g.real(a[0])])
-    let yd = g.def1(false, "add $d0, $u0, #16", [g.real(b[0])])
+    let xd = g.str_data(a)
+    let yd = g.str_data(b)
     let res = g.rt("xo_x_obj_str_eq", regs([xd, a[1], yd, b[1]]), [false])
     r = g.def1(false, "cmp $wu0, #0\ncset $d0, ne", [res[0]])
   } else if k is ssa.Kind.List | ssa.Kind.Box {

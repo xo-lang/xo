@@ -541,6 +541,18 @@ fn (var g: G) same_facts(a: Int, n: Int) {
   }
 }
 
+/// The data address of the Str or Bytes value whose words are ws (decision
+/// 0330): the object's bytes. Every emitter site that wants a string's bytes
+/// goes through this one function, so a view's offset (layout C) is added
+/// in one place.
+fn (var g: G) str_data(ws: List[Int]) -> Int {
+  g.def1(false, "add $d0, $u0, #16", [g.real(ws[0])])
+}
+
+/// The length of the Str or Bytes value whose words are ws (decision 0330):
+/// the second word today, its low half under layout C.
+fn (g: G) str_len(ws: List[Int]) -> Int { ws[1] }
+
 /// Loads byte i (SSA value iv, register i) of the Bytes object in
 /// register obj0; the data address, and data + j for i = j + c (0 < c <
 /// 4096), are computed once per block (isel.go bytesLoad, decision 0184).
@@ -893,8 +905,8 @@ fn (var g: G) call_op(v: Int) {
     "str.eq" | "str.cmp" => {
       let a = g.words(x.args[0])
       let b = g.words(x.args[1])
-      let xd = g.def1(false, "add $d0, $u0, #16", [g.real(a[0])])
-      let yd = g.def1(false, "add $d0, $u0, #16", [g.real(b[0])])
+      let xd = g.str_data(a)
+      let yd = g.str_data(b)
       if name == "str.cmp" && g.x86 {
         // x86_64 retargets no cneg yet: the export
         g.set(v, g.rt("xo_x_obj_str_cmp", regs([xd, a[1], yd, b[1]]), [false]))
@@ -917,7 +929,7 @@ fn (var g: G) call_op(v: Int) {
     }
     "Stdio.print" | "Stdio.println" | "Stdio.eprint" | "Stdio.eprintln" => {
       let a = g.words(x.args[1])
-      let d = g.def1(false, "add $d0, $u0, #16", [g.real(a[0])])
+      let d = g.str_data(a)
       let _r = g.rt("xo_${name.trim_prefix("Stdio.")}", regs([d, a[1]]), [])
       g.set(v, [])
     }
@@ -1327,7 +1339,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     "rt.float_from_bits" => g.set(v, [g.def1(true, "fmov $d0, $u0", [g.word(x.args[0])])])
     "rt.bytes_word" => {
       let ws = g.words(x.args[0])
-      let d = g.def1(false, "add $d0, $u0, #16", [g.real(ws[0])])
+      let d = g.str_data(ws)
       g.set(v, [g.def1(false, "ldr $d0, [$u0, $u1]", [d, g.word(x.args[1])])])
     }
     "rt.sys6" => {
@@ -1468,7 +1480,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     "rt.clz" => g.set(v, [g.def1(false, "clz $d0, $u0", [g.word(x.args[0])])])
     "rt.bytes_eq16" | "rt.bytes_high16" => {
       let ws = g.words(x.args[0])
-      let d = g.def1(false, "add $d0, $u0, #16", [g.real(ws[0])])
+      let d = g.str_data(ws)
       var us = [d, g.word(x.args[1])]
       if g.x86 {
         g.set(v, [g.x86_bytes16(x, us)])
@@ -1488,7 +1500,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     }
     "rt.rs_put_word" => {
       let ws = g.words(x.args[0])
-      let d = g.def1(false, "add $d0, $u0, #16", [g.real(ws[0])])
+      let d = g.str_data(ws)
       let _i = g.plain("str $u2, [$u0, $u1]", [], [d, g.word(x.args[1]), g.word(x.args[2])])
       g.set(v, ws)
     }
@@ -2634,7 +2646,7 @@ fn (var g: G) rt_call(v: Int) {
           args.push(rsrc(ws[0]))
           args.push(rsrc(ws[1]))
         } else {
-          let d = g.def1(false, "add $d0, $u0, #16", [g.real(ws[0])])
+          let d = g.str_data(ws)
           args.push(rsrc(d))
           args.push(rsrc(ws[1]))
         }
@@ -2873,7 +2885,7 @@ fn (var g: G) platform_call(v: Int) {
         us.push(ws[0])
       }
       Str => {
-        let d = g.def1(false, "add $d0, $u0, #16", [g.real(ws[0])])
+        let d = g.str_data(ws)
         args.push(rsrc(d))
         us.push(d)
       }
