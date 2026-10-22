@@ -63,7 +63,7 @@ cache. Server CPU samples of a 3 x 256 MiB bulk download in Docker
 ## 2026-10-22: speedup: ML-KEM's NTT loops in NEON on arm64
 
 - Kind: speedup
-- Commit: (filled in after the push)
+- Commit: 177602f83
 - Found by: decision 0336's alternatives (Xo Lang 4)
 - Go reference: none (Go's crypto/mlkem is scalar Go)
 - Test: crypto_mlkem, tls13_server, tls13_go, tls_client, tls_mlkem_off, tls13_rfc8448, tls12_server, cpu_prims goldens (arm64 and LLVM on the Mac); compiler/macho tests of the new encodings
