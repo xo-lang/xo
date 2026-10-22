@@ -3,7 +3,7 @@
 ## 2026-10-22: fix: Earlier and Later in a daylight saving gap were swapped
 
 - Kind: fix
-- Commit: this commit
+- Commit: 86e417086
 - Found by: a field report (02:30 on 2026-03-08 in New York gave Earlier 03:30 EDT and Later 01:30 EST, so Earlier was after Later)
 - Go reference: none (Go's time.Date picks one instant and documents no choice); Temporal's `disambiguation: "earlier"` and `"later"`
 - Test: internal/gen/testdata/golden/time_civil ("order": gaps and overlaps in New York, Berlin, Sydney and Lord Howe's 30 minute change, Earlier never after Later, and the distance between the two), internal/llvm/testdata/golden/tz_table (arm64, LLVM, and the Go backend agree)
