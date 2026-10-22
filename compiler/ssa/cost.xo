@@ -1,7 +1,7 @@
 // `xo vet --cost` (decision 0327): notes on what the compiled program
 // does that its source does not show, found in the SSA after insert_rc
 // (before inlining): a loop that copies a collection's entries first
-// (XO0907). Notes only, never errors; the driver turns them into vet's
+// (XO0907), an element counted up and down every iteration (XO0908). Notes only, never errors; the driver turns them into vet's
 // findings (compiler/xo vetcost.xo).
 
 /// A cost note at a source position of function fn_name.
@@ -34,7 +34,7 @@ pub fn cost_notes(m: Module, keep: List[Str]) -> List[CostNote] {
       continue
     }
     let inloop = loop_blocks(f)
-    for n in copy_feeds_loop(f, inloop) {
+    for n in copy_feeds_loop(f, inloop) + elem_count_per_iter(f, inloop) {
       var n2 = n
       n2.file = file
       out.push(n2)
@@ -169,4 +169,89 @@ fn reaches_loop(f: Func, v: Int, users: List[List[Int]], inloop: List[Bool]) -> 
     }
   }
   false
+}
+
+/// XO0908: in a loop, an element of a collection made outside it (a
+/// list.index, or a field of one) counted up (Retain) for a function
+/// value, which cannot borrow it and drops it after. An element that a
+/// use keeps (a call, a push, a struct, a return: on any path) is a real
+/// copy and not reported; a direct call's parameter is borrowed unless
+/// the callee keeps it (infer_borrows).
+fn elem_count_per_iter(f: Func, inloop: List[Bool]) -> List[CostNote] {
+  var out: List[CostNote] = []
+  var used_by: List[List[Int]] = []
+  for _ in f.values {
+    used_by.push([])
+  }
+  for bl in f.blocks {
+    for v in bl.instrs {
+      for a in f.values[v].args {
+        if a >= 0 && a < used_by.len() {
+          used_by[a].push(v)
+        }
+      }
+    }
+  }
+  var seen: Map[Int, Bool] = {}
+  for bl in f.blocks {
+    for r in bl.instrs {
+      let rx = f.values[r]
+      if rx.op != Op.Retain || rx.args.is_empty() || rx.block < 0 || !inloop[rx.block] {
+        continue
+      }
+      let x = rx.args[0]
+      if !elem_of_outside(f, x, inloop) {
+        continue
+      }
+      // up and down: a function value's argument, and no use that keeps
+      // it (a store on another path retains it too: not a dup and drop)
+      var dropped = false
+      var stored = false
+      for u in used_by[x] {
+        let ux = f.values[u]
+        if ux.op == Op.CallValue {
+          dropped = true
+        } else if ux.op == Op.Call && aux_name(ux.aux) != "list.index" && aux_name(ux.aux) != "list.len" || ux.op is Op.Struct | Op.Tuple | Op.Variant | Op.Box | Op.Return | Op.SetField | Op.Closure {
+          stored = true
+        }
+      }
+      if !dropped || stored {
+        continue
+      }
+      let line = f.values[x].line / 4096
+      if line <= 0 || seen.contains(line) {
+        continue
+      }
+      seen[line] = true
+      out.push(CostNote{code: "XO0908", fn_name: f.name, file: f.file, line: line, col: f.values[x].line % 4096, msg: "each iteration counts this element up and down: it goes to a function value, which cannot borrow it (atomically, when the collection is shared across threads); call a named function that only reads it, or hoist the call"})
+    }
+  }
+  out
+}
+
+/// Whether x is an element of a collection made outside the loop: a
+/// list.index (through fields, and through the chunks of a directory)
+/// whose root list is defined in a block outside the loop or is a
+/// parameter.
+fn elem_of_outside(f: Func, x0: Int, inloop: List[Bool]) -> Bool {
+  var x = x0
+  var elem = false
+  while x >= 0 && x < f.values.len() {
+    let v = f.values[x]
+    if v.op == Op.Field {
+      x = v.args[0]
+      continue
+    }
+    if v.op == Op.Call && aux_name(v.aux) == "list.index" && !v.args.is_empty() {
+      elem = true
+      x = v.args[0]
+      continue
+    }
+    break
+  }
+  if !elem || x < 0 || x >= f.values.len() {
+    return false
+  }
+  let b = f.values[x].block
+  f.values[x].op == Op.Param || b < 0 || !inloop[b]
 }

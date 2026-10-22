@@ -1,8 +1,8 @@
 # 0327: `xo vet --cost`, notes on costs the source does not show
 
 Status: Accepted (owner, 2026-10-21, from the agents' language poll; design
-reviewed by the lead). Stage 1 implemented: XO0907. XO0908 to XO0910
-claimed, to follow.
+reviewed by the lead). Implemented: XO0907 (stage 1), XO0908. XO0909 and
+XO0910 claimed, to follow.
 
 ## Context
 
@@ -32,8 +32,13 @@ Notes (spec section 10), each about a loop unless said:
   reads, when the loop's line has no in-place walk (xo.mlog.eachpos):
   a log-mode map through a forked view, or a body the walk does not
   take (over 64 nodes, a closure, a defer).
-- XO0908 (to do): a dup and drop per iteration (a Retain of a
-  collection element's leaf inside a loop, from insert_rc's leaves).
+- XO0908: in a loop, a Retain of an element of a collection made outside
+  the loop (a list.index, through fields and directory chunks) that the
+  function value takes (CallValue), which cannot borrow it and drops it
+  after. An element that any use keeps (a call, a push, a struct, a
+  return, on any path) is a real copy and not reported. Over compiler/xo
+  the first version (any release in the loop) noted 17 loops that store
+  the element on one path; this one notes none there.
 - XO0909 (to do): a copy on write that can copy every iteration (a Reuse
   of a loop-carried list uniq cannot prove unique, naming the other
   holder).

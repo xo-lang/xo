@@ -1484,3 +1484,71 @@ func TestVetCostMapCopy(t *testing.T) {
 		t.Errorf("vet without --cost: XO0907 at lines %v, want none", got)
 	}
 }
+
+// vetCostElemProg: an element passed to a function value is counted up
+// and down each iteration (XO0908, line 3); passed to a named function
+// that only reads it, or pushed into a list kept after, it is not.
+const vetCostElemProg = `fn via_value(xs: List[Str], f: fn(Str) -> Int) -> Int {
+  var t = 0
+  for x in xs {
+    t += f(x)
+  }
+  t
+}
+
+fn width(s: Str) -> Int {
+  s.len()
+}
+
+fn direct(xs: List[Str]) -> Int {
+  var t = 0
+  for x in xs {
+    t += width(x)
+  }
+  t
+}
+
+fn kept(xs: List[Str]) -> List[Str] {
+  var out: List[Str] = []
+  for x in xs {
+    out.push(x)
+  }
+  out
+}
+
+fn main(os: Os) {
+  let xs = ["a", "bb", "ccc"]
+  os.stdio.println("${via_value(xs, fn(s) { s.len() })} ${direct(xs)} ${kept(xs).len()}")
+}
+`
+
+// TestVetCostElemCount: `xo vet --cost` notes the loop whose element goes
+// to a function value (XO0908) and not the borrowed or stored ones.
+func TestVetCostElemCount(t *testing.T) {
+	t.Parallel()
+	dir := writeFiles(t, map[string]string{"main.xo": vetCostElemProg})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"vet", "--json", "--cost", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	var res struct {
+		Diagnostics []struct {
+			Code string `json:"code"`
+			Span struct {
+				Line int `json:"line"`
+			} `json:"span"`
+		} `json:"diagnostics"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &res); err != nil {
+		t.Fatalf("bad JSON: %v\n%s", err, out.String())
+	}
+	var lines []int
+	for _, d := range res.Diagnostics {
+		if d.Code == "XO0908" {
+			lines = append(lines, d.Span.Line)
+		}
+	}
+	if len(lines) != 1 || lines[0] != 3 {
+		t.Errorf("XO0908 at lines %v, want [3]\n%s", lines, out.String())
+	}
+}
