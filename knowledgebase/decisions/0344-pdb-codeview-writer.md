@@ -151,7 +151,11 @@ debugger's `k` reads like the crash report.
    location lists, and TPI records (LF_STRUCTURE, LF_FIELDLIST,
    LF_POINTER, LF_PROCEDURE) for the types `xo debug` reads.
 5. The lld-link path (`use c`, the LLVM backend): the same converter on
-   lld-link's output.
+   lld-link's output. Deferred (owner, 2026-10-22): building and testing
+   it needs a Windows SDK sysroot (xwin, accepting Microsoft's SDK
+   license again, which the owner declined), Windows releases use the
+   native PE linker, and the LLVM Windows recipe does not ship. Taken up
+   when the LLVM Windows path is wanted.
 
 Each stage is checked on Windows with cdb in one CI run on the
 xo-windows runner (`k`, `ln`, `.lines`, `bp FILE:LINE`, `dv`), asked
