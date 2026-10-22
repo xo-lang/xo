@@ -190,3 +190,14 @@ so the yield is only an extra switch per write. A yield rule keyed on
 free Mutex parks would not separate the two workloads; the next
 experiment keys on whether an idle worker would have to be woken
 (P_NIDLE > 0 at the release).
+
+`xo bench --ab` (2026-10-22 09:09, the owner's rule for speed claims;
+load about 30, interleaved, agents/yabq-cmd.log): bench/perf/conc rwmutex
+at 4x its work, yield off (A) against on (B): CPU 1.47 [1.28, 1.88],
+wall 1.18 [1.06, 1.28], instructions 1.44 [1.36, 1.61], so the lock
+only loop pays more than the +19 to 28% above. The CRUD server on the Mac
+(6 threads, 256 connections, 3 s rounds): rps 1.152 [1.07, 1.21] with the
+yield; the Linux Docker 2.15x and 1.93x above were interleaved but not
+`--ab`, and are to be confirmed with it. Yielding only while a worker is
+idle (XO_MUTEX_YIELD=idle, measured, not pushed) changed neither (rwmutex
+CPU 0.989, CRUD rps 0.994, both within noise).
