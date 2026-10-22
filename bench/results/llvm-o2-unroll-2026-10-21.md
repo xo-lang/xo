@@ -114,3 +114,24 @@ refill_alloc renamed (so the cold list misses it):
 
 -O3 is now 1.3% below -O2 on strings instead of 13% above. Gotcha:
 knowledgebase/gotchas/llvm-o3-hoists-inlined-slow-path.md.
+
+## Build time of xo itself with 0333's default (2026-10-22)
+
+xo's own LLVM build (compiler/xo, `xo build --backend=llvm`, every cache
+off: XO_BACKEND_CACHE, XO_CLANG_CACHE and XO_BIN_CACHE), by the xo of
+a32988ede (0333: -O2 with -mllvm -unroll-threshold=300), against the
+same build with the flag stripped by a clang wrapper (the -O2 before
+0333; the control: nbody built through the wrapper back at 2,318 M
+instructions, the pre-0333 figure). One run each, in a heavy.sh bulk
+slot, on a Mac loaded by other agents all night: user CPU is the
+figure; wall time is not (the machine's load differed between runs).
+
+| build | user CPU | wall | max RSS | __text |
+| --- | ---: | ---: | ---: | ---: |
+| -O2 (before 0333) | 1,924 s | 3,489 s | 7.7 G | 2,395,012 |
+| -O2, unroll 300 (0333) | 2,170 s | 4,495 s | 5.8 G | 2,420,796 |
+| change | +12.8% | | | +1.1% |
+
+The -O3 build was stopped to free the slot (lead, 2026-10-22 00:45) and
+is queued for a quiet window. The max RSS difference runs the other way
+from the CPU time; with one run each it is not taken as a result.
