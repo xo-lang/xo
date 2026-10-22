@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo vet --cost` XO0908 also notes a loop handing struct elements to a
+  function value and the prelude's callback walks (`xs.any(fn ...)`,
+  `map`, `filter`, `find`, `all`, `fold`) over elements holding heap
+  memory, which count each element up and down (3.3 times a `for`
+  loop's instructions in a measured walk; decision 0327 addendum).
 - The Go backend's Map overwrites an existing key in place while no copy
   shares the map (decision 0335): the generated code marks a map where it
   copies one, as it marks lists. bench/perf putget -39%, update -40%;

@@ -37,7 +37,7 @@ pub fn cost_notes(m: Module, keep: List[Str]) -> List[CostNote] {
       continue
     }
     let inloop = loop_blocks(f)
-    for n in copy_feeds_loop(f, inloop) + elem_count_per_iter(f, inloop) + reuse_in_loop(f, inloop) + large_copies(m, f, inloop, nwords) {
+    for n in copy_feeds_loop(f, inloop) + elem_count_per_iter(f, inloop) + callback_walks(m, f) + reuse_in_loop(f, inloop) + large_copies(m, f, inloop, nwords) {
       var n2 = n
       n2.file = file
       out.push(n2)
@@ -207,26 +207,99 @@ fn elem_count_per_iter(f: Func, inloop: List[Bool]) -> List[CostNote] {
         continue
       }
       // up and down: a function value's argument, and no use that keeps
-      // it (a store on another path retains it too: not a dup and drop)
+      // it (a store on another path retains it too: not a dup and drop).
+      // A struct element is retained field by field while the call takes
+      // the element: the uses of x and of each value its fields come from
+      // (2026-10-22: `for u in xs { t += f(u) }` was not noted)
       var dropped = false
       var stored = false
-      for u in used_by[x] {
-        let ux = f.values[u]
-        if ux.op == Op.CallValue {
-          dropped = true
-        } else if ux.op == Op.Call && aux_name(ux.aux) != "list.index" && aux_name(ux.aux) != "list.len" || ux.op is Op.Struct | Op.Tuple | Op.Variant | Op.Box | Op.Return | Op.SetField | Op.Closure {
-          stored = true
+      var at = x
+      var c = x
+      while c >= 0 && c < f.values.len() {
+        for u in used_by[c] {
+          let ux = f.values[u]
+          if ux.op == Op.CallValue {
+            dropped = true
+            if f.values[at].line / 4096 <= 0 {
+              // a field the RC pass made has no position: the call's
+              at = u
+            }
+          } else if ux.op == Op.Call && aux_name(ux.aux) != "list.index" && aux_name(ux.aux) != "list.len" || ux.op is Op.Struct | Op.Tuple | Op.Variant | Op.Box | Op.Return | Op.SetField | Op.Closure {
+            stored = true
+          }
         }
+        if f.values[c].op != Op.Field {
+          break
+        }
+        c = f.values[c].args[0]
       }
       if !dropped || stored {
         continue
       }
-      let line = f.values[x].line / 4096
+      let line = f.values[at].line / 4096
       if line <= 0 || seen.contains(line) {
         continue
       }
       seen[line] = true
-      out.push(CostNote{code: "XO0908", fn_name: f.name, file: f.file, line: line, col: f.values[x].line % 4096, msg: "each iteration counts this element up and down: it goes to a function value, which cannot borrow it (atomically, when the collection is shared across threads); call a named function that only reads it, or hoist the call"})
+      out.push(CostNote{code: "XO0908", fn_name: f.name, file: f.file, line: line, col: f.values[at].line % 4096, msg: "each iteration counts this element up and down: it goes to a function value, which cannot borrow it (atomically, when the collection is shared across threads); call a named function that only reads it, or hoist the call"})
+    }
+  }
+  out
+}
+
+/// The prelude's methods that walk a collection and hand each element to
+/// a function value (std/native prelude.xo), with the parameter of the
+/// function value that the walk does not give an element (fold's
+/// accumulator), else -1. Not sort_by or group_by: their key runs once
+/// per element and the sort or the grouping costs more (sort_by over
+/// 1000 structs of two strings: +16% against Int fields, 2026-10-22).
+fn callback_walk(name: Str) -> (Bool, Int) {
+  let base = name.split("[")[0]
+  match base {
+    "prelude.list_map" | "prelude.list_filter" | "prelude.list_find" | "prelude.list_any" | "prelude.list_all" => (true, -1)
+    "prelude.map_filter" | "prelude.map_map" | "prelude.map_any" | "prelude.map_all" | "prelude.set_any" | "prelude.set_all" | "prelude.set_filter" | "prelude.set_map" => (true, -1)
+    "prelude.list_fold" => (true, 0)
+    _ => (false, -1)
+  }
+}
+
+/// XO0908 at the call: a prelude method that walks a collection and
+/// hands each element to a function value (`xs.any(fn(u) { ... })`)
+/// counts each element's heap fields up and down per element, as a loop
+/// passing elements to a function value does; the loop is the prelude's,
+/// which cost_notes does not read, so the note is at the call. Only when
+/// an element parameter of the function value holds heap memory.
+fn callback_walks(m: Module, f: Func) -> List[CostNote] {
+  var out: List[CostNote] = []
+  var seen: Map[Int, Bool] = {}
+  for bl in f.blocks {
+    for v in bl.instrs {
+      let x = f.values[v]
+      if x.op != Op.Call {
+        continue
+      }
+      let (walks, acc) = callback_walk(aux_name(x.aux))
+      if !walks {
+        continue
+      }
+      var heap = false
+      for a in x.args {
+        let t = f.values[a].ty
+        if t < 0 || t >= m.types.len() || m.types[t].kind != Kind.Func {
+          continue
+        }
+        for (i, p) in m.types[t].elems.indexed() {
+          if i != acc && m.heap(p) {
+            heap = true
+          }
+        }
+      }
+      let line = x.line / 4096
+      if !heap || line <= 0 || seen.contains(line) {
+        continue
+      }
+      seen[line] = true
+      out.push(CostNote{code: "XO0908", fn_name: f.name, file: f.file, line: line, col: x.line % 4096, msg: "this call counts each element up and down: it hands every element to a function value, which cannot borrow it (atomically, when the collection is shared across threads); a `for` loop over the collection borrows its elements (decision 0186), or call a named function that only reads them"})
     }
   }
   out

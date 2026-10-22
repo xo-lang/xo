@@ -82,3 +82,31 @@ Notes (spec section 10), each about a loop unless said:
   findings go.
 - A profile-guided report: needs a run and a workload; vet works on the
   source alone.
+
+## Addendum: XO0908 sees callback walks (2026-10-22, Xo Publish)
+
+Measuring decision 0337 found XO0908 silent on the two common forms of
+an element handed to a function value (gotchas/vet-cost-misses-callbacks.md),
+whose cost was 3.3 times a `for` loop's instructions (5.5 times on a
+list shared by two tasks):
+
+- `for u in xs { t += f(u) }` over struct elements: insert_rc retains
+  the element's heap fields (`field 1`, `field 2`) and the CallValue
+  takes the element, so the test "a CallValue uses the retained value"
+  never matched. elem_count_per_iter now follows the retained value's
+  Field chain to the element and reads the uses of each; the note is at
+  the call when the retained field has no position.
+- `xs.any(fn(u) { ... })`: the loop is the prelude's (list_any), which
+  cost_notes does not read. callback_walks notes the call in the root
+  module's function: a call of the prelude's `map`, `filter`, `find`,
+  `any`, `all` of a List, `filter`, `map`, `any`, `all` of a Map or Set,
+  or a List's `fold`, when a parameter of its function value that takes
+  an element (not fold's accumulator) holds heap memory. Not `sort_by`
+  or `group_by`: their key runs once per element and the sort or the
+  grouping costs more (+16% over 1000 structs of two strings).
+
+Over compiler/xo: 7 notes (`any` and `map` over strings and tuples,
+none in a hot path; 18 when sort_by was included); none in the CRUD
+server.
+TestVetCostCallbacks. Decision 0337 (Proposed) would remove the cost
+itself; until then the note names it.

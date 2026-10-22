@@ -22,7 +22,10 @@ functions only.
 
 ## Fix
 
-Until decision 0337 (function values borrow their arguments) is decided:
+Fixed 2026-10-22 (decision 0327 addendum): XO0908 now follows a field's
+Retain to its element and notes the prelude's callback walks at the
+call (not sort_by or group_by). Before that fix, and still for the
+cost itself: until decision 0337 (function values borrow their arguments) is decided:
 treat a callback over a list of heap holding structs in a hot path as
 counting each heap field up and down per element; write a `for` loop
 there, which borrows (decision 0186). Check a function with

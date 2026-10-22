@@ -1636,6 +1636,93 @@ func TestVetCostElemCount(t *testing.T) {
 	}
 }
 
+// vetCostCallbackProg: a loop handing struct elements to a function value
+// (line 9: their fields are retained, the call takes the struct), the
+// prelude's callback walks over heap elements (lines 15, 19, 23), and
+// neither the same walks over Int elements or with a heap accumulator
+// only (lines 27, 31) nor a for loop (line 35).
+const vetCostCallbackProg = `struct User {
+  id: Int
+  name: Str
+}
+
+fn via_value(xs: List[User], f: fn(User) -> Int) -> Int {
+  var t = 0
+  for u in xs {
+    t += f(u)
+  }
+  t
+}
+
+fn named(xs: List[User], want: Str) -> Bool {
+  xs.any(fn(u) { u.name == want })
+}
+
+fn evens(xs: List[User]) -> Int {
+  xs.filter(fn(u) { u.id % 2 == 0 }).len()
+}
+
+fn total(xs: List[User]) -> Int {
+  xs.fold(0, fn(t, u) { t + u.name.len() })
+}
+
+fn ints(xs: List[Int]) -> Bool {
+  xs.any(fn(x) { x == 3 })
+}
+
+fn collect(xs: List[Int]) -> List[Int] {
+  xs.fold([], fn(acc: List[Int], x: Int) -> List[Int] { acc + [x] })
+}
+
+fn by_loop(xs: List[User], want: Str) -> Bool {
+  for u in xs {
+    if u.name == want {
+      return true
+    }
+  }
+  false
+}
+
+fn main(os: Os) {
+  let xs = [User{id: 1, name: "a"}, User{id: 2, name: "bb"}]
+  os.stdio.println("${via_value(xs, fn(u) { u.id })} ${named(xs, "a")} ${evens(xs)} ${total(xs)} ${ints([1, 3])} ${collect([1]).len()} ${by_loop(xs, "a")}")
+}
+`
+
+// TestVetCostCallbacks: XO0908 notes a loop handing struct elements to a
+// function value and the prelude's callback walks over heap elements
+// (gotchas/vet-cost-misses-callbacks.md), and not Int elements, a heap
+// accumulator alone, or a for loop.
+func TestVetCostCallbacks(t *testing.T) {
+	t.Parallel()
+	dir := writeFiles(t, map[string]string{"main.xo": vetCostCallbackProg})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"vet", "--json", "--cost", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	var res struct {
+		Diagnostics []struct {
+			Code string `json:"code"`
+			Span struct {
+				Line int `json:"line"`
+			} `json:"span"`
+		} `json:"diagnostics"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &res); err != nil {
+		t.Fatalf("bad JSON: %v\n%s", err, out.String())
+	}
+	var lines []int
+	for _, d := range res.Diagnostics {
+		if d.Code == "XO0908" {
+			lines = append(lines, d.Span.Line)
+		}
+	}
+	sort.Ints(lines)
+	if fmt.Sprint(lines) != "[9 15 19 23]" {
+		t.Errorf("XO0908 at lines %v, want [9 15 19 23]\n%s", lines, out.String())
+	}
+}
+
 // vetCostLargeProg: a closure capturing a 9-word struct (XO0910, line 14)
 // and an Option holding one (line 25); a closure capturing one field of
 // it and an Option of its index are not noted.
