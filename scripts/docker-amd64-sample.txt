@@ -5,7 +5,7 @@
 # libm, spills and calls, strings and collections, JSON, crypto, the
 # runtime (tasks, faults, RC), and the network stack. The full 201 run
 # in the lead's 4-hourly full tier. Run:
-#   scripts/docker-goldens.sh XO amd64 amd64 WORK $(grep -v '^#' scripts/docker-amd64-sample.txt)
+#   scripts/docker-goldens.sh XO amd64 amd64 WORK scripts/docker-amd64-sample.txt
 arith
 overflow_add
 overflow_mul

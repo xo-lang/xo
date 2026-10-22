@@ -3,8 +3,14 @@
 # this checkout (cross built here with the Go backend): the linux/arm64 or
 # linux/amd64 run CI did before decision 0225's CI was turned off.
 #
-#   scripts/docker-goldens.sh DARWIN_XO ARCH BACKEND WORK [NAME...]
+#   scripts/docker-goldens.sh DARWIN_XO ARCH BACKEND WORK [NAME|FILE...]
 #
+# NAMEs restrict the run to those goldens; a FILE ending in .txt (such
+# as scripts/docker-amd64-sample.txt) adds the names on its lines, without
+# its # comments. A word starting with # and a name that is no golden
+# are skipped with a note, and when names were given but none is left
+# the run stops: inside the container's command line a # once commented
+# out every name after it and ran all 201 (Lib1, 2026-10-22).
 # DARWIN_XO builds the Linux xo; ARCH arm64 or amd64; BACKEND arm64,
 # amd64, or llvm; WORK a scratch directory (WORK/xo the Linux xo and its
 # std, WORK/goldens the results, summary.txt there). amd64 runs with no C
@@ -19,6 +25,35 @@ be=$3
 work=$4
 shift 4
 root=$(cd "$(dirname "$0")/.." && pwd)
+gdir=$root/internal/llvm/testdata/golden
+names=""
+skipped=""
+given=$#
+for a in "$@"; do
+  if [ "${a%.txt}" != "$a" ] && [ -f "$a" ]; then
+    words=$(sed 's/#.*//' "$a")
+  else
+    words=$a
+  fi
+  for n in $words; do
+    case $n in
+    \#*) skipped="$skipped $n" ;;
+    *)
+      case " $names " in
+      *" $n "*) ;;
+      *) if [ -f "$gdir/$n/want.txt" ]; then names="$names $n"; else skipped="$skipped $n"; fi ;;
+      esac
+      ;;
+    esac
+  done
+done
+if [ -n "$skipped" ]; then
+  echo "docker-goldens: skipped (a # word or no golden of that name):$skipped" >&2
+fi
+if [ "$given" -gt 0 ] && [ -z "$names" ]; then
+  echo "docker-goldens: no golden among the names given; not running all of them" >&2
+  exit 2
+fi
 mkdir -p "$work"
 work=$(cd "$work" && pwd)
 rm -rf "$work/xo" "$work/goldens"
@@ -29,6 +64,6 @@ cc=""
 if [ "$arch" = amd64 ]; then
   cc="XO_CC=/bin/false XO_CLANG=/bin/false"
 fi
-nice -n 10 "$root/scripts/docker-linux.sh" "$arch" "$work" "$cc /xo/scripts/linux-goldens.sh /work/xo/bin/xo $be /work/goldens $*" > "$work/docker.txt" 2>&1 || true
+nice -n 10 "$root/scripts/docker-linux.sh" "$arch" "$work" "$cc /xo/scripts/linux-goldens.sh /work/xo/bin/xo $be /work/goldens$names" > "$work/docker.txt" 2>&1 || true
 echo "ok $(grep -c '^ok' "$work/goldens/summary.txt") of $(wc -l < "$work/goldens/summary.txt")"
 grep -v '^ok' "$work/goldens/summary.txt" || true

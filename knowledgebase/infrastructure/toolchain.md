@@ -3815,7 +3815,7 @@ Three scripts:
 
     scripts/docker-linux.sh ARCH WORKDIR 'COMMAND'   # in xo-linux-test:ARCH-BASE (Debian with clang, lld, make, yara; $XO_DOCKER_BASE, default debian:trixie-slim, clang 19); the checkout at /xo read only, WORKDIR at /work, HOME=/work/home; --rm
     scripts/linux-goldens.sh XO BACKEND OUTDIR [NAME...]   # build each golden with XO and BACKEND and compare with want.txt (exit status and stdout)
-    scripts/docker-goldens.sh DARWIN_XO ARCH BACKEND WORK [NAME...]   # a Linux xo of the checkout cross built here, then linux-goldens.sh in Docker (amd64 with no C toolchain); 2026-10-18
+    scripts/docker-goldens.sh DARWIN_XO ARCH BACKEND WORK [NAME|FILE.txt...]   # a Linux xo of the checkout cross built here, then linux-goldens.sh in Docker (amd64 with no C toolchain); 2026-10-18. A .txt file (scripts/docker-amd64-sample.txt) gives names; # words and unknown names are skipped with a note, and no name left stops the run instead of running all 201 (2026-10-22)
     scripts/arm64-identity.sh BASE_XO NEW_XO [BACKEND]    # the arm64 (or amd64) output of every golden and compiler/xo, darwin and linux, byte compared; for changes meant for another target; 2026-10-18
     scripts/arm64-identity.sh --own-std BASE_XO NEW_XO [BACKEND]    # for a change to std and the compiler together: each xo on its own checkout's std, source positions and label-only lines normalized (gotchas/identity-std-and-compiler.md); 2026-10-20
     scripts/macho-link-compare.sh XO WORK                 # every golden for darwin/amd64 linked by Xo's linker and by Apple's ld, compared layout independently; 2026-10-18
