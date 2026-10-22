@@ -692,6 +692,14 @@ fn (var l: Linker) layout() {
     cmds += align_up(24 + d.len() + 1, 8)
   }
   l.cmds_size = cmds
+  // __TEXT's sections start after room for the __DWARF segment's command
+  // with all its sections, whether it is written or not, so a build
+  // with debug information and one without (-s, --release) have their
+  // code at the same addresses (decision 0252's gate,
+  // TestDebugInfoSameCode; the command moved __text by 712 bytes,
+  // gotchas/dwarf-segment-moved-text.md)
+  let dw_cmd = if l.dw_sizes.is_empty() { 0 } else { 72 + 80 * l.dw_sizes.len() }
+  let hdr = 32 + cmds - dw_cmd + 72 + 80 * dwarf_names().len()
   var vm = IMAGE_BASE
   var fo = 0
   for gi in 1..l.segs.len() - 1 {
@@ -710,7 +718,7 @@ fn (var l: Linker) layout() {
       fo += g.filesize
       continue
     }
-    var a = if g.name == "__TEXT" { 32 + cmds } else { 0 }
+    var a = if g.name == "__TEXT" { hdr } else { 0 }
     var filesz = a
     for i in g.sects {
       let s = l.osects[i]
