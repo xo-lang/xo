@@ -433,3 +433,20 @@ simpler and exact); direct calls of the TSan functions from generated code
 on darwin and linux (no depth, so the isolate drift stays); a per context
 stack of frame pointers (exact without a catch site call, but more memory
 and work per call).
+
+## Addendum (2026-10-22): --race defaults to the native backend (owner)
+
+Owner decision, through the lead; supersedes decision 0270's "`--race`
+still chooses LLVM". `xo build|run|test --race` with no `--backend`
+builds with the native backend (arm64 or amd64, native_backend) wherever
+a prebuilt ThreadSanitizer runtime ships for the target: race_runtime
+finds it under lib/xo/race/ (darwin/arm64, linux/arm64, linux/amd64,
+windows/amd64 in the 0.25 archives; XO_RACE_RUNTIME names another). Only
+a target with none falls back to LLVM, and a missing clang there says
+that no native ThreadSanitizer runtime ships for the target, rather than
+the generic "the LLVM backend needs clang". Before, 0.25.2 failed `xo
+build --race .` on a machine without clang although `--race
+--backend=arm64` worked (the lead verified it; another machine reported
+it as a missing fix). compiler/xo main.xo race_backend; tests in internal/llvm
+(TestRaceDefaultNative: clang off PATH, race_stacks builds and its race is reported;
+the fallback's message for a target with no runtime).

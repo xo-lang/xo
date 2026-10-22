@@ -45,7 +45,9 @@ The default backend is the native one: arm64 or amd64 by the
 architecture of the build's targets (`--targets`; else the host's), on
 darwin, linux and windows (compiler/xo main.xo native_backend). This
 supersedes decision 0248's x86_64 line. `--race` still chooses LLVM
-(ThreadSanitizer, which the native backends lack), the Go-only flags
+(ThreadSanitizer, which the native backends lack; superseded by
+decision 0273's 2026-10-22 addendum: the native backend wherever a
+prebuilt runtime ships), the Go-only flags
 (--hybrid, --holes, xo test --explore, xo run --seed and --record)
 still choose Go, and `--backend=llvm` keeps LLVM's code for anyone who
 wants it.

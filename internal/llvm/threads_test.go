@@ -659,3 +659,69 @@ func TestSysCTSan(t *testing.T) {
 		t.Fatalf("got %q (%v), want 01010101 (the last byte: the heap mapped through the C library)", out, err)
 	}
 }
+
+// TestRaceDefaultNative: --race with no --backend builds with the native
+// backend where a ThreadSanitizer runtime is found (decision 0273's
+// 2026-10-22 addendum), so it needs no clang: with clang off PATH and the
+// runtime named by XO_RACE_RUNTIME, race_stacks builds and its race is
+// reported. With no runtime for the target (none in the checkout) it
+// falls back to LLVM, whose missing clang is an error saying so.
+func TestRaceDefaultNative(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a program with ThreadSanitizer")
+	}
+	if runtime.GOOS != "darwin" || !xotool.Arm64Host() {
+		t.Skip("darwin/arm64: the runtime is clang's dylib")
+	}
+	cl, err := xotool.Clang()
+	if err != nil {
+		t.Skip("clang not found (it finds the runtime)")
+	}
+	out, err := exec.Command(cl, "-print-file-name=lib/darwin/libclang_rt.tsan_osx_dynamic.dylib").Output()
+	rt := strings.TrimSpace(string(out))
+	if err != nil || !filepath.IsAbs(rt) {
+		t.Skipf("no ThreadSanitizer runtime: %v", err)
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := xotool.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	empty := filepath.Join(tmp, "path")
+	if err := os.Mkdir(empty, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// the environment without PATH, XO_CLANG and XO_RACE_RUNTIME
+	var env []string
+	for _, e := range os.Environ() {
+		if !strings.HasPrefix(e, "PATH=") && !strings.HasPrefix(e, "XO_CLANG=") && !strings.HasPrefix(e, "XO_RACE_RUNTIME=") && !strings.HasPrefix(e, "XO_STD=") {
+			env = append(env, e)
+		}
+	}
+	env = append(env, "PATH="+empty, "XO_STD="+filepath.Join(root, "std"), "XO_BIN_CACHE=off")
+	bin := filepath.Join(tmp, "prog")
+	cmd := testtmp.Guard(exec.Command(xo, "build", "--race", "-o", bin, filepath.Join("testdata", "race_stacks")))
+	cmd.Env = append(env, "XO_RACE_RUNTIME="+rt)
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("xo build --race with no clang on PATH: %v\n%s", err, b)
+	}
+	run := testtmp.Guard(exec.Command(bin))
+	run.Env = append(os.Environ(), "TSAN_OPTIONS=halt_on_error=0")
+	var stdout, stderr bytes.Buffer
+	run.Stdout, run.Stderr = &stdout, &stderr
+	_ = run.Run()
+	if !strings.Contains(stderr.String(), "WARNING: ThreadSanitizer: data race") || !strings.Contains(stderr.String(), "xo_f_touch main.xo:") {
+		t.Errorf("no race reported (stdout %q):\n%s", stdout.String(), stderr.String())
+	}
+	// no runtime for the target: LLVM, and no clang
+	fb := testtmp.Guard(exec.Command(xo, "build", "--race", "-o", filepath.Join(tmp, "fb"), filepath.Join("testdata", "race_stacks")))
+	fb.Env = env
+	b, err := fb.CombinedOutput()
+	if err == nil || !strings.Contains(string(b), "no native ThreadSanitizer runtime ships for darwin/arm64") {
+		t.Errorf("xo build --race with no runtime and no clang: %v, want the no native runtime error:\n%s", err, b)
+	}
+}

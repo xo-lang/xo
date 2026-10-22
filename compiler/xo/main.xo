@@ -183,8 +183,9 @@ fn main(os: Os) ! {
   // arm64 or amd64 by the targets' architecture, else the host's
   // (native_backend); asm prints the arm64 assembly. The flags only the
   // Go backend has (--hybrid, --holes, xo test --explore, xo run --seed
-  // and --record) choose it, and --race llvm's ThreadSanitizer (the
-  // native backends have no race detector).
+  // and --record) choose it. --race takes the native backend where a
+  // ThreadSanitizer runtime ships for the target, else llvm
+  // (race_backend, decision 0273 addendum).
   var backend = o.backend
   if backend.is_empty() {
     let go_only = o.hybrid || o.holes || (o.cmd == "test" && o.explore > 0) || (o.cmd == "run" && (o.topts.seed != 0 || !o.record.is_empty()))
@@ -193,7 +194,7 @@ fn main(os: Os) ! {
     } else if go_only {
       backend = "go"
     } else if o.race {
-      backend = "llvm"
+      backend = race_backend(os, ctx, o)
     } else {
       backend = native_backend(o)
     }
@@ -261,8 +262,8 @@ fn main(os: Os) ! {
   }
   // the arm64 backend's --race (decision 0273 parts 2 and 3): its
   // ThreadSanitizer calls, linked by Xo's linker with the runtime
-  // race_runtime finds; amd64's on darwin and Linux (compiler-rt's
-  // ThreadSanitizer has no Windows port)
+  // race_runtime finds; amd64's on darwin, Linux and Windows (Go's
+  // race_windows_amd64.syso)
   if o.race && !(backend is "llvm" | "arm64" | "amd64") {
     fail(os, "the ${backend} backend does not support --race: use --backend=llvm (ThreadSanitizer) or --backend=go (Go's race detector)")
   }
@@ -617,6 +618,26 @@ fn in_scope(os: Os, o: Opts, ds: List[check.Diag]) -> List[check.Diag] {
 /// architecture --targets names (the last one, so a mix fails on the
 /// backend's own target check), else for the host's; llvm on a host
 /// with neither (a wasm build of xo).
+/// The backend --race builds with when none is given (decision 0273
+/// addendum, owner 2026-10-22): the native one where a ThreadSanitizer
+/// runtime ships for the target (race_runtime: lib/xo/race/), else llvm,
+/// whose ThreadSanitizer comes with clang.
+fn race_backend(os: Os, ctx: Ctx, o: Opts) -> Str {
+  let b = native_backend(o)
+  if b == "llvm" {
+    return b
+  }
+  var tg = ctx.goos
+  if !o.targets.is_empty() && o.targets != "all" {
+    let parts = o.targets.split(",")[0].trim().split("/")
+    if parts.len() == 2 {
+      tg = parts[0]
+    }
+  }
+  let (rt, _) = race_runtime(os, ctx, tg, b)
+  if rt.is_empty() { "llvm" } else { b }
+}
+
 fn native_backend(o: Opts) -> Str {
   var arch = host_arch()
   if !o.targets.is_empty() && o.targets != "all" {
@@ -773,6 +794,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     if cc.is_empty() {
       cc = find_clang(os)
       if cc.is_empty() {
+        if o.backend_auto && o.race {
+          fail(os, "--race: no native ThreadSanitizer runtime ships for ${ltarget} (lib/xo/race/; darwin/arm64, linux/arm64, linux/amd64 and windows/amd64 have one), so it builds with the LLVM backend, which needs clang: install it or set XO_CLANG")
+        }
         if o.backend_auto {
           // the default backend on this host (decision 0248)
           fail(os, "the LLVM backend (the default on this host) needs clang: install it (xcode-select --install on macOS, your distribution's clang package on Linux) or set XO_CLANG, or build with --backend=go")

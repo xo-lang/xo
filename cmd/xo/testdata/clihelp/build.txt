@@ -7,8 +7,9 @@ usage: xo build [--targets=all|os/arch,...] [--backend=go|llvm|arm64|amd64|wasm]
 
 Compile to static binaries (default: the host). The directories are one
 program. The default backend is native (decisions 0248 and 0270): arm64
-or amd64 for the target's architecture; --race picks llvm (which needs
-clang) and its ThreadSanitizer; --backend=go builds through
+or amd64 for the target's architecture, --race too where a
+ThreadSanitizer runtime ships for the target (else llvm, which needs
+clang); --backend=go builds through
 the Go toolchain, and a program with `use go` needs it. A linux/arm64
 target links with Xo's own linker, from any host (decision 0243).
 --no-gc (also on run and test) reports every construct, std API, or

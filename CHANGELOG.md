@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `--race` with no `--backend` uses the native backend (arm64 or amd64)
+  wherever a prebuilt ThreadSanitizer runtime ships (darwin/arm64,
+  linux/arm64, linux/amd64, windows/amd64), so it needs no clang (owner,
+  2026-10-22, decision 0273 addendum). In 0.25.2 `xo build --race .`
+  picked the LLVM backend and failed without clang, although `--race
+  --backend=arm64` worked. Other targets still use LLVM, and a missing
+  clang there says no native race runtime ships for the target.
 - Native runtime: idle workers no longer loop on a run-next slot they
   may not take yet (its 50 us grace); they wait the grace out in the
   poller or on their futex. An HTTP/2 download server on linux/arm64
