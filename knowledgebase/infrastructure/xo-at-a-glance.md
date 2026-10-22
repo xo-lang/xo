@@ -14,8 +14,9 @@ Last verified: 2026-10-21 (spec/core.md and spec/std.md at main).
   faults. `Float` (64-bit) and `Float32`. `Rune`, `Bool`, `()`, `Never`.
 - `Str` (always valid UTF-8) and `Bytes`; `Duration` and `Time`.
 - Collections, all immutable persistent values: `List[T]`, `Map[K, V]`
-  and `Set[T]` (both insertion ordered); `Buf[T]` is the mutable,
-  move-only buffer (5.3).
+  and `Set[T]` (both insertion ordered); literals `[1, 2]`, `{"a": 1}`,
+  `#{1, 2}`, and empty `[]`, `{}` (a Map), `#{}` (a Set) (core 1.6);
+  `Buf[T]` is the mutable, move-only buffer (5.3).
 - `T?` (Option, 2.5) and `Result[T, E]` written `T ! E` (2.6); `?`
   propagates, `??` supplies a default and since 0321 an early exit
   (`x ?? return v`, `?? break`, `?? continue`).
