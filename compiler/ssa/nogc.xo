@@ -84,9 +84,9 @@ fn nogc_diag(e: BuildErr) -> check.Diag {
     "not available without a garbage collector (`--no-gc`) yet: ${e.feature} (support is planned)"
   }
   let note = if e.impossible {
-    "support: impossible; build without --no-gc to use the Go backend"
+    "support: impossible; build with --backend=go (and without --no-gc) to use it"
   } else {
-    "support: planned; build without --no-gc to use the Go backend until then"
+    "support: planned; build with --backend=go (and without --no-gc) to use it until then"
   }
   check.Diag{code: "XO1201", file: e.file, line: e.span.start.line, col: e.span.start.col, end_line: e.span.end.line, end_col: e.span.end.col, message: msg, notes: [check.DNote{message: note}]}
 }

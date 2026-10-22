@@ -24,7 +24,7 @@ Evidence from 2026-10-21, native arm64, instructions retired:
 Hot paths work around it by indexing bytes, which is why the ports read
 like C. A view would let them read like Go.
 
-## Decision (proposed)
+## Decision
 
 Make slicing O(1) for `Str` and `Bytes` as the spec already says.
 

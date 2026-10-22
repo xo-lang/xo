@@ -1,6 +1,6 @@
 # 0340: `xo bench --ab`, an interleaved A/B measurement with a confidence interval
 
-Status: Proposed (owner request, 2026-10-22, through the lead)
+Status: Accepted (owner request, 2026-10-22, through the lead: build it; shipped as `xo bench --ab`, compiler/cli/bench, and required for every speedup claim)
 
 ## Context
 

@@ -36,7 +36,7 @@ them writes four lines (`let s = match x { Some(v) => v  None =>
 continue }`), which is the pattern repeated most in a loop body and in
 `parse`-style functions that walk a list.
 
-## Decision (part 1 accepted, part 2 deferred)
+## Decision (parts 1 and 2 accepted; part 2 implemented 2026-10-21)
 
 1. **Option form.** `return`, `break`, and `continue` are expressions of
    type `Never` where an expression is expected, as `fault(...)` is. So

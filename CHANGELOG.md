@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Messages: XO1201's note says to build with `--backend=go` (it said
+  "build without --no-gc", also on default native builds that passed no
+  `--no-gc`); "needs a native backend" names arm64, amd64, and llvm;
+  `xo explain XO1504` says no build reports it today.
 - scripts/release-verify.sh checks what 0.25.2 shipped broken: `xo build
   --targets=all` gives the six native binaries named NAME-OS-ARCH, `xo
   build --race` with no clang on PATH reports a planted race with its

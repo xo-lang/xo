@@ -207,11 +207,11 @@ fn main(os: Os) ! {
     }
   }
   if !o.trace.is_empty() && backend == "go" {
-    os.stdio.eprintln("xo ${what}: --trace needs a native backend (llvm or arm64); a Go backend program traces with runtime/trace")
+    os.stdio.eprintln("xo ${what}: --trace needs a native backend (arm64, amd64, or llvm); a Go backend program traces with runtime/trace")
     os.proc.exit(2)
   }
   if !o.profile.is_empty() && backend == "go" {
-    os.stdio.eprintln("xo ${what}: --profile needs a native backend (llvm or arm64); a Go backend program profiles with runtime/pprof")
+    os.stdio.eprintln("xo ${what}: --profile needs a native backend (arm64, amd64, or llvm); a Go backend program profiles with runtime/pprof")
     os.proc.exit(2)
   }
   if o.hybrid {
@@ -221,7 +221,7 @@ fn main(os: Os) ! {
     }
   }
   if o.no_gc && backend == "go" {
-    os.stdio.eprintln("xo ${what}: --no-gc needs a native backend (llvm or arm64), not go")
+    os.stdio.eprintln("xo ${what}: --no-gc needs a native backend (arm64, amd64, or llvm), not go")
     os.proc.exit(1)
   }
   if o.cmd == "run" && o.topts.seed != 0 && backend != "go" {
@@ -252,7 +252,7 @@ fn main(os: Os) ! {
     os.stdio.eprintln("hybrid: no assembly (the self hosted arm64 backend has no Go assembler mode yet)")
   }
   if backend == "go" && !o.std_module.is_empty() {
-    fail(os, "--std-module needs a native backend (llvm or arm64): the Go backend's std is std/rt, in Go")
+    fail(os, "--std-module needs a native backend (arm64, amd64, or llvm): the Go backend's std is std/rt, in Go")
   }
   if backend == "go" && (o.cmd == "build" || o.cmd == "test" || o.cmd == "run") {
     build_go(os, ctx, o)?

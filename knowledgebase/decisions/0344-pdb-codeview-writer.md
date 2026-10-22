@@ -1,7 +1,8 @@
 # 0344: A PDB and CodeView writer for the PE linker
 
-Status: Proposed (Xo Lang 4, 2026-10-22; the owner approved building the
-writer the same day, after decision 0343's crash report). Stage 1
+Status: Accepted for stages 1 to 4, stage 5 (lld-link) deferred (Xo Lang 4,
+2026-10-22; the owner approved building the writer the same day, after
+decision 0343's crash report). Stage 1
 implemented 2026-10-22 (compiler/macho pdb.xo): llvm-pdbutil 19 dumps
 every stream without an error and finds globals by name through the GSI
 hash; llvm-symbolizer names functions from the PDB alone. Measured on
