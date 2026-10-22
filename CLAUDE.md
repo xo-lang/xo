@@ -22,6 +22,10 @@ implementation the language started with was deleted (decision 0215).
   every agent tool (lookups, miscompile triage, std tests, measuring,
   push queue and board) and when to use it; read it at the start of a
   session.
+- [`knowledgebase/infrastructure/xo-at-a-glance.md`](knowledgebase/infrastructure/xo-at-a-glance.md):
+  what Xo already has (types, statements, concurrency, std, tools) with
+  spec sections; check it before reporting a feature as missing (owner,
+  2026-10-21: match guards and Set were reported missing).
 - Finding Xo code (decision 0261): use `xo def NAME` (`Type.method` or a
   bare name), `xo refs NAME`, `xo type FILE:LINE:COL`, `xo doc NAME`
   (a type's methods), and `xo symbols [--all]`, with `--dir=DIR` and

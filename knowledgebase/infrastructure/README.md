@@ -10,3 +10,4 @@
 - [agent-tools.md](agent-tools.md): one index of the tools built for agents (lookups, triage, tests, measuring, coordination) and when to use each
 - [code-signing.md](code-signing.md): signing and notarizing macOS binaries linked by Xo's own linker (scripts/sign-macos.sh), the team ID trap, verification commands; Authenticode signing of Windows executables with Azure Artifact Signing and jsign (scripts/sign-windows.sh)
 - [std-coverage.md](std-coverage.md): std against Go's standard library (decision 0276): one row per Go package with its Xo module, status, and what is missing, rows for backend needs outside Go's std, the module change logs, and the 2026-10-20 survey ranking of gaps
+- [xo-at-a-glance.md](xo-at-a-glance.md): what the language, std and tools already have, with spec sections; read before reporting a feature as missing
