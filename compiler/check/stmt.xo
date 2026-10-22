@@ -1359,8 +1359,15 @@ fn (var c: Checker) assign(span: Span, op: parser.Kind, target: Expr, value: Exp
       c.map_store = c.expr_key(unparen(target))
     }
   }
+  if op != parser.Kind.Assign {
+    c.map_upd = c.expr_key(unparen(target))
+    c.map_upd_op = op_text(op)
+    c.map_upd_val = c.src_of(parser.expr_span(value))
+    c.map_upd_span = Some(Span{start: parser.expr_span(target).start, end: parser.expr_span(value).end})
+  }
   let tt = c.place_type(target)
   c.map_store = -1
+  c.map_upd = -1
   c.require_mutable(target, "XO0502", "assignment")
   if op == parser.Kind.Assign {
     c.check_ty(value, tt)
@@ -1421,7 +1428,7 @@ fn (var c: Checker) place_type(e: Expr) -> Int {
       c.set_type(e, t)
       if c.is_prelude(bt, "Map") && c.map_store != c.expr_key(e) {
         let d = c.error("XO0410", span, "changing a Map element in place faults when the key is missing")
-        c.note(d, "use `m.update(k, init, fn(var v) { ... })`, or assign the whole value with `m[k] = v` (core 3.6)")
+        c.map_update_fix(d, t, x, index, c.map_upd == c.expr_key(e))
       }
       t
     }
@@ -1613,4 +1620,21 @@ fn (var c: Checker) finish_groups(x: Int) {
     let d = c.error("XO0801", sp.span, "a task started on a task group from outside this function can fail with `${c.show(e)}`; handle the error inside the task, or bind its handle and await it")
     c.note(d, "a failing group task fails the scope that created the group, which this function cannot see (core 7.1)")
   }
+}
+
+/// XO0410's note for `m[k] op= v` and `m[k].f = v`, and for a compound
+/// assignment to a number or Str element its fix: `m.update(k, ZERO,
+/// fn(var e) { e op= v })`, which starts a missing key at ZERO.
+fn (var c: Checker) map_update_fix(d: Int, t: Int, m: Expr, k: Expr, compound: Bool) {
+  let zero = if c.is_prelude(t, "Str") { "\"\"" } else if c.is_float(t) { "0.0" } else if c.is_int(t) { "0" } else { "" }
+  if !compound || zero.is_empty() {
+    c.note(d, "use `m.update(k, init, fn(var v) { ... })`, or assign the whole value with `m[k] = v` (core 3.6)")
+    return
+  }
+  let sp = c.map_upd_span ?? return
+  let ms = c.operand_src(m)
+  let ks = c.src_of(parser.expr_span(k))
+  let upd = "${ms}.update(${ks}, ${zero}, fn(var e) { e ${c.map_upd_op} ${c.map_upd_val} })"
+  c.note(d, "`${upd}` starts a missing key at ${zero}; `m.get(k)` and `m.contains(k)` test for it (core 3.6, spec/std.md 2.4)")
+  c.fix(d, "use update", [c.replace_edit(sp, upd)])
 }

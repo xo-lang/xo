@@ -528,6 +528,84 @@ fn method_habit(name: Str) -> Str {
   }
 }
 
+/// The Xo method a name stands for when method_habit's does not exist on
+/// the receiver: a Set adds with `add` and removes with `remove` (Rust's
+/// `insert`, List's `push`, Map's `put`; TypeScript's `delete`), or "".
+fn collection_alt(name: Str) -> Str {
+  match name {
+    "insert" | "push" | "put" | "append" | "push_back" | "emplace" => "add"
+    "delete" | "discard" | "erase" => "remove"
+    _ => ""
+  }
+}
+
+/// The languages of a name of collection_alt, or "Xo" for another Xo
+/// collection's name.
+fn collection_alt_lang(name: Str) -> Str {
+  match name {
+    "insert" => "Rust and C++"
+    "push_back" | "emplace" | "erase" => "C++"
+    "append" => "Python"
+    "delete" => "TypeScript"
+    "discard" => "Python"
+    _ => "Xo"
+  }
+}
+
+/// The clock expression of a `CLOCK.now()` call, or "".
+fn (c: Checker) now_receiver(x: Expr) -> Str {
+  if let CallExpr(fun: f, args: a, ..) = unparen(x) {
+    if a.is_empty() {
+      if let SelectorExpr(x: cx, sel: s, ..) = f {
+        if text(s.name) == "now" {
+          return c.src_of(parser.expr_span(cx))
+        }
+      }
+    }
+  }
+  ""
+}
+
+/// `t.sub(u)`, `t.add(d)`, `t.elapsed()` and the like on a Time or
+/// Duration: XO0601 with the operator Xo writes (core 2.1), or
+/// `clock.since(t)`.
+fn (var c: Checker) habit_time_op(bt: Int, r: Int, span: Span, x: Expr, sel: Ident, name: Str, args: List[Arg], report: Str) -> (Int, Bool) {
+  let is_time = c.is_prelude(r, "Time")
+  let plus = name is "add" | "Add" | "plus"
+  if args.is_empty() {
+    // Rust's `t.elapsed()`: the time since t
+    if !is_time || !(name is "elapsed" | "Elapsed" | "since" | "Since") {
+      return (-1, false)
+    }
+    let d = c.error("XO0601", sel.span, report)
+    c.habit_note(d, "did you mean `clock.since(t)`? The time elapsed since `t` is `clock.since(${c.operand_src(x)})`, through the `Clock` capability (spec/std.md 3.3)")
+    return (c.named("Duration"), true)
+  }
+  if args.len() != 1 || args[0].name != None {
+    return (-1, false)
+  }
+  let at = c.infer(args[0].value, -1)
+  let arg_time = c.is_prelude(at, "Time")
+  let xs = c.operand_src(x)
+  let a = c.operand_src(args[0].value)
+  let op = if plus { "+" } else { "-" }
+  let d = c.error("XO0601", sel.span, report)
+  let clock = c.now_receiver(x)
+  if is_time && !plus && arg_time {
+    if !clock.is_empty() {
+      c.habit_note(d, "did you mean `${clock}.since(${a})`? Xo subtracts times with `-`: `t1 - t2` is the `Duration` between them, and `clock.since(t)` the time elapsed since `t` (core 2.1, spec/std.md 3.3)")
+      c.fix(d, "write `${clock}.since(...)`", [c.replace_edit(span, "${clock}.since(${a})")])
+    } else {
+      c.habit_note(d, "Xo subtracts times with `-`: `t1 - t2` is the `Duration` between them; the time elapsed since `t` is `clock.since(t)` (core 2.1, spec/std.md 3.3)")
+      c.fix(d, "write `(t1 - t2)`", [c.replace_edit(span, "(${xs} - ${a})")])
+    }
+    return (c.named("Duration"), true)
+  }
+  c.habit_note(d, "Xo adds and subtracts `Time` and `Duration` with operators: `t + d`, `t - d`, `t1 - t2`, `d1 + d2` (core 2.1)")
+  c.fix(d, "write `(x ${op} y)`", [c.replace_edit(span, "(${xs} ${op} ${a})")])
+  (bt, true)
+}
+
 /// The languages of a method name of method_habit (habits.go
 /// methodHabits).
 fn method_habit_lang(name: Str) -> Str {
@@ -646,6 +724,14 @@ fn (var c: Checker) habit_method(bt: Int, r: Int, sspan: Span, x: Expr, sel: Ide
       c.infer_args(args)
       return (c.unit_ty, true)
     }
+    "sub" | "Sub" | "minus" | "subtract" | "duration_since" | "since" | "Since" | "elapsed" | "Elapsed" | "add" | "Add" | "plus" => {
+      if c.is_prelude(r, "Time") || c.is_prelude(r, "Duration") {
+        let (tt, tok) = c.habit_time_op(bt, r, span, x, sel, name, args, report)
+        if tok {
+          return (tt, true)
+        }
+      }
+    }
     "substring" | "substr" | "slice" => {
       if c.is_prelude(r, "Str") || c.list_elem(r) >= 0 {
         let d = c.error("XO0601", sel.span, report)
@@ -668,22 +754,35 @@ fn (var c: Checker) habit_method(bt: Int, r: Int, sspan: Span, x: Expr, sel: Ide
       lang = "camelCase"
     }
   }
-  if xo.is_empty() {
-    return (-1, false)
+  var found = false
+  if !xo.is_empty() {
+    let (m, _) = c.find_method_any(r, xo)
+    found = m >= 0
   }
-  let (m, _) = c.find_method_any(r, xo)
-  if m < 0 {
-    return (-1, false)
+  if !found {
+    // a Set's `add` and `remove` (collection_alt)
+    let alt = collection_alt(name)
+    if alt.is_empty() {
+      return (-1, false)
+    }
+    let (m2, _) = c.find_method_any(r, alt)
+    if m2 < 0 {
+      return (-1, false)
+    }
+    xo = alt
+    lang = collection_alt_lang(name)
   }
   // `count(x)` and `add(x)` on other types mean other things.
   if (name is "count" | "size" | "length") && !args.is_empty() {
     return (-1, false)
   }
   let d = c.error("XO0601", sel.span, report)
-  if lang == "camelCase" {
+  if lang == "Xo" {
+    c.habit_note(d, "did you mean `${xo}`? `.${name}` is another collection's method; `${c.show(bt)}` has `.${xo}` (spec/std.md 2.4)")
+  } else if lang == "camelCase" {
     c.habit_note(d, "`${name}` is a camelCase name from TypeScript, Kotlin, Java, or Swift; Xo methods are snake_case: `${xo}` (core 1.5)")
   } else {
-    c.habit_note(d, "`.${name}` is the ${lang} name; Xo's is `.${xo}` (spec/std.md 2)")
+    c.habit_note(d, "did you mean `${xo}`? `.${name}` is the ${lang} name; Xo's is `.${xo}` (spec/std.md 2)")
   }
   c.fix(d, "write `${xo}`", [c.replace_edit(sel.span, xo)])
   let nsel = Ident{span: sel.span, name: xo.bytes()}

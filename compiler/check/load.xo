@@ -211,6 +211,17 @@ pub struct Checker {
   value_calls: Map[Int, Bool] = {}
   /// The target of a plain `m[k] = v` (stmt.xo assign), by key.
   map_store: Int = -1
+  /// The `m[k]` of a `m[k]?` or `m[k] ?? d` (expr.xo try_expr, binary),
+  /// by key, and its operator: XO0410 then suggests `m.get(k)`.
+  map_opt: Int = -1
+  map_opt_form: Str = ""
+  /// A compound assignment `m[k] op= v` (stmt.xo assign): the target's
+  /// key, the operator, v's source, and the statement's span, for
+  /// XO0410's `update` fix.
+  map_upd: Int = -1
+  map_upd_op: Str = ""
+  map_upd_val: Str = ""
+  map_upd_span: Span? = None
   /// Calls whose value an expression statement discards, decided once
   /// effects are solved (XO0209, decision 0258), and how many times
   /// require_mutable ran (a call that mutates is not one of them).

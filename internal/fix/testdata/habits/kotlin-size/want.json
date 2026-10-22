@@ -12,7 +12,7 @@
     },
     "notes": [
       {
-        "message": "`.size` is the Kotlin and Java name; Xo's is `.len` (spec/std.md 2)"
+        "message": "did you mean `len`? `.size` is the Kotlin and Java name; Xo's is `.len` (spec/std.md 2)"
       }
     ],
     "fixes": [

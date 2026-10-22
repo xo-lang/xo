@@ -1,0 +1,17 @@
+// `m[k]?` and `m[k] ?? d` read by index, which faults on a missing key
+// before the operator sees it: XO0410 suggests `m.get(k)`. `m[k] += v` on
+// a number or Str element suggests `m.update(k, ZERO, ...)`.
+
+fn first(m: Map[Str, Int]) -> Int? {
+  let v = m["a"]? // ERROR XO0410 "before `.` sees it"
+  Some(v)
+}
+
+fn main(os: Os) {
+  var m: Map[Str, Int] = {}
+  m["a"] += 1 // ERROR XO0410 "m.update..a., 0, fn.var e. . e .= 1 ."
+  var names: Map[Str, Str] = {}
+  names["x"] += "!" // ERROR XO0410 "starts a missing key at \"\""
+  let v = m["b"] ?? 0 // ERROR XO0410 "`m.get.k. .. d`"
+  os.stdio.println("${v} ${first(m) ?? 0} ${names.len()}")
+}

@@ -464,12 +464,24 @@ fn (var c: Checker) infer0(e: Expr, hint: Int) -> Int {
       let bt = c.infer(x, -1)
       let t = c.index_type(bt, span, index)
       if c.is_prelude(bt, "Map") {
+        let isp = parser.expr_span(index)
+        // `m[k]?` and `m[k] ?? d` expect an optional: the read faults
+        // first, and `m.get(k)` is what they mean
+        if c.map_opt >= 0 && c.map_opt == c.expr_key(e) {
+          let form = c.map_opt_form
+          c.map_opt = -1
+          let d = c.error("XO0410", span, "reading a Map by index faults when the key is missing, before `${form}` sees it")
+          if d >= 0 {
+            c.note(d, "`m.get(k)` is the optional value: `m.get(k)${if form == "?" { "?" } else { " ?? d" }}` (core 3.6)")
+            c.fix(d, "write `.get(k)`", [c.replace_edit(Span{start: parser.expr_span(x).end, end: isp.start}, ".get("), c.replace_edit(Span{start: isp.end, end: span.end}, ")")])
+          }
+          return c.option_of(t)
+        }
         // A missing key is the Map form of a nil dereference, so reads
         // must say what happens when the key is absent (core 3.6).
         let d = c.error("XO0410", span, "reading a Map by index faults when the key is missing")
         if d >= 0 {
           c.note(d, "use `m.get(k)` (an optional) or `m.get_or_fault(k, \"why the key must exist\")` (core 3.6)")
-          let isp = parser.expr_span(index)
           c.fix(d, "use get_or_fault", [c.replace_edit(Span{start: parser.expr_span(x).end, end: isp.start}, ".get_or_fault("), c.replace_edit(Span{start: isp.end, end: span.end}, ", \"TODO: why the key must exist\")")])
         }
       }
@@ -645,7 +657,10 @@ fn (var c: Checker) is_sized_int(t: Int) -> Bool {
 
 /// `x?` (core 2.5, 2.6).
 fn (var c: Checker) try_expr(span: Span, x: Expr) -> Int {
+  c.map_opt = c.expr_key(unparen(x))
+  c.map_opt_form = "?"
   let t = c.infer(x, -1)
+  c.map_opt = -1
   let r = c.resolve(t)
   if c.is_bad(r) {
     return c.bad_ty
@@ -1344,7 +1359,10 @@ fn (var c: Checker) binary(span: Span, op: parser.Kind, x: Expr, y: Expr, hint: 
     return c.named("Bool")
   }
   if op == parser.Kind.Coalesce {
+    c.map_opt = c.expr_key(unparen(x))
+    c.map_opt_form = "??"
     let xt = c.infer(x, if hint >= 0 { c.option_of(hint) } else { -1 })
+    c.map_opt = -1
     let el = c.option_elem(xt)
     if el < 0 {
       c.infer(y, c.bad_ty)

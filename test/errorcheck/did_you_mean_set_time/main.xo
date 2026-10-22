@@ -1,0 +1,22 @@
+// A Set adds with `add` and removes with `remove`: another language's name
+// (Rust's `insert`, Python's `discard`) or another collection's (List's
+// `push`) suggests them. Time and Duration use operators: `t.sub(u)` on a
+// `clock.now()` suggests `clock.since(u)`, elsewhere `t1 - t2`;
+// `t.elapsed()` suggests `clock.since(t)`; `d.add(d)` suggests `+`.
+
+fn age(clock: Clock, t: Time) -> Duration uses clock {
+  clock.now().sub(t) // ERROR XO0601 "did you mean `clock.since.t.`"
+}
+
+fn main(os: Os) {
+  var s: Set[Int] = #{}
+  s.insert(3) // ERROR XO0601 "did you mean `add`. `.insert` is the Rust"
+  s.push(4) // ERROR XO0601 "did you mean `add`. `.push` is another collection's method"
+  s.discard(3) // ERROR XO0601 "did you mean `remove`"
+  let t = os.clock.now()
+  let u = os.clock.now()
+  let d = u.sub(t) // ERROR XO0601 "Xo subtracts times with `-`"
+  let e = t.elapsed() // ERROR XO0601 "elapsed since `t` is `clock.since.t.`"
+  let f = d.add(d) // ERROR XO0601 "with operators"
+  os.stdio.println("${s.len()} ${d} ${e} ${f} ${age(os.clock, t)}")
+}

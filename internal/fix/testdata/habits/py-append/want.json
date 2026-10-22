@@ -12,7 +12,7 @@
     },
     "notes": [
       {
-        "message": "`.append` is the Python and Swift name; Xo's is `.push` (spec/std.md 2)"
+        "message": "did you mean `push`? `.append` is the Python and Swift name; Xo's is `.push` (spec/std.md 2)"
       }
     ],
     "fixes": [

@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Diagnostics: an unknown method on a Set suggests `add` and `remove`
+  (`insert`, `push`, `put`, `discard`, `delete`); `sub`, `add`,
+  `elapsed` and the like on a Time or Duration suggest the operators or,
+  for `clock.now().sub(t)` and `t.elapsed()`, `clock.since(t)`; other
+  languages' method names now open with "did you mean". XO0410 on
+  `m[k]?` and `m[k] ?? d` suggests `m.get(k)` (one error, with a fix),
+  and on `m[k] += v` for a number or Str element `m.update(k, 0, fn(var
+  e) { e += v })` (no new codes).
 - Any integer type indexes a List or Bytes: reads, assignments, `get`,
   and slice bounds, and a Str's slice bounds (decision 0331, 5aff68252).
 - `x ?? return v`, `?? break`, and `?? continue` on an Option, and the
