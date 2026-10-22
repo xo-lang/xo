@@ -6,7 +6,8 @@
 // (internal/repotest) checks the sizes, that this module imports
 // nothing, and that a copy left elsewhere has its source's value.
 //
-// Records here: the context (ctx.xo, decision 0229).
+// Records here: the context (ctx.xo, decision 0229), the deadlock counts
+// (pool.xo, ctx.xo).
 
 /// The context record (ctx.xo; xo_ctx in the C runtime it came from,336 bytes, 16 aligned; the owner of each field in decision 0229):
 /// the innermost cancellation node (a scope body or the task's node).
@@ -82,3 +83,38 @@ pub const C_RACE_DEPTH = 360
 /// addendum: a lock bound loop paid a switch per write)
 pub const C_LOCKS = 368
 pub const C_SIZE = 376
+
+/// The deadlock counts record (the pool record's P_DLK word; pool.xo, ctx.xo
+/// init makes it and never frees it; xo_rt.c's static `dlk` before): word
+/// indices for the slot atomics. The roots made, the roots asleep in a
+/// counted wait, and the contexts in a wait a timer, the network, or a
+/// signal can end.
+pub const DLK_ROOTS = 0
+pub const DLK_BLOCKED = 1
+pub const DLK_UNCOUNTED = 2
+/// The roots in their loop (root_main, decision 0286 step 1): counted
+/// alive and idle as workers, for the deadlock check, but not against the
+/// worker threads' limit (workers).
+pub const DLK_LOOPS = 3
+/// XO_LOCKCHECK=1 (poolsetup.xo setup): plock and klock check the lock
+/// order.
+pub const DLK_LOCKCHECK = 4
+/// Whether the first spawn switched the heap to a record per thread
+/// (scope_add_at).
+pub const DLK_THREADED = 5
+/// Main's fiber while it runs on one (decision 0286 step 1), else 0: every
+/// thread going idle counts its counted wait blocked (count_main).
+pub const DLK_MAINF = 6
+/// XO_PREEMPT=0 (poolsetup.xo setup): the monitor asks no worker to yield.
+pub const DLK_NOPREEMPT = 7
+/// The workers waiting in the network poller (decision 0324): counted
+/// idle by the deadlock check, and wakep breaks their wait when no other
+/// worker can take the work (DLK_SIZE).
+pub const DLK_NPBLK = 8
+/// XO_MUTEX_YIELD (poolsetup.xo setup): 0 by default (a release yields
+/// to the writer it woke when the releaser does I/O between its locks,
+/// mutex.xo wake), 1 under XO_MUTEX_YIELD=0 (never), 2 under
+/// XO_MUTEX_YIELD=1 (always).
+pub const DLK_MNOYIELD = 9
+/// the record's bytes (ten words)
+pub const DLK_SIZE = 80

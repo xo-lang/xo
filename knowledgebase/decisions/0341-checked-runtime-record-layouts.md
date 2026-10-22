@@ -101,3 +101,14 @@ on both sides, 27 of 27 identical
 (~/xo-lead/notes/Xo Lang 2/lay-ident3.sh). scripts/identity does not fit
 a std-only change: it builds both sides with one std. TestRuntimeLayoutCopies is in
 internal/repotest.
+
+## Step 2 (2026-10-22): the deadlock counts record
+
+The ten words DLK_ROOTS to DLK_MNOYIELD (word indices for the slot
+atomics) and DLK_SIZE (80 bytes) moved to layout.xo from pool.xo (their
+owner, which keeps them as aliases) and ctx.xo (copies of DLK_ROOTS and
+DLK_SIZE, the miss that started this decision). Code identical by the
+step 1 method (lay-ident3.sh on this tree, line numbers in the embedded
+locations normalized): 27 of 27 programs the same by disassembly; the
+arm64 runtime goldens (task, chan, conc, mutex, fault, scope, select,
+panic, isolate) pass.
