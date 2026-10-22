@@ -6,6 +6,55 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Any integer type indexes a List or Bytes: reads, assignments, `get`,
+  and slice bounds, and a Str's slice bounds (decision 0331, 5aff68252).
+- `x ?? return v`, `?? break`, and `?? continue` on an Option, and the
+  Result form `r ?? e => body` for an early error exit, which replaces
+  the four line `match` (decision 0321; cec4bfb6f, 937331d29).
+- A top-level `const` may call effect-free functions; it is computed
+  once, on first use (`const ISO: Layout = time.layout(...)`; XO0415 for
+  an effect, XO0416 for a handle in the value; decision 0332, 33288eb37).
+- Slices of a Str or Bytes are views of the original, with no copy, and
+  `Str.clone` and `Bytes.clone` make an explicit copy (decision 0330;
+  d644daae2, 44099405f). `mime.parse_media_type` takes 25.6% fewer
+  instructions, `multipart.parse` 16.1%
+  (bench/results/views-step3-measured-2026-10-22.md). `url.parse_query`
+  and `mime.parse_media_type` copy their tokens when the input is over 4
+  KiB, so a kept token does not keep a large input alive: 318 MB to 6 MB
+  resident in a probe (bench/results/views-parsers-clone-2026-10-22.md;
+  4438a0bf0).
+- `time` layouts are named fields (`"{year}-{month}-{day}"`), checked at
+  compile time when constant, and `time.layout(text)` gives a `Layout`
+  parsed once: native format 2.6 times and parse 2.1 times fewer
+  instructions than with a layout string
+  (bench/results/time-layout-measured-2026-10-22.md).
+- A Mutex release that wakes a writer, on a Mutex `with_read` has taken,
+  yields to it (decision 0118 addendum, owner: the default;
+  `XO_MUTEX_YIELD=0` turns it off; f367eb970, 0ae49494d): the CRUD
+  server on linux/arm64 from 88.6k to 190.8k requests per second on 3
+  cores and 70.5k to 136.0k on 6; bench/perf/conc rwmutex costs 19 to 28%
+  more CPU.
+- `std/debug`: a server's CPU profile, heap profile, and scheduler state
+  over HTTP behind an auth function, and `xo prof URL` fetches and
+  summarizes one (decision 0325; 0c17dba55, a38859220).
+- XO0540, a checker warning: a `Mutex.with` closure that writes its
+  `var` value and then has a path that returns `Err`, which undoes the
+  write (d4d420f20).
+- `--race` on amd64 (darwin and linux) and reports with the call stack
+  on every native target (decision 0273 addenda; 64a4f5fb3);
+  windows/amd64 builds with it but is not supported until a Windows run
+  with threads passes.
+- LLVM builds mark only the loops with Float arithmetic for full
+  unrolling instead of raising the unroll threshold for the whole module
+  (decision 0338, superseding 0333; 8c54d5b9a): nbody keeps its gain
+  (2,308 M to 1,160 M instructions) without 12.8% more CPU for xo's own
+  LLVM build.
+- `xo vet --cost` (decision 0327): XO0907 to XO0911 report costs the
+  source does not show (a map copied before a loop, an element counted
+  up and down each iteration, a list copied by each iteration's update,
+  a large value copied into a closure or Option in a loop, a stored view
+  of a parameter's text that keeps the whole input alive; 9b526de4f).
+
 - A function value borrows its arguments (decision 0337): a callback
   that only reads an element (`xs.any(fn(u) { u.name == n })`,
   `filter`, `fold`, a `fn` parameter) no longer counts its heap fields
