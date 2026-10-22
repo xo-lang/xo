@@ -1,7 +1,7 @@
 # 0327: `xo vet --cost`, notes on costs the source does not show
 
 Status: Accepted (owner, 2026-10-21, from the agents' language poll; design
-reviewed by the lead). Implemented: XO0907 (stage 1), XO0908, XO0909, XO0910.
+reviewed by the lead). Implemented: XO0907 (stage 1), XO0908, XO0909, XO0910, XO0911.
 XO0909 (Xo Lang 3).
 
 ## Context
@@ -51,6 +51,16 @@ Notes (spec section 10), each about a loop unless said:
   noting any Reuse left in a loop gave 14 notes over compiler/xo, all
   conditional pushes to a unique list (the count is 1 at run time); this
   one gives none there and none in the CRUD server.
+- XO0911 (decision 0330, owner 2026-10-22): a view of a parameter's text
+  stored long-lived: a slice or trim of a parameter (rt.str_view, str_trim*)
+  made in a loop block, or an element (list.index) of the parameter's
+  split or lines, reaching a SetField, or a Return inside a struct or a
+  collection (through a push or put, a struct or variant, a block
+  parameter). Not noted: the full text stored, a view used and dropped, a
+  list of views that stays local, a bare returned view. The note cannot
+  see the input's size: over compiler/xo it gives 12 notes, all small
+  inputs (arguments, environment, file lists). The first version (any
+  slice of a parameter, any push) gave 24 there.
 - XO0910: a value over 8 words (compiler/arm64 layout) copied where the
   source shows no copy: a capture of a closure literal (anywhere: made
   once per call, each heap field shared), or a Variant (`Some(x)`) whose

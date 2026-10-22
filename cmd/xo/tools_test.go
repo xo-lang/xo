@@ -1928,3 +1928,84 @@ func TestVetCostReuse(t *testing.T) {
 		t.Errorf("XO0909 at lines %v, want [6]\n%s", lines, out.String())
 	}
 }
+
+// vetCostViewProg: slices of a parameter's text made in a loop and stored
+// in a returned list (XO0911, line 11); not the full text stored, a slice
+// used and dropped, nor a list of slices that stays local.
+const vetCostViewProg = `
+struct Tok {
+  name: Str
+  val: Str
+}
+
+fn parse(text: Str) -> List[Tok] {
+  var out: List[Tok] = []
+  for line in text.lines() {
+    let i = line.find("=") ?? 0
+    out.push(Tok{name: line[0..i], val: line[i + 1..].trim()})
+  }
+  out
+}
+
+fn keep_full(text: Str) -> List[Tok] {
+  var out: List[Tok] = []
+  for _i in 0..2 {
+    out.push(Tok{name: text, val: text})
+  }
+  out
+}
+
+fn local_only(text: Str) -> Int {
+  var n = 0
+  for line in text.lines() {
+    let t = line[0..1]
+    n += t.len()
+  }
+  n
+}
+
+fn local_list(text: Str) -> Int {
+  var parts: List[Str] = []
+  for line in text.lines() {
+    parts.push(line[0..1])
+  }
+  parts.join(",").len()
+}
+
+fn main(os: Os) {
+  let ts = parse("a=b\nc=d")
+  os.stdio.println("${ts.len()} ${keep_full("x").len()} ${local_only("ab")} ${local_list("ab")}")
+}
+`
+
+// TestVetCostViewStore: `xo vet --cost` notes a view of a parameter's
+// text stored in a returned collection (XO0911, decision 0330), and not
+// the full text, a slice used and dropped, or a list that stays local.
+func TestVetCostViewStore(t *testing.T) {
+	t.Parallel()
+	dir := writeFiles(t, map[string]string{"main.xo": vetCostViewProg})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"vet", "--json", "--cost", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	var res struct {
+		Diagnostics []struct {
+			Code string `json:"code"`
+			Span struct {
+				Line int `json:"line"`
+			} `json:"span"`
+		} `json:"diagnostics"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &res); err != nil {
+		t.Fatalf("bad JSON: %v\n%s", err, out.String())
+	}
+	var lines []int
+	for _, d := range res.Diagnostics {
+		if d.Code == "XO0911" {
+			lines = append(lines, d.Span.Line)
+		}
+	}
+	if len(lines) != 1 || lines[0] != 11 {
+		t.Errorf("XO0911 at lines %v, want [11]\n%s", lines, out.String())
+	}
+}

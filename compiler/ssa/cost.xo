@@ -3,7 +3,8 @@
 // (before inlining): a loop that copies a collection's entries first
 // (XO0907), an element counted up and down every iteration (XO0908), a
 // value over 8 words captured or wrapped inline (XO0910), a list update
-// that may copy the whole list every iteration (XO0909). Notes only, never errors; the driver turns them into vet's
+// that may copy the whole list every iteration (XO0909), a small view of a
+// parameter's text stored long-lived (XO0911). Notes only, never errors; the driver turns them into vet's
 // findings (compiler/xo vetcost.xo).
 
 /// A cost note at a source position of function fn_name.
@@ -37,7 +38,7 @@ pub fn cost_notes(m: Module, keep: List[Str]) -> List[CostNote] {
       continue
     }
     let inloop = loop_blocks(f)
-    for n in copy_feeds_loop(f, inloop) + elem_count_per_iter(f, inloop) + callback_walks(m, f) + reuse_in_loop(f, inloop) + large_copies(m, f, inloop, nwords) {
+    for n in copy_feeds_loop(f, inloop) + elem_count_per_iter(f, inloop) + callback_walks(m, f) + reuse_in_loop(f, inloop) + large_copies(m, f, inloop, nwords) + view_stores(f, inloop) {
       var n2 = n
       n2.file = file
       out.push(n2)
@@ -636,4 +637,139 @@ fn below_fields(f: Func, x0: Int) -> Int {
 /// The name of type t as notes show it.
 fn type_label(m: Module, t: Int) -> Str {
   m.types[t].name
+}
+
+/// The calls whose result is a view of their first argument (decision
+/// 0330): a slice, and the trims.
+fn view_call(name: Str) -> Bool {
+  name is "rt.str_view" | "prelude.str_trim" | "prelude.str_trim_start" | "prelude.str_trim_end" | "prelude.str_trim_prefix" | "prelude.str_trim_suffix"
+}
+
+/// The value a Field or Rebind chain starts from.
+fn below_rebinds(f: Func, x0: Int) -> Int {
+  var x = x0
+  while x >= 0 && x < f.values.len() && f.values[x].op is Op.Field | Op.Rebind && !f.values[x].args.is_empty() {
+    x = f.values[x].args[0]
+  }
+  x
+}
+
+/// Whether x is a view of a parameter's text (decision 0330): a slice or
+/// a trim of a parameter, or an element of what the parameter's split or
+/// lines made.
+fn param_view(f: Func, x: Int) -> Bool { param_view_at(f, x, 0) }
+
+/// A view of a view is a view of the same text (depth bounds the chain).
+fn param_text(f: Func, a: Int, depth: Int) -> Bool {
+  let r = below_rebinds(f, a)
+  r >= 0 && r < f.values.len() && (f.values[r].op == Op.Param || (depth < 8 && param_view_at(f, r, depth + 1)))
+}
+
+fn param_view_at(f: Func, x: Int, depth: Int) -> Bool {
+  if x < 0 || x >= f.values.len() {
+    return false
+  }
+  let v = f.values[x]
+  if v.op != Op.Call || v.args.is_empty() {
+    return false
+  }
+  let name = aux_name(v.aux)
+  if view_call(name) {
+    return param_text(f, v.args[0], depth)
+  }
+  if name == "list.index" {
+    let l = below_rebinds(f, v.args[0])
+    if l < 0 || l >= f.values.len() || f.values[l].op != Op.Call || f.values[l].args.is_empty() {
+      return false
+    }
+    let ln = aux_name(f.values[l].aux)
+    if ln is "prelude.str_split" | "prelude.str_lines" {
+      return param_text(f, f.values[l].args[0], depth)
+    }
+  }
+  false
+}
+
+/// Whether value x (or what carries it: a struct or variant it is a field
+/// of, a collection it is pushed or put into, a block parameter it flows
+/// into) is stored long-lived: set as a field, or returned inside a struct
+/// or a collection.
+fn view_stored(f: Func, x0: Int, users: List[List[Int]]) -> Bool {
+  var work = [(x0, false)]
+  var seen: Map[Int, Bool] = {}
+  while !work.is_empty() {
+    let (x, agg) = work.pop() ?? (-1, false)
+    if x < 0 || seen.contains(x) {
+      continue
+    }
+    seen[x] = true
+    for u in users[x] {
+      let w = f.values[u]
+      let name = aux_name(w.aux)
+      if w.op is Op.Struct | Op.Variant | Op.Box {
+        work.push((u, true))
+      } else if w.op is Op.Tuple | Op.Rebind {
+        work.push((u, agg))
+      } else if w.op == Op.Return {
+        if agg {
+          return true
+        }
+      } else if w.op == Op.SetField {
+        if w.args.len() >= 2 && w.args[1] == x {
+          return true
+        }
+      } else if w.op == Op.Call && (name == "list.push" || name == "list.set" || name.starts_with("xo.map.put[") || name.starts_with("xo.set.add[")) {
+        // the collection now holds x: stored long-lived when it is returned
+        // or set in a field (a list used and dropped here is not)
+        for (k, a) in w.args.indexed() {
+          if k > 0 && a == x {
+            work.push((u, true))
+          }
+        }
+      }
+    }
+    for ed in f.edges {
+      for (k, a) in ed.args.indexed() {
+        if a == x && k < f.blocks[ed.to].params.len() {
+          work.push((f.blocks[ed.to].params[k], agg))
+        }
+      }
+    }
+  }
+  false
+}
+
+/// XO0911: a view of a parameter's text (decision 0330: a slice, a trim, an
+/// element of a split or of lines) that is stored long-lived, in a struct
+/// field, a collection, or a returned struct: the small view keeps the
+/// whole input alive, however large, until the holder is dropped.
+fn view_stores(f: Func, inloop: List[Bool]) -> List[CostNote] {
+  var users: List[List[Int]] = []
+  for _ in f.values {
+    users.push([])
+  }
+  for bl in f.blocks {
+    for v in bl.instrs {
+      for a in f.values[v].args {
+        if a >= 0 && a < users.len() {
+          users[a].push(v)
+        }
+      }
+    }
+  }
+  var out: List[CostNote] = []
+  var seen: Map[Int, Bool] = {}
+  for (vi, x) in f.values.indexed() {
+    let line = x.line / 4096
+    // parser-shaped: the view is made in a loop (a tokenizer's slices) or is
+    // an element of a split; one slice of an argument (a path, a name) is
+    // too common and too small to note
+    let tokenizer = x.op == Op.Call && (aux_name(x.aux) == "list.index" || (x.block >= 0 && x.block < inloop.len() && inloop[x.block]))
+    if line <= 0 || seen.contains(line) || !tokenizer || !param_view(f, vi) || !view_stored(f, vi, users) {
+      continue
+    }
+    seen[line] = true
+    out.push(CostNote{code: "XO0911", fn_name: f.name, file: f.file, line: line, col: x.line % 4096, msg: "this view of a parameter's text is stored long-lived (in a field, a collection, or a returned struct): this keeps the whole input alive; clone() it"})
+  }
+  out
 }

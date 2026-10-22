@@ -109,7 +109,9 @@ Prelude collections include `sort`, `sort_by`, `group_by`,
   counted up and down each iteration (including callback walks such as
   `xs.any(fn ...)`), `XO0909` a list update that copies the list each
   iteration, `XO0910` a value over 8 words copied into a closure or an
-  Option in a loop.
+  Option in a loop, `XO0911` a view of a parameter's text (a slice, trim,
+  or element of split or lines made in a loop) stored in a field or a
+  returned collection, which keeps the whole input alive (`clone()` it).
 - `xo prof FILE|URL`: a URL is a running server's std/debug
   `/debug/profile?seconds=N` or `/debug/heap` (0325), fetched then
   summarized like a file; `/debug/sched` is printed.

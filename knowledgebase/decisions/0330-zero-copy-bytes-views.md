@@ -42,6 +42,16 @@ Make slicing O(1) for `Str` and `Bytes` as the spec already says.
    under 1/4 of its buffer and the buffer is over 4 KB, at the point it is
    stored; a view used in place is never copied. `s.clone()` copies
    explicitly.
+
+   **Superseded by std cloning plus a vet note (owner, 2026-10-22).** The
+   runtime does not compact. std parsers that keep a token of a large
+   input copy it (`clone()`): url.parse_query and mime.parse_media_type
+   over 4 KiB (bench/results/views-parsers-clone-2026-10-22.md; json, toml,
+   multipart, and xml build their tokens; csv keeps views by design), and
+   `xo vet --cost` notes (XO0911, decision 0327) a view of a parameter's
+   text, made in a loop or taken from its split or lines, that is stored in a
+   field or a returned collection: "this keeps the whole input alive;
+   clone() it". Runtime compaction stays possible later and compatible.
 4. **Runtime and ABI.** The layout of Str and Bytes is fixed in the C-free
    runtime (llrt/obj.xo, the static word table, the wasm runtime, and every
    emitter's inline string equality and hashing). Moving to (buffer, off,
