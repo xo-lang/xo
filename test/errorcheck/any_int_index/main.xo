@@ -1,0 +1,19 @@
+// Decision 0331: any integer type indexes a List, Bytes or slice bound;
+// other types are still XO0401.
+fn main(os: Os) {
+  let xs = [1, 2, 3]
+  let bs = "abc".bytes()
+  let u: UInt8 = 1
+  let w: UInt32 = 2
+  let s: Int16 = 0
+  let big: UInt64 = 1
+  let f = 1.0
+  let r: Rune = 'a'
+  let n = xs[u] + xs[w] + xs[s] + xs[big] + Int(bs[w])
+  let m = xs[u..w].len() + bs[s..=u].len() + "abc"[u..].len() + (xs.get(w) ?? 0)
+  let bad = xs[f] // ERROR XO0401
+  let bad2 = bs["x"] // ERROR XO0401
+  let bad3 = xs[r] // ERROR XO0401
+  let bad4 = xs.get(f) // ERROR XO0401
+  os.stdio.println("${n} ${m} ${bad} ${bad2} ${bad3} ${bad4 ?? 0}")
+}

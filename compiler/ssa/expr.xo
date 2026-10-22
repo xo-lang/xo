@@ -77,6 +77,11 @@ fn (var b: Builder) coerce_at(v: Int, t: Int, at: Expr?) -> Int {
     return v
   }
   let tk = b.tkind(t)
+  if tk == Kind.Int && b.tkind(vt) == Kind.Int && t == b.int_t() {
+    // a sized integer index widened to Int (decision 0331): a UInt64
+    // above Int's range wraps negative, which the bounds check rejects
+    return b.add(Op.IntConv, t, Aux.None, [v])
+  }
   if tk == Kind.Box {
     let inner = b.coerce_at(v, b.m.types[t].elems[0], at)
     return b.add(Op.Box, t, Aux.None, [inner])

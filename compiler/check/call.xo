@@ -1342,7 +1342,11 @@ fn (var c: Checker) check_args(params: List[ParamInfo], call: Expr, fname: Str, 
       if is_lit != (pass == 1) {
         continue
       }
-      c.check_ty(e, params[i].ty)
+      if i == 0 && ref_fo >= 0 && c.objs[ref_fo].module == c.prelude && c.display_name(ref_fo) == "List.get" {
+        c.check_index(e)
+      } else {
+        c.check_ty(e, params[i].ty)
+      }
       if params[i].is_var {
         c.require_mutable(e, "XO0502", "passing to `var` parameter `${text(params[i].name)}`")
       }

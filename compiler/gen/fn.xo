@@ -1683,7 +1683,8 @@ fn (var g: Gen) resolve_place(e: Expr) -> PlaceRef {
         kind = PS_MAP
       }
       let iv = g.tmp("ix")
-      g.line("${iv} := ${g.val(index)}")
+      let ic = if kind == PS_LIST { g.index_val(index) } else { g.val(index) }
+      g.line("${iv} := ${ic}")
       base.steps.push(PStep{kind: kind, idx: iv, loc: g.loc(parser.expr_span(e)), t: g.type_of(e)})
       return base
     }

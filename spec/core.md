@@ -606,7 +606,8 @@ A `Str` is always valid UTF-8: literals are, operations on `Str` keep it, and
 std makes outside bytes valid where they become a `Str` (std.md 0, decision
 0259), so slicing faults only at an offset inside a sequence of valid text.
 
-There are no implicit numeric conversions. Conversions are calls on the target
+There are no implicit numeric conversions, except that an index or slice bound
+of any integer type is widened to `Int` (3.6). Conversions are calls on the target
 type: `Float(i)`, `Int(f)` (truncates toward zero, faults on NaN or out of
 range), `Int32(x)` (faults out of range), `Int32.try(x) -> Int32?`. Parsing
 text is `Int.parse(s) -> Int?`, `Float.parse(s) -> Float?`.
@@ -1208,6 +1209,13 @@ An `UpperCamel` name in a pattern always refers to a variant; bindings are
 ### 3.6 Indexing and slicing
 
 - `xs[i]` on `List`, `Bytes`: faults when out of range. `xs.get(i)` returns `T?`.
+- The index (in a read, an assignment, and `get`) and the bounds of a slice
+  may be any integer type, `Int`, `Int8`..`Int64` or `UInt8`..`UInt64`
+  (decision 0331): it is widened to `Int` and then bounds-checked. A
+  `UInt64` above `Int`'s range wraps to a negative `Int` and so is out of
+  range (the fault prints the wrapped value). Any other type, `Rune` and
+  `Float` included, is `XO0401`; this is the only implicit numeric
+  conversion (2.1 has none other).
 - `Map` cannot be read by index: `m[k]` in an expression, or an in place change
   through it (`m[k].f = v`, `m[k] += 1`, `m[k].push(x)`), is error `XO0410`,
   because a missing key is the Map form of a nil dereference. Use `m.get(k)`

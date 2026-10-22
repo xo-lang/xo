@@ -563,10 +563,10 @@ fn (var c: Checker) index_type(bt: Int, span: Span, index: Expr) -> Int {
   if let RangeExpr(lo: lo, hi: hi, ..) = index {
     if name is "List" | "Bytes" | "Str" {
       if let Some(x) = lo {
-        c.check_ty(x, c.named("Int"))
+        c.check_index(x)
       }
       if let Some(x) = hi {
-        c.check_ty(x, c.named("Int"))
+        c.check_index(x)
       }
       c.set_type(index, c.named1("Range", c.named("Int")))
       return r
@@ -575,11 +575,11 @@ fn (var c: Checker) index_type(bt: Int, span: Span, index: Expr) -> Int {
     return c.bad_ty
   }
   if name == "List" {
-    c.check_ty(index, c.named("Int"))
+    c.check_index(index)
     return c.tys[r].args[0]
   }
   if name == "Bytes" {
-    c.check_ty(index, c.named("Int"))
+    c.check_index(index)
     return c.named("UInt8")
   }
   if name == "Map" {
@@ -592,6 +592,40 @@ fn (var c: Checker) index_type(bt: Int, span: Span, index: Expr) -> Int {
     c.note(d, "slice with a range (`s[a..b]`) or use `.runes()` or `.bytes()`")
   }
   c.bad_ty
+}
+
+/// An index or slice bound of a List, Bytes, or Str, or the argument of
+/// `List.get` (decision 0331): any integer type, which the backends widen
+/// to Int before the bounds check; anything else is checked against Int.
+fn (var c: Checker) check_index(e: Expr) {
+  match e {
+    ParenExpr(x: x, ..) => {
+      c.check_index(x)
+      return
+    }
+    Block(..) | IfExpr(..) | MatchExpr(..) | ScopeExpr(..) | SelectExpr(..) => {
+      c.check_ty(e, c.named("Int"))
+      return
+    }
+    _ => {}
+  }
+  let t = c.infer(e, c.named("Int"))
+  if c.is_sized_int(t) {
+    return
+  }
+  if c.is_never(t) {
+    c.never_expr[c.expr_key(e)] = true
+  }
+  c.coerce_to(t, want(c.named("Int")), parser.expr_span(e), [e])
+}
+
+/// Whether t is one of the sized integer types, Int8 to UInt64 (not Rune).
+fn (var c: Checker) is_sized_int(t: Int) -> Bool {
+  let r = c.resolve(t)
+  if c.is_bad(r) || c.tys[r].kind != TyKind.Named || c.objs[c.tys[r].obj].module != c.prelude {
+    return false
+  }
+  text(c.objs[c.tys[r].obj].name) is "Int8" | "Int16" | "Int32" | "Int64" | "UInt8" | "UInt16" | "UInt32" | "UInt64"
 }
 
 /// `x?` (core 2.5, 2.6).

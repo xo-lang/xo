@@ -1,0 +1,33 @@
+// Decision 0331: any integer type indexes a List or Bytes, in reads,
+// assignments, `get` and slice bounds; a UInt64 above Int's range is out of
+// range.
+
+fn show(xs: List[Int]) -> Str {
+  xs.map(fn(x) { "${x}" }).join(" ")
+}
+
+fn pick(xs: List[Int], i: UInt64) -> Int {
+  xs[i]
+}
+
+fn main(os: Os) {
+  var xs = [10, 20, 30, 40]
+  let a: UInt8 = 1
+  let b: Int32 = 2
+  let c: UInt64 = 3
+  let d: Int16 = 0
+  os.stdio.println("${xs[a] + xs[b] + xs[c] + xs[d]}")
+  xs[a] = 21
+  xs[b] += 1
+  os.stdio.println(show(xs))
+  os.stdio.println("${xs.get(c) ?? -1} ${xs.get(UInt32(9)) ?? -1}")
+  os.stdio.println(show(xs[a..c]))
+  os.stdio.println(show(xs[d..=b]))
+  let bs = "hello".bytes()
+  let k: UInt16 = 4
+  os.stdio.println("${bs[k]}")
+  os.stdio.println(bs[a..k].to_str() ?? "")
+  os.stdio.println("hello"[d..k])
+  let big: UInt64 = 18446744073709551615
+  os.stdio.println("${pick(xs, big)}")
+}

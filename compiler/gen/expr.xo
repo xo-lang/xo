@@ -31,6 +31,20 @@ fn (var g: Gen) val_as(e: Expr, want: Int) -> Str {
   g.coerce(code, g.nat(e), want)
 }
 
+/// The Go code of an index or slice bound e as an int64: a sized integer
+/// is widened (decision 0331).
+fn (var g: Gen) index_val(e: Expr) -> Str {
+  let code = g.val(e)
+  let t = g.info_type(e)
+  if t < 0 {
+    return code
+  }
+  if g.go_type(t) is "int8" | "int16" | "int32" | "uint8" | "uint16" | "uint32" | "uint64" {
+    return "int64(${code})"
+  }
+  code
+}
+
 /// Whether Go code is a value with no effects that needs no temporary
 /// (trivialCode).
 fn trivial_code(s: Str) -> Bool {
@@ -135,6 +149,11 @@ fn (var g: Gen) coerce(code: Str, from: Int, to: Int) -> Str {
   }
   if ft == tt {
     return code
+  }
+  if tt == "int64" && ft is "int8" | "int16" | "int32" | "uint8" | "uint16" | "uint32" | "uint64" {
+    // a sized integer index widened to Int (decision 0331): a uint64 above
+    // Int's range wraps negative, which the bounds check rejects
+    return "int64(${code})"
   }
   let el = g.option_elem(to)
   if el >= 0 && g.option_elem(from) < 0 {
@@ -1136,13 +1155,13 @@ fn (var g: Gen) index(e: Expr) -> Str {
       } else if i == 1 {
         code = match lo {
           None => "0"
-          Some(l) => g.val(l)
+          Some(l) => g.index_val(l)
         }
       } else {
         code = match hi {
           None => "0"
           Some(h) => {
-            let hv = g.val(h)
+            let hv = g.index_val(h)
             if inclusive { "${g.rt()}AddS(${hv}, 1, ${loc})" } else { hv }
           }
         }
@@ -1168,7 +1187,7 @@ fn (var g: Gen) index(e: Expr) -> Str {
       // only element i is copied out (and marked by own_read)
       code = if base_ok { g.borrow(x) } else { g.val(x) }
     } else {
-      code = g.val(index)
+      code = g.index_val(index)
     }
     g.op_end(ops, sv, code, false)
   }
@@ -1204,7 +1223,7 @@ fn (var g: Gen) index_ref(e: Expr) -> Str {
     if i == 0 {
       code = if base_ok { g.borrow(x) } else { g.val(x) }
     } else {
-      code = g.val(index)
+      code = g.index_val(index)
     }
     g.op_end(ops, sv, code, false)
   }

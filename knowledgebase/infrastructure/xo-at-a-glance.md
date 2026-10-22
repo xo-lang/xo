@@ -41,6 +41,9 @@ Last verified: 2026-10-21 (spec/core.md and spec/std.md at main).
 - `defer stmt` / `defer { ... }` at block exit (3.5).
 - Strings: interpolation `"${x}"`, Debug interpolation `"${x:?}"`, raw
   multi-line strings `r"""..."""` and `r#"""..."""#` (0320).
+- Indexing (3.6): `xs[i]`, `xs.get(i)` and slice bounds take any integer
+  type (`UInt8`, `UInt32`, ...), widened to `Int` before the bounds check
+  (0331); `Map` cannot be read by index (`m.get(k)`).
 - Holes (3.7).
 
 ## Values, memory, concurrency (core 5, 7)
