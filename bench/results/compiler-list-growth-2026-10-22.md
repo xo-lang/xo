@@ -73,3 +73,41 @@ in place when the block's size class has room or the next block is
 free, and the growth schedule of small lists. It will be measured with
 `xo bench --ab` on the same cold build and on the http and json
 benches. No vet note is proposed, since the experiment did not pay.
+
+## In-place growth and a larger first capacity (same day)
+
+In-place growth already exists: std/native/llrt obj.xo hresize tries
+alloc.resize before hmove. It succeeds only within a block's size class,
+though. Small classes are 16 bytes apart, so a list that doubles always
+changes class and moves. With these classes, growing in place has no
+room to win.
+
+The experiment instead started a list's first growth at 8 elements,
+not 4 (GROW_FIRST at the five sites: rl_grow_n, rl_grow_mt, rl_grow,
+grow, and rl_copy's first push into an empty literal). Every arm64
+golden passed with it.
+
+`xo bench --ab` compared old and new xo, each building compiler/xo with
+the cache off: 5 rounds, 0 loaded.
+
+| metric | B / A | 95% interval | verdict |
+|---|---|---|---|
+| instructions | 0.992 | 0.991 to 0.993 | better |
+| cpu_ms | 0.996 | 0.974 to 1.033 | within noise |
+| wall_ms | 1.028 | 0.975 to 1.122 | within noise |
+| max_rss_kb | 1.197 | 0.945 to 1.211 | within noise; median +20% |
+
+Not shipped: 0.8% of instructions and no measurable time, against a
+likely rise in peak memory, since every small list reserves 8 slots.
+
+The 9% of resizes is spread over many small lists, each moving a few
+times, and neither per-site rewrites nor the first capacity reach it.
+What remains:
+
+- size classes that leave room to grow in place (an allocator design
+  change);
+- presizing at the sites that know a final size.
+
+Neither is queued without a profile that shows a single site worth
+more than about 2%.
+
