@@ -156,6 +156,18 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 ## Measuring
 
+- Before starting on a ranked gap (lead, 2026-10-22: five items that
+  day came from old tables: two already fixed, one misread, two
+  stale), re-measure it on today's main and cite the figure's file:line
+  and date; rankings name their source the same way.
+- Before asking for a Windows CI run (lead, 2026-10-22: four of five
+  crash and PDB runs failed on setup, not on the code): build the
+  script's programs on the Mac with the oldest seed that CI may use
+  (an import or intrinsic the seed lacks fails xobuild's smoke), run the
+  script's steps under Wine, and check every tool it calls exists on
+  the runner (no clang, no cdb by default).
+- A measurement needing a quiet machine waits with
+  `~/xo-lead/agents/quiet.sh wait [LOAD]` inside the lead's window.
 - Which tool answers what (owner, 2026-10-22): `xo bench --ab` decides
   "is it faster" (real time, interleaved, with an interval; threads,
   waits and I/O included); callgrind (instruction counts, deterministic)
