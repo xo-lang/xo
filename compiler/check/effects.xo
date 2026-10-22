@@ -66,6 +66,8 @@ enum ObKind {
   Iface
   /// A contract clause or invariant, which must be pure.
   Pure
+  /// A const initializer, which must be pure (decision 0332, XO0415).
+  Const
 }
 
 /// The effects of sub must be within those of sup (effects.go
@@ -435,10 +437,13 @@ fn (var c: Checker) solve_effects() {
     let list = "`${missing.join("`, `")}`"
     let msg = if ob.kind == ObKind.Pure {
       "contract clauses must be pure, but this one performs ${list}"
+    } else if ob.kind == ObKind.Const {
+      "a const initializer must be pure (it runs once, at the constant's first use; decision 0332), but this one performs ${list}"
     } else {
       "${c.ob_what(ob, c.flat_text(sup))}, but performs ${list}"
     }
-    let d = c.report(ob.file, "XO0701", ob.span, msg)
+    let code = if ob.kind == ObKind.Const { "XO0415" } else { "XO0701" }
+    let d = c.report(ob.file, code, ob.span, msg)
     if d < 0 {
       continue
     }
@@ -553,7 +558,7 @@ fn (c: Checker) ob_what(ob: EffOb, s: Str) -> Str {
       }
       "${head} allows only `${s}`, but `${c.display_name(ob.fo)}`"
     }
-    Pure => ""
+    Pure | Const => ""
   }
 }
 

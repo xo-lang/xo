@@ -417,6 +417,11 @@ fn (var g: Gen) call(v: Int) {
       let op = name.trim_prefix("rt.")
       if name.starts_with("rt.") && g.files && rt4_direct(op) {
         g.rt_call(v, "$${op}")
+        if op == "const_once" {
+          // a constant whose initializer faulted raises the fault at
+          // every read (decision 0332)
+          g.check_fault(v)
+        }
         return
       }
       if name == "rt.fs_canceled" {

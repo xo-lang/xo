@@ -31,6 +31,9 @@ Last verified: 2026-10-21 (spec/core.md and spec/std.md at main).
 ## Statements and expressions (core 3)
 
 - `let`, `var`, `const` (including `embed("path")`, 0304).
+- A top-level `const` may call effect-free functions: computed once, at
+  its first read, shared by every task; a fault in it is raised at every
+  read (0332, XO0415, XO0416, XO-F009).
 - Functions with default parameter values (3.2); closures (3.3, they
   capture by value at creation); methods and `var` receivers (3.4).
 - `if`/`else` and `match` are expressions; `match` is exhaustive, takes

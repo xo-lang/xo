@@ -638,8 +638,9 @@ fn (var b: Builder) print_trace(tr: Int) {
 // Constants and sized integers (build_int.go)
 
 /// Reads the constant c as a value of type t (constValue): a constant of
-/// a heap type other than Str is built once, by a function the runtime
-/// calls (xo.const), and read from its list.
+/// a heap type other than Str, or one whose initializer calls a function
+/// (decision 0332), is built once, by a function the runtime calls
+/// (xo.const), and read from its list.
 fn (var b: Builder) const_value(c: Int, t: Int) -> Int {
   let f = b.c.objs[c].decl_file
   let di = b.c.objs[c].decl_idx
@@ -654,9 +655,11 @@ fn (var b: Builder) const_value(c: Int, t: Int) -> Int {
       return b.add(Op.Const, t, Aux.I(n: n), [])
     }
   }
-  if !b.m.heap(t) || b.tkind(t) == Kind.Str {
+  if (!b.m.heap(t) || b.tkind(t) == Kind.Str) && b.c.is_compile_time(f, value) {
     return b.foreign_value(value, f, t)
   }
+  // a constant whose initializer runs code (a call) is built once too,
+  // whatever its type (decision 0332)
   let it = b.int_t()
   let lt = b.m.list(t)
   let name = "xo.const[${b.c.mods[b.obj_mod(c)].name}.${b.obj_name(c)}]"
@@ -675,8 +678,12 @@ fn (var b: Builder) const_value(c: Int, t: Int) -> Int {
     if id >= 4096 {
       b.unsupported("more than 4096 constants of collection types")
     }
-    let fi = b.m.new_func(name, [], [lt])
-    b.m.funcs[fi].entry = true
+    // an initializer that runs code is built by a function of its own,
+    // which the entry function calls under a landing (decision 0332)
+    let runs = !b.c.is_compile_time(f, value)
+    let body = if runs { "xo.const_body[${b.c.mods[b.obj_mod(c)].name}.${b.obj_name(c)}]" } else { name }
+    let fi = b.m.new_func(body, [], [lt])
+    b.m.funcs[fi].entry = !runs
     let saved = b.begin(fi, f)
     let v = match b.int_list_data(value, f, t) {
       // a long List[Int] of literals as data, read back by the native
@@ -692,12 +699,44 @@ fn (var b: Builder) const_value(c: Int, t: Int) -> Int {
     b.retv(l)
     b.finish_fn()
     b.end(saved)
+    if runs {
+      b.const_entry(name, body, lt, f)
+    }
   }
   let fa = b.add(Op.FuncAddr, it, Aux.S(s: name), [])
   let dl = b.drop_list(t)
   let da = b.add(Op.FuncAddr, it, Aux.S(s: dl), [])
   let l = b.rt("const_once", lt, [fa, da, b.cint(id)])
   b.call("list.index", t, "", [l, b.cint(0)])
+}
+
+/// The entry function name of a constant whose initializer runs code:
+/// it calls the builder body and returns its list of one; a fault in it
+/// is caught (as task.isolate catches one) and the immortal empty list
+/// returned (never dropped),
+/// the fault's record left in the context for rt.const_once to store and
+/// raise at every read; a cancellation returns the empty list too, the
+/// context still unwinding (decision 0332).
+fn (var b: Builder) const_entry(name: Str, body: Str, lt: Int, f: Int) {
+  let fi = b.m.new_func(name, [], [lt])
+  b.m.funcs[fi].entry = true
+  let saved = b.begin(fi, f)
+  let bt = b.bool_t()
+  let r = b.s.f.add(b.s.cur, Op.Call, lt, Aux.S(s: body), [])
+  let u = b.s.f.add(b.s.cur, Op.Call, bt, Aux.S(s: "rt.unwinding"), [])
+  b.s.f.values[r].pad = u
+  let (pad, normal) = b.branch(u)
+  b.s.cur = pad
+  let caught = b.rt("fault_take", bt, [])
+  let (yes, no) = b.branch(caught)
+  b.s.cur = yes
+  b.retv(b.rt("rl_empty", lt, []))
+  b.s.cur = no
+  b.retv(b.rt("rl_empty", lt, []))
+  b.s.cur = normal
+  b.retv(r)
+  b.finish_fn()
+  b.end(saved)
 }
 
 /// The little endian 8 byte words of value when it is a List[Int]

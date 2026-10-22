@@ -1,0 +1,12 @@
+// Decision 0332: a constant read during its own initialization, through
+// a function, faults (XO-F009) instead of waiting on itself.
+fn next() -> Int {
+  A + 1
+}
+
+const A = next()
+
+fn main(os: Os) {
+  os.stdio.println("start")
+  os.stdio.println("${A}")
+}

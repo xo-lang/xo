@@ -654,7 +654,19 @@ fn (var g: Gen) const_ref(o: Int) -> Str {
   if g.ostd(o) {
     return g.rt() + g.std_prefix(g.omod(o)) + g.oname(o)
   }
-  g.pkg_ref(g.omod(o)) + "C_" + g.oname(o)
+  let r = g.pkg_ref(g.omod(o)) + "C_" + g.oname(o)
+  if !g.c.is_compile_time(g.c.objs[o].decl_file, g.const_init(o)) {
+    return "${r}.Get(tk)"
+  }
+  r
+}
+
+/// The initializer of the module constant o.
+fn (g: Gen) const_init(o: Int) -> Expr {
+  match g.c.files[g.c.objs[o].decl_file].ast.decls[g.c.objs[o].decl_idx] {
+    ConstDecl(d) => d.value
+    _ => fault("const")
+  }
 }
 
 fn (var g: Gen) selector(e: Expr) -> Str {

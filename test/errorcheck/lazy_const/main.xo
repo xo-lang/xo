@@ -1,0 +1,34 @@
+// Decision 0332: a module const may call functions that perform no
+// effect (XO0415 otherwise), and its value holds no handle (XO0416).
+fn table(n: Int) -> List[Int] {
+  var xs: List[Int] = []
+  for i in 0..n {
+    xs.push(i * i)
+  }
+  xs
+}
+
+// declares an effect (a capability could not reach a constant anyway)
+fn stamp() -> Int uses clock {
+  42
+}
+
+fn make_lock() -> Mutex[Int] {
+  Mutex.new(0)
+}
+
+const SQUARES = table(8)
+const TOTAL = SQUARES.fold(0, fn(a, x) { a + x })
+const STAMP = stamp() + 1 // ERROR XO0415 "performs `clock`"
+const LOCK = make_lock() // ERROR XO0416 "holds a `Mutex`"
+
+struct Holder {
+  m: Mutex[Int]
+}
+
+const HELD = Holder{m: Mutex.new(1)} // ERROR XO0416
+
+fn main(os: Os) {
+  const LOCAL = table(2) // ERROR XO0408
+  os.stdio.println("${TOTAL} ${SQUARES.len()} ${LOCAL.len()} ${STAMP}")
+}

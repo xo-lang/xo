@@ -1015,9 +1015,21 @@ const MAX_USERS = 1000
 const DEFAULT = Config{port: 8080}
 ```
 
-- `const` may appear at top level or in a block. Initializers must be compile
-  time values: literals, other
-  constants, struct and enum construction, and collection literals of those.
+- `const` may appear at top level or in a block. A block constant's
+  initializer must be a compile time value: literals, other constants,
+  struct and enum construction, and collection literals of those
+  (`XO0408`).
+- A top-level constant's initializer may also call functions (decision
+  0332): `const RFC3339 = time.layout("...")`, `const CRC = make_table(0xedb88320)`.
+  Such a constant is computed once per process, at its first read, and
+  shared by every task: a reader that comes while another task computes
+  it waits. The initializer must perform no effect (`XO0415`), and the
+  value may hold no handle (`Mutex`, `Chan`, `Atomic`, `Task`, a file;
+  `XO0416`), so a constant is an immutable value, never a global
+  variable. A fault in the initializer is stored, and every read of the
+  constant, the first and each later one, raises it again. A read of a
+  constant during its own initialization (through a function it calls)
+  faults with `XO-F009`.
 - A top-level constant may embed files at build time (decision 0304):
   `const PAGE: Str = embed("static/index.html")` (the file's text, valid
   UTF-8), `const LOGO: Bytes = embed("logo.png")` (its bytes), or
@@ -2801,13 +2813,15 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0405` | error | checker | type cannot be inferred here; annotate it |
 | `XO0406` | error | checker | operator, index, slice, or iteration not defined for the type |
 | `XO0407` | error | checker | name used as the wrong kind of thing (a type as a value, a value that is not callable) |
-| `XO0408` | error | checker | const initializer is not a compile time value (core 3.1) |
+| `XO0408` | error | checker | a block const initializer is not a compile time value (core 3.1) |
 | `XO0409` | error | checker | invalid explicit conversion (core 2.1) |
 | `XO0410` | error | checker | reading a Map by index; use `get` or `get_or_fault` (core 3.6) |
 | `XO0411` | error | checker | two fields have one wire key under a derive the struct has (core 2.2, decision 0277) |
 | `XO0412` | error | checker | empty wire name, `as ""` (core 2.2) |
 | `XO0413` | error | checker | unknown derive argument or `case:` value, or an argument on a derive that takes none (core 2.2) |
 | `XO0414` | warning | checker | a wire name on a struct with no derive that maps fields to keys (core 2.2) |
+| `XO0415` | error | checker | a top-level constant's initializer performs an effect (core 3.1, decision 0332) |
+| `XO0416` | error | checker | a constant's value holds a handle (`Mutex`, `Chan`, `Atomic`, `Task`, a file) (core 3.1, decision 0332) |
 | `XO0420` | error | checker | constant std/time layout is invalid: unknown field, bad field form, or stray brace (std.md 13.3) |
 | `XO0421` | error | checker | integer literal does not fit the integer type it takes in context (1.6) |
 | `XO0422` | error | checker | unknown wire name option; the only one is `omitempty` (core 2.2, decision 0309) |
@@ -2907,6 +2921,7 @@ Faults (8) that have a stable code print it in their message:
 | `XO-F006` | a loop started more iterations than its `bound N` (3.5) |
 | `XO-F007` | a real-time section allocated (6.5, native builds) |
 | `XO-F008` | shielded code under a resource budget ran past twice a ceiling (std.md 7, decision 0173) |
+| `XO-F009` | a constant read during its own initialization, through a function its initializer calls (core 3.1, decision 0332) |
 
 ---
 

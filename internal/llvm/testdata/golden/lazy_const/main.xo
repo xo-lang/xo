@@ -1,0 +1,61 @@
+use std/task
+// Decision 0332: a const initializer may call effect-free functions; the
+// value is built once, on first use, shared by every task. dbg in the
+// initializer shows each build on standard error.
+
+fn slow_table(n: Int) -> List[Int] {
+  let _ = dbg("building TABLE")
+  var xs: List[Int] = []
+  var acc = 0
+  for i in 0..n {
+    for j in 0..2000 {
+      acc = (acc + i * j) % 1000003
+    }
+    xs.push(acc)
+  }
+  xs
+}
+
+fn square_sum(n: Int) -> Int {
+  let _ = dbg("building SUM")
+  var t = 0
+  for i in 1..=n {
+    t += i * i
+  }
+  t
+}
+
+fn parse_all(xs: List[Str]) -> List[Int] {
+  xs.map(fn(s) { Int.parse(s) ?? fault("bad number: ${s}") })
+}
+
+const TABLE = slow_table(400)
+const SUM = square_sum(10)
+const NAME = "lazy-${SUM}"
+const BAD = parse_all(["1", "two", "3"])
+
+fn read_bad() -> Int {
+  BAD.len()
+}
+
+fn main(os: Os) {
+  os.stdio.println("${SUM} ${SUM + 1} ${NAME}")
+  var sums: List[Int] = []
+  scope s {
+    var hs: List[Task[Int, Never]] = []
+    for k in 0..64 {
+      hs.push(s.spawn(fn() { TABLE[399] + k - k }))
+    }
+    for h in hs {
+      sums.push(h.await)
+    }
+  }
+  os.stdio.println("${sums.len()} ${sums.all(fn(x) { x == sums[0] })} ${TABLE.len()}")
+  for i in 0..2 {
+    match task.isolate(read_bad) {
+      Ok(n) => os.stdio.println("ok ${n}")
+      Err(task.Isolated.Faulted(info)) => os.stdio.println("fault ${i}: ${info.msg}")
+      Err(_) => os.stdio.println("failed")
+    }
+  }
+}

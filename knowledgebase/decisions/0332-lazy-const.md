@@ -162,6 +162,45 @@ keyed by layout text is a separate decision).
   faulting initializer read twice (the same fault both times); a cycle
   through a function (`XO-F009`); errorcheck for `XO0415` and `XO0416`.
 
+## Implementation notes (2026-10-21)
+
+- Checker (compiler/check stmt.xo `const_type`): a top-level initializer
+  is no longer limited to compile time forms; its effect set becomes an
+  obligation of kind `Const` (`XO0415`, effects.xo), and `const_handle`
+  finds a handle at any depth (`XO0416`). A block `const` keeps
+  `check_const_expr` (`XO0408`). `is_compile_time` (info.xo) tells the
+  backends which constants run code: a call that is not a constructor,
+  or a reference to such a constant.
+- SSA (show.xo `const_value`): such a constant goes through the 0081
+  path whatever its type (a non-heap one is no longer re-lowered at each
+  read). Its builder is `xo.const_body[M.N]`; the entry function
+  `xo.const[M.N]` (`const_entry`) calls it under a landing and, on a
+  fault (`rt.fault_take`) or a cancellation, returns the immortal empty
+  list. `rt.const_once` joined `faulting_rt`.
+- Native runtime (std/native/llrt/consts.xo): slot states empty, running,
+  faulted, or the list; one reader builds under the table's lock and the
+  others park on its wait list (`tasks.wl_wait_as`, cancelable); a
+  canceled builder empties the slot and wakes the waiters, one of which
+  builds; a fault's message and location move out of the context
+  (`fault.move_out`) into the table and are raised again at every read.
+  `rt.const_once`'s signature is unchanged, so code of an older xo (whose
+  entry functions cannot fail) runs on it.
+- wasm (rt4.xo `$const_once`): the same states (single threaded, no
+  waiting); `rt.const_once` is followed by a fault check (call.xo), as
+  wasm faults are a flag the caller tests.
+- Go (gen decl.xo, std/rt once.go `LazyConst`): the constant's builder is
+  set in an `init` function (as a variable initializer, a builder that
+  reads the constant through a function is a Go initialization cycle)
+  and read through `Get(tk)`: an atomic flag, then `Task_Once`'s rules.
+- Not yet: `XO-F009` reports the location `?` (rt.const_once takes no
+  location); a task started inside an initializer that reads the same
+  constant waits instead of faulting (the runner is checked, not its
+  tasks); std/time's named layouts (Lib1); `xo vet --cost` listing.
+- Tests: errorcheck lazy_const (`XO0415`, `XO0416`, `XO0408` for a block
+  const), goldens lazy_const (64 tasks read a constant built once, `dbg`
+  in the initializer shows each build; a faulting constant read twice)
+  and lazy_const_cycle (`XO-F009`) on go, arm64, LLVM, and wasm.
+
 ## Alternatives
 
 - **Compile time evaluation of any effect-free initializer**: no runtime

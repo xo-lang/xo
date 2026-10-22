@@ -1,13 +1,22 @@
-// Constants of collection types (decision 0081): each is built once, by
-// its entry function on first use, and kept immortal in its slot until
-// exit, when consts_free gives it to its drop function (which releases a
-// list) so the leak check sees it freed. Two threads may both build it;
-// the loser releases its copy. The table (the lists, then their drop
-// functions: 2 * MAX words, heap_large) hangs off ctx.xo's services
-// record (SV_CONSTS). Was xo_bytes.c xo_const_once and xo_consts_free;
-// the C entries forward to cabi.xo's exports (the generated code of
-// older xo's and the services record of entry.xo call them).
+// Constants built at run time (decisions 0081 and 0332): each is built
+// once, by its entry function on first use, and kept immortal in its slot
+// until exit, when consts_free gives it to its drop function (which
+// releases a list) so the leak check sees it freed. One reader builds it;
+// the others park until it is done (an entry function of an older xo,
+// which cannot fail, is built the same way). The entry function of a
+// constant whose initializer runs code catches a fault in it and returns
+// an empty list; the fault is stored and raised again at every read. The
+// table (the slots, their drop functions, runners, stored faults, the
+// wait list and its lock: TABLE bytes, heap_large) hangs off ctx.xo's
+// services record (SV_CONSTS). Was xo_bytes.c xo_const_once and
+// xo_consts_free; the C entries forward to cabi.xo's exports (the
+// generated code of older xo's and the services record of entry.xo call
+// them).
 use native/llrt/ctx
+use native/llrt/fault
+use native/llrt/pool
+use native/llrt/raw
+use native/llrt/tasks
 use native/rt
 
 /// The most constants a program has (the C's N_MAX_CONSTS).
@@ -17,7 +26,24 @@ const MAX = 4096
 const IMMORTAL = -9223372036854775807 - 1
 
 const ACQUIRE = 1
+const RELEASE = 2
 const ACQ_REL = 3
+
+/// A slot's states below a built list's address.
+const EMPTY = 0
+const RUNNING = 1
+const FAULTED = 2
+
+/// The table's parts, in words: the slots, the drop functions, the
+/// context running each initializer, the stored faults' messages and
+/// locations, then the wait list (two words) and its lock.
+const DROPS = 4096
+const RUNNERS = 8192
+const MSGS = 12288
+const LOCS = 16384
+const WAIT = 20480
+const LOCK = 20482
+const TABLE = 163848
 
 /// The table, made at first use.
 fn table() -> Int {
@@ -27,8 +53,8 @@ fn table() -> Int {
   if a != 0 {
     return a
   }
-  let n = rt.heap_large(16 * MAX)
-  rt.mem_set(n, 0, 16 * MAX)
+  let n = rt.heap_large(TABLE)
+  rt.mem_set(n, 0, TABLE)
   if rt.slot_cas[Int](w, k, 0, n, ACQ_REL) {
     return n
   }
@@ -36,24 +62,117 @@ fn table() -> Int {
   rt.slot_load[Int](w, k, ACQUIRE)
 }
 
+fn ld(t: Int, i: Int) -> Int { rt.mem_load(t, 8 * i, 8) }
+
+fn st(t: Int, i: Int, v: Int) { rt.mem_store(t, 8 * i, v, 8) }
+
 /// The constant id: built by calling the entry function at address f
 /// the first time (the list object's address), its drop function at
-/// address drop kept for consts_free.
+/// address drop kept for consts_free. A read that finds the constant
+/// faulted raises the fault again; one canceled while it waits returns an
+/// empty list with its context unwinding.
 pub fn once(f: Int, drop: Int, id: Int) -> Int {
   let t = table()
   let l0 = rt.slot_load[Int](t, id, ACQUIRE)
-  if l0 != 0 {
+  if l0 > FAULTED {
     return l0
   }
+  slow(t, f, drop, id)
+}
+
+/// once when the constant is not built yet: under the table's lock, a
+/// reader that finds the slot empty marks it running and builds it; one
+/// that finds it running parks on the wait list (no spinning: the runner
+/// is ordinary preemptible code, decision 0318) until the runner is done.
+fn slow(t: Int, f: Int, drop: Int, id: Int) -> Int {
+  let c = ctx.cur()
+  let mu = t + 8 * LOCK
+  pool.lock_k(mu, pool.ST_LOCK_TASK)
+  while true {
+    let s = ld(t, id)
+    if s > FAULTED {
+      pool.unlock(mu)
+      return s
+    }
+    if s == FAULTED {
+      pool.unlock(mu)
+      raise_stored(t, id)
+    }
+    if s == EMPTY {
+      break
+    }
+    if c == 0 {
+      // a thread with no context (none reads constants today) cannot park
+      pool.unlock(mu)
+      rt.spin_hint()
+      pool.lock_k(mu, pool.ST_LOCK_TASK)
+      continue
+    }
+    if ld(t, RUNNERS + id) == c {
+      // the runner reads the constant it is building (XO-F009)
+      pool.unlock(mu)
+      raise_msg("XO-F009: a constant is used during its own initialization")
+    }
+    if !tasks.wl_wait_as(c, mu, t + 8 * WAIT, true, 0) {
+      pool.unlock(mu)
+      rt.mem_store(c, ctx.C_UNWINDING, 1, 4)
+      return tasks.empty_list()
+    }
+  }
+  st(t, RUNNERS + id, c)
+  rt.slot_store[Int](t, id, RUNNING, RELEASE)
+  pool.unlock(mu)
   let l = rt.call_c2(f, 0, 0)
-  rt.mem_store(l, 0, IMMORTAL, 8)
-  if rt.slot_cas[Int](t, id, 0, l, ACQ_REL) {
-    rt.mem_store(t, 8 * (MAX + id), drop, 8)
+  pool.lock_k(mu, pool.ST_LOCK_TASK)
+  st(t, RUNNERS + id, 0)
+  if rt.mem_load(l, 8, 8) > 0 {
+    rt.mem_store(l, 0, IMMORTAL, 8)
+    st(t, DROPS + id, drop)
+    rt.slot_store[Int](t, id, l, RELEASE)
+    tasks.wl_wake(t + 8 * WAIT)
+    pool.unlock(mu)
     return l
   }
-  rt.mem_store(l, 0, 1, 8)
-  let _d = rt.call_c2(drop, l, 0)
-  rt.slot_load[Int](t, id, ACQUIRE)
+  // l is the immortal empty list (rt.rl_empty), not dropped
+  if rt.mem_load(c, ctx.C_UNWINDING, 4) != 0 {
+    // canceled while it built: the next reader builds it
+    rt.slot_store[Int](t, id, EMPTY, RELEASE)
+    tasks.wl_wake(t + 8 * WAIT)
+    pool.unlock(mu)
+    return tasks.empty_list()
+  }
+  fault.move_out(c, t + 8 * (MSGS + id), t + 8 * (LOCS + id))
+  rt.slot_store[Int](t, id, FAULTED, RELEASE)
+  tasks.wl_wake(t + 8 * WAIT)
+  pool.unlock(mu)
+  raise_stored(t, id)
+  tasks.empty_list()
+}
+
+/// Raises the fault stored for constant id again (its message and
+/// location, copied by the raise).
+fn raise_stored(t: Int, id: Int) {
+  let m = ld(t, MSGS + id)
+  let l = ld(t, LOCS + id)
+  if m == 0 || l == 0 {
+    raise_msg("fault")
+  }
+  fault.raise_cstrs(m, l)
+}
+
+/// Raises the fault m at an unknown location.
+fn raise_msg(m: Str) {
+  let q = "?"
+  fault.raise(raw.data(m), m.len(), raw.data(q), 1)
+}
+
+/// Frees the stored fault string in word i of the table t.
+fn release(t: Int, i: Int) {
+  let b = ld(t, i)
+  if b != 0 {
+    rt.heap_release(b)
+    st(t, i, 0)
+  }
 }
 
 /// Releases the constants built during the run (at exit).
@@ -63,12 +182,14 @@ pub fn free_all() {
     return
   }
   for i in 0..MAX {
-    let l = rt.mem_load(t, 8 * i, 8)
-    let d = rt.mem_load(t, 8 * (MAX + i), 8)
-    if l != 0 && d != 0 {
-      rt.mem_store(t, 8 * i, 0, 8)
+    let l = ld(t, i)
+    let d = ld(t, DROPS + i)
+    if l > FAULTED && d != 0 {
+      st(t, i, 0)
       rt.mem_store(l, 0, 1, 8)
       let _d = rt.call_c2(d, l, 0)
     }
+    release(t, MSGS + i)
+    release(t, LOCS + i)
   }
 }

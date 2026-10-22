@@ -3,6 +3,7 @@ package rt
 import (
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // Task_Once is `task.Once[T, E]` (std.md 7, decision 0043): a handle; copies
@@ -150,4 +151,43 @@ func (s *onceState[T, E]) handOff() {
 	s.running = false
 	s.runner = nil
 	s.mu.Unlock()
+}
+
+// LazyConst is a module constant whose initializer runs code (decision
+// 0332): built by F once, at its first read, by Task_Once's rules (the
+// readers that come while it runs wait; a fault is stored and raised
+// again at every read; a canceled builder hands the run on). A read after
+// the build is one atomic load; a read by the task building it faults
+// (XO-F009). F is set by the package's init function.
+type LazyConst[T any] struct {
+	F      func(*Task) T
+	done   atomic.Bool
+	val    T
+	runner atomic.Pointer[Task]
+	mu     sync.Mutex
+	once   Task_Once[T, struct{}]
+}
+
+// Get is a read of the constant.
+func (c *LazyConst[T]) Get(tk *Task) T {
+	if c.done.Load() {
+		return c.val
+	}
+	if tk != nil && c.runner.Load() == tk {
+		Fault(tk, "XO-F009: a constant is used during its own initialization", "?")
+	}
+	c.mu.Lock()
+	if c.once.s == nil {
+		c.once = Task_once[T, struct{}](nil)
+	}
+	once := c.once
+	c.mu.Unlock()
+	return once.M_get(tk, func(tk *Task) Result[T, struct{}] {
+		c.runner.Store(tk)
+		defer c.runner.Store(nil)
+		v := c.F(tk)
+		c.val = v
+		c.done.Store(true)
+		return Ok[T, struct{}](v)
+	}).V
 }

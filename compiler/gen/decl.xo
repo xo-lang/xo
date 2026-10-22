@@ -890,6 +890,22 @@ fn (var g: Gen) gen_const(co: Int) {
   let ld = g.line_directive(d.span)
   g.f = saved_f
   g.pl(ld)
+  if !g.c.is_compile_time(o.decl_file, d.value) {
+    // built once at its first read, a fault stored and raised again at
+    // every read (decision 0332)
+    // (its builder is set in an init function: as a variable's
+    // initializer, a builder that reads the constant through a function
+    // would be a Go initialization cycle)
+    let gt = g.go_type(o.ty)
+    g.pl("var C_${g.oname(co)} = &${g.rt()}LazyConst[${gt}]{}\n")
+    g.pl("func init() {")
+    g.pl("\tC_${g.oname(co)}.F = func(tk *${g.rt()}Task) ${gt} {")
+    g.pl("\t_ = tk")
+    g.pout(body)
+    g.pl("\treturn ${code}\n}\n}\n")
+    g.end_decl(mark, ["C_${g.oname(co)}"])
+    return
+  }
   g.pl("var C_${g.oname(co)} = func() ${g.go_type(o.ty)} {")
   if uses_task(body + code) {
     g.pl("\ttk := ${g.rt()}InitTask")

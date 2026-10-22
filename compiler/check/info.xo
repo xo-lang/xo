@@ -111,3 +111,47 @@ pub fn (c: Checker) test_os_of(f: Int, td: parser.TestDecl) -> Int {
 pub fn (c: Checker) test_params_of(f: Int, td: parser.TestDecl) -> List[Int] {
   c.test_params.get(c.test_key(f, td)) ?? []
 }
+
+/// Whether e, a constant's initializer in file f, is made only of the
+/// forms a block `const` takes (literals, operators, construction,
+/// collection literals: check_const_expr) and of constants that are; a
+/// module constant that is not runs code once at its first use (decision
+/// 0332).
+pub fn (c: Checker) is_compile_time(f: Int, e: Expr) -> Bool { c.compile_time_in(f, e, 0) }
+
+fn (c: Checker) compile_time_in(f: Int, e: Expr, depth: Int) -> Bool {
+  if depth > 64 {
+    return false
+  }
+  match e {
+    IntLit(..) | FloatLit(..) | DurationLit(..) | RuneLit(..) | BytesLit(..) | UnitExpr(..) | BadExpr(..) => true
+    Ident(id) => c.const_ref_compile_time(f, id, depth)
+    StringLit(s) => s.parts.all(fn(p) { if let Some(x) = p.expr { c.compile_time_in(f, x, depth) } else { true } })
+    SelectorExpr(x: x, sel: sel, ..) => c.const_ref_compile_time(f, sel, depth) && c.compile_time_in(f, x, depth)
+    ParenExpr(x: x, ..) | UnaryExpr(x: x, ..) => c.compile_time_in(f, x, depth)
+    BinaryExpr(x: x, y: y, ..) => c.compile_time_in(f, x, depth) && c.compile_time_in(f, y, depth)
+    TupleExpr(elems: els, ..) | ListLit(elems: els, ..) | SetLit(elems: els, ..) => els.all(fn(x) { c.compile_time_in(f, x, depth) })
+    MapLit(entries: entries, ..) => entries.all(fn(en) { c.compile_time_in(f, en.key, depth) && c.compile_time_in(f, en.value, depth) })
+    StructLit(fields: fields, ..) => fields.all(fn(fl) { c.compile_time_in(f, fl.value, depth) })
+    CallExpr(args: args, ..) => c.ctor_calls.contains(c.expr_key_in(f, e)) && args.all(fn(a) { c.compile_time_in(f, a.value, depth) })
+    _ => false
+  }
+}
+
+/// Whether the name id of file f is not a constant, or is one whose
+/// initializer is compile time.
+fn (c: Checker) const_ref_compile_time(f: Int, id: parser.Ident, depth: Int) -> Bool {
+  let i = c.name_at.get(f * 268435456 + id.span.start.offset) ?? -1
+  if i < 0 {
+    return true
+  }
+  let o = c.names[i].obj
+  if o < 0 || c.objs[o].kind != ObjKind.Const || c.objs[o].decl_file < 0 || c.objs[o].decl_idx < 0 {
+    return true
+  }
+  let df = c.objs[o].decl_file
+  match c.files[df].ast.decls[c.objs[o].decl_idx] {
+    ConstDecl(d) => c.compile_time_in(df, d.value, depth + 1)
+    _ => true
+  }
+}

@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+385 386 lazy-385
+64 true 400
+fault 0: bad number: two
+fault 1: bad number: two
+--- stderr
+[main.xo:20:11] "building SUM" = "building SUM"
+[main.xo:7:11] "building TABLE" = "building TABLE"

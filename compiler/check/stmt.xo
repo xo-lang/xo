@@ -421,10 +421,19 @@ fn (var c: Checker) const_type(co: Int) -> Int {
   } else {
     t = c.infer(cd.value, -1)
   }
+  // the initializer runs once, at first use, so it may call functions
+  // but perform no effect, and the value holds no handle (decision 0332)
+  let eff = c.ctxs[c.ctx].eff
+  if !c.esets[eff].is_empty() {
+    c.obligations.push(EffOb{kind: ObKind.Const, sub: eff, sup: c.new_eset([]), file: c.path, span: parser.expr_span(cd.value)})
+  }
   c.ctx = saved
   c.scopes = saved_scopes
-  if !c.mods[c.objs[co].module].is_std {
-    c.check_const_expr(cd.value)
+  if !c.is_bad(t) {
+    let h = c.const_handle(t, [], 16)
+    if !h.is_empty() {
+      c.error_at(f, "XO0416", cd.name.span, "constant `${text(cd.name.name)}` holds a `${h}`; a constant is an immutable value shared by every task, not a global variable (decision 0332)")
+    }
   }
   c.cur_mod = saved_mod
   c.cur_file = saved_file
@@ -468,8 +477,73 @@ fn (var c: Checker) deep_copy(t0: Int) -> Int {
   }
 }
 
-/// XO0408 for initializer parts that are not compile time values (core
-/// 3.1).
+/// The name of a handle type (Mutex, Chan, Atomic, Task, a file; is_handle)
+/// in a value of type t at any depth, "" for none (decision 0332, XO0416).
+fn (var c: Checker) const_handle(t0: Int, seen: List[Int], depth: Int) -> Str {
+  if t0 < 0 || depth <= 0 {
+    return ""
+  }
+  let t = c.resolve(t0)
+  let x = c.tys[t]
+  match x.kind {
+    Tuple => {
+      for e in x.args {
+        let h = c.const_handle(e, seen, depth - 1)
+        if !h.is_empty() {
+          return h
+        }
+      }
+      ""
+    }
+    Named => {
+      let o = x.obj
+      if c.is_handle(o) {
+        return text(c.objs[o].name)
+      }
+      for a in x.args {
+        if c.tys[a].kind != TyKind.EffArg {
+          let h = c.const_handle(a, seen, depth - 1)
+          if !h.is_empty() {
+            return h
+          }
+        }
+      }
+      if seen.contains(o) {
+        return ""
+      }
+      var seen2 = seen
+      seen2.push(o)
+      let sm = c.args_subst(c.objs[o].tparams, x.args)
+      var fts: List[Int] = []
+      let tk = c.objs[o].tkind
+      if tk == "struct" {
+        for fl in c.objs[o].fields {
+          fts.push(c.subst(fl.ty, sm))
+        }
+      } else if tk == "enum" {
+        for v in c.objs[o].variants {
+          for fl in v.fields {
+            fts.push(c.subst(fl.ty, sm))
+          }
+        }
+      } else if (tk == "newtype" || tk == "alias") && c.objs[o].target >= 0 {
+        fts.push(c.subst(c.objs[o].target, sm))
+      }
+      for ft in fts {
+        let h = c.const_handle(ft, seen2, depth - 1)
+        if !h.is_empty() {
+          return h
+        }
+      }
+      ""
+    }
+    Func | Param | Var | Bad | EffArg => ""
+  }
+}
+
+/// XO0408 for the parts of a block `const` initializer that are not
+/// compile time values (core 3.1; a module constant may call functions,
+/// decision 0332).
 fn (var c: Checker) check_const_expr(e: Expr) {
   match e {
     IntLit(..) | FloatLit(..) | DurationLit(..) | RuneLit(..) | BytesLit(..) | UnitExpr(..) | BadExpr(..) => {}
@@ -530,7 +604,7 @@ fn (var c: Checker) check_const_expr(e: Expr) {
 }
 
 fn (var c: Checker) const_bad(sp: Span, what: Str) {
-  c.error("XO0408", sp, "${what} is not a compile time value; a const initializer may use literals, other constants, struct and enum construction, and collection literals of those (core 3.1)")
+  c.error("XO0408", sp, "${what} is not a compile time value; a block `const` initializer may use literals, other constants, struct and enum construction, and collection literals of those (a module `const` may call functions, decision 0332; core 3.1)")
 }
 
 // ---------------------------------------------------------------------------

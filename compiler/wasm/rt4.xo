@@ -142,6 +142,8 @@ fn rt4_text(var g: Gen, tz: List[tzsel.TZSel]) -> Str {
   let empty = g.empty_list
   let thunk = g.sig([], ["i32"])
   let dropsig = g.sig(["i32"], [])
+  let cyc = g.litp("XO-F009: a constant is used during its own initialization")
+  let qmark = g.litp("?")
   let e_noent = g.litp("no such file or directory")
   let e_exist = g.litp("file exists")
   let e_notempty = g.litp("directory not empty")
@@ -935,8 +937,10 @@ fn rt4_text(var g: Gen, tz: List[tzsel.TZSel]) -> Str {
       local.get $t)
 
     ;; the constant list id, built once by the entry function f and kept
-    ;; immortal until exit (xo_const_once); entries {list, drop}
-    (func $const_once (param $f i64) (param $d i64) (param $id i64) (result i32) (local $i i32) (local $p i32) (local $n i32) (local $l i32)
+    ;; immortal until exit (xo_const_once); entries {list, drop}, the
+    ;; list word 1 while it is built and 2 with {message, location} in
+    ;; place of drop once its initializer faulted (decision 0332)
+    (func $const_once (param $f i64) (param $d i64) (param $id i64) (result i32) (local $i i32) (local $p i32) (local $n i32) (local $l i32) (local $r i32) (local $ms i32) (local $mn i32) (local $ls i32) (local $ln i32)
       local.get $id
       i32.wrap_i64
       local.tee $i
@@ -982,23 +986,113 @@ fn rt4_text(var g: Gen, tz: List[tzsel.TZSel]) -> Str {
       local.tee $p
       i32.load
       local.tee $l
+      i32.const 2
+      i32.gt_u
       if
         local.get $l
         return
       end
+      local.get $l
+      i32.const 2
+      i32.eq
+      if
+        ;; its initializer faulted: the fault again
+        local.get $p
+        i32.load offset=4
+        local.tee $r
+        i32.load
+        local.get $r
+        i32.load offset=4
+        local.get $r
+        i32.load offset=8
+        local.get $r
+        i32.load offset=12
+        call $fault_raise
+        i32.const ${empty}
+        return
+      end
+      local.get $l
+      i32.const 1
+      i32.eq
+      if
+        ;; read while it is built (XO-F009)
+        i32.const 0
+        call $rs_new
+        i32.const 0
+        ${cyc}
+        call $sapp
+        ${qmark}
+        call $fault_set
+        i32.const ${empty}
+        return
+      end
+      local.get $p
+      i32.const 1
+      i32.store
       local.get $f
       i32.wrap_i64
       call_indirect (type ${thunk})
-      local.tee $l
-      i32.const 0x80000000
-      i32.store
+      local.set $l
       ;; the table may have moved
       global.get $consts
       local.get $i
       i32.const 3
       i32.shl
       i32.add
-      local.tee $p
+      local.set $p
+      local.get $l
+      i32.load offset=4
+      i32.eqz
+      if
+        ;; the entry function caught a fault, or a cancellation (no
+        ;; message), and returned the immortal empty list
+        global.get $fmsg
+        i32.eqz
+        if
+          local.get $p
+          i32.const 0
+          i32.store
+          i32.const ${empty}
+          return
+        end
+        call $fault_msg
+        local.set $mn
+        local.set $ms
+        call $fault_loc
+        local.set $ln
+        local.set $ls
+        i32.const 16
+        call $alloc
+        local.tee $r
+        local.get $ms
+        i32.store
+        local.get $r
+        local.get $mn
+        i32.store offset=4
+        local.get $r
+        local.get $ls
+        i32.store offset=8
+        local.get $r
+        local.get $ln
+        i32.store offset=12
+        local.get $p
+        i32.const 2
+        i32.store
+        local.get $p
+        local.get $r
+        i32.store offset=4
+        local.get $ms
+        local.get $mn
+        local.get $ls
+        local.get $ln
+        call $fault_raise
+        i32.const ${empty}
+        return
+      end
+      local.get $l
+      i32.const 0x80000000
+      i32.store
+      local.get $p
       local.get $l
       i32.store
       local.get $p
@@ -1023,6 +1117,8 @@ fn rt4_text(var g: Gen, tz: List[tzsel.TZSel]) -> Str {
           local.tee $p
           i32.load
           local.tee $l
+          i32.const 2
+          i32.gt_u
           if
             local.get $p
             i32.const 0
@@ -1034,6 +1130,25 @@ fn rt4_text(var g: Gen, tz: List[tzsel.TZSel]) -> Str {
             local.get $p
             i32.load offset=4
             call_indirect (type ${dropsig})
+          end
+          local.get $l
+          i32.const 2
+          i32.eq
+          if
+            ;; a stored fault: its message, location, and record
+            local.get $p
+            i32.load offset=4
+            local.tee $l
+            i32.load
+            call $free
+            local.get $l
+            i32.load offset=8
+            call $free
+            local.get $l
+            call $free
+            local.get $p
+            i32.const 0
+            i32.store
           end
           local.get $i
           i32.const 1
