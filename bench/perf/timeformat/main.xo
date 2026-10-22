@@ -1,5 +1,8 @@
 use std/time
 
+const ISO: time.Layout = time.layout("{year}-{month}-{day}T{hour}:{minute}:{second}{offset}")
+const LONG: time.Layout = time.layout("{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second} {zone}")
+
 fn main(os: Os) {
   let args = os.env.args()
   let mode = if args.len() > 0 { args[0] } else { "none" }
@@ -19,6 +22,15 @@ fn main(os: Os) {
       let s = "2026-10-${10 + i % 20}T12:34:56Z"
       let t = time.parse(s, "{year}-{month}-{day}T{hour}:{minute}:{second}{offset}", utc).ok() ?? fault("parse")
       n += t.unix() % 7
+    }
+  }
+  if mode == "layoutparse" {
+    for i in 0..300000 {
+      let s = "2026-10-${10 + i % 20}T12:34:56Z"
+      let t = ISO.parse(s, utc).ok() ?? fault("parse")
+      n += t.unix() % 7
+      let u = LONG.parse("Mon, 12 Oct 2026 12:34:56 UTC", utc).ok() ?? fault("parse")
+      n += u.unix() % 7
     }
   }
   if mode == "civil" {

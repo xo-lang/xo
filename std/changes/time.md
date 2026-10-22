@@ -1,5 +1,24 @@
 # std/time changes
 
+## 2026-10-22: perf: parse no longer builds strings it does not use
+
+- Kind: perf
+- Commit: this commit
+- Found by: the std Go ranking (Layout.parse 3.4x Go's time.Parse), XO_PROF=cpu
+- Go reference: time.Parse
+- Test: std module tests native/time (arm64); goldens time_format, time_zones
+
+`parse` and `Layout.parse` built the error-text date (`when`, six `pad` calls)
+on every successful call, named each number field with a string it then
+matched on, built a name list for every month and weekday name, and sliced the
+text for each literal. The date text is built only in the error paths, number
+fields carry an integer, short month and weekday names compare three bytes
+against one packed string, and literals compare bytes in place. Same results
+and error texts. 300,000 ISO and 300,000 long layout parses: 3,605 M to 1,622 M
+instructions (native arm64; `xo bench --ab` wall 0.409, instructions 0.450);
+the same program against Go's `time.Parse`: 1,290 M, so 2.8x to 1.26x Go.
+bench/results/time-parse-2026-10-22.md.
+
 ## 2026-10-22: guidance: std formats with a lazy const Layout, not the layout text
 
 - Kind: perf

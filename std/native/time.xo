@@ -939,6 +939,42 @@ fn read_digits(b: Bytes, pos: Int, hi: Int) -> (Int, Int) {
   (v, n)
 }
 
+/// The index of the width w name of packed (the names side by side) that
+/// b has at pos, or -1.
+fn read_fixed(b: Bytes, pos: Int, packed: Bytes, w: Int) -> Int {
+  if pos + w > b.len() {
+    return -1
+  }
+  var i = 0
+  while i * w < packed.len() {
+    var k = 0
+    while k < w && b[pos + k] == packed[i * w + k] {
+      k += 1
+    }
+    if k == w {
+      return i
+    }
+    i += 1
+  }
+  -1
+}
+
+fn field_name(code: Int) -> Str {
+  match code {
+    1 => "year"
+    2 => "month"
+    3 => "day"
+    5 => "hour"
+    6 => "hour"
+    8 => "minute"
+    _ => "second"
+  }
+}
+
+fn when_text(year: Int, month: Int, day: Int, hour: Int, minute: Int, second: Int) -> Str {
+  "${pad(year, 4)}-${pad(month, 2)}-${pad(day, 2)}T${pad(hour, 2)}:${pad(minute, 2)}:${pad(second, 2)}"
+}
+
 /// The longest of names at pos of s: (index, length), or (-1, 0).
 fn read_word(s: Str, pos: Int, names: List[Str]) -> (Int, Int) {
   let rest = s[pos..]
@@ -991,21 +1027,29 @@ fn parse_items(items: List[Item], s: Str, layout: Str, z: Zone) -> Time ! time.P
   for it in items {
     let start = pos
     if it.code == 0 {
-      if !s[pos..].starts_with(it.lit) {
+      let lb = it.lit.bytes()
+      var k = 0
+      if pos + lb.len() > n {
+        k = -1
+      }
+      while k >= 0 && k < lb.len() && b[pos + k] == lb[k] {
+        k += 1
+      }
+      if k != lb.len() {
         return perr(s, layout, start, "expected ${it.lit.quote()}")
       }
-      pos += it.lit.len()
+      pos += lb.len()
       continue
     }
     // a number field: what, digits lo to hi, range min to max
-    var what = ""
+    var what = 0
     var lo = 2
     var hi = 2
     var min = 0
     var max = 0
     match it.code {
       1 => {
-        what = "year"
+        what = 1
         lo = 4
         hi = 4
         min = 1
@@ -1013,20 +1057,28 @@ fn parse_items(items: List[Item], s: Str, layout: Str, z: Zone) -> Time ! time.P
       }
       2 => {
         if it.arg == "" || it.arg == "1" {
-          what = "month"
+          what = 2
           if it.arg == "1" {
             lo = 1
           }
           min = 1
           max = 12
         } else {
-          var names = month_short()
+          var i = -1
+          var len = 3
           if it.arg == "name" {
-            names = month_name()
+            let (j, l) = read_word(s, pos, month_name())
+            i = j
+            len = l
+          } else {
+            i = read_fixed(b, pos, MONTHS_SHORT.bytes(), 3)
           }
-          let (i, len) = read_word(s, pos, names)
           if i < 0 {
-            return perr(s, layout, start, "expected a month name such as ${names[0].quote()}")
+            var first = "Jan"
+            if it.arg == "name" {
+              first = "January"
+            }
+            return perr(s, layout, start, "expected a month name such as ${first.quote()}")
           }
           month = i + 1
           pos += len
@@ -1034,7 +1086,7 @@ fn parse_items(items: List[Item], s: Str, layout: Str, z: Zone) -> Time ! time.P
       }
       3 => {
         day_at = start
-        what = "day"
+        what = 3
         if it.arg == "1" {
           lo = 1
         }
@@ -1042,24 +1094,32 @@ fn parse_items(items: List[Item], s: Str, layout: Str, z: Zone) -> Time ! time.P
         max = 31
       }
       4 => {
-        var names = weekday_short()
+        var i = -1
+        var len = 3
         if it.arg == "name" {
-          names = weekday_name()
+          let (j, l) = read_word(s, pos, weekday_name())
+          i = j
+          len = l
+        } else {
+          i = read_fixed(b, pos, WEEKDAYS_SHORT.bytes(), 3)
         }
-        let (i, len) = read_word(s, pos, names)
         if i < 0 {
-          return perr(s, layout, start, "expected a weekday name such as ${names[0].quote()}")
+          var first = "Mon"
+          if it.arg == "name" {
+            first = "Monday"
+          }
+          return perr(s, layout, start, "expected a weekday name such as ${first.quote()}")
         }
         weekday = i
         weekday_at = start
         pos += len
       }
       5 => {
-        what = "hour"
+        what = 5
         max = 23
       }
       6 => {
-        what = "hour12"
+        what = 6
         min = 1
         max = 12
       }
@@ -1073,11 +1133,11 @@ fn parse_items(items: List[Item], s: Str, layout: Str, z: Zone) -> Time ! time.P
         pos += 2
       }
       8 => {
-        what = "minute"
+        what = 8
         max = 59
       }
       9 => {
-        what = "second"
+        what = 9
         max = 59
       }
       10 => {
@@ -1164,12 +1224,9 @@ fn parse_items(items: List[Item], s: Str, layout: Str, z: Zone) -> Time ! time.P
         pos += k
       }
     }
-    if what != "" {
+    if what != 0 {
       let (v, cnt) = read_digits(b, pos, hi)
-      var name = what
-      if what == "hour12" {
-        name = "hour"
-      }
+      var name = field_name(what)
       if cnt < lo {
         return perr(s, layout, start, "expected ${digit_text(lo, hi)} ${name}")
       }
@@ -1178,23 +1235,23 @@ fn parse_items(items: List[Item], s: Str, layout: Str, z: Zone) -> Time ! time.P
       }
       pos += cnt
       match what {
-        "year" => {
+        1 => {
           year = v
         }
-        "month" => {
+        2 => {
           month = v
         }
-        "day" => {
+        3 => {
           day = v
         }
-        "hour" => {
+        5 => {
           hour = v
         }
-        "hour12" => {
+        6 => {
           hour12 = v
           has12 = true
         }
-        "minute" => {
+        8 => {
           minute = v
         }
         _ => {
@@ -1223,7 +1280,6 @@ fn parse_items(items: List[Item], s: Str, layout: Str, z: Zone) -> Time ! time.P
     }
   }
   let local = days * 86400 + hour * 3600 + minute * 60 + second
-  let when = "${pad(year, 4)}-${pad(month, 2)}-${pad(day, 2)}T${pad(hour, 2)}:${pad(minute, 2)}:${pad(second, 2)}"
   var secs = local
   if has_off {
     secs = local - off
@@ -1238,22 +1294,22 @@ fn parse_items(items: List[Item], s: Str, layout: Str, z: Zone) -> Time ! time.P
     }
     if !found {
       if abbr != "UTC" && abbr != "GMT" {
-        return perr(s, layout, abbr_at_pos, "zone abbreviation ${abbr.quote()} is not used by ${z.label} at ${when}")
+        return perr(s, layout, abbr_at_pos, "zone abbreviation ${abbr.quote()} is not used by ${z.label} at ${when_text(year, month, day, hour, minute, second)}")
       }
       secs = local
     }
   } else {
     let (early, _, kind) = civil_instant(local, z)
     if kind == 2 {
-      return perr(s, layout, 0, "${when} does not exist in ${z.label} (skipped by a daylight saving change); the layout needs {offset}")
+      return perr(s, layout, 0, "${when_text(year, month, day, hour, minute, second)} does not exist in ${z.label} (skipped by a daylight saving change); the layout needs {offset}")
     }
     if kind == 3 {
-      return perr(s, layout, 0, "${when} happens twice in ${z.label} (repeated by a daylight saving change); the layout needs {offset} or {zone}")
+      return perr(s, layout, 0, "${when_text(year, month, day, hour, minute, second)} happens twice in ${z.label} (repeated by a daylight saving change); the layout needs {offset} or {zone}")
     }
     secs = early
   }
   if secs <= MIN_TIME_SECS || secs >= MAX_TIME_SECS {
-    return perr(s, layout, 0, "${when} is outside the range of Time (1678 to 2262)")
+    return perr(s, layout, 0, "${when_text(year, month, day, hour, minute, second)} is outside the range of Time (1678 to 2262)")
   }
   Ok(time_of(secs * 1000000000 + nanos))
 }
