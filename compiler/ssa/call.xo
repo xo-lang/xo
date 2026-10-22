@@ -189,6 +189,9 @@ fn (var b: Builder) cpu_call(x: Expr, ci: check.CallInfo) -> Int? {
     "aes_enc12" => "aes_enc12"
     "aes_enc14" => "aes_enc14"
     "sha256_block" => "sha256_block"
+    // decision 0329: arm64 only (NEON, and LLVM's vectors there); amd64
+    // runs the portable body until it has its own lowering
+    "chacha_blocks4" => if b.goarch == "arm64" { "chacha_blocks4" } else { "" }
     "cpuid1_ecx" => "cpuid1_ecx"
     "cpuid7_ebx" => "cpuid7_ebx"
     "lowered" => "lowered"

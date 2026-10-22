@@ -749,6 +749,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       let r = g.def("call <2 x i64> ${asm}(<2 x i64> ${a}, <2 x i64> ${b})")
       g.set(v, "extractelement <2 x i64> ${r}, i32 ${if aux_str(x.aux) == "rt.clmul_lo" { 0 } else { 1 }}")
     }
+    "rt.chacha_blocks4" => g.chacha4(g.raw_ptr(x.args[0]), g.raw_ptr(x.args[1]), g.raw_ptr(x.args[2]))
     "rt.aes_round" | "rt.aes_last" => {
       let last = aux_str(x.aux) == "rt.aes_last"
       let p = g.raw_ptr(x.args[0])
@@ -1615,4 +1616,74 @@ fn xo_export(name: Str) -> Str {
   // the net, clock and scope checks, shutdown and real-time sections
   // (ssa/exports.xo, shared with arm64)
   ssa.rt_export(name)
+}
+
+/// rt.chacha_blocks4 (decision 0329) as vector IR: the 16 state words
+/// as <4 x i32> values, a lane a block (the counters the four words after
+/// the state at st), the 20 rounds with llvm.fshl rotations, the state
+/// added back, each group of four words transposed into the four blocks
+/// (shufflevector), xored with src into dst.
+fn (var g: Gen) chacha4(dst: Str, src: Str, st: Str) {
+  var orig: List[Str] = []
+  for i in 0..16 {
+    if i == 12 {
+      let a = g.def("getelementptr i8, ptr ${st}, i64 64")
+      orig.push(g.def("load <4 x i32>, ptr ${a}, align 4"))
+    } else {
+      let a = g.def("getelementptr i8, ptr ${st}, i64 ${4 * i}")
+      let w = g.def("load i32, ptr ${a}, align 4")
+      let one = g.def("insertelement <4 x i32> poison, i32 ${w}, i64 0")
+      orig.push(g.def("shufflevector <4 x i32> ${one}, <4 x i32> poison, <4 x i32> zeroinitializer"))
+    }
+  }
+  var x = orig
+  let quarters = [[0, 4, 8, 12], [1, 5, 9, 13], [2, 6, 10, 14], [3, 7, 11, 15], [0, 5, 10, 15], [1, 6, 11, 12], [2, 7, 8, 13], [3, 4, 9, 14]]
+  for _ in 0..10 {
+    for q in quarters {
+      let a = q[0]
+      let b = q[1]
+      let c = q[2]
+      let d = q[3]
+      x[a] = g.def("add <4 x i32> ${x[a]}, ${x[b]}")
+      x[d] = g.chacha_rotl(g.def("xor <4 x i32> ${x[d]}, ${x[a]}"), 16)
+      x[c] = g.def("add <4 x i32> ${x[c]}, ${x[d]}")
+      x[b] = g.chacha_rotl(g.def("xor <4 x i32> ${x[b]}, ${x[c]}"), 12)
+      x[a] = g.def("add <4 x i32> ${x[a]}, ${x[b]}")
+      x[d] = g.chacha_rotl(g.def("xor <4 x i32> ${x[d]}, ${x[a]}"), 8)
+      x[c] = g.def("add <4 x i32> ${x[c]}, ${x[d]}")
+      x[b] = g.chacha_rotl(g.def("xor <4 x i32> ${x[b]}, ${x[c]}"), 7)
+    }
+  }
+  for i in 0..16 {
+    x[i] = g.def("add <4 x i32> ${x[i]}, ${orig[i]}")
+  }
+  for gr in 0..4 {
+    let w0 = x[4 * gr]
+    let w1 = x[4 * gr + 1]
+    let w2 = x[4 * gr + 2]
+    let w3 = x[4 * gr + 3]
+    let t0 = g.def("shufflevector <4 x i32> ${w0}, <4 x i32> ${w1}, <4 x i32> <i32 0, i32 4, i32 2, i32 6>")
+    let t1 = g.def("shufflevector <4 x i32> ${w0}, <4 x i32> ${w1}, <4 x i32> <i32 1, i32 5, i32 3, i32 7>")
+    let t2 = g.def("shufflevector <4 x i32> ${w2}, <4 x i32> ${w3}, <4 x i32> <i32 0, i32 4, i32 2, i32 6>")
+    let t3 = g.def("shufflevector <4 x i32> ${w2}, <4 x i32> ${w3}, <4 x i32> <i32 1, i32 5, i32 3, i32 7>")
+    let ys = [
+      g.def("shufflevector <4 x i32> ${t0}, <4 x i32> ${t2}, <4 x i32> <i32 0, i32 1, i32 4, i32 5>"),
+      g.def("shufflevector <4 x i32> ${t1}, <4 x i32> ${t3}, <4 x i32> <i32 0, i32 1, i32 4, i32 5>"),
+      g.def("shufflevector <4 x i32> ${t0}, <4 x i32> ${t2}, <4 x i32> <i32 2, i32 3, i32 6, i32 7>"),
+      g.def("shufflevector <4 x i32> ${t1}, <4 x i32> ${t3}, <4 x i32> <i32 2, i32 3, i32 6, i32 7>"),
+    ]
+    for (b, y) in ys.indexed() {
+      let off = 64 * b + 16 * gr
+      let sa = g.def("getelementptr i8, ptr ${src}, i64 ${off}")
+      let sv = g.def("load <4 x i32>, ptr ${sa}, align 1")
+      let r = g.def("xor <4 x i32> ${y}, ${sv}")
+      let da = g.def("getelementptr i8, ptr ${dst}, i64 ${off}")
+      g.emit("store <4 x i32> ${r}, ptr ${da}, align 1")
+    }
+  }
+}
+
+/// v rotated left by k in each 32 bit lane (llvm.fshl).
+fn (var g: Gen) chacha_rotl(v: Str, k: Int) -> Str {
+  g.def("call <4 x i32> @llvm.fshl.v4i32(<4 x i32> ${v}, <4 x i32> ${v}, <4 x i32> <i32 ${k}, i32 ${k}, i32 ${k}, i32 ${k}>)")
 }
