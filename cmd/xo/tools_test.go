@@ -475,6 +475,23 @@ func TestExplainCLI(t *testing.T) {
 
 // agentJSON runs one of decision 0261's agent commands and decodes its
 // JSON; code is the exit status wanted.
+// xoStd is the std the xo under test reads: $XO_STD, else a release
+// layout's lib/xo/std beside its bin/ (release-verify.sh runs an archive's
+// xo with no XO_STD, and a std elsewhere is an ordinary directory to it),
+// else the checkout's.
+func xoStd() string {
+	if s := os.Getenv("XO_STD"); s != "" {
+		return s
+	}
+	if cli, err := xoCommand(); err == nil && len(cli) > 0 {
+		s := filepath.Join(filepath.Dir(cli[0]), "..", "lib", "xo", "std")
+		if st, err := os.Stat(s); err == nil && st.IsDir() {
+			return filepath.Clean(s)
+		}
+	}
+	return filepath.Join(repoRoot, "std")
+}
+
 func agentJSON(t *testing.T, code int, args ...string) map[string]any {
 	t.Helper()
 	var out, errOut bytes.Buffer
@@ -689,7 +706,7 @@ func TestVetStd(t *testing.T) {
 		}
 		return v
 	}
-	for _, args := range [][]string{{"--std-module=native/llrt/pool"}, {"--std-module=json"}, {filepath.Join(repoRoot, "std", "native", "llrt")}} {
+	for _, args := range [][]string{{"--std-module=native/llrt/pool"}, {"--std-module=json"}, {filepath.Join(xoStd(), "native", "llrt")}} {
 		v := vet(args...)
 		if fmt.Sprint(v["check_errors"]) != "0" {
 			t.Errorf("vet %v: check_errors %v", args, v["check_errors"])
@@ -1209,10 +1226,7 @@ fn main(os: Os) {
 func TestAgentRuntimeRefs(t *testing.T) {
 	t.Parallel()
 	prog := writeFiles(t, map[string]string{"main.xo": toolsProg})
-	std, err := filepath.Abs(filepath.Join("..", "..", "std"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	std := xoStd()
 	refFiles := func(dir string) []string {
 		t.Helper()
 		v := agentJSON(t, 0, "refs", "--dir="+dir, "--json", "pool.park_wait")
