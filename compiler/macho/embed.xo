@@ -1,0 +1,245 @@
+// Decision 0346 stage 3: the DWARF of a darwin executable that ld64
+// linked (the LLVM backend, --ld=cc, `use c`) moved into the executable,
+// as Xo's own linker writes it: dsymutil's dSYM sections become a
+// `__DWARF` segment (prot 0, vmsize 0, as Go's) before `__LINKEDIT`,
+// which moves up by the DWARF's size, and the ad hoc signature is made
+// again over the new bytes. ld64 leaves no room for another load command
+// (32 bytes on hello, 2026-10-22), so the link passes -headerpad.
+
+const LC_DYLD_INFO = 0x22
+const LC_DYLD_INFO_ONLY = 0x80000022
+const DW_PAGE = 0x4000
+
+/// The load commands whose words at these offsets are file offsets into
+/// __LINKEDIT (0 when absent): symtab, dysymtab, dyld info, and the
+/// linkedit_data_command kinds (code signature, split info, function
+/// starts, data in code, dylib code sign DRS, linker optimization hints,
+/// exports trie, chained fixups).
+fn linkedit_fields(cmd: Int) -> List[Int] {
+  if cmd == LC_SYMTAB {
+    return [8, 16]
+  }
+  if cmd == LC_DYSYMTAB {
+    return [32, 40, 48, 56, 64, 72]
+  }
+  if cmd == LC_DYLD_INFO || cmd == LC_DYLD_INFO_ONLY {
+    return [8, 16, 24, 32, 40]
+  }
+  if cmd is 0x1d | 0x1e | 0x26 | 0x29 | 0x2b | 0x2e | 0x80000033 | 0x80000034 {
+    return [8]
+  }
+  []
+}
+
+/// A section of the dSYM's __DWARF segment: its name, bytes, alignment.
+struct DwSect {
+  name: Bytes
+  data: Bytes
+  align: Int
+}
+
+/// The sections of the __DWARF segment of a Mach-O file (a dSYM's
+/// DWARF file), in order.
+fn dwarf_sects(b: Bytes) -> List[DwSect] ! Str {
+  if b.len() < 32 || rd32(b, 0) != MH_MAGIC_64 {
+    return Err("the dSYM is not a 64 bit Mach-O file")
+  }
+  var out: List[DwSect] = []
+  var off = 32
+  for _ in 0..rd32(b, 16) {
+    let cmd = rd32(b, off)
+    if cmd == LC_SEGMENT_64 && bstr(cstr(b[off + 8..off + 24], 0)) == "__DWARF" {
+      for k in 0..rd32(b, off + 64) {
+        let s = off + 72 + 80 * k
+        let size = rd64(b, s + 40)
+        let at = rd32(b, s + 48)
+        if at + size > b.len() {
+          return Err("a dSYM section is past the file's end")
+        }
+        out.push(DwSect{name: b[s..s + 16], data: b[at..at + size], align: rd32(b, s + 52)})
+      }
+    }
+    off += rd32(b, off + 4)
+  }
+  if out.is_empty() {
+    return Err("the dSYM has no __DWARF segment")
+  }
+  Ok(out)
+}
+
+/// The identifier of exe's code signature (ld64's: the output's name),
+/// else dflt.
+fn sig_ident(exe: Bytes, sig_off: Int, dflt: Str) -> Str {
+  if sig_off <= 0 || sig_off + 28 > exe.len() {
+    return dflt
+  }
+  // the SuperBlob's first index entry's offset, then the CodeDirectory's
+  // ident offset (big endian)
+  let be = fn(o: Int) -> Int { shl(Int(exe[o]), 24) | shl(Int(exe[o + 1]), 16) | shl(Int(exe[o + 2]), 8) | Int(exe[o + 3]) }
+  let cd = sig_off + be(sig_off + 16)
+  if cd + 24 > exe.len() {
+    return dflt
+  }
+  let id = cd + be(cd + 20)
+  if id >= exe.len() {
+    return dflt
+  }
+  let n = bstr(cstr(exe, id))
+  if n.is_empty() { dflt } else { n }
+}
+
+/// exe (an ld64 linked arm64 executable) with the __DWARF sections of
+/// dsym (its dSYM's DWARF file, whose addresses are exe's) as a segment
+/// before __LINKEDIT, signed again ad hoc (identifier: the signature's,
+/// else name).
+pub fn embed_dwarf(exe: Bytes, dsym: Bytes, name: Str) -> Bytes ! Str {
+  if exe.len() < 32 || rd32(exe, 0) != MH_MAGIC_64 {
+    return Err("not a 64 bit Mach-O executable")
+  }
+  let sects = dwarf_sects(dsym)?
+  let ncmds = rd32(exe, 16)
+  let sizeofcmds = rd32(exe, 20)
+  // the load commands: __LINKEDIT's, __TEXT's, the signature's, and the
+  // first section's file offset (the end of the room for commands)
+  var le_cmd = -1
+  var text_off = 0
+  var text_size = 0
+  var sig_cmd = -1
+  var room = exe.len()
+  var off = 32
+  for _ in 0..ncmds {
+    let cmd = rd32(exe, off)
+    if cmd == LC_SEGMENT_64 {
+      let seg = bstr(cstr(exe[off + 8..off + 24], 0))
+      if seg == "__DWARF" {
+        return Err("the executable has a __DWARF segment already")
+      }
+      if seg == "__LINKEDIT" {
+        le_cmd = off
+      }
+      if seg == "__TEXT" {
+        text_off = rd64(exe, off + 40)
+        text_size = rd64(exe, off + 48)
+      }
+      for k in 0..rd32(exe, off + 64) {
+        let s = off + 72 + 80 * k
+        let at = rd32(exe, s + 48)
+        if at > 0 && at < room {
+          room = at
+        }
+      }
+    }
+    if cmd == LC_CODE_SIGNATURE {
+      sig_cmd = off
+    }
+    off += rd32(exe, off + 4)
+  }
+  if le_cmd < 0 {
+    return Err("the executable has no __LINKEDIT segment")
+  }
+  let seg_size = 72 + 80 * sects.len()
+  if 32 + sizeofcmds + seg_size > room {
+    return Err("no room for the __DWARF segment's load command (${room - 32 - sizeofcmds} bytes free, ${seg_size} needed): link with -headerpad")
+  }
+  let le_vm = rd64(exe, le_cmd + 24)
+  let le_off = rd64(exe, le_cmd + 40)
+  let sig_off = if sig_cmd >= 0 { rd32(exe, sig_cmd + 8) } else { exe.len() }
+  let ident = sig_ident(exe, if sig_cmd >= 0 { sig_off } else { 0 }, name)
+  // the DWARF at __LINKEDIT's old offset, each section at its alignment
+  var dw = new_out(dsym.len())
+  var at: List[Int] = []
+  for s in sects {
+    dw.pad(shl(1, imin(s.align, 12)))
+    at.push(dw.n)
+    dw.bytes(s.data)
+  }
+  let dw_len = dw.n
+  dw.pad(DW_PAGE)
+  let shift = dw.n
+  // __LINKEDIT without its old signature, the new one 16 aligned after
+  let le_body = (sig_off - le_off + 15) / 16 * 16
+  let code_size = le_off + shift + le_body
+  let sig_size = if sig_cmd >= 0 { signature_size(code_size, ident) } else { 0 }
+  // the load commands: each copied, its __LINKEDIT offsets moved, the
+  // __DWARF segment before __LINKEDIT's
+  var lc = new_out(sizeofcmds + seg_size)
+  off = 32
+  for _ in 0..ncmds {
+    let cmd = rd32(exe, off)
+    let size = rd32(exe, off + 4)
+    if off == le_cmd {
+      lc.u32(LC_SEGMENT_64)
+      lc.u32(seg_size)
+      lc.name("__DWARF", 16)
+      lc.u64(le_vm)
+      lc.u64(0)
+      lc.u64(le_off)
+      lc.u64(dw_len)
+      lc.u32(0)
+      lc.u32(0)
+      lc.u32(sects.len())
+      lc.u32(0)
+      for (k, s) in sects.indexed() {
+        lc.bytes(s.name)
+        lc.name("__DWARF", 16)
+        lc.u64(le_vm + at[k])
+        lc.u64(s.data.len())
+        lc.u32(le_off + at[k])
+        lc.u32(s.align)
+        lc.u32(0)
+        lc.u32(0)
+        lc.u32(S_ATTR_DEBUG)
+        lc.u32(0)
+        lc.u32(0)
+        lc.u32(0)
+      }
+    }
+    // the words to change: offset in the command, value, width
+    var fix: Map[Int, (Int, Int)] = {}
+    if off == le_cmd {
+      // vmsize (the new size in pages), fileoff, filesize
+      let le_size = le_body + sig_size
+      fix[32] = ((le_size + DW_PAGE - 1) / DW_PAGE * DW_PAGE, 8)
+      fix[40] = (le_off + shift, 8)
+      fix[48] = (le_size, 8)
+    } else if cmd == LC_CODE_SIGNATURE {
+      fix[8] = (code_size, 4)
+      fix[12] = (sig_size, 4)
+    } else {
+      for f in linkedit_fields(cmd) {
+        let v = rd32(exe, off + f)
+        if v >= le_off {
+          fix[f] = (v + shift, 4)
+        }
+      }
+    }
+    var i = 0
+    while i < size {
+      if let Some((v, n)) = fix.get(i) {
+        lc.le(v, n)
+        i += n
+      } else {
+        lc.u8(Int(exe[off + i]))
+        i += 1
+      }
+    }
+    off += size
+  }
+  // the file: the header with one more command, the commands, the rest
+  // up to __LINKEDIT, the DWARF, __LINKEDIT's body, the signature
+  var o = new_out(code_size + sig_size)
+  o.bytes(exe[0..16])
+  o.u32(ncmds + 1)
+  o.u32(sizeofcmds + seg_size)
+  o.bytes(exe[24..32])
+  o.bytes(lc.done())
+  o.bytes(exe[32 + sizeofcmds + seg_size..le_off])
+  o.bytes(dw.done())
+  o.bytes(exe[le_off..sig_off])
+  o.zeros(code_size - o.n)
+  let file = o.done()
+  if sig_cmd < 0 {
+    return Ok(file)
+  }
+  Ok(file + code_signature(file, ident, text_off, text_size))
+}

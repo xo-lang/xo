@@ -14,7 +14,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `--dsym` writes the bundle too; `-s` leaves both out. Release binaries
   (`xo` itself included) ship with their DWARF: the darwin archive grows
   by about 11 MB (xo's tar.gz 23.2 MB to 34.4 MB). Links through cc (the
-  LLVM backend, `--ld=cc`) still write `NAME.dSYM`.
+  LLVM backend, `--ld=cc`, `use c`) do the same: dsymutil's DWARF is
+  moved into the executable after the link and the bundle kept only for
+  `--dsym`.
+- DWARF fixes on darwin: atos names the first function of each code
+  part (xo_f_main was nameless: a marker symbol shared its address), a
+  build from outside the module (`xo build DIR`) records the module's
+  directory as the compilation directory so lldb opens the right file,
+  and `dwarfdump --verify` passes on programs with `List[()]` or fields
+  of type `()`.
 - `xo clean -cache [-n]` (owner, 2026-10-22), like `go clean -cache`:
   removes every cache under `<user cache>/xo` (build directories, the
   native back end's cache, GOCACHE, test binaries, watch builds, xo dev

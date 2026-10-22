@@ -33,6 +33,11 @@ fn link_os(ctx: Ctx) -> Str {
   if ctx.tgoos.is_empty() { ctx.goos } else { ctx.tgoos }
 }
 
+/// The cc link flag that leaves room in the executable's header for the
+/// __DWARF segment's load command embed_dsym adds (ld64 left 32 bytes;
+/// 8 sections take 712, a dSYM with accelerator tables more).
+const DWARF_HEADERPAD = "-Wl,-headerpad,0x1000"
+
 /// ccBuild: compiles and links srcs into bin with cc and flags; returns
 /// the compiler's output of the failed link, "" on success. The sources
 /// are the program's assembly or IR and other C sources (no C runtime
@@ -46,15 +51,43 @@ fn link_os(ctx: Ctx) -> Str {
 /// fails, the program has no dSYM and the build goes on. (With Xcode
 /// 26.6 selected against the macOS 27 SDK the cc link itself fails,
 /// gotchas/xcode-ld-vs-clt-sdk27.md; DEVELOPER_DIR picks the tools.)
-fn cc_dsym(os: Os, bin: Str) {
+/// Decision 0346 stage 3: the bundle's DWARF is then embedded in the
+/// executable, as compiler/macho's link writes it, and the bundle kept
+/// only for --dsym (keep); when embedding fails the bundle stays and a
+/// warning says why.
+fn cc_dsym(os: Os, bin: Str, keep: Bool) {
   let d = "${bin}.dSYM"
   os.fs.remove_all(d).ignore_err("none from an earlier link")
   match os.proc.run("dsymutil", [bin, "-o", d]) {
     Ok(r) => if r.code != 0 {
       os.fs.remove_all(d).ignore_err("a failed dsymutil")
+      return
     }
     // xo:allow XO0903 dsymutil is optional: no dSYM, as on a system without it
-    Err(_) => {}
+    Err(_) => return
+  }
+  let why = embed_dsym(os, bin)
+  if !why.is_empty() {
+    os.stdio.eprintln("xo: ${base_name(bin)}'s DWARF stays in its dSYM: ${why}")
+  } else if !keep {
+    os.fs.remove_all(d).ignore_err("the program carries its DWARF")
+  }
+}
+
+/// Moves the DWARF of bin's dSYM into bin (macho.embed_dwarf); "" or why
+/// not.
+fn embed_dsym(os: Os, bin: Str) -> Str {
+  let exe = match os.fs.read(bin) {
+    Ok(b) => b
+    Err(e) => return "reading ${bin}: ${e}"
+  }
+  let dw = match os.fs.read(dsym_dwarf(bin)) {
+    Ok(b) => b
+    Err(e) => return "reading its dSYM: ${e}"
+  }
+  match macho.embed_dwarf(exe, dw, base_name(bin)) {
+    Ok(out) => write_exe(os, bin, out)
+    Err(e) => e
   }
 }
 

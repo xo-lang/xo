@@ -33,6 +33,53 @@ Users' crash reports, tracebacks and race reports name file and line;
 the alternatives (strip with `-s`, or publish a separate dSYM per
 release) were declined.
 
+Stage 2 done 2026-10-22, every outside reader against the embedded copy
+with no dSYM present: atos names file and line (`xo_f_entry_2emain (in
+hello) (entry.xo:97)`), and ThreadSanitizer's reports through it
+(TestRaceStacksArm64 passes); lldb resolves a breakpoint at main.xo:9
+and prints frame variables (TestDebugVars, TestDebugTypes); `dwarfdump
+--verify` finds no error in hello; `codesign --verify --strict` passes.
+A Developer ID signed hello and xo (hardened runtime, timestamp,
+scripts/sign-macos.sh) were notarized with their `__DWARF` segments, as
+the owner approved: submission 0ff4dfa7-c4e4-4117-b05d-9470e93ef0c0,
+Accepted, no issues; `spctl -a -t install` accepts hello as "Notarized
+Developer ID" (a bare executable is "not an app" to the default
+assessment, as code-signing.md says), and the signed copies run and
+symbolize. The checks found three older DWARF faults, fixed in
+0226ad6dd: atos named nothing at the first function of each part (a
+second symbol, the part's `xo_utext_` marker, at its address; the
+linker now leaves the markers out of the symbol table,
+gotchas/atos-two-symbols-one-address.md); DW_AT_comp_dir was the
+working directory, not the line root the names are relative to, so
+lldb opened the wrong main.xo for `xo build DIR` from elsewhere; and a
+type with no words (a List[()]'s items, a field of type ()) referred to
+offset 0, which `dwarfdump --verify` rejected (101 times in xo).
+
+Stage 3 done 2026-10-22, the post-link step: after an ld64 link (the
+LLVM backend, `--ld=cc`, `use c`) and its dsymutil, compiler/macho
+embed.xo `embed_dwarf` copies the dSYM's `__DWARF` sections into the
+executable as the same kind of segment (vmaddr `__LINKEDIT`'s, vmsize 0,
+as Go's; every `__LINKEDIT` file offset in the load commands moved by
+the DWARF's page aligned size) and signs it again ad hoc under ld64's
+identifier; compiler/xo link.xo cc_dsym keeps the bundle only for
+`--dsym` (in the binary cache's key) or when embedding fails (a warning
+says why). ld64 leaves 32 bytes after the load commands, so these links
+pass `-Wl,-headerpad,0x1000` (gotchas/ld64-header-room.md). Both
+ld64 outputs of hello: `__DWARF` present, `dwarfdump --verify` no
+errors, `codesign --verify --strict` passes, lldb resolves main.xo:9,
+and atos names file and line with the debug map's stabs stripped
+(`xo_f_num_2eappend__int (in nostab) (num.xo:74)`, `x.cabi_c.main (in
+nostab) (cabi_c.xo:15)`), so the copy, not the build directory's
+objects, is what it read. Measured on internal/llvm's http_server
+golden (three runs each, XO_BIN_CACHE=off, `--phase-times` cc phase):
+`--ld=cc` 210, 214, 588 ms before and 251, 226, 260 ms after; the LLVM
+backend 19.3, 19.3, 23.9 s before and 19.3, 19.6, 18.8 s after (its
+link is dominated by clang). The executable grows by its bundle:
+`--ld=cc` 2,505,944 bytes plus a 3.75 MB dSYM to 6,205,125 bytes, LLVM
+2,652,304 plus 2.24 MB to 4,815,612. Keeping the bundle for these links
+was the other way measured: no link time saved worth the second
+artifact, so every darwin link now gives one file.
+
 ## Context
 
 A darwin program's DWARF lives in a separate bundle today
@@ -105,7 +152,8 @@ segment of the executable, by default, instead of PROG.dSYM.
    (`codesign --verify --strict` of an ad hoc signed debug binary and of
    the cached ones) and notarization of a Developer ID signed binary
    (submitted only with the owner's approval, through the lead).
-3. The ld64 links: the post-link step or the bundle, by measurement.
+3. The ld64 links: the post-link step or the bundle, by measurement
+   (the post-link step, measured above).
 4. `--dsym`, the docs (toolchain.md, the spec's mentions of PROG.dSYM),
    and the cache: `xo run`'s cached binary needs no bundle beside it.
 

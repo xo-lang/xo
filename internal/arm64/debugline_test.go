@@ -163,15 +163,16 @@ func dwarfFile(bin string) string {
 	return bin
 }
 
-// TestDebugLineDarwinCC checks the dSYM of the darwin links that do not go
-// through compiler/macho (decision 0239): the LLVM backend's and arm64
-// with --ld=cc, which run dsymutil after the cc link. Each must write
-// PROG.dSYM whose line table names main.xo and verifies, and lldb must
-// resolve a breakpoint at main.xo:9 from it (no run: the line tables
-// alone). A second build from the binary cache must bring the dSYM back
-// (the cache keeps its DWARF beside the entry). The macho link's
-// executable carries its DWARF and has no dSYM (decision 0346), unless
-// --dsym, which the cache keeps too.
+// TestDebugLineDarwinCC checks the DWARF of the darwin links that do not
+// go through compiler/macho (decision 0239): the LLVM backend's and arm64
+// with --ld=cc, which run dsymutil after the cc link and then move the
+// dSYM's DWARF into the executable (decision 0346 stage 3), as the macho
+// link writes it. Every executable must carry a __DWARF segment that
+// verifies and a signature codesign accepts; its DWARF (the bundle's with
+// --dsym, which alone keeps PROG.dSYM) must name main.xo and verify, and
+// lldb must resolve a breakpoint at main.xo:9 from it (no run: the line
+// tables alone). A second build from the binary cache must give the same
+// (the cache keeps a bundle's DWARF beside the entry).
 func TestDebugLineDarwinCC(t *testing.T) {
 	if runtime.GOOS != "darwin" || !native() {
 		t.Skip("darwin/arm64 only")
@@ -216,6 +217,15 @@ func TestDebugLineDarwinCC(t *testing.T) {
 	}
 	check := func(bin string) {
 		t.Helper()
+		if !hasDwarfSegment(t, bin) {
+			t.Errorf("%s has no __DWARF segment", bin)
+		}
+		if v, err := exec.Command("dwarfdump", "--verify", bin).CombinedOutput(); err != nil || !strings.Contains(string(v), "No errors.") {
+			t.Errorf("dwarfdump --verify %s: %v\n%s", bin, err, v)
+		}
+		if v, err := exec.Command("codesign", "--verify", "--strict", bin).CombinedOutput(); err != nil {
+			t.Errorf("codesign --verify --strict %s: %v\n%s", bin, err, v)
+		}
 		dsym := dwarfFile(bin)
 		lines, err := exec.Command("dwarfdump", "--debug-line", dsym).CombinedOutput()
 		if err != nil || !strings.Contains(string(lines), "main.xo") {
@@ -234,8 +244,12 @@ func TestDebugLineDarwinCC(t *testing.T) {
 		args   []string
 		bundle bool
 	}{
-		{"llvm", []string{"--backend=llvm"}, true},
-		{"cc", []string{"--backend=arm64", "--ld=cc"}, true},
+		// ld64's links carry the dSYM's DWARF too (decision 0346 stage
+		// 3), the bundle only for --dsym
+		{"llvm", []string{"--backend=llvm"}, false},
+		{"llvm-dsym", []string{"--backend=llvm", "--dsym"}, true},
+		{"cc", []string{"--backend=arm64", "--ld=cc"}, false},
+		{"cc-dsym", []string{"--backend=arm64", "--ld=cc", "--dsym"}, true},
 		{"macho", []string{"--backend=arm64", "--ld=macho"}, false},
 		{"macho-dsym", []string{"--backend=arm64", "--ld=macho", "--dsym"}, true},
 	} {

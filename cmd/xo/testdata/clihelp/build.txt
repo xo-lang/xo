@@ -22,8 +22,8 @@ requires(debug) and ensures(debug) compiled out, the runtime's profiler
 (XO_PROF) left out unless --profile-support, and the execution trace's
 recorder (XO_TRACE) unless --trace-support; --error-args=false drops
 parameter values from error frames. Native builds carry DWARF line tables
-(in a darwin binary's __DWARF segment; --dsym also writes NAME.dSYM, and
-a link through cc writes only the .dSYM); -s leaves them and the local
+(in a darwin binary's __DWARF segment, a link through cc's too; --dsym
+also writes NAME.dSYM); -s leaves them and the local
 symbols out, --debug-info keeps them in a --release build. --ld picks the native
 linker: macho (Xo's own; the default on darwin/arm64) or cc. --race (also
 on run and test) builds with ThreadSanitizer on the LLVM backend. --stamp (repeatable, also on run)

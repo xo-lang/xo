@@ -904,14 +904,20 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       mode_flags = mode_flags + ["lto", lto1]
     }
     let srcs = lls + lk.srcs
-    let key = native_bin_key(os, ctx, dir, cc, mode_flags + lk.flags + lk.link_only, srcs)
+    // the DWARF embedded after the link (cc_dsym, decision 0346 stage
+    // 3): room in the header for its segment, and the bundle for --dsym
+    let dsym = lm.debug_info && lctx.tgoos == "darwin" && ctx.goos == "darwin"
+    let pad = if dsym { [DWARF_HEADERPAD] } else { [] }
+    if dsym && o.dsym {
+      mode_flags.push("dsym")
+    }
+    let key = native_bin_key(os, ctx, dir, cc, mode_flags + pad + lk.flags + lk.link_only, srcs)
     // built in a hidden stage beside bin, then moved into place (Stage)
     let st = stage(os, ctx, bin)
     let (hit, entry) = fetch_bin(os, ctx, key, st.bin)
     if !hit {
-      let dsym = lm.debug_info && lctx.tgoos == "darwin" && ctx.goos == "darwin"
       let lto = if multi { split.lto } else { lto1 }
-      let lflags = (if dsym { lk.flags + lto_object_flags(os, dir, lto) } else { lk.flags }) + lk.link_only
+      let lflags = (if dsym { lk.flags + lto_object_flags(os, dir, lto) } else { lk.flags }) + pad + lk.link_only
       let msg = if split.stable {
         // beside dir, not in it: the binary cache's key hashes every
         // file of dir, and the modules are made only after its miss
@@ -936,13 +942,19 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         fail_stage(os, st, "${cc} failed${ir_failure_sources(os, lm, msg)}")
       }
       if dsym {
-        cc_dsym(os, st.bin)
+        cc_dsym(os, st.bin, o.dsym)
       }
       store_bin(os, ctx, entry, st.bin)
     }
+    // xo:allow XO0903 no bundle staged: an earlier one beside bin goes
+    let staged = os.fs.exists("${st.bin}.dSYM").ok() ?? false
     let cerr = st.commit(os)
     if !cerr.is_empty() {
       fail(os, cerr)
+    }
+    if !staged {
+      // an earlier --dsym build's bundle, for another UUID (decision 0346)
+      os.fs.remove_all("${bin}.dSYM").ignore_err("none from an earlier build")
     }
     lap(os, phases, "cc", t)
     return finish(os, ctx, o, c, root, [(ltarget, bin)], tests, fz)
@@ -1252,7 +1264,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       bins.push((tg, bin))
       continue
     }
-    let key = if macho_as { "" } else { native_bin_key(os, ctx, dir, cc, [march] + flags + lk.link_only, srcs) }
+    let cdsym = gm.debug_info && tgoos == "darwin"
+    let pad = if cdsym { [DWARF_HEADERPAD] + (if o.dsym { ["dsym"] } else { [] }) } else { [] }
+    let key = if macho_as { "" } else { native_bin_key(os, ctx, dir, cc, [march] + flags + pad + lk.link_only, srcs) }
     let cst = stage(os, ctx, bin)
     let (hit, entry) = fetch_bin(os, ctx, key, cst.bin)
     if !hit {
@@ -1268,19 +1282,25 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         t = lap(os, phases, "assemble", t)
         cache_note(os, phases, "objects", progs.len() - nasm, progs.len())
       }
-      let msg = cc_build(os, ctx, cc, flags + lk.link_only, lsrcs, cst.bin)
+      let msg = cc_build(os, ctx, cc, flags + (if cdsym { [DWARF_HEADERPAD] } else { [] }) + lk.link_only, lsrcs, cst.bin)
       if !msg.is_empty() {
         os.stdio.eprint(msg)
         fail_stage(os, cst, "${cc} failed")
       }
-      if gm.debug_info && tgoos == "darwin" {
-        cc_dsym(os, cst.bin)
+      if cdsym {
+        cc_dsym(os, cst.bin, o.dsym)
       }
       store_bin(os, ctx, entry, cst.bin)
     }
+    // xo:allow XO0903 no bundle staged: an earlier one beside bin goes
+    let cstaged = os.fs.exists("${cst.bin}.dSYM").ok() ?? false
     let cerr = cst.commit(os)
     if !cerr.is_empty() {
       fail(os, cerr)
+    }
+    if !cstaged {
+      // an earlier --dsym build's bundle, for another UUID (decision 0346)
+      os.fs.remove_all("${bin}.dSYM").ignore_err("none from an earlier build")
     }
     if !keep_asm {
       // linked: cc's assembly files are not read again (the next build

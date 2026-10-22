@@ -14,7 +14,8 @@ import (
 // TestStrippedNoDWARF checks that the LLVM builds without debug
 // information have none (decision 0252): -s and --release leave no
 // dSYM, no __DWARF segment, and no compile unit in the executable, and
-// --release --debug-info keeps the dSYM.
+// --release --debug-info keeps the DWARF, in the executable (decision
+// 0346 stage 3).
 func TestStrippedNoDWARF(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("darwin only (Linux: checked with llvm-readelf by hand)")
@@ -52,20 +53,21 @@ func TestStrippedNoDWARF(t *testing.T) {
 			if res.Failed {
 				t.Fatalf("build failed:\n%s", res.Output)
 			}
-			_, serr := os.Stat(out + ".dSYM")
-			if (serr == nil) != c.dwarf {
-				t.Errorf("dSYM present: %v, want %v", serr == nil, c.dwarf)
+			// the DWARF is in the executable (decision 0346 stage 3),
+			// never in a bundle without --dsym
+			if _, serr := os.Stat(out + ".dSYM"); serr == nil {
+				t.Errorf("a build without --dsym wrote %s.dSYM", out)
 			}
 			lc, err := exec.Command("otool", "-l", out).Output()
 			if err != nil {
 				t.Fatal(err)
 			}
-			if strings.Contains(string(lc), "__DWARF") {
-				t.Errorf("the executable has a __DWARF segment")
+			if strings.Contains(string(lc), "__DWARF") != c.dwarf {
+				t.Errorf("__DWARF segment present: %v, want %v", !c.dwarf, c.dwarf)
 			}
 			info, _ := exec.Command("dwarfdump", "--debug-info", out).CombinedOutput()
-			if strings.Contains(string(info), "DW_TAG_compile_unit") {
-				t.Errorf("the executable has DWARF compile units")
+			if strings.Contains(string(info), "DW_TAG_compile_unit") != c.dwarf {
+				t.Errorf("DWARF compile units in the executable: %v, want %v", !c.dwarf, c.dwarf)
 			}
 		})
 	}
