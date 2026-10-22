@@ -38,7 +38,7 @@ const T_NODE = 16
 const S_BODY = 16
 const T_STATE = 80
 /// A park record's parked fiber (pool.xo PK_FIBER).
-const PK_FIBER = 24
+const PK_FIBER = layout.PK_FIBER
 /// The frames looked at for a blocked task's location.
 const MAX_FRAMES = 64
 

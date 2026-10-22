@@ -1950,14 +1950,12 @@ fn fiber_trim(fs: Int, ops: Int) {
 // futex word of a thread (a root context) that sleeps on it; a fiber
 // that waits parks instead (decision 0069). All zero is a fresh park.
 
-/// xo_park (byte offsets; signaled is word 1): its lock, signaled, a
-/// thread sleeps on it (a C int), a root asleep here counts in the
-/// blocked roots (a C int), the fiber parked here.
-const PK_SIGNALED = 1
-const PK_SIGNALED_AT = 8
-const PK_SLEEPING = 16
-const PK_COUNTED = 20
-const PK_FIBER = 24
+/// xo_park's layout is layout.xo's (decision 0341).
+const PK_SIGNALED = layout.PK_SIGNALED
+const PK_SIGNALED_AT = layout.PK_SIGNALED_AT
+const PK_SLEEPING = layout.PK_SLEEPING
+const PK_COUNTED = layout.PK_COUNTED
+const PK_FIBER = layout.PK_FIBER
 
 /// The deadlock counts' layout is layout.xo's (decision 0341); these names stay
 /// for pool.xo's users.

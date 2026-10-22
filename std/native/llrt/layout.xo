@@ -7,7 +7,7 @@
 // nothing, and that a copy left elsewhere has its source's value.
 //
 // Records here: the context (ctx.xo, decision 0229), the deadlock counts
-// (pool.xo, ctx.xo), the pool and worker records (pool.xo), the cancellation node (pool.xo), the wait list and its entry (tasks.xo).
+// (pool.xo, ctx.xo), the pool and worker records (pool.xo), the cancellation node (pool.xo), the wait list and its entry (tasks.xo), the park record (pool.xo).
 
 /// The context record (ctx.xo; xo_ctx in the C runtime it came from,336 bytes, 16 aligned; the owner of each field in decision 0229):
 /// the innermost cancellation node (a scope body or the task's node).
@@ -253,3 +253,15 @@ pub const E_WRITER = 24
 pub const E_WRITER_W = 3
 pub const E_GRANTED = 28
 pub const E_SIZE = 32
+
+/// xo_park, a park record (pool.xo; 32 bytes; byte offsets, PK_SIGNALED is
+/// the word index of PK_SIGNALED_AT): its lock, signaled, a
+/// thread sleeps on it (a C int), a root asleep here counts in the
+/// blocked roots (a C int), the fiber parked here.
+pub const PK_SIGNALED = 1
+pub const PK_SIGNALED_AT = 8
+pub const PK_SLEEPING = 16
+pub const PK_COUNTED = 20
+pub const PK_FIBER = 24
+/// the record's bytes
+pub const PK_SIZE = 32

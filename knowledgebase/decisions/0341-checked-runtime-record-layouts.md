@@ -151,3 +151,9 @@ E_* are xo_cent's, a different record: its E_PREV and E_NEXT, which share
 names with this one's but not values, are marked `// own:`. Checked as
 step 3: 27 of 27 programs identical.
 
+## Step 6 (2026-10-22): the park record
+
+PK_SIGNALED to PK_FIBER and PK_SIZE (32, the C_PARK field's size) moved to
+layout.xo from pool.xo; dump.xo's PK_FIBER copy uses it. Checked as
+step 3: 27 of 27 programs identical.
+
