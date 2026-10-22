@@ -72,7 +72,7 @@ func Internal_crypto_op(_ *Task, op string, a, b, c, d Bytes) Bytes {
 	case "sha1":
 		r, ok = cryptoSHA1(what, a, b)
 	case "cpu":
-		r, ok = cryptoCPU(what, a, b, c)
+		r, ok = cryptoCPU4(what, a, b, c, d)
 	case "sysc":
 		// std/native/internal.xo sysc_op: getpid called and linked, no
 		// ThreadSanitizer in a Go build
@@ -690,6 +690,25 @@ func cryptoSHA1(what string, a, b Bytes) (Bytes, bool) {
 // cryptoCPU is the reference of std/native/llrt/cpu.xo's ops (decision
 // 0231): a carry-less product and AES rounds in arm64's form (AESE then
 // AESMC), written plainly.
+// cryptoCPU4: the cpu ops of four inputs (aes_gcm_enc, aes_gcm_dec),
+// else cryptoCPU's.
+func cryptoCPU4(what0 string, a, b, c, d Bytes) (Bytes, bool) {
+	what := strings.TrimSuffix(strings.TrimSuffix(what0, "_soft"), "_ip")
+	if what == "aes_gcm_enc" || what == "aes_gcm_dec" {
+		// aes_ctr over a, and ghash_blocks of the ciphertext (the output
+		// when sealing, a when opening) into the state d[:16] with the
+		// powers d[16:80]; the output then the state
+		out, _ := cryptoCPU("aes_ctr", a, b, c)
+		ct := out
+		if what == "aes_gcm_dec" {
+			ct = a
+		}
+		st, _ := cryptoCPU("ghash_blocks", d[:16], d[16:80], ct)
+		return out + st, true
+	}
+	return cryptoCPU(what0, a, b, c)
+}
+
 func cryptoCPU(what string, a, b, c Bytes) (Bytes, bool) {
 	what = strings.TrimSuffix(what, "_soft")
 	switch what {

@@ -1,0 +1,178 @@
+// AES-GCM's bulk on arm64 (Xo Lang 3's profile after the AES-CTR loop,
+// 2026-10-22: GHASH 53% of a seal, the CTR kernel 25%): cpu.aes_gcm_enc
+// and aes_gcm_dec as one loop whose AES rounds (AESE, AESMC) and GHASH
+// products (PMULL) are interleaved, so the two chains of dependent
+// instructions overlap, as Go's gcmAesEnc does. Sealing hashes each 64
+// bytes of ciphertext in the next round of the loop (it is written by
+// this one); opening hashes the ciphertext it decrypts in the same round.
+//
+// Registers: the AES side v0 to v3 (four blocks), v4 (the counter block,
+// its 32 bit lanes byte swapped), v5 (the increment), v6 (a round key,
+// loaded for each round), v7 (src's bytes); the GHASH side v16 (the
+// state), v17 (a block), v18 to v21 (H^4 to H), v22 (a power's halves
+// swapped), v23 to v30 (the products and the reduction), v31 (the
+// reduction's constant) and v8 (zero): d8 and d9, which a callee keeps,
+// are saved on the stack around the loop.
+
+/// The V registers aes_gcm_lines clobbers (v8 and v9 restored).
+pub fn aes_gcm_vregs() -> List[Int] { [0, 1, 2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31] }
+
+/// AES-CTR of 64 bytes from q into p: nr rounds, the round keys at rk.
+fn gcm_aes_chunk(nr: Int, rk: Str, p: Str, q: Str) -> List[Str] {
+  var t = [
+    "mov v0.16b, v4.16b",
+    "add v1.4s, v4.4s, v5.4s",
+    "add v2.4s, v1.4s, v5.4s",
+    "add v3.4s, v2.4s, v5.4s",
+    "add v4.4s, v3.4s, v5.4s",
+  ]
+  for s in 0..4 {
+    t.push("rev32 v${s}.16b, v${s}.16b")
+  }
+  for r in 0..nr - 1 {
+    t.push(if r == 0 { "ldr q6, [${rk}]" } else { "ldr q6, [${rk}, #${16 * r}]" })
+    for s in 0..4 {
+      t.push("aese v${s}.16b, v6.16b")
+      t.push("aesmc v${s}.16b, v${s}.16b")
+    }
+  }
+  t.push("ldr q6, [${rk}, #${16 * (nr - 1)}]")
+  for s in 0..4 {
+    t.push("aese v${s}.16b, v6.16b")
+  }
+  t.push("ldr q6, [${rk}, #${16 * nr}]")
+  for s in 0..4 {
+    t.push("eor v${s}.16b, v${s}.16b, v6.16b")
+  }
+  for s in 0..4 {
+    t.push(if s == 0 { "ldr q7, [${q}]" } else { "ldr q7, [${q}, #${16 * s}]" })
+    t.push("eor v${s}.16b, v${s}.16b, v7.16b")
+    t.push(if s == 0 { "str q${s}, [${p}]" } else { "str q${s}, [${p}, #${16 * s}]" })
+  }
+  t
+}
+
+/// GHASH of the 64 bytes at d + off (off 0 or -64) into v16: ghash4's
+/// products and reduction (a64ghash.xo) in this kernel's registers.
+fn gcm_ghash_chunk(d: Str, off: Int) -> List[Str] {
+  var t: List[Str] = []
+  for j in [1, 2, 3, 0] {
+    let o = off + 16 * j
+    t.push(if o == 0 { "ldr q17, [${d}]" } else if o > 0 { "ldr q17, [${d}, #${o}]" } else { "ldur q17, [${d}, #${o}]" })
+    t.push("rev64 v17.16b, v17.16b")
+    if j == 0 {
+      t.push("eor v17.16b, v17.16b, v16.16b")
+    }
+    let h = "v${18 + j}"
+    t.push("ext v22.16b, ${h}.16b, ${h}.16b, #8")
+    if j == 1 {
+      t = t + [
+        "pmull2 v23.1q, v17.2d, v22.2d",
+        "pmull v24.1q, v17.1d, v22.1d",
+        "pmull v25.1q, v17.1d, ${h}.1d",
+        "pmull2 v26.1q, v17.2d, ${h}.2d",
+        "eor v25.16b, v25.16b, v26.16b",
+      ]
+    } else {
+      t = t + [
+        "pmull2 v26.1q, v17.2d, v22.2d",
+        "pmull v27.1q, v17.1d, v22.1d",
+        "pmull v28.1q, v17.1d, ${h}.1d",
+        "pmull2 v29.1q, v17.2d, ${h}.2d",
+        "eor v23.16b, v23.16b, v26.16b",
+        "eor v24.16b, v24.16b, v27.16b",
+        "eor v28.16b, v28.16b, v29.16b",
+        "eor v25.16b, v25.16b, v28.16b",
+      ]
+    }
+  }
+  // the reduction (a64ghash.xo's, v20 -> v23, v21 -> v24, v23 -> v25,
+  // v24 -> v26 ... v28 -> v30, C in v31, zero in v8)
+  t + [
+    "shl v29.2d, v23.2d, #1",
+    "pmull v30.1q, v29.1d, v31.1d",
+    "ext v26.16b, v8.16b, v25.16b, #8",
+    "ext v27.16b, v25.16b, v8.16b, #8",
+    "eor v23.16b, v23.16b, v26.16b",
+    "eor v24.16b, v24.16b, v27.16b",
+    "ushr v26.2d, v23.2d, #63",
+    "ushr v27.2d, v24.2d, #63",
+    "shl v23.2d, v23.2d, #1",
+    "shl v24.2d, v24.2d, #1",
+    "ext v28.16b, v8.16b, v26.16b, #8",
+    "ext v26.16b, v26.16b, v27.16b, #8",
+    "eor v23.16b, v23.16b, v28.16b",
+    "eor v24.16b, v24.16b, v26.16b",
+    "ext v27.16b, v23.16b, v24.16b, #8",
+    "ext v28.16b, v8.16b, v29.16b, #8",
+    "eor v27.16b, v27.16b, v30.16b",
+    "eor v27.16b, v27.16b, v28.16b",
+    "pmull v26.1q, v27.1d, v31.1d",
+    "trn2 v28.2d, v27.2d, v24.2d",
+    "ext v29.16b, v8.16b, v27.16b, #8",
+    "eor v28.16b, v28.16b, v26.16b",
+    "eor v28.16b, v28.16b, v29.16b",
+    "ext v16.16b, v28.16b, v28.16b, #8",
+  ]
+}
+
+/// The two instruction lists merged, each in its own order, spread
+/// evenly (the registers they use are disjoint). Opening in place (dst
+/// is src) relies on the spread: GHASH's loads are in the first half of
+/// its list and the AES stores in the last tenth of its, so each load
+/// reads the ciphertext before its block is overwritten.
+fn interleave(a: List[Str], b: List[Str]) -> List[Str] {
+  var out: List[Str] = []
+  var i = 0
+  var j = 0
+  while i < a.len() || j < b.len() {
+    // keep i / a.len() and j / b.len() level
+    if j >= b.len() || (i < a.len() && i * b.len() <= j * a.len()) {
+      out.push(a[i])
+      i += 1
+    } else {
+      out.push(b[j])
+      j += 1
+    }
+  }
+  out
+}
+
+/// cpu.aes_gcm_enc (seal) or aes_gcm_dec (open) with nr rounds: dst =
+/// src xor AES-CTR's key stream for the n bytes (a multiple of 64) from
+/// the counter block at iv (as aes_ctr_lines), and the GHASH of the
+/// ciphertext (dst when sealing, src when opening) into the state at y
+/// with the H powers at hp (ghash4's table); p, q and c scratch registers
+/// for dst, src and the bytes left.
+pub fn aes_gcm_lines(nr: Int, seal: Bool, dst: Str, src: Str, rk: Str, iv: Str, n: Str, y: Str, hp: Str, p: Str, q: Str, c: Str) -> List[Str] {
+  var t = [
+    "stp d8, d9, [sp, #-16]!",
+    "movi v8.16b, #0",
+    "mov w${p[1..]}, #1",
+    "dup v5.4s, w${p[1..]}",
+    "ext v5.16b, v8.16b, v5.16b, #4",
+    "ldr q4, [${iv}]",
+    "rev32 v4.16b, v4.16b",
+    "movi v31.16b, #194",
+    "shl v31.2d, v31.2d, #56",
+    "ldr q16, [${y}]",
+  ]
+  for j in 0..4 {
+    t.push(if j == 0 { "ldr q18, [${hp}]" } else { "ldur q${18 + j}, [${hp}, #${24 * j}]" })
+  }
+  t = t + ["mov ${p}, ${dst}", "mov ${q}, ${src}", "mov ${c}, ${n}", "cbz ${c}, 9f"]
+  if seal {
+    // the first 64 bytes encrypted alone; then each round encrypts the
+    // next and hashes the one before; the last hashed after the loop
+    t = t + gcm_aes_chunk(nr, rk, p, q)
+    t = t + ["add ${p}, ${p}, #64", "add ${q}, ${q}, #64", "subs ${c}, ${c}, #64", "b.eq 8f", "1:"]
+    t = t + interleave(gcm_aes_chunk(nr, rk, p, q), gcm_ghash_chunk(p, -64))
+    t = t + ["add ${p}, ${p}, #64", "add ${q}, ${q}, #64", "subs ${c}, ${c}, #64", "b.hi 1b", "8:"]
+    t = t + gcm_ghash_chunk(p, -64)
+  } else {
+    t.push("1:")
+    t = t + interleave(gcm_aes_chunk(nr, rk, p, q), gcm_ghash_chunk(q, 0))
+    t = t + ["add ${p}, ${p}, #64", "add ${q}, ${q}, #64", "subs ${c}, ${c}, #64", "b.hi 1b"]
+  }
+  t + ["9:", "str q16, [${y}]", "ldp d8, d9, [sp], #16"]
+}

@@ -129,6 +129,33 @@ fn main(os: Os) {
       }
     }
   }
+  // AES-GCM's bulk (cpu.aes_gcm_enc and aes_gcm_dec): the AES rounds and
+  // GHASH products interleaved on arm64 and LLVM, apart and in place,
+  // against the portable body
+  for i in 0..inputs.len() {
+    for nk in [11, 15] {
+      var ks = b""
+      for j in 0..nk {
+        ks = ks + inputs[(i + 3 + j) % inputs.len()]
+      }
+      let iv = inputs[(i + 1) % inputs.len()]
+      var d = inputs[(i + 2) % inputs.len()]
+      for j in 0..4 {
+        d = d + inputs[(i + 5 + j) % inputs.len()]
+      }
+      for nb in [0, 1, 2, 8] {
+        var data = b""
+        for j in 0..4 * nb {
+          data = data + inputs[(i + j) % inputs.len()]
+        }
+        for op in ["aes_gcm_enc", "aes_gcm_dec", "aes_gcm_enc_ip", "aes_gcm_dec_ip"] {
+          let e = internal.crypto_op("cpu.${op}", data, ks, iv, d)
+          let es = internal.crypto_op("cpu.${op}_soft", data, ks, iv, d)
+          os.stdio.println("${op} ${i} ${nk} ${64 * nb} ${internal.crypto_op("hash.sha256", e, b"", b"", b"").to_hex()} ${if e == es { "same" } else { "soft differs" }}")
+        }
+      }
+    }
+  }
   // four blocks at once (cpu.aes_enc10x4, 12x4, 14x4): the four states
   // side by side on arm64 and LLVM, against the portable body; 11, 13
   // and 15 round keys from the inputs
