@@ -1,5 +1,21 @@
 # prelude changes
 
+## 2026-10-22: perf: split, lines, trim and trim_prefix/suffix return views (decision 0330)
+
+- Kind: perf
+- Commit: this commit
+- Found by: decision 0330's step list (hot ports), the std survey of 2026-10-22
+- Go reference: strings.Split, TrimSpace, TrimPrefix (substrings share the string)
+- Test: golden views_split (arm64, LLVM, Go); bench/results/views-split-2026-10-22.md
+
+`Str.split`, `lines`, `trim`, `trim_start`, `trim_end`, `trim_prefix` and
+`trim_suffix` (and the parsers built on `raw.str_slice`: http routing,
+toml, regexp submatches) return views of their argument on native targets
+instead of copies, when both ends of the piece are on UTF-8 boundaries (a
+cut inside a sequence still copies). Native arm64, instructions: split
+-13.4%, lines -13.9%, trim -10.9%, trim_prefix/suffix -10.6%. A piece
+keeps the whole source alive, as in Go.
+
 ## 2026-10-22: perf: Str and Bytes slices are views (decision 0330)
 
 - Kind: perf

@@ -195,7 +195,14 @@ pub fn str_slice(s: Str, lo0: Int, hi0: Int) -> Str {
   if hi < lo {
     hi = lo
   }
-  str_at(data(s) + lo, hi - lo)
+  // a view of s (decision 0330) when both ends are on UTF-8 boundaries, as
+  // `s[lo..hi]` requires; a cut inside a sequence (callers slice bytes,
+  // and a Str may hold an invalid one) still copies
+  let d = data(s)
+  if (lo < n && rt.mem_load(d, lo, 1) & 0xC0 == 0x80) || (hi < n && rt.mem_load(d, hi, 1) & 0xC0 == 0x80) {
+    return str_at(d + lo, hi - lo)
+  }
+  s[lo..hi]
 }
 
 /// The elements of xs with sep between them.

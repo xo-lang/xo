@@ -1,0 +1,34 @@
+// Decision 0330 step 5: split, lines, trim and trim_prefix/suffix return
+// views of their argument; the pieces compare, hash, concatenate and
+// outlive the source like any string.
+fn pieces() -> List[Str] {
+  let src = "ab,é✓,,cd\n" + "x".repeat(40)
+  src.split(",")
+}
+
+fn main(os: Os) {
+  let ps = pieces()
+  os.stdio.println("${ps.len()} ${ps[0]} ${ps[1]} ${ps[1].len()} [${ps[2]}] ${ps[3].len()}")
+  var m: Map[Str, Int] = {}
+  for p in ps {
+    m[p] = (m.get(p) ?? 0) + 1
+  }
+  os.stdio.println("${m.len()} ${m.get("ab") ?? -1} ${m.get("é✓") ?? -1} ${m.get("") ?? -1}")
+  var b = ps[0]
+  b = b + "!"
+  b = b + "?"
+  os.stdio.println("${b} ${ps[0]}")
+  let ls = "one\r\ntwo\n\nthree".lines()
+  os.stdio.println("${ls.len()} ${ls[0]} ${ls[1]} [${ls[2]}] ${ls[3]} ${ls[0] == "one"}")
+  let t = "  \t é pad ✓ \n".trim()
+  os.stdio.println("[${t}] ${t.len()} [${"  x ".trim_start()}] [${"  x ".trim_end()}] ${t == "é pad ✓"}")
+  let a = "Bearer token123".trim_prefix("Bearer ")
+  let z = "file.tar.gz".trim_suffix(".gz")
+  os.stdio.println("${a} ${z} ${a == "token123"} ${"x".trim_prefix("y")} ${"é".split("").len()}")
+  var acc = ""
+  for p in "k1=v1;k2=v2;k3=v3".split(";") {
+    let kv = p.split("=")
+    acc = acc + kv[1] + ","
+  }
+  os.stdio.println(acc)
+}

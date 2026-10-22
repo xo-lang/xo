@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+4 ab é✓ 5 [] 43
+4 1 1 1
+ab!? ab
+4 one two [] three true
+[é pad ✓] 10 [x ] [  x] true
+token123 file.tar true x 1
+v1,v2,v3,
+--- stderr
