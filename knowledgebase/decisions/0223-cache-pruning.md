@@ -146,3 +146,63 @@ packs/<xx>/. Alternatives: a size ledger updated on every store (an
 append per store from many processes, and every removal by another
 process to account for), or keeping the in-build whole walk with a
 longer interval (the build that falls on it still stalls).
+
+## Addendum: where the back-end cache's churn comes from (2026-10-22, Xo Publish)
+
+Measured for the owner's cap decision (no cap or threshold changed).
+
+The prune removed 42 to 89 GiB an hour from 13:00 to 23:00 on
+2026-10-21 and 42 to 46 GiB an hour from 00:00 to 02:00 on 2026-10-22
+(prune-log: the sum of bytes before minus after for each slice, by hour),
+against the 16 GiB cap; the cache sat at about 17.2 GB before each
+slice.
+
+- Part packs (fixed, 056db2d07): each gate's one self-build in a new
+  worktree wrote a 648 MB pack of xo's parts no build read. After the
+  fix the part packs went from 9.3 GB to 1.1 GB. The hourly churn did
+  not drop with it (46.1 GiB at 02:00).
+- New code generation keys (correct invalidation): the entries are keyed
+  by the code generation key (decision 0275), and 183 commits touched
+  compiler/ or std/native from 13:00 on 2026-10-21 to 04:30 on
+  2026-10-22, about 12 an hour. Each one that changes a code generation
+  input gives every program built after it new fn, inl, rc and sum keys:
+  a cold build of xo writes fe 100 MB, fn 387, inl 194, rc 154, sum 57,
+  obj 115 (xo of 2719f79a0, private cache). In the last hour of
+  2026-10-22's quiet window the loose stores were fn 2.1 GB, inl 1.1,
+  obj 0.9, rc 0.7, fe 0.7, sum 0.1. These can only be avoided by
+  keeping fewer generations: a cap or policy question for the owner.
+- The worktree's path (comp_dir): a second worktree at the same commit
+  reuses every fe, fn, inl, rc and sum entry (8640/8640 functions) but
+  none of the objects (0/117, 115 MB written again) or the build
+  target's lists (parts, parse, borrows), because the paths are in the
+  objects' DWARF. About 1 GB an hour at 2026-10-22's gate rate, a few
+  percent of the churn.
+- Module check entries (fixed, ba502771a): about 21 per build of xo were
+  written with the module skip off (the default) and never read; now
+  stored only when XO_CHK_CACHE or verify reads them.
+
+Every store now appends `UNIX store KIND BYTES id ID` to DIR/store-log
+(ID: 12 hex digits of the code generation key's hash), so a day of it
+splits the churn into new keys and repeats by kind.
+
+Proposed, not built: objects without the worktree's path. The path
+reaches a cached object in three inline DW_FORM_string values
+(compiler/arm64 debug.xo: line table directories 0 and 1, comp_dir and
+std_root, and the unit's DW_AT_comp_dir). An inline string cannot be
+replaced by one of another length without moving unit_length,
+header_length and every unit relative reference after it, so the plan
+is fixed slots: emit the three as DW_FORM_strp into 1 KiB NUL padded
+slots of the object's __debug_str (.debug_str), key the object on its
+assembly with placeholder paths, and write the real paths into the
+slots when the object leaves the cache (asmparts.xo
+cached_macho_objects holds its bytes). The DWARF stays byte clean (no
+padded paths); four readers need DW_FORM_strp first: compiler/macho
+dsym.xo (copy __debug_str and rebase each object's strp, with comp_dir
+moved to a fixed place in the unit as addr_base and loclists_base
+are), compiler/macho elflink.xo, std/native/llrt dwline.xo (tracebacks),
+and compiler/debug (its line header reader has strp). Gate:
+TestDebugInfoSameOutputLLVM, TestDwarfReader, TestUnwind, the
+XO_TRACEBACK=locals goldens, and a linux/arm64 Docker run. Rejected:
+padding the paths to a fixed width with extra slashes (no reader
+changes, but the padded paths show in tools and tracebacks; lead,
+2026-10-22).
