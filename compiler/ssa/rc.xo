@@ -1203,6 +1203,15 @@ fn (var b: Builder) rc_run(r0: Rc, keys: List[Str], entries: Map[Str, Bytes], su
 /// The reference counting of function fi (f), after borrow inference.
 fn (var r: Rc) rc_func(var f: Func, fi: Int) {
   r.fi = fi
+  // a function with no body, one block with no instruction: `xo dev dump
+  // ssa --fn=NAME` makes every function NAME matches a root, and a std
+  // function no build reaches can be one; walk reads each block's
+  // terminator (2026-10-22: --stage=rc faulted on the slice 0..-1). A
+  // build has none
+  if f.blocks.len() == 1 && f.blocks[0].instrs.is_empty() {
+    f.borrowed = r.borrowed[fi]
+    return
+  }
   var c = RcFunc{}
   r.borrow_projections(f)
   r.liveness(f, c)
