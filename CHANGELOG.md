@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The back-end cache's objects and parts name no directory, so a build
+  in another worktree at the same commit reuses them (xo: 0/117 objects
+  before): the arm64 emitter's DWARF names the compile directory and
+  std/'s root through .debug_str slots filled as each object leaves the
+  compiler. A string literal binding's location list no longer depends
+  on the part's other functions (linux/arm64 builds through the cache
+  differed from cache-off ones in their DWARF).
 - The Go backend compiles a std method call on a value holding a Map
   again (`Request.client_ip`, `Embed.Dir.paths`): since decision 0335 the
   own-marked receiver was not addressable for std/rt's pointer methods.

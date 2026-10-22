@@ -101,8 +101,8 @@ var codegenEnv = map[string]inputClass{
 
 // codegenFields classifies the module fields compiler/xo sets.
 var codegenFields = map[string]inputClass{
-	"comp_dir":      {"keyed", "comp_dir ${m.comp_dir.len()}"},
-	"std_root":      {"keyed", "std_root ${m.std_root.len()}"},
+	"comp_dir":      {"none", ""}, // only in the .debug_str path slots, filled after the caches (arm64 debug.xo dw_slots_obj, 2026-10-22)
+	"std_root":      {"none", ""}, // only in the .debug_str path slots, filled after the caches (arm64 debug.xo dw_slots_obj, 2026-10-22)
 	"debug_info":    {"keyed", "debug=${m.debug_info}"},
 	"dw_data_addrs": {"keyed", "dwaddr=${m.dw_data_addrs}"},
 	"nolibc":        {"keyed", "nolibc=${m.nolibc}"},

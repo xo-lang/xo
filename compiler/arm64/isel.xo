@@ -20,6 +20,7 @@ fn (var g: G) function(fi: Int) {
     g.skipped.push("${g.m.funcs[fi].name}: ${why}")
     return
   }
+  g.fn_strs = {}
   g.begin_func(fi)
   g.isel()
   // the optional passes (passes.xo) unless $XO_PASSES turns them off

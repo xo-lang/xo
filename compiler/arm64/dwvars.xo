@@ -515,8 +515,9 @@ fn (var g: G) dv_const(a: ssa.Aux) -> List[(Str, List[Int])] {
     B(b) => [("", dv_int(if b { 1 } else { 0 }))]
     S(..) | Bs(..) => {
       let bs = const_bytes(a) ?? b""
-      let have = if g.canon { g.cstr_at.contains(bs) } else { g.strs.contains(bs) }
-      if !g.m.dw_data_addrs || !have {
+      // only a string this function's code names exists in every build
+      // of it (fn_strs)
+      if !g.m.dw_data_addrs || !g.fn_strs.contains(bs) {
         return []
       }
       [(g.str_obj(bs), []), ("", dv_int(bs.len()))]

@@ -185,7 +185,7 @@ Every store now appends `UNIX store KIND BYTES id ID` to DIR/store-log
 (ID: 12 hex digits of the code generation key's hash), so a day of it
 splits the churn into new keys and repeats by kind.
 
-Proposed, not built: objects without the worktree's path. The path
+Built the same day (lead's decision; gotchas/cached-object-names-worktree.md, TestBackendCacheObjectsAcrossDirs): objects without the worktree's path. The path
 reaches a cached object in three inline DW_FORM_string values
 (compiler/arm64 debug.xo: line table directories 0 and 1, comp_dir and
 std_root, and the unit's DW_AT_comp_dir). An inline string cannot be

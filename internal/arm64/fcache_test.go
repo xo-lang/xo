@@ -2489,3 +2489,95 @@ func TestCacheStoreLog(t *testing.T) {
 		t.Errorf("%d module check entries stored with the module skip off", len(fs))
 	}
 }
+
+// TestBackendCacheObjectsAcrossDirs: a split program's objects name no
+// directory in the back-end cache (their .debug_str path slots hold
+// placeholders, filled as each object leaves the compiler; 2026-10-22: a
+// second worktree reused none of xo's 117 objects), so the same program
+// built in another directory reuses every object, its binary is that
+// directory's cache-off build, and its debug information names that
+// directory, not the first one or a placeholder (the dSYM on darwin, the
+// executable's .debug_str on linux).
+func TestBackendCacheObjectsAcrossDirs(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-objdirs-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	// the directory xo sees as its working directory (/private/var, not
+	// /var, on macOS)
+	if r, err := filepath.EvalSymlinks(work); err == nil {
+		work = r
+	}
+	var b strings.Builder
+	for i := 0; i < 300; i++ {
+		fmt.Fprintf(&b, "fn f%d(x: Int) -> Int {\n  if x > %d {\n    f%d(x - 1) + %d\n  } else {\n    x * 3\n  }\n}\n\n", i, i, (i+1)%300, i)
+	}
+	b.WriteString("fn main(os: Os) {\n  os.stdio.println(\"${f0(400)}\")\n}\n")
+	// two directories of different lengths
+	dirs := []string{filepath.Join(work, "a"), filepath.Join(work, "second-dir")}
+	for _, d := range dirs {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, "main.xo"), []byte(b.String()), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, target := range []string{"", "linux/arm64"} {
+		cache := filepath.Join(work, "cache"+strings.ReplaceAll(target, "/", "-"))
+		build := func(dir string, env ...string) ([]byte, []byte, string) {
+			t.Helper()
+			out := filepath.Join(work, "out", "prog")
+			os.RemoveAll(filepath.Join(work, "out"))
+			args := []string{"build", "--backend=arm64", "--phase-times", "-o", out}
+			if target != "" {
+				args = append(args, "--targets="+target)
+			}
+			cmd := testtmp.Guard(exec.Command(xo, append(args, ".")...))
+			cmd.Dir = dir
+			cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache), env...)
+			log, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("%s %s: %v\n%s", target, dir, err, log)
+			}
+			bin, err := os.ReadFile(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dbg := bin
+			if target == "" {
+				if dbg, err = os.ReadFile(out + ".dSYM/Contents/Resources/DWARF/prog"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			return bin, dbg, string(log)
+		}
+		build(dirs[0], "XO_BACKEND_CACHE=on")
+		on, dbg, log := build(dirs[1], "XO_BACKEND_CACHE=on")
+		m := regexp.MustCompile(`cache objects (\d+)/(\d+) reused`).FindStringSubmatch(log)
+		if m == nil || m[1] != m[2] || m[2] == "0" || m[2] == "1" {
+			t.Errorf("%s: the second directory's build did not reuse every object:\n%s", target, log)
+		}
+		off, _, _ := build(dirs[1], "XO_BACKEND_CACHE=off")
+		if !bytes.Equal(on, off) {
+			t.Errorf("%s: the second directory's build through the cache differs from its cache-off build", target)
+		}
+		if !bytes.Contains(dbg, []byte(dirs[1]+"\x00")) {
+			t.Errorf("%s: the debug information does not name %s", target, dirs[1])
+		}
+		if bytes.Contains(dbg, []byte(dirs[0]+"\x00")) || bytes.Contains(dbg, []byte("@@xo-dwarf-slot")) {
+			t.Errorf("%s: the debug information names the first directory or a placeholder", target)
+		}
+	}
+}

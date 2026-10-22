@@ -365,6 +365,7 @@ fn (g: G) tramp_def(name: Str) -> Str {
 
 /// The label of the immortal object of a string literal.
 fn (var g: G) str_obj(s: Bytes) -> Str {
+  g.fn_strs[s] = true
   if g.canon {
     return g.canon_str(s)
   }

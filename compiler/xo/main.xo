@@ -1012,7 +1012,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     let s = "${dir}/prog-${tgoos}.s"
     let keep_asm = (os.env.get("XO_KEEP_ASM") ?? "") == "1"
     if !o.asm_path.is_empty() {
-      write_or_fail(os, dir, o.asm_path, p.text().bytes())
+      write_or_fail(os, dir, o.asm_path, dw_real(gm, p.text()).bytes())
     }
     // --ld=macho links arm64 programs without cc, linux/arm64 ones from
     // any host (decision 0182); with no --ld, the host's darwin/arm64
@@ -1040,7 +1040,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // cc (or clang, windows) reads the whole file when there are no parts
     let cc_reads = if win { o.assembler == "cc" } else { !macho_as }
     if keep_asm || asm_only || (cc_reads && p.parts.len() <= 1) {
-      write_or_fail(os, dir, s, p.text().bytes())
+      write_or_fail(os, dir, s, dw_real(gm, p.text()).bytes())
     }
     t = lap(os, phases, "write", t)
     if march == "amd64" && tgoos == "windows" {
@@ -1053,7 +1053,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         for (i, part) in p.parts.indexed() {
           let ps = "${dir}/prog-${tgoos}.${i}.s"
           if keep_asm || o.assembler == "cc" {
-            write_or_fail(os, dir, ps, part.bytes())
+            write_or_fail(os, dir, ps, dw_real(gm, part).bytes())
           }
           wsrcs.push(ps)
         }
@@ -1065,7 +1065,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         var objs: List[Str] = []
         for (i, txt) in texts.indexed() {
           let obj = if texts.len() > 1 { "${dir}/prog-${tgoos}.${i}.obj" } else { "${dir}/prog-${tgoos}.obj" }
-          match assemble_coff(txt) {
+          match assemble_coff(dw_real(gm, txt)) {
             Ok(b) => write_or_fail(os, dir, obj, b)
             Err(e) => fail(os, "assembler: ${e}")
           }
@@ -1140,7 +1140,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       for (i, part) in p.parts.indexed() {
         let ps = "${dir}/prog-${tgoos}.${i}.s"
         if keep_asm || !macho_as {
-          write_or_fail(os, dir, ps, part.bytes())
+          write_or_fail(os, dir, ps, dw_real(gm, part).bytes())
         }
         progs.push(ps)
       }
@@ -1154,7 +1154,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       for (i, r) in assembled.indexed() {
         let obj = if progs.len() > 1 { "${dir}/prog-${tgoos}.${i}.o" } else { "${dir}/prog-${tgoos}.o" }
         match r {
-          Ok(b) => write_or_fail(os, dir, obj, b)
+          // the real paths in its .debug_str slots (a cached object
+          // names no worktree)
+          Ok(b) => write_or_fail(os, dir, obj, if gm.debug_info { arm64.dw_slots_obj(b, gm.comp_dir, gm.std_root) } else { b })
           Err(e) => fail(os, "assembler: ${e}")
         }
         objs.push(obj)
@@ -1195,7 +1197,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       var lsrcs = srcs
       if progs.len() > 1 && !macho_as {
         // the parts assembled by parallel cc processes, then linked
-        let (objs, why, nasm) = cached_cc_assemble(os, ctx, cc, flags + memo_sysroot(os, ctx), progs, p.parts, jobs)
+        let (objs, why, nasm) = cached_cc_assemble(os, ctx, cc, flags + memo_sysroot(os, ctx), progs, p.parts.map(fn(x) { dw_real(gm, x) }), jobs)
         if !why.is_empty() {
           os.stdio.eprint(why)
           fail(os, "${cc} failed")
@@ -1233,6 +1235,13 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
 }
 
 /// The tasks of the parallel stages of a build (ssa insert_rc_jobs,
+/// The generated text t with the real paths in its .debug_str slots
+/// (arm64.dw_slots_text), for every reader but compiler/macho's
+/// assembler, whose objects are patched (arm64.dw_slots_obj).
+fn dw_real(gm: ssa.Module, t: Str) -> Str {
+  if gm.debug_info { arm64.dw_slots_text(t, gm.comp_dir, gm.std_root) } else { t }
+}
+
 /// arm64.generate_parallel, the parts' assembly): $XO_EMIT_JOBS, else
 /// the physical cores, at most 16 and a third of the memory in GB. The
 /// output does not depend on it.

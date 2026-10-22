@@ -37,7 +37,9 @@ pub fn part_keys(m: ssa.Module, os: Str, fkeys: List[Str]) -> List[Str] {
   // output reads none of them (its labels count from 0 in its
   // namespace), and a cut that moves (a value cut, an added function)
   // left every later part's key changed
-  head.write("comp_dir ${m.comp_dir.len()}:${m.comp_dir}\nstd_root ${m.std_root.len()}:${m.std_root}\n")
+  // no paths: the text holds the .debug_str slots' placeholders
+  // (debug.xo DW_SLOT_COMP), filled where the object leaves the compiler
+  head.write("dwarf path slots ${DW_SLOT}\n")
   if m.debug_info {
     head.write("types ${crypto.sha256(ssa.type_keys(m).join("\n").bytes()).to_hex()}\n")
   }

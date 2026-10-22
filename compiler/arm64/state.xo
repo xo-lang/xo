@@ -181,6 +181,12 @@ struct G {
   /// the last file of a split generation: the helper of each global name
   ext_keys: Map[Str, Str] = {}
   strs: Map[Bytes, Str] = {}
+  /// The strings the current function's code names (str_obj): a
+  /// literal binding is described by its string only then (dv_const), in
+  /// a fresh and a canonical text alike (g.strs holds the part's, so
+  /// another function's literal decided it, and a build through the
+  /// function cache wrote other location lists, 2026-10-22)
+  fn_strs: Map[Bytes, Bool] = {}
   str_ord: List[Bytes] = []
   locs: Map[Str, Str] = {}
   loc_ord: List[Str] = []

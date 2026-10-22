@@ -7,6 +7,64 @@
 // relocations only, which every assembler and compiler/macho handle);
 // every length is counted here, so no label differences are needed.
 
+/// The size of each path slot of a part's .debug_str (dw_slot_text).
+pub const DW_SLOT = 1024
+
+/// The placeholders the generated text holds in the .debug_str slots of
+/// the compile directory and std/'s root: the text, and so the back-end
+/// cache's keys of its objects and parts, names no worktree (2026-10-22:
+/// a second worktree reused none of xo's 117 objects, 115 MB). The real
+/// paths go in where the text or object leaves the compiler
+/// (dw_slots_text, dw_slots_obj). The slots are DW_FORM_strp targets at
+/// fixed places, so a patch moves no offset.
+pub const DW_SLOT_COMP = "@@xo-dwarf-slot:comp_dir@@"
+pub const DW_SLOT_STD = "@@xo-dwarf-slot:std_root@@"
+
+/// A slot's line of assembly: s's bytes, then zeros to DW_SLOT (a path of
+/// DW_SLOT bytes or more is written as ".", the compile directory
+/// relative to the debugger's).
+fn dw_slot_text(s0: Str) -> Str {
+  let s = if s0.len() >= DW_SLOT { "." } else { s0 }
+  var bs: List[Str] = []
+  for c in s.bytes() {
+    bs.push("${Int(c)}")
+  }
+  for _ in s.len()..DW_SLOT {
+    bs.push("0")
+  }
+  "\t.byte ${bs.join(", ")}\n"
+}
+
+/// The generated text with the real paths in its .debug_str slots, for
+/// an assembler other than compiler/macho's, an assembly file, or
+/// `xo asm`.
+pub fn dw_slots_text(text: Str, comp_dir: Str, std_root: Str) -> Str {
+  if !text.contains(DW_SLOT_COMP) {
+    return text
+  }
+  text.replace(dw_slot_text(DW_SLOT_COMP), dw_slot_text(if comp_dir.is_empty() { "." } else { comp_dir })).replace(dw_slot_text(DW_SLOT_STD), dw_slot_text(std_root))
+}
+
+/// An object assembled from the generated text with the real paths in
+/// its .debug_str slots (an object from the back-end cache too).
+pub fn dw_slots_obj(obj: Bytes, comp_dir: Str, std_root: Str) -> Bytes {
+  var b = obj
+  for (mark, path) in [(DW_SLOT_COMP, if comp_dir.is_empty() { "." } else { comp_dir }), (DW_SLOT_STD, std_root)] {
+    let at = b.find(mark.bytes()) ?? -1
+    if at < 0 || at + DW_SLOT > b.len() {
+      continue
+    }
+    let p = if path.len() >= DW_SLOT { "." } else { path }
+    var w = BytesBuilder.with_capacity(b.len())
+    w.write(b[0..at])
+    w.write_str(p)
+    w.write(Bytes.zeroed(DW_SLOT - p.len()))
+    w.write(b[at + DW_SLOT..b.len()])
+    b = w.freeze()
+  }
+  b
+}
+
 /// The debug sections of the part, or "" with none.
 fn (g: G) debug_sections(with_static: Bool) -> Str {
   if !g.m.debug_info || (g.dbgs.is_empty() && !with_static) {
@@ -70,8 +128,12 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
     // a unit for xo_static alone (the last file of a split build)
     files.push("<generated>")
   }
-  let dir = if g.m.comp_dir.is_empty() { "." } else { g.m.comp_dir }
   var out = StrBuilder.new()
+  // the paths: DW_FORM_strp into the part's .debug_str slots
+  // (DW_SLOT_COMP, DW_SLOT_STD), by offset within the object on Mach-O
+  // (compiler/macho dsym.xo rebases them) and by label on ELF
+  let comp_lab = g.local("xo_dwcomp_${g.ns}")
+  let std_lab = g.local("xo_dwstd_${g.ns}")
   // .debug_line
   var hdr = Dw{}
   hdr.u8(1)   // minimum_instruction_length
@@ -86,13 +148,14 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
   // directories: the compile directory, and the one std/'s file names
   // are relative to
   let stdd = !g.m.std_root.is_empty()
-  hdr.u8(1)   // directory_entry_format_count
-  hdr.uleb(1) // DW_LNCT_path
-  hdr.uleb(8) // DW_FORM_string
+  // (the paths at bytes 34 and 38 of the table, for dsym.xo)
+  hdr.u8(1)      // directory_entry_format_count
+  hdr.uleb(1)    // DW_LNCT_path
+  hdr.uleb(0x0e) // DW_FORM_strp
   hdr.uleb(if stdd { 2 } else { 1 })
-  hdr.str(dir)
+  hdr.offset(if mac { "0" } else { comp_lab })
   if stdd {
-    hdr.str(g.m.std_root)
+    hdr.offset(if mac { "${DW_SLOT}" } else { std_lab })
   }
   hdr.u8(2)    // file_name_entry_format_count
   hdr.uleb(1)  // DW_LNCT_path
@@ -167,8 +230,9 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
   out.write("${abbrev_lab}:\n")
   // 1: compile_unit, children: stmt_list, low_pc, high_pc (the part's
   // functions are one run of its text; at fixed places, bytes 13, 17,
-  // and 25, for compiler/macho dsym.xo), producer, language, name,
-  // comp_dir; 2: subprogram, children: name, low_pc, high_pc; 3: an
+  // and 25, for compiler/macho dsym.xo), producer, language, comp_dir
+  // (DW_FORM_strp, at byte 46 after loclists_base and addr_base), name;
+  // 2: subprogram, children: name, low_pc, high_pc; 3: an
   // inlined callee's abstract subprogram: name, inline (1, inlined); 4:
   // inlined_subroutine, children (the calls inlined into it):
   // abstract_origin (unit relative), low_pc, high_pc, call_file,
@@ -184,7 +248,7 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
   // xo_static (decision 0253: the debugger finds the runtime's records
   // through it): name, type, external, location (exprloc, DW_OP_addr);
   // 11: array_type, children: type; 12: subrange_type: count
-  out.write("\t.byte 1, 0x11, 1, 0x10, 0x17, 0x11, 0x01, 0x12, 0x01, 0x25, 0x08, 0x13, 0x05, 0x8c, 0x01, 0x17, 0x73, 0x17, 0x03, 0x08, 0x1b, 0x08, 0, 0\n")
+  out.write("\t.byte 1, 0x11, 1, 0x10, 0x17, 0x11, 0x01, 0x12, 0x01, 0x25, 0x08, 0x13, 0x05, 0x8c, 0x01, 0x17, 0x73, 0x17, 0x1b, 0x0e, 0x03, 0x08, 0, 0\n")
   out.write("\t.byte 2, 0x2e, 1, 0x03, 0x08, 0x11, 0x01, 0x12, 0x01, 0, 0\n")
   out.write("\t.byte 3, 0x2e, 0, 0x03, 0x08, 0x20, 0x0b, 0, 0\n")
   out.write("\t.byte 4, 0x1d, 1, 0x31, 0x13, 0x11, 0x01, 0x12, 0x01, 0x58, 0x0f, 0x59, 0x0f, 0x57, 0x0f, 0, 0\n")
@@ -221,8 +285,9 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
   die.offset(if mac { "12" } else { ll_base })
   let addr_base = g.local("xo_dwaddrbase_${g.ns}")
   die.offset(if mac { "8" } else { addr_base })
+  // comp_dir (DW_FORM_strp) at byte 46, for dsym.xo, then the name
+  die.offset(if mac { "0" } else { comp_lab })
   die.str(files[0])
-  die.str(dir)
   // the types of the variables (unit relative offsets, by type name),
   // then the objects their pointers point at
   var tys = DwTys{}
@@ -363,6 +428,9 @@ fn (g: G) debug_sections(with_static: Bool) -> Str {
   for a in addr_syms {
     out.write("\t.quad ${a}\n")
   }
+  // .debug_str: the path slots (placeholders, dw_slots_obj)
+  out.write(if mac { "\t.section __DWARF,__debug_str,regular,debug\n" } else { "\t.section .debug_str,\"\",@progbits\n" })
+  out.write("${comp_lab}:\n${dw_slot_text(DW_SLOT_COMP)}${std_lab}:\n${dw_slot_text(DW_SLOT_STD)}")
   out.write(g.section("text"))
   out.freeze()
 }
