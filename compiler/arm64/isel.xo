@@ -1350,7 +1350,7 @@ fn (var g: G) instr1(v: Int) {
     Unbox => g.unbox_op(v)
     Fault => {
       let ws = g.words(x.args[0])
-      let d = g.def1(false, "add $d0, $u0, #16", [ws[0]])
+      let d = g.str_data(ws)
       let n = g.str_len(ws)
       let w1 = g.real(n)
       let l = g.loc_label(x.pos)

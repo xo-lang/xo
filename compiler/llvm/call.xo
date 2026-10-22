@@ -4,17 +4,26 @@
 
 use github.com/xo-lang/xo/compiler/ssa
 
-/// The object, data pointer, and length of a Str (strParts).
-fn (var g: Gen) str_parts(x: Str) -> (Str, Str, Str) {
-  let obj = g.def("extractvalue %xo.str ${x}, 0")
-  let data = g.def("getelementptr i8, ptr ${obj}, i64 16")
-  let n = g.str_len_of(x)
-  (obj, data, n)
-}
-
 /// Whether Str and Bytes values may be views (decision 0330 step 3): the
 /// second word is then len | (off << 32). Off until slicing makes views.
 const STR_VIEWS: Bool = false
+
+/// The object, data pointer, and length of a Str (strParts). The data of a
+/// view starts off bytes into the object's bytes (decision 0330).
+fn (var g: Gen) str_parts(x: Str) -> (Str, Str, Str) {
+  let obj = g.def("extractvalue %xo.str ${x}, 0")
+  var data = ""
+  if STR_VIEWS {
+    let w1 = g.def("extractvalue %xo.str ${x}, 1")
+    let off = g.def("lshr i64 ${w1}, 32")
+    let at = g.def("getelementptr i8, ptr ${obj}, i64 ${off}")
+    data = g.def("getelementptr i8, ptr ${at}, i64 16")
+  } else {
+    data = g.def("getelementptr i8, ptr ${obj}, i64 16")
+  }
+  let n = g.str_len_of(x)
+  (obj, data, n)
+}
 
 /// The length of the Str or Bytes value x: its second word, or the low half
 /// of it once values may be views.

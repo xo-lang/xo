@@ -551,44 +551,83 @@ fn (var g: G) same_facts(a: Int, n: Int) {
   }
 }
 
+/// Whether Str and Bytes values may be views (decision 0330 step 3): the
+/// second word is then len | (off << 32) and the data starts off bytes into
+/// the object's bytes. Off until slicing makes views, so the code below that
+/// reads the offset and masks the length is not emitted and the output is
+/// unchanged.
+const STR_VIEWS: Bool = false
+
 /// The data address of the Str or Bytes value whose words are ws (decision
-/// 0330): the object's bytes. Every emitter site that wants a string's bytes
-/// goes through this one function, so a view's offset (layout C) is added
-/// in one place.
+/// 0330): the object's bytes, plus the offset of a view. Every emitter site
+/// that wants a string's bytes goes through this one function, so the layout
+/// is read in one place.
 fn (var g: G) str_data(ws: List[Int]) -> Int {
+  if STR_VIEWS {
+    return g.str_base(ws)
+  }
   g.def1(false, "add $d0, $u0, #16", [g.real(ws[0])])
 }
 
-/// Whether Str and Bytes values may be views (decision 0330 step 3): the
-/// second word is then len | (off << 32). Off until slicing makes views, so
-/// the mask below is not emitted and the output is unchanged.
-const STR_VIEWS: Bool = false
+/// str_data once per block for a value (STR_VIEWS only): the memo is the
+/// one bytes_load keeps.
+fn (var g: G) str_base(ws: List[Int]) -> Int {
+  let obj = g.real(ws[0])
+  if !STR_VIEWS {
+    let _mi = g.m_()
+    if let Some(x) = g.cm.bases.get((obj, 0, -16)) {
+      return x
+    }
+    let d = g.def1(false, "add $d0, $u0, #16", [obj])
+    let _mj = g.m_()
+    g.cm.bases[(obj, 0, -16)] = d
+    return d
+  }
+  let w1 = g.real(ws[1])
+  let _mi = g.m_()
+  if let Some(x) = g.cm.bases.get((obj, w1, -16)) {
+    return x
+  }
+  var s = 0
+  if g.x86 {
+    let off = g.def1(false, "lsr $d0, $u0, #32", [w1])
+    s = g.def1(false, "add $d0, $u0, $u1", [obj, off])
+  } else {
+    s = g.def1(false, "add $d0, $u0, $u1, lsr #32", [obj, w1])
+  }
+  let d = g.def1(false, "add $d0, $u0, #16", [s])
+  let _mj = g.m_()
+  g.cm.bases[(obj, w1, -16)] = d
+  d
+}
 
 /// The length of the Str or Bytes value whose words are ws (decision 0330):
-/// the second word, or its low half once values may be views. Every emitter
-/// site that does arithmetic on a length, or hands it to C, goes through
-/// here; calls into obj.xo pass the word as it is and the runtime masks it.
+/// the second word, or its low half once values may be views (a 32 bit move,
+/// which x86 retargets to movl, zero extending too). Every emitter site that
+/// does arithmetic on a length, or hands it to C, goes through here; calls
+/// into obj.xo pass the word as it is and the runtime masks it. The mask is
+/// made once per block for a word, so Str.len and an index check on the same
+/// value share one register and their facts (less_fact, proved_index) link.
 fn (var g: G) str_len(ws: List[Int]) -> Int {
-  if STR_VIEWS {
-    return g.def1(false, "and $d0, $u0, #4294967295", [g.real(ws[1])])
+  if !STR_VIEWS {
+    return ws[1]
   }
-  ws[1]
+  let w1 = g.real(ws[1])
+  let _mi = g.m_()
+  if let Some(x) = g.cm.bases.get((w1, 0, -18)) {
+    return x
+  }
+  let n = g.def1(false, "mov $wd0, $wu0", [w1])
+  let _mj = g.m_()
+  g.cm.bases[(w1, 0, -18)] = n
+  n
 }
 
 /// Loads byte i (SSA value iv, register i) of the Bytes object in
 /// register obj0; the data address, and data + j for i = j + c (0 < c <
 /// 4096), are computed once per block (isel.go bytesLoad, decision 0184).
-fn (var g: G) bytes_load(obj0: Int, iv: Int, i: Int) -> Int {
-  let obj = g.real(obj0)
-  let _mi = g.m_()
-  var d = 0
-  if let Some(x) = g.cm.bases.get((obj, 0, -16)) {
-    d = x
-  } else {
-    d = g.def1(false, "add $d0, $u0, #16", [obj])
-    let _mj = g.m_()
-    g.cm.bases[(obj, 0, -16)] = d
-  }
+fn (var g: G) bytes_load(ws: List[Int], iv: Int, i: Int) -> Int {
+  let d = g.str_base(ws)
   let x = g.f.values[iv]
   if x.op == ssa.Op.Add {
     let (c, is_k) = g.const_int(x.args[1])
@@ -1021,7 +1060,7 @@ fn (var g: G) call_op(v: Int) {
         g.index_facts(i)
         g.less_fact(x.args[1], alen)
       }
-      g.set(v, [g.bytes_load(a[0], x.args[1], i)])
+      g.set(v, [g.bytes_load(a, x.args[1], i)])
     }
     "Str.len" => g.set(v, [g.str_len(g.words(x.args[0]))])
     "Str.is_empty" => g.set(v, [g.def1(false, "cmp $u0, #0\ncset $d0, eq", [g.real(g.str_len(g.words(x.args[0])))])])
