@@ -1,5 +1,26 @@
 # std/tls changes
 
+## 2026-10-22: speedup: AES-GCM hashes with the fused GHASH loop and unrolls its whole chunks
+
+- Kind: speedup
+- Commit: this commit
+- Found by: bench/perf/aesgcm profile after the four-block rounds: ghash 37%, the counter and xor loop 36% (Xo Lang 3)
+- Go reference: crypto/cipher's GCM (assembly)
+- Test: tls_test (seal_at over chunk boundaries), tls12_client, http_tls and crypto_prims goldens (arm64, LLVM with Go parity); TestTLSDiff, TestCryptoXoDiff, TestConstantTimeLLVM
+
+`ghash_hw` hashes the multiple of 64 bytes with `cpu.ghash_blocks` (Xo
+Lang 1, 7fcaa337b: one NEON loop, state and H powers in vector registers)
+instead of a `ghash64` call per chunk, which is removed; TLS 1.3's seal no
+longer hashes each chunk inside the CTR loop (the data is hot in L1
+either way) and ghashes the record once. `ctr_at` and `ctr_at_a` write the
+counter blocks and xor the eight words of a whole chunk unrolled, with
+no per-word range test. `xo bench --ab` on the Mac (B / A), bench/perf/aesgcm
+16 KiB records: hash step wall 0.951 (seal) and 0.957 (open),
+instructions 0.85; unrolled chunks wall 0.841 and 0.821, instructions
+0.71 and 0.72 (together 0.80 and 0.78 wall of the four-block step); Go's
+instruction count is now 0.47 of Xo's (was 0.25).
+bench/results/aesgcm-2026-10-22.md.
+
 ## 2026-10-22: speedup: AES-GCM rounds four blocks at once, TLS 1.2 records sealed in one string
 
 - Kind: speedup
