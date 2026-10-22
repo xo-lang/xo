@@ -38,3 +38,4 @@ entries yet.
 - [template.md](template.md): std/template (spec/std.md 30)
 - [websocket.md](websocket.md): std/websocket (spec/std.md 35)
 - [debug.md](debug.md): std/debug (spec/std.md 36)
+- [metrics.md](metrics.md): std/metrics (spec/std.md 37)

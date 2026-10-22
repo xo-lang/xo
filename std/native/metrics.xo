@@ -1,0 +1,239 @@
+// std/metrics on the native backends and, through std/go_compiled.txt, on
+// the Go backend (decisions 0312 and 0325): one source. The instruments
+// are Atomic cells in a per-instrument Mutex[Map] keyed by the label
+// values; a series is made on its first use (the write lock) and found
+// afterwards under the read lock.
+use std/http
+use std/metrics
+
+const SEP = "\x1f"
+const MAX_SERIES = 10000
+
+fn registry() -> metrics.Registry {
+  metrics.Registry{families: Mutex[List[metrics.Family]].new([]), dropped: Atomic[Int].new(0)}
+}
+
+fn latency_buckets() -> List[Float] {
+  [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
+}
+
+fn valid_name(s: Str, colon: Bool) -> Bool {
+  if s.is_empty() {
+    return false
+  }
+  for (i, c) in s.bytes().indexed() {
+    let x = Int(c)
+    let letter = (x >= 65 && x <= 90) || (x >= 97 && x <= 122) || x == 95 || (colon && x == 58)
+    let digit = x >= 48 && x <= 57
+    if !(letter || (digit && i > 0)) {
+      return false
+    }
+  }
+  true
+}
+
+fn make(r: metrics.Registry, kind: Int, name: Str, help: Str, labels: List[Str], bounds: List[Float]) -> metrics.Family {
+  if !valid_name(name, true) {
+    fault("metrics: invalid metric name ${name.quote()}")
+  }
+  for l in labels {
+    if !valid_name(l, false) || l.starts_with("__") || l == "le" {
+      fault("metrics: invalid label name ${l.quote()}")
+    }
+  }
+  for k in 1..bounds.len() {
+    if bounds[k] <= bounds[k - 1] {
+      fault("metrics: histogram buckets must increase")
+    }
+  }
+  let f = metrics.Family{name: name, help: help, kind: kind, labels: labels, bounds: bounds, series: Mutex[Map[Str, metrics.Series]].new({}), dropped: r.dropped}
+  let dup = r.families.with(fn(var fs: List[metrics.Family]) -> Bool {
+    for g in fs {
+      if g.name == name {
+        return true
+      }
+    }
+    fs.push(f)
+    false
+  })
+  if dup {
+    fault("metrics: ${name} is registered already")
+  }
+  f
+}
+
+fn registry_counter(r: metrics.Registry, name: Str, help: Str, labels: List[Str] = []) -> metrics.Counter {
+  metrics.Counter{f: make(r, 0, name, help, labels, [])}
+}
+
+fn registry_gauge(r: metrics.Registry, name: Str, help: Str, labels: List[Str] = []) -> metrics.Gauge {
+  metrics.Gauge{f: make(r, 1, name, help, labels, [])}
+}
+
+fn registry_histogram(r: metrics.Registry, name: Str, help: Str, labels: List[Str] = [], buckets: List[Float] = latency_buckets()) -> metrics.Histogram {
+  metrics.Histogram{f: make(r, 2, name, help, labels, buckets)}
+}
+
+/// The series of the label values, made on first use; None when the
+/// instrument holds MAX_SERIES already (counted as dropped).
+fn series_of(f: metrics.Family, values: List[Str]) -> metrics.Series? {
+  if values.len() != f.labels.len() {
+    fault("metrics: ${f.name} has ${f.labels.len()} labels, got ${values.len()} values")
+  }
+  let key = values.join(SEP)
+  if let Some(s) = f.series.with_read(fn(m: Map[Str, metrics.Series]) -> metrics.Series? { m.get(key) }) {
+    return Some(s)
+  }
+  let made = f.series.with(fn(var m: Map[Str, metrics.Series]) -> metrics.Series? {
+    if let Some(s) = m.get(key) {
+      return Some(s)
+    }
+    if m.len() >= MAX_SERIES {
+      return None
+    }
+    var bs: List[Atomic[Int]] = []
+    for _ in f.bounds {
+      bs.push(Atomic[Int].new(0))
+    }
+    let s = metrics.Series{values: values, v: Atomic[Int].new(0), buckets: bs, count: Atomic[Int].new(0), sum: Atomic[Int].new(0)}
+    m.put(key, s)
+    Some(s)
+  })
+  if made is None {
+    let _n = f.dropped.add(1)
+  }
+  made
+}
+
+/// The float whose bits a holds (the cells hold bits: the native
+/// backends' atomics are integers).
+fn load(a: Atomic[Int]) -> Float {
+  Float.from_bits(a.get())
+}
+
+/// a.set(a.get() + d), atomically.
+fn add_float(a: Atomic[Int], d: Float) {
+  while true {
+    let old = a.get()
+    if a.compare_and_swap(old, (Float.from_bits(old) + d).to_bits()) {
+      return
+    }
+  }
+}
+
+fn counter_inc(c: metrics.Counter, values: List[Str] = []) {
+  counter_add(c, 1.0, values)
+}
+
+fn counter_add(c: metrics.Counter, n: Float, values: List[Str] = []) {
+  if n < 0.0 {
+    fault("metrics: a counter cannot decrease")
+  }
+  if let Some(s) = series_of(c.f, values) {
+    add_float(s.v, n)
+  }
+}
+
+fn gauge_set(g: metrics.Gauge, v: Float, values: List[Str] = []) {
+  if let Some(s) = series_of(g.f, values) {
+    s.v.set(v.to_bits())
+  }
+}
+
+fn gauge_add(g: metrics.Gauge, v: Float, values: List[Str] = []) {
+  if let Some(s) = series_of(g.f, values) {
+    add_float(s.v, v)
+  }
+}
+
+fn histogram_observe(h: metrics.Histogram, v: Float, values: List[Str] = []) {
+  if let Some(s) = series_of(h.f, values) {
+    for (i, b) in h.f.bounds.indexed() {
+      if v <= b {
+        let _n = s.buckets[i].add(1)
+      }
+    }
+    let _c = s.count.add(1)
+    add_float(s.sum, v)
+  }
+}
+
+// ---- exposition ----
+
+/// A number as Prometheus text: an integral value without a fraction.
+fn num(v: Float) -> Str {
+  if v != v {
+    return "NaN"
+  }
+  if v > 1.0e300 {
+    return "+Inf"
+  }
+  if v < -1.0e300 {
+    return "-Inf"
+  }
+  if v > -1.0e15 && v < 1.0e15 && v == Float(Int(v)) {
+    return "${Int(v)}"
+  }
+  "${v}"
+}
+
+fn escape_label(s: Str) -> Str {
+  s.replace("\\", "\\\\").replace("\n", "\\n").replace("\"", "\\\"")
+}
+
+fn escape_help(s: Str) -> Str {
+  s.replace("\\", "\\\\").replace("\n", "\\n")
+}
+
+/// name{l1="v1",l2="v2"} with extra (already formatted pairs) appended.
+fn head(name: Str, labels: List[Str], values: List[Str], extra: Str) -> Str {
+  var parts: List[Str] = []
+  for (i, l) in labels.indexed() {
+    parts.push("${l}=\"${escape_label(values[i])}\"")
+  }
+  if !extra.is_empty() {
+    parts.push(extra)
+  }
+  if parts.is_empty() { name } else { "${name}{${parts.join(",")}}" }
+}
+
+fn expose(f: metrics.Family) -> List[Str] {
+  var out: List[Str] = []
+  out.push("# HELP ${f.name} ${escape_help(f.help)}")
+  out.push("# TYPE ${f.name} ${if f.kind == 0 { "counter" } else if f.kind == 1 { "gauge" } else { "histogram" }}")
+  let m = f.series.with_read(fn(m: Map[Str, metrics.Series]) -> Map[Str, metrics.Series] { m })
+  let keys = m.keys().sort()
+  for k in keys {
+    let s = m.get(k) ?? continue
+    if f.kind < 2 {
+      out.push("${head(f.name, f.labels, s.values, "")} ${num(load(s.v))}")
+    } else {
+      for (i, b) in f.bounds.indexed() {
+        out.push("${head("${f.name}_bucket", f.labels, s.values, "le=\"${num(b)}\"")} ${s.buckets[i].get()}")
+      }
+      let n = s.count.get()
+      out.push("${head("${f.name}_bucket", f.labels, s.values, "le=\"+Inf\"")} ${n}")
+      out.push("${head("${f.name}_sum", f.labels, s.values, "")} ${num(load(s.sum))}")
+      out.push("${head("${f.name}_count", f.labels, s.values, "")} ${n}")
+    }
+  }
+  out
+}
+
+fn registry_text(r: metrics.Registry) -> Str {
+  let fs = r.families.with_read(fn(l: List[metrics.Family]) -> List[metrics.Family] { l })
+  var out: List[Str] = []
+  for f in fs {
+    out = out + expose(f)
+  }
+  out.push("# HELP xo_metrics_dropped_total Series dropped past the per instrument limit.")
+  out.push("# TYPE xo_metrics_dropped_total counter")
+  out.push("xo_metrics_dropped_total ${r.dropped.get()}")
+  "${out.join("\n")}\n"
+}
+
+fn registry_handler(r: metrics.Registry) -> fn(http.Request) -> http.Response {
+  fn(_req) -> http.Response {
+    http.Response{status: 200, headers: {"Content-Type": "text/plain; version=0.0.4; charset=utf-8"}, body: registry_text(r).bytes()}
+  }
+}

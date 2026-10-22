@@ -1,0 +1,71 @@
+// std/metrics (decision 0325): the text exposition of counters, gauges and
+// a histogram (labels, escaping, sorted series, cumulative buckets), the
+// series limit, concurrent increments, and the handler.
+use std/http
+use std/metrics
+
+fn main(os: Os) {
+  let r = metrics.registry()
+  let reqs = r.counter("http_requests_total", "Requests by route and status.", ["route", "status"])
+  let inflight = r.gauge("in_flight", "Requests in flight.")
+  let lat = r.histogram("request_seconds", "Latency in seconds.", ["route"], [0.125, 0.5, 1.0])
+  reqs.inc(["/a", "200"])
+  reqs.inc(["/a", "200"])
+  reqs.add(2.5, ["/b", "500"])
+  reqs.inc(["/q\"x\\y\nz", "200"])
+  inflight.set(3.0)
+  inflight.add(-1.0)
+  lat.observe(0.0625, ["/a"])
+  lat.observe(0.25, ["/a"])
+  lat.observe(2.0, ["/a"])
+  os.stdio.print(r.text())
+
+  // concurrent increments of one series and observations of one histogram
+  let hot = r.counter("hot_total", "Hot.")
+  let h2 = r.histogram("hot_seconds", "Hot latency.", [], [1.0])
+  scope s {
+    var tasks: List[Task[Int, Never]] = []
+    for w in 0..4 {
+      tasks.push(s.spawn(fn() -> Int {
+        for _ in 0..500 {
+          hot.inc()
+          h2.observe(0.5)
+        }
+        w
+      }))
+    }
+    for t in tasks {
+      let _w = t.await
+    }
+  }
+  let lines = r.text().split("\n")
+  for l in lines {
+    if l.starts_with("hot_total ") || l.starts_with("hot_seconds_count") || l.starts_with("hot_seconds_sum") {
+      os.stdio.println(l)
+    }
+  }
+
+  // the series limit: 10,000 per instrument, the rest counted as dropped
+  let r2 = metrics.registry()
+  let many = r2.counter("many_total", "Many.", ["id"])
+  for i in 0..10001 {
+    many.inc(["${i}"])
+  }
+  let l2 = r2.text().split("\n")
+  var kept = 0
+  for l in l2 {
+    if l.starts_with("many_total{") {
+      kept += 1
+    }
+    if l.starts_with("xo_metrics_dropped_total ") {
+      os.stdio.println(l)
+    }
+  }
+  os.stdio.println("series kept: ${kept}")
+
+  // the handler
+  var router = http.router()
+  router.handle("GET /metrics", r2.handler())
+  let resp = router.call(http.new_request("GET", "/metrics"))
+  os.stdio.println("handler: ${resp.status} ${resp.headers.get("Content-Type") ?? "-"} ${resp.body.len() > 100}")
+}

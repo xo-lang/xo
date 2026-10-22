@@ -1,0 +1,83 @@
+// std/metrics (spec/std.md 37, decision 0325). Declaration file; encoding
+// rules are listed at the top of std/prelude.xo. Counters, gauges and
+// histograms with label values, and their Prometheus text exposition
+// (format version 0.0.4), with no dependency. A registry is a value
+// that main makes and passes on.
+use std/http
+
+/// One series of an instrument: its label values, its value (a counter's
+/// or gauge's float, as its bits), and for a histogram the bucket counts,
+/// the count and the sum (bits). Internal: use the instruments.
+struct Series {
+  values: List[Str]
+  v: Atomic[Int]
+  buckets: List[Atomic[Int]]
+  count: Atomic[Int]
+  sum: Atomic[Int]
+}
+
+/// One instrument: kind 0 counter, 1 gauge, 2 histogram. Internal.
+struct Family {
+  name: Str
+  help: Str
+  kind: Int
+  labels: List[Str]
+  bounds: List[Float]
+  series: Mutex[Map[Str, Series]]
+  dropped: Atomic[Int]
+}
+
+/// A set of instruments. Cloning shares it. Its fields are internal.
+struct Registry {
+  families: Mutex[List[Family]]
+  dropped: Atomic[Int]
+}
+
+/// A new empty registry. Xo has no program wide state: main makes one and
+/// passes it to what registers or reads instruments.
+fn registry() -> Registry
+
+/// A value that only goes up.
+struct Counter {
+  f: Family
+}
+/// A value that goes up and down.
+struct Gauge {
+  f: Family
+}
+/// Observations counted in buckets, with their count and sum.
+struct Histogram {
+  f: Family
+}
+
+/// The buckets of request latencies in seconds: 0.005 to 10.
+fn latency_buckets() -> List[Float]
+
+/// Makes a counter named `name` (a Prometheus name: letters, digits, `_`
+/// and `:`, not starting with a digit) with the label names `labels`. A
+/// second instrument with the same name, an invalid name or label, or
+/// buckets that do not increase is a fault: they are programmer errors,
+/// found at start.
+fn (r: Registry) counter(name: Str, help: Str, labels: List[Str] = []) -> Counter
+fn (r: Registry) gauge(name: Str, help: Str, labels: List[Str] = []) -> Gauge
+fn (r: Registry) histogram(name: Str, help: Str, labels: List[Str] = [], buckets: List[Float] = latency_buckets()) -> Histogram
+
+/// Adds 1 to (or n >= 0 to) the series of the label `values` (one per
+/// label name, in order; a wrong count is a fault). Safe from any task.
+/// A registry holds at most `max_series` (10,000) series per instrument:
+/// a new series past it is dropped and counted in
+/// `xo_metrics_dropped_total`.
+fn (c: Counter) inc(values: List[Str] = [])
+fn (c: Counter) add(n: Float, values: List[Str] = [])
+fn (g: Gauge) set(v: Float, values: List[Str] = [])
+fn (g: Gauge) add(v: Float, values: List[Str] = [])
+fn (h: Histogram) observe(v: Float, values: List[Str] = [])
+
+/// The text exposition: `# HELP` and `# TYPE` lines and the series,
+/// instruments in the order they were made, series sorted by label
+/// values, histograms as cumulative `_bucket{le=...}`, `_sum` and
+/// `_count`, and `xo_metrics_dropped_total`.
+fn (r: Registry) text() -> Str
+/// A handler answering `text()` as `text/plain; version=0.0.4`:
+/// `router.handle("GET /metrics", reg.handler())`.
+fn (r: Registry) handler() -> fn(http.Request) -> http.Response

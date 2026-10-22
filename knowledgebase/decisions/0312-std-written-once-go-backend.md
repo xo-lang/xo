@@ -226,3 +226,14 @@ not affected.
 - **Move every module, including regexp and json.** Their Go
   implementations are Go's own optimized packages. Through gen they would
   be slower, and their oracle is the package itself.
+
+## Addendum (2026-10-21, Xo Lang, for std/metrics, decision 0325)
+
+A module with no Go standard library counterpart (std/metrics: the
+Prometheus client is a third party package) may join `go_compiled.txt`
+with a hand written corpus: the expected output written from the
+published format's specification (here the Prometheus text exposition
+format 0.0.4) and checked by hand against it, run as a differential
+golden on arm64, LLVM and the Go backend. The "Go generated corpus"
+rule exists to give the module an independent oracle; the format's
+specification is the oracle when no Go package is.

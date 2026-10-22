@@ -4674,3 +4674,44 @@ fn heap_start(rate: Int = 0) -> Bool
   router costs nothing.
 - A live profile running when the program exits is dropped, with no file
   (the `XO_PROF` file profile is separate: it still writes at exit).
+
+## 37. std/metrics
+
+Counters, gauges and histograms with label values, and their Prometheus
+text exposition (format 0.0.4), with no dependency (decision 0325). A
+registry is a value that `main` makes and passes on; there is no
+program wide default.
+
+```xo
+fn registry() -> Registry
+fn latency_buckets() -> List[Float]      // 0.005 to 10 seconds
+fn (r: Registry) counter(name: Str, help: Str, labels: List[Str] = []) -> Counter
+fn (r: Registry) gauge(name: Str, help: Str, labels: List[Str] = []) -> Gauge
+fn (r: Registry) histogram(name: Str, help: Str, labels: List[Str] = [], buckets: List[Float] = latency_buckets()) -> Histogram
+fn (c: Counter) inc(values: List[Str] = [])
+fn (c: Counter) add(n: Float, values: List[Str] = [])
+fn (g: Gauge) set(v: Float, values: List[Str] = [])
+fn (g: Gauge) add(v: Float, values: List[Str] = [])
+fn (h: Histogram) observe(v: Float, values: List[Str] = [])
+fn (r: Registry) text() -> Str
+fn (r: Registry) handler() -> fn(http.Request) -> http.Response
+```
+
+- A name is a Prometheus name (letters, digits, `_` and `:`, not
+  starting with a digit); a label name has no `:` and is not `le` or
+  `__`-prefixed. A bad name, a second instrument of the same name, a
+  value list of the wrong length, a counter decreasing, or buckets that
+  do not increase is a fault: programmer errors found at start.
+- A series is the label values of one call (one per label name, in
+  order). Calls are safe from any task: a series is found under a read
+  lock and updated with atomics; the write lock is taken only to make a
+  series the first time.
+- An instrument holds at most 10,000 series: later new ones are dropped
+  and counted in `xo_metrics_dropped_total`, which `text()` always ends
+  with.
+- `text()` writes `# HELP` and `# TYPE` per instrument in the order they
+  were made, its series sorted by label values, a histogram as
+  cumulative `_bucket{le="..."}` (then `le="+Inf"`), `_sum` and `_count`,
+  integral values without a fraction, and label values escaped (`\\`,
+  `\"`, `\n`). `handler()` answers it as
+  `text/plain; version=0.0.4; charset=utf-8`.
