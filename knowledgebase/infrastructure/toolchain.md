@@ -4124,6 +4124,13 @@ TestModuleCheckAutoGeneric failure: c7d2445ff good to 2719f79a0 bad,
 ancestor build or seed), first bad 129b19af7, the commit the hand bisect
 found. Last verified: 2026-10-22.
 
+Before bisecting it runs the step at GOOD and at BAD and stops with exit
+3 when GOOD does not pass or BAD does not fail (either skipped counts):
+on 2026-10-22 a bisect from a GOOD that already failed tested bad at every
+step and named the commit right after GOOD. `--skip-verify` turns the
+check off. scripts/bisect_test.sh tests the script on a throwaway
+repository (`XO_BISECT_XOBUILD=true` replaces the xo build; seconds).
+
 A checkout's xo (the one the Go tests run, internal/xotool):
 
     go run ./scripts/xobuild                  # prints <repo>/bin/xo

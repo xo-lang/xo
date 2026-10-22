@@ -6,7 +6,7 @@
 # did), the test then run in the step's tree with that xo
 # (XO_CLI_STALE_OK=1). Prints the first bad commit and its author.
 #
-# usage: scripts/bisect.sh [--pkg=PKG] [--timeout=D] [--keep] TEST GOOD BAD
+# usage: scripts/bisect.sh [--pkg=PKG] [--timeout=D] [--keep] [--skip-verify] TEST GOOD BAD
 #
 #   TEST  a go test -run pattern (TestName, or TestA|TestB): run as
 #         `go test -count=1 -run '^(TEST)$' PKG` (a pattern with a / for
@@ -15,7 +15,11 @@
 #         does not exist yet ("no tests to run") is skipped. Anything else
 #         (it has a space) is a shell command run in the step's tree with
 #         XO_CLI set: exit 0 good, 125 skip, any other bad.
-#   GOOD, BAD  commits: the test passes at GOOD and fails at BAD.
+#   GOOD, BAD  commits: the test passes at GOOD and fails at BAD. Both
+#         are tested first and the run stops (exit 3) when GOOD fails, BAD
+#         passes, or either is skipped: a bisect from a GOOD that already
+#         fails tests bad at every step and names the commit after GOOD
+#         (2026-10-22). --skip-verify bisects without that check.
 #
 # Every cache xo writes is private (back-end cache, build directory, Go
 # cache, test binaries) and deleted at the end, so an old xo's prune never
@@ -26,15 +30,18 @@
 # Heavy: run it as HEAVY_CLASS=bulk ~/xo-lead/agents/heavy.sh NAME
 # scripts/bisect.sh ... (each step builds xo and runs the test).
 # Work in ${XO_BISECT_WORK:-$TMPDIR/xo-bisect.PID}; --keep keeps it.
+# XO_BISECT_XOBUILD=CMD replaces the xobuild step (scripts/bisect_test.sh).
 set -u -o pipefail
 pkg=""
 timeout=30m
 keep=0
+verify=1
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--pkg=*) pkg=${1#--pkg=} ;;
 	--timeout=*) timeout=${1#--timeout=} ;;
 	--keep) keep=1 ;;
+	--skip-verify) verify=0 ;;
 	--) shift; break ;;
 	-*) echo "bisect.sh: unknown flag $1" >&2; exit 2 ;;
 	*) break ;;
@@ -42,7 +49,7 @@ while [ $# -gt 0 ]; do
 	shift
 done
 if [ $# -ne 3 ]; then
-	echo "usage: scripts/bisect.sh [--pkg=PKG] [--timeout=D] [--keep] TEST GOOD BAD" >&2
+	echo "usage: scripts/bisect.sh [--pkg=PKG] [--timeout=D] [--keep] [--skip-verify] TEST GOOD BAD" >&2
 	exit 2
 fi
 test_arg=$1
@@ -78,7 +85,12 @@ tree=$work/tree
 # worktrees
 git clone -q --shared --no-checkout "$root" "$tree" || exit 1
 # this checkout's xobuild, built once
-(cd "$root" && go build -o "$work/xobuild" ./scripts/xobuild) || exit 1
+if [ -n "${XO_BISECT_XOBUILD:-}" ]; then
+	printf '#!/bin/bash\nexec %s\n' "$XO_BISECT_XOBUILD" >"$work/xobuild"
+	chmod +x "$work/xobuild"
+else
+	(cd "$root" && go build -o "$work/xobuild" ./scripts/xobuild) || exit 1
+fi
 mode=cmd
 run_pat="^($test_arg)\$"
 if [[ "$test_arg" != *" "* ]] && [[ "$test_arg" =~ ^Test[^[:space:]]*$ ]]; then
@@ -140,6 +152,29 @@ exit 1
 EOF
 chmod +x "$work/step.sh"
 echo "bisect.sh: $test_arg ($mode${pkg:+, $pkg}) from good ${good:0:9} to bad ${bad:0:9}, $(git -C "$root" rev-list --count "$good..$bad") commits; work $work"
+if [ "$verify" = 1 ]; then
+	# GOOD must pass and BAD fail, or every step's verdict is meaningless
+	for side in good bad; do
+		if [ "$side" = good ]; then c=$good; up=GOOD; else c=$bad; up=BAD; fi
+		git -C "$tree" checkout -q --detach "$c" || exit 1
+		"$work/step.sh"
+		src=$?
+		want=0
+		if [ "$side" = bad ]; then want=1; fi
+		if [ "$src" != "$want" ]; then
+			case "$src" in
+			0) got="passes" ;;
+			125) got="was skipped (see above)" ;;
+			*) got="fails (exit $src)" ;;
+			esac
+			echo "bisect.sh: $up ${c:0:9} $got, so it is not a $side commit; pick another $up (or --skip-verify)" >&2
+			exit 3
+		fi
+	done
+fi
+# the clone has no checkout: with GOOD and BAD adjacent, git bisect run
+# tests the current tree without checking a commit out
+git -C "$tree" checkout -q --detach "$bad" || exit 1
 git -C "$tree" bisect start "$bad" "$good" >/dev/null || exit 1
 git -C "$tree" bisect run "$work/step.sh" >"$work/bisect.log" 2>&1
 rc=$?

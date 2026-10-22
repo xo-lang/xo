@@ -115,12 +115,17 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   fails until it is run. Never edit those files by hand, and resolve a
   conflict in one by regenerating.
 - `scripts/gate.sh WORKTREE STEP...`: an agent's gate as named steps.
-- `scripts/bisect.sh [--pkg=PKG] [--timeout=D] [--keep] TEST GOOD BAD`:
+- `scripts/bisect.sh [--pkg=PKG] [--timeout=D] [--keep] [--skip-verify]
+  TEST GOOD BAD`:
   the first commit between GOOD (passes) and BAD (fails) where TEST
   fails, and its author: TEST a go test -run pattern (the package found
   at BAD) or a shell command (it has a space) run with that step's
   XO_CLI. Each step's xo is built with this checkout's seed choice
-  (era-correct seeds), every xo cache private and deleted after. Run it
+  (era-correct seeds), every xo cache private and deleted after. It
+  tests GOOD and BAD first and stops (exit 3) when GOOD fails or BAD
+  passes (a GOOD that already failed once named the commit after GOOD,
+  2026-10-22); `--skip-verify` skips that check. After editing it, run
+  `scripts/bisect_test.sh` (seconds, no xo build). Run it
   as `HEAVY_CLASS=bulk ~/xo-lead/agents/heavy.sh NAME scripts/bisect.sh
   ...`, once the lead has named you the bisect owner (CLAUDE.md).
 - `scripts/progen-batches.sh`, the amd64 progen runner, TestArithOracle.
