@@ -112,7 +112,8 @@ are always on (STR_VIEWS) on arm64, x86 and LLVM; wasm and no-prelude builds
 copy as before. Builders and in-place paths see only off 0: a value with
 off != 0 is never unique (obj.xo reserve), and the inline push compares the
 packed word unsigned against the capacity so a view takes the call. The cap
-faults at concat, append, push and repeat (cabi len_cap). A small view keeps
+faults at concat, append and push (cabi, len_over) and at repeat (raw.xo
+str_repeat, its own message). A small view keeps
 its whole parent alive (a 10 byte token keeps a 100 MB read buffer), as in
 Go. C ABI exports (cabi*.xo, `xo_x_` names) are the runtime's own: none returns a Str today, and a Str result would carry the packed word to its Xo caller unchanged (checked 2026-10-22; there is no user level export), so the export wrappers need no copy. The SSA builder refuses an export with a Str result (the export declarations in ssa/build.xo), so a future one cannot hand C the packed word.
 
@@ -245,3 +246,10 @@ arm64 and LLVM goldens, and the mime/multipart/time baseline)
 4. Hot ports drop their byte-index workarounds one by one, each with its
    timing row.
 
+## Implementation note (step 4, 2026-10-22)
+
+The cost of step 3 in `Layout.format` was not the view offset and length
+mask in loops (`hoist_invariants` moves them, and a function computes a
+Str's data address once per block): it was the cap check, a call per
+pushed byte. The check is now in line in every runtime entry. Figures:
+bench/results/views-cap-inline-2026-10-22.md.
