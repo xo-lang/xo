@@ -8,6 +8,16 @@ hash; llvm-symbolizer names functions from the PDB alone. Measured on
 xo.exe (140 MB): a 1.7 MB PDB, 6,996 procedures and 14,638 publics, and
 the link phase within its run to run noise (0.9 to 1.4 s with and
 without).
+Stage 2 implemented 2026-10-22: DEBUG_S_LINES per function and
+DEBUG_S_FILECHKSMS, /names with its hash table, the DBI file info. A
+function's rows are its own: code of a call inlined into it takes the
+call's line (stage 3 describes the inside), and only the file most rows
+name is kept, since LLVM's reader (SymbolCache::findLineTable), as
+MSVC's tools, opens every file block at the function's start. Over 400
+random addresses of a program, llvm-symbolizer from the PDB alone gives
+DWARF's outermost frame's function and file:line at 266 of 268 (the two
+others: code of another file with no DW_TAG_inlined_subroutine, where
+the PDB keeps the function's own line).
 
 ## Context
 

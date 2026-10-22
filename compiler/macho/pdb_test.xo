@@ -3,6 +3,8 @@
 // llvm-symbolizer names a program's functions from the PDB alone; these
 // check the container and the orders the readers rely on.
 
+use github.com/xo-lang/xo/compiler/debug
+
 /// The streams of an MSF file, read back: the superblock's block size and
 /// directory, each stream's blocks.
 fn msf_read(f: Bytes) -> List[Bytes] {
@@ -66,4 +68,44 @@ test "the PDB string hash is case insensitive in its low bits" {
   // differing only in ASCII case land in the same bucket
   expect(hash_v1("Poke") % 4096) == hash_v1("poke") % 4096
   expect(hash_v1("") >= 0) == true
+}
+
+test "a function's rows: its own file, inlined code at the call's line" {
+  // files: 0 main.xo (home), 1 callee.xo; rows at 0x100 (a prologue row
+  // in the callee's file, outside any call), 0x104 main:3, 0x108 and
+  // 0x10c in an inlined call (called at main:4), 0x110 main:5
+  let lns = debug.Lines{
+    rows: [
+      debug.Row{addr: 0x100, file: 1, line: 9, stmt: true, end: false},
+      debug.Row{addr: 0x104, file: 0, line: 3, stmt: true, end: false},
+      debug.Row{addr: 0x108, file: 1, line: 20, stmt: true, end: false},
+      debug.Row{addr: 0x10c, file: 1, line: 21, stmt: true, end: false},
+      debug.Row{addr: 0x110, file: 0, line: 5, stmt: true, end: false},
+      debug.Row{addr: 0x120, file: 0, line: 5, stmt: false, end: true},
+    ],
+    files: ["main.xo", "callee.xo"],
+  }
+  var keyed: List[(Int, Int)] = []
+  for (i, r) in lns.rows.indexed() {
+    if !r.end {
+      keyed.push((r.addr, i))
+    }
+  }
+  let rows = fn_rows(lns, keyed.sort(), 0x100, 0x120, [([(0x108, 0x110)], 0, 4)])
+  expect(rows) == [(4, 0, 3, true), (8, 0, 4, true), (0x10, 0, 5, true)]
+}
+
+test "the /names table finds each string by its hash" {
+  let (t, at) = names_table(["a.xo", "b.xo", "c.xo"])
+  // header 12, strings "\0a.xo\0b.xo\0c.xo\0" (16), buckets
+  let nb = le_b(t, 12 + 16, 4)
+  expect(nb) == 7
+  for (i, s) in ["a.xo", "b.xo", "c.xo"].indexed() {
+    var k = hash_v1(s) % nb
+    while le_b(t, 32 + 4 * k, 4) != at[i] && le_b(t, 32 + 4 * k, 4) != 0 {
+      k = (k + 1) % nb
+    }
+    expect(le_b(t, 32 + 4 * k, 4)) == at[i]
+  }
+  expect(le_b(t, 32 + 4 * nb, 4)) == 3
 }

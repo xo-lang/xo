@@ -47,13 +47,19 @@ const DEBUG_TYPE_CODEVIEW = 2
 const RSDS_FIXED = 24
 
 /// A function of the module: its name, section (1 based) and offset
-/// there, and its size.
+/// there, its size, and its line rows (offset in the function, file (an
+/// index of the DWARF's files), line, whether a statement starts).
 struct PdbProc {
   name: Str
   seg: Int
   off: Int
   size: Int
+  rows: List[(Int, Int, Int, Bool)] = []
 }
+
+/// The C13 subsection kinds.
+const DEBUG_S_LINES = 0xf2
+const DEBUG_S_FILECHKSMS = 0xf4
 
 /// A PE section as the PDB needs it: its address (RVA), size in memory,
 /// characteristics, and the raw 40 byte header.
@@ -110,6 +116,19 @@ pub fn pe_pdb(img: Bytes) -> Result[(Bytes, Bytes), Str] {
     Err(e) => return Err("the image's DWARF: ${e}")
   }
   let info = debug.read(s)
+  let lns = debug.lines(s)
+  // the line rows by address (a sequence's end row starts no code)
+  var keyed: List[(Int, Int)] = []
+  for (i, r) in lns.rows.indexed() {
+    if !r.end && r.file >= 0 {
+      keyed.push((r.addr, i))
+    }
+  }
+  let by_addr = keyed.sort()
+  var file_of: Map[Str, Int] = {}
+  for (i, f) in lns.files.indexed() {
+    file_of[f] = i
+  }
   var procs: List[PdbProc] = []
   for f in info.funcs {
     if f.hi <= f.lo {
@@ -117,7 +136,16 @@ pub fn pe_pdb(img: Bytes) -> Result[(Bytes, Bytes), Str] {
     }
     let (seg, off) = seg_off(sects, f.lo - base)
     if seg > 0 {
-      procs.push(PdbProc{name: f.name, seg: seg, off: off, size: f.hi - f.lo})
+      // the calls inlined into f itself (depth 1): their code is at the
+      // call's line in f's own lines (stage 3 describes them inside)
+      var calls: List[(List[(Int, Int)], Int, Int)] = []
+      for c in f.inlined {
+        if c.depth == 1 {
+          let cf = file_of.get(lns.call_file(c.unit_line, c.call_file)) ?? -1
+          calls.push((c.ranges, cf, c.call_line))
+        }
+      }
+      procs.push(PdbProc{name: f.name, seg: seg, off: off, size: f.hi - f.lo, rows: fn_rows(lns, by_addr, f.lo, f.hi, calls)})
     }
   }
   // the publics: the COFF symbol table's functions
@@ -128,7 +156,89 @@ pub fn pe_pdb(img: Bytes) -> Result[(Bytes, Bytes), Str] {
       pubs.push(PdbProc{name: n, seg: seg, off: off, size: 0})
     }
   }
-  Ok((out, pdb_file(guid, stamp, sects, procs, pubs)))
+  Ok((out, pdb_file(guid, stamp, sects, procs, pubs, lns.files)))
+}
+
+/// The rows of [lo, hi) (by_addr: the rows' addresses and indexes, in
+/// address order), as offsets from lo; a function whose first row is
+/// past lo starts with the row before it, at offset 0. A row in the code
+/// of a call inlined into the function (calls: its ranges, the call's
+/// file and line) takes the call's file and line, so the function's rows
+/// are its own lines, as Windows' tools read them; a run of rows on one
+/// line is one row. Only the function's home file (the one most rows
+/// name) is kept: a reader opens every file's block at the function's
+/// start (LLVM's SymbolCache::findLineTable, as MSVC's tools), so a
+/// second block (a prologue row in an inlined callee's file, outside the
+/// call's range) hid the first; a dropped row's code takes the line
+/// before it.
+fn fn_rows(lns: debug.Lines, by_addr: List[(Int, Int)], lo: Int, hi: Int, calls: List[(List[(Int, Int)], Int, Int)]) -> List[(Int, Int, Int, Bool)] {
+  // the first row at or past lo
+  var a = 0
+  var b = by_addr.len()
+  while a < b {
+    let m = (a + b) / 2
+    let (ad, _) = by_addr[m]
+    if ad < lo {
+      a = m + 1
+    } else {
+      b = m
+    }
+  }
+  var raw: List[(Int, Int, Int, Bool)] = []
+  if a > 0 && (a == by_addr.len() || by_addr[a].0 > lo) {
+    let r = lns.rows[by_addr[a - 1].1]
+    raw.push((lo, r.file, r.line, r.stmt))
+  }
+  var k = a
+  while k < by_addr.len() && by_addr[k].0 < hi {
+    let r = lns.rows[by_addr[k].1]
+    raw.push((r.addr, r.file, r.line, r.stmt))
+    k += 1
+  }
+  var mapped: List[(Int, Int, Int, Bool)] = []
+  var count: Map[Int, Int] = {}
+  for (addr, f0, l0, stmt) in raw {
+    var f = f0
+    var l = l0
+    for (ranges, cf, cl) in calls {
+      for (rlo, rhi) in ranges {
+        if addr >= rlo && addr < rhi && cf >= 0 {
+          f = cf
+          l = cl
+        }
+      }
+    }
+    mapped.push((addr, f, l, stmt))
+    count[f] = (count.get(f) ?? 0) + 1
+  }
+  var home = -1
+  var best = 0
+  for (_, f, _, _) in mapped {
+    let c = count.get(f) ?? 0
+    if c > best {
+      best = c
+      home = f
+    }
+  }
+  var out: List[(Int, Int, Int, Bool)] = []
+  for (addr, f, l, stmt) in mapped {
+    if f != home {
+      continue
+    }
+    let off = addr - lo
+    if !out.is_empty() {
+      let (po, pf, pl, _) = out[out.len() - 1]
+      if pf == f && pl == l {
+        continue
+      }
+      // one row per offset: the last of several at one address
+      if po == off {
+        out.pop()
+      }
+    }
+    out.push((off, f, l, stmt))
+  }
+  out
 }
 
 /// The little endian number of n bytes at o.
@@ -163,17 +273,31 @@ fn seg_off(sects: List[PdbSect], rva: Int) -> (Int, Int) {
 }
 
 /// The PDB's bytes: its streams in the MSF container.
-fn pdb_file(guid: Bytes, stamp: Int, sects: List[PdbSect], procs: List[PdbProc], pubs: List[PdbProc]) -> Bytes {
+fn pdb_file(guid: Bytes, stamp: Int, sects: List[PdbSect], procs: List[PdbProc], pubs: List[PdbProc], dfiles: List[Str]) -> Bytes {
   var streams: List[Bytes] = []
   for _ in 0..PS_COUNT {
     streams.push(b"")
   }
-  let (modsyms, proc_at) = module_stream(procs)
+  // the files the line rows name, in first use order, and each one's
+  // index among them
+  var files: List[Str] = []
+  var fidx: Map[Int, Int] = {}
+  for p in procs {
+    for (_, f, _, _) in p.rows {
+      if !fidx.contains(f) {
+        fidx[f] = files.len()
+        files.push(dfiles[f])
+      }
+    }
+  }
+  let (names, name_at) = names_table(files)
+  let c13 = c13_lines(procs, fidx, name_at)
+  let (modsyms, proc_at) = module_stream(procs, c13)
   let (recs, pub_at, ref_at) = sym_records(procs, proc_at, pubs)
   streams[PS_INFO] = info_stream(guid, stamp)
   streams[PS_TPI] = tpi_stream()
   streams[PS_IPI] = tpi_stream()
-  streams[PS_NAMES] = names_stream()
+  streams[PS_NAMES] = names
   streams[PS_MOD] = modsyms
   var sh = BytesBuilder.new()
   for s in sects {
@@ -182,12 +306,12 @@ fn pdb_file(guid: Bytes, stamp: Int, sects: List[PdbSect], procs: List[PdbProc],
   streams[PS_SECTHDR] = sh.freeze()
   streams[PS_SYMS] = recs
   streams[PS_PUBLICS] = publics_stream(pubs, pub_at)
-  var names: List[Str] = []
+  var pnames: List[Str] = []
   for p in procs {
-    names.push(p.name)
+    pnames.push(p.name)
   }
-  streams[PS_GLOBALS] = gsi(names, ref_at)
-  streams[PS_DBI] = dbi_stream(sects, modsyms.len())
+  streams[PS_GLOBALS] = gsi(pnames, ref_at)
+  streams[PS_DBI] = dbi_stream(sects, modsyms.len() - c13.len(), c13.len(), files)
   msf(streams)
 }
 
@@ -236,9 +360,101 @@ fn tpi_stream() -> Bytes {
   w.done()
 }
 
-/// The /names string table: its header (signature, hash version 1, the
-/// strings' size), the strings (the empty one), a one bucket hash table
-/// and the count of names.
+/// The /names string table of strs: its header (signature, hash version
+/// 1, the strings' size), the strings (the empty one first), the hash
+/// table (each string's offset at hash_v1 % buckets, the next free
+/// bucket on a collision; 0 is empty), and the count of names; and each
+/// string's offset.
+fn names_table(strs: List[Str]) -> (Bytes, List[Int]) {
+  var buf = new_out(64)
+  buf.u8(0)
+  var at: List[Int] = []
+  for s in strs {
+    at.push(buf.n)
+    buf.bytes(cstr_bytes(s))
+  }
+  let data = buf.done()
+  let nb = if strs.is_empty() { 1 } else { 2 * strs.len() + 1 }
+  var buckets: List[Int] = []
+  for _ in 0..nb {
+    buckets.push(0)
+  }
+  for (i, s) in strs.indexed() {
+    var k = hash_v1(s) % nb
+    while buckets[k] != 0 {
+      k = (k + 1) % nb
+    }
+    buckets[k] = at[i]
+  }
+  var w = new_out(24 + data.len() + 4 * nb)
+  w.u32(0xeffeeffe)
+  w.u32(1)
+  w.u32(data.len())
+  w.bytes(data)
+  w.u32(nb)
+  for x in buckets {
+    w.u32(x)
+  }
+  w.u32(strs.len())
+  (w.done(), at)
+}
+
+/// The module's C13 line information: the file checksums subsection
+/// (each file's /names offset, no checksum) and a lines subsection per
+/// function with rows (its offset, segment and size, then a block per
+/// run of rows in one file: the file's checksum entry, the rows' offsets
+/// and lines with the statement bit).
+fn c13_lines(procs: List[PdbProc], fidx: Map[Int, Int], name_at: List[Int]) -> Bytes {
+  var w = new_out(1024)
+  var ck = new_out(8 * name_at.len())
+  for off in name_at {
+    ck.u32(off)
+    ck.u8(0)
+    ck.u8(0)
+    ck.u16(0)
+  }
+  subsection(w, DEBUG_S_FILECHKSMS, ck.done())
+  for p in procs {
+    if p.rows.is_empty() {
+      continue
+    }
+    var b = new_out(16 + 12 * p.rows.len())
+    b.u32(p.off)
+    b.u16(p.seg)
+    b.u16(0)
+    b.u32(p.size)
+    var i = 0
+    while i < p.rows.len() {
+      let f = p.rows[i].1
+      var j = i
+      while j < p.rows.len() && p.rows[j].1 == f {
+        j += 1
+      }
+      b.u32(8 * (fidx.get(f) ?? 0))
+      b.u32(j - i)
+      b.u32(12 + 8 * (j - i))
+      for k in i..j {
+        let (off, _, line, stmt) = p.rows[k]
+        b.u32(off)
+        b.u32((line & 0xffffff) | (if stmt { 0x80000000 } else { 0 }))
+      }
+      i = j
+    }
+    subsection(w, DEBUG_S_LINES, b.done())
+  }
+  w.done()
+}
+
+/// A C13 subsection: its kind, length and data, padded to 4 bytes.
+fn subsection(var w: Out, kind: Int, data: Bytes) {
+  w.u32(kind)
+  w.u32(data.len())
+  w.bytes(data)
+  w.pad(4)
+}
+
+/// An empty string table (the DBI's EC names): the header, the empty
+/// string, a one bucket hash table and no names.
 fn names_stream() -> Bytes {
   var w = new_out(32)
   w.u32(0xeffeeffe)
@@ -270,9 +486,9 @@ fn cstr_bytes(s: Str) -> Bytes {
 }
 
 /// The module's stream: the CodeView signature (4, C13), S_OBJNAME, and
-/// each function's S_GPROC32 and S_END; no line subsections yet; the
-/// global references' size (0). Also each S_GPROC32's offset.
-fn module_stream(procs: List[PdbProc]) -> (Bytes, List[Int]) {
+/// each function's S_GPROC32 and S_END; the C13 line information c13;
+/// the global references' size (0). Also each S_GPROC32's offset.
+fn module_stream(procs: List[PdbProc], c13: Bytes) -> (Bytes, List[Int]) {
   var w = new_out(64 + 64 * procs.len())
   w.u32(4)
   var ob = new_out(16)
@@ -303,6 +519,7 @@ fn module_stream(procs: List[PdbProc]) -> (Bytes, List[Int]) {
     sym_record(w, S_GPROC32, pb.done())
     sym_record(w, S_END, b"")
   }
+  w.bytes(c13)
   w.u32(0)
   (w.done(), at)
 }
@@ -478,9 +695,9 @@ fn lower(c: Int) -> Int { if c >= 65 && c <= 90 { c + 32 } else { c } }
 
 /// The DBI stream: its header, the one module's entry, the section
 /// contributions (the module's: the first code section), the section
-/// map, the file info (no files yet), the EC names, and the optional
-/// debug header (the section header stream).
-fn dbi_stream(sects: List[PdbSect], modsize: Int) -> Bytes {
+/// map, the file info (the module's files), the EC names, and the
+/// optional debug header (the section header stream).
+fn dbi_stream(sects: List[PdbSect], symsize: Int, c13size: Int, files: List[Str]) -> Bytes {
   // the module: its first code section
   var text = 0
   for (i, s) in sects.indexed() {
@@ -495,10 +712,12 @@ fn dbi_stream(sects: List[PdbSect], modsize: Int) -> Bytes {
   contrib(mi, text, tsize, tchars)
   mi.u16(0)
   mi.u16(PS_MOD)
-  mi.u32(modsize - 4)
+  // the symbols' size with the signature (the stream less the C13 data
+  // and the global references' size), no C11 lines, the C13's, the files
+  mi.u32(symsize - 4)
   mi.u32(0)
-  mi.u32(0)
-  mi.u16(0)
+  mi.u32(c13size)
+  mi.u16(files.len())
   mi.u16(0)
   mi.u32(0)
   mi.u32(0)
@@ -544,12 +763,24 @@ fn dbi_stream(sects: List[PdbSect], modsize: Int) -> Bytes {
   sm.u32(0)
   sm.u32(0xffffffff)
   let smap = sm.done()
-  // the file info: one module, no files
-  var fi = new_out(8)
+  // the file info: one module, its files (their names' offsets, then
+  // the names)
+  var nb = new_out(64)
+  var noff: List[Int] = []
+  for f in files {
+    noff.push(nb.n)
+    nb.bytes(cstr_bytes(f))
+  }
+  var fi = new_out(8 + 4 * files.len() + nb.n)
   fi.u16(1)
+  fi.u16(files.len() & 0xffff)
   fi.u16(0)
-  fi.u16(0)
-  fi.u16(0)
+  fi.u16(files.len() & 0xffff)
+  for o in noff {
+    fi.u32(o)
+  }
+  fi.bytes(nb.done())
+  fi.pad(4)
   let finfo = fi.done()
   // the optional debug header: FPO, exception, fixup, omap to and from,
   // section headers, token map, xdata, pdata, new FPO, original headers
