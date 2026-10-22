@@ -146,7 +146,7 @@ if [ -n "${WINDOWS_CRASH_KEEP:-}" ]; then
   cp "$w/crash.pdb" "$WINDOWS_CRASH_KEEP/" 2>/dev/null || note "no crash.pdb next to crash.exe"
 fi
 first='^fatal error: EXCEPTION_ACCESS_VIOLATION: access violation \(code 0xc0000005, write\) at address 0x10\n'
-frames='(?m)^  crashpoke\.write \(crashpoke\.xo:6\) \[inlined\]\n  poke \(main\.xo:7\)\n  poke \(main\.xo:5\)\n  poke \(main\.xo:5\)\n'
+frames='(?m)^  crashpoke\.write \(crashpoke\.xo:6\) \[inlined\]\n  poke \(main\.xo:10\)\n  poke \(main\.xo:5\)\n  poke \(main\.xo:5\)\n'
 check segv segv $AV - "$first" '\nregisters:\n  rax ' '\nframes: 0x' '\ntraceback:\n' "$frames" '(?m)^  main \(main\.xo:\d+\)$'
 grep -q "crash report faulted" "$o/run.err" && { note "FAIL segv: the handler ran twice"; fail=1; }
 check task task $AV - "$first" "$frames" '(?m)^  main\.fn1 \(main\.xo:\d+\)$'

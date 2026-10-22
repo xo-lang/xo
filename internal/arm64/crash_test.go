@@ -66,8 +66,8 @@ func testCrashReport(t *testing.T, be string) {
 		}
 	}
 	// the C function (LLVM names it with its module's prefix), then poke
-	// at its call (the match's line or the arm's), the recursion, main
-	frames := regexp.MustCompile(`(?m)^  \S*crashc_write\n  poke \(main\.xo:1[4-7]\)\n  poke \(main\.xo:10\)\n  poke \(main\.xo:10\)\n  main \(main\.xo:32\)$`)
+	// at its call (the arm's line), the recursion, main
+	frames := regexp.MustCompile(`(?m)^  \S*crashc_write\n  poke \(main\.xo:17\)\n  poke \(main\.xo:10\)\n  poke \(main\.xo:10\)\n  main \(main\.xo:32\)$`)
 	if !frames.MatchString(got) {
 		t.Errorf("segv: the traceback lacks the frames:\n%s", got)
 	}
@@ -82,7 +82,7 @@ func testCrashReport(t *testing.T, be string) {
 	symbolize(t, bin, got)
 	// the trap instruction: brk on arm64 (SIGTRAP)
 	_, got, sig = run("XO_CRASH_KIND=trap")
-	if sig != syscall.SIGTRAP || !strings.HasPrefix(got, "fatal error: SIGTRAP: trace trap (code ") || strings.Contains(got, "crash report faulted") || !regexp.MustCompile(`crashc_trap\n  poke \(main\.xo:1[45]\)\n`).MatchString(got) {
+	if sig != syscall.SIGTRAP || !strings.HasPrefix(got, "fatal error: SIGTRAP: trace trap (code ") || strings.Contains(got, "crash report faulted") || !regexp.MustCompile(`crashc_trap\n  poke \(main\.xo:15\)\n`).MatchString(got) {
 		t.Errorf("trap: signal %v\n%s", sig, got)
 	}
 	// a stack overflow in C: reported on the alternate signal stack
@@ -92,7 +92,7 @@ func testCrashReport(t *testing.T, be string) {
 	}
 	// a fault in a task (a worker's fiber): its own frames
 	_, got, sig = run("XO_CRASH_KIND=task")
-	if sig != syscall.SIGSEGV || !strings.HasPrefix(got, "fatal error: SIGSEGV") || !regexp.MustCompile(`crashc_write\n  poke \(main\.xo:1[4-7]\)\n  poke \(main\.xo:10\)\n  poke \(main\.xo:10\)\n`).MatchString(got) {
+	if sig != syscall.SIGSEGV || !strings.HasPrefix(got, "fatal error: SIGSEGV") || !regexp.MustCompile(`crashc_write\n  poke \(main\.xo:17\)\n  poke \(main\.xo:10\)\n  poke \(main\.xo:10\)\n`).MatchString(got) {
 		t.Errorf("task: signal %v\n%s", sig, got)
 	}
 	// off: no report, the same signal

@@ -1996,6 +1996,27 @@ fn (var b: Builder) arm_to(join: Int, has_val: Bool, v: Int, t: Int, at: Expr?) 
 }
 
 /// A match as a chain of pattern tests (match).
+/// A match arm's body: its value (unit for a statement or none). An
+/// expression body is at its own line, as a statement body is: its calls
+/// had the match's line (a C call in an arm was reported at the match,
+/// 2026-10-22); the line after it is the enclosing one again.
+fn (var b: Builder) arm_body(body: Stmt?) -> Int {
+  match body {
+    Some(st) => {
+      if let ExprStmt(x: x, ..) = st {
+        let saved = b.s.line
+        b.set_line(parser.stmt_span(st))
+        let v = b.expr(x)
+        b.s.line = saved
+        return v
+      }
+      b.stmt(st)
+      b.unit()
+    }
+    None => b.unit()
+  }
+}
+
 fn (var b: Builder) match_expr(e: Expr) -> Int {
   let (subject, arms) = match e {
     MatchExpr(subject: subject, arms: arms, ..) => (subject, arms)
@@ -2017,15 +2038,7 @@ fn (var b: Builder) match_expr(e: Expr) -> Int {
       if i != k {
         continue
       }
-      var av = -1
-      match a.body {
-        Some(ExprStmt(x: x, ..)) => av = b.expr(x)
-        Some(st) => {
-          b.stmt(st)
-          av = b.unit()
-        }
-        None => av = b.unit()
-      }
+      let av = b.arm_body(a.body)
       if b.is_dead() {
         return b.undef(t)
       }
@@ -2046,15 +2059,7 @@ fn (var b: Builder) match_expr(e: Expr) -> Int {
       let gv = b.value_as(g, b.bool_t())
       b.test_br(gv, next)
     }
-    var av = -1
-    match a.body {
-      Some(ExprStmt(x: x, ..)) => av = b.expr(x)
-      Some(st) => {
-        b.stmt(st)
-        av = b.unit()
-      }
-      None => av = b.unit()
-    }
+    let av = b.arm_body(a.body)
     b.arm_to(join, has_val, av, t, None)
     b.seal(next)
     b.s.cur = next
