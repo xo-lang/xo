@@ -267,3 +267,51 @@ built on it):
   amd64 links but was not run: ThreadSanitizer, clang's own C programs
   included, does not start under Docker's x86 emulation on this Mac
   (gotchas/tsan-amd64-not-on-arm64-mac.md).
+
+## Addendum (2026-10-22): windows/amd64 through ThreadSanitizer's Go runtime (owner-queued item 3)
+
+Status: Accepted in direction (lead, owner's overnight delegation,
+2026-10-22). Windows --race is not called supported until one Windows CI
+run (threads) passes; that run needs the owner's approval (morning).
+
+compiler-rt's ThreadSanitizer has no Windows port for C programs, but its
+Go flavor (lib/tsan/go, built into Go's race_windows_amd64.syso) runs on
+Windows. Xo would use that flavor on windows/amd64.
+
+- API: every call names the goroutine's ThreadState (Xo: one per task, the
+  task's T_TSAN word, and one per root/worker context), a Processor per
+  worker (CallbackGetProc returns the current worker's), and a pc. Entry
+  points: __tsan_init/fini, map_shadow, read/write(_pc, _range),
+  func_enter/exit, malloc/free, go_start/go_end (spawn, task end),
+  acquire/release/release_merge, mutex hooks, go_ignore_sync_begin/end.
+  No interceptors: llrt's explicit synchronization (mode 2) is told
+  through the same table, with thr.
+- Lowering: a third variant of compiler/arm64 race.xo for windows/amd64:
+  thr loaded from the task context (TLS slot, or kept in a callee saved
+  register for the function), pc the call's return address
+  (__tsan_read_pc with the caller pc). func_enter/exit on every
+  instrumented function (Go reports stacks from them; no unwinder).
+- Memory: app memory must lie in 0x1000 to 0xe0_0000_0000; the runtime
+  calls __tsan_map_shadow for each region heapos maps (VirtualAlloc with
+  addresses in that range) and for fiber stacks.
+- Stack: TSan's functions need a large stack (Go switches to g0); Xo's
+  fiber stacks: measure the deepest TSan path or switch to the worker's
+  system stack around report paths only.
+- Symbolization: CallbackSymbolizeCode answers from Xo's own line tables
+  (the binary's DWARF or a table the runtime keeps under --race).
+- Build: our own, from the pinned LLVM 23.1.3 (not Go's prebuilt
+  object): tsan/go's buildgo.sh GOOS=windows with mingw in Docker, one
+  COFF object linked by Xo's Windows link (decision 0254 6b's path; it
+  needs synchronization, ntdll, dbghelp and psapi imports), shipped as
+  lib/xo/race/windows-amd64/ with compiler-rt's license.
+- Size estimate: lowering variant ~200 lines, runtime hook table and thr
+  plumbing ~300, symbolize callback ~150, build script ~80, tests (race_sync
+  table on a Windows CI run, owner approval via the lead).
+- Prototype (2026-10-22): a C program driving Go 1.26.1's
+  race_windows.syso through this API (init with the three callbacks,
+  map_shadow of a heap page, two goroutine states, a planted race, then a
+  release and acquire pair), linked by mingw gcc and run under Wine
+  (scripts/docker-wine.sh box64, single threaded), reported the planted
+  race with the callback's frames and nothing for the synchronized pair.
+  The Go flavor's shadow layout works under Box64's Wine, where the C
+  flavor does not start under Docker's x86 emulation.
