@@ -204,4 +204,5 @@ dd2628eb7 (std/trace). Differences from the plan above:
 - No program wide default registry: Xo has no program state, so main
   makes one and passes it.
 - The profiler's ring stays mapped after a live profile (17 MB virtual);
-  madvise of the used span is a follow-up (no binding yet).
+  profile_collect returns the used span's pages with madvise (linux.madvise,
+  sys_darwin.madvise), so a read profile is not resident.

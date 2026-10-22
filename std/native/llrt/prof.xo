@@ -323,7 +323,31 @@ pub fn profile_collect() -> Bytes {
     // wait for profile_inflight() is a cap, not an assumption)
     return b""
   }
-  build_raw(r, 0).data
+  let out = build_raw(r, 0).data
+  // the profile is read once: give the ring's used pages back (they stay
+  // mapped for a later run; begin clears the slot counts it reuses)
+  release_ring(r)
+  out
+}
+
+/// Returns the pages the last run's samples used to the system and marks
+/// the profile as read (profile_collect then returns empty until the next
+/// run).
+fn release_ring(r: Int) {
+  let used = if ld(r, R_NEXT) < ld(r, R_CAP) { ld(r, R_NEXT) } else { ld(r, R_CAP) }
+  let n = (used * SLOT + 16383) / 16384 * 16384
+  if n > 0 {
+    match target.os {
+      TargetOs.Linux => {
+        let _a = linux.madvise(ld(r, R_RING), n, 4)
+      }
+      TargetOs.Darwin => {
+        let _a = sys_darwin.madvise(ld(r, R_RING), n, 5)
+      }
+      TargetOs.Windows | TargetOs.Wasi => {}
+    }
+  }
+  st(r, R_DUR, 0)
 }
 
 /// The heap profile's snapshot while it samples (started by XO_PROF=heap

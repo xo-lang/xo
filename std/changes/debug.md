@@ -1,5 +1,16 @@
 # std/debug changes
 
+## 2026-10-21: perf: a read profile gives its ring back
+
+- Kind: perf
+- Commit: this commit
+- Found by: decision 0325 follow-up
+- Test: internal/llvm/testdata/golden/debug_routes (two profiles in a row; arm64, LLVM)
+
+After `GET /profile` reads a profile, the native profiler returns the
+ring's used pages to the system (madvise DONTNEED on Linux, FREE on
+Darwin) instead of holding up to 17 MB resident until the next run.
+
 ## 2026-10-21: feature: std/debug, live profiles and scheduler counters
 
 - Kind: feature

@@ -286,6 +286,10 @@ pub fn mmap(addr: Int, len: Int, prot: Int, flags: Int, fd: Int, off: Int) -> In
 /// munmap(2).
 pub fn munmap(addr: Int, len: Int) -> Int { rt.sys6(nr(215, 11), addr, len, 0, 0, 0, 0) }
 
+/// madvise(2): the advice (MADV_DONTNEED 4 frees the pages of an anonymous
+/// mapping; they read as zeros after), 0 or the negative errno.
+pub fn madvise(addr: Int, len: Int, advice: Int) -> Int { rt.sys6(nr(233, 28), addr, len, advice, 0, 0, 0) }
+
 /// mprotect(2).
 pub fn mprotect(addr: Int, len: Int, prot: Int) -> Int { rt.sys6(nr(226, 10), addr, len, prot, 0, 0, 0) }
 

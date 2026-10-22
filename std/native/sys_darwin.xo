@@ -105,6 +105,9 @@ fn __getdirentries64(fd: Int, buf: Int, n: Int, base: Int) -> Int
 /// mmap(2): the address, or MAP_FAILED (-1) with errno set.
 fn mmap(addr: Int, len: Int, prot: Int, flags: Int, fd: Int, off: Int) -> Int
 fn mprotect(addr: Int, len: Int, prot: Int) -> Int32
+/// madvise(2): MADV_FREE (5) lets the kernel take the pages of an anonymous
+/// mapping back when it needs them.
+fn madvise(addr: Int, len: Int, advice: Int) -> Int32
 /// kqueue(2): a new kernel event queue, or -1.
 fn kqueue() -> Int32
 /// kevent(2): apply nchanges changes and collect at most nevents events
