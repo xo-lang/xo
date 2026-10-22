@@ -3,7 +3,7 @@
 ## 2026-10-22: speedup: AES-GCM hashes with the fused GHASH loop and unrolls its whole chunks
 
 - Kind: speedup
-- Commit: this commit
+- Commit: ba0e97a7c
 - Found by: bench/perf/aesgcm profile after the four-block rounds: ghash 37%, the counter and xor loop 36% (Xo Lang 3)
 - Go reference: crypto/cipher's GCM (assembly)
 - Test: tls_test (seal_at over chunk boundaries), tls12_client, http_tls and crypto_prims goldens (arm64, LLVM with Go parity); TestTLSDiff, TestCryptoXoDiff, TestConstantTimeLLVM
@@ -24,7 +24,7 @@ bench/results/aesgcm-2026-10-22.md.
 ## 2026-10-22: speedup: AES-GCM rounds four blocks at once, TLS 1.2 records sealed in one string
 
 - Kind: speedup
-- Commit: this commit
+- Commit: 75dd849d6
 - Found by: tlsrate bulk on main 35d244cce (quiet Docker linux/arm64): TLS 1.3 AES-GCM 0.50 of Go, TLS 1.2 AES-GCM 0.35 (arm64) and 0.41 (LLVM) (Xo Lang 3; bench/perf/aesgcm splits it)
 - Go reference: crypto/aes and crypto/cipher's GCM (assembly, CTR and GHASH fused)
 - Test: tls_test (seal and open over record sizes), tls12_client, http_tls and crypto_prims goldens (arm64, LLVM with Go parity); TestTLSDiff, TestCryptoXoDiff, TestConstantTimeLLVM
