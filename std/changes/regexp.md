@@ -3,7 +3,7 @@
 ## 2026-10-22: perf: the Pike step adds threads straight from the run queue's group positions
 
 - Kind: perf
-- Commit: this commit
+- Commit: b487f0c33
 - Found by: XO_PROF of the replace row (`add` and `exec`, the Pike matcher)
 - Go reference: none (Go copies each thread's captures; this reads them in place)
 - Test: std/native/regexp_test.xo, internal/llvm testdata golden regexp_table, internal/stdtest corpus regexp; timing row against Go: bench/results/regexp-ascii-bitmap-inline-2026-10-22.md
