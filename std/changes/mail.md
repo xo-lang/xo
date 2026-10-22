@@ -3,7 +3,7 @@
 ## 2026-10-22: perf: the Date header uses a time.Layout
 
 - Kind: perf
-- Commit: this commit
+- Commit: da2bdc4c9
 - Found by: Xo Lead's survey of constant layouts (std/changes/time.md)
 - Go reference: net/mail Header Date (time.RFC1123Z)
 - Test: std module tests native/mail; goldens mail_basic and mail_messages

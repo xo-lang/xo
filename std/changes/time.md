@@ -3,7 +3,7 @@
 ## 2026-10-22: perf: format writes digits into one byte buffer
 
 - Kind: perf
-- Commit: this commit
+- Commit: da2bdc4c9
 - Found by: the mail Date header measurement (a Layout formatter was 13% slower than a hand written one), Xo Lead
 - Go reference: time.Time.appendFormat (appendInt, appendNano)
 - Test: std module tests native/time ("every format field and argument form"; 2,625 layout, zone and time combinations agreed with the old text)

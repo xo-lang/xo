@@ -3,7 +3,7 @@
 ## 2026-10-22: perf: Str and Bytes slices are views (decision 0330)
 
 - Kind: perf
-- Commit: this commit
+- Commit: 436574f41
 - Found by: bench/results/regexp-time-csv-vs-go-2026-10-21.md, decision 0330
 - Go reference: Go's string and byte slices
 - Test: goldens views_unique, views_eq (arm64, LLVM, Go)
