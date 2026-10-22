@@ -322,3 +322,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0331-any-integer-index.md](0331-any-integer-index.md): Accepted (owner, 2026-10-21): any integer type indexes a List or Bytes (widened to Int, bounds-checked as today); no other implicit conversion
 - [0332-lazy-const.md](0332-lazy-const.md): Accepted in direction (owner, 2026-10-21): a lazy `const`, computed once per process on first use; design by Xo Publish, measurement by Lib1 first
 - [0329-chacha20-neon.md](0329-chacha20-neon.md): Accepted: ChaCha20's key stream four blocks at a time in vector registers (cpu.chacha_blocks4, an rt intrinsic on arm64: a NEON core, LLVM <4 x i32>; amd64 and wasm the portable body); bulk ChaCha20 -76% native, -78% LLVM
+- [0333-llvm-o2-unroll-300.md](0333-llvm-o2-unroll-300.md): Proposed: LLVM -O2 builds pass `-mllvm -unroll-threshold=300` (stub)
