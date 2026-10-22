@@ -969,6 +969,53 @@ fn (g: Gcm) ctr_at(s0: Str, d: Int, nlo: Int, nhi: Int, ctr0: Int, src: Bytes, s
   rt.rs_set_len(s0, d.wrapping_add(n))
 }
 
+/// ctr_at of the m bytes that are the n = m - 1 bytes at address sa and
+/// then the byte last (a TLS inner plaintext: data, then its content
+/// type), read from where they are: no copy of the data into a string
+/// of its own. s0 is as ctr_at's (room d + chunk_room(m), not sa's).
+fn (g: Gcm) ctr_at_a(s0: Str, d: Int, nlo: Int, nhi: Int, ctr0: Int, sa: Int, m: Int, last: Int) -> Str {
+  let q0 = raw.data(s0).wrapping_add(d)
+  var ctr = ctr0
+  var i = 0
+  while i < m {
+    let q = q0.wrapping_add(i)
+    var b = 0
+    while b < 4 {
+      rt.mem_store(q, b.wrapping_shl(4), nlo, 8)
+      rt.mem_store(q, b.wrapping_shl(4).wrapping_add(8), nhi | shl((ctr.wrapping_add(b) & 0xFFFFFFFF).swap_bytes() & ~0xFFFFFFFF, 0), 8)
+      b = b.wrapping_add(1)
+    }
+    let left = m.wrapping_sub(i)
+    enc_at(g.c, q, if left >= 64 { 4 } else { left.wrapping_add(15).shr_logical(4) })
+    var k = 0
+    while k < 8 {
+      let off = i.wrapping_add(k.wrapping_shl(3))
+      if off >= m {
+        break
+      }
+      let w = if off.wrapping_add(8) < m { rt.mem_load(sa, off, 8) } else { tail_at(sa, off, m, last) }
+      rt.mem_store(q, k.wrapping_shl(3), w ^ rt.mem_load(q, k.wrapping_shl(3), 8), 8)
+      k = k.wrapping_add(1)
+    }
+    ctr = ctr.wrapping_add(4)
+    i = i.wrapping_add(64)
+  }
+  rt.rs_set_len(s0, d.wrapping_add(m))
+}
+
+/// The bytes from off to m (fewer than 9) of the m - 1 bytes at sa and
+/// then last, little endian, zeros above.
+fn tail_at(sa: Int, off: Int, m: Int, last: Int) -> Int {
+  var w = 0
+  var k = 0
+  while off + k < m {
+    let c = if off + k == m - 1 { last } else { rt.mem_load(sa, off + k, 1) }
+    w = w | shl(c, 8 * k)
+    k += 1
+  }
+  w
+}
+
 /// n rounded up to whole 64 byte chunks: the room ctr_at writes.
 fn chunk_room(n: Int) -> Int { n.wrapping_add(63) & -64 }
 
@@ -1068,6 +1115,24 @@ pub fn (g: Gcm) seal_into(out: Str, an: Int, nlo: Int, nhi: Int, pt: Bytes) -> S
   // the tag's place is the scratch for its counter block
   let sp = if cap_of(s) >= an + n + 16 { raw.data(s).wrapping_add(an + n) } else { 0 }
   let (t0, t1) = g.tag_sp(nlo, nhi, b, an, n, b, 0, an, sp)
+  rt.rs_push_word(rt.rs_push_word(s, t0, 8), t1, 8)
+}
+
+/// seal_into of the n bytes at address pa (the caller's, read before
+/// this returns) and the byte last after them (a TLS inner plaintext),
+/// in out's room (seal_room(an, n + 1)): the data is not copied first.
+pub fn (g: Gcm) seal_into_at(out: Str, an: Int, nlo: Int, nhi: Int, pa: Int, n: Int, last: Int) -> Str {
+  let m = n + 1
+  if (g.c.hw & cpu.HW_AES) == 0 || cap_of(out) < an + chunk_room(m) + 16 {
+    var inner = rt.rs_set_len(rt.rs_with_cap(m), n)
+    rt.mem_copy(raw.data(inner), pa, n)
+    inner = rt.rs_push_byte(inner, last)
+    return g.seal_into(out, an, nlo, nhi, inner.bytes())
+  }
+  let s = g.ctr_at_a(out, an, nlo, nhi, 2, pa, m, last)
+  let b = s.bytes()
+  let sp = raw.data(s).wrapping_add(an + m)
+  let (t0, t1) = g.tag_sp(nlo, nhi, b, an, m, b, 0, an, sp)
   rt.rs_push_word(rt.rs_push_word(s, t0, 8), t1, 8)
 }
 

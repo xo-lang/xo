@@ -187,17 +187,17 @@ pub fn seal_at(var k: Keys, ct: Int, p: Int, n: Int, version: Int) -> Bytes {
     }
     return out.bytes()
   }
-  var inner = rt.rs_set_len(rt.rs_with_cap(n + 1), n)
-  rt.mem_copy(raw.data(inner), p, n)
-  inner = rt.rs_push_byte(inner, ct)
   if let Some(g) = k.gcm {
     // the header, then the ciphertext and tag sealed after it in the
     // same string (aesgcm seal_into: the header is the additional data)
     let (nlo, nhi) = nonce_w(k)
     k.seq += 1
     let out = push_header(rt.rs_with_cap(aesgcm.seal_room(5, n + 1)), CT_APP, 0x0303, n + 17)
-    return g.seal_into(out, 5, nlo, nhi, inner.bytes()).bytes()
+    return g.seal_into_at(out, 5, nlo, nhi, p, n, ct).bytes()
   }
+  var inner = rt.rs_set_len(rt.rs_with_cap(n + 1), n)
+  rt.mem_copy(raw.data(inner), p, n)
+  inner = rt.rs_push_byte(inner, ct)
   let hdr = header(CT_APP, 0x0303, n + 17)
   let sealed = chacha.seal(k.key, nonce(k), inner.bytes(), hdr)
   k.seq += 1
