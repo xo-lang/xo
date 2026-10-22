@@ -706,6 +706,20 @@ func cryptoCPU4(what0 string, a, b, c, d Bytes) (Bytes, bool) {
 		st, _ := cryptoCPU("ghash_blocks", d[:16], d[16:80], ct)
 		return out + st, true
 	}
+	if what == "aes_gcm8_enc" || what == "aes_gcm8_dec" {
+		// as aes_gcm_enc, with eight entries d[16:144] and the products
+		// of each 128 bytes summed and reduced once (cpu.aes_gcm8_soft)
+		out, _ := cryptoCPU("aes_ctr", a, b, c)
+		ct := out
+		if what == "aes_gcm8_dec" {
+			ct = a
+		}
+		st := d[:16]
+		for i := 0; i+128 <= len(ct); i += 128 {
+			st, _ = cryptoCPU("ghash4", st, d[16:144], ct[i:i+128])
+		}
+		return out + st, true
+	}
 	return cryptoCPU(what0, a, b, c)
 }
 
@@ -791,7 +805,8 @@ func cryptoCPU(what string, a, b, c Bytes) (Bytes, bool) {
 		}
 		return st, true
 	case "ghash4":
-		// GHASH of the 64 bytes c into the state a (y1, y0 as little endian
+		// GHASH of the 64 bytes c (or 128: ghash8_soft's eight entries)
+		// into the state a (y1, y0 as little endian
 		// words) with the H powers b (8 little endian words: p0, p1 a block;
 		// p2 = p0 ^ p1), as cpu.xo's op lays them out: the products summed,
 		// then one reduction, as ghash4_soft
@@ -809,7 +824,7 @@ func cryptoCPU(what string, a, b, c Bytes) (Bytes, bool) {
 			return lo, hi
 		}
 		var a0, b0, a1, b1, c0, c1 uint64
-		for j := 0; j < 4; j++ {
+		for j := 0; j < len(c)/16; j++ {
 			x1 := bits.ReverseBytes64(w(c, 2*j))
 			x0 := bits.ReverseBytes64(w(c, 2*j+1))
 			if j == 0 {

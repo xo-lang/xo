@@ -1382,6 +1382,24 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.clobber()
       g.set(v, [])
     }
+    "rt.aes_gcm8_enc10" | "rt.aes_gcm8_enc12" | "rt.aes_gcm8_enc14" | "rt.aes_gcm8_dec10" | "rt.aes_gcm8_dec12" | "rt.aes_gcm8_dec14" => {
+      // ssa.aes_gcm8_lines: the arguments as aes_gcm_lines' (the H
+      // powers eight); x9 to x11 its pointers and count (d8 to d15 saved
+      // on the stack and restored)
+      let name = aux_str(x.aux)
+      let nr = Int.parse(name[name.len() - 2..name.len()]) ?? 10
+      var cl = [9, 10, 11]
+      for r in ssa.aes_gcm8_vregs() {
+        cl.push(FP_BASE + r)
+      }
+      var us: List[Int] = []
+      for k in 0..7 {
+        us.push(g.real(g.word(x.args[k])))
+      }
+      let _i = g.add(Inst{kind: K_PLAIN, text: ssa.aes_gcm8_lines(nr, name.contains("enc"), "$u0", "$u1", "$u2", "$u3", "$u4", "$u5", "$u6", "x9", "x10", "x11").join("\n"), us: us, clobbers: cl})
+      g.clobber()
+      g.set(v, [])
+    }
     "rt.aes_ctr10" | "rt.aes_ctr12" | "rt.aes_ctr14" => {
       // ssa.aes_ctr_lines: $u0 dst, $u1 src, $u2 the round keys, $u3 the
       // counter block, $u4 the length; x9 to x11 its pointers and count

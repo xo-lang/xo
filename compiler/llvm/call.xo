@@ -812,6 +812,22 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       clob = clob + ",~{memory},~{cc}"
       g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, ptr ${g.raw_ptr(x.args[2])}, ptr ${g.raw_ptr(x.args[3])}, i64 ${g.op(x.args[4])}, ptr ${g.raw_ptr(x.args[5])}, ptr ${g.raw_ptr(x.args[6])})")
     }
+    "rt.aes_gcm8_enc10" | "rt.aes_gcm8_enc12" | "rt.aes_gcm8_enc14" | "rt.aes_gcm8_dec10" | "rt.aes_gcm8_dec12" | "rt.aes_gcm8_dec14" => {
+      // arm64 only (ssa call.xo): ssa.aes_gcm8_lines as inline asm, x9 to
+      // x11 and its V registers clobbered (d8 to d15 restored by it)
+      let name = aux_str(x.aux)
+      let nr = Int.parse(name[name.len() - 2..name.len()]) ?? 10
+      var t = [".arch_extension crypto"]
+      for l in ssa.aes_gcm8_lines(nr, name.contains("enc"), "$0", "$1", "$2", "$3", "$4", "$5", "$6", "x9", "x10", "x11") {
+        t.push(l)
+      }
+      var clob = "r,r,r,r,r,r,r,~{x9},~{x10},~{x11}"
+      for r in ssa.aes_gcm8_vregs() {
+        clob = clob + ",~{q${r}}"
+      }
+      clob = clob + ",~{memory},~{cc}"
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, ptr ${g.raw_ptr(x.args[2])}, ptr ${g.raw_ptr(x.args[3])}, i64 ${g.op(x.args[4])}, ptr ${g.raw_ptr(x.args[5])}, ptr ${g.raw_ptr(x.args[6])})")
+    }
     "rt.aes_ctr10" | "rt.aes_ctr12" | "rt.aes_ctr14" => {
       // arm64 only (ssa call.xo): ssa.aes_ctr_lines as inline asm, x9 to
       // x11 and its V registers clobbered

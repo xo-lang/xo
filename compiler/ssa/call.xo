@@ -206,6 +206,7 @@ fn (var b: Builder) cpu_call(x: Expr, ci: check.CallInfo) -> Int? {
     "aes_enc10x4" | "aes_enc12x4" | "aes_enc14x4" => if b.goarch == "arm64" { b.obj_name(fo) } else { "" }
     "aes_ctr10" | "aes_ctr12" | "aes_ctr14" => if b.goarch == "arm64" { b.obj_name(fo) } else { "" }
     "aes_gcm_enc10" | "aes_gcm_enc12" | "aes_gcm_enc14" | "aes_gcm_dec10" | "aes_gcm_dec12" | "aes_gcm_dec14" => if b.goarch == "arm64" { b.obj_name(fo) } else { "" }
+    "aes_gcm8_enc10" | "aes_gcm8_enc12" | "aes_gcm8_enc14" | "aes_gcm8_dec10" | "aes_gcm8_dec12" | "aes_gcm8_dec14" => if b.goarch == "arm64" { b.obj_name(fo) } else { "" }
     "sha256_block" => "sha256_block"
     // decision 0329: arm64 only (NEON, and LLVM's vectors there); amd64
     // runs the portable body until it has its own lowering

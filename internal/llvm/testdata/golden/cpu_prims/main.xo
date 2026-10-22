@@ -156,6 +156,35 @@ fn main(os: Os) {
       }
     }
   }
+  // AES-GCM's bulk eight blocks at a time (cpu.aes_gcm8_enc and
+  // aes_gcm8_dec): the round keys in registers (12 and 14 rounds load the
+  // keys past K11 each round of the loop), Karatsuba's products and one
+  // reduction per 128 bytes on arm64 and LLVM, apart and in place, against
+  // the portable body; eight arbitrary table entries
+  for i in 0..inputs.len() {
+    for nk in [11, 13, 15] {
+      var ks = b""
+      for j in 0..nk {
+        ks = ks + inputs[(i + 3 + j) % inputs.len()]
+      }
+      let iv = inputs[(i + 1) % inputs.len()]
+      var d = inputs[(i + 2) % inputs.len()]
+      for j in 0..8 {
+        d = d + inputs[(i + 5 + j) % inputs.len()]
+      }
+      for nb in [0, 1, 2, 5] {
+        var data = b""
+        for j in 0..8 * nb {
+          data = data + inputs[(i + j) % inputs.len()]
+        }
+        for op in ["aes_gcm8_enc", "aes_gcm8_dec", "aes_gcm8_enc_ip", "aes_gcm8_dec_ip"] {
+          let e = internal.crypto_op("cpu.${op}", data, ks, iv, d)
+          let es = internal.crypto_op("cpu.${op}_soft", data, ks, iv, d)
+          os.stdio.println("${op} ${i} ${nk} ${128 * nb} ${internal.crypto_op("hash.sha256", e, b"", b"", b"").to_hex()} ${if e == es { "same" } else { "soft differs" }}")
+        }
+      }
+    }
+  }
   // four blocks at once (cpu.aes_enc10x4, 12x4, 14x4): the four states
   // side by side on arm64 and LLVM, against the portable body; 11, 13
   // and 15 round keys from the inputs
