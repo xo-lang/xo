@@ -1,0 +1,21 @@
+// Decision 0330 (item 3): clone() is an explicit copy of a Str or Bytes, a
+// view or not; the copy equals the original and lives on its own.
+fn make() -> (Str, Bytes) {
+  let big = "header: ".repeat(1000) + "token=abc123;" + "tail".repeat(100)
+  let i = big.find("token") ?? 0
+  let piece = big[i..i + 12]
+  let bs = big.bytes()[i..i + 12]
+  (piece.clone(), bs.clone())
+}
+
+fn main(os: Os) {
+  let (s, b) = make()
+  os.stdio.println("${s} ${s.len()} ${b.len()} ${s == "token=abc123"} ${b.to_str() ?? "?"}")
+  let lit = "literal".clone()
+  let e = "".clone()
+  os.stdio.println("${lit} ${lit.len()} [${e}] ${e.len()} ${Bytes.zeroed(3).clone().len()}")
+  var m: Map[Str, Int] = {}
+  m[s] = 1
+  m["token=abc123".clone()] = (m.get("token=abc123") ?? 0) + 1
+  os.stdio.println("${m.len()} ${m.get("token=abc123") ?? -1} ${(s.clone() + "!").len()}")
+}

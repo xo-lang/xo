@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+token=abc123 12 12 true token=abc123
+literal 7 [] 0 3
+1 2 13
+--- stderr

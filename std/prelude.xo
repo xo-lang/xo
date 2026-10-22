@@ -271,6 +271,10 @@ fn (s: Str) to_lower() -> Str
 fn (s: Str) to_upper() -> Str
 fn (s: Str) replace(old: Str, new: Str) -> Str
 fn (s: Str) repeat(n: Int) -> Str
+/// An explicit copy of s in a buffer of its own: a slice, a `split` piece or
+/// a `trim` result shares its source's buffer on native targets (core 3.6),
+/// so a small piece to keep for long copies it to let a large source go.
+fn (s: Str) clone() -> Str
 fn (s: Str) runes() -> List[Rune]
 fn (s: Str) bytes() -> Bytes
 
@@ -278,6 +282,8 @@ fn (b: Bytes) len() -> Int
 fn (b: Bytes) is_empty() -> Bool
 fn (b: Bytes) to_str() -> Str?
 fn (b: Bytes) to_hex() -> Str
+/// An explicit copy of b in a buffer of its own (see Str.clone).
+fn (b: Bytes) clone() -> Bytes
 fn (b: Bytes) to_base64() -> Str
 fn (static: Bytes) from_hex(s: Str) -> Bytes?
 fn (static: Bytes) from_base64(s: Str) -> Bytes?

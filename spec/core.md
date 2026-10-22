@@ -1258,8 +1258,8 @@ An `UpperCamel` name in a pattern always refers to a variant; bindings are
   immutable values are O(1) and share storage: on native targets the result
   of slicing a `Str` or `Bytes` is a view of the same buffer (no copy), so a
   small view keeps its whole buffer alive (as a Go substring does; there is
-  no automatic compaction of a stored view, and `s.repeat(1)` copies when
-  the piece must outlive a large source). A view is never changed in place:
+  no automatic compaction of a stored view; `s.clone()` makes an explicit
+  copy when a piece must outlive a large source). A view is never changed in place:
   appending to one, or building on one, copies. A `Str` or `Bytes` value
   holds at most 4294967295 bytes (4 GiB
   less one); an operation that would make a longer one (concatenation,

@@ -184,6 +184,7 @@ fn (s: Str) trim_prefix(p: Str) -> Str       // also trim_suffix
 fn (s: Str) to_lower() -> Str                // also to_upper (Unicode aware)
 fn (s: Str) replace(old: Str, new: Str) -> Str
 fn (s: Str) repeat(n: Int) -> Str
+fn (s: Str) clone() -> Str                   // an explicit copy in a buffer of its own (a slice or split piece shares its source on native targets)
 fn (s: Str) runes() -> List[Rune]
 fn (s: Str) bytes() -> Bytes
 
@@ -199,6 +200,7 @@ fn (b: Bytes) decode_rune(i: Int) -> (Rune, Int)  // the rune at byte i and its 
 fn (b: Bytes) quote() -> Str                 // also on Str: a quoted literal
 fn (b: Bytes) find(sub: Bytes) -> Int?       // bytes.Index; Some(0) for an empty sub
 fn (b: Bytes) rfind(sub: Bytes) -> Int?      // bytes.LastIndex; Some(b.len()) for an empty sub
+fn (b: Bytes) clone() -> Bytes               // an explicit copy in a buffer of its own
 fn (b: Bytes) indexed() -> List[(Int, UInt8)]  // each byte with its offset, as List.indexed
 fn (static: Bytes) zeroed(n: Int) -> Bytes   // n zero bytes (make([]byte, n)); a fault for n < 0
 fn (s: Str) unquote() -> Str?                // Go's Unquote (decision 0287); None when s is not a literal or the text is not UTF-8
@@ -3970,7 +3972,7 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
 
 Every function and method of std/prelude.xo, by type, as declared there
 (the sections above explain them); interface methods take `self`.
-356 declarations.
+358 declarations.
 
 ### Range
 
@@ -4153,6 +4155,7 @@ fn (s: Str) to_lower() -> Str
 fn (s: Str) to_upper() -> Str
 fn (s: Str) replace(old: Str, new: Str) -> Str
 fn (s: Str) repeat(n: Int) -> Str
+fn (s: Str) clone() -> Str
 fn (s: Str) runes() -> List[Rune]
 fn (s: Str) bytes() -> Bytes
 fn (s: Str) quote() -> Str
@@ -4166,6 +4169,7 @@ fn (b: Bytes) len() -> Int
 fn (b: Bytes) is_empty() -> Bool
 fn (b: Bytes) to_str() -> Str?
 fn (b: Bytes) to_hex() -> Str
+fn (b: Bytes) clone() -> Bytes
 fn (b: Bytes) to_base64() -> Str
 fn (static: Bytes) from_hex(s: Str) -> Bytes?
 fn (static: Bytes) from_base64(s: Str) -> Bytes?

@@ -106,6 +106,8 @@ var (
 	_ func(*Task, Bytes, int64) Tuple2[Rune, int64]                 = Bytes_decode_rune
 	_ func(*Task, Bytes) string                                     = Bytes_quote
 	_ func(*Task, Bytes, Bytes) Option[int64]                       = Bytes_find
+	_ func(*Task, Bytes) Bytes                                      = Bytes_clone
+	_ func(*Task, string) string                                    = Str_clone
 	_ func(*Task, Bytes, Bytes) Option[int64]                       = Bytes_rfind
 	_ func(*Task, Bytes) List[Tuple2[int64, uint8]]                 = Bytes_indexed
 	_ func(*Task, int64) Bytes                                      = Bytes_zeroed

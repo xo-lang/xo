@@ -111,3 +111,10 @@ func Bytes_zeroed(_ *Task, n int64) Bytes {
 	}
 	return Bytes(make([]byte, n))
 }
+
+// Str_clone is `s.clone()`: Go strings are immutable and substrings share by
+// design, so the copy is the value itself (decision 0330 views are native only).
+func Str_clone(_ *Task, s string) string { return s }
+
+// Bytes_clone is `b.clone()`: Bytes is a Go string here, so it is its own copy.
+func Bytes_clone(_ *Task, b Bytes) Bytes { return b }

@@ -120,6 +120,16 @@ fn str_replace(s: Str, old: Str, new: Str) -> Str { strings.replace(s, old, new)
 
 fn str_repeat(s: Str, n: Int) -> Str { raw.str_repeat(s, n) }
 
+/// A copy in a buffer of its own (decision 0330): s may be a view.
+fn str_clone(s: Str) -> Str { raw.str_at(raw.data(s), s.len()) }
+
+fn bytes_clone(b: Bytes) -> Bytes {
+  let n = b.len()
+  let c = raw.bytes_buf(n)
+  rt.mem_copy(raw.bytes_addr(c), raw.bytes_addr(b), n)
+  c
+}
+
 fn list_join(xs: List[Str], sep: Str) -> Str { raw.str_join(xs, sep) }
 
 fn str_quote(s: Str) -> Str { unicode.quote(s.bytes()) }

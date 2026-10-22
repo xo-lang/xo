@@ -1,5 +1,19 @@
 # prelude changes
 
+## 2026-10-22: feature: Str.clone and Bytes.clone
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0330 item 3 (explicit copy of a view)
+- Go reference: strings.Clone, bytes.Clone
+- Test: golden views_clone (arm64, LLVM, Go); bench/results/views-retention-2026-10-22.md
+
+`s.clone()` and `b.clone()` return a copy in a buffer of its own. A slice,
+a `split` piece or a `trim` result is a view that keeps its whole source
+alive on native targets; clone a piece that outlives a large source (2,000
+16 byte tokens kept from 1 MiB bodies hold 2.1 GB as views, 4.9 MB cloned).
+The Go backend returns the value itself (its strings share by design).
+
 ## 2026-10-22: perf: split, lines, trim and trim_prefix/suffix return views (decision 0330)
 
 - Kind: perf

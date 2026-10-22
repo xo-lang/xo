@@ -48,7 +48,8 @@ Last verified: 2026-10-22 (spec/core.md and spec/std.md at main).
 - Slices of `Str` and `Bytes` are O(1) views on native targets (0330):
   `s[a..b]`, `split`, `lines`, `trim*`, `trim_prefix/suffix` share the
   buffer, so a small piece keeps a large source alive (copy with
-  `s.repeat(1)`; no automatic compaction, no `clone()` on Str); a Str or
+  `s.clone()`, also on Bytes; no automatic compaction, design note in
+  bench/results/views-retention-2026-10-22.md); a Str or
   Bytes holds at most 4294967295 bytes (concat, append, push fault with
   "Str or Bytes longer than 4 GiB", `repeat` with its own message); a C ABI
   export may not return a Str. wasm and the Go backend copy.
