@@ -1193,6 +1193,34 @@ pub fn (g: Gcm) seal_into_aad(out: Str, d: Int, nlo: Int, nhi: Int, pt: Bytes, a
   rt.rs_push_word(rt.rs_push_word(s, t0, 8), t1, 8)
 }
 
+/// seal_into_aad of the n bytes at address pa (the caller's, read before
+/// this returns): the whole 64 byte chunks are sealed from there on the
+/// fused kernel without the copy of the data seal_into_aad takes; only a
+/// tail under 64 bytes is copied.
+pub fn (g: Gcm) seal_into_aad_at(out: Str, d: Int, nlo: Int, nhi: Int, pa: Int, n: Int, aad: Bytes) -> Str {
+  let whole = n & -64
+  if whole == 0 || !g.fused() || cap_of(out) < d + chunk_room(n) + 16 {
+    return g.seal_into_aad(out, d, nlo, nhi, raw.str_at(pa, n).bytes(), aad)
+  }
+  let (a1, a0) = g.ghash_o(0, 0, aad, 0, aad.len())
+  let (y1, y0) = g.gcm_bulk(raw.data(out).wrapping_add(d), pa, nlo, nhi, whole, a1, a0, true)
+  var s = out
+  var b1 = y1
+  var b0 = y0
+  if n > whole {
+    let tail = raw.str_at(pa + whole, n - whole)
+    s = g.ctr_o(out, d + whole, nlo, nhi, 2 + whole / 16, tail.bytes(), 0, n - whole)
+    let (c1, c0) = g.ghash_o(y1, y0, s.bytes(), d + whole, n - whole)
+    b1 = c1
+    b0 = c0
+  } else {
+    s = rt.rs_set_len(out, d + n)
+  }
+  let sp = raw.data(s).wrapping_add(d + n)
+  let (t0, t1) = g.tag_fin(nlo, nhi, b1, b0, aad.len(), n, sp)
+  rt.rs_push_word(rt.rs_push_word(s, t0, 8), t1, 8)
+}
+
 /// seal_into and seal_into_aad on the fused kernel: the ciphertext of
 /// pt's n bytes at offset d of out (room d + chunk_room(n) + 16), the
 /// additional data the an bytes of ad at ao.

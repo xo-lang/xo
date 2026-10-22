@@ -16,6 +16,7 @@ use native/llrt/asn1
 use native/llrt/chacha
 use native/llrt/ct
 use native/llrt/hmac
+use native/llrt/raw
 use native/llrt/rand
 use native/llrt/sha1
 use native/llrt/sha256
@@ -369,6 +370,71 @@ pub fn seal(var k: Keys, ct: Int, data: Bytes, version: Int) -> Bytes {
     return out[0]
   }
   asn1.cat(out)
+}
+
+/// seal of the n bytes at address p (the caller's, read before this
+/// returns): AES-GCM records are sealed from there without the copies of
+/// the data seal makes (a string of the whole data, then the records
+/// joined); seal itself for the other protections and an empty data.
+pub fn seal_at(var k: Keys, ct: Int, p: Int, n: Int, version: Int) -> Bytes {
+  if !k.on || k.mac.len() > 0 || n == 0 {
+    return seal(k, ct, raw.str_at(p, n).bytes(), version)
+  }
+  let g = match k.gcm {
+    Some(x) => x
+    None => return seal(k, ct, raw.str_at(p, n).bytes(), version)
+  }
+  if n <= MAX_PLAIN {
+    return gcm_record_at(g, k, ct, p, n, version)
+  }
+  var out = rt.rs_with_cap(n + (n / MAX_PLAIN + 1) * 29)
+  var off = 0
+  while off < n {
+    let m = if n - off > MAX_PLAIN { MAX_PLAIN } else { n - off }
+    let rec = gcm_record_at(g, k, ct, p + off, m, version)
+    out = rt.rs_append_bytes(out, rec, 0, rec.len(), 0)
+    off += m
+  }
+  out.bytes()
+}
+
+/// One AES-GCM record of the n bytes at address p (0 < n <= MAX_PLAIN):
+/// the header, the explicit nonce (the sequence number), the ciphertext
+/// and the tag in the one string.
+fn gcm_record_at(g: aesgcm.Gcm, var k: Keys, ct: Int, p: Int, n: Int, version: Int) -> Bytes {
+  // the additional data: the sequence number (8 bytes, big endian, also
+  // the explicit nonce), the type, the version and the plaintext's length
+  let seq = k.seq
+  var aad = rt.rs_with_cap(13)
+  var hi = 0
+  var lo = 0
+  for i in 0..4 {
+    let b = (seq >> (56 - i * 8)) & 255
+    aad = rt.rs_push_byte(aad, b)
+    hi = hi | (b << (i * 8))
+  }
+  for i in 4..8 {
+    let b = (seq >> (56 - i * 8)) & 255
+    aad = rt.rs_push_byte(aad, b)
+    lo = lo | (b << ((i - 4) * 8))
+  }
+  aad = rt.rs_push_byte(aad, ct)
+  aad = rt.rs_push_byte(aad, version >> 8)
+  aad = rt.rs_push_byte(aad, version & 255)
+  aad = rt.rs_push_byte(aad, n >> 8)
+  aad = rt.rs_push_byte(aad, n & 255)
+  // the nonce: the 4 byte salt, then the sequence number, as two words
+  let nlo = Int(k.iv[0]) | (Int(k.iv[1]) << 8) | (Int(k.iv[2]) << 16) | (Int(k.iv[3]) << 24) | (hi << 32)
+  let nhi = lo
+  var rec = rt.rs_with_cap(13 + aesgcm.chunk_room(n) + 16)
+  rec = rt.rs_push_byte(rec, ct)
+  rec = rt.rs_push_byte(rec, version >> 8)
+  rec = rt.rs_push_byte(rec, version & 255)
+  rec = rt.rs_push_byte(rec, (n + 24) >> 8)
+  rec = rt.rs_push_byte(rec, (n + 24) & 255)
+  rec = rt.rs_append_bytes(rec, aad.bytes(), 0, 8, 0)
+  k.seq += 1
+  g.seal_into_aad_at(rec, 13, nlo, nhi, p, n, aad.bytes()).bytes()
 }
 
 /// A record's content after protection is removed: its type and data;

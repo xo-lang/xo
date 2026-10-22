@@ -168,6 +168,14 @@ pub fn send(var s: Server, data: Bytes) {
   }
 }
 
+/// send of the n bytes at address p (read before this returns).
+pub fn send_at(var s: Server, p: Int, n: Int) {
+  if s.state == DONE && n > 0 {
+    let rec = tls12.seal_at(s.wk, tls12.CT_APP, p, n, 0x0303)
+    s.out = if s.out.len() == 0 { rec } else { cat2(s.out, rec) }
+  }
+}
+
 /// Sends close_notify (Go's Close after the handshake).
 pub fn close(var s: Server) { s.out = cat2(s.out, tls12.seal(s.wk, tls12.CT_ALERT, b"\x01\x00", 0x0303)) }
 

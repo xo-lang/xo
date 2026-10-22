@@ -1,0 +1,47 @@
+// Tests of tls12.xo's record protection: `xo test
+// --std-module=native/llrt/tls12`, run by internal/stdtest.
+
+use native/llrt/raw
+
+fn pattern(n: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  for i in 0..n {
+    b.write_byte(UInt8((i * 7 + 3) & 255))
+  }
+  b.freeze()
+}
+
+test "seal_at makes the bytes seal does, and the records open" {
+  let sizes = [0, 1, 7, 8, 9, 15, 16, 17, 62, 63, 64, 65, 100, 127, 128, 129, 191, 255, 1000, 4096, 16383, 16384, 16385, 20000, 32768, 40001, 65536]
+  for klen in [16, 32] {
+    let suite = if klen == 16 { 0xc02b } else { 0xc02c }
+    let key = pattern(klen)
+    let iv = b"\x01\x02\x03\x04"
+    for n in sizes {
+      for seq in [0, 5, 0x0102030405060708] {
+        let data = pattern(n)
+        var k1 = keys(suite, key, iv)
+        var k2 = keys(suite, key, iv)
+        var k3 = keys(suite, key, iv)
+        k1.seq = seq
+        k2.seq = seq
+        k3.seq = seq
+        let a = seal(k1, 23, data, 0x0303)
+        let p = if n == 0 { 0 } else { raw.bytes_addr(data) }
+        let b = seal_at(k2, 23, p, n, 0x0303)
+        expect(b == a)
+        expect(k2.seq == k1.seq)
+        var off = 0
+        var got = BytesBuilder.new()
+        while off < b.len() {
+          let rn = u16_at(b, off + 3)
+          let r = open(k3, b[off..off + 5], b[off + 5..off + 5 + rn])
+          expect(r.ct == 23)
+          got.write(r.data)
+          off += 5 + rn
+        }
+        expect(got.freeze() == data)
+      }
+    }
+  }
+}

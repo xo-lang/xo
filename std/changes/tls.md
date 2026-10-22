@@ -1,5 +1,28 @@
 # std/tls changes
 
+## 2026-10-22: speedup: TLS 1.2 AES-GCM records sealed in place from the caller's buffer
+
+- Kind: speedup
+- Commit: this commit
+- Found by: XO_PROF=cpu of the tlsrate bulk server in Docker, TLS 1.2 against TLS 1.3 (Xo Lang 3): libcstr.copy_words and asn1.cat only in the 1.2 profile, server CPU 372 against 298 us/MB
+- Go reference: crypto/tls conn.go (halfConn.encrypt seals in the record buffer)
+- Test: native/llrt/tls12 module test (seal_at equals seal, byte for byte, for both key sizes, 27 lengths up to 64 KiB and three sequence numbers, and the records open), tls12_client, http_tls and http_tls_keys goldens (arm64, LLVM with Go parity), TestTLSDiff
+
+TLS 1.3's server write sealed the response from its address, but the TLS 1.2
+server copied the whole write into a string, sliced it into records, and
+joined the records. `tls12.seal_at` and `Gcm.seal_into_aad_at` seal each
+16 KiB record straight from the caller's address (only a tail under 64 bytes
+is copied), build the additional data and nonce words without the small
+lists `u64` and `asn1.cat` allocated, and join the records once, as
+`tlsrec.seal_at` does. `xo bench --ab` in Docker linux/arm64 (B / A, 4 GiB
+TLS 1.2 download from the tlsrate server, 11 rounds, load 6 to 7): wall 0.921
+(95% 0.873 to 0.932), cpu_ms 0.910 (0.794 to 0.979); a second run 0.888 and
+0.822 (both within noise at that load). The Mac cannot show it: loopback
+`sendto` is 84% of the server there. The rest of the gap to Go is the AES
+kernel (the same in TLS 1.3) and Go's TLS 1.2 write being faster than its own
+TLS 1.3 one.
+bench/results/aesgcm-2026-10-22.md.
+
 ## 2026-10-22: speedup: AES-GCM seal and open on the interleaved AES and GHASH kernel
 
 - Kind: speedup
