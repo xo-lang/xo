@@ -3,7 +3,10 @@
 Status: Accepted (owner, 2026-10-22). Proposed the same day (owner
 approved the tool; Xo Publish). Plan step 4 (XO_INLINE_STRICT=1 in
 gate.sh, release.sh, hourly.sh) done. Step 1 (the check, XO1510) done,
-measured below.
+measured below. Step 2 (records in fn entries for undecoded hits) is
+deferred until a stale undecoded hit is seen: their keys already carry
+the callees' signatures (the lead, 2026-10-22). Step 3 (the amd64 Docker
+sample) does not apply: the check generates no x86 code.
 
 ## Context
 
