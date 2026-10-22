@@ -38,6 +38,13 @@ resource "aws_iam_role_policy" "runner" {
   policy = data.aws_iam_policy_document.runner.json
 }
 
+# Session Manager on the runners (owner, 2026-10-22: live debugging of the
+# Windows xo.exe crash; no inbound port, no keys)
+resource "aws_iam_role_policy_attachment" "runner_ssm" {
+  role       = aws_iam_role.runner.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
 resource "aws_iam_instance_profile" "runner" {
   name = "xo-ci-runner"
   role = aws_iam_role.runner.name
