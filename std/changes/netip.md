@@ -3,7 +3,7 @@
 ## 2026-10-22: perf: parse and display without per group strings and lists
 
 - Kind: perf
-- Commit: this commit
+- Commit: dd05b4c3a
 - Found by: the std Go ranking (netip 1.85x Go's net/netip), XO_PROF=cpu
 - Go reference: net/netip (go1.26.1)
 - Test: internal/stdtest/testdata/corpus/netip (go, arm64, LLVM); golden http_client_ip (Go parity)

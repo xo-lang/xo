@@ -3,7 +3,7 @@
 ## 2026-10-22: perf: format looks the zone up once
 
 - Kind: perf
-- Commit: this commit
+- Commit: fdc3297ca
 - Found by: the std Go ranking (Layout.format 1.7x Go's time.Format), XO_PROF=cpu
 - Go reference: time.Format
 - Test: std module tests native/time (arm64, llvm); goldens time_format, time_zones
