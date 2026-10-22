@@ -1467,6 +1467,15 @@ fn (var e: E) str_data_ptr(x: Str) -> Str {
   e.def("getelementptr i8, ptr ${o}, i64 16")
 }
 
+/// The length of the Str x (decision 0330: the low half of the second word).
+fn (var e: E) str_len(x: Str) -> Str {
+  let w1 = e.def("extractvalue %xo.str ${x}, 1")
+  if STR_VIEWS {
+    return e.def("and i64 ${w1}, 4294967295")
+  }
+  w1
+}
+
 fn (var e: E) def(s: Str) -> Str {
   let r = e.tmp()
   e.emit("${r} = ${s}")
@@ -1526,9 +1535,9 @@ fn (var g: Gen) eq_fn(t: Int) -> Str {
     }
     Str => {
       let da = e.str_data_ptr("%a")
-      let na = e.def("extractvalue %xo.str %a, 1")
+      let na = e.str_len("%a")
       let db = e.str_data_ptr("%b")
-      let nb = e.def("extractvalue %xo.str %b, 1")
+      let nb = e.str_len("%b")
       let pa = e.def("ptrtoint ptr ${da} to i64")
       let pb = e.def("ptrtoint ptr ${db} to i64")
       let r = e.def("call i64 @xo_x_obj_str_eq(i64 ${pa}, i64 ${na}, i64 ${pb}, i64 ${nb}) #6")
