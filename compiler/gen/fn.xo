@@ -808,6 +808,9 @@ fn (var g: Gen) ret(e: Expr) {
     g.ret_unit()
     return
   }
+  if g.map_last_use(e) {
+    g.note_borrow(e)
+  }
   var v = g.coerce(g.expr(e), ne, res_t)
   if g.fr().is_result {
     v = g.ok_value(v)

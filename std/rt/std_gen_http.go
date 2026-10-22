@@ -81,6 +81,12 @@ func (v Http_Request) XoDebug(b *strings.Builder) {
 
 func (v Http_Request) M_debug(*Task) string { return Debug(v) }
 
+// XoMark marks the lists held by the fields (see rt.List).
+func (v *Http_Request) XoMark() {
+	v.F_url.XoMark()
+	v.F_headers.XoMark()
+}
+
 type Http_ProxyHeader struct {
 	Tag int
 	P   any
@@ -336,6 +342,11 @@ func (v Http_Response) XoDebug(b *strings.Builder) {
 
 func (v Http_Response) M_debug(*Task) string { return Debug(v) }
 
+// XoMark marks the lists held by the fields (see rt.List).
+func (v *Http_Response) XoMark() {
+	v.F_headers.XoMark()
+}
+
 type Http_StreamPart struct {
 	F_name     string
 	F_filename Option[string]
@@ -381,6 +392,11 @@ func (v Http_StreamPart) XoDebug(b *strings.Builder) {
 }
 
 func (v Http_StreamPart) M_debug(*Task) string { return Debug(v) }
+
+// XoMark marks the lists held by the fields (see rt.List).
+func (v *Http_StreamPart) XoMark() {
+	v.F_headers.XoMark()
+}
 
 type Http_TlsErr struct {
 	F_msg string
@@ -605,6 +621,11 @@ func (v Http_Url) XoDebug(b *strings.Builder) {
 }
 
 func (v Http_Url) M_debug(*Task) string { return Debug(v) }
+
+// XoMark marks the lists held by the fields (see rt.List).
+func (v *Http_Url) XoMark() {
+	v.F_query.XoMark()
+}
 
 type Http_UrlErr struct {
 	F_msg string

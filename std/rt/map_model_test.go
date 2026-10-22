@@ -117,7 +117,7 @@ func TestMapModel(t *testing.T) {
 				refs[i].remove(k)
 			case op < 8:
 				j := rng.IntN(len(pool))
-				pool[j] = pool[i]
+				pool[j] = Map_Own(pool[i]) // a copy is marked, as generated code does
 				refs[j] = refs[i].clone()
 			case op < 9:
 				var u Map[int64, int64]
@@ -127,7 +127,7 @@ func TestMapModel(t *testing.T) {
 			default:
 				// A put that a copy makes and then drops: the original
 				// must not see it.
-				c := pool[i]
+				c := Map_Own(pool[i])
 				Map_put(nil, &c, k, -1)
 			}
 			if step%7 == 0 || step == steps-1 {
@@ -136,6 +136,38 @@ func TestMapModel(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// TestMapOverwriteInPlace: an unshared root table overwrites a live key's
+// entry instead of appending (decision 0335); once marked it appends, and a
+// marked copy keeps its values.
+func TestMapOverwriteInPlace(t *testing.T) {
+	var m Map[int64, int64]
+	for k := range int64(50) {
+		Map_put(nil, &m, k, k)
+	}
+	for i := range int64(10000) {
+		Map_put(nil, &m, i%50, i)
+		Map_update(nil, &m, i%50, 0, func(_ *Task, v *int64) Result[Unit, string] {
+			*v++
+			return Ok[Unit, string](Unit{})
+		})
+	}
+	if len(m.es) != 50 || m.t.used.Load() != 50 {
+		t.Fatalf("log %d used %d, want 50 entries overwritten in place", len(m.es), m.t.used.Load())
+	}
+	c := Map_Own(m)
+	Map_put(nil, &m, 7, -7)
+	Map_update(nil, &m, 8, 0, func(_ *Task, v *int64) Result[Unit, string] {
+		*v = -8
+		return Ok[Unit, string](Unit{})
+	})
+	if len(m.es) != 52 {
+		t.Fatalf("log %d after a copy, want 52 (appended)", len(m.es))
+	}
+	if Map_get(nil, c, 7).V != 9958 || Map_get(nil, c, 8).V != 9959 || Map_get(nil, m, 7).V != -7 || Map_get(nil, m, 8).V != -8 {
+		t.Fatalf("copy %v %v, map %v %v", Map_get(nil, c, 7), Map_get(nil, c, 8), Map_get(nil, m, 7), Map_get(nil, m, 8))
 	}
 }
 
@@ -148,7 +180,7 @@ func TestMapHeavyRewrite(t *testing.T) {
 	var snaps []Map[int64, int64]
 	var refs []mmodel
 	for round := range int64(30) {
-		snap := m
+		snap := Map_Own(m)
 		snaps = append(snaps, snap)
 		refs = append(refs, ref.clone())
 		// Write through the snapshot first half the time, so m becomes
@@ -182,7 +214,7 @@ func TestMapLargeChurnedLog(t *testing.T) {
 		Map_put(nil, &m, k, k)
 		ref.put(k, k)
 	}
-	snap, snapRef := m, ref.clone()
+	snap, snapRef := Map_Own(m), ref.clone()
 	for k := int64(0); k < 300; k++ {
 		Map_put(nil, &m, (k*7)%400, -k)
 		ref.put((k*7)%400, -k)
@@ -212,7 +244,7 @@ func TestMapConcurrentReaders(t *testing.T) {
 	}
 	var wg sync.WaitGroup
 	for r := range 4 {
-		snap := m
+		snap := Map_Own(m)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -240,7 +272,7 @@ func TestMapConcurrentReaders(t *testing.T) {
 	}
 	// Writers: the owner, and a second copy that loses the claim and
 	// forks, both racing with the readers.
-	other := m
+	other := Map_Own(m)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -261,7 +293,7 @@ func TestSetValueSemantics(t *testing.T) {
 	var s Set[string]
 	Set_add(nil, &s, "a")
 	Set_add(nil, &s, "b")
-	c := s
+	c := Set_Own(s)
 	Set_add(nil, &c, "c")
 	Set_remove(nil, &c, "a")
 	Set_add(nil, &s, "d")
@@ -284,7 +316,7 @@ func TestMapHashCollisions(t *testing.T) {
 	for i := range int64(200) {
 		Map_put(nil, &m, collide{i}, i)
 	}
-	snap := m
+	snap := Map_Own(m)
 	for i := range int64(200) {
 		if i%3 == 0 {
 			Map_remove(nil, &m, collide{i})

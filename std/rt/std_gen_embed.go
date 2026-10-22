@@ -36,3 +36,8 @@ func (v Embed_Dir) XoDebug(b *strings.Builder) {
 }
 
 func (v Embed_Dir) M_debug(*Task) string { return Debug(v) }
+
+// XoMark marks the lists held by the fields (see rt.List).
+func (v *Embed_Dir) XoMark() {
+	v.F_files.XoMark()
+}

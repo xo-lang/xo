@@ -1,5 +1,19 @@
 # prelude changes
 
+## 2026-10-22: perf: Map overwrites a key in place on the Go backend
+
+- Kind: perf
+- Commit: (filled in after the push)
+- Found by: the Go backend's bench/perf profile (go-backend-map-profile-2026-10-22, the lead's notes)
+- Go reference: none (Go's map writes in place; this is the persistent log's owner path)
+- Test: std/rt TestMapOverwriteInPlace and the model tests; golden map_inplace_copies (go, arm64, LLVM)
+
+On the Go backend a put of an existing key (and `update`) overwrites the
+key's entry in place while no copy of the map shares its table (decision
+0335), instead of appending and flattening the log every 2n+32 writes.
+bench/perf putget 162 to 100 ms and update 122 to 73 ms (medians of 7,
+interleaved, checksums equal); branch, copymut, get and iter unchanged.
+
 ## 2026-10-21: feature: Bytes.indexed
 
 - Kind: feature

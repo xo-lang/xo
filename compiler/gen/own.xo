@@ -1,6 +1,8 @@
 // List ownership (internal/gen own.go): the generated code marks the
 // blocks a value holds wherever it copies the value out of a place into
-// something that outlives the read, unless the read is a borrow.
+// something that outlives the read, unless the read is a borrow. A Map is
+// marked the same way (decision 0335): its table is overwritten in place
+// only while unmarked. "Holds a list" below means a List or a Map.
 
 use github.com/xo-lang/xo/compiler/check
 
@@ -30,7 +32,7 @@ fn (var g: Gen) holds_list1(t0: Int, var seen: Map[Int, Bool]) -> Bool {
       let o = x.obj
       if g.oprelude(o) {
         let n = g.oname(o)
-        if n == "List" {
+        if n == "List" || n == "Map" {
           return true
         }
         if n == "Option" || n == "Result" {
@@ -105,7 +107,7 @@ fn (var g: Gen) mark_stmts(addr: Str, t0: Int) -> List[Str] {
     Named => {
       if g.oprelude(x.obj) {
         let n = g.oname(x.obj)
-        if n == "List" {
+        if n == "List" || n == "Map" {
           return [addr + ".XoMark()"]
         }
         if n == "Option" {
@@ -148,6 +150,9 @@ fn (var g: Gen) own_code(code: Str, t0: Int) -> Str {
   let t = g.mono_type(t0)
   if g.is_prelude(t, "List") {
     return g.rt() + "List_Own(" + code + ")"
+  }
+  if g.is_prelude(t, "Map") {
+    return g.rt() + "Map_Own(" + code + ")"
   }
   if g.contains_param(t) {
     return "${g.rt()}Own(${code})"
@@ -299,6 +304,43 @@ fn (g: Gen) mutates(n: Node, v: Int) -> Bool {
 fn (g: Gen) hit(e: Expr, v: Int) -> Bool {
   let r = g.root_var(e)
   r >= 0 && (r == v || (g.var_alias(v) && g.var_alias(r)))
+}
+
+/// Whether returning e is the last use of a Map binding, which needs no
+/// own mark (decision 0335): a local of a named function's body (a
+/// parameter's table may still be the caller's), outside block closures,
+/// in a function with no `defer` (which could write the binding after the
+/// value is taken).
+fn (var g: Gen) map_last_use(e: Expr) -> Bool {
+  let v = match unparen(e) {
+    Ident(id) => g.var_of(id)
+    _ => -1
+  }
+  if v < 0 || g.is_param_or_recv(v) || g.fr().iife > 0 || !g.is_prelude(g.mono_type(g.nat(e)), "Map") {
+    return false
+  }
+  let fo = g.fr().fo
+  if fo < 0 || g.c.objs[fo].fn_decl.is_empty() {
+    return false
+  }
+  let body = match g.c.objs[fo].fn_decl[0].body {
+    Some(b) => b
+    None => return false
+  }
+  for ne in flatten(Node.E(Expr.Block(body))) {
+    if let S(s) = ne.node {
+      if let DeferStmt(..) = s {
+        return false
+      }
+    }
+  }
+  true
+}
+
+/// The read only Map methods whose receiver is borrowed: none keeps the
+/// receiver's table past the call (decision 0335).
+fn borrow_map_recv(name: Str) -> Bool {
+  name is "len" | "is_empty" | "get" | "get_or_fault" | "contains" | "keys" | "values" | "entries" | "filter" | "map" | "any" | "all"
 }
 
 /// The read only List methods whose receiver is borrowed (borrowRecv).

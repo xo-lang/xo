@@ -58,6 +58,11 @@ func (v Multipart_Part) XoDebug(b *strings.Builder) {
 
 func (v Multipart_Part) M_debug(*Task) string { return Debug(v) }
 
+// XoMark marks the lists held by the fields (see rt.List).
+func (v *Multipart_Part) XoMark() {
+	v.F_headers.XoMark()
+}
+
 type Multipart_Form struct {
 	F_values Url_Values
 	F_files  Map[string, List[Multipart_Part]]
@@ -95,6 +100,11 @@ func (v Multipart_Form) XoDebug(b *strings.Builder) {
 }
 
 func (v Multipart_Form) M_debug(*Task) string { return Debug(v) }
+
+// XoMark marks the lists held by the fields (see rt.List).
+func (v *Multipart_Form) XoMark() {
+	v.F_files.XoMark()
+}
 
 type Multipart_MultipartErr struct {
 	F_msg string

@@ -648,7 +648,8 @@ func (f Testing_FakeEnv) M_vars(tk *Task) Map[string, string] {
 	}
 	f.e.mu.Lock()
 	defer f.e.mu.Unlock()
-	return f.e.vars
+	// marked under the lock: M_set overwrites an unshared map in place
+	return Map_Own(f.e.vars)
 }
 
 func (f Testing_FakeEnv) M_args(*Task) List[string] {

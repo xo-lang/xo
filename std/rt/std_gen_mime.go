@@ -44,6 +44,11 @@ func (v Mime_MediaType) XoDebug(b *strings.Builder) {
 
 func (v Mime_MediaType) M_debug(*Task) string { return Debug(v) }
 
+// XoMark marks the lists held by the fields (see rt.List).
+func (v *Mime_MediaType) XoMark() {
+	v.F_params.XoMark()
+}
+
 type Mime_MimeErr struct {
 	F_msg string
 }

@@ -96,6 +96,11 @@ func (v Crypto_PemBlock) XoDebug(b *strings.Builder) {
 
 func (v Crypto_PemBlock) M_debug(*Task) string { return Debug(v) }
 
+// XoMark marks the lists held by the fields (see rt.List).
+func (v *Crypto_PemBlock) XoMark() {
+	v.F_headers.XoMark()
+}
+
 type Crypto_KeyErr struct {
 	F_msg string
 }

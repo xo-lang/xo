@@ -437,6 +437,7 @@ func headerGet(h Map[string, string], name string) Option[string] {
 // with the header set (canonical key).
 func (r Http_Request) M_with_header(tk *Task, name, value string) Http_Request {
 	k := textproto.CanonicalMIMEHeaderKey(name)
+	r.F_headers.XoMark() // a copy (decision 0335)
 	Map_put(tk, &r.F_headers, k, value)
 	r.XFields = withoutField(r.XFields, k)
 	return r
@@ -665,6 +666,7 @@ func Http_stream(_ *Task, status int64, f func(*Task, Http_BodyWriter) Result[Un
 // M_with_header is `resp.with_header(name, value)`.
 func (r Http_Response) M_with_header(tk *Task, name, value string) Http_Response {
 	k := textproto.CanonicalMIMEHeaderKey(name)
+	r.F_headers.XoMark() // a copy (decision 0335)
 	Map_put(tk, &r.F_headers, k, value)
 	r.XFields = withoutField(r.XFields, k)
 	return r

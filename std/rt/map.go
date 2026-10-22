@@ -66,6 +66,22 @@ import (
 // overwritten, which is value semantics. Copies cost O(1); the first put
 // after a copy decides which of the two copies keeps appending in place.
 //
+// # Overwriting in place (decision 0335)
+//
+// Appending an entry for every overwrite makes a map that is written much
+// more often than it grows flatten again and again (2n+32 entries). So a
+// put of a key whose newest entry is live in a root table overwrites that
+// entry's value instead, when the table is not shared. t.shared is the
+// List block's sticky flag (see List): the generated code marks a map
+// wherever it copies one out of a place into anything that outlives the
+// read (XoMark, Map_Own, internal/gen own.xo), and the runtime marks a map
+// it copies or hands to another task. Invariant U of List holds for an
+// unshared table: one live header reaches it, so no other header can see
+// the overwritten entry, and points 1 to 4 above hold for every header
+// that exists. A shared table is never overwritten (only appended to, as
+// above), so concurrent readers of a shared map race with nothing.
+// Flattening and forking make fresh, unshared tables.
+//
 // # Concurrency
 //
 // Copies of a map can be read on other tasks (goroutines) while the owner
@@ -100,6 +116,7 @@ type mtable[K, V any] struct {
 	base   int
 	depth  int
 	used   atomic.Int64                   // log length claimed by some value
+	shared atomic.Bool                    // more than one header may see it (no overwrite in place)
 	arr    atomic.Pointer[[]mentry[K, V]] // newest log array (len == cap)
 	idx    atomic.Pointer[mindex]         // own keys to newest own entry
 	keys   int                            // distinct keys in idx (owner only)
@@ -232,6 +249,30 @@ func Map_claim[K, V any](m *Map[K, V]) {
 	m.t.used.Store(int64(m.t.base+len(m.es)) + 1)
 }
 
+// XoMark marks the map's table shared: its entries are not overwritten in
+// place again (decision 0335).
+func (m *Map[K, V]) XoMark() {
+	if t := m.t; t != nil && !t.shared.Load() {
+		t.shared.Store(true)
+	}
+}
+
+// Map_Own marks the map's table shared and returns the map (an own site in
+// generated code).
+func Map_Own[K, V any](m Map[K, V]) Map[K, V] {
+	m.XoMark()
+	return m
+}
+
+// XoMark marks the set's table shared.
+func (s *Set[T]) XoMark() { s.m.XoMark() }
+
+// Set_Own marks the set's table shared and returns the set.
+func Set_Own[T any](s Set[T]) Set[T] {
+	s.m.XoMark()
+	return s
+}
+
 // Map_record appends an entry for k (a tombstone when del) at the position m
 // claimed. Only the owner calls it.
 func Map_record[K, V any](m *Map[K, V], h uint64, k K, v V, del bool) {
@@ -250,6 +291,13 @@ func Map_record[K, V any](m *Map[K, V], h uint64, k K, v V, del bool) {
 func Map_write[K, V any](m *Map[K, V], ix *mindex, pos uint64, j int, h uint64, k K, v V, del bool) {
 	t := m.t
 	L := t.base + len(m.es)
+	if !del && j >= 0 && t.parent == nil && !t.shared.Load() && m.es[j].org >= 0 {
+		// an unshared root table: m is the only header that sees entry j
+		// (decision 0335), so overwrite it and give back position L
+		m.es[j].v = v
+		t.used.Store(int64(L))
+		return
+	}
 	var org int32
 	switch {
 	case j >= 0:
@@ -544,6 +592,7 @@ func Map_put[K, V any](_ *Task, m *Map[K, V], k K, v V) {
 
 // Map_With returns a copy with k set to v.
 func Map_With[K, V any](m Map[K, V], k K, v V) Map[K, V] {
+	m.XoMark()
 	Map_put(nil, &m, k, v)
 	return m
 }

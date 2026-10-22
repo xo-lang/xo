@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The Go backend's Map overwrites an existing key in place while no copy
+  shares the map (decision 0335): the generated code marks a map where it
+  copies one, as it marks lists. bench/perf putget -39%, update -40%;
+  maps that are copied cost what they did.
+
 - `xo vet`'s `XO0906` also notes the four line Result `match`
   (`Ok(v) => v` and `Err(e) => return w`, `break`, or `continue`), with
   the fix `r ?? e => return w` (`Err(_)` gives `_ =>`; decision 0321).

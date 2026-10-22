@@ -1,0 +1,17 @@
+exit 0
+--- stdout
+start k0=0 k1=2 k2=4
+binding k0=0 k1=2 k2=4 | k0=100 k1=2 k2=4
+field k0=100 k1=2 k2=202 | k0=100 k1=101 k2=4
+struct k0=100 k1=2 k2=202 | k0=300 k1=2 k2=202
+list k0=400 k1=101 k2=4 | k0=100 k1=101 k2=102
+map value k0=100 k1=500 k2=102 | k0=100 k1=101 k2=102
+closure 100 | 7
+kept k0=7 k1=101 k2=102 | k0=8 k1=101 k2=102
+option k0=8 k1=101 k2=102 | k0=8 k1=101 k2=9
+loop 8,101,9 | k0=1008 k1=1101 k2=1009
+filter k1=1101 k2=1 | k0=1008 k1=2 k2=1009
+param k0=1 k1=2 k2=1009 | k0=1008 k1=3 k2=1009
+defer d=1 defer saw 2
+update 100 300 10 10
+--- stderr

@@ -342,7 +342,7 @@ fn (var g: Gen) decl_call1(x: Expr, ci: check.CallInfo) -> (Str, Int) {
     arg_codes.push("")
   }
   // by value arguments of a user function and the receiver of a read
-  // only List method are borrowed (own.xo)
+  // only List or Map method are borrowed (own.xo)
   var any_var = g.c.objs[fo].recv_var
   for p in params {
     any_var = any_var || p.is_var
@@ -370,7 +370,7 @@ fn (var g: Gen) decl_call1(x: Expr, ci: check.CallInfo) -> (Str, Int) {
       keep = g.c.objs[fo].recv_var
       let re = recv_e[0]
       let fr0 = g.c.objs[fo].recv
-      let list_read = g.ostd(fo) && fr0 >= 0 && g.oprelude(fr0) && g.oname(fr0) == "List" && borrow_recv(g.oname(fo))
+      let list_read = g.ostd(fo) && fr0 >= 0 && g.oprelude(fr0) && (g.oname(fr0) == "List" && borrow_recv(g.oname(fo)) || g.oname(fr0) == "Map" && borrow_map_recv(g.oname(fo)))
       let calm = g.borrow_ok(re, g.call_others(recv_e, args, aidx, -1))
       var done = false
       if g.c.objs[fo].recv_var && g.ostd(fo) && calm {

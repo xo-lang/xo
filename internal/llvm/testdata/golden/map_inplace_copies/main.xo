@@ -1,0 +1,139 @@
+// decision 0335: the Go backend overwrites a map key in place while the
+// map's table is unshared. Every kind of copy must keep its own values
+// when the original then overwrites a key: a binding, a struct field, a
+// list element, a map value, a closure capture, a return, an Option, a
+// loop over the map that writes it, and a std method's result.
+
+struct Box {
+  m: Map[Str, Int]
+  n: Int
+}
+
+fn fill(n: Int) -> Map[Str, Int] {
+  var m: Map[Str, Int] = {}
+  for i in 0..n {
+    m["k${i}"] = i
+  }
+  // overwrites while unshared: in place
+  for i in 0..n {
+    m["k${i}"] = i * 2
+  }
+  m
+}
+
+fn show(m: Map[Str, Int]) -> Str {
+  var parts: List[Str] = []
+  for (k, v) in m {
+    parts.push("${k}=${v}")
+  }
+  parts.join(" ")
+}
+
+fn keep(m: Map[Str, Int]) -> Box {
+  Box{m: m, n: m.len()}
+}
+
+/// m stored as a map value, then overwritten through the outer map
+fn map_value(m: Map[Str, Int]) -> Str {
+  var outer: Map[Str, Map[Str, Int]] = {}
+  outer["a"] = m
+  outer.update("a", {}, fn(var inner) { inner["k1"] = 500 })
+  "map value ${show(outer.get("a") ?? {})} | ${show(m)}"
+}
+
+/// returns its parameter: the caller's binding shares the table
+fn same(m: Map[Str, Int]) -> Map[Str, Int] {
+  m
+}
+
+/// returns a local that a defer then overwrites
+fn deferred(var log: List[Str]) -> Map[Str, Int] {
+  var m: Map[Str, Int] = {}
+  m["d"] = 1
+  defer {
+    m["d"] = 2
+    log.push("defer saw ${m.get("d") ?? -1}")
+  }
+  m
+}
+
+fn main(os: Os) {
+  var m = fill(3)
+  os.stdio.println("start ${show(m)}")
+
+  // a binding
+  let c = m
+  m["k0"] = 100
+  os.stdio.println("binding ${show(c)} | ${show(m)}")
+
+  // a struct field
+  var b = Box{m: m, n: 1}
+  m["k1"] = 101
+  b.m["k2"] = 202
+  os.stdio.println("field ${show(b.m)} | ${show(m)}")
+
+  // a struct copied, then written through one side
+  var b2 = b
+  b.m["k0"] = 300
+  os.stdio.println("struct ${show(b2.m)} | ${show(b.m)}")
+
+  // a list element
+  var xs = [m]
+  m["k2"] = 102
+  xs[0]["k0"] = 400
+  os.stdio.println("list ${show(xs[0])} | ${show(m)}")
+
+  // a map value, and update on the outer map
+  os.stdio.println(map_value(m))
+
+  // a closure capture
+  let f = fn() -> Int { m.get("k0") ?? -1 }
+  m["k0"] = 7
+  os.stdio.println("closure ${f()} | ${m.get("k0") ?? -1}")
+
+  // a value kept by a user function
+  let kept = keep(m)
+  m["k0"] = 8
+  os.stdio.println("kept ${show(kept.m)} | ${show(m)}")
+
+  // an Option
+  let o: Map[Str, Int]? = Some(m)
+  m["k2"] = 9
+  os.stdio.println("option ${show(o ?? {})} | ${show(m)}")
+
+  // a loop over the map that overwrites it sees the values it started with
+  var seen: List[Int] = []
+  for (k, v) in m {
+    m[k] = v + 1000
+    seen.push(v)
+  }
+  os.stdio.println("loop ${seen.map(fn(x) { "${x}" }).join(",")} | ${show(m)}")
+
+  // a std method's result, then overwrites on both
+  var g = m.filter(fn(k, v) { v > 1008 })
+  g["k2"] = 1
+  m["k1"] = 2
+  os.stdio.println("filter ${show(g)} | ${show(m)}")
+
+  // a parameter returned, then overwritten on both sides
+  var p = same(m)
+  p["k0"] = 1
+  m["k1"] = 3
+  os.stdio.println("param ${show(p)} | ${show(m)}")
+
+  // a local returned past a defer that overwrites it
+  var log: List[Str] = []
+  let d = deferred(log)
+  os.stdio.println("defer ${show(d)} ${log.join(",")}")
+
+  // many updates in place, then a copy, then more
+  var h: Map[Int, Int] = {}
+  for i in 0..1000 {
+    h.update(i % 10, 0, fn(var v) { v += 1 })
+  }
+  let snap = h
+  for i in 0..1000 {
+    h.update(i % 10, 0, fn(var v) { v += 2 })
+  }
+  os.stdio.println("update ${snap.get(3) ?? -1} ${h.get(3) ?? -1} ${snap.len()} ${h.len()}")
+}

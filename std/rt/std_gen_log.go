@@ -127,3 +127,8 @@ func (v Log_Record) XoDebug(b *strings.Builder) {
 }
 
 func (v Log_Record) M_debug(*Task) string { return Debug(v) }
+
+// XoMark marks the lists held by the fields (see rt.List).
+func (v *Log_Record) XoMark() {
+	v.F_fields.XoMark()
+}
