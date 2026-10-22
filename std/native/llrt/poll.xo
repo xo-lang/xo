@@ -569,6 +569,7 @@ pub fn pd_wait_ctx(pd: Int, write: Bool, c: Int, deadline: Int) -> Int {
   let slot = if write { D_WWAIT } else { D_RWAIT }
   let ready = if write { D_WREADY } else { D_RREADY }
   let park = addw(c, ctx.C_PARK)
+  rt.mem_store(c, ctx.C_LOCKS, 0, 8)
   var t = 0
   var res = READY
   while true {

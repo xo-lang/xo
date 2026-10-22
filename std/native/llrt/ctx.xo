@@ -92,7 +92,12 @@ pub const C_PARK_FP = 352
 /// of a fault (task.isolate) gives ThreadSanitizer the exits of the
 /// frames the fault unwound
 pub const C_RACE_DEPTH = 360
-pub const C_SIZE = 368
+/// the Mutex takes since this context last waited on I/O (mutex.xo,
+/// poll.xo pd_wait_ctx): a Mutex release yields to the writer it woke
+/// only for a context that took few (decision 0118's 2026-10-22
+/// addendum: a lock bound loop paid a switch per write)
+pub const C_LOCKS = 368
+pub const C_SIZE = 376
 
 /// rt.static_word: the address of the services record (SV_*), made by
 /// init.

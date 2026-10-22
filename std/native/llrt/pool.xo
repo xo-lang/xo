@@ -2026,17 +2026,23 @@ pub const DLK_NOPREEMPT = 7
 /// idle by the deadlock check, and wakep breaks their wait when no other
 /// worker can take the work (ctx.xo DLK_SIZE).
 const DLK_NPBLK = 8
-/// XO_MUTEX_YIELD=0 (poolsetup.xo setup): a Mutex release that wakes a
-/// writer does not yield to it (mutex_yield).
+/// XO_MUTEX_YIELD (poolsetup.xo setup): 0 by default (a release yields
+/// to the writer it woke when the releaser does I/O between its locks,
+/// mutex.xo wake), 1 under XO_MUTEX_YIELD=0 (never), 2 under
+/// XO_MUTEX_YIELD=1 (always).
 pub const DLK_MNOYIELD = 9
 
-/// Whether a Mutex release that wakes a writer puts it in next and yields
-/// to it (mutex.xo wake, decision 0118's 2026-10-22 addendum): not with
-/// one CPU, where the yield only delays the releaser, nor under
+/// Whether a Mutex release that wakes a writer may put it in next and
+/// yield to it (mutex.xo wake, decision 0118's 2026-10-22 addendum): not
+/// with one CPU, where the yield only delays the releaser, nor under
 /// XO_MUTEX_YIELD=0.
 pub fn mutex_yield(p: Int) -> Bool {
-  rt.mem_load(p, P_NCPU, 8) > 1 && rt.slot_load(rt.mem_load(p, P_DLK, 8), DLK_MNOYIELD, RELAXED) == 0
+  rt.mem_load(p, P_NCPU, 8) > 1 && rt.slot_load(rt.mem_load(p, P_DLK, 8), DLK_MNOYIELD, RELAXED) != 1
 }
+
+/// Whether the yield ignores how many locks the releaser took since its
+/// last I/O wait (XO_MUTEX_YIELD=1).
+pub fn mutex_yield_always(p: Int) -> Bool { rt.slot_load(rt.mem_load(p, P_DLK, 8), DLK_MNOYIELD, RELAXED) == 2 }
 
 /// Yields the running fiber to the back of its worker's ring (W_ASYNC 2,
 /// run_item) now: mutex.xo's release that woke a writer into next, as

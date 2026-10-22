@@ -38,6 +38,11 @@ const M_READ = 88
 /// M_READ as a word index (the slot atomics).
 const M_READ_W = 11
 const M_SIZE = 96
+/// The most Mutex takes since its last I/O wait a releasing context may
+/// have made and still yield to the writer it woke (wake; ctx.xo
+/// C_LOCKS): a server handler takes one or two between socket waits, a
+/// lock bound loop thousands
+const IO_LOCKS = 8
 
 /// A wait list's first entry, an entry's park, next, writer, and granted
 /// (tasks.xo E_*).
@@ -184,12 +189,13 @@ fn grant_readers(m: Int) {
 /// the lock together, the next writer waits for them; after the last
 /// reader's release (or when no reader waits) the oldest waiting writer
 /// is woken. True when the caller should yield to the writer it woke
-/// (pool.xo mutex_yield): the writer is in this worker's next, and until
-/// it runs m is free yet every reader that comes queues behind it (a
-/// convoy of about one park per operation: CRUD at 3 and 6 cores 2.3x
-/// and 2.4x the requests with the yield, decision 0118's 2026-10-22
-/// addendum; the Go backend's fix, gotchas/lock-convoy-runnext-wake.md).
-/// The caller yields after it let go of m's lock.
+/// (pool.xo mutex_yield): the writer is in this worker's next and runs at
+/// once, where in the ring an idle worker was woken (a futex call) to
+/// take it and slept again; only for a releaser that took few locks since
+/// its last I/O wait (IO_LOCKS), since a lock bound loop paid a switch
+/// per write for nothing (decision 0118's 2026-10-22 addendum and its
+/// correction: the Mutex parks stay as many). The caller yields after it
+/// let go of m's lock.
 fn wake(m: Int, after_writer: Bool) -> Bool {
   if ld4(m, M_WRITER) != 0 || ld(m, M_WAITERS + WL_FIRST) == 0 {
     return false
@@ -211,7 +217,7 @@ fn wake(m: Int, after_writer: Bool) -> Bool {
         if pool.park_signaled(p) {
           return false
         }
-        if rt.slot_load(m, M_READ_W, RELAXED) != 0 && pool.mutex_yield(ctx.pool()) {
+        if rt.slot_load(m, M_READ_W, RELAXED) != 0 && pool.mutex_yield(ctx.pool()) && (ld(ctx.cur(), ctx.C_LOCKS) <= IO_LOCKS || pool.mutex_yield_always(ctx.pool())) {
           rtstats.count(rtstats.SIG_MUTEX)
           tasks.park_signal(p)
           return true
@@ -333,6 +339,7 @@ fn lock_body(m: Int, lp: Int, ln: Int) -> Int {
   pool.defer_check()
   let c = ctx.cur()
   let w = "with"
+  st(c, ctx.C_LOCKS, ld(c, ctx.C_LOCKS) + 1)
   held_add(c, m, raw.data(w), 4, lp, ln)
   pool.lock_k(m + M_MU, pool.ST_LOCK_MUTEX)
   // the writer bit first, in one atomic step with the readers it sees:
@@ -406,6 +413,7 @@ fn rlock_body(m: Int, lp: Int, ln: Int) -> Int {
   pool.defer_check()
   let c = ctx.cur()
   let w = "with_read"
+  st(c, ctx.C_LOCKS, ld(c, ctx.C_LOCKS) + 1)
   held_add(c, m, raw.data(w), 9, lp, ln)
   if rt.slot_load(m, M_READ_W, RELAXED) == 0 {
     rt.slot_store(m, M_READ_W, 1, RELAXED)

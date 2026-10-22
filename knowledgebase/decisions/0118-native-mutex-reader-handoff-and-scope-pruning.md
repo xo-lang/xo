@@ -201,3 +201,19 @@ yield; the Linux Docker 2.15x and 1.93x above were interleaved but not
 `--ab`, and are to be confirmed with it. Yielding only while a worker is
 idle (XO_MUTEX_YIELD=idle, measured, not pushed) changed neither (rwmutex
 CPU 0.989, CRUD rps 0.994, both within noise).
+
+The yield's rule (2026-10-22 10:00, lead's approval pending at writing;
+`xo bench --ab`, agents/ioyab-cmd.log): a release yields only when the
+releasing context took at most 8 Mutex locks since its last I/O wait
+(ctx C_LOCKS, reset in poll.pd_wait_ctx). A server handler takes one or
+two between socket waits; the rwmutex loop takes thousands. Against the
+yield on every release (A) this rule (B): rwmutex at 4x its work CPU
+0.764 [0.76, 0.80], wall 0.806 [0.79, 0.82]; Mac CRUD rps 1.04 [0.98,
+1.06] and p99 0.839 [0.78, 0.98]; Linux Docker CRUD at 6 cores rps 0.929
+[0.79, 1.07], within noise. The Linux Docker gain of the yield itself,
+with `--ab` (yield off A, on B; 1024 connections, 6 s rounds): rps
+1.283 [1.00, 1.78] at 3 cores and 1.212 [1.08, 1.66] at 6, p99 0.881
+[0.47, 0.96] at 6, which replaces the 2.15x and 1.93x of the interleaved
+runs above (not `--ab`; their rounds were 4 per side on a moving load).
+`XO_MUTEX_YIELD=0` never yields, `XO_MUTEX_YIELD=1` yields on every
+release as before.
