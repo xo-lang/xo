@@ -3,7 +3,7 @@
 ## 2026-10-22: speedup: AES-GCM hashes a 64 byte chunk with cpu.ghash4
 
 - Kind: speedup
-- Commit: this commit
+- Commit: b9092b2b6
 - Found by: profile (Xo Lang 3, bulk TLS 1.3 download: ghash64 26% of server CPU)
 - Go reference: none (Go's crypto/internal/fips140/aes/gcm uses pmull on arm64)
 - Test: std/native/llrt/tlsrec_test.xo; tls, tls12, tls13, http_tls, websocket_tls, crypto goldens (arm64, LLVM); wasm TLS and Map goldens
@@ -17,7 +17,7 @@ valgrind callgrind, linux/arm64, 16 MiB TLS 1.3 download: 141.53 M to
 ## 2026-10-22: speedup: a server read forgets stale readiness first
 
 - Kind: speedup
-- Commit: this commit
+- Commit: c30b3ddf5
 - Found by: strace per request (Xo Lang 3, HTTP/2 one stream: 1.8 EAGAIN reads a request against Go's 1.1)
 - Go reference: none (Go's netFD reads first and waits on EAGAIN)
 - Test: tls, tls12, tls13, http_tls, websocket_tls, http2, crypto goldens (arm64, LLVM); wasm TLS and Map goldens
@@ -33,7 +33,7 @@ strace, linux/arm64, HTTP/2 one stream, tlsrate: syscalls per request
 ## 2026-10-22: speedup: GHASH of a 64 byte chunk written out in the fused CTR loop
 
 - Kind: speedup
-- Commit: this commit
+- Commit: d38115df3
 - Found by: profile (Xo Lang 3, bulk TLS 1.3 download: aesgcm.ghash64 26% of server CPU, called once per chunk)
 - Go reference: none (call overhead only)
 - Test: std/native/llrt/tlsrec_test.xo; tls, tls12, tls13, http_tls, websocket_tls, crypto goldens (arm64, LLVM); wasm TLS and Map goldens
