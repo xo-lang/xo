@@ -1,5 +1,22 @@
 # std/regexp changes
 
+## 2026-10-22: perf: Go's one-pass matcher for patterns anchored with \A
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/results/regexp-ascii-bitmap-inline-2026-10-22.md (the one-pass matcher was the last of Go's matchers not ported; anchored row 1.20x Go's instructions)
+- Go reference: regexp/onepass.go, regexp/exec.go doOnePass (go1.26.1); onepass_test.go's patterns
+- Test: std/native/regexp_test.xo (4,760 anchored cases from Go), internal/llvm/testdata/golden/regexp_table, internal/stdtest corpus regexp; timing row against Go: bench/results/regexp-ascii-bitmap-inline-2026-10-22.md
+
+A pattern starting with `\A` (`^` without `(?m)`) whose every alternation is
+decided by the next rune now runs in one pass over the text: no backtracking,
+no visited bits, no thread list. Compile checks the program as Go's
+compileOnePass does (alternation legs with disjoint rune sets, empty matches
+only at `\z`, fewer than 1,000 instructions) and keeps its tables in
+`Prog.one`; other patterns run as before. `xo bench --ab` instructions on the
+anchored row (short texts, `is_match` and `captures`): 0.87x of the
+backtracker, 1.04x Go's; the unanchored rows moved within 0.3%.
+
 ## 2026-10-22: perf: the Pike matcher skips empty width contexts it cannot use
 
 - Kind: perf

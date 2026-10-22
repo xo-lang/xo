@@ -71,3 +71,30 @@ instructions: find_all 3,577 M (0.90x Go), replace 2,227 M (1.47x Go).
 Tried and not kept: the capture instruction's recursive `add` replaced by a
 saved-position stack in the queue (restore at the call's end): find_all 1.079x,
 replace 1.024x instructions, worse.
+
+## Fourth step: Go's one-pass matcher (anchored row)
+
+The three rows above use unanchored patterns, which Go never runs one-pass.
+New row `anchored` in the bench program and its Go twin: `^(\w+)@(\w+)\.com`
+and `^(\d{4})-(\d{2})-(\d{2})$` on 10-17 byte texts, `is_match` twice and
+`captures` twice per round, 200,000 rounds (outputs equal, 1,600,000).
+Before: Xo's backtracker ran these at 2,983 M instructions against Go's
+2,496 M (1.20x). The port (Go's makeOnePass: the `onePassCopy` rewrites, rune
+set merging, the unambiguity check, `AltMatch`; the matcher dispatches an
+alternation by binary search over the merged ranges, and a rune instruction
+tests the ASCII bitmap first) gives 2,616 M, 0.877x of before (0.877 to
+0.877, 7 rounds), 1.045x Go; `\A` and `\z` are tested by position, with no
+context, 2,593 M (0.991x of that), 1.04x Go. The other rows against the
+previous step (`--ab`, instructions): match 1.001, captures 1.002, compile
+1.002, find_all and replace 1.000 (one more list in `Prog`).
+
+A first version kept the tables as six fields of `Prog` and cost compile
++9.5% (a larger `Prog` copied by value); one flat list `Prog.one` brought it
+to +0.2%.
+
+Not the same as Go: Go's parser factors a common prefix out of an
+alternation (`a|aa` becomes `a(?:|a)`), so three of onepass_test.go's
+one-pass patterns (`^(?:a|(?:aa))$` and two like it) are not one-pass in
+Xo, where the alternation is not factored; results are the same, they take
+the backtracker. Porting the parser's `factor` is the next candidate (it also
+shrinks every program with a common prefix, so the Pike rows move too).

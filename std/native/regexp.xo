@@ -1330,6 +1330,15 @@ struct Prog {
   // whether any instruction is an empty width assertion (^ $ \b ...):
   // when false, exec skips the context of each position
   has_empty: Bool
+  // Go's one-pass program (onepass.go), for a pattern anchored with \A
+  // whose alternations are decided by the next rune, else empty; one list
+  // so that a Prog stays small: [n, len(flat), op (n), out (n), base (n),
+  // cnt (n), flat, nx]. op and out are the rewritten instructions
+  // (OP_ALT_MATCH for an alternation with an empty match leg), and an
+  // alternation pc dispatches on the next rune through the sorted rune
+  // ranges flat[2 * base[pc] ..] (cnt[pc] pairs) to the instruction
+  // nx[base[pc] + k] of the matching range
+  one: List[Int]
 }
 
 /// A fragment: its first instruction (0 a failure), its patch list's head
@@ -1632,7 +1641,7 @@ fn compile(pattern: Str) -> Regex ! regexp.RegexErr {
     j += 1
   }
   let sroot = p.simplify(root)
-  var g = Prog{op: [], out: [], arg: [], rune: [], fold: [], start: 0, num_cap: 2, first_ok: false, first: [], ascii: [], prefix: "", has_empty: false}
+  var g = Prog{op: [], out: [], arg: [], rune: [], fold: [], start: 0, num_cap: 2, first_ok: false, first: [], ascii: [], prefix: "", has_empty: false, one: []}
   g.inst(I_FAIL)
   let f = g.compile(p, sroot)
   let m = g.inst(I_MATCH)
@@ -1647,6 +1656,9 @@ fn compile(pattern: Str) -> Regex ! regexp.RegexErr {
       g.has_empty = true
     }
     hp += 1
+  }
+  if g.has_empty {
+    g.one_pass()
   }
   Regex{expr: pattern, prog: g, names: names}
 }
@@ -2165,6 +2177,444 @@ fn anchored_start(g: Prog) -> Bool {
   pc != 0 && g.op[pc] == I_EMPTY && (g.arg[pc] & E_BEGIN_TEXT) != 0
 }
 
+// ---------------------------------------------------------------------------
+// One-pass matching (Go's regexp/onepass.go): a pattern anchored with \A
+// whose every alternation is decided by the next rune runs in one pass over
+// the text, with no backtracking and no thread list.
+
+const OP_ALT_MATCH: Int = 11
+
+/// The rune ranges (sorted pairs) a rune instruction accepts.
+fn one_pass_runes(g: Prog, pc: Int) -> List[Int] {
+  let op = g.op[pc]
+  if op == I_ANY {
+    return [0, MAX_RUNE]
+  }
+  if op == I_ANY_NOT_NL {
+    return [0, 9, 11, MAX_RUNE]
+  }
+  let rs = g.rune[pc]
+  if op == I_RUNE1 || rs.len() == 1 {
+    let r0 = rs[0]
+    var all = [r0]
+    if g.fold[pc] {
+      var r1 = simple_fold(r0)
+      while r1 != r0 {
+        all.push(r1)
+        r1 = simple_fold(r1)
+      }
+    }
+    var i = 1
+    while i < all.len() {
+      let v = all[i]
+      var j = i
+      while j > 0 && all[j - 1] > v {
+        all[j] = all[j - 1]
+        j -= 1
+      }
+      all[j] = v
+      i += 1
+    }
+    var pairs: List[Int] = []
+    for v in all {
+      pairs.push(v)
+      pairs.push(v)
+    }
+    return pairs
+  }
+  rs
+}
+
+/// mergeRuneSets: the two rune range lists merged in order, with the
+/// instruction each range leads to; false when they intersect.
+fn merge_rune_sets(l: List[Int], r: List[Int], lpc: Int, rpc: Int) -> (Bool, List[Int], List[Int]) {
+  var merged: List[Int] = []
+  var next: List[Int] = []
+  var lx = 0
+  var rx = 0
+  while lx < l.len() || rx < r.len() {
+    var left = true
+    if rx >= r.len() {
+      left = true
+    } else if lx >= l.len() {
+      left = false
+    } else if r[rx] < l[lx] {
+      left = false
+    }
+    var lo = 0
+    var hi = 0
+    var pc = 0
+    if left {
+      lo = l[lx]
+      hi = l[lx + 1]
+      pc = lpc
+      lx += 2
+    } else {
+      lo = r[rx]
+      hi = r[rx + 1]
+      pc = rpc
+      rx += 2
+    }
+    let k = merged.len()
+    if k > 0 && lo <= merged[k - 1] {
+      return (false, [], [])
+    }
+    merged.push(lo)
+    merged.push(hi)
+    next.push(pc)
+  }
+  (true, merged, next)
+}
+
+/// The analysis state of makeOnePass.
+struct OnePassB {
+  op: List[Int]
+  out: List[Int]
+  arg: List[Int]
+  runes: List[List[Int]]
+  next: List[List[Int]]
+  done: List[Bool]
+  vis: List[Int]
+  stamp: Int
+  m: List[Bool]
+  iq: List[Int]
+  inq: List[Bool]
+}
+
+/// check: the paths from the alternations at pc are unambiguous (Go's
+/// closure in makeOnePass).
+fn one_pass_check(g: Prog, var b: OnePassB, pc: Int) -> Bool {
+  if b.vis[pc] == b.stamp {
+    return true
+  }
+  b.vis[pc] = b.stamp
+  let op = b.op[pc]
+  if op == I_ALT || op == OP_ALT_MATCH {
+    if !one_pass_check(g, b, b.out[pc]) {
+      return false
+    }
+    if !one_pass_check(g, b, b.arg[pc]) {
+      return false
+    }
+    var o = b.out[pc]
+    var a = b.arg[pc]
+    var mo = b.m[o]
+    var ma = b.m[a]
+    if mo && ma {
+      return false
+    }
+    // a match on empty goes in out
+    if ma {
+      b.out[pc] = a
+      b.arg[pc] = o
+      let t = o
+      o = a
+      a = t
+      mo = true
+      ma = false
+    }
+    if mo {
+      b.m[pc] = true
+      b.op[pc] = OP_ALT_MATCH
+    }
+    let (ok, merged, nx) = merge_rune_sets(b.runes[o], b.runes[a], o, a)
+    if !ok {
+      return false
+    }
+    b.runes[pc] = merged
+    b.next[pc] = nx
+    return true
+  }
+  if op == I_CAPTURE || op == I_NOP || op == I_EMPTY {
+    let o = b.out[pc]
+    if !one_pass_check(g, b, o) {
+      return false
+    }
+    b.m[pc] = b.m[o]
+    b.runes[pc] = b.runes[o]
+    return true
+  }
+  if op == I_MATCH || op == I_FAIL {
+    b.m[pc] = op == I_MATCH
+    return true
+  }
+  b.m[pc] = false
+  if b.done[pc] {
+    return true
+  }
+  b.done[pc] = true
+  let o = b.out[pc]
+  if !b.inq[o] {
+    b.inq[o] = true
+    b.iq.push(o)
+  }
+  b.runes[pc] = one_pass_runes(g, pc)
+  true
+}
+
+/// compileOnePass: when the program is one-pass, sets g.onepass and the
+/// tables its matcher reads.
+fn (var g: Prog) one_pass() {
+  let n = g.op.len()
+  // Go: the machine must be short, and anchored with \A at its start
+  if n >= 1000 || g.start == 0 || g.op[g.start] != I_EMPTY || (g.arg[g.start] & E_BEGIN_TEXT) != E_BEGIN_TEXT {
+    return
+  }
+  var has_alt = false
+  var pc = 0
+  while pc < n {
+    if g.op[pc] == I_ALT {
+      has_alt = true
+    }
+    pc += 1
+  }
+  // with alternates, every instruction leading to a match must be \z
+  pc = 0
+  while pc < n {
+    let op = g.op[pc]
+    let op_out = g.op[g.out[pc]]
+    if op == I_ALT {
+      if op_out == I_MATCH || g.op[g.arg[pc]] == I_MATCH {
+        return
+      }
+    } else if op == I_EMPTY {
+      if op_out == I_MATCH && (g.arg[pc] & E_END_TEXT) != E_END_TEXT {
+        return
+      }
+    } else if op_out == I_MATCH && has_alt {
+      return
+    }
+    pc += 1
+  }
+  var b = OnePassB{op: g.op, out: g.out, arg: g.arg, runes: [], next: [], done: [], vis: raw.zero_ints(n), stamp: 0, m: [], iq: [g.start], inq: []}
+  pc = 0
+  while pc < n {
+    b.runes.push([])
+    b.next.push([])
+    b.done.push(false)
+    b.m.push(false)
+    b.inq.push(false)
+    pc += 1
+  }
+  b.inq[g.start] = true
+  // onePassCopy: patch the alternation idioms that block a one-pass program
+  pc = 0
+  while pc < n {
+    if b.op[pc] == I_ALT {
+      var alt_is_arg = true
+      var al = b.arg[pc]
+      if b.op[al] != I_ALT {
+        alt_is_arg = false
+        al = b.out[pc]
+        if b.op[al] != I_ALT {
+          pc += 1
+          continue
+        }
+      }
+      let other = if alt_is_arg { b.out[pc] } else { b.arg[pc] }
+      if b.op[other] == I_ALT {
+        pc += 1
+        continue
+      }
+      // A:BC + B:DA => A:BC + B:DC (a simple empty transition loop)
+      var b_alt_is_out = true
+      var patch = false
+      if b.out[al] == pc {
+        patch = true
+      } else if b.arg[al] == pc {
+        patch = true
+        b_alt_is_out = false
+      }
+      if patch {
+        if b_alt_is_out {
+          b.out[al] = other
+        } else {
+          b.arg[al] = other
+        }
+      }
+      // A:BC + B:DC => A:DC + B:DC (an empty transition to a common target)
+      let b_alt = if b_alt_is_out { b.out[al] } else { b.arg[al] }
+      let b_other = if b_alt_is_out { b.arg[al] } else { b.out[al] }
+      if other == b_alt {
+        if alt_is_arg {
+          b.arg[pc] = b_other
+        } else {
+          b.out[pc] = b_other
+        }
+      }
+    }
+    pc += 1
+  }
+  var i = 0
+  while i < b.iq.len() {
+    b.stamp += 1
+    if !one_pass_check(g, b, b.iq[i]) {
+      return
+    }
+    i += 1
+  }
+  var base = raw.zero_ints(n)
+  var cnt = raw.zero_ints(n)
+  var flat: List[Int] = []
+  var nx: List[Int] = []
+  pc = 0
+  while pc < n {
+    if b.op[pc] == I_ALT || b.op[pc] == OP_ALT_MATCH {
+      base[pc] = nx.len()
+      cnt[pc] = b.next[pc].len()
+      for v in b.runes[pc] {
+        flat.push(v)
+      }
+      for v in b.next[pc] {
+        nx.push(v)
+      }
+    }
+    pc += 1
+  }
+  var one = [n, flat.len()]
+  for tab in [b.op, b.out, base, cnt, flat, nx] {
+    for v in tab {
+      one.push(v)
+    }
+  }
+  g.one = one
+}
+
+/// The matcher of a one-pass program: the group positions of the match at
+/// the start of s, or the empty list.
+fn one_pass_exec(g: Prog, o: List[Int], s: Str, pos0: Int, ncap: Int) -> List[Int] {
+  if pos0 != 0 {
+    return []
+  }
+  let end = s.len()
+  let sd = raw.data(s)
+  let n = o[0]
+  let o_out = 2 + n
+  let o_base = 2 + 2 * n
+  let o_cnt = 2 + 3 * n
+  let o_flat = 2 + 4 * n
+  let o_nx = o_flat + o[1]
+  var cap = raw.zero_ints(ncap)
+  var i = 0
+  while i < ncap {
+    cap[i] = -1
+    i += 1
+  }
+  var pc = g.start
+  var pos = 0
+  while true {
+    let op = o[2 + pc]
+    let nxt = o[o_out + pc]
+    if op == I_RUNE || op == I_RUNE1 || op == I_ANY || op == I_ANY_NOT_NL {
+      if pos >= end {
+        return []
+      }
+      let c = raw.byte_at(sd, pos)
+      if c < 128 {
+        if ((g.ascii[pc * 4 + (c >> 5)] >> (c & 31)) & 1) == 0 {
+          return []
+        }
+        pos += 1
+        pc = nxt
+        continue
+      }
+      let st = step_at(s, pos)
+      let r = st >> 3
+      var ok = false
+      if op == I_RUNE {
+        ok = rune_matches(g, pc, r)
+      } else if op == I_RUNE1 {
+        ok = r == g.rune[pc][0]
+      } else if op == I_ANY {
+        ok = true
+      } else {
+        ok = r != 10
+      }
+      if !ok {
+        return []
+      }
+      pos += st & 7
+      pc = nxt
+      continue
+    }
+    if op == I_ALT || op == OP_ALT_MATCH {
+      var r = -1
+      if pos < end {
+        let c = raw.byte_at(sd, pos)
+        if c < 128 {
+          r = c
+        } else {
+          r = step_at(s, pos) >> 3
+        }
+      }
+      let base = o[o_base + pc]
+      var lo = 0
+      var hi = o[o_cnt + pc]
+      var found = -1
+      while lo < hi {
+        let mid = (lo + hi) >> 1
+        let a = o[o_flat + 2 * (base + mid)]
+        if r < a {
+          hi = mid
+        } else if r > o[o_flat + 2 * (base + mid) + 1] {
+          lo = mid + 1
+        } else {
+          found = mid
+          break
+        }
+      }
+      if found >= 0 {
+        pc = o[o_nx + base + found]
+      } else if op == OP_ALT_MATCH {
+        pc = nxt
+      } else {
+        return []
+      }
+      continue
+    }
+    if op == I_CAPTURE {
+      let a = g.arg[pc]
+      if a < ncap {
+        cap[a] = pos
+      }
+      pc = nxt
+      continue
+    }
+    if op == I_EMPTY {
+      // \A and \z need no context
+      let want = g.arg[pc]
+      if want == E_END_TEXT {
+        if pos != end {
+          return []
+        }
+      } else if want == E_BEGIN_TEXT {
+        if pos != 0 {
+          return []
+        }
+      } else {
+        let cond = empty_context(rune_before(s, pos), rune_at(s, pos))
+        if (want & (0 - 1 - cond)) != 0 {
+          return []
+        }
+      }
+      pc = nxt
+      continue
+    }
+    if op == I_NOP {
+      pc = nxt
+      continue
+    }
+    if op == I_MATCH {
+      cap[0] = 0
+      cap[1] = pos
+      return cap
+    }
+    return []
+  }
+  []
+}
+
+
 fn backtrack(g: Prog, s: Str, pos0: Int, ncap: Int, prefix: Str) -> List[Int] {
   let end = s.len()
   let nprog = g.op.len()
@@ -2218,6 +2668,9 @@ fn backtrack(g: Prog, s: Str, pos0: Int, ncap: Int, prefix: Str) -> List[Int] {
 /// of them, at least 2), or the empty list.
 fn exec(g: Prog, s: Str, pos0: Int, ncap: Int) -> List[Int] {
   let n = g.op.len()
+  if g.one.len() > 0 {
+    return one_pass_exec(g, g.one, s, pos0, ncap)
+  }
   if n <= 500 && s.len() < 262144 / n {
     return backtrack(g, s, pos0, ncap, g.prefix)
   }
