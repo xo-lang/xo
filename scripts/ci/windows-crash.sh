@@ -20,6 +20,8 @@
 #   overflow  Xo recursion without end: still entry.xo on_overflow's
 #             "fatal error: stack overflow", exit 2
 #   off       segv with XO_CRASH_REPORT=0: no report
+# WINDOWS_CRASH_KEEP=DIR (windows-pdb.sh) keeps the program, its PDB and
+# each run's standard error (NAME.err) there.
 # Each run checks the report's lines and the exit code, the NTSTATUS
 # (read with PowerShell, which keeps its 32 bits). $XO_CI_OUT/windows-crash.txt
 # has a line per check and every report; exit 1 on any mismatch.
@@ -112,7 +114,10 @@ check() {
   shift 4
   local ev=(XO_CRASH_KIND="$kind")
   [ "$extra" = - ] || ev+=("$extra")
-  (export "${ev[@]}"; tmo "$w/crash.exe" > "$o/run.out" 2> "$o/run.err" < /dev/null)
+  # the program's own redirections, in the child: a redirection of the
+  # call would also take bash's "Segmentation fault" notice of its death
+  # (CI 39828812268: the off case's stderr held only that line)
+  (export "${ev[@]}"; tmo bash -c 'exec "$0" > "$1" 2> "$2" < /dev/null' "$w/crash.exe" "$o/run.out" "$o/run.err")
   local rc=$?
   local got
   got=$(export "${ev[@]}"; tmo powershell.exe -NoProfile -NonInteractive -Command "& '$(np "$w/crash.exe")' 2>&1 | Out-Null; [Console]::Out.Write(\$LASTEXITCODE)")
@@ -127,12 +132,18 @@ check() {
   done
   if [ $ok = 1 ]; then note "ok   $name (code $got, bash status $rc)"; else note "FAIL $name: $why (bash status $rc)"; fail=1; fi
   { echo "---- $name stdout:"; cat "$o/run.out"; echo "---- $name stderr:"; cat "$o/run.err"; } >> "$sum"
+  if [ -n "${WINDOWS_CRASH_KEEP:-}" ]; then cp "$o/run.err" "$WINDOWS_CRASH_KEEP/$name.err"; fi
 }
 AV=-1073741819
 ILL=-1073741795
 if ! "$XO_CLI" build --std="$(np "$w/std")" --backend=amd64 -o "$(np "$w/crash.exe")" "$(np "$w/prog")" > "$o/build.txt" 2>&1; then
   note "FAIL build: $(tail -5 "$o/build.txt")"
   exit 1
+fi
+if [ -n "${WINDOWS_CRASH_KEEP:-}" ]; then
+  mkdir -p "$WINDOWS_CRASH_KEEP"
+  cp "$w/crash.exe" "$WINDOWS_CRASH_KEEP/"
+  cp "$w/crash.pdb" "$WINDOWS_CRASH_KEEP/" 2>/dev/null || note "no crash.pdb next to crash.exe"
 fi
 first='^fatal error: EXCEPTION_ACCESS_VIOLATION: access violation \(code 0xc0000005, write\) at address 0x10\n'
 frames='(?m)^  crashpoke\.write \(crashpoke\.xo:6\) \[inlined\]\n  poke \(main\.xo:7\)\n  poke \(main\.xo:5\)\n  poke \(main\.xo:5\)\n'
