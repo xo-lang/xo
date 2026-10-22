@@ -359,6 +359,20 @@ Windows. Xo would use that flavor on windows/amd64.
   unsynchronized (lazy_const, which has no race, nothing either way).
   Threads are untested until the Windows CI run (owner approval).
   gotchas/tsan-go-flavor-windows.md has the traps.
+- Verified with threads (2026-10-22, CI run 39783374191 on the
+  xo-windows runner, scripts/ci/windows-race.sh, owner approved; xo
+  0.25.0 at 4bea3162a, built natively there from seed 0.25.0 in xobuild's
+  two hops): 234 of 234 checks ok, 0 FAIL. At XO_THREADS unset (the
+  runner's CPUs), 4, and 1, three rounds each: tsan_race reports its race
+  (exit 66), race_sync's 11 cases are clean synchronized and report the
+  race unsynchronized, lazy_const is clean both ways, and race_stacks
+  catches its 200 isolated faults and reports its race with stacks.
+  Windows --race is validated on real threads (summary in the run's
+  script-out artifact, windows-race.txt). The two runs before it failed
+  in xo's own build on the runner, not in the race code: a cached xo
+  hundreds of commits old (fixed by xobuild's second hop and smoke check,
+  gotchas/xobuild-ancestor-older-semantics.md) and seed 0.24.0's linker,
+  which predates the SetThreadContext import (fixed by seed 0.25.0).
 
 ## Addendum (2026-10-22): stacks (function entry and exit), every native target
 
