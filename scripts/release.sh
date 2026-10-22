@@ -51,7 +51,10 @@
 #                                                        native --race and its license
 #                                                        (decision 0273; darwin/arm64
 #                                                        and linux/arm64, built first)
-#   xo-<version>-<os>-<arch>/README.md, CHANGELOG.md
+#   xo-<version>-<os>-<arch>/README.md, CHANGELOG.md, LICENSE,
+#                                                        THIRD_PARTY_NOTICES (the binaries
+#                                                        carry Go's and musl's code, whose
+#                                                        licenses ask for their notices)
 #
 # xo1 finds std and xo-gobind beside itself (bin/../lib/xo), so
 # bin/xo does not work copied alone (gotchas/xo1-outside-release-layout.md).
@@ -204,7 +207,7 @@ layout() {
 	local target=$1 stage
 	stage=$(stage_of "$target")
 	if [ "$dry" = 1 ]; then
-		echo "+ layout $stage: lib/xo/std (git ls-files std), bin/xo-gobind (go build ./cmd/xo-gobind for $target), README.md, CHANGELOG.md, lib/xo/race/${target%/*}-${target#*/} when built" >&2
+		echo "+ layout $stage: lib/xo/std (git ls-files std), bin/xo-gobind (go build ./cmd/xo-gobind for $target), README.md, CHANGELOG.md, LICENSE, THIRD_PARTY_NOTICES, lib/xo/race/${target%/*}-${target#*/} when built" >&2
 		return
 	fi
 	mkdir -p "$stage/bin" "$stage/lib/xo"
@@ -215,7 +218,7 @@ layout() {
 	[ "${target%/*}" = windows ] && exe=.exe
 	GOOS="${target%/*}" GOARCH="${target#*/}" CGO_ENABLED=0 \
 		go build -trimpath -o "$stage/bin/xo-gobind$exe" ./cmd/xo-gobind
-	cp README.md CHANGELOG.md "$stage/"
+	cp README.md CHANGELOG.md LICENSE THIRD_PARTY_NOTICES "$stage/"
 	# ThreadSanitizer's runtime for native --race (decision 0273 part 3),
 	# when scripts/race-runtime.sh built it for this target into the
 	# checkout's lib/xo/race, with its license

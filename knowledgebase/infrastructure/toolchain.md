@@ -152,7 +152,9 @@ for darwin/arm64, linux/arm64, and linux/amd64: `bin/xo` (xo1, as
 above), `bin/xo-gobind` (Go, `use go`), `lib/xo/std` and
 `lib/xo/third_party` (the tracked files), `lib/xo/zoneinfo.zip` (Go's
 zone database, copied from `go env GOROOT`, so std/time needs no Go;
-decision 0157 next step 1, 2026-10-12), README.md, CHANGELOG.md; and
+decision 0157 next step 1, 2026-10-12), README.md, CHANGELOG.md,
+LICENSE and THIRD_PARTY_NOTICES (the last two since 2026-10-22: 0.25.2's
+archives shipped without them); and
 `dist/SHA256SUMS` (no runtime packs since decision 0234, 2026-10-16). It
 needs Go, the host's clang, and a clean tree
 (`XO_RELEASE_ALLOW_DIRTY=1` to try it); 992 s and 9.3 GB peak RSS (release run 7) on
