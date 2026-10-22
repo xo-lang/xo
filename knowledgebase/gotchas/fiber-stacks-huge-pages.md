@@ -43,3 +43,6 @@ ourselves and passing pthread_attr_setstack.
 A mapping that is touched sparsely and held for long (stacks, rings,
 arenas) gets MADV_NOHUGEPAGE, or is sized below the huge page. Check
 `grep -E '^(Size|Rss)' /proc/PID/smaps` for mappings whose Rss is 2048 KB.
+
+Guard: `scripts/docker-rss-guard.sh XO_CLI` (1024 connections, THP always,
+fails over 150 MB peak RSS; toolchain.md).

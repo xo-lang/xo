@@ -3811,6 +3811,16 @@ ld.gold. The darwin gates see neither Linux's linkers nor the no-libc
 start (gotchas/llvm-linux-section-bounds-and-start.md). Last verified:
 2026-10-21.
 
+RSS guard for the fiber stack fix (2026-10-22, for hourly.sh):
+`scripts/docker-rss-guard.sh XO_CLI [BOUND_MB]` cross builds the CRUD
+server (bench/perf/http/xo) and its Go load generator for linux/arm64,
+runs the server in the arm64 container (transparent huge pages "always"
+there) under 1024 keep-alive connections for 8 s, and fails when its peak
+RSS (VmHWM) is over BOUND_MB (default 150): exit 0 ok, 1 over, 2 setup
+error, 0 with a note when Docker is not running. About 35 s. Measured: 60
+MB with the fix, 2129 MB with the madvise in map_stack disabled
+(gotchas/fiber-stacks-huge-pages.md). Last verified: 2026-10-22.
+
 Three scripts:
 
     scripts/docker-linux.sh ARCH WORKDIR 'COMMAND'   # in xo-linux-test:ARCH-BASE (Debian with clang, lld, make, yara; $XO_DOCKER_BASE, default debian:trixie-slim, clang 19); the checkout at /xo read only, WORKDIR at /work, HOME=/work/home; --rm
