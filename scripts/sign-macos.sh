@@ -10,8 +10,11 @@
 # checked with codesign --verify --strict. --notarize zips the signed
 # files, submits the zip with notarytool and waits, prints the notary log
 # when the submission is not accepted, and runs spctl on each file.
-# Credentials come only from the environment: APPLE_API_KEY (the path of
-# the App Store Connect API key, .p8), APPLE_API_KEY_ID, APPLE_API_ISSUER.
+# Credentials: XO_NOTARY_PROFILE, a notarytool keychain profile the owner
+# made once with `xcrun notarytool store-credentials NAME` (the password
+# never passes through this script), else the environment: APPLE_API_KEY
+# (the path of the App Store Connect API key, .p8), APPLE_API_KEY_ID,
+# APPLE_API_ISSUER.
 # Source them in a subshell so they do not stay in your shell, for
 # example: ( set -a; . PATH/TO/.env; set +a; scripts/sign-macos.sh --notarize FILE )
 # Every submission shows in the team's notary history: submit seldom.
@@ -45,26 +48,35 @@ done
 if [ "$notarize" -eq 0 ]; then
   exit 0
 fi
-for v in APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER; do
-  if [ -z "${!v:-}" ]; then
-    echo "sign-macos.sh: --notarize needs $v in the environment" >&2
-    exit 2
-  fi
-done
+if [ -n "${XO_NOTARY_PROFILE:-}" ]; then
+  auth=(--keychain-profile "$XO_NOTARY_PROFILE")
+else
+  for v in APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER; do
+    if [ -z "${!v:-}" ]; then
+      echo "sign-macos.sh: --notarize needs XO_NOTARY_PROFILE, or $v in the environment" >&2
+      exit 2
+    fi
+  done
+  auth=(--key "$APPLE_API_KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER")
+fi
 
 tmp=$(mktemp -d)
 trap 'rm -rf "${tmp:?}"' EXIT
 mkdir "$tmp/signed"
 for f in "$@"; do
-  # one directory level per file, so two files of the same name can go in one zip
-  d="$tmp/signed/$(basename "$(dirname "$f")")"
+  # two directory levels per file, so two files of the same name can go in
+  # one zip (release.sh: xo-V-darwin-arm64/bin/xo and xo-V-darwin-amd64/bin/xo)
+  d="$tmp/signed/$(basename "$(dirname "$(dirname "$f")")")/$(basename "$(dirname "$f")")"
+  if [ -e "$d/$(basename "$f")" ]; then
+    echo "sign-macos.sh: two files would be $d/$(basename "$f") in the zip" >&2
+    exit 2
+  fi
   mkdir -p "$d"
   cp -p "$f" "$d/"
 done
 [ -n "$zip" ] || zip=$tmp/signed.zip
 ditto -c -k --keepParent "$tmp/signed" "$zip"
 
-auth=(--key "$APPLE_API_KEY" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER")
 xcrun notarytool submit "$zip" "${auth[@]}" --wait --output-format json > "$tmp/submit.json"
 id=$(plutil -extract id raw "$tmp/submit.json")
 status=$(plutil -extract status raw "$tmp/submit.json")

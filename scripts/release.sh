@@ -14,6 +14,8 @@
 #                by the xo1 of the go-compiler-final tag:
 #                internal/xotool)
 #   darwin/arm64 the seed: xo build --backend=arm64 compiler/xo
+#   darwin/amd64 the darwin xo1: --backend=amd64 --target=darwin/amd64
+#                (decision 0254 stage 6a; runs on an Intel Mac only)
 #   linux/arm64  the darwin xo1: --backend=arm64 --target=linux/arm64
 #                --ld=macho (decision 0182 stage 3: compiler/macho's ELF
 #                writer and linker)
@@ -50,9 +52,28 @@
 #
 # xo1 finds std and xo-gobind beside itself (bin/../lib/xo), so
 # bin/xo does not work copied alone (gotchas/xo1-outside-release-layout.md).
+# Every xo1 is stamped (decision 0264, `xo version -v` and `--json`)
+# with the commit it was built from, so a release is built from the
+# published tree (../xo-publish after publish.sh prepare, decision 0249):
+# its commits are the public ones, and its std and docs are the scrubbed
+# ones. A private checkout (it has scripts/lead) is refused unless
+# XO_RELEASE_PRIVATE=1 (trials; its archives name a private commit).
+#
+# The darwin executables (bin/xo, bin/xo-gobind, the race dylib) are
+# signed with the Developer ID whose identity (a SHA-1 hash or the full
+# name) is in $XO_SIGN_ID, never in this file, and notarized in one
+# submission: with the keychain profile $XO_NOTARY_PROFILE (made once by
+# the owner: xcrun notarytool store-credentials NAME), else the App Store
+# Connect key in APPLE_API_KEY, APPLE_API_KEY_ID, APPLE_API_ISSUER
+# (scripts/sign-macos.sh, code-signing.md). A bare Mach-O and a tar.gz
+# cannot carry a stapled ticket: Gatekeeper looks the notarization up
+# online on first run. XO_RELEASE_UNSIGNED=1 skips signing (trials), and
+# XO_RELEASE_NO_NOTARIZE=1 signs without notarizing.
+#
 # The script then writes dist/xo-<version>-<os>-<arch>.tar.gz
 # (scripts/disttar: the same bytes for the same inputs) and
-# dist/SHA256SUMS. It never tags, pushes, or uploads.
+# dist/SHA256SUMS. It never tags, pushes, or uploads
+# (scripts/release-publish.sh, the owner's, uploads).
 #
 # Compilers: the host's Apple clang (run this script on a Mac; no C
 # runtime is compiled since decision 0234, so no zig for linux/arm64)
@@ -100,6 +121,20 @@ if [ -n "$(git status --porcelain)" ] && [ "${XO_RELEASE_ALLOW_DIRTY:-}" != 1 ];
 	echo "release.sh: the tree has changes; commit them (or set XO_RELEASE_ALLOW_DIRTY=1)" >&2
 	exit 1
 fi
+if [ -d scripts/lead ] && [ "${XO_RELEASE_PRIVATE:-}" != 1 ]; then
+	echo "release.sh: this is the private checkout; build from the published tree (publish.sh prepare, then scripts/release.sh in ../xo-publish) so xo version names a public commit, or set XO_RELEASE_PRIVATE=1 for a trial" >&2
+	exit 1
+fi
+sign=1
+if [ "${XO_RELEASE_UNSIGNED:-}" = 1 ]; then
+	sign=0
+elif [ -z "${XO_SIGN_ID:-}" ]; then
+	echo "release.sh: set XO_SIGN_ID to the Developer ID Application identity (its SHA-1 from security find-identity -v -p codesigning), or XO_RELEASE_UNSIGNED=1 for a trial" >&2
+	exit 1
+elif [ "${XO_RELEASE_NO_NOTARIZE:-}" != 1 ] && [ -z "${XO_NOTARY_PROFILE:-}" ] && [ -z "${APPLE_API_KEY:-}" ]; then
+	echo "release.sh: notarizing needs XO_NOTARY_PROFILE (xcrun notarytool store-credentials NAME, the owner) or APPLE_API_KEY, APPLE_API_KEY_ID, APPLE_API_ISSUER; XO_RELEASE_NO_NOTARIZE=1 signs only" >&2
+	exit 1
+fi
 if [ "${XO_RELEASE_WINDOWS:-}" = 1 ]; then
 	win_clang="${XO_WIN_CLANG:-}"
 	if [ -z "$win_clang" ] || ! "$win_clang" --version >/dev/null 2>&1 || [ ! -x "$(dirname "$win_clang")/lld-link" ]; then
@@ -136,7 +171,7 @@ fi
 # the checkout's lib/xo/race, which layout copies: the host's dylib and
 # linux/arm64's static archive (built in Docker)
 race_work="${XO_RELEASE_RACE_WORK:-${TMPDIR:-/tmp}/xo-release-race}"
-for plat in darwin-arm64 linux-arm64; do
+for plat in darwin-arm64 darwin-amd64 linux-arm64; do
 	if race_reuse "$plat"; then
 		echo "== race runtime $plat: kept lib/xo/race/$plat (XO_RELEASE_RACE=reuse)" >&2
 		continue
@@ -180,27 +215,42 @@ layout() {
 	fi
 }
 
-targets="darwin/arm64 linux/arm64 linux/amd64"
+targets="darwin/arm64 darwin/amd64 linux/arm64 linux/amd64"
 [ "${XO_RELEASE_WINDOWS:-}" = 1 ] && targets="$targets windows/amd64"
 for target in $targets; do
 	layout "$target"
 done
 darwin=$(stage_of darwin/arm64)
+darwin_amd64=$(stage_of darwin/amd64)
 linux_arm64=$(stage_of linux/arm64)
 linux_amd64=$(stage_of linux/amd64)
 
+# the provenance stamps (decision 0264): this tree's commit, source key,
+# and code generation key, the same for every target
+stamp=()
+if [ "$dry" = 1 ]; then
+	stamp=(--stamp 'XO_COMMIT=...' --stamp 'XO_SOURCE_KEY=...')
+else
+	while IFS= read -r a; do stamp+=("$a"); done < <(go run ./scripts/xobuild --stamp-args="$host_xo")
+	[ ${#stamp[@]} -gt 0 ] || { echo "release.sh: no provenance stamp (go run ./scripts/xobuild --stamp-args)" >&2; exit 1; }
+fi
+
 echo "== darwin/arm64: the seed builds xo1" >&2
-run "$host_xo" build --backend=arm64 --std="$repo/std" -o "$darwin/bin/xo" compiler/xo >&2
+run "$host_xo" build --backend=arm64 --std="$repo/std" "${stamp[@]}" -o "$darwin/bin/xo" compiler/xo >&2
 xo1="$darwin/bin/xo"
 run "$xo1" version >&2
 # no runtime packs since decision 0234: a program has no C runtime
 
 echo "== linux/arm64: xo1 cross builds xo1 (compiler/macho's ELF link, no cc)" >&2
-run "$xo1" build --backend=arm64 \
+run "$xo1" build --backend=arm64 "${stamp[@]}" \
 	--target=linux/arm64 --ld=macho -o "$linux_arm64/bin/xo" compiler/xo >&2
 
+echo "== darwin/amd64: xo1 cross builds xo1 with the amd64 backend" >&2
+run "$xo1" build --backend=amd64 "${stamp[@]}" \
+	--target=darwin/amd64 -o "$darwin_amd64/bin/xo" compiler/xo >&2
+
 echo "== linux/amd64: xo1 builds xo1 with the Go backend" >&2
-run "$xo1" build --backend=go --targets=linux/amd64 -o "$linux_amd64/bin/xo" compiler/xo >&2
+run "$xo1" build --backend=go "${stamp[@]}" --targets=linux/amd64 -o "$linux_amd64/bin/xo" compiler/xo >&2
 
 if [ "${XO_RELEASE_WINDOWS:-}" = 1 ]; then
 	echo "== windows/amd64: xo1 cross builds xo1 with the LLVM backend" >&2
@@ -208,8 +258,24 @@ if [ "${XO_RELEASE_WINDOWS:-}" = 1 ]; then
 	XO_CLANG="$win_clang" XO_AR="$(dirname "$win_clang")/llvm-ar" XO_WINSYSROOT="$XO_WINSYSROOT" \
 		XO_LLVM_SPLIT="${XO_RELEASE_WIN_SPLIT:-16}" XO_LLVM_LTO="${XO_RELEASE_WIN_LTO:-thin}" \
 		XO_LLVM_JOBS="${XO_RELEASE_WIN_JOBS:-4}" XO_LLVM_OPT=O2 \
-		run "$xo1" build --backend=llvm --targets=windows/amd64 \
+		run "$xo1" build --backend=llvm "${stamp[@]}" --targets=windows/amd64 \
 		-o "$(stage_of windows/amd64)/bin/xo.exe" compiler/xo >&2
+fi
+
+# sign the darwin executables with the Developer ID and notarize them in
+# one submission, before they are archived
+if [ "$sign" = 1 ]; then
+	signed=()
+	for st in "$darwin" "$darwin_amd64"; do
+		signed+=("$st/bin/xo" "$st/bin/xo-gobind")
+		for d in "$st"/lib/xo/race/darwin-*/*.dylib; do
+			[ -e "$d" ] && signed+=("$d")
+		done
+	done
+	notarize=--notarize
+	[ "${XO_RELEASE_NO_NOTARIZE:-}" = 1 ] && notarize=
+	echo "== darwin: sign ${#signed[@]} files${notarize:+ and notarize them}" >&2
+	XO_SIGN_IDENTITY="$XO_SIGN_ID" run bash scripts/sign-macos.sh $notarize "${signed[@]}" >&2
 fi
 
 for target in $targets; do

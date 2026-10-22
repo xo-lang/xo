@@ -6,6 +6,7 @@
 //	XO_SEED=/path/to/xo go run ./scripts/xobuild
 //	go run ./scripts/xobuild --from-source   # only the go-compiler-final root and the seed chain
 //	go run ./scripts/xobuild --key           # print the source key, build nothing
+//	go run ./scripts/xobuild --stamp-args=XO # the --stamp flags of a build of compiler/xo by XO, one per line
 //
 // The seed and the cache are internal/xotool's: $XO_SEED, the checkout's
 // earlier bin/xo, the newest earlier build, `xo` on PATH, the newest
@@ -23,20 +24,24 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
 func main() {
 	keyOnly := false
+	stampBy := ""
 	for _, a := range os.Args[1:] {
-		switch a {
-		case "--from-source", "-from-source":
+		switch {
+		case a == "--from-source" || a == "-from-source":
 			os.Setenv("XO_SEED_FALLBACK", "from-source")
-		case "--key", "-key":
+		case a == "--key" || a == "-key":
 			keyOnly = true
+		case strings.HasPrefix(a, "--stamp-args=") && len(a) > len("--stamp-args="):
+			stampBy = strings.TrimPrefix(a, "--stamp-args=")
 		default:
-			fmt.Fprintf(os.Stderr, "xobuild: unknown argument %q (usage: xobuild [--from-source] [--key])\n", a)
+			fmt.Fprintf(os.Stderr, "xobuild: unknown argument %q (usage: xobuild [--from-source] [--key] [--stamp-args=XO])\n", a)
 			os.Exit(2)
 		}
 	}
@@ -44,6 +49,21 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "xobuild:", err)
 		os.Exit(1)
+	}
+	if stampBy != "" {
+		// the provenance flags (decision 0264) of a build of this
+		// checkout's compiler/xo by stampBy, for builds xobuild does not
+		// make (scripts/release.sh: each target's xo reports the commit
+		// it was built from)
+		args := xotool.StampArgs(root, stampBy)
+		if args == nil {
+			fmt.Fprintln(os.Stderr, "xobuild: no stamp for this checkout (no compiler/xo provenance.xo, or the source key failed)")
+			os.Exit(1)
+		}
+		for _, a := range args {
+			fmt.Println(a)
+		}
+		return
 	}
 	if keyOnly {
 		// the source key a build of this checkout has (decision 0264:

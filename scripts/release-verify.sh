@@ -25,6 +25,14 @@
 #      decision 0215 cmd/xo holds only these tests: there is no Go xo to
 #      compare with).
 #
+# Also, without Go: `xo version --json` names the commit this checkout is
+# at (release.sh stamps it; a release is built from the published tree),
+# and on darwin bin/xo and bin/xo-gobind carry a Developer ID signature
+# that codesign --verify --strict accepts and spctl calls notarized
+# (XO_VERIFY_UNSIGNED=1 reports these as UNSUPPORTED, for trial archives).
+# The native checks use the host's backend (arm64, or amd64 on an Intel
+# Mac and linux/amd64).
+#
 # Prints "PASS name", "FAIL name", or "UNSUPPORTED name" per check and a
 # summary line; exit status 0 when nothing failed.
 set -u
@@ -46,7 +54,7 @@ fails=0
 pass() { echo "PASS $1"; }
 fail() { echo "FAIL $1"; fails=$((fails + 1)); }
 native=1
-[ "$host" = linux/amd64 ] && native=0
+nb=${host#*/}
 # check NAME CMD...: runs CMD, its output in OUTDIR/NAME.txt
 check() {
   local name=$1; shift
@@ -85,27 +93,48 @@ done
   echo "PASS no-go-on-path"
   check version "$xo" version
   cat "$out/version.txt"
+  # the stamped commit is this checkout's (release.sh, decision 0264)
+  commit=$("$xo" version --json 2>/dev/null | sed -n 's/.*"commit":"\([0-9a-f]*\)".*/\1/p')
+  head=$(git -C "$root" rev-parse HEAD)
+  if [ -n "$commit" ] && [ "$commit" = "$head" ]; then pass "stamp-commit ($commit)"
+  else fail "stamp-commit: xo version --json says '${commit}', this checkout is $head"; fi
+  if [ "${host%/*}" = darwin ]; then
+    for f in "$xo" "$rel/bin/xo-gobind"; do
+      b=$(basename "$f")
+      if [ "${XO_VERIFY_UNSIGNED:-}" = 1 ]; then
+        echo "UNSUPPORTED signed-$b (XO_VERIFY_UNSIGNED=1)"
+        continue
+      fi
+      if codesign --verify --strict "$f" 2>"$out/sign-$b.txt" && codesign -dvv "$f" 2>&1 | grep -q '^Authority=Developer ID Application'; then
+        pass "signed-$b"
+      else fail "signed-$b"; codesign -dvv "$f" 2>&1 | grep -E '^(Authority|Signature)' | sed 's/^/  /'; fi
+      if spctl --assess --type open --context context:primary-signature -vv "$f" 2>&1 | grep -q 'source=Notarized Developer ID'; then
+        pass "notarized-$b"
+      else fail "notarized-$b"; spctl --assess --type open --context context:primary-signature -vv "$f" 2>&1 | sed 's/^/  /'; fi
+    done
+  fi
   check check "$xo" check "$out/hello"
-  check native-arm64-run "$xo" run --backend=arm64 "$out/hello"
-  check native-arm64-ld-cc-run "$xo" run --backend=arm64 --ld=cc "$out/hello"
-  check native-arm64-ld-macho-run "$xo" run --backend=arm64 --ld=macho "$out/hello"
+  check native-$nb-run "$xo" run --backend=$nb "$out/hello"
+  check native-$nb-ld-cc-run "$xo" run --backend=$nb --ld=cc "$out/hello"
+  check native-$nb-ld-macho-run "$xo" run --backend=$nb --ld=macho "$out/hello"
   check native-llvm-run "$xo" run --backend=llvm "$out/hello"
-  check native-arm64-tz-run "$xo" build --backend=arm64 -o "$out/tz/tz" "$out/tz"
+  check native-$nb-tz-run "$xo" build --backend=$nb -o "$out/tz/tz" "$out/tz"
   if [ "$native" = 1 ]; then
     # want.txt is "exit 0", "--- stdout", the output, "--- stderr"
     sed -n '/^--- stdout$/,/^--- stderr$/p' internal/gen/testdata/golden/time_zones/want.txt | sed '1d;$d' > "$out/tz/want.txt"
     "$out/tz/tz" > "$out/tz/got.txt" 2>&1
     if cmp -s "$out/tz/got.txt" "$out/tz/want.txt"; then
-      pass native-arm64-tz-output
+      pass native-$nb-tz-output
     else
-      fail native-arm64-tz-output; diff "$out/tz/got.txt" "$out/tz/want.txt" | head -5 | sed 's/^/  /'
+      fail native-$nb-tz-output; diff "$out/tz/got.txt" "$out/tz/want.txt" | head -5 | sed 's/^/  /'
     fi
   fi
-  for f in native-arm64-run native-arm64-ld-cc-run native-arm64-ld-macho-run native-llvm-run; do
+  for f in native-$nb-run native-$nb-ld-cc-run native-$nb-ld-macho-run native-llvm-run; do
     grep -q "hello from the released xo" "$out/$f.txt" 2>/dev/null && echo "  $f: $(head -1 "$out/$f.txt")"
   done
-  # the default backend is Go: with no Go it must say so, not crash
-  if "$xo" build -o "$out/hello-go" "$out/hello" > "$out/go-missing.txt" 2>&1; then
+  # the Go backend with no Go must say so, not crash (native has been the
+  # default backend since 2026-10-20)
+  if "$xo" build --backend=go -o "$out/hello-go" "$out/hello" > "$out/go-missing.txt" 2>&1; then
     fail go-missing-reported
   elif grep -qi "go" "$out/go-missing.txt" && ! grep -qi "fault\|panic" "$out/go-missing.txt"; then
     pass go-missing-reported; sed 's/^/  /' "$out/go-missing.txt" | head -3
