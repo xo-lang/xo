@@ -1,5 +1,23 @@
 # std/regexp changes
 
+## 2026-10-22: perf: the parser factors common prefixes out of alternations
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/results/regexp-ascii-bitmap-inline-2026-10-22.md (three of onepass_test.go's one-pass patterns were not one-pass here; Go's parser factors `a|aa`)
+- Go reference: regexp/syntax/parse.go (maybeConcat, factor, swapVerticalBar, cleanAlt, mergeCharClass; go1.26.1)
+- Test: std/native/regexp_test.xo (11,508 alternation cases from Go), internal/llvm/testdata/golden/regexp_table, internal/stdtest corpus regexp; timing row against Go: bench/results/regexp-ascii-bitmap-inline-2026-10-22.md
+
+The parser now joins adjacent literals into strings and factors the common
+prefix out of an alternation as Go's does: `abc|abd|aef` is `a(?:b[cd]|ef)`,
+`a|b|c` is `[a-c]`, a common leading class or fixed repeat is shared, and a
+run of empty arms is one. Matches and groups are the same (4,760 anchored and
+11,508 alternation cases from Go's package pass); the programs are smaller, so
+the matchers do less work on keyword alternations, and `a|aa` style patterns
+are one-pass again. `xo bench --ab` instructions: matching keyword alternations
+(`GET|POST|...`, month names, URL schemes) 0.79x, compiling them 0.93x;
+compiling patterns without an alternation 1.013x (the extra parser work).
+
 ## 2026-10-22: perf: Go's one-pass matcher for patterns anchored with \A
 
 - Kind: perf

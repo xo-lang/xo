@@ -1,12 +1,11 @@
 // std/regexp on the native backends (decisions 0164 and 0172): Go's
 // regexp ported to Xo. regexp/syntax's parser (the same errors and
-// texts), Simplify, and compiler to an instruction program, and
-// regexp's Pike VM (exec.go): leftmost first matching in time linear in
-// the input, with the same matches and groups as the Go backend. Not
-// ported: the parser's factoring of alternations and the onepass and
-// backtracking engines (they change speed, not results), the size limit
-// (ErrLarge), and Unicode classes other than \pL, \p{Nd}, \p{Any}, and
-// \p{ASCII} (an error that says so).
+// texts, with the factoring of alternations), Simplify, and compiler to
+// an instruction program, and regexp's matchers (exec.go): the Pike VM,
+// the bit-state backtracker and the one-pass matcher, leftmost first
+// matching with the same matches and groups as the Go backend. Not
+// ported: the size limit (ErrLarge), and Unicode classes other than \pL,
+// \p{Nd}, \p{Any}, and \p{ASCII} (an error that says so).
 use std/regexp
 use native/llrt/raw
 use native/llrt/scan
@@ -88,9 +87,67 @@ fn (var p: Parser) node(op: Int) -> Int {
   p.ops.len() - 1
 }
 
+/// push (with maybeConcat): a one-rune class becomes a literal, and the
+/// literal on top of the stack joins the one below it.
 fn (var p: Parser) push(n: Int) -> Int {
+  if p.ops[n] == OP_CHAR_CLASS {
+    let r = p.runes[n]
+    if r.len() == 2 && r[0] == r[1] {
+      let fl = (p.flags | FOLD_CASE) ^ FOLD_CASE
+      if p.maybe_concat(r[0], fl) {
+        return n
+      }
+      p.ops[n] = OP_LITERAL
+      p.runes[n] = [r[0]]
+      p.nflags[n] = fl
+      p.stack.push(n)
+      return n
+    }
+    // a case-insensitive rune like [Aa] or [Δδ]
+    if (r.len() == 4 && r[0] == r[1] && r[2] == r[3] && simple_fold(r[0]) == r[2] && simple_fold(r[2]) == r[0]) || (r.len() == 2 && r[0] + 1 == r[1] && simple_fold(r[0]) == r[1] && simple_fold(r[1]) == r[0]) {
+      let fl = p.flags | FOLD_CASE
+      if p.maybe_concat(r[0], fl) {
+        return n
+      }
+      p.ops[n] = OP_LITERAL
+      p.runes[n] = [r[0]]
+      p.nflags[n] = fl
+      p.stack.push(n)
+      return n
+    }
+  }
+  let sn = p.stack.len()
+  if sn >= 2 && p.ops[p.stack[sn - 1]] == OP_LITERAL && p.ops[p.stack[sn - 2]] == OP_LITERAL {
+    p.maybe_concat(-1, 0)
+  }
   p.stack.push(n)
   n
+}
+
+/// maybeConcat: the literal on top of the stack joins the literal below
+/// it, so ab* stays a and b* (the top literal is still open to an
+/// operator). With r >= 0 the freed node is reused to push r with flags;
+/// whether r was pushed.
+fn (var p: Parser) maybe_concat(r: Int, flags: Int) -> Bool {
+  let n = p.stack.len()
+  if n < 2 {
+    return false
+  }
+  let re1 = p.stack[n - 1]
+  let re2 = p.stack[n - 2]
+  if p.ops[re1] != OP_LITERAL || p.ops[re2] != OP_LITERAL || (p.nflags[re1] & FOLD_CASE) != (p.nflags[re2] & FOLD_CASE) {
+    return false
+  }
+  for x in p.runes[re1] {
+    p.runes[re2].push(x)
+  }
+  if r >= 0 {
+    p.runes[re1] = [r]
+    p.nflags[re1] = flags
+    return true
+  }
+  p.pop()
+  false
 }
 
 fn (var p: Parser) op(op: Int) -> Int {
@@ -98,9 +155,29 @@ fn (var p: Parser) op(op: Int) -> Int {
   p.push(n)
 }
 
+/// minFoldRune: the least rune fold-equivalent to r.
+fn min_fold_rune(r: Int) -> Int {
+  if r < MIN_FOLD || r > MAX_FOLD {
+    return r
+  }
+  var m = r
+  var f = simple_fold(r)
+  while f != r {
+    if f < m {
+      m = f
+    }
+    f = simple_fold(f)
+  }
+  m
+}
+
 fn (var p: Parser) literal(r: Int) {
   let n = p.node(OP_LITERAL)
-  p.runes[n] = [r]
+  if (p.flags & FOLD_CASE) != 0 {
+    p.runes[n] = [min_fold_rune(r)]
+  } else {
+    p.runes[n] = [r]
+  }
   p.push(n)
 }
 
@@ -840,7 +917,6 @@ fn (var p: Parser) collapse(subs: List[Int], op: Int) -> Int {
   if subs.len() == 1 {
     return subs[0]
   }
-  let re = p.node(op)
   var all: List[Int] = []
   for sub in subs {
     if p.ops[sub] == op {
@@ -851,6 +927,13 @@ fn (var p: Parser) collapse(subs: List[Int], op: Int) -> Int {
       all.push(sub)
     }
   }
+  if op == OP_ALTERNATE {
+    all = p.factor(all)
+    if all.len() == 1 {
+      return all[0]
+    }
+  }
+  let re = p.node(op)
   p.subs[re] = all
   re
 }
@@ -877,7 +960,397 @@ fn (var p: Parser) take_from(i: Int) -> List[Int] {
   subs
 }
 
+fn (var p: Parser) is_char_class(re: Int) -> Bool {
+  let op = p.ops[re]
+  op == OP_CHAR_CLASS || op == OP_ANY_CHAR_NOT_NL || op == OP_ANY_CHAR || (op == OP_LITERAL && p.runes[re].len() == 1)
+}
+
+/// matchRune: does the literal or class re match r.
+fn (var p: Parser) match_rune(re: Int, r: Int) -> Bool {
+  let op = p.ops[re]
+  if op == OP_LITERAL {
+    return p.runes[re].len() == 1 && p.runes[re][0] == r
+  }
+  if op == OP_CHAR_CLASS {
+    let rs = p.runes[re]
+    var i = 0
+    while i + 1 < rs.len() {
+      if rs[i] <= r && r <= rs[i + 1] {
+        return true
+      }
+      i += 2
+    }
+    return false
+  }
+  if op == OP_ANY_CHAR_NOT_NL {
+    return r != '\n'
+  }
+  op == OP_ANY_CHAR
+}
+
+fn append_literal(var r: List[Int], x: Int, flags: Int) {
+  if (flags & FOLD_CASE) != 0 {
+    append_folded_range(r, x, x)
+  } else {
+    append_range(r, x, x)
+  }
+}
+
+/// mergeCharClass: src added to dst, which is at least as complex.
+fn (var p: Parser) merge_char_class(dst: Int, src: Int) {
+  let op = p.ops[dst]
+  if op == OP_ANY_CHAR_NOT_NL {
+    if p.match_rune(src, '\n') {
+      p.ops[dst] = OP_ANY_CHAR
+    }
+  } else if op == OP_CHAR_CLASS {
+    var rs = p.runes[dst]
+    if p.ops[src] == OP_LITERAL {
+      append_literal(rs, p.runes[src][0], p.nflags[src])
+    } else {
+      append_class(rs, p.runes[src])
+    }
+    p.runes[dst] = rs
+  } else if op == OP_LITERAL {
+    if p.runes[src][0] == p.runes[dst][0] && p.nflags[src] == p.nflags[dst] {
+      return
+    }
+    var rs: List[Int] = []
+    append_literal(rs, p.runes[dst][0], p.nflags[dst])
+    append_literal(rs, p.runes[src][0], p.nflags[src])
+    p.ops[dst] = OP_CHAR_CLASS
+    p.runes[dst] = rs
+  }
+}
+
+/// cleanAlt: a class about to join an alternation is sorted and merged,
+/// and may turn out to be any character.
+fn (var p: Parser) clean_alt(re: Int) {
+  if p.ops[re] != OP_CHAR_CLASS {
+    return
+  }
+  var r = p.runes[re]
+  var clean = true
+  var i = 0
+  while i + 1 < r.len() {
+    if r[i] > r[i + 1] || (i >= 2 && r[i] <= r[i - 1] + 1) {
+      clean = false
+      break
+    }
+    i += 2
+  }
+  if !clean {
+    r = clean_class(r)
+    p.runes[re] = r
+  }
+  if r.len() == 2 && r[0] == 0 && r[1] == MAX_RUNE {
+    p.runes[re] = []
+    p.ops[re] = OP_ANY_CHAR
+  } else if r.len() == 4 && r[0] == 0 && r[1] == 9 && r[2] == 11 && r[3] == MAX_RUNE {
+    p.runes[re] = []
+    p.ops[re] = OP_ANY_CHAR_NOT_NL
+  }
+}
+
+/// The literal node re begins with (itself, or the first of a
+/// concatenation), -1 for none.
+fn (var p: Parser) leading_string(re0: Int) -> Int {
+  var re = re0
+  if p.ops[re] == OP_CONCAT && p.subs[re].len() > 0 {
+    re = p.subs[re][0]
+  }
+  if p.ops[re] != OP_LITERAL {
+    return -1
+  }
+  re
+}
+
+/// removeLeadingString: re without its first n runes.
+fn (var p: Parser) remove_leading_string(re0: Int, n: Int) -> Int {
+  var re = re0
+  if p.ops[re] == OP_CONCAT && p.subs[re].len() > 0 {
+    var subs = p.subs[re]
+    let sub = p.remove_leading_string(subs[0], n)
+    subs[0] = sub
+    p.subs[re] = subs
+    if p.ops[sub] == OP_EMPTY_MATCH {
+      if subs.len() < 2 {
+        p.ops[re] = OP_EMPTY_MATCH
+        p.subs[re] = []
+      } else if subs.len() == 2 {
+        re = subs[1]
+      } else {
+        var rest: List[Int] = []
+        var k = 1
+        while k < subs.len() {
+          rest.push(subs[k])
+          k += 1
+        }
+        p.subs[re] = rest
+      }
+    }
+    return re
+  }
+  if p.ops[re] == OP_LITERAL {
+    let rs = p.runes[re]
+    var rest: List[Int] = []
+    var k = n
+    while k < rs.len() {
+      rest.push(rs[k])
+      k += 1
+    }
+    p.runes[re] = rest
+    if rest.is_empty() {
+      p.ops[re] = OP_EMPTY_MATCH
+    }
+  }
+  re
+}
+
+/// The first piece of re (itself, or the first of a concatenation), -1
+/// for an empty match.
+fn (var p: Parser) leading_regexp(re: Int) -> Int {
+  if p.ops[re] == OP_EMPTY_MATCH {
+    return -1
+  }
+  if p.ops[re] == OP_CONCAT && p.subs[re].len() > 0 {
+    let sub = p.subs[re][0]
+    if p.ops[sub] == OP_EMPTY_MATCH {
+      return -1
+    }
+    return sub
+  }
+  re
+}
+
+fn (var p: Parser) remove_leading_regexp(re: Int) -> Int {
+  if p.ops[re] == OP_CONCAT && p.subs[re].len() > 0 {
+    let subs = p.subs[re]
+    var rest: List[Int] = []
+    var k = 1
+    while k < subs.len() {
+      rest.push(subs[k])
+      k += 1
+    }
+    if rest.is_empty() {
+      p.ops[re] = OP_EMPTY_MATCH
+      p.subs[re] = []
+      return re
+    }
+    if rest.len() == 1 {
+      return rest[0]
+    }
+    p.subs[re] = rest
+    return re
+  }
+  p.node(OP_EMPTY_MATCH)
+}
+
+fn same_runes(a: List[Int], b: List[Int]) -> Bool {
+  if a.len() != b.len() {
+    return false
+  }
+  var i = 0
+  while i < a.len() {
+    if a[i] != b[i] {
+      return false
+    }
+    i += 1
+  }
+  true
+}
+
+/// Equal, for the pieces round 2 of factor compares: a literal, a class,
+/// or a repeat of one.
+fn (var p: Parser) equal(x: Int, y: Int) -> Bool {
+  let op = p.ops[x]
+  if op != p.ops[y] {
+    return false
+  }
+  if op == OP_LITERAL {
+    return (p.nflags[x] & FOLD_CASE) == (p.nflags[y] & FOLD_CASE) && same_runes(p.runes[x], p.runes[y])
+  }
+  if op == OP_CHAR_CLASS {
+    return same_runes(p.runes[x], p.runes[y])
+  }
+  if op == OP_ANY_CHAR || op == OP_ANY_CHAR_NOT_NL {
+    return true
+  }
+  if op == OP_REPEAT {
+    return (p.nflags[x] & NON_GREEDY) == (p.nflags[y] & NON_GREEDY) && p.mins[x] == p.mins[y] && p.maxs[x] == p.maxs[y] && p.equal(p.subs[x][0], p.subs[y][0])
+  }
+  false
+}
+
+/// factor: common prefixes of the alternation list sub0 factored out,
+///   ABC|ABD|AEF|BCX|BCY  =>  A(B[CD]|EF)|BC[XY]
+/// by common literal prefix, common leading class (or fixed repeat of
+/// one), a run of single runes into one class, and a run of empty
+/// matches into one.
+fn (var p: Parser) factor(sub0: List[Int]) -> List[Int] {
+  if sub0.len() < 2 {
+    return sub0
+  }
+  // Round 1: common literal prefixes.
+  var out: List[Int] = []
+  var str: List[Int] = []
+  var strflags = 0
+  var start = 0
+  var i = 0
+  while i <= sub0.len() {
+    var istr: List[Int] = []
+    var iflags = 0
+    if i < sub0.len() {
+      let ls = p.leading_string(sub0[i])
+      if ls >= 0 {
+        istr = p.runes[ls]
+        iflags = p.nflags[ls] & FOLD_CASE
+      }
+      if iflags == strflags {
+        var same = 0
+        while same < str.len() && same < istr.len() && str[same] == istr[same] {
+          same += 1
+        }
+        if same > 0 {
+          if same < str.len() {
+            var head: List[Int] = []
+            var k = 0
+            while k < same {
+              head.push(str[k])
+              k += 1
+            }
+            str = head
+          }
+          i += 1
+          continue
+        }
+      }
+    }
+    if i == start {
+    } else if i == start + 1 {
+      out.push(sub0[start])
+    } else {
+      let prefix = p.node(OP_LITERAL)
+      p.nflags[prefix] = strflags
+      p.runes[prefix] = str
+      var run: List[Int] = []
+      var j = start
+      while j < i {
+        run.push(p.remove_leading_string(sub0[j], str.len()))
+        j += 1
+      }
+      let suffix = p.collapse(run, OP_ALTERNATE)
+      let re = p.node(OP_CONCAT)
+      p.subs[re] = [prefix, suffix]
+      out.push(re)
+    }
+    start = i
+    str = istr
+    strflags = iflags
+    i += 1
+  }
+  let sub1 = out
+
+  // Round 2: common simple leading pieces. Complex subexpressions
+  // (quantifiers) are not safe to factor: that merges distinct paths
+  // through the automaton.
+  out = []
+  start = 0
+  var first = -1
+  i = 0
+  while i <= sub1.len() {
+    var ifirst = -1
+    if i < sub1.len() {
+      ifirst = p.leading_regexp(sub1[i])
+      if first >= 0 && ifirst >= 0 && (p.is_char_class(first) || (p.ops[first] == OP_REPEAT && p.mins[first] == p.maxs[first] && p.is_char_class(p.subs[first][0]))) && p.equal(first, ifirst) {
+        i += 1
+        continue
+      }
+    }
+    if i == start {
+    } else if i == start + 1 {
+      out.push(sub1[start])
+    } else {
+      var run: List[Int] = []
+      var j = start
+      while j < i {
+        run.push(p.remove_leading_regexp(sub1[j]))
+        j += 1
+      }
+      let suffix = p.collapse(run, OP_ALTERNATE)
+      let re = p.node(OP_CONCAT)
+      p.subs[re] = [first, suffix]
+      out.push(re)
+    }
+    start = i
+    first = ifirst
+    i += 1
+  }
+  let sub2 = out
+
+  // Round 3: runs of single runes and classes into one class.
+  out = []
+  start = 0
+  i = 0
+  while i <= sub2.len() {
+    if i < sub2.len() && p.is_char_class(sub2[i]) {
+      i += 1
+      continue
+    }
+    if i == start {
+    } else if i == start + 1 {
+      out.push(sub2[start])
+    } else {
+      // The most complex of the run takes the others.
+      var best = start
+      var j = start + 1
+      while j < i {
+        let ob = p.ops[sub2[best]]
+        let oj = p.ops[sub2[j]]
+        if ob < oj || (ob == oj && p.runes[sub2[best]].len() < p.runes[sub2[j]].len()) {
+          best = j
+        }
+        j += 1
+      }
+      let dst = sub2[best]
+      j = start
+      while j < i {
+        if j != best {
+          p.merge_char_class(dst, sub2[j])
+        }
+        j += 1
+      }
+      p.clean_alt(dst)
+      out.push(dst)
+    }
+    if i < sub2.len() {
+      out.push(sub2[i])
+    }
+    start = i + 1
+    i += 1
+  }
+  let sub3 = out
+
+  // Round 4: a run of empty matches into one.
+  out = []
+  i = 0
+  while i < sub3.len() {
+    if i + 1 < sub3.len() && p.ops[sub3[i]] == OP_EMPTY_MATCH && p.ops[sub3[i + 1]] == OP_EMPTY_MATCH {
+      i += 1
+      continue
+    }
+    out.push(sub3[i])
+    i += 1
+  }
+  out
+}
+
+
 fn (var p: Parser) concat() -> Int {
+  let sn = p.stack.len()
+  if sn >= 2 && p.ops[p.stack[sn - 1]] == OP_LITERAL && p.ops[p.stack[sn - 2]] == OP_LITERAL {
+    p.maybe_concat(-1, 0)
+  }
   let subs = p.take_from(p.run_start())
   if subs.is_empty() {
     let e = p.node(OP_EMPTY_MATCH)
@@ -893,15 +1366,33 @@ fn (var p: Parser) alternate() -> Int {
     let e = p.node(OP_NO_MATCH)
     return p.push(e)
   }
+  p.clean_alt(subs[subs.len() - 1])
   let a = p.collapse(subs, OP_ALTERNATE)
   p.push(a)
 }
 
-/// swapVerticalBar (without merging classes): an element above a
-/// vertical bar goes below it.
+/// swapVerticalBar: a literal or class above and below a vertical bar
+/// merge into one class; else an element above a vertical bar goes
+/// below it.
 fn (var p: Parser) swap_vertical_bar() -> Bool {
   let n = p.stack.len()
+  if n >= 3 && p.ops[p.stack[n - 2]] == OP_VERTICAL_BAR && p.is_char_class(p.stack[n - 1]) && p.is_char_class(p.stack[n - 3]) {
+    var re1 = p.stack[n - 1]
+    var re3 = p.stack[n - 3]
+    if p.ops[re1] > p.ops[re3] {
+      let t = re1
+      re1 = re3
+      re3 = t
+      p.stack[n - 3] = re3
+    }
+    p.merge_char_class(re3, re1)
+    p.pop()
+    return true
+  }
   if n >= 2 && p.ops[p.stack[n - 2]] == OP_VERTICAL_BAR {
+    if n >= 3 {
+      p.clean_alt(p.stack[n - 3])
+    }
     let re1 = p.stack[n - 1]
     p.stack[n - 1] = p.stack[n - 2]
     p.stack[n - 2] = re1
@@ -934,12 +1425,13 @@ fn (var p: Parser) parse_right_paren() -> () ! PErr {
   }
   p.flags = p.nflags[re2]
   if p.caps[re2] == 0 {
-    p.stack.push(re1)
+    p.push(re1)
   } else {
     p.ops[re2] = OP_CAPTURE
     p.subs[re2] = [re1]
-    p.stack.push(re2)
+    p.push(re2)
   }
+  ()
 }
 
 fn is_valid_capture_name(name: Str) -> Bool {

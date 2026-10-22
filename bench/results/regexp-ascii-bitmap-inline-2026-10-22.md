@@ -98,3 +98,38 @@ one-pass patterns (`^(?:a|(?:aa))$` and two like it) are not one-pass in
 Xo, where the alternation is not factored; results are the same, they take
 the backtracker. Porting the parser's `factor` is the next candidate (it also
 shrinks every program with a common prefix, so the Pike rows move too).
+
+## Fifth step: the parser's alternation factoring (alt rows)
+
+Go's parser joins adjacent literals into one string (`maybeConcat`) and
+factors alternations in four rounds (`factor`): the common literal prefix,
+the common leading class or fixed repeat of a class, a run of single runes
+and classes into one class (also when the bars sit between two classes,
+`swapVerticalBar`), and a run of empty matches into one; `cleanAlt` turns a
+full class into `.` forms. All ported (std/native/regexp.xo). A one-rune class
+is a literal and `[Aa]` a case-folded literal, as in Go, and a folded literal
+keeps its least rune (`minFoldRune`) so `(?i)a|A` factors.
+
+New rows `alt` (find_all of four keyword alternations on a 150 KB text, 10
+passes: `GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS`, month names,
+`https?://|ftp://|file://`, `foo|foobar|foobaz|bar|baz`) and `alt_compile`
+(compiling those four, 20,000 times); outputs equal to Go's (180,000 and
+2,680,000). Instructions, `xo bench --ab --rounds=5`, factored against
+unfactored (B / A): alt 0.790 (0.789 to 0.790; wall 0.784), alt_compile 0.934
+(0.934 to 0.934). The other rows: match 1.000, find_all 1.000, captures 0.999,
+replace 1.000, anchored 1.000, compile 1.013 (patterns with no alternation
+pay for the literal joining and the class checks; the first version, with
+`maybe_concat` called at every push, was 1.025).
+
+Against Go (instructions, 3 rounds, Xo / Go): alt 2,878 M against 6,272 M
+(0.46x; unfactored 0.58x), alt_compile 11,820 M against 3,586 M (3.30x;
+unfactored 3.87x), match 1.06, find_all 0.92, captures 0.84, replace 1.47,
+anchored 1.04, compile 3.57 (not changed by this step: Xo's parse, simplify
+and compile cost 3.6x Go's per pattern; the next gap to look at).
+
+The 4,760 anchored cases and 11,508 new alternation cases (115 patterns:
+shared prefixes, classes, empty arms, folds, captures, nested alternations,
+repeats; 100 texts, first match and groups from Go) pass; the three
+onepass_test.go patterns that were not one-pass (`^(?:a|(?:aa))$` and two
+like it) now are, so all 37 agree with Go on whether a pattern is one-pass.
+
