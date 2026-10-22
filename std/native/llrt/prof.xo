@@ -74,12 +74,20 @@ const R_THI = 64
 const R_HZ = 72
 const R_T0 = 80
 const R_NOREC = 88
+/// Whether a CPU profile is running (1) or stopped with its record kept
+/// for the next one (0; decision 0325): the handler checks it first.
+const R_ON = 120
 /// The profile's duration, set when it stops.
 const R_DUR = 112
 /// Windows: the sampler's record (WB_*) and its thread's handle.
 const R_WIN = 96
 const R_WTHREAD = 104
-const R_SIZE = 128
+/// Set by profile_begin: the profile is served by std/debug, not written
+/// to a file at exit.
+const R_LIVE = 128
+/// Signal handlers inside a sample now (profile_stop waits for 0).
+const R_INFLIGHT = 136
+const R_SIZE = 144
 
 /// The deepest stack a sample keeps, and a slot's bytes: the frame count,
 /// then the pcs.
@@ -179,17 +187,40 @@ pub fn start() {
       hz = n
     }
   }
+  let r = make_record(hz)
+  if r == -1 {
+    stdio.eprint("xo profile: no memory for the profile", true)
+    return
+  }
+  if r == -2 {
+    stdio.eprint("xo profile: the program's unwind tables were not found", true)
+    return
+  }
+  st(r, R_ON, 1)
+  if win {
+    // the pool's first record is the sampler's (no thread of the
+    // program claims one: no signal handler runs on Windows)
+    win_start(r, ld(r, R_POOL), hz)
+    return
+  }
+  rt.slot_store[Int](rt.static_word(W_PROF), 0, r, 2)
+  handler(rt.fn_addr("on_prof"))
+  timer(1000000 / hz)
+}
+
+/// A new profiler record at rate hz: the record, the sample ring and the
+/// pool of unwind records mapped, the program's text found; -1 without
+/// memory, -2 without the unwind tables.
+fn make_record(hz: Int) -> Int {
   let r = map(R_SIZE)
   let ring = map(CAP * SLOT)
   let pool = map(POOL_N * unwind.PROF_RECORD)
   if r == 0 || ring == 0 || pool == 0 {
-    stdio.eprint("xo profile: no memory for the profile", true)
-    return
+    return -1
   }
   for i in 0..POOL_N {
     if !unwind.prof_init(pool + i * unwind.PROF_RECORD) {
-      stdio.eprint("xo profile: the program's unwind tables were not found", true)
-      return
+      return -2
     }
   }
   let (lo, hi) = unwind.prof_text(pool)
@@ -201,15 +232,117 @@ pub fn start() {
   st(r, R_THI, hi)
   st(r, R_HZ, hz)
   st(r, R_T0, sysio.mono_ns())
-  if win {
-    // the pool's first record is the sampler's (no thread of the
-    // program claims one: no signal handler runs on Windows)
-    win_start(r, pool, hz)
-    return
+  r
+}
+
+/// Whether profiles can be started and read while the program runs
+/// (decision 0325): CPU profiles on linux and darwin.
+pub fn live_supported() -> Bool {
+  match target.os {
+    TargetOs.Darwin | TargetOs.Linux => true
+    TargetOs.Windows | TargetOs.Wasi => false
   }
+}
+
+/// Starts a CPU profile at hz (1 to 10000) while the program runs: 0
+/// started, 1 one is running already, 2 not available here (windows, a
+/// target without the profiler), 3 no memory or unwind tables. Callers
+/// serialize their begins (std/debug holds a Mutex); the first call maps
+/// the record, the ring and the unwind pool, which stay mapped for the
+/// life of the process (a handler on another thread may still read them
+/// after the timer stops), and later calls reset them: the counts of the
+/// slots the last run used back to 0, the sample position, the loss
+/// counts. Threads keep their unwind records (TL_PROF) between runs.
+pub fn profile_begin(hz: Int) -> Int {
+  if !live_supported() || hz < 1 || hz > 10000 {
+    return 2
+  }
+  var r = rt.slot_load[Int](rt.static_word(W_PROF), 0, 1)
+  if r == 0 {
+    r = make_record(hz)
+    if r < 0 {
+      return 3
+    }
+  } else {
+    if rt.slot_load[Int](r, R_ON / 8, 1) != 0 || rt.slot_load[Int](r, R_INFLIGHT / 8, 4) != 0 {
+      // running, or a handler of the last run is still inside a sample
+      return 1
+    }
+    let used = if ld(r, R_NEXT) < ld(r, R_CAP) { ld(r, R_NEXT) } else { ld(r, R_CAP) }
+    let ring = ld(r, R_RING)
+    for k in 0..used {
+      st(ring + k * SLOT, 0, 0)
+    }
+    st(r, R_NEXT, 0)
+    st(r, R_LOST, 0)
+    st(r, R_NOREC, 0)
+    st(r, R_DUR, 0)
+    st(r, R_HZ, hz)
+    st(r, R_T0, sysio.mono_ns())
+  }
+  st(r, R_LIVE, 1)
+  rt.slot_store[Int](r, R_ON / 8, 1, 2)
   rt.slot_store[Int](rt.static_word(W_PROF), 0, r, 2)
   handler(rt.fn_addr("on_prof"))
   timer(1000000 / hz)
+  0
+}
+
+/// Stops the running CPU profile's timer and sampling (false: none was
+/// running). The caller waits for profile_inflight() to read 0 (a handler
+/// that counted itself in before the switch went off is finishing its
+/// sample), then reads the profile with profile_collect.
+pub fn profile_stop() -> Bool {
+  let r = rt.slot_load[Int](rt.static_word(W_PROF), 0, 1)
+  if r == 0 || rt.slot_swap[Int](r, R_ON / 8, 0, 4) == 0 {
+    return false
+  }
+  timer(0)
+  handler(1)
+  st(r, R_DUR, sysio.mono_ns() - ld(r, R_T0))
+  true
+}
+
+/// Signal handlers that are inside a sample now: profile_stop's caller
+/// waits (a fiber sleep of 1 ms a round) until this reads 0, then reads
+/// the profile.
+pub fn profile_inflight() -> Int {
+  let r = rt.slot_load[Int](rt.static_word(W_PROF), 0, 1)
+  if r == 0 {
+    return 0
+  }
+  rt.slot_load[Int](r, R_INFLIGHT / 8, 4)
+}
+
+/// The stopped CPU profile as decision 0240's container (what `xo prof`
+/// reads), or empty when none has run.
+pub fn profile_collect() -> Bytes {
+  let r = rt.slot_load[Int](rt.static_word(W_PROF), 0, 1)
+  if r == 0 || ld(r, R_DUR) == 0 || rt.slot_load[Int](r, R_ON / 8, 1) != 0 || rt.slot_load[Int](r, R_INFLIGHT / 8, 4) != 0 {
+    // none, running, or a handler is still writing a slot (the caller's
+    // wait for profile_inflight() is a cap, not an assumption)
+    return b""
+  }
+  build_raw(r, 0).data
+}
+
+/// The heap profile's snapshot while it samples (started by XO_PROF=heap
+/// or heap_live_start), as the container; empty when it is off.
+pub fn heap_snapshot() -> Bytes {
+  let rh = heapprof.record()
+  if rh == 0 {
+    return b""
+  }
+  build_raw(0, rh).data
+}
+
+/// Starts the heap sampler while the program runs (rate 0: the default);
+/// false when it cannot start (an unsupported target) or runs already.
+pub fn heap_live_start(rate: Int) -> Bool {
+  if !live_supported() || heapprof.record() != 0 {
+    return false
+  }
+  heapprof.start(if rate >= 1 { rate } else { HEAP_RATE })
 }
 
 /// Whether the C string at v lists w (comma separated).
@@ -348,6 +481,18 @@ pub fn on_signal(uc: Int) {
   if r == 0 || uc == 0 {
     return
   }
+  // counted in before the switch is read (both sequentially consistent),
+  // so profile_stop, which clears the switch and then waits for the count
+  // to reach 0, never lets a sample start after it returns (decision 0325)
+  let _in = rt.slot_add[Int](r, R_INFLIGHT / 8, 1, 4)
+  if rt.slot_load[Int](r, R_ON / 8, 4) != 0 {
+    sample(r, uc)
+  }
+  let _out = rt.slot_add[Int](r, R_INFLIGHT / 8, -1, 4)
+}
+
+/// One sample of the interrupted thread into the next free slot.
+fn sample(r: Int, uc: Int) {
   var s = rt.tlocal_get(TL_PROF)
   if s == 0 {
     let i = rt.slot_add[Int](r, R_POOL_NEXT / 8, 1, ACQ_REL)
@@ -384,6 +529,37 @@ pub fn finish() {
   if rc == 0 && rh == 0 {
     return
   }
+  let raw = build_raw(rc, rh)
+  let nh = raw.nh
+  let nc = raw.nc
+  let out0 = process.env_real("XO_PROF_OUT")
+  let out = expand_pid(if out0.is_empty() || out0[0].is_empty() { "xo-prof.xoraw" } else { out0[0] })
+  let ok = write_file(out, raw.data)
+  let quiet = process.env_real_at("XO_PROF_QUIET") != 0
+  if !ok {
+    stdio.eprint("xo profile: could not write ${out} (it must not exist: a profile never overwrites a file)", true)
+  } else if !quiet {
+    var what = ""
+    if rc != 0 {
+      what = "${nc} samples"
+    }
+    if rh != 0 {
+      what = if what.is_empty() { "${nh} heap samples" } else { "${what} and ${nh} heap samples" }
+    }
+    stdio.eprint("xo profile: ${what} in ${out} (`xo prof ${out}` writes the pprof files and summaries)", true)
+  }
+}
+
+/// A raw profile (build_raw): the container and its sample counts.
+struct Raw {
+  data: Bytes
+  nc: Int
+  nh: Int
+}
+
+/// The container of the CPU profile record rc and the heap profile rh
+/// (0: none), as finish writes it and std/debug serves it.
+fn build_raw(rc: Int, rh: Int) -> Raw {
   var b = BytesBuilder.new()
   b.write("XORAW1".bytes())
   b.write_byte(UInt8(0))
@@ -414,22 +590,7 @@ pub fn finish() {
   if rc != 0 {
     nc = cpu_section(b, rc)
   }
-  let out0 = process.env_real("XO_PROF_OUT")
-  let out = expand_pid(if out0.is_empty() || out0[0].is_empty() { "xo-prof.xoraw" } else { out0[0] })
-  let ok = write_file(out, b.freeze())
-  let quiet = process.env_real_at("XO_PROF_QUIET") != 0
-  if !ok {
-    stdio.eprint("xo profile: could not write ${out} (it must not exist: a profile never overwrites a file)", true)
-  } else if !quiet {
-    var what = ""
-    if rc != 0 {
-      what = "${nc} samples"
-    }
-    if rh != 0 {
-      what = if what.is_empty() { "${nh} heap samples" } else { "${what} and ${nh} heap samples" }
-    }
-    stdio.eprint("xo profile: ${what} in ${out} (`xo prof ${out}` writes the pprof files and summaries)", true)
-  }
+  Raw{data: b.freeze(), nc: nc, nh: nh}
 }
 
 /// Stops the CPU profile: its record, or 0 when it was off.
@@ -437,6 +598,15 @@ fn stop_cpu() -> Int {
   let w = rt.static_word(W_PROF)
   let r = rt.slot_swap[Int](w, 0, 0, 4)
   if r == 0 {
+    return 0
+  }
+  if ld(r, R_LIVE) != 0 {
+    // a live profile (std/debug serves it): running at exit, it ends
+    // there with no file; stopped already, its profile was served
+    if rt.slot_swap[Int](r, R_ON / 8, 0, 4) != 0 {
+      timer(0)
+      handler(1)
+    }
     return 0
   }
   if ld(r, R_WIN) != 0 {

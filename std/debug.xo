@@ -1,0 +1,33 @@
+// std/debug (spec/std.md 36, decision 0325). Declaration file; encoding
+// rules are listed at the top of std/prelude.xo. A router a server mounts
+// to profile and inspect itself while it runs: CPU and heap profiles,
+// the scheduler's counters. Nothing is mounted by default and every route
+// asks `auth` first.
+use std/http
+
+/// The router of the debug routes, to mount under a prefix of the
+/// server's own (`r.mount("/debug", debug.router(clock, auth))`):
+///
+/// - `GET /profile?seconds=N&hz=H`: a CPU profile of the next N seconds
+///   (default 30, at most 300) at H samples per second of CPU time
+///   (default 100, at most 1000), answered as decision 0240's container
+///   (`Content-Type: application/x-xo-profile`; `xo prof URL` converts it
+///   to pprof files and a text summary). One profile runs at a time (409
+///   while one does); 501 where profiles cannot be taken (a build without
+///   `--profile-support`, windows, wasm). On the Go backend the answer is
+///   a pprof profile of Go's runtime/pprof.
+/// - `GET /heap`: the sampled heap profile, in the same container; 409
+///   until the sampler runs (`XO_PROF=heap`, or `heap_start()`).
+/// - `GET /sched`: the scheduler's counters as `name value` lines (the
+///   counts of `XO_RTSTATS`, zero until they are on: `?on=1` turns them
+///   on).
+///
+/// A request for which `auth` answers false gets 403.
+fn router(clock: Clock, auth: fn(http.Request) -> Bool) -> http.Router uses clock
+
+/// Starts the heap sampler while the program runs, every `rate` bytes on
+/// average (0: 512 KiB, Go's MemProfileRate); false when it runs already
+/// or cannot start here.
+/// It cannot be stopped: its cost (a sample every `rate` bytes and a
+/// table of the sampled objects) stays for the life of the process.
+fn heap_start(rate: Int = 0) -> Bool

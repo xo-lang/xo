@@ -37,3 +37,4 @@ entries yet.
 - [time.md](time.md): std/time (spec/std.md 13)
 - [template.md](template.md): std/template (spec/std.md 30)
 - [websocket.md](websocket.md): std/websocket (spec/std.md 35)
+- [debug.md](debug.md): std/debug (spec/std.md 36)

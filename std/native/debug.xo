@@ -1,0 +1,128 @@
+// std/debug on the native backends (decision 0325): the profile routes
+// over llrt/prof's live profiler and the scheduler's counters.
+use std/debug
+use std/http
+use native/rt
+use native/llrt/prof
+use native/llrt/rtstats
+
+/// The names of the runtime counters in the order of rtstats' record
+/// (llrt/entry.xo STAT_NAMES, each followed by a blank).
+const STAT_NAMES = "spawn steal inject wake idle_sleep spin_round fiber_park fiber_new thread_wait thread_wake lock_slow spin_yield net_read net_write net_again poll_return poll_event poll_wake rt_section rt_defer rt_overflow fiber_live fiber_peak mon_tick mon_wake defer futex_wait futex_wake lock_inject lock_pd lock_pool lock_park lock_http lock_chan lock_mutex lock_task preempt "
+
+const MAX_SECONDS = 300
+const PROFILE_TYPE = "application/x-xo-profile"
+
+fn clamp(x: Int, lo: Int, hi: Int) -> Int {
+  if x < lo {
+    lo
+  } else if x > hi {
+    hi
+  } else {
+    x
+  }
+}
+
+fn query_int(req: http.Request, name: Str, dflt: Int) -> Int {
+  Int.parse(req.query(name) ?? "") ?? dflt
+}
+
+fn plain(status: Int, s: Str) -> http.Response {
+  http.text(status, "${s}\n")
+}
+
+/// The CPU profile route: the begin, the wait, the stop and the wait for
+/// a handler that was running, the read. busy makes it one at a time.
+fn profile(clock: Clock, busy: Mutex[Bool], req: http.Request) -> http.Response uses clock {
+  let secs = clamp(query_int(req, "seconds", 30), 1, MAX_SECONDS)
+  let hz = clamp(query_int(req, "hz", 100), 1, 1000)
+  let got = busy.with(fn(var b: Bool) -> Bool {
+    if b {
+      false
+    } else {
+      b = true
+      true
+    }
+  })
+  if !got {
+    return plain(409, "a profile is running already")
+  }
+  var resp = plain(501, "profiles are not available in this build")
+  let rc = prof.profile_begin(hz)
+  if rc == 1 {
+    resp = plain(409, "a profile is running already")
+  } else if rc == 3 {
+    resp = plain(503, "no memory or unwind tables for the profile")
+  } else if rc == 0 {
+    clock.sleep(Duration.from_secs_int(secs))
+    let _stopped = prof.profile_stop()
+    // a signal handler that counted itself in before the stop finishes
+    // its sample (bounded: a handler is microseconds)
+    var rounds = 0
+    while prof.profile_inflight() > 0 && rounds < 100 {
+      clock.sleep(Duration.from_millis(1))
+      rounds += 1
+    }
+    let data = prof.profile_collect()
+    resp = if data.is_empty() {
+      plain(503, "the profile could not be read (a sample was still in flight)")
+    } else {
+      http.Response{status: 200, headers: {"Content-Type": PROFILE_TYPE}, body: data}
+    }
+  }
+  busy.with(fn(var b: Bool) -> () {
+    b = false
+  })
+  resp
+}
+
+fn sched(req: http.Request) -> http.Response {
+  if query_int(req, "on", 0) == 1 {
+    rtstats.set(1)
+  }
+  let c = rtstats.counts()
+  var lines: List[Str] = []
+  if !rtstats.on() {
+    lines.push("# the counters are off: ?on=1 turns them on, XO_RTSTATS=1 at start")
+  }
+  var i = 0
+  for name in STAT_NAMES.split(" ") {
+    if !name.is_empty() {
+      lines.push("${name} ${rt.mem_load(c, 8 * i, 8)}")
+      i += 1
+    }
+  }
+  http.Response{status: 200, headers: {"Content-Type": "text/plain; charset=utf-8"}, body: "${lines.join("\n")}\n".bytes()}
+}
+
+pub fn router(clock: Clock, auth: fn(http.Request) -> Bool) -> http.Router uses clock {
+  let busy = Mutex[Bool].new(false)
+  var r = http.router()
+  r.handle("GET /profile", fn(req) -> http.Response {
+    if !auth(req) {
+      return plain(403, "forbidden")
+    }
+    profile(clock, busy, req)
+  })
+  r.handle("GET /heap", fn(req) -> http.Response {
+    if !auth(req) {
+      return plain(403, "forbidden")
+    }
+    let data = prof.heap_snapshot()
+    if data.is_empty() {
+      return plain(409, "the heap sampler is off (XO_PROF=heap, or debug.heap_start())")
+    }
+    http.Response{status: 200, headers: {"Content-Type": PROFILE_TYPE}, body: data}
+  })
+  r.handle("GET /sched", fn(req) -> http.Response {
+    if !auth(req) {
+      return plain(403, "forbidden")
+    }
+    sched(req)
+  })
+  r
+}
+
+pub fn heap_start(rate: Int = 0) -> Bool {
+  prof.heap_live_start(rate)
+}

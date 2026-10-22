@@ -1,0 +1,38 @@
+// std/debug (decision 0325): the routes called in process: the auth gate,
+// the scheduler counters, the heap route (the sampler is off on the
+// native backends, always on in Go: 409 or 200), and a CPU profile of one
+// second, with a second request during it refused (one at a time).
+use std/debug
+use std/http
+
+fn status_of(r: http.Router, path: Str) -> Int {
+  r.call(http.new_request("GET", path)).status
+}
+
+fn main(os: Os) {
+  let ok = debug.router(os.clock, fn(_req) { true })
+  let no = debug.router(os.clock, fn(_req) { false })
+  os.stdio.println("auth refused: ${status_of(no, "/sched")} ${status_of(no, "/heap")} ${status_of(no, "/profile?seconds=1")}")
+  let s = ok.call(http.new_request("GET", "/sched"))
+  os.stdio.println("sched: ${s.status} ${s.body.len() > 10}")
+  let h = status_of(ok, "/heap")
+  os.stdio.println("heap: ${h == 200 || h == 409}")
+  os.stdio.println("unknown route: ${status_of(ok, "/nothing")}")
+  scope t {
+    let a = t.spawn(fn() -> (Int, Int) {
+      let p = ok.call(http.new_request("GET", "/profile?seconds=1&hz=500"))
+      (p.status, p.body.len())
+    })
+    let b = t.spawn(fn() -> Int {
+      os.clock.sleep(300ms)
+      status_of(ok, "/profile?seconds=1")
+    })
+    let (first, size) = a.await
+    let second = b.await
+    os.stdio.println("profile: ${first} ${size > 16}")
+    os.stdio.println("second during the first: ${second}")
+  }
+  // after the first ends another profile can run
+  let again = ok.call(http.new_request("GET", "/profile?seconds=1"))
+  os.stdio.println("profile again: ${again.status} ${again.body.len() > 16}")
+}

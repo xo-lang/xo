@@ -4641,3 +4641,36 @@ pub fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str
 - Not provided: permessage-deflate, a message written in pieces, ping
   timers (use `ping` and a clock), WebSockets over HTTP/2.
 
+
+## 36. std/debug
+
+Live inspection of a running server (decision 0325). Nothing is mounted
+by default: a program mounts the router under a prefix of its own and
+gives it an `auth` function.
+
+```xo
+fn router(clock: Clock, auth: fn(http.Request) -> Bool) -> http.Router uses clock
+fn heap_start(rate: Int = 0) -> Bool
+```
+
+- `GET /profile?seconds=N&hz=H`: a CPU profile of the next N seconds
+  (default 30, 1 to 300) at H samples per CPU second (default 100, 1 to
+  1000). The native backends answer decision 0240's container
+  (`Content-Type: application/x-xo-profile`; `xo prof FILE` converts a
+  saved answer to pprof files and a text summary); the Go backend answers
+  runtime/pprof's profile (`X-Profile-Format: pprof`) and ignores `hz`.
+  One profile runs at a time: a request during one is 409. 501 where
+  profiles cannot be taken (windows, wasm, a native build without
+  `--profile-support`).
+- `GET /heap`: the sampled heap profile in the same container; 409 until
+  the sampler runs on the native backends (`XO_PROF=heap` at start, or
+  `heap_start(rate)`; rate 0 is 512 KiB, Go's MemProfileRate; once
+  started it runs for the life of the process). The Go backend samples
+  always (`heap_start` returns false).
+- `GET /sched`: the scheduler's counters as `name value` lines (native:
+  the `XO_RTSTATS` counts, zero until they are on; `?on=1` turns them on.
+  Go: goroutines, gomaxprocs, threads, heap_inuse_bytes, gc_count).
+- A request for which `auth` answers false gets 403; the unmounted
+  router costs nothing.
+- A live profile running when the program exits is dropped, with no file
+  (the `XO_PROF` file profile is separate: it still writes at exit).
