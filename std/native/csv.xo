@@ -5,6 +5,7 @@
 // errors, and positions; std/rt's csv.go runs encoding/csv itself.
 use std/csv
 use native/rt
+use native/llrt/scan
 
 fn csverr_display(e: csv.CsvErr) -> Str {
   if e.msg == "wrong number of fields" {
@@ -43,10 +44,8 @@ fn (var r: Rd) read_line() -> (Bytes, Bool) {
   if r.at >= r.b.len() {
     return (b"", true)
   }
-  var j = r.at
-  while j < r.b.len() && r.b[j] != '\n' {
-    j += 1
-  }
+  let found = scan.find_byte(r.b, r.at, r.b.len(), 10)
+  let j = if found >= 0 { found } else { r.b.len() }
   var line = b""
   if j < r.b.len() {
     line = r.b[r.at..j + 1]
@@ -72,14 +71,7 @@ fn first_rune(b: Bytes) -> Rune { if b.is_empty() { Rune(0xFFFD) } else { b.deco
 /// bytes.IndexRune(b, r): the byte offset of r, or -1.
 fn index_rune(b: Bytes, r: Rune) -> Int {
   if Int(r) < 128 {
-    var i = 0
-    while i < b.len() {
-      if Int(b[i]) == Int(r) {
-        return i
-      }
-      i += 1
-    }
-    return -1
+    return scan.find_byte(b, 0, b.len(), Int(r))
   }
   var i = 0
   while i < b.len() {
@@ -92,16 +84,11 @@ fn index_rune(b: Bytes, r: Rune) -> Int {
   -1
 }
 
-fn index_byte(b: Bytes, c: UInt8) -> Int {
-  var i = 0
-  while i < b.len() {
-    if b[i] == c {
-      return i
-    }
-    i += 1
-  }
-  -1
-}
+fn index_byte(b: Bytes, c: UInt8) -> Int { scan.find_byte(b, 0, b.len(), Int(c)) }
+
+/// The Str of b, a slice of the text at field boundaries (a separator, a
+/// quote, a line end): valid UTF-8 as the text is, so not checked again.
+fn field_str(b: Bytes) -> Str { rt.cast[Bytes, Str](b) }
 
 struct Opts {
   sep: Rune
@@ -166,7 +153,7 @@ fn read_record(var r: Rd, o: Opts) -> (List[Str], Int)? ! csv.CsvErr {
           return Err(csv.CsvErr{start_line: rec_line, line: r.num_line, column: col + j, msg: ERR_BARE_QUOTE})
         }
       }
-      fields.push(field.to_str() ?? "")
+      fields.push(field_str(field))
       if i >= 0 {
         line = line[i + sep_len..]
         col += i + sep_len
@@ -182,24 +169,26 @@ fn read_record(var r: Rd, o: Opts) -> (List[Str], Int)? ! csv.CsvErr {
     while !done {
       let i = index_byte(line, '"')
       if i >= 0 {
-        buf = buf + line[0..i]
+        // the text before the quote: the field itself when nothing came
+        // before it and no quote follows (no copy)
+        let seg = line[0..i]
         line = line[i + 1..]
         col += i + 1
         let rn = first_rune(line)
         if rn == '"' {
-          buf = buf + b"\""
+          buf = buf + seg + b"\""
           line = line[1..]
           col += 1
         } else if !line.is_empty() && rn == o.sep {
           line = line[sep_len..]
           col += sep_len
-          fields.push(buf.to_str() ?? "")
+          fields.push(field_str(if buf.is_empty() { seg } else { buf + seg }))
           done = true
         } else if length_nl(line) == line.len() {
-          fields.push(buf.to_str() ?? "")
+          fields.push(field_str(if buf.is_empty() { seg } else { buf + seg }))
           return Ok(Some((fields, rec_line)))
         } else if o.lazy {
-          buf = buf + b"\""
+          buf = buf + seg + b"\""
         } else {
           return Err(csv.CsvErr{start_line: rec_line, line: r.num_line, column: col - 1, msg: ERR_QUOTE})
         }

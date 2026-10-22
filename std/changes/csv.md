@@ -1,5 +1,19 @@
 # std/csv changes
 
+## 2026-10-22: perf: parse finds line ends, quotes and separators 16 bytes at a time
+
+- Kind: perf
+- Commit: this commit
+- Found by: XO_PROF=cpu (read_line, index_byte, the per-field UTF-8 check and slice checks were 45% of parse)
+- Go reference: encoding/csv reader.go readLine, readRecord (go1.26.1)
+- Test: internal/llvm/testdata/golden/csv_basic and std/native/csv_test.xo (arm64, LLVM, go)
+
+`parse` searches with `scan.find_byte`, no longer validates each field as
+UTF-8 again (a slice of a valid text at a field boundary is valid), and
+returns a quoted field without a doubled quote as a slice. 20,000 rows of
+six fields, parsed 10 times, native arm64: 829 M to 668 M instructions
+(Go's package 734 M). Results are the same.
+
 ## 2026-10-21: perf: quoted fields are written in runs
 
 - Kind: perf
