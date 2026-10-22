@@ -1,0 +1,72 @@
+// The Go twin of main.xo (build as main.go in a module that requires
+// golang.org/x/crypto): the same 16 KiB records through chacha20poly1305,
+// chacha20 and poly1305. Usage: twin <workload>, N in the environment.
+package main
+
+import (
+	"fmt"
+	"os"
+	"strconv"
+
+	"golang.org/x/crypto/chacha20"
+	"golang.org/x/crypto/chacha20poly1305"
+	"golang.org/x/crypto/poly1305"
+)
+
+func main() {
+	w := "seal"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	n := 20000
+	if v, err := strconv.Atoi(os.Getenv("N")); err == nil {
+		n = v
+	}
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i*7 + 1)
+	}
+	nonce := []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}
+	pt := make([]byte, 16384)
+	for i := range pt {
+		pt[i] = byte(i % 251)
+	}
+	aad := []byte{0x17, 3, 3, 0x40, 0, 0, 0, 0, 0, 0, 0, 1, 0}
+	a, _ := chacha20poly1305.New(key)
+	sum := 0
+	switch w {
+	case "seal":
+		dst := make([]byte, 0, len(pt)+16)
+		for i := 0; i < n; i++ {
+			s := a.Seal(dst[:0], nonce, pt, aad)
+			sum += int(s[len(s)-1]) + len(s)
+		}
+	case "open":
+		s := a.Seal(nil, nonce, pt, aad)
+		dst := make([]byte, 0, len(pt))
+		for i := 0; i < n; i++ {
+			r, err := a.Open(dst[:0], nonce, s, aad)
+			if err != nil {
+				panic(err)
+			}
+			sum += len(r)
+		}
+	case "xor":
+		out := make([]byte, len(pt))
+		for i := 0; i < n; i++ {
+			c, _ := chacha20.NewUnauthenticatedCipher(key, nonce)
+			c.SetCounter(1)
+			c.XORKeyStream(out, pt)
+			sum += int(out[len(out)-1]) + len(out)
+		}
+	case "poly":
+		var k [32]byte
+		copy(k[:], key)
+		var tag [16]byte
+		for i := 0; i < n; i++ {
+			poly1305.Sum(&tag, pt, &k)
+			sum += int(tag[0]) + 16
+		}
+	}
+	fmt.Println(w, sum)
+}

@@ -1,5 +1,23 @@
 # std/tls changes
 
+## 2026-10-22: speedup: Poly1305 absorbs two blocks per step
+
+- Kind: speedup
+- Commit: this commit
+- Found by: tlsrate bulk TLS 1.2 ChaCha20-Poly1305 at 0.73 of Go (Xo Lang 3; bench/perf/chacha splits it)
+- Go reference: golang.org/x/crypto/poly1305 (64 bit limbs); the limbs stay poly1305-donna's 26 bit
+- Test: crypto_prims (RFC 8439 vectors, every length to 200), chacha_blocks4, tls12_client goldens (arm64, LLVM with Go parity); TestCryptoXoDiff, TestConstantTimeLLVM, TestTLSDiff; test/codegen intrinsics
+
+Poly1305 had Go's instruction count but ran 1.5x slower: each block
+waited for the last one's multiply and carries. `absorb` now takes two
+blocks per step, h = (h + m0) r^2 + m1 r (r^2 computed in `poly_new`),
+and one block for an odd tail. Constant time as before (no branch on
+data). bench/perf/chacha, 16 KiB records, `xo bench --ab` on the Mac
+(B / A wall): seal 0.836, open 0.844, poly1305 alone 0.571; Linux
+arm64: poly1305 0.126 s to 0.072 s (Go 0.079), seal 0.337 to 0.292 s
+(Go 0.258). TLS 1.2 ChaCha bulk 0.73 before, 0.82 to 0.86 after (loaded).
+bench/results/chacha-poly1305-2026-10-22.md.
+
 ## 2026-10-22: perf: AES-GCM goes back to its own GHASH body (cpu.ghash4 was slower in the loop)
 
 - Kind: perf

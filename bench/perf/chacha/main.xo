@@ -1,0 +1,54 @@
+// ChaCha20-Poly1305 seal and open of 16 KiB records, the TLS 1.2 bulk
+// path (std/native/llrt/chacha.xo) through internal.crypto_op, and its
+// two halves: "xor" (ChaCha20 alone) and "poly" (Poly1305 alone). Usage:
+// chachaperf <workload> with N records in the environment (default
+// 20000); prints "<workload> <checksum>". twin.go.txt is the same loop
+// over golang.org/x/crypto's chacha20poly1305, chacha20 and poly1305.
+use std/internal
+
+fn main(os: Os) {
+  let w = os.env.args().get(0) ?? "seal"
+  let n = Int.parse(os.env.get("N") ?? "") ?? 20000
+  var kb = BytesBuilder.new()
+  for i in 0..32 {
+    kb.write_byte(UInt8(i * 7 + 1))
+  }
+  let key = kb.freeze()
+  let nonce = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b"
+  var pb = BytesBuilder.new()
+  for i in 0..16384 {
+    pb.write_byte(UInt8(i % 251))
+  }
+  let pt = pb.freeze()
+  let aad = b"\x17\x03\x03\x40\x00\x00\x00\x00\x00\x00\x00\x01\x00"
+  var sum = 0
+  match w {
+    "seal" => {
+      for _ in 0..n {
+        let s = internal.crypto_op("chacha.seal", key, nonce, pt, aad)
+        sum += Int(s[s.len() - 1]) + s.len()
+      }
+    }
+    "open" => {
+      let s = internal.crypto_op("chacha.seal", key, nonce, pt, aad)
+      for _ in 0..n {
+        let r = internal.crypto_op("chacha.open", key, nonce, s, aad)
+        sum += r.len()
+      }
+    }
+    "xor" => {
+      for _ in 0..n {
+        let s = internal.crypto_op("chacha.xor", key, nonce, b"1", pt)
+        sum += Int(s[s.len() - 1]) + s.len()
+      }
+    }
+    "poly" => {
+      for _ in 0..n {
+        let s = internal.crypto_op("chacha.poly1305", key, pt, b"", b"")
+        sum += Int(s[0]) + s.len()
+      }
+    }
+    _ => os.stdio.println("unknown workload")
+  }
+  os.stdio.println("${w} ${sum}")
+}
