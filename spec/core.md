@@ -1843,6 +1843,15 @@ fn (m: Mutex[T]) with[R, E, fx: Effects](f: fn(var T) -> R ! E uses fx) -> R ! E
   successfully. If it returns an error or faults, the protected value is left
   unchanged.
 - A closure parameter declared without `var` gets a read only view.
+- Warning `XO0540`: the closure writes its `var` value and a later path can
+  return `Err` (`return Err(...)`, `?`, or a call that can fail as its
+  result), so the write is undone. A sticky error is the common case:
+  ```
+  m.with(fn(var st) -> () ! E {
+    st.err = Some(e)          // undone by the Err below
+    Err(e)                    // XO0540
+  })
+  ```
 - To keep changes and still report failure, return the outcome as the
   closure's success value and apply `?` outside:
   ```
@@ -2797,6 +2806,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0535` | note | vet | `${x.debug()}` in a string, which `${x:?}` writes shorter; its fix rewrites it (core 1.6, decision 0296) |
 | `XO0536` | note | vet | a collection copied out of a list element, changed, and stored back, so its first change copies all of it; change the element in place (core 5.1, decision 0294) |
 | `XO0537` | warning | vet | a by value receiver is read before an argument that changes it: `x.m(x.n(..))` with m by value and n a `var` method of x (core 5.2, decision 0142) |
+| `XO0540` | warning | checker | a `Mutex.with` closure writes its `var` value, then a path returns `Err`, which undoes the write (core 5.4) |
 | `XO0601` | error | checker | name does not resolve (core 4.3) |
 | `XO0602` | error | checker | import path does not yield a valid local name (core 4.1) |
 | `XO0603` | error | checker | name declared twice in one scope, or a predeclared name redefined (core 3.1, 1.4) |

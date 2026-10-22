@@ -1,0 +1,125 @@
+// XO0540: a Mutex.with closure writes its `var` value, then a path may
+// return Err, which undoes the write (core 5.4).
+enum E {
+  Bad
+  Done
+} derive Display
+
+struct St {
+  n: Int
+  done: Bool
+  items: List[Int]
+  err: E? = None
+}
+
+fn fails(x: Int) -> Int ! E {
+  if x < 0 {
+    return Err(E.Bad)
+  }
+  Ok(x)
+}
+
+fn finish(x: Int) -> () ! E {
+  let _v = fails(x)?
+  Ok(())
+}
+
+// the sticky error stored, then the error returned: both undone
+fn sticky(m: Mutex[St]) -> Int ! E {
+  m.with(fn(var st) -> Int ! E {
+    st.err = Some(E.Bad)
+    return Err(E.Bad) // ERROR XO0540 "undoes the write to `st.err`"
+  })
+}
+
+// std/sql's commit before 3f4236b08: `done` set, then the driver's result
+fn commit(m: Mutex[St], x: Int) -> () ! E {
+  m.with(fn(var st) -> () ! E {
+    if st.done {
+      return Err(E.Done)
+    }
+    st.done = true
+    let r = finish(x)
+    r // ERROR XO0540 "may return Err, which undoes the write to `st.done`"
+  })
+}
+
+// a `var` receiver method is a write
+fn pushed(m: Mutex[St], x: Int) -> () ! E {
+  m.with(fn(var st) -> () ! E {
+    st.items.push(x)
+    if x > 9 {
+      return Err(E.Bad) // ERROR XO0540 "write to `st.items.push\(x\)`"
+    }
+    Ok(())
+  })
+}
+
+// http's BodyReader.read before 70586f641: a helper takes the value as
+// `var`, stores its sticky error, and fails: the whole closure is the call
+fn read_step(var st: St, x: Int) -> Int ! E {
+  if x < 0 {
+    st.err = Some(E.Bad)
+    return Err(E.Bad)
+  }
+  Ok(x)
+}
+
+fn read(m: Mutex[St], x: Int) -> Int ! E {
+  m.with(fn(var st) -> Int ! E { read_step(st, x) }) // ERROR XO0540 "may return Err, which undoes the write to `read_step\(st, x\)`"
+}
+
+// a `?` after a write returns its Err
+fn tried(m: Mutex[St], x: Int) -> Int ! E {
+  m.with(fn(var st) -> Int ! E {
+    st.n += 1
+    let v = fails(x)? // ERROR XO0540 "this `\?` returns its Err"
+    Ok(v + st.n)
+  })
+}
+
+// the write only on the Ok path: silent
+fn ok_path(m: Mutex[St], x: Int) -> Int ! E {
+  m.with(fn(var st) -> Int ! E {
+    if x < 0 {
+      return Err(E.Bad)
+    }
+    st.n += x
+    Ok(st.n)
+  })
+}
+
+// core 5.4's pattern: the outcome as the success value, `?` outside: silent
+fn outcome(m: Mutex[St], x: Int) -> Int ! E {
+  let r = m.with(fn(var st) -> Result[Int, E] {
+    st.n += 1
+    if x < 0 {
+      return Err(E.Bad)
+    }
+    Ok(st.n)
+  })
+  r?
+}
+
+// an error after no write: silent
+fn no_write(m: Mutex[St], x: Int) -> Int ! E {
+  m.with(fn(var st) -> Int ! E {
+    if st.done {
+      return Err(E.Done)
+    }
+    Ok(st.n + x)
+  })
+}
+
+fn main(os: Os) {
+  let m = Mutex[St].new(St{n: 0, done: false, items: []})
+  let a = sticky(m).ok() ?? 0
+  commit(m, 1).ignore_err("a test")
+  pushed(m, 1).ignore_err("a test")
+  let d = tried(m, 1).ok() ?? 0
+  let h = read(m, 1).ok() ?? 0
+  let e = ok_path(m, 1).ok() ?? 0
+  let f = outcome(m, 1).ok() ?? 0
+  let g = no_write(m, 1).ok() ?? 0
+  os.stdio.println("${a} ${d} ${e} ${f} ${g} ${h}")
+}

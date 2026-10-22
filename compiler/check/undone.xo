@@ -1,0 +1,331 @@
+// XO0540 (a warning): a `Mutex.with` closure that writes its `var`
+// parameter and then, on the same path, may return Err. The write is
+// undone (core 5.4: the closure's changes are written back only when it
+// returns successfully), which is rarely what the writer meant: a sticky
+// error or a `done` flag set before the failure vanishes with it
+// (gotchas/mutex-with-err-undoes-state.md). The fix the message names is
+// 5.4's: return the outcome as the closure's success value and apply `?`
+// outside the `with`.
+//
+// The walk follows the closure's body in order: the first write to the
+// parameter (an assignment to it or below it, or a call of a `var`
+// receiver method on it, or a call that takes it as a `var` argument)
+// is the state; an exit that can carry an Err
+// after it is reported: `return Err(...)`, a tail `Err(...)`, a returned
+// or tail Result that is not an `Ok(...)` literal, and a `?` on a Result.
+// Branches are walked apart and joined (a branch that leaves does not
+// join); a loop's writes count after it.
+
+use github.com/xo-lang/xo/compiler/parser
+
+/// The write the walk carries: none yet (at.len() == 0), or its span and
+/// source text.
+struct UndoWalk {
+  p: Bytes
+  at: List[Span] = []
+  what: Str = ""
+}
+
+/// XO0540 over the `m.with(fn(var x) ...)` calls among nodes.
+fn (var c: Checker) undone_writes(nodes: List[Node]) {
+  for n in nodes {
+    let e = match n {
+      NExpr(x) => x
+      NStmt(_) | NBlock(_) => continue
+    }
+    let (mu, call) = c.mutex_with(e, false)
+    if mu.is_empty() {
+      continue
+    }
+    if let CallExpr(args: args, ..) = call {
+      if args.len() != 1 {
+        continue
+      }
+      if let FnLit(f) = args[0].value {
+        // a closure that cannot fail (its type has no error) keeps every
+        // write: its Err values are its success (core 5.4's outcome
+        // pattern, `-> Result[T, E]` with no `!`)
+        if c.fn_can_fail(args[0].value) && f.params.len() == 1 && f.params[0].is_var {
+          var w = UndoWalk{p: f.params[0].name.name}
+          let _t = c.uw_block(f.body, w, true)
+        }
+      }
+    }
+  }
+}
+
+/// Walks block b (tail: its value is the closure's result); true when
+/// every path through it leaves (return, break, continue).
+fn (var c: Checker) uw_block(b: Block, var w: UndoWalk, tail: Bool) -> Bool {
+  for (i, s) in b.stmts.indexed() {
+    if c.uw_stmt(s, w, tail && i == b.stmts.len() - 1) {
+      return true
+    }
+  }
+  false
+}
+
+fn (var c: Checker) uw_stmt(s: Stmt, var w: UndoWalk, tail: Bool) -> Bool {
+  match s {
+    AssignStmt(target: target, value: value, ..) => {
+      let _t = c.uw_expr(value, w, false)
+      if let Some(id) = place_root(target) {
+        if id.name == w.p {
+          c.uw_write(w, parser.expr_span(target))
+        }
+      }
+      false
+    }
+    ReturnStmt(value: value, ..) => {
+      if let Some(v) = value {
+        let _t = c.uw_expr(v, w, false)
+        c.uw_exit(v, w)
+      }
+      true
+    }
+    LetStmt(value: value, ..) | VarStmt(value: value, ..) => c.uw_expr(value, w, false)
+    ExprStmt(x: x, ..) => c.uw_expr(x, w, tail)
+    ForStmt(iter: iter, body: body, ..) => {
+      let _t = c.uw_expr(iter, w, false)
+      // the body may run: its writes count after the loop
+      var wb = w
+      let _b = c.uw_block(body, wb, false)
+      if w.at.is_empty() && !wb.at.is_empty() {
+        w = wb
+      }
+      false
+    }
+    WhileStmt(cond: cond, value: value, body: body, ..) => {
+      if let Some(x) = cond {
+        let _t = c.uw_expr(x, w, false)
+      }
+      for x in value {
+        let _t = c.uw_expr(x, w, false)
+      }
+      var wb = w
+      let _b = c.uw_block(body, wb, false)
+      if w.at.is_empty() && !wb.at.is_empty() {
+        w = wb
+      }
+      false
+    }
+    BreakStmt(..) | ContinueStmt(..) => true
+    DeferStmt(..) | BadStmt(..) | ConstDecl(..) => false
+  }
+}
+
+/// Walks e (tail: it is the closure's result); true when every path
+/// through it leaves.
+fn (var c: Checker) uw_expr(e: Expr, var w: UndoWalk, tail: Bool) -> Bool {
+  match e {
+    IfExpr(e: ie) => {
+      if let Some(x) = ie.cond {
+        let _t = c.uw_expr(x, w, false)
+      }
+      if let Some(x) = ie.value {
+        let _t = c.uw_expr(x, w, false)
+      }
+      var wt = w
+      let tt = c.uw_block(ie.then, wt, tail)
+      var we = w
+      var te = false
+      if let Some(x) = ie.els {
+        te = c.uw_expr(x, we, tail)
+      }
+      c.uw_join(w, [(wt, tt), (we, te)])
+      tt && te
+    }
+    MatchExpr(subject: subject, arms: arms, ..) => {
+      let _t = c.uw_expr(subject, w, false)
+      var outs: List[(UndoWalk, Bool)] = []
+      var all = !arms.is_empty()
+      for a in arms {
+        var wa = w
+        var ta = false
+        if let Some(b) = a.body {
+          ta = c.uw_stmt(b, wa, tail)
+        }
+        all = all && ta
+        outs.push((wa, ta))
+      }
+      c.uw_join(w, outs)
+      all
+    }
+    Block(b) => c.uw_block(b, w, tail)
+    ParenExpr(x: x, ..) => c.uw_expr(x, w, tail)
+    FnLit(..) => false
+    TryExpr(x: x, span: span) => {
+      let _t = c.uw_expr(x, w, false)
+      if c.is_result(c.type_of(x)) {
+        c.uw_report(w, span, "this `?` returns its Err")
+      }
+      false
+    }
+    CallExpr(fun: fun, args: args, ..) => {
+      for a in args {
+        let _t = c.uw_expr(a.value, w, false)
+      }
+      // the value passed as a `var` argument: the callee writes it (a
+      // helper that stores a sticky error, then fails: http's body_read)
+      let vars = c.call_vars(e)
+      for (i, a) in args.indexed() {
+        if i < vars.len() && vars[i] {
+          if let Some(id) = place_root(a.value) {
+            if id.name == w.p {
+              c.uw_write(w, parser.expr_span(e))
+            }
+          }
+        }
+      }
+      if let SelectorExpr(x: sx, ..) = fun {
+        let _t = c.uw_expr(sx, w, false)
+        if let Some(id) = place_root(sx) {
+          if id.name == w.p && c.var_method(e) {
+            c.uw_write(w, parser.expr_span(e))
+          }
+        }
+      }
+      if tail {
+        c.uw_exit(e, w)
+      }
+      false
+    }
+    _ => {
+      for ch in children(Node.NExpr(e)) {
+        match ch {
+          NExpr(x) => {
+            let _t = c.uw_expr(x, w, false)
+          }
+          NStmt(s) => {
+            let _t = c.uw_stmt(s, w, false)
+          }
+          NBlock(b) => {
+            let _t = c.uw_block(b, w, false)
+          }
+        }
+      }
+      if tail {
+        c.uw_exit(e, w)
+      }
+      false
+    }
+  }
+}
+
+/// w after branches outs (each walked from w, with whether it leaves):
+/// the first write of a branch that does not leave, when w had none.
+fn (c: Checker) uw_join(var w: UndoWalk, outs: List[(UndoWalk, Bool)]) {
+  if !w.at.is_empty() {
+    return
+  }
+  for (wb, leaves) in outs {
+    if !leaves && !wb.at.is_empty() {
+      w = wb
+      return
+    }
+  }
+}
+
+/// Records the write at sp (the first one of the path).
+fn (c: Checker) uw_write(var w: UndoWalk, sp: Span) {
+  if w.at.is_empty() {
+    w.at = [sp]
+    let src = c.files[c.cur_file].src
+    let lo = sp.start.offset
+    let hi = sp.end.offset
+    w.what = if lo >= 0 && hi <= src.len() && lo < hi { (src[lo..hi].to_str() ?? "").split("\n")[0] } else { "" }
+  }
+}
+
+/// Whether call e is a method whose receiver is `var`.
+fn (c: Checker) var_method(e: Expr) -> Bool {
+  match c.call_infos.get(c.expr_key(e)) {
+    Some(ci) => ci.fn_obj >= 0 && c.objs[ci.fn_obj].recv >= 0 && c.objs[ci.fn_obj].recv_var
+    None => false
+  }
+}
+
+/// The closure leaves with value v: reported when v may be an Err after
+/// a write: `Err(...)`, a call of a function that can fail, or a local
+/// holding a Result. (A value's recorded type is the converted one: a
+/// tail `xs.pop()` is recorded as the Result `with` wants, so the types
+/// read here are the callee's and the local's own.)
+fn (var c: Checker) uw_exit(v: Expr, var w: UndoWalk) {
+  if w.at.is_empty() {
+    return
+  }
+  match v {
+    CallExpr(fun: Ident(id), ..) => {
+      if id.name == b"Ok" {
+        return
+      }
+      if id.name == b"Err" {
+        c.uw_report(w, parser.expr_span(v), "this path returns Err")
+        return
+      }
+      if c.call_can_fail(v) {
+        c.uw_report(w, parser.expr_span(v), "this path may return Err")
+      }
+    }
+    CallExpr(..) => {
+      if c.call_can_fail(v) {
+        c.uw_report(w, parser.expr_span(v), "this path may return Err")
+      }
+    }
+    Ident(id) => {
+      let o = c.ident_obj(id)
+      if o >= 0 && c.is_result(c.objs[o].ty) {
+        c.uw_report(w, parser.expr_span(v), "this path may return Err")
+      }
+    }
+    _ => {}
+  }
+}
+
+/// Which parameters of call e's function are `var` (its declaration's).
+fn (c: Checker) call_vars(e: Expr) -> List[Bool] {
+  var out: List[Bool] = []
+  if let Some(ci) = c.call_infos.get(c.expr_key(e)) {
+    if ci.fn_obj >= 0 {
+      for p in c.objs[ci.fn_obj].params {
+        out.push(p.is_var)
+      }
+    }
+  }
+  out
+}
+
+/// Whether call e's function can fail (its type has an error).
+fn (c: Checker) call_can_fail(e: Expr) -> Bool {
+  match c.call_infos.get(c.expr_key(e)) {
+    Some(ci) => ci.fn_obj >= 0 && c.objs[ci.fn_obj].err >= 0 && !c.is_never(c.objs[ci.fn_obj].err)
+    None => false
+  }
+}
+
+/// Whether the function literal e's type has an error.
+fn (c: Checker) fn_can_fail(e: Expr) -> Bool {
+  c.fn_err(c.type_of(e)) >= 0
+}
+
+/// The error type of function type t, -1 for none.
+fn (c: Checker) fn_err(t: Int) -> Int {
+  if t < 0 {
+    return -1
+  }
+  let r = c.resolve(t)
+  if c.tys[r].kind != TyKind.Func {
+    return -1
+  }
+  let e = c.tys[r].err
+  if e < 0 || c.is_never(e) { -1 } else { e }
+}
+
+fn (var c: Checker) uw_report(w: UndoWalk, sp: Span, how: Str) {
+  if w.at.is_empty() {
+    return
+  }
+  let what = if w.what.is_empty() { "the `var` value" } else { "`${w.what}`" }
+  let d = c.warn("XO0540", sp, "${how}, which undoes the write to ${what} (line ${w.at[0].start.line}): a Mutex.with closure's changes are kept only when it returns Ok (core 5.4)")
+  c.note(d, "to keep the change and still report the failure, return the outcome as the closure's success value and apply `?` outside: `let r = m.with(fn(var s) -> Result[T, E] { ...; Err(e) }); r?`")
+}

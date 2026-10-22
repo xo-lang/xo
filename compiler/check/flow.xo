@@ -798,6 +798,7 @@ fn (var c: Checker) flow_bodies() {
     c.lost_updates(sites, nodes)
     c.stored_updates(sites, nodes)
     c.split_critical_sections(nodes)
+    c.undone_writes(nodes)
   }
   if saved_file >= 0 {
     c.set_file(saved_file)
