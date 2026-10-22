@@ -459,3 +459,48 @@ test "a build directory's assembly goes after its idle time, whatever the direct
   expect(there(os, "b/aa/arm64/prog.o")) == true
   expect(st.bytes) == 10
 }
+
+test "clean empties a cache: entries go, its stamp and lock files stay, dry removes nothing" {
+  put(os, "r/xo/build/a1/prog", 100)
+  put(os, "r/xo/build/b2/prog.s", 50)
+  put(os, "r/xo/build/prune-stamp", 0)
+  put(os, "r/xo/build/prune-lock", 0)
+  put(os, "r/xo/build/stray", 7)
+  put(os, "r/keep/other", 5)
+  let c = Cache{name: "build", what: ""}
+  let d = clean(os.fs, "r/xo", c, true)
+  expect(d.found) == true
+  expect(d.bytes) == 157
+  expect(d.entries) == 3
+  expect(there(os, "r/xo/build/a1/prog")) == true
+  let r = clean(os.fs, "r/xo", c, false)
+  expect(r.bytes) == 157
+  expect(there(os, "r/xo/build/a1")) == false
+  expect(there(os, "r/xo/build/b2")) == false
+  expect(there(os, "r/xo/build/stray")) == false
+  expect(there(os, "r/xo/build/prune-stamp")) == true
+  expect(there(os, "r/xo/build/prune-lock")) == true
+  // nothing outside the root
+  expect(there(os, "r/keep/other")) == true
+  // again: nothing left to remove
+  expect(clean(os.fs, "r/xo", c, false).bytes) == 0
+}
+
+test "clean of a cache that is one file, and of one that is not there" {
+  put(os, "r/xo/llvm-sysroot", 1)
+  let f = clean(os.fs, "r/xo", Cache{name: "llvm-sysroot", what: ""}, false)
+  expect(f.bytes) == 1
+  expect(there(os, "r/xo/llvm-sysroot")) == false
+  expect(clean(os.fs, "r/xo", Cache{name: "gone", what: ""}, false).found) == false
+}
+
+test "the table names each cache once, and keeps the module cache and seeds" {
+  var seen: Set[Str] = #{}
+  for c in caches() {
+    expect(seen.contains(c.name)) == false
+    seen.add(c.name)
+    if c.name is "mod" | "seeds" | "seed" {
+      expect(c.clean) == false
+    }
+  }
+}

@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo clean -cache [-n]` (owner, 2026-10-22), like `go clean -cache`:
+  removes every cache under `<user cache>/xo` (build directories, the
+  native back end's cache, GOCACHE, test binaries, watch builds, xo dev
+  outputs, and the test infrastructure's caches, from one table in
+  compiler/prune that a repository test keeps complete) and prints the
+  bytes freed per cache; `-n` measures without removing. The module
+  cache and the prebuilt seeds stay, each cache's stamp and lock files
+  stay, an entry a running build holds the lock of is left, and nothing
+  outside `<user cache>/xo` is touched. `xo clean` alone is a usage error.
 - A directory argument means that directory alone (decision 0345,
   owner): `xo run` runs exactly the directory it is given, never a
   program found below it (in a parent of two programs `xo run .` ran the

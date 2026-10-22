@@ -1,0 +1,66 @@
+// `xo clean -cache [-n]` (2026-10-22, owner): empties every cache in
+// prune.caches() under <user cache>/xo; -n measures without removing.
+
+use github.com/xo-lang/xo/compiler/cli/cmdhelp
+use github.com/xo-lang/xo/compiler/prune
+
+/// `xo clean`: its exit status.
+fn clean_cmd(os: Os, args: List[Str]) -> Int {
+  var cache = false
+  var dry = false
+  for a in args {
+    if a is "-cache" | "--cache" {
+      cache = true
+    } else if a is "-n" | "--n" {
+      dry = true
+    } else if cmdhelp.is_help_flag(a) {
+      os.stdio.print(cmdhelp.usage("clean"))
+      return 0
+    } else {
+      os.stdio.eprint("xo clean: unknown argument ${a}\n\n${cmdhelp.usage("clean")}")
+      return 2
+    }
+  }
+  if !cache {
+    os.stdio.eprint("xo clean: say what to remove: -cache (every cache under <user cache>/xo)\n\n${cmdhelp.usage("clean")}")
+    return 2
+  }
+  let base = user_cache_dir(os, host_os(os))
+  if base.is_empty() {
+    os.stdio.eprintln("xo clean: no user cache directory (HOME, or LocalAppData on Windows, is not set)")
+    return 1
+  }
+  let root = "${base.trim_suffix("/")}/xo"
+  var total = 0
+  var busy = 0
+  for c in prune.caches() {
+    if !c.clean {
+      continue
+    }
+    let r = prune.clean(os.fs, root, c, dry)
+    if !r.found {
+      continue
+    }
+    total += r.bytes
+    busy += r.busy
+    let verb = if dry { "would remove" } else { "removed" }
+    let held = if r.busy > 0 { "; ${r.busy} in use by a running build, left" } else { "" }
+    os.stdio.println("${verb} ${size_text(r.bytes)} from ${r.name} (${r.entries} ${if r.entries == 1 { "entry" } else { "entries" }}, ${r.path})${held}")
+  }
+  os.stdio.println("${if dry { "would free" } else { "freed" }} ${size_text(total)} in ${root}${if busy > 0 { "; ${busy} entries in use were left" } else { "" }}")
+  0
+}
+
+/// n bytes for a person: 1.2 GB, 340 MB, 12 KB, 9 B (powers of 1,000).
+fn size_text(n: Int) -> Str {
+  if n >= 1000000000 {
+    return "${n / 1000000000}.${(n % 1000000000) / 100000000} GB"
+  }
+  if n >= 1000000 {
+    return "${n / 1000000} MB"
+  }
+  if n >= 1000 {
+    return "${n / 1000} KB"
+  }
+  "${n} B"
+}

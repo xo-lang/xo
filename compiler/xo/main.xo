@@ -116,6 +116,10 @@ fn main(os: Os) ! {
     }
     os.proc.exit(bench.run(os, bench.Host{goos: host_os(os)}, args[1..]))
   }
+  if !args.is_empty() && args[0] == "clean" {
+    // remove xo's caches (clean.xo)
+    os.proc.exit(clean_cmd(os, args[1..]))
+  }
   if !args.is_empty() && args[0] == "dev" {
     // hidden: the developer commands (dev.xo, decision 0209)
     os.proc.exit(dev_cmd(os, args[1..]))

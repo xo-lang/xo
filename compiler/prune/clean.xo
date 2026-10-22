@@ -1,0 +1,187 @@
+// `xo clean -cache` (2026-10-22, owner): every cache xo and its test
+// infrastructure keep under <user cache>/xo, emptied at once. caches() is
+// the one table of them: internal/repotest TestCacheTable fails when the
+// source names a directory under <user cache>/xo that the table lacks,
+// so a new cache cannot be missed.
+//
+// What a clean removes: each top level entry of a cleaned cache (a
+// build directory, a GOCACHE shard, a back-end subcache, a checkout's
+// xo), never the cache's own prune-stamp, prune-lock, prune-log and
+// similar files at its top, and never anything outside <user cache>/xo
+// ($XO_BUILD_DIR, $XO_BIN_CACHE or $XO_BACKEND_CACHE_DIR set elsewhere,
+// a project, the module cache). An entry holding a build lock
+// (build.lock, *.lock) that a live process holds is skipped and counted
+// as busy: a build of that checkout is running.
+//
+// A build running at the same time: its own build directory and the
+// back-end entries it reads may be removed under it. Its stores into
+// the caches are best effort (a store into a removed directory fails
+// and is dropped), but a file it is about to read (a cached object, a
+// build directory's assembly) can be gone, and that build then fails
+// with a missing file: run it again. The caches refill on the next
+// builds, which are cold.
+
+/// A cache under <user cache>/xo.
+pub struct Cache {
+  /// The directory name under <user cache>/xo.
+  pub name: Str
+  /// What it holds, for `xo clean -cache -n` and the docs.
+  pub what: Str
+  /// Whether `xo clean -cache` empties it; the module cache and the
+  /// prebuilt seeds are downloads, not build outputs, and stay (`xo mod
+  /// clean` empties the module cache).
+  pub clean: Bool = true
+}
+
+/// Every cache under <user cache>/xo, in the order a clean reports them.
+pub fn caches() -> List[Cache] {
+  [
+    Cache{name: "build", what: "build directories of xo build, run and test (decision 0223)"},
+    Cache{name: "backend", what: "the native back end's function, object and front end cache (decision 0220)"},
+    Cache{name: "gocache", what: "the Go backend's GOCACHE"},
+    Cache{name: "testbin", what: "linked test binaries ($XO_BIN_CACHE's default, decision 0236)"},
+    Cache{name: "watch", what: "xo run --watch and xo test --watch builds and last.json (decision 0267)"},
+    Cache{name: "dev", what: "xo dev goldens and bisect outputs (decision 0209)"},
+    Cache{name: "lsp-std", what: "xo lsp's read only copy of std"},
+    Cache{name: "checkout", what: "xo builds of checkouts (scripts/xobuild, the Go tests; decision 0216)"},
+    Cache{name: "testcc", what: "the Go tests' C compiles (xotool.EnableTestCCache)"},
+    Cache{name: "testprog", what: "the Go tests' content keyed program directories"},
+    Cache{name: "testgobind", what: "the Go tests' use go bindings"},
+    Cache{name: "llvm-ir", what: "scripts/gate.sh's LLVM IR keys"},
+    Cache{name: "lifeline", what: "the Go tests' lifeline helper binaries (internal/testtmp)"},
+    Cache{name: "xo1-test", what: "test binaries of older Go tests"},
+    Cache{name: "llvm-sysroot", what: "the LLVM backend's found sysroot (a file)"},
+    Cache{name: "mod", what: "the module cache (xo mod clean empties it)", clean: false},
+    Cache{name: "seeds", what: "prebuilt seeds fetched from the seed bucket (decision 0216)", clean: false},
+    Cache{name: "seed", what: "seed chain hops built from source (decision 0216)", clean: false},
+  ]
+}
+
+/// What a clean of one cache did, or would do with dry.
+pub struct Cleaned {
+  pub name: Str
+  pub path: Str
+  /// The bytes removed (with dry: that would be removed).
+  pub bytes: Int = 0
+  /// The entries removed (or that would be).
+  pub entries: Int = 0
+  /// Entries skipped because a live process holds their lock.
+  pub busy: Int = 0
+  /// Whether the cache exists.
+  pub found: Bool = false
+}
+
+/// Empties the cache c under root (<user cache>/xo); with dry only
+/// measures what it would remove.
+pub fn clean(fs: Fs, root: Str, c: Cache, dry: Bool) -> Cleaned uses (fs.read, fs.write) {
+  let dir = "${root}/${c.name}"
+  var r = Cleaned{name: c.name, path: dir}
+  let fi = match fs.stat(dir) {
+    Ok(Some(x)) => x
+    _ => return r
+  }
+  r.found = true
+  if !fi.is_dir {
+    // a cache that is one file (llvm-sysroot)
+    r.entries = 1
+    r.bytes = fi.size
+    if !dry {
+      fs.remove(dir).ignore_err("another process removed it")
+    }
+    return r
+  }
+  let top = match fs.read_dir(dir) {
+    Ok(l) => l
+    Err(_) => return r
+  }
+  for e in top {
+    let path = "${dir}/${e.name}"
+    if !e.is_dir {
+      if is_cache_meta(e.name) {
+        continue
+      }
+      r.entries += 1
+      r.bytes += e.size
+      if !dry {
+        fs.remove(path).ignore_err("another process removed it")
+      }
+      continue
+    }
+    // a build in flight holds its lock: leave its entry
+    if let Some(p) = held_lock(fs, path) {
+      p.unlock()
+      if p.held {
+        r.busy += 1
+        continue
+      }
+    }
+    let size = tree_size(fs, path)
+    r.entries += 1
+    r.bytes += size
+    if !dry {
+      fs.remove_all(path).ignore_err("another process removed part of it; the rest is reported by the next clean")
+    }
+  }
+  r
+}
+
+/// The files at a cache's top that its pruning keeps (decision 0223):
+/// the stamp, the lock, the log, the counters, and lock files.
+fn is_cache_meta(name: Str) -> Bool {
+  name.starts_with("prune-") || name.ends_with(".lock")
+}
+
+/// The result of probing an entry's lock files.
+struct Probe {
+  held: Bool = false
+  locks: List[FileLock] = []
+}
+
+fn (p: Probe) unlock() {
+  for l in p.locks {
+    l.unlock()
+  }
+}
+
+/// The lock files at the top of entry dir (build.lock, any *.lock):
+/// held when a live process holds one; None when there are none. The
+/// caller releases the locks this call takes (unlock).
+fn held_lock(fs: Fs, dir: Str) -> Probe? uses (fs.read, fs.write) {
+  let es = match fs.read_dir(dir) {
+    Ok(l) => l
+    Err(_) => return None
+  }
+  var p = Probe{}
+  var any = false
+  for e in es {
+    if e.is_dir || !e.name.ends_with(".lock") {
+      continue
+    }
+    any = true
+    match fs.try_lock("${dir}/${e.name}") {
+      Ok(Some(l)) => p.locks.push(l)
+      Ok(None) => p.held = true
+      Err(_) => {}
+    }
+  }
+  if !any {
+    return None
+  }
+  Some(p)
+}
+
+/// The bytes of the files below dir.
+fn tree_size(fs: Fs, dir: Str) -> Int uses fs.read {
+  var n = 0
+  match fs.walk(dir) {
+    Ok(all) => {
+      for f in all {
+        if !f.is_dir {
+          n += f.size
+        }
+      }
+    }
+    Err(_) => {}
+  }
+  n
+}

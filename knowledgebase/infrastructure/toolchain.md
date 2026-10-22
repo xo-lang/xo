@@ -3642,6 +3642,22 @@ entries unused for longer than the age limit, then the least recently
 used until the cache is under its cap. Nothing used within the last two
 hours is removed, so a cache can sit above its cap by that much.
 
+`xo clean -cache` (2026-10-22, owner) empties them all at once, like
+`go clean -cache`: every cache of `compiler/prune/clean.xo`'s
+`caches()` table (build, backend, gocache, testbin, watch, dev,
+lsp-std, checkout, testcc, testprog, testgobind, llvm-ir, lifeline,
+xo1-test, llvm-sysroot), printing the bytes freed per cache; `-n` only
+measures. It keeps each cache's `prune-*` and `*.lock` files, skips an
+entry whose `build.lock` a live process holds (`Fs.try_lock`; a
+checkout build in flight), and never touches the module cache (`mod`,
+`xo mod clean` empties it), the seeds (`seeds`, `seed`), or anything
+outside `<user cache>/xo` (a `$XO_BUILD_DIR` or `$XO_BIN_CACHE`
+elsewhere, a project). A build running during a clean can fail with a
+missing file (its build directory or a cached object removed under it);
+run it again, and the next builds are cold. internal/repotest
+TestCacheTable fails when the source names a new directory under
+`<user cache>/xo` that the table lacks. Last verified: 2026-10-22.
+
 | Cache | Entry | When | Age | Cap |
 |---|---|---|---|---|
 | `<user cache>/xo/build` (not a `$XO_BUILD_DIR`) | each `<hash>` directory; its `.s` files on their own | build_dir, at most hourly | `XO_CACHE_MAX_AGE`; a directory used within 30 minutes stays (not two hours: about 50 builds an hour held 31.7 GB under a 20 GB cap, 2026-10-21); its `.s` files go after 10 minutes unused whatever the directory's age (no build reads them after its link; they were 28 GB of 40) | `XO_BUILD_DIR_MAX` bytes, else `XO_CACHE_MAX_GB` |

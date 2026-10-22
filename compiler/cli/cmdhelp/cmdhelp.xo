@@ -45,6 +45,7 @@ pub fn commands() -> List[Command] {
     Command{name: "prof", purpose: "pprof files and summaries of a native program's profile"},
     Command{name: "trace", purpose: "Perfetto JSON and a summary of a native execution trace"},
     Command{name: "bench", purpose: "interleaved A/B measurement with a confidence interval (--ab)"},
+    Command{name: "clean", purpose: "remove xo's caches under the user cache directory (-cache)"},
     Command{name: "lsp", purpose: "Language Server Protocol server on stdin/stdout"},
     Command{name: "mcp", purpose: "Model Context Protocol server on stdin/stdout"},
     Command{name: "serve", purpose: "keep checked programs in memory for check and query"},
@@ -116,6 +117,7 @@ pub fn usage(name: Str) -> Str {
     "prof" => prof_text()
     "trace" => trace_text()
     "bench" => bench_text()
+    "clean" => clean_text()
     "lsp" => lsp_text()
     "mcp" => mcp_text()
     "serve" => serve_text()
@@ -183,6 +185,24 @@ pub fn pattern_error(cmd: Str, arg: Str) -> Str {
 /// files.
 pub fn no_match_error(cmd: Str, arg: Str) -> Str {
   "xo ${cmd}: ${arg} matched no directory with .xo files"
+}
+
+fn clean_text() -> Str {
+  """
+usage: xo clean -cache [-n]
+
+-cache removes every cache xo and its tests keep under the user cache
+directory (<user cache>/xo: build directories, the native back end's
+cache, the Go backend's GOCACHE, test binaries, watch builds, xo dev
+outputs, checkout builds, the Go tests' caches) and prints the bytes
+freed per cache. -n prints what it would remove, and its size, and
+removes nothing. Nothing outside <user cache>/xo is touched: not
+$XO_BUILD_DIR or another directory a variable names, not a project. The
+module cache (xo mod clean) and the prebuilt seeds stay. Each cache's
+own stamp and lock files stay, and an entry whose build lock a running
+process holds is skipped. A build running at the same time can fail
+with a missing file: run it again.
+"""
 }
 
 fn build_text() -> Str {
