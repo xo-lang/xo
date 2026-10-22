@@ -30,6 +30,5 @@ value_flags() written as a separate argument. A second stamped self-build
 reuses 115 of 116 parts (9.5 s against 11.0 s) and the packs hold 666
 against 1,295 MB. The fix takes effect for builds made by an xo that has
 it (xobuild builds with the earlier xo).
-Remaining: a worktree's first self-build still writes the parts pack,
-and the loose entries still turn over every 20 to 30 minutes at the cap
-(measure again after this lands).
+Remaining: a worktree's first self-build still wrote the parts pack
+(fixed by first-build-parts-pack-unread.md).

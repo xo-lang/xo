@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The back-end cache packs a large module's parts (xo's 650 MB) on its
+  build target's second build, not its first: each gate's one-shot
+  self-build in a new worktree wrote one no build read (9.3 GB of the
+  16 GiB cap, about 27 GB an hour of the prune's churn). A pack none
+  of whose entries a build used (after a rebase) is rewritten instead
+  of appended to.
 - The back-end cache names a build target without its flags' values:
   `--stamp NAME=VALUE` (scripts/xobuild stamps the commit and the
   source key) made every self-build a new target that wrote a 678 MB

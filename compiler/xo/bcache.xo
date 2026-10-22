@@ -140,10 +140,10 @@ fn fn_cache_load(os: Os, ctx: Ctx, m: ssa.Module, tgoos: Str, jobs: Int, release
 
 /// Stores the entries a cached generation made (fn_cache_load's dir),
 /// functions' and parts', and updates the target's packs with them and
-/// the hits of fc. first_parts: the parts are packed on the target's
-/// first build whatever their count (a test build the run cache keys:
-/// its unchanged rebuilds never reach the back end, so its first edit
-/// regenerated every part, 2026-10-21).
+/// the hits of fc. first_parts: a module of fewer than PART_PACK_FIRST
+/// parts packs them on the target's first build (a test build the run
+/// cache keys: its unchanged rebuilds never reach the back end, so its
+/// first edit regenerated every part, 2026-10-21).
 fn fn_cache_store(os: Os, dir: Str, pk: Pack, fc: arm64.FnCache, stores: List[(Str, Bytes)], part_stores: List[(Str, Bytes)], first_parts: Bool) {
   if dir.is_empty() {
     return
@@ -153,10 +153,13 @@ fn fn_cache_store(os: Os, dir: Str, pk: Pack, fc: arm64.FnCache, stores: List[(S
   // its namespace), and its text is large (xo: 34 parts, 328 MB), so
   // no loose copy for other programs to share
   if let Some(pp) = pk.parts {
-    if pp.fresh && (first_parts || fc.part_keys.len() >= PART_PACK_FIRST) && !part_stores.is_empty() {
-      // a large module's parts on the target's first build too: they
-      // have no loose copies to come back from, so the first edit after
-      // a cold build regenerated every part
+    if pp.fresh && first_parts && fc.part_keys.len() < PART_PACK_FIRST && !part_stores.is_empty() {
+      // a small test module's parts on the target's first build: they
+      // have no loose copies to come back from. A large module's wait
+      // for the second build: xo's (650 MB) written by every gate's
+      // self-build in a new worktree were never read again (a rebase
+      // keeps none of them either), 27 GB an hour of the prune's churn
+      // (2026-10-22)
       os.fs.create_dir_all(pp.dir).ignore_err("no pack: the parts are made again")
       pack_write(os, pp, part_stores)
     } else {
@@ -998,9 +1001,11 @@ fn prune_backend_child(os: Os, dir: Str) -> Int {
 // build only creates the directory and counts it, and the second counts
 // again, so a program built once or twice (a golden) costs no second
 // copy (the third writes the segments, 2026-10-21); the parts have no
-// loose copies, so they are packed on the second build, and those of a
-// module of PART_PACK_FIRST parts or more on the first, or the first
-// edit after a cold build would make every part again. Segments are written whole
+// loose copies, so they are packed on the second build (a test build's
+// of fewer than PART_PACK_FIRST parts on the first: the run cache serves
+// its unchanged rebuilds, so its second back end build is an edit). A
+// build that used none of its pack's entries (after a rebase: xo's parts
+// 0/116) rewrites the pack instead of appending. Segments are written whole
 // and renamed into place (cache_put); a segment another build removed
 // while this one listed it reads as missing, and its keys come from the
 // loose files.
@@ -1008,10 +1013,11 @@ fn prune_backend_child(os: Os, dir: Str) -> Int {
 
 const PACK_VERSION = "xo pack v1"
 
-/// The parts a module needs for its parts pack to be written on its
-/// build target's first build: the compiler has 77; the largest golden
-/// 10 (http_conn_fault, 31 MB of parts), an HTTP server about 7 to 9, a
-/// hello program 3 (m.funcs holds the runtime), 2026-10-20.
+/// A test build of a module of fewer parts writes its parts pack on its
+/// build target's first build: the compiler has 116 (650 MB); the
+/// largest golden 10 (http_conn_fault, 31 MB of parts), an HTTP server
+/// about 7 to 9, a hello program 3 (m.funcs holds the runtime),
+/// 2026-10-20.
 const PART_PACK_FIRST = 16
 const PACK_SEGS = 4
 /// The builds of a target that only count before its pack is written: the
@@ -1241,7 +1247,9 @@ fn pack_store(os: Os, p: Pack, entries: Map[Str, Bytes], stores: List[(Str, Byte
       extra.push((k, b))
     }
   }
-  if p.compact || p.segs.len() >= PACK_SEGS || p.held > 2 * used.len() + 64 {
+  // no entry from the pack: its segments hold another tree's entries
+  // (a rebase), so they are replaced, not kept beside the new one
+  if p.compact || p.segs.len() >= PACK_SEGS || p.held > 2 * used.len() + 64 || (p.held > 0 && p.from_pack.is_empty()) {
     // a compaction replaces the segments it read: only what it adds
     // counts as stored for the prune's burst (a warm build of xo
     // rewrote about 1 GB of packs and set off a prune of the whole
