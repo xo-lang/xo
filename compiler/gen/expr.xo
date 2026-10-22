@@ -1019,6 +1019,10 @@ fn (var g: Gen) binop(op: Str, a0: Str, b: Str, xt: Int, yt: Int, rt: Int, at: O
       return code
     }
   }
+  let (scode, sok) = g.sized_op(op, a, b, xt, yt, at, loc)
+  if sok {
+    return scode
+  }
   match op {
     "+" => "${r}Add${suffix}(${a}, ${b}, ${loc})"
     "-" => "${r}Sub${suffix}(${a}, ${b}, ${loc})"
@@ -1033,6 +1037,44 @@ fn (var g: Gen) binop(op: Str, a0: Str, b: Str, xt: Int, yt: Int, rt: Int, at: O
       "nil"
     }
   }
+}
+
+/// An operation on a sized integer type (Int8 to Int32, UInt8 to UInt64):
+/// std/rt's non-generic helper for the type (sized.go), which Go inlines;
+/// the generic rt.AddS family is a call each time. A division or remainder
+/// by a positive constant is plain Go.
+fn (var g: Gen) sized_op(op: Str, a: Str, b: Str, xt: Int, yt: Int, at: OpAt, loc: Str) -> (Str, Bool) {
+  let gt = g.go_type(xt)
+  if !(gt is "int8" | "int16" | "int32" | "uint8" | "uint16" | "uint32" | "uint64") {
+    return ("", false)
+  }
+  let r = g.rt()
+  if op == "<<" || op == ">>" {
+    // the count widened to int64 (a UInt64 count stays generic)
+    let yg = g.go_type(yt)
+    if !(yg is "int8" | "int16" | "int32" | "int64" | "uint8" | "uint16" | "uint32") {
+      return ("", false)
+    }
+    let nm = if op == "<<" { "Shl" } else { "Shr" }
+    let n = if yg == "int64" { b } else { "int64(${b})" }
+    return ("${r}${nm}_${gt}(${a}, ${n}, ${loc})", true)
+  }
+  if !(op is "+" | "-" | "*" | "/" | "%") || g.go_type(yt) != gt {
+    return ("", false)
+  }
+  if let Some(k) = g.const_operand(at.ye) {
+    if (op == "/" || op == "%") && k > 0 {
+      return ("(" + a + " " + op + " " + b + ")", true)
+    }
+  }
+  let name = match op {
+    "+" => "Add"
+    "-" => "Sub"
+    "*" => "Mul"
+    "/" => "Div"
+    _ => "Rem"
+  }
+  ("${r}${name}_${gt}(${a}, ${b}, ${loc})", true)
 }
 
 /// An Int operation: plain Go when the range analysis proved it cannot

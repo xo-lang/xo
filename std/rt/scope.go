@@ -215,6 +215,8 @@ func (s *Scope) Close(r any, completed bool, ctl int) int {
 	if x, ok := r.(*arithFault); ok {
 		// convert while the stack is still the operation's (panicStack)
 		r = x.fault()
+	} else if x, ok := r.(*sizedFault); ok {
+		r = x.fault()
 	}
 	s.mu.Lock()
 	if completed && r == nil {

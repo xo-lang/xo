@@ -237,7 +237,7 @@ func GoBoundary(name string) {
 
 func goRepanic(name string, r any) {
 	switch r.(type) {
-	case *FaultErr, *arithFault, cancelUnwind, *exitUnwind:
+	case *FaultErr, *arithFault, *sizedFault, cancelUnwind, *exitUnwind:
 		panic(r)
 	}
 	panic(newFault("", "", fmt.Sprintf("Go panic in %s: %v", name, r)))

@@ -32,5 +32,14 @@ Fix:
   in range.
 
 `Rect.area` now inlines (cost 72) and the iface workload runs at 0.80x of
-Go. The generic `rt.AddS` family (`--no-mono`, sized integer types) still
-calls an out of line fault and stays over the budget.
+Go. The generic `rt.AddS` family (`--no-mono`) still calls an out of line
+fault and stays over the budget.
+
+Update 2026-10-22: the sized integer types (Int8 to Int32, UInt8 to
+UInt64) had the same problem (bench/perf/portable ran 4.6 to 5.5x native on
+the Go backend). They now have non-generic helpers per type and operation
+(std/rt/sized.go, written by scripts/gen-rt-sized.py; fault a panic of a
+`*sizedFault`), emitted by compiler/gen's `sized_op`: `--ab` instructions
+0.24 to 0.43 of before, wall 0.41 to 0.81, 1.3 to 2.1x native
+(bench/results/go-backend-sized-arith-2026-10-22.md). Duration, Time and
+a UInt64 shift count still use the generic functions.

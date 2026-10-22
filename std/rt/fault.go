@@ -161,6 +161,8 @@ func AsFault(r any) *FaultErr {
 		return x
 	case *arithFault:
 		return x.fault()
+	case *sizedFault:
+		return x.fault()
 	case runtime.Error:
 		return &FaultErr{Msg: "internal fault: " + x.Error(), Loc: xoLocation(3), Stack: stack(3)}
 	case error:

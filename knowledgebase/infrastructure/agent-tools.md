@@ -209,6 +209,9 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   `scripts/std-identity.sh XO REV_A REV_B` runs it over every
   internal/llvm golden and the compiler with std at two revisions (heavy
   lock, about 25 minutes).
+- `python3 scripts/gen-rt-sized.py std/rt/sized.go`: rewrites the Go
+  backend's checked sized integer helpers (gotchas/checked-arith-inline-budget.md);
+  std/rt's TestSizedHelpersMatchGeneric checks them.
 - `scripts/fieldcheck.py [--quick]`: after regenerating x25519.xo or
   nistec.xo's field code, interprets the generated Xo against Python big
   integers and checks that a planted dropped carry is caught. The
