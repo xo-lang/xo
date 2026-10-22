@@ -3,7 +3,7 @@
 ## 2026-10-22: speedup: Poly1305 absorbs two blocks per step
 
 - Kind: speedup
-- Commit: this commit
+- Commit: 83af5520d
 - Found by: tlsrate bulk TLS 1.2 ChaCha20-Poly1305 at 0.73 of Go (Xo Lang 3; bench/perf/chacha splits it)
 - Go reference: golang.org/x/crypto/poly1305 (64 bit limbs); the limbs stay poly1305-donna's 26 bit
 - Test: crypto_prims (RFC 8439 vectors, every length to 200), chacha_blocks4, tls12_client goldens (arm64, LLVM with Go parity); TestCryptoXoDiff, TestConstantTimeLLVM, TestTLSDiff; test/codegen intrinsics
