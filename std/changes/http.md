@@ -3,7 +3,7 @@
 ## 2026-10-22: perf: the HTTP date layout is parsed once
 
 - Kind: perf
-- Commit: this commit
+- Commit: 8ddf1bbe0
 - Found by: bench/results/time-format-cache-variants-2026-10-22.md (the layout parse was 62% of a text-layout format)
 - Go reference: none (Go's time.Format has no parsed layout type; this is the lazy const of decision 0332)
 - Test: golden http_cookies (the Expires text), http_serve_content (Last-Modified)

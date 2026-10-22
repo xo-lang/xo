@@ -3,7 +3,7 @@
 ## 2026-10-22: perf: the Go backend answers invalid JSON from the scanner
 
 - Kind: perf
-- Commit: this commit
+- Commit: ca4d2964c
 - Found by: the Go gap ranking (bench/results/go-backend-gap-2026-10-22.md: json invalid 10.2x Go)
 - Go reference: encoding/json (go1.26.1: Unmarshal checks the syntax first; the error texts are the scanner's)
 - Test: std/rt TestJsonSyntaxErrMatchesDecoder, TestJsonParseFastTrailingJunk

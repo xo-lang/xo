@@ -3,7 +3,7 @@
 ## 2026-10-22: guidance: std formats with a lazy const Layout, not the layout text
 
 - Kind: perf
-- Commit: this commit
+- Commit: 8ddf1bbe0
 - Found by: bench/results/time-format-cache-variants-2026-10-22.md (ADR 0332's two estimates, measured)
 - Go reference: none
 - Test: none (std's own callers: native/http.xo HTTP_DATE_LAYOUT, native/mail.xo DATE_LAYOUT)
