@@ -21,10 +21,18 @@ fn report(name: Str, xs: List[Int], m: Map[Str, Int], s: Shape, it: Item) -> Int
 }
 
 fn main(os: Os) {
-  let xs = [10, 20, 30]
   var m: Map[Str, Int] = {}
+  // a key the optimizer cannot know (the variable is never set): m.n stays
+  // a value report reads at run time, which TestDebugTypes/llvm shows
+  // (since d41fa5eed clang saw the map's header stores, folded m.n to 2,
+  // and with it report's only location of m); before xs, whose location
+  // in main the branch would end
+  if (os.env.get("XO_DEBUGTYPES_NEVER") ?? "") == "yes" {
+    m["three"] = 3
+  }
   m["one"] = 1
   m["two"] = 2
+  let xs = [10, 20, 30]
   let it = Item{name: "box", tags: [7, 8]}
   let sh = if xs.len() > 2 { Shape.Rect(w: 4, h: 5) } else { Shape.Circle(r: 1) }
   os.stdio.println("${report("hello", xs, m, sh, it)}")

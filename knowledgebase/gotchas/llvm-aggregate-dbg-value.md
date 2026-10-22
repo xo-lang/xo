@@ -51,3 +51,14 @@ the LLVM backend's calling convention (backlog: a combined speed and
 debuggability item; it touches the ABI and every call). A new debug
 only extractvalue does not help even after a live one: EarlyCSE
 deletes dead instructions before it merges equal ones.
+
+Also observed (2026-10-22, e5a34b0c3): a part the code extracts is only
+described while it stays a run time value. Once the LLVM backend stored a
+new list's header where LLVM sees it, clang folded TestDebugTypes' m.n
+(the map main fills with two constant keys) to 2 after inlining report;
+the fragment dbg.value went with the extractvalue, m had no location left
+in the inlined report, and lldb answered "use of undeclared identifier
+'m'". The test program now adds a key under an environment variable that
+is never set, so m.n is read at run time (and builds m before xs, whose
+location in main the branch would otherwise end). A variable whose parts
+are all constants after optimization can still show nothing on LLVM.
