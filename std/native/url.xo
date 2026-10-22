@@ -232,6 +232,14 @@ fn (var v: Values) remove(key: Str) {
   }
 }
 
+/// A query longer than this has its keys and values copied (Str.clone): a
+/// token kept from a large query does not keep all of it alive. A shorter
+/// query keeps its slices (a copy per token is +14% on a 30 byte query). The
+/// rule depends on the query being a small object of its own: the server's
+/// raw query is a slice of the request target, itself a copy of the head's
+/// bytes (http1 parse_head, url_text_at), never of the read buffer.
+const OWN_MIN = 4096
+
 /// url.go parseQuery: pairs split on `&`, then `=`; an empty pair is
 /// skipped. Go keeps parsing after an error and returns the first; Xo
 /// returns the first error alone.
@@ -239,6 +247,7 @@ fn parse_query(s: Str) -> Values ! url.EscapeErr {
   if s.split("&").len() > MAX_PARAMS {
     return Err(url.EscapeErr{msg: "number of URL query parameters exceeded limit"})
   }
+  let big = s.len() > OWN_MIN
   // the keys' positions in a Map, so many distinct keys stay linear
   var at: Map[Str, Int] = {}
   var ks: List[Str] = []
@@ -256,8 +265,13 @@ fn parse_query(s: Str) -> Values ! url.EscapeErr {
       Some(i) => (pair[0..i], pair[i + 1..])
       None => (pair, "")
     }
-    let k = query_unescape(k0)?
-    let x = query_unescape(x0)?
+    // stored in the result: copies for a long s (decision 0330, Str.clone)
+    var k = query_unescape(k0)?
+    var x = query_unescape(x0)?
+    if big {
+      k = k.clone()
+      x = x.clone()
+    }
     match at.get(k) {
       Some(i) => {
         var xs = vs[i]

@@ -1,6 +1,18 @@
 # std/mime changes
 
-## 2026-10-21: perf: token characters from a table
+## 2026-10-22: perf: parse_media_type copies its tokens of a long value
+
+- Kind: perf
+- Commit: this commit
+- Found by: memory probe (300 values of 1 MiB, one kept token: 318 MB retained)
+- Go reference: mime/mediatype.go ParseMediaType (go1.26.1)
+- Test: internal/llvm/testdata/golden/views_parsers (arm64, LLVM, go)
+
+Slices are views (decision 0330), so a kept kind or parameter of a long media
+type held all of it. Over 4 KiB the kind, names and values are copied: 318 MB
+to 6 MB in the probe; shorter values keep slices (copying every token is
++14.7% instructions on a three parameter type, copying only long values
++1.4%; bench/results/views-parsers-clone-2026-10-22.md).
 
 - Kind: perf
 - Commit: 2e840b6f

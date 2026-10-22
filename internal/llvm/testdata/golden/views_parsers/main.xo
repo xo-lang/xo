@@ -1,0 +1,29 @@
+// Decision 0330 option 3: parse_query and parse_media_type copy their
+// tokens when the input is over 4 KiB; short and long inputs parse the same.
+use std/mime
+use std/url
+
+fn main(os: Os) {
+  let pad = "x".repeat(5000)
+  for tail in ["", pad] {
+    match url.parse_query("a=1&b%20c=2+3&a=4&${tail}=z") {
+      Ok(v) => {
+        os.stdio.println("${v.keys().len()} ${v.get("a") ?? "-"} ${v.all("a").join(",")} ${v.get("b c") ?? "-"} ${v.has(tail)}")
+      }
+      Err(e) => os.stdio.println("err ${e.msg}")
+    }
+    match mime.parse_media_type("Text/HTML; charset=\"utf-8\"; pad=p${tail}; title*=utf-8''a%20b") {
+      Ok(m) => {
+        os.stdio.println("${m.kind} ${m.params.get("charset") ?? "-"} ${m.params.get("title") ?? "-"} ${(m.params.get("pad") ?? "").len()} ${m.params.len()}")
+      }
+      Err(e) => os.stdio.println("err ${e.msg}")
+    }
+    // RFC 2231: a single encoded value, and continuations (plain and encoded)
+    match mime.parse_media_type("a/b; one*=utf-8''p%20${tail}; two*0=x${tail}; two*1=y; three*0*=utf-8''q%20; three*1*=r%21${tail}") {
+      Ok(m) => {
+        os.stdio.println("${m.kind} ${m.params.len()} ${(m.params.get("one") ?? "").len()} ${(m.params.get("two") ?? "").len()} ${(m.params.get("three") ?? "").len()} ${(m.params.get("two") ?? "").starts_with("x")}")
+      }
+      Err(e) => os.stdio.println("err ${e.msg}")
+    }
+  }
+}

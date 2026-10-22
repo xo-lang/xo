@@ -1,5 +1,16 @@
 # std/url changes
 
+## 2026-10-22: perf: parse_query copies its keys and values of a long query
+
+- Kind: perf
+- Commit: this commit
+- Found by: memory probe (300 queries of 1 MiB, one kept key: 318 MB retained)
+- Go reference: net/url url.go parseQuery (go1.26.1)
+- Test: internal/llvm/testdata/golden/views_parsers (arm64, LLVM, go)
+
+Slices are views (decision 0330), so a kept key or value of a long query
+held all of it. Over 4 KiB each key and value is copied: 318 MB to 6 MB in
+the probe; a shorter query keeps slices (bench/results/views-parsers-clone-2026-10-22.md).
 ## 2026-10-21: fix: unescape errors and parse_query's semicolon error as Go's
 
 - Kind: fix
