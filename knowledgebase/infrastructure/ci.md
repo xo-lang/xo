@@ -92,6 +92,38 @@ fixed point), runs that write files back into a worktree (golden
 recording; CI returns only logs), and the instruction counts the bar is
 judged on (decision 0180: the Mac); `measure` adds Linux counts.
 
+### Script output: text artifacts, large files in the bucket
+
+Since 2026-10-22, the artifact `script-out` carries text only. That day
+GitHub's artifact egress limit answered 503 on download, after scripts
+uploaded their 43 MB input archive, unpacked trees and built binaries.
+
+The scripts source `scripts/ci/ci-out.sh` (PowerShell:
+`scripts/ci/ci-out.ps1`, `Send-CiOut`).
+
+- **Inputs and build products** go to a work directory outside
+  `XO_CI_OUT` (`ci_work NAME`, under `RUNNER_TEMP`), which is removed at
+  exit. This covers archives, unpacked releases and programs the script
+  builds.
+- **Large outputs** move to the bucket at the end (`ci_offload DIR
+  SUMMARY`): crash dumps and bundles, binaries kept to read the dumps
+  with, and text over 1 MiB (`CI_OUT_MAX`). They go to
+  `s3://$XO_SEED_BUCKET/dev/ci-out/$GITHUB_RUN_ID/<output dir>/`; the
+  runner role may write `dev/*` (infra/ci-runners/iam.tf). Each one is a
+  line in the script's summary: `large output in the bucket: KEY (N
+  bytes)`. Fetch them with `aws s3 cp --recursive
+  s3://$XO_SEED_BUCKET/dev/ci-out/RUN_ID/ DIR` on the Mac.
+
+**Cleanup:** nothing expires under `dev/`. Delete a run's prefix once its
+outputs are read: `aws s3 rm --recursive
+s3://$XO_SEED_BUCKET/dev/ci-out/RUN_ID/`. `aws s3 ls
+s3://$XO_SEED_BUCKET/dev/ci-out/` lists what is left.
+
+Users: release-smoke.sh, windows-race.sh, win-crash-cdb.ps1 and
+win-cdb-watch.ps1. A new script that writes anything but small text
+into `XO_CI_OUT` uses the same helper. Last verified: 2026-10-22 (on
+the Mac with a local archive; not yet on a runner).
+
 ## How it works
 
 ```

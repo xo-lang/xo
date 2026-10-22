@@ -18,7 +18,9 @@
 # ARCHIVE is a path in the checkout, else a name under ci/release/ of the
 # seed bucket ($XO_SEED_BUCKET, as release-smoke.sh); SHA256 its digest.
 # Output in $XO_CI_OUT/win-crash: summary.txt (every step), run-*.out and
-# run-*.err, cdb-*.txt, the dumps. (Xo Lang 4, 2026-10-22: the 0.25.1
+# run-*.err, cdb-*.txt; the dumps and the xo.exe they need go to
+# s3://$XO_SEED_BUCKET/dev/ci-out/$GITHUB_RUN_ID/win-crash/ (ci-out.ps1:
+# artifacts carry text only), their keys in summary.txt. (Xo Lang 4, 2026-10-22: the 0.25.1
 # Windows smoke; CI 39805650922 found no cdb and logged no output.)
 param([string]$Archive, [string]$Sha256)
 $ErrorActionPreference = 'Continue'
@@ -29,6 +31,8 @@ New-Item -ItemType Directory -Force $out | Out-Null
 $sum = Join-Path $out 'summary.txt'
 Set-Content $sum "win-crash-cdb $Archive on $([Environment]::OSVersion.VersionString), PowerShell $($PSVersionTable.PSVersion)"
 function Log([string]$s) { Add-Content $sum $s; Write-Output $s }
+. (Join-Path $PSScriptRoot 'ci-out.ps1')
+$tmp = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }
 
 # Run NAME EXE ARGS DIR: the command line, standard output and error in
 # run-NAME.out and .err, the exit code in decimal and hex
@@ -54,7 +58,7 @@ function Run([string]$name, [string]$exe, [string[]]$argv, [string]$dir) {
 
 $a = $Archive
 if (-not (Test-Path $a)) {
-  $a = Join-Path $out (Split-Path $Archive -Leaf)
+  $a = Join-Path $tmp (Split-Path $Archive -Leaf)
   Log "fetching s3://.../ci/release/$(Split-Path $Archive -Leaf)"
   & aws s3 cp --only-show-errors "s3://$($env:XO_SEED_BUCKET)/ci/release/$(Split-Path $Archive -Leaf)" $a 2>&1 | ForEach-Object { Log "  $_" }
   if (-not (Test-Path $a)) { Log "archive not found"; exit 2 }
@@ -124,4 +128,6 @@ foreach ($t in @('', '1')) {
 Start-Sleep -Seconds 5
 Get-ChildItem $dumps -ErrorAction SilentlyContinue | ForEach-Object { Log "dump $($_.Name) $($_.Length)" }
 Copy-Item $xo $out
+# the dumps and xo.exe to the bucket, their keys in summary.txt
+Send-CiOut -Dir $out -Summary $sum
 Log 'done'

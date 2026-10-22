@@ -21,7 +21,10 @@
 # temporary directories gained while it ran, as suite.sh keeps them);
 # only Go backend programs write them, so a native xo's crash leaves its
 # exit status and output alone (CI 39800969338: every build exit 139, no
-# output).
+# output). Actions artifacts carry text only (ci-out.sh): the archive, its
+# unpacked tree and every build product stay in a work directory outside
+# XO_CI_OUT, and crash bundles over the text limit go to the bucket's
+# dev/ci-out/$GITHUB_RUN_ID/.
 set -uo pipefail
 archive=${1:?usage: release-smoke.sh ARCHIVE SHA256 [COMMIT]}
 want_sum=${2:?usage: release-smoke.sh ARCHIVE SHA256 [COMMIT]}
@@ -32,6 +35,9 @@ up() { if command -v cygpath >/dev/null; then cygpath -u "$1"; else echo "$1"; f
 o=$(up "$out")
 mkdir -p "$o"
 root=$PWD
+. "$root/scripts/ci/ci-out.sh"
+w=$(ci_work release-smoke) || exit 2
+trap 'rm -rf "${w:?}"' EXIT
 sum="$o/release-smoke.txt"
 : > "$sum"
 fails=0
@@ -40,16 +46,15 @@ fail() { echo "FAIL $1" | tee -a "$sum"; fails=$((fails + 1)); }
 
 a=$archive
 if [ ! -f "$a" ]; then
-  a="$o/$(basename "$archive")"
+  a="$w/$(basename "$archive")"
   aws s3 cp --only-show-errors "s3://${XO_SEED_BUCKET:?XO_SEED_BUCKET}/ci/release/$(basename "$archive")" "$(np "$a")" ||
     { echo "release-smoke: $archive is not in the checkout or the bucket (ci/release/)"; exit 2; }
 fi
 got=$(sha256sum "$a" | cut -d' ' -f1)
 [ "$got" = "$want_sum" ] || { echo "release-smoke: SHA-256 $got, want $want_sum"; exit 2; }
-rm -rf "$o/unpack"
-mkdir -p "$o/unpack"
-tar -xzf "$a" -C "$o/unpack" || { echo "release-smoke: unpack failed"; exit 2; }
-rel=$(echo "$o"/unpack/xo-*)
+mkdir -p "$w/unpack"
+tar -xzf "$a" -C "$w/unpack" || { echo "release-smoke: unpack failed"; exit 2; }
+rel=$(echo "$w"/unpack/xo-*)
 exe=""
 [ -f "$rel/bin/xo.exe" ] && exe=.exe
 xo="$rel/bin/xo$exe"
@@ -84,45 +89,46 @@ if [ -z "$commit" ]; then fail "stamp: no commit in xo version --json"
 elif [ -n "$want_commit" ] && [ "$commit" != "$want_commit" ]; then fail "stamp: commit $commit, want $want_commit"
 else pass "stamp ($commit)"; fi
 
-mkdir -p "$o/hello" "$o/modt/calc"
-printf 'fn main(os: Os) uses (stdio) {\n  os.stdio.println("hello from the released xo")\n}\n' > "$o/hello/main.xo"
-run check "$xo" check "$(np "$o/hello")"
-run build-hello "$xo" build -o "$(np "$o/hello-bin$exe")" "$(np "$o/hello")"
-if [ -f "$o/hello-bin$exe" ] && [ "$("$o/hello-bin$exe" 2>&1 | tr -d '\r')" = "hello from the released xo" ]; then pass run-hello; else fail run-hello; fi
-run run-hello-xo-run "$xo" run "$(np "$o/hello")"
+mkdir -p "$w/hello" "$w/modt/calc"
+printf 'fn main(os: Os) uses (stdio) {\n  os.stdio.println("hello from the released xo")\n}\n' > "$w/hello/main.xo"
+run check "$xo" check "$(np "$w/hello")"
+run build-hello "$xo" build -o "$(np "$w/hello-bin$exe")" "$(np "$w/hello")"
+if [ -f "$w/hello-bin$exe" ] && [ "$("$w/hello-bin$exe" 2>&1 | tr -d '\r')" = "hello from the released xo" ]; then pass run-hello; else fail run-hello; fi
+run run-hello-xo-run "$xo" run "$(np "$w/hello")"
 
 # goldens: threads, and the zone database from the archive
 for g in internal/llvm/testdata/golden/conc_channels internal/llvm/testdata/golden/conc_mutex \
   internal/llvm/testdata/golden/conc_scopes internal/llvm/testdata/golden/conc_rwlock_handoff \
   internal/gen/testdata/golden/time_zones; do
   n=$(basename "$g")
-  if ! "$xo" build -o "$(np "$o/$n$exe")" "$(np "$root/$g")" > "$o/build-$n.txt" 2>&1; then
+  if ! "$xo" build -o "$(np "$w/$n$exe")" "$(np "$root/$g")" > "$o/build-$n.txt" 2>&1; then
     fail "build-$n"; tail -5 "$o/build-$n.txt" | sed 's/^/  /' | tee -a "$sum"
     continue
   fi
   d="$root/$g"
   if [ -f "$d/want_windows.txt" ] && [ -n "$exe" ]; then
-    d="$o/golden-$n"; rm -rf "$d"; cp -R "$root/$g" "$d"; cp "$d/want_windows.txt" "$d/want.txt"
+    d="$w/golden-$n"; rm -rf "$d"; cp -R "$root/$g" "$d"; cp "$d/want_windows.txt" "$d/want.txt"
   fi
-  if sh "$root/scripts/golden-run.sh" "$o/$n$exe" "$d" > "$o/golden-$n.txt" 2>&1; then pass "golden-$n"; else
+  if sh "$root/scripts/golden-run.sh" "$w/$n$exe" "$d" > "$o/golden-$n.txt" 2>&1; then pass "golden-$n"; else
     fail "golden-$n"; tail -8 "$o/golden-$n.txt" | sed 's/^/  /' | tee -a "$sum"
   fi
 done
 
 # xo test of a small module
-printf 'module calc\n' > "$o/modt/xo.mod"
-printf 'pub fn add(a: Int, b: Int) -> Int {\n  a + b\n}\n' > "$o/modt/calc/calc.xo"
-printf 'test "add" {\n  expect(add(2, 3)) == 5\n}\n' > "$o/modt/calc/calc_test.xo"
-run xo-test sh -c 'cd "$1" && "$2" test ./calc' _ "$o/modt" "$xo"
+printf 'module calc\n' > "$w/modt/xo.mod"
+printf 'pub fn add(a: Int, b: Int) -> Int {\n  a + b\n}\n' > "$w/modt/calc/calc.xo"
+printf 'test "add" {\n  expect(add(2, 3)) == 5\n}\n' > "$w/modt/calc/calc_test.xo"
+run xo-test sh -c 'cd "$1" && "$2" test ./calc' _ "$w/modt" "$xo"
 
 # the released xo builds its own compiler (several minutes)
 if [ "${XO_SMOKE_SELF:-1}" != 0 ]; then
-  run self-build "$xo" build -o "$(np "$o/xo2$exe")" "$(np "$root/compiler/xo")"
-  [ -f "$o/xo2$exe" ] && run self-build-version "$o/xo2$exe" version
+  run self-build "$xo" build -o "$(np "$w/xo2$exe")" "$(np "$root/compiler/xo")"
+  [ -f "$w/xo2$exe" ] && run self-build-version "$w/xo2$exe" version
 fi
 
 keep_crashes
 n=$(find "$o/crashes" -name '*.xocrash' | wc -l | tr -d ' ')
 echo "crash bundles: $n in $o/crashes" | tee -a "$sum"
+ci_offload "$o" "$sum"
 echo "release-smoke: $fails failed" | tee -a "$sum"
 [ "$fails" = 0 ]

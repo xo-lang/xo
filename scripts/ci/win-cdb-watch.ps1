@@ -22,6 +22,7 @@ New-Item -ItemType Directory -Force $out | Out-Null
 $sum = Join-Path $out 'summary.txt'
 Set-Content $sum "win-cdb-watch $Archive"
 function Log([string]$s) { Add-Content $sum $s; Write-Output $s }
+. (Join-Path $PSScriptRoot 'ci-out.ps1')
 $tmp = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }
 
 # the archive, from the checkout or the bucket's ci/release/, unpacked in
@@ -97,3 +98,5 @@ Log ("cdb exit {0} (0x{1:X8})" -f $LASTEXITCODE, $LASTEXITCODE)
 Pop-Location
 Log "cdb.txt lines: $((Get-Content (Join-Path $out 'cdb.txt')).Count)"
 Get-Content (Join-Path $out 'cdb.txt') -TotalCount 60 | ForEach-Object { Log "  $_" }
+# a cdb.txt over the text limit goes to the bucket (ci-out.ps1)
+Send-CiOut -Dir $out -Summary $sum

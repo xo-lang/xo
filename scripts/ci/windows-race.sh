@@ -35,9 +35,14 @@ out=${XO_CI_OUT:?XO_CI_OUT}
 np() { if command -v cygpath >/dev/null; then cygpath -w "$1"; else echo "$1"; fi; }
 up() { if command -v cygpath >/dev/null; then cygpath -u "$1"; else echo "$1"; fi; }
 o=$(up "$out")
+# the runtime and the built programs outside XO_CI_OUT: artifacts carry
+# text only (ci-out.sh)
+. scripts/ci/ci-out.sh
+w=$(ci_work windows-race) || exit 2
+trap 'rm -rf "${w:?}"' EXIT
 rt=${XO_RACE_RUNTIME:-}
 if [ -z "$rt" ]; then
-  rt="$o/race_windows_amd64.syso"
+  rt="$w/race_windows_amd64.syso"
   aws s3 cp --only-show-errors "s3://${XO_SEED_BUCKET:?XO_SEED_BUCKET}/ci/race/race_windows_amd64.syso" "$(np "$rt")" || { echo "windows-race: the runtime is not in the bucket (ci/race/race_windows_amd64.syso)"; exit 2; }
 fi
 got=$(sha256sum "$(up "$rt")" | cut -d' ' -f1)
@@ -50,12 +55,12 @@ sum="$o/windows-race.txt"
 # separates a broken xo from a --race problem (run 39772751654 failed every
 # build with XO1201 and said neither)
 "$XO_CLI" version --json | tee -a "$sum"
-if ! "$XO_CLI" build --backend=amd64 -o "$(np "$o/plain_tsan_race.exe")" internal/llvm/testdata/tsan_race > "$o/build-plain.txt" 2>&1; then
+if ! "$XO_CLI" build --backend=amd64 -o "$(np "$w/plain_tsan_race.exe")" internal/llvm/testdata/tsan_race > "$o/build-plain.txt" 2>&1; then
   echo "FAIL build tsan_race without --race: $(grep -m 3 ' error ' "$o/build-plain.txt")" | tee -a "$sum"
 fi
 fail=0
 for p in tsan_race race_sync race_stacks; do
-  if ! "$XO_CLI" build --race --backend=amd64 -o "$(np "$o/$p.exe")" "internal/llvm/testdata/$p" > "$o/build-$p.txt" 2>&1; then
+  if ! "$XO_CLI" build --race --backend=amd64 -o "$(np "$w/$p.exe")" "internal/llvm/testdata/$p" > "$o/build-$p.txt" 2>&1; then
     echo "FAIL build $p: $(tail -3 "$o/build-$p.txt")" | tee -a "$sum"
     fail=1
   fi
@@ -64,7 +69,7 @@ done
 # one run: NAME EXE WANT_EXIT WANT_RACES(+ for at least one, 0 for none) [GREP]
 check() {
   local name=$1 exe=$2 want=$3 races=$4 grep=${5:-}
-  tmo "$o/$exe" > "$o/run.out" 2> "$o/run.err"
+  tmo "$w/$exe" > "$o/run.out" 2> "$o/run.err"
   local rc=$? n
   local hung=0
   if [ "$rc" = 124 ] || [ "$rc" = 137 ]; then hung=1; hangs=$((hangs + 1)); fi
@@ -105,5 +110,6 @@ for threads in "" 4 1; do
     grep -q "touch()" "$o/run.err" && grep -q "created at" "$o/run.err" || { echo "FAIL t=$t r=$r race_stacks: no touch() frame or created at stack" | tee -a "$sum"; fail=1; }
   done
 done
+ci_offload "$o" "$sum"
 echo "windows-race: $(grep -c '^ok' "$sum") ok, $(grep -c '^FAIL' "$sum") failed"
 exit $fail
