@@ -3,7 +3,7 @@
 ## 2026-10-21: feature: Registry.middleware, request counts and latencies for a router
 
 - Kind: feature
-- Commit: this commit
+- Commit: b9b44a29f
 - Found by: decision 0325 (a server's per route counts and latencies with no handler code)
 - Go reference: none (the Prometheus client's promhttp middleware is the shape)
 - Test: internal/llvm/testdata/golden/metrics_text (the middleware counts by method, route and status, times, and leaves in flight at 0)
