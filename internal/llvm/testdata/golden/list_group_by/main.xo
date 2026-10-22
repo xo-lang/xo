@@ -1,0 +1,23 @@
+struct P {
+  name: Str
+  age: Int
+}
+
+fn main(os: Os) {
+  let ps = [P{name: "a", age: 3}, P{name: "bb", age: 5}, P{name: "c", age: 3}, P{name: "dd", age: 7}, P{name: "e", age: 5}]
+  for (k, g) in ps.group_by(fn(p) { p.age }) {
+    os.stdio.println("${k}: ${g.map(fn(p) { p.name }).join(",")}")
+  }
+  for (k, g) in ps.group_by(fn(p) { p.name.len() }) {
+    os.stdio.println("len ${k}: ${g.len()}")
+  }
+  let empty: List[P] = []
+  os.stdio.println("${empty.group_by(fn(p) { p.age }).len()}")
+  let r = [1, 2, 3, 4, 5, 6].group_by(fn(n) -> Int ! Str {
+    if n == 5 {
+      return Err("five")
+    }
+    n % 2
+  })
+  os.stdio.println("${r.err().map(fn(e) { e }) ?? "ok"}")
+}

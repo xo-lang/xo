@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+3: a,c
+5: bb,e
+7: dd
+len 1: 3
+len 2: 2
+0
+five
+--- stderr

@@ -243,6 +243,7 @@ fn (xs: List[T]) find(f: fn(T) -> Bool) -> T?
 fn (xs: List[T]) any(f: fn(T) -> Bool) -> Bool   // also all
 fn (xs: List[T]) sort() -> List[T]           // T: Ord, stable
 fn (xs: List[T]) sort_by[K: Ord](key: fn(T) -> K) -> List[T]
+fn (xs: List[T]) group_by[K: Hash](key: fn(T) -> K) -> List[(K, List[T])]   // keys in first appearance order, each group in input order
 fn (xs: List[T]) reverse() -> List[T]
 fn (xs: List[T]) to_set() -> Set[T]
 (0..n).to_list()                             // Range[Int] to List[Int]
@@ -3961,7 +3962,7 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
 
 Every function and method of std/prelude.xo, by type, as declared there
 (the sections above explain them); interface methods take `self`.
-354 declarations.
+355 declarations.
 
 ### Range
 
@@ -4188,6 +4189,7 @@ fn (xs: List[T]) any[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> Bool ! E u
 fn (xs: List[T]) all[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> Bool ! E uses fx
 fn (xs: List[T]) sort() -> List[T]
 fn (xs: List[T]) sort_by[K: Ord, E, fx: Effects](key: fn(T) -> K ! E uses fx) -> List[T] ! E uses fx
+fn (xs: List[T]) group_by[K: Hash, E, fx: Effects](key: fn(T) -> K ! E uses fx) -> List[(K, List[T])] ! E uses fx
 fn (xs: List[T]) reverse() -> List[T]
 fn (xs: List[T]) to_set() -> Set[T]
 fn (xs: List[Str]) join(sep: Str) -> Str

@@ -204,7 +204,7 @@ fn (g: Gen) handler_lit(x: Expr, ci: check.CallInfo) -> parser.FnLit? {
 }
 
 fn arena_consumer(n: Str) -> Bool {
-  n is "any" | "all" | "find" | "fold" | "map" | "filter" | "sort_by" | "sort" | "len" | "is_empty" | "contains" | "index_of" | "first" | "last" | "get" | "join" | "reverse" | "to_set" | "indexed"
+  n is "any" | "all" | "find" | "fold" | "map" | "filter" | "sort_by" | "group_by" | "sort" | "len" | "is_empty" | "contains" | "index_of" | "first" | "last" | "get" | "join" | "reverse" | "to_set" | "indexed"
 }
 
 /// The runtime function that builds the temporary List of producer fo in

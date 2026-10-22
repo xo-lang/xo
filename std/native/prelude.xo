@@ -586,6 +586,35 @@ fn list_sort_by[T, K: Ord, E, fx: Effects](xs: List[T], key: fn(T) -> K ! E uses
   out
 }
 
+/// The elements grouped by key, the keys in first appearance order and each
+/// group in input order.
+fn list_group_by[T, K: Hash, E, fx: Effects](xs: List[T], key: fn(T) -> K ! E uses fx) -> List[(K, List[T])] ! E uses fx {
+  var at: Map[K, Int] = {}
+  var keys: List[K] = []
+  var groups: List[List[T]] = []
+  for x in xs {
+    let k = key(x)?
+    match at.get(k) {
+      Some(i) => {
+        var g = groups[i]
+        groups[i] = []
+        g.push(x)
+        groups[i] = g
+      }
+      None => {
+        at[k] = keys.len()
+        keys.push(k)
+        groups.push([x])
+      }
+    }
+  }
+  var out: List[(K, List[T])] = []
+  for i in 0..keys.len() {
+    out.push((keys[i], groups[i]))
+  }
+  out
+}
+
 fn list_sort[T: Ord](xs: List[T]) -> List[T] { merge_sort(xs, fn(a, b) { a < b }) }
 
 /// A stable bottom up merge sort: less(a, b) when a sorts before b.

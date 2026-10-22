@@ -642,6 +642,33 @@ func List_sort_by[T, K, E any](tk *Task, l List[T], key func(*Task, T) Result[K,
 	return Ok[List[T], E](ListOf(out...))
 }
 
+// List_group_by is `xs.group_by(key)`: the keys in first appearance order,
+// each with its elements in input order.
+func List_group_by[T, K, E any](tk *Task, l List[T], key func(*Task, T) Result[K, E]) Result[List[Tuple2[K, List[T]]], E] {
+	var at Map[K, int64]
+	var keys []K
+	var groups [][]T
+	for _, x := range l.s {
+		r := key(tk, x)
+		if !r.Ok {
+			return ErrTr[List[Tuple2[K, List[T]]]](r.E, r.Tr)
+		}
+		if g := Map_get(tk, at, r.V); g.Some {
+			groups[g.V] = append(groups[g.V], x)
+		} else {
+			Map_put(tk, &at, r.V, int64(len(keys)))
+			keys = append(keys, r.V)
+			groups = append(groups, []T{x})
+		}
+	}
+	out := make([]Tuple2[K, List[T]], len(keys))
+	for i, k := range keys {
+		markElems(groups[i])
+		out[i] = Tuple2[K, List[T]]{k, ListOf(groups[i]...)}
+	}
+	return Ok[List[Tuple2[K, List[T]]], E](ListOf(out...))
+}
+
 // XoEq implements Eq.
 func (l List[T]) XoEq(o any) bool {
 	m, ok := o.(List[T])

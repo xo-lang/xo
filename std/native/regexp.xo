@@ -1893,9 +1893,13 @@ fn try_backtrack(g: Prog, s: Str, var b: BT, pc0: Int, pos0: Int) -> Bool {
   b.push(g, pc0, pos0, 0)
   while b.jn > 0 {
     b.jn -= 1
-    var pc = b.jpc[b.jn]
-    var pos = b.jpos[b.jn]
-    var arg = b.jarg[b.jn]
+    // (through a let: a var copied from an element is XO0520)
+    let pc0 = b.jpc[b.jn]
+    let pos0 = b.jpos[b.jn]
+    let arg0 = b.jarg[b.jn]
+    var pc = pc0
+    var pos = pos0
+    var arg = arg0
     var check = false
     while true {
       if check && !b.should_visit(pc, pos) {

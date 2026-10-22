@@ -303,13 +303,13 @@ fn (g: Gen) hit(e: Expr, v: Int) -> Bool {
 
 /// The read only List methods whose receiver is borrowed (borrowRecv).
 fn borrow_recv(name: Str) -> Bool {
-  name is "len" | "is_empty" | "get" | "first" | "last" | "contains" | "index_of" | "indexed" | "map" | "filter" | "fold" | "find" | "any" | "all" | "sort" | "sort_by" | "reverse" | "to_set" | "join"
+  name is "len" | "is_empty" | "get" | "first" | "last" | "contains" | "index_of" | "indexed" | "map" | "filter" | "fold" | "find" | "any" | "all" | "sort" | "sort_by" | "group_by" | "reverse" | "to_set" | "join"
 }
 
 /// Whether the std method recv.name returns only fresh lists (freshStd).
 fn fresh_std(recv: Str, name: Str) -> Bool {
   match recv {
-    "List" => name is "map" | "filter" | "sort" | "sort_by" | "reverse" | "indexed"
+    "List" => name is "map" | "filter" | "sort" | "sort_by" | "group_by" | "reverse" | "indexed"
     "Map" => name is "keys" | "values" | "entries"
     "Set" => name == "to_list"
     "Range" => name == "to_list"

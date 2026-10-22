@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-10-21: feature: List.group_by
+
+- Kind: feature
+- Commit: (filled in after the push)
+- Found by: the 2026-10-21 language poll (a group-by loop written three times in std)
+- Go reference: none (Go's slices has no group-by); Rust's itertools chunk_by is the nearest
+- Test: golden list_group_by (go, arm64, LLVM)
+
+`xs.group_by(key)` returns `List[(K, List[T])]`: the keys in first appearance
+order, each group in input order (K: Hash; the key function may fail, as
+`sort_by`'s). `sort_by` already is the sort by key.
+
 ## 2026-10-21: feature: a program's own Stdio, Clock, Rand, and Os on the native backends
 
 - Kind: feature
