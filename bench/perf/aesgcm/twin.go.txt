@@ -34,13 +34,13 @@ func main() {
 	a, _ := cipher.NewGCM(b)
 	sum := 0
 	switch w {
-	case "seal":
+	case "seal", "seal1":
 		dst := make([]byte, 0, len(pt)+16)
 		for i := 0; i < n; i++ {
 			s := a.Seal(dst[:0], nonce, pt, aad)
 			sum += int(s[len(s)-1]) + len(s)
 		}
-	case "open":
+	case "open", "open1":
 		s := a.Seal(nil, nonce, pt, aad)
 		dst := make([]byte, 0, len(pt))
 		for i := 0; i < n; i++ {

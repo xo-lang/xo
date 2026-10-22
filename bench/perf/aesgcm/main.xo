@@ -2,7 +2,10 @@
 // path (std/native/llrt/aesgcm.xo) through internal.crypto_op. Usage:
 // aesgcmperf <workload> with N records in the environment (default
 // 20000); prints "<workload> <checksum>". twin.go.txt is the same loop
-// over Go's crypto/aes and crypto/cipher.
+// over Go's crypto/aes and crypto/cipher. seal and open make the key for
+// every record (crypto_op's aes.seal); seal1 and open1 make it once, as
+// the twin does (aes.seal*N: a fifth of seal's instructions were the key
+// schedule and H's powers, 2026-10-22).
 use std/internal
 
 fn main(os: Os) {
@@ -34,6 +37,15 @@ fn main(os: Os) {
         let r = internal.crypto_op("aes.open", key, nonce, s, aad)
         sum += r.len()
       }
+    }
+    "seal1" => {
+      let s = internal.crypto_op("aes.seal*${n}", key, nonce, pt, aad)
+      sum += n * (Int(s[s.len() - 1]) + s.len())
+    }
+    "open1" => {
+      let s = internal.crypto_op("aes.seal", key, nonce, pt, aad)
+      let r = internal.crypto_op("aes.open*${n}", key, nonce, s, aad)
+      sum += n * r.len()
     }
     _ => os.stdio.println("unknown workload")
   }
