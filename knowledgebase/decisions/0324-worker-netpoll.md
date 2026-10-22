@@ -137,3 +137,62 @@ Go's netpoller model: an idle worker waits in the poller itself.
 - A per-core poller thread: more threads to wake, the same handoff.
 - Waking the worker that last ran the fiber (affinity): helps the cache,
   not the wake count; can follow this.
+
+## Proposed stage 2026-10-22: Windows workers poll the completion port
+
+Status: Proposed (Xo Lang 3's draft, reviewed by Xo Lang 2, who owns the
+Windows native side; nothing is coded). Everything on the Windows poll
+path is untested on Windows (cross links only), so the first run is the
+proof.
+
+Today (poll.xo at 3a256049d): waiters arm a one shot AFD poll
+(`pd_arm`, under the descriptor lock, from any thread) and only the
+poller thread dequeues the port (`poll_main_win`,
+GetQueuedCompletionStatusEx), calls `afd_done` per completion (the
+readiness goes to the inject queue), fires timers, frees the dead list
+and counts signals. `np_wanted()` is false there, so every wake takes
+the inject queue and a woken worker, the cost this decision removed on
+Linux and macOS.
+
+Stage:
+1. `np_wanted()` is true on Windows when the AFD device opened
+   (`afd() != 0`; the WSAPoll fallback keeps the poller thread), not in
+   the test world, and XO_NETPOLL not 0.
+2. `wait_events` gets a Windows arm: GetQueuedCompletionStatusEx on the
+   port for at most NEVENTS entries. `got` is zeroed before the call (a
+   FALSE return with WAIT_TIMEOUT is no events).
+3. `poll_round` decodes an OVERLAPPED_ENTRY (32 bytes, lpOverlapped at
+   +8): 0 is the break (the PostQueuedCompletionStatus `poke` already
+   posts, so np_break is unchanged), else `afd_done`. It needs no new
+   flag: pool.xo `np_poll` sets W_NONEXT to 2 on the calling worker and
+   `park_signal` reads the current worker, so a worker's completions land
+   on its ring and the poller thread's still go to inject.
+4. The token, np_spread (one wakep), and the poller thread's fallback
+   (EV_PSLEEP, the tick) are as on Linux; the poller thread stays out of
+   the port while a worker holds the token. A port takes many dequeuers
+   (`afd_done` is thread agnostic), so the token is for one timer owner,
+   break accounting and keeping wakes off the LIFO spread, not safety.
+5. **Concurrency value (blocker found in review).** `ev_init` creates the
+   port with NumberOfConcurrentThreads 1 (CreateIoCompletionPort at
+   poll.xo ~1593). A thread that dequeued counts as running until it
+   blocks in a wait again, and a worker running fibers does not, so the
+   next dequeuer would not be released while packets wait. It must be 0
+   (the processor count) with this stage.
+6. **Timeouts.** The port's millisecond timeout follows the system timer
+   (15.6 ms by default), so a worker's wait of 0 < wait < 1 ms passes 0
+   and the worker loops; no timed GQCSEx carries a sub millisecond wait.
+   The run-next grace wait (np_block when any_work is 2) and
+   go_idle's futex_wait_us have the same problem on Windows and are fixed
+   there by spinning or SwitchToThread for the grace (Xo Lang 2).
+
+Not a risk (reviewed): an AFD request is not cancelled when the thread
+that issued it exits (the handle is associated with the port in
+`afd_open`, and arming already happens on workers).
+
+Verification: windows/amd64 cross build of bench/perf/http and conc, the
+runtime layout and static word tests, Wine single threaded smoke only
+(owner, 2026-10-21), then one correctness run on the xo-windows runner
+through the lead with XO_RTSTATS (inject, wake_push, idle_npblock,
+poll_return, idle_sleep). No timing claim comes from it (owner,
+2026-10-22: timing A/Bs run on the Mac in quiet windows only); expected
+direction as on Linux, inject adds near 0.
