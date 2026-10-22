@@ -14,7 +14,7 @@ use github.com/xo-lang/xo/compiler/ssa
 use github.com/xo-lang/xo/compiler/tzsel
 use github.com/xo-lang/xo/compiler/wasm
 
-fn build_wasm(os: Os, m: ssa.Module, out0: Str, wd: Str, dir: Str, tz: tzsel.TZSel) {
+fn build_wasm(os: Os, ctx: Ctx, m: ssa.Module, out0: Str, wd: Str, dir: Str, tz: tzsel.TZSel) {
   if !tz.err.is_empty() {
     fail(os, tz.err)
   }
@@ -32,12 +32,19 @@ fn build_wasm(os: Os, m: ssa.Module, out0: Str, wd: Str, dir: Str, tz: tzsel.TZS
     let name = if last == "." || last.is_empty() { base_name(wd) } else { last }
     out = "${name}.wasm"
   }
-  match os.fs.write(out, p.wasm) {
+  // NAME.wasm and NAME.wat built in a hidden stage beside them, then
+  // moved into place (ld.xo Stage)
+  let st = stage(os, ctx, abs_of(wd, out))
+  match os.fs.write(st.bin, p.wasm) {
     Ok(_) => {}
-    Err(e) => fail(os, "${e}")
+    Err(e) => fail_stage(os, st, "cannot write the program to ${out}: ${fs_reason(e)}")
   }
-  match os.fs.write("${out.trim_suffix(".wasm")}.wat", p.wat.bytes()) {
+  match os.fs.write("${st.bin.trim_suffix(".wasm")}.wat", p.wat.bytes()) {
     Ok(_) => {}
-    Err(e) => fail(os, "${e}")
+    Err(e) => fail_stage(os, st, "cannot write ${out.trim_suffix(".wasm")}.wat: ${fs_reason(e)}")
+  }
+  let err = st.commit(os)
+  if !err.is_empty() {
+    fail(os, err)
   }
 }

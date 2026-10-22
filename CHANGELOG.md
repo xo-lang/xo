@@ -26,8 +26,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   run DIR`. Write `xo check ./...` where `xo check .` covered the tree.
 - Build outputs (the owner's 0.25.2 reports): `-o DIR` naming an existing
   directory writes `DIR/NAME` and `DIR/NAME.dSYM`, as `go build -o`
-  does; a failed write removes its `OUT.tmp` and says why in words (it
-  printed `IsDir(path: ...)` and left the file); `xo run --watch` and
+  does; every final output is built in a hidden `.NAME.tmp-TAG-RAND`
+  directory beside it and renamed into place, so no visible file
+  appears while a build runs and two builds of one output both succeed;
+  a failed build, or one stopped by SIGINT or SIGTERM (exit 130),
+  removes it and says why in words (it printed `IsDir(path: ...)` and
+  left `OUT.tmp`); `xo run --watch` and
   `xo test --watch` build and keep `last.json` in
   `<user cache>/xo/watch/HASH`, not `.xo/watch` in the project, with the
   debug information named after the binary; `xo init` adds `/.xo/` (the

@@ -130,27 +130,37 @@ fn build_go(os: Os, ctx: Ctx, o: Opts) ! {
   for tg in targets {
     let bin = bin_path(tree, out, name, tg, targets.len() > 1)
     os.fs.create_dir_all(dir_name(bin))?
+    // built in a hidden stage beside bin, then moved into place (ld.xo)
+    let gst = stage(os, ctx, bin)
     // go build; with Go callbacks first with the runtime's view of Go
     // timers (goBuildTimers, decision 0073), again without it when this
     // Go does not link runtime.timeSleepUntil
     var res = (0, "")
     if timers {
-      res = go_build(os, ctx, gocmd, tree, ["xo_gotimers"] + prog.tags, "-checklinkname=0 ", bin, tg, o.race)?
+      res = go_build(os, ctx, gocmd, tree, ["xo_gotimers"] + prog.tags, "-checklinkname=0 ", gst.bin, tg, o.race)?
       if res.0 != 0 && linkname_failed(res.1) {
-        res = go_build(os, ctx, gocmd, tree, prog.tags, "", bin, tg, o.race)?
+        res = go_build(os, ctx, gocmd, tree, prog.tags, "", gst.bin, tg, o.race)?
         if res.0 == 0 {
           os.stdio.eprintln("xo build: warning: deadlock detection through Go callbacks is off: this Go toolchain does not link runtime.timeSleepUntil (decision 0073)")
           timers = false
         }
       }
     } else {
-      res = go_build(os, ctx, gocmd, tree, prog.tags, "", bin, tg, o.race)?
+      res = go_build(os, ctx, gocmd, tree, prog.tags, "", gst.bin, tg, o.race)?
     }
     if res.0 != 0 {
       os.stdio.eprint(res.1)
-      fail(os, "go build failed (a code generator bug)")
+      fail_stage(os, gst, "go build failed (a code generator bug)")
+    }
+    let gerr = gst.commit(os)
+    if !gerr.is_empty() {
+      fail(os, gerr)
     }
     bins.push((tg, bin))
+  }
+  // the outputs are in place: a stop from here on is the program's
+  if let Some(d) = ctx.build_done {
+    let _ = d.try_send(())
   }
   var host_bin = ""
   for (tg, p) in bins {

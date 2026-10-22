@@ -49,6 +49,33 @@ workspace or repository root (decision 0289: `xo lsp`, `xo def`, `xo
 refs`, `xo query`, `xo edit`) and `xo publish`'s check of the module
 being published walking, now within the same bound.
 
+## Output paths (2026-10-22, the owner's 0.25.2 reports)
+
+- `-o DIR` naming an existing directory writes `DIR/NAME` (and
+  `NAME.dSYM`), as `go build -o` does.
+- Every final output (the `-o` file or the build directory's
+  `bin/NAME`, its `NAME.dSYM` or `NAME.pdb`, a wasm program's `.wasm`
+  and `.wat`, a copy out of the binary cache, the Go backend's `go
+  build`) is built in a hidden staging directory beside it,
+  `DIR/.NAME.tmp-TAG-RAND/`, under its final name, then renamed into
+  place: the debug information first, the program last (compiler/xo
+  ld.xo `Stage`). TAG is random per xo process: Xo has no call for its
+  own process id, and the tag serves the same purpose (two processes
+  never share a stage; the stop watcher finds its own). The linkers see
+  the final name, so ld64's ad hoc signature identifier and the binary
+  cache's bytes do not change. No visible file appears in DIR while a
+  build runs, and two builds of the same output both succeed.
+- A failed build removes its stage and says why in words (it printed
+  `IsDir(path: ...)` and left `OUT.tmp`); a program path that is a
+  directory fails before anything moves. On SIGINT or SIGTERM during the
+  build (a stop request, core 7.5) a watcher removes the stages and xo
+  exits 130; once the outputs are in place, a stop is the program's
+  (`xo run`, `xo test`).
+- `xo run --watch` and `xo test --watch` build and keep `last.json` in
+  `<user cache>/xo/watch/HASH`, with the dSYM named after the binary;
+  `xo init` adds `/.xo/` (the `use go` and `use c` binding caches) to
+  `.gitignore`.
+
 ## Consequences
 
 - `xo check .` at a repository root with no `.xo` file of its own is an

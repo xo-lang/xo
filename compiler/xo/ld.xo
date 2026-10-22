@@ -7,6 +7,7 @@
 
 use github.com/xo-lang/xo/compiler/macho
 use github.com/xo-lang/xo/compiler/tzsel
+use std/task
 
 /// Links prog (an object) into out for tgoos; "" on success, else why
 /// not. strip leaves the local symbols out (`-s`); nolibc: a Linux
@@ -336,7 +337,9 @@ fn tz_object_coff(os: Os, dir: Str, sel: tzsel.TZSel) -> Str ! FsErr {
 /// program, at its fixed base (ThreadSanitizer's application range ends
 /// at 0xe0_0000_0000; Go's linker turns ASLR off for it too). "" or why
 /// not.
-fn pe_link(os: Os, paths: List[Str], bin: Str, stamps: List[(Str, Str)], race: Bool) -> Str {
+/// bin is where the program is written (a stage's, ld.xo Stage), out
+/// the path it will have: the debug directory names out's PDB.
+fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)], race: Bool) -> Str {
   var objs: List[macho.CObj] = []
   for p in paths {
     let b = match os.fs.read(p) {
@@ -357,10 +360,13 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, stamps: List[(Str, Str)], race: B
     }
   }
   let pdb = if dwarf { "${bin.trim_suffix(".exe")}.pdb" } else { "" }
+  // the debug directory names the PDB where it will be, not in the
+  // stage: the same program has the same bytes
+  let pdb_named = if dwarf { "${out.trim_suffix(".exe")}.pdb" } else { "" }
   // the debug directory names it with backslashes, as MSVC's and lld's
   // linkers do: dbghelp finds a PDB moved since by its base name, which
   // an older one takes after the last backslash only
-  match macho.link_pe(objs, macho.PEOpts{entry: "xo_win_start", imports: macho.pe_imports(), resources: pe_resources(bin, stamps), fixed_base: race, pdb: pdb.replace("/", "\\")}) {
+  match macho.link_pe(objs, macho.PEOpts{entry: "xo_win_start", imports: macho.pe_imports(), resources: pe_resources(bin, stamps), fixed_base: race, pdb: pdb_named.replace("/", "\\")}) {
     Ok(img0) => {
       var img = img0
       if dwarf {
@@ -454,4 +460,116 @@ fn fs_reason(e: FsErr) -> Str {
     Io(p, msg) => "${p}: ${msg}"
     Canceled => "canceled"
   }
+}
+
+/// A final output (the -o file, a build directory's bin/NAME) built in a
+/// hidden staging directory beside it, DIR/.NAME.tmp-TAG-RAND, under its
+/// own name (NAME, with NAME.dSYM or NAME.pdb beside it), then renamed
+/// into place: no visible file appears in DIR while a build runs, two
+/// builds of the same output never share a temporary, the linkers see
+/// the final name (ld64 names the ad hoc code signature after the file),
+/// and a failed or interrupted build leaves nothing (the stop watcher
+/// removes the stages a SIGINT or SIGTERM catches; decision 0345).
+struct Stage {
+  /// the staging directory
+  dir: Str
+  /// the final output
+  out: Str
+  /// where the build writes the output: dir/NAME
+  bin: Str
+}
+
+/// The stage of final output out, its directory created and announced
+/// to the stop watcher.
+fn stage(os: Os, ctx: Ctx, out: Str) -> Stage {
+  let tag = if ctx.tmp_tag.is_empty() { "0" } else { ctx.tmp_tag }
+  let d = "${dir_name(out)}/.${base_name(out)}.tmp-${tag}-${os.rand.bytes(4).to_hex()}"
+  if let Some(ch) = ctx.stages {
+    let _ = ch.try_send(d)
+  }
+  match os.fs.create_dir_all(d) {
+    Ok(_) => {}
+    Err(e) => fail(os, "cannot write the program to ${out}: ${fs_reason(e)}")
+  }
+  Stage{dir: d, out: out, bin: "${d}/${base_name(out)}"}
+}
+
+/// Moves what the build wrote in the stage into place, the debug
+/// information first and the program last, and removes the stage; ""
+/// on success, else why (and the stage is removed).
+fn (s: Stage) commit(os: Os) -> Str {
+  let es = match os.fs.read_dir(s.dir) {
+    Ok(l) => l
+    Err(e) => {
+      s.abandon(os)
+      return "cannot write the program to ${s.out}: ${fs_reason(e)}"
+    }
+  }
+  let target = dir_name(s.out)
+  let name = base_name(s.out)
+  // a directory where the program goes: fail before anything moves, so
+  // no debug information is left beside it
+  if let Ok(Some(fi)) = os.fs.stat(s.out) {
+    if fi.is_dir {
+      s.abandon(os)
+      return "cannot write the program to ${s.out}: it is a directory (-o DIR writes DIR/NAME when DIR exists)"
+    }
+  }
+  var order: List[Str] = []
+  for e in es {
+    if e.name != name {
+      order.push(e.name)
+    }
+  }
+  if es.any(fn(e) { e.name == name }) {
+    order.push(name)
+  }
+  for n in order {
+    let dst = "${target}/${n}"
+    if n != name {
+      // a bundle (NAME.dSYM) or file of an earlier build: replaced
+      os.fs.remove_all(dst).ignore_err("none from an earlier build")
+    }
+    match os.fs.rename("${s.dir}/${n}", dst) {
+      Ok(_) => {}
+      Err(e) => {
+        s.abandon(os)
+        return match e {
+          IsDir(_) | NotEmpty(_) => "cannot write the program to ${dst}: it is a directory (-o DIR writes DIR/NAME when DIR exists)"
+          _ => "cannot write the program to ${dst}: ${fs_reason(e)}"
+        }
+      }
+    }
+  }
+  s.abandon(os)
+  ""
+}
+
+/// Removes the stage and whatever is in it.
+fn (s: Stage) abandon(os: Os) {
+  os.fs.remove_all(s.dir).ignore_err("the stop watcher or another process removed it")
+}
+
+/// fail, after removing the stage.
+fn fail_stage(os: Os, s: Stage, msg: Str) -> Never {
+  s.abandon(os)
+  fail(os, msg)
+}
+
+/// The stop watcher: on the first SIGINT or SIGTERM (a stop request,
+/// core 7.5) it removes every stage this process announced and exits
+/// 130, so an interrupted build leaves no temporary behind.
+fn watch_stages(os: Os, ch: Chan[Str], done: Chan[()]) {
+  let _w = os.tasks.spawn_background(fn() {
+    let _ = task.stopping().recv()
+    if done.try_recv().is_some() {
+      // built: the stop is the program's (xo run, xo test)
+      return
+    }
+    while let Some(d) = ch.try_recv() {
+      os.fs.remove_all(d).ignore_err("committed or abandoned already")
+    }
+    os.stdio.eprintln("xo: interrupted")
+    os.proc.exit(130)
+  })
 }

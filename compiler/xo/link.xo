@@ -17,6 +17,15 @@ struct Ctx {
   tgoos: Str = ""
   // the cache of linked binaries (bin_cache_dir), "" when it is off
   bin_cache: Str = ""
+  // this process's tag in the hidden staging directories of its final
+  // outputs (DIR/.NAME.tmp-TAG-RAND, ld.xo Stage), and where each stage
+  // directory is announced for the stop watcher (main.xo): Xo has no
+  // call for its own process id, so a random tag stands for it
+  tmp_tag: Str = ""
+  stages: Chan[Str]? = None
+  // sent once the outputs are in place (finish): the stop watcher then
+  // leaves a SIGINT to the program xo run or xo test runs
+  build_done: Chan[()]? = None
 }
 
 /// The OS the link of ctx targets: the host unless a cross build set it.

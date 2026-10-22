@@ -3642,6 +3642,18 @@ entries unused for longer than the age limit, then the least recently
 used until the cache is under its cap. Nothing used within the last two
 hours is removed, so a cache can sit above its cap by that much.
 
+Final outputs are staged (decision 0345, output paths; 2026-10-22): `xo
+build -o OUT` and every other final write (the build directory's
+`bin/NAME`, `NAME.dSYM`, `NAME.pdb`, `.wasm` and `.wat`, a copy out of
+the binary cache, the Go backend's `go build`) is built in a hidden
+`DIR/.NAME.tmp-TAG-RAND/` beside OUT under the final name (TAG random
+per xo process) and renamed into place, debug information first. A
+failure, or a SIGINT or SIGTERM during the build (xo exits 130), removes
+the stage; `-o DIR` of an existing directory writes `DIR/NAME`. cmd/xo
+TestBuildStagedOutputs (two concurrent builds of one output, a poll for
+visible files, a SIGINT) and TestBuildOutPaths. Last verified:
+2026-10-22.
+
 `xo clean -cache` (2026-10-22, owner) empties them all at once, like
 `go clean -cache`: every cache of `compiler/prune/clean.xo`'s
 `caches()` table (build, backend, gocache, testbin, watch, dev,
