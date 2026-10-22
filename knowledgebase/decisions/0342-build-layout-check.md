@@ -2,7 +2,8 @@
 
 Status: Accepted (owner, 2026-10-22). Proposed the same day (owner
 approved the tool; Xo Publish). Plan step 4 (XO_INLINE_STRICT=1 in
-gate.sh, release.sh, hourly.sh) done.
+gate.sh, release.sh, hourly.sh) done. Step 1 (the check, XO1510) done,
+measured below.
 
 ## Context
 
@@ -131,6 +132,26 @@ The pieces of the check:
   into spec section 10.
 - The check runs in-process before assembly, so a build that links with
   cc is covered too. Objects and the linkers gain no metadata section.
+
+## Measured (step 1, 2026-10-22)
+
+As built, the check reads every decoded function's calls, closures and
+field accesses through the verifier's check_types. A call of a function
+with neither a body nor body facts is skipped, since its signature is
+unknown and must not be read as empty: every arm64 golden had failed on
+prelude.llrt_* calls before that rule.
+
+`xo bench --ab` of one xo building compiler/xo, with the check on (A) and
+`XO_ASSUME_CHECK=off` (B):
+
+| build | rounds | instructions B / A | wall B / A | verdict |
+|---|---|---|---|---|
+| warm | 10 | 0.995 (0.99 to 1.0) | 0.972 (0.946 to 1.011) | instructions: off is better; wall: within noise |
+| cold | 3 | 0.997 (0.994 to 0.998) | 0.894 | too few rounds; load 9 to 11 |
+
+The check costs about 0.3% to 0.5% of a build's instructions. A warm
+build's `phase assume` is 0 to 1 ms (most functions are cache hits that
+are not decoded), and a cold one's is about 565 ms. It is on by default.
 
 ## Alternatives
 
