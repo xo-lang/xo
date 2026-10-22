@@ -1,8 +1,8 @@
 # 0297: Binary and test-run cache keys by build inputs, not xo's identity
 
-Status: Proposed (2026-10-20, Xo Lang 3; a draft for the lead and the
-owner; the measurement below runs first, on CI with the owner's
-approval)
+Status: Rejected (owner, 2026-10-21): the measurements below put the
+saving at about 1 s on CI and 8 s of 51 on the Mac, not worth a stale-entry
+risk; the pack write found here is the larger item (Xo lang 5)
 
 ## Context
 

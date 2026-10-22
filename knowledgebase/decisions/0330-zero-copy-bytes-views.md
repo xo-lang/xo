@@ -1,6 +1,6 @@
 # 0330: zero-copy Str and Bytes slices (views that share the buffer)
 
-Status: Proposed (Xo Lang Lib 1, 2026-10-21), a design note for the owner.
+Status: Accepted (owner, 2026-10-21; proposed by Xo Lang Lib 1). Owner: Xo Lang Lib 1, with Xo Lang 2 reviewing the runtime and emitter changes; staged as in Decision item 5.
 
 ## Context
 
