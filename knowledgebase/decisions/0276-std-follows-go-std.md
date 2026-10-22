@@ -71,7 +71,12 @@ very stable.
    One or two sentences: what was wrong or new, and what a user sees.
    ```
 
-   A bug fix's entry is part of the fix's commit. "Found by" is kept
+   A bug fix's entry is part of the fix's commit. A commit cannot name its
+   own hash, so the entry in the code commit says `Commit: this commit`;
+   the hash is filled in later, several entries per docs push, never in a
+   docs push of its own (lead, 2026-10-21: one-line follow-up commits
+   doubled the push count; the commit is also found with
+   `git log -S"## DATE: KIND: TITLE" -- std/changes/MODULE.md`). "Found by" is kept
    because it measures how much each source of tests is worth (the
    reason this decision ports Go's tests); the coverage table links each
    module's log, and the root CHANGELOG.md keeps one line per release
