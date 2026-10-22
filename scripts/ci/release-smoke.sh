@@ -16,7 +16,12 @@
 # module; and the released xo building compiler/xo (its own sources,
 # threads and memory under load) and that xo's version (XO_SMOKE_SELF=0
 # skips it: the owner's Intel laptop builds no xo). $XO_CI_OUT/
-# release-smoke.txt has a line per check; exit 1 on any failure.
+# release-smoke.txt has a line per check; exit 1 on any failure. Crash
+# bundles go to $XO_CI_OUT/crashes (XO_CRASH_DIR, and any *.xocrash the
+# temporary directories gained while it ran, as suite.sh keeps them);
+# only Go backend programs write them, so a native xo's crash leaves its
+# exit status and output alone (CI 39800969338: every build exit 139, no
+# output).
 set -uo pipefail
 archive=${1:?usage: release-smoke.sh ARCHIVE SHA256 [COMMIT]}
 want_sum=${2:?usage: release-smoke.sh ARCHIVE SHA256 [COMMIT]}
@@ -49,6 +54,18 @@ exe=""
 [ -f "$rel/bin/xo.exe" ] && exe=.exe
 xo="$rel/bin/xo$exe"
 unset XO_STD XO_CLI XO_RTPACK
+mkdir -p "$o/crashes"
+touch "$o/crashes/.start"
+export XO_CRASH_DIR
+XO_CRASH_DIR=$(np "$o/crashes")
+keep_crashes() {
+  local d
+  for d in "${TEMP:-}" "${TMP:-}" "${TMPDIR:-}" /tmp /c/Windows/SystemTemp "${LOCALAPPDATA:-}/Temp"; do
+    d=$(up "$d")
+    [ -n "$d" ] && [ -d "$d" ] && find "$d" -maxdepth 1 -name '*.xocrash' -newer "$o/crashes/.start" -exec cp {} "$o/crashes/" \; 2>/dev/null
+  done
+  true
+}
 echo "archive $(basename "$a") ($got) on $(uname -s) $(uname -m)" | tee -a "$sum"
 
 # run NAME CMD...: CMD's output in OUT/NAME.txt; its last lines on failure
@@ -104,5 +121,8 @@ if [ "${XO_SMOKE_SELF:-1}" != 0 ]; then
   [ -f "$o/xo2$exe" ] && run self-build-version "$o/xo2$exe" version
 fi
 
+keep_crashes
+n=$(find "$o/crashes" -name '*.xocrash' | wc -l | tr -d ' ')
+echo "crash bundles: $n in $o/crashes" | tee -a "$sum"
 echo "release-smoke: $fails failed" | tee -a "$sum"
 [ "$fails" = 0 ]
