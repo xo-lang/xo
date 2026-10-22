@@ -17,6 +17,7 @@
 // Generated code reaches it through the native prelude's llrt_test_*
 // (compiler/ssa testmode.xo), http.xo directly, and the C runtime
 // through cabi_tw.xo's exports (xo_x_tw_*).
+use native/llrt/layout
 use native/llrt/atexit
 use native/llrt/ctx
 use native/llrt/poll
@@ -115,9 +116,8 @@ const ME_SIZE = 24
 const L_MEM = 32
 
 /// A context's node, and its unwinding flag (an int; ctx.xo).
-const C_NODE = 0
-const C_UNWINDING = 8
-
+const C_NODE = layout.C_NODE
+const C_UNWINDING = layout.C_UNWINDING
 /// A node's canceled word (byte offset), and the bytes of a node
 /// (xo_rt.c xo_node, at most).
 const N_CANCELED = 32

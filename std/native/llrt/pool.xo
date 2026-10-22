@@ -24,6 +24,7 @@
 // from the heap of Xo values (records come from rt.heap_large, the C's
 // malloc), and no fault, so it runs on a worker's own stack with no
 // current context and never unwinds into its C callers.
+use native/llrt/layout
 use native/llrt/linux
 use native/llrt/rtstats
 use native/llrt/sanhook
@@ -100,10 +101,10 @@ const W_DEFER_N = 3408
 /// W_CHUNK, decision 0240), 0 when off.
 const W_TRACE = 3416
 /// ctx.xo C_TRACE: the context's trace word.
-const C_TRACE = 344
+const C_TRACE = layout.C_TRACE
 /// ctx.xo C_WHY, C_PARK_FP (`xo dump`, decision 0251)
-const C_WHY = 336
-const C_PARK_FP = 352
+const C_WHY = layout.C_WHY
+const C_PARK_FP = layout.C_PARK_FP
 /// When this worker last granted readers a RWMutex (mutex.xo
 /// grant_readers; ns): a thief leaves its ring alone for GRACE_NS after
 /// (steal_round), so the granted readers run here, with the lock's cache
@@ -2160,10 +2161,9 @@ const N_MU = 48
 
 /// xo_ctx (byte offsets): its innermost node, the shield count (a C
 /// int), its park.
-const C_NODE = 0
-const C_SHIELD = 12
-const C_PARK = 16
-
+const C_NODE = layout.C_NODE
+const C_SHIELD = layout.C_SHIELD
+const C_PARK = layout.C_PARK
 /// Makes the park at p unsignaled.
 pub fn park_reset(p: Int) {
   klock(p)

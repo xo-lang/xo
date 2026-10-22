@@ -15,6 +15,7 @@
 // xo_rt.c fault_raise and unwind.xo).
 //
 // Nothing here faults.
+use native/llrt/layout
 use native/llrt/num
 use native/llrt/obj
 use native/llrt/process
@@ -31,14 +32,13 @@ const RAISE = 64
 
 /// xo_ctx's fields: `unwinding` and `faulting` (C ints), the message,
 /// location, and detail (char pointers, NULL when unset).
-const C_UNWINDING = 8
-const C_FAULTING = 80
-const C_MSG = 88
+const C_UNWINDING = layout.C_UNWINDING
+const C_FAULTING = layout.C_FAULTING
+const C_FAULT_MSG = layout.C_FAULT_MSG
 const C_LOC = 96
 const C_DETAIL = 104
 /// ctx.xo C_FAULT_TRACE
-const C_TRACE = 320
-
+const C_FAULT_TRACE = layout.C_FAULT_TRACE
 /// rt.static_word: XO_TRACEBACK (the fault report's traceback, decision
 /// 0239): 0 not looked up yet, 1 off, else the address of the function
 /// that prints it, plus 1 for XO_TRACEBACK=locals (decision 0268: each
@@ -85,9 +85,9 @@ fn drop(c: Int, off: Int) {
 pub fn set(c: Int, mp: Int, mn: Int, lp: Int, ln: Int) {
   let m = dup(mp, mn)
   let l = dup(lp, ln)
-  drop(c, C_MSG)
+  drop(c, C_FAULT_MSG)
   drop(c, C_LOC)
-  rt.mem_store(c, C_MSG, m, 8)
+  rt.mem_store(c, C_FAULT_MSG, m, 8)
   rt.mem_store(c, C_LOC, l, 8)
   if traceback_on() {
     trace(c)
@@ -103,7 +103,7 @@ fn traceback_on() -> Bool { rt.mem_load(rt.static_word(TB), 0, 8) > 2 }
 /// fault is raised in (unwind.xo trace: the unwind tables' walk, on
 /// every backend).
 fn trace(c: Int) {
-  let old = rt.mem_load(c, C_TRACE, 8)
+  let old = rt.mem_load(c, C_FAULT_TRACE, 8)
   if old != 0 && rt.mem_load(old, 16, 8) == -1 {
     // a fault while the report's locals are made (below): not again, so
     // it cannot recurse; that fault reports itself
@@ -126,7 +126,7 @@ fn trace(c: Int) {
   rt.mem_store(b, 8, 1 + rw, 8)
   rt.mem_store(b, 16, 0, 8)
   rt.mem_store(b, 24, 0, 8)
-  rt.mem_store(c, C_TRACE, b, 8)
+  rt.mem_store(c, C_FAULT_TRACE, b, 8)
   if rw > 0 {
     // the report's text now, while the frames' values are alive (the
     // unwinding before the report releases them); through the printer's
@@ -151,7 +151,7 @@ pub fn detail(c: Int, p: Int, n: Int) {
 /// Clears the record of the context c.
 pub fn clear(c: Int) {
   rt.mem_store(c, C_FAULTING, 0, 4)
-  drop(c, C_MSG)
+  drop(c, C_FAULT_MSG)
   drop(c, C_LOC)
   drop(c, C_DETAIL)
   drop_trace(c)
@@ -159,12 +159,12 @@ pub fn clear(c: Int) {
 
 /// Frees the context c's trace block and the report text it holds.
 fn drop_trace(c: Int) {
-  let b = rt.mem_load(c, C_TRACE, 8)
+  let b = rt.mem_load(c, C_FAULT_TRACE, 8)
   if b != 0 && rt.mem_load(b, 16, 8) > 0 {
     rt.heap_release(rt.mem_load(b, 16, 8) - 8)
     rt.mem_store(b, 16, 0, 8)
   }
-  drop(c, C_TRACE)
+  drop(c, C_FAULT_TRACE)
 }
 
 /// Catches the fault unwinding the context c (task.isolate): 1 and the
@@ -185,9 +185,9 @@ pub fn take(c: Int) -> Int {
 /// frees with rt.heap_release; 0 when unset) and clears the rest of the
 /// record: a lazy constant's stored fault (decision 0332).
 pub fn move_out(c: Int, mp: Int, lp: Int) {
-  rt.mem_store(mp, 0, rt.mem_load(c, C_MSG, 8), 8)
+  rt.mem_store(mp, 0, rt.mem_load(c, C_FAULT_MSG, 8), 8)
   rt.mem_store(lp, 0, rt.mem_load(c, C_LOC, 8), 8)
-  rt.mem_store(c, C_MSG, 0, 8)
+  rt.mem_store(c, C_FAULT_MSG, 0, 8)
   rt.mem_store(c, C_LOC, 0, 8)
   clear(c)
 }
@@ -202,7 +202,7 @@ fn str_of(p: Int, lenp: Int) -> Int {
 
 /// The message of the fault take caught in the context c (xo_fault_msg),
 /// its length stored at lenp.
-pub fn msg(c: Int, lenp: Int) -> Int { str_of(rt.mem_load(c, C_MSG, 8), lenp) }
+pub fn msg(c: Int, lenp: Int) -> Int { str_of(rt.mem_load(c, C_FAULT_MSG, 8), lenp) }
 
 /// Its location (xo_fault_loc), its length stored at lenp; the record is
 /// cleared after it.
@@ -217,7 +217,7 @@ pub fn loc(c: Int, lenp: Int) -> Int {
 /// LOC" and the detail line, if any, on standard error in one write.
 pub fn exit(c: Int) {
   stdio.flush()
-  let m = rt.mem_load(c, C_MSG, 8)
+  let m = rt.mem_load(c, C_FAULT_MSG, 8)
   let l = rt.mem_load(c, C_LOC, 8)
   let d = rt.mem_load(c, C_DETAIL, 8)
   let mn = if m == 0 { 5 } else { raw.cstr_len(m) }
@@ -238,13 +238,13 @@ pub fn exit(c: Int) {
   // XO_TRACEBACK: the frames the fault was raised in, by function and
   // .xo line (cabi.xo fault_traceback, through its address)
   let f = rt.mem_load(rt.static_word(TB), 0, 8)
-  let t = rt.mem_load(c, C_TRACE, 8)
+  let t = rt.mem_load(c, C_FAULT_TRACE, 8)
   if f > 2 && t != 0 {
     // taken out of the context first: a fault while printing it ends the
     // process with that fault's report, not this one's printing again;
     // and the context no longer unwinds (the process ends after), so the
     // printer's code does not hand this fault on at its first check
-    rt.mem_store(c, C_TRACE, 0, 8)
+    rt.mem_store(c, C_FAULT_TRACE, 0, 8)
     rt.mem_store(c, C_UNWINDING, 0, 4)
     rt.mem_store(c, C_FAULTING, 0, 4)
     let _r = rt.call_c2(f - (f & 1), t, 0)

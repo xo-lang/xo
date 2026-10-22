@@ -50,8 +50,7 @@ const L_SIZE = 48
 const C_PD = 16
 const C_UP = 24
 const C_MEM = 32
-const C_SIZE = 40
-
+const C_SIZE = 40 // own: this module\'s connection record, not the context
 /// The error of a read or write on a connection std/tls took over.
 const UPGRADED_TEXT = "use of a connection upgraded to TLS"
 

@@ -177,8 +177,7 @@ const C_BUF_OFF = 448
 const C_MAXBODY = 456
 const C_FR = 464
 const C_MSG = 488
-const C_SIZE = 616
-
+const C_SIZE = 616 // own: this module\'s connection record, not the context
 /// A stream record's words: its connection's record, its id, the
 /// references, whether it is in the table, the request's state (ST_*);
 /// the request (the fiber's, until dispatched): its parts (an Any of

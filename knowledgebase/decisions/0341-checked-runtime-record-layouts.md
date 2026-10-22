@@ -1,6 +1,7 @@
 # 0341: Runtime record layouts are declared once, and copies are checked
 
-Status: Proposed (owner request, poll item 3, 2026-10-22; Xo Lang 2)
+Status: Accepted (owner, 2026-10-22). Proposed the same day (owner
+request, poll item 3; Xo Lang 2). Step 1 implemented: the context record.
 
 ## Context
 
@@ -31,8 +32,8 @@ tells them from drift:
 1. **One home for shared layouts.** A leaf module,
    `std/native/llrt/layout.xo`, which imports nothing but native/rt,
    declares every record layout that more than one module uses, as
-   `pub const`, grouped by record with the record's size last
-   (`CTX_SIZE`, `POOL_SIZE`, ...). Modules use `layout.C_WENT`; the
+   `pub const`, grouped by record with the record's size last, named by
+   the fields' prefix (`C_SIZE` for the context's `C_*`). Modules use `layout.C_WENT`; the
    record's owner keeps only the layout of fields no other module
    touches. A word index (for the slot atomics) is the byte offset's name
    with `_W` and is declared next to it.
@@ -46,10 +47,13 @@ tells them from drift:
    A repository test, TestRuntimeLayoutCopies (internal/repotest), parses
    llrt's integer constants and fails when a marked copy's value differs
    from its source's, and when a module defines a constant with the name
-   of another module's `pub const` and a different value without a
-   marker (a likely stale copy or a misleading name, like fault.xo's
-   C_TRACE). Distinct records that share a name get distinct names or a
-   `// own:` marker that says the name is local.
+   of a layout.xo constant and a different value without a marker (a
+   likely stale copy or a misleading name, like fault.xo's C_TRACE). A
+   local constant that only shares the name gets a distinct name or a
+   `// own:` marker. The name rule covers layout.xo's names only: against
+   every module's `pub const` it flagged 96 constants on 2026-10-22,
+   nearly all legitimate (per OS values such as EAGAIN, TLS states such
+   as DONE, unrelated R_SIZE and CAP), so its reach grows as records move.
 4. **Sizes are checked where records are made.** A record whose size
    changes adds its new field and the size together in layout.xo; the
    test also fails when a record's fields (by their prefix) reach past
@@ -80,3 +84,20 @@ tells them from drift:
   import cycle workarounds, and the naming collisions.
 - **Status quo**: drift found by crashes; the DLK_SIZE miss above would
   have been a heap overrun in a record allocated at start.
+
+## Step 1 (2026-10-22): the context record
+
+std/native/llrt/layout.xo holds the context record's fields (C_NODE to C_LOCKS) and C_SIZE
+(moved from ctx.xo, which keeps `pub const C_X = layout.C_X` for its
+users). The 14 copies that import cycles had kept (fault.xo, pool.xo,
+twrun.xo) use layout.xo now; fault.xo's C_MSG and C_TRACE, second names
+for C_FAULT_MSG and C_FAULT_TRACE, take the fields' names. h2srv.xo's and
+netconn.xo's C_SIZE (their connection records) are marked `// own:`.
+Code identical: one xo, main's std against the moved std at the same
+path, every 12th golden and compiler/xo (27 programs) by disassembly,
+the same except the line numbers in the std source locations the
+programs embed (ctx.xo:323 became ctx.xo:284); a control with main's std
+on both sides, 27 of 27 identical
+(~/xo-lead/notes/Xo Lang 2/lay-ident3.sh). scripts/identity does not fit
+a std-only change: it builds both sides with one std. TestRuntimeLayoutCopies is in
+internal/repotest.
