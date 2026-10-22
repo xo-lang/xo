@@ -37,7 +37,7 @@ type cycle struct {
 func alive(pid int) bool { return pid > 0 && syscall.Kill(pid, 0) == nil }
 
 // TestRunWatch: xo run --watch starts the program, leaves it running
-// after an edit that does not change the binary (a new test file),
+// after a new test file (not watched, decision 0348),
 // restarts it after one that does (SIGTERM, the new pid), keeps it after
 // a failed build, and stops it when xo gets a stop request.
 func TestRunWatch(t *testing.T) {
@@ -111,10 +111,12 @@ func TestRunWatch(t *testing.T) {
 	first := c.PID
 	pids = append(pids, first)
 
+	// a test file is not watched (decision 0348: a build reads none), so
+	// the next cycle is the edit of main
 	write("main_test.xo", "test \"t\" {\n  expect(1 == 1)\n}\n")
-	c = next("a test file")
-	if c.Build != "unchanged" || c.Restarted || !alive(first) {
-		t.Errorf("a new test file: %+v (want unchanged, %d still running)", c, first)
+	time.Sleep(300 * time.Millisecond)
+	if !alive(first) {
+		t.Errorf("a new test file stopped the program %d", first)
 	}
 
 	write("main.xo", strings.ReplaceAll(watchProg, "VERSION", "v2"))

@@ -2479,6 +2479,12 @@ test "retries after 503" {
 ```
 
 - `test` blocks may live in any file. They are compiled only by `xo test`.
+- `xo build` and `xo run` (with `--watch` too) do not read `_test.xo`
+  files at all (decision 0348): their declarations, errors, and `use`
+  lines do not exist for a build, so a helper declared only there is
+  `XO0601` in production code and a test-only import is never fetched
+  or bound. `xo test`, `xo check`, `xo vet`, `xo fix`, the language
+  server, and the lookup tools read them.
 - Where tests live (a note, not a rule). Both places have the same access
   to the module's private names; they differ in what else sees the edit:
   - Inline `test` blocks keep a test next to the code it checks, so a

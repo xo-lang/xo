@@ -57,8 +57,9 @@ fn watch_dir(os: Os, root: Str) -> Str {
   "${user_cache_dir(os, host_os(os))}/xo/watch/${crypto.sha256(root.bytes()).to_hex()[0..16]}"
 }
 
-/// The watched files under root and their size and modified time.
-fn snapshot(os: Os, root: Str) -> Map[Str, Str] {
+/// The watched files under root and their size and modified time;
+/// without tests, no _test.xo file (a build reads none, decision 0348).
+fn snapshot(os: Os, root: Str, tests: Bool) -> Map[Str, Str] {
   var out: Map[Str, Str] = {}
   // xo:allow XO0903 an empty snapshot looks like a change: one extra rebuild
   let all = os.fs.walk(root).ok() ?? []
@@ -67,7 +68,7 @@ fn snapshot(os: Os, root: Str) -> Map[Str, Str] {
       continue
     }
     let rel = fi.path.trim_prefix(root + "/")
-    if watched_path(rel) {
+    if watched_path(rel) && (tests || !rel.ends_with("_test.xo")) {
       out[fi.path] = "${fi.size}:${fi.modified.unix_millis()}"
     }
   }
@@ -296,7 +297,7 @@ fn watch_run(os: Os, o: Opts, args: List[Str]) -> Int {
   var n = 0
   var running: Running? = None
   var bin_hash = ""
-  var seen = snapshot(os, root)
+  var seen = snapshot(os, root, false)
   // the first build; without it there is nothing to run until a change
   var pending = true
   var changed: List[Str] = []
@@ -363,7 +364,7 @@ fn watch_run(os: Os, o: Opts, args: List[Str]) -> Int {
       }
       after 200ms => {}
     }
-    let now = snapshot(os, root)
+    let now = snapshot(os, root, false)
     var diff = stamp_changes(seen, now)
     if diff.is_empty() {
       continue
@@ -372,7 +373,7 @@ fn watch_run(os: Os, o: Opts, args: List[Str]) -> Int {
     var cur = now
     while true {
       os.clock.sleep(100ms)
-      let again = snapshot(os, root)
+      let again = snapshot(os, root, false)
       if stamp_changes(cur, again).is_empty() {
         break
       }
@@ -583,7 +584,7 @@ fn watch_test(os: Os, o: Opts, args: List[Str]) -> Int {
       }
     }
   })
-  var seen = snapshot(os, root)
+  var seen = snapshot(os, root, true)
   var state = test_state(os, root)
   var n = 0
   var pending = true
@@ -637,14 +638,14 @@ fn watch_test(os: Os, o: Opts, args: List[Str]) -> Int {
     if pending {
       continue
     }
-    let now = snapshot(os, root)
+    let now = snapshot(os, root, true)
     if stamp_changes(seen, now).is_empty() {
       continue
     }
     var cur = now
     while true {
       os.clock.sleep(100ms)
-      let again = snapshot(os, root)
+      let again = snapshot(os, root, true)
       if stamp_changes(cur, again).is_empty() {
         break
       }

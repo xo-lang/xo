@@ -462,6 +462,8 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   // the C paths of ported runtime modules (decisions 0193, 0206)
   c.llrt_c = llrt_c_names(os, o.std)
   c.std_test = std_test_path(o.std_module)
+  // decision 0348: a build reads no _test.xo file
+  c.skip_tests = o.cmd == "build" || o.cmd == "run"
   // the build target's parse list (parse_prefetch, parse_list_store):
   // the files its last check parsed, parsed on tasks before this check,
   // for test builds too (2026-10-21: an `xo test` parsed std serially,

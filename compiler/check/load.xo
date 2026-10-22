@@ -165,6 +165,10 @@ pub struct Checker {
   /// That module's _test.xo file, beside its source, is loaded with it,
   /// and it is the run's root module in place of any directory.
   pub std_test: Str = ""
+  /// `xo build` and `xo run` (decision 0348): `_test.xo` files are
+  /// neither listed nor parsed, so their declarations, errors, and
+  /// imports do not exist for the build.
+  pub skip_tests: Bool = false
   /// $XO_CBIND_DIR: where C bindings are cached (cimport.xo), "" for
   /// `<module root>/.xo/cbind`.
   pub cbind_dir: Str = ""
@@ -528,7 +532,7 @@ fn (var c: Checker) find_module_dirs(dir: Str, top: Bool, var out: List[Str]) {
   c.walk_seen += entries.len()
   var has_xo = false
   for e in entries {
-    if !e.is_dir && e.name.ends_with(".xo") {
+    if !e.is_dir && e.name.ends_with(".xo") && !(c.skip_tests && e.name.ends_with("_test.xo")) {
       has_xo = true
       c.walk_xo += 1
     }
@@ -1048,7 +1052,7 @@ fn (var c: Checker) load_dir(dir0: Str) -> Int {
   let entries = c.list_dir(dir)
   var names: List[Str] = []
   for e in entries {
-    if !e.is_dir && e.name.ends_with(".xo") {
+    if !e.is_dir && e.name.ends_with(".xo") && !(c.skip_tests && e.name.ends_with("_test.xo")) {
       names.push(e.name)
     }
   }
@@ -1056,7 +1060,7 @@ fn (var c: Checker) load_dir(dir0: Str) -> Int {
   if !c.overlay.is_empty() {
     let ad = c.abs(dir).trim_suffix("/")
     for p in c.overlay.keys() {
-      if p.ends_with(".xo") && dir_of_path(p) == ad {
+      if p.ends_with(".xo") && dir_of_path(p) == ad && !(c.skip_tests && p.ends_with("_test.xo")) {
         let n = p.trim_prefix(ad + "/")
         if !names.contains(n) {
           names.push(n)

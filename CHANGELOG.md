@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo build` and `xo run` (and `--watch`) no longer read `_test.xo`
+  files (decision 0348, owner): a type error in a test file no longer
+  fails a build, a helper declared only in a test file is not visible to
+  the program, a `use` only tests have is not fetched or bound, and
+  `xo run --watch` does not rebuild after a test file changes. `xo test`
+  and `xo check` report test files' errors as before.
 - New warning `XO1511`: `SITE.read("index.html")`, `read_text` or
   `contains` on an `embed.Dir` constant (or a literal `.sub` of one) with
   a literal path the constant does not hold. It caught a server that
