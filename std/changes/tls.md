@@ -60,6 +60,20 @@ chunk of ciphertext is hashed right after it is written, while it is in
 cache. Server CPU samples of a 3 x 256 MiB bulk download in Docker
 (linux/arm64, loaded machine): 703 ms to 508 ms.
 
+## 2026-10-22: speedup: ML-KEM's NTT loops in NEON on arm64
+
+- Kind: speedup
+- Commit: (filled in after the push)
+- Found by: decision 0336's alternatives (Xo Lang 4)
+- Go reference: none (Go's crypto/mlkem is scalar Go)
+- Test: crypto_mlkem, tls13_server, tls13_go, tls_client, tls_mlkem_off, tls13_rfc8448, tls12_server, cpu_prims goldens (arm64 and LLVM on the Mac); compiler/macho tests of the new encodings
+
+The X25519MLKEM768 key share's NTT, inverse NTT and NTT domain products
+run four coefficients a NEON register on arm64 (both backends; decision
+0336's addendum). The crypto_mlkem golden on the Mac: native
+793,576,441 to 634,053,655 instructions, LLVM 849,332,618 to
+710,645,372, output identical.
+
 ## 2026-10-22: speedup: ML-KEM's NTT loops in SSE2 on x86-64
 
 - Kind: speedup

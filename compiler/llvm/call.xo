@@ -848,7 +848,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       }
       g.emit("store <16 x i8> ${s}, ptr ${p}, align 1")
     }
-    "rt.mlkem_mul_acc" => {
+    "rt.mlkem_mul_acc" if g.arch() == "amd64" => {
       // amd64 only, as rt.mlkem_ntt
       var t: List[Str] = []
       for l in ssa.mlkem_mul_acc_sse2_lines("@0@", "@1@", "@2@", "@3@") {
@@ -863,6 +863,25 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       }
       clob = clob + ",~{memory},~{dirflag},~{fpsr},~{flags}"
       g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, ptr ${g.raw_ptr(x.args[2])}, ptr ${g.raw_ptr(x.args[3])})")
+    }
+    "rt.mlkem_ntt" | "rt.mlkem_inverse_ntt" | "rt.mlkem_mul_acc" if g.arch() == "arm64" => {
+      // ssa a64mlkem.xo's lines as inline asm, its registers clobbered
+      let name = aux_str(x.aux)
+      let ls = if name == "rt.mlkem_ntt" { ssa.mlkem_ntt_neon_lines("$0", "$1") } else if name == "rt.mlkem_inverse_ntt" { ssa.mlkem_inverse_ntt_neon_lines("$0", "$1") } else { ssa.mlkem_mul_acc_neon_lines("$0", "$1", "$2", "$3") }
+      var ops: List[Str] = []
+      var clob = ""
+      for a in x.args {
+        ops.push("ptr ${g.raw_ptr(a)}")
+        clob = clob + (if clob.is_empty() { "r" } else { ",r" })
+      }
+      for r in ssa.mlkem_neon_gprs() {
+        clob = clob + ",~{x${r}}"
+      }
+      for r in ssa.mlkem_neon_vregs() {
+        clob = clob + ",~{q${r}}"
+      }
+      clob = clob + ",~{memory},~{nzcv}"
+      g.emit("call void asm sideeffect \"${ls.join("\\0A")}\", \"${clob}\"(${ops.join(", ")})")
     }
     "rt.mlkem_ntt" | "rt.mlkem_inverse_ntt" => {
       // amd64 only (ssa cpu_call): ssa.mlkem_ntt_sse2_lines as inline asm

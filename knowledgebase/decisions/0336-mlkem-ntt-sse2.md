@@ -66,3 +66,29 @@ product fits 32 bits (std/native/llrt mlkem.xo's bounds), so pmuludq
   measure after this.
 - NEON on arm64 (four 32 bit lanes): native arm64 now matches LLVM's
   scalar loops; next candidate there.
+
+## Addendum (Xo Lang 4, 2026-10-22): NEON on arm64
+
+The Alternatives' NEON item, done: compiler/ssa cpu_call maps the three
+intrinsics on arm64 too (both backends); wasm keeps the portable bodies.
+
+- compiler/ssa a64mlkem.xo holds the lines both arm64 emitters use: four
+  coefficients a vector register (32 bit lanes; the 8 byte Ints narrowed
+  by uzp1 on load, widened by ushll/ushll2 on store); Barrett as umull,
+  umull2, uzp2 (the high halves), mul and sub; the full reduction adds
+  the sign (sshr 31, and q). The layers len 128 to 4 run four
+  butterflies a step; len 2 pairs each group's halves by zip1/zip2 .2d.
+- Native (compiler/arm64 calls.xo): one instruction with its text,
+  clobbering x9 to x15 and v16 to v31 (caller saved; a callee keeps only
+  v8 to v15's low halves). LLVM (compiler/llvm call.xo): the same lines
+  as inline asm with those clobbers; the amd64 arm is now guarded by
+  the target.
+- compiler/macho encodes the new forms (dup .4s from w, umull/umull2,
+  uzp2, mul/sub .4s, sshr .4s, and .16b, zip1/zip2 .4s), tested in
+  macho_test.xo.
+- Measured (the crypto_mlkem golden, Mac, instructions retired, least
+  of 3, base 185699ae0): native 793,576,441 to 634,053,655 (20% fewer),
+  LLVM -O2 849,332,618 to 710,645,372 (16% fewer), output identical. The
+  arm64 gates now run the vector lines (crypto_mlkem's known answers,
+  the TLS 1.3 goldens with ML-KEM, cpu_prims), so the Consequences' "the
+  arm64 gates run the portable bodies only" holds for wasm only.

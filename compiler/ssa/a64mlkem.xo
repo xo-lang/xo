@@ -1,0 +1,290 @@
+// ML-KEM's NTT on arm64 with NEON: the instruction sequences both arm64
+// lowerings use (compiler/arm64 calls.xo, compiler/llvm call.xo) for
+// rt.mlkem_ntt (std/native/llrt/cpu.xo mlkem_ntt), as x86mlkem.xo's for
+// x86-64.
+
+/// The general registers the NEON sequences write: x9 to x15.
+pub fn mlkem_neon_gprs() -> List[Int] { [9, 10, 11, 12, 13, 14, 15] }
+
+/// The V registers they write: v16 to v31 (caller saved).
+pub fn mlkem_neon_vregs() -> List[Int] { [16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31] }
+
+/// The constants: v31 1290167 (Barrett's floor(2^32 / q)), v30 q, v29
+/// 2q, each in the four 32 bit lanes, through w14 (free until the loops:
+/// x9 to x12 hold the arguments of mlkem_mul_acc_neon_lines).
+fn mlkem_neon_consts() -> List[Str] {
+  [
+    "mov w14, #44983",
+    "movk w14, #19, lsl #16",
+    "dup v31.4s, w14",
+    "mov w14, #3329",
+    "dup v30.4s, w14",
+    "mov w14, #6658",
+    "dup v29.4s, w14",
+  ]
+}
+
+/// Barrett's reduction (cpu.xo mlkem_bred) of the four lanes of x into x:
+/// x - floor(x 1290167 / 2^32) q, through t and u.
+fn mlkem_neon_bred(x: Str, t: Str, u: Str) -> List[Str] {
+  [
+    "umull ${t}.2d, ${x}.2s, v31.2s",
+    "umull2 ${u}.2d, ${x}.4s, v31.4s",
+    "uzp2 ${t}.4s, ${t}.4s, ${u}.4s",
+    "mul ${t}.4s, ${t}.4s, v30.4s",
+    "sub ${x}.4s, ${x}.4s, ${t}.4s",
+  ]
+}
+
+/// bfull (cpu.xo mlkem_bfull) of the four lanes of x: bred, less q, q
+/// added back where that went below 0.
+fn mlkem_neon_bfull(x: Str, t: Str, u: Str) -> List[Str] {
+  mlkem_neon_bred(x, t, u) + ["sub ${x}.4s, ${x}.4s, v30.4s", "sshr ${t}.4s, ${x}.4s, #31", "and ${t}.16b, ${t}.16b, v30.16b", "add ${x}.4s, ${x}.4s, ${t}.4s"]
+}
+
+/// The forward NTT of the 256 coefficients at p (8 byte words) with the
+/// zetas at zp (8 byte words), as cpu.mlkem_ntt_soft computes it: four
+/// coefficients a register in 32 bit lanes (uzp1 of two registers of
+/// words on the way in, ushll and ushll2 on the way out; every value
+/// below 2^28 in the lazy layers). The layers len 128 to 4 (lb, in bytes,
+/// in x11) four butterflies a step (x12 the j's, x14 the j + len's, x13
+/// the group's end, x10 the zetas, x15 the polynomial's end), the
+/// butterfly t = bred(z f[j + len]), f[j] + t, f[j] - t + 2q; then len 2,
+/// two groups a step (zip1 and zip2 on .2d pair each group's halves, the
+/// two zetas as (z0, z0, z1, z1)), with the final reduction below q
+/// (bfull) of every output.
+pub fn mlkem_ntt_neon_lines(p: Str, zp: Str) -> List[Str] {
+  var t = ["mov x9, ${p}", "add x10, ${zp}, #8", "add x15, x9, #2048"] + mlkem_neon_consts() + [
+    "mov x11, #1024",
+    "1:",
+    "mov x12, x9",
+    "2:",
+    "ldr w13, [x10]",
+    "add x10, x10, #8",
+    "dup v28.4s, w13",
+    "add x13, x12, x11",
+    "3:",
+    "add x14, x12, x11",
+    "ldp q16, q17, [x12]",
+    "ldp q18, q19, [x14]",
+    "uzp1 v16.4s, v16.4s, v17.4s",
+    "uzp1 v18.4s, v18.4s, v19.4s",
+    "mul v18.4s, v18.4s, v28.4s",
+  ]
+  t = t + mlkem_neon_bred("v18", "v20", "v21") + [
+    "add v20.4s, v16.4s, v18.4s",
+    "sub v21.4s, v16.4s, v18.4s",
+    "add v21.4s, v21.4s, v29.4s",
+    "ushll v16.2d, v20.2s, #0",
+    "ushll2 v17.2d, v20.4s, #0",
+    "ushll v18.2d, v21.2s, #0",
+    "ushll2 v19.2d, v21.4s, #0",
+    "stp q16, q17, [x12]",
+    "stp q18, q19, [x14]",
+    "add x12, x12, #32",
+    "cmp x12, x13",
+    "b.lo 3b",
+    "add x12, x12, x11",
+    "cmp x12, x15",
+    "b.lo 2b",
+    "lsr x11, x11, #1",
+    "cmp x11, #32",
+    "b.hs 1b",
+    // len 2 with the final reduction
+    "mov x12, x9",
+    "4:",
+    "ldp q16, q17, [x12]",
+    "ldp q18, q19, [x12, #32]",
+    "uzp1 v16.4s, v16.4s, v17.4s",
+    "uzp1 v18.4s, v18.4s, v19.4s",
+    "zip1 v20.2d, v16.2d, v18.2d",
+    "zip2 v21.2d, v16.2d, v18.2d",
+    "ldr q22, [x10]",
+    "add x10, x10, #16",
+    "uzp1 v22.4s, v22.4s, v22.4s",
+    "zip1 v22.4s, v22.4s, v22.4s",
+    "mul v21.4s, v21.4s, v22.4s",
+  ]
+  t = t + mlkem_neon_bred("v21", "v25", "v26") + [
+    "add v23.4s, v20.4s, v21.4s",
+    "sub v24.4s, v20.4s, v21.4s",
+    "add v24.4s, v24.4s, v29.4s",
+  ]
+  t = t + mlkem_neon_bfull("v23", "v25", "v26") + mlkem_neon_bfull("v24", "v25", "v26")
+  t + [
+    "zip1 v16.2d, v23.2d, v24.2d",
+    "zip2 v18.2d, v23.2d, v24.2d",
+    "ushll v19.2d, v16.2s, #0",
+    "ushll2 v20.2d, v16.4s, #0",
+    "stp q19, q20, [x12]",
+    "ushll v19.2d, v18.2s, #0",
+    "ushll2 v20.2d, v18.4s, #0",
+    "stp q19, q20, [x12, #32]",
+    "add x12, x12, #64",
+    "cmp x12, x15",
+    "b.lo 4b",
+  ]
+}
+
+/// The four lanes of x and y widened to 8 byte words and stored at a
+/// (x) and b (y), through the registers t and u.
+fn mlkem_neon_store2(x: Str, a: Str, y: Str, b: Str) -> List[Str] {
+  [
+    "ushll v22.2d, ${x}.2s, #0",
+    "ushll2 v23.2d, ${x}.4s, #0",
+    "stp q22, q23, [${a}]",
+    "ushll v22.2d, ${y}.2s, #0",
+    "ushll2 v23.2d, ${y}.4s, #0",
+    "stp q22, q23, [${b}]",
+  ]
+}
+
+/// The inverse NTT of the 256 coefficients at p with the zetas at zp, as
+/// cpu.mlkem_inverse_ntt_soft computes it, in mlkem_ntt_neon_lines's
+/// layout: len 2 first, two groups a step (zip1 and zip2 on .2d, the
+/// zetas k and k - 1 as (zk, zk, zk-1, zk-1), x10 walking down), then
+/// len 4 to 64 four butterflies a step, f[j] + f[j + len] and bred(z
+/// (f[j + len] - f[j] + b)), b in v28 doubling a layer from q (every
+/// value below 2^31); then len 128 with 3303 = 128^-1 (v26) folded in:
+/// bfull((f[j] + f[j + 128]) 3303) and bfull(z' (f[j + 128] - f[j] +
+/// b)), z' = bfull(zetas[1] 3303) in v27.
+pub fn mlkem_inverse_ntt_neon_lines(p: Str, zp: Str) -> List[Str] {
+  var t = ["mov x9, ${p}", "add x10, ${zp}, #1008", "add x15, x9, #2048"] + mlkem_neon_consts() + [
+    "mov v28.16b, v30.16b",
+    // len 2
+    "mov x12, x9",
+    "1:",
+    "ldp q16, q17, [x12]",
+    "ldp q18, q19, [x12, #32]",
+    "uzp1 v16.4s, v16.4s, v17.4s",
+    "uzp1 v18.4s, v18.4s, v19.4s",
+    "zip1 v20.2d, v16.2d, v18.2d",
+    "zip2 v21.2d, v16.2d, v18.2d",
+    "ldr q24, [x10]",
+    "sub x10, x10, #16",
+    "ext v24.16b, v24.16b, v24.16b, #8",
+    "uzp1 v24.4s, v24.4s, v24.4s",
+    "zip1 v24.4s, v24.4s, v24.4s",
+    "add v16.4s, v20.4s, v21.4s",
+    "sub v18.4s, v21.4s, v20.4s",
+    "add v18.4s, v18.4s, v28.4s",
+    "mul v18.4s, v18.4s, v24.4s",
+  ]
+  t = t + mlkem_neon_bred("v18", "v22", "v23") + [
+    "zip1 v20.2d, v16.2d, v18.2d",
+    "zip2 v21.2d, v16.2d, v18.2d",
+    "add x14, x12, #32",
+  ]
+  t = t + mlkem_neon_store2("v20", "x12", "v21", "x14") + [
+    "add x12, x12, #64",
+    "cmp x12, x15",
+    "b.lo 1b",
+    "add v28.4s, v28.4s, v28.4s",
+    "add x10, x10, #8",
+    // len 4 to 64
+    "mov x11, #32",
+    "2:",
+    "mov x12, x9",
+    "3:",
+    "ldr w13, [x10]",
+    "sub x10, x10, #8",
+    "dup v27.4s, w13",
+    "add x13, x12, x11",
+    "4:",
+    "add x14, x12, x11",
+    "ldp q16, q17, [x12]",
+    "ldp q18, q19, [x14]",
+    "uzp1 v16.4s, v16.4s, v17.4s",
+    "uzp1 v18.4s, v18.4s, v19.4s",
+    "add v20.4s, v16.4s, v18.4s",
+    "sub v21.4s, v18.4s, v16.4s",
+    "add v21.4s, v21.4s, v28.4s",
+    "mul v21.4s, v21.4s, v27.4s",
+  ]
+  t = t + mlkem_neon_bred("v21", "v22", "v23") + mlkem_neon_store2("v20", "x12", "v21", "x14") + [
+    "add x12, x12, #32",
+    "cmp x12, x13",
+    "b.lo 4b",
+    "add x12, x12, x11",
+    "cmp x12, x15",
+    "b.lo 3b",
+    "add v28.4s, v28.4s, v28.4s",
+    "lsl x11, x11, #1",
+    "cmp x11, #512",
+    "b.ls 2b",
+    // len 128
+    "ldr w13, [${zp}, #8]",
+    "mov w14, #3303",
+    "dup v26.4s, w14",
+    "mul w13, w13, w14",
+    "dup v27.4s, w13",
+  ]
+  t = t + mlkem_neon_bfull("v27", "v22", "v23") + [
+    "mov x12, x9",
+    "add x13, x9, #1024",
+    "5:",
+    "add x14, x12, #1024",
+    "ldp q16, q17, [x12]",
+    "ldp q18, q19, [x14]",
+    "uzp1 v16.4s, v16.4s, v17.4s",
+    "uzp1 v18.4s, v18.4s, v19.4s",
+    "add v20.4s, v16.4s, v18.4s",
+    "mul v20.4s, v20.4s, v26.4s",
+    "sub v21.4s, v18.4s, v16.4s",
+    "add v21.4s, v21.4s, v28.4s",
+    "mul v21.4s, v21.4s, v27.4s",
+  ]
+  t = t + mlkem_neon_bfull("v20", "v22", "v23") + mlkem_neon_bfull("v21", "v24", "v25") + mlkem_neon_store2("v20", "x12", "v21", "x14")
+  t + ["add x12, x12, #32", "cmp x12, x13", "b.lo 5b"]
+}
+
+/// h += f g in the NTT domain (the 128 degree one products with the
+/// gammas at gp), as cpu.mlkem_mul_acc_soft computes it: four products a
+/// step, the coefficients narrowed to 32 bit lanes and split into the
+/// pairs' first and second (uzp1, uzp2): even = a0 b0 + bred(a1 b1) gamma
+/// + h0, odd = a0 b1 + a1 b0 + h1, each below 2^26, reduced below q
+/// (bfull) and joined again (zip1, zip2). x9 walks h, x10 f, x11 g, x12
+/// the gammas, x13 ends h.
+pub fn mlkem_mul_acc_neon_lines(h: Str, f: Str, g: Str, gp: Str) -> List[Str] {
+  var t = ["mov x9, ${h}", "mov x10, ${f}", "mov x11, ${g}", "mov x12, ${gp}", "add x13, x9, #2048"] + mlkem_neon_consts() + ["1:"]
+  // f's pairs in v16 (a0) and v17 (a1), g's in v18 (b0) and v19 (b1),
+  // h's in v20 (h0) and v21 (h1)
+  for (src, lo, hi) in [("x10", "v16", "v17"), ("x11", "v18", "v19"), ("x9", "v20", "v21")] {
+    t = t + [
+      "ldp q22, q23, [${src}]",
+      "ldp q24, q25, [${src}, #32]",
+      "uzp1 v22.4s, v22.4s, v23.4s",
+      "uzp1 v24.4s, v24.4s, v25.4s",
+      "uzp1 ${lo}.4s, v22.4s, v24.4s",
+      "uzp2 ${hi}.4s, v22.4s, v24.4s",
+    ]
+  }
+  t = t + [
+    "ldp q22, q23, [x12]",
+    "uzp1 v28.4s, v22.4s, v23.4s",
+    "mul v26.4s, v17.4s, v19.4s",
+  ]
+  t = t + mlkem_neon_bred("v26", "v22", "v23") + [
+    "mul v26.4s, v26.4s, v28.4s",
+    "mul v27.4s, v16.4s, v18.4s",
+    "add v26.4s, v26.4s, v27.4s",
+    "add v26.4s, v26.4s, v20.4s",
+    "mul v27.4s, v16.4s, v19.4s",
+    "mul v24.4s, v17.4s, v18.4s",
+    "add v27.4s, v27.4s, v24.4s",
+    "add v27.4s, v27.4s, v21.4s",
+  ]
+  t = t + mlkem_neon_bfull("v26", "v22", "v23") + mlkem_neon_bfull("v27", "v24", "v25") + [
+    "zip1 v20.4s, v26.4s, v27.4s",
+    "zip2 v21.4s, v26.4s, v27.4s",
+    "add x14, x9, #32",
+  ]
+  t + mlkem_neon_store2("v20", "x9", "v21", "x14") + [
+    "add x9, x9, #64",
+    "add x10, x10, #64",
+    "add x11, x11, #64",
+    "add x12, x12, #32",
+    "cmp x9, x13",
+    "b.lo 1b",
+  ]
+}

@@ -1350,6 +1350,23 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.store(t, [g.real(g.word(x.args[0])), g.real(g.word(x.args[1]))])
       g.set(v, [])
     }
+    "rt.mlkem_ntt" | "rt.mlkem_inverse_ntt" | "rt.mlkem_mul_acc" if !g.x86 => {
+      // NEON, four coefficients a register (ssa a64mlkem.xo): x9 to x15
+      // and v16 to v31 clobbered
+      var cl = ssa.mlkem_neon_gprs()
+      for r in ssa.mlkem_neon_vregs() {
+        cl.push(FP_BASE + r)
+      }
+      let name = aux_str(x.aux)
+      let ls = if name == "rt.mlkem_ntt" { ssa.mlkem_ntt_neon_lines("$u0", "$u1") } else if name == "rt.mlkem_inverse_ntt" { ssa.mlkem_inverse_ntt_neon_lines("$u0", "$u1") } else { ssa.mlkem_mul_acc_neon_lines("$u0", "$u1", "$u2", "$u3") }
+      var us: List[Int] = []
+      for a in x.args {
+        us.push(g.real(g.word(a)))
+      }
+      let _i = g.add(Inst{kind: K_PLAIN, text: ls.join("\n"), us: us, clobbers: cl})
+      g.clobber()
+      g.set(v, [])
+    }
     "rt.mlkem_ntt" | "rt.mlkem_inverse_ntt" => {
       // SSE2, two coefficients a register (ssa.mlkem_ntt_sse2_lines):
       // xmm0 to xmm5 and six general registers clobbered, xmm14 and
