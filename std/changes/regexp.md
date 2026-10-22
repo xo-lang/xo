@@ -3,7 +3,7 @@
 ## 2026-10-22: perf: compiling builds the ASCII bitmaps from the class ranges
 
 - Kind: perf
-- Commit: this commit
+- Commit: c635bbd80
 - Found by: XO_PROF of the compile row (half the time was in the ASCII bitmap and first byte setup)
 - Go reference: none (Go has no ASCII bitmaps; this is Xo's own table, built cheaper)
 - Test: std/native/regexp_test.xo, internal/llvm testdata golden regexp_table, internal/stdtest corpus regexp; timing row against Go: bench/results/regexp-ascii-bitmap-inline-2026-10-22.md
