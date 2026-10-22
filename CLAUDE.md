@@ -52,6 +52,15 @@ implementation the language started with was deleted (decision 0215).
 - Profiling native programs: `XO_PROF=cpu` / `xo run --profile=cpu`
   (decision 0238), see toolchain.md Profiling; use it before Docker
   callgrind for where the time goes. (Owner-requested, 2026-10-16.)
+- Measuring speed (owner, 2026-10-22): `xo bench --ab` (decision 0340)
+  decides whether a change is faster; callgrind and `XO_PROF` explain
+  where the time goes and never prove a speedup alone. Every speedup
+  claim carries an `--ab` result. Scheduler, lock, spin, I/O and
+  concurrency changes use `--ab` only: callgrind runs threads one at a
+  time, so spinning looks free and fiber switches are charged to the
+  wrong function (the spin default and the h2 "allocator slow path").
+  A codegen only change reports callgrind's instruction count and
+  confirms it with one `--ab` run. See agent-tools.md "Measuring".
 
 Read `knowledgebase/README.md` and the relevant folder index before starting
 work in an area. Check `decisions/` before proposing a change to something

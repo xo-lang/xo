@@ -143,6 +143,14 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 ## Measuring
 
+- Which tool answers what (owner, 2026-10-22): `xo bench --ab` decides
+  "is it faster" (real time, interleaved, with an interval; threads,
+  waits and I/O included); callgrind (instruction counts, deterministic)
+  and `XO_PROF` say where the cost is. A speedup claim needs an `--ab`
+  result. For scheduler, lock, spin, I/O and concurrency changes use
+  `--ab` only: callgrind serializes threads, so spin loops look free and
+  fiber switches are misattributed. For a codegen only change report
+  the callgrind count and confirm with one `--ab` run.
 - Two builds or two settings, a verdict with an interval: `xo bench --ab
   A [B] [--env-b=K=V] [--max-load=X] -- ARGS` (decision 0340,
   toolchain.md "A/B measurement"): interleaved rounds, median, spread, a
