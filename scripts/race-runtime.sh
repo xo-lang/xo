@@ -4,7 +4,7 @@
 # the release archive and the seeds; a maintainer step, never run on
 # users' machines.
 #
-#   scripts/race-runtime.sh WORKDIR OUTDIR [linux-arm64|linux-amd64|darwin-amd64]
+#   scripts/race-runtime.sh WORKDIR OUTDIR [linux-arm64|linux-amd64|darwin-amd64|windows-amd64]
 #
 # Downloads the pinned sources into WORKDIR (checked against the pinned
 # SHA-256 sums), builds with clang, cmake, and ninja (cmake and ninja from
@@ -22,7 +22,11 @@
 # (seed-cut.sh's linux-arm64 seed; before release.sh, OUTDIR the checkout).
 # linux-amd64 does the same in Docker linux/amd64 (libclang_rt.tsan-x86_64.a
 # for the amd64 backend's --race), and darwin-amd64 on an arm64 Mac builds
-# the x86_64 dylib (lib/xo/race/darwin-amd64).
+# the x86_64 dylib (lib/xo/race/darwin-amd64). windows-amd64 builds
+# ThreadSanitizer's Go flavor (compiler-rt lib/tsan/go, as Go's
+# race_windows_amd64.syso; decision 0273's windows addendum) with MinGW-w64
+# g++ in Docker linux/arm64: one COFF object, race_windows_amd64.syso, with
+# scripts/race-windows.cpp's additions, which Xo's PE linker links.
 set -euo pipefail
 
 # 23.1.3: 21.1.8's runtime crashed at start on macOS 27 (a null atomic
@@ -38,6 +42,48 @@ out=${2:?OUTDIR}
 mkdir -p "$work" "$out"
 work=$(cd "$work" && pwd)
 out=$(cd "$out" && pwd)
+
+if [ "${3:-}" = windows-amd64 ]; then
+  here=$(cd "$(dirname "$0")" && pwd)
+  if [ "$(uname -s)" = Darwin ]; then
+    cp "$0" "$work/race-runtime.sh"
+    cp "$here/race-windows.cpp" "$work/race-windows.cpp"
+    XO_DOCKER_ROOT=1 nice -n 10 "$here/docker-linux.sh" arm64 "$work" -- bash /work/race-runtime.sh /work/w /work/out windows-amd64
+    o="$work/out/lib/xo/race/windows-amd64/race_windows_amd64.syso"
+    [ -s "$o" ] || { echo "race-runtime.sh: Docker build wrote no $o" >&2; exit 1; }
+    mkdir -p "$out/lib/xo/race"
+    rm -rf "${out:?}/lib/xo/race/windows-amd64"
+    cp -R "$work/out/lib/xo/race/windows-amd64" "$out/lib/xo/race/"
+    cp "$work/out/lib/xo/race/LICENSE.TXT" "$out/lib/xo/race/"
+    echo "$out/lib/xo/race/windows-amd64/race_windows_amd64.syso"
+    exit 0
+  fi
+  command -v x86_64-w64-mingw32-g++ >/dev/null || (apt-get update -qq && apt-get install -y -qq g++-mingw-w64-x86-64 xz-utils curl) >/dev/null 2>&1
+  tarball="$work/dl/llvm-project-$LLVM_VERSION.src.tar.xz"
+  mkdir -p "$work/dl"
+  [ -f "$tarball" ] || curl -fsSL -o "$tarball" "$URL/llvm-project-$LLVM_VERSION.src.tar.xz"
+  echo "$SUM_LLVM_PROJECT  $tarball" | sha256sum -c - >/dev/null || { echo "race-runtime.sh: $tarball: SHA-256 mismatch" >&2; exit 1; }
+  top="llvm-project-$LLVM_VERSION.src"
+  rm -rf "${work:?}/src"
+  mkdir -p "$work/src"
+  tar -C "$work/src" -xf "$tarball" "$top/compiler-rt"
+  g="$work/src/$top/compiler-rt/lib/tsan/go"
+  cp "$here/race-windows.cpp" "$g/xo_race_windows.cpp"
+  # Go's build.bat flags (Windows 7 APIs, SSE3 only), no C runtime
+  # imports (_CRTIMP empty: race-windows.cpp defines _errno and exit), no
+  # test program (it needs a POSIX C library)
+  (cd "$g" && GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-g++ SKIP_TEST=1 DEPENDS_ON_LIBC=1 \
+    ADD_SRCS=xo_race_windows.cpp \
+    EXTRA_CFLAGS="-DWINVER=0x0600 -D_WIN32_WINNT=0x0600 -DGetProcessMemoryInfo=K32GetProcessMemoryInfo -DSANITIZER_WINDOWS=1 -D_CRTIMP= -msse3 -Wno-format -Wno-maybe-uninitialized" \
+    ./buildgo.sh >"$work/build.txt" 2>&1) || true
+  [ -s "$g/race_windows_amd64.syso" ] || { tail -30 "$work/build.txt"; exit 1; }
+  dest="$out/lib/xo/race/windows-amd64"
+  mkdir -p "$dest"
+  cp "$g/race_windows_amd64.syso" "$dest/"
+  cp "$work/src/$top/compiler-rt/LICENSE.TXT" "$out/lib/xo/race/LICENSE.TXT"
+  echo "$dest/race_windows_amd64.syso"
+  exit 0
+fi
 
 if [ "${3:-}" = linux-arm64 ] || [ "${3:-}" = linux-amd64 ]; then
   if [ "$(uname -s)" = Darwin ]; then
