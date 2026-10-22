@@ -334,7 +334,13 @@ fn call_hands_unique(f: Func, idom: List[Int], facts: List[Bool], c: Int, k: Int
 /// between a call and its check; a check another value's pad names is
 /// that value's, c's own having been pruned) is the value c's block ends
 /// in `br landed, fault, ok` on, and b is dominated by ok. A call with no
-/// landing check: b dominated by c's block.
+/// landing check: b dominated by c's block, since nothing after c in this
+/// function runs when c faults: native faults unwind through tables
+/// (decision 0085), and a call with no pad has no landing in its frame
+/// (LLVM a `call`, not an `invoke`; arm64 isel attaches none), so the
+/// fault leaves the function at c. prune_landings removes only a check
+/// whose cleanup does nothing but reach the unwind exit (trivial_pad),
+/// which is that same exit.
 fn past_landing(f: Func, idom: List[Int], c: Int, b: Int) -> Bool {
   let cb = f.values[c].block
   let ins = f.blocks[cb].instrs

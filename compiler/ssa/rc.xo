@@ -2165,6 +2165,8 @@ fn (var r: Rc) handed_unique(f: Func, u: Uniq, l: Leaf, at: Int) -> Bool {
   if l.path.is_empty() {
     k = if r.is_list(x.ty) { 0 } else { -1 }
   } else if !l.path[1..l.path.len()].contains(".") {
+    // a leaf path is ".k..." (leaf_paths); one that does not parse is -1,
+    // which call_hands_unique rejects
     k = Int.parse(l.path[1..l.path.len()]) ?? -1
   }
   call_hands_unique(f, u.idom, r.uq[ci], l.root, k, at)

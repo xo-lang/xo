@@ -1,7 +1,8 @@
 // Decision 0322 follow-up: a caller's update of a `var` out or List
 // result that its callee hands back unique (every Return but a fault
 // exit's) skips the copy-on-write check, but only past the call's landing
-// check. Each case prints an alias that would see a missed copy.
+// check (or, with no check left, only where the call returned). Each case
+// prints an alias that would see a missed copy.
 use std/task
 
 fn show(xs: List[Int]) -> Str {
@@ -82,6 +83,29 @@ fn on_fault(out: Stdio, fail: Bool) -> Int {
   xs.len()
 }
 
+// unique on a normal return only: on the fault path the out is other,
+// which the caller's caller still holds
+fn share_or_fault(var xs: List[Int], other: List[Int], fail: Bool) {
+  if fail {
+    xs = other
+    let ks = [1]
+    xs[1] = ks[xs.len()]
+  }
+  var ys: List[Int] = []
+  for x in xs {
+    ys.push(x + 3)
+  }
+  xs = ys
+}
+
+// nothing to clean up at the call (xs goes back to the caller either
+// way), so its landing check is pruned: the update after it must not
+// run when the call faults, or it would write other in place
+fn update_after(var xs: List[Int], other: List[Int], fail: Bool) {
+  share_or_fault(xs, other, fail)
+  xs[0] = 77
+}
+
 fn main(os: Os) {
   let out = os.stdio
   out.println("proved ${proved()}")
@@ -91,4 +115,18 @@ fn main(os: Os) {
     Err(task.Isolated.Faulted(info)) => out.println("fault: ${info.msg}")
     Err(_) => out.println("fault: failed")
   }
+  let held = fresh(2)
+  var mine = fresh(3)
+  update_after(mine, held, false)
+  out.println("pruned ok ${show(mine)} ${show(held)}")
+  match task.isolate(fn() -> Int ! () {
+    var xs = fresh(3)
+    update_after(xs, held, true)
+    xs.len()
+  }) {
+    Ok(v) => out.println("pruned: none ${v}")
+    Err(task.Isolated.Faulted(info)) => out.println("pruned fault: ${info.msg}")
+    Err(_) => out.println("pruned: failed")
+  }
+  out.println("held ${show(held)}")
 }
