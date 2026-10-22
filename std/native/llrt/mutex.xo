@@ -52,6 +52,42 @@ const TLS_W = 2
 
 const ACQUIRE = 1
 const RELEASE = 2
+const ACQ_REL = 3
+
+/// The readers word (M_READERS) as a word index, and its writer bit: set
+/// while a writer holds m or waits for it, kept so under m's lock by the
+/// writers (sync_writer). Readers take and give back their share with one
+/// atomic add on the word while the bit is clear, without m's lock (Go's
+/// RWMutex readerCount); the bit sends them to the locked path, where
+/// writers are preferred and waiting is a cancellation point as before.
+const R_W = 4
+const R_WRITER = 4611686018427387904
+const R_COUNT = 4611686018427387903
+
+/// The readers holding m.
+fn readers(m: Int) -> Int { rt.slot_load(m, R_W, ACQUIRE) & R_COUNT }
+
+/// Sets m's writer bit to whether a writer holds or waits for m (m's lock
+/// held); the bit's clearing releases the writer's stores (the value) to
+/// the readers that then take m without the lock.
+fn sync_writer(m: Int) {
+  let want = if ld4(m, M_WRITER) != 0 || ld(m, M_WWAIT) > 0 { R_WRITER } else { 0 }
+  var old = rt.slot_load(m, R_W, ACQUIRE)
+  while (old & R_WRITER) != want && !rt.slot_cas(m, R_W, old, (old & R_COUNT) | want, ACQ_REL) {
+    old = rt.slot_load(m, R_W, ACQUIRE)
+  }
+}
+
+/// Gives back one reader's share of m; the last one out while a writer
+/// waits wakes it under m's lock.
+fn reader_out(m: Int) {
+  let old = rt.slot_add(m, R_W, -1, ACQ_REL)
+  if (old & R_WRITER) != 0 && (old & R_COUNT) == 1 {
+    pool.lock_k(m + M_MU, pool.ST_LOCK_MUTEX)
+    wake(m, false)
+    pool.unlock(m + M_MU)
+  }
+}
 
 fn ld(p: Int, off: Int) -> Int { rt.mem_load(p, off, 8) }
 
@@ -103,7 +139,7 @@ fn grant_readers(m: Int) {
     if ld4(e, E_WRITER) == 0 {
       let p = ld(e, E_PARK)
       tasks.wl_del(l, e)
-      st(m, M_READERS, ld(m, M_READERS) + 1)
+      let _r = rt.slot_add(m, R_W, 1, ACQ_REL)
       st(m, M_RWAIT, ld(m, M_RWAIT) - 1)
       // granted is the high half of the entry's word at E_WRITER (a
       // reader's writer half is 0): one release store of the word, which
@@ -141,7 +177,7 @@ fn wake(m: Int, after_writer: Bool) {
     grant_readers(m)
     return
   }
-  if ld(m, M_WWAIT) > 0 && ld(m, M_READERS) == 0 {
+  if ld(m, M_WWAIT) > 0 && readers(m) == 0 {
     var e = ld(m, M_WAITERS + WL_FIRST)
     while e != 0 {
       if ld4(e, E_WRITER) != 0 {
@@ -270,14 +306,21 @@ fn lock_body(m: Int, lp: Int, ln: Int) -> Int {
   let w = "with"
   held_add(c, m, raw.data(w), 4, lp, ln)
   pool.lock_k(m + M_MU, pool.ST_LOCK_MUTEX)
-  if ld4(m, M_WRITER) != 0 || ld(m, M_READERS) > 0 {
+  // the writer bit first, in one atomic step with the readers it sees:
+  // a reader adding itself after this goes to the locked path
+  var old = rt.slot_load(m, R_W, ACQUIRE)
+  while (old & R_WRITER) == 0 && !rt.slot_cas(m, R_W, old, old | R_WRITER, ACQ_REL) {
+    old = rt.slot_load(m, R_W, ACQUIRE)
+  }
+  if ld4(m, M_WRITER) != 0 || readers(m) > 0 {
     st(m, M_WWAIT, ld(m, M_WWAIT) + 1)
-    while ld4(m, M_WRITER) != 0 || ld(m, M_READERS) > 0 {
+    while ld4(m, M_WRITER) != 0 || readers(m) > 0 {
       if tracerec.built() {
         rt.mem_store(c, ctx.C_WHY, tracerec.WHY_MUTEX, 8)
       }
       if !tasks.wl_wait_as(c, m + M_MU, m + M_WAITERS, true, 1) {
         st(m, M_WWAIT, ld(m, M_WWAIT) - 1)
+        sync_writer(m)
         // readers held back by this writer, or the next writer
         wake(m, false)
         pool.unlock(m + M_MU)
@@ -307,6 +350,7 @@ fn unlock_body(m: Int, l: Int) {
   pool.lock_k(m + M_MU, pool.ST_LOCK_MUTEX)
   st(m, M_SLOT, l)
   st4(m, M_WRITER, 0)
+  sync_writer(m)
   wake(m, true)
   pool.unlock(m + M_MU)
   held_del(ctx.cur(), m)
@@ -328,6 +372,16 @@ fn rlock_body(m: Int, lp: Int, ln: Int) -> Int {
   let c = ctx.cur()
   let w = "with_read"
   held_add(c, m, raw.data(w), 9, lp, ln)
+  // no writer holds or waits: the share without m's lock (the add's
+  // acquire pairs with the last writer's clearing of the bit)
+  if (rt.slot_add(m, R_W, 1, ACQ_REL) & R_WRITER) == 0 {
+    let l0 = ld(m, M_SLOT)
+    rc.inc(l0)
+    return l0
+  }
+  // a writer holds or waits: give the add back (the last out wakes it)
+  // and take the locked path
+  reader_out(m)
   pool.lock_k(m + M_MU, pool.ST_LOCK_MUTEX)
   if ld4(m, M_WRITER) != 0 || ld(m, M_WWAIT) > 0 {
     let e = c + ctx.C_WENT
@@ -366,7 +420,7 @@ fn rlock_body(m: Int, lp: Int, ln: Int) -> Int {
       pool.unlock(m + M_MU)
     }
   } else {
-    st(m, M_READERS, ld(m, M_READERS) + 1)
+    let _r = rt.slot_add(m, R_W, 1, ACQ_REL)
   }
   let l = ld(m, M_SLOT)
   rc.inc(l)
@@ -388,13 +442,7 @@ fn runlock_body(m: Int, l: Int) {
     // not reached: the Mutex holds the value
     let _d = rt.call_c2(ld(m, M_DROP), l, 0)
   }
-  pool.lock_k(m + M_MU, pool.ST_LOCK_MUTEX)
-  let r = ld(m, M_READERS) - 1
-  st(m, M_READERS, r)
-  if r == 0 {
-    wake(m, false)
-  }
-  pool.unlock(m + M_MU)
+  reader_out(m)
   held_del(ctx.cur(), m)
 }
 
