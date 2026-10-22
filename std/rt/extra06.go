@@ -39,12 +39,12 @@ func Time_from_unix_millis(_ *Task, ms int64) Time { return Time(MulS(ms, 1e6, "
 // Atomic_max is `a.max(n)`: stores the larger of the value and n and
 // returns the new value.
 func Atomic_max(_ *Task, a *Atomic[int64], n int64) int64 {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if n > a.v {
-		a.v = n
+	for {
+		old := a.n.Load()
+		if n <= old || a.n.CompareAndSwap(old, n) {
+			return max(old, n)
+		}
 	}
-	return a.v
 }
 
 // Range_to_list is `(a..b).to_list()`.

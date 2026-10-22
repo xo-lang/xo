@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 )
 
 // lock is a cancelable lock with explicit waiters (see Chan).
@@ -420,51 +421,63 @@ func Mutex_with_read[T, R, E any](tk *Task, m *Mutex[T], f func(*Task, T) Result
 	return f(tk, Own(m.v))
 }
 
-// Atomic is `Atomic[T]` for Int and Bool (std.md 2.7).
+// Atomic is `Atomic[T]` for Int and Bool (std.md 2.7): one atomic.Int64
+// holding the value (a Bool as 0 or 1). A sync.Mutex and a defer per
+// operation cost about 98 instructions a get against native's 6
+// (bench/results/go-backend-gap-2026-10-22.md).
 type Atomic[T any] struct {
-	mu sync.Mutex
-	v  T
+	n atomic.Int64
+}
+
+// atomEnc is v as the int64 Atomic stores. T is Int or Bool; the size
+// test is a constant in each of the two instantiations.
+func atomEnc[T any](v T) int64 {
+	if unsafe.Sizeof(v) == 8 {
+		return *(*int64)(unsafe.Pointer(&v))
+	}
+	return int64(*(*uint8)(unsafe.Pointer(&v)))
+}
+
+// atomDec is the T that atomEnc encoded as n.
+func atomDec[T any](n int64) T {
+	var v T
+	if unsafe.Sizeof(v) == 8 {
+		*(*int64)(unsafe.Pointer(&v)) = n
+	} else {
+		*(*uint8)(unsafe.Pointer(&v)) = uint8(n)
+	}
+	return v
 }
 
 // Atomic_new is `Atomic[T].new(v)`.
-func Atomic_new[T any](_ *Task, v T) *Atomic[T] { return &Atomic[T]{v: v} }
+func Atomic_new[T any](_ *Task, v T) *Atomic[T] {
+	a := &Atomic[T]{}
+	a.n.Store(atomEnc(v))
+	return a
+}
 
 // M_get is `a.get()`.
 func (a *Atomic[T]) M_get(tk *Task) T {
 	tk.Yield()
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.v
+	return atomDec[T](a.n.Load())
 }
 
 // M_set is `a.set(v)`.
 func (a *Atomic[T]) M_set(tk *Task, v T) {
 	tk.Yield()
-	a.mu.Lock()
-	a.v = v
-	a.mu.Unlock()
+	a.n.Store(atomEnc(v))
 }
 
 // M_swap is `a.swap(v)`.
 func (a *Atomic[T]) M_swap(tk *Task, v T) T {
 	tk.Yield()
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	old := a.v
-	a.v = v
-	return old
+	return atomDec[T](a.n.Swap(atomEnc(v)))
 }
 
 // M_compare_and_swap is `a.compare_and_swap(old, new)`.
 func (a *Atomic[T]) M_compare_and_swap(tk *Task, old, nv T) bool {
 	tk.Yield()
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if !Eq(a.v, old) {
-		return false
-	}
-	a.v = nv
-	return true
+	return a.n.CompareAndSwap(atomEnc(old), atomEnc(nv))
 }
 
 // XoDebug implements Debug.
@@ -475,13 +488,16 @@ func (a *Atomic[T]) XoDebug(b *strings.Builder) {
 }
 
 // Atomic_add is `a.add(n)` on Atomic[Int]: returns the new value; overflow
-// faults.
+// faults (and leaves the value unchanged).
 func Atomic_add(tk *Task, a *Atomic[int64], n int64) int64 {
 	tk.Yield()
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.v = AddS(a.v, n, "")
-	return a.v
+	for {
+		old := a.n.Load()
+		v := AddS(old, n, "")
+		if a.n.CompareAndSwap(old, v) {
+			return v
+		}
+	}
 }
 
 // Task_Semaphore is `task.Semaphore`: copies share permits.

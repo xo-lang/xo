@@ -73,12 +73,51 @@ new binaries above, argument `parse`, 2026-10-22 09:34):
 
 bench/perf/ctx `mutex`: 20,469 M against 1,103 M. Not profiled yet.
 
-## 3. atomic (next)
+## 3. atomic: fixed
 
-bench/perf/atomic: every operation 10x to 17x native per call (get 189 M
-over setup against 12 M). Not profiled yet; std/rt's Atomic is a Go
-`sync/atomic` behind the Xo handle, so the cost is likely the call path
-per operation, not the atomic instruction.
+Cause (the generated Go and its disassembly): std/rt's `Atomic[T]` was a
+`sync.Mutex` and a value, with a `defer` per operation, and every
+operation first called `Task.Yield`, whose cost (82) was over Go's
+inlining budget (80). `Atomic` is now one `atomic.Int64` (a Bool as 0 or
+1; the encoding is an `unsafe.Sizeof` test that folds in each of the two
+instantiations, so `get` is one `LDAR`), `add` and `max` are compare and
+swap loops, and `Yield` inlines its test of the deterministic scheduler
+(the yield itself is a separate function).
+
+Instructions over setup (least of 3; `none` 35.4 M on both sides):
+
+| Workload | before | after | change |
+|---|---|---|---|
+| get | 205.8 M | 81.1 M | -60.6% |
+| set | 132.7 M | 62.8 M | -52.7% |
+| swap | 220.8 M | 108.5 M | -50.9% |
+| cas | 274.5 M | 94.6 M | -65.5% |
+| add | 256.5 M | 160.4 M | -37.4% |
+| max | 190.6 M | 70.3 M | -63.1% |
+| flag | 312.4 M | 132.8 M | -57.5% |
+
+get is now 6.8x native (81 M against 12 M over setup). The checksums are
+the same on both sides for every workload.
+
+`xo bench --ab` (decides; 10 rounds, the binaries above, 2026-10-22
+09:34; `set` again without cpu_ms, see below):
+
+| Workload | wall_ms before | after | after / before | 95% interval | instructions after / before | verdict |
+|---|---|---|---|---|---|---|
+| get | 16.43 | 8.348 | 0.508 | 0.46 to 0.575 | 0.482 | better |
+| set | 12.15 | 7.701 | 0.634 | 0.602 to 0.829 | 0.584 | better |
+| cas | 18.41 | 9.84 | 0.534 | 0.495 to 0.617 | 0.419 | better |
+| add | 17.6 | 16.15 | 0.918 | 0.883 to 0.967 | 0.672 | better |
+| flag | 20.85 | 11.8 | 0.566 | 0.535 to 0.626 | 0.483 | better |
+| contended (4 tasks) | 144.4 | 150.8 | 1.044 | 0.778 to 1.111 | 0.266 | within noise |
+
+contended's wall time is the scheduling of four goroutines on one value,
+not the operation; its instructions fell to 0.27.
+
+`xo bench --ab` faulted on `set` with `cpu_ms` included ("cannot convert
+NaN to Int"): both medians were 0 (rusage's 10 ms resolution) and the
+ratio 0/0 reached the formatter. The cpu_ms rows above it (10 against 0,
+"better") are below the metric's resolution and say nothing.
 
 ## Not measured
 

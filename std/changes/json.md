@@ -3,7 +3,7 @@
 ## 2026-10-22: perf: the Go backend's fast JSON reader reads surrogate pairs
 
 - Kind: perf
-- Commit: (filled in after the push)
+- Commit: 41217c4a0
 - Found by: go pprof of bench/perf/json parse on the Go backend (bench/results/go-backend-gap-2026-10-22.md)
 - Go reference: encoding/json (go1.26.1: a `\u` high surrogate followed by a `\u` low one is one rune; a lone one is U+FFFD)
 - Test: std/rt TestJsonParseFastSurrogatePairs, TestJsonParseFastMatchesDecoder

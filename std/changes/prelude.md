@@ -1,5 +1,22 @@
 # prelude changes
 
+## 2026-10-22: perf: Atomic on the Go backend is lock free
+
+- Kind: perf
+- Commit: (filled in after the push)
+- Found by: the Go backend gap ranking (bench/results/go-backend-gap-2026-10-22.md, item 3)
+- Go reference: sync/atomic.Int64
+- Test: std/rt atomic_test.go (-race); golden atomic_ops and conc_* through TestGoldenGoParity; bench/perf/atomic
+
+The Go backend's `Atomic[Int]` and `Atomic[Bool]` are one `atomic.Int64`
+(a Bool as 0 or 1) instead of a `sync.Mutex` and a `defer` per
+operation; `add` and `max` are compare and swap loops (an overflowing
+`add` still faults and leaves the value). `Task.Yield`, called by every
+Atomic and Mutex operation, inlines its test of the deterministic
+scheduler. bench/perf/atomic, instructions over setup: get -61%, set
+-53%, swap -51%, cas -66%, flag -58%, add -38%, max -63%; `xo bench --ab`
+wall time 0.51 (get) to 0.92 (add) of before.
+
 ## 2026-10-22: feature: Str.clone and Bytes.clone
 
 - Kind: feature

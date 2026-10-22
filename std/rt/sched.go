@@ -589,15 +589,17 @@ func (s *sched) snapsLocked() []waitSnap {
 }
 
 // Yield is a scheduling point of the deterministic scheduler; it does
-// nothing when goroutines run freely.
+// nothing when goroutines run freely. Only the test is inlined (with the
+// yield in the body, the cost was 82 against Go's budget of 80: a call
+// per Atomic and Mutex operation).
 func (tk *Task) Yield() {
-	if tk == nil || tk.th == nil {
-		return
-	}
-	if s := tk.th.sch; s != nil {
-		s.yield(tk.th)
+	if tk != nil && tk.th != nil && tk.th.sch != nil {
+		tk.yieldSched()
 	}
 }
+
+//go:noinline
+func (tk *Task) yieldSched() { tk.th.sch.yield(tk.th) }
 
 // leave and enter bracket a wait on the outside world (network, standard
 // input, a child process) so other threads run under the deterministic
