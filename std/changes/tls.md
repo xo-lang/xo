@@ -1,5 +1,26 @@
 # std/tls changes
 
+## 2026-10-22: speedup: AES-GCM seal and open on the interleaved AES and GHASH kernel
+
+- Kind: speedup
+- Commit: this commit
+- Found by: bench/perf/aesgcm profile after the fused CTR kernel: GHASH 53% of seal (Xo Lang 3; kernel by Xo Lang 1, 0f5353597)
+- Go reference: crypto/cipher's GCM (gcmAesEnc and gcmAesDec interleave the rounds with the products)
+- Test: tls_test (seal_at over chunk boundaries), tls12_client, http_tls, http_tls_keys and crypto_prims goldens (arm64, LLVM with Go parity); TestTLSDiff, TestCryptoXoDiff, TestConstantTimeLLVM
+
+`seal_w`, `seal_into`, `seal_into_aad`, `seal_into_at`, `open_w` and
+`open_from` hand the whole 64 byte chunks of a record to
+`cpu.aes_gcm_enc10/12/14` or `aes_gcm_dec10/12/14`, which run the AES
+rounds of one chunk with the GHASH products of the previous one in the same
+loop (open hashes the ciphertext before it stores the plaintext); the
+tail (under 64 bytes, and the TLS inner plaintext's last byte) and the tag
+are as before. `xo bench --ab` on the Mac (B / A), bench/perf/aesgcm 16 KiB
+records, 10 rounds: seal wall 0.827 (95% 0.809 to 0.841), open wall 0.790
+(0.777 to 0.797); instructions 1.063 and 1.059 (the kernel reloads the round
+keys each round), cpu_ms 0.75. Go's crypto/cipher on the same loop is still
+1.73x (seal) and 1.83x (open) faster in wall.
+bench/results/aesgcm-2026-10-22.md.
+
 ## 2026-10-22: speedup: AES-GCM counter, rounds and xor in one fused kernel
 
 - Kind: speedup

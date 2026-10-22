@@ -887,6 +887,45 @@ fn (g: Gcm) ctr_run(q0: Int, sp: Int, nlo: Int, nhi: Int, ctr: Int, whole: Int) 
   keep(g.c.rk)
 }
 
+/// Whether the interleaved kernel can run: the CPU's AES and carry-less
+/// multiply (the whole chunks of a record, GHASH's products overlapped
+/// with the next chunk's rounds).
+fn (g: Gcm) fused() -> Bool { (g.c.hw & cpu.HW_AES) != 0 && (g.hw & cpu.HW_CLMUL) != 0 }
+
+/// The fused kernel over the first whole bytes (a multiple of 64) of the
+/// key stream from counter 2: the data at sp into q0 (enc: sp is the
+/// plaintext and the ciphertext is hashed; else sp is the ciphertext,
+/// hashed before it is read again), the GHASH state (a1, a0) taken
+/// through the ciphertext; returns it.
+fn (g: Gcm) gcm_bulk(q0: Int, sp: Int, nlo: Int, nhi: Int, whole: Int, a1: Int, a0: Int, enc: Bool) -> (Int, Int) {
+  let iv = [nlo, nhi | (2).swap_bytes() & ~0xFFFFFFFF]
+  var st = [a1, a0]
+  let kp = addr(g.c.rk)
+  let hp = addr(g.hk)
+  let ip = addr(iv)
+  let yp = addr(st)
+  if enc {
+    match g.c.nr {
+      10 => cpu.aes_gcm_enc10(q0, sp, kp, ip, whole, yp, hp)
+      12 => cpu.aes_gcm_enc12(q0, sp, kp, ip, whole, yp, hp)
+      _ => cpu.aes_gcm_enc14(q0, sp, kp, ip, whole, yp, hp)
+    }
+  } else {
+    match g.c.nr {
+      10 => cpu.aes_gcm_dec10(q0, sp, kp, ip, whole, yp, hp)
+      12 => cpu.aes_gcm_dec12(q0, sp, kp, ip, whole, yp, hp)
+      _ => cpu.aes_gcm_dec14(q0, sp, kp, ip, whole, yp, hp)
+    }
+  }
+  let y1 = rt.mem_load(yp, 0, 8)
+  let y0 = rt.mem_load(yp, 8, 8)
+  keep(iv)
+  keep(st)
+  keep(g.c.rk)
+  keep(g.hk)
+  (y1, y0)
+}
+
 /// ctr_o in s0's own room, which reaches d + chunk_room(n): each 64 byte
 /// chunk's counter blocks are written where its output goes, encrypted
 /// there (the CPU's rounds on memory) and xored with src in place, so a
@@ -1090,6 +1129,26 @@ pub fn (g: Gcm) seal(nonce: Bytes, pt: Bytes, aad: Bytes) -> Bytes { g.seal_w(rt
 /// are the one string allocated.
 pub fn (g: Gcm) seal_w(nlo: Int, nhi: Int, pt: Bytes, aad: Bytes) -> Bytes {
   let n = pt.len()
+  let whole = n & -64
+  if whole > 0 && g.fused() {
+    let (a1, a0) = g.ghash_o(0, 0, aad, 0, aad.len())
+    let ct0 = rt.rs_with_cap(chunk_room(n) + 16)
+    let (y1, y0) = g.gcm_bulk(raw.data(ct0), raw.bytes_addr(pt), nlo, nhi, whole, a1, a0, true)
+    keep_bytes(pt)
+    var ct = ct0
+    var b1 = y1
+    var b0 = y0
+    if n > whole {
+      ct = g.ctr_o(ct0, whole, nlo, nhi, 2 + whole / 16, pt, whole, n - whole)
+      let (c1, c0) = g.ghash_o(y1, y0, ct.bytes(), whole, n - whole)
+      b1 = c1
+      b0 = c0
+    } else {
+      ct = rt.rs_set_len(ct0, n)
+    }
+    let (t0, t1) = g.tag_fin(nlo, nhi, b1, b0, aad.len(), n, 0)
+    return rt.rs_push_word(rt.rs_push_word(ct, t0, 8), t1, 8).bytes()
+  }
   let ct = g.ctr_w(rt.rs_with_cap(n + 16), nlo, nhi, 2, pt, n)
   let (t0, t1) = g.tag_w(nlo, nhi, ct.bytes(), n, aad)
   rt.rs_push_word(rt.rs_push_word(ct, t0, 8), t1, 8).bytes()
@@ -1105,6 +1164,10 @@ pub fn (g: Gcm) open(nonce: Bytes, sealed: Bytes, aad: Bytes) -> Bytes? { g.open
 /// lists), no other string.
 pub fn (g: Gcm) seal_into(out: Str, an: Int, nlo: Int, nhi: Int, pt: Bytes) -> Str {
   let n = pt.len()
+  let whole = n & -64
+  if whole > 0 && g.fused() && cap_of(out) >= an + chunk_room(n) + 16 {
+    return g.seal_fused(out, an, nlo, nhi, pt, n, whole, out.bytes(), 0, an)
+  }
   let s = g.ctr_o(out, an, nlo, nhi, 2, pt, 0, n)
   let b = s.bytes()
   // the tag's place is the scratch for its counter block
@@ -1119,10 +1182,37 @@ pub fn (g: Gcm) seal_into(out: Str, an: Int, nlo: Int, nhi: Int, pt: Bytes) -> S
 /// tag after it.
 pub fn (g: Gcm) seal_into_aad(out: Str, d: Int, nlo: Int, nhi: Int, pt: Bytes, aad: Bytes) -> Str {
   let n = pt.len()
+  let whole = n & -64
+  if whole > 0 && g.fused() && cap_of(out) >= d + chunk_room(n) + 16 {
+    return g.seal_fused(out, d, nlo, nhi, pt, n, whole, aad, 0, aad.len())
+  }
   let s = g.ctr_o(out, d, nlo, nhi, 2, pt, 0, n)
   let b = s.bytes()
   let sp = if cap_of(s) >= d + n + 16 { raw.data(s).wrapping_add(d + n) } else { 0 }
   let (t0, t1) = g.tag_sp(nlo, nhi, b, d, n, aad, 0, aad.len(), sp)
+  rt.rs_push_word(rt.rs_push_word(s, t0, 8), t1, 8)
+}
+
+/// seal_into and seal_into_aad on the fused kernel: the ciphertext of
+/// pt's n bytes at offset d of out (room d + chunk_room(n) + 16), the
+/// additional data the an bytes of ad at ao.
+fn (g: Gcm) seal_fused(out: Str, d: Int, nlo: Int, nhi: Int, pt: Bytes, n: Int, whole: Int, ad: Bytes, ao: Int, an: Int) -> Str {
+  let (a1, a0) = g.ghash_o(0, 0, ad, ao, an)
+  let (y1, y0) = g.gcm_bulk(raw.data(out).wrapping_add(d), raw.bytes_addr(pt), nlo, nhi, whole, a1, a0, true)
+  keep_bytes(pt)
+  var s = out
+  var b1 = y1
+  var b0 = y0
+  if n > whole {
+    s = g.ctr_o(out, d + whole, nlo, nhi, 2 + whole / 16, pt, whole, n - whole)
+    let (c1, c0) = g.ghash_o(y1, y0, s.bytes(), d + whole, n - whole)
+    b1 = c1
+    b0 = c0
+  } else {
+    s = rt.rs_set_len(out, d + n)
+  }
+  let sp = raw.data(s).wrapping_add(d + n)
+  let (t0, t1) = g.tag_fin(nlo, nhi, b1, b0, an, n, sp)
   rt.rs_push_word(rt.rs_push_word(s, t0, 8), t1, 8)
 }
 
@@ -1141,7 +1231,29 @@ pub fn (g: Gcm) seal_into_at(out: Str, an: Int, nlo: Int, nhi: Int, pa: Int, n: 
   // ciphertext after ctr_at_a wrote it (one pass, ghash_hw), then the tag
   let hdr = out.bytes()
   let (h1, h0) = g.ghash_o(0, 0, hdr, 0, an)
-  let (s, f1, f0) = g.ctr_at_a(out, an, nlo, nhi, 2, pa, m, last, h1, h0)
+  let whole = n & -64
+  var f1 = h1
+  var f0 = h0
+  var s = out
+  if whole > 0 && g.fused() {
+    // the whole chunks of the data on the fused kernel, then the rest
+    // (and the last byte) as before
+    let (y1, y0) = g.gcm_bulk(raw.data(out).wrapping_add(an), pa, nlo, nhi, whole, h1, h0, true)
+    f1 = y1
+    f0 = y0
+    let (s2, _x1, _x0) = g.ctr_at_a(out, an + whole, nlo, nhi, 2 + whole / 16, pa + whole, m - whole, last, 0, 0)
+    s = s2
+    let (c1, c0) = g.ghash_o(f1, f0, s.bytes(), an + whole, m - whole)
+    f1 = c1
+    f0 = c0
+    let sp = raw.data(s).wrapping_add(an + m)
+    let (t0, t1) = g.tag_fin(nlo, nhi, f1, f0, an, m, sp)
+    return rt.rs_push_word(rt.rs_push_word(s, t0, 8), t1, 8)
+  }
+  let (s3, g1, g0) = g.ctr_at_a(out, an, nlo, nhi, 2, pa, m, last, h1, h0)
+  s = s3
+  f1 = g1
+  f0 = g0
   let b = s.bytes()
   let (c1, c0) = g.ghash_o(f1, f0, b, an, m)
   let sp = raw.data(s).wrapping_add(an + m)
@@ -1160,6 +1272,24 @@ pub fn (g: Gcm) open_w(nlo: Int, nhi: Int, sealed: Bytes, aad: Bytes) -> Bytes? 
   let n = sealed.len() - 16
   if n < 0 {
     return None
+  }
+  let whole = n & -64
+  if whole > 0 && g.fused() {
+    // the fused kernel decrypts and hashes the whole chunks into the
+    // plaintext's string, which is dropped when the tag fails
+    let pt = rt.rs_with_cap(chunk_room(n) + 16)
+    let (a1, a0) = g.ghash_o(0, 0, aad, 0, aad.len())
+    let (y1, y0) = g.gcm_bulk(raw.data(pt), raw.bytes_addr(sealed), nlo, nhi, whole, a1, a0, false)
+    keep_bytes(sealed)
+    let (b1, b0) = g.ghash_o(y1, y0, sealed, whole, n - whole)
+    let (t0, t1) = g.tag_fin(nlo, nhi, b1, b0, aad.len(), n, raw.data(pt).wrapping_add(chunk_room(n)))
+    if ((t0 ^ rt.bytes_word(sealed, n)) | (t1 ^ rt.bytes_word(sealed, n + 8))) != 0 {
+      return None
+    }
+    if n > whole {
+      return g.ctr_o(pt, whole, nlo, nhi, 2 + whole / 16, sealed, whole, n - whole).bytes()
+    }
+    return rt.rs_set_len(pt, n).bytes()
   }
   let (t0, t1) = g.tag_w(nlo, nhi, sealed, n, aad)
   if ((t0 ^ rt.bytes_word(sealed, n)) | (t1 ^ rt.bytes_word(sealed, n + 8))) != 0 {
@@ -1181,6 +1311,21 @@ pub fn (g: Gcm) open_from(nlo: Int, nhi: Int, buf: Bytes, at: Int, an: Int, sn: 
   // the plaintext's string, with room for ctr_at's chunks and, after
   // them, 16 bytes of scratch for the tag's counter block
   let pt = rt.rs_with_cap(chunk_room(n) + 16)
+  let whole = n & -64
+  if whole > 0 && g.fused() {
+    let (a1, a0) = g.ghash_o(0, 0, buf, at, an)
+    let (y1, y0) = g.gcm_bulk(raw.data(pt), raw.bytes_addr(buf).wrapping_add(so), nlo, nhi, whole, a1, a0, false)
+    keep_bytes(buf)
+    let (b1, b0) = g.ghash_o(y1, y0, buf, so + whole, n - whole)
+    let (t0, t1) = g.tag_fin(nlo, nhi, b1, b0, an, n, raw.data(pt).wrapping_add(chunk_room(n)))
+    if ((t0 ^ rt.bytes_word(buf, so + n)) | (t1 ^ rt.bytes_word(buf, so + n + 8))) != 0 {
+      return None
+    }
+    if n > whole {
+      return g.ctr_o(pt, whole, nlo, nhi, 2 + whole / 16, buf, so + whole, n - whole).bytes()
+    }
+    return rt.rs_set_len(pt, n).bytes()
+  }
   let (t0, t1) = g.tag_sp(nlo, nhi, buf, so, n, buf, at, an, raw.data(pt).wrapping_add(chunk_room(n)))
   if ((t0 ^ rt.bytes_word(buf, so + n)) | (t1 ^ rt.bytes_word(buf, so + n + 8))) != 0 {
     return None
