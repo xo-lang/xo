@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Crash bundles go to `<user cache>/xo/crash` (macOS
+  `~/Library/Caches/xo/crash`) instead of the system temporary
+  directory, where they were easy to lose (owner, 2026-10-22). The
+  newest 100 are kept, the path is printed on standard error as before,
+  `XO_CRASH_DIR` still overrides, and `xo clean -cache` leaves them.
+
 - Native runtime: a fault caught by `task.isolate` (an HTTP handler's
   500 included) under `XO_TRACEBACK` no longer leaks its trace: the
   block was released at the wrong address, about 1 KB a fault (200,000

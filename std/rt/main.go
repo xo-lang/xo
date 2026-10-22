@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"runtime/pprof"
 	"runtime/trace"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -327,8 +328,54 @@ var isolatedBundles atomic.Int32
 
 const maxIsolatedBundles = 100
 
+// maxCrashBundles is how many bundles the default directory keeps.
+const maxCrashBundles = 100
+
+// crashDir is the default directory of crash bundles (owner,
+// 2026-10-22): <user cache>/xo/crash, where they are not lost among the
+// system temporary directory's files (0.25.2 wrote them to
+// /var/folders/...), with the oldest past maxCrashBundles removed; the
+// temporary directory when there is no user cache. `xo clean -cache`
+// keeps it (compiler/prune clean.xo).
+func crashDir() string {
+	base, err := os.UserCacheDir()
+	if err != nil || base == "" {
+		return os.TempDir()
+	}
+	dir := filepath.Join(base, "xo", "crash")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return os.TempDir()
+	}
+	pruneCrashBundles(dir, maxCrashBundles-1)
+	return dir
+}
+
+// pruneCrashBundles removes the oldest *.xocrash files of dir past keep
+// (their names start with the program and end with the time, so the
+// modification time orders them).
+func pruneCrashBundles(dir string, keep int) {
+	ms, _ := filepath.Glob(filepath.Join(dir, "*.xocrash"))
+	if len(ms) <= keep {
+		return
+	}
+	type f struct {
+		p string
+		t time.Time
+	}
+	fs := make([]f, 0, len(ms))
+	for _, p := range ms {
+		if st, err := os.Stat(p); err == nil {
+			fs = append(fs, f{p, st.ModTime()})
+		}
+	}
+	sort.Slice(fs, func(i, j int) bool { return fs[i].t.After(fs[j].t) })
+	for _, x := range fs[min(keep, len(fs)):] {
+		os.Remove(x.p)
+	}
+}
+
 // writeCrashBundle writes `<name>-<time>.xocrash` (core 11.2) into
-// $XO_CRASH_DIR, or the system temporary directory: the fault or error
+// $XO_CRASH_DIR, or crashDir (<user cache>/xo/crash): the fault or error
 // with its frames, the task tree, the build id and source hashes, the
 // target, and with a recording (XO_RECORD) or ring buffers (XO_RING=N)
 // the effect trace of the failing request, which `xo replay` replays.
@@ -338,7 +385,7 @@ func writeCrashBundle(c *crashInfo) string {
 	}
 	dir := os.Getenv("XO_CRASH_DIR")
 	if dir == "" {
-		dir = os.TempDir()
+		dir = crashDir()
 	}
 	name := filepath.Base(os.Args[0])
 	now := time.Now().UTC()

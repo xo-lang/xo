@@ -742,7 +742,11 @@ cache is reused; the layout tag keeps older xo binaries out, see
 empty), and (build mode, since 2026-10-08) `xo_buildinfo.go` (package
 main: `rt.SetBuildInfo` with the build id, source hashes, main module
 directory, and options, `build.Info`). Last verified: 2026-10-08. Crash bundles go to
-`$XO_CRASH_DIR` or the system temporary directory. `XO_GO` overrides the go
+`$XO_CRASH_DIR`, else `<user cache>/xo/crash` (macOS
+`~/Library/Caches/xo/crash`, Linux `~/.cache/xo/crash`; owner,
+2026-10-22), which keeps the newest 100 and which `xo clean -cache`
+leaves alone; the path is printed on standard error (`crash bundle:
+PATH`). Last verified: 2026-10-22. `XO_GO` overrides the go
 command (default: `go` on PATH). A program that calls `time.zone` also
 gets `xo_tzdata.go` (package main: `rt.TZEmbed` per constant zone name,
 or `rt.TZFull` over `xo_zoneinfo.zip` embedded with go:embed when a name

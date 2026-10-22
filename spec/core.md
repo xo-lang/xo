@@ -3057,7 +3057,10 @@ LoadErr.Db(msg: "timeout")
 On a fault reaching `main`, an unhandled error from `main`, or an isolated
 fault in a server, the runtime writes `<name>-<time>.xocrash` containing: the
 error or fault with frames, the task tree, build id, source hashes, target, and
-**[P2]** the effect trace for the failing request. Native builds (`--no-gc`)
+**[P2]** the effect trace for the failing request, and prints its path on
+standard error (`crash bundle: PATH`). Bundles go to `$XO_CRASH_DIR`, else
+`<user cache>/xo/crash`, which keeps the newest 100 (owner, 2026-10-22)
+and which `xo clean -cache` does not empty. Native builds (`--no-gc`)
 write none yet (decision 0085).
 
 ### 11.3 Record and replay [P2]
