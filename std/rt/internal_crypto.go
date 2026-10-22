@@ -845,6 +845,26 @@ func cryptoCPU(what string, a, b, c Bytes) (Bytes, bool) {
 		}
 		o, _ := cryptoCPU("aes_last", Bytes(s), b[144:160], b[160:176])
 		return o, true
+	case "aes_ctr":
+		// CTR mode over a (a multiple of 64 bytes) with the round keys b
+		// from the counter block c: GCM's inc32 on its last 4 bytes
+		nr := len(b)/16 - 1
+		ctr := binary.BigEndian.Uint32([]byte(c[12:16]))
+		var out []byte
+		for i := 0; i+16 <= len(a); i += 16 {
+			blk := []byte(c[:12])
+			blk = binary.BigEndian.AppendUint32(blk, ctr+uint32(i/16))
+			s := blk
+			for r := 0; r < nr-1; r++ {
+				o, _ := cryptoCPU("aes_round", Bytes(s), b[16*r:16*r+16], "")
+				s = []byte(o)
+			}
+			o, _ := cryptoCPU("aes_last", Bytes(s), b[16*(nr-1):16*nr], b[16*nr:16*nr+16])
+			for k := 0; k < 16; k++ {
+				out = append(out, a[i+k]^o[k])
+			}
+		}
+		return Bytes(out), true
 	case "aes_enc4":
 		// four blocks a (64 bytes) under the round keys b (176, 208 or
 		// 240 bytes: AES-128, -192, -256)

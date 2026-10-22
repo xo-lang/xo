@@ -1363,6 +1363,22 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.store(t, [g.real(g.word(x.args[0])), g.real(g.word(x.args[1]))])
       g.set(v, [])
     }
+    "rt.aes_ctr10" | "rt.aes_ctr12" | "rt.aes_ctr14" => {
+      // ssa.aes_ctr_lines: $u0 dst, $u1 src, $u2 the round keys, $u3 the
+      // counter block, $u4 the length; x9 to x11 its pointers and count
+      let nr = Int.parse(aux_str(x.aux).trim_prefix("rt.aes_ctr")) ?? 10
+      var cl = [9, 10, 11]
+      for r in ssa.aes_ctr_vregs() {
+        cl.push(FP_BASE + r)
+      }
+      var us: List[Int] = []
+      for k in 0..5 {
+        us.push(g.real(g.word(x.args[k])))
+      }
+      let _i = g.add(Inst{kind: K_PLAIN, text: ssa.aes_ctr_lines(nr, "$u0", "$u1", "$u2", "$u3", "$u4", "x9", "x10", "x11").join("\n"), us: us, clobbers: cl})
+      g.clobber()
+      g.set(v, [])
+    }
     "rt.aes_enc10x4" | "rt.aes_enc12x4" | "rt.aes_enc14x4" => {
       // four blocks in v26 to v29 (caller saved, never v8 to v15), each
       // round key loaded once into v31 and applied to the four in turn:

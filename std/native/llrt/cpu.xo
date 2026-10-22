@@ -244,6 +244,71 @@ fn aes_enc_x4(st: Int, rk: Int, nr: Int) {
   }
 }
 
+/// dst = src xor AES-CTR's key stream for the n bytes (a multiple of 64)
+/// at src, with the nr + 1 round keys at rk and the first counter block
+/// at iv (16 bytes: a 12 byte nonce, then the counter, big endian), each
+/// next block's counter one more mod 2^32 (GCM's inc32); dst and src may
+/// be the same. arm64 and LLVM there run one loop with the round keys,
+/// the counter and the four states in vector registers (ssa a64aesctr.xo);
+/// elsewhere the counter blocks made here and aes_encNNx4 a 64 bytes.
+pub fn aes_ctr10(dst: Int, src: Int, rk: Int, iv: Int, n: Int) { aes_ctr_by4(dst, src, rk, iv, n, 10) }
+
+pub fn aes_ctr12(dst: Int, src: Int, rk: Int, iv: Int, n: Int) { aes_ctr_by4(dst, src, rk, iv, n, 12) }
+
+pub fn aes_ctr14(dst: Int, src: Int, rk: Int, iv: Int, n: Int) { aes_ctr_by4(dst, src, rk, iv, n, 14) }
+
+/// The counter words of block k after the one at iv: the nonce's two
+/// words, the second with the counter (its top 32 bits, big endian) plus
+/// k.
+fn ctr_words(iv: Int, k: Int) -> (Int, Int) {
+  let hi = rt.mem_load(iv, 8, 8)
+  let ctr = (hi.shr_logical(32) & 0xFFFFFFFF).swap_bytes().shr_logical(32).wrapping_add(k) & 0xFFFFFFFF
+  (rt.mem_load(iv, 0, 8), (hi & 0xFFFFFFFF) | ctr.swap_bytes() & ~0xFFFFFFFF)
+}
+
+/// The aes_ctr functions' body where they are not lowered: the counter
+/// blocks in a list, aes_encNNx4, the xor.
+fn aes_ctr_by4(dst: Int, src: Int, rk: Int, iv: Int, n: Int, nr: Int) {
+  var blk = [0, 0, 0, 0, 0, 0, 0, 0]
+  var i = 0
+  while i + 64 <= n {
+    for b in 0..4 {
+      let (lo, hi) = ctr_words(iv, i / 16 + b)
+      blk[2 * b] = lo
+      blk[2 * b + 1] = hi
+    }
+    let a = addr(blk)
+    match nr {
+      10 => aes_enc10x4(a, rk)
+      12 => aes_enc12x4(a, rk)
+      _ => aes_enc14x4(a, rk)
+    }
+    for k in 0..8 {
+      rt.mem_store(dst, i + 8 * k, rt.mem_load(src, i + 8 * k, 8) ^ rt.mem_load(a, 8 * k, 8), 8)
+    }
+    i += 64
+  }
+  keep(blk)
+}
+
+/// The aes_ctr functions' portable body (the cpu_prims golden's
+/// reference): a block at a time through aes_enc_soft.
+pub fn aes_ctr_soft(dst: Int, src: Int, rk: Int, iv: Int, n: Int, nr: Int) {
+  var blk = [0, 0]
+  var i = 0
+  while i + 16 <= n {
+    let (lo, hi) = ctr_words(iv, i / 16)
+    blk[0] = lo
+    blk[1] = hi
+    aes_enc_soft(addr(blk), rk, nr)
+    for k in 0..2 {
+      rt.mem_store(dst, i + 8 * k, rt.mem_load(src, i + 8 * k, 8) ^ rt.mem_load(addr(blk), 8 * k, 8), 8)
+    }
+    i += 16
+  }
+  keep(blk)
+}
+
 /// The four block functions' portable body (the cpu_prims golden's
 /// reference).
 pub fn aes_enc_x4_soft(st: Int, rk: Int, nr: Int) {
@@ -484,6 +549,42 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
       keep(st)
       keep(k)
       Some(r)
+    }
+    "aes_ctr" => {
+      // the data a (a multiple of 64 bytes) under the round keys b (176,
+      // 208 or 240 bytes) from the counter block c (16 bytes)
+      var src: List[Int] = []
+      for i in 0..a.len() / 8 {
+        src.push(rt.bytes_word(a, 8 * i))
+      }
+      var dst: List[Int] = []
+      for _ in 0..a.len() / 8 {
+        dst.push(0)
+      }
+      let nr = b.len() / 16 - 1
+      var k: List[Int] = []
+      for i in 0..b.len() / 8 {
+        k.push(rt.bytes_word(b, 8 * i))
+      }
+      let iv = block(c)
+      if soft {
+        aes_ctr_soft(addr(dst), addr(src), addr(k), addr(iv), a.len(), nr)
+      } else if nr == 10 {
+        aes_ctr10(addr(dst), addr(src), addr(k), addr(iv), a.len())
+      } else if nr == 12 {
+        aes_ctr12(addr(dst), addr(src), addr(k), addr(iv), a.len())
+      } else {
+        aes_ctr14(addr(dst), addr(src), addr(k), addr(iv), a.len())
+      }
+      var o = rt.rs_with_cap(a.len())
+      for i in 0..dst.len() {
+        o = rt.rs_push_word(o, rt.mem_load(addr(dst), 8 * i, 8), 8)
+      }
+      keep(src)
+      keep(dst)
+      keep(k)
+      keep(iv)
+      Some(o.bytes())
     }
     "aes_enc4" => {
       // four 16 byte blocks a (64 bytes) under the round keys b: 176

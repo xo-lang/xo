@@ -204,6 +204,7 @@ fn (var b: Builder) cpu_call(x: Expr, ci: check.CallInfo) -> Int? {
     // four blocks side by side: arm64 (NEON's AESE, AESMC) and LLVM
     // there; amd64 and wasm run the body (four aes_enc calls)
     "aes_enc10x4" | "aes_enc12x4" | "aes_enc14x4" => if b.goarch == "arm64" { b.obj_name(fo) } else { "" }
+    "aes_ctr10" | "aes_ctr12" | "aes_ctr14" => if b.goarch == "arm64" { b.obj_name(fo) } else { "" }
     "sha256_block" => "sha256_block"
     // decision 0329: arm64 only (NEON, and LLVM's vectors there); amd64
     // runs the portable body until it has its own lowering

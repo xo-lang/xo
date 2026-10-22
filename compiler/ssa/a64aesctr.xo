@@ -1,0 +1,59 @@
+// AES-CTR on arm64 (Xo Lang 3's AES-GCM profile, 2026-10-22: the counter
+// blocks stored by Xo code, a call of the four block AES and a scalar xor
+// per 64 bytes, about half of a 16 KiB seal): cpu.aes_ctr10, aes_ctr12
+// and aes_ctr14 as one loop, the round keys in v16 to v30, the counter
+// block in v4 (its 32 bit lanes byte swapped, so the counter adds as a
+// number), the four states in v0 to v3, src's bytes through v6 and v7.
+
+/// The V registers aes_ctr_lines clobbers.
+pub fn aes_ctr_vregs() -> List[Int] { [0, 1, 2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30] }
+
+/// dst = src xor the key stream of nr rounds (10, 12, 14) for the n bytes
+/// (a multiple of 64), the round keys at rk, the first counter block (a
+/// 12 byte nonce, then the counter, big endian) at iv, each next block's
+/// counter one more (mod 2^32, GCM's inc32); p, q and c are scratch
+/// registers for dst, src and the bytes left.
+pub fn aes_ctr_lines(nr: Int, dst: Str, src: Str, rk: Str, iv: Str, n: Str, p: Str, q: Str, c: Str) -> List[Str] {
+  // the increment (0, 0, 0, 1) in v5: lane 3 is the counter's
+  var t = ["mov w${p[1..]}, #1", "dup v5.4s, w${p[1..]}", "movi v6.16b, #0", "ext v5.16b, v6.16b, v5.16b, #4", "ldr q4, [${iv}]", "rev32 v4.16b, v4.16b"]
+  for r in 0..nr + 1 {
+    t.push(if r == 0 { "ldr q16, [${rk}]" } else { "ldr q${16 + r}, [${rk}, #${16 * r}]" })
+  }
+  t = t + ["mov ${p}, ${dst}", "mov ${q}, ${src}", "mov ${c}, ${n}", "cbz ${c}, 2f", "1:"]
+  // the four counter blocks, the next chunk's first in v4
+  t = t + [
+    "mov v0.16b, v4.16b",
+    "add v1.4s, v4.4s, v5.4s",
+    "add v2.4s, v1.4s, v5.4s",
+    "add v3.4s, v2.4s, v5.4s",
+    "add v4.4s, v3.4s, v5.4s",
+  ]
+  for s in 0..4 {
+    t.push("rev32 v${s}.16b, v${s}.16b")
+  }
+  for r in 0..nr - 1 {
+    for s in 0..4 {
+      t.push("aese v${s}.16b, v${16 + r}.16b")
+      t.push("aesmc v${s}.16b, v${s}.16b")
+    }
+  }
+  for s in 0..4 {
+    t.push("aese v${s}.16b, v${16 + nr - 1}.16b")
+    t.push("eor v${s}.16b, v${s}.16b, v${16 + nr}.16b")
+  }
+  t + [
+    "ldp q6, q7, [${q}]",
+    "eor v0.16b, v0.16b, v6.16b",
+    "eor v1.16b, v1.16b, v7.16b",
+    "stp q0, q1, [${p}]",
+    "ldp q6, q7, [${q}, #32]",
+    "eor v2.16b, v2.16b, v6.16b",
+    "eor v3.16b, v3.16b, v7.16b",
+    "stp q2, q3, [${p}, #32]",
+    "add ${p}, ${p}, #64",
+    "add ${q}, ${q}, #64",
+    "subs ${c}, ${c}, #64",
+    "b.hi 1b",
+    "2:",
+  ]
+}

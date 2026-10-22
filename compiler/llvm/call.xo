@@ -796,6 +796,21 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       clob = clob + ",~{memory}"
       g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, ptr ${g.raw_ptr(x.args[2])})")
     }
+    "rt.aes_ctr10" | "rt.aes_ctr12" | "rt.aes_ctr14" => {
+      // arm64 only (ssa call.xo): ssa.aes_ctr_lines as inline asm, x9 to
+      // x11 and its V registers clobbered
+      let nr = Int.parse(aux_str(x.aux).trim_prefix("rt.aes_ctr")) ?? 10
+      var t = [".arch_extension crypto"]
+      for l in ssa.aes_ctr_lines(nr, "$0", "$1", "$2", "$3", "$4", "x9", "x10", "x11") {
+        t.push(l)
+      }
+      var clob = "r,r,r,r,r,~{x9},~{x10},~{x11}"
+      for r in ssa.aes_ctr_vregs() {
+        clob = clob + ",~{q${r}}"
+      }
+      clob = clob + ",~{memory},~{cc}"
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, ptr ${g.raw_ptr(x.args[2])}, ptr ${g.raw_ptr(x.args[3])}, i64 ${g.op(x.args[4])})")
+    }
     "rt.ghash_blocks" => {
       // arm64 only (ssa call.xo): ssa.ghash_loop_lines as inline asm, x9,
       // x10 and its V registers clobbered
