@@ -75,6 +75,11 @@ Update the knowledgebase in the same change as the work, not later:
   `std/changes/MODULE.md` in the same commit, in 0276's format. Std
   follows Go's standard library (port Go's code and tests where they
   fit, with attribution; Xo's own API); Xo Lang Lib 1 owns std.
+  Port Go's fast paths too, not only its general algorithm, and give
+  every port a timing row against Go's package beside its corpus
+  (owner, 2026-10-21: ports that matched Go's output ran 3 to 10x
+  slower; gotchas/std-port-costly-go-idioms.md: Str/Bytes slicing
+  copies, small Lists allocate, no package-level caches).
 - **Gotchas**: when something breaks unexpectedly, behaves surprisingly, or
   costs more than one attempt to get right, add a gotcha with symptom, cause,
   and fix. Mark it `Observed` or `Anticipated`; flip anticipated entries to

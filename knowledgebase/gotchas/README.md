@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [std-port-costly-go-idioms.md](std-port-costly-go-idioms.md): Observed 2026-10-21: native std ports matched Go's output but ran 3 to 10x slower: they skipped Go's fast paths (regexp prefix/backtracker, template parse once, base64 tables) or used idioms free in Go but costly in Xo (Str/Bytes slicing copies, small Lists allocate, no package-level caches); port the fast paths, index bytes, time every port against Go
 - [reuse-is-the-uniqueness-mark.md](reuse-is-the-uniqueness-mark.md): Observed 2026-10-21: removing a `var` parameter's entry reuse (decision 0322's first version) failed the inlined module's verification and built nbody without inlining (+10.7%): the verifier, insert_rc's uniq and the arm64 field and in-place passes read a reuse result as the uniqueness mark; mark it proved and lower it to its argument instead
 
 - [konst-text-not-value.md](konst-text-not-value.md): Observed 2026-10-21: hoist_consts merged constants by template text; Float constants (`fmov $d0, $u0`) all share it, so one loop read one Float for another (native_json 5e+08, list_field_licm 15.0); key on text, operands, and class
