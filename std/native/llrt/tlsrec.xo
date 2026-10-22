@@ -169,8 +169,23 @@ pub fn seal(var k: Keys, ct: Int, data: Bytes, version: Int) -> Bytes {
 /// copy of the data seal takes (tlssrv.write's response, 2026-10-20);
 /// seal itself when the keys are off or the data needs more records.
 pub fn seal_at(var k: Keys, ct: Int, p: Int, n: Int, version: Int) -> Bytes {
-  if !k.on || n > MAX_PLAIN {
+  if !k.on {
     return seal(k, ct, raw.str_at(p, n).bytes(), version)
+  }
+  if n > MAX_PLAIN {
+    // more than one record: each of MAX_PLAIN bytes sealed in place from
+    // p (before 2026-10-21 the data was copied whole, then sliced and
+    // copied again for every record: three of the ten copies of a 64 KiB
+    // write's profile in bench/results/tls-h2-vs-go-2026-10-21.md)
+    var out = rt.rs_with_cap(n + (n / MAX_PLAIN + 1) * 40)
+    var off = 0
+    while off < n {
+      let m = if n - off > MAX_PLAIN { MAX_PLAIN } else { n - off }
+      let rec = seal_at(k, ct, p + off, m, version)
+      out = rt.rs_append_bytes(out, rec, 0, rec.len(), 0)
+      off += m
+    }
+    return out.bytes()
   }
   var inner = rt.rs_set_len(rt.rs_with_cap(n + 1), n)
   rt.mem_copy(raw.data(inner), p, n)
