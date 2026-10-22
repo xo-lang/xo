@@ -67,6 +67,24 @@ Make slicing O(1) for `Str` and `Bytes` as the spec already says.
   or 16 with the offset packed into the length word for views under 4 GB):
   structs holding strings grow; benchmark before choosing.
 
+## Measurements (2026-10-21, native arm64, instructions per slice)
+
+A loop of 1,000,000 `b[i..i+n]` on an 8 KB Bytes (`len()` of the result),
+setup removed: 16 bytes 166 instructions, 256 bytes 205, 4096 bytes 962; a
+byte index costs about 8 instructions. So a small slice costs about 160
+instructions of which the copy is a few: the allocation (and the free) is the
+cost. Consequence for the layout:
+
+- **One word view object** (a header [count, len, cap, data_ptr, parent],
+  no byte copy): saves the copy only, so a 16 byte token slice drops from 166
+  to about 140 (still one allocation) and a 4 KB slice from 962 to about 140.
+  It helps large slices (streaming parsers, websocket frames) and not tokens.
+- **Three word value** (pointer, offset, length in registers; no allocation
+  for a slice): a token slice costs a few instructions. It is the only layout
+  that makes time layouts, mime parameters, and header parsing cheap, at the
+  price of changing value passing in the SSA, three emitters, wasm, and the
+  llrt ABI.
+
 ## Alternatives
 
 - **Keep copying and rewrite hot ports with byte indexing** (what was done
