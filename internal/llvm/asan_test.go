@@ -57,7 +57,7 @@ func TestGoldenASan(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, threads := range []string{"1", ""} {
-				cmd := exec.Command(bin)
+				cmd := testtmp.Guard(exec.Command(bin))
 				testtmp.Lifeline(t, cmd, 30*time.Minute) // no orphan if the test is killed
 				cmd.Dir = dir
 				// the golden's env.txt too (http_conn_fault's probe)

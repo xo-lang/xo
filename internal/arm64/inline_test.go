@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -27,7 +28,7 @@ func TestInlineFallbackLoud(t *testing.T) {
 	brk := ""
 	build := func(strict string) (string, error) {
 		args := append(append([]string{}, cli[1:]...), "build", "--backend=arm64", "-o", filepath.Join(dir, "prog"), ".")
-		cmd := exec.Command(cli[0], args...)
+		cmd := testtmp.Guard(exec.Command(cli[0], args...))
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(), "XO_INLINE_BREAK="+brk, "XO_INLINE_STRICT="+strict, "XO_BACKEND_CACHE_DIR="+filepath.Join(dir, "cache"))
 		out, err := cmd.CombinedOutput()

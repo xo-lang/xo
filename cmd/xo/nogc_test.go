@@ -521,7 +521,7 @@ func TestNoAllocDiagnosticSpan(t *testing.T) {
 	if err != nil {
 		t.Skip(err)
 	}
-	cmd := exec.Command(cli[0], append(cli[1:], "build", "--backend=arm64", "--std="+std, "-o", filepath.Join(dir, "h"), dir)...)
+	cmd := testtmp.Guard(exec.Command(cli[0], append(cli[1:], "build", "--backend=arm64", "--std="+std, "-o", filepath.Join(dir, "h"), dir)...))
 	cmd.Env = append(os.Environ(), "XO_BIN_CACHE=off", "XO_BACKEND_CACHE=off")
 	out, _ := cmd.CombinedOutput()
 	want := fmt.Sprintf("std/native/llrt/rc.xo:%d:3: error XO1201", at+2)
@@ -562,7 +562,7 @@ fn main(os: Os) {
 `,
 	})
 	for _, backend := range []string{"go", "arm64", "llvm"} {
-		cmd := exec.Command(cli[0], append(cli[1:], "run", "--backend="+backend, ".")...)
+		cmd := testtmp.Guard(exec.Command(cli[0], append(cli[1:], "run", "--backend="+backend, ".")...))
 		cmd.Dir = dir
 		out, err := cmd.CombinedOutput()
 		if err != nil || string(out) != "int 5\n[2, 3, 1]\n" {

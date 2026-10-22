@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -113,7 +114,7 @@ func TestStdModules(t *testing.T) {
 				t.Parallel()
 				sem <- struct{}{}
 				defer func() { <-sem }()
-				cmd := exec.Command(xo, "test", "--std-module="+m, "--backend="+b)
+				cmd := testtmp.Guard(exec.Command(xo, "test", "--std-module="+m, "--backend="+b))
 				cmd.Dir = root
 				cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+root)
 				out, err := cmd.CombinedOutput()
@@ -156,7 +157,7 @@ func TestStdCorpora(t *testing.T) {
 				t.Parallel()
 				sem <- struct{}{}
 				defer func() { <-sem }()
-				cmd := exec.Command(xo, "test", "--backend="+b, abs)
+				cmd := testtmp.Guard(exec.Command(xo, "test", "--backend="+b, abs))
 				cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"))
 				out, err := cmd.CombinedOutput()
 				if err != nil {

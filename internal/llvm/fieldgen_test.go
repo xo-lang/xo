@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -38,7 +39,7 @@ func TestFieldGeneratorsInSync(t *testing.T) {
 		t.Run(c.gen, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
-			cmd := exec.CommandContext(ctx, xo, "run", filepath.Join("scripts", "gen", c.gen))
+			cmd := testtmp.Guard(exec.CommandContext(ctx, xo, "run", filepath.Join("scripts", "gen", c.gen)))
 			cmd.Dir = root
 			var stderr strings.Builder
 			cmd.Stderr = &stderr

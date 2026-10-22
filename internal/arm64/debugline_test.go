@@ -52,7 +52,7 @@ func TestDebugLineDarwin(t *testing.T) {
 		bin := filepath.Join(out, name)
 		args := append([]string{"build", "--backend=arm64"}, extra...)
 		args = append(args, "-o", bin, ".")
-		cmd := exec.Command(xo, args...)
+		cmd := testtmp.Guard(exec.Command(xo, args...))
 		cmd.Dir = src
 		cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off")
 		if b, err := cmd.CombinedOutput(); err != nil {
@@ -131,7 +131,7 @@ func TestDebugLineDarwinCC(t *testing.T) {
 		bin := filepath.Join(out, name)
 		args = append([]string{"build"}, args...)
 		args = append(args, "-o", bin, ".")
-		cmd := exec.Command(xo, args...)
+		cmd := testtmp.Guard(exec.Command(xo, args...))
 		cmd.Dir = src
 		cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE="+cache)
 		if b, err := cmd.CombinedOutput(); err != nil {
@@ -218,7 +218,7 @@ func TestDebugLineInlined(t *testing.T) {
 		t.Fatal(err)
 	}
 	bin := filepath.Join(out, "p")
-	cmd := exec.Command(xo, "build", "--backend=arm64", "--ld=macho", "-o", bin, ".")
+	cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "--ld=macho", "-o", bin, "."))
 	cmd.Dir = src
 	cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off")
 	if b, err := cmd.CombinedOutput(); err != nil {
@@ -267,7 +267,7 @@ func lldb(t *testing.T, run bool, args ...string) ([]byte, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "lldb", args...)
+	cmd := testtmp.Guard(exec.CommandContext(ctx, "lldb", args...))
 	cmd.WaitDelay = 5 * time.Second
 	b, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {

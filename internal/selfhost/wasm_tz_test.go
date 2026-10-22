@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -31,7 +32,7 @@ func TestWasmZoneData(t *testing.T) {
 	root := repoRoot(t)
 	dir := filepath.Join(root, "internal", "llvm", "testdata", "golden", "tz_table")
 	out := filepath.Join(t.TempDir(), "tz_table.wasm")
-	cmd := exec.Command(xo, "build", "--backend=wasm", "-o", out, ".")
+	cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=wasm", "-o", out, "."))
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "XO_BIN_CACHE=off")
 	if b, err := cmd.CombinedOutput(); err != nil {

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -46,7 +47,7 @@ func testTraceback(t *testing.T, be string) {
 	}
 	bin := res.Binaries[xotool.Host()]
 	run := func(env ...string) string {
-		cmd := exec.Command(bin)
+		cmd := testtmp.Guard(exec.Command(bin))
 		cmd.Env = append(os.Environ(), env...)
 		var errb strings.Builder
 		cmd.Stderr = &errb
@@ -91,7 +92,7 @@ func TestTracebackInlined(t *testing.T) {
 			if err != nil || res.Failed {
 				t.Fatalf("build: %v %v", err, res)
 			}
-			cmd := exec.Command(res.Binaries[xotool.Host()])
+			cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()]))
 			cmd.Env = append(os.Environ(), "XO_TRACEBACK=1")
 			var errb strings.Builder
 			cmd.Stderr = &errb

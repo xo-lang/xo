@@ -64,7 +64,7 @@ func TestDebugVars(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			bin := filepath.Join(out, c.name)
 			args := append(append([]string{"build"}, c.args...), "-o", bin, ".")
-			cmd := exec.Command(xo, args...)
+			cmd := testtmp.Guard(exec.Command(xo, args...))
 			cmd.Dir = src
 			cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off")
 			if b, err := cmd.CombinedOutput(); err != nil {
@@ -212,14 +212,14 @@ func TestDwarfReader(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			bin := filepath.Join(out, c.name)
 			args := append(append([]string{"build"}, c.args...), "-o", bin, ".")
-			cmd := exec.Command(xo, args...)
+			cmd := testtmp.Guard(exec.Command(xo, args...))
 			cmd.Dir = src
 			cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off")
 			if b, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("xo %v: %v\n%s", args, err, b)
 			}
 			dw := filepath.Join(bin+".dSYM", "Contents", "Resources", "DWARF", c.name)
-			got, err := exec.Command(xo, "dev", "dwarf", "--func=sum", dw).CombinedOutput()
+			got, err := testtmp.Guard(exec.Command(xo, "dev", "dwarf", "--func=sum", dw)).CombinedOutput()
 			if err != nil {
 				t.Fatalf("xo dev dwarf: %v\n%s", err, got)
 			}
@@ -229,7 +229,7 @@ func TestDwarfReader(t *testing.T) {
 				}
 			}
 			// the runtime's static words, the debugger's way to its records
-			all, err := exec.Command(xo, "dev", "dwarf", dw).CombinedOutput()
+			all, err := testtmp.Guard(exec.Command(xo, "dev", "dwarf", dw)).CombinedOutput()
 			if err != nil {
 				t.Fatalf("xo dev dwarf: %v\n%s", err, all)
 			}
@@ -238,7 +238,7 @@ func TestDwarfReader(t *testing.T) {
 			}
 			// a breakpoint at main.xo:11 (in sum's loop; inlined into main
 			// by LLVM) at lldb's address, and the line at that address
-			brk, err := exec.Command(xo, "dev", "dwarf", "--break=main.xo:11", dw).CombinedOutput()
+			brk, err := testtmp.Guard(exec.Command(xo, "dev", "dwarf", "--break=main.xo:11", dw)).CombinedOutput()
 			if err != nil {
 				t.Fatalf("xo dev dwarf --break: %v\n%s", err, brk)
 			}
@@ -253,7 +253,7 @@ func TestDwarfReader(t *testing.T) {
 			if got := strings.TrimSpace(string(brk)); got != "0x"+string(m[1]) {
 				t.Errorf("xo dev dwarf --break=main.xo:11: %s, lldb: 0x%s", got, m[1])
 			}
-			at, err := exec.Command(xo, "dev", "dwarf", "--pc=0x"+string(m[1]), dw).CombinedOutput()
+			at, err := testtmp.Guard(exec.Command(xo, "dev", "dwarf", "--pc=0x"+string(m[1]), dw)).CombinedOutput()
 			if err != nil || !strings.HasSuffix(strings.TrimSpace(string(at)), "/main.xo:11") {
 				t.Errorf("xo dev dwarf --pc=0x%s: %v %s, want .../main.xo:11", m[1], err, at)
 			}
@@ -262,7 +262,7 @@ func TestDwarfReader(t *testing.T) {
 			}
 			// a breakpoint on sum: past its prologue, at its first statement
 			// (line 6, the prologue_end row), for lldb and xo debug alike
-			fb, err := exec.Command(xo, "dev", "dwarf", "--break=sum", dw).CombinedOutput()
+			fb, err := testtmp.Guard(exec.Command(xo, "dev", "dwarf", "--break=sum", dw)).CombinedOutput()
 			if err != nil {
 				t.Fatalf("xo dev dwarf --break=sum: %v\n%s", err, fb)
 			}
@@ -392,7 +392,7 @@ func TestUnwind(t *testing.T) {
 			t.Run(p.name+"/"+c.name, func(t *testing.T) {
 				bin := filepath.Join(out, p.name+"-"+c.name)
 				args := append(append([]string{"build"}, c.args...), "-o", bin, ".")
-				cmd := exec.Command(xo, args...)
+				cmd := testtmp.Guard(exec.Command(xo, args...))
 				cmd.Dir = src
 				cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off")
 				if b, err := cmd.CombinedOutput(); err != nil {
@@ -424,7 +424,7 @@ func TestUnwind(t *testing.T) {
 					t.Fatalf("lldb printed no frames of %s:\n%s", img, lb)
 				}
 				dw := filepath.Join(bin+".dSYM", "Contents", "Resources", "DWARF", filepath.Base(bin))
-				got, err := exec.Command(xo, "dev", "unwind", "--snap="+snap, "--dwarf="+dw, "--locals", bin).CombinedOutput()
+				got, err := testtmp.Guard(exec.Command(xo, "dev", "unwind", "--snap="+snap, "--dwarf="+dw, "--locals", bin)).CombinedOutput()
 				if err != nil {
 					t.Fatalf("xo dev unwind: %v\n%s", err, got)
 				}
@@ -466,14 +466,14 @@ func TestUnwind(t *testing.T) {
 				if frame < 0 {
 					t.Fatalf("no frame of %s in %v", p.fn, have)
 				}
-				sess, _ := exec.Command(xo, "dev", "debug", "--snap="+snap, "--dwarf="+dw, "-c", fmt.Sprintf("frame %d", frame), "-c", "print "+p.print, "-c", "b "+p.stop, "-c", "continue", bin).CombinedOutput()
+				sess, _ := testtmp.Guard(exec.Command(xo, "dev", "debug", "--snap="+snap, "--dwarf="+dw, "-c", fmt.Sprintf("frame %d", frame), "-c", "print "+p.print, "-c", "b "+p.stop, "-c", "continue", bin)).CombinedOutput()
 				for _, w := range []string{"(xo) print " + p.print + "\n" + p.want + "\n", "breakpoint 1: 0x", "error: this session is a recorded thread"} {
 					if !bytes.Contains(sess, []byte(w)) {
 						t.Errorf("xo dev debug lacks %q:\n%s", w, sess)
 					}
 				}
 				// the same with --json (spec 11.5): one object a line, v 1
-				js, _ := exec.Command(xo, "dev", "debug", "--json", "--snap="+snap, "--dwarf="+dw, "-c", fmt.Sprintf("frame %d", frame), "-c", "print "+p.print, "-c", "bt", bin).CombinedOutput()
+				js, _ := testtmp.Guard(exec.Command(xo, "dev", "debug", "--json", "--snap="+snap, "--dwarf="+dw, "-c", fmt.Sprintf("frame %d", frame), "-c", "print "+p.print, "-c", "bt", bin)).CombinedOutput()
 				var objs []map[string]any
 				for _, l := range strings.Split(strings.TrimSpace(string(js)), "\n") {
 					var o map[string]any
@@ -497,7 +497,7 @@ func TestUnwind(t *testing.T) {
 				}
 				// the line protocol on standard input: an empty line repeats
 				// the last command; quit ends it
-				in := exec.Command(xo, "dev", "debug", "--json", "--snap="+snap, "--dwarf="+dw, bin)
+				in := testtmp.Guard(exec.Command(xo, "dev", "debug", "--json", "--snap="+snap, "--dwarf="+dw, bin))
 				in.Stdin = strings.NewReader(fmt.Sprintf("frame %d\nprint %s\n\nquit\nbt\n", frame, p.print))
 				lp, err := in.CombinedOutput()
 				if err != nil {
@@ -589,7 +589,7 @@ func TestDebugTypes(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			bin := filepath.Join(out, c.name)
 			args := append(append([]string{"build"}, c.args...), "-o", bin, ".")
-			cmd := exec.Command(xo, args...)
+			cmd := testtmp.Guard(exec.Command(xo, args...))
 			cmd.Dir = src
 			cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off")
 			if b, err := cmd.CombinedOutput(); err != nil {
@@ -648,7 +648,7 @@ func TestDebugLoclistsBudget(t *testing.T) {
 	}
 	src := filepath.Join(root, "internal", "llvm", "testdata", "golden", "http_server")
 	bin := filepath.Join(t.TempDir(), "hs")
-	cmd := exec.Command(xo, "build", "--backend=arm64", "-o", bin, ".")
+	cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", bin, "."))
 	cmd.Dir = src
 	cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off")
 	if b, err := cmd.CombinedOutput(); err != nil {
@@ -709,7 +709,7 @@ func TestNoLeafWithPads(t *testing.T) {
 		dir := dir
 		t.Run(filepath.Base(dir), func(t *testing.T) {
 			t.Parallel()
-			cmd := exec.Command(xo, "asm", "--backend=arm64", ".")
+			cmd := testtmp.Guard(exec.Command(xo, "asm", "--backend=arm64", "."))
 			cmd.Dir = dir
 			cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+dir)
 			out, err := cmd.Output()

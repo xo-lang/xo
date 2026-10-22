@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/xo-lang/xo/internal/testtmp"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -84,7 +85,7 @@ func TestSelfhostWasm(t *testing.T) {
 		r, _ := filepath.Rel(root, d)
 		rel = append(rel, r)
 	}
-	cmd := exec.Command(bin, append([]string{"--std=std", "--wd=" + root, "--each", "--out=" + out}, rel...)...)
+	cmd := testtmp.Guard(exec.Command(bin, append([]string{"--std=std", "--wd=" + root, "--each", "--out=" + out}, rel...)...))
 	cmd.Dir = root
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -217,7 +218,7 @@ func TestSelfhostWasmFsWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := t.TempDir()
-	cmd := exec.Command(bin, "--std="+filepath.Join(root, "std"), "--wd="+src, "--out="+out, ".")
+	cmd := testtmp.Guard(exec.Command(bin, "--std="+filepath.Join(root, "std"), "--wd="+src, "--out="+out, "."))
 	cmd.Dir = src
 	res, err := cmd.CombinedOutput()
 	if err != nil || !strings.HasPrefix(string(res), "== ok ") {

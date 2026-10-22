@@ -22,6 +22,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -395,7 +396,7 @@ func TestTLS13ReplayDiff(t *testing.T) {
 		if res.Failed {
 			t.Fatalf("build (%s) failed: %v", be, res.Output)
 		}
-		cmd := exec.Command(res.Binaries[xotool.Host()])
+		cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()]))
 		cmd.Stdin = strings.NewReader(in.String())
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr

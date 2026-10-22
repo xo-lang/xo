@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -44,7 +45,7 @@ func TestDeadFunctionsDropped(t *testing.T) {
 				n++
 			}
 		}
-		run, err := exec.Command(bin).Output()
+		run, err := testtmp.Guard(exec.Command(bin)).Output()
 		if err != nil {
 			t.Fatalf("%s: %v", bin, err)
 		}

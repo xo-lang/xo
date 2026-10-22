@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -64,7 +65,7 @@ func triage(test string, seed int64, files map[string]string, be string, crash b
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(mins)*time.Minute)
 	defer cancel()
 	if be == xotool.BackendArm64 || be == "amd64" {
-		cmd := exec.CommandContext(ctx, xo, "dev", "bisect-pass", "--backend="+be, dir)
+		cmd := testtmp.Guard(exec.CommandContext(ctx, xo, "dev", "bisect-pass", "--backend="+be, dir))
 		out, _ := cmd.CombinedOutput()
 		b.Write(out)
 	}

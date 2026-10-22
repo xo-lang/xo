@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -31,7 +32,7 @@ func TestHeapGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 	run := func(sub string) (string, error) {
-		cmd := exec.Command(xo, "test", "--std-module=native/llrt/libcmem", "--backend=arm64", "--run="+sub)
+		cmd := testtmp.Guard(exec.Command(xo, "test", "--std-module=native/llrt/libcmem", "--backend=arm64", "--run="+sub))
 		cmd.Dir = root
 		cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+root, "XO_HEAP_GUARD=1")
 		out, err := cmd.CombinedOutput()

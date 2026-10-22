@@ -374,7 +374,7 @@ fn main(os: Os) {
 // probes saw, and its standard error.
 func runH2Diff(t *testing.T, bin string, p *testPKI, native bool, env ...string) (string, string) {
 	t.Helper()
-	cmd := exec.Command(bin)
+	cmd := testtmp.Guard(exec.Command(bin))
 	testtmp.Lifeline(t, cmd, 30*time.Minute) // no orphan if the test is killed
 	stopAttr(cmd)                            // a stop request reaches it on Windows too
 	cmd.Env = append(os.Environ(), env...)

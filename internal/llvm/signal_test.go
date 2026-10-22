@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -65,7 +66,7 @@ func startNative(t *testing.T, backend string, env ...string) *nativeChild {
 		t.Skip("clang not found")
 	}
 	bin := signalBinary(t, backend)
-	cmd := exec.Command(bin)
+	cmd := testtmp.Guard(exec.Command(bin))
 	cmd.Env = append(os.Environ(), env...)
 	stopAttr(cmd)
 	stdout, err := cmd.StdoutPipe()

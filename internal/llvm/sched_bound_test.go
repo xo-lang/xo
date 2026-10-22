@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -52,7 +53,7 @@ func TestDeferredWakeBound(t *testing.T) {
 				if err != nil || res.Failed {
 					t.Fatalf("build: %v %v", err, res)
 				}
-				cmd := exec.Command(res.Binaries[xotool.Host()])
+				cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()]))
 				cmd.Env = append(os.Environ(), "XO_THREADS="+run.threads, "XO_LOCKCHECK=1")
 				out, err := runCombined(cmd, 2*time.Minute)
 				if err != nil {
@@ -94,7 +95,7 @@ func TestDeferWakeOff(t *testing.T) {
 		if err != nil || res.Failed {
 			t.Fatalf("build %s: %v %v", prog, err, res)
 		}
-		cmd := exec.Command(res.Binaries[xotool.Host()])
+		cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()]))
 		cmd.Env = append(append(os.Environ(), "XO_THREADS=4", "XO_RTSTATS=1"), env...)
 		out, err := runCombined(cmd, 2*time.Minute)
 		if err != nil {
@@ -140,7 +141,7 @@ func TestOneThreadSpawnJoin(t *testing.T) {
 	if err != nil || res.Failed {
 		t.Fatalf("build: %v %v", err, res)
 	}
-	cmd := exec.Command(res.Binaries[xotool.Host()])
+	cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()]))
 	cmd.Env = append(os.Environ(), "XO_THREADS=1", "XO_RTSTATS=1")
 	out, err := runCombined(cmd, 2*time.Minute)
 	if err != nil {
@@ -213,7 +214,7 @@ func TestRootParkHandOff(t *testing.T) {
 				// LLVM goldens alongside) once took acceptbusy to 225 ms
 				ms := 0
 				for try := 0; try < 2; try++ {
-					cmd := exec.Command(res.Binaries[xotool.Host()])
+					cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()]))
 					cmd.Env = append(os.Environ(), "XO_THREADS="+run.threads, "XO_LOCKCHECK=1")
 					out, err := runCombined(cmd, 2*time.Minute)
 					if err != nil {
@@ -266,7 +267,7 @@ func TestMainFiberAwaitStorm(t *testing.T) {
 			}
 			for i := 0; i < 5; i++ {
 				// the scheduler's lock order checked (pool.xo klock)
-				cmd := exec.Command(res.Binaries[xotool.Host()])
+				cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()]))
 				cmd.Env = append(os.Environ(), "XO_LOCKCHECK=1")
 				out, err := runCombined(cmd, time.Minute)
 				if err != nil {
@@ -309,7 +310,7 @@ func TestRootNoSpin(t *testing.T) {
 				t.Fatalf("build: %v %v", err, res)
 			}
 			for i := 0; i < 3; i++ {
-				cmd := exec.Command(res.Binaries[xotool.Host()])
+				cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()]))
 				cmd.Env = append(os.Environ(), "XO_THREADS=1", "XO_LOCKCHECK=1")
 				out, err := runCombined(cmd, 30*time.Second)
 				if err != nil || out != "stuckring 10\n" {
@@ -348,7 +349,7 @@ func TestMainFiberDeadlock(t *testing.T) {
 				t.Fatalf("build: %v %v", err, res)
 			}
 			for i := 0; i < 30; i++ {
-				cmd := exec.Command(res.Binaries[xotool.Host()])
+				cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()]))
 				cmd.Env = append(os.Environ(), "XO_LOCKCHECK=1")
 				out, err := runCombined(cmd, 10*time.Second)
 				var ee *exec.ExitError
@@ -385,7 +386,7 @@ func TestPreempt(t *testing.T) {
 				t.Fatalf("build: %v %v", err, res)
 			}
 			for i := 0; i < 3; i++ {
-				cmd := exec.Command(res.Binaries[xotool.Host()])
+				cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()]))
 				cmd.Env = append(os.Environ(), "XO_THREADS=1", "XO_LOCKCHECK=1")
 				out, err := runCombined(cmd, 20*time.Second)
 				if err != nil || out != "preempt 5\n" {
@@ -445,7 +446,7 @@ func testAsyncPreempt(t *testing.T, be, dir, want, env string, preempts *regexp.
 		}
 		total := 0
 		for i := 0; i < 3; i++ {
-			cmd := exec.Command(res.Binaries[xotool.Host()])
+			cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()]))
 			cmd.Env = append(os.Environ(), "XO_THREADS=1", "XO_LOCKCHECK=1", "XO_LEAKCHECK=1", "XO_RTSTATS=1")
 			out, err := runCombined(cmd, 60*time.Second)
 			if err != nil || !strings.HasPrefix(out, want) || !strings.Contains(out, "xo leakcheck: 0 live") {
@@ -497,7 +498,7 @@ func TestPreemptMigrate(t *testing.T) {
 					t.Fatalf("build: %v %v", err, res)
 				}
 				for i := 0; i < 3; i++ {
-					cmd := exec.Command(res.Binaries[xotool.Host()])
+					cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()]))
 					cmd.Env = append(os.Environ(), "XO_THREADS=4", "XO_LOCKCHECK=1")
 					out, err := runCombined(cmd, 60*time.Second)
 					if err != nil || out != want {

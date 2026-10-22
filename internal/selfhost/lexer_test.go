@@ -407,7 +407,7 @@ func runeFiles(t testing.TB, dir string, step int) []string {
 
 // runXo runs the Xo lexer on paths (relative to root or absolute).
 func runXo(t testing.TB, bin, root string, paths []string) string {
-	cmd := exec.Command(bin, paths...)
+	cmd := testtmp.Guard(exec.Command(bin, paths...))
 	cmd.Dir = root
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -573,7 +573,7 @@ func runXoTests(t *testing.T, component string) {
 	if res.Failed {
 		t.Fatalf("xo test compiler/%s built no test binary:\n%s", component, res.Output)
 	}
-	cmd := exec.Command(res.Binaries[xotool.Host()])
+	cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()]))
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {

@@ -368,7 +368,7 @@ func TestTLSServerReplayDiff(t *testing.T) {
 		if res.Failed {
 			t.Fatalf("build (%s) failed: %v", be, res.Output)
 		}
-		cmd := exec.Command(res.Binaries[xotool.Host()])
+		cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()]))
 		testtmp.Lifeline(t, cmd, 30*time.Minute) // no orphan if the test is killed
 		cmd.Stdin = strings.NewReader(in.String())
 		var stderr bytes.Buffer

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -50,7 +51,7 @@ func TestProfCPU(t *testing.T) {
 			dir := t.TempDir()
 			out := filepath.Join(dir, "cpu.pprof")
 			raw := filepath.Join(dir, "prof.xoraw")
-			cmd := exec.Command(bin)
+			cmd := testtmp.Guard(exec.Command(bin))
 			cmd.Dir = dir
 			cmd.Env = append(os.Environ(), "XO_PROF=cpu", "XO_PROF_HZ=1000", "XO_PROF_OUT="+raw)
 			got, err := runCombined(cmd, 2*time.Minute)
@@ -92,7 +93,7 @@ func TestProfCPU(t *testing.T) {
 			}
 			// off: no XO_PROF, no profile written, nothing said
 			off := t.TempDir()
-			cmd = exec.Command(bin)
+			cmd = testtmp.Guard(exec.Command(bin))
 			cmd.Dir = off
 			got, err = runCombined(cmd, 2*time.Minute)
 			if err != nil || strings.Contains(got, "xo profile") {
@@ -126,7 +127,7 @@ func TestProfHelperNames(t *testing.T) {
 	bin := res.Binaries[xotool.Host()]
 	dir := t.TempDir()
 	raw := filepath.Join(dir, "prof.xoraw")
-	cmd := exec.Command(bin)
+	cmd := testtmp.Guard(exec.Command(bin))
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "XO_PROF=cpu", "XO_PROF_HZ=1000", "XO_PROF_OUT="+raw)
 	got, err := runCombined(cmd, 2*time.Minute)
@@ -168,7 +169,7 @@ func TestProfLeafCaller(t *testing.T) {
 	bin := res.Binaries[xotool.Host()]
 	dir := t.TempDir()
 	raw := filepath.Join(dir, "prof.xoraw")
-	cmd := exec.Command(bin)
+	cmd := testtmp.Guard(exec.Command(bin))
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "XO_PROF=cpu", "XO_PROF_HZ=1000", "XO_PROF_OUT="+raw)
 	got, err := runCombined(cmd, 2*time.Minute)
@@ -186,7 +187,7 @@ func TestProfLeafCaller(t *testing.T) {
 	if c := cumPercent(string(txt), "outer"); c < 90 {
 		t.Fatalf("outer's cumulative share %.1f%%, want at least 90 (every sample in mix has it as the caller):\n%s", c, txt)
 	}
-	cmd = exec.Command(bin, "fault")
+	cmd = testtmp.Guard(exec.Command(bin, "fault"))
 	cmd.Env = append(os.Environ(), "XO_TRACEBACK=1")
 	got, _ = runCombined(cmd, 2*time.Minute)
 	i, j, k := strings.Index(got, "  mix ("), strings.Index(got, "  outer ("), strings.Index(got, "  main (")
@@ -245,7 +246,7 @@ func TestProfHeap(t *testing.T) {
 			bin := res.Binaries[xotool.Host()]
 			run := func(env ...string) (string, string) {
 				dir := t.TempDir()
-				cmd := exec.Command(bin)
+				cmd := testtmp.Guard(exec.Command(bin))
 				cmd.Dir = dir
 				cmd.Env = append(os.Environ(), env...)
 				got, err := runCombined(cmd, 2*time.Minute)
@@ -357,7 +358,7 @@ func TestProfGating(t *testing.T) {
 		return strings.Contains(string(out), "prof_2estart") || strings.Contains(string(out), "prof.start")
 	}
 	run := func(bin, dir string) string {
-		cmd := exec.Command(bin)
+		cmd := testtmp.Guard(exec.Command(bin))
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(), "XO_PROF=cpu", "XO_PROF_HZ=1000")
 		got, err := runCombined(cmd, 2*time.Minute)
@@ -445,7 +446,7 @@ func TestProfDrivers(t *testing.T) {
 		return a
 	}
 	runIn := func(dir string, args ...string) string {
-		cmd := exec.Command(xo, args...)
+		cmd := testtmp.Guard(exec.Command(xo, args...))
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(), "PWD="+dir)
 		out, err := runCombined(cmd, 5*time.Minute)
@@ -504,7 +505,7 @@ func xoProfRun(dir, raw string, args ...string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	cmd := exec.Command(xo, append([]string{"prof", raw}, args...)...)
+	cmd := testtmp.Guard(exec.Command(xo, append([]string{"prof", raw}, args...)...))
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "PWD="+dir)
 	out, err := cmd.CombinedOutput()
@@ -635,14 +636,14 @@ func TestProfProcessOnly(t *testing.T) {
 		}
 	}
 	bin := filepath.Join(d, "envchild")
-	build := exec.Command(xo, "build", "--backend=arm64", "-o", bin, ".")
+	build := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", bin, "."))
 	build.Dir = d
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("xo build: %v\n%s", err, out)
 	}
 	run := func(env ...string) string {
 		t.Helper()
-		cmd := exec.Command(bin)
+		cmd := testtmp.Guard(exec.Command(bin))
 		cmd.Dir = d
 		cmd.Env = append(os.Environ(), env...)
 		out, err := cmd.CombinedOutput()
@@ -658,7 +659,7 @@ func TestProfProcessOnly(t *testing.T) {
 		t.Errorf("with XO_PROF_CHILDREN=1 the child did not see XO_PROF:\n%s", got)
 	}
 	// the compiler's own profile
-	self := exec.Command(xo, "build", "--backend=arm64", "--profile=cpu", "-o", bin, ".")
+	self := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "--profile=cpu", "-o", bin, "."))
 	self.Dir = d
 	if out, err := self.CombinedOutput(); err != nil {
 		t.Fatalf("xo build --profile=cpu: %v\n%s", err, out)

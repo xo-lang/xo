@@ -86,7 +86,7 @@ func TestFaultLocals(t *testing.T) {
 			}
 			bin := res.Binaries[xotool.Host()]
 			run := func(tb string) string {
-				cmd := exec.Command(bin)
+				cmd := testtmp.Guard(exec.Command(bin))
 				cmd.Env = append(os.Environ(), "XO_TRACEBACK="+tb)
 				testtmp.Lifeline(t, cmd, 2*time.Minute)
 				out, _ := cmd.CombinedOutput()
@@ -162,7 +162,7 @@ func TestFaultLocalsFaultingFrame(t *testing.T) {
 	if err != nil || res.Failed {
 		t.Fatalf("build: %v %v", err, res.Output)
 	}
-	cmd := exec.Command(res.Binaries[xotool.Host()])
+	cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()]))
 	cmd.Env = append(os.Environ(), "XO_TRACEBACK=locals")
 	testtmp.Lifeline(t, cmd, 2*time.Minute)
 	out, _ := cmd.CombinedOutput()
@@ -243,7 +243,7 @@ func TestFaultLocalsFaultingFramePad(t *testing.T) {
 	if err != nil || res.Failed {
 		t.Fatalf("build: %v %v", err, res.Output)
 	}
-	cmd := exec.Command(res.Binaries[xotool.Host()])
+	cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()]))
 	cmd.Env = append(os.Environ(), "XO_TRACEBACK=locals")
 	testtmp.Lifeline(t, cmd, 2*time.Minute)
 	out, _ := cmd.CombinedOutput()
@@ -297,7 +297,7 @@ func TestFaultLocalsInlined(t *testing.T) {
 	if err != nil || res.Failed {
 		t.Fatalf("build: %v %v", err, res.Output)
 	}
-	cmd := exec.Command(res.Binaries[xotool.Host()])
+	cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()]))
 	cmd.Env = append(os.Environ(), "XO_TRACEBACK=locals")
 	testtmp.Lifeline(t, cmd, 2*time.Minute)
 	out, _ := cmd.CombinedOutput()

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -36,7 +37,7 @@ func TestAmd64DebugInfoSameCode(t *testing.T) {
 				defer cancel()
 				args := append(append(append([]string{}, cli[1:]...), "build", "--backend=amd64", "--targets=linux/amd64", "-o", filepath.Join(t.TempDir(), "b"), "--asm="+out), flags...)
 				args = append(args, ".")
-				cmd := exec.CommandContext(ctx, cli[0], args...)
+				cmd := testtmp.Guard(exec.CommandContext(ctx, cli[0], args...))
 				cmd.Dir = dir
 				var stderr bytes.Buffer
 				cmd.Stderr = &stderr

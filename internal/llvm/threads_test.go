@@ -137,7 +137,7 @@ func sanitizerRuns(flag string) string {
 		if err := xotool.CompileC([]string{"-O1", flag}, []string{src}, bin); err != nil {
 			return // no such sanitizer: the real build reports it
 		}
-		if out, err := exec.Command(bin).CombinedOutput(); err != nil {
+		if out, err := testtmp.Guard(exec.Command(bin)).CombinedOutput(); err != nil {
 			text := strings.TrimSpace(string(out))
 			if i := strings.IndexByte(text, '\n'); i >= 0 {
 				text = text[:i]
@@ -165,7 +165,7 @@ func tsanOptions() string {
 // runTSan runs bin and fails on a nonzero exit or a sanitizer report.
 func runTSan(t *testing.T, bin, dir string, env ...string) string {
 	t.Helper()
-	cmd := exec.Command(bin)
+	cmd := testtmp.Guard(exec.Command(bin))
 	cmd.Dir = dir
 	cmd.Env = append(append(os.Environ(), tsanOptions()), env...)
 	var out bytes.Buffer
@@ -371,7 +371,7 @@ func TestGoldenTasks(t *testing.T) {
 			}
 			bin := tsanBuildRuntime(t, []string{"-Wno-override-module"}, []string{ll})
 			for _, threads := range []string{"1", "2", ""} {
-				cmd := exec.Command(bin)
+				cmd := testtmp.Guard(exec.Command(bin))
 				cmd.Dir = dir
 				// the golden's env.txt too (http_conn_fault's probe)
 				cmd.Env = append(append(os.Environ(), progEnv(dir)...), tsanOptions(), "XO_LEAKCHECK=1", "XO_THREADS="+threads)
@@ -438,7 +438,7 @@ func TestDeadlock(t *testing.T) {
 			t.Fatalf("%s: build: %v", bk, err)
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-		cmd := exec.CommandContext(ctx, res.Binaries[xotool.Host()])
+		cmd := testtmp.Guard(exec.CommandContext(ctx, res.Binaries[xotool.Host()]))
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &stdout, &stderr
 		err = cmd.Run()
@@ -471,7 +471,7 @@ func TestTSanSameThreadRaceArm64(t *testing.T) {
 }
 
 func sameThreadRace(t *testing.T, bin string) {
-	cmd := exec.Command(bin)
+	cmd := testtmp.Guard(exec.Command(bin))
 	cmd.Env = append(os.Environ(), "TSAN_OPTIONS=halt_on_error=0", "XO_THREADS=1")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -581,7 +581,7 @@ func raceSyncTable(t *testing.T, bin string) {
 				if sync == "0" && syncOnly[c] {
 					continue
 				}
-				cmd := exec.Command(bin)
+				cmd := testtmp.Guard(exec.Command(bin))
 				cmd.Env = append(os.Environ(), "TSAN_OPTIONS=halt_on_error=0", "XO_THREADS="+threads, "XO_RACE_CASE="+c, "XO_RACE_SYNC="+sync)
 				var stdout, stderr bytes.Buffer
 				cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -622,7 +622,7 @@ func TestSysCTSan(t *testing.T) {
 		t.Fatal(err)
 	}
 	bin := tsanBuildRuntime(t, []string{"-Wno-override-module"}, []string{ll})
-	cmd := exec.Command(bin)
+	cmd := testtmp.Guard(exec.Command(bin))
 	cmd.Env = append(os.Environ(), tsanOptions())
 	out, err := cmd.CombinedOutput()
 	if err != nil || strings.TrimSpace(string(out)) != "01010101" {

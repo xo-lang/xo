@@ -3,6 +3,7 @@ package selfhost
 import (
 	"bytes"
 	"fmt"
+	"github.com/xo-lang/xo/internal/testtmp"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -62,7 +63,7 @@ func TestSelfhostFormat(t *testing.T) {
 // the first differences from the recording.
 func formatCompare(t *testing.T, bin, root string, files []string) {
 	t.Helper()
-	cmd := exec.Command(bin, files...)
+	cmd := testtmp.Guard(exec.Command(bin, files...))
 	cmd.Dir = root
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

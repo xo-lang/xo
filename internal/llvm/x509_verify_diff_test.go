@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -273,7 +274,7 @@ func TestX509VerifyDiff(t *testing.T) {
 		if res.Failed {
 			t.Fatalf("build (%s) failed: %v", be, res.Output)
 		}
-		cmd := exec.Command(res.Binaries[xotool.Host()])
+		cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()]))
 		cmd.Stdin = strings.NewReader(strings.Join(lines, "\n") + "\n")
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr

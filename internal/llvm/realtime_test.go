@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -82,7 +83,7 @@ func TestRealtimeNative(t *testing.T) {
 				t.Fatalf("build the demo: %v %v", err, res.Output)
 			}
 			for _, mode := range []string{"rt", "plain", "alloc"} {
-				cmd := exec.Command(res.Binaries[xotool.Host()], mode, "3000", "500")
+				cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()], mode, "3000", "500"))
 				cmd.Env = append(os.Environ(), "XO_LEAKCHECK=1")
 				var out bytes.Buffer
 				cmd.Stdout, cmd.Stderr = &out, &out

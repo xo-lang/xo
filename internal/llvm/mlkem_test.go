@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -42,7 +43,7 @@ func TestMLKEMAccumulated(t *testing.T) {
 			t.Fatalf("build (%s): %v %v", be, err, res.Output)
 		}
 		start := time.Now()
-		out, err := exec.Command(res.Binaries[xotool.Host()]).Output()
+		out, err := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()])).Output()
 		if err != nil {
 			t.Fatalf("%s: %v", be, err)
 		}

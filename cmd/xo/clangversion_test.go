@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"github.com/xo-lang/xo/internal/testtmp"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,7 +35,7 @@ func TestLLVMClangTooOld(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(prog, "main.xo"), []byte("fn main(os: Os) {\n  os.stdio.println(\"hi\")\n}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(xoBin(t), "build", "--backend=llvm", "-o", filepath.Join(dir, "out"), ".")
+	cmd := testtmp.Guard(exec.Command(xoBin(t), "build", "--backend=llvm", "-o", filepath.Join(dir, "out"), "."))
 	cmd.Dir = prog
 	cmd.Env = append(os.Environ(), "XO_CLANG="+fake)
 	var out bytes.Buffer

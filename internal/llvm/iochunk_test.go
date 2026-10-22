@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -41,7 +42,7 @@ func TestRuntimeIOChunk(t *testing.T) {
 			if res.Failed {
 				t.Fatalf("build failed:\n%s", res.Output)
 			}
-			cmd := exec.Command(res.Binaries[xotool.Host()])
+			cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()]))
 			cmd.Env = os.Environ()
 			out, err := cmd.CombinedOutput()
 			if err != nil {

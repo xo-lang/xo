@@ -351,7 +351,7 @@ fn main(os: Os) {
 // what it printed and what the probes saw.
 func runTLSDiff(t *testing.T, bin string, p *testPKI, native bool) string {
 	t.Helper()
-	cmd := exec.Command(bin)
+	cmd := testtmp.Guard(exec.Command(bin))
 	testtmp.Lifeline(t, cmd, 30*time.Minute) // no orphan if the test is killed
 	stopAttr(cmd)                            // a stop request reaches it on Windows too
 	if native {

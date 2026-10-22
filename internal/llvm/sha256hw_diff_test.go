@@ -16,6 +16,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -167,7 +168,7 @@ func TestSHA256HWDiff(t *testing.T) {
 		if err != nil || res.Failed {
 			t.Fatalf("build (%s): %v %v", be, err, res.Output)
 		}
-		cmd := exec.Command(res.Binaries[xotool.Host()])
+		cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()]))
 		cmd.Stdin = strings.NewReader(in.String())
 		out, err := cmd.Output()
 		if err != nil {

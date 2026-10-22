@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -27,7 +28,7 @@ func TestAmd64PassesFinish(t *testing.T) {
 	defer cancel()
 	dir := filepath.Join("testdata", "x86sink")
 	args := append(append([]string{}, cli[1:]...), "asm", "--backend=amd64", "--target=linux/amd64", dir)
-	cmd := exec.CommandContext(ctx, cli[0], args...)
+	cmd := testtmp.Guard(exec.CommandContext(ctx, cli[0], args...))
 	cmd.Env = append(os.Environ(), "XO_NOLIBC=0")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

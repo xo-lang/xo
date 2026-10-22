@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -273,7 +274,7 @@ func TestHTTP1ClientDiff(t *testing.T) {
 		if res.Failed {
 			t.Fatalf("build (%s) failed: %v", be, res.Output)
 		}
-		cmd := exec.Command(res.Binaries[xotool.Host()])
+		cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()]))
 		cmd.Env = append(os.Environ(), "ADDR="+addr, "N="+strconv.Itoa(len(inputs)))
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
@@ -362,7 +363,7 @@ func TestHTTPClientRedirectNotUTF8(t *testing.T) {
 					}()
 				}
 			}()
-			cmd := exec.Command(bin)
+			cmd := testtmp.Guard(exec.Command(bin))
 			cmd.Env = append(os.Environ(), "ADDR="+l.Addr().String(), "N=2", "XO_LEAKCHECK=1")
 			var out, stderr bytes.Buffer
 			cmd.Stdout, cmd.Stderr = &out, &stderr

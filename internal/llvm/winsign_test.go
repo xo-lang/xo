@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -56,7 +57,7 @@ func TestWindowsCertTableAppends(t *testing.T) {
 		t.Fatal(err)
 	}
 	exe := filepath.Join(work, "hello.exe")
-	cmd := exec.Command(xo, "build", "--backend=llvm", "--target=windows/amd64", "-o", exe, ".")
+	cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=llvm", "--target=windows/amd64", "-o", exe, "."))
 	cmd.Dir = src
 	cmd.Env = append(os.Environ(), "XO_CLANG="+clang, "XO_AR="+ar, "XO_WINSYSROOT="+sysroot)
 	if out, err := cmd.CombinedOutput(); err != nil {

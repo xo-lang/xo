@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -52,7 +53,7 @@ func TestTestSplitReuse(t *testing.T) {
 	note := regexp.MustCompile(`cache llvm modules (\d+)/(\d+) reused`)
 	run := func() (int, int) {
 		t.Helper()
-		cmd := exec.Command(xo, "test", "--backend=llvm", "--phase-times", ".")
+		cmd := testtmp.Guard(exec.Command(xo, "test", "--backend=llvm", "--phase-times", "."))
 		cmd.Dir = own
 		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on", "XO_BIN_CACHE="+filepath.Join(work, "bin"))
 		log, err := cmd.CombinedOutput()

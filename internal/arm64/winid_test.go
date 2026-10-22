@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -88,7 +89,7 @@ func winAsm(t *testing.T, dir, target, passes string) string {
 		t.Fatal(err)
 	}
 	args := append(append([]string{}, cli[1:]...), "asm", "--backend=amd64", "--target="+target, dir)
-	cmd := exec.Command(cli[0], args...)
+	cmd := testtmp.Guard(exec.Command(cli[0], args...))
 	cmd.Env = append(os.Environ(), "XO_PASSES="+passes, "XO_NOLIBC=0")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

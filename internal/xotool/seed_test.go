@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"github.com/xo-lang/xo/internal/testtmp"
 	"io"
 	"os"
 	"os/exec"
@@ -324,7 +325,7 @@ func TestSeedPackHello(t *testing.T) {
 	os.MkdirAll(filepath.Join(work, "hello"), 0o755)
 	os.WriteFile(filepath.Join(work, "hello", "main.xo"), []byte("fn main(os: Os) uses (stdio) {\n  os.stdio.println(\"hello from the seed\")\n}\n"), 0o644)
 	backend, env := hostBackend()
-	run := exec.Command(bin, "run", "--backend="+backend, "./hello")
+	run := testtmp.Guard(exec.Command(bin, "run", "--backend="+backend, "./hello"))
 	run.Dir = work
 	for _, e := range os.Environ() {
 		if !strings.HasPrefix(e, "XO_STD=") && !strings.HasPrefix(e, "XO_RTPACK=") && !strings.HasPrefix(e, "PWD=") {

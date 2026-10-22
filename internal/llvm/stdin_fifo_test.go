@@ -40,7 +40,7 @@ func TestStdinFIFO(t *testing.T) {
 		}
 		bin := res.Binaries[xotool.Host()]
 		// the expected output: the same input from an anonymous pipe
-		pipe := exec.Command(bin, "lines")
+		pipe := testtmp.Guard(exec.Command(bin, "lines"))
 		testtmp.Lifeline(t, pipe, time.Minute)
 		pipe.Stdin = strings.NewReader(input)
 		want, err := pipe.Output()
@@ -63,7 +63,7 @@ func TestStdinFIFO(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		cmd := exec.Command(bin, "lines")
+		cmd := testtmp.Guard(exec.Command(bin, "lines"))
 		testtmp.Lifeline(t, cmd, time.Minute)
 		cmd.Stdin = r
 		var out bytes.Buffer

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -61,13 +62,13 @@ func TestZonesWithoutGo(t *testing.T) {
 	} {
 		t.Run(c.dir, func(t *testing.T) {
 			bin := filepath.Join(t.TempDir(), c.dir)
-			cmd := exec.Command(xo, "build", "--backend=arm64", "-o", bin, ".")
+			cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", bin, "."))
 			cmd.Dir = filepath.Join("testdata", "tzdata", c.dir)
 			cmd.Env = env
 			if b, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("xo build without go: %v\n%s", err, b)
 			}
-			out, err := exec.Command(bin, c.args...).CombinedOutput()
+			out, err := testtmp.Guard(exec.Command(bin, c.args...)).CombinedOutput()
 			if err != nil {
 				t.Fatalf("run: %v\n%s", err, out)
 			}

@@ -20,6 +20,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -69,7 +70,7 @@ func devGoldens(t *testing.T, args ...string) {
 		full = append(full, "--force")
 	}
 	full = append(full, args...)
-	cmd := exec.Command(xo, full...)
+	cmd := testtmp.Guard(exec.Command(xo, full...))
 	cmd.Dir = root
 	// xo takes its working directory from $PWD, which go test leaves at
 	// the package directory; a wrong one hid gc_config's xo.mod gc lines
@@ -160,7 +161,7 @@ func devRun(t *testing.T, args ...string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(xo, append([]string{"dev"}, args...)...)
+	cmd := testtmp.Guard(exec.Command(xo, append([]string{"dev"}, args...)...))
 	cmd.Dir = root
 	// xo takes its working directory from $PWD, which go test leaves at
 	// the package directory; a wrong one hid gc_config's xo.mod gc lines

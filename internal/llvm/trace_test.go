@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -49,7 +50,7 @@ func TestTrace(t *testing.T) {
 			dir := t.TempDir()
 			raw := filepath.Join(dir, "t.raw")
 			run := func(env ...string) string {
-				cmd := exec.Command(bin)
+				cmd := testtmp.Guard(exec.Command(bin))
 				cmd.Dir = dir
 				cmd.Env = append(append(os.Environ(), "XO_THREADS=4"), env...)
 				got, err := runCombined(cmd, 2*time.Minute)
@@ -87,7 +88,7 @@ func TestTrace(t *testing.T) {
 			}
 			// the JSON and the summary
 			out := filepath.Join(dir, "t.json")
-			sum, err := exec.Command(xo, "trace", raw, "--json", out).CombinedOutput()
+			sum, err := testtmp.Guard(exec.Command(xo, "trace", raw, "--json", out)).CombinedOutput()
 			if err != nil {
 				t.Fatalf("xo trace: %v\n%s", err, sum)
 			}
@@ -124,7 +125,7 @@ func TestTrace(t *testing.T) {
 			}
 			// off: nothing written, nothing said
 			off := t.TempDir()
-			cmd := exec.Command(bin)
+			cmd := testtmp.Guard(exec.Command(bin))
 			cmd.Dir = off
 			got, err := runCombined(cmd, 2*time.Minute)
 			if err != nil || strings.Contains(got, "xo trace") {

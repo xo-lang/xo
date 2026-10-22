@@ -54,7 +54,7 @@ func TestTSanSharedMaps(t *testing.T) {
 			if r.Failed {
 				t.Fatalf("xo build --race failed:\n%s", r.Output)
 			}
-			cmd := exec.Command(bin)
+			cmd := testtmp.Guard(exec.Command(bin))
 			cmd.Env = append(os.Environ(), tsanOptions())
 			var stdout, stderr bytes.Buffer
 			cmd.Stdout, cmd.Stderr = &stdout, &stderr

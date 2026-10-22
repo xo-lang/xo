@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -121,7 +122,7 @@ func fullRun(t *testing.T, dir, be string) string {
 	if err != nil || res.Failed {
 		t.Fatalf("build (%s): %v", be, err)
 	}
-	cmd := exec.Command(res.Binaries[xotool.Host()])
+	cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()]))
 	cmd.Dir = dir
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr

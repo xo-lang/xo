@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -71,7 +72,7 @@ func TestProcSpecDiff(t *testing.T) {
 		if res.Failed {
 			t.Fatalf("build (%s) failed: %v", be, res.Output)
 		}
-		cmd := exec.Command(res.Binaries[xotool.Host()])
+		cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()]))
 		cmd.Dir = run
 		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "PWD=/stale", "XO_SPEC_C=c", "XO_SPEC_D=d", "XO_SPEC_Z=0", "LANG=C"}
 		out, err := cmd.CombinedOutput()

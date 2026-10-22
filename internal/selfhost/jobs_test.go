@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	"github.com/xo-lang/xo/internal/testtmp"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -297,7 +298,7 @@ func runXoBatches(t testing.TB, bin, root string, prefix, paths []string, size i
 	start := time.Now()
 	heavy := func(i int) bool { return len(chunks[i]) == 1 && mergeHeavy(chunks[i][0]) }
 	runUnits(order, heavy, func(i int) {
-		cmd := exec.Command(bin, append(append([]string(nil), prefix...), chunks[i]...)...)
+		cmd := testtmp.Guard(exec.Command(bin, append(append([]string(nil), prefix...), chunks[i]...)...))
 		cmd.Dir = root
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &stdout, &stderr

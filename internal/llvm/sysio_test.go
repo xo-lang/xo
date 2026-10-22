@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -76,7 +77,7 @@ func TestErrnoTables(t *testing.T) {
 	if err := xotool.CompileC(nil, []string{filepath.Join("testdata", "errno_probe.c")}, bin); err != nil {
 		t.Fatalf("compile errno_probe.c: %v", err)
 	}
-	out, err := exec.Command(bin).Output()
+	out, err := testtmp.Guard(exec.Command(bin)).Output()
 	if err != nil {
 		t.Fatalf("run errno_probe: %v", err)
 	}

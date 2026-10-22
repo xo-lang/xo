@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/xo-lang/xo/internal/testtmp"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1350,7 +1351,7 @@ func TestDevGoldensInlineStrict(t *testing.T) {
 		if err != nil {
 			t.Skip(err)
 		}
-		cmd := exec.Command(cli[0], append(cli[1:], "dev", "goldens", "--xo="+fake, "--backend=arm64", "--build-only", "--no-each", "--force", "--no-cache", filepath.Join(dir, "golden"))...)
+		cmd := testtmp.Guard(exec.Command(cli[0], append(cli[1:], "dev", "goldens", "--xo="+fake, "--backend=arm64", "--build-only", "--no-each", "--force", "--no-cache", filepath.Join(dir, "golden"))...))
 		env := []string{}
 		for _, kv := range os.Environ() {
 			if !strings.HasPrefix(kv, "XO_INLINE_STRICT=") {
@@ -1403,7 +1404,7 @@ func TestGoCompiledMethodRouting(t *testing.T) {
 	if err != nil {
 		t.Skip(err)
 	}
-	cmd := exec.Command(cli[0], append(cli[1:], "build", "--backend=go", "--std="+std, "-o", filepath.Join(dir, "p"), dir)...)
+	cmd := testtmp.Guard(exec.Command(cli[0], append(cli[1:], "build", "--backend=go", "--std="+std, "-o", filepath.Join(dir, "p"), dir)...))
 	cmd.Env = append(os.Environ(), "XO_BIN_CACHE=off")
 	out, err := cmd.CombinedOutput()
 	if err == nil || !strings.Contains(string(out), "uuid.Uuid.xo_test_zero`: a static method") {
@@ -1424,7 +1425,7 @@ func TestWasmToolRejectedText(t *testing.T) {
 		t.Skip(err)
 	}
 	tool := filepath.Join(t.TempDir(), "xowasm")
-	b := exec.Command(cli[0], append(cli[1:], "build", "-o", tool, filepath.Join("..", "..", "compiler", "wasm"))...)
+	b := testtmp.Guard(exec.Command(cli[0], append(cli[1:], "build", "-o", tool, filepath.Join("..", "..", "compiler", "wasm"))...))
 	if out, err := b.CombinedOutput(); err != nil {
 		t.Fatalf("building compiler/wasm: %v\n%s", err, out)
 	}
@@ -1436,7 +1437,7 @@ func TestWasmToolRejectedText(t *testing.T) {
 	// run in the directory, as the tool's callers do (an absolute
 	// directory argument with --wd elsewhere reads the wrong directory:
 	// gotchas/dev-tool-wd-is-not-cwd.md)
-	run := exec.Command(tool, "--std="+std, ".")
+	run := testtmp.Guard(exec.Command(tool, "--std="+std, "."))
 	run.Dir = dir
 	out, _ := run.CombinedOutput()
 	if !strings.Contains(string(out), "== rejected ") || !strings.Contains(string(out), ":2:") || !strings.Contains(string(out), "XO0401") {

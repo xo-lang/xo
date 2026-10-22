@@ -1,6 +1,7 @@
 package xotool
 
 import (
+	"github.com/xo-lang/xo/internal/testtmp"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,7 +32,7 @@ func TestCCCache(t *testing.T) {
 		if err := CompileC([]string{"-O1"}, []string{filepath.Join(src, "main.c")}, bin); err != nil {
 			t.Fatal(err)
 		}
-		out, err := exec.Command(bin).Output()
+		out, err := testtmp.Guard(exec.Command(bin)).Output()
 		if err != nil || string(out) != want {
 			t.Fatalf("got %q, %v; want %q", out, err, want)
 		}

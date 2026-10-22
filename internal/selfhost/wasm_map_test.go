@@ -2,6 +2,7 @@ package selfhost
 
 import (
 	"bytes"
+	"github.com/xo-lang/xo/internal/testtmp"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -43,7 +44,7 @@ func wasmMapRun(t *testing.T, node, bin, root, mode string) {
 	for _, g := range wasmMapGoldens {
 		rel = append(rel, filepath.Join("internal", "llvm", "testdata", "golden", g))
 	}
-	cmd := exec.Command(bin, append([]string{"--std=std", "--wd=" + root, "--each", "--out=" + out}, rel...)...)
+	cmd := testtmp.Guard(exec.Command(bin, append([]string{"--std=std", "--wd=" + root, "--each", "--out=" + out}, rel...)...))
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(), "XO_MAP_LOG="+mode)
 	var stderr bytes.Buffer

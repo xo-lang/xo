@@ -376,7 +376,7 @@ func matrixKnown(cell string) string {
 // the matrix's lines (sorted).
 func runMatrix(t *testing.T, bin string, certs []matrixCert, roots *x509.CertPool) string {
 	t.Helper()
-	cmd := exec.Command(bin)
+	cmd := testtmp.Guard(exec.Command(bin))
 	testtmp.Lifeline(t, cmd, 30*time.Minute) // no orphan if the test is killed
 	stopAttr(cmd)
 	stdout, err := cmd.StdoutPipe()

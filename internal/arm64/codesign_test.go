@@ -60,7 +60,7 @@ func TestCodesignAcceptsLinkerOutput(t *testing.T) {
 	} {
 		t.Run(tc.arch, func(t *testing.T) {
 			bin := filepath.Join(work, tc.arch, "hello")
-			cmd := exec.Command(xo, "build", "--backend="+tc.backend, "--target="+tc.target, "--ld=macho", "-o", bin, ".")
+			cmd := testtmp.Guard(exec.Command(xo, "build", "--backend="+tc.backend, "--target="+tc.target, "--ld=macho", "-o", bin, "."))
 			cmd.Dir = src
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("build: %v\n%s", err, out)
@@ -73,7 +73,7 @@ func TestCodesignAcceptsLinkerOutput(t *testing.T) {
 			if tc.arch != runtime.GOARCH {
 				return
 			}
-			out, err := exec.Command(bin).CombinedOutput()
+			out, err := testtmp.Guard(exec.Command(bin)).CombinedOutput()
 			if err != nil || strings.TrimSpace(string(out)) != want {
 				t.Fatalf("the re-signed program: %v, output %q, want %q", err, out, want)
 			}

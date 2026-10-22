@@ -915,7 +915,7 @@ func TestHTTPFuzz(t *testing.T) {
 			}
 		}()
 		n := int(secs * 200)
-		cmd := exec.Command(bin)
+		cmd := testtmp.Guard(exec.Command(bin))
 		testtmp.Lifeline(t, cmd, 30*time.Minute) // no orphan if the test is killed
 		cmd.Env = append(os.Environ(), "ADDR="+l.Addr().String(), fmt.Sprintf("N=%d", n), "XO_LEAKCHECK=1")
 		var out, stderr bytes.Buffer
@@ -940,7 +940,7 @@ func TestHTTPFuzz(t *testing.T) {
 			}
 			in.WriteString(hex.EncodeToString(doc) + "\n")
 		}
-		cmd := exec.Command(bin)
+		cmd := testtmp.Guard(exec.Command(bin))
 		testtmp.Lifeline(t, cmd, 30*time.Minute) // no orphan if the test is killed
 		cmd.Env = append(os.Environ(), "XO_LEAKCHECK=1")
 		cmd.Stdin = &in
@@ -966,7 +966,7 @@ type fuzzServer struct {
 
 func startFuzzServer(t *testing.T, bin string) *fuzzServer {
 	t.Helper()
-	cmd := exec.Command(bin)
+	cmd := testtmp.Guard(exec.Command(bin))
 	testtmp.Lifeline(t, cmd, 30*time.Minute) // no orphan if the test is killed
 	stopAttr(cmd)
 	cmd.Env = append(os.Environ(), "XO_LEAKCHECK=1")

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -87,7 +88,7 @@ func buildFaultShared(t *testing.T, tmp string) map[string]string {
 func TestRuntimeFaultShared(t *testing.T) {
 	t.Parallel() // builds nothing in the shared build directory
 	for name, bin := range faultSharedBins(t) {
-		cmd := exec.Command(bin)
+		cmd := testtmp.Guard(exec.Command(bin))
 		cmd.Env = append(os.Environ(), tsanOptions())
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -112,7 +113,7 @@ func TestRuntimeFaultShared(t *testing.T) {
 func TestRuntimeFaultResume(t *testing.T) {
 	t.Parallel() // builds nothing in the shared build directory
 	for name, bin := range faultSharedBins(t) {
-		cmd := exec.Command(bin)
+		cmd := testtmp.Guard(exec.Command(bin))
 		cmd.Env = append(os.Environ(), tsanOptions(), "XO_FAULT_UNISOLATED=1")
 		out, err := cmd.CombinedOutput()
 		var ee *exec.ExitError

@@ -2,6 +2,7 @@ package selfhost
 
 import (
 	"bytes"
+	"github.com/xo-lang/xo/internal/testtmp"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -74,7 +75,7 @@ func TestSelfhostDefhash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(bin, append([]string{"defhash"}, args...)...)
+	cmd := testtmp.Guard(exec.Command(bin, append([]string{"defhash"}, args...)...))
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

@@ -94,7 +94,7 @@ fn main(os: Os) {
 // http1Server runs a built server program: its address and a stop.
 func http1Server(t testing.TB, bin string, env ...string) (string, func()) {
 	t.Helper()
-	cmd := exec.Command(bin)
+	cmd := testtmp.Guard(exec.Command(bin))
 	cmd.Env = append(os.Environ(), env...)
 	return startHTTP1Server(t, cmd)
 }
