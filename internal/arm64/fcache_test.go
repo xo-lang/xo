@@ -42,7 +42,7 @@ func TestBackendCacheModuleFacts(t *testing.T) {
 	asm := func(t *testing.T, cache string, env ...string) (string, error) {
 		cmd := testtmp.Guard(exec.Command(xo, "asm", "--backend=arm64", "--targets=linux/arm64", "."))
 		cmd.Dir = dir
-		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache), env...)
+		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on"), env...)
 		out, err := cmd.Output()
 		return string(out), err
 	}
@@ -864,7 +864,7 @@ func TestModuleCheckAuto(t *testing.T) {
 		os.Remove(out)
 		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "--phase-times", "-o", out, "."))
 		cmd.Dir = dir
-		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache), env...)
+		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on"), env...)
 		log, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("%s: xo build %v: %v\n%s", filepath.Base(dir), env, err, log)
@@ -963,7 +963,7 @@ fn main(os: Os) uses stdio {
 		os.Remove(out)
 		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", out, "."))
 		cmd.Dir = dir
-		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache), env...)
+		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on"), env...)
 		if log, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("%s: xo build %v: %v\n%s", filepath.Base(dir), env, err, log)
 		}
@@ -1053,7 +1053,7 @@ fn main(os: Os) uses stdio {
 		os.Remove(out)
 		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", out, "."))
 		cmd.Dir = dir
-		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache), env...)
+		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on"), env...)
 		if log, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("%s: xo build %v: %v\n%s", filepath.Base(dir), env, err, log)
 		}
@@ -1207,7 +1207,7 @@ fn main(os: Os) uses stdio {
 		os.Remove(out)
 		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", out, "."))
 		cmd.Dir = dir
-		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache), env...)
+		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on"), env...)
 		if log, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("%s: xo build %v: %v\n%s", filepath.Base(dir), env, err, log)
 		}
@@ -1306,7 +1306,7 @@ fn main(os: Os) uses stdio {
 		os.Remove(out)
 		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "--phase-times", "-o", out, "."))
 		cmd.Dir = own
-		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache), env...)
+		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on"), env...)
 		log, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("xo build %v: %v\n%s", env, err, log)
@@ -1501,7 +1501,7 @@ fn main(os: Os) {
 		os.Remove(out)
 		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "--phase-times", "-o", out, "."))
 		cmd.Dir = own
-		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache), env...)
+		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on"), env...)
 		log, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("xo build %v: %v\n%s", env, err, log)
@@ -1714,7 +1714,7 @@ func TestFrontCacheStdCommentEdit(t *testing.T) {
 		os.Remove(out)
 		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "--phase-times", "--std="+std, "-o", out, "."))
 		cmd.Dir = own
-		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache), env...)
+		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on"), env...)
 		log, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("xo build %v: %v\n%s", env, err, log)
@@ -1920,7 +1920,7 @@ func TestFrontCacheMovedBodies(t *testing.T) {
 		}
 		cmd := testtmp.Guard(exec.Command(xo, append(args, ".")...))
 		cmd.Dir = own
-		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache), env...)
+		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on"), env...)
 		log, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("xo build %v: %v\n%s", env, err, log)
@@ -2081,7 +2081,7 @@ func TestFrontCacheStdTestEdit(t *testing.T) {
 		cmd.Dir = work
 		// the run cache off: it serves the unchanged second run without a
 		// build (5b98eec1), and this test measures the front end cache
-		cmd.Env = append(os.Environ(), "XO_STD="+std, "XO_BACKEND_CACHE_DIR="+cache, "XO_BIN_CACHE=off")
+		cmd.Env = append(os.Environ(), "XO_STD="+std, "XO_BACKEND_CACHE_DIR="+cache, "XO_BIN_CACHE=off", "XO_BACKEND_CACHE=on")
 		log, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("xo test: %v\n%s", err, log)
@@ -2375,7 +2375,7 @@ func TestParseListAfterRunCache(t *testing.T) {
 		t.Helper()
 		cmd := testtmp.Guard(exec.Command(xo, "test", "--backend=arm64", "--phase-times", "."))
 		cmd.Dir = own
-		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_BIN_CACHE="+filepath.Join(work, "bin"))
+		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_BIN_CACHE="+filepath.Join(work, "bin"), "XO_BACKEND_CACHE=on")
 		log, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("xo test: %v\n%s", err, log)
@@ -2440,12 +2440,15 @@ func TestCacheStoreLog(t *testing.T) {
 		t.Fatal(err)
 	}
 	cache := filepath.Join(work, "cache")
-	env := []string{"XO_BACKEND_CACHE_DIR=" + cache, "XO_BACKEND_CACHE=on"}
+	// the cache settings after the environment's: exec keeps the last of
+	// a name, and scripts/gate.sh exports XO_BACKEND_CACHE=off
+	var env []string
 	for _, e := range os.Environ() {
 		if !strings.HasPrefix(e, "XO_CHK_CACHE=") {
 			env = append(env, e)
 		}
 	}
+	env = append(env, "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on")
 	logged := func() []string {
 		b, _ := os.ReadFile(filepath.Join(cache, "store-log"))
 		return strings.Split(strings.TrimSpace(string(b)), "\n")
@@ -2546,7 +2549,7 @@ func TestBackendCacheObjectsAcrossDirs(t *testing.T) {
 			}
 			cmd := testtmp.Guard(exec.Command(xo, append(args, ".")...))
 			cmd.Dir = dir
-			cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache), env...)
+			cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on"), env...)
 			log, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("%s %s: %v\n%s", target, dir, err, log)
