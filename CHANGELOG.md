@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `XO_TRACEBACK=locals` prints an inlined call's variables under its
+  `[inlined]` frame instead of the caller's (LLVM printed every frame's
+  under main), each line once, a Str missing its length as
+  `<unavailable>`, and on arm64 a literal's binding (`let label =
+  "order-7"`) with its value instead of `<unavailable>`.
 - The back-end cache packs a large module's parts (xo's 650 MB) on its
   build target's second build, not its first: each gate's one-shot
   self-build in a new worktree wrote one no build read (9.3 GB of the

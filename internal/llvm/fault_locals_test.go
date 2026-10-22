@@ -312,3 +312,123 @@ func TestFaultLocalsInlined(t *testing.T) {
 		t.Errorf("XO_TRACEBACK=locals: no line \"k = 2\" (pick's parameter) in\n%s", got)
 	}
 }
+
+// faultFramesProgram faults in pick (an index out of range), inlined into
+// total, called from main: each frame has its own variables, and main's
+// label is a literal (its words made again where used).
+const faultFramesProgram = `struct Item {
+  name: Str
+  qty: Int
+}
+
+fn pick(xs: List[Int], at: Int, tag: Str) -> Int {
+  let doubled = at * 2
+  xs[doubled]
+}
+
+fn total(items: List[Item], strict: Bool) -> Int {
+  var sum = 0
+  for it in items {
+    sum += it.qty
+  }
+  let nums = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+  sum + pick(nums, sum, "widget-${sum}")
+}
+
+fn main(os: Os) {
+  let label = "order-7"
+  let items = [Item{name: "a", qty: 4}, Item{name: "b", qty: 5}]
+  let n = total(items, true)
+  os.stdio.println("${label} ${n}")
+}
+`
+
+// TestFaultLocalsFrames: XO_TRACEBACK=locals prints each variable under
+// its own frame, an inlined call's under its `[inlined]` line (they were
+// listed under the function holding the call, and LLVM's under main),
+// each once, a Str without its length as <unavailable> (not its raw
+// words), a literal's binding with its value (arm64), and no variable of
+// an inlined call that ended before the fault (2026-10-22).
+func TestFaultLocalsFrames(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a program on each native backend")
+	}
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("the DWARF is read on Linux and macOS")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte(faultFramesProgram), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module example.com/faultframes\nedition preview\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	common := map[string][]string{
+		"pick":  {"xs = [1, 2, 3, 4, 5, 6, 7, 8, ... (12 items)]", "at = 9", "doubled = 18"},
+		"total": {"sum = 9"},
+		"main":  {"items = List[Item] (len 2)"},
+	}
+	backends := []string{xotool.BackendLLVM}
+	if runtime.GOARCH == "arm64" {
+		backends = append(backends, xotool.BackendArm64)
+	}
+	for _, be := range backends {
+		t.Run(be, func(t *testing.T) {
+			res, err := xotool.Build([]string{dir}, xotool.Options{Backend: be})
+			if err != nil || res.Failed {
+				t.Fatalf("build: %v %v", err, res.Output)
+			}
+			cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()]))
+			cmd.Env = append(os.Environ(), "XO_TRACEBACK=locals")
+			testtmp.Lifeline(t, cmd, 2*time.Minute)
+			out, _ := cmd.CombinedOutput()
+			got := string(out)
+			if !strings.Contains(got, "fault: index 18 out of range") {
+				t.Fatalf("no fault report:\n%s", got)
+			}
+			// each frame's lines: "  NAME (...)" then "      VAR = VALUE"
+			frames := map[string][]string{}
+			cur := ""
+			for _, l := range strings.Split(got, "\n") {
+				switch {
+				case strings.HasPrefix(l, "      "):
+					v := strings.TrimSpace(l)
+					for _, seen := range frames[cur] {
+						if seen == v {
+							t.Errorf("frame %s lists %q twice:\n%s", cur, v, got)
+						}
+					}
+					frames[cur] = append(frames[cur], v)
+					if strings.Contains(v, "Str {") {
+						t.Errorf("frame %s shows a Str's raw words: %q", cur, v)
+					}
+				case strings.HasPrefix(l, "  ") && !strings.HasPrefix(l, "   "):
+					cur = strings.Fields(l)[0]
+				}
+			}
+			want := common
+			if be == xotool.BackendArm64 {
+				want = map[string][]string{"main": {`label = "order-7"`}}
+				for k, v := range common {
+					want[k] = append(want[k], v...)
+				}
+			}
+			for fr, vs := range want {
+				for _, w := range vs {
+					found := false
+					for _, v := range frames[fr] {
+						found = found || v == w
+					}
+					if !found {
+						t.Errorf("frame %s: no %q (it has %q) in\n%s", fr, w, frames[fr], got)
+					}
+				}
+			}
+			for _, v := range frames["total"] {
+				if strings.HasPrefix(v, "xs = ") || strings.HasPrefix(v, "doubled = ") {
+					t.Errorf("pick's %q listed under total:\n%s", v, got)
+				}
+			}
+		})
+	}
+}

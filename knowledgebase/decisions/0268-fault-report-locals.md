@@ -127,3 +127,34 @@ those registers before the report reads them.
   rsi, rdi, r8, r9, and r10 (r11 is the emitter's scratch) below rsp,
   described with DW_OP_breg7, under the same exclusions and also not in
   a Windows leaf (which jumps; windows/amd64 has no DWARF yet).
+
+## Addendum (2026-10-22, Xo Publish): frames, literals, partial Str
+
+From a three-frame fault (an index fault in pick, inlined into total,
+called from main), on both backends:
+
+- **Each variable under its own frame.** The reader (dwline.xo) records
+  for every variable the innermost DW_TAG_inlined_subroutine holding it
+  (its function's name, through the abstract origin, and its depth), and
+  prof.xo trace_text_at prints it under that call's `[inlined]` line;
+  the frame's own variables stay under the function's line. Before, an
+  inlined call's variables were listed under the function holding the
+  call, and LLVM's (which inlines main into xo_entry) all under main. A
+  variable of an inlined call not on the fault's chain (one that ended
+  before it, its register still described) is left out: arm64 printed a
+  prelude helper's `v = 9`.
+- **Each line once per frame**: LLVM described `items` twice (the
+  parameter and its inlined copy).
+- **A Str without its length** prints `<unavailable>`, not its raw words
+  (`Str { obj: pointer 0x..., len: <unavailable> }`).
+- **A literal's binding** (`let label = "order-7"`, `let n = 5`): its
+  words are made again at each use (compiler/arm64 isel.xo words), so no
+  register holds them across a call and it showed `<unavailable>` in
+  every caller frame. The arm64 backend (dwvars.xo dv_plan, dv_const)
+  describes a binding whose SSA value is an Int, Bool, or string
+  constant as that constant over the whole function: DW_OP_constu or
+  consts, and a string's object by DW_OP_addrx when the function already
+  names it (so debug information adds no data). LLVM keeps the string's
+  object out (gotchas/llvm-aggregate-dbg-value.md), so there a literal Str
+  stays `<unavailable>`.
+- Test: internal/llvm TestFaultLocalsFrames (arm64 and LLVM).

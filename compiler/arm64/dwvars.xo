@@ -10,6 +10,8 @@
 // DW_TAG_variable entries and .debug_loclists. Nothing here changes the
 // code: the labels are only labels (decision 0252's gate).
 
+use github.com/xo-lang/xo/compiler/ssa
+
 /// Where one word of a binding's value lives over the instructions
 /// [lo, hi): the bytes of a DWARF location for it.
 struct DvSpan {
@@ -377,9 +379,46 @@ fn (var g: G) dv_plan() -> DvPlan {
     }
   }
   var symix: Map[Str, Int] = {}
+  // the function's last described position, for a binding of constants
+  // only (below)
+  var fn_end = -1
+  for rs in g.vranges {
+    for rg in rs {
+      fn_end = fn_end.max(rg.e / 4 + 1)
+    }
+  }
   for d in g.f.dbinds {
     let dv = g.f.dvars[d.dvar]
-    if !g.has_val[d.value] || !g.dv_type_ok(dv.ty) {
+    if !g.dv_type_ok(dv.ty) {
+      continue
+    }
+    // a binding of a literal (`let label = "order-7"`): its words are
+    // made again at each use (isel.xo words), so no register holds them
+    // across a call; described as the constant over the whole function
+    // (2026-10-22: it showed <unavailable> in every frame)
+    let cx = g.f.values[d.value]
+    if cx.op == ssa.Op.Const && fn_end > 0 {
+      let ks = g.dv_const(cx.aux)
+      if ks.len() == g.layout(dv.ty).len() {
+        var words: List[List[DvSpan]] = []
+        for (sym, op) in ks {
+          var o = op
+          if !sym.is_empty() {
+            if !symix.contains(sym) {
+              symix[sym] = p.syms.len()
+              p.syms.push(sym)
+            }
+            o = [0xa1, -1 - (symix.get(sym) ?? 0), 0x9f]
+          }
+          words.push([DvSpan{lo: 0, hi: fn_end, op: o}])
+        }
+        need[0] = true
+        need[fn_end] = true
+        p.binds.push(DvBind{dvar: d.dvar, def: 0, words: words})
+        continue
+      }
+    }
+    if !g.has_val[d.value] {
       continue
     }
     let ws = g.vals[d.value]
@@ -462,6 +501,33 @@ fn (var g: G) dv_plan() -> DvPlan {
   }
   p.need = ks.sort()
   p
+}
+
+/// The words of a literal binding's value as DWARF expressions (an
+/// Int's or Bool's DW_OP_constu or consts; a string's object as its
+/// symbol, the caller's DW_OP_addrx, and its length), [] when one cannot
+/// be described: a string whose object the function does not already
+/// have (naming it would add data only with debug information), or with
+/// no data addresses in the DWARF.
+fn (var g: G) dv_const(a: ssa.Aux) -> List[(Str, List[Int])] {
+  match a {
+    I(n) => [("", dv_int(n))]
+    B(b) => [("", dv_int(if b { 1 } else { 0 }))]
+    S(..) | Bs(..) => {
+      let bs = const_bytes(a) ?? b""
+      let have = if g.canon { g.cstr_at.contains(bs) } else { g.strs.contains(bs) }
+      if !g.m.dw_data_addrs || !have {
+        return []
+      }
+      [(g.str_obj(bs), []), ("", dv_int(bs.len()))]
+    }
+    _ => []
+  }
+}
+
+/// DW_OP_constu or DW_OP_consts n, DW_OP_stack_value.
+fn dv_int(n: Int) -> List[Int] {
+  (if n >= 0 { [0x10] + uleb_bytes(n) } else { [0x11] + sleb_bytes(n) }) + [0x9f]
 }
 
 /// The debug record's variable field: per described variable,

@@ -1333,25 +1333,40 @@ pub fn trace_text_at(pcs: List[Int], regs: List[Int]) -> Str {
     // the callees inlined at the call, innermost first, then the
     // function itself at the outermost call's line
     let (fs, pf, pl) = dwline.inline_chain(lines, pc - 1, name)
-    for fm in fs {
+    let shown = if name == "xo_entry" { "main" } else { name }
+    // the variables, each under its inlined call's frame (fs[i]), or
+    // the function's (fs.len())
+    var under: List[List[Str]] = []
+    for _ in 0..fs.len() + 1 {
+      under.push([])
+    }
+    if fi < regs.len() && vars.why.is_empty() {
+      // the frame's CFA: the next frame's sp
+      let cfa = if fi + 1 < regs.len() { rt.mem_load(regs[fi + 1], 8 * sp_reg, 8) } else { 0 }
+      for (inl, depth, l) in dwline.frame_vars(vars, pc - 1, dwline.Regs{at: regs[fi], have: have, cfa: cfa}) {
+        let at = inlined_frame(fs, shown, inl, depth)
+        if at >= 0 {
+          under[at].push(l)
+        }
+      }
+    }
+    for (i, fm) in fs.indexed() {
       if fm.file.is_empty() {
         b.write("  ${fm.name} [inlined]\n")
       } else {
         b.write("  ${fm.name} (${base_name(fm.file)}:${fm.line}) [inlined]\n")
       }
+      for l in under[i] {
+        b.write("      ${l}\n")
+      }
     }
-    let shown = if name == "xo_entry" { "main" } else { name }
     if pf.is_empty() {
       b.write("  ${shown}\n")
     } else {
       b.write("  ${shown} (${base_name(pf)}:${pl})\n")
     }
-    if fi < regs.len() && vars.why.is_empty() {
-      // the frame's CFA: the next frame's sp
-      let cfa = if fi + 1 < regs.len() { rt.mem_load(regs[fi + 1], 8 * sp_reg, 8) } else { 0 }
-      for l in dwline.frame_locals(vars, pc - 1, dwline.Regs{at: regs[fi], have: have, cfa: cfa}) {
-        b.write("      ${l}\n")
-      }
+    for l in under[fs.len()] {
+      b.write("      ${l}\n")
     }
     // the program's main (LLVM inlines it into xo_entry)
     if name == "main" || name == "xo_entry" {
@@ -1359,6 +1374,38 @@ pub fn trace_text_at(pcs: List[Int], regs: List[Int]) -> Str {
     }
   }
   b.freeze()
+}
+
+/// The frame a variable of the inlined call of function inl, depth
+/// inlined calls deep, prints under: the index in fs (innermost first)
+/// of that call, fs.len() for the function itself (inl "": its own
+/// variables; LLVM inlines main into xo_entry, shown as main), -1 for
+/// an inlined call not on the chain (one that ended before the fault,
+/// whose variable a register still holds).
+fn inlined_frame(fs: List[dwline.Frame], shown: Str, inl: Str, depth: Int) -> Int {
+  if inl.is_empty() || depth == 0 {
+    return fs.len()
+  }
+  // by depth first: the outermost inlined call (depth 1) is fs's last
+  let j = fs.len() - depth
+  if j >= 0 && j < fs.len() && same_fn(fs[j].name, inl) {
+    return j
+  }
+  for (i, fm) in fs.indexed() {
+    if same_fn(fm.name, inl) {
+      return i
+    }
+  }
+  if same_fn(shown, inl) {
+    return fs.len()
+  }
+  -1
+}
+
+/// Whether two names of a function are the same, one maybe qualified by
+/// its module (`main.pick`, `pick`).
+fn same_fn(a: Str, b: Str) -> Bool {
+  a == b || a.ends_with(".${b}") || b.ends_with(".${a}")
 }
 
 // ---------------------------------------------------------------------------

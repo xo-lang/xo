@@ -1234,6 +1234,13 @@ struct VVar {
   /// the ranges of the innermost inlined call or lexical block holding
   /// it (unplaced; none: the whole function)
   within: List[(Int, Int)] = []
+  /// the function of the innermost inlined call holding it ("" for the
+  /// function's own) and how many inlined calls hold it, so the report
+  /// prints it under that call's frame
+  inl: Str = ""
+  depth: Int = 0
+  /// that call's abstract origin, for inl when the call has no name
+  inl_origin: Int = -1
   expr: Int = 0
   expr_n: Int = 0
   list: Int = -1
@@ -1297,6 +1304,8 @@ fn parse_vars(var v: Vars) {
   // the named variables by offset, for the inlined copies that name
   // theirs through DW_AT_abstract_origin (LLVM's)
   var named: Map[Int, (Str, Int)] = {}
+  // the functions' names by offset, for the inlined calls' origins
+  var fnames: Map[Int, Str] = {}
   var p = s.info
   let end = s.info + s.info_n
   while p + 11 <= end {
@@ -1329,6 +1338,9 @@ fn parse_vars(var v: Vars) {
     var fn_at: List[Int] = [-1]
     var ty_at: List[Int] = [-1]
     var scope_at: List[List[(Int, Int)]] = [[]]
+    // the innermost inlined call open at each depth: its function's
+    // name, its abstract origin, how many inlined calls hold it
+    var inl_at: List[(Str, Int, Int)] = [("", -1, 0)]
     var ok = true
     while ok && r.p < next {
       let die = r.p - s.info
@@ -1338,6 +1350,7 @@ fn parse_vars(var v: Vars) {
           let _a = fn_at.pop()
           let _b = ty_at.pop()
           let _c = scope_at.pop()
+          let _d = inl_at.pop()
         }
         continue
       }
@@ -1431,6 +1444,14 @@ fn parse_vars(var v: Vars) {
       var kid_fn = cur_fn
       var kid_ty = -1
       var kid_scope = cur_scope
+      let cur_inl = inl_at[inl_at.len() - 1]
+      var kid_inl = cur_inl
+      if ab.tag == 0x1d {
+        kid_inl = (name, origin, cur_inl.2 + 1)
+      }
+      if ab.tag == 0x2e && !name.is_empty() {
+        fnames[die] = name
+      }
       if ab.tag == 0x1d || ab.tag == 0x0b {
         // an inlined call or a lexical block: its variables' scope
         if rng >= 0 {
@@ -1458,7 +1479,7 @@ fn parse_vars(var v: Vars) {
             named[die] = (name, ty)
           }
           if cur_fn >= 0 && (!name.is_empty() || origin >= 0) && (loc.blk_n > 0 || loc_list) {
-            var vv = VVar{name: name, ty: ty, param: ab.tag == 0x05, unit: ui, origin: origin, within: cur_scope}
+            var vv = VVar{name: name, ty: ty, param: ab.tag == 0x05, unit: ui, origin: origin, within: cur_scope, inl: cur_inl.0, inl_origin: cur_inl.1, depth: cur_inl.2}
             if loc_list {
               var off = loc.n
               if loc.idx {
@@ -1505,6 +1526,7 @@ fn parse_vars(var v: Vars) {
         fn_at.push(kid_fn)
         ty_at.push(kid_ty)
         scope_at.push(kid_scope)
+        inl_at.push(kid_inl)
       }
     }
     p = next
@@ -1517,6 +1539,12 @@ fn parse_vars(var v: Vars) {
         if let Some((n, t)) = named.get(vv.origin) {
           vs[k].name = n
           vs[k].ty = t
+          changed = true
+        }
+      }
+      if vv.inl.is_empty() && vv.inl_origin >= 0 {
+        if let Some(n) = fnames.get(vv.inl_origin) {
+          vs[k].inl = n
           changed = true
         }
       }
@@ -1565,6 +1593,19 @@ pub fn callee_saved() -> List[Bool] {
 /// function holds pc).
 pub fn frame_locals(v: Vars, pc: Int, rg: Regs) -> List[Str] {
   var out: List[Str] = []
+  for (_, _, l) in frame_vars(v, pc, rg) {
+    out.push(l)
+  }
+  out
+}
+
+/// frame_locals with each line's inlined call: its function's name ("" for
+/// the frame's own variables) and how many inlined calls hold it. A line
+/// the same as one before it in the same call is left out (LLVM can
+/// describe a variable twice, as a parameter and as its inlined copy).
+pub fn frame_vars(v: Vars, pc: Int, rg: Regs) -> List[(Str, Int, Str)] {
+  var out: List[(Str, Int, Str)] = []
+  var seen: Map[Str, Bool] = {}
   let fi = fn_at_pc(v, pc)
   if fi < 0 {
     return out
@@ -1594,14 +1635,22 @@ pub fn frame_locals(v: Vars, pc: Int, rg: Regs) -> List[Str] {
       // an inlined copy without a location here is out of its scope (an
       // LLVM function lists every inlined call's variables)
       if vv.origin < 0 {
-        out.push("${vv.name} = <unavailable>")
+        add_var(out, seen, vv, "${vv.name} = <unavailable>")
       }
       continue
     }
     let ws = eval_loc(v, f, vv.unit, ex, exn, rg)
-    out.push("${vv.name} = ${show(v, vv.ty, ws, 0)}")
+    add_var(out, seen, vv, "${vv.name} = ${show(v, vv.ty, ws, 0)}")
   }
   out
+}
+
+fn add_var(var out: List[(Str, Int, Str)], var seen: Map[Str, Bool], vv: VVar, line: Str) {
+  let k = "${vv.inl}\n${vv.depth}\n${line}"
+  if !seen.contains(k) {
+    seen[k] = true
+    out.push((vv.inl, vv.depth, line))
+  }
 }
 
 /// Whether pc (unplaced) is in the ranges (none: everywhere).
@@ -1954,8 +2003,9 @@ fn show(v: Vars, ty0: Int, ws0: List[W], depth: Int) -> Str {
       "${w0}"
     }
     0x13 => {
-      if t.name == "Str" && ws.len() >= 2 && ws[1].ok {
-        return str_text(w0, ws[1].v)
+      if t.name == "Str" {
+        // its text needs its length too
+        return if ws.len() >= 2 && ws[1].ok { str_text(w0, ws[1].v) } else { "<unavailable>" }
       }
       // an enum: its tag's enumerator, the variant's fields when shown
       if t.m_names.len() >= 1 && t.m_names[0] == "tag" {
