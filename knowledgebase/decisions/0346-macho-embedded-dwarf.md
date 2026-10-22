@@ -17,6 +17,22 @@ link through ld64 (`use c`, the LLVM backend) has no segment: atos and
 lldb find its lines through ld64's debug map (the build directory's
 objects), the runtime through its dSYM (stage 3).
 
+Stage 4 implemented 2026-10-22: no PROG.dSYM by default; `--dsym`
+(compiler/xo opts.xo, macho.LinkOpts.dsym) writes it too, and is part
+of the binary cache's key (an entry linked without it has no bundle);
+an earlier --dsym build's bundle beside the output is removed. The
+arm64 debug tests read the executable (dwarfFile in debugline_test.go)
+and check that the default writes no bundle, `--dsym` writes one that
+verifies, and `-s` writes neither and has no `__DWARF` segment.
+
+Release binaries (owner, 2026-10-22, through the lead): ship with their
+DWARF. scripts/release.sh builds the darwin xo with neither `--release`
+nor `-s`, so it now carries its `__DWARF` segment: the xo binary 60.6 MB
+to 102.7 MB, its tar.gz 23,178,098 to 34,366,894 bytes (+11.2 MB, +48%).
+Users' crash reports, tracebacks and race reports name file and line;
+the alternatives (strip with `-s`, or publish a separate dSYM per
+release) were declined.
+
 ## Context
 
 A darwin program's DWARF lives in a separate bundle today
@@ -99,8 +115,9 @@ segment of the executable, by default, instead of PROG.dSYM.
   names and lines; a crash or race report from a CI artifact names its
   frames.
 - Larger debug binaries: hello is 673 KB with a 1.3 MB dSYM today, so
-  about 2.0 MB embedded; xo itself measured in stage 1. Release binaries
-  are unchanged (`--release` strips).
+  about 2.0 MB embedded; xo itself measured in stage 1. A `--release`
+  build strips; the released xo is not built with it and ships its
+  DWARF (owner, 2026-10-22: +11 MB per darwin archive).
 - The link writes into the executable the bytes it writes into the
   bundle today: about the same link time (measured in stage 1).
 - A signed debug binary's signature covers its DWARF (the segment is

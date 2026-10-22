@@ -19,7 +19,8 @@ import (
 
 // TestDebugVars checks decision 0252's variables on darwin/arm64:
 // testdata/debugvars built by the arm64 backend, linked by compiler/macho
-// and by cc (dsymutil), and by the LLVM backend, has a dSYM that verifies
+// and by cc (dsymutil), and by the LLVM backend, has DWARF (embedded or
+// a dSYM, dwarfFile) that verifies
 // and describes sum's parameter k and its locals (and, from the arm64
 // backend, the struct Pair with its fields); lldb stopped at main.xo:12
 // in the loop prints k, total, and d with the values of the first
@@ -70,7 +71,7 @@ func TestDebugVars(t *testing.T) {
 			if b, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("xo %v: %v\n%s", args, err, b)
 			}
-			dsym := bin + ".dSYM"
+			dsym := dwarfFile(bin)
 			if v, err := exec.Command("dwarfdump", "--verify", dsym).CombinedOutput(); err != nil || !strings.Contains(string(v), "No errors.") {
 				t.Errorf("dwarfdump --verify: %v\n%s", err, v)
 			}
@@ -91,7 +92,7 @@ func TestDebugVars(t *testing.T) {
 			}
 			for _, want := range wants {
 				if !strings.Contains(string(info), want) {
-					t.Errorf("the dSYM's .debug_info lacks %s", want)
+					t.Errorf("%s's .debug_info lacks %s", dsym, want)
 				}
 			}
 			b, err := lldb(t, true, "-b", "-o", "breakpoint set -f main.xo -l 12", "-o", "run", "-o", "frame variable", bin)
@@ -160,7 +161,7 @@ func TestDebugInfoSameCode(t *testing.T) {
 
 // TestDwarfReader checks decision 0253's DWARF reader (compiler/debug,
 // through `xo dev dwarf`) on testdata/debugvars: from the arm64
-// backend's dSYM (compiler/macho and dsymutil) it reads sum's variables
+// backend's DWARF (compiler/macho's embedded, dsymutil's dSYM) it reads sum's variables
 // with the address ranges dwarfdump prints for each, and from the LLVM
 // backend's, sum inlined into main with k the constant 10; from each, a
 // breakpoint at main.xo:11 resolves to lldb's address, and the line
@@ -218,7 +219,7 @@ func TestDwarfReader(t *testing.T) {
 			if b, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("xo %v: %v\n%s", args, err, b)
 			}
-			dw := filepath.Join(bin+".dSYM", "Contents", "Resources", "DWARF", c.name)
+			dw := dwarfFile(bin)
 			got, err := testtmp.Guard(exec.Command(xo, "dev", "dwarf", "--func=sum", dw)).CombinedOutput()
 			if err != nil {
 				t.Fatalf("xo dev dwarf: %v\n%s", err, got)
@@ -277,7 +278,7 @@ func TestDwarfReader(t *testing.T) {
 				t.Errorf("xo dev dwarf --break=sum: %s, lldb:\n%s", fb, lf)
 			}
 			// each variable's ranges against dwarfdump's
-			dd, err := exec.Command("dwarfdump", "--name=sum", "--show-children", bin+".dSYM").CombinedOutput()
+			dd, err := exec.Command("dwarfdump", "--name=sum", "--show-children", dwarfFile(bin)).CombinedOutput()
 			if err != nil {
 				t.Fatalf("dwarfdump: %v\n%s", err, dd)
 			}
@@ -423,7 +424,7 @@ func TestUnwind(t *testing.T) {
 				if len(want) == 0 {
 					t.Fatalf("lldb printed no frames of %s:\n%s", img, lb)
 				}
-				dw := filepath.Join(bin+".dSYM", "Contents", "Resources", "DWARF", filepath.Base(bin))
+				dw := dwarfFile(bin)
 				got, err := testtmp.Guard(exec.Command(xo, "dev", "unwind", "--snap="+snap, "--dwarf="+dw, "--locals", bin)).CombinedOutput()
 				if err != nil {
 					t.Fatalf("xo dev unwind: %v\n%s", err, got)
@@ -514,7 +515,7 @@ func TestUnwind(t *testing.T) {
 
 // TestDebugTypes checks decision 0252 stage 4's types on darwin/arm64:
 // testdata/debugtypes built by the arm64 backend (compiler/macho and cc)
-// and by LLVM has a dSYM that verifies, and lldb stopped in report (inlined into
+// and by LLVM has DWARF that verifies, and lldb stopped in report (inlined into
 // main) reads main's List[Int] through its object (count, length,
 // capacity), a Map[Str, Int] as its struct of lists, a Str's bytes
 // through its object, and an enum as its tag's name and the union of its
@@ -595,7 +596,7 @@ func TestDebugTypes(t *testing.T) {
 			if b, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("xo %v: %v\n%s", args, err, b)
 			}
-			if v, err := exec.Command("dwarfdump", "--verify", bin+".dSYM").CombinedOutput(); err != nil || !strings.Contains(string(v), "No errors.") {
+			if v, err := exec.Command("dwarfdump", "--verify", dwarfFile(bin)).CombinedOutput(); err != nil || !strings.Contains(string(v), "No errors.") {
 				t.Errorf("dwarfdump --verify: %v\n%s", err, v)
 			}
 			largs := []string{"-b", "-o", "breakpoint set -f main.xo -l 19", "-o", "run", "-o", "frame select 1"}
@@ -621,7 +622,7 @@ func TestDebugTypes(t *testing.T) {
 }
 
 // TestDebugLoclistsBudget pins the size of the arm64 backend's variable
-// locations (decision 0252 stage 4): the dSYM of internal/llvm's
+// locations (decision 0252 stage 4): the DWARF of internal/llvm's
 // http_server golden has a __debug_loclists under 3 MB (2.35 MB on
 // 2026-10-17, 445 KB before stage 4 described Str, Map, and struct
 // values; 4.2 MB before they were compacted: one piece per run of absent
@@ -654,7 +655,7 @@ func TestDebugLoclistsBudget(t *testing.T) {
 	if b, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("xo build: %v\n%s", err, b)
 	}
-	lc, err := exec.Command("otool", "-l", filepath.Join(bin+".dSYM", "Contents", "Resources", "DWARF", "hs")).Output()
+	lc, err := exec.Command("otool", "-l", dwarfFile(bin)).Output()
 	if err != nil {
 		t.Fatalf("otool -l: %v", err)
 	}
@@ -674,7 +675,7 @@ func TestDebugLoclistsBudget(t *testing.T) {
 		}
 	}
 	if size < 0 {
-		t.Fatalf("no __debug_loclists in the dSYM:\n%s", lc)
+		t.Fatalf("no __debug_loclists in %s:\n%s", dwarfFile(bin), lc)
 	}
 	const budget = 3 << 20
 	t.Logf("__debug_loclists: %d bytes (budget %d)", size, budget)

@@ -2499,7 +2499,7 @@ func TestCacheStoreLog(t *testing.T) {
 // second worktree reused none of xo's 117 objects), so the same program
 // built in another directory reuses every object, its binary is that
 // directory's cache-off build, and its debug information names that
-// directory, not the first one or a placeholder (the dSYM on darwin, the
+// directory, not the first one or a placeholder (the DWARF on darwin, the
 // executable's .debug_str on linux).
 func TestBackendCacheObjectsAcrossDirs(t *testing.T) {
 	if !native() {
@@ -2560,7 +2560,7 @@ func TestBackendCacheObjectsAcrossDirs(t *testing.T) {
 			}
 			dbg := bin
 			if target == "" {
-				if dbg, err = os.ReadFile(out + ".dSYM/Contents/Resources/DWARF/prog"); err != nil {
+				if dbg, err = os.ReadFile(dwarfFile(out)); err != nil {
 					t.Fatal(err)
 				}
 			}

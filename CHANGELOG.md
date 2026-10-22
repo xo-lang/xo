@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- darwin executables carry their DWARF (decision 0346, owner): Xo's
+  Mach-O linker writes it uncompressed into a `__DWARF` segment of the
+  executable instead of a `NAME.dSYM` beside it, so a copied, cached,
+  renamed or packaged binary keeps its file:line names in crash reports,
+  fault tracebacks, the profiler, `--race` reports, atos and lldb.
+  `--dsym` writes the bundle too; `-s` leaves both out. Release binaries
+  (`xo` itself included) ship with their DWARF: the darwin archive grows
+  by about 11 MB (xo's tar.gz 23.2 MB to 34.4 MB). Links through cc (the
+  LLVM backend, `--ld=cc`) still write `NAME.dSYM`.
 - `xo clean -cache [-n]` (owner, 2026-10-22), like `go clean -cache`:
   removes every cache under `<user cache>/xo` (build directories, the
   native back end's cache, GOCACHE, test binaries, watch builds, xo dev

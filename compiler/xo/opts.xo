@@ -50,6 +50,9 @@ struct Opts {
   /// build too (decision 0239)
   strip: Bool = false
   debug_info: Bool = false
+  /// --dsym: a darwin link through compiler/macho also writes NAME.dSYM
+  /// (decision 0346: the executable carries its DWARF without it)
+  dsym: Bool = false
   /// --profile-support: a release build keeps the runtime's profiler
   /// (XO_PROF), which --release otherwise leaves out (decision 0238)
   profile_support: Bool = false
@@ -113,7 +116,7 @@ fn value_flags() -> List[Str] {
 
 /// The boolean flags.
 fn bool_flags() -> List[Str] {
-  ["json", "ci", "release", "error-args", "hybrid", "mono", "no-mono", "arenas", "no-arenas", "no-preempt", "no-gc", "holes", "race", "v", "real", "phase-times", "offline", "s", "debug-info", "profile-support", "trace-support", "watch"]
+  ["json", "ci", "release", "error-args", "hybrid", "mono", "no-mono", "arenas", "no-arenas", "no-preempt", "no-gc", "holes", "race", "v", "real", "phase-times", "offline", "s", "debug-info", "dsym", "profile-support", "trace-support", "watch"]
 }
 
 /// The usage of xo1's hidden commands (asm, keys) and of an unknown one;
@@ -589,6 +592,8 @@ fn set_bool(os: Os, var o: Opts, name: Str, on: Bool) {
     o.strip = on
   } else if name == "debug-info" {
     o.debug_info = on
+  } else if name == "dsym" {
+    o.dsym = on
   } else if name == "profile-support" {
     o.profile_support = on
   } else if name == "error-args" {

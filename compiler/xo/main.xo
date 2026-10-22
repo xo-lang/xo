@@ -1225,11 +1225,11 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         }
         race_rt = rp
       }
-      let mkey = macho_bin_key(os, ctx, dir, tgoos, flags, srcs, o.strip, nl, race_rt)
+      let mkey = macho_bin_key(os, ctx, dir, tgoos, flags, srcs, o.strip, nl, race_rt, o.dsym)
       let mst = stage(os, ctx, bin)
       let (mhit, mentry) = fetch_bin(os, ctx, mkey, mst.bin)
       if !mhit {
-        let why = macho_link(os, ctx, tgoos, flags, srcs, mst.bin, o.strip, nl, race_rt)
+        let why = macho_link(os, ctx, tgoos, flags, srcs, mst.bin, o.strip, nl, race_rt, o.dsym)
         if !why.is_empty() {
           fail_stage(os, mst, why)
         }
@@ -1238,6 +1238,10 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       let merr = mst.commit(os)
       if !merr.is_empty() {
         fail(os, merr)
+      }
+      if !o.dsym {
+        // an earlier --dsym build's bundle, for another UUID (decision 0346)
+        os.fs.remove_all("${bin}.dSYM").ignore_err("none from an earlier build")
       }
       t = lap(os, phases, "link", t)
       bins.push((tg, bin))

@@ -62,6 +62,8 @@ pub struct LinkOpts {
   /// The DWARF in the executable's own __DWARF segment (decision 0346),
   /// uncompressed, before __LINKEDIT, mapped with no access
   pub embed_dwarf: Bool = true
+  /// link_debug also gives the dSYM's DWARF file (`--dsym`)
+  pub dsym: Bool = false
 }
 
 /// An input file: its path (for messages) and contents.
@@ -193,8 +195,9 @@ pub fn link(inputs: List[LinkInput], opts: LinkOpts) -> Result[Bytes, Str] {
   }
 }
 
-/// link_debug: the executable and its dSYM's DWARF file (dsym.xo; empty
-/// when no input has DWARF sections), or the first error.
+/// link_debug: the executable and, with opts.dsym, its dSYM's DWARF file
+/// (dsym.xo; empty without it or when no input has DWARF sections), or
+/// the first error.
 pub fn link_debug(inputs: List[LinkInput], opts: LinkOpts) -> Result[(Bytes, Bytes), Str] {
   var l = Linker{opts: opts}
   for inp in inputs {
@@ -244,7 +247,7 @@ pub fn link_debug(inputs: List[LinkInput], opts: LinkOpts) -> Result[(Bytes, Byt
   if !l.err.is_empty() {
     return Err(l.err)
   }
-  let dsym = l.dsym()
+  let dsym = if l.opts.dsym { l.dsym() } else { zeros(0) }
   if !l.err.is_empty() {
     return Err(l.err)
   }

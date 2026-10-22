@@ -2,6 +2,7 @@ package arm64
 
 import (
 	"context"
+	"debug/macho"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,11 +17,12 @@ import (
 )
 
 // TestDebugLineDarwin checks the DWARF line tables of decision 0239 on
-// darwin/arm64: a build writes PROG.dSYM next to the executable, whose
-// line table maps an address of main to main.xo and the line of its
-// statement; `-s` writes none (and removes no executable bytes: darwin
-// keeps DWARF out of the executable). lldb's `b main.xo:9` resolving
-// there is checked by hand (knowledgebase/infrastructure/toolchain.md).
+// darwin/arm64: a build embeds them in the executable's __DWARF segment
+// and writes no PROG.dSYM (decision 0346); the line table maps an
+// address of main to main.xo and the line of its statement. `--dsym`
+// writes the bundle too, with the same tables; `-s` writes neither.
+// lldb's `b main.xo:9` resolving there is checked by hand
+// (knowledgebase/infrastructure/toolchain.md).
 func TestDebugLineDarwin(t *testing.T) {
 	if runtime.GOOS != "darwin" || !native() {
 		t.Skip("darwin/arm64 only")
@@ -61,10 +63,13 @@ func TestDebugLineDarwin(t *testing.T) {
 		return bin
 	}
 	bin := build("p")
-	dsym := bin + ".dSYM"
-	if _, err := os.Stat(filepath.Join(dsym, "Contents", "Resources", "DWARF", "p")); err != nil {
-		t.Fatalf("no dSYM: %v", err)
+	if _, err := os.Stat(bin + ".dSYM"); err == nil {
+		t.Errorf("a build without --dsym wrote %s.dSYM", bin)
 	}
+	if !hasDwarfSegment(t, bin) {
+		t.Fatalf("%s has no __DWARF segment", bin)
+	}
+	dsym := bin
 	info, err := exec.Command("dwarfdump", "--debug-info", dsym).CombinedOutput()
 	if err != nil {
 		t.Fatalf("dwarfdump: %v\n%s", err, info)
@@ -84,10 +89,41 @@ func TestDebugLineDarwin(t *testing.T) {
 	if v, err := exec.Command("dwarfdump", "--verify", dsym).CombinedOutput(); err != nil || !strings.Contains(string(v), "No errors.") {
 		t.Errorf("dwarfdump --verify: %v\n%s", err, v)
 	}
-	stripped := build("q", "-s")
+	withDsym := build("d", "--dsym")
+	d := filepath.Join(withDsym+".dSYM", "Contents", "Resources", "DWARF", "d")
+	if v, err := exec.Command("dwarfdump", "--verify", d).CombinedOutput(); err != nil || !strings.Contains(string(v), "No errors.") {
+		t.Errorf("--dsym: dwarfdump --verify %s: %v\n%s", d, err, v)
+	}
+	stripped := build("q", "-s", "--dsym")
 	if _, err := os.Stat(stripped + ".dSYM"); err == nil {
 		t.Errorf("-s wrote %s.dSYM", stripped)
 	}
+	if hasDwarfSegment(t, stripped) {
+		t.Errorf("-s left a __DWARF segment in %s", stripped)
+	}
+}
+
+// hasDwarfSegment reports whether the Mach-O executable bin has a
+// __DWARF segment (decision 0346).
+func hasDwarfSegment(t *testing.T, bin string) bool {
+	t.Helper()
+	f, err := macho.Open(bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	return f.Segment("__DWARF") != nil
+}
+
+// dwarfFile is where bin's DWARF is: its dSYM's DWARF file when the link
+// wrote one (cc and the LLVM backend through dsymutil, or --dsym), else
+// bin itself (compiler/macho embeds it, decision 0346).
+func dwarfFile(bin string) string {
+	d := filepath.Join(bin+".dSYM", "Contents", "Resources", "DWARF", filepath.Base(bin))
+	if _, err := os.Stat(d); err == nil {
+		return d
+	}
+	return bin
 }
 
 // TestDebugLineDarwinCC checks the dSYM of the darwin links that do not go
@@ -96,7 +132,9 @@ func TestDebugLineDarwin(t *testing.T) {
 // PROG.dSYM whose line table names main.xo and verifies, and lldb must
 // resolve a breakpoint at main.xo:9 from it (no run: the line tables
 // alone). A second build from the binary cache must bring the dSYM back
-// (the cache keeps its DWARF beside the entry), for the macho link too.
+// (the cache keeps its DWARF beside the entry). The macho link's
+// executable carries its DWARF and has no dSYM (decision 0346), unless
+// --dsym, which the cache keeps too.
 func TestDebugLineDarwinCC(t *testing.T) {
 	if runtime.GOOS != "darwin" || !native() {
 		t.Skip("darwin/arm64 only")
@@ -141,7 +179,7 @@ func TestDebugLineDarwinCC(t *testing.T) {
 	}
 	check := func(bin string) {
 		t.Helper()
-		dsym := bin + ".dSYM"
+		dsym := dwarfFile(bin)
 		lines, err := exec.Command("dwarfdump", "--debug-line", dsym).CombinedOutput()
 		if err != nil || !strings.Contains(string(lines), "main.xo") {
 			t.Fatalf("dwarfdump --debug-line %s: %v\n%.2000s", dsym, err, lines)
@@ -155,15 +193,20 @@ func TestDebugLineDarwinCC(t *testing.T) {
 		}
 	}
 	for _, c := range []struct {
-		name string
-		args []string
+		name   string
+		args   []string
+		bundle bool
 	}{
-		{"llvm", []string{"--backend=llvm"}},
-		{"cc", []string{"--backend=arm64", "--ld=cc"}},
-		{"macho", []string{"--backend=arm64", "--ld=macho"}},
+		{"llvm", []string{"--backend=llvm"}, true},
+		{"cc", []string{"--backend=arm64", "--ld=cc"}, true},
+		{"macho", []string{"--backend=arm64", "--ld=macho"}, false},
+		{"macho-dsym", []string{"--backend=arm64", "--ld=macho", "--dsym"}, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			bin := build(c.name, c.args...)
+			if _, err := os.Stat(bin + ".dSYM"); (err == nil) != c.bundle {
+				t.Fatalf("%s.dSYM present: %v, want %v", bin, err == nil, c.bundle)
+			}
 			check(bin)
 			// from the binary cache: the executable and its dSYM
 			if err := os.RemoveAll(bin + ".dSYM"); err != nil {
@@ -173,8 +216,8 @@ func TestDebugLineDarwinCC(t *testing.T) {
 				t.Fatal(err)
 			}
 			build(c.name, c.args...)
-			if _, err := os.Stat(bin + ".dSYM"); err != nil {
-				t.Fatalf("no dSYM after a cache hit: %v", err)
+			if _, err := os.Stat(bin + ".dSYM"); (err == nil) != c.bundle {
+				t.Fatalf("%s.dSYM present after a cache hit: %v, want %v", bin, err == nil, c.bundle)
 			}
 			check(bin)
 		})
@@ -183,7 +226,7 @@ func TestDebugLineDarwinCC(t *testing.T) {
 
 // TestDebugLineInlined checks the inlined frames of decision 0239 on
 // darwin/arm64: the arm64 inliner copies testdata/inlined's scale into
-// main, and the dSYM describes the copy with a DW_TAG_inlined_subroutine
+// main, and the DWARF describes the copy with a DW_TAG_inlined_subroutine
 // whose abstract origin is scale and whose call line is main's call (12),
 // so an address in the copy looks up as scale at its own lines (5 or 6),
 // and lldb stopped at `b scale` shows scale as an inlined frame above
@@ -224,7 +267,7 @@ func TestDebugLineInlined(t *testing.T) {
 	if b, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("xo build: %v\n%s", err, b)
 	}
-	dsym := bin + ".dSYM"
+	dsym := dwarfFile(bin)
 	info, err := exec.Command("dwarfdump", "--debug-info", dsym).CombinedOutput()
 	if err != nil {
 		t.Fatalf("dwarfdump: %v\n%s", err, info)

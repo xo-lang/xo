@@ -1,7 +1,7 @@
 usage: xo build [--targets=all|os/arch,...] [--backend=go|llvm|arm64|amd64|wasm] [--no-gc]
                 [--no-mono] [--no-arenas] [--tzdata=embedded|system] [--ci]
                 [--release [--error-args=false] [--profile-support] [--trace-support]]
-                [-s] [--debug-info] [--ld=macho|cc] [--race]
+                [-s] [--debug-info] [--dsym] [--ld=macho|cc] [--race]
                 [--stamp NAME=VALUE]... [--hybrid]
                 [--json] [-o out] <dirs...>
 
@@ -22,8 +22,9 @@ requires(debug) and ensures(debug) compiled out, the runtime's profiler
 (XO_PROF) left out unless --profile-support, and the execution trace's
 recorder (XO_TRACE) unless --trace-support; --error-args=false drops
 parameter values from error frames. Native builds carry DWARF line tables
-(a .dSYM beside a darwin binary); -s leaves them and the local symbols
-out, --debug-info keeps them in a --release build. --ld picks the native
+(in a darwin binary's __DWARF segment; --dsym also writes NAME.dSYM, and
+a link through cc writes only the .dSYM); -s leaves them and the local
+symbols out, --debug-info keeps them in a --release build. --ld picks the native
 linker: macho (Xo's own; the default on darwin/arm64) or cc. --race (also
 on run and test) builds with ThreadSanitizer on the LLVM backend. --stamp (repeatable, also on run)
 sets a `const NAME: Str` of the main module for this build (XO1501
