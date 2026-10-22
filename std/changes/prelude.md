@@ -3,7 +3,7 @@
 ## 2026-10-22: perf: Fs.cwd and the working directory on macOS take $PWD when it names it
 
 - Kind: perf
-- Commit: this commit
+- Commit: 532bd6838
 - Found by: the Go backend gap ranking (bench/results/go-backend-gap-2026-10-22.md), fsproc cwd at 0.14x of the Go backend
 - Go reference: os.Getwd (go1.26.1)
 - Test: golden fs_cwd_path (a stale PWD is not used); bench/results/native-cwd-darwin-2026-10-22.md
