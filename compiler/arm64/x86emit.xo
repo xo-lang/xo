@@ -362,7 +362,7 @@ fn (var g: G) x86_emit_once() {
 /// where the frame's blocks start (with shrink wrapping a save block's
 /// prologue runs where the rules already say the frame is made; no call
 /// is inside it).
-fn (g: G) x86_prologue(var b: List[Str]) {
+fn (var g: G) x86_prologue(var b: List[Str]) {
   let fr = g.fr
   let win = g.os == "windows"
   if fr.leaf {
@@ -384,7 +384,17 @@ fn (g: G) x86_prologue(var b: List[Str]) {
   }
   let rest = fr.size - 8 * g.saved.len() - fr.rz
   if rest > 0 {
-    if rest >= 4096 {
+    if rest > PROBE_UNROLL * PROBE_PAGE {
+      // a frame past PROBE_UNROLL pages (as arm64's probe_sp): each
+      // page below rsp read in a loop (r10 the frame's end, r11 the
+      // page; neither holds an argument), then one subq, so the prologue
+      // stays short (a Win64 prologue is at most 255 bytes: the unrolled
+      // probes passed it at about 68 KiB, 2026-10-22)
+      let top = g.local("${g.lbl_prefix()}_pk${g.dl_n}")
+      let out = g.local("${g.lbl_prefix()}_pk${g.dl_n + 1}")
+      g.dl_n += 2
+      b.push("\tleaq -${rest}(%rsp), %r10\n\tmovq %rsp, %r11\n${top}:\n\tsubq $4096, %r11\n\tcmpq %r10, %r11\n\tjbe ${out}\n\ttestq %r11, (%r11)\n\tjmp ${top}\n${out}:\n\tsubq $${rest}, %rsp\n")
+    } else if rest >= 4096 {
       // touch each page on the way down (the guard page)
       var off = 4096
       while off < rest {
