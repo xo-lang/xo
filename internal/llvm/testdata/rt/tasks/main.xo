@@ -306,6 +306,12 @@ fn test_magazines(r: Run, workers: Int) {
   let warm = 4
   let nblocks = 50000
   var before = 0
+  // the rounds whose blocks were freed on another thread: the allocating
+  // task spins while it waits, and preemption (decision 0286 step 3's
+  // polls, decision 0318's signal) may yield it so its own thread runs
+  // the freeing task, so a round may not; one at least must (as
+  // alloc_threads' waves, 62543aed5)
+  var off_rounds = 0
   for round in 0..rounds {
     if round == warm {
       before = internal.rt_probe("chunks", 0, 0, 0, 0)
@@ -332,8 +338,11 @@ fn test_magazines(r: Run, workers: Int) {
       }
       t.await
     }
-    r.check(workers == 1 || th != me, "magazines: the blocks were freed on their own thread")
+    if th != me {
+      off_rounds += 1
+    }
   }
+  r.check(workers == 1 || off_rounds > 0, "magazines: no round of ${rounds} freed its blocks on another thread")
   // each round allocates 3.2 MB: without magazines about one chunk a
   // round; a freeing thread keeps less than two magazines (128 KB) in
   // the heap it leaves behind
