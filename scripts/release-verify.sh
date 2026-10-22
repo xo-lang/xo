@@ -19,11 +19,21 @@
 #      (linux/amd64) these are expected to fail and are reported as
 #      "unsupported", not as failures; `xo build` with the default (Go)
 #      backend must say Go is missing.
+#      Also without Go, the checks of bugs 0.25.2 shipped (lead,
+#      2026-10-22): `xo build --targets=all` of hello gives the six
+#      binaries a native backend builds, NAME-OS-ARCH (windows/arm64 needs
+#      the Go backend); `xo build --race` and a run with no clang on PATH
+#      report the planted race with a main.xo line (where lib/xo/race
+#      ships for the host); the time_civil golden (daylight saving gaps
+#      and overlaps, Earlier never after Later) matches; on darwin, atos
+#      names main.xo for a function of a built binary (the embedded DWARF,
+#      decision 0346; CoreSymbolication on the Intel laptop's macOS).
 #   3. with Go: a hello program on the Go backend, a `use go` program
 #      (bin/xo-gobind), then cmd/xo's whole suite (no -short) with XO_CLI
 #      = the archive's bin/xo, no XO_STD (the switch point B gate; since
 #      decision 0215 cmd/xo holds only these tests: there is no Go xo to
-#      compare with).
+#      compare with); and on arm64 with 5 GB free, internal/arm64
+#      TestStrViewPast2GiB (a Str view past 2 GiB).
 #
 # Also, without Go: `xo version --json` names the commit this checkout is
 # at (release.sh stamps it; a release is built from the published tree),
@@ -51,8 +61,9 @@ root=$(pwd)
 out=${2:-.tools/release-verify}
 case "$out" in /*) ;; *) out=$root/$out ;; esac
 rm -rf "$out"
-mkdir -p "$out/unpack" "$out/shim" "$out/hello" "$out/usego/app" "$out/tz"
+mkdir -p "$out/unpack" "$out/shim" "$out/hello" "$out/usego/app" "$out/tz" "$out/civil" "$out/race" "$out/all" "$out/noclang"
 cp internal/gen/testdata/golden/time_zones/main.xo "$out/tz/main.xo"
+cp internal/gen/testdata/golden/time_civil/main.xo "$out/civil/main.xo"
 tar -xzf "$archive" -C "$out/unpack" || { echo "FAIL unpack"; exit 1; }
 rel=$(echo "$out"/unpack/*)
 xo=$rel/bin/xo
@@ -154,6 +165,59 @@ done
       fail native-$nb-tz-output; diff "$out/tz/got.txt" "$out/tz/want.txt" | head -5 | sed 's/^/  /'
     fi
   fi
+  # the time_civil golden: daylight saving gaps and overlaps
+  check native-$nb-civil-run "$xo" build --backend=$nb -o "$out/civil/civil" "$out/civil"
+  if [ "$native" = 1 ]; then
+    sed -n '/^--- stdout$/,/^--- stderr$/p' internal/gen/testdata/golden/time_civil/want.txt | sed '1d;$d' > "$out/civil/want.txt"
+    "$out/civil/civil" > "$out/civil/got.txt" 2>&1
+    if cmp -s "$out/civil/got.txt" "$out/civil/want.txt"; then pass native-$nb-civil-output
+    else fail native-$nb-civil-output; diff "$out/civil/got.txt" "$out/civil/want.txt" | head -5 | sed 's/^/  /'; fi
+  fi
+  # --targets=all: the six binaries a native backend builds
+  check native-targets-all "$xo" build --targets=all -o "$out/all/" "$out/hello"
+  missing=""
+  for f in hello-linux-amd64 hello-linux-arm64 hello-darwin-amd64 hello-darwin-arm64 hello-windows-amd64.exe hello-wasip1-wasm.wasm; do
+    [ -s "$out/all/$f" ] || missing="$missing $f"
+  done
+  if [ -z "$missing" ]; then pass native-targets-all-binaries; else fail "native-targets-all-binaries (missing:$missing)"; fi
+  # --race with no clang on PATH: the native ThreadSanitizer where it ships
+  if [ -d "$rel/lib/xo/race/${host%/*}-${host#*/}" ]; then
+    noclang=""
+    IFS=: read -ra cdirs <<< "$PATH"
+    for d in "${cdirs[@]}"; do
+      [ -n "$d" ] || continue
+      if ls "$d"/clang* >/dev/null 2>&1; then
+        for f in "$d"/*; do
+          b=$(basename "$f")
+          case "$b" in clang*|cc|c++|gcc*|g++*|ld.lld|lld*) continue ;; esac
+          [ -x "$f" ] && [ ! -e "$out/noclang/$b" ] && ln -s "$f" "$out/noclang/$b"
+        done
+        d=$out/noclang
+        case ":$noclang:" in *":$d:"*) continue ;; esac
+      fi
+      noclang=${noclang:+$noclang:}$d
+    done
+    if PATH=$noclang command -v clang >/dev/null 2>&1; then
+      fail "race-no-clang (clang still on PATH: $(PATH=$noclang command -v clang))"
+    # built in place: it plants the race with std/internal, which only
+    # the checkout's own modules may use
+    elif (cd "$root" && PATH=$noclang "$xo" build --race -o "$out/race/race" internal/llvm/testdata/tsan_race) > "$out/race-build.txt" 2>&1; then
+      XO_THREADS=1 "$out/race/race" > "$out/race-run.txt" 2>&1
+      if grep -q "WARNING: ThreadSanitizer: data race" "$out/race-run.txt" && grep -q "main.xo:[0-9]" "$out/race-run.txt"; then
+        pass race-no-clang
+      else fail race-no-clang; head -12 "$out/race-run.txt" | sed 's/^/  /'; fi
+    else fail race-no-clang-build; tail -5 "$out/race-build.txt" | sed 's/^/  /'; fi
+  else
+    echo "UNSUPPORTED race-no-clang (no lib/xo/race for $host)"
+  fi
+  # atos on darwin: a function's address named with its main.xo line
+  if [ "${host%/*}" = darwin ] && [ "$native" = 1 ] && [ -x "$out/tz/tz" ]; then
+    addr=$(nm "$out/tz/tz" 2>/dev/null | awk '$3 == "_xo_f_main" || $3 == "xo_f_main" { print "0x" $1; exit }')
+    if [ -z "$addr" ]; then fail "atos (no xo_f_main symbol)"
+    elif atos -o "$out/tz/tz" -arch "$(uname -m)" "$addr" 2>&1 | tee "$out/atos.txt" | grep -q "main.xo:[0-9]"; then
+      pass "atos ($(head -1 "$out/atos.txt"))"
+    else fail atos; sed 's/^/  /' "$out/atos.txt"; fi
+  fi
   for f in native-$nb-run native-$nb-ld-cc-run native-$nb-ld-macho-run native-llvm-run; do
     grep -q "hello from the released xo" "$out/$f.txt" 2>/dev/null && echo "  $f: $(head -1 "$out/$f.txt")"
   done
@@ -187,6 +251,20 @@ if command -v go >/dev/null 2>&1; then
   # full log stays on the instance
   grep -E '^[[:space:]]+[a-z_0-9]+_test\.go:[0-9]+:' "$out/cmdxo.log" | head -80 | cut -c1-400 | sed 's/^[[:space:]]*/    /'
   if [ "$f" = 0 ] && grep -q '^ok' "$out/cmdxo.txt"; then pass cmdxo-gate; else fail cmdxo-gate; fi
+  # a Str view past 2 GiB (the 0.25.2 truncation): about 2.2 GB at its
+  # peak, so only with 5 GB free; arm64 hosts (the test's own skip)
+  freegb=0
+  if [ "${host%/*}" = darwin ]; then
+    freegb=$(vm_stat | awk '/page size of/ { ps = $8 } /Pages (free|inactive|speculative)/ { gsub("\\.", "", $NF); n += $NF } END { printf "%d", n * ps / 1073741824 }')
+  elif [ -r /proc/meminfo ]; then
+    freegb=$(awk '/^MemAvailable:/ { printf "%d", $2 / 1048576 }' /proc/meminfo)
+  fi
+  if [ "$nb" != arm64 ]; then echo "UNSUPPORTED str-view-past-2gib (not arm64)"
+  elif [ "$freegb" -lt 5 ]; then echo "UNSUPPORTED str-view-past-2gib (${freegb} GB free, 5 needed)"
+  else
+    ( cd "$root" && XO_CLI="$xo" go test -count=1 -timeout 30m -run '^TestStrViewPast2GiB$' ./internal/arm64 ) > "$out/bigstr.txt" 2>&1
+    if grep -q '^ok' "$out/bigstr.txt"; then pass str-view-past-2gib; else fail str-view-past-2gib; tail -5 "$out/bigstr.txt" | sed 's/^/  /'; fi
+  fi
 else
   echo "no go on PATH: the Go backend checks and cmd/xo's tests are not run"
   fail go-present

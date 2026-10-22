@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- scripts/release-verify.sh checks what 0.25.2 shipped broken: `xo build
+  --targets=all` gives the six native binaries named NAME-OS-ARCH, `xo
+  build --race` with no clang on PATH reports a planted race with its
+  main.xo line, the time_civil golden (daylight saving gaps and overlaps)
+  matches, a Str view past 2 GiB (internal/arm64 TestStrViewPast2GiB,
+  with 5 GB free), and on darwin atos names main.xo from the embedded
+  DWARF (run it on the Intel laptop too).
+
 - A memory budget for native programs and for xo (decision 0349, owner):
   `XO_MAX_MEM=12G` (or `512M`, bytes; `off`) stops a program whose heap
   maps more, with status 70, `fatal error: memory budget exceeded: ...`
