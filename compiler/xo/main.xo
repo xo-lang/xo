@@ -66,15 +66,11 @@ use github.com/xo-lang/xo/compiler/cli/cmdhelp
 use github.com/xo-lang/xo/compiler/cli/bench
 
 fn main(os: Os) ! {
-  // decision 0349: xo stops past half of physical memory (with the phase
-  // it was in) instead of growing until the machine swaps; XO_MAX_MEM
-  // sets another budget, 0 or off none (read by the runtime at start)
-  if os.env.get("XO_MAX_MEM") == None {
-    let total = debug.mem_total()
-    if total > 0 {
-      debug.mem_budget(total / 2)
-    }
-  }
+  // decision 0349: no default budget until it is measured (2026-10-22: a
+  // self build of xo maps more than half of a 24 GB Mac's memory, past
+  // the default of half, though its resident set stays under heavy.sh's
+  // 12 GB; every build of xo stopped); XO_MAX_MEM sets one (read by the
+  // runtime at start)
   debug.mem_label("checking (the first phase)")
   let fr = front(os, os.env.args())
   if fr.code >= 0 {
