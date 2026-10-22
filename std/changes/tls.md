@@ -1,5 +1,20 @@
 # std/tls changes
 
+## 2026-10-22: speedup: GHASH of a 64 byte chunk written out in the fused CTR loop
+
+- Kind: speedup
+- Commit: this commit
+- Found by: profile (Xo Lang 3, bulk TLS 1.3 download: aesgcm.ghash64 26% of server CPU, called once per chunk)
+- Go reference: none (call overhead only)
+- Test: std/native/llrt/tlsrec_test.xo; tls, tls12, tls13, http_tls, websocket_tls, crypto goldens (arm64, LLVM); wasm TLS and Map goldens
+
+ghash64's body is now in ctr_at_a's loop (the inliner leaves the call: the
+function is too big), so a chunk no longer pays a call and a returned
+pair. valgrind callgrind, linux/arm64, 16 MiB TLS 1.3 download: 142.89 M
+to 141.34 M instructions (-1.1%); ghash64 is 25.9% of them, so the
+four-blocks-a-reduction body is where the rest is (a NEON multiply is the
+next step).
+
 ## 2026-10-22: speedup: AES-GCM response records sealed from the caller's bytes, GHASH fused with the CTR pass
 
 - Kind: speedup
