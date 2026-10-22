@@ -3,7 +3,7 @@
 ## 2026-10-22: speedup: AES-GCM seal and open on the interleaved AES and GHASH kernel
 
 - Kind: speedup
-- Commit: this commit
+- Commit: df2b7ce39
 - Found by: bench/perf/aesgcm profile after the fused CTR kernel: GHASH 53% of seal (Xo Lang 3; kernel by Xo Lang 1, 0f5353597)
 - Go reference: crypto/cipher's GCM (gcmAesEnc and gcmAesDec interleave the rounds with the products)
 - Test: tls_test (seal_at over chunk boundaries), tls12_client, http_tls, http_tls_keys and crypto_prims goldens (arm64, LLVM with Go parity); TestTLSDiff, TestCryptoXoDiff, TestConstantTimeLLVM
