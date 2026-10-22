@@ -554,6 +554,18 @@ Part 2 (design, 2026-10-18), in order of the measured time left:
   removed by another build while this one listed it reads as missing and
   its keys come from the loose files. The prune treats each segment as
   one entry, marked used when read.
+  Amended 2026-10-21 (Xo Lang 3, after Xo Lang 5's measurement): a
+  target's second build no longer writes segments either. TestGoldenRun
+  on an empty private cache wrote 12.6 GiB and 1,645 files on its second
+  pass, 7% faster than the cold first (115 s, 107 s, then 37 s for the
+  third), the bytes mostly copies of loose entries. The pack directory
+  now holds a `seen` count (1 after the first build, 2 after the second);
+  the segments are written by the third build. The parts, which have no
+  loose copies, are still packed on the second build (the first for a
+  module of 16 parts or more). A program built twice, as a test run's
+  goldens are, never pays for the copies; an edit loop reads loose files
+  one build longer. TestBackendCacheEditIdentity checks the packs after
+  its third build.
   Measured (the Mac, main and the change interleaved step by step, load
   average 50 to 130 from other sessions, so the wall times are not
   comparable): insert_rc.read 0.21 to 0.51 s to 0.03 to 0.11 s,
