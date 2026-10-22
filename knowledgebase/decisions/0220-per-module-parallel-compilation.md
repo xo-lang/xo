@@ -910,3 +910,20 @@ constant edit 9.40 to 8.13 s (0.6 to 1.3 s less); the check phase 1.4
 to 2.0 s to 1.1 to 1.4 s; bodies replayed warm 7,915 to 8,201 of about
 8,420. A cold build is 2.9 s slower in wall (48.3 to 51.2 s, load 31 to
 45) and 1.3 s less in user CPU.
+
+## Addendum (owner, 2026-10-22): the module skip's auto mode is the default
+
+`XO_CHK_CACHE=auto` is the default of `xo build` and `xo run` with one
+target (compiler/xo main.xo): a module is skipped only when the front
+end cache replays every body of it, with build_native's fallback when one
+is built from source anyway. `XO_CHK_CACHE=0` turns it off and `=1`
+skips every unchanged module (opt in, as before). The check is 300 to
+410 ms of a 0.5 to 0.7 s warm build (bench/results/test-speed-vs-go-2026-10-21.md)
+and 0.22 to 0.27 s when modules skip (decision 0283). Two warm and cold
+differences slipped past the per-push gates before (2026-10-19,
+gotchas/module-check-cache-skips-whole-program-passes.md; 2026-10-22,
+main_unnamed), so scripts/gate.sh runs TestModuleCheckAuto,
+TestModuleCheckAutoGeneric and TestModuleCheckAutoZones (internal/arm64
+fcache_test.go) after every gate of a branch that changes compiler/check
+or compiler/ssa, and the lead's hourly run runs them on main.
+

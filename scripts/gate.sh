@@ -23,6 +23,13 @@
 #            (XO_PASSES, compiler/arm64 passes.xo)
 #   fp       the self rebuild fixed point (scripts/bootstrap-xo.sh); its
 #            output (about 3 GB) is removed after
+#   chkcache the module check cache's auto mode against a cold check
+#            (internal/arm64 TestModuleCheckAuto, ...Generic, ...Zones):
+#            run after the steps named when the branch changes
+#            compiler/check or compiler/ssa, since XO_CHK_CACHE=auto is the
+#            default of xo build and run (owner, 2026-10-22; two warm and
+#            cold differences slipped past the per-push gates before);
+#            XO_GATE_CHKCACHE=0 skips that
 #   warm     the backend caches across xo builds (decision 0275): the
 #            parent commit's xo is built, then TestFrontCacheAcrossPrograms
 #            fills a cache with it and builds every program again with
@@ -82,6 +89,14 @@ go_backend() {
   base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
   { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | grep -q -E '^(compiler/gen/|std/rt/)'
 }
+# check_change: the branch changes the checker or the SSA builder, whose
+# whole-program passes the module check cache's skipped modules must
+# replay (gotchas/module-check-cache-skips-whole-program-passes.md).
+check_change() {
+  base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
+  { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | grep -q -E '^compiler/(check|ssa)/'
+}
+chkcache_ran=0
 # llvm_goldens: the golden programs the llvm step runs (owner,
 # 2026-10-22: the whole package cost 46 to 56 minutes a gate), "all" or
 # XO_LLVM_GOLDENS's list (internal/llvm golden_select_test.go): those
@@ -192,8 +207,15 @@ for step in "$@"; do
     fi
     git worktree remove --force "$pw/tree" >/dev/null 2>&1
     rm -rf "${pw:?}" ;;
+  chkcache)
+    chkcache_ran=1
+    full chkcache ./internal/arm64 -run '^TestModuleCheckAuto(Generic|Zones)?$' ;;
   *) echo "gate.sh: unknown step $step"; failed=1 ;;
   esac
 done
+if [ "$chkcache_ran" = 0 ] && [ "${XO_GATE_CHKCACHE:-1}" != 0 ] && check_change; then
+  chkcache_ran=1
+  full chkcache ./internal/arm64 -run '^TestModuleCheckAuto(Generic|Zones)?$'
+fi
 echo GATE-DONE
 exit $failed

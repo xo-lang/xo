@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo build` and `xo run` with one target skip checking an unchanged
+  module whose bodies the front end cache replays, by default (owner,
+  2026-10-22; decision 0220 addendum): a warm build's check drops from
+  300 to 410 ms to about 0.25 s. `XO_CHK_CACHE=0` turns it off.
+
 - `xo run --holes` and `xo test --holes` build natively (owner,
   2026-10-22): an evaluated `???` faults with `evaluated a hole \`???\``
   as on the Go backend, so `--holes` no longer needs Go installed.

@@ -578,11 +578,17 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
       c.mod_cache_dir = dir
       c.mod_verify = backend_cache_mode(os) == "verify"
       c.mod_flags = "${id}\nstd=${o.std} lazy=${c.lazy} llrt_c=${c.llrt_c.join(",")} std_test=${c.std_test}"
-      // opt in until the whole-program passes (solve_effects,
-      // flow_bodies, never results) cover a skipped module's bodies: a
-      // body checked lazily after them builds wrong (os_tasks lost its
-      // task's error, 2026-10-19)
-      let cc = os.env.get("XO_CHK_CACHE") ?? ""
+      // auto by default for one target (owner, 2026-10-22): a skipped
+      // module is one whose every body the front end cache replays, so
+      // the whole-program passes see them (a body checked lazily after
+      // them built wrong under XO_CHK_CACHE=1, 2026-10-19); scripts/gate.sh
+      // runs TestModuleCheckAuto* for every compiler/check and
+      // compiler/ssa change. XO_CHK_CACHE=0 turns it off, =1 skips every
+      // unchanged module (opt in)
+      var cc = os.env.get("XO_CHK_CACHE") ?? ""
+      if cc.is_empty() {
+        cc = "auto"
+      }
       c.mod_skip_on = cc == "1" || (cc == "auto" && !o.many_targets)
       // auto: only modules whose every body the front end cache replays,
       // with a fallback (build_native) when one is built from source

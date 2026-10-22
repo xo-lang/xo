@@ -2448,7 +2448,9 @@ func TestCacheStoreLog(t *testing.T) {
 			env = append(env, e)
 		}
 	}
-	env = append(env, "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on")
+	// the module check cache off: auto is the default since 2026-10-22
+	// (decision 0220 addendum), and this test is about the store log
+	env = append(env, "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on", "XO_CHK_CACHE=0")
 	logged := func() []string {
 		b, _ := os.ReadFile(filepath.Join(cache, "store-log"))
 		return strings.Split(strings.TrimSpace(string(b)), "\n")
