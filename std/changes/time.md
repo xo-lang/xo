@@ -3,7 +3,7 @@
 ## 2026-10-22: perf: parse no longer builds strings it does not use
 
 - Kind: perf
-- Commit: this commit
+- Commit: 6235fe89d
 - Found by: the std Go ranking (Layout.parse 3.4x Go's time.Parse), XO_PROF=cpu
 - Go reference: time.Parse
 - Test: std module tests native/time (arm64); goldens time_format, time_zones
