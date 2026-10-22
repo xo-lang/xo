@@ -3,7 +3,7 @@
 ## 2026-10-22: perf: parse finds line ends, quotes and separators 16 bytes at a time
 
 - Kind: perf
-- Commit: this commit
+- Commit: cf61b9236
 - Found by: XO_PROF=cpu (read_line, index_byte, the per-field UTF-8 check and slice checks were 45% of parse)
 - Go reference: encoding/csv reader.go readLine, readRecord (go1.26.1)
 - Test: internal/llvm/testdata/golden/csv_basic and std/native/csv_test.xo (arm64, LLVM, go)

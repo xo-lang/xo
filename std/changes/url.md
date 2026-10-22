@@ -3,7 +3,7 @@
 ## 2026-10-22: perf: parse_query copies its keys and values of a long query
 
 - Kind: perf
-- Commit: this commit
+- Commit: 4438a0bf0
 - Found by: memory probe (300 queries of 1 MiB, one kept key: 318 MB retained)
 - Go reference: net/url url.go parseQuery (go1.26.1)
 - Test: internal/llvm/testdata/golden/views_parsers (arm64, LLVM, go)

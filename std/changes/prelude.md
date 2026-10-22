@@ -3,7 +3,7 @@
 ## 2026-10-22: feature: Str.clone and Bytes.clone
 
 - Kind: feature
-- Commit: this commit
+- Commit: 44099405f
 - Found by: decision 0330 item 3 (explicit copy of a view)
 - Go reference: strings.Clone, bytes.Clone
 - Test: golden views_clone (arm64, LLVM, Go); bench/results/views-retention-2026-10-22.md

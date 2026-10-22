@@ -3,7 +3,7 @@
 ## 2026-10-22: perf: parse_media_type copies its tokens of a long value
 
 - Kind: perf
-- Commit: this commit
+- Commit: 4438a0bf0
 - Found by: memory probe (300 values of 1 MiB, one kept token: 318 MB retained)
 - Go reference: mime/mediatype.go ParseMediaType (go1.26.1)
 - Test: internal/llvm/testdata/golden/views_parsers (arm64, LLVM, go)

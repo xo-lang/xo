@@ -1931,7 +1931,8 @@ func TestVetCostReuse(t *testing.T) {
 
 // vetCostViewProg: slices of a parameter's text made in a loop and stored
 // in a returned list (XO0911, line 11); not the full text stored, a slice
-// used and dropped, nor a list of slices that stays local.
+// used and dropped, a list of slices that stays local, nor a slice cloned
+// where it is stored.
 const vetCostViewProg = `
 struct Tok {
   name: Str
@@ -1972,15 +1973,25 @@ fn local_list(text: Str) -> Int {
   parts.join(",").len()
 }
 
+fn cloned(text: Str) -> List[Tok] {
+  var out: List[Tok] = []
+  for line in text.lines() {
+    let i = line.find("=") ?? 0
+    out.push(Tok{name: line[0..i].clone(), val: line[i + 1..].trim().clone()})
+  }
+  out
+}
+
 fn main(os: Os) {
   let ts = parse("a=b\nc=d")
-  os.stdio.println("${ts.len()} ${keep_full("x").len()} ${local_only("ab")} ${local_list("ab")}")
+  os.stdio.println("${ts.len()} ${keep_full("x").len()} ${local_only("ab")} ${local_list("ab")} ${cloned("a=b").len()}")
 }
 `
 
 // TestVetCostViewStore: `xo vet --cost` notes a view of a parameter's
 // text stored in a returned collection (XO0911, decision 0330), and not
-// the full text, a slice used and dropped, or a list that stays local.
+// the full text, a slice used and dropped, a list that stays local, or a
+// slice cloned where it is stored.
 func TestVetCostViewStore(t *testing.T) {
 	t.Parallel()
 	dir := writeFiles(t, map[string]string{"main.xo": vetCostViewProg})
