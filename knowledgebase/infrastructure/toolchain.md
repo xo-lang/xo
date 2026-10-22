@@ -3781,6 +3781,17 @@ so they yield to the Mac's own work, not through scripts/lead/heavy.sh
 they started, by ID (`docker rm ID`), never by name or pattern. Last
 verified: 2026-10-16.
 
+Linux LLVM smoke test (2026-10-21, for hourly.sh):
+`scripts/docker-llvm-smoke.sh XO_CLI` cross builds a linux/arm64 xo with
+the darwin XO_CLI, then in the arm64 container builds hello and the
+async_preempt_regs golden with --backend=llvm, linked by ld.bfd (with
+the LLVM plugin, the image's default) and by ld.lld, and checks their
+output against want.txt: exit 0 ok, 1 failed, 2 setup error, 0 with a
+note when Docker is not running; about 4 minutes. Debian trixie has no
+ld.gold. The darwin gates see neither Linux's linkers nor the no-libc
+start (gotchas/llvm-linux-section-bounds-and-start.md). Last verified:
+2026-10-21.
+
 Three scripts:
 
     scripts/docker-linux.sh ARCH WORKDIR 'COMMAND'   # in xo-linux-test:ARCH-BASE (Debian with clang, lld, make, yara; $XO_DOCKER_BASE, default debian:trixie-slim, clang 19); the checkout at /xo read only, WORKDIR at /work, HOME=/work/home; --rm
