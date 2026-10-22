@@ -44,6 +44,9 @@ pub struct PEOpts {
   /// a --race program (decision 0273's Windows addendum), whose image
   /// ThreadSanitizer's Go flavor shadows below 0xe0_0000_0000
   pub fixed_base: Bool = false
+  /// the PDB the debug directory names (decision 0344, pdb.xo pe_pdb
+  /// writes it and the record's GUID); "": no debug directory
+  pub pdb: Str = ""
 }
 
 /// An input section's place: its output section and offset there.
@@ -356,6 +359,34 @@ pub fn link_pe(objs: List[CObj], o: PEOpts) -> Result[Bytes, Str] {
       bufs[PO_RDATA].push(0)
     }
   }
+  // the debug directory (one IMAGE_DEBUG_DIRECTORY, 28 bytes) and its
+  // CodeView record: RSDS, the GUID (pdb.xo pe_pdb sets it), age 1, the
+  // PDB's path
+  var dbg = -1
+  var rsds = -1
+  if !o.pdb.is_empty() {
+    while bufs[PO_RDATA].len() % 4 != 0 {
+      bufs[PO_RDATA].push(0)
+    }
+    dbg = bufs[PO_RDATA].len()
+    for _ in 0..28 {
+      bufs[PO_RDATA].push(0)
+    }
+    rsds = bufs[PO_RDATA].len()
+    for c in "RSDS".bytes() {
+      bufs[PO_RDATA].push(Int(c))
+    }
+    for _ in 0..16 {
+      bufs[PO_RDATA].push(0)
+    }
+    for x in [1, 0, 0, 0] {
+      bufs[PO_RDATA].push(x)
+    }
+    for c in o.pdb.bytes() {
+      bufs[PO_RDATA].push(Int(c))
+    }
+    bufs[PO_RDATA].push(0)
+  }
   // layout: the headers, then each section that has contents (.reloc's
   // size known after the relocations: placed last)
   let nsect_max = PO_DEBUG + dnames.len()
@@ -509,12 +540,13 @@ pub fn link_pe(objs: List[CObj], o: PEOpts) -> Result[Bytes, Str] {
   if entry < 0 {
     return Err("the entry ${o.entry} is not defined")
   }
-  Ok(pe_write(bufs, rva, hdr, entry, o, has_tls, tls_dir, idir, dlls.len(), iat_start, iat_size, objs, places, bss, dnames))
+  Ok(pe_write(bufs, rva, hdr, entry, o, has_tls, tls_dir, idir, dlls.len(), iat_start, iat_size, objs, places, bss, dnames, dbg, rsds))
 }
 
 /// The image: the DOS header, the PE headers and section table, the
 /// sections, then the COFF symbol table and string table.
-fn pe_write(bufs: List[List[Int]], rva: List[Int], hdr: Int, entry: Int, o: PEOpts, has_tls: Bool, tls_dir: Int, idir: Int, ndll: Int, iat_start: Int, iat_size: Int, objs: List[CObj], places: List[List[PEPlace]], bss: Int, dnames: List[Str]) -> Bytes {
+fn pe_write(bufs0: List[List[Int]], rva: List[Int], hdr: Int, entry: Int, o: PEOpts, has_tls: Bool, tls_dir: Int, idir: Int, ndll: Int, iat_start: Int, iat_size: Int, objs: List[CObj], places: List[List[PEPlace]], bss: Int, dnames: List[Str], dbg: Int, rsds: Int) -> Bytes {
+  var bufs = bufs0
   var names = [".text", ".rdata", ".data", ".pdata", ".tls", ".rsrc", ".reloc"]
   var chars = [IMAGE_SCN_CNT_CODE + IMAGE_SCN_MEM_EXECUTE + IMAGE_SCN_MEM_READ, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ + IMAGE_SCN_MEM_WRITE, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ + IMAGE_SCN_MEM_WRITE, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ + IMAGE_SCN_MEM_DISCARDABLE]
   for d in dnames {
@@ -536,6 +568,14 @@ fn pe_write(bufs: List[List[Int]], rva: List[Int], hdr: Int, entry: Int, o: PEOp
     at += pe_up(bufs[k].len(), PE_FILE_ALIGN)
   }
   let symtab = at
+  if dbg >= 0 {
+    // the debug directory: type CODEVIEW, the record's size, RVA and file
+    // offset
+    put_le(bufs[PO_RDATA], dbg + 12, 2, 4)
+    put_le(bufs[PO_RDATA], dbg + 16, 24 + o.pdb.len() + 1, 4)
+    put_le(bufs[PO_RDATA], dbg + 20, rva[PO_RDATA] + rsds, 4)
+    put_le(bufs[PO_RDATA], dbg + 24, foff[PO_RDATA] + rsds, 4)
+  }
   // the symbol table: each object's external and static symbols that are
   // in the image (not sections, not removed), with the output section's
   // number and the offset in it
@@ -637,7 +677,7 @@ fn pe_write(bufs: List[List[Int]], rva: List[Int], hdr: Int, entry: Int, o: PEOp
     (rva[PO_PDATA], bufs[PO_PDATA].len()),
     (0, 0),
     (rva[PO_RELOC], bufs[PO_RELOC].len()),
-    (0, 0),
+    (if dbg >= 0 { rva[PO_RDATA] + dbg } else { 0 }, if dbg >= 0 { 28 } else { 0 }),
     (0, 0),
     (0, 0),
     (if has_tls { rva[PO_RDATA] + tls_dir } else { 0 }, if has_tls { 40 } else { 0 }),

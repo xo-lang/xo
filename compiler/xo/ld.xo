@@ -366,8 +366,29 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, stamps: List[(Str, Str)], race: B
       Err(e) => return e
     }
   }
-  match macho.link_pe(objs, macho.PEOpts{entry: "xo_win_start", imports: macho.pe_imports(), resources: pe_resources(bin, stamps), fixed_base: race}) {
-    Ok(img) => {
+  // a program with DWARF gets a PDB next to it (decision 0344), which its
+  // debug directory names
+  var dwarf = false
+  for ob in objs {
+    for s in ob.sects {
+      dwarf = dwarf || s.name == ".debug_info"
+    }
+  }
+  let pdb = if dwarf { "${bin.trim_suffix(".exe")}.pdb" } else { "" }
+  match macho.link_pe(objs, macho.PEOpts{entry: "xo_win_start", imports: macho.pe_imports(), resources: pe_resources(bin, stamps), fixed_base: race, pdb: pdb}) {
+    Ok(img0) => {
+      var img = img0
+      if dwarf {
+        match macho.pe_pdb(img0) {
+          Ok((i2, p)) => {
+            img = i2
+            if let Err(e) = os.fs.write(pdb, p) {
+              return "${pdb}: ${e}"
+            }
+          }
+          Err(e) => return "${bin}: the PDB: ${e}"
+        }
+      }
       match os.fs.write(bin, img) {
         Ok(_) => ""
         Err(e) => "${bin}: ${e}"

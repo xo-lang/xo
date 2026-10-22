@@ -1,0 +1,727 @@
+// The PDB of a windows/amd64 executable (decision 0344): after Xo's PE
+// linker (pelink.xo) has written the image with a debug directory whose
+// CodeView (RSDS) record names the PDB, pe_pdb reads the image's DWARF
+// back (compiler/debug, the readers of `xo debug` and `xo dev
+// symbolize`) and writes the PDB WinDbg, cdb and Visual Studio read,
+// and the record's GUID, a hash of the image, so a build stays
+// reproducible and the two files agree.
+//
+// Stage 1: the MSF 7.0 container (4096 byte blocks, the free block map,
+// the stream directory) holding the PDB info stream (the GUID, age, the
+// named stream /names), empty TPI and IPI streams, the DBI stream (one
+// module, its section contribution, the section map, the optional debug
+// header naming the section header stream), the module's symbols
+// (S_GPROC32 and S_END for each DWARF function, named as the traceback
+// names it), the publics (S_PUB32 for each COFF function symbol, their
+// GSI hash and address map) and globals (S_PROCREF of each function).
+// Layouts from LLVM's PDB documentation (llvm.org/docs/PDB) and its
+// reader, llvm-pdbutil, which checks them.
+
+use github.com/xo-lang/xo/compiler/debug
+use std/crypto
+
+const PDB_BLOCK = 4096
+
+/// The streams, by index.
+const PS_INFO = 1
+const PS_TPI = 2
+const PS_DBI = 3
+const PS_IPI = 4
+const PS_NAMES = 5
+const PS_MOD = 6
+const PS_SECTHDR = 7
+const PS_PUBLICS = 8
+const PS_GLOBALS = 9
+const PS_SYMS = 10
+const PS_COUNT = 11
+
+/// CodeView symbol kinds.
+const S_END = 0x0006
+const S_OBJNAME = 0x1101
+const S_PUB32 = 0x110e
+const S_GPROC32 = 0x1110
+const S_PROCREF = 0x1125
+
+/// IMAGE_DEBUG_TYPE_CODEVIEW, and the RSDS record's size before its path.
+const DEBUG_TYPE_CODEVIEW = 2
+const RSDS_FIXED = 24
+
+/// A function of the module: its name, section (1 based) and offset
+/// there, and its size.
+struct PdbProc {
+  name: Str
+  seg: Int
+  off: Int
+  size: Int
+}
+
+/// A PE section as the PDB needs it: its address (RVA), size in memory,
+/// characteristics, and the raw 40 byte header.
+struct PdbSect {
+  rva: Int
+  vsize: Int
+  chars: Int
+  header: Bytes
+}
+
+/// The image img with its RSDS record's GUID and the debug directory's
+/// time stamp set, and its PDB; an error when img has no CodeView debug
+/// directory or no DWARF.
+pub fn pe_pdb(img: Bytes) -> Result[(Bytes, Bytes), Str] {
+  if img.len() < 64 || img[0] != 77 || img[1] != 90 {
+    return Err("not a PE image")
+  }
+  let pe = le_b(img, 60, 4)
+  let coff = pe + 4
+  let opt = coff + 20
+  let nsec = le_b(img, coff + 2, 2)
+  let base = le_b(img, opt + 24, 8)
+  let sec = opt + le_b(img, coff + 16, 2)
+  var sects: List[PdbSect] = []
+  for i in 0..nsec {
+    let h = sec + 40 * i
+    sects.push(PdbSect{rva: le_b(img, h + 12, 4), vsize: le_b(img, h + 8, 4), chars: le_b(img, h + 36, 4), header: img[h..h + 40]})
+  }
+  // the debug directory (data directory 6, at 112 + 8 * 6 of PE32+'s
+  // optional header): its file offset from its RVA
+  let drva = le_b(img, opt + 112 + 48, 4)
+  if drva == 0 {
+    return Err("the image has no debug directory")
+  }
+  let dfile = rva_file(img, sec, nsec, drva)
+  if dfile < 0 || le_b(img, dfile + 12, 4) != DEBUG_TYPE_CODEVIEW {
+    return Err("the image's debug directory has no CodeView record")
+  }
+  let rsds = le_b(img, dfile + 24, 4)
+  // the GUID: the image's hash (its GUID and time stamp are still zero)
+  let h = crypto.sha256(img)
+  let guid = h[0..16]
+  let stamp = le_b(h, 16, 4)
+  var b = BytesBuilder.with_capacity(img.len())
+  b.write(img[0..dfile + 4])
+  b.write(h[16..20])
+  b.write(img[dfile + 8..rsds + 4])
+  b.write(guid)
+  b.write(img[rsds + 20..img.len()])
+  let out = b.freeze()
+  // the functions: DWARF's, by name as the traceback shows them
+  let s = match debug.sections(img) {
+    Ok(x) => x
+    Err(e) => return Err("the image's DWARF: ${e}")
+  }
+  let info = debug.read(s)
+  var procs: List[PdbProc] = []
+  for f in info.funcs {
+    if f.hi <= f.lo {
+      continue
+    }
+    let (seg, off) = seg_off(sects, f.lo - base)
+    if seg > 0 {
+      procs.push(PdbProc{name: f.name, seg: seg, off: off, size: f.hi - f.lo})
+    }
+  }
+  // the publics: the COFF symbol table's functions
+  var pubs: List[PdbProc] = []
+  for (a, n) in debug.tables(img).syms {
+    let (seg, off) = seg_off(sects, a - base)
+    if seg > 0 {
+      pubs.push(PdbProc{name: n, seg: seg, off: off, size: 0})
+    }
+  }
+  Ok((out, pdb_file(guid, stamp, sects, procs, pubs)))
+}
+
+/// The little endian number of n bytes at o.
+fn le_b(b: Bytes, o: Int, n: Int) -> Int {
+  var v = 0
+  for k in 0..n {
+    v = v | (Int(b[o + k]) << (8 * k))
+  }
+  v
+}
+
+/// The file offset of an RVA, or -1.
+fn rva_file(img: Bytes, sec: Int, nsec: Int, rva: Int) -> Int {
+  for i in 0..nsec {
+    let h = sec + 40 * i
+    let va = le_b(img, h + 12, 4)
+    if rva >= va && rva < va + le_b(img, h + 8, 4) {
+      return le_b(img, h + 20, 4) + rva - va
+    }
+  }
+  -1
+}
+
+/// The section (1 based; 0: none) holding RVA rva, and the offset in it.
+fn seg_off(sects: List[PdbSect], rva: Int) -> (Int, Int) {
+  for (i, s) in sects.indexed() {
+    if rva >= s.rva && rva < s.rva + s.vsize {
+      return (i + 1, rva - s.rva)
+    }
+  }
+  (0, 0)
+}
+
+/// The PDB's bytes: its streams in the MSF container.
+fn pdb_file(guid: Bytes, stamp: Int, sects: List[PdbSect], procs: List[PdbProc], pubs: List[PdbProc]) -> Bytes {
+  var streams: List[Bytes] = []
+  for _ in 0..PS_COUNT {
+    streams.push(b"")
+  }
+  let (modsyms, proc_at) = module_stream(procs)
+  let (recs, pub_at, ref_at) = sym_records(procs, proc_at, pubs)
+  streams[PS_INFO] = info_stream(guid, stamp)
+  streams[PS_TPI] = tpi_stream()
+  streams[PS_IPI] = tpi_stream()
+  streams[PS_NAMES] = names_stream()
+  streams[PS_MOD] = modsyms
+  var sh = BytesBuilder.new()
+  for s in sects {
+    sh.write(s.header)
+  }
+  streams[PS_SECTHDR] = sh.freeze()
+  streams[PS_SYMS] = recs
+  streams[PS_PUBLICS] = publics_stream(pubs, pub_at)
+  var names: List[Str] = []
+  for p in procs {
+    names.push(p.name)
+  }
+  streams[PS_GLOBALS] = gsi(names, ref_at)
+  streams[PS_DBI] = dbi_stream(sects, modsyms.len())
+  msf(streams)
+}
+
+// ---------------------------------------------------------------------------
+// The streams
+
+/// The PDB info stream: version VC70, the signature (a time stamp's
+/// place), age 1, the GUID, the named stream map (/names), and the
+/// VC140 feature (the IPI stream is present).
+fn info_stream(guid: Bytes, stamp: Int) -> Bytes {
+  var w = new_out(64)
+  w.u32(20000404)
+  w.u32(stamp)
+  w.u32(1)
+  w.bytes(guid)
+  // the map's string buffer, then its hash table: size 1, capacity 1,
+  // the present bit vector (one word, bucket 0), no deleted words, and
+  // the entry (the name's offset, the stream)
+  w.u32(7)
+  w.bytes(b"/names\0")
+  w.u32(1)
+  w.u32(1)
+  w.u32(1)
+  w.u32(1)
+  w.u32(0)
+  w.u32(0)
+  w.u32(PS_NAMES)
+  w.u32(20140508)
+  w.done()
+}
+
+/// A TPI or IPI stream with no records: its header (version V80, the
+/// first and end type index 0x1000, no hash stream).
+fn tpi_stream() -> Bytes {
+  var w = new_out(56)
+  w.u32(20040203)
+  w.u32(56)
+  w.u32(0x1000)
+  w.u32(0x1000)
+  w.u32(0)
+  w.u16(0xffff)
+  w.u16(0xffff)
+  w.u32(4)
+  w.u32(0x3ffff)
+  w.zeros(24)
+  w.done()
+}
+
+/// The /names string table: its header (signature, hash version 1, the
+/// strings' size), the strings (the empty one), a one bucket hash table
+/// and the count of names.
+fn names_stream() -> Bytes {
+  var w = new_out(32)
+  w.u32(0xeffeeffe)
+  w.u32(1)
+  w.u32(1)
+  w.u8(0)
+  w.u32(1)
+  w.u32(0)
+  w.u32(0)
+  w.done()
+}
+
+/// A symbol record: its length (after the length field, padded to 4
+/// bytes), kind and body.
+fn sym_record(var w: Out, kind: Int, body: Bytes) {
+  let len = 2 + body.len()
+  let padded = (len + 2 + 3) / 4 * 4 - 2
+  w.u16(padded)
+  w.u16(kind)
+  w.bytes(body)
+  w.zeros(padded - len)
+}
+
+fn cstr_bytes(s: Str) -> Bytes {
+  var b = BytesBuilder.new()
+  b.write(s.bytes())
+  b.write_byte(0)
+  b.freeze()
+}
+
+/// The module's stream: the CodeView signature (4, C13), S_OBJNAME, and
+/// each function's S_GPROC32 and S_END; no line subsections yet; the
+/// global references' size (0). Also each S_GPROC32's offset.
+fn module_stream(procs: List[PdbProc]) -> (Bytes, List[Int]) {
+  var w = new_out(64 + 64 * procs.len())
+  w.u32(4)
+  var ob = new_out(16)
+  ob.u32(0)
+  ob.bytes(cstr_bytes("xo"))
+  sym_record(w, S_OBJNAME, ob.done())
+  var at: List[Int] = []
+  for p in procs {
+    at.push(w.n)
+    let name = cstr_bytes(p.name)
+    // the S_END follows: its offset is this record's end
+    let body_len = 35 + name.len()
+    let end = w.n + (4 + body_len + 3) / 4 * 4
+    var pb = new_out(body_len)
+    // parent, end, next, code size, debug start and end, type (none),
+    // offset, segment, flags, name
+    pb.u32(0)
+    pb.u32(end)
+    pb.u32(0)
+    pb.u32(p.size)
+    pb.u32(0)
+    pb.u32(p.size)
+    pb.u32(0)
+    pb.u32(p.off)
+    pb.u16(p.seg)
+    pb.u8(0)
+    pb.bytes(name)
+    sym_record(w, S_GPROC32, pb.done())
+    sym_record(w, S_END, b"")
+  }
+  w.u32(0)
+  (w.done(), at)
+}
+
+/// The symbol record stream: each public's S_PUB32 (a function), then
+/// each function's S_PROCREF (module 1, its S_GPROC32's offset); and the
+/// offsets of both.
+fn sym_records(procs: List[PdbProc], proc_at: List[Int], pubs: List[PdbProc]) -> (Bytes, List[Int], List[Int]) {
+  var w = new_out(64 * (procs.len() + pubs.len()))
+  var pub_at: List[Int] = []
+  for p in pubs {
+    pub_at.push(w.n)
+    var b = new_out(16 + p.name.len())
+    b.u32(2)
+    b.u32(p.off)
+    b.u16(p.seg)
+    b.bytes(cstr_bytes(p.name))
+    sym_record(w, S_PUB32, b.done())
+  }
+  var ref_at: List[Int] = []
+  for (i, p) in procs.indexed() {
+    ref_at.push(w.n)
+    var b = new_out(16 + p.name.len())
+    b.u32(0)
+    b.u32(proc_at[i])
+    b.u16(1)
+    b.bytes(cstr_bytes(p.name))
+    sym_record(w, S_PROCREF, b.done())
+  }
+  (w.done(), pub_at, ref_at)
+}
+
+/// The publics stream: its header (the GSI's size, the address map's),
+/// the GSI of the publics, and the address map (their record offsets by
+/// section and offset).
+fn publics_stream(pubs: List[PdbProc], at: List[Int]) -> Bytes {
+  var names: List[Str] = []
+  var keyed: List[(Int, Int, Int)] = []
+  for (i, p) in pubs.indexed() {
+    names.push(p.name)
+    keyed.push((p.seg, p.off, i))
+  }
+  let hash = gsi(names, at)
+  var w = new_out(28 + hash.len() + 4 * pubs.len())
+  w.u32(hash.len())
+  w.u32(4 * pubs.len())
+  w.zeros(20)
+  w.bytes(hash)
+  for (_, _, i) in keyed.sort() {
+    w.u32(at[i])
+  }
+  w.done()
+}
+
+/// The GSI hash of records named names at offsets at: its header, the
+/// hash records (offset + 1, a reference count of 1) by bucket
+/// (hash_v1 % 4096), each bucket's in gsi_less order, the bitmap of the
+/// buckets in use, and each used bucket's first record (times 12, the
+/// size of the old in-memory record).
+fn gsi(names: List[Str], at: List[Int]) -> Bytes {
+  var buckets: List[List[Int]] = []
+  for _ in 0..4096 {
+    buckets.push([])
+  }
+  for (i, n) in names.indexed() {
+    let k = hash_v1(n) % 4096
+    buckets[k].push(i)
+  }
+  var order: List[Int] = []
+  var starts: List[Int] = []
+  var used: List[Bool] = []
+  for k in 0..4096 {
+    var l = buckets[k]
+    // insertion sort by gsi_less: buckets hold few records
+    var j = 1
+    while j < l.len() {
+      var m = j
+      while m > 0 && gsi_less(names[l[m]], names[l[m - 1]]) {
+        let t = l[m]
+        l[m] = l[m - 1]
+        l[m - 1] = t
+        m -= 1
+      }
+      j += 1
+    }
+    buckets[k] = l
+    used.push(!l.is_empty())
+    if !l.is_empty() {
+      starts.push(order.len())
+    }
+    for i in l {
+      order.push(i)
+    }
+  }
+  let bitmap_words = (4096 + 1 + 31) / 32
+  var w = new_out(16 + 8 * order.len() + 4 * bitmap_words + 4 * starts.len())
+  w.u32(0xffffffff)
+  w.u32(0xeffe0000 + 19990810)
+  w.u32(8 * order.len())
+  w.u32(4 * bitmap_words + 4 * starts.len())
+  for i in order {
+    w.u32(at[i] + 1)
+    w.u32(1)
+  }
+  for wi in 0..bitmap_words {
+    var v = 0
+    for bit in 0..32 {
+      let k = 32 * wi + bit
+      if k < 4096 && used[k] {
+        v = v | (1 << bit)
+      }
+    }
+    w.u32(v)
+  }
+  for s in starts {
+    w.u32(12 * s)
+  }
+  w.done()
+}
+
+/// The PDB's string hash (LLVM hashStringV1): the name's little endian
+/// words, a 2 byte and a 1 byte rest xored, lowered, folded.
+pub fn hash_v1(s: Str) -> Int {
+  let b = s.bytes()
+  var r = 0
+  var i = 0
+  while i + 4 <= b.len() {
+    r = r ^ (Int(b[i]) | (Int(b[i + 1]) << 8) | (Int(b[i + 2]) << 16) | (Int(b[i + 3]) << 24))
+    i += 4
+  }
+  if b.len() - i >= 2 {
+    r = r ^ (Int(b[i]) | (Int(b[i + 1]) << 8))
+    i += 2
+  }
+  if b.len() - i == 1 {
+    r = r ^ Int(b[i])
+  }
+  r = r | 0x20202020
+  r = r ^ (r >> 11)
+  (r ^ (r >> 16)) & 0xffffffff
+}
+
+/// The GSI bucket order (LLVM gsiRecordCmp): a shorter name first, then
+/// ASCII names case insensitively, else by bytes.
+fn gsi_less(a: Str, b: Str) -> Bool {
+  if a.len() != b.len() {
+    return a.len() < b.len()
+  }
+  let x = a.bytes()
+  let y = b.bytes()
+  var ascii = true
+  for c in x {
+    ascii = ascii && c < 128
+  }
+  for c in y {
+    ascii = ascii && c < 128
+  }
+  for k in 0..x.len() {
+    var p = Int(x[k])
+    var q = Int(y[k])
+    if ascii {
+      p = lower(p)
+      q = lower(q)
+    }
+    if p != q {
+      return p < q
+    }
+  }
+  false
+}
+
+fn lower(c: Int) -> Int { if c >= 65 && c <= 90 { c + 32 } else { c } }
+
+/// The DBI stream: its header, the one module's entry, the section
+/// contributions (the module's: the first code section), the section
+/// map, the file info (no files yet), the EC names, and the optional
+/// debug header (the section header stream).
+fn dbi_stream(sects: List[PdbSect], modsize: Int) -> Bytes {
+  // the module: its first code section
+  var text = 0
+  for (i, s) in sects.indexed() {
+    if text == 0 && (s.chars & 0x20000000) != 0 {
+      text = i + 1
+    }
+  }
+  let tsize = if text > 0 { sects[text - 1].vsize } else { 0 }
+  let tchars = if text > 0 { sects[text - 1].chars } else { 0 }
+  var mi = new_out(128)
+  mi.u32(0)
+  contrib(mi, text, tsize, tchars)
+  mi.u16(0)
+  mi.u16(PS_MOD)
+  mi.u32(modsize - 4)
+  mi.u32(0)
+  mi.u32(0)
+  mi.u16(0)
+  mi.u16(0)
+  mi.u32(0)
+  mi.u32(0)
+  mi.u32(0)
+  mi.bytes(cstr_bytes("xo"))
+  mi.bytes(cstr_bytes("xo"))
+  mi.pad(4)
+  let modi = mi.done()
+  var sc = new_out(32)
+  sc.u32(0xeffe0000 + 19970605)
+  contrib(sc, text, tsize, tchars)
+  let scs = sc.done()
+  // the section map: each section, then the absolute entry
+  var sm = new_out(4 + 20 * (sects.len() + 1))
+  sm.u16(sects.len() + 1)
+  sm.u16(sects.len() + 1)
+  for (i, s) in sects.indexed() {
+    var fl = 0x108
+    if (s.chars & 0x40000000) != 0 {
+      fl = fl | 1
+    }
+    if (s.chars & 0x80000000) != 0 {
+      fl = fl | 2
+    }
+    if (s.chars & 0x20000000) != 0 {
+      fl = fl | 4
+    }
+    sm.u16(fl)
+    sm.u16(0)
+    sm.u16(0)
+    sm.u16(i + 1)
+    sm.u16(0xffff)
+    sm.u16(0xffff)
+    sm.u32(0)
+    sm.u32(s.vsize)
+  }
+  sm.u16(0x208)
+  sm.u16(0)
+  sm.u16(0)
+  sm.u16(sects.len() + 1)
+  sm.u16(0xffff)
+  sm.u16(0xffff)
+  sm.u32(0)
+  sm.u32(0xffffffff)
+  let smap = sm.done()
+  // the file info: one module, no files
+  var fi = new_out(8)
+  fi.u16(1)
+  fi.u16(0)
+  fi.u16(0)
+  fi.u16(0)
+  let finfo = fi.done()
+  // the optional debug header: FPO, exception, fixup, omap to and from,
+  // section headers, token map, xdata, pdata, new FPO, original headers
+  var dh = new_out(22)
+  for k in 0..11 {
+    dh.u16(if k == 5 { PS_SECTHDR } else { 0xffff })
+  }
+  let dbg = dh.done()
+  // the EC names (a string table, as /names: the module's PDB file name
+  // index 0 is its empty string)
+  let ec = names_stream()
+  var w = new_out(64 + modi.len() + scs.len() + smap.len() + finfo.len() + ec.len() + dbg.len())
+  w.u32(0xffffffff)
+  w.u32(19990903)
+  w.u32(1)
+  w.u16(PS_GLOBALS)
+  // build number: the new format, version 14.0
+  w.u16(0x8e00)
+  w.u16(PS_PUBLICS)
+  w.u16(0)
+  w.u16(PS_SYMS)
+  w.u16(0)
+  w.u32(modi.len())
+  w.u32(scs.len())
+  w.u32(smap.len())
+  w.u32(finfo.len())
+  w.u32(0)
+  w.u32(0)
+  w.u32(dbg.len())
+  w.u32(ec.len())
+  w.u16(0)
+  w.u16(0x8664)
+  w.u32(0)
+  w.bytes(modi)
+  w.bytes(scs)
+  w.bytes(smap)
+  w.bytes(finfo)
+  w.bytes(ec)
+  w.bytes(dbg)
+  w.done()
+}
+
+/// A section contribution of module 0: the section, offset 0, size and
+/// characteristics, no CRCs.
+fn contrib(var w: Out, sect: Int, size: Int, chars: Int) {
+  w.u16(sect)
+  w.u16(0)
+  w.u32(0)
+  w.u32(size)
+  w.u32(chars)
+  w.u16(0)
+  w.u16(0)
+  w.u32(0)
+  w.u32(0)
+}
+
+// ---------------------------------------------------------------------------
+// The MSF container
+
+/// Whether block i is a free block map's (blocks 1 and 2 of every 4096).
+fn fpm_block(i: Int) -> Bool { i % PDB_BLOCK == 1 || i % PDB_BLOCK == 2 }
+
+/// The first block from i on that is not a free block map's.
+fn free_from(i: Int) -> Int {
+  var k = i
+  while fpm_block(k) {
+    k += 1
+  }
+  k
+}
+
+/// The MSF file of streams: the superblock (block 0), the free block
+/// maps, each stream's blocks, the stream directory, and the block
+/// holding the directory's block numbers.
+fn msf(streams: List[Bytes]) -> Bytes {
+  var next = 3
+  var blocks: List[List[Int]] = []
+  for s in streams {
+    var l: List[Int] = []
+    for _ in 0..(s.len() + PDB_BLOCK - 1) / PDB_BLOCK {
+      next = free_from(next)
+      l.push(next)
+      next += 1
+    }
+    blocks.push(l)
+  }
+  var d = new_out(4 + 8 * streams.len())
+  d.u32(streams.len())
+  for s in streams {
+    d.u32(s.len())
+  }
+  for l in blocks {
+    for k in l {
+      d.u32(k)
+    }
+  }
+  let dir = d.done()
+  var dir_blocks: List[Int] = []
+  for _ in 0..(dir.len() + PDB_BLOCK - 1) / PDB_BLOCK {
+    next = free_from(next)
+    dir_blocks.push(next)
+    next += 1
+  }
+  let map_block = free_from(next)
+  let nblocks = map_block + 1
+  var file: List[Bytes] = []
+  for _ in 0..nblocks {
+    file.push(b"")
+  }
+  var sb = new_out(PDB_BLOCK)
+  // the magic: "Microsoft C/C++ MSF 7.00\r\n", 0x1a, "DS", three zeros
+  sb.bytes("Microsoft C/C++ MSF 7.00".bytes())
+  for c in [13, 10, 0x1a, 68, 83, 0, 0, 0] {
+    sb.u8(c)
+  }
+  sb.u32(PDB_BLOCK)
+  sb.u32(1)
+  sb.u32(nblocks)
+  sb.u32(dir.len())
+  sb.u32(0)
+  sb.u32(map_block)
+  file[0] = sb.done()
+  // the free block map (bit set: free): every block below nblocks used;
+  // byte j of the map is in interval j / 4096's first map block
+  let intervals = (nblocks + PDB_BLOCK - 1) / PDB_BLOCK
+  for iv in 0..intervals {
+    var m = BytesBuilder.with_capacity(PDB_BLOCK)
+    for j in 0..PDB_BLOCK {
+      var v = 0
+      for bit in 0..8 {
+        if 8 * (PDB_BLOCK * iv + j) + bit >= nblocks {
+          v = v | (1 << bit)
+        }
+      }
+      m.write_byte(UInt8(v))
+    }
+    let fm = m.freeze()
+    if PDB_BLOCK * iv + 1 < nblocks {
+      file[PDB_BLOCK * iv + 1] = fm
+    }
+    if PDB_BLOCK * iv + 2 < nblocks {
+      file[PDB_BLOCK * iv + 2] = fm
+    }
+  }
+  for (si, l) in blocks.indexed() {
+    for (k, blk) in l.indexed() {
+      let a = PDB_BLOCK * k
+      let e = if a + PDB_BLOCK < streams[si].len() { a + PDB_BLOCK } else { streams[si].len() }
+      file[blk] = streams[si][a..e]
+    }
+  }
+  for (k, blk) in dir_blocks.indexed() {
+    let a = PDB_BLOCK * k
+    let e = if a + PDB_BLOCK < dir.len() { a + PDB_BLOCK } else { dir.len() }
+    file[blk] = dir[a..e]
+  }
+  var mb = new_out(4 * dir_blocks.len())
+  for k in dir_blocks {
+    mb.u32(k)
+  }
+  file[map_block] = mb.done()
+  var w = BytesBuilder.with_capacity(PDB_BLOCK * nblocks)
+  var zb = BytesBuilder.with_capacity(PDB_BLOCK)
+  for _ in 0..PDB_BLOCK {
+    zb.write_byte(0)
+  }
+  let zero = zb.freeze()
+  for blk in file {
+    w.write(blk)
+    if blk.len() < PDB_BLOCK {
+      w.write(zero[0..PDB_BLOCK - blk.len()])
+    }
+  }
+  w.freeze()
+}

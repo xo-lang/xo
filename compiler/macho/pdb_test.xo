@@ -1,0 +1,69 @@
+// Tests of the PDB writer (pdb.xo, decision 0344). llvm-pdbutil reads
+// what it writes (dump --all, lookups by name through the GSI hash) and
+// llvm-symbolizer names a program's functions from the PDB alone; these
+// check the container and the orders the readers rely on.
+
+/// The streams of an MSF file, read back: the superblock's block size and
+/// directory, each stream's blocks.
+fn msf_read(f: Bytes) -> List[Bytes] {
+  let bs = le_b(f, 32, 4)
+  let dir_size = le_b(f, 44, 4)
+  let map = le_b(f, 52, 4)
+  var dir = BytesBuilder.new()
+  for k in 0..(dir_size + bs - 1) / bs {
+    let blk = le_b(f, map * bs + 4 * k, 4)
+    dir.write(f[blk * bs..blk * bs + bs])
+  }
+  let d = dir.freeze()
+  let n = le_b(d, 0, 4)
+  var at = 4 + 4 * n
+  var out: List[Bytes] = []
+  for i in 0..n {
+    let size = le_b(d, 4 + 4 * i, 4)
+    var s = BytesBuilder.new()
+    for k in 0..(size + bs - 1) / bs {
+      let blk = le_b(d, at, 4)
+      at += 4
+      let e = if size - k * bs < bs { size - k * bs } else { bs }
+      s.write(f[blk * bs..blk * bs + e])
+    }
+    out.push(s.freeze())
+  }
+  out
+}
+
+test "the MSF container holds each stream, past a block and empty ones" {
+  var big = BytesBuilder.new()
+  for i in 0..10000 {
+    big.write_byte(UInt8(i % 251))
+  }
+  let streams = [b"", b"abc", big.freeze(), b""]
+  let f = msf(streams)
+  expect(f.len() % PDB_BLOCK) == 0
+  expect(f[0..24].to_str() ?? "") == "Microsoft C/C++ MSF 7.00"
+  let got = msf_read(f)
+  expect(got.len()) == 4
+  for i in 0..4 {
+    expect(got[i] == streams[i]) == true
+  }
+}
+
+test "no stream block lands on a free block map's" {
+  expect(free_from(1)) == 3
+  expect(free_from(4097)) == 4099
+  expect(free_from(5)) == 5
+}
+
+test "a GSI bucket's records are in gsi_less order" {
+  expect(gsi_less("ab", "abc")) == true
+  expect(gsi_less("ABD", "abc")) == false
+  expect(gsi_less("abc", "ABD")) == true
+  expect(gsi_less("a", "a")) == false
+}
+
+test "the PDB string hash is case insensitive in its low bits" {
+  // hashStringV1 ORs 0x20 into every byte of the folded word, so names
+  // differing only in ASCII case land in the same bucket
+  expect(hash_v1("Poke") % 4096) == hash_v1("poke") % 4096
+  expect(hash_v1("") >= 0) == true
+}
