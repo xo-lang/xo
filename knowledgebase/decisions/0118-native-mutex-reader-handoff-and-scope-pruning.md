@@ -220,8 +220,7 @@ release as before.
 
 ## Addendum 2026-10-22: a reader grant yields to its first reader
 
-Status: Proposed (Xo Lang 3; the Mutex yield defaults are the owner's, so
-it waits for the lead's go). Code: std/native/llrt mutex.xo
+Status: Implemented (owner, 2026-10-22: ship; 14a3ae695). Code: std/native/llrt mutex.xo
 `grant_readers` (returns whether to yield) and `wake`.
 
 The writer yield above leaves reader grants in the ring. A release that
