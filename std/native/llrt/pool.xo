@@ -25,6 +25,7 @@
 // malloc), and no fault, so it runs on a worker's own stack with no
 // current context and never unwinds into its C callers.
 use native/llrt/det
+use native/llrt/cpu
 use native/llrt/layout
 use native/llrt/linux
 use native/llrt/rtstats
@@ -850,7 +851,7 @@ fn push(p: Int, t: Int, handoff: Bool) {
   if w == 0 {
     inject_add(p, 0, 0, t)
   } else if (t & 1) != 0 && rt.mem_load(w, W_NONEXT, 8) == 0 {
-    rt.slot_store(w, W_NEXT_AT / 8, sysio.mono_ns(), RELAXED)
+    rt.slot_store(w, W_NEXT_AT / 8, cpu.ticks(), RELAXED)
     let old = rt.slot_swap(w, W_NEXT_I, t, SEQ_CST)
     if old != 0 {
       rq_put(p, w, old)
@@ -953,7 +954,7 @@ pub fn steal_round(p: Int, w: Int, last: Int) -> Int {
     }
     if t == 0 && last != 0 {
       let x = rt.slot_load(v, W_NEXT_I, ACQUIRE)
-      if x != 0 && sysio.mono_ns().wrapping_sub(rt.slot_load(v, W_NEXT_AT / 8, RELAXED)) > NEXT_GRACE_NS && rt.slot_cas(v, W_NEXT_I, x, 0, SEQ_CST) {
+      if x != 0 && cpu.ticks_ns(cpu.ticks().wrapping_sub(rt.slot_load(v, W_NEXT_AT / 8, RELAXED))) > NEXT_GRACE_NS && rt.slot_cas(v, W_NEXT_I, x, 0, SEQ_CST) {
         t = x
       }
     }
@@ -1007,9 +1008,9 @@ pub fn any_work(p: Int) -> Int {
     }
     if rt.slot_load(v, W_NEXT_I, SEQ_CST) != 0 {
       if now == 0 {
-        now = sysio.mono_ns()
+        now = cpu.ticks()
       }
-      if now.wrapping_sub(rt.slot_load(v, W_NEXT_AT / 8, RELAXED)) > NEXT_GRACE_NS {
+      if cpu.ticks_ns(now.wrapping_sub(rt.slot_load(v, W_NEXT_AT / 8, RELAXED))) > NEXT_GRACE_NS {
         return 1
       }
       r = 2
@@ -1263,15 +1264,15 @@ pub fn run_item(p: Int, w: Int, it: Int) {
 /// Runs fiber f on w until it parks or ends (then its stack is kept;
 /// main's tells its root, root_main).
 fn run_fiber(p: Int, w: Int, f: Int) {
-  rt.slot_store(w, W_RUN_AT_I, sysio.mono_ns(), RELAXED)
+  rt.slot_store(w, W_RUN_AT_I, cpu.ticks(), RELAXED)
   rt.slot_store(w, W_RUNF / 8, f, RELEASE)
   let r = sched.fiber_run(w, f)
   rt.slot_store(w, W_RUNF / 8, 0, RELEASE)
+  rt.slot_store(w, W_RUN_AT_I, 0, RELAXED)
   if rt.mem_load(w, W_LOCKS, 8) != 0 && rt.slot_load(rt.mem_load(p, P_DLK, 8), DLK_LOCKCHECK, RELAXED) != 0 {
     // a fiber switched away holding a runtime lock (XO_LOCKCHECK=1)
     let _r = rt.call_c2(rt.fn_addr("lock_held_switch"), 0, 0)
   }
-  rt.slot_store(w, W_RUN_AT_I, 0, RELAXED)
   rt.slot_store(w, W_PREEMPT_I, 0, RELAXED)
   if r == 2 {
     if rt.mem_load(w, W_ASYNC, 8) == 2 {
@@ -2154,7 +2155,11 @@ fn klock(k: Int) {
     stat(ST_LOCK_PARK)
     lock_slow(k)
   }
-  held(1)
+  // held(1) with the record already in hand (one thread local lookup a
+  // park lock, not two: each is a call on macOS)
+  if w != 0 {
+    rt.mem_store(w, W_LOCKS, rt.mem_load(w, W_LOCKS, 8).wrapping_add(1), 8)
+  }
 }
 
 /// The test world's record (twflags.xo, byte offsets): the verdict for
@@ -2752,6 +2757,10 @@ const DEFER_US = 1000
 /// deferral (defer_check): the bound that does not depend on the
 /// monitor's timer.
 const DEFER_CHECK_NS = 50000
+
+/// DEFER_CHECK_NS in ticks of cpu.ticks (the stamps of W_DEFER_AT and
+/// W_NEXT_AT are ticks, not ns: a counter register read, not a clock call).
+fn defer_check_ticks() -> Int { cpu.ticks_hz() / 20000 }
 const MON_IDLE_TICKS = 10
 /// How long a fiber runs while work waits before the monitor asks its
 /// worker to yield (Go's forcePreemptNS).
@@ -2771,8 +2780,8 @@ fn defer_wake(p: Int, w: Int) -> Bool {
   let at = rt.slot_load(w, W_DEFER_AT_W, RELAXED)
   if at == 0 {
     rt.mem_store(w, W_DEFER_N, 0, 8)
-    rt.slot_store(w, W_DEFER_AT_W, sysio.mono_ns(), SEQ_CST)
-  } else if !(rt.mem_load(p, P_NCPU, 8) < 2 && rt.mem_load(w, W_ROOT, 4) != 0) && sysio.mono_ns().wrapping_sub(at) >= DEFER_CHECK_NS {
+    rt.slot_store(w, W_DEFER_AT_W, cpu.ticks(), SEQ_CST)
+  } else if !(rt.mem_load(p, P_NCPU, 8) < 2 && rt.mem_load(w, W_ROOT, 4) != 0) && cpu.ticks().wrapping_sub(at) >= defer_check_ticks() {
     // an older deferral is due: wake now for both
     rt.slot_store(w, W_DEFER_AT_W, 0, SEQ_CST)
     return false
@@ -2908,7 +2917,7 @@ fn mon_scan(p: Int) -> Bool {
       }
     } else if waiting && ra != 0 {
       pending = true
-      if now.wrapping_sub(ra) >= SLICE_NS && rt.slot_cas(w, W_PREEMPT_I, 0, now, RELAXED) {
+      if cpu.ticks_ns(cpu.ticks().wrapping_sub(ra)) >= SLICE_NS && rt.slot_cas(w, W_PREEMPT_I, 0, now, RELAXED) {
         let _i = rt.slot_add[Int](rt.static_word(W_PREEMPT), 0, 1, RELEASE)
         if async {
           async_kick(w)
@@ -2918,13 +2927,13 @@ fn mon_scan(p: Int) -> Bool {
     let at = rt.slot_load(w, W_DEFER_AT_W, SEQ_CST)
     if at != 0 {
       pending = true
-      if now.wrapping_sub(at) >= DEFER_NS && rt.slot_cas(w, W_DEFER_AT_W, at, 0, SEQ_CST) {
+      if cpu.ticks_ns(cpu.ticks().wrapping_sub(at)) >= DEFER_NS && rt.slot_cas(w, W_DEFER_AT_W, at, 0, SEQ_CST) {
         let queued = rt.slot_load(w, W_NEXT_I, SEQ_CST) != 0 || rt.slot_load(w, 0, SEQ_CST) != rt.slot_load(w, RQ_TAIL, SEQ_CST)
         if queued {
           stat(ST_MON_WAKE)
           if tracerec.built() && tracerec.on() {
             // a late wake by the monitor: the deferral's age
-            tracerec.ev(tracerec.K_LATE, 1, w, now.wrapping_sub(at))
+            tracerec.ev(tracerec.K_LATE, 1, w, cpu.ticks_ns(cpu.ticks().wrapping_sub(at)))
           }
           wakep(p)
         }
@@ -2986,14 +2995,14 @@ fn defer_check_w(w: Int) {
   // whichever is later
   let n = rt.mem_load(w, W_DEFER_N, 8).wrapping_add(1)
   rt.mem_store(w, W_DEFER_N, n, 8)
-  if (n & 15) != 0 || sysio.mono_ns().wrapping_sub(at) < DEFER_CHECK_NS {
+  if (n & 15) != 0 || cpu.ticks().wrapping_sub(at) < defer_check_ticks() {
     return
   }
   if rt.slot_cas(w, W_DEFER_AT_W, at, 0, SEQ_CST) && queued(w) {
     stat(ST_MON_WAKE)
     if tracerec.built() && tracerec.on() {
       // a late wake by the waker's own check
-      tracerec.ev(tracerec.K_LATE, 2, w, sysio.mono_ns().wrapping_sub(at))
+      tracerec.ev(tracerec.K_LATE, 2, w, cpu.ticks_ns(cpu.ticks().wrapping_sub(at)))
     }
     wakep(rt.mem_load(w, W_POOL, 8))
   }
