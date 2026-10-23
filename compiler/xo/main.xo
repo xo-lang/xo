@@ -1019,6 +1019,14 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         split.objcache = cdir
       }
     }
+    // a large program with no XO_LLVM_SPLIT is split by its IR's size
+    // (default_modules), so no single clang takes the whole IR
+    if !split.modules_set && !split.stable && split.modules == 1 {
+      split.modules = default_modules(code.len())
+      if phases && split.modules > 1 {
+        os.stdio.eprintln("llvm: IR ${code.len() / 1000000} MB split into ${split.modules} modules (${split.jobs} clang jobs, ${split.lto} LTO)")
+      }
+    }
     // a test build's split (stable) is made after a miss of the binary
     // cache, which keys it on the whole IR: a warm build does not split
     let parts = if split.stable { [code] } else { split_ir(code, split.modules, false, false) }

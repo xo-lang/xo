@@ -6,11 +6,14 @@
 // drivers share the binary cache entry.
 
 use std/crypto
+use std/debug
 
 /// SplitConfig: the module count (1: one module with full LTO), the job
 /// bound, and the LTO mode of split builds.
 struct SplitConfig {
   modules: Int = 1
+  /// XO_LLVM_SPLIT named the count (the size based default stays off)
+  modules_set: Bool = false
   jobs: Int = 6
   lto: Str = "thin"
   /// clang's optimization level of the program's IR ($XO_LLVM_OPT: O0,
@@ -36,14 +39,48 @@ struct SplitConfig {
   by_file: Bool = false
 }
 
+/// The clang jobs a split build runs at once by default: the cores, and
+/// no more than three quarters of physical memory, less what xo's own heap
+/// holds now (the IR is made by then), fits at 3.5 GB a job (a clang of a
+/// 90 MB module, bench/results/fast-builds-2026-10-13.md), at least 1.
+/// An LLVM build of xo on the 24 GB Mac (xo's heap 7.8 GB) ran six clangs
+/// beside it and its process group reached 22 GB (2026-10-22); it now runs
+/// two, and a small program still gets one per core up to the memory's
+/// share. XO_LLVM_JOBS overrides.
+fn default_jobs(os: Os) -> Int {
+  var total = debug.mem_total()
+  if total <= 0 {
+    total = mem_gb(os) * 1000000000
+  }
+  let room = total / 4 * 3 - debug.mem_mapped()
+  let per = 3500000000
+  ncores(os).min(room / per).max(1)
+}
+
+/// The IR size above which a build with no XO_LLVM_SPLIT is split, and the
+/// size of each module then: one clang of the whole IR of xo grew past
+/// 15 GB (2026-10-22, the process group at 22 GB on a 24 GB Mac), while a
+/// clang of a 90 MB module takes about 3.5 GB.
+const SPLIT_AT = 100000000
+const SPLIT_PART = 50000000
+
+/// The modules a build of IR of n bytes is split into by default: 1 up
+/// to SPLIT_AT, else one per SPLIT_PART bytes (thin LTO across them).
+fn default_modules(n: Int) -> Int {
+  if n <= SPLIT_AT {
+    return 1
+  }
+  (n + SPLIT_PART - 1) / SPLIT_PART
+}
+
 /// LLVMSplitConfig from the environment.
 fn split_config(os: Os) -> SplitConfig {
-  // a clang of a 90 MB module takes about 3.5 GB (bench/results/fast-builds-2026-10-13.md)
-  var c = SplitConfig{jobs: ncores(os).min(mem_gb(os) / 4).max(1)}
+  var c = SplitConfig{jobs: default_jobs(os)}
   // a value none of these accepts is an error, not the default (an
   // XO_LLVM_LTO=off build linked with thin LTO for 90 minutes,
   // 2026-10-21)
   let ns = os.env.get("XO_LLVM_SPLIT") ?? ""
+  c.modules_set = !ns.is_empty()
   let n = Int.parse(ns) ?? 0
   if n > 1 {
     c.modules = n

@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- LLVM builds of large programs split their IR: over 100 MB (xo itself),
+  modules of about 50 MB with thin LTO, and the clang jobs sized to
+  memory (three quarters of it, less xo's own heap, at 3.5 GB a job).
+  The LLVM build of xo, which a single clang took past 20 GB, finishes at
+  an 11.1 GB peak (bench/results/llvm-split-default-2026-10-22.md).
+  Smaller programs stay one module with full LTO. XO_LLVM_SPLIT and
+  XO_LLVM_JOBS still override.
+
 - `XO_CHK_CACHE=auto`: a skipped module whose body calls `xml.encode_value`
   or `xml.decode` and is built from source (its front end cache entry
   gone) builds again; the call reached the build unrewritten and failed
