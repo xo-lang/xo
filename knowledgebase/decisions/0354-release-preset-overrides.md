@@ -1,9 +1,11 @@
 # 0354: --release is a preset of settings, each with its own override
 
-Status: Proposed (Xo Lang 2, 2026-10-23; owner-approved item, the lead
-asked for this ADR before code). Flag names proposed to Xo Lang 1, whose
-`--debug-info=split` would be one value of the debug info setting
-(awaiting their answer).
+Status: Accepted (owner, 2026-10-23, as drafted). Built in two stages:
+(1) the override flags and their cache keys, with spec/core.md 8,
+toolchain.md and the help; (2) native build information (`xo version -m`,
+native replay, the crash report line). `--debug-info=split` is Xo Lang
+1's value of the debug info setting (its exact meaning comes with their
+change).
 
 ## Context
 
