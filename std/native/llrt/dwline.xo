@@ -169,13 +169,14 @@ fn load_elf(lo: Int, hi: Int, var out: Lines) {
 }
 
 /// Linux: the debug sections of /proc/self/exe and the load bias (ok
-/// false when the file or its section headers cannot be read).
+/// false when the file or its section headers cannot be read); a split
+/// program's (decision 0355) from the file its .gnu_debuglink names in
+/// the executable's directory, when its GNU build id is the program's.
 fn elf_sects() -> (Sects, Int, Bool) {
   let data = read_raw("/proc/self/exe")
   if data.len() < 64 {
     return (Sects{}, 0, false)
   }
-  let f = raw.bytes_addr(data)
   let ph = linux.auxval(linux.AT_PHDR)
   let phn = linux.auxval(linux.AT_PHNUM)
   var bias = 0
@@ -185,29 +186,61 @@ fn elf_sects() -> (Sects, Int, Bool) {
       bias = ph - ld(p, 16)
     }
   }
+  let (s, link, id, ok) = elf_debug(data)
+  if !ok {
+    return (Sects{}, 0, false)
+  }
+  if s.line_n == 0 && !link.is_empty() && !id.is_empty() {
+    let (exe, err) = linux.readlink("/proc/self/exe")
+    if err == 0 {
+      let parts = exe.split("/")
+      let dir = exe[0..exe.len() - parts[parts.len() - 1].len()]
+      let (ds, _, did, dok) = elf_debug(read_raw("${dir}${link}"))
+      if dok && did == id {
+        return (ds, bias, true)
+      }
+    }
+  }
+  (s, bias, true)
+}
+
+/// The .debug_ sections of the ELF file data, its .gnu_debuglink's file
+/// name and its GNU build id note ("" without them), and whether its
+/// section headers could be read.
+fn elf_debug(data: Bytes) -> (Sects, Str, Bytes, Bool) {
+  if data.len() < 64 {
+    return (Sects{}, "", b"", false)
+  }
+  let f = raw.bytes_addr(data)
   // Elf64_Ehdr: e_shoff 40, e_shnum 60, e_shstrndx 62
   let shoff = ld(f, 40)
   let shn = rt.mem_load(f, 60, 2)
   let shx = rt.mem_load(f, 62, 2)
   if shoff <= 0 || shoff + 64 * shn > data.len() || shx >= shn {
-    return (Sects{}, 0, false)
+    return (Sects{}, "", b"", false)
   }
   let strs = ld(f + shoff + 64 * shx, 24)
   var s = Sects{data: data}
+  var link = ""
+  var id = b""
   for i in 0..shn {
-    // Elf64_Shdr: sh_name 0, sh_offset 24, sh_size 32
+    // Elf64_Shdr: sh_name 0, sh_type 4, sh_offset 24, sh_size 32
     let sh = f + shoff + 64 * i
     let off = ld(sh, 24)
     let size = ld(sh, 32)
-    if off + size > data.len() {
+    if off + size > data.len() || rt.mem_load(sh, 4, 4) == 8 {
       continue
     }
     let name = cstr(f + strs + u32(sh), 64)
     if name.starts_with(".debug_") {
       s.set(name[7..name.len()], f + off, size)
+    } else if name == ".gnu_debuglink" && size > 4 {
+      link = cstr(f + off, size - 4)
+    } else if name == ".note.gnu.build-id" {
+      id = data[off..off + size]
     }
   }
-  (s, bias, true)
+  (s, link, id, true)
 }
 
 /// macOS: PROG.dSYM/Contents/Resources/DWARF/PROG beside the executable

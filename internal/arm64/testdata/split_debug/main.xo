@@ -1,0 +1,12 @@
+// --debug-info=split (decision 0355): the traceback of a fault reads its
+// lines from PROG.dSYM or PROG.debug beside the program.
+
+fn pick(xs: List[Int], i: Int) -> Int {
+  xs[i]
+}
+
+fn main(os: Os) {
+  let n = Int.parse(os.env.get("SPLIT_INDEX") ?? "5") ?? 5
+  os.stdio.println("start")
+  os.stdio.println("${pick([1, 2], n)}")
+}

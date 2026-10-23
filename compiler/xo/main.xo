@@ -194,10 +194,6 @@ fn main(os: Os) ! {
   // cmd/xo's checks of the flags, before anything is built
   // decision 0354: every setting of the release preset is allowed in any
   // build (--error-args=false needed --release before)
-  if o.debug_info == "split" {
-    os.stdio.eprintln("xo ${o.cmd}: --debug-info=split is not implemented yet (decision 0355)")
-    os.proc.exit(2)
-  }
   // the default backend is the native one (decisions 0248 and 0270):
   // arm64 or amd64 by the targets' architecture, else the host's
   // (native_backend); asm prints the arm64 assembly. The flags only the
@@ -949,6 +945,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         wout = "${od}/${base}"
       }
     }
+    if debug_info_eff(o, release) == "split" {
+      fail(os, "--debug-info=split is for the native and LLVM backends' linux and darwin programs, not wasip1/wasm (decision 0355)")
+    }
     let why = build_wasm(os, ctx, b.m, wout, o.wd, o.dirs[0], tzsel.tz_select(os, ctx.std, tu, o.tzdata, "wasip1"), o.skip_unsupported)
     if !why.is_empty() {
       return Native{skipped: why}
@@ -1147,6 +1146,16 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     if dsym && o.dsym {
       mode_flags.push("dsym")
     }
+    // --debug-info=split (decision 0355): dsymutil's dSYM stays beside a
+    // darwin program; clang's linux link has no split (Xo's ELF linker
+    // does it)
+    let lsplit = lm.debug_info && debug_info_eff(o, release) == "split"
+    if lsplit && !dsym {
+      fail(os, "--debug-info=split on ${ltarget} needs the native backend's linker; the LLVM backend links with clang (decision 0355)")
+    }
+    if lsplit {
+      mode_flags.push("debug-info=split")
+    }
     let key = native_bin_key(os, ctx, dir, cc, mode_flags + pad + lk.flags + lk.link_only, srcs)
     // built in a hidden stage beside bin, then moved into place (Stage)
     let st = stage(os, ctx, bin)
@@ -1178,7 +1187,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         fail_stage(os, st, "${cc} failed${ir_failure_sources(os, lm, msg)}")
       }
       if dsym {
-        cc_dsym(os, st.bin, o.dsym)
+        cc_dsym(os, st.bin, o.dsym, lsplit)
       }
       store_bin(os, ctx, entry, st.bin)
     }
@@ -1516,11 +1525,14 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         }
         race_rt = rp
       }
-      let mkey = macho_bin_key(os, ctx, dir, tgoos, flags, srcs, o.strip, nl, race_rt, o.dsym)
+      // --debug-info=split (decision 0355): the DWARF in PROG.debug
+      // (linux) or PROG.dSYM (darwin) beside the program, not in it
+      let split_dbg = gm.debug_info && debug_info_eff(o, release) == "split"
+      let mkey = macho_bin_key(os, ctx, dir, tgoos, flags + (if split_dbg { ["debug-info=split"] } else { [] }), srcs, o.strip, nl, race_rt, o.dsym)
       let mst = stage(os, ctx, bin)
       let (mhit, mentry) = fetch_bin(os, ctx, mkey, mst.bin)
       if !mhit {
-        let why = macho_link(os, ctx, tgoos, flags, srcs, mst.bin, o.strip, nl, race_rt, o.dsym)
+        let why = macho_link(os, ctx, tgoos, flags, srcs, mst.bin, o.strip, nl, race_rt, o.dsym, split_dbg)
         if !why.is_empty() {
           fail_stage(os, mst, why)
         }
@@ -1538,15 +1550,25 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
           fail(os, rerr)
         }
       }
-      if !o.dsym {
-        // an earlier --dsym build's bundle, for another UUID (decision 0346)
+      if !o.dsym && !split_dbg {
+        // an earlier --dsym or split build's bundle, for another UUID
+        // (decisions 0346, 0355), and a split build's PROG.debug
         os.fs.remove_all("${bin}.dSYM").ignore_err("none from an earlier build")
+        if tgoos == "linux" {
+          os.fs.remove("${bin}.debug").ignore_err("none from an earlier build")
+        }
       }
       t = lap(os, phases, "link", t)
       bins.push((tg, bin))
       continue
     }
     let cdsym = gm.debug_info && tgoos == "darwin"
+    // --debug-info=split with cc: dsymutil's dSYM beside the program on
+    // darwin; cc's linux link has no split (Xo's ELF linker does it)
+    let csplit = gm.debug_info && debug_info_eff(o, release) == "split"
+    if csplit && tgoos != "darwin" {
+      fail(os, "--debug-info=split on ${tg} needs Xo's ELF linker, and this program links with cc (a `use c` source or --ld=cc) (decision 0355)")
+    }
     let pad = if cdsym { [DWARF_HEADERPAD] + (if o.dsym { ["dsym"] } else { [] }) } else { [] }
     let key = if macho_as { "" } else { native_bin_key(os, ctx, dir, cc, [march] + flags + pad + lk.link_only, srcs) }
     let cst = stage(os, ctx, bin)
@@ -1570,7 +1592,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         fail_stage(os, cst, "${cc} failed")
       }
       if cdsym {
-        cc_dsym(os, cst.bin, o.dsym)
+        cc_dsym(os, cst.bin, o.dsym, csplit)
       }
       store_bin(os, ctx, entry, cst.bin)
     }

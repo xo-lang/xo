@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `--debug-info=split` (decision 0355) keeps the DWARF beside the
+  program instead of in it: PROG.dSYM on darwin, PROG.debug on linux
+  (a GNU build id in both and a `.gnu_debuglink` in the program, as
+  `objcopy --only-keep-debug` makes). Tracebacks, `xo dev symbolize`,
+  lldb, gdb, llvm-symbolizer and addr2line find it there.
+- `xo dev symbolize` no longer prints `NAME+0x0x...` for a pc no table
+  names.
+
 - `--release` is a preset (decision 0354): each of its settings has a
   flag of its own in any build (`xo build`, `run`, `test`) that wins
   over the preset whatever the order: `--debug-contracts`, `--dbg`,

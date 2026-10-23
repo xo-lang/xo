@@ -32,6 +32,9 @@ fn build_go(os: Os, ctx: Ctx, o: Opts) ! {
   let wd = o.wd
   let root = abs_line_root(os, wd, o.dirs[0])
   let release = o.release && !tests
+  if debug_info_eff(o, release) == "split" {
+    fail(os, "--debug-info=split is for the native and LLVM backends, not --backend=go (decision 0355)")
+  }
   var opts = gen.Opts{arenas: !o.no_arenas, line_root: root, wd: wd}
   opts.test_mode = tests
   opts.holes = o.holes

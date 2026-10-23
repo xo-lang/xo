@@ -1,0 +1,151 @@
+// Split debug information for the ELF linker (decision 0355): the
+// executable keeps its code, data and symbols, plus a GNU build id note
+// and a .gnu_debuglink naming the debug file; the debug file (PROG.debug)
+// has the DWARF, the symbols and the same build id, with the loaded
+// sections as SHT_NOBITS at their addresses, as `objcopy
+// --only-keep-debug` writes one. gdb, lldb and llvm-symbolizer find it
+// by the build id or beside the executable by the debuglink's name.
+
+use std/crypto
+
+const NT_GNU_BUILD_ID = 3
+
+/// The .note.gnu.build-id contents: "GNU" and 20 bytes of the SHA-256 of
+/// the loaded sections, the DWARF and the symbols (the same link gives the
+/// same id).
+fn build_id_note(body: List[Bytes], dwarf: List[(Str, Bytes)], symtab: Bytes) -> Bytes {
+  var h = new_out(1 << 16)
+  for b in body {
+    h.u64(b.len())
+    h.bytes(b)
+  }
+  for (nm, d) in dwarf {
+    h.bytes(nm.bytes())
+    h.u64(d.len())
+    h.bytes(d)
+  }
+  h.bytes(symtab)
+  let id = crypto.sha256(h.done())[0..20]
+  var o = new_out(16 + id.len())
+  o.u32(4)
+  o.u32(id.len())
+  o.u32(NT_GNU_BUILD_ID)
+  o.bytes("GNU".bytes())
+  o.u8(0)
+  o.bytes(id)
+  o.done()
+}
+
+/// The debug file: the ELF header of the executable with no program
+/// headers, the loaded sections as SHT_NOBITS (their names, flags,
+/// addresses and sizes, so the symbols' section indexes and the DWARF's
+/// addresses match), the build id note, .symtab, .strtab, the DWARF
+/// sections, .shstrtab.
+fn (l: ELinker) debug_elf(shown: List[Int], body: List[Bytes], note: Bytes, symtab: Bytes, strtab: Bytes, nlocal: Int, dwarf: List[(Str, Bytes)]) -> Bytes {
+  var shstr = new_out(256)
+  shstr.u8(0)
+  var names: List[Int] = []
+  for i in shown {
+    names.push(shstr.n)
+    shstr.bytes(l.osects[i].name.bytes())
+    shstr.u8(0)
+  }
+  // the unloaded sections, in order: their names, contents, types
+  var tail: List[(Str, Bytes, Int)] = [(".note.gnu.build-id", note, SHT_NOTE), (".symtab", symtab, SHT_SYMTAB), (".strtab", strtab, SHT_STRTAB)]
+  for (nm, d) in dwarf {
+    tail.push((nm, d, SHT_PROGBITS))
+  }
+  var tnames: List[Int] = []
+  for (nm, _, _) in tail {
+    tnames.push(shstr.n)
+    shstr.bytes(nm.bytes())
+    shstr.u8(0)
+  }
+  let shstr_name = shstr.n
+  shstr.bytes(".shstrtab".bytes())
+  shstr.u8(0)
+  let shstrtab = shstr.done()
+  var offs: List[Int] = []
+  var at = 64
+  for (_, d, _) in tail {
+    at = align_up(at, 8)
+    offs.push(at)
+    at += d.len()
+  }
+  let shstr_off = at
+  let shoff = align_up(shstr_off + shstrtab.len(), 8)
+  let shnum = 1 + shown.len() + tail.len() + 1
+  var o = new_out(shoff + 64 * shnum)
+  o.u8(0x7f)
+  o.bytes("ELF".bytes())
+  o.u8(2)
+  o.u8(1)
+  o.u8(1)
+  o.zeros(9)
+  o.u16(ET_EXEC)
+  o.u16(if l.amd64 { 62 } else { 183 })
+  o.u32(1)
+  let entry = match l.globals.get(l.opts.entry.bytes()) {
+    Some((d, i)) => l.sym_addr(d, i)
+    None => 0
+  }
+  o.u64(entry)
+  o.u64(0)
+  o.u64(shoff)
+  o.u32(0)
+  o.u16(64)
+  o.u16(56)
+  o.u16(0)
+  o.u16(64)
+  o.u16(shnum)
+  o.u16(shnum - 1)
+  for (k, (_, d, _)) in tail.indexed() {
+    o.zeros(offs[k] - o.n)
+    o.bytes(d)
+  }
+  o.bytes(shstrtab)
+  o.zeros(shoff - o.n)
+  o.zeros(64)
+  for (k, i) in shown.indexed() {
+    let s = l.osects[i]
+    o.u32(names[k])
+    o.u32(SHT_NOBITS)
+    o.u64(s.flags)
+    o.u64(s.addr)
+    o.u64(0)
+    o.u64(s.size)
+    o.u32(0)
+    o.u32(0)
+    o.u64(s.align)
+    o.u64(0)
+  }
+  // .symtab names .strtab, the section after it
+  let strtab_index = 1 + shown.len() + 2
+  for (k, (_, d, typ)) in tail.indexed() {
+    if typ == SHT_SYMTAB {
+      shdr(o, tnames[k], typ, offs[k], d.len(), strtab_index, nlocal, 8, 24)
+    } else {
+      shdr(o, tnames[k], typ, offs[k], d.len(), 0, 0, if typ == SHT_NOTE { 4 } else { 1 }, 0)
+    }
+  }
+  shdr(o, shstr_name, SHT_STRTAB, shstr_off, shstrtab.len(), 0, 0, 1, 0)
+  o.done()
+}
+
+/// CRC-32 (IEEE, reflected, as zlib's crc32): .gnu_debuglink's check of
+/// the debug file.
+fn crc32(data: Bytes) -> Int {
+  var table: List[Int] = []
+  for n in 0..256 {
+    var c = n
+    for _ in 0..8 {
+      c = if (c & 1) != 0 { (c >> 1) ^ 0xedb88320 } else { c >> 1 }
+    }
+    table.push(c)
+  }
+  var c = 0xffffffff
+  for x in data {
+    c = table[(c ^ Int(x)) & 255] ^ (c >> 8)
+  }
+  c ^ 0xffffffff
+}

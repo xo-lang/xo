@@ -391,9 +391,18 @@ fn dsym_dwarf(bin: Str) -> Str {
   "${bin}.dSYM/Contents/Resources/DWARF/${base_name(bin)}"
 }
 
-/// Keeps bin's dSYM DWARF beside its cache entry (entry.dsym), so a
-/// fetch gives the program its line tables too.
+/// Keeps bin's dSYM DWARF beside its cache entry (entry.dsym), and a
+/// split link's PROG.debug (entry.debug, decision 0355), so a fetch
+/// gives the program its line tables too.
 fn store_dsym(os: Os, entry: Str, bin: Str) {
+  // xo:allow XO0903 no debug file stored: a fetch gives the program none, as with none
+  if os.fs.exists("${bin}.debug").ok() ?? false {
+    let dtmp = "${entry}.debug.tmp-xo1-${os.rand.bytes(6).to_hex()}"
+    match os.fs.copy("${bin}.debug", dtmp) {
+      Ok(_) => os.fs.rename(dtmp, "${entry}.debug").ignore_err("another process stored it")
+      Err(_) => os.fs.remove(dtmp).ignore_err("a failed store")
+    }
+  }
   let src = dsym_dwarf(bin)
   // xo:allow XO0903 no dSYM stored: a fetch gives the program no line tables, as with none
   if !(os.fs.exists(src).ok() ?? false) {
@@ -410,6 +419,12 @@ fn store_dsym(os: Os, entry: Str, bin: Str) {
 /// left from another link of bin (its UUID would not match).
 fn fetch_dsym(os: Os, entry: Str, bin: Str) {
   os.fs.remove_all("${bin}.dSYM").ignore_err("none from an earlier link")
+  os.fs.remove("${bin}.debug").ignore_err("none from an earlier link")
+  // xo:allow XO0903 no debug file fetched: the program runs without one
+  if os.fs.exists("${entry}.debug").ok() ?? false {
+    prune.mark_used_within(os.fs, os.clock, "${entry}.debug", BIN_TOUCH)
+    os.fs.copy("${entry}.debug", "${bin}.debug").ignore_err("the program runs without its debug file")
+  }
   let src = "${entry}.dsym"
   // xo:allow XO0903 no dSYM fetched: the program runs without its line tables
   if !(os.fs.exists(src).ok() ?? false) {

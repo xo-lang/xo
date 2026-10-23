@@ -15,14 +15,14 @@ use std/task
 /// for --race (decision 0273 part 3), ThreadSanitizer's runtime, a dylib
 /// the executable loads by that path ("" for none); dsym: also write
 /// out.dSYM (--dsym; the executable carries its DWARF, decision 0346).
-fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], out: Str, strip: Bool, nolibc: Bool, race_rt: Str, dsym: Bool) -> Str {
+fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], out: Str, strip: Bool, nolibc: Bool, race_rt: Str, dsym: Bool, split: Bool) -> Str {
   if tgoos == "linux" {
     if !race_rt.is_empty() && nolibc {
       return "--race links with the C library (ThreadSanitizer's runtime needs it): not with XO_NOLIBC=1"
     }
     // --race: ThreadSanitizer's static archive, whole (its __tsan_init
     // in a .preinit_array no symbol reaches, decision 0273 part 3)
-    return elf_link(os, ctx, flags, srcs, out, nolibc, strip, race_rt)
+    return elf_link(os, ctx, flags, srcs, out, nolibc, strip, race_rt, split)
   }
   let (objs, bad) = ld_objects(srcs)
   if !bad.is_empty() {
@@ -53,7 +53,9 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
       return cerr
     }
   }
-  let opts = macho.LinkOpts{name: base_name(out), dylibs: dylibs, rpaths: rpaths, strip: strip, dsym: dsym}
+  // --debug-info=split (decision 0355): no __DWARF in the program, its
+  // DWARF in the dSYM
+  let opts = macho.LinkOpts{name: base_name(out), dylibs: dylibs, rpaths: rpaths, strip: strip, embed_dwarf: !split, dsym: dsym || split}
   match macho.link_debug(ins, opts) {
     Ok((b, dsym)) => {
       // a new file, renamed over the old: the kernel caches the
@@ -186,7 +188,9 @@ fn ld_objects(srcs: List[Str]) -> (List[Str], Str) {
 /// into out, dynamically linked against glibc, or static with no C
 /// library under XO_NOLIBC (decision 0243); "" on success, else why
 /// not.
-fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, static: Bool, strip: Bool, whole: Str) -> Str {
+/// split (decision 0355): the DWARF and symbols in out.debug, which
+/// out's .gnu_debuglink names, both with the same GNU build id.
+fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, static: Bool, strip: Bool, whole: Str, split: Bool) -> Str {
   let (objs, bad) = ld_objects(srcs)
   if !bad.is_empty() {
     return bad
@@ -205,13 +209,16 @@ fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, stati
       Err(e) => return "${whole}: ${e}"
     }
   }
-  match macho.link_elf(ins, macho.ElfLinkOpts{static: static, strip: strip}) {
-    Ok(b) => {
-      let werr = write_exe(os, out, b)
-      if !werr.is_empty() {
-        return werr
+  let debug_link = if split { "${base_name(out)}.debug" } else { "" }
+  match macho.link_elf_split(ins, macho.ElfLinkOpts{static: static, strip: strip, debug_link: debug_link}) {
+    Ok((b, dbg)) => {
+      if split {
+        match os.fs.write("${out}.debug", dbg) {
+          Ok(_) => {}
+          Err(e) => return "cannot write the debug information to ${out}.debug: ${fs_reason(e)}"
+        }
       }
-      ""
+      write_exe(os, out, b)
     }
     Err(e) => "link: ${e}"
   }

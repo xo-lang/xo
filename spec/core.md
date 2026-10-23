@@ -2451,8 +2451,13 @@ marked `requires(debug)` or `ensures(debug)`.
   records or which diagnostic tools it carries, never what a program
   computes. `--opt` applies to the LLVM backend; with arm64 or amd64 it
   is a usage error, and the Go backend ignores it with a note.
-  `--debug-info=split` (decision 0355) is a usage error until it is
-  implemented. A release build fails while an xo.work workspace
+  `--debug-info=split` (decision 0355) writes the debug information
+  beside the program instead of in it: PROG.dSYM on darwin (matched by
+  the Mach-O UUID), PROG.debug on linux (Xo's ELF linker: a GNU build id
+  in both files and a `.gnu_debuglink` in the program); tracebacks,
+  `xo dev symbolize`, debuggers and symbolizers find it there. It is an
+  error on linux with a cc or clang link (`use c`, `--ld=cc`, the LLVM
+  backend), on wasip1, and with the Go backend. A release build fails while an xo.work workspace
   overrides a required module (`XO1308`, 4.2); no flag overrides that.
 - Every other build is a debug build: `xo build` without `--release`,
   `xo run`, `xo test` (whose contract fuzzing checks the debug clauses

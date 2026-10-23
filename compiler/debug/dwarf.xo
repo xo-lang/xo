@@ -43,6 +43,39 @@ fn (var s: Sections) set(name: Str, b: Bytes) {
   }
 }
 
+/// The contents of the ELF file data's section name, or none (not ELF,
+/// no such section, or SHT_NOBITS).
+pub fn elf_section(data: Bytes, name: Str) -> Bytes? {
+  if data.len() < 64 || rd32(data, 0) != 0x464c457f {
+    return None
+  }
+  let shoff = rd64(data, 40)
+  let shn = rd16(data, 60)
+  let shx = rd16(data, 62)
+  if shoff <= 0 || shoff + 64 * shn > data.len() || shx >= shn {
+    return None
+  }
+  let strs = rd64(data, shoff + 64 * shx + 24)
+  for i in 0..shn {
+    let sh = shoff + 64 * i
+    let off = rd64(data, sh + 24)
+    let size = rd64(data, sh + 32)
+    if rd32(data, sh + 4) != 8 && off + size <= data.len() && cstr(data, strs + rd32(data, sh), data.len()) == name {
+      return Some(data[off..off + size])
+    }
+  }
+  None
+}
+
+/// A split ELF executable's debug file (decision 0355): the file name its
+/// .gnu_debuglink names, "" when it has none.
+pub fn elf_debuglink(data: Bytes) -> Str {
+  match elf_section(data, ".gnu_debuglink") {
+    Some(l) => cstr(l, 0, l.len())
+    None => ""
+  }
+}
+
 /// The debug sections of an ELF executable or object, of a Mach-O file
 /// (a dSYM's DWARF file, or an object), or of a PE image; an error for
 /// another format or a file with no .debug_info.

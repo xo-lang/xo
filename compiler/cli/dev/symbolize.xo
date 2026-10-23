@@ -6,7 +6,8 @@
 // where the image was loaded, so each pc is moved to the file's own
 // addresses (Mach-O: from the header's address to __TEXT's; ELF: B is
 // the load bias; PE: from B to the image's preferred base) and named by
-// the DWARF (BINARY's own, its BINARY.dSYM on macOS, or --dwarf) and the
+// the DWARF (BINARY's own, its BINARY.dSYM on macOS, the debug file a
+// split ELF program's .gnu_debuglink names beside it, or --dwarf) and the
 // symbol table, in the report's format: `  FUNCTION (FILE:LINE)`, the
 // calls inlined at a pc first, `  BINARY+0xOFFSET` for a pc no table
 // names.
@@ -16,7 +17,7 @@ use github.com/xo-lang/xo/compiler/debug
 
 fn symbolize_cmd(os: Os, args: List[Str]) -> Int uses (fs.read, stdio) {
   var fl = core.new_flags("dev symbolize")
-  fl.str_flag("dwarf", "", "the DWARF file (default BINARY's own, or BINARY.dSYM's)")
+  fl.str_flag("dwarf", "", "the DWARF file (default BINARY's own, BINARY.dSYM's, or the split debug file BINARY's .gnu_debuglink names)")
   if !fl.parse(os, args) {
     return 2
   }
@@ -37,6 +38,17 @@ fn symbolize_cmd(os: Os, args: List[Str]) -> Int uses (fs.read, stdio) {
     let parts = bin.split("/")
     let dsym = "${bin}.dSYM/Contents/Resources/DWARF/${parts[parts.len() - 1]}"
     dpath = if os.fs.read(dsym) is Ok(_) { dsym } else { bin }
+    // a split ELF program's debug file beside it (decision 0355), by its
+    // .gnu_debuglink, when its build id is the program's
+    let link = debug.elf_debuglink(exe)
+    if dpath == bin && !link.is_empty() {
+      let near = "${bin[0..bin.len() - parts[parts.len() - 1].len()]}${link}"
+      if let Ok(d) = os.fs.read(near) {
+        if debug.elf_section(d, ".note.gnu.build-id") == debug.elf_section(exe, ".note.gnu.build-id") {
+          dpath = near
+        }
+      }
+    }
   }
   let ddata = if dpath == bin { exe } else {
     match os.fs.read(dpath) {
@@ -160,7 +172,7 @@ fn traceback(info: debug.Info, lines: debug.Lines, tab: debug.Tables, pcs: List[
     let last = n == "main"
     let inl = f.inlined && !last
     if n.is_empty() || n == "?" {
-      b.write("  ${name}+0x${hex(f.pc + slide - base)}\n")
+      b.write("  ${name}+${hex(f.pc + slide - base)}\n")
     } else if f.file.is_empty() {
       b.write("  ${n}${if inl { " [inlined]" } else { "" }}\n")
     } else {

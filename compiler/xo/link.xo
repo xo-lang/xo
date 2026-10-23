@@ -55,7 +55,7 @@ const DWARF_HEADERPAD = "-Wl,-headerpad,0x1000"
 /// executable, as compiler/macho's link writes it, and the bundle kept
 /// only for --dsym (keep); when embedding fails the bundle stays and a
 /// warning says why.
-fn cc_dsym(os: Os, bin: Str, keep: Bool) {
+fn cc_dsym(os: Os, bin: Str, keep: Bool, split: Bool) {
   let d = "${bin}.dSYM"
   os.fs.remove_all(d).ignore_err("none from an earlier link")
   match os.proc.run("dsymutil", [bin, "-o", d]) {
@@ -65,6 +65,10 @@ fn cc_dsym(os: Os, bin: Str, keep: Bool) {
     }
     // xo:allow XO0903 dsymutil is optional: no dSYM, as on a system without it
     Err(_) => return
+  }
+  if split {
+    // --debug-info=split (decision 0355): the bundle stays beside bin
+    return
   }
   let why = embed_dsym(os, bin)
   if !why.is_empty() {

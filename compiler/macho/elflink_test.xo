@@ -111,3 +111,59 @@ test "an ELF link refuses .ctors" {
     Err(e) => expect(e.contains(".ctors"))
   }
 }
+
+/// The contents of the section named name in the ELF b, or none.
+fn elf_section(b: Bytes, name: Str) -> Bytes? {
+  let shoff = rd64(b, 40)
+  let shnum = rd16(b, 60)
+  let shstr = shoff + 64 * rd16(b, 62)
+  let stroff = rd64(b, shstr + 24)
+  for i in 0..shnum {
+    let sh = shoff + 64 * i
+    var e = stroff + rd32(b, sh)
+    let start = e
+    while Int(b[e]) != 0 {
+      e += 1
+    }
+    if bstr(b[start..e]) == name {
+      let off = rd64(b, sh + 24)
+      return Some(b[off..off + rd64(b, sh + 32)])
+    }
+  }
+  None
+}
+
+test "a split ELF link moves DWARF and symbols to the debug file, matched by build id and debuglink (decision 0355)" {
+  let obj = assemble_elf(INIT_SRC.bytes()).or_fault("assemble")
+  let whole = link_elf([LinkInput{path: "i.o", data: obj}], ElfLinkOpts{}).or_fault("link")
+  let (exe, dbg) = link_elf_split([LinkInput{path: "i.o", data: obj}], ElfLinkOpts{debug_link: "prog.debug"}).or_fault("split link")
+  // without it, no note and no debug file
+  expect(elf_section(whole, ".note.gnu.build-id")) == None
+  expect(link_elf_split([LinkInput{path: "i.o", data: obj}], ElfLinkOpts{}).or_fault("link").1.len()) == 0
+  // the executable: the note and the debuglink, no DWARF
+  let note = elf_section(exe, ".note.gnu.build-id").or_fault("no build id note")
+  expect(note.len()) == 36
+  expect(rd32(note, 0)) == 4
+  expect(rd32(note, 4)) == 20
+  expect(rd32(note, 8)) == 3
+  expect(bstr(note[12..15])) == "GNU"
+  expect(elf_section(exe, ".debug_info")) == None
+  let link = elf_section(exe, ".gnu_debuglink").or_fault("no debuglink")
+  expect(bstr(link[0..10])) == "prog.debug"
+  expect(link.len()) == 16
+  expect(rd32(link, 12)) == crc32(dbg)
+  // the debug file: an ELF with the same note and the symbols at the
+  // executable's addresses
+  expect(bstr(dbg[1..4])) == "ELF"
+  expect(elf_section(dbg, ".note.gnu.build-id")) == Some(note)
+  expect(elf_sym_value(dbg, "main")) == elf_sym_value(exe, "main")
+  expect(elf_sym_value(dbg, "main") > 0)
+  // the same link, the same id
+  let (exe2, _) = link_elf_split([LinkInput{path: "i.o", data: obj}], ElfLinkOpts{debug_link: "prog.debug"}).or_fault("split link")
+  expect(exe2) == exe
+}
+
+test "crc32 is zlib's" {
+  expect(crc32("123456789".bytes())) == 0xcbf43926
+  expect(crc32("".bytes())) == 0
+}

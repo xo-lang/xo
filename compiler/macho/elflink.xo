@@ -123,6 +123,11 @@ pub struct ElfLinkOpts {
   pub static: Bool = false
   /// leave the local symbols out of .symtab (`-s`, as LinkOpts.strip)
   pub strip: Bool = false
+  /// split debug information (decision 0355): the name of the debug
+  /// file (PROG.debug) the executable's .gnu_debuglink names; its DWARF
+  /// and symbols go there (link_elf_split's second result), and both
+  /// files carry the same GNU build id. "" keeps them in the executable.
+  pub debug_link: Str = ""
 }
 
 /// An input section, by its header index.
@@ -226,11 +231,22 @@ struct ELinker {
   /// x86-64 objects (decision 0254, stage 4): every input's machine
   amd64: Bool = false
   err: Str = ""
+  /// the debug file of a split link (ElfLinkOpts.debug_link)
+  debug_file: Bytes = zeros(0)
 }
 
 /// link_elf: the linux/arm64 executable of the inputs (objects and
 /// archives), or the first error.
 pub fn link_elf(inputs: List[LinkInput], opts: ElfLinkOpts) -> Result[Bytes, Str] {
+  match link_elf_split(inputs, opts) {
+    Ok((exe, _)) => Ok(exe)
+    Err(e) => Err(e)
+  }
+}
+
+/// link_elf, and the debug file of ElfLinkOpts.debug_link (decision
+/// 0355; empty without it).
+pub fn link_elf_split(inputs: List[LinkInput], opts: ElfLinkOpts) -> Result[(Bytes, Bytes), Str] {
   var l = ELinker{opts: opts}
   for inp in inputs {
     if inp.data.len() >= 8 && bstr(inp.data[0..8]) == "!<arch>\n" {
@@ -298,7 +314,7 @@ pub fn link_elf(inputs: List[LinkInput], opts: ElfLinkOpts) -> Result[Bytes, Str
   if !l.err.is_empty() {
     return Err(l.err)
   }
-  Ok(out)
+  Ok((out, l.debug_file))
 }
 
 fn (var l: ELinker) fail(why: Str) {
@@ -1793,10 +1809,29 @@ fn (var l: ELinker) write() -> Bytes {
   let strtab_name = shstr.n
   shstr.bytes(".strtab".bytes())
   shstr.u8(0)
-  // the DWARF sections (elfdebug.xo), after .strtab, not loaded
-  let dbg = l.debug_sections()
+  // the DWARF sections (elfdebug.xo), after .strtab, not loaded; split
+  // (decision 0355): in the debug file, and the executable has the
+  // build id note and .gnu_debuglink in their place
+  let dwarf = l.debug_sections()
   if !l.err.is_empty() {
     return "".bytes()
+  }
+  let (symtab, strtab, nlocal) = l.symtab(shown)
+  var dbg: List[(Str, Bytes)] = dwarf
+  var dbg_types: List[Int] = []
+  for _ in dwarf {
+    dbg_types.push(SHT_PROGBITS)
+  }
+  if !l.opts.debug_link.is_empty() {
+    let note = build_id_note(body, dwarf, symtab)
+    l.debug_file = l.debug_elf(shown, body, note, symtab, strtab, nlocal, dwarf)
+    var dl = new_out(l.opts.debug_link.len() + 8)
+    dl.bytes(l.opts.debug_link.bytes())
+    dl.u8(0)
+    dl.pad(4)
+    dl.u32(crc32(l.debug_file))
+    dbg = [(".note.gnu.build-id", note), (".gnu_debuglink", dl.done())]
+    dbg_types = [SHT_NOTE, SHT_PROGBITS]
   }
   var dbg_names: List[Int] = []
   for (nm, _) in dbg {
@@ -1808,7 +1843,6 @@ fn (var l: ELinker) write() -> Bytes {
   shstr.bytes(".shstrtab".bytes())
   shstr.u8(0)
   let shstrtab = shstr.done()
-  let (symtab, strtab, nlocal) = l.symtab(shown)
   var fend = 0
   for i in 0..O_COUNT {
     if l.osects[i].typ != SHT_NOBITS {
@@ -1821,7 +1855,11 @@ fn (var l: ELinker) write() -> Bytes {
   let strtab_off = symtab_off + symtab.len()
   var dbg_offs: List[Int] = []
   var dend = strtab_off + strtab.len()
-  for (_, d) in dbg {
+  for (k, (_, d)) in dbg.indexed() {
+    // a note is 4 byte aligned
+    if dbg_types[k] == SHT_NOTE {
+      dend = align_up(dend, 4)
+    }
     dbg_offs.push(dend)
     dend += d.len()
   }
@@ -1877,7 +1915,8 @@ fn (var l: ELinker) write() -> Bytes {
   o.zeros(symtab_off - o.n)
   o.bytes(symtab)
   o.bytes(strtab)
-  for (_, d) in dbg {
+  for (k, (_, d)) in dbg.indexed() {
+    o.zeros(dbg_offs[k] - o.n)
     o.bytes(d)
   }
   o.bytes(shstrtab)
@@ -1920,7 +1959,7 @@ fn (var l: ELinker) write() -> Bytes {
   shdr(o, symtab_name, SHT_SYMTAB, symtab_off, symtab.len(), strtab_index, nlocal, 8, 24)
   shdr(o, strtab_name, SHT_STRTAB, strtab_off, strtab.len(), 0, 0, 1, 0)
   for (k, (_, d)) in dbg.indexed() {
-    shdr(o, dbg_names[k], SHT_PROGBITS, dbg_offs[k], d.len(), 0, 0, 1, 0)
+    shdr(o, dbg_names[k], dbg_types[k], dbg_offs[k], d.len(), 0, 0, if dbg_types[k] == SHT_NOTE { 4 } else { 1 }, 0)
   }
   shdr(o, shstr_name, SHT_STRTAB, shstr_off, shstrtab.len(), 0, 0, 1, 0)
   o.done()
