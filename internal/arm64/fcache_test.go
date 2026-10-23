@@ -2737,10 +2737,12 @@ fn main(os: Os) {
 	}
 }
 
-// TestSharedPack: with XO_SHARED_PACK=on (decision 0351) the entries one
-// program read loose go to the shared pack, and a new program in a new
-// directory (no pack of its own) reads its std and runtime entries from
-// there instead of loose files; its binary equals a cache-off build.
+// TestSharedPack: with XO_SHARED_PACK=on (decision 0351) a cold build's
+// many new entries go to the shared pack as one segment (store_entries;
+// with XO_COLD_PACK=off the entries one program read loose go there on its
+// second build), and a new program in a new directory (no pack of its
+// own) reads its std and runtime entries from there instead of loose
+// files; its binary equals a cache-off build.
 func TestSharedPack(t *testing.T) {
 	if !native() {
 		t.Skip("the host is not arm64")
@@ -2757,7 +2759,7 @@ func TestSharedPack(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(work)
-	cache := filepath.Join(work, "cache")
+	cache := filepath.Join(work, "cache-loose")
 	stats := regexp.MustCompile(`cache loose rc (\d+) of (\d+) \(pack (\d+), shared (\d+), missing (\d+)\)`)
 	build := func(name, body string, env ...string) ([]byte, []string) {
 		t.Helper()
@@ -2783,12 +2785,21 @@ func TestSharedPack(t *testing.T) {
 		}
 		return b, stats.FindStringSubmatch(string(log))
 	}
-	// the first program fills the cache; its second build reads the
-	// entries loose (no pack yet) and adds them to the shared pack
-	build("one", "one")
-	_, m := build("one", "one")
+	// XO_COLD_PACK=off: the first program's cold build stores loose; its
+	// second build reads them loose (no pack yet) and adds them to the
+	// shared pack
+	build("one", "one", "XO_COLD_PACK=off")
+	_, m := build("one", "one", "XO_COLD_PACK=off")
 	if m == nil || m[1] == "0" {
-		t.Fatalf("the second build read no rc entry loose: %v", m)
+		t.Fatalf("XO_COLD_PACK=off: the second build read no rc entry loose: %v", m)
+	}
+	// the default: the cold build writes its entries as a shared pack
+	// segment, so the second build reads them there, none loose
+	cache = filepath.Join(work, "cache")
+	build("one", "one")
+	_, m = build("one", "one")
+	if m == nil || m[4] == "0" || m[1] != "0" {
+		t.Fatalf("the second build after a packed cold build: %v, want its rc entries from the shared pack and none loose", m)
 	}
 	got, m := build("two", "two")
 	if m == nil || m[4] == "0" || m[1] != "0" {

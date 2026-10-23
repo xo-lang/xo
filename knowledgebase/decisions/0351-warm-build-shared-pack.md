@@ -117,6 +117,18 @@ output in 76 of 76 directories, every errorcheck program among them
 (bench/results/check-cache-2026-10-23.md). Test: cmd/xo
 TestCheckCacheWarnings.
 
+## Addendum (2026-10-23): a cold build stores into the shared pack
+
+Lead-approved (item A of the Windows --race note). A build with
+COLD_PACK_MIN (64) or more new entries of a kind writes them as one
+segment of that kind's shared pack (compiler/xo bcache.xo store_entries)
+instead of a file each; a cold build of a small program left 638 files in
+the cache instead of 6,227 and took 0.687 of the wall time on the Mac
+(bench/results/cold-pack-2026-10-23.md). Parts stay in the target's pack.
+A compaction of the shared pack keeps what the compacting build used, so
+an entry another program needs may go and be built again (never wrong
+code). XO_COLD_PACK=off stores loose as before.
+
 ## Consequences
 
 - Stage 1 changes the cache layout (a new `packs/shared` tree) but not

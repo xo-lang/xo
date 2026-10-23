@@ -169,11 +169,7 @@ fn fn_cache_store(os: Os, dir: Str, pk: Pack, fc: arm64.FnCache, stores: List[(S
   if stores.is_empty() {
     return
   }
-  var n = 0
-  for (k, e) in stores {
-    cache_put(os, entry_path(dir, "fn", k), e)
-    n += e.len()
-  }
+  let n = store_entries(os, dir, "fn", pk, stores)
   prune_backend_cache(os, "fn", dir, n)
 }
 
@@ -248,11 +244,7 @@ fn rc_cached(os: Os, var b: ssa.Builder, release: Bool, jobs: Int, phases: Bool,
       }
     }
     let new_sums = sums_of(b.m, plan.keys, todo, jobs)
-    var sn = 0
-    for (k, e) in new_sums {
-      cache_put(os, entry_path(dir, "sum", k), e)
-      sn += e.len()
-    }
+    let sn = store_entries(os, dir, "sum", spk, new_sums)
     pack_store(os, spk, sums, new_sums)
     if sn > 0 {
       prune_backend_cache(os, "sum", dir, sn)
@@ -262,11 +254,7 @@ fn rc_cached(os: Os, var b: ssa.Builder, release: Bool, jobs: Int, phases: Bool,
     }
     t = lap(os, phases, "insert_rc.sums", t)
   }
-  var n = 0
-  for (k, e) in out.stores {
-    cache_put(os, entry_path(dir, "rc", k), e)
-    n += e.len()
-  }
+  let n = store_entries(os, dir, "rc", pk, out.stores)
   if !out.stores.is_empty() {
     prune_backend_cache(os, "rc", dir, n)
   }
@@ -509,11 +497,7 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
   if fin != hint {
     cache_put(os, "${dir}/fe-hint/last", fin.bytes())
   }
-  var n = 0
-  for (k, e) in b.fe.stores {
-    cache_put(os, entry_path(dir, "fe", k), e)
-    n += e.len()
-  }
+  let n = store_entries(os, dir, "fe", pk, b.fe.stores)
   pack_store(os, pk, entries, b.fe.stores)
   if n > 0 {
     prune_backend_cache(os, "fe", dir, n)
@@ -627,11 +611,7 @@ fn inline_through_cache(os: Os, var mi: ssa.Module, rc_keys: List[Str], jobs: In
   t = lap(os, phases, "inline.read", t)
   let out = arm64.inline_cached(mi, ik, entries, backend_cache_mode(os) == "verify", brk, jobs, lazy)
   pack_store(os, pk, entries, out.stores)
-  var n = 0
-  for (k, e) in out.stores {
-    cache_put(os, entry_path(dir, "inl", k), e)
-    n += e.len()
-  }
+  let n = store_entries(os, dir, "inl", pk, out.stores)
   if !out.stores.is_empty() {
     prune_backend_cache(os, "inl", dir, n)
   }
@@ -1063,6 +1043,9 @@ struct Pack {
   from_pack: Map[Str, Bool] = {}
   /// The target's first build: no pack directory yet.
   fresh: Bool = false
+  /// The shared pack of this kind and target (shared_pack_dir), "" when
+  /// it is off: where a build's many new entries go (store_entries).
+  shared_dir: Str = ""
   /// The builds of this target that left the pack empty (the file "seen"
   /// in its directory): segments are written once PACK_AFTER were counted.
   seen: Int = 0
@@ -1181,6 +1164,7 @@ fn cache_get_packed(os: Os, dir: Str, kind: Str, target: Str, keys: List[Str], j
   // pack lacks, before any loose file
   let sh_on = kind != "part" && (os.env.get("XO_SHARED_PACK") ?? "") != "off"
   let sdir = if sh_on { shared_pack_dir(dir, kind, target) } else { "" }
+  p.shared_dir = sdir
   // a build target without a formed pack (a new directory) takes the
   // shared copy of the last formed pack's list: the keys found nowhere
   // even with a pack, so stored by no build (9,520 failed opens for
@@ -1252,6 +1236,30 @@ fn cache_get_packed(os: Os, dir: Str, kind: Str, target: Str, keys: List[Str], j
   }
   (entries, p)
 }
+
+/// A build's new entries of kind (stores): one segment of the shared pack
+/// when they are many (COLD_PACK_MIN or more: a cold build's, about 5,800
+/// files of std's bodies for a hello, which a Windows runner writes
+/// slowly; lead-approved item (A), 2026-10-23), else a loose file each, as
+/// before. Every reader looks in the shared pack before the loose files
+/// (cache_get_packed). The bytes written loose, for the caller's prune
+/// (pack_write counts a segment itself).
+fn store_entries(os: Os, dir: Str, kind: Str, p: Pack, stores: List[(Str, Bytes)]) -> Int {
+  if !p.shared_dir.is_empty() && stores.len() >= COLD_PACK_MIN && (os.env.get("XO_COLD_PACK") ?? "") != "off" {
+    os.fs.create_dir_all(p.shared_dir).ignore_err("no shared pack: the entries are made again")
+    pack_write(os, Pack{root: dir, dir: p.shared_dir}, stores)
+    return 0
+  }
+  var n = 0
+  for (k, e) in stores {
+    cache_put(os, entry_path(dir, kind, k), e)
+    n += e.len()
+  }
+  n
+}
+
+/// store_entries writes a segment from this many new entries up.
+const COLD_PACK_MIN = 64
 
 /// A build that read at least this many entries loose adds them to the
 /// shared pack (decision 0351).
