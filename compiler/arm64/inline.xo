@@ -427,7 +427,11 @@ fn inline_state_jobs(m: ssa.Module, jobs: Int) -> InlineState {
   let (small, loopy, padded, fewl) = inlinable_set(m, sums, by_name)
   // XO_PASSES=-inline: no call is inlined (devirtualize, which runs
   // with the call search, neither); the other passes here still run
-  let rounds = if pass_on(m, "inline") { 200 } else { 0 }
+  // the calls one function may inline: 200 left large functions' later
+  // sites calls once the budget ran out (2026-10-23: portable's main
+  // stopped before ints.fits and llrt_u64_rem, checked 1.40 times
+  // LLVM's instructions; any change that inlined more there hid others)
+  let rounds = if pass_on(m, "inline") { 400 } else { 0 }
   InlineState{by_name: by_name, sums: sums, small: small, loopy: loopy, padded: padded, fewl: fewl, rounds: rounds}
 }
 
