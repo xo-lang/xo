@@ -1,6 +1,7 @@
 // xoparse: the self hosted parser's command line.
 //
 //   parser [--sig] <files...>              print each file's canonical tree dump
+//   parser --lazy [--sig] <files...>       the same through the lazy parse and parse_body
 //   parser [--sig] --bench=N <files...>    parse every file N times, print the time
 //
 // The dump of every file the Go parser accepts is byte for byte the output
@@ -10,12 +11,17 @@
 fn dump_body(os: Os, args: List[Str]) ! {
   var repeat = 0
   var sig = false
+  // --lazy: the lazy parse with every body parsed after (decision 0351
+  // stage 2), which must dump as the full parse does
+  var lazy = false
   var files: List[Str] = []
   for a in args {
     if a.starts_with("--bench=") {
       repeat = Int.parse(a.trim_prefix("--bench=")) ?? fault("--bench needs a number")
     } else if a == "--sig" {
       sig = true
+    } else if a == "--lazy" {
+      lazy = true
     } else {
       files.push(a)
     }
@@ -42,7 +48,11 @@ fn dump_body(os: Os, args: List[Str]) ! {
   }
   var out = StrBuilder.new()
   for (f, src) in srcs {
-    out.write(dump(f, src, sig))
+    if lazy {
+      out.write(dump_result(f, force_bodies(f.bytes(), src, parse_file_lazy(f.bytes(), src, sig))))
+    } else {
+      out.write(dump(f, src, sig))
+    }
   }
   os.stdio.print(out.freeze())
 }

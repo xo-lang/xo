@@ -8,8 +8,10 @@ use github.com/xo-lang/xo/compiler/lexer
 /// Parses src and prints its tree and diagnostics. With sig, function
 /// declarations may omit their body. A file with errors prints the tree
 /// the parser recovered.
-pub fn dump(file: Str, src: Bytes, sig: Bool) -> Str {
-  let r = parse_file(file.bytes(), src, sig)
+pub fn dump(file: Str, src: Bytes, sig: Bool) -> Str { dump_result(file, parse_file(file.bytes(), src, sig)) }
+
+/// The dump of a parse result r of file.
+pub fn dump_result(file: Str, r: ParseResult) -> Str {
   var out = StrBuilder.new()
   out.write("== ${file}\n")
   dump_file(out, r.file)

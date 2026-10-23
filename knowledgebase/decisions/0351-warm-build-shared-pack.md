@@ -60,10 +60,23 @@ Proposed, in stages, each with its own `xo bench --ab`:
 
    The shared pack held 16 MB after these builds.
 
-2. **A cross-build parse and declaration cache**: each file's parse (or
-   each module's declarations) keyed by its bytes and the parser's
-   version, read from a pack, so an unchanged std file is neither parsed
-   nor declared again (half of a warm hello's check). Its own --ab.
+2. **Lazy function bodies** (approved by the lead 2026-10-23 in place of
+   an on-disk parse cache: no AST serializer exists, and decoding would
+   allocate the same nodes): a warm hello build allocates 1.33 GB, 538 MB
+   of it parsing, mostly std and runtime bodies it takes from the front
+   end cache. The parser's lazy mode (parse_file_lazy) skips each
+   function body by its braces at the token level and records its range
+   (FnDecl.lazy); parse_body parses it with the full parse's spans
+   (lexer.lex_from). Stage (a), the parser alone, is in: the lazy parse
+   with every body forced dumps exactly as the full parse for all 1,785
+   repository files that parse cleanly (35,374 bodies;
+   internal/selfhost TestParserLazyBodies, `xo dev dump ast --lazy`).
+   Stage (b) chooses the mode per file (lazy only for the toolchain's
+   own std and runtime and for modules whose check cache entry hits),
+   forces bodies through one checker entry point, and gives an unforced
+   body a sentinel that faults when read; its gate builds compiler/xo and
+   every golden with XO_LAZY_PARSE=on, the fixed point and identity. Its
+   own --ab (design: ~/xo-lead/notes/xo-publish/0351/lazy-body-parse.md).
 
 3. **A whole-build key** (Go's action IDs): the hash of the checked
    modules' keys, the flags and the target maps to the linked binary;

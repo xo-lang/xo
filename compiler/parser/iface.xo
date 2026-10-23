@@ -102,6 +102,9 @@ fn iface_bytes(toks: List[lexer.Token], decls: List[Decl]) -> Bytes {
     if let FnDecl(d: fd) = d {
       if let Some(bd) = fd.body {
         cuts.push((bd.span.start.offset, bd.span.end.offset))
+      } else if let Some(lb) = fd.lazy {
+        // a body the lazy parse skipped: the same bytes as its block's
+        cuts.push((lb.start.offset, lb.end))
       }
     }
     // a test's body too: nothing outside it reads it (2026-10-21: an

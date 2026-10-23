@@ -69,6 +69,9 @@ struct Parser {
   /// Signature mode: function declarations may omit their body (std
   /// declaration files).
   sig: Bool = false
+  /// Lazy mode (decision 0351 stage 2): a function body is skipped by its
+  /// braces and recorded (FnDecl.lazy) instead of parsed.
+  lazy: Bool = false
   /// No struct literals: the head of if, while, for, match, requires,
   /// ensures (core 1.4).
   no_lit: Bool = false
@@ -106,15 +109,85 @@ struct Parser {
 }
 
 /// Parses one file. With sig, function declarations may omit their body.
-pub fn parse_file(name: Bytes, src: Bytes, sig: Bool) -> ParseResult {
+pub fn parse_file(name: Bytes, src: Bytes, sig: Bool) -> ParseResult { parse_file_mode(name, src, sig, false) }
+
+/// parse_file with function bodies skipped and recorded (FnDecl.lazy;
+/// decision 0351 stage 2): the declarations, the interface, and the
+/// lexer's and habits' diagnostics are a full parse's; a body's own
+/// parse errors are reported only when parse_body parses it.
+pub fn parse_file_lazy(name: Bytes, src: Bytes, sig: Bool) -> ParseResult { parse_file_mode(name, src, sig, true) }
+
+fn parse_file_mode(name: Bytes, src: Bytes, sig: Bool, lazy: Bool) -> ParseResult {
   let lx = lexer.lex(src)
-  var p = Parser{file: name, src: src, toks: lx.tokens, tok: lx.tokens[0], sig: sig, diags: lx.diags}
+  var p = Parser{file: name, src: src, toks: lx.tokens, tok: lx.tokens[0], sig: sig, lazy: lazy, diags: lx.diags}
   p.collect_docs(lx.comments)
   p.lex_habits()
   p.tok = p.toks[0]
   let f = p.parse_file(name)
   let iface = crypto.sha256(iface_bytes(lx.tokens, if p.hard { [] } else { f.decls })).to_hex()
   ParseResult{file: f, diags: sort_diags(p.diags), hard: p.hard, iface: iface}
+}
+
+/// The body of a function the lazy parse skipped (decision 0351 stage 2),
+/// parsed from src (the file's bytes) as parse_file would have, spans
+/// included, and the diagnostics of its parse.
+pub fn parse_body(name: Bytes, src: Bytes, lb: LazyBody) -> (Block, List[Diag]) {
+  let lx = lexer.lex_from(src, lb.start, lb.end)
+  var p = Parser{file: name, src: src, toks: lx.tokens, tok: lx.tokens[0], diags: lx.diags}
+  p.lex_habits()
+  p.tok = p.toks[0]
+  let b = p.parse_block()
+  (b, sort_diags(p.diags))
+}
+
+/// r (a lazy parse of src, parse_file_lazy) with every skipped body
+/// parsed (parse_body) and its diagnostics added: what parse_file gives
+/// (decision 0351 stage 2; the parser's lazy test compares the two).
+pub fn force_bodies(name: Bytes, src: Bytes, r: ParseResult) -> ParseResult {
+  var out = r
+  var diags = r.diags
+  var decls: List[Decl] = []
+  for d in r.file.decls {
+    if let FnDecl(d: fd) = d {
+      if let Some(lb) = fd.lazy {
+        let (b, ds) = parse_body(name, src, lb)
+        var f = fd
+        f.body = Some(b)
+        f.lazy = None
+        decls.push(Decl.FnDecl(d: f))
+        diags = diags + ds
+        continue
+      }
+    }
+    decls.push(d)
+  }
+  out.file.decls = decls
+  out.diags = sort_diags(diags)
+  out
+}
+
+/// At a body's `{`: steps past its matching `}` (by brace depth over the
+/// tokens; braces in strings and comments are not tokens) and returns
+/// the body's source range.
+fn (var p: Parser) skip_body() -> LazyBody {
+  let start = p.tok.span.start
+  var depth = 0
+  var end = start.offset
+  while p.tok.kind != Kind.Eof {
+    if p.tok.kind == Kind.LBrace || p.tok.kind == Kind.HashLBrace {
+      // `#{` opens a set literal, closed by `}`
+      depth += 1
+    } else if p.tok.kind == Kind.RBrace {
+      depth -= 1
+      if depth == 0 {
+        end = p.tok.span.end.offset
+        p.next()
+        break
+      }
+    }
+    p.next()
+  }
+  LazyBody{start: start, end: end}
 }
 
 /// Orders diagnostics by position, keeping the order of equal ones
@@ -811,7 +884,11 @@ fn (var p: Parser) parse_fn_decl(doc: Doc?, is_pub: Bool, start: Pos, in_interfa
     if in_interface && !p.bad {
       p.soft(UNEXPECTED_TOKEN, p.tok.span, "interface method `${txt(name.name)}` cannot have a body (core 15: FnSig)")
     }
-    fn_decl.body = Some(p.parse_block())
+    if p.lazy && !in_interface {
+      fn_decl.lazy = Some(p.skip_body())
+    } else {
+      fn_decl.body = Some(p.parse_block())
+    }
   } else if !in_interface && !p.sig {
     p.fail(MISSING_BODY, p.tok.span, "expected `{` to start the body of `${txt(name.name)}`, found ${describe(p.tok)}")
   }

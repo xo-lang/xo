@@ -207,3 +207,40 @@ test "doc comments attach to declarations, fields, and variants" {
   expect(text.contains("doc: Doc 1:1:0-2:8:15 text=\"one\\x0atwo\"")) == true
   expect(text.contains("doc: Doc 4:3:29-4:8:34 text=\"f\"")) == true
 }
+
+test "the lazy parse skips bodies and parse_body restores them exactly" {
+  let src = """
+    fn f(x: Int) -> Str {
+      let s = "a } brace { in a string \${x + 1}"
+      let g = fn(y: Int) -> Int { y * 2 }
+      match x {
+        0 => "zero"
+        _ => "\${s} \${g(x)}"
+      }
+    }
+
+    // a comment with a } brace
+    fn h() {
+      if true {
+        let _m: Map[Str, Int] = {}
+      }
+    }
+
+    struct P {
+      a: Int
+    }
+    """.bytes()
+  let lazy = parse_file_lazy(b"t.xo", src, false)
+  var skipped = 0
+  for d in lazy.file.decls {
+    if let FnDecl(d: fd) = d {
+      expect(fd.body.is_none()) == true
+      if fd.lazy != None {
+        skipped += 1
+      }
+    }
+  }
+  expect(skipped) == 2
+  expect(lazy.iface) == parse_file(b"t.xo", src, false).iface
+  expect(dump_result("t.xo", force_bodies(b"t.xo", src, lazy))) == dump("t.xo", src, false)
+}

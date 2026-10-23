@@ -54,6 +54,15 @@ pub fn lex(src: Bytes) -> LexResult {
   LexResult{tokens: l.toks, comments: l.comments, diags: l.diags}
 }
 
+/// Tokenizes src[start.offset..end] as part of a file, Newline tokens
+/// included, with positions continuing from start: a function body the
+/// lazy parse skipped (parser parse_body, decision 0351 stage 2).
+pub fn lex_from(src: Bytes, start: Pos, end: Int) -> LexResult {
+  var l = Lexer{src: src, off: start.offset, end: end, line: start.line, col: start.col, range_mode: false}
+  l.run()
+  LexResult{tokens: l.toks, comments: l.comments, diags: l.diags}
+}
+
 /// Tokenizes src[start.offset..end] with positions continuing from start.
 /// Used for interpolated expressions; never emits Newline tokens.
 pub fn lex_range(src: Bytes, start: Pos, end: Int) -> LexResult {

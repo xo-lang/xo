@@ -70,10 +70,21 @@ pub struct FnDecl {
   pub err: ErrSpec? = None
   pub clauses: List[Clause] = []
   pub body: Block? = None
+  /// A body the lazy parse left unparsed (decision 0351 stage 2): its
+  /// source range; parse_body parses it. body is None while it is set.
+  pub lazy: LazyBody? = None
   /// params is empty but not nil in Go (a method recovered from a Rust
   /// `impl` block whose only parameter was `self`): the dump prints
   /// `params: []`.
   pub params_list: Bool = false
+}
+
+/// The source of a function body the lazy parse skipped (decision 0351
+/// stage 2): from its `{` (start, with its line and column) to the byte
+/// after its `}`.
+pub struct LazyBody {
+  pub start: Pos
+  pub end: Int
 }
 
 /// `(var name: Type)` before a method name.
