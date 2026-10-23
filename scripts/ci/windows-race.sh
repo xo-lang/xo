@@ -29,9 +29,17 @@
 # ThreadSanitizer runtime the archive ships (lib/xo/race), not the
 # bucket's, and no XO_STD, XO_CLI or XO_RACE_RUNTIME of the job.
 set -uo pipefail
+# --no-prune (lead, 2026-10-23): a backend cache cap no cache reaches, so
+# no build prunes (separates the prune from the cache's other costs when
+# builds are slow; the dispatch cannot set environment variables)
+if [ "${1:-}" = --no-prune ]; then
+  shift
+  export XO_BACKEND_CACHE_MAX=64000000000
+  echo "windows-race: --no-prune: XO_BACKEND_CACHE_MAX=$XO_BACKEND_CACHE_MAX"
+fi
 archive=${1:-}
 want_sum=${2:-}
-[ -z "$archive" ] || [ -n "$want_sum" ] || { echo "usage: windows-race.sh [ARCHIVE SHA256]"; exit 2; }
+[ -z "$archive" ] || [ -n "$want_sum" ] || { echo "usage: windows-race.sh [--no-prune] [ARCHIVE SHA256]"; exit 2; }
 RT_SHA256=cbab2689849964a299312a7d5de5e2c0553c1b27bf90fca5a5f488fcb7826b11
 REPS=${REPS:-3}
 RUN_TIMEOUT=${RUN_TIMEOUT:-120}
@@ -97,6 +105,7 @@ cache_note() {
   fi
 }
 cache_note "before the builds"
+echo "cap XO_BACKEND_CACHE_MAX=${XO_BACKEND_CACHE_MAX:-default}" >> "$sum"
 # which xo, and whether it builds a native program at all without --race:
 # separates a broken xo from a --race problem (run 39772751654 failed every
 # build with XO1201 and said neither)
