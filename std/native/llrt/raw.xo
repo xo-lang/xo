@@ -228,6 +228,24 @@ pub fn str_cut(s: Str, lo: Int, hi: Int) -> Str {
   rt.str_view(s, lo, hi)
 }
 
+/// str_cut(s, lo, s.len()) for 0 <= lo <= s.len(): one boundary test (the
+/// end is the string's end).
+pub fn str_from(s: Str, lo: Int) -> Str {
+  if lo < s.len() && (rt.mem_load(data(s), lo, 1) & 0xC0) == 0x80 {
+    return str_at(data(s) + lo, s.len() - lo)
+  }
+  rt.str_view(s, lo, s.len())
+}
+
+/// str_cut(s, 0, hi) for 0 <= hi <= s.len(): one boundary test (the start
+/// is the string's start).
+pub fn str_upto(s: Str, hi: Int) -> Str {
+  if hi < s.len() && (rt.mem_load(data(s), hi, 1) & 0xC0) == 0x80 {
+    return str_at(data(s), hi)
+  }
+  rt.str_view(s, 0, hi)
+}
+
 /// The elements of xs with sep between them.
 pub fn str_join(xs: List[Str], sep: Str) -> Str {
   var total = 0

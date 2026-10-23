@@ -1,5 +1,20 @@
 # prelude changes
 
+## 2026-10-22: perf: trim_prefix and trim_suffix compare words and cut once (native)
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/results/views-trim-2026-10-22.md (trim_prefix and trim_suffix ran 123.7 M instructions against Go's 50.5 M)
+- Go reference: strings.TrimPrefix, strings.TrimSuffix (a length test and one memequal)
+- Test: golden trim_affix_lens (every affix length and cut point, cuts inside a rune), views_split, str_ops_table, strings, text_helpers on arm64 and LLVM with Go parity; wasm goldens; std corpora
+
+`scan.eq_text` compares the affix on the two texts' words (8 byte words and an
+overlapping tail, 4, 2 and 1 byte loads for the short ones) with no Bytes
+values and no bounds checks, for a caller that proved the range; `eq_at` takes
+the same 4 to 7 byte compare. `raw.str_from` and `raw.str_upto` cut with one
+boundary test, since the other end is the string's start or end. Results are
+unchanged (md5 of the program output, before and after).
+
 ## 2026-10-22: perf: split and lines cut views without the second check (native)
 
 - Kind: perf

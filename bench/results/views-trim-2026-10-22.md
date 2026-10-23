@@ -31,3 +31,18 @@ match or the string length). Same method, `mb/sliceb`:
 
 Both now execute fewer instructions than Go. Output is byte-identical (md5 of
 the program output, before and after).
+
+## trim_prefix and trim_suffix (same day)
+
+`trim_affix` (400000 iterations of `s.trim_prefix("Bearer ").len() +
+s.trim_suffix("nop").len()`), same method. The byte loop with bounds checks in
+`eq_at` for 3 and 7 byte affixes was the largest part; a 4 to 7 byte overlapping
+compare alone gave 0.867 of the instructions, the text compare without Bytes
+values 0.725, and the one-test cuts 0.684.
+
+| mode | wall | instructions | before | after | Go |
+| --- | --- | --- | --- | --- | --- |
+| trim_affix | 0.689 (0.646 to 0.853) | 0.684 | 124.0 M | 84.8 M | 50.5 M |
+
+Still 1.7x Go's instructions: the three calls (compare, cut, release) are not
+inlined, where Go inlines HasPrefix. Output is byte-identical.

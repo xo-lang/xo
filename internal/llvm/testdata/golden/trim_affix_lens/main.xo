@@ -1,0 +1,39 @@
+// trim_prefix and trim_suffix at every affix length (the word, 4 byte, 2
+// byte and 1 byte compares) and every rune boundary of a string with 2 and 3
+// byte runes: the result equals the slice the cut stands for, a changed last
+// byte is not an affix, an empty affix cuts nothing.
+fn main(os: Os) {
+  let t = "aé✓b" + "xyz0123456789" + "é✓" + "end"
+  let n = t.len()
+  var bad = 0
+  var k = 0
+  let bs = t.bytes()
+  while k <= n {
+    if k < n && (bs[k] & 0xC0) == 0x80 {
+      k += 1
+      continue
+    }
+    let head = t[0..k]
+    let tail = t[k..n]
+    if t.trim_prefix(head) != tail || t.trim_prefix(head).len() != n - k {
+      bad += 1
+    }
+    if t.trim_suffix(tail) != head || t.trim_suffix(tail).len() != k {
+      bad += 1
+    }
+    if k > 0 && bs[k - 1] < 0x80 {
+      let other = t[0..k - 1] + "~"
+      if t.trim_prefix(other) != t || t.trim_suffix(other) != t {
+        bad += 1
+      }
+    }
+    k += 1
+  }
+  if t.trim_prefix("") != t || t.trim_suffix("") != t || "".trim_prefix("") != "" {
+    bad += 1
+  }
+  if "ab".trim_prefix("abc") != "ab" || "ab".trim_suffix("abc") != "ab" {
+    bad += 1
+  }
+  os.stdio.println("bad ${bad} ${n}")
+}

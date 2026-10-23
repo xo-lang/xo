@@ -113,6 +113,12 @@ pub fn eq_at(a: Bytes, ai: Int, b: Bytes, bi: Int, n: Int) -> Bool {
     }
     return rt.bytes_word(a, ai + n - 8) == rt.bytes_word(b, bi + n - 8)
   }
+  if n >= 4 {
+    // 4 to 7 bytes: the first four and the last four, overlapping
+    let pa = raw.bytes_addr(a) + ai
+    let pb = raw.bytes_addr(b) + bi
+    return rt.mem_load(pa, 0, 4) == rt.mem_load(pb, 0, 4) && rt.mem_load(pa, n - 4, 4) == rt.mem_load(pb, n - 4, 4)
+  }
   var t = 0
   while t < n {
     if a[ai + t] != b[bi + t] {
@@ -121,6 +127,32 @@ pub fn eq_at(a: Bytes, ai: Int, b: Bytes, bi: Int, n: Int) -> Bool {
     t += 1
   }
   true
+}
+
+/// Whether p is the text of s at i, for a caller that knows 0 <= i and
+/// i + p.len() <= s.len(): eq_at on the text's words with no Bytes values
+/// and no bounds checks (the trim_prefix and trim_suffix tests).
+pub fn eq_text(s: Str, i: Int, p: Str) -> Bool {
+  let n = p.len()
+  let a = raw.data(s) + i
+  let b = raw.data(p)
+  if n >= 8 {
+    var t = 0
+    while n - t > 8 {
+      if rt.mem_load(a, t, 8) != rt.mem_load(b, t, 8) {
+        return false
+      }
+      t += 8
+    }
+    return rt.mem_load(a, n - 8, 8) == rt.mem_load(b, n - 8, 8)
+  }
+  if n >= 4 {
+    return rt.mem_load(a, 0, 4) == rt.mem_load(b, 0, 4) && rt.mem_load(a, n - 4, 4) == rt.mem_load(b, n - 4, 4)
+  }
+  if n >= 2 {
+    return rt.mem_load(a, 0, 2) == rt.mem_load(b, 0, 2) && rt.mem_load(a, n - 2, 2) == rt.mem_load(b, n - 2, 2)
+  }
+  n == 0 || rt.mem_load(a, 0, 1) == rt.mem_load(b, 0, 1)
 }
 
 /// strings.Index of sub in s from `from` (rt.str_find): from below 0 is

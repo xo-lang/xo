@@ -95,15 +95,15 @@ fn str_trim_start(s: Str) -> Str { strings.trim(s, 1) }
 fn str_trim_end(s: Str) -> Str { strings.trim(s, 2) }
 
 fn str_trim_prefix(s: Str, p: Str) -> Str {
-  if scan.starts_with(s, p) {
-    return raw.str_cut(s, p.len(), s.len())
+  if p.len() <= s.len() && scan.eq_text(s, 0, p) {
+    return raw.str_from(s, p.len())
   }
   s
 }
 
 fn str_trim_suffix(s: Str, p: Str) -> Str {
-  if scan.ends_with(s, p) {
-    return raw.str_cut(s, 0, s.len() - p.len())
+  if p.len() <= s.len() && scan.eq_text(s, s.len() - p.len(), p) {
+    return raw.str_upto(s, s.len() - p.len())
   }
   s
 }
