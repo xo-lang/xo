@@ -3,7 +3,7 @@
 ## 2026-10-22: perf: trim, trim_start, trim_end, trim_prefix and trim_suffix cut a view without the second check (native)
 
 - Kind: perf
-- Commit: this commit
+- Commit: 2507d45c9
 - Found by: bench/results/views-split-2026-10-22.md (trim 295.5 M instructions against Go's 201.2 M, trim_prefix/suffix 182.6 M against 50.5 M: the boundary test and the range check ran twice)
 - Go reference: strings.TrimSpace, TrimPrefix, TrimSuffix (a subslice, no check)
 - Test: goldens views_split, str_ops_table, strings, text_helpers on arm64 and LLVM with Go parity; std corpora
