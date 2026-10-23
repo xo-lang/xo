@@ -102,3 +102,54 @@ func TestBindC(t *testing.T) {
 		t.Fatalf("check --no-gc exit %d: %s%s", code, out.String(), errOut.String())
 	}
 }
+
+// TestUseGoPin covers decision 0356: a third-party `use go` without a
+// `require go` line is XO1319, whose fix (xo fix) pins the version the
+// binding resolved; `xo mod tidy` adds a missing pin too; Go's std needs
+// none.
+func TestUseGoPin(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("runs go list and fetches a Go module")
+	}
+	setenv(t, "XO_GOBIND_DIR", "")
+	mod := "module ex\nedition preview\n"
+	dir := writeFiles(t, map[string]string{
+		"xo.mod":      mod,
+		"app/main.xo": "use go \"strings\"\nuse go \"github.com/google/uuid\" as uuid\n\nfn main(os: Os) {\n  os.stdio.println(strings.to_upper(\"x\") + \"${uuid.new_string().len()}\")\n}\n",
+	})
+	app := filepath.Join(dir, "app")
+	var out, errOut bytes.Buffer
+	code := run(t, []string{"check", "--backend=go", app}, &out, &errOut)
+	if strings.Contains(errOut.String(), "cannot bind") {
+		t.Skipf("the Go module cannot be fetched here: %s", errOut.String())
+	}
+	if code != 1 || !strings.Contains(errOut.String(), "XO1319") || !strings.Contains(errOut.String(), "Go module github.com/google/uuid has no `require go` line") || strings.Contains(errOut.String(), `"strings"`) {
+		t.Fatalf("check without the pin: exit %d\n%s", code, errOut.String())
+	}
+	out.Reset()
+	errOut.Reset()
+	run(t, []string{"fix", app}, &out, &errOut)
+	data, _ := os.ReadFile(filepath.Join(dir, "xo.mod"))
+	if !strings.Contains(string(data), "\nrequire go github.com/google/uuid v1.") {
+		t.Fatalf("xo fix did not pin it: xo.mod\n%s\n%s%s", data, out.String(), errOut.String())
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := run(t, []string{"check", "--backend=go", app}, &out, &errOut); code != 0 {
+		t.Fatalf("check after the fix: exit %d\n%s", code, errOut.String())
+	}
+	// tidy adds the pin from the binding
+	if err := os.WriteFile(filepath.Join(dir, "xo.mod"), []byte(mod), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := run(t, []string{"mod", "tidy", "--dir=" + dir}, &out, &errOut); code != 0 {
+		t.Fatalf("tidy: exit %d\n%s", code, errOut.String())
+	}
+	data, _ = os.ReadFile(filepath.Join(dir, "xo.mod"))
+	if !strings.Contains(string(data), "require go github.com/google/uuid v1.") || strings.Contains(string(data), "require go strings") {
+		t.Fatalf("tidy: xo.mod\n%s", data)
+	}
+}

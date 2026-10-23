@@ -1650,7 +1650,12 @@ fn main(os: Os) ! {
 
 - `xo check`, `build`, `run`, and `test` generate bindings automatically into
   `.xo/gobind/` (or `$XO_GOBIND_DIR`); `xo bind <path>` does it explicitly.
-  Third party module versions follow Go's module resolution.
+  A package outside Go's standard library needs its Go module pinned,
+  `require go <module> <version>` in xo.mod (4.2), or the use is
+  `XO1319` (decision 0356): its fix adds the line with the version Go's
+  module resolution picked, and `xo mod tidy` adds missing pins. Go's
+  standard library packages need no line; the Go toolchain's version
+  decides them.
 - Names are converted to Xo naming: functions and methods to `snake_case`
   (`Split` is `split`, `EncodeToString` is `encode_to_string`), types stay
   `UpperCamel`.
@@ -3042,6 +3047,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO1316` | error | checker, xo get | `use c` or `use go` of an impure Go package in a required module without the consumer's `vouch` for that version (4.2, decision 0156) |
 | `XO1317` | error | modules | a dependency's effects are wider than its `effects` line in xo.lock (4.3, decision 0156) |
 | `XO1318` | error | modules | a module's tree cannot be read (an I/O error) for its content hash, the effect or escape hatch audit, or `xo mod tidy`'s import scan, so none of them answers from a partial tree (4.3, decision 0156) |
+| `XO1319` | error | modules | a `use go` of a package outside Go's standard library whose Go module has no `require go` line in xo.mod (builds would follow its latest version); the fix adds the line with the version the binding resolved, and `xo mod tidy` adds it too (decision 0356) |
 | `XO1401` | error | checker | allocation in a real-time function (literal, interpolation, `+` on Str or List, closure, growth method) |
 | `XO1402` | error | checker | loop without a provable bound in a real-time function, or a `bound N` that is not a constant or is exceeded by a constant range |
 | `XO1403` | error | checker | call in a real-time function of a function that is not real-time, a function value, or an interface method |

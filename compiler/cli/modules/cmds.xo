@@ -33,11 +33,22 @@ fn is_remote(path: Str) -> Bool {
 /// the requirements its imports need (XO1318).
 fn (c: ModCtx) imports(main_dir: Str, main_path: Str) -> List[Str] ! Str uses fs.read {
   var set: Map[Str, Bool] = {}
-  c.imports_walk(main_dir, main_path, set)?
+  c.imports_walk(main_dir, main_path, false, set)?
   Ok(set.keys().sort())
 }
 
-fn (c: ModCtx) imports_walk(d: Str, main_path: Str, var set: Map[Str, Bool]) -> () ! Str uses fs.read {
+/// The packages outside Go's standard library that the main module's
+/// `use go` lines name (decision 0356: each needs a `require go` pin),
+/// sorted.
+fn (c: ModCtx) go_imports(main_dir: Str, main_path: Str) -> List[Str] ! Str uses fs.read {
+  var set: Map[Str, Bool] = {}
+  c.imports_walk(main_dir, main_path, true, set)?
+  Ok(set.keys().sort())
+}
+
+/// imports_walk collects the remote Xo imports, or with go the
+/// third-party `use go` paths (a first element with a dot).
+fn (c: ModCtx) imports_walk(d: Str, main_path: Str, go: Bool, var set: Map[Str, Bool]) -> () ! Str uses fs.read {
   let entries = match c.os.fs.read_dir(d) {
     Ok(es) => es
     Err(NotFound(_)) => []
@@ -49,7 +60,7 @@ fn (c: ModCtx) imports_walk(d: Str, main_path: Str, var set: Map[Str, Bool]) -> 
       if e.name == "vendor" || e.name == "testdata" || e.name.starts_with(".") || e.name.starts_with("_") || c.exists("${p}/xo.mod") {
         continue
       }
-      c.imports_walk(p, main_path, set)?
+      c.imports_walk(p, main_path, go, set)?
       continue
     }
     if !e.name.ends_with(".xo") {
@@ -59,6 +70,12 @@ fn (c: ModCtx) imports_walk(d: Str, main_path: Str, var set: Map[Str, Bool]) -> 
     let r = parser.parse_file(p.bytes(), src, false)
     for u in r.file.imports {
       let path = check.text(u.path)
+      if go {
+        if u.go && path.split("/")[0].contains(".") {
+          set[path] = true
+        }
+        continue
+      }
       if u.go || u.c || path.is_empty() || !is_remote(path) || path == main_path || path.starts_with("${main_path}/") {
         continue
       }
@@ -332,6 +349,23 @@ fn (var c: ModCtx) tidy(main_dir: Str) -> (List[Change], List[check.Problem]) us
   for r in extra {
     data = set_require(data, r.path, r.version)
   }
+  // decision 0356: a `require go` pin for each third-party `use go`,
+  // at the version its binding resolved
+  let gos = match c.go_imports(main_dir, main.path) {
+    Ok(x) => x
+    Err(e) => return ([], [check.Problem{code: "XO1318", file: main.file, msg: "the module's imports cannot be read: ${e}", notes: ["tidy stops rather than drop the requirements of what it could not read; run it again"]}])
+  }
+  for g in gos {
+    if !go_pin(data, g).is_empty() {
+      continue
+    }
+    let (mp, v) = c.go_binding_module(main_dir, g)
+    if mp.is_empty() {
+      return ([], [check.Problem{code: "XO1319", file: main.file, msg: "`use go \"${g}\"` has no `require go` line, and no binding records its version yet", notes: ["run `xo check` once (it binds the package with Go), then `xo mod tidy` again, or add `require go <module> <version>` to xo.mod (decision 0356)"]}])
+    }
+    data = data.trim_suffix("\n") + "\nrequire go ${mp} ${v}\n"
+    changes.push(Change{path: mp, new: v})
+  }
   if data != orig {
     match c.write_file(main.file, data.bytes()) {
       Ok(_) => {}
@@ -385,4 +419,42 @@ fn (var c: ModCtx) vendor(main_dir0: Str) -> (List[check.DepModule], List[check.
     return ([], out.problems)
   }
   (out.modules, [])
+}
+
+/// The version of the `require go` line in xo.mod text data that pins the
+/// Go package gopath (its longest module prefix), or "".
+fn go_pin(data: Str, gopath: Str) -> Str {
+  var best = ""
+  var v = ""
+  for l in data.split("\n") {
+    let fs = check.fields(l)
+    if fs.len() >= 4 && fs[0] == "require" && fs[1] == "go" && (gopath == fs[2] || gopath.starts_with("${fs[2]}/")) && fs[2].len() > best.len() {
+      best = fs[2]
+      v = fs[3]
+    }
+  }
+  v
+}
+
+/// The Go module and version the binding of gopath resolved, from its
+/// declaration file's `// go-module: M V` header in the main module's
+/// binding cache (.xo/gobind, or $XO_GOBIND_DIR), or ("", "").
+fn (c: ModCtx) go_binding_module(main_dir: Str, gopath: Str) -> (Str, Str) uses fs.read {
+  let set = c.getenv("XO_GOBIND_DIR")
+  let dir = if set.is_empty() { "${c.abs(main_dir)}/.xo/gobind" } else { set }
+  // xo:allow XO0903 no binding yet: the caller reports it
+  let text = c.os.fs.read_text("${dir}/${gopath}.xo").ok() ?? ""
+  for l in text.split("\n") {
+    if !l.starts_with("//") {
+      break
+    }
+    let t = l.trim_prefix("//").trim()
+    if t.starts_with("go-module: ") {
+      let fs = check.fields(t.trim_prefix("go-module: "))
+      if fs.len() == 2 {
+        return (fs[0], fs[1])
+      }
+    }
+  }
+  ("", "")
 }

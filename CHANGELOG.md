@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- **Breaking** (decision 0356): a `use go` of a package outside Go's
+  standard library needs its Go module pinned with `require go <module>
+  <version>` in xo.mod; without it the use is `XO1319`. Builds used to
+  follow the module's latest version, recorded only in the gitignored
+  `.xo/`, so they were not reproducible. `xo fix` adds the line with
+  the version the binding resolved, and `xo mod tidy` adds missing
+  pins. Go's standard library packages need nothing.
+
 - `"${r?:?}"` (the try operator, then the Debug form) parses; it was
   read as Kotlin's elvis `?:` (XO0177 and XO0160), and only
   `"${(r?):?}"` worked.
