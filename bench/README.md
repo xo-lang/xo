@@ -119,6 +119,7 @@ Stage 3 runs:
 - [2026-10-21 GET /users under the read lock](results/http-list-under-lock-2026-10-21.md): encoding the list inside the store's read lock instead of copying and sorting first (owner's decision): list-only load at 1024 connections Xo 5.4k to 13.6k req/s (CPU per request -66%), Go 5.3k to 5.0k (within noise, CPU -14%); mixed CRUD unchanged within noise for both.
 - [2026-10-21 WebSocket Autobahn](results/websocket-autobahn-2026-10-21.md): std/websocket against the Autobahn TestSuite, server and client, arm64 and Go backends (`bench/websocket/autobahn/run.sh`): 300 cases each, OK 293, NON-STRICT 4 (6.4.x, fail-fast UTF-8), INFORMATIONAL 3, none failed.
 - [2026-10-22 Network against Go](results/net-vs-go-2026-10-22.md): one table of TLS handshakes and bulk (AES-GCM, ChaCha20), HTTP/2 (1 and 100 streams, download), WebSocket echo, the HTTP client, and the CRUD server against Go, each row with source, date, machine state (quiet or loaded: ratios only), and commit; the Go side of the WebSocket and HTTP client rows is `perf/netgo`.
+- [2026-10-23 Rune classes against Go](results/rune-classes-2026-10-23.md): `bench/perf/unicode` and its new Go twin, instructions retired: all 13 Rune classes 0.62 (arm64) and 0.51 (LLVM) of Go, the Latin-1 class pass 0.91 and 0.72, `to_title` 0.61 and 0.51, `utf8_len` 0.96 and 0.95; every checksum identical on both backends and Go.
 
 ## Quiet HTTP measurement: `bench/perf/http/callgrind-docker.sh`
 

@@ -225,8 +225,12 @@ fn (b: Bytes) indexed() -> List[(Int, UInt8)]  // each byte with its offset, as 
 fn (static: Bytes) zeroed(n: Int) -> Bytes   // n zero bytes (make([]byte, n)); a fault for n < 0
 fn (s: Str) unquote() -> Str?                // Go's Unquote (decision 0287); None when s is not a literal or the text is not UTF-8
 
-fn (r: Rune) is_digit() -> Bool              // also is_letter, is_space, to_lower, to_upper
-fn (r: Rune) is_print() -> Bool
+fn (r: Rune) is_digit() -> Bool              // also is_letter, is_space
+fn (r: Rune) is_upper() -> Bool              // also is_lower, is_title
+fn (r: Rune) is_punct() -> Bool              // also is_control, is_graphic, is_mark, is_symbol, is_number
+fn (r: Rune) to_lower() -> Rune              // also to_upper, to_title
+fn (r: Rune) utf8_len() -> Int               // 1, 2, 3 or 4 bytes (utf8.RuneLen; a Rune is a scalar value, so Go's -1 cannot happen)
+fn (r: Rune) is_print() -> Bool              // strconv.IsPrint
 fn (r: Rune) quote() -> Str                  // 'a', '\n', '\u2028'
 ```
 
@@ -238,6 +242,14 @@ reproduced:
   `is_space` white space (`\t \n \v \f \r`, space, U+0085, U+00A0, and
   category Zs, plus U+2028 and U+2029), `is_print` `strconv.IsPrint` (a
   letter, mark, number, punctuation, symbol, or the ASCII space).
+- The other classes are Go's `IsUpper`, `IsLower` and `IsTitle` (the
+  cased letters), and `IsPunct`, `IsControl`, `IsGraphic`, `IsMark`,
+  `IsSymbol` and `IsNumber` (the categories P, C, L+M+N+P+S+Zs, M, S and
+  N). `to_title` is `unicode.ToTitle`: the upper case of an ASCII letter,
+  and the title case of a digraph (`ǅ` for `Ǆ` and `ǆ`).
+- `utf8_len` is `utf8.RuneLen` of the rune: 1, 2, 3 or 4 bytes. A `Rune`
+  is a Unicode scalar value (core 2.4), so Go's -1 for an invalid rune
+  cannot happen; `Rune.try(n)` is `utf8.ValidRune` for an `Int`.
 - `decode_rune(i)` reads the UTF-8 sequence at byte `i`: `(U+FFFD, 1)`
   for an invalid or short sequence, `(U+FFFD, 0)` at `i == len()`, and a
   fault when `i` is negative or past the end.
@@ -4049,7 +4061,7 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
 
 Every function and method of std/prelude.xo, by type, as declared there
 (the sections above explain them); interface methods take `self`.
-385 declarations.
+396 declarations.
 
 ### Range
 
@@ -4204,8 +4216,19 @@ fn (static: Rune) try(x: Int) -> Rune?
 fn (r: Rune) is_digit() -> Bool
 fn (r: Rune) is_letter() -> Bool
 fn (r: Rune) is_space() -> Bool
+fn (r: Rune) is_upper() -> Bool
+fn (r: Rune) is_lower() -> Bool
+fn (r: Rune) is_title() -> Bool
+fn (r: Rune) is_punct() -> Bool
+fn (r: Rune) is_control() -> Bool
+fn (r: Rune) is_graphic() -> Bool
+fn (r: Rune) is_mark() -> Bool
+fn (r: Rune) is_symbol() -> Bool
+fn (r: Rune) is_number() -> Bool
 fn (r: Rune) to_lower() -> Rune
 fn (r: Rune) to_upper() -> Rune
+fn (r: Rune) to_title() -> Rune
+fn (r: Rune) utf8_len() -> Int
 fn (r: Rune) is_print() -> Bool
 fn (r: Rune) quote() -> Str
 ```

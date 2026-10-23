@@ -76,6 +76,97 @@ fn rune_case(rs: List[Rune]) -> Int {
   sum
 }
 
+/// The weighted sum of every Rune class, so one pass exercises all 13.
+fn class_bits(r: Rune) -> Int {
+  var n = 0
+  if r.is_letter() {
+    n += 1
+  }
+  if r.is_digit() {
+    n += 3
+  }
+  if r.is_space() {
+    n += 7
+  }
+  if r.is_print() {
+    n += 11
+  }
+  if r.is_upper() {
+    n += 13
+  }
+  if r.is_lower() {
+    n += 17
+  }
+  if r.is_title() {
+    n += 19
+  }
+  if r.is_punct() {
+    n += 23
+  }
+  if r.is_control() {
+    n += 29
+  }
+  if r.is_graphic() {
+    n += 31
+  }
+  if r.is_mark() {
+    n += 37
+  }
+  if r.is_symbol() {
+    n += 41
+  }
+  if r.is_number() {
+    n += 43
+  }
+  n
+}
+
+fn classes(rs: List[Rune]) -> Int {
+  var sum = 0
+  for _ in 0..10 {
+    for r in rs {
+      sum += class_bits(r)
+    }
+  }
+  sum
+}
+
+/// The classes of every Latin-1 rune: the table Go's properties cover,
+/// where this runtime uses the bitmap of U+0080 to U+07FF.
+fn latin1() -> Int {
+  var sum = 0
+  for _ in 0..REPS {
+    var i = 0
+    while i < 256 {
+      if let Some(r) = Rune.try(i) {
+        sum += class_bits(r)
+      }
+      i += 1
+    }
+  }
+  sum
+}
+
+fn title_sum(rs: List[Rune]) -> Int {
+  var sum = 0
+  for _ in 0..10 {
+    for r in rs {
+      sum = (sum + Int(r.to_title())) % 1000000007
+    }
+  }
+  sum
+}
+
+fn utf8_len_sum(rs: List[Rune]) -> Int {
+  var sum = 0
+  for _ in 0..10 {
+    for r in rs {
+      sum += r.utf8_len()
+    }
+  }
+  sum
+}
+
 fn quote(s: Str) -> Int {
   var sum = 0
   for _ in 0..20 {
@@ -99,6 +190,10 @@ fn main(os: Os) {
     "eqlower" => eq_lower(a, a.to_upper()) + eq_lower(u, u.to_upper())
     "classify" => classify(rs)
     "runecase" => rune_case(rs)
+    "classes" => classes(rs)
+    "latin1" => latin1()
+    "title" => title_sum(rs)
+    "utf8len" => utf8_len_sum(rs)
     "quote" => quote((ASCII + MIXED + "\t\u{7}\u{0}").repeat(400))
     _ => -1
   }

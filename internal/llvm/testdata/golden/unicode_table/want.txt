@@ -1,22 +1,44 @@
 exit 0
 --- stdout
-plane 0: letters=48965 digits=370 spaces=25 prints=55508 case=517314775
-plane 1: letters=17135 digits=310 spaces=0 prints=23246 case=603224227
-plane 2: letters=60873 digits=0 spaces=0 prints=60873 case=0
-plane 3: letters=9131 digits=0 spaces=0 prints=9131 case=0
-plane 4: letters=0 digits=0 spaces=0 prints=0 case=0
-plane 5: letters=0 digits=0 spaces=0 prints=0 case=0
-plane 6: letters=0 digits=0 spaces=0 prints=0 case=0
-plane 7: letters=0 digits=0 spaces=0 prints=0 case=0
-plane 8: letters=0 digits=0 spaces=0 prints=0 case=0
-plane 9: letters=0 digits=0 spaces=0 prints=0 case=0
-plane 10: letters=0 digits=0 spaces=0 prints=0 case=0
-plane 11: letters=0 digits=0 spaces=0 prints=0 case=0
-plane 12: letters=0 digits=0 spaces=0 prints=0 case=0
-plane 13: letters=0 digits=0 spaces=0 prints=0 case=0
-plane 14: letters=0 digits=0 spaces=0 prints=240 case=0
-plane 15: letters=0 digits=0 spaces=0 prints=0 case=0
-plane 16: letters=0 digits=0 spaces=0 prints=0 case=0
+plane 0: letters=48965 digits=370 spaces=25 prints=55508 upper=1127 lower=1445 title=31 punct=625 control=65 graphic=55524 mark=1338 symbol=3844 number=735 len=188288 case=886293283
+plane 1: letters=17135 digits=310 spaces=0 prints=23246 upper=704 lower=788 title=0 punct=217 control=0 graphic=23246 mark=872 symbol=3926 number=1096 len=262144 case=299908581
+plane 2: letters=60873 digits=0 spaces=0 prints=60873 upper=0 lower=0 title=0 punct=0 control=0 graphic=60873 mark=0 symbol=0 number=0 len=262144 case=0
+plane 3: letters=9131 digits=0 spaces=0 prints=9131 upper=0 lower=0 title=0 punct=0 control=0 graphic=9131 mark=0 symbol=0 number=0 len=262144 case=0
+plane 4: letters=0 digits=0 spaces=0 prints=0 upper=0 lower=0 title=0 punct=0 control=0 graphic=0 mark=0 symbol=0 number=0 len=262144 case=0
+plane 5: letters=0 digits=0 spaces=0 prints=0 upper=0 lower=0 title=0 punct=0 control=0 graphic=0 mark=0 symbol=0 number=0 len=262144 case=0
+plane 6: letters=0 digits=0 spaces=0 prints=0 upper=0 lower=0 title=0 punct=0 control=0 graphic=0 mark=0 symbol=0 number=0 len=262144 case=0
+plane 7: letters=0 digits=0 spaces=0 prints=0 upper=0 lower=0 title=0 punct=0 control=0 graphic=0 mark=0 symbol=0 number=0 len=262144 case=0
+plane 8: letters=0 digits=0 spaces=0 prints=0 upper=0 lower=0 title=0 punct=0 control=0 graphic=0 mark=0 symbol=0 number=0 len=262144 case=0
+plane 9: letters=0 digits=0 spaces=0 prints=0 upper=0 lower=0 title=0 punct=0 control=0 graphic=0 mark=0 symbol=0 number=0 len=262144 case=0
+plane 10: letters=0 digits=0 spaces=0 prints=0 upper=0 lower=0 title=0 punct=0 control=0 graphic=0 mark=0 symbol=0 number=0 len=262144 case=0
+plane 11: letters=0 digits=0 spaces=0 prints=0 upper=0 lower=0 title=0 punct=0 control=0 graphic=0 mark=0 symbol=0 number=0 len=262144 case=0
+plane 12: letters=0 digits=0 spaces=0 prints=0 upper=0 lower=0 title=0 punct=0 control=0 graphic=0 mark=0 symbol=0 number=0 len=262144 case=0
+plane 13: letters=0 digits=0 spaces=0 prints=0 upper=0 lower=0 title=0 punct=0 control=0 graphic=0 mark=0 symbol=0 number=0 len=262144 case=0
+plane 14: letters=0 digits=0 spaces=0 prints=240 upper=0 lower=0 title=0 punct=0 control=0 graphic=240 mark=240 symbol=0 number=0 len=262144 case=0
+plane 15: letters=0 digits=0 spaces=0 prints=0 upper=0 lower=0 title=0 punct=0 control=0 graphic=0 mark=0 symbol=0 number=0 len=262144 case=0
+plane 16: letters=0 digits=0 spaces=0 prints=0 upper=0 lower=0 title=0 punct=0 control=0 graphic=0 mark=0 symbol=0 number=0 len=262144 case=0
+u+0: upper=false lower=false title=false punct=false control=true graphic=false mark=false symbol=false number=false len=1 up=0 lo=0 ti=0
+u+31: upper=false lower=false title=false punct=false control=true graphic=false mark=false symbol=false number=false len=1 up=31 lo=31 ti=31
+u+32: upper=false lower=false title=false punct=false control=false graphic=true mark=false symbol=false number=false len=1 up=32 lo=32 ti=32
+u+65: upper=true lower=false title=false punct=false control=false graphic=true mark=false symbol=false number=false len=1 up=65 lo=97 ti=65
+u+97: upper=false lower=true title=false punct=false control=false graphic=true mark=false symbol=false number=false len=1 up=65 lo=97 ti=65
+u+126: upper=false lower=false title=false punct=false control=false graphic=true mark=false symbol=true number=false len=1 up=126 lo=126 ti=126
+u+127: upper=false lower=false title=false punct=false control=true graphic=false mark=false symbol=false number=false len=1 up=127 lo=127 ti=127
+u+128: upper=false lower=false title=false punct=false control=true graphic=false mark=false symbol=false number=false len=2 up=128 lo=128 ti=128
+u+160: upper=false lower=false title=false punct=false control=false graphic=true mark=false symbol=false number=false len=2 up=160 lo=160 ti=160
+u+255: upper=false lower=true title=false punct=false control=false graphic=true mark=false symbol=false number=false len=2 up=376 lo=255 ti=376
+u+256: upper=true lower=false title=false punct=false control=false graphic=true mark=false symbol=false number=false len=2 up=256 lo=257 ti=256
+u+2047: upper=false lower=false title=false punct=false control=false graphic=true mark=false symbol=true number=false len=2 up=2047 lo=2047 ti=2047
+u+2048: upper=false lower=false title=false punct=false control=false graphic=true mark=false symbol=false number=false len=3 up=2048 lo=2048 ti=2048
+u+55295: upper=false lower=false title=false punct=false control=false graphic=false mark=false symbol=false number=false len=3 up=55295 lo=55295 ti=55295
+u+57344: upper=false lower=false title=false punct=false control=false graphic=false mark=false symbol=false number=false len=3 up=57344 lo=57344 ti=57344
+u+65535: upper=false lower=false title=false punct=false control=false graphic=false mark=false symbol=false number=false len=3 up=65535 lo=65535 ti=65535
+u+65536: upper=false lower=false title=false punct=false control=false graphic=true mark=false symbol=false number=false len=4 up=65536 lo=65536 ti=65536
+u+1114111: upper=false lower=false title=false punct=false control=false graphic=false mark=false symbol=false number=false len=4 up=1114111 lo=1114111 ti=1114111
+u+-1: none
+u+55296: none
+u+57343: none
+u+1114112: none
 "" lower="" upper="" eq=true ne=true
 "abc" lower="abc" upper="ABC" eq=true ne=false
 "ABC" lower="abc" upper="ABC" eq=true ne=false

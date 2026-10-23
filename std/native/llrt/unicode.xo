@@ -1,10 +1,12 @@
 // The Unicode operations of the native runtime, written in Xo (decision
-// 0180, the runtime pilot): the case mapping of Str and Rune, the Rune
-// classes is_letter, is_digit, and is_print, strconv's quoting, and the
-// class ranges of std/regexp's \pL and \p{Nd}. They were C (std/llrt's
-// xo_unicode.c tables and their users, deleted by decision 0198); the
-// semantics are still Go's (unicode, strings, strconv), so the native
-// backends print what the Go backend prints.
+// 0180, the runtime pilot): the case mapping of Str and Rune (lower,
+// upper, title), the Rune classes (is_letter, is_digit, is_space,
+// is_upper, is_lower, is_title, is_punct, is_control, is_graphic,
+// is_mark, is_symbol, is_number, is_print and utf8_len), strconv's
+// quoting, and the class ranges of std/regexp's \pL and \p{Nd}. They were
+// C (std/llrt's xo_unicode.c tables and their users, deleted by decision
+// 0198); the semantics are still Go's (unicode, strings, strconv), so the
+// native backends print what the Go backend prints.
 //
 // A runtime module (std/native/llrt/<name>.xo, imported as
 // `use native/llrt/<name>`) is compiled with the program like the
@@ -59,7 +61,7 @@ pub fn is_letter(r: Int) -> Bool {
     return (r >= 97 && r <= 122) || (r >= 65 && r <= 90)
   }
   if r < 0x800 {
-    return has_bit(unicode_tables.LETTER2, r)
+    return has_bit(unicode_tables.LETTER_BITS, r)
   }
   in_ranges(unicode_tables.LETTER, unicode_tables.LETTER_N, r)
 }
@@ -70,7 +72,7 @@ pub fn is_digit(r: Int) -> Bool {
     return r >= 48 && r <= 57
   }
   if r < 0x800 {
-    return has_bit(unicode_tables.DIGIT2, r)
+    return has_bit(unicode_tables.DIGIT_BITS, r)
   }
   in_ranges(unicode_tables.DIGIT, unicode_tables.DIGIT_N, r)
 }
@@ -81,9 +83,116 @@ pub fn is_print(r: Int) -> Bool {
     return r >= 0x20 && r < 0x7F
   }
   if r < 0x800 {
-    return has_bit(unicode_tables.PRINT2, r)
+    return has_bit(unicode_tables.PRINT_BITS, r)
   }
   in_ranges(unicode_tables.PRINT, unicode_tables.PRINT_N, r)
+}
+
+// The Rune classes below, like is_letter above: ASCII tested directly, the
+// runes U+0080 to U+07FF from a bitmap of this class, and the rest by the
+// binary search over its merged ranges (Decision 0180's shape; Go's
+// Latin-1 properties table covers only U+0000 to U+00FF, the bitmap one
+// byte further).
+
+/// unicode.IsUpper.
+pub fn is_upper(r: Int) -> Bool {
+  if r < 0x80 {
+    return r >= 65 && r <= 90
+  }
+  if r < 0x800 {
+    return has_bit(unicode_tables.UPPER_BITS, r)
+  }
+  in_ranges(unicode_tables.UPPER, unicode_tables.UPPER_N, r)
+}
+
+/// unicode.IsLower.
+pub fn is_lower(r: Int) -> Bool {
+  if r < 0x80 {
+    return r >= 97 && r <= 122
+  }
+  if r < 0x800 {
+    return has_bit(unicode_tables.LOWER_BITS, r)
+  }
+  in_ranges(unicode_tables.LOWER, unicode_tables.LOWER_N, r)
+}
+
+/// unicode.IsTitle (no title case rune is below U+0080).
+pub fn is_title(r: Int) -> Bool {
+  if r < 0x80 {
+    return false
+  }
+  if r < 0x800 {
+    return has_bit(unicode_tables.TITLE_BITS, r)
+  }
+  in_ranges(unicode_tables.TITLE, unicode_tables.TITLE_N, r)
+}
+
+/// unicode.IsPunct (in ASCII, the nine symbol characters are is_symbol,
+/// not is_punct).
+pub fn is_punct(r: Int) -> Bool {
+  if r < 0x80 {
+    return (r >= 33 && r <= 47 && r != 36 && r != 43) || (r >= 58 && r <= 64 && r != 60 && r != 61 && r != 62) || (r >= 91 && r <= 96 && r != 94 && r != 96) || (r >= 123 && r <= 126 && r != 124 && r != 126)
+  }
+  if r < 0x800 {
+    return has_bit(unicode_tables.PUNCT_BITS, r)
+  }
+  in_ranges(unicode_tables.PUNCT, unicode_tables.PUNCT_N, r)
+}
+
+/// unicode.IsControl.
+pub fn is_control(r: Int) -> Bool {
+  if r < 0x80 {
+    return r < 32 || r == 127
+  }
+  if r < 0x800 {
+    return has_bit(unicode_tables.CONTROL_BITS, r)
+  }
+  in_ranges(unicode_tables.CONTROL, unicode_tables.CONTROL_N, r)
+}
+
+/// unicode.IsGraphic (letters, marks, numbers, punctuation, symbols and
+/// the space separators; no control, format or line separator).
+pub fn is_graphic(r: Int) -> Bool {
+  if r < 0x80 {
+    return r >= 32 && r <= 126
+  }
+  if r < 0x800 {
+    return has_bit(unicode_tables.GRAPHIC_BITS, r)
+  }
+  in_ranges(unicode_tables.GRAPHIC, unicode_tables.GRAPHIC_N, r)
+}
+
+/// unicode.IsMark (no mark is below U+0080).
+pub fn is_mark(r: Int) -> Bool {
+  if r < 0x80 {
+    return false
+  }
+  if r < 0x800 {
+    return has_bit(unicode_tables.MARK_BITS, r)
+  }
+  in_ranges(unicode_tables.MARK, unicode_tables.MARK_N, r)
+}
+
+/// unicode.IsSymbol.
+pub fn is_symbol(r: Int) -> Bool {
+  if r < 0x80 {
+    return r == 36 || r == 43 || (r >= 60 && r <= 62) || r == 94 || r == 96 || r == 124 || r == 126
+  }
+  if r < 0x800 {
+    return has_bit(unicode_tables.SYMBOL_BITS, r)
+  }
+  in_ranges(unicode_tables.SYMBOL, unicode_tables.SYMBOL_N, r)
+}
+
+/// unicode.IsNumber.
+pub fn is_number(r: Int) -> Bool {
+  if r < 0x80 {
+    return r >= 48 && r <= 57
+  }
+  if r < 0x800 {
+    return has_bit(unicode_tables.NUMBER_BITS, r)
+  }
+  in_ranges(unicode_tables.NUMBER, unicode_tables.NUMBER_N, r)
 }
 
 /// unicode.ToLower (lower) or unicode.ToUpper of the scalar value r.
@@ -105,28 +214,67 @@ pub fn to_case(r: Int, lower: Bool) -> Int {
     }
     return u24(unicode_tables.UPPER2, (r - 0x80) * 3)
   }
+  case_map(r, if lower { 1 } else { 0 })
+}
+
+/// unicode.ToTitle of the rune r (title case is upper case in ASCII).
+pub fn to_title(r: Int) -> Int {
+  if r < 0x80 {
+    if r >= 97 && r <= 122 {
+      return r - 32
+    }
+    return r
+  }
+  if r < 0x800 {
+    return u24(unicode_tables.TITLE2, (r - 0x80) * 3)
+  }
+  case_map(r, 2)
+}
+
+/// Go's lookupCaseRange and convertCase above U+07FF: kind is Go's
+/// UpperCase (0), LowerCase (1) or TitleCase (2).
+fn case_map(r: Int, kind: Int) -> Int {
   let t = unicode_tables.CASE
   var lo = 0
   var hi = unicode_tables.CASE_N
   while lo < hi {
     let m = lo + (hi - lo) / 2
-    let k = m * 12
+    let k = m * 15
     let first = u24(t, k)
     if r < first {
       hi = m
     } else if r > u24(t, k + 3) {
       lo = m + 1
     } else {
-      let d = if lower { s24(t, k + 9) } else { s24(t, k + 6) }
+      let d = s24(t, k + 6 + kind * 3)
       if d == unicode_tables.UPPER_LOWER {
-        // alternating pairs: the upper case at an even offset from first
+        // alternating upper and lower pairs, from an upper case one: the
+        // upper (and title) case at an even offset from first, the lower
+        // at an odd one
         let even = first + (r - first) / 2 * 2
-        return if lower { even + 1 } else { even }
+        return if kind == 1 { even + 1 } else { even }
       }
       return r + d
     }
   }
   r
+}
+
+/// utf8.RuneLen of the rune r: the 1, 2, 3 or 4 bytes it takes in UTF-8.
+/// A Rune is always a scalar value, so Go's -1 for an invalid rune cannot
+/// happen here; `Rune.try(n)` is that check on an Int (core 2.4,
+/// decision 0079).
+pub fn utf8_len(r: Int) -> Int {
+  if r < 0x80 {
+    return 1
+  }
+  if r < 0x800 {
+    return 2
+  }
+  if r < 0x10000 {
+    return 3
+  }
+  4
 }
 
 /// The bytes 0 to 255, so `BYTE[x]` is x as a UInt8 for x in that range

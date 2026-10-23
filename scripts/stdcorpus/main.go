@@ -47,6 +47,7 @@ var generators = map[string]func() string{
 	"netip":     netipCorpus,
 	"path":      pathCorpus,
 	"regexp":    regexpCorpus,
+	"runes":     runesCorpus,
 	"smtp":      smtpCorpus,
 	"strsearch": strsearchCorpus,
 	"trimchars": trimcharsCorpus,

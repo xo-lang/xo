@@ -195,11 +195,43 @@ fn rune_is_digit(r: Rune) -> Bool { unicode.is_digit(Int(r)) }
 
 fn rune_is_space(r: Rune) -> Bool { unicode.is_space(Int(r)) }
 
+fn rune_is_upper(r: Rune) -> Bool { unicode.is_upper(Int(r)) }
+
+fn rune_is_lower(r: Rune) -> Bool { unicode.is_lower(Int(r)) }
+
+fn rune_is_title(r: Rune) -> Bool { unicode.is_title(Int(r)) }
+
+fn rune_is_punct(r: Rune) -> Bool { unicode.is_punct(Int(r)) }
+
+fn rune_is_control(r: Rune) -> Bool { unicode.is_control(Int(r)) }
+
+fn rune_is_graphic(r: Rune) -> Bool { unicode.is_graphic(Int(r)) }
+
+fn rune_is_mark(r: Rune) -> Bool { unicode.is_mark(Int(r)) }
+
+fn rune_is_symbol(r: Rune) -> Bool { unicode.is_symbol(Int(r)) }
+
+fn rune_is_number(r: Rune) -> Bool { unicode.is_number(Int(r)) }
+
 fn rune_is_print(r: Rune) -> Bool { unicode.is_print(Int(r)) }
 
 fn rune_to_lower(r: Rune) -> Rune { rune_case(r, true) }
 
 fn rune_to_upper(r: Rune) -> Rune { rune_case(r, false) }
+
+fn rune_to_title(r: Rune) -> Rune {
+  let x = Int(r)
+  let y = unicode.to_title(x)
+  if y == x {
+    return r
+  }
+  if y < 0x80 {
+    return Rune(unicode.byte(y))
+  }
+  Rune(y)
+}
+
+fn rune_utf8_len(r: Rune) -> Int { unicode.utf8_len(Int(r)) }
 
 /// unicode.ToLower (lower) or unicode.ToUpper: an unchanged or ASCII
 /// result needs no checked conversion.

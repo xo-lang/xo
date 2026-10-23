@@ -362,8 +362,22 @@ fn (s: Str) unquote() -> Str?
 fn (r: Rune) is_digit() -> Bool
 fn (r: Rune) is_letter() -> Bool
 fn (r: Rune) is_space() -> Bool
+fn (r: Rune) is_upper() -> Bool
+fn (r: Rune) is_lower() -> Bool
+fn (r: Rune) is_title() -> Bool
+fn (r: Rune) is_punct() -> Bool
+fn (r: Rune) is_control() -> Bool
+fn (r: Rune) is_graphic() -> Bool
+fn (r: Rune) is_mark() -> Bool
+fn (r: Rune) is_symbol() -> Bool
+fn (r: Rune) is_number() -> Bool
 fn (r: Rune) to_lower() -> Rune
 fn (r: Rune) to_upper() -> Rune
+fn (r: Rune) to_title() -> Rune
+/// The 1, 2, 3 or 4 bytes the rune takes in UTF-8 (utf8.RuneLen; a Rune
+/// is a scalar value, so Go's -1 cannot happen, and Rune.try(n) is the
+/// check on an Int).
+fn (r: Rune) utf8_len() -> Int
 fn (r: Rune) is_print() -> Bool
 fn (r: Rune) quote() -> Str
 

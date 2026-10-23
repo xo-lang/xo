@@ -303,6 +303,39 @@ func Rune_is_letter(_ *Task, r Rune) bool { return unicode.IsLetter(rune(r)) }
 // Rune_is_space is `r.is_space()`.
 func Rune_is_space(_ *Task, r Rune) bool { return unicode.IsSpace(rune(r)) }
 
+// Rune_is_upper is `r.is_upper()`.
+func Rune_is_upper(_ *Task, r Rune) bool { return unicode.IsUpper(rune(r)) }
+
+// Rune_is_lower is `r.is_lower()`.
+func Rune_is_lower(_ *Task, r Rune) bool { return unicode.IsLower(rune(r)) }
+
+// Rune_is_title is `r.is_title()`.
+func Rune_is_title(_ *Task, r Rune) bool { return unicode.IsTitle(rune(r)) }
+
+// Rune_is_punct is `r.is_punct()`.
+func Rune_is_punct(_ *Task, r Rune) bool { return unicode.IsPunct(rune(r)) }
+
+// Rune_is_control is `r.is_control()`.
+func Rune_is_control(_ *Task, r Rune) bool { return unicode.IsControl(rune(r)) }
+
+// Rune_is_graphic is `r.is_graphic()`.
+func Rune_is_graphic(_ *Task, r Rune) bool { return unicode.IsGraphic(rune(r)) }
+
+// Rune_is_mark is `r.is_mark()`.
+func Rune_is_mark(_ *Task, r Rune) bool { return unicode.IsMark(rune(r)) }
+
+// Rune_is_symbol is `r.is_symbol()`.
+func Rune_is_symbol(_ *Task, r Rune) bool { return unicode.IsSymbol(rune(r)) }
+
+// Rune_is_number is `r.is_number()`.
+func Rune_is_number(_ *Task, r Rune) bool { return unicode.IsNumber(rune(r)) }
+
+// Rune_to_title is `r.to_title()`.
+func Rune_to_title(_ *Task, r Rune) Rune { return Rune(unicode.ToTitle(rune(r))) }
+
+// Rune_utf8_len is `r.utf8_len()`: utf8.RuneLen of a scalar value.
+func Rune_utf8_len(_ *Task, r Rune) int64 { return int64(utf8.RuneLen(rune(r))) }
+
 // Rune_to_lower is `r.to_lower()`.
 func Rune_to_lower(_ *Task, r Rune) Rune { return Rune(unicode.ToLower(rune(r))) }
 

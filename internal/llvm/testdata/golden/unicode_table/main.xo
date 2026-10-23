@@ -1,8 +1,10 @@
 // The Unicode operations of the native runtime, written in Xo since
-// decision 0180 (std/native/llrt/unicode.xo): case mapping, the Rune
-// classes, and quoting, compared with the Go backend (Go's unicode,
-// strings, and strconv). Every scalar value is classified and mapped;
-// the sums per block of 0x10000 runes cover every table entry.
+// decision 0180 (std/native/llrt/unicode.xo): case mapping (lower, upper
+// and title), the Rune classes (letter, digit, space, print, upper, lower,
+// title, punct, control, graphic, mark, symbol, number), utf8_len, and
+// quoting, compared with the Go backend (Go's unicode, strings, and
+// strconv). Every scalar value is classified and mapped; the sums per
+// block of 0x10000 runes cover every table entry.
 
 use std/regexp
 
@@ -21,6 +23,16 @@ fn main(os: Os) {
     var digits = 0
     var spaces = 0
     var prints = 0
+    var uppers = 0
+    var lowers = 0
+    var titles = 0
+    var puncts = 0
+    var controls = 0
+    var graphics = 0
+    var marks = 0
+    var symbols = 0
+    var numbers = 0
+    var lens = 0
     var h = 0
     var i = plane * 0x10000
     while i < (plane + 1) * 0x10000 {
@@ -29,16 +41,40 @@ fn main(os: Os) {
         digits += bit(r.is_digit(), 1)
         spaces += bit(r.is_space(), 1)
         prints += bit(r.is_print(), 1)
+        uppers += bit(r.is_upper(), 1)
+        lowers += bit(r.is_lower(), 1)
+        titles += bit(r.is_title(), 1)
+        puncts += bit(r.is_punct(), 1)
+        controls += bit(r.is_control(), 1)
+        graphics += bit(r.is_graphic(), 1)
+        marks += bit(r.is_mark(), 1)
+        symbols += bit(r.is_symbol(), 1)
+        numbers += bit(r.is_number(), 1)
+        lens += r.utf8_len()
         let lo = Int(r.to_lower())
         let up = Int(r.to_upper())
-        if lo != i || up != i {
-          h = (h * 31 + i * 7 + lo * 3 + up) % 1000000007
+        let ti = Int(r.to_title())
+        if lo != i || up != i || ti != i {
+          h = (h * 31 + i * 7 + lo * 3 + up * 5 + ti * 11) % 1000000007
         }
       }
       i += 1
     }
-    os.stdio.println("plane ${plane}: letters=${letters} digits=${digits} spaces=${spaces} prints=${prints} case=${h}")
+    os.stdio.println("plane ${plane}: letters=${letters} digits=${digits} spaces=${spaces} prints=${prints} upper=${uppers} lower=${lowers} title=${titles} punct=${puncts} control=${controls} graphic=${graphics} mark=${marks} symbol=${symbols} number=${numbers} len=${lens} case=${h}")
     plane += 1
+  }
+  // the boundaries of each table, and the values a Rune cannot hold
+  let bounds = [0x0, 0x1f, 0x20, 0x41, 0x61, 0x7e, 0x7f, 0x80, 0xa0, 0xff, 0x100, 0x7ff, 0x800, 0xd7ff, 0xe000, 0xffff, 0x10000, 0x10ffff]
+  for i in bounds {
+    if let Some(r) = Rune.try(i) {
+      os.stdio.println("u+${i}: upper=${r.is_upper()} lower=${r.is_lower()} title=${r.is_title()} punct=${r.is_punct()} control=${r.is_control()} graphic=${r.is_graphic()} mark=${r.is_mark()} symbol=${r.is_symbol()} number=${r.is_number()} len=${r.utf8_len()} up=${Int(r.to_upper())} lo=${Int(r.to_lower())} ti=${Int(r.to_title())}")
+    }
+  }
+  for i in [-1, 0xd800, 0xdfff, 0x110000] {
+    match Rune.try(i) {
+      Some(_) => os.stdio.println("u+${i}: a rune")
+      None => os.stdio.println("u+${i}: none")
+    }
   }
   // case mapping of strings, with the special cases of Go's tables
   let words = ["", "abc", "ABC", "Hello, World! 123", "straße", "İstanbul", "ıi", "ǅǄǆ", "ΣΑΣ σας", "ﬁne", "K Ω Å", "Ünïcödé ÀÉÎÕÜ", "Кириллица ТЕКСТ", "𐐀𐐨 𞤀𞤢", "ⓐⓑⒶⒷ", "ꙁꙀ ꞔ Ɐ", "日本語 ﾃｷｽﾄ", "ǰ ẞ ſ ͅ", "ascii only"]

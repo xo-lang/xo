@@ -1,5 +1,39 @@
 # prelude changes
 
+## 2026-10-23: feature: the rest of the Rune classes, to_title and utf8_len
+
+- Kind: feature
+- Commit: this commit
+- Found by: lead request; Rune had is_letter, is_digit, is_space and
+  is_print only, so a port of Go code classifying punctuation, case or
+  symbols had to hand roll it
+- Go reference: unicode.IsUpper, IsLower, IsTitle, IsPunct, IsControl,
+  IsGraphic, IsMark, IsSymbol and IsNumber, unicode.ToTitle (the
+  CaseRanges TitleCase delta and the UpperLower sentinel), and
+  utf8.RuneLen (go1.26.1)
+- Test: corpus/runes (every Unicode scalar value: per plane counts of
+  all 13 classes, the UTF-8 lengths summed and a hash of Go's ToLower,
+  ToUpper and ToTitle; the boundaries of every table; and Rune.try
+  rejecting surrogates and out of range values; arm64 and LLVM), golden
+  unicode_table (arm64, LLVM, Go parity and wasm); timing row against
+  Go: bench/results/rune-classes-2026-10-23.md
+
+`Rune.is_upper`, `is_lower`, `is_title`, `is_punct`, `is_control`,
+`is_graphic`, `is_mark`, `is_symbol`, `is_number`, `to_title` and
+`utf8_len` complete the Rune surface, with the semantics of Go's unicode
+package (is_print stays strconv.IsPrint, decision 0079). The tables come
+from Go's unicode package through internal/llvm TestUnicodeTables, which
+already generated the letter, digit, print and case tables; CASE now
+carries Go's title delta as well (15 bytes a range) and TITLE2 the direct
+title case of U+0080 to U+07FF. The module keeps decision 0180's shape,
+ASCII tested directly, a bitmap for U+0080 to U+07FF and the merged range
+search above, rather than Go's Latin-1 properties table, which covers
+only U+0000 to U+00FF: one shape for all 13 classes, the same one byte
+lookup at Latin-1 and a fast path past it. `utf8_len` is 1, 2, 3 or 4
+bytes; a Rune is a Unicode scalar value (core 2.4, decision 0079), so
+Go's -1 cannot happen, and `Rune.try(n)` is Go's ValidRune check on an
+Int.
+
 ## 2026-10-23: feature: Bytes.contains, starts_with, ends_with and count
 
 - Kind: feature
