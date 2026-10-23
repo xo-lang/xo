@@ -6,6 +6,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- 0.27.0 (2026-10-23): breaking, a third-party `use go` needs a `require
+  go` pin (XO1319, decision 0356) and std's errors print plain messages
+  (0358); `xo check` about 2.5x faster warm and `--support` 2.3 to 2.6x;
+  warm builds with the module check cache, the shared pack and lazy body
+  parsing on by default; `--release` as a preset of per-setting flags
+  (0354), `--debug-info=split` (0355), build information in every binary
+  (`xo version -m`); native `--seed` and `--explore` (0350); one-word
+  channel sends (0353); an x86_64 miscompile of stack-passed parameters
+  and the 0.26.0 field reports' fixes (Intel Mac, Windows). Known gaps:
+  spawning many short tasks, sorting Strs (1.18x Go), a contended
+  RWMutex. The entries below, down to 0.26.0's, are in it.
 - `xo check --support` is about 2.5 times faster on a warm run
   (compiler/xo 3.7 s to 1.6 s): it keeps the module check cache and
   builds through the front end cache (decision 0351 addendum).
