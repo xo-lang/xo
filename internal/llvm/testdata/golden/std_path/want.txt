@@ -38,4 +38,52 @@ join(/, x) = /x
 join(a/b, ../../..) = ..
 join(.., a) = ../a
 join(x, /) = x
+split[] = dir=[] file=[] is_abs=false
+split[/] = dir=[/] file=[] is_abs=true
+split[//] = dir=[//] file=[] is_abs=true
+split[.] = dir=[] file=[.] is_abs=false
+split[..] = dir=[] file=[..] is_abs=false
+split[./] = dir=[./] file=[] is_abs=false
+split[../..] = dir=[../] file=[..] is_abs=false
+split[a/..] = dir=[a/] file=[..] is_abs=false
+split[a/../..] = dir=[a/../] file=[..] is_abs=false
+split[/../a] = dir=[/../] file=[a] is_abs=true
+split[a/b/../../..] = dir=[a/b/../../] file=[..] is_abs=false
+split[/a/b/../../../c] = dir=[/a/b/../../../] file=[c] is_abs=true
+split[abc.] = dir=[] file=[abc.] is_abs=false
+split[.hidden] = dir=[] file=[.hidden] is_abs=false
+split[a.b/c] = dir=[a.b/] file=[c] is_abs=false
+split[x/] = dir=[x/] file=[] is_abs=false
+split[/a/b/] = dir=[/a/b/] file=[] is_abs=true
+split[a//b] = dir=[a//] file=[b] is_abs=false
+split[./a] = dir=[./] file=[a] is_abs=false
+split[a/./b/.] = dir=[a/./b/] file=[.] is_abs=false
+split[...] = dir=[] file=[...] is_abs=false
+split[a/.../b] = dir=[a/.../] file=[b] is_abs=false
+split[/..] = dir=[/] file=[..] is_abs=true
+split[../a/../b] = dir=[../a/../] file=[b] is_abs=false
+split[dir/file.tar.gz] = dir=[dir/] file=[file.tar.gz] is_abs=false
+split[noext] = dir=[] file=[noext] is_abs=false
+split[a.b.c/] = dir=[a.b.c/] file=[] is_abs=false
+split[é/ü.txt] = dir=[é/] file=[ü.txt] is_abs=false
+split[a/b/c/../d/./e.f] = dir=[a/b/c/../d/./] file=[e.f] is_abs=false
+is_match(abc, abc) = true
+is_match(*, abc) = true
+is_match(a*, ab/c) = false
+is_match(a*b?c*x, abxbbxdbxebxczzx) = true
+is_match(ab[c], abc) = true
+is_match(ab[^c], abc) = false
+is_match(a\*b, a*b) = true
+is_match(a?b, a☺b) = true
+is_match([a-ζ]*, α) = true
+is_match([\]a], ]) = true
+is_match([x\-], -) = true
+is_match([]a], ]) = invalid path pattern "[]a]": syntax error in pattern
+is_match([-], -) = invalid path pattern "[-]": syntax error in pattern
+is_match([a-b-c], a) = invalid path pattern "[a-b-c]": syntax error in pattern
+is_match(\, a) = invalid path pattern "\\": syntax error in pattern
+is_match(a/b[, x) = invalid path pattern "a/b[": syntax error in pattern
+is_match(*x, xxx) = true
+is_match(é?, éa) = true
+is_match(a[b-d]?, ac1) = true
 --- stderr

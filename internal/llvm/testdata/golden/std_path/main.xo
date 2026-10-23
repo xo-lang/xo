@@ -14,4 +14,19 @@ fn main(os: Os) {
   for (a, b) in pairs {
     os.stdio.println("join(${a}, ${b}) = ${path.join(a, b)}")
   }
+  for c in cases {
+    let (d, f) = path.split(c)
+    os.stdio.println("split[${c}] = dir=[${d}] file=[${f}] is_abs=${path.is_abs(c)}")
+  }
+  let patterns = [("abc", "abc"), ("*", "abc"), ("a*", "ab/c"), ("a*b?c*x", "abxbbxdbxebxczzx"),
+    ("ab[c]", "abc"), ("ab[^c]", "abc"), ("a\\*b", "a*b"), ("a?b", "a☺b"), ("[a-ζ]*", "α"),
+    ("[\\]a]", "]"), ("[x\\-]", "-"), ("[]a]", "]"), ("[-]", "-"), ("[a-b-c]", "a"), ("\\", "a"),
+    ("a/b[", "x"), ("*x", "xxx"), ("é?", "éa"), ("a[b-d]?", "ac1")]
+  for (pat, name) in patterns {
+    let line = match path.is_match(pat, name) {
+      Ok(v) => "${v}"
+      Err(e) => e.display()
+    }
+    os.stdio.println("is_match(${pat}, ${name}) = ${line}")
+  }
 }

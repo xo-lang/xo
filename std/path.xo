@@ -3,7 +3,21 @@
 // every Fs capability uses on every OS (std.md 3.1).
 
 fn join(a: Str, b: Str) -> Str
+fn split(p: Str) -> (Str, Str)
 fn dir(p: Str) -> Str
 fn base(p: Str) -> Str
 fn ext(p: Str) -> Str
 fn clean(p: Str) -> Str
+fn is_abs(p: Str) -> Bool
+
+/// A path pattern `is_match` cannot parse (Go's path.ErrBadPattern).
+struct PathErr {
+  pattern: Str
+}
+
+fn (e: PathErr) display() -> Str
+
+/// Whether name matches the shell pattern: `*` any sequence of non-`/`
+/// characters, `?` one non-`/` character, `[a-z]` and `[^a-z]` a byte
+/// class, `\c` the character c. The pattern must match all of name.
+fn is_match(pattern: Str, name: Str) -> Bool ! PathErr

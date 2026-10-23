@@ -1973,11 +1973,21 @@ every OS (section 3.1).
 
 ```
 pub fn join(a: Str, b: Str) -> Str   // joins and cleans
+pub fn split(p: Str) -> (Str, Str)   // dir, to and including the last "/", and file
 pub fn dir(p: Str) -> Str            // all but the last element, "." if none
 pub fn base(p: Str) -> Str           // the last element
 pub fn ext(p: Str) -> Str            // extension with the dot, or ""
 pub fn clean(p: Str) -> Str          // removes `.`, `..`, repeated `/`
+pub fn is_abs(p: Str) -> Bool        // starts with "/"
+
+struct PathErr { pattern: Str }      // a pattern `match` cannot parse
+pub fn is_match(pattern: Str, name: Str) -> Bool ! PathErr
+                                     // `*` any run of non-`/`, `?` one non-`/`,
+                                     // `[a-z]` and `[^a-z]` a byte class, `\c` c
 ```
+
+`is_match` matches the whole of `name`, and a malformed pattern is `PathErr`
+(Go's `path.ErrBadPattern`), reported even when `name` cannot match.
 
 Go's path package's results on every backend. Every backend runs one
 implementation, std/native/path.xo: the Go backend compiles it too

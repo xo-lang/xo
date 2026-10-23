@@ -165,7 +165,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | os/signal | core 7.5 shutdown, task.stop_requested, Proc.kill | done | Two phase stop on SIGTERM and SIGINT. |
 | os/user | Env.home | partial | Home directory only. |
 | io, io/fs, bufio, io/ioutil | File, Conn, Child read and write, Fs.walk | partial | Byte streams exist per handle. Missing: a common reader and writer interface, buffered readers over a Conn. |
-| path | std/path | done | |
+| path | std/path | done | Clean, Join, Dir, Base, Ext, Split and IsAbs, and Go's Match as `is_match` (ErrBadPattern as `PathErr`, 2026-10-23). |
 | path/filepath | prelude Fs paths, std/path | done | Every Fs path uses `/` on every OS (section 3.1). |
 | embed | std/embed (with core 3.1's `embed`) | done | a constant of `Str`, `Bytes`, or `embed.Dir` set to `embed("path or glob")`, decision 0304: one file as text or bytes, or a tree; `Dir.fs()` is a read-only `Fs` over it (decision 0307), as embed.FS is an fs.FS. Not covered: `open` as a stream over an embedded file (read the whole file). |
 | syscall | none | not planned | Capabilities replace raw system calls. |
