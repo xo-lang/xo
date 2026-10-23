@@ -1,0 +1,35 @@
+// Str.split_n, split_after and split_after_n (Go's SplitN, SplitAfter and
+// SplitAfterN): the count (below 0, 0, 1, exact, above the pieces), an empty
+// separator (Go's explode), the pieces keeping their separator, and pieces
+// that are views of a longer text, one taken through a parameter (the
+// compiler's fresh-result and parameter-view lists name the three methods
+// beside split).
+fn head(s: Str) -> Str { s.split_n(",", 2)[0] }
+
+fn tail(s: Str) -> Str { s.split_after_n(",", 2)[1] }
+
+fn pieces(s: Str) -> List[Str] { s.split_n(",", 3) }
+
+fn main(os: Os) {
+  let text = "a,b,,c\ndé,f,☺"
+  let long = "<<" + text + ">>"
+  let v = long[2..(long.len() - 2)]
+  let out = os.stdio
+  out.println("${v.len()} ${text.len()}")
+  for n in [-3, -1, 0, 1, 2, 3, 9] {
+    out.println("${n} ${v.split_n(",", n).debug()}")
+  }
+  out.println("${v.split_n("", 4).debug()}")
+  out.println("${v.split_n("", -1).debug()}")
+  out.println("${v.split_n("", 1).debug()}")
+  out.println("${v.split_after(",").debug()}")
+  out.println("${v.split_after_n(",", 2).debug()}")
+  out.println("${v.split_after_n(",", 0).debug()}")
+  out.println("${v.split_after_n("", 3).debug()}")
+  out.println("${v.split_after("").debug()}")
+  out.println("${head(v)} ${tail(v)} ${pieces(v).debug()}")
+  let w = v[4..v.len()]
+  out.println("${w} ${w.split_n(",", 2).debug()}")
+  out.println("${"".split_n("", -1).debug()} ${"".split_after(",").debug()} ${"x".split_n("x", 0).debug()}")
+  out.println("${"abc".split_n("", 2).debug()} ${"abc".split_after_n("", 2).debug()}")
+}

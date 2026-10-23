@@ -684,7 +684,7 @@ fn param_view_at(f: Func, x: Int, depth: Int) -> Bool {
       return false
     }
     let ln = aux_name(f.values[l].aux)
-    if ln is "prelude.str_split" | "prelude.str_fields" | "prelude.str_lines" {
+    if ln is "prelude.str_split" | "prelude.str_split_n" | "prelude.str_split_after" | "prelude.str_split_after_n" | "prelude.str_fields" | "prelude.str_lines" {
       return param_text(f, f.values[l].args[0], depth)
     }
   }

@@ -2,13 +2,22 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
 	"os"
+	"slices"
 	"strings"
 )
 
 // strsearchCase is one (s, sep) input of the Str search and split methods.
 type strsearchCase struct{ s, sep string }
+
+// strsearchSplitN is one (s, sep, n) input of Str.split_n, split_after and
+// split_after_n.
+type strsearchSplitN struct {
+	s, sep string
+	n      int
+}
 
 // The API these corpora cover, as std/prelude.xo declares it: Str.find
 // (strings.Index), Str.rfind (strings.LastIndex), Str.contains
@@ -98,6 +107,104 @@ func goCountCases() []strsearchCase {
 		cs = append(cs, strsearchCase{t[0], t[1]})
 	}
 	return cs
+}
+
+// splitTestTable is Go's strings_test.go SplitTest constants, shared by
+// splittests and splitaftertests.
+const (
+	stABCD   = "abcd"
+	stFaces  = "☺☻☹"
+	stCommas = "1,2,3,4"
+	stDots   = "1....2....3....4"
+)
+
+// goSplitNTests are Go's strings_test.go splittests (strings.SplitN) and
+// splitaftertests (strings.SplitAfterN) as (s, sep, n) inputs; each is
+// checked against the table's pieces here, so the port is verified when the
+// corpus is generated. Go's strings tests are Copyright 2009 The Go Authors,
+// BSD-style license.
+func goSplitNTests() []strsearchSplitN {
+	var cs []strsearchSplitN
+	type splitTest struct {
+		s, sep string
+		n      int
+		a      []string
+	}
+	for _, t := range []splitTest{
+		{"", "", -1, []string{}},
+		{stABCD, "", 2, []string{"a", "bcd"}},
+		{stABCD, "", 4, []string{"a", "b", "c", "d"}},
+		{stABCD, "", -1, []string{"a", "b", "c", "d"}},
+		{stFaces, "", -1, []string{"\u263a", "\u263b", "\u2639"}},
+		{stFaces, "", 3, []string{"\u263a", "\u263b", "\u2639"}},
+		{stFaces, "", 17, []string{"\u263a", "\u263b", "\u2639"}},
+		{"\u263a\ufffd\u2639", "", -1, []string{"\u263a", "\ufffd", "\u2639"}},
+		{stABCD, "a", 0, nil},
+		{stABCD, "a", -1, []string{"", "bcd"}},
+		{stABCD, "z", -1, []string{"abcd"}},
+		{stCommas, ",", -1, []string{"1", "2", "3", "4"}},
+		{stDots, "...", -1, []string{"1", ".2", ".3", ".4"}},
+		{stFaces, "\u2639", -1, []string{"\u263a\u263b", ""}},
+		{stFaces, "~", -1, []string{stFaces}},
+		{"1 2 3 4", " ", 3, []string{"1", "2", "3 4"}},
+		{"1 2", " ", 3, []string{"1", "2"}},
+		{"", "T", math.MaxInt / 4, []string{""}},
+		{"\xff-\xff", "", -1, []string{"\xff", "-", "\xff"}},
+		{"\xff-\xff", "-", -1, []string{"\xff", "\xff"}},
+	} {
+		if got := strings.SplitN(t.s, t.sep, t.n); !slices.Equal(got, t.a) {
+			fmt.Fprintf(os.Stderr, "stdcorpus: strings.SplitN(%q, %q, %d) = %q, Go's test says %q\n", t.s, t.sep, t.n, got, t.a)
+			os.Exit(1)
+		}
+		cs = append(cs, strsearchSplitN{t.s, t.sep, t.n})
+	}
+	for _, t := range []splitTest{
+		{stABCD, "a", -1, []string{"a", "bcd"}},
+		{stABCD, "z", -1, []string{"abcd"}},
+		{stABCD, "", -1, []string{"a", "b", "c", "d"}},
+		{stCommas, ",", -1, []string{"1,", "2,", "3,", "4"}},
+		{stDots, "...", -1, []string{"1...", ".2...", ".3...", ".4"}},
+		{stFaces, "\u2639", -1, []string{"\u263a\u263b\u2639", ""}},
+		{stFaces, "~", -1, []string{stFaces}},
+		{stFaces, "", -1, []string{"\u263a", "\u263b", "\u2639"}},
+		{"1 2 3 4", " ", 3, []string{"1 ", "2 ", "3 4"}},
+		{"1 2 3", " ", 3, []string{"1 ", "2 ", "3"}},
+		{"1 2", " ", 3, []string{"1 ", "2"}},
+		{"123", "", 2, []string{"1", "23"}},
+		{"123", "", 17, []string{"1", "2", "3"}},
+	} {
+		if got := strings.SplitAfterN(t.s, t.sep, t.n); !slices.Equal(got, t.a) {
+			fmt.Fprintf(os.Stderr, "stdcorpus: strings.SplitAfterN(%q, %q, %d) = %q, Go's test says %q\n", t.s, t.sep, t.n, got, t.a)
+			os.Exit(1)
+		}
+		cs = append(cs, strsearchSplitN{t.s, t.sep, t.n})
+	}
+	return cs
+}
+
+// strsearchRandomSplitN is a random (s, sep, n): sep is empty, one byte, a
+// piece of s or unrelated, and n is below 0, 0, 1 to 5 or above the piece
+// count.
+func strsearchRandomSplitN(r *rand.Rand) strsearchSplitN {
+	c := strsearchCase{s: strsearchGen(r, strsearchLen(r))}
+	switch r.Intn(4) {
+	case 0:
+		c.sep = ""
+	case 1:
+		c.sep = strsearchGen(r, 1)
+	case 2:
+		if c.s != "" {
+			n := 1 + r.Intn(len(c.s))
+			st := r.Intn(len(c.s) - n + 1)
+			c.sep = c.s[st : st+n]
+		} else {
+			c.sep = "-"
+		}
+	default:
+		c.sep = strsearchGen(r, 1+r.Intn(3))
+	}
+	ns := []int{-3, -1, 0, 1, 2, 3, 4, 5, 9, 40}
+	return strsearchSplitN{c.s, c.sep, ns[r.Intn(len(ns))]}
 }
 
 // goSplitCases are Go's strings_test.go splittests with n < 0 (strings.Split)
@@ -522,7 +629,7 @@ func strsearchText(c strsearchCase) strsearchCase { return strsearchCase{textOf(
 func strsearchCorpus() string {
 	r := rand.New(rand.NewSource(31))
 	var o strings.Builder
-	o.WriteString(header("strings.Index, LastIndex, Contains, IndexAny, LastIndexAny, ContainsAny, ContainsRune, Split, Fields, ReplaceAll and Join on the inputs of Go's strings_test.go (indexTests, lastIndexTests, indexAnyTests, lastIndexAnyTests, ContainsAnyTests, ContainsRuneTests, splittests, fieldstests, ReplaceTests) and on seeded random inputs, against Str.find, rfind, contains, find_any, rfind_any, contains_any, contains_rune, split, fields, replace and List[Str].join, and strings.Count (countTests) against Str.count (Go's strings tests are Copyright 2009 The Go Authors, BSD-style license)"))
+	o.WriteString(header("strings.Index, LastIndex, Contains, IndexAny, LastIndexAny, ContainsAny, ContainsRune, Split, SplitN, SplitAfterN, Fields, ReplaceAll and Join on the inputs of Go's strings_test.go (indexTests, lastIndexTests, indexAnyTests, lastIndexAnyTests, ContainsAnyTests, ContainsRuneTests, splittests, splitaftertests, fieldstests, ReplaceTests) and on seeded random inputs, against Str.find, rfind, contains, find_any, rfind_any, contains_any, contains_rune, split, split_n, split_after, split_after_n, fields, replace and List[Str].join, and strings.Count (countTests) against Str.count (Go's strings tests are Copyright 2009 The Go Authors, BSD-style license)"))
 
 	// index, rfind and contains
 	idx := goIndexCases()
@@ -636,6 +743,20 @@ func strsearchCorpus() string {
 	}
 	o.WriteString("]\n")
 
+	// split_n and split_after_n (its own seed)
+	sn := goSplitNTests()
+	rs := rand.New(rand.NewSource(59))
+	for i := 0; i < 3000; i++ {
+		sn = append(sn, strsearchRandomSplitN(rs))
+	}
+	o.WriteString("\n/// (s, sep, n, Go's SplitN pieces, Go's SplitAfterN pieces)\nconst SPLIT_N_CASES: List[(Str, Str, Int, Str, Str)] = [\n")
+	for _, c := range sn {
+		s := textOf(c.s)
+		sep := textOf(c.sep)
+		fmt.Fprintf(&o, "  (%s, %s, %d, %s, %s),\n", xq(s), xq(sep), c.n, xq(strsearchList(strings.SplitN(s, sep, c.n))), xq(strsearchList(strings.SplitAfterN(s, sep, c.n))))
+	}
+	o.WriteString("]\n")
+
 	o.WriteString(strsearchTests)
 	return o.String()
 }
@@ -694,6 +815,73 @@ test "split is Go's Split" {
     }
   }
   expect(show3(bad)) == []
+}
+
+fn show5(bad: List[(Str, Str, Int, Str, Str)]) -> List[(Str, Str, Int, Str, Str)] {
+  bad[0..(if bad.len() < 20 { bad.len() } else { 20 })]
+}
+
+test "split_n is Go's SplitN" {
+  var bad: List[(Str, Str, Int, Str, Str)] = []
+  for (s, sep, n, want, _) in SPLIT_N_CASES {
+    let got = list_of(s.split_n(sep, n))
+    if got != want {
+      bad.push((s, sep, n, got, want))
+    }
+  }
+  expect(show5(bad)) == []
+}
+
+test "split_after_n is Go's SplitAfterN" {
+  var bad: List[(Str, Str, Int, Str, Str)] = []
+  for (s, sep, n, _, want) in SPLIT_N_CASES {
+    let got = list_of(s.split_after_n(sep, n))
+    if got != want {
+      bad.push((s, sep, n, got, want))
+    }
+  }
+  expect(show5(bad)) == []
+}
+
+test "split_after is Go's SplitAfter, and split_n with n below 0 is split" {
+  var bad: List[(Str, Str, Int, Str, Str)] = []
+  for (s, sep, n, _, want) in SPLIT_N_CASES {
+    if n == -1 {
+      let got = list_of(s.split_after(sep))
+      if got != want {
+        bad.push((s, sep, n, got, want))
+      }
+    }
+    let all = list_of(s.split_n(sep, -1))
+    let one = list_of(s.split(sep))
+    if all != one {
+      bad.push((s, sep, -1, all, one))
+    }
+  }
+  expect(show5(bad)) == []
+}
+
+test "split_n, split_after and split_after_n on a view of a longer text" {
+  var bad: List[(Str, Str, Int, Str, Str)] = []
+  for (s, sep, n, want, after) in SPLIT_N_CASES {
+    let long = "<<" + s + ">>"
+    let view = long[2..(long.len() - 2)]
+    let got = list_of(view.split_n(sep, n))
+    if got != want {
+      bad.push((s, sep, n, got, want))
+    }
+    let got_after = list_of(view.split_after_n(sep, n))
+    if got_after != after {
+      bad.push((s, sep, n, got_after, after))
+    }
+    if n == -1 {
+      let got_plain = list_of(view.split_after(sep))
+      if got_plain != after {
+        bad.push((s, sep, n, got_plain, after))
+      }
+    }
+  }
+  expect(show5(bad)) == []
 }
 
 test "split on a view of a longer text, and join puts the pieces back" {

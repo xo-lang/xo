@@ -276,6 +276,14 @@ fn (s: Str) contains_any(chars: Str) -> Bool
 /// Whether s holds r (strings.ContainsRune); an invalid byte of s reads as
 /// U+FFFD, so a U+FFFD r finds it.
 fn (s: Str) contains_rune(r: Rune) -> Bool
+/// s cut at each sep, at most n pieces with the unsplit rest in the last;
+/// n below 0 for every piece and 0 for none (strings.SplitN). Pieces are
+/// views of s like split's.
+fn (s: Str) split_n(sep: Str, n: Int) -> List[Str]
+/// Like split, each piece keeping its separator (strings.SplitAfter).
+fn (s: Str) split_after(sep: Str) -> List[Str]
+/// At most n pieces, each keeping its separator (strings.SplitAfterN).
+fn (s: Str) split_after_n(sep: Str, n: Int) -> List[Str]
 fn (s: Str) split(sep: Str) -> List[Str]
 /// The runs of non-white-space text, split around runs of white space
 /// (strings.Fields, unicode.IsSpace); pieces are views of s like split's.

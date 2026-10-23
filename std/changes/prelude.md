@@ -47,6 +47,28 @@ long or blocking tasks, wakes a worker per spawn as before. No API change.
 `xo bench --ab` against main (arm64, 20 rounds, load under 4): conc spawn wall 0.45,
 fanout 0.59, pmap, pingpong, mutex and rwmutex within noise (linux/arm64 in Docker: spawn 0.77, fanout 0.63); CRUD HTTP rps and p99 within noise.
 
+## 2026-10-23: feature: Str.split_n, split_after and split_after_n
+
+- Kind: feature
+- Commit: this commit
+- Found by: lead request; Str.split had no count and no separator-keeping form
+- Go reference: strings.SplitN, SplitAfter, SplitAfterN and their genSplit and
+  explode (go1.26.1)
+- Test: corpus/strsearch (Go's splittests and splitaftertests plus 3000 random
+  (s, sep, n); SPLIT_N_CASES) on arm64, LLVM and go; golden split_view (arm64,
+  LLVM, Go parity, wasm)
+
+`split` was Go's `Split` only. `split_n` takes Go's count: below 0 every
+piece (the same pieces `split` returns, through `split`'s own path), 0 none,
+and n above 0 at most n pieces with the unsplit rest in the last.
+`split_after` and `split_after_n` keep each separator in its piece, as Go's
+`SplitAfter` and `SplitAfterN`. An empty sep is Go's `explode`: one piece per
+UTF-8 sequence, the pieces after the first n-1 in the last. Pieces are views
+of s, as `split`'s are, and the compiler's fresh-result list and its
+parameter-view list name the three methods beside `split`
+(compiler/gen/own.xo fresh_std, compiler/ssa/cost.xo param_view_at).
+
+
 ## 2026-10-23: feature: Str.find_any, rfind_any, contains_any, contains_rune
 
 - Kind: feature

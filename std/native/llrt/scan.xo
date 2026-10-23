@@ -767,6 +767,72 @@ pub fn split(s: Str, sep: Str) -> List[Str] {
   out
 }
 
+/// Go's genSplit: s cut at each sep, at most n pieces with the unsplit rest
+/// in the last (n below 0: every piece, n 0: none), and each piece ending
+/// save bytes past its separator (split_after's sep length, 0 otherwise).
+fn split_save(s: Str, sep: Str, save: Int, n: Int) -> List[Str] {
+  var out: List[Str] = []
+  if n == 0 {
+    return out
+  }
+  if sep.is_empty() {
+    return explode_n(s, n)
+  }
+  if n < 0 && save == 0 {
+    return split(s, sep)
+  }
+  let sl = s.len()
+  let m = sep.len()
+  var start = 0
+  var i = 1
+  while n < 0 || i < n {
+    let at = find(s, sep, start)
+    if at < 0 {
+      break
+    }
+    out.push(raw.str_cut(s, start, at + save))
+    start = at + m
+    i += 1
+  }
+  out.push(raw.str_cut(s, start, sl))
+  out
+}
+
+/// Go's explode: s cut after each UTF-8 sequence, at most n pieces with the
+/// rest in the last (n below 0 or above the rune count: one piece per rune).
+fn explode_n(s: Str, n: Int) -> List[Str] {
+  var out: List[Str] = []
+  if n == 0 {
+    return out
+  }
+  let b = s.bytes()
+  let sl = b.len()
+  var start = 0
+  var i = 0
+  var count = 0
+  while i < sl && (n < 0 || count < n - 1) {
+    let k = if b[i] < 0x80 { 1 } else { raw.bytes_decode(b, i) & 7 }
+    out.push(raw.str_slice(s, start, start + k))
+    start += k
+    i += k
+    count += 1
+  }
+  if start < sl {
+    out.push(raw.str_slice(s, start, sl))
+  }
+  out
+}
+
+/// strings.SplitN: s cut at sep, at most n pieces (n below 0: all, n 0:
+/// none, the rest in the last piece).
+pub fn split_n(s: Str, sep: Str, n: Int) -> List[Str] { split_save(s, sep, 0, n) }
+
+/// strings.SplitAfter: like split, each piece keeping its separator.
+pub fn split_after(s: Str, sep: Str) -> List[Str] { split_save(s, sep, sep.len(), -1) }
+
+/// strings.SplitAfterN: at most n pieces, each keeping its separator.
+pub fn split_after_n(s: Str, sep: Str, n: Int) -> List[Str] { split_save(s, sep, sep.len(), n) }
+
 /// The lines of s: split on \n, a trailing \r of each removed, and no
 /// empty last line after a final newline.
 pub fn lines(s: Str) -> List[Str] {

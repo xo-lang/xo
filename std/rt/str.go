@@ -123,6 +123,23 @@ func Str_contains_rune(_ *Task, s string, r Rune) bool { return strings.Contains
 // Str_split is `s.split(sep)`.
 func Str_split(_ *Task, s, sep string) List[string] { return ListOf(strings.Split(s, sep)...) }
 
+// Str_split_n is `s.split_n(sep, n)`: at most n pieces, the last holding the
+// rest, n below 0 for all and 0 for none (strings.SplitN).
+func Str_split_n(_ *Task, s, sep string, n int64) List[string] {
+	return ListOf(strings.SplitN(s, sep, int(n))...)
+}
+
+// Str_split_after is `s.split_after(sep)`: like split, each piece keeping
+// its separator (strings.SplitAfter).
+func Str_split_after(_ *Task, s, sep string) List[string] {
+	return ListOf(strings.SplitAfter(s, sep)...)
+}
+
+// Str_split_after_n is `s.split_after_n(sep, n)` (strings.SplitAfterN).
+func Str_split_after_n(_ *Task, s, sep string, n int64) List[string] {
+	return ListOf(strings.SplitAfterN(s, sep, int(n))...)
+}
+
 // Str_fields is `s.fields()`: the runs of non-white-space text
 // (strings.Fields, unicode.IsSpace).
 func Str_fields(_ *Task, s string) List[string] { return ListOf(strings.Fields(s)...) }

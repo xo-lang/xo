@@ -362,7 +362,7 @@ fn fresh_std(recv: Str, name: Str) -> Bool {
     "Map" => name is "keys" | "values" | "entries"
     "Set" => name == "to_list"
     "Range" => name == "to_list"
-    "Str" => name is "split" | "fields" | "lines" | "runes"
+    "Str" => name is "split" | "split_n" | "split_after" | "split_after_n" | "fields" | "lines" | "runes"
     "Buf" => name == "freeze"
     _ => false
   }

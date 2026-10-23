@@ -91,6 +91,12 @@ fn str_rfind(s: Str, sub: Str) -> Int? {
 
 fn str_split(s: Str, sep: Str) -> List[Str] { scan.split(s, sep) }
 
+fn str_split_n(s: Str, sep: Str, n: Int) -> List[Str] { scan.split_n(s, sep, n) }
+
+fn str_split_after(s: Str, sep: Str) -> List[Str] { scan.split_after(s, sep) }
+
+fn str_split_after_n(s: Str, sep: Str, n: Int) -> List[Str] { scan.split_after_n(s, sep, n) }
+
 fn str_count(s: Str, sub: Str) -> Int { scan.count(s, sub) }
 
 fn str_find_any(s: Str, chars: Str) -> Int? {

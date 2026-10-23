@@ -182,11 +182,14 @@ fn (s: Str) rfind_any(chars: Str) -> Int?    // the last rune of chars (strings.
 fn (s: Str) contains_any(chars: Str) -> Bool // strings.ContainsAny
 fn (s: Str) contains_rune(r: Rune) -> Bool   // strings.ContainsRune; an invalid byte of s reads as U+FFFD
 fn (s: Str) split(sep: Str) -> List[Str]
+fn (s: Str) split_n(sep: Str, n: Int) -> List[Str]  // at most n pieces, the unsplit rest in the last (strings.SplitN); n below 0 is split, 0 is no piece
+fn (s: Str) split_after(sep: Str) -> List[Str]      // like split, each piece keeping its separator (strings.SplitAfter)
+fn (s: Str) split_after_n(sep: Str, n: Int) -> List[Str] // strings.SplitAfterN
 fn (s: Str) fields() -> List[Str]            // runs of non-white-space text (strings.Fields, unicode.IsSpace)
 fn (s: Str) lines() -> List[Str]             // splits on \n, strips \r
 fn (s: Str) trim() -> Str                    // also trim_start, trim_end
 fn (s: Str) trim_prefix(p: Str) -> Str       // also trim_suffix
-// split, fields, lines, trim*, trim_prefix and trim_suffix return views of s on native
+// split, split_n, split_after, split_after_n, fields, lines, trim*, trim_prefix and trim_suffix return views of s on native
 // targets (O(1) per piece, no copy; a piece keeps s alive), as slices do (core 3.6)
 fn (s: Str) to_lower() -> Str                // also to_upper (Unicode aware)
 fn (s: Str) replace(old: Str, new: Str) -> Str
@@ -4030,7 +4033,7 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
 
 Every function and method of std/prelude.xo, by type, as declared there
 (the sections above explain them); interface methods take `self`.
-371 declarations.
+374 declarations.
 
 ### Range
 
@@ -4208,6 +4211,9 @@ fn (s: Str) find_any(chars: Str) -> Int?
 fn (s: Str) rfind_any(chars: Str) -> Int?
 fn (s: Str) contains_any(chars: Str) -> Bool
 fn (s: Str) contains_rune(r: Rune) -> Bool
+fn (s: Str) split_n(sep: Str, n: Int) -> List[Str]
+fn (s: Str) split_after(sep: Str) -> List[Str]
+fn (s: Str) split_after_n(sep: Str, n: Int) -> List[Str]
 fn (s: Str) split(sep: Str) -> List[Str]
 fn (s: Str) fields() -> List[Str]
 fn (s: Str) lines() -> List[Str]
