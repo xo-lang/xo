@@ -97,6 +97,27 @@ guard stops accidents and habits, not an adversary. `grep -r` inside the
 repo reads CLAUDE.local.md (redaction covers only the numbers it finds
 there).
 
+## Claude Code runs
+
+From task 3 (2026-10-23) DeepSeek also runs in Claude Code (session
+xo-deepseek-1, `ANTHROPIC_BASE_URL` set to the Subconscious gateway).
+xo-guard is a Pi extension, so the same rules run there as a PreToolUse
+hook: `scripts/lead/pi/claude-hook.ts` maps Claude Code's tools (Bash,
+Read, Write, Edit, MultiEdit, NotebookEdit, Grep, Glob) onto rules.ts;
+exit 2 blocks and tells the model to report to the overseer; it fails
+closed; blocks go to pi-guard.log tagged `cc`. install.sh puts it in
+`~/xo-lead/agents/xo-guard/`. A session gets it from its worktree's
+`.claude/settings.local.json` (ignored by git), which also carries
+permission deny rules (pkill, killall, sudo, git push, git stash, gh
+workflow and release, terraform, keychain reads, the secret files, edits
+under the main checkout) as a second layer.
+
+Start a Claude Code DeepSeek session in its worktree, never the main
+checkout: Claude Code loads the start directory's settings and its
+CLAUDE.local.md, so a start in the main checkout sends the private values
+to the gateway (it happened on 2026-10-23 before the guide was read) and
+skips the worktree's guard settings.
+
 ## Findings
 
 Each finding: what, evidence, fix. Status in brackets.
