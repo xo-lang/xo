@@ -389,6 +389,11 @@ func Arm64Race(dir string) ([]byte, error) {
 // dir, for the host or target ("" is the host).
 func Asm(dir, backend, target string) ([]byte, error) { return asm(dir, backend, target) }
 
+// AsmEnv is Asm with more NAME=VALUE environment entries for xo.
+func AsmEnv(dir, backend, target string, env []string) ([]byte, error) {
+	return asmEnv(dir, backend, target, env)
+}
+
 func asm(dir, backend, target string, flags ...string) ([]byte, error) {
 	return asmEnv(dir, backend, target, nil, flags...)
 }
