@@ -1,5 +1,23 @@
 # std/http changes
 
+## 2026-10-23: perf: new_request and parse_url parse the URL once, and url_parse scans a word at a time
+
+- Kind: perf
+- Commit: this commit
+- Found by: XO_PROF=cpu of http.new_request (url_parts was 47% of it, called twice)
+- Go reference: net/url url.go Parse (go1.26.1); http.NewRequest
+- Test: internal/stdtest/testdata/corpus/url (TestStdCorpora), golden http_router
+
+`new_request` and `parse_url` called `http1.url_parts` twice for one URL;
+they now share one result. `neturl.url_parse` finds the control-byte check
+with `scan.ctl_at`, the query with `scan.find_byte`, and the path's escape
+with `scan.find_byte` instead of per-byte loops, and the raw query is a
+view. `xo bench --ab` of 400k `new_request` calls on four URLs: 2.94 G to
+2.06 G instructions (0.699) and 164 ms to 114 ms for the parse-once change,
+then 2.06 G to 1.83 G (0.890, wall 0.882) for the scans. Against Go's
+`http.NewRequest` the same row is 0.779 of its instructions and 0.838 of
+its wall time (bench/results/url-parse-2026-10-23.md).
+
 ## 2026-10-23: perf: a router's path parameters skip the range clamp
 
 - Kind: perf

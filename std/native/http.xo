@@ -927,7 +927,11 @@ fn (k: Key[T]) name() -> Str { k.key_name }
 /// url.Parse of an absolute or path only URL; a URL that does not parse
 /// is its text as the path (std/rt's parseURLLoose).
 fn parse_url_loose(raw: Str) -> http.Url {
-  let parts = http1.url_parts(raw, false)
+  url_from_parts(raw, http1.url_parts(raw, false))
+}
+
+/// parse_url_loose of raw whose url_parts are already in hand.
+fn url_from_parts(raw: Str, parts: List[Str]) -> http.Url {
   if parts.is_empty() {
     return http.Url{scheme: "", host: "", port: None, path: raw, query: {}}
   }
@@ -949,12 +953,12 @@ fn parse_url_loose(raw: Str) -> http.Url {
 }
 
 fn new_request(method: Str, url: Str, headers: Map[Str, Str] = {}, body: Bytes = "".bytes()) -> Request {
-  let u = parse_url_loose(url)
+  let parts = http1.url_parts(url, false)
+  let u = url_from_parts(url, parts)
   var h: Map[Str, Str] = {}
   for (k, v) in headers {
     h.put(http1.canonical_key(k), v)
   }
-  let parts = http1.url_parts(url, false)
   let path = if parts.is_empty() { url } else { parts[3] }
   let raw = if parts.is_empty() { "" } else { parts[4] }
   Request{method: method.to_upper(), path: path, url: u, headers: h, body: body, remote_ip: "127.0.0.1", raw_query: raw}
@@ -971,7 +975,7 @@ fn parse_url(s: Str) -> http.Url ! http.UrlErr {
   if parts[5].is_empty() {
     return Err(http.UrlErr{msg: "missing host: ${s}"})
   }
-  parse_url_loose(s)
+  url_from_parts(s, parts)
 }
 
 fn json[T: Json](status: Int, v: T) -> http.Response {

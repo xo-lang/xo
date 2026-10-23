@@ -58,6 +58,13 @@ pub const U_FRAG: Int = 4
 
 /// The end of the bytes of b from lo that unescape keeps as they are.
 fn plain_end(b: Bytes, lo: Int, hi: Int, mode: Int) -> Int {
+  if mode == U_PATH {
+    if lo >= hi {
+      return hi
+    }
+    let k = scan.find_byte(b, lo, hi, 37)
+    return if k < 0 { hi } else { k }
+  }
   var i = lo
   while i < hi {
     let c = Int(b[i])
@@ -395,14 +402,10 @@ pub fn url_fail(err: Str) -> Url { Url{ok: false, err: err, scheme: "", host: ""
 pub fn url_parse(s: Str, via_request: Bool) -> Url {
   let b = s.bytes()
   let sn = b.len()
-  var i = 0
-  while i < sn {
-    let c = Int(b[i])
-    if c < 32 || c == 127 {
-      return url_fail("net/url: invalid control character in URL")
-    }
-    i += 1
+  if scan.ctl_at(b, 0, sn) < sn {
+    return url_fail("net/url: invalid control character in URL")
   }
+  var i = 0
   if sn == 0 && via_request {
     return url_fail("empty url")
   }
@@ -437,23 +440,12 @@ pub fn url_parse(s: Str, via_request: Bool) -> Url {
   }
   // the query: a single trailing ? is ForceQuery with no RawQuery
   var rn = sn
-  var q = -1
-  var qcount = 0
-  i = rest
-  while i < sn {
-    if b[i] == 63 {
-      if q < 0 {
-        q = i
-      }
-      qcount += 1
-    }
-    i += 1
-  }
+  let q = find(s, 63, rest, sn)
   var rawquery = ""
-  if rn > rest && b[rn - 1] == 63 && qcount == 1 {
+  if rn > rest && b[rn - 1] == 63 && (q < 0 || q == rn - 1) {
     rn -= 1
   } else if q >= 0 {
-    rawquery = rawb.str_slice(s, q + 1, rn)
+    rawquery = rawb.str_cut(s, q + 1, rn)
     rn = q
   }
   if !(rn > rest && b[rest] == 47) {
