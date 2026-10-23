@@ -6,7 +6,8 @@
 // (Str.split, Str.lines, Str.rune_count, Bytes.to_hex), which decision
 // 0193 kept C. Sixteen bytes a step through rt.bytes_eq16 and
 // rt.bytes_high16 (NEON on arm64, a <16 x i8> compare on LLVM, two words
-// in the wasm runtime), eight a step through rt.bytes_word, the lowest
+// in the wasm runtime; on amd64 their _bits forms, pmovmskb's one bit a
+// byte, through eq16_1 and high16_1), eight a step through rt.bytes_word, the lowest
 // match by rt.ctz. A range shorter than a step that ends at least a step
 // into its value is read as the step ending at its end, its bytes before
 // the range shifted out; only bytes of the value are ever read. Decision
@@ -25,6 +26,33 @@ const BACKSLASHES: Int = 6655295901103053916
 /// Bit 0 of every nibble (0x1111111111111111, a logical immediate on
 /// arm64): one bit a byte of a mask of rt.bytes_eq16.
 const NIBS: Int = 1229782938247303441
+
+/// One bit a byte for the 16 bytes of b from i equal to c: bit k << bsh()
+/// for byte i + k. On amd64 pmovmskb's bits (rt.bytes_eq16_bits, bsh 0:
+/// the nibble narrowing was eleven SSE instructions a step, 2026-10-23),
+/// elsewhere the nibble mask's low bits (bsh 2).
+fn eq16_1(b: Bytes, i: Int, c: Int) -> Int {
+  match target.arch {
+    TargetArch.Amd64 => rt.bytes_eq16_bits(b, i, c)
+    _ => rt.bytes_eq16(b, i, c) & NIBS
+  }
+}
+
+/// eq16_1 for the bytes 0x80 and above.
+fn high16_1(b: Bytes, i: Int) -> Int {
+  match target.arch {
+    TargetArch.Amd64 => rt.bytes_high16_bits(b, i)
+    _ => rt.bytes_high16(b, i) & NIBS
+  }
+}
+
+/// The shift from a bit of eq16_1's mask to its byte: 0 on amd64, else 2.
+fn bsh() -> Int {
+  match target.arch {
+    TargetArch.Amd64 => 0
+    _ => 2
+  }
+}
 
 fn addw(a: Int, b: Int) -> Int { a.wrapping_add(b) }
 
@@ -48,9 +76,9 @@ fn eq8(w: Int, r: Int) -> Int {
 pub fn find_byte(b: Bytes, from: Int, to: Int, c: Int) -> Int {
   var i = from
   while to - i >= 16 {
-    let m = rt.bytes_eq16(b, i, c)
+    let m = eq16_1(b, i, c)
     if m != 0 {
-      return i + (rt.ctz(m) >> 2)
+      return i + (rt.ctz(m) >> bsh())
     }
     i += 16
   }
@@ -60,11 +88,11 @@ pub fn find_byte(b: Bytes, from: Int, to: Int, c: Int) -> Int {
   if to >= 16 {
     // the 16 bytes ending at to; those before i were searched
     let k = to - 16
-    let m = shr(rt.bytes_eq16(b, k, c), 4 * (i - k))
+    let m = shr(eq16_1(b, k, c), shl(i - k, bsh()))
     if m == 0 {
       return -1
     }
-    return i + (rt.ctz(m) >> 2)
+    return i + (rt.ctz(m) >> bsh())
   }
   find_short(b, i, to, c)
 }
@@ -420,9 +448,9 @@ pub fn span(b: Bytes, from: Int, cls: Int) -> Int {
   var i = from
   if cls == 0 {
     while n - i >= 16 {
-      let m = rt.bytes_high16(b, i)
+      let m = high16_1(b, i)
       if m != 0 {
-        return i + (rt.ctz(m) >> 2)
+        return i + (rt.ctz(m) >> bsh())
       }
       i += 16
     }
@@ -501,18 +529,18 @@ pub fn mem_byte(p: Int, from: Int, to: Int, c: Int) -> Int {
   -1
 }
 
-/// Bit 4k set when byte i + k of b is c, for the bytes from i to n =
+/// Bit k << bsh() set when byte i + k of b is c, for the bytes from i to n =
 /// b.len() (fewer than 16, i < n): the last step of split and lines.
 fn tail16(b: Bytes, i: Int, n: Int, c: Int) -> Int {
   if n >= 16 {
     // the 16 bytes ending at n, those before i shifted out
     let k = n - 16
-    return shr(rt.bytes_eq16(b, k, c), shl(i - k, 2)) & NIBS
+    return shr(eq16_1(b, k, c), shl(i - k, bsh()))
   }
   var m = 0
   var j = n - 1
   while j >= i {
-    m = shl(m, 4)
+    m = shl(m, shl(1, bsh()))
     if Int(b[j]) == c {
       m = m | 1
     }
@@ -543,9 +571,9 @@ pub fn split(s: Str, sep: Str) -> List[Str] {
     let last = n - 16
     var i = 0
     while i <= last {
-      var k = rt.bytes_eq16(b, i, c) & NIBS
+      var k = eq16_1(b, i, c)
       while k != 0 {
-        let end = i + (rt.ctz(k) >> 2)
+        let end = i + (rt.ctz(k) >> bsh())
         out.push(raw.str_cut(s, start, end))
         start = end + 1
         k = k & subw(k, 1)
@@ -555,7 +583,7 @@ pub fn split(s: Str, sep: Str) -> List[Str] {
     if i < n {
       var k = tail16(b, i, n, c)
       while k != 0 {
-        let end = i + (rt.ctz(k) >> 2)
+        let end = i + (rt.ctz(k) >> bsh())
         out.push(raw.str_cut(s, start, end))
         start = end + 1
         k = k & subw(k, 1)
@@ -585,9 +613,9 @@ pub fn lines(s: Str) -> List[Str] {
   let last = n - 16
   var i = 0
   while i <= last {
-    var k = rt.bytes_eq16(b, i, 10) & NIBS
+    var k = eq16_1(b, i, 10)
     while k != 0 {
-      let end = i + (rt.ctz(k) >> 2)
+      let end = i + (rt.ctz(k) >> bsh())
       out.push(raw.str_cut(s, start, if end > start && b[end - 1] == 13 { end - 1 } else { end }))
       start = end + 1
       k = k & subw(k, 1)
@@ -597,7 +625,7 @@ pub fn lines(s: Str) -> List[Str] {
   if i < n {
     var k = tail16(b, i, n, 10)
     while k != 0 {
-      let end = i + (rt.ctz(k) >> 2)
+      let end = i + (rt.ctz(k) >> bsh())
       out.push(raw.str_cut(s, start, if end > start && b[end - 1] == 13 { end - 1 } else { end }))
       start = end + 1
       k = k & subw(k, 1)

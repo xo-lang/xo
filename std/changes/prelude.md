@@ -1,5 +1,20 @@
 # prelude changes
 
+## 2026-10-23: perf: Str.lines, split, replace and UTF-8 checks scan with one bit a byte on amd64
+
+- Kind: perf
+- Commit: this commit
+- Found by: Xo Lang 1 (text workloads, native amd64 against LLVM: lines 1.234)
+- Go reference: none (the runtime's byte scans)
+- Test: scan_test.xo on arm64, LLVM and amd64; text bench outputs unchanged
+
+The native runtime's 16 byte scans (std/native/llrt/scan.xo) use
+rt.bytes_eq16_bits and rt.bytes_high16_bits on amd64: one bit a byte from
+pmovmskb, where the nibble narrowing took eleven SSE instructions a step.
+Other targets keep the nibble masks. callgrind on linux/amd64: text lines
+0.905, utf8 0.964, replace 0.978, split 0.990, the other text workloads
+1.0. Output is unchanged.
+
 ## 2026-10-23: feature: Str.fields (strings.Fields)
 
 - Kind: feature
