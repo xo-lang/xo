@@ -1,0 +1,41 @@
+// std/csv (std.md 16, decision 0298): csv.valid_sep and csv.valid_comment are
+// Go's validDelim, so a program whose separator or comment character comes
+// from data can check them instead of faulting inside parse or format.
+use std/csv
+
+// The records of text, or the reason the delimiters were not used.
+fn read(text: Str, sep: Rune, comment: Rune) -> Str {
+  if !csv.valid_sep(sep) {
+    return "no parse: ${Int(sep)} is not a separator"
+  }
+  if !csv.valid_comment(comment) {
+    return "no parse: ${Int(comment)} is not a comment"
+  }
+  if comment != '\0' && comment == sep {
+    return "no parse: comment and sep are both ${Int(sep)}"
+  }
+  match csv.parse(text, sep: sep, comment: comment) {
+    Ok(rows) => rows.map(fn(r) { "[" + r.map(fn(f) { f.quote() }).join(", ") + "]" }).join(" ")
+    Err(e) => "${e}"
+  }
+}
+
+fn main(os: Os) {
+  let out = os.stdio
+  // every class the rule distinguishes: ordinary ASCII, a multi byte one, the
+  // quote, NUL, a line end, U+FFFD, a space and an astral code point
+  for cp in [44, 59, 9, 163, 34, 0, 13, 10, 0xFFFD, 0x2000, 0x1F600] {
+    let r = Rune(cp)
+    out.println("${cp}: sep ${csv.valid_sep(r)} comment ${csv.valid_comment(r)}")
+  }
+  for (sep, comment) in [(',', '\0'), (';', '#'), ('\t', '€'), ('£', '\0'), ('€', 'λ'),
+                         ('"', '\0'), ('\0', '\0'), ('\r', '#'), ('\n', '\n'), (';', ';')] {
+    out.println("${Int(sep)}/${Int(comment)}: ${read("a;b#c\nx", sep, comment)}")
+  }
+  // a checked comment skips its lines, and a comment that is the separator is
+  // refused by the check before parse could fault
+  out.println("comment line: ${read("#skip\na;b\n", ';', '#')}")
+  out.println("comment is sep: ${read("a;b\n", ';', ';')}")
+  out.println("format: ${csv.format([["a;b", "c"]], sep: ';').quote()}")
+  out.println("round trip: ${csv.parse(csv.format([["é", "a;b"]], sep: ';'), sep: ';').ok() == Some([["é", "a;b"]])}")
+}

@@ -24,7 +24,26 @@ import (
 	"math/rand"
 	"os"
 	"strings"
+	"unicode/utf8"
 )
+
+// csvGoValidDelim is Go's validDelim (encoding/csv reader.go), which is not
+// exported: the rule behind csv.valid_sep and csv.valid_comment. Go's
+// encoding/csv tests are Copyright 2011 The Go Authors, BSD-style license.
+func csvGoValidDelim(r rune) bool {
+	return r != 0 && r != '"' && r != '\r' && r != '\n' && utf8.ValidRune(r) && r != utf8.RuneError
+}
+
+// csvDelimRunes are the code points the delimiter rule distinguishes: the
+// ones Go's validDelim rejects, and ordinary ones, single and multi byte, in
+// the ASCII range, the BMP, the noncharacters and the astral planes. A
+// surrogate, a negative code point and one above U+10FFFF are absent:
+// Rune(n) faults on them (not a Unicode scalar value), so a program cannot
+// hold one, and the rule still states them, Go's validDelim line for line.
+var csvDelimRunes = []rune{
+	0, 1, 9, 10, 11, 12, 13, 32, 34, 35, 44, 59, 65, 127, 128, 163, 233,
+	0x2000, 0x2028, 0xD7FF, 0xE000, 0xFDD0, 0xFFFD, 0xFFFF, 0x10000, 0x1F600, 0x10FFFF,
+}
 
 // csvReadCase is one Reader input: text read with comma (0 for Go's default
 // ','), comment, FieldsPerRecord as fields (-1 unset), LazyQuotes and
@@ -3446,7 +3465,7 @@ func csvRoundTrip(c csvWriteCase) bool {
 
 func csvCorpus() string {
 	var o strings.Builder
-	o.WriteString(header("encoding/csv's Reader.ReadAll and Writer on Go's reader_test.go readTests and writer_test.go writeTests, on the inputs of the ad hoc differential test this corpus replaces, and on seeded random texts and records, against std/csv's parse and format (Go's encoding/csv tests are Copyright 2011 The Go Authors, BSD-style license)"))
+	o.WriteString(header("encoding/csv's Reader.ReadAll and Writer on Go's reader_test.go readTests and writer_test.go writeTests, on the inputs of the ad hoc differential test this corpus replaces, and on seeded random texts and records, against std/csv's parse and format, and reader.go's validDelim on the code points it distinguishes, against csv.valid_sep and csv.valid_comment (Go's encoding/csv tests are Copyright 2011 The Go Authors, BSD-style license)"))
 	o.WriteString("use std/csv\n")
 
 	// read cases: Go's tests, the module test's inputs, then randoms
@@ -3500,6 +3519,21 @@ func csvCorpus() string {
 	}
 	o.WriteString("]\n")
 
+	// the delimiter rule behind valid_sep and valid_comment
+	for _, r := range []rune{-1, 0xD800, 0xDFFF, 0x110000} {
+		// a program cannot hold these (Rune(n) faults), so they cannot be
+		// cases; Go's rule still refuses them, and the rule states them
+		if csvGoValidDelim(r) {
+			fmt.Fprintf(os.Stderr, "stdcorpus: csv: Go's validDelim accepts %d\n", r)
+			os.Exit(1)
+		}
+	}
+	o.WriteString("\n/// (code point, Go's validDelim: usable as sep, and as comment, where 0 is none)\nconst VALID_CASES: List[(Int, Bool, Bool)] = [\n")
+	for _, r := range csvDelimRunes {
+		fmt.Fprintf(&o, "  (%d, %v, %v),\n", r, csvGoValidDelim(r), r == 0 || csvGoValidDelim(r))
+	}
+	o.WriteString("]\n")
+
 	o.WriteString(csvTests)
 	return o.String()
 }
@@ -3529,6 +3563,10 @@ fn first_write(bad: List[(List[List[Str]], Rune, Bool, Str, Str)]) -> List[(List
 }
 
 fn first_trip(bad: List[(List[List[Str]], Rune, Str, Str)]) -> List[(List[List[Str]], Rune, Str, Str)] {
+  bad[0..(if bad.len() < 20 { bad.len() } else { 20 })]
+}
+
+fn first_delim(bad: List[(Int, Bool, Bool, Bool, Bool)]) -> List[(Int, Bool, Bool, Bool, Bool)] {
   bad[0..(if bad.len() < 20 { bad.len() } else { 20 })]
 }
 
@@ -3593,5 +3631,18 @@ test "format then parse is the same records" {
     }
   }
   expect(first_trip(bad)) == []
+}
+
+test "valid_sep and valid_comment are Go's validDelim" {
+  var bad: List[(Int, Bool, Bool, Bool, Bool)] = []
+  for (cp, sep, comment) in VALID_CASES {
+    let r = Rune(cp)
+    let got_sep = csv.valid_sep(r)
+    let got_comment = csv.valid_comment(r)
+    if got_sep != sep || got_comment != comment {
+      bad.push((cp, got_sep, got_comment, sep, comment))
+    }
+  }
+  expect(first_delim(bad)) == []
 }
 `

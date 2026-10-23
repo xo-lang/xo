@@ -24,11 +24,24 @@ func csvValidDelim(r rune) bool {
 	return r != 0 && r != '"' && r != '\r' && r != '\n' && utf8.ValidRune(r) && r != utf8.RuneError
 }
 
+// csvValidSep and csvValidComment are the one delimiter rule, for
+// Csv_valid_sep, Csv_valid_comment and csvCheckDelims: Go's validDelim, and
+// '\0' (Go's zero value, no comment) for a comment.
+func csvValidSep(r rune) bool { return csvValidDelim(r) }
+
+func csvValidComment(r rune) bool { return r == 0 || csvValidDelim(r) }
+
 func csvCheckDelims(sep rune, comment rune) {
-	if !csvValidDelim(sep) || comment != 0 && (comment == sep || !csvValidDelim(comment)) {
+	if !csvValidSep(sep) || !csvValidComment(comment) || comment != 0 && comment == sep {
 		FaultHere("csv: invalid field or comment delimiter")
 	}
 }
+
+// Csv_valid_sep is `csv.valid_sep(r)`.
+func Csv_valid_sep(_ *Task, r Rune) bool { return csvValidSep(rune(r)) }
+
+// Csv_valid_comment is `csv.valid_comment(r)`.
+func Csv_valid_comment(_ *Task, r Rune) bool { return csvValidComment(rune(r)) }
 
 func csvReadAll(text string, sep Rune, comment Rune, fields int64, lazy, trim bool) ([][]string, *Csv_CsvErr) {
 	csvCheckDelims(rune(sep), rune(comment))

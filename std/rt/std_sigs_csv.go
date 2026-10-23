@@ -10,4 +10,6 @@ var (
 	_ func(*Task, string, Rune, Rune, int64, bool, bool) Result[List[List[string]], Csv_CsvErr] = Csv_parse
 	_ func(*Task, string, Rune, Rune, bool, bool) Result[List[Map[string, string]], Csv_CsvErr] = Csv_parse_maps
 	_ func(*Task, List[List[string]], Rune, bool) string                                        = Csv_format
+	_ func(*Task, Rune) bool                                                                    = Csv_valid_sep
+	_ func(*Task, Rune) bool                                                                    = Csv_valid_comment
 )

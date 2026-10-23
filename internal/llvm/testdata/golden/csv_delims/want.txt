@@ -1,0 +1,28 @@
+exit 0
+--- stdout
+44: sep true comment true
+59: sep true comment true
+9: sep true comment true
+163: sep true comment true
+34: sep false comment false
+0: sep false comment true
+13: sep false comment false
+10: sep false comment false
+65533: sep false comment false
+8192: sep true comment true
+128512: sep true comment true
+44/0: ["a;b#c"] ["x"]
+59/35: ["a", "b#c"] ["x"]
+9/8364: ["a;b#c"] ["x"]
+163/0: ["a;b#c"] ["x"]
+8364/955: ["a;b#c"] ["x"]
+34/0: no parse: 34 is not a separator
+0/0: no parse: 0 is not a separator
+13/35: no parse: 13 is not a separator
+10/10: no parse: 10 is not a separator
+59/59: no parse: comment and sep are both 59
+comment line: ["a", "b"]
+comment is sep: no parse: comment and sep are both 59
+format: "\"a;b\";c\n"
+round trip: true
+--- stderr

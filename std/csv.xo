@@ -35,3 +35,14 @@ fn parse_maps(text: Str, sep: Rune = ',', comment: Rune = '\0', lazy_quotes: Boo
 /// with a space, or is `\.`; also when it is the only, empty field of a
 /// record (so it reads back as a record, where Go writes an empty line).
 fn format(rows: List[List[Str]], sep: Rune = ',', crlf: Bool = false) -> Str
+/// Go's validDelim (reader.go): whether r can be the `sep` of `parse`,
+/// `parse_maps` and `format`. False for `'\0'`, `"`, `\r`, `\n` and U+FFFD,
+/// and for a code point that is not a Unicode scalar value (which no Rune
+/// holds: `Rune(n)` faults on it); every other code point works, a multi
+/// byte one included.
+fn valid_sep(r: Rune) -> Bool
+/// Go's validDelim for `comment`, and true for `'\0'`, Go's zero value and
+/// the default (no comment). A `comment` must also differ from `sep`:
+/// `parse`, `parse_maps` and `format` fault
+/// `csv: invalid field or comment delimiter` when it does not.
+fn valid_comment(r: Rune) -> Bool

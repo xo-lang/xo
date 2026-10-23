@@ -24,6 +24,12 @@ const ERR_FIELD_COUNT: Str = "wrong number of fields"
 /// reader.go validDelim.
 fn valid_delim(r: Rune) -> Bool { Int(r) != 0 && r != '"' && r != '\r' && r != '\n' && Int(r) != 0xFFFD && !(Int(r) >= 0xD800 && Int(r) <= 0xDFFF) && Int(r) <= 0x10FFFF }
 
+/// Go's validDelim: whether r can be a separator.
+fn valid_sep(r: Rune) -> Bool { valid_delim(r) }
+
+/// Go's validDelim for a comment character, and true for '\0' (Go's none).
+fn valid_comment(r: Rune) -> Bool { Int(r) == 0 || valid_delim(r) }
+
 fn rune_text(r: Rune) -> Bytes {
   var b = BytesBuilder.new()
   b.write_rune(r)
@@ -215,8 +221,8 @@ fn read_record(var r: Rd, o: Opts) -> (List[Str], Int)? ! csv.CsvErr {
 }
 
 fn check_delims(sep: Rune, comment: Rune, at: rt.Loc) {
-  let bad = Int(comment) != 0 && (comment == sep || !valid_delim(comment))
-  if bad || !valid_delim(sep) {
+  let clash = Int(comment) != 0 && comment == sep
+  if clash || !valid_sep(sep) || !valid_comment(comment) {
     rt.fault_at("csv: invalid field or comment delimiter", at)
   }
 }

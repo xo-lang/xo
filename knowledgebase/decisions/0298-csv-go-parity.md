@@ -37,6 +37,12 @@ reader options (Comment, LazyQuotes, TrimLeadingSpace, FieldsPerRecord).
   option and Go's Writer on 400 row sets.
 - The Go backend's generator gained negative integer defaults for std
   parameters (`fields: Int = -1`).
+- 2026-10-23 (owner): an invalid separator or comment character stays a
+  fault (`csv: invalid field or comment delimiter`, spec/std.md 16), not
+  Go's `errInvalidDelim`, which is a plain error with no position and so
+  has no CsvErr to return. `csv.valid_sep` and `csv.valid_comment` are
+  Go's validDelim, so a program whose separator or comment comes from
+  data checks them first.
 
 ## Alternatives
 

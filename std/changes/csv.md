@@ -1,5 +1,23 @@
 # std/csv changes
 
+## 2026-10-23: feature: valid_sep and valid_comment check a delimiter before it faults
+
+- Kind: feature
+- Commit: (filled in after the push)
+- Found by: the fault for an invalid separator left a program whose separator
+  comes from data no way to check it (owner's decision, 2026-10-23)
+- Go reference: encoding/csv reader.go validDelim (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/csv (VALID_CASES, 27 code points, arm64
+  and LLVM) and internal/llvm/testdata/golden/csv_delims (format, parse, and Go
+  parity)
+
+`valid_sep(r)` and `valid_comment(r)` are Go's validDelim, `valid_comment`
+counting `'\0'` (Go's zero value, no comment) as valid. The fault for an
+invalid separator or comment stays, as spec/std.md 16 documents and decision
+0298 now notes, so a program checks these values instead of faulting. The
+private rule `check_delims` used is now these two functions, so the rule exists
+once on each backend.
+
 ## 2026-10-23: test: the differential is a generated corpus, and the module test is gone
 
 - Kind: test

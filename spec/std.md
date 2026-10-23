@@ -3125,6 +3125,8 @@ pub fn parse(text: Str, sep: Rune = ',', comment: Rune = '\0', fields: Int = -1,
 pub fn parse_maps(text: Str, sep: Rune = ',', comment: Rune = '\0', lazy_quotes: Bool = false,
                   trim_leading_space: Bool = false) -> List[Map[Str, Str]] ! CsvErr
 pub fn format(rows: List[List[Str]], sep: Rune = ',', crlf: Bool = false) -> Str
+pub fn valid_sep(r: Rune) -> Bool           // a usable `sep`: Go's validDelim
+pub fn valid_comment(r: Rune) -> Bool       // a usable `comment`, `'\0'` (none) included
 ```
 
 - Go's csv.Reader: `sep` is Comma, `comment` Comment (`'\0'` for none:
@@ -3147,9 +3149,14 @@ pub fn format(rows: List[List[Str]], sep: Rune = ',', crlf: Bool = false) -> Str
   is `\.`; quotes double. One difference: the only, empty field of a
   record is written `""` (Go writes an empty line, which reads back as no
   record), so `parse(format(rows))` gives `rows` back.
-- `sep` and `comment` must be valid delimiters (not `"`, `\r`, `\n`,
-  `\0` for `sep`, and not each other): a fault `csv: invalid field or
-  comment delimiter` otherwise.
+- `sep` and `comment` must be valid delimiters (not `"`, `\r`, `\n` or
+  U+FFFD; not `\0` for `sep`; and not each other): a fault
+  `csv: invalid field or comment delimiter` otherwise, where Go returns
+  `errInvalidDelim` (decision 0298's note, 2026-10-23). `valid_sep` and
+  `valid_comment` are Go's validDelim, `valid_comment` counting `'\0'`
+  (Go's zero value, no comment) as valid, so a program whose separator or
+  comment comes from data checks them, and a non-zero comment against the
+  separator, before `parse` or `format` faults.
 
 ---
 
