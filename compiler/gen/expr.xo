@@ -1312,7 +1312,8 @@ fn (var g: Gen) try_expr(e: Expr) -> Str {
   if let Some(tm) = g.c.test_missing.get(g.c.expr_key_in(g.f.file, e)) {
     // a test body's `x?` on an Option: `x.or_err("missing value: x")?`
     // (decision 0347)
-    g.propagate(tm.msg.quote(), "nil", tm.str_ty, span)
+    // where (decision 0347), as expect failures say it
+    g.propagate("${tm.msg} at ${g.loc(span)}".quote(), "nil", tm.str_ty, span)
     g.f.ind -= 1
     g.line("}")
     return v + ".V"

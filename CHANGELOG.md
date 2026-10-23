@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- A test block's `opt?` failure names where the value was missing:
+  `error: missing value: find(x) at main.xo:61:11`, as decision 0347
+  says and as `expect` failures do, so two `?` of the same text in one
+  test are told apart. Every backend.
+
 - `xo test --seed=N` and `--explore=N` run natively on the deterministic
   scheduler (decision 0350, stage 2), as does a test that pins its seed
   (`test "x" seed N`): each test runs with its own seed, else `--seed`'s,

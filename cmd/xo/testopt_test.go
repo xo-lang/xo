@@ -11,7 +11,7 @@ import (
 // TestOptionTryInTests checks decision 0347 on testdata/testopt/tests:
 // `x?` on an Option directly in a test body (nested blocks, `if`,
 // `match`, a property test, mixed with a Result's `?`) fails the test
-// with `error: missing value: EXPR` on the Go backend and every native
+// with `error: missing value: EXPR at FILE:LINE:COL` on the Go backend and every native
 // one, a property test's missing value is shrunk like any failure, and a
 // fn literal in a test keeps its own rules (it becomes Option returning).
 func TestOptionTryInTests(t *testing.T) {
@@ -21,12 +21,14 @@ func TestOptionTryInTests(t *testing.T) {
 	}
 	dir := filepath.Join("testdata", "testopt", "tests")
 	wants := []string{
-		"--- FAIL: none fails (main.xo:15:1, seed 1)\n    error: missing value: find(5)\n",
-		"--- FAIL: nested (main.xo:20:1, seed 1)\n    error: missing value: m.get(\"zz\")\n",
-		"--- FAIL: mixed (main.xo:34:1, seed 1)\n    error: missing value: find(b + 1)\n",
+		"--- FAIL: none fails (main.xo:15:1, seed 1)\n    error: missing value: find(5) at main.xo:16:11\n",
+		"--- FAIL: nested (main.xo:20:1, seed 1)\n    error: missing value: m.get(\"zz\") at main.xo:26:17\n",
+		"--- FAIL: mixed (main.xo:34:1, seed 1)\n    error: missing value: find(b + 1) at main.xo:37:11\n",
 		"--- FAIL: prop (main.xo:41:1, seed 1)\n    property failed on case 1; shrunk in ",
-		"    n = 3\n    error: missing value: find(n)\n",
-		"FAIL: 2 passed, 4 failed, 0 skipped\n",
+		"    n = 3\n    error: missing value: find(n) at main.xo:42:11\n",
+		// two `?` of the same text in one test: the location names the second
+		"--- FAIL: same text twice (main.xo:57:1, seed 1)\n    error: missing value: find(x) at main.xo:61:11\n",
+		"FAIL: 2 passed, 5 failed, 0 skipped\n",
 	}
 	check := func(name string, code int, out string) {
 		t.Helper()

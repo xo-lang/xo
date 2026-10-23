@@ -935,7 +935,9 @@ fn (var b: Builder) try_expr(e: Expr) -> Int {
   } else if let Some(tm) = b.c.test_missing.get(b.c.expr_key_in(b.s.file, e)) {
     // a test body's `x?` on an Option: `x.or_err("missing value: x")?`
     // (decision 0347)
-    let sv = b.add(Op.Const, b.str_t(), Aux.Bs(b: tm.msg.bytes()), [])
+    // where (decision 0347: `missing value: first([]) at FILE:LINE:COL`,
+    // as expect failures say it)
+    let sv = b.add(Op.Const, b.str_t(), Aux.Bs(b: "${tm.msg} at ${b.pos(span)}".bytes()), [])
     let ce = b.coerce_err(sv, tm.str_ty, b.s.err_t, Some(e))
     let wi = b.m.variant_index(want, "Err")
     let fs = b.m.types[want].variants[wi].fields

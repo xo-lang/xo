@@ -52,3 +52,12 @@ test "closure keeps its rules" {
 fn main(os: Os) {
   os.stdio.println("${find(0) ?? 1}")
 }
+
+// the same text twice: only the location says which one was missing
+test "same text twice" {
+  var x = 0
+  let a = find(x)?
+  x = 5
+  let b = find(x)?
+  expect(a + b) == 5
+}
