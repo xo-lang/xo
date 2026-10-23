@@ -1,6 +1,8 @@
 # 0356: A third-party `use go` needs a `require go` pin
 
 Status: Accepted (owner, 2026-10-23; option A of Xo Lang 2's proposal).
+Stage (a) landed 1a42abd9f; stage (b) landed with the change that adds
+this line (2026-10-23).
 
 ## Context
 

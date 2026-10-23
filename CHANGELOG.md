@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- xo.lock records each pinned Go module's go.sum hashes (`go <module>
+  <version> h1:...` and its `/go.mod` line; decision 0356): a changed
+  module is `XO1304`, a missing line `XO1305` (run `xo mod tidy`).
+
 - **Breaking** (decision 0356): a `use go` of a package outside Go's
   standard library needs its Go module pinned with `require go <module>
   <version>` in xo.mod; without it the use is `XO1319`. Builds used to

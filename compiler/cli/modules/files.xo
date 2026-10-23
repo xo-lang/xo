@@ -274,7 +274,7 @@ fn sort_lock_keys(keys: List[Str]) -> List[Str] {
 
 /// mod.WriteLock: dir/xo.lock with the hash entries and effect sets, sorted.
 /// With no entries and no lock file, nothing is written.
-fn (c: ModCtx) write_lock(dir: Str, entries: Map[Str, Str], effects: Map[Str, List[Str]]) -> () ! Str uses fs {
+fn (c: ModCtx) write_lock(dir: Str, entries: Map[Str, Str], effects: Map[Str, List[Str]], go_entries: Map[Str, Str]) -> () ! Str uses fs {
   let keys = sort_lock_keys(entries.keys())
   var b = StrBuilder.new()
   b.write(LOCK_HEADER)
@@ -284,8 +284,12 @@ fn (c: ModCtx) write_lock(dir: Str, entries: Map[Str, Str], effects: Map[Str, Li
   for p in effects.keys().sort() {
     b.write("${p} effects ${check.effects_text(effects.get(p) ?? [])}\n")
   }
+  // pinned Go modules' go.sum hashes (decision 0356)
+  for k in go_entries.keys().sort() {
+    b.write("go ${k} ${go_entries.get(k) ?? ""}\n")
+  }
   let name = "${dir}/xo.lock"
-  if keys.is_empty() && !c.exists(name) {
+  if keys.is_empty() && go_entries.is_empty() && !c.exists(name) {
     return Ok(())
   }
   c.write_file(name, b.freeze().bytes())

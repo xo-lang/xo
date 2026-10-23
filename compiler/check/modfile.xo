@@ -73,6 +73,10 @@ pub struct Lock {
   /// path's `effects` line, and the line.
   pub effects: Map[Str, List[Str]] = {}
   pub effect_lines: Map[Str, Int] = {}
+  /// Go modules pinned by `require go` (decision 0356): Go's go.sum hash
+  /// of "<module> <version>" and "<module> <version>/go.mod", and the line.
+  pub go_entries: Map[Str, Str] = {}
+  pub go_lines: Map[Str, Int] = {}
 }
 
 /// A module of a build list besides the main one (mod.Module).
@@ -891,6 +895,13 @@ pub fn (c: Checker) read_lock(dir: Str) -> (Lock, List[Problem]) uses fs.read {
         }
         None => probs.push(Problem{code: "XO1301", file: l.file, line: line, msg: "malformed xo.lock effects line: want `<module path> effects <labels|none>`", notes: ["xo.lock is written by the toolchain; `xo mod tidy` rewrites it"]})
       }
+      continue
+    }
+    if f.len() == 4 && f[0] == "go" && f[3].starts_with("h1:") {
+      // a pinned Go module's go.sum hash (decision 0356)
+      let key = "${f[1]} ${f[2]}"
+      l.go_entries[key] = f[3]
+      l.go_lines[key] = line
       continue
     }
     if f.len() != 3 || !f[2].starts_with("h1:") {

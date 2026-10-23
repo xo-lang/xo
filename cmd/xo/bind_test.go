@@ -134,10 +134,35 @@ func TestUseGoPin(t *testing.T) {
 	if !strings.Contains(string(data), "\nrequire go github.com/google/uuid v1.") {
 		t.Fatalf("xo fix did not pin it: xo.mod\n%s\n%s%s", data, out.String(), errOut.String())
 	}
+	// pinned, xo.lock has no go.sum hash for it yet (stage b): XO1305,
+	// which tidy records
+	out.Reset()
+	errOut.Reset()
+	if code := run(t, []string{"check", "--backend=go", app}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "XO1305") || !strings.Contains(errOut.String(), "xo.lock has no hash for Go module github.com/google/uuid v1.") {
+		t.Fatalf("check after the fix: exit %d\n%s", code, errOut.String())
+	}
+	if code := run(t, []string{"mod", "tidy", "--dir=" + dir}, &out, &errOut); code != 0 {
+		t.Fatalf("tidy after the fix: exit %d\n%s", code, errOut.String())
+	}
+	lock, _ := os.ReadFile(filepath.Join(dir, "xo.lock"))
+	if !strings.Contains(string(lock), "\ngo github.com/google/uuid v1.") || !strings.Contains(string(lock), "/go.mod h1:") {
+		t.Fatalf("tidy wrote no Go lines: xo.lock\n%s", lock)
+	}
 	out.Reset()
 	errOut.Reset()
 	if code := run(t, []string{"check", "--backend=go", app}, &out, &errOut); code != 0 {
-		t.Fatalf("check after the fix: exit %d\n%s", code, errOut.String())
+		t.Fatalf("check after tidy: exit %d\n%s", code, errOut.String())
+	}
+	// a changed hash is XO1304
+	bad := strings.Replace(string(lock), "\ngo github.com/google/uuid v1.6.0 h1:", "\ngo github.com/google/uuid v1.6.0 h1:X", 1)
+	if bad != string(lock) {
+		os.WriteFile(filepath.Join(dir, "xo.lock"), []byte(bad), 0o644)
+		out.Reset()
+		errOut.Reset()
+		if code := run(t, []string{"check", "--backend=go", app}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "XO1304") {
+			t.Fatalf("check with a changed hash: exit %d\n%s", code, errOut.String())
+		}
+		os.WriteFile(filepath.Join(dir, "xo.lock"), lock, 0o644)
 	}
 	// tidy adds the pin from the binding
 	if err := os.WriteFile(filepath.Join(dir, "xo.mod"), []byte(mod), 0o644); err != nil {

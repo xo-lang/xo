@@ -234,7 +234,7 @@ fn (var c: ModCtx) write_lock_changes(main_dir: Str, accept: Options) -> (List[E
       None => changes.push(EffectChange{path: m.path, new: cur})
     }
   }
-  match c.write_lock(c.abs(main_dir), b.hashes, b.effects) {
+  match c.write_lock(c.abs(main_dir), b.hashes, b.effects, c.go_lock_entries(main_dir)) {
     Ok(_) => {}
     Err(e) => return ([], [check.Problem{code: "XO1301", file: "${c.abs(main_dir)}/xo.lock", msg: e}])
   }
@@ -457,4 +457,48 @@ fn (c: ModCtx) go_binding_module(main_dir: Str, gopath: Str) -> (Str, Str) uses 
     }
   }
   ("", "")
+}
+
+/// The xo.lock lines of the Go modules xo.mod pins (decision 0356):
+/// "<module> <version>" and "<module> <version>/go.mod" with Go's go.sum
+/// hash, from the binding workspace's go.sum (.xo/gobind/_mod, or
+/// $XO_GOBIND_DIR's), else the current xo.lock's line, so a rewrite keeps
+/// a pin no binding has fetched yet. A module no longer pinned is dropped.
+fn (c: ModCtx) go_lock_entries(main_dir: Str) -> Map[Str, Str] uses fs.read {
+  var out: Map[Str, Str] = {}
+  let dir = c.abs(main_dir)
+  // xo:allow XO0903 an unreadable xo.mod pins nothing here; the load reports it
+  let modtext = c.os.fs.read_text("${dir}/xo.mod").ok() ?? ""
+  let set = c.getenv("XO_GOBIND_DIR")
+  let cache = if set.is_empty() { "${dir}/.xo/gobind" } else { set }
+  // xo:allow XO0903 no binding workspace yet: the current lines are kept
+  let sum = c.os.fs.read_text("${cache}/_mod/go.sum").ok() ?? ""
+  let (old, _) = c.chk.read_lock(dir)
+  for l in modtext.split("\n") {
+    let fs = check.fields(l)
+    if fs.len() < 4 || fs[0] != "require" || fs[1] != "go" {
+      continue
+    }
+    for key in ["${fs[2]} ${fs[3]}", "${fs[2]} ${fs[3]}/go.mod"] {
+      let h = go_sum_hash(sum, key)
+      if !h.is_empty() {
+        out[key] = h
+      } else if let Some(prev) = old.go_entries.get(key) {
+        out[key] = prev
+      }
+    }
+  }
+  out
+}
+
+/// The hash of the go.sum line for key ("<module> <version>[/go.mod]"),
+/// or "".
+pub fn go_sum_hash(sum: Str, key: Str) -> Str {
+  for l in sum.split("\n") {
+    let fs = check.fields(l)
+    if fs.len() == 3 && "${fs[0]} ${fs[1]}" == key {
+      return fs[2]
+    }
+  }
+  ""
 }

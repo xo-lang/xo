@@ -1,0 +1,5 @@
+# xo.lock: content hashes of the module versions this module builds with,
+# and the effects each module may reach (decision 0156).
+# Written by the xo toolchain (xo get, xo mod tidy, xo mod accept-effects); do not edit (core 4.3).
+go github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
+go github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=

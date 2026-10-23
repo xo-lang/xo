@@ -84,6 +84,9 @@ fn (var c: Checker) load_go_import(m: Int, f: Int, u: parser.UseDecl) {
       let ws = join(cache, "_mod")
       c.mods[dep].go_require = go_mod_requires(c.fs.read_text(join(ws, "go.mod")).ok() ?? "")
       c.mods[dep].go_sum = c.fs.read_text(join(ws, "go.sum")).ok() ?? ""
+      if !pin.is_empty() && !hdr.mod_path.is_empty() {
+        c.check_go_lock(f, u.span, root, hdr.mod_path, hdr.mod_version, c.mods[dep].go_sum)
+      }
     }
     c.parse_into(dep, decl_path, data, true)
     c.mods[dep].state = 1
@@ -138,6 +141,38 @@ fn (var c: Checker) go_unpinned(f: Int, sp: Span, xomod: Str, mod_path: Str, ver
   let last = lines.len()
   let col = lines[last - 1].len() + 1
   c.fix(d, "add `require go ${mod_path} ${version}` to xo.mod", [DEdit{span: JSpan{file: c.abs(xomod), line: last, col: col, end_line: last, end_col: col}, replace: "\nrequire go ${mod_path} ${version}"}])
+}
+
+/// XO1304 and XO1305 for a pinned Go module (decision 0356): root's
+/// xo.lock must record Go's go.sum hashes of the module version and its
+/// go.mod, as the binding workspace's go.sum has them.
+fn (var c: Checker) check_go_lock(f: Int, sp: Span, root: Str, mod_path: Str, version: Str, sum: Str) {
+  let (lock, _) = c.read_lock(root)
+  for key in ["${mod_path} ${version}", "${mod_path} ${version}/go.mod"] {
+    var got = ""
+    for l in sum.split("\n") {
+      let fs = fields(l)
+      if fs.len() == 3 && "${fs[0]} ${fs[1]}" == key {
+        got = fs[2]
+      }
+    }
+    if got.is_empty() {
+      continue
+    }
+    match lock.go_entries.get(key) {
+      Some(want) => {
+        if want != got {
+          let d = c.error_at(f, "XO1304", sp, "Go module ${key}: go.sum hash ${got} does not match xo.lock (${want})")
+          c.note(d, "the Go module's content changed since it was locked; nothing was built")
+          c.note(d, "if the change is expected, delete the line and run `xo mod tidy`")
+        }
+      }
+      None => {
+        let d = c.error_at(f, "XO1305", sp, "xo.lock has no hash for Go module ${key}")
+        c.note(d, "run `xo mod tidy` to record it in ${c.abs(join(root, "xo.lock"))} (decision 0356)")
+      }
+    }
+  }
 }
 
 /// The header lines of a binding's declaration file (gobind Load).

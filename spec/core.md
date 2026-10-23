@@ -1582,6 +1582,14 @@ its content hash.
   cache or vendor/ and compares them. A mismatch (a moved tag, an edited
   cache or vendor copy) is `XO1304` and nothing builds; a version with no
   entry is `XO1305` (run `xo mod tidy`). Malformed lines are `XO1301`.
+- Pinned Go modules (decision 0356): for each `require go <module>
+  <version>` line, xo.lock records Go's own go.sum hashes, `go <module>
+  <version> h1:<hash>` (the module zip) and `go <module>
+  <version>/go.mod h1:<hash>`, taken from the binding workspace's
+  go.sum. Every check compares them with the binding's go.sum: a
+  different hash is `XO1304`, a missing line `XO1305`; `xo mod tidy`
+  and `xo get` write them, and a rewrite keeps a line no binding has
+  fetched yet.
 - **[P1]** Effect lock (decision 0156): xo.lock also records, for each
   selected module (not workspace modules), the effects its exported API
   can reach: `<module path> effects <labels|none>`
