@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+ok 1 a e 1.5 1 -
+ok 2 b e 1.5 0 -
+ok 7 esc e 2.0 0 n
+err at $: missing field `email`
+ok 9 y z 3.0 2 -
+err at $: missing field `id`
+--- stderr

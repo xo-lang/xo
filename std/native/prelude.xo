@@ -2952,6 +2952,8 @@ fn llrt_json_str(src: Bytes, tape: List[Int], i: Int) -> Str { jsontext.str_at(s
 
 fn llrt_json_find(src: Bytes, tape: List[Int], i: Int, key: Str) -> Int { jsontext.find(src, tape, i, key) }
 
+fn llrt_json_find_all(src: Bytes, tape: List[Int], i: Int, keys: Str, nk: Int) -> List[Int] { jsontext.find_all(src, tape, i, keys, nk) }
+
 fn llrt_json_members(src: Bytes, tape: List[Int], i: Int) -> List[Int] { jsontext.members(src, tape, i) }
 
 fn llrt_json_int_ok(src: Bytes, tape: List[Int], i: Int) -> Bool { jsontext.int_ok(src, tape, i) }

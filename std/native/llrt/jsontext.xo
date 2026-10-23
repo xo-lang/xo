@@ -675,6 +675,67 @@ pub fn find(src: Bytes, tape: List[Int], i: Int, key: Str) -> Int {
   found
 }
 
+/// The tape index of the value of the last member of the object at i
+/// for each of nk keys, -1 for a key no member has: find for every field
+/// of a struct in one pass over the members (derive Json's decoders;
+/// they called find once per field, which walked every member each
+/// time, 2026-10-23). keys holds each key after its length as one byte
+/// (each under 128 bytes). A member counts for the first key it equals;
+/// a later member of the same key replaces it, as in find.
+pub fn find_all(src: Bytes, tape: List[Int], i: Int, keys: Str, nk: Int) -> List[Int] {
+  var out: List[Int] = List.with_capacity(nk)
+  for _ in 0..nk {
+    out.push(-1)
+  }
+  let kb = keys.bytes()
+  let m = tape[i + 1]
+  var j = i + 3
+  var k = 0
+  while k < m {
+    let v = j + 3
+    let raw = tape[j + 2]
+    if raw > LEN_MASK {
+      let f = keys_match_slow(src, tape, j, kb, nk)
+      if f >= 0 {
+        out[f] = v
+      }
+    } else {
+      let at = tape[j + 1]
+      var p = 0
+      var f = 0
+      while f < nk {
+        let kl = Int(kb[p])
+        if raw == kl && range_eq(src, at, kb, p + 1, kl) {
+          out[f] = v
+          break
+        }
+        p += 1 + kl
+        f += 1
+      }
+    }
+    j = next(tape, v)
+    k += 1
+  }
+  out
+}
+
+/// find_all's match of an escaped key node at j (cold, as key_eq_slow):
+/// the index of the key of keys (find_all's form) its value equals, or -1.
+fn keys_match_slow(src: Bytes, tape: List[Int], j: Int, kb: Bytes, nk: Int) -> Int {
+  let s = str_at(src, tape, j).bytes()
+  var p = 0
+  var f = 0
+  while f < nk {
+    let kl = Int(kb[p])
+    if s.len() == kl && range_eq(s, 0, kb, p + 1, kl) {
+      return f
+    }
+    p += 1 + kl
+    f += 1
+  }
+  -1
+}
+
 /// Whether the escaped key node at j equals key: its own function (a cold
 /// call, compiler/ssa ir.xo cold_fn) so find's loop keeps its values in
 /// registers instead of across a call.

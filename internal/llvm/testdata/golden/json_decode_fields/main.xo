@@ -1,0 +1,30 @@
+// derive Json's decoder finds every field in one pass over an object's
+// members (jsontext.find_all, 2026-10-23): a duplicate key's last value,
+// escaped keys, members in any order, unknown members, a missing field.
+
+use std/json
+
+struct User {
+  id: Int
+  name: Str
+  email: Str
+  score: Float
+  tags: List[Str]
+  nick: Str? = None
+} derive Json
+
+fn show(os: Os, text: Str) {
+  match json.decode[User](text.bytes()) {
+    Ok(u) => os.stdio.println("ok ${u.id} ${u.name} ${u.email} ${u.score} ${u.tags.len()} ${u.nick ?? "-"}")
+    Err(e) => os.stdio.println("err ${e}")
+  }
+}
+
+fn main(os: Os) {
+  show(os, "{\"id\":1,\"name\":\"a\",\"email\":\"e\",\"score\":1.5,\"tags\":[\"x\"]}")
+  show(os, "{\"id\":1,\"id\":2,\"name\":\"a\",\"email\":\"e\",\"score\":1.5,\"tags\":[],\"name\":\"b\"}")
+  show(os, "{\"i\\u0064\":7,\"n\\u0061me\":\"esc\",\"email\":\"e\",\"score\":2,\"tags\":[],\"nick\":\"n\"}")
+  show(os, "{\"id\":1,\"name\":\"a\",\"score\":1.5,\"tags\":[]}")
+  show(os, "{\"extra\":true,\"tags\":[\"p\",\"q\"],\"score\":3,\"email\":\"z\",\"name\":\"y\",\"id\":9,\"more\":{\"id\":5}}")
+  show(os, "{}")
+}

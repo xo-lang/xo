@@ -1,5 +1,23 @@
 # std/json changes
 
+## 2026-10-23: perf: a derived decoder finds every field in one pass over the object
+
+- Kind: perf
+- Commit: this commit
+- Found by: Xo Lang 1 (JSON small: find was 24% of native amd64's instructions, 83.3M; the lead's pick of the options, 2026-10-23)
+- Go reference: none (encoding/json matches each member to a field as it reads it; this is the same one pass)
+- Test: golden json_decode_fields (duplicates, escaped keys, any order, unknown members, a missing field) on arm64, LLVM and the Go backend; json goldens with Go parity; TestJSONTextDiff; native/json's corpus on arm64 and LLVM
+
+A `derive Json` decoder of a struct (or an enum variant's fields) called
+find once per field, and each find walked all of the object's members, so
+an object of F fields cost F walks. It now calls jsontext.find_all once:
+one walk over the members, each matched against the field keys, the last
+member of a key winning as before. Output is unchanged. JSON small:
+callgrind on linux/amd64 346.1M to 315.0M instructions (0.910); `xo bench
+--ab` on darwin/arm64, 40 rounds: instructions 0.936 (native) and 0.932
+(LLVM), wall time within noise on a loaded machine (spread about 30%).
+The other JSON workloads, which decode no structs, are unchanged.
+
 ## 2026-10-23: perf: jsontext.find and same_key compare escaped keys in their own functions
 
 - Kind: perf

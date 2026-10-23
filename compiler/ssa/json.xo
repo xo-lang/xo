@@ -987,8 +987,25 @@ fn (var b: Builder) dec_fields(d: Dec, o: Int, seg: Str, fs: List[JField], with_
   let it = b.int_t()
   let bt = b.bool_t()
   var out: List[Int] = []
+  // every field's member in one pass over the object (jsontext
+  // find_all), its keys each after its length as one byte; a key of 128
+  // bytes or more, or a single field, finds alone
+  var packed = StrBuilder.new()
+  var all = fs.len() >= 2
   for f in fs {
-    let j = b.json_rt("json_find", it, [d.src, d.tape, o, b.const_str(f.key)])
+    if f.key.len() >= 128 {
+      all = false
+    }
+    packed.write("${Rune(f.key.len())}")
+    packed.write(f.key)
+  }
+  var idx = -1
+  if all {
+    let lt = b.m.list(it)
+    idx = b.json_rt("json_find_all", lt, [d.src, d.tape, o, b.const_str(packed.freeze()), b.cint(fs.len())])
+  }
+  for (fk, f) in fs.indexed() {
+    let j = if all { b.call("list.index", it, "", [idx, b.cint(fk)]) } else { b.json_rt("json_find", it, [d.src, d.tape, o, b.const_str(f.key)]) }
     let join = b.new_block()
     let res = b.s.f.add_param(join, f.st)
     let (found, missing) = b.branch(b.add(Op.Ge, bt, Aux.None, [j, b.cint(0)]))
