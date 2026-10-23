@@ -50,3 +50,8 @@ http_tls
 net_echo
 async_preempt_regs
 async_preempt_alloc
+# shapes that crashed the amd64 backend (2026-10-23, msuccs pads):
+sql_conv
+sql_wire_names
+xml_basic
+fault_pad_proved

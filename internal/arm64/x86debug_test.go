@@ -69,3 +69,41 @@ func TestAmd64DebugInfoSameCode(t *testing.T) {
 		})
 	}
 }
+
+// TestAmd64CrossBuilds: programs whose amd64 builds crashed the backend
+// build for every amd64 target (2026-10-23: mir.xo msuccs named a call's
+// pad block that the layout had dropped, and shrink's liveness indexed it:
+// "index -1 out of range" at arm64/regalloc.xo for bench/perf/portable,
+// sql_conv, sql_wire_names, xml_basic on linux, windows and darwin).
+func TestAmd64CrossBuilds(t *testing.T) {
+	if testing.Short() {
+		t.Skip("cross builds four programs for three targets")
+	}
+	cli, err := xotool.Command()
+	if err != nil {
+		t.Fatal(err)
+	}
+	golden := filepath.Join("..", "llvm", "testdata", "golden")
+	dirs := map[string]string{
+		"portable":       filepath.Join("..", "..", "bench", "perf", "portable"),
+		"sql_conv":       filepath.Join(golden, "sql_conv"),
+		"sql_wire_names": filepath.Join(golden, "sql_wire_names"),
+		"xml_basic":      filepath.Join(golden, "xml_basic"),
+	}
+	for name, dir := range dirs {
+		for _, target := range []string{"linux/amd64", "windows/amd64", "darwin/amd64"} {
+			t.Run(name+"/"+strings.ReplaceAll(target, "/", "_"), func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+				defer cancel()
+				args := append(append([]string{}, cli[1:]...), "build", "--backend=amd64", "--targets="+target, "-o", filepath.Join(t.TempDir(), "b"), ".")
+				cmd := testtmp.Guard(exec.CommandContext(ctx, cli[0], args...))
+				cmd.Dir = dir
+				var stderr bytes.Buffer
+				cmd.Stderr = &stderr
+				if err := cmd.Run(); err != nil {
+					t.Fatalf("xo %s: %v\n%s", strings.Join(args, " "), err, stderr.String())
+				}
+			})
+		}
+	}
+}

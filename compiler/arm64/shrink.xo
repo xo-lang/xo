@@ -254,7 +254,10 @@ fn (var g: G) shrink_split() {
     kills.push(kl)
     var ss: List[Int] = []
     for s in g.msuccs(b) {
-      ss.push(idx[s])
+      // a block outside the order (as x86_live and opt's liveness skip)
+      if idx[s] >= 0 {
+        ss.push(idx[s])
+      }
     }
     succs.push(ss)
   }
