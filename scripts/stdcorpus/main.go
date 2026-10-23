@@ -43,6 +43,7 @@ var generators = map[string]func() string{
 	"netip":     netipCorpus,
 	"regexp":    regexpCorpus,
 	"smtp":      smtpCorpus,
+	"strings":   stringsCorpus,
 }
 
 func main() {

@@ -1,5 +1,19 @@
 # prelude changes
 
+## 2026-10-23: test: Str trim, trim_prefix/suffix, starts_with/ends_with against Go's strings
+
+- Kind: test
+- Commit: this commit
+- Found by: lead request after the trim, eq_text and eq_at changes of 2026-10-23
+- Go reference: strings.TrimSpace, TrimLeftFunc, TrimRightFunc, TrimPrefix, TrimSuffix, HasPrefix, HasSuffix
+- Test: corpus/strings on arm64 and LLVM (internal/stdtest/testdata/corpus/strings)
+
+Corpus from Go's strings_test.go inputs (trim, index and cut tables), affix
+lengths 4 to 32 bytes, and 6000 random cases (Unicode spaces, invalid bytes,
+affixes that are a prefix or suffix with and without a flipped bit), each run
+on a plain Str and on a view of a longer text. Both backends match Go; no
+std change was needed.
+
 ## 2026-10-23: perf: scan.eq_text inlines into the trim loop sites
 
 - Kind: perf
