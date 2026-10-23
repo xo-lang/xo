@@ -1,5 +1,23 @@
 # prelude changes
 
+## 2026-10-23: perf: List.sort sorts runs by insertion and merges between two buffers
+
+- Kind: perf
+- Commit: this commit
+- Found by: the Intel field report on 0.26.0 (sort 1M ints 2.25x Go)
+- Go reference: slices.Sort (pdqsort; Xo's sort stays stable, std.md 2.1, which pdqsort is not)
+- Test: golden sort_merge (arm64, LLVM, Go parity); timing row bench/perf/sort against slices.Sort
+
+`List.sort` was a bottom up merge sort that pushed every merged element
+onto a new list through a `less` closure. It now sorts runs of 16 by
+insertion, then merges between two buffers with `<` on the elements,
+copying a pair of runs that is already in order. The result and the
+stability are the same. `xo bench --ab --rounds=10` against the old sort
+(arm64): 1M Ints wall 0.82, instructions 0.86, max RSS 0.58; 200 000 Strs
+wall 0.92; 1M Floats wall 0.91. Against Go's slices.Sort (same programs in
+bench/perf/sort/go): Ints 1.01 (was 1.23), Floats 1.05 (was 1.14), Strs
+1.18 (was 1.29).
+
 ## 2026-10-23: perf: select arms on integer channels pass the word
 
 - Kind: perf

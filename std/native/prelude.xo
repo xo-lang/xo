@@ -642,7 +642,79 @@ fn list_group_by[T, K: Hash, E, fx: Effects](xs: List[T], key: fn(T) -> K ! E us
   out
 }
 
-fn list_sort[T: Ord](xs: List[T]) -> List[T] { merge_sort(xs, fn(a, b) { a < b }) }
+/// A stable sort of xs: runs of 16 sorted by insertion, then bottom up
+/// merges between two buffers (a pair of runs already in order is copied,
+/// so sorted input costs one pass). Merge order is stable: an element of
+/// the right run goes first only when it is strictly less.
+fn list_sort[T: Ord](xs: List[T]) -> List[T] {
+  let n = xs.len()
+  if n < 2 {
+    return xs
+  }
+  var a = xs
+  var lo = 0
+  while lo < n {
+    let hi = if lo + 16 < n { lo + 16 } else { n }
+    var i = lo + 1
+    while i < hi {
+      let x = a[i]
+      var j = i
+      while j > lo && x < a[j - 1] {
+        a[j] = a[j - 1]
+        j -= 1
+      }
+      a[j] = x
+      i += 1
+    }
+    lo = hi
+  }
+  var b = a
+  var width = 16
+  while width < n {
+    var lo2 = 0
+    while lo2 < n {
+      var mid = lo2 + width
+      if mid > n {
+        mid = n
+      }
+      var hi = mid + width
+      if hi > n {
+        hi = n
+      }
+      var i = lo2
+      var j = mid
+      var k = lo2
+      if mid < hi && a[mid] < a[mid - 1] {
+        while i < mid && j < hi {
+          if a[j] < a[i] {
+            b[k] = a[j]
+            j += 1
+          } else {
+            b[k] = a[i]
+            i += 1
+          }
+          k += 1
+        }
+      }
+      while i < mid {
+        b[k] = a[i]
+        i += 1
+        k += 1
+      }
+      while j < hi {
+        b[k] = a[j]
+        j += 1
+        k += 1
+      }
+      lo2 = hi
+    }
+    let t = a
+    a = b
+    b = t
+    width *= 2
+  }
+  a
+}
 
 /// A stable bottom up merge sort: less(a, b) when a sorts before b.
 fn merge_sort[T](xs: List[T], less: fn(T, T) -> Bool) -> List[T] {

@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+int mismatches 0
+zeros 74 stable true
+apple apple banana cherry date elder fig fig grape honeydew kiwi lime mango nectarine orange papaya pear quince
+--- stderr

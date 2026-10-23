@@ -1,0 +1,64 @@
+// List.sort on one million pseudo random Ints, 200 000 Strs and one
+// million Floats, against Go's slices.Sort (bench/perf/sort/go).
+// Usage: sortperf ints|strs|floats. Prints "<workload> <checksum>".
+fn ints() -> Int {
+  var xs: List[Int] = List.with_capacity(1000000)
+  var seed = 42
+  for _ in 0..1000000 {
+    seed = (seed * 1103515245 + 12345) % 2147483648
+    xs.push(seed % 1000000)
+  }
+  let s = xs.sort()
+  var h = s[0] + s[s.len() / 2] * 3 + s[s.len() - 1]
+  var i = 0
+  while i < s.len() {
+    h = (h * 31 + s[i]) % 1000000007
+    i += 997
+  }
+  h
+}
+
+fn strs() -> Int {
+  var xs: List[Str] = List.with_capacity(200000)
+  var seed = 7
+  for _ in 0..200000 {
+    seed = (seed * 1103515245 + 12345) % 2147483648
+    xs.push("key${seed % 1000000}")
+  }
+  let s = xs.sort()
+  var h = s[0].len() + s[s.len() / 2].len() * 3 + s[s.len() - 1].len()
+  var i = 0
+  while i < s.len() {
+    let b = s[i].bytes()
+    h = (h * 31 + Int(b[b.len() - 1])) % 1000000007
+    i += 997
+  }
+  h
+}
+
+fn floats() -> Int {
+  var xs: List[Float] = List.with_capacity(1000000)
+  var seed = 99
+  for _ in 0..1000000 {
+    seed = (seed * 1103515245 + 12345) % 2147483648
+    xs.push(Float(seed % 1000000) / 7.0)
+  }
+  let s = xs.sort()
+  var h = Int(s[0]) + Int(s[s.len() / 2]) * 3 + Int(s[s.len() - 1])
+  var i = 0
+  while i < s.len() {
+    h = (h * 31 + Int(s[i])) % 1000000007
+    i += 997
+  }
+  h
+}
+
+fn main(os: Os) {
+  let w = os.env.args().get(0) ?? "ints"
+  match w {
+    "ints" => os.stdio.println("ints ${ints()}")
+    "strs" => os.stdio.println("strs ${strs()}")
+    "floats" => os.stdio.println("floats ${floats()}")
+    _ => os.stdio.println("unknown workload ${w}")
+  }
+}

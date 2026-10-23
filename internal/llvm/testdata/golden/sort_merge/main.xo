@@ -1,0 +1,70 @@
+// List.sort (a stable merge sort with insertion sorted runs): sizes around
+// the run length, sorted, reversed and duplicate heavy input against an
+// insertion sort, and -0.0 and 0.0 keeping their input order (std.md 2.1).
+fn reference(xs: List[Int]) -> List[Int] {
+  var out: List[Int] = []
+  for x in xs {
+    var i = out.len()
+    out.push(x)
+    while i > 0 && out[i - 1] > x {
+      out[i] = out[i - 1]
+      i -= 1
+    }
+    out[i] = x
+  }
+  out
+}
+
+fn gen(n: Int, m: Int, seed: Int) -> List[Int] {
+  var xs: List[Int] = []
+  var s = seed
+  for _ in 0..n {
+    s = (s * 1103515245 + 12345) % 2147483648
+    xs.push(s % m)
+  }
+  xs
+}
+
+fn main(os: Os) {
+  var bad = 0
+  for n in [0, 1, 2, 3, 15, 16, 17, 31, 32, 33, 47, 48, 49, 100, 255, 256, 257, 1000, 4099] {
+    for m in [2, 10, 1000000] {
+      let xs = gen(n, m, n + m)
+      if xs.sort() != reference(xs) {
+        bad += 1
+      }
+      if xs.sort().reverse().sort() != reference(xs) {
+        bad += 1
+      }
+    }
+    var asc: List[Int] = []
+    for i in 0..n {
+      asc.push(i)
+    }
+    if asc.sort() != asc || asc.reverse().sort() != asc {
+      bad += 1
+    }
+  }
+  os.stdio.println("int mismatches ${bad}")
+  var fl: List[Float] = []
+  for i in 0..100 {
+    fl.push(if i % 3 == 0 { -0.0 } else if i % 3 == 1 { 0.0 } else { Float(i % 5) - 2.0 })
+  }
+  let sorted = fl.sort()
+  // the zeros keep the order of the input among themselves
+  var in_zeros: List[Bool] = []
+  for f in fl {
+    if f == 0.0 {
+      in_zeros.push(1.0 / f < 0.0)
+    }
+  }
+  var out_zeros: List[Bool] = []
+  for f in sorted {
+    if f == 0.0 {
+      out_zeros.push(1.0 / f < 0.0)
+    }
+  }
+  os.stdio.println("zeros ${out_zeros.len()} stable ${in_zeros == out_zeros}")
+  let words = ["pear", "apple", "fig", "apple", "kiwi", "banana", "fig", "cherry", "date", "elder", "grape", "honeydew", "lime", "mango", "nectarine", "orange", "papaya", "quince"]
+  os.stdio.println(words.sort().join(" "))
+}
