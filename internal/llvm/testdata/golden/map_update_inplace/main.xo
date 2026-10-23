@@ -1,0 +1,47 @@
+// Map.update changes a value in place (decision 0169's take): 20,000
+// pushes into four lists through update make a few allocations each, not
+// a copy per push (TestMapUpdateInPlace), with value semantics kept. The
+// loop's closure captures nothing: a capturing one allocates its
+// environment at every iteration, which the test would count.
+
+fn main(os: Os) {
+  var by: Map[Int, List[Int]] = {}
+  for i in 0..20000 {
+    by.update(i % 4, [], fn(var ids) { ids.push(ids.len()) })
+  }
+  var total = 0
+  for k in 0..4 {
+    let ids = by.get(k) ?? []
+    var s = 0
+    for x in ids {
+      s += x
+    }
+    total += s
+    os.stdio.println("key ${k}: ${ids.len()} values, sum ${s}, first ${ids[0]}, last ${ids[ids.len() - 1]}")
+  }
+  os.stdio.println("total ${total}")
+
+  // a copy taken before an update keeps the old value
+  let before = by
+  by.update(0, [], fn(var ids) { ids.push(-1) })
+  os.stdio.println("before ${(before.get(0) ?? []).len()}, after ${(by.get(0) ?? []).len()}")
+
+  // a missing key starts from init
+  by.update(9, [7], fn(var ids) { ids.push(8) })
+  let nine = by.get(9) ?? []
+  os.stdio.println("new key ${nine.len()} ${nine[0]} ${nine[1]}")
+
+  // f's result is the call's
+  let n = by.update(1, [], fn(var ids) {
+    ids.push(5)
+    ids.len()
+  })
+  os.stdio.println("len ${n}")
+
+  // Str values
+  var names: Map[Str, Str] = {}
+  for w in ["a", "b", "a", "c", "a"] {
+    names.update(w, "", fn(var s) { s += "x" })
+  }
+  os.stdio.println("${names.get("a") ?? ""} ${names.get("b") ?? ""} ${names.get("c") ?? ""} ${names.len()}")
+}

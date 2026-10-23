@@ -73,3 +73,21 @@ write as the error XO0520, "mutation of `x` is never written back"
 (core 5.2), found when TestVetCopyStore's program failed to check. An
 error is stronger than a vet warning, and a second code for the same
 mistake would break the one code per meaning rule (spec 10).
+
+## Addendum (2026-10-23): update is now in place on the native backends
+
+The point of pointing copy-modify-store at `update` was that `update`
+changes the value in place. On the arm64 and LLVM backends it did not:
+compiler/ssa map_update read the value while the map still held it, so
+a push inside the closure saw a count of two and copied the list on
+every call, as copy-modify-store did. Found by the scale suite (the
+checker's flow events: 98 GB allocated for a 32,768 statement
+function). For a closure that cannot fail (its store always follows),
+map_update_take now moves the map out of its place and the value out
+of the map (`list.take` of the lists' values, decision 0169) and puts
+it back with `list.set`; a closure that can fail keeps the read and the
+store on success only, and a missing key or a log mode map (decision
+0291) keeps the lookup and put. 20,000 pushes through update: 40,003
+allocations to 86, xo bench --ab instructions 0.098, wall 0.227 (golden
+map_update_inplace, internal/llvm TestMapUpdateInPlace). Gotcha
+map-update-copied-value.

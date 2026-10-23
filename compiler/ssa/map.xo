@@ -945,6 +945,9 @@ fn (var b: Builder) map_update(x: Expr, var p: Place, args: List[Expr?]) -> Int 
   }
   let k = b.value_as(args[0] ?? fault("arg"), map_key(b.m, t))
   let init = b.value_as(args[1] ?? fault("arg"), vt)
+  if b.fail_err(b.with_err(fe)) < 0 {
+    return b.map_update_take(t, p, k, init, fv)
+  }
   // the store happens only when f succeeds: a list element on the way
   // stays where it is (decision 0169)
   p.keep = true
@@ -974,6 +977,53 @@ fn (var b: Builder) map_update(x: Expr, var p: Place, args: List[Expr?]) -> Int 
   }
   let put = b.map_put(t)
   b.place_set(p, b.call(put, t, "", [mp, k, nv]))
+  res
+}
+
+/// map_update of a closure that cannot fail, so the store always
+/// follows: the map moves out of its place, and a value of the lists'
+/// representation moves out of the map (list.take, decision 0169) for
+/// f to change in place, then back (list.set); a missing key, or one in
+/// the log representation, gets f's result put as before. Reading the
+/// value while the map held it made a push inside f copy the value every
+/// call (2026-10-23: the checker's flow events, 98 GB allocated for a
+/// 32,768 statement function).
+fn (var b: Builder) map_update_take(t: Int, var p: Place, k: Int, init: Int, fv: Int) -> Int {
+  let bt = b.bool_t()
+  let vt = map_val(b.m, t)
+  let vl = b.m.types[t].fields[1].ty
+  let fty = b.vty(fv)
+  let rt0 = b.m.types[fty].ret
+  let rest = b.m.types[rt0].elems[0]
+  let mp = b.place_get(p)
+  let idx = b.map_index(t, mp, k)
+  var found = b.add(Op.Ge, bt, Aux.None, [idx, b.cint(0)])
+  if b.m.map_log {
+    found = b.add(Op.And, bt, Aux.None, [found, b.bop(Op.Eq, b.iop(Op.And, idx, b.cint(MAPH_LOG)), b.cint(0))])
+  }
+  let join = b.new_block()
+  let res = b.s.f.add_param(join, rest)
+  let m2 = b.s.f.add_param(join, t)
+  let (yes, no) = b.branch(found)
+  b.s.cur = yes
+  let tk = b.call("list.take", b.m.tuple([vl, vt]), "", [b.mfield(t, 1, mp), idx])
+  let r = b.add(Op.CallValue, rt0, Aux.None, [fv, b.add(Op.Field, vt, Aux.I(n: 1), [tk])])
+  b.check("")
+  let vals = b.call("list.set", vl, "", [b.add(Op.Field, vl, Aux.I(n: 0), [tk]), idx, b.add(Op.Field, vt, Aux.I(n: 1), [r])])
+  b.jump(join, [b.add(Op.Field, rest, Aux.I(n: 0), [r]), b.add(Op.SetField, t, Aux.I(n: 1), [mp, vals])])
+  b.s.cur = no
+  let cur = b.local()
+  b.write_var(cur, init)
+  let (no2, join2) = b.if_then_begin(b.add(Op.Ge, bt, Aux.None, [idx, b.cint(0)]))
+  b.write_var(cur, b.map_value(t, mp, idx))
+  b.if_then_end(no2, join2)
+  let r2 = b.add(Op.CallValue, rt0, Aux.None, [fv, b.read(cur)])
+  b.check("")
+  let nv = b.add(Op.Field, vt, Aux.I(n: 1), [r2])
+  b.jump(join, [b.add(Op.Field, rest, Aux.I(n: 0), [r2]), b.call(b.map_put(t), t, "", [mp, k, nv])])
+  b.seal(join)
+  b.s.cur = join
+  b.place_set(p, m2)
   res
 }
 
