@@ -14,10 +14,16 @@
 #     peak RSS, ratio XO/GO with its interval and verdict.
 # ROUNDS (default 10) sets the --ab rounds; WORKLOADS limits the run
 # workloads (names as below). Run it through heavy.sh (HEAVY_CLASS=bulk).
+# MAX_LOAD (default 6): each build and run waits, up to WAIT_MIN minutes
+# (default 30), for a 1-minute load average under MAX_LOAD, and the report
+# gives the load each run started at (lead, 2026-10-23: the 0.26.0 report
+# ran at load 14, and its three slower rows needed a rerun to trust).
 set -euo pipefail
 XO=${1:?usage: release-vs-go.sh XO OUT}
 OUT=${2:?usage: release-vs-go.sh XO OUT}
 ROUNDS=${ROUNDS:-10}
+MAX_LOAD=${MAX_LOAD:-6}
+WAIT_MIN=${WAIT_MIN:-30}
 root=$(cd "$(dirname "$0")/.." && pwd)
 perf=$root/bench/perf
 mkdir -p "$OUT"
@@ -43,6 +49,17 @@ timed() {
 	echo "${ms:-0} $((${rss:-0} / 1048576))"
 }
 
+load1() { sysctl -n vm.loadavg | awk '{print int($2)}'; }
+# settle: waits up to WAIT_MIN minutes for a load under MAX_LOAD; prints
+# the load it starts at
+settle() {
+	local end=$(($(date +%s) + WAIT_MIN * 60))
+	while [ "$(load1)" -ge "$MAX_LOAD" ] && [ "$(date +%s)" -lt "$end" ]; do
+		sleep 15
+	done
+	load1
+}
+
 # compile SIDE NAME SRCDIR MAINFILE: cold, warm and edit builds of a copy
 # of SRCDIR; prints a table row and leaves the binary at $work/NAME.SIDE
 compile() {
@@ -60,6 +77,7 @@ compile() {
 		build=(env GOCACHE="$cache/go" GOFLAGS=-trimpath go build -o "$bin" .)
 	fi
 	local cold warm edit
+	settle >/dev/null
 	cold=$(cd "$d" && timed "$OUT/build-$side-$name-cold.log" "${build[@]}")
 	warm=$(cd "$d" && timed "$OUT/build-$side-$name-warm.log" "${build[@]}")
 	if [ "$side" = xo ]; then
@@ -114,7 +132,9 @@ done
 want() { [ -z "${WORKLOADS:-}" ] || [[ " $WORKLOADS " == *" $1 "* ]]; }
 ab() { # NAME GOBIN XOBIN ARG
 	want "$4" || return 0
-	echo "### $1 $4" >>"$report"
+	local l
+	l=$(settle)
+	echo "### $1 $4 (load $l at start)" >>"$report"
 	echo >>"$report"
 	echo '```' >>"$report"
 	"$XO" bench --ab --rounds="$ROUNDS" --metrics=wall_ms,cpu_ms,max_rss_kb "$2" "$3" -- "$4" 2>&1 | grep -v '^round ' | sed "s#$work/##g" >>"$report" || echo "(failed)" >>"$report"
