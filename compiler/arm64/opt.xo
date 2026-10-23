@@ -361,12 +361,26 @@ fn dce_keep(var insts: List[Inst], live: List[Bool]) {
   }
 }
 
+/// The most entries a memo's map passes on to the memos that inherit it.
+/// Every block's memo is kept, and a block's first new fact copies the
+/// map it shares with its dominator's, so in a long chain of blocks the
+/// maps held grew with the chain's length times its facts: 10 GB of a
+/// 65,536 statement function's build (the scale suite, 2026-10-23). A
+/// larger map is not passed on: the block starts that map empty, which
+/// only forgets facts.
+const MEMO_INHERIT_MAX = 1024
+
+/// m, or an empty map when m is past MEMO_INHERIT_MAX entries.
+fn capped[K, V](m: Map[K, V]) -> Map[K, V] {
+  if m.len() > MEMO_INHERIT_MAX { {} } else { m }
+}
+
 /// Starts the memo of the current block from memo from, of a block that
 /// dominates it.
 fn (var g: G) inherit(from: Int) {
   let src = g.memo_at(from)
-  var m = Memo{blk: g.cur, epoch: src.epoch, lo: src.lo, hi: src.hi, low_zero: src.low_zero, less: src.less, quo: src.quo, lens: src.lens, checked: src.checked, bases: src.bases, loaded: src.loaded, cs: src.cs, len_at: src.len_at}
-  for (k, v) in src.ci {
+  var m = Memo{blk: g.cur, epoch: src.epoch, lo: capped(src.lo), hi: capped(src.hi), low_zero: capped(src.low_zero), less: capped(src.less), quo: capped(src.quo), lens: capped(src.lens), checked: capped(src.checked), bases: capped(src.bases), loaded: capped(src.loaded), cs: capped(src.cs), len_at: capped(src.len_at)}
+  for (k, v) in capped(src.ci) {
     // a constant one instruction makes is not worth a register across
     // blocks (and a fresh one coalesces with a block parameter)
     if k >= -65536 && k < 65536 {
@@ -374,7 +388,7 @@ fn (var g: G) inherit(from: Int) {
     }
     m.ci[k] = v
   }
-  for (k, v) in src.cf {
+  for (k, v) in capped(src.cf) {
     if k == 0 {
       continue
     }

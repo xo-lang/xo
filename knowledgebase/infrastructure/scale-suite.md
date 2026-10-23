@@ -135,3 +135,26 @@ the driver now turns them off and drops repeated sizes). 45 minutes.
 
 Every program that built printed the expected output.
 
+### Fixes from the first sweep (2026-10-23)
+
+Measured on an idle Mac (the sweep's own times ran beside other jobs
+and were inflated up to 4x; profile before reading a sweep's times):
+
+| Cost | Fix | Result |
+| --- | --- | --- |
+| switch 65535 `adr out of range` | 98896f323: jump tables of long functions after their br | builds and runs (TestSwitch65535Arms) |
+| merge_jumps copied the head's list per merged block | 592459457 | vars 32k insert_rc 19.9 s to 0.4 s |
+| checker cand_events Map.update push | b4d83b49d | 98 GB allocated to none; check 3.2 s to 0.5 s (fnlen 32k) |
+| slp_f64 copy-modify-store of use lists | b4d83b49d | 54 GB allocated to none |
+| natural_loops per block body and dominator walks | b4d83b49d | 1.5 s to 0.2 s (fnlen 32k) |
+| Map.update copied the value it updates | a9436992c | 40,003 allocations to 86 for 20,000 updates |
+| emit memos: each block's first fact copied its dominator's maps, all kept | memo cap (MEMO_INHERIT_MAX) | fnlen 64k emit peak 10 GB to 3.3 GB, build 17.3 s to 9.2 s |
+
+Still open: vars emit grows about n^1.7 (register allocation with every
+binding live at once: 1.3 s, 4.1 s, 13.5 s at 16k, 32k, 64k; spill
+slots are found by a first fit scan over all slots). The funcs knob's
+memory (about 75 KB a function) is mostly inlining: each function calls
+the one before it in chains of 64, so the inliner copies up to 63 bodies
+into each; a knob of independent functions would measure the per
+function cost alone.
+
