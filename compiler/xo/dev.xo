@@ -99,6 +99,7 @@ fn build_each_cmd(os: Os, args: List[Str]) -> Int {
     let t0 = os.clock.now()
     var o = parse_args(os, ["build"] + flags + ["-o", out, dir])
     o.parse_cache = pc
+    o.reuse_parse = true
     let ctx = Ctx{goos: goos, std: o.std, xo: dir_name(o.std.trim_suffix("/")), cache: user_cache_dir(os, goos)}
     let backend = if o.backend.is_empty() { native_backend(o) } else { o.backend }
     let nb = build_native(os, ctx, o, backend)

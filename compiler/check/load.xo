@@ -1476,3 +1476,18 @@ struct Discard {
   /// not reported
   operands: List[Int] = []
 }
+
+/// What a native build reads of the checker once the program is lowered
+/// (decision 0352): the modules (their paths and `use c` prefixes for
+/// the link), the diagnostics, and the parse cache when keep_parse (a
+/// caller that reuses it). Every file, object and type goes, which held
+/// the build's front end alive through code generation and the link.
+pub fn (c: Checker) link_view(keep_parse: Bool) -> Checker {
+  var v = Checker{fs: c.fs, std_dir: c.std_dir}
+  v.mods = c.mods
+  v.diags = c.diags
+  if keep_parse {
+    v.parse_cache = c.parse_cache
+  }
+  v
+}

@@ -886,7 +886,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     lo = lower(os, o, c, root, tests, release, uses_time, tgoos, tgoarch, backend == "wasm", backend is "arm64" | "amd64", t)
   }
   t = lo.t
-  let b = lo.b
+  var b = lo.b
   let tu = lo.tu
   if backend == "wasm" {
     // the zone data std/time reads (as the native link embeds it)
@@ -1134,6 +1134,19 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   // target; the host's is linked
   let dir = "${bdir}/${march}"
   write_or_fail(os, dir, "", b"")
+  // decision 0352: a build for one target OS reads only the modules, the
+  // diagnostics and (xo dev's reuse) the parse cache of the checker from
+  // here on; the rest, held by c, the builder and lo, goes before
+  // inlining (a test build keeps it: test_infos and run_store read it)
+  var one_os = true
+  for tg in targets {
+    one_os = one_os && tg.split("/")[0] == tgoos
+  }
+  if one_os && !tests && (os.env.get("XO_KEEP_FRONT") ?? "") != "1" {
+    c = c.link_view(o.reuse_parse)
+    b.c = c
+    lo.b = b
+  }
   var cur = b
   var cur_tu = tu
   var cur_os = tgoos

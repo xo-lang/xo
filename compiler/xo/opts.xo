@@ -111,6 +111,10 @@ struct Opts {
   /// The std parses of an earlier build of this process (`xo dev
   /// build-each`, decision 0209); empty for a command line.
   parse_cache: Map[Str, check.ParseEntry] = {}
+  /// the caller reuses the parse cache the build returns (xo dev's
+  /// builds in one process): a native build keeps it past lowering
+  /// (decision 0352)
+  reuse_parse: Bool = false
 }
 
 /// The flags that take a value (every other known flag is a boolean).
