@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo build -o /dev/null` works again: the hidden stage of an output
+  whose directory cannot hold it (/dev) goes to the user cache, and the
+  program's bytes are written to the output.
+
 - Native runtime on Linux: an idle worker waiting out a run-next grace
   (50 us) in the poller uses epoll_pwait2 (a nanosecond timeout, Linux
   5.11) instead of epoll_wait, which rounded the wait up to 1 ms; older

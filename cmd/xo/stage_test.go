@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -122,4 +123,29 @@ func TestBuildStagedOutputs(t *testing.T) {
 		os.RemoveAll(filepath.Join(outDir, "int.dSYM"))
 	}
 	t.Log("the SIGINT never fell inside a stage in 5 tries (the link was too quick); only the no-leftover checks ran")
+}
+
+// TestBuildDevNull: `xo build -o /dev/null` builds and writes the program
+// to the device: /dev takes no stage directory, so the program is staged
+// in the user cache and its bytes written to the output (dfd47760e's
+// stages had broken the idiom: "cannot write the program to /dev/null").
+func TestBuildDevNull(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("no /dev/null")
+	}
+	dir := writeFiles(t, map[string]string{
+		"app/xo.mod":  "module app\n",
+		"app/main.xo": "fn main(os: Os) {\n  os.stdio.println(\"hi\")\n}\n",
+	})
+	for _, be := range []string{"", "--backend=go"} {
+		args := []string{"build", "-o", "/dev/null"}
+		if be != "" {
+			args = append(args, be)
+		}
+		var out, errb bytes.Buffer
+		if code := run(t, append(args, filepath.Join(dir, "app")), &out, &errb); code != 0 {
+			t.Errorf("xo build %s -o /dev/null: exit %d\n%s%s", be, code, out.String(), errb.String())
+		}
+	}
 }

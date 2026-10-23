@@ -502,6 +502,9 @@ struct Stage {
   out: Str
   /// where the build writes the output: dir/NAME
   bin: Str
+  /// staged away from out (its directory cannot hold the stage: -o
+  /// /dev/null): commit writes the program's bytes to out, no rename
+  copy: Bool = false
 }
 
 /// The stage of final output out, its directory created and announced
@@ -513,16 +516,41 @@ fn stage(os: Os, ctx: Ctx, out: Str) -> Stage {
     let _ = ch.try_send(d)
   }
   match os.fs.create_dir_all(d) {
-    Ok(_) => {}
-    Err(e) => fail(os, "cannot write the program to ${out}: ${fs_reason(e)}")
+    Ok(_) => Stage{dir: d, out: out, bin: "${d}/${base_name(out)}"}
+    Err(e) => {
+      // the output's directory takes no stage (-o /dev/null: /dev is not
+      // writable, though /dev/null is; dfd47760e's stages broke that
+      // idiom): stage in the user cache and write the program to out
+      let away = "${ctx.cache}/xo/build/.stage-${tag}-${os.rand.bytes(4).to_hex()}"
+      if !ctx.cache.is_empty() && os.fs.create_dir_all(away).is_ok() {
+        if let Some(ch) = ctx.stages {
+          let _ = ch.try_send(away)
+        }
+        return Stage{dir: away, out: out, bin: "${away}/${base_name(out)}", copy: true}
+      }
+      fail(os, "cannot write the program to ${out}: ${fs_reason(e)}")
+    }
   }
-  Stage{dir: d, out: out, bin: "${d}/${base_name(out)}"}
 }
 
 /// Moves what the build wrote in the stage into place, the debug
 /// information first and the program last, and removes the stage; ""
 /// on success, else why (and the stage is removed).
 fn (s: Stage) commit(os: Os) -> Str {
+  if s.copy {
+    // the program's bytes written to out (a device such as /dev/null, or
+    // a file in a directory that takes no stage); debug information
+    // beside it is dropped with the stage
+    let r = match os.fs.read(s.bin) {
+      Ok(data) => match os.fs.write(s.out, data) {
+        Ok(_) => ""
+        Err(e) => "cannot write the program to ${s.out}: ${fs_reason(e)}"
+      }
+      Err(e) => "cannot write the program to ${s.out}: ${fs_reason(e)}"
+    }
+    s.abandon(os)
+    return r
+  }
   let es = match os.fs.read_dir(s.dir) {
     Ok(l) => l
     Err(e) => {
