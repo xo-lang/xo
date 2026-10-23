@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+reads 133837744
+never 0
+first: index 3 out of range for List of length 3
+again: index 3 out of range for List of length 3
+in loop: index 3 out of range for List of length 3
+still 337 0
+--- stderr

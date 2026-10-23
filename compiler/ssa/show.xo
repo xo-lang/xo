@@ -713,8 +713,62 @@ fn (var b: Builder) const_value(c: Int, t: Int) -> Int {
   let fa = b.add(Op.FuncAddr, it, Aux.S(s: name), [])
   let dl = b.drop_list(t)
   let da = b.add(Op.FuncAddr, it, Aux.S(s: dl), [])
-  let l = b.rt("const_once", lt, [fa, da, b.cint(id)])
+  // one value for the number: the front end's cache renumbers it
+  // (fecache.xo fe_const_ids), the fast path's load included
+  let idv = b.cint(id)
+  let l = if b.const_fast() { b.const_read(lt, fa, da, idv) } else { b.rt("const_once", lt, [fa, da, idv]) }
   b.call("list.index", t, "", [l, b.cint(0)])
+}
+
+/// Whether a constant's read takes const_read's fast path: the native
+/// backends and LLVM on arm64 and amd64, not --race (whose readers call
+/// sanhook.acquire, consts.once) nor wasm.
+fn (b: Builder) const_fast() -> Bool {
+  !b.wasm && !b.m.race && (b.goarch is "arm64" | "amd64")
+}
+
+/// The services record's static word and its constants table's word
+/// (std/native/llrt/ctx.xo SVC and SV_CONSTS / 8), and a slot's state
+/// past which it holds a built list (consts.xo FAULTED, read ACQUIRE).
+const CONST_SVC_WORD = 16
+const CONST_TABLE_WORD = 18
+const CONST_FAULTED = 2
+const CONST_ACQUIRE = 1
+
+/// A constant's list, read inline when it is built: the services
+/// record, its constants table, the constant's slot (consts.once's fast
+/// path, without its calls: 2026-10-23, bench/perf/trimchars index read
+/// two tables a loop through cabi.const_once, consts.once and table());
+/// rt.const_once otherwise (not built yet, being built, or faulted).
+fn (var b: Builder) const_read(lt: Int, fa: Int, da: Int, idv: Int) -> Int {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let join = b.new_block()
+  let res = b.s.f.add_param(join, lt)
+  let slow = b.new_block()
+  let sw = b.rt("static_word", it, [b.cint(CONST_SVC_WORD)])
+  let w = b.rt("mem_load", it, [sw, b.cint(0), b.cint(8)])
+  let t = b.rt("slot_load", it, [w, b.cint(CONST_TABLE_WORD), b.cint(CONST_ACQUIRE)])
+  let (has, none) = b.branch(b.add(Op.Ne, bt, Aux.None, [t, b.cint(0)]))
+  b.s.cur = none
+  b.jump(slow, [])
+  b.s.cur = has
+  let s0 = b.rt("slot_load", it, [t, idv, b.cint(CONST_ACQUIRE)])
+  let (built, not) = b.branch(b.add(Op.Gt, bt, Aux.None, [s0, b.cint(CONST_FAULTED)]))
+  b.s.cur = not
+  b.jump(slow, [])
+  b.s.cur = built
+  // the same word as a list, a plain load after the acquiring one (a
+  // built slot never changes until exit)
+  let off = b.add(Op.Mul, it, Aux.None, [idv, b.cint(8)])
+  let l = b.rt("mem_load", lt, [t, off, b.cint(8)])
+  b.jump(join, [l])
+  b.seal(slow)
+  b.s.cur = slow
+  b.jump(join, [b.rt("const_once", lt, [fa, da, idv])])
+  b.seal(join)
+  b.s.cur = join
+  res
 }
 
 /// The entry function name of a constant whose initializer runs code:

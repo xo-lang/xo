@@ -1,0 +1,61 @@
+// Reads of constants built at run time (decision 0332), which the native
+// backends and LLVM read inline once built (compiler/ssa show.xo
+// const_read): many reads in a loop, a constant whose initializer faults
+// (the fault raised again at every read), and the same constant read
+// only inside a loop of no iterations and a branch not taken, which
+// must neither build it nor raise its fault.
+use std/task
+
+const WORDS: List[Str] = ["alpha", "beta", "gamma", "delta", "epsilon"]
+const SQUARES: List[Int] = make_squares(64)
+const BROKEN: List[Int] = broken()
+
+fn make_squares(n: Int) -> List[Int] {
+  var out: List[Int] = []
+  for i in 0..n {
+    out.push(i * i)
+  }
+  out
+}
+
+fn broken() -> List[Int] {
+  let xs = [1, 2, 3]
+  [xs[xs.len()]]
+}
+
+fn show(stdio: Stdio, label: Str, r: Result[Str, task.Isolated[Int]]) uses stdio {
+  match r {
+    Ok(v) => stdio.println("${label}: ok ${v}")
+    Err(task.Isolated.Faulted(info)) => stdio.println("${label}: ${info.msg}")
+    Err(task.Isolated.Failed(e)) => stdio.println("${label}: failed ${e}")
+  }
+}
+
+fn reads(n: Int) -> Int {
+  var t = 0
+  for i in 0..n {
+    t += WORDS[i % WORDS.len()].len() + SQUARES[i % SQUARES.len()]
+  }
+  t
+}
+
+fn never(n: Int, flag: Bool) -> Int {
+  var t = 0
+  for i in 0..n {
+    t += BROKEN[i]
+  }
+  if flag {
+    t += BROKEN[0]
+  }
+  t
+}
+
+fn main(os: Os) {
+  let io = os.stdio
+  io.println("reads ${reads(100000)}")
+  io.println("never ${never(0, false)}")
+  show(io, "first", task.isolate(fn() -> Str ! Int { "${BROKEN[0]}" }))
+  show(io, "again", task.isolate(fn() -> Str ! Int { "${BROKEN.len()}" }))
+  show(io, "in loop", task.isolate(fn() -> Str ! Int { "${never(1, false)}" }))
+  io.println("still ${reads(10)} ${never(0, false)}")
+}

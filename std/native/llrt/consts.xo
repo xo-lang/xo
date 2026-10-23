@@ -33,6 +33,7 @@ const ACQ_REL = 3
 /// A slot's states below a built list's address.
 const EMPTY = 0
 const RUNNING = 1
+// compiler/ssa show.xo const_read tests a slot past it inline
 const FAULTED = 2
 
 /// The table's parts, in words: the slots, the drop functions, the

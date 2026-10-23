@@ -62,6 +62,7 @@ pub const C_SIZE = layout.C_SIZE
 
 /// rt.static_word: the address of the services record (SV_*), made by
 /// init.
+// also compiler/ssa show.xo CONST_SVC_WORD
 const SVC = 16
 /// rt.static_word: the program's task group (`os.tasks`, a reference to
 /// a scope, or 0), tasks.xo's.
@@ -91,6 +92,7 @@ pub const SV_WORKER_MAIN = 96
 pub const SV_H2_POOL = 104
 /// obj.xo's table of the collection constants (consts.xo; 0 until the
 /// first).
+// compiler/ssa show.xo CONST_TABLE_WORD (144 / 8)
 pub const SV_CONSTS = 144
 /// The table of streamed responses (hserve.xo ST_*: a lock word, the
 /// array, the count).

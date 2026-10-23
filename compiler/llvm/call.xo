@@ -1270,7 +1270,10 @@ fn (var g: Gen) inline_raw(v: Int) -> Bool {
         _ => 8
       }
       let p = g.raw_at(x.args[0], x.args[1])
-      if w == 8 {
+      if w == 8 && g.kind(x.ty) is ssa.Kind.List | ssa.Kind.Handle {
+        // a word read as a list (ssa show.xo const_read)
+        g.set(v, "load ptr, ptr ${p}, align 8")
+      } else if w == 8 {
         g.set(v, "load i64, ptr ${p}, align 1")
       } else {
         let it = "i${8 * w}"
