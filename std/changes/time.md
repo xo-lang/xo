@@ -1,5 +1,20 @@
 # std/time changes
 
+## 2026-10-23: perf: the monotonic clock on macOS is CLOCK_UPTIME_RAW, as Go's nanotime
+
+- Kind: perf
+- Commit: this commit
+- Found by: macOS `sample` of bench/perf/conc rwmutex (clock reads were most of the running samples), Xo Lang 3
+- Go reference: runtime nanotime on darwin (mach_absolute_time)
+- Test: xo bench --ab (bench/results/mono-clock-2026-10-23.md)
+
+On macOS `mono_ns` (the scheduler's stamps, timers, budgets, and the monotonic
+reading of `Time`) read CLOCK_MONOTONIC, which goes through gettimeofday and
+costs several times a CLOCK_UPTIME_RAW read (one commpage read). It now reads
+CLOCK_UPTIME_RAW, as Go does. Behavior change: the clock stops while the Mac
+sleeps, so a duration measured across a system sleep no longer includes it
+(spec/std.md makes no promise either way; Linux and Windows are unchanged).
+
 ## 2026-10-22: fix: Earlier and Later in a daylight saving gap were swapped
 
 - Kind: fix

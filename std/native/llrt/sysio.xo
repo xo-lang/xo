@@ -193,7 +193,7 @@ pub fn real_ns() -> Int {
 
 /// The monotonic clock in nanoseconds (the time of the scheduler, the
 /// timers, and the budgets; the C runtime's mono_ns through cabi.xo):
-/// CLOCK_MONOTONIC on Linux and macOS, QueryPerformanceCounter on
+/// CLOCK_MONOTONIC on Linux, CLOCK_UPTIME_RAW on macOS, QueryPerformanceCounter on
 /// Windows.
 pub fn mono_ns() -> Int {
   let f = rt.slot_load[Int](rt.sys_words(), 0, 0)
@@ -208,7 +208,7 @@ pub fn mono_ns() -> Int {
     return rt.mem_load(a, 0, 8).wrapping_mul(1000000000).wrapping_add(rt.mem_load(a, 8, 8))
   }
   if f == CLOCK_LIBSYSTEM {
-    return sys_darwin.clock_gettime_nsec_np(darwin.CLOCK_MONOTONIC)
+    return sys_darwin.clock_gettime_nsec_np(darwin.CLOCK_UPTIME_RAW)
   }
   clock_read(false, rt.tlocal_addr().wrapping_add(TLS_CLOCK_AT))
 }
@@ -225,7 +225,7 @@ fn clock_read(real: Bool, a: Int) -> Int {
   // the word says which; the target tests keep the other OSes' clocks
   // out of the build (decision 0246)
   if target.os == TargetOs.Darwin && f == CLOCK_LIBSYSTEM {
-    return sys_darwin.clock_gettime_nsec_np(if real { darwin.CLOCK_REALTIME } else { darwin.CLOCK_MONOTONIC })
+    return sys_darwin.clock_gettime_nsec_np(if real { darwin.CLOCK_REALTIME } else { darwin.CLOCK_UPTIME_RAW })
   }
   if target.os == TargetOs.Windows && f == CLOCK_KERNEL32 {
     return if real { windows.clock_ns(a) } else { windows.mono_ns(a) }

@@ -32,6 +32,10 @@ pub const O_CLOEXEC: Int = 16777216
 
 pub const CLOCK_REALTIME: Int = 0
 pub const CLOCK_MONOTONIC: Int = 6
+/// CLOCK_UPTIME_RAW: mach_absolute_time scaled, a read of the commpage
+/// (CLOCK_MONOTONIC goes through gettimeofday and costs several times as
+/// much); it stops while the Mac sleeps, as Go's nanotime does.
+pub const CLOCK_UPTIME_RAW: Int = 8
 
 /// The calling thread's errno.
 fn errno() -> Int { rt.mem_load(sys_darwin.__error(), 0, 4) }
