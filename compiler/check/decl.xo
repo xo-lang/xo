@@ -635,6 +635,17 @@ fn (var c: Checker) resolve_sig(fo: Int, env0: TypeEnv, iface: Bool) {
     c.objs[fo].result = c.resolve_type(t, renv)
   }
   c.objs[fo].err = c.resolve_err_spec(fd.err, renv)
+  if fd.bad_sig {
+    // the parser reported its parameter list; no other error from it:
+    // its parameters and result take anything (bad_ty)
+    c.objs[fo].result = c.bad_ty
+    c.objs[fo].err = -1
+    var ps = c.objs[fo].params
+    for i in 0..ps.len() {
+      ps[i].ty = c.bad_ty
+    }
+    c.objs[fo].params = ps
+  }
   var use_list: List[parser.Effect] = []
   var has_uses = false
   for cl in fd.clauses {

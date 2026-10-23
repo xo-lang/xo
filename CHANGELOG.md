@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- A parse error in a parameter list (`r: Int ! E`) no longer cascades:
+  the function's parameters and result take any type, so its body and
+  its callers report nothing more.
+- `xo fix` removes a `?` after an expression that cannot fail (XO0401);
+  the XO0601 fix left it.
+- `--targets` no longer says "the wasm backend: the wasm backend".
+- `scripts/release-verify.sh` accepts Windows ThreadSanitizer's
+  "WARNING: DATA RACE"; decision 0273 notes that Windows `--race` works.
+
 - `xo check` checks by the native backends' rules by default, as a build
   does (owner, 2026-10-23): `use c` passes, and `--backend=go` checks by
   the Go backend's. The native support check (XO1201) is `--support`

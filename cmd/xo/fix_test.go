@@ -117,3 +117,27 @@ func TestWorkEdition(t *testing.T) {
 		t.Errorf("xo 2027: check codes %q:\n%s", got, r.out)
 	}
 }
+
+// TestFixDropsQuestionMark: `xo fix` on `os.stdio.print_line("x")?`
+// renames the method (XO0601) and then removes the `?` the new call no
+// longer needs (XO0401's fix), so the file checks clean; before, the
+// rename left `println("x")?`, an XO0401 error (field report 0.26.0).
+func TestFixDropsQuestionMark(t *testing.T) {
+	t.Parallel()
+	src := "fn run(os: Os) -> () ! Error uses stdio {\n  os.stdio.print_line(\"x\")?\n  Ok(())\n}\n\nfn main(os: Os) {\n  run(os) ?? _e => ()\n}\n"
+	dir := writeFiles(t, map[string]string{"m/main.xo": src})
+	mod := filepath.Join(dir, "m")
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"fix", mod}, &out, &errOut); code != 0 {
+		t.Fatalf("fix: exit %d: %s%s", code, out.String(), errOut.String())
+	}
+	b, _ := os.ReadFile(filepath.Join(mod, "main.xo"))
+	if !strings.Contains(string(b), "os.stdio.println(\"x\")\n") {
+		t.Fatalf("fixed file:\n%s", b)
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := run(t, []string{"check", mod}, &out, &errOut); code != 0 {
+		t.Fatalf("check after fix: exit %d: %s%s\n%s", code, out.String(), errOut.String(), b)
+	}
+}

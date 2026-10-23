@@ -721,7 +721,14 @@ fn (var c: Checker) try_expr(span: Span, x: Expr) -> Int {
     c.error("XO0405", parser.expr_span(x), "the type of this value must be known before `?`")
     return c.bad_ty
   }
-  c.error("XO0401", span, "`?` needs a Result or an optional value, found `${c.show(t)}`")
+  let d = c.error("XO0401", span, "`?` needs a Result or an optional value, found `${c.show(t)}`")
+  if d >= 0 && !c.is_bad(t) {
+    // the value cannot fail, so the `?` goes (a machine fix: xo fix's
+    // earlier rename of a failable method to one that cannot fail, such as
+    // print_line to println, left it; field report 0.26.0)
+    let xs = parser.expr_span(x)
+    c.fix(d, "remove the `?`: `${c.show(t)}` cannot fail", [c.replace_edit(Span{start: xs.end, end: span.end}, "")])
+  }
   c.bad_ty
 }
 

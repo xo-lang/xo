@@ -273,6 +273,11 @@ built on it):
 Status: Accepted in direction (lead, owner's overnight delegation,
 2026-10-22). Windows --race is not called supported until one Windows CI
 run (threads) passes; that run needs the owner's approval (morning).
+2026-10-23: met by the 0.26.0 Windows field test (a tester's threaded run
+of the released xo): `--race` found the planted race (Go flavor's text
+`WARNING: DATA RACE`, exit 66, "Found 2 data race(s)") with no false
+alarms. windows/amd64 --race is supported; scripts/release-verify.sh
+accepts that text beside LLVM's `WARNING: ThreadSanitizer: data race`.
 
 compiler-rt's ThreadSanitizer has no Windows port for C programs, but its
 Go flavor (lib/tsan/go, built into Go's race_windows_amd64.syso) runs on

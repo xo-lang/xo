@@ -203,7 +203,10 @@ done
     # the checkout's own modules may use
     elif (cd "$root" && PATH=$noclang "$xo" build --race -o "$out/race/race" internal/llvm/testdata/tsan_race) > "$out/race-build.txt" 2>&1; then
       XO_THREADS=1 "$out/race/race" > "$out/race-run.txt" 2>&1
-      if grep -q "WARNING: ThreadSanitizer: data race" "$out/race-run.txt" && grep -q "main.xo:[0-9]" "$out/race-run.txt"; then
+      # windows/amd64's runtime is Go's flavor of TSan: "WARNING: DATA
+      # RACE" (exit 66, "Found N data race(s)"), not LLVM's text (Windows
+      # field report 0.26.0, W7)
+      if grep -q -e "WARNING: ThreadSanitizer: data race" -e "WARNING: DATA RACE" "$out/race-run.txt" && grep -q "main.xo:[0-9]" "$out/race-run.txt"; then
         pass race-no-clang
       else fail race-no-clang; head -12 "$out/race-run.txt" | sed 's/^/  /'; fi
     else fail race-no-clang-build; tail -5 "$out/race-build.txt" | sed 's/^/  /'; fi

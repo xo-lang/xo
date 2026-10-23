@@ -857,6 +857,7 @@ fn (var p: Parser) parse_fn_decl(doc: Doc?, is_pub: Bool, start: Pos, in_interfa
     fn_decl.type_params = p.parse_type_params()
   }
   fn_decl.params = p.parse_params(false, in_interface || p.in_impl)
+  fn_decl.bad_sig = p.bad
   var throws_tok: List[Token] = []
   if !p.bad && p.at_ident(b"throws") {
     throws_tok.push(p.tok)
@@ -869,10 +870,10 @@ fn (var p: Parser) parse_fn_decl(doc: Doc?, is_pub: Bool, start: Pos, in_interfa
     // A result type on the next line continues the declaration.
     p.skip_newlines()
   }
-  if fn_decl.result.is_none() && p.got(Kind.Arrow) {
+  if !fn_decl.bad_sig && fn_decl.result.is_none() && p.got(Kind.Arrow) {
     fn_decl.result = Some(p.parse_type_top())
   }
-  if p.at(Kind.Bang) {
+  if !fn_decl.bad_sig && p.at(Kind.Bang) {
     fn_decl.err = Some(p.parse_err_spec())
   }
   for t in throws_tok {

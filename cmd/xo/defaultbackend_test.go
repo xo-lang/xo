@@ -196,8 +196,8 @@ func TestTargetsAllSkipsUnsupported(t *testing.T) {
 	if code := run(t, []string{"build", "--targets=wasip1/wasm", "-o", filepath.Join(dir, "outw"), "."}, &stdout, &stderr); code == 0 {
 		t.Errorf("xo build --targets=wasip1/wasm: exit 0, want a failure\n%s", stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "does not support the network") {
-		t.Errorf("--targets=wasip1/wasm: the error does not name the network:\n%s", stderr.String())
+	if !strings.Contains(stderr.String(), "does not support the network") || strings.Contains(stderr.String(), "the wasm backend: the wasm backend") {
+		t.Errorf("--targets=wasip1/wasm: the error does not name the network once:\n%s", stderr.String())
 	}
 }
 

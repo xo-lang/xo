@@ -30,7 +30,9 @@ fn build_wasm(os: Os, ctx: Ctx, m: ssa.Module, out0: Str, wd: Str, dir: Str, tz:
     if skip {
       return p.err
     }
-    fail(os, "the wasm backend: ${p.err}")
+    // the generator's own messages name the backend already ("the wasm
+    // backend does not support ..."): no second prefix
+    fail(os, if p.err.starts_with("the wasm backend") { p.err } else { "the wasm backend: ${p.err}" })
   }
   var out = out0
   if out.is_empty() {
