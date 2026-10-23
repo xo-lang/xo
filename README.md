@@ -7,9 +7,9 @@ programs with fast, structured feedback. It keeps what makes Go productive
 standard library, a compatibility promise) and moves the bugs tests usually
 miss into the compiler.
 
-Status: experimental, toolchain 0.19.0. The compiler and the `xo`
-toolchain are written in Xo and compile to native code (arm64, LLVM),
-Go, and WebAssembly. Xo stays on 0.x and expect breaking changes until
+Status: experimental, toolchain 0.26.0. The compiler and the `xo`
+toolchain are written in Xo and compile to native code (arm64, amd64,
+LLVM), Go, and WebAssembly. Xo stays on 0.x and expect breaking changes until
 1.0.
 
 Xo is built almost entirely by AI agents working under one maintainer,
@@ -79,12 +79,30 @@ fn main(os: Os) ! {
 | Flaky concurrency tests | Deterministic scheduler; `xo test --explore=N` searches interleavings |
 | Hard to reproduce failures | Contract fuzzing writes regression tests; `xo run --record` and `xo replay` |
 
+## Install
+
+The [latest release](https://github.com/xo-lang/xo/releases/latest) has
+archives for macOS (Apple silicon and Intel, signed and notarized), Linux
+(arm64 and x86-64) and Windows (x86-64, Authenticode signed), with a
+`SHA256SUMS` file. Check the archive against it, unpack it, and put its
+`bin` directory on your `PATH`; `bin/xo` finds the standard library at
+`../lib/xo`, so keep the directory together. The steps for each platform
+are in [Getting started](https://xolang.dev/docs/getting-started/#install)
+on [xolang.dev](https://xolang.dev), which also has the language tour,
+the specification and the release notes.
+
 ## Building from source
 
 The compiler is written in Xo, so an existing `xo` builds the next one
 (decision 0215 removed the Go implementation; decision 0216: release N is
-built by release N-1). There are no public releases or prebuilt seeds
-yet, so the first build starts from Go:
+built by release N-1). An installed release usually builds this
+checkout; one older than the checkout's minor version may not:
+
+```
+XO_SEED=/path/to/xo go run ./scripts/xobuild   # prints the path of bin/xo
+```
+
+With no `xo` at all, the first build starts from Go:
 
 ```
 go run ./scripts/xobuild --from-source   # Go 1.26 or later; prints the path of bin/xo
@@ -109,8 +127,9 @@ scripts/bootstrap-xo.sh                         # the self rebuild fixed point
 
 The default backend is native (decisions 0248 and 0270): arm64 on arm64
 hosts (Apple Silicon, arm64 Linux) and amd64 on x86-64 hosts (macOS,
-Linux, Windows), with Xo's own assemblers and linkers; `--backend=llvm`
-(clang needed) is the choice for `--race`. `--backend=go`
+Linux, Windows), with Xo's own assemblers and linkers; `--race` stays native where a
+ThreadSanitizer runtime ships with the release (darwin, linux, and
+windows/amd64) and uses `--backend=llvm` (clang needed) elsewhere. `--backend=go`
 builds through the Go toolchain, which `use go` bindings need, and
 `--backend=wasm` builds a WASI preview1 module. `xo build --targets=all`
 cross compiles natively for linux and darwin (amd64 and arm64),
@@ -156,8 +175,11 @@ lost updates), 30 per language: Xo prevented or caught 23 to 29, against
 ([planted-xo-2026-10-07.md](bench/results/planted-xo-2026-10-07.md));
 with Codex, a second model family, as the author, 22 to 27 against 17
 for strict Go and 12 for plain Go
-([codex-2026-10-09.md](bench/results/codex-2026-10-09.md)). Performance
-and code size results for each backend are indexed in
+([codex-2026-10-09.md](bench/results/codex-2026-10-09.md)). Against Go on the
+same machine, the 0.26.0 release ran 14 of 20 benchmark workloads faster
+and all 20 in less peak memory, with smaller binaries
+([release-vs-go-v0.26.0.md](bench/results/release-vs-go-v0.26.0.md)).
+Performance and code size results for each backend are indexed in
 [bench/results/README.md](bench/results/README.md).
 
 ## Development
