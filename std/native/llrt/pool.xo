@@ -2383,6 +2383,10 @@ pub fn park_wait(pl: Int, c: Int, cancelable0: Int, counted: Int, f: Int, rw: In
   }
   let node = rt.mem_load(c, C_NODE, 8)
   let p = c.wrapping_add(C_PARK)
+  if f != 0 && !(counted != 0 && rt.mem_load(f, F_TASK, 8) == MAIN_TASK) {
+    park_wait_fiber(pl, c, cancelable, counted, f, node)
+    return
+  }
   if cancelable != 0 {
     node_set_waiter(node, p)
   }
@@ -2471,6 +2475,81 @@ pub fn park_wait(pl: Int, c: Int, cancelable0: Int, counted: Int, f: Int, rw: In
   if cancelable != 0 {
     node_set_waiter(node, 0)
   }
+}
+
+/// park_wait of a task on a fiber that is not main's counted wait (the
+/// common park: a channel, a mutex, a join). The same steps as the loop
+/// in park_wait, with the worker record looked up once for the locks
+/// before the park and once after it (the fiber may resume on another
+/// thread): a thread local lookup is a call on macOS, and the park made
+/// six, one for each lock and unlock of the node's lock and the park's.
+/// W_LOCKS counts each lock as held() does (a signal's preemption poll
+/// reads it).
+fn park_wait_fiber(pl: Int, c: Int, cancelable: Int, counted: Int, f: Int, node: Int) {
+  let p = c.wrapping_add(C_PARK)
+  var w = rt.tlocal_get(TLS_W)
+  if cancelable != 0 {
+    node_waiter_w(w, node, p)
+  }
+  let dlk = rt.mem_load(pl, P_DLK, 8)
+  if counted == 0 {
+    rt.slot_add(dlk, DLK_UNCOUNTED, 1, SEQ_CST)
+  }
+  klock_w(w, p)
+  while rt.slot_load(p, PK_SIGNALED, ACQUIRE) == 0 && !(cancelable != 0 && node_canceled(node)) {
+    rt.mem_store(p, PK_FIBER, f, 8)
+    sched.fiber_parking(f)
+    unlock_w(w, p)
+    sched.fiber_park(f)
+    w = rt.tlocal_get(TLS_W)
+    klock_w(w, p)
+    rt.mem_store(p, PK_FIBER, 0, 8)
+  }
+  rt.slot_store(p, PK_SIGNALED, 0, RELAXED)
+  unlock_w(w, p)
+  if counted == 0 {
+    rt.slot_add(dlk, DLK_UNCOUNTED, -1, SEQ_CST)
+  }
+  if cancelable != 0 {
+    node_waiter_w(w, node, 0)
+  }
+}
+
+/// klock with the worker record w in hand.
+fn klock_w(w: Int, k: Int) {
+  if w != 0 && rt.mem_load(w, W_POOLHELD, 8) != 0 {
+    let _r = rt.call_c2(rt.fn_addr("lock_order"), 0, 0)
+  }
+  if !rt.slot_cas(k, 0, 0, 1, ACQUIRE) {
+    stat(ST_LOCK_PARK)
+    lock_slow(k)
+  }
+  if w != 0 {
+    rt.mem_store(w, W_LOCKS, rt.mem_load(w, W_LOCKS, 8).wrapping_add(1), 8)
+  }
+}
+
+/// unlock with the worker record w in hand.
+fn unlock_w(w: Int, l: Int) {
+  if w != 0 {
+    rt.mem_store(w, W_LOCKS, rt.mem_load(w, W_LOCKS, 8).wrapping_sub(1), 8)
+  }
+  if rt.slot_swap(l, 0, 0, RELEASE) == 2 {
+    futex_wake(l)
+  }
+}
+
+/// node_set_waiter with the worker record w in hand.
+fn node_waiter_w(w: Int, n: Int, p: Int) {
+  let m = n.wrapping_add(N_MU)
+  if !rt.slot_cas(m, 0, 0, 1, ACQUIRE) {
+    lock_slow(m)
+  }
+  if w != 0 {
+    rt.mem_store(w, W_LOCKS, rt.mem_load(w, W_LOCKS, 8).wrapping_add(1), 8)
+  }
+  rt.mem_store(n, N_WAITER, p, 8)
+  unlock_w(w, m)
 }
 
 /// Whether root record rw, parked with a task that runs on its own stack
