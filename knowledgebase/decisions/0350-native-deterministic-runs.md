@@ -1,6 +1,8 @@
 # 0350: Deterministic runs in the native runtime
 
-Status: Proposed (Xo Lang 2 for the lead, 2026-10-22; the owner decides).
+Status: Accepted (owner, 2026-10-22). Stages 1 and 2 follow the release;
+stage 3 (det by default for native `xo test`) returns to the owner with
+`xo bench --ab` numbers.
 
 ## Context
 
