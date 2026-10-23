@@ -820,3 +820,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [ssa-line-zero-before-statements.md](ssa-line-zero-before-statements.md): Observed 2026-10-23, fixed: contract checks lowered outside a statement had line 0, so a failed requires' traceback named an inlined string helper and FILE:0
 - [windows-host-paths.md](windows-host-paths.md): Observed 2026-10-23, fixed: the CLI assumed a / root, /tmp and no .exe, so xo init hung at C:/, fuzz regressions and cached test binaries were lost, and C:/ paths were relative.
 - [x86-frameless-stack-params.md](x86-frameless-stack-params.md): amd64 blocks laid out without the frame (shrink wrapping) read stack-passed parameters 8 bytes off at the framed offset; x86_in_arg_here (Observed, fixed 2026-10-23)
+- [darwin-cc-link-oso-mtime.md](darwin-cc-link-oso-mtime.md): darwin cc links differed per build (OSO mtimes in the UUID and signature); ZERO_AR_DATE=1 makes them reproducible (Observed 2026-10-23)

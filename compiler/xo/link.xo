@@ -234,7 +234,12 @@ fn try_link(os: Os, ctx: Ctx, cc: Str, flags: List[Str], libs: List[Str], srcs: 
   if link_os(ctx) == "darwin" {
     args = args + weak_undefined_args(os, srcs)
   }
-  match os.proc.run(cc, args) {
+  // darwin: ld64 writes each object's modification time into the debug
+  // map's OSO entries, which the UUID and the code signature hash, so two
+  // links of the same objects differed; ZERO_AR_DATE=1 writes 0 instead
+  // (reproducible builds; dsymutil skips the time check for 0)
+  let c = if link_os(ctx) == "darwin" { os.proc.cmd(cc, args).set_env("ZERO_AR_DATE", "1") } else { os.proc.cmd(cc, args) }
+  match c.output() {
     Ok(r) => ((r.stdout.to_str() ?? "") + (r.stderr.to_str() ?? ""), r.code == 0)
     Err(e) => ("${cc}: ${e}", false)
   }
