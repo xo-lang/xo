@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+3001 -6813739 4 -2999999 -6000000 1004
+overflow first: integer overflow: 9223372036854775807 + 1 does not fit Int
+overflow later: integer overflow: 9223372036854775807 + 1 does not fit Int
+second op: integer overflow: 5000000000000000000 * 2 does not fit Int
+--- stderr

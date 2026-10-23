@@ -299,6 +299,8 @@ struct G {
   /// the run's other pushes, which make no list
   push_run: Map[Int, List[Int]] = {}
   push_skip: Map[Int, Bool] = {}
+  /// skipped pushes a landing pad releases (pushrun.xo)
+  push_alias: Map[Int, Bool] = {}
   /// the last user of each value, -1 for none
   users: List[Int] = []
   /// the register of a List block parameter to the register of its

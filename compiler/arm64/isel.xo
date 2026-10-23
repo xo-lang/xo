@@ -672,6 +672,7 @@ fn (var g: G) isel() {
   } else {
     g.push_run = {}
     g.push_skip = {}
+    g.push_alias = {}
   }
   // a block's place in the order: a predecessor at or past it is a back
   // edge (a loop header's Float32 parameters stay single, decision 0361)
