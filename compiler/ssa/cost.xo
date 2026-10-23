@@ -645,10 +645,11 @@ fn view_call(name: Str) -> Bool {
   name is "rt.str_view" | "prelude.str_trim" | "prelude.str_trim_start" | "prelude.str_trim_end" | "prelude.str_trim_prefix" | "prelude.str_trim_suffix"
 }
 
-/// The value a Field or Rebind chain starts from.
+/// The value a Field, Rebind, or Payload chain starts from (a Payload: an
+/// Option's view unwrapped with ??, 2026-10-23).
 fn below_rebinds(f: Func, x0: Int) -> Int {
   var x = x0
-  while x >= 0 && x < f.values.len() && f.values[x].op is Op.Field | Op.Rebind && !f.values[x].args.is_empty() {
+  while x >= 0 && x < f.values.len() && f.values[x].op is Op.Field | Op.Rebind | Op.Payload && !f.values[x].args.is_empty() {
     x = f.values[x].args[0]
   }
   x
@@ -710,6 +711,11 @@ fn view_stored(f: Func, x0: Int, users: List[List[Int]]) -> Bool {
         work.push((u, true))
       } else if w.op is Op.Tuple | Op.Rebind {
         work.push((u, agg))
+      } else if w.op == Op.Payload {
+        // an Option or a Result unwrapped (`view ?? ""`, a view_call's
+        // Option): the view itself again, not inside an aggregate (a
+        // payload of a nested aggregate is missed, never noted wrongly)
+        work.push((u, false))
       } else if w.op == Op.Return {
         if agg {
           return true

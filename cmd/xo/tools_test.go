@@ -2045,3 +2045,67 @@ func TestVetCostViewStore(t *testing.T) {
 		t.Errorf("XO0911 at lines %v, want [11]\n%s", lines, out.String())
 	}
 }
+
+// vetCostViewOptionProg: a slice of a parameter's text wrapped in an
+// Option and unwrapped with ?? before it is stored in a returned list
+// (XO0911, line 9: the analysis follows the Option's payload, the shape of
+// `line.cut_prefix("x") ?? ""`); the same unwrapped view returned alone is
+// not noted.
+const vetCostViewOptionProg = `
+struct Tok {
+  name: Str
+}
+
+fn parse(text: Str) -> List[Tok] {
+  var out: List[Tok] = []
+  for line in text.lines() {
+    let o: Str? = if line.len() > 2 { Some(line[1..]) } else { None }
+    out.push(Tok{name: o ?? ""})
+  }
+  out
+}
+
+fn first(text: Str) -> Str {
+  for line in text.lines() {
+    let o: Str? = if line.len() > 2 { Some(line[1..]) } else { None }
+    return o ?? ""
+  }
+  ""
+}
+
+fn main(os: Os) {
+  os.stdio.println("${parse("ab\ncd").len()} ${first("abc")}")
+}
+`
+
+// TestVetCostViewStoreOption: XO0911 follows a view through an Option
+// unwrapped with ?? into a returned collection (lead request 2026-10-23,
+// found by xo-deepseek-1 with cut_prefix).
+func TestVetCostViewStoreOption(t *testing.T) {
+	t.Parallel()
+	dir := writeFiles(t, map[string]string{"main.xo": vetCostViewOptionProg})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"vet", "--json", "--cost", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	var res struct {
+		Diagnostics []struct {
+			Code string `json:"code"`
+			Span struct {
+				Line int `json:"line"`
+			} `json:"span"`
+		} `json:"diagnostics"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &res); err != nil {
+		t.Fatalf("bad JSON: %v\n%s", err, out.String())
+	}
+	var lines []int
+	for _, d := range res.Diagnostics {
+		if d.Code == "XO0911" {
+			lines = append(lines, d.Span.Line)
+		}
+	}
+	if len(lines) != 1 || lines[0] != 9 {
+		t.Errorf("XO0911 at lines %v, want [9]\n%s", lines, out.String())
+	}
+}
