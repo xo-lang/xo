@@ -166,6 +166,21 @@ fn listing_of(os: Os, dir: Str) -> Str {
   }
 }
 
+/// The SHA-256 of every path under dir (a slash after a directory's),
+/// sorted; "none" when it cannot be walked.
+fn walk_of(os: Os, dir: Str) -> Str {
+  match os.fs.walk(dir) {
+    Ok(all) => {
+      var names: List[Str] = []
+      for fi in all {
+        names.push(if fi.is_dir { "${fi.path}/" } else { fi.path })
+      }
+      crypto.sha256(names.sort().join("\n").bytes()).to_hex()
+    }
+    Err(_) => "none"
+  }
+}
+
 /// The stored run of key when every input it lists is unchanged.
 fn run_fetch(os: Os, ctx: Ctx, key: Str) -> RunHit? {
   if key.is_empty() {
@@ -202,6 +217,18 @@ fn run_fetch(os: Os, ctx: Ctx, key: Str) -> RunHit? {
       }
     } else if f[0] == "dir" && f.len() == 3 {
       if listing_of(os, unhex_field(f[2])) != f[1] {
+        return None
+      }
+    } else if f[0] == "walk" && f.len() == 3 {
+      if walk_of(os, unhex_field(f[2])) != f[1] {
+        return None
+      }
+    } else if f[0] == "probe" && f.len() == 3 {
+      if probe_again(os, unhex_field(f[2])) != unhex_field(f[1]) {
+        return None
+      }
+    } else if f[0] == "env" && f.len() == 3 {
+      if env_again(os, unhex_field(f[2])) != unhex_field(f[1]) {
         return None
       }
     } else if f[0] == "output" && f.len() == 2 {
@@ -304,9 +331,57 @@ fn run_store(os: Os, ctx: Ctx, key: Str, c: check.Checker, std: Str, wd: Str, bi
   if key.is_empty() || bin.is_empty() {
     return
   }
-  let (files, dirs) = match run_inputs(os, c, std, wd) {
-    Some(x) => x
-    None => return
+  // the recorded reads (recorder.xo), else the whole std tree and every
+  // module directory
+  var files: List[Str] = []
+  var dirs: List[Str] = []
+  var walks: List[Str] = []
+  var extra: List[Str] = []
+  // a build's own outputs and what it wrote are not its inputs: a
+  // probe of the output before it existed would miss every next build
+  var made: Map[Str, Bool] = {}
+  for (_, o) in ro.outs {
+    made[abs_path(wd, o)] = true
+  }
+  match ctx.rec {
+    Some(m) => {
+      let rec = m.with(fn(r) { r })
+      for (p, _) in rec.written {
+        made[p] = true
+      }
+      let own = fn(p: Str) -> Bool { made.contains(p) }
+      files = rec.reads.keys().sort().filter(fn(p) { !own(p) })
+      for p in rec.lists.keys().sort() {
+        if own(p) {
+          continue
+        }
+        if (rec.lists.get(p) ?? "") == "walk" {
+          walks.push(p)
+        } else {
+          dirs.push(p)
+        }
+      }
+      for k in rec.probes.keys().sort() {
+        // "KIND PATH": a probe of the build's own output is left out
+        let kind = k.split(" ")[0]
+        if kind.len() < k.len() && own(k[kind.len() + 1..]) {
+          continue
+        }
+        extra.push("probe ${hex_field(rec.probes.get(k) ?? "")} ${hex_field(k)}\n")
+      }
+      for n in rec.env.keys().sort() {
+        extra.push("env ${hex_field(rec.env.get(n) ?? "")} ${hex_field(n)}\n")
+      }
+    }
+    None => {
+      match run_inputs(os, c, std, wd) {
+        Some((fs, ds)) => {
+          files = fs
+          dirs = ds
+        }
+        None => return
+      }
+    }
   }
   var b = StrBuilder.new()
   b.write("xo-testrun-v1\n")
@@ -332,6 +407,12 @@ fn run_store(os: Os, ctx: Ctx, key: Str, c: check.Checker, std: Str, wd: Str, bi
   }
   for d in dirs {
     b.write("dir ${listing_of(os, d)} ${hex_field(d)}\n")
+  }
+  for d in walks {
+    b.write("walk ${walk_of(os, d)} ${hex_field(d)}\n")
+  }
+  for l in extra {
+    b.write(l)
   }
   if !ro.output.is_empty() {
     b.write("output ${hex_field(ro.output)}\n")

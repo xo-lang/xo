@@ -3080,6 +3080,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO1509` | error | checker | `embed` used other than as the initializer of a constant typed `Str`, `Bytes`, or `embed.Dir`, with one plain string literal (decision 0304) |
 | `XO1510` | error | build | a function the native backends are about to generate disagrees with this build's definitions: a call's argument or result types, a closure, or a field or payload access do not match the callee or type (decision 0342: a stale cached piece, such as a front end body naming a helper this build defines otherwise); rebuild with `XO_BACKEND_CACHE=off` and report it |
 | `XO1511` | warning | checker | `read`, `read_text`, or `contains` on an `embed.Dir` constant, or a literal `.sub` of one, with a literal path it holds no file at; a key ending in the path is offered as a fix (decision 0304) |
+| `XO1512` | error | build | under `XO_BACKEND_CACHE=verify`, a build, run, or test the run cache would have served differs from its rebuild, in the binary or in what the build printed: an input the entry does not list, or a build that is not reproducible (decision 0360) |
 
 `XO1001` is reserved: no `std/sys/<os>` module exists yet (14), so it is
 never reported.

@@ -5,6 +5,8 @@
 // are kept with the binary and a hit prints them again, so a hit shows
 // the build's warnings and its output lines as the build did.
 
+use github.com/xo-lang/xo/compiler/check
+
 /// Standard output and error of a build, kept in order while they are
 /// written through: (true for standard error, the text).
 struct Tee {
@@ -153,4 +155,32 @@ fn kept_output(ctx: Ctx) -> Str {
     Some(t) => t.text()
     None => ""
   }
+}
+
+/// Whether a run cache hit is checked against a rebuild instead of used
+/// (XO_BACKEND_CACHE=verify, decision 0360).
+fn verifying(os: Os) -> Bool {
+  backend_cache_mode(os) == "verify"
+}
+
+/// XO_BACKEND_CACHE=verify after the build a hit would have skipped: the
+/// stored binary and output must be the rebuild's, else error XO1512 (an
+/// input the entry missed, or a build that is not reproducible).
+fn verify_entry(os: Os, hit: RunHit, bin: Str, kept: Str) {
+  // xo:allow XO0903 a binary it cannot read differs
+  let stored = os.fs.read(hit.bin).ok() ?? b""
+  // xo:allow XO0903 a binary it cannot read differs
+  let built = os.fs.read(bin).ok() ?? b"x"
+  os.fs.remove(hit.bin).ignore_err("a copy of the entry's binary")
+  var what = ""
+  if stored != built {
+    what = "the binary (${stored.len()} bytes stored, ${built.len()} built)"
+  } else if hit.output != kept {
+    what = "what the build printed"
+  }
+  if what.is_empty() {
+    return
+  }
+  print_diags(os, [check.Diag{code: "XO1512", file: "", line: 0, col: 0, end_line: 0, end_col: 0, message: "the run cache's entry for this build differs from a rebuild in ${what} (decision 0360): an input the entry does not list, or a build that is not reproducible; please report it with the program, and build with XO_BIN_CACHE=off meanwhile"}])
+  os.proc.exit(1)
 }

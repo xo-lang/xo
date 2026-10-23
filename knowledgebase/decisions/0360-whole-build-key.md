@@ -44,11 +44,31 @@ the key holds the working directory and the full command line, so the
 same program built from another directory or into another output misses
 (safe, and the common edit loop stays in one directory).
 
-Stage 2, from here: the Fs, Env and Proc recorders replace the hand list
-for both caches, so the manifest holds the about 200 files a build reads
-instead of the whole std tree (the lookup should fall toward the 10 to
-30 ms estimated below), and probes a list misses are covered; verify mode
-(`XO_BACKEND_CACHE=verify` rebuilds on a hit and compares) comes with it.
+## Stage 2, as built (2026-10-23)
+
+compiler/xo recorder.xo: the Os a stored build is given (build, run or
+test) has a recording Fs and Env (RecFs, RecEnv), and the entry lists
+what they saw instead of run_inputs' hand list:
+
+- each file read (hashed at the store), each directory listed or walked,
+  each probe with its answer then (stat, exists, mode, read_link, glob:
+  the xo.work search up from the module, vendor/modules.txt), and each
+  environment variable read, unset ones too;
+- left out: paths under xo's caches and build directories, every path
+  the build wrote, and its outputs (a stat of `prog` before it existed
+  would otherwise miss the next build). The temporary directory is not
+  left out: a program may live there (the first try did, and an edit
+  under $TMPDIR hit: the tests caught it).
+
+Proc is not wrapped: run_key already holds the C tools' identities, as
+it did. The manifest is not as small as estimated: a hello build reads
+445 of std's files (the checker loads most of std), so the lookup still
+hashes about that many; the warm CRUD build's hit went from 56 to 39 ms
+(bench/results/whole-build-2026-10-23.md).
+
+Verify: `XO_BACKEND_CACHE=verify` keeps a hit aside, builds, and
+compares the binary and what the build printed with the entry's;
+a difference is error XO1512 (TestWholeBuildCache plants a wrong binary).
 
 ## Context
 

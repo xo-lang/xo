@@ -11,7 +11,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `xo test` uses, printing what the build printed (a warm build of a
   small HTTP server 0.56 s to 0.056 s, hello 0.30 s to 0.044 s). `xo
   test` of a program with a warning is now cached too, the warning
-  printed on each hit (it was never stored before).
+  printed on each hit (it was never stored before). The entries list
+  what the build actually read, looked for (an `xo.work` above the
+  module, a vendor directory) and the environment variables it read;
+  `XO_BACKEND_CACHE=verify` rebuilds on a hit and reports a difference
+  as XO1512.
 
 - A cold build writes its new cache entries as one shared pack segment
   instead of a file each (6,227 files to 638 for a small program, 0.687

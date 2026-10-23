@@ -36,8 +36,11 @@ test "one" {
 // use the run cache of `xo test` (decision 0360 stage 1): an unchanged
 // program's binary is copied to the output (or run) with what its build
 // printed, its warning included, and every input change misses: an edit,
-// a new file, an XO_ variable, a flag, and a std file edited at the same
-// size with its modification time put back. A file touched but unchanged
+// a new file, an XO_ variable, a flag, an xo.work above the module (a
+// path the build only looked for, stage 2's recorder), and a std file
+// edited at the same size with its modification time put back.
+// XO_BACKEND_CACHE=verify rebuilds a hit: a good entry passes, a planted
+// wrong binary is XO1512. A file touched but unchanged
 // still hits (the entry hashes contents). Two builds of one output at
 // once leave a whole binary. `xo test` of a program with a warning hits
 // and prints the warning (such a build was never stored before).
@@ -128,6 +131,31 @@ func TestWholeBuildCache(t *testing.T) {
 	build("an XO_ variable, unchanged", true)
 	build("a flag", false, "--error-args=off")
 	build("a flag, unchanged", true, "--error-args=off")
+	// an xo.work above the module: the build looked for one and found
+	// none, so finding one now misses
+	if err := os.WriteFile(filepath.Join(tmp, "xo.work"), []byte("xo preview\nuse ./prog\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	build("an xo.work above", false, "--error-args=off")
+	build("an xo.work above, unchanged", true, "--error-args=off")
+
+	// XO_BACKEND_CACHE=verify rebuilds a hit and compares: equal passes;
+	// a planted wrong binary in the entry is XO1512
+	setenv(t, "XO_BACKEND_CACHE", "verify")
+	build("verify, a good entry", false, "--error-args=off")
+	bins, _ := filepath.Glob(filepath.Join(tmp, "bin", "run", "*", "*.bin"))
+	if len(bins) == 0 {
+		t.Fatal("no run cache entry to plant")
+	}
+	for _, e := range bins {
+		if err := os.WriteFile(e, []byte("not the program"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if code, so, se, _ := xo("build", "-o", out, "--error-args=off", "."); code != 1 || !strings.Contains(se, "XO1512") {
+		t.Fatalf("verify, a planted entry: exit %d, want 1 and XO1512\n%s%s", code, so, se)
+	}
+	setenv(t, "XO_BACKEND_CACHE", "on")
 
 	// a std file edited at the same size, its modification time put back
 	// (touch -r): the contents are hashed, so it misses

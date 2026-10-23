@@ -47,3 +47,26 @@ edit, a new file, an XO_ variable, a flag, and a std file edited at the
 same size with its modification time put back miss; two builds of one
 output at once (missing, then hitting) leave a binary that runs; `xo
 run` and `xo test` print the warning on a hit.
+
+## Stage 2: the recorded inputs (later the same day)
+
+The entry lists what the build's recording Fs and Env saw (decision 0360
+stage 2) instead of the whole std tree. The same `--ab` script, the same
+machine (load lower than above):
+
+CRUD server:
+
+    wall_ms               540.4       39.47       0.495% 4.519%     0.073   0.07 to 0.075     better (n=10)
+    cpu_ms                1795        30.0        5.71% 33.33%      0.017   0.011 to 0.017    better (n=10)
+    max_rss_kb            546896      14736       0.378% 0.109%     0.027   0.027 to 0.027    better (n=10)
+
+hello:
+
+    wall_ms               277.0       40.27       5.571% 21.43%     0.145   0.13 to 0.164     better (n=10)
+    cpu_ms                740.0       25.0        5.405% 40.0%      0.034   0.027 to 0.041    better (n=10)
+    max_rss_kb            309904      14736       1.402% 0.19%      0.048   0.047 to 0.048    better (n=10)
+
+A hello build's entry lists 445 std files read (the checker loads most of
+std), a walk of std, std/rt's listing, the module directory, 15 probes
+(the xo.work search up to /, vendor/modules.txt, xo.mod) and the XO_
+variables the build read, so the lookup still hashes most of std.

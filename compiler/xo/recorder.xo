@@ -1,0 +1,372 @@
+// What a build read, recorded as it reads it (decision 0360 stage 2): the
+// Fs and Env a stored build (xo build, run, or test in the run cache) is
+// given wrap the real ones, so the run cache's entry lists the files it
+// read, the paths it only looked at (a stat, an exists, a mode, a link, a
+// glob: a missing xo.work or vendor directory too), the directories it
+// listed, and the environment variables it read, instead of the whole std
+// tree and every module directory (run_inputs). Paths under xo's caches
+// and build directories are left out (derived from the same inputs), and
+// so is every path the build wrote.
+
+use github.com/xo-lang/xo/compiler/hostpath
+use std/crypto
+
+/// The record: each path in the first form it was met.
+struct Rec {
+  /// files read (their contents are hashed when the entry is stored)
+  reads: Map[Str, Bool] = {}
+  /// "KIND PATH" to what the probe answered then (probe_of)
+  probes: Map[Str, Str] = {}
+  /// directories listed ("dir") or walked ("walk")
+  lists: Map[Str, Str] = {}
+  /// paths the build wrote: never inputs
+  written: Map[Str, Bool] = {}
+  /// environment variables read: "=VALUE", or "!" when unset
+  env: Map[Str, Str] = {}
+}
+
+/// The recording Fs: forwards every call to inner, noting the reads.
+struct RecFs {
+  inner: Fs
+  rec: Mutex[Rec]
+  /// relative paths resolve against wd
+  wd: Str
+  /// path prefixes never recorded (each ends in "/")
+  skip: List[Str]
+}
+
+fn (f: RecFs) abs(p: Str) -> Str { hostpath.abs(f.wd, p) }
+
+fn (f: RecFs) skipped(p: Str) -> Bool {
+  for s in f.skip {
+    if p.starts_with(s) || "${p}/" == s {
+      return true
+    }
+  }
+  false
+}
+
+fn (f: RecFs) note_read(path: Str) {
+  let p = f.abs(path)
+  if !f.skipped(p) {
+    f.rec.with(fn(var r) {
+      if !r.written.contains(p) {
+        r.reads[p] = true
+      }
+    })
+  }
+}
+
+fn (f: RecFs) note_probe(kind: Str, path: Str, answer: Str) {
+  let p = if kind == "glob" { path } else { f.abs(path) }
+  if kind != "glob" && f.skipped(p) {
+    return
+  }
+  let k = "${kind} ${p}"
+  f.rec.with(fn(var r) {
+    if !r.written.contains(p) && !r.probes.contains(k) {
+      r.probes[k] = answer
+    }
+  })
+}
+
+fn (f: RecFs) note_list(kind: Str, dir: Str) {
+  let p = f.abs(dir)
+  if !f.skipped(p) {
+    f.rec.with(fn(var r) {
+      if !r.written.contains(p) && !r.lists.contains(p) {
+        r.lists[p] = kind
+      }
+    })
+  }
+}
+
+fn (f: RecFs) note_write(path: Str) {
+  let p = f.abs(path)
+  if !f.skipped(p) {
+    f.rec.with(fn(var r) {
+      r.written[p] = true
+      let _ = r.reads.remove(p)
+    })
+  }
+}
+
+fn (f: RecFs) sub(dir: Str) -> Fs { f.inner.sub(dir) }
+fn (f: RecFs) cwd() -> Fs { f.inner.cwd() }
+fn (f: RecFs) cwd_path() -> Str ! FsErr { f.inner.cwd_path() }
+fn (f: RecFs) read_only() -> Fs { f.inner.read_only() }
+fn (f: RecFs) write_only() -> Fs { f.inner.write_only() }
+fn (f: RecFs) case_sensitive() -> Bool { f.inner.case_sensitive() }
+
+fn (f: RecFs) stat(path: Str) -> FileInfo? ! FsErr uses fs.read {
+  let r = f.inner.stat(path)
+  f.note_probe("stat", path, stat_answer(r))
+  r
+}
+
+fn (f: RecFs) exists(path: Str) -> Bool ! FsErr uses fs.read {
+  let r = f.inner.exists(path)
+  f.note_probe("exists", path, bool_answer(r))
+  r
+}
+
+fn (f: RecFs) read(path: Str) -> Bytes ! FsErr uses fs.read {
+  f.note_read(path)
+  f.inner.read(path)
+}
+
+fn (f: RecFs) read_text(path: Str) -> Str ! FsErr uses fs.read {
+  f.note_read(path)
+  f.inner.read_text(path)
+}
+
+fn (f: RecFs) read_dir(dir: Str) -> List[FileInfo] ! FsErr uses fs.read {
+  f.note_list("dir", dir)
+  f.inner.read_dir(dir)
+}
+
+fn (f: RecFs) walk(dir: Str) -> List[FileInfo] ! FsErr uses fs.read {
+  f.note_list("walk", dir)
+  f.inner.walk(dir)
+}
+
+fn (f: RecFs) write(path: Str, data: Bytes) -> () ! FsErr uses fs.write {
+  f.note_write(path)
+  f.inner.write(path, data)
+}
+
+fn (f: RecFs) create_temp(dir: Str, prefix: Str) -> Str ! FsErr uses fs.write {
+  let p = f.inner.create_temp(dir, prefix)?
+  f.note_write(p)
+  Ok(p)
+}
+
+fn (f: RecFs) rename(from: Str, to: Str) -> () ! FsErr uses fs.write {
+  f.note_write(from)
+  f.note_write(to)
+  f.inner.rename(from, to)
+}
+
+fn (f: RecFs) remove(path: Str) -> () ! FsErr uses fs.write {
+  f.note_write(path)
+  f.inner.remove(path)
+}
+
+fn (f: RecFs) remove_all(path: Str) -> () ! FsErr uses fs.write {
+  f.note_write(path)
+  f.inner.remove_all(path)
+}
+
+fn (f: RecFs) create_dir_all(dir: Str) -> () ! FsErr uses fs.write {
+  f.note_write(dir)
+  f.inner.create_dir_all(dir)
+}
+
+fn (f: RecFs) set_modified(path: Str, t: Time) -> () ! FsErr uses fs.write {
+  f.note_write(path)
+  f.inner.set_modified(path, t)
+}
+
+fn (f: RecFs) open(path: Str) -> File ! FsErr uses fs.read {
+  f.note_read(path)
+  f.inner.open(path)
+}
+
+fn (f: RecFs) create(path: Str) -> File ! FsErr uses fs.write {
+  f.note_write(path)
+  f.inner.create(path)
+}
+
+fn (f: RecFs) open_append(path: Str) -> File ! FsErr uses fs.write {
+  f.note_write(path)
+  f.inner.open_append(path)
+}
+
+fn (f: RecFs) create_new(path: Str) -> File ! FsErr uses fs.write {
+  f.note_write(path)
+  f.inner.create_new(path)
+}
+
+fn (f: RecFs) append(path: Str, data: Bytes) -> () ! FsErr uses fs.write {
+  f.note_write(path)
+  f.inner.append(path, data)
+}
+
+fn (f: RecFs) copy(from: Str, to: Str) -> () ! FsErr uses fs {
+  f.note_read(from)
+  f.note_write(to)
+  f.inner.copy(from, to)
+}
+
+fn (f: RecFs) mode(path: Str) -> Int ! FsErr uses fs.read {
+  let r = f.inner.mode(path)
+  f.note_probe("mode", path, mode_answer(r))
+  r
+}
+
+fn (f: RecFs) set_mode(path: Str, mode: Int) -> () ! FsErr uses fs.write {
+  f.note_write(path)
+  f.inner.set_mode(path, mode)
+}
+
+fn (f: RecFs) symlink(target: Str, link: Str) -> () ! FsErr uses fs.write {
+  f.note_write(link)
+  f.inner.symlink(target, link)
+}
+
+fn (f: RecFs) read_link(path: Str) -> Str? ! FsErr uses fs.read {
+  let r = f.inner.read_link(path)
+  f.note_probe("link", path, link_answer(r))
+  r
+}
+
+fn (f: RecFs) glob(pattern: Str) -> List[Str] ! FsErr uses fs.read {
+  let r = f.inner.glob(pattern)
+  f.note_probe("glob", f.abs(pattern), glob_answer(r))
+  r
+}
+
+fn (f: RecFs) lock(path: Str) -> FileLock ! FsErr uses fs.write {
+  f.note_write(path)
+  f.inner.lock(path)
+}
+
+fn (f: RecFs) try_lock(path: Str) -> FileLock? ! FsErr uses fs.write {
+  f.note_write(path)
+  f.inner.try_lock(path)
+}
+
+/// The recording Env: forwards every call to inner, noting the variables
+/// read.
+struct RecEnv {
+  inner: Env
+  rec: Mutex[Rec]
+}
+
+fn (e: RecEnv) note(name: Str, v: Str?) {
+  e.rec.with(fn(var r) {
+    if !r.env.contains(name) {
+      r.env[name] = match v {
+        Some(x) => "=${x}"
+        None => "!"
+      }
+    }
+  })
+}
+
+fn (e: RecEnv) get(name: Str) -> Str? uses env {
+  let v = e.inner.get(name)
+  e.note(name, v)
+  v
+}
+
+/// Every variable, as a read of each (a build that lists the environment
+/// depends on all of it).
+fn (e: RecEnv) vars() -> Map[Str, Str] uses env {
+  let all = e.inner.vars()
+  e.note("\x00vars", Some(env_sum(all)))
+  all
+}
+
+fn (e: RecEnv) args() -> List[Str] uses env { e.inner.args() }
+fn (e: RecEnv) program() -> Str uses env { e.inner.program() }
+fn (e: RecEnv) home() -> Str ! EnvErr uses env { e.inner.home() }
+fn (e: RecEnv) only(names: List[Str]) -> Env { e.inner.only(names) }
+fn (e: RecEnv) config_dir() -> Str ! EnvErr uses env { e.inner.config_dir() }
+fn (e: RecEnv) cache_dir() -> Str ! EnvErr uses env { e.inner.cache_dir() }
+
+/// What a stat answered, in the form an entry keeps.
+fn stat_answer(r: Result[FileInfo?, FsErr]) -> Str {
+  match r {
+    Ok(Some(fi)) => if fi.is_dir { "dir" } else { "file ${fi.size}" }
+    Ok(None) => "missing"
+    Err(_) => "err"
+  }
+}
+
+fn bool_answer(r: Result[Bool, FsErr]) -> Str {
+  match r {
+    Ok(b) => "${b}"
+    Err(_) => "err"
+  }
+}
+
+fn mode_answer(r: Result[Int, FsErr]) -> Str {
+  match r {
+    Ok(m) => "${m}"
+    Err(_) => "err"
+  }
+}
+
+fn crypto_hex(s: Str) -> Str { crypto.sha256(s.bytes()).to_hex() }
+
+fn link_answer(r: Result[Str?, FsErr]) -> Str {
+  match r {
+    Ok(Some(t)) => "to ${t}"
+    Ok(None) => "none"
+    Err(_) => "err"
+  }
+}
+
+fn glob_answer(r: Result[List[Str], FsErr]) -> Str {
+  match r {
+    Ok(ps) => crypto_hex(ps.join("\n"))
+    Err(_) => "err"
+  }
+}
+
+/// The SHA-256 of the sorted variables.
+fn env_sum(all: Map[Str, Str]) -> Str {
+  var b = StrBuilder.new()
+  for n in all.keys().sort() {
+    b.write("${n}=${all.get(n) ?? ""}\n")
+  }
+  crypto_hex(b.freeze())
+}
+
+/// A probe asked again (run_fetch): KIND PATH as the recorder keyed it.
+fn probe_again(os: Os, key: Str) -> Str {
+  let kind = key.split(" ")[0]
+  if kind.len() + 1 >= key.len() {
+    return "?"
+  }
+  let p = key[kind.len() + 1..]
+  match kind {
+    "stat" => stat_answer(os.fs.stat(p))
+    "exists" => bool_answer(os.fs.exists(p))
+    "mode" => mode_answer(os.fs.mode(p))
+    "link" => link_answer(os.fs.read_link(p))
+    "glob" => glob_answer(os.fs.glob(p))
+    _ => "?"
+  }
+}
+
+/// A variable read again (run_fetch), as RecEnv.note keeps it.
+fn env_again(os: Os, name: Str) -> Str {
+  if name == "\x00vars" {
+    return "=${env_sum(os.env.vars())}"
+  }
+  match os.env.get(name) {
+    Some(x) => "=${x}"
+    None => "!"
+  }
+}
+
+/// os with its Fs and Env recording into rec, paths under skip left out.
+fn rec_os(os: Os, rec: Mutex[Rec], wd: Str, skip: List[Str]) -> Os {
+  Os{net: os.net, fs: RecFs{inner: os.fs, rec: rec, wd: wd, skip: skip}, clock: os.clock, rand: os.rand, env: RecEnv{inner: os.env, rec: rec}, proc: os.proc, stdio: os.stdio, tasks: os.tasks}
+}
+
+/// The paths a recorder leaves out: xo's caches and build directories,
+/// each ending in "/". Not the temporary directory: a program may live
+/// there (the tests' do), and the build's own temporary files are left
+/// out as paths it wrote.
+fn rec_skip(os: Os, ctx: Ctx) -> List[Str] {
+  var s: List[Str] = []
+  for d in ["${ctx.cache}/xo", os.env.get("XO_BACKEND_CACHE_DIR") ?? "", os.env.get("XO_BIN_CACHE") ?? "", os.env.get("XO_BUILD_DIR") ?? "", ctx.run_cache] {
+    if !d.is_empty() {
+      s.push("${d.trim_suffix("/")}/")
+    }
+  }
+  s
+}
