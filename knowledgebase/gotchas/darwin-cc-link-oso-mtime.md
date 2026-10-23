@@ -19,3 +19,11 @@ ZERO_AR_DATE=1, which makes ld64 write 0 (as reproducible build tools
 do); dsymutil skips its time check for 0 (`--dsym` still writes the
 DWARF). Xo's own Mach-O linker writes no debug map and was already
 deterministic.
+
+Related, same day (internal/arm64 TestDebugInfoSameCode/use_c_add): a
+darwin cc link with debug information got `-headerpad 0x1000` (room for
+the __DWARF load command embed_dsym adds, decision 0346 stage 3) and an
+`-s` link did not, so __text started 0xfe0 later and every address and
+adrp offset differed between the two. Every darwin cc link (and the
+LLVM backend's) now gets the pad, `-s` included (4 KB of header); the
+binary cache key still tells the two apart (`dwarf-embed`).

@@ -1157,7 +1157,12 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // the DWARF embedded after the link (cc_dsym, decision 0346 stage
     // 3): room in the header for its segment, and the bundle for --dsym
     let dsym = lm.debug_info && lctx.tgoos == "darwin" && ctx.goos == "darwin"
-    let pad = if dsym { [DWARF_HEADERPAD] } else { [] }
+    // the same room with -s or --release too, so debug information
+    // changes no code address (internal/arm64 TestDebugInfoSameCode)
+    let pad = if lctx.tgoos == "darwin" && ctx.goos == "darwin" { [DWARF_HEADERPAD] } else { [] }
+    if dsym {
+      mode_flags.push("dwarf-embed")
+    }
     if dsym && o.dsym {
       mode_flags.push("dsym")
     }
@@ -1589,7 +1594,11 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     if csplit && tgoos != "darwin" {
       fail(os, "--debug-info=split on ${tg} needs Xo's ELF linker, and this program links with cc (a `use c` source or --ld=cc) (decision 0355)")
     }
-    let pad = if cdsym { [DWARF_HEADERPAD] + (if o.dsym { ["dsym"] } else { [] }) } else { [] }
+    // the header room for the embedded DWARF in every darwin cc link,
+    // -s too, so debug information changes no code address
+    // (TestDebugInfoSameCode); the key tells the two apart
+    let cpad: List[Str] = if tgoos == "darwin" { [DWARF_HEADERPAD] } else { [] }
+    let pad = cpad + (if cdsym { ["dwarf-embed"] + (if o.dsym { ["dsym"] } else { [] }) } else { [] })
     let key = if macho_as { "" } else { native_bin_key(os, ctx, dir, cc, [march] + flags + pad + lk.link_only, srcs) }
     let cst = stage(os, ctx, bin)
     let (hit, entry) = fetch_bin(os, ctx, key, cst.bin)
@@ -1606,7 +1615,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         t = lap(os, phases, "assemble", t)
         cache_note(os, phases, "objects", progs.len() - nasm, progs.len())
       }
-      let msg = cc_build(os, ctx, cc, flags + (if cdsym { [DWARF_HEADERPAD] } else { [] }) + lk.link_only, lsrcs, cst.bin)
+      let msg = cc_build(os, ctx, cc, flags + cpad + lk.link_only, lsrcs, cst.bin)
       if !msg.is_empty() {
         os.stdio.eprint(msg)
         fail_stage(os, cst, "${cc} failed")
