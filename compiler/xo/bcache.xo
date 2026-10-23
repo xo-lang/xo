@@ -1046,6 +1046,12 @@ struct Pack {
   /// The shared pack of this kind and target (shared_pack_dir), "" when
   /// it is off: where a build's many new entries go (store_entries).
   shared_dir: Str = ""
+  /// The entries this build read from the shared pack, its segments
+  /// then, and how many entries they held: store_entries compacts by
+  /// them as shared_store does.
+  shared_used: Map[Str, Bytes] = {}
+  shared_segs: List[Str] = []
+  shared_held: Int = 0
   /// The builds of this target that left the pack empty (the file "seen"
   /// in its directory): segments are written once PACK_AFTER were counted.
   seen: Int = 0
@@ -1194,6 +1200,9 @@ fn cache_get_packed(os: Os, dir: Str, kind: Str, target: Str, keys: List[Str], j
       shared = g
       sh_segs = sg
       sh_held = sh
+      p.shared_used = g
+      p.shared_segs = sg
+      p.shared_held = sh
       for (k, b) in shared {
         entries[k] = b
       }
@@ -1246,8 +1255,17 @@ fn cache_get_packed(os: Os, dir: Str, kind: Str, target: Str, keys: List[Str], j
 /// (pack_write counts a segment itself).
 fn store_entries(os: Os, dir: Str, kind: Str, p: Pack, stores: List[(Str, Bytes)]) -> Int {
   if !p.shared_dir.is_empty() && stores.len() >= COLD_PACK_MIN && (os.env.get("XO_COLD_PACK") ?? "") != "off" {
-    os.fs.create_dir_all(p.shared_dir).ignore_err("no shared pack: the entries are made again")
-    pack_write(os, Pack{root: dir, dir: p.shared_dir}, stores)
+    // shared_store's rule: a new segment, or past PACK_SEGS segments (or
+    // a pack holding more than twice what this build used) one segment
+    // of what it used and made, replacing the old. Appending alone grew
+    // the pack by a segment per new xo (each CI run's: 12.6 MB a
+    // generation of a windows --race build, 114 MB in 11 segments after
+    // eight, every build reading them all; 2026-10-23)
+    var made: Map[Str, Bytes] = {}
+    for (k, e) in stores {
+      made[k] = e
+    }
+    shared_store(os, dir, p.shared_dir, p.shared_used, made, p.shared_segs, p.shared_held)
     return 0
   }
   var n = 0

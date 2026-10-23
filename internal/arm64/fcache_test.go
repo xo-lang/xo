@@ -2812,6 +2812,85 @@ func TestSharedPack(t *testing.T) {
 	}
 }
 
+// TestSharedPackBounded: cold builds whose entries are all new (each a new
+// xo, as every CI run's is; here XO_INLINE_DENY of a function no program
+// has, which changes the keys and nothing else) write their entries to the
+// shared pack, and the pack is compacted as shared_store compacts it
+// instead of growing a segment per build (2026-10-23: 11 segments and
+// 114 MB after eight such builds, every build reading them all). The last
+// build's binary is the cache-off build's.
+func TestSharedPackBounded(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-shpackb-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	cache := filepath.Join(work, "cache")
+	dir := filepath.Join(work, "prog")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte("fn main(os: Os) uses stdio {\n  os.stdio.println(\"bounded\")\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	build := func(gen int, env ...string) []byte {
+		t.Helper()
+		out := filepath.Join(work, "prog.bin")
+		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", out, "."))
+		cmd.Dir = dir
+		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on", "XO_SHARED_PACK=on", fmt.Sprintf("XO_INLINE_DENY=no_such_fn_%d", gen)), env...)
+		if log, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("xo build, generation %d: %v\n%s", gen, err, log)
+		}
+		b, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	// the most segments any kind's shared pack held after a build
+	most := func() (int, string) {
+		t.Helper()
+		kinds, _ := filepath.Glob(filepath.Join(cache, "packs", "shared", "*", "*"))
+		n, which := 0, ""
+		for _, k := range kinds {
+			segs, _ := filepath.Glob(filepath.Join(k, "s-*"))
+			c := 0
+			for _, s := range segs {
+				if !strings.Contains(filepath.Base(s), ".") {
+					c++
+				}
+			}
+			if c > n {
+				n, which = c, filepath.Base(k)
+			}
+		}
+		return n, which
+	}
+	var got []byte
+	for gen := 1; gen <= 8; gen++ {
+		got = build(gen)
+		// PACK_SEGS (4) segments, plus the one a build adds before the
+		// next build compacts them
+		if n, kind := most(); n > 5 {
+			t.Fatalf("after generation %d the %s shared pack has %d segments, want at most 5: it grows a segment per new xo", gen, kind, n)
+		}
+	}
+	if off := build(8, "XO_BACKEND_CACHE=off"); !bytes.Equal(got, off) {
+		t.Error("the build through the compacted shared pack differs from the cache-off build")
+	}
+}
+
 // TestSharedPackNegKeys: with XO_SHARED_PACK=on (decision 0351) a formed
 // pack's list of front end keys found nowhere is copied to the shared
 // pack, and a build in a new directory (no pack of its own) skips those

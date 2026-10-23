@@ -129,6 +129,19 @@ A compaction of the shared pack keeps what the compacting build used, so
 an entry another program needs may go and be built again (never wrong
 code). XO_COLD_PACK=off stores loose as before.
 
+Fix (2026-10-23, after the lead's Windows report): store_entries only
+appended, and the compaction lived in shared_store, which runs when a
+build read 64 or more entries loose; a packed cold build reads none
+loose, so a cache that saw many xo versions (every CI run's) grew a
+segment per version, and every build reads every segment. Eight
+generations of a windows --race cross build (new keys each, same
+program) left 114 MB in 11 segments, against 13.7 MB with
+XO_COLD_PACK=off. store_entries now applies shared_store's rule (past
+PACK_SEGS segments, or a pack holding more than twice what the build
+used, one segment of what it used and made replaces the old): 26 to
+51 MB over the same eight (bench/results/cold-pack-2026-10-23.md;
+TestSharedPackBounded).
+
 ## Consequences
 
 - Stage 1 changes the cache layout (a new `packs/shared` tree) but not

@@ -10,7 +10,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   instead of a file each (6,227 files to 638 for a small program, 0.687
   of the wall time on the Mac; Windows writes small files slowly).
   `XO_COLD_PACK=off` writes them loose as before (decision 0351
-  addendum).
+  addendum). Such segments are compacted as the shared pack's others
+  are, so a cache that sees many xo versions no longer grows a segment
+  per version (114 MB after eight, now 26 to 51 MB).
 
 - 0.27.0 (2026-10-23): breaking, a third-party `use go` needs a `require
   go` pin (XO1319, decision 0356) and std's errors print plain messages
