@@ -2984,3 +2984,45 @@ test "go strconv: ParseInt, FormatInt, ParseBool, Unquote" {
   }
   expect(bad) == []
 }
+
+// Str.starts_with and Str.ends_with against a byte loop (scan.eq_at's
+// 4 to 7 and 8 to 16 byte paths without a loop): every length 0 to 40,
+// the whole affix matching and one byte off at each position.
+fn affix_naive(s: Str, i: Int, p: Str) -> Bool {
+  let a = s.bytes()
+  let b = p.bytes()
+  for k in 0..b.len() {
+    if a[i + k] != b[k] {
+      return false
+    }
+  }
+  true
+}
+
+test "starts_with and ends_with at every length and mismatch position" {
+  let letters = "abcdefghijklmnopqrstuvwxyz"
+  var bad = 0
+  for n in 0..41 {
+    var p = ""
+    for j in 0..n {
+      let c = (j * 7 + 3) % 26
+      p = p + letters[c..c + 1]
+    }
+    let s = "xx" + p + "yy"
+    let head = s[2..s.len()]
+    let tail = s[0..s.len() - 2]
+    if !head.starts_with(p) || !tail.ends_with(p) {
+      bad += 1
+    }
+    for d in 0..n {
+      let q = p[0..d] + "#" + p[d + 1..n]
+      if head.starts_with(q) != affix_naive(head, 0, q) || tail.ends_with(q) != affix_naive(tail, tail.len() - n, q) {
+        bad += 1
+      }
+      if head.starts_with(q) || tail.ends_with(q) {
+        bad += 1
+      }
+    }
+  }
+  expect(bad == 0)
+}

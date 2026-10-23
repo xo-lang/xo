@@ -103,6 +103,17 @@ fn find_short(b: Bytes, from: Int, to: Int, c: Int) -> Int {
 /// Whether the n bytes of a from ai are the n bytes of b from bi (both
 /// ranges inside their values).
 pub fn eq_at(a: Bytes, ai: Int, b: Bytes, bi: Int, n: Int) -> Bool {
+  // 8 to 16 bytes: two words, the second ending at the end (overlapping
+  // the first); 4 to 7: the same with 4 byte words. With a literal for b
+  // n is a constant once inlined, so no loop remains.
+  if n >= 8 && n <= 16 {
+    return rt.bytes_word(a, ai) == rt.bytes_word(b, bi) && rt.bytes_word(a, ai + n - 8) == rt.bytes_word(b, bi + n - 8)
+  }
+  if n >= 4 && n < 8 {
+    let pa = raw.bytes_addr(a).wrapping_add(ai)
+    let pb = raw.bytes_addr(b).wrapping_add(bi)
+    return rt.mem_load(pa, 0, 4) == rt.mem_load(pb, 0, 4) && rt.mem_load(pa, n - 4, 4) == rt.mem_load(pb, n - 4, 4)
+  }
   if n >= 8 {
     var t = 0
     while n - t > 8 {

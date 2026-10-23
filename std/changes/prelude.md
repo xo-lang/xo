@@ -358,3 +358,16 @@ the last bit; a product now prints as `float64(a * b)`.
 
 Go's strconv parsing and formatting in other bases, booleans, and
 unquoting, None where Go returns an error (decision 0287).
+
+## 2026-10-23: perf: Str.starts_with and Str.ends_with compare 4 to 16 byte affixes without a loop
+
+- Kind: perf
+- Commit: this commit
+- Found by: profile
+- Go reference: none (bytes.HasPrefix compares with memequal)
+- Test: std/native/prelude_test.xo (every length 0 to 40, a mismatch at each position)
+
+scan.eq_at compares 8 to 16 bytes as two overlapping words and 4 to 7 bytes
+as two overlapping 4 byte loads, so a short affix such as "Bearer " takes no
+loop. xo bench --ab (10 rounds): instructions 0.939 on starts_with and
+ends_with of four literal affixes over a header list.
