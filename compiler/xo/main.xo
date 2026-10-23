@@ -381,6 +381,8 @@ struct Native {
   /// The checker's std parses, for the next build of the process
   /// (`xo dev build-each`, decision 0209).
   pc: Map[Str, check.ParseEntry] = {}
+  /// Why the targets were skipped (Opts.skip_unsupported), "" when built.
+  skipped: Str = ""
 }
 
 /// The native backend that builds target tg ("" for none): arm64 for
@@ -427,6 +429,7 @@ fn backend_groups(targets: List[Str]) -> List[(Str, List[Str])] {
 fn build_by_backend(os: Os, ctx: Ctx, o: Opts, groups: List[(Str, List[Str])]) {
   var bins: List[(Str, Str)] = []
   var none: List[Str] = []
+  var skipped: List[(List[Str], Str)] = []
   for (b, ts) in groups {
     if b.is_empty() {
       none = none + ts
@@ -436,8 +439,19 @@ fn build_by_backend(os: Os, ctx: Ctx, o: Opts, groups: List[(Str, List[Str])]) {
     og.targets = ts.join(",")
     og.many_targets = true
     og.part_of_many = true
+    // --targets=all skips a target the program cannot support (the
+    // owner's call on the 0.26.0 field report: a network program and
+    // WASI's missing sockets), with a note; a named target still fails
+    og.skip_unsupported = o.targets == "all"
     let nb = build_native(os, ctx, og, b)
+    if !nb.skipped.is_empty() {
+      skipped.push((ts, nb.skipped))
+      continue
+    }
     bins = bins + nb.bins
+  }
+  for (ts, why) in skipped {
+    os.stdio.eprintln("xo build: skipped ${ts.join(", ")}: ${why} (--targets=all builds the targets the program supports)")
   }
   if o.json {
     os.stdio.print(build_json(none.is_empty(), bins, []))
@@ -760,12 +774,14 @@ fn native_backend(o: Opts) -> Str {
   if !o.targets.is_empty() && o.targets != "all" {
     for p in o.targets.split(",") {
       let parts = p.trim().split("/")
-      if parts.len() == 2 && (parts[1] is "arm64" | "amd64") {
-        arch = parts[1]
+      if parts.len() == 2 && (parts[1] is "arm64" | "amd64" | "wasm" | "wasm32") {
+        arch = if parts[1] == "wasm32" { "wasm" } else { parts[1] }
       }
     }
   }
-  if arch is "arm64" | "amd64" { arch } else { "llvm" }
+  // wasip1/wasm alone: the wasm backend (it took the host's, and
+  // --targets=wasip1/wasm failed naming the arm64 backend)
+  if arch is "arm64" | "amd64" | "wasm" { arch } else { "llvm" }
 }
 
 /// A native build (arm64, amd64 or llvm, or wasm): check, SSA, passes,
@@ -894,6 +910,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     lo = lower(os, o, c, false, root, tests, release, uses_time, tgoos, tgoarch, backend == "wasm", backend is "arm64" | "amd64", t)
   }
   t = lo.t
+  if !lo.skipped.is_empty() {
+    return Native{skipped: lo.skipped}
+  }
   var b = lo.b
   let tu = lo.tu
   if backend == "wasm" {
@@ -911,7 +930,10 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         wout = "${od}/${base}"
       }
     }
-    build_wasm(os, ctx, b.m, wout, o.wd, o.dirs[0], tzsel.tz_select(os, ctx.std, tu, o.tzdata))
+    let why = build_wasm(os, ctx, b.m, wout, o.wd, o.dirs[0], tzsel.tz_select(os, ctx.std, tu, o.tzdata), o.skip_unsupported)
+    if !why.is_empty() {
+      return Native{skipped: why}
+    }
     return Native{bins: if wout.is_empty() { [] } else { [("wasip1/wasm", wout)] }, pc: c.parse_cache}
   }
   // the build directory (buildDir, then the backend's subdirectory)
@@ -1579,6 +1601,9 @@ struct Lowered {
   t: Time
   /// the functions' reference counting keys ([] without the cache)
   rc_keys: List[Str] = []
+  /// why the program cannot be built for this target, when the build
+  /// skips such a target (Opts.skip_unsupported)
+  skipped: Str = ""
 }
 
 /// The SSA of the checked program for tgoos/tgoarch (the predeclared
@@ -1609,6 +1634,9 @@ fn lower(os: Os, o: Opts, var c: check.Checker, strip: Bool, root: Str, tests: B
     if o.cmd == "run" && b.why.starts_with("no `main`") {
       os.stdio.eprintln(run_no_main(os, o.wd, o.dirs[0], "has no main function"))
       os.proc.exit(1)
+    }
+    if o.skip_unsupported {
+      return Lowered{b: b, tu: tzsel.TZUse{}, t: t, skipped: b.why}
     }
     fail_unsupported(os, b.why)
   }

@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo build --targets=all` skips a target the program cannot support, with
+  a note naming it and why (a network program and wasip1/wasm, which has
+  no sockets), and exits 0 when the rest built; a target named in
+  `--targets` still fails. `--targets=wasip1/wasm` alone now builds with
+  the wasm backend (it picked the host's backend and failed naming it).
+
 - A hole interpolated into a string (`"${???}"`) has type `Str`, with the
   values in scope that fit it, instead of `hole of type unknown`.
 

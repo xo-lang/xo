@@ -14,7 +14,10 @@ use github.com/xo-lang/xo/compiler/ssa
 use github.com/xo-lang/xo/compiler/tzsel
 use github.com/xo-lang/xo/compiler/wasm
 
-fn build_wasm(os: Os, ctx: Ctx, m: ssa.Module, out0: Str, wd: Str, dir: Str, tz: tzsel.TZSel) {
+/// skip (Opts.skip_unsupported): what the backend does not support is
+/// returned (the target skipped) instead of failing the build; "" when
+/// the module was written.
+fn build_wasm(os: Os, ctx: Ctx, m: ssa.Module, out0: Str, wd: Str, dir: Str, tz: tzsel.TZSel, skip: Bool) -> Str {
   if !tz.err.is_empty() {
     fail(os, tz.err)
   }
@@ -23,6 +26,9 @@ fn build_wasm(os: Os, ctx: Ctx, m: ssa.Module, out0: Str, wd: Str, dir: Str, tz:
   }
   let p = wasm.generate_tz(m, false, false, false, tz)
   if !p.err.is_empty() {
+    if skip {
+      return p.err
+    }
     fail(os, "the wasm backend: ${p.err}")
   }
   var out = out0
@@ -47,4 +53,5 @@ fn build_wasm(os: Os, ctx: Ctx, m: ssa.Module, out0: Str, wd: Str, dir: Str, tz:
   if !err.is_empty() {
     fail(os, err)
   }
+  ""
 }

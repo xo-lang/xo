@@ -144,3 +144,59 @@ func TestTargetsAllNative(t *testing.T) {
 		t.Errorf("-o app for windows/amd64 wrote app too")
 	}
 }
+
+// TestTargetsAllSkipsUnsupported: --targets=all on a program a target
+// cannot support (a network program and WASI preview1, which has no
+// sockets) builds the other targets, notes the skipped one with its
+// reason, and exits 0 (owner, 2026-10-23, field report 0.26.0: it exited
+// 1); --targets=wasip1/wasm named alone still fails, with the network
+// reason (it picked the arm64 backend and named that instead).
+func TestTargetsAllSkipsUnsupported(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	t.Parallel()
+	src, err := os.ReadFile(filepath.Join("..", "..", "internal", "llvm", "testdata", "golden", "conn_iface", "main.xo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(t.TempDir(), "netprog")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string][]byte{"xo.mod": []byte("module netprog\n"), "main.xo": src} {
+		if err := os.WriteFile(filepath.Join(dir, name), body, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	chdir(t, dir)
+	var stdout, stderr bytes.Buffer
+	if code := run(t, []string{"build", "--targets=all", "--json", "-o", filepath.Join(dir, "out"), "."}, &stdout, &stderr); code != 0 {
+		t.Fatalf("xo build --targets=all: exit %d, want 0\n%s%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "xo build: skipped wasip1/wasm: ") || !strings.Contains(stderr.String(), "no sockets") {
+		t.Errorf("stderr has no note skipping wasip1/wasm for its sockets:\n%s", stderr.String())
+	}
+	var rep struct {
+		Binaries map[string]string `json:"binaries"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &rep); err != nil {
+		t.Fatalf("--json: %v\n%s", err, stdout.String())
+	}
+	for _, tg := range []string{"darwin/arm64", "darwin/amd64", "linux/arm64", "linux/amd64", "windows/amd64"} {
+		if _, err := os.Stat(rep.Binaries[tg]); err != nil {
+			t.Errorf("%s: no binary (%v): %v", tg, err, rep.Binaries)
+		}
+	}
+	if _, ok := rep.Binaries["wasip1/wasm"]; ok {
+		t.Errorf("wasip1/wasm reported built: %v", rep.Binaries)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := run(t, []string{"build", "--targets=wasip1/wasm", "-o", filepath.Join(dir, "outw"), "."}, &stdout, &stderr); code == 0 {
+		t.Errorf("xo build --targets=wasip1/wasm: exit 0, want a failure\n%s", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "does not support the network") {
+		t.Errorf("--targets=wasip1/wasm: the error does not name the network:\n%s", stderr.String())
+	}
+}

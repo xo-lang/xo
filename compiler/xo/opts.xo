@@ -90,6 +90,11 @@ struct Opts {
   /// (build_by_backend): build_native leaves the report of the binaries
   /// to its caller.
   part_of_many: Bool = false
+  /// --targets=all: a target the program cannot be built for (the SSA
+  /// builder's unsupported reason, e.g. the network on wasip1/wasm) is
+  /// skipped with a note instead of failing the build (field report
+  /// 0.26.0); a target named in --targets still fails
+  skip_unsupported: Bool = false
   topts: TestOpts = TestOpts{}
   /// --std-module=MODULE (test, decision 0262): the std module whose
   /// _test.xo tests run, as `use` names it below std (`json`,
