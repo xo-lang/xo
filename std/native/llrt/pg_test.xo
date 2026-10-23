@@ -22,6 +22,11 @@ test "a refused connection is a Conn error in every TLS mode" {
   }
 }
 
+test "an attenuated Net: an address outside its list is Conn with the spec's text" {
+  let r = sql.open(os.net.only(["other.test"]), "postgres", "postgres://a@db.test:5432/db?sslmode=disable")
+  expect(r.err()) == Some(sql.SqlErr.Conn(msg: "dial db.test:5432: denied by Net.only"))
+}
+
 test "values: arrays, bytea, json, floats, timestamps" {
   expect(decode_text(1007, "{1,NULL,3}")) == sql.SqlValue.Array(items: [sql.SqlValue.Integer(n: 1), sql.SqlValue.Null, sql.SqlValue.Integer(n: 3)])
   expect(decode_text(1009, "{\"a b\",\"c\\\"d\",x}")) == sql.SqlValue.Array(items: [sql.SqlValue.Text(s: "a b"), sql.SqlValue.Text(s: "c\"d"), sql.SqlValue.Text(s: "x")])

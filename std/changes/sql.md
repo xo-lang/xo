@@ -1,5 +1,17 @@
 # std/sql changes
 
+## 2026-10-23: fix: the Postgres driver's denied dial reads as std.md 10.9 says
+
+- Kind: fix
+- Commit: this commit
+- Found by: the Intel field report on 0.26.0 (Net.only text)
+- Go reference: none (the driver dials through Net)
+- Test: std/native/llrt/pg_test.xo "an attenuated Net"
+
+`sql.open` over `os.net.only(...)` with an address outside the list
+answered `Conn("Denied(addr: db.test:5432)")`; it is now
+`Conn("dial db.test:5432: denied by Net.only")`, the text 10.9 gives.
+
 ## 2026-10-23: fix: Postgres numeric, json and date columns read as the spec says; a wrong parameter count is Param
 
 - Kind: fix

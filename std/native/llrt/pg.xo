@@ -211,7 +211,13 @@ fn connect_one(net: Net, cfg: Config, roots: Bytes, host: Str, port: Int) -> PgC
 /// Dials addr, upgrades to TLS as mode says (SSLRequest, then std/tls's
 /// client: decision 0281), and runs the startup handshake.
 fn connect_link(net: Net, cfg: Config, roots: Bytes, host: Str, addr: Str, mode: Str) -> PgConn ! sql.SqlErr uses net.dial {
-  let c = net.dial(addr).map_err(net_err)?
+  let c = net.dial(addr).map_err(fn(e) {
+    match e {
+      // the text std.md 10.9 gives for an attenuated Net
+      Denied(_) => conn_err("dial ${addr}: denied by Net.only")
+      _ => net_err(e)
+    }
+  })?
   var link = Link.Plain(c: c)
   if mode != "disable" {
     match c.write(pgwire.ssl_request()) {

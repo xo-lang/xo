@@ -34,6 +34,11 @@ const dumpProg = `fn main(os: Os) {
       let _ = held.recv()
       m.with(fn(v) { v })
     })
+    // tasks that end at once stay in the scope's list until a later spawn
+    // prunes them: the dump lists live tasks only
+    for _ in 0..3 {
+      s.spawn(fn() { })
+    }
   }
 }
 `

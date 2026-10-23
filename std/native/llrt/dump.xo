@@ -132,6 +132,13 @@ fn (var d: Dump) walk(n: Int, c: Int, depth: Int) {
   let free = rt.mem_load(n - 16, H_FREE, 8)
   if free == d.task_free {
     let t = n - T_NODE
+    // a finished task stays in its scope's list until a later spawn prunes
+    // it (scope_prune), so a server's per-connection tasks piled up here
+    // (Intel field report b13); its children are gone, as a scope joins
+    // them before its task ends
+    if rt.slot_load[Int](t + T_STATE, 0, 1) == 2 {
+      return
+    }
     let tc = rt.slot_load[Int](t + tasks.T_CTX, 0, 1)
     d.tasks += 1
     // numbered as the Go backend numbers its threads: main is 1

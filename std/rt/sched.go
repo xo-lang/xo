@@ -1070,7 +1070,16 @@ func dumpText(root *cnode) string {
 			if n.tk == nil || n.tk.th == nil {
 				break
 			}
-			line = n.tk.th.label()
+			// a finished task stays in its scope's list until a later spawn
+			// prunes it: the dump lists live tasks (Intel field report b13)
+			th := n.tk.th
+			th.mu.Lock()
+			done := th.done
+			th.mu.Unlock()
+			if done && len(kids) == 0 {
+				return
+			}
+			line = th.label()
 			tasks++
 		}
 		if n.tk != nil {
