@@ -1,0 +1,222 @@
+// Views only measured (view_lens): after inlining, `s.trim_prefix(p).len()`
+// makes a view of s (rt.str_view counts s once more), joins it with s
+// itself in a block parameter, reads the parameter's length, and
+// releases it, a call. When a Str value's only uses are its length,
+// its release, and edges into parameters of the same kind: a view
+// becomes hi - lo (no count, no release), and a parameter gets an Int
+// parameter beside it with the length, its own reads replaced, while it
+// still carries a Str for its release (the empty string where a view
+// came in), since a parameter may alias an argument read after the jump
+// (Xo Lang 3's trim_affix, 2026-10-23: about 12 instructions and a call
+// per trim).
+
+use github.com/xo-lang/xo/compiler/ssa
+
+/// Rewrites the Str values of f used only for their length (see above);
+/// whether it changed f.
+fn view_lens(var f: ssa.Func) -> Bool {
+  // the Int and Str types: a Str.len's result and operand
+  var it = -1
+  var st = -1
+  for x in f.values {
+    if x.op == ssa.Op.Call && aux_str(x.aux) == "Str.len" && x.args.len() == 1 && x.block >= 0 {
+      it = x.ty
+      st = f.values[x.args[0]].ty
+      break
+    }
+  }
+  if it < 0 || st < 0 {
+    return false
+  }
+  let n = f.values.len()
+  // the uses of each value: by instructions, and as edge arguments
+  var vuses: List[List[Int]] = []
+  var euses: List[List[(Int, Int)]] = []
+  for _ in 0..n {
+    vuses.push([])
+    euses.push([])
+  }
+  for b in 0..f.blocks.len() {
+    for u in f.blocks[b].instrs {
+      for a in f.values[u].args {
+        vuses[a].push(u)
+      }
+      for e in f.values[u].succs {
+        for (k, a) in f.edges[e].args.indexed() {
+          euses[a].push((e, k))
+        }
+      }
+    }
+  }
+  // candidates: views that cannot fault, and Str parameters of blocks
+  // other than the entry (a function's parameters may be borrowed)
+  var cand: List[Bool] = []
+  for _ in 0..n {
+    cand.push(false)
+  }
+  for b in 1..f.blocks.len() {
+    for p in f.blocks[b].params {
+      cand[p] = f.values[p].ty == st
+    }
+    for v in f.blocks[b].instrs {
+      let x = f.values[v]
+      cand[v] = cand[v] || (x.op == ssa.Op.Call && aux_str(x.aux) == "rt.str_view" && x.args.len() == 3 && x.pad < 0 && x.ty == st)
+    }
+  }
+  for v in f.blocks[0].instrs {
+    let x = f.values[v]
+    cand[v] = x.op == ssa.Op.Call && aux_str(x.aux) == "rt.str_view" && x.args.len() == 3 && x.pad < 0 && x.ty == st
+  }
+  // drop a candidate with any other use, until none changes
+  var changed = true
+  while changed {
+    changed = false
+    for v in 0..n {
+      if !cand[v] {
+        continue
+      }
+      var ok = true
+      for u in vuses[v] {
+        let y = f.values[u]
+        if !((y.op == ssa.Op.Call && aux_str(y.aux) == "Str.len" && y.args.len() == 1) || (y.op == ssa.Op.Release && y.args.len() == 1)) {
+          ok = false
+          break
+        }
+      }
+      if ok {
+        for (e, k) in euses[v] {
+          if !cand[f.blocks[f.edges[e].to].params[k]] {
+            ok = false
+            break
+          }
+        }
+      }
+      if !ok {
+        cand[v] = false
+        changed = true
+      }
+    }
+  }
+  var any = false
+  for v in 0..n {
+    any = any || cand[v]
+  }
+  if !any {
+    return false
+  }
+  // a view is its length (no count taken, none released)
+  var view: List[Bool] = []
+  for _ in 0..n {
+    view.push(false)
+  }
+  for v in 0..n {
+    if cand[v] && f.values[v].op == ssa.Op.Call {
+      let a = f.values[v].args
+      f.values[v].op = ssa.Op.Sub
+      f.values[v].aux = ssa.Aux.None
+      f.values[v].args = [a[2], a[1]]
+      f.values[v].ty = it
+      view[v] = true
+    }
+  }
+  // a parameter keeps its Str, so every reference is released where it
+  // was (a parameter may alias its argument, which is read after the
+  // jump), and gets its length beside it
+  var plen: Map[Int, Int] = {}
+  for b in 1..f.blocks.len() {
+    for p in f.blocks[b].params {
+      if cand[p] && !view[p] {
+        plen[p] = f.add_param(b, it)
+      }
+    }
+  }
+  // on each edge into such a parameter: the argument's length, and the
+  // immortal empty string in place of a view (its release does nothing)
+  for b in 0..f.blocks.len() {
+    let t = f.term(b)
+    if t < 0 {
+      continue
+    }
+    for e in f.values[t].succs {
+      let to = f.edges[e].to
+      let args = f.edges[e].args
+      var extra: List[Int] = []
+      for (k, a) in args.indexed() {
+        let p = f.blocks[to].params[k]
+        if !plen.contains(p) {
+          continue
+        }
+        if view[a] {
+          extra.push(a)
+          let c = f.add(b, ssa.Op.Const, st, ssa.Aux.S(s: ""), [])
+          before_term(f, b, c)
+          f.edges[e].args[k] = c
+        } else if let Some(l) = plen.get(a) {
+          extra.push(l)
+        } else {
+          let l = f.add(b, ssa.Op.Call, it, ssa.Aux.S(s: "Str.len"), [a])
+          before_term(f, b, l)
+          extra.push(l)
+        }
+      }
+      if !extra.is_empty() {
+        f.edges[e].args = f.edges[e].args + extra
+      }
+    }
+  }
+  // a length read is the length; a view's release goes
+  var repl: Map[Int, Int] = {}
+  var gone: Map[Int, Bool] = {}
+  for v in 0..n {
+    if !cand[v] {
+      continue
+    }
+    for u in vuses[v] {
+      if f.values[u].op == ssa.Op.Release {
+        if view[v] {
+          gone[u] = true
+        }
+      } else {
+        repl[u] = if view[v] { v } else { plen.get(v) ?? v }
+        gone[u] = true
+      }
+    }
+  }
+  for b in 0..f.blocks.len() {
+    var out: List[Int] = []
+    for u in f.blocks[b].instrs {
+      if gone.contains(u) {
+        continue
+      }
+      out.push(u)
+      var args = f.values[u].args
+      var ch = false
+      for k in 0..args.len() {
+        if let Some(r) = repl.get(args[k]) {
+          args[k] = r
+          ch = true
+        }
+      }
+      if ch {
+        f.values[u].args = args
+      }
+      for e in f.values[u].succs {
+        for k in 0..f.edges[e].args.len() {
+          if let Some(r) = repl.get(f.edges[e].args[k]) {
+            f.edges[e].args[k] = r
+          }
+        }
+      }
+    }
+    f.blocks[b].instrs = out
+  }
+  true
+}
+
+/// Moves value v, just added at the end of block b, before b's
+/// terminator.
+fn before_term(var f: ssa.Func, b: Int, v: Int) {
+  let ins = f.blocks[b].instrs
+  let n = ins.len()
+  f.blocks[b].instrs = ins[0..n - 2] + [v, ins[n - 2]]
+}

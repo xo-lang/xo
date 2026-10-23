@@ -1,0 +1,15 @@
+exit 0
+--- stdout
+total 230000
+16 20 23 11 23 [Bearer abcdefghijklmnop]
+9 9 9 4 9 [Basic zzz]
+0 0 0 0 0 []
+0 7 7 3 7 [Bearer ]
+10 10 6 5 10 [abcdef xyz]
+2 2 0 1 2 [ab]
+4 4 0 2 4 [abyz]
+13 10 13 6 12 [ylophone nop]
+12 12 12 6 12 [é Bearer ñ]
+2 9 9 4 9 [Bearer é]
+joined 76
+--- stderr

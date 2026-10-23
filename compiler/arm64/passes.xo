@@ -20,6 +20,8 @@ pub fn passes() -> List[Str] {
     "uniq_var_params",
     "fold_consts",
     "cancel_rc_pairs",
+    // viewlen.xo: a Str view used only for its length is the length
+    "view_lens",
     "hoist_fields",
     "fold_tuples",
     "cse",

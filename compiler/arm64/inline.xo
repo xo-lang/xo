@@ -499,6 +499,11 @@ fn inline_one(var m: ssa.Module, st: InlineState, fi: Int) -> Bool {
     if pass_on(m, "cancel_rc_pairs") {
       let _c = cancel_rc_pairs(f)
     }
+    // a view only measured is its length (viewlen.xo); a release it
+    // moved to an edge may meet a retain
+    if pass_on(m, "view_lens") && view_lens(f) && pass_on(m, "cancel_rc_pairs") {
+      let _c2 = cancel_rc_pairs(f)
+    }
   }
   // decision 0257: after inlining, which brings the loops' list reads
   // into one function

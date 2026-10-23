@@ -1,0 +1,48 @@
+// Str views used only for their length (compiler/arm64 viewlen.xo,
+// view_lens): the length without the view's count and release, on every
+// shape the joins take; XO_LEAKCHECK in the goldens checks the counts.
+
+fn rest_len(s: Str) -> Int {
+  s.trim_prefix("Bearer ").len()
+}
+
+fn tail_len(s: Str) -> Int {
+  s.trim_suffix("nop").len()
+}
+
+fn both(s: Str) -> Int {
+  s.trim_prefix("ab").trim_suffix("yz").len()
+}
+
+fn slice_len(s: Str, a: Int, b: Int) -> Int {
+  s[a..b].len()
+}
+
+fn kept(s: Str) -> (Int, Str) {
+  // the view also kept: not only measured
+  let t = s.trim_prefix("x")
+  (t.len(), t)
+}
+
+fn main(os: Os) {
+  let words = ["Bearer abcdefghijklmnop", "Basic zzz", "", "Bearer ", "abcdef xyz", "ab", "abyz", "xylophone nop", "é Bearer ñ", "Bearer é"]
+  var n = 0
+  for _ in 0..1000 {
+    for w in words {
+      n += rest_len(w) + tail_len(w) + both(w)
+    }
+  }
+  os.stdio.println("total ${n}")
+  for w in words {
+    let (k, t) = kept(w)
+    os.stdio.println("${rest_len(w)} ${tail_len(w)} ${both(w)} ${slice_len(w, 0, w.len() / 2)} ${k} [${t}]")
+  }
+  // a view joined with a copy (a non boundary cut copies) and with the
+  // string itself
+  let s = "héllo wörld"
+  var m = 0
+  for i in [0, 1, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13] {
+    m += s.trim_prefix(s[0..i]).len()
+  }
+  os.stdio.println("joined ${m}")
+}
