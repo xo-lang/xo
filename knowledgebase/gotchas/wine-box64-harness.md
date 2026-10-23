@@ -54,3 +54,25 @@ Fix: scripts/wine-goldens.sh's run.sh probes the prefix after wineboot
 (`wine cmd /c echo xo-ok`) and makes it again, up to three times. When a
 run's summary shows every program failing with the same status, check
 the prefix before the programs.
+
+## The pin and a prefix in the image (2026-10-22)
+
+Symptom: a session's runs failed at wineboot ("Unhandled illegal
+instruction", then every exe exit c0000135 or 53, main's unchanged std
+too), while the same image, xo and goldens passed for another session
+an hour before and after (hello, conc_mutex, and wine-goldens.sh
+conc_mutex conc_channels net_echo, 3 of 3). A run interrupted in
+wineboot left a half made WORK/wine-box64, and every later run in that
+WORK failed the same way.
+
+Cause: the section above's Box64 wineboot failure; nothing in the image
+had changed (one image, 76f2ef49be04, all day). The image itself was
+also unpinned: a rebuild would have taken whatever Box64 and Wine
+Debian carried that day.
+
+Fix: scripts/docker-wine.sh's box64 image is pinned (base by digest,
+box64 and wine64 by version, the tag naming them) and is built with a
+prefix booted and checked (`wine cmd /c echo xo-ok`, up to five tries),
+copied into WORK when WORK has none; a failed check fails the image
+build instead of a run (toolchain.md "Windows programs under Wine in
+Docker"). Delete a WORK's wine-box64 after an interrupted run.
