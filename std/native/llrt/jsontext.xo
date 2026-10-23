@@ -665,7 +665,7 @@ pub fn find(src: Bytes, tape: List[Int], i: Int, key: Str) -> Int {
         found = v
       }
     } else if raw > LEN_MASK {
-      if str_at(src, tape, j) == key {
+      if key_eq_slow(src, tape, j, key) {
         found = v
       }
     }
@@ -675,6 +675,13 @@ pub fn find(src: Bytes, tape: List[Int], i: Int, key: Str) -> Int {
   found
 }
 
+/// Whether the escaped key node at j equals key: its own function (a cold
+/// call, compiler/ssa ir.xo cold_fn) so find's loop keeps its values in
+/// registers instead of across a call.
+fn key_eq_slow(src: Bytes, tape: List[Int], j: Int, key: Str) -> Bool {
+  str_at(src, tape, j) == key
+}
+
 /// Whether the string nodes at a and j have the same value.
 fn same_key(src: Bytes, tape: List[Int], a: Int, j: Int) -> Bool {
   let ra = tape[a + 2]
@@ -682,6 +689,11 @@ fn same_key(src: Bytes, tape: List[Int], a: Int, j: Int) -> Bool {
   if (ra | rj) <= LEN_MASK {
     return ra == rj && range_eq(src, tape[a + 1], src, tape[j + 1], ra)
   }
+  keys_eq_slow(src, tape, a, j)
+}
+
+/// same_key's compare when either key has an escape (cold, as key_eq_slow).
+fn keys_eq_slow(src: Bytes, tape: List[Int], a: Int, j: Int) -> Bool {
   str_at(src, tape, a) == str_at(src, tape, j)
 }
 

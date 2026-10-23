@@ -1,5 +1,19 @@
 # std/json changes
 
+## 2026-10-23: perf: jsontext.find and same_key compare escaped keys in their own functions
+
+- Kind: perf
+- Commit: this commit
+- Found by: Xo Lang 1 (JSON small on amd64 native 1.161x LLVM; callgrind jsontext.find 87.1M native vs 53.8M LLVM)
+- Go reference: none (internal scan)
+- Test: json std corpus and json goldens on arm64 and LLVM
+
+The only call in find's loop was the escaped-key compare, so about ten loop
+values had to survive a call and x86's five callee-saved registers left
+them in stack slots. The compare is now key_eq_slow (and same_key's keys_eq_slow),
+which the SSA treats as cold calls (saves only around the call). Output is
+unchanged.
+
 ## 2026-10-22: security: decode and parse_value reject a byte after the value
 
 - Kind: security
