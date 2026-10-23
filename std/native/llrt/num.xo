@@ -296,25 +296,55 @@ fn parity(m: Int, ph: Int, pl: Int, beta: Int) -> Int {
   if whole { p | 2 } else { p }
 }
 
+/// Go's trimZeros (internal/strconv/math.go): x times the inverse of 5^k
+/// mod 2^64, rotated right k bits, is x / 10^k when 10^k divides x and
+/// above (2^64 - 1) / 10^k when it does not; the inverses as Int
+/// (0xc767074b22e90e21, 0xd288ce703afb7e91, 0x8f5c28f5c28f5c29,
+/// 0xcccccccccccccccd) and the bounds
+const TRIM8_M = -4078282918271054303
+const TRIM8_LE = 184467440737
+const TRIM4_M = -3276141747490816367
+const TRIM4_LE = 1844674407370955
+const TRIM2_M = -8116567392432202711
+const TRIM2_LE = 184467440737095516
+const TRIM1_M = -3689348814741910323
+const TRIM1_LE = 1844674407370955161
+
 /// x without its trailing zeros and the exponent of its last digit (exp
-/// is x's): strconv.trimZeros.
+/// is x's), x not 0: strconv.trimZeros, one multiply and rotate a test
+/// and its quotient (2026-10-23: a remainder and a quotient by each power
+/// of ten, portable json enc_floats 1.14 times LLVM).
 fn trimmed(x0: Int, exp0: Int) -> (Int, Int) {
   var x = x0
   var exp = exp0
-  if x % 100000000 == 0 {
-    x = x / 100000000
-    exp += 8
+  // most shortest digits end in no zero: one test, then done
+  if ult(TRIM1_LE, mulw(x, TRIM1_M).rotate_right(1)) {
+    return (x, exp)
   }
-  if x % 10000 == 0 {
-    x = x / 10000
+  // x is below 10^18: 8 zeros at most twice
+  let d8 = mulw(x, TRIM8_M).rotate_right(8)
+  if !ult(TRIM8_LE, d8) {
+    x = d8
+    exp += 8
+    let e8 = mulw(x, TRIM8_M).rotate_right(8)
+    if !ult(TRIM8_LE, e8) {
+      x = e8
+      exp += 8
+    }
+  }
+  let d4 = mulw(x, TRIM4_M).rotate_right(4)
+  if !ult(TRIM4_LE, d4) {
+    x = d4
     exp += 4
   }
-  if x % 100 == 0 {
-    x = x / 100
+  let d2 = mulw(x, TRIM2_M).rotate_right(2)
+  if !ult(TRIM2_LE, d2) {
+    x = d2
     exp += 2
   }
-  if x % 10 == 0 {
-    x = x / 10
+  let d1 = mulw(x, TRIM1_M).rotate_right(1)
+  if !ult(TRIM1_LE, d1) {
+    x = d1
     exp += 1
   }
   (x, exp)

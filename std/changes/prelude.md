@@ -1,5 +1,22 @@
 # prelude changes
 
+## 2026-10-23: perf: Float text trims trailing zeros with Go's trimZeros
+
+- Kind: perf
+- Commit: this commit
+- Found by: native vs LLVM comparison (json enc_floats 1.14 times LLVM's instructions)
+- Go reference: internal/strconv/math.go trimZeros
+- Test: TestNumDiff at 200000 cases (arm64 and LLVM against Go)
+
+The shortest Float digits (std/native/llrt/num.xo dbox) drop their
+trailing zeros as Go's trimZeros does: x times the inverse of 5^k modulo
+2^64, rotated right k bits, is x / 10^k exactly when 10^k divides x, so
+each step is one multiply, a rotate and an unsigned compare instead of a
+remainder and a quotient by the power of ten, after one test that
+returns at once when the digits end in no zero. Output is unchanged.
+callgrind linux/amd64: json enc_floats 0.975, enc_small 0.997; arm64
+xo bench --ab enc_floats within noise.
+
 ## 2026-10-23: feature: Str.equal_fold (strings.EqualFold)
 
 - Kind: feature
