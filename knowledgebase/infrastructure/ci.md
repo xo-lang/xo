@@ -315,6 +315,15 @@ after the idle time.
   `ssh ec2-user@IP 'sudo bash -c "aws s3 cp s3://xo-seeds-ACCOUNT_ID/ci/boot/linux.sh /usr/local/sbin/xo-ci-boot.sh --region us-east-1 && AWS_REGION=us-east-1 bash /usr/local/sbin/xo-ci-boot.sh"'`.
   Template syntax: Terraform interpolates `${name}`; write shell
   variables as `$NAME` (or `$${NAME}`), never `${NAME}`.
+- **The runners' xo caches grow** (2026-10-23): the xo-windows runner's
+  backend cache (`%LOCALAPPDATA%\xo\backend`) held 31 GB against its
+  16 GB cap, the leftovers of many CI runs' xo builds (each a new cache
+  identity). Over the cap every due prune evicts, and on Windows the
+  prune runs inside the build (bcache.xo prune_backend_cache). The
+  instrumented windows-race.sh lines (`cache before/after the builds`)
+  show its size. To reset it, delete the runner's backend cache between
+  runs (an RDP or SSM session on the instance; a fresh cache costs one
+  cold build).
 - **Changing the workflow or suites**: `.github/workflows/ci.yml` and
   `scripts/ci/suite.sh`, pushed to main (the workflow definition always
   comes from main).

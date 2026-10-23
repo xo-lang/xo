@@ -142,6 +142,16 @@ used, one segment of what it used and made replaces the old): 26 to
 51 MB over the same eight (bench/results/cold-pack-2026-10-23.md;
 TestSharedPackBounded).
 
+Opt in (2026-10-23 evening, lead): the instrumented windows-race.sh runs
+(CI 40019736764 and 40019755932) put main's four builds at 564 to 623 s
+each against 9.6 to 16.1 s for the 0.27.0 archive's xo, on the runner's
+31 GB backend cache (16 GB cap), main removing 5.5 GB of it; the test
+binaries ran alike (265.0 s against 265.2 s). On the Mac, two APFS clones
+of a 17 GB cache with the prune inline (XO_PRUNE_DETACH=off, as on
+Windows), at the cap and with an 8 GB cap, put both xos' builds at 4.6
+to 19 s with bounded prunes. The cause is not found, so XO_COLD_PACK=on
+opts in and a cold build stores loose as 0.27.0 does.
+
 ## Consequences
 
 - Stage 1 changes the cache layout (a new `packs/shared` tree) but not

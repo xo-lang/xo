@@ -1254,7 +1254,11 @@ fn cache_get_packed(os: Os, dir: Str, kind: Str, target: Str, keys: List[Str], j
 /// (cache_get_packed). The bytes written loose, for the caller's prune
 /// (pack_write counts a segment itself).
 fn store_entries(os: Os, dir: Str, kind: Str, p: Pack, stores: List[(Str, Bytes)]) -> Int {
-  if !p.shared_dir.is_empty() && stores.len() >= COLD_PACK_MIN && (os.env.get("XO_COLD_PACK") ?? "") != "off" {
+  // opt in (XO_COLD_PACK=on) since 2026-10-23: main's builds took about
+  // 10 minutes each on the Windows CI runner's 31 GB cache, against 10 to
+  // 16 s for 0.27.0's, and the Mac does not reproduce it (decision 0351
+  // addendum); off until the cause is found
+  if !p.shared_dir.is_empty() && stores.len() >= COLD_PACK_MIN && (os.env.get("XO_COLD_PACK") ?? "") == "on" {
     // shared_store's rule: a new segment, or past PACK_SEGS segments (or
     // a pack holding more than twice what this build used) one segment
     // of what it used and made, replacing the old. Appending alone grew

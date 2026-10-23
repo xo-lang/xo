@@ -2793,15 +2793,15 @@ func TestSharedPack(t *testing.T) {
 	if m == nil || m[1] == "0" {
 		t.Fatalf("XO_COLD_PACK=off: the second build read no rc entry loose: %v", m)
 	}
-	// the default: the cold build writes its entries as a shared pack
+	// XO_COLD_PACK=on (opt in since 2026-10-23): the cold build writes its entries as a shared pack
 	// segment, so the second build reads them there, none loose
 	cache = filepath.Join(work, "cache")
-	build("one", "one")
-	_, m = build("one", "one")
+	build("one", "one", "XO_COLD_PACK=on")
+	_, m = build("one", "one", "XO_COLD_PACK=on")
 	if m == nil || m[4] == "0" || m[1] != "0" {
 		t.Fatalf("the second build after a packed cold build: %v, want its rc entries from the shared pack and none loose", m)
 	}
-	got, m := build("two", "two")
+	got, m := build("two", "two", "XO_COLD_PACK=on")
 	if m == nil || m[4] == "0" || m[1] != "0" {
 		t.Fatalf("a new program in a new directory: %v, want its rc entries from the shared pack and none loose", m)
 	}
@@ -2848,7 +2848,7 @@ func TestSharedPackBounded(t *testing.T) {
 		out := filepath.Join(work, "prog.bin")
 		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", out, "."))
 		cmd.Dir = dir
-		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on", "XO_SHARED_PACK=on", fmt.Sprintf("XO_INLINE_DENY=no_such_fn_%d", gen)), env...)
+		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on", "XO_SHARED_PACK=on", "XO_COLD_PACK=on", fmt.Sprintf("XO_INLINE_DENY=no_such_fn_%d", gen)), env...)
 		if log, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("xo build, generation %d: %v\n%s", gen, err, log)
 		}
