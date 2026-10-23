@@ -736,7 +736,7 @@ fn (var b: Builder) run_job_fe(j: Job) {
       if let Some(e) = eo {
         match entry {
           Some(old) => {
-            if applies && !fe_same(old, e) {
+            if applies && !b.fe_same_numbered(old, e) {
               b.fe.mismatches.push(b.m.funcs[fi].name)
             }
           }

@@ -26,6 +26,34 @@ test "verify compares the tail, not the xo that recorded the entry (fe_same)" {
   expect(fe_same(a, head_entry("conc=true", "xo-a", b"body one"))) == false
 }
 
+/// A tail as fe_entry writes it: no checks, no variables, the modules the
+/// body built code of first, then target, flag bits, and the body.
+fn tail_with(mods: List[Str], body: Bytes) -> Bytes {
+  var t = EntryW{b: BytesBuilder.new()}
+  t.uv(0)
+  t.sv(0)
+  t.uv(mods.len())
+  for m in mods {
+    t.str(m)
+  }
+  t.bool(false)
+  t.uv(0)
+  t.bytes(body)
+  t.b.freeze()
+}
+
+test "verify does not compare the modules a body built code of first (fe_same: tail_sans_mods)" {
+  // the same body recorded where native/llrt/ints was declared before it
+  // and where it was not (2026-10-23, prelude.llrt_str_hash)
+  let a = head_entry("conc=false", "xo-a", tail_with([], b"body one"))
+  expect(fe_same(a, head_entry("conc=false", "xo-a", tail_with(["native/llrt/ints"], b"body one")))) == true
+  expect(fe_same(a, head_entry("conc=false", "xo-a", tail_with(["native/llrt/ints"], b"body two")))) == false
+  expect(tail_sans_mods(tail_with(["a", "b"], b"x"))) == tail_sans_mods(tail_with([], b"x"))
+  expect(tail_sans_mods(tail_with(["a"], b"x")) == tail_sans_mods(tail_with([], b"y"))) == false
+  // a tail fe_entry did not write is compared whole
+  expect(tail_sans_mods(b"body one")) == None
+}
+
 test "verify does not compare where the body was (fe_same: line, pinned)" {
   let a = head_entry_at("conc=false", "xo-a", 10, false, b"body one")
   expect(fe_same(a, head_entry_at("conc=false", "xo-a", 42, false, b"body one"))) == true
@@ -51,4 +79,12 @@ test "shift_lines moves packed lines by whole lines, columns kept (v13)" {
   shift_lines(f, -2)
   expect(f.values[0].line) == 10 * 4096 + 3
   expect(f.dvars[0].line) == 11 * 4096 + 5
+}
+
+test "verify numbers closures alike: closure_name" {
+  expect(closure_name("http.call_raw.fn17")) == true
+  expect(closure_name("f.fn1")) == true
+  expect(closure_name("f.fn")) == false
+  expect(closure_name("main")) == false
+  expect(closure_name("a.fnx")) == false
 }

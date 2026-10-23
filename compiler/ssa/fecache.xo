@@ -322,7 +322,8 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
   e.uv(base.max(0))
   e.bool(pinned)
   // the body and what it does to the builder itself: the same whichever
-  // builder made the entry (fe_same compares this for verify)
+  // builder made the entry but for the module list (fe_same compares the
+  // rest for verify, tail_sans_mods)
   var tl = EntryW{b: BytesBuilder.new()}
   tl.uv(b.checks.len() - r.nc)
   for c in b.checks[r.nc..b.checks.len()] {
@@ -481,9 +482,10 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
 }
 
 /// Whether entries a and b make the same body with the same effects on
-/// the builder (verify): their version, flags, and tail; what each found
-/// and made depends on the builder that recorded it, and the xo that
-/// recorded it (v8's recorder) is not compared.
+/// the builder (verify): their version, flags, and tail without its
+/// module list (tail_sans_mods); what each found and made depends on the
+/// builder that recorded it, and the xo that recorded it (v8's recorder)
+/// is not compared.
 fn fe_same(a: Bytes, b: Bytes) -> Bool {
   var x = EntryR{d: a}
   var y = EntryR{d: b}
@@ -496,7 +498,139 @@ fn fe_same(a: Bytes, b: Bytes) -> Bool {
   let _yl = y.uv()
   let _xp = x.bool()
   let _yp = y.bool()
-  same_head && x.bytes() == y.bytes() && x.ok && y.ok
+  let xt = x.bytes()
+  let yt = y.bytes()
+  let same_tail = match (tail_sans_mods(xt), tail_sans_mods(yt)) {
+    (Some(p), Some(q)) => p == q
+    _ => xt == yt
+  }
+  same_head && same_tail && x.ok && y.ok
+}
+
+/// An entry's tail (fe_entry's tl) without its module list, or None when
+/// it is not a tail fe_entry wrote. The list holds the modules the body
+/// was the first to build code of, which depends on what the builder
+/// built before it (decl_mods only grows), so one body recorded in two
+/// programs differs there; a replay declares the body's functions again
+/// (its declare events, declare0), which adds their modules, so the
+/// list's contents never change what a replay builds (2026-10-23:
+/// XO_BACKEND_CACHE=verify failed on entries another golden recorded,
+/// with byte-identical binaries).
+fn tail_sans_mods(t: Bytes) -> Option[Bytes] {
+  let (pre, mid, body) = tail_split(t)?
+  var w = EntryW{b: BytesBuilder.new()}
+  w.b.write(pre)
+  w.b.write(mid)
+  w.bytes(body)
+  Some(w.b.freeze())
+}
+
+/// A tail's parts: what comes before its module list, what comes after
+/// it up to the body (target and flag bits), and the encoded body.
+fn tail_split(t: Bytes) -> Option[(Bytes, Bytes, Bytes)] {
+  var r = EntryR{d: t}
+  let nc = r.uv()
+  if !r.ok || nc > t.len() {
+    return None
+  }
+  for _ in 0..nc {
+    let _u = r.uv()
+    let _c = r.str()
+    let _w = r.sv()
+  }
+  let _nvar = r.sv()
+  let mods_at = r.at
+  let nm = r.uv()
+  if !r.ok || nm > t.len() {
+    return None
+  }
+  for _ in 0..nm {
+    let _m = r.str()
+  }
+  let mid_at = r.at
+  let _target = r.bool()
+  let _flagbits = r.uv()
+  let body_at = r.at
+  let body = r.bytes()
+  if !r.ok || r.at != t.len() {
+    return None
+  }
+  Some((t[0..mods_at], t[mid_at..body_at], body))
+}
+
+/// fe_same, with the closures and constants each body names numbered
+/// alike: a replay numbers both as the build here numbers them
+/// (fe_replay's renames, fe_const_ids), so one body recorded where other
+/// bodies had been replayed or built before it (http.call_raw.fn17
+/// against fn22, 2026-10-23) builds the same code. Verify's comparison.
+fn (b: Builder) fe_same_numbered(a: Bytes, e: Bytes) -> Bool {
+  if fe_same(a, e) {
+    return true
+  }
+  let (xh, xt) = entry_head_tail(a) ?? ("", b"")
+  let (yh, yt) = entry_head_tail(e) ?? ("", b"")
+  if xh.is_empty() || xh != yh {
+    return false
+  }
+  match (tail_split(xt), tail_split(yt)) {
+    (Some((xp, xm, xb)), Some((yp, ym, yb))) => {
+      if xp != yp || xm != ym {
+        return false
+      }
+      let nb = b.numbered_body(xb)
+      nb != None && nb == b.numbered_body(yb)
+    }
+    _ => false
+  }
+}
+
+/// An entry's version and flags (what fe_same compares of its head) and
+/// its tail; None when it does not decode.
+fn entry_head_tail(d: Bytes) -> Option[(Str, Bytes)] {
+  var r = EntryR{d: d}
+  let v = r.str()
+  let own = r.str()
+  let _recorder = r.str()
+  let _line = r.uv()
+  let _pinned = r.bool()
+  let t = r.bytes()
+  if !r.ok {
+    return None
+  }
+  Some(("${v}\n${own}", t))
+}
+
+/// An encoded body with its closures numbered by first use and its
+/// constants' numbers zeroed (fe_same_numbered), re-encoded; None when
+/// it does not decode.
+fn (b: Builder) numbered_body(d: Bytes) -> Option[Bytes] {
+  var f = decode_func(b.m, d, op_names())?
+  var clos: Map[Str, Str] = {}
+  for i in 0..f.values.len() {
+    if f.values[i].op is Op.Call | Op.FuncAddr | Op.Closure | Op.Rebind {
+      if let S(s) = f.values[i].aux {
+        if closure_name(s) {
+          if !clos.contains(s) {
+            clos[s] = "closure#${clos.len()}"
+          }
+          f.values[i].aux = Aux.S(s: clos.get(s) ?? s)
+        } else if s == "rt.const_once" && f.values[i].args.len() == 3 {
+          f.values[f.values[i].args[2]].aux = Aux.I(n: 0)
+        }
+      }
+    }
+  }
+  encode_func(b.m, f)
+}
+
+/// Whether s names a closure as the builder names them: NAME.fnN.
+fn closure_name(s: Str) -> Bool {
+  let d = s.bytes()
+  var i = d.len()
+  while i > 0 && Int(d[i - 1]) >= 48 && Int(d[i - 1]) <= 57 {
+    i -= 1
+  }
+  i < d.len() && i >= 4 && d[i - 3..i] == b".fn"
 }
 
 /// Whether a commit of entry d would pass its checks here (fe_replay's,

@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `XO_BACKEND_CACHE=verify` no longer reports front end cache entries
+  that another program recorded as differing: it compared the modules a
+  body was first to build code of and its closure and constant numbers,
+  which depend on what the build did before the body and which a replay
+  redoes. Builds through the cache were already identical.
+
 - 0.26.0 (2026-10-22): Windows binaries signed (Azure Artifact Signing)
   and native windows/amd64 I/O on completion ports (decision 0324); large
   Maps and Sets branch instead of copying (0291); fault tracebacks by
