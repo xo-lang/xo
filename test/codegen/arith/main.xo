@@ -72,7 +72,15 @@ fn by_zero(x: Int) -> Int {
   x
 }
 
+// A remainder by a constant under 0x110000 is a valid Rune unless it is
+// negative: the ranges decide the over-max and surrogate compares, so the
+// check is one compare and branch, no cset or orr chain.
+fn rune_rem(v: Int) -> Int {
+  // arm64: "cmp x[0-9]+, #0" -"cset" -"#1114111"
+  Int(Rune(v % 55296))
+}
+
 fn main(os: Os) {
   let n = os.env.args().len()
-  os.stdio.println("${times8(n)} ${div4(n)} ${fold()} ${times3(n)} ${clear_low(n + 6)} ${bit1(n)} ${low_bits(n)} ${word_index(n)} ${word_rem(n)} ${by_zero(n)}")
+  os.stdio.println("${times8(n)} ${div4(n)} ${fold()} ${times3(n)} ${clear_low(n + 6)} ${bit1(n)} ${low_bits(n)} ${word_index(n)} ${word_rem(n)} ${by_zero(n)} ${rune_rem(n * 7919)}")
 }

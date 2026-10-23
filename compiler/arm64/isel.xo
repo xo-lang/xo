@@ -1472,7 +1472,36 @@ fn (var g: G) fold_decided(blocks: List[Int], idom: List[Int]) {
       continue
     }
     let c = g.f.values[t].args[0]
-    let dk = g.decided(c) ?? g.dom_decided(b, c, idom)
+    var dk = g.decided(c) ?? g.dom_decided(b, c, idom)
+    // through not, or, and and: the one compare left to test, negated
+    // or not (2026-10-22: Rune(v % 55296) tested not(not(lt or gt or
+    // eq)), of which the ranges decide gt and eq)
+    var tv = c
+    var neg = false
+    if dk == None {
+      let (k, v, n) = g.fold_cond(c, COND_DEPTH)
+      if k >= 0 {
+        dk = Some(k == 1)
+      } else if v != c {
+        tv = v
+        neg = n
+        if let Some(k2) = g.dom_decided(b, v, idom) {
+          dk = Some(k2 != n)
+        }
+      }
+    }
+    if dk == None {
+      if tv != c {
+        g.f.values[t].args = [tv]
+        if neg {
+          let ss = g.f.values[t].succs
+          g.f.values[t].succs = [ss[1], ss[0]]
+        }
+        g.nuses[c] -= 1
+        g.nuses[tv] += 1
+      }
+      continue
+    }
     if let Some(k) = dk {
       let keep = g.f.values[t].succs[if k { 0 } else { 1 }]
       let drop = g.f.values[t].succs[if k { 1 } else { 0 }]
@@ -1546,6 +1575,55 @@ fn dominates(idom: List[Int], a: Int, b: Int) -> Bool {
     x = idom[x]
   }
   false
+}
+
+/// How many not, or, and and operations fold_cond looks through.
+const COND_DEPTH = 6
+
+/// Branch condition c with the Int compares the bounds decide (decided)
+/// and the Bool constants folded through not, or, and and: (1 or 0, c,
+/// false) when that decides it, else (-1, v, neg) to test v instead,
+/// negated when neg (v is c when nothing folds).
+fn (var g: G) fold_cond(c: Int, d: Int) -> (Int, Int, Bool) {
+  let x = g.f.values[c]
+  if x.op == ssa.Op.Const {
+    match x.aux {
+      B(k) => return (if k { 1 } else { 0 }, c, false)
+      _ => {}
+    }
+  }
+  if let Some(k) = g.decided(c) {
+    return (if k { 1 } else { 0 }, c, false)
+  }
+  if d <= 0 || x.ty < 0 || g.kind(x.ty) != ssa.Kind.Bool {
+    return (-1, c, false)
+  }
+  if x.op == ssa.Op.Not && x.args.len() == 1 {
+    let (k, v, n) = g.fold_cond(x.args[0], d - 1)
+    if k >= 0 {
+      return (1 - k, c, false)
+    }
+    return (-1, v, !n)
+  }
+  if (x.op == ssa.Op.Or || x.op == ssa.Op.And) && x.args.len() == 2 {
+    // true absorbs an or, false an and; the other constant is the identity
+    let absorb = if x.op == ssa.Op.Or { 1 } else { 0 }
+    let (ka, va, na) = g.fold_cond(x.args[0], d - 1)
+    let (kb, vb, nb) = g.fold_cond(x.args[1], d - 1)
+    if ka == absorb || kb == absorb {
+      return (absorb, c, false)
+    }
+    if ka >= 0 && kb >= 0 {
+      return (ka, c, false)
+    }
+    if ka >= 0 {
+      return (-1, vb, nb)
+    }
+    if kb >= 0 {
+      return (-1, va, na)
+    }
+  }
+  (-1, c, false)
 }
 
 /// The outcome of the Int compare c when its operands' bounds decide it.
