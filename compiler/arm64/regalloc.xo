@@ -758,12 +758,19 @@ fn (var g: G) regalloc() {
       if chosen < 0 {
         // a spill slot no value live at the same time holds (first fit,
         // like the registers; gotchas/arm64-large-frame.md)
+        // past SLOT_SCAN_MAX slots a new one is taken rather than the
+        // scan going on: with thousands of values live at once every
+        // value scanned every slot (the scale suite's vars program: emit
+        // n^1.7, 13.5 s at 65,536 bindings, 2026-10-23)
         var k = 0
         if wide {
           // two slots, the first even (16 bytes; q_mem copes with any
           // alignment of the area)
-          while k + 1 < slot_occ.len() && (overlaps_sorted(slot_occ[k], ranges[v]) || overlaps_sorted(slot_occ[k + 1], ranges[v])) {
+          while k + 1 < slot_occ.len() && k < SLOT_SCAN_MAX && (overlaps_sorted(slot_occ[k], ranges[v]) || overlaps_sorted(slot_occ[k + 1], ranges[v])) {
             k += 2
+          }
+          if k >= SLOT_SCAN_MAX && k + 1 < slot_occ.len() {
+            k = slot_occ.len() + slot_occ.len() % 2
           }
           while slot_occ.len() < k + 2 {
             slot_occ.push([])
@@ -771,8 +778,11 @@ fn (var g: G) regalloc() {
           }
           insert_ranges(slot_occ, k + 1, ranges[v])
         } else {
-          while k < slot_occ.len() && overlaps_sorted(slot_occ[k], ranges[v]) {
+          while k < slot_occ.len() && k < SLOT_SCAN_MAX && overlaps_sorted(slot_occ[k], ranges[v]) {
             k += 1
+          }
+          if k >= SLOT_SCAN_MAX && k < slot_occ.len() {
+            k = slot_occ.len()
           }
           if k == slot_occ.len() {
             slot_occ.push([])
@@ -1096,6 +1106,10 @@ fn push_rng(var lists: List[List[Rng]], i: Int, r: Rng) {
 fn push_int(var lists: List[List[Int]], i: Int, x: Int) {
   lists[i].push(x)
 }
+
+/// The spill slots a value's first fit scan tries before it takes a new
+/// slot.
+const SLOT_SCAN_MAX = 512
 
 /// Spill slot codes of stack words: SLOT_OUT + j is word j of the calls'
 /// stack argument area ([sp, #8j]), SLOT_IN + k word k of this
