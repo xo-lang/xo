@@ -2109,3 +2109,64 @@ func TestVetCostViewStoreOption(t *testing.T) {
 		t.Errorf("XO0911 at lines %v, want [9]\n%s", lines, out.String())
 	}
 }
+
+// vetCostSplitNProg: a piece of a split_n of a line (itself a piece of the
+// parameter's text) stored in a struct inside a loop (XO0911, line 9); the
+// same piece returned alone is not noted.
+const vetCostSplitNProg = `
+struct Tok {
+  name: Str
+}
+
+fn parse(text: Str) -> List[Tok] {
+  var out: List[Tok] = []
+  for line in text.lines() {
+    out.push(Tok{name: line.split_n(",", 2)[0]})
+  }
+  out
+}
+
+fn first(text: Str) -> Str {
+  for line in text.lines() {
+    return line.split_n(",", 2)[0]
+  }
+  ""
+}
+
+fn main(os: Os) {
+  os.stdio.println("${parse("ab,cd\nef").len()} ${first("ab,cd")}")
+}
+`
+
+// TestVetCostViewStoreSplitN: XO0911 names split_n, split_after and
+// split_after_n beside split in the parameter-view list
+// (compiler/ssa/cost.xo param_view_at), on the shape e6a66135b covers for
+// Options: a piece of a split stored in a struct inside a loop.
+func TestVetCostViewStoreSplitN(t *testing.T) {
+	t.Parallel()
+	dir := writeFiles(t, map[string]string{"main.xo": vetCostSplitNProg})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"vet", "--json", "--cost", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	var res struct {
+		Diagnostics []struct {
+			Code string `json:"code"`
+			Span struct {
+				Line int `json:"line"`
+			} `json:"span"`
+		} `json:"diagnostics"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &res); err != nil {
+		t.Fatalf("bad JSON: %v\n%s", err, out.String())
+	}
+	var lines []int
+	for _, d := range res.Diagnostics {
+		if d.Code == "XO0911" {
+			lines = append(lines, d.Span.Line)
+		}
+	}
+	if len(lines) != 1 || lines[0] != 9 {
+		t.Errorf("XO0911 at lines %v, want [9]\n%s", lines, out.String())
+	}
+}
