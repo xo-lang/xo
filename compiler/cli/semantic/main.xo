@@ -9,6 +9,8 @@
 //                                            module, as JSON (the
 //                                            comparison with internal/defhash)
 
+use github.com/xo-lang/xo/compiler/hostpath
+
 fn main(os: Os) ! {
   os.proc.exit(run(os, os.env.args()))
 }
@@ -38,69 +40,23 @@ fn wd_of(os: Os) -> Str {
 }
 
 /// p cleaned (filepath.Clean of a slash path).
-pub fn clean(p: Str) -> Str {
-  if p.is_empty() {
-    return "."
-  }
-  let rooted = p.starts_with("/")
-  var out: List[Str] = []
-  for seg in p.split("/") {
-    if seg.is_empty() || seg == "." {
-      continue
-    }
-    if seg == ".." {
-      if !out.is_empty() && out[out.len() - 1] != ".." {
-        out.pop()
-        continue
-      }
-      if rooted {
-        continue
-      }
-    }
-    out.push(seg)
-  }
-  let s = out.join("/")
-  if rooted {
-    return "/${s}"
-  }
-  if s.is_empty() { "." } else { s }
-}
+pub fn clean(p: Str) -> Str { hostpath.clean(p) }
 
 /// filepath.Abs against wd.
-pub fn abs_path(wd: Str, p: Str) -> Str {
-  if p.starts_with("/") {
-    return clean(p)
-  }
-  clean("${wd}/${p}")
-}
+pub fn abs_path(wd: Str, p: Str) -> Str { hostpath.abs(wd, p) }
 
 /// filepath.Dir.
-pub fn dir_of(p: Str) -> Str {
-  let c = clean(p)
-  let parts = c.split("/")
-  if parts.len() <= 1 {
-    return "."
-  }
-  let d = parts[0..parts.len() - 1].join("/")
-  if d.is_empty() { "/" } else { d }
-}
+pub fn dir_of(p: Str) -> Str { hostpath.dir(p) }
 
 /// filepath.Base.
-pub fn base_of(p: Str) -> Str {
-  let c = clean(p)
-  if c == "/" {
-    return "/"
-  }
-  let parts = c.split("/")
-  parts[parts.len() - 1]
-}
+pub fn base_of(p: Str) -> Str { hostpath.base(p) }
 
 /// mod.ModRoot: the nearest directory at or above dir holding an xo.mod,
 /// absolute; "" when there is none.
 pub fn mod_root(fs: Fs, wd: Str, dir: Str) -> Str uses fs.read {
   var d = abs_path(wd, dir)
   while true {
-    let f = if d == "/" { "/xo.mod" } else { "${d}/xo.mod" }
+    let f = hostpath.join(d, "xo.mod")
     if fs.exists(f).ok() ?? false {
       return d
     }

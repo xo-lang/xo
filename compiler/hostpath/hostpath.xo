@@ -1,0 +1,234 @@
+// The host's path rules in one place (field report W1 to W4, W8,
+// 2026-10-23: the CLI assumed a `/` root, `/tmp`, and no `.exe`, and hung,
+// lost files and rejected C:/ paths on Windows). Paths reach xo with `/`
+// separators on every OS (std.md 3.1); on Windows a drive (`C:/x`) or a
+// UNC share (`//host/share/x`) is a volume in front of the root, and `\`
+// separates too. Every function has a `_w` form taking the OS as a flag so
+// the Windows rules are tested on any host; the plain form uses the OS xo
+// was built for.
+
+/// Whether this xo runs on Windows (the OS it was built for).
+pub fn windows() -> Bool {
+  match target.os {
+    Windows => true
+    Darwin | Linux | Wasi => false
+  }
+}
+
+fn slash_w(p: Str, win: Bool) -> Str {
+  if win { p.replace("\\", "/") } else { p }
+}
+
+/// The volume at the front of p: `C:` or `//host/share` on Windows, "" on
+/// other OSes and for a path without one.
+pub fn volume_w(p0: Str, win: Bool) -> Str {
+  if !win {
+    return ""
+  }
+  let p = slash_w(p0, true)
+  let b = p.bytes()
+  if b.len() >= 2 && b[1] == ':' && ((b[0] >= 'a' && b[0] <= 'z') || (b[0] >= 'A' && b[0] <= 'Z')) {
+    return p[0..2]
+  }
+  if p.starts_with("//") && !p.starts_with("///") {
+    let parts = p[2..].split("/")
+    if parts.len() >= 2 && !parts[0].is_empty() && !parts[1].is_empty() {
+      return "//${parts[0]}/${parts[1]}"
+    }
+  }
+  ""
+}
+
+pub fn volume(p: Str) -> Str { volume_w(p, windows()) }
+
+/// filepath.IsAbs, and a path rooted at `/` too on Windows (xo takes
+/// `/x` as absolute on every host).
+pub fn is_abs_w(p0: Str, win: Bool) -> Bool {
+  let p = slash_w(p0, win)
+  let v = volume_w(p, win)
+  if v.is_empty() {
+    return p.starts_with("/")
+  }
+  v.starts_with("//") || p[v.len()..].starts_with("/")
+}
+
+pub fn is_abs(p: Str) -> Bool { is_abs_w(p, windows()) }
+
+/// filepath.Clean of a path in `/` form (and `\` on Windows); a volume
+/// stays in front.
+pub fn clean_w(p0: Str, win: Bool) -> Str {
+  if p0.is_empty() {
+    return "."
+  }
+  let p = slash_w(p0, win)
+  let v = volume_w(p, win)
+  let rest = p[v.len()..]
+  let rooted = rest.starts_with("/") || v.starts_with("//")
+  var out: List[Str] = []
+  for e in rest.split("/") {
+    if e.is_empty() || e == "." {
+      continue
+    }
+    if e == ".." {
+      if !out.is_empty() && out[out.len() - 1] != ".." {
+        out.pop()
+        continue
+      }
+      if rooted {
+        continue
+      }
+    }
+    out.push(e)
+  }
+  let body = out.join("/")
+  if rooted {
+    return "${v}/${body}"
+  }
+  "${v}${if body.is_empty() { "." } else { body }}"
+}
+
+pub fn clean(p: Str) -> Str { clean_w(p, windows()) }
+
+/// The root of an absolute path: `/`, `C:/`, `//host/share/`; "" for a
+/// relative path.
+pub fn root_w(p: Str, win: Bool) -> Str {
+  if !is_abs_w(p, win) {
+    return ""
+  }
+  "${volume_w(p, win)}/"
+}
+
+pub fn root(p: Str) -> Str { root_w(p, windows()) }
+
+/// Whether p is the root of its volume (`/`, `C:/`), where a walk up the
+/// directories ends.
+pub fn is_root_w(p: Str, win: Bool) -> Bool {
+  is_abs_w(p, win) && clean_w(p, win) == root_w(p, win)
+}
+
+pub fn is_root(p: Str) -> Bool { is_root_w(p, windows()) }
+
+/// filepath.Join of two elements.
+pub fn join_w(a: Str, b: Str, win: Bool) -> Str {
+  if a.is_empty() {
+    return clean_w(b, win)
+  }
+  if b.is_empty() {
+    return clean_w(a, win)
+  }
+  clean_w("${a}/${b}", win)
+}
+
+pub fn join(a: Str, b: Str) -> Str { join_w(a, b, windows()) }
+
+/// filepath.Dir: "." for a name alone, the root for a root's child, the
+/// root itself for a root.
+pub fn dir_w(p0: Str, win: Bool) -> Str {
+  let p = slash_w(p0, win)
+  let v = volume_w(p, win)
+  let rest = p[v.len()..]
+  match rest.rfind("/") {
+    Some(i) => clean_w("${v}${rest[0..i + 1]}", win)
+    None => "${v}."
+  }
+}
+
+pub fn dir(p: Str) -> Str { dir_w(p, windows()) }
+
+/// filepath.Base.
+pub fn base_w(p0: Str, win: Bool) -> Str {
+  let p1 = slash_w(p0, win)
+  let rest = p1[volume_w(p1, win).len()..]
+  if rest.is_empty() {
+    return "."
+  }
+  var p = rest
+  while p.len() > 1 && p.ends_with("/") {
+    p = p[0..p.len() - 1]
+  }
+  match p.rfind("/") {
+    Some(i) => {
+      let r = p[i + 1..]
+      if r.is_empty() { "/" } else { r }
+    }
+    None => p
+  }
+}
+
+pub fn base(p: Str) -> Str { base_w(p, windows()) }
+
+/// filepath.Abs against the working directory wd.
+pub fn abs_w(wd: Str, p: Str, win: Bool) -> Str {
+  if is_abs_w(p, win) {
+    return clean_w(p, win)
+  }
+  join_w(wd, p, win)
+}
+
+pub fn abs(wd: Str, p: Str) -> Str { abs_w(wd, p, windows()) }
+
+/// filepath.Rel(base, target) for two absolute clean paths on one volume;
+/// None when target is not below base.
+pub fn rel_below_w(base: Str, target: Str, win: Bool) -> Str? {
+  if target == base {
+    return Some(".")
+  }
+  let pre = if is_root_w(base, win) { base } else { "${base}/" }
+  if target.starts_with(pre) {
+    return Some(target.trim_prefix(pre))
+  }
+  None
+}
+
+pub fn rel_below(base: Str, target: Str) -> Str? { rel_below_w(base, target, windows()) }
+
+/// os.TempDir in `/` form, without a trailing `/` (except a root): $TMPDIR,
+/// and on Windows $TEMP then $TMP then %LocalAppData%/Temp (GetTempPath's
+/// order), else /tmp on the others; on Windows with none of them, the
+/// Windows directory's Temp.
+pub fn temp_dir_w(env: Env, win: Bool) -> Str uses env {
+  var names = ["TMPDIR"]
+  if win {
+    names = ["TMPDIR", "TEMP", "TMP"]
+  }
+  for n in names {
+    let v = env.get(n) ?? ""
+    if !v.is_empty() {
+      return trim_slash_w(msys_w(slash_w(v, win), win), win)
+    }
+  }
+  if win {
+    let la = env.get("LocalAppData") ?? ""
+    if !la.is_empty() {
+      return trim_slash_w("${slash_w(la, true)}/Temp", true)
+    }
+    let wd = env.get("SystemRoot") ?? (env.get("windir") ?? "C:\\Windows")
+    return "${trim_slash_w(slash_w(wd, true), true)}/Temp"
+  }
+  "/tmp"
+}
+
+pub fn temp_dir(env: Env) -> Str uses env { temp_dir_w(env, windows()) }
+
+/// A Git Bash path (`/c/Users/x`) as the drive path a Windows program can
+/// open (`C:/Users/x`); other paths unchanged.
+pub fn msys_w(p: Str, win: Bool) -> Str {
+  let b = p.bytes()
+  if win && b.len() >= 2 && b[0] == '/' && ((b[1] >= 'a' && b[1] <= 'z') || (b[1] >= 'A' && b[1] <= 'Z')) && (b.len() == 2 || b[2] == '/') {
+    return "${p[1..2].to_upper()}:${if b.len() == 2 { "/" } else { p[2..] }}"
+  }
+  p
+}
+
+fn trim_slash_w(p: Str, win: Bool) -> Str {
+  var d = p
+  while d.len() > 1 && d.ends_with("/") && !(win && d.len() == 3 && volume_w(d, true).len() == 2) {
+    d = d[0..d.len() - 1]
+  }
+  d
+}
+
+/// The suffix of an executable for the OS goos names (".exe" on Windows).
+pub fn exe_suffix(goos: Str) -> Str {
+  if goos == "windows" { ".exe" } else { "" }
+}

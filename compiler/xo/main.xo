@@ -64,6 +64,7 @@ use github.com/xo-lang/xo/compiler/cli/bind
 use github.com/xo-lang/xo/compiler/cli/servers
 use github.com/xo-lang/xo/compiler/cli/cmdhelp
 use github.com/xo-lang/xo/compiler/cli/bench
+use github.com/xo-lang/xo/compiler/hostpath
 
 fn main(os: Os) ! {
   // decision 0349's default (owner, 2026-10-22): three quarters of
@@ -714,7 +715,7 @@ fn in_scope(os: Os, o: Opts, ds: List[check.Diag]) -> List[check.Diag] {
   }
   // xo:allow XO0903 the working directory from $PWD when getcwd fails
   let wd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
-  let abs = fn(p: Str) -> Str { if p.starts_with("/") { p } else { "${wd}/${p}".replace("/./", "/") } }
+  let abs = fn(p: Str) -> Str { if is_abs_path(p) { p } else { "${wd}/${p}".replace("/./", "/") } }
   var roots: List[Str] = []
   for d in o.dirs {
     // "." and "./x" too: the root ends in "/", so abs's "/./" cleanup
@@ -931,7 +932,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         wout = "${od}/${base}"
       }
     }
-    let why = build_wasm(os, ctx, b.m, wout, o.wd, o.dirs[0], tzsel.tz_select(os, ctx.std, tu, o.tzdata), o.skip_unsupported)
+    let why = build_wasm(os, ctx, b.m, wout, o.wd, o.dirs[0], tzsel.tz_select(os, ctx.std, tu, o.tzdata, "wasip1"), o.skip_unsupported)
     if !why.is_empty() {
       return Native{skipped: why}
     }
@@ -990,7 +991,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     let cwd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
     lm.comp_dir = abs_line_root(os, cwd, o.dirs[0])
     let lsd = dir_name(ctx.std.trim_suffix("/"))
-    lm.std_root = if lsd.starts_with("/") { lsd } else { "${cwd}/${lsd}" }
+    lm.std_root = if is_abs_path(lsd) { lsd } else { "${cwd}/${lsd}" }
     // whole program dead function removal, as for the native backends
     // below: a function only a folded target arm called (sanhook's
     // ThreadSanitizer threads, which call pthread and mmap) is not
@@ -1377,9 +1378,14 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         // objects, the zone data's, imports by the table
         var zsrcs: List[Str] = []
         if uses_time {
-          let sel = tzsel.tz_select(os, ctx.std, cur_tu, o.tzdata)
+          let sel = tzsel.tz_select(os, ctx.std, cur_tu, o.tzdata, tgoos)
           if !sel.err.is_empty() {
             fail(os, sel.err)
+          }
+          if !(o.json && o.cmd == "build") {
+            for n in sel.notes {
+              os.stdio.eprintln(n)
+            }
           }
           match tz_object(os, dir, sel, tgoos, tgoarch) {
             Ok(p) => zsrcs.push(p)
@@ -1781,7 +1787,7 @@ fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str,
     if !(o.tzdata is "" | "embedded" | "system") {
       fail(os, "unknown --tzdata=${o.tzdata} (want embedded or system)")
     }
-    let sel = tzsel.tz_select(os, ctx.std, tu, o.tzdata)
+    let sel = tzsel.tz_select(os, ctx.std, tu, o.tzdata, tgoos)
     if !sel.err.is_empty() {
       fail(os, sel.err)
     }
@@ -1907,7 +1913,7 @@ fn write_dumps(os: Os, dumps: List[(Str, Str)]) {
   if dumps.is_empty() {
     return
   }
-  var dir = os.env.get("XO_DUMP_DIR") ?? (os.env.get("TMPDIR") ?? "/tmp")
+  var dir = os.env.get("XO_DUMP_DIR") ?? hostpath.temp_dir(os.env)
   while dir.len() > 1 && dir.ends_with("/") {
     dir = dir[0..dir.len() - 1]
   }
@@ -2064,7 +2070,7 @@ fn gen_module(os: Os, o: Opts, ctx: Ctx, c: check.Checker, m: ssa.Module, tgoos:
   let cwd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
   gm.comp_dir = abs_line_root(os, cwd, o.dirs[0])
   let sd = dir_name(ctx.std.trim_suffix("/"))
-  gm.std_root = if sd.starts_with("/") { sd } else { "${cwd}/${sd}" }
+  gm.std_root = if is_abs_path(sd) { sd } else { "${cwd}/${sd}" }
   (gm, t)
 }
 

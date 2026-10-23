@@ -354,6 +354,13 @@ fn write_file(text: Str) {
     dir = env1("TMPDIR")
   }
   if dir.is_empty() {
+    // Windows sets TEMP and TMP, not TMPDIR (field report W2)
+    dir = env1("TEMP")
+  }
+  if dir.is_empty() {
+    dir = env1("TMP")
+  }
+  if dir.is_empty() {
     dir = "/tmp"
   }
   let path = "${dir.trim_suffix("/")}/xo-dump-${pid()}.txt"

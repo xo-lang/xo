@@ -20,6 +20,7 @@
 
 use github.com/xo-lang/xo/compiler/check
 use github.com/xo-lang/xo/compiler/gen
+use github.com/xo-lang/xo/compiler/hostpath
 
 /// A test of the binary (internal/build TestInfo).
 struct TestInfo {
@@ -356,7 +357,7 @@ fn run_tests(os: Os, bin: Str, tests: List[TestInfo], o: TestOpts) -> Int {
   if !regress.is_empty() && !o.std.is_empty() {
     // regressions_test.xo in each module (regress.xo), as on the Go
     // backend
-    let rf = "${(os.env.get("TMPDIR") ?? "/tmp").trim_suffix("/")}/xo-regressions-${os.rand.bytes(6).to_hex()}.jsonl"
+    let rf = "${hostpath.temp_dir(os.env)}/xo-regressions-${os.rand.bytes(6).to_hex()}.jsonl"
     match os.fs.write(rf, (regress.join("\n") + "\n").bytes()) {
       Ok(_) => {
         write_regressions(os, rf, o.std)

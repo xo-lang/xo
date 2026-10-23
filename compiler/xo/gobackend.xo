@@ -12,6 +12,7 @@ use github.com/xo-lang/xo/compiler/prune
 use github.com/xo-lang/xo/compiler/tzsel
 use std/crypto
 use std/internal
+use github.com/xo-lang/xo/compiler/hostpath
 
 /// Builds o.dirs with the Go backend (internal/build Build with the Go
 /// backend): the tree is the Go driver's build directory (or --go-tree),
@@ -232,11 +233,7 @@ fn build_go(os: Os, ctx: Ctx, o: Opts) ! {
     }
     // shrunk contract fuzz failures become regression tests (core 9.2),
     // through a file in the test binary's environment
-    var tmp_root = os.env.get("TMPDIR") ?? ""
-    if tmp_root.is_empty() {
-      tmp_root = "/tmp"
-    }
-    let rf = "${tmp_root.trim_suffix("/")}/xo-regressions-${os.rand.bytes(6).to_hex()}.jsonl"
+    let rf = "${hostpath.temp_dir(os.env)}/xo-regressions-${os.rand.bytes(6).to_hex()}.jsonl"
     let made = os.fs.write(rf, b"").is_ok()
     let code = exec_binary(os, host_bin, targs, if made { ["XO_REGRESSION_OUT=${rf}"] } else { [] })
     if made {

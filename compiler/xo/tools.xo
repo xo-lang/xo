@@ -5,6 +5,7 @@
 // entries in the same caches.
 
 use std/crypto
+use github.com/xo-lang/xo/compiler/hostpath
 
 /// The host's GOOS ("darwin", "linux", or "windows"): Windows is the OS
 /// this xo was built for (decision 0197), the others from `uname -s`.
@@ -37,22 +38,12 @@ fn host_arch() -> Str {
 }
 
 /// Whether this xo runs on Windows (the OS it was built for).
-fn is_windows() -> Bool {
-  match target.os {
-    Windows => true
-    Darwin | Linux | Wasi => false
-  }
-}
+fn is_windows() -> Bool { hostpath.windows() }
 
 /// Whether p is absolute: rooted at / on every host, and on Windows a
 /// drive path (C:/x, C:\x; paths reach xo with / separators there,
 /// std.md 3.1).
-fn is_abs_path(p: Str) -> Bool {
-  if p.starts_with("/") {
-    return true
-  }
-  is_windows() && p.len() >= 3 && p[1..2] == ":" && (p[2..3] == "/" || p[2..3] == "\\")
-}
+fn is_abs_path(p: Str) -> Bool { hostpath.is_abs(p) }
 
 /// The null device for a tool's input or output.
 fn dev_null() -> Str {

@@ -6,6 +6,7 @@
 
 use std/json
 use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/hostpath
 
 /// One parameter of the failing call (rt.RegressRecord's params; the
 /// JSON key "var" is read as is_var).
@@ -124,11 +125,7 @@ fn regression_source(r: RRecord, name: Str) -> (Str, Str) {
 /// regressions_test.xo replaced by src (a copy in a temporary
 /// directory), "" when it checks clean.
 fn checks_with(os: Os, dir: Str, src: Str, std_dir: Str) -> Str {
-  var tmp_root = os.env.get("TMPDIR") ?? ""
-  if tmp_root.is_empty() {
-    tmp_root = "/tmp"
-  }
-  let tmp = "${tmp_root.trim_suffix("/")}/xo-regress-${os.rand.bytes(6).to_hex()}"
+  let tmp = "${hostpath.temp_dir(os.env)}/xo-regress-${os.rand.bytes(6).to_hex()}"
   let m = "${tmp}/${base_name(dir)}"
   let why = copy_tree(os, dir, m)
   if !why.is_empty() {

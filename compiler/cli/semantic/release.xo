@@ -7,6 +7,7 @@
 use std/archive
 use github.com/xo-lang/xo/compiler/check
 use github.com/xo-lang/xo/compiler/parser
+use github.com/xo-lang/xo/compiler/hostpath
 
 /// One export of a module version: a pub declaration of one of its
 /// packages, as `xo query api` lists it (release.Item).
@@ -577,7 +578,7 @@ pub fn publish(os: Os, dir: Str, version: Str, only_check: Bool) -> PublishResul
     }
   }
   if !r.previous.is_empty() {
-    let tmp = match os.fs.create_temp("/tmp", "xo-publish-") {
+    let tmp = match os.fs.create_temp(hostpath.temp_dir(os.env), "xo-publish-") {
       Ok(t) => t
       Err(e) => {
         r.fail("XO1311", mod_file, 0, "${e}", [])

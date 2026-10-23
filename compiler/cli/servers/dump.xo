@@ -4,15 +4,14 @@
 // directory) as xo-dump-<pid>.txt. Only the process the user names is
 // signaled.
 
+use github.com/xo-lang/xo/compiler/hostpath
+
 fn dump_flags() -> List[Flag] {
   [Flag{name: "timeout", kind: "duration", def: "5s", usage: "how long to wait for the dump"}]
 }
 
-/// The temporary directory as Go's os.TempDir: $TMPDIR, else /tmp.
-pub fn temp_dir(os: Os) -> Str uses env {
-  let t = os.env.get("TMPDIR") ?? ""
-  if t.is_empty() { "/tmp" } else { t }
-}
+/// The temporary directory as Go's os.TempDir (hostpath.temp_dir).
+pub fn temp_dir(os: Os) -> Str uses env { hostpath.temp_dir(os.env) }
 
 /// filepath.Join of a directory and a name (the separators cleaned at
 /// the join).

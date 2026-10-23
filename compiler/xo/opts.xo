@@ -292,7 +292,7 @@ fn path_arg(arg: Str) -> Str {
 
 /// p against the working directory wd (unless absolute).
 fn abs_in(wd: Str, p: Str) -> Str {
-  if p.starts_with("/") || wd.is_empty() { p } else { "${wd}/${p}" }
+  if is_abs_path(p) || wd.is_empty() { p } else { "${wd}/${p}" }
 }
 
 fn is_dir(os: Os, p: Str) -> Bool {

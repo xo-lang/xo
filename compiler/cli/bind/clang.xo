@@ -1,6 +1,8 @@
 // Running clang (internal/cbind clang.go): finding it, its version line,
 // and the JSON AST dump of a translation unit that includes the header.
 
+use github.com/xo-lang/xo/compiler/hostpath
+
 /// cbind.Clang: $XO_CLANG, then clang on $PATH (internal/build.Clang's
 /// rule).
 fn find_clang(os: Os) -> Str ! Str uses (env, fs.read) {
@@ -72,11 +74,7 @@ fn host_is_darwin() -> Bool {
 /// dumpAST: clang's JSON AST dump of a translation unit holding include,
 /// as top level declarations with the file each is declared in.
 fn dump_ast(os: Os, clang: Str, include: Str, inc_dirs: List[Str]) -> List[Decl] ! Str uses (fs, proc, env) {
-  var tmp_root = (os.env.get("TMPDIR") ?? "").trim_suffix("/")
-  if tmp_root.is_empty() {
-    tmp_root = "/tmp"
-  }
-  let tmp = match os.fs.create_temp(tmp_root, "xo-cbind-") {
+  let tmp = match os.fs.create_temp(hostpath.temp_dir(os.env), "xo-cbind-") {
     Ok(t) => t
     Err(e) => return Err("${e}")
   }

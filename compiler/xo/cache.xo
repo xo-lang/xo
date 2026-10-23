@@ -6,48 +6,14 @@
 
 use github.com/xo-lang/xo/compiler/prune
 use std/crypto
+use github.com/xo-lang/xo/compiler/hostpath
 
 /// filepath.Clean of a slash separated path.
-fn clean_path(p: Str) -> Str {
-  if p.is_empty() {
-    return "."
-  }
-  if is_windows() && is_abs_path(p) && !p.starts_with("/") {
-    // a drive path: the drive, then the rest cleaned as rooted
-    return p[0..2] + clean_path("/" + p[3..].replace("\\", "/"))
-  }
-  let rooted = p.starts_with("/")
-  var out: List[Str] = []
-  for e in p.split("/") {
-    if e.is_empty() || e == "." {
-      continue
-    }
-    if e == ".." {
-      if !out.is_empty() && out[out.len() - 1] != ".." {
-        out.pop()
-        continue
-      }
-      if rooted {
-        continue
-      }
-    }
-    out.push(e)
-  }
-  let s = out.join("/")
-  if rooted {
-    return "/" + s
-  }
-  if s.is_empty() { "." } else { s }
-}
+fn clean_path(p: Str) -> Str { hostpath.clean(p) }
 
 /// filepath.Abs: p joined to the working directory wd when relative,
 /// cleaned.
-fn abs_of(wd: Str, p: Str) -> Str {
-  if is_abs_path(p) {
-    return clean_path(p)
-  }
-  clean_path("${wd}/${p}")
-}
+fn abs_of(wd: Str, p: Str) -> Str { hostpath.abs(wd, p) }
 
 /// internal/build progName: the base name of the first directory.
 fn prog_name(wd: Str, dirs: List[Str]) -> Str {

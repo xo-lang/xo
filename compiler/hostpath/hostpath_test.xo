@@ -1,0 +1,95 @@
+// Tests of the host path rules, the Windows ones on any host.
+
+test "windows volumes and roots" {
+  expect(volume_w("C:/x/y", true)) == "C:"
+  expect(volume_w("c:\\x", true)) == "c:"
+  expect(volume_w("//srv/share/x", true)) == "//srv/share"
+  expect(volume_w("//srv", true)) == ""
+  expect(volume_w("C:/x", false)) == ""
+  expect(is_abs_w("C:/x", true)) == true
+  expect(is_abs_w("C:\\x", true)) == true
+  expect(is_abs_w("/x", true)) == true
+  expect(!is_abs_w("C:x", true)) == true
+  expect(!is_abs_w("x/y", true)) == true
+  expect(!is_abs_w("C:/x", false)) == true
+  expect(root_w("C:/x/y", true)) == "C:/"
+  expect(root_w("/x", false)) == "/"
+  expect(root_w("x", true)) == ""
+  expect(is_root_w("C:/", true)) == true
+  expect(is_root_w("C:", true) == false) == true
+  expect(is_root_w("/", false)) == true
+  expect(!is_root_w("C:/x", true)) == true
+}
+
+test "clean, dir, base, abs" {
+  expect(clean_w("C:/a/../b/./c", true)) == "C:/b/c"
+  expect(clean_w("C:\\a\\b\\..", true)) == "C:/a"
+  expect(clean_w("C:/..", true)) == "C:/"
+  expect(clean_w("C:", true)) == "C:."
+  expect(clean_w("//srv/share/a/..", true)) == "//srv/share/"
+  expect(clean_w("/a/../..", false)) == "/"
+  expect(clean_w("a/../..", false)) == ".."
+  expect(dir_w("C:/x", true)) == "C:/"
+  expect(dir_w("C:/x/y", true)) == "C:/x"
+  expect(dir_w("C:/", true)) == "C:/"
+  expect(dir_w("x", true)) == "."
+  expect(dir_w("a/b/", false)) == "a/b"
+  expect(dir_w("/x", false)) == "/"
+  expect(dir_w("/a/b", false)) == "/a"
+  expect(base_w("C:/x/y.exe", true)) == "y.exe"
+  expect(base_w("C:/", true)) == "/"
+  expect(base_w("/", false)) == "/"
+  expect(base_w("/a/b/", false)) == "b"
+  expect(abs_w("C:/w", "x/y", true)) == "C:/w/x/y"
+  expect(abs_w("C:/w", "D:/z/../q", true)) == "D:/q"
+  expect(abs_w("/w", "x", false)) == "/w/x"
+  expect(join_w("C:/a", "../b", true)) == "C:/b"
+}
+
+test "walk up ends at the root" {
+  for win in [true, false] {
+    var d = if win { "C:/a/b/c" } else { "/a/b/c" }
+    var steps = 0
+    while !is_root_w(d, win) {
+      d = dir_w(d, win)
+      steps += 1
+      expect(steps < 10) == true
+    }
+    expect(steps) == 3
+    expect(dir_w(d, win)) == d
+  }
+}
+
+test "rel_below" {
+  expect(rel_below_w("C:/a", "C:/a/b/c", true)) == Some("b/c")
+  expect(rel_below_w("C:/", "C:/a", true)) == Some("a")
+  expect(rel_below_w("/", "/a", false)) == Some("a")
+  expect(rel_below_w("C:/a", "C:/ab", true)) == None
+  expect(rel_below_w("C:/a", "C:/a", true)) == Some(".")
+}
+
+test "temp dir" {
+  expect(exe_suffix("windows")) == ".exe"
+  expect(exe_suffix("linux")) == ""
+}
+
+test "temp_dir reads TMPDIR, TEMP, TMP, then the OS's own" {
+  os.env.set("TMPDIR", "")
+  os.env.set("TEMP", "")
+  os.env.set("TMP", "")
+  os.env.set("LocalAppData", "")
+  expect(temp_dir_w(os.env, false)) == "/tmp"
+  expect(temp_dir_w(os.env, true)) == "C:/Windows/Temp"
+  os.env.set("LocalAppData", "C:\\Users\\x\\AppData\\Local")
+  expect(temp_dir_w(os.env, true)) == "C:/Users/x/AppData/Local/Temp"
+  os.env.set("TMP", "D:\\t\\")
+  expect(temp_dir_w(os.env, true)) == "D:/t"
+  expect(temp_dir_w(os.env, false)) == "/tmp"
+  os.env.set("TEMP", "E:\\e")
+  expect(temp_dir_w(os.env, true)) == "E:/e"
+  os.env.set("TMPDIR", "/c/Users/x/Temp/")
+  expect(temp_dir_w(os.env, true)) == "C:/Users/x/Temp"
+  expect(temp_dir_w(os.env, false)) == "/c/Users/x/Temp"
+  os.env.set("TMPDIR", "C:\\")
+  expect(temp_dir_w(os.env, true)) == "C:/"
+}

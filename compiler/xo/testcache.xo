@@ -17,6 +17,7 @@
 use github.com/xo-lang/xo/compiler/check
 use github.com/xo-lang/xo/compiler/prune
 use std/crypto
+use github.com/xo-lang/xo/compiler/hostpath
 
 /// A stored run: the binary and its tests.
 struct RunHit {
@@ -185,11 +186,8 @@ fn run_fetch(os: Os, ctx: Ctx, key: Str) -> RunHit? {
   prune.mark_used_within(os.fs, os.clock, bin, BIN_TOUCH)
   // the run uses a copy outside the cache, so a prune cannot remove the
   // binary between its test processes, however long they run
-  var tmp = (os.env.get("TMPDIR") ?? "").trim_suffix("/")
-  if tmp.is_empty() {
-    tmp = "/tmp"
-  }
-  let run = "${tmp}/xo-run-${os.rand.bytes(8).to_hex()}"
+  // (the .exe a Windows program needs to run: field report W3)
+  let run = "${hostpath.temp_dir(os.env)}/xo-run-${os.rand.bytes(8).to_hex()}${hostpath.exe_suffix(if hostpath.windows() { "windows" } else { "" })}"
   match os.fs.copy(bin, run) {
     Ok(_) => {}
     Err(_) => {

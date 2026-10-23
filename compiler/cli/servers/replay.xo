@@ -12,6 +12,8 @@
 // prefix and parsed.
 
 /// The length of a build ID (internal/build: hex of SHA-256, [:24]).
+use github.com/xo-lang/xo/compiler/hostpath
+
 const ID_LEN = 24
 
 fn replay_flags() -> List[Flag] {
@@ -261,7 +263,7 @@ fn host_target(os: Os) -> Str uses proc {
 
 /// filepath.Abs against the working directory.
 fn abs_path(os: Os, p: Str) -> Str uses env {
-  if p.starts_with("/") {
+  if hostpath.is_abs(p) {
     return p
   }
   join(os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? "", p.trim_prefix("./"))

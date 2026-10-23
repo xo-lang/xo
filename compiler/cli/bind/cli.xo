@@ -7,6 +7,7 @@
 // the binding cache (check_dirs_bound).
 
 use github.com/xo-lang/xo/compiler/cli/cmdhelp
+use github.com/xo-lang/xo/compiler/hostpath
 
 /// Runs `xo bind <args>` (args[0] is "bind") and returns the exit status,
 /// with the std directory $XO_STD, else "std" in the working directory
@@ -362,11 +363,7 @@ pub fn gobind_helper(os: Os, std_dir: Str, wd: Str) -> (Str, Bool) ! Str uses (f
   if !is_file(os, join(up, "cmd/xo-gobind/main.go")) {
     return Err("xo-gobind not found: set XO_GOBIND, put xo-gobind on PATH or beside xo, or build it with `go build github.com/xo-lang/xo/cmd/xo-gobind`")
   }
-  var tmp_root = (os.env.get("TMPDIR") ?? "").trim_suffix("/")
-  if tmp_root.is_empty() {
-    tmp_root = "/tmp"
-  }
-  let tmp = match os.fs.create_temp(tmp_root, "xo-gobind-") {
+  let tmp = match os.fs.create_temp(hostpath.temp_dir(os.env), "xo-gobind-") {
     Ok(t) => t
     Err(e) => return Err("building xo-gobind: ${e}")
   }

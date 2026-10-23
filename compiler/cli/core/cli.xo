@@ -11,6 +11,7 @@
 
 use github.com/xo-lang/xo/compiler/check
 use github.com/xo-lang/xo/compiler/cli/cmdhelp
+use github.com/xo-lang/xo/compiler/hostpath
 
 /// The toolchain version (cmd/xo version.go; TestSelfhostVersion keeps
 /// them equal).
@@ -355,10 +356,12 @@ pub fn nearest_work(os: Os, ctx: Ctx, dir: Str) -> Str uses fs.read {
     if os.fs.exists(name).ok() ?? false {
       return name
     }
-    if d == "/" {
+    // the root of the volume (/, C:/), where dir_of gives back d
+    let up = dir_of(d)
+    if up == d || hostpath.is_root(d) {
       return ""
     }
-    d = dir_of(d)
+    d = up
   }
   ""
 }
@@ -366,104 +369,24 @@ pub fn nearest_work(os: Os, ctx: Ctx, dir: Str) -> Str uses fs.read {
 // ---------------------------------------------------------------------------
 // Paths (path/filepath on Unix)
 
-/// filepath.Clean.
-pub fn clean_path(p: Str) -> Str {
-  if p.is_empty() {
-    return "."
-  }
-  let rooted = p.starts_with("/")
-  var out: List[Str] = []
-  for s in p.split("/") {
-    if s.is_empty() || s == "." {
-      continue
-    }
-    if s == ".." {
-      if !out.is_empty() && out[out.len() - 1] != ".." {
-        out.pop()
-        continue
-      }
-      if rooted {
-        continue
-      }
-    }
-    out.push(s)
-  }
-  let body = out.join("/")
-  if rooted {
-    return "/${body}"
-  }
-  if body.is_empty() { "." } else { body }
-}
+/// filepath.Clean (hostpath.clean: a Windows volume stays in front).
+pub fn clean_path(p: Str) -> Str { hostpath.clean(p) }
 
 /// filepath.Join of two elements.
-pub fn join_path(a: Str, b: Str) -> Str {
-  if a.is_empty() {
-    return clean_path(b)
-  }
-  if b.is_empty() {
-    return clean_path(a)
-  }
-  clean_path("${a}/${b}")
-}
+pub fn join_path(a: Str, b: Str) -> Str { hostpath.join(a, b) }
 
 /// filepath.Dir.
-pub fn dir_of(p: Str) -> Str {
-  match last_slash(p) {
-    Some(i) => clean_path(slice_to(p, i + 1))
-    None => "."
-  }
-}
+pub fn dir_of(p: Str) -> Str { hostpath.dir(p) }
 
 /// filepath.Base.
-pub fn base_of(p0: Str) -> Str {
-  if p0.is_empty() {
-    return "."
-  }
-  var p = p0
-  while p.len() > 1 && p.ends_with("/") {
-    p = slice_to(p, p.len() - 1)
-  }
-  match last_slash(p) {
-    Some(i) => {
-      let r = slice_from(p, i + 1)
-      if r.is_empty() { "/" } else { r }
-    }
-    None => p
-  }
-}
-
-fn last_slash(p: Str) -> Int? {
-  let b = p.bytes()
-  var i = b.len() - 1
-  while i >= 0 {
-    if b[i] == '/' {
-      return Some(i)
-    }
-    i -= 1
-  }
-  None
-}
+pub fn base_of(p: Str) -> Str { hostpath.base(p) }
 
 /// filepath.Abs against the working directory of ctx.
-pub fn abs_path(ctx: Ctx, p: Str) -> Str {
-  if p.starts_with("/") {
-    return clean_path(p)
-  }
-  join_path(ctx.wd, p)
-}
+pub fn abs_path(ctx: Ctx, p: Str) -> Str { hostpath.abs(ctx.wd, p) }
 
 /// filepath.Rel(base, target) for two absolute clean paths; None when
 /// target is not below base.
-pub fn rel_below(base: Str, target: Str) -> Str? {
-  if target == base {
-    return Some(".")
-  }
-  let pre = if base == "/" { "/" } else { "${base}/" }
-  if target.starts_with(pre) {
-    return Some(target.trim_prefix(pre))
-  }
-  None
-}
+pub fn rel_below(base: Str, target: Str) -> Str? { hostpath.rel_below(base, target) }
 
 /// An Fs error as Go's *PathError prints it, as near as the error kinds
 /// allow.

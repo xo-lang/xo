@@ -187,8 +187,24 @@ pub struct TZSel {
 }
 
 /// tzSelect for the native backends; tzdata is --tzdata ("" or
-/// "embedded", or "system").
-pub fn tz_select(os: Os, std: Str, tu: TZUse, tzdata: Str) -> TZSel uses (env, fs) {
+/// "embedded", or "system") for a program of the OS goos: Windows has no
+/// zone database to read at run time, so --tzdata=system there embeds the
+/// data and says so (field report W8: every zone was unknown).
+pub fn tz_select(os: Os, std: Str, tu: TZUse, tzdata: Str, goos: Str) -> TZSel uses (env, fs) {
+  var tzdata = tzdata
+  var note = ""
+  if tzdata == "system" && goos == "windows" {
+    tzdata = "embedded"
+    note = "note: --tzdata=system: Windows has no zone database to read at run time; the zone data is embedded as with --tzdata=embedded"
+  }
+  var sel = tz_select_mode(os, std, tu, tzdata)
+  if !note.is_empty() && sel.err.is_empty() && (!tu.names.is_empty() || !tu.dynamic.is_empty()) {
+    sel.notes.push(note)
+  }
+  sel
+}
+
+fn tz_select_mode(os: Os, std: Str, tu: TZUse, tzdata: Str) -> TZSel uses (env, fs) {
   if tzdata == "system" {
     if tu.names.is_empty() && tu.dynamic.is_empty() {
       return TZSel{}

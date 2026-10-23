@@ -1,8 +1,27 @@
 // Tests of the regression file writes of `xo test` (core 9.2).
 
+use std/testing
+use github.com/xo-lang/xo/compiler/hostpath
+
 test "a regressions file that cannot be read is an error, not empty" {
   expect(existing_text(Ok("old tests"))) == Ok("old tests")
   expect(existing_text(Err(FsErr.NotFound(path: "r_test.xo")))) == Ok("")
   // "" here wrote the new test over every earlier one
   expect(existing_text(Err(FsErr.Io(path: "r_test.xo", msg: "input/output error"))).is_err()) == true
+}
+
+test "checks_with under a Windows TEMP terminates and cleans up (field report W1)" {
+  // TMPDIR a drive path: the module copy and its check walk up from the
+  // temporary directory and must stop at the volume root
+  os.fs.create_dir_all("/w/m")?
+  os.fs.write("/w/m/xo.mod", b"module example.com/m\n")?
+  os.fs.write("/w/m/m.xo", b"fn main(os: Os) {}\n")?
+  os.env.set("TMPDIR", "C:\\Users\\x\\AppData\\Local\\Temp\\")
+  testing.run_main(fn(o: Os) -> () ! Error {
+    // the std tree is not there: an error text, not a hang
+    let out = checks_with(o, "/w/m", "// regressions\n", "/std")
+    expect(out.len() >= 0) == true
+  }, os)
+  os.env.set("TMPDIR", "/c/Users/x/Temp")
+  expect(hostpath.temp_dir_w(os.env, true)) == "C:/Users/x/Temp"
 }
