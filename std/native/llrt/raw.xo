@@ -5,7 +5,7 @@
 use native/rt
 
 /// The address of the first byte of s (its string object's data).
-pub fn data(s: Str) -> Int { rt.obj_addr(s) + rt.layout(0) }
+pub fn data(s: Str) -> Int { rt.int_wrap(0, rt.obj_addr(s), rt.layout(0)) }
 
 /// The address of b's first byte (valid while b is alive; the kernel may
 /// write there only when b is unique, as bytes_buf's are). Bytes and Str
@@ -228,11 +228,19 @@ pub fn str_cut(s: Str, lo: Int, hi: Int) -> Str {
   rt.str_view(s, lo, hi)
 }
 
+/// str_at for a range of an existing Str (n is under the 4 GiB a Str holds,
+/// so no length check, and no fault: a caller stays inlinable).
+fn str_copy(a: Int, n: Int) -> Str {
+  let s = rt.rs_set_len(rt.rs_with_cap(n), n)
+  rt.mem_copy(data(s), a, n)
+  s
+}
+
 /// str_cut(s, lo, s.len()) for 0 <= lo <= s.len(): one boundary test (the
 /// end is the string's end).
 pub fn str_from(s: Str, lo: Int) -> Str {
   if lo < s.len() && (rt.mem_load(data(s), lo, 1) & 0xC0) == 0x80 {
-    return str_at(data(s) + lo, s.len() - lo)
+    return str_copy(rt.int_wrap(0, data(s), lo), rt.int_wrap(1, s.len(), lo))
   }
   rt.str_view(s, lo, s.len())
 }
@@ -241,7 +249,7 @@ pub fn str_from(s: Str, lo: Int) -> Str {
 /// is the string's start).
 pub fn str_upto(s: Str, hi: Int) -> Str {
   if hi < s.len() && (rt.mem_load(data(s), hi, 1) & 0xC0) == 0x80 {
-    return str_at(data(s), hi)
+    return str_copy(data(s), hi)
   }
   rt.str_view(s, 0, hi)
 }

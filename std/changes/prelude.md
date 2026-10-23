@@ -1,5 +1,22 @@
 # prelude changes
 
+## 2026-10-23: perf: trim_prefix and trim_suffix inline in native code
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/results/views-trim-2026-10-22.md (trim_affix still 1.7x Go's instructions: the suffix trim was a call)
+- Go reference: strings.TrimPrefix, strings.TrimSuffix (inlined at the call)
+- Test: golden trim_affix_lens, views_split, str_ops_table, strings, text_helpers on arm64 and LLVM with Go parity; wasm goldens; std corpora
+
+The native inliner took `str_trim_suffix` only at a site passing a closure: its
+checked `s.len() - p.len()`, and the checked adds in `raw.data`, `eq_text` and
+the cut helpers, gave the function landing pads. Those operations are
+`rt.int_wrap` now (each is proved in range by its caller), `raw.str_from` and
+`raw.str_upto` copy through `raw.str_copy` (no length check: the source is a
+Str), and `eq_text` hands its 8 byte loop to `eq_words`. `str_trim_suffix` is
+inlined at a loop site, and the prefix trim at its site. Results are
+unchanged.
+
 ## 2026-10-22: perf: trim_prefix and trim_suffix compare words and cut once (native)
 
 - Kind: perf

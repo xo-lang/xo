@@ -46,3 +46,20 @@ values 0.725, and the one-test cuts 0.684.
 
 Still 1.7x Go's instructions: the three calls (compare, cut, release) are not
 inlined, where Go inlines HasPrefix. Output is byte-identical.
+
+## trim_prefix and trim_suffix inline (2026-10-23)
+
+The native inliner's report (`XO_INLINE_REPORT=1`) showed `str_trim_suffix` as
+"no (pads)": the checked subtraction and adds in the compare and cut helpers
+gave it landing pads, and a function with pads is inlined only at a closure
+site (or at its one site). With `rt.int_wrap` for the ranges the callers prove,
+no length check in the copy of a Str's own range, and the word loop in
+`eq_words`, it is "few" (inlined at loop sites).
+
+| mode | wall | instructions | before | after | Go |
+| --- | --- | --- | --- | --- | --- |
+| trim_affix | within noise (0.921) | 0.895 (0.892 to 0.897, `--ab` n=10) | 84.8 M | 75.8 M | 50.5 M |
+
+1.5x Go's instructions remain: `scan.eq_text` (120 instructions with its
+branches and `eq_words`) is still a call per trim, where Go folds the compare
+of a constant affix. Output is byte-identical.

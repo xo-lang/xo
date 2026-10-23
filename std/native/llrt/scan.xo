@@ -134,25 +134,33 @@ pub fn eq_at(a: Bytes, ai: Int, b: Bytes, bi: Int, n: Int) -> Bool {
 /// and no bounds checks (the trim_prefix and trim_suffix tests).
 pub fn eq_text(s: Str, i: Int, p: Str) -> Bool {
   let n = p.len()
-  let a = raw.data(s) + i
+  let a = rt.int_wrap(0, raw.data(s), i)
   let b = raw.data(p)
   if n >= 8 {
-    var t = 0
-    while n - t > 8 {
-      if rt.mem_load(a, t, 8) != rt.mem_load(b, t, 8) {
-        return false
-      }
-      t += 8
-    }
-    return rt.mem_load(a, n - 8, 8) == rt.mem_load(b, n - 8, 8)
+    return eq_words(a, b, n)
   }
   if n >= 4 {
-    return rt.mem_load(a, 0, 4) == rt.mem_load(b, 0, 4) && rt.mem_load(a, n - 4, 4) == rt.mem_load(b, n - 4, 4)
+    let e = rt.int_wrap(1, n, 4)
+    return rt.mem_load(a, 0, 4) == rt.mem_load(b, 0, 4) && rt.mem_load(a, e, 4) == rt.mem_load(b, e, 4)
   }
   if n >= 2 {
-    return rt.mem_load(a, 0, 2) == rt.mem_load(b, 0, 2) && rt.mem_load(a, n - 2, 2) == rt.mem_load(b, n - 2, 2)
+    let e = rt.int_wrap(1, n, 2)
+    return rt.mem_load(a, 0, 2) == rt.mem_load(b, 0, 2) && rt.mem_load(a, e, 2) == rt.mem_load(b, e, 2)
   }
   n == 0 || rt.mem_load(a, 0, 1) == rt.mem_load(b, 0, 1)
+}
+
+/// eq_text's n >= 8 bytes: whole words, then the last word (overlapping).
+fn eq_words(a: Int, b: Int, n: Int) -> Bool {
+  var t = 0
+  while rt.int_wrap(1, n, t) > 8 {
+    if rt.mem_load(a, t, 8) != rt.mem_load(b, t, 8) {
+      return false
+    }
+    t = rt.int_wrap(0, t, 8)
+  }
+  let e = rt.int_wrap(1, n, 8)
+  rt.mem_load(a, e, 8) == rt.mem_load(b, e, 8)
 }
 
 /// strings.Index of sub in s from `from` (rt.str_find): from below 0 is

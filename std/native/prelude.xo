@@ -102,8 +102,12 @@ fn str_trim_prefix(s: Str, p: Str) -> Str {
 }
 
 fn str_trim_suffix(s: Str, p: Str) -> Str {
-  if p.len() <= s.len() && scan.eq_text(s, s.len() - p.len(), p) {
-    return raw.str_upto(s, s.len() - p.len())
+  if p.len() <= s.len() {
+    // proved by the test above: no overflow, so no checked subtraction (its fault pads keep the function from inlining)
+    let k = rt.int_wrap(1, s.len(), p.len())
+    if scan.eq_text(s, k, p) {
+      return raw.str_upto(s, k)
+    }
   }
   s
 }
