@@ -1,5 +1,22 @@
 # prelude changes
 
+## 2026-10-23: test: Str find, rfind, contains, split, replace and List[Str].join against Go's strings
+
+- Kind: test
+- Commit: this commit
+- Found by: lead request after the strings corpus of 2026-10-23 (the search and split methods had none)
+- Go reference: strings.Index, LastIndex, Contains, Split, ReplaceAll, Join
+- Test: corpus/strsearch on arm64 and LLVM (internal/stdtest/testdata/corpus/strsearch)
+
+Corpus from Go's strings_test.go inputs (indexTests, lastIndexTests,
+splittests with n below zero, ReplaceTests with n at -1), 5000 seeded random
+search pairs, 3000 split pairs, 3000 replace triples and 1500 join lists,
+each on a plain Str and, for the search, split and replace cases, on a view
+of a longer text; join is also checked by putting every split back. Both
+backends match Go; no std change was needed. Go's IndexAny, LastIndexAny,
+Count and Fields tables are left out: no Str method exposes them, and
+Str.replace is ReplaceAll (no n).
+
 ## 2026-10-23: behavior: FsErr, NetErr, IoErr, EnvErr, ProcErr and ClockErr print plain messages (decision 0358)
 
 - Kind: behavior
