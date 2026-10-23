@@ -103,6 +103,14 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 ## Testing
 
+- Changing a printed text (an error message, a diagnostic, a failure
+  report, a CLI line): before pushing, grep every expected-output file
+  for the old text, `git grep -l -F 'OLD TEXT' -- '*want*.txt'
+  '*_test.go' '*_test.xo'`, and run or update each test that names it
+  (lead, 2026-10-23: three main failures that day were stale want files
+  after a text change: test_go_callback_deadlock, net_only,
+  TestBuildSettings). A text built at run time (a derived Display,
+  `${...}`) is not in any source literal, so grep for the printed form.
 - `xo test --std-module=MODULE` runs a std module's `_test.xo` files with
   private access (decision 0262); internal/stdtest runs every std module
   that has tests. Tests under std/ and compiler/ live only in `_test.xo`
