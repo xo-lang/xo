@@ -656,7 +656,7 @@ fn (var b: Builder) const_value(c: Int, t: Int) -> Int {
     }
   }
   if (!b.m.heap(t) || b.tkind(t) == Kind.Str) && b.c.is_compile_time(f, value) {
-    return b.foreign_value(value, f, t)
+    return b.foreign_value(value, f, t, b.s.sub)
   }
   // a constant whose initializer runs code (a call) is built once too,
   // whatever its type (decision 0332)

@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+ints 2 2 2 2
+strs 0 none
+v v 1
+--- stderr

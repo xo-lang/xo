@@ -1282,7 +1282,10 @@ fn (var b: Builder) struct_lit(e: Expr) -> Int {
       continue
     }
     if named >= 0 && i < b.c.objs[named].fields.len() && !b.c.objs[named].fields[i].default.is_empty() {
-      vals[i] = b.foreign_value(b.c.objs[named].fields[i].default[0], b.decl_file(named), b.m.types[t].fields[i].ty)
+      // a generic struct's default mentions its own parameters
+      // (`items: List[T] = []`): lower it with the instance's arguments
+      let dsub = b.c.args_subst(b.c.objs[named].tparams, b.ty_args(nt))
+      vals[i] = b.foreign_value(b.c.objs[named].fields[i].default[0], b.decl_file(named), b.m.types[t].fields[i].ty, dsub)
       continue
     }
     if named >= 0 {
@@ -1290,7 +1293,7 @@ fn (var b: Builder) struct_lit(e: Expr) -> Int {
       if it >= 0 {
         for f in b.c.objs[it].fields {
           if check.text(f.name) == b.m.types[t].fields[i].name && !f.default.is_empty() {
-            vals[i] = b.foreign_value(f.default[0], b.decl_file(it), b.m.types[t].fields[i].ty)
+            vals[i] = b.foreign_value(f.default[0], b.decl_file(it), b.m.types[t].fields[i].ty, b.c.args_subst(b.c.objs[it].tparams, b.ty_args(nt)))
             break
           }
         }
@@ -1343,7 +1346,7 @@ fn (var b: Builder) os_lit(fields: List[parser.FieldInit], t: Int, e: Expr) -> I
 
 
 /// e of file f (a default value, a constant) as a value of type t.
-fn (var b: Builder) foreign_value(e: Expr, f: Int, t: Int) -> Int {
+fn (var b: Builder) foreign_value(e: Expr, f: Int, t: Int, sub: Map[Int, Int]) -> Int {
   // a variant without fields, written as `None` or `Enum.Variant`: from
   // t itself (a std declaration file's defaults, std/http's Cookie, are
   // not checked as bodies, so the checker records no constructor there)
@@ -1368,18 +1371,24 @@ fn (var b: Builder) foreign_value(e: Expr, f: Int, t: Int) -> Int {
   if let ListLit(elems: es, ..) = e {
     if es.is_empty() && b.tkind(t) == Kind.List {
       let saved = b.s.file
+      let saved_sub = b.s.sub
       b.s.file = f
+      b.s.sub = sub
       let typed = b.tkind(b.type_of(e)) == Kind.List || b.tkind(b.nat_of(e)) == Kind.List
       b.s.file = saved
+      b.s.sub = saved_sub
       if !typed {
         return b.rt("rl_empty", t, [])
       }
     }
   }
   let saved = b.s.file
+  let saved_sub = b.s.sub
   b.s.file = f
+  b.s.sub = sub
   let v = b.value_as(e, t)
   b.s.file = saved
+  b.s.sub = saved_sub
   v
 }
 

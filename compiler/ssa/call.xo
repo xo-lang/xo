@@ -1167,7 +1167,7 @@ fn (var b: Builder) call_as_via(x: Expr, ci: check.CallInfo, impl: Int, real: In
         vals[i] = b.undef(ps[off + i])
         continue
       }
-      vals[i] = b.foreign_value(d[0], dfile, ps[off + i])
+      vals[i] = b.foreign_value(d[0], dfile, ps[off + i], b.s.sub)
     }
     if arg_places[i] >= 0 {
       places.push(aplaces[arg_places[i]])
@@ -2338,7 +2338,7 @@ fn (var b: Builder) io_arg(fo: Int, es: List[Expr?], i: Int, t: Int) -> Int {
     None => {
       let d = b.c.objs[fo].params[i].default
       if !d.is_empty() {
-        return b.foreign_value(d[0], b.decl_file(fo), t)
+        return b.foreign_value(d[0], b.decl_file(fo), t, b.s.sub)
       }
       b.unsupported("a call with a missing argument")
       b.undef(t)

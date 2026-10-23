@@ -1,0 +1,32 @@
+// A generic struct's field defaults mention its type parameter: the
+// native backend lowers them with the instance's type arguments
+// (Intel field report b01: XO1201 "the type `T`").
+struct Bag[T] {
+  name: Str
+  items: List[T] = []
+  index: Map[Str, T] = {}
+  last: Option[T] = None
+  count: Int = 0
+}
+
+fn (var b: Bag[T]) add(key: Str, v: T) {
+  b.items.push(v)
+  b.index[key] = v
+  b.last = Some(v)
+  b.count += 1
+}
+
+fn fresh[U](name: Str) -> Bag[U] {
+  Bag[U]{name: name}
+}
+
+fn main(os: Os) {
+  var a = Bag[Int]{name: "ints"}
+  a.add("one", 1)
+  a.add("two", 2)
+  os.stdio.println("${a.name} ${a.items.len()} ${a.index.get("two") ?? 0} ${a.last ?? -1} ${a.count}")
+  var s = fresh[Str]("strs")
+  os.stdio.println("${s.name} ${s.items.len()} ${s.last ?? "none"}")
+  s.add("k", "v")
+  os.stdio.println("${s.items[0]} ${s.index.get("k") ?? ""} ${s.count}")
+}

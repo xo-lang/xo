@@ -999,7 +999,7 @@ fn (var b: Builder) dec_fields(d: Dec, o: Int, seg: Str, fs: List[JField], with_
     b.jump(join, [cv])
     b.s.cur = missing
     if with_defaults && !f.dflt.is_empty() {
-      let dv = b.foreign_value(f.dflt[0], f.dfile, f.st)
+      let dv = b.foreign_value(f.dflt[0], f.dfile, f.st, b.s.sub)
       b.jump(join, [dv])
     } else if b.is_json_patch(f.ct) {
       let pt = b.unbox_type(f.st)
