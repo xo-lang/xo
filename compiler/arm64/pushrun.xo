@@ -51,6 +51,7 @@ fn (var g: G) plan_push_runs(blocks: List[Int]) {
       }
       // back from v through the pushes it continues
       var chain = [v]
+      var aliases: List[Int] = []
       var cur = v
       while chain.len() < PUSH_RUN_MAX {
         let a = g.f.values[cur].args[0]
@@ -85,7 +86,7 @@ fn (var g: G) plan_push_runs(blocks: List[Int]) {
           break
         }
         if !rb.is_empty() {
-          g.push_alias[a] = true
+          aliases.push(a)
         }
         chain.insert(0, a)
         cur = a
@@ -97,6 +98,17 @@ fn (var g: G) plan_push_runs(blocks: List[Int]) {
       var seen: Map[Int, Bool] = {}
       if !g.local_list(root, seen) {
         continue
+      }
+      // a pad's release reads the root's register: a block parameter (a
+      // loop's list, json scan's tape), defined before the run; a list.new
+      // root is made where first used, which may be the run's last push
+      // (2026-10-23: an xo built with that compiled ssa.Builder.mlog_record
+      // to a read before the definition)
+      if !aliases.is_empty() && g.f.values[root].op != ssa.Op.Param {
+        continue
+      }
+      for a in aliases {
+        g.push_alias[a] = true
       }
       var run = [root]
       for p in chain {
