@@ -175,6 +175,23 @@ Each finding: what, evidence, fix. Status in brackets.
   the read tool instead rather than taking that route on its own. The
   heavy guard now checks command position only (what a command word runs,
   through `bash SCRIPT` too).
+- 2026-10-23, task 2 result: Str.fields (strings.Fields) in Xo on native
+  (std/native/llrt/strings.xo, ASCII byte path, views), Go parity, spec,
+  corpus (Go's fieldstests plus 3000 random texts over every IsSpace
+  class), a golden on a view and a struct-held piece, wasm under Node,
+  and the full fixed point (s2 = s3, s1 = s2). About 12:50 to 13:41, of
+  which 32 minutes waiting for a bulk slot; unpushed commits 54ece9fbc and
+  938631a80 for the lead (after the 0.27.0 seed cut). Overseer verdict
+  approve. 1 soft correction (two one-line compiler/ edits made without
+  asking first, both correct, approved by Xo Lang 1), 3 guard blocks, all
+  overseer false positives, all reported with no workaround. The 60 s
+  polling rule was followed but did not get messages through: Pi keeps
+  one long turn, and xo-inbox delivers only between turns.
+- crosswalk cannot interrupt a Pi turn: `send_input` with an escape
+  sequence types it as literal text (`\u001b` landed in Pi's editor),
+  a raw control character is rejected as empty, and Ctrl+C
+  (`interrupt`) does not clear Pi's editor while it works. Do not try
+  again; clear the editor by hand at the terminal.
 
 ## Observations
 
