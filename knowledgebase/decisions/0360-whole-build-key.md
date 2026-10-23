@@ -1,4 +1,222 @@
 # 0360: A whole-build key: reuse the linked binary when nothing that feeds the build changed
 
-Status: Proposed (stub, 2026-10-23, Xo Lang 2): 0351's stage 3. The design
-and its measurements follow before any code.
+Status: Proposed (Xo Lang 2, 2026-10-23): 0351's stage 3, for the lead
+and then the owner. No code yet; the measurements below were taken
+first.
+
+## Context
+
+An unchanged warm build is Xo's largest build gap. The language twins
+(bench/results/twins-build-2026-10-23.md, lines 20 to 25) measured the
+CRUD server's warm build at 0.57 s for xo 0.27.0, against 0.08 s for Go
+and 0.03 s for Rust; hello at 0.28 s against 0.04 and 0.01.
+
+Every cache already hits on such a build. A warm CRUD build with xo at
+cbfa9b100 (`--phase-times`, XO_FE_STATS=1, 2026-10-23) shows it:
+
+- parse 194/194 reused, fe 2628/2642 bodies, rc, sum, inline and
+  borrows 2995/2995, functions 1364/1364, parts 9/9, objects 10/10.
+
+The time is the walk itself, phase by phase:
+
+- check 62 ms;
+- fe keys, read and build 87 ms;
+- prune_unwind 25, add_landings 26, cleanup 56;
+- insert_rc 76, of which plan 48;
+- assume 9;
+- inline 61, of which apply 59;
+- inline.verify 55;
+- fn_keys 7, emit 12, assemble 32, link 54.
+
+These sum to the 0.57 s. Each pass caches per function but still runs
+over the whole program, about 3,000 functions with std and the runtime.
+The fixed cost grows with the runtime, not with what changed. Making
+each pass cheaper attacks 0.3 s spread over ten phases; skipping them
+all when nothing changed removes it.
+
+What a hit can cost, on the same machine (Apple M4 Pro, load 4 to 5,
+gate class, 2026-10-23):
+
+| step | measured |
+|---|---|
+| start xo and exit (`xo version`, median of 20) | 5.5 ms (`go version`: 12.6 ms) |
+| stat every .xo, xo.mod and xo.lock of std and the CRUD program (273 files, 12.3 MB) | 0.5 ms |
+| read and sha256 all of them (the path when stats differ) | 22.8 ms |
+| copy the 6.4 MB binary | under 10 ms (`time -p` shows 0.00) |
+
+A hit with unchanged stats would therefore take about 10 ms, under
+Go's 80 ms. A checkout that touched every file without changing it
+would take about 35 ms.
+
+## Decision
+
+### What the key covers
+
+A build is stored under a **prefix** and a **manifest**.
+
+The prefix is the hash of what is known before the build reads
+anything:
+
+- `"xo whole-build v1"`;
+- xo's identity, `self_id` (bcache.xo): the hash of xo's own binary,
+  memoized by its path, size and modification time. The driver, the
+  linker and the passes are all in it. The codegen key (`cache_id`) is
+  not enough, since it leaves out the driver and the linker, as the
+  binary cache already notes.
+- the subcommand and the parsed options: every flag, `--release` and
+  each of its settings, the stamps, `--target`, the backend, `--race`
+  and `--debug-info`;
+- the output's base name (macOS's ad hoc signature names the file;
+  fetch_bin keys on it already);
+- the absolute program directories and the working directory, since
+  build info embeds the absolute directory.
+
+The manifest is the list of everything the build read, recorded while
+it ran:
+
+- **Files**: each file read through `os.fs`, by path, with its sha256,
+  size and modification time.
+- **Probes**: each stat or exists check, by path, with its result
+  (missing, a file of this size, a directory). The search for xo.work in
+  parent directories, vendor/ and a module looked up but not found are
+  probes, so creating such a file later changes the result.
+- **Listings**: each `read_dir`, by path, with the hash of its sorted
+  names. A new .xo file in a package directory changes it.
+- **Environment**: each `os.env.get`, by name, with its value or unset.
+  Every XO_* variable the build reads is in the key by construction.
+  TestCodegenInputsClassified stays, but the whole-build key does not
+  depend on it being complete.
+- **Diagnostics**: the build's warnings and notes. The CRUD server's
+  build prints an XO0540 warning, and a hit prints them again, as the
+  module check cache replays its diagnostics.
+
+The record comes from wrappers: `Fs`, `Env` and `Proc` are predeclared
+interfaces (core 6.3), so `RecordingFs`, `RecordingEnv` and
+`RecordingProc` wrap the `Os` the build is given. This covers every
+read, including ones a hand kept list would miss. These paths are left
+out:
+
+- the backend cache, the binary cache and the build directory: they are
+  derived from the same inputs, and verify mode checks that;
+- the output path;
+- the build's own temporary files.
+
+A build that started a process (cc, clang, go, ld, `use c` sources,
+`--ld=cc`, the LLVM backend, `--backend=go`) is not stored in stage 2:
+the process's own inputs are not recorded. A note under
+`XO_FE_STATS=1` names the process. A failed build is never stored.
+
+### The fast path
+
+1. Parse the command and compute the prefix. This reads xo's selfid
+   memo and nothing else of the program.
+2. Read the newest manifests under `<backend cache>/whole/PP/PREFIX/`
+   (up to 4 kept, newest first).
+3. For each manifest:
+   - compare the recorded environment;
+   - redo each probe and listing;
+   - stat each file. An equal size and modification time trusts the
+     recorded hash; otherwise read the file and compare its sha256.
+   - A file whose modification time was within 2 s of the manifest's
+     write time is always hashed, Go's and git's "racy" rule. FileInfo
+     has no inode or change time, so an edit in the same millisecond at
+     the same size would otherwise pass.
+4. On the first manifest that matches, clone the stored binary to the
+   output (`clonefile` on APFS, else a copy), replay the diagnostics,
+   and exit. A match that needed hashes rewrites the manifest's stats,
+   so the next hit is a stat hit.
+5. Otherwise, run the full build with the recorders on, then store the
+   binary and the manifest by temporary file and rename (two builds
+   racing store two equal entries).
+
+Entries live in the backend cache and are pruned by its size cap with
+the other kinds. `XO_WHOLE_BUILD=off`, and `XO_BACKEND_CACHE=off`, turn
+the path off.
+
+### Verify mode
+
+`XO_BACKEND_CACHE=verify` treats a hit as a miss:
+
+- it runs the full build with the recorders on, to a temporary output;
+- it compares the bytes with the stored binary;
+- it compares the new manifest's key with the hit's.
+
+A difference is an error with a new diagnostic code (claimed in stage
+2; no existing code changes meaning). The error names both files and
+the first differing manifest entry. That case is a missed input or a
+nondeterministic build, both bugs. Verify relies on builds being byte
+reproducible on Xo's own linkers, which scripts/identity already
+checks, and which ZERO_AR_DATE gave darwin cc links (2026-10-23).
+Determinism also requires that the clock never reaches the output.
+`Clock` is not wrapped, because the build reads it only for phase
+times and pruning, and the verify run catches a change to that.
+
+### Stages
+
+1. **Recorders, no reuse.** Wrap the build's `Os`, write the manifest
+   after a successful build, and report its size under `XO_FE_STATS=1`.
+   Measure a miss's extra cost with `xo bench --ab` on a warm CRUD and a
+   cold hello build. The recorder hashes bytes the checker has already
+   read, about 12 MB for the CRUD program. The budget is under 3% of a
+   cold build; if it is over, hash in a background task after the link.
+2. **Hits behind `XO_WHOLE_BUILD=on`**, verify mode, and the new code.
+   Tests:
+   - an edited file misses;
+   - a touched but unchanged file hits, and the stat is rewritten;
+   - a new .xo file in the package directory misses;
+   - an xo.work created in a parent directory misses;
+   - a changed XO_* value the build reads misses;
+   - a changed flag or target misses;
+   - the same program built into another directory with the same
+     output name hits; with another name it misses;
+   - a std file edited in place misses;
+   - a build that ran cc is not stored;
+   - verify passes on all of these and fails on a planted wrong entry;
+   - the replayed warning matches.
+   Then `--ab` on the warm CRUD and hello builds.
+3. **Default on** (the owner's decision), then `xo run` (a hit runs the
+   stored binary) and `xo test`, whose test binary cache (decision 0236)
+   keys only the link today.
+
+## Consequences
+
+- An unchanged warm build is expected to fall from 0.57 s to about
+  10 ms for the CRUD server, and from 0.28 s to about 10 ms for hello:
+  under Go's 0.08 s and Rust's 0.03 s, if the estimate holds. The gap the
+  comparison pages state closes for the no-change case only.
+- Builds after an edit are unchanged. The edit row (0.57 s against Go's
+  0.24 s) is the next target, the passes' per-function walk.
+- The design depends on the recorders seeing every input. The wrappers
+  make this structural, but a read through a path that bypasses `os`
+  (a constant table compiled into xo is part of `self_id`, so it is
+  covered) would be a hole. Verify mode exists to find one.
+- One more cache kind to prune, of about the binary's size per entry
+  (6 MB for the CRUD server), under the existing cap.
+- The process exclusion leaves cc, LLVM and Go backend builds on today's
+  path until their tools' identities are recorded (tool_id already
+  hashes a tool's `--version`; the native binary cache keys the SDK).
+
+## Alternatives
+
+- **A hand built key** from build info's sources, the
+  TestCodegenInputsClassified list and the flags. It is cheaper to
+  write, but it misses probes (xo.work, vendor, a module not found),
+  embedded files (decision 0304) and every input added later. Rejected:
+  the recorder is complete by construction.
+- **The link-level binary cache** (cache.xo, decision 0178) keys the link
+  after code generation, so it saves only the 54 ms link.
+- **Cheaper passes**: worthwhile for the edit case, but the no-change
+  case would still pay a walk over about 3,000 functions.
+- **A resident daemon** (`xo serve` keeping the checked program in
+  memory): it would also speed up edits. It is a larger change with its
+  own lifetime and invalidation questions, and is a separate decision
+  if wanted.
+
+## Method
+
+xo built from cbfa9b100 (`go run ./scripts/xobuild`), the CRUD program
+copied from bench/perf/http/xo, a private XO_BACKEND_CACHE_DIR warmed by
+four builds; `--phase-times` and XO_FE_STATS=1 on the fifth. The start,
+stat and hash figures are medians from a Python timing harness (20 runs
+of `xo version`, one pass over the 273 files). Everything ran through
+heavy.sh's gate class on the development Mac with other agents running.
