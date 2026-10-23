@@ -22,9 +22,12 @@ import (
 //   - funcs: n functions in chains of 64 calls (symbols, call
 //     relocations, functions per object)
 //   - switch: one match of n Int arms (jump tables, compare trees)
+//   - fns: n independent functions, each self recursive so none is
+//     inlined, called in groups of 64 by self recursive group functions
+//     (the per function cost alone: funcs' chains are mostly inlining)
 
 // ScaleKnobs lists the knobs Scale knows, in sweep order.
-var ScaleKnobs = []string{"fnlen", "vars", "funcs", "switch"}
+var ScaleKnobs = []string{"fnlen", "vars", "funcs", "switch", "fns"}
 
 // scaleMod keeps every value small, so no knob overflows at any n.
 const scaleMod = 1000003
@@ -78,6 +81,23 @@ func Scale(knob string, n int) string {
 			fmt.Fprintf(&b, "    %d => %d\n", i, scaleArm(i))
 		}
 		fmt.Fprintf(&b, "    _ => -1\n  }\n}\n\nfn main(os: Os) {\n  let x = os.env.args().len() + 1\n  var s = 0\n  for i in 0..%d {\n    s = (s + arm(i * x - x + 1)) %% %d\n  }\n  os.stdio.println(\"${s}\")\n}\n", n+1, scaleMod)
+	case "fns":
+		for i := 0; i < n; i++ {
+			fmt.Fprintf(&b, "fn f%d(x: Int) -> Int {\n  if x <= 0 {\n    return %d\n  }\n  (f%d(x - 1) * 3 + %d) %% %d\n}\n\n", i, i%scaleMod, i, i, scaleMod)
+		}
+		groups := (n + scaleChain - 1) / scaleChain
+		for k := 0; k < groups; k++ {
+			fmt.Fprintf(&b, "fn g%d(x: Int, d: Int) -> Int {\n  if d > 0 {\n    return g%d(x, d - 1)\n  }\n  var s = 0\n", k, k)
+			for i := k * scaleChain; i < n && i < (k+1)*scaleChain; i++ {
+				fmt.Fprintf(&b, "  s = (s + f%d(x)) %% %d\n", i, scaleMod)
+			}
+			b.WriteString("  s\n}\n\n")
+		}
+		b.WriteString("fn main(os: Os) {\n  let x = os.env.args().len() + 1\n  var s = 0\n")
+		for k := 0; k < groups; k++ {
+			fmt.Fprintf(&b, "  s = (s + g%d(x, 1)) %% %d\n", k, scaleMod)
+		}
+		b.WriteString("  os.stdio.println(\"${s}\")\n}\n")
 	default:
 		panic("progen.Scale: unknown knob " + knob)
 	}
@@ -129,6 +149,13 @@ func ScaleWant(knob string, n int) string {
 				v = scaleArm(k)
 			}
 			s = (s + v) % scaleMod
+		}
+		r = s
+	case "fns":
+		// f_i(1) = (f_i(0) * 3 + i) % M with f_i(0) = i % M
+		s := 0
+		for i := 0; i < n; i++ {
+			s = (s + (i%scaleMod*3+i)%scaleMod) % scaleMod
 		}
 		r = s
 	default:

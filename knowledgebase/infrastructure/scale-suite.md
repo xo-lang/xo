@@ -45,6 +45,7 @@ Done in the first step (2026-10-23):
 | vars | n let bindings all live to a sum at the end | live ranges, spills, frame size, DWARF variables |
 | funcs | n functions in call chains of 64 | symbols, call relocations, per function tables (unwind, pdata, DWARF subprograms) |
 | switch | one match of n Int arms | jump tables or compare trees |
+| fns | n independent self recursive functions (never inlined), called in groups of 64 by self recursive group functions | the cost per function alone (2026-10-23; funcs' chains are mostly inlining) |
 
 Next, in order:
 
@@ -155,6 +156,10 @@ binding live at once: 1.3 s, 4.1 s, 13.5 s at 16k, 32k, 64k; spill
 slots are found by a first fit scan over all slots). The funcs knob's
 memory (about 75 KB a function) is mostly inlining: each function calls
 the one before it in chains of 64, so the inliner copies up to 63 bodies
-into each; a knob of independent functions would measure the per
-function cost alone.
+into each. The fns knob measures a function alone: about 115 KB of xo's
+memory per six line function (1,778 MB at 8,192, 2,742 MB at 16,384;
+280 bytes of binary each), held from the front end on: at 16,384 the
+heap grows about 800 MB by the end of check, 470 MB in ssa, 250 MB in
+add_landings, 270 MB in cleanup, and 50 MB in emit, so the AST, the
+checker's tables and earlier SSA copies stay alive through the build.
 
