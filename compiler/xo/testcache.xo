@@ -69,6 +69,10 @@ fn run_key(os: Os, ctx: Ctx, o: Opts, args: List[Str], backend: Str) -> Str {
     kept.push(a)
   }
   k.strs(kept)
+  // --seed and --explore leave the key's command line, but build the
+  // deterministic flavor (decision 0350 stage 2): a seeded run after a
+  // plain one reused the plain binary
+  k.str("det ${o.topts.seed != 0 || o.explore > 0}")
   // the environment that can change a build: every XO_ variable (but
   // XO_TEST_JOBS, how many test processes run at once, and
   // XO_TEST_ONLY, which of the tests run), and where tools

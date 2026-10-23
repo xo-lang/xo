@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -118,5 +119,79 @@ func TestRunSeedNativeManyTasks(t *testing.T) {
 	}
 	if got := strings.TrimSpace(out.String()); got != "19900" {
 		t.Fatalf("got %q, want 19900", got)
+	}
+}
+
+// TestTestExploreNative: `xo test --explore=N` runs natively on the
+// deterministic scheduler (decision 0350 stage 2): it finds the planted
+// lost update of internal/gen's test_explore golden under some seed, the
+// printed `--seed=S --run=...` reproduces that failure every time, and
+// the race free test passes under every seed.
+func TestTestExploreNative(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	dir := filepath.Join("..", "..", "internal", "gen", "testdata", "golden", "test_explore")
+	xoTest := func(args ...string) (int, string) {
+		t.Helper()
+		var out, errOut bytes.Buffer
+		code := run(t, append([]string{"test"}, append(args, dir)...), &out, &errOut)
+		return code, out.String() + errOut.String()
+	}
+	code, out := xoTest("--explore=40", "--run=lost update")
+	if code != 1 {
+		t.Fatalf("--explore=40: exit %d, want 1:\n%s", code, out)
+	}
+	m := regexp.MustCompile("--- FAIL: lost update \\(main_test.xo:1:1, seed (\\d+)\\)\n    explored seeds 1 to (\\d+): seed (\\d+) fails; reproduce with `xo test --seed=(\\d+) --run='lost update'`").FindStringSubmatch(out)
+	if m == nil {
+		t.Fatalf("--explore=40 found no failing seed of `lost update`:\n%s", out)
+	}
+	seed := m[1]
+	if m[2] != seed || m[3] != seed || m[4] != seed {
+		t.Fatalf("the seeds disagree: %q", m[0])
+	}
+	// a plain run first: the run cache must not hand the seeded runs its
+	// thread pool binary (--seed left the cache key, 2026-10-23)
+	xoTest("--run=lost update")
+	first := ""
+	for i := 0; i < 5; i++ {
+		code, got := xoTest("--seed="+seed, "--run=lost update")
+		if code != 1 || !strings.Contains(got, "--- FAIL: lost update (main_test.xo:1:1, seed "+seed+")") {
+			t.Fatalf("--seed=%s: exit %d, the failure does not reproduce:\n%s", seed, code, got)
+		}
+		if i == 0 {
+			first = got
+		} else if got != first {
+			t.Fatalf("--seed=%s printed\n%s\nthen\n%s", seed, first, got)
+		}
+	}
+	if code, got := xoTest("--explore=40", "--run=no race"); code != 0 {
+		t.Fatalf("the race free test failed under --explore=40: exit %d\n%s", code, got)
+	}
+}
+
+// TestTestSeedFakeClock: a test that sleeps on the test world's virtual
+// clock finishes under --seed (decision 0350 stage 2): the fibers the
+// clock's kick wakes go on the deterministic ready list, which pool.xo
+// any_work must count, or the idle root parks for good (every fake clock
+// test hit the real time limit, 2026-10-23).
+func TestTestSeedFakeClock(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	src := t.TempDir()
+	for name, body := range map[string]string{
+		"main.xo":      "fn main(os: Os) {\n}\n",
+		"main_test.xo": "test \"sleep on the fake clock\" {\n  os.clock.sleep(5s)\n  expect(1) == 1\n}\n",
+	} {
+		if err := os.WriteFile(filepath.Join(src, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"test", "--seed=3", "--timeout=30s", src}, &out, &errOut); code != 0 {
+		t.Fatalf("exit %d\n%s%s", code, out.String(), errOut.String())
 	}
 }

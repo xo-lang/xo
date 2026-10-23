@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo test --seed=N` and `--explore=N` run natively on the deterministic
+  scheduler (decision 0350, stage 2), as does a test that pins its seed
+  (`test "x" seed N`): each test runs with its own seed, else `--seed`'s,
+  else 1, and `--explore=N` runs a test under seeds 1 to N until one
+  fails, printing how to reproduce (`xo test --seed=S --run=...`) and pin
+  it. Before, `--explore` chose the Go backend and native tests ignored
+  their seeds. The seeds that expose a race differ from the Go backend's.
+
 - `XO_PROF=cpu` keeps the Xo caller of a sample taken in a C library
   system call (a file's open or read): the profile walk now follows
   the C library's frames above the system call stub back into the

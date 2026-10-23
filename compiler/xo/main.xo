@@ -198,13 +198,13 @@ fn main(os: Os) ! {
   // the default backend is the native one (decisions 0248 and 0270):
   // arm64 or amd64 by the targets' architecture, else the host's
   // (native_backend); asm prints the arm64 assembly. The flags only the
-  // Go backend has (--hybrid, xo test --explore, xo run --record)
-  // choose it (xo run --seed runs natively, decision 0350); --holes builds natively too (2026-10-22). --race takes the native backend where a
+  // Go backend has (--hybrid, xo run --record) choose it (xo run --seed,
+  // xo test --seed and --explore run natively, decision 0350); --holes builds natively too (2026-10-22). --race takes the native backend where a
   // ThreadSanitizer runtime ships for the target, else llvm
   // (race_backend, decision 0273 addendum).
   var backend = o.backend
   if backend.is_empty() {
-    let go_only = o.hybrid || (o.cmd == "test" && o.explore > 0) || (o.cmd == "run" && !o.record.is_empty())
+    let go_only = o.hybrid || (o.cmd == "run" && !o.record.is_empty())
     if o.cmd == "asm" {
       backend = "arm64"
     } else if go_only {
@@ -283,10 +283,6 @@ fn main(os: Os) ! {
     fail(os, "the wasm backend does not support --holes")
   }
   if o.cmd == "test" {
-    if o.explore > 0 {
-      os.stdio.eprintln("xo test: --explore needs the Go backend (native builds use the real scheduler)")
-      os.proc.exit(2)
-    }
     if o.out.is_empty() && (backend is "arm64" | "amd64" | "llvm") {
       // the run cache (testcache.xo): an unchanged program's binary and
       // tests without a build; a std module's tests too (--std-module is
@@ -829,6 +825,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     let (c2, f2) = fuzz_check(os, o, c)
     c = c2
     fz = f2
+    // --seed, --explore, or a test's `seed N` (decision 0350 stage 2):
+    // the tests run on the deterministic scheduler
+    c.det = o.topts.seed != 0 || o.explore > 0 || tests_seeded(c)
   }
   t = lap(os, phases, "check", t)
   if o.backend_auto {

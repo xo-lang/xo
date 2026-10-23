@@ -72,7 +72,10 @@ fn setup(p: Int) {
   rtstats.set(on)
   if det.built() {
     // a deterministic run's ready list and seed (decision 0350)
-    det.start(env_int("XO_SEED"))
+    // XO_SEED (xo run, a built program), else a test's XO_TEST_SEED
+    // (stage 2: its `seed N`, else --seed, else 1)
+    let s = env_int("XO_SEED")
+    det.start(if s != 0 { s } else { env_int("XO_TEST_SEED") })
   }
   var n = cpu_count()
   let th = env_int("XO_THREADS")

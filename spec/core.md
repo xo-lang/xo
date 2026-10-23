@@ -2319,9 +2319,15 @@ runs, default 1) picks the next ready task, so one seed gives one
 interleaving. Its scheduling points are the runtime's: channel operations,
 `select`, `Mutex.with` and `with_read`, `spawn`, `await`, `Atomic` operations
 and `task.is_canceled()`, and every wait; effect calls are not yet. A program
-built without `--seed` ignores `XO_SEED`. `xo test --seed` and `--explore`, and
-`xo run --record`, still use the Go backend's scheduler (decision 0350's later
-stages). The rest of core 7 means the same on every backend.
+built without `--seed` ignores `XO_SEED`. Native `xo test` uses the
+deterministic scheduler when given `--seed=N` or `--explore=N`, or when a test
+pins its seed (`test "x" seed N`): each test runs with its own seed, else
+`--seed`'s, else 1, and `--explore=N` runs a test without its own seed under
+seeds 1 to N until one fails, reporting how to reproduce and pin it. The
+seeds that expose a race differ from the Go backend's (its generator and
+scheduling points differ). Other native tests still run on the thread pool
+until decision 0350's stage 3; `xo run --record` still uses the Go backend.
+The rest of core 7 means the same on every backend.
 
 ### 7.5 Process signals and graceful shutdown
 
@@ -2648,9 +2654,9 @@ diagnostic with an exact fix never costs a run (decision 0096). The MCP
 needs clang) otherwise. `--backend=go` compiles through the Go toolchain
 and is required by a program with a `use go` package; with no `--backend`
 such a program is a usage error naming it. The flags only the Go backend
-has (`--hybrid`, `xo test --explore` and `xo run --record`) choose it
-when no backend is given; `xo run --seed` builds natively for the
-deterministic scheduler (7.4, decision 0350). `--race` keeps the
+has (`--hybrid` and `xo run --record`) choose it when no backend is
+given; `xo run --seed`, `xo test --seed` and `xo test --explore` build
+natively for the deterministic scheduler (7.4, decision 0350). `--race` keeps the
 native backend where a ThreadSanitizer runtime ships for the target
 (darwin/arm64, darwin/amd64, linux/arm64, linux/amd64, windows/amd64)
 and otherwise
@@ -2675,9 +2681,9 @@ without `--no-gc` until then) or *impossible* (code from a `use go` package
 needs Go's runtime). A program the check accepts builds; the check is
 derived from the native code generator itself, so the two cannot disagree.
 `xo check --no-gc` runs the same check without building (programs only: a
-module without `main` has nothing to lower). The Go backend's deterministic
-scheduler (`--seed` of `xo run`, `--explore`) and recording (`--record`) are
-not available on native builds (decision 0083). `xo test --no-gc` builds a
+module without `main` has nothing to lower). Native builds have their own
+deterministic scheduler for `--seed` and `--explore` (7.4, decision 0350);
+recording (`--record`) is the Go backend's only (decision 0083). `xo test --no-gc` builds a
 native test binary and runs each test in a process of its own against the
 fakes of 9.2 (virtual clock, seeded `Rand`, fake environment, streams, and
 network, MemFs, FakeProc, `os.tasks`) with the same report as the Go

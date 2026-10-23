@@ -987,6 +987,12 @@ fn grace_spin(p: Int) {
 /// slots still in their grace (NEXT_GRACE_NS: no other worker may take
 /// them yet), or 0.
 pub fn any_work(p: Int) -> Int {
+  if det.built() && det.ready() > 0 {
+    // a deterministic run's ready list (decision 0350): the fibers a
+    // virtual clock's kick woke are there, not in the rings, and an idle
+    // root that missed them parked for good (stage 2's fake clock tests)
+    return 1
+  }
   if rt.slot_load(p, P_ILEN, SEQ_CST) > 0 {
     return 1
   }

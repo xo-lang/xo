@@ -54,6 +54,16 @@ pub fn start(s: Int) {
   rt.slot_store[Int](rt.static_word(W_DET), 0, r, RELEASE)
 }
 
+/// Seeds the generator again with s (1 when 0): each run of a test
+/// batch starts as a new process with its seed would (twrun.xo next).
+pub fn reseed(s: Int) {
+  let r = rec()
+  if r == 0 {
+    return
+  }
+  rt.mem_store(r, DR_RNG * 8, if s == 0 { 1 } else { s }, 8)
+}
+
 fn lock(r: Int) {
   while !rt.slot_cas(r, DR_LOCK, 0, 1, ACQUIRE) {
     rt.spin_hint()

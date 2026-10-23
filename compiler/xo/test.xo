@@ -155,9 +155,29 @@ fn abs_path(wd: Str, p: Str) -> Str {
   "${wd}/${p.trim_prefix("./")}"
 }
 
+/// Whether a test of the root modules declares its seed (`test "x" seed
+/// N`): such a test runs on the deterministic scheduler (decision 0350).
+fn tests_seeded(c: check.Checker) -> Bool {
+  for m in c.root_mods {
+    for f in c.mods[m].files {
+      for d in c.files[f].ast.decls {
+        if let TestDecl(d: td) = d {
+          if td.seed != None {
+            return true
+          }
+        }
+      }
+    }
+  }
+  false
+}
+
 /// The options of `xo1 test`.
 struct TestOpts {
   seed: Int = 0
+  /// --explore=N: each test without its own seed runs under seeds 1 to N
+  /// until one fails (decision 0350 stage 2)
+  explore: Int = 0
   /// the std directory: the check of a written regression test
   std: Str = ""
   /// --real: the tests that declare `uses` run with real capabilities.
@@ -231,7 +251,7 @@ fn run_tests(os: Os, bin: Str, tests: List[TestInfo], o: TestOpts) -> Int {
   // the outcomes of the tests run in batches, by place in tests; the
   // rest run below, one process each
   var pre: Map[Int, Outcome] = {}
-  if (os.env.get("XO_TEST_BATCH") ?? "") != "0" {
+  if (os.env.get("XO_TEST_BATCH") ?? "") != "0" && o.explore <= 0 {
     pre = run_batched(os, bin, limit, tests, o)
   }
   for (k, t) in tests.indexed() {
@@ -268,6 +288,21 @@ fn run_tests(os: Os, bin: Str, tests: List[TestInfo], o: TestOpts) -> Int {
       out = bo
     } else if t.prop {
       out = run_property(os, bin, limit, t, s, if o.cases <= 0 { 100 } else { o.cases })
+    } else if o.explore > 0 && t.seed == 0 {
+      // --explore (decision 0350 stage 2): seeds 1 to N on the
+      // deterministic scheduler, the first that fails reported with how
+      // to reproduce and pin it, as the Go backend's harness does
+      var e = 1
+      while e <= o.explore {
+        let (oc, _) = run_test_env(os, bin, limit, t, e, prof_words(o))
+        out = oc
+        s = e
+        if oc.status == "fail" {
+          out.msg = "explored seeds 1 to ${e}: seed ${e} fails; reproduce with `xo test --seed=${e} --run='${t.name}'`, or pin it with `test \"${t.name}\" seed ${e}`\n${oc.msg}"
+          break
+        }
+        e += 1
+      }
     } else {
       let (oc, _) = run_test_env(os, bin, limit, t, s, prof_words(o))
       out = oc

@@ -212,6 +212,34 @@ recorded (10.1).
   cmd/xo test, since a golden's want.txt cannot hold one output per
   seed.
 
+### Stage 2 as built (2026-10-23)
+
+- A test build takes the det flavor for `--seed`, `--explore`, or any
+  root test with `seed N` (compiler/xo main.xo after fuzz_check;
+  test.xo tests_seeded). The test run cache's key carries it: `--seed`
+  was left out of the key as a run-only flag, and a seeded run after a
+  plain one reused the thread pool binary.
+- The seed: the harness's per test `XO_TEST_SEED` when `XO_SEED` is
+  unset (poolsetup), and twrun.next reseeds the generator for each run
+  of a batch (det.reseed).
+- `--explore`: the harness runs each test without its own seed under
+  seeds 1 to N, one process per seed (no batches while exploring),
+  stopping at the first failure; the message is the Go backend's with
+  the native reproduce line. The planned in process reruns became a
+  process per seed: a batch ends at a failing run anyway, so it would
+  save only process starts.
+- pool.xo any_work counts the deterministic ready list: the fibers a
+  virtual clock's kick wakes go there, and an idle root that looked only
+  at the rings parked for good (every fake clock test hit the 60 s real
+  time limit under `--seed`).
+- Proof: TestTestExploreNative (internal/gen's test_explore natively: a
+  seed of `--explore=40` fails `lost update`, `--seed=S` after a plain
+  run reproduces it five times with identical output, the race free
+  test passes all 40), TestTestSeedFakeClock, and every internal/gen
+  golden with tests under `--seed=1` natively with the run cache off
+  exits as its want.txt (but the two `use go` ones, which need the Go
+  backend).
+
 ## Cost when off
 
 None at run time: a program built without det has no `det_point`

@@ -521,6 +521,7 @@ fn set_value(os: Os, var o: Opts, name: Str, v: Str) {
     o.topts.seed = int_flag(os, o.cmd, name, v)
   } else if name == "explore" {
     o.explore = int_flag(os, o.cmd, name, v)
+    o.topts.explore = o.explore
   } else if name == "cases" {
     o.topts.cases = int_flag(os, o.cmd, name, v)
   } else if name == "timeout" {

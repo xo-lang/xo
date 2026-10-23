@@ -20,6 +20,7 @@
 use native/llrt/layout
 use native/llrt/atexit
 use native/llrt/ctx
+use native/llrt/det
 use native/llrt/poll
 use native/llrt/pool
 use native/llrt/process
@@ -981,6 +982,10 @@ pub fn next() -> Int {
     return -1
   }
   testworld.reset_test(r[1], r[2] != 0, r[3])
+  if det.built() {
+    // the run's seed drives the deterministic scheduler (decision 0350)
+    det.reseed(r[1])
+  }
   testworld.write_real("XO-TEST-BEGIN\n")
   r[0]
 }
