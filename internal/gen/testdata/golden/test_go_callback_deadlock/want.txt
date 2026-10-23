@@ -1,6 +1,7 @@
 exit 1
 --- stdout
 --- FAIL: a Go call waits for a callback that waits for the test's Mutex (main_test.xo:1:1, seed 1)
+    explored seeds 1 to 1: seed 1 fails; reproduce with `xo test --backend=go --seed=1 --run='a Go call waits for a callback that waits for the test'\''s Mutex'`, or pin it with `test "a Go call waits for a callback that waits for the test's Mutex" seed 1`
     fault: XO-F001: deadlock: a wait cycle of 2 tasks at main.xo:16
     wait cycle:
     test blocked in Go call sync.(*WaitGroup).Wait at main.xo:16 for callback 2
