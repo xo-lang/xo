@@ -705,6 +705,10 @@ fn (var b: Builder) conc_call(x: Expr, ci: check.CallInfo) -> Int {
     }
     "Chan.new" => {
       let et = b.m.types[nt].elems[0]
+      if b.word_chan(et) {
+        // decision 0353: CH_DROP 1 marks a channel of plain words
+        return b.rt("chan_new", nt, [b.io_arg(fo, es, 0, it), b.cint(1), b.loc(span)])
+      }
       let dl = b.drop_list(et)
       let drop = b.add(Op.FuncAddr, it, Aux.S(s: dl), [])
       return b.rt("chan_new", nt, [b.io_arg(fo, es, 0, it), drop, b.loc(span)])
@@ -738,13 +742,30 @@ fn (var b: Builder) conc_call(x: Expr, ci: check.CallInfo) -> Int {
   }
   match key {
     "Chan.send" => {
+      if b.word_chan(et) {
+        b.llrt_call("chan_send_w", [b.chan_word(h), b.word_in(b.io_arg(fo, es, 0, et), et), b.loc(span)])
+        b.check("")
+        return b.unit()
+      }
       let l = b.one(b.io_arg(fo, es, 0, et))
       b.rt("chan_send", -1, [h, l, b.loc(span)])
       b.check("")
       return b.unit()
     }
-    "Chan.try_send" => return b.rt("chan_try_send", bt, [h, b.one(b.io_arg(fo, es, 0, et))])
+    "Chan.try_send" => {
+      if b.word_chan(et) {
+        return b.llrt_call("chan_try_send_w", [b.chan_word(h), b.word_in(b.io_arg(fo, es, 0, et), et)])
+      }
+      return b.rt("chan_try_send", bt, [h, b.one(b.io_arg(fo, es, 0, et))])
+    }
     "Chan.recv" | "Chan.try_recv" => {
+      if b.word_chan(et) {
+        let r = b.llrt_call("chan_${fname}_w", [b.chan_word(h)])
+        if fname == "recv" {
+          b.check("")
+        }
+        return b.word_option(r, nt, et)
+      }
       let l = b.rt("chan_${fname}", b.m.list(et), [h])
       if fname == "recv" {
         b.check("")
@@ -948,17 +969,29 @@ fn (var b: Builder) for_chan(label: Bytes, p: Pattern, iter: Expr, bound: List[E
   let exit = b.new_block()
   b.jump(head, [])
   b.s.cur = head
-  let l = b.rt("chan_recv", b.m.list(et), [h])
-  b.check("")
-  let o = b.pop_one(l, ot)
+  var o = -1
+  var wv = -1
+  var c = -1
   let some = b.m.variant_index(ot, "Some")
-  let tag = b.add(Op.Tag, it, Aux.None, [o])
-  let c = b.add(Op.Eq, b.bool_t(), Aux.None, [tag, b.cint(some)])
+  var tag = -1
+  if b.word_chan(et) {
+    // no Option: the loop tests the receive's ok flag (decision 0353)
+    let r = b.llrt_call("chan_recv_w", [b.chan_word(h)])
+    b.check("")
+    wv = b.add(Op.Field, it, Aux.I(n: 0), [r])
+    c = b.add(Op.Field, b.bool_t(), Aux.I(n: 1), [r])
+  } else {
+    let l = b.rt("chan_recv", b.m.list(et), [h])
+    b.check("")
+    o = b.pop_one(l, ot)
+    tag = b.add(Op.Tag, it, Aux.None, [o])
+    c = b.add(Op.Eq, b.bool_t(), Aux.None, [tag, b.cint(some)])
+  }
   b.s.f.branch(b.s.cur, c, bodyb, exit)
   b.seal(bodyb)
   b.s.cur = bodyb
   b.loop_tick(tick)
-  let elem = b.add(Op.Payload, et, Aux.P(tag: some, field: 0), [o])
+  let elem = if wv >= 0 { b.word_out(wv, et) } else { b.add(Op.Payload, et, Aux.P(tag: some, field: 0), [o]) }
   let fail = b.new_block()
   b.pattern(elem, p, fail)
   b.end_fail(fail)
@@ -1586,4 +1619,107 @@ fn (var b: Builder) tasks_main(mf: Int, et: Int) {
   }
   b.finish_fn()
   b.end(saved)
+}
+
+/// Whether a channel of element type et sends plain words (decision 0353):
+/// the native prelude has the word operations and et is one word with no
+/// drop: an integer type (Int, the sized integers, Byte, Rune), Float (its
+/// bits), Bool, or an enum none of whose variants has a field.
+fn (var b: Builder) word_chan(et: Int) -> Bool {
+  if et < 0 || b.prelude_impl("llrt_chan_send_w") < 0 {
+    return false
+  }
+  let k = b.tkind(et)
+  if k is Kind.Int | Kind.Float | Kind.Bool {
+    return true
+  }
+  if k == Kind.Enum {
+    let vs = b.m.types[et].variants
+    for v in vs {
+      if !v.fields.is_empty() {
+        return false
+      }
+    }
+    return !vs.is_empty()
+  }
+  false
+}
+
+/// The element v of a word channel as the Int word the runtime carries.
+fn (var b: Builder) word_in(v: Int, et: Int) -> Int {
+  let it = b.int_t()
+  match b.tkind(et) {
+    Float => return b.rt("float_bits", it, [v])
+    Bool => {
+      let join = b.new_block()
+      let res = b.s.f.add_param(join, it)
+      let (yes, no) = b.branch(v)
+      b.s.cur = yes
+      b.jump(join, [b.cint(1)])
+      b.s.cur = no
+      b.jump(join, [b.cint(0)])
+      b.seal(join)
+      b.s.cur = join
+      return res
+    }
+    Enum => return b.add(Op.Tag, it, Aux.None, [v])
+    _ => {}
+  }
+  if et == it {
+    return v
+  }
+  b.add(Op.IntConv, it, Aux.None, [v])
+}
+
+/// The word v the runtime carries as an element of type et.
+fn (var b: Builder) word_out(v: Int, et: Int) -> Int {
+  match b.tkind(et) {
+    Float => return b.rt("float_from_bits", et, [v])
+    Bool => return b.add(Op.Ne, b.bool_t(), Aux.None, [v, b.cint(0)])
+    Enum => {
+      // the variant whose index is the word: a chain of compares
+      let vs = b.m.types[et].variants
+      let join = b.new_block()
+      let res = b.s.f.add_param(join, et)
+      var i = 0
+      while i < vs.len() - 1 {
+        let (yes, no) = b.branch(b.add(Op.Eq, b.bool_t(), Aux.None, [v, b.cint(i)]))
+        b.s.cur = yes
+        b.jump(join, [b.variant(et, vs[i].name, [])])
+        b.s.cur = no
+        i += 1
+      }
+      b.jump(join, [b.variant(et, vs[vs.len() - 1].name, [])])
+      b.seal(join)
+      b.s.cur = join
+      return res
+    }
+    _ => {}
+  }
+  if et == b.int_t() {
+    return v
+  }
+  b.add(Op.IntConv, et, Aux.None, [v])
+}
+
+/// The Option of a word receive r, a (value, ok) tuple.
+fn (var b: Builder) word_option(r: Int, nt: Int, et: Int) -> Int {
+  let v = b.word_out(b.add(Op.Field, b.int_t(), Aux.I(n: 0), [r]), et)
+  let ok = b.add(Op.Field, b.bool_t(), Aux.I(n: 1), [r])
+  let join = b.new_block()
+  let res = b.s.f.add_param(join, nt)
+  let (yes, no) = b.branch(ok)
+  b.s.cur = yes
+  b.jump(join, [b.variant(nt, "Some", [v])])
+  b.s.cur = no
+  b.jump(join, [b.variant(nt, "None", [])])
+  b.seal(join)
+  b.s.cur = join
+  res
+}
+
+/// The address word of channel handle h, for the word operations (the
+/// verifier does not take a Chan[T] for an Int parameter).
+fn (var b: Builder) chan_word(h: Int) -> Int {
+  b.rt("obj_addr", b.int_t(), [h])
 }

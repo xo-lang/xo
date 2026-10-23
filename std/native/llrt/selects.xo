@@ -73,11 +73,13 @@ fn arm(s: Int, c: Int, send: Int, l: Int) {
     st4(s, SE_CAP, nc)
   }
   rc.inc(c)
+  // a word channel's arm keeps the word itself (decision 0353)
+  let item = if send != 0 && chan.is_word(c) { chan.unbox_word(l) } else { l }
   let a = ld(s, SE_ARMS) + A_SIZE * n
   rt.mem_set(a, 0, A_SIZE)
   st(a, A_CH, c)
   st4(a, A_SEND, send)
-  st(a, A_ITEM, l)
+  st(a, A_ITEM, item)
   st4(s, SE_N, n + 1)
 }
 
@@ -162,6 +164,14 @@ fn wait_body(s: Int, lp: Int, ln: Int) -> Int {
         done = i
       } else if chan.try_send_locked(c, ld(a, A_ITEM)) {
         st(a, A_ITEM, 0)
+        done = i
+      }
+    } else if chan.is_word(c) {
+      // E_SHUT of the arm's entry says closed (a word 0 is a value)
+      let (state, got) = chan.try_recv_locked_w(c)
+      if state != 0 {
+        st(a, A_ITEM, got)
+        st4(a + A_E, chan.E_SHUT, if state == 2 { 1 } else { 0 })
         done = i
       }
     } else {
@@ -270,6 +280,9 @@ pub fn take(s: Int, i: Int) -> Int {
   let a = ld(s, SE_ARMS) + A_SIZE * i
   let l = ld(a, A_ITEM)
   st(a, A_ITEM, 0)
+  if chan.is_word(ld(a, A_CH)) {
+    return if ld4(a + A_E, chan.E_SHUT) == 0 { chan.box_word(l) } else { tasks.empty_list() }
+  }
   if l != 0 { l } else { tasks.empty_list() }
 }
 
@@ -280,7 +293,9 @@ pub fn free(s: Int) {
   for i in 0..ld4(s, SE_N) {
     let a = arms + A_SIZE * i
     let c = ld(a, A_CH)
-    tasks.list_release(ld(a, A_ITEM), ld(c, chan.CH_DROP))
+    if !chan.is_word(c) {
+      tasks.list_release(ld(a, A_ITEM), ld(c, chan.CH_DROP))
+    }
     tasks.h_release(c)
   }
   if arms != 0 {

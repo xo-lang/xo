@@ -1,0 +1,227 @@
+// Channels of one word elements (decision 0353: a channel of an integer,
+// Bool, Float or payload free enum type sends the word, not a list of one): 0 and negatives are values,
+// the closed flag is separate, buffered elements survive close, and
+// send, recv, try_*, for and select agree on one channel.
+
+fn drain(ch: Chan[Int]) -> Str {
+  var s = ""
+  for v in ch {
+    s = "${s}${v},"
+  }
+  s
+}
+
+fn values(os: Os) {
+  let ch = Chan[Int].new(8)
+  for v in [0, -1, 1, 9223372036854775807, -9223372036854775807 - 1, 0] {
+    ch.send(v)
+  }
+  os.stdio.println("len ${ch.len()}")
+  ch.close()
+  os.stdio.println("drain ${drain(ch)}")
+  os.stdio.println("after ${ch.recv() ?? 77} ${ch.try_recv() ?? 78}")
+}
+
+fn zero_is_not_closed(os: Os) {
+  let ch = Chan[Int].new(1)
+  ch.send(0)
+  let a = ch.recv()
+  os.stdio.println("a ${a ?? 99}")
+  ch.close()
+  let b = ch.recv()
+  os.stdio.println("b ${b ?? 99}")
+}
+
+fn unbuffered(os: Os) {
+  let req = Chan[Int].new()
+  let rep = Chan[Int].new()
+  let total = scope s {
+    s.spawn(fn() {
+      for v in req {
+        rep.send(v * 2)
+      }
+      rep.close()
+    })
+    var t = 0
+    for i in [0, 1, -3, 7] {
+      req.send(i)
+      t = t + (rep.recv() ?? 1000)
+    }
+    req.close()
+    t + (rep.recv() ?? 500)
+  }
+  os.stdio.println("unbuffered ${total}")
+}
+
+fn tries(os: Os) {
+  let ch = Chan[Int].new(2)
+  os.stdio.println("t1 ${ch.try_send(5)} ${ch.try_send(0)} ${ch.try_send(6)}")
+  os.stdio.println("t2 ${ch.try_recv() ?? 99} ${ch.try_recv() ?? 99} ${ch.try_recv() ?? 99}")
+  ch.close()
+  os.stdio.println("t3 ${ch.try_send(1)} ${ch.try_recv() ?? 99}")
+}
+
+fn sel(os: Os) {
+  let a = Chan[Int].new(2)
+  let b = Chan[Int].new(2)
+  a.send(0)
+  b.send(-5)
+  var out = ""
+  for _ in 0..4 {
+    select {
+      v = a.recv() => out = "${out}a${v ?? 99} "
+      v = b.recv() => out = "${out}b${v ?? 99} "
+      b.send(11) => out = "${out}sb "
+    }
+  }
+  os.stdio.println("sel ${out}")
+  // a send arm onto a word channel with a waiting receiver, a recv arm
+  // woken by a send, and a recv arm woken by close
+  let c = Chan[Int].new()
+  let d = Chan[Int].new()
+  let r = scope s {
+    let t1 = s.spawn(fn() -> Int { c.recv() ?? -1 })
+    let t2 = s.spawn(fn() -> Int { d.recv() ?? -2 })
+    select {
+      c.send(7) => {}
+    }
+    d.close()
+    t1.await * 10 + t2.await
+  }
+  os.stdio.println("wake ${r}")
+  let e = Chan[Int].new()
+  let f = Chan[Int].new(1)
+  let got = scope s {
+    s.spawn(fn() {
+      f.send(0)
+      e.close()
+    })
+    var g = ""
+    for _ in 0..2 {
+      select {
+        v = f.recv() => g = "${g}f${v ?? 99} "
+        v = e.recv() => g = "${g}e${v ?? 99} "
+      }
+    }
+    g
+  }
+  os.stdio.println("closed ${got}")
+}
+
+fn mixed(os: Os) {
+  // one channel used through send, recv, for and select
+  let ch = Chan[Int].new(3)
+  let done = Chan[Int].new()
+  let sum = scope s {
+    s.spawn(fn() {
+      var n = 0
+      for v in ch {
+        n = n + v
+      }
+      done.send(n)
+    })
+    ch.send(1)
+    select {
+      ch.send(0) => {}
+    }
+    ch.send(-4)
+    ch.close()
+    done.recv() ?? 12345
+  }
+  os.stdio.println("mixed ${sum}")
+}
+
+enum Color {
+  Red
+  Green
+  Blue
+}
+
+fn color_name(c: Color) -> Str {
+  match c {
+    Red => "red"
+    Green => "green"
+    Blue => "blue"
+  }
+}
+
+fn kinds(os: Os) {
+  let i32s = Chan[Int32].new(4)
+  for v in [Int32(-2147483648), Int32(0), Int32(2147483647)] {
+    i32s.send(v)
+  }
+  i32s.close()
+  var a = ""
+  for v in i32s {
+    a = "${a}${v},"
+  }
+  let bytes = Chan[UInt8].new(3)
+  for v in [UInt8(0), UInt8(255), UInt8(128)] {
+    bytes.send(v)
+  }
+  bytes.close()
+  var b = ""
+  for v in bytes {
+    b = "${b}${v},"
+  }
+  let bools = Chan[Bool].new(3)
+  bools.send(true)
+  bools.send(false)
+  bools.send(true)
+  bools.close()
+  var c = ""
+  for v in bools {
+    c = "${c}${v},"
+  }
+  let floats = Chan[Float].new(5)
+  for v in [0.0, -0.0, 1.5, -2.25e300, 5e-324] {
+    floats.send(v)
+  }
+  floats.close()
+  var d = ""
+  for v in floats {
+    d = "${d}${v} ${1.0 / v},"
+  }
+  let colors = Chan[Color].new(3)
+  colors.send(Color.Blue)
+  colors.send(Color.Red)
+  colors.send(Color.Green)
+  colors.close()
+  var e = ""
+  for v in colors {
+    e = "${e}${color_name(v)},"
+  }
+  os.stdio.println("i32 ${a} u8 ${b} bool ${c}")
+  os.stdio.println("float ${d}")
+  os.stdio.println("enum ${e} after ${(colors.recv() ?? Color.Red) is Color.Red}")
+}
+
+fn canceled(os: Os) {
+  // a sender blocked on a full word channel and a receiver blocked on an
+  // empty one are canceled with their scope
+  let full = Chan[Int].new(1)
+  let empty = Chan[Float].new()
+  let r = scope s {
+    s.spawn(fn() {
+      full.send(1)
+      full.send(2)
+    })
+    s.spawn(fn() {
+      let _x = empty.recv()
+    })
+    s.cancel()
+    1
+  }
+  os.stdio.println("canceled ${r}")
+}
+
+fn main(os: Os) {
+  kinds(os)
+  canceled(os)
+  values(os)
+  zero_is_not_closed(os)
+  unbuffered(os)
+  tries(os)
+  sel(os)
+  mixed(os)
+}

@@ -52,6 +52,30 @@ pub const CH_DROP = 64
 pub const CH_RECVQ = 72
 pub const CH_SENDQ = 88
 const CH_SIZE = 104
+/// CH_DROP of a word channel (decision 0353): its values are plain words.
+const WORD_MODE = 1
+
+/// The data of a list object starts after its 24 byte header (obj.xo L_HDR).
+const LIST_DATA = 24
+
+/// Whether channel c sends plain words.
+pub fn is_word(c: Int) -> Bool { ld(c, CH_DROP) == WORD_MODE }
+
+/// The word a list of one holds, the list freed (a boxed send on a word
+/// channel: select's arms, generic code).
+pub fn unbox_word(l: Int) -> Int {
+  let v = ld(l, LIST_DATA)
+  obj.rl_free_n(l, 8, 0)
+  v
+}
+
+/// A list of one holding the word v (a boxed receive on a word channel).
+pub fn box_word(v: Int) -> Int {
+  let l = obj.rl_new_n(1, 8)
+  st(l, 8, 1)
+  st(l, LIST_DATA, v)
+  l
+}
 const Q_HEAD = 0
 const Q_TAIL = 8
 
@@ -240,6 +264,12 @@ fn entry(x: Int, l: Int) -> Int {
 /// while the channel is full, a cancellation point that unwinds; sending
 /// on a closed channel faults at the ln bytes at lp.
 pub fn send(c: Int, l: Int, lp: Int, ln: Int) {
+  if is_word(c) {
+    if send_w_core(c, unbox_word(l)) != 0 {
+      fault.raise_str_at("send on a closed channel", lp, ln)
+    }
+    return
+  }
   // a scheduling point of a deterministic run (core 7.4, decision 0350)
   if det.built() {
     pool.det_point()
@@ -320,6 +350,10 @@ fn send_body(c: Int, l: Int, lp: Int, ln: Int) {
 /// list when the channel is closed and drained (and while unwinding); a
 /// cancellation point that unwinds.
 pub fn recv(c: Int) -> Int {
+  if is_word(c) {
+    let (v, ok) = recv_w(c)
+    return if ok { box_word(v) } else { tasks.empty_list() }
+  }
   // a scheduling point of a deterministic run (core 7.4, decision 0350)
   if det.built() {
     pool.det_point()
@@ -391,6 +425,9 @@ fn recv_body(c: Int) -> Int {
 /// `ch.try_send(x)` (xo_chan_try_send): false (and x released) when the
 /// channel is full or closed.
 pub fn try_send(c: Int, l: Int) -> Int {
+  if is_word(c) {
+    return if try_send_w(c, unbox_word(l)) { 1 } else { 0 }
+  }
   // a scheduling point of a deterministic run (core 7.4, decision 0350)
   if det.built() {
     pool.det_point()
@@ -415,6 +452,10 @@ fn try_send_body(c: Int, l: Int) -> Int {
 
 /// `ch.try_recv()` (xo_chan_try_recv): never blocks.
 pub fn try_recv(c: Int) -> Int {
+  if is_word(c) {
+    let (v, ok) = try_recv_w(c)
+    return if ok { box_word(v) } else { tasks.empty_list() }
+  }
   // a scheduling point of a deterministic run (core 7.4, decision 0350)
   if det.built() {
     pool.det_point()
@@ -453,6 +494,7 @@ fn close_body(c: Int) {
     var e = cq_take(c + CH_RECVQ)
     while e != 0 {
       st(e, E_ITEM, 0)
+      st4(e, E_SHUT, 1)
       hand(e)
       e = cq_take(c + CH_RECVQ)
     }
@@ -477,12 +519,208 @@ pub fn len(c: Int) -> Int {
 /// A channel's free function (chan_free): the values still buffered,
 /// the ring.
 pub fn free(c: Int) {
-  for i in 0..ld(c, CH_LEN) {
-    tasks.list_release(ld(slot(c, i), 0), ld(c, CH_DROP))
+  if !is_word(c) {
+    for i in 0..ld(c, CH_LEN) {
+      tasks.list_release(ld(slot(c, i), 0), ld(c, CH_DROP))
+    }
   }
   let b = ld(c, CH_BUF)
   if b != 0 {
     rt.heap_release(b)
   }
   tasks.free_handle(c)
+}
+
+// ---------------------------------------------------------------------------
+// Word channels (decision 0353): the value is the word itself, not a list of
+// one; a receive reports closed by a flag, since 0 is a value.
+
+/// try_recv_locked for a word channel: (1, value), (2, 0) closed and
+/// drained, (0, 0) nothing yet.
+pub fn try_recv_locked_w(c: Int) -> (Int, Int) {
+  if ld(c, CH_LEN) > 0 {
+    let out = ld(slot(c, 0), 0)
+    var h = ld(c, CH_HEAD).wrapping_add(1)
+    if h >= ld(c, CH_CAP) {
+      h = 0
+    }
+    st(c, CH_HEAD, h)
+    st(c, CH_LEN, ld(c, CH_LEN).wrapping_sub(1))
+    let s = cq_take(c + CH_SENDQ)
+    if s != 0 {
+      let n = ld(c, CH_LEN)
+      st(slot(c, n), 0, ld(s, E_ITEM))
+      st(c, CH_LEN, n + 1)
+      hand(s)
+    }
+    return (1, out)
+  }
+  let s = cq_take(c + CH_SENDQ)
+  if s != 0 {
+    let out = ld(s, E_ITEM)
+    hand(s)
+    return (1, out)
+  }
+  if ld4(c, CH_CLOSED) != 0 {
+    return (2, 0)
+  }
+  (0, 0)
+}
+
+/// `ch.send(v)` on a word channel: 0 when v was sent (or the sender is
+/// unwinding), 1 when the channel is closed (the caller faults).
+pub fn send_w_core(c: Int, v: Int) -> Int {
+  if det.built() {
+    pool.det_point()
+  }
+  sanhook.release(c)
+  pool.defer_check()
+  let x = ctx.cur()
+  if budget.canceled(x) {
+    st4(x, ctx.C_UNWINDING, 1)
+    return 0
+  }
+  pool.lock_k(c + CH_MU, pool.ST_LOCK_CHAN)
+  if ld4(c, CH_CLOSED) != 0 {
+    pool.unlock(c + CH_MU)
+    return 1
+  }
+  let n = ld(c, CH_LEN)
+  if ld(c + CH_RECVQ, Q_HEAD) == 0 && n < ld(c, CH_CAP) {
+    st(slot(c, n), 0, v)
+    st(c, CH_LEN, n.wrapping_add(1))
+    pool.unlock(c + CH_MU)
+    return 0
+  }
+  if try_send_locked(c, v) {
+    pool.unlock(c + CH_MU)
+    return 0
+  }
+  let e = entry(x, v)
+  let fired = x + ctx.C_FIRED
+  pool.park_reset(x + ctx.C_PARK)
+  cq_push(c + CH_SENDQ, e)
+  pool.unlock(c + CH_MU)
+  while true {
+    if tracerec.built() {
+      rt.mem_store(x, ctx.C_WHY, tracerec.WHY_SEND, 8)
+    }
+    tasks.park_wait_n(x, true, ld4(c, CH_EXT) == 0)
+    if rt.slot_load[Int](fired, 0, ACQUIRE) != 0 {
+      break
+    }
+    if budget.canceled(x) {
+      pool.lock_k(c + CH_MU, pool.ST_LOCK_CHAN)
+      if claim(fired) {
+        cq_del(c + CH_SENDQ, e)
+        pool.unlock(c + CH_MU)
+        st4(x, ctx.C_UNWINDING, 1)
+        return 0
+      }
+      pool.unlock(c + CH_MU)
+      break
+    }
+  }
+  pool.lock_k(c + CH_MU, pool.ST_LOCK_CHAN)
+  let shut = ld4(e, E_SHUT)
+  pool.unlock(c + CH_MU)
+  if shut != 0 { 1 } else { 0 }
+}
+
+/// `ch.send(v)` on a word channel.
+pub fn send_w(c: Int, v: Int, at: rt.Loc) {
+  if send_w_core(c, v) != 0 {
+    rt.fault_at("send on a closed channel", at)
+  }
+}
+
+/// `ch.recv()` on a word channel: (value, true), or (0, false) when the
+/// channel is closed and drained (and while unwinding).
+pub fn recv_w(c: Int) -> (Int, Bool) {
+  if det.built() {
+    pool.det_point()
+  }
+  pool.defer_check()
+  let x = ctx.cur()
+  if budget.canceled(x) {
+    st4(x, ctx.C_UNWINDING, 1)
+    return (0, false)
+  }
+  pool.lock_k(c + CH_MU, pool.ST_LOCK_CHAN)
+  let n = ld(c, CH_LEN)
+  if n > 0 && ld(c + CH_SENDQ, Q_HEAD) == 0 {
+    let out = ld(slot(c, 0), 0)
+    var h = ld(c, CH_HEAD).wrapping_add(1)
+    if h >= ld(c, CH_CAP) {
+      h = 0
+    }
+    st(c, CH_HEAD, h)
+    st(c, CH_LEN, n.wrapping_sub(1))
+    pool.unlock(c + CH_MU)
+    sanhook.acquire(c)
+    return (out, true)
+  }
+  let (state, got) = try_recv_locked_w(c)
+  if state != 0 {
+    pool.unlock(c + CH_MU)
+    sanhook.acquire(c)
+    return (got, state == 1)
+  }
+  let e = entry(x, 0)
+  let fired = x + ctx.C_FIRED
+  pool.park_reset(x + ctx.C_PARK)
+  cq_push(c + CH_RECVQ, e)
+  pool.unlock(c + CH_MU)
+  while true {
+    if tracerec.built() {
+      rt.mem_store(x, ctx.C_WHY, tracerec.WHY_RECV, 8)
+    }
+    tasks.park_wait_n(x, true, ld4(c, CH_EXT) == 0)
+    if rt.slot_load[Int](fired, 0, ACQUIRE) != 0 {
+      break
+    }
+    if budget.canceled(x) {
+      pool.lock_k(c + CH_MU, pool.ST_LOCK_CHAN)
+      if claim(fired) {
+        cq_del(c + CH_RECVQ, e)
+        pool.unlock(c + CH_MU)
+        st4(x, ctx.C_UNWINDING, 1)
+        return (0, false)
+      }
+      pool.unlock(c + CH_MU)
+      break
+    }
+  }
+  pool.lock_k(c + CH_MU, pool.ST_LOCK_CHAN)
+  let out = ld(e, E_ITEM)
+  let shut = ld4(e, E_SHUT)
+  pool.unlock(c + CH_MU)
+  sanhook.acquire(c)
+  (out, shut == 0)
+}
+
+/// `ch.try_send(v)` on a word channel.
+pub fn try_send_w(c: Int, v: Int) -> Bool {
+  if det.built() {
+    pool.det_point()
+  }
+  sanhook.release(c)
+  pool.defer_check()
+  pool.lock_k(c + CH_MU, pool.ST_LOCK_CHAN)
+  let ok = ld4(c, CH_CLOSED) == 0 && try_send_locked(c, v)
+  pool.unlock(c + CH_MU)
+  ok
+}
+
+/// `ch.try_recv()` on a word channel: (value, true) or (0, false).
+pub fn try_recv_w(c: Int) -> (Int, Bool) {
+  if det.built() {
+    pool.det_point()
+  }
+  pool.defer_check()
+  pool.lock_k(c + CH_MU, pool.ST_LOCK_CHAN)
+  let (state, got) = try_recv_locked_w(c)
+  pool.unlock(c + CH_MU)
+  sanhook.acquire(c)
+  (got, state == 1)
 }

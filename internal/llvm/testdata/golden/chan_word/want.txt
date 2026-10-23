@@ -1,0 +1,20 @@
+exit 0
+--- stdout
+i32 -2147483648,0,2147483647, u8 0,255,128, bool true,false,true,
+float 0.0 +Inf,-0.0 -Inf,1.5 0.6666666666666666,-2.25e+300 -4.4444444444444446e-301,5e-324 +Inf,
+enum blue,red,green, after true
+canceled 1
+len 6
+drain 0,-1,1,9223372036854775807,-9223372036854775808,0,
+after 77 78
+a 0
+b 99
+unbuffered 510
+t1 true true false
+t2 5 0 99
+t3 false 99
+sel a0 b-5 sb b11 
+wake 68
+closed f0 e99 
+mixed -3
+--- stderr

@@ -1,5 +1,25 @@
 # prelude changes
 
+## 2026-10-23: perf: channels of integers send the word, not a list of one
+
+- Kind: perf
+- Commit: this commit
+- Found by: XO_PROF=cpu of bench/perf/conc/xo/pingpong (alloc_pop 11.6% of samples: every send boxed its value in a one element List); decision 0353
+- Go reference: none (internal representation)
+- Test: golden chan_word (arm64, LLVM, Go parity), the channel and select goldens, a deterministic explore test on arm64 and LLVM, bench/perf/conc rows with `xo bench --ab`
+
+A `Chan[T]` whose element is one word with no drop (an integer type, Float
+as its bits, Bool, or an enum none of whose variants has a field) is a word channel on the native backends: `send`, `recv`,
+`try_send`, `try_recv` and `for v in ch` pass the word through the native
+prelude's llrt_chan_*_w, with no list allocated or freed per message, and
+`recv` reports closed by a flag (a received 0 is a value). The list entry
+points (select arms, generic code) convert at the runtime's boundary, so a
+channel is never read in two representations. `select` behavior, closed
+channel faults, cancellation and the deterministic scheduler's points are
+unchanged. Other element types keep the list path. pingpong (10 rounds, arm64,
+`xo bench --ab`): wall 0.835 (0.817 to 0.856), instructions 0.860; fanout,
+mutex, spawn, rwmutex and pmap within noise.
+
 ## 2026-10-23: test: Str trim, trim_prefix/suffix, starts_with/ends_with against Go's strings
 
 - Kind: test

@@ -5,6 +5,7 @@
 // declaration in std/prelude.xo, in order. Semantics are std/rt's.
 use native/llrt/atomic
 use native/llrt/cabi
+use native/llrt/chan
 use native/llrt/cabi_c
 use native/llrt/cabi_libc
 use native/llrt/cabi_wincrt
@@ -2732,6 +2733,15 @@ fn llrt_atomic_max(a: Atomic[Int], n: Int) -> Int { atomic.max(a, n) }
 // the SSA builder calls it before an inline Atomic operation only in a
 // deterministic run's build (Builder.det_point).
 fn llrt_det_point() { pool.det_point() }
+
+// Word channels (decision 0353).
+fn llrt_chan_send_w(c: Int, v: Int, at: rt.Loc) { chan.send_w(c, v, at) }
+
+fn llrt_chan_recv_w(c: Int) -> (Int, Bool) { chan.recv_w(c) }
+
+fn llrt_chan_try_send_w(c: Int, v: Int) -> Bool { chan.try_send_w(c, v) }
+
+fn llrt_chan_try_recv_w(c: Int) -> (Int, Bool) { chan.try_recv_w(c) }
 
 // The report of a property test's case to the harness (decision 0193
 // step 5): in Xo (std/native/llrt/report.xo; decision 0198 deleted the C
