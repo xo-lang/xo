@@ -2630,8 +2630,16 @@ fn merge_jumps(var f: Func) {
   }
   var any = false
   for bl in 0..f.blocks.len() {
+    if !keep[bl] {
+      continue
+    }
+    // the chain first, then one list of its instructions (a copy of the
+    // block's list per merged block was quadratic: 20 s of a 32,768
+    // binding function's 34 s build, the scale suite, 2026-10-23)
+    var chain: List[Int] = []
+    var cur = bl
     while true {
-      let t = f.term(bl)
+      let t = f.term(cur)
       if t < 0 || f.values[t].op != Op.Jump {
         break
       }
@@ -2640,21 +2648,33 @@ fn merge_jumps(var f: Func) {
         break
       }
       f.land_rest.remove(to)
-      let n = f.blocks[bl].instrs.len()
-      var ins = f.blocks[bl].instrs[0..n - 1]
-      for v in f.blocks[to].instrs {
+      chain.push(to)
+      cur = to
+    }
+    if chain.is_empty() {
+      continue
+    }
+    let n = f.blocks[bl].instrs.len()
+    var ins = f.blocks[bl].instrs[0..n - 1]
+    for (i, to) in chain.indexed() {
+      let tin = f.blocks[to].instrs
+      // every jump but the last block's is dropped
+      let m = if i + 1 < chain.len() { tin.len() - 1 } else { tin.len() }
+      for (j, v) in tin.indexed() {
         f.values[v].block = bl
         for e in f.values[v].succs {
           f.edges[e].from = bl
         }
-        ins.push(v)
+        if j < m {
+          ins.push(v)
+        }
       }
-      f.blocks[bl].instrs = ins
       f.blocks[to].instrs = []
       f.blocks[to].preds = []
       keep[to] = false
-      any = true
     }
+    f.blocks[bl].instrs = ins
+    any = true
   }
   if any {
     remove_blocks(f, keep)
