@@ -80,7 +80,15 @@ fn rune_rem(v: Int) -> Int {
   Int(Rune(v % 55296))
 }
 
+// A UInt64 remainder by a constant multiplies by the magic number: the
+// divisor reaches ints.u64_rem through a conversion to Int, which hid it
+// (an sdiv and a zero check, 2026-10-23).
+fn u64_mod(x: UInt64) -> UInt64 {
+  // arm64: "smulh" -"sdiv"
+  x % 1000
+}
+
 fn main(os: Os) {
   let n = os.env.args().len()
-  os.stdio.println("${times8(n)} ${div4(n)} ${fold()} ${times3(n)} ${clear_low(n + 6)} ${bit1(n)} ${low_bits(n)} ${word_index(n)} ${word_rem(n)} ${by_zero(n)} ${rune_rem(n * 7919)}")
+  os.stdio.println("${times8(n)} ${div4(n)} ${fold()} ${times3(n)} ${clear_low(n + 6)} ${bit1(n)} ${low_bits(n)} ${word_index(n)} ${word_rem(n)} ${by_zero(n)} ${rune_rem(n * 7919)} ${u64_mod(UInt64(n) * 12345)}")
 }
