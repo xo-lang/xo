@@ -14,6 +14,7 @@
 use github.com/xo-lang/xo/compiler/check
 use github.com/xo-lang/xo/compiler/cli/cmdhelp
 use github.com/xo-lang/xo/compiler/cli/semantic
+use github.com/xo-lang/xo/compiler/hostpath
 use github.com/xo-lang/xo/compiler/parser
 
 /// Whether args (the command line after `xo`) is one of these commands:
@@ -57,6 +58,8 @@ pub fn is_agent_command(os: Os, args: List[Str]) -> Bool uses fs {
 struct AgentArgs {
   target: Str
   dir: Str
+  /// --dir given (an explicit directory is never replaced by std)
+  dir_set: Bool = false
   all: Bool
   json: Bool = false
   text: Bool = false
@@ -73,6 +76,7 @@ fn agent_args(cmd: Str, args: List[Str]) -> AgentArgs ! Str {
   for x in args {
     if x.starts_with("--dir=") {
       a.dir = x.trim_prefix("--dir=")
+      a.dir_set = true
     } else if x == "--all" {
       // the default since decision 0289; kept for old command lines
       a.all = true
@@ -147,7 +151,19 @@ pub fn run_agent(os: Os, cmd: Str, args: List[Str]) -> Int uses (stdio, fs, env)
   let as_json = a.json || (!a.text && !os.stdio.stdout_is_tty())
   var s = match agent_session(os, dir, preload) {
     Ok(x) => x
-    Err(e) => return fail(os, cmd, as_json, e)
+    Err(e) => {
+      // `xo doc NAME` or `xo def NAME` run outside a module (a scratch or
+      // home directory over the walk bound, or one with no .xo file):
+      // a std or prelude name is answered from std alone
+      let fb = if (cmd is "doc" | "def") && !a.dir_set { std_session(os, preload) } else { None }
+      match fb {
+        Some(x) => {
+          os.stdio.eprintln("xo ${cmd}: the working directory was not checked (${e}); answering from std")
+          x
+        }
+        None => return fail(os, cmd, as_json, e)
+      }
+    }
   }
   let out = match cmd {
     "def" => s.agent_def(os, a.target, false)
@@ -317,6 +333,21 @@ fn too_wide(os: Os, d: Str) -> Str? uses fs.read {
     }
   }
   None
+}
+
+/// A Session of std alone (and the modules preload names): agent_session
+/// over a new directory holding one empty program, removed after; None
+/// when it fails too.
+fn std_session(os: Os, preload: List[Str]) -> Session? uses (stdio, fs, env) {
+  let tmp = os.fs.create_temp(hostpath.temp_dir(os.env), "xo-doc-").ok() ?? return None
+  // create_temp makes a file: a directory of that name instead
+  os.fs.remove(tmp).ignore_err("replaced by a directory")
+  os.fs.create_dir_all(tmp).ok() ?? return None
+  // a directory with no .xo file is refused: one empty program
+  os.fs.write("${tmp}/main.xo", "fn main() {}\n".bytes()).ok() ?? return None
+  let r = agent_session(os, tmp, preload).ok()
+  os.fs.remove_all(tmp).ignore_err("a temporary directory")
+  r
 }
 
 /// A Session over the .xo files of dir, checked as `xo lsp` checks open

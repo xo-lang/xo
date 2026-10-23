@@ -17,6 +17,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   and the 0.26.0 field reports' fixes (Intel Mac, Windows). Known gaps:
   spawning many short tasks, sorting Strs (1.18x Go), a contended
   RWMutex. The entries below, down to 0.26.0's, are in it.
+- `xo doc NAME` and `xo def NAME` run outside a module (a scratch or home
+  directory too large to check, or one with no `.xo` file) answer a std or
+  prelude name from std, with a note, instead of failing; `--dir` keeps
+  the refusal. A name from another language (`String`, `str`, `int`,
+  `dict`, `Vec`, `nil`, ...) gets a note naming Xo's type (`Str`, `Int`,
+  `Map`, `List`, `Option`).
 - `xo check --support` is about 2.5 times faster on a warm run
   (compiler/xo 3.7 s to 1.6 s): it keeps the module check cache and
   builds through the front end cache (decision 0351 addendum).

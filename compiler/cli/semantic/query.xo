@@ -121,11 +121,36 @@ pub fn miss_hint(os: Os, std_dir: Str, name: Str) -> Str uses fs.read {
   if segs.len() == 2 && segs[1] is "min" | "max" | "clamp" {
     out = "; `${segs[1]}` is a built-in method of ordered types (Int, Float, Str, ...): `a.${segs[1]}(b)`"
   }
+  let ty = habit_type(name)
+  if !ty.is_empty() {
+    out = "${out}; ${ty}"
+  }
   let alts = std_suggestions(os, std_dir, name)
   if !alts.is_empty() {
     out = "${out}; did you mean ${alts.join(", ")}?"
   }
   out
+}
+
+/// Xo's name for a type an agent knows from another language
+/// (`xo doc String`: Xo's string type is `Str`), or "".
+fn habit_type(name: Str) -> Str {
+  let (xo, from) = match name.to_lower() {
+    "string" | "str" | "&str" => ("Str", "a string")
+    "int" | "integer" | "int64" | "i64" | "long" => ("Int", "a 64-bit integer")
+    "bool" | "boolean" => ("Bool", "a boolean")
+    "float64" | "f64" | "double" | "float" => ("Float", "a 64-bit float")
+    "byte" | "[]byte" | "bytes" | "u8" => ("Bytes", "bytes")
+    "map" | "dict" | "hashmap" | "dictionary" => ("Map", "a map")
+    "slice" | "array" | "vec" | "vector" | "list" | "arraylist" => ("List", "a list")
+    "error" => ("Result", "an error result (`T ! E`, core 2.6)")
+    "nil" | "null" | "none" | "option" | "optional" => ("Option", "an optional value (`T?`, core 2.5)")
+    _ => ("", "")
+  }
+  if xo.is_empty() || xo == name {
+    return ""
+  }
+  "Xo's type for ${from} is `${xo}` (`xo doc ${xo}`)"
 }
 
 /// The std and runtime functions named like name's last segment, as

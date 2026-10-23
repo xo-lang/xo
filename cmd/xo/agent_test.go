@@ -442,3 +442,39 @@ func TestServeLongSocketPath(t *testing.T) {
 		t.Errorf("xo serve with a %d byte socket path: exit %d\n%s", len(sock), code, errOut.String())
 	}
 }
+
+// TestDocOutsideModule: `xo doc NAME` run in a directory too large to
+// check (a scratch directory over the walk bound) answers a std or prelude
+// name from std alone, with a note; `xo doc String` names Xo's `Str`.
+func TestDocOutsideModule(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	deep := filepath.Join(dir, "a", "b")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i <= 6000; i++ {
+		if err := os.WriteFile(filepath.Join(deep, fmt.Sprintf("f%d.xo", i)), []byte("fn f() {}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	chdir(t, dir)
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"doc", "--text", "Str"}, &out, &errOut); code != 0 {
+		t.Fatalf("xo doc Str outside a module: exit %d\n%s%s", code, out.String(), errOut.String())
+	}
+	for _, m := range []string{"Str.find", "Str.split", "Str.replace"} {
+		if !strings.Contains(out.String(), m) {
+			t.Errorf("xo doc Str lacks %s:\n%s", m, out.String())
+		}
+	}
+	if !strings.Contains(errOut.String(), "answering from std") {
+		t.Errorf("no note that the answer is std's:\n%s", errOut.String())
+	}
+	out.Reset()
+	errOut.Reset()
+	run(t, []string{"doc", "--text", "String"}, &out, &errOut)
+	if !strings.Contains(out.String()+errOut.String(), "Xo's type for a string is `Str`") {
+		t.Errorf("xo doc String names no Str:\n%s%s", out.String(), errOut.String())
+	}
+}
