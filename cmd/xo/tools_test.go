@@ -959,6 +959,17 @@ fn num(s: Str) -> Int ! Str {
   }
   s.len()
 }
+
+// already written with ?? (field report 0.26.0, b07: vet offered to
+// rewrite it into the same text)
+fn already(ss: List[Str]) -> Int {
+  var t = 0
+  for s in ss {
+    let n = num(s) ?? _ => continue
+    t += n
+  }
+  t
+}
 `
 	dir := writeFiles(t, map[string]string{"main.xo": src})
 	var out, errOut bytes.Buffer

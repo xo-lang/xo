@@ -79,14 +79,17 @@ fn cascades(e: BuildErr, kept: List[BuildErr]) -> Bool {
 /// The XO1201 diagnostic of one construct (NoGCDiagnostic).
 fn nogc_diag(e: BuildErr) -> check.Diag {
   let msg = if e.impossible {
-    "not available without a garbage collector (`--no-gc`): ${e.feature} (impossible: Go code needs Go's runtime)"
+    "not available on the native backends (arm64, amd64, LLVM): ${e.feature} (impossible: Go code needs Go's runtime)"
   } else {
-    "not available without a garbage collector (`--no-gc`) yet: ${e.feature} (support is planned)"
+    "not available on the native backends (arm64, amd64, LLVM) yet: ${e.feature} (support is planned)"
   }
+  // the native backends build by default (decision 0248), so the message
+  // names them, not --no-gc, which the build may not have been given
+  // (field report 0.26.0)
   let note = if e.impossible {
-    "support: impossible; build with --backend=go (and without --no-gc) to use it"
+    "support: impossible; build with --backend=go to use it"
   } else {
-    "support: planned; build with --backend=go (and without --no-gc) to use it until then"
+    "support: planned; build with --backend=go to use it until then"
   }
   check.Diag{code: "XO1201", file: e.file, line: e.span.start.line, col: e.span.start.col, end_line: e.span.end.line, end_col: e.span.end.col, message: msg, notes: [check.DNote{message: note}]}
 }

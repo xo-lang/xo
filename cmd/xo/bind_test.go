@@ -85,8 +85,16 @@ func TestBindC(t *testing.T) {
 	}
 	out.Reset()
 	errOut.Reset()
-	if code := run(t, []string{"check", app}, &out, &errOut); code == 0 || !strings.Contains(out.String()+errOut.String(), "XO1201") {
-		t.Errorf("check without --no-gc: exit %d\n%s%s", code, out.String(), errOut.String())
+	// `xo check` checks by the native backends' rules, as a build does, so
+	// `use c` passes (owner, 2026-10-23, field report 0.26.0 b08); the Go
+	// backend's rules (--backend=go) reject it
+	if code := run(t, []string{"check", app}, &out, &errOut); code != 0 {
+		t.Errorf("check: exit %d, want 0 (use c is valid natively)\n%s%s", code, out.String(), errOut.String())
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := run(t, []string{"check", "--backend=go", app}, &out, &errOut); code == 0 || !strings.Contains(out.String()+errOut.String(), "XO1201") {
+		t.Errorf("check --backend=go: exit %d, want XO1201\n%s%s", code, out.String(), errOut.String())
 	}
 	out.Reset()
 	errOut.Reset()

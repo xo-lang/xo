@@ -1762,6 +1762,11 @@ fn match_exit(c: check.Checker, f: Int, file: Str, span: parser.Span, subject: p
   if arms.len() != 2 {
     return None
   }
+  // the match the parser makes of `r ?? e => body` is already the short
+  // form (field report 0.26.0, b07: vet offered to rewrite it into itself)
+  if arms[1].coalesce {
+    return None
+  }
   var exit_text = ""
   var unwrap = ""
   var leave = ""

@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo check` checks by the native backends' rules by default, as a build
+  does (owner, 2026-10-23): `use c` passes, and `--backend=go` checks by
+  the Go backend's. The native support check (XO1201) is `--support`
+  (its old name `--no-gc` still works).
+- XO1201 says "not available on the native backends (arm64, amd64,
+  LLVM)" instead of naming `--no-gc`, which the build may not have been
+  given.
+- `xo vet` no longer offers to rewrite `x ?? _ => continue` (XO0906)
+  into the same text.
+
 - `r ?? e => body` (decision 0321) builds when `r` is a plain variable,
   a parameter or a field: it failed on the native backends (XO1201
   converting `()` to `Int`) and the Go backend (`undefined:

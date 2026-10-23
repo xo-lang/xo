@@ -185,7 +185,15 @@ pub fn load(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map[Str, By
 /// load with the std and runtime modules of preload (`std/tls`,
 /// `native/llrt/pool`) loaded too, imported or not (decision 0289).
 pub fn load_with(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map[Str, Bytes], preload: List[Str]) -> Session ! Str uses fs, proc, net, rand, env {
+  load_mode(os, ctx, dirs, exact, overlay, preload, false)
+}
+
+/// load_with under the native backends' checker rules when native (as
+/// `xo check` checks by default, owner 2026-10-23: `use c` is valid), else
+/// the Go backend's.
+fn load_mode(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map[Str, Bytes], preload: List[Str], native: Bool) -> Session ! Str uses fs, proc, net, rand, env {
   var c = new_checker(os, ctx)
+  c.native = native
   c.overlay = overlay
   c.preload = preload
   let all = if exact { dirs } else { c.workspace_dirs(dirs) }
@@ -212,7 +220,9 @@ pub fn load_with(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map[St
 fn run_check(os: Os, ctx: Ctx, args: List[Str]) -> Int {
   var fl = new_flags("check")
   fl.bool_flag("json", "print diagnostics as JSON")
-  fl.bool_flag("no-gc", "also run the no GC check of native builds (XO1201, decision 0083)")
+  fl.str_flag("backend", "", "the build backend whose rules to check by (go for the Go backend's; default the native backends', as xo build builds)")
+  fl.bool_flag("support", "also run the native backends' support check (XO1201: what they cannot build yet), which lowers the program")
+  fl.bool_flag("no-gc", "the same as --support (its old name)")
   fl.bool_flag("fix", "first apply every unambiguous machine fix (as `xo fix`) and reformat the changed files, then report what remains (decision 0096)")
   fl.str_flag("dir", "", "a directory to check, as def, refs, and doc take --dir (the same as giving it as an argument)")
   fl.bool_flag("wip", "report unused bindings and imports (XO0110) and unused computed values (XO0209) as warnings, for checking code mid edit; a normal check and every build keep them errors (decision 0293)")
@@ -238,7 +248,12 @@ fn run_check(os: Os, ctx: Ctx, args: List[Str]) -> Int {
       }
     }
   }
-  var s = match load_check(os, ctx, targets, fl.get_bool("no-gc")) {
+  let be = fl.get_str("backend")
+  if !(be is "" | "go" | "native" | "arm64" | "amd64" | "llvm") {
+    os.stdio.eprintln("xo check: --backend=${be}: want go, arm64, amd64 or llvm")
+    return 2
+  }
+  var s = match load_check(os, ctx, targets, fl.get_bool("support") || fl.get_bool("no-gc"), be == "go") {
     Ok(x) => x
     Err(e) => {
       os.stdio.eprintln("xo check: ${e}")
@@ -281,35 +296,31 @@ fn run_check(os: Os, ctx: Ctx, args: List[Str]) -> Int {
   if errs > 0 { 1 } else { 0 }
 }
 
-/// The check of `xo check`: the workspace's modules, or with no_gc the
-/// native check and, when it reports no error and a root module declares
-/// main, the XO1201 diagnostics of the SSA builder
-/// (build.CheckNoGCDirs).
-fn load_check(os: Os, ctx: Ctx, dirs: List[Str], no_gc: Bool) -> Session ! Str uses fs, proc, net, rand, env {
-  if !no_gc {
+/// The check of `xo check` (owner, 2026-10-23, field report 0.26.0 b08):
+/// the workspace's modules under the native backends' checker rules, as a
+/// build checks them, or the Go backend's with go_rules (--backend=go); with
+/// support, when the check reports no error and a root module declares
+/// main, the XO1201 diagnostics of the SSA builder too (what the native
+/// backends cannot build yet; it lowers the program, about 2 s for
+/// compiler/xo, so it is not the default yet).
+fn load_check(os: Os, ctx: Ctx, dirs: List[Str], support: Bool, go_rules: Bool) -> Session ! Str uses fs, proc, net, rand, env {
+  if go_rules {
     return load(os, ctx, dirs, false, {})
   }
-  var c = new_checker(os, ctx)
-  c.native = true
-  c.check_dirs_fetching(os, dirs, fn(p: Str, v: Str) -> Str ! check.Problem { modules.fetch(os, ctx.wd, p, v) })?
-  if !c.unsupported.is_empty() {
-    return Err("not supported by the self hosted checker: ${c.unsupported}")
+  var s = load_mode(os, ctx, dirs, false, {}, [], true)?
+  if !support {
+    return Ok(s)
   }
-  var mods: List[Str] = []
-  for m in c.root_mods {
-    mods.push(c.mods[m].path)
-  }
-  var ds = c.diags
   var errs = false
-  for d in ds {
+  for d in s.diags {
     errs = errs || !d.warning
   }
   if !errs {
-    let b = ssa.build_program(c, ".", false)
+    let b = ssa.build_program(s.c, ".", false)
     // no main: a library has no program to lower
     if b.why.is_empty() {
-      ds = ds + ssa.nogc_diags(b)
+      s.diags = sort_diags(s.diags + ssa.nogc_diags(b))
     }
   }
-  Ok(Session{c: c, mods: mods, diags: sort_diags(ds)})
+  Ok(s)
 }

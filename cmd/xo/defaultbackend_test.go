@@ -200,3 +200,34 @@ func TestTargetsAllSkipsUnsupported(t *testing.T) {
 		t.Errorf("--targets=wasip1/wasm: the error does not name the network:\n%s", stderr.String())
 	}
 }
+
+// TestTargetsWasiAlone: --targets=wasip1/wasm alone, and the spec's
+// spelling wasi/wasm32 (spec 12.1), build a WebAssembly module with the
+// wasm backend (field report 0.26.0, b06: 0.26.0 picked the host's
+// backend and failed; fixed with caddf03ac).
+func TestTargetsWasiAlone(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "hi")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte("fn main(os: Os) uses (stdio) {\n  os.stdio.println(\"hi\")\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, dir)
+	for _, tg := range []string{"wasip1/wasm", "wasi/wasm32"} {
+		out := filepath.Join(dir, strings.ReplaceAll(tg, "/", "-")+".wasm")
+		var stdout, stderr bytes.Buffer
+		if code := run(t, []string{"build", "--targets=" + tg, "-o", out, "."}, &stdout, &stderr); code != 0 {
+			t.Errorf("--targets=%s: exit %d\n%s%s", tg, code, stdout.String(), stderr.String())
+			continue
+		}
+		b, err := os.ReadFile(out)
+		if err != nil || !bytes.HasPrefix(b, []byte("\x00asm")) {
+			t.Errorf("--targets=%s: %s is not a WebAssembly module (%v)", tg, out, err)
+		}
+	}
+}

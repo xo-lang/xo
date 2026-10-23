@@ -313,13 +313,16 @@ a JSON line, the last also in last.json under <user cache>/xo/watch
 
 fn check_text() -> Str {
   """
-usage: xo check [--json] [--no-gc] [--fix] [--wip] [--dir=DIR] <dirs...>
+usage: xo check [--json] [--backend=go] [--support] [--fix] [--wip] [--dir=DIR] <dirs...>
 
 Resolve names and type check the modules under each directory (every
 directory holding .xo files is a module; imports are resolved through
-xo.mod and the embedded std). --json prints {"modules": [...],
-"diagnostics": [...]} on stdout. --no-gc also runs the check of native
-builds (XO1201 for what they cannot build yet, or ever; decision 0083).
+xo.mod and the embedded std) by the rules of the backend a build uses:
+the native backends' by default, so `use c` is valid; --backend=go checks
+by the Go backend's. --json prints {"modules": [...], "diagnostics":
+[...]} on stdout. --support (old name --no-gc) also runs the native
+backends' support check, which lowers the program (XO1201 for what they
+cannot build yet, or ever; decision 0083).
 --fix first applies every unambiguous machine fix (as xo fix) and
 reformats the changed files, then reports what remains (decision 0096).
 --wip reports the errors of code still being written, an unused binding

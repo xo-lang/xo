@@ -65,7 +65,7 @@ func TestBuildRunLLVM(t *testing.T) {
 		t.Fatal(err)
 	}
 	errOut.Reset()
-	if code := run(t, []string{"build", "--backend=llvm", "-o", bin, src}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "main.xo:2:31: error XO1201: not available without a garbage collector (`--no-gc`) yet: a Map key or Set element that holds a Map or Set (support is planned)") {
+	if code := run(t, []string{"build", "--backend=llvm", "-o", bin, src}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "main.xo:2:31: error XO1201: not available on the native backends (arm64, amd64, LLVM) yet: a Map key or Set element that holds a Map or Set (support is planned)") {
 		t.Fatalf("unsupported: exit %d stderr %s", code, errOut.String())
 	}
 }

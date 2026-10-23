@@ -1060,7 +1060,8 @@ const DEFAULT = Config{port: 8080}
   fix. A path computed at run time is not checked.
 - Unused local bindings, local constants, and imports are errors (`XO0110`). Not covered:
   function and closure parameters, names starting with `_`, and `_` itself.
-  `xo fix` removes unused bindings. `xo check --wip` reports `XO0110` and
+  `xo fix` renames an unused binding or local constant to `_name` (removing
+  it could drop its value's effects) and removes an unused import. `xo check --wip` reports `XO0110` and
   `XO0209` (section 2.6) as warnings, for checking code still being written;
   a normal check and every build reject them (decision 0293).
 - Shadowing in the same block is an error. Shadowing in a nested block is
@@ -2576,7 +2577,7 @@ test "retries after 503" {
 | `xo build [--targets=all\|os/arch,...] [--no-gc] [--tzdata=embedded\|system] [--ci] [--release [--error-args=false]] [--stamp NAME=VALUE]...` | Build static binaries; `--stamp` (repeatable, also `xo run`) sets a `const NAME: Str = "..."` of the main module to VALUE for this build, else `XO1501`, and is recorded in the build information so `xo replay` rebuilds the same program (decision 0165); `--no-gc` on a native backend without a garbage collector (below); `--tzdata=system` reads time zones from the host instead of embedding the ones the program uses (std.md 13); `--ci` fails before building on an unformatted file (10.5) or a `dbg` left in code (11.4); `--release` is a release build (8): `requires(debug)` and `ensures(debug)` compiled out, and the native runtime's profiler and execution trace recorder left out unless `--profile-support` or `--trace-support` (decisions 0238, 0240); `--release --error-args=false` drops parameter values from error frames (11.1); `-s` leaves debug information and local symbols out of a native binary. Builds are debug builds otherwise, and `xo run` and `xo test` always are |
 | `xo run [DIR]` | Build and run for the host the program in exactly DIR (default `.`), never one below it (decision 0345); `--profile=cpu\|heap\|cpu,heap` (XO_PROF, decision 0238) and `--trace=FILE` (XO_TRACE, decision 0240) on a native backend; `--watch [--grace=D]` rebuilds after a source change and restarts the program only when the built binary changed (SIGTERM, up to `--grace`, default 5s, then SIGKILL; decision 0267). A stop request `xo run` gets (SIGINT or SIGTERM, 7.5) is sent on to the program as SIGTERM when standard input is not a terminal; on a terminal, Ctrl-C reaches the program through the process group |
 | `xo trace FILE [--json OUT] [--text]` | The execution trace a native program wrote under XO_TRACE as Chrome trace event JSON (Perfetto) and a summary (decision 0240) |
-| `xo check [--no-gc] [--fix]` | Parse and type check all targets, no codegen; `--no-gc` adds the native build check (XO1201); `--fix` first applies the machine fixes (below) |
+| `xo check [--backend=go] [--support] [--fix]` | Parse and type check all targets, no codegen, by the rules of the backend a build uses: the native backends' by default (`use c` is valid), the Go backend's with `--backend=go`; `--support` (old name `--no-gc`) adds the native backends' support check (XO1201), which lowers the program; `--fix` first applies the machine fixes (below) |
 | `xo test [--seed=N] [--explore=N] [--cases=N] [--timeout=D] [--real] [--watch]` | Tests, contract fuzzing, property tests (`--cases` per property test and fuzzed function, default 100; `--timeout` the real time each test may take, default 60s, 0 for none, 9.2); deterministic scheduling. `--watch` reruns, after each change, only the tests the change reaches (decision 0267). Doc comment examples are [P2] (1.2) |
 | `xo dump <pid>` | Task tree of a running program (11.4) |
 | `xo mcp` | Model Context Protocol server over stdio: `check` (with an optional `fix`), `query`, `edit`, `explain`, `fmt`, `test`, `build` tools returning compact JSON |
@@ -2987,7 +2988,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO1103` | note | vet | per module report of `use go` packages and the functions that perform `go` (decision 0041) |
 | `XO1104` | error | checker | C header cannot be bound (not found, clang cannot read it, a `link` file is missing, or an unknown effect in its `uses`) |
 | `XO1105` | error | checker | C function exists in the header but its signature does not map to Xo, so the binding skipped it |
-| `XO1201` | error | no GC check, checker (`use c` without `--no-gc`) | construct, std API, or effect not available without a garbage collector (`--no-gc`); planned or impossible |
+| `XO1201` | error | no GC check, checker (`use c` without `--no-gc`) | construct, std API, or effect not available on the native backends (arm64, amd64, LLVM); planned or impossible |
 | `XO1301` | error | modules | malformed xo.mod require or deny line, xo.lock, or xo.work line, or a deny rule naming a package that does not exist (core 4.2, 4.3) |
 | `XO1302` | error | modules | module version cannot be fetched from git or a module proxy (XO_PROXY): repository, tag, or version missing, or its xo.mod declares another path |
 | `XO1303` | error | modules | module version is not in the module cache and the build is offline (XO_OFFLINE, --offline) |
