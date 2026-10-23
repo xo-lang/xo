@@ -140,8 +140,19 @@ Go's netpoller model: an idle worker waits in the poller itself.
 
 ## Proposed stage 2026-10-22: Windows workers poll the completion port
 
-Status: Proposed (Xo Lang 3's draft, reviewed by Xo Lang 2, who owns the
-Windows native side; nothing is coded). Everything on the Windows poll
+Status: Implemented 2026-10-22 (poll.xo; Xo Lang 3's draft, reviewed by Xo Lang 2,
+who owns the Windows native side). First Windows run: CI 39878309838 on
+the xo-windows runner (scripts/ci/windows-netpoll.sh): 144 runs ok, 0 failed
+(12 goldens, worker polling on and XO_NETPOLL=0, XO_THREADS unset, 4 and 1,
+two rounds); correctness and counters only, no timing. Mac dry run before it:
+windows/amd64 cross builds, runtime layout tests, arm64 and LLVM concurrency
+and http goldens.
+
+Note (Xo Lang 2's review, 2026-10-22): while the poller thread waits in
+GetQueuedCompletionStatusEx holding TOK_POLLER (its quiet state, wait -1),
+a worker cannot take the token, and np_break posts only when the token is
+TOK_BLOCKED or TOK_FREE; as on Linux. On Windows a post then wakes the
+poller thread, not a worker. Everything on the Windows poll
 path is untested on Windows (cross links only), so the first run is the
 proof.
 

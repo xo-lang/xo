@@ -992,7 +992,9 @@ fn ev_init() {
 pub fn poll_thread() {
   let e = ev()
   if windows() {
-    if rt.mem_load(e, EV_AFD, 8) != 0 {
+    if rt.mem_load(e, EV_AFD, 8) != 0 && rt.mem_load(e, EV_ON, 8) != 0 {
+      poll_main(0, 0, addw(e, EV_MU), addw(e, EV_DEAD), addw(e, EV_SIGS))
+    } else if rt.mem_load(e, EV_AFD, 8) != 0 {
       poll_main_win(rt.mem_load(e, EV_IOCP, 8), addw(e, EV_MU), addw(e, EV_DEAD), addw(e, EV_SIGS))
     } else {
       poll_main_wsa(e)
@@ -1188,8 +1190,9 @@ pub fn poll_main(poll: Int, pipe_r: Int, mu: Int, dead: Int, sigs: Int) {
 /// a worker's poll, whose readied fibers go to its own ring with no wake
 /// (pool.xo np_poll).
 fn poll_round(e: Int, evs: Int, maxwait: Int, worker: Bool) -> Int {
-  let poll = s32(rt.mem_load(e, EV_POLL, 4))
-  let pipe_r = s32(rt.mem_load(e, EV_PIPE_R, 4))
+  let win = windows()
+  let poll = if win { rt.mem_load(e, EV_IOCP, 8) } else { s32(rt.mem_load(e, EV_POLL, 4)) }
+  let pipe_r = if win { -1 } else { s32(rt.mem_load(e, EV_PIPE_R, 4)) }
   let mu = addw(e, EV_MU)
   let dead = addw(e, EV_DEAD)
   let sigs = addw(e, EV_SIGS)
@@ -1200,7 +1203,11 @@ fn poll_round(e: Int, evs: Int, maxwait: Int, worker: Bool) -> Int {
   var pd = rt.mem_load(dead, 0, 8)
   while pd != 0 {
     let next = rt.mem_load(pd, D_NEXT, 8)
-    rt.heap_release(subw(pd, 8))
+    if win {
+      dead_win(pd)
+    } else {
+      rt.heap_release(subw(pd, 8))
+    }
     pd = next
   }
   rt.mem_store(dead, 0, 0, 8)
@@ -1232,11 +1239,14 @@ fn poll_round(e: Int, evs: Int, maxwait: Int, worker: Bool) -> Int {
   var i = 0
   while i < n {
     let (p, mode) = event(evs, i)
-    if p != 0 {
+    if p != 0 && win {
+      afd_done(p)
+    } else if p != 0 {
       pd_ready(p, mode)
     } else {
-      // the self pipe: drain it, then the signals that wrote to it
-      while read_fd(pipe_r, drain, 64) > 0 {}
+      // the self pipe: drain it (on Windows the break is a completion
+      // with no record), then the signals that wrote to it
+      while !win && read_fd(pipe_r, drain, 64) > 0 {}
       var k = rt.slot_swap(sigs, 0, 0, ACQ_REL)
       while k > 0 {
         stop.signal()
@@ -1253,12 +1263,14 @@ fn poll_round(e: Int, evs: Int, maxwait: Int, worker: Bool) -> Int {
 }
 
 /// Whether workers poll the network themselves (decision 0324): Linux and
-/// macOS, not the test world's virtual clock (twrun moves its timers),
+/// macOS, Windows with the AFD device (they dequeue the completion port),
+/// not the test world's virtual clock (twrun moves its timers),
 /// and XO_NETPOLL not 0.
 fn np_wanted() -> Bool {
   let os_ok = match target.os {
     TargetOs.Darwin | TargetOs.Linux => true
-    TargetOs.Windows | TargetOs.Wasi => false
+    TargetOs.Windows => afd() != 0
+    TargetOs.Wasi => false
   }
   if !os_ok || virt() {
     return false
@@ -1350,7 +1362,22 @@ fn wait_events(poll: Int, evs: Int, ts: Int, wait: Int) -> Int {
       sanhook.acquire(ev())
       if r < 0 { 0 } else { r }
     }
-    TargetOs.Windows | TargetOs.Wasi => 0
+    TargetOs.Windows => {
+      // the completion port dequeues OVERLAPPED_ENTRY records (32 bytes,
+      // the record at 8: event()), the count in ts; a wait under 1 ms
+      // does not wait (the port's timeout follows the 15.6 ms tick)
+      var ms = INFINITE
+      if wait >= 0 {
+        ms = if wait < 1000000 { 0 } else if wait > 1099511627776 { 1073741824 } else { addw(wait, 999999) / 1000000 }
+      }
+      rt.mem_store(ts, 0, 0, 8)
+      if Int(sys_windows.GetQueuedCompletionStatusEx(poll, evs, NEVENTS, ts, ms, 0)) != 0 {
+        rt.mem_load(ts, 0, 4)
+      } else {
+        0
+      }
+    }
+    TargetOs.Wasi => 0
   }
 }
 
@@ -1384,7 +1411,24 @@ fn event(evs: Int, i: Int) -> (Int, Int) {
       let w = if (f & (4 | 16 | 8)) != 0 { 2 } else { 0 }
       (data, r | w)
     }
-    TargetOs.Windows | TargetOs.Wasi => (0, 0)
+    TargetOs.Windows => (rt.mem_load(evs, addw(i.wrapping_mul(32), 8), 8), 0)
+    TargetOs.Wasi => (0, 0)
+  }
+}
+
+/// A closed descriptor's record (on the poller or a worker): freed, or,
+/// with a poll in flight, marked to be freed by its cancelled poll's
+/// completion (afd_done).
+fn dead_win(pd: Int) {
+  lk(addw(pd, D_MU))
+  let armed = rt.mem_load(pd, D_ARMED, 4) != 0
+  if armed {
+    rt.mem_store(pd, D_DYING, 1, 4)
+    let _c = sys_windows.CancelIoEx(afd(), addw(pd, D_IOSB))
+  }
+  unlk(addw(pd, D_MU))
+  if !armed {
+    rt.heap_release(subw(pd, 8))
   }
 }
 
@@ -1600,10 +1644,13 @@ const POLL_ERRS = 7
 /// when the system refuses a part, as the C's was.
 fn ev_init_win() {
   let e = ev()
-  let iocp = sys_windows.CreateIoCompletionPort(-1, 0, 0, 1)
+  let iocp = sys_windows.CreateIoCompletionPort(-1, 0, 0, 0)
   rt.mem_store(e, EV_IOCP, iocp, 8)
   let dev = if iocp != 0 { afd_open(iocp) } else { 0 }
   rt.mem_store(e, EV_AFD, dev, 8)
+  // decision 0324: the token holder's event buffer and whether workers poll
+  rt.mem_store(e, EV_BUF, rt.heap_large(addw(NEVENTS.wrapping_mul(32), 16 + 64)), 8)
+  rt.mem_store(e, EV_ON, if np_wanted() { 1 } else { 0 }, 8)
   if dev == 0 {
     let (r, w) = sock.loopback_pair()
     if r < 0 {
