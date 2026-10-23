@@ -70,6 +70,13 @@ test "invalid UTF-8 in a form body stays escaped" {
   expect(request_form(r).map(fn(v) { v.get("a") })) == Ok(Some("%FFA"))
 }
 
+test "a plain query is read in place: first value of a repeated key, empty keys and values, no escape work" {
+  let r = new_request("GET", "/p?b=2&a=1&&b=3&c&=x&d=&e=h%C3%A9llo&f=a+b")
+  expect(r.url.query) == {"a": "1", "b": "2", "c": "", "d": "", "": "x", "e": "h\u{00e9}llo", "f": "a b"}
+  let p = new_request("GET", "/p?k=h\u{00e9}llo&z=1&k=2")
+  expect(p.url.query) == {"k": "h\u{00e9}llo", "z": "1"}
+}
+
 test "a request built as a struct literal reads url.query" {
   let r = http.Request{method: "GET", path: "/", url: http.Url{scheme: "http", host: "x", port: None, path: "/", query: {"k": "v"}}, headers: {}, body: b"", remote_ip: "1.2.3.4"}
   expect(r.query_all("k")) == ["v"]

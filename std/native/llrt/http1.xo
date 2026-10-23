@@ -137,43 +137,54 @@ pub fn query_parts(q: Str) -> List[Str] {
   let b = q.bytes()
   let n = b.len()
   var amps = 0
-  var i = 0
-  while i < n {
-    if b[i] == 38 {
-      amps += 1
-    }
-    i += 1
+  var i = scan.find_byte(b, 0, n, 38)
+  while i >= 0 {
+    amps += 1
+    i = scan.find_byte(b, i + 1, n, 38)
   }
   if amps + 1 > 10000 {
     return [] // number of URL query parameters exceeded limit
   }
+  // no escape, no plus and valid UTF-8: every key and value is a view of
+  // q (a split at & or = keeps UTF-8 whole), no unescape or copy
+  let plain = scan.find_byte(b, 0, n, 37) < 0 && scan.find_byte(b, 0, n, 43) < 0 && scan.utf8_valid(b)
+  let semi = scan.find_byte(b, 0, n, 59) >= 0
   // the keys kept sorted as they come (a key seen before keeps its first
   // value): [k1, v1, k2, v2, ...]
   var out: List[Str] = []
   i = 0
   while i < n {
-    var j = scan.find(q, "&", i)
+    var j = scan.find_byte(b, i, n, 38)
     if j < 0 {
       j = n
     }
     let lo = i
     i = j + 1
-    if j == lo || find(q, 59, lo, j) >= 0 {
+    if j == lo || (semi && find(q, 59, lo, j) >= 0) {
       continue
     }
     let eq = find(q, 61, lo, j)
     let ke = if eq < 0 { j } else { eq }
-    let (kok, k) = neturl.unescape(b, q, lo, ke, neturl.U_QUERY)
-    if !kok {
-      continue
-    }
+    var k = ""
     var v = ""
-    if eq >= 0 {
-      let (vok, vv) = neturl.unescape(b, q, eq + 1, j, neturl.U_QUERY)
-      if !vok {
+    if plain {
+      k = rawb.str_cut(q, lo, ke)
+      if eq >= 0 {
+        v = rawb.str_cut(q, eq + 1, j)
+      }
+    } else {
+      let (kok, kk) = neturl.unescape(b, q, lo, ke, neturl.U_QUERY)
+      if !kok {
         continue
       }
-      v = vv
+      k = kk
+      if eq >= 0 {
+        let (vok, vv) = neturl.unescape(b, q, eq + 1, j, neturl.U_QUERY)
+        if !vok {
+          continue
+        }
+        v = vv
+      }
     }
     // binary search for k among the keys
     var a = 0

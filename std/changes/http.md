@@ -1,5 +1,26 @@
 # std/http changes
 
+## 2026-10-23: perf: query_parts reads a plain query in place
+
+- Kind: perf
+- Commit: this commit
+- Found by: XO_PROF=cpu of http.new_request (query_parts was 18% of it)
+- Go reference: net/url url.go parseQuery (go1.26.1)
+- Test: std/native/http_test.xo "a plain query is read in place", internal/stdtest/testdata/corpus/url (TestStdCorpora), goldens http_form and http_router_paths
+
+`http1.query_parts` counted the `&` bytes one at a time, searched each pair
+with a string find, and ran every key and value through `neturl.unescape`
+(a byte loop and a UTF-8 check each). It now finds `&` with
+`scan.find_byte`, checks for a `;` once, and when the whole query has no
+`%` or `+` and is valid UTF-8 (three word-at-a-time scans) every key and
+value is a view of the query. `xo bench --ab`, 300k `new_request` calls on
+four URLs with plain queries: 0.756 instructions and 0.821 wall against the
+old code (156.6 to 128.7 ms), and against Go's `http.NewRequest` with
+`URL.Query()` 0.827 instructions, wall within noise, peak memory 0.17;
+the mixed row of 400k calls (two queries, one with `%20` and one with
+`+`): 0.937 instructions, 0.98 wall, Go 0.722 instructions, 0.704 wall.
+bench/results/query-parts-2026-10-23.md.
+
 ## 2026-10-23: perf: new_request and parse_url parse the URL once, and url_parse scans a word at a time
 
 - Kind: perf
