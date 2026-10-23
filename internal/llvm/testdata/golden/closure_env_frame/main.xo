@@ -1,0 +1,67 @@
+// Closure environments in the frame (compiler/arm64 closures.xo
+// stack_closures): a closure whose captures hold nothing counted and
+// whose value is only called keeps its environment in the frame, no
+// allocation (TestClosureEnvInFrame); one that is stored, returned or
+// carried across blocks keeps a heap environment. The outputs are the
+// same either way.
+
+fn adder(k: Int) -> fn(Int) -> Int {
+  // returned: escapes
+  fn(x) { x + k }
+}
+
+fn apply(f: fn(Int) -> Int, x: Int) -> Int {
+  f(x)
+}
+
+fn main(os: Os) {
+  var by: Map[Int, List[Int]] = {}
+  for i in 0..20000 {
+    // captures i (an Int), only called inside update
+    by.update(i % 4, [], fn(var ids) { ids.push(i) })
+  }
+  var total = 0
+  for k in 0..4 {
+    let ids = by.get(k) ?? []
+    for x in ids {
+      total += x
+    }
+  }
+  os.stdio.println("total ${total}")
+
+  // called directly in a loop, capturing two Ints and a Float
+  var acc = 0
+  for i in 0..1000 {
+    let j = i * 2
+    let f = 0.5
+    let g = fn(x: Int) -> Int { x + i + j + Int(f * 2.0) }
+    acc += g(1)
+  }
+  os.stdio.println("acc ${acc}")
+
+  // escaping: stored in a list, returned, passed on
+  var fs: List[fn(Int) -> Int] = []
+  for k in 0..5 {
+    fs.push(fn(x) { x * k })
+  }
+  var s = 0
+  for f in fs {
+    s += f(10)
+  }
+  let a = adder(7)
+  os.stdio.println("stored ${s} returned ${a(1)} passed ${apply(fn(x) { x + s }, 1)}")
+
+  // chosen on a branch: carried across blocks
+  let c = os.env.args().len()
+  let h = if c > 100 { fn(x: Int) -> Int { x + c } } else { fn(x: Int) -> Int { x - c } }
+  os.stdio.println("branch ${h(5)}")
+
+  // a captured Str (counted): its environment stays on the heap
+  let name = "xo"
+  var t = 0
+  for _ in 0..3 {
+    let w = fn(x: Int) -> Int { x + name.len() }
+    t += w(1)
+  }
+  os.stdio.println("str ${t}")
+}

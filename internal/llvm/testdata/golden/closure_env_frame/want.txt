@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+total 199990000
+acc 1500500
+stored 100 returned 8 passed 101
+branch 5
+str 9
+--- stderr

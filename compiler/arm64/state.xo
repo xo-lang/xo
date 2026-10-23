@@ -374,6 +374,10 @@ struct G {
   ended: Bool = false
   stubs: List[Str] = []
   nstub: Int = 0
+  /// the closures whose environment is in the frame (stack_closures),
+  /// computed once per function (stack_env_done)
+  stack_env: Map[Int, Bool] = {}
+  stack_env_done: Bool = false
   /// the memos (a block's memo is an index into them)
   memos: List[Memo] = []
   mm: Int = -1
@@ -506,6 +510,8 @@ fn (var g: G) begin_func(fi: Int) {
   g.region = []
   g.stubs = []
   g.nstub = 0
+  g.stack_env = {}
+  g.stack_env_done = false
   if g.split {
     // the call site labels numbered per function, so a function's
     // assembly in a part does not depend on the functions before it

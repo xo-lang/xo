@@ -1367,6 +1367,9 @@ fn (var g: G) instr1(v: Int) {
       if g.op(a) == ssa.Op.Const || g.cancel_rc(v) {
         return // literals are immortal; see cancel_rc
       }
+      if g.stack_closures().contains(a) {
+        return // an environment in the frame (stack_closures)
+      }
       if g.rc_at(v, "dup", a) {
         return
       }
@@ -1377,6 +1380,9 @@ fn (var g: G) instr1(v: Int) {
         return
       }
       let a = x.args[0]
+      if g.stack_closures().contains(a) {
+        return // an environment in the frame (stack_closures)
+      }
       if g.bare_variant(a) {
         return // holds no heap value (main's own Stdio after the 0307 fold)
       }

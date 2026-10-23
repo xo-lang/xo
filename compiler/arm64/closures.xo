@@ -46,8 +46,28 @@ fn (var g: G) closure_op(v: Int) {
   if ENV_HDR + 8 * n > 32760 {
     g.fail("closure of `${name}` captures too many words")
   }
+  if g.stack_closures().contains(v) {
+    // in the frame: one area per closure, which its next run reuses (the
+    // value is dead by then: it is never carried on an edge); the count
+    // immortal, so nothing frees it
+    let off = g.mem_bytes
+    g.mem_bytes += ENV_HDR + 8 * n
+    let env = g.area_addr(off)
+    g.store("str $u0, [$u1]", [g.cimm(MIN_INT), env])
+    g.closure_fill(v, ci, env)
+    g.set(v, [code, env])
+    return
+  }
   let env = g.rt("xo_x_obj_rc_alloc", [isrc(ENV_HDR + 8 * n)], [false])[0]
   g.store("str $u0, [$u1]", [g.cimm(1), env])
+  g.closure_fill(v, ci, env)
+  g.set(v, [code, env])
+}
+
+/// Stores a closure's drop and share functions and its captured values
+/// (consumed) in its environment env.
+fn (var g: G) closure_fill(v: Int, ci: Int, env: Int) {
+  let x = g.f.values[v]
   let d = g.sym_addr(g.env_drop(ci))
   g.store("str $u0, [$u1, #8]", [d, env])
   let s = g.sym_addr(g.env_share(ci))
@@ -59,7 +79,60 @@ fn (var g: G) closure_op(v: Int) {
       k += 1
     }
   }
-  g.set(v, [code, env])
+}
+
+/// The closures of the function whose environment can be in its frame:
+/// those whose captured values hold nothing counted (no drop to run) and
+/// whose value is only called, retained, or released here: never stored,
+/// passed, returned, captured, or carried on an edge (2026-10-23: a
+/// closure given to Map.update in a loop allocated its environment at
+/// every iteration).
+fn (var g: G) stack_closures() -> Map[Int, Bool] {
+  if g.stack_env_done {
+    return g.stack_env
+  }
+  g.stack_env_done = true
+  var cand: Map[Int, Bool] = {}
+  for (v, x) in g.f.values.indexed() {
+    if x.op != ssa.Op.Closure || x.args.is_empty() || x.block < 0 {
+      continue
+    }
+    var ok = true
+    for a in x.args {
+      if g.m.heap(g.vty(a)) {
+        ok = false
+      }
+    }
+    if ok {
+      cand[v] = true
+    }
+  }
+  if cand.is_empty() {
+    return g.stack_env
+  }
+  for b in 0..g.f.blocks.len() {
+    for u in g.f.blocks[b].instrs {
+      let y = g.f.values[u]
+      for (k, a) in y.args.indexed() {
+        if !cand.contains(a) {
+          continue
+        }
+        let fine = (y.op == ssa.Op.CallValue && k == 0) || ((y.op == ssa.Op.Retain || y.op == ssa.Op.Release) && y.args.len() == 1)
+        if !fine {
+          cand.remove(a)
+        }
+      }
+      for e in y.succs {
+        for a in g.f.edges[e].args {
+          if cand.contains(a) {
+            cand.remove(a)
+          }
+        }
+      }
+    }
+  }
+  g.stack_env = cand
+  g.stack_env
 }
 
 /// Lowers a capture: the words of a captured value, loaded from the
