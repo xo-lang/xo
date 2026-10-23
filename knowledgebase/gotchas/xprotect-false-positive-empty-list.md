@@ -44,3 +44,17 @@ yara since 2026-10-16) when Docker runs; XO_XPROTECT_DOCKER=off skips
 the container.
 Any address at page offset 0x880 loaded into x11 and then x12 can still
 match; scan new layouts with the rules.
+
+## Again (2026-10-22): asynchronous preemption's tables
+
+TestEmptyListAtPageStart failed on main ("_xo_empty_list at page offset
+0xb38"): decision 0318's unsafe range tables (compiler/arm64
+apreempt.xo, `xo_unsafe_<ns>` in each part of a split build and
+`xo_unsafe_parts` in the last) went in `__DATA,__data`, and compiler/macho
+concatenates the parts' `__data` in file order, so every part's table
+came before the last file's empty list. On darwin the tables now go in
+`__DATA,__const` (gen.xo section "rodata"; compiler/macho and ld64 place
+it in `__DATA_CONST,__const`): the runtime only reads them. Data that a
+part of a split build writes on darwin must not go in `__DATA,__data`
+before the empty list either; give it its own section or put it in the
+last file after end_data's placeholders.

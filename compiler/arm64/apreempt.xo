@@ -104,7 +104,7 @@ fn (var g: G) unsafe_table(text: Str, ns: Str) -> (Str, Str, Str) {
       }
     }
   }
-  var b: List[Str] = ["${g.section("data")}${g.hidden_global(tbl)}\t.p2align 3\n${tbl}:\n\t.quad ${base}\n\t.quad ${end} - ${base}\n\t.quad ${labs.len() / 2}\n"]
+  var b: List[Str] = ["${g.section("rodata")}${g.hidden_global(tbl)}\t.p2align 3\n${tbl}:\n\t.quad ${base}\n\t.quad ${end} - ${base}\n\t.quad ${labs.len() / 2}\n"]
   var i = 0
   while i + 1 < labs.len() {
     // a start (`_du<2k>`) and its end (`_du<2k+1>`, the same function):
@@ -139,7 +139,7 @@ fn du_pair(a: Str, b: Str) -> Bool {
 /// 77 (end_data).
 fn (g: G) unsafe_parts(nss: List[Str]) -> Str {
   let s = g.sym("xo_unsafe_parts")
-  var b: List[Str] = ["${g.section("data")}${g.hidden_global(s)}\t.p2align 3\n${s}:\n\t.quad ${nss.len()}\n"]
+  var b: List[Str] = ["${g.section("rodata")}${g.hidden_global(s)}\t.p2align 3\n${s}:\n\t.quad ${nss.len()}\n"]
   for ns in nss {
     b.push("\t.quad ${g.sym("xo_unsafe_${ns}")}\n")
   }

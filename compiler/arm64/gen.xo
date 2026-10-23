@@ -295,6 +295,9 @@ fn (g: G) section(kind: Str) -> Str {
     match kind {
       "text" => return "\t.section __TEXT,__text,regular,pure_instructions\n"
       "data" => return "\t.section __DATA,__data\n"
+      // data with addresses that nothing writes (compiler/macho and ld64
+      // put it in __DATA_CONST,__const)
+      "rodata" => return "\t.section __DATA,__const\n"
       "const" => return "\t.section __TEXT,__const\n"
       "cstring" => return "\t.section __TEXT,__cstring,cstring_literals\n"
       _ => {}
@@ -308,7 +311,7 @@ fn (g: G) section(kind: Str) -> Str {
   }
   match kind {
     "text" => "\t.text\n"
-    "data" => "\t.data\n"
+    "data" | "rodata" => "\t.data\n"
     "const" => "\t.section .rodata\n"
     _ => "\t.section .rodata.str1.1,\"aMS\",@progbits,1\n"
   }
