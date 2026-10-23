@@ -119,7 +119,29 @@ if [ "${XO_SKIP_RACE:-}" = 1 ]; then echo "skip race (XO_SKIP_RACE=1)" >> "$sum"
     # the race build did not return in 300 s (run 39953440508)
     XO_RACE_RUNTIME=$(fp "$(up "$rt")")
     echo "race: XO_RACE_RUNTIME=$XO_RACE_RUNTIME ($(wc -c < "$(up "$rt")" | tr -d ' ') bytes)" >> "$sum"
-    if run "race build" "$w/rb.log" "$XO_CLI" build --race --backend=amd64 -o "$(fp "$w/tsan.exe")" internal/llvm/testdata/tsan_race; then
+    # the race build runs in the background so that a build still going
+    # after 45 s leaves a snapshot of the process tree (which child of xo.exe
+    # it waits on, with its command line) in race-procs.log: the first CI run
+    # ended at the timeout with an empty log and said nothing about where
+    ( tmo "$XO_CLI" build --race --backend=amd64 -o "$(fp "$w/tsan.exe")" internal/llvm/testdata/tsan_race > "$w/rb.log" 2>&1 ) &
+    bp=$!
+    n=0
+    while [ $n -lt 45 ] && kill -0 $bp 2>/dev/null; do sleep 1; n=$((n + 1)); done
+    if kill -0 $bp 2>/dev/null; then
+      { echo "race build still running after ${n}s; processes:"
+        powershell.exe -NoProfile -Command 'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,@{n="Cpu";e={$_.UserModeTime+$_.KernelModeTime}},CommandLine | Format-List' 2>&1
+        tasklist.exe /v 2>&1 | head -60
+      } > "$w/race-procs.log" 2>&1
+    fi
+    wait $bp
+    rbrc=$?
+    if [ $rbrc = 0 ]; then echo "ok   race build" >> "$sum"; else
+      echo "FAIL race build (exit $rbrc$([ $rbrc = 124 ] || [ $rbrc = 137 ] && echo ", timeout"))" | tee -a "$sum"
+      tail -20 "$w/rb.log" | sed 's/^/     /' >> "$sum"
+      [ -f "$w/race-procs.log" ] && head -80 "$w/race-procs.log" | sed 's/^/     /' >> "$sum"
+      fail=1
+    fi
+    if [ $rbrc = 0 ]; then
       tmo "$w/tsan.exe" > "$w/race.out" 2> "$w/race.err"
       rc=$?
       [ $rc = 66 ] && echo "ok   race reported (exit 66)" >> "$sum" || { echo "FAIL race exit $rc (want 66)" | tee -a "$sum"; fail=1; }
