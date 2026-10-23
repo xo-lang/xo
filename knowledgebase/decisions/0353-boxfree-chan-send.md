@@ -1,6 +1,9 @@
 # 0353: Box-free channel send and receive for word-sized scalars
 
-Status: Proposed (Xo Lang 3, 2026-10-23; lead asked for the ADR before code).
+Status: Accepted (owner approved design, prototype and the full change through
+the lead, 2026-10-23; Xo Lang 3; SSA split reviewed by Xo Lang 1). Landed in
+13b1a2798: pingpong wall 0.835 and instructions 0.860 (`xo bench --ab`, 10
+rounds, arm64).
 
 ## Context
 
@@ -30,11 +33,15 @@ inherent.
 ## Decision (proposed)
 
 A channel whose element type is a **word sized scalar that needs no drop**
-(Int and the sized integers, Bool, Rune, Byte, Float, and enums without
-payload: every type whose `drop_list` is empty and whose value is one
-register) sends and receives the word itself, with no list. Other element
-types keep the list ABI unchanged (phase 2 may take Str, handles and
-one word payloads with a drop function).
+sends and receives the word itself, with no list: the integer types
+(Kind.Int: Int, the sized integers, Byte, Rune, converted with `IntConv`),
+Float (its bits, `rt.float_bits` and `rt.float_from_bits`), Bool (0 or 1)
+and enums none of whose variants has a field (the variant index, rebuilt
+by a compare chain). Struct and Tuple never qualify: several words. Other
+element types keep the list ABI unchanged (a later phase may take Str,
+handles and one word payloads with a drop function). The handle reaches
+the prelude functions as its address word (`rt.obj_addr`), because the
+SSA verifier rejects a Chan[T] for an Int parameter.
 
 1. **Where it lives (no new rt intrinsics).** The native prelude gets
    `llrt_chan_send_w(c, v, lp, ln)`, `llrt_chan_recv_w(c) -> (Int, Bool)`
@@ -66,14 +73,17 @@ one word payloads with a drop function).
    `(value, true)`, the drained closed path `(0, false)`. `recv` builds
    the Option from the ok flag in SSA (`Some`/`None` by a branch), as
    `pop_one` does now.
-4. **ABI between boxed and word code.** Word mode is decided at compile
-   time per element type, and Xo monomorphizes, so one channel is always
-   used through one API. The exception is `select`. Phase 1 keeps select
-   on the list ABI: a select arm on a word channel converts at the
-   boundary in `select.xo` (a send arm unboxes its list into the word and
-   frees the list; a recv arm boxes the received word into a fresh list),
-   correct and no slower than today. If `--ab` shows select over scalar
-   channels matters, phase 2 gives select word arms.
+4. **ABI between boxed and word code (review by Xo Lang 1).** A channel
+   stores one representation, and every list entry point converts at the
+   runtime's boundary, so generic code and select cannot read a word
+   channel as lists: `chan.send/recv/try_send/try_recv` test `CH_DROP == 1`
+   and unbox (`unbox_word`: read the element, free the list) or box
+   (`box_word`: a fresh list of one, the empty list for closed); in
+   `selects.xo` a send arm unboxes when it is added, a recv arm on a word
+   channel keeps the word with the closed flag in its entry's `E_SHUT`
+   (`take` boxes), and `free` skips the list release. Select over integer
+   channels is correct and no slower than today (it allocates the box it
+   always did). Phase 2 may give select word arms.
 5. **Unchanged semantics.** Blocking, cancellation points and unwinding
    (`b.check("")` after send and recv), the closed-channel fault text at
    `lp`/`ln`, `defer_check`, the deterministic scheduler's points
@@ -117,6 +127,24 @@ one word payloads with a drop function).
    is built by Xo and sends on channels).
 3. Phase 2 (separately measured): Str and handle elements with the
    existing drop function over the word ABI, select word arms.
+
+## Result (2026-10-23)
+
+Prototype on arm64, `Chan[Int]`, main afc6ac09, `xo bench --ab --rounds=10`:
+pingpong wall 0.837 (0.813 to 0.852, better), instructions 0.856 (better);
+fanout 0.976, mutex 0.944, rwmutex 1.005, pmap 0.992 (within noise), spawn
+wall 0.941 (instructions within noise); the programs' outputs are
+identical. The prototype also needed `for v in ch` (`for_chan`, a second
+call site) and, per review, no Option on that loop (branch on ok). Golden
+`chan_word` (0 and the Int extremes, close with buffered elements,
+`try_*`, a select mixing send and recv arms, wake by send and by close, one
+channel through send, recv, for and select; Int32, UInt8, Bool, Float
+(zeros, a subnormal, a large value), an enum, a cancelled scope) matches
+the boxed build's output on arm64, LLVM and the Go backend, and a test run
+under `--explore=30` passes on arm64 and LLVM. The final build (all types):
+pingpong wall 0.835 (0.817 to 0.856), instructions 0.860; fanout 1.022,
+mutex 0.981, spawn 1.009, rwmutex 1.006, pmap 0.906 (30% spread), all
+within noise.
 
 ## Consequences
 
