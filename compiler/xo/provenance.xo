@@ -7,6 +7,7 @@
 // a cached build of the same sources keeps the commit that first built
 // it: XO_SOURCE_KEY, not XO_COMMIT, says whether an xo matches a checkout.
 
+use github.com/xo-lang/xo/compiler/check
 use github.com/xo-lang/xo/compiler/cli/core
 use std/json
 
@@ -23,6 +24,31 @@ const XO_BUILT_BY: Str = ""
 /// 0275): the backends and the compiler modules they use. The backend
 /// caches key on it (bcache.xo cache_id); "" when unstamped.
 const XO_CODEGEN_KEY: Str = ""
+
+/// A warning on standard error when this xo is older than the std it
+/// runs with (std/VERSION, written by seed-cut.sh's bump): a stale bin/xo
+/// on PATH checks and builds a newer std with old rules (lead,
+/// 2026-10-23: an agent ran a 0.24.0 bin/xo against 0.27.0's std).
+fn stale_std_note(os: Os, args: List[Str]) {
+  var sd = ""
+  for a in args {
+    if a.starts_with("--std=") {
+      sd = a.trim_prefix("--std=")
+    }
+  }
+  if sd.is_empty() {
+    sd = check.std_dir(os.env, os.fs)
+  }
+  if sd.is_empty() {
+    return
+  }
+  // xo:allow XO0903 a std without the stamp (older, or a test's copy) is not compared
+  let sv = (os.fs.read_text("${sd}/VERSION").ok() ?? "").trim()
+  if sv.is_empty() || check.version_compare("v${sv}", "v${core.VERSION}") <= 0 {
+    return
+  }
+  os.stdio.eprintln("xo: warning: this xo (${core.VERSION}) is older than std at ${sd} (${sv}); rebuild it (`go run ./scripts/xobuild` in a checkout) or put the matching xo on PATH")
+}
 
 /// `xo version --json` and `xo version -v`; None for any other form,
 /// which compiler/cli/core answers.

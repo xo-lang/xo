@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // TestBuildCI checks `xo build --ci` (core 10.5, 11.4): an unformatted
@@ -272,5 +274,42 @@ func TestVersionM(t *testing.T) {
 	var out, errOut bytes.Buffer
 	if code := run(t, []string{"version", "-m", filepath.Join(dir, "app", "main.xo")}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "no Xo build information") {
 		t.Errorf("version -m of a source file: exit %d\n%s", code, errOut.String())
+	}
+}
+
+// TestStaleXoWarning: an xo older than the std it runs with (std/VERSION
+// newer than its version) warns on standard error; a matching std and
+// `xo version` say nothing.
+func TestStaleXoWarning(t *testing.T) {
+	t.Parallel()
+	root, err := xotool.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := writeFiles(t, map[string]string{"app/main.xo": "fn main(os: Os) {\n  os.stdio.println(\"hi\")\n}\n"})
+	app := filepath.Join(dir, "app")
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"check", app}, &out, &errOut); code != 0 || strings.Contains(errOut.String(), "is older than std") {
+		t.Errorf("check with its own std: exit %d\n%s", code, errOut.String())
+	}
+	std := filepath.Join(t.TempDir(), "std")
+	if err := os.CopyFS(std, os.DirFS(filepath.Join(root, "std"))); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(std, "VERSION"), []byte("99.0.0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	setenv(t, "XO_STD", std)
+	out.Reset()
+	errOut.Reset()
+	run(t, []string{"check", app}, &out, &errOut)
+	if !strings.Contains(errOut.String(), "is older than std at") || !strings.Contains(errOut.String(), "(99.0.0); rebuild it") {
+		t.Errorf("no warning with a newer std:\n%s", errOut.String())
+	}
+	out.Reset()
+	errOut.Reset()
+	run(t, []string{"version"}, &out, &errOut)
+	if strings.Contains(errOut.String(), "older than std") {
+		t.Errorf("xo version warned:\n%s", errOut.String())
 	}
 }

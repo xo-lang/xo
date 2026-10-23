@@ -88,6 +88,9 @@ fn main(os: Os) ! {
     os.proc.exit(fr.code)
   }
   let args = fr.args
+  if !args.is_empty() && !(args[0] is "version" | "--version" | "help") {
+    stale_std_note(os, args)
+  }
   // xo:allow XO0903 the working directory from $PWD when getcwd fails
   if !args.is_empty() && modules.is_command(args[0]) { os.proc.exit(modules.run(os, os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? "", args)) }
   if !args.is_empty() && args[0] == "bind" { os.proc.exit(bind.run_std(os, args, check.std_dir(os.env, os.fs))) }

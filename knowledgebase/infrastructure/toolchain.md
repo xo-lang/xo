@@ -110,6 +110,15 @@ run the full suite with the full internal/selfhost tier:
 `XO_SELFHOST_TIER=full go test -timeout 120m ./...` (see the TestSelfhost
 tier lines under Commands). Last verified: 2026-10-11.
 
+**std/VERSION** (2026-10-23): one line, the toolchain version
+(`compiler/cli/core` `VERSION`, kept equal by internal/repotest
+TestStdVersionMatches; scripts/seed-cut.sh's bump writes both). An xo
+whose version is below the stamp of the std it runs with prints `xo:
+warning: this xo (X) is older than std at DIR (Y); rebuild it ...` on
+standard error for every command but `version` and `help`
+(compiler/xo provenance.xo stale_std_note): agents kept running a stale
+bin/xo from PATH against a newer checkout. Last verified: 2026-10-23.
+
 **What `xo` is (switch point B, decision 0178, 2026-10-12)**: the
 released `xo` is xo1, the self hosted toolchain built from
 `compiler/xo` (Xo). Since decision 0215 (2026-10-13) the Go

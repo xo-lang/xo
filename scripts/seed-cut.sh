@@ -13,8 +13,8 @@
 #
 # Steps, each stopping the script on failure:
 #   1. a worktree of origin/main at WORKDIR/tree; VERSION in
-#      compiler/cli/core/cli.xo and compiler/cli/servers/servers.xo, one
-#      commit
+#      compiler/cli/core/cli.xo, compiler/cli/servers/servers.xo and
+#      std/VERSION, one commit
 #   2. go test -short of internal/xotool and cmd/xo
 #   3. the gate: xo built from the bump (go run ./scripts/xobuild) builds
 #      and runs hello, and the self rebuild fixed point holds
@@ -132,8 +132,10 @@ cd "$tree"
 if [ "$prebumped" = 0 ]; then
   sed -i '' "s/^pub const VERSION = \"$cur\"$/pub const VERSION = \"$version\"/" compiler/cli/core/cli.xo
   sed -i '' "s/^pub const XO_VERSION = \"$cur\"$/pub const XO_VERSION = \"$version\"/" compiler/cli/servers/servers.xo
-  [ "$(git diff --name-only | sort | tr '\n' ' ')" = "compiler/cli/core/cli.xo compiler/cli/servers/servers.xo " ] ||
-    die "the bump changed $(git diff --name-only | tr '\n' ' ')(want cli.xo and servers.xo)"
+  # std's stamp (an xo older than its std warns: compiler/xo provenance.xo)
+  echo "$version" > std/VERSION
+  [ "$(git diff --name-only | sort | tr '\n' ' ')" = "compiler/cli/core/cli.xo compiler/cli/servers/servers.xo std/VERSION " ] ||
+    die "the bump changed $(git diff --name-only | tr '\n' ' ')(want cli.xo, servers.xo and std/VERSION)"
   git commit -qam "Version $version (seed $version, decision 0216; tag v$version)"
 fi
 commit=$(git rev-parse HEAD)

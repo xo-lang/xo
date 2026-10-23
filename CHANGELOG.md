@@ -17,6 +17,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   and the 0.26.0 field reports' fixes (Intel Mac, Windows). Known gaps:
   spawning many short tasks, sorting Strs (1.18x Go), a contended
   RWMutex. The entries below, down to 0.26.0's, are in it.
+- xo warns when it is older than the std it runs with (`std/VERSION`):
+  `xo: warning: this xo (0.24.0) is older than std at DIR (0.27.0);
+  rebuild it`, so a stale `bin/xo` on PATH is noticed.
 - `xo doc NAME` and `xo def NAME` run outside a module (a scratch or home
   directory too large to check, or one with no `.xo` file) answer a std or
   prelude name from std, with a note, instead of failing; `--dir` keeps
