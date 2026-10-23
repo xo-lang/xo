@@ -179,6 +179,14 @@ Update the knowledgebase in the same change as the work, not later:
     bisects a failure to the commit's owner, who fixes forward. An
     agent still runs any repo test its change obviously affects (e.g.
     TestCodegenInputsClassified for a new XO_* variable) in its gate.
+  - a push that changes a default (an XO_* default, a flag default, a
+    default-on pass or output) runs, in its gate, the full suites of the
+    packages it touches (e.g. internal/arm64's cache tests, the dev
+    goldens, cmd/xo), not only targeted tests; a change to a runtime
+    limit or allocation behavior that xo itself runs gates on a self
+    build with the newly built xo (scripts/bootstrap-xo.sh s2) (owner,
+    2026-10-22: a defaults batch reached main with three failures, and a
+    memory budget default stopped xo building itself).
   - every build, test, benchmark or repro an agent starts goes through
     heavy.sh (gate class for short ones), even a one-off (owner,
     2026-10-22: a direct xo build reached 37 GB and stalled the Mac);
