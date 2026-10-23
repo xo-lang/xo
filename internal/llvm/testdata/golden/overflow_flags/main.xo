@@ -1,0 +1,52 @@
+// checked_add, checked_sub, checked_mul and the saturating forms at the
+// edges of Int: their overflow tests branch on the operation's own
+// overflow flag (arm64 cmn and cmp, x86_64 add, sub and imul), so every
+// pair of edge values must give the same answers as the arithmetic.
+
+fn edges() -> List[Int] {
+  let max = 9223372036854775807
+  let min = -max - 1
+  [0, 1, -1, 2, -2, 3, max, min, max - 1, min + 1, max / 2, min / 2, max / 2 + 1, min / 2 - 1, 3037000499, 3037000500, -3037000499, -3037000500, 4294967296, -4294967296, 4611686018427387904, -4611686018427387904]
+}
+
+fn code(r: Int?) -> Int {
+  match r {
+    Some(v) => v % 1000003
+    None => 7
+  }
+}
+
+fn main(os: Os) {
+  let io = os.stdio
+  let xs = edges()
+  var none_add = 0
+  var none_sub = 0
+  var none_mul = 0
+  var h = 0
+  for a in xs {
+    for b in xs {
+      let s = a.checked_add(b)
+      let d = a.checked_sub(b)
+      let m = a.checked_mul(b)
+      if s == None { none_add += 1 }
+      if d == None { none_sub += 1 }
+      if m == None { none_mul += 1 }
+      h = (h * 31 + code(s) + 3 * code(d) + 5 * code(m)) % 1000000007
+      h = (h * 31 + a.saturating_add(b) % 1000003 + a.saturating_sub(b) % 999983 + a.saturating_mul(b) % 999979) % 1000000007
+    }
+  }
+  io.println("${xs.len() * xs.len()} pairs: add none ${none_add}, sub none ${none_sub}, mul none ${none_mul}, hash ${h}")
+  // a loop whose sum stops at the first overflow
+  var acc = 1
+  var steps = 0
+  while let Some(n) = acc.checked_mul(3) {
+    acc = n
+    steps += 1
+  }
+  var down = -1
+  while let Some(n) = down.checked_sub(4611686018427387904) {
+    down = n
+    steps += 1
+  }
+  io.println("steps ${steps}, acc ${acc}, down ${down}")
+}

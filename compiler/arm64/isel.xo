@@ -1290,6 +1290,13 @@ fn (var g: G) instr1(v: Int) {
         g.lazy[v] = true
         return
       }
+      // an overflow test passed to a join (ints.fits returned into
+      // checked_mul's `if`): the flag set, not the sign or high word test
+      let (otext, oa, ob, vc) = g.overflow_test(v)
+      if !otext.is_empty() {
+        g.set(v, [g.def1(false, "${otext}\ncset $d0, ${if vc { "vc" } else { "vs" }}", [g.word(oa), g.word(ob)])])
+        return
+      }
       let c = g.compare(v)
       g.set(v, [g.def1(false, "${c.text}\ncset $d0, ${c.cond}", c.us)])
     }
@@ -1579,6 +1586,91 @@ fn (g: G) dom_decided(b: Int, c: Int, idom: List[Int]) -> Bool? {
   None
 }
 
+/// The overflow tests ints.fits(op, a, b) inlines to: `((a ^ r) & (b ^
+/// r)) >= 0` with r = a.wrapping_add(b), `((a ^ b) & (a ^ r)) >= 0` with
+/// r = a.wrapping_sub(b), and on x86_64 `mul_hi_signed(a, b) ==
+/// a.wrapping_mul(b) >> 63` (arm64's mul sets no flag): (the instruction
+/// whose V flag is the overflow of a op b, a, b, whether c holds when it
+/// does not overflow), else ("", -1, -1, false). Compares against 0 the
+/// other way (`< 0`, `!=`) hold when it overflows.
+fn (var g: G) overflow_test(c: Int) -> (Str, Int, Int, Bool) {
+  let none = ("", -1, -1, false)
+  let o = g.op(c)
+  if g.f.values[c].args.len() != 2 {
+    return none
+  }
+  if o is ssa.Op.Ge | ssa.Op.Lt {
+    let (z, zc) = g.const_int(g.arg(c, 1))
+    let x = g.arg(c, 0)
+    if !zc || z != 0 || g.op(x) != ssa.Op.And || g.vkind(x) != ssa.Kind.Int {
+      return none
+    }
+    let p = g.arg(x, 0)
+    let q = g.arg(x, 1)
+    if g.op(p) != ssa.Op.Xor || g.op(q) != ssa.Op.Xor {
+      return none
+    }
+    let vc = o == ssa.Op.Ge
+    for (s, t) in [(p, q), (q, p)] {
+      for i in 0..2 {
+        for j in 0..2 {
+          let r = g.arg(s, i)
+          if g.arg(t, j) != r {
+            continue
+          }
+          let sa = g.arg(s, 1 - i)
+          let ta = g.arg(t, 1 - j)
+          let (code, wa, wb) = g.wrap_parts(r)
+          // add: s = a ^ r, t = b ^ r
+          if code == 0 && ((wa == sa && wb == ta) || (wa == ta && wb == sa)) {
+            return ("cmn $u0, $u1", wa, wb, vc)
+          }
+          // sub: t = a ^ r, s = a ^ b
+          if code == 1 && wa == ta && ((g.arg(s, 0) == wa && g.arg(s, 1) == wb) || (g.arg(s, 1) == wa && g.arg(s, 0) == wb)) {
+            return ("cmp $u0, $u1", wa, wb, vc)
+          }
+        }
+      }
+    }
+    return none
+  }
+  if !g.x86 || !(o is ssa.Op.Eq | ssa.Op.Ne) {
+    return none
+  }
+  for i in 0..2 {
+    let h = g.arg(c, i)
+    let s = g.arg(c, 1 - i)
+    let hx = g.f.values[h]
+    if hx.op != ssa.Op.Call || aux_str(hx.aux) != "rt.i64_mul_hi" || hx.args.len() != 2 || g.op(s) != ssa.Op.Shr {
+      continue
+    }
+    let (k, kc) = g.const_int(g.arg(s, 1))
+    if !kc || k != 63 {
+      continue
+    }
+    let (code, wa, wb) = g.wrap_parts(g.arg(s, 0))
+    let (ha, hb) = (hx.args[0], hx.args[1])
+    if code == 2 && ((wa == ha && wb == hb) || (wa == hb && wb == ha)) {
+      return ("x86_mulf $u0, $u1", wa, wb, o == ssa.Op.Eq)
+    }
+  }
+  none
+}
+
+/// The operation code and operands of rt.int_wrap(code, a, b) with a
+/// constant code, else (-1, -1, -1).
+fn (g: G) wrap_parts(v: Int) -> (Int, Int, Int) {
+  let x = g.f.values[v]
+  if x.op != ssa.Op.Call || aux_str(x.aux) != "rt.int_wrap" || x.args.len() != 3 {
+    return (-1, -1, -1)
+  }
+  let (code, ok) = g.const_int(x.args[0])
+  if !ok {
+    return (-1, -1, -1)
+  }
+  (code, x.args[1], x.args[2])
+}
+
 /// The compare that is true exactly when op is false.
 fn negated_cmp(op: ssa.Op) -> ssa.Op {
   match op {
@@ -1788,6 +1880,17 @@ fn (var g: G) branch_op(v: Int) {
   var inst = Inst{kind: K_CONDBR}
   if g.lazy[c] && (g.range_branch(x) || g.range_and(x)) {
     return
+  }
+  if g.lazy[c] {
+    let (text, oa, ob, vc) = g.overflow_test(c)
+    if !text.is_empty() {
+      // the overflow flag of the operation itself (cmn or cmp; x86's
+      // imul), not the sign test of ints.fits' xors (2026-10-23:
+      // portable checked's checked_add was seven x86 instructions,
+      // checked_mul three multiplies)
+      let _i = g.add(Inst{kind: K_CONDBR, text: text, us: [g.word(oa), g.word(ob)], cond: if vc { "vc" } else { "vs" }, targets: [g.edge(x.succs[0]), g.edge(x.succs[1])]})
+      return
+    }
   }
   if g.logic_value(x) {
     return

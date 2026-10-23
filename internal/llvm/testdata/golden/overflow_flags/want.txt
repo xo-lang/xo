@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+484 pairs: add none 81, sub none 81, mul none 294, hash -619308374
+steps 40, acc 4052555153018976267, down -4611686018427387905
+--- stderr

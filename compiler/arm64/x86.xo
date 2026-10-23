@@ -558,6 +558,17 @@ fn (var g: G) x86_line(inst: Inst, var x: XT, m: Str, ops: List[Str], single: Bo
       g.x86_binop(inst, x, ops[0], ops[3], "%r11", "${op}${q}", single)
       true
     }
+    "x86_mulf" => {
+      // isel's overflow_test: the flags of a signed product (OF, the
+      // branch's vs or vc) in the scratch register
+      if n != 2 {
+        return false
+      }
+      x.lines.push("movq ${xop(ops[0], 8)}, %r11")
+      x.lines.push("imulq ${xop(ops[1], 8)}, %r11")
+      x.kind = "mul"
+      return true
+    }
     "x86_mulo" => {
       // isel's checked product under g.x86: imul sets OF on a signed
       // overflow (the fault's vs, jo); the definition is early (the fault
