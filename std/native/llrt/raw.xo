@@ -216,6 +216,18 @@ pub fn str_slice(s: Str, lo0: Int, hi0: Int) -> Str {
   s[lo..hi]
 }
 
+/// str_slice for a range the caller knows is 0 <= lo <= hi <= s.len():
+/// no clamp and no second range check; a view when both ends are on
+/// UTF-8 boundaries, else a copy (as str_slice).
+pub fn str_cut(s: Str, lo: Int, hi: Int) -> Str {
+  let n = s.len()
+  let d = data(s)
+  if (lo < n && (rt.mem_load(d, lo, 1) & 0xC0) == 0x80) || (hi < n && (rt.mem_load(d, hi, 1) & 0xC0) == 0x80) {
+    return str_at(d + lo, hi - lo)
+  }
+  rt.str_view(s, lo, hi)
+}
+
 /// The elements of xs with sep between them.
 pub fn str_join(xs: List[Str], sep: Str) -> Str {
   var total = 0

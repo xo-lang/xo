@@ -96,14 +96,14 @@ fn str_trim_end(s: Str) -> Str { strings.trim(s, 2) }
 
 fn str_trim_prefix(s: Str, p: Str) -> Str {
   if scan.starts_with(s, p) {
-    return raw.str_slice(s, p.len(), s.len())
+    return raw.str_cut(s, p.len(), s.len())
   }
   s
 }
 
 fn str_trim_suffix(s: Str, p: Str) -> Str {
   if scan.ends_with(s, p) {
-    return raw.str_slice(s, 0, s.len() - p.len())
+    return raw.str_cut(s, 0, s.len() - p.len())
   }
   s
 }

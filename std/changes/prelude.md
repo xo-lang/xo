@@ -1,5 +1,22 @@
 # prelude changes
 
+## 2026-10-22: perf: trim, trim_start, trim_end, trim_prefix and trim_suffix cut a view without the second check (native)
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/results/views-split-2026-10-22.md (trim 295.5 M instructions against Go's 201.2 M, trim_prefix/suffix 182.6 M against 50.5 M: the boundary test and the range check ran twice)
+- Go reference: strings.TrimSpace, TrimPrefix, TrimSuffix (a subslice, no check)
+- Test: goldens views_split, str_ops_table, strings, text_helpers on arm64 and LLVM with Go parity; std corpora
+
+The five trims know their range is inside the string, so they call
+`raw.str_cut` (std/native/llrt/raw.xo): no clamp, no `s[lo..hi]` range
+check, one boundary test, then the declared `rt.str_view` (already
+lowered inline by the arm64 and LLVM emitters since decision 0330 step
+3, so the 0.25.0 seed builds it and no new seed is needed). A cut
+inside a UTF-8 sequence still copies, as before. `xo bench --ab`, mb/sliceb on the Mac:
+trim wall 0.835, instructions 0.710 (296.0 M to 210.3 M); trim_prefix and
+trim_suffix wall 0.816, instructions 0.676 (182.9 M to 123.7 M).
+
 ## 2026-10-22: perf: List.insert and List.remove_at move elements with one memmove (native)
 
 - Kind: perf

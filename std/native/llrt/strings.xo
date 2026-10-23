@@ -127,5 +127,5 @@ pub fn trim(s: Str, mode: Int) -> Str {
   if lo == 0 && hi == n {
     return s
   }
-  raw.str_slice(s, lo, hi)
+  raw.str_cut(s, lo, hi)
 }
