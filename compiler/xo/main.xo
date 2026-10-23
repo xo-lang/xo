@@ -565,7 +565,8 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   c.lazy = native && (os.env.get("XO_CHECK_EAGER") ?? "") != "1"
   // the native modules' function bodies parsed lazily too (decision 0351
   // stage 2): xo build and run only, opt in while it is measured
-  c.lazy_parse = (o.cmd == "build" || o.cmd == "run") && (os.env.get("XO_LAZY_PARSE") ?? "") == "on"
+  // on by default (owner, 2026-10-23); XO_LAZY_PARSE=off parses every body
+  c.lazy_parse = (o.cmd == "build" || o.cmd == "run") && (os.env.get("XO_LAZY_PARSE") ?? "") != "off"
   // decision 0291 (the switch, owner 2026-10-21): Map and Set are the
   // hybrid (the lists until written while shared twice, then the log);
   // XO_MAP_LOG=0 builds the lists alone (wasm too, since its hybrid's

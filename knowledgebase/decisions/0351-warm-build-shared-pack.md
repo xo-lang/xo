@@ -82,8 +82,11 @@ Proposed, in stages, each with its own `xo bench --ab`:
    and runtime files in build and run): 33 of 33 programs identical to
    a full parse, compiler/xo included; a small program's warm build
    0.589x peak memory and 0.886x CPU, wall within noise, compiler/xo
-   unchanged (bench/results/lazy-parse-2026-10-23.md). Turning it on by
-   default is the lead's call after the full tier runs with it.
+   unchanged (bench/results/lazy-parse-2026-10-23.md). On by default
+   since 2026-10-23 (owner), after the touched packages' full suites
+   passed with it on (compiler/parser and compiler/check xo tests,
+   cmd/xo, internal/arm64 TestGoldenRun); XO_LAZY_PARSE=off is the
+   escape hatch.
 
 3. **A whole-build key** (Go's action IDs): the hash of the checked
    modules' keys, the flags and the target maps to the linked binary;

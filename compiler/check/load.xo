@@ -85,7 +85,8 @@ pub struct Checker {
   /// sets it too, unless it checks std itself (decision 0351 addendum,
   /// 2026-10-23); the checker's own runs check every body.
   /// Function bodies of the native modules a lazy run checks lazily
-  /// are parsed lazily too (decision 0351 stage 2, XO_LAZY_PARSE=on):
+  /// are parsed lazily too (decision 0351 stage 2, on by default;
+  /// XO_LAZY_PARSE=off turns it off):
   /// skipped by their braces, parsed when check_lazy forces them.
   pub lazy_parse: Bool = false
   pub lazy: Bool = false

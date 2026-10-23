@@ -17,10 +17,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   only as a build does (decision 0351 addendum). The output is
   unchanged; `XO_CHK_CACHE=off` checks everything.
 
-- `XO_LAZY_PARSE=on` (opt in, decision 0351 stage 2): `xo build` and
-  `xo run` parse a std or runtime function body only when the checker
-  needs it; the output is identical, and a small program's warm build
-  peaks about 40% lower in memory.
+- `xo build` and `xo run` parse a std or runtime function body only
+  when the checker needs it (decision 0351 stage 2, on by default;
+  `XO_LAZY_PARSE=off` parses every body): the output is identical, and a
+  small program's warm build peaks about 40% lower in memory.
 
 - Native binaries carry their build information, as Go backend ones
   always did, now with every effective setting of `--release`'s preset

@@ -56,7 +56,7 @@ func TestRecordReplayCLI(t *testing.T) {
 		Trace  []any    `json:"trace"`
 	}
 	data, _ := os.ReadFile(m[1])
-	if err := json.Unmarshal(data, &b); err != nil || b.Kind != "error" || !strings.HasPrefix(b.Error, "NotFound") || len(b.Frames) == 0 || len(b.Trace) == 0 {
+	if err := json.Unmarshal(data, &b); err != nil || b.Kind != "error" || !strings.Contains(b.Error, "no such file or directory") || len(b.Frames) == 0 || len(b.Trace) == 0 {
 		t.Fatalf("bundle %v:\n%s", err, data)
 	}
 
@@ -67,7 +67,7 @@ func TestRecordReplayCLI(t *testing.T) {
 	}
 	out.Reset()
 	errOut.Reset()
-	if code := run(t, []string{"replay", m[1]}, &out, &errOut); code != 1 || out.String() != recOut || !strings.Contains(errOut.String(), "xo replay: reproduced the crash: error: NotFound") {
+	if code := run(t, []string{"replay", m[1]}, &out, &errOut); code != 1 || out.String() != recOut || !strings.Contains(errOut.String(), "xo replay: reproduced the crash: error: missing-") {
 		t.Fatalf("bundle replay: exit %d\n%s\nstderr:\n%s", code, out.String(), errOut.String())
 	}
 
