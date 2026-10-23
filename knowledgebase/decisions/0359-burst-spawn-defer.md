@@ -1,8 +1,8 @@
 # 0359: A burst of spawns stays on the spawner (no wake per spawn)
 
-Status: Proposed (Xo Lang 3, 2026-10-23). Owner, 2026-10-23: hold G as written
-and try the adaptive per-spawn-site variant (below, AD); AD is measured and
-recommended, awaiting the owner's acceptance. Nothing is implemented in main.
+Status: Accepted (owner, 2026-10-23: AD, the adaptive per spawn site variant,
+after a quiet re-run; G and a spawn_heavy hint are recorded as alternatives).
+Landed in 935c3779e.
 
 ## Context
 
@@ -27,7 +27,7 @@ raising the scope prune bound from 64 to 1024 (1.107); dropping the
 node_link write into the previous sibling's cache line (0.982 vs the
 bound). The allocator is not hot (1 sample of about 50 on the spawner).
 
-## Decision (proposed)
+## Decision (G, the first form; the accepted decision is AD below)
 
 `scope_add_at` never calls `wakep` for a spawn: the new task joins the
 spawner's ring and the existing deferral wakes a worker if the spawner has
@@ -106,6 +106,20 @@ Costs and limits: site slots collide (256 slots; two sites share an average),
 a site whose tasks change size takes a few tasks to adapt, and the first task
 of a new site's burst wakes workers once. Landing it needs a quiet window
 re-measure of all rows and a Linux (Docker arm64) pass.
+
+## Landed (AD, 2026-10-23)
+
+Decision: AD as described above, landed in 935c3779e (std/native/llrt/pool.xo
+site_slot, site_small, site_note; tasks.xo run_claimed; layout.xo P_SITES).
+Re-measured before landing, `xo bench --ab` 20 rounds at load under 4
+(arm64): spawn wall 0.454, fanout 0.594, pingpong 0.996, mutex 1.026, pmap
+1.009, rwmutex 1.002. CRUD HTTP, 6 interleaved loadgen runs at load 15 to 20
+(not quiet): rps 144.1k against 143.2k, p99 656 against 680 us, p99.9 1.05
+against 1.09 ms: no loss. linux/arm64 in Docker: the 21 conc goldens pass,
+spawn 0.77 and fanout 0.63 of main's wall. ThreadSanitizer clean on the six
+conc rows. mutex and rwmutex keep their gap (their tasks block on the lock);
+the lock-bound classification is the next item (design note in
+~/xo-lead/notes/lib1/lock-bound-throttle-design-2026-10-23.md).
 
 ## Consequences
 
