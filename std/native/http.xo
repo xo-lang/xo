@@ -635,14 +635,14 @@ fn bind_in(route: Route, p: Str, sb: List[Int]) -> Map[Str, Str] {
   var k = 0
   for s in route.segs {
     if s.rest {
-      params.put(s.param, if k >= n { "" } else { raw.str_slice(p, sb[2 * k], sb[sb.len() - 1]) })
+      params.put(s.param, if k >= n { "" } else { raw.str_cut(p, sb[2 * k], sb[sb.len() - 1]) })
       return params
     }
     if k >= n {
       break
     }
     if !s.param.is_empty() {
-      params.put(s.param, raw.str_slice(p, sb[2 * k], sb[2 * k + 1]))
+      params.put(s.param, raw.str_cut(p, sb[2 * k], sb[2 * k + 1]))
     }
     k += 1
   }

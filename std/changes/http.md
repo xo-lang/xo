@@ -1,5 +1,19 @@
 # std/http changes
 
+## 2026-10-23: perf: a router's path parameters skip the range clamp
+
+- Kind: perf
+- Commit: this commit
+- Found by: Xo Lang 3's router dispatch row (three routes, 200,000 dispatches) against Go's ServeMux
+- Go reference: net/http ServeMux.PathValue (a substring of the path)
+- Test: none (same output; the dispatch row prints the same checksum before and after)
+
+`bind_in` binds a parameter with `raw.str_cut` (the bounds are the segment
+bounds already checked) instead of `raw.str_slice`, which clamped both ends
+again. Dispatch of a prepared request: 905 M to 864 M instructions,
+`xo bench --ab` instructions 0.954 (interval 0.954 to 0.955), wall within
+noise (0.968, n=10).
+
 ## 2026-10-22: perf: the HTTP date layout is parsed once
 
 - Kind: perf
