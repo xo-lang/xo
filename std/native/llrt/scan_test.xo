@@ -2,6 +2,7 @@
 // --std-module=native/llrt/scan`, run by internal/stdtest.
 
 use native/llrt/raw
+use native/rt
 
 fn hex(s: Str) -> Bytes { Bytes.from_hex(s) ?? "".bytes() }
 
@@ -131,4 +132,42 @@ test "ctl_at on header values" {
   expect(ctl_at("a\tb".bytes(), 0, 3) == 1)
   expect(ctl_at(hex("41424344454647487f"), 0, 9) == 8)
   expect(ctl_at(hex("80ff9f20"), 0, 4) == 4)
+}
+
+/// bytes_eq16_bits' and bytes_high16_bits' masks of the 16 bytes of b
+/// from i, by a byte loop.
+fn bits_want(b: Bytes, i: Int, c: Int) -> (Int, Int) {
+  var we = 0
+  var wh = 0
+  for k in 0..16 {
+    if Int(b[i + k]) == c {
+      we = we | (1 << k)
+    }
+    if Int(b[i + k]) >= 128 {
+      wh = wh | (1 << k)
+    }
+  }
+  (we, wh)
+}
+
+test "bytes_eq16_bits and bytes_high16_bits give one bit a byte" {
+  let b = hex("0a41ff0a800a0a7f00010a0aff0a410a0a")
+  let (we, wh) = bits_want(b, 1, 10)
+  expect(rt.bytes_eq16_bits(b, 1, 10)) == we
+  expect(rt.bytes_high16_bits(b, 1)) == wh
+  expect(we != 0 && wh != 0)
+}
+
+test "bytes_eq16_bits matches a byte loop" for xs: List[Int], c: Int {
+  var ys = xs
+  while ys.len() < 20 {
+    ys.push(ys.len() * 37 + (c & 255))
+  }
+  let b = bytes_of(ys)
+  let cc = c & 255
+  for i in 0..b.len() - 15 {
+    let (we, wh) = bits_want(b, i, cc)
+    expect(rt.bytes_eq16_bits(b, i, cc) == we)
+    expect(rt.bytes_high16_bits(b, i) == wh)
+  }
 }

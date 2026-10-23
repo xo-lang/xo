@@ -1848,6 +1848,55 @@ fn rt2_text(var g: Gen) -> Str {
       i64.shl
       i64.or)
 
+    ;; a nibble mask's low bits gathered, one bit a byte (bytes_eq16_bits)
+    (func $nib_bits (param $x i64) (result i64)
+      local.get $x
+      i64.const 0x1111111111111111
+      i64.and
+      local.tee $x
+      local.get $x
+      i64.const 3
+      i64.shr_u
+      i64.or
+      i64.const 0x0303030303030303
+      i64.and
+      local.tee $x
+      local.get $x
+      i64.const 6
+      i64.shr_u
+      i64.or
+      i64.const 0x000f000f000f000f
+      i64.and
+      local.tee $x
+      local.get $x
+      i64.const 12
+      i64.shr_u
+      i64.or
+      i64.const 0x000000ff000000ff
+      i64.and
+      local.tee $x
+      local.get $x
+      i64.const 24
+      i64.shr_u
+      i64.or
+      i64.const 0xffff
+      i64.and)
+
+    (func $bytes_eq16_bits (param $o i32) (param $n i32) (param $i i64) (param $c i64) (result i64)
+      local.get $o
+      local.get $n
+      local.get $i
+      local.get $c
+      call $bytes_eq16
+      call $nib_bits)
+
+    (func $bytes_high16_bits (param $o i32) (param $n i32) (param $i i64) (result i64)
+      local.get $o
+      local.get $n
+      local.get $i
+      call $bytes_high16
+      call $nib_bits)
+
     (func $bytes_high16 (param $o i32) (param $n i32) (param $i i64) (result i64)
       local.get $o
       local.get $i
@@ -2508,5 +2557,5 @@ fn rt2_text(var g: Gen) -> Str {
 /// The runtime functions of rt2.xo called with the operands' leaves under
 /// their std/llrt names (rt.<name> is $<name>).
 fn rt2_direct(name: Str) -> Bool {
-  name is "rs_append_time" | "bytes_hex_ok" | "bytes_from_hex" | "floor_div" | "int_wrap" | "int_fits" | "crypto_b64" | "realtime_program" | "realtime_enter" | "realtime_exit" | "rand_int" | "rand_float" | "rand_bool" | "rand_bytes" | "duration_parse_ok" | "duration_parse" | "str_byte" | "bytes_span" | "rs_append_bytes" | "rune_is_space" | "utf8_valid" | "bytes_decode" | "bytes_rune_count" | "int_parse_ok" | "int_parse" | "str_of_byte" | "str_replace" | "b64_encode" | "b64_ok" | "b64_decode" | "u64_mul_hi" | "float_bits" | "float_from_bits" | "bytes_word" | "mem_load" | "mem_store" | "mem_copy" | "mem_copy_block" | "mem_move" | "mem_set" | "mem_cmp" | "popcount" | "ctz" | "clz" | "ct_barrier" | "bytes_eq16" | "bytes_high16" | "rs_put_word" | "rs_set_len"
+  name is "rs_append_time" | "bytes_hex_ok" | "bytes_from_hex" | "floor_div" | "int_wrap" | "int_fits" | "crypto_b64" | "realtime_program" | "realtime_enter" | "realtime_exit" | "rand_int" | "rand_float" | "rand_bool" | "rand_bytes" | "duration_parse_ok" | "duration_parse" | "str_byte" | "bytes_span" | "rs_append_bytes" | "rune_is_space" | "utf8_valid" | "bytes_decode" | "bytes_rune_count" | "int_parse_ok" | "int_parse" | "str_of_byte" | "str_replace" | "b64_encode" | "b64_ok" | "b64_decode" | "u64_mul_hi" | "float_bits" | "float_from_bits" | "bytes_word" | "mem_load" | "mem_store" | "mem_copy" | "mem_copy_block" | "mem_move" | "mem_set" | "mem_cmp" | "popcount" | "ctz" | "clz" | "ct_barrier" | "bytes_eq16" | "bytes_high16" | "bytes_eq16_bits" | "bytes_high16_bits" | "rs_put_word" | "rs_set_len"
 }

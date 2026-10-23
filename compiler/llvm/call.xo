@@ -1184,6 +1184,23 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     "rt.popcount" => g.set(v, "call i64 @llvm.ctpop.i64(i64 ${g.op(x.args[0])})")
     "rt.ctz" => g.set(v, "call i64 @llvm.cttz.i64(i64 ${g.op(x.args[0])}, i1 false)")
     "rt.clz" => g.set(v, "call i64 @llvm.ctlz.i64(i64 ${g.op(x.args[0])}, i1 false)")
+    "rt.bytes_eq16_bits" | "rt.bytes_high16_bits" => {
+      // one bit a byte (pmovmskb on x86_64)
+      let (_, d, _) = g.str_parts(g.op(x.args[0]))
+      let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(x.args[1])}")
+      let w = g.def("load <16 x i8>, ptr ${p}, align 1${g.sc_md(v)}")
+      var e = ""
+      if aux_str(x.aux) == "rt.bytes_eq16_bits" {
+        let c = g.def("trunc i64 ${g.op(x.args[2])} to i8")
+        var r = g.def("insertelement <16 x i8> poison, i8 ${c}, i64 0")
+        r = g.def("shufflevector <16 x i8> ${r}, <16 x i8> poison, <16 x i32> zeroinitializer")
+        e = g.def("icmp eq <16 x i8> ${w}, ${r}")
+      } else {
+        e = g.def("icmp slt <16 x i8> ${w}, zeroinitializer")
+      }
+      let m = g.def("bitcast <16 x i1> ${e} to i16")
+      g.set(v, "zext i16 ${m} to i64")
+    }
     "rt.bytes_eq16" | "rt.bytes_high16" => {
       let (_, d, _) = g.str_parts(g.op(x.args[0]))
       let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(x.args[1])}")

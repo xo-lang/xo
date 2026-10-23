@@ -1614,8 +1614,13 @@ fn (var g: G) x86_store(text: Str, us: List[Int]) {
 /// $u0 + $u1 compared, narrowed to 4 bits a byte as arm64's shrn does (the
 /// contract std/native/llrt/scan.xo reads).
 fn (var g: G) x86_bytes16(x: ssa.Value, var us: List[Int]) -> Int {
+  let name = aux_str(x.aux)
+  if name == "rt.bytes_high16_bits" {
+    // the bytes' sign bits, one a byte
+    return g.x86_def1("movdqu ($u0,$u1), %xmm15\npmovmskb %xmm15, $wd0", us)
+  }
   var cmp: List[Str] = []
-  if aux_str(x.aux) == "rt.bytes_eq16" {
+  if name == "rt.bytes_eq16" || name == "rt.bytes_eq16_bits" {
     let (c, ok) = g.const_int(x.args[2])
     if ok {
       cmp.push("movl $${(c & 255) * 16843009}, %r11d")
@@ -1627,6 +1632,10 @@ fn (var g: G) x86_bytes16(x: ssa.Value, var us: List[Int]) -> Int {
     cmp = cmp + ["movd %r11d, %xmm14", "pshufd $0, %xmm14, %xmm14", "pcmpeqb %xmm14, %xmm15"]
   } else {
     cmp = ["pxor %xmm14, %xmm14", "pcmpgtb %xmm15, %xmm14", "movdqa %xmm14, %xmm15"]
+  }
+  if name == "rt.bytes_eq16_bits" {
+    // one bit a byte: the compare's bytes narrowed by pmovmskb
+    return g.x86_def1((["movdqu ($u0,$u1), %xmm15"] + cmp + ["pmovmskb %xmm15, $wd0"]).join("\n"), us)
   }
   let t = ["movdqu ($u0,$u1), %xmm15"] + cmp + ["psrlw $4, %xmm15", "pcmpeqw %xmm14, %xmm14", "psrlw $8, %xmm14", "pand %xmm14, %xmm15", "packuswb %xmm15, %xmm15", "movq %xmm15, $d0"]
   g.x86_def1(t.join("\n"), us)

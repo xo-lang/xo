@@ -1724,7 +1724,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     }
     "rt.ctz" => g.set(v, [g.def1(false, "rbit $d0, $u0\nclz $d0, $d0", [g.word(x.args[0])])])
     "rt.clz" => g.set(v, [g.def1(false, "clz $d0, $u0", [g.word(x.args[0])])])
-    "rt.bytes_eq16" | "rt.bytes_high16" => {
+    "rt.bytes_eq16" | "rt.bytes_high16" | "rt.bytes_eq16_bits" | "rt.bytes_high16_bits" => {
       let ws = g.words(x.args[0])
       let d = g.str_data(ws)
       var us = [d, g.word(x.args[1])]
@@ -1732,8 +1732,9 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         g.set(v, [g.x86_bytes16(x, us)])
         return true
       }
+      let bits = aux_str(x.aux).ends_with("_bits")
       var cmp = "cmlt v30.16b, v30.16b, #0"
-      if aux_str(x.aux) == "rt.bytes_eq16" {
+      if aux_str(x.aux) == "rt.bytes_eq16" || aux_str(x.aux) == "rt.bytes_eq16_bits" {
         let (c, ok) = g.const_int(x.args[2])
         if ok {
           cmp = "movi v31.16b, #${c & 255}\ncmeq v30.16b, v30.16b, v31.16b"
@@ -1742,7 +1743,14 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
           us.push(g.word(x.args[2]))
         }
       }
-      g.set(v, [g.def1(false, "ldr q30, [$u0, $u1]\n${cmp}\nshrn v30.8b, v30.8h, #4\nfmov $d0, d30", us)])
+      let nib = g.def1(false, "ldr q30, [$u0, $u1]\n${cmp}\nshrn v30.8b, v30.8h, #4\nfmov $d0, d30", us)
+      if !bits {
+        g.set(v, [nib])
+        return true
+      }
+      // one bit a byte (the _bits forms, made for amd64's pmovmskb): the
+      // nibbles' low bits gathered, pairs at a time
+      g.set(v, [g.def1(false, "and $d0, $u0, #0x1111111111111111\norr $d0, $d0, $d0, lsr #3\nand $d0, $d0, #0x0303030303030303\norr $d0, $d0, $d0, lsr #6\nand $d0, $d0, #0x000f000f000f000f\norr $d0, $d0, $d0, lsr #12\nand $d0, $d0, #0x000000ff000000ff\norr $d0, $d0, $d0, lsr #24\nand $d0, $d0, #0xffff", [nib])])
     }
     "rt.rs_put_word" => {
       let ws = g.words(x.args[0])

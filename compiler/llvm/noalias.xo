@@ -368,7 +368,7 @@ fn (var g: Gen) summarize() {
 /// Whether call name reads its list or Bytes operand (Args[0]), and
 /// whether it also writes the list (scopeRead, scopeWrite).
 fn scope_read(name: Str) -> Bool {
-  name is "list.len" | "list.index" | "list.get" | "bytes.index" | "rt.bytes_word" | "rt.bytes_eq16" | "rt.bytes_high16"
+  name is "list.len" | "list.index" | "list.get" | "bytes.index" | "rt.bytes_word" | "rt.bytes_eq16" | "rt.bytes_high16" | "rt.bytes_eq16_bits" | "rt.bytes_high16_bits"
 }
 
 fn scope_write(name: Str) -> Bool {
