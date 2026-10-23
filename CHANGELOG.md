@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Warm builds no longer look up, on every build, the front end cache
+  entries of bodies the program never builds (one key per checked body,
+  4,146 of a one-line program's 5,373): the build target's pack lists
+  the keys found nowhere and skips them. A warm build of a one-line
+  program uses about 7% less CPU (decision 0351).
+
 - `XO_BACKEND_CACHE=verify` no longer reports front end cache entries
   that another program recorded as differing: it compared the modules a
   body was first to build code of and its closure and constant numbers,

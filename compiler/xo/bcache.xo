@@ -1143,14 +1143,52 @@ fn cache_get_packed(os: Os, dir: Str, kind: Str, target: Str, keys: List[Str], j
     }
     Err(_) => p.fresh = true
   }
+  // the front end's keys its last build asked for and found nowhere
+  // (decision 0351): fe.keys has one key per checked body and the front
+  // end stores only the reachable ones (4,146 of hello's 5,373 never
+  // are), so each was a failed open on every build. A key in the list is
+  // not read loose; one the build stores is found in the pack first.
+  let neg_path = "${p.dir}/neg"
+  // only with a formed pack: before it forms, the build stores its
+  // entries loose, and a listed key would hide one
+  let neg_on = kind == "fe" && !p.segs.is_empty()
+  var neg: Map[Str, Bool] = {}
+  var neg_text = ""
+  if neg_on {
+    // xo:allow XO0903 no list: every key not in the pack is read loose
+    neg_text = (os.fs.read(neg_path).ok() ?? b"").to_str() ?? ""
+    for k in neg_text.split("\n") {
+      if !k.is_empty() {
+        neg[k] = true
+      }
+    }
+  }
   var rest: List[Str] = []
   for (k, _) in want {
-    if !entries.contains(k) {
+    if !entries.contains(k) && !neg.contains(k) {
       rest.push(k)
     }
   }
-  for (k, b) in cache_get_all(os, dir, kind, rest, jobs) {
+  let loose = cache_get_all(os, dir, kind, rest, jobs)
+  // XO_FE_STATS=1: how many entries came from loose files (one open
+  // each) against the directory's pack (decision 0351)
+  if (os.env.get("XO_FE_STATS") ?? "") == "1" {
+    os.stdio.eprintln("cache loose ${kind} ${loose.len()} of ${want.len()} (pack ${p.from_pack.len()}, missing ${rest.len() - loose.len()})")
+  }
+  for (k, b) in loose {
     entries[k] = b
+  }
+  if neg_on {
+    var missing: List[Str] = []
+    for (k, _) in want {
+      if !entries.contains(k) {
+        missing.push(k)
+      }
+    }
+    let text = missing.sort().join("\n")
+    if text != neg_text {
+      cache_put(os, neg_path, text.bytes())
+    }
   }
   (entries, p)
 }

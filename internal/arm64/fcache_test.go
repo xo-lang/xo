@@ -2586,3 +2586,68 @@ func TestBackendCacheObjectsAcrossDirs(t *testing.T) {
 		}
 	}
 }
+
+// TestFrontCacheNegKeys: the front end asks for one key per checked body
+// and stores only the reachable ones, so once the build target's pack has
+// formed, the keys found nowhere are listed (pack neg) and not read as
+// loose files again (decision 0351: hello's 4,146 failed opens on every
+// warm build), and the binary does not change.
+func TestFrontCacheNegKeys(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-feneg-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	own := filepath.Join(work, "p")
+	if err := os.MkdirAll(own, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(own, "main.xo"), []byte("fn main(os: Os) uses stdio {\n  os.stdio.println(\"hi\")\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(work, "prog")
+	cache := filepath.Join(work, "cache")
+	loose := regexp.MustCompile(`cache loose fe (\d+) of (\d+) \(pack (\d+), missing (\d+)\)`)
+	build := func() ([]byte, []string) {
+		t.Helper()
+		os.Remove(out)
+		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", out, "."))
+		cmd.Dir = own
+		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on", "XO_FE_STATS=1")
+		log, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("xo build: %v\n%s", err, log)
+		}
+		b, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := loose.FindStringSubmatch(string(log))
+		if m == nil {
+			t.Fatalf("no cache loose fe line:\n%s", log)
+		}
+		return b, m
+	}
+	first, m := build()
+	// the pack forms within a few builds (PACK_AFTER); then the list
+	for i := 0; i < 4; i++ {
+		_, m = build()
+	}
+	got, m := build()
+	if !bytes.Equal(got, first) {
+		t.Errorf("the warm build's binary differs from the first")
+	}
+	if m[1] != "0" || m[4] != "0" || m[3] == "0" || m[2] == m[3] {
+		t.Errorf("warm build: %s, want no loose reads, no missing lookups, and fewer bodies in the pack than keys", m[0])
+	}
+}
