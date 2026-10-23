@@ -586,12 +586,54 @@ fn (var g: G) derived(v: Int, d: Int) -> (Interval, Bool) {
       (Interval{lo: a.lo >> k, hi: a.hi >> k}, true)
     }
     Shl => {
-      let (k, ok) = g.const_int(x.args[1])
-      if !ok || k < 0 || k > 62 || x.pos.is_empty() {
+      // by an amount in [klo, khi] (a constant, or bounded: portable
+      // shift's `(w >> 8) << UInt32(i % 8)`); unchecked only when no
+      // product leaves the Int range, so the shift is exact
+      let (klo, khi) = g.bounds(x.args[1])
+      if klo < 0 || khi > 62 {
         return none
       }
       let a = g.bounds_iv(x.args[0], d)
-      (Interval{lo: sat_mul(a.lo, 1 << k), hi: sat_mul(a.hi, 1 << k)}, true)
+      let (l0, o0) = mul_ok(a.lo, 1 << (if a.lo < 0 { khi } else { klo }))
+      let (h0, o1) = mul_ok(a.hi, 1 << (if a.hi < 0 { klo } else { khi }))
+      if o0 && o1 {
+        return (Interval{lo: l0, hi: h0}, true)
+      }
+      if x.pos.is_empty() || klo != khi {
+        return none
+      }
+      (Interval{lo: sat_mul(a.lo, 1 << klo), hi: sat_mul(a.hi, 1 << klo)}, true)
+    }
+    Rem => {
+      // a % k for a constant k: below |k| in magnitude, with a's sign
+      // (portable shift's `i % 31`, a shift amount checked against 31)
+      let (k0, ok) = g.const_int(x.args[1])
+      if !ok || k0 == 0 || k0 == MIN_INT {
+        return none
+      }
+      let k = if k0 < 0 { -k0 } else { k0 }
+      let a = g.bounds_iv(x.args[0], d)
+      let lo = if a.lo >= 0 { 0 } else { imax(a.lo, 1 - k) }
+      let hi = if a.hi <= 0 { 0 } else { imin(a.hi, k - 1) }
+      if a.lo >= 0 && a.hi < k {
+        return (a, true)
+      }
+      (Interval{lo: lo, hi: hi}, true)
+    }
+    Xor => {
+      // x ^ MIN_INT, the sign flip of an unsigned compare (ssa show.xo
+      // ult: a sized shift's amount check `bits - 1 < c` as UInt64s)
+      for j in 0..2 {
+        let (k, ok) = g.const_int(x.args[j])
+        if ok && k == MIN_INT {
+          let a = g.bounds_iv(x.args[1 - j], d)
+          if a.lo >= 0 || a.hi < 0 {
+            return (Interval{lo: a.lo ^ MIN_INT, hi: a.hi ^ MIN_INT}, true)
+          }
+          return none
+        }
+      }
+      none
     }
     IntConv => {
       // a sized Int's value is in its type's range (2026-10-23: portable

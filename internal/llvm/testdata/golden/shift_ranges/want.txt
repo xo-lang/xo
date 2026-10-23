@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+mix 3878667971
+wide 32 2714002199
+wide 33: shift amount 32 out of range for UInt32
+over 30 505290271
+over 31: integer overflow: 3 << 30 does not fit Int32
+--- stderr

@@ -1,0 +1,66 @@
+// Shifts whose amount and operand ranges come from `%` by a constant, a
+// shift by a bounded amount, and the sign flip of an unsigned compare
+// (arm64 opt.xo derived: Rem, Shl, Xor), which drop the amount and
+// overflow checks they prove, next to ones that still fault.
+use std/task
+
+fn show(stdio: Stdio, label: Str, r: Result[Str, task.Isolated[Int]]) uses stdio {
+  match r {
+    Ok(v) => stdio.println("${label}: ok ${v}")
+    Err(task.Isolated.Faulted(info)) => stdio.println("${label}: ${info.msg}")
+    Err(task.Isolated.Failed(e)) => stdio.println("${label}: failed ${e}")
+  }
+}
+
+fn mix(ws: List[UInt32], xs: List[Int32]) -> Int {
+  var a: UInt32 = 0
+  var b: Int32 = 0
+  var c = 0
+  for i in 0..ws.len() {
+    let k = UInt32(i % 8)
+    a = a ^ ((ws[i] >> 8) << k) ^ (ws[i] >> k)
+    b = b ^ ((xs[i] % 1024) << 4) ^ (xs[i] >> Int32(i % 31))
+    // a negative dividend's remainder is negative
+    c = c + (Int(xs[i]) % 7) * 3 + (-i % 5)
+  }
+  Int(a) + Int(b) * 7 + c
+}
+
+/// An amount that reaches the type's width: `i % 33` can be 32.
+fn wide(ws: List[UInt32], n: Int) -> UInt32 {
+  var a: UInt32 = 0
+  for i in 0..n {
+    a = a ^ (ws[i % ws.len()] >> UInt32(i % 33))
+  }
+  a
+}
+
+/// A shift left that can overflow: 3 << 30 does not fit Int32.
+fn over(xs: List[Int32], n: Int) -> Int32 {
+  var b: Int32 = 0
+  for i in 0..n {
+    b = b ^ ((xs[i % xs.len()] % 4) << Int32(i % 31))
+  }
+  b
+}
+
+fn main(os: Os) {
+  let io = os.stdio
+  var ws: List[UInt32] = []
+  var xs: List[Int32] = []
+  var g = 12345
+  for _ in 0..500 {
+    g = (g * 1103515245 + 12345) % 2147483648
+    ws.push(UInt32(g * 2 % 4294967296))
+    xs.push(Int32(g % 2000000001 - 1000000000))
+  }
+  ws.push(4294967295)
+  xs.push(-2147483647)
+  xs.push(2147483647)
+  ws.push(0)
+  io.println("mix ${mix(ws, xs)}")
+  io.println("wide 32 ${wide(ws, 32)}")
+  show(io, "wide 33", task.isolate(fn() -> Str ! Int { "${wide(ws, 33)}" }))
+  io.println("over 30 ${over([1, -1, 2, 3], 30)}")
+  show(io, "over 31", task.isolate(fn() -> Str ! Int { "${over([3], 31)}" }))
+}
