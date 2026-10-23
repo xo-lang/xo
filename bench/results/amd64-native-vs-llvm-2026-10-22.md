@@ -158,3 +158,39 @@ Every workload:
    float_fmt 1.28 and 1.17, time_fmt 1.26, time_parse 1.26 and 1.29.
 4. portable float32: even instructions (0.96) but 1.72 the time: a stall
    in the loop (its carried Float32 dependency), not instruction count.
+
+## Closing the JSON parse gap (2026-10-22 night, Xo Lang 1)
+
+Per function (callgrind, linux/amd64, json parse): native spent 139M in
+jsontext.scan, 108M in str_end (560,000 calls) and 41M in scalar_end
+(320,000 calls); LLVM 207M in scan with both inlined. Two causes:
+
+1. str_end's word loop made its five 64 bit masks and the Bytes data
+   address again every 8 bytes on both native backends: a loop with two
+   back edges (a `continue` in `while true`) had no preheader for
+   hoist_consts, and x86 made a 64 bit logical immediate with a movabsq
+   at each use (c94dc33c4, gotchas/loop-two-back-edges-no-hoist.md).
+2. str_end (103 blocks) and scalar_end (133) were over the inliner's
+   80 block limit for few call sites; each has one, so the copy is the
+   only body. A one-site function is now inlined up to 500 instructions
+   and 160 blocks (compiler/arm64 inline.xo INLINE_ONE_SITE_BLOCKS).
+
+Instructions (callgrind, linux/amd64, bench/perf/json), main, step 1,
+step 2; LLVM from the table above:
+
+| workload | main | 1: hoisting | 2: one site | LLVM | native/LLVM |
+|---|---:|---:|---:|---:|---:|
+| parse | 318,529,935 | 312,444,975 | 255,550,524 | 234,212,407 | 1.091 |
+| invalid | 220,279,738 | 220,630,463 | 192,224,488 | 181,542,505 | 1.059 |
+| small | 377,421,855 | 377,309,015 | 348,947,219 | 300,298,976 | 1.162 |
+| maps | 357,791,291 | 356,966,421 | 339,100,775 | 315,316,162 | 1.075 |
+| ints | 233,439,929 | 232,094,289 | 219,420,798 | 205,730,808 | 1.067 |
+| strings | 377,663,090 | 368,699,667 | 353,601,321 | 325,836,722 | 1.085 |
+| bytes | 474,249,429 | 426,865,324 | 421,065,423 | 410,847,380 | 1.025 |
+
+The encoders are unchanged. arm64 (Mac, `xo bench --ab --rounds=10`,
+step 2 against step 1): instructions parse 0.913, small 0.971, strings
+0.980, ints 0.971; wall within noise (runs of about 18 ms). Step 2 on
+xo itself: __text 56,148,060 to 56,139,132 bytes, its build 86 s to 85
+s; HTTP short callgrind (linux/amd64) plain 29,306 to 29,351, tls 38,667
+to 37,007 instructions a request.

@@ -43,6 +43,14 @@ const INLINE_LOOP_SITES = 8
 /// A function with landing pads and one call site is inlined there up
 /// to this size
 const INLINE_ONE_PADDED_INSTRS = 150
+/// A function with one call site is inlined there up to INLINE_FEW_BUDGET
+/// instructions and this many blocks (the copy is the only body, so the
+/// program does not grow): jsontext.str_end and scalar_end, 103 and 133
+/// blocks of bounds and overflow checks over INLINE_FEW_BLOCKS, were
+/// calls from scan where LLVM inlines them, json parse 1.36 times LLVM's
+/// instructions on amd64 (2026-10-22,
+/// bench/results/amd64-native-vs-llvm-2026-10-22.md)
+const INLINE_ONE_SITE_BLOCKS = 160
 
 /// The last function of each name (Go's byName).
 fn funcs_by_name(m: ssa.Module) -> Map[Str, Int] {
@@ -228,7 +236,8 @@ fn inline_walk(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int], sites: 
   }
   if c.instrs > INLINE_MAX_INSTRS || c.blocks > INLINE_MAX_BLOCKS {
     let n = sites.get(f.name) ?? 0
-    if n > INLINE_FEW_SITES || n * c.instrs > INLINE_FEW_BUDGET || c.blocks > INLINE_FEW_BLOCKS {
+    let blocks_max = if n == 1 { INLINE_ONE_SITE_BLOCKS } else { INLINE_FEW_BLOCKS }
+    if n > INLINE_FEW_SITES || n * c.instrs > INLINE_FEW_BUDGET || c.blocks > blocks_max {
       c.bad = true
     } else if n > 1 && c.instrs > INLINE_MAX_INSTRS && c.instrs <= INLINE_FEW_LOOP_INSTRS {
       c.few = true
