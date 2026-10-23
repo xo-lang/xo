@@ -587,18 +587,21 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
       c.mod_cache_dir = dir
       c.mod_verify = backend_cache_mode(os) == "verify"
       c.mod_flags = "${id}\nstd=${o.std} lazy=${c.lazy} llrt_c=${c.llrt_c.join(",")} std_test=${c.std_test}"
-      // auto by default for one target (owner, 2026-10-22): a skipped
-      // module is one whose every body the front end cache replays, so
-      // the whole-program passes see them (a body checked lazily after
-      // them built wrong under XO_CHK_CACHE=1, 2026-10-19); scripts/gate.sh
-      // runs TestModuleCheckAuto* for every compiler/check and
-      // compiler/ssa change. XO_CHK_CACHE=0 turns it off, =1 skips every
-      // unchanged module (opt in)
-      var cc = os.env.get("XO_CHK_CACHE") ?? ""
-      if cc.is_empty() {
-        cc = "auto"
-      }
-      c.mod_skip_on = cc == "1" || (cc == "auto" && !o.many_targets)
+      // XO_CHK_CACHE=auto (one target): a skipped module is one whose
+      // every body the front end cache replays, so the whole-program
+      // passes see them (a body checked lazily after them built wrong
+      // under XO_CHK_CACHE=1, 2026-10-19); scripts/gate.sh runs
+      // TestModuleCheckAuto* for every compiler/check and compiler/ssa
+      // change. =1 skips every unchanged module
+      // opt in again (2026-10-22, night): with auto as the default,
+      // internal/arm64 TestModuleCheckAuto's xml_derive failed its warm
+      // build on main (XO1201 for std/xml's encode_value and decode), so
+      // the default is off until that is fixed
+      let cc = os.env.get("XO_CHK_CACHE") ?? ""
+      // not under XO_ASSUME_BREAK=1 (decision 0342's test knob): a
+      // skipped module's bodies come from the cache, so the call it breaks
+      // may not be there and the check sees nothing to report
+      c.mod_skip_on = (cc == "1" || (cc == "auto" && !o.many_targets)) && (os.env.get("XO_ASSUME_BREAK") ?? "") != "1"
       // auto: only modules whose every body the front end cache replays,
       // with a fallback (build_native) when one is built from source
       // anyway (gotchas/module-check-cache-skips-whole-program-passes.md)

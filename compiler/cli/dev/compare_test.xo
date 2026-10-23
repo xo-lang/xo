@@ -6,6 +6,9 @@ test "stable drops frames and fixes times" {
   expect(stable(s, Rules{}) == "fault: boom at <time>\ndone\n")
   expect(stable(s, Rules{go_frames: true, drop_leak: false}) == "fault: boom at <time>\n  at main.xo:3\nxo leakcheck: 0 live of 3 allocations\ndone\n")
   expect(stable("", Rules{}) == "")
+  // a native fault's traceback (by default since 2026-10-22): the header
+  // and its indented frames are dropped
+  expect(stable("fault: x at main.xo:1:1\ntraceback:\n  main (main.xo:1)\n", Rules{}) == "fault: x at main.xo:1:1\n")
 }
 
 test "layout" {

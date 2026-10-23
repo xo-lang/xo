@@ -927,3 +927,9 @@ TestModuleCheckAutoGeneric and TestModuleCheckAutoZones (internal/arm64
 fcache_test.go) after every gate of a branch that changes compiler/check
 or compiler/ssa, and the lead's hourly run runs them on main.
 
+Reverted the same night (2026-10-22): with auto as the default, the
+warm build of TestModuleCheckAuto's xml_derive failed on main (XO1201
+for std/xml's encode_value and decode: a skipped module's bodies seen as
+not native), so `XO_CHK_CACHE=auto` is opt in again until that is fixed.
+The gate.sh step and the hourly run stay.
+

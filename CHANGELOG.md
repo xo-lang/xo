@@ -29,10 +29,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   and its peak after each phase, and `debug.mem_peak()` is new. xo sets
   no default budget for now.
 
-- `xo build` and `xo run` with one target skip checking an unchanged
-  module whose bodies the front end cache replays, by default (owner,
-  2026-10-22; decision 0220 addendum): a warm build's check drops from
-  300 to 410 ms to about 0.25 s. `XO_CHK_CACHE=0` turns it off.
+- The module check cache stays opt in (`XO_CHK_CACHE=auto`): it was
+  made the default on 2026-10-22 and reverted the same night, when
+  internal/arm64 TestModuleCheckAuto's xml_derive failed its warm build
+  on main. scripts/gate.sh runs the TestModuleCheckAuto tests for any
+  change to compiler/check or compiler/ssa.
 
 - `xo run --holes` and `xo test --holes` build natively (owner,
   2026-10-22): an evaluated `???` faults with `evaluated a hole \`???\``

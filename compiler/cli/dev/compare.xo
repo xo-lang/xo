@@ -36,7 +36,9 @@ pub fn stable(s: Str, r: Rules) -> Str {
       out.write("\n")
       continue
     }
-    if l.is_empty() || l.starts_with(" ") || l.starts_with("\t") || l.starts_with("crash bundle:") {
+    // the traceback's header too: its frames are indented, and the
+    // native backends print it by default since 2026-10-22
+    if l.is_empty() || l.starts_with(" ") || l.starts_with("\t") || l.starts_with("crash bundle:") || l == "traceback:" {
       continue
     }
     if r.drop_leak && l.starts_with("xo leakcheck:") {
