@@ -407,6 +407,34 @@ pub fn last_index_any(s: Str, chars: Str) -> Int {
   -1
 }
 
+/// strings.Cut: the text before and after the first sep, as views of s;
+/// None when sep does not occur, and sep "" cuts at the start.
+pub fn cut(s: Str, sep: Str) -> (Str, Str)? {
+  let i = find(s, sep, 0)
+  if i < 0 {
+    return None
+  }
+  Some((s[0..i], s[i + sep.len()..]))
+}
+
+/// strings.CutPrefix: the rest of s after prefix, a view of s; None when s
+/// does not start with prefix, and prefix "" gives s.
+pub fn cut_prefix(s: Str, prefix: Str) -> Str? {
+  if !starts_with(s, prefix) {
+    return None
+  }
+  Some(s[prefix.len()..])
+}
+
+/// strings.CutSuffix: s up to suffix, a view of s; None when s does not end
+/// with suffix, and suffix "" gives s.
+pub fn cut_suffix(s: Str, suffix: Str) -> Str? {
+  if !ends_with(s, suffix) {
+    return None
+  }
+  Some(s[0..s.len() - suffix.len()])
+}
+
 /// The number of UTF-8 continuation bytes (0x80 to 0xBF) in w.
 fn cont8(w: Int) -> Int { rt.popcount(w & (shl(w, 1) ^ -1) & HIGHS) }
 

@@ -128,6 +128,34 @@ remainder and a quotient by the power of ten, after one test that
 returns at once when the digits end in no zero. Output is unchanged.
 callgrind linux/amd64: json enc_floats 0.975, enc_small 0.997; arm64
 xo bench --ab enc_floats within noise.
+## 2026-10-23: feature: Str.cut, cut_prefix and cut_suffix (strings.Cut, CutPrefix, CutSuffix)
+
+- Kind: feature
+- Commit: this commit
+- Found by: lead request; Str had find and rfind but no way to split at a separator without building a List, as Go's Cut does
+- Go reference: strings.Cut, strings.CutPrefix, strings.CutSuffix
+- Test: corpus/cut (arm64 and LLVM), golden cut_view (arm64, LLVM, Go parity and wasm)
+
+`Str.cut(sep)` returns `Some((before, after))` for the first sep in s and
+`None` when sep does not occur; `Str.cut_prefix(prefix)` returns the rest
+of s after prefix or `None`, and `Str.cut_suffix(suffix)` returns s up to
+its suffix or `None`. An empty sep, prefix or suffix gives the Go result:
+`Some(("", s))` for cut and `Some(s)` for the other two. Option carries
+Go's third `found` result, as `find_index` and `get_uvarint` already do
+with an Option of a tuple. Every result is a view of s, like a trim or a
+split piece, so a cut copies nothing. They are declared in
+std/prelude.xo, implemented in Xo in std/native/llrt/scan.xo over `find`,
+`starts_with` and `ends_with`, and the Go backend compiles the same body
+(decision 0312). The corpus is Go's cut_test.go tables plus seeded random
+cases on plain and view inputs. The cost check sees the views: the three
+calls join `view_call` in compiler/ssa/cost.xo, and 86f78cd39's payload
+walk carries a view through an Option, so `xo vet --cost` reports XO0911
+for a `Str?` or `(Str, Str)?` field, for the call stored directly, and
+for the shape `line.cut_prefix("x") ?? ""` stored in a field.
+TestVetCostViewStoreCutOption in cmd/xo covers the last one. Two shapes
+still get no note: a piece bound by a `Some((a, b))` match, and a tuple
+from `??` whose field is stored (the stored value is a phi, not the
+payload).
 
 ## 2026-10-23: feature: Str.equal_fold (strings.EqualFold)
 

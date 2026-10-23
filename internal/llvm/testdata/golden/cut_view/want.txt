@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+[key][value; ΔΔΔ/é.txt]
+[key=value][ ΔΔΔ/é.txt]
+[][key=value; ΔΔΔ/é.txt]
+none
+[value; ΔΔΔ/é.txt] [none]
+[key=value; ΔΔΔ/é] [none]
+[key=value; ΔΔΔ/é.txt] [key=value; ΔΔΔ/é.txt]
+[value; ΔΔΔ/] [value; ][ΔΔ/]
+24 28
+--- stderr

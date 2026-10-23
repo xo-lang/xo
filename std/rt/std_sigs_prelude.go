@@ -91,6 +91,9 @@ var (
 	_ func(*Task, string, string, int64) List[string]               = Str_split_n
 	_ func(*Task, string, string) List[string]                      = Str_split_after
 	_ func(*Task, string, string, int64) List[string]               = Str_split_after_n
+	_ func(*Task, string, string) Option[Tuple2[string, string]]    = Str_cut
+	_ func(*Task, string, string) Option[string]                    = Str_cut_prefix
+	_ func(*Task, string, string) Option[string]                    = Str_cut_suffix
 	_ func(*Task, string, string) List[string]                      = Str_split
 	_ func(*Task, string) List[string]                              = Str_fields
 	_ func(*Task, string) List[string]                              = Str_lines

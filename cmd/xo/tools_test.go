@@ -2170,3 +2170,55 @@ func TestVetCostViewStoreSplitN(t *testing.T) {
 		t.Errorf("XO0911 at lines %v, want [9]\n%s", lines, out.String())
 	}
 }
+
+// vetCostViewCutProg: the same shape with Str.cut_prefix, so the three cut
+// functions' place in view_call (compiler/ssa/cost.xo) has a test: without
+// it the note below disappears (checked by removing them).
+const vetCostViewCutProg = `
+struct Tok {
+  name: Str
+}
+
+fn parse(text: Str) -> List[Tok] {
+  var out: List[Tok] = []
+  for line in text.lines() {
+    out.push(Tok{name: line.cut_prefix("x") ?? ""})
+  }
+  out
+}
+
+fn main(os: Os) {
+  os.stdio.println("${parse("x1\nx2").len()}")
+}
+`
+
+// TestVetCostViewStoreCutOption: XO0911 follows line.cut_prefix(x) ?? ""
+// into a field, which needs str_cut_prefix in view_call.
+func TestVetCostViewStoreCutOption(t *testing.T) {
+	t.Parallel()
+	dir := writeFiles(t, map[string]string{"main.xo": vetCostViewCutProg})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"vet", "--json", "--cost", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	var res struct {
+		Diagnostics []struct {
+			Code string `json:"code"`
+			Span struct {
+				Line int `json:"line"`
+			} `json:"span"`
+		} `json:"diagnostics"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &res); err != nil {
+		t.Fatalf("bad JSON: %v\n%s", err, out.String())
+	}
+	var lines []int
+	for _, d := range res.Diagnostics {
+		if d.Code == "XO0911" {
+			lines = append(lines, d.Span.Line)
+		}
+	}
+	if len(lines) != 1 || lines[0] != 9 {
+		t.Errorf("XO0911 at lines %v, want [9]\n%s", lines, out.String())
+	}
+}

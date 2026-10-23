@@ -32,6 +32,7 @@ var generators = map[string]func() string{
 	"binary":    binaryCorpus,
 	"compress":  compressCorpus,
 	"csv":       csvCorpus,
+	"cut":       cutCorpus,
 	"equalfold": equalfoldCorpus,
 	"httpurl":   httpurlCorpus,
 	"json":      jsonCorpus,

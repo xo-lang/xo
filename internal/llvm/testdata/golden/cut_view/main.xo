@@ -1,0 +1,26 @@
+// Str.cut, cut_prefix and cut_suffix on a view: a slice of a longer text,
+// cut at a separator that is there, at one that is not, and at an empty
+// one; a prefix and a suffix that match and that do not, and empty ones;
+// an Option's two pieces; a multi byte rune; and a view of the view.
+fn main(os: Os) {
+  let text = "key=value; ΔΔΔ/é.txt"
+  let long = "  " + text + "  "
+  let view = long[2..(long.len() - 2)]
+  os.stdio.println(show_cut(view.cut("=")))
+  os.stdio.println(show_cut(view.cut(";")))
+  os.stdio.println(show_cut(view.cut("")))
+  os.stdio.println(show_cut(view.cut("zz")))
+  os.stdio.println("[${view.cut_prefix("key=") ?? "none"}] [${view.cut_prefix("val") ?? "none"}]")
+  os.stdio.println("[${view.cut_suffix(".txt") ?? "none"}] [${view.cut_suffix("Δ") ?? "none"}]")
+  os.stdio.println("[${view.cut_prefix("") ?? "none"}] [${view.cut_suffix("") ?? "none"}]")
+  let piece = view[4..18]
+  os.stdio.println("[${piece}] ${show_cut(piece.cut("Δ"))}")
+  os.stdio.println("${view.len()} ${long.len()}")
+}
+
+fn show_cut(r: (Str, Str)?) -> Str {
+  match r {
+    None => "none"
+    Some((before, after)) => "[${before}][${after}]"
+  }
+}

@@ -119,6 +119,35 @@ func Str_contains_any(_ *Task, s, chars string) bool { return strings.ContainsAn
 
 // Str_contains_rune is `s.contains_rune(r)`: strings.ContainsRune.
 func Str_contains_rune(_ *Task, s string, r Rune) bool { return strings.ContainsRune(s, rune(r)) }
+// Str_cut is `s.cut(sep)`: the text before and after the first sep
+// (strings.Cut), and None when sep is not there.
+func Str_cut(_ *Task, s, sep string) Option[Tuple2[string, string]] {
+	before, after, ok := strings.Cut(s, sep)
+	if !ok {
+		return None[Tuple2[string, string]]()
+	}
+	return Some(Tuple2[string, string]{before, after})
+}
+
+// Str_cut_prefix is `s.cut_prefix(prefix)`: the text after a leading
+// prefix (strings.CutPrefix), and None when s does not start with it.
+func Str_cut_prefix(_ *Task, s, prefix string) Option[string] {
+	rest, ok := strings.CutPrefix(s, prefix)
+	if !ok {
+		return Option[string]{}
+	}
+	return Some(rest)
+}
+
+// Str_cut_suffix is `s.cut_suffix(suffix)`: the text before a trailing
+// suffix (strings.CutSuffix), and None when s does not end with it.
+func Str_cut_suffix(_ *Task, s, suffix string) Option[string] {
+	before, ok := strings.CutSuffix(s, suffix)
+	if !ok {
+		return Option[string]{}
+	}
+	return Some(before)
+}
 
 // Str_split is `s.split(sep)`.
 func Str_split(_ *Task, s, sep string) List[string] { return ListOf(strings.Split(s, sep)...) }

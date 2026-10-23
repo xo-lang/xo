@@ -119,6 +119,12 @@ fn str_contains_any(s: Str, chars: Str) -> Bool { scan.index_any(s, chars) >= 0 
 
 fn str_contains_rune(s: Str, r: Rune) -> Bool { scan.index_rune(s, r) >= 0 }
 
+fn str_cut(s: Str, sep: Str) -> (Str, Str)? { scan.cut(s, sep) }
+
+fn str_cut_prefix(s: Str, prefix: Str) -> Str? { scan.cut_prefix(s, prefix) }
+
+fn str_cut_suffix(s: Str, suffix: Str) -> Str? { scan.cut_suffix(s, suffix) }
+
 fn str_fields(s: Str) -> List[Str] { strings.fields(s) }
 
 fn str_lines(s: Str) -> List[Str] { scan.lines(s) }

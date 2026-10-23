@@ -181,6 +181,9 @@ fn (s: Str) find_any(chars: Str) -> Int?     // the first rune of chars (strings
 fn (s: Str) rfind_any(chars: Str) -> Int?    // the last rune of chars (strings.LastIndexAny)
 fn (s: Str) contains_any(chars: Str) -> Bool // strings.ContainsAny
 fn (s: Str) contains_rune(r: Rune) -> Bool   // strings.ContainsRune; an invalid byte of s reads as U+FFFD
+fn (s: Str) cut(sep: Str) -> (Str, Str)?     // before and after the first sep (strings.Cut); None when absent
+fn (s: Str) cut_prefix(prefix: Str) -> Str?  // the rest after a prefix (strings.CutPrefix); None when absent
+fn (s: Str) cut_suffix(suffix: Str) -> Str?   // s up to a suffix (strings.CutSuffix); None when absent
 fn (s: Str) split(sep: Str) -> List[Str]
 fn (s: Str) split_n(sep: Str, n: Int) -> List[Str]  // at most n pieces, the unsplit rest in the last (strings.SplitN); n below 0 is split, 0 is no piece
 fn (s: Str) split_after(sep: Str) -> List[Str]      // like split, each piece keeping its separator (strings.SplitAfter)
@@ -4033,7 +4036,7 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
 
 Every function and method of std/prelude.xo, by type, as declared there
 (the sections above explain them); interface methods take `self`.
-374 declarations.
+377 declarations.
 
 ### Range
 
@@ -4214,6 +4217,9 @@ fn (s: Str) contains_rune(r: Rune) -> Bool
 fn (s: Str) split_n(sep: Str, n: Int) -> List[Str]
 fn (s: Str) split_after(sep: Str) -> List[Str]
 fn (s: Str) split_after_n(sep: Str, n: Int) -> List[Str]
+fn (s: Str) cut(sep: Str) -> (Str, Str)?
+fn (s: Str) cut_prefix(prefix: Str) -> Str?
+fn (s: Str) cut_suffix(suffix: Str) -> Str?
 fn (s: Str) split(sep: Str) -> List[Str]
 fn (s: Str) fields() -> List[Str]
 fn (s: Str) lines() -> List[Str]

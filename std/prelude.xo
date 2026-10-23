@@ -284,6 +284,15 @@ fn (s: Str) split_n(sep: Str, n: Int) -> List[Str]
 fn (s: Str) split_after(sep: Str) -> List[Str]
 /// At most n pieces, each keeping its separator (strings.SplitAfterN).
 fn (s: Str) split_after_n(sep: Str, n: Int) -> List[Str]
+/// The text before and after the first sep (strings.Cut), as views of s;
+/// None when sep does not occur, and sep "" cuts at the start.
+fn (s: Str) cut(sep: Str) -> (Str, Str)?
+/// The rest of s after prefix (strings.CutPrefix), a view of s; None when
+/// s does not start with prefix, and prefix "" gives s.
+fn (s: Str) cut_prefix(prefix: Str) -> Str?
+/// s up to its suffix (strings.CutSuffix), a view of s; None when s does
+/// not end with suffix, and suffix "" gives s.
+fn (s: Str) cut_suffix(suffix: Str) -> Str?
 fn (s: Str) split(sep: Str) -> List[Str]
 /// The runs of non-white-space text, split around runs of white space
 /// (strings.Fields, unicode.IsSpace); pieces are views of s like split's.
