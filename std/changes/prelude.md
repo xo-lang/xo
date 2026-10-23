@@ -1,5 +1,19 @@
 # prelude changes
 
+## 2026-10-23: perf: scan.eq_text inlines into the trim loop sites
+
+- Kind: perf
+- Commit: (pending)
+- Found by: bench/results/views-trim-2026-10-22.md (trim_affix still 1.5x Go's instructions: eq_text was a call per trim)
+- Go reference: strings.TrimPrefix, strings.TrimSuffix (compare folded into the caller)
+- Test: golden trim_affix_lens, views_split, str_ops_table, strings, text_helpers on arm64 and LLVM with Go parity; wasm goldens; std corpora
+
+`scan.eq_text` was 120 instructions (its 8 byte word loop, `eq_words`, was
+inlined into it), over the few sites rule's 100. It compares with 4 byte words
+(whole words, then the overlapping last word) for 4 or more bytes, so the
+helper `eq_words` is gone; at 93 instructions it is inlined at loop sites.
+Output is byte-identical.
+
 ## 2026-10-23: perf: trim_prefix and trim_suffix inline in native code
 
 - Kind: perf

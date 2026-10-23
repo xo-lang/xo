@@ -63,3 +63,16 @@ no length check in the copy of a Str's own range, and the word loop in
 1.5x Go's instructions remain: `scan.eq_text` (120 instructions with its
 branches and `eq_words`) is still a call per trim, where Go folds the compare
 of a constant affix. Output is byte-identical.
+
+## scan.eq_text inlines (2026-10-23)
+
+`eq_text` compares 4 byte words (no `eq_words`): 120 to 93 instructions, so the
+few sites rule (at most 100) inlines it at the loop sites of `trim_prefix` and
+`trim_suffix`.
+
+| mode | wall | instructions | before | after | Go |
+| --- | --- | --- | --- | --- | --- |
+| trim_affix | within noise (1.009) | 0.953 (0.952 to 0.954, `--ab` n=10) | 75.8 M | 72.2 M | 50.5 M |
+
+1.43x Go's instructions remain: the compare of a constant affix is still run
+at call time (Go folds it). Output is byte-identical.
