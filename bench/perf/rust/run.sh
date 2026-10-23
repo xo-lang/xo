@@ -44,7 +44,7 @@ cargo=${CARGO:-$(command -v cargo || echo "$HOME/.cargo/bin/cargo")}
 build_rust() { # DIR BIN OUT
 	(cd "$1" && CARGO_TARGET_DIR="$out/target-$2" "$cargo" build --release --locked -q) && cp "$out/target-$2/release/$2" "$3"
 }
-crates=$(for d in http json; do awk '/^name = "(axum|tokio|hyper|serde|serde_json)"$/{n=$3} /^version/{if(n){printf "%s %s; ", n, $3; n=""}}' "$here/$d/Cargo.lock"; done | tr -d '"')
+crates=$(for d in http json; do awk '/^name = "(axum|tokio|hyper|serde|serde_json)"$/{n=$3} /^version/{if(n){printf "%s %s; ", n, $3; n=""}}' "$here/$d/Cargo.lock"; done | tr -d '"' | tr ';' '\n' | sed 's/^ *//' | sort -u | tr '\n' ';')
 header Rust "$("$cargo" --version), $(rustc --version 2>/dev/null || true)" "crates (Cargo.lock): $crates" "release profile of every crate: opt-level 3, codegen-units 1, thin LTO, panic abort" > "$out/header.md"
 : > "$out/body.md"
 
@@ -67,6 +67,14 @@ for r in $rows; do
 		for w in spawn fanout pingpong mutex rwmutex pmap; do
 			(cd "$here/../conc/xo/$w" && "$xo" build -o "$out/conc-xo-$w" . >/dev/null)
 			ab "$w" "$out/concperf-rust" "$out/conc-xo-$w" "$w" >> "$out/body.md"
+		done
+		# tokio's current thread runtime is the idiom for many small tasks and a
+		# channel ping pong that never needs a second thread (a multi thread
+		# runtime wakes another worker per hop), so the three async rows run
+		# on it as well
+		wrapper "$out/concperf-rust-ct" env CONCPERF_RT=current "$out/concperf-rust"
+		for w in spawn fanout pingpong; do
+			ab "$w, tokio current thread runtime" "$out/concperf-rust-ct" "$out/conc-xo-$w" "$w" >> "$out/body.md"
 		done ;;
 	json)
 		build_rust "$here/json" jsontwin "$out/json-rust"
