@@ -325,6 +325,12 @@ func usesTasks(t *testing.T, dir string) bool {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// a `use c` program (use_c_add) links its C adapter and sources,
+	// which the IR alone TestGoldenTasks builds from does not carry
+	// (undefined _xo_c_... symbols); TestGolden runs it with its tasks
+	if bytes.HasPrefix(src, []byte("use c ")) || bytes.Contains(src, []byte("\nuse c ")) {
+		return false
+	}
 	for _, w := range []string{"scope ", "Chan[", "Mutex[", "Atomic["} {
 		if bytes.Contains(src, []byte(w)) {
 			return true
