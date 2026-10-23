@@ -267,9 +267,10 @@ fn ipv6_ok(b: Bytes, lo0: Int, hi: Int) -> Bool {
   tp == 16
 }
 
-/// url.parseHost of b[lo..hi] (Go 1.26, strict colons, not postgres):
+/// url.parseHost of b[lo..hi] (Go 1.26, strict colons; postgres keeps the
+/// last colon, go.dev/issue/75223, for a comma-separated host list):
 /// (true, the host unescaped, "") or (false, "", Go's error text).
-fn parse_host(b: Bytes, s: Str, lo: Int, hi: Int) -> (Bool, Str, Str) {
+fn parse_host(b: Bytes, s: Str, lo: Int, hi: Int, pg: Bool) -> (Bool, Str, Str) {
   let ob = rfind(b, 91, hi)
   if ob > lo {
     return (false, "", "invalid IP-literal")
@@ -312,7 +313,10 @@ fn parse_host(b: Bytes, s: Str, lo: Int, hi: Int) -> (Bool, Str, Str) {
     }
     return (true, "[" + name + "]" + rawb.str_slice(s, cb + 1, hi), "")
   }
-  let colon = find(s, 58, lo, hi)
+  var colon = find(s, 58, lo, hi)
+  if pg && colon >= 0 {
+    colon = rfind(b, 58, hi)
+  }
   if colon >= 0 && !valid_port(b, colon, hi) {
     return (false, "", "invalid port " + go_quote(rawb.str_slice(s, colon, hi)) + " after host")
   }
@@ -480,7 +484,7 @@ pub fn url_parse(s: Str, via_request: Bool) -> Url {
       k -= 1
     }
     let hlo = if at >= 0 { at + 1 } else { a }
-    let (hok, h, herr) = parse_host(b, s, hlo, ae)
+    let (hok, h, herr) = parse_host(b, s, hlo, ae, scheme == "postgres" || scheme == "postgresql")
     if !hok {
       return url_fail(herr)
     }

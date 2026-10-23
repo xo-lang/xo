@@ -1,5 +1,17 @@
 # std/http changes
 
+## 2026-10-23: test: parse_url and new_request against Go's net/url
+
+- Kind: test
+- Commit: this commit
+- Found by: Go's url_test.go inputs and 4,000 seeded random URLs and 1,200 queries run through url.Parse and ParseQuery
+- Go reference: net/url url_test.go (Copyright 2009 The Go Authors, BSD-style license), url.go (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/httpurl (TestStdCorpora, arm64 and LLVM)
+
+The corpus compares parse_url (scheme, host, port, path, first value of each
+query key, and its three error texts) and new_request (path, url path, query)
+with Go. It found the postgres multi-host gap fixed in std/url.
+
 ## 2026-10-23: perf: query_parts reads a plain query in place
 
 - Kind: perf

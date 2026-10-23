@@ -1,5 +1,18 @@
 # std/url changes
 
+## 2026-10-23: fix: a postgres URL keeps its comma-separated host list, as Go 1.26's parseHost
+
+- Kind: fix
+- Commit: this commit
+- Found by: differential test against Go (internal/stdtest/testdata/corpus/httpurl, Go's url_test.go inputs)
+- Go reference: net/url url.go parseHost, url_test.go urltests (go1.26.1, go.dev/issue/75223, 75859)
+- Test: internal/stdtest/testdata/corpus/httpurl (TestStdCorpora, arm64 and LLVM)
+
+`postgres://host1:1,host2:2,host3:3` failed with `invalid port ":1,host2:2,host3:3"
+after host`. Go 1.26 keeps strict colon checking except for the postgres and
+postgresql schemes, where the last colon starts the port. neturl.parse_host
+now takes that case.
+
 ## 2026-10-22: perf: parse_query copies its keys and values of a long query
 
 - Kind: perf
