@@ -1,5 +1,18 @@
 # prelude changes
 
+## 2026-10-23: perf: Float text reads powers of ten from a table
+
+- Kind: perf
+- Commit: this commit
+- Found by: native vs LLVM comparison (json enc_floats 1.11 times LLVM's instructions)
+- Go reference: none (Go's ftoa keeps its own tables)
+- Test: TestNumDiff at 200000 cases (arm64 and LLVM against Go)
+
+std/native/llrt/num.xo pow10, which the Float layout calls at each of
+its sites, is one load from a table of 10^0 to 10^18 instead of five
+tests and five checked multiplies. Output is unchanged. callgrind
+linux/amd64: json enc_floats 0.964, enc_small 0.990.
+
 ## 2026-10-23: fix: Float32 of a UInt64 rounds once
 
 - Kind: fix
