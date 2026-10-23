@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native runtime on Linux: an idle worker waiting out a run-next grace
+  (50 us) in the poller uses epoll_pwait2 (a nanosecond timeout, Linux
+  5.11) instead of epoll_wait, which rounded the wait up to 1 ms; older
+  kernels fall back to epoll_wait. HTTP/2 download and CRUD within noise
+  (`xo bench --ab`).
+
 - xo stops itself past three quarters of physical memory, at least 16
   GiB (decision 0349's default, owner): a runaway build ends with
   `fatal error: memory budget exceeded` and its phase instead of swapping

@@ -1329,11 +1329,21 @@ fn wait_events(poll: Int, evs: Int, ts: Int, wait: Int) -> Int {
       if r < 0 { 0 } else { r }
     }
     TargetOs.Linux => {
-      var ms = -1
-      if wait >= 0 {
-        ms = if wait > 1099511627776 { 1073741824 } else { addw(wait, 999999) / 1000000 }
+      var r = -38
+      if wait > 0 && wait < 1000000 {
+        // under a millisecond (an idle worker waiting out a run-next
+        // grace, pool.xo np_block): epoll_wait would round it up to 1 ms
+        rt.mem_store(ts, 0, 0, 8)
+        rt.mem_store(ts, 8, wait, 8)
+        r = sock.epoll_pwait2(poll, evs, NEVENTS, ts)
       }
-      let r = sock.epoll_wait(poll, evs, NEVENTS, ms)
+      if r == -38 {
+        var ms = -1
+        if wait >= 0 {
+          ms = if wait > 1099511627776 { 1073741824 } else { addw(wait, 999999) / 1000000 }
+        }
+        r = sock.epoll_wait(poll, evs, NEVENTS, ms)
+      }
       // the acquire of epoll_add's release: the kernel orders a
       // registration before its events, which ThreadSanitizer sees only
       // through the C library's interceptors (gotchas/tsan-raw-epoll-no-edge.md)

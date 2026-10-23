@@ -348,6 +348,10 @@ pub fn epoll_ctl(ep: Int, op: Int, fd: Int, ev: Int) -> Int { rt.sys6(nr(21, 233
 /// epoll_pwait(2) with no signal mask (epoll_wait, which arm64 lacks).
 pub fn epoll_wait(ep: Int, evs: Int, n: Int, ms: Int) -> Int { rt.sys6(nr(22, 281), ep, evs, n, ms, 0, 8) }
 
+/// epoll_pwait2(2) (Linux 5.11) with the timespec at ts and no signal
+/// mask: a wait in nanoseconds; -38 (ENOSYS) on an older kernel.
+pub fn epoll_pwait2(ep: Int, evs: Int, n: Int, ts: Int) -> Int { rt.sys6(nr(441, 441), ep, evs, n, ts, 0, 8) }
+
 /// ppoll(2) of the n struct pollfd at fds, with the timespec at ts (0:
 /// no limit) and no signal mask.
 pub fn ppoll(fds: Int, n: Int, ts: Int) -> Int { rt.sys6(nr(73, 271), fds, n, ts, 0, 8, 0) }
