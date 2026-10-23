@@ -512,6 +512,12 @@ fn (b: Builder) target_names() -> (Str, Str) {
       _ => "Amd64"
     }
   }
+  // a wasm build targets Wasi on Wasm32 whatever the host is (a build for
+  // the browser or WASI passed the host's goos and goarch: field report
+  // b05: target.os was Darwin)
+  if b.wasm {
+    return ("Wasi", "Wasm32")
+  }
   (os_name, arch_name)
 }
 

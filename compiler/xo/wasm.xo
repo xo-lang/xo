@@ -1,7 +1,8 @@
 // `xo1 build --backend=wasm` (decision 0179): the SSA module after the
 // passes lowered by compiler/wasm to a WebAssembly module whose only
 // imports are WASI preview1's (no C compiler, no linker), written to OUT
-// (default <name>.wasm) with its WAT text beside it (OUT with .wat). A
+// (default <name>.wasm), and its WAT text beside it (OUT with .wat) when
+// XO_KEEP_WAT=1. A
 // program the backend does not support yet fails with its reason; no
 // module is written.
 //
@@ -45,9 +46,13 @@ fn build_wasm(os: Os, ctx: Ctx, m: ssa.Module, out0: Str, wd: Str, dir: Str, tz:
     Ok(_) => {}
     Err(e) => fail_stage(os, st, "cannot write the program to ${out}: ${fs_reason(e)}")
   }
-  match os.fs.write("${st.bin.trim_suffix(".wasm")}.wat", p.wat.bytes()) {
-    Ok(_) => {}
-    Err(e) => fail_stage(os, st, "cannot write ${out.trim_suffix(".wasm")}.wat: ${fs_reason(e)}")
+  // the WAT text (770 KB for a small program) only on request, as
+  // XO_KEEP_ASM keeps the native assembly (field report b05)
+  if (os.env.get("XO_KEEP_WAT") ?? "") == "1" {
+    match os.fs.write("${st.bin.trim_suffix(".wasm")}.wat", p.wat.bytes()) {
+      Ok(_) => {}
+      Err(e) => fail_stage(os, st, "cannot write ${out.trim_suffix(".wasm")}.wat: ${fs_reason(e)}")
+    }
   }
   let err = st.commit(os)
   if !err.is_empty() {

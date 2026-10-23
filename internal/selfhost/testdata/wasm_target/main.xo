@@ -1,0 +1,31 @@
+// The predeclared `target` of a wasm build is Wasi on Wasm32, not the
+// host's (field report b05: it was Darwin). TestWasmTargetOS builds this
+// with `xo build --backend=wasm` and runs it under Node's WASI; the other
+// backends print their own target, so it is not a shared golden.
+
+fn os_name(o: TargetOs) -> Str {
+  match o {
+    Linux => "Linux"
+    Darwin => "Darwin"
+    Windows => "Windows"
+    Wasi => "Wasi"
+  }
+}
+
+fn arch_name(a: TargetArch) -> Str {
+  match a {
+    Amd64 => "Amd64"
+    Arm64 => "Arm64"
+    Wasm32 => "Wasm32"
+  }
+}
+
+fn main(os: Os) {
+  os.stdio.println("target ${os_name(target.os)} ${arch_name(target.arch)}")
+  // the arm a `match target.os` takes is the build's
+  let folded = match target.os {
+    Wasi => "wasi arm"
+    _ => "other arm"
+  }
+  os.stdio.println(folded)
+}
