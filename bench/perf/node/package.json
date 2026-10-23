@@ -1,0 +1,13 @@
+{
+  "name": "perf-node",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Node (TypeScript) twins of bench/perf's rows: http CRUD on node:http, JSON, concurrency with async tasks and worker_threads, compute. Compiled by tsc into dist/.",
+  "scripts": {
+    "build": "tsc -p ."
+  },
+  "devDependencies": {
+    "@types/node": "22.19.0",
+    "typescript": "5.9.3"
+  }
+}

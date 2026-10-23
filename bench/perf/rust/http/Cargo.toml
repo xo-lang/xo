@@ -1,0 +1,19 @@
+[package]
+name = "crudperf"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Rust twin of bench/perf/http/go (the users CRUD API): axum on tokio with
+# serde_json. Versions are pinned by Cargo.lock (build with --locked).
+[dependencies]
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+codegen-units = 1
+lto = "thin"
+panic = "abort"

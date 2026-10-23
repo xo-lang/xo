@@ -1,0 +1,60 @@
+// Xo twin of bench/perf/jsontwin: std/json decode and encode of 1000
+// users, 100 rounds each. Usage: jsontwin decode|encode.
+use std/json
+
+struct User {
+  id: Int
+  name: Str
+  email: Str
+  score: Float
+  active: Bool
+  tags: List[Str]
+} derive Json
+
+const DOCS = 1000
+const ROUNDS = 100
+
+fn users() -> List[User] {
+  var us: List[User] = List.with_capacity(DOCS)
+  var seed = 12345
+  for _ in 0..DOCS {
+    seed = (seed * 1103515245 + 12345) % 2147483648
+    let n = seed % 100000
+    var tags: List[Str] = []
+    for t in 0..(seed % 5) {
+      tags.push("t${t}")
+    }
+    us.push(User{id: n, name: "user ${n}", email: "user_${n}@example.com", score: Float(seed % 1000) + 0.5, active: seed % 2 == 0, tags: tags})
+  }
+  us
+}
+
+/// The document built by hand, not with the encoder under test.
+fn text(u: User) -> Str {
+  let ts = u.tags.map(fn(t) { "\"${t}\"" }).join(",")
+  "{\"id\":${u.id},\"name\":\"${u.name}\",\"email\":\"${u.email}\",\"score\":${u.score},\"active\":${u.active},\"tags\":[${ts}]}"
+}
+
+fn main(os: Os) {
+  let w = os.env.args().get(0) ?? "decode"
+  let us = users()
+  var h = 0
+  if w == "decode" {
+    let ds = us.map(text)
+    for _ in 0..ROUNDS {
+      for d in ds {
+        match json.decode_str[User](d) {
+          Ok(u) => h = (h * 31 + u.id + u.name.len() + u.email.len() + u.tags.len() + Int(u.score) % 100 + (if u.active { 1 } else { 0 })) % 1000000007
+          Err(e) => h = h + e.msg.len()
+        }
+      }
+    }
+  } else {
+    for _ in 0..ROUNDS {
+      for u in us {
+        h = (h * 31 + json.encode_str(u).len()) % 1000000007
+      }
+    }
+  }
+  os.stdio.println("${w} ${h}")
+}

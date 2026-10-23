@@ -30,6 +30,8 @@
 # --backend=llvm and "xo-base-arm64" with --backend=arm64; "xo-arm64" and "xo-llvm" build
 # the Xo server with the native backends, decision 0074, which have no GC
 # so their GC columns are 0), XO,
+# "rust" builds bench/perf/rust/http with cargo, "node", "python-asyncio" and
+# "python-starlette" run bench/perf/{node,python} (their GC columns are 0),
 # PERF_OUT (keep binaries and logs there), GOGC passed through to the
 # servers. SCHEME=https serves the Xo configs over TLS (decision 0105) with
 # a fresh self signed certificate (loadgen -gencert; the go config stays
@@ -80,6 +82,14 @@ for c in $configs; do
 	xo-arm64) "$xo" build --backend=arm64 -o "$out/srv-xo-arm64" "$here/xo" >/dev/null ;;
 	xo-llvm) "$xo" build --backend=llvm -o "$out/srv-xo-llvm" "$here/xo" >/dev/null ;;
 	xo-base-llvm) XO_BUILD_DIR="$out/build-base" "${XO_BASE:?set XO_BASE to an xo binary}" build --backend=llvm -o "$out/srv-xo-base-llvm" "$here/xo" >/dev/null ;;
+	rust) # bench/perf/rust/http: axum on tokio with serde_json (Cargo.lock pins every crate)
+		(cd "$here/../rust/http" && CARGO_TARGET_DIR="$out/rust-target" "${CARGO:-$(command -v cargo || echo "$HOME/.cargo/bin/cargo")}" build --release --locked -q) && cp "$out/rust-target/release/crudperf" "$out/srv-rust" ;;
+	node) # bench/perf/node: node:http, one process (the store is in memory); needs npm ci first
+		(cd "$here/../node" && npm ci --no-audit --no-fund --silent && npx tsc -p .) && printf '#!/bin/sh\nexec node %s/../node/dist/http/server.js\n' "$here" > "$out/srv-node" && chmod +x "$out/srv-node" ;;
+	python-asyncio) # bench/perf/python: asyncio.Protocol on the standard library, one process
+		printf '#!/bin/sh\nexec %s/../python/.venv/bin/python %s/../python/http/server_asyncio.py\n' "$here" "$here" > "$out/srv-python-asyncio" && chmod +x "$out/srv-python-asyncio" ;;
+	python-starlette) # Starlette on uvicorn (httptools, uvloop), one worker
+		printf '#!/bin/sh\nexec %s/../python/.venv/bin/python %s/../python/http/server_starlette.py\n' "$here" "$here" > "$out/srv-python-starlette" && chmod +x "$out/srv-python-starlette" ;;
 	xo-base-arm64) XO_BUILD_DIR="$out/build-base" "${XO_BASE:?set XO_BASE to an xo binary}" build --backend=arm64 -o "$out/srv-xo-base-arm64" "$here/xo" >/dev/null ;;
 	*) echo "unknown config $c" >&2; exit 2 ;;
 	esac

@@ -1,0 +1,17 @@
+[package]
+name = "jsontwin"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Rust twin of bench/perf/jsontwin: serde derive and serde_json on typed
+# structs. Versions are pinned by Cargo.lock (build with --locked).
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+codegen-units = 1
+lto = "thin"
+panic = "abort"
