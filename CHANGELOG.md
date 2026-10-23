@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- A hole interpolated into a string (`"${???}"`) has type `Str`, with the
+  values in scope that fit it, instead of `hole of type unknown`.
+
 - `xo test --explore` prints the exact command that reproduces a failure
   on its first seed too, as it did for later seeds (the Go backend said
   only `seed 1`, and `xo test --seed=1` without `--backend=go` passed).

@@ -403,7 +403,14 @@ fn (var c: Checker) infer0(e: Expr, hint: Int) -> Int {
     StringLit(s) => {
       for p in s.parts {
         if let Some(x) = p.expr {
-          let t = c.infer(x, -1)
+          // a hole interpolated (`${???}`): Str, the type every
+          // interpolated value becomes, rather than no type at all (it
+          // said "hole of type unknown"; field report 0.26.0)
+          var want = -1
+          if let HoleExpr(..) = x {
+            want = c.named("Str")
+          }
+          let t = c.infer(x, want)
           if p.debug {
             // `${x:?}` (decision 0296): every type implements Debug
             // (std.md 1), so this reports only what has no text at all

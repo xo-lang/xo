@@ -33,3 +33,24 @@ func TestHolesNative(t *testing.T) {
 		t.Errorf("build without --holes: exit %d\n%s", code, out)
 	}
 }
+
+// TestHoleInInterpolation: a hole interpolated into a string (`"${???}"`,
+// and `"${???:?}"`) has the type an interpolated value becomes, Str, with
+// the values in scope that fit it (field report 0.26.0: it said "hole of
+// type unknown" and listed none).
+func TestHoleInInterpolation(t *testing.T) {
+	t.Parallel()
+	dir := writeFiles(t, map[string]string{
+		"app/xo.mod":  "module app\n",
+		"app/main.xo": "fn greet(name: Str) -> Str {\n  \"hello ${???}\"\n}\n\nfn debug(name: Str) -> Str {\n  \"got ${???:?}\"\n}\n\nfn main(os: Os) {\n  os.stdio.println(greet(\"x\") + debug(\"y\"))\n}\n",
+	})
+	var out, errb strings.Builder
+	run(t, []string{"check", "--json", filepath.Join(dir, "app")}, &out, &errb)
+	text := out.String()
+	if strings.Count(text, "hole of type `Str`") != 2 || strings.Contains(text, "hole of type unknown") {
+		t.Fatalf("want two holes of type `Str`:\n%s%s", text, errb.String())
+	}
+	if !strings.Contains(text, "in scope values that fit: `name`") {
+		t.Errorf("no note naming `name`, the Str in scope:\n%s", text)
+	}
+}
