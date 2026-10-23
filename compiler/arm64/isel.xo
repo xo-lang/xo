@@ -1173,8 +1173,12 @@ fn (var g: G) instr1(v: Int) {
         q = x.args[0]
       }
       let (n, qc) = g.logic_const(q)
-      // x86 takes any sign extended 32 bit immediate (decision 0254)
-      if qc && (ones_run(n) || (g.x86 && imm32(n))) {
+      // x86 takes any sign extended 32 bit immediate (decision 0254), and
+      // only those: a wider one in a register is a constant hoist_consts
+      // moves out of a loop, where the immediate was a movabsq through
+      // r11 at each use (2026-10-22: jsontext.str_end's 0x22 and 0x80
+      // byte masks, every 8 bytes)
+      if qc && (if g.x86 { imm32(n) } else { ones_run(n) }) {
         // a logical immediate (decision 0184)
         let w = g.word(p)
         g.set(v, [g.def1(false, "${ins} $d0, $u0, #${n}", [w])])
@@ -2575,7 +2579,8 @@ fn (g: G) and_imm(v: Int) -> (Int, Int) {
   let x = g.f.values[v]
   for i in [1, 0] {
     let (n, c) = g.logic_const(x.args[i])
-    if c && ones_run(n) {
+    // x86: a 32 bit one only (the and's rule)
+    if c && ones_run(n) && (!g.x86 || imm32(n)) {
       return (x.args[1 - i], n)
     }
   }

@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [loop-two-back-edges-no-hoist.md](loop-two-back-edges-no-hoist.md): Observed and fixed 2026-10-22: dfs_loops gave one loop per back edge, so a loop with two (a `continue` in `while true`, jsontext.str_end) had no preheader and hoist_consts moved nothing; on x86 a 64 bit logical immediate was a movabsq at each use. Merged per header; x86 immediates only within 32 bits.
 - [cached-object-names-worktree.md](cached-object-names-worktree.md): Observed and fixed 2026-10-22: the worktree's path in each part's DWARF (inline comp_dir and line table directories) kept every worktree from reusing the back-end cache's objects (0/117 for xo); now strp into fixed .debug_str slots filled as the object leaves the compiler.
 - [check-cache-builder-reads-names.md](check-cache-builder-reads-names.md): Observed and fixed 2026-10-22: the SSA builder's main_unnamed read the checker's names, which a module skipped by XO_CHK_CACHE=auto never records, so warm builds kept main's user capability dispatch (TestModuleCheckAuto failed); the module check entry now records it.
 - [go-own-mark-receiver-not-addressable.md](go-own-mark-receiver-not-addressable.md): Observed and fixed 2026-10-22: after 0335 an own-marked receiver (a Request or Embed.Dir, holding a Map) was a Go call result, and std/rt's pointer methods (M_client_ip, M_paths) did not compile on it; go_recv passes it through rt.Addr.

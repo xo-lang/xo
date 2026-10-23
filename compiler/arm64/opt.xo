@@ -1343,7 +1343,12 @@ fn (g: G) mpreds_all(blocks: List[Int]) -> List[List[Int]] {
 
 /// The natural loops of the back edges a depth first search from b0
 /// finds, in the order found: each its header and body (hoistConsts);
-/// a retreating edge into an irreducible region gives none.
+/// a retreating edge into an irreducible region gives none. A header's
+/// back edges make one loop, the union of their bodies (2026-10-22: a
+/// `while true` whose body continues from two places, jsontext.str_end,
+/// gave a loop a back edge, each of whose bodies left the other latch
+/// outside: two predecessors from outside, so no preheader, and its
+/// five 64 bit masks were made again every 8 bytes).
 fn (g: G) dfs_loops(b0: Int, preds: List[List[Int]]) -> List[(Int, List[Bool])] {
   let nb = g.blocks.len()
   var state: List[Int] = []
@@ -1392,7 +1397,21 @@ fn (g: G) dfs_loops(b0: Int, preds: List[List[Int]]) -> List[(Int, List[Bool])] 
       // it on a path that never made it: "reads virtual register 307
       // before it is written")
       if t == b0 || !body[b0] {
-        loops.push((t, body))
+        var merged = false
+        for k in 0..loops.len() {
+          if loops[k].0 == t {
+            var u = loops[k].1
+            for x in 0..nb {
+              u[x] = u[x] || body[x]
+            }
+            loops[k] = (t, u)
+            merged = true
+            break
+          }
+        }
+        if !merged {
+          loops.push((t, body))
+        }
       }
     }
   }
