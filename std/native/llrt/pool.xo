@@ -2706,7 +2706,7 @@ fn site_small(pl: Int, t: Int) -> Bool {
   if a == 0 {
     return false
   }
-  let avg = rt.mem_load(pl, a, 8)
+  let avg = rt.slot_load(pl, a.shr_logical(3), RELAXED)
   avg != 0 && avg < SITE_SMALL_NS
 }
 
@@ -2716,8 +2716,7 @@ const SITE_SMALL_NS = 20000
 pub fn site_clock() -> Int { cpu.ticks() }
 
 /// Folds the run time of task t, started at t0 (site_clock), into its spawn
-/// site's average (a quarter weight). The word is read and written plainly:
-/// a lost update is one sample.
+/// site's average (a quarter weight).
 pub fn site_note(pl: Int, t: Int, t0: Int) {
   let a = site_slot(t)
   if a == 0 {
@@ -2730,8 +2729,12 @@ pub fn site_note(pl: Int, t: Int, t0: Int) {
   if ns > 1000000000 {
     ns = 1000000000
   }
-  let old = rt.mem_load(pl, a, 8)
-  rt.mem_store(pl, a, if old == 0 { ns } else { old.wrapping_mul(3).wrapping_add(ns).shr_logical(2) }, 8)
+  // relaxed atomics: every worker reads and writes the slot, and a lost
+  // update is one sample (a plain access was a data race to
+  // ThreadSanitizer in a --race build of the runtime, 2026-10-23)
+  let w = a.shr_logical(3)
+  let old = rt.slot_load(pl, w, RELAXED)
+  rt.slot_store(pl, w, if old == 0 { ns } else { old.wrapping_mul(3).wrapping_add(ns).shr_logical(2) }, RELAXED)
 }
 
 /// Takes the tasks that are over and that only s's list holds out of the
