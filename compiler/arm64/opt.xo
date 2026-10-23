@@ -967,6 +967,18 @@ fn (var g: G) narrow(x: Int, o: ssa.Op, ylo: Int, yhi: Int) {
       g.narrow(g.arg(x, 0), o, sat_add(ylo, -c), sat_add(yhi, -c))
     }
   }
+  // x = a >> k: a in [lo << k, (hi << k) + 2^k - 1] (2026-10-23: a
+  // sized conversion's fit test `(v + 2^31) >> 32 == 0` bounds v to
+  // Int32's range, portable conv)
+  if g.op(x) == ssa.Op.Shr {
+    let (k, ok) = g.const_int(g.arg(x, 1))
+    if ok && k >= 0 && k <= 62 {
+      let alo = sat_mul(lo, 1 << k)
+      let ahi = sat_add(sat_mul(hi, 1 << k), (1 << k) - 1)
+      g.narrow(g.arg(x, 0), ssa.Op.Ge, alo, alo)
+      g.narrow(g.arg(x, 0), ssa.Op.Le, ahi, ahi)
+    }
+  }
 }
 
 /// Whether a + n (or a - n) cannot overflow.

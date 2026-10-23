@@ -150,6 +150,35 @@ fn align16(n: Int) -> Int {
   (n + 15) & ~15
 }
 
+/// (m, s, true) with x * m >> s = x / d for every x in [0, hi] (d >= 2
+/// not a power of two, hi >= 0) and x * m below 2^63, the least such s:
+/// m = ceil(2^s / d) with error e = m * d - 2^s, exact when hi * e < 2^s
+/// (x = q * d + r, r < d: the error adds below 1 to r). (0, 0, false)
+/// when no s up to 62 works. m below 2^31 is an x86_64 immediate.
+fn small_magic(d: Int, hi: Int) -> (Int, Int, Bool) {
+  if d >= 1 << 61 {
+    // m * d up to 2^s + d: kept below 2^63
+    return (0, 0, false)
+  }
+  for s in 1..63 {
+    let p = 1 << s
+    if p < d {
+      continue
+    }
+    let m = p / d + 1
+    let e = m * d - p
+    let (he, hok) = mul_ok(hi, e)
+    let (_, mok) = mul_ok(hi, m)
+    if !mok {
+      return (0, 0, false)
+    }
+    if hok && he < p {
+      return (m, s, true)
+    }
+  }
+  (0, 0, false)
+}
+
 /// How x / d for UInt64s x and a constant d in [2, 2^63) is a multiply
 /// high (Granlund and Montgomery, "Division by Invariant Integers using
 /// Multiplication", 1994, theorem 4.2): (form, m, pre, post) with form 0

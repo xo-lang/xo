@@ -3056,9 +3056,10 @@ fn (var g: G) sdiv_quot(xv: Int, a: Int, d: Int) -> Int {
   if let Some(r) = g.cm.quo.get((a, d)) {
     return r
   }
-  let (lo, _) = g.bounds(xv)
+  let (lo, hi) = g.bounds(xv)
   var q = 0
   let (k, p2) = pow2c(d)
+  let (sm, ss, sok) = if g.x86 && !p2 && lo >= 0 { small_magic(d, hi) } else { (0, 0, false) }
   if p2 {
     if lo >= 0 || (g.cm.low_zero.get(a) ?? 0) >= k {
       q = g.def1(false, "asr $d0, $u0, #${k}", [a])
@@ -3070,6 +3071,12 @@ fn (var g: G) sdiv_quot(xv: Int, a: Int, d: Int) -> Int {
       let t = g.def1(false, "add $d0, $u0, $u1, lsr #${64 - k}", [a, sg])
       q = g.def1(false, "asr $d0, $u0, #${k}", [t])
     }
+  } else if sok {
+    // a dividend in [0, hi]: x * m >> s, the product exact in 63 bits
+    // (one imul by an immediate on x86_64, not imul through rdx:rax,
+    // 2026-10-23: portable conv's Int32 values, as LLVM)
+    q = g.def1(false, "mul $d0, $u0, $u1", [a, g.cimm(sm)])
+    q = g.def1(false, "lsr $d0, $u0, #${ss}", [q])
   } else {
     let (mg, sh) = sdiv_magic(d)
     q = g.def1(false, "smulh $d0, $u0, $u1", [a, g.cimm(mg)])

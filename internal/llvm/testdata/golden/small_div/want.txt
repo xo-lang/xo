@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+21 divisors: uint8 0 wrong 976109307, int32 0 wrong 308608911
+--- stderr
