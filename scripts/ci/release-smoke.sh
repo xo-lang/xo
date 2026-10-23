@@ -114,6 +114,14 @@ run build-hello "$xo" build -o "$(np "$w/hello-bin$exe")" "$(np "$w/hello")"
 if [ -f "$w/hello-bin$exe" ] && [ "$("$w/hello-bin$exe" 2>&1 | tr -d '\r')" = "hello from the released xo" ]; then pass run-hello; else fail run-hello; fi
 run run-hello-xo-run "$xo" run "$(np "$w/hello")"
 
+# Git Bash (the Windows runner's shell) rewrites a POSIX-looking value in
+# a program's environment or arguments into a Windows path when it starts
+# a Windows exe (env_dirs' XDG_CONFIG_HOME=/xdg/config became C:/Program
+# Files/Git/xdg/config, CI 39999938410): the goldens' env.txt values are
+# meant as written
+if [ -n "$exe" ]; then
+  export MSYS_NO_PATHCONV=1 MSYS2_ENV_CONV_EXCL='*' MSYS2_ARG_CONV_EXCL='*'
+fi
 # goldens: threads, the zone database from the archive, and the goldens
 # whose output differs on Windows (want_windows.txt there: environment,
 # files, processes, signals, the clock, method values)

@@ -11,16 +11,16 @@ unlisted socket: Denied true
 hosts only, socket: Denied true
 other case: Denied true
 socket only, tcp: denied by Net.only: 127.0.0.1:9
-term: Io(msg: "signal TERM is not supported on this system")
+term: signal TERM is not supported on this system
 status after TERM: 137
 kill: ok
 status after KILL: 137
 unknown name: unknown signal "SIGTERM"
 pid 0: invalid process id 0
 pid -1: invalid process id -1
-no such process: Io(msg: "signal CONT is not supported on this system")
+no such process: signal CONT is not supported on this system
 not listed: denied by Proc.only: kill
-listed: Io(msg: "signal QUIT is not supported on this system")
+listed: signal QUIT is not supported on this system
 status after QUIT: 137
 intersection: denied by Proc.only: kill
 --- stderr
