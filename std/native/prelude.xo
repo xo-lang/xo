@@ -142,6 +142,12 @@ fn str_trim_prefix(s: Str, p: Str) -> Str {
   s
 }
 
+fn str_trim_chars(s: Str, chars: Str) -> Str { scan.trim_chars(s, chars) }
+
+fn str_trim_start_chars(s: Str, chars: Str) -> Str { scan.trim_start_chars(s, chars) }
+
+fn str_trim_end_chars(s: Str, chars: Str) -> Str { scan.trim_end_chars(s, chars) }
+
 fn str_trim_suffix(s: Str, p: Str) -> Str {
   if p.len() <= s.len() {
     // proved by the test above: no overflow, so no checked subtraction (its fault pads keep the function from inlining)

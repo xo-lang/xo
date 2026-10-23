@@ -1,0 +1,3 @@
+fn lead(s: Str) -> Str {
+  strings.TrimLeft(s, "0")
+}

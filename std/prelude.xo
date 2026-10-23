@@ -303,6 +303,13 @@ fn (s: Str) trim_start() -> Str
 fn (s: Str) trim_end() -> Str
 fn (s: Str) trim_prefix(p: Str) -> Str
 fn (s: Str) trim_suffix(p: Str) -> Str
+/// s without its leading and trailing runes in chars, a view of s like
+/// trim (strings.Trim); an empty s or chars gives s.
+fn (s: Str) trim_chars(chars: Str) -> Str
+/// s without its leading runes in chars, a view of s (strings.TrimLeft).
+fn (s: Str) trim_start_chars(chars: Str) -> Str
+/// s without its trailing runes in chars, a view of s (strings.TrimRight).
+fn (s: Str) trim_end_chars(chars: Str) -> Str
 fn (s: Str) to_lower() -> Str
 fn (s: Str) to_upper() -> Str
 fn (s: Str) replace(old: Str, new: Str) -> Str

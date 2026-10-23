@@ -1,0 +1,3 @@
+fn trail(s: Str) -> Str {
+  s.trim_end_chars("/")
+}

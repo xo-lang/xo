@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "name `strings` not found",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 3,
+      "end_line": 2,
+      "end_col": 10
+    },
+    "notes": [
+      {
+        "message": "`strings.TrimRight` is Go's library; Xo calls the method on the value: `s.trim_end_chars(\"/\")` (spec/std.md 2)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `.trim_end_chars(...)`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 3,
+              "end_line": 2,
+              "end_col": 28
+            },
+            "replace": "s.trim_end_chars(\"/\")"
+          }
+        ]
+      }
+    ]
+  }
+]

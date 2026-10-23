@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+[héllo, wörld]
+[  héllo, wörld  ]
+[éllo, wörld  ] [  héllo, wörl]
+[  héllo, wörld  ] [  héllo, wörld  ]
+14 18 22
+[héllo, wörld] [éllo, wörld]
+[héllo, wörld] 14 true
+--- stderr

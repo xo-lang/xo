@@ -435,6 +435,119 @@ pub fn cut_suffix(s: Str, suffix: Str) -> Str? {
   Some(s[0..s.len() - suffix.len()])
 }
 
+/// strings.Trim: s without its leading and trailing runes in chars, as a
+/// view of s. Go's fast paths: an empty s or chars is s, a one byte ASCII
+/// chars trims that byte, an ASCII chars is a bitmap, else runes are
+/// decoded and looked up in chars.
+pub fn trim_chars(s: Str, chars: Str) -> Str {
+  if s.len() == 0 || chars.len() == 0 {
+    return s
+  }
+  let cb = chars.bytes()
+  if chars.len() == 1 && cb[0] < 0x80 {
+    return trim_start_byte(trim_end_byte(s, cb[0]), cb[0])
+  }
+  let (lo, hi, ascii) = ascii_set(cb)
+  if ascii {
+    return trim_start_ascii(trim_end_ascii(s, lo, hi), lo, hi)
+  }
+  trim_start_unicode(trim_end_unicode(s, chars), chars)
+}
+
+/// strings.TrimLeft: s without its leading runes in chars, a view of s.
+pub fn trim_start_chars(s: Str, chars: Str) -> Str {
+  if s.len() == 0 || chars.len() == 0 {
+    return s
+  }
+  let cb = chars.bytes()
+  if chars.len() == 1 && cb[0] < 0x80 {
+    return trim_start_byte(s, cb[0])
+  }
+  let (lo, hi, ascii) = ascii_set(cb)
+  if ascii {
+    return trim_start_ascii(s, lo, hi)
+  }
+  trim_start_unicode(s, chars)
+}
+
+/// strings.TrimRight: s without its trailing runes in chars, a view of s.
+pub fn trim_end_chars(s: Str, chars: Str) -> Str {
+  if s.len() == 0 || chars.len() == 0 {
+    return s
+  }
+  let cb = chars.bytes()
+  if chars.len() == 1 && cb[0] < 0x80 {
+    return trim_end_byte(s, cb[0])
+  }
+  let (lo, hi, ascii) = ascii_set(cb)
+  if ascii {
+    return trim_end_ascii(s, lo, hi)
+  }
+  trim_end_unicode(s, chars)
+}
+
+fn trim_start_byte(s: Str, c: UInt8) -> Str {
+  let b = s.bytes()
+  var i = 0
+  while i < b.len() && b[i] == c {
+    i += 1
+  }
+  s[i..]
+}
+
+fn trim_end_byte(s: Str, c: UInt8) -> Str {
+  let b = s.bytes()
+  var n = b.len()
+  while n > 0 && b[n - 1] == c {
+    n -= 1
+  }
+  s[0..n]
+}
+
+fn trim_start_ascii(s: Str, lo: Int, hi: Int) -> Str {
+  let b = s.bytes()
+  var i = 0
+  while i < b.len() && in_set(lo, hi, Int(b[i])) {
+    i += 1
+  }
+  s[i..]
+}
+
+fn trim_end_ascii(s: Str, lo: Int, hi: Int) -> Str {
+  let b = s.bytes()
+  var n = b.len()
+  while n > 0 && in_set(lo, hi, Int(b[n - 1])) {
+    n -= 1
+  }
+  s[0..n]
+}
+
+fn trim_start_unicode(s: Str, chars: Str) -> Str {
+  let b = s.bytes()
+  var i = 0
+  while i < b.len() {
+    let (r, sz) = b.decode_rune(i)
+    if index_rune(chars, r) < 0 {
+      break
+    }
+    i += sz
+  }
+  s[i..]
+}
+
+fn trim_end_unicode(s: Str, chars: Str) -> Str {
+  let b = s.bytes()
+  var n = b.len()
+  while n > 0 {
+    let (r, sz) = decode_last(b, n)
+    if index_rune(chars, r) < 0 {
+      break
+    }
+    n -= sz
+  }
+  s[0..n]
+}
+
 /// The number of UTF-8 continuation bytes (0x80 to 0xBF) in w.
 fn cont8(w: Int) -> Int { rt.popcount(w & (shl(w, 1) ^ -1) & HIGHS) }
 

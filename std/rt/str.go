@@ -202,6 +202,15 @@ func Str_trim_end(_ *Task, s string) string { return strings.TrimRightFunc(s, un
 // Str_trim_prefix is `s.trim_prefix(p)`.
 func Str_trim_prefix(_ *Task, s, p string) string { return strings.TrimPrefix(s, p) }
 
+// Str_trim_chars is `s.trim_chars(chars)`: strings.Trim.
+func Str_trim_chars(_ *Task, s, chars string) string { return strings.Trim(s, chars) }
+
+// Str_trim_start_chars is `s.trim_start_chars(chars)`: strings.TrimLeft.
+func Str_trim_start_chars(_ *Task, s, chars string) string { return strings.TrimLeft(s, chars) }
+
+// Str_trim_end_chars is `s.trim_end_chars(chars)`: strings.TrimRight.
+func Str_trim_end_chars(_ *Task, s, chars string) string { return strings.TrimRight(s, chars) }
+
 // Str_trim_suffix is `s.trim_suffix(p)`.
 func Str_trim_suffix(_ *Task, s, p string) string { return strings.TrimSuffix(s, p) }
 

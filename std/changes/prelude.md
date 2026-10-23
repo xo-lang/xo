@@ -1,5 +1,37 @@
 # prelude changes
 
+## 2026-10-23: feature: Str.trim_chars, trim_start_chars and trim_end_chars (strings.Trim, TrimLeft, TrimRight)
+
+- Kind: feature
+- Commit: this commit
+- Found by: lead request; trim removed Unicode white space only, so a
+  cutset of characters, as Go's Trim takes, had to be looped by hand
+- Go reference: strings.Trim, TrimLeft and TrimRight with their
+  trimLeftByte, trimRightByte, trimLeftASCII, trimRightASCII,
+  trimLeftUnicode and trimRightUnicode fast paths, and makeASCIISet
+  (go1.26.1)
+- Test: corpus/trimchars (Go's trimTests rows for the three functions
+  plus 3000 random texts and cutsets; arm64 and LLVM), golden
+  trim_chars_view (arm64, LLVM, Go parity and wasm),
+  TestVetCostViewStoreTrimChars
+
+`Str.trim_chars(chars)` returns s without its leading and trailing runes
+in chars, `trim_start_chars(chars)` its leading ones and
+`trim_end_chars(chars)` its trailing ones; the names follow
+find_any(chars:). Every result is a view of s, like trim's. Go's fast
+paths are ported: an empty s or chars returns s, a one byte ASCII chars
+trims that byte, an all-ASCII chars is a bitmap of two Int words (128
+bits, no List allocation) tested a byte at a time, and any other chars
+decodes runes of s, from the end with decode_last for trim_end_chars, and
+looks each up in chars. They are declared in std/prelude.xo, implemented
+in Xo in std/native/llrt/scan.xo, and the Go backend compiles the same
+body (decision 0312). The corpus is Go's trimTests rows plus seeded
+random texts that mix ASCII, multi-byte runes and bytes that are not
+valid UTF-8 (read as U+FFFD, decision 0259) against empty, one byte,
+ASCII and Unicode cutsets. The three calls join `view_call` in
+compiler/ssa/cost.xo, so `xo vet --cost` reports a trimmed view stored
+for longer as a view of its source (XO0911).
+
 ## 2026-10-23: feature: Str.replace_n, Go's Replace with a count
 
 - Kind: feature

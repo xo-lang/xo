@@ -192,7 +192,9 @@ fn (s: Str) fields() -> List[Str]            // runs of non-white-space text (st
 fn (s: Str) lines() -> List[Str]             // splits on \n, strips \r
 fn (s: Str) trim() -> Str                    // also trim_start, trim_end
 fn (s: Str) trim_prefix(p: Str) -> Str       // also trim_suffix
-// split, split_n, split_after, split_after_n, fields, lines, trim*, trim_prefix and trim_suffix return views of s on native
+fn (s: Str) trim_chars(chars: Str) -> Str    // also trim_start_chars, trim_end_chars (strings.Trim, TrimLeft, TrimRight)
+// split, split_n, split_after, split_after_n, fields, lines, trim, trim_start, trim_end, trim_chars,
+// trim_start_chars, trim_end_chars, trim_prefix and trim_suffix return views of s on native
 // targets (O(1) per piece, no copy; a piece keeps s alive), as slices do (core 3.6)
 fn (s: Str) to_lower() -> Str                // also to_upper (Unicode aware)
 fn (s: Str) replace(old: Str, new: Str) -> Str
@@ -241,6 +243,12 @@ reproduced:
 - `s.quote()` and `b.quote()` are `strconv.Quote`: double quotes, the same
   escapes with `\"` in place of `\'`, and every byte of an invalid UTF-8
   sequence as `\xHH`.
+
+`trim_chars(chars)`, `trim_start_chars(chars)` and `trim_end_chars(chars)`
+remove the leading, the trailing, or both kinds of runes of `s` that are
+in `chars`, as Go's `strings.Trim`, `TrimLeft` and `TrimRight` do (an
+empty `chars` returns `s`); `trim`, `trim_start` and `trim_end` remove
+Unicode white space instead. All are views of `s`.
 
 Slicing (`s[a..b]`) is in core 3.6.
 
@@ -4037,7 +4045,7 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
 
 Every function and method of std/prelude.xo, by type, as declared there
 (the sections above explain them); interface methods take `self`.
-378 declarations.
+381 declarations.
 
 ### Range
 
@@ -4229,6 +4237,9 @@ fn (s: Str) trim_start() -> Str
 fn (s: Str) trim_end() -> Str
 fn (s: Str) trim_prefix(p: Str) -> Str
 fn (s: Str) trim_suffix(p: Str) -> Str
+fn (s: Str) trim_chars(chars: Str) -> Str
+fn (s: Str) trim_start_chars(chars: Str) -> Str
+fn (s: Str) trim_end_chars(chars: Str) -> Str
 fn (s: Str) to_lower() -> Str
 fn (s: Str) to_upper() -> Str
 fn (s: Str) replace(old: Str, new: Str) -> Str

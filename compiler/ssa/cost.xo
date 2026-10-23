@@ -642,7 +642,7 @@ fn type_label(m: Module, t: Int) -> Str {
 /// The calls whose result is a view of their first argument (decision
 /// 0330): a slice, and the trims.
 fn view_call(name: Str) -> Bool {
-  name is "rt.str_view" | "prelude.str_trim" | "prelude.str_trim_start" | "prelude.str_trim_end" | "prelude.str_trim_prefix" | "prelude.str_trim_suffix" | "prelude.str_cut" | "prelude.str_cut_prefix" | "prelude.str_cut_suffix"
+  name is "rt.str_view" | "prelude.str_trim" | "prelude.str_trim_start" | "prelude.str_trim_end" | "prelude.str_trim_prefix" | "prelude.str_trim_suffix" | "prelude.str_cut" | "prelude.str_cut_prefix" | "prelude.str_cut_suffix" | "prelude.str_trim_chars" | "prelude.str_trim_start_chars" | "prelude.str_trim_end_chars"
 }
 
 /// The value a Field, Rebind, or Payload chain starts from (a Payload: an

@@ -1,0 +1,31 @@
+// Str.trim_chars, trim_start_chars and trim_end_chars on a view: a slice
+// of a longer text trimmed of an ASCII cutset, a one byte cutset, a
+// multi-byte rune cutset, a cutset that is not there and one holding a
+// rune of s; the pieces compared and lengthed like trim's views (decision
+// 0330). keep returns a trimmed piece in a struct after its source text's
+// function has returned: the view keeps the source alive.
+struct Kept {
+  s: Str
+}
+
+fn keep() -> Kept {
+  let text = "##  héllo, wörld  ##"
+  let long = "()" + text + "()"
+  let view = long[2..(long.len() - 2)]
+  Kept{s: view.trim_chars("# ")}
+}
+
+fn main(os: Os) {
+  let text = "  héllo, wörld  "
+  let long = "<>" + text + "<>"
+  let view = long[2..(long.len() - 2)]
+  os.stdio.println("[${view.trim_chars(" ")}]")
+  os.stdio.println("[${view.trim_chars("#")}]")
+  os.stdio.println("[${view.trim_start_chars(" h")}] [${view.trim_end_chars("d ")}]")
+  os.stdio.println("[${view.trim_chars("é")}] [${view.trim_chars("")}]")
+  os.stdio.println("${view.trim_chars(" ").len()} ${view.len()} ${long.len()}")
+  let piece = view[2..16]
+  os.stdio.println("[${piece}] [${piece.trim_chars("h,")}]")
+  let k = keep()
+  os.stdio.println("[${k.s}] ${k.s.len()} ${k.s == "héllo, wörld"}")
+}

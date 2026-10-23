@@ -1,0 +1,3 @@
+fn lead(s: Str) -> Str {
+  s.trim_start_chars("0")
+}

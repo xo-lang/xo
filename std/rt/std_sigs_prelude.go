@@ -102,6 +102,9 @@ var (
 	_ func(*Task, string) string                                    = Str_trim_end
 	_ func(*Task, string, string) string                            = Str_trim_prefix
 	_ func(*Task, string, string) string                            = Str_trim_suffix
+	_ func(*Task, string, string) string                            = Str_trim_chars
+	_ func(*Task, string, string) string                            = Str_trim_start_chars
+	_ func(*Task, string, string) string                            = Str_trim_end_chars
 	_ func(*Task, string) string                                    = Str_to_lower
 	_ func(*Task, string) string                                    = Str_to_upper
 	_ func(*Task, string, string, string) string                    = Str_replace

@@ -1,0 +1,3 @@
+fn clean(s: Str) -> Str {
+  strings.Trim(s, " \t")
+}
