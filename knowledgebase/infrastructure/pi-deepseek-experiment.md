@@ -140,7 +140,7 @@ Each finding: what, evidence, fix. Status in brackets.
 - 2026-10-23, task 1 (lead, owner approved): a Go differential corpus for
   Str find, rfind, contains, split, replace and List[Str].join
   (internal/stdtest/testdata/corpus/strsearch, in the layout of afc6ac099).
-  12:25 to 12:50, unpushed commit f076a050c for the lead's review;
+  about 12:25 to 12:47, unpushed commit f076a050c for the lead's review;
   overseer verdict approve (gate 7 of 7 on arm64 and LLVM, a negative
   control fails all 7). 2 corrections: a heavy.sh run with a 180 s tool
   timeout piped to `tail` while both gate places were held (it would have
