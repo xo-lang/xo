@@ -257,6 +257,14 @@ create`. The order:
    with the new file and line links, the Go version measured against
    and the newest Go release, and its "Last verified" date; the
    website push needs the owner's OK.
+9. clean up (lead, 2026-10-23: the disk sat at the 50 GB trim line,
+   about 6 GB of it finished release directories): delete the seed
+   cut's WORKDIR once seed-upload.sh has run (step 4 of "Cutting a
+   seed"), and the previous release's published tree and race work
+   directory (`../xo-rel-X.Y.Z`, `../xo-rel-X.Y.Z.race-work`) once this
+   release is published; keep this release's until the next one. Delete
+   by literal absolute path; a git worktree (WORKDIR/tree) goes with
+   `git worktree remove --force` first.
 `scripts/release-verify.sh ARCHIVE [OUTDIR]` checks an archive on its
 host from a checkout of the same commit: unpacked clean, with no Go on
 PATH `xo version`, `rtpack --status`, `check`, and a hello program on
@@ -4461,6 +4469,11 @@ a checkout of the repository, in two steps:
     scripts/seed-cut.sh X.Y.0 /tmp/notes-X.Y.0.txt WORKDIR
     # 3. upload, latest.txt last (a minute)
     scripts/seed-upload.sh WORKDIR
+    # 4. delete WORKDIR (about 4 GB: the boot stages, the cross and race
+    #    builds, the packed tarballs, now in the bucket) and its tree
+    #    worktree, by literal path
+    git worktree remove --force /ABS/WORKDIR/tree && git worktree prune
+    rm -rf /ABS/WORKDIR
 
 Run the scripts from a worktree of origin/main, not the main checkout
 (which stays at an old commit): seed-cut.sh refuses to run when its seed
