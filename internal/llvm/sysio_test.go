@@ -48,7 +48,7 @@ func TestSysioParity(t *testing.T) {
 		t.Fatalf("run: %v exit %d\n%s\n%s", err, got.exit, got.stdout, got.stderr)
 	}
 	xo := got.stdout
-	if !strings.HasSuffix(xo, "done\n") || !strings.Contains(xo, "read nope: NotFound") {
+	if !strings.HasSuffix(xo, "done\n") || !strings.Contains(xo, "read nope: nope: no such file or directory") {
 		t.Errorf("unexpected output:\n%s", xo)
 	}
 	t.Logf("%s/%s: %d lines", runtime.GOOS, runtime.GOARCH, strings.Count(xo, "\n"))

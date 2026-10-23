@@ -87,7 +87,14 @@ fn net(io: Stdio, n0: Net, lists: Str, addr: Str) uses stdio, net.dial {
       c.close()
       io.println("net ${addr}: connected")
     }
-    Err(e) => io.println("net ${addr}: ${if "${e}".starts_with("Denied") { "denied" } else { "other" }}")
+    Err(e) => {
+      // the variant, not the printed text (decision 0358 made it plain)
+      let kind = match e {
+        Denied(_) => "denied"
+        _ => "other"
+      }
+      io.println("net ${addr}: ${kind}")
+    }
   }
 }
 
