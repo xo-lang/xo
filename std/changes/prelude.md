@@ -3,7 +3,7 @@
 ## 2026-10-23: perf: scan.eq_text inlines into the trim loop sites
 
 - Kind: perf
-- Commit: (pending)
+- Commit: 24197a209
 - Found by: bench/results/views-trim-2026-10-22.md (trim_affix still 1.5x Go's instructions: eq_text was a call per trim)
 - Go reference: strings.TrimPrefix, strings.TrimSuffix (compare folded into the caller)
 - Test: golden trim_affix_lens, views_split, str_ops_table, strings, text_helpers on arm64 and LLVM with Go parity; wasm goldens; std corpora
