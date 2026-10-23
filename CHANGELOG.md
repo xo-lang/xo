@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo check --support` is about 2.5 times faster on a warm run
+  (compiler/xo 3.7 s to 1.6 s): it keeps the module check cache and
+  builds through the front end cache (decision 0351 addendum).
+
 - `xo check` is about 2.5 times faster on a warm run (compiler/xo 1.8 s
   to 0.67 s, a small server 0.59 s to 0.26 s) and peaks a third lower in
   memory: it skips a module unchanged since its last check, replaying

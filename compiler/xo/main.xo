@@ -115,7 +115,12 @@ fn main(os: Os) ! {
   }
   if core.is_command(args) {
     let (cd, cid) = check_cache(os, args)
-    os.proc.exit(core.run_cached(os, args, [], cd, cid))
+    // `xo check --support`: the SSA builder through the front end cache,
+    // as plain_support builds it (no target, the profiler kept)
+    os.proc.exit(core.run_cached(os, args, [], cd, cid, fn(c: check.Checker) -> List[check.Diag] uses (clock, env, fs, proc, rand, stdio) {
+      let bb = fe_cached_build(os, c, ".", false, false, false, "", "", false, false, true, false, false, false, false, [])
+      if bb.why.is_empty() { ssa.nogc_diags(bb) } else { [] }
+    }))
   }
   if !args.is_empty() && args[0] == "prof" {
     // a native program's raw profile as pprof and text (prof.xo,

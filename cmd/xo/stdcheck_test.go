@@ -56,6 +56,10 @@ type stdDiag struct {
 func nativeCheck(t *testing.T, dir string) []stdDiag {
 	t.Helper()
 	chdir(t, dir)
+	// eager: `xo check` checks the runtime's bodies only as a build does
+	// since the decision 0351 addendum (2026-10-23); this guard checks
+	// them all
+	setenv(t, "XO_CHECK_EAGER", "1")
 	var out, errOut bytes.Buffer
 	run(t, []string{"check", "--no-gc", "--json", "."}, &out, &errOut)
 	var r struct {
@@ -69,8 +73,8 @@ func nativeCheck(t *testing.T, dir string) []stdDiag {
 
 // TestStdChecks checks every function body of the native runtime (the
 // implementation modules std/native/*.xo and the runtime modules
-// std/native/llrt/*.xo) with no diagnostic, in an eager native check of a
-// program that imports every std module. A native build checks only the
+// std/native/llrt/*.xo) with no diagnostic, in an eager native check
+// (XO_CHECK_EAGER=1) of a program that imports every std module. A native build checks only the
 // bodies it builds (decision 0247), so this is where an error in an
 // unreached body is reported. The second part proves the program reaches
 // every runtime file with a body: in a copy of std with a function that

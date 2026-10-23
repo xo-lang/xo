@@ -37,3 +37,23 @@ compiler/xo, and std/, which keeps the eager check). cmd/xo
 TestCheckCacheWarnings: a module's XO0540 warning prints on the
 first and the cached check, after an edit of another module, and is
 gone after its fix.
+
+## `xo check --support` through the caches (b08 option C', same day)
+
+`--support` kept the module check cache and the lazy runtime off and
+built its SSA without the front end cache. It now keeps both and builds
+through the front end cache (its own entries: the key is the support
+check's, so a repeated `--support` check hits them). A = XO_CHK_CACHE=off
+and XO_FE_CACHE=off (the old path), B = the default, warm, 10 rounds:
+
+| program | A median | B median | wall B/A (95%) | cpu B/A | peak RSS B/A |
+|---|---|---|---|---|---|
+| bench/perf/http/xo | 926.9 ms | 355.6 ms | 0.384 (0.367 to 0.406) better | 0.365 better | 0.737 better |
+| compiler/xo | 3,743 ms | 1,610 ms | 0.43 (0.416 to 0.449) better | 0.43 better | 0.848 better |
+
+`xo check --support .` output and exit status: identical, A against B
+cold and warm, in the same 76 directories.
+
+Making the support check the default (option C) would add the
+difference to every check: about +0.1 s to the small server's 0.26 s
+and +0.94 s to compiler/xo's 0.67 s.

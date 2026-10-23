@@ -104,7 +104,11 @@ checked; a named directory inside std keeps the eager check. A checked
 body that reads a skipped module's inferred effects makes the check run
 again without the cache. `--support`, `--backend=go`, an overlay (the
 editor) and XO_CHK_CACHE=off, XO_FE_CACHE=off or XO_BACKEND_CACHE=off
-check everything. Measured: `xo check` of a small server 0.432x wall
+check everything; XO_CHECK_EAGER=1 checks the runtime's bodies too (cmd/xo
+TestStdChecks, the guard that every runtime body checks, sets it). `--support` keeps the module check cache and the lazy
+runtime too, and builds its SSA through the front end cache (the driver
+passes core the build as a closure, compiler/xo main.xo): 0.384x and
+0.43x wall. Measured: `xo check` of a small server 0.432x wall
 and 0.656x peak memory, of compiler/xo 0.369x and 0.669x; the same
 output in 76 of 76 directories, every errorcheck program among them
 (bench/results/check-cache-2026-10-23.md). Test: cmd/xo

@@ -275,7 +275,7 @@ fn store_check_entries(os: Os, c: check.Checker) uses fs, rand {
   }
 }
 
-fn run_check(os: Os, ctx: Ctx, args: List[Str]) -> Int {
+fn run_check(os: Os, ctx: Ctx, args: List[Str], support_fn: fn(check.Checker) -> List[Diag] uses (clock, env, fs, proc, rand, stdio)) -> Int {
   var fl = new_flags("check")
   fl.bool_flag("json", "print diagnostics as JSON")
   fl.str_flag("backend", "", "the build backend whose rules to check by (go for the Go backend's; default the native backends', as xo build builds)")
@@ -311,7 +311,7 @@ fn run_check(os: Os, ctx: Ctx, args: List[Str]) -> Int {
     os.stdio.eprintln("xo check: --backend=${be}: want go, arm64, amd64 or llvm")
     return 2
   }
-  var s = match load_check(os, ctx, targets, fl.get_bool("support") || fl.get_bool("no-gc"), be == "go") {
+  var s = match load_check(os, ctx, targets, fl.get_bool("support") || fl.get_bool("no-gc"), be == "go", support_fn) {
     Ok(x) => x
     Err(e) => {
       os.stdio.eprintln("xo check: ${e}")
@@ -361,11 +361,14 @@ fn run_check(os: Os, ctx: Ctx, args: List[Str]) -> Int {
 /// main, the XO1201 diagnostics of the SSA builder too (what the native
 /// backends cannot build yet; it lowers the program, about 2 s for
 /// compiler/xo, so it is not the default yet).
-fn load_check(os: Os, ctx: Ctx, dirs: List[Str], support: Bool, go_rules: Bool) -> Session ! Str uses fs, proc, net, rand, env {
+fn load_check(os: Os, ctx: Ctx, dirs: List[Str], support: Bool, go_rules: Bool, support_fn: fn(check.Checker) -> List[Diag] uses (clock, env, fs, proc, rand, stdio)) -> Session ! Str uses fs, proc, net, rand, env, clock, stdio {
   if go_rules {
     return load(os, ctx, dirs, false, {})
   }
-  var s = load_mode_cached(os, ctx, dirs, false, {}, [], true, !support)?
+  // --support keeps the module check cache and the lazy runtime: the SSA
+  // builder checks the runtime bodies it reaches (check_lazy) as a build
+  // does, and a skipped module's diagnostics come from its entry
+  var s = load_mode_cached(os, ctx, dirs, false, {}, [], true, true)?
   if !support {
     return Ok(s)
   }
@@ -374,11 +377,17 @@ fn load_check(os: Os, ctx: Ctx, dirs: List[Str], support: Bool, go_rules: Bool) 
     errs = errs || !d.warning
   }
   if !errs {
-    let b = ssa.build_program(s.c, ".", false)
-    // no main: a library has no program to lower
-    if b.why.is_empty() {
-      s.diags = sort_diags(s.diags + ssa.nogc_diags(b))
-    }
+    // the driver's support check (compiler/xo: through the front end
+    // cache), or plain_support
+    s.diags = sort_diags(s.diags + support_fn(s.c))
   }
   Ok(s)
+}
+
+/// The native backends' support check of c's program without a cache:
+/// the XO1201 diagnostics of the SSA builder (none for a library, which
+/// has no program to lower).
+pub fn plain_support(c: check.Checker) -> List[Diag] uses fs.read {
+  let b = ssa.build_program(c, ".", false)
+  if b.why.is_empty() { ssa.nogc_diags(b) } else { [] }
 }

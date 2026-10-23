@@ -52,12 +52,12 @@ pub fn run(os: Os, args0: List[Str]) -> Int uses fs, env, stdio, proc, clock, ne
 /// run with extra findings for `xo vet` (its --cost notes, which the
 /// driver computes from the compiled program: decision 0327).
 pub fn run_extra(os: Os, args0: List[Str], extra: List[Diag]) -> Int uses fs, env, stdio, proc, clock, net, rand {
-  run_cached(os, args0, extra, "", "")
+  run_cached(os, args0, extra, "", "", fn(c: check.Checker) -> List[Diag] uses (clock, env, fs, proc, rand, stdio) { plain_support(c) })
 }
 
 /// run_extra with the module check cache for `xo check` in chk_dir under
 /// the cache ID chk_id ("" for none).
-pub fn run_cached(os: Os, args0: List[Str], extra: List[Diag], chk_dir: Str, chk_id: Str) -> Int uses fs, env, stdio, proc, clock, net, rand {
+pub fn run_cached(os: Os, args0: List[Str], extra: List[Diag], chk_dir: Str, chk_id: Str, support: fn(check.Checker) -> List[Diag] uses (clock, env, fs, proc, rand, stdio)) -> Int uses fs, env, stdio, proc, clock, net, rand {
   var std_dir = os.env.get("XO_STD") ?? ""
   var wd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
   var args = args0
@@ -114,7 +114,7 @@ pub fn run_cached(os: Os, args0: List[Str], extra: List[Diag], chk_dir: Str, chk
     i += 1
   }
   match args[0] {
-    "check" => run_check(os, ctx, rest)
+    "check" => run_check(os, ctx, rest, support)
     "parse" => run_parse(os, ctx, rest)
     "explain" => run_explain(os, rest)
     "version" | "--version" => run_version(os, rest)
