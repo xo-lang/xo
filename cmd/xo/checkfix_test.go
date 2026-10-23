@@ -120,6 +120,10 @@ pub fn sticky(m: Mutex[St]) -> Int ! E {
 	})
 	cache := t.TempDir()
 	setenv(t, "XO_BACKEND_CACHE_DIR", cache)
+	// the cache on whatever the run's environment says (scripts/gate.sh
+	// exports XO_BACKEND_CACHE=off, which turns xo check's cache off)
+	setenv(t, "XO_BACKEND_CACHE", "on")
+	setenv(t, "XO_FE_CACHE", "")
 	setenv(t, "XO_CHK_CACHE", "")
 	check := func() (int, string) {
 		var out, errOut bytes.Buffer
