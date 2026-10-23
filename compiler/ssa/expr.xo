@@ -1922,6 +1922,26 @@ fn (var b: Builder) if_finish(st: IfStep) -> Int {
 fn (var b: Builder) if_head(e: Expr, x: parser.IfExpr) -> IfStep {
   let t = b.type_of(e)
   let has_val = b.tkind(t) != Kind.Unit && !b.expr_never(e)
+  // a statement `if` on a test of the build's target with no value: only
+  // the arm it takes, in the current block, with no join block (an empty
+  // join and its jump shifted block numbering, and so layout, wherever a
+  // folded-false `if` sat, as `if det.built() { ... }` in a normal build,
+  // decision 0350)
+  if !has_val && !b.expr_never(e) {
+    if let Some(cond) = x.cond {
+      if let Some(taken) = b.target_test(cond) {
+        if taken {
+          let _tv = b.block(x.then)
+        } else if let Some(els) = x.els {
+          let _ev = b.expr(els)
+        }
+        if b.is_dead() {
+          return IfStep{done: true, v: b.undef(t)}
+        }
+        return IfStep{done: true, v: b.unit()}
+      }
+    }
+  }
   let join = b.new_block()
   var res = -1
   if has_val {
