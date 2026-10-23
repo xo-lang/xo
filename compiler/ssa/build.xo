@@ -2573,10 +2573,17 @@ fn (var b: Builder) read_var(vo: Int, bl0: Int) -> Int {
     b.s.defs[def_key(vo, bl)] = v
     break
   }
+  // the value goes to the block the read started in and every 16th block
+  // of the chain, so a later read walks at most 16 blocks: an entry per
+  // chain block per variable read was 11 s of a 24,000 line function's
+  // build, 2026-10-22 (the chain's blocks are sealed with one
+  // predecessor, never written again, so no other code looks them up)
   var i = chain.len()
   while i > 0 {
     i -= 1
-    b.s.defs[def_key(vo, chain[i])] = v
+    if i % 16 == 0 {
+      b.s.defs[def_key(vo, chain[i])] = v
+    }
   }
   v
 }

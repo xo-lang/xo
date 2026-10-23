@@ -21,6 +21,12 @@ instruction order), keeps the open run as values and writes its text
 once (emit 16 s). The build takes 31 s with debug information, 22 s with
 `-s`; the output is byte identical. Look for a renumbering or a full
 scan inside a per block or per check loop first when a long function's
-build is slow; compiler/ssa build.xo read_var (Braun's construction,
-11 s of the 24,000 line function) caches each definition in every block
-of a single predecessor chain and is the next one.
+build is slow.
+
+A third (2026-10-22): compiler/ssa build.xo read_var (Braun's
+construction) put the definition it found in every block of the single
+predecessor chain it walked, an entry per chain block per variable read:
+the ssa phase 11.7 s and a peak heap of 3.4 GB for the 24,000 line
+function. It now puts it in the block the read started in and every
+16th block of the chain (a later read walks at most 16): ssa 5.5 s,
+peak heap 0.9 GB (1.39 GB resident against 3.18), the output identical.
