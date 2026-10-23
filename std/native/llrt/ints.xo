@@ -112,6 +112,14 @@ pub fn u64_rem(a: Int, b: Int) -> Int {
 
 /// a / b rounded down (b > 0): `Time.unix()` (xo_floor_div).
 pub fn floor_div(a: Int, b: Int) -> Int {
+  if b > 0 {
+    // s ^ a is a when a >= 0 and -a - 1 when not, and -((-a - 1) / b) - 1
+    // is a / b rounded down: one division of a value not negative, no
+    // branch (2026-10-23: portable unix tested the sign and the
+    // remainder of every division, 1.10 times LLVM's instructions)
+    let s = a >> 63
+    return s ^ ((a ^ s) / b)
+  }
   let q = a / b
   if a < 0 && a % b != 0 {
     return q - 1

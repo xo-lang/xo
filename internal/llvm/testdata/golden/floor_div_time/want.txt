@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+9018 times, 0 wrong, -912593019
+--- stderr

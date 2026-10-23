@@ -1,0 +1,34 @@
+// Time.unix and unix_millis round down (ints.floor_div: s ^ ((a ^ s) / b)
+// with s the sign of a, one division of a value not negative), checked
+// against the quotient and remainder at the edges of Int and around
+// multiples of the unit, before and after the epoch.
+
+fn floor_ref(a: Int, b: Int) -> Int {
+  let q = a / b
+  if a < 0 && a % b != 0 { q - 1 } else { q }
+}
+
+fn main(os: Os) {
+  let io = os.stdio
+  let max = 9223372036854775807
+  var ns = [0, 1, -1, 999999, -999999, 1000000, -1000000, 1000001, -1000001, 999999999, -999999999, 1000000000, -1000000000, 1000000001, -1000000001, max, -max, -max - 1]
+  var g = 12345
+  for _ in 0..3000 {
+    g = (g * 1103515245 + 12345) % 2147483648
+    ns.push(g * 4294967296 + g)
+    ns.push(-(g * 4294967296) - g)
+    ns.push(g % 3000000 - 1500000)
+  }
+  var bad = 0
+  var h = 0
+  for n in ns {
+    let t = Time.UNIX_EPOCH + Duration.from_nanos(n)
+    let s = t.unix()
+    let m = t.unix_millis()
+    if s != floor_ref(n, 1000000000) || m != floor_ref(n, 1000000) {
+      bad += 1
+    }
+    h = (h * 31 + s % 1000003 + m % 999983) % 1000000007
+  }
+  io.println("${ns.len()} times, ${bad} wrong, ${h}")
+}

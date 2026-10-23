@@ -621,6 +621,19 @@ fn (var g: G) derived(v: Int, d: Int) -> (Interval, Bool) {
       (Interval{lo: lo, hi: hi}, true)
     }
     Xor => {
+      // x ^ (x >> 63): x when x >= 0, -x - 1 when not (ints.floor_div)
+      for j in 0..2 {
+        let s = x.args[j]
+        if g.op(s) == ssa.Op.Shr && g.arg(s, 0) == x.args[1 - j] {
+          let (k, kc) = g.const_int(g.arg(s, 1))
+          if kc && k == 63 {
+            let a = g.bounds_iv(x.args[1 - j], d)
+            let neg = if a.lo < 0 { -(a.lo + 1) } else { 0 }
+            let lo = if a.lo >= 0 { a.lo } else if a.hi < 0 { -(a.hi + 1) } else { 0 }
+            return (Interval{lo: lo, hi: imax(imax(a.hi, 0), neg)}, true)
+          }
+        }
+      }
       // x ^ MIN_INT, the sign flip of an unsigned compare (ssa show.xo
       // ult: a sized shift's amount check `bits - 1 < c` as UInt64s)
       for j in 0..2 {

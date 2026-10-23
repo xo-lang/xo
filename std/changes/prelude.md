@@ -1,5 +1,19 @@
 # prelude changes
 
+## 2026-10-23: perf: Time.unix and unix_millis round down without a branch
+
+- Kind: perf
+- Commit: this commit
+- Found by: native vs LLVM comparison (portable unix 1.10 times LLVM's instructions)
+- Go reference: none (Go's time.Unix splits seconds and nanoseconds)
+- Test: golden floor_div_time (arm64, LLVM, Go parity, Docker amd64)
+
+std/native/llrt/ints.xo floor_div, which Time.unix and unix_millis call on
+the native backends, divides `s ^ a` by b and flips the quotient back
+with `s`, the sign of a, for a positive b: one division of a value that
+is not negative, with no test of the sign or the remainder. Results are
+unchanged. callgrind linux/amd64: portable unix 0.846.
+
 ## 2026-10-23: perf: Float text trims trailing zeros with Go's trimZeros
 
 - Kind: perf
