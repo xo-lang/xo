@@ -1,0 +1,28 @@
+// Row accessors that convert where no information is lost (std.md 10.9):
+// float reads a numeric column's text, str reads json text, time reads a
+// date's text as its midnight in UTC.
+use std/sql
+
+fn show[T: Display](r: Result[T, sql.SqlErr]) -> Str {
+  match r {
+    Ok(v) => "ok ${v}"
+    Err(Mismatch(column, msg)) => "mismatch ${column}: ${msg}"
+    Err(e) => "err ${e}"
+  }
+}
+
+fn main(os: Os) ! {
+  let db = sql.memory("CREATE TABLE t (id SERIAL, n TEXT, d TEXT, j JSONB)")?
+  db.exec("INSERT INTO t (n, d, j) VALUES ($1, $2, $3)", [sql.str("12.50"), sql.str("2026-10-20"), sql.json([1, 2])])?
+  db.exec("INSERT INTO t (n, d, j) VALUES ($1, $2, $3)", [sql.str("abc"), sql.str("20-10-2026"), sql.null()])?
+  let rows = db.query("SELECT n, d, j FROM t ORDER BY id")?
+  os.stdio.println(show(rows[0].float("n")))
+  os.stdio.println(show(rows[0].float_opt("n").map(fn(o) { o ?? -1.0 })))
+  os.stdio.println(show(rows[0].time("d").map(fn(t) { t.unix() })))
+  os.stdio.println(show(rows[0].str("j")))
+  os.stdio.println(show(rows[0].str_opt("j").map(fn(o) { o ?? "-" })))
+  os.stdio.println(show(rows[0].json[List[Int]]("j").map(fn(l) { l.len() })))
+  os.stdio.println(show(rows[1].float("n")))
+  os.stdio.println(show(rows[1].time("d").map(fn(t) { t.unix() })))
+  os.stdio.println(show(rows[1].str_opt("j").map(fn(o) { o ?? "-" })))
+}

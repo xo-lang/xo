@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+ok 12.5
+ok 12.5
+ok 1792454400
+ok [1,2]
+ok [1,2]
+ok 2
+mismatch n: expected a float, found text
+mismatch d: expected a time, found text
+ok -
+--- stderr

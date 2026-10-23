@@ -378,6 +378,22 @@ fn server_err(f: Map[Str, Str]) -> sql.SqlErr {
     let parts = (f.get("M") ?? "").split("\"")
     return sql.SqlErr.NoTable(name: if parts.len() >= 3 { parts[1] } else { msg })
   }
+  if code == "08P01" {
+    // bind message supplies 1 parameters, but prepared statement "" requires 2
+    let m = f.get("M") ?? ""
+    if m.starts_with("bind message supplies ") {
+      let w = m.split(" ")
+      if w.len() >= 9 {
+        return sql.SqlErr.Param(msg: "statement has ${w[w.len() - 1]} placeholders but ${w[3]} arguments were given")
+      }
+    }
+    // a protocol violation is a server error; the connection is still there
+    return sql.SqlErr.Server(code: code, msg: msg)
+  }
+  if code == "42P02" {
+    // there is no parameter $1 (a statement with placeholders and no arguments)
+    return sql.SqlErr.Param(msg: msg)
+  }
   if code.starts_with("08") || code == "57P01" {
     return sql.SqlErr.Conn(msg: msg)
   }

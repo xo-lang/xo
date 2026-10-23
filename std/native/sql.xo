@@ -531,9 +531,19 @@ fn (r: Row) int(name: Str) -> Int ! sql.SqlErr {
   }
 }
 
+/// A date's text (2026-10-20, Postgres in ISO DateStyle) as its midnight in UTC.
+fn date_time(s: Str) -> Time? {
+  let b = s.bytes()
+  if b.len() != 10 || b[4] != 45 || b[7] != 45 {
+    return None
+  }
+  Time.parse_rfc3339(s + "T00:00:00Z")
+}
+
 fn (r: Row) str(name: Str) -> Str ! sql.SqlErr {
   match r.get(name)? {
     Text(s) => s
+    JsonText(s) => s
     v => Err(mismatch(name, "text", v))
   }
 }
@@ -542,6 +552,10 @@ fn (r: Row) float(name: Str) -> Float ! sql.SqlErr {
   match r.get(name)? {
     Real(f) => f
     Integer(n) => Float(n)
+    Text(s) => match Float.parse(s) {
+      Some(f) => f
+      None => Err(mismatch(name, "a float", Text(s: s)))
+    }
     v => Err(mismatch(name, "a float", v))
   }
 }
@@ -556,6 +570,10 @@ fn (r: Row) bool(name: Str) -> Bool ! sql.SqlErr {
 fn (r: Row) time(name: Str) -> Time ! sql.SqlErr {
   match r.get(name)? {
     At(t) => t
+    Text(s) => match date_time(s) {
+      Some(t) => t
+      None => Err(mismatch(name, "a time", Text(s: s)))
+    }
     v => Err(mismatch(name, "a time", v))
   }
 }
@@ -572,6 +590,7 @@ fn (r: Row) str_opt(name: Str) -> Str? ! sql.SqlErr {
   match r.get(name)? {
     Null => None
     Text(s) => Some(s)
+    JsonText(s) => Some(s)
     v => Err(mismatch(name, "text", v))
   }
 }
@@ -581,6 +600,10 @@ fn (r: Row) float_opt(name: Str) -> Float? ! sql.SqlErr {
     Null => None
     Real(f) => Some(f)
     Integer(n) => Some(Float(n))
+    Text(s) => match Float.parse(s) {
+      Some(f) => Some(f)
+      None => Err(mismatch(name, "a float", Text(s: s)))
+    }
     v => Err(mismatch(name, "a float", v))
   }
 }
@@ -597,6 +620,10 @@ fn (r: Row) time_opt(name: Str) -> Time? ! sql.SqlErr {
   match r.get(name)? {
     Null => None
     At(t) => Some(t)
+    Text(s) => match date_time(s) {
+      Some(t) => Some(t)
+      None => Err(mismatch(name, "a time", Text(s: s)))
+    }
     v => Err(mismatch(name, "a time", v))
   }
 }

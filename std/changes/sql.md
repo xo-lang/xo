@@ -1,5 +1,25 @@
 # std/sql changes
 
+## 2026-10-23: fix: Postgres numeric, json and date columns read as the spec says; a wrong parameter count is Param
+
+- Kind: fix
+- Commit: this commit
+- Found by: the Intel field report on 0.26.0 (b10, b11)
+- Go reference: pgx's Rows.Values and pgconn's PgError (08P01)
+- Test: internal/llvm/testdata/golden/sql_conv (arm64, LLVM, Go parity), pg_test "server errors: a wrong parameter count"
+
+`row.float` and `float_opt` read a Text that parses as a Float (a
+`numeric` column), `row.str` and `str_opt` read `JsonText` (json and
+jsonb), and `row.time` and `time_opt` read a date's Text (`2026-10-20`) as
+its midnight in UTC, as 10.9 promises; each returned `Mismatch` before, on
+the native backends and on the Go backend. A Postgres statement given the
+wrong number of arguments answered `Conn("bind message supplies ...")`,
+which reads like a lost connection: the server's 08P01 bind error is now
+`Param("statement has N placeholders but M arguments were given")`, the
+text the in memory driver gives, `42P02` (no parameter $1, a statement with
+placeholders and no arguments) is `Param`, and any other 08P01 is `Server`
+(`Conn` stays for the connection exceptions that lose the connection).
+
 ## 2026-10-21: fix: a driver transaction stays done when its commit or rollback fails
 
 - Kind: fix

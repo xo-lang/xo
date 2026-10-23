@@ -1,9 +1,11 @@
 package rt
 
 import (
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // std/sql (std.md 10): a Db over a driver. The only driver that ships is the
@@ -659,15 +661,41 @@ func sqlColOpt[T any](r Sql_Row, name, want string, conv func(any) (T, bool)) Re
 }
 
 func asInt(v any) (int64, bool)  { x, ok := v.(int64); return x, ok }
-func asStr(v any) (string, bool) { x, ok := v.(string); return x, ok }
+func asStr(v any) (string, bool) {
+	switch x := v.(type) {
+	case string:
+		return x, true
+	case SqlJSON:
+		return string(x), true
+	}
+	return "", false
+}
 func asBool(v any) (bool, bool)  { x, ok := v.(bool); return x, ok }
-func asTime(v any) (Time, bool)  { x, ok := v.(Time); return x, ok }
+func asTime(v any) (Time, bool) {
+	switch x := v.(type) {
+	case Time:
+		return x, true
+	case string:
+		// a date's text (2026-10-20) is its midnight in UTC
+		if len(x) == 10 && x[4] == '-' && x[7] == '-' {
+			if t, err := time.Parse("2006-01-02", x); err == nil {
+				return Time(t.UnixNano()), true
+			}
+		}
+	}
+	return 0, false
+}
 func asFloat(v any) (float64, bool) {
 	switch x := v.(type) {
 	case float64:
 		return x, true
 	case int64:
 		return float64(x), true
+	case string:
+		// a numeric column's text
+		if f, err := strconv.ParseFloat(x, 64); err == nil {
+			return f, true
+		}
 	}
 	return 0, false
 }

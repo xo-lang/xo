@@ -54,6 +54,17 @@ test "a fake server: rows decoded by type, and an exec's count" {
   }
 }
 
+test "server errors: a wrong parameter count is Param, other protocol violations are Server" {
+  let bind: Map[Str, Str] = {"C": "08P01", "M": "bind message supplies 1 parameters, but prepared statement \"\" requires 2"}
+  expect(server_err(bind)) == sql.SqlErr.Param(msg: "statement has 2 placeholders but 1 arguments were given")
+  let other: Map[Str, Str] = {"C": "08P01", "M": "invalid message format"}
+  expect(server_err(other)) == sql.SqlErr.Server(code: "08P01", msg: "invalid message format")
+  let none: Map[Str, Str] = {"C": "42P02", "M": "there is no parameter $1"}
+  expect(server_err(none)) == sql.SqlErr.Param(msg: "there is no parameter $1")
+  let lost: Map[Str, Str] = {"C": "08006", "M": "connection failure"}
+  expect(server_err(lost)) == sql.SqlErr.Conn(msg: "connection failure")
+}
+
 test "a fake server: errors by SQLSTATE" {
   let l = os.net.listen("db.test:5432")?
   scope s {
