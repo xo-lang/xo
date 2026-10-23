@@ -1,0 +1,15 @@
+// Str.count on a view: a slice of a longer text, counted for a one byte
+// sub, a multi byte sub, overlapping copies ("1111111" and "11"), the empty
+// sub (the rune count plus one), a sub that is not there, and a view of the
+// view.
+fn main(os: Os) {
+  let text = "banana ΔΔΔ 1111111"
+  let long = "  " + text + "  "
+  let view = long[2..(long.len() - 2)]
+  os.stdio.println("${view.count("a")} ${view.count("na")} ${view.count("Δ")}")
+  os.stdio.println("${view.count("11")} ${view.count("")} ${view.rune_count()}")
+  os.stdio.println("${view.count("zz")} ${view.count("")}")
+  let piece = view[7..13]
+  os.stdio.println("[${piece}] ${piece.count("Δ")} ${piece.count("")}")
+  os.stdio.println("${view.len()} ${long.len()}")
+}

@@ -260,6 +260,9 @@ fn (s: Str) ends_with(p: Str) -> Bool
 fn (s: Str) find(sub: Str) -> Int?
 /// The byte offset of the last sub (strings.LastIndex); Some(s.len()) for "".
 fn (s: Str) rfind(sub: Str) -> Int?
+/// The number of non-overlapping copies of sub (strings.Count); the count
+/// of s's runes plus one for "".
+fn (s: Str) count(sub: Str) -> Int
 fn (s: Str) split(sep: Str) -> List[Str]
 /// The runs of non-white-space text, split around runs of white space
 /// (strings.Fields, unicode.IsSpace); pieces are views of s like split's.

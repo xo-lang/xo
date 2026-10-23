@@ -1,5 +1,21 @@
 # prelude changes
 
+## 2026-10-23: feature: Str.count (strings.Count)
+
+- Kind: feature
+- Commit: this commit
+- Found by: lead request; Str had find and rfind but no count
+- Go reference: strings.Count
+- Test: corpus/strsearch (arm64 and LLVM), golden count_view (arm64, LLVM and Go parity)
+
+`Str.count(sub)` returns the number of non-overlapping copies of sub in s,
+like Go's `strings.Count`, and for "" the count of s's runes plus one. It
+is declared in std/prelude.xo, implemented in Xo in std/native/llrt/scan.xo
+over the existing `find` (so a one byte sub takes the same byte scan as
+find), and on the Go backend by strings.Count in std/rt. The corpus adds
+Go's countTests, 3000 seeded random (text, sub) pairs on their own seed
+(empty, one byte, multi byte and pieces of s, so overlapping copies
+occur), and a view test; all backends match Go.
 ## 2026-10-23: perf: Bytes.from_base64 decodes four ordinary characters at once
 
 - Kind: perf

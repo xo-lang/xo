@@ -239,6 +239,22 @@ pub fn has_at(s: Str, i: Int, p: Str) -> Bool {
 
 pub fn contains(s: Str, sub: Str) -> Bool { find(s, sub, 0) >= 0 }
 
+/// strings.Count: the number of non-overlapping copies of sub in s; for ""
+/// the count of s's runes plus one (Go's utf8.RuneCountInString(s) + 1).
+pub fn count(s: Str, sub: Str) -> Int {
+  let m = sub.len()
+  if m == 0 {
+    return rune_count(s) + 1
+  }
+  var n = 0
+  var i = find(s, sub, 0)
+  while i >= 0 {
+    n += 1
+    i = find(s, sub, i + m)
+  }
+  n
+}
+
 pub fn starts_with(s: Str, p: Str) -> Bool { p.len() <= s.len() && eq_at(s.bytes(), 0, p.bytes(), 0, p.len()) }
 
 pub fn ends_with(s: Str, p: Str) -> Bool { p.len() <= s.len() && eq_at(s.bytes(), s.len() - p.len(), p.bytes(), 0, p.len()) }

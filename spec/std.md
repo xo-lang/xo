@@ -175,6 +175,7 @@ fn (s: Str) starts_with(p: Str) -> Bool
 fn (s: Str) ends_with(p: Str) -> Bool
 fn (s: Str) find(sub: Str) -> Int?           // byte offset
 fn (s: Str) rfind(sub: Str) -> Int?          // the last sub's byte offset (strings.LastIndex); Some(s.len()) for ""
+fn (s: Str) count(sub: Str) -> Int           // non-overlapping copies (strings.Count); rune_count() + 1 for ""
 fn (s: Str) split(sep: Str) -> List[Str]
 fn (s: Str) fields() -> List[Str]            // runs of non-white-space text (strings.Fields, unicode.IsSpace)
 fn (s: Str) lines() -> List[Str]             // splits on \n, strips \r
@@ -4004,7 +4005,7 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
 
 Every function and method of std/prelude.xo, by type, as declared there
 (the sections above explain them); interface methods take `self`.
-365 declarations.
+366 declarations.
 
 ### Range
 
@@ -4176,6 +4177,7 @@ fn (s: Str) starts_with(p: Str) -> Bool
 fn (s: Str) ends_with(p: Str) -> Bool
 fn (s: Str) find(sub: Str) -> Int?
 fn (s: Str) rfind(sub: Str) -> Int?
+fn (s: Str) count(sub: Str) -> Int
 fn (s: Str) split(sep: Str) -> List[Str]
 fn (s: Str) fields() -> List[Str]
 fn (s: Str) lines() -> List[Str]

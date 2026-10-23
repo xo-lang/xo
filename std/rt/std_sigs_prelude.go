@@ -82,6 +82,7 @@ var (
 	_ func(*Task, string, string) bool                              = Str_ends_with
 	_ func(*Task, string, string) Option[int64]                     = Str_find
 	_ func(*Task, string, string) Option[int64]                     = Str_rfind
+	_ func(*Task, string, string) int64                             = Str_count
 	_ func(*Task, string, string) List[string]                      = Str_split
 	_ func(*Task, string) List[string]                              = Str_fields
 	_ func(*Task, string) List[string]                              = Str_lines

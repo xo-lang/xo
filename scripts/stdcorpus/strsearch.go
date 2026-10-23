@@ -11,11 +11,11 @@ type strsearchCase struct{ s, sep string }
 
 // The API these corpora cover, as std/prelude.xo declares it: Str.find
 // (strings.Index), Str.rfind (strings.LastIndex), Str.contains
-// (strings.Contains), Str.split (strings.Split), Str.replace
-// (strings.ReplaceAll) and List[Str].join (strings.Join). Go's
-// strings.IndexAny, LastIndexAny, Count, Fields and the n of Replace have
-// no Str method, so their tables are not here; replace_all is
-// Str.replace, which always replaces every match.
+// (strings.Contains), Str.count (strings.Count), Str.split (strings.Split),
+// Str.replace (strings.ReplaceAll) and List[Str].join (strings.Join). Go's
+// strings.IndexAny, LastIndexAny and the n of Replace have no Str method,
+// so their tables are not here; replace_all is Str.replace, which always
+// replaces every match.
 
 // goIndexCases are Go's strings_test.go indexTests and lastIndexTests
 // (IndexTest) merged: each case checks Index, LastIndex and Contains.
@@ -75,6 +75,22 @@ func goIndexCases() []strsearchCase {
 		// lastIndexTests
 		{"foo", "f"}, {"oofofoofooo", "foo"}, {"barfoobarfoo", "foo"},
 		{"abcABCabc", "a"},
+	} {
+		cs = append(cs, strsearchCase{t[0], t[1]})
+	}
+	return cs
+}
+
+// goCountCases are Go's strings_test.go CountTests as (s, sub) inputs; the
+// count itself comes from strings.Count. Go's strings tests are Copyright
+// 2009 The Go Authors, BSD-style license.
+func goCountCases() []strsearchCase {
+	var cs []strsearchCase
+	for _, t := range [][2]string{
+		{"", ""}, {"", "notempty"}, {"notempty", ""},
+		{"smaller", "not smaller"}, {"12345678987654321", "6"},
+		{"611161116", "6"}, {"notequal", "NotEqual"}, {"equal", "equal"},
+		{"abc1231231123q", "123"}, {"11111", "11"},
 	} {
 		cs = append(cs, strsearchCase{t[0], t[1]})
 	}
@@ -228,6 +244,31 @@ func strsearchRandomFields(r *rand.Rand) string {
 	return b.String()
 }
 
+// strsearchRandomCount is a random (s, sub): sub is empty, one byte, a
+// longer unrelated text, or a piece of s, so overlapping copies ("11111"
+// and "11") and a multi byte piece occur.
+func strsearchRandomCount(r *rand.Rand) strsearchCase {
+	s := strsearchGen(r, strsearchLen(r))
+	var sub string
+	switch r.Intn(5) {
+	case 0:
+		sub = ""
+	case 1:
+		sub = strsearchGen(r, 1)
+	case 2:
+		sub = strsearchGen(r, 2+r.Intn(3))
+	default:
+		if len(s) > 0 {
+			n := 1 + r.Intn(len(s))
+			start := r.Intn(len(s) - n + 1)
+			sub = s[start : start+n]
+		} else {
+			sub = strsearchGen(r, 1)
+		}
+	}
+	return strsearchCase{s, sub}
+}
+
 // strsearchRandomReplace is a random (s, old, new): old is unrelated, empty
 // or a piece of s, so replace all, no match and the empty old insertion
 // before each UTF-8 sequence are covered.
@@ -276,7 +317,7 @@ func strsearchText(c strsearchCase) strsearchCase { return strsearchCase{textOf(
 func strsearchCorpus() string {
 	r := rand.New(rand.NewSource(31))
 	var o strings.Builder
-	o.WriteString(header("strings.Index, LastIndex, Contains, Split, Fields, ReplaceAll and Join on the inputs of Go's strings_test.go (indexTests, lastIndexTests, splittests, fieldstests, ReplaceTests) and on seeded random inputs, against Str.find, rfind, contains, split, fields, replace and List[Str].join (Go's strings tests are Copyright 2009 The Go Authors, BSD-style license)"))
+	o.WriteString(header("strings.Index, LastIndex, Contains, Split, Fields, ReplaceAll and Join on the inputs of Go's strings_test.go (indexTests, lastIndexTests, splittests, fieldstests, ReplaceTests) and on seeded random inputs, against Str.find, rfind, contains, split, fields, replace and List[Str].join, and strings.Count (countTests) against Str.count (Go's strings tests are Copyright 2009 The Go Authors, BSD-style license)"))
 
 	// index, rfind and contains
 	idx := goIndexCases()
@@ -347,6 +388,20 @@ func strsearchCorpus() string {
 		}
 		lits.WriteString("]")
 		fmt.Fprintf(&o, "  (%s, %s, %s),\n", lits.String(), xq(sep), xq(strsearchOracleJoin(parts, sep)))
+	}
+	o.WriteString("]\n")
+
+	// count (its own seed, after every section that shares r, so their
+	// random inputs stay identical)
+	ct := goCountCases()
+	rc := rand.New(rand.NewSource(41))
+	for i := 0; i < 3000; i++ {
+		ct = append(ct, strsearchRandomCount(rc))
+	}
+	o.WriteString("\n/// (s, sub, Go's Count)\nconst COUNT_CASES: List[(Str, Str, Str)] = [\n")
+	for _, c := range ct {
+		c = strsearchText(c)
+		fmt.Fprintf(&o, "  (%s, %s, %s),\n", xq(c.s), xq(c.sep), xq(fmt.Sprintf("%d", strings.Count(c.s, c.sep))))
 	}
 	o.WriteString("]\n")
 
@@ -445,6 +500,32 @@ test "fields on a view of a longer text" {
     }
   }
   expect(show2(bad)) == []
+}
+
+test "count is Go's Count" {
+  var bad: List[(Str, Str, Str, Str)] = []
+  for (s, sub, want) in COUNT_CASES {
+    let got = "${s.count(sub)}"
+    if got != want {
+      bad.push((s, sub, got, want))
+    }
+  }
+  expect(show3(bad)) == []
+}
+
+test "count on a view of a longer text" {
+  // the slice is exactly s, so every count, the "" one (runes plus one)
+  // included, is s's own Go count
+  var bad: List[(Str, Str, Str, Str)] = []
+  for (s, sub, want) in COUNT_CASES {
+    let long = "<<" + s + ">>"
+    let view = long[2..(long.len() - 2)]
+    let got = "${view.count(sub)}"
+    if got != want {
+      bad.push((s, sub, got, want))
+    }
+  }
+  expect(show3(bad)) == []
 }
 
 test "replace is Go's ReplaceAll" {

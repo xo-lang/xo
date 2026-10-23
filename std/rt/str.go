@@ -86,6 +86,10 @@ func Str_find(_ *Task, s, sub string) Option[int64] {
 	return Some(int64(i))
 }
 
+// Str_count is `s.count(sub)`: the number of non-overlapping copies of sub
+// (strings.Count), the rune count plus one for "".
+func Str_count(_ *Task, s, sub string) int64 { return int64(strings.Count(s, sub)) }
+
 // Str_split is `s.split(sep)`.
 func Str_split(_ *Task, s, sep string) List[string] { return ListOf(strings.Split(s, sep)...) }
 

@@ -463,6 +463,8 @@ fn (var c: Checker) habit_module_call(call: Expr, md: Ident, sel: Ident) -> (Int
     "strings.HasPrefix" => "starts_with"
     "strings.HasSuffix" => "ends_with"
     "strings.Split" => "split"
+    "strings.Fields" => "fields"
+    "strings.Count" => "count"
     "strings.Repeat" => "repeat"
     "strings.TrimPrefix" => "trim_prefix"
     "strings.TrimSuffix" => "trim_suffix"
