@@ -1,0 +1,5 @@
+// The smallest program of the build and startup comparison
+// (twins/build.sh): print one line and exit.
+fn main(os: Os) {
+  os.stdio.println("hello")
+}

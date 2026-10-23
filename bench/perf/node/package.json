@@ -8,6 +8,8 @@
   },
   "devDependencies": {
     "@types/node": "22.19.0",
+    "esbuild": "0.28.2",
+    "postject": "1.0.0-alpha.6",
     "typescript": "5.9.3"
   }
 }

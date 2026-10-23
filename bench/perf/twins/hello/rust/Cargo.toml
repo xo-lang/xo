@@ -1,0 +1,15 @@
+[package]
+name = "hello"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# The smallest program of the build and startup comparison (twins/build.sh),
+# with the release profile of the other Rust twins.
+[dependencies]
+
+[profile.release]
+opt-level = 3
+codegen-units = 1
+lto = "thin"
+panic = "abort"
