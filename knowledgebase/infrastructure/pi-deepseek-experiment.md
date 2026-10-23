@@ -112,6 +112,14 @@ permission deny rules (pkill, killall, sudo, git push, git stash, gh
 workflow and release, terraform, keychain reads, the secret files, edits
 under the main checkout) as a second layer.
 
+Its home is the persistent worktree ~/godev/claude-space/xolang/pi-deepseek
+(since 2026-10-23, replacing /tmp/pi-count; /tmp is wiped on a reboot), started with
+`~/xo-lead/agents/deepseek.sh [--continue]`, which refuses to start
+without the worktree, its guard settings, the installed hook, or the
+gateway variable, or with a CLAUDE.local.md present. One task at a time
+there: reset it to origin/main per task instead of new worktrees, which
+would have no guard.
+
 Start a Claude Code DeepSeek session in its worktree, never the main
 checkout: Claude Code loads the start directory's settings and its
 CLAUDE.local.md, so a start in the main checkout sends the private values
