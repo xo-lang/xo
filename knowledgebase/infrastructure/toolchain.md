@@ -236,7 +236,9 @@ create`. The order:
    UNPACKED/bin/xo OUT` in the private checkout, and commit
    OUT/report.md as `bench/results/release-vs-go-vX.Y.Z.md`. It builds
    bench/perf's Go-twin programs (llvm, collections, conc) with xo and
-   Go: compile cold, warm and after a one function edit, peak build
+   Go: compile cold, a second build, warm (the third unchanged build:
+   xo writes a directory's parts pack on the second build and reads it
+   from the third, 2026-10-23) and after a one function edit, peak build
    memory, binary size, and each workload's run under `xo bench --ab`
    (wall, CPU, peak RSS; Go is A, Xo is B). Last verified: 2026-10-22
    (smoke run, 3 workloads).

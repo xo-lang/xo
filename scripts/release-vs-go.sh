@@ -6,7 +6,9 @@
 #
 # Pairs: the Go-twin programs of bench/perf: llvm/xo/<w> against llvm/go,
 # xo against go (collections), conc/xo/<w> against conc/go. Per pair:
-#   - compile: cold (empty caches), warm (again, unchanged) and edit (one
+#   - compile: cold (empty caches), second (again, unchanged), warm (a
+#     third, unchanged: xo writes a directory's parts pack on its second
+#     build and reads it from the third, bcache.xo pack_dir) and edit (one
 #     new function appended to a copy of the main file), wall time and
 #     peak RSS of the build (/usr/bin/time -l);
 #   - binary size (default build; Go's default keeps its symbols too);
@@ -60,7 +62,7 @@ settle() {
 	load1
 }
 
-# compile SIDE NAME SRCDIR MAINFILE: cold, warm and edit builds of a copy
+# compile SIDE NAME SRCDIR MAINFILE: cold, second, warm and edit builds of a copy
 # of SRCDIR; prints a table row and leaves the binary at $work/NAME.SIDE
 compile() {
 	local side=$1 name=$2 src=$3 mainf=$4
@@ -76,9 +78,10 @@ compile() {
 	else
 		build=(env GOCACHE="$cache/go" GOFLAGS=-trimpath go build -o "$bin" .)
 	fi
-	local cold warm edit
+	local cold second warm edit
 	settle >/dev/null
 	cold=$(cd "$d" && timed "$OUT/build-$side-$name-cold.log" "${build[@]}")
+	second=$(cd "$d" && timed "$OUT/build-$side-$name-second.log" "${build[@]}")
 	warm=$(cd "$d" && timed "$OUT/build-$side-$name-warm.log" "${build[@]}")
 	if [ "$side" = xo ]; then
 		printf '\nfn release_vs_go_edit() -> Int {\n  7\n}\n' >>"$d/$mainf"
@@ -91,8 +94,8 @@ compile() {
 	(cd "$d" && "${build[@]}" >/dev/null 2>&1)
 	local size
 	size=$(stat -f %z "$bin")
-	set -- $cold $warm $edit
-	echo "| $name | $side | $1 | $3 | $5 | $2 / $4 / $6 | $(python3 -c "print(f'{$size/1048576:.2f}')") |"
+	set -- $cold $second $warm $edit
+	echo "| $name | $side | $1 | $3 | $5 | $7 | $2 / $6 / $8 | $(python3 -c "print(f'{$size/1048576:.2f}')") |"
 }
 
 {
@@ -100,12 +103,14 @@ compile() {
 	echo
 	echo "scripts/release-vs-go.sh on $(uname -sm), $(sysctl -n hw.memsize 2>/dev/null | awk '{printf "%d GB", $1/1073741824}'),"
 	echo "Go $(go env GOVERSION). Build times are wall milliseconds of one build; peak MB is the"
-	echo "build's largest resident set (cold / warm / edit). Size is the default build's binary."
+	echo "build's largest resident set (cold / warm / edit). Warm is the third unchanged build"
+	echo "(xo's parts pack is written on the second and read from the third); second is the second."
+	echo "Size is the default build's binary."
 	echo
 	echo "## Compile and size"
 	echo
-	echo "| program | side | cold ms | warm ms | edit ms | peak MB (c/w/e) | size MB |"
-	echo "|---|---|---|---|---|---|---|"
+	echo "| program | side | cold ms | second ms | warm ms | edit ms | peak MB (c/w/e) | size MB |"
+	echo "|---|---|---|---|---|---|---|---|"
 } >"$report"
 
 # the pairs: NAME XO_SRC GO_SRC
