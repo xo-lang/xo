@@ -5,7 +5,7 @@
 use native/rt
 
 /// The address of the first byte of s (its string object's data).
-pub fn data(s: Str) -> Int { rt.int_wrap(0, rt.obj_addr(s), rt.layout(0)) }
+pub fn data(s: Str) -> Int { rt.obj_addr(s).wrapping_add(rt.layout(0)) }
 
 /// The address of b's first byte (valid while b is alive; the kernel may
 /// write there only when b is unique, as bytes_buf's are). Bytes and Str
@@ -240,7 +240,7 @@ fn str_copy(a: Int, n: Int) -> Str {
 /// end is the string's end).
 pub fn str_from(s: Str, lo: Int) -> Str {
   if lo < s.len() && (rt.mem_load(data(s), lo, 1) & 0xC0) == 0x80 {
-    return str_copy(rt.int_wrap(0, data(s), lo), rt.int_wrap(1, s.len(), lo))
+    return str_copy(data(s).wrapping_add(lo), s.len().wrapping_sub(lo))
   }
   rt.str_view(s, lo, s.len())
 }

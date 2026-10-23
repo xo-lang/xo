@@ -375,12 +375,15 @@ func TestLinuxEmit(t *testing.T) {
 // of the local it is a field of, not copied in and out of a home of the
 // field's own type at every call (compiler/arm64 byref.xo slot_mems,
 // 2026-10-21: frame homes are by type, and another call's field argument
-// made one for the field's type). Measured in main's loop (the region from
-// a label to the latest branch back to it): at most 16 of the 32 byte
-// block copies (`ldp q30, q31`; 24 before) and 225 loads and stores (234
-// before); the loop ran 36% faster (20M iterations, 0.48 s to 0.30 s).
+// made one for the field's type). Measured in main's loop (the smallest
+// region from a label to a branch back to it that holds the call of bump;
+// the longest region, which this test used until 2026-10-23, was the whole
+// function once a landing pad branched back to its start, and changed with
+// the std's fault pads): at most 225 loads and stores (234 before) and no
+// 32 byte block copy (`ldp q30, q31`) where there were 24 in the longest
+// region before; the loop ran 36% faster (20M iterations, 0.48 s to 0.30 s).
 func TestByRefFieldHome(t *testing.T) {
-	const maxCopies, maxOps = 16, 225
+	const maxCopies, maxOps = 0, 225
 	got := ownFuncs(asm(t, filepath.Join("..", "llvm", "testdata", "golden", "byref_field_home"), "darwin"))
 	main := got
 	if i := strings.Index(got, "// func main"); i >= 0 {
@@ -402,8 +405,15 @@ func TestByRefFieldHome(t *testing.T) {
 		if len(f) < 2 || !(f[0] == "b" || strings.HasPrefix(f[0], "b.") || f[0] == "cbz" || f[0] == "cbnz" || f[0] == "tbz" || f[0] == "tbnz") {
 			continue
 		}
-		if p, ok := at[f[len(f)-1]]; ok && p < k && (lo < 0 || k-p > hi-lo) {
-			lo, hi = p, k
+		p, ok := at[f[len(f)-1]]
+		if !ok || p >= k || (lo >= 0 && k-p >= hi-lo) {
+			continue
+		}
+		for _, l := range lines[p:k] {
+			if strings.Contains(l, "_xo_f_bump") {
+				lo, hi = p, k
+				break
+			}
 		}
 	}
 	if lo < 0 {

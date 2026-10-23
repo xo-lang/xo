@@ -134,22 +134,22 @@ pub fn eq_at(a: Bytes, ai: Int, b: Bytes, bi: Int, n: Int) -> Bool {
 /// and no bounds checks (the trim_prefix and trim_suffix tests).
 pub fn eq_text(s: Str, i: Int, p: Str) -> Bool {
   let n = p.len()
-  let a = rt.int_wrap(0, raw.data(s), i)
+  let a = raw.data(s).wrapping_add(i)
   let b = raw.data(p)
   var t = 0
   if n >= 4 {
     // 4-byte words, then the last word (overlapping)
-    while rt.int_wrap(1, n, t) > 4 {
+    while n.wrapping_sub(t) > 4 {
       if rt.mem_load(a, t, 4) != rt.mem_load(b, t, 4) {
         return false
       }
-      t = rt.int_wrap(0, t, 4)
+      t = t.wrapping_add(4)
     }
-    let e = rt.int_wrap(1, n, 4)
+    let e = n.wrapping_sub(4)
     return rt.mem_load(a, e, 4) == rt.mem_load(b, e, 4)
   }
   if n >= 2 {
-    let e = rt.int_wrap(1, n, 2)
+    let e = n.wrapping_sub(2)
     return rt.mem_load(a, 0, 2) == rt.mem_load(b, 0, 2) && rt.mem_load(a, e, 2) == rt.mem_load(b, e, 2)
   }
   n == 0 || rt.mem_load(a, 0, 1) == rt.mem_load(b, 0, 1)

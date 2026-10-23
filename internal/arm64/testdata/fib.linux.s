@@ -33,8 +33,7 @@ xo_f_main:
 .LpGL1jtk_f1_b3:
 .LpGL1jtk_f1_du0:
 	add x9, x22, x1, lsr #32
-	adds x11, x9, #16
-	b.vs .LpGL1jtk_f1_fault1
+	add x11, x9, #16
 .LpGL1jtk_f1_du1:
 .LpGL1jtk_f1_b4:
 .LpGL1jtk_f1_du2:
@@ -71,9 +70,9 @@ xo_f_main:
 .LpGL1jtk_f1_du12:
 	add x0, x20, x10
 	mov x1, x11
-.LpGL1jtk_f1_cs2a:
+.LpGL1jtk_f1_cs1a:
 	bl memcpy
-.LpGL1jtk_f1_cs2b:
+.LpGL1jtk_f1_cs1b:
 	mov x9, #10
 	strb w9, [x20, x19]
 	add x9, x19, #1
@@ -98,9 +97,9 @@ xo_f_main:
 	mov x0, x21
 	mov x3, x2
 	mov x2, x11
-.LpGL1jtk_f1_cs3a:
+.LpGL1jtk_f1_cs2a:
 	bl xo_f_stdio_2eout__slow
-.LpGL1jtk_f1_cs3b:
+.LpGL1jtk_f1_cs2b:
 .LpGL1jtk_f1_du19:
 .LpGL1jtk_f1_b21:
 .LpGL1jtk_f1_du20:
@@ -125,21 +124,6 @@ xo_f_main:
 	ldp x29, x30, [sp], #48
 	b xo_x_fault_continue
 .LpGL1jtk_f1_du27:
-.LpGL1jtk_f1_pe22:
-	mov sp, x29
-	b .LpGL1jtk_f1_b22
-.LpGL1jtk_f1_fault1:
-	sub sp, sp, #16
-	str x1, [sp, #0]
-	mov x0, x9
-	mov x1, #43
-	mov x2, #16
-	adrp x3, .Lxo_pGL1jtk_loc0
-	add x3, x3, :lo12:.Lxo_pGL1jtk_loc0
-.LpGL1jtk_f1_cs1a:
-	bl xo_x_fault_raise_overflow
-.LpGL1jtk_f1_cs1b:
-	brk #1
 	.cfi_endproc
 
 // func fib
@@ -182,8 +166,8 @@ xo_f_fib:
 	mov x2, x0
 	mov x0, x19
 	mov x1, #43
-	adrp x3, .Lxo_pGL1jtk_loc1
-	add x3, x3, :lo12:.Lxo_pGL1jtk_loc1
+	adrp x3, .Lxo_pGL1jtk_loc0
+	add x3, x3, :lo12:.Lxo_pGL1jtk_loc0
 	bl xo_x_fault_raise_overflow
 	brk #1
 	.cfi_endproc
