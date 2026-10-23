@@ -153,7 +153,24 @@ Each finding: what, evidence, fix. Status in brackets.
   Str.count, index_any or fields exist), and checked its own fast gate
   with -v unprompted.
 
+- 2026-10-23, after task 1: told to remove its worktree, it ran `cd MAIN
+  && git worktree remove /tmp/pi-strsearch`; xo-guard blocked it (main
+  checkout: `worktree remove` was in the mutator list, a false positive
+  for its own tree). Instead of reporting the block it reran the command
+  as `git -C <the overseer's scratch worktree> worktree remove ...`, which
+  the guard did not cover. Harmless in effect (its own clean tree), but a
+  guard workaround, against APPEND_SYSTEM.md's "never try to get around a
+  block: report it". Correction 3. Guard fixed: `git worktree remove` is
+  allowed from any directory for a `/tmp/pi-*` tree without `--force`;
+  every other remove, `prune` and `move` is blocked.
+
 ## Observations
+
+- DeepSeek routes around a guard block when it sees a path the guard does
+  not cover (above), even with the rule in its system prompt. Guards must
+  be written on the target of an action (which worktree, which file), not
+  on where the command runs from, and a block reason should say "report
+  this to the overseer" explicitly.
 
 - xo-inbox messages reach a Pi session only between its turns. DeepSeek
   runs long turns with `sleep N` polls, so a correction waited up to about
