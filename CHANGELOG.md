@@ -21,6 +21,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   the keys found nowhere and skips them. A warm build of a one-line
   program uses about 7% less CPU (decision 0351).
 
+- `XO_CHK_CACHE=auto` skips the check of a module whose closures make a
+  generic instance (a Map method first called in a `Mutex.with`
+  closure): such a closure now has only its owning function checked
+  again, as a body without a front end entry does; before, its whole
+  module was checked on every build (bench/perf/http's never skipped).
+
 - `XO_BACKEND_CACHE=verify` no longer reports front end cache entries
   that another program recorded as differing: it compared the modules a
   body was first to build code of and its closure and constant numbers,

@@ -2651,3 +2651,88 @@ func TestFrontCacheNegKeys(t *testing.T) {
 		t.Errorf("warm build: %s, want no loose reads, no missing lookups, and fewer bodies in the pack than keys", m[0])
 	}
 }
+
+// TestModuleCheckAutoClosureGen: a module whose closure makes a generic
+// instance (a Map method first called inside a Mutex.with closure, fe
+// skip.gen: the closure has no front end entry) still skips its check
+// under XO_CHK_CACHE=auto, with that closure's owner checked eagerly;
+// before 2026-10-23 such a closure marked its whole module incomplete,
+// and bench/perf/http/xo's one module never skipped (cache chk 0/1).
+func TestModuleCheckAutoClosureGen(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-chkclo-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	own := filepath.Join(work, "p")
+	if err := os.MkdirAll(own, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := `struct Store {
+  users: Map[Int, Str]
+}
+
+fn add(m: Mutex[Store], id: Int, name: Str) {
+  m.with(fn(var s) { s.users[id] = name })
+}
+
+fn count(m: Mutex[Store]) -> Int {
+  m.with_read(fn(s) { s.users.len() })
+}
+
+fn main(os: Os) {
+  let m = Mutex[Store].new(Store{users: {}})
+  add(m, 1, "a")
+  add(m, 2, "b")
+  os.stdio.println("${count(m)}")
+}
+`
+	if err := os.WriteFile(filepath.Join(own, "main.xo"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(work, "prog")
+	build := func(cache string, env ...string) ([]byte, string) {
+		t.Helper()
+		os.Remove(out)
+		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "--phase-times", "-o", out, "."))
+		cmd.Dir = own
+		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on"), env...)
+		log, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("xo build %v: %v\n%s", env, err, log)
+		}
+		b, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b, string(log)
+	}
+	off, _ := build(filepath.Join(work, "off"), "XO_BACKEND_CACHE=off")
+	cache := filepath.Join(work, "cache")
+	auto := []string{"XO_BACKEND_CACHE=on", "XO_CHK_CACHE=auto", "XO_FE_STATS=1"}
+	build(cache, auto...)
+	warm, log := build(cache, auto...)
+	if !strings.Contains(log, "fe skip.gen") {
+		t.Fatalf("no closure without a front end entry (fe skip.gen): the program no longer tests the case:\n%s", log)
+	}
+	if !regexp.MustCompile(`cache chk 1/1 modules`).MatchString(log) {
+		t.Fatalf("the warm build skipped no module:\n%s", log)
+	}
+	if !bytes.Equal(warm, off) {
+		t.Error("the warm build with XO_CHK_CACHE=auto differs from the cache-off build")
+	}
+	got, err := testtmp.Guard(exec.Command(out)).CombinedOutput()
+	if err != nil || strings.TrimSpace(string(got)) != "2" {
+		t.Errorf("the program printed %q (%v), want 2", got, err)
+	}
+}

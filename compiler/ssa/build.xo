@@ -757,18 +757,26 @@ fn (var b: Builder) run_job_fe(j: Job) {
     }
   }
   match j {
-    Closure(cf, _, file, _, _, _, _, _, _, _, _, _) => {
+    Closure(cf, _, file, _, _, owner, _, _, _, _, _, _) => {
       // a closure's entry is pinned: its lines are not made relative
       b.fe.cur_line = 0
       // a closure's body: an entry of its own, sealed into its owner's
-      // (fe_finalize); none makes its module's bodies incomplete
+      // (fe_finalize); none leaves its owner without an entry, so the
+      // owner's body is checked and built from source when the module's
+      // check comes from the cache (nofe_fo, the entry's eager list), as a
+      // body without an entry is. Only a closure with no named owner makes
+      // its module's bodies incomplete: a module whose closures made a
+      // generic instance (fe skip.gen, bench/perf/http's Mutex.with calls)
+      // never skipped its check (cache chk 0/1, 2026-10-23)
       let r = b.fe_begin()
       b.run_job0(j)
       match b.fe_entry(r, cf) {
         Some(e) => b.fe.clos_rec[cf] = (e, b.fe_made_closures())
         None => {
           b.fe.no_clos[cf] = true
-          if file >= 0 {
+          if owner >= 0 {
+            b.nofe_fo(owner)
+          } else if file >= 0 {
             b.nofe_mods[b.c.files[file].module] = true
           }
         }
