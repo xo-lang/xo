@@ -12,3 +12,4 @@
 - [std-coverage.md](std-coverage.md): std against Go's standard library (decision 0276): one row per Go package with its Xo module, status, and what is missing, rows for backend needs outside Go's std, the module change logs, and the 2026-10-20 survey ranking of gaps
 - [xo-at-a-glance.md](xo-at-a-glance.md): what the language, std and tools already have, with spec sections; read before reporting a feature as missing
 - [scale-suite.md](scale-suite.md): the scale suite (internal/progen Scale, scripts/scale): one knob of program size swept at a time against build time, peak memory and binary size, outputs checked on every backend, the count field edges per object format, growth thresholds and runtime budget
+- [pi-deepseek-experiment.md](pi-deepseek-experiment.md): the DeepSeek/Pi experiment (2026-10-23): DeepSeek through the Pi agent as an Xo team member, its setup, gaps against Claude Code, safety findings, and the Pi extensions and config it needs
