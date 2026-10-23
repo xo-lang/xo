@@ -860,7 +860,15 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // stays the host's (gotchas/wasm-target-os-is-the-host.md)
     tgoarch = "wasm"
   }
-  var lo = lower(os, o, c, root, tests, release, uses_time, tgoos, tgoarch, backend == "wasm", backend is "arm64" | "amd64", t)
+  // decision 0352: lower lets the checker go once the SSA is built, in a
+  // native build for one target OS that is not a test and has no module
+  // check cache retry (which reads the checker after lowering)
+  var one_os = true
+  for tg in targets {
+    one_os = one_os && tg.split("/")[0] == targets[0].split("/")[0]
+  }
+  let strip = (backend is "arm64" | "amd64") && one_os && !tests && !c.mod_skip_auto && (os.env.get("XO_KEEP_FRONT") ?? "") != "1"
+  var lo = lower(os, o, c, strip, root, tests, release, uses_time, tgoos, tgoarch, backend == "wasm", backend is "arm64" | "amd64", t)
   if c.mod_skip_auto && (!lo.b.skip_src.is_empty() || c.skip_unsafe) {
     // XO_CHK_CACHE=auto skipped a module a body of which was built from
     // source after the whole-program passes (or the checked bodies read
@@ -883,7 +891,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     }
     o.chk_noskip = o.chk_noskip + no
     c = check_program(os, o, true)
-    lo = lower(os, o, c, root, tests, release, uses_time, tgoos, tgoarch, backend == "wasm", backend is "arm64" | "amd64", t)
+    lo = lower(os, o, c, false, root, tests, release, uses_time, tgoos, tgoarch, backend == "wasm", backend is "arm64" | "amd64", t)
   }
   t = lo.t
   var b = lo.b
@@ -1138,10 +1146,6 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   // diagnostics and (xo dev's reuse) the parse cache of the checker from
   // here on; the rest, held by c, the builder and lo, goes before
   // inlining (a test build keeps it: test_infos and run_store read it)
-  var one_os = true
-  for tg in targets {
-    one_os = one_os && tg.split("/")[0] == tgoos
-  }
   if one_os && !tests && (os.env.get("XO_KEEP_FRONT") ?? "") != "1" {
     c = c.link_view(o.reuse_parse)
     b.c = c
@@ -1166,7 +1170,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     let tgoos = tg.split("/")[0]
     if tgoos != cur_os {
       // another OS: its own SSA, its `target` that OS's
-      let l = lower(os, o, c, root, tests, release, uses_time, tgoos, march, false, true, t)
+      let l = lower(os, o, c, false, root, tests, release, uses_time, tgoos, march, false, true, t)
       cur = l.b
       cur_tu = l.tu
       cur_os = tgoos
@@ -1582,7 +1586,7 @@ struct Lowered {
 /// lazy: the arm64 and amd64 backends, whose inliner decodes the cached
 /// reference counting it reads (bcache.xo rc_cached); the module may
 /// then hold undecoded functions (ssa Module.lazy) until it inlines.
-fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Bool, uses_time: Bool, tgoos: Str, tgoarch: Str, wasm: Bool, lazy: Bool, t0: Time) -> Lowered {
+fn lower(os: Os, o: Opts, var c: check.Checker, strip: Bool, root: Str, tests: Bool, release: Bool, uses_time: Bool, tgoos: Str, tgoarch: Str, wasm: Bool, lazy: Bool, t0: Time) -> Lowered {
   // the runtime's profiler: in every build but a release one without
   // --profile-support (decision 0238); --profile asks for it too
   let prof = !release || o.profile_support || !o.profile.is_empty()
@@ -1632,6 +1636,13 @@ fn lower(os: Os, o: Opts, c: check.Checker, root: Str, tests: Bool, release: Boo
   // the zone data std/time needs, noted as the Go builder lowers
   let tu = if uses_time { tzsel.tz_use(c, b.m, root) } else { tzsel.TZUse{} }
   t = lap(os, o.phases, "tz", t)
+  if strip {
+    // decision 0352: the SSA is built and nothing after reads the
+    // checker but the link's view, so its syntax trees and tables go
+    // here, before the passes' peak (the caller's c is this variable)
+    c = c.link_view(o.reuse_parse)
+    b.c = c
+  }
   // b.run_passes(), timed; may_fault's scans on tasks
   b.m.jobs = emit_jobs(os)
   b.prune_unwind()

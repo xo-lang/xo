@@ -48,7 +48,7 @@ fn vet_cost(os: Os, args: List[Str]) -> List[check.Diag] {
     uses_time = uses_time || m.path == "native/time"
   }
   let root = line_root(os, o.wd, o.dirs[0])
-  let lo = lower(os, o, c, root, false, false, uses_time, host_os(os), host_arch(), false, false, os.clock.now())
+  let lo = lower(os, o, c, false, root, false, false, uses_time, host_os(os), host_arch(), false, false, os.clock.now())
   // the root modules' own files, as the functions name them
   var keep: List[Str] = []
   for m in c.root_mods {

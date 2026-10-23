@@ -1,7 +1,7 @@
 # 0352: the front end's data is freed once the SSA exists
 
-Status: Accepted (lead, 2026-10-23); steps B and C implemented, step D's
-tool (XO_PROF_HEAP_AT) landed, D itself open
+Status: Accepted (lead, 2026-10-23); steps B, C and E implemented, step
+D's tool (XO_PROF_HEAP_AT) landed
 
 ## Context
 
@@ -35,6 +35,13 @@ scale-suite.md; Xo Lang 1's design note, 2026-10-23). XO_PROF_HEAP_AT
   to gen_module, the modules before and after inlining are dropped
   (`cur.m`, `mi`, the builder's), so only gen_module's output is alive
   through code generation and the link.
+- E (2026-10-23, after D's first snapshots): lower() takes the link view
+  itself, right after the SSA is built (and std/time's zone use read),
+  through a `var` checker parameter, so the caller's checker goes too;
+  prune_unwind, add_landings, cleanup, insert_rc and rc_cached read no
+  part of it. Only for a native build for one target OS that is not a
+  test and has no module check cache retry (which reads the checker
+  after lowering).
 - XO_KEEP_FRONT=1 keeps both (today's behavior, for comparison), and
   XO_KEEP_MODS=1 keeps the modules (C off); neither changes the output.
 - D: XO_PROF_HEAP_AT=TEXT (std/debug, d449dc24c) writes the heap in use
@@ -56,6 +63,20 @@ off, darwin/arm64:
 The three xo binaries built are identical. fns' peak is now reached
 before lowering ends (ssa, add_landings, cleanup), so its smaller
 gain points at step D.
+
+Step E (XO_PROF_HEAP_AT at cleanup on fns-16384 showed 1.43 GB live, 1.1
+GB of it the parser's trees and the checker's tables, held through
+lower()'s passes), one xo, everything kept against B, C and E:
+
+| | kept | B, C, E |
+| --- | --- | --- |
+| fns-16384 peak heap | 2,824 MB | 2,020 MB |
+| fns-16384 max RSS | 2.81 GB | 2.08 GB |
+| compiler/xo peak heap | 11,616 MB | 8,864 MB |
+| compiler/xo max RSS | 10.15 GB | 8.42 GB |
+
+The live heap at cleanup on fns-16384 is now 284 MB, mostly the SSA
+(renumber's lists).
 
 ## Alternatives
 
