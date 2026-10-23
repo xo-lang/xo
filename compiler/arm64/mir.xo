@@ -202,7 +202,11 @@ fn (g: G) term_kind(b: Int) -> Int {
 }
 
 /// The targets of block b's terminator when it branches (jump, condbr,
-/// switch).
+/// switch); else the landing pads of its calls: a call that does not
+/// return (a fault the operands prove, then a trap) still unwinds to its
+/// pad, which no rt.landing branch reaches once the branch to the call
+/// was decided (2026-10-23: `csv.parse(s, sep: '"')` in a test left the
+/// pad unemitted and its call site's label undefined).
 fn (g: G) msuccs(b: Int) -> List[Int] {
   let n = g.blocks[b].insts.len()
   if n == 0 {
@@ -212,5 +216,11 @@ fn (g: G) msuccs(b: Int) -> List[Int] {
   if k == K_JUMP || k == K_CONDBR || k == K_SWITCH {
     return g.blocks[b].insts[n - 1].targets
   }
-  []
+  var pads: List[Int] = []
+  for inst in g.blocks[b].insts {
+    if inst.kind == K_CALL && inst.pad >= 0 && !pads.contains(inst.pad) {
+      pads.push(inst.pad)
+    }
+  }
+  pads
 }

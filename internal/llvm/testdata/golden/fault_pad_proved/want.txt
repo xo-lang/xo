@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+bad: csv: invalid field or comment delimiter
+good: ok 1 2
+format: csv: invalid field or comment delimiter
+--- stderr
