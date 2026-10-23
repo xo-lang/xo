@@ -486,13 +486,17 @@ pub fn trim_end_chars(s: Str, chars: Str) -> Str {
   trim_end_unicode(s, chars)
 }
 
+// The ASCII trims cut where an ASCII byte (one of the set, or the first
+// byte past them) meets the rest: a UTF-8 boundary in range, so a view
+// with no range or boundary check (rt.str_view; 2026-10-23: the checked
+// slice was 22% of bench/perf/trimchars trim, DS-1's profile).
 fn trim_start_byte(s: Str, c: UInt8) -> Str {
   let b = s.bytes()
   var i = 0
   while i < b.len() && b[i] == c {
     i += 1
   }
-  s[i..]
+  rt.str_view(s, i, s.len())
 }
 
 fn trim_end_byte(s: Str, c: UInt8) -> Str {
@@ -501,7 +505,7 @@ fn trim_end_byte(s: Str, c: UInt8) -> Str {
   while n > 0 && b[n - 1] == c {
     n -= 1
   }
-  s[0..n]
+  rt.str_view(s, 0, n)
 }
 
 fn trim_start_ascii(s: Str, lo: Int, hi: Int) -> Str {
@@ -510,7 +514,7 @@ fn trim_start_ascii(s: Str, lo: Int, hi: Int) -> Str {
   while i < b.len() && in_set(lo, hi, Int(b[i])) {
     i += 1
   }
-  s[i..]
+  rt.str_view(s, i, s.len())
 }
 
 fn trim_end_ascii(s: Str, lo: Int, hi: Int) -> Str {
@@ -519,7 +523,7 @@ fn trim_end_ascii(s: Str, lo: Int, hi: Int) -> Str {
   while n > 0 && in_set(lo, hi, Int(b[n - 1])) {
     n -= 1
   }
-  s[0..n]
+  rt.str_view(s, 0, n)
 }
 
 fn trim_start_unicode(s: Str, chars: Str) -> Str {

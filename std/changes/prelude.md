@@ -1,5 +1,20 @@
 # prelude changes
 
+## 2026-10-23: perf: the ASCII trims return their view without a slice check
+
+- Kind: perf
+- Commit: this commit
+- Found by: DS-1's bench/perf/trimchars profile (bench/results/trimchars-2026-10-23.md: the checked slice 22% of trim)
+- Go reference: strings.trimLeftByte, trimRightByte, trimLeftASCII, trimRightASCII (they slice unchecked by construction)
+- Test: corpus/trimchars (arm64 and LLVM), golden trim_chars_view (arm64, LLVM, Go parity)
+
+Str.trim_chars, trim_start_chars and trim_end_chars with an ASCII cutset
+cut where a byte of the set meets a byte that is not, both ASCII or a
+string end, so the cut is in range and on a UTF-8 boundary: the view is
+made with no range or boundary check. Results are unchanged. arm64 xo
+bench --ab bench/perf/trimchars: instructions trim 0.89, trim_end 0.926,
+trim_start 0.942.
+
 ## 2026-10-23: feature: Str.trim_chars, trim_start_chars and trim_end_chars (strings.Trim, TrimLeft, TrimRight)
 
 - Kind: feature
