@@ -21,25 +21,6 @@ const PUSH_RUN_MAX = 4
 fn (var g: G) plan_push_runs(blocks: List[Int]) {
   g.push_run = {}
   g.push_skip = {}
-  g.push_alias = {}
-  // the releases of each value: a push's list a landing pad drops
-  // a block's place in isel's order: a release's block must come after
-  // the skipped push's (whose list it then reads, push_alias)
-  var pos: Map[Int, Int] = {}
-  for (k, bb) in blocks.indexed() {
-    pos[bb] = k
-  }
-  var rel: Map[Int, List[Int]] = {}
-  for (bi, bl) in g.f.blocks.indexed() {
-    for v in bl.instrs {
-      let x = g.f.values[v]
-      if x.op == ssa.Op.Release && x.args.len() == 1 {
-        var bs = rel.get(x.args[0]) ?? []
-        bs.push(bi)
-        rel[x.args[0]] = bs
-      }
-    }
-  }
   for b in blocks {
     let ins = g.f.blocks[b].instrs
     var k = ins.len() - 1
@@ -54,38 +35,8 @@ fn (var g: G) plan_push_runs(blocks: List[Int]) {
       var cur = v
       while chain.len() < PUSH_RUN_MAX {
         let a = g.f.values[cur].args[0]
-        if !g.is_push(a) || g.f.values[a].pad >= 0 {
+        if !g.is_push(a) || g.f.values[a].block != b || g.nuses[a] != 1 || g.f.values[a].pad >= 0 {
           break
-        }
-        // in the block, or in the one whose landing branch's normal edge
-        // is the only way into the push after it (a checked `p + 1` that
-        // may fault between them, in a function with landing pads:
-        // json scan), with the list's other uses releases (the pad drops
-        // it; a skipped push's list is its input's, push_list)
-        let ab = g.f.values[a].block
-        let cb = g.f.values[cur].block
-        // across a fault point only for elements of no reference count
-        // (Int, Float, Bool words): a value pushed before it is not yet
-        // in the list, and a fault would leak one that owns memory
-        if ab != cb && (!g.landing_into(ab, cb) || !(g.vkind(g.f.values[a].args[1]) is ssa.Kind.Int | ssa.Kind.Float | ssa.Kind.Bool)) {
-          break
-        }
-        // releases elsewhere only: one in the run's blocks would drop the
-        // list before the run's last push stores into it
-        // (a run in one block keeps its first rule: no other use)
-        let rb = if ab == cb { [] } else { rel.get(a) ?? [] }
-        if g.nuses[a] != 1 + rb.len() || rb.contains(ab) || rb.contains(cb) || rb.contains(b) {
-          break
-        }
-        var later = true
-        for r in rb {
-          later = later && (pos.get(r) ?? -1) > (pos.get(ab) ?? 0)
-        }
-        if !later {
-          break
-        }
-        if !rb.is_empty() {
-          g.push_alias[a] = true
         }
         chain.insert(0, a)
         cur = a
@@ -108,21 +59,6 @@ fn (var g: G) plan_push_runs(blocks: List[Int]) {
       }
     }
   }
-}
-
-/// Whether block b's only way in is the normal edge of block a's branch
-/// on rt.landing (a value of a that may fault, then b).
-fn (g: G) landing_into(a: Int, b: Int) -> Bool {
-  let ps = g.f.blocks[b].preds
-  if ps.len() != 1 || g.f.edges[ps[0]].from != a {
-    return false
-  }
-  let t = g.f.term(a)
-  if t < 0 || g.f.values[t].op != ssa.Op.Branch || g.f.values[t].succs.len() != 2 {
-    return false
-  }
-  let c = g.f.values[g.f.values[t].args[0]]
-  c.op == ssa.Op.Call && aux_str(c.aux) == "rt.landing" && g.f.edges[g.f.values[t].succs[1]].to == b
 }
 
 fn (g: G) is_push(v: Int) -> Bool {

@@ -775,16 +775,6 @@ fn (var g: G) call_op(v: Int) {
   // a push run (pushrun.xo): its first pushes make nothing (the next
   // push of the run reads their list only), its last pushes them all
   if name == "list.push" && g.push_skip.contains(v) {
-    // no list of its own; one a landing pad between the pushes releases
-    // is its input's, the same object until the run's last push grows it
-    // (pushrun.xo push_alias)
-    if g.push_alias.contains(v) {
-      var r = x.args[0]
-      while g.push_skip.contains(r) {
-        r = g.f.values[r].args[0]
-      }
-      g.set(v, g.words(r))
-    }
     return
   }
   if name == "list.push" {
