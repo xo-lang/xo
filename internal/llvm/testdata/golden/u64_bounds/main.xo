@@ -1,0 +1,42 @@
+// UInt64 arithmetic whose overflow tests the bounds decide (arm64 opt.xo
+// derived: rt.u64_mul_hi of small products, a logical shift right, the
+// remainder of a constant division, through the IntConvs between Int and
+// UInt64 words), next to the same shapes that still overflow.
+use std/task
+
+fn show(stdio: Stdio, label: Str, r: Result[Str, task.Isolated[Int]]) uses stdio {
+  match r {
+    Ok(v) => stdio.println("${label}: ok ${v}")
+    Err(task.Isolated.Faulted(info)) => stdio.println("${label}: ${info.msg}")
+    Err(task.Isolated.Failed(e)) => stdio.println("${label}: failed ${e}")
+  }
+}
+
+fn hash(us: List[UInt64]) -> UInt64 {
+  var h: UInt64 = 14695981039346656037
+  for u in us {
+    h = (h % 4294967291) * 65599 + u % 1000000
+    h = h + (h >> 7) / 3
+  }
+  h
+}
+
+/// (h >> 1) * 3 can pass 2^64: its test stays
+fn wide(h: UInt64) -> UInt64 { (h >> 1) * 3 }
+
+/// h % 2^41 times 2^23 fits 64 bits but not 63: its test stays, no fault
+fn near(h: UInt64) -> UInt64 { (h % 2199023255552) * 8388608 }
+
+fn main(os: Os) {
+  let io = os.stdio
+  var us: List[UInt64] = [0, 18446744073709551615, 9223372036854775808]
+  var g = 7
+  for _ in 0..2000 {
+    g = (g * 1103515245 + 12345) % 2147483648
+    us.push(UInt64(g) * 8589934592 + UInt64(g % 99991))
+  }
+  io.println("hash ${hash(us)}")
+  io.println("wide ${wide(6148914691236517204)}")
+  show(io, "wide max", task.isolate(fn() -> Str ! Int { "${wide(18446744073709551615)}" }))
+  io.println("near ${near(18446744073709551615)} ${near(2199023255551)}")
+}

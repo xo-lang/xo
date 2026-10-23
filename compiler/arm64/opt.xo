@@ -639,7 +639,10 @@ fn (var g: G) derived(v: Int, d: Int) -> (Interval, Bool) {
       // a sized Int's value is in its type's range (2026-10-23: portable
       // divmod's Int32 `xs[i] / d` widened to Int cannot be the minimum,
       // so its division by -1 cannot overflow)
-      let a = g.bounds_iv(x.args[0], d)
+      // the same word: a conversion uses no depth (UInt64 arithmetic is
+      // Int words between IntConvs both ways: `(h % p) * 65599` reached
+      // the remainder's bounds three levels down)
+      let a = g.bounds_iv(x.args[0], d + 1)
       let st = g.m.types[g.f.values[x.args[0]].ty]
       if st.kind != ssa.Kind.Int || st.bits <= 0 || st.bits >= 64 {
         return (a, true)
@@ -653,6 +656,34 @@ fn (var g: G) derived(v: Int, d: Int) -> (Interval, Bool) {
       (Interval{lo: lo, hi: hi}, true)
     }
     Call => {
+      if aux_str(x.aux) == "rt.u64_mul_hi" && x.args.len() == 2 {
+        // the high word of a product of two words not negative: 0 when
+        // the product fits 63 bits (2026-10-23: portable u64's UInt64 `(h
+        // % p) * 65599` kept its overflow test, the remainder below 2^32)
+        let a = g.bounds_iv(x.args[0], d)
+        let b = g.bounds_iv(x.args[1], d)
+        if a.lo >= 0 && b.lo >= 0 {
+          let (_, ok) = mul_ok(a.hi, b.hi)
+          if ok {
+            return (Interval{lo: 0, hi: 0}, true)
+          }
+        }
+        return none
+      }
+      if aux_str(x.aux) == "rt.int_wrap" && x.args.len() == 3 {
+        // a logical shift right by a constant k >= 1: below 2^(64-k)
+        // (portable u64's `(h >> 7) / 3` divides a value not negative)
+        let (op, opk) = g.const_int(x.args[0])
+        let (k, kk) = g.const_int(x.args[2])
+        if opk && op == 4 && kk && k & 63 != 0 {
+          let a = g.bounds_iv(x.args[1], d)
+          if a.lo >= 0 {
+            return (Interval{lo: a.lo >> (k & 63), hi: a.hi >> (k & 63)}, true)
+          }
+          return (Interval{lo: 0, hi: MAX_INT >> ((k & 63) - 1)}, true)
+        }
+        return none
+      }
       if aux_str(x.aux) == "rt.u64_divc" && x.args.len() == 3 {
         // a UInt64 by a constant d >= 2 (calls.xo u64_divc): a remainder
         // in [0, d), a quotient below 2^63 (2026-10-23: `Int(u % 1000)`
