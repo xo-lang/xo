@@ -169,6 +169,12 @@ Each finding: what, evidence, fix. Status in brackets.
   pass). This time DeepSeek reported the block with what it was trying and
   a scope question, did not retry, and ended its turn to wait: the "a
   block ends the attempt" rule worked on the first block after it was added.
+- 2026-10-23, task 2: a second false positive, `sed -n 1,80p
+  scripts/bootstrap-xo.sh` (reading the script) blocked as a heavy run;
+  DeepSeek again reported it without retrying, and asked whether to use
+  the read tool instead rather than taking that route on its own. The
+  heavy guard now checks command position only (what a command word runs,
+  through `bash SCRIPT` too).
 
 ## Observations
 
