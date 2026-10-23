@@ -899,6 +899,11 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     one_os = one_os && tg.split("/")[0] == targets[0].split("/")[0]
   }
   let strip = (backend is "arm64" | "amd64") && one_os && !tests && !c.mod_skip_auto && (os.env.get("XO_KEEP_FRONT") ?? "") != "1"
+  // the build information's source hashes, before lower lets the
+  // checker go (decision 0354 stage 2)
+  if !tests {
+    o.binfo_sources = binfo_sources(c, root, o.wd)
+  }
   var lo = lower(os, o, c, strip, root, tests, release, uses_time, tgoos, tgoarch, backend == "wasm", backend is "arm64" | "amd64", t)
   if c.mod_skip_auto && (!lo.b.skip_src.is_empty() || c.skip_unsafe) {
     // XO_CHK_CACHE=auto skipped a module a body of which was built from
@@ -1110,7 +1115,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     }
     t = lap(os, phases, "write", t)
     let bin = bin_path(dir, out, name, ltarget, o.many_targets)
-    var lk = link_inputs(os, ctx, o, c, dir, code, uses_time, tu, false, lctx.tgoos, tgoarch)
+    var lk = link_inputs(os, ctx, o, c, dir, code, uses_time, tu, false, lctx.tgoos, tgoarch, "llvm")
     lk.flags = cross + lk.flags
     var race_rt = ""
     if o.race {
@@ -1422,6 +1427,11 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
             Err(e) => fail(os, "${e}")
           }
         }
+        // the build information (decision 0354 stage 2)
+        match binfo_object(os, dir, native_build_info(os, o, "amd64", "${tgoos}/${tgoarch}"), tgoos, tgoarch, true) {
+          Ok(p) => zsrcs.push(p)
+          Err(e) => fail(os, "${e}")
+        }
         if o.race {
           // ThreadSanitizer's Go flavor object (decision 0273's Windows
           // addendum)
@@ -1445,7 +1455,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         continue
       }
       // the zone data (a C source clang compiles) and `use c`'s inputs
-      let wlk = link_inputs(os, ctx, o, c, dir, code, uses_time, cur_tu, false, tgoos, march)
+      let wlk = link_inputs(os, ctx, o, c, dir, code, uses_time, cur_tu, false, tgoos, march, march)
       let wst = stage(os, ctx, wbin)
       let why = win_amd64_link(os, wsrcs + wlk.srcs, wst.bin, wlk.flags + wlk.link_only)
       if !why.is_empty() {
@@ -1479,7 +1489,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       }
     }
     let bin = bin_path(dir, out, name, tg, o.many_targets)
-    let lk = link_inputs(os, ctx, o, c, dir, code, uses_time, cur_tu, no_cc, tgoos, march)
+    let lk = link_inputs(os, ctx, o, c, dir, code, uses_time, cur_tu, no_cc, tgoos, march, march)
     let flags = ["-O2"] + lk.flags
     // the program's assembly: one file, or the files of a parallel
     // generation, which assemble apart (arm64.generate_parallel)
@@ -1818,12 +1828,22 @@ struct LinkInputs {
   link_only: List[Str] = []
 }
 
-fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str, uses_time: Bool, tu: tzsel.TZUse, no_cc: Bool, tgoos: Str, tgoarch: Str) -> LinkInputs {
+fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str, uses_time: Bool, tu: tzsel.TZUse, no_cc: Bool, tgoos: Str, tgoarch: Str, backend: Str) -> LinkInputs {
   // no C runtime (decision 0234; std/llrt/xo_rt.c deleted after seed
   // 0.16.0)
   var lk = LinkInputs{}
   if o.strip {
     lk.link_only = if tgoos == "darwin" { ["-Wl,-x"] } else { ["-s"] }
+  }
+  // the build information (decision 0354 stage 2)
+  match binfo_object(os, dir, native_build_info(os, o, backend, "${tgoos}/${tgoarch}"), tgoos, tgoarch, no_cc) {
+    Ok(p) => {
+      lk.srcs.push(p)
+      if !no_cc {
+        lk.link_only = lk.link_only + binfo_link_flags(tgoos)
+      }
+    }
+    Err(e) => fail(os, "${e}")
   }
   // std/time: the program's zone data beside the runtime (timeFlags)
   if uses_time {

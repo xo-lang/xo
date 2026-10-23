@@ -41,6 +41,7 @@ use native/llrt/sanhook
 use native/llrt/stdio
 use native/llrt/unwind
 use native/rt
+use native/sys_c
 use native/sys_darwin
 use native/sys_windows
 
@@ -672,6 +673,7 @@ fn phase1(r: Int, sig: Int, info: Int, uc: Int) {
 
 /// The pc, the image base, and the registers at the record's R_REGS.
 fn w_regs(r: Int) {
+  w_build(r)
   let regs = r + R_REGS
   w_str(r, "pc ")
   w_hex(r, ld(regs, unwind.PC_AT))
@@ -911,6 +913,30 @@ fn flush(r: Int) {
     stdio.write_all(2, r + R_BUF, ld(r, R_POS))
   }
   st(r, R_POS, 0)
+}
+
+/// The build information's line (decision 0354 stage 2), when the
+/// program's link carries it: `build: xo VERSION, BACKEND, TARGET, id
+/// ID, MODE (SETTINGS)`.
+fn w_build(r: Int) {
+  if !rt.sym_present("xo_buildinfo_line") {
+    return
+  }
+  let p = sys_c.weak_xo_buildinfo_line()
+  if p == 0 {
+    return
+  }
+  w_str(r, "build: ")
+  var i = 0
+  while i < 512 {
+    let c = rt.mem_load(p, i, 1)
+    if c == 0 {
+      break
+    }
+    w_byte(r, c)
+    i += 1
+  }
+  w_str(r, "\n")
 }
 
 fn w_byte(r: Int, c: Int) {

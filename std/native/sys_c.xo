@@ -28,6 +28,10 @@ fn weak_free(p: Int)
 /// Defined (int xo_tsan_runtime) by the runtime's own race tests' builds
 /// (decision 0273 mode 1, sanhook.xo user_mode)
 fn weak_xo_tsan_runtime() -> Int
+/// The build information's one line (decision 0354 stage 2): defined by
+/// the object compiler/xo binfo.xo links into every native program;
+/// the crash report prints it (crash.xo w_build)
+fn weak_xo_buildinfo_line() -> Int
 
 /// ThreadSanitizer's Go flavor (windows/amd64 --race, decision 0273's
 /// Windows addendum: race_windows_amd64.syso): every call names a

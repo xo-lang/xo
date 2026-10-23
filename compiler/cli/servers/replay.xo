@@ -12,9 +12,9 @@
 // prefix and parsed.
 
 /// The length of a build ID (internal/build: hex of SHA-256, [:24]).
+use github.com/xo-lang/xo/compiler/cli/core
 use github.com/xo-lang/xo/compiler/hostpath
 
-const ID_LEN = 24
 
 fn replay_flags() -> List[Flag] {
   [Flag{name: "dir", kind: "string", def: "", usage: "the program's main module directory (default: the one recorded in the trace)"}]
@@ -135,8 +135,26 @@ fn build_flags(info: J) -> List[Str] {
   }
   if jbool_of(info, "release") {
     out.push("--release")
-    if jbool_of(info, "no_error_args") {
-      out.push("--error-args=false")
+  }
+  match get(info, "settings") {
+    Some(J.Obj(keys, vals, _)) => {
+      // the effective settings (decision 0354 stage 2), each given
+      // explicitly, so the replaying xo's defaults do not matter; the
+      // Go backend replays, so debug info, the native profiler and trace
+      // recorder, and the LLVM level do not apply
+      for (k, key) in keys.indexed() {
+        if key is "debug_contracts" | "dbg" | "error_args" {
+          if let J.Bool(on) = vals[k] {
+            out.push("--${key.replace("_", "-")}=${if on { "on" } else { "off" }}")
+          }
+        }
+      }
+    }
+    _ => {
+      // an older build's information
+      if jbool_of(info, "release") && jbool_of(info, "no_error_args") {
+        out.push("--error-args=false")
+      }
     }
   }
   match get(info, "stamps") {
@@ -154,64 +172,15 @@ fn build_flags(info: J) -> List[Str] {
 }
 
 /// The build information embedded in a binary built from dir (see the
-/// top of this file), or J.Null.
+/// top of this file; core.find_build_info), or J.Null.
 fn embedded_info(os: Os, bin: Str, dir: Str) -> J uses fs {
+  // xo:allow XO0903 an unreadable binary has no build information
   let data = os.fs.read(bin).ok() ?? b""
-  let prefix = "{\"id\":\"".bytes()
-  let tail = "\",\"dir\":".bytes()
-  var i = 0
-  let n = data.len()
-  while i + prefix.len() + ID_LEN + tail.len() < n {
-    if data[i] != '{' || data[i + 1] != '"' {
-      i += 1
-      continue
-    }
-    var ok = true
-    for k in 0..prefix.len() {
-      ok = ok && data[i + k] == prefix[k]
-    }
-    let t = i + prefix.len() + ID_LEN
-    for k in 0..tail.len() {
-      ok = ok && data[t + k] == tail[k]
-    }
-    if ok {
-      // the object ends at the first `}` that closes it
-      var depth = 0
-      var j = i
-      var in_str = false
-      var esc = false
-      while j < n {
-        let c = data[j]
-        if in_str {
-          if esc {
-            esc = false
-          } else if c == '\\' {
-            esc = true
-          } else if c == '"' {
-            in_str = false
-          }
-        } else if c == '"' {
-          in_str = true
-        } else if c == '{' {
-          depth += 1
-        } else if c == '}' {
-          depth -= 1
-          if depth == 0 {
-            break
-          }
-        }
-        j += 1
-      }
-      if j < n {
-        let v = parse(data[i..j + 1].to_str() ?? "").ok() ?? J.Null
-        if jstr_of(v, "dir") == dir {
-          return v
-        }
-      }
-    }
-    i += 1
+  let text = core.find_build_info(data, dir)
+  if text.is_empty() {
+    return J.Null
   }
-  J.Null
+  parse(text).ok() ?? J.Null
 }
 
 /// sourceChanges: the differences between two source hash maps, sorted.

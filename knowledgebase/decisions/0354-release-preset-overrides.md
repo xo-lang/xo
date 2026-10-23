@@ -1,6 +1,10 @@
 # 0354: --release is a preset of settings, each with its own override
 
-Status: Accepted (owner, 2026-10-23, as drafted). Built in two stages:
+Status: Accepted (owner, 2026-10-23, as drafted). Stage 1 landed
+9b4c9a489; stage 2 (build information in native binaries, `xo version
+-m`, replay's settings, the crash report's line) landed 2026-10-23.
+Native replay waits on native recording, which is the Go backend's only
+(spec 10). Built in two stages:
 (1) the override flags and their cache keys, with spec/core.md 8,
 toolchain.md and the help; (2) native build information (`xo version -m`,
 native replay, the crash report line). `--debug-info=split` is Xo Lang

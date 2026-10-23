@@ -171,7 +171,6 @@ fn main(os: Os) ! {
 		args []string
 		want string
 	}{
-		{[]string{"--debug-info=split"}, "decision 0355"},
 		{[]string{"--backend=arm64", "--opt=O2"}, "has no optimization levels"},
 		{[]string{"--opt=O9"}, "--opt"},
 		{[]string{"--dbg=maybe"}, "--dbg"},
@@ -225,5 +224,53 @@ fn main(os: Os) ! {
 		if !c.args && !strings.Contains(stderr.String(), "profile(...)") {
 			t.Errorf("[%s] no profile(...) frame:\n%s", name, stderr.String())
 		}
+	}
+}
+
+// TestVersionM checks `xo version -m` (decision 0354 stage 2): a native
+// and a Go backend binary carry their build information, with every
+// effective setting; a file xo did not build has none.
+func TestVersionM(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	dir := writeFiles(t, map[string]string{"app/main.xo": "fn main(os: Os) {\n  os.stdio.println(\"hi\")\n}\n"})
+	setenv(t, "XO_BUILD_DIR", filepath.Join(dir, "build"))
+	app := filepath.Join(dir, "app")
+	for _, c := range []struct {
+		name  string
+		flags []string
+		want  []string
+	}{
+		{"native", nil, []string{"\tbuild\tmode=debug\n", "\tbuild\tdebug-contracts=on\n", "\tbuild\tdebug-info=on\n", "\tsource\tmain.xo\t"}},
+		{"release", []string{"--release", "--dbg=on"}, []string{"\tbuild\tmode=release\n", "\tbuild\tdebug-contracts=off\n", "\tbuild\tdbg=on\n", "\tbuild\tprofile-support=off\n", "\tbuild\tdebug-info=off\n"}},
+		{"go", []string{"--backend=go"}, []string{"\tbackend\tgo\n", "\tbuild\terror-args=on\n"}},
+	} {
+		bin := filepath.Join(dir, c.name)
+		var out, errOut bytes.Buffer
+		if code := run(t, append(append([]string{"build"}, c.flags...), "-o", bin, app), &out, &errOut); code != 0 {
+			t.Errorf("%s: build exit %d\n%s", c.name, code, errOut.String())
+			continue
+		}
+		out.Reset()
+		errOut.Reset()
+		if code := run(t, []string{"version", "-m", bin}, &out, &errOut); code != 0 {
+			t.Errorf("%s: version -m exit %d\n%s", c.name, code, errOut.String())
+			continue
+		}
+		got := out.String()
+		if !strings.HasPrefix(got, bin+": xo ") || !strings.Contains(got, "\tid\t") || !strings.Contains(got, "\ttarget\t") {
+			t.Errorf("%s: version -m:\n%s", c.name, got)
+		}
+		for _, w := range c.want {
+			if !strings.Contains(got, w) {
+				t.Errorf("%s: version -m lacks %q:\n%s", c.name, w, got)
+			}
+		}
+	}
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"version", "-m", filepath.Join(dir, "app", "main.xo")}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "no Xo build information") {
+		t.Errorf("version -m of a source file: exit %d\n%s", code, errOut.String())
 	}
 }

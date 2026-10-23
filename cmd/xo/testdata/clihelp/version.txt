@@ -1,6 +1,12 @@
 usage: xo version [--json | -v]
+       xo version -m [--json] BINARY...
 
 Print the toolchain version and the host target. --json and -v add
 what the binary was built from: the commit, whether the tree had
 uncommitted changes (and a hash of them), the source key, and the xo
-that built it (decision 0264).
+that built it (decision 0264). -m prints the build information a
+program built by xo carries, on every backend (decision 0354): the xo,
+backend and target, its ID and directory, every effective setting
+(debug contracts, dbg, error args, debug info, profiler and trace
+support, the LLVM level), the stamps, and its sources' hashes; --json
+prints it as recorded.

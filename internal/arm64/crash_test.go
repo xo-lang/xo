@@ -74,6 +74,10 @@ func testCrashReport(t *testing.T, be string) {
 	if strings.Contains(got, "crash report faulted") {
 		t.Errorf("segv: the handler ran twice:\n%s", got)
 	}
+	// the build information's line (decision 0354 stage 2)
+	if !regexp.MustCompile(`\nbuild: xo \S+, \w+, \w+/\w+, id [0-9a-f]{24}, debug \(debug-contracts=on dbg=on error-args=on debug-info=\w+ profile-support=on trace-support=on( opt=O\d)?\)\npc 0x`).MatchString(got) {
+		t.Errorf("segv: the report lacks the build line:\n%s", got)
+	}
 	if !strings.HasPrefix(got, "fatal error: SIGSEGV") {
 		t.Errorf("segv: the report does not start with its first line:\n%s", got)
 	}

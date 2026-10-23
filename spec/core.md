@@ -2436,7 +2436,9 @@ failed `Int32(x)` conversion, evaluated hole, explicit `fault("msg")`.
   0343): `fatal error: SIGNAL: TEXT (code N)`, with `at address A` for
   SIGSEGV and SIGBUS (Windows: `fatal error: EXCEPTION_NAME: TEXT (code
   0xNTSTATUS, read|write|execute) at address A` for an access
-  violation), then the pc and the image's load address, the registers,
+  violation), then the build information's line (`build: xo VERSION,
+  BACKEND, TARGET, id ID, debug|release (SETTINGS)`, decision 0354), the
+  pc and the image's load address, the registers,
   the frames' pcs (`frames:`) and the `traceback:` above; then the
   signal's default action ends the program, with the same exit status
   and core file as without the report (Windows: the same exit code, the
@@ -2485,7 +2487,9 @@ marked `requires(debug)` or `ensures(debug)`.
 - Every other build is a debug build: `xo build` without `--release`,
   `xo run`, `xo test` (whose contract fuzzing checks the debug clauses
   too), and `xo replay`, which rebuilds with the settings recorded in
-  the program's build information. `--ci` is a gate, not a mode: it does not
+  the program's build information. Every binary records the effective
+  value of each setting, native ones included (`xo version -m BINARY`
+  prints them; a native crash report's `build:` line names them). `--ci` is a gate, not a mode: it does not
   imply `--release`; a pipeline that ships the binary passes both.
 
 ---
@@ -2642,6 +2646,7 @@ test "retries after 503" {
 | `xo audit [--json] [--no-gc] [<dir>]` | Supply chain report (decision 0156): per dependency its effects, its xo.lock effects line (ok, widened, narrowed, unlocked), its ceiling, and its escape hatches (`use c`, impure `use go`) with the vouches covering them; this module's attenuations (`only`, `sub`, `read_only`, `write_only`, `cwd`) with constant arguments, the capabilities it passes into dependencies and whether each is attenuated, vouches that match nothing, and the check's diagnostics. JSON with `--json` or when stdout is not a terminal (an agent piping it gets JSON), text otherwise. Exit 1 when the check has errors |
 | `xo init <path>`, `xo publish [--check]` | Start a module (xo.mod, xo.work gitignored); check a release against the previous tag (4.2) |
 | `xo explain <code>` | Long form explanation of a diagnostic |
+| `xo version [--json \| -v]`, `xo version -m [--json] BINARY...` | The toolchain's version and host target; `--json` and `-v` add what xo was built from (decision 0264); `-m` prints the build information a program built by xo carries on every backend (decision 0354): the xo, backend and target, its ID and directory, every effective setting of 8 (and `--opt`), the stamps, and its sources' hashes, as `go version -m` does for Go |
 | `xo bind [--json] <Go path>...`, `xo bind --c [--link x]... [--uses none\|e,...] <header>...` | Generate the bindings of Go packages (`use go`, 4.4) or C headers (`use c`, 4.5) into the project's binding cache |
 
 The commands that report diagnostics or results accept `--json`: `parse`,

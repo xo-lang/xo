@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Native binaries carry their build information, as Go backend ones
+  always did, now with every effective setting of `--release`'s preset
+  (decision 0354): `xo version -m BINARY` prints it (the xo, backend,
+  target, ID, settings, stamps and sources' hashes), a native crash
+  report adds a `build:` line, and `xo replay` rebuilds with the
+  recorded settings.
+
 - xo.lock records each pinned Go module's go.sum hashes (`go <module>
   <version> h1:...` and its `/go.mod` line; decision 0356): a changed
   module is `XO1304`, a missing line `XO1305` (run `xo mod tidy`).

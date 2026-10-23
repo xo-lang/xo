@@ -1577,6 +1577,25 @@ commits. bench/perf/xocheck.sh, sourced by the bench runners, refuses an
 xo whose key is not the checkout's (or that has no stamp) unless
 XO_BENCH_ANY=1, and sets XO_INLINE_STRICT=1. Last verified: 2026-10-18.
 
+### A program's build information (decision 0354 stage 2, 2026-10-23)
+
+Every program xo builds carries its build information as one JSON
+object (compiler/xo binfo.xo build_info_json): `{"id":...,"dir":...,
+"sources":{...}, ..., "backend", "target", "xo", "settings":{...}}`, the
+settings being 0354's effective values. The Go backend passes it to
+rt.SetBuildInfo; a native link adds a small object (Mach-O, ELF, COFF
+from compiler/macho, or xo_buildinfo.c for a cc link, kept through
+--gc-sections by `-Wl,-u,xo_buildinfo`) with the NUL-terminated symbol
+`xo_buildinfo` and the function `xo_buildinfo_line`, whose one line the
+crash report prints (std/native/llrt/crash.xo w_build, through the weak
+sys_c.weak_xo_buildinfo_line, so a runtime linked by an older xo prints
+none). build_native hashes the sources before lower releases the
+checker (decision 0352) and carries them in Opts.binfo_sources. `xo
+version -m [--json] BINARY...` and `xo replay` find the object by its
+`{"id":"` prefix (compiler/cli/core buildinfo.xo); replay passes the
+recorded debug-contracts, dbg and error-args settings explicitly. Last
+verified: 2026-10-23.
+
 ### HTTP callgrind: short or full
 
 `bench/perf/http/callgrind-docker.sh XO OUT` (decision 0180's quiet

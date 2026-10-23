@@ -66,6 +66,9 @@ struct Opts {
   /// --opt=O0|O1|O2|O3: the LLVM backend's optimization level ("" for
   /// the preset's)
   opt: Str = ""
+  /// The build information's source hashes (binfo.xo binfo_sources),
+  /// taken by build_native before lowering releases the checker.
+  binfo_sources: Map[Str, Str] = {}
   hybrid: Bool = false
   no_mono: Bool = false
   no_arenas: Bool = false

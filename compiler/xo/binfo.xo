@@ -1,0 +1,234 @@
+// Build information in every binary (decision 0354 stage 2): the JSON
+// the Go backend has always passed to rt.SetBuildInfo, now with every
+// effective setting, the backend and the target, and in native binaries
+// too, as the NUL-terminated symbol xo_buildinfo of a small object (or C
+// source for a cc link) linked into every program. `xo version -m
+// BINARY` prints it; `xo replay` rebuilds with its settings.
+
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/cli/core
+use github.com/xo-lang/xo/compiler/macho
+use std/crypto
+
+/// The build information of a program (internal/build buildInfo; decision
+/// 0354 stage 2): the program's directory, the sha256 of each source
+/// relative to the line root, an ID over them, the options and the
+/// effective settings, and the runtime's files; the backend, the target
+/// and the xo that built it. The Go backend hands it to rt.SetBuildInfo;
+/// a native binary carries it as the symbol xo_buildinfo (binfo_object).
+/// `xo replay` and `xo version -m` find it by its `{"id":"` prefix.
+fn build_info_json(os: Os, sources: Map[Str, Str], dir: Str, wd: Str, std_dir: Str, o: Opts, backend: Str, target: Str) -> Str {
+  build_info(os, sources, dir, wd, std_dir, o, backend, target).0
+}
+
+/// build_info_json and the one line a native crash report prints of it
+/// (crash.xo w_build): the xo, backend, target, ID, mode and settings.
+fn build_info(os: Os, sources: Map[Str, Str], dir: Str, wd: Str, std_dir: Str, o: Opts, backend: Str, target: Str) -> (Str, Str) {
+  let paths = sources.keys().sort()
+  var h = StrBuilder.new()
+  for p in paths {
+    h.write("${p} ${sources.get(p) ?? ""}\n")
+  }
+  let release = o.release
+  h.write("backend=${backend} target=${target}\n")
+  h.write("holes=${o.holes} mono=${!o.no_mono} arenas=${!o.no_arenas} race=${o.race}\n")
+  if !o.tzdata.is_empty() {
+    h.write("tzdata=${o.tzdata}\n")
+  }
+  if release {
+    h.write("release\n")
+  }
+  // the effective settings (decision 0354), so the build ID changes with them
+  h.write("error_args=${error_args_eff(o)} debug_contracts=${debug_contracts_eff(o, release)} dbg=${dbg_eff(o, release)}\n")
+  let stamps = o.stamps.sort_by(fn(x) { x.0 })
+  for (n, v) in stamps {
+    h.write("stamp ${n}=${v.quote()}\n")
+  }
+  // the runtime's files, as embedded (rt/*.go, rt/*.s), in lexical order
+  var rt: List[Str] = []
+  match os.fs.read_dir("${std_dir}/rt") {
+    Ok(fis) => {
+      for fi in fis {
+        if fi.name.ends_with(".go") || fi.name.ends_with(".s") {
+          rt.push(fi.name)
+        }
+      }
+    }
+    // xo:allow XO0903 a wrong program id only misses the Go build cache
+    Err(_) => {}
+  }
+  for name in rt.sort() {
+    // xo:allow XO0903 a wrong program id only misses the Go build cache
+    let data = os.fs.read("${std_dir}/rt/${name}").ok() ?? b""
+    h.write("rt/${name} ${crypto.sha256(data).to_hex()}\n")
+  }
+  let id = crypto.sha256(h.freeze().bytes()).to_hex().bytes()[0..24].to_str() ?? ""
+  let abs_dir = abs_of(wd, dir)
+  var j = "{\"id\":${json_str(id)},\"dir\":${json_str(abs_dir)},\"sources\":{"
+  for (i, p) in paths.indexed() {
+    if i > 0 {
+      j = j + ","
+    }
+    j = j + "${json_str(p)}:${json_str(sources.get(p) ?? "")}"
+  }
+  j = j + "}"
+  // the options (Info's omitempty fields, in its order)
+  if o.holes {
+    j = j + ",\"holes\":true"
+  }
+  if o.no_mono {
+    j = j + ",\"no_mono\":true"
+  }
+  if o.no_arenas {
+    j = j + ",\"no_arenas\":true"
+  }
+  if o.race {
+    j = j + ",\"race\":true"
+  }
+  if !o.tzdata.is_empty() {
+    j = j + ",\"tzdata\":${json_str(o.tzdata)}"
+  }
+  if release {
+    j = j + ",\"release\":true"
+  }
+  // the effective settings (decision 0354; replay reads them in stage 2)
+  if !error_args_eff(o) {
+    j = j + ",\"no_error_args\":true"
+  }
+  j = j + ",\"debug_contracts\":${debug_contracts_eff(o, release)},\"dbg\":${dbg_eff(o, release)}"
+  // every effective setting (decision 0354), the backend, the target,
+  // and the xo that built it
+  j = j + ",\"backend\":${json_str(backend)},\"target\":${json_str(target)},\"xo\":${json_str(core.VERSION)}"
+  j = j + ",\"settings\":{\"debug_contracts\":${debug_contracts_eff(o, release)},\"dbg\":${dbg_eff(o, release)},\"error_args\":${error_args_eff(o)},\"debug_info\":${json_str(debug_info_eff(o, release))},\"profile_support\":${profile_support_eff(o, release)},\"trace_support\":${trace_support_eff(o, release)},\"opt\":${json_str(opt_eff(os, o, backend))}}"
+
+  if !stamps.is_empty() {
+    var ss: List[Str] = []
+    for (n, v) in stamps {
+      ss.push("${json_str(n)}:${json_str(v)}")
+    }
+    j = j + ",\"stamps\":{${ss.join(",")}}"
+  }
+  let onoff = fn(x: Bool) -> Str { if x { "on" } else { "off" } }
+  var line = "xo ${core.VERSION}, ${backend}, ${target}, id ${id}, ${if release { "release" } else { "debug" }} (debug-contracts=${onoff(debug_contracts_eff(o, release))} dbg=${onoff(dbg_eff(o, release))} error-args=${onoff(error_args_eff(o))} debug-info=${debug_info_eff(o, release)} profile-support=${onoff(profile_support_eff(o, release))} trace-support=${onoff(trace_support_eff(o, release))}"
+  let opt = opt_eff(os, o, backend)
+  if !opt.is_empty() {
+    line = "${line} opt=${opt}"
+  }
+  (j + "}", "${line})")
+}
+
+/// The LLVM optimization level the build uses ("" on the other
+/// backends): --opt, else $XO_LLVM_OPT, else O2 (split.xo).
+fn opt_eff(os: Os, o: Opts, backend: Str) -> Str {
+  if backend != "llvm" {
+    return ""
+  }
+  if !o.opt.is_empty() {
+    return o.opt
+  }
+  let env = os.env.get("XO_LLVM_OPT") ?? ""
+  if env.is_empty() { "O2" } else { env }
+}
+
+/// The object (or, for a cc link, the C source) that carries the build
+/// information json as the NUL-terminated symbol xo_buildinfo, in dir;
+/// its path. The data is read only and referenced by nothing, so a link
+/// with --gc-sections keeps it by `-u xo_buildinfo` (binfo_link_flags).
+fn binfo_object(os: Os, dir: Str, info: (Str, Str), goos: Str, goarch: Str, no_cc: Bool) -> Str ! FsErr {
+  let (json, line) = info
+  if !no_cc && goos != "windows" {
+    var b = BytesBuilder.new()
+    b.write_str("// Code generated by xo build. DO NOT EDIT.\n// The build information of the program (decision 0354).\n\n")
+    b.write_str("__attribute__((used)) const char xo_buildinfo[] =\n")
+    c_bytes(b, json.bytes())
+    b.write_str(";\nstatic const char xo_buildinfo_ln[] =\n")
+    c_bytes(b, line.bytes())
+    b.write_str(";\nconst char *xo_buildinfo_line(void) { return xo_buildinfo_ln; }\n")
+    let path = "${dir}/xo_buildinfo.c"
+    os.fs.write(path, b.freeze())?
+    return Ok(path)
+  }
+  var b = BytesBuilder.new()
+  b.write_str("// The build information of the program (decision 0354).\n")
+  let sym = if goos == "darwin" { "_xo_buildinfo" } else { "xo_buildinfo" }
+  if goos == "darwin" {
+    b.write_str("\t.section __TEXT,__const\n")
+  } else if goos == "windows" {
+    b.write_str("\t.section .rdata,\"dr\"\n")
+  } else {
+    b.write_str("\t.section .rodata\n")
+  }
+  b.write_str("\t.globl ${sym}\n${sym}:\n")
+  asm_bytes(b, json.bytes())
+  b.write_str("\t.byte 0\n")
+  // the crash report's line, through xo_buildinfo_line (crash.xo w_build)
+  let lbl = if goos == "darwin" { "Lxo_binfo_line" } else { ".Lxo_binfo_line" }
+  b.write_str("${lbl}:\n")
+  asm_bytes(b, line.bytes())
+  b.write_str("\t.byte 0\n")
+  let amd64 = goarch == "amd64"
+  let fsym = if goos == "darwin" { "_xo_buildinfo_line" } else { "xo_buildinfo_line" }
+  if goos == "darwin" {
+    b.write_str("\t.section __TEXT,__text,regular,pure_instructions\n")
+  } else {
+    b.write_str("\t.text\n")
+  }
+  b.write_str("\t.globl ${fsym}\n\t.p2align ${if amd64 { 4 } else { 2 }}\n${fsym}:\n")
+  if amd64 {
+    b.write_str("\tleaq ${lbl}(%rip), %rax\n\tretq\n")
+  } else if goos == "darwin" {
+    b.write_str("\tadrp x0, ${lbl}@PAGE\n\tadd x0, x0, ${lbl}@PAGEOFF\n\tret\n")
+  } else {
+    b.write_str("\tadrp x0, ${lbl}\n\tadd x0, x0, :lo12:${lbl}\n\tret\n")
+  }
+  let src = b.freeze()
+  let res = if goos == "darwin" {
+    if amd64 { macho.assemble_macho_amd64(src, (11, 0)) } else { macho.assemble(src) }
+  } else if goos == "windows" {
+    macho.assemble_coff_amd64(src)
+  } else {
+    if amd64 { macho.assemble_elf_amd64(src) } else { macho.assemble_elf(src) }
+  }
+  let obj = match res {
+    Ok(x) => x
+    Err(e) => fault("the build information does not assemble: ${e}")
+  }
+  let path = if goos == "windows" { "${dir}/xo_buildinfo.obj" } else { "${dir}/xo_buildinfo.o" }
+  os.fs.write(path, obj)?
+  Ok(path)
+}
+
+/// The link flags that keep xo_buildinfo through --gc-sections (a cc
+/// link for Linux).
+fn binfo_link_flags(goos: Str) -> List[Str] {
+  if goos == "linux" { ["-Wl,-u,xo_buildinfo"] } else { [] }
+}
+
+/// build_info for a native build of o's directories, with the source
+/// hashes build_native took before lowering released the checker
+/// (decision 0352).
+fn native_build_info(os: Os, o: Opts, backend: Str, target: Str) -> (Str, Str) {
+  build_info(os, o.binfo_sources, o.dirs[0], o.wd, o.std, o, backend, target)
+}
+
+/// The sha256 of each of the program's sources (not std's), keyed by its
+/// path relative to the line root root.
+fn binfo_sources(c: check.Checker, root: Str, wd: Str) -> Map[Str, Str] {
+  var sources: Map[Str, Str] = {}
+  for f in c.files {
+    let m = f.module
+    if m < 0 || c.mods[m].is_std {
+      continue
+    }
+    var p = f.path
+    var abs = p
+    if !is_abs_path(abs) {
+      abs = "${wd}/${abs}"
+    }
+    if abs.starts_with("${root}/") {
+      p = abs.trim_prefix("${root}/")
+    }
+    sources[p] = crypto.sha256(f.src).to_hex()
+  }
+  sources
+}

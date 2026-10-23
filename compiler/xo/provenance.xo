@@ -8,6 +8,7 @@
 // it: XO_SOURCE_KEY, not XO_COMMIT, says whether an xo matches a checkout.
 
 use github.com/xo-lang/xo/compiler/cli/core
+use std/json
 
 /// The commit of the tree it was built from.
 const XO_COMMIT: Str = ""
@@ -26,6 +27,9 @@ const XO_CODEGEN_KEY: Str = ""
 /// `xo version --json` and `xo version -v`; None for any other form,
 /// which compiler/cli/core answers.
 fn version_cmd(os: Os, args: List[Str]) -> Int? {
+  if args.len() >= 2 && args[0] is "version" | "--version" && args[1] == "-m" {
+    return Some(version_m(os, args[2..args.len()]))
+  }
   if args.len() != 2 || !(args[0] is "version" | "--version") || !(args[1] is "--json" | "-v") {
     return None
   }
@@ -45,4 +49,118 @@ fn version_cmd(os: Os, args: List[Str]) -> Int? {
   os.stdio.println("source key ${XO_SOURCE_KEY}")
   os.stdio.println("built by ${XO_BUILT_BY}")
   Some(0)
+}
+
+/// The settings of a binary's build information (decision 0354).
+struct BinfoSettings {
+  debug_contracts: Bool = false
+  dbg: Bool = false
+  error_args: Bool = false
+  debug_info: Str = ""
+  profile_support: Bool = false
+  trace_support: Bool = false
+  opt: Str = ""
+} derive Json
+
+/// A binary's build information, as `xo version -m` shows it.
+struct BinfoView {
+  id: Str = ""
+  dir: Str = ""
+  xo: Str = ""
+  backend: Str = ""
+  target: Str = ""
+  release: Bool = false
+  holes: Bool = false
+  no_mono: Bool = false
+  no_arenas: Bool = false
+  race: Bool = false
+  tzdata: Str = ""
+  settings: BinfoSettings? = None
+  stamps: Map[Str, Str] = {}
+  sources: Map[Str, Str] = {}
+} derive Json
+
+/// `xo version -m [--json] BINARY...` (decision 0354 stage 2): the build
+/// information each binary carries (the Go backend's rt.SetBuildInfo
+/// string, a native binary's xo_buildinfo), as `go version -m` lists a
+/// Go binary's: the xo, backend and target, the ID and directory, every
+/// effective setting, the stamps, and the sources with their hashes.
+fn version_m(os: Os, args: List[Str]) -> Int {
+  var as_json = false
+  var bins: List[Str] = []
+  for a in args {
+    if a == "--json" {
+      as_json = true
+    } else {
+      bins.push(a)
+    }
+  }
+  if bins.is_empty() {
+    os.stdio.eprintln("usage: xo version -m [--json] BINARY...")
+    return 2
+  }
+  var code = 0
+  for bin in bins {
+    let data = match os.fs.read(bin) {
+      Ok(d) => d
+      Err(e) => {
+        os.stdio.eprintln("xo version -m: ${bin}: ${e}")
+        code = 1
+        continue
+      }
+    }
+    let text = core.find_build_info(data, "")
+    if text.is_empty() {
+      os.stdio.eprintln("xo version -m: ${bin}: no Xo build information (not built by xo, or a native build by an xo before decision 0354 stage 2)")
+      code = 1
+      continue
+    }
+    if as_json {
+      os.stdio.println(text)
+      continue
+    }
+    let v = match json.decode_str[BinfoView](text) {
+      Ok(x) => x
+      Err(e) => {
+        os.stdio.eprintln("xo version -m: ${bin}: unreadable build information: ${e}")
+        code = 1
+        continue
+      }
+    }
+    let xo = if v.xo.is_empty() { "an xo before decision 0354 stage 2" } else { "xo ${v.xo}" }
+    var b = StrBuilder.new()
+    b.write("${bin}: ${xo}\n")
+    if !v.backend.is_empty() {
+      b.write("\tbackend\t${v.backend}\n")
+    }
+    if !v.target.is_empty() {
+      b.write("\ttarget\t${v.target}\n")
+    }
+    b.write("\tid\t${v.id}\n\tdir\t${v.dir}\n")
+    b.write("\tbuild\tmode=${if v.release { "release" } else { "debug" }}\n")
+    if let Some(st) = v.settings {
+      let onoff = fn(x: Bool) -> Str { if x { "on" } else { "off" } }
+      b.write("\tbuild\tdebug-contracts=${onoff(st.debug_contracts)}\n\tbuild\tdbg=${onoff(st.dbg)}\n\tbuild\terror-args=${onoff(st.error_args)}\n")
+      b.write("\tbuild\tdebug-info=${st.debug_info}\n\tbuild\tprofile-support=${onoff(st.profile_support)}\n\tbuild\ttrace-support=${onoff(st.trace_support)}\n")
+      if !st.opt.is_empty() {
+        b.write("\tbuild\topt=${st.opt}\n")
+      }
+    }
+    for (flag, on) in [("holes", v.holes), ("no-mono", v.no_mono), ("no-arenas", v.no_arenas), ("race", v.race)] {
+      if on {
+        b.write("\tbuild\t${flag}\n")
+      }
+    }
+    if !v.tzdata.is_empty() {
+      b.write("\tbuild\ttzdata=${v.tzdata}\n")
+    }
+    for k in v.stamps.keys().sort() {
+      b.write("\tstamp\t${k}=${v.stamps.get(k) ?? ""}\n")
+    }
+    for k in v.sources.keys().sort() {
+      b.write("\tsource\t${k}\t${v.sources.get(k) ?? ""}\n")
+    }
+    os.stdio.print(b.freeze())
+  }
+  code
 }
