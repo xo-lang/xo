@@ -151,7 +151,7 @@ and were inflated up to 4x; profile before reading a sweep's times):
 | Map.update copied the value it updates | a9436992c | 40,003 allocations to 86 for 20,000 updates |
 | emit memos: each block's first fact copied its dominator's maps, all kept | memo cap (MEMO_INHERIT_MAX) | fnlen 64k emit peak 10 GB to 3.3 GB, build 17.3 s to 9.2 s |
 
-Still open: vars emit grows about n^1.7 (register allocation with every
+Since: the spill slot scan bounded (0546a6365: vars 64k emit 13.5 s to 7.6 s, still about n^1.5), and decision 0352 (the checker and the SSA copies freed after lowering: xo's self build peak heap 12.4 to 9.7 GB, fns-16k 2.8 to 2.55 GB, its peak now in ssa and cleanup). Still open: vars emit grows about n^1.7 (register allocation with every
 binding live at once: 1.3 s, 4.1 s, 13.5 s at 16k, 32k, 64k; spill
 slots are found by a first fit scan over all slots). The funcs knob's
 memory (about 75 KB a function) is mostly inlining: each function calls

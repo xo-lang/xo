@@ -94,6 +94,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_WARNINGS":             {"none", ""},
 	"XO_LAZY_INLINE":          {"none", ""}, // off decodes every inline hit at once; the module is the same
 	"XO_KEEP_FRONT":           {"none", ""}, // 1 keeps the checker and the SSA modules alive to the build's end (decision 0352); the output is the same
+	"XO_KEEP_MODS":            {"none", ""}, // 1 keeps the SSA modules before and after inlining alive (decision 0352 step C); the output is the same
 	"XO_BORROW_CHECK":         {"none", ""}, // runs the full inference too and compares; the flags are the same
 	"XO_KEEP_ASM":             {"none", ""}, // writes and keeps the assembly files only
 	"XO_CACHE_PRUNE_BUDGET":   {"none", ""}, // how long a build prunes its caches

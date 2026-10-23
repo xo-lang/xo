@@ -1162,7 +1162,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   var pend = pend0
   t = lap(os, phases, "inline", t)
   var bins: List[(Str, Str)] = []
-  for tg in targets {
+  for (ti, tg) in targets.indexed() {
     let tgoos = tg.split("/")[0]
     if tgoos != cur_os {
       // another OS: its own SSA, its `target` that OS's
@@ -1201,6 +1201,16 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         gm = gm1
         t = t2
       }
+    }
+    // decision 0352: the module before inlining was the verification's
+    // fallback and the inlined one gen_module's input; past here only gm
+    // is read (another target OS lowers its own), so the last target lets
+    // both go before code generation
+    if ti == targets.len() - 1 && (os.env.get("XO_KEEP_FRONT") ?? "") != "1" && (os.env.get("XO_KEEP_MODS") ?? "") != "1" {
+      cur.m = ssa.Module{}
+      mi = ssa.Module{}
+      b.m = ssa.Module{}
+      lo.b.m = ssa.Module{}
     }
     // no per-function cache for amd64 yet (its canonical text is
     // arm64's), nor with passes off (XO_PASSES: its keys do not say so),
