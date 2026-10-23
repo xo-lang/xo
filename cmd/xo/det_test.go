@@ -195,3 +195,54 @@ func TestTestSeedFakeClock(t *testing.T) {
 		t.Fatalf("exit %d\n%s%s", code, out.String(), errOut.String())
 	}
 }
+
+// TestExploreFirstSeedCommand: a test that fails on --explore's first
+// seed prints the exact command that reproduces it, as a later seed's
+// failure does, on the Go backend and natively, and that command fails
+// the test again (field report 0.26.0: the Go backend said only "seed 1",
+// and `xo test --seed=1` without --backend=go built natively and passed).
+func TestExploreFirstSeedCommand(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	src := t.TempDir()
+	for name, body := range map[string]string{
+		"main.xo":      "fn main(os: Os) {\n}\n",
+		"main_test.xo": "test \"always fails\" {\n  let n = Atomic[Int].new(0)\n  scope s {\n    s.spawn(fn() { let _ = n.add(1) })\n  }\n  expect(n.get()) == 2\n}\n",
+	} {
+		if err := os.WriteFile(filepath.Join(src, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	xoTestOut := func(args ...string) (int, string) {
+		t.Helper()
+		var out, errOut bytes.Buffer
+		code := run(t, append(append([]string{"test"}, args...), src), &out, &errOut)
+		return code, out.String() + errOut.String()
+	}
+	cmdRE := regexp.MustCompile("reproduce with `xo test ([^`]*)`")
+	for _, backend := range []string{"go", ""} {
+		args := []string{"--explore=3"}
+		if backend != "" {
+			args = append(args, "--backend="+backend)
+		}
+		code, out := xoTestOut(args...)
+		if code != 1 {
+			t.Fatalf("%v: exit %d, want 1\n%s", args, code, out)
+		}
+		m := cmdRE.FindStringSubmatch(out)
+		if m == nil || !strings.Contains(m[1], "--seed=1") {
+			t.Fatalf("%v: no reproduce command for seed 1:\n%s", args, out)
+		}
+		// the command's words as a shell splits them: flags, and the
+		// quoted test name of --run
+		var again []string
+		for _, w := range regexp.MustCompile(`--[a-z]+(=('[^']*'|\S+))?`).FindAllString(m[1], -1) {
+			again = append(again, strings.ReplaceAll(w, "'", ""))
+		}
+		if code, out := xoTestOut(again...); code != 1 || !strings.Contains(out, "--- FAIL: always fails") {
+			t.Fatalf("%v: the printed command %q does not fail the test again (exit %d):\n%s", args, m[1], code, out)
+		}
+	}
+}

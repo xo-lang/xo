@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo test --explore` prints the exact command that reproduces a failure
+  on its first seed too, as it did for later seeds (the Go backend said
+  only `seed 1`, and `xo test --seed=1` without `--backend=go` passed).
+
 - A test block's `opt?` failure names where the value was missing:
   `error: missing value: find(x) at main.xo:61:11`, as decision 0347
   says and as `expect` failures do, so two `?` of the same text in one

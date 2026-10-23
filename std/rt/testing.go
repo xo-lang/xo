@@ -130,6 +130,12 @@ func runTests(args []string, tables [][]TestCase) int {
 				out = testOutcome{status: "skip", msg: "uses " + strings.Join(tc.Uses, ", ") + ": run with `xo test --real` for real capabilities"}
 			default:
 				out = runOneTest(tc, s, *timeout)
+				if out.status == "fail" && *explore > 0 && tc.Seed == 0 {
+					// the first seed failed: the same exact command as for a
+					// later one (a 0.26.0 field report: it said only "seed 1",
+					// and a plain `xo test --seed=1` builds natively)
+					out.msg = exploreMsg(s, s, tc.Name, out.msg)
+				}
 				if out.status == "pass" && out.concurrent && *explore > 1 && tc.Seed == 0 {
 					first := s
 					for i := 1; i < *explore; i++ {
@@ -140,7 +146,7 @@ func runTests(args []string, tables [][]TestCase) int {
 							// chose it and only it has the deterministic
 							// scheduler (native `xo test --seed=N` seeds only
 							// Rand, so it passed again; a 0.25.2 field report)
-							o.msg = fmt.Sprintf("explored seeds %d to %d: seed %d fails; reproduce with `xo test --backend=go --seed=%d --run=%s`, or pin it with `test %q seed %d`\n%s", first, s, s, s, shellQuote(tc.Name), tc.Name, s, o.msg)
+							o.msg = exploreMsg(first, s, tc.Name, o.msg)
 							out = o
 							break
 						}
@@ -1819,4 +1825,13 @@ func shellQuote(s string) string {
 		return s
 	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// exploreMsg prefixes msg, test name's failure under seed s found by
+// exploring from seed first, with the exact command that reproduces it:
+// --backend=go, since only the Go backend's harness explores this way
+// (decision 0350: native `xo test --seed=N` runs its own deterministic
+// scheduler, whose seeds differ).
+func exploreMsg(first, s int64, name, msg string) string {
+	return fmt.Sprintf("explored seeds %d to %d: seed %d fails; reproduce with `xo test --backend=go --seed=%d --run=%s`, or pin it with `test %q seed %d`\n%s", first, s, s, s, shellQuote(name), name, s, msg)
 }
