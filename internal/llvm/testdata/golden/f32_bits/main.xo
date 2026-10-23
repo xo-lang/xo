@@ -1,0 +1,65 @@
+// Float32 + - * / on the edges of float32, bit for bit (decision 0361:
+// the native backends compute them in single precision; every result's
+// bits, NaN payloads, signed zeros and subnormals included (a default
+// NaN's sign is the architecture's, so only its flag), must be the
+// rounded double of decision 0101): zeros, the smallest subnormal and
+// normal, the largest finite, infinities, a default NaN and NaNs with
+// payloads, and ordinary values, in chains and in a loop.
+
+fn hex(n: Int) -> Str {
+  let digits = "0123456789abcdef"
+  var s = ""
+  for k in 0..16 {
+    let d = n.shr_logical(60 - 4 * k) & 15
+    s = s + digits[d..d + 1]
+  }
+  s
+}
+
+fn vals() -> List[Float32] {
+  let z: Float32 = 0.0
+  let one: Float32 = 1.0
+  [
+    z, -z, one, -one, 0.1, 3.0, 1.0e-45, -1.0e-45, 1.1754944e-38, 3.4028235e38, -3.4028235e38,
+    one / z, -one / z, z / z,
+    Float32(Float.from_bits(0x7FFC000000000000)), Float32(Float.from_bits(-1970324836974592)),
+    16777217.0, 0.33333334, 1.0e20, 1.0e-20,
+  ]
+}
+
+fn main(os: Os) {
+  let io = os.stdio
+  let xs = vals()
+  var h = 1469598103934665603
+  var nans = 0
+  for a in xs {
+    for b in xs {
+      for r in [a + b, a - b, a * b, a / b, (a * b + a) / (b - a)] {
+        // with two NaN operands, which payload survives is not fixed by
+        // IEEE 754 (native and LLVM keep the first, Go's compiler may
+        // swap a commutative operation's operands): the NaN flag only
+        // a NaN made from operands that are not (0 / 0, inf - inf): its
+        // sign is the architecture's default NaN (x86_64 negative, arm64
+        // positive), the NaN flag only
+        let both = Float(a).is_nan() && Float(b).is_nan()
+        let made = !Float(a).is_nan() && !Float(b).is_nan()
+        let bits = if (both || made) && Float(r).is_nan() { 1 } else { Float(r).to_bits() }
+        h = (h ^ bits).wrapping_mul(1099511628211)
+        if Float(r).is_nan() {
+          nans += 1
+        }
+      }
+    }
+  }
+  io.println("${xs.len()} values, ${nans} NaN results, hash ${hex(h)}")
+  let z: Float32 = 0.0
+  io.println("${z / z}")
+  for r in [xs[14] + xs[2], xs[2] * xs[15], xs[15] - xs[2], -z * xs[3], xs[6] * xs[2], xs[6] / 2.0, xs[9] * 2.0] {
+    io.println("${hex(Float(r).to_bits())} ${r}")
+  }
+  var acc: Float32 = 0.0
+  for i in 0..1000 {
+    acc = acc * 0.75 + Float32(i) / 3.0 - acc / 7.0
+  }
+  io.println("acc ${hex(Float(acc).to_bits())} ${acc}")
+}

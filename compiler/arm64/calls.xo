@@ -1626,9 +1626,21 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     "rt.ct_barrier" => g.set(v, [g.word(x.args[0])])
     // decision 0195: the conversions of UInt64 and Float32
     "rt.u64_to_float" => g.set(v, [g.def1(true, "ucvtf $d0, $u0", [g.word(x.args[0])])])
-    "rt.f32_round" => g.set(v, [g.def1(true, "fcvt $wd0, $u0\nfcvt $d0, $wd0", [g.word(x.args[0])])])
-    "rt.i64_to_f32" => g.set(v, [g.def1(true, "scvtf $wd0, $u0\nfcvt $d0, $wd0", [g.word(x.args[0])])])
-    "rt.u64_to_f32" => g.set(v, [g.def1(true, "ucvtf $wd0, $u0\nfcvt $d0, $wd0", [g.word(x.args[0])])])
+    "rt.f32_round" => {
+      if g.f32_lazy(x.args[0]) {
+        g.f32_op(v, x.args[0])
+      } else {
+        g.set(v, [g.def1(true, "fcvt $wd0, $u0\nfcvt $d0, $wd0", [g.word(x.args[0])])])
+      }
+    }
+    "rt.i64_to_f32" | "rt.u64_to_f32" => {
+      // the single form kept for the Float32 operations that read it
+      // (decision 0361; the widen goes when only they do)
+      let cv = if aux_str(x.aux) == "rt.i64_to_f32" { "scvtf" } else { "ucvtf" }
+      let s = g.def1(true, "${cv} $wd0, $u0", [g.word(x.args[0])])
+      g.f32s[v] = s
+      g.set(v, [g.def1(true, "fcvt $d0, $wu0", [s])])
+    }
     "rt.float_bits" => g.set(v, [g.def1(false, "fmov $d0, $u0", [g.word(x.args[0])])])
     "rt.float_from_bits" => g.set(v, [g.def1(true, "fmov $d0, $u0", [g.word(x.args[0])])])
     "rt.bytes_word" => {

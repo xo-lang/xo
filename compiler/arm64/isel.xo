@@ -2649,6 +2649,9 @@ fn (g: G) used_by_branch(v: Int) -> Bool {
 
 fn (var g: G) mul(v: Int) {
   let x = g.f.values[v]
+  if g.f32_lazy(v) {
+    return // f32_op
+  }
   if g.kind(x.ty) == ssa.Kind.Float {
     let a = g.word(x.args[0])
     let b = g.word(x.args[1])
@@ -2731,9 +2734,56 @@ fn (var g: G) mul(v: Int) {
   g.set(v, [r])
 }
 
+/// Whether v is a Float32 `+ - * /` whose only user is the rt.f32_round
+/// the SSA builder put after it (decision 0101): that round makes it in
+/// single precision instead (f32_op, decision 0361).
+fn (g: G) f32_lazy(v: Int) -> Bool {
+  let x = g.f.values[v]
+  if !(x.op is ssa.Op.Add | ssa.Op.Sub | ssa.Op.Mul | ssa.Op.Div) || x.ty < 0 || g.kind(x.ty) != ssa.Kind.Float || g.m.types[x.ty].bits != 32 || x.args.len() != 2 || g.nuses[v] != 1 || g.has_val[v] {
+    return false
+  }
+  let u = g.users[v]
+  u >= 0 && g.f.values[u].op == ssa.Op.Call && aux_str(g.f.values[u].aux) == "rt.f32_round" && g.f.values[u].block == x.block
+}
+
+/// rt.f32_round(v) of an f32_lazy v: the single-precision operation on
+/// the operands' single forms, which is the float32 0101's double
+/// operation and round give (double rounding is innocuous: 53 >= 2 * 24
+/// + 2; decision 0361), then its double for the uses that read one (a
+/// widen no use reads is dead and goes). The single form stays in f32s
+/// for the next Float32 operation.
+fn (var g: G) f32_op(r: Int, v: Int) {
+  let x = g.f.values[v]
+  let ins = match x.op {
+    Add => "fadd"
+    Sub => "fsub"
+    Mul => "fmul"
+    _ => "fdiv"
+  }
+  let a = g.f32_single(x.args[0])
+  let b = g.f32_single(x.args[1])
+  let s = g.def1(true, "${ins} $wd0, $wu0, $wu1", [a, b])
+  g.f32s[r] = s
+  g.set(r, [g.def1(true, "fcvt $d0, $wu0", [s])])
+}
+
+/// A single-precision register holding Float32 value a: the one a single
+/// operation made (defined where a is, so it dominates every use of a),
+/// else its double narrowed here (exact: a Float32 value is a float32;
+/// not kept, since here may not dominate a's other uses).
+fn (var g: G) f32_single(a: Int) -> Int {
+  if let Some(s) = g.f32s.get(a) {
+    return s
+  }
+  g.def1(true, "fcvt $wd0, $u0", [g.word(a)])
+}
+
 fn (var g: G) add_sub(v: Int) {
   let x = g.f.values[v]
   let ins = if x.op == ssa.Op.Add { "add" } else { "sub" }
+  if g.f32_lazy(v) {
+    return // made in single precision by its rt.f32_round (f32_op)
+  }
   if g.kind(x.ty) == ssa.Kind.Float {
     let a = g.word(x.args[0])
     let b = g.word(x.args[1])
@@ -2966,6 +3016,9 @@ fn (var g: G) div_rem(v: Int) {
     let msk = g.def1(false, "and $d0, $u0, #${-pow2i(k)}", [t])
     g.set(v, [g.def1(false, "sub $d0, $u0, $u1", [a, msk])])
     return
+  }
+  if is_div && g.f32_lazy(v) {
+    return // f32_op
   }
   if g.kind(x.ty) == ssa.Kind.Float {
     let a = g.word(x.args[0])

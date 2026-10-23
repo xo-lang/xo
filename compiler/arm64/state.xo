@@ -405,6 +405,9 @@ struct G {
   ref_ptr: Map[Int, Int] = {}
   has_ref_ptr: Bool = false
   areas: Map[Int, List[Int]] = {}
+  /// the single-precision register of a Float32 value a single-precision
+  /// operation made (decision 0361; f32_op)
+  f32s: Map[Int, Int] = {}
   mem_bytes: Int = 0
   /// the homes in the frame (byref.xo plan_held): address register,
   /// byte offset of the frame's memory
@@ -537,6 +540,7 @@ fn (var g: G) begin_func(fi: Int) {
   g.ref_ptr = {}
   g.has_ref_ptr = false
   g.areas = {}
+  g.f32s = {}
   g.mem_bytes = 0
   g.frame_homes = []
   g.lazy_res = {}

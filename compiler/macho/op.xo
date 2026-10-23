@@ -998,6 +998,10 @@ fn fp_word(m: Str, o: List[Operand]) -> Int {
       let (d, kd) = rk_of(o[0])
       let (x, kx) = rk_of(o[1])
       let (y, ky) = rk_of(o[2])
+      if kd == RS && kx == RS && ky == RS {
+        // single precision (decision 0361): type 00
+        return (base - 0x400000) | (y * 0x10000) | (x * 32) | d
+      }
       if kd != RD || kx != RD || ky != RD { -1 } else { base | (y * 0x10000) | (x * 32) | d }
     }
     "fneg" | "fabs" | "fsqrt" | "frintz" | "frinta" | "frintm" | "frintp" | "frintn" | "frintx" | "frinti" => {

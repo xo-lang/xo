@@ -769,11 +769,13 @@ fn (var g: G) x86_line(inst: Inst, var x: XT, m: Str, ops: List[Str], single: Bo
       true
     }
     "fadd" | "fsub" | "fmul" | "fdiv" => {
+      // single precision for the s form (decision 0361)
+      let sfx = if is_w(ops[0]) { "ss" } else { "sd" }
       let op = match m {
-        "fadd" => "addsd"
-        "fsub" => "subsd"
-        "fmul" => "mulsd"
-        _ => "divsd"
+        "fadd" => "add${sfx}"
+        "fsub" => "sub${sfx}"
+        "fmul" => "mul${sfx}"
+        _ => "div${sfx}"
       }
       g.x86_binop(inst, x, ops[0], ops[1], xop(ops[2], 8), op, single)
       true

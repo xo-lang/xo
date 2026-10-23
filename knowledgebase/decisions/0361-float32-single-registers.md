@@ -1,7 +1,10 @@
 # 0361: Float32 arithmetic in single-precision registers on the native backends
 
-Status: Proposed (Xo Lang 1, 2026-10-23; no code yet; for the lead's
-approval as a codegen change, since the results stay bit-identical)
+Status: Accepted (lead, 2026-10-23, as a codegen change: the results stay
+bit-identical). Stage 1 landed 2026-10-23: portable float32 0.799 of the
+instructions before it on linux/amd64 (99,714,356 to 79,714,747), now
+0.945 of LLVM's; golden f32_bits identical on arm64, LLVM and the Go
+backend.
 
 ## Context
 
@@ -92,6 +95,14 @@ forms, and they widen only where a double is needed. Stages:
    the float32 golden plus a new one with NaN payloads, signed zeros,
    subnormals and overflow, checked bit for bit against LLVM and Go
    parity. Measure portable float32 with callgrind and one `--ab`.
+   Landed with two more pieces: the conversions to Float32
+   (`rt.i64_to_f32`, `rt.u64_to_f32`) keep their single form, and LICM
+   hoists `fcvt` (a loop-invariant Float32 operand narrowed once).
+   f32_bits: the edges of float32 (zeros, subnormals, the largest
+   finite, infinities, default and payload NaNs) through `+ - * /` and
+   a chain, bit for bit. With two NaN operands only the NaN flag is
+   checked, since IEEE 754 does not fix which payload survives and Go's
+   compiler may swap a commutative operation's operands.
 2. Loop-carried Float32 values (block parameters) stay single across
    the back edge, so a loop accumulator never widens.
 
