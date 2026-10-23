@@ -27,6 +27,11 @@ pub struct Ctx {
   /// The directories (absolute) the command line named as DIR/...: only
   /// they cover the directories below them (decision 0345).
   pub walk: List[Str] = []
+  /// The module check cache for `xo check` (decision 0351 addendum,
+  /// 2026-10-23): the driver's backend cache directory and cache ID, ""
+  /// when the cache is off (compiler/xo main.xo check_cache).
+  pub chk_dir: Str = ""
+  pub chk_id: Str = ""
 }
 
 /// The commands this package runs.
@@ -47,6 +52,12 @@ pub fn run(os: Os, args0: List[Str]) -> Int uses fs, env, stdio, proc, clock, ne
 /// run with extra findings for `xo vet` (its --cost notes, which the
 /// driver computes from the compiled program: decision 0327).
 pub fn run_extra(os: Os, args0: List[Str], extra: List[Diag]) -> Int uses fs, env, stdio, proc, clock, net, rand {
+  run_cached(os, args0, extra, "", "")
+}
+
+/// run_extra with the module check cache for `xo check` in chk_dir under
+/// the cache ID chk_id ("" for none).
+pub fn run_cached(os: Os, args0: List[Str], extra: List[Diag], chk_dir: Str, chk_id: Str) -> Int uses fs, env, stdio, proc, clock, net, rand {
   var std_dir = os.env.get("XO_STD") ?? ""
   var wd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
   var args = args0
@@ -65,7 +76,7 @@ pub fn run_extra(os: Os, args0: List[Str], extra: List[Diag]) -> Int uses fs, en
     os.stdio.eprint(cmdhelp.top())
     return 2
   }
-  var ctx = Ctx{std: std_dir, wd: wd, offline: os.env.get("XO_OFFLINE") ?? "", work: os.env.get("XO_WORK") ?? ""}
+  var ctx = Ctx{std: std_dir, wd: wd, offline: os.env.get("XO_OFFLINE") ?? "", work: os.env.get("XO_WORK") ?? "", chk_dir: chk_dir, chk_id: chk_id}
   // moduleFlags: --offline and --workspace anywhere before `--`
   var rest: List[Str] = []
   var i = 1

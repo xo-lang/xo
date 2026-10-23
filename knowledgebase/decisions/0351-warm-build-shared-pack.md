@@ -90,6 +90,26 @@ Proposed, in stages, each with its own `xo bench --ab`:
    on a match the build copies it and skips the front end, the passes,
    code generation and the link. Its own --ab.
 
+## Addendum (2026-10-23): `xo check` uses the module check cache
+
+Lead-approved (b08 follow-up). `xo check` checks a program module
+unchanged since its last `xo check` (its key: the files, the interfaces
+it imports, xo's cache ID, the std path) from its entry instead: the
+module's diagnostics, warnings included, are replayed, so the output is
+a full check's. The entries are `xo check`'s own (flags `xo check`),
+apart from a build's, whose entries also say what the front end cache
+replays. A plain check also checks the native runtime's bodies lazily,
+as a build does (decision 0247): no SSA builder runs, so they are not
+checked; a named directory inside std keeps the eager check. A checked
+body that reads a skipped module's inferred effects makes the check run
+again without the cache. `--support`, `--backend=go`, an overlay (the
+editor) and XO_CHK_CACHE=off, XO_FE_CACHE=off or XO_BACKEND_CACHE=off
+check everything. Measured: `xo check` of a small server 0.432x wall
+and 0.656x peak memory, of compiler/xo 0.369x and 0.669x; the same
+output in 76 of 76 directories, every errorcheck program among them
+(bench/results/check-cache-2026-10-23.md). Test: cmd/xo
+TestCheckCacheWarnings.
+
 ## Consequences
 
 - Stage 1 changes the cache layout (a new `packs/shared` tree) but not

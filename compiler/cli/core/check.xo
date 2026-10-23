@@ -192,8 +192,29 @@ pub fn load_with(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map[St
 /// `xo check` checks by default, owner 2026-10-23: `use c` is valid), else
 /// the Go backend's.
 fn load_mode(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map[Str, Bytes], preload: List[Str], native: Bool) -> Session ! Str uses fs, proc, net, rand, env {
+  load_mode_cached(os, ctx, dirs, exact, overlay, preload, native, false)
+}
+
+/// load_mode, with cached the module check cache of `xo check` (decision
+/// 0351 addendum, 2026-10-23): a program module unchanged since its last
+/// check, with the modules it imports, is not checked again; its
+/// diagnostics, warnings included, come from its entry, so the output is
+/// a full check's. The entries are `xo check`'s own (their flags say so):
+/// a build's entries also record what its front end cache replays.
+fn load_mode_cached(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map[Str, Bytes], preload: List[Str], native: Bool, cached: Bool) -> Session ! Str uses fs, proc, net, rand, env {
   var c = new_checker(os, ctx)
   c.native = native
+  let chk = cached && native && overlay.is_empty() && !ctx.chk_dir.is_empty()
+  if chk {
+    c.mod_cache_dir = ctx.chk_dir
+    c.mod_flags = "xo check\n${ctx.chk_id}\nstd=${ctx.std}"
+    c.mod_skip_on = true
+    // the runtime's bodies as a build checks them (decision 0247): when
+    // the SSA builder needs them, so never in a plain check; not when a
+    // named directory is in std (checking std itself checks them all)
+    let std_abs = abs_path(ctx, ctx.std)
+    c.lazy = (os.env.get("XO_CHECK_EAGER") ?? "") != "1" && !dirs.any(fn(d) { let a = abs_path(ctx, d); a == std_abs || a.starts_with("${std_abs}/") })
+  }
   c.overlay = overlay
   c.preload = preload
   let all = if exact { dirs } else { c.workspace_dirs(dirs) }
@@ -213,8 +234,45 @@ fn load_mode(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map[Str, B
   for m in c.root_mods {
     mods.push(c.mods[m].path)
   }
+  if chk && !c.mod_skip.is_empty() && !c.effect_reads_across_modules().is_empty() {
+    // a checked body reads a skipped module's inferred effects: check
+    // everything (gotchas/module-check-cache-skips-whole-program-passes.md)
+    return load_mode_cached(os, ctx, dirs, exact, overlay, preload, native, false)
+  }
+  if chk {
+    store_check_entries(os, c)
+  }
   let ds = sort_diags(c.diags)
   Ok(Session{c: c, mods: mods, diags: ds})
+}
+
+/// Stores the module check cache entries of the modules c checked in
+/// full without an error (Checker.mod_cache_entries), each written to a
+/// temporary file and renamed into place.
+fn store_check_entries(os: Os, c: check.Checker) uses fs, rand {
+  var scans: Map[Int, (Bool, Bool)] = {}
+  for m in c.order {
+    // the SSA builder's scans: no build reads `xo check`'s entries
+    scans[m] = (false, false)
+  }
+  for (k, e) in c.mod_cache_entries(scans, {}, {}) {
+    let path = "${c.mod_cache_dir}/chk/${k[0..2]}/${k}"
+    match os.fs.create_dir_all("${c.mod_cache_dir}/chk/${k[0..2]}") {
+      Ok(_) => {}
+      // xo:allow XO0903 a cache it cannot write is only slower
+      Err(_) => return
+    }
+    let tmp = "${path}.tmp-${os.rand.bytes(6).to_hex()}"
+    match os.fs.write(tmp, e) {
+      Ok(_) => {
+        match os.fs.rename(tmp, path) {
+          Ok(_) => {}
+          Err(_) => os.fs.remove(tmp).ignore_err("another process stored it")
+        }
+      }
+      Err(_) => os.fs.remove(tmp).ignore_err("a failed store")
+    }
+  }
 }
 
 fn run_check(os: Os, ctx: Ctx, args: List[Str]) -> Int {
@@ -307,7 +365,7 @@ fn load_check(os: Os, ctx: Ctx, dirs: List[Str], support: Bool, go_rules: Bool) 
   if go_rules {
     return load(os, ctx, dirs, false, {})
   }
-  var s = load_mode(os, ctx, dirs, false, {}, [], true)?
+  var s = load_mode_cached(os, ctx, dirs, false, {}, [], true, !support)?
   if !support {
     return Ok(s)
   }

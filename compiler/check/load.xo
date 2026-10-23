@@ -81,8 +81,9 @@ pub struct Checker {
   /// Lazy runtime bodies (decision 0247): in native mode, the function
   /// bodies of the implementation and runtime modules (Module.native) are
   /// checked when the SSA builder first builds them (check_lazy), not by
-  /// run; a build reaches a small part of the runtime. Off for `xo check`
-  /// and the checker's own runs, which check every body.
+  /// run; a build reaches a small part of the runtime. A plain `xo check`
+  /// sets it too, unless it checks std itself (decision 0351 addendum,
+  /// 2026-10-23); the checker's own runs check every body.
   /// Function bodies of the native modules a lazy run checks lazily
   /// are parsed lazily too (decision 0351 stage 2, XO_LAZY_PARSE=on):
   /// skipped by their braces, parsed when check_lazy forces them.

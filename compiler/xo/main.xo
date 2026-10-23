@@ -114,7 +114,8 @@ fn main(os: Os) ! {
     os.proc.exit(core.run_extra(os, args, vet_cost(os, args)))
   }
   if core.is_command(args) {
-    os.proc.exit(core.run(os, args))
+    let (cd, cid) = check_cache(os, args)
+    os.proc.exit(core.run_cached(os, args, [], cd, cid))
   }
   if !args.is_empty() && args[0] == "prof" {
     // a native program's raw profile as pprof and text (prof.xo,
@@ -2201,4 +2202,28 @@ fn std_test_path(m: Str) -> Str {
     return m
   }
   "std/${m}"
+}
+
+/// The module check cache of `xo check` (decision 0351 addendum,
+/// 2026-10-23): the backend cache directory and this xo's cache ID, as a
+/// build's (XO_CHK_CACHE=off, XO_FE_CACHE=off or XO_BACKEND_CACHE=off
+/// turn it off), or ("", "") for another command.
+fn check_cache(os: Os, args: List[Str]) -> (Str, Str) {
+  var i = 0
+  while i < args.len() && (args[i].starts_with("--std=") || args[i].starts_with("--wd=")) {
+    i += 1
+  }
+  if i >= args.len() || args[i] != "check" {
+    return ("", "")
+  }
+  if (os.env.get("XO_CHK_CACHE") ?? "") == "off" || (os.env.get("XO_FE_CACHE") ?? "") == "off" || backend_cache_mode(os) == "off" {
+    return ("", "")
+  }
+  let host = host_os(os)
+  let dir = backend_cache_dir(os, Ctx{goos: host, std: "", xo: "", cache: user_cache_dir(os, host)})
+  if dir.is_empty() {
+    return ("", "")
+  }
+  let id = cache_id(os)
+  if id.is_empty() { ("", "") } else { (dir, id) }
 }

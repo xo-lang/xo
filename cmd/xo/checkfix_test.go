@@ -91,3 +91,65 @@ func TestCheckWIP(t *testing.T) {
 		t.Errorf("check --wip with an unresolved name: exit %d, want 1:\n%s", code, errOut.String())
 	}
 }
+
+// TestCheckCacheWarnings covers the module check cache of `xo check`
+// (decision 0351 addendum, 2026-10-23): a module unchanged since its last
+// check is skipped and its warnings come from its entry, so a cached check
+// prints exactly what an uncached one does.
+func TestCheckCacheWarnings(t *testing.T) {
+	t.Parallel()
+	lib := `pub enum E {
+  Bad
+} derive Display
+
+pub struct St {
+  err: E? = None
+}
+
+pub fn sticky(m: Mutex[St]) -> Int ! E {
+  m.with(fn(var st) -> Int ! E {
+    st.err = Some(E.Bad)
+    return Err(E.Bad)
+  })
+}
+`
+	dir := writeFiles(t, map[string]string{
+		"xo.mod":     "module example.com/app\nedition preview\n",
+		"main.xo":    "use example.com/app/lib\n\nfn main(os: Os) {\n  let m = Mutex.new(lib.St{})\n  os.stdio.println(\"${lib.sticky(m).is_ok()}\")\n}\n",
+		"lib/lib.xo": lib,
+	})
+	cache := t.TempDir()
+	setenv(t, "XO_BACKEND_CACHE_DIR", cache)
+	setenv(t, "XO_CHK_CACHE", "")
+	check := func() (int, string) {
+		var out, errOut bytes.Buffer
+		code := run(t, []string{"check", dir}, &out, &errOut)
+		return code, out.String() + errOut.String()
+	}
+	code1, first := check()
+	if code1 != 0 || !strings.Contains(first, "warning XO0540") {
+		t.Fatalf("first check: exit %d\n%s", code1, first)
+	}
+	if ms, _ := filepath.Glob(filepath.Join(cache, "chk", "*", "*")); len(ms) == 0 {
+		t.Fatalf("the first check stored no module check cache entry under %s", cache)
+	}
+	code2, second := check()
+	if code2 != code1 || second != first {
+		t.Errorf("the cached check printed something else: exit %d\n%s\nthe first (exit %d):\n%s", code2, second, code1, first)
+	}
+	// an edit of main.xo: lib is still skipped, its warning still printed
+	os.WriteFile(filepath.Join(dir, "main.xo"), []byte("use example.com/app/lib\n\nfn main(os: Os) {\n  let m = Mutex.new(lib.St{})\n  os.stdio.println(\"ok ${lib.sticky(m).is_ok()}\")\n}\n"), 0o644)
+	if code, got := check(); code != 0 || !strings.Contains(got, "warning XO0540") {
+		t.Errorf("after an edit of main.xo: exit %d\n%s", code, got)
+	}
+	// an edit of lib that removes the warning: it is gone
+	os.WriteFile(filepath.Join(dir, "lib", "lib.xo"), []byte(strings.Replace(lib, "    st.err = Some(E.Bad)\n", "", 1)), 0o644)
+	if code, got := check(); code != 0 || strings.Contains(got, "XO0540") {
+		t.Errorf("after the warning's fix: exit %d\n%s", code, got)
+	}
+	// and an uncached check agrees
+	setenv(t, "XO_CHK_CACHE", "off")
+	if code, got := check(); code != 0 || strings.Contains(got, "XO0540") {
+		t.Errorf("XO_CHK_CACHE=off: exit %d\n%s", code, got)
+	}
+}

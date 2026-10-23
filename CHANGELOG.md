@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo check` is about 2.5 times faster on a warm run (compiler/xo 1.8 s
+  to 0.67 s, a small server 0.59 s to 0.26 s) and peaks a third lower in
+  memory: it skips a module unchanged since its last check, replaying
+  its diagnostics and warnings, and checks the native runtime's bodies
+  only as a build does (decision 0351 addendum). The output is
+  unchanged; `XO_CHK_CACHE=off` checks everything.
+
 - `XO_LAZY_PARSE=on` (opt in, decision 0351 stage 2): `xo build` and
   `xo run` parse a std or runtime function body only when the checker
   needs it; the output is identical, and a small program's warm build
