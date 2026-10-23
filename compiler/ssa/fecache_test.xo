@@ -88,3 +88,19 @@ test "verify numbers closures alike: closure_name" {
   expect(closure_name("main")) == false
   expect(closure_name("a.fnx")) == false
 }
+
+test "an entry that made a thunk replays with the one there only when it is the same (thunk_replay_ok)" {
+  let sig = "(Int) -> (Int)"
+  // the same thunk another body made first: replay with it
+  expect(thunk_replay_ok("twice.value", 7, sig, "twice.value", 7, sig)) == true
+  // a thunk of another name, another target, or another signature: the
+  // entry is refused (fe miss thunk), its body built from source
+  expect(thunk_replay_ok("inc.value", 7, sig, "twice.value", 7, sig)) == false
+  expect(thunk_replay_ok("twice.value", 8, sig, "twice.value", 7, sig)) == false
+  expect(thunk_replay_ok("twice.value", 7, "(Int, Int) -> (Int)", "twice.value", 7, sig)) == false
+  expect(thunk_replay_ok("twice.value", -1, sig, "twice.value", -1, sig)) == false
+  // a callee not declared yet here: the target decides (it fixes the
+  // signature), and a wrong target still refuses
+  expect(thunk_replay_ok("twice.value", 7, sig, "twice.value", 7, "")) == true
+  expect(thunk_replay_ok("twice.value", 8, sig, "twice.value", 7, "")) == false
+}

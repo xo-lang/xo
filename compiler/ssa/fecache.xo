@@ -730,7 +730,7 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
     } else if k.starts_with("a ") {
       // a constant's function made whole here may be there already,
       // made by another body: the commit keeps that one
-      if b.m.func_at.contains(n) && !fe_const_fn(n) {
+      if b.m.func_at.contains(n) && !fe_const_fn(n) && !b.fe_thunk_there(n) {
         return b.fe_miss("absent")
       }
     } else if !b.m.func_at.contains(n) {
@@ -840,10 +840,27 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
       }
       let key = "${fo}:${b.func_name(fo)}"
       let there = b.thunks.contains(key) || tnew.contains(key)
-      if made == there {
+      // a thunk the body made that another body made first: the commit
+      // keeps that one, as for a constant's function, when it is the
+      // thunk this entry made (same target function, name and signature);
+      // before, the body missed on every build that made the thunk
+      // elsewhere first (dce_values' main, 2026-10-23)
+      var made_there = false
+      if made && b.thunks.contains(key) {
+        let w = b.thunks.get(key) ?? -1
+        made_there = thunk_replay_ok(b.m.funcs[w].name, b.thunk_of.get(w) ?? -1, b.thunk_sig(w), n, fo, b.thunk_sig_of(n))
+        if !made_there {
+          return b.fe_miss("thunk")
+        }
+      }
+      // the same body's second record of making it (dce_values' main
+      // names inc in a list and in an if's arms): one thunk, which the
+      // commit makes once
+      let made_again = made && tnew.contains(key) && !b.thunks.contains(key)
+      if made == there && !made_there && !made_again {
         return b.fe_miss("thunk")
       }
-      if made {
+      if made && !made_there {
         tnew[key] = true
       } else if !tnew.contains(key) && b.m.funcs[b.thunks.get(key) ?? 0].name != n {
         return b.fe_miss("thunk")
@@ -968,7 +985,7 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
     } else if ev.k == 3 {
       // absent: checked above, but for a constant's function another
       // body made (the same function: its body is not decoded)
-      if !(fe_const_fn(ev.s) && b.m.func_at.contains(ev.s)) {
+      if !((fe_const_fn(ev.s) && b.m.func_at.contains(ev.s)) || b.fe_thunk_there(ev.s)) {
         let i = b.m.new_func(ev.s, [], [])
         holes.push((i, hi))
       }
@@ -1270,6 +1287,60 @@ pub fn (var b: Builder) fe_finalize() {
 /// (drop_list's xo.droplist[T], an empty function). An entry that made
 /// one whole replays where another body made it already.
 fn fe_const_fn(n: Str) -> Bool { n.starts_with("xo.const[") || n.starts_with("xo.droplist[") }
+
+/// Whether an entry that made the thunk named n for target function fo
+/// with signature sig may replay with the thunk already there (its name,
+/// target and signature): only when it is that same thunk.
+/// sig is "" when the callee is not declared yet in this build (its body
+/// replays later): the target function object (have_target == fo) then
+/// fixes the signature, as a thunk of a generic instance never replays.
+fn thunk_replay_ok(have_name: Str, have_target: Int, have_sig: Str, n: Str, fo: Int, sig: Str) -> Bool {
+  have_name == n && have_target == fo && fo >= 0 && (sig.is_empty() || have_sig == sig)
+}
+
+/// The parameter types (from the entry block's, skipping the first skip)
+/// and result types of function w, by type name ("" for none).
+fn (b: Builder) sig_from(w: Int, skip: Int) -> Str {
+  if w < 0 || w >= b.m.funcs.len() {
+    return ""
+  }
+  let f = b.m.funcs[w]
+  var ps: List[Str] = []
+  for (i, v) in f.blocks[0].params.indexed() {
+    if i >= skip {
+      ps.push(b.m.types[f.values[v].ty].name)
+    }
+  }
+  var rs: List[Str] = []
+  for r in f.results {
+    rs.push(b.m.types[r].name)
+  }
+  "(${ps.join(",")}) -> (${rs.join(",")})"
+}
+
+/// A thunk's own signature: its parameters after the closure value and
+/// its results (call.xo: NAME.value calls NAME with them).
+fn (b: Builder) thunk_sig(w: Int) -> Str { b.sig_from(w, 1) }
+
+/// The signature the thunk of function object fo must have: its callee's
+/// (the function the thunk named NAME.value calls, NAME).
+fn (b: Builder) thunk_sig_of(n: Str) -> Str {
+  if !n.ends_with(".value") {
+    return ""
+  }
+  b.sig_from(b.m.func_at.get(n.trim_suffix(".value")) ?? -1, 0)
+}
+
+/// Whether n names a function value's thunk that is there already (made
+/// by another body): an entry that made it whole replays with that one
+/// (call.xo names a thunk after its function: `NAME.value`).
+fn (b: Builder) fe_thunk_there(n: Str) -> Bool {
+  if !n.ends_with(".value") {
+    return false
+  }
+  let w = b.m.func_at.get(n) ?? -1
+  w >= 0 && b.thunk_of.contains(w)
+}
 
 /// Adds delta to every line of f in its own file: each value's line and
 /// position (`file:line[:col]`), its variables' and their bindings'
