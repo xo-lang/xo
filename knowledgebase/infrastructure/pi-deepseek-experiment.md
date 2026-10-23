@@ -228,6 +228,20 @@ Each finding: what, evidence, fix. Status in brackets.
   in the test, not std. It found that no live test covers the habits hint
   table (an orphaned internal/fix golden, a stale toolchain.md line) and
   reported it instead of widening scope.
+- 2026-10-23, task 4 on Claude Code (harder): Str.equal_fold
+  (strings.EqualFold), moving regexp's private simple_fold into
+  llrt/unicode.xo as the one shared copy. About 14:40 to 14:57 of work,
+  commit ce77d5b75, verdict approve. It sent a plan before editing,
+  checked the import graph, and moved the fold table verbatim (overseer
+  diff) with a cited equivalence for its two rewritten calls. 1
+  correction: its regexp module test filter matched nothing ("[no tests to
+  run]", the trap its own guide names). 1 reminder (fixed point; already
+  started). 1 stale report claim (its base "lacked" count; it did not),
+  and when correcting it, it misremembered deleting its own branch. 0
+  blocks. Its heavy.sh jobs ran under `nohup ... &`, which does not wake a
+  Claude Code session when they end: after ending its turn it sat about 6
+  minutes until messaged. Next: start heavy.sh through the harness's
+  background mode (run_in_background), which notifies the session.
 
 ## Pi and Claude Code compared (task 2 and task 3)
 
