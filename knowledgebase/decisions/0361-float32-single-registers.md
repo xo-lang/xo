@@ -104,7 +104,14 @@ forms, and they widen only where a double is needed. Stages:
    checked, since IEEE 754 does not fix which payload survives and Go's
    compiler may swap a commutative operation's operands.
 2. Loop-carried Float32 values (block parameters) stay single across
-   the back edge, so a loop accumulator never widens.
+   the back edge, so a loop accumulator never widens. Landed
+   2026-10-23: a loop header's Float32 parameter gets a single-precision
+   register that edge_moves and param_moves fill (the argument's single
+   form, or narrowed in the predecessor). select_branch, range_and and
+   logic_value, which build their own parameter moves, leave such a
+   block alone. Portable float32 79,714,747 to 77,714,748 instructions
+   (0.92 of LLVM's). Golden f32_loops: branches, nested loops, a
+   Float32 loop condition, break, and a select.
 
 ## Consequences
 

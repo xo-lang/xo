@@ -1,0 +1,66 @@
+// Loop carried Float32 values (decision 0361 stage 2: a loop header's
+// Float32 parameter keeps a single-precision register the edges fill):
+// accumulators updated on both sides of a branch, in nested loops, under
+// a Float32 loop condition, passed unchanged, and left with break.
+
+fn hex(n: Int) -> Str {
+  let digits = "0123456789abcdef"
+  var s = ""
+  for k in 0..16 {
+    let d = n.shr_logical(60 - 4 * k) & 15
+    s = s + digits[d..d + 1]
+  }
+  s
+}
+
+fn show(stdio: Stdio, label: Str, x: Float32) uses stdio {
+  stdio.println("${label} ${hex(Float(x).to_bits())} ${x}")
+}
+
+fn main(os: Os) {
+  let io = os.stdio
+  var a: Float32 = 0.0
+  var b: Float32 = 1.0
+  for i in 0..500 {
+    if i % 3 == 0 {
+      a = a + Float32(i) * 0.1
+    } else {
+      a = a - b / 3.0
+    }
+    b = b * 1.001
+  }
+  show(io, "branches", a)
+  show(io, "product", b)
+  var s: Float32 = 0.0
+  for i in 0..40 {
+    var t: Float32 = 1.0
+    for j in 0..i {
+      t = t * 0.97 + Float32(j) / 7.0
+    }
+    s = s + t
+  }
+  show(io, "nested", s)
+  var x: Float32 = 1.0
+  var n = 0
+  while x < 1000000.0 {
+    x = x * 1.5 + 0.25
+    n += 1
+  }
+  show(io, "while ${n}", x)
+  var c: Float32 = 0.5
+  var keep: Float32 = 2.0
+  for i in 0..100 {
+    c = c * keep - Float32(i) / 128.0
+    if c < -50.0 {
+      break
+    }
+  }
+  show(io, "break", c)
+  show(io, "kept", keep)
+  var m: Float32 = 0.0
+  for i in 0..300 {
+    let y = Float32(i) * 0.37
+    m = if y > m { y - 0.125 } else { m + 0.001 }
+  }
+  show(io, "select", m)
+}

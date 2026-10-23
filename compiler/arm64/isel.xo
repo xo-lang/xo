@@ -673,12 +673,30 @@ fn (var g: G) isel() {
     g.push_run = {}
     g.push_skip = {}
   }
+  // a block's place in the order: a predecessor at or past it is a back
+  // edge (a loop header's Float32 parameters stay single, decision 0361)
+  var pos: Map[Int, Int] = {}
+  for (k, b) in blocks.indexed() {
+    pos[b] = k
+  }
   for b in blocks {
     g.bmap[b] = g.blocks.len()
     g.blocks.push(MBlock{id: 0})
     if b != 0 {
+      var header = false
+      for e in g.f.blocks[b].preds {
+        if (pos.get(g.f.edges[e].from) ?? -1) >= (pos.get(b) ?? 0) {
+          header = true
+        }
+      }
       for p in g.f.blocks[b].params {
         g.set(p, g.new_vregs(g.layout(g.vty(p))))
+        if header && g.is_f32(g.vty(p)) {
+          // the loop carried Float32 (an accumulator) in single
+          // precision too: the edges move its single form
+          // (f32_param_move), and its Float32 operations read it
+          g.f32s[p] = g.new_vreg(true)
+        }
         if g.vkind(p) == ssa.Kind.List {
           // the list's length travels with it (see opt.xo)
           let c = g.new_vreg(false)
@@ -852,6 +870,7 @@ fn (var g: G) edge_moves(e: Int) -> (List[Int], List[Src]) {
       dsts.push(pw[k])
       srcs.push(rsrc(aw[k]))
     }
+    g.f32_param_move(p, g.f.edges[e].args[i], dsts, srcs)
     if g.vkind(p) != ssa.Kind.List {
       continue
     }
@@ -2012,7 +2031,7 @@ fn (var g: G) select_branch(x: ssa.Value, cmp: Cmp) -> Bool {
   }
   let (j0, e0, s0) = g.forward(x.succs[0])
   let (j1, e1, s1) = g.forward(x.succs[1])
-  if j0 != j1 || (e0 == x.succs[0] && e1 == x.succs[1]) || !g.plans_of(j0).is_empty() {
+  if j0 != j1 || (e0 == x.succs[0] && e1 == x.succs[1]) || !g.plans_of(j0).is_empty() || g.f32_params(j0) {
     return false
   }
   let ps = g.f.blocks[j0].params
@@ -2277,7 +2296,7 @@ fn (var g: G) range_and(x: ssa.Value) -> Bool {
     return false
   }
   let j = g.f.blocks[jb]
-  if jf != jb || j.instrs.len() != 1 || j.preds.len() != 2 {
+  if jf != jb || j.instrs.len() != 1 || j.preds.len() != 2 || g.f32_params(jb) {
     return false
   }
   let c2 = b.instrs[n - 2]
@@ -2357,7 +2376,7 @@ fn (var g: G) logic_value(x: ssa.Value) -> Bool {
     let eb = jmp.succs[0]
     let jb = g.f.edges[eb].to
     let (jf, ef, sp) = g.forward(e_j)
-    if jf != jb || !sp.is_empty() || !g.plans_of(jb).is_empty() {
+    if jf != jb || !sp.is_empty() || !g.plans_of(jb).is_empty() || g.f32_params(jb) {
       continue
     }
     let c2 = b.instrs[n - 2]
@@ -2630,6 +2649,7 @@ fn (var g: G) param_moves(p: Int, a: Int, var dsts: List[Int], var srcs: List[Sr
       srcs.push(rsrc(aw[k]))
     }
   }
+  g.f32_param_move(p, a, dsts, srcs)
   if g.vkind(p) != ssa.Kind.List {
     return
   }
@@ -2765,6 +2785,36 @@ fn (var g: G) f32_op(r: Int, v: Int) {
   let s = g.def1(true, "${ins} $wd0, $wu0, $wu1", [a, b])
   g.f32s[r] = s
   g.set(r, [g.def1(true, "fcvt $d0, $wu0", [s])])
+}
+
+/// Whether t is Float32.
+fn (g: G) is_f32(t: Int) -> Bool {
+  t >= 0 && g.kind(t) == ssa.Kind.Float && g.m.types[t].bits == 32
+}
+
+/// The move of a loop header's Float32 parameter p's single form from
+/// argument a along an edge: a's single form, or a narrowed here (in the
+/// predecessor, before its jump or branch: fcvt sets no flags).
+fn (var g: G) f32_param_move(p: Int, a: Int, var dsts: List[Int], var srcs: List[Src]) {
+  if let Some(sp) = g.f32s.get(p) {
+    let s = g.f32_single(a)
+    if s != sp {
+      dsts.push(sp)
+      srcs.push(rsrc(s))
+    }
+  }
+}
+
+/// Whether one of block b's parameters has a single form, which only
+/// edge_moves and param_moves fill (select_branch, range_and, and
+/// logic_value build their own moves: they leave such a block alone).
+fn (g: G) f32_params(b: Int) -> Bool {
+  for p in g.f.blocks[b].params {
+    if g.f32s.contains(p) {
+      return true
+    }
+  }
+  false
 }
 
 /// A single-precision register holding Float32 value a: the one a single
