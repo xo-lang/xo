@@ -1,11 +1,11 @@
 exit 0
 --- stdout
-commit: Conn(msg: "commit failed")
-commit again: TxDone
+commit: connection: commit failed
+commit again: transaction already committed or rolled back
 rollback after: ok
-rollback: Conn(msg: "rollback failed")
+rollback: connection: rollback failed
 rollback again: ok
-commit after: TxDone
+commit after: transaction already committed or rolled back
 pooled conn 1
 connect 1 dsn
 conn 1 ping

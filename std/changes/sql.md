@@ -1,5 +1,23 @@
 # std/sql changes
 
+## 2026-10-23: behavior: SqlErr prints plain messages (decision 0358)
+
+- Kind: behavior
+- Commit: this commit
+- Found by: the Intel field report on 0.26.0 (error texts nested Debug output)
+- Go reference: database/sql and pgconn error texts
+- Test: goldens sql_driver, sql_values, sql_tx_driver_err, sql_wire_names, native_sql, net_only, std_error_display (arm64, LLVM, Go parity), gen sql_tx, sql_decode, sql_wire_names
+
+`Display` of `SqlErr` (`${e}`, an uncaught error's report) printed the
+Debug form, `Conn(msg: "Io(msg: \"tls: ...\")")`. It prints a plain
+sentence now: `syntax error: MSG`, MSG for `Constraint`, `Param` and
+`Driver`, `no such table: NAME`, `no rows in result set`, `no such column:
+NAME`, `column COL: MSG`, `connection: MSG`, `MSG (SQLSTATE CODE)` for
+`Server`, `transaction already committed or rolled back`, `database is
+closed`, `canceled`. A TLS or network failure under the Postgres driver
+reads `connection: tls: handshake failure`, one level. `Debug` and value
+comparison are unchanged.
+
 ## 2026-10-23: fix: the Postgres driver's denied dial reads as std.md 10.9 says
 
 - Kind: fix

@@ -19,6 +19,25 @@ use native/llrt/raw
 use native/llrt/sysio
 use native/llrt/pg
 
+/// The Display of SqlErr (decision 0358); std/rt/sqltext.go prints the same.
+fn sqlerr_display(e: sql.SqlErr) -> Str {
+  match e {
+    Syntax(msg) => "syntax error: ${msg}"
+    Constraint(msg, _, _) => msg
+    Param(msg) => msg
+    NoTable(name) => "no such table: ${name}"
+    NoRows => "no rows in result set"
+    NoColumn(name) => "no such column: ${name}"
+    Mismatch(column, msg) => "column ${column}: ${msg}"
+    Conn(msg) => "connection: ${msg}"
+    Driver(msg) => msg
+    Server(code, msg) => "${msg} (SQLSTATE ${code})"
+    TxDone => "transaction already committed or rolled back"
+    Closed => "database is closed"
+    Canceled => "canceled"
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Handles
 

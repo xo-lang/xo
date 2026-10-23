@@ -2,10 +2,10 @@ exit 0
 --- stdout
 insert ada: affected 1 id 1
 insert two: affected 2 id 3
-insert dup: error Constraint(msg: "UNIQUE constraint failed: users.name", code: "23505", name: "")
-insert null: error Constraint(msg: "NOT NULL constraint failed: users.name", code: "23502", name: "")
-insert type: error Constraint(msg: "column age expects an integer, got string", code: "42804", name: "")
-insert params: error Param(msg: "statement has 2 placeholders but 1 arguments were given")
+insert dup: error UNIQUE constraint failed: users.name
+insert null: error NOT NULL constraint failed: users.name
+insert type: error column age expects an integer, got string
+insert params: error statement has 2 placeholders but 1 arguments were given
 insert explicit id: affected 1 id 10
 returning: 1 [id=11 name="eve" twice=82]
 all: 5 [id=1 name="ada" age=36 score=1.5 active=true seen=2023-11-14T22:13:20Z; id=2 name="bob" age=NULL score=2.0 active=false seen=NULL; id=3 name="cy's" age=29 score=-0.25 active=true seen=NULL; id=10 name="dee" age=NULL score=1.5 active=true seen=NULL; id=11 name="eve" age=41 score=1.5 active=true seen=NULL]
@@ -18,51 +18,51 @@ count alias: 1 [n=5 count=5]
 arith: 1 [?column?=2 ?column?=2 ?column?=2 q=3.5 ?column?=2]
 table.col: 1 [name="cy's"]
 limit big: 1 [id=11]
-no table: error NoTable(name: "nope")
-syntax: error Syntax(msg: "expected an expression, found \"where\"")
-syntax 2: error Syntax(msg: "expected FROM, found \"users\"")
-bad char: error Syntax(msg: "unexpected character \"#\"")
-unterminated: error Syntax(msg: "unterminated string")
-no column: error Syntax(msg: "no such column nope")
-mixed count: error Syntax(msg: "COUNT(*) cannot be mixed with other columns")
-two stmts: error Syntax(msg: "expected one statement")
-query exec: error Syntax(msg: "query needs a SELECT statement or a write with RETURNING (use exec for other statements)")
-div zero: error Driver(msg: "division by zero")
-cmp types: error Driver(msg: "cannot compare string with int64")
-negative limit: error Syntax(msg: "LIMIT and OFFSET need a non negative integer")
-exec select: error Syntax(msg: "exec cannot run a SELECT (use query)")
-empty: error Syntax(msg: "empty statement")
-several args: error Param(msg: "several statements cannot take arguments")
-bad type: error Syntax(msg: "unknown column type money")
-exists: error Syntax(msg: "table tags already exists")
+no table: error no such table: nope
+syntax: error syntax error: expected an expression, found "where"
+syntax 2: error syntax error: expected FROM, found "users"
+bad char: error syntax error: unexpected character "#"
+unterminated: error syntax error: unterminated string
+no column: error syntax error: no such column nope
+mixed count: error syntax error: COUNT(*) cannot be mixed with other columns
+two stmts: error syntax error: expected one statement
+query exec: error syntax error: query needs a SELECT statement or a write with RETURNING (use exec for other statements)
+div zero: error division by zero
+cmp types: error cannot compare string with int64
+negative limit: error syntax error: LIMIT and OFFSET need a non negative integer
+exec select: error syntax error: exec cannot run a SELECT (use query)
+empty: error syntax error: empty statement
+several args: error several statements cannot take arguments
+bad type: error syntax error: unknown column type money
+exists: error syntax error: table tags already exists
 bob cols id,name,age,score,active,seen
-bob age Err(Mismatch(column: "age", msg: "expected an integer, found NULL")) Ok(None) Ok(true) Err(Mismatch(column: "age", msg: "expected text, found NULL"))
-bob score Ok(2.0) Ok(Some(2.0)) Err(Mismatch(column: "score", msg: "expected an integer, found a float"))
-bob active Ok(false) Ok(Some(false)) Err(NoColumn(name: "nope"))
-bob seen Ok(None) Err(Mismatch(column: "seen", msg: "expected a time, found NULL"))
+bob age Err(column age: expected an integer, found NULL) Ok(None) Ok(true) Err(column age: expected text, found NULL)
+bob score Ok(2.0) Ok(Some(2.0)) Err(column score: expected an integer, found a float)
+bob active Ok(false) Ok(Some(false)) Err(no such column: nope)
+bob seen Ok(None) Err(column seen: expected a time, found NULL)
 bob id as float Ok(2.0)
-none: NoRows
+none: no rows in result set
 user 1 ada Some(36) 1.5 true Some(2023-11-14T22:13:20Z)
 user 2 bob None 2.0 false None
 user 3 cy's Some(29) -0.25 true None
 user 10 dee None 1.5 true None
 user 11 eve Some(41) 1.5 true None
-short: Mismatch(column: "age", msg: "expected an integer, found NULL")
-short one: NoColumn(name: "age")
+short: column age: expected an integer, found NULL
+short one: no such column: age
 dee dee None
 update returning: 2 [name="ada" age=37 active=false; name="cy's" age=30 active=false]
-update unique: error Constraint(msg: "UNIQUE constraint failed: users.name", code: "23505", name: "")
+update unique: error UNIQUE constraint failed: users.name
 update all: affected 5 id 0
 delete returning: 1 [id=11 name="eve" age=41 score=2.5 active=true seen=NULL]
 delete: affected 2 id 0
 left: 2 [id=1 name="ada" score=2.5; id=3 name="cy's" score=0.75]
 tx insert: affected 2 id 2
-tx bad: error Constraint(msg: "NOT NULL constraint failed: tags.label", code: "23502", name: "")
+tx bad: error NOT NULL constraint failed: tags.label
 tx sees: 2 [id=1 label="a"; id=2 label="b"]
 db does not: 0 []
 committed
-commit again: TxDone
-tx done: error TxDone
+commit again: transaction already committed or rolled back
+tx done: error transaction already committed or rolled back
 rollback after commit ok
 after commit: 2 [id=1 label="a"; id=2 label="b"]
 tx2 delete: affected 2 id 0
@@ -70,12 +70,12 @@ tx2 sees: 1 [count=0]
 rolled back
 after rollback: 2 [label="b"; label="a"]
 drop: affected 0 id 0
-drop again: error NoTable(name: "tags")
+drop again: error no such table: tags
 pk: 2 [a=5; a=6]
-bad schema: Syntax(msg: "expected \")\", found end of input")
+bad schema: syntax error: expected ")", found end of input
 closed
-after close: error Closed
-ping: Closed
-open: Param(msg: "sslmode is invalid: \"bogus\"")
-open: Param(msg: "max_open must be at least 1")
+after close: error database is closed
+ping: database is closed
+open: sslmode is invalid: "bogus"
+open: max_open must be at least 1
 --- stderr

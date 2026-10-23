@@ -4,11 +4,11 @@ ok 1
 ok 1
 doc 1: 0001fe none a|b c 2
 meta 7 seven items 2
-second as Doc: Mismatch(column: "scores", msg: "expected an array of integers, found NULL")
-json of bytes: Mismatch(column: "data", msg: "expected json, found bytes")
+second as Doc: column scores: expected an array of integers, found NULL
+json of bytes: column data: expected json, found bytes
 by bytes: 1
-Constraint(msg: "UNIQUE constraint failed: docs.name", code: "23505", name: "")
-Constraint(msg: "NOT NULL constraint failed: docs.data", code: "23502", name: "")
-Constraint(msg: "column tags expects text, got int64", code: "42804", name: "")
+UNIQUE constraint failed: docs.name
+NOT NULL constraint failed: docs.data
+column tags expects text, got int64
 matched code 23505
 --- stderr

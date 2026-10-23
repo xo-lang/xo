@@ -2157,8 +2157,14 @@ enum SqlErr {
   Syntax(msg: Str), Constraint(msg: Str, code: Str, name: Str), Param(msg: Str), NoTable(name: Str),
   NoRows, NoColumn(name: Str), Mismatch(column: Str, msg: Str),
   Conn(msg: Str), Driver(msg: Str), Server(code: Str, msg: Str), TxDone, Closed, Canceled
-} derive Display
+}
 ```
+
+`display` prints plain messages (decision 0358): `syntax error: MSG`, MSG for
+`Constraint`, `Param` and `Driver`, `no such table: NAME`, `no rows in result
+set`, `no such column: NAME`, `column COL: MSG`, `connection: MSG`, `MSG
+(SQLSTATE CODE)` for `Server`, `transaction already committed or rolled back`,
+`database is closed`, and `canceled`. `Debug` keeps the variant form.
 
 `Conn` is a lost or refused connection, `Driver` any other driver failure
 (including an unknown driver name), `Constraint` a key, uniqueness, NOT NULL,

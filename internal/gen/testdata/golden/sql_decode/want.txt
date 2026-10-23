@@ -11,9 +11,9 @@ no column price
 mismatch name: expected an integer, found text
 mismatch note: expected text, found NULL
 no rows
-Syntax(msg: "query needs a SELECT statement or a write with RETURNING (use exec for other statements)")
-Syntax(msg: "RETURNING cannot use COUNT(*)")
-Constraint(msg: "NOT NULL constraint failed: items.name", code: "23502", name: "")
+syntax error: query needs a SELECT statement or a write with RETURNING (use exec for other statements)
+syntax error: RETURNING cannot use COUNT(*)
+NOT NULL constraint failed: items.name
 rows 3
 tx saw 1, after rollback 0
 --- stderr

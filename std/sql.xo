@@ -62,7 +62,14 @@ enum SqlErr {
   TxDone
   Closed
   Canceled
-} derive Display
+}
+
+/// Plain text (decision 0358): `syntax error: MSG`, MSG for a Constraint,
+/// Param or Driver, `no such table: NAME`, `no rows in result set`,
+/// `no such column: NAME`, `column COL: MSG`, `connection: MSG`,
+/// `MSG (SQLSTATE CODE)`, `transaction already committed or rolled back`,
+/// `database is closed`, `canceled`.
+fn (e: SqlErr) display() -> Str
 
 struct ExecResult {
   rows_affected: Int

@@ -1,11 +1,11 @@
 exit 0
 --- stdout
-open: Conn(msg: "password authentication failed")
+open: connection: password authentication failed
 row conn 1 n 2
 exec 1
-commit again: TxDone
-break: Conn(msg: "connection reset")
-closed: Closed
+commit again: transaction already committed or rolled back
+break: connection: connection reset
+closed: database is closed
 connect 1 dsn
 conn 1 ping
 conn 1 query SELECT 1
