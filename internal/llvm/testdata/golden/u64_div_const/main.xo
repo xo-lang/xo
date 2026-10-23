@@ -1,0 +1,184 @@
+// UInt64 division and remainder by constants (show.xo u64_div_const:
+// a shift, or a multiply high by a magic number of 64 or 65 bits)
+// against the same by a variable (ints.u64_div), over edge and
+// pseudo random dividends.
+
+fn check(xs: List[UInt64], ks: List[UInt64]) -> (Int, UInt64) {
+  var bad = 0
+  var sum: UInt64 = 0
+  for x in xs {
+    let q0 = x / 2
+    let r0 = x % 2
+    if q0 != x / ks[0] || r0 != x % ks[0] { bad += 1 }
+    sum = sum ^ q0 ^ r0
+    let q1 = x / 3
+    let r1 = x % 3
+    if q1 != x / ks[1] || r1 != x % ks[1] { bad += 1 }
+    sum = sum ^ q1 ^ r1
+    let q2 = x / 5
+    let r2 = x % 5
+    if q2 != x / ks[2] || r2 != x % ks[2] { bad += 1 }
+    sum = sum ^ q2 ^ r2
+    let q3 = x / 6
+    let r3 = x % 6
+    if q3 != x / ks[3] || r3 != x % ks[3] { bad += 1 }
+    sum = sum ^ q3 ^ r3
+    let q4 = x / 7
+    let r4 = x % 7
+    if q4 != x / ks[4] || r4 != x % ks[4] { bad += 1 }
+    sum = sum ^ q4 ^ r4
+    let q5 = x / 10
+    let r5 = x % 10
+    if q5 != x / ks[5] || r5 != x % ks[5] { bad += 1 }
+    sum = sum ^ q5 ^ r5
+    let q6 = x / 12
+    let r6 = x % 12
+    if q6 != x / ks[6] || r6 != x % ks[6] { bad += 1 }
+    sum = sum ^ q6 ^ r6
+    let q7 = x / 25
+    let r7 = x % 25
+    if q7 != x / ks[7] || r7 != x % ks[7] { bad += 1 }
+    sum = sum ^ q7 ^ r7
+    let q8 = x / 60
+    let r8 = x % 60
+    if q8 != x / ks[8] || r8 != x % ks[8] { bad += 1 }
+    sum = sum ^ q8 ^ r8
+    let q9 = x / 100
+    let r9 = x % 100
+    if q9 != x / ks[9] || r9 != x % ks[9] { bad += 1 }
+    sum = sum ^ q9 ^ r9
+    let q10 = x / 641
+    let r10 = x % 641
+    if q10 != x / ks[10] || r10 != x % ks[10] { bad += 1 }
+    sum = sum ^ q10 ^ r10
+    let q11 = x / 1000
+    let r11 = x % 1000
+    if q11 != x / ks[11] || r11 != x % ks[11] { bad += 1 }
+    sum = sum ^ q11 ^ r11
+    let q12 = x / 3600
+    let r12 = x % 3600
+    if q12 != x / ks[12] || r12 != x % ks[12] { bad += 1 }
+    sum = sum ^ q12 ^ r12
+    let q13 = x / 65599
+    let r13 = x % 65599
+    if q13 != x / ks[13] || r13 != x % ks[13] { bad += 1 }
+    sum = sum ^ q13 ^ r13
+    let q14 = x / 1000000
+    let r14 = x % 1000000
+    if q14 != x / ks[14] || r14 != x % ks[14] { bad += 1 }
+    sum = sum ^ q14 ^ r14
+    let q15 = x / 1000000007
+    let r15 = x % 1000000007
+    if q15 != x / ks[15] || r15 != x % ks[15] { bad += 1 }
+    sum = sum ^ q15 ^ r15
+    let q16 = x / 4294967291
+    let r16 = x % 4294967291
+    if q16 != x / ks[16] || r16 != x % ks[16] { bad += 1 }
+    sum = sum ^ q16 ^ r16
+    let q17 = x / 4294967296
+    let r17 = x % 4294967296
+    if q17 != x / ks[17] || r17 != x % ks[17] { bad += 1 }
+    sum = sum ^ q17 ^ r17
+    let q18 = x / 4294967297
+    let r18 = x % 4294967297
+    if q18 != x / ks[18] || r18 != x % ks[18] { bad += 1 }
+    sum = sum ^ q18 ^ r18
+    let q19 = x / 6700417
+    let r19 = x % 6700417
+    if q19 != x / ks[19] || r19 != x % ks[19] { bad += 1 }
+    sum = sum ^ q19 ^ r19
+    let q20 = x / 7340032
+    let r20 = x % 7340032
+    if q20 != x / ks[20] || r20 != x % ks[20] { bad += 1 }
+    sum = sum ^ q20 ^ r20
+    let q21 = x / 4611686018427387905
+    let r21 = x % 4611686018427387905
+    if q21 != x / ks[21] || r21 != x % ks[21] { bad += 1 }
+    sum = sum ^ q21 ^ r21
+    let q22 = x / 4611686018427387903
+    let r22 = x % 4611686018427387903
+    if q22 != x / ks[22] || r22 != x % ks[22] { bad += 1 }
+    sum = sum ^ q22 ^ r22
+    let q23 = x / 9223372036854775807
+    let r23 = x % 9223372036854775807
+    if q23 != x / ks[23] || r23 != x % ks[23] { bad += 1 }
+    sum = sum ^ q23 ^ r23
+    let q24 = x / 9223372036854775783
+    let r24 = x % 9223372036854775783
+    if q24 != x / ks[24] || r24 != x % ks[24] { bad += 1 }
+    sum = sum ^ q24 ^ r24
+    let q25 = x / 3298534883335
+    let r25 = x % 3298534883335
+    if q25 != x / ks[25] || r25 != x % ks[25] { bad += 1 }
+    sum = sum ^ q25 ^ r25
+    let q26 = x / 1000000000000000000
+    let r26 = x % 1000000000000000000
+    if q26 != x / ks[26] || r26 != x % ks[26] { bad += 1 }
+    sum = sum ^ q26 ^ r26
+    let q27 = x / 123456789012345
+    let r27 = x % 123456789012345
+    if q27 != x / ks[27] || r27 != x % ks[27] { bad += 1 }
+    sum = sum ^ q27 ^ r27
+    let q28 = x / 9007199254740993
+    let r28 = x % 9007199254740993
+    if q28 != x / ks[28] || r28 != x % ks[28] { bad += 1 }
+    sum = sum ^ q28 ^ r28
+    let q29 = x / 4611686018427387904
+    let r29 = x % 4611686018427387904
+    if q29 != x / ks[29] || r29 != x % ks[29] { bad += 1 }
+    sum = sum ^ q29 ^ r29
+    let q30 = x / 6917529027641081856
+    let r30 = x % 6917529027641081856
+    if q30 != x / ks[30] || r30 != x % ks[30] { bad += 1 }
+    sum = sum ^ q30 ^ r30
+    let q31 = x / 9223372036854775806
+    let r31 = x % 9223372036854775806
+    if q31 != x / ks[31] || r31 != x % ks[31] { bad += 1 }
+    sum = sum ^ q31 ^ r31
+    let q32 = x / 1024000
+    let r32 = x % 1024000
+    if q32 != x / ks[32] || r32 != x % ks[32] { bad += 1 }
+    sum = sum ^ q32 ^ r32
+    let q33 = x / 8000000000000000000
+    let r33 = x % 8000000000000000000
+    if q33 != x / ks[33] || r33 != x % ks[33] { bad += 1 }
+    sum = sum ^ q33 ^ r33
+    let q34 = x / 14
+    let r34 = x % 14
+    if q34 != x / ks[34] || r34 != x % ks[34] { bad += 1 }
+    sum = sum ^ q34 ^ r34
+    let q35 = x / 22
+    let r35 = x % 22
+    if q35 != x / ks[35] || r35 != x % ks[35] { bad += 1 }
+    sum = sum ^ q35 ^ r35
+  }
+  (bad, sum)
+}
+
+fn main(os: Os) {
+  let io = os.stdio
+  let ks: List[UInt64] = [2, 3, 5, 6, 7, 10, 12, 25, 60, 100, 641, 1000, 3600, 65599, 1000000, 1000000007, 4294967291, 4294967296, 4294967297, 6700417, 7340032, 4611686018427387905, 4611686018427387903, 9223372036854775807, 9223372036854775783, 3298534883335, 1000000000000000000, 123456789012345, 9007199254740993, 4611686018427387904, 6917529027641081856, 9223372036854775806, 1024000, 8000000000000000000, 14, 22]
+  var xs: List[UInt64] = [0, 1, 2, 3, 18446744073709551615, 18446744073709551614, 9223372036854775808, 9223372036854775807, 9223372036854775809]
+  for k in ks {
+    for d in [k - 1, k, k + 1] {
+      xs.push(d)
+    }
+    if k < 3074457345618258602 {
+      xs.push(k * 2)
+      xs.push(k * 3 - 1)
+    }
+    xs.push(18446744073709551615 - 18446744073709551615 % k)
+    xs.push(18446744073709551615 - 18446744073709551615 % k - 1)
+  }
+  var g = 88172645463325252
+  for _ in 0..20000 {
+    g = g ^ g.wrapping_shl(13)
+    g = g ^ g.shr_logical(7)
+    g = g ^ g.wrapping_shl(17)
+    let s = UInt64(g.shr_logical(32)) * 4294967296 + UInt64(g & 4294967295)
+    xs.push(s)
+    xs.push(s >> (s % 64))
+  }
+  let (bad, sum) = check(xs, ks)
+  io.println("${xs.len()} dividends, ${ks.len()} divisors, ${bad} wrong, ${sum}")
+}

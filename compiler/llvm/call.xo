@@ -733,6 +733,14 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     // empty asm the optimizer cannot see through, with no side effect
     // (it may still be merged or dropped when unused)
     "rt.ct_barrier" => g.set(v, "call i64 asm \"\", \"=r,0\"(i64 ${g.op(x.args[0])})")
+    // ssa show.xo u64_div_const: a UInt64 by a constant
+    "rt.u64_divc" => {
+      let rem = match g.f.values[x.args[2]].aux {
+        I(n) => n == 1
+        _ => false
+      }
+      g.set(v, "${if rem { "urem" } else { "udiv" }} i64 ${g.op(x.args[0])}, ${g.op(x.args[1])}")
+    }
     "rt.u64_mul_hi" => {
       let a = g.def("zext i64 ${g.op(x.args[0])} to i128")
       let b = g.def("zext i64 ${g.op(x.args[1])} to i128")

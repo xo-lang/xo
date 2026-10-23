@@ -80,11 +80,10 @@ fn rune_rem(v: Int) -> Int {
   Int(Rune(v % 55296))
 }
 
-// A UInt64 remainder by a constant multiplies by the magic number: the
-// divisor reaches ints.u64_rem through a conversion to Int, which hid it
-// (an sdiv and a zero check, 2026-10-23).
+// A UInt64 remainder by a constant multiplies high by the unsigned magic
+// number (rt.u64_divc), not an sdiv and a zero check (2026-10-23).
 fn u64_mod(x: UInt64) -> UInt64 {
-  // arm64: "smulh" -"sdiv"
+  // arm64: "umulh" -"sdiv" -"smulh"
   x % 1000
 }
 

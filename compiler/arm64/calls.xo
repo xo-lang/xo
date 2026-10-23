@@ -1094,6 +1094,52 @@ fn (var g: G) call_op(v: Int) {
   }
 }
 
+/// rt.u64_divc(a, d, rem): a / d (a % d when rem is 1) as UInt64s, d a
+/// constant in [2, 2^63) (ssa show.xo u64_div_const): where a's bounds
+/// prove it is not negative, the signed division by a constant (its
+/// quotient shared through Memo.quo with an Int's `a % d` of the same
+/// word: portable conv's `w % 1000` and `u % 1000`), else u64_magic's
+/// multiply high.
+fn (var g: G) u64_divc(v: Int) -> Bool {
+  let x = g.f.values[v]
+  let (d, dok) = g.const_int(x.args[1])
+  let (rem, rok) = g.const_int(x.args[2])
+  if !dok || !rok || d < 2 {
+    return false
+  }
+  let a = g.word(x.args[0])
+  let (lo, _) = g.bounds(x.args[0])
+  var q = 0
+  if lo >= 0 {
+    q = g.sdiv_quot(x.args[0], a, d)
+  } else {
+    let (form, m, pre, post) = u64_magic(d)
+    if form == 0 {
+      q = g.def1(false, "lsr $d0, $u0, #${post}", [a])
+    } else if form == 1 {
+      var y = a
+      if pre > 0 {
+        y = g.def1(false, "lsr $d0, $u0, #${pre}", [a])
+      }
+      q = g.def1(false, "umulh $d0, $u0, $u1", [y, g.cimm(m)])
+      if post > 0 {
+        q = g.def1(false, "lsr $d0, $u0, #${post}", [q])
+      }
+    } else {
+      let hi = g.def1(false, "umulh $d0, $u0, $u1", [a, g.cimm(m)])
+      let t = g.def1(false, "sub $d0, $u0, $u1", [a, hi])
+      let h = g.def1(false, "add $d0, $u1, $u0, lsr #1", [t, hi])
+      q = g.def1(false, "lsr $d0, $u0, #${post}", [h])
+    }
+  }
+  if rem != 1 {
+    g.set(v, [q])
+    return true
+  }
+  g.set(v, [g.def1(false, "msub $d0, $u0, $u1, $u2", [q, g.cimm(d), a])])
+  true
+}
+
 /// Lowers the runtime intrinsics that are an instruction or two
 /// (decision 0193 step 3): rt.int_wrap with a constant op (0 +, 1 -, 2
 /// *, 3 << and 4 >> logical by the amount mod 64; decision 0195: 5
@@ -1115,6 +1161,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     // instructions more before the same call (text/int_fmt 1.006x)
     "rt.rs_push_byte" if g.push_loops() => g.push_fast(v, false)
     "rt.rs_push_word" if g.f.values[v].args.len() == 3 && g.push_loops() => g.push_fast(v, true)
+    "rt.u64_divc" => g.u64_divc(v)
     "rt.int_wrap" => {
       let (op, ok) = g.const_int(x.args[0])
       if !ok || op < 0 || op > 7 {

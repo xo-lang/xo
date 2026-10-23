@@ -883,6 +883,17 @@ fn (var b: Builder) word(v: Int) -> Int {
   v
 }
 
+/// a / d (rem: a % d) on the Int word a as UInt64s, d a constant in
+/// [2, 2^63): rt.u64_divc, which the backends lower inline (native:
+/// isel's u64_divc, a multiply high by a magic number, or the signed
+/// division where a's bounds prove it is not negative; LLVM udiv and
+/// urem; wasm i64.div_u and i64.rem_u), not ints.u64_div's signed
+/// division behind tests of both signs (2026-10-23: portable u64's `h %
+/// 4294967291` and `/ 3`, 1.38 times LLVM's instructions).
+fn (var b: Builder) u64_div_const(a: Int, d: Int, rem: Bool) -> Int {
+  b.rt("u64_divc", b.int_t(), [a, b.cint(d), b.cint(if rem { 1 } else { 0 })])
+}
+
 /// `x < y` on two Int words as UInt64s (ult).
 fn (var b: Builder) ult(x: Int, y: Int) -> Int {
   let it = b.int_t()
@@ -963,7 +974,9 @@ fn (var b: Builder) sized_op(code: Int, l: Int, r: Int, sp: Span) -> Int {
     if !bconst || kb == 0 {
       b.sized_fail_if(b.add(Op.Eq, bt, Aux.None, [c, b.cint(0)]), code, l, r, sp)
     }
-    if u64 {
+    if u64 && bconst && kb > 1 {
+      res = b.u64_div_const(a, kb, code == 4)
+    } else if u64 {
       let name = if code == 4 { "u64_rem" } else { "u64_div" }
       res = b.llrt_call(name, [a, c])
     } else if code == 4 {

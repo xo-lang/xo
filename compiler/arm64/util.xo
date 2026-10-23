@@ -150,6 +150,61 @@ fn align16(n: Int) -> Int {
   (n + 15) & ~15
 }
 
+/// How x / d for UInt64s x and a constant d in [2, 2^63) is a multiply
+/// high (Granlund and Montgomery, "Division by Invariant Integers using
+/// Multiplication", 1994, theorem 4.2): (form, m, pre, post) with form 0
+/// a shift right by post (d a power of two), 1 umulh(x >> pre, m) >>
+/// post, 2 the 65 bit multiplier 2^64 + m: hi = umulh(x, m), ((x - hi)
+/// >> 1 + hi) >> post. Form 1 first without a pre shift (m = ceil(2^(63
+/// + l) / d), l = ceil(log2 d), exact when its error d - 2^(63+l) mod d
+/// is at most 2^(l-1)), else for an even d = 2^z * o with pre = z (x >>
+/// z is below 2^(64-z), so a shift sh = max(z, ceil(log2 o)) bounds the
+/// error below o <= 2^sh with m below 2^64), else form 2.
+fn u64_magic(d: Int) -> (Int, Int, Int, Int) {
+  var l = 0
+  var t = d - 1
+  while t > 0 {
+    l += 1
+    t = t >> 1
+  }
+  var z = 0
+  while (d >> z) & 1 == 0 {
+    z += 1
+  }
+  let o = d >> z
+  if o == 1 {
+    return (0, 0, 0, l)
+  }
+  let (q, r) = pow2_divmod(63 + l, d)
+  if d - r <= 1 << (l - 1) {
+    return (1, q.wrapping_add(1), 0, l - 1)
+  }
+  if z > 0 {
+    let sh = if z > l - z { z } else { l - z }
+    let (mq, _) = pow2_divmod(64 - z + sh, o)
+    return (1, mq.wrapping_add(1), z, sh - z)
+  }
+  let (q2, _) = pow2_divmod(64 + l, d)
+  (2, q2.wrapping_add(1), 0, l - 1)
+}
+
+/// floor(2^p / d) mod 2^64 and 2^p mod d, d in [2, 2^63), by long
+/// division one bit at a time.
+fn pow2_divmod(p: Int, d: Int) -> (Int, Int) {
+  var q = 0
+  var r = 0
+  for i in 0..p + 1 {
+    // r < d < 2^63, so 2r + 1 fits a UInt64
+    r = r.wrapping_add(r) | (if i == 0 { 1 } else { 0 })
+    q = q.wrapping_add(q)
+    if !r.lt_unsigned(d) {
+      r = r.wrapping_sub(d)
+      q = q | 1
+    }
+  }
+  (q, r)
+}
+
 /// The multiplier M (as an Int's bits) and the shift s of a signed
 /// division by d (3 <= d < 2^63, not a power of two), as internal/arm64
 /// sdivMagic (Hacker's Delight 10-1): the least p >= 64 with e * anc <

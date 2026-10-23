@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+40245 dividends, 36 divisors, 0 wrong, 2952730732345127826
+--- stderr
