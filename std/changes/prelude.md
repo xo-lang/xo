@@ -3,7 +3,7 @@
 ## 2026-10-23: perf: trim_prefix and trim_suffix inline in native code
 
 - Kind: perf
-- Commit: this commit
+- Commit: f7ccf46fe
 - Found by: bench/results/views-trim-2026-10-22.md (trim_affix still 1.7x Go's instructions: the suffix trim was a call)
 - Go reference: strings.TrimPrefix, strings.TrimSuffix (inlined at the call)
 - Test: golden trim_affix_lens, views_split, str_ops_table, strings, text_helpers on arm64 and LLVM with Go parity; wasm goldens; std corpora
