@@ -3248,6 +3248,49 @@ fn (var g: G) funnel(v: Int) -> Bool {
 /// block with one incoming edge is the value that edge passes (an
 /// inlined call's result reaches its continuation block that way, so a
 /// pattern over the call's operation looks through it).
+/// The little endian value of the w bytes at base + off when base is a
+/// string literal's data address (raw.data of a literal: rt.obj_addr of
+/// the constant plus the 16 bytes of its header, through block
+/// parameters) and the bytes are the literal's: a prefix compared by
+/// scan.eq_text loads its words from the literal (Xo Lang 3's
+/// trim_affix, 2026-10-23), which Go compares as immediates.
+fn (g: G) literal_load(base: Int, off: Int, w: Int) -> Int? {
+  if !(w is 1 | 2 | 4 | 8) {
+    return None
+  }
+  let b = g.through_params(base)
+  let xb = g.f.values[b]
+  var a = b
+  var c = 0
+  if xb.op == ssa.Op.Call && aux_str(xb.aux) == "rt.int_wrap" && xb.args.len() == 3 {
+    let (op, ok) = g.const_int(xb.args[0])
+    let (k, kc) = g.const_int(xb.args[2])
+    if !ok || op != 0 || !kc {
+      return None
+    }
+    a = g.through_params(xb.args[1])
+    c = k
+  }
+  let xa = g.f.values[a]
+  if xa.op != ssa.Op.Call || aux_str(xa.aux) != "rt.obj_addr" || xa.args.len() != 1 {
+    return None
+  }
+  let s = g.through_params(xa.args[0])
+  if g.f.values[s].op != ssa.Op.Const {
+    return None
+  }
+  let bs = const_bytes(g.f.values[s].aux) ?? return None
+  let i = c - 16 + off
+  if i < 0 || i + w > bs.len() {
+    return None
+  }
+  var k = 0
+  for j in 0..w {
+    k = k | (Int(bs[i + j]) << (8 * j))
+  }
+  Some(k)
+}
+
 fn (g: G) through_params(v0: Int) -> Int {
   var v = v0
   for _ in 0..8 {

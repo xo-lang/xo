@@ -1750,6 +1750,13 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
     "rt.mem_load" => {
       let (w, _) = g.const_int(x.args[2])
       let (off, oc) = g.const_int(x.args[1])
+      if oc {
+        if let Some(k) = g.literal_load(x.args[0], off, w) {
+          // bytes of a string literal: the value itself
+          g.set(v, [g.cimm(k)])
+          return true
+        }
+      }
       if g.x86 && !oc {
         if let Some((i, c)) = g.x86_disp(x.args[1]) {
           // decision 0254: i + c folded into the displacement

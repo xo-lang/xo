@@ -1,0 +1,18 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): string literals.
+
+// The prefix's last word is read from the literal at compile time: "rer "
+// (0x20726572) is an immediate, not a load (compiler/arm64 literal_load,
+// with fold_consts's Str.len of a literal, 2026-10-23).
+fn token_len(hs: List[Str]) -> Int {
+  // arm64: "movk x[0-9]+, #8306, lsl #16"
+  var n = 0
+  for h in hs {
+    n += h.trim_prefix("Bearer ").len()
+  }
+  n
+}
+
+fn main(os: Os) {
+  let hs = ["Bearer abc", "x", "Bearer"]
+  os.stdio.println("${token_len(hs)}")
+}

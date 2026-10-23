@@ -577,6 +577,31 @@ fn fold_consts(var f: ssa.Func, types: List[ssa.SType]) {
   }
 }
 
+/// v through parameters of blocks with one predecessor (the argument
+/// that predecessor's edge passes).
+fn param_source(f: ssa.Func, v0: Int) -> Int {
+  var v = v0
+  for _ in 0..8 {
+    let x = f.values[v]
+    if x.op != ssa.Op.Param || x.block <= 0 || f.blocks[x.block].preds.len() != 1 {
+      return v
+    }
+    let bl = f.blocks[x.block]
+    var k = -1
+    for (i, p) in bl.params.indexed() {
+      if p == v {
+        k = i
+      }
+    }
+    let e = f.edges[bl.preds[0]]
+    if k < 0 || k >= e.args.len() {
+      return v
+    }
+    v = e.args[k]
+  }
+  v
+}
+
 /// The integer v is when it is a constant or folds to one.
 fn const_value(f: ssa.Func, v: Int) -> Int? {
   if let Some(n) = const_int(f, v) {
@@ -600,6 +625,17 @@ fn const_int(f: ssa.Func, v: Int) -> Int? {
 /// The constant value of x when its operands are constants and the
 /// operation cannot fault.
 fn fold_value(f: ssa.Func, x: ssa.Value) -> Int? {
+  if x.op == ssa.Op.Call && aux_str(x.aux) == "Str.len" && x.args.len() == 1 {
+    // a literal's length (a callee's p.len() of a literal argument:
+    // scan.eq_text's word count, 2026-10-23)
+    let s = f.values[param_source(f, x.args[0])]
+    if s.op == ssa.Op.Const {
+      if let Some(bs) = const_bytes(s.aux) {
+        return Some(bs.len())
+      }
+    }
+    return None
+  }
   if x.op == ssa.Op.Call {
     if aux_str(x.aux) != "rt.int_wrap" || x.args.len() != 3 {
       return None
