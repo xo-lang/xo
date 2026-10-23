@@ -680,8 +680,11 @@ pub fn find(src: Bytes, tape: List[Int], i: Int, key: Str) -> Int {
 /// of a struct in one pass over the members (derive Json's decoders;
 /// they called find once per field, which walked every member each
 /// time, 2026-10-23). keys holds each key after its length as one byte
-/// (each under 128 bytes). A member counts for the first key it equals;
-/// a later member of the same key replaces it, as in find.
+/// (each under 128 bytes), then 8 zero bytes (key_eq_padded reads whole
+/// words). A member counts for the key it equals (the
+/// keys are distinct); a later member of the same key replaces it, as in
+/// find. The keys are tried from the one after the last match, so members
+/// in the fields' order cost one compare each.
 pub fn find_all(src: Bytes, tape: List[Int], i: Int, keys: Str, nk: Int) -> List[Int] {
   var out: List[Int] = List.with_capacity(nk)
   for _ in 0..nk {
@@ -691,6 +694,9 @@ pub fn find_all(src: Bytes, tape: List[Int], i: Int, keys: Str, nk: Int) -> List
   let m = tape[i + 1]
   var j = i + 3
   var k = 0
+  // the key to try first and its offset in kb
+  var hf = 0
+  var hp = 0
   while k < m {
     let v = j + 3
     let raw = tape[j + 2]
@@ -700,23 +706,67 @@ pub fn find_all(src: Bytes, tape: List[Int], i: Int, keys: Str, nk: Int) -> List
         out[f] = v
       }
     } else {
+      // from the key after the last one matched (an encoder writes the
+      // members in the fields' order, so one compare a member), round to
+      // it again
       let at = tape[j + 1]
-      var p = 0
-      var f = 0
-      while f < nk {
+      var p = hp
+      var f = hf
+      var c = 0
+      while c < nk {
         let kl = Int(kb[p])
-        if raw == kl && range_eq(src, at, kb, p + 1, kl) {
+        if raw == kl && key_eq_padded(src, at, kb, p + 1, kl) {
           out[f] = v
+          hf = f + 1
+          hp = p + 1 + kl
+          if hf == nk {
+            hf = 0
+            hp = 0
+          }
           break
         }
         p += 1 + kl
         f += 1
+        if f == nk {
+          f = 0
+          p = 0
+        }
+        c += 1
       }
     }
     j = next(tape, v)
     k += 1
   }
   out
+}
+
+/// Whether the n bytes of src from at are the n bytes of kb from kp,
+/// where kb has 8 bytes after its last key (find_all's keys): a word at
+/// a time, the last part of a word masked, so a key under 8 bytes is one
+/// compare; bytes only within 8 bytes of src's end.
+fn key_eq_padded(src: Bytes, at: Int, kb: Bytes, kp: Int, n: Int) -> Bool {
+  var t = 0
+  while t + 8 <= n {
+    if rt.bytes_word(src, at + t) != rt.bytes_word(kb, kp + t) {
+      return false
+    }
+    t += 8
+  }
+  let r = n - t
+  if r == 0 {
+    return true
+  }
+  if at + t + 8 <= src.len() {
+    let mask = (1 << (8 * r)) - 1
+    return ((rt.bytes_word(src, at + t) ^ rt.bytes_word(kb, kp + t)) & mask) == 0
+  }
+  while t < n {
+    if src[at + t] != kb[kp + t] {
+      return false
+    }
+    t += 1
+  }
+  true
 }
 
 /// find_all's match of an escaped key node at j (cold, as key_eq_slow):

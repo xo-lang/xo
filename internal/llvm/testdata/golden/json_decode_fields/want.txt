@@ -6,4 +6,5 @@ ok 7 esc e 2.0 0 n
 err at $: missing field `email`
 ok 9 y z 3.0 2 -
 err at $: missing field `id`
+err at $: missing field `name`
 --- stderr

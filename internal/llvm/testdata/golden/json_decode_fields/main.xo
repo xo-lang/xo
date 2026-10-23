@@ -1,6 +1,7 @@
 // derive Json's decoder finds every field in one pass over an object's
 // members (jsontext.find_all, 2026-10-23): a duplicate key's last value,
-// escaped keys, members in any order, unknown members, a missing field.
+// escaped keys, members in any order, unknown members, a missing field;
+// keys compared a word at a time (jsontext.key_eq_padded).
 
 use std/json
 
@@ -27,4 +28,6 @@ fn main(os: Os) {
   show(os, "{\"id\":1,\"name\":\"a\",\"score\":1.5,\"tags\":[]}")
   show(os, "{\"extra\":true,\"tags\":[\"p\",\"q\"],\"score\":3,\"email\":\"z\",\"name\":\"y\",\"id\":9,\"more\":{\"id\":5}}")
   show(os, "{}")
+  // a key within 8 bytes of the text's end: compared a byte at a time
+  show(os, "{\"id\":1}")
 }

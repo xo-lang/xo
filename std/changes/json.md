@@ -1,5 +1,23 @@
 # std/json changes
 
+## 2026-10-23: perf: find_all compares keys a word at a time, from the next expected field
+
+- Kind: perf
+- Commit: this commit
+- Found by: Xo Lang 1 (after the one-pass decode, find_all was 53.8M of JSON small's 315.0M instructions on amd64, most of it the byte loop of keys that match)
+- Go reference: none (internal scan)
+- Test: golden json_decode_fields (a key within 8 bytes of the text's end added) on arm64, LLVM and the Go backend; json goldens with Go parity; TestJSONTextDiff; native/json's corpus on arm64 and LLVM
+
+The decoder's packed keys end with 8 zero bytes, so find_all compares a key
+8 bytes at a time with the last word masked (key_eq_padded): a key under 8
+bytes is one compare instead of a loop of byte compares, each with bounds
+checks; within 8 bytes of the text's end it compares bytes as before. Each
+member's scan starts at the field after the last one matched, so members in
+the fields' order match on the first try. Output is unchanged. JSON small:
+callgrind linux/amd64 315.0M to 299.9M instructions (0.952; 346.1M before
+the one-pass decode); `xo bench --ab` darwin/arm64, 40 rounds: wall 0.96
+(0.937 to 0.99), instructions 0.954.
+
 ## 2026-10-23: perf: a derived decoder finds every field in one pass over the object
 
 - Kind: perf

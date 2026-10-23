@@ -999,6 +999,10 @@ fn (var b: Builder) dec_fields(d: Dec, o: Int, seg: Str, fs: List[JField], with_
     packed.write("${Rune(f.key.len())}")
     packed.write(f.key)
   }
+  // 8 bytes after the last key: jsontext's key_eq_padded reads words
+  for _ in 0..8 {
+    packed.write("${Rune(0)}")
+  }
   var idx = -1
   if all {
     let lt = b.m.list(it)
