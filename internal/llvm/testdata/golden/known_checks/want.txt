@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+mix 8496478
+tests 84 2
+negative: -1 is out of range for UInt64
+rune: -1 is not a Unicode scalar value, so it is not a Rune
+--- stderr

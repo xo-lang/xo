@@ -1290,6 +1290,13 @@ fn (var g: G) instr1(v: Int) {
         g.lazy[v] = true
         return
       }
+      // decided by the operands' bounds: a constant (2026-10-23: a
+      // Rune's `r < 0` in its or of range tests kept a compare after a
+      // branch proved its operand not negative, portable conv)
+      if let Some(k) = g.decided(v) {
+        g.set(v, [g.imm(if k { 1 } else { 0 })])
+        return
+      }
       // an overflow test passed to a join (ints.fits returned into
       // checked_mul's `if`): the flag set, not the sign or high word test
       let (otext, oa, ob, vc) = g.overflow_test(v)
@@ -1832,6 +1839,48 @@ fn (var g: G) decided(c: Int) -> Bool? {
   }
 }
 
+/// The value of Bool v when the operands' bounds decide it: a constant,
+/// a compare decided, or a not, or, and of such (d more levels deep),
+/// else None (2026-10-23: a Rune's range tests `r < 0 || r > max ||
+/// surrogate` after a branch proved r's operand not negative).
+fn (var g: G) known_bool(v: Int, d: Int) -> Bool? {
+  let x = g.f.values[v]
+  match x.op {
+    Const => {
+      if let B(k) = x.aux {
+        return Some(k)
+      }
+      None
+    }
+    Not => {
+      if d <= 0 {
+        return None
+      }
+      if let Some(k) = g.known_bool(x.args[0], d - 1) {
+        return Some(!k)
+      }
+      None
+    }
+    Or | And => {
+      if d <= 0 || x.args.len() != 2 || g.vkind(v) != ssa.Kind.Bool {
+        return None
+      }
+      let a = g.known_bool(x.args[0], d - 1)
+      let b = g.known_bool(x.args[1], d - 1)
+      let absorb = x.op == ssa.Op.Or
+      if a == Some(absorb) || b == Some(absorb) {
+        return Some(absorb)
+      }
+      if a == Some(!absorb) && b == Some(!absorb) {
+        return Some(!absorb)
+      }
+      None
+    }
+    Eq | Ne | Lt | Le | Gt | Ge => g.decided(v)
+    _ => None
+  }
+}
+
 /// Whether v is an Or with a constant operand other than 0 (never 0).
 fn (var g: G) nonzero_or(v: Int) -> Bool {
   let x = g.f.values[v]
@@ -1852,21 +1901,29 @@ fn (var g: G) branch_op(v: Int) {
   g.end_memo[x.block] = g.m_()
   let c = x.args[0]
   let cv = g.f.values[c]
+  // a constant, or a Bool the operands' bounds decide through nots, ors,
+  // and ands of compares (known_bool)
+  var known: Bool? = None
   if cv.op == ssa.Op.Const {
     if let B(k) = cv.aux {
-      let e = if k { x.succs[0] } else { x.succs[1] }
-      let (dsts, srcs) = g.edge_moves(e)
-      g.pmove(dsts, srcs)
-      var ts = [g.bmap[g.f.edges[e].to]]
-      if !ssa.pads_reached(g.f, v, e) {
-        // a value on the kept path lands on a check of the other edge's
-        // blocks: they stay reachable, as the rt.landing branch's second
-        // target (2026-10-21: an inlined `ensures` that always fails)
-        ts.push(g.bmap[g.f.edges[if k { x.succs[1] } else { x.succs[0] }].to])
-      }
-      let _j = g.add(Inst{kind: K_JUMP, targets: ts})
-      return
+      known = Some(k)
     }
+  } else {
+    known = g.known_bool(c, 4)
+  }
+  if let Some(k) = known {
+    let e = if k { x.succs[0] } else { x.succs[1] }
+    let (dsts, srcs) = g.edge_moves(e)
+    g.pmove(dsts, srcs)
+    var ts = [g.bmap[g.f.edges[e].to]]
+    if !ssa.pads_reached(g.f, v, e) {
+      // a value on the kept path lands on a check of the other edge's
+      // blocks: they stay reachable, as the rt.landing branch's second
+      // target (2026-10-21: an inlined `ensures` that always fails)
+      ts.push(g.bmap[g.f.edges[if k { x.succs[1] } else { x.succs[0] }].to])
+    }
+    let _j = g.add(Inst{kind: K_JUMP, targets: ts})
+    return
   }
   if cv.op == ssa.Op.Call && aux_str(cv.aux) == "rt.landing" {
     // only a fault takes it, through a landing pad (decision 0085): a

@@ -653,6 +653,24 @@ fn (var g: G) derived(v: Int, d: Int) -> (Interval, Bool) {
       (Interval{lo: lo, hi: hi}, true)
     }
     Call => {
+      if aux_str(x.aux) == "rt.u64_divc" && x.args.len() == 3 {
+        // a UInt64 by a constant d >= 2 (calls.xo u64_divc): a remainder
+        // in [0, d), a quotient below 2^63 (2026-10-23: `Int(u % 1000)`
+        // kept its sign check in portable conv)
+        let (dv, dk) = g.const_int(x.args[1])
+        let (rem, rk) = g.const_int(x.args[2])
+        if !dk || !rk || dv < 2 {
+          return none
+        }
+        if rem == 1 {
+          return (Interval{lo: 0, hi: dv - 1}, true)
+        }
+        let a = g.bounds_iv(x.args[0], d)
+        if a.lo >= 0 {
+          return (Interval{lo: a.lo / dv, hi: a.hi / dv}, true)
+        }
+        return (Interval{lo: 0, hi: MAX_INT}, true)
+      }
       if aux_str(x.aux) != "Str.len" || x.args.is_empty() {
         return none
       }

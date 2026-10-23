@@ -1,0 +1,57 @@
+// Checks a branch or a range already decided: a Rune's range tests after
+// UInt64(v) proved v not negative, Int(u % k) of a UInt64 (below k), and
+// a compare in an or of tests, which arm64's isel folds (known_bool,
+// decided), next to the same conversions that still fault.
+use std/task
+
+fn show(stdio: Stdio, label: Str, r: Result[Str, task.Isolated[Int]]) uses stdio {
+  match r {
+    Ok(v) => stdio.println("${label}: ok ${v}")
+    Err(task.Isolated.Faulted(info)) => stdio.println("${label}: ${info.msg}")
+    Err(task.Isolated.Failed(e)) => stdio.println("${label}: failed ${e}")
+  }
+}
+
+fn mix(vs: List[Int]) -> Int {
+  var h = 0
+  for v in vs {
+    let u = UInt64(v)
+    let r = Rune(v % 55296)
+    let q = u / 7
+    h = (h + Int(u % 1000) + Int(r) + Int(q % 13)) % 1000000007
+  }
+  h
+}
+
+fn tests(vs: List[Int]) -> Int {
+  var n = 0
+  for v in vs {
+    if v >= 0 {
+      let m = v % 100
+      if m < 0 || m > 99 || (m >= 50 && m < 0) {
+        n += 1000
+      } else if m < 10 || m > 89 {
+        n += 1
+      }
+    }
+  }
+  n
+}
+
+fn main(os: Os) {
+  let io = os.stdio
+  var vs: List[Int] = [0, 1, 55295, 55296, 55297, 9223372036854775807]
+  for i in 0..300 {
+    vs.push(i * 7919 + i * i * 104729)
+  }
+  io.println("mix ${mix(vs)}")
+  io.println("tests ${tests(vs)} ${tests([-5, -100, 5, 95, 50])}")
+  show(io, "negative", task.isolate(fn() -> Str ! Int { "${mix([3, -1])}" }))
+  show(io, "rune", task.isolate(fn() -> Str ! Int {
+    var r = 0
+    for v in [55, -55297] {
+      r += Int(Rune(v % 55296))
+    }
+    "${r}"
+  }))
+}
