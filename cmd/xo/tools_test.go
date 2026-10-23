@@ -2222,3 +2222,90 @@ func TestVetCostViewStoreCutOption(t *testing.T) {
 		t.Errorf("XO0911 at lines %v, want [9]\n%s", lines, out.String())
 	}
 }
+
+// vetCostNotes runs xo vet --cost on prog and returns the lines of its
+// XO0911 notes, in order.
+func vetCostNotes(t *testing.T, prog string) []int {
+	t.Helper()
+	dir := writeFiles(t, map[string]string{"main.xo": prog})
+	var out, errOut bytes.Buffer
+	if status := run(t, []string{"vet", "--json", "--cost", dir}, &out, &errOut); status != 0 {
+		t.Fatalf("exit %d: %s", status, errOut.String())
+	}
+	var res struct {
+		Diagnostics []struct {
+			Code string `json:"code"`
+			Span struct {
+				Line int `json:"line"`
+			} `json:"span"`
+		} `json:"diagnostics"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &res); err != nil {
+		t.Fatalf("bad JSON: %v\n%s", err, out.String())
+	}
+	var lines []int
+	for _, d := range res.Diagnostics {
+		if d.Code == "XO0911" {
+			lines = append(lines, d.Span.Line)
+		}
+	}
+	return lines
+}
+
+// vetCostViewTwoPushesProg: two split_n pieces of a parameter's text, each
+// stored in a struct and both pushed into a returned list. Each push makes a
+// new list, so the earlier piece is only reachable through the next push's
+// collection argument (XO0911 at lines 8 and 9).
+const vetCostViewTwoPushesProg = `
+struct Tok {
+  name: Str
+}
+
+fn two(text: Str) -> List[Tok] {
+  var out: List[Tok] = []
+  out.push(Tok{name: text.split_n(",", 2)[0]})
+  out.push(Tok{name: text.split_n(",", 3)[0]})
+  out
+}
+
+fn main(os: Os) {
+  os.stdio.println("${two("a,b").len()}")
+}
+`
+
+// TestVetCostViewStoreTwoPushes: XO0911 follows a stored view through the
+// collection argument of a later push (Xo Lang 1's approval of the fix,
+// 2026-10-23): both pushes are noted, not only the last.
+func TestVetCostViewStoreTwoPushes(t *testing.T) {
+	t.Parallel()
+	lines := vetCostNotes(t, vetCostViewTwoPushesProg)
+	if len(lines) != 2 || lines[0] != 8 || lines[1] != 9 {
+		t.Errorf("XO0911 at lines %v, want [8 9]", lines)
+	}
+}
+
+// vetCostViewMapPutProg: two split_n pieces of a parameter's text put into a
+// returned map. As with push, the earlier put's map is the next put's
+// collection argument (XO0911 at lines 4 and 5).
+const vetCostViewMapPutProg = `
+fn picks(text: Str) -> Map[Str, Str] {
+  var out: Map[Str, Str] = {}
+  out.put("a", text.split_n(",", 2)[0])
+  out.put("b", text.split_n(",", 3)[0])
+  out
+}
+
+fn main(os: Os) {
+  os.stdio.println("${picks("a,b").len()}")
+}
+`
+
+// TestVetCostViewStoreMapPut: the fix covers map.put's collection argument
+// as well as list.push's.
+func TestVetCostViewStoreMapPut(t *testing.T) {
+	t.Parallel()
+	lines := vetCostNotes(t, vetCostViewMapPutProg)
+	if len(lines) != 2 || lines[0] != 4 || lines[1] != 5 {
+		t.Errorf("XO0911 at lines %v, want [4 5]", lines)
+	}
+}

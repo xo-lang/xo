@@ -728,8 +728,16 @@ fn view_stored(f: Func, x0: Int, users: List[List[Int]]) -> Bool {
         // the collection now holds x: stored long-lived when it is returned
         // or set in a field (a list used and dropped here is not)
         for (k, a) in w.args.indexed() {
-          if k > 0 && a == x {
+          if a != x {
+            continue
+          }
+          if k > 0 {
             work.push((u, true))
+          } else {
+            // the collection itself: list.push, list.set, map.put and
+            // set.add make a new collection, and whatever holds the update
+            // holds x
+            work.push((u, agg))
           }
         }
       }
