@@ -350,6 +350,32 @@ fn release_ring(r: Int) {
   st(r, R_DUR, 0)
 }
 
+/// XO_PROF_HEAP_AT (decision 0352 step D): when the text of a
+/// debug.mem_label ends with its value, the heap profile's samples in use
+/// at that moment are written to XO_PROF_HEAP_OUT (xo-heap-at.xoraw by
+/// default; %p is the pid), once (a profile never overwrites a file). A
+/// program that labels its phases (compiler/xo: "building, past phase
+/// NAME") gets what each phase leaves alive, which a profile written at
+/// exit cannot show. The sampler must run (XO_PROF=heap).
+pub fn heap_at_label(text: Str) {
+  let at = process.env_real("XO_PROF_HEAP_AT")
+  if at.is_empty() || at[0].is_empty() || !text.ends_with(at[0]) {
+    return
+  }
+  let data = heap_snapshot()
+  if data.is_empty() {
+    stdio.eprint("xo profile: XO_PROF_HEAP_AT needs the heap sampler (XO_PROF=heap)", true)
+    return
+  }
+  let o0 = process.env_real("XO_PROF_HEAP_OUT")
+  let out = expand_pid(if o0.is_empty() || o0[0].is_empty() { "xo-heap-at.xoraw" } else { o0[0] })
+  if !write_file(out, data) {
+    stdio.eprint("xo profile: could not write ${out} (it must not exist: a profile never overwrites a file)", true)
+  } else if process.env_real_at("XO_PROF_QUIET") == 0 {
+    stdio.eprint("xo profile: the heap in use at \"${text}\" in ${out} (`xo prof ${out}`)", true)
+  }
+}
+
 /// The heap profile's snapshot while it samples (started by XO_PROF=heap
 /// or heap_live_start), as the container; empty when it is off.
 pub fn heap_snapshot() -> Bytes {

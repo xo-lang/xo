@@ -4693,6 +4693,11 @@ fn mem_total() -> Int
   router costs nothing.
 - A live profile running when the program exits is dropped, with no file
   (the `XO_PROF` file profile is separate: it still writes at exit).
+- `XO_PROF_HEAP_AT=TEXT` (native backends, with `XO_PROF=heap`): the
+  first `mem_label` call whose text ends with TEXT writes the heap
+  samples in use at that moment to `XO_PROF_HEAP_OUT`
+  (`xo-heap-at.xoraw` by default, `%p` the pid; never overwritten),
+  which `xo prof` converts like any heap profile (decision 0352).
 - The memory budget (decision 0349, native backends): `mem_budget(bytes)`
   stops the program with status 70 when the bytes its heap has mapped
   from the system pass `bytes` (0: none), writing `fatal error: memory

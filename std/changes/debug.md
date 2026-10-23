@@ -1,5 +1,20 @@
 # std/debug changes
 
+## 2026-10-23: feature: the heap in use at a labeled point (XO_PROF_HEAP_AT)
+
+- Kind: feature
+- Commit: f78739caf
+- Found by: decision 0352 step D (what a build keeps alive between phases)
+- Test: a build of the scale suite's fns-4096 program with XO_PROF=heap XO_PROF_HEAP_AT=inline (compiler/xo labels its phases), converted by xo prof
+
+With the heap sampler on, `XO_PROF_HEAP_AT=TEXT` writes the samples in use
+when the first `mem_label` text ending with TEXT is set, to
+`XO_PROF_HEAP_OUT`: the memory a phase leaves alive, which the profile
+written at exit (everything freed by then) does not show. xo's own build
+labels its phases, so `XO_PROF=heap XO_PROF_HEAP_AT=inline xo build ...`
+shows what is alive once inlining is done (on fns-4096: 741 MB, two
+thirds of it the parser's syntax trees).
+
 ## 2026-10-21: perf: a read profile gives its ring back
 
 - Kind: perf

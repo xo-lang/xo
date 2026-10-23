@@ -121,7 +121,11 @@ pub fn heap_start(rate: Int = 0) -> Bool {
 
 pub fn mem_budget(bytes: Int) { heapos.set_budget(bytes) }
 
-pub fn mem_label(text: Str) { heapos.set_label(raw.data(text), text.len()) }
+pub fn mem_label(text: Str) {
+  heapos.set_label(raw.data(text), text.len())
+  // XO_PROF_HEAP_AT: the heap in use at this label (decision 0352 step D)
+  prof.heap_at_label(text)
+}
 
 pub fn mem_mapped() -> Int { heapos.mapped_bytes() }
 
