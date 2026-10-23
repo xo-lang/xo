@@ -1,7 +1,20 @@
 // Str.fields on a view: a slice of a longer text, split around runs of
 // Unicode white space (U+2000 to U+200A, U+0085, U+00A0, U+3000 as well as
 // ASCII space, tab and newline), with the pieces compared, lengthed and
-// concatenated like split's views (decision 0330).
+// concatenated like split's views (decision 0330). keep returns a piece in
+// a struct after its source text's function has returned: the view keeps the
+// source alive.
+struct Kept {
+  s: Str
+}
+
+fn keep() -> Kept {
+  let text = " \t alpha\u{2000}beta\u{3000} gamma"
+  let long = "  " + text + "  "
+  let view = long[2..(long.len() - 2)]
+  Kept{s: view.fields()[1]}
+}
+
 fn main(os: Os) {
   let text = " \t alpha\u{2000}beta\u{3000}\n gamma\u{85}δ\u{a0} "
   let long = "  " + text + "  "
@@ -14,4 +27,6 @@ fn main(os: Os) {
   b = b + "!"
   os.stdio.println("${b} ${fs[0]}")
   os.stdio.println("${view.len()} ${long.len()}")
+  let k = keep()
+  os.stdio.println("[${k.s}] ${k.s.len()} ${k.s == "beta"}")
 }
