@@ -114,8 +114,12 @@ if [ "${XO_SKIP_RACE:-}" = 1 ]; then echo "skip race (XO_SKIP_RACE=1)" >> "$sum"
   fi
   if [ -n "$rt" ]; then
     export XO_RACE_RUNTIME
-    XO_RACE_RUNTIME=$(np "$(up "$rt")")
-    if run "race build" "$w/rb.log" "$XO_CLI" build --race --backend=amd64 -o "$(np "$w/tsan.exe")" internal/llvm/testdata/tsan_race; then
+    # a path as xo takes it on Windows (C:/dir, forward slashes), as every
+    # other step passes one: the first CI run gave it a backslash path and
+    # the race build did not return in 300 s (run 39953440508)
+    XO_RACE_RUNTIME=$(fp "$(up "$rt")")
+    echo "race: XO_RACE_RUNTIME=$XO_RACE_RUNTIME ($(wc -c < "$(up "$rt")" | tr -d ' ') bytes)" >> "$sum"
+    if run "race build" "$w/rb.log" "$XO_CLI" build --race --backend=amd64 -o "$(fp "$w/tsan.exe")" internal/llvm/testdata/tsan_race; then
       tmo "$w/tsan.exe" > "$w/race.out" 2> "$w/race.err"
       rc=$?
       [ $rc = 66 ] && echo "ok   race reported (exit 66)" >> "$sum" || { echo "FAIL race exit $rc (want 66)" | tee -a "$sum"; fail=1; }
