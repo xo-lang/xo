@@ -22,8 +22,8 @@ http case: denied by Net.only: WWW.Example.COM.evil:80
 redirect within: 200 fine
 redirect away: protocol error: Get "http://evil.example/x?k=v": denied by Net.only: redirect to evil.example:80
 redirect away with a port: protocol error: Get "https://Evil.Example:8443/x": denied by Net.only: redirect to Evil.Example:8443
-sql allowed host: Conn(msg: "an attenuated Net (Net.only) cannot open a database: the driver dials by itself; pass an unattenuated Net")
-sql denied host: Conn(msg: "an attenuated Net (Net.only) cannot open a database: the driver dials by itself; pass an unattenuated Net")
+sql allowed host: connection: an attenuated Net (Net.only) cannot open a database: the driver dials by itself; pass an unattenuated Net
+sql denied host: connection: an attenuated Net (Net.only) cannot open a database: the driver dials by itself; pass an unattenuated Net
 env get unlisted: false
 env vars unlisted: false
 env home: HOME is not set

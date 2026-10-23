@@ -351,7 +351,7 @@ func TestSignalStopsReadLine(t *testing.T) {
 	io.WriteString(c.stdin, "a\nb\n")
 	time.Sleep(300 * time.Millisecond)
 	c.signal()
-	c.expect("read_line: Canceled after 2 lines")
+	c.expect("read_line: canceled after 2 lines")
 	if code, rest := c.wait(); code != 0 {
 		t.Fatalf("exit %d (output %q)", code, rest)
 	}
@@ -363,7 +363,7 @@ func TestCancelStopsReadLine(t *testing.T) {
 	t.Parallel() // testdata/signal builds once (signalBinary), testdata/holes only here
 	c := startSignalChild(t, "MODE=stdin_cancel", "STDIN=pipe")
 	c.expect("ready")
-	c.expect("read_line: Canceled after 0 lines")
+	c.expect("read_line: canceled after 0 lines")
 	if code, rest := c.wait(); code != 0 {
 		t.Fatalf("exit %d (output %q)", code, rest)
 	}
