@@ -8,8 +8,8 @@ Mac at load about 14 (other agents running): wall times are noisy,
 
 Summary:
 
-- Run time, Xo over Go (wall, median): Xo is faster on 15 of 20
-  workloads (interp 0.48, strings 0.44, sort 0.80, every collection
+- Run time, Xo over Go (wall, median): Xo is faster on 14 of 20
+  workloads (fib 0.98, collatz 0.95, interp 0.48, strings 0.44, sort 0.80, every collection
   workload 0.02 to 0.86, conc mutex 0.56, fanout 0.89), within noise on
   3 (sieve, spawn, pmap), and slower on 3: conc rwmutex 3.78, conc
   pingpong 1.51, llvm nbody 1.43. Those three are the next targets.
