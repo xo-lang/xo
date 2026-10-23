@@ -30,6 +30,10 @@
 #            default of xo build and run (owner, 2026-10-22; two warm and
 #            cold differences slipped past the per-push gates before);
 #            XO_GATE_CHKCACHE=0 skips that
+#   cross    internal/arm64 TestAmd64CrossBuilds (four programs built for
+#            linux, windows and darwin amd64): run after the steps named
+#            when the branch changes compiler/arm64 or compiler/ssa;
+#            XO_GATE_CROSS=0 skips that
 #   warm     the backend caches across xo builds (decision 0275): the
 #            parent commit's xo is built, then TestFrontCacheAcrossPrograms
 #            fills a cache with it and builds every program again with
@@ -97,6 +101,17 @@ check_change() {
   { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | grep -q -E '^compiler/(check|ssa)/'
 }
 chkcache_ran=0
+# native_change: the branch changes the native backend (compiler/arm64
+# holds the amd64 emitter and the shared MIR passes), so the cross step
+# runs after the steps named (lead, 2026-10-23: daed94d4d, a mir.xo
+# change, passed its arm64 gate and broke every amd64 build of three
+# goldens on main for an hour; the x86-only Docker sample rule did not
+# apply to a shared file). XO_GATE_CROSS=0 skips it.
+native_change() {
+  base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
+  { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | grep -q -E '^compiler/(arm64|ssa)/'
+}
+cross_ran=0
 # llvm_goldens: the golden programs the llvm step runs (owner,
 # 2026-10-22: the whole package cost 46 to 56 minutes a gate), "all" or
 # XO_LLVM_GOLDENS's list (internal/llvm golden_select_test.go): those
@@ -210,12 +225,19 @@ for step in "$@"; do
   chkcache)
     chkcache_ran=1
     full chkcache ./internal/arm64 -run '^TestModuleCheckAuto(Generic|Zones)?$' ;;
+  cross)
+    cross_ran=1
+    full cross ./internal/arm64 -run '^TestAmd64CrossBuilds$' ;;
   *) echo "gate.sh: unknown step $step"; failed=1 ;;
   esac
 done
 if [ "$chkcache_ran" = 0 ] && [ "${XO_GATE_CHKCACHE:-1}" != 0 ] && check_change; then
   chkcache_ran=1
   full chkcache ./internal/arm64 -run '^TestModuleCheckAuto(Generic|Zones)?$'
+fi
+if [ "$cross_ran" = 0 ] && [ "${XO_GATE_CROSS:-1}" != 0 ] && native_change; then
+  cross_ran=1
+  full cross ./internal/arm64 -run '^TestAmd64CrossBuilds$'
 fi
 echo GATE-DONE
 exit $failed
