@@ -32,14 +32,23 @@ set -uo pipefail
 # --no-prune (lead, 2026-10-23): a backend cache cap no cache reaches, so
 # no build prunes (separates the prune from the cache's other costs when
 # builds are slow; the dispatch cannot set environment variables)
-if [ "${1:-}" = --no-prune ]; then
+# --fresh-cache (lead, 2026-10-23): the builds use a new, empty backend
+# cache under the job's temporary directory, removed with it (a cold
+# build's cost, whatever the runner's cache holds)
+fresh=0
+while [ $# -gt 0 ]; do
+  case $1 in
+  --no-prune)
+    export XO_BACKEND_CACHE_MAX=64000000000
+    echo "windows-race: --no-prune: XO_BACKEND_CACHE_MAX=$XO_BACKEND_CACHE_MAX" ;;
+  --fresh-cache) fresh=1 ;;
+  *) break ;;
+  esac
   shift
-  export XO_BACKEND_CACHE_MAX=64000000000
-  echo "windows-race: --no-prune: XO_BACKEND_CACHE_MAX=$XO_BACKEND_CACHE_MAX"
-fi
+done
 archive=${1:-}
 want_sum=${2:-}
-[ -z "$archive" ] || [ -n "$want_sum" ] || { echo "usage: windows-race.sh [--no-prune] [ARCHIVE SHA256]"; exit 2; }
+[ -z "$archive" ] || [ -n "$want_sum" ] || { echo "usage: windows-race.sh [--no-prune] [--fresh-cache] [ARCHIVE SHA256]"; exit 2; }
 RT_SHA256=cbab2689849964a299312a7d5de5e2c0553c1b27bf90fca5a5f488fcb7826b11
 REPS=${REPS:-3}
 RUN_TIMEOUT=${RUN_TIMEOUT:-120}
@@ -58,6 +67,12 @@ o=$(up "$out")
 . scripts/ci/ci-out.sh
 w=$(ci_work windows-race) || exit 2
 trap 'rm -rf "${w:?}"' EXIT
+if [ $fresh = 1 ]; then
+  mkdir -p "$w/fresh-backend"
+  export XO_BACKEND_CACHE_DIR
+  XO_BACKEND_CACHE_DIR=$(np "$w/fresh-backend")
+  echo "windows-race: --fresh-cache: XO_BACKEND_CACHE_DIR=$XO_BACKEND_CACHE_DIR"
+fi
 if [ -n "$archive" ]; then
   a=$archive
   if [ ! -f "$a" ]; then
@@ -97,7 +112,7 @@ sum="$o/windows-race.txt"
 now_ms() { local t=${EPOCHREALTIME/[.,]/}; echo $((t / 1000)); }
 cache_note() {
   local c
-  c=$(up "${LOCALAPPDATA:-$HOME/AppData/Local}")/xo
+  if [ -n "${XO_BACKEND_CACHE_DIR:-}" ]; then c=$(up "$XO_BACKEND_CACHE_DIR"); else c=$(up "${LOCALAPPDATA:-$HOME/AppData/Local}")/xo; fi
   if [ -d "$c" ]; then
     echo "cache $1: $(du -sm "$c" 2>/dev/null | cut -f1) MB, $(find "$c" -path '*packs/shared/*' -name 's-*' -type f 2>/dev/null | wc -l | tr -d ' ') shared pack segments" | tee -a "$sum"
   else
