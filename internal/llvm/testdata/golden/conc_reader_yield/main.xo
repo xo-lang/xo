@@ -1,0 +1,54 @@
+// A release that hands a Mutex to waiting readers wakes the first of
+// them into the releasing worker's next and yields to it (decision 0118's
+// 2026-10-22 addendum): every reader still gets the lock, sees the value
+// the writer left, and the releasing task still finishes its own work
+// after the yield, over many rounds on any number of threads.
+fn main(os: Os) {
+  let m = Mutex[Int].new(0)
+  let inside = Atomic[Int].new(0)
+  let gate = Chan[Int].new()
+  let seen = Atomic[Int].new(0)
+  let after = Atomic[Int].new(0)
+  for round in 0..50 {
+    scope s {
+      s.spawn(fn() {
+        m.with(fn(var v) {
+          inside.add(1)
+          let _ = gate.recv()
+          v += 1
+        })
+        after.add(1)
+      })
+      while inside.get() < round + 1 {
+        let _x = 1
+      }
+      for _ in 0..16 {
+        s.spawn(fn() {
+          let got = m.with_read(fn(x) { x })
+          seen.add(if got == round + 1 { 1 } else { 0 })
+        })
+      }
+      gate.send(1)
+    }
+  }
+  os.stdio.println("readers saw the writer's value: ${seen.get()} of 800")
+  os.stdio.println("writers finished after their release: ${after.get()} of 50")
+
+  // readers that go on to lock again, as a handler does between I/O waits
+  let total = Atomic[Int].new(0)
+  scope s {
+    for t in 0..8 {
+      s.spawn(fn() {
+        for i in 0..300 {
+          if (i + t) % 5 == 0 {
+            m.with(fn(var x) { x += 1 })
+          } else {
+            let _ = m.with_read(fn(x) { x })
+          }
+          total.add(1)
+        }
+      })
+    }
+  }
+  os.stdio.println("handler loop: ${total.get()} reads, value ${m.with_read(fn(x) { x })}")
+}

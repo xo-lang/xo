@@ -135,11 +135,13 @@ fn signal(p: Int) {
   }
 }
 
-/// Hands m to every waiting reader (m's lock held, no writer holds m):
+/// Hands m to every waiting reader (m's lock held, no writer holds m;
+/// true when the caller should yield to the first reader, which went to
+/// this worker's next under wake's rule for a writer):
 /// each is counted in the readers, taken off the list, and marked
 /// granted before it is woken, so it runs without taking the lock or
 /// checking again. Nothing here touches its entry after the wake up.
-fn grant_readers(m: Int) {
+fn grant_readers(m: Int) -> Bool {
   let l = m + M_WAITERS
   // the readers this wakes run on this worker for a moment unless it
   // keeps computing (pool.xo GRACE_NS): a reader stolen at once moved to
@@ -153,6 +155,8 @@ fn grant_readers(m: Int) {
     st(w, W_NONEXT, 2)
   }
   var woke = false
+  var yes = false
+  let first_next = pool.mutex_yield(ctx.pool()) && (ld(ctx.cur(), ctx.C_LOCKS) <= IO_LOCKS || pool.mutex_yield_always(ctx.pool()))
   var e = ld(l, WL_FIRST)
   while e != 0 {
     let next = ld(e, E_NEXT)
@@ -168,7 +172,15 @@ fn grant_readers(m: Int) {
       rt.slot_store(e, E_WRITER_W, GRANTED, RELEASE)
       if w != 0 {
         rtstats.count(rtstats.SIG_MUTEX)
-        tasks.park_signal(p)
+        if !woke && first_next {
+          // the first reader runs next on this worker, the rest queue
+          st(w, W_NONEXT, 0)
+          tasks.park_signal(p)
+          st(w, W_NONEXT, 2)
+          yes = true
+        } else {
+          tasks.park_signal(p)
+        }
         woke = true
       } else {
         signal(p)
@@ -182,6 +194,7 @@ fn grant_readers(m: Int) {
       pool.batch_wake(ctx.pool())
     }
   }
+  yes
 }
 
 /// Wakes the waiters that can take m now (m's lock held), phase fair as
@@ -189,7 +202,8 @@ fn grant_readers(m: Int) {
 /// after a writer's release (after_writer) the readers waiting then get
 /// the lock together, the next writer waits for them; after the last
 /// reader's release (or when no reader waits) the oldest waiting writer
-/// is woken. True when the caller should yield to the writer it woke
+/// is woken. True when the caller should yield to the writer it woke (or
+/// to the first reader of a grant, grant_readers)
 /// (pool.xo mutex_yield): the writer is in this worker's next and runs at
 /// once, where in the ring an idle worker was woken (a futex call) to
 /// take it and slept again; only for a releaser that took few locks since
@@ -202,8 +216,7 @@ fn wake(m: Int, after_writer: Bool) -> Bool {
     return false
   }
   if ld(m, M_RWAIT) > 0 && (after_writer || ld(m, M_WWAIT) == 0) {
-    grant_readers(m)
-    return false
+    return grant_readers(m)
   }
   if ld(m, M_WWAIT) > 0 && readers(m) == 0 {
     var e = ld(m, M_WAITERS + WL_FIRST)

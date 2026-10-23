@@ -217,3 +217,29 @@ with `--ab` (yield off A, on B; 1024 connections, 6 s rounds): rps
 runs above (not `--ab`; their rounds were 4 per side on a moving load).
 `XO_MUTEX_YIELD=0` never yields, `XO_MUTEX_YIELD=1` yields on every
 release as before.
+
+## Addendum 2026-10-22: a reader grant yields to its first reader
+
+Status: Proposed (Xo Lang 3; the Mutex yield defaults are the owner's, so
+it waits for the lead's go). Code: std/native/llrt mutex.xo
+`grant_readers` (returns whether to yield) and `wake`.
+
+The writer yield above leaves reader grants in the ring. A release that
+hands the Mutex to waiting readers now puts the first of them in the
+worker's next and yields to it, under the writer's rule (`mutex_yield`:
+more than one CPU, not XO_MUTEX_YIELD=0; the releaser took at most
+IO_LOCKS locks since its last I/O wait, or XO_MUTEX_YIELD=1). The other
+readers stay on the ring behind one `batch_wake`.
+
+Numbers (CRUD server in Docker linux/arm64, 1024 connections, servers on
+cores 0 to 5, a quiet machine, 10 interleaved pairs, 10 s each; before,
+after, Go): rps 139.1k to 142.3k, 150.7k to 154.1k (every pair +7.5% to
++10.7%), Go 155.2k to 157.5k; p50 8.3 to 10.9 ms, 7.5 to 9.9 ms, Go 4.2;
+p99 25.6 to 26.6 ms, 23.6 to 24.3 ms, Go 21; CPU a request 19.7 to 21.6
+us, 19.5 to 20.4 us. XO_RTSTATS per request (13 s runs): sig_mutex 1.00
+to 1.00, wake 0.187 to 0.163, idle_sleep 0.175 to 0.154, futex_wait
+0.445 to 0.415. The parks are as many; what falls is the workers'
+sleeping, as for the writer yield. Cost rows (`xo bench --ab`, Mac, 15
+rounds): bench/perf/conc rwmutex wall 1.02 [0.986, 1.035], instructions
+0.958 [0.865, 1.05]; pingpong wall 1.001; mutex wall 0.974; all within
+noise.

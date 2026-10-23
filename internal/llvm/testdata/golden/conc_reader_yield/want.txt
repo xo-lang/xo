@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+readers saw the writer's value: 800 of 800
+writers finished after their release: 50 of 50
+handler loop: 2400 reads, value 530
+--- stderr
