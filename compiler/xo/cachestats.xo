@@ -1,0 +1,263 @@
+// XO_CACHE_STATS=1: where a build's file system time goes in xo's caches
+// (lead, 2026-10-23: main's builds took about 10 minutes each on the
+// Windows CI runner and no log said where). The build's Fs is wrapped: a
+// call on a path under a cache directory is counted, with the bytes it
+// read or wrote, by what it touched (a cache entry, a build target's
+// pack, the shared pack, the prune's own files) and by what it did (a
+// read that found the file or not, a write, a rename, a remove, a stat,
+// a listing), and the build prints one line per pair on standard error.
+// Not timed: a type that is an Fs performs only fs effects, so it cannot
+// read the clock; --phase-times says which phase the time went to.
+
+/// Counts and bytes per "AREA OP".
+struct CStats {
+  n: Map[Str, Int] = {}
+  bytes: Map[Str, Int] = {}
+}
+
+/// The timing Fs: forwards every call to inner.
+struct StatFs {
+  inner: Fs
+  st: Mutex[CStats]
+  /// the cache directories, each ending in "/"
+  roots: List[Str]
+}
+
+/// The area of path: "" when it is not under a cache directory.
+fn (f: StatFs) area(path: Str) -> Str {
+  var under = false
+  for r in f.roots {
+    if path.starts_with(r) {
+      under = true
+    }
+  }
+  if !under {
+    return ""
+  }
+  let base = path.split("/").last() ?? ""
+  if base.starts_with("prune") {
+    "prune"
+  } else if path.contains("/packs/shared/") {
+    "shared"
+  } else if path.contains("/packs/") {
+    "pack"
+  } else {
+    "entry"
+  }
+}
+
+fn (f: StatFs) note(path: Str, op: Str, size: Int) {
+  let a = f.area(path)
+  if a.is_empty() {
+    return
+  }
+  let k = "${a} ${op}"
+  f.st.with(fn(var s) {
+    s.n[k] = (s.n.get(k) ?? 0) + 1
+    s.bytes[k] = (s.bytes.get(k) ?? 0) + size
+  })
+}
+
+fn (f: StatFs) sub(dir: Str) -> Fs { f.inner.sub(dir) }
+fn (f: StatFs) cwd() -> Fs { f.inner.cwd() }
+fn (f: StatFs) cwd_path() -> Str ! FsErr { f.inner.cwd_path() }
+fn (f: StatFs) read_only() -> Fs { f.inner.read_only() }
+fn (f: StatFs) write_only() -> Fs { f.inner.write_only() }
+fn (f: StatFs) case_sensitive() -> Bool { f.inner.case_sensitive() }
+
+fn (f: StatFs) stat(path: Str) -> FileInfo? ! FsErr uses fs.read {
+  let r = f.inner.stat(path)
+  f.note(path, "stat", 0)
+  r
+}
+
+fn (f: StatFs) exists(path: Str) -> Bool ! FsErr uses fs.read {
+  let r = f.inner.exists(path)
+  f.note(path, "stat", 0)
+  r
+}
+
+fn (f: StatFs) read(path: Str) -> Bytes ! FsErr uses fs.read {
+  let r = f.inner.read(path)
+  var n = 0
+  if let Ok(b) = r {
+    n = b.len()
+  }
+  f.note(path, if r.is_ok() { "read hit" } else { "read miss" }, n)
+  r
+}
+
+fn (f: StatFs) read_text(path: Str) -> Str ! FsErr uses fs.read {
+  let r = f.inner.read_text(path)
+  f.note(path, if r.is_ok() { "read hit" } else { "read miss" }, 0)
+  r
+}
+
+fn (f: StatFs) read_dir(dir: Str) -> List[FileInfo] ! FsErr uses fs.read {
+  let r = f.inner.read_dir(dir)
+  f.note("${dir}/.", "list", 0)
+  r
+}
+
+fn (f: StatFs) walk(dir: Str) -> List[FileInfo] ! FsErr uses fs.read {
+  let r = f.inner.walk(dir)
+  f.note("${dir}/.", "walk", 0)
+  r
+}
+
+fn (f: StatFs) write(path: Str, data: Bytes) -> () ! FsErr uses fs.write {
+  let r = f.inner.write(path, data)
+  f.note(path, "write", data.len())
+  r
+}
+
+fn (f: StatFs) create_temp(dir: Str, prefix: Str) -> Str ! FsErr uses fs.write {
+  let r = f.inner.create_temp(dir, prefix)
+  f.note("${dir}/${prefix}", "create", 0)
+  r
+}
+
+fn (f: StatFs) rename(from: Str, to: Str) -> () ! FsErr uses fs.write {
+  let r = f.inner.rename(from, to)
+  f.note(to, "rename", 0)
+  r
+}
+
+fn (f: StatFs) remove(path: Str) -> () ! FsErr uses fs.write {
+  let r = f.inner.remove(path)
+  f.note(path, "remove", 0)
+  r
+}
+
+fn (f: StatFs) remove_all(path: Str) -> () ! FsErr uses fs.write {
+  let r = f.inner.remove_all(path)
+  f.note(path, "remove", 0)
+  r
+}
+
+fn (f: StatFs) create_dir_all(dir: Str) -> () ! FsErr uses fs.write {
+  let r = f.inner.create_dir_all(dir)
+  f.note("${dir}/.", "mkdir", 0)
+  r
+}
+
+fn (f: StatFs) set_modified(path: Str, t: Time) -> () ! FsErr uses fs.write {
+  let r = f.inner.set_modified(path, t)
+  f.note(path, "touch", 0)
+  r
+}
+
+fn (f: StatFs) open(path: Str) -> File ! FsErr uses fs.read {
+  let r = f.inner.open(path)
+  f.note(path, "open", 0)
+  r
+}
+
+fn (f: StatFs) create(path: Str) -> File ! FsErr uses fs.write {
+  let r = f.inner.create(path)
+  f.note(path, "create", 0)
+  r
+}
+
+fn (f: StatFs) open_append(path: Str) -> File ! FsErr uses fs.write {
+  let r = f.inner.open_append(path)
+  f.note(path, "create", 0)
+  r
+}
+
+fn (f: StatFs) create_new(path: Str) -> File ! FsErr uses fs.write {
+  let r = f.inner.create_new(path)
+  f.note(path, "create", 0)
+  r
+}
+
+fn (f: StatFs) append(path: Str, data: Bytes) -> () ! FsErr uses fs.write {
+  let r = f.inner.append(path, data)
+  f.note(path, "write", 0)
+  r
+}
+
+fn (f: StatFs) copy(from: Str, to: Str) -> () ! FsErr uses fs {
+  let r = f.inner.copy(from, to)
+  f.note(if f.area(to).is_empty() { from } else { to }, "copy", 0)
+  r
+}
+
+fn (f: StatFs) mode(path: Str) -> Int ! FsErr uses fs.read {
+  let r = f.inner.mode(path)
+  f.note(path, "stat", 0)
+  r
+}
+
+fn (f: StatFs) set_mode(path: Str, mode: Int) -> () ! FsErr uses fs.write {
+  let r = f.inner.set_mode(path, mode)
+  f.note(path, "touch", 0)
+  r
+}
+
+fn (f: StatFs) symlink(target: Str, link: Str) -> () ! FsErr uses fs.write {
+  let r = f.inner.symlink(target, link)
+  f.note(link, "write", 0)
+  r
+}
+
+fn (f: StatFs) read_link(path: Str) -> Str? ! FsErr uses fs.read {
+  let r = f.inner.read_link(path)
+  f.note(path, "stat", 0)
+  r
+}
+
+fn (f: StatFs) glob(pattern: Str) -> List[Str] ! FsErr uses fs.read {
+  let r = f.inner.glob(pattern)
+  f.note(pattern, "list", 0)
+  r
+}
+
+fn (f: StatFs) lock(path: Str) -> FileLock ! FsErr uses fs.write {
+  let r = f.inner.lock(path)
+  f.note(path, "lock", 0)
+  r
+}
+
+fn (f: StatFs) try_lock(path: Str) -> FileLock? ! FsErr uses fs.write {
+  let r = f.inner.try_lock(path)
+  f.note(path, "lock", 0)
+  r
+}
+
+/// Whether XO_CACHE_STATS=1 asks for the summary.
+fn cache_stats_on(os: Os) -> Bool {
+  (os.env.get("XO_CACHE_STATS") ?? "") == "1"
+}
+
+/// os with its Fs timed into st (XO_CACHE_STATS=1): the cache directories
+/// are the backend cache, the bin cache, the build directory and xo's user
+/// cache.
+fn stats_os(os: Os, ctx: Ctx, st: Mutex[CStats]) -> Os {
+  var roots: List[Str] = []
+  for d in [backend_cache_dir(os, ctx), ctx.bin_cache, os.env.get("XO_BUILD_DIR") ?? "", "${ctx.cache}/xo"] {
+    if !d.is_empty() {
+      roots.push("${d.trim_suffix("/")}/")
+    }
+  }
+  Os{net: os.net, fs: StatFs{inner: os.fs, st: st, roots: roots}, clock: os.clock, rand: os.rand, env: os.env, proc: os.proc, stdio: os.stdio, tasks: os.tasks}
+}
+
+/// The summary: "cache stats: AREA OP: N calls, B bytes", the most calls
+/// first, and the total.
+fn cache_stats_text(st: Mutex[CStats]) -> Str {
+  let s = st.with(fn(c) { c })
+  let keys = s.n.keys().sort_by(fn(k) { -(s.n.get(k) ?? 0) })
+  var b = StrBuilder.new()
+  var calls = 0
+  var bytes = 0
+  for k in keys {
+    let n = s.n.get(k) ?? 0
+    let by = s.bytes.get(k) ?? 0
+    calls += n
+    bytes += by
+    b.write("cache stats: ${k}: ${n} calls, ${by} bytes\n")
+  }
+  b.write("cache stats: total: ${calls} calls, ${bytes} bytes\n")
+  b.freeze()
+}

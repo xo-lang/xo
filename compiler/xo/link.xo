@@ -33,6 +33,8 @@ struct Ctx {
   run_cache: Str = ""
   // what the build read (recorder.xo), for the entry's input list
   rec: Mutex[Rec]? = None
+  // XO_CACHE_STATS=1: the build's cache file operations (cachestats.xo)
+  cstats: Mutex[CStats]? = None
 }
 
 /// The OS the link of ctx targets: the host unless a cross build set it.

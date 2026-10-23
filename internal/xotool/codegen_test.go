@@ -79,6 +79,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_LAZY_PARSE":           {"none", ""},
 	"XO_SHARED_PACK":          {"none", ""},
 	"XO_COLD_PACK":            {"none", ""},
+	"XO_CACHE_STATS":          {"none", ""}, // a summary of the build's cache file operations on standard error
 	"XO_FE_BREAK":             {"none", ""},
 	"XO_FE_KEEP_DIR":          {"none", ""},
 	"XO_BUILD_DIR":            {"none", ""},

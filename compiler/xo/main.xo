@@ -387,7 +387,15 @@ fn main(os: Os) ! {
     ctx.rec = Some(rec)
     bos = rec_os(tee_os(os, tee), rec, o.wd, rec_skip(os, ctx))
   }
+  if cache_stats_on(os) {
+    let st = Mutex[CStats].new(CStats{})
+    ctx.cstats = Some(st)
+    bos = stats_os(bos, ctx, st)
+  }
   let nb = build_native(bos, ctx, o, backend)
+  if let Some(st) = ctx.cstats {
+    os.stdio.eprint(cache_stats_text(st))
+  }
   if let Some(h) = verify_hit {
     verify_entry(os, h, nb.bin, kept_output(ctx))
   }
