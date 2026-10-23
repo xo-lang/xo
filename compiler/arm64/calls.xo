@@ -1628,6 +1628,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     "rt.u64_to_float" => g.set(v, [g.def1(true, "ucvtf $d0, $u0", [g.word(x.args[0])])])
     "rt.f32_round" => g.set(v, [g.def1(true, "fcvt $wd0, $u0\nfcvt $d0, $wd0", [g.word(x.args[0])])])
     "rt.i64_to_f32" => g.set(v, [g.def1(true, "scvtf $wd0, $u0\nfcvt $d0, $wd0", [g.word(x.args[0])])])
+    "rt.u64_to_f32" => g.set(v, [g.def1(true, "ucvtf $wd0, $u0\nfcvt $d0, $wd0", [g.word(x.args[0])])])
     "rt.float_bits" => g.set(v, [g.def1(false, "fmov $d0, $u0", [g.word(x.args[0])])])
     "rt.float_from_bits" => g.set(v, [g.def1(true, "fmov $d0, $u0", [g.word(x.args[0])])])
     "rt.bytes_word" => {

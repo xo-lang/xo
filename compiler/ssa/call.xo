@@ -981,8 +981,10 @@ fn (var b: Builder) type_call(obj: Int, x: Expr) -> Int {
     return v
   }
   if b.m.is_f32(to) && b.m.is_u64(vt) {
-    let f = b.rt("u64_to_float", b.float_t(), [v])
-    return b.rt("f32_round", to, [f])
+    // one rounding, as Go's float32(u): through a Float, a UInt64 above
+    // 2^53 rounded twice (2026-10-23: 2^60 + 2^36 + 1 became 2^60, not
+    // 2^60 + 2^37)
+    return b.rt("u64_to_f32", to, [v])
   }
   if b.m.is_f32(to) && vk == Kind.Int {
     return b.rt("i64_to_f32", to, [v])

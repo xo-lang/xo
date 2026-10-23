@@ -587,7 +587,7 @@ b"raw bytes\x00"                          // Bytes, escapes but no interpolation
 | `Int` | 64 bit signed. Overflow faults. |
 | `Int8 Int16 Int32 Int64` | Sized signed integers. Overflow faults. |
 | `UInt8 UInt16 UInt32 UInt64` | Sized unsigned integers. Overflow faults. |
-| `Float` | 64 bit IEEE 754. `Float32` also exists. |
+| `Float` | 64 bit IEEE 754. `Float32` also exists. Converting an integer to `Float` or `Float32` rounds once to the nearest value, ties to even, as Go does. |
 | `Rune` | Unicode scalar value |
 | `Str` | Immutable UTF-8 text |
 | `Bytes` | Immutable byte sequence |

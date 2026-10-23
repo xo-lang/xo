@@ -1,5 +1,21 @@
 # prelude changes
 
+## 2026-10-23: fix: Float32 of a UInt64 rounds once
+
+- Kind: fix
+- Commit: this commit
+- Found by: Xo Lang 1, checking decision 0361's claims
+- Go reference: the conversion float32(u) for a uint64 u
+- Test: golden u64_to_float32 (258 values, arm64, LLVM and Go parity against Go's output; Docker amd64)
+
+`Float32(u)` for a UInt64 u above 2^53 converted to a Float first and
+then to Float32, rounding twice, on the native and LLVM backends:
+2^60 + 2^36 + 1 became 2^60 instead of Go's 2^60 + 2^37. It now rounds
+once (rt.u64_to_f32: arm64 `ucvtf` to single, x86_64 the halving
+conversion in single precision, LLVM `uitofp` to float, wasm
+`f32.convert_i64_u`), as the Go backend and Go always did. Printed
+results change for such values; values up to 2^53 are unchanged.
+
 ## 2026-10-23: perf: a spawn site of tiny tasks keeps its burst on the spawner (decision 0359)
 
 - Kind: perf

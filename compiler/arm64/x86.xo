@@ -817,9 +817,11 @@ fn (var g: G) x86_line(inst: Inst, var x: XT, m: Str, ops: List[Str], single: Bo
     }
     "ucvtf" => {
       // unsigned: halve (keeping the low bit, round to odd) past 2^63
+      // (single precision for the w form, rt.u64_to_f32: one rounding)
       let d = xop(ops[0], 8)
       let u = xop(ops[1], 8)
-      x.lines = x.lines + ["testq ${u}, ${u}", "js 6f", "cvtsi2sdq ${u}, ${d}", "jmp 7f", "6:", "movq ${u}, %r11", "shrq $1, %r11", "jnc 5f", "orq $1, %r11", "5:", "cvtsi2sdq %r11, ${d}", "addsd ${d}, ${d}", "7:"]
+      let (cv, ad) = if is_w(ops[0]) { ("cvtsi2ssq", "addss") } else { ("cvtsi2sdq", "addsd") }
+      x.lines = x.lines + ["testq ${u}, ${u}", "js 6f", "${cv} ${u}, ${d}", "jmp 7f", "6:", "movq ${u}, %r11", "shrq $1, %r11", "jnc 5f", "orq $1, %r11", "5:", "${cv} %r11, ${d}", "${ad} ${d}, ${d}", "7:"]
       true
     }
     "fcvt" => {

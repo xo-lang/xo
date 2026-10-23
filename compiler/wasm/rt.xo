@@ -3468,6 +3468,11 @@ fn rt_text(var g: Gen) -> Str {
       f32.convert_i64_s
       f64.promote_f32)
 
+    (func $u64_to_f32 (param $v i64) (result f64)
+      local.get $v
+      f32.convert_i64_u
+      f64.promote_f32)
+
     (func $rs_push_byte (param $a i32) (param $an i32) (param $x i64) (result i32 i32)
       local.get $a
       local.get $an
