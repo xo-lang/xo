@@ -21,7 +21,17 @@
 # stopped and counted a FAIL with exit=timeout. After MAX_HANGS (3) hung runs
 # the rest are skipped (one SKIP line, exit 1): a systematic hang would
 # otherwise cost 234 x RUN_TIMEOUT, past the job limit.
+#
+# Release mode (lead, 0.27.0): `windows-race.sh ARCHIVE SHA256` tests a
+# release archive as release-smoke.sh does (ARCHIVE a path in the
+# checkout, else a name under ci/release/ of the seed bucket, checked
+# against SHA256): its bin/xo.exe builds the programs, with the
+# ThreadSanitizer runtime the archive ships (lib/xo/race), not the
+# bucket's, and no XO_STD, XO_CLI or XO_RACE_RUNTIME of the job.
 set -uo pipefail
+archive=${1:-}
+want_sum=${2:-}
+[ -z "$archive" ] || [ -n "$want_sum" ] || { echo "usage: windows-race.sh [ARCHIVE SHA256]"; exit 2; }
 RT_SHA256=cbab2689849964a299312a7d5de5e2c0553c1b27bf90fca5a5f488fcb7826b11
 REPS=${REPS:-3}
 RUN_TIMEOUT=${RUN_TIMEOUT:-120}
@@ -40,15 +50,36 @@ o=$(up "$out")
 . scripts/ci/ci-out.sh
 w=$(ci_work windows-race) || exit 2
 trap 'rm -rf "${w:?}"' EXIT
+if [ -n "$archive" ]; then
+  a=$archive
+  if [ ! -f "$a" ]; then
+    a="$w/$(basename "$archive")"
+    aws s3 cp --only-show-errors "s3://${XO_SEED_BUCKET:?XO_SEED_BUCKET}/ci/release/$(basename "$archive")" "$(np "$a")" ||
+      { echo "windows-race: $archive is not in the checkout or the bucket (ci/release/)"; exit 2; }
+  fi
+  got=$(sha256sum "$a" | cut -d' ' -f1)
+  [ "$got" = "$want_sum" ] || { echo "windows-race: SHA-256 $got, want $want_sum"; exit 2; }
+  mkdir -p "$w/unpack"
+  tar -xzf "$a" -C "$w/unpack" || { echo "windows-race: unpack failed"; exit 2; }
+  rel=$(echo "$w"/unpack/xo-*)
+  unset XO_STD XO_RTPACK XO_RACE_RUNTIME
+  export XO_CLI
+  XO_CLI=$(np "$rel/bin/xo.exe")
+  [ -f "$rel/lib/xo/race/windows-amd64/race_windows_amd64.syso" ] || { echo "windows-race: the archive ships no lib/xo/race/windows-amd64/race_windows_amd64.syso"; exit 2; }
+fi
 rt=${XO_RACE_RUNTIME:-}
-if [ -z "$rt" ]; then
+if [ -n "$archive" ]; then
+  : # the archive's own runtime, found by its xo
+elif [ -z "$rt" ]; then
   rt="$w/race_windows_amd64.syso"
   aws s3 cp --only-show-errors "s3://${XO_SEED_BUCKET:?XO_SEED_BUCKET}/ci/race/race_windows_amd64.syso" "$(np "$rt")" || { echo "windows-race: the runtime is not in the bucket (ci/race/race_windows_amd64.syso)"; exit 2; }
 fi
-got=$(sha256sum "$(up "$rt")" | cut -d' ' -f1)
-[ "$got" = "$RT_SHA256" ] || { echo "windows-race: runtime SHA-256 $got, want $RT_SHA256"; exit 2; }
-export XO_RACE_RUNTIME
-XO_RACE_RUNTIME=$(np "$(up "$rt")")
+if [ -z "$archive" ]; then
+  got=$(sha256sum "$(up "$rt")" | cut -d' ' -f1)
+  [ "$got" = "$RT_SHA256" ] || { echo "windows-race: runtime SHA-256 $got, want $RT_SHA256"; exit 2; }
+  export XO_RACE_RUNTIME
+  XO_RACE_RUNTIME=$(np "$(up "$rt")")
+fi
 sum="$o/windows-race.txt"
 : > "$sum"
 # which xo, and whether it builds a native program at all without --race:
