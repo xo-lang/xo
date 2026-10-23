@@ -670,3 +670,40 @@ func TestProfProcessOnly(t *testing.T) {
 		}
 	}
 }
+
+// TestProfSyscallCaller: a CPU sample in a C library system call (open
+// and read of a small file in a loop, testdata/prof/syscall) keeps the
+// Xo function that made the call as its caller: past the leaf stub the
+// profile walk follows the libc frames' frame records back into the
+// program (before, darwin's profile showed `_open` with no caller,
+// 2026-10-23).
+func TestProfSyscallCaller(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs a program")
+	}
+	if runtime.GOARCH != "arm64" || (runtime.GOOS != "darwin" && runtime.GOOS != "linux") {
+		t.Skip("the arm64 backend's unwind tables, with SIGPROF")
+	}
+	res, err := xotool.Build([]string{filepath.Join("testdata", "prof", "syscall")}, xotool.Options{Backend: xotool.BackendArm64})
+	if err != nil || res.Failed {
+		t.Fatalf("build: %v %v", err, res)
+	}
+	bin := res.Binaries[xotool.Host()]
+	dir := t.TempDir()
+	raw := filepath.Join(dir, "prof.xoraw")
+	cmd := testtmp.Guard(exec.Command(bin))
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "XO_PROF=cpu", "XO_PROF_HZ=1000", "XO_PROF_OUT="+raw)
+	got, err := runCombined(cmd, 2*time.Minute)
+	if err != nil || !strings.Contains(got, "read 1000000") {
+		t.Fatalf("run: %v\n%s", err, got)
+	}
+	xoProf(t, dir, raw, "--cpu-out="+filepath.Join(dir, "cpu.pprof"))
+	txt, err := os.ReadFile(filepath.Join(dir, "cpu.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := cumPercent(string(txt), "reader"); c < 80 {
+		t.Fatalf("reader's cumulative share %.1f%%, want at least 80 (its system calls' samples have it as their caller):\n%s", c, txt)
+	}
+}

@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `XO_PROF=cpu` keeps the Xo caller of a sample taken in a C library
+  system call (a file's open or read): the profile walk now follows
+  the C library's frames above the system call stub back into the
+  program, where before such samples showed `open` alone.
+
 - `xo run --seed=N` runs natively on a deterministic scheduler (decision
   0350, stage 1): one thread runs every task, and at each scheduling
   point (channel operations, `select`, `Mutex.with`, `spawn`, `await`,

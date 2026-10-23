@@ -1,0 +1,30 @@
+// Most of the CPU time in the C library's system calls (open, read,
+// close of a small file) made by reader: a sample in libc's syscall stub
+// keeps reader as its caller through the libc frames above it (the
+// profile walk follows their frame records; it showed `_open` alone,
+// 2026-10-23). The never taken self call keeps reader out of line.
+fn reader(os: Os, path: Str, n: Int) -> Int uses fs {
+  if n < 0 {
+    return reader(os, path, n + 1)
+  }
+  var total = 0
+  for _ in 0..n {
+    match os.fs.read(path) {
+      Ok(b) => total += b.len()
+      Err(_) => total -= 1
+    }
+  }
+  total
+}
+
+fn main(os: Os) uses (fs, stdio) {
+  let path = "syscall-probe.txt"
+  match os.fs.write(path, "probe".bytes()) {
+    Ok(_) => {}
+    Err(e) => {
+      os.stdio.eprintln("write: ${e}")
+      return
+    }
+  }
+  os.stdio.println("read ${reader(os, path, 200000)}")
+}
