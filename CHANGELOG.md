@@ -15,6 +15,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   given.
 - `xo vet` no longer offers to rewrite `x ?? _ => continue` (XO0906)
   into the same text.
+- Cross builds link or fail: a darwin program links with Xo's Mach-O
+  linker from any host (from Windows or Linux, darwin targets were
+  reported built and only their assembly written), and a cross build
+  that needs a C compiler (a `use c` source, `--ld=cc`) fails naming
+  the target instead of exiting 0 with no binary (`--targets=all`
+  skips it with a note). Darwin/amd64 builds that link through cc
+  (`use c`, `--ld=cc`) link again (undefined `___tsan_*` symbols), and
+  a generic struct's field default that mentions its type parameter
+  (`items: List[T] = []`) builds on the native backends.
 
 - `r ?? e => body` (decision 0321) builds when `r` is a plain variable,
   a parameter or a field: it failed on the native backends (XO1201

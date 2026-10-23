@@ -1297,12 +1297,12 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // source is linked, else cc's, and a linux/arm64 program with no C
     // library links with the ELF linker from any host, a cross build too
     // (default_ld, decision 0243: as GOOS=linux go build)
-    // the amd64 backend's darwin/amd64 program, on an arm64 Mac too
-    // (decision 0254 stage 6a): Xo's Mach-O x86_64 assembler and linker
+    // the amd64 backend's darwin/amd64 program, on an arm64 Mac or any
+    // other host (decision 0254 stage 6a): Xo's Mach-O x86_64 assembler and linker
     // as darwin/arm64's (--as=cc for Apple's cc, which then links too)
-    let mac_x86 = march == "amd64" && tg == "darwin/amd64" && host.starts_with("darwin/")
+    let mac_x86 = march == "amd64" && tg == "darwin/amd64"
     var no_cc = o.linker == "macho"
-    if o.linker.is_empty() && (tg == host || tgoos == "linux" || mac_x86) {
+    if o.linker.is_empty() && (tg == host || tgoos == "linux" || tgoos == "darwin") {
       no_cc = default_ld(os, ctx, o, c, tgoos, code, uses_time)
     }
     if o.race && tgoos == "windows" && !nolibc(os, o, c, tgoos) {
@@ -1313,7 +1313,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     }
     let macho_as = if mac_x86 { o.assembler != "cc" } else { o.assembler == "macho" || (no_cc && o.assembler.is_empty()) }
     let win = march == "amd64" && tgoos == "windows"
-    let asm_only = !win && tg != host && !(no_cc && tgoos == "linux") && !mac_x86
+    let asm_only = !win && tg != host && !(no_cc && (tgoos == "linux" || tgoos == "darwin")) && !mac_x86
     // cc (or clang, windows) reads the whole file when there are no parts
     let cc_reads = if win { o.assembler == "cc" } else { !macho_as }
     if keep_asm || asm_only || (cc_reads && p.parts.len() <= 1) {
@@ -1403,12 +1403,18 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       bins.push((tg, wbin))
       continue
     }
-    if tg != host && !(no_cc && tgoos == "linux") && !mac_x86 {
-      // another target: its assembly only (internal/build buildArm64)
-      if !o.json {
-        os.stdio.println("${tg}: ${s}")
+    if tg != host && !(no_cc && (tgoos == "linux" || tgoos == "darwin")) && !mac_x86 {
+      // another target that links with cc (a `use c` source, --ld=cc):
+      // the host's cc does not link it, and the build stopped at its
+      // assembly with exit 0 and no binary (Intel field report b04)
+      let why = "${tg} links with a C compiler (a `use c` source, --ld=cc, or a ${tgoos} program from ${host}), and xo does not cross link with one: build it on ${tg} (its assembly: ${s})"
+      if o.skip_unsupported {
+        return Native{skipped: why}
       }
-      continue
+      if o.json {
+        os.stdio.print(build_json(false, [], []))
+      }
+      fail(os, why)
     }
     if cc.is_empty() && !no_cc {
       cc = find_cc(os)
@@ -1572,8 +1578,10 @@ fn emit_jobs(os: Os) -> Int {
 /// linux/arm64 target, from a linux host or cross built from any other,
 /// a program with no C library links with the ELF linker's static mode
 /// (decision 0243, as Go links); one with the C library (XO_NOLIBC=0, or
-/// `use c`) keeps cc and glibc (a cross build of one: its assembly, as
-/// before).
+/// `use c`) keeps cc and glibc (a cross build of one fails: xo does not
+/// cross link with cc). A darwin program with no `use c` source links
+/// with Xo's Mach-O linker from any host, as GOOS=darwin go build does
+/// (Windows field report W5 on 0.26.0: it stopped at its assembly).
 fn default_ld(os: Os, ctx: Ctx, o: Opts, c: check.Checker, tgoos: Str, code: Str, uses_time: Bool) -> Bool {
   if o.assembler == "cc" {
     return false
@@ -1583,7 +1591,7 @@ fn default_ld(os: Os, ctx: Ctx, o: Opts, c: check.Checker, tgoos: Str, code: Str
     // ELF linker with the C library (decision 0273)
     return nolibc(os, o, c, tgoos) || o.race
   }
-  if ctx.goos != "darwin" || tgoos != "darwin" {
+  if tgoos != "darwin" {
     return false
   }
   for m in c.mods {

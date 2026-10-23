@@ -24,9 +24,6 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
     // in a .preinit_array no symbol reaches, decision 0273 part 3)
     return elf_link(os, ctx, flags, srcs, out, nolibc, strip, race_rt)
   }
-  if ctx.goos != "darwin" {
-    return "--ld=macho links darwin executables on darwin only"
-  }
   let (objs, bad) = ld_objects(srcs)
   if !bad.is_empty() {
     return bad

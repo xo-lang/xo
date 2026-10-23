@@ -17,7 +17,8 @@ directory per program key, so each edit of xo left another 2.2 GB.
 Fix: compiler/xo/main.xo writes the files only where a tool reads them:
 cc (or clang for windows/amd64) assembling, which takes the parts' files
 when there are parts and the whole file otherwise, and a cross build
-that stops at its assembly (it prints the path). cc's files are removed
+that cannot link (it fails and names the path; until 2026-10-23 it
+stopped there with exit 0). cc's files are removed
 after the link. `XO_KEEP_ASM=1` writes and keeps them all;
 `--asm=FILE` and `xo asm` give the text anywhere. Directories made
 before the fix still hold their files until the cache prune removes
