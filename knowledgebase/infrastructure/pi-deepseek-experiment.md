@@ -124,7 +124,10 @@ Start a Claude Code DeepSeek session in its worktree, never the main
 checkout: Claude Code loads the start directory's settings and its
 CLAUDE.local.md, so a start in the main checkout sends the private values
 to the gateway (it happened on 2026-10-23 before the guide was read) and
-skips the worktree's guard settings.
+skips the worktree's guard settings. The values that reached the gateway on
+2026-10-23 were identifiers, not credentials (the account number, the two
+bucket names, the SSH allowlist address, and where the signing secret is
+kept); the owner reviewed them the same day and chose not to rotate any.
 
 ## Findings
 
