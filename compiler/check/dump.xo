@@ -59,7 +59,7 @@ fn (var c: Checker) run() -> () ! Str {
   if c.mod_skip_auto && !c.mod_skip.is_empty() && !c.effect_reads_across_modules().is_empty() {
     c.skip_unsafe = true
   }
-  c.rewrite_xml_calls()
+  c.rewrite_xml_calls(0)
   c.report_edition_aliases()
   c.check_key_types()
   c.solve_effects()

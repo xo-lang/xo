@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `XO_CHK_CACHE=auto`: a skipped module whose body calls `xml.encode_value`
+  or `xml.decode` and is built from source (its front end cache entry
+  gone) builds again; the call reached the build unrewritten and failed
+  with XO1201 before the recheck could run (TestModuleCheckAuto
+  xml_derive). check_lazy now rewrites the calls of the bodies it checks.
+
 - `xo build -o /dev/null` works again: the hidden stage of an output
   whose directory cannot hold it (/dev) goes to the user cache, and the
   program's bytes are written to the output.

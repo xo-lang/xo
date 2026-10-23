@@ -227,9 +227,13 @@ pub fn (var c: Checker) check_lazy(fo: Int) -> List[Diag] uses fs.read {
   let saved_path = c.path
   let n0 = c.diags.len()
   let nr0 = c.never_results.len()
+  let nx0 = c.xml_calls.len()
   c.cur_mod = c.objs[fo].module
   c.set_file(c.objs[fo].decl_file)
   c.check_fn_decl(c.objs[fo].fn_decl[0], fo)
+  // the whole-program passes ran: its xml.encode_value and xml.decode
+  // calls are rewritten here, or the build met them as std calls (XO1201)
+  c.rewrite_xml_calls(nx0)
   // run's: a closure result that nothing determined and whose body
   // never completes is Never
   for t in c.never_results[nr0..] {

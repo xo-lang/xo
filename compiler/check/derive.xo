@@ -524,9 +524,11 @@ fn (var c: Checker) expand_derives(file: Int, f: parser.File) -> (Str, List[Span
 /// Points each call of xml.encode_value[T] and xml.decode[T] at the
 /// function `derive Xml` generated for T (a call of an ordinary function,
 /// so no backend knows about it); XO0427 for a T that is not a struct
-/// deriving Xml, or is a type parameter.
-fn (var c: Checker) rewrite_xml_calls() {
-  for (key, call, fo, file) in c.xml_calls {
+/// deriving Xml, or is a type parameter. Only the calls from index
+/// `from` on: check_lazy rewrites the calls of a body it checks after
+/// the whole-program passes (a skipped module's, XO_CHK_CACHE=auto).
+fn (var c: Checker) rewrite_xml_calls(from: Int) {
+  for (key, call, fo, file) in c.xml_calls[from..] {
     let ci = match c.call_infos.get(key) {
       Some(x) => x
       None => continue
