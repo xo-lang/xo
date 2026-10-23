@@ -366,7 +366,7 @@ func TestFaultLocalsFrames(t *testing.T) {
 	common := map[string][]string{
 		"pick":  {"xs = [1, 2, 3, 4, 5, 6, 7, 8, ... (12 items)]", "at = 9", "doubled = 18"},
 		"total": {"sum = 9"},
-		"main":  {"items = List[Item] (len 2)"},
+		"main":  {`items = [Item { name: "a", qty: 4 }, Item { name: "b", qty: 5 }]`},
 	}
 	backends := []string{xotool.BackendLLVM}
 	if runtime.GOARCH == "arm64" {

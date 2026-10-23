@@ -2405,8 +2405,10 @@ failed `Int32(x)` conversion, evaluated hole, explicit `fault("msg")`.
   leaves the frames out. With `XO_TRACEBACK=locals` each frame is followed by its
   variables, `      NAME = VALUE` (decision 0268: from the program's
   DWARF, read at the fault; `<unavailable>` where the frame does not
-  keep the value; numbers, `Bool`, `Str` text, a list's first elements,
-  structs' fields, and an enum's variant with its fields).
+  keep the value; numbers, `Bool`, `Str` text, a list's first elements
+  (of any element type), structs' fields, an enum's variant with its
+  fields, and `Os` by its type; a local declared at or after the frame's
+  line with no value yet is left out).
 - The native backends unwind a fault the same way (decision 0085: deferred
   code, scopes, Mutexes, and references are released on the way); they
   print the fault without its frames, write no crash bundle, and

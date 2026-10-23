@@ -1390,6 +1390,9 @@ struct VVar {
   expr: Int = 0
   expr_n: Int = 0
   list: Int = -1
+  /// its declaration's line (DW_AT_decl_line), 0 when not given: a
+  /// variable declared after the fault's line has no value yet
+  decl: Int = 0
   unit: Int = 0
 }
 
@@ -1450,6 +1453,7 @@ fn parse_vars(var v: Vars) {
   // the named variables by offset, for the inlined copies that name
   // theirs through DW_AT_abstract_origin (LLVM's)
   var named: Map[Int, (Str, Int)] = {}
+  var decls: Map[Int, Int] = {}
   // the functions' names by offset, for the inlined calls' origins
   var fnames: Map[Int, Str] = {}
   var p = s.info
@@ -1527,6 +1531,7 @@ fn parse_vars(var v: Vars) {
       var origin = -1
       var rng = -1
       var rng_x = false
+      var dline = 0
       for a in ab.attrs {
         let (fv, fok) = read_form(r, a.form, s, u, a.imp)
         if !fok {
@@ -1556,6 +1561,7 @@ fn parse_vars(var v: Vars) {
           }
           0x40 => fb = fv
           0x31 => origin = if a.form == 0x10 { fv.n } else { u.start + fv.n }
+          0x3b => dline = fv.n
           0x55 => {
             rng = fv.n
             rng_x = fv.idx
@@ -1623,9 +1629,10 @@ fn parse_vars(var v: Vars) {
         0x34 | 0x05 => {
           if !name.is_empty() {
             named[die] = (name, ty)
+            decls[die] = dline
           }
           if cur_fn >= 0 && (!name.is_empty() || origin >= 0) && (loc.blk_n > 0 || loc_list) {
-            var vv = VVar{name: name, ty: ty, param: ab.tag == 0x05, unit: ui, origin: origin, within: cur_scope, inl: cur_inl.0, inl_origin: cur_inl.1, depth: cur_inl.2}
+            var vv = VVar{name: name, ty: ty, param: ab.tag == 0x05, unit: ui, origin: origin, within: cur_scope, inl: cur_inl.0, inl_origin: cur_inl.1, depth: cur_inl.2, decl: dline}
             if loc_list {
               var off = loc.n
               if loc.idx {
@@ -1641,7 +1648,9 @@ fn parse_vars(var v: Vars) {
             v.fns[cur_fn].vars.push(vv)
           }
         }
-        0x24 | 0x13 | 0x17 | 0x16 | 0x0f | 0x04 => {
+        0x24 | 0x13 | 0x17 | 0x16 | 0x0f | 0x04 | 0x01 => {
+          // an array type (0x01): its element type as target (a List's
+          // object's items, show)
           v.types[die] = VTy{tag: ab.tag, name: name, size: size, enc: enc, target: ty}
           kid_ty = die
         }
@@ -1685,6 +1694,7 @@ fn parse_vars(var v: Vars) {
         if let Some((n, t)) = named.get(vv.origin) {
           vs[k].name = n
           vs[k].ty = t
+          vs[k].decl = decls.get(vv.origin) ?? 0
           changed = true
         }
       }
@@ -1739,7 +1749,7 @@ pub fn callee_saved() -> List[Bool] {
 /// function holds pc).
 pub fn frame_locals(v: Vars, pc: Int, rg: Regs) -> List[Str] {
   var out: List[Str] = []
-  for (_, _, l) in frame_vars(v, pc, rg) {
+  for (_, _, l, _) in frame_vars(v, pc, rg) {
     out.push(l)
   }
   out
@@ -1749,8 +1759,11 @@ pub fn frame_locals(v: Vars, pc: Int, rg: Regs) -> List[Str] {
 /// the frame's own variables) and how many inlined calls hold it. A line
 /// the same as one before it in the same call is left out (LLVM can
 /// describe a variable twice, as a parameter and as its inlined copy).
-pub fn frame_vars(v: Vars, pc: Int, rg: Regs) -> List[(Str, Int, Str)] {
-  var out: List[(Str, Int, Str)] = []
+/// The fourth: a local with no value here, its declaration's line (the
+/// traceback leaves it out when that is at or after its frame's line:
+/// not set yet), else 0.
+pub fn frame_vars(v: Vars, pc: Int, rg: Regs) -> List[(Str, Int, Str, Int)] {
+  var out: List[(Str, Int, Str, Int)] = []
   var seen: Map[Str, Bool] = {}
   let fi = fn_at_pc(v, pc)
   if fi < 0 {
@@ -1781,23 +1794,31 @@ pub fn frame_vars(v: Vars, pc: Int, rg: Regs) -> List[(Str, Int, Str)] {
       // an inlined copy without a location here is out of its scope (an
       // LLVM function lists every inlined call's variables)
       if vv.origin < 0 {
-        add_var(out, seen, vv, "${vv.name} = <unavailable>")
+        // the Os capability holds no value of the program's (its fields
+        // live apart, with no location): named by its type
+        let os_cap = (v.types.get(vv.ty) ?? VTy{}).name == "xo.Os"
+        add_var(out, seen, vv, "${vv.name} = ${if os_cap { "Os" } else { "<unavailable>" }}", if os_cap { 0 } else { late(vv) })
       }
       continue
     }
     let ws = eval_loc(v, f, vv.unit, ex, exn, rg)
-    add_var(out, seen, vv, "${vv.name} = ${show(v, vv.ty, ws, 0)}")
+    let shown = show(v, vv.ty, ws, 0)
+    add_var(out, seen, vv, "${vv.name} = ${shown}", if shown == "<unavailable>" { late(vv) } else { 0 })
   }
   out
 }
 
-fn add_var(var out: List[(Str, Int, Str)], var seen: Map[Str, Bool], vv: VVar, line: Str) {
+fn add_var(var out: List[(Str, Int, Str, Int)], var seen: Map[Str, Bool], vv: VVar, line: Str, decl: Int) {
   let k = "${vv.inl}\n${vv.depth}\n${line}"
   if !seen.contains(k) {
     seen[k] = true
-    out.push((vv.inl, vv.depth, line))
+    out.push((vv.inl, vv.depth, line, decl))
   }
 }
+
+/// A local's declaration line, for frame_vars' fourth (0 for a
+/// parameter: it has its value from the call).
+fn late(vv: VVar) -> Int { if vv.param { 0 } else { vv.decl } }
 
 /// Whether pc (unplaced) is in the ranges (none: everywhere).
 fn in_scope(rs: List[(Int, Int)], pc: Int) -> Bool {
@@ -2134,6 +2155,31 @@ fn show(v: Vars, ty0: Int, ws0: List[W], depth: Int) -> Str {
           }
           let more = if n.v > k { ", ... (${n.v} items)" } else { "" }
           return "[${parts.join(", ")}${more}]"
+        }
+        // any other element of whole words (Str, a struct, a List): its
+        // type from the object's items array, the first few shown as
+        // the spec promises (Intel field report, round 2, on 0.26.0:
+        // List[Str] showed only its length)
+        let obj = v.types.get(t.target) ?? VTy{}
+        let ii = obj.m_names.index_of("items") ?? -1
+        if ii >= 0 && n.v >= 0 && depth < 2 {
+          let arr = v.types.get(obj.m_types[ii]) ?? VTy{}
+          let et = v.types.get(arr.target) ?? VTy{}
+          if arr.tag == 0x01 && et.size > 0 && et.size % 8 == 0 {
+            let ew = et.size / 8
+            let k = n.v.min(if ew > 1 { 4 } else { 8 })
+            let items = read_words(w0 + rt.layout(2), k * ew)
+            var parts: List[Str] = []
+            for i in 0..k {
+              var sub: List[W] = []
+              for j in i * ew..(i + 1) * ew {
+                sub.push(if j < items.len() { items[j] } else { W{ok: false, v: 0} })
+              }
+              parts.push(show(v, arr.target, sub, depth + 1))
+            }
+            let more = if n.v > k { ", ... (${n.v} items)" } else { "" }
+            return "[${parts.join(", ")}${more}]"
+          }
         }
         "${shown} (len ${n.v})"
       } else {

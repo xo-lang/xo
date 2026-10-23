@@ -17,6 +17,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `XO_SERVE_SOCKET`, instead of a bare "bind: invalid argument".
 - Spec 6.1 describes the `[module@version]` tag on a dependency's log
   records (decision 0173); it still said "[later]".
+- `XO_TRACEBACK=locals` shows a list's first elements for any element
+  type (`names = ["a-2", "b"]`; a `List[Str]` or a list of structs
+  showed only its length), shows `os = Os` instead of `<unavailable>`,
+  and leaves out a local that is not set yet at the fault (`let r =
+  f()` faulting in `f`).
+
 - `--debug-info=split` (decision 0355) keeps the DWARF beside the
   program instead of in it: PROG.dSYM on darwin, PROG.debug on linux
   (a GNU build id in both and a `.gnu_debuglink` in the program, as

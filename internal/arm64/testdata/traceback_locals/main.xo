@@ -1,0 +1,35 @@
+// XO_TRACEBACK=locals shows a frame's variables of several types (decision
+// 0268; the Intel field report's round 2 on 0.26.0: List[Str] showed
+// only its length, locals not yet set showed <unavailable>).
+
+struct Point {
+  x: Int
+  y: Int
+}
+
+enum Mode {
+  Fast
+  Slow(level: Int)
+}
+
+fn deep(k: Int) -> Int {
+  let xs = [1, 2]
+  xs[k]
+}
+
+fn step(label: Str, p: Point, m: Mode, ratio: Float, done: Bool, k: Int, names: List[Str], nums: List[Int], opt: Int?) -> Str {
+  let r = deep(k)
+  let lv = match m {
+    Fast => 0
+    Slow(level) => level
+  }
+  "${label} ${p.x} ${p.y} ${lv} ${ratio} ${done} ${r} ${names.len()} ${nums.len()} ${opt ?? 0}"
+}
+
+fn main(os: Os) {
+  var i = 0
+  while i < 3 {
+    os.stdio.println(step("widget-${i}", Point{x: i, y: 40 + i}, Mode.Slow(level: i + 5), 0.25 * Float(i), i > 1, i, ["a-${i}", "b"], [i, 7, 9], Some(i * 10)))
+    i += 1
+  }
+}

@@ -1380,9 +1380,13 @@ pub fn trace_text_at(pcs: List[Int], regs: List[Int]) -> Str {
     if fi < regs.len() && vars.why.is_empty() {
       // the frame's CFA: the next frame's sp
       let cfa = if fi + 1 < regs.len() { rt.mem_load(regs[fi + 1], 8 * sp_reg, 8) } else { 0 }
-      for (inl, depth, l) in dwline.frame_vars(vars, pc - 1, dwline.Regs{at: regs[fi], have: have, cfa: cfa}) {
+      for (inl, depth, l, decl) in dwline.frame_vars(vars, pc - 1, dwline.Regs{at: regs[fi], have: have, cfa: cfa}) {
         let at = inlined_frame(fs, shown, inl, depth)
-        if at >= 0 {
+        // a local declared at or after its frame's line has no value
+        // yet (`let r = deep(k)` faulting in deep): left out, not
+        // <unavailable> (Intel field report, round 2, on 0.26.0)
+        let fline = if at >= 0 && at < fs.len() { fs[at].line } else { pl }
+        if at >= 0 && !(decl > 0 && fline > 0 && decl >= fline) {
           under[at].push(l)
         }
       }
