@@ -119,22 +119,32 @@ if [ "${XO_SKIP_RACE:-}" = 1 ]; then echo "skip race (XO_SKIP_RACE=1)" >> "$sum"
     # the race build did not return in 300 s (run 39953440508)
     XO_RACE_RUNTIME=$(fp "$(up "$rt")")
     echo "race: XO_RACE_RUNTIME=$XO_RACE_RUNTIME ($(wc -c < "$(up "$rt")" | tr -d ' ') bytes)" >> "$sum"
-    # the race build runs in the background so that a build still going
-    # after 45 s leaves a snapshot of the process tree (which child of xo.exe
-    # it waits on, with its command line) in race-procs.log: the first CI run
-    # ended at the timeout with an empty log and said nothing about where
-    ( tmo "$XO_CLI" build --race --backend=amd64 -o "$(fp "$w/tsan.exe")" internal/llvm/testdata/tsan_race > "$w/rb.log" 2>&1 ) &
+    # the race build runs in the background with its own build directory, and
+    # a snapshot of the process tree and of the files it has written so far is
+    # taken at 45 s and at 150 s (race-procs.log): a build that is working
+    # (files and CPU growing) differs from one that spins (neither). The first
+    # CI run (39953440508) timed out at 300 s with an empty log, the second
+    # (39982907616) showed xo.exe at 77 s of CPU after 45 s and no child:
+    # a cold instrumented build of std may only be slow on the runner, so
+    # the limit is RACE_BUILD_TIMEOUT (default 900 s) and the elapsed time is
+    # reported
+    rbd="$w/race-build"; mkdir -p "$rbd"
+    snap() {
+      { echo "race build still running after $1 s; build dir: $(find "$rbd" -type f | wc -l) files, $(du -sk "$rbd" | cut -f1) KB; processes:"
+        powershell.exe -NoProfile -Command 'Get-CimInstance Win32_Process | Where-Object { $_.Name -match "xo|clang|lld|link|llvm" } | Select-Object ProcessId,ParentProcessId,Name,ThreadCount,@{n="CpuSeconds";e={($_.UserModeTime+$_.KernelModeTime)/10000000}},CommandLine | Format-List' 2>&1
+      } >> "$w/race-procs.log" 2>&1
+    }
+    rb0=$(date +%s)
+    ( XO_BUILD_DIR="$(fp "$rbd")" timeout -k 10 "${RACE_BUILD_TIMEOUT:-900}" "$XO_CLI" build --race --backend=amd64 -o "$(fp "$w/tsan.exe")" internal/llvm/testdata/tsan_race > "$w/rb.log" 2>&1 ) &
     bp=$!
     n=0
-    while [ $n -lt 45 ] && kill -0 $bp 2>/dev/null; do sleep 1; n=$((n + 1)); done
-    if kill -0 $bp 2>/dev/null; then
-      { echo "race build still running after ${n}s; processes:"
-        powershell.exe -NoProfile -Command 'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,@{n="Cpu";e={$_.UserModeTime+$_.KernelModeTime}},CommandLine | Format-List' 2>&1
-        tasklist.exe /v 2>&1 | head -60
-      } > "$w/race-procs.log" 2>&1
-    fi
+    while kill -0 $bp 2>/dev/null; do
+      sleep 1; n=$((n + 1))
+      if [ $n = 45 ] || [ $n = 150 ]; then snap $n; fi
+    done
     wait $bp
     rbrc=$?
+    echo "race build: exit $rbrc after $(( $(date +%s) - rb0 )) s" >> "$sum"
     if [ $rbrc = 0 ]; then echo "ok   race build" >> "$sum"; else
       echo "FAIL race build (exit $rbrc$([ $rbrc = 124 ] || [ $rbrc = 137 ] && echo ", timeout"))" | tee -a "$sum"
       tail -20 "$w/rb.log" | sed 's/^/     /' >> "$sum"
