@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,11 +57,6 @@ func TestBuildCI(t *testing.T) {
 // (--ci is a gate, not a build mode).
 func TestBuildRelease(t *testing.T) {
 	t.Parallel()
-	// --error-args=false belongs to release builds (decision 0092)
-	var o, e bytes.Buffer
-	if code := run(t, []string{"build", "--error-args=false", t.TempDir()}, &o, &e); code != 2 || !strings.Contains(e.String(), "--error-args=false needs --release") {
-		t.Errorf("--error-args=false without --release: exit %d\n%s", code, e.String())
-	}
 	if testing.Short() {
 		t.Skip("builds and runs programs")
 	}
@@ -131,6 +127,103 @@ func TestBuildOutPaths(t *testing.T) {
 	for _, e := range ents {
 		if e.Name() != "main.xo" {
 			t.Errorf("xo run left %s in the project", e.Name())
+		}
+	}
+}
+
+// TestBuildSettings checks decision 0354: --release is a preset, and each
+// setting has its own flag in any build that wins over the preset
+// whatever the order; the flags' usage errors.
+func TestBuildSettings(t *testing.T) {
+	t.Parallel()
+	src := `enum InputErr {
+  Odd(n: Int)
+} derive Display
+
+fn checked_half(n: Int) -> Int ! InputErr
+  requires(debug) n % 2 == 0 else InputErr.Odd(n: n)
+{
+  n / 2
+}
+
+fn load(id: Int) -> Int ! InputErr {
+  if id > 10 {
+    return Err(InputErr.Odd(n: id))
+  }
+  id
+}
+
+fn profile(id: Int, name: Str) -> Str ! InputErr {
+  let h = load(id)?
+  "${name}: ${h}"
+}
+
+fn main(os: Os) ! {
+  os.stdio.println("contracts ${!checked_half(7).is_ok()}")
+  let x = dbg(1 + 2)
+  os.stdio.println("x ${x}")
+  os.stdio.println(profile(42, "b")?)
+}
+`
+	dir := writeFiles(t, map[string]string{"app/main.xo": src})
+	app := filepath.Join(dir, "app")
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--debug-info=split"}, "decision 0355"},
+		{[]string{"--backend=arm64", "--opt=O2"}, "has no optimization levels"},
+		{[]string{"--opt=O9"}, "--opt"},
+		{[]string{"--dbg=maybe"}, "--dbg"},
+	} {
+		var o, e bytes.Buffer
+		args := append(append([]string{"build"}, c.args...), app)
+		if code := run(t, args, &o, &e); code != 2 || !strings.Contains(e.String(), c.want) {
+			t.Errorf("xo %s: exit %d, want 2 and %q:\n%s", strings.Join(args, " "), code, c.want, e.String())
+		}
+	}
+	if testing.Short() {
+		t.Skip("builds and runs programs")
+	}
+	setenv(t, "XO_BUILD_DIR", filepath.Join(dir, "build"))
+	setenv(t, "XO_CRASH_DIR", dir)
+	for i, c := range []struct {
+		flags                []string
+		contracts, dbg, args bool
+	}{
+		{nil, true, true, true},
+		{[]string{"--release"}, false, false, true},
+		{[]string{"--release", "--debug-contracts=on"}, true, false, true},
+		{[]string{"--debug-contracts=on", "--release"}, true, false, true},
+		{[]string{"--debug-contracts=off"}, false, true, true},
+		{[]string{"--dbg=off"}, true, false, true},
+		{[]string{"--release", "--dbg"}, false, true, true},
+		{[]string{"--error-args=off"}, true, true, false},
+		{[]string{"--release", "--error-args=false"}, false, false, false},
+	} {
+		name := strings.Join(c.flags, " ")
+		bin := filepath.Join(dir, fmt.Sprintf("bin%d", i))
+		var out, errOut bytes.Buffer
+		args := append(append([]string{"build"}, c.flags...), "-o", bin, app)
+		if code := run(t, args, &out, &errOut); code != 0 {
+			t.Errorf("xo %s: exit %d\n%s", strings.Join(args, " "), code, errOut.String())
+			continue
+		}
+		cmd := command(t, bin)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		got, _ := cmd.Output()
+		if want := fmt.Sprintf("contracts %v\nx 3\n", c.contracts); !strings.HasPrefix(string(got), want) {
+			t.Errorf("[%s] stdout %q, want prefix %q", name, got, want)
+		}
+		if has := strings.Contains(stderr.String(), "1 + 2 = 3"); has != c.dbg {
+			t.Errorf("[%s] dbg printed %v, want %v:\n%s", name, has, c.dbg, stderr.String())
+		}
+		if has := strings.Contains(stderr.String(), "profile(id=42"); has != c.args {
+			t.Errorf("[%s] frame with arguments %v, want %v:\n%s", name, has, c.args, stderr.String())
+		}
+		if !c.args && !strings.Contains(stderr.String(), "profile(...)") {
+			t.Errorf("[%s] no profile(...) frame:\n%s", name, stderr.String())
 		}
 	}
 }

@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `--release` is a preset (decision 0354): each of its settings has a
+  flag of its own in any build (`xo build`, `run`, `test`) that wins
+  over the preset whatever the order: `--debug-contracts`, `--dbg`,
+  `--error-args`, `--debug-info`, `--profile-support`,
+  `--trace-support` (`on|off`, `true|false`, a bare flag is on) and
+  `--opt=O0..O3` (LLVM; a usage error on arm64 and amd64).
+  `--error-args=off` no longer needs `--release`, and native frames
+  print `(...)` for its parameters as the Go backend does.
+  `--debug-info=split` is a usage error until decision 0355 lands.
 - Every `DIR/...` walk skips `vendor/` directories, with or without
   `modules.txt`, as the go command does (owner, 2026-10-23); vendored
   code is checked only when its directory is named.

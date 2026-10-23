@@ -60,7 +60,10 @@ fn dump_body(os: Os, args: List[Str]) ! {
     } else if a == "--no-arenas" {
       opts.arenas = false
     } else if a == "--release" {
+      // the release preset (decision 0354)
       opts.release = true
+      opts.debug_contracts = false
+      opts.dbg = false
     } else if a == "--no-error-args" {
       opts.no_error_args = true
     } else {

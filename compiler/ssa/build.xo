@@ -121,7 +121,7 @@ enum Gen {
   Debug(ct: Int, t: Int)
   Slice(lt: Int)
   Concat(t: Int)
-  FrameArgs(names: List[Str], cts: List[Int], cap_ts: List[Int])
+  FrameArgs(names: List[Str], cts: List[Int], cap_ts: List[Int], elided: Bool)
   Zero(t: Int)
   /// xo.testfs[memfs]: the real Fs of a `--real` test (realFsWrapper).
   TestFs(memfs: Int, real: Int)
@@ -429,8 +429,26 @@ pub fn build_program_fe(c: check.Checker, line_root: Str, tests: Bool, release: 
 /// contractOn: whether a contract clause marked debug (or not) is
 /// checked: always, except debug clauses of a release build.
 fn (b: Builder) contract_on(debug: Bool) -> Bool {
-  !debug || !b.release
+  !debug || b.debug_contracts_on()
 }
+
+/// A setting's value (decision 0354): as given (0 or 1), else the preset.
+fn setting_on(v: Int, preset: Bool) -> Bool { if v < 0 { preset } else { v == 1 } }
+
+/// The `(debug)` contract clauses checked: in a debug build, unless
+/// --debug-contracts says.
+pub fn (b: Builder) debug_contracts_on() -> Bool { setting_on(b.c.set_debug_contracts, !b.release) }
+
+/// `dbg(x)` prints: in a debug build, unless --dbg says.
+pub fn (b: Builder) dbg_on() -> Bool { setting_on(b.c.set_dbg, !b.release) }
+
+/// Parameter values in error frames: in every build, unless
+/// --error-args=off.
+pub fn (b: Builder) error_args_on() -> Bool { setting_on(b.c.set_error_args, true) }
+
+/// The execution trace's recorder: in a debug build, and in a release
+/// one with --trace-support (decision 0240), unless --trace-support says.
+pub fn (b: Builder) trace_on() -> Bool { setting_on(b.c.set_trace, !b.release || b.trace_support) }
 
 /// A builder for build_program_fe, with or without unwinding checks.
 fn program_builder(c: check.Checker, line_root: Str, tests: Bool, release: Bool, real_tests: Bool, goos: Str, goarch: Str, wasm: Bool, nolibc: Bool, prof: Bool, trace_support: Bool, soft_cpu: Bool, heap_guard: Bool, fe: FeCache, conc: Bool) -> Builder {
@@ -3426,7 +3444,7 @@ fn (var b: Builder) build_gen(g: GenJob) {
       b.concat_body(t)
       b.finish_fn()
     }
-    FrameArgs(names, cts, cap_ts) => b.frame_args_body(names, cts, cap_ts)
+    FrameArgs(names, cts, cap_ts, elided) => b.frame_args_body(names, cts, cap_ts, elided)
     Zero(t) => {
       let z = b.zero(b.m.types[t].ret, [])
       b.add(Op.Return, -1, Aux.None, [z])

@@ -106,6 +106,13 @@ pub struct Checker {
   /// decides native/llrt/det.built() true, so the runtime's det branches
   /// are built (one worker, a seeded pick at scheduling points), and
   /// loops get no preemption polls
+  /// The settings --release presets, as given (decision 0354): -1 when
+  /// not given (the build's preset), else 0 or 1. The SSA builder reads
+  /// them (debug_contracts_on, dbg_on, error_args_on, trace_on).
+  pub set_debug_contracts: Int = -1
+  pub set_dbg: Int = -1
+  pub set_error_args: Int = -1
+  pub set_trace: Int = -1
   pub det: Bool = false
   /// --race (decision 0273): set by the driver; on windows the builder
   /// declares std/native/llrt/cabi_race.xo's exports, the functions the

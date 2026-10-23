@@ -192,8 +192,10 @@ fn main(os: Os) ! {
   }
   let what = if o.cmd == "asm" { "build" } else { o.cmd }
   // cmd/xo's checks of the flags, before anything is built
-  if !o.error_args && !o.release {
-    os.stdio.eprintln("xo build: --error-args=false needs --release (debug builds always record parameters)")
+  // decision 0354: every setting of the release preset is allowed in any
+  // build (--error-args=false needed --release before)
+  if o.debug_info == "split" {
+    os.stdio.eprintln("xo ${o.cmd}: --debug-info=split is not implemented yet (decision 0355)")
     os.proc.exit(2)
   }
   // the default backend is the native one (decisions 0248 and 0270):
@@ -223,6 +225,15 @@ fn main(os: Os) ! {
   if !o.profile.is_empty() && backend == "go" {
     os.stdio.eprintln("xo ${what}: --profile needs a native backend (arm64, amd64, or llvm); a Go backend program profiles with runtime/pprof")
     os.proc.exit(2)
+  }
+  // --opt (decision 0354): the LLVM backend's levels; the native
+  // backends have none
+  if !o.opt.is_empty() && (backend is "arm64" | "amd64") {
+    os.stdio.eprintln("xo ${what}: --opt=${o.opt}: the ${backend} backend has no optimization levels (--opt is for --backend=llvm)")
+    os.proc.exit(2)
+  }
+  if !o.opt.is_empty() && backend == "go" {
+    os.stdio.eprintln("xo ${what}: note: --opt=${o.opt} is for --backend=llvm; the Go backend builds as go build does")
   }
   if o.hybrid {
     if backend != "go" {
@@ -571,6 +582,12 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   // deterministic scheduler; a built program takes its seed from XO_SEED
   // (default 1)
   c.det = (o.cmd == "run" || o.cmd == "build") && o.topts.seed != 0
+  // the settings --release presets, as given (decision 0354): the SSA
+  // builder resolves them against the build's release mode
+  c.set_debug_contracts = o.debug_contracts
+  c.set_dbg = o.dbg
+  c.set_error_args = o.error_args
+  c.set_trace = o.trace_support
   // --race: the builder declares a windows program's race exports
   // (native/llrt/cabi_race)
   c.race = o.race
@@ -982,7 +999,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     }
     // DWARF line tables (decision 0239), as for arm64 below
     var lm = b.m
-    lm.debug_info = o.cmd != "asm" && !o.strip && (!release || o.debug_info)
+    lm.debug_info = o.cmd != "asm" && !o.strip && debug_info_eff(o, release) != "off"
     // the line root (the sources' names are relative to it: ssa file_name)
     // is the compilation directory, not the working directory, which
     // differs for `xo build DIR` (lldb opened the working directory's
@@ -1028,7 +1045,11 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     if !split.err.is_empty() {
       fail(os, split.err)
     }
-    if release {
+    if !o.opt.is_empty() {
+      // --opt (decision 0354): in any build, release included
+      split.opt = "-${o.opt}"
+      split.opt_set = true
+    } else if release {
       split.opt = "-O2"
     } else if tests && !split.opt_set {
       // a test binary is built at -O0, so with no LTO (decision 0236:
@@ -1657,12 +1678,12 @@ struct Lowered {
 fn lower(os: Os, o: Opts, var c: check.Checker, strip: Bool, root: Str, tests: Bool, release: Bool, uses_time: Bool, tgoos: Str, tgoarch: Str, wasm: Bool, lazy: Bool, t0: Time) -> Lowered {
   // the runtime's profiler: in every build but a release one without
   // --profile-support (decision 0238); --profile asks for it too
-  let prof = !release || o.profile_support || !o.profile.is_empty()
+  let prof = profile_support_eff(o, release) || !o.profile.is_empty()
   // the amd64 backend lowers only cpu.xo's carry arithmetic yet
   let soft_cpu = o.backend == "amd64"
   // the runtime's overrun check (XO_HEAP_GUARD=1, ssa Builder.heap_guard)
   let heap_guard = !wasm && (os.env.get("XO_HEAP_GUARD") ?? "") == "1"
-  var b = fe_cached_build(os, c, root, tests, release, tests && o.real, tgoos, tgoarch, wasm, !wasm && nolibc(os, o, c, tgoos), prof, o.trace_support, soft_cpu, heap_guard, o.phases, o.stamps)
+  var b = fe_cached_build(os, c, root, tests, release, tests && o.real, tgoos, tgoarch, wasm, !wasm && nolibc(os, o, c, tgoos), prof, trace_support_eff(o, release), soft_cpu, heap_guard, o.phases, o.stamps)
   b.imm_rc = o.backend != "llvm"
   b.m.nolibc_start = !wasm && nolibc(os, o, c, tgoos)
   b.m.nolibc = !wasm && nolibc(os, o, c, tgoos)
@@ -2057,7 +2078,7 @@ fn gen_module(os: Os, o: Opts, ctx: Ctx, c: check.Checker, m: ssa.Module, tgoos:
   gm.poison_frames = (os.env.get("XO_POISON_FRAMES") ?? "") == "1"
   // DWARF line tables (decision 0239): on, except for `xo asm`, -s, and
   // a release build without --debug-info
-  gm.debug_info = o.cmd != "asm" && !o.strip && (!release || o.debug_info)
+  gm.debug_info = o.cmd != "asm" && !o.strip && debug_info_eff(o, release) != "off"
   // a string literal's address in a variable's location: not through
   // dsymutil (a cc link on macOS), which relocates it as the function's
   let own_ld = o.linker == "macho" || (o.linker.is_empty() && default_ld(os, ctx, o, c, tgoos, "", false))

@@ -37,7 +37,10 @@ fn build_go(os: Os, ctx: Ctx, o: Opts) ! {
   opts.holes = o.holes
   opts.no_mono = o.no_mono
   opts.release = release
-  opts.no_error_args = release && !o.error_args
+  // the settings --release presets, each overridable (decision 0354)
+  opts.no_error_args = !error_args_eff(o)
+  opts.debug_contracts = debug_contracts_eff(o, release)
+  opts.dbg = dbg_eff(o, release)
   opts.gc = gc_line(os, root)
   let prog = gen.generate(c, opts)
   if !prog.err.is_empty() {
@@ -63,9 +66,16 @@ fn build_go(os: Os, ctx: Ctx, o: Opts) ! {
     var variants: List[Str] = []
     if release {
       variants.push("release")
-      if !o.error_args {
-        variants.push("noargs")
-      }
+    }
+    // a tree per setting that differs from a debug build's (decision 0354)
+    if !error_args_eff(o) {
+      variants.push("noargs")
+    }
+    if !debug_contracts_eff(o, release) {
+      variants.push("nodebugc")
+    }
+    if !dbg_eff(o, release) {
+      variants.push("nodbg")
     }
     tree = build_dir(os, ctx, wd, o.dirs, if tests { 1 } else { 0 }, !o.no_mono, false, !o.no_arenas, variants)?
   } else {
@@ -466,8 +476,10 @@ fn build_info_file(os: Os, c: check.Checker, root: Str, dir: Str, wd: Str, std_d
     h.write("tzdata=${o.tzdata}\n")
   }
   if release {
-    h.write("release error_args=${o.error_args}\n")
+    h.write("release\n")
   }
+  // the effective settings (decision 0354), so the build ID changes with them
+  h.write("error_args=${error_args_eff(o)} debug_contracts=${debug_contracts_eff(o, release)} dbg=${dbg_eff(o, release)}\n")
   let stamps = o.stamps.sort_by(fn(x) { x.0 })
   for (n, v) in stamps {
     h.write("stamp ${n}=${v.quote()}\n")
@@ -518,10 +530,13 @@ fn build_info_file(os: Os, c: check.Checker, root: Str, dir: Str, wd: Str, std_d
   }
   if release {
     j = j + ",\"release\":true"
-    if !o.error_args {
-      j = j + ",\"no_error_args\":true"
-    }
   }
+  // the effective settings (decision 0354; replay reads them in stage 2)
+  if !error_args_eff(o) {
+    j = j + ",\"no_error_args\":true"
+  }
+  j = j + ",\"debug_contracts\":${debug_contracts_eff(o, release)},\"dbg\":${dbg_eff(o, release)}"
+
   if !stamps.is_empty() {
     var ss: List[Str] = []
     for (n, v) in stamps {

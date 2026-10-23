@@ -2426,20 +2426,38 @@ There is no undefined behavior. Debug and release builds have identical
 semantics; release builds may only disable contract checks that are explicitly
 marked `requires(debug)` or `ensures(debug)`.
 
-- `xo build --release` is a release build (decision 0099): the clauses
-  marked `(debug)` are compiled out on every backend, `requires(debug) c
-  else E` included (the function no longer returns that error). Every
-  other contract, every invariant, and every fault check stays. A release
-  build fails while an xo.work workspace overrides a required module
-  (`XO1308`, 4.2) and is the only build that accepts
-  `--error-args=false` (11.1). Error frames are recorded in both. It
-  also leaves the native runtime's profiler (XO_PROF) out unless
-  `--profile-support` is given (decision 0238): not a semantic change,
-  only that diagnostic tool.
+- `xo build --release` is a release build (decisions 0099, 0354): a
+  preset of the settings below. Without it every setting starts at its
+  debug value. Any setting can be given either way in any build (`xo
+  build`, `xo run`, `xo test`), before or after `--release`; an explicit
+  flag wins over the preset, and between two explicit flags the last
+  wins. A bare `--NAME` means on; booleans accept `on|off` and
+  `true|false`.
+
+  | flag | values | debug | release |
+  |---|---|---|---|
+  | `--debug-contracts` | on, off | on | off |
+  | `--dbg` | on, off | on | off (`dbg(x)` is `x`, 11.4) |
+  | `--error-args` | on, off | on | on (11.1) |
+  | `--debug-info` | on, off, split | on | off |
+  | `--profile-support` | on, off | on | off (XO_PROF, decision 0238) |
+  | `--trace-support` | on, off | on | off (XO_TRACE, decision 0240) |
+  | `--opt` | O0, O1, O2, O3 | the LLVM split's | O2 |
+
+  `--debug-contracts=off` compiles the clauses marked `(debug)` out on
+  every backend, `requires(debug) c else E` included (the function no
+  longer returns that error); every other contract, every invariant,
+  and every fault check stays. The other settings change what a build
+  records or which diagnostic tools it carries, never what a program
+  computes. `--opt` applies to the LLVM backend; with arm64 or amd64 it
+  is a usage error, and the Go backend ignores it with a note.
+  `--debug-info=split` (decision 0355) is a usage error until it is
+  implemented. A release build fails while an xo.work workspace
+  overrides a required module (`XO1308`, 4.2); no flag overrides that.
 - Every other build is a debug build: `xo build` without `--release`,
   `xo run`, `xo test` (whose contract fuzzing checks the debug clauses
-  too), and `xo replay`, which rebuilds in the mode recorded in the
-  program's build information. `--ci` is a gate, not a mode: it does not
+  too), and `xo replay`, which rebuilds with the settings recorded in
+  the program's build information. `--ci` is a gate, not a mode: it does not
   imply `--release`; a pipeline that ships the binary passes both.
 
 ---
@@ -2574,7 +2592,7 @@ test "retries after 503" {
 
 | Command | Purpose |
 |---|---|
-| `xo build [--targets=all\|os/arch,...] [--no-gc] [--tzdata=embedded\|system] [--ci] [--release [--error-args=false]] [--stamp NAME=VALUE]...` | Build static binaries; `--stamp` (repeatable, also `xo run`) sets a `const NAME: Str = "..."` of the main module to VALUE for this build, else `XO1501`, and is recorded in the build information so `xo replay` rebuilds the same program (decision 0165); `--no-gc` on a native backend without a garbage collector (below); `--tzdata=system` reads time zones from the host instead of embedding the ones the program uses (std.md 13); `--ci` fails before building on an unformatted file (10.5) or a `dbg` left in code (11.4); `--release` is a release build (8): `requires(debug)` and `ensures(debug)` compiled out, and the native runtime's profiler and execution trace recorder left out unless `--profile-support` or `--trace-support` (decisions 0238, 0240); `--release --error-args=false` drops parameter values from error frames (11.1); `-s` leaves debug information and local symbols out of a native binary. Builds are debug builds otherwise, and `xo run` and `xo test` always are |
+| `xo build [--targets=all\|os/arch,...] [--no-gc] [--tzdata=embedded\|system] [--ci] [--release] [--debug-contracts\|--dbg\|--error-args\|--profile-support\|--trace-support=on\|off] [--debug-info=on\|off\|split] [--opt=O0..O3] [--stamp NAME=VALUE]...` | Build static binaries; `--stamp` (repeatable, also `xo run`) sets a `const NAME: Str = "..."` of the main module to VALUE for this build, else `XO1501`, and is recorded in the build information so `xo replay` rebuilds the same program (decision 0165); `--no-gc` on a native backend without a garbage collector (below); `--tzdata=system` reads time zones from the host instead of embedding the ones the program uses (std.md 13); `--ci` fails before building on an unformatted file (10.5) or a `dbg` left in code (11.4); `--release` is the release preset (8, decision 0354): `requires(debug)` and `ensures(debug)` compiled out, `dbg` off, no debug information, the native runtime's profiler and execution trace recorder left out, `--opt=O2`; each of those settings has its own flag, in any build, that wins over the preset; `--error-args=off` drops parameter values from error frames (11.1); `-s` leaves debug information and local symbols out of a native binary. Builds are debug builds otherwise, and `xo run` and `xo test` always are |
 | `xo run [DIR]` | Build and run for the host the program in exactly DIR (default `.`), never one below it (decision 0345); `--profile=cpu\|heap\|cpu,heap` (XO_PROF, decision 0238) and `--trace=FILE` (XO_TRACE, decision 0240) on a native backend; `--watch [--grace=D]` rebuilds after a source change and restarts the program only when the built binary changed (SIGTERM, up to `--grace`, default 5s, then SIGKILL; decision 0267). A stop request `xo run` gets (SIGINT or SIGTERM, 7.5) is sent on to the program as SIGTERM when standard input is not a terminal; on a terminal, Ctrl-C reaches the program through the process group |
 | `xo trace FILE [--json OUT] [--text]` | The execution trace a native program wrote under XO_TRACE as Chrome trace event JSON (Perfetto) and a summary (decision 0240) |
 | `xo check [--backend=go] [--support] [--fix]` | Parse and type check all targets, no codegen, by the rules of the backend a build uses: the native backends' by default (`use c` is valid), the Go backend's with `--backend=go`; `--support` (old name `--no-gc`) adds the native backends' support check (XO1201), which lowers the program; `--fix` first applies the machine fixes (below) |
@@ -3066,10 +3084,9 @@ LoadErr.Db(msg: "timeout")
   have been at the `?`: values are immutable or copied on write, and the
   few whose `Debug` text can change in place (`Buf`, `Atomic`) are
   formatted when captured.
-- `xo build --release --error-args=false` records the function and
-  location only and prints `(...)` for the parameters:
-  `at users.fetch_user(...)   users/fetch.xo:18`. It is a usage error
-  without `--release`.
+- `--error-args=off` (any build, decision 0354; `--error-args=false`
+  too) records the function and location only and prints `(...)` for
+  the parameters: `at users.fetch_user(...)   users/fetch.xo:18`.
 - **[later]** A last line naming the task and its scope
   (`in task "handler#913" (scope api.serve)`) is planned.
 - Native backends (`--no-gc`, LLVM, arm64) record the same frames
@@ -3167,8 +3184,9 @@ call and its result, plus scheduler decisions.
   backend, `--no-gc` included. It needs no capability: it is the one output
   a function may produce without `Stdio`, and it is not part of a
   function's effects, so adding one changes no signature. `xo build
-  --release` compiles `dbg(expr)` to `expr` (the value is computed, nothing
-  prints); `xo run` and `xo test` keep it. `xo vet` warns (XO0901), and
+  --release` and `--dbg=off` (any build, decision 0354) compile
+  `dbg(expr)` to `expr` (the value is computed, nothing prints); other
+  builds keep it, and `--release --dbg=on` keeps it in a release build. `xo vet` warns (XO0901), and
   real-time functions reject it (XO1405) because its write blocks.
 
 ### 11.5 Debugger protocol

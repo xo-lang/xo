@@ -501,7 +501,14 @@ fn (var b: Builder) push_frame(tr: Int, sp: Span) -> Int {
   var vals: List[Int] = []
   var names: List[Str] = []
   var cts: List[Int] = []
-  for vo in b.frame_vars(fo) {
+  // --error-args=off (decision 0354; spec 11.1): the frame records the
+  // function and the location, and `...` for its parameters
+  var fvs = b.frame_vars(fo)
+  let elided = !b.error_args_on() && !fvs.is_empty()
+  if elided {
+    fvs = []
+  }
+  for vo in fvs {
     if !b.s.var_type.contains(vo) {
       continue
     }
@@ -516,7 +523,7 @@ fn (var b: Builder) push_frame(tr: Int, sp: Span) -> Int {
     cts.push(ct)
     vals.push(v)
   }
-  let fname = b.frame_args_func(names, cts, vals)
+  let fname = b.frame_args_func(names, cts, vals, elided)
   let args = b.add(Op.Closure, b.m.types[ft].elems[2], Aux.S(s: fname), vals)
   var label = b.frame_name(fo)
   for _ in 0..b.s.closures {
@@ -532,9 +539,9 @@ fn (var b: Builder) push_frame(tr: Int, sp: Span) -> Int {
 
 /// The code of the closure that formats a frame's parameters
 /// (frameArgsFunc); its body is built by run_gens.
-fn (var b: Builder) frame_args_func(names: List[Str], cts: List[Int], vals: List[Int]) -> Str {
+fn (var b: Builder) frame_args_func(names: List[Str], cts: List[Int], vals: List[Int], elided: Bool) -> Str {
   let st = b.str_t()
-  var key: List[Str] = []
+  var key: List[Str] = if elided { ["..."] } else { [] }
   var cap_ts: List[Int] = []
   for (i, n) in names.indexed() {
     if cts[i] < 0 {
@@ -553,15 +560,15 @@ fn (var b: Builder) frame_args_func(names: List[Str], cts: List[Int], vals: List
   let fi = b.m.new_func(name, [ft], [st])
   b.m.funcs[fi].indirect = true
   b.m.funcs[fi].captures = cap_ts
-  b.build_gen(GenJob{fi: fi, file: b.s.file, gen: Gen.FrameArgs(names: names, cts: cts, cap_ts: cap_ts)})
+  b.build_gen(GenJob{fi: fi, file: b.s.file, gen: Gen.FrameArgs(names: names, cts: cts, cap_ts: cap_ts, elided: elided)})
   name
 }
 
-fn (var b: Builder) frame_args_body(names: List[Str], cts: List[Int], cap_ts: List[Int]) {
+fn (var b: Builder) frame_args_body(names: List[Str], cts: List[Int], cap_ts: List[Int], elided: Bool) {
   let st = b.str_t()
   let it = b.int_t()
   let env = b.param(0)
-  var acc = b.const_str("")
+  var acc = b.const_str(if elided { "..." } else { "" })
   for (i, n) in names.indexed() {
     var sep = "${n}="
     if i > 0 {

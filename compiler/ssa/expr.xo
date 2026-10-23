@@ -388,7 +388,7 @@ fn (var b: Builder) expr_at(e: Expr) -> Int {
     CallExpr(..) => {
       if b.recorder_call(e) {
         // tracerec.built(): the build decides it (decision 0240)
-        return b.cbool(!b.release || b.trace_support)
+        return b.cbool(b.trace_on())
       }
       return b.call_expr(e)
     }
@@ -753,7 +753,7 @@ fn (var b: Builder) target_test(e: Expr) -> Bool? {
   if b.recorder_call(e) {
     // the execution trace's recorder: in a development build, and in a
     // release build only with --trace-support (decision 0240)
-    return Some(!b.release || b.trace_support)
+    return Some(b.trace_on())
   }
   match e {
     ParenExpr(x: x, ..) => b.target_test(x)

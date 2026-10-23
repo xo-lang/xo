@@ -37,7 +37,12 @@ pub struct Opts {
   pub no_ranges: Bool = false
   pub arenas: Bool = false
   pub release: Bool = false
+  /// The settings --release presets (decision 0354), as the driver
+  /// computed them: parameter values left out of error frames, the
+  /// `(debug)` contract clauses checked, `dbg(x)` printing
   pub no_error_args: Bool = false
+  pub debug_contracts: Bool = true
+  pub dbg: Bool = true
   /// The statement that passes the main module's `gc` lines to the
   /// runtime (decision 0065), "rt.GCConfig(...); " or "".
   pub gc: Str = ""
@@ -1311,10 +1316,10 @@ fn (var g: Gen) frame_eager1(t0: Int, var seen: Map[Int, Bool]) -> Bool {
 /// Whether a contract clause marked debug (or not) is checked
 /// (contractOn).
 fn (g: Gen) contract_on(debug: Bool) -> Bool {
-  !debug || !g.opts.release || g.opts.test_mode
+  !debug || g.opts.debug_contracts
 }
 
 /// Whether error frames leave out parameter values (noErrorArgs).
 fn (g: Gen) no_error_args() -> Bool {
-  g.opts.no_error_args && g.opts.release && !g.opts.test_mode
+  g.opts.no_error_args
 }

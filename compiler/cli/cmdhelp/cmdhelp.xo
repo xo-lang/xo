@@ -209,8 +209,10 @@ fn build_text() -> Str {
   """
 usage: xo build [--targets=all|os/arch,...] [--backend=go|llvm|arm64|amd64|wasm] [--no-gc]
                 [--no-mono] [--no-arenas] [--tzdata=embedded|system] [--ci]
-                [--release [--error-args=false] [--profile-support] [--trace-support]]
-                [-s] [--debug-info] [--dsym] [--ld=macho|cc] [--race]
+                [--release] [--debug-contracts=on|off] [--dbg=on|off]
+                [--error-args=on|off] [--debug-info=on|off|split]
+                [--profile-support=on|off] [--trace-support=on|off] [--opt=O0..O3]
+                [-s] [--dsym] [--ld=macho|cc] [--race]
                 [--stamp NAME=VALUE]... [--hybrid]
                 [--json] [-o out] <dirs...>
 
@@ -231,14 +233,19 @@ generation (decision 0083). --backend=wasm builds a WASI preview1 module.
 Request scoped arenas for HTTP handlers are on by default (decision
 0066); --no-arenas (also on run and test) turns them off. --ci fails
 before building when a .xo file is not formatted (core 10.5) or dbg(...)
-is left in code (core 11.4). --release is a release build:
-requires(debug) and ensures(debug) compiled out, the runtime's profiler
-(XO_PROF) left out unless --profile-support, and the execution trace's
-recorder (XO_TRACE) unless --trace-support; --error-args=false drops
-parameter values from error frames. Native builds carry DWARF line tables
+is left in code (core 11.4). --release is a preset (decision 0354):
+it turns off --debug-contracts (requires(debug) and ensures(debug)
+compiled out), --dbg (dbg(x) is x), --debug-info, --profile-support (the
+runtime's XO_PROF) and --trace-support (XO_TRACE's recorder), and sets
+--opt=O2; each setting can be given either way in any build, and an
+explicit flag wins over the preset (a bare flag means on; on|off and
+true|false both work). --error-args=off drops parameter values from
+error frames. --opt applies to the LLVM backend (a usage error on arm64
+and amd64; the Go backend ignores it). --debug-info=split is not
+implemented yet (decision 0355). Native builds carry DWARF line tables
 (in a darwin binary's __DWARF segment, a link through cc's too; --dsym
-also writes NAME.dSYM); -s leaves them and the local
-symbols out, --debug-info keeps them in a --release build. --ld picks the native
+also writes NAME.dSYM); -s leaves them and the local symbols out.
+--ld picks the native
 linker: macho (Xo's own; the default on darwin/arm64) or cc. --race (also
 on run and test) builds with ThreadSanitizer on the LLVM backend. --stamp (repeatable, also on run)
 sets a `const NAME: Str` of the main module for this build (XO1501

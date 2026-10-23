@@ -1775,7 +1775,7 @@ fn (var b: Builder) std_call(x: Expr, ci: check.CallInfo) -> Int {
       // returned; a release build computes only the value (decision 0265)
       let a = args[0].value
       let v = b.value_as(a, nt)
-      if !b.release {
+      if b.dbg_on() {
         let head = b.const_str("[${b.pos(span)}] ${b.source_text(b.s.file, parser.expr_span(a))} = ")
         b.eprintln_rt(b.append_debug(head, v, b.check_type(a)))
       }

@@ -41,22 +41,31 @@ struct Opts {
   json: Bool = false
   ci: Bool = false
   release: Bool = false
-  /// --trace-support: a --release build keeps the execution trace's
-  /// recorder (decision 0240; development builds always have it)
-  trace_support: Bool = false
+  /// The settings --release presets (decision 0354): each -1 when not
+  /// given (the preset's value, *_eff below), else 0 or 1. --trace-support:
+  /// the execution trace's recorder (decision 0240)
+  trace_support: Int = -1
   /// -s: no debug information and no local symbols (compiler/macho's
   /// LinkOpts.strip, `ld -x` on darwin, `ld -s` on Linux; the Go
-  /// backend's `-s -w`); --debug-info: debug information in a release
-  /// build too (decision 0239)
+  /// backend's `-s -w`), on top of --debug-info
   strip: Bool = false
-  debug_info: Bool = false
+  /// --debug-info=on|off|split (decision 0354; split is decision 0355's),
+  /// "" when not given: debug_info_eff
+  debug_info: Str = ""
   /// --dsym: a darwin link through compiler/macho also writes NAME.dSYM
   /// (decision 0346: the executable carries its DWARF without it)
   dsym: Bool = false
-  /// --profile-support: a release build keeps the runtime's profiler
-  /// (XO_PROF), which --release otherwise leaves out (decision 0238)
-  profile_support: Bool = false
-  error_args: Bool = true
+  /// --profile-support: the runtime's profiler (XO_PROF, decision 0238)
+  profile_support: Int = -1
+  /// --error-args: parameter values in error frames (11.1)
+  error_args: Int = -1
+  /// --debug-contracts: the `(debug)` contract clauses (spec 8)
+  debug_contracts: Int = -1
+  /// --dbg: `dbg(x)` prints (11.4); off compiles it to x
+  dbg: Int = -1
+  /// --opt=O0|O1|O2|O3: the LLVM backend's optimization level ("" for
+  /// the preset's)
+  opt: Str = ""
   hybrid: Bool = false
   no_mono: Bool = false
   no_arenas: Bool = false
@@ -124,12 +133,12 @@ struct Opts {
 
 /// The flags that take a value (every other known flag is a boolean).
 fn value_flags() -> List[Str] {
-  ["o", "trace", "targets", "target", "backend", "tzdata", "stamp", "seed", "explore", "record", "run", "cases", "timeout", "std", "wd", "cc", "asm", "go-tree", "workspace", "as", "ld", "profile", "std-module", "grace"]
+  ["o", "trace", "targets", "target", "backend", "tzdata", "stamp", "seed", "explore", "record", "run", "cases", "timeout", "std", "wd", "cc", "asm", "go-tree", "workspace", "as", "ld", "profile", "std-module", "grace", "opt"]
 }
 
 /// The boolean flags.
 fn bool_flags() -> List[Str] {
-  ["json", "ci", "release", "error-args", "hybrid", "mono", "no-mono", "arenas", "no-arenas", "no-preempt", "no-gc", "holes", "race", "v", "real", "phase-times", "offline", "s", "debug-info", "dsym", "profile-support", "trace-support", "watch"]
+  ["json", "ci", "release", "error-args", "hybrid", "mono", "no-mono", "arenas", "no-arenas", "no-preempt", "no-gc", "holes", "race", "v", "real", "phase-times", "offline", "s", "debug-info", "dsym", "profile-support", "trace-support", "watch", "debug-contracts", "dbg"]
 }
 
 /// The usage of xo1's hidden commands (asm, keys) and of an unknown one;
@@ -424,12 +433,16 @@ fn parse_args(os: Os, args: List[Str]) -> Opts {
         i += 1
       }
       set_value(os, o, name, value)
+    } else if name == "debug-info" && has_value && value == "split" {
+      // decision 0355's value of the debug info setting (0354)
+      o.debug_info = "split"
     } else if bools.contains(name) {
       var on = true
       if has_value {
-        if value is "true" | "1" | "t" | "T" | "TRUE" | "True" {
+        // on and off too: every setting of decision 0354 takes them
+        if value is "true" | "1" | "t" | "T" | "TRUE" | "True" | "on" {
           on = true
-        } else if value is "false" | "0" | "f" | "F" | "FALSE" | "False" {
+        } else if value is "false" | "0" | "f" | "F" | "FALSE" | "False" | "off" {
           on = false
         } else {
           usage(os, o.cmd, "invalid boolean value \"${value}\" for -${name}: parse error")
@@ -528,6 +541,12 @@ fn set_value(os: Os, var o: Opts, name: Str, v: Str) {
     o.stamps = kept
   } else if name == "seed" {
     o.topts.seed = int_flag(os, o.cmd, name, v)
+  } else if name == "opt" {
+    if !(v is "O0" | "O1" | "O2" | "O3") {
+      os.stdio.eprintln("xo ${o.cmd}: --opt=${v}: want O0, O1, O2 or O3")
+      os.proc.exit(2)
+    }
+    o.opt = v
   } else if name == "explore" {
     o.explore = int_flag(os, o.cmd, name, v)
     o.topts.explore = o.explore
@@ -599,19 +618,23 @@ fn set_bool(os: Os, var o: Opts, name: Str, on: Bool) {
   } else if name == "ci" {
     o.ci = on
   } else if name == "trace-support" {
-    o.trace_support = on
+    o.trace_support = if on { 1 } else { 0 }
+  } else if name == "debug-contracts" {
+    o.debug_contracts = if on { 1 } else { 0 }
+  } else if name == "dbg" {
+    o.dbg = if on { 1 } else { 0 }
   } else if name == "release" {
     o.release = on
   } else if name == "s" {
     o.strip = on
   } else if name == "debug-info" {
-    o.debug_info = on
+    o.debug_info = if on { "on" } else { "off" }
   } else if name == "dsym" {
     o.dsym = on
   } else if name == "profile-support" {
-    o.profile_support = on
+    o.profile_support = if on { 1 } else { 0 }
   } else if name == "error-args" {
-    o.error_args = on
+    o.error_args = if on { 1 } else { 0 }
   } else if name == "hybrid" {
     o.hybrid = on
   } else if name == "mono" {
@@ -647,4 +670,36 @@ fn int_flag(os: Os, cmd: Str, name: Str, v: Str) -> Int {
     Some(n) => n
     None => usage(os, cmd, "invalid value \"${v}\" for flag -${name}: parse error")
   }
+}
+
+/// A setting's value (decision 0354): the flag's when given (0 or 1),
+/// else the preset's.
+fn setting(v: Int, preset: Bool) -> Bool { if v < 0 { preset } else { v == 1 } }
+
+/// The profiler (XO_PROF): in a debug build, out of a release one,
+/// unless --profile-support says.
+fn profile_support_eff(o: Opts, release: Bool) -> Bool { setting(o.profile_support, !release) }
+
+/// The execution trace's recorder, as the profiler.
+fn trace_support_eff(o: Opts, release: Bool) -> Bool { setting(o.trace_support, !release) }
+
+/// Parameter values in error frames: on in every build unless
+/// --error-args=off.
+fn error_args_eff(o: Opts) -> Bool { setting(o.error_args, true) }
+
+/// The `(debug)` contract clauses: checked in a debug build, compiled
+/// out of a release one, unless --debug-contracts says.
+fn debug_contracts_eff(o: Opts, release: Bool) -> Bool { setting(o.debug_contracts, !release) }
+
+/// `dbg(x)` printing: in a debug build, compiled to x in a release one,
+/// unless --dbg says.
+fn dbg_eff(o: Opts, release: Bool) -> Bool { setting(o.dbg, !release) }
+
+/// The debug information: on, off or split (decision 0355): --debug-info's
+/// value when given, else off for a release build and on otherwise.
+pub fn debug_info_eff(o: Opts, release: Bool) -> Str {
+  if !o.debug_info.is_empty() {
+    return o.debug_info
+  }
+  if release { "off" } else { "on" }
 }
