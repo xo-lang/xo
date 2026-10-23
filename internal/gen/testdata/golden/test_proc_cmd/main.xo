@@ -26,7 +26,7 @@ test "output answers from on_run" {
 test "a command with no on_run is NotFound" {
   match os.proc.cmd("make").output() {
     Ok(_) => expect(false) == true
-    Err(e) => expect("${e}") == "NotFound(cmd: \"make\")"
+    Err(e) => expect("${e}") == "make: executable file not found"
   }
 }
 
@@ -64,7 +64,7 @@ test "an attenuated FakeProc denies other commands" {
   expect(git_only.cmd("git").output().is_ok()) == true
   match git_only.cmd("curl", ["https://example.com"]).output() {
     Ok(_) => expect(false) == true
-    Err(e) => expect("${e}") == "Denied(cmd: \"curl\")"
+    Err(e) => expect("${e}") == "denied by Proc.only: curl"
   }
   expect(git_only.pipeline([os.proc.cmd("git"), os.proc.cmd("sh")]).is_err()) == true
 }

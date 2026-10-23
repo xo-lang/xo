@@ -93,7 +93,7 @@ test "fake net handle and fail" {
   }
   match c.get("https://api.test/down") {
     Ok(_) => expect(false)
-    Err(e) => expect("${e}") == "Connect(msg: \"no fake handler for GET https://api.test/down\")"
+    Err(e) => expect("${e}") == "no fake handler for GET https://api.test/down"
   }
   expect(os.net.requests().len()) == 4
   expect(os.net.requests()[1].path) == "/users/me"

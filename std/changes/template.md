@@ -1,5 +1,17 @@
 # std/template changes
 
+## 2026-10-23: behavior: TemplateErr prints its message (decision 0358)
+
+- Kind: behavior
+- Commit: this commit
+- Found by: the Intel field report on 0.26.0 (error texts nested Debug output)
+- Go reference: net/http, net/smtp and text/template error texts
+- Test: golden error_text_http (arm64, LLVM, Go parity)
+
+`Display` of `TemplateErr` printed `TemplateErr(msg: "...")` on the Go
+backend; it prints Go's text (`template: t:1: function "nope" not defined`)
+everywhere. `Debug` and value comparison are unchanged.
+
 ## 2026-10-21: perf: a Template keeps its parsed set
 
 - Kind: perf

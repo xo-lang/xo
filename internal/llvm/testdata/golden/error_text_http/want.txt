@@ -1,0 +1,17 @@
+exit 0
+--- stdout
+http broken pipe | Io(msg: "broken pipe")
+http canceled | Canceled
+client invalid URL: no scheme | InvalidUrl(msg: "no scheme")
+client denied by Net.only: a.test:80 | Connect(msg: "denied by Net.only: a.test:80")
+client request timed out | Timeout
+client protocol error: bad status line | Protocol(msg: "bad status line")
+client canceled | Canceled
+url invalid port
+cookie bad name
+http tls bad pem
+tls no certificates
+smtp 550 5.1.1 no such user
+smtp0 smtp: server doesn't support STARTTLS
+template template: t:1: function "nope" not defined
+--- stderr

@@ -10,7 +10,10 @@
 struct SmtpErr {
   code: Int
   msg: Str
-} derive Display
+}
+
+/// `CODE MSG` (net/textproto's Error), or MSG alone for code 0 (decision 0358).
+fn (e: SmtpErr) display() -> Str
 
 /// How the client authenticates (net/smtp PlainAuth, CRAMMD5Auth).
 enum Auth {

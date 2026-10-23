@@ -14,14 +14,14 @@ host:port entry, other port: denied by Net.only: 127.0.0.1:10
 intersection: denied by Net.only: a.test:1
 empty list: denied by Net.only: 127.0.0.1:1
 trimmed entry: connected
-http other host: Connect(msg: "denied by Net.only: evil.example:80")
-http ipv6: Connect(msg: "denied by Net.only: [::1]:9")
-https default port: Connect(msg: "denied by Net.only: api.test:443")
-http default port: Connect(msg: "denied by Net.only: api.test:80")
-http case: Connect(msg: "denied by Net.only: WWW.Example.COM.evil:80")
+http other host: denied by Net.only: evil.example:80
+http ipv6: denied by Net.only: [::1]:9
+https default port: denied by Net.only: api.test:443
+http default port: denied by Net.only: api.test:80
+http case: denied by Net.only: WWW.Example.COM.evil:80
 redirect within: 200 fine
-redirect away: Protocol(msg: "Get \"http://evil.example/x?k=v\": denied by Net.only: redirect to evil.example:80")
-redirect away with a port: Protocol(msg: "Get \"https://Evil.Example:8443/x\": denied by Net.only: redirect to Evil.Example:8443")
+redirect away: protocol error: Get "http://evil.example/x?k=v": denied by Net.only: redirect to evil.example:80
+redirect away with a port: protocol error: Get "https://Evil.Example:8443/x": denied by Net.only: redirect to Evil.Example:8443
 sql allowed host: connection: connection refused
 sql denied host: connection: dial 203.0.113.7:5432: denied by Net.only
 env get unlisted: false

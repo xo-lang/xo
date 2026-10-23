@@ -1,12 +1,4 @@
-exit 1
+exit 0
 --- stdout
---- FAIL: a command with no on_run is NotFound (main.xo:26:1, seed 1)
-    expect failed: expect("${e}") == "NotFound(cmd: \"make\")" at main.xo:29:15
-          left:  "make: executable file not found"
-          right: "NotFound(cmd: \"make\")"
---- FAIL: an attenuated FakeProc denies other commands (main.xo:61:1, seed 1)
-    expect failed: expect("${e}") == "Denied(cmd: \"curl\")" at main.xo:67:15
-          left:  "denied by Proc.only: curl"
-          right: "Denied(cmd: \"curl\")"
-FAIL: 4 passed, 2 failed, 0 skipped
+ok: 6 passed, 0 failed, 0 skipped
 --- stderr

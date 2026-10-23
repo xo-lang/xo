@@ -1,5 +1,16 @@
 # std/tls changes
 
+## 2026-10-23: behavior: TlsErr prints its message (decision 0358)
+
+- Kind: behavior
+- Commit: this commit
+- Found by: the Intel field report on 0.26.0 (error texts nested Debug output)
+- Go reference: net/http, net/smtp and text/template error texts
+- Test: golden error_text_http (arm64, LLVM, Go parity)
+
+`Display` of `TlsErr` printed `TlsErr(msg: "...")`; it prints the message.
+`Debug` and value comparison are unchanged.
+
 ## 2026-10-22: speedup: ChaCha20's NEON kernel loops over the record
 
 - Kind: speedup

@@ -118,7 +118,10 @@ fn parse_set_cookie(line: Str) -> Cookie ! CookieErr
 
 struct CookieErr {
   msg: Str
-} derive Display
+}
+
+/// The message (decision 0358).
+fn (e: CookieErr) display() -> Str
 
 /// A typed request value key (std.md 4.3).
 struct Key[T] {}
@@ -210,12 +213,18 @@ fn tls_cert(cert_pem: Bytes, key_pem: Bytes) -> TlsCert ! TlsErr
 
 struct TlsErr {
   msg: Str
-} derive Display
+}
+
+/// The message (decision 0358).
+fn (e: TlsErr) display() -> Str
 
 enum HttpErr {
   Io(msg: Str)
   Canceled
-} derive Display
+}
+
+/// MSG for an Io, `canceled` (decision 0358).
+fn (e: HttpErr) display() -> Str
 
 struct Client {}
 fn client(net: Net, timeout: Duration = 30s) -> Client
@@ -232,7 +241,11 @@ enum ClientErr {
   Timeout
   Protocol(msg: Str)
   Canceled
-} derive Display
+}
+
+/// `invalid URL: MSG`, MSG for a Connect, `request timed out`, `protocol
+/// error: MSG`, `canceled` (decision 0358).
+fn (e: ClientErr) display() -> Str
 
 fn parse_url(s: Str) -> Url ! UrlErr
 
@@ -246,7 +259,10 @@ struct Url {
 
 struct UrlErr {
   msg: Str
-} derive Display
+}
+
+/// The message (decision 0358).
+fn (e: UrlErr) display() -> Str
 
 /// A middleware that compresses responses with gzip when the request
 /// accepts it (std.md 4.7, decision 0305): `r.wrap(http.gzip_responses())`.

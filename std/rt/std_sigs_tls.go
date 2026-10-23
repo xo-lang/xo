@@ -6,6 +6,7 @@ package rt
 // The signatures the Go backend calls the hand written std functions
 // with (compiler/gen stdtypes.xo std_sigs).
 var (
+	_ func(*Tls_TlsErr, *Task) string                                                                    = (*Tls_TlsErr).M_display
 	_ func(*Task, Bytes) Result[Tls_Roots, Tls_TlsErr]                                                   = Tls_roots
 	_ func(*Task, Conn, string, Option[Tls_Roots], Tls_Verify, List[string]) Result[Tls_TlsConn, NetErr] = Tls_client
 	_ func(*Tls_TlsConn, *Task, int64) Result[Option[Bytes], NetErr]                                     = (*Tls_TlsConn).M_read

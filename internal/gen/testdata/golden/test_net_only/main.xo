@@ -15,9 +15,9 @@ test "FakeNet.only checks each request before the fake answers" {
   let n = os.net.only(["api.test", "*.cdn.test"])
   expect(fetch(n, "http://api.test/hi")) == "200 hello"
   expect(fetch(n, "http://img.cdn.test/hi")) == "200 hello"
-  expect(fetch(n, "http://cdn.test/hi")) == "Connect(msg: \"denied by Net.only: cdn.test:80\")"
-  expect(fetch(n, "https://evil.test/hi")) == "Connect(msg: \"denied by Net.only: evil.test:443\")"
-  expect(fetch(n.only(["img.cdn.test"]), "http://api.test/hi")) == "Connect(msg: \"denied by Net.only: api.test:80\")"
+  expect(fetch(n, "http://cdn.test/hi")) == "denied by Net.only: cdn.test:80"
+  expect(fetch(n, "https://evil.test/hi")) == "denied by Net.only: evil.test:443"
+  expect(fetch(n.only(["img.cdn.test"]), "http://api.test/hi")) == "denied by Net.only: api.test:80"
 }
 
 test "FakeNet.only denies dial and listen" {

@@ -1,5 +1,20 @@
 # std/http changes
 
+## 2026-10-23: behavior: HttpErr, ClientErr, UrlErr, CookieErr and TlsErr print plain messages (decision 0358)
+
+- Kind: behavior
+- Commit: this commit
+- Found by: the Intel field report on 0.26.0 (error texts nested Debug output)
+- Go reference: net/http, net/smtp and text/template error texts
+- Test: golden error_text_http (arm64, LLVM, Go parity)
+
+`Display` printed the Debug form (`Connect(msg: "...")`, `UrlErr(msg: ...)`).
+It prints plain text now: `HttpErr` the message of an `Io` and `canceled`;
+`ClientErr` `invalid URL: MSG`, MSG for a `Connect`, `request timed out`,
+`protocol error: MSG`, `canceled`; `UrlErr`, `CookieErr` and `TlsErr` their
+message. `Debug` and value comparison are unchanged; a program that
+matches the old text must change.
+
 ## 2026-10-23: test: parse_url and new_request against Go's net/url
 
 - Kind: test

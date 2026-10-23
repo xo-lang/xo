@@ -6,6 +6,7 @@ package rt
 // The signatures the Go backend calls the hand written std functions
 // with (compiler/gen stdtypes.xo std_sigs).
 var (
+	_ func(*Template_TemplateErr, *Task) string                                                       = (*Template_TemplateErr).M_display
 	_ func(*Task, string, string, string, string) Result[Template_Template, Template_TemplateErr]     = Template_parse
 	_ func(*Template_Template, *Task, string, string) Result[Template_Template, Template_TemplateErr] = (*Template_Template).M_add
 	_ func(*Template_Template, *Task, bool) Template_Template                                         = (*Template_Template).M_missing_key

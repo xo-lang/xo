@@ -9,22 +9,22 @@ wc 200000
 code 2304 out "" err ""
 code 0 out "in the dir\n" err ""
 code 0 out "pwd ok\n" err ""
-err NotFound(cmd: "cat")
+err cat: executable file not found
 code 0 out "home set\n" err ""
 code 0 out "[a1] [b2]\n" err ""
 code 0 out "[two]\n" err ""
 only get true true vars XO_GOLDEN_A
-home Missing(name: "HOME")
+home HOME is not set
 twice true a1
-err NotFound(cmd: "xo-no-such-command-anywhere")
-err NotFound(cmd: "./xo-no-such-command")
-err Denied(cmd: "ls")
+err xo-no-such-command-anywhere: executable file not found
+err ./xo-no-such-command: executable file not found
+err denied by Proc.only: ls
 code 0 out "allowed\n" err ""
-err Denied(cmd: "echo")
+err denied by Proc.only: echo
 code 0 out "both\n" err ""
-run Denied(cmd: "ls")
-err Denied(cmd: "echo")
-err Denied(cmd: "tr")
+run denied by Proc.only: ls
+err denied by Proc.only: echo
+err denied by Proc.only: tr
 before run
 from the child
 run code 4
@@ -39,20 +39,20 @@ line got three
 line done
 errs "e:one\ne:two\ne:three\n"
 wait 5 again 5
-late Io(msg: "write |1: file already closed")
+late write |1: file already closed
 crlf a then "b\nrest"
 rest "" wait 0
-read_err Io(msg: "the child's error stream is not a pipe (inherit or merge_stderr was set)")
+read_err the child's error stream is not a pipe (inherit or merge_stderr was set)
 merged x,y 0
 killed 137
-write Io(msg: "the child's input is not a pipe (stdin data or inherit was set)")
+write the child's input is not a pipe (stdin data or inherit was set)
 cat data in 0
-spawn NotFound(cmd: "xo-no-such-command-anywhere")
+spawn xo-no-such-command-anywhere: executable file not found
 code 0 out "a\nb\nc\n" err ""
 code 3 out "" err "one\ntwo\n"
 code 6 out "" err ""
 code 0 out "y\nz\n" err ""
 code 0 out "TO-PIPE\n" err ""
-err NotFound(cmd: "xo-no-such-command-anywhere")
+err xo-no-such-command-anywhere: executable file not found
 code 0 out "" err ""
 --- stderr

@@ -7,7 +7,7 @@ listen on every interface: denied by Net.only: :0
 subdomain entry, bare domain: denied by Net.only: example.com:80
 host:port entry, other port: denied by Net.only: 127.0.0.1:10
 intersection: denied by Net.only: a.test:1
-http: Connect(msg: "denied by Net.only: evil.example:80")
+http: denied by Net.only: evil.example:80
 env get unlisted: false
 env vars unlisted: false
 env home: HOME is not set

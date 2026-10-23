@@ -1408,6 +1408,11 @@ struct Url { scheme: Str, host: Str, port: Int?, path: Str, query: Map[Str, Str]
 struct UrlErr { msg: Str }
 ```
 
+`display` of these errors prints plain text (decision 0358): `HttpErr` the
+message of an `Io` or `canceled`; `ClientErr` `invalid URL: MSG`, MSG for a
+`Connect`, `request timed out`, `protocol error: MSG`, `canceled`; `UrlErr`,
+`CookieErr` and `TlsErr` their message.
+
 Any HTTP status is a successful `Response`; only transport failures are
 `ClientErr`. A request's query is sent as it was given (Go's `URL.RawQuery`:
 repeated keys and their order kept) unless its `url.query` was changed,
@@ -3687,7 +3692,7 @@ FakeNet's raw connections serve its tests, decision 0292); build the
 message with std/mail's `compose` (25).
 
 ```
-struct SmtpErr { code: Int, msg: Str } derive Display   // the server's reply, or code 0
+struct SmtpErr { code: Int, msg: Str }                  // the server's reply, or code 0; displays `CODE MSG`, or MSG for code 0 (decision 0358)
 enum Auth { None, Plain(user: Str, password: Secret[Str]), CramMd5(user: Str, secret: Secret[Str]) }
 enum Security { StartTls, Tls, None } derive Display
 
@@ -3723,7 +3728,7 @@ built in functions, and fmt's printing); Go's output and error texts on
 205 templates (`template_test.xo`) and golden `template_basic`.
 
 ```
-struct TemplateErr { msg: Str } derive Display          // Go's texts
+struct TemplateErr { msg: Str }                          // Go's texts; displays the message (decision 0358)
 struct Template { name: Str, sources: List[(Str, Str)], left: Str = "{{", right: Str = "}}", missing_key_error: Bool = false, parsed: Parsed }
 
 pub fn parse(name: Str, src: Str, left: Str = "{{", right: Str = "}}") -> Template ! TemplateErr

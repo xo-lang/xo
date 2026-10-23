@@ -1,5 +1,17 @@
 # std/smtp changes
 
+## 2026-10-23: behavior: SmtpErr prints `CODE MSG` (decision 0358)
+
+- Kind: behavior
+- Commit: this commit
+- Found by: the Intel field report on 0.26.0 (error texts nested Debug output)
+- Go reference: net/http, net/smtp and text/template error texts
+- Test: golden error_text_http (arm64, LLVM, Go parity)
+
+`Display` of `SmtpErr` printed `SmtpErr(code: 550, msg: "...")`; it prints
+`550 5.1.1 no such user` (net/textproto's Error), or the message alone for
+code 0. `Debug` and value comparison are unchanged.
+
 ## 2026-10-21: behavior: the Go backend runs smtp.xo too
 
 - Kind: behavior

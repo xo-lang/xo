@@ -1,0 +1,24 @@
+// Display of the http, tls, smtp and template errors prints plain
+// messages (decision 0358); Debug keeps the variant form.
+use std/http
+use std/smtp
+use std/template
+use std/tls
+
+fn main(os: Os) {
+  let h: List[http.HttpErr] = [http.HttpErr.Io(msg: "broken pipe"), http.HttpErr.Canceled]
+  for e in h {
+    os.stdio.println("http ${e} | ${e.debug()}")
+  }
+  let c: List[http.ClientErr] = [http.ClientErr.InvalidUrl(msg: "no scheme"), http.ClientErr.Connect(msg: "denied by Net.only: a.test:80"), http.ClientErr.Timeout, http.ClientErr.Protocol(msg: "bad status line"), http.ClientErr.Canceled]
+  for e in c {
+    os.stdio.println("client ${e} | ${e.debug()}")
+  }
+  os.stdio.println("url ${http.UrlErr{msg: "invalid port"}}")
+  os.stdio.println("cookie ${http.CookieErr{msg: "bad name"}}")
+  os.stdio.println("http tls ${http.TlsErr{msg: "bad pem"}}")
+  os.stdio.println("tls ${tls.TlsErr{msg: "no certificates"}}")
+  os.stdio.println("smtp ${smtp.SmtpErr{code: 550, msg: "5.1.1 no such user"}}")
+  os.stdio.println("smtp0 ${smtp.SmtpErr{code: 0, msg: "smtp: server doesn't support STARTTLS"}}")
+  os.stdio.println("template ${template.TemplateErr{msg: "template: t:1: function \"nope\" not defined"}}")
+}

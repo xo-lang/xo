@@ -2767,3 +2767,27 @@ fn request_client_ip(r: Request, trusted: List[netip.Prefix] = [], header: http.
   // hops: the peer
   leftmost ?? Some(peer)
 }
+
+// Plain error messages (decision 0358); std/rt/errtext_http.go prints the same.
+fn httperr_display(e: http.HttpErr) -> Str {
+  match e {
+    http.HttpErr.Io(msg) => msg
+    http.HttpErr.Canceled => "canceled"
+  }
+}
+
+fn clienterr_display(e: http.ClientErr) -> Str {
+  match e {
+    http.ClientErr.InvalidUrl(msg) => "invalid URL: ${msg}"
+    http.ClientErr.Connect(msg) => msg
+    http.ClientErr.Timeout => "request timed out"
+    http.ClientErr.Protocol(msg) => "protocol error: ${msg}"
+    http.ClientErr.Canceled => "canceled"
+  }
+}
+
+fn urlerr_display(e: http.UrlErr) -> Str { e.msg }
+
+fn cookieerr_display(e: http.CookieErr) -> Str { e.msg }
+
+fn tlserr_display(e: http.TlsErr) -> Str { e.msg }

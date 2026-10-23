@@ -170,3 +170,6 @@ fn passthrough_write(c: Conn, data: Bytes) -> () ! NetErr uses net.dial {
   netconn.conn_upgrade(cn)
   r
 }
+
+/// The message (decision 0358).
+fn tlserr_display(e: tls.TlsErr) -> Str { e.msg }

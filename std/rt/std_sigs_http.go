@@ -26,6 +26,7 @@ var (
 	_ func(*Http_Cookie, *Task) string                                                                                                                  = (*Http_Cookie).M_display
 	_ func(*Task, string) Result[List[Http_Cookie], Http_CookieErr]                                                                                     = Http_parse_cookie
 	_ func(*Task, string) Result[Http_Cookie, Http_CookieErr]                                                                                           = Http_parse_set_cookie
+	_ func(*Http_CookieErr, *Task) string                                                                                                               = (*Http_CookieErr).M_display
 	_ func(*Task, string, string, Map[string, string], Bytes) Http_Request                                                                              = Http_new_request
 	_ func(*Task, Http_Request, string, Option[Time], Bytes, Map[string, string]) Http_Response                                                         = Http_serve_content
 	_ func(*Task, int64, string) Http_Response                                                                                                          = Http_text
@@ -50,10 +51,14 @@ var (
 	_ func(*Http_Server, *Task) string                                                                                                                  = (*Http_Server).M_addr
 	_ func(*Http_Server, *Task, List[Http_TlsCert]) Http_Server                                                                                         = (*Http_Server).M_with_tls
 	_ func(*Task, Bytes, Bytes) Result[Http_TlsCert, Http_TlsErr]                                                                                       = Http_tls_cert
+	_ func(*Http_TlsErr, *Task) string                                                                                                                  = (*Http_TlsErr).M_display
+	_ func(*Http_HttpErr, *Task) string                                                                                                                 = (*Http_HttpErr).M_display
 	_ func(*Task, Net, Duration) Http_Client                                                                                                            = Http_client
 	_ func(*Http_Client, *Task, string) Result[Http_Response, Http_ClientErr]                                                                           = (*Http_Client).M_get
 	_ func(*Http_Client, *Task, Http_Request) Result[Http_Response, Http_ClientErr]                                                                     = (*Http_Client).M_send
 	_ func(*Http_Client, *Task, Bytes) Result[Http_Client, Http_TlsErr]                                                                                 = (*Http_Client).M_with_roots
+	_ func(*Http_ClientErr, *Task) string                                                                                                               = (*Http_ClientErr).M_display
 	_ func(*Task, string) Result[Http_Url, Http_UrlErr]                                                                                                 = Http_parse_url
+	_ func(*Http_UrlErr, *Task) string                                                                                                                  = (*Http_UrlErr).M_display
 	_ func(*Task, int64, Compress_Level) func(*Task, Http_Request, func(*Task, Http_Request) Result[Http_Response, Never]) Result[Http_Response, Never] = Http_gzip_responses
 )

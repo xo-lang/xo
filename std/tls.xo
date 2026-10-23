@@ -15,7 +15,10 @@ struct Roots {}
 
 struct TlsErr {
   msg: Str
-} derive Display
+}
+
+/// The message (decision 0358).
+fn (e: TlsErr) display() -> Str
 
 /// Parses the CERTIFICATE blocks of a PEM text, as http's with_roots.
 fn roots(pem: Bytes) -> Roots ! TlsErr

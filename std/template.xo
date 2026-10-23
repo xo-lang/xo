@@ -8,7 +8,10 @@ use std/json
 /// (`template: t:1: function "nope" not defined`).
 struct TemplateErr {
   msg: Str
-} derive Display
+}
+
+/// The message, Go's text (decision 0358).
+fn (e: TemplateErr) display() -> Str
 
 /// A set of named templates (template.Template and its associated
 /// templates): each name's source, in the order added, the action

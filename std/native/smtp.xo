@@ -351,3 +351,11 @@ fn run(var c: Client, from: Str, to: List[Str], msg: Bytes, auth: smtp.Auth, sec
   let _ = c.cmd(221, "QUIT")?
   Ok(())
 }
+
+/// `CODE MSG`, or MSG alone for code 0 (decision 0358).
+fn smtperr_display(e: smtp.SmtpErr) -> Str {
+  if e.code == 0 {
+    return e.msg
+  }
+  "${e.code} ${e.msg}"
+}
