@@ -667,6 +667,12 @@ fn (var g: G) isel() {
   if g.on("ranges") {
     g.fold_decided(blocks, idom)
   }
+  if g.on("push_runs") {
+    g.plan_push_runs(blocks)
+  } else {
+    g.push_run = {}
+    g.push_skip = {}
+  }
   for b in blocks {
     g.bmap[b] = g.blocks.len()
     g.blocks.push(MBlock{id: 0})

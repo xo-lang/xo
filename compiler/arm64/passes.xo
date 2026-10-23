@@ -28,6 +28,9 @@ pub fn passes() -> List[Str] {
     // per function: SSA analyses isel uses
     "lsr",
     "ranges",
+    // pushrun.xo: up to four pushes onto a list this function made, in
+    // one block, are one capacity check and one length update
+    "push_runs",
     "inplace_elems",
     // per function: MIR
     "mir_dce",

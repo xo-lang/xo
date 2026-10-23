@@ -1,0 +1,146 @@
+// Push runs (2026-10-23): up to four pushes onto the same list in one
+// block, each push's list read only by the next, are one push of their
+// values: one capacity check, the stores, one length update (json scan's
+// three words a token were three checks and three length stores, with
+// the list and its length in stack slots on x86). The run's first
+// pushes give no list of their own (push_skip); its last makes the room
+// for all its values (push_run, calls.xo push_n).
+//
+// The values are stored at the last push, after the instructions
+// between the pushes. One of them may fault (scan's `p + 1`); the run is
+// made only for a list this function made (list.new, an empty literal,
+// pushes and sets onto one, joins of those), which the unwinding drops,
+// so no one sees which of its values were stored.
+
+use github.com/xo-lang/xo/compiler/ssa
+
+/// The longest run: four values (a list's growth gives room for at
+/// least four once it is full, obj.xo grow).
+const PUSH_RUN_MAX = 4
+
+fn (var g: G) plan_push_runs(blocks: List[Int]) {
+  g.push_run = {}
+  g.push_skip = {}
+  for b in blocks {
+    let ins = g.f.blocks[b].instrs
+    var k = ins.len() - 1
+    while k >= 0 {
+      let v = ins[k]
+      k -= 1
+      if !g.is_push(v) || g.push_skip.contains(v) {
+        continue
+      }
+      // back from v through the pushes it continues
+      var chain = [v]
+      var cur = v
+      while chain.len() < PUSH_RUN_MAX {
+        let a = g.f.values[cur].args[0]
+        if !g.is_push(a) || g.f.values[a].block != b || g.nuses[a] != 1 || g.f.values[a].pad >= 0 {
+          break
+        }
+        chain.insert(0, a)
+        cur = a
+      }
+      if chain.len() < 2 {
+        continue
+      }
+      let root = g.f.values[chain[0]].args[0]
+      var seen: Map[Int, Bool] = {}
+      if !g.local_list(root, seen) {
+        continue
+      }
+      var run = [root]
+      for p in chain {
+        run.push(g.f.values[p].args[1])
+      }
+      g.push_run[v] = run
+      for p in chain[0..chain.len() - 1] {
+        g.push_skip[p] = true
+      }
+    }
+  }
+}
+
+fn (g: G) is_push(v: Int) -> Bool {
+  let x = g.f.values[v]
+  x.op == ssa.Op.Call && x.args.len() == 2 && aux_str(x.aux) == "list.push"
+}
+
+/// Whether the list v is one this function made: list.new, an empty
+/// literal, a push or set onto one, or a join (a block's parameter) of
+/// those; not a parameter of the function or a list read from elsewhere.
+fn (g: G) local_list(v: Int, var seen: Map[Int, Bool]) -> Bool {
+  if seen.contains(v) {
+    return true
+  }
+  seen[v] = true
+  let x = g.f.values[v]
+  if x.op == ssa.Op.Call {
+    let name = aux_str(x.aux)
+    if name is "list.new" | "rt.rl_empty" {
+      return true
+    }
+    if (name is "list.push" | "list.set") && x.args.len() >= 1 {
+      return g.local_list(x.args[0], seen)
+    }
+    return false
+  }
+  if x.op != ssa.Op.Param || x.block <= 0 {
+    return false
+  }
+  let b = x.block
+  let pi = g.f.blocks[b].params.index_of(v) ?? -1
+  if pi < 0 {
+    return false
+  }
+  for e in g.f.blocks[b].preds {
+    let ed = g.f.edges[e]
+    if pi >= ed.args.len() || ed.args[pi] < 0 || !g.local_list(ed.args[pi], seen) {
+      return false
+    }
+  }
+  true
+}
+
+/// A push run's last push v (plan_push_runs): room for the values of
+/// run[1..] in the list run[0], then their stores and one length update.
+fn (var g: G) push_n(v: Int, run: List[Int]) {
+  let l0 = g.word(run[0])
+  let xs = run[1..run.len()]
+  let et = g.vty(xs[0])
+  var ws: List[List[Int]] = []
+  for x in xs {
+    ws.push(g.store_words(x))
+  }
+  let n = g.list_len(l0)
+  let nk = g.def1(false, "add $d0, $u0, #${xs.len()}", [n])
+  let lm = g.new_vreg(false)
+  let before = g.m_()
+  g.pmove([lm], regs([l0]))
+  let chk = g.new_block(false)
+  let grow = g.new_block(true)
+  let room = g.new_block(false)
+  let _j0 = g.add(Inst{kind: K_JUMP, targets: [chk]})
+  g.cur = chk
+  let c = g.def1(false, "ldr $d0, [$u0, #16]", [lm])
+  let _b = g.add(Inst{kind: K_CONDBR, text: "cmp $u0, $u1", us: [nk, c], cond: "gt", targets: [grow, room]})
+  // a growth at least doubles a capacity of four or more (obj.xo grow):
+  // one is enough but for a list made with a smaller capacity
+  g.cur = grow
+  let l2 = g.rt("xo_x_obj_rl_grow_n", [rsrc(lm), isrc(g.esize(et))], [false])
+  g.pmove([lm], regs([l2[0]]))
+  let _j1 = g.add(Inst{kind: K_JUMP, targets: [chk]})
+  g.cur = room
+  g.inherit(before)
+  g.clobber()
+  if g.esize(et) > 0 {
+    for (i, w) in ws.indexed() {
+      let ni = if i == 0 { n } else { g.def1(false, "add $d0, $u0, #${i}", [n]) }
+      g.store_elem(at_base(g.elem_base(lm, ni, g.esize(et))), et, w)
+    }
+  }
+  g.store("str $u0, [$u1, #8]", [nk, lm])
+  let _mi = g.m_()
+  g.cm.lens[lm] = nk
+  g.set(v, [lm])
+}

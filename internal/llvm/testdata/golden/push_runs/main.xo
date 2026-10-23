@@ -1,0 +1,53 @@
+// Push runs (compiler/arm64 pushrun.xo): pushes onto a list this
+// function made, one after another in a block, are one capacity check
+// and one length update on the native backends; lists made with small
+// capacities grow more than once for a run of four.
+
+fn ints() -> List[Int] {
+  var xs = List[Int].with_capacity(1)
+  var i = 0
+  while i < 5 {
+    xs.push(i)
+    xs.push(i * 10)
+    xs.push(i + 100)
+    xs.push(-i)
+    i += 1
+  }
+  xs
+}
+
+fn strs(n: Int) -> List[Str] {
+  var xs: List[Str] = []
+  for i in 0..n {
+    xs.push("a${i}")
+    xs.push("b${i}")
+  }
+  xs
+}
+
+fn floats() -> List[Float] {
+  var xs = List[Float].with_capacity(3)
+  xs.push(1.5)
+  xs.push(2.5)
+  xs.push(3.5)
+  xs.push(4.5)
+  xs
+}
+
+fn add_two(var xs: List[Int], a: Int, b: Int) {
+  xs.push(a)
+  xs.push(b)
+}
+
+fn main(os: Os) {
+  let a = ints()
+  os.stdio.println("${a.len()} ${a[0]} ${a[3]} ${a[7]} ${a[19]}")
+  let s = strs(3)
+  os.stdio.println("${s.len()} ${s.join(",")}")
+  let f = floats()
+  os.stdio.println("${f.len()} ${f[0]} ${f[3]}")
+  var p = [9]
+  add_two(p, 7, 8)
+  add_two(p, 5, 6)
+  os.stdio.println("${p.len()} ${p[1]} ${p[4]}")
+}

@@ -772,6 +772,17 @@ fn (var g: G) call_op(v: Int) {
     g.set(v, [0])
     return
   }
+  // a push run (pushrun.xo): its first pushes make nothing (the next
+  // push of the run reads their list only), its last pushes them all
+  if name == "list.push" && g.push_skip.contains(v) {
+    return
+  }
+  if name == "list.push" {
+    if let Some(run) = g.push_run.get(v) {
+      g.push_n(v, run)
+      return
+    }
+  }
   let ci = g.by_name.get(name) ?? -1
   if ci >= 0 && !g.by_ref_of(ci).is_empty() {
     g.by_ref_call(v, ci)

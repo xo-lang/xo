@@ -292,6 +292,10 @@ struct G {
   /// the machine block of each SSA block
   bmap: List[Int] = []
   nuses: List[Int] = []
+  /// push runs (pushrun.xo): a run's last push and its list and values;
+  /// the run's other pushes, which make no list
+  push_run: Map[Int, List[Int]] = {}
+  push_skip: Map[Int, Bool] = {}
   /// the last user of each value, -1 for none
   users: List[Int] = []
   /// the register of a List block parameter to the register of its
