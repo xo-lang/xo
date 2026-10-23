@@ -103,6 +103,16 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 ## Testing
 
+- Runtime changes (2026-10-23): a change to std/native/llrt pool, tasks,
+  mutex, sched (the scheduler and its shared words) runs internal/llvm's
+  ThreadSanitizer tests in its gate, `go test -short -count=1 -run
+  'TestRuntimeThreads|TestRuntimeEventLoop|TestRuntimeAlloc|TestRuntimeRealtime'
+  ./internal/llvm`, more than once (a race hit 3 runs in 4): the runtime is
+  instrumented in a --race build, so a plain store to a word every worker
+  writes is a reported data race, and the conc rows built with --race ran too
+  briefly to see it (935c3779e, fixed in b33e9ed22). Share such words with
+  relaxed atomics (rt.slot_load, rt.slot_store).
+
 - Hung xo in a test (2026-10-23): xotool.Build and asm run xo through
   `xotool.RunWatched`; a child still running after `XO_BUILD_LIMIT` (a Go
   duration, default 20m, `0` for none) gets `xo dump PID`, `lsof -p PID` and
