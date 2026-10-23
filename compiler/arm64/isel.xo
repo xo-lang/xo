@@ -2830,22 +2830,38 @@ fn (var g: G) div_rem(v: Int) {
   }
   let a = g.word(x.args[0])
   let b = g.word(x.args[1])
-  if !x.pos.is_empty() && !(is_const && kc != 0) {
+  // the divisor's and dividend's value ranges (ranges.xo, the branches
+  // that dominate: u64_rem's `if a >= 0 && b > 0 { a % b }`) can rule
+  // out the zero and the minimum by -1 (2026-10-23: portable u64 1.38
+  // times LLVM's instructions with both checks every division)
+  let (blo, bhi) = g.bounds(x.args[1])
+  let (alo, _) = g.bounds(x.args[0])
+  let _mi = g.m_()
+  let nonzero = blo > 0 || bhi < 0 || g.cm.nonzero.contains(b)
+  let no_overflow = blo > -1 || bhi < -1 || alo > MIN_INT
+  let zchk = !x.pos.is_empty() && !(is_const && kc != 0) && !nonzero
+  let ochk = is_div && !x.pos.is_empty() && !(is_const && kc != -1) && !no_overflow
+  // x86_64: a plain idiv (x86.xo sdivs), not arm64's sdiv semantics'
+  // tests of 0 and -1, when the divisor is proven or checked not 0 and
+  // the minimum by -1 (idiv's other fault) is ruled out or checked
+  // (2026-10-23: portable divmod's checked `xs[i] / d`)
+  let sdiv = if g.x86 && (nonzero || zchk) && (no_overflow || ochk) { "sdivs" } else { "sdiv" }
+  if zchk {
     let l = g.loc_label(x.pos)
     g.check("cmp $u0, #0", [b], "eq", "xo_fault_divzero", [rsrc(a), isrc(op_char(x.op)), symsrc(l)])
   }
   if is_div {
-    if !x.pos.is_empty() && !(is_const && kc != -1) {
+    if ochk {
       let mn = g.imm(MIN_INT)
       let l = g.loc_label(x.pos)
       g.check("cmp $u0, $u1\nccmn $u2, #1, #0, eq", [a, mn, b], "eq", "xo_fault_overflow", [rsrc(a), isrc(47), rsrc(b), symsrc(l)])
     }
-    g.set(v, [g.def1(false, "sdiv $d0, $u0, $u1", [a, b])])
+    g.set(v, [g.def1(false, "${sdiv} $d0, $u0, $u1", [a, b])])
     return
   }
   // a - (a / b) * b; arm64's sdiv of the minimum by -1 is the minimum, so
   // `x % -1` is 0 as Xo requires
-  let q = g.def1(false, "sdiv $d0, $u0, $u1", [a, b])
+  let q = g.def1(false, "${sdiv} $d0, $u0, $u1", [a, b])
   g.set(v, [g.def1(false, "msub $d0, $u0, $u1, $u2", [q, b, a])])
 }
 

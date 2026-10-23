@@ -609,6 +609,15 @@ fn (var g: G) x86_line(inst: Inst, var x: XT, m: Str, ops: List[Str], single: Bo
       x.lines = x.lines + ["movq ${xop(ops[1], 8)}, %rax", "cmpq $-1, ${dv}", "je 1f", "testq ${dv}, ${dv}", "je 2f", "cqto", "idivq ${dv}", "jmp 3f", "1:", "negq %rax", "jmp 3f", "2:", "xorl %eax, %eax", "3:", "movq %rax, ${xop(ops[0], 8)}"]
       true
     }
+    "sdivs" => {
+      // idiv alone: isel.xo div_rem proved or checked that it cannot trap
+      if n != 3 {
+        return false
+      }
+      x.clobbers = x.clobbers + [XR_AX, XR_DX]
+      x.lines = x.lines + ["movq ${xop(ops[1], 8)}, %rax", "cqto", "idivq ${xop(ops[2], 8)}", "movq %rax, ${xop(ops[0], 8)}"]
+      true
+    }
     "sxtw" => {
       x.lines.push("movslq ${xop(ops[1], 4)}, ${xop(ops[0], 8)}")
       true

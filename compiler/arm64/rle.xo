@@ -12,7 +12,7 @@
 /// effect beyond their definitions (reuse_loads: anything else ends every
 /// reuse).
 fn pure_op(op: Str) -> Bool {
-  op is "ldr" | "ldrb" | "ldrh" | "ldrsw" | "ldrsb" | "ldrsh" | "ldur" | "ldp" | "add" | "adds" | "sub" | "subs" | "mov" | "movz" | "movk" | "movn" | "and" | "ands" | "orr" | "eor" | "lsl" | "lsr" | "asr" | "ror" | "mul" | "madd" | "msub" | "umulh" | "smulh" | "umull" | "smull" | "umaddl" | "smaddl" | "cmp" | "cmn" | "tst" | "csel" | "cset" | "csetm" | "csinc" | "csinv" | "csneg" | "cneg" | "neg" | "negs" | "mvn" | "ubfx" | "sbfx" | "ubfiz" | "sbfiz" | "bfi" | "bfxil" | "sxtw" | "sxth" | "sxtb" | "uxtw" | "uxth" | "uxtb" | "adc" | "adcs" | "sbc" | "sbcs" | "bic" | "orn" | "eon" | "clz" | "rev" | "rbit" | "extr" | "udiv" | "sdiv" | "fmov" | "fadd" | "fsub" | "fmul" | "fdiv" | "fneg" | "fabs" | "fsqrt" | "fcmp" | "fcsel" | "scvtf" | "ucvtf" | "fcvtzs" | "fcvtzu" | "fcvt"
+  op is "ldr" | "ldrb" | "ldrh" | "ldrsw" | "ldrsb" | "ldrsh" | "ldur" | "ldp" | "add" | "adds" | "sub" | "subs" | "mov" | "movz" | "movk" | "movn" | "and" | "ands" | "orr" | "eor" | "lsl" | "lsr" | "asr" | "ror" | "mul" | "madd" | "msub" | "umulh" | "smulh" | "umull" | "smull" | "umaddl" | "smaddl" | "cmp" | "cmn" | "tst" | "csel" | "cset" | "csetm" | "csinc" | "csinv" | "csneg" | "cneg" | "neg" | "negs" | "mvn" | "ubfx" | "sbfx" | "ubfiz" | "sbfiz" | "bfi" | "bfxil" | "sxtw" | "sxth" | "sxtb" | "uxtw" | "uxth" | "uxtb" | "adc" | "adcs" | "sbc" | "sbcs" | "bic" | "orn" | "eon" | "clz" | "rev" | "rbit" | "extr" | "udiv" | "sdiv" | "sdivs" | "fmov" | "fadd" | "fsub" | "fmul" | "fdiv" | "fneg" | "fabs" | "fsqrt" | "fcmp" | "fcsel" | "scvtf" | "ucvtf" | "fcvtzs" | "fcvtzu" | "fcvt"
 }
 
 /// Whether inst may write memory or synchronize (reuse_loads forgets

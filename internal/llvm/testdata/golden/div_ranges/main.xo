@@ -1,0 +1,79 @@
+// Divisions whose operands' ranges or a dominating `!= 0` branch rule
+// out a fault (x86_64 then divides with idiv alone, isel.xo div_rem)
+// next to ones that still fault: an Int32's minimum by -1, Int's
+// minimum by -1 behind a zero test, and `x % -1` of the minimum.
+use std/task
+
+fn show(stdio: Stdio, label: Str, r: Result[Str, task.Isolated[Int]]) uses stdio {
+  match r {
+    Ok(v) => stdio.println("${label}: ok ${v}")
+    Err(task.Isolated.Faulted(info)) => stdio.println("${label}: ${info.msg}")
+    Err(task.Isolated.Failed(e)) => stdio.println("${label}: failed ${e}")
+  }
+}
+
+/// Int32 division by an odd divisor that may be -1: the dividend's type
+/// rules out the minimum of Int, the result's check the Int32 one.
+fn odd32(xs: List[Int32]) -> Int {
+  var s = 0
+  for x in xs {
+    let d = (x % 97) | 1
+    s = s * 31 % 1000003 + Int(x / d) + Int(x % d)
+  }
+  s
+}
+
+/// A zero test dominating the division: the divisor is never 0 but may
+/// be -1, and the dividend may be Int's minimum.
+fn guarded(xs: List[Int], ds: List[Int]) -> Int {
+  var s = 0
+  for i in 0..xs.len() {
+    let d = ds[i]
+    if d != 0 {
+      s = s ^ (xs[i] % d) ^ (xs[i] / d)
+    }
+  }
+  s
+}
+
+fn narrow(bs: List[UInt8], ws: List[Int8]) -> Int {
+  var s = 0
+  for i in 0..bs.len() {
+    let b = bs[i]
+    let w = ws[i]
+    s = s + Int(b / ((b & 7) + 1)) + Int(w / ((w % 5) | 1)) + Int(w % ((w & 3) - 2 + ((w & 3) / 2) * 4))
+  }
+  s
+}
+
+fn main(os: Os) {
+  let io = os.stdio
+  var xs: List[Int32] = []
+  var k: Int32 = 1
+  for i in 0..400 {
+    k = (k * 7 + Int32(i)) % 2000000
+    xs.push(k - 1000000)
+  }
+  xs.push(2147483647)
+  xs.push(-2147483647)
+  xs.push(-1)
+  xs.push(0)
+  io.println("odd32 ${odd32(xs)}")
+  var big = -9223372036854775807
+  big -= 1
+  io.println("guarded ${guarded([7, -7, big, big, 9223372036854775807, 0, 5], [2, -2, 3, 0, -1, -1, 0])}")
+  var bs: List[UInt8] = []
+  var ws: List[Int8] = []
+  for i in 0..256 {
+    bs.push(UInt8(i))
+    ws.push(Int8(i % 255 - 127))
+  }
+  io.println("narrow ${narrow(bs, ws)}")
+  var m32: Int32 = -2147483647
+  m32 -= 1
+  let neg: Int32 = Int32(xs.len()) - 405
+  show(io, "int32 min / -1", task.isolate(fn() -> Str ! Int { "${m32 / neg}" }))
+  show(io, "int32 min % -1", task.isolate(fn() -> Str ! Int { "${m32 % neg}" }))
+  show(io, "int min / -1 guarded", task.isolate(fn() -> Str ! Int { "${guarded([big], [-1])}" }))
+  show(io, "int min % -1", task.isolate(fn() -> Str ! Int { "${big % (Int(neg))}" }))
+}

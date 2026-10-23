@@ -107,6 +107,9 @@ struct Memo {
   /// through a join (join_facts): not a register to read here, but the
   /// facts about it hold of l's length (decision 0208)
   len_at: Map[Int, Int] = {}
+  /// registers a branch proved not zero (`if d == 0 { fault }` before a
+  /// division of Int32 and the other sized Ints)
+  nonzero: Map[Int, Bool] = {}
 }
 
 /// A pointer induction variable of a loop (lsr.xo lsrPlan).

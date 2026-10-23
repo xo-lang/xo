@@ -379,7 +379,7 @@ fn capped[K, V](m: Map[K, V]) -> Map[K, V] {
 /// dominates it.
 fn (var g: G) inherit(from: Int) {
   let src = g.memo_at(from)
-  var m = Memo{blk: g.cur, epoch: src.epoch, lo: capped(src.lo), hi: capped(src.hi), low_zero: capped(src.low_zero), less: capped(src.less), quo: capped(src.quo), lens: capped(src.lens), checked: capped(src.checked), bases: capped(src.bases), loaded: capped(src.loaded), cs: capped(src.cs), len_at: capped(src.len_at)}
+  var m = Memo{blk: g.cur, epoch: src.epoch, lo: capped(src.lo), hi: capped(src.hi), low_zero: capped(src.low_zero), less: capped(src.less), quo: capped(src.quo), lens: capped(src.lens), checked: capped(src.checked), bases: capped(src.bases), loaded: capped(src.loaded), cs: capped(src.cs), len_at: capped(src.len_at), nonzero: capped(src.nonzero)}
   for (k, v) in capped(src.ci) {
     // a constant one instruction makes is not worth a register across
     // blocks (and a fresh one coalesces with a block parameter)
@@ -415,6 +415,9 @@ fn (var g: G) join_facts(from: Int) {
   }
   for (k, v) in src.checked {
     g.cm.checked[k] = v
+  }
+  for (k, v) in src.nonzero {
+    g.cm.nonzero[k] = v
   }
   for (k, v) in src.lo {
     if let Some(o) = g.cm.lo.get(k) {
@@ -590,7 +593,23 @@ fn (var g: G) derived(v: Int, d: Int) -> (Interval, Bool) {
       let a = g.bounds_iv(x.args[0], d)
       (Interval{lo: sat_mul(a.lo, 1 << k), hi: sat_mul(a.hi, 1 << k)}, true)
     }
-    IntConv => (g.bounds_iv(x.args[0], d), true)
+    IntConv => {
+      // a sized Int's value is in its type's range (2026-10-23: portable
+      // divmod's Int32 `xs[i] / d` widened to Int cannot be the minimum,
+      // so its division by -1 cannot overflow)
+      let a = g.bounds_iv(x.args[0], d)
+      let st = g.m.types[g.f.values[x.args[0]].ty]
+      if st.kind != ssa.Kind.Int || st.bits <= 0 || st.bits >= 64 {
+        return (a, true)
+      }
+      let (tlo, thi) = if st.unsigned { (0, (1 << st.bits) - 1) } else { (-(1 << (st.bits - 1)), (1 << (st.bits - 1)) - 1) }
+      let lo = imax(a.lo, tlo)
+      let hi = imin(a.hi, thi)
+      if lo > hi {
+        return (Interval{lo: tlo, hi: thi}, true)
+      }
+      (Interval{lo: lo, hi: hi}, true)
+    }
     Call => {
       if aux_str(x.aux) != "Str.len" || x.args.is_empty() {
         return none
@@ -816,6 +835,15 @@ fn (var g: G) cond_facts(c: Int, truth: Bool) {
   } else if o == ssa.Op.Gt {
     if g.has_val[x] && g.vals[x].len() == 1 {
       g.less_fact(y, g.vals[x][0])
+    }
+  }
+  if o == ssa.Op.Ne {
+    for (r, z) in [(x, y), (y, x)] {
+      let (n, isc) = g.const_int(z)
+      if isc && n == 0 && g.has_val[r] && g.vals[r].len() == 1 {
+        let _mi = g.m_()
+        g.cm.nonzero[g.vals[r][0]] = true
+      }
     }
   }
   if o == ssa.Op.Eq {

@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+odd32 933917
+guarded 6148914691236517207
+narrow 18351
+int32 min / -1: integer overflow: -2147483648 / -1 does not fit Int32
+int32 min % -1: ok 0
+int min / -1 guarded: integer overflow: -9223372036854775808 / -1 does not fit Int
+int min % -1: ok 0
+--- stderr
