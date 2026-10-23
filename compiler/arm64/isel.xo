@@ -1542,11 +1542,17 @@ fn (g: G) dom_decided(b: Int, c: Int, idom: List[Int]) -> Bool? {
     if t >= 0 && g.f.values[t].op == ssa.Op.Branch && g.f.values[t].succs.len() == 2 && g.f.values[t].pad < 0 {
       let c2 = g.f.values[t].args[0]
       let x2 = g.f.values[c2]
-      if c2 == c || (x2.op == cv.op && x2.args == cv.args && (cv.op is ssa.Op.Eq | ssa.Op.Ne | ssa.Op.Lt | ssa.Op.Le | ssa.Op.Gt | ssa.Op.Ge)) {
+      // the same compare, or its negation (lt and ge, le and gt, eq and
+      // ne), which decides the other way (2026-10-23: UInt64(v) branched
+      // on v < 0, and ints.u64_rem on Int(UInt64(v)) >= 0)
+      let cmp = cv.op is ssa.Op.Eq | ssa.Op.Ne | ssa.Op.Lt | ssa.Op.Le | ssa.Op.Gt | ssa.Op.Ge
+      // (integers only: a Float compare with a NaN is false both ways)
+      let inv = cmp && x2.op == negated_cmp(cv.op) && cv.args.len() == 2 && g.kind(g.f.values[cv.args[0]].ty) == ssa.Kind.Int
+      if c2 == c || (cmp && (x2.op == cv.op || inv) && g.same_operands(x2.args, cv.args)) {
         for i in 0..2 {
           let s = g.f.edges[g.f.values[t].succs[i]].to
           if g.f.blocks[s].preds.len() == 1 && dominates(idom, s, b) {
-            return Some(i == 0)
+            return Some((i == 0) != inv)
           }
         }
         return None
@@ -1559,6 +1565,62 @@ fn (g: G) dom_decided(b: Int, c: Int, idom: List[Int]) -> Bool? {
     steps += 1
   }
   None
+}
+
+/// The compare that is true exactly when op is false.
+fn negated_cmp(op: ssa.Op) -> ssa.Op {
+  match op {
+    Eq => ssa.Op.Ne
+    Ne => ssa.Op.Eq
+    Lt => ssa.Op.Ge
+    Ge => ssa.Op.Lt
+    Le => ssa.Op.Gt
+    Gt => ssa.Op.Le
+    _ => op
+  }
+}
+
+/// Whether two compares' operands are the same words of the same types:
+/// equal values, equal constants, or values equal through conversions between 64 bit
+/// integer types (2026-10-23: UInt64(v) tested v >= 0, and ints.u64_rem
+/// then tested Int(UInt64(v)) >= 0 again in portable conv's loop).
+fn (g: G) same_operands(a: List[Int], b: List[Int]) -> Bool {
+  if a.len() != b.len() {
+    return false
+  }
+  for i in 0..a.len() {
+    if a[i] == b[i] {
+      continue
+    }
+    let (ka, ca) = g.const_int(a[i])
+    let (kb, cb) = g.const_int(b[i])
+    if ca && cb && ka == kb && g.f.values[a[i]].ty == g.f.values[b[i]].ty {
+      continue
+    }
+    if g.f.values[a[i]].ty != g.f.values[b[i]].ty || g.word_source(a[i]) != g.word_source(b[i]) {
+      return false
+    }
+  }
+  true
+}
+
+/// v through conversions between 64 bit integer types (Int, Int64,
+/// UInt64), which keep the word.
+fn (g: G) word_source(v0: Int) -> Int {
+  var v = v0
+  for _ in 0..8 {
+    let x = g.f.values[v]
+    if x.op != ssa.Op.IntConv || x.args.len() != 1 || !g.word64(x.ty) || !g.word64(g.f.values[x.args[0]].ty) {
+      break
+    }
+    v = x.args[0]
+  }
+  v
+}
+
+/// Whether type t is a 64 bit integer type.
+fn (g: G) word64(t: Int) -> Bool {
+  t >= 0 && g.m.types[t].kind == ssa.Kind.Int && (g.m.types[t].bits == 0 || g.m.types[t].bits == 64)
 }
 
 /// Whether block a dominates block b (idom: dominators_of, -1 for the
