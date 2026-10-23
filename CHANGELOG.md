@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- xo stops itself past three quarters of physical memory, at least 16
+  GiB (decision 0349's default, owner): a runaway build ends with
+  `fatal error: memory budget exceeded` and its phase instead of swapping
+  the machine. Builds of xo peak at 9.9 to 11.2 GB counted (18 GiB on a
+  24 GB Mac). `XO_MAX_MEM` sets another budget, `off` none.
+
 - The memory budget (decision 0349) counts what the heap uses (large
   blocks by the bytes handed out, not the room a growing block reserves),
   which tracks the resident set: a cold self build of xo peaks at 9.9 GB

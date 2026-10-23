@@ -116,3 +116,22 @@ no default until the LLVM build of xo (the full tier) and a gate are
 measured the same way and the owner approves the number; `XO_MAX_MEM`
 works as described above.
 
+## Addendum (owner, 2026-10-22, night): the default
+
+xo's default budget is three quarters of physical memory, at least 16 GiB
+(18 GiB on the 24 GB Mac, 16 GiB on a 16 GB machine), when XO_MAX_MEM is
+not set, counting the bytes the heap hands out (the measure of the
+previous addendum). Counted peaks on the 24 GB Mac
+(bench/results/memory-budget-measure-2026-10-22.md):
+
+| build | counted peak | maximum RSS |
+|---|---|---|
+| self build of xo, cold | 9,909 MB | 9,141 MiB |
+| self build of xo, warm (caches on) | 11,200 MB | 9,359 MB |
+| LLVM build of xo (xo itself) | 7,819 MB | (clang's own processes on top) |
+
+A runaway like the 37 GB one stops at 18 GiB with its phase named. On a
+16 GB machine the floor keeps a warm self build (11.2 GB counted) clear of
+the budget; the machine's own memory then is the limit, as before.
+Windows reads no physical memory yet, so xo sets no default there.
+

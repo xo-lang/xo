@@ -4702,8 +4702,10 @@ fn mem_total() -> Int
   `mem_mapped()` is the count the budget compares (chunks and records as
   mapped, large blocks as handed out, not the room a growing block
   reserves), `mem_peak()` its high-water mark, `mem_total()` the
-  machine's physical memory (macOS and Linux; 0 elsewhere). xo sets no
-  budget unless XO_MAX_MEM does (a default awaits measurement). The Go backend ignores the
+  machine's physical memory (macOS and Linux; 0 elsewhere). xo, when
+  XO_MAX_MEM is not set, sets three quarters of physical memory, at least
+  16 GiB (decision 0349's default; none where physical memory is not
+  read). The Go backend ignores the
   budget and its label, and both counts are 0 there.
 
 ## 37. std/metrics
