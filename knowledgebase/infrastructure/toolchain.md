@@ -242,6 +242,12 @@ create`. The order:
    memory, binary size, and each workload's run under `xo bench --ab`
    (wall, CPU, peak RSS; Go is A, Xo is B). Last verified: 2026-10-22
    (smoke run, 3 workloads).
+8. the website's comparison pages (owner, 2026-10-23): refresh the
+   tables of `content/docs/xo-and-go.md` from step 7's
+   `release-vs-go-vX.Y.Z.md` (and any newer `*-vs-go-*` results),
+   with the new file and line links, the Go version measured against
+   and the newest Go release, and its "Last verified" date; the
+   website push needs the owner's OK.
 `scripts/release-verify.sh ARCHIVE [OUTDIR]` checks an archive on its
 host from a checkout of the same commit: unpacked clean, with no Go on
 PATH `xo version`, `rtpack --status`, `check`, and a hello program on
