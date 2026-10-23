@@ -441,7 +441,17 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
   let fl = ssa.fe_flags(root, tests, release, real, tgoos, tgoarch, wasm, nolibc, prof, trace, soft_cpu, heap_guard)
   let hint_path = "${dir}/fe-hint/${crypto.sha256("${id}\n${fl}\n${fe_program_id(os, c)}".bytes()).to_hex()[0..32]}"
   // xo:allow XO0903 a hint: with none the build reads both common variants
-  let hint = (os.fs.read(hint_path).ok() ?? b"").to_str() ?? ""
+  var hint = (os.fs.read(hint_path).ok() ?? b"").to_str() ?? ""
+  let own_hint = !hint.is_empty()
+  if hint.is_empty() {
+    // a program the cache has not seen here (a new directory: the
+    // program's id names its directory) starts as the last build of any
+    // program did (decision 0351): reading both variants doubled its
+    // lookups, and one variant is never stored (5,389 failed opens for
+    // hello); a wrong guess only misses
+    // xo:allow XO0903 a hint: with none the build reads both common variants
+    hint = (os.fs.read("${dir}/fe-hint/last").ok() ?? b"").to_str() ?? ""
+  }
   let owns = if hint.is_empty() { ssa.fe_common_owns() } else { [hint] }
   fe.start_conc = hint.starts_with("conc=true ")
   var keys: List[Str] = []
@@ -493,8 +503,11 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
   // the entries of bodies that made closures, with their closures'
   b.fe_finalize()
   let fin = b.fe_final_own()
-  if fin != hint {
+  if fin != hint || !own_hint {
     cache_put(os, hint_path, fin.bytes())
+  }
+  if fin != hint {
+    cache_put(os, "${dir}/fe-hint/last", fin.bytes())
   }
   var n = 0
   for (k, e) in b.fe.stores {
@@ -1168,6 +1181,20 @@ fn cache_get_packed(os: Os, dir: Str, kind: Str, target: Str, keys: List[Str], j
   // before any loose file
   let sh_on = kind != "part" && (os.env.get("XO_SHARED_PACK") ?? "") == "on"
   let sdir = if sh_on { shared_pack_dir(dir, kind, target) } else { "" }
+  // a build target without a formed pack (a new directory) takes the
+  // shared copy of the last formed pack's list: the keys found nowhere
+  // even with a pack, so stored by no build (9,520 failed opens for
+  // hello in a new directory)
+  let sh_neg = sh_on && kind == "fe" && !neg_on
+  if sh_neg {
+    // xo:allow XO0903 no shared list: every key not in a pack is read loose
+    let t = (os.fs.read("${sdir}/neg").ok() ?? b"").to_str() ?? ""
+    for k in t.split("\n") {
+      if !k.is_empty() {
+        neg[k] = true
+      }
+    }
+  }
   var shared: Map[Str, Bytes] = {}
   var sh_segs: List[Str] = []
   var sh_held = 0
@@ -1216,6 +1243,11 @@ fn cache_get_packed(os: Os, dir: Str, kind: Str, target: Str, keys: List[Str], j
     let text = missing.sort().join("\n")
     if text != neg_text {
       cache_put(os, neg_path, text.bytes())
+      if sh_on {
+        // the shared copy for new build targets (sh_neg)
+        os.fs.create_dir_all(sdir).ignore_err("no shared list: new directories read loose")
+        cache_put(os, "${sdir}/neg", text.bytes())
+      }
     }
   }
   (entries, p)

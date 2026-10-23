@@ -2800,3 +2800,70 @@ func TestSharedPack(t *testing.T) {
 		t.Error("the build through the shared pack differs from the cache-off build")
 	}
 }
+
+// TestSharedPackNegKeys: with XO_SHARED_PACK=on (decision 0351) a formed
+// pack's list of front end keys found nowhere is copied to the shared
+// pack, and a build in a new directory (no pack of its own) skips those
+// keys' loose reads: no missing fe lookups, the same binary.
+func TestSharedPackNegKeys(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-shneg-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	cache := filepath.Join(work, "cache")
+	src := "fn main(os: Os) uses stdio {\n  os.stdio.println(\"hi\")\n}\n"
+	fe := regexp.MustCompile(`cache loose fe (\d+) of (\d+) \(pack (\d+), shared (\d+), missing (\d+)\)`)
+	build := func(name string, env ...string) ([]byte, []string) {
+		t.Helper()
+		dir := filepath.Join(work, name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out := filepath.Join(work, name+".bin")
+		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", out, "."))
+		cmd.Dir = dir
+		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on", "XO_SHARED_PACK=on", "XO_FE_STATS=1"), env...)
+		log, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("xo build %s: %v\n%s", name, err, log)
+		}
+		b, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b, fe.FindStringSubmatch(string(log))
+	}
+	// the first directory's pack forms within a few builds (PACK_AFTER),
+	// then its list of keys found nowhere is written, and copied
+	for i := 0; i < 5; i++ {
+		build("one")
+	}
+	got, m := build("two")
+	// the program's own bodies are keyed by their file, so in a new
+	// directory they are real misses (main: 1); without the list and the
+	// last build's hint, 9,520 of hello's 10,776 lookups failed
+	if m == nil {
+		t.Fatal("no cache loose fe line")
+	}
+	if n, _ := strconv.Atoi(m[5]); n > 4 || m[2] == "" {
+		t.Fatalf("a build in a new directory: %v, want at most the program's own bodies missing", m)
+	}
+	off, _ := build("two", "XO_BACKEND_CACHE=off")
+	if !bytes.Equal(got, off) {
+		t.Error("the build in the new directory differs from the cache-off build")
+	}
+}
