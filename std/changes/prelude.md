@@ -1,5 +1,20 @@
 # prelude changes
 
+## 2026-10-23: perf: Bytes.from_base64 decodes four ordinary characters at once
+
+- Kind: perf
+- Commit: this commit
+- Found by: Xo Lang 1 (json bytes on amd64 native against LLVM: num.from_base64 176.4M against 147.7M instructions)
+- Go reference: encoding/base64 decodeQuantum's fast path (go1.26.1)
+- Test: internal/llvm TestNumDiff (Bytes.from_base64 against encoding/base64 on 200,000 texts, malformed ones included), goldens std06_helpers, method_values, json_value, native_json
+
+At the start of each quantum the decoder takes the next four characters
+together when all four are ordinary (no padding, no \r or \n, nothing
+invalid: one test of their table values), and goes a character at a time
+otherwise, as before. Output and errors are unchanged. json bytes: callgrind
+on linux/amd64 420.3M to 395.6M instructions (0.941); `xo bench --ab` on
+darwin/arm64, 30 rounds: wall 0.811 (0.80 to 0.842), instructions 0.944.
+
 ## 2026-10-23: perf: Str.lines, split, replace and UTF-8 checks scan with one bit a byte on amd64
 
 - Kind: perf

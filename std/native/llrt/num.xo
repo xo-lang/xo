@@ -1509,6 +1509,34 @@ pub fn from_base64(s: Str) -> Bytes? {
   var wk = 0
   var i = 0
   while i < n {
+    // whole quanta of four ordinary characters at once (Go's
+    // decodeQuantum fast path); padding, \r, \n and invalid characters,
+    // and the last characters, go a character at a time below
+    // (2026-10-23: the per-character state was most of json bytes' time)
+    if k == 0 {
+      while i + 4 <= n {
+        let a0 = Int(t[Int(b[i])])
+        let a1 = Int(t[Int(b[i + 1])])
+        let a2 = Int(t[Int(b[i + 2])])
+        let a3 = Int(t[Int(b[i + 3])])
+        if (a0 | a1 | a2 | a3) >= 64 {
+          break
+        }
+        let q = (a0 << 18) | (a1 << 12) | (a2 << 6) | a3
+        let x = ((q >> 16) & 0xFF) | (q & 0xFF00) | ((q & 0xFF) << 16)
+        w = w | shl(x, 8 * wk)
+        wk += 3
+        if wk == 6 {
+          out = rt.rs_push_word(out, w, 6)
+          w = 0
+          wk = 0
+        }
+        i += 4
+      }
+      if i >= n {
+        break
+      }
+    }
     let v = Int(t[Int(b[i])])
     i += 1
     if v >= 64 {
