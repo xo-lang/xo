@@ -75,6 +75,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_CHK_CACHE":            {"none", ""},
 	"XO_FE_CACHE":             {"none", ""},
 	"XO_FE_STATS":             {"none", ""},
+	"XO_SHARED_PACK":          {"none", ""},
 	"XO_FE_BREAK":             {"none", ""},
 	"XO_FE_KEEP_DIR":          {"none", ""},
 	"XO_BUILD_DIR":            {"none", ""},

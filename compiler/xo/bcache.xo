@@ -1163,6 +1163,31 @@ fn cache_get_packed(os: Os, dir: Str, kind: Str, target: Str, keys: List[Str], j
       }
     }
   }
+  // the shared pack (decision 0351, Proposed: XO_SHARED_PACK=on until
+  // the owner decides the default): what this target's pack lacks,
+  // before any loose file
+  let sh_on = kind != "part" && (os.env.get("XO_SHARED_PACK") ?? "") == "on"
+  let sdir = if sh_on { shared_pack_dir(dir, kind, target) } else { "" }
+  var shared: Map[Str, Bytes] = {}
+  var sh_segs: List[Str] = []
+  var sh_held = 0
+  if sh_on {
+    var need: Map[Str, Bool] = {}
+    for (k, _) in want {
+      if !entries.contains(k) && !neg.contains(k) {
+        need[k] = true
+      }
+    }
+    if !need.is_empty() {
+      let (g, sg, sh) = shared_read(os, sdir, need)
+      shared = g
+      sh_segs = sg
+      sh_held = sh
+      for (k, b) in shared {
+        entries[k] = b
+      }
+    }
+  }
   var rest: List[Str] = []
   for (k, _) in want {
     if !entries.contains(k) && !neg.contains(k) {
@@ -1170,10 +1195,13 @@ fn cache_get_packed(os: Os, dir: Str, kind: Str, target: Str, keys: List[Str], j
     }
   }
   let loose = cache_get_all(os, dir, kind, rest, jobs)
+  if sh_on && loose.len() >= SHARED_MIN {
+    shared_store(os, dir, sdir, shared, loose, sh_segs, sh_held)
+  }
   // XO_FE_STATS=1: how many entries came from loose files (one open
   // each) against the directory's pack (decision 0351)
   if (os.env.get("XO_FE_STATS") ?? "") == "1" {
-    os.stdio.eprintln("cache loose ${kind} ${loose.len()} of ${want.len()} (pack ${p.from_pack.len()}, missing ${rest.len() - loose.len()})")
+    os.stdio.eprintln("cache loose ${kind} ${loose.len()} of ${want.len()} (pack ${p.from_pack.len()}, shared ${shared.len()}, missing ${rest.len() - loose.len()})")
   }
   for (k, b) in loose {
     entries[k] = b
@@ -1191,6 +1219,80 @@ fn cache_get_packed(os: Os, dir: Str, kind: Str, target: Str, keys: List[Str], j
     }
   }
   (entries, p)
+}
+
+/// A build that read at least this many entries loose adds them to the
+/// shared pack (decision 0351).
+const SHARED_MIN = 64
+
+/// The shared pack of kind for target (decision 0351): one per kind and
+/// target for every program and directory, read after the build target's
+/// own pack (pack_dir) and before loose files. It settles on the entries
+/// every program uses (std and the runtime): each build that reads many
+/// entries loose appends them, and a compaction keeps what the compacting
+/// build used.
+fn shared_pack_dir(dir: Str, kind: Str, target: Str) -> Str {
+  let id = crypto.sha256("${PACK_VERSION}\nshared\n${target}\n".bytes()).to_hex()
+  "${dir}/packs/shared/${id[0..30]}/${kind}"
+}
+
+/// The entries of the shared pack at sdir for the keys need: them, the
+/// segments read, and how many entries those hold.
+fn shared_read(os: Os, sdir: Str, need: Map[Str, Bool]) -> (Map[Str, Bytes], List[Str], Int) {
+  var got: Map[Str, Bytes] = {}
+  var segs: List[Str] = []
+  var held = 0
+  // xo:allow XO0903 no shared pack yet: every entry is read loose
+  for fi in os.fs.read_dir(sdir).ok() ?? [] {
+    if !fi.name.starts_with("s-") || fi.name.contains(".") {
+      continue
+    }
+    let path = "${sdir}/${fi.name}"
+    // xo:allow XO0903 a segment it cannot read (another build compacted it) is a miss
+    if let Ok(b) = os.fs.read(path) {
+      prune.mark_used_within(os.fs, os.clock, path, BACKEND_TOUCH)
+      segs.push(fi.name)
+      for (k, lo, hi) in pack_index(b) {
+        held += 1
+        if need.contains(k) && !got.contains(k) {
+          got[k] = b[lo..hi]
+        }
+      }
+    }
+  }
+  (got, segs, held)
+}
+
+/// Adds the entries a build read loose to the shared pack at sdir: a new
+/// segment, or, past PACK_SEGS segments or when the pack holds more than
+/// twice what this build used of it, one segment of what it used (the
+/// entries read from it and the loose ones) replacing the old.
+fn shared_store(os: Os, root: Str, sdir: Str, used: Map[Str, Bytes], loose: Map[Str, Bytes], segs: List[Str], held: Int) {
+  os.fs.create_dir_all(sdir).ignore_err("no shared pack: the loose files serve")
+  let p = Pack{root: root, dir: sdir}
+  var items: List[(Str, Bytes)] = []
+  for (k, b) in loose {
+    items.push((k, b))
+  }
+  if segs.len() >= PACK_SEGS || held > 2 * (used.len() + loose.len()) + 64 {
+    for (k, b) in used {
+      if !loose.contains(k) {
+        items.push((k, b))
+      }
+    }
+    var old = 0
+    for s in segs {
+      if let Ok(Some(fi)) = os.fs.stat("${sdir}/${s}") {
+        old += fi.size
+      }
+    }
+    pack_write_counted(os, p, items, old)
+    for s in segs {
+      os.fs.remove("${sdir}/${s}").ignore_err("another build compacted it")
+    }
+  } else {
+    pack_write(os, p, items)
+  }
 }
 
 /// The keys of a segment with their bytes' range in b, [] when b is not

@@ -2617,7 +2617,7 @@ func TestFrontCacheNegKeys(t *testing.T) {
 	}
 	out := filepath.Join(work, "prog")
 	cache := filepath.Join(work, "cache")
-	loose := regexp.MustCompile(`cache loose fe (\d+) of (\d+) \(pack (\d+), missing (\d+)\)`)
+	loose := regexp.MustCompile(`cache loose fe (\d+) of (\d+) \(pack (\d+), (?:shared \d+, )?missing (\d+)\)`)
 	build := func() ([]byte, []string) {
 		t.Helper()
 		os.Remove(out)
@@ -2734,5 +2734,69 @@ fn main(os: Os) {
 	got, err := testtmp.Guard(exec.Command(out)).CombinedOutput()
 	if err != nil || strings.TrimSpace(string(got)) != "2" {
 		t.Errorf("the program printed %q (%v), want 2", got, err)
+	}
+}
+
+// TestSharedPack: with XO_SHARED_PACK=on (decision 0351) the entries one
+// program read loose go to the shared pack, and a new program in a new
+// directory (no pack of its own) reads its std and runtime entries from
+// there instead of loose files; its binary equals a cache-off build.
+func TestSharedPack(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-shpack-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	cache := filepath.Join(work, "cache")
+	stats := regexp.MustCompile(`cache loose rc (\d+) of (\d+) \(pack (\d+), shared (\d+), missing (\d+)\)`)
+	build := func(name, body string, env ...string) ([]byte, []string) {
+		t.Helper()
+		dir := filepath.Join(work, name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		src := "fn main(os: Os) uses stdio {\n  os.stdio.println(\"" + body + "\")\n}\n"
+		if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out := filepath.Join(work, name+".bin")
+		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", out, "."))
+		cmd.Dir = dir
+		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on", "XO_SHARED_PACK=on", "XO_FE_STATS=1"), env...)
+		log, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("xo build %s: %v\n%s", name, err, log)
+		}
+		b, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b, stats.FindStringSubmatch(string(log))
+	}
+	// the first program fills the cache; its second build reads the
+	// entries loose (no pack yet) and adds them to the shared pack
+	build("one", "one")
+	_, m := build("one", "one")
+	if m == nil || m[1] == "0" {
+		t.Fatalf("the second build read no rc entry loose: %v", m)
+	}
+	got, m := build("two", "two")
+	if m == nil || m[4] == "0" || m[1] != "0" {
+		t.Fatalf("a new program in a new directory: %v, want its rc entries from the shared pack and none loose", m)
+	}
+	// the same directory: the binary names its source directory
+	off, _ := build("two", "two", "XO_BACKEND_CACHE=off")
+	if !bytes.Equal(got, off) {
+		t.Error("the build through the shared pack differs from the cache-off build")
 	}
 }
