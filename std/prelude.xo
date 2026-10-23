@@ -522,7 +522,10 @@ enum FsErr {
   Denied(path: Str)
   Io(path: Str, msg: Str)
   Canceled
-} derive Display
+}
+
+/// Plain text (decision 0358): `PATH: no such file or directory`.
+fn (e: FsErr) display() -> Str
 
 struct FileInfo {
   name: Str
@@ -612,7 +615,11 @@ enum NetErr {
   Canceled
   /// The address is outside an attenuated Net (`Net.only`, decision 0156).
   Denied(addr: Str)
-} derive Display
+}
+
+/// Plain text (decision 0358): `connection refused`, `i/o timeout`, the
+/// message of an Io, `denied by Net.only: ADDR`.
+fn (e: NetErr) display() -> Str
 
 struct Listener {}
 /// The bound address, `host:port`, with the port the system chose for
@@ -678,11 +685,17 @@ interface Rand {
 /// The error of `Clock.sleep_or_cancel` (decision 0088).
 enum ClockErr {
   Canceled
-} derive Display
+}
+
+/// `canceled` (decision 0358).
+fn (e: ClockErr) display() -> Str
 
 enum EnvErr {
   Missing(name: Str)
-} derive Display
+}
+
+/// `NAME is not set` (decision 0358).
+fn (e: EnvErr) display() -> Str
 
 interface Env {
   fn get(self, name: Str) -> Str? uses env
@@ -706,7 +719,10 @@ enum IoErr {
   Closed
   Io(msg: Str)
   Canceled
-} derive Display
+}
+
+/// Plain text (decision 0358): `closed`, the message of an Io, `canceled`.
+fn (e: IoErr) display() -> Str
 
 interface Stdio {
   fn print(self, text: Str) uses stdio
@@ -748,7 +764,11 @@ enum ProcErr {
   /// The command is outside an attenuated Proc (`Proc.only`, decision
   /// 0156).
   Denied(cmd: Str)
-} derive Display
+}
+
+/// Plain text (decision 0358): `CMD: executable file not found`, the message
+/// of an Io, `canceled`, `denied by Proc.only: CMD`.
+fn (e: ProcErr) display() -> Str
 
 interface Proc {
   fn exit(self, code: Int) -> Never uses proc

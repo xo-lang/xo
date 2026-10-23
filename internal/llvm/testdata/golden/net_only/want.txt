@@ -1,18 +1,18 @@
 exit 0
 --- stdout
 dial allowed host: connected
-dial other host: Denied(addr: "203.0.113.7:443")
-dial name: Denied(addr: "evil.example:80")
-dial without a port: Denied(addr: "127.0.0.1")
-dial too many colons: Denied(addr: "127.0.0.1:1:2")
-dial ipv6: Denied(addr: "[::1]:9")
-listen on every interface: Denied(addr: ":0")
-listen other host: Denied(addr: "10.0.0.1:0")
-subdomain entry, bare domain: Denied(addr: "example.com:80")
-subdomain entry, suffix only: Denied(addr: "badexample.com:80")
-host:port entry, other port: Denied(addr: "127.0.0.1:10")
-intersection: Denied(addr: "a.test:1")
-empty list: Denied(addr: "127.0.0.1:1")
+dial other host: denied by Net.only: 203.0.113.7:443
+dial name: denied by Net.only: evil.example:80
+dial without a port: denied by Net.only: 127.0.0.1
+dial too many colons: denied by Net.only: 127.0.0.1:1:2
+dial ipv6: denied by Net.only: [::1]:9
+listen on every interface: denied by Net.only: :0
+listen other host: denied by Net.only: 10.0.0.1:0
+subdomain entry, bare domain: denied by Net.only: example.com:80
+subdomain entry, suffix only: denied by Net.only: badexample.com:80
+host:port entry, other port: denied by Net.only: 127.0.0.1:10
+intersection: denied by Net.only: a.test:1
+empty list: denied by Net.only: 127.0.0.1:1
 trimmed entry: connected
 http other host: Connect(msg: "denied by Net.only: evil.example:80")
 http ipv6: Connect(msg: "denied by Net.only: [::1]:9")
@@ -22,18 +22,18 @@ http case: Connect(msg: "denied by Net.only: WWW.Example.COM.evil:80")
 redirect within: 200 fine
 redirect away: Protocol(msg: "Get \"http://evil.example/x?k=v\": denied by Net.only: redirect to evil.example:80")
 redirect away with a port: Protocol(msg: "Get \"https://Evil.Example:8443/x\": denied by Net.only: redirect to Evil.Example:8443")
-sql allowed host: Conn(msg: "Refused")
-sql denied host: Conn(msg: "Denied(addr: \"203.0.113.7:5432\")")
+sql allowed host: Conn(msg: "connection refused")
+sql denied host: Conn(msg: "dial 203.0.113.7:5432: denied by Net.only")
 env get unlisted: false
 env vars unlisted: false
-env home: Missing(name: "HOME")
+env home: HOME is not set
 env args still readable: 0
 env intersection: true false
-proc run: Denied(cmd: "sh")
-proc cmd output: Denied(cmd: "sh")
-proc cmd spawn: Denied(cmd: "sh")
-proc pipeline: Denied(cmd: "sh")
-proc intersection: Denied(cmd: "echo")
+proc run: denied by Proc.only: sh
+proc cmd output: denied by Proc.only: sh
+proc cmd spawn: denied by Proc.only: sh
+proc pipeline: denied by Proc.only: sh
+proc intersection: denied by Proc.only: echo
 proc allowed: allowed
 
 --- stderr

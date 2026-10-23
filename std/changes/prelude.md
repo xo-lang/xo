@@ -1,5 +1,25 @@
 # prelude changes
 
+## 2026-10-23: behavior: FsErr, NetErr, IoErr, EnvErr, ProcErr and ClockErr print plain messages (decision 0358)
+
+- Kind: behavior
+- Commit: this commit
+- Found by: the Intel field report on 0.26.0 (error texts nested Debug output)
+- Go reference: os and net error texts (`open x: no such file or directory`, `i/o timeout`, `connection refused`)
+- Test: goldens std_error_display, fs_native, fs_files, fs_ops_edges, net_only, proc_cmd and 12 others (arm64, LLVM, Go parity), test_net_only, test_proc_cmd, test_fakenet_raw, test_unix_kill
+
+`Display` of these enums (and so `${e}` and an uncaught error's report)
+printed the Debug form, `NotFound(path: "a.txt")`; it now prints a plain
+sentence: `a.txt: no such file or directory`, `a.txt: file exists`,
+`d: directory not empty`, `a.txt/x: not a directory`, `d: is a directory`,
+`x: permission denied`, `PATH: MSG` for `FsErr.Io` (just MSG for an empty
+path); `connection refused`, `i/o timeout`, `invalid address: MSG`, MSG for
+`NetErr.Io` and `IoErr.Io` and `ProcErr.Io`, `denied by Net.only: ADDR`,
+`denied by Proc.only: CMD`, `closed`, `canceled`; `NAME is not set`;
+`CMD: executable file not found`. `Debug` is unchanged, and so is
+comparing values. A program that matches the old text must change; the
+repository's goldens and tests were updated.
+
 ## 2026-10-23: perf: List.sort sorts runs by insertion and merges between two buffers
 
 - Kind: perf

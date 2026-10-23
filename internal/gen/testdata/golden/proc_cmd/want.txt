@@ -7,17 +7,17 @@ stdin: code 0 out "HELLO" err ""
 exit: code 3 out "partial\n" err ""
 signal: code 143 out "" err ""
 merged: code 0 out "out\nerr\nmore\n" err ""
-missing: error NotFound(cmd: "xo-no-such-command")
+missing: error xo-no-such-command: executable file not found
 stream: lines one,three err "two\n" code 5
 echo: "ping\npong\n" code 0 pid set true
 pipeline: code 0 out "APPLE\nFIG\nPEAR\n" err ""
 pipefail: code 4 out "a\n" err "first\nsecond\n"
 empty pipeline: code 0 out "" err ""
-denied: error Denied(cmd: "tr")
-denied in pipeline: error Denied(cmd: "sort")
-denied made by tools: error Denied(cmd: "sort")
+denied: error denied by Proc.only: tr
+denied in pipeline: error denied by Proc.only: sort
+denied made by tools: error denied by Proc.only: sort
 allowed: code 0 out "ok\n" err ""
-denied run: Denied(cmd: "sort")
+denied run: denied by Proc.only: sort
 terminal:
 child on the terminal
 terminal code 7

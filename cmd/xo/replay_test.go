@@ -42,7 +42,7 @@ func TestRecordReplayCLI(t *testing.T) {
 		t.Fatalf("run --record: exit %d\n%s\n%s", code, out.String(), errOut.String())
 	}
 	recOut, recErr := out.String(), errOut.String()
-	if !strings.HasPrefix(recOut, "args a,b rand ") || !strings.Contains(recErr, "error: NotFound(path: \"missing-") || !strings.Contains(recErr, "xo run: recorded "+trace) {
+	if !strings.HasPrefix(recOut, "args a,b rand ") || !strings.Contains(recErr, "error: missing-") || !strings.Contains(recErr, "xo run: recorded "+trace) {
 		t.Fatalf("recording:\n%s\n%s", recOut, recErr)
 	}
 	m := regexp.MustCompile(`(?m)^crash bundle: (.*)$`).FindStringSubmatch(recErr)
@@ -62,7 +62,7 @@ func TestRecordReplayCLI(t *testing.T) {
 
 	out.Reset()
 	errOut.Reset()
-	if code := run(t, []string{"replay", trace}, &out, &errOut); code != 1 || out.String() != recOut || !strings.Contains(errOut.String(), "xo replay: identical run: error: NotFound(path: \"missing-") {
+	if code := run(t, []string{"replay", trace}, &out, &errOut); code != 1 || out.String() != recOut || !strings.Contains(errOut.String(), "xo replay: identical run: error: missing-") {
 		t.Fatalf("replay: exit %d\n%s\nrecorded:\n%s\nstderr:\n%s", code, out.String(), recOut, errOut.String())
 	}
 	out.Reset()

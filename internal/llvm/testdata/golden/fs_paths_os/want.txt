@@ -10,7 +10,7 @@ sub read: deep
 walk a/b b
 walk a/b/f.txt f.txt
 temp under a: true
-escape: Denied(path: "../outside")
+escape: ../outside: permission denied
 cwd exists: true
 removed: true
 --- stderr

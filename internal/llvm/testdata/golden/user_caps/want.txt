@@ -3,10 +3,10 @@ exit 0
 1 - /home/fake prog,--fake fakeprog
 only: - 2 1
 ran ls a b
-error NotFound(cmd: "fail")
+error fail: executable file not found
 kill: true
-error Denied(addr: "example.com:80")
-only: error Denied(addr: "example.com:80")
+error denied by Net.only: example.com:80
+only: error denied by Net.only: example.com:80
 real env: unset
 ran task a b 1
 --- stderr

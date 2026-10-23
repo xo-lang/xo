@@ -1,18 +1,18 @@
 exit 0
 --- stdout
 lines: first|second|third|fourth
-write to a read handle: Io(path: "notes.txt", msg: "file is open for reading")
-read after close: Io(path: "notes.txt", msg: "file already closed")
+write to a read handle: notes.txt: file is open for reading
+read after close: notes.txt: file already closed
 head: first
 log: "one\ntwo\n"
-open missing: NotFound(path: "missing.txt")
-open a directory: IsDir(path: ".")
+open missing: missing.txt: no such file or directory
+open a directory: .: is a directory
 mode: 750 copy: 750 same: true
-copy missing: NotFound(path: "nothing.sh")
+copy missing: nothing.sh: no such file or directory
 read through link: A
 read_link: deep/a.txt not a link: -
-escaping link: Denied(path: "escape")
-absolute link: Denied(path: "abs")
+escaping link: escape: permission denied
+absolute link: abs: permission denied
 inside link: A
 glob *.txt: log.txt notes.txt
 glob **/*.txt: data/deep/a.txt data/link.txt log.txt notes.txt
@@ -22,5 +22,5 @@ glob none: 0
 second try_lock: held
 after unlock: acquired
 config: /xdg/config cache: /xdg/cache
-attenuated: Missing(name: "HOME")
+attenuated: HOME is not set
 --- stderr

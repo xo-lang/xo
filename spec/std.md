@@ -512,6 +512,12 @@ enum FsErr {
   Canceled
 }
 
+`display` prints plain messages (decision 0358): `PATH: no such file or
+directory`, `PATH: file exists`, `PATH: directory not empty`, `PATH: not a
+directory`, `PATH: is a directory`, `PATH: permission denied`, `PATH: MSG`
+for `Io` (the text alone when the path is empty), and `canceled`. `Debug`
+keeps the variant form.
+
 struct FileInfo {
   name: Str              // last path segment
   path: Str              // relative to the capability root
@@ -663,6 +669,9 @@ fn count_errors(fs: Fs, path: Str) -> Int ! FsErr uses fs.read {
 ```
 enum NetErr { InvalidAddr(msg: Str), Refused, Timeout, Io(msg: Str), Canceled, Denied(addr: Str) }
 
+`display` prints `invalid address: MSG`, `connection refused`, `i/o timeout`,
+MSG for `Io`, `canceled`, and `denied by Net.only: ADDR` (decision 0358).
+
 fn (n: Net) listen(addr: Str) -> Listener ! NetErr uses net.listen
 fn (n: Net) dial(addr: Str) -> Conn ! NetErr       uses net.dial
 fn (n: Net) only(hosts: List[Str]) -> Net          // attenuation (below)
@@ -747,6 +756,8 @@ let weather = weather.client(api)   // the library can reach api.example.com onl
 fn (c: Clock) now() -> Time
 enum ClockErr { Canceled }
 
+`display` prints `canceled` (decision 0358).
+
 fn (c: Clock) sleep(d: Duration)             // cancellation point; unwinds when cancelled
 fn (c: Clock) sleep_or_cancel(d: Duration) -> () ! ClockErr
     // like sleep, but cancellation is Err(Canceled) instead of an unwind
@@ -791,6 +802,8 @@ program's own Rand too: Fisher-Yates from the end with that value's
 ```
 enum EnvErr { Missing(name: Str) }
 
+`display` prints `NAME is not set` (decision 0358).
+
 fn (e: Env) get(name: Str) -> Str?
 fn (e: Env) vars() -> Map[Str, Str]
 fn (e: Env) args() -> List[Str]              // without the program name
@@ -829,6 +842,8 @@ them (`only(["PATH"])` admits `Path`). Native builds have it too
 
 ```
 enum IoErr { Closed, Io(msg: Str), Canceled }
+
+`display` prints `closed`, MSG for `Io`, and `canceled` (decision 0358).
 
 fn (s: Stdio) print(text: Str)               // write errors are ignored
 fn (s: Stdio) println(text: Str)
@@ -879,6 +894,9 @@ Terminals (decision 0162), on every backend:
 ```
 struct ProcOutput { code: Int, stdout: Bytes, stderr: Bytes }
 enum ProcErr { NotFound(cmd: Str), Io(msg: Str), Canceled, Denied(cmd: Str) }
+
+`display` prints `CMD: executable file not found`, MSG for `Io`, `canceled`,
+and `denied by Proc.only: CMD` (decision 0358).
 
 fn (p: Proc) exit(code: Int) -> Never        // exits immediately; defer blocks do not run
 fn (p: Proc) set_grace(d: Duration)          // time between stop requested and cancel (default 30s)
@@ -3974,7 +3992,7 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
 
 Every function and method of std/prelude.xo, by type, as declared there
 (the sections above explain them); interface methods take `self`.
-358 declarations.
+364 declarations.
 
 ### Range
 
@@ -4397,6 +4415,12 @@ fn (static: Secret[T]) new(v: T) -> Secret[T]
 fn (s: Secret[T]) reveal() -> T
 ```
 
+### FsErr
+
+```
+fn (e: FsErr) display() -> Str
+```
+
 ### Fs
 
 ```
@@ -4447,6 +4471,12 @@ fn (f: File) close() -> () ! FsErr
 
 ```
 fn (l: FileLock) unlock()
+```
+
+### NetErr
+
+```
+fn (e: NetErr) display() -> Str
 ```
 
 ### Listener
@@ -4508,6 +4538,18 @@ fn bytes(self, n: Int) -> Bytes uses rand
 fn shuffle[T](self, xs: List[T]) -> List[T] uses rand
 ```
 
+### ClockErr
+
+```
+fn (e: ClockErr) display() -> Str
+```
+
+### EnvErr
+
+```
+fn (e: EnvErr) display() -> Str
+```
+
 ### Env
 
 ```
@@ -4519,6 +4561,12 @@ fn home(self) -> Str ! EnvErr uses env
 fn only(self, names: List[Str]) -> Env
 fn config_dir(self) -> Str ! EnvErr uses env
 fn cache_dir(self) -> Str ! EnvErr uses env
+```
+
+### IoErr
+
+```
+fn (e: IoErr) display() -> Str
 ```
 
 ### Stdio
@@ -4539,6 +4587,12 @@ fn width(self) -> Int? uses stdio
 fn read_secret(self, prompt: Str) -> Str? ! IoErr uses stdio
 fn read_bytes(self, max: Int) -> Bytes? ! IoErr uses stdio
 fn read_all_bytes(self) -> Bytes ! IoErr uses stdio
+```
+
+### ProcErr
+
+```
+fn (e: ProcErr) display() -> Str
 ```
 
 ### Proc

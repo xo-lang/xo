@@ -10,7 +10,7 @@ part "\n\nth"
 part "ree"
 appended "one\r\ntwo\n\nthree\nfour"
 created new
-again: Exists(path: "b.txt")
-missing: NotFound(path: "missing.txt")
-dir: IsDir(path: "sub")
+again: b.txt: file exists
+missing: missing.txt: no such file or directory
+dir: sub: is a directory
 --- stderr

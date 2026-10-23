@@ -10,17 +10,17 @@ listed socket: true
 unlisted socket: Denied true
 hosts only, socket: Denied true
 other case: Denied true
-socket only, tcp: Denied(addr: "127.0.0.1:9")
+socket only, tcp: denied by Net.only: 127.0.0.1:9
 term: ok
 status after TERM: 143
 kill: ok
 status after KILL: 137
-unknown name: Io(msg: "unknown signal \"SIGTERM\"")
-pid 0: Io(msg: "invalid process id 0")
-pid -1: Io(msg: "invalid process id -1")
-no such process: Io(msg: "no such process")
-not listed: Denied(cmd: "kill")
+unknown name: unknown signal "SIGTERM"
+pid 0: invalid process id 0
+pid -1: invalid process id -1
+no such process: no such process
+not listed: denied by Proc.only: kill
 listed: ok
 status after QUIT: 131
-intersection: Denied(cmd: "kill")
+intersection: denied by Proc.only: kill
 --- stderr

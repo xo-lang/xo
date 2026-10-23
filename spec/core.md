@@ -961,6 +961,9 @@ pub struct User { ... } derive Display, Ord, Json, OpenApi
 - Derived `Display` prints the same text as `Debug`:
   `NotFound(id: 42)`, `User{id: 1, name: "a"}`. Implement `Display` by hand
   (`fn (e: ApiErr) display() -> Str`) for user facing text.
+  Std's error enums implement `Display` by hand and print plain messages
+  (`PATH: no such file or directory`, `connection refused`; decision 0358);
+  their `Debug` keeps the variant form.
 - `Json`, `OpenApi`, and `Proto` derives generate codecs and schemas from the
   same declaration so wire formats and docs cannot drift. JSON rules are in
   `spec/std.md`. **[after 1.0]** `OpenApi` and `Proto` are planned for

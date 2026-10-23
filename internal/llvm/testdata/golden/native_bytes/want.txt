@@ -7,6 +7,6 @@ h é  wörld "héllo, wörld" "tab\there \"q\" \x00\x7f\u0085"
 [20,30] [10,20] [40,50] [20] []
 5 10231 5 5 a7
 11 "two\nlines\xff\n"
-NotFound(path: "missing.txt")
+missing.txt: no such file or directory
 0
 --- stderr

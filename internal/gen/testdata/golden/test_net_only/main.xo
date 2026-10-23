@@ -24,11 +24,11 @@ test "FakeNet.only denies dial and listen" {
   let n = os.net.only(["127.0.0.1:8080"])
   match n.dial("evil.test:1") {
     Ok(_) => expect(false) == true
-    Err(e) => expect("${e}") == "Denied(addr: \"evil.test:1\")"
+    Err(e) => expect("${e}") == "denied by Net.only: evil.test:1"
   }
   match n.listen(":8080") {
     Ok(_) => expect(false) == true
-    Err(e) => expect("${e}") == "Denied(addr: \":8080\")"
+    Err(e) => expect("${e}") == "denied by Net.only: :8080"
   }
 }
 
@@ -43,11 +43,11 @@ test "FakeEnv.only and FakeProc.only" {
   let p = os.proc.only(["git"])
   match p.run("sh", []) {
     Ok(_) => expect(false) == true
-    Err(e) => expect("${e}") == "Denied(cmd: \"sh\")"
+    Err(e) => expect("${e}") == "denied by Proc.only: sh"
   }
   match p.cmd("sh").output() {
     Ok(_) => expect(false) == true
-    Err(e) => expect("${e}") == "Denied(cmd: \"sh\")"
+    Err(e) => expect("${e}") == "denied by Proc.only: sh"
   }
   expect(p.cmd("git").output().is_ok()) == true
 }

@@ -188,8 +188,8 @@ const wasmFsWriteProg = `fn main(os: Os) ! {
 const wasmFsWriteWant = `read "hi\n"
 big 188890 of 188890 same true
 empty 0
-missing: NotFound(path: "missing/x.txt")
-dir: IsDir(path: "d")
+missing: missing/x.txt: no such file or directory
+dir: d: is a directory
 `
 
 // TestSelfhostWasmFsWrite is stage 3's rt.fs_write (decision 0179): a

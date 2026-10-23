@@ -1,11 +1,11 @@
 exit 0
 --- stdout
 new: first
-again: Exists(path: "new.txt")
+again: new.txt: file exists
 kept: first
-dir: Exists(path: "dir")
-dangling: Exists(path: "dangling")
+dir: dir: file exists
+dangling: dangling: file exists
 target made: false
-read only: Denied(path: "other.txt")
-in a missing dir: NotFound(path: "nodir/x.txt")
+read only: other.txt: permission denied
+in a missing dir: nodir/x.txt: no such file or directory
 --- stderr

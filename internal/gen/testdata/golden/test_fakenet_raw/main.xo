@@ -36,7 +36,7 @@ test "a dial reaches the listener at its address, both ways" {
 test "a dial without a listener is Refused" {
   match os.net.dial("nothing.test:1") {
     Ok(_) => expect(false) == true
-    Err(e) => expect("${e}") == "Refused"
+    Err(e) => expect("${e}") == "connection refused"
   }
 }
 
@@ -44,7 +44,7 @@ test "a second listener on a busy address fails" {
   let l = os.net.listen("127.0.0.1:7000")?
   match os.net.listen("127.0.0.1:7000") {
     Ok(_) => expect(false) == true
-    Err(e) => expect("${e}") == "Io(msg: \"address already in use\")"
+    Err(e) => expect("${e}") == "address already in use"
   }
   l.close()
   let again = os.net.listen("127.0.0.1:7000")?
@@ -72,7 +72,7 @@ test "writing to a closed peer fails; a closed listener resets its backlog" {
   expect(c.read(10)?) == None
   match c.write(b"late") {
     Ok(_) => expect(false) == true
-    Err(e) => expect("${e}") == "Io(msg: \"write tcp: connection reset by peer\")"
+    Err(e) => expect("${e}") == "write tcp: connection reset by peer"
   }
   let queued = os.net.dial(l.addr())?
   l.close()

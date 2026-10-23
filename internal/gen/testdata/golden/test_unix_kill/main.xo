@@ -29,6 +29,6 @@ test "a unix socket listens in memory" {
   l.close()
   match os.net.only(["unix:/run/app.sock"]).listen("unix:/run/other.sock") {
     Ok(_) => expect(false) == true
-    Err(e) => expect("${e}") == "Denied(addr: \"unix:/run/other.sock\")"
+    Err(e) => expect("${e}") == "denied by Net.only: unix:/run/other.sock"
   }
 }

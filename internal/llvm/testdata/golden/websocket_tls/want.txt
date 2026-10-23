@@ -4,6 +4,6 @@ echo: over tls
 echo: 70000 bytes
 wss: ok
 system roots: true
-bad roots: Io(msg: "tls: no certificates found in PEM input")
+bad roots: tls: no certificates found in PEM input
 done
 --- stderr

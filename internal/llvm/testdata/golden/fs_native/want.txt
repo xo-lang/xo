@@ -15,21 +15,21 @@ walk d d/e
 walk d d/e/y.txt
 walk d d/z.txt
 sub zz y y
-escape Denied(path: "../x.txt") Denied(path: "e/../../x.txt") ok
-missing NotFound(path: "nope/f.txt") false true
-notdir NotDir(path: "a.txt/f") NotDir(path: "a.txt/q")
-isdir IsDir(path: "d")
-read dir IsDir(path: "d")
-notempty NotEmpty(path: "d")
-ro alpha Denied(path: "a.txt") Denied(path: "z.txt")
-wo Denied(path: "a.txt") ok
-denied Denied(path: "x")
-denied read Denied(path: "x")
+escape ../x.txt: permission denied e/../../x.txt: permission denied ok
+missing nope/f.txt: no such file or directory false true
+notdir a.txt/f: not a directory a.txt/q: not a directory
+isdir d: is a directory
+read dir d: is a directory
+notempty d: directory not empty
+ro alpha a.txt: permission denied z.txt: permission denied
+wo a.txt: permission denied ok
+denied x: permission denied
+denied read x: permission denied
 stat a.txt a.txt 5 1700000000 false
 stat root path=[] true
 temp true true
-renamed true false NotFound(path: "nope")
-removed false NotFound(path: "d/renamed.txt")
+renamed true false nope: no such file or directory
+removed false d/renamed.txt: no such file or directory
 remove_all ok false ok
 debug <fs>
 cleaned false

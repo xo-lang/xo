@@ -146,6 +146,7 @@ var (
 	_ func(*BytesBuilder, *Task, Rune)                              = (*BytesBuilder).M_write_rune
 	_ func(*BytesBuilder, *Task) int64                              = (*BytesBuilder).M_len
 	_ func(*BytesBuilder, *Task) Bytes                              = (*BytesBuilder).M_freeze
+	_ func(*FsErr, *Task) string                                    = (*FsErr).M_display
 	_ func(*Task, Fs, string, string) Result[string, FsErr]         = Prelude_read_text_or
 	_ func(*Task, Fs, string, Bytes) Result[Bytes, FsErr]           = Prelude_read_or
 	_ func(*File, *Task, int64) Result[Option[Bytes], FsErr]        = (*File).M_read
@@ -153,6 +154,7 @@ var (
 	_ func(*File, *Task, Bytes) Result[Unit, FsErr]                 = (*File).M_write
 	_ func(*File, *Task) Result[Unit, FsErr]                        = (*File).M_close
 	_ func(*FileLock, *Task)                                        = (*FileLock).M_unlock
+	_ func(*NetErr, *Task) string                                   = (*NetErr).M_display
 	_ func(*Listener, *Task) string                                 = (*Listener).M_addr
 	_ func(*Listener, *Task) Result[ServerConn, NetErr]             = (*Listener).M_accept
 	_ func(*Listener, *Task)                                        = (*Listener).M_close
@@ -162,6 +164,10 @@ var (
 	_ func(*ServerConn, *Task, int64) Result[Option[Bytes], NetErr] = (*ServerConn).M_read
 	_ func(*ServerConn, *Task, Bytes) Result[Unit, NetErr]          = (*ServerConn).M_write
 	_ func(*ServerConn, *Task)                                      = (*ServerConn).M_close
+	_ func(*ClockErr, *Task) string                                 = (*ClockErr).M_display
+	_ func(*EnvErr, *Task) string                                   = (*EnvErr).M_display
+	_ func(*IoErr, *Task) string                                    = (*IoErr).M_display
+	_ func(*ProcErr, *Task) string                                  = (*ProcErr).M_display
 	_ func(*Cmd, *Task, string) Cmd                                 = (*Cmd).M_dir
 	_ func(*Cmd, *Task, Env) Cmd                                    = (*Cmd).M_env
 	_ func(*Cmd, *Task, string, string) Cmd                         = (*Cmd).M_set_env

@@ -1,11 +1,11 @@
 exit 0
 --- stdout
-FsErr: NotFound(path: "a.txt") (same as interpolation: true)
-NetErr: Timeout (same as interpolation: true)
-ClockErr: Canceled (same as interpolation: true)
-EnvErr: Missing(name: "HOME") (same as interpolation: true)
-IoErr: Io(msg: "broken pipe") (same as interpolation: true)
-ProcErr: NotFound(cmd: "git") (same as interpolation: true)
+FsErr: a.txt: no such file or directory (same as interpolation: true)
+NetErr: i/o timeout (same as interpolation: true)
+ClockErr: canceled (same as interpolation: true)
+EnvErr: HOME is not set (same as interpolation: true)
+IoErr: broken pipe (same as interpolation: true)
+ProcErr: git: executable file not found (same as interpolation: true)
 http.HttpErr: Io(msg: "reset") (same as interpolation: true)
 http.ClientErr: Connect(msg: "refused") (same as interpolation: true)
 http.ClientErr: Timeout (same as interpolation: true)

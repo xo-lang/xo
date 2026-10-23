@@ -27,6 +27,6 @@ map error: failed at a
 read_text_or there: hello
 read_text_or missing: default
 read_or missing: 0102
-read_text_or dir: IsDir(path: "d")
-read_text_or outside: Denied(path: "../outside")
+read_text_or dir: d: is a directory
+read_text_or outside: ../outside: permission denied
 --- stderr

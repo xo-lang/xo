@@ -7,11 +7,11 @@ rewritten short
 stat big.txt 5 dir false
 stat dir true
 missing true
-read nope: NotFound(path: "nope.txt")
-read through a file: NotDir(path: "a.txt/x")
+read nope: nope.txt: no such file or directory
+read through a file: a.txt/x: not a directory
 read dir is an error true
-write into missing dir: NotFound(path: "no/such/x.txt")
-long: Io(path: "x*300", msg: "file name too long")
+write into missing dir: no/such/x.txt: no such file or directory
+long: x*300: file name too long
 proc ok true
 clock moves true after 2020 true since true
 entries a.txt:6 big.txt:5 empty.txt:0

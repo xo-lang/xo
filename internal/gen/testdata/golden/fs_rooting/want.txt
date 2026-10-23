@@ -2,9 +2,9 @@ exit 0
 --- stdout
 ok alpha
 ok alpha
-err Denied(path: "../escape.txt")
-err Denied(path: "inner/../../escape.txt")
-err NotFound(path: "missing.txt")
+err ../escape.txt: permission denied
+err inner/../../escape.txt: permission denied
+err missing.txt: no such file or directory
 ok beta
 walk inner dir=true size=0
 walk inner/a.txt dir=false size=5
@@ -13,10 +13,10 @@ walk inner/deep/b.txt dir=false size=4
 walk top.txt dir=false size=3
 read_dir a.txt a.txt
 read_dir deep deep
-read only: Denied(path: "x.txt")
-write only: Denied(path: "top.txt")
+read only: x.txt: permission denied
+write only: top.txt: permission denied
 temp starts with inner/tmp-: true
 exists true false
-remove non-empty: NotEmpty(path: "inner")
+remove non-empty: inner: directory not empty
 stat 3 true
 --- stderr

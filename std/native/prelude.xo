@@ -3444,3 +3444,68 @@ fn int_leading_zeros(n: Int) -> Int { rt.clz(n) }
 fn int_trailing_zeros(n: Int) -> Int { rt.ctz(n) }
 
 fn int_ones_count(n: Int) -> Int { rt.popcount(n) }
+
+// ---------------------------------------------------------------------------
+// Plain error messages (decision 0358): the Display of the prelude's
+// error enums; std/rt/errtext.go prints the same texts on the Go backend.
+
+/// path and what is wrong with it, or the text alone for an empty path.
+fn fs_text(path: Str, text: Str) -> Str {
+  if path.is_empty() {
+    return text
+  }
+  "${path}: ${text}"
+}
+
+fn fserr_display(e: FsErr) -> Str {
+  match e {
+    NotFound(path) => fs_text(path, "no such file or directory")
+    Exists(path) => fs_text(path, "file exists")
+    NotEmpty(path) => fs_text(path, "directory not empty")
+    NotDir(path) => fs_text(path, "not a directory")
+    IsDir(path) => fs_text(path, "is a directory")
+    Denied(path) => fs_text(path, "permission denied")
+    Io(path, msg) => fs_text(path, msg)
+    Canceled => "canceled"
+  }
+}
+
+fn neterr_display(e: NetErr) -> Str {
+  match e {
+    InvalidAddr(msg) => "invalid address: ${msg}"
+    Refused => "connection refused"
+    Timeout => "i/o timeout"
+    Io(msg) => msg
+    Canceled => "canceled"
+    Denied(addr) => "denied by Net.only: ${addr}"
+  }
+}
+
+fn ioerr_display(e: IoErr) -> Str {
+  match e {
+    Closed => "closed"
+    Io(msg) => msg
+    Canceled => "canceled"
+  }
+}
+
+fn enverr_display(e: EnvErr) -> Str {
+  match e {
+    Missing(name) => "${name} is not set"
+  }
+}
+
+fn procerr_display(e: ProcErr) -> Str {
+  match e {
+    NotFound(cmd) => "${cmd}: executable file not found"
+    Io(msg) => msg
+    Canceled => "canceled"
+    Denied(cmd) => "denied by Proc.only: ${cmd}"
+  }
+}
+
+fn clockerr_display(e: ClockErr) -> Str {
+  match e {
+    Canceled => "canceled"
+  }
+}
