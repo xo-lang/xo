@@ -1,7 +1,9 @@
 # 0316: an input-keyed program cache (XO_PROG_CACHE)
 
 Status: Superseded by 0236's run cache for `xo test` (2026-10-21, xo-fa);
-not pursued for `xo build`.
+not pursued for `xo build` then. Taken up for `xo build` and `xo run` by
+0360 (2026-10-23), once the language twins measured a warm build at
+0.57 s against Go's 0.08 s.
 
 The proposal: key a finished program on its inputs before the check, so
 an unchanged warm build skips the check, SSA passes and link (the warm

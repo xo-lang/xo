@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `XO_WHOLE_BUILD=on` (opt in, decision 0360 stage 1): `xo build` and
+  `xo run` of an unchanged program reuse its binary through the run cache
+  `xo test` uses, printing what the build printed (a warm build of a
+  small HTTP server 0.56 s to 0.056 s, hello 0.30 s to 0.044 s). `xo
+  test` of a program with a warning is now cached too, the warning
+  printed on each hit (it was never stored before).
+
 - A cold build writes its new cache entries as one shared pack segment
   instead of a file each (6,227 files to 638 for a small program, 0.687
   of the wall time on the Mac; Windows writes small files slowly).

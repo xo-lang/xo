@@ -312,6 +312,8 @@ fn main(os: Os) ! {
       o.run_key = run_key(os, ctx, o, args, backend)
       if let Some(hit) = run_fetch(os, ctx, o.run_key) {
         lap(os, o.phases, "run_cache", t0)
+        // the build's warnings, as it printed them (decision 0360)
+        replay_output(os, hit.output)
         let code = run_tests(os, hit.bin, hit.tests, o.topts)
         prof_tests(os, o.topts)
         os.fs.remove(hit.bin).ignore_err("a prune removes it later")
@@ -336,7 +338,43 @@ fn main(os: Os) ! {
       return
     }
   }
-  let nb = build_native(os, ctx, o, backend)
+  if o.cmd is "build" | "run" {
+    // the run cache for a build or run (decision 0360 stage 1,
+    // XO_WHOLE_BUILD=on): an unchanged program's binary, copied to the
+    // output or run, with what its build printed
+    let t0 = os.clock.now()
+    o.run_start = t0.unix_millis()
+    o.run_key = whole_key(os, ctx, o, args, backend)
+    if !o.run_key.is_empty() {
+      ctx.run_cache = whole_cache_dir(os, ctx)
+      var wc = ctx
+      wc.bin_cache = ctx.run_cache
+      if let Some(hit) = run_fetch(os, wc, o.run_key) {
+        lap(os, o.phases, "run_cache", t0)
+        if o.cmd == "run" {
+          replay_output(os, hit.output)
+          let code = run_built(os, o, hit.bin)
+          os.fs.remove(hit.bin).ignore_err("a prune removes it later")
+          os.proc.exit(code)
+        }
+        let ok = whole_build_hit(os, hit)
+        os.fs.remove(hit.bin).ignore_err("a prune removes it later")
+        if ok {
+          return
+        }
+      }
+      lap(os, o.phases, "run_cache_miss", t0)
+    }
+  }
+  // what a build stored in the run cache prints goes through a tee, for
+  // the entry (decision 0360)
+  var bos = os
+  if !o.run_key.is_empty() {
+    let tee = new_tee(os.stdio)
+    ctx.tee = Some(tee)
+    bos = tee_os(os, tee)
+  }
+  let nb = build_native(bos, ctx, o, backend)
   if o.cmd == "test" {
     var to = o.topts
     to.profile_dir = o.wd
@@ -354,38 +392,44 @@ fn main(os: Os) ! {
       os.stdio.eprintln("xo run: --record needs the Go backend")
       os.proc.exit(2)
     }
-    // --profile: the raw profile beside the binary, then xo-cpu.pprof and
-    // xo-heap.pprof (and their .txt) in the working directory (prof.xo,
-    // decision 0245)
-    let raw = "${nb.bin}.prof.xoraw"
-    var pe = if o.profile.is_empty() { [] } else { ["XO_PROF=${o.profile}", "XO_PROF_OUT=${raw}", "XO_PROF_QUIET=1"] }
-    if !o.profile.is_empty() {
-      os.fs.remove(raw).ignore_err("not there")
-    }
-    if !o.trace.is_empty() {
-      // --trace (decision 0240): the raw file, then its JSON and summary
-      pe.push("XO_TRACE=${o.trace}")
-    }
-    if o.topts.seed != 0 {
-      // the deterministic scheduler's seed (decision 0350, det.xo)
-      pe.push("XO_SEED=${o.topts.seed}")
-    }
-    let code = exec_binary(os, nb.bin, o.prog_args, pe)
-    if !o.profile.is_empty() {
-      // xo:allow XO0903 a path it cannot stat is not a file argument
-      if os.fs.exists(raw).ok() ?? false {
-        match prof_convert(os, raw, "xo-cpu.pprof", "xo-heap.pprof", false, false) {
-          Ok(_) => {}
-          Err(e) => os.stdio.eprintln("xo run: ${e}")
-        }
-      }
-      os.fs.remove(raw).ignore_err("not there")
-    }
-    if !o.trace.is_empty() {
-      let _t = trace_convert(os, o.trace, o.trace + ".json", false)
-    }
-    os.proc.exit(code)
+    os.proc.exit(run_built(os, o, nb.bin))
   }
+}
+
+/// Runs a built program for `xo run`: its arguments, --profile's and
+/// --trace's files and conversions, --seed; the program's exit code.
+fn run_built(os: Os, o: Opts, bin: Str) -> Int {
+  // --profile: the raw profile beside the binary, then xo-cpu.pprof and
+  // xo-heap.pprof (and their .txt) in the working directory (prof.xo,
+  // decision 0245)
+  let raw = "${bin}.prof.xoraw"
+  var pe = if o.profile.is_empty() { [] } else { ["XO_PROF=${o.profile}", "XO_PROF_OUT=${raw}", "XO_PROF_QUIET=1"] }
+  if !o.profile.is_empty() {
+    os.fs.remove(raw).ignore_err("not there")
+  }
+  if !o.trace.is_empty() {
+    // --trace (decision 0240): the raw file, then its JSON and summary
+    pe.push("XO_TRACE=${o.trace}")
+  }
+  if o.topts.seed != 0 {
+    // the deterministic scheduler's seed (decision 0350, det.xo)
+    pe.push("XO_SEED=${o.topts.seed}")
+  }
+  let code = exec_binary(os, bin, o.prog_args, pe)
+  if !o.profile.is_empty() {
+    // xo:allow XO0903 a path it cannot stat is not a file argument
+    if os.fs.exists(raw).ok() ?? false {
+      match prof_convert(os, raw, "xo-cpu.pprof", "xo-heap.pprof", false, false) {
+        Ok(_) => {}
+        Err(e) => os.stdio.eprintln("xo run: ${e}")
+      }
+    }
+    os.fs.remove(raw).ignore_err("not there")
+  }
+  if !o.trace.is_empty() {
+    let _t = trace_convert(os, o.trace, o.trace + ".json", false)
+  }
+  code
 }
 
 /// What a native build made: the host binary ("" for asm or another
@@ -1323,8 +1367,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     let p = arm64.generate_cached(gm, if march == "amd64" { "${tgoos}-amd64" } else { tgoos }, jobs, fc)
     t = lap(os, phases, "emit", t)
     if !fdir.is_empty() {
-      // a test build the run cache keys: the unchanged builds after it are
-      // served whole, so its first is the only one that can pack the parts
+      // a build the run cache keys (a test's, or a build's or run's under
+      // XO_WHOLE_BUILD=on): the unchanged builds after it are served
+      // whole, so its first is the only one that can pack the parts
       fn_cache_store(os, fdir, fpk, fc, p.stores, p.part_stores, !o.run_key.is_empty())
       cache_note(os, phases, "functions", p.reused, fc.keys.len())
       if !fc.part_keys.is_empty() {
@@ -1820,8 +1865,10 @@ fn finish(os: Os, ctx: Ctx, o: Opts, c: check.Checker, root: Str, bins: List[(St
   }
   if tests {
     let ts = test_infos(c, root, o.wd, fz)
-    if !o.run_key.is_empty() && c.diags.is_empty() {
-      run_store(os, ctx, o.run_key, c, o.std, o.wd, host_bin, ts, o.run_start)
+    if !o.run_key.is_empty() {
+      // with the warnings the build printed, which a hit prints again
+      // (decision 0360; a build with a warning was not stored before)
+      run_store(os, ctx, o.run_key, c, o.std, o.wd, host_bin, ts, RunOut{output: kept_output(ctx)}, o.run_start)
     }
     return Native{bin: host_bin, tests: ts, pc: c.parse_cache}
   }
@@ -1833,6 +1880,13 @@ fn finish(os: Os, ctx: Ctx, o: Opts, c: check.Checker, root: Str, bins: List[(St
         os.stdio.println("${tg}: ${p}")
       }
     }
+  }
+  if !o.run_key.is_empty() && !ctx.run_cache.is_empty() && bins.len() == 1 {
+    // a build's or run's entry (decision 0360 stage 1): a build's output
+    // paths, so a hit writes them
+    var wc = ctx
+    wc.bin_cache = ctx.run_cache
+    run_store(os, wc, o.run_key, c, o.std, o.wd, host_bin, [], RunOut{output: kept_output(ctx), outs: if o.cmd == "build" { bins } else { [] }}, o.run_start)
   }
   Native{bin: host_bin, bins: bins, pc: c.parse_cache}
 }

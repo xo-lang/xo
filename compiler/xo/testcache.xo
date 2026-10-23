@@ -11,8 +11,16 @@
 // xo.work.lock from the working directory up. An entry is used only
 // when all of them still match. It lives in the bin cache (XO_BIN_CACHE,
 // run/<key>.m and run/<key>.bin), so `XO_BIN_CACHE=off` turns it off.
-// A build that printed diagnostics (warnings) is not stored, so a hit
-// never hides one, nor is one whose inputs changed while it ran.
+// The entry keeps the warnings the build printed and a hit prints them
+// again, so a hit never hides one (decision 0360; before, a build with
+// a warning was not stored, and such a program never hit). A build whose
+// inputs changed while it ran is not stored.
+//
+// `xo build` and `xo run` use the same entries under XO_WHOLE_BUILD=on
+// (decision 0360 stage 1): the key's command line is theirs (it names
+// the subcommand, so their entries never meet a test run's), an entry
+// also keeps the outputs a build wrote (target and path), and a hit
+// copies the binary to each output, or runs it.
 
 use github.com/xo-lang/xo/compiler/check
 use github.com/xo-lang/xo/compiler/prune
@@ -23,6 +31,23 @@ use github.com/xo-lang/xo/compiler/hostpath
 struct RunHit {
   bin: Str
   tests: List[TestInfo]
+  /// what the build printed (Tee.text: its warnings, a build's output
+  /// lines or --json report), printed again on a hit
+  output: Str = ""
+  /// the outputs a `xo build` wrote: (target, path)
+  outs: List[(Str, Str)] = []
+}
+
+/// What a build stores beside its binary (run_store).
+struct RunOut {
+  output: Str = ""
+  outs: List[(Str, Str)] = []
+}
+
+/// Whether `xo build` and `xo run` use the run cache (decision 0360
+/// stage 1, opt in while it is measured).
+fn whole_build_on(os: Os) -> Bool {
+  (os.env.get("XO_WHOLE_BUILD") ?? "") == "on"
 }
 
 /// The flags of `xo test` that only change how the tests run, not the
@@ -51,7 +76,9 @@ fn run_key(os: Os, ctx: Ctx, o: Opts, args: List[Str], backend: Str) -> Str {
   k.str(backend)
   k.str(o.wd)
   k.str(o.std)
-  // the command line, without the flags that only change the run
+  // the command line, without the flags that only change the run (a
+  // test's), or the report (--phase-times), and without a `xo run`
+  // program's arguments
   var kept: List[Str] = []
   var skip_next = false
   for a in args {
@@ -59,10 +86,13 @@ fn run_key(os: Os, ctx: Ctx, o: Opts, args: List[Str], backend: Str) -> Str {
       skip_next = false
       continue
     }
+    if a == "--" && o.cmd == "run" {
+      break
+    }
     if a.starts_with("-") && a != "-" {
       let body = a.trim_prefix("-").trim_prefix("-")
       let name = body.split("=")[0]
-      if run_only_flag(name) {
+      if (o.cmd == "test" && run_only_flag(name)) || name == "phase-times" {
         skip_next = run_flag_takes_value(name) && !body.contains("=")
         continue
       }
@@ -156,6 +186,8 @@ fn run_fetch(os: Os, ctx: Ctx, key: Str) -> RunHit? {
     _ => return None
   }
   var tests: List[TestInfo] = []
+  var output = ""
+  var outs: List[(Str, Str)] = []
   var head = false
   for l in text.split("\n") {
     if l.is_empty() {
@@ -172,6 +204,10 @@ fn run_fetch(os: Os, ctx: Ctx, key: Str) -> RunHit? {
       if listing_of(os, unhex_field(f[2])) != f[1] {
         return None
       }
+    } else if f[0] == "output" && f.len() == 2 {
+      output = unhex_field(f[1])
+    } else if f[0] == "out" && f.len() == 3 {
+      outs.push((unhex_field(f[1]), unhex_field(f[2])))
     } else if f[0] == "test" && f.len() == 10 {
       let eff = unhex_field(f[7])
       tests.push(TestInfo{index: Int.parse(f[2]) ?? -1, name: unhex_field(f[1]), module: unhex_field(f[3]), dir: unhex_field(f[4]), loc: unhex_field(f[5]), seed: Int.parse(f[6]) ?? 0, effects: if eff.is_empty() { [] } else { eff.split(",") }, prop: f[8] == "1", skip: unhex_field(f[9])})
@@ -195,7 +231,7 @@ fn run_fetch(os: Os, ctx: Ctx, key: Str) -> RunHit? {
       return None
     }
   }
-  Some(RunHit{bin: run, tests: tests})
+  Some(RunHit{bin: run, tests: tests, output: output, outs: outs})
 }
 
 /// The files and directories a test build of c read (run_fetch's
@@ -264,7 +300,7 @@ fn run_inputs(os: Os, c: check.Checker, std: Str, wd: Str) -> (List[Str], List[S
 /// Stores the run of key: bin, its tests, and the inputs c read, with
 /// their contents now. Not when an input changed after start (the build
 /// may have read the older contents).
-fn run_store(os: Os, ctx: Ctx, key: Str, c: check.Checker, std: Str, wd: Str, bin: Str, tests: List[TestInfo], start: Int) {
+fn run_store(os: Os, ctx: Ctx, key: Str, c: check.Checker, std: Str, wd: Str, bin: Str, tests: List[TestInfo], ro: RunOut, start: Int) {
   if key.is_empty() || bin.is_empty() {
     return
   }
@@ -274,7 +310,16 @@ fn run_store(os: Os, ctx: Ctx, key: Str, c: check.Checker, std: Str, wd: Str, bi
   }
   var b = StrBuilder.new()
   b.write("xo-testrun-v1\n")
+  // a build's own outputs are not its inputs: `xo build -o prog .`
+  // writes into the module's directory (its listing keeps the name)
+  var outputs: Map[Str, Bool] = {}
+  for (_, o) in ro.outs {
+    outputs[abs_path(wd, o)] = true
+  }
   for p in files {
+    if outputs.contains(p) {
+      continue
+    }
     match os.fs.stat(p) {
       Ok(Some(fi)) => {
         if fi.modified.unix_millis() >= start {
@@ -287,6 +332,12 @@ fn run_store(os: Os, ctx: Ctx, key: Str, c: check.Checker, std: Str, wd: Str, bi
   }
   for d in dirs {
     b.write("dir ${listing_of(os, d)} ${hex_field(d)}\n")
+  }
+  if !ro.output.is_empty() {
+    b.write("output ${hex_field(ro.output)}\n")
+  }
+  for (tg, p) in ro.outs {
+    b.write("out ${hex_field(tg)} ${hex_field(p)}\n")
   }
   for t in tests {
     b.write("test ${hex_field(t.name)} ${t.index} ${hex_field(t.module)} ${hex_field(t.dir)} ${hex_field(t.loc)} ${t.seed} ${hex_field(t.effects.join(","))} ${if t.prop { "1" } else { "0" }} ${hex_field(t.skip)}\n")

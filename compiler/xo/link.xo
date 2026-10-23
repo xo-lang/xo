@@ -26,6 +26,11 @@ struct Ctx {
   // sent once the outputs are in place (finish): the stop watcher then
   // leaves a SIGINT to the program xo run or xo test runs
   build_done: Chan[()]? = None
+  // a build stored in the run cache (decision 0360): what it printed,
+  // kept for the entry, and the entries' directory when it is not
+  // bin_cache (a build's or run's: whole_cache_dir)
+  tee: Tee? = None
+  run_cache: Str = ""
 }
 
 /// The OS the link of ctx targets: the host unless a cross build set it.

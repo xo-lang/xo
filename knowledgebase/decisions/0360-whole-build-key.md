@@ -2,8 +2,53 @@
 
 Status: Proposed (Xo Lang 2, 2026-10-23): 0351's stage 3. The lead
 approved stages 1 and 2 (opt-in, `XO_WHOLE_BUILD=on`) on 2026-10-23,
-with content hashing by default and the stat path opt-in (below);
-stage 3, on by default, goes to the owner with stage 2's numbers.
+with content hashing by default and the stat path opt-in (below), then
+reversed their order once 0236's run cache turned up (see "Stage 1, as
+built"); stage 3, on by default, goes to the owner with stage 2's
+numbers. For `xo build` this takes up what 0316 left as "not pursued"
+(no warm case had measured as a problem; the language twins measured
+one).
+
+## Stage 1, as built (2026-10-23)
+
+Decision 0236's run cache (compiler/xo testcache.xo) already did this for
+`xo test`: a key known before the check (xo's self_id, the command line
+less the run-only flags, every XO_ variable, PATH, HOME, CC, the SDK and
+the C tools' identities) and an entry listing every std file, each module
+directory's files and listing, the embedded files and the module files up
+from the working directory, each with its SHA-256, compared on every
+lookup (so the content-hash default holds, and a same-size edit with its
+time put back misses). Stage 1 reuses it for `xo build` and `xo run`
+under `XO_WHOLE_BUILD=on`:
+
+- the key is run_key's, the command line naming the subcommand (and, for
+  `xo run`, without the program's arguments after `--`);
+- the build's standard output and error go through a tee (`Os{stdio:
+  tee, ...}`, decision 0307) and are kept in the entry, without xo's own
+  reports (--phase-times and XO_FE_STATS lines); a hit prints them again,
+  so its warnings and `os/arch: path` line are the build's;
+- the entry keeps the outputs a build wrote, and a hit copies the binary
+  to each by a temporary file and a rename; a run's hit runs it;
+- a build's own output is left out of its inputs (`-o prog` inside the
+  module directory);
+- `xo test` keeps its build's output the same way, so a program with a
+  warning is now stored (before, a build that printed a diagnostic was
+  never stored, and such a program never hit: the CRUD server's warm `xo
+  test` was 0.77 s every time, now 0.17 s).
+
+Results (bench/results/whole-build-2026-10-23.md, `xo bench --ab`, warm):
+the CRUD server's build 560 to 56 ms wall (0.099), 1,740 to 40 ms CPU,
+546 to 17 MB peak memory; hello's 301 to 44 ms (0.144). The lookup is 28
+to 35 ms of a hit: it hashes the whole std tree. Not as designed above:
+the key holds the working directory and the full command line, so the
+same program built from another directory or into another output misses
+(safe, and the common edit loop stays in one directory).
+
+Stage 2, from here: the Fs, Env and Proc recorders replace the hand list
+for both caches, so the manifest holds the about 200 files a build reads
+instead of the whole std tree (the lookup should fall toward the 10 to
+30 ms estimated below), and probes a list misses are covered; verify mode
+(`XO_BACKEND_CACHE=verify` rebuilds on a hit and compares) comes with it.
 
 ## Context
 

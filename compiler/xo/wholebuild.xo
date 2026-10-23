@@ -1,0 +1,156 @@
+// `xo build` and `xo run` through the run cache (decision 0360 stage 1,
+// opt in with XO_WHOLE_BUILD=on): the key and the input list of `xo
+// test`'s run cache (testcache.xo), so an unchanged program skips the
+// check, the passes and the link. The build's standard output and error
+// are kept with the binary and a hit prints them again, so a hit shows
+// the build's warnings and its output lines as the build did.
+
+/// Standard output and error of a build, kept in order while they are
+/// written through: (true for standard error, the text).
+struct Tee {
+  inner: Stdio
+  rec: Mutex[List[(Bool, Str)]]
+}
+
+fn new_tee(inner: Stdio) -> Tee {
+  Tee{inner: inner, rec: Mutex[List[(Bool, Str)]].new([])}
+}
+
+/// Keeps text, but not xo's own reports (--phase-times' "phase ..."
+/// lines and XO_FE_STATS' "cache ..." and "fe ..." ones): they describe
+/// this build, and --phase-times is not in the key.
+fn (t: Tee) keep(err: Bool, text: Str) {
+  if err && (text.starts_with("phase ") || text.starts_with("cache ") || text.starts_with("fe ")) {
+    return
+  }
+  t.rec.with(fn(var r) { r.push((err, text)) })
+}
+
+/// os with its standard output and error through tee.
+fn tee_os(os: Os, tee: Tee) -> Os {
+  Os{net: os.net, fs: os.fs, clock: os.clock, rand: os.rand, env: os.env, proc: os.proc, stdio: tee, tasks: os.tasks}
+}
+
+fn (t: Tee) print(text: Str) uses stdio {
+  t.inner.print(text)
+  t.keep(false, text)
+}
+
+fn (t: Tee) println(text: Str) uses stdio {
+  t.inner.println(text)
+  t.keep(false, "${text}\n")
+}
+
+fn (t: Tee) eprint(text: Str) uses stdio {
+  t.inner.eprint(text)
+  t.keep(true, text)
+}
+
+fn (t: Tee) eprintln(text: Str) uses stdio {
+  t.inner.eprintln(text)
+  t.keep(true, "${text}\n")
+}
+
+fn (t: Tee) write(data: Bytes) -> () ! IoErr uses stdio {
+  t.inner.write(data)?
+  t.keep(false, data.to_str() ?? "")
+}
+
+fn (t: Tee) read_line() -> Str? ! IoErr uses stdio { t.inner.read_line() }
+fn (t: Tee) read_all() -> Str ! IoErr uses stdio { t.inner.read_all() }
+fn (t: Tee) lines() -> List[Str] ! IoErr uses stdio { t.inner.lines() }
+fn (t: Tee) stdin_is_tty() -> Bool uses stdio { t.inner.stdin_is_tty() }
+fn (t: Tee) stdout_is_tty() -> Bool uses stdio { t.inner.stdout_is_tty() }
+fn (t: Tee) stderr_is_tty() -> Bool uses stdio { t.inner.stderr_is_tty() }
+fn (t: Tee) width() -> Int? uses stdio { t.inner.width() }
+fn (t: Tee) read_secret(prompt: Str) -> Str? ! IoErr uses stdio { t.inner.read_secret(prompt) }
+fn (t: Tee) read_bytes(max: Int) -> Bytes? ! IoErr uses stdio { t.inner.read_bytes(max) }
+fn (t: Tee) read_all_bytes() -> Bytes ! IoErr uses stdio { t.inner.read_all_bytes() }
+
+/// The output kept so far, as stored in an entry: a line "e TEXT" or "o
+/// TEXT" per write, the text hex encoded.
+fn (t: Tee) text() -> Str {
+  let chunks = t.rec.with(fn(r) { r })
+  var b = StrBuilder.new()
+  for (err, s) in chunks {
+    b.write("${if err { "e" } else { "o" }} ${s.bytes().to_hex()}\n")
+  }
+  b.freeze()
+}
+
+/// Prints an entry's kept output (Tee.text) again, in its order.
+fn replay_output(os: Os, kept: Str) {
+  for l in kept.split("\n") {
+    if l.len() < 2 {
+      continue
+    }
+    let s = match Bytes.from_hex(l[2..]) {
+      Some(b) => b.to_str() ?? ""
+      None => ""
+    }
+    if l.starts_with("e ") {
+      os.stdio.eprint(s)
+    } else {
+      os.stdio.print(s)
+    }
+  }
+}
+
+/// Where the entries of `xo build` and `xo run` live: the bin cache when
+/// XO_BIN_CACHE names one, else the test runs' default (bin_cache_dir), so
+/// the run cache's prune keeps them all under one cap.
+fn whole_cache_dir(os: Os, ctx: Ctx) -> Str {
+  bin_cache_dir(os, ctx, true)
+}
+
+/// The whole-build key of a build or run (run_key's, under the entries'
+/// directory), "" when it does not apply: the opt in is off, a test,
+/// several targets, a profile of xo itself, or --watch.
+fn whole_key(os: Os, ctx: Ctx, o: Opts, args: List[Str], backend: Str) -> Str {
+  if !whole_build_on(os) || !(o.cmd is "build" | "run") || o.part_of_many || o.watch {
+    return ""
+  }
+  if !o.targets.is_empty() && (o.targets == "all" || o.targets.contains(",")) {
+    return ""
+  }
+  var wc = ctx
+  wc.bin_cache = whole_cache_dir(os, ctx)
+  run_key(os, wc, o, args, backend)
+}
+
+/// A build's hit: the stored binary copied to each output it wrote (by a
+/// temporary file and a rename, so two builds of one output never leave a
+/// torn file), its output printed again. false when an output cannot be
+/// written (the build then runs).
+fn whole_build_hit(os: Os, hit: RunHit) -> Bool {
+  if hit.outs.is_empty() {
+    return false
+  }
+  for (_, p) in hit.outs {
+    let tmp = "${p}.tmp-${os.rand.bytes(6).to_hex()}"
+    match os.fs.copy(hit.bin, tmp) {
+      Ok(_) => {}
+      Err(_) => {
+        os.fs.remove(tmp).ignore_err("a failed copy")
+        return false
+      }
+    }
+    match os.fs.rename(tmp, p) {
+      Ok(_) => {}
+      Err(_) => {
+        os.fs.remove(tmp).ignore_err("a failed rename")
+        return false
+      }
+    }
+  }
+  replay_output(os, hit.output)
+  true
+}
+
+/// What the build printed so far through ctx's tee, "" without one.
+fn kept_output(ctx: Ctx) -> Str {
+  match ctx.tee {
+    Some(t) => t.text()
+    None => ""
+  }
+}
