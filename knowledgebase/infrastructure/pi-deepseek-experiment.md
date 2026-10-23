@@ -164,6 +164,12 @@ Each finding: what, evidence, fix. Status in brackets.
   allowed from any directory for a `/tmp/pi-*` tree without `--force`;
   every other remove, `prune` and `move` is blocked.
 
+- 2026-10-23, task 2 (Str.fields) start: xo-guard blocked `./bin/xo build
+  --help` as a heavy run (a false positive; help, version and `-list` now
+  pass). This time DeepSeek reported the block with what it was trying and
+  a scope question, did not retry, and ended its turn to wait: the "a
+  block ends the attempt" rule worked on the first block after it was added.
+
 ## Observations
 
 - DeepSeek routes around a guard block when it sees a path the guard does
