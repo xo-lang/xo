@@ -164,9 +164,10 @@ func runProp(t *testing.T, bin, dir string) string {
 // normStderr removes from a program's standard error only what
 // legitimately differs between backends, and keeps every other line:
 //
-//   - the frames under a `fault:` or `error:` line (indented lines): the
-//     Go backend prints Go's call stack (mangled function names, then
-//     file:line), native backends print none;
+//   - the frames under a `fault:` or `error:` line (indented lines, and
+//     the native backends' `traceback:` header before them): the Go
+//     backend prints Go's call stack (mangled function names, then
+//     file:line), native backends their own;
 //   - `crash bundle: PATH` lines: the path holds a time stamp, and only
 //     the Go backend writes a bundle;
 //   - the location of the deadlock fault XO-F001 and its list of blocked
@@ -186,6 +187,10 @@ func normStderr(s string) string {
 		case blocked && !strings.HasPrefix(l, "crash bundle: "):
 			continue
 		case frames && (strings.HasPrefix(l, " ") || strings.HasPrefix(l, "\t")):
+			continue
+		case frames && l == "traceback:\n":
+			// the native backends' traceback header (by default since
+			// dea6cca39, 2026-10-22); its frames are indented
 			continue
 		case strings.HasPrefix(l, "crash bundle: "):
 			continue
@@ -249,6 +254,13 @@ func TestNormStderr(t *testing.T) {
 	native := "fault: integer overflow: 3 * 4 does not fit Int at main.xo:2:3\n"
 	if a, b := normStderr(goOut), normStderr(native); a != b {
 		t.Errorf("the Go and native faults differ after normStderr:\n%q\n%q", a, b)
+	}
+	// a native fault's traceback (by default since 2026-10-22): header and
+	// frames dropped, as the Go backend's frames are (TestArithProperty
+	// failed every faulting seed on the full tier)
+	tb := "fault: integer overflow: 3 * 4 does not fit Int at main.xo:2:3\ntraceback:\n  f0 (main.xo:2) [inlined]\n  main (main.xo:9)\n"
+	if a, b := normStderr(goOut), normStderr(tb); a != b {
+		t.Errorf("the Go fault and the native one with its traceback differ after normStderr:\n%q\n%q", a, b)
 	}
 	if got := normStderr("fault: XO-F001: deadlock at main.xo:3:1\nblocked:\nmain blocked in select at main.xo:52\n\ncrash bundle: x\n"); got != "fault: XO-F001: deadlock\n" {
 		t.Errorf("deadlock: %q", got)
