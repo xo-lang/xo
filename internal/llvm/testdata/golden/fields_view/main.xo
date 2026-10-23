@@ -1,0 +1,17 @@
+// Str.fields on a view: a slice of a longer text, split around runs of
+// Unicode white space (U+2000 to U+200A, U+0085, U+00A0, U+3000 as well as
+// ASCII space, tab and newline), with the pieces compared, lengthed and
+// concatenated like split's views (decision 0330).
+fn main(os: Os) {
+  let text = " \t alpha\u{2000}beta\u{3000}\n gamma\u{85}δ\u{a0} "
+  let long = "  " + text + "  "
+  let view = long[2..(long.len() - 2)]
+  let fs = view.fields()
+  os.stdio.println("${fs.len()} [${fs[0]}] [${fs[1]}] [${fs[2]}] [${fs[3]}]")
+  os.stdio.println("${fs[0].len()} ${fs[1].len()} ${fs[2].len()} ${fs[3].len()}")
+  os.stdio.println("${fs[1] == "beta"} ${fs[2] == "gamma"} ${fs[3] == "δ"}")
+  var b = fs[0]
+  b = b + "!"
+  os.stdio.println("${b} ${fs[0]}")
+  os.stdio.println("${view.len()} ${long.len()}")
+}

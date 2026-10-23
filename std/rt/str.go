@@ -89,6 +89,10 @@ func Str_find(_ *Task, s, sub string) Option[int64] {
 // Str_split is `s.split(sep)`.
 func Str_split(_ *Task, s, sep string) List[string] { return ListOf(strings.Split(s, sep)...) }
 
+// Str_fields is `s.fields()`: the runs of non-white-space text
+// (strings.Fields, unicode.IsSpace).
+func Str_fields(_ *Task, s string) List[string] { return ListOf(strings.Fields(s)...) }
+
 // Str_lines is `s.lines()`: splits on \n and strips a trailing \r. A final
 // newline does not produce an empty last line.
 func Str_lines(_ *Task, s string) List[string] {

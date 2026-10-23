@@ -83,6 +83,7 @@ var (
 	_ func(*Task, string, string) Option[int64]                     = Str_find
 	_ func(*Task, string, string) Option[int64]                     = Str_rfind
 	_ func(*Task, string, string) List[string]                      = Str_split
+	_ func(*Task, string) List[string]                              = Str_fields
 	_ func(*Task, string) List[string]                              = Str_lines
 	_ func(*Task, string) string                                    = Str_trim
 	_ func(*Task, string) string                                    = Str_trim_start

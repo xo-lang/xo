@@ -261,6 +261,9 @@ fn (s: Str) find(sub: Str) -> Int?
 /// The byte offset of the last sub (strings.LastIndex); Some(s.len()) for "".
 fn (s: Str) rfind(sub: Str) -> Int?
 fn (s: Str) split(sep: Str) -> List[Str]
+/// The runs of non-white-space text, split around runs of white space
+/// (strings.Fields, unicode.IsSpace); pieces are views of s like split's.
+fn (s: Str) fields() -> List[Str]
 fn (s: Str) lines() -> List[Str]
 fn (s: Str) trim() -> Str
 fn (s: Str) trim_start() -> Str

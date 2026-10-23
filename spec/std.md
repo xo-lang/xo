@@ -176,10 +176,11 @@ fn (s: Str) ends_with(p: Str) -> Bool
 fn (s: Str) find(sub: Str) -> Int?           // byte offset
 fn (s: Str) rfind(sub: Str) -> Int?          // the last sub's byte offset (strings.LastIndex); Some(s.len()) for ""
 fn (s: Str) split(sep: Str) -> List[Str]
+fn (s: Str) fields() -> List[Str]            // runs of non-white-space text (strings.Fields, unicode.IsSpace)
 fn (s: Str) lines() -> List[Str]             // splits on \n, strips \r
 fn (s: Str) trim() -> Str                    // also trim_start, trim_end
 fn (s: Str) trim_prefix(p: Str) -> Str       // also trim_suffix
-// split, lines, trim*, trim_prefix and trim_suffix return views of s on native
+// split, fields, lines, trim*, trim_prefix and trim_suffix return views of s on native
 // targets (O(1) per piece, no copy; a piece keeps s alive), as slices do (core 3.6)
 fn (s: Str) to_lower() -> Str                // also to_upper (Unicode aware)
 fn (s: Str) replace(old: Str, new: Str) -> Str
@@ -4003,7 +4004,7 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
 
 Every function and method of std/prelude.xo, by type, as declared there
 (the sections above explain them); interface methods take `self`.
-364 declarations.
+365 declarations.
 
 ### Range
 
@@ -4176,6 +4177,7 @@ fn (s: Str) ends_with(p: Str) -> Bool
 fn (s: Str) find(sub: Str) -> Int?
 fn (s: Str) rfind(sub: Str) -> Int?
 fn (s: Str) split(sep: Str) -> List[Str]
+fn (s: Str) fields() -> List[Str]
 fn (s: Str) lines() -> List[Str]
 fn (s: Str) trim() -> Str
 fn (s: Str) trim_start() -> Str

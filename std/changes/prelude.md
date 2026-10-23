@@ -1,5 +1,26 @@
 # prelude changes
 
+## 2026-10-23: feature: Str.fields (strings.Fields)
+
+- Kind: feature
+- Commit: this commit
+- Found by: lead request; Str had split and lines but no fields
+- Go reference: strings.Fields (unicode.IsSpace)
+- Test: corpus/strsearch (arm64 and LLVM), golden fields_view (arm64, LLVM, Go parity, and wasm under Node)
+
+`Str.fields()` returns the runs of non-white-space text, split around runs
+of Unicode white space as `unicode.IsSpace` defines it, like Go's
+`strings.Fields`. It is declared in std/prelude.xo, implemented in Xo in
+std/native/llrt/strings.xo (ASCII bytes take a byte path; only a non-ASCII
+byte decodes a rune), and on the Go backend by strings.Fields in std/rt.
+Pieces are views of s on native targets, as split's are (decision 0330),
+and the corpus and golden check a slice of a longer Str. The corpus adds
+Go's fieldstests, 3000 seeded random texts over every Unicode space class
+(U+0085, U+00A0, U+1680, U+2000 to U+200A, U+2028, U+2029, U+202F, U+205F,
+U+3000) and a view test; all backends match Go. Wasm needs no special
+path: the fields_view golden builds with --backend=wasm and prints the same
+output under Node's WASI.
+
 ## 2026-10-23: test: Str find, rfind, contains, split, replace and List[Str].join against Go's strings
 
 - Kind: test

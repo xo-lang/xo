@@ -61,6 +61,59 @@ fn is_space(r: Int) -> Bool {
   unicode.is_space(r)
 }
 
+/// Whether c, a byte, is ASCII white space (unicode.IsSpace's ASCII set).
+fn ascii_space(c: Int) -> Bool { c == 32 || (c >= 9 && c <= 13) }
+
+/// strings.Fields: the runs of non-white-space text, split around runs of
+/// white space (unicode.IsSpace), as views of s. ASCII takes the byte path
+/// of Go's fast path; only a non-ASCII byte decodes a rune.
+pub fn fields(s: Str) -> List[Str] {
+  var out: List[Str] = []
+  let n = s.len()
+  let b = s.bytes()
+  var i = 0
+  while i < n {
+    // skip a run of white space
+    while i < n {
+      let c = Int(b[i])
+      if c < 0x80 {
+        if ascii_space(c) {
+          i += 1
+          continue
+        }
+        break
+      }
+      let p = unicode.decode(b, i)
+      if (p & 7) == 1 || !is_space(p >> 3) {
+        break
+      }
+      i += p & 7
+    }
+    if i >= n {
+      break
+    }
+    let start = i
+    // the field runs to the next white space
+    while i < n {
+      let c = Int(b[i])
+      if c < 0x80 {
+        if ascii_space(c) {
+          break
+        }
+        i += 1
+      } else {
+        let p = unicode.decode(b, i)
+        if (p & 7) != 1 && is_space(p >> 3) {
+          break
+        }
+        i += p & 7
+      }
+    }
+    out.push(raw.str_cut(s, start, i))
+  }
+  out
+}
+
 /// The start of the bytes of b from lo to hi after their leading white
 /// space (an invalid byte is not space).
 pub fn space_end(b: Bytes, lo: Int, hi: Int) -> Int {

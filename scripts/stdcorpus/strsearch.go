@@ -98,6 +98,19 @@ func goSplitCases() []strsearchCase {
 	return cs
 }
 
+// goFieldsCases are Go's strings_test.go fieldstests (FieldsTest); only
+// the input is used, since Str.fields takes no argument. Go's strings tests
+// are Copyright 2009 The Go Authors, BSD-style license.
+func goFieldsCases() []string {
+	return []string{
+		"", " ", " \t ", "\u2000", "  abc  ", "1 2 3 4", "1  2  3  4",
+		"1\t\t2\t\t3\t4", "1\u20002\u20013\u20024", "\u2000\u2001\u2002",
+		"\n™\t™\n", "\n\u20001™2\u2000 \u2001™",
+		"\n1\uFFFD \uFFFD2\u20003\uFFFD4", "1\xFF\u2000\xFF2\xFF \xFF",
+		"☺☻☹",
+	}
+}
+
 // strsearchReplace is one (s, old, new) input of Str.replace.
 type strsearchReplace struct{ s, old, new string }
 
@@ -184,6 +197,37 @@ func strsearchRandomSplit(r *rand.Rand) strsearchCase {
 	return strsearchCase{s, sep}
 }
 
+// strsearchFieldAlphabet covers every class of unicode.IsSpace, the ASCII
+// set and U+0085, U+00A0, U+1680, U+2000 to U+200A, U+2028, U+2029, U+202F,
+// U+205F and U+3000, beside non-space text and invalid bytes (U+FFFD in a
+// Str, decision 0259). U+0000 and U+001F are left out: the list and record
+// separators.
+var strsearchFieldAlphabet = []string{
+	"a", "b", "c", "A", "0", "-", ",", ".", "/", "é", "日", "☺", "\x80", "\xff",
+	"\t", "\n", "\v", "\f", "\r", " ",
+	"\u0085", "\u00a0", "\u1680", "\u2000", "\u2001", "\u2002", "\u2003",
+	"\u2004", "\u2005", "\u2006", "\u2007", "\u2008", "\u2009", "\u200a",
+	"\u2028", "\u2029", "\u202f", "\u205f", "\u3000",
+}
+
+// strsearchRandomFields is a random text over strsearchFieldAlphabet, so runs
+// of ASCII space, runs of non-ASCII space, a leading or trailing run, and
+// non-space text between them all occur.
+func strsearchRandomFields(r *rand.Rand) string {
+	var b strings.Builder
+	n := strsearchLen(r)
+	if r.Intn(4) == 0 {
+		b.WriteString("\u2000")
+	}
+	for i := 0; i < n; i++ {
+		b.WriteString(strsearchFieldAlphabet[r.Intn(len(strsearchFieldAlphabet))])
+	}
+	if r.Intn(4) == 0 {
+		b.WriteString("\u3000")
+	}
+	return b.String()
+}
+
 // strsearchRandomReplace is a random (s, old, new): old is unrelated, empty
 // or a piece of s, so replace all, no match and the empty old insertion
 // before each UTF-8 sequence are covered.
@@ -211,8 +255,14 @@ func strsearchOracleIndex(c strsearchCase) string {
 
 // strsearchOracleSplit is Go's Split(s, sep) as its length and its pieces
 // joined by U+0000, so an empty list differs from one empty piece.
-func strsearchOracleSplit(c strsearchCase) string {
-	parts := strings.Split(c.s, c.sep)
+func strsearchOracleSplit(c strsearchCase) string { return strsearchList(strings.Split(c.s, c.sep)) }
+
+// strsearchOracleFields is Go's Fields(s) in strsearchList's form.
+func strsearchOracleFields(s string) string { return strsearchList(strings.Fields(s)) }
+
+// strsearchList is parts as its length and its pieces joined by U+0000, so
+// an empty list differs from one empty piece.
+func strsearchList(parts []string) string {
 	return fmt.Sprintf("%d\x1f%s", len(parts), strings.Join(parts, "\x00"))
 }
 
@@ -226,7 +276,7 @@ func strsearchText(c strsearchCase) strsearchCase { return strsearchCase{textOf(
 func strsearchCorpus() string {
 	r := rand.New(rand.NewSource(31))
 	var o strings.Builder
-	o.WriteString(header("strings.Index, LastIndex, Contains, Split, ReplaceAll and Join on the inputs of Go's strings_test.go (indexTests, lastIndexTests, splittests, ReplaceTests) and on seeded random inputs, against Str.find, rfind, contains, split, replace and List[Str].join (Go's strings tests are Copyright 2009 The Go Authors, BSD-style license)"))
+	o.WriteString(header("strings.Index, LastIndex, Contains, Split, Fields, ReplaceAll and Join on the inputs of Go's strings_test.go (indexTests, lastIndexTests, splittests, fieldstests, ReplaceTests) and on seeded random inputs, against Str.find, rfind, contains, split, fields, replace and List[Str].join (Go's strings tests are Copyright 2009 The Go Authors, BSD-style license)"))
 
 	// index, rfind and contains
 	idx := goIndexCases()
@@ -249,6 +299,19 @@ func strsearchCorpus() string {
 	for _, c := range sp {
 		c = strsearchText(c)
 		fmt.Fprintf(&o, "  (%s, %s, %s),\n", xq(c.s), xq(c.sep), xq(strsearchOracleSplit(c)))
+	}
+	o.WriteString("]\n")
+
+	// fields (its own seed, so the later corpora keep their random inputs)
+	fd := goFieldsCases()
+	rf := rand.New(rand.NewSource(37))
+	for i := 0; i < 3000; i++ {
+		fd = append(fd, strsearchRandomFields(rf))
+	}
+	o.WriteString("\n/// (s, Go's Fields as its length and its pieces joined by U+0000, joined by U+001F)\nconst FIELDS_CASES: List[(Str, Str)] = [\n")
+	for _, s := range fd {
+		s = textOf(s)
+		fmt.Fprintf(&o, "  (%s, %s),\n", xq(s), xq(strsearchOracleFields(s)))
 	}
 	o.WriteString("]\n")
 
@@ -304,6 +367,10 @@ fn show3(bad: List[(Str, Str, Str, Str)]) -> List[(Str, Str, Str, Str)] {
   bad[0..(if bad.len() < 20 { bad.len() } else { 20 })]
 }
 
+fn show2(bad: List[(Str, Str, Str)]) -> List[(Str, Str, Str)] {
+  bad[0..(if bad.len() < 20 { bad.len() } else { 20 })]
+}
+
 test "find, rfind and contains are Go's Index, LastIndex and Contains" {
   var bad: List[(Str, Str, Str, Str)] = []
   for (s, sub, want) in INDEX_CASES {
@@ -354,6 +421,30 @@ test "split on a view of a longer text, and join puts the pieces back" {
     }
   }
   expect(show3(bad)) == []
+}
+
+test "fields is Go's Fields" {
+  var bad: List[(Str, Str, Str)] = []
+  for (s, want) in FIELDS_CASES {
+    let got = list_of(s.fields())
+    if got != want {
+      bad.push((s, got, want))
+    }
+  }
+  expect(show2(bad)) == []
+}
+
+test "fields on a view of a longer text" {
+  var bad: List[(Str, Str, Str)] = []
+  for (s, want) in FIELDS_CASES {
+    let long = "  " + s + "  "
+    let view = long[2..(long.len() - 2)]
+    let got = list_of(view.fields())
+    if got != want {
+      bad.push((s, got, want))
+    }
+  }
+  expect(show2(bad)) == []
 }
 
 test "replace is Go's ReplaceAll" {

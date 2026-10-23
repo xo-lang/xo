@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+4 [alpha] [beta] [gamma] [δ]
+5 4 5 2
+true true true
+alpha! alpha
+32 36
+--- stderr
