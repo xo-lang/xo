@@ -6,7 +6,7 @@
 // two sizes is flagged.
 //
 //	go run ./scripts/scale -xo bin/xo -out DIR [-knobs fnlen,vars] [-from 1024] [-to 131072]
-//	    [-sizes 65535,65536] [-backends arm64,llvm,go] [-amd64] [-budget 600]
+//	    [-sizes 65535,65536] [-backends arm64,llvm,go] [-amd64] [-budget 600] [-keep]
 //
 // -amd64 also builds each program with --backend=amd64 for linux/amd64
 // and runs every such binary in one Docker container at the end
@@ -70,6 +70,7 @@ func main() {
 	backends := flag.String("backends", "arm64", "host backends: arm64, llvm, go")
 	amd64 := flag.Bool("amd64", false, "also build for linux/amd64 and run in Docker")
 	budget := flag.Float64("budget", 600, "seconds per build before a knob's sweep stops")
+	keep := flag.Bool("keep", false, "keep each binary (by default deleted once its size and output are recorded)")
 	flag.Parse()
 	if *xo == "" || *out == "" {
 		flag.Usage()
@@ -118,6 +119,11 @@ func main() {
 				if r.status == "ok" && be != "amd64" {
 					r.status = run(filepath.Join(dir, "prog-"+be), progen.ScaleWant(knob, n))
 				}
+				if be != "amd64" && !*keep {
+					// a sweep's binaries reach gigabytes (2026-10-23: the
+					// disk floor); amd64's go after the Docker run
+					os.Remove(filepath.Join(dir, "prog-"+be))
+				}
 				if r.status == "ok" && be == "amd64" {
 					docker = append(docker, filepath.Base(dir))
 					r.status = "built"
@@ -137,6 +143,11 @@ func main() {
 	}
 	if len(docker) > 0 {
 		dockerRun(outDir, docker, rows)
+		if !*keep {
+			for _, d := range docker {
+				os.Remove(filepath.Join(outDir, d, "prog-amd64"))
+			}
+		}
 	}
 
 	var flags []string
