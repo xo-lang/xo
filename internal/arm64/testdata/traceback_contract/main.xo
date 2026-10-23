@@ -1,0 +1,11 @@
+// A failed `requires` in a function inlined into its caller (slug.xo):
+// the traceback names the function and the clause's line, not the string
+// helper the failure's detail inlines nor line 0 (field report on 0.26.0,
+// 2026-10-23: `prelude.llrt_concat_int (prelude.xo:2703) [inlined]` then
+// `slug (slug.xo:0)`).
+
+fn main(os: Os) {
+  let k = os.env.args().len()
+  os.stdio.println(slug("Hello World", 2))
+  os.stdio.println(slug("Bad One", k))
+}

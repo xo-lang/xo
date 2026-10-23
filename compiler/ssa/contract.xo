@@ -220,6 +220,12 @@ fn rc_callee_ok(n: Str) -> Bool {
 /// A `requires` clause (core 9.1): without `else` a false condition
 /// faults, with it the function returns Err(else value) (requires).
 fn (var b: Builder) check_requires(cond: Expr, els: Expr?, cl: parser.Clause) {
+  // the clause's line for its check and its failure (the detail's text,
+  // its inlined string helpers, the raise): lowered before any statement,
+  // they had line 0, and a traceback named the inlined helper and FILE:0
+  // (field report on 0.26.0, 2026-10-23)
+  let saved = b.s.line
+  b.set_line(parser.expr_span(cond))
   let bt = b.bool_t()
   let ok = b.value_as(cond, bt)
   let (fail, good) = b.branch(b.add(Op.Not, bt, Aux.None, [ok]))
@@ -244,6 +250,7 @@ fn (var b: Builder) check_requires(cond: Expr, els: Expr?, cl: parser.Clause) {
     }
   }
   b.s.cur = good
+  b.s.line = saved
 }
 
 /// Builds fi as the wrapper of fo's body (contractBody): it checks the
@@ -528,6 +535,9 @@ fn (var b: Builder) visit_stmt(st: Stmt, v: Visit) {
 /// Faults with prefix and cond's source text when cond is false, after
 /// the names cond reads (contractCheck).
 fn (var b: Builder) contract_check(cond: Expr, prefix: Str) {
+  // the clause's line, as check_requires
+  let saved = b.s.line
+  b.set_line(parser.expr_span(cond))
   let bt = b.bool_t()
   let ok = b.value_as(cond, bt)
   let (fail, good) = b.branch(b.add(Op.Not, bt, Aux.None, [ok]))
@@ -536,6 +546,7 @@ fn (var b: Builder) contract_check(cond: Expr, prefix: Str) {
   let msg = b.const_str("${prefix}${b.source_text(b.s.file, parser.expr_span(cond))}")
   b.fault(msg, b.pos(parser.expr_span(cond)))
   b.s.cur = good
+  b.s.line = saved
 }
 
 /// Hands the runtime the line printed under a failed contract: each name

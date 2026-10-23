@@ -1,0 +1,7 @@
+/// A slug of a title: lower case words joined by -, numbered.
+fn slug(title: Str, n: Int) -> Str
+  requires n > 0
+{
+  let words = title.to_lower().split(" ")
+  "${words.join("-")}-${n}"
+}
