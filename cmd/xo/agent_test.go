@@ -248,6 +248,13 @@ func TestMCPSession(t *testing.T) {
 		t.Errorf("query def = %v", def)
 	}
 
+	// query type's FILE is relative to dir, not the server's working
+	// directory (Intel field report 0.26.0)
+	ty, isErr := c.tool("query", map[string]any{"kind": "type", "arg": "main.xo:4:3", "dir": filepath.Join(dir, "app")})
+	if isErr || !strings.Contains(fmt.Sprint(ty), "g()") {
+		t.Errorf("query type with dir = %v", ty)
+	}
+
 	// The module has an error, so the edit is rejected with it.
 	ed, isErr := c.tool("edit", map[string]any{"op": "rename", "args": []string{"g", "h"}, "dir": dir, "dry_run": true})
 	if isErr || ed["ok"] != false || !strings.Contains(fmt.Sprint(ed["reason"]), "before the edit") {
@@ -419,5 +426,19 @@ func TestServe(t *testing.T) {
 	}
 	if s := stats(); s.Hits < 2 {
 		t.Errorf("query was not served from the cache: %+v", s)
+	}
+}
+
+// TestServeLongSocketPath: a socket path over the kernel's limit (103
+// bytes on macOS, 107 on Linux) fails with a note naming the limit and
+// the fix, not a bare "bind: invalid argument" (Intel field report
+// 0.26.0).
+func TestServeLongSocketPath(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), strings.Repeat("d", 60), strings.Repeat("e", 60))
+	sock := filepath.Join(dir, "serve.sock")
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"serve", "--socket=" + sock}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "holds at most 103 bytes") || !strings.Contains(errOut.String(), "XO_SERVE_SOCKET") {
+		t.Errorf("xo serve with a %d byte socket path: exit %d\n%s", len(sock), code, errOut.String())
 	}
 }

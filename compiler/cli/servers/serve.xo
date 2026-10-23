@@ -584,9 +584,22 @@ fn listen(os: Os, path: Str) -> Listener ! Str uses (fs, net) {
   }
   match os.net.listen("unix:" + path) {
     Ok(l) => Ok(l)
-    Err(NetErr.Io(m)) => Err(m)
-    Err(e) => Err("${e}")
+    Err(e) => {
+      let m = if let NetErr.Io(t) = e { t } else { "${e}" }
+      Err("${m}${socket_path_note(path)}")
+    }
   }
+}
+
+/// Why a socket path fails to bind when it is too long: a Unix socket's
+/// path holds at most 103 bytes on macOS and 107 on Linux (sun_path less
+/// its NUL), and the kernel says only "invalid argument" (Intel field
+/// report 0.26.0, a long user cache directory).
+fn socket_path_note(path: Str) -> Str {
+  if path.len() <= 103 {
+    return ""
+  }
+  "\n  note: the socket path ${path} is ${path.len()} bytes; a Unix socket path holds at most 103 bytes on macOS (107 on Linux)\n  fix: pass --socket=/tmp/xo-serve.sock or set XO_SERVE_SOCKET to a shorter path"
 }
 
 pub fn run_serve(os: Os, ex: Exec, args: List[Str]) -> Int uses (stdio, proc, env, fs, net) {

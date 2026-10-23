@@ -20,6 +20,16 @@ struct Dog {
 
 fn (d: Dog) name() -> Str { d.n }
 
+// `${r?:?}`: the try operator then the Debug form, not Kotlin's elvis
+// `?:` (field report 0.26.0 b09)
+fn tried(r: Result[Int, Str]) -> Str ! Str {
+  "${r?:?}"
+}
+
+fn opt_tried(o: Int?) -> Str? {
+  Some("${o?:?}")
+}
+
 fn check(os: Os, label: Str, got: Str, want: Str) {
   os.stdio.println("${label}: ${got}${if got == want { "" } else { " MISMATCH ${want}" }}")
 }
@@ -50,5 +60,8 @@ fn main(os: Os) {
   check(os, "tuple", "${t:?}", t.debug())
   check(os, "iface", "${d:?}", d.debug())
   check(os, "expr", "${xs.len() + 1:?}", (xs.len() + 1).debug())
+  check(os, "try", tried(ok).ok() ?? "failed", "1")
+  check(os, "try err", tried(err).ok() ?? "failed", "failed")
+  check(os, "opt try", opt_tried(opt) ?? "none", "3")
   check(os, "mixed", "n=${xs.len()} xs=${xs:?} s=${"q"} ${"q":?}", "n=3 xs=${xs.debug()} s=q ${"q".debug()}")
 }

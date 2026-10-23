@@ -6,6 +6,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `"${r?:?}"` (the try operator, then the Debug form) parses; it was
+  read as Kotlin's elvis `?:` (XO0177 and XO0160), and only
+  `"${(r?):?}"` worked.
+- `xo query type --dir=DIR FILE:LINE:COL` (and `xo mcp`'s query tool
+  with `dir`) finds a relative FILE under DIR; it looked only under the
+  working directory.
+- `xo serve` with a socket path over the kernel's limit (103 bytes on
+  macOS, 107 on Linux) says so and names `--socket` and
+  `XO_SERVE_SOCKET`, instead of a bare "bind: invalid argument".
+- Spec 6.1 describes the `[module@version]` tag on a dependency's log
+  records (decision 0173); it still said "[later]".
 - `--debug-info=split` (decision 0355) keeps the DWARF beside the
   program instead of in it: PROG.dSYM on darwin, PROG.debug on linux
   (a GNU build id in both and a `.gnu_debuglink` in the program, as

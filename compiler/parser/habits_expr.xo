@@ -75,7 +75,7 @@ fn (var p: Parser) foreign_binary(x: Expr, min_prec: Int) -> Expr? {
     p.add_fix(d, "write `.pow(...)`", [replace_range(expr_span(x).start, expr_span(y).end, "${p.operand_text(x)}.pow(${p.span_text(expr_span(y))})")])
     return Some(method_call(x, b"pow", span_to(expr_span(x), expr_span(y)), [y]))
   }
-  if t.kind == Kind.Question && next.kind == Kind.Colon && adjacent(t, next) {
+  if t.kind == Kind.Question && next.kind == Kind.Colon && adjacent(t, next) && !p.debug_suffix_after_try() {
     if 1 < min_prec {
       return None
     }
@@ -755,6 +755,13 @@ fn (var p: Parser) try_optional() -> Expr {
   method_call(x, b"or_fault", p.span_from(start), [str_lit(OR_FAULT_REASON.bytes(), t.span)])
 }
 
+/// Whether the `?` at the current token is the try operator followed by
+/// the end of an interpolation in its Debug form, `${x?:?}` (decision
+/// 0296), not Kotlin's elvis `?:`.
+fn (p: Parser) debug_suffix_after_try() -> Bool {
+  p.peek(1).kind == Kind.Colon && p.peek(2).kind == Kind.Question && p.peek(3).kind == Kind.Eof
+}
+
 /// What foreign_postfix found after x.
 enum Postfix {
   /// Not a habit: the postfix loop goes on.
@@ -772,7 +779,7 @@ fn (var p: Parser) foreign_postfix(x: Expr) -> Postfix {
   let next = p.peek(1)
   match t.kind {
     Question => {
-      if next.kind == Kind.Colon && adjacent(t, next) {
+      if next.kind == Kind.Colon && adjacent(t, next) && !p.debug_suffix_after_try() {
         return Postfix.Stop
       }
       if p.ternary_ahead() {

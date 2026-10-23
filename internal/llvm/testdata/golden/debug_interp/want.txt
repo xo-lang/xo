@@ -16,5 +16,8 @@ enum: Dot Circle(r: 2)
 tuple: (1, "two", 3.5)
 iface: Dog{n: "rex"}
 expr: 4
+try: 1
+try err: failed
+opt try: 3
 mixed: n=3 xs=[1, 2, 3] s=q "q"
 --- stderr

@@ -58,7 +58,7 @@ fn run_query(os: Os, args: List[Str]) -> Int {
   if kind == "type" {
     match parse_pos(rest[0]) {
       Ok(p) => {
-        file = p.0
+        file = in_dir(os, if dir_set { dir } else { "" }, p.0)
         line = p.1
         col = p.2
       }
@@ -106,6 +106,21 @@ fn parse_pos(s: Str) -> (Str, Int, Int) ! Str {
 }
 
 /// Whether path lies under dir.
+/// A relative FILE with --dir names a file under the directory when one
+/// is there and none is under the working directory (xo mcp's query tool
+/// passes its dir argument as --dir; Intel field report 0.26.0).
+fn in_dir(os: Os, dir: Str, file: Str) -> Str uses fs.read {
+  if dir.is_empty() || file.starts_with("/") {
+    return file
+  }
+  let joined = "${dir.trim_suffix("/")}/${file}"
+  // xo:allow XO0903 a path it cannot stat is left for the query to report
+  if !(os.fs.exists(file).ok() ?? false) && (os.fs.exists(joined).ok() ?? false) {
+    return joined
+  }
+  file
+}
+
 fn within(wd: Str, path: Str, dir: Str) -> Bool {
   let ap = abs_path(wd, path)
   let ad = abs_path(wd, dir)

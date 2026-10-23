@@ -2000,9 +2000,14 @@ are unchanged. `log.configure` performs `stdio`, not `log`. std's own
 records (a handler fault, an `ignore_err`) stay attributed to std and do
 not make std functions perform `log`. Log output goes to the sink
 configured in `main` (standard error by default) and is recorded during
-record and replay like any other output. **[later]** Tagging each record
-with the dependency that wrote it is planned; the `log` effect already
-makes a dependency's logging visible in its signatures.
+record and replay like any other output. Each record a required
+module's code writes names it (decision 0173): a text record reads
+`<time> <LEVEL> [<module>@<version>] <msg> k=v ...`, and a JSON record
+carries the key `"module"` (which replaces a field of that name, so a
+dependency cannot attribute its record to another module); `log.Record`
+in tests has `module` (`""` for the main module). The main module's
+records are unchanged. The call's source file decides, so a main module
+closure run by a dependency stays the main module's.
 
 Effect labels live in their own namespace: a parameter or module named `fs` or
 `net` does not conflict with the effect `fs` or `net`.
@@ -2829,6 +2834,10 @@ xo query imports example.com/notes/domain   // its `use` lines
 xo query deps example.com/notes/server      // the same, transitively
 xo query hash users.fetch_user              // content hash of a definition (4.3)
 ```
+
+`type` takes FILE:LINE:COL; with `--dir=DIR`, a relative FILE that is
+not under the working directory but is under DIR names that file (`xo
+mcp`'s query tool passes its `dir` this way).
 
 `hash` (decision 0125) answers `{list}`, one entry per definition the
 name resolves to (a name, `Type.method`, `pkg.name`, or `<package
