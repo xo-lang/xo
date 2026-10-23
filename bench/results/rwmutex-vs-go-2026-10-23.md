@@ -38,6 +38,13 @@
   considered and dropped: Go's `RWMutex.Lock` also blocks new `RLock`s while
   a writer is pending; the difference is how many tasks run at once.
 
+- The grace windows (pool.xo GRACE_NS, the reader grant's, and
+  NEXT_GRACE_NS, the run-next slot's), compile-time, `--ab` against current
+  main, load 5, rows rwmutex, pingpong, mutex, pmap, fanout: GRACE_NS 2 us
+  makes rwmutex 1.26x wall (worse), 200 us noise; NEXT_GRACE_NS 10 us and
+  500 us noise on every row (pmap 10 us 1.34x with an interval of 0.69 to
+  1.84). Neither knob is the lever; the default stays.
+
 ## Reading
 
 This row is lock bound: one task at a time can make progress, so extra
@@ -45,7 +52,7 @@ workers only add contention, and Xo spreads the 64 tasks over all workers
 at once where Go's goroutines stay with the waker's P. The CRUD server
 (a lock held for a few microseconds between socket waits) is the workload
 that matters; there Xo is at 0.93x to 1.0x of Go's requests a second
-(decision 0118's addendum). Next candidates, all `--ab` only: keep a
-granted waiter on the waking worker for longer (NEXT_GRACE_NS is the
-existing knob), and throttle worker wakeups for a program whose parks are
-all Mutex parks.
+(decision 0118's addendum). Open candidate, `--ab` only: throttle
+worker wakeups and steals for a program whose parks are all Mutex parks
+(rtstats shows few wakes and steals already: 73 and 8 for 256k accesses, so
+the contention is among the workers that are awake, not from waking more).
