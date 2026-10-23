@@ -1,0 +1,32 @@
+// `r ?? e => body` (decision 0321) with r a plain variable, a parameter
+// and a field: the parser's synthesized `ok` binding sat at r's own span,
+// so these failed to build (native XO1201, Go `undefined: MISSING_VAR_ok`)
+// while `(r) ?? e => body` worked (field report 0.26.0, b02).
+enum E {
+  Bad
+  Worse
+}
+
+struct Box {
+  r: Result[Int, E]
+}
+
+fn get(n: Int) -> Int ! E {
+  if n > 0 { Ok(n) } else if n == 0 { Err(E.Bad) } else { Err(E.Worse) }
+}
+
+fn param(r: Result[Int, E]) -> Int {
+  r ?? e => match e {
+    E.Bad => -1
+    E.Worse => -2
+  }
+}
+
+fn main(os: Os) {
+  let r = get(5)
+  let a = r ?? _e => 0
+  let b = (r) ?? _e => 0
+  let box = Box{r: get(-3)}
+  let c = box.r ?? _e => 7
+  os.stdio.println("${a} ${b} ${param(get(0))} ${param(get(-1))} ${param(get(2))} ${c}")
+}

@@ -735,8 +735,13 @@ fn (var p: Parser) coalesce_arm(r: Expr) -> Expr {
   p.next() // =>
   let body = p.parse_simple_stmt()
   let rs = expr_span(r)
-  let ok = Ident{span: rs, name: b"ok"}
-  let ok_pat = Pattern.VariantPat(span: rs, path: [Ident{span: rs, name: b"Ok"}], parens: true, fields: [PatField{span: rs, name: None, pattern: Pattern.BindPat(span: rs, name: ok)}], rest: false)
+  // the synthesized `ok` binding and its use at a zero-width span after
+  // r: at r's own span they took the checker's records of a plain
+  // variable r (keyed by span), so `r ?? e => body` failed to build for
+  // r a variable, parameter or field (field report 0.26.0, b02)
+  let oks = Span{start: rs.end, end: rs.end}
+  let ok = Ident{span: oks, name: b"ok"}
+  let ok_pat = Pattern.VariantPat(span: rs, path: [Ident{span: rs, name: b"Ok"}], parens: true, fields: [PatField{span: oks, name: None, pattern: Pattern.BindPat(span: oks, name: ok)}], rest: false)
   let err_span = span_to(name.span, stmt_span(body))
   let e_pat = if name.name == b"_" { Pattern.WildcardPat(name.span) } else { Pattern.BindPat(span: name.span, name: name) }
   let err_pat = Pattern.VariantPat(span: name.span, path: [Ident{span: name.span, name: b"Err"}], parens: true, fields: [PatField{span: name.span, name: None, pattern: e_pat}], rest: false)

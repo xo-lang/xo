@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `r ?? e => body` (decision 0321) builds when `r` is a plain variable,
+  a parameter or a field: it failed on the native backends (XO1201
+  converting `()` to `Int`) and the Go backend (`undefined:
+  MISSING_VAR_ok`) while `xo check` passed it, and only `(r) ?? e =>`
+  worked.
+
 - Warm builds are faster by default (owner, 2026-10-23): the module check
   cache is on (`XO_CHK_CACHE=auto`; a warm build of xo itself 0.885 of
   the wall time with 0.914 of the peak memory), and the cache's shared
