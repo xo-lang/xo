@@ -177,6 +177,10 @@ fn (s: Str) equal_fold(other: Str) -> Bool   // Unicode simple case folding (str
 fn (s: Str) find(sub: Str) -> Int?           // byte offset
 fn (s: Str) rfind(sub: Str) -> Int?          // the last sub's byte offset (strings.LastIndex); Some(s.len()) for ""
 fn (s: Str) count(sub: Str) -> Int           // non-overlapping copies (strings.Count); rune_count() + 1 for ""
+fn (s: Str) find_any(chars: Str) -> Int?     // the first rune of chars (strings.IndexAny); None for "" and no match
+fn (s: Str) rfind_any(chars: Str) -> Int?    // the last rune of chars (strings.LastIndexAny)
+fn (s: Str) contains_any(chars: Str) -> Bool // strings.ContainsAny
+fn (s: Str) contains_rune(r: Rune) -> Bool   // strings.ContainsRune; an invalid byte of s reads as U+FFFD
 fn (s: Str) split(sep: Str) -> List[Str]
 fn (s: Str) fields() -> List[Str]            // runs of non-white-space text (strings.Fields, unicode.IsSpace)
 fn (s: Str) lines() -> List[Str]             // splits on \n, strips \r
@@ -4026,7 +4030,7 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
 
 Every function and method of std/prelude.xo, by type, as declared there
 (the sections above explain them); interface methods take `self`.
-367 declarations.
+371 declarations.
 
 ### Range
 
@@ -4200,6 +4204,10 @@ fn (s: Str) equal_fold(other: Str) -> Bool
 fn (s: Str) find(sub: Str) -> Int?
 fn (s: Str) rfind(sub: Str) -> Int?
 fn (s: Str) count(sub: Str) -> Int
+fn (s: Str) find_any(chars: Str) -> Int?
+fn (s: Str) rfind_any(chars: Str) -> Int?
+fn (s: Str) contains_any(chars: Str) -> Bool
+fn (s: Str) contains_rune(r: Rune) -> Bool
 fn (s: Str) split(sep: Str) -> List[Str]
 fn (s: Str) fields() -> List[Str]
 fn (s: Str) lines() -> List[Str]

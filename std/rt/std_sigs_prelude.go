@@ -84,6 +84,10 @@ var (
 	_ func(*Task, string, string) Option[int64]                     = Str_find
 	_ func(*Task, string, string) Option[int64]                     = Str_rfind
 	_ func(*Task, string, string) int64                             = Str_count
+	_ func(*Task, string, string) Option[int64]                     = Str_find_any
+	_ func(*Task, string, string) Option[int64]                     = Str_rfind_any
+	_ func(*Task, string, string) bool                              = Str_contains_any
+	_ func(*Task, string, Rune) bool                                = Str_contains_rune
 	_ func(*Task, string, string) List[string]                      = Str_split
 	_ func(*Task, string) List[string]                              = Str_fields
 	_ func(*Task, string) List[string]                              = Str_lines

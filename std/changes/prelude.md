@@ -1,5 +1,34 @@
 # prelude changes
 
+## 2026-10-23: feature: Str.find_any, rfind_any, contains_any, contains_rune
+
+- Kind: feature
+- Commit: this commit
+- Found by: lead request; Str searched one needle (find, rfind, count), not a
+  set of characters or a single Rune
+- Go reference: strings.IndexAny, LastIndexAny, ContainsAny, ContainsRune and
+  IndexRune (go1.26.1)
+- Test: corpus/strsearch (Go's indexAnyTests, lastIndexAnyTests,
+  ContainsAnyTests and ContainsRuneTests, plus seeded random texts, sets and
+  runes; arm64 and LLVM), golden str_any_view (arm64, LLVM, Go parity and wasm)
+
+`Str.find_any(chars)` and `Str.rfind_any(chars)` give the byte offset of the
+first and last rune of `chars` in s, `None` where Go gives -1 (so also for an
+empty `chars`); `contains_any(chars)` and `contains_rune(r)` are Go's
+ContainsAny and ContainsRune. Declared in std/prelude.xo after `count`,
+lowered to `str_*` in std/native/prelude.xo, and implemented in Xo in
+std/native/llrt/scan.xo: `index_any` and `last_index_any` use Go's ASCII word
+set (two 64 bit words, the bytes of s scanned directly) when `chars` is ASCII
+and s is longer than 8 bytes, and decode s rune by rune otherwise, with
+`index_rune` (a byte search below U+0080) and a `decode_last` that is Go's
+DecodeLastRuneInString. The Go backend calls strings.IndexAny,
+LastIndexAny, ContainsAny and ContainsRune in std/rt/str.go.
+
+A `Str` is valid UTF-8, so one branch of Go's IndexAny cannot arise here:
+`len(chars) == 1` with a byte of 0x80 or above (Go reads that byte as
+U+FFFD), since a lone non-ASCII byte is never a valid Str. An invalid byte of
+s reads as U+FFFD (decision 0259), so a U+FFFD needle or set member finds it,
+as in Go.
 ## 2026-10-23: perf: Time.unix and unix_millis round down without a branch
 
 - Kind: perf

@@ -1,0 +1,35 @@
+// Str.find_any, rfind_any, contains_any and contains_rune (Go's IndexAny,
+// LastIndexAny, ContainsAny and ContainsRune) on a view of a longer text:
+// Go's ASCII word set path (chars all ASCII over a text longer than 8
+// bytes) and its rune by rune path (a multi byte char), one byte chars, an
+// empty chars, byte offsets around multi byte runes, a view of a view, the
+// empty view, and U+FFFD.
+fn main(os: Os) {
+  let text = "h\u{e9}llo w\u{f6}rld \u{263a} ok, end"
+  let long = "<<" + text + ">>"
+  let v = long[2..(long.len() - 2)]
+  let out = os.stdio
+  out.println("${v.len()} ${v == text}")
+  // ASCII chars over a long text: the word set path
+  out.println("${v.find_any("le") ?? -1} ${v.rfind_any("le") ?? -1} ${v.contains_any("le")}")
+  out.println("${v.find_any("xyz") ?? -1} ${v.rfind_any("xyz") ?? -1} ${v.contains_any("xyz")}")
+  out.println("${v.find_any("") ?? -1} ${v.rfind_any("") ?? -1} ${v.contains_any("")}")
+  out.println("${v.find_any(" ") ?? -1} ${v.rfind_any(" ") ?? -1}")
+  // one byte chars, and offsets are bytes around a two byte rune
+  let l = v.find_any("l") ?? 0
+  out.println("${l} ${v[l..(l + 1)]} ${v.rfind_any("l") ?? -1}")
+  let e = v[0..3]
+  out.println("${e.find_any("l") ?? -1} ${e.len()} ${e.rune_count()}")
+  // multi byte chars: the rune by rune path
+  out.println("${v.find_any("\u{e9}\u{f6}") ?? -1} ${v.rfind_any("\u{e9}\u{f6}") ?? -1} ${v.contains_any("\u{e9}\u{f6}")}")
+  out.println("${v.find_any("\u{263a}") ?? -1} ${v.rfind_any("\u{263a}") ?? -1}")
+  // a view of a view, the empty view, and a one byte text
+  let w = v[0..10]
+  out.println("${w.find_any("o") ?? -1} ${w.rfind_any("l") ?? -1} ${w.contains_any("w")}")
+  out.println("${v[0..0].find_any("l") ?? -1} ${v[0..0].rfind_any("l") ?? -1} ${v[0..0].contains_any("l")}")
+  out.println("${v[0..1].find_any("h") ?? -1} ${v[0..1].rfind_any("h") ?? -1}")
+  // contains_rune: ASCII, a multi byte rune, one s has not, U+FFFD
+  out.println("${v.contains_rune('l')} ${v.contains_rune('L')} ${v.contains_rune(Rune(0x263a))} ${v.contains_rune(Rune(0))}")
+  let fffd = "\u{fffd}"
+  out.println("${fffd.contains_rune(Rune(0xfffd))} ${(fffd + "x").find_any(fffd) ?? -1} ${(fffd + "x").rfind_any("x\u{fffd}") ?? -1}")
+}

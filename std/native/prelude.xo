@@ -93,6 +93,26 @@ fn str_split(s: Str, sep: Str) -> List[Str] { scan.split(s, sep) }
 
 fn str_count(s: Str, sub: Str) -> Int { scan.count(s, sub) }
 
+fn str_find_any(s: Str, chars: Str) -> Int? {
+  let i = scan.index_any(s, chars)
+  if i < 0 {
+    return None
+  }
+  Some(i)
+}
+
+fn str_rfind_any(s: Str, chars: Str) -> Int? {
+  let i = scan.last_index_any(s, chars)
+  if i < 0 {
+    return None
+  }
+  Some(i)
+}
+
+fn str_contains_any(s: Str, chars: Str) -> Bool { scan.index_any(s, chars) >= 0 }
+
+fn str_contains_rune(s: Str, r: Rune) -> Bool { scan.index_rune(s, r) >= 0 }
+
 fn str_fields(s: Str) -> List[Str] { strings.fields(s) }
 
 fn str_lines(s: Str) -> List[Str] { scan.lines(s) }

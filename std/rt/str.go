@@ -94,6 +94,32 @@ func Str_find(_ *Task, s, sub string) Option[int64] {
 // (strings.Count), the rune count plus one for "".
 func Str_count(_ *Task, s, sub string) int64 { return int64(strings.Count(s, sub)) }
 
+// Str_find_any is `s.find_any(chars)`: the byte offset of the first rune of
+// chars in s (strings.IndexAny).
+func Str_find_any(_ *Task, s, chars string) Option[int64] {
+	i := strings.IndexAny(s, chars)
+	if i < 0 {
+		return Option[int64]{}
+	}
+	return Some(int64(i))
+}
+
+// Str_rfind_any is `s.rfind_any(chars)`: the byte offset of the last rune of
+// chars in s (strings.LastIndexAny).
+func Str_rfind_any(_ *Task, s, chars string) Option[int64] {
+	i := strings.LastIndexAny(s, chars)
+	if i < 0 {
+		return Option[int64]{}
+	}
+	return Some(int64(i))
+}
+
+// Str_contains_any is `s.contains_any(chars)`: strings.ContainsAny.
+func Str_contains_any(_ *Task, s, chars string) bool { return strings.ContainsAny(s, chars) }
+
+// Str_contains_rune is `s.contains_rune(r)`: strings.ContainsRune.
+func Str_contains_rune(_ *Task, s string, r Rune) bool { return strings.ContainsRune(s, rune(r)) }
+
 // Str_split is `s.split(sep)`.
 func Str_split(_ *Task, s, sep string) List[string] { return ListOf(strings.Split(s, sep)...) }
 

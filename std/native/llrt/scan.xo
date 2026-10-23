@@ -259,6 +259,154 @@ pub fn starts_with(s: Str, p: Str) -> Bool { p.len() <= s.len() && eq_at(s.bytes
 
 pub fn ends_with(s: Str, p: Str) -> Bool { p.len() <= s.len() && eq_at(s.bytes(), s.len() - p.len(), p.bytes(), 0, p.len()) }
 
+/// strings.IndexRune: the byte offset of r in s, or -1. r below 0x80 is a
+/// byte search; otherwise s is decoded (an invalid byte decodes as U+FFFD,
+/// so a U+FFFD r finds it, as Go's does).
+pub fn index_rune(s: Str, r: Rune) -> Int {
+  let b = s.bytes()
+  if Int(r) < 0x80 {
+    return find_byte(b, 0, b.len(), Int(r))
+  }
+  var i = 0
+  while i < b.len() {
+    let (x, sz) = b.decode_rune(i)
+    if x == r {
+      return i
+    }
+    i += sz
+  }
+  -1
+}
+
+/// Go's makeASCIISet: the bytes of b as two 64 bit words, and whether every
+/// byte is ASCII (only then does the set answer for all of them).
+fn ascii_set(b: Bytes) -> (Int, Int, Bool) {
+  var lo = 0
+  var hi = 0
+  var i = 0
+  while i < b.len() {
+    let c = Int(b[i])
+    if c >= 0x80 {
+      return (0, 0, false)
+    }
+    if c < 64 {
+      lo = lo | shl(1, c)
+    } else {
+      hi = hi | shl(1, c - 64)
+    }
+    i += 1
+  }
+  (lo, hi, true)
+}
+
+/// Whether the ASCII word pair holds byte c: a non-ASCII byte is never in a
+/// set built from an ASCII chars.
+fn in_set(lo: Int, hi: Int, c: Int) -> Bool {
+  if c < 64 {
+    return (shr(lo, c) & 1) != 0
+  }
+  if c < 0x80 {
+    return (shr(hi, c - 64) & 1) != 0
+  }
+  false
+}
+
+/// strings.IndexAny: the byte offset of the first rune of chars in s, or -1.
+/// A one byte chars is a rune search, as Go's; an ASCII chars of any length
+/// over a long s is Go's word set path, scanning the bytes of s.
+pub fn index_any(s: Str, chars: Str) -> Int {
+  let n = s.len()
+  let cb = chars.bytes()
+  let m = cb.len()
+  if m == 0 {
+    return -1
+  }
+  if m == 1 {
+    // one byte is ASCII: a Str holds valid UTF-8, so a byte of 0x80 or
+    // above never stands alone (Go's RuneError case for it cannot arise)
+    return index_rune(s, Rune(Int(cb[0])))
+  }
+  let (lo, hi, ascii) = ascii_set(cb)
+  let b = s.bytes()
+  if ascii && n > 8 {
+    var i = 0
+    while i < n {
+      if in_set(lo, hi, Int(b[i])) {
+        return i
+      }
+      i += 1
+    }
+    return -1
+  }
+  var i = 0
+  while i < n {
+    let (x, sz) = b.decode_rune(i)
+    if index_rune(chars, x) >= 0 {
+      return i
+    }
+    i += sz
+  }
+  -1
+}
+
+/// utf8.DecodeLastRuneInString: the last rune of b[0..end] and its size (a
+/// byte that is not part of a complete sequence decodes as U+FFFD of 1).
+fn decode_last(b: Bytes, end: Int) -> (Rune, Int) {
+  let c = Int(b[end - 1])
+  if c < 0x80 {
+    return (Rune(c), 1)
+  }
+  // back over at most UTFMax - 1 continuation bytes to the start byte
+  var i = end - 2
+  var k = 0
+  while i >= 0 && k < 3 {
+    if Int(b[i]) & 0xC0 != 0x80 {
+      break
+    }
+    i -= 1
+    k += 1
+  }
+  if i < 0 {
+    i = 0
+  }
+  let (r, sz) = b.decode_rune(i)
+  if i + sz != end {
+    return (Rune(0xFFFD), 1)
+  }
+  (r, sz)
+}
+
+/// strings.LastIndexAny: the byte offset of the last rune of chars in s, or
+/// -1.
+pub fn last_index_any(s: Str, chars: Str) -> Int {
+  let n = s.len()
+  let cb = chars.bytes()
+  if cb.len() == 0 {
+    return -1
+  }
+  let (lo, hi, ascii) = ascii_set(cb)
+  let b = s.bytes()
+  if ascii && n > 8 {
+    var i = n - 1
+    while i >= 0 {
+      if in_set(lo, hi, Int(b[i])) {
+        return i
+      }
+      i -= 1
+    }
+    return -1
+  }
+  var end = n
+  while end > 0 {
+    let (x, sz) = decode_last(b, end)
+    end -= sz
+    if index_rune(chars, x) >= 0 {
+      return end
+    }
+  }
+  -1
+}
+
 /// The number of UTF-8 continuation bytes (0x80 to 0xBF) in w.
 fn cont8(w: Int) -> Int { rt.popcount(w & (shl(w, 1) ^ -1) & HIGHS) }
 

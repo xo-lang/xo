@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"math/rand"
+	"os"
 	"strings"
 )
 
@@ -11,10 +12,12 @@ type strsearchCase struct{ s, sep string }
 
 // The API these corpora cover, as std/prelude.xo declares it: Str.find
 // (strings.Index), Str.rfind (strings.LastIndex), Str.contains
-// (strings.Contains), Str.count (strings.Count), Str.split (strings.Split),
-// Str.replace (strings.ReplaceAll) and List[Str].join (strings.Join). Go's
-// strings.IndexAny, LastIndexAny and the n of Replace have no Str method,
-// so their tables are not here; replace_all is Str.replace, which always
+// (strings.Contains), Str.count (strings.Count), Str.find_any and
+// Str.rfind_any (strings.IndexAny, LastIndexAny), Str.contains_any
+// (strings.ContainsAny), Str.contains_rune (strings.ContainsRune),
+// Str.split (strings.Split), Str.replace (strings.ReplaceAll) and
+// List[Str].join (strings.Join). Go's n of Replace has no Str method, so
+// that table is not here; replace_all is Str.replace, which always
 // replaces every match.
 
 // goIndexCases are Go's strings_test.go indexTests and lastIndexTests
@@ -142,6 +145,147 @@ func goReplaceCases() []strsearchReplace {
 		{"banana", "a", "a"}, {"☺☻☹", "", "<>"},
 	} {
 		cs = append(cs, strsearchReplace{t[0], t[1], t[2]})
+	}
+	return cs
+}
+
+// strsearchDots is Go's dots in strings_test.go (dots + dots + dots is one
+// of the inputs).
+const strsearchDots = "1....2....3....4"
+
+// goAnyCases are Go's strings_test.go indexAnyTests and lastIndexAnyTests as
+// (s, chars) inputs for Str.find_any and Str.rfind_any. Each table's own
+// offset is checked against Go here, and against Go's answer on the text as
+// std/rt reads it (an invalid byte as U+FFFD, decision 0259): an offset after
+// an invalid byte moves (Go's 7 for "012\\x80bcb\\x80210" is 9 as Xo reads
+// it), and the note tells which, since the corpus records Go's answer on the
+// converted text. The two tables have different inputs ("aRegExp*" against
+// "a.RegExp*"), and each pair is kept as its table states it. Go's strings
+// tests are Copyright 2009 The Go Authors, BSD-style license.
+func goAnyCases() []strsearchCase {
+	type anyTest struct {
+		s, chars string
+		want     int
+	}
+	var cs []strsearchCase
+	add := func(t anyTest, last bool) {
+		name, f := "IndexAny", strings.IndexAny
+		if last {
+			name, f = "LastIndexAny", strings.LastIndexAny
+		}
+		if got := f(t.s, t.chars); got != t.want {
+			fmt.Fprintf(os.Stderr, "stdcorpus: strings.%s(%q, %q) = %d, Go's test says %d\n", name, t.s, t.chars, got, t.want)
+			os.Exit(1)
+		}
+		if a, b := textOf(t.s), textOf(t.chars); f(a, b) != t.want {
+			// an invalid byte reads as U+FFFD (decision 0259), three
+			// bytes where it was one, so an offset after it moves: the
+			// corpus records Go's answer on the text as Xo holds it
+			fmt.Fprintf(os.Stderr, "stdcorpus: note: %s(%q, %q) = %d on the text as Xo reads it (%q, %q), Go's test says %d\n", name, t.s, t.chars, f(a, b), a, b, t.want)
+		}
+		cs = append(cs, strsearchCase{t.s, t.chars})
+	}
+	for _, t := range []anyTest{
+		{"", "", -1},
+		{"", "a", -1},
+		{"", "abc", -1},
+		{"a", "", -1},
+		{"a", "a", 0},
+		{"\x80", "\xffb", 0},
+		{"aaa", "a", 0},
+		{"abc", "xyz", -1},
+		{"abc", "xcz", 2},
+		{"ab☺c", "x☺yz", 2},
+		{"a☺b☻c☹d", "cx", len("a☺b☻")},
+		{"a☺b☻c☹d", "uvw☻xyz", len("a☺b")},
+		{"aRegExp*", ".(|)*+?^$[]", 7},
+		{strsearchDots + strsearchDots + strsearchDots, " ", -1},
+		{"012abcba210", "\xffb", 4},
+		{"012\x80bcb\x80210", "\xffb", 3},
+		{"0123456\xcf\x80abc", "\xcfb\x80", 10},
+	} {
+		add(t, false)
+	}
+	for _, t := range []anyTest{
+		{"", "", -1},
+		{"", "a", -1},
+		{"", "abc", -1},
+		{"a", "", -1},
+		{"a", "a", 0},
+		{"\x80", "\xffb", 0},
+		{"aaa", "a", 2},
+		{"abc", "xyz", -1},
+		{"abc", "ab", 1},
+		{"ab☺c", "x☺yz", 2},
+		{"a☺b☻c☹d", "cx", len("a☺b☻")},
+		{"a☺b☻c☹d", "uvw☻xyz", len("a☺b")},
+		{"a.RegExp*", ".(|)*+?^$[]", 8},
+		{strsearchDots + strsearchDots + strsearchDots, " ", -1},
+		{"012abcba210", "\xffb", 6},
+		{"012\x80bcb\x80210", "\xffb", 7},
+		{"0123456\xcf\x80abc", "\xcfb\x80", 10},
+	} {
+		add(t, true)
+	}
+	return cs
+}
+
+// goContainsAnyCases are Go's strings_test.go ContainsAnyTests.
+func goContainsAnyCases() []strsearchCase {
+	var cs []strsearchCase
+	for _, t := range []struct {
+		s, chars string
+		want     bool
+	}{
+		{"", "", false},
+		{"", "a", false},
+		{"", "abc", false},
+		{"a", "", false},
+		{"a", "a", true},
+		{"aaa", "a", true},
+		{"abc", "xyz", false},
+		{"abc", "xcz", true},
+		{"a☺b☻c☹d", "uvw☻xyz", true},
+		{"aRegExp*", ".(|)*+?^$[]", true},
+		{strsearchDots + strsearchDots + strsearchDots, " ", false},
+	} {
+		if got := strings.ContainsAny(t.s, t.chars); got != t.want {
+			fmt.Fprintf(os.Stderr, "stdcorpus: strings.ContainsAny(%q, %q) = %v, Go's test says %v\n", t.s, t.chars, got, t.want)
+			os.Exit(1)
+		}
+		cs = append(cs, strsearchCase{t.s, t.chars})
+	}
+	return cs
+}
+
+// strsearchRune is one (s, r) input of Str.contains_rune.
+type strsearchRune struct {
+	s string
+	r rune
+}
+
+// goContainsRuneCases are Go's strings_test.go ContainsRuneTests.
+func goContainsRuneCases() []strsearchRune {
+	var cs []strsearchRune
+	for _, t := range []struct {
+		s    string
+		r    rune
+		want bool
+	}{
+		{"", 'a', false},
+		{"a", 'a', true},
+		{"aaa", 'a', true},
+		{"abc", 'y', false},
+		{"abc", 'c', true},
+		{"a☺b☻c☹d", 'x', false},
+		{"a☺b☻c☹d", '☻', true},
+		{"aRegExp*", '*', true},
+	} {
+		if got := strings.ContainsRune(t.s, t.r); got != t.want {
+			fmt.Fprintf(os.Stderr, "stdcorpus: strings.ContainsRune(%q, %q) = %v, Go's test says %v\n", t.s, t.r, got, t.want)
+			os.Exit(1)
+		}
+		cs = append(cs, strsearchRune{t.s, t.r})
 	}
 	return cs
 }
@@ -288,10 +432,71 @@ func strsearchRandomReplace(r *rand.Rand) strsearchReplace {
 	return strsearchReplace{s, old, strsearchGen(r, r.Intn(4))}
 }
 
+// strsearchRandomAny is a random (s, chars): chars is empty, one byte, a
+// short ASCII set, a multi byte set, a piece of s, or holds U+FFFD, so Go's
+// one byte, word set and rune by rune paths all occur.
+func strsearchRandomAny(r *rand.Rand) strsearchCase {
+	s := strsearchGen(r, strsearchLen(r))
+	var chars string
+	switch r.Intn(6) {
+	case 0:
+		chars = ""
+	case 1:
+		chars = strsearchGen(r, 1)
+	case 2:
+		var b strings.Builder
+		for i := 0; i < 1+r.Intn(5); i++ {
+			b.WriteByte(byte(0x20 + r.Intn(0x5f)))
+		}
+		chars = b.String()
+	case 3:
+		chars = strsearchGen(r, 1+r.Intn(3))
+	case 4:
+		if len(s) > 0 {
+			n := 1 + r.Intn(len(s))
+			at := r.Intn(len(s) - n + 1)
+			chars = s[at : at+n]
+		} else {
+			chars = "a"
+		}
+	default:
+		chars = "\uFFFD" + strsearchGen(r, r.Intn(2))
+	}
+	return strsearchCase{s, chars}
+}
+
+// strsearchRandomRune is a random (s, r): r is a rune of s, one of the
+// alphabet's, U+FFFD, or one s need not hold, so the found and the missing
+// case, the ASCII and the multi byte path and RuneError all occur.
+func strsearchRandomRune(r *rand.Rand) strsearchRune {
+	s := strsearchGen(r, strsearchLen(r))
+	var cp rune
+	switch r.Intn(4) {
+	case 0, 1:
+		rs := []rune(textOf(s))
+		if len(rs) > 0 {
+			cp = rs[r.Intn(len(rs))]
+		} else {
+			cp = 'a'
+		}
+	case 2:
+		cp = []rune(textOf(strsearchAlphabet[r.Intn(len(strsearchAlphabet))]))[0]
+	default:
+		cp = []rune("aA0-\u00e9\u65e5\u263a\uFFFD\u2000")[r.Intn(9)]
+	}
+	return strsearchRune{s, cp}
+}
+
 // strsearchOracleIndex is Go's Index, LastIndex and Contains as one
 // "\x1f" separated record, None as -1.
 func strsearchOracleIndex(c strsearchCase) string {
 	return fmt.Sprintf("%d\x1f%d\x1f%v", strings.Index(c.s, c.sep), strings.LastIndex(c.s, c.sep), strings.Contains(c.s, c.sep))
+}
+
+// strsearchOracleAny is Go's IndexAny, LastIndexAny and ContainsAny as one
+// "\x1f" separated record, None as -1.
+func strsearchOracleAny(c strsearchCase) string {
+	return fmt.Sprintf("%d\x1f%d\x1f%v", strings.IndexAny(c.s, c.sep), strings.LastIndexAny(c.s, c.sep), strings.ContainsAny(c.s, c.sep))
 }
 
 // strsearchOracleSplit is Go's Split(s, sep) as its length and its pieces
@@ -317,7 +522,7 @@ func strsearchText(c strsearchCase) strsearchCase { return strsearchCase{textOf(
 func strsearchCorpus() string {
 	r := rand.New(rand.NewSource(31))
 	var o strings.Builder
-	o.WriteString(header("strings.Index, LastIndex, Contains, Split, Fields, ReplaceAll and Join on the inputs of Go's strings_test.go (indexTests, lastIndexTests, splittests, fieldstests, ReplaceTests) and on seeded random inputs, against Str.find, rfind, contains, split, fields, replace and List[Str].join, and strings.Count (countTests) against Str.count (Go's strings tests are Copyright 2009 The Go Authors, BSD-style license)"))
+	o.WriteString(header("strings.Index, LastIndex, Contains, IndexAny, LastIndexAny, ContainsAny, ContainsRune, Split, Fields, ReplaceAll and Join on the inputs of Go's strings_test.go (indexTests, lastIndexTests, indexAnyTests, lastIndexAnyTests, ContainsAnyTests, ContainsRuneTests, splittests, fieldstests, ReplaceTests) and on seeded random inputs, against Str.find, rfind, contains, find_any, rfind_any, contains_any, contains_rune, split, fields, replace and List[Str].join, and strings.Count (countTests) against Str.count (Go's strings tests are Copyright 2009 The Go Authors, BSD-style license)"))
 
 	// index, rfind and contains
 	idx := goIndexCases()
@@ -405,6 +610,32 @@ func strsearchCorpus() string {
 	}
 	o.WriteString("]\n")
 
+	o.WriteString("\n/// (s, chars, Go's IndexAny and LastIndexAny and ContainsAny joined by U+001F; None as -1)\nconst ANY_CASES: List[(Str, Str, Str)] = [\n")
+	an := goAnyCases()
+	an = append(an, goContainsAnyCases()...)
+	ra := rand.New(rand.NewSource(43))
+	for i := 0; i < 4000; i++ {
+		an = append(an, strsearchRandomAny(ra))
+	}
+	for _, c := range an {
+		c = strsearchText(c)
+		fmt.Fprintf(&o, "  (%s, %s, %s),\n", xq(c.s), xq(c.sep), xq(strsearchOracleAny(c)))
+	}
+	o.WriteString("]\n")
+
+	// contains_rune (its own seed)
+	rn := goContainsRuneCases()
+	rr := rand.New(rand.NewSource(47))
+	for i := 0; i < 2000; i++ {
+		rn = append(rn, strsearchRandomRune(rr))
+	}
+	o.WriteString("\n/// (s, rune code point, Go's ContainsRune)\nconst CONTAINS_RUNE_CASES: List[(Str, Int, Bool)] = [\n")
+	for _, c := range rn {
+		s := textOf(c.s)
+		fmt.Fprintf(&o, "  (%s, %d, %v),\n", xq(s), c.r, strings.ContainsRune(s, c.r))
+	}
+	o.WriteString("]\n")
+
 	o.WriteString(strsearchTests)
 	return o.String()
 }
@@ -423,6 +654,10 @@ fn show3(bad: List[(Str, Str, Str, Str)]) -> List[(Str, Str, Str, Str)] {
 }
 
 fn show2(bad: List[(Str, Str, Str)]) -> List[(Str, Str, Str)] {
+  bad[0..(if bad.len() < 20 { bad.len() } else { 20 })]
+}
+
+fn show_rune(bad: List[(Str, Int, Bool, Bool)]) -> List[(Str, Int, Bool, Bool)] {
   bad[0..(if bad.len() < 20 { bad.len() } else { 20 })]
 }
 
@@ -561,5 +796,57 @@ test "join is Go's Join" {
     }
   }
   expect(show3(bad)) == []
+}
+
+fn any_of(s: Str, chars: Str) -> Str {
+  "${s.find_any(chars) ?? -1}\u{1f}${s.rfind_any(chars) ?? -1}\u{1f}${s.contains_any(chars)}"
+}
+
+test "find_any, rfind_any and contains_any are Go's IndexAny, LastIndexAny and ContainsAny" {
+  var bad: List[(Str, Str, Str, Str)] = []
+  for (s, chars, want) in ANY_CASES {
+    let got = any_of(s, chars)
+    if got != want {
+      bad.push((s, chars, got, want))
+    }
+  }
+  expect(show3(bad)) == []
+}
+
+test "find_any, rfind_any and contains_any on a view of a longer text" {
+  var bad: List[(Str, Str, Str, Str)] = []
+  for (s, chars, want) in ANY_CASES {
+    let long = "<<" + s + ">>"
+    let view = long[2..(long.len() - 2)]
+    let got = any_of(view, chars)
+    if got != want {
+      bad.push((s, chars, got, want))
+    }
+  }
+  expect(show3(bad)) == []
+}
+
+test "contains_rune is Go's ContainsRune" {
+  var bad: List[(Str, Int, Bool, Bool)] = []
+  for (s, cp, want) in CONTAINS_RUNE_CASES {
+    let got = s.contains_rune(Rune(cp))
+    if got != want {
+      bad.push((s, cp, got, want))
+    }
+  }
+  expect(show_rune(bad)) == []
+}
+
+test "contains_rune on a view of a longer text" {
+  var bad: List[(Str, Int, Bool, Bool)] = []
+  for (s, cp, want) in CONTAINS_RUNE_CASES {
+    let long = "<<" + s + ">>"
+    let view = long[2..(long.len() - 2)]
+    let got = view.contains_rune(Rune(cp))
+    if got != want {
+      bad.push((s, cp, got, want))
+    }
+  }
+  expect(show_rune(bad)) == []
 }
 `

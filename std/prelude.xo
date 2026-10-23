@@ -266,6 +266,16 @@ fn (s: Str) rfind(sub: Str) -> Int?
 /// The number of non-overlapping copies of sub (strings.Count); the count
 /// of s's runes plus one for "".
 fn (s: Str) count(sub: Str) -> Int
+/// The byte offset of the first rune of chars in s (strings.IndexAny),
+/// None for no rune of chars and for "".
+fn (s: Str) find_any(chars: Str) -> Int?
+/// The byte offset of the last rune of chars in s (strings.LastIndexAny).
+fn (s: Str) rfind_any(chars: Str) -> Int?
+/// Whether s holds a rune of chars (strings.ContainsAny).
+fn (s: Str) contains_any(chars: Str) -> Bool
+/// Whether s holds r (strings.ContainsRune); an invalid byte of s reads as
+/// U+FFFD, so a U+FFFD r finds it.
+fn (s: Str) contains_rune(r: Rune) -> Bool
 fn (s: Str) split(sep: Str) -> List[Str]
 /// The runs of non-white-space text, split around runs of white space
 /// (strings.Fields, unicode.IsSpace); pieces are views of s like split's.
