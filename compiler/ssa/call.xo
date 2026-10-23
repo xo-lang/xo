@@ -212,6 +212,9 @@ fn (var b: Builder) cpu_call(x: Expr, ci: check.CallInfo) -> Int? {
     // runs the portable body until it has its own lowering
     "chacha_blocks4" => if b.goarch == "arm64" { "chacha_blocks4" } else { "" }
     "chacha_stream4" => if b.goarch == "arm64" { "chacha_stream4" } else { "" }
+    // the generic timer on arm64; elsewhere the body (mono_ns, 1e9 a
+    // second)
+    "ticks" | "ticks_hz" => if b.goarch == "arm64" { b.obj_name(fo) } else { "" }
     // decision 0339: NEON on arm64; amd64 runs the portable body
     "ghash4" => if b.goarch == "arm64" { "ghash4" } else { "" }
     "ghash_blocks" => if b.goarch == "arm64" { "ghash_blocks" } else { "" }

@@ -843,6 +843,8 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       clob = clob + ",~{memory},~{cc}"
       g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, ptr ${g.raw_ptr(x.args[2])}, ptr ${g.raw_ptr(x.args[3])}, i64 ${g.op(x.args[4])})")
     }
+    "rt.ticks" => g.set(v, "call i64 asm sideeffect \"mrs $0, cntvct_el0\", \"=r\"()")
+    "rt.ticks_hz" => g.set(v, "call i64 asm sideeffect \"mrs $0, cntfrq_el0\", \"=r\"()")
     "rt.chacha_stream4" => {
       // arm64 only (ssa call.xo): ssa.chacha4_neon_lines' loop as inline
       // asm, x9 to x11 and its V registers clobbered

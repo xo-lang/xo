@@ -1,0 +1,22 @@
+// Tests of cpu.xo's timer reads (`xo test --std-module=native/llrt/cpu`,
+// run by internal/stdtest): the generic timer on arm64, mono_ns
+// elsewhere.
+
+use native/llrt/sysio
+
+test "ticks advance and ticks_ns converts a difference" {
+  let hz = ticks_hz()
+  expect(hz >= 1000000)
+  let a = ticks()
+  let t0 = sysio.mono_ns()
+  while sysio.mono_ns() - t0 < 2000000 {
+  }
+  let d = ticks() - a
+  expect(d > 0)
+  let ns = ticks_ns(d)
+  // 2 ms spun: between 1 ms and 1 s of ticks
+  expect(ns >= 1000000 && ns < 1000000000)
+  expect(ticks_ns(hz) == 1000000000)
+  expect(ticks_ns(hz * 3 + hz / 2) == 3500000000)
+  expect(ticks_ns(0) == 0)
+}

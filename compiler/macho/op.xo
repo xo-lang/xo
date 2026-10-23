@@ -906,6 +906,14 @@ pub fn encode_op_fix(o: Op, elf: Bool) -> Enc {
       if k == RX && sr == "nzcv" {
         return Enc{w: (if o.m == "mrs" { 0xd53b4200 } else { 0xd51b4200 }) | r}
       }
+      // the generic timer's virtual count and its frequency, read only
+      // (cpu.ticks, cpu.ticks_hz)
+      if k == RX && o.m == "mrs" && sr == "cntvct_el0" {
+        return Enc{w: 0xd53be040 | r}
+      }
+      if k == RX && o.m == "mrs" && sr == "cntfrq_el0" {
+        return Enc{w: 0xd53be000 | r}
+      }
     }
     return none
   }

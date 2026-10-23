@@ -1348,6 +1348,13 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.clobber()
       g.set(v, [])
     }
+    "rt.ticks" | "rt.ticks_hz" => {
+      // a read of the generic timer: kept, never merged or moved (keep)
+      let reg = if aux_str(x.aux) == "rt.ticks" { "cntvct_el0" } else { "cntfrq_el0" }
+      let d = g.new_vreg(false)
+      let _i = g.add(Inst{kind: K_PLAIN, text: "mrs $d0, ${reg}", defs: [d], keep: true})
+      g.set(v, [d])
+    }
     "rt.chacha_stream4" => {
       // the same kernel over n bytes (a multiple of 256) in one loop, x9
       // to x11 its cursors and count

@@ -12,6 +12,7 @@
 // rest; a call of one lowered for a CPU without it faults on an illegal
 // instruction.
 use native/llrt/linux
+use native/llrt/sysio
 use native/rt
 
 /// hw()'s bits: the AES rounds (aes_round, aes_last), the carry-less
@@ -1272,4 +1273,26 @@ pub fn mlkem_mul_acc_soft(h: Int, f: Int, g: Int, gp: Int) {
     o = o.wrapping_add(16)
     gi = gi.wrapping_add(8)
   }
+}
+
+/// A count of time for elapsed time thresholds (fiber run and wait
+/// stamps): on arm64 the generic timer's virtual count (cntvct_el0, a
+/// constant rate readable at EL0 on darwin, linux and windows; one
+/// instruction where mono_ns is a libc call), elsewhere mono_ns. Not a
+/// time of day, and not comparable across machines; ticks_ns converts a
+/// difference. Not constant time, unlike the rest of this file.
+pub fn ticks() -> Int {
+  sysio.mono_ns()
+}
+
+/// ticks a second: cntfrq_el0 on arm64, else 1e9 (ticks are mono_ns).
+pub fn ticks_hz() -> Int {
+  1000000000
+}
+
+/// The nanoseconds of d ticks (a difference of two ticks()), without an
+/// overflow for any d below about 2^63 / 1e9 seconds.
+pub fn ticks_ns(d: Int) -> Int {
+  let hz = ticks_hz()
+  (d / hz) * 1000000000 + (d % hz) * 1000000000 / hz
 }
