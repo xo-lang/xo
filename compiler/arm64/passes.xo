@@ -19,6 +19,9 @@ pub fn passes() -> List[Str] {
     // every call passes unique skips its entry copy-on-write check
     "uniq_var_params",
     "fold_consts",
+    // compiler/ssa unroll.xo: a loop of a constant count of at most 8 trips
+    // and a one-block body, after inlining, unrolled
+    "unroll_small",
     "cancel_rc_pairs",
     // viewlen.xo: a Str view used only for its length is the length
     "view_lens",

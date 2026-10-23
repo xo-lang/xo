@@ -1,0 +1,43 @@
+// Small counted loops a call's constant makes (compiler/ssa unroll.xo):
+// unrolled after inlining for 0 to 8 trips, left as loops above that.
+
+fn digits(v: Int, k: Int) -> Int {
+  var w = 0
+  var x = v & 0x7FFFFFFFFFFFFFFF
+  var i = 0
+  while i < k {
+    w = ((w & 0x7FFFFFFFFFFFFF) << 8) | (48 + x % 10)
+    x = x / 10
+    i += 1
+  }
+  w
+}
+
+fn sum_from(xs: List[Int], start: Int, end: Int) -> Int {
+  var t = 0
+  var i = start
+  while i < end {
+    t += xs[i] * (i + 1)
+    i += 1
+  }
+  t
+}
+
+fn shown(w: Int, n: Int) -> Str {
+  var b = BytesBuilder.new()
+  for k in 0..n {
+    b.write_byte(UInt8((w >> (8 * k)) & 255))
+  }
+  b.freeze().to_str() ?? "?"
+}
+
+fn main(os: Os) {
+  let xs = [3, 1, 4, 1, 5, 9, 2, 6, 5, 3]
+  var total = 0
+  for v in [7, 42, 1234, 98765, 1000000007] {
+    total = total ^ digits(v, 0) ^ digits(v, 1) ^ digits(v, 2) ^ digits(v, 4) ^ digits(v, 8) ^ digits(v, 9)
+    os.stdio.println("${shown(digits(v, 4), 4)} ${shown(digits(v, 8), 8)}")
+  }
+  os.stdio.println("${total}")
+  os.stdio.println("${sum_from(xs, 0, 0)} ${sum_from(xs, 2, 5)} ${sum_from(xs, 1, 9)} ${sum_from(xs, 0, 10)}")
+}

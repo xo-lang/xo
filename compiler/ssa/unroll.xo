@@ -1,0 +1,191 @@
+// Full unrolling of small counted loops (the native backends, after
+// inlining: compiler/arm64 inline.xo). A loop whose header only tests
+// `i < K` of a parameter i that starts at a constant and steps by 1 in
+// the loop's one body block, K a constant, at most UNROLL_MAX trips and
+// UNROLL_BODY body values, becomes that many copies of its body in the
+// block before it, which then jumps to the loop's exit (2026-10-23:
+// std/native/llrt text.xo digits_word's `while i < k`, k 2 or 4 once
+// inlined, kept its counter, compare, branch and a spilled mask every
+// digit; LLVM unrolls it).
+
+/// The most trips a loop is unrolled for.
+const UNROLL_MAX = 8
+
+/// The most values of a body (its jump included) a loop is unrolled for.
+const UNROLL_BODY = 40
+
+/// Unrolls the small counted loops of f; whether any was.
+pub fn unroll_small_loops(var f: Func) -> Bool {
+  var changed = false
+  for h in 0..f.blocks.len() {
+    if unroll_at(f, h) {
+      changed = true
+    }
+  }
+  if changed {
+    prune_func(f)
+  }
+  changed
+}
+
+/// Unrolls the loop headed by block h when it is a small counted loop.
+fn unroll_at(var f: Func, h: Int) -> Bool {
+  let hb = f.blocks[h]
+  if hb.preds.len() != 2 || hb.params.is_empty() || hb.instrs.len() != 2 {
+    return false
+  }
+  let t = hb.instrs[1]
+  let tv = f.values[t]
+  if tv.op != Op.Branch || tv.succs.len() != 2 {
+    return false
+  }
+  let cmp = hb.instrs[0]
+  let cv = f.values[cmp]
+  if cv.op != Op.Lt || cv.args.len() != 2 || tv.args.len() != 1 || tv.args[0] != cmp {
+    return false
+  }
+  let pi = hb.params.index_of(cv.args[0]) ?? -1
+  if pi < 0 {
+    return false
+  }
+  let k = match const_word(f, cv.args[1]) {
+    Some(x) => x
+    None => return false
+  }
+  // the body: one block, entered only from the header, back to it
+  let yes = tv.succs[0]
+  let no = tv.succs[1]
+  let body = f.edges[yes].to
+  if body == h || !f.edges[yes].args.is_empty() || f.blocks[body].preds.len() != 1 || !f.blocks[body].params.is_empty() {
+    return false
+  }
+  let bins = f.blocks[body].instrs
+  if bins.is_empty() || bins.len() > UNROLL_BODY {
+    return false
+  }
+  let bt = bins[bins.len() - 1]
+  if f.values[bt].op != Op.Jump || f.values[bt].succs.len() != 1 || f.edges[f.values[bt].succs[0]].to != h {
+    return false
+  }
+  let latch = f.values[bt].succs[0]
+  let pe = if hb.preds[0] == latch { hb.preds[1] } else { hb.preds[0] }
+  if pe == latch {
+    return false
+  }
+  let pre = f.edges[pe].from
+  let pt = f.term(pre)
+  if pt < 0 || f.values[pt].op != Op.Jump || f.values[pt].succs.len() != 1 || f.values[pt].succs[0] != pe {
+    return false
+  }
+  // i: a constant start, a step of 1
+  let c0 = match const_word(f, f.edges[pe].args[pi]) {
+    Some(x) => x
+    None => return false
+  }
+  let step = f.values[f.edges[latch].args[pi]]
+  if step.op != Op.Add || step.block != body || step.args.len() != 2 || step.args[0] != hb.params[pi] || const_word(f, step.args[1]) != Some(1) {
+    return false
+  }
+  let n = k - c0
+  if n < 0 || n > UNROLL_MAX {
+    return false
+  }
+  // the copies keep their landing check (decision 0085): the body's
+  // values and the test share one (an inlined callee's values all land
+  // at its call's check, as the values before the loop do)
+  let pad = f.values[cmp].pad
+  for v in bins {
+    let x = f.values[v]
+    if (v != bt && x.pad != pad) || x.op == Op.Param || (v != bt && !x.succs.is_empty()) {
+      return false
+    }
+  }
+  // the copies, in the block before the loop, each trip's header
+  // parameters the values the trip before passed
+  var cur = f.edges[pe].args
+  var copies: List[Int] = []
+  for _ in 0..n {
+    var m: Map[Int, Int] = {}
+    for (j, p) in hb.params.indexed() {
+      m[p] = cur[j]
+    }
+    for v in bins {
+      if v == bt {
+        continue
+      }
+      var x = f.values[v]
+      var args: List[Int] = []
+      for a in x.args {
+        args.push(m.get(a) ?? a)
+      }
+      x.args = args
+      x.block = pre
+      let c = f.values.len()
+      f.values.push(x)
+      copies.push(c)
+      m[v] = c
+    }
+    var next: List[Int] = []
+    for a in f.edges[latch].args {
+      next.push(m.get(a) ?? a)
+    }
+    cur = next
+  }
+  let pins = f.blocks[pre].instrs
+  f.blocks[pre].instrs = pins[0..pins.len() - 1] + copies + [pt]
+  // the block before jumps to the exit with the last trip's values
+  let ex = f.edges[no].to
+  var fin: Map[Int, Int] = {}
+  for (j, p) in hb.params.indexed() {
+    fin[p] = cur[j]
+  }
+  var eargs: List[Int] = []
+  for a in f.edges[no].args {
+    eargs.push(fin.get(a) ?? a)
+  }
+  f.edges[pe].to = ex
+  f.edges[pe].args = eargs
+  f.blocks[ex].preds.push(pe)
+  var hp: List[Int] = []
+  for e in f.blocks[h].preds {
+    if e != pe {
+      hp.push(e)
+    }
+  }
+  f.blocks[h].preds = hp
+  // the header's parameters read past the loop: the last trip's values
+  for vi in 0..f.values.len() {
+    let x = f.values[vi]
+    if x.block == h || x.block == body {
+      continue
+    }
+    var hit = false
+    for a in x.args {
+      hit = hit || fin.contains(a)
+    }
+    if hit {
+      var args: List[Int] = []
+      for a in x.args {
+        args.push(fin.get(a) ?? a)
+      }
+      f.values[vi].args = args
+    }
+  }
+  for e in 0..f.edges.len() {
+    if e == latch || e == pe {
+      continue
+    }
+    var hit = false
+    for a in f.edges[e].args {
+      hit = hit || fin.contains(a)
+    }
+    if hit {
+      var args: List[Int] = []
+      for a in f.edges[e].args {
+        args.push(fin.get(a) ?? a)
+      }
+      f.edges[e].args = args
+    }
+  }
+  true
+}
