@@ -599,7 +599,11 @@ fn (var g: G) regalloc() {
     for r in ranges[v] {
       l += r.e - r.s + 1
     }
-    prio[v] = weight[v] / Float(l + 4)
+    // x86's fewer registers: a long range of a hot value (a function's
+    // list and its length, used throughout a loop) by the square root of
+    // its length, not the length (2026-10-23: json scan's tape in stack
+    // slots; callgrind on JSON and portable equal or better on 22 of 23)
+    prio[v] = if g.x86 { weight[v] / Float(l + 4).sqrt() } else { weight[v] / Float(l + 4) }
   }
   // by priority, highest first; the order is by register before (stable)
   let by_prio = order.sort_by(fn(v) { -prio[v] })
