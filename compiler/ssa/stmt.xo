@@ -131,6 +131,9 @@ fn (var b: Builder) stmt_body(st: Stmt) {
       b.s.any_defer = true
       b.defer_stmt(body, span)
     }
+    // a body the lazy parse skipped and nothing parsed (decision 0351): a
+    // compiler bug, never an empty function
+    LazyStmt(..) => fault("a lazily parsed function body was read before parse_body")
     _ => b.unsupported("this statement")
   }
 }

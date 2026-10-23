@@ -223,6 +223,7 @@ test "the lazy parse skips bodies and parse_body restores them exactly" {
     fn h() {
       if true {
         let _m: Map[Str, Int] = {}
+        let _s = #{1, 2}
       }
     }
 
@@ -234,7 +235,16 @@ test "the lazy parse skips bodies and parse_body restores them exactly" {
   var skipped = 0
   for d in lazy.file.decls {
     if let FnDecl(d: fd) = d {
-      expect(fd.body.is_none()) == true
+      // the sentinel: one LazyStmt over the real body's span
+      var sentinel = false
+      if let Some(bd) = fd.body {
+        if bd.stmts.len() == 1 {
+          if let LazyStmt(..) = bd.stmts[0] {
+            sentinel = true
+          }
+        }
+      }
+      expect(sentinel) == true
       if fd.lazy != None {
         skipped += 1
       }

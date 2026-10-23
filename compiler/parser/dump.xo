@@ -483,6 +483,10 @@ fn dump_stmt(var out: StrBuilder, depth: Int, label: Str, s: Stmt) {
       out.write("\n")
       dump_expr(out, d, "x", x)
     }
+    LazyStmt(span) => {
+      head(out, depth, label, "LazyStmt", span)
+      out.write("\n")
+    }
     BadStmt(span) => {
       head(out, depth, label, "BadStmt", span)
       out.write("\n")

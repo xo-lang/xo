@@ -169,10 +169,11 @@ pub fn force_bodies(name: Bytes, src: Bytes, r: ParseResult) -> ParseResult {
 /// At a body's `{`: steps past its matching `}` (by brace depth over the
 /// tokens; braces in strings and comments are not tokens) and returns
 /// the body's source range.
-fn (var p: Parser) skip_body() -> LazyBody {
+fn (var p: Parser) skip_body() -> (LazyBody, Span) {
   let start = p.tok.span.start
   var depth = 0
   var end = start.offset
+  var end_pos = start
   while p.tok.kind != Kind.Eof {
     if p.tok.kind == Kind.LBrace || p.tok.kind == Kind.HashLBrace {
       // `#{` opens a set literal, closed by `}`
@@ -181,13 +182,14 @@ fn (var p: Parser) skip_body() -> LazyBody {
       depth -= 1
       if depth == 0 {
         end = p.tok.span.end.offset
+        end_pos = p.tok.span.end
         p.next()
         break
       }
     }
     p.next()
   }
-  LazyBody{start: start, end: end}
+  (LazyBody{start: start, end: end}, Span{start: start, end: end_pos})
 }
 
 /// Orders diagnostics by position, keeping the order of equal ones
@@ -886,7 +888,12 @@ fn (var p: Parser) parse_fn_decl(doc: Doc?, is_pub: Bool, start: Pos, in_interfa
       p.soft(UNEXPECTED_TOKEN, p.tok.span, "interface method `${txt(name.name)}` cannot have a body (core 15: FnSig)")
     }
     if p.lazy && !in_interface {
-      fn_decl.lazy = Some(p.skip_body())
+      let (lb, sp) = p.skip_body()
+      fn_decl.lazy = Some(lb)
+      // the sentinel body (decision 0351): a reader that skips
+      // parse_body faults on its LazyStmt instead of building an empty
+      // function; its span is the real body's
+      fn_decl.body = Some(Block{span: sp, stmts: [Stmt.LazyStmt(span: sp)]})
     } else {
       fn_decl.body = Some(p.parse_block())
     }

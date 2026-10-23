@@ -113,8 +113,12 @@ fn (var c: Checker) check_time_layouts() {
                 _ => {}
               }
             }
-            if let Some(b) = fd.body {
-              pre_block(b, false, nodes)
+            // a body the lazy parse skipped is a native module's, whose
+            // layouts std's own checks see (decision 0351)
+            if fd.lazy == None {
+              if let Some(b) = fd.body {
+                pre_block(b, false, nodes)
+              }
             }
           }
           TestDecl(d: td) => {

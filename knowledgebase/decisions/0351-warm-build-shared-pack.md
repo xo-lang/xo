@@ -78,6 +78,12 @@ Proposed, in stages, each with its own `xo bench --ab`:
    body a sentinel that faults when read; its gate builds compiler/xo and
    every golden with XO_LAZY_PARSE=on, the fixed point and identity. Its
    own --ab (design: ~/xo-lead/notes/xo-publish/0351/lazy-body-parse.md).
+   Stage (b) landed opt in (XO_LAZY_PARSE=on, 2026-10-23; lazy for std
+   and runtime files in build and run): 33 of 33 programs identical to
+   a full parse, compiler/xo included; a small program's warm build
+   0.589x peak memory and 0.886x CPU, wall within noise, compiler/xo
+   unchanged (bench/results/lazy-parse-2026-10-23.md). Turning it on by
+   default is the lead's call after the full tier runs with it.
 
 3. **A whole-build key** (Go's action IDs): the hash of the checked
    modules' keys, the flags and the target maps to the linked binary;

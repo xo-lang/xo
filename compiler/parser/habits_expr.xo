@@ -1083,6 +1083,7 @@ pub fn stmt_span(s: Stmt) -> Span {
     WhileStmt(span, ..) => span
     ExprStmt(span, ..) => span
     BadStmt(span) => span
+    LazyStmt(span) => span
     ConstDecl(d) => d.span
   }
 }

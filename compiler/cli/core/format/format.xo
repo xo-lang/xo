@@ -1195,6 +1195,7 @@ fn stmt_span(s: Stmt) -> Span {
     WhileStmt(span, ..) => span
     ExprStmt(span, ..) => span
     BadStmt(span) => span
+    LazyStmt(span) => span
     ConstDecl(d) => d.span
   }
 }
@@ -1292,6 +1293,9 @@ fn (var p: Printer) stmt(s: Stmt) {
     ExprStmt(_, x) => p.expr(x)
     ConstDecl(d) => p.const_decl(d)
     BadStmt(sp) => p.w(p.text(sp))
+    // a body the lazy parse skipped, read without parse_body (decision
+    // 0351): a compiler bug, never an empty body
+    LazyStmt(..) => fault("a lazily parsed function body was read before parse_body")
   }
 }
 

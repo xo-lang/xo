@@ -111,6 +111,9 @@ fn (var c: Checker) uw_stmt(s: Stmt, var w: UndoWalk, tail: Bool) -> Bool {
     }
     BreakStmt(..) | ContinueStmt(..) => true
     DeferStmt(..) | BadStmt(..) | ConstDecl(..) => false
+    // a body the lazy parse skipped, read without parse_body (decision
+    // 0351): a compiler bug, never an empty body
+    LazyStmt(..) => fault("a lazily parsed function body was read before parse_body")
   }
 }
 

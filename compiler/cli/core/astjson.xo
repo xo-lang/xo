@@ -414,6 +414,9 @@ fn stmt_json(s: parser.Stmt) -> Str {
       o.done()
     }
     BadStmt(span) => node("BadStmt", span).done()
+    // a body the lazy parse skipped, read without parse_body (decision
+    // 0351): a compiler bug, never an empty body
+    LazyStmt(..) => fault("a lazily parsed function body was read before parse_body")
     ConstDecl(c) => const_json(c)
   }
 }

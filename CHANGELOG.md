@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `XO_LAZY_PARSE=on` (opt in, decision 0351 stage 2): `xo build` and
+  `xo run` parse a std or runtime function body only when the checker
+  needs it; the output is identical, and a small program's warm build
+  peaks about 40% lower in memory.
+
 - Native binaries carry their build information, as Go backend ones
   always did, now with every effective setting of `--release`'s preset
   (decision 0354): `xo version -m BINARY` prints it (the xo, backend,

@@ -1503,7 +1503,7 @@ fn parse_list_path(os: Os, dir: Str) -> Str {
 fn parse_prefetch(os: Os, var c: check.Checker, dir: Str) {
   // xo:allow XO0903 the parse prefetch only saves time; the check reads every file itself
   let data = os.fs.read(parse_list_path(os, dir)).ok() ?? b""
-  var todo: List[(Str, Bytes, Bool)] = []
+  var todo: List[(Str, Bytes, Bool, Bool)] = []
   for line in (data.to_str() ?? "").split("\n") {
     let sig = line.starts_with("s ")
     if !sig && !line.starts_with("f ") {
@@ -1511,7 +1511,7 @@ fn parse_prefetch(os: Os, var c: check.Checker, dir: Str) {
     }
     let path = line[2..line.len()]
     match os.fs.read(c.source_path(path)) {
-      Ok(b) => todo.push((path, b, sig))
+      Ok(b) => todo.push((path, b, sig, !sig && c.parse_lazy_path(path)))
       // xo:allow XO0903 the parse prefetch only saves time; the check reads every file itself
       Err(_) => {}
     }
@@ -1531,8 +1531,8 @@ fn parse_prefetch(os: Os, var c: check.Checker, dir: Str) {
           if i >= n {
             break
           }
-          let (path, src, sig) = todo[i]
-          mine.push((path, check.parse_entry(path, src, sig)))
+          let (path, src, sig, lazy) = todo[i]
+          mine.push((path, check.parse_entry(path, src, sig, lazy)))
         }
         mine
       }))

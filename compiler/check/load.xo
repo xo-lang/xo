@@ -83,6 +83,10 @@ pub struct Checker {
   /// checked when the SSA builder first builds them (check_lazy), not by
   /// run; a build reaches a small part of the runtime. Off for `xo check`
   /// and the checker's own runs, which check every body.
+  /// Function bodies of the native modules a lazy run checks lazily
+  /// are parsed lazily too (decision 0351 stage 2, XO_LAZY_PARSE=on):
+  /// skipped by their braces, parsed when check_lazy forces them.
+  pub lazy_parse: Bool = false
   pub lazy: Bool = false
   /// Map and Set as decision 0291's hybrid (every backend since 2026-10-21,
   /// the playground's too; compiler/xo main.xo turns it off for
@@ -913,6 +917,8 @@ pub struct ParseEntry {
   src: Bytes
   sig: Bool
   r: parser.ParseResult
+  /// a lazy parse (parse_lazy_path): its bodies skipped
+  lazy: Bool = false
 }
 
 /// parse_cached parses src, reusing the parse of a std or std/native
@@ -921,8 +927,9 @@ pub struct ParseEntry {
 /// checks many programs (xo dev goldens' builds, check --each, check
 /// --bench) carries parse_cache from one checker to the next.
 fn (var c: Checker) parse_cached(path: Str, src: Bytes, sig: Bool) -> parser.ParseResult {
+  let lazy = !sig && c.parse_lazy_path(path)
   if let Some(e) = c.parse_cache.get(path) {
-    if e.sig == sig && e.src == src {
+    if e.sig == sig && e.src == src && e.lazy == lazy {
       c.parse_hits += 1
       return e.r
     }
@@ -933,15 +940,23 @@ fn (var c: Checker) parse_cached(path: Str, src: Bytes, sig: Bool) -> parser.Par
     // parsed it ahead
     return parser.parse_file(path.bytes(), src, sig)
   }
-  let r = parser.parse_file(path.bytes(), src, sig)
-  c.parse_cache[path] = ParseEntry{src: src, sig: sig, r: r}
+  let r = if lazy { parser.parse_file_lazy(path.bytes(), src, sig) } else { parser.parse_file(path.bytes(), src, sig) }
+  c.parse_cache[path] = ParseEntry{src: src, sig: sig, r: r, lazy: lazy}
   r
+}
+
+/// Whether the file at path is parsed lazily (decision 0351 stage 2): a
+/// native module's file in a lazy run with lazy_parse, whose bodies wait
+/// for check_lazy anyway (lazy_mod), but not the std module under test,
+/// which is checked in full.
+pub fn (c: Checker) parse_lazy_path(path: Str) -> Bool {
+  c.lazy && c.lazy_parse && path.starts_with("std/native/") && (c.std_test.is_empty() || !path.starts_with("std/${c.std_test}/") && path != "std/${c.std_test}.xo")
 }
 
 /// A parse of src at path for parse_cache, made ahead of the check (the
 /// driver's parse prefetch parses on tasks).
-pub fn parse_entry(path: Str, src: Bytes, sig: Bool) -> ParseEntry {
-  ParseEntry{src: src, sig: sig, r: parser.parse_file(path.bytes(), src, sig)}
+pub fn parse_entry(path: Str, src: Bytes, sig: Bool, lazy: Bool) -> ParseEntry {
+  ParseEntry{src: src, sig: sig, r: if lazy { parser.parse_file_lazy(path.bytes(), src, sig) } else { parser.parse_file(path.bytes(), src, sig) }, lazy: lazy}
 }
 
 /// Where the checker reads the file it parses as path: std's under the

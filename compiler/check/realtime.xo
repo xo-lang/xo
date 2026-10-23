@@ -206,6 +206,9 @@ fn (var c: Checker) rt_stmt(var w: RtWalk, s: Stmt) {
     ExprStmt(x: x, ..) => c.rt_expr(w, x)
     ConstDecl(d: cd) => c.rt_expr(w, cd.value)
     BreakStmt(..) | ContinueStmt(..) | BadStmt(..) => {}
+    // a body the lazy parse skipped, read without parse_body (decision
+    // 0351): a compiler bug, never an empty body
+    LazyStmt(..) => fault("a lazily parsed function body was read before parse_body")
   }
 }
 

@@ -318,6 +318,11 @@ pub enum Stmt {
   ExprStmt(span: Span, x: Expr)
   BadStmt(span: Span)
   ConstDecl(d: ConstDecl)
+  /// The only statement of a function body the lazy parse skipped and
+  /// nothing forced yet (decision 0351 stage 2): reading it is a compiler
+  /// bug, so every consumer faults on it (a missed one must never build an
+  /// empty function); parser.parse_body gives the body.
+  LazyStmt(span: Span)
 }
 
 // ---------------------------------------------------------------------------

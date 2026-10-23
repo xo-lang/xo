@@ -203,6 +203,7 @@ pub fn stmt_span(s: Stmt) -> parser.Span {
     WhileStmt(span, ..) => span
     ExprStmt(span, ..) => span
     BadStmt(span) => span
+    LazyStmt(span) => span
     ConstDecl(d) => d.span
   }
 }

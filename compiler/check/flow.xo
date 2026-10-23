@@ -234,6 +234,9 @@ fn children(n: Node) -> List[Node] {
         }
         ConstDecl(d: cd) => out.push(Node.NExpr(cd.value))
         BreakStmt(..) | ContinueStmt(..) | BadStmt(..) => {}
+        // a body the lazy parse skipped, read without parse_body (decision
+        // 0351): a compiler bug, never an empty body
+        LazyStmt(..) => fault("a lazily parsed function body was read before parse_body")
       }
     }
     NExpr(e) => {
@@ -486,6 +489,9 @@ fn pre_stmt(s: Stmt, idents: Bool, var out: List[Node]) {
     }
     ConstDecl(d: cd) => pre_expr(cd.value, idents, out)
     BreakStmt(..) | ContinueStmt(..) | BadStmt(..) => {}
+    // a body the lazy parse skipped, read without parse_body (decision
+    // 0351): a compiler bug, never an empty body
+    LazyStmt(..) => fault("a lazily parsed function body was read before parse_body")
   }
 }
 
@@ -692,6 +698,9 @@ fn fw_stmt(s: Stmt, in_defer: Bool, in_fn: Int, var w: FlowWalk) {
     }
     ConstDecl(d: cd) => fw_expr(cd.value, in_defer, in_fn, w)
     BreakStmt(..) | ContinueStmt(..) | BadStmt(..) => {}
+    // a body the lazy parse skipped, read without parse_body (decision
+    // 0351): a compiler bug, never an empty body
+    LazyStmt(..) => fault("a lazily parsed function body was read before parse_body")
   }
 }
 
@@ -1018,6 +1027,9 @@ fn (var c: Checker) mv_stmt(s: Stmt, var moved: Moved) {
       c.mv_dead = true
     }
     BadStmt(..) | ConstDecl(_) => {}
+    // a body the lazy parse skipped, read without parse_body (decision
+    // 0351): a compiler bug, never an empty body
+    LazyStmt(..) => fault("a lazily parsed function body was read before parse_body")
   }
 }
 

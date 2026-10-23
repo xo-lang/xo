@@ -441,6 +441,9 @@ pub fn (var w: Walk) stmt(st: parser.Stmt) {
     }
     ExprStmt(_, x) => w.expr(x, "X", -1, SiteCtx.Other, [])
     BadStmt(_) => {}
+    // a body the lazy parse skipped, read without parse_body (decision
+    // 0351): a compiler bug, never an empty body
+    LazyStmt(..) => fault("a lazily parsed function body was read before parse_body")
     ConstDecl(d) => w.const_decl(d, -1)
   }
 }

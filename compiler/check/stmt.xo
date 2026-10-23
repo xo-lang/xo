@@ -212,12 +212,35 @@ fn (var c: Checker) check_fn_defaults(fo: Int) {
   }
 }
 
+/// Parses fo's body when the lazy parse skipped it (decision 0351 stage
+/// 2): the sentinel body becomes the real one in fo's declaration, which
+/// every later reader (the check, the SSA builder) sees. A syntax error
+/// in it is a std file's (TestStdChecks reports it), so the build stops.
+pub fn (var c: Checker) force_body(fo: Int) {
+  if fo < 0 || c.objs[fo].fn_decl.is_empty() {
+    return
+  }
+  let fd = c.objs[fo].fn_decl[0]
+  if let Some(lb) = fd.lazy {
+    let f = c.objs[fo].decl_file
+    let (b, ds) = parser.parse_body(c.files[f].path.bytes(), c.files[f].src, lb)
+    if !ds.is_empty() {
+      fault("a lazily parsed body of ${c.files[f].path} does not parse: ${ds[0].message.to_str() ?? "?"} (XO_LAZY_PARSE=off parses it in full)")
+    }
+    var nf = fd
+    nf.body = Some(b)
+    nf.lazy = None
+    c.objs[fo].fn_decl = [nf]
+  }
+}
+
 /// Checks the body of fo when it waits for check_lazy (decision 0247),
 /// as run would have, and returns the errors it reported (none for a
 /// std that TestStdChecks checks in full). The flow passes, effect
 /// obligations, and unused name reports of run are not run for it: they
 /// only report diagnostics, which an eager check of std already has.
 pub fn (var c: Checker) check_lazy(fo: Int) -> List[Diag] uses fs.read {
+  c.force_body(fo)
   if !(c.lazy_fns.get(fo) ?? false) {
     return []
   }
@@ -1143,6 +1166,9 @@ fn (var c: Checker) stmt(s: Stmt) {
       c.loop_body(label_name(label), cond == None, body, [], -1, false)
     }
     BadStmt(..) => {}
+    // a body the lazy parse skipped, read without parse_body (decision
+    // 0351): a compiler bug, never an empty body
+    LazyStmt(..) => fault("a lazily parsed function body was read before parse_body")
   }
 }
 

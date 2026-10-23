@@ -920,6 +920,9 @@ fn (var c: Enc) stmt(var b: BytesBuilder, s: Stmt) {
       c.expr(b, x)
     }
     BadStmt(_) => open(b, "BadStmt")
+    // a body the lazy parse skipped, read without parse_body (decision
+    // 0351): a compiler bug, never an empty body
+    LazyStmt(..) => fault("a lazily parsed function body was read before parse_body")
     ConstDecl(d) => c.const_decl(b, d, false)
   }
 }

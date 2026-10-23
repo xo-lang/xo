@@ -1180,6 +1180,7 @@ fn stmt_span(s: Stmt) -> Span {
     ForStmt(span: span, ..) => span
     WhileStmt(span: span, ..) => span
     ExprStmt(span: span, ..) => span
+    LazyStmt(span: span) => span
     BadStmt(span: span) => span
     ConstDecl(d) => d.span
   }
@@ -1272,6 +1273,8 @@ fn (var g: Gen) stmt(s: Stmt) {
       }
       g.loop_while(l, cond, body, Some(s))
     }
+    // the Go backend parses every body in full (decision 0351)
+    LazyStmt(..) => fault("a lazily parsed function body was read before parse_body")
     BadStmt(span: span) => {
       g.errorf(span, "bad statement")
       return
