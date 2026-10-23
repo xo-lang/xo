@@ -1,7 +1,8 @@
 # 0359: A burst of spawns stays on the spawner (no wake per spawn)
 
-Status: Proposed (Xo Lang 3, 2026-10-23; for the owner's decision with the
-measurements below). Nothing is implemented in main.
+Status: Proposed (Xo Lang 3, 2026-10-23). Owner, 2026-10-23: hold G as written
+and try the adaptive per-spawn-site variant (below, AD); AD is measured and
+recommended, awaiting the owner's acceptance. Nothing is implemented in main.
 
 ## Context
 
@@ -65,6 +66,46 @@ Two refinements were tried and each gives back one side:
   empty: spawn 0.303, fanout 0.428, mutex 0.962, rwmutex 0.98, pmap 1.354.
   pmap is worse, not better: one extra wake does not rebuild the
   per-spawn fan out.
+
+## Adaptive per spawn site (variant AD; owner's request, 2026-10-23)
+
+A running average of each spawn site's task run time (a quarter weight, 256
+slots of the pool record indexed by a hash of the spawn location, 2 KiB; one
+clock read before and after each task's run, one store; one load per spawn).
+A site whose tasks average under 20 us keeps its burst on the spawner (G); a
+site not seen yet, or with long or blocking tasks, wakes a worker per spawn as
+today. No API change. Unknown sites wake until their first task ends.
+
+\`xo bench --ab\`, 20 rounds, load about 5.8 (the quiet window opened after the
+run), against main:
+
+| row | wall | |
+|---|---|---|
+| pmap | 1.008 (noise) | G was 1.298 |
+| spawn | 0.386 | G 0.329 |
+| fanout | 0.587 | G 0.547 |
+| pingpong | 1.004 | tie |
+| mutex | 0.998 | G was 0.671 |
+| rwmutex | 1.002 | G was 0.374 |
+
+mutex and rwmutex lose G's gain: their tasks block on the lock, so their run
+time is long and the site wakes per spawn, as pmap's does. Their gap to Go is
+a lock bound wake and steal problem of its own (a throttle for programs that
+mostly wait on one lock), not a task size one.
+
+CRUD HTTP (4 interleaved loadgen runs, 32 connections): rps 146.8k against
+149.9k, p99 674 against 637 us, p99.9 1.09 against 1.02 ms: inside the 5
+percent spread of the runs, a slight tendency against, not a loss to chase.
+ThreadSanitizer: the six conc rows built with \`--race\` run and print their
+checksums with no report. \`xo test --explore=100\` on test_explore,
+test_property and test_runner: the same passes and failures as main (their
+recorded failures), because a deterministic run starts no worker (\`wakep\`
+returns first).
+
+Costs and limits: site slots collide (256 slots; two sites share an average),
+a site whose tasks change size takes a few tasks to adapt, and the first task
+of a new site's burst wakes workers once. Landing it needs a quiet window
+re-measure of all rows and a Linux (Docker arm64) pass.
 
 ## Consequences
 
