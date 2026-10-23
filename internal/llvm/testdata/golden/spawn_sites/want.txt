@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+tiny 4990000 heavy 192282357 waited 21840
+--- stderr

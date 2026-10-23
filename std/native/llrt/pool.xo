@@ -2613,6 +2613,8 @@ const T_NODE = 16
 const T_SCOPE = 72
 const T_STATE = 10
 const T_SNEXT = 168
+const T_LOC_P = 232
+const P_SITES = layout.P_SITES
 const T_GONE = 22
 
 /// Links task t into scope s and queues it in the ring of w, the
@@ -2676,12 +2678,60 @@ pub fn scope_add_at(pl: Int, s: Int, t: Int, w: Int, own: Bool) -> Int {
   // waiting 1 ms later (defer_wake). With one worker every spawn defers:
   // the spawner's join or park runs them (as Go's GOMAXPROCS=1 and
   // tokio's current thread runtime do), not a woken worker one by one
-  let alone = rt.mem_load(pl, P_NCPU, 8) < 2 || rt.slot_load(w, 0, ACQUIRE) == rt.mem_load(w, RQ_TAIL_AT, 8)
+  let alone = rt.mem_load(pl, P_NCPU, 8) < 2 || site_small(pl, t) || rt.slot_load(w, 0, ACQUIRE) == rt.mem_load(w, RQ_TAIL_AT, 8)
   rq_put(pl, w, t)
   if !(alone && defer_wake(pl, w)) {
     wakep(pl)
   }
   dead
+}
+
+/// The spawn site's slot of a task (its location word, hashed to 256 words
+/// of the pool record): 0 for a task spawned with no location.
+fn site_slot(t: Int) -> Int {
+  let lp = rt.mem_load(t, T_LOC_P, 8)
+  if lp == 0 {
+    return 0
+  }
+  P_SITES.wrapping_add(lp.shr_logical(3).wrapping_mul(-7046029254386353131).shr_logical(56).wrapping_shl(3))
+}
+
+/// Whether t's spawn site has run tasks that finish in microseconds (a
+/// running average of their run time under SITE_SMALL_NS): its burst stays
+/// on the spawner, which runs it at its join, instead of waking a worker per
+/// spawn (decision 0359). A site not seen yet, or with long or blocking
+/// tasks, wakes a worker per spawn.
+fn site_small(pl: Int, t: Int) -> Bool {
+  let a = site_slot(t)
+  if a == 0 {
+    return false
+  }
+  let avg = rt.mem_load(pl, a, 8)
+  avg != 0 && avg < SITE_SMALL_NS
+}
+
+const SITE_SMALL_NS = 20000
+
+/// The clock a task's run is timed with (tasks.xo run_claimed).
+pub fn site_clock() -> Int { cpu.ticks() }
+
+/// Folds the run time of task t, started at t0 (site_clock), into its spawn
+/// site's average (a quarter weight). The word is read and written plainly:
+/// a lost update is one sample.
+pub fn site_note(pl: Int, t: Int, t0: Int) {
+  let a = site_slot(t)
+  if a == 0 {
+    return
+  }
+  var ns = cpu.ticks_ns(cpu.ticks().wrapping_sub(t0))
+  if ns < 1 {
+    ns = 1
+  }
+  if ns > 1000000000 {
+    ns = 1000000000
+  }
+  let old = rt.mem_load(pl, a, 8)
+  rt.mem_store(pl, a, if old == 0 { ns } else { old.wrapping_mul(3).wrapping_add(ns).shr_logical(2) }, 8)
 }
 
 /// Takes the tasks that are over and that only s's list holds out of the

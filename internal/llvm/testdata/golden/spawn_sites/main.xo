@@ -1,0 +1,48 @@
+// Spawn sites with different task sizes in one program (decision 0359): a
+// site of tiny tasks (a burst that stays on the spawner), a site of tasks
+// that compute for a while, and a site of tasks that block on a channel;
+// every site runs for many rounds, so the per site averages settle. The
+// results must not depend on where the tasks run.
+fn steps(x: Int) -> Int {
+  var n = x
+  var c = 0
+  while n > 1 {
+    n = if n % 2 == 0 { n / 2 } else { 3 * n + 1 }
+    c += 1
+  }
+  c
+}
+
+fn main(os: Os) {
+  let tiny = Atomic[Int].new(0)
+  let heavy = Atomic[Int].new(0)
+  let waited = Atomic[Int].new(0)
+  for r in 0..40 {
+    scope s {
+      for i in 0..500 {
+        s.spawn(fn() { tiny.add(i) })
+      }
+    }
+    scope s {
+      for k in 0..16 {
+        s.spawn(fn() {
+          var acc = 0
+          for i in 0..3000 {
+            acc += steps(k * 3000 + i + r + 1)
+          }
+          heavy.add(acc)
+        })
+      }
+    }
+    let c = Chan[Int].new(cap: 8)
+    scope s {
+      for i in 0..8 {
+        s.spawn(fn() { c.send(i * r) })
+      }
+      for _ in 0..8 {
+        waited.add(c.recv() ?? 0)
+      }
+    }
+  }
+  os.stdio.println("tiny ${tiny.get()} heavy ${heavy.get()} waited ${waited.get()}")
+}

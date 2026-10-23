@@ -1,5 +1,23 @@
 # prelude changes
 
+## 2026-10-23: perf: a spawn site of tiny tasks keeps its burst on the spawner (decision 0359)
+
+- Kind: perf
+- Commit: this commit
+- Found by: the Intel field report on 0.26.0 (spawn 100k tasks 1.25x Go) and the conc rwmutex gap
+- Go reference: none (the scheduler)
+- Test: golden spawn_sites (arm64, LLVM, Go parity); xo bench --ab on bench/perf/conc rows
+
+The runtime keeps a running average of each spawn site's task run time
+(256 slots of the pool record, a hash of the spawn location, a quarter
+weight). A spawn from a site whose tasks average under 20 us no longer wakes
+a worker: the burst stays on the spawner's ring, the spawner runs it at its
+join, and the existing deferral (50 us on a later spawn, the monitor's 1 ms
+tick) wakes helpers if the burst outlasts them. A site not seen yet, or with
+long or blocking tasks, wakes a worker per spawn as before. No API change.
+`xo bench --ab` against main (arm64, 20 rounds, load under 4): conc spawn wall 0.45,
+fanout 0.59, pmap, pingpong, mutex and rwmutex within noise (linux/arm64 in Docker: spawn 0.77, fanout 0.63); CRUD HTTP rps and p99 within noise.
+
 ## 2026-10-23: feature: Str.find_any, rfind_any, contains_any, contains_rune
 
 - Kind: feature

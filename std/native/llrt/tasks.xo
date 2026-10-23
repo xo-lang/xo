@@ -935,7 +935,9 @@ pub fn run_claimed(t: Int, units: Int) {
     st(c, ctx.C_TRACE, 1)
     tracerec.ev(tracerec.K_START, 0, c, t)
   }
+  let st0 = pool.site_clock()
   run_entry(c, t, fl, env)
+  pool.site_note(ctx.pool(), t, st0)
   rt.slot_store[Int](t + T_CTX, 0, 0, RELEASE)
   if tracerec.built() && tr {
     tracerec.ev(tracerec.K_END, 0, c, t)

@@ -219,7 +219,10 @@ pub const W_RUNF = 3520
 pub const W_SIZE = 3528
 /// The pool record's size (pool.xo P_*: 16 words, then the 4096 worker
 /// records' addresses; ctx.xo makes it).
-pub const P_SIZE = 32896
+/// The spawn sites' average run times (pool.xo site_note): 256 words after
+/// the worker records' addresses (decision 0359).
+pub const P_SITES = 32896
+pub const P_SIZE = 34944
 
 /// xo_node, a cancellation node (pool.xo; xo_rt.c before; ctx.xo makes the
 /// context's, twrun.xo and pool.xo the others): its parent, first child,
