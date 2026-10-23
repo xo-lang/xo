@@ -1,0 +1,3 @@
+fn words(s: Str) -> List[Str] {
+  s.fields()
+}

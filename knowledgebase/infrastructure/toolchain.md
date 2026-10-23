@@ -2356,7 +2356,7 @@ Last verified: 2026-10-08. Rules and choices; details in
   Goldens `time_zones`, `time_civil`, `time_format`, `time_layout_fault`,
   `time_dynamic_zone`; `TestZoneDataPerUse` (what each kind of use
   embeds, `--tzdata=system`); checker golden `time_layout`; habit cases
-  `internal/fix/testdata/habits/time-layout-*`. Sizes on darwin/arm64:
+  `cmd/xo/testdata/habits/time-layout-*`. Sizes on darwin/arm64:
   UTC only 7,968,146 bytes, one constant zone 7,968,994, a run time
   name 8,382,498 (std.md 13.5).
 - Test log capture (2026-10-08, decision 0057): `runOneTest` gives each

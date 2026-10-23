@@ -1,0 +1,3 @@
+fn commas(s: Str) -> Int {
+  s.count(",")
+}

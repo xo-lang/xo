@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "name `strings` not found",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 3,
+      "end_line": 2,
+      "end_col": 10
+    },
+    "notes": [
+      {
+        "message": "`strings.Count` is Go's library; Xo calls the method on the value: `s.count(\",\")` (spec/std.md 2)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `.count(...)`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 3,
+              "end_line": 2,
+              "end_col": 24
+            },
+            "replace": "s.count(\",\")"
+          }
+        ]
+      }
+    ]
+  }
+]

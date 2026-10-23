@@ -13,6 +13,6 @@ recognize a foreign form, and short or truncated inputs end before that.
 Fix: habit code reads tokens through `p.tokAt(i)`, which returns the EOF
 token past the end. When adding lookahead anywhere in the parser, use
 `peek` or `tokAt`, and add the new form's input to the fuzz seeds
-(`FuzzParse` seeds itself from internal/fix/testdata/habits and
+(`FuzzParse` seeded itself from internal/fix/testdata/habits (now cmd/xo/testdata/habits) and
 bench/habits/drafts), then run
 `go test -run '^$' -fuzz=FuzzParse -fuzztime=300s ./internal/parser/`.
