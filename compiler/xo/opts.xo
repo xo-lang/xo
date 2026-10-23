@@ -316,7 +316,7 @@ fn has_sources(os: Os, dir: Str, var n: Int) -> Bool {
     }
   }
   for e in entries {
-    if e.is_dir && e.name != "vendor" && !check.walk_skips(e.name) {
+    if e.is_dir && !check.walk_skips(e.name) {
       if has_sources(os, "${dir}/${e.name}", n) {
         return true
       }

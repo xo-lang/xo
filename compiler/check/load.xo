@@ -550,7 +550,7 @@ fn (var c: Checker) find_module_dirs(dir: Str, top: Bool, var out: List[Str]) {
       continue
     }
     let sub = join(dir, e.name)
-    if walk_skips(e.name) || c.is_vendor_dir(sub) {
+    if walk_skips(e.name) {
       continue
     }
     // the std tree of this checker (a checkout's std/ under a workspace
@@ -572,11 +572,12 @@ fn (var c: Checker) find_module_dirs(dir: Str, top: Bool, var out: List[Str]) {
 }
 
 /// walk_skips reports whether a DIR/... walk skips the directory named
-/// name, as the go command does: testdata, and names starting with `.`
-/// or `_` (decision 0210; its 2026-10-23 note: every walk, parse and fmt
-/// too). The module walks also skip vendor directories.
+/// name, as the go command does: testdata, vendor (with or without
+/// modules.txt: vendored code is checked only when named), and names
+/// starting with `.` or `_` (decision 0210 and its 2026-10-23 notes:
+/// every walk, parse and fmt too).
 pub fn walk_skips(name: Str) -> Bool {
-  name == "testdata" || name.starts_with(".") || name.starts_with("_")
+  name == "testdata" || name == "vendor" || name.starts_with(".") || name.starts_with("_")
 }
 
 /// The most .xo files, and directory entries, a DIR/... walk looks at
@@ -630,10 +631,6 @@ fn source_bytes(r: Result[Bytes, FsErr], p: Str) -> (Bytes?, Str) {
     Err(NotFound(_)) => (None, "")
     Err(e) => (None, "read ${p}: ${e}")
   }
-}
-
-fn (c: Checker) is_vendor_dir(dir: Str) -> Bool {
-  base(dir) == "vendor" && (c.fs.exists(join(dir, "modules.txt")).ok() ?? false)
 }
 
 fn (var c: Checker) load_prelude() {

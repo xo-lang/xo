@@ -2622,10 +2622,10 @@ Only the package pattern `DIR/...` (`./...`, `cmd/...`, accepted by
 covers the directories below DIR: every directory with `.xo` files at or
 below it (one module each, or one program for `build` and `test`),
 or for `fmt`, `fix`, and `parse` every `.xo` file below it. Every such
-walk skips directories named `testdata` and names starting with `.` or
-`_`, as the go command does, so a deliberately broken directory is kept
-out of `./...` by its name; the module walks also skip `vendor/` (with
-`modules.txt`). A `DIR/...` walk stops past 6,000 `.xo` files or 60,000 directory
+walk skips directories named `testdata` or `vendor` (with or without
+`modules.txt`) and names starting with `.` or `_`, as the go command
+does, so a deliberately broken directory is kept out of `./...` by its
+name; vendored code is checked only when its directory is named. A `DIR/...` walk stops past 6,000 `.xo` files or 60,000 directory
 entries with an error naming the limit, so `xo build /...` or
 `xo check $HOME/...` refuses. A `DIR/...` with no `.xo` file at or below
 DIR (with the skips above) is an error, `xo CMD: DIR/... matched no

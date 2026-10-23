@@ -58,8 +58,15 @@ and it now holds for every walk. `fmt` walked `testdata` and `parse`
 walked every directory; both now skip `testdata` and names starting
 with `.` or `_` like the others, through one predicate
 (`check.walk_skips`, used by the checker's module walk, fix, fmt,
-parse, and the front end's has-sources test). `vendor/` handling is
-unchanged. Test: cmd/xo TestCLIPattern.
+parse, and the front end's has-sources test). Test: cmd/xo
+TestCLIPattern.
+
+Note (2026-10-23, owner): every walk also skips every `vendor/`
+directory, with or without `modules.txt`, as the go command does; the
+checker's module walk skipped only a vendor directory with
+`modules.txt`, and fmt, fix and parse none. Vendored code is checked
+only when its directory is named (`xo check vendor/x`). Test: cmd/xo
+TestCLIPattern.
 
 ## Consequences
 

@@ -222,6 +222,7 @@ func TestCLIPattern(t *testing.T) {
 		"m/.hidden/syn.xo":     "fn (\n",
 		"m/testdata/y/syn.xo":  "fn (\n",
 		"m/testdata/x/ugly.xo": "fn  h( )   ->Int {1}\n",
+		"m/vendor/v/a.xo":      bad,
 		"m/empty/notes.txt":    "no sources\n",
 		"m/broken/deep/c.xo":   bad,
 	}
@@ -273,10 +274,10 @@ func TestCLIPattern(t *testing.T) {
 	}
 	// every DIR/... walk skips testdata and names starting with _ or .,
 	// fmt and parse too (decision 0210, its 2026-10-23 note)
-	for _, args := range [][]string{{"parse", "./..."}, {"fmt", "--check", "./..."}, {"fix", "--dry-run", "./..."}, {"vet", "./..."}, {"test", "./..."}} {
+	for _, args := range [][]string{{"check", "./..."}, {"build", "./..."}, {"parse", "./..."}, {"fmt", "--check", "./..."}, {"fix", "--dry-run", "./..."}, {"vet", "./..."}, {"test", "./..."}} {
 		got := xo(args...)
-		if strings.Contains(got, "_skip") || strings.Contains(got, ".hidden") || strings.Contains(got, "testdata") {
-			t.Errorf("xo %s (want nothing from _skip, .hidden, testdata):\n%s", strings.Join(args, " "), got)
+		if strings.Contains(got, "_skip") || strings.Contains(got, ".hidden") || strings.Contains(got, "testdata") || strings.Contains(got, "vendor") {
+			t.Errorf("xo %s (want nothing from _skip, .hidden, testdata, vendor):\n%s", strings.Join(args, " "), got)
 		}
 	}
 	for _, c := range []string{"check", "test", "vet", "fmt", "doc"} {

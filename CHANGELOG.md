@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Every `DIR/...` walk skips `vendor/` directories, with or without
+  `modules.txt`, as the go command does (owner, 2026-10-23); vendored
+  code is checked only when its directory is named.
+
 - `xo fmt ./...` and `xo parse ./...` skip directories named `testdata`
   and names starting with `.` or `_`, as `check`, `vet`, `test`, `build`
   and `fix` already did, so a deliberately broken directory stays out of
