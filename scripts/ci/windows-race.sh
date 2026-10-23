@@ -82,26 +82,49 @@ if [ -z "$archive" ]; then
 fi
 sum="$o/windows-race.txt"
 : > "$sum"
+# where the time goes (lead, 2026-10-23: main took 44 minutes where the
+# 0.27.0 archive took 323 s, and the summary had no times): each build's
+# and each run's milliseconds on its line, and the cache's size and its
+# shared pack segments before and after the builds
+now_ms() { local t=${EPOCHREALTIME/[.,]/}; echo $((t / 1000)); }
+cache_note() {
+  local c
+  c=$(up "${LOCALAPPDATA:-$HOME/AppData/Local}")/xo
+  if [ -d "$c" ]; then
+    echo "cache $1: $(du -sm "$c" 2>/dev/null | cut -f1) MB, $(find "$c" -path '*packs/shared/*' -name 's-*' -type f 2>/dev/null | wc -l | tr -d ' ') shared pack segments" | tee -a "$sum"
+  else
+    echo "cache $1: no $c" | tee -a "$sum"
+  fi
+}
+cache_note "before the builds"
 # which xo, and whether it builds a native program at all without --race:
 # separates a broken xo from a --race problem (run 39772751654 failed every
 # build with XO1201 and said neither)
 "$XO_CLI" version --json | tee -a "$sum"
+t0=$(now_ms)
 if ! "$XO_CLI" build --backend=amd64 -o "$(np "$w/plain_tsan_race.exe")" internal/llvm/testdata/tsan_race > "$o/build-plain.txt" 2>&1; then
   echo "FAIL build tsan_race without --race: $(grep -m 3 ' error ' "$o/build-plain.txt")" | tee -a "$sum"
 fi
+echo "build plain tsan_race ms=$(($(now_ms) - t0))" | tee -a "$sum"
 fail=0
 for p in tsan_race race_sync race_stacks; do
+  t0=$(now_ms)
   if ! "$XO_CLI" build --race --backend=amd64 -o "$(np "$w/$p.exe")" "internal/llvm/testdata/$p" > "$o/build-$p.txt" 2>&1; then
     echo "FAIL build $p: $(tail -3 "$o/build-$p.txt")" | tee -a "$sum"
     fail=1
   fi
+  echo "build --race $p ms=$(($(now_ms) - t0))" | tee -a "$sum"
 done
+cache_note "after the builds"
 [ $fail = 0 ] || exit 1
 # one run: NAME EXE WANT_EXIT WANT_RACES(+ for at least one, 0 for none) [GREP]
 check() {
   local name=$1 exe=$2 want=$3 races=$4 grep=${5:-}
+  local t0
+  t0=$(now_ms)
   tmo "$w/$exe" > "$o/run.out" 2> "$o/run.err"
   local rc=$? n
+  local ms=$(($(now_ms) - t0))
   local hung=0
   if [ "$rc" = 124 ] || [ "$rc" = 137 ]; then hung=1; hangs=$((hangs + 1)); fi
   n=$(grep -c "WARNING: DATA RACE" "$o/run.err")
@@ -111,7 +134,7 @@ check() {
   if [ "$races" = 0 ]; then [ "$n" = 0 ] || ok=0; else [ "$n" -ge 1 ] || ok=0; fi
   # (grep the files: with pipefail, cat | grep -q fails on cat's SIGPIPE)
   if [ -n "$grep" ]; then grep -q -- "$grep" "$o/run.out" "$o/run.err" || ok=0; fi
-  local line="$name exit=$rc races=$n"
+  local line="$name exit=$rc races=$n ms=$ms"
   [ $hung = 0 ] || line="$name exit=timeout(${RUN_TIMEOUT}s) races=$n"
   if [ $ok = 1 ]; then echo "ok   $line" >> "$sum"; else
     echo "FAIL $line (want exit $want, races $races${grep:+, \"$grep\"})" | tee -a "$sum"
