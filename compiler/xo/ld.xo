@@ -40,12 +40,39 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
     }
   }
   var dylibs = ["/usr/lib/libSystem.B.dylib"]
+  var rpaths: List[Str] = []
   if !race_rt.is_empty() {
     // its interceptors (malloc, pthread_create, ...) take effect through
-    // its __interpose section, whatever the lookup order
-    dylibs.push(race_rt)
+    // its __interpose section, whatever the lookup order. Loaded by
+    // @rpath, found beside the executable first (a copy put there, as
+    // Xcode embeds a sanitizer's runtime), then in the toolchain's race
+    // directory: a binary that loaded the toolchain's path outlived
+    // neither a move nor a removal of the toolchain (field report on
+    // 0.26.0, 2026-10-23)
+    let file = base_name(race_rt)
+    dylibs.push("@rpath/${file}")
+    rpaths = ["@executable_path", dir_name(race_rt)]
+    let near = "${dir_name(out)}/${file}"
+    if near != race_rt {
+      match os.fs.read(race_rt) {
+        Ok(data) => {
+          // xo:allow XO0903 a copy that cannot be read is written again
+          let same = match os.fs.read(near) {
+            Ok(old) => old == data
+            Err(_) => false
+          }
+          if !same {
+            let werr = write_exe(os, near, data)
+            if !werr.is_empty() {
+              return werr
+            }
+          }
+        }
+        Err(e) => return "${race_rt}: ${e}"
+      }
+    }
   }
-  let opts = macho.LinkOpts{name: base_name(out), dylibs: dylibs, strip: strip, dsym: dsym}
+  let opts = macho.LinkOpts{name: base_name(out), dylibs: dylibs, rpaths: rpaths, strip: strip, dsym: dsym}
   match macho.link_debug(ins, opts) {
     Ok((b, dsym)) => {
       // a new file, renamed over the old: the kernel caches the

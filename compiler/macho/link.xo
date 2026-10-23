@@ -32,6 +32,7 @@ const MH_TWOLEVEL = 0x80
 const MH_PIE = 0x200000
 const MH_HAS_TLV_DESCRIPTORS = 0x800000
 const LC_LOAD_DYLIB = 0xc
+const LC_RPATH = 0x8000001c
 const LC_LOAD_DYLINKER = 0xe
 const LC_UUID = 0x1b
 const LC_CODE_SIGNATURE = 0x1d
@@ -51,6 +52,9 @@ pub struct LinkOpts {
   pub minos: (Int, Int) = (11, 0)
   pub sdk: (Int, Int) = (11, 0)
   pub dylibs: List[Str] = ["/usr/lib/libSystem.B.dylib"]
+  /// The run path searched for a dylib named @rpath/... (LC_RPATH), in
+  /// order: --race's ThreadSanitizer runtime (decision 0273)
+  pub rpaths: List[Str] = []
   pub entry: Str = "_main"
   /// No local symbols in the symbol table (`xo build -s`, as `ld -x`):
   /// the exports, the imports, and __mh_execute_header stay
@@ -690,6 +694,9 @@ fn (var l: Linker) layout() {
   var cmds = 72 * l.segs.len() + 80 * ns + 16 + 16 + 24 + 80 + 32 + 24 + 24 + 24 + 16
   for d in l.opts.dylibs {
     cmds += align_up(24 + d.len() + 1, 8)
+  }
+  for r in l.opts.rpaths {
+    cmds += align_up(12 + r.len() + 1, 8)
   }
   l.cmds_size = cmds
   // __TEXT's sections start after room for the __DWARF segment's command
@@ -1428,7 +1435,7 @@ fn (var l: Linker) write() -> Bytes {
   if l.has_tlv {
     flags += MH_HAS_TLV_DESCRIPTORS
   }
-  let ncmds = l.segs.len() + 9 + l.opts.dylibs.len()
+  let ncmds = l.segs.len() + 9 + l.opts.dylibs.len() + l.opts.rpaths.len()
   h.u32(MH_MAGIC_64)
   h.u32(if l.x86 { CPU_TYPE_X86_64 } else { CPU_TYPE_ARM64 })
   h.u32(if l.x86 { 3 } else { 0 })
@@ -1574,6 +1581,14 @@ fn (var l: Linker) write() -> Bytes {
     h.u32(if d.contains("libSystem") { 1356 * 65536 } else { 65536 })
     h.u32(65536)
     h.name(d, size - 24)
+  }
+  // LC_RPATH of each run path entry
+  for r in l.opts.rpaths {
+    let size = align_up(12 + r.len() + 1, 8)
+    h.u32(LC_RPATH)
+    h.u32(size)
+    h.u32(12)
+    h.name(r, size - 12)
   }
   // LC_CODE_SIGNATURE
   h.u32(LC_CODE_SIGNATURE)

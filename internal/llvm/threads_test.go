@@ -726,3 +726,73 @@ func TestRaceDefaultNative(t *testing.T) {
 		t.Errorf("xo build --race with no runtime and no clang: %v, want the no native runtime error:\n%s", err, b)
 	}
 }
+
+// TestRaceBinaryOutlivesToolchain: a darwin --race binary built by Xo's
+// Mach-O linker still runs after the toolchain's race runtime directory
+// is renamed (field report on 0.26.0, 2026-10-23: it loaded the dylib by
+// the toolchain's absolute path). The link loads
+// @rpath/libclang_rt.tsan_osx_dynamic.dylib with the run path
+// @executable_path, then the runtime's directory, and puts a copy of the
+// runtime beside the binary.
+func TestRaceBinaryOutlivesToolchain(t *testing.T) {
+	if runtime.GOOS != "darwin" || !xotool.Arm64Host() {
+		t.Skip("darwin/arm64's Mach-O race link")
+	}
+	if testing.Short() {
+		t.Skip("builds a program with ThreadSanitizer")
+	}
+	if why := sanitizerRuns("-fsanitize=thread"); why != "" {
+		t.Skipf("ThreadSanitizer does not run here: %s", why)
+	}
+	src := os.Getenv("XO_RACE_RUNTIME")
+	if src == "" {
+		cl, err := xotool.Clang()
+		if err != nil {
+			t.Skip("clang not found")
+		}
+		out, err := exec.Command(cl, "-print-file-name=lib/darwin/libclang_rt.tsan_osx_dynamic.dylib").Output()
+		if err != nil {
+			t.Skipf("no ThreadSanitizer runtime: %v", err)
+		}
+		src = strings.TrimSpace(string(out))
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Skipf("no ThreadSanitizer runtime: %v", err)
+	}
+	tmp := t.TempDir()
+	rt := filepath.Join(tmp, "toolchain", "race", filepath.Base(src))
+	if err := os.MkdirAll(filepath.Dir(rt), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rt, data, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(tmp, "out", "prog")
+	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r, err := xotool.Build([]string{filepath.Join("testdata", "race_sync")}, xotool.Options{Backend: xotool.BackendArm64, Race: true, Out: bin, Env: []string{"XO_RACE_RUNTIME=" + rt}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Failed {
+		t.Fatalf("xo build --race --backend=arm64 failed:\n%s", r.Output)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(bin), filepath.Base(src))); err != nil {
+		t.Fatalf("no copy of the runtime beside the binary: %v", err)
+	}
+	// the toolchain moves away
+	if err := os.Rename(filepath.Join(tmp, "toolchain"), filepath.Join(tmp, "moved")); err != nil {
+		t.Fatal(err)
+	}
+	cmd := testtmp.Guard(exec.Command(bin))
+	cmd.Env = append(os.Environ(), "XO_RACE_CASE=spawn", "XO_RACE_SYNC=1")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("the race binary did not run after its toolchain moved: %v\n%s", err, out)
+	}
+	if strings.Contains(string(out), "WARNING: ThreadSanitizer") {
+		t.Fatalf("a race reported in the synchronized case:\n%s", out)
+	}
+}

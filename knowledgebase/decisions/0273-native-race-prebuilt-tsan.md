@@ -451,3 +451,29 @@ build --race .` on a machine without clang although `--race
 it as a missing fix). compiler/xo main.xo race_backend; tests in internal/llvm
 (TestRaceDefaultNative: clang off PATH, race_stacks builds and its race is reported;
 the fallback's message for a target with no runtime).
+
+## Addendum (2026-10-23): darwin race binaries load the runtime by @rpath, with a copy beside them
+
+The field report on 0.26.0 found every darwin --race binary broken once
+the toolchain moved: Xo's Mach-O linker wrote the runtime dylib's
+absolute path (~/.local/xo/current/lib/xo/race/...) as its LC_LOAD_DYLIB.
+(0.25.2's binaries, linked by clang with the LLVM backend, loaded
+`@rpath/...` with clang's own lib directory as the run path.)
+
+Decision: a darwin race link loads `@rpath/libclang_rt.tsan_osx_dynamic.dylib`
+with the run path `@executable_path`, then the runtime's directory
+(compiler/macho LinkOpts.rpaths, LC_RPATH), and copies the runtime next
+to the output (replaced when it differs), as Xcode embeds a sanitizer's
+runtime in an app. The binary runs after the toolchain moves or goes, as
+long as the copy travels with it; without the copy it still finds the
+toolchain's.
+
+Not chosen, for now: a static runtime, as Go links its race object. On
+darwin compiler-rt builds ThreadSanitizer only as a dylib; the static way
+is the Go flavor object the Windows addendum links (race_windows_amd64.syso
+with sanhook's gorace contexts). Using it on darwin would make the binary
+self contained with no second file, at the cost of moving darwin from the
+C flavor (interceptors, the clang-compatible reports) to the Go flavor:
+worth its own measurement and ADR step. Test: internal/llvm
+TestRaceBinaryOutlivesToolchain (build, rename the runtime's directory,
+run a race_sync case).
