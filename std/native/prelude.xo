@@ -23,6 +23,7 @@ use native/llrt/jsontext
 use native/llrt/logstate
 use native/llrt/num
 use native/llrt/poll
+use native/llrt/pool
 use native/llrt/process
 use native/llrt/proc
 use native/llrt/procspec
@@ -2726,6 +2727,11 @@ fn llrt_append_u64(s: Str, v: Int) -> Str { show.append_u64(s, v) }
 fn llrt_atomic_add(a: Atomic[Int], n: Int, at: rt.Loc) -> Int { atomic.add(a, n, at) }
 
 fn llrt_atomic_max(a: Atomic[Int], n: Int) -> Int { atomic.max(a, n) }
+
+// A scheduling point of a deterministic run (core 7.4, decision 0350):
+// the SSA builder calls it before an inline Atomic operation only in a
+// deterministic run's build (Builder.det_point).
+fn llrt_det_point() { pool.det_point() }
 
 // The report of a property test's case to the harness (decision 0193
 // step 5): in Xo (std/native/llrt/report.xo; decision 0198 deleted the C

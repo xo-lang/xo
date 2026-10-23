@@ -12,6 +12,7 @@
 // entry points forward for older xo's code.
 use native/llrt/budget
 use native/llrt/ctx
+use native/llrt/det
 use native/llrt/fault
 use native/llrt/obj
 use native/llrt/pool
@@ -239,6 +240,10 @@ fn entry(x: Int, l: Int) -> Int {
 /// while the channel is full, a cancellation point that unwinds; sending
 /// on a closed channel faults at the ln bytes at lp.
 pub fn send(c: Int, l: Int, lp: Int, ln: Int) {
+  // a scheduling point of a deterministic run (core 7.4, decision 0350)
+  if det.built() {
+    pool.det_point()
+  }
   // what the sender did happens before the receive (decision 0273:
   // the runtime is not instrumented)
   sanhook.release(c)
@@ -315,6 +320,10 @@ fn send_body(c: Int, l: Int, lp: Int, ln: Int) {
 /// list when the channel is closed and drained (and while unwinding); a
 /// cancellation point that unwinds.
 pub fn recv(c: Int) -> Int {
+  // a scheduling point of a deterministic run (core 7.4, decision 0350)
+  if det.built() {
+    pool.det_point()
+  }
   let r = recv_body(c)
   // the send (or close) happens before what follows the receive
   sanhook.acquire(c)
@@ -382,6 +391,10 @@ fn recv_body(c: Int) -> Int {
 /// `ch.try_send(x)` (xo_chan_try_send): false (and x released) when the
 /// channel is full or closed.
 pub fn try_send(c: Int, l: Int) -> Int {
+  // a scheduling point of a deterministic run (core 7.4, decision 0350)
+  if det.built() {
+    pool.det_point()
+  }
   // what the sender did happens before the receive (decision 0273:
   // the runtime is not instrumented)
   sanhook.release(c)
@@ -402,6 +415,10 @@ fn try_send_body(c: Int, l: Int) -> Int {
 
 /// `ch.try_recv()` (xo_chan_try_recv): never blocks.
 pub fn try_recv(c: Int) -> Int {
+  // a scheduling point of a deterministic run (core 7.4, decision 0350)
+  if det.built() {
+    pool.det_point()
+  }
   let r = try_recv_body(c)
   // the send (or close) happens before what follows the receive
   sanhook.acquire(c)
@@ -419,6 +436,10 @@ fn try_recv_body(c: Int) -> Int {
 /// `ch.close()` (xo_chan_close): waiting receivers get None, waiting
 /// senders fault. Closing twice has no effect.
 pub fn close(c: Int) {
+  // a scheduling point of a deterministic run (core 7.4, decision 0350)
+  if det.built() {
+    pool.det_point()
+  }
   // what the sender did happens before the receive (decision 0273:
   // the runtime is not instrumented)
   sanhook.release(c)

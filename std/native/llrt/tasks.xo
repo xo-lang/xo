@@ -13,6 +13,7 @@
 use native/llrt/layout
 use native/llrt/budget
 use native/llrt/ctx
+use native/llrt/det
 use native/llrt/fault
 use native/llrt/obj
 use native/llrt/poll
@@ -253,7 +254,13 @@ pub fn canceled(c: Int) -> Bool {
 
 /// `task.is_canceled()` (xo_rt.c xo_is_canceled): whether the current
 /// context's innermost node is canceled, shielded or not.
-pub fn is_canceled() -> Bool { node_canceled(ld(ctx.cur(), ctx.C_NODE)) }
+pub fn is_canceled() -> Bool {
+  // a scheduling point of a deterministic run (core 7.4, decision 0350)
+  if det.built() {
+    pool.det_point()
+  }
+  node_canceled(ld(ctx.cur(), ctx.C_NODE))
+}
 
 /// Adds entry e at the end of wait list l (the oldest waiter is first).
 pub fn wl_add(l: Int, e: Int) {
@@ -380,6 +387,10 @@ pub fn fault_rethrow(s: Int) {
 /// point that unwinds) and returns its result list (a reference). The
 /// location is the ln bytes at lp.
 pub fn task_await(t: Int, lp: Int, ln: Int) -> Int {
+  // a scheduling point of a deterministic run (core 7.4, decision 0350)
+  if det.built() {
+    pool.det_point()
+  }
   let c = ctx.cur()
   if rt.slot_load[Int](t + T_STATE, 0, ACQUIRE) != T_DONE {
     if canceled(c) {
@@ -620,6 +631,10 @@ fn spawn(s: Int, fl: Int, env: Int, run: Int, drop: Int, flags: Int, site: Int, 
     pool.node_unlink(dead + T_NODE)
     h_release(dead)
     dead = next
+  }
+  // a scheduling point of a deterministic run (core 7.4, decision 0350)
+  if det.built() {
+    pool.det_point()
   }
   t
 }

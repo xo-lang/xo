@@ -2296,7 +2296,8 @@ be pinned with `test "x" seed 8812`.
 
 `xo test --explore=N` reruns each concurrent test that passed under N further
 seeds and reports the first failing seed. `xo run --seed=N` (or `XO_SEED=N` for
-any built binary) uses the same scheduler with the real clock; interleavings
+a binary the Go backend built, or a native one built with `--seed`) uses
+the same scheduler with the real clock; interleavings
 are then reproducible as long as timer and I/O timing does not decide them.
 
 An Xo function that Go calls on a goroutine of its own (`use go`, for
@@ -2308,12 +2309,19 @@ function has crossed into Go, the return of every Go call is a scheduling
 point. Go code woken by a Go timer or I/O of its own is not reproducible
 (decision 0073).
 
-The deterministic scheduler belongs to the Go backend. Native builds
-(`--backend=llvm` and `--backend=arm64`, decision 0068) run tasks on the real
-scheduler only, on a pool of threads: `xo run --seed` is refused with them and
-`XO_SEED` has no effect, and a native program whose output depends on how its
-tasks interleave may print differently from run to run. The rest of core 7
-means the same on every backend.
+Native builds (`--backend=arm64`, `amd64` and `llvm`) run tasks on the real
+scheduler, on a pool of threads, so a native program whose output depends on
+how its tasks interleave may print differently from run to run. `xo run
+--seed=N` and `xo build --seed=N` build the program for the deterministic
+scheduler instead (decision 0350): one thread runs every task, and at each
+scheduling point a generator seeded with N (`XO_SEED=N` when the built program
+runs, default 1) picks the next ready task, so one seed gives one
+interleaving. Its scheduling points are the runtime's: channel operations,
+`select`, `Mutex.with` and `with_read`, `spawn`, `await`, `Atomic` operations
+and `task.is_canceled()`, and every wait; effect calls are not yet. A program
+built without `--seed` ignores `XO_SEED`. `xo test --seed` and `--explore`, and
+`xo run --record`, still use the Go backend's scheduler (decision 0350's later
+stages). The rest of core 7 means the same on every backend.
 
 ### 7.5 Process signals and graceful shutdown
 
@@ -2640,8 +2648,9 @@ diagnostic with an exact fix never costs a run (decision 0096). The MCP
 needs clang) otherwise. `--backend=go` compiles through the Go toolchain
 and is required by a program with a `use go` package; with no `--backend`
 such a program is a usage error naming it. The flags only the Go backend
-has (`--hybrid`, `xo test --explore`, `xo run --seed` and `--record`)
-choose it when no backend is given. `--race` keeps the
+has (`--hybrid`, `xo test --explore` and `xo run --record`) choose it
+when no backend is given; `xo run --seed` builds natively for the
+deterministic scheduler (7.4, decision 0350). `--race` keeps the
 native backend where a ThreadSanitizer runtime ships for the target
 (darwin/arm64, darwin/amd64, linux/arm64, linux/amd64, windows/amd64)
 and otherwise

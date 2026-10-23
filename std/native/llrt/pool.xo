@@ -24,6 +24,7 @@
 // from the heap of Xo values (records come from rt.heap_large, the C's
 // malloc), and no fault, so it runs on a worker's own stack with no
 // current context and never unwinds into its C callers.
+use native/llrt/det
 use native/llrt/layout
 use native/llrt/linux
 use native/llrt/rtstats
@@ -507,6 +508,11 @@ fn workers(p: Int) -> Int {
 }
 
 fn wakep(p: Int) {
+  if det.built() {
+    // a deterministic run starts no worker: the root thread runs every
+    // task, one at a time (decision 0350)
+    return
+  }
   if rt.slot_load(p, P_SPINNING, SEQ_CST) != 0 {
     return
   }
@@ -628,6 +634,18 @@ fn np_break(p: Int) {
 
 /// Adds the n items at src, then x unless it is 0, to the inject queue.
 fn inject_add(p: Int, src: Int, n: Int, x: Int) {
+  if det.built() {
+    // a deterministic run: the ready list (decision 0350)
+    var i = 0
+    while i < n {
+      det.add(rt.mem_load(src, i.wrapping_shl(3), 8))
+      i = i.wrapping_add(1)
+    }
+    if x != 0 {
+      det.add(x)
+    }
+    return
+  }
   let im = p.wrapping_add(P_IMU)
   let all = if x != 0 { n.wrapping_add(1) } else { n }
   if !rt.slot_cas(im, 0, 0, 1, ACQUIRE) {
@@ -790,6 +808,10 @@ fn inject_get_scope(p: Int, s: Int) -> Int {
 /// Adds x to the ring of w (the owner); a full ring moves half of itself
 /// and x to the inject queue.
 fn rq_put(p: Int, w: Int, x: Int) {
+  if det.built() {
+    det.add(x)
+    return
+  }
   while true {
     owner_check(w)
     if sched.rq_put(w, x) != 0 {
@@ -818,6 +840,12 @@ fn rq_put(p: Int, w: Int, x: Int) {
 }
 
 fn push(p: Int, t: Int, handoff: Bool) {
+  if det.built() {
+    // a deterministic run: no run-next slot, no wake (the root runs
+    // every item, decision 0350)
+    det.add(t)
+    return
+  }
   let w = rt.tlocal_get(TLS_W)
   if w == 0 {
     inject_add(p, 0, 0, t)
@@ -989,6 +1017,12 @@ pub fn any_work(p: Int) -> Int {
 /// (not 0), steals for a few rounds (the last one also takes next); 0
 /// when it found none.
 pub fn find_work(p: Int, w: Int, spinning: Int) -> Int {
+  if det.built() {
+    // the network's ready fibers join the ready list (push), then the
+    // seeded pick (decision 0350)
+    let _n = np_poll(p, w, 0)
+    return det.pick()
+  }
   var t = take_local(w)
   if t == 0 {
     t = inject_pop(p, w)
@@ -1453,6 +1487,10 @@ pub fn async_wpark(cx: Int) {
 
 /// Puts fiber f, preempted by SIGURG, on w's own list.
 fn pin_push(w: Int, f: Int) {
+  if det.built() {
+    det.add(f | 1)
+    return
+  }
   rt.mem_store(f, F_NEXT, 0, 8)
   let tail = rt.mem_load(w, W_PIN_TAIL, 8)
   if tail == 0 {
@@ -2039,6 +2077,16 @@ pub fn mutex_yield_always(p: Int) -> Bool { rt.slot_load(rt.mem_load(p, P_DLK, 8
 /// run_item) now: mutex.xo's release that woke a writer into next, as
 /// the Go backend's Gosched after a wake (gotchas/lock-convoy-runnext-
 /// wake.md); not on a thread without a fiber or with a runtime lock held.
+/// A scheduling point of a deterministic run (core 7.4, decision 0350):
+/// when another task is ready, the running one goes back on the ready
+/// list and the seeded pick chooses who runs next (possibly itself).
+/// Nothing in other builds (det.built() is false there).
+pub fn det_point() {
+  if det.built() && det.ready() > 0 {
+    yield_now()
+  }
+}
+
 pub fn yield_now() {
   let w = rt.tlocal_get(TLS_W)
   let f = rt.tlocal_get(TLS_FIB)

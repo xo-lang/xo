@@ -68,11 +68,6 @@ func TestBuildRunLLVM(t *testing.T) {
 	if code := run(t, []string{"build", "--backend=llvm", "-o", bin, src}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "main.xo:2:31: error XO1201: not available without a garbage collector (`--no-gc`) yet: a Map key or Set element that holds a Map or Set (support is planned)") {
 		t.Fatalf("unsupported: exit %d stderr %s", code, errOut.String())
 	}
-	// the deterministic scheduler is the Go backend's (decision 0068)
-	errOut.Reset()
-	if code := run(t, []string{"run", "--backend=llvm", "--seed=3", src}, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "--seed needs the Go backend") {
-		t.Fatalf("seed: exit %d stderr %s", code, errOut.String())
-	}
 }
 
 // TestNoGC drives `--no-gc` (decision 0083): the host's native backend

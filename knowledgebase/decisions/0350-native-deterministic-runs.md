@@ -181,6 +181,37 @@ recorded (10.1).
    `--record` (0248's list keeps `--hybrid` and `--holes`), with the
    spec and the website updated.
 
+### Stage 1 as built (2026-10-23)
+
+- The flavor: `xo run --seed=N` and `xo build --seed=N` set the checker's
+  `det`, the SSA module's `det` (which implies `no_preempt`: no loop
+  polls, no async preemption), and `det=` in the front end, fn and part
+  cache keys. `native/llrt/det.built()` is folded by the SSA builder, as
+  `tracerec.built()` is. A det binary reads its seed from `XO_SEED`
+  (`xo run` sets it), 1 when unset or 0.
+- std/native/llrt/det.xo: the ready list (arrival order, behind a lock
+  for the poller and signal threads) and splitmix64 instead of PCG (one
+  word of state, no multiply by a 128-bit constant); `pick` removes a
+  uniformly drawn item and keeps the order of the rest.
+- pool.xo: `push`, `rq_put`, `inject_add` and `pin_push` add to the ready
+  list, `wakep` starts no worker, `find_work` polls and then picks, so
+  the root runs every fiber on the main thread.
+- Scheduling points (`pool.det_point`, a yield when the ready list is
+  not empty): channel send, receive, try forms and close, `select`'s
+  wait, Mutex lock and RwLock read lock, spawn, await,
+  `task.is_canceled()`, and every Atomic operation (the SSA builder
+  emits the call in a det build). Effect calls are not yet points (the
+  Go backend's are); core 7.4 says so.
+- Proof: TestRunSeedNative (six tasks through a Mutex, a Chan and an
+  Atomic: one seed gives the same order three times, seeds 2 to 6 the
+  same values in at least two orders), TestRunSeedNativeManyTasks (200
+  ready tasks: the list grows), every internal/llvm golden built with
+  `--seed=1` against its want.txt (306), no det symbol in a normal build
+  (nm), and scripts/identity of normal builds against the parent (every
+  4th golden and compiler/xo). The planned 20 runs and a golden became the
+  cmd/xo test, since a golden's want.txt cannot hold one output per
+  seed.
+
 ## Cost when off
 
 None at run time: a program built without det has no `det_point`

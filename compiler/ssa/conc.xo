@@ -754,6 +754,7 @@ fn (var b: Builder) conc_call(x: Expr, ci: check.CallInfo) -> Int {
     "Chan.close" => return b.rt("chan_close", -1, [h])
     "Chan.len" => return b.rt("chan_len", it, [h])
     "Atomic.get" | "Atomic.set" | "Atomic.swap" | "Atomic.compare_and_swap" | "Atomic.add" | "Atomic.max" => {
+      b.det_point()
       if b.atomic_xo() {
         return b.atomic_op(key, fo, es, h, et, span)
       }
@@ -764,6 +765,23 @@ fn (var b: Builder) conc_call(x: Expr, ci: check.CallInfo) -> Int {
   }
   b.unsupported("the method `${b.c.display_name(fo)}`")
   b.undef(nt)
+}
+
+/// A scheduling point of a deterministic run (core 7.4, decision 0350)
+/// before an operation the builder lowers inline (Atomic's): a call of
+/// the native prelude's llrt_det_point, only when the build is one
+/// (Module.det); the runtime's own operations (channels, Mutex, spawn,
+/// await) have theirs in std/native/llrt.
+fn (var b: Builder) det_point() {
+  if !b.m.det {
+    return
+  }
+  let impl = b.prelude_impl("llrt_det_point")
+  if impl < 0 {
+    return
+  }
+  let f = b.declare(impl, [])
+  b.call(b.m.funcs[f].name, b.unit_t(), "", [])
 }
 
 /// The cell of an Atomic's value: slot 13 (byte 128) of the C runtime's

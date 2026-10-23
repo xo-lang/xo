@@ -198,13 +198,13 @@ fn main(os: Os) ! {
   // the default backend is the native one (decisions 0248 and 0270):
   // arm64 or amd64 by the targets' architecture, else the host's
   // (native_backend); asm prints the arm64 assembly. The flags only the
-  // Go backend has (--hybrid, xo test --explore, xo run --seed and
-  // --record) choose it; --holes builds natively too (2026-10-22). --race takes the native backend where a
+  // Go backend has (--hybrid, xo test --explore, xo run --record)
+  // choose it (xo run --seed runs natively, decision 0350); --holes builds natively too (2026-10-22). --race takes the native backend where a
   // ThreadSanitizer runtime ships for the target, else llvm
   // (race_backend, decision 0273 addendum).
   var backend = o.backend
   if backend.is_empty() {
-    let go_only = o.hybrid || (o.cmd == "test" && o.explore > 0) || (o.cmd == "run" && (o.topts.seed != 0 || !o.record.is_empty()))
+    let go_only = o.hybrid || (o.cmd == "test" && o.explore > 0) || (o.cmd == "run" && !o.record.is_empty())
     if o.cmd == "asm" {
       backend = "arm64"
     } else if go_only {
@@ -232,10 +232,6 @@ fn main(os: Os) ! {
   if o.no_gc && backend == "go" {
     os.stdio.eprintln("xo ${what}: --no-gc needs a native backend (arm64, amd64, or llvm), not go")
     os.proc.exit(1)
-  }
-  if o.cmd == "run" && o.topts.seed != 0 && backend != "go" {
-    os.stdio.eprintln("xo run: --seed needs the Go backend (native builds use the real scheduler)")
-    os.proc.exit(2)
   }
   if o.cmd == "build" && (o.ci || o.release) {
     // cmd/xo runBuild: a release (or --ci) build fails while a workspace
@@ -356,6 +352,10 @@ fn main(os: Os) ! {
     if !o.trace.is_empty() {
       // --trace (decision 0240): the raw file, then its JSON and summary
       pe.push("XO_TRACE=${o.trace}")
+    }
+    if o.topts.seed != 0 {
+      // the deterministic scheduler's seed (decision 0350, det.xo)
+      pe.push("XO_SEED=${o.topts.seed}")
     }
     let code = exec_binary(os, nb.bin, o.prog_args, pe)
     if !o.profile.is_empty() {
@@ -556,6 +556,10 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   c.lower_off = lower_off
   // loops without preemption polls (decision 0286 step 3's opt out)
   c.no_preempt = o.no_preempt || (os.env.get("XO_PREEMPT_POLLS") ?? "") == "off"
+  // `xo run --seed=N` and `xo build --seed=N` (decision 0350): the
+  // deterministic scheduler; a built program takes its seed from XO_SEED
+  // (default 1)
+  c.det = (o.cmd == "run" || o.cmd == "build") && o.topts.seed != 0
   // --race: the builder declares a windows program's race exports
   // (native/llrt/cabi_race)
   c.race = o.race

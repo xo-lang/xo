@@ -1,0 +1,136 @@
+// The deterministic scheduler's state (decision 0350): the ready list a
+// deterministic run picks from, in arrival order, and its seeded
+// generator. pool.xo's det branches (push, rq_put, inject_add, find_work,
+// det_point) use it; every branch is behind `det.built()`, which the SSA
+// builder decides (ssa Module.det, true only for `xo run --seed`), so
+// other builds carry none of it.
+//
+// The record is rt.heap_large's (the runtime's own records, as poll.xo's
+// timer heap): a lock word, the generator's state, and the list
+// (address, length, capacity) of run queue items (a task, or a fiber
+// with bit 0 set, as the rings hold them). A deterministic run has one
+// worker, but the poller, signal threads and the deferred wakes' monitor
+// may push, so the list takes the lock.
+use native/rt
+
+/// rt.static_word: the record's address, 0 until start (rt.xo's table).
+const W_DET = 89
+
+/// The record's words.
+const DR_LOCK = 0
+const DR_RNG = 1
+const DR_ITEMS = 2
+const DR_LEN = 3
+const DR_CAP = 4
+const DR_SIZE = 40
+
+/// C11's orders of the slot atomics.
+const RELAXED = 0
+const ACQUIRE = 1
+const RELEASE = 2
+
+/// Whether this is a deterministic run's build: the SSA builder decides a
+/// call (decision 0350), so the body is only what other contexts see.
+pub fn built() -> Bool { false }
+
+/// The record, 0 before start.
+fn rec() -> Int { rt.slot_load[Int](rt.static_word(W_DET), 0, ACQUIRE) }
+
+/// Whether the deterministic scheduler runs (start was called).
+pub fn on() -> Bool { built() && rec() != 0 }
+
+/// Starts the scheduler with seed s (XO_SEED, poolsetup.xo; 1 when unset
+/// or 0, as the Go backend's default).
+pub fn start(s: Int) {
+  if !built() || rec() != 0 {
+    return
+  }
+  let r = rt.heap_large(DR_SIZE)
+  rt.mem_store(r, DR_LOCK * 8, 0, 8)
+  rt.mem_store(r, DR_RNG * 8, if s == 0 { 1 } else { s }, 8)
+  rt.mem_store(r, DR_ITEMS * 8, 0, 8)
+  rt.mem_store(r, DR_LEN * 8, 0, 8)
+  rt.mem_store(r, DR_CAP * 8, 0, 8)
+  rt.slot_store[Int](rt.static_word(W_DET), 0, r, RELEASE)
+}
+
+fn lock(r: Int) {
+  while !rt.slot_cas(r, DR_LOCK, 0, 1, ACQUIRE) {
+    rt.spin_hint()
+  }
+}
+
+fn unlock(r: Int) { rt.slot_store(r, DR_LOCK, 0, RELEASE) }
+
+/// Appends run queue item x to the ready list.
+pub fn add(x: Int) {
+  let r = rec()
+  lock(r)
+  let n = rt.mem_load(r, DR_LEN * 8, 8)
+  var cap = rt.mem_load(r, DR_CAP * 8, 8)
+  var items = rt.mem_load(r, DR_ITEMS * 8, 8)
+  if n == cap {
+    let ncap = if cap == 0 { 64 } else { cap.wrapping_shl(1) }
+    // heap_large_resize takes the block's prefix (8 bytes before the
+    // address heap_large gave)
+    items = if items == 0 { rt.heap_large(ncap.wrapping_shl(3)) } else { rt.heap_large_resize(items - 8, ncap.wrapping_shl(3)) }
+    cap = ncap
+    rt.mem_store(r, DR_ITEMS * 8, items, 8)
+    rt.mem_store(r, DR_CAP * 8, cap, 8)
+  }
+  rt.mem_store(items, n.wrapping_shl(3), x, 8)
+  rt.mem_store(r, DR_LEN * 8, n.wrapping_add(1), 8)
+  unlock(r)
+}
+
+/// The number of ready items.
+pub fn ready() -> Int {
+  let r = rec()
+  if r == 0 {
+    return 0
+  }
+  rt.slot_load[Int](r, DR_LEN, RELAXED)
+}
+
+/// splitmix64's constants as Int (0x9E3779B97F4A7C15, 0xBF58476D1CE4E5B9,
+/// 0x94D049BB133111EB)
+const GOLDEN = -7046029254386353131
+const MIX1 = -4658895280553007687
+const MIX2 = -7723592293110705685
+
+/// The next value of the generator (splitmix64), never negative.
+fn next(r: Int) -> Int {
+  let s = rt.mem_load(r, DR_RNG * 8, 8).wrapping_add(GOLDEN)
+  rt.mem_store(r, DR_RNG * 8, s, 8)
+  var z = s
+  z = (z ^ z.shr_logical(30)).wrapping_mul(MIX1)
+  z = (z ^ z.shr_logical(27)).wrapping_mul(MIX2)
+  (z ^ z.shr_logical(31)).shr_logical(1)
+}
+
+/// Removes and returns a ready item chosen by the generator, 0 when none:
+/// the list keeps arrival order, so the pick depends only on the seed and
+/// what the program did.
+pub fn pick() -> Int {
+  let r = rec()
+  if r == 0 {
+    return 0
+  }
+  lock(r)
+  let n = rt.mem_load(r, DR_LEN * 8, 8)
+  if n == 0 {
+    unlock(r)
+    return 0
+  }
+  let i = if n == 1 { 0 } else { next(r) % n }
+  let items = rt.mem_load(r, DR_ITEMS * 8, 8)
+  let x = rt.mem_load(items, i.wrapping_shl(3), 8)
+  var j = i
+  while j.wrapping_add(1) < n {
+    rt.mem_store(items, j.wrapping_shl(3), rt.mem_load(items, j.wrapping_add(1).wrapping_shl(3), 8), 8)
+    j = j.wrapping_add(1)
+  }
+  rt.mem_store(r, DR_LEN * 8, n.wrapping_sub(1), 8)
+  unlock(r)
+  x
+}

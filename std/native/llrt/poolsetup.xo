@@ -5,6 +5,7 @@
 // thread's record, which it makes on first use. Not in pool.xo: these
 // read the environment through process.xo, which stdio.xo's imports
 // reach, and stdio.xo imports pool.xo.
+use native/llrt/det
 use native/llrt/layout
 use native/llrt/ctx
 use native/llrt/linux
@@ -69,6 +70,10 @@ fn setup(p: Int) {
     on = 1
   }
   rtstats.set(on)
+  if det.built() {
+    // a deterministic run's ready list and seed (decision 0350)
+    det.start(env_int("XO_SEED"))
+  }
   var n = cpu_count()
   let th = env_int("XO_THREADS")
   if th > 0 {

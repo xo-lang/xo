@@ -102,6 +102,11 @@ pub struct Checker {
   /// or XO_PREEMPT_POLLS=off, for tight loop benchmarks; a task that
   /// loops without calling the runtime can then starve its worker
   pub no_preempt: Bool = false
+  /// a deterministic run (decision 0350): `xo run --seed`; the builder
+  /// decides native/llrt/det.built() true, so the runtime's det branches
+  /// are built (one worker, a seeded pick at scheduling points), and
+  /// loops get no preemption polls
+  pub det: Bool = false
   /// --race (decision 0273): set by the driver; on windows the builder
   /// declares std/native/llrt/cabi_race.xo's exports, the functions the
   /// instrumented code calls

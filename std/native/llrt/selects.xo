@@ -12,6 +12,7 @@
 use native/llrt/budget
 use native/llrt/chan
 use native/llrt/ctx
+use native/llrt/det
 use native/llrt/fault
 use native/llrt/obj
 use native/llrt/poll
@@ -94,6 +95,10 @@ fn queue(c: Int, send: Int) -> Int { c + (if send != 0 { chan.CH_SENDQ } else { 
 /// unwinding, -2 the `after` arm); a send arm on a closed channel faults
 /// at the ln bytes at lp.
 pub fn wait(s: Int, lp: Int, ln: Int) -> Int {
+  // a scheduling point of a deterministic run (core 7.4, decision 0350)
+  if det.built() {
+    pool.det_point()
+  }
   // ThreadSanitizer (decision 0273: the runtime is not instrumented): a
   // send arm's sender releases its channel, the chosen arm's acquires it
   let n = ld4(s, SE_N)

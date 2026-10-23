@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo run --seed=N` runs natively on a deterministic scheduler (decision
+  0350, stage 1): one thread runs every task, and at each scheduling
+  point (channel operations, `select`, `Mutex.with`, `spawn`, `await`,
+  `Atomic` operations, `task.is_canceled()`, every wait) a generator
+  seeded with N picks the next ready task, so a seed reproduces an
+  interleaving. `xo build --seed=N` builds such a program, which takes
+  its seed from `XO_SEED` (default 1). Programs built without `--seed`
+  are unchanged. Before, `xo run --seed` chose the Go backend.
+
 - Warm builds no longer look up, on every build, the front end cache
   entries of bodies the program never builds (one key per checked body,
   4,146 of a one-line program's 5,373): the build target's pack lists

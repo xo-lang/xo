@@ -420,6 +420,9 @@ pub struct Module {
   pub async_preempt: Bool = false
   /// loops without preemption polls (`--no-preempt`, decision 0286 step 3)
   pub no_preempt: Bool = false
+  /// a deterministic run (decision 0350, check.Checker.det): in the fn and
+  /// part cache keys
+  pub det: Bool = false
   /// Emit DWARF line tables (decision 0239): set by the driver; off for
   /// `xo asm`, `-s`, and release builds without --debug-info.
   pub debug_info: Bool = false

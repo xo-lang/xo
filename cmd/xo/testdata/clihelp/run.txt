@@ -6,11 +6,13 @@ usage: xo run [--seed=N] [--record=trace.xotrace] [--holes] [--backend=go|llvm|a
 Build for the host and run the program in dir (default .) with args.
 xo run runs exactly that directory and never one below it (decision
 0345): a dir with no .xo file or no main is an error.
---seed makes task interleavings reproducible. --record writes every
+--seed makes task interleavings reproducible: one thread runs the
+tasks and a generator seeded with N picks the next at each scheduling
+point (decision 0350). --record writes every
 effect (clock, rand, env, stdin, fs, net, http client responses, server
 requests, signals) and every scheduling decision into the trace (core
 11.3) for xo replay. --holes allows holes (???), which fault when
-evaluated. --seed and --record need the Go backend. --profile=cpu
+evaluated. --record needs the Go backend. --profile=cpu
 samples the program's CPU time (a native backend, the host's by default)
 into xo-cpu.pprof (go tool pprof reads it) and a text summary,
 xo-cpu.txt, in the working directory; --profile=heap samples its

@@ -10,6 +10,7 @@
 use native/llrt/layout
 use native/llrt/budget
 use native/llrt/ctx
+use native/llrt/det
 use native/llrt/fault
 use native/llrt/pool
 use native/llrt/raw
@@ -343,6 +344,10 @@ fn held_del(c: Int, m: Int) {
 /// caller, who gives it back with unlock. The location is the ln bytes at
 /// lp.
 pub fn lock(m: Int, lp: Int, ln: Int) -> Int {
+  // a scheduling point of a deterministic run (core 7.4, decision 0350)
+  if det.built() {
+    pool.det_point()
+  }
   let r = lock_body(m, lp, ln)
   // the last unlock happens before the critical section (decision 0273)
   sanhook.acquire(m)
@@ -417,6 +422,10 @@ fn unlock_body(m: Int, l: Int) {
 /// reference. A reader that waits is handed m by a writer's release
 /// (grant_readers); a cancellation unwinds unless m was handed over first.
 pub fn rlock(m: Int, lp: Int, ln: Int) -> Int {
+  // a scheduling point of a deterministic run (core 7.4, decision 0350)
+  if det.built() {
+    pool.det_point()
+  }
   let r = rlock_body(m, lp, ln)
   // the last unlock happens before the critical section (decision 0273)
   sanhook.acquire(m)
