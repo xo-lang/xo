@@ -15,3 +15,17 @@ func TestProgramDeterministic(t *testing.T) {
 		}
 	}
 }
+
+// TestScaleKnobs: every knob writes a program and its expected output,
+// the same one each time, and a larger n writes a larger program.
+func TestScaleKnobs(t *testing.T) {
+	for _, k := range ScaleKnobs {
+		a, b := Scale(k, 100), Scale(k, 200)
+		if a != Scale(k, 100) || ScaleWant(k, 100) != ScaleWant(k, 100) {
+			t.Fatalf("%s: two different programs for one size", k)
+		}
+		if len(b) <= len(a) {
+			t.Fatalf("%s: n=200 is not larger than n=100", k)
+		}
+	}
+}
