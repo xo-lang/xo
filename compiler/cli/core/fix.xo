@@ -454,7 +454,7 @@ fn walk_sources(os: Os, top: Str, dir: Str, walk: Bool, var out: List[Str], var 
   for e in entries {
     let p = join_path(dir, e.name)
     if e.is_dir {
-      if !walk || e.name == "testdata" || e.name.starts_with(".") || e.name.starts_with("_") {
+      if !walk || check.walk_skips(e.name) {
         continue
       }
       walk_sources(os, top, p, walk, out, seen, n)?

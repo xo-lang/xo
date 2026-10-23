@@ -20,7 +20,7 @@ fn run_parse(os: Os, ctx: Ctx, args: List[Str]) -> Int {
     os.stdio.eprintln("xo parse: no files or directories given")
     return 2
   }
-  let files = match collect(os, ctx, fl.args, false) {
+  let files = match collect(os, ctx, fl.args) {
     Ok(fs) => fs
     Err(e) => {
       os.stdio.eprintln("xo parse: ${e}")
@@ -73,9 +73,9 @@ fn run_parse(os: Os, ctx: Ctx, args: List[Str]) -> Int {
 
 /// The .xo files of paths: a file as named, a directory's own .xo files,
 /// and for a directory named as DIR/... (in ctx.walk, decision 0345) its
-/// .xo files at any depth (dot directories skipped when skip_dot, as `xo
-/// fmt` does), all sorted (cmd/xo collect, collectFmt).
-pub fn collect(os: Os, ctx: Ctx, paths: List[Str], skip_dot: Bool) -> List[Str] ! Str uses fs.read {
+/// .xo files at any depth (check.walk_skips directories skipped), all
+/// sorted (cmd/xo collect, collectFmt).
+pub fn collect(os: Os, ctx: Ctx, paths: List[Str]) -> List[Str] ! Str uses fs.read {
   var out: List[Str] = []
   for p in paths {
     let info = match os.fs.stat(p) {
@@ -94,7 +94,7 @@ pub fn collect(os: Os, ctx: Ctx, paths: List[Str], skip_dot: Bool) -> List[Str] 
       continue
     }
     var n = WalkCount{}
-    walk_xo(os, p, true, skip_dot, out, n)?
+    walk_xo(os, p, true, out, n)?
   }
   Ok(out.sort())
 }
@@ -128,7 +128,7 @@ fn walk_limit(top: Str) -> Str {
 
 /// Appends the .xo files under dir in the order filepath.WalkDir visits
 /// them, with paths joined as it joins them.
-fn walk_xo(os: Os, dir: Str, top: Bool, skip_dot: Bool, var out: List[Str], var n: WalkCount) -> () ! Str {
+fn walk_xo(os: Os, dir: Str, top: Bool, var out: List[Str], var n: WalkCount) -> () ! Str {
   let entries = match os.fs.read_dir(dir) {
     Ok(es) => es
     Err(e) => return Err(stat_err(dir, e))
@@ -140,10 +140,10 @@ fn walk_xo(os: Os, dir: Str, top: Bool, skip_dot: Bool, var out: List[Str], var 
   for e in entries {
     let p = join_path(dir, e.name)
     if e.is_dir {
-      if skip_dot && (e.name.starts_with(".") || e.name.starts_with("_")) {
+      if check.walk_skips(e.name) {
         continue
       }
-      walk_xo(os, p, false, skip_dot, out, n)?
+      walk_xo(os, p, false, out, n)?
     } else if p.ends_with(".xo") {
       out.push(p)
       n.xo += 1

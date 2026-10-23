@@ -550,7 +550,7 @@ fn (var c: Checker) find_module_dirs(dir: Str, top: Bool, var out: List[Str]) {
       continue
     }
     let sub = join(dir, e.name)
-    if e.name == "testdata" || e.name.starts_with(".") || e.name.starts_with("_") || c.is_vendor_dir(sub) {
+    if walk_skips(e.name) || c.is_vendor_dir(sub) {
       continue
     }
     // the std tree of this checker (a checkout's std/ under a workspace
@@ -569,6 +569,14 @@ fn (var c: Checker) find_module_dirs(dir: Str, top: Bool, var out: List[Str]) {
     }
     c.find_module_dirs(sub, false, out)
   }
+}
+
+/// walk_skips reports whether a DIR/... walk skips the directory named
+/// name, as the go command does: testdata, and names starting with `.`
+/// or `_` (decision 0210; its 2026-10-23 note: every walk, parse and fmt
+/// too). The module walks also skip vendor directories.
+pub fn walk_skips(name: Str) -> Bool {
+  name == "testdata" || name.starts_with(".") || name.starts_with("_")
 }
 
 /// The most .xo files, and directory entries, a DIR/... walk looks at

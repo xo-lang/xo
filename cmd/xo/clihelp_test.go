@@ -210,15 +210,20 @@ func TestCLIPattern(t *testing.T) {
 	root := t.TempDir()
 	bad := "pub fn f() -> Int {\n  \"x\"\n}\n"
 	files := map[string]string{
-		"m/xo.mod":           "module example.com/m\nedition preview\n",
-		"m/main.xo":          "use example.com/m/sub\n\nfn main(os: Os) {\n  os.stdio.println(\"${sub.g()}\")\n}\n\ntest \"root\" {\n  expect(1) == 1\n}\n",
-		"m/sub/a.xo":         "pub fn g() -> Int {\n  2\n}\n\ntest \"sub\" {\n  expect(g()) == 2\n}\n",
-		"m/sub/deep/b.xo":    "pub fn h() -> Int {\n  3\n}\n",
-		"m/_skip/a.xo":       bad,
-		"m/.hidden/a.xo":     bad,
-		"m/testdata/x/a.xo":  bad,
-		"m/empty/notes.txt":  "no sources\n",
-		"m/broken/deep/c.xo": bad,
+		"m/xo.mod":          "module example.com/m\nedition preview\n",
+		"m/main.xo":         "use example.com/m/sub\n\nfn main(os: Os) {\n  os.stdio.println(\"${sub.g()}\")\n}\n\ntest \"root\" {\n  expect(1) == 1\n}\n",
+		"m/sub/a.xo":        "pub fn g() -> Int {\n  2\n}\n\ntest \"sub\" {\n  expect(g()) == 2\n}\n",
+		"m/sub/deep/b.xo":   "pub fn h() -> Int {\n  3\n}\n",
+		"m/_skip/a.xo":      bad,
+		"m/.hidden/a.xo":    bad,
+		"m/testdata/x/a.xo": bad,
+		// a syntax error and unformatted text, for parse, fmt and fix
+		"m/_skip/syn.xo":       "fn (\n",
+		"m/.hidden/syn.xo":     "fn (\n",
+		"m/testdata/y/syn.xo":  "fn (\n",
+		"m/testdata/x/ugly.xo": "fn  h( )   ->Int {1}\n",
+		"m/empty/notes.txt":    "no sources\n",
+		"m/broken/deep/c.xo":   bad,
 	}
 	for name, src := range files {
 		p := filepath.Join(root, name)
@@ -265,6 +270,14 @@ func TestCLIPattern(t *testing.T) {
 	got := xo("check", "./...")
 	if !strings.HasPrefix(got, "exit 1\n") || !strings.Contains(got, "broken/deep/c.xo") || strings.Contains(got, "_skip") || strings.Contains(got, ".hidden") || strings.Contains(got, "testdata") {
 		t.Errorf("xo check ./... (want broken/deep, not _skip, .hidden, testdata):\n%s", got)
+	}
+	// every DIR/... walk skips testdata and names starting with _ or .,
+	// fmt and parse too (decision 0210, its 2026-10-23 note)
+	for _, args := range [][]string{{"parse", "./..."}, {"fmt", "--check", "./..."}, {"fix", "--dry-run", "./..."}, {"vet", "./..."}, {"test", "./..."}} {
+		got := xo(args...)
+		if strings.Contains(got, "_skip") || strings.Contains(got, ".hidden") || strings.Contains(got, "testdata") {
+			t.Errorf("xo %s (want nothing from _skip, .hidden, testdata):\n%s", strings.Join(args, " "), got)
+		}
 	}
 	for _, c := range []string{"check", "test", "vet", "fmt", "doc"} {
 		want := "exit 1\n--- stdout\n--- stderr\nxo " + c + ": empty/... matched no directory with .xo files\n"

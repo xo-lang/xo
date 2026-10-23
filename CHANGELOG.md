@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo fmt ./...` and `xo parse ./...` skip directories named `testdata`
+  and names starting with `.` or `_`, as `check`, `vet`, `test`, `build`
+  and `fix` already did, so a deliberately broken directory stays out of
+  every `./...` (decision 0210). `fmt ./...` rewrote files under
+  `testdata/`.
+
 - A parse error in a parameter list (`r: Int ! E`) no longer cascades:
   the function's parameters and result take any type, so its body and
   its callers report nothing more.

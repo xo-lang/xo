@@ -67,7 +67,7 @@ pub fn release_check(os: Os, ctx: Ctx, dirs: List[Str], as_json: Bool, flag: Str
 /// not formatted or `dbg(...)` is left in code (XO0901 as an error); 2
 /// when the files cannot be read or checked; 0 to build.
 pub fn ci_check(os: Os, ctx: Ctx, dirs: List[Str], as_json: Bool) -> Int uses (fs, env, stdio, net, proc, rand) {
-  let files = match collect(os, ctx, dirs, true) {
+  let files = match collect(os, ctx, dirs) {
     Ok(fs) => fs
     Err(e) => {
       os.stdio.eprintln("xo build: ${e}")

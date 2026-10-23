@@ -14,7 +14,7 @@ fn run_fmt(os: Os, ctx: Ctx, args: List[Str]) -> Int {
   if paths.is_empty() {
     paths = ["."]
   }
-  let files = match collect(os, ctx, paths, true) {
+  let files = match collect(os, ctx, paths) {
     Ok(fs) => fs
     Err(e) => {
       os.stdio.eprintln("xo fmt: ${e}")

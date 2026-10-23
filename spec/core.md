@@ -2621,10 +2621,11 @@ Only the package pattern `DIR/...` (`./...`, `cmd/...`, accepted by
 `check`, `test`, `build`, `vet`, `doc`, `fmt`, `fix`, `parse`, `audit`)
 covers the directories below DIR: every directory with `.xo` files at or
 below it (one module each, or one program for `build` and `test`),
-skipping `testdata`, `vendor/` (with `modules.txt`), and names starting
-with `.` or `_`; `fmt` and `fix` take the files below it, skipping names
-starting with `.` or `_` (and `fix` `testdata`); `parse` takes every
-file. A `DIR/...` walk stops past 6,000 `.xo` files or 60,000 directory
+or for `fmt`, `fix`, and `parse` every `.xo` file below it. Every such
+walk skips directories named `testdata` and names starting with `.` or
+`_`, as the go command does, so a deliberately broken directory is kept
+out of `./...` by its name; the module walks also skip `vendor/` (with
+`modules.txt`). A `DIR/...` walk stops past 6,000 `.xo` files or 60,000 directory
 entries with an error naming the limit, so `xo build /...` or
 `xo check $HOME/...` refuses. A `DIR/...` with no `.xo` file at or below
 DIR (with the skips above) is an error, `xo CMD: DIR/... matched no

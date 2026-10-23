@@ -52,6 +52,15 @@ in xo `.` and `./...` overlap entirely.
 - The expansion is in xo1's front end (selfhost/xo opts.xo `front`),
   before any command runs, so every command gets plain directories.
 
+Note (2026-10-23, owner's field report: `xo check ./...` needs a way
+to skip deliberately broken directories): the rule above is the way,
+and it now holds for every walk. `fmt` walked `testdata` and `parse`
+walked every directory; both now skip `testdata` and names starting
+with `.` or `_` like the others, through one predicate
+(`check.walk_skips`, used by the checker's module walk, fix, fmt,
+parse, and the front end's has-sources test). `vendor/` handling is
+unchanged. Test: cmd/xo TestCLIPattern.
+
 ## Consequences
 
 - `go`-style command lines work: `xo check ./...`, `xo test ./...`,
