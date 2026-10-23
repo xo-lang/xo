@@ -562,7 +562,7 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
     if chk_on {
       os.stdio.eprintln("cache chk ${c.mod_skip.len()}/${c.mod_keys.len()} modules")
     } else {
-      os.stdio.eprintln("cache chk off (XO_CHK_CACHE)")
+      os.stdio.eprintln("cache chk off (XO_CHK_CACHE=off)")
     }
   }
   b
@@ -1176,10 +1176,10 @@ fn cache_get_packed(os: Os, dir: Str, kind: Str, target: Str, keys: List[Str], j
       }
     }
   }
-  // the shared pack (decision 0351, Proposed: XO_SHARED_PACK=on until
-  // the owner decides the default): what this target's pack lacks,
-  // before any loose file
-  let sh_on = kind != "part" && (os.env.get("XO_SHARED_PACK") ?? "") == "on"
+  // the shared pack (decision 0351, Accepted: on by default, owner
+  // 2026-10-23; XO_SHARED_PACK=off turns it off): what this target's
+  // pack lacks, before any loose file
+  let sh_on = kind != "part" && (os.env.get("XO_SHARED_PACK") ?? "") != "off"
   let sdir = if sh_on { shared_pack_dir(dir, kind, target) } else { "" }
   // a build target without a formed pack (a new directory) takes the
   // shared copy of the last formed pack's list: the keys found nowhere

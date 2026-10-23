@@ -240,6 +240,16 @@ recorded (10.1).
   exits as its want.txt (but the two `use go` ones, which need the Go
   backend).
 
+### Stage 3: owner decision (2026-10-23)
+
+Deterministic `xo test` stays opt in on the native backends (`--seed`,
+`--explore`, or a test's `seed N`); the default remains the thread pool.
+The data the decision used (~/xo-lead/notes/xo-publish/0350/stage3-data.md):
+every std module test suite and internal/gen test golden has the same
+outcome either way and the same time within hundredths of a second, but
+a test whose tasks do CPU-bound work in parallel takes 3.6 times the wall
+time on the one thread (0.30 s against 1.10 s, the same CPU).
+
 ## Cost when off
 
 None at run time: a program built without det has no `det_point`

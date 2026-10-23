@@ -607,11 +607,12 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
       // under XO_CHK_CACHE=1, 2026-10-19); scripts/gate.sh runs
       // TestModuleCheckAuto* for every compiler/check and compiler/ssa
       // change. =1 skips every unchanged module
-      // opt in again (2026-10-22, night): with auto as the default,
-      // internal/arm64 TestModuleCheckAuto's xml_derive failed its warm
-      // build on main (XO1201 for std/xml's encode_value and decode), so
-      // the default is off until that is fixed
-      let cc = os.env.get("XO_CHK_CACHE") ?? ""
+      // auto is the default (owner, 2026-10-23, after the closure owner
+      // and thunk replay fixes; it was the default for a night on
+      // 2026-10-22 and reverted when xml_derive failed); XO_CHK_CACHE=off
+      // turns it off
+      let cc0 = os.env.get("XO_CHK_CACHE") ?? ""
+      let cc = if cc0.is_empty() { "auto" } else { cc0 }
       // not under XO_ASSUME_BREAK=1 (decision 0342's test knob): a
       // skipped module's bodies come from the cache, so the call it breaks
       // may not be there and the check sees nothing to report

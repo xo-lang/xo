@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Warm builds are faster by default (owner, 2026-10-23): the module check
+  cache is on (`XO_CHK_CACHE=auto`; a warm build of xo itself 0.885 of
+  the wall time with 0.914 of the peak memory), and the cache's shared
+  pack (decision 0351; a new program's first build 0.831 of the wall
+  time, a warm build in a new directory 0.857). `XO_CHK_CACHE=off` and
+  `XO_SHARED_PACK=off` turn them off.
+
 - `xo build --targets=all` skips a target the program cannot support, with
   a note naming it and why (a network program and wasip1/wasm, which has
   no sockets), and exits 0 when the rest built; a target named in

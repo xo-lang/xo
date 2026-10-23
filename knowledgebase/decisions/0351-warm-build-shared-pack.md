@@ -1,7 +1,8 @@
 # 0351: Warm builds without per-directory loose reads
 
-Status: Proposed (Xo Lang 2, 2026-10-23). Measurements and the design
-follow; the lead approved the investigation, the owner decides.
+Status: Accepted (owner, 2026-10-23): stage 1, the shared pack, is on by
+default (XO_SHARED_PACK=off turns it off). Stage 2 (lazy function bodies)
+is in progress; stage 3 (a whole-build key) is proposed.
 
 ## Context
 
@@ -37,7 +38,7 @@ Proposed, in stages, each with its own `xo bench --ab`:
 
 1. **A shared pack per kind and target** (compiler/xo bcache.xo
    shared_pack_dir, shared_read, shared_store; behind `XO_SHARED_PACK=on`
-   until the owner decides the default). Reads go: the build target's
+   until the owner's decision of 2026-10-23 made it the default). Reads go: the build target's
    own pack, then the shared pack, then loose files. A build that read
    64 or more entries loose appends them to the shared pack as a
    segment; past 4 segments, or when the pack holds more than twice
@@ -87,8 +88,8 @@ Proposed, in stages, each with its own `xo bench --ab`:
 
 - Stage 1 changes the cache layout (a new `packs/shared` tree) but not
   any build's output (TestSharedPack: equal to a cache-off build).
-- Turning it on by default is the owner's call (a default change);
-  until then it costs nothing.
+- On by default since the owner's decision of 2026-10-23 (a default
+  change: its gate ran the touched packages' full suites).
 - A new directory still pays failed fe lookups (9,520 for hello): the
   negative list exists only once a directory's pack forms. A shared
   negative list is a follow-up.
