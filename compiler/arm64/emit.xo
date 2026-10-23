@@ -552,9 +552,11 @@ const FAR_COND_LIMIT = 240000
 /// goes, a change here is made in its port too, or XO_OP_VERIFY=1 builds
 /// fail (gotchas/arm64-line-pass-port-drift.md).
 fn (g: G) far_tests_l(lines: List[Str]) -> List[Str] {
+  // instructions and the words of a jump table kept after its br
+  // (JT_INLINE_WORDS), which lengthen the branches over it
   var n = 0
   for l in lines {
-    if l.starts_with("\t") && !l.starts_with("\t.") {
+    if l.starts_with("\t") && (!l.starts_with("\t.") || l.starts_with("\t.long ")) {
       n += 1
     }
   }

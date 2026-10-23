@@ -491,7 +491,7 @@ fn op_reads_x(o: macho.Op, r: Int) -> Bool {
 fn (g: G) far_tests_ops(xs: List[Line]) -> List[Line] {
   var n = 0
   for x in xs {
-    if x.op != None {
+    if x.op != None || x.text.starts_with("\t.long ") {
       n += 1
     }
   }

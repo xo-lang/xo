@@ -154,8 +154,16 @@ fn (var g: G) jump_tables() {
   }
 }
 
+/// A function of more than this many words, its instructions counted
+/// twice (spills, far tests and stubs grow them) plus a table's entries,
+/// keeps its jump tables after their br: adr reaches 1 MiB, and the table
+/// at the function's end did not in a match of 65535 arms ("adr out of
+/// range", the scale suite, 2026-10-23).
+const JT_INLINE_WORDS = 131072
+
 /// Emits a K_SWITCH: values outside the table go to the last target; the
-/// table holds offsets from its own label.
+/// table holds offsets from its own label, after the function's code, or
+/// right after the br in a long function (JT_INLINE_WORDS).
 fn (var g: G) emit_switch(var b: List[Str], inst: Inst) {
   let lo = Int.parse(inst.text) ?? 0
   let n = inst.targets.len() - 1
@@ -174,6 +182,10 @@ fn (var g: G) emit_switch(var b: List[Str], inst: Inst) {
   var s: List[Str] = ["\t.p2align 2\n${tab}:\n"]
   for t in inst.targets[0..n] {
     s.push("\t.long ${g.label(g.fwd(t))}-${tab}\n")
+  }
+  if 2 * g.ninst + n >= JT_INLINE_WORDS {
+    b.push(s.join(""))
+    return
   }
   g.stubs.push(s.join(""))
 }

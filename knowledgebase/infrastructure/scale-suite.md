@@ -77,6 +77,7 @@ for the knob that drives that count (`-sizes`):
 | DWARF | 32 bit offsets (DWARF32) | 32 | fnlen x funcs (4 GiB debug sections) |
 | PDB | module, section and symbol indices | 16 | funcs, modules |
 | arm64 | tbz/tbnz range (32 KiB), b.cond, cbz, adr, ldr literal (1 MiB), b and bl (128 MiB) | 14, 19, 26 | fnlen (one function past 32 KiB and 1 MiB of code), funcs (past 128 MiB of text) |
+| arm64 | a jump table's adr (1 MiB) | 21 | switch at 65535 arms (`-sizes 65535`; failed until 2026-10-23) |
 | x86 | rel32 (2 GiB) | 32 | not reachable by size alone |
 | runtime | Str and Bytes lengths and view offsets | 31, 32 | strbytes |
 
@@ -130,7 +131,7 @@ the driver now turns them off and drops repeated sizes). 45 minutes.
 | fnlen | build time n^1.6 from 16k to 32k statements (17 s to 52 s); peak memory 1.3 GB at 32k, 6.4 GB at 64k (n^2.3); 131072 exceeds XO_MAX_MEM (18 GB) in emit, after fn_keys |
 | vars | build time n^2.2 to n^2.6 from 4k to 16k bindings (1.7 s, 7.9 s, 47 s), 726 s at 131072 |
 | funcs | time and memory linear, but about 140 KB of xo memory a function: 8.9 GB at 65535 one line functions, and 131072 exceeds 18 GB after inline.read |
-| switch | a match of 65535 arms fails to assemble: `adr out of range` (a correctness bug, not a cost); time n^1.9 from 2k to 4k arms |
+| switch | a match of 65535 arms fails to assemble: `adr out of range` (a correctness bug, not a cost; fixed the same day, jump tables of long functions after their br, regression internal/arm64 TestSwitch65535Arms); time n^1.9 from 2k to 4k arms |
 
 Every program that built printed the expected output.
 

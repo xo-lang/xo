@@ -29,3 +29,15 @@ and its overflow and index checks branch to fault stubs at the end of
 the function: `b.hs Lf852_fault1` out of range. `farTests` now also
 rewrites `b.cond`, `cbz`, and `cbnz` of a function past 240,000
 instructions (`farCondLimit`) the same way (`TestFarBranches`).
+
+Observed again 2026-10-23 for `adr` (21 bit byte offset, 1 MiB), by the
+scale suite (knowledgebase/infrastructure/scale-suite.md): a `match` of
+65535 Int arms failed with `xo: assembler: line 315: adr out of range`.
+A jump table's `adr x16, Ltab` sat at the dispatch, the table after the
+function's code (with the fault stubs), over 1 MiB away. The size count
+also missed the table's `.long` words, which lengthen any branch over
+them. Fix (compiler/arm64 jumptab.xo `JT_INLINE_WORDS`): a function
+whose instructions, counted twice, plus the table's entries reach
+131072 words keeps the table right after its `br x16`, so `adr` reaches
+it; far_tests (and its lines.xo port) counts `.long` lines as words.
+Ordinary functions are unchanged. Test `TestSwitch65535Arms`.
