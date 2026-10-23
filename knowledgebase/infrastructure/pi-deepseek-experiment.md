@@ -137,3 +137,34 @@ Each finding: what, evidence, fix. Status in brackets.
 - 2026-10-23: setup surveyed; session idle, no task given yet.
 - 2026-10-23: xo-guard and APPEND_SYSTEM.md written, 77 rule tests pass,
   end-to-end block confirmed in print mode; installed into `~/.pi/agent`.
+- 2026-10-23, task 1 (lead, owner approved): a Go differential corpus for
+  Str find, rfind, contains, split, replace and List[Str].join
+  (internal/stdtest/testdata/corpus/strsearch, in the layout of afc6ac099).
+  12:25 to 12:50, unpushed commit f076a050c for the lead's review;
+  overseer verdict approve (gate 7 of 7 on arm64 and LLVM, a negative
+  control fails all 7). 2 corrections: a heavy.sh run with a 180 s tool
+  timeout piped to `tail` while both gate places were held (it would have
+  been killed in the queue); a hand-truncated Go table entry ("..."[:41])
+  that changed a near miss into a match, fixed by copying Go's slice
+  expressions. 1 advisory: it put the main checkout's stale bin/xo
+  (0.24.0) on PATH for lookups, so `xo doc Str` listed no methods (not a
+  doc bug). 0 guard blocks, 0 unsafe actions, 0 scope breaks. Good: it
+  looked up Xo names with xo def instead of guessing from Go (no
+  Str.count, index_any or fields exist), and checked its own fast gate
+  with -v unprompted.
+
+## Observations
+
+- xo-inbox messages reach a Pi session only between its turns. DeepSeek
+  runs long turns with `sleep N` polls, so a correction waited up to about
+  10 minutes, and it answered queued messages one per turn after it had
+  already committed. Next: give heavy.sh a blocking wait mode Pi can call
+  with a long tool timeout, so its turns end at natural points; or have
+  xo-inbox inject messages into the running turn (tool_result append).
+- It launches heavy.sh with `nohup ... &` and records `$!`, instead of the
+  harness background mode Claude agents use; it did stop nothing it did
+  not start. Acceptable, but APPEND_SYSTEM.md should give Pi a concrete
+  pattern for long runs.
+- Tasks must name the xo binary: the session starts in the main checkout,
+  whose bin/xo can be stale. APPEND_SYSTEM.md should say "use WORKTREE/bin/xo
+  only" (added after task 1 is reviewed).
