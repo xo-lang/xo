@@ -1,0 +1,33 @@
+// Str.replace_n (strings.Replace) with every count: none, one, a partial
+// number, the number of matches, above it and below 0; an empty old at rune
+// boundaries; old equal to new and a separator that is not there (the text
+// itself); a view of a longer text; a replacement that deletes; invalid
+// U+FFFD (what an invalid byte reads as in a Str); and multi byte
+// separators.
+fn main(os: Os) {
+  let s = "a-b-c-d"
+  os.stdio.println(s.replace_n("-", "+", 0))
+  os.stdio.println(s.replace_n("-", "+", 1))
+  os.stdio.println(s.replace_n("-", "+", 2))
+  os.stdio.println(s.replace_n("-", "+", 3))
+  os.stdio.println(s.replace_n("-", "+", 4))
+  os.stdio.println(s.replace_n("-", "+", 99))
+  os.stdio.println(s.replace_n("-", "+", -1))
+  os.stdio.println(s.replace_n("-", "+", -7))
+  os.stdio.println("banana".replace_n("", "<>", 1))
+  os.stdio.println("banana".replace_n("", "<>", 3))
+  os.stdio.println("banana".replace_n("", "<>", -1))
+  os.stdio.println("☺☻☹".replace_n("", ".", -1))
+  os.stdio.println("[${s.replace_n("-", "-", 2)}] [${s.replace_n("z", "+", 2)}]")
+  os.stdio.println("a,b,c".replace_n(",", "", -1))
+  os.stdio.println("a-b-c".replace_n("-", " -- ", 2))
+  let long = "  " + s + "  "
+  let view = long[2..(long.len() - 2)]
+  os.stdio.println(view.replace_n("-", "+", 2))
+  os.stdio.println("${view.len()} ${long.len()}")
+  let bad = "a\u{fffd}-b\u{fffd}-c"
+  os.stdio.println(bad.replace_n("-", "+", 1))
+  os.stdio.println("${bad.len()}")
+  os.stdio.println("é日é日".replace_n("é", "e", 1))
+  os.stdio.println("xé日xé日".replace_n("é日", "E", 1))
+}

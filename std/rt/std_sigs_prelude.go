@@ -105,6 +105,7 @@ var (
 	_ func(*Task, string) string                                    = Str_to_lower
 	_ func(*Task, string) string                                    = Str_to_upper
 	_ func(*Task, string, string, string) string                    = Str_replace
+	_ func(*Task, string, string, string, int64) string             = Str_replace_n
 	_ func(*Task, string, int64) string                             = Str_repeat
 	_ func(*Task, string) string                                    = Str_clone
 	_ func(*Task, string) List[Rune]                                = Str_runes

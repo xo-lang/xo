@@ -24,10 +24,9 @@ type strsearchSplitN struct {
 // (strings.Contains), Str.count (strings.Count), Str.find_any and
 // Str.rfind_any (strings.IndexAny, LastIndexAny), Str.contains_any
 // (strings.ContainsAny), Str.contains_rune (strings.ContainsRune),
-// Str.split (strings.Split), Str.replace (strings.ReplaceAll) and
-// List[Str].join (strings.Join). Go's n of Replace has no Str method, so
-// that table is not here; replace_all is Str.replace, which always
-// replaces every match.
+// Str.split (strings.Split), Str.replace (strings.ReplaceAll),
+// Str.replace_n (strings.Replace) and List[Str].join (strings.Join).
+// replace_all is Str.replace, which always replaces every match.
 
 // goIndexCases are Go's strings_test.go indexTests and lastIndexTests
 // (IndexTest) merged: each case checks Index, LastIndex and Contains.
@@ -539,6 +538,60 @@ func strsearchRandomReplace(r *rand.Rand) strsearchReplace {
 	return strsearchReplace{s, old, strsearchGen(r, r.Intn(4))}
 }
 
+// strsearchReplaceN is one (s, old, new, n) input of Str.replace_n.
+type strsearchReplaceN struct {
+	s, old, new string
+	n           int
+}
+
+// goReplaceNCases are Go's strings_test.go ReplaceTests as (s, old, new, n)
+// inputs, with every n of them (0, 1, -1 and 1000): the text comes from
+// strings.Replace. Go's strings tests are Copyright 2009 The Go Authors,
+// BSD-style license.
+func goReplaceNCases() []strsearchReplaceN {
+	var cs []strsearchReplaceN
+	for _, t := range []struct {
+		in       string
+		old, new string
+		n        int
+	}{
+		{"hello", "l", "L", 0},
+		{"hello", "l", "L", -1},
+		{"hello", "x", "X", -1},
+		{"", "x", "X", -1},
+		{"radar", "r", "<r>", -1},
+		{"", "", "<>", -1},
+		{"banana", "a", "<>", -1},
+		{"banana", "a", "<>", 1},
+		{"banana", "a", "<>", 1000},
+		{"banana", "an", "<>", -1},
+		{"banana", "ana", "<>", -1},
+		{"banana", "", "<>", -1},
+		{"banana", "", "<>", 10},
+		{"banana", "", "<>", 6},
+		{"banana", "", "<>", 5},
+		{"banana", "", "<>", 1},
+		{"banana", "a", "a", -1},
+		{"banana", "a", "a", 1},
+		{"☺☻☹", "", "<>", -1},
+	} {
+		cs = append(cs, strsearchReplaceN{t.in, t.old, t.new, t.n})
+	}
+	return cs
+}
+
+// strsearchNs are the counts of the random replace_n cases: every copy (as
+// -1 and as -2, which Go also reads as every copy), none, partial ones up to
+// 4, and one above any match list these texts hold.
+var strsearchNs = []int{-2, -1, 0, 1, 2, 3, 4, 10}
+
+// strsearchRandomReplaceN is a random (s, old, new, n): replace's random
+// inputs (an empty old and invalid bytes included) with a random count.
+func strsearchRandomReplaceN(r *rand.Rand) strsearchReplaceN {
+	c := strsearchRandomReplace(r)
+	return strsearchReplaceN{c.s, c.old, c.new, strsearchNs[r.Intn(len(strsearchNs))]}
+}
+
 // strsearchRandomAny is a random (s, chars): chars is empty, one byte, a
 // short ASCII set, a multi byte set, a piece of s, or holds U+FFFD, so Go's
 // one byte, word set and rune by rune paths all occur.
@@ -754,6 +807,21 @@ func strsearchCorpus() string {
 		s := textOf(c.s)
 		sep := textOf(c.sep)
 		fmt.Fprintf(&o, "  (%s, %s, %d, %s, %s),\n", xq(s), xq(sep), c.n, xq(strsearchList(strings.SplitN(s, sep, c.n))), xq(strsearchList(strings.SplitAfterN(s, sep, c.n))))
+	}
+	o.WriteString("]\n")
+
+	// replace_n (its own seed, after every section that shares r, so their
+	// random inputs stay identical)
+	rpl := goReplaceNCases()
+	rplr := rand.New(rand.NewSource(61))
+	for i := 0; i < 3000; i++ {
+		rpl = append(rpl, strsearchRandomReplaceN(rplr))
+	}
+	o.WriteString("\n/// (s, old, new, n, Go's Replace)\nconst REPLACE_N_CASES: List[(Str, Str, Str, Int, Str)] = [\n")
+	for _, c := range rpl {
+		in := strsearchText(strsearchCase{c.s, c.old})
+		nt := textOf(c.new)
+		fmt.Fprintf(&o, "  (%s, %s, %s, %d, %s),\n", xq(in.s), xq(in.sep), xq(nt), c.n, xq(strings.Replace(in.s, in.sep, nt, c.n)))
 	}
 	o.WriteString("]\n")
 
@@ -973,6 +1041,42 @@ test "replace on a view of a longer text" {
     }
   }
   expect(show3(bad)) == []
+}
+
+fn show5r(bad: List[(Str, Str, Str, Int, Str, Str)]) -> List[(Str, Str, Str, Int, Str, Str)] {
+  bad[0..(if bad.len() < 20 { bad.len() } else { 20 })]
+}
+
+test "replace_n is Go's Replace" {
+  var bad: List[(Str, Str, Str, Int, Str, Str)] = []
+  for (s, old, new, n, want) in REPLACE_N_CASES {
+    let got = s.replace_n(old, new, n)
+    if got != want {
+      bad.push((s, old, new, n, got, want))
+    }
+  }
+  expect(show5r(bad)) == []
+}
+
+test "replace_n on a view of a longer text" {
+  var bad: List[(Str, Str, Str, Int, Str, Str)] = []
+  for (s, old, new, n, want) in REPLACE_N_CASES {
+    let long = "<<" + s + ">>"
+    let view = long[2..(long.len() - 2)]
+    let got = view.replace_n(old, new, n)
+    if got != want {
+      bad.push((s, old, new, n, got, want))
+    }
+  }
+  expect(show5r(bad)) == []
+}
+
+test "replace_n keeps the text itself when nothing changes" {
+  // n 0, old equal to new, and no match: the same text, not a copy
+  let s = "a,b,c"
+  expect(s.replace_n(",", ";", 0)) == s
+  expect(s.replace_n(",", ",", 2)) == s
+  expect(s.replace_n("z", ";", 3)) == s
 }
 
 test "join is Go's Join" {

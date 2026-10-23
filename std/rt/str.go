@@ -119,6 +119,7 @@ func Str_contains_any(_ *Task, s, chars string) bool { return strings.ContainsAn
 
 // Str_contains_rune is `s.contains_rune(r)`: strings.ContainsRune.
 func Str_contains_rune(_ *Task, s string, r Rune) bool { return strings.ContainsRune(s, rune(r)) }
+
 // Str_cut is `s.cut(sep)`: the text before and after the first sep
 // (strings.Cut), and None when sep is not there.
 func Str_cut(_ *Task, s, sep string) Option[Tuple2[string, string]] {
@@ -243,6 +244,12 @@ func Str_to_upper(_ *Task, s string) string { return strings.ToUpper(s) }
 
 // Str_replace is `s.replace(old, new)`: every occurrence.
 func Str_replace(_ *Task, s, old, nw string) string { return strings.ReplaceAll(s, old, nw) }
+
+// Str_replace_n is `s.replace_n(old, new, n)`: the first n copies of old
+// replaced (n below 0 for every one, 0 for none; strings.Replace).
+func Str_replace_n(_ *Task, s, old, new string, n int64) string {
+	return strings.Replace(s, old, new, int(n))
+}
 
 // Str_repeat is `s.repeat(n)`.
 func Str_repeat(_ *Task, s string, n int64) string {

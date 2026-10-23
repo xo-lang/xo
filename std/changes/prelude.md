@@ -1,5 +1,22 @@
 # prelude changes
 
+## 2026-10-23: feature: Str.replace_n, Go's Replace with a count
+
+- Kind: feature
+- Commit: this commit
+- Found by: Str had replace only, which always replaces every match, so Go's Replace had no Xo form
+- Go reference: strings.Replace (and its ReplaceAll path for n below 0 or above the count)
+- Test: corpus strsearch REPLACE_N_CASES (Go's ReplaceTests with every n of them, plus 3000 seeded cases: arm64 and LLVM), golden replace_n (arm64, LLVM, Go parity and wasm)
+
+`s.replace_n(old, new, n)` replaces the first n copies of old (below 0
+for every one, 0 for none). Go's paths as they are: s itself, not a
+copy, when old is new, when n is 0, and when there is no match; every
+match goes through replace's ReplaceAll path; otherwise one allocation
+sized from the count, and an empty old inserts at rune boundaries and at
+the end. native arm64 against Go's strings.Replace, 2000 texts x 120
+rounds with a counted and a full replacement each: 1.14 times Go's
+instructions (1.20 wall); counted replacements only: 1.11 (1.11).
+
 ## 2026-10-23: perf: Float text reads powers of ten from a table
 
 - Kind: perf

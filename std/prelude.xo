@@ -306,6 +306,10 @@ fn (s: Str) trim_suffix(p: Str) -> Str
 fn (s: Str) to_lower() -> Str
 fn (s: Str) to_upper() -> Str
 fn (s: Str) replace(old: Str, new: Str) -> Str
+/// s with the first n copies of old replaced by new; n below 0 for every
+/// copy and 0 for none (strings.Replace). s itself, not a copy, when
+/// nothing changes.
+fn (s: Str) replace_n(old: Str, new: Str, n: Int) -> Str
 fn (s: Str) repeat(n: Int) -> Str
 /// An explicit copy of s in a buffer of its own: a slice, a `split` piece or
 /// a `trim` result shares its source's buffer on native targets (core 3.6),

@@ -1,6 +1,6 @@
 // The Str operations of the native runtime that decide something per
-// rune or per match, written in Xo (decision 0193, step 2): Str.replace
-// and the trims (Unicode white space). They were C (std/llrt/xo_std.c);
+// rune or per match, written in Xo (decision 0193, step 2): Str.replace,
+// its counted form, and the trims (Unicode white space). They were C (std/llrt/xo_std.c);
 // the semantics are still Go's (strings), so the native backends print
 // what the Go backend prints. Its C path (`XO_LLRT_C=strings`,
 // strings_c.xo) went once bench/perf/text met decision 0180's bar on both
@@ -51,6 +51,50 @@ pub fn replace(s: Str, old: Str, new: Str) -> Str {
     i = scan.find(s, old, start)
   }
   rt.rs_append_bytes(o, b, start, n, 0)
+}
+
+/// strings.Replace with a count: the first n matches of old are replaced
+/// (n below 0: every one; 0: none). Go's paths: the same text, not a copy,
+/// when old is new or n is 0, and when there is no match; one allocation
+/// sized from the count otherwise. An empty old inserts new at rune
+/// boundaries, and at the end (Count of "" is the rune count plus one).
+pub fn replace_n(s: Str, old: Str, new: Str, n: Int) -> Str {
+  if old == new || n == 0 {
+    return s
+  }
+  let cnt = scan.count(s, old)
+  if cnt <= 0 {
+    return s
+  }
+  if n < 0 || cnt < n {
+    // every match: ReplaceAll's path
+    return replace(s, old, new)
+  }
+  let sl = s.len()
+  let m = old.len()
+  let b = s.bytes()
+  var o = rt.rs_with_cap(sl + n * (new.len() - m))
+  var start = 0
+  var i = 0
+  while i < n {
+    var j = start
+    if m == 0 {
+      // before each UTF-8 sequence: after the first, one sequence on (no
+      // sequence at the end, as Go's DecodeRuneInString gives no width
+      // there, so a count at the end inserts after the last rune)
+      if i > 0 && j < sl {
+        j += seq_size(b, j)
+      }
+    } else {
+      // an absolute offset, as scan.find returns it
+      j = scan.find(s, old, start)
+    }
+    o = rt.rs_append_bytes(o, b, start, j, 0)
+    o = rt.rs_append(o, new)
+    start = j + m
+    i += 1
+  }
+  rt.rs_append_bytes(o, b, start, sl, 0)
 }
 
 /// Whether the rune r is white space (unicode.IsSpace).

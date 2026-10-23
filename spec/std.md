@@ -196,6 +196,7 @@ fn (s: Str) trim_prefix(p: Str) -> Str       // also trim_suffix
 // targets (O(1) per piece, no copy; a piece keeps s alive), as slices do (core 3.6)
 fn (s: Str) to_lower() -> Str                // also to_upper (Unicode aware)
 fn (s: Str) replace(old: Str, new: Str) -> Str
+fn (s: Str) replace_n(old: Str, new: Str, n: Int) -> Str  // the first n copies (strings.Replace); n below 0 for every one, 0 for none
 fn (s: Str) repeat(n: Int) -> Str
 fn (s: Str) clone() -> Str                   // an explicit copy in a buffer of its own (a slice or split piece shares its source on native targets)
 fn (s: Str) runes() -> List[Rune]
@@ -4036,7 +4037,7 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
 
 Every function and method of std/prelude.xo, by type, as declared there
 (the sections above explain them); interface methods take `self`.
-377 declarations.
+378 declarations.
 
 ### Range
 
@@ -4231,6 +4232,7 @@ fn (s: Str) trim_suffix(p: Str) -> Str
 fn (s: Str) to_lower() -> Str
 fn (s: Str) to_upper() -> Str
 fn (s: Str) replace(old: Str, new: Str) -> Str
+fn (s: Str) replace_n(old: Str, new: Str, n: Int) -> Str
 fn (s: Str) repeat(n: Int) -> Str
 fn (s: Str) clone() -> Str
 fn (s: Str) runes() -> List[Rune]

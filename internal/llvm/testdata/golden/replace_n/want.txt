@@ -1,0 +1,24 @@
+exit 0
+--- stdout
+a-b-c-d
+a+b-c-d
+a+b+c-d
+a+b+c+d
+a+b+c+d
+a+b+c+d
+a+b+c+d
+a+b+c+d
+<>banana
+<>b<>a<>nana
+<>b<>a<>n<>a<>n<>a<>
+.☺.☻.☹.
+[a-b-c-d] [a-b-c-d]
+abc
+a -- b -- c
+a+b+c-d
+7 11
+a�+b�-c
+11
+e日é日
+xExé日
+--- stderr

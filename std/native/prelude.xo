@@ -162,6 +162,7 @@ fn str_to_upper(s: Str) -> Str { unicode.map_case(s, false) }
 fn str_eq_lower(a: Str, b: Str) -> Bool { unicode.eq_lower(a, b) }
 
 fn str_replace(s: Str, old: Str, new: Str) -> Str { strings.replace(s, old, new) }
+fn str_replace_n(s: Str, old: Str, new: Str, n: Int) -> Str { strings.replace_n(s, old, new, n) }
 
 fn str_repeat(s: Str, n: Int) -> Str { raw.str_repeat(s, n) }
 
