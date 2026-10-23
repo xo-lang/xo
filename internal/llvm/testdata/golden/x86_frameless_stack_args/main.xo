@@ -1,0 +1,46 @@
+// A function whose parameters pass the six argument registers reads its
+// stack parameters in a block laid out without the frame (shrink
+// wrapping, compiler/arm64 shrink.xo): at entry+8 there, not at the
+// framed offset (2026-10-23: time.offset_secs read the word after its
+// parameter on x86_64 once its entry needed no callee saved register).
+
+struct Wide {
+  fixed: Bool
+  secs: Int
+  a: Int
+  b: Int
+  c: Int
+  rules: List[Int]
+}
+
+fn slow(w: Wide, sec: Int) -> Int {
+  var t = 0
+  for r in w.rules {
+    t += r * sec
+  }
+  t + w.a + w.b + w.c
+}
+
+fn offset(w: Wide, sec: Int) -> Int {
+  if w.fixed {
+    return w.secs + sec
+  }
+  slow(w, sec)
+}
+
+fn eight(a: Int, b: Int, c: Int, d: Int, e: Int, f: Int, g: Int, h: Int) -> Int {
+  if a == 0 {
+    return g * 100 + h
+  }
+  eight(a - 1, b, c, d, e, f, g + 1, h + b)
+}
+
+fn main(os: Os) {
+  var total = 0
+  for i in 0..20 {
+    let w = Wide{fixed: i % 2 == 0, secs: i, a: 1, b: 2, c: 3, rules: [i, i + 1]}
+    total += offset(w, 1000 + i)
+  }
+  os.stdio.println("${total}")
+  os.stdio.println("${eight(0, 1, 2, 3, 4, 5, 6, 7)} ${eight(3, 1, 2, 3, 4, 5, 6, 7)}")
+}

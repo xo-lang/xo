@@ -87,6 +87,19 @@ fn (g: G) x86_in_arg(k: Int) -> Int {
   g.fr.size + 16 + 8 * k - g.fr.rz
 }
 
+/// x86_in_arg in the block being emitted: a block of a shrink wrapped
+/// function laid out without the frame (shrink.xo) has rsp as at the
+/// entry, the word above the return address the first (2026-10-23:
+/// time.offset_secs read its stack parameter at the framed offset 16 in
+/// its frameless entry, eight bytes off, once the allocation needed no
+/// callee saved register there)
+fn (g: G) x86_in_arg_here(k: Int) -> Int {
+  if g.shrink && g.cur >= 0 && g.cur < g.region.len() && !g.region[g.cur] {
+    return 8 + 8 * k
+  }
+  g.x86_in_arg(k)
+}
+
 fn (var g: G) x86_emit() {
   g.nfunc += 1
   if g.os != "windows" {
@@ -560,7 +573,7 @@ fn (var g: G) x86_emit_inst(var b: List[Str], inst: Inst, next: Int) {
     for (k, l) in g.x86_call_locs(regs(inst.defs), -1).indexed() {
       var src = MLoc{reg: l.reg}
       if l.reg < 0 {
-        src = MLoc{reg: -1, base: "%rsp", off: g.x86_in_arg(l.slot)}
+        src = MLoc{reg: -1, base: "%rsp", off: g.x86_in_arg_here(l.slot)}
       }
       let (d, ok) = g.vloc(inst.defs[k])
       if ok {
@@ -573,7 +586,7 @@ fn (var g: G) x86_emit_inst(var b: List[Str], inst: Inst, next: Int) {
     for (k, l) in g.x86_res_locs(inst.srcs).indexed() {
       var dst = MLoc{reg: l.reg}
       if l.reg < 0 {
-        dst = MLoc{reg: -1, base: "%rsp", off: g.x86_in_arg(l.slot)}
+        dst = MLoc{reg: -1, base: "%rsp", off: g.x86_in_arg_here(l.slot)}
       }
       ms.push(Move{dst: dst, src: g.msrc_of(inst.srcs[k])})
     }
