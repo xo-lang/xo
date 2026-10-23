@@ -3,7 +3,7 @@
 ## 2026-10-23: feature: the heap in use at a labeled point (XO_PROF_HEAP_AT)
 
 - Kind: feature
-- Commit: f78739caf
+- Commit: d449dc24c
 - Found by: decision 0352 step D (what a build keeps alive between phases)
 - Test: a build of the scale suite's fns-4096 program with XO_PROF=heap XO_PROF_HEAP_AT=inline (compiler/xo labels its phases), converted by xo prof
 
