@@ -162,14 +162,24 @@ do the rest.
 ### Credentials
 
 An Entra app registration holding the certificate profile signer role
-on the profile, through the client credentials flow. Six
-variables: `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`,
-`AZURE_CODE_SIGNING_ENDPOINT`, `AZURE_CODE_SIGNING_ACCOUNT`,
-`AZURE_CODE_SIGNING_PROFILE`. Keep them in a mode 600 file outside the
-repository and source it in a subshell only:
+on the profile, through the client credentials flow (owner,
+2026-10-22: settings in a file, the secret in the keychain):
 
-    ( set -a; . PATH/TO/azure.env; set +a
-      JSIGN_JAR=PATH/jsign-7.5.jar JAVA=PATH/java scripts/sign-windows.sh FILE.exe... )
+- five settings, `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`,
+  `AZURE_CODE_SIGNING_ENDPOINT`, `AZURE_CODE_SIGNING_ACCOUNT`,
+  `AZURE_CODE_SIGNING_PROFILE`: from the environment, else from the mode
+  600 file named by `XO_AZURE_ENV`, by default
+  `~/Library/Application Support/xo/azure-signing.env` (KEY=VALUE lines,
+  read by sign-windows.sh, never sourced; other names are ignored);
+- the client secret: `AZURE_CLIENT_SECRET`, else the login keychain's
+  generic password of service `xo-azure-signing`, account
+  `client-secret` (`security find-generic-password -s xo-azure-signing
+  -a client-secret -w`, which sign-windows.sh writes straight into its
+  mode 700 temporary directory).
+
+So on the development Mac no variable is needed:
+
+    JSIGN_JAR=PATH/jsign-7.5.jar JAVA=$(brew --prefix openjdk)/bin/java scripts/sign-windows.sh FILE.exe...
 
 The script never puts the secret or the access token on a command line
 (where ps shows them) or in its output: the secret goes to curl through a
@@ -184,7 +194,8 @@ constraint, but each signature is still a billed, owner-approved action:
 agents never sign on their own, and a session's permission settings may
 refuse the call (the owner then runs it). Rehearse with a self-signed
 certificate first (jsign `--keystore KEY.p12 --storetype PKCS12`, the
-same output layout). Last verified: 2026-10-19
+same output layout). Last verified: 2026-10-22 (`--check-auth` with the
+settings file and the keychain secret: a token)
 
 ### Releases (2026-10-22)
 
@@ -192,9 +203,8 @@ scripts/release.sh signs the windows/amd64 archive's `bin/xo.exe` and
 `bin/xo-gobind.exe` after the build and before the archive is written
 (owner, 2026-10-22: Windows signing in the next release after 0.25.2).
 
-- **Credentials:** the six `AZURE_*` variables in the environment, or
-  `XO_AZURE_ENV`, the path of the mode 600 file above. Only the
-  subshell that signs reads it. Also `JSIGN_JAR` (jsign-7.5.jar,
+- **Credentials:** as above (the settings file and the keychain item,
+  or the environment); only sign-windows.sh reads them. Also `JSIGN_JAR` (jsign-7.5.jar,
   checked against the SHA-1 above) and `JAVA`
   (`$(brew --prefix openjdk)/bin/java`).
 - **Early check:** `sign-windows.sh --check-auth` requests a token

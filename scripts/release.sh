@@ -78,9 +78,11 @@
 #
 # The windows executables (bin/xo.exe, bin/xo-gobind.exe) are signed
 # with Azure Artifact Signing (scripts/sign-windows.sh, code-signing.md
-# "Windows"; each signature is billed): the six AZURE_* variables come
-# from the environment, or from the mode 600 file $XO_AZURE_ENV, read in
-# the subshell that signs and nowhere else; JSIGN_JAR names jsign's jar
+# "Windows"; each signature is billed): the five AZURE_* settings come
+# from the environment or the mode 600 file $XO_AZURE_ENV (default
+# ~/Library/Application Support/xo/azure-signing.env), the client secret
+# from AZURE_CLIENT_SECRET or the login keychain, all read by
+# sign-windows.sh and nowhere else; JSIGN_JAR names jsign's jar
 # and JAVA a Java runtime. The credentials are checked before the build
 # (sign-windows.sh --check-auth, a token only). XO_RELEASE_UNSIGNED=1
 # skips this too; XO_RELEASE_WIN_UNSIGNED=1 skips only Windows signing.
@@ -154,24 +156,17 @@ fi
 win=${XO_RELEASE_WINDOWS:-native}
 [ "$win" = 1 ] && win=native
 case $win in native|llvm|0) ;; *) echo "release.sh: XO_RELEASE_WINDOWS is native (the default), llvm, or 0" >&2; exit 1 ;; esac
-# win_sign ARGS...: scripts/sign-windows.sh with the Azure credentials of
-# the environment or $XO_AZURE_ENV, which only this subshell reads
+# win_sign ARGS...: scripts/sign-windows.sh, which reads the Azure
+# settings (the environment, else $XO_AZURE_ENV or its default file) and
+# the client secret (AZURE_CLIENT_SECRET, else the login keychain)
 win_sign() {
-	(
-		if [ -n "${XO_AZURE_ENV:-}" ]; then
-			set -a
-			# shellcheck disable=SC1090
-			. "$XO_AZURE_ENV" || exit 2
-			set +a
-		fi
-		bash scripts/sign-windows.sh "$@"
-	)
+	bash scripts/sign-windows.sh "$@"
 }
 winsign=0
 if [ "$win" != 0 ] && [ "$sign" = 1 ] && [ "${XO_RELEASE_WIN_UNSIGNED:-}" != 1 ]; then
 	winsign=1
 	if ! win_sign --check-auth >&2; then
-		echo "release.sh: Windows signing needs working Azure Artifact Signing credentials: the six AZURE_* variables (or XO_AZURE_ENV, a mode 600 file of them), JSIGN_JAR and JAVA (code-signing.md \"Windows\"); XO_RELEASE_WIN_UNSIGNED=1 builds unsigned Windows executables" >&2
+		echo "release.sh: Windows signing needs working Azure Artifact Signing credentials: the five AZURE_* settings (the environment or XO_AZURE_ENV's file) and the client secret (AZURE_CLIENT_SECRET or the keychain item xo-azure-signing), JSIGN_JAR and JAVA (code-signing.md \"Windows\"); XO_RELEASE_WIN_UNSIGNED=1 builds unsigned Windows executables" >&2
 		exit 1
 	fi
 fi

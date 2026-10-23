@@ -10,12 +10,17 @@
 # billed) and exits 0 when the credentials work: release.sh runs it
 # before its long build, so a bad secret stops it at once.
 #
-# Credentials come only from the environment: AZURE_TENANT_ID,
-# AZURE_CLIENT_ID, AZURE_CLIENT_SECRET (an app registration with the
-# signing role on the profile), AZURE_CODE_SIGNING_ENDPOINT (the
+# The settings: AZURE_TENANT_ID, AZURE_CLIENT_ID (an app registration
+# with the signing role on the profile), AZURE_CODE_SIGNING_ENDPOINT (the
 # account's regional endpoint, https://REGION.codesigning.azure.net),
-# AZURE_CODE_SIGNING_ACCOUNT, AZURE_CODE_SIGNING_PROFILE. Source them in
-# a subshell, for example ( . PATH/TO/azure.env; scripts/sign-windows.sh FILE ).
+# AZURE_CODE_SIGNING_ACCOUNT, AZURE_CODE_SIGNING_PROFILE. Each comes from
+# the environment, else from the file XO_AZURE_ENV (default
+# "$HOME/Library/Application Support/xo/azure-signing.env", mode 600,
+# KEY=VALUE lines; read, not sourced, and only those five names). The
+# client secret comes from AZURE_CLIENT_SECRET, else from the login
+# keychain's generic password of service xo-azure-signing, account
+# client-secret (owner, 2026-10-22; made once with `security
+# add-generic-password -s xo-azure-signing -a client-secret -w`).
 # The secret and the access token only ever sit in a mode 700 temporary
 # directory removed on exit (curl and jsign read them from files), never
 # on a command line or in the output. Each signature is billed: sign
@@ -35,9 +40,29 @@ if [ ! -f "${JSIGN_JAR:-}" ]; then
   echo "sign-windows.sh: JSIGN_JAR names no file (jsign-7.5.jar, code-signing.md \"The tools\")" >&2
   exit 2
 fi
-for v in AZURE_TENANT_ID AZURE_CLIENT_ID AZURE_CLIENT_SECRET AZURE_CODE_SIGNING_ENDPOINT AZURE_CODE_SIGNING_ACCOUNT AZURE_CODE_SIGNING_PROFILE JSIGN_JAR; do
+settings="AZURE_TENANT_ID AZURE_CLIENT_ID AZURE_CODE_SIGNING_ENDPOINT AZURE_CODE_SIGNING_ACCOUNT AZURE_CODE_SIGNING_PROFILE"
+envfile=${XO_AZURE_ENV:-$HOME/Library/Application Support/xo/azure-signing.env}
+if [ -f "$envfile" ]; then
+  # KEY=VALUE lines (an `export ` prefix and one pair of quotes allowed);
+  # a variable already set in the environment wins
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line#export }
+    k=${line%%=*}
+    [ "$k" = "$line" ] && continue
+    case " $settings " in *" $k "*) ;; *) continue ;; esac
+    [ -n "${!k:-}" ] && continue
+    val=${line#*=}
+    case $val in \"*\") val=${val#\"}; val=${val%\"} ;; \'*\') val=${val#\'}; val=${val%\'} ;; esac
+    printf -v "$k" '%s' "$val"
+    export "${k?}"
+  done < "$envfile"
+elif [ -n "${XO_AZURE_ENV:-}" ]; then
+  echo "sign-windows.sh: XO_AZURE_ENV names no file" >&2
+  exit 2
+fi
+for v in $settings JSIGN_JAR; do
   if [ -z "${!v:-}" ]; then
-    echo "sign-windows.sh: set $v" >&2
+    echo "sign-windows.sh: set $v (the environment or the settings file, see the header)" >&2
     exit 2
   fi
 done
@@ -54,7 +79,17 @@ chmod 700 "$tmp"
 
 # the token: the client credentials flow, everything curl sends from a
 # config file
-printf '%s' "$AZURE_CLIENT_SECRET" > "$tmp/secret"
+if [ -n "${AZURE_CLIENT_SECRET:-}" ]; then
+  printf '%s' "$AZURE_CLIENT_SECRET" > "$tmp/secret"
+elif command -v security > /dev/null 2>&1 && security find-generic-password -s xo-azure-signing -a client-secret -w > "$tmp/secret.nl" 2> /dev/null; then
+  # the keychain prints the password and a newline: keep the password
+  tr -d '\n' < "$tmp/secret.nl" > "$tmp/secret"
+  rm -f "$tmp/secret.nl"
+fi
+if [ ! -s "$tmp/secret" ]; then
+  echo "sign-windows.sh: no client secret: set AZURE_CLIENT_SECRET or add the login keychain item (service xo-azure-signing, account client-secret)" >&2
+  exit 2
+fi
 cat > "$tmp/curl.cfg" <<EOF
 url = "https://login.microsoftonline.com/$AZURE_TENANT_ID/oauth2/v2.0/token"
 data = "grant_type=client_credentials"
