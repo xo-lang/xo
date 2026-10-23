@@ -245,14 +245,85 @@ fn bytes_at(b: Bytes, sub: Bytes, i: Int) -> Bool {
 /// bytes.Index and bytes.LastIndex, on the bytes as they are (no Str cast:
 /// the bytes need not be UTF-8, TestOutsideBytesValidated).
 fn bytes_find(b: Bytes, sub: Bytes) -> Int? {
-  var i = 0
-  while i + sub.len() <= b.len() {
-    if bytes_at(b, sub, i) {
-      return Some(i)
+  bytes_find_from(b, sub, 0)
+}
+
+/// The offset of the first sub at or after i0 (bytes.Index with a start),
+/// or None: as Go's Index does, the first byte of sub is searched 16 bytes
+/// at a time (scan.find_byte) and each candidate compared.
+fn bytes_find_from(b: Bytes, sub: Bytes, i0: Int) -> Int? {
+  let n = b.len()
+  let m = sub.len()
+  if m == 0 {
+    if i0 <= n {
+      return Some(i0)
     }
-    i += 1
+    return None
+  }
+  let first = Int(sub[0])
+  var i = i0
+  while i + m <= n {
+    let j = scan.find_byte(b, i, n - m + 1, first)
+    if j < 0 {
+      return None
+    }
+    if bytes_at(b, sub, j) {
+      return Some(j)
+    }
+    i = j + 1
   }
   None
+}
+
+/// The offset of the first sub at or after i0, or -1 (a loop's form).
+fn bytes_find_int(b: Bytes, sub: Bytes, i0: Int) -> Int {
+  match bytes_find_from(b, sub, i0) {
+    Some(i) => i
+    None => -1
+  }
+}
+
+/// bytes.Contains: an empty sub is in b.
+fn bytes_contains(b: Bytes, sub: Bytes) -> Bool {
+  match bytes_find_from(b, sub, 0) {
+    Some(_) => true
+    None => false
+  }
+}
+
+/// bytes.HasPrefix: an empty p is a prefix of b.
+fn bytes_starts_with(b: Bytes, p: Bytes) -> Bool {
+  p.len() <= b.len() && scan.eq_at(b, 0, p, 0, p.len())
+}
+
+/// bytes.HasSuffix: an empty p is a suffix of b.
+fn bytes_ends_with(b: Bytes, p: Bytes) -> Bool {
+  p.len() <= b.len() && scan.eq_at(b, b.len() - p.len(), p, 0, p.len())
+}
+
+/// bytes.Count: the non-overlapping copies of sub in b, left to right; for
+/// an empty sub the rune count plus one (utf8.RuneCount, an invalid byte
+/// one rune), and one byte sub counts bytes 16 at a time.
+fn bytes_count(b: Bytes, sub: Bytes) -> Int {
+  let n = b.len()
+  let m = sub.len()
+  if m == 0 {
+    return scan.bytes_rune_count(b) + 1
+  }
+  if m == 1 {
+    return scan.count_byte(b, 0, n, Int(sub[0]))
+  }
+  var c = 0
+  var i = 0
+  while i + m <= n {
+    let j = bytes_find_int(b, sub, i)
+    if j < 0 {
+      break
+    }
+    c += 1
+    i = j + m
+  }
+  c
 }
 
 fn bytes_indexed(b: Bytes) -> List[(Int, UInt8)] {

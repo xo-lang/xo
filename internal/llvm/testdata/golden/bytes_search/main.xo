@@ -1,0 +1,25 @@
+// Bytes.contains, Bytes.starts_with, Bytes.ends_with and Bytes.count
+// (bytes.Contains, HasPrefix, HasSuffix and Count): on text, a one byte sub,
+// an empty sub, a sub longer than the value, overlapping copies, bytes no
+// UTF-8 sequence can hold, NUL bytes, a view of a longer value, and empty
+// values on both sides.
+fn main(os: Os) {
+  let t = b"hello world"
+  os.stdio.println("${t.contains(b"lo w")} ${t.starts_with(b"hello")} ${t.ends_with(b"world")}")
+  os.stdio.println("${t.contains(b"")} ${t.starts_with(b"")} ${t.ends_with(b"")} ${t.count(b"")}")
+  os.stdio.println("${t.contains(b"Hello")} ${t.starts_with(b"world")} ${t.ends_with(b"hello")} ${t.count(b"l")}")
+  os.stdio.println("${t.count(b"o")} ${t.count(b"lo")} ${t.count(b"xyz")} ${t.count(b"hello world!")}")
+  let a = b"aaaaa"
+  os.stdio.println("${a.count(b"aa")} ${a.count(b"aaa")} ${a.starts_with(b"aaa")} ${a.ends_with(b"aaa")}")
+  let inv = b"\xff\xfe\xc3"
+  os.stdio.println("${inv.contains(b"\xff")} ${inv.starts_with(b"\xff\xfe")} ${inv.ends_with(b"\xc3")} ${inv.count(b"\xff")}")
+  // an invalid byte is not U+FFFD: U+FFFD's three bytes do not match 0xFF
+  os.stdio.println("${inv.contains(b"\xef\xbf\xbd")} ${b"\xef\xbf\xbd\xef\xbf\xbd\xef\xbf\xbd".count(b"\xef\xbf\xbd")}")
+  let nul = b"\x00a\x00"
+  os.stdio.println("${nul.count(b"\x00")} ${nul.starts_with(b"\x00")} ${nul.ends_with(b"\x00")} ${nul.contains(b"a\x00")}")
+  let long = b"zz" + t
+  let view = long[2..long.len()]
+  os.stdio.println("${view.contains(b"world")} ${view.starts_with(b"h")} ${view.ends_with(b"d")} ${view.count(b"o")}")
+  let e = b""
+  os.stdio.println("${e.contains(b"")} ${e.contains(b"a")} ${e.count(b"")} ${e.count(b"a")}")
+}

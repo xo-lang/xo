@@ -30,6 +30,7 @@ var generators = map[string]func() string{
 	"base64":    base64Corpus,
 	"big":       bigCorpus,
 	"binary":    binaryCorpus,
+	"bytes":     bytesCorpus,
 	"compress":  compressCorpus,
 	"csv":       csvCorpus,
 	"cut":       cutCorpus,

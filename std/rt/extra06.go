@@ -95,6 +95,26 @@ func Bytes_rfind(_ *Task, b, sub Bytes) Option[int64] {
 	return Some(int64(i))
 }
 
+// Bytes_contains is `b.contains(sub)`: bytes.Contains.
+func Bytes_contains(_ *Task, b, sub Bytes) bool {
+	return bytes.Contains([]byte(b), []byte(sub))
+}
+
+// Bytes_starts_with is `b.starts_with(p)`: bytes.HasPrefix.
+func Bytes_starts_with(_ *Task, b, p Bytes) bool {
+	return bytes.HasPrefix([]byte(b), []byte(p))
+}
+
+// Bytes_ends_with is `b.ends_with(p)`: bytes.HasSuffix.
+func Bytes_ends_with(_ *Task, b, p Bytes) bool {
+	return bytes.HasSuffix([]byte(b), []byte(p))
+}
+
+// Bytes_count is `b.count(sub)`: bytes.Count.
+func Bytes_count(_ *Task, b, sub Bytes) int64 {
+	return int64(bytes.Count([]byte(b), []byte(sub)))
+}
+
 // Bytes_indexed is `b.indexed()`: each byte with its offset.
 func Bytes_indexed(_ *Task, b Bytes) List[Tuple2[int64, uint8]] {
 	out := make([]Tuple2[int64, uint8], len(b))

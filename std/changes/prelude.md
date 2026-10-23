@@ -1,5 +1,27 @@
 # prelude changes
 
+## 2026-10-23: feature: Bytes.contains, starts_with, ends_with and count
+
+- Kind: feature
+- Commit: this commit
+- Found by: Bytes had find and rfind only, so the four questions bytes.Contains, HasPrefix, HasSuffix and Count answer needed a find and a hand comparison each
+- Go reference: bytes.Contains, HasPrefix, HasSuffix and Count (go1.26.1)
+- Test: corpus bytes (Go's containsTests, the TestCountByte and TestCountByteNoMatch windows, the documented boundaries, and 3000 seeded byte strings with invalid UTF-8: arm64, LLVM and Go), golden bytes_search (arm64, LLVM, Go parity and wasm)
+
+`b.contains(sub)`, `b.starts_with(p)`, `b.ends_with(p)` and `b.count(sub)`
+answer on the bytes as they are (no Str cast, so invalid UTF-8 is compared
+byte for byte). Go's fast paths are ported: the count of an empty sub is
+the rune count plus one; a one byte sub counts 16 bytes a step
+(scan.count_byte, the scan equal mask and popcount); a search scans for
+sub's first byte 16 bytes a step and compares each candidate, as Go's
+Index does; starts_with and ends_with reuse scan.eq_at, 4 to 16 byte
+affixes in two loads rather than a loop.
+
+native arm64 against Go's package, 2000 buffers searched 200 times with
+contains, starts_with, ends_with, count of one byte and count of three
+bytes: buffers of 0 to 80 bytes 0.65 times Go's instructions (0.47 wall),
+buffers of 0 to 400 bytes 0.63 (0.63).
+
 ## 2026-10-23: perf: the ASCII trims return their view without a slice check
 
 - Kind: perf

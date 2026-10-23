@@ -216,6 +216,10 @@ fn (b: Bytes) decode_rune(i: Int) -> (Rune, Int)  // the rune at byte i and its 
 fn (b: Bytes) quote() -> Str                 // also on Str: a quoted literal
 fn (b: Bytes) find(sub: Bytes) -> Int?       // bytes.Index; Some(0) for an empty sub
 fn (b: Bytes) rfind(sub: Bytes) -> Int?      // bytes.LastIndex; Some(b.len()) for an empty sub
+fn (b: Bytes) contains(sub: Bytes) -> Bool   // bytes.Contains; true for an empty sub
+fn (b: Bytes) starts_with(p: Bytes) -> Bool  // bytes.HasPrefix; true for an empty p
+fn (b: Bytes) ends_with(p: Bytes) -> Bool    // bytes.HasSuffix; true for an empty p
+fn (b: Bytes) count(sub: Bytes) -> Int       // bytes.Count, non-overlapping; the rune count plus one for an empty sub
 fn (b: Bytes) clone() -> Bytes               // an explicit copy in a buffer of its own
 fn (b: Bytes) indexed() -> List[(Int, UInt8)]  // each byte with its offset, as List.indexed
 fn (static: Bytes) zeroed(n: Int) -> Bytes   // n zero bytes (make([]byte, n)); a fault for n < 0
@@ -4045,7 +4049,7 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
 
 Every function and method of std/prelude.xo, by type, as declared there
 (the sections above explain them); interface methods take `self`.
-381 declarations.
+385 declarations.
 
 ### Range
 
@@ -4268,6 +4272,10 @@ fn (b: Bytes) decode_rune(i: Int) -> (Rune, Int)
 fn (b: Bytes) quote() -> Str
 fn (b: Bytes) find(sub: Bytes) -> Int?
 fn (b: Bytes) rfind(sub: Bytes) -> Int?
+fn (b: Bytes) contains(sub: Bytes) -> Bool
+fn (b: Bytes) starts_with(p: Bytes) -> Bool
+fn (b: Bytes) ends_with(p: Bytes) -> Bool
+fn (b: Bytes) count(sub: Bytes) -> Int
 fn (b: Bytes) indexed() -> List[(Int, UInt8)]
 fn (static: Bytes) zeroed(n: Int) -> Bytes
 ```

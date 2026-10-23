@@ -341,6 +341,16 @@ fn (b: Bytes) quote() -> Str
 fn (b: Bytes) find(sub: Bytes) -> Int?
 /// The offset of the last sub (bytes.LastIndex); Some(b.len()) for an empty sub.
 fn (b: Bytes) rfind(sub: Bytes) -> Int?
+/// Whether sub is in b (bytes.Contains); true for an empty sub. The bytes
+/// need not be UTF-8: compare bytes, not text.
+fn (b: Bytes) contains(sub: Bytes) -> Bool
+/// Whether b starts with p (bytes.HasPrefix); true for an empty p.
+fn (b: Bytes) starts_with(p: Bytes) -> Bool
+/// Whether b ends with p (bytes.HasSuffix); true for an empty p.
+fn (b: Bytes) ends_with(p: Bytes) -> Bool
+/// The number of non-overlapping copies of sub in b (bytes.Count); for an
+/// empty sub the rune count plus one, an invalid byte counting as one rune.
+fn (b: Bytes) count(sub: Bytes) -> Int
 fn (b: Bytes) indexed() -> List[(Int, UInt8)]
 /// n zero bytes (Go's make([]byte, n)); a fault for n < 0.
 fn (static: Bytes) zeroed(n: Int) -> Bytes
