@@ -32,6 +32,7 @@ use native/llrt/rand
 use native/llrt/raw
 use native/llrt/report
 use native/llrt/scan
+use native/llrt/selects
 use native/llrt/show
 use native/llrt/stdin as stdinrt
 use native/llrt/stdio as stdiort
@@ -2742,6 +2743,10 @@ fn llrt_chan_recv_w(c: Int) -> (Int, Bool) { chan.recv_w(c) }
 fn llrt_chan_try_send_w(c: Int, v: Int) -> Bool { chan.try_send_w(c, v) }
 
 fn llrt_chan_try_recv_w(c: Int) -> (Int, Bool) { chan.try_recv_w(c) }
+
+fn llrt_select_send_w(s: Int, c: Int, v: Int) { selects.send_w(s, c, v) }
+
+fn llrt_select_take_w(s: Int, i: Int) -> (Int, Bool) { selects.take_w(s, i) }
 
 // The report of a property test's case to the harness (decision 0193
 // step 5): in Xo (std/native/llrt/report.xo; decision 0198 deleted the C

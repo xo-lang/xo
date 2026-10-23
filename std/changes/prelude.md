@@ -1,5 +1,20 @@
 # prelude changes
 
+## 2026-10-23: perf: select arms on integer channels pass the word
+
+- Kind: perf
+- Commit: this commit
+- Found by: decision 0353 phase 2 (select arms still boxed a one element List per message)
+- Go reference: none (internal representation)
+- Test: goldens chan_word, conc_channels, conc_select, select_arm_order (arm64, LLVM, Go parity), select_unbound and channels (gen)
+
+A `select` send arm on a word channel (see the entry below) passes the
+word through llrt_select_send_w, and a receive arm reads the word and the
+closed flag through llrt_select_take_w, with no list allocated per message.
+Behavior is unchanged. Two select loops ping-ponging over word channels
+(arm64, `xo bench --ab --rounds=20`): wall 0.951 (0.925 to 0.975),
+instructions 0.982, max RSS 0.974.
+
 ## 2026-10-23: perf: channels of integers send the word, not a list of one
 
 - Kind: perf

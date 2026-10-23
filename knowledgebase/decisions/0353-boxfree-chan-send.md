@@ -169,3 +169,13 @@ within noise.
   change; the prelude route gets most of it through the inliner and can
   be promoted later.
 - **Stack switch changes.** Measured and dropped (Context).
+
+## Phase 2: select word arms (2026-10-23)
+
+A select over word channels no longer boxes: a send arm passes the word
+(`llrt_select_send_w`) and a receive arm reads `(word, ok)`
+(`llrt_select_take_w`), building the Option with `word_option`. The list
+arms stay for other element types and for Wasm and Go. Selpp (ping-pong
+through two select loops, arm64, `xo bench --ab --rounds=20`): wall 0.951
+(0.925 to 0.975, better), instructions 0.982, max RSS 0.974. Str and handle
+elements remain to be measured separately.

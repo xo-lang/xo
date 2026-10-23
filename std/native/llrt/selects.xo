@@ -73,8 +73,7 @@ fn arm(s: Int, c: Int, send: Int, l: Int) {
     st4(s, SE_CAP, nc)
   }
   rc.inc(c)
-  // a word channel's arm keeps the word itself (decision 0353)
-  let item = if send != 0 && chan.is_word(c) { chan.unbox_word(l) } else { l }
+  let item = l
   let a = ld(s, SE_ARMS) + A_SIZE * n
   rt.mem_set(a, 0, A_SIZE)
   st(a, A_CH, c)
@@ -88,7 +87,13 @@ pub fn recv(s: Int, c: Int) { arm(s, c, 0, 0) }
 
 /// Adds an arm `ch.send(x)` (xo_select_send), x in a list of one
 /// (consumed).
-pub fn send(s: Int, c: Int, l: Int) { arm(s, c, 1, l) }
+pub fn send(s: Int, c: Int, l: Int) {
+  // a word channel's arm keeps the word itself (decision 0353)
+  arm(s, c, 1, if chan.is_word(c) { chan.unbox_word(l) } else { l })
+}
+
+/// Adds an arm `ch.send(v)` on a word channel, v the word itself.
+pub fn send_w(s: Int, c: Int, v: Int) { arm(s, c, 1, v) }
 
 /// The queue of channel c an arm waits in.
 fn queue(c: Int, send: Int) -> Int { c + (if send != 0 { chan.CH_SENDQ } else { chan.CH_RECVQ }) }
@@ -284,6 +289,15 @@ pub fn take(s: Int, i: Int) -> Int {
     return if ld4(a + A_E, chan.E_SHUT) == 0 { chan.box_word(l) } else { tasks.empty_list() }
   }
   if l != 0 { l } else { tasks.empty_list() }
+}
+
+/// What word receive arm i got: the word and whether it is a value (false
+/// when its channel was closed and drained).
+pub fn take_w(s: Int, i: Int) -> (Int, Bool) {
+  let a = ld(s, SE_ARMS) + A_SIZE * i
+  let v = ld(a, A_ITEM)
+  st(a, A_ITEM, 0)
+  (v, ld4(a + A_E, chan.E_SHUT) == 0)
 }
 
 /// A select's free function (select_free): the arms' values and channel

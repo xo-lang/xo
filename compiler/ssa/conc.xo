@@ -1026,9 +1026,11 @@ fn (var b: Builder) select_expr(e: Expr) -> Int {
   // an `after` arm is -2
   var recvs: List[Int] = []
   var rt_idx: List[Int] = []
+  var wrecv: List[Bool] = []
   var n = 0
   for a in arms {
     recvs.push(-1)
+    wrecv.push(false)
     if let Some(d) = a.after {
       b.rt("select_after", -1, [sel, b.value_as(d, it)])
       rt_idx.push(-2)
@@ -1050,10 +1052,15 @@ fn (var b: Builder) select_expr(e: Expr) -> Int {
           if name.name == b"recv" {
             b.rt("select_recv", -1, [sel, h])
             recvs[recvs.len() - 1] = b.typ(b.prelude_type("Option", [b.elem_check(hx)]))
+            wrecv[wrecv.len() - 1] = b.word_chan(b.elem_check(hx))
           } else if name.name == b"send" {
             let sv = b.value_as(cargs[0].value, b.m.types[ht].elems[0])
-            let one = b.one(sv)
-            b.rt("select_send", -1, [sel, h, one])
+            if b.word_chan(b.m.types[ht].elems[0]) {
+              b.llrt_call("select_send_w", [b.chan_word(sel), b.chan_word(h), b.word_in(sv, b.m.types[ht].elems[0])])
+            } else {
+              let one = b.one(sv)
+              b.rt("select_send", -1, [sel, h, one])
+            }
           } else {
             b.unsupported("this `select` arm")
           }
@@ -1080,8 +1087,14 @@ fn (var b: Builder) select_expr(e: Expr) -> Int {
     if ot >= 0 {
       let sm = b.m.variant_index(ot, "Some")
       let et = b.m.types[ot].variants[sm].fields[0].ty
-      let tl = b.rt("select_take", b.m.list(et), [sel, b.cint(rt_idx[i])])
-      let o = b.pop_one(tl, ot)
+      var o = -1
+      if wrecv[i] {
+        let r = b.llrt_call("select_take_w", [b.chan_word(sel), b.cint(rt_idx[i])])
+        o = b.word_option(r, ot, et)
+      } else {
+        let tl = b.rt("select_take", b.m.list(et), [sel, b.cint(rt_idx[i])])
+        o = b.pop_one(tl, ot)
+      }
       if let Some(bind) = a.bind {
         let vo = b.c.var_of(b.s.file, bind)
         if vo >= 0 {
