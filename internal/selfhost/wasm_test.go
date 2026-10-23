@@ -42,7 +42,10 @@ const wasmMinPass = 170
 // unsupported and logs each. (The native runtime's entropy was one until
 // the SSA builder sent rand.xo's entropy to the wasm runtime's
 // random_get, gotchas/wasm-native-rand-no-entropy.md.)
-var wasmCCallRE = regexp.MustCompile("the platform call `[A-Za-z0-9_]+` of c on another OS|the wasm backend does not support the call `rt\\.(fn_addr|frame_addr|call_c2|call_c4)`|msg: \"getcwd failed\"|msg: \"operation not supported \\(WASI has no file modes or locks\\)\"|msg: \"WASI has no times before 1970\"")
+// WASI's missing features print as plain messages since decision 0358
+// (`PATH: operation not supported (...)`, `.: no working directory under
+// WASI`); the Debug forms (`msg: "..."`) are kept for older runtimes.
+var wasmCCallRE = regexp.MustCompile("the platform call `[A-Za-z0-9_]+` of c on another OS|the wasm backend does not support the call `rt\\.(fn_addr|frame_addr|call_c2|call_c4)`|getcwd failed|no working directory under WASI|operation not supported \\(WASI has no file modes or locks\\)|WASI has no times before 1970")
 
 func TestSelfhostWasm(t *testing.T) {
 	if selfhostTier(t) == tierShort {
@@ -116,7 +119,13 @@ func TestSelfhostWasm(t *testing.T) {
 			continue
 		}
 		dir := filepath.Join(root, r)
-		want, err := os.ReadFile(filepath.Join(dir, "want.txt"))
+		// want_wasm.txt, when a golden's output names the target (target.os
+		// is Wasi in a WASI module, 4da985517), else want.txt
+		wantFile := filepath.Join(dir, "want_wasm.txt")
+		if _, err := os.Stat(wantFile); err != nil {
+			wantFile = filepath.Join(dir, "want.txt")
+		}
+		want, err := os.ReadFile(wantFile)
 		if err != nil {
 			t.Fatal(err)
 		}
