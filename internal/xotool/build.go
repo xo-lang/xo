@@ -204,11 +204,14 @@ func Build(dirs []string, o Options) (*Result, error) {
 	cmd.Env = TestJobsEnv(env)
 	var b bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &b, &b
-	err = cmd.Run()
+	err = RunWatched(cmd, cli, &b)
 	res.Output = b.String()
 	var ee *exec.ExitError
 	switch {
 	case err == nil:
+	case errors.Is(err, ErrHung):
+		// killed at the limit, its state is in the output: a failed build
+		res.Code = -1
 	case errors.As(err, &ee):
 		res.Code = ee.ExitCode()
 	default:
@@ -416,13 +419,12 @@ func asmEnv(dir, backend, target string, env []string, flags ...string) ([]byte,
 		// default, its own _start
 		cmd.Env = append(cmd.Env, "XO_NOLIBC=0")
 	}
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := RunWatched(cmd, cli, &stderr); err != nil {
 		return nil, fmt.Errorf("xo %s %s: %v\n%s", strings.Join(args, " "), dir, err, stderr.String())
 	}
-	return out, nil
+	return stdout.Bytes(), nil
 }
 
 // Check is `xo check --json [flags] dirs`: the diagnostics (none when

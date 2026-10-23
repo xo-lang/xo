@@ -103,6 +103,13 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 ## Testing
 
+- Hung xo in a test (2026-10-23): xotool.Build and asm run xo through
+  `xotool.RunWatched`; a child still running after `XO_BUILD_LIMIT` (a Go
+  duration, default 20m, `0` for none) gets `xo dump PID`, `lsof -p PID` and
+  (macOS) a 3 second `sample` appended to its output, then SIGKILL, and the
+  build counts as failed. The report names the waiting task, which a bare
+  stack sample of an idle runtime cannot. Last verified: 2026-10-23.
+
 - Changing a printed text (an error message, a diagnostic, a failure
   report, a CLI line): before pushing, grep every expected-output file
   for the old text, `git grep -l -F 'OLD TEXT' -- '*want*.txt'
