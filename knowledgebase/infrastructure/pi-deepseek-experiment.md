@@ -25,10 +25,11 @@ Last verified: 2026-10-23.
   never recommend stopping) or the Claude memory index, so those rules
   reach DeepSeek only if they are put in a file Pi reads.
 - Global extensions in `~/.pi/agent/extensions/`:
-  - `bash-guard.ts`: blocks pkill, killall, `kill -SIGNAL` without a
-    target, `kill -f`, kill with several PIDs, pushes matching `xolang`,
-    tag pushes, and `publish.sh`. Fails closed. Overrides
-    `XO_ALLOW_KILL=1` / `XO_ALLOW_PUSH=1` in the command itself.
+  - `xo-guard/` (since 2026-10-23, source `scripts/lead/pi/`, installed by
+    `scripts/lead/pi/install.sh`): the team's rules as `tool_call` blocks,
+    described under "xo-guard" below. It replaced `bash-guard.ts` (kept as
+    `bash-guard.ts.disabled`), which blocked only process killers, pushes
+    matching `xolang`, tag pushes and `publish.sh`.
   - `xo-inbox.ts`: loads `~/xo-lead/channels/inbox/pi/xo-inbox.ts`, the
     channel the lead and other agents message through.
   - `subconscious-compaction.ts`, `subconscious-image-window/`: gateway
@@ -42,51 +43,97 @@ runs with the user's permissions. Project trust only gates loading
 (container, VM, or the example `sandbox` extension, which wraps bash in
 macOS `sandbox-exec` through `@anthropic-ai/sandbox-runtime`). Extensions
 can block any tool call from a `tool_call` handler, which is how
-`bash-guard.ts` works.
+xo-guard works. Nested calls (a `codemode` script calling bash) go through
+the same handlers.
 
 ## Gaps against Claude Code
 
-| Claude Code has | Pi today | Needed |
+| Claude Code has | Pi | Status |
 |---|---|---|
-| Permission modes and an auto mode classifier | nothing: every call runs | a guard extension per rule below; sandbox for bash |
-| Hard safety rules (CLAUDE.md "Safety rules") | bash-guard.ts | close the bypasses (findings 1, 2) |
-| Global owner rules (`~/.claude/CLAUDE.md`) | not loaded | an `APPEND_SYSTEM.md` or extension that appends them |
-| Memory (feedback rules: heavy.sh, pushq, no commits in the main checkout, no git stash, worktree per push) | none | encode the hard ones as guards, the rest as an appended rules file |
-| MCP (crosswalk, xo-inbox, docs) | xo-inbox through an extension; no MCP servers | probably none; the xo tools are CLI |
+| Permission modes and an auto mode classifier | every call runs | xo-guard blocks the known dangerous classes; an OS sandbox for bash is next |
+| Hard safety rules (CLAUDE.md "Safety rules") | bash-guard.ts, bypassable | xo-guard (findings 1, 2) |
+| Global owner rules (`~/.claude/CLAUDE.md`) | not loaded | `~/.pi/agent/APPEND_SYSTEM.md` (source `scripts/lead/pi/APPEND_SYSTEM.md`) |
+| Memory (heavy.sh, pushq, no commits in the main checkout, no git stash, worktree per task) | none | hard rules in xo-guard, the rest in APPEND_SYSTEM.md |
+| MCP (crosswalk, xo-inbox, docs) | xo-inbox through an extension; no MCP servers | none needed so far; the xo tools are CLI |
 | Subagents, skills | none configured | not needed for single tasks |
+
+## xo-guard
+
+Source `scripts/lead/pi/` (rules.ts, index.ts, rules_test.ts,
+APPEND_SYSTEM.md, install.sh). Every block is logged to
+`~/xo-lead/notes/pi-guard.log` (`BLOCK tool [guard] input`), which the
+overseer reads. A rule that throws blocks the call (fail closed).
+
+| Guard | Blocks | Override |
+|---|---|---|
+| process or service killer | pkill, killall, `kill` by name, of several PIDs, of `$(pgrep ..)`, `xargs kill`, `kill -f`, launchctl stop/load, shutdown, sudo | `XO_ALLOW_KILL=1` |
+| publishing, tag push | pushes to `xo-lang`/`xolang`, tags, `publish.sh`, `release-publish.sh` | none |
+| git push outside pushq | any other `git push` | `XO_ALLOW_PUSH=1` (a non-main branch) |
+| owner-only action | `gh workflow run`, `gh release`, GitHub API writes, seed cut/upload, terraform apply, AWS writes, crontab, signing | none |
+| main checkout | git commit, checkout, add, reset, rebase, merge, pull, ... with the main checkout as cwd, `cd` target or `-C`; write/edit tools on its files | none (make a worktree) |
+| git stash | stash, stash pop (list and show pass) | none |
+| protected path | write/edit under `~/.pi/agent`, `~/.claude`, `~/xo-lead/agents`, `~/xo-lead/locks`, `~/.ssh`, `~/.aws` | none |
+| heavy run outside heavy.sh | `go test`, `go build`, xobuild/xocheck, `xo build/run/test/bench`, gate, bootstrap, identity, docker-linux | wrap in heavy.sh |
+| secret | any tool touching CLAUDE.local.md, Pi's auth/models files, `~/.aws`, `~/.ssh`, signing env, tfvars, the seed-bucket file; `security find-*`, `gh auth token`, `aws configure get` | none |
+| rm -r | of `$VAR` without `${VAR:?}`, a bare glob, `/`, home, the main checkout, `~/xo-lead` | none |
+
+Commands are checked after quoted text is removed (so a commit message
+that mentions pkill passes), and again inside each quoted body that the
+shell will run: every body when `bash -c`, `sh -c`, `eval`, `xargs`,
+`ssh`, `env`, `nohup`, `timeout` and similar appear, and any double-quoted
+body holding `$(...)` or backticks. A tool result containing a private
+value from CLAUDE.local.md (account numbers, CIDR addresses) is redacted
+before the model sees it.
+
+Verify: `node --experimental-strip-types --test scripts/lead/pi/rules_test.ts`
+(77 cases, 2026-10-23); end to end, in a scratch git repo,
+`pi -ne -e scripts/lead/pi -p "Use the bash tool to run exactly this command once: git push --tags --dry-run" </dev/null`
+answers that xo-guard blocked it, and pi-guard.log gains a `BLOCK bash [tag push]` line
+(gotchas/pi-print-mode-waits-on-stdin.md: without `</dev/null` it hangs).
+
+Limits: text matching, not a security boundary. A determined model can
+write a script file and run it, or build a command from variables; the
+guard stops accidents and habits, not an adversary. `grep -r` inside the
+repo reads CLAUDE.local.md (redaction covers only the numbers it finds
+there).
 
 ## Findings
 
 Each finding: what, evidence, fix. Status in brackets.
 
-1. **bash-guard misses commands inside quotes.** [Open] `stripQuoted`
-   removes quoted text before matching, so `bash -c "pkill -f x"`,
-   `sh -c '...'`, `eval "..."` and `xargs` with a quoted command are not
-   checked. Fix: match the guards on the raw command too when it contains
-   `bash -c`, `sh -c`, `zsh -c`, `eval`, or `xargs`, or strip only after
-   the first word of a quoted argument.
-2. **The publish guard matches `xolang`, but the public org is
-   `xo-lang`.** [Open, verify] `git push` to a URL or remote named for
-   `xo-lang` is not blocked. Fix: match `xo-?lang` and the remote names
-   publish.sh uses.
-3. **No guard for the main checkout.** [Open] Memory rule: never commit in
-   the main checkout; the session starts there. Fix: a `tool_call` guard
-   blocking `git commit`, `git checkout`, `git rebase`, `git reset --hard`
-   and `git stash` when cwd is the main checkout; tasks name a worktree.
-4. **Builds and tests not forced through heavy.sh.** [Open] An `xo build`
-   or `go test` run directly once reached 37 GB. Fix: a guard that blocks
-   `go test` (without `-short`/`-run` of a few tests), `go run
-   ./scripts/xobuild`, `xo build`, and `scripts/bootstrap-xo.sh` unless the
-   command starts with `~/xo-lead/agents/heavy.sh`.
-5. **Secrets readable and sent to a third-party gateway.** [Open]
-   `CLAUDE.local.md`, `~/.pi/agent/auth.json`, `~/.aws`, the keychain
-   (`security find-generic-password`) are readable by bash, and anything
-   read goes to the Subconscious gateway. Fix: block `read` and `bash` on
-   those paths and on `security find-generic-password`; or the sandbox
-   extension with `denyRead`.
-6. **Pushes outside pushq.** [Open] Fix: block `git push` to origin main
-   unless it runs through `~/xo-lead/agents/pushq.sh`.
+1. **bash-guard missed commands inside quotes.** [Fixed by xo-guard,
+   2026-10-23] Its `stripQuoted` removed quoted text before matching, so
+   `bash -c "pkill -f x"`, `eval "..."` and `"$(pkill x)"` were never
+   checked. xo-guard checks runnable quoted bodies too (tests in
+   rules_test.ts).
+2. **bash-guard's publish guard matched only `xolang`; the public org is
+   `xo-lang`.** [Fixed by xo-guard] It matches `xo-?lang` and github.com
+   URLs under xo-lang.
+3. **No guard for the main checkout.** [Fixed by xo-guard] Pi starts there.
+4. **Builds and tests not forced through heavy.sh.** [Fixed by xo-guard]
+   A direct xo build reached 37 GB on 2026-10-22.
+5. **Secrets readable and sent to a third-party gateway.** [Mitigated]
+   Blocked by path and command, plus output redaction. Next: Pi's example
+   `sandbox` extension (sandbox-exec) with `denyRead` on those paths, so a
+   script file cannot read them either.
+6. **Pushes outside pushq.** [Fixed by xo-guard]
+7. **Owner rules and memory rules not loaded.** [Fixed]
+   `APPEND_SYSTEM.md` carries the em-dash, never-stop, worktree, pushq,
+   heavy.sh, and reporting rules.
+
+## Next experiments
+
+1. Sandbox: copy Pi's `examples/extensions/sandbox` into
+   `scripts/lead/pi/sandbox/` with a `sandbox.json` that denies reads of
+   the secret paths and writes outside `/tmp`, `~/xo-lead/notes`,
+   `~/xo-lead/agents/*.log` and worktrees under `/tmp/pi-*`; check that
+   heavy.sh, pushq and git worktree still work inside it.
+2. First real task for DeepSeek (a small std or docs item) to measure:
+   rules followed without a block, blocks hit (pi-guard.log), quality of
+   the change, tokens used.
 
 ## Log
 
-- 2026-10-23: setup surveyed (above); session idle, no task given yet.
+- 2026-10-23: setup surveyed; session idle, no task given yet.
+- 2026-10-23: xo-guard and APPEND_SYSTEM.md written, 77 rule tests pass,
+  end-to-end block confirmed in print mode; installed into `~/.pi/agent`.
