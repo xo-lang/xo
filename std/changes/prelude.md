@@ -3,7 +3,7 @@
 ## 2026-10-22: perf: trim_prefix and trim_suffix compare words and cut once (native)
 
 - Kind: perf
-- Commit: this commit
+- Commit: 2593fbe3d
 - Found by: bench/results/views-trim-2026-10-22.md (trim_prefix and trim_suffix ran 123.7 M instructions against Go's 50.5 M)
 - Go reference: strings.TrimPrefix, strings.TrimSuffix (a length test and one memequal)
 - Test: golden trim_affix_lens (every affix length and cut point, cuts inside a rune), views_split, str_ops_table, strings, text_helpers on arm64 and LLVM with Go parity; wasm goldens; std corpora
