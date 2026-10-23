@@ -14,7 +14,7 @@ different type.
 Fix: `or_err` with one argument on a Result is a habit
 (internal/check/habits.go): the note explains that the value is already a
 Result and the fix rewrites to `.map_err(fn(_) { e })`. Habit golden
-`internal/fix/testdata/habits/codex-or-err-on-result`. When adding a std
+`cmd/xo/testdata/habits/codex-or-err-on-result`. When adding a std
 function whose result shape differs from its siblings (`Int.parse`
 returns an Option), rerun `python3 -I bench/habits/measure.py` on the
 snaps to see what the guesses do.

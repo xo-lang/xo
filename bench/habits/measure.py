@@ -7,7 +7,7 @@ path repeats (knowledgebase/gotchas/xo-check-same-module-path.md).
 
 Usage: python3 -I measure.py <xo binary> <cases dir> <mode>
   mode "snap":   each subdirectory is a module tree (bench/habits/reconstruct.py)
-  mode "golden": each subdirectory holds in.xo (internal/fix/testdata/habits)
+  mode "golden": each subdirectory holds in.xo (cmd/xo/testdata/habits)
   mode "drafts": each <name>.xo.txt file is one module (bench/habits/drafts)
 """
 import json

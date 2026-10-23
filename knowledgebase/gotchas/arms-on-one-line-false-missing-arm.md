@@ -14,4 +14,4 @@ Fix: when the token after an arm starts an operand and a `=>` follows on
 the same line outside brackets, the parser reports XO0175 softly with a
 fix inserting a newline, then parses the rest as arms. `xo fix` and the
 formatter put each arm on its own line
-(`internal/fix/testdata/habits/codex-arms-one-line`).
+(`cmd/xo/testdata/habits/codex-arms-one-line`).
