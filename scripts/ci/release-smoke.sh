@@ -114,10 +114,16 @@ run build-hello "$xo" build -o "$(np "$w/hello-bin$exe")" "$(np "$w/hello")"
 if [ -f "$w/hello-bin$exe" ] && [ "$("$w/hello-bin$exe" 2>&1 | tr -d '\r')" = "hello from the released xo" ]; then pass run-hello; else fail run-hello; fi
 run run-hello-xo-run "$xo" run "$(np "$w/hello")"
 
-# goldens: threads, and the zone database from the archive
+# goldens: threads, the zone database from the archive, and the goldens
+# whose output differs on Windows (want_windows.txt there: environment,
+# files, processes, signals, the clock, method values)
 for g in internal/llvm/testdata/golden/conc_channels internal/llvm/testdata/golden/conc_mutex \
   internal/llvm/testdata/golden/conc_scopes internal/llvm/testdata/golden/conc_rwlock_handoff \
-  internal/gen/testdata/golden/time_zones; do
+  internal/gen/testdata/golden/time_zones \
+  internal/llvm/testdata/golden/env_dirs internal/llvm/testdata/golden/fs_files \
+  internal/llvm/testdata/golden/fs_ops_edges internal/llvm/testdata/golden/method_values \
+  internal/llvm/testdata/golden/proc_cmd internal/llvm/testdata/golden/sys_files_clock \
+  internal/llvm/testdata/golden/unix_kill; do
   n=$(basename "$g")
   if ! "$xo" build -o "$(np "$w/$n$exe")" "$(np "$root/$g")" > "$o/build-$n.txt" 2>&1; then
     fail "build-$n"; tail -5 "$o/build-$n.txt" | sed 's/^/  /' | tee -a "$sum"
