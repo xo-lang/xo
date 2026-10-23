@@ -71,7 +71,9 @@ also unpinned: a rebuild would have taken whatever Box64 and Wine
 Debian carried that day.
 
 Fix: scripts/docker-wine.sh's box64 image is pinned (base by digest,
-box64 and wine64 by version, the tag naming them) and is built with a
+box64 and wine64 by version, installed from Debian's snapshot archive
+at 20261022T000000Z so the versions stay installable once the mirrors
+move on, the tag naming them) and is built with a
 prefix booted and checked (`wine cmd /c echo xo-ok`, up to five tries),
 copied into WORK when WORK has none; a failed check fails the image
 build instead of a run (toolchain.md "Windows programs under Wine in

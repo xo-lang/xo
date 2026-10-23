@@ -49,24 +49,32 @@ if [ "$arch" = box64 ]; then
   # pinned (owner, 2026-10-22): the base by digest and Box64's and Wine's
   # packages by version, the ones that ran the goldens that day (image
   # 76f2ef49be04), so a rebuild or a pull never changes the runner
-  # (gotchas/wine-box64-harness.md); the tag names the pins. A pinned
-  # package Debian has since replaced fails the build: take it from
-  # snapshot.debian.org, or move the pins after a goldens run.
+  # (gotchas/wine-box64-harness.md); the tag names the pins. To move
+  # them, change these lines (the snapshot's time with them) and run the
+  # goldens.
   pin_base=debian:trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad
   pin_box64=0.3.4+dfsg-1
   pin_wine=10.0~repack-6
+  # the packages come from Debian's snapshot archive at this time, always
+  # (owner, 2026-10-22): the pinned versions stay installable after the
+  # mirrors replace them, and every other package the image installs is
+  # that day's too
+  pin_snapshot=20261022T000000Z
   base=${XO_DOCKER_BASE:-$pin_base}
-  image=xo-wine-test:box64-trixie-62bd423-box64-$pin_box64-wine-$pin_wine-prefix1
+  image=xo-wine-test:box64-trixie-62bd423-box64-$pin_box64-wine-$pin_wine-snap$pin_snapshot-prefix1
   image=$(echo "$image" | tr '+~' '__')
   [ -n "${XO_DOCKER_BASE:-}" ] && image=xo-wine-test:box64-$(echo "$base" | tr ':/@' '---')
   platform=arm64
   if ! docker image inspect "$image" >/dev/null 2>&1; then
-    docker build --platform linux/arm64 --build-arg BASE="$base" --build-arg BOX64="$pin_box64" --build-arg WINE="$pin_wine" -t "$image" - >&2 <<'DOCKERFILE'
+    docker build --platform linux/arm64 --build-arg BASE="$base" --build-arg BOX64="$pin_box64" --build-arg WINE="$pin_wine" --build-arg SNAPSHOT="$pin_snapshot" -t "$image" - >&2 <<'DOCKERFILE'
 ARG BASE=debian:trixie-slim
 FROM $BASE
 ARG BOX64
 ARG WINE
-RUN dpkg --add-architecture amd64 && apt-get update && apt-get install -y --no-install-recommends \
+ARG SNAPSHOT
+RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/* \
+  && printf 'Types: deb\nURIs: http://snapshot.debian.org/archive/debian/%s\nSuites: trixie trixie-updates\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\nCheck-Valid-Until: no\n\nTypes: deb\nURIs: http://snapshot.debian.org/archive/debian-security/%s\nSuites: trixie-security\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\nCheck-Valid-Until: no\n' "$SNAPSHOT" "$SNAPSHOT" > /etc/apt/sources.list.d/snapshot.sources \
+  && dpkg --add-architecture amd64 && apt-get update && apt-get install -y --no-install-recommends \
     box64=$BOX64 wine64:amd64=$WINE libwine:amd64=$WINE file procps ca-certificates \
   && rm -rf /var/lib/apt/lists/* \
   && printf '#!/bin/sh\nexec box64 /usr/lib/wine/wine64 "$@"\n' > /usr/local/bin/wine \

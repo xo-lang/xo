@@ -4137,8 +4137,11 @@ ARM64 PE (a hello hangs), so windows/arm64 is cross linked only
 
 The box64 image is pinned (owner, 2026-10-22): debian:trixie-slim by
 digest (sha256:62bd423a...), box64 0.3.4+dfsg-1, wine64 and libwine
-10.0~repack-6, tagged
-`xo-wine-test:box64-trixie-62bd423-box64-0.3.4_dfsg-1-wine-10.0_repack-6-prefix1`,
+10.0~repack-6, every package installed from Debian's snapshot archive
+at 20261022T000000Z (http://snapshot.debian.org, Check-Valid-Until: no;
+owner, 2026-10-22: so the pinned versions stay installable after the
+mirrors replace them; no image is saved anywhere), tagged
+`xo-wine-test:box64-trixie-62bd423-box64-0.3.4_dfsg-1-wine-10.0_repack-6-snap20261022T000000Z-prefix1`,
 and it carries a prefix booted and checked (`wine cmd /c echo`) when
 the image is built, which each run copies to WORK/wine-box64 when WORK
 has none, so no run boots its own (Box64 stopped a run's first wineboot
@@ -4147,8 +4150,8 @@ part way under load: gotchas/wine-box64-harness.md). A run: `scripts/docker-wine
 runs it with `sh -c`), a new WORK or `rm -rf WORK/wine-box64` per run;
 2 s for hello once the image exists (about 30 s to build it).
 XO_DOCKER_BASE builds an unpinned image under its own tag. To move the
-pins, change docker-wine.sh's pin_ lines and the tag together and run
-the goldens. Last verified: 2026-10-22 (hello, conc_mutex with
+pins, change docker-wine.sh's pin_ lines (the snapshot time with them;
+the tag follows) and run the goldens. Last verified: 2026-10-22 (hello, conc_mutex with
 XO_THREADS=1, wine-goldens.sh conc_mutex conc_channels net_echo with
 XO_WINE_BACKEND=amd64: 3 of 3).
 
