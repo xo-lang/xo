@@ -183,7 +183,7 @@ Update the knowledgebase in the same change as the work, not later:
     heavy.sh (gate class for short ones), even a one-off (owner,
     2026-10-22: a direct xo build reached 37 GB and stalled the Mac);
     heavy.sh stops the job's process group past HEAVY_MAX_GB of memory
-    (default 12, compressed pages counted) and logs why. macOS ignores
+    (default 16, compressed pages counted) and logs why. macOS ignores
     `ulimit -v`.
   - gates take no slot (owner, 2026-10-21): run your gate as
     `HEAVY_CLASS=gate ~/xo-lead/agents/heavy.sh NAME CMD...`; it starts
