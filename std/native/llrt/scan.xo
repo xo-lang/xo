@@ -503,7 +503,7 @@ pub fn split(s: Str, sep: Str) -> List[Str] {
       var k = rt.bytes_eq16(b, i, c) & NIBS
       while k != 0 {
         let end = i + (rt.ctz(k) >> 2)
-        out.push(raw.str_slice(s, start, end))
+        out.push(raw.str_cut(s, start, end))
         start = end + 1
         k = k & subw(k, 1)
       }
@@ -513,7 +513,7 @@ pub fn split(s: Str, sep: Str) -> List[Str] {
       var k = tail16(b, i, n, c)
       while k != 0 {
         let end = i + (rt.ctz(k) >> 2)
-        out.push(raw.str_slice(s, start, end))
+        out.push(raw.str_cut(s, start, end))
         start = end + 1
         k = k & subw(k, 1)
       }
@@ -524,11 +524,11 @@ pub fn split(s: Str, sep: Str) -> List[Str] {
       if i < 0 {
         break
       }
-      out.push(raw.str_slice(s, start, i))
+      out.push(raw.str_cut(s, start, i))
       start = i + m
     }
   }
-  out.push(raw.str_slice(s, start, n))
+  out.push(raw.str_cut(s, start, n))
   out
 }
 
@@ -545,7 +545,7 @@ pub fn lines(s: Str) -> List[Str] {
     var k = rt.bytes_eq16(b, i, 10) & NIBS
     while k != 0 {
       let end = i + (rt.ctz(k) >> 2)
-      out.push(raw.str_slice(s, start, if end > start && b[end - 1] == 13 { end - 1 } else { end }))
+      out.push(raw.str_cut(s, start, if end > start && b[end - 1] == 13 { end - 1 } else { end }))
       start = end + 1
       k = k & subw(k, 1)
     }
@@ -555,13 +555,13 @@ pub fn lines(s: Str) -> List[Str] {
     var k = tail16(b, i, n, 10)
     while k != 0 {
       let end = i + (rt.ctz(k) >> 2)
-      out.push(raw.str_slice(s, start, if end > start && b[end - 1] == 13 { end - 1 } else { end }))
+      out.push(raw.str_cut(s, start, if end > start && b[end - 1] == 13 { end - 1 } else { end }))
       start = end + 1
       k = k & subw(k, 1)
     }
   }
   if start < n {
-    out.push(raw.str_slice(s, start, if b[n - 1] == 13 { n - 1 } else { n }))
+    out.push(raw.str_cut(s, start, if b[n - 1] == 13 { n - 1 } else { n }))
   }
   out
 }

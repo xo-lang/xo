@@ -258,7 +258,7 @@ pub fn host_name(s: Str) -> Str {
   if scan.find_byte(b, j, n, 91) >= 0 || scan.find_byte(b, k, n, 93) >= 0 {
     return s
   }
-  rawb.str_slice(s, lo, hi)
+  rawb.str_cut(s, lo, hi)
 }
 
 /// The port of an absolute request target's host (url.host), or -1: none,
@@ -292,7 +292,7 @@ pub fn url_parts(s: Str, request: Bool) -> List[Str] {
   if !request {
     let h = scan.find(s, "#", 0)
     if h >= 0 {
-      t = rawb.str_slice(s, 0, h)
+      t = rawb.str_cut(s, 0, h)
     }
   }
   let u = neturl.url_parse(t, request)
@@ -308,7 +308,7 @@ pub fn url_error(s: Str) -> Str {
   var t = s
   let h = scan.find(s, "#", 0)
   if h >= 0 {
-    t = rawb.str_slice(s, 0, h)
+    t = rawb.str_cut(s, 0, h)
   }
   let u = neturl.url_parse(t, false)
   if !u.ok {
@@ -769,7 +769,7 @@ fn trim_ws(s: Str) -> Str {
   while z > a && (b[z - 1] == 32 || b[z - 1] == 9 || b[z - 1] == 13 || b[z - 1] == 10) {
     z -= 1
   }
-  if a == 0 && z == b.len() { s } else { rawb.str_slice(s, a, z) }
+  if a == 0 && z == b.len() { s } else { rawb.str_cut(s, a, z) }
 }
 
 /// The start and end of b[a..z] without spaces and tabs at either end.
@@ -3087,7 +3087,7 @@ fn trim_ascii(v: Str) -> Str {
   while z > a && (b[z - 1] == 32 || b[z - 1] == 9 || b[z - 1] == 10 || b[z - 1] == 13) {
     z -= 1
   }
-  rawb.str_slice(v, a, z)
+  rawb.str_cut(v, a, z)
 }
 
 /// textproto's readMIMEHeader of the lines of s from i to end (end: just

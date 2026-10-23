@@ -1,5 +1,22 @@
 # prelude changes
 
+## 2026-10-22: perf: split and lines cut views without the second check (native)
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/results/views-trim-2026-10-22.md (split 446.6 M instructions against Go's 403.8 M, lines 178.8 M against 223.9 M: every piece ran the clamp and the range check twice)
+- Go reference: strings.Split, bytes.Split (subslices, no check)
+- Test: goldens views_split, str_ops_table, strings, text_helpers and the http goldens on arm64 and LLVM with Go parity; std corpora
+
+`scan.split` (all but the empty-separator loop, whose last sequence may be cut
+short) and `scan.lines` call `raw.str_cut`: every end comes from a match or
+from the string's own length, so the clamp and the second range check go. The
+http1 helpers that trim or cut at a position found in the string (host
+without brackets, the fragment cut in url_parts and url_error, trim_ws,
+trim_ascii) use it too. `xo bench --ab`, mb/sliceb on the Mac: split wall
+0.783, instructions 0.572 (446.6 M to 255.4 M, Go 403.8 M); lines wall 0.774,
+instructions 0.652 (178.8 M to 116.6 M, Go 223.9 M).
+
 ## 2026-10-22: perf: trim, trim_start, trim_end, trim_prefix and trim_suffix cut a view without the second check (native)
 
 - Kind: perf

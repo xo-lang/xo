@@ -18,3 +18,16 @@ std) against after, same binary otherwise:
 
 The estimate in views-split (a few percent) was low: the double check was most
 of the remaining cost. trim is now within 5% of Go's instructions.
+
+## split and lines (same day)
+
+`scan.split` and `scan.lines` take `raw.str_cut` the same way (every end is a
+match or the string length). Same method, `mb/sliceb`:
+
+| mode | wall | instructions | before | after | Go |
+| --- | --- | --- | --- | --- | --- |
+| split | 0.783 (0.705 to 0.841) | 0.572 | 446.6 M | 255.4 M | 403.8 M |
+| lines | 0.774 (0.704 to 0.79) | 0.652 | 178.8 M | 116.6 M | 223.9 M |
+
+Both now execute fewer instructions than Go. Output is byte-identical (md5 of
+the program output, before and after).
