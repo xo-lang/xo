@@ -2619,19 +2619,25 @@ fn trivial_pad(f: Func, b0: Int, exit: Int) -> Bool {
 }
 
 /// Merges the blocks addLandings split off back into their predecessor
-/// once its check is gone (mergeJumps).
+/// once its check is gone (mergeJumps). Each block takes in the chain of
+/// blocks its jumps reach, and the merged blocks go in one renumbering at
+/// the end (a renumbering per merge, the scan restarted, was 37% of a
+/// 24,000 line function's debug build, 2026-10-22).
 fn merge_jumps(var f: Func) {
-  var changed = true
-  while changed {
-    changed = false
-    for bl in 0..f.blocks.len() {
+  var keep: List[Bool] = []
+  for _ in 0..f.blocks.len() {
+    keep.push(true)
+  }
+  var any = false
+  for bl in 0..f.blocks.len() {
+    while true {
       let t = f.term(bl)
       if t < 0 || f.values[t].op != Op.Jump {
-        continue
+        break
       }
       let to = f.edges[f.values[t].succs[0]].to
       if !f.land_rest.contains(to) || to == bl || to == 0 || f.blocks[to].preds.len() != 1 || !f.blocks[to].params.is_empty() || to == f.unwind_exit {
-        continue
+        break
       }
       f.land_rest.remove(to)
       let n = f.blocks[bl].instrs.len()
@@ -2646,14 +2652,12 @@ fn merge_jumps(var f: Func) {
       f.blocks[bl].instrs = ins
       f.blocks[to].instrs = []
       f.blocks[to].preds = []
-      var keep: List[Bool] = []
-      for i in 0..f.blocks.len() {
-        keep.push(i != to)
-      }
-      remove_blocks(f, keep)
-      changed = true
-      break
+      keep[to] = false
+      any = true
     }
+  }
+  if any {
+    remove_blocks(f, keep)
   }
 }
 

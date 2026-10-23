@@ -551,6 +551,13 @@ fn (var g: G) dv_field(p: DvPlan, labels: Map[Int, Str]) -> Str {
     by_var[b.dvar] = l
   }
   var total = 0
+  // the emitters record the stubs in instruction order
+  var stubs_sorted = true
+  for i in 1..g.dv_stubs.len() {
+    if g.dv_stubs[i].at < g.dv_stubs[i - 1].at {
+      stubs_sorted = false
+    }
+  }
   for (vi, dv) in g.f.dvars.indexed() {
     if !g.dv_type_ok(dv.ty) {
       continue
@@ -691,28 +698,55 @@ fn (var g: G) dv_field(p: DvPlan, labels: Map[Int, Str]) -> Str {
     // over them all (a function of 12,000 overflow checks and 12,000
     // variables in spill slots wrote an entry per variable per stub, 3 GB
     // of assembly; gotchas/dwarf-stub-locations-quadratic.md)
+    // The open run: its first stub's start, its last stub's end, its
+    // expression and that expression's text, made once per run (the text
+    // of every stub, and the entry split to extend it, were half of
+    // dv_field's time, 2026-10-22)
     var prev_slot = -2
-    var prev_ops = ""
-    for s in g.dv_stubs {
+    var run_open = false
+    var run_lo = ""
+    var run_hi = ""
+    var run_expr: List[Int] = []
+    var run_ops = ""
+    // only the stubs inside the variable's spans, [cs[0], its last cut):
+    // the others have no place for it (a stub per variable per check was
+    // 28% of a 24,000 line function's debug build, 2026-10-22)
+    var s0 = 0
+    var s1 = 0
+    if !cs.is_empty() {
+      s0 = if stubs_sorted { stub_from(g.dv_stubs, cs[0]) } else { 0 }
+      s1 = if stubs_sorted { stub_from(g.dv_stubs, cs[cs.len() - 1]) } else { g.dv_stubs.len() }
+    }
+    for si in s0..s1 {
+      let s = g.dv_stubs[si]
       let expr = dv_stub_expr(mine, s, nw, g.x86)
       if expr.is_empty() {
         prev_slot = -2
         continue
       }
-      var bs: List[Str] = []
-      for x in expr {
-        bs.push(if x < 0 { p.syms[-1 - x] } else { "${x}" })
+      let next = s.slot >= 0 && s.slot == prev_slot + 1 && run_open
+      if next && expr == run_expr {
+        run_hi = s.hi
+        prev_slot = s.slot
+        continue
       }
-      let ops = bs.join(",")
-      if s.slot >= 0 && s.slot == prev_slot + 1 && ops == prev_ops && !entries.is_empty() {
-        let prev = entries.pop() ?? ""
-        let ps = prev.split(" ")
-        entries.push("${ps[0]} ${s.hi} ${ops}")
+      let ops = dv_ops_text(expr, p.syms)
+      if next && ops == run_ops {
+        run_hi = s.hi
       } else {
-        entries.push("${s.lo} ${s.hi} ${ops}")
+        if run_open {
+          entries.push("${run_lo} ${run_hi} ${run_ops}")
+        }
+        run_open = true
+        run_lo = s.lo
+        run_hi = s.hi
+        run_ops = ops
       }
+      run_expr = expr
       prev_slot = s.slot
-      prev_ops = ops
+    }
+    if run_open {
+      entries.push("${run_lo} ${run_hi} ${run_ops}")
     }
     // a bound on the function's entries, so no build writes gigabytes of
     // location lists (about 50 bytes of assembly each; a 24,000 line
@@ -729,6 +763,32 @@ fn (var g: G) dv_field(p: DvPlan, labels: Map[Int, Str]) -> Str {
     out.push("${dv.name}|${tn}|${if dv.param { 1 } else { 0 }}|${dv.line}|${entries.join("~")}|${dv.inl}")
   }
   out.join(";")
+}
+
+/// A location expression's text in an entry: its bytes, and for -1 - k
+/// the name of DW_OP_addrx's symbol k, joined by commas.
+fn dv_ops_text(expr: List[Int], syms: List[Str]) -> Str {
+  var bs: List[Str] = []
+  for x in expr {
+    bs.push(if x < 0 { syms[-1 - x] } else { "${x}" })
+  }
+  bs.join(",")
+}
+
+/// The index of the first of stubs (sorted by at) at or past instruction
+/// index k.
+fn stub_from(stubs: List[DvStub], k: Int) -> Int {
+  var lo = 0
+  var hi = stubs.len()
+  while lo < hi {
+    let mid = (lo + hi) / 2
+    if stubs[mid].at < k {
+      lo = mid + 1
+    } else {
+      hi = mid
+    }
+  }
+  lo
 }
 
 /// The most location list entries one function's variables may take

@@ -1,7 +1,8 @@
 // Command identity checks that two xo binaries build the same programs
 // (owner, 2026-10-21): for a change that claims no output change, every
-// program is built by both, and the outputs are compared, ELF and PE
-// byte for byte, Mach-O by disassembly (its code signature and UUID take
+// program is built by both, and the outputs are compared, ELF byte for
+// byte, PE byte for byte but its PDB record, that record's time stamp
+// and CheckSum (they take the output's path: maskPE), Mach-O by disassembly (its code signature and UUID take
 // the output's path: gotchas/darwin-binary-identity-output-name.md).
 //
 //	go run ./scripts/identity [flags] BASE NEW [DIR...]
@@ -34,7 +35,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 
@@ -112,8 +112,13 @@ func main() {
 	for _, t := range strings.Split(*targets, ",") {
 		for _, d := range dirs {
 			name := filepath.Base(filepath.Clean(d))
-			a := filepath.Join(*out, "a", "prog")
-			b := filepath.Join(*out, "b", "prog")
+			// xo build names a windows -o NAME without an extension NAME.exe
+			prog := "prog"
+			if strings.HasPrefix(t, "windows/") {
+				prog = "prog.exe"
+			}
+			a := filepath.Join(*out, "a", prog)
+			b := filepath.Join(*out, "b", prog)
 			if err := build(xos[0], d, *backend, t, a, env); err != nil {
 				baseFailed++
 				cleanPair(*out)
@@ -232,6 +237,70 @@ func build(xo, dir, backend, t, out string, env []string) error {
 }
 
 // equal compares two outputs: Mach-O by disassembly, others byte for byte.
+// maskPE zeroes what a PE file takes from its output path: the CodeView
+// record (RSDS, the PDB's GUID, age and path, which names the a or b
+// directory), its debug directory entry's TimeDateStamp (from the GUID)
+// and the optional header's CheckSum. Other files are returned as they
+// are.
+func maskPE(x []byte) []byte {
+	if len(x) < 0x40 || x[0] != 'M' || x[1] != 'Z' {
+		return x
+	}
+	x = bytes.Clone(x)
+	pe := int(x[0x3c]) | int(x[0x3d])<<8 | int(x[0x3e])<<16 | int(x[0x3f])<<24
+	// the signature (4 bytes), the file header (20), CheckSum at 64
+	if c := pe + 4 + 20 + 64; c+4 <= len(x) {
+		copy(x[c:c+4], make([]byte, 4))
+	}
+	// every RSDS followed by a path ending in .pdb: a program can hold
+	// the four letters elsewhere (xo's own PE writer does)
+	for at := 0; ; {
+		n := bytes.Index(x[at:], []byte("RSDS"))
+		if n < 0 {
+			break
+		}
+		i := at + n
+		at = i + 4
+		j := i + 4 + 16 + 4
+		for j < len(x) && x[j] != 0 {
+			j++
+		}
+		if j > len(x) || i+24 > j || !bytes.HasSuffix(x[i+24:j], []byte(".pdb")) {
+			continue
+		}
+		copy(x[i+4:j], make([]byte, j-i-4))
+	}
+	// the debug directory's CodeView entries' TimeDateStamp (taken from
+	// the GUID): data directory 6 of a PE32+ optional header, its RVA
+	// mapped to the file through the section table
+	le32 := func(o int) int {
+		if o < 0 || o+4 > len(x) {
+			return -1
+		}
+		return int(x[o]) | int(x[o+1])<<8 | int(x[o+2])<<16 | int(x[o+3])<<24
+	}
+	opt := pe + 4 + 20
+	if opt+112+7*8 > len(x) || x[opt] != 0x0b || x[opt+1] != 0x02 {
+		return x
+	}
+	rva, size := le32(opt+112+6*8), le32(opt+112+6*8+4)
+	nsec := int(x[pe+6]) | int(x[pe+7])<<8
+	sec := opt + (int(x[pe+20]) | int(x[pe+21])<<8)
+	for k := 0; k < nsec; k++ {
+		h := sec + 40*k
+		va, vsz, raw := le32(h+12), le32(h+8), le32(h+20)
+		if va < 0 || rva < va || rva >= va+vsz {
+			continue
+		}
+		for e := raw + rva - va; e+28 <= raw+rva-va+size && e+28 <= len(x); e += 28 {
+			if le32(e+12) == 2 { // IMAGE_DEBUG_TYPE_CODEVIEW
+				copy(x[e+4:e+8], make([]byte, 4))
+			}
+		}
+	}
+	return x
+}
+
 func equal(a, b string, macho bool) (bool, error) {
 	if !macho {
 		x, err := os.ReadFile(a)
@@ -242,7 +311,7 @@ func equal(a, b string, macho bool) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		return bytes.Equal(x, y), nil
+		return bytes.Equal(maskPE(x), maskPE(y)), nil
 	}
 	dis := func(p string) ([]byte, error) {
 		o, err := exec.Command("objdump", "-d", p).Output()
@@ -271,9 +340,8 @@ func cleanPair(out string) {
 	for _, s := range []string{"a", "b"} {
 		os.RemoveAll(filepath.Join(out, s, "prog"))
 		os.RemoveAll(filepath.Join(out, s, "prog.dSYM"))
-		if runtime.GOOS == "windows" {
-			os.RemoveAll(filepath.Join(out, s, "prog.exe"))
-		}
+		os.RemoveAll(filepath.Join(out, s, "prog.exe"))
+		os.RemoveAll(filepath.Join(out, s, "prog.pdb"))
 	}
 }
 
