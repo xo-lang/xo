@@ -106,6 +106,26 @@ fn name16(b: Bytes, o: Int) -> Str {
 }
 
 /// parse_object: an arm64 or x86_64 MH_OBJECT.
+/// The symbols an object references only weakly and does not define
+/// (undefined externals with N_WEAK_REF): what a cc link must be told
+/// may stay undefined (`-U`), when the object's assembly is not on disk to
+/// read them from (xo's own assembler, compiler/xo link.xo
+/// weak_undefined_args).
+pub fn weak_undefined(path: Str, b: Bytes) -> List[Str] {
+  var out: List[Str] = []
+  match parse_object(path, b) {
+    Ok(o) => {
+      for s in o.syms {
+        if is_ext(s) && !is_defined(s) && (s.desc & 0x40) != 0 {
+          out.push(bstr(s.name))
+        }
+      }
+    }
+    Err(_) => {}
+  }
+  out
+}
+
 fn parse_object(path: Str, b: Bytes) -> Result[IObj, Str] {
   if b.len() < 32 || rd32(b, 0) != MH_MAGIC_64 {
     return Err("${path}: not a 64 bit Mach-O file")

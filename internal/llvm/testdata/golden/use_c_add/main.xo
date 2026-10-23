@@ -1,0 +1,16 @@
+// Calling C (`use c`, core 4.5) from the native backends: the program is
+// linked by cc, which must be told the runtime's weak references
+// (ThreadSanitizer's and the fiber switch hooks) may stay undefined; on
+// darwin/amd64 xo's own assembler wrote no .s to read them from, and ld
+// refused the link (b03, the Intel field report on 0.26.0).
+use c "addc.h" link "addc.c"
+
+fn main(os: Os) {
+  let n = os.env.args().len()
+  os.stdio.println("${addc.addc_add(40, 2)} ${addc.addc_twice(n + 21)}")
+  scope s {
+    s.spawn(fn() {
+      os.stdio.println("task ${addc.addc_add(1, 1)}")
+    })
+  }
+}

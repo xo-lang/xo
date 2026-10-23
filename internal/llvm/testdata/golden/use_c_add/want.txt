@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+42 42
+task 2
+--- stderr

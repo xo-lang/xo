@@ -25,3 +25,11 @@ which binds a weak import it cannot find to 0. compiler/xo link.xo
 for every weak reference of the program's .s or .ll; compiler/macho's
 own linker marks such an import weak in the chained fixups. A new place
 that links Xo output with the system linker on macOS needs the same.
+
+Observed again 2026-10-23 (Intel field report b03): darwin/amd64 native
+builds assemble straight to .o with no .s beside it, so the scan found
+no weak references and `--ld=cc` or any `use c` link failed with
+undefined `___tsan_*` and `___sanitizer_*_switch_fiber`. link.xo now
+reads an object's own symbol table (macho.weak_undefined: external,
+undefined, N_WEAK_REF) when no .s or .ll is beside it; regression
+TestUseCDarwinAmd64Links and the use_c_add golden.

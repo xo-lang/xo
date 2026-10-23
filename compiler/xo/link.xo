@@ -163,6 +163,27 @@ fn weak_undefined_args(os: Os, srcs: List[Str]) -> List[Str] {
     if s.ends_with(".o") {
       let base = s.trim_suffix(".o")
       paths = ["${base}.s", "${base}.ll"]
+      // xo:allow XO0903 an object it cannot stat is read from its source
+      let has_src = (os.fs.exists("${base}.s").ok() ?? false) || (os.fs.exists("${base}.ll").ok() ?? false)
+      if !has_src {
+        // xo's own assembler writes no .s (b03, field report on 0.26.0:
+        // a darwin/amd64 build linked by cc lacked every -U and ld
+        // refused the ThreadSanitizer and fiber hooks): the object's own
+        // weak references
+        match os.fs.read(s) {
+          Ok(b) => {
+            for sym in macho.weak_undefined(s, b) {
+              if !seen.contains(sym) {
+                seen.add(sym)
+                out = out + ["-Wl,-U,${sym}"]
+              }
+            }
+          }
+          // xo:allow XO0903 an unreadable object fails the link itself
+          Err(_) => {}
+        }
+        continue
+      }
     }
     for p in paths {
       if !(p.ends_with(".s") || p.ends_with(".ll")) {
