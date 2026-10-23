@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- 0.26.0 (2026-10-22): Windows binaries signed (Azure Artifact Signing)
+  and native windows/amd64 I/O on completion ports (decision 0324); large
+  Maps and Sets branch instead of copying (0291); fault tracebacks by
+  default; darwin DWARF embedded (0346); native `--race` without clang;
+  xo's memory budget (0349) and the LLVM split default; `xo run DIR` runs
+  exactly DIR (0345), build and run skip `_test.xo` (0348), `opt?` in
+  tests (0347), and the daylight saving gap fix (Earlier and Later were
+  swapped). The entries below, down to 0.25.2's, are in it.
 - LLVM builds of large programs split their IR: over 100 MB (xo itself),
   modules of about 50 MB with thin LTO, and the clang jobs sized to
   memory (three quarters of it, less xo's own heap, at 3.5 GB a job).
