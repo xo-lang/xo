@@ -740,7 +740,11 @@ fn (c: Checker) cand_events(sites: List[FlowSite], cands: List[FlowCand], kinds:
   for cd in cands {
     set[cd.v] = true
   }
-  var out: Map[Int, List[FlowEvent]] = {}
+  // (local, event) pairs first, each local's list stored once: update
+  // copied the list the map held on every push, quadratic in a local's
+  // occurrences (98 GB allocated checking a 32,768 statement function,
+  // the scale suite, 2026-10-23)
+  var pairs: List[(Int, FlowEvent)] = []
   for st in sites {
     if !st.var_value.is_empty() {
       continue
@@ -751,9 +755,21 @@ fn (c: Checker) cand_events(sites: List[FlowSite], cands: List[FlowCand], kinds:
     }
     let k = kinds.get(c.name_key(st.id.span.start.offset)) ?? -1
     if k >= 0 {
-      let ev = FlowEvent{id: st.id, kind: k, in_defer: st.in_defer, loops: st.loops}
-      out.update(v, [], fn(var evs) { evs.push(ev) })
+      pairs.push((v, FlowEvent{id: st.id, kind: k, in_defer: st.in_defer, loops: st.loops}))
     }
+  }
+  // by local, then in the order found
+  let order = (0..pairs.len()).to_list().sort_by(fn(i) { (pairs[i].0, i) })
+  var out: Map[Int, List[FlowEvent]] = {}
+  var j = 0
+  while j < order.len() {
+    let v = pairs[order[j]].0
+    var evs: List[FlowEvent] = []
+    while j < order.len() && pairs[order[j]].0 == v {
+      evs.push(pairs[order[j]].1)
+      j += 1
+    }
+    out[v] = evs
   }
   out
 }

@@ -172,18 +172,33 @@ fn (var g: G) slp_f64() {
   }
   // every vreg's definition count and uses (block, index, operand)
   var ndef: Map[Int, Int] = {}
-  var vuses: Map[Int, List[SPos]] = {}
+  // the uses as (vreg, position) pairs first, each vreg's list stored
+  // once: a push into a list the map still held copied it, quadratic in
+  // a vreg's uses (54 GB allocated for a 32,768 statement function, the
+  // scale suite, 2026-10-23)
+  var pairs: List[(Int, SPos)] = []
   for b in g.all_blocks() {
     for (i, x) in g.blocks[b].insts.indexed() {
       for d in x.defs {
         ndef[d] = (ndef.get(d) ?? 0) + 1
       }
       for u in x.us {
-        var l = vuses.get(u) ?? []
-        l.push(SPos{b: b, i: i, ord: -1})
-        vuses[u] = l
+        pairs.push((u, SPos{b: b, i: i, ord: -1}))
       }
     }
+  }
+  // by vreg, then in the order found
+  let order = (0..pairs.len()).to_list().sort_by(fn(k) { (pairs[k].0, k) })
+  var vuses: Map[Int, List[SPos]] = {}
+  var j = 0
+  while j < order.len() {
+    let u = pairs[order[j]].0
+    var l: List[SPos] = []
+    while j < order.len() && pairs[order[j]].0 == u {
+      l.push(pairs[order[j]].1)
+      j += 1
+    }
+    vuses[u] = l
   }
   var tr: List[Str] = []
   for ch in g.slp_chains() {

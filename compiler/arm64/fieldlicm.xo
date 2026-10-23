@@ -83,14 +83,25 @@ const PROMOTE_MAX = 8
 fn natural_loops(f: ssa.Func, rpo: List[Int], idom: List[Int], entry: Int) -> List[(Int, List[Bool])] {
   var out: List[(Int, List[Bool])] = []
   let nb = f.blocks.len()
+  // a back edge's source comes after its header in reverse postorder
+  // (the header dominates it), so an earlier predecessor is no back edge
+  // and costs no walk up the dominators, and a block that heads no loop
+  // allocates no body (both quadratic in a long straight function: 11%
+  // of a 32,768 statement one's build, the scale suite, 2026-10-23)
+  var pos: List[Int] = []
+  for _ in 0..nb {
+    pos.push(-1)
+  }
+  for (i, b) in rpo.indexed() {
+    pos[b] = i
+  }
   for h in rpo {
-    var body: List[Bool] = []
-    for _ in 0..nb {
-      body.push(false)
-    }
     var work: List[Int] = []
     for e in f.blocks[h].preds {
       let u = f.edges[e].from
+      if pos[u] < pos[h] {
+        continue
+      }
       if idom[u] >= 0 || u == entry {
         if dominates_b(idom, entry, h, u) {
           work.push(u)
@@ -99,6 +110,10 @@ fn natural_loops(f: ssa.Func, rpo: List[Int], idom: List[Int], entry: Int) -> Li
     }
     if work.is_empty() {
       continue
+    }
+    var body: List[Bool] = []
+    for _ in 0..nb {
+      body.push(false)
     }
     body[h] = true
     while !work.is_empty() {
