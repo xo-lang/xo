@@ -213,6 +213,40 @@ Each finding: what, evidence, fix. Status in brackets.
   a raw control character is rejected as empty, and Ctrl+C
   (`interrupt`) does not clear Pi's editor while it works. Do not try
   again; clear the editor by hand at the terminal.
+- 2026-10-23: the Pi session wrote ~/xo-lead/notes/pi/DEEPSEEK-AGENTS.md,
+  a guide from one DeepSeek to the next (300 lines; the overseer sent back
+  four corrections and one stale claim). The Claude Code session read it
+  first and restated its key rules correctly.
+- 2026-10-23, task 3 on Claude Code (xo-deepseek-1, worktree /tmp/pi-count,
+  the claude-hook guard): Str.count (strings.Count) plus the habits.xo
+  hints for strings.Fields and strings.Count. 14:12 to 14:33, one commit
+  49cf121fb, verdict approve, fixed point passed. 0 corrections, 0 blocks
+  during the task (2 during setup: an over-broad `Bash(git stash:*)` deny
+  rule that also matched `git stash list`, and the intended hook probe,
+  both reported correctly, with a stat-only probe chosen so a broken guard
+  could not leak). Two of its own test bugs were caught by gates and fixed
+  in the test, not std. It found that no live test covers the habits hint
+  table (an orphaned internal/fix golden, a stale toolchain.md line) and
+  reported it instead of widening scope.
+
+## Pi and Claude Code compared (task 2 and task 3)
+
+| Metric | Pi (task 2, Str.fields) | Claude Code (task 3, Str.count) |
+|---|---|---|
+| Time | about 51 min, 32 of them queued | about 21 min, about 8 queue and fixed point |
+| Corrections | 1 (compiler/ edits without asking) | 0 |
+| Follow-ups after "done" | 2 (ownership golden, fixed point) | 0 |
+| Guard blocks in the task | 3, all false positives, reported | 0 |
+| Workarounds | 1 (before the block rule) | 0 |
+| Own bugs caught by gates | 1 | 2, fixed in the test |
+| Message latency | 5 to 10 min (one long turn) | a few minutes (status, then end of turn) |
+
+Confounds: count is simpler than fields; task 2's commit was a layout
+model; the fixed point was stated up front; the session read the
+DeepSeek-written guide; the overseer's briefs and guards had improved.
+The clearest Claude Code effect is messaging: SendMessage plus "report
+and end the turn" kept corrections and requests flowing, where Pi's
+xo-inbox waited for the end of a long turn.
 
 ## Observations
 
