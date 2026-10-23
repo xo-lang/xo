@@ -46,27 +46,11 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
     // directory: a binary that loaded the toolchain's path outlived
     // neither a move nor a removal of the toolchain (field report on
     // 0.26.0, 2026-10-23)
-    let file = base_name(race_rt)
-    dylibs.push("@rpath/${file}")
+    dylibs.push("@rpath/${base_name(race_rt)}")
     rpaths = ["@executable_path", dir_name(race_rt)]
-    let near = "${dir_name(out)}/${file}"
-    if near != race_rt {
-      match os.fs.read(race_rt) {
-        Ok(data) => {
-          // xo:allow XO0903 a copy that cannot be read is written again
-          let same = match os.fs.read(near) {
-            Ok(old) => old == data
-            Err(_) => false
-          }
-          if !same {
-            let werr = write_exe(os, near, data)
-            if !werr.is_empty() {
-              return werr
-            }
-          }
-        }
-        Err(e) => return "${race_rt}: ${e}"
-      }
+    let cerr = race_rt_beside(os, race_rt, out)
+    if !cerr.is_empty() {
+      return cerr
     }
   }
   let opts = macho.LinkOpts{name: base_name(out), dylibs: dylibs, rpaths: rpaths, strip: strip, dsym: dsym}
@@ -94,6 +78,39 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
       ""
     }
     Err(e) => "link: ${e}"
+  }
+}
+
+/// clang's link flags for xo's ThreadSanitizer runtime race_rt in place
+/// of clang's own (the LLVM backend's --race): darwin's dylib by @rpath,
+/// beside the executable first, then race_rt's directory (race_rt_beside
+/// puts the copy there); linux's static archive whole, its interceptors
+/// exported as clang's own link does.
+fn race_link_flags(tgoos: Str, race_rt: Str) -> List[Str] {
+  if tgoos == "darwin" {
+    return ["-fno-sanitize-link-runtime", race_rt, "-Wl,-rpath,@executable_path", "-Wl,-rpath,${dir_name(race_rt)}"]
+  }
+  ["-fno-sanitize-link-runtime", "-Wl,--whole-archive", race_rt, "-Wl,--no-whole-archive", "-rdynamic", "-lpthread", "-ldl", "-lm", "-lrt"]
+}
+
+/// Copies the darwin race runtime race_rt beside the executable out
+/// (unless it is there already), which loads it by @rpath with
+/// @executable_path first: "" or why not.
+fn race_rt_beside(os: Os, race_rt: Str, out: Str) -> Str {
+  let near = "${dir_name(out)}/${base_name(race_rt)}"
+  if near == race_rt {
+    return ""
+  }
+  match os.fs.read(race_rt) {
+    Ok(data) => {
+      // xo:allow XO0903 a copy that cannot be read is written again
+      let same = match os.fs.read(near) {
+        Ok(old) => old == data
+        Err(_) => false
+      }
+      if same { "" } else { write_exe(os, near, data) }
+    }
+    Err(e) => "${race_rt}: ${e}"
   }
 }
 

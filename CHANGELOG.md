@@ -14,6 +14,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - `--targets` no longer says "the wasm backend: the wasm backend".
 - `scripts/release-verify.sh` accepts Windows ThreadSanitizer's
   "WARNING: DATA RACE"; decision 0273 notes that Windows `--race` works.
+- `--race` with `--backend=llvm` links xo's own ThreadSanitizer runtime
+  (lib/xo/race) instead of clang's, copied beside the binary on darwin as
+  the native backends do: Apple clang 17's runtime stopped at SIGILL on
+  an Intel Mac. A race build served from the build cache also copies the
+  runtime beside its new output.
 
 - `xo check` checks by the native backends' rules by default, as a build
   does (owner, 2026-10-23): `use c` passes, and `--backend=go` checks by

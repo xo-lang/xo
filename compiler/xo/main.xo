@@ -1091,11 +1091,23 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     let bin = bin_path(dir, out, name, ltarget, o.many_targets)
     var lk = link_inputs(os, ctx, o, c, dir, code, uses_time, tu, false, lctx.tgoos, tgoarch)
     lk.flags = cross + lk.flags
+    var race_rt = ""
     if o.race {
       // without the instrumentation of function entry and exit: it gives
       // a function a cleanup pad that resumes the unwind, which the Xo
       // fault unwinder cannot resume (gotchas/tsan-func-exit-pads.md)
       lk.flags = lk.flags + ["-fsanitize=thread", "-mllvm", "-tsan-instrument-func-entry-exit=0"]
+      // xo's own ThreadSanitizer runtime (lib/xo/race, the native
+      // backends'), not clang's: Apple clang 17's stopped at SIGILL on an
+      // Intel Mac (field report on 0.26.0), and a clang without
+      // compiler-rt has none; clang's when xo has none (a checkout)
+      if lctx.tgoos == "darwin" || lctx.tgoos == "linux" {
+        let (rp, _) = race_runtime(os, ctx, lctx.tgoos, tgoarch)
+        race_rt = rp
+      }
+      if !race_rt.is_empty() {
+        lk.link_only = lk.link_only + race_link_flags(lctx.tgoos, race_rt)
+      }
     }
     let lto1 = single_lto(split)
     lk.flags = lk.flags + unroll_flags(split.opt, lctx.tgoos, if multi { split.lto } else { lto1 })
@@ -1157,6 +1169,14 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     if !staged {
       // an earlier --dsym build's bundle, for another UUID (decision 0346)
       os.fs.remove_all("${bin}.dSYM").ignore_err("none from an earlier build")
+    }
+    if !race_rt.is_empty() && lctx.tgoos == "darwin" {
+      // loaded by @rpath, beside the executable first (a cached binary's
+      // new directory too)
+      let rerr = race_rt_beside(os, race_rt, bin)
+      if !rerr.is_empty() {
+        fail(os, rerr)
+      }
     }
     lap(os, phases, "cc", t)
     return finish(os, ctx, o, c, root, [(ltarget, bin)], tests, fz)
@@ -1482,6 +1502,14 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       let merr = mst.commit(os)
       if !merr.is_empty() {
         fail(os, merr)
+      }
+      if !race_rt.is_empty() && tgoos == "darwin" {
+        // a cached link skipped macho_link's copy: the runtime beside
+        // this output too
+        let rerr = race_rt_beside(os, race_rt, bin)
+        if !rerr.is_empty() {
+          fail(os, rerr)
+        }
       }
       if !o.dsym {
         // an earlier --dsym build's bundle, for another UUID (decision 0346)

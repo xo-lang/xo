@@ -760,39 +760,59 @@ func TestRaceBinaryOutlivesToolchain(t *testing.T) {
 	if err != nil {
 		t.Skipf("no ThreadSanitizer runtime: %v", err)
 	}
-	tmp := t.TempDir()
-	rt := filepath.Join(tmp, "toolchain", "race", filepath.Base(src))
-	if err := os.MkdirAll(filepath.Dir(rt), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(rt, data, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	bin := filepath.Join(tmp, "out", "prog")
-	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	r, err := xotool.Build([]string{filepath.Join("testdata", "race_sync")}, xotool.Options{Backend: xotool.BackendArm64, Race: true, Out: bin, Env: []string{"XO_RACE_RUNTIME=" + rt}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.Failed {
-		t.Fatalf("xo build --race --backend=arm64 failed:\n%s", r.Output)
-	}
-	if _, err := os.Stat(filepath.Join(filepath.Dir(bin), filepath.Base(src))); err != nil {
-		t.Fatalf("no copy of the runtime beside the binary: %v", err)
-	}
-	// the toolchain moves away
-	if err := os.Rename(filepath.Join(tmp, "toolchain"), filepath.Join(tmp, "moved")); err != nil {
-		t.Fatal(err)
-	}
-	cmd := testtmp.Guard(exec.Command(bin))
-	cmd.Env = append(os.Environ(), "XO_RACE_CASE=spawn", "XO_RACE_SYNC=1")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("the race binary did not run after its toolchain moved: %v\n%s", err, out)
-	}
-	if strings.Contains(string(out), "WARNING: ThreadSanitizer") {
-		t.Fatalf("a race reported in the synchronized case:\n%s", out)
+	// the native backends link it with Xo's linker; LLVM's clang links
+	// xo's runtime too, not its own (Apple clang 17's stopped at SIGILL
+	// on an Intel Mac, field report on 0.26.0)
+	for _, backend := range []string{xotool.BackendArm64, xotool.BackendLLVM} {
+		t.Run(backend, func(t *testing.T) {
+			tmp := t.TempDir()
+			rt := filepath.Join(tmp, "toolchain", "race", filepath.Base(src))
+			if err := os.MkdirAll(filepath.Dir(rt), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(rt, data, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			bin := filepath.Join(tmp, "out", "prog")
+			if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			r, err := xotool.Build([]string{filepath.Join("testdata", "race_sync")}, xotool.Options{Backend: backend, Race: true, Out: bin, Env: []string{"XO_RACE_RUNTIME=" + rt}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if r.Failed {
+				t.Fatalf("xo build --race --backend=%s failed:\n%s", backend, r.Output)
+			}
+			if _, err := os.Stat(filepath.Join(filepath.Dir(bin), filepath.Base(src))); err != nil {
+				t.Fatalf("no copy of the runtime beside the binary: %v", err)
+			}
+			// the same program again into another directory: the binary
+			// cache's link, which copies the runtime there too
+			bin2 := filepath.Join(tmp, "out2", "prog")
+			if err := os.MkdirAll(filepath.Dir(bin2), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			r, err = xotool.Build([]string{filepath.Join("testdata", "race_sync")}, xotool.Options{Backend: backend, Race: true, Out: bin2, Env: []string{"XO_RACE_RUNTIME=" + rt}})
+			if err != nil || r.Failed {
+				t.Fatalf("second build: %v\n%s", err, r.Output)
+			}
+			if _, err := os.Stat(filepath.Join(filepath.Dir(bin2), filepath.Base(src))); err != nil {
+				t.Fatalf("a cached link left no copy of the runtime beside the binary: %v", err)
+			}
+			// the toolchain moves away
+			if err := os.Rename(filepath.Join(tmp, "toolchain"), filepath.Join(tmp, "moved")); err != nil {
+				t.Fatal(err)
+			}
+			cmd := testtmp.Guard(exec.Command(bin))
+			cmd.Env = append(os.Environ(), "XO_RACE_CASE=spawn", "XO_RACE_SYNC=1")
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("the race binary did not run after its toolchain moved: %v\n%s", err, out)
+			}
+			if strings.Contains(string(out), "WARNING: ThreadSanitizer") {
+				t.Fatalf("a race reported in the synchronized case:\n%s", out)
+			}
+		})
 	}
 }

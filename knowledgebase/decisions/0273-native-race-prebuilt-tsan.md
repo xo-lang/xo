@@ -482,3 +482,16 @@ C flavor (interceptors, the clang-compatible reports) to the Go flavor:
 worth its own measurement and ADR step. Test: internal/llvm
 TestRaceBinaryOutlivesToolchain (build, rename the runtime's directory,
 run a race_sync case).
+
+Same day, the LLVM backend: its clang linked clang's own runtime, and
+Apple clang 17's stopped at SIGILL on an Intel Mac (field report on
+0.26.0). An LLVM --race build for darwin or linux now links xo's runtime
+(lib/xo/race, as the native backends do) with `-fno-sanitize-link-runtime`:
+darwin's dylib by @rpath with the same copy beside the binary, linux's
+static archive whole with its interceptors exported (`-rdynamic`).
+clang's runtime stays the fallback only where xo has none (a checkout
+without lib/xo/race and no XO_RACE_RUNTIME). A cached link (either
+backend) copies the runtime beside its new output too. Evidence: a
+darwin/amd64 LLVM race build of race_sync ran on the Intel laptop, no
+race reported in the synchronized case and the planted race reported;
+TestRaceBinaryOutlivesToolchain runs on arm64 and llvm.
