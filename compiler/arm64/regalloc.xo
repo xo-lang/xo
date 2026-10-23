@@ -337,12 +337,14 @@ fn (var g: G) regalloc() {
   // Map's get loop, whose fallback call made every live value callee
   // saved and its hoisted constants spill, 1.2x the instructions of the
   // same loop without it; gotchas/arm64-cold-call-in-loop.md). Not
-  // x86_64 (its emitter saves no registers there yet), not a tail call
-  // or one that does not return. Not every call of a cold block: in the
+  // x86_64 too since 2026-10-23 (x86emit.xo stores and loads csave
+  // around the call: jsontext.find's rare escaped key compare made every
+  // value of its loop spill, x86_64 having five callee saved registers),
+  // not a tail call or one that does not return. Not every call of a cold block: in the
   // landing pads' cleanups the freed caller saved registers left an
   // instruction with ten spilled operands no scratch register
   // (xo.slice[List[x509.Cert]], 2026-10-21)
-  let cold_saves = !g.x86 && pass_on(g.m, "cold_saves")
+  let cold_saves = pass_on(g.m, "cold_saves")
   // the instructions that write registers besides their definitions:
   // position and registers
   var clobs: List[(Int, List[Int], Bool)] = []

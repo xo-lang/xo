@@ -1521,8 +1521,8 @@ fn (var g: G) hoist_consts() {
       }
       for inst in g.blocks[b].insts {
         // a slow path's call (cold_call) is stored around, not across
-        // (arm64's cold_saves; x86_64 saves none yet)
-        calls = calls || (inst.kind == K_CALL && (!inst.cold_call || g.x86))
+        // (cold_saves)
+        calls = calls || (inst.kind == K_CALL && !inst.cold_call)
       }
     }
     // under calls: the lines of the constants that may move, dearest
@@ -1836,8 +1836,8 @@ fn (var g: G) hoist_invariants() {
       }
       for inst in g.blocks[b].insts {
         // a slow path's call (cold_call) is stored around, not across
-        // (arm64's cold_saves; x86_64 saves none yet)
-        calls = calls || (inst.kind == K_CALL && (!inst.cold_call || g.x86))
+        // (cold_saves)
+        calls = calls || (inst.kind == K_CALL && !inst.cold_call)
       }
     }
     if calls {

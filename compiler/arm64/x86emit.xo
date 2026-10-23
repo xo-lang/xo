@@ -477,6 +477,19 @@ fn (var g: G) x86_emit_inst(var b: List[Str], inst: Inst, next: Int) {
     g.x86_parallel(b, ms)
   } else if inst.kind == K_CALL {
     let locs = g.x86_call_locs(inst.srcs, inst.vfix)
+    // a cold call's saves (regalloc.xo cold_saves): stored before the
+    // argument moves, which may take their registers, loaded after the
+    // results' moves
+    var saves: List[Move] = []
+    var loads: List[Move] = []
+    for (r, sl) in inst.csave {
+      let at = MLoc{reg: -1, base: "%rsp", off: slot_off(g.fr, sl) + g.stub_sp}
+      saves.push(Move{dst: at, src: MSrc{kind: M_LOC, l: MLoc{reg: r}}})
+      loads.push(Move{dst: MLoc{reg: r}, src: MSrc{kind: M_LOC, l: at}})
+    }
+    if !saves.is_empty() {
+      g.x86_parallel(b, saves)
+    }
     g.x86_parallel(b, g.x86_call_moves(inst.srcs, inst.vfix))
     if inst.vfix == -3 {
       // a C call (darwin): no vector registers for a variadic callee
@@ -539,6 +552,9 @@ fn (var g: G) x86_emit_inst(var b: List[Str], inst: Inst, next: Int) {
       }
     }
     g.x86_parallel(b, ms)
+    if !loads.is_empty() {
+      g.x86_parallel(b, loads)
+    }
   } else if inst.kind == K_ENTRY {
     var ms: List[Move] = []
     for (k, l) in g.x86_call_locs(regs(inst.defs), -1).indexed() {
