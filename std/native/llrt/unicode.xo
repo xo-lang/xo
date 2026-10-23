@@ -259,6 +259,138 @@ pub fn eq_lower(a: Str, b: Str) -> Bool {
   case_append(rt.rs_with_cap(n - i), x, i, true) == case_append(rt.rs_with_cap(m - i), y, i, true)
 }
 
+/// The Unicode maximum code point (std/regexp keeps its own copy).
+const MAX_RUNE: Int = 0x10ffff
+
+/// unicode.SimpleFold: the next rune of r's simple case folding orbit
+/// (the smallest rune after the largest wraps around to the smallest).
+/// It is ToLower when that changes r, else ToUpper, except for the runes
+/// whose orbit is longer than a pair or has no lower case, listed here.
+/// The caller walks the orbit; std/regexp's case insensitive matching
+/// uses it (moved here from std/native/regexp.xo, which had the only
+/// copy).
+pub fn simple_fold(r: Int) -> Int {
+  if r < 0 || r > MAX_RUNE {
+    return r
+  }
+  let odd = match r {
+    0x6b => 0x212a
+    0x73 => 0x17f
+    0xdf => 0x1e9e
+    0xe5 => 0x212b
+    0x130 => 0x130
+    0x131 => 0x131
+    0x1c4 => 0x1c5
+    0x1c7 => 0x1c8
+    0x1ca => 0x1cb
+    0x1f1 => 0x1f2
+    0x3a3 => 0x3c2
+    0x3b2 => 0x3d0
+    0x3b5 => 0x3f5
+    0x3b8 => 0x3d1
+    0x3b9 => 0x1fbe
+    0x3ba => 0x3f0
+    0x3bc => 0xb5
+    0x3c0 => 0x3d6
+    0x3c1 => 0x3f1
+    0x3c2 => 0x3c3
+    0x3c6 => 0x3d5
+    0x3c9 => 0x2126
+    0x3d1 => 0x3f4
+    0x3f4 => 0x398
+    0x432 => 0x1c80
+    0x434 => 0x1c81
+    0x43e => 0x1c82
+    0x441 => 0x1c83
+    0x442 => 0x1c84
+    0x44a => 0x1c86
+    0x463 => 0x1c87
+    0x1c84 => 0x1c85
+    0x1e61 => 0x1e9b
+    0x1fbe => 0x345
+    0x2126 => 0x3a9
+    0x212a => 0x4b
+    0x212b => 0xc5
+    0xa64b => 0x1c88
+    _ => -1
+  }
+  if odd >= 0 {
+    return odd
+  }
+  let l = to_case(r, true)
+  if l != r {
+    return l
+  }
+  to_case(r, false)
+}
+
+/// strings.EqualFold: whether a and b are equal under Unicode simple case
+/// folding (not only ASCII case). An ASCII prefix compares as bytes, as
+/// Go's fast path does; from the first non-ASCII byte of either, which is
+/// a rune boundary of both, the rests compare rune by rune, an equal rune
+/// or an ASCII upper and lower case of one letter matching directly and
+/// any other pair by walking the SimpleFold orbit of the smaller rune.
+pub fn equal_fold(a: Str, b: Str) -> Bool {
+  let x = a.bytes()
+  let y = b.bytes()
+  let n = x.len()
+  let m = y.len()
+  var i = 0
+  while i < n && i < m {
+    var p = Int(x[i])
+    var q = Int(y[i])
+    if p >= 0x80 || q >= 0x80 {
+      break
+    }
+    if p >= 65 && p <= 90 {
+      p += 32
+    }
+    if q >= 65 && q <= 90 {
+      q += 32
+    }
+    if p != q {
+      return false
+    }
+    i += 1
+  }
+  if i == n && i == m {
+    return true
+  }
+  if i == n || i == m {
+    // one is a prefix of the other, but not equal
+    return false
+  }
+  var j = i
+  while i < n && j < m {
+    let dp = raw.decode(x, i)
+    let dq = raw.decode(y, j)
+    let sr = dp >> 3
+    let tr = dq >> 3
+    i += dp & 7
+    j += dq & 7
+    if tr == sr {
+      continue
+    }
+    let lo = if tr < sr { tr } else { sr }
+    let hi = if tr < sr { sr } else { tr }
+    if hi < 0x80 {
+      // ASCII only: hi must be the lower case of lo
+      if lo >= 65 && lo <= 90 && hi == lo + 32 {
+        continue
+      }
+      return false
+    }
+    var f = simple_fold(lo)
+    while f != lo && f < hi {
+      f = simple_fold(f)
+    }
+    if f != hi {
+      return false
+    }
+  }
+  i == n && j == m
+}
+
 const HEX: Bytes = b"0123456789abcdef"
 
 /// The letter of the escape \<letter> of strconv for the control rune r,

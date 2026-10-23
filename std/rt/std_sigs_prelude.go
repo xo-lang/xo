@@ -80,6 +80,7 @@ var (
 	_ func(*Task, string, string) bool                              = Str_contains
 	_ func(*Task, string, string) bool                              = Str_starts_with
 	_ func(*Task, string, string) bool                              = Str_ends_with
+	_ func(*Task, string, string) bool                              = Str_equal_fold
 	_ func(*Task, string, string) Option[int64]                     = Str_find
 	_ func(*Task, string, string) Option[int64]                     = Str_rfind
 	_ func(*Task, string, string) int64                             = Str_count

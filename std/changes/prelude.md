@@ -1,5 +1,26 @@
 # prelude changes
 
+## 2026-10-23: feature: Str.equal_fold (strings.EqualFold)
+
+- Kind: feature
+- Commit: this commit
+- Found by: lead request; Str had no Unicode case insensitive comparison (only eq_lower, which is a lowered equality, not simple folding)
+- Go reference: strings.EqualFold, unicode.SimpleFold
+- Test: corpus/equalfold (arm64 and LLVM), golden equal_fold_view (arm64, LLVM, Go parity and wasm), std/regexp's module tests and corpus
+
+`Str.equal_fold(other)` reports whether s and other are equal under
+Unicode simple case folding, like Go's `strings.EqualFold`, so `"k"` and
+`"K"` and the Kelvin sign U+212A are equal, as are the three sigma forms,
+while the Turkish dotted and dotless I fold only to themselves. It is
+declared in std/prelude.xo, implemented in Xo in std/native/llrt/unicode.xo
+(an ASCII prefix fast path, then rune by rune with a SimpleFold orbit
+walk), and on the Go backend by strings.EqualFold in std/rt. The fold
+table is the one std/regexp already had: `simple_fold` moved from
+std/native/regexp.xo into std/native/llrt/unicode.xo and regexp calls it
+there, with no change to its matching. The corpus adds Go's EqualFoldTests
+and 3000 seeded random pairs drawn from the folding orbits, with a view
+test; all backends match Go.
+
 ## 2026-10-23: feature: Str.count (strings.Count)
 
 - Kind: feature
@@ -16,6 +37,7 @@ find), and on the Go backend by strings.Count in std/rt. The corpus adds
 Go's countTests, 3000 seeded random (text, sub) pairs on their own seed
 (empty, one byte, multi byte and pieces of s, so overlapping copies
 occur), and a view test; all backends match Go.
+
 ## 2026-10-23: perf: Bytes.from_base64 decodes four ordinary characters at once
 
 - Kind: perf

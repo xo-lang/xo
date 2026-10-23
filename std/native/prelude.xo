@@ -56,6 +56,8 @@ fn str_starts_with(s: Str, p: Str) -> Bool { scan.starts_with(s, p) }
 
 fn str_ends_with(s: Str, p: Str) -> Bool { scan.ends_with(s, p) }
 
+fn str_equal_fold(a: Str, b: Str) -> Bool { unicode.equal_fold(a, b) }
+
 fn str_find(s: Str, sub: Str) -> Int? {
   let i = scan.find(s, sub, 0)
   if i < 0 {

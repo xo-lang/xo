@@ -1,0 +1,16 @@
+// Str.equal_fold on a view of a longer text: Unicode simple case folding
+// of the k, s and sigma orbits (the Kelvin sign, the long s and the three
+// sigma forms), the Turkish dotted and dotless I, which simple folding
+// does not equate with i and I, the ring and ohm signs, the micro sign,
+// and the ASCII prefix fast path with a shorter and a longer operand.
+fn main(os: Os) {
+  let text = "Kk s\u{17f} \u{3a3}\u{3c3}\u{3c2} \u{130}\u{131} \u{c5}\u{3a9}\u{b5}"
+  let long = "  " + text + "  "
+  let v = long[2..(long.len() - 2)]
+  os.stdio.println("${v.equal_fold("kK S\u{17f} \u{3c3}\u{3a3}\u{3c2} \u{130}\u{131} \u{e5}\u{3c9}\u{3bc}")} ${v.equal_fold("kK S\u{17f} \u{3c3}\u{3a3}\u{3c2} i\u{131} \u{e5}\u{3c9}\u{3bc}")}")
+  os.stdio.println("${"Stra\u{df}e".equal_fold("STRASSE")} ${"Stra\u{df}e".equal_fold("stra\u{df}e")}")
+  os.stdio.println("${v[0..2].equal_fold("kK")} ${v[0..2].equal_fold("k")} ${v[0..2].equal_fold("kk")}")
+  os.stdio.println("${v.equal_fold(v)} ${v.equal_fold(long)}")
+  os.stdio.println("${"abcdefghijk".equal_fold("abcdefghij\u{212a}")} ${"utf-8".equal_fold("US-ASCII")}")
+  os.stdio.println("${v.len()} ${long.len()}")
+}

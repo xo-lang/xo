@@ -173,6 +173,7 @@ fn (s: Str) is_empty() -> Bool
 fn (s: Str) contains(sub: Str) -> Bool
 fn (s: Str) starts_with(p: Str) -> Bool
 fn (s: Str) ends_with(p: Str) -> Bool
+fn (s: Str) equal_fold(other: Str) -> Bool   // Unicode simple case folding (strings.EqualFold), not only ASCII
 fn (s: Str) find(sub: Str) -> Int?           // byte offset
 fn (s: Str) rfind(sub: Str) -> Int?          // the last sub's byte offset (strings.LastIndex); Some(s.len()) for ""
 fn (s: Str) count(sub: Str) -> Int           // non-overlapping copies (strings.Count); rune_count() + 1 for ""
@@ -4005,7 +4006,7 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
 
 Every function and method of std/prelude.xo, by type, as declared there
 (the sections above explain them); interface methods take `self`.
-366 declarations.
+367 declarations.
 
 ### Range
 
@@ -4175,6 +4176,7 @@ fn (s: Str) is_empty() -> Bool
 fn (s: Str) contains(sub: Str) -> Bool
 fn (s: Str) starts_with(p: Str) -> Bool
 fn (s: Str) ends_with(p: Str) -> Bool
+fn (s: Str) equal_fold(other: Str) -> Bool
 fn (s: Str) find(sub: Str) -> Int?
 fn (s: Str) rfind(sub: Str) -> Int?
 fn (s: Str) count(sub: Str) -> Int

@@ -257,6 +257,9 @@ fn (s: Str) is_empty() -> Bool
 fn (s: Str) contains(sub: Str) -> Bool
 fn (s: Str) starts_with(p: Str) -> Bool
 fn (s: Str) ends_with(p: Str) -> Bool
+/// Whether s and other are equal under Unicode simple case folding
+/// (strings.EqualFold), not only ASCII case.
+fn (s: Str) equal_fold(other: Str) -> Bool
 fn (s: Str) find(sub: Str) -> Int?
 /// The byte offset of the last sub (strings.LastIndex); Some(s.len()) for "".
 fn (s: Str) rfind(sub: Str) -> Int?

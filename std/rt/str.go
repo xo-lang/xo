@@ -77,6 +77,10 @@ func Str_starts_with(_ *Task, s, p string) bool { return strings.HasPrefix(s, p)
 // Str_ends_with is `s.ends_with(p)`.
 func Str_ends_with(_ *Task, s, p string) bool { return strings.HasSuffix(s, p) }
 
+// Str_equal_fold is `s.equal_fold(other)`: equality under Unicode simple
+// case folding (strings.EqualFold), not only ASCII case.
+func Str_equal_fold(_ *Task, a, b string) bool { return strings.EqualFold(a, b) }
+
 // Str_find is `s.find(sub)`: a byte offset.
 func Str_find(_ *Task, s, sub string) Option[int64] {
 	i := strings.Index(s, sub)

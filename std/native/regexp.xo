@@ -9,6 +9,7 @@
 use std/regexp
 use native/llrt/raw
 use native/llrt/scan
+use native/llrt/unicode
 use native/llrt/unicode_classes
 use native/rt
 
@@ -104,7 +105,7 @@ fn (var p: Parser) push(n: Int) -> Int {
       return n
     }
     // a case-insensitive rune like [Aa] or [Δδ]
-    if (r.len() == 4 && r[0] == r[1] && r[2] == r[3] && simple_fold(r[0]) == r[2] && simple_fold(r[2]) == r[0]) || (r.len() == 2 && r[0] + 1 == r[1] && simple_fold(r[0]) == r[1] && simple_fold(r[1]) == r[0]) {
+    if (r.len() == 4 && r[0] == r[1] && r[2] == r[3] && unicode.simple_fold(r[0]) == r[2] && unicode.simple_fold(r[2]) == r[0]) || (r.len() == 2 && r[0] + 1 == r[1] && unicode.simple_fold(r[0]) == r[1] && unicode.simple_fold(r[1]) == r[0]) {
       let fl = p.flags | FOLD_CASE
       if p.maybe_concat(r[0], fl) {
         return n
@@ -161,12 +162,12 @@ fn min_fold_rune(r: Int) -> Int {
     return r
   }
   var m = r
-  var f = simple_fold(r)
+  var f = unicode.simple_fold(r)
   while f != r {
     if f < m {
       m = f
     }
-    f = simple_fold(f)
+    f = unicode.simple_fold(f)
   }
   m
 }
@@ -241,66 +242,6 @@ fn unhex(c: Int) -> Int {
 }
 
 // ---------------------------------------------------------------------------
-// Case folding (unicode.SimpleFold): ToLower when it changes the rune,
-// else ToUpper, except for the runes of longer orbits listed here.
-
-fn simple_fold(r: Int) -> Int {
-  if r < 0 || r > MAX_RUNE {
-    return r
-  }
-  let odd = match r {
-    0x6b => 0x212a
-    0x73 => 0x17f
-    0xdf => 0x1e9e
-    0xe5 => 0x212b
-    0x130 => 0x130
-    0x131 => 0x131
-    0x1c4 => 0x1c5
-    0x1c7 => 0x1c8
-    0x1ca => 0x1cb
-    0x1f1 => 0x1f2
-    0x3a3 => 0x3c2
-    0x3b2 => 0x3d0
-    0x3b5 => 0x3f5
-    0x3b8 => 0x3d1
-    0x3b9 => 0x1fbe
-    0x3ba => 0x3f0
-    0x3bc => 0xb5
-    0x3c0 => 0x3d6
-    0x3c1 => 0x3f1
-    0x3c2 => 0x3c3
-    0x3c6 => 0x3d5
-    0x3c9 => 0x2126
-    0x3d1 => 0x3f4
-    0x3f4 => 0x398
-    0x432 => 0x1c80
-    0x434 => 0x1c81
-    0x43e => 0x1c82
-    0x441 => 0x1c83
-    0x442 => 0x1c84
-    0x44a => 0x1c86
-    0x463 => 0x1c87
-    0x1c84 => 0x1c85
-    0x1e61 => 0x1e9b
-    0x1fbe => 0x345
-    0x2126 => 0x3a9
-    0x212a => 0x4b
-    0x212b => 0xc5
-    0xa64b => 0x1c88
-    _ => -1
-  }
-  if odd >= 0 {
-    return odd
-  }
-  let ru = Rune.try(r) ?? Rune(0)
-  let l = Int(ru.to_lower())
-  if l != r {
-    return l
-  }
-  Int(ru.to_upper())
-}
-
-// ---------------------------------------------------------------------------
 // Character classes: sorted lo, hi pairs (regexp/syntax's []rune)
 
 /// appendRange: merged with one of the last two ranges when they touch.
@@ -349,10 +290,10 @@ fn append_folded_range(var r: List[Int], lo0: Int, hi0: Int) {
   var c = lo
   while c <= hi {
     append_range(r, c, c)
-    var f = simple_fold(c)
+    var f = unicode.simple_fold(c)
     while f != c {
       append_range(r, f, f)
-      f = simple_fold(f)
+      f = unicode.simple_fold(f)
     }
     c += 1
   }
@@ -1984,7 +1925,7 @@ fn (var g: Prog) rune_frag(r: List[Int], fold0: Bool) -> Frag {
   f.nullable = false
   g.rune[f.i] = r
   var fold = fold0
-  if r.len() != 1 || simple_fold(r[0]) == r[0] {
+  if r.len() != 1 || unicode.simple_fold(r[0]) == r[0] {
     fold = false
   }
   g.fold[f.i] = fold
@@ -2177,10 +2118,10 @@ fn (var g: Prog) ascii_bytes() {
           let r0 = rs[0]
           ascii_set(a, b, r0)
           if g.fold[pc] {
-            var r1 = simple_fold(r0)
+            var r1 = unicode.simple_fold(r0)
             while r1 != r0 {
               ascii_set(a, b, r1)
-              r1 = simple_fold(r1)
+              r1 = unicode.simple_fold(r1)
             }
           }
         } else {
@@ -2377,12 +2318,12 @@ fn rune_matches(g: Prog, pc: Int, r: Int) -> Bool {
       return true
     }
     if g.fold[pc] {
-      var r1 = simple_fold(r0)
+      var r1 = unicode.simple_fold(r0)
       while r1 != r0 {
         if r == r1 {
           return true
         }
-        r1 = simple_fold(r1)
+        r1 = unicode.simple_fold(r1)
       }
     }
     return false
@@ -2708,10 +2649,10 @@ fn one_pass_runes(g: Prog, pc: Int) -> List[Int] {
     let r0 = rs[0]
     var all = [r0]
     if g.fold[pc] {
-      var r1 = simple_fold(r0)
+      var r1 = unicode.simple_fold(r0)
       while r1 != r0 {
         all.push(r1)
-        r1 = simple_fold(r1)
+        r1 = unicode.simple_fold(r1)
       }
     }
     var i = 1
