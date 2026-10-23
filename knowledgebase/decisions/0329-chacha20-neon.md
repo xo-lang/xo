@@ -49,6 +49,28 @@ The arm64 SLP pass (decision 0323) pairs Float operations only.
   TLS) must not be mapped in a build whose backends cannot lower it:
   gotchas/intrinsic-mapped-before-lowered.md.
 
+## Addendum 2026-10-22: one loop over the record (cpu.chacha_stream4)
+
+Xo Lang 3's bench/perf/chacha put ChaCha20 alone at 1.23x Go's
+chacha_arm64.s on linux/arm64. The kernel's rounds were already Go's
+(rev32, tbl for the 8 bit rotation, shl and sri), but chacha.xo called it
+once per 256 bytes and stored the four counters as words before each
+call. cpu.chacha_stream4(dst, src, st, n) runs the kernel as one loop
+over n bytes (a multiple of 256), the counters at st advanced by 4 with
+a vector add (v31 the step, so 6 free registers instead of 7) and stored
+back; compiler/ssa a64chacha.xo generates the lines for both arm64
+lowerings (the native emitter, LLVM inline asm), and rt.chacha_blocks4
+uses the same generator unchanged. The portable body loops over
+chacha_blocks4. Docker linux/arm64, `xo bench --ab --rounds=10`: xor
+0.888 of main (0.880 to 0.892), 1.13x Go's time before and 1.005x
+after; seal 0.919 of main. On the Mac the instructions fall 4.3% and
+the time does not change (main was already even with Go there).
+
+An eight block kernel needs 32 state registers of the 24 a call may
+clobber; the next step past Go is OpenSSL's mix of NEON and scalar
+blocks (chacha-armv8.pl: four NEON blocks with two in general purpose
+registers), measured with the same driver.
+
 ## Alternatives
 
 - (a) An integer-lane SLP stage (4 x 32 bit add, eor, rotate) for

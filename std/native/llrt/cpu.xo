@@ -1092,6 +1092,22 @@ pub fn ghash8_soft(y: Int, hp: Int, d: Int) {
 /// portable body.
 pub fn chacha_blocks4(dst: Int, src: Int, st: Int) { chacha_blocks4_soft(dst, src, st) }
 
+/// chacha_blocks4 over n bytes (a multiple of 256) at dst and src, the
+/// four counters at st advanced by 4 for each 256 (modulo 2^32). The
+/// arm64 emitter and LLVM there run one NEON loop, which overlaps a
+/// group's rounds with the next's (a call a group waits for its counter
+/// stores); elsewhere a call a group.
+pub fn chacha_stream4(dst: Int, src: Int, st: Int, n: Int) {
+  var i = 0
+  while i < n {
+    chacha_blocks4(dst.wrapping_add(i), src.wrapping_add(i), st)
+    for b in 0..4 {
+      rt.mem_store(st, 64 + 4 * b, (rt.mem_load(st, 64 + 4 * b, 4) + 4) & 0xFFFFFFFF, 4)
+    }
+    i += 256
+  }
+}
+
 /// chacha_blocks4's body.
 pub fn chacha_blocks4_soft(dst: Int, src: Int, st: Int) {
   for b in 0..4 {

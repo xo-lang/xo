@@ -1,5 +1,21 @@
 # std/tls changes
 
+## 2026-10-22: speedup: ChaCha20's NEON kernel loops over the record
+
+- Kind: speedup
+- Commit: (this commit)
+- Found by: Xo Lang 3's bench/perf/chacha against golang.org/x/crypto (bench/results/chacha-poly1305-2026-10-22.md: xor 1.23x Go)
+- Go reference: golang.org/x/crypto/chacha20 chacha_arm64.s xorKeyStreamVX (one loop over every 256 bytes, the counters advanced in a register)
+- Test: chacha_blocks4, crypto_prims, tls12_client, tls12_server, tls13 goldens (arm64, LLVM with Go parity), TestConstantTimeLLVM, test/codegen
+
+ChaCha20 called the four block kernel once per 256 bytes, storing the
+four counters into its state first. cpu.chacha_stream4 runs the same
+kernel as one loop over the whole run of 256 byte groups, the counters
+advanced with a vector add (decision 0329 addendum). Docker linux/arm64,
+`xo bench --ab`, 20,000 records of 16 KiB: ChaCha20 alone 0.888 of
+main's time (1.13x Go's before, 1.005x after), seal 0.919. amd64 and wasm
+run the portable body as before.
+
 ## 2026-10-22: speedup: AES-GCM records eight blocks a round on arm64
 
 - Kind: speedup
