@@ -1,8 +1,9 @@
 # 0360: A whole-build key: reuse the linked binary when nothing that feeds the build changed
 
-Status: Proposed (Xo Lang 2, 2026-10-23): 0351's stage 3, for the lead
-and then the owner. No code yet; the measurements below were taken
-first.
+Status: Proposed (Xo Lang 2, 2026-10-23): 0351's stage 3. The lead
+approved stages 1 and 2 (opt-in, `XO_WHOLE_BUILD=on`) on 2026-10-23,
+with content hashing by default and the stat path opt-in (below);
+stage 3, on by default, goes to the owner with stage 2's numbers.
 
 ## Context
 
@@ -115,16 +116,23 @@ the process's own inputs are not recorded. A note under
 3. For each manifest:
    - compare the recorded environment;
    - redo each probe and listing;
-   - stat each file. An equal size and modification time trusts the
-     recorded hash; otherwise read the file and compare its sha256.
-   - A file whose modification time was within 2 s of the manifest's
-     write time is always hashed, Go's and git's "racy" rule. FileInfo
-     has no inode or change time, so an edit in the same millisecond at
-     the same size would otherwise pass.
+   - read each recorded file and compare its sha256 (the default; lead,
+     2026-10-23: correctness first). A same-size edit whose
+     modification time was put back (`touch -r`) changes the hash and
+     misses. Estimated cost: about 30 ms a hit for the CRUD server (22.8
+     ms to read and hash all 273 files, of which the build reads about
+     194).
+   - `XO_WHOLE_BUILD=stat`, the opt-in fast path: an equal size and
+     modification time trusts the recorded hash, and only a file that
+     differs is read. A file whose modification time was within 2 s of
+     the manifest's write time is always hashed, Go's and git's "racy"
+     rule. Estimated cost: about 10 ms a hit. Its known gap, which Go's
+     file hash cache shares: a same-size edit with the modification time
+     put back is not seen (FileInfo has no inode or change time).
 4. On the first manifest that matches, clone the stored binary to the
    output (`clonefile` on APFS, else a copy), replay the diagnostics,
-   and exit. A match that needed hashes rewrites the manifest's stats,
-   so the next hit is a stat hit.
+   and exit. On the stat path, a match that needed hashes rewrites the
+   manifest's stats, so the next lookup is a stat hit.
 5. Otherwise, run the full build with the recorders on, then store the
    binary and the manifest by temporary file and rename (two builds
    racing store two equal entries).
@@ -170,6 +178,12 @@ times and pruning, and the verify run catches a change to that.
    - the same program built into another directory with the same
      output name hits; with another name it misses;
    - a std file edited in place misses;
+   - a std file edited at the same size with its modification time put
+     back by `touch -r` misses on the default, and hits on
+     `XO_WHOLE_BUILD=stat`, where that is the documented gap (lead);
+   - two builds of the same program into the same output at once leave
+     a whole binary that runs, never a torn one (temporary file and
+     rename; lead);
    - a build that ran cc is not stored;
    - verify passes on all of these and fails on a planted wrong entry;
    - the replayed warning matches.
@@ -181,8 +195,10 @@ times and pruning, and the verify run catches a change to that.
 ## Consequences
 
 - An unchanged warm build is expected to fall from 0.57 s to about
-  10 ms for the CRUD server, and from 0.28 s to about 10 ms for hello:
-  under Go's 0.08 s and Rust's 0.03 s, if the estimate holds. The gap the
+  30 ms for the CRUD server (about 10 ms on the stat path), and from
+  0.28 s to less for hello:
+  under Go's 0.08 s and level with Rust's 0.03 s (the stat path under
+  both), if the estimates hold. The gap the
   comparison pages state closes for the no-change case only.
 - Builds after an edit are unchanged. The edit row (0.57 s against Go's
   0.24 s) is the next target, the passes' per-function walk.
