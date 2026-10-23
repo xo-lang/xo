@@ -229,7 +229,17 @@ create`. The order:
 4. in `../xo-publish`, `scripts/release.sh`, then release-verify.sh per
    host;
 5. the owner runs `publish.sh push`;
-6. the owner runs `release-publish.sh`.
+6. the owner runs `release-publish.sh`;
+7. the Xo against Go comparison on the released darwin/arm64 binary
+   (owner, 2026-10-22, every release): unpack the archive, then
+   `HEAVY_CLASS=bulk heavy.sh vsgo scripts/release-vs-go.sh
+   UNPACKED/bin/xo OUT` in the private checkout, and commit
+   OUT/report.md as `bench/results/release-vs-go-vX.Y.Z.md`. It builds
+   bench/perf's Go-twin programs (llvm, collections, conc) with xo and
+   Go: compile cold, warm and after a one function edit, peak build
+   memory, binary size, and each workload's run under `xo bench --ab`
+   (wall, CPU, peak RSS; Go is A, Xo is B). Last verified: 2026-10-22
+   (smoke run, 3 workloads).
 `scripts/release-verify.sh ARCHIVE [OUTDIR]` checks an archive on its
 host from a checkout of the same commit: unpacked clean, with no Go on
 PATH `xo version`, `rtpack --status`, `check`, and a hello program on
