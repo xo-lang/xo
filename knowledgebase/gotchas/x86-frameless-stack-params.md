@@ -28,6 +28,10 @@ result stores of a block outside the frame's region use 8 + 8k. When an
 allocator or layout change makes a function frameless at its entry,
 run a program with stack-passed parameters on amd64 (the golden above).
 
-Not fixed yet: dwvars.xo describes a stack parameter's DWARF location
-with x86_in_arg too, so XO_TRACEBACK=locals can show such a parameter
-8 bytes off inside a frameless block.
+The DWARF locations (dwvars.xo x86_dv_op) still use x86_in_arg, and
+need not: a value stays in its incoming stack word only through the
+pass arg_slots, which is off on x86 when the function is shrink wrapped
+(regalloc.xo), and a block without the frame has no spill slots, so no
+rsp relative location is described inside one. If arg_slots is turned
+on for shrink wrapped x86 functions, those locations need the same
+frameless offset.
