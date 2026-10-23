@@ -3,7 +3,7 @@
 ## 2026-10-22: perf: split and lines cut views without the second check (native)
 
 - Kind: perf
-- Commit: this commit
+- Commit: 128a10711
 - Found by: bench/results/views-trim-2026-10-22.md (split 446.6 M instructions against Go's 403.8 M, lines 178.8 M against 223.9 M: every piece ran the clamp and the range check twice)
 - Go reference: strings.Split, bytes.Split (subslices, no check)
 - Test: goldens views_split, str_ops_table, strings, text_helpers and the http goldens on arm64 and LLVM with Go parity; std corpora
