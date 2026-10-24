@@ -72,7 +72,8 @@ pub struct Config {
 pub struct Outcome {
   pub name: Str
   pub dir: Str
-  /// "pass", "cached", or "fail".
+  /// "pass", "cached", "unsupported" (a program the target or backend cannot
+  /// build by design, see classify), or "fail".
   pub status: Str
   pub why: Str = ""
   pub build_ms: Int = 0
@@ -470,7 +471,47 @@ pub fn run_goldens(os: Os, cfg0: Config, dirs: List[Str]) -> List[Outcome] uses 
   }
   os.fs.remove_all(cfg.bins).ok()
   prune_build_dirs(os, cfg.out)
-  outs.sort_by(fn(o: Outcome) { o.dir })
+  let sorted = outs.sort_by(fn(o: Outcome) { o.dir })
+  sorted.map(fn(o: Outcome) { classify(os.fs, cfg, o) })
+}
+
+/// Whether a build failure is a documented limit, not a regression: a
+/// program with a `use c` source built for another target (xo does not
+/// cross link with a C compiler: linux/amd64 says so, windows/amd64's
+/// clang cannot compile the host's C), and the wasm backend's own
+/// unsupported calls (stage 2, no sockets). 2026-10-24: new goldens
+/// shifted hourly.sh's every-4th sample onto use_c_add.
+fn classify(fs: Fs, cfg: Config, o: Outcome) -> Outcome uses fs.read {
+  if o.status != "fail" || !o.why.starts_with("build: ") {
+    return o
+  }
+  let limit = o.why.contains("does not cross link") || o.why.contains("backend does not support") || (cross_target(cfg) && has_use_c(fs, o.dir))
+  if limit { o with {status: "unsupported"} } else { o }
+}
+
+/// Whether the build flags name a --target (the caller names one to
+/// cross build).
+fn cross_target(cfg: Config) -> Bool {
+  cfg.flags.any(fn(f: Str) { f.contains("--target=") })
+}
+
+/// Whether a .xo file of directory d has a `use c` line.
+fn has_use_c(fs: Fs, d: Str) -> Bool uses fs.read {
+  let ents = match fs.read_dir(d) {
+    Ok(es) => es
+    Err(_) => return false
+  }
+  for e in ents {
+    if !e.is_dir && e.name.ends_with(".xo") {
+      let src = fs.read("${d}/${e.name}").ok() ?? "".bytes()
+      for l in (src.to_str() ?? "").split("\n") {
+        if l.starts_with("use c ") || l.starts_with("use c\t") {
+          return true
+        }
+      }
+    }
+  }
+  false
 }
 
 /// Prunes the build directories the runs' builds leave under out (xo
@@ -714,10 +755,12 @@ fn write_times(fs: Fs, path: Str, old: Map[Str, Int], outs: List[Outcome]) uses 
 pub fn report(os: Os, cfg: Config, outs: List[Outcome], wall: Duration) -> Int uses stdio {
   var pass = 0
   var cachedn = 0
+  var unsup = 0
   var fails: List[Outcome] = []
   for o in outs {
     match o.status {
       "pass" => pass += 1
+      "unsupported" => unsup += 1
       "cached" => {
         pass += 1
         cachedn += 1
@@ -729,9 +772,10 @@ pub fn report(os: Os, cfg: Config, outs: List[Outcome], wall: Duration) -> Int u
     for o in outs {
       os.stdio.println("{\"name\":${json_str(o.name)},\"dir\":${json_str(o.dir)},\"status\":${json_str(o.status)},\"why\":${json_str(o.why)},\"build_ms\":${o.build_ms},\"run_ms\":${o.run_ms}}")
     }
-    os.stdio.println("{\"programs\":${outs.len()},\"pass\":${pass},\"cached\":${cachedn},\"fail\":${fails.len()},\"wall_ms\":${wall.millis()}}")
+    os.stdio.println("{\"programs\":${outs.len()},\"pass\":${pass},\"cached\":${cachedn},\"unsupported\":${unsup},\"fail\":${fails.len()},\"wall_ms\":${wall.millis()}}")
   } else {
-    os.stdio.println("${outs.len()} programs: ${pass} pass, ${fails.len()} fail (${cachedn} cached, ${wall.millis()} ms)")
+    let un = if unsup > 0 { ", ${unsup} unsupported" } else { "" }
+    os.stdio.println("${outs.len()} programs: ${pass} pass${un}, ${fails.len()} fail (${cachedn} cached, ${wall.millis()} ms)")
     var reasons: Map[Str, Int] = {}
     for o in fails {
       let k = if o.why.len() > 90 { o.why[0..90] } else { o.why }

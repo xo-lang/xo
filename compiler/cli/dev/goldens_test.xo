@@ -28,3 +28,19 @@ test "last_msg skips the leak check line a compiler adds when it exits" {
   expect(last_msg("a\nb\n") == "b")
   expect(last_msg("") == "")
 }
+
+test "classify counts a cross build of a use c program and the cross link error as unsupported" {
+  os.fs.create_dir_all("u/c")?
+  os.fs.write("u/c/main.xo", b"use c \"a.h\" link \"a.c\"\nfn main() {}\n")?
+  os.fs.create_dir_all("u/plain")?
+  os.fs.write("u/plain/main.xo", b"fn main() {}\n")?
+  let cross = Config{xo: "xo", std: "std", out: "out", flags: ["--backend=amd64", "--target=linux/amd64"]}
+  let host = Config{xo: "xo", std: "std", out: "out"}
+  let fail = fn(dir: Str, why: Str) -> Outcome { Outcome{name: "x", dir: dir, status: "fail", why: why} }
+  expect(classify(os.fs, cross, fail("u/c", "build: xo: syntax")).status) == "unsupported"
+  expect(classify(os.fs, cross, fail("u/plain", "build: xo: syntax")).status) == "fail"
+  expect(classify(os.fs, host, fail("u/c", "build: xo: syntax")).status) == "fail"
+  expect(classify(os.fs, host, fail("u/plain", "build: xo: linux/amd64 links with a C compiler and xo does not cross link with one")).status) == "unsupported"
+  expect(classify(os.fs, host, fail("u/plain", "build: xo: the wasm backend does not support the call `rt.heap_big`")).status) == "unsupported"
+  expect(classify(os.fs, cross, fail("u/c", "differs: line 1")).status) == "fail"
+}
