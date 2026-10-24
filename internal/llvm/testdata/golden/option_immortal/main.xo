@@ -1,0 +1,72 @@
+// None and Some of a constant string are immortal to the reference
+// counting (compiler/ssa rc.xo imm_at: a variant of only immortal fields
+// is one immortal leaf, no retain or release): stored in fields, lists
+// and maps, replaced by counted values and back, dropped, and passed to
+// tasks, the counts stay balanced (TestGoldenRun's leak check) and the
+// values right.
+
+struct Slot {
+  name: Str?
+  tag: Str?
+}
+
+fn pick(i: Int) -> Str? {
+  if i % 3 == 0 {
+    return None
+  }
+  if i % 3 == 1 {
+    return Some("lit")
+  }
+  Some("made ${i}")
+}
+
+fn show(o: Str?) -> Str {
+  match o {
+    Some(s) => s
+    None => "-"
+  }
+}
+
+fn churn(n: Int) -> Int {
+  var slots: List[Slot] = []
+  var m: Map[Int, Str?] = {}
+  var total = 0
+  for i in 0..n {
+    var s = Slot{name: None, tag: Some("lit")}
+    s.name = pick(i)
+    if i % 5 == 0 {
+      s.tag = pick(i + 2)
+    }
+    slots.push(s)
+    m[i % 7] = pick(i)
+    if slots.len() > 9 {
+      slots = slots[5..slots.len()]
+    }
+    total += show(s.name).len() + show(s.tag).len() + show(m.get(i % 7) ?? None).len()
+  }
+  let keep: List[Str?] = [None, Some("lit"), pick(2), None]
+  for o in keep {
+    total += show(o).len()
+  }
+  total
+}
+
+fn main(os: Os) {
+  os.stdio.println("churn ${churn(1000)}")
+  let sums = scope s {
+    var ts = []
+    for k in 0..4 {
+      let seed: Str? = if k % 2 == 0 { None } else { Some("lit") }
+      ts.push(s.spawn(fn() -> Int { churn(300 + k) + show(seed).len() }))
+    }
+    var out: List[Int] = []
+    for t in ts {
+      out.push(t.await)
+    }
+    out
+  }
+  os.stdio.println("tasks ${sums.map(fn(x) { "${x}" }).join(" ")}")
+  let o: Str? = Some("lit")
+  let n: Str? = None
+  os.stdio.println("${show(o)} ${show(n)} ${o == Some("lit")} ${n == None}")
+}

@@ -1386,6 +1386,18 @@ fn imm_at(f: Func, v: Int, parts: List[Str], k: Int, sums: Map[Str, List[Bool]],
     return true
   }
   if k >= parts.len() {
+    if x.op == Op.Variant {
+      // an enum is one leaf whose release releases its fields: a variant
+      // of nothing but immortal fields (None, Some of a constant string)
+      // is immortal (2026-10-24: view_lens hands an option of a view the
+      // empty string, and drops its releases)
+      for a in x.args {
+        if !imm_at(f, a, parts, k, sums, depth + 1) {
+          return false
+        }
+      }
+      return true
+    }
     return imm_value(x) || const_list(f, x)
   }
   let idx = Int.parse(parts[k]) ?? -1

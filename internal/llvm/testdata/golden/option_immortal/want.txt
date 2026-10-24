@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+churn 11128
+tasks 3292 3304 3311 3332
+lit - true true
+--- stderr

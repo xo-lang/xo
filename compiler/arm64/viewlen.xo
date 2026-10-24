@@ -70,6 +70,41 @@ fn view_lens(var f: ssa.Func) -> Bool {
     let x = f.values[v]
     cand[v] = x.op == ssa.Op.Call && aux_str(x.aux) == "rt.str_view" && x.args.len() == 3 && x.ty == st
   }
+  // an option of a Str (2026-10-24, DS-2's `(b.cut_prefix(p) ?? b"").len()`:
+  // the view travels in a variant, through option parameters, out of a
+  // payload): its types are those of a variant of one Str; a variant of
+  // such a type (of one view, or of none) and such a block parameter are
+  // option candidates, and a payload of one, a Str, is a view whose
+  // length the option carries beside it
+  var otys: Map[Int, Bool] = {}
+  for v in 0..n {
+    let x = f.values[v]
+    if x.block >= 0 && x.op == ssa.Op.Variant && x.args.len() == 1 && f.values[x.args[0]].ty == st {
+      otys[x.ty] = true
+    }
+  }
+  var ocand: List[Bool] = []
+  for _ in 0..n {
+    ocand.push(false)
+  }
+  if !otys.is_empty() {
+    for b in 0..f.blocks.len() {
+      if b > 0 {
+        for p in f.blocks[b].params {
+          ocand[p] = otys.contains(f.values[p].ty)
+        }
+      }
+      for v in f.blocks[b].instrs {
+        let x = f.values[v]
+        if x.op == ssa.Op.Variant && otys.contains(x.ty) {
+          ocand[v] = x.args.is_empty() || cand[x.args[0]]
+        }
+        if x.op == ssa.Op.Payload && x.ty == st && x.args.len() == 1 && otys.contains(f.values[x.args[0]].ty) {
+          cand[v] = true
+        }
+      }
+    }
+  }
   // drop a candidate with any other use, until none changes
   var changed = true
   while changed {
@@ -79,9 +114,13 @@ fn view_lens(var f: ssa.Func) -> Bool {
         continue
       }
       var ok = true
+      let xv = f.values[v]
+      if xv.op == ssa.Op.Payload && !ocand[xv.args[0]] {
+        ok = false
+      }
       for u in vuses[v] {
         let y = f.values[u]
-        if !((y.op == ssa.Op.Call && aux_str(y.aux) == "Str.len" && y.args.len() == 1) || (y.op == ssa.Op.Release && y.args.len() == 1)) {
+        if !((y.op == ssa.Op.Call && aux_str(y.aux) == "Str.len" && y.args.len() == 1) || (y.op == ssa.Op.Release && y.args.len() == 1) || (y.op == ssa.Op.Variant && ocand[u] && xv.op == ssa.Op.Call)) {
           ok = false
           break
         }
@@ -99,10 +138,52 @@ fn view_lens(var f: ssa.Func) -> Bool {
         changed = true
       }
     }
+    // an option candidate: read only by tags, candidate payloads and
+    // releases, passed only to option candidates, of a candidate view
+    for v in 0..n {
+      if !ocand[v] {
+        continue
+      }
+      var ok = true
+      let x = f.values[v]
+      if x.op == ssa.Op.Variant && !x.args.is_empty() && !cand[x.args[0]] {
+        ok = false
+      }
+      // a parameter: every value coming in is a candidate too (its length
+      // rides the edge beside it)
+      if x.op == ssa.Op.Param && x.block > 0 {
+        let k = f.blocks[x.block].params.index_of(v) ?? -1
+        for e in f.blocks[x.block].preds {
+          let args = f.edges[e].args
+          if k < 0 || k >= args.len() || args[k] < 0 || args[k] >= n || !ocand[args[k]] {
+            ok = false
+          }
+        }
+      }
+      for u in vuses[v] {
+        let y = f.values[u]
+        if !(y.op == ssa.Op.Tag || (y.op == ssa.Op.Payload && cand[u]) || (y.op == ssa.Op.Release && y.args.len() == 1)) {
+          ok = false
+          break
+        }
+      }
+      if ok {
+        for (e, k) in euses[v] {
+          if !ocand[f.blocks[f.edges[e].to].params[k]] {
+            ok = false
+            break
+          }
+        }
+      }
+      if !ok {
+        ocand[v] = false
+        changed = true
+      }
+    }
   }
   var any = false
   for v in 0..n {
-    any = any || cand[v]
+    any = any || cand[v] || ocand[v]
   }
   if !any {
     return false
@@ -123,13 +204,92 @@ fn view_lens(var f: ssa.Func) -> Bool {
       view[v] = true
     }
   }
+  // an option candidate's length: its view's (the variant then holds the
+  // immortal empty string), 0 for none, an Int parameter beside an option
+  // parameter; a payload of one is that length (a view, as above)
+  var olen: Map[Int, Int] = {}
+  for b in 0..f.blocks.len() {
+    if b > 0 {
+      for p in f.blocks[b].params {
+        if ocand[p] {
+          olen[p] = f.add_param(b, it)
+        }
+      }
+    }
+  }
+  for b in 0..f.blocks.len() {
+    var ins: List[Int] = []
+    for v in f.blocks[b].instrs {
+      let x = f.values[v]
+      if ocand[v] && x.op == ssa.Op.Variant {
+        if x.args.is_empty() {
+          let z = f.add(b, ssa.Op.Const, it, ssa.Aux.I(n: 0), [])
+          ins.push(z)
+          olen[v] = z
+        } else {
+          let e = f.add(b, ssa.Op.Const, st, ssa.Aux.S(s: ""), [])
+          ins.push(e)
+          olen[v] = x.args[0]
+          f.values[v].args = [e]
+        }
+      }
+      ins.push(v)
+    }
+    f.blocks[b].instrs = ins
+  }
+  for v in 0..n {
+    let x = f.values[v]
+    if cand[v] && x.op == ssa.Op.Payload {
+      let l = olen.get(x.args[0]) ?? -1
+      let z = f.add(x.block, ssa.Op.Const, it, ssa.Aux.I(n: 0), [])
+      // before v in its block
+      var ins: List[Int] = []
+      for u in f.blocks[x.block].instrs {
+        if u == z {
+          continue
+        }
+        if u == v {
+          ins.push(z)
+        }
+        ins.push(u)
+      }
+      f.blocks[x.block].instrs = ins
+      f.values[v].op = ssa.Op.Add
+      f.values[v].aux = ssa.Aux.None
+      f.values[v].args = [l, z]
+      f.values[v].ty = it
+      f.values[v].pad = -1
+      view[v] = true
+    }
+  }
+  // on each edge into an option parameter, the argument's length
+  for b in 0..f.blocks.len() {
+    let t = f.term(b)
+    if t < 0 {
+      continue
+    }
+    for e in f.values[t].succs {
+      let to = f.edges[e].to
+      var extra: List[Int] = []
+      for (k, a) in f.edges[e].args.indexed() {
+        let p = f.blocks[to].params[k]
+        if ocand[p] {
+          extra.push(olen.get(a) ?? a)
+        }
+      }
+      if !extra.is_empty() {
+        f.edges[e].args = f.edges[e].args + extra
+      }
+    }
+  }
   // a parameter keeps its Str, so every reference is released where it
   // was (a parameter may alias its argument, which is read after the
   // jump), and gets its length beside it
   var plen: Map[Int, Int] = {}
   for b in 1..f.blocks.len() {
     for p in f.blocks[b].params {
-      if cand[p] && !view[p] {
+      // (p < n: not a length parameter added above)
+      if p < n && cand[p] && !view[p] {
         plen[p] = f.add_param(b, it)
       }
     }
@@ -150,7 +310,7 @@ fn view_lens(var f: ssa.Func) -> Bool {
         if !plen.contains(p) {
           continue
         }
-        if view[a] {
+        if a < n && view[a] {
           extra.push(a)
           let c = f.add(b, ssa.Op.Const, st, ssa.Aux.S(s: ""), [])
           before_term(f, b, c)
@@ -176,12 +336,28 @@ fn view_lens(var f: ssa.Func) -> Bool {
       continue
     }
     for u in vuses[v] {
+      if f.values[u].op == ssa.Op.Variant {
+        // an option candidate's view: the variant now holds the empty
+        // string, its length rides beside the option
+        continue
+      }
       if f.values[u].op == ssa.Op.Release {
         if view[v] {
           gone[u] = true
         }
       } else {
         repl[u] = if view[v] { v } else { plen.get(v) ?? v }
+        gone[u] = true
+      }
+    }
+  }
+  // an option candidate holds the empty string or nothing: its releases go
+  for v in 0..n {
+    if !ocand[v] {
+      continue
+    }
+    for u in vuses[v] {
+      if f.values[u].op == ssa.Op.Release {
         gone[u] = true
       }
     }
