@@ -46,3 +46,8 @@ test "a malformed duration is a Usage error with exit status 2" {
     Err(e) => e.exit_code()
   }) == 2
 }
+
+test "FakeEnv.set_args is what env.args gives back" {
+  os.env.set_args(["app", "--wait", "2s"])
+  expect(os.env.args()) == ["app", "--wait", "2s"]
+}

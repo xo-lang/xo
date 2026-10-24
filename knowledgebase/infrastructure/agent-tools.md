@@ -156,6 +156,15 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   `-check` names each stale artifact and prints the one command that fixes
   them all. TestStdIndexCurrent and stdgen -check name it in their failure
   messages too.
+- `go run ./scripts/stdcoverage` prints every std function and method no
+  corpus or golden calls (internal/stdcoverage): std/*.xo and
+  std/native/prelude.xo against the calls in internal/stdtest's corpora,
+  internal/llvm's and internal/arm64's goldens, internal/gen's goldens and
+  cmd/xo's testdata, following std's own calls and the prelude lowering
+  (decision 0074). The -short TestStdAPICovered fails for an uncovered
+  declaration that internal/stdcoverage/allow.txt does not name with its
+  reason, and for an allowlist line that matches nothing; a new std
+  function or method needs a corpus, a golden, or such a line.
 - `go run ./scripts/stdgen` after changing a std type (a struct, enum,
   newtype, or interface in std/*.xo) or a std function's signature:
   regenerates std/rt/std_gen_M.go, the Go backend's declarations of

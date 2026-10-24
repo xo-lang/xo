@@ -1,0 +1,55 @@
+# stdcoverage's allowlist: declarations that no corpus or golden reaches,
+# one line each with the reason. Format: module.Symbol, whitespace, reason.
+# A trailing * matches a family (prelude.llrt_*).
+#
+# A line here says the declaration cannot have a corpus or golden call. When
+# one could, add the corpus instead. TestStdAPICovered fails both for an
+# uncovered declaration missing here and for a line here that matches
+# nothing, so this file cannot go stale quietly.
+
+# Native runtime hooks: the compiler lowers an intrinsic or a prelude call
+# to them (decision 0074), so no Xo source names them.
+prelude.llrt_*  native runtime hooks the compiler lowers a call or intrinsic to; no source call site
+
+# The bounds-check hooks the compiler emits at an index.
+prelude.slice_check  emitted at every Str/Bytes/List index, not written in source
+prelude.slice_fail  the failure path slice_check calls
+
+# Helpers internal/ssa calls directly rather than through a method.
+prelude.str_eq_lower  lowers a.to_lower() == b.to_lower()
+prelude.str_prefix7  the sorted() fast path's seven byte prefix
+prelude.list_sort_str  the sorted() fast path for List[Str]
+prelude.int_range_list  lowers Range.to_list
+
+# A child's stdio: the child inherits the program's own, so a corpus has
+# nothing to observe.
+prelude.Cmd.inherit  hands the child the program's own stdio
+prelude.cmd_inherit  the lowering of Cmd.inherit
+
+# The heap profiler and the memory budget act only under XO_PROF=heap and
+# XO_MAX_MEM, which a corpus does not set.
+debug.heap_start  heap profiling starts from the environment
+debug.mem_budget  the memory budget comes from XO_MAX_MEM
+debug.mem_label  the budget's label, set by XO_MAX_MEM's label
+debug.mem_mapped  the profiled heap's mapped bytes
+debug.mem_peak  the profiled heap's peak
+debug.mem_total  the profiled heap's total
+
+# Runtime self checks for `xo debug` and the realtime tests.
+internal.rt_probe  the runtime's probe hook, called by xo debug
+internal.rt_queued  the realtime queue depth, native backends only
+internal.rt_allocs  the realtime allocation count, native backends only
+internal.lock_shared  the shared fs lock a reader takes; no corpus opens one
+
+# std/xmlcodec's helpers: the xml corpus drives xmlcodec's marshal and
+# decode paths through the derive, and these are the steps inside them.
+xmlcodec.open_path  opens the path a field's parents name
+xmlcodec.chardata  character data inside the open element
+xmlcodec.comment  a comment inside the open element
+xmlcodec.parse_root  the root element of a text, inside the decode path
+xmlcodec.attr_of  an attribute of a local name, inside the decode path
+xmlcodec.direct_text  an element's own text, inside the decode path
+xmlcodec.float_text  Go's FormatFloat('g') for a JSON field
+xmlcodec.int_of  Go's ParseInt with the decode's error text
+xmlcodec.float_of  Go's ParseFloat with the decode's error text
+xmlcodec.bool_of  Go's ParseBool with the decode's error text

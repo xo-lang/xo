@@ -653,6 +653,11 @@ test "Date.days_until is the whole days between the two dates" {
   }
   expect(show3(bad)) == []
 }
+
+test "local with a fake Env reads no TZ and gives utc" {
+  let z = time.local(os.env)?
+  expect(z.name()) == "UTC"
+}
 `)
 	return o.String()
 }
