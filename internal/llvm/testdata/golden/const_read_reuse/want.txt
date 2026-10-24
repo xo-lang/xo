@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+walk 52 52
+twice faulted
+twice faulted
+--- stderr

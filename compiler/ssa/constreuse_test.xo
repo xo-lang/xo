@@ -1,0 +1,101 @@
+// reuse_const_reads (constreuse.xo): a constant read again where a read
+// of it dominates gives that read's list.
+
+/// Appends const_read's shape for constant idx at the end of block b of
+/// f: its join and the join's parameter (the list). The join also
+/// carries variable x first, as the builder's joins do until
+/// remove_trivial_params.
+fn read_shape(var f: Func, b: Int, it: Int, bt: Int, idx: Int, x: Int) -> (Int, Int) {
+  let join = f.new_block()
+  let _xp = f.add_param(join, it)
+  let res = f.add_param(join, it)
+  let slow = f.new_block()
+  // the constant's number, before the read as const_read's caller makes it
+  let iv = f.add(b, Op.Const, it, Aux.I(n: idx), [])
+  let c16 = f.add(b, Op.Const, it, Aux.I(n: CONST_SVC_WORD), [])
+  let sw = f.add(b, Op.Call, it, Aux.S(s: "rt.static_word"), [c16])
+  let z = f.add(b, Op.Const, it, Aux.I(n: 0), [])
+  let e8 = f.add(b, Op.Const, it, Aux.I(n: 8), [])
+  let w = f.add(b, Op.Call, it, Aux.S(s: "rt.mem_load"), [sw, z, e8])
+  let c18 = f.add(b, Op.Const, it, Aux.I(n: CONST_TABLE_WORD), [])
+  let acq = f.add(b, Op.Const, it, Aux.I(n: CONST_ACQUIRE), [])
+  let t = f.add(b, Op.Call, it, Aux.S(s: "rt.slot_load"), [w, c18, acq])
+  let z2 = f.add(b, Op.Const, it, Aux.I(n: 0), [])
+  let ne = f.add(b, Op.Ne, bt, Aux.None, [t, z2])
+  let has = f.new_block()
+  let none = f.new_block()
+  let _b = f.branch(b, ne, has, none)
+  let _n = f.jump(none, slow, [])
+  let acq2 = f.add(has, Op.Const, it, Aux.I(n: CONST_ACQUIRE), [])
+  let s0 = f.add(has, Op.Call, it, Aux.S(s: "rt.slot_load"), [t, iv, acq2])
+  let two = f.add(has, Op.Const, it, Aux.I(n: CONST_FAULTED), [])
+  let gt = f.add(has, Op.Gt, bt, Aux.None, [s0, two])
+  let built = f.new_block()
+  let not = f.new_block()
+  let _b2 = f.branch(has, gt, built, not)
+  let _n2 = f.jump(not, slow, [])
+  let off = f.add(built, Op.Const, it, Aux.I(n: idx * 8), [])
+  let e8b = f.add(built, Op.Const, it, Aux.I(n: 8), [])
+  let l = f.add(built, Op.Call, it, Aux.S(s: "rt.mem_load"), [t, off, e8b])
+  let _j = f.jump(built, join, [x, l])
+  let once = f.add(slow, Op.Call, it, Aux.S(s: "rt.const_once"), [iv])
+  let _j2 = f.jump(slow, join, [x, once])
+  (join, res)
+}
+
+/// f() reads constant 0, then constant 0 again and constant 1, and
+/// returns the sum of the three lists (as Ints).
+fn three_reads() -> (Module, Func) {
+  var m = Module{}
+  let it = m.intern(SType{kind: Kind.Int, name: "Int"})
+  let bt = m.intern(SType{kind: Kind.Bool, name: "Bool"})
+  let fi = m.new_func("f", [it], [it])
+  var f = m.funcs[fi]
+  let x = f.blocks[0].params[0]
+  let (j1, r1) = read_shape(f, 0, it, bt, 0, x)
+  let (j2, r2) = read_shape(f, j1, it, bt, 0, x)
+  let (j3, r3) = read_shape(f, j2, it, bt, 1, x)
+  let a = f.add(j3, Op.Add, it, Aux.None, [r1, r2])
+  let s = f.add(j3, Op.Add, it, Aux.None, [a, r3])
+  let _r = f.add(j3, Op.Return, -1, Aux.None, [s])
+  m.funcs[fi] = f
+  (m, m.funcs[fi])
+}
+
+fn count_calls(f: Func, name: Str) -> Int {
+  var n = 0
+  for v in f.values {
+    if v.block >= 0 && v.op == Op.Call && aux_name(v.aux) == name {
+      n += 1
+    }
+  }
+  n
+}
+
+test "const_reads finds each inline constant read" {
+  let made = three_reads()
+  expect(const_reads(made.1).len()) == 3
+}
+
+test "a dominated read of the same constant gives the first read's list" {
+  let made = three_reads()
+  var m = made.0
+  var f = made.1
+  expect(reuse_const_reads(f)) == true
+  cleanup_func(f)
+  expect(count_calls(f, "rt.static_word")) == 2
+  expect(count_calls(f, "rt.const_once")) == 2
+  expect(m.verify_func(f)) == []
+}
+
+test "a removed read's edges pass nothing" {
+  let made = three_reads()
+  var f = made.1
+  expect(reuse_const_reads(f)) == true
+  let live = reachable(f)
+  for e in f.edges {
+    if !live[e.from] {
+      expect(e.args) == []
+    }
+  }
+}

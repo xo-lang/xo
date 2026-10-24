@@ -593,6 +593,8 @@ fn cleaned(f0: Func) -> Func {
 }
 
 fn cleanup_func(var f: Func) {
+  // a constant read again where a read of it dominates (constreuse.xo)
+  let _c = reuse_const_reads(f)
   prune_func(f)
   remove_trivial_params(f)
   renumber(f)

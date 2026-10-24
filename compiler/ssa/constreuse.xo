@@ -1,0 +1,220 @@
+// A constant read once per function path (2026-10-24): show.xo
+// const_read reads a constant's list inline at every mention, so a loop
+// that names a constant table twice an iteration (DS-2's cut_prefix
+// shape: `TEXTS[i % TEXTS.len()]`) read the services record, the
+// constants table and the slot four times, 45 to 49 instructions a
+// mention against a local's none. A read that an earlier read of the same
+// constant dominates (that read completed: built, or faulted and never
+// reached here) gives that read's value; once built, a slot never
+// changes until exit (consts.xo), so the two are the same list.
+
+/// One inline constant read of f (const_read's shape): its first block,
+/// its branch on the table word, the values it loaded there, its join,
+/// the join's parameter that is the list (the builder's variables are
+/// the join's other parameters until remove_trivial_params), the built
+/// path's edge arguments with the list at pi, and the constant's index.
+struct CRead {
+  start: Int
+  br: Int
+  loads: List[Int]
+  join: Int
+  res: Int
+  args: List[Int]
+  pi: Int
+  idx: Int
+}
+
+/// The inline constant reads of f, by const_read's shape: in one block a
+/// static_word(CONST_SVC_WORD), its mem_load, the table word's slot_load
+/// (CONST_TABLE_WORD), a compare of it with 0 that the block's branch
+/// tests; the built path's mem_load of the slot's list jumping to the
+/// join, whose one parameter is the list; the slot's index constant.
+fn const_reads(f: Func) -> List[CRead] {
+  var out: List[CRead] = []
+  for b in 0..f.blocks.len() {
+    let t = f.term(b)
+    if t < 0 || f.values[t].op != Op.Branch || f.values[t].args.len() != 1 {
+      continue
+    }
+    let cmp = f.values[t].args[0]
+    let cv = f.values[cmp]
+    if cv.op != Op.Ne || cv.block != b || cv.args.len() != 2 || const_int(f, cv.args[1]) != Some(0) {
+      continue
+    }
+    let tw = cv.args[0]
+    let tv = f.values[tw]
+    if tv.op != Op.Call || tv.block != b || aux_name(tv.aux) != "rt.slot_load" || tv.args.len() != 3 || const_int(f, tv.args[1]) != Some(CONST_TABLE_WORD) {
+      continue
+    }
+    let w = tv.args[0]
+    let wv = f.values[w]
+    if wv.op != Op.Call || wv.block != b || aux_name(wv.aux) != "rt.mem_load" || wv.args.is_empty() {
+      continue
+    }
+    let sw = wv.args[0]
+    let sv = f.values[sw]
+    if sv.op != Op.Call || sv.block != b || aux_name(sv.aux) != "rt.static_word" || sv.args.is_empty() || const_int(f, sv.args[0]) != Some(CONST_SVC_WORD) {
+      continue
+    }
+    // the slot's state read and the built list's load: t's other users
+    var idx = -1
+    var join = -1
+    var res = -1
+    var args: List[Int] = []
+    var pi = -1
+    var inner: List[Int] = []
+    var ok = true
+    for (vi, x) in f.values.indexed() {
+      if x.block < 0 || x.args.is_empty() || x.args[0] != tw || vi == cmp {
+        continue
+      }
+      if x.op != Op.Call {
+        ok = false
+        continue
+      }
+      let n = aux_name(x.aux)
+      if n == "rt.slot_load" && x.args.len() == 3 {
+        inner.push(x.block)
+        match const_int(f, x.args[1]) {
+          Some(k) => idx = k
+          None => ok = false
+        }
+      } else if n == "rt.mem_load" {
+        // the built path: its block jumps to the join with it
+        let jt = f.term(x.block)
+        if jt < 0 || f.values[jt].op != Op.Jump || f.values[jt].succs.len() != 1 {
+          ok = false
+          continue
+        }
+        let e = f.values[jt].succs[0]
+        let to = f.edges[e].to
+        pi = f.edges[e].args.index_of(vi) ?? -1
+        if pi < 0 || pi >= f.blocks[to].params.len() {
+          ok = false
+          continue
+        }
+        inner.push(x.block)
+        join = to
+        res = f.blocks[to].params[pi]
+        args = f.edges[e].args
+      } else {
+        ok = false
+      }
+    }
+    // the loads used only within the read
+    for v in [sw, w] {
+      for (vi, x) in f.values.indexed() {
+        if x.block >= 0 && x.args.contains(v) && vi != w && vi != tw {
+          ok = false
+        }
+      }
+    }
+    // the other arguments are the builder's variables, defined before
+    // the read: the start block can pass them too
+    for (k, a) in args.indexed() {
+      if k != pi && (inner.contains(f.values[a].block) || a == tw || a == w || a == sw || a == cmp) {
+        ok = false
+      }
+    }
+    if ok && idx >= 0 && join >= 0 {
+      out.push(CRead{start: b, br: t, loads: [sw, w, tw, cmp], join: join, res: res, args: args, pi: pi, idx: idx})
+    }
+  }
+  out
+}
+
+/// Gives each inline constant read that an earlier read of the same
+/// constant dominates that read's list, its own loads and branch gone
+/// (its start block jumps to its join with the list); whether any was.
+pub fn reuse_const_reads(var f: Func) -> Bool {
+  let reads = const_reads(f)
+  if reads.len() < 2 {
+    return false
+  }
+  let idom = dominators(f)
+  var kept: List[CRead] = []
+  var repl: Map[Int, Int] = {}
+  var any = false
+  // in the order of the blocks: an earlier read first where one
+  // dominates another
+  for r in reads {
+    var from = -1
+    for k in kept {
+      if k.idx == r.idx && idom[r.start] >= 0 && dominates(idom, k.join, r.start) {
+        from = k.res
+      }
+    }
+    if from < 0 {
+      kept.push(r)
+      continue
+    }
+    any = true
+    repl[r.res] = from
+    // the start block jumps to the join, which no longer reads the slot
+    var ins: List[Int] = []
+    for v in f.blocks[r.start].instrs {
+      if !r.loads.contains(v) && v != r.br {
+        ins.push(v)
+      }
+    }
+    for v in r.loads {
+      f.values[v].block = -1
+    }
+    f.values[r.br].block = -1
+    f.blocks[r.start].instrs = ins
+    var jargs = r.args
+    jargs[r.pi] = from
+    let _j = f.jump(r.start, r.join, jargs)
+  }
+  if !any {
+    return false
+  }
+  for vi in 0..f.values.len() {
+    if f.values[vi].block < 0 {
+      continue
+    }
+    var args: List[Int] = []
+    for a in f.values[vi].args {
+      args.push(repl.get(a) ?? a)
+    }
+    f.values[vi].args = args
+  }
+  // the removed reads' paths are unreachable now: their edges pass
+  // nothing (prune keeps the edges of the blocks it drops, and the
+  // reference counting's use lists read every edge's arguments)
+  let live = reachable(f)
+  for e in 0..f.edges.len() {
+    var args: List[Int] = []
+    if live[f.edges[e].from] {
+      for a in f.edges[e].args {
+        args.push(repl.get(a) ?? a)
+      }
+    }
+    f.edges[e].args = args
+  }
+  true
+}
+
+/// Whether each block of f is reachable from the entry.
+fn reachable(f: Func) -> List[Bool] {
+  var reach: List[Bool] = []
+  for _ in 0..f.blocks.len() {
+    reach.push(false)
+  }
+  var stack = [0]
+  reach[0] = true
+  while !stack.is_empty() {
+    let bl = stack.pop() ?? 0
+    let t = f.term(bl)
+    if t >= 0 {
+      for e in f.values[t].succs {
+        let to = f.edges[e].to
+        if !reach[to] {
+          reach[to] = true
+          stack.push(to)
+        }
+      }
+    }
+  }
+  reach
+}

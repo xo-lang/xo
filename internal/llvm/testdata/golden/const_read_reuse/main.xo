@@ -1,0 +1,39 @@
+// A constant read again where a read of it dominates gives that read's
+// list (ssa constreuse.xo): a loop naming two tables twice an iteration,
+// and a constant whose initializer faults, read twice in one function,
+// which faults at its first read each time.
+use std/task
+
+const TEXTS: List[Bytes] = [b",a,b", b" cc dd", b":e:f", b"gh"]
+const SEPS: List[Bytes] = [b",", b" ", b":"]
+
+fn boom() -> List[List[Int]] {
+  let xs: List[List[Int]] = []
+  [xs[3]]
+}
+
+const BAD: List[List[Int]] = boom()
+
+fn walk() -> Int {
+  var n = 0
+  for i in 0..50 {
+    n += (TEXTS[i % TEXTS.len()].cut_prefix(SEPS[i % SEPS.len()]) ?? b"").len()
+  }
+  n
+}
+
+fn twice() -> Int {
+  let a = BAD.len()
+  let b = BAD[0].len()
+  a + b
+}
+
+fn main(os: Os) {
+  os.stdio.println("walk ${walk()} ${walk()}")
+  for _ in 0..2 {
+    match task.isolate(fn() -> Int { twice() }) {
+      Ok(v) => os.stdio.println("twice ${v}")
+      Err(_) => os.stdio.println("twice faulted")
+    }
+  }
+}
