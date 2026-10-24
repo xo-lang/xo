@@ -284,6 +284,22 @@ func timeCorpus() string {
 		rfcRow{text: "1600-01-01T00:00:00Z",
 			note: "outside Time's range, so None (decision 0364)"},
 	)
+	// Xo's reader is stricter than Go's in shape: std/native/prelude.xo's
+	// time_parse_rfc3339 takes "two and four digit fields ... a '.' fraction
+	// ... Go's parser alone also takes a one digit hour, a comma fraction and
+	// offsets to +24:60". These two are Go's reading; Xo refuses them, so the
+	// expectation is None (the range rows above are decision 0364; these are
+	// shape, which the module comment states and no ADR decides).
+	for _, s := range []string{
+		"2010-02-04T21:00:57,012Z", // a comma fraction
+		"2010-02-04T1:00:57Z",      // a one digit hour
+	} {
+		if _, _, _, ok := timeRFC3339(s); !ok {
+			fmt.Fprintf(os.Stderr, "stdcorpus: Go refuses %q too, so it is not a difference to pin\n", s)
+			os.Exit(1)
+		}
+		rows = append(rows, rfcRow{text: s, note: "Go reads it; Xo refuses it, as std/native/prelude.xo time_parse_rfc3339 says Go's parser alone takes a comma fraction or a one digit hour"})
+	}
 	// Seeded instants from inside the range, every second and nanosecond
 	// shape: the text is Go's format of the same instant.
 	rr := rand.New(rand.NewSource(79))

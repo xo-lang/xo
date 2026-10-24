@@ -830,6 +830,10 @@ const RFC_CASES: List[(Str, Bool, Str, Int, Int)] = [
   ("2300-01-01T00:00:00Z", false, "", 0, 0),
   // outside Time's range, so None (decision 0364)
   ("1600-01-01T00:00:00Z", false, "", 0, 0),
+  // Go reads it; Xo refuses it, as std/native/prelude.xo time_parse_rfc3339 says Go's parser alone takes a comma fraction or a one digit hour
+  ("2010-02-04T21:00:57,012Z", false, "", 0, 0),
+  // Go reads it; Xo refuses it, as std/native/prelude.xo time_parse_rfc3339 says Go's parser alone takes a comma fraction or a one digit hour
+  ("2010-02-04T1:00:57Z", false, "", 0, 0),
   ("2185-01-01T21:17:23.617682494Z", true, "2185-01-01T21:17:23.617682494Z", 6784895843, 6784895843617),
   ("2045-10-06T20:44:59.682944925Z", true, "2045-10-06T20:44:59.682944925Z", 2390935499, 2390935499682),
   ("2110-12-15T11:03:26.25305644Z", true, "2110-12-15T11:03:26.25305644Z", 4448084606, 4448084606253),
