@@ -13,8 +13,10 @@ use std/crypto
 
 /// The record: each path in the first form it was met.
 struct Rec {
-  /// files read (their contents are hashed when the entry is stored)
-  reads: Map[Str, Bool] = {}
+  /// files read, to the SHA-256 of what the read returned (read and
+  /// read_text hash it where it is read, on the task that read it), ""
+  /// for a file opened or copied: the entry hashes those when it is stored
+  reads: Map[Str, Str] = {}
   /// "KIND PATH" to what the probe answered then (probe_of)
   probes: Map[Str, Str] = {}
   /// directories listed ("dir") or walked ("walk")
@@ -46,15 +48,21 @@ fn (f: RecFs) skipped(p: Str) -> Bool {
   false
 }
 
-fn (f: RecFs) note_read(path: Str) {
+/// Notes a read of path with the SHA-256 of what it returned ("" before
+/// the read, or for a file opened); false for a path under skip, which
+/// is not recorded (and so not worth hashing).
+fn (f: RecFs) note_read(path: Str, sum: Str) -> Bool {
   let p = f.abs(path)
-  if !f.skipped(p) {
-    f.rec.with(fn(var r) {
-      if !r.written.contains(p) {
-        r.reads[p] = true
-      }
-    })
+  if f.skipped(p) {
+    return false
   }
+  f.rec.with(fn(var r) {
+    let have = r.reads.get(p) ?? ""
+    if !r.written.contains(p) && have.is_empty() {
+      r.reads[p] = sum
+    }
+  })
+  true
 }
 
 fn (f: RecFs) note_probe(kind: Str, path: Str, answer: Str) {
@@ -111,13 +119,22 @@ fn (f: RecFs) exists(path: Str) -> Bool ! FsErr uses fs.read {
 }
 
 fn (f: RecFs) read(path: Str) -> Bytes ! FsErr uses fs.read {
-  f.note_read(path)
-  f.inner.read(path)
+  let recorded = f.note_read(path, "")
+  let b = f.inner.read(path)?
+  // only a recorded path is hashed: the caches' packs under skip are large
+  if recorded {
+    let _ = f.note_read(path, crypto.sha256(b).to_hex())
+  }
+  b
 }
 
 fn (f: RecFs) read_text(path: Str) -> Str ! FsErr uses fs.read {
-  f.note_read(path)
-  f.inner.read_text(path)
+  let recorded = f.note_read(path, "")
+  let s = f.inner.read_text(path)?
+  if recorded {
+    let _ = f.note_read(path, crypto.sha256(s.bytes()).to_hex())
+  }
+  s
 }
 
 fn (f: RecFs) read_dir(dir: Str) -> List[FileInfo] ! FsErr uses fs.read {
@@ -168,7 +185,7 @@ fn (f: RecFs) set_modified(path: Str, t: Time) -> () ! FsErr uses fs.write {
 }
 
 fn (f: RecFs) open(path: Str) -> File ! FsErr uses fs.read {
-  f.note_read(path)
+  let _ = f.note_read(path, "")
   f.inner.open(path)
 }
 
@@ -193,7 +210,7 @@ fn (f: RecFs) append(path: Str, data: Bytes) -> () ! FsErr uses fs.write {
 }
 
 fn (f: RecFs) copy(from: Str, to: Str) -> () ! FsErr uses fs {
-  f.note_read(from)
+  let _ = f.note_read(from, "")
   f.note_write(to)
   f.inner.copy(from, to)
 }

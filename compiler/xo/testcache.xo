@@ -118,9 +118,9 @@ fn run_key(os: Os, ctx: Ctx, o: Opts, args: List[Str], backend: Str) -> Str {
   k.strs(env.sort())
   k.str("${host_os(os)}/${host_arch()}")
   // the C toolchain the link uses, the SDK, and the prebuilt runtime
-  k.str(tool_id(os, ctx.goos, if o.cc.is_empty() { find_cc(os) } else { o.cc }, ["--version"]))
+  k.str(tool_id_memo(os, ctx, if o.cc.is_empty() { find_cc(os) } else { o.cc }, ["--version"]))
   if backend == "llvm" {
-    k.str(tool_id(os, ctx.goos, if o.cc.is_empty() { find_clang(os) } else { o.cc }, ["--version"]))
+    k.str(tool_id_memo(os, ctx, if o.cc.is_empty() { find_clang(os) } else { o.cc }, ["--version"]))
   }
   let memo = sysroot_memo(os, ctx)
   if !memo.is_empty() {
@@ -335,6 +335,8 @@ fn run_store(os: Os, ctx: Ctx, key: Str, c: check.Checker, std: Str, wd: Str, bi
   // the recorded reads (recorder.xo), else the whole std tree and every
   // module directory
   var files: List[Str] = []
+  // the SHA-256 of a file's contents where the build hashed them as it read
+  var sums: Map[Str, Str] = {}
   var dirs: List[Str] = []
   var walks: List[Str] = []
   var extra: List[Str] = []
@@ -352,6 +354,7 @@ fn run_store(os: Os, ctx: Ctx, key: Str, c: check.Checker, std: Str, wd: Str, bi
       }
       let own = fn(p: Str) -> Bool { made.contains(p) }
       files = rec.reads.keys().sort().filter(fn(p) { !own(p) })
+      sums = rec.reads
       for p in rec.lists.keys().sort() {
         if own(p) {
           continue
@@ -404,7 +407,8 @@ fn run_store(os: Os, ctx: Ctx, key: Str, c: check.Checker, std: Str, wd: Str, bi
       }
       _ => {}
     }
-    b.write("file ${sha_of(os, p)} ${hex_field(p)}\n")
+    let sum = sums.get(p) ?? ""
+    b.write("file ${if sum.is_empty() { sha_of(os, p) } else { sum }} ${hex_field(p)}\n")
   }
   for d in dirs {
     b.write("dir ${listing_of(os, d)} ${hex_field(d)}\n")

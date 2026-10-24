@@ -246,7 +246,7 @@ fn cached_cc_assemble(os: Os, ctx: Ctx, cc: Str, flags: List[Str], srcs: List[St
     let (objs, why) = cc_assemble(os, cc, flags, srcs, jobs)
     return (objs, why, srcs.len())
   }
-  let prefix = "xo backend v1 obj cc\x00${tool_id(os, ctx.goos, cc, ["--version"])}\x00${asm_cflags(flags).join("\x00")}"
+  let prefix = "xo backend v1 obj cc\x00${tool_id_memo(os, ctx, cc, ["--version"])}\x00${asm_cflags(flags).join("\x00")}"
   let keys = part_keys(prefix, srcs, texts, jobs)
   var objs: List[Str] = []
   var miss: List[Int] = []

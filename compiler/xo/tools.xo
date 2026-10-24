@@ -180,6 +180,24 @@ fn tool_id(os: Os, goos: Str, name: Str, args: List[Str]) -> Str {
   id
 }
 
+/// tool_id, once per process for a tool (its path and arguments): a build
+/// asks for the C compiler's id in the run cache key and again in the
+/// backend's keys, two process spawns each. A tool that changed between
+/// two xo processes still changes the id, the memo lives in ctx.
+fn tool_id_memo(os: Os, ctx: Ctx, name: Str, args: List[Str]) -> Str {
+  let m = match ctx.tools {
+    Some(m) => m
+    None => return tool_id(os, ctx.goos, name, args)
+  }
+  let k = "${look_path(os, name)}\x00${name}\x00${args.join("\x00")}"
+  if let Some(v) = m.with(fn(t) { t.get(k) }) {
+    return v
+  }
+  let id = tool_id(os, ctx.goos, name, args)
+  m.with(fn(var t) { t[k] = id })
+  id
+}
+
 /// The modification time of p in Unix nanoseconds (os.Stat's ModTime
 /// followed by UnixNano), from stat(1): FileInfo.modified is not finer
 /// than a millisecond.

@@ -4,6 +4,7 @@
 // and find each other's linked binaries in the same cache (XO_BIN_CACHE,
 // off by default; decision 0178 stage 1).
 
+use github.com/xo-lang/xo/compiler/check
 use github.com/xo-lang/xo/compiler/prune
 use std/crypto
 use github.com/xo-lang/xo/compiler/hostpath
@@ -230,7 +231,7 @@ fn native_bin_key(os: Os, ctx: Ctx, dir: Str, cc: Str, flags: List[Str], srcs: L
     return ""
   }
   var k = new_key("native")
-  k.str(tool_id(os, ctx.goos, cc, ["--version"]))
+  k.str(tool_id_memo(os, ctx, cc, ["--version"]))
   k.strs(flags)
   for s in srcs {
     if !s.starts_with("${dir}/") {
@@ -300,7 +301,7 @@ fn go_bin_key(os: Os, ctx: Ctx, gocmd: Str, dir: Str, args: List[Str], t: Str, r
     return ""
   }
   var k = new_key("go")
-  k.str(tool_id(os, ctx.goos, gocmd, ["env", "GOVERSION", "GOROOT", "GOEXPERIMENT", "GOARM64", "GOAMD64", "GOARM", "GODEBUG", "GOTOOLCHAIN"]))
+  k.str(tool_id_memo(os, ctx, gocmd, ["env", "GOVERSION", "GOROOT", "GOEXPERIMENT", "GOARM64", "GOAMD64", "GOARM", "GODEBUG", "GOTOOLCHAIN"]))
   k.strs(args)
   k.str(t)
   if race {
@@ -308,7 +309,7 @@ fn go_bin_key(os: Os, ctx: Ctx, gocmd: Str, dir: Str, args: List[Str], t: Str, r
     for v in ["CC", "CGO_CFLAGS", "CGO_LDFLAGS", "CGO_CPPFLAGS"] {
       k.str("${v}=${os.env.get(v) ?? ""}")
     }
-    k.str(tool_id(os, ctx.goos, "cc", ["--version"]))
+    k.str(tool_id_memo(os, ctx, "cc", ["--version"]))
   }
   if !key_tree(os, k, dir, ["bin", "llvm*", "arm64*"]) {
     return ""
@@ -446,10 +447,45 @@ const BIN_TOUCH: Duration = 1m
 /// not KEEP's two hours: a test binary is in use only while a build
 /// copies it or a run copies it (decision 0236; 12 GB of test binaries
 /// were all younger than two hours on 2026-10-15).
+///
+/// A due prune runs in a detached `xo dev prune-bins DIR` (the back-end
+/// cache's way, bcache.xo prune_backend_cache), so the build that stored
+/// an entry does not wait on the walk (1 to 146 ms on a first build after
+/// an edit, decision 0360); $XO_PRUNE_DETACH=off, or a host without
+/// /bin/sh, prunes in the build.
 fn prune_bins(os: Os, ctx: Ctx) {
   if ctx.bin_cache.is_empty() {
     return
   }
+  let p = bins_policy(os)
+  if (os.env.get("XO_PRUNE_DETACH") ?? "") == "off" || host_os(os) == "windows" {
+    prune.run(os.fs, os.clock, ctx.bin_cache, p)
+    return
+  }
+  if !prune.due(os.fs, os.clock, ctx.bin_cache, p) {
+    return
+  }
+  // one child a minute at most: the builds that find it due at once
+  let mark = "${ctx.bin_cache}/prune-spawned"
+  if let Ok(Some(fi)) = os.fs.stat(mark) {
+    if os.clock.since(fi.modified) < 1m {
+      return
+    }
+  }
+  os.fs.write(mark, b"").ignore_err("only limits the children")
+  os.fs.set_modified(mark, os.clock.now()).ignore_err("only limits the children")
+  let xo = check.executable(os.env, os.fs)
+  let script = "XO_PROF= XO_PROF_OUT= XO_TRACE= XO_TRACE_OUT= \"$0\" dev prune-bins \"$1\" </dev/null >/dev/null 2>&1 &"
+  os.proc.cmd("/bin/sh", ["-c", script, xo, ctx.bin_cache]).run().ignore_err("a prune that does not start runs on a later build")
+}
+
+fn bins_policy(os: Os) -> prune.Policy {
   let p = prune.from_env(os.env, prune.Policy{max_bytes: 4 * prune.GB, every: 2m, keep: 10m})
-  prune.run(os.fs, os.clock, ctx.bin_cache, cap_env(os, p, "XO_BIN_CACHE_MAX"))
+  cap_env(os, p, "XO_BIN_CACHE_MAX")
+}
+
+/// `xo dev prune-bins DIR`: the detached run of prune_bins.
+fn prune_bins_child(os: Os, dir: Str) -> Int {
+  prune.run(os.fs, os.clock, dir, bins_policy(os))
+  0
 }

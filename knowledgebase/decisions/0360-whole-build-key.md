@@ -268,6 +268,24 @@ times and pruning, and the verify run catches a change to that.
   comparison pages state closes for the no-change case only.
 - Builds after an edit are unchanged. The edit row (0.57 s against Go's
   0.24 s) is the next target, the passes' per-function walk.
+- What the default costs a build after an edit (stage 3, measured
+  2026-10-24, `XO_WHOLE_BUILD=off` against the default, 14 alternating
+  first builds of a program with one new function, clean xo builds,
+  load 1 to 3, the real cache): strings 0.382 s off, 0.407 s on (+25 ms,
+  6%); http_server 1.385 s off, 1.439 s on (+54 ms, 4%). A warm
+  unchanged build pays nothing for it (it is the hit). A phase split of a
+  first build showed where the work is: 15 to 20 ms for the key (two
+  process spawns for the C tool's id, asked again by the backend's keys),
+  13 to 40 ms hashing the 447 recorded input files again, 1 to 9 ms
+  copying the binary (a clone would gain little), 0.1 ms for the manifest,
+  and a prune of the run cache every two minutes (1 to 146 ms). Hashing a
+  file where it is read, one C tool id per process (keyed on the tool's
+  path and arguments) and a detached prune of the run cache
+  (`xo dev prune-bins`) recovered 3 ms (strings) and 74 ms (http_server,
+  inside its 1.33 to 1.54 s range) in the same measurement: no speedup is
+  claimed for them. (An xo built from a dirty tree runs with cold
+  back-end caches: a first measurement of the fixes, 5 times slower, was
+  that, not the change.)
 - The design depends on the recorders seeing every input. The wrappers
   make this structural, but a read through a path that bypasses `os`
   (a constant table compiled into xo is part of `self_id`, so it is

@@ -1,0 +1,39 @@
+// Tests of the build recorder (recorder.xo, decision 0360).
+
+use std/crypto
+use std/testing
+
+test "the recorder hashes what a read returned, and only for a recorded path" {
+  let rec = Mutex[Rec].new(Rec{})
+  let code = testing.run_main(fn(o: Os) -> () ! Error {
+    o.fs.create_dir_all("/w/src")?
+    o.fs.create_dir_all("/c/packs")?
+    o.fs.write("/w/src/a.xo", b"fn a() {}")?
+    o.fs.write("/c/packs/p.bin", b"a large cache pack")?
+    let r = rec_os(o, rec, "/w", ["/c/"])
+    let _a = r.fs.read_text("/w/src/a.xo")?
+    let _p = r.fs.read("/c/packs/p.bin")?
+  }, os)
+  expect(code) == 0
+  let seen = rec.with(fn(x) { x.reads })
+  // the recorded file carries the SHA-256 of its contents; the skipped
+  // pack is not recorded and not hashed (hashing every pack a build
+  // read made a first build after an edit 5 times slower, 2026-10-24)
+  expect(seen.get("/w/src/a.xo") ?? "") == crypto.sha256(b"fn a() {}").to_hex()
+  expect(seen.contains("/c/packs/p.bin")) == false
+}
+
+test "a file opened is recorded without a hash for the entry to fill" {
+  let rec = Mutex[Rec].new(Rec{})
+  let code = testing.run_main(fn(o: Os) -> () ! Error {
+    o.fs.create_dir_all("/w/src")?
+    o.fs.write("/w/src/b.xo", b"fn b() {}")?
+    let r = rec_os(o, rec, "/w", [])
+    let f = r.fs.open("/w/src/b.xo")?
+    f.close()?
+  }, os)
+  expect(code) == 0
+  let seen = rec.with(fn(x) { x.reads })
+  expect(seen.contains("/w/src/b.xo")) == true
+  expect(seen.get("/w/src/b.xo") ?? "x") == ""
+}
