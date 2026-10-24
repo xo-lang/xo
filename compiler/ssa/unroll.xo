@@ -14,11 +14,14 @@ const UNROLL_MAX = 8
 /// The most values of a body (its jump included) a loop is unrolled for.
 const UNROLL_BODY = 40
 
+/// The most blocks of a body unroll_region copies.
+const UNROLL_BLOCKS = 8
+
 /// Unrolls the small counted loops of f; whether any was.
 pub fn unroll_small_loops(var f: Func) -> Bool {
   var changed = false
   for h in 0..f.blocks.len() {
-    if unroll_at(f, h) {
+    if unroll_at(f, h) || unroll_region(f, h) {
       changed = true
     }
   }
@@ -188,4 +191,433 @@ fn unroll_at(var f: Func, h: Int) -> Bool {
     }
   }
   true
+}
+
+/// Unrolls the loop headed by block h when it is a small counted loop
+/// whose body is more than one block, with exits of its own (unroll_at
+/// takes one block): `while i < k { if bad { return -1 } ... i += 1 }`,
+/// a digit loop's early return (2026-10-24: std text.xo num's loop of 2
+/// or 4 digits kept its counter and test; LLVM unrolls it, and a hand
+/// unrolled num2 made bench/perf/text time_parse 0.879x the
+/// instructions). The body: the blocks reached from the header's true
+/// edge that reach it back, each entered only from the body (its first
+/// block only from the header), one latch edge, at most UNROLL_BLOCKS
+/// blocks and UNROLL_BODY values. Each trip copies the body, the latch
+/// going on to the next trip's copy, the last trip's to the loop's exit;
+/// an edge out of the body stays an edge out of each copy. Refused: a
+/// value of the body used past it, a header parameter used past the
+/// loop but in its exit block (entered from the header alone) and that
+/// block's edges, the function's unwind block among the body's, and a
+/// body whose only exits are its checks' faults.
+fn unroll_region(var f: Func, h: Int) -> Bool {
+  let hb = f.blocks[h]
+  if hb.preds.len() != 2 || hb.params.is_empty() || hb.instrs.len() != 2 {
+    return false
+  }
+  let t = hb.instrs[1]
+  let tv = f.values[t]
+  if tv.op != Op.Branch || tv.succs.len() != 2 {
+    return false
+  }
+  let cmp = hb.instrs[0]
+  let cv = f.values[cmp]
+  if cv.op != Op.Lt || cv.args.len() != 2 || tv.args.len() != 1 || tv.args[0] != cmp {
+    return false
+  }
+  let pi = hb.params.index_of(cv.args[0]) ?? -1
+  if pi < 0 {
+    return false
+  }
+  let yes = tv.succs[0]
+  let no = tv.succs[1]
+  let entry = f.edges[yes].to
+  if entry == h || !f.edges[yes].args.is_empty() || f.blocks[entry].preds.len() != 1 || !f.blocks[entry].params.is_empty() {
+    return false
+  }
+  // the blocks the entry dominates: those the function's entry cannot
+  // reach without it (its only way in is the header's edge)
+  let nb = f.blocks.len()
+  var fwd: List[Bool] = []
+  var back: List[Bool] = []
+  var outer: List[Bool] = []
+  for _ in 0..nb {
+    fwd.push(false)
+    back.push(false)
+    outer.push(false)
+  }
+  outer[0] = true
+  var stack = [0]
+  while !stack.is_empty() {
+    let b = stack.pop() ?? 0
+    let bt = f.term(b)
+    if bt < 0 {
+      continue
+    }
+    for e in f.values[bt].succs {
+      let to = f.edges[e].to
+      if to != entry && !outer[to] {
+        outer[to] = true
+        stack.push(to)
+      }
+    }
+  }
+  if outer[entry] {
+    return false
+  }
+  fwd[entry] = true
+  stack = [entry]
+  while !stack.is_empty() {
+    let b = stack.pop() ?? 0
+    let bt = f.term(b)
+    if bt < 0 {
+      return false
+    }
+    for e in f.values[bt].succs {
+      let to = f.edges[e].to
+      if to != h && !outer[to] && !fwd[to] {
+        fwd[to] = true
+        stack.push(to)
+      }
+    }
+  }
+  // the latch: the header's edge from a block the entry dominates
+  var latch = -1
+  for e in hb.preds {
+    if fwd[f.edges[e].from] {
+      if latch >= 0 {
+        return false
+      }
+      latch = e
+    }
+  }
+  if latch < 0 {
+    return false
+  }
+  // back from the latch, within the forward set: the body
+  let lb = f.edges[latch].from
+  back[lb] = true
+  stack = [lb]
+  while !stack.is_empty() {
+    let b = stack.pop() ?? 0
+    if b == entry {
+      continue
+    }
+    for e in f.blocks[b].preds {
+      let from = f.edges[e].from
+      if from != h && fwd[from] && !back[from] {
+        back[from] = true
+        stack.push(from)
+      }
+    }
+  }
+  var body: List[Int] = []
+  var inb: List[Bool] = []
+  var nvals = 0
+  for b in 0..nb {
+    let x = fwd[b] && back[b]
+    inb.push(x)
+    if x {
+      body.push(b)
+      nvals += f.blocks[b].params.len() + f.blocks[b].instrs.len()
+    }
+  }
+  if !inb[entry] || body.len() < 2 || body.len() > UNROLL_BLOCKS || nvals > UNROLL_BODY || inb[h] || (f.unwind_exit >= 0 && inb[f.unwind_exit]) {
+    return false
+  }
+  for b in body {
+    for e in f.blocks[b].preds {
+      let from = f.edges[e].from
+      if dead_block(f, from) {
+        continue
+      }
+      if b == entry {
+        if e != yes {
+          return false
+        }
+      } else if from < 0 || !inb[from] {
+        return false
+      }
+    }
+  }
+  // an exit of its own that is not a fault's (a check's block ending in
+  // Fault or Unreachable, or a landing check's edge): a loop of only
+  // checks and stores gained
+  // nothing unrolled and lost on its unfolded copies (2026-10-24:
+  // bench/perf/tls chacha 1.027x the instructions, chacha.xor_stream's
+  // four counter stores)
+  var real_exit = false
+  for b in body {
+    let bt = f.term(b)
+    // a branch on a landing check (`call rt.landing`): its exit is the
+    // unwind's, not the loop's own
+    let tv2 = f.values[bt]
+    var landing = false
+    if tv2.op == Op.Branch && tv2.args.len() == 1 {
+      let cv2 = f.values[tv2.args[0]]
+      if cv2.op == Op.Call {
+        if let S(s: nm) = cv2.aux {
+          landing = nm is "rt.landing" | "rt.unwinding"
+        }
+      }
+    }
+    for e in tv2.succs {
+      let to = f.edges[e].to
+      if to != h && !inb[to] && !landing {
+        let tt = f.term(to)
+        if tt >= 0 && !(f.values[tt].op is Op.Fault | Op.Unreachable) {
+          real_exit = true
+        }
+      }
+    }
+  }
+  if !real_exit {
+    return false
+  }
+  let pe = if hb.preds[0] == latch { hb.preds[1] } else { hb.preds[0] }
+  if pe == latch {
+    return false
+  }
+  let pre = f.edges[pe].from
+  let pt = f.term(pre)
+  if pt < 0 || f.values[pt].op != Op.Jump || f.values[pt].succs.len() != 1 || f.values[pt].succs[0] != pe {
+    return false
+  }
+  let c0 = match const_word(f, f.edges[pe].args[pi]) {
+    Some(x) => x
+    None => return false
+  }
+  // the bound: a constant, or a header parameter the loop passes on
+  // unchanged whose value coming in is one
+  var kv = cv.args[1]
+  let ki = hb.params.index_of(kv) ?? -1
+  if ki >= 0 {
+    if through(f, inb, f.edges[latch].args[ki], 8) != kv {
+      return false
+    }
+    kv = f.edges[pe].args[ki]
+  }
+  let k = match const_word(f, kv) {
+    Some(x) => x
+    None => return false
+  }
+  // i + 1, i possibly passed on through the body's joins
+  let step = f.values[f.edges[latch].args[pi]]
+  if step.op != Op.Add || step.block < 0 || !inb[step.block] || step.args.len() != 2 || through(f, inb, step.args[0], 8) != hb.params[pi] || const_word(f, step.args[1]) != Some(1) {
+    return false
+  }
+  let n = k - c0
+  if n < 1 || n > UNROLL_MAX {
+    return false
+  }
+  // the values of the body and the header's parameters, and who uses
+  // them past the body
+  var mine: Map[Int, Bool] = {}
+  for b in body {
+    for v in f.blocks[b].params {
+      mine[v] = true
+    }
+    for v in f.blocks[b].instrs {
+      mine[v] = true
+      if f.values[v].op == Op.Param {
+        return false
+      }
+    }
+  }
+  var hps: Map[Int, Bool] = {}
+  for p in hb.params {
+    hps[p] = true
+  }
+  let ex = f.edges[no].to
+  let ex_one = f.blocks[ex].preds.len() == 1 && !inb[ex]
+  for vi in 0..f.values.len() {
+    let x = f.values[vi]
+    if x.block < 0 || x.block == h || inb[x.block] {
+      continue
+    }
+    for a in x.args {
+      if mine.contains(a) {
+        return false
+      }
+      if hps.contains(a) && !(ex_one && x.block == ex) {
+        return false
+      }
+    }
+  }
+  for e in 0..f.edges.len() {
+    let fr = f.edges[e].from
+    if fr < 0 || fr == h || inb[fr] {
+      continue
+    }
+    for a in f.edges[e].args {
+      if mine.contains(a) {
+        return false
+      }
+      if hps.contains(a) && !(ex_one && fr == ex) {
+        return false
+      }
+    }
+  }
+  // the copies: each trip's blocks, values first, then their operands
+  var cur = f.edges[pe].args
+  var into = pe
+  for _ in 0..n {
+    var m: Map[Int, Int] = {}
+    for (j, p) in hb.params.indexed() {
+      m[p] = cur[j]
+    }
+    var bm: Map[Int, Int] = {}
+    for b in body {
+      let c = f.new_block()
+      bm[b] = c
+      if f.land_rest.contains(b) {
+        f.land_rest[c] = true
+      }
+    }
+    var made: List[Int] = []
+    for b in body {
+      let c = bm.get(b) ?? -1
+      for p in f.blocks[b].params {
+        var x = f.values[p]
+        x.block = c
+        let nv = f.values.len()
+        f.values.push(x)
+        f.blocks[c].params.push(nv)
+        m[p] = nv
+      }
+      for v in f.blocks[b].instrs {
+        var x = f.values[v]
+        x.block = c
+        x.succs = []
+        let nv = f.values.len()
+        f.values.push(x)
+        f.blocks[c].instrs.push(nv)
+        m[v] = nv
+        made.push(nv)
+      }
+    }
+    for nv in made {
+      var args: List[Int] = []
+      for a in f.values[nv].args {
+        args.push(m.get(a) ?? a)
+      }
+      f.values[nv].args = args
+      let pd = f.values[nv].pad
+      if pd >= 0 {
+        f.values[nv].pad = m.get(pd) ?? pd
+      }
+    }
+    // the terminators' edges: within the trip, out of the body, and
+    // the latch, kept to go on to the next trip
+    var next_latch = -1
+    for b in body {
+      let ot = f.term(b)
+      let ct = m.get(ot) ?? -1
+      var succs: List[Int] = []
+      for e in f.values[ot].succs {
+        var args: List[Int] = []
+        for a in f.edges[e].args {
+          args.push(m.get(a) ?? a)
+        }
+        let to = f.edges[e].to
+        let ce = f.edges.len()
+        if e == latch {
+          f.edges.push(Edge{from: bm.get(b) ?? -1, to: -1, args: args})
+          next_latch = ce
+        } else if inb[to] {
+          f.edges.push(Edge{from: bm.get(b) ?? -1, to: bm.get(to) ?? -1, args: args})
+          f.blocks[bm.get(to) ?? 0].preds.push(ce)
+        } else {
+          f.edges.push(Edge{from: bm.get(b) ?? -1, to: to, args: args})
+          f.blocks[to].preds.push(ce)
+        }
+        succs.push(ce)
+      }
+      f.values[ct].succs = succs
+    }
+    // the way in: the block before the loop, or the trip before's latch
+    let ce = bm.get(entry) ?? -1
+    f.edges[into].to = ce
+    f.edges[into].args = []
+    f.blocks[ce].preds = [into]
+    cur = f.edges[next_latch].args
+    into = next_latch
+  }
+  // the last trip's latch goes to the loop's exit with its values
+  var fin: Map[Int, Int] = {}
+  for (j, p) in hb.params.indexed() {
+    fin[p] = cur[j]
+  }
+  var eargs: List[Int] = []
+  for a in f.edges[no].args {
+    eargs.push(fin.get(a) ?? a)
+  }
+  f.edges[into].to = ex
+  f.edges[into].args = eargs
+  f.blocks[ex].preds.push(into)
+  // the original header and body: no way in now
+  f.blocks[h].preds = []
+  f.blocks[entry].preds = []
+  if ex_one {
+    for vi in 0..f.values.len() {
+      if f.values[vi].block != ex {
+        continue
+      }
+      var args: List[Int] = []
+      for a in f.values[vi].args {
+        args.push(fin.get(a) ?? a)
+      }
+      f.values[vi].args = args
+    }
+    for e in 0..f.edges.len() {
+      if f.edges[e].from != ex {
+        continue
+      }
+      var args: List[Int] = []
+      for a in f.edges[e].args {
+        args.push(fin.get(a) ?? a)
+      }
+      f.edges[e].args = args
+    }
+  }
+  true
+}
+
+/// The value v stands for: v, or when v is a parameter of a body block
+/// (inb) whose every incoming edge passes the same value, that value's,
+/// up to depth joins.
+fn through(f: Func, inb: List[Bool], v: Int, depth: Int) -> Int {
+  var x = v
+  for _ in 0..depth {
+    let pv = f.values[x]
+    if pv.op != Op.Param || pv.block < 0 || !inb[pv.block] {
+      return x
+    }
+    let b = pv.block
+    let j = f.blocks[b].params.index_of(x) ?? -1
+    if j < 0 || f.blocks[b].preds.is_empty() {
+      return x
+    }
+    var same = -1
+    for e in f.blocks[b].preds {
+      if dead_block(f, f.edges[e].from) {
+        continue
+      }
+      let a = through(f, inb, f.edges[e].args[j], 0)
+      if same >= 0 && a != same {
+        return x
+      }
+      same = a
+    }
+    if same < 0 {
+      return x
+    }
+    x = same
+  }
+  x
+}
+
+/// Whether block b is unreachable as it stands: not the entry, and no
+/// edge into it (a block the builder left behind a return).
+fn dead_block(f: Func, b: Int) -> Bool {
+  b > 0 && f.blocks[b].preds.is_empty()
 }

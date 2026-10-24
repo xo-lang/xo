@@ -1,0 +1,107 @@
+// unroll_region (unroll.xo): a counted loop of more than one block with
+// an exit of its own, the shape std's digit loop has once inlined.
+
+/// f(at, k): x = 0; i = 0; while i < 2 { let c = at + i - 48; if c < 0
+/// || c > 9 { return -1 }; x = x * 10 + c; i += 1 }; return x, with the
+/// count a constant the block before the loop passes.
+fn digit_loop() -> (Func, Int) {
+  var m = Module{}
+  let it = m.intern(SType{kind: Kind.Int, name: "Int"})
+  let bt = m.intern(SType{kind: Kind.Bool, name: "Bool"})
+  let fi = m.new_func("f", [it], [it])
+  var f = m.funcs[fi]
+  let at = f.blocks[0].params[0]
+  let two = f.add(0, Op.Const, it, Aux.I(n: 2), [])
+  let pre = f.new_block()
+  let _j0 = f.jump(0, pre, [])
+  let h = f.new_block()
+  let i = f.add_param(h, it)
+  let x = f.add_param(h, it)
+  let z0 = f.add(pre, Op.Const, it, Aux.I(n: 0), [])
+  let z1 = f.add(pre, Op.Const, it, Aux.I(n: 0), [])
+  let _j1 = f.jump(pre, h, [z0, z1])
+  let lt = f.add(h, Op.Lt, bt, Aux.None, [i, two])
+  let body = f.new_block()
+  let ex = f.new_block()
+  let _b = f.branch(h, lt, body, ex)
+  let a = f.add(body, Op.Add, it, Aux.None, [at, i])
+  let c48 = f.add(body, Op.Const, it, Aux.I(n: 48), [])
+  let c = f.add(body, Op.Sub, it, Aux.None, [a, c48])
+  let c0 = f.add(body, Op.Const, it, Aux.I(n: 0), [])
+  let neg = f.add(body, Op.Lt, bt, Aux.None, [c, c0])
+  let yes = f.new_block()
+  let no = f.new_block()
+  let _b2 = f.branch(body, neg, yes, no)
+  let join = f.new_block()
+  let jb = f.add_param(join, bt)
+  let t = f.add(yes, Op.Const, bt, Aux.B(b: true), [])
+  let _j2 = f.jump(yes, join, [t])
+  let c9 = f.add(no, Op.Const, it, Aux.I(n: 9), [])
+  let gt = f.add(no, Op.Gt, bt, Aux.None, [c, c9])
+  let _j3 = f.jump(no, join, [gt])
+  let side = f.new_block()
+  let cont = f.new_block()
+  let _b3 = f.branch(join, jb, side, cont)
+  let out = f.new_block()
+  let r = f.add_param(out, it)
+  let m1 = f.add(side, Op.Const, it, Aux.I(n: -1), [])
+  let _j4 = f.jump(side, out, [m1])
+  let c10 = f.add(cont, Op.Const, it, Aux.I(n: 10), [])
+  let xm = f.add(cont, Op.Mul, it, Aux.None, [x, c10])
+  let xa = f.add(cont, Op.Add, it, Aux.None, [xm, c])
+  let one = f.add(cont, Op.Const, it, Aux.I(n: 1), [])
+  let i1 = f.add(cont, Op.Add, it, Aux.None, [i, one])
+  let _j5 = f.jump(cont, h, [i1, xa])
+  let _j6 = f.jump(ex, out, [x])
+  let _r = f.add(out, Op.Return, -1, Aux.None, [r])
+  m.funcs[fi] = f
+  (m.funcs[fi], h)
+}
+
+test "a counted loop with an early exit is unrolled, each trip keeping its exit" {
+  let made = digit_loop()
+  var f = made.0
+  expect(unroll_small_loops(f)) == true
+  // no compare with the count is left; the early exit's block (past the
+  // body: it does not lead back) is reached from each trip
+  var lts = 0
+  for v in f.values {
+    if v.op == Op.Lt && v.block >= 0 && v.args.len() == 2 {
+      if let Some(n) = const_word(f, v.args[1]) {
+        if n == 2 {
+          lts += 1
+        }
+      }
+    }
+  }
+  expect(lts) == 0
+  var side_preds = -1
+  for b in f.blocks {
+    for v in b.instrs {
+      if f.values[v].op == Op.Const && f.values[v].aux == Aux.I(n: -1) {
+        side_preds = b.preds.len()
+      }
+    }
+  }
+  expect(side_preds) == 2
+}
+
+test "unroll_region leaves a loop whose body value is used past it" {
+  let made = digit_loop()
+  var f = made.0
+  // the return reads the body's c directly
+  for bi in 0..f.blocks.len() {
+    for v in f.blocks[bi].instrs {
+      if f.values[v].op == Op.Return {
+        var c = -1
+        for (vi, x) in f.values.indexed() {
+          if x.op == Op.Sub {
+            c = vi
+          }
+        }
+        f.values[v].args = [c]
+      }
+    }
+  }
+  expect(unroll_small_loops(f)) == false
+}

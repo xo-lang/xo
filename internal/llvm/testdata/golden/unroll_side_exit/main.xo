@@ -1,0 +1,42 @@
+// A small counted loop with an exit of its own, inlined with a constant
+// count (ssa unroll.xo unroll_region): each trip's copy keeps its early
+// return; the results are the loop's.
+
+fn num(b: Bytes, at: Int, k: Int) -> Int {
+  var x = 0
+  var i = 0
+  while i < k {
+    let c = Int(b[at + i]) - 48
+    if c < 0 || c > 9 {
+      return -1
+    }
+    x = x * 10 + c
+    i += 1
+  }
+  x
+}
+
+fn first_zero(xs: List[Int], at: Int) -> Int {
+  var i = 0
+  while i < 3 {
+    if xs[at + i] == 0 {
+      return i
+    }
+    i += 1
+  }
+  -1
+}
+
+fn main(os: Os) {
+  for s in ["2026", "12a4", "0099", "/123", "999:", "00"] {
+    let b = s.bytes()
+    let four = if b.len() >= 4 { num(b, 0, 4) } else { -2 }
+    os.stdio.println("${s} ${num(b, 0, 2)} ${four}")
+  }
+  let xs = [5, 0, 7, 0, 0, 9, 9, 9, 1]
+  var out: List[Int] = []
+  for at in 0..6 {
+    out.push(first_zero(xs, at))
+  }
+  os.stdio.println(out.map(fn(x) { "${x}" }).join(" "))
+}
