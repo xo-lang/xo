@@ -1013,6 +1013,13 @@ pub fn float_ok(src: Bytes, tape: List[Int], i: Int) -> Bool {
   num.parse_float_at(src, lo, lo + tape[i + 2]) != None
 }
 
+/// The Float of the number node at i, None when it is not one (out of
+/// range): one parse where float_ok then float_at made two.
+pub fn float_opt(src: Bytes, tape: List[Int], i: Int) -> Float? {
+  let lo = tape[i + 1]
+  num.parse_float_at(src, lo, lo + tape[i + 2])
+}
+
 /// The Float of the number node at i (0.0 when it is not one).
 pub fn float_at(src: Bytes, tape: List[Int], i: Int) -> Float {
   let lo = tape[i + 1]

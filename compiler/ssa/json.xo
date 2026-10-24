@@ -582,6 +582,23 @@ fn (var b: Builder) dec_fail(d: Dec, msg: Str) {
   b.retv(b.dec_err(d, p, m))
 }
 
+/// Returns the Some of option o (a runtime call's result) as the decoded
+/// value, or fails with msg on None: the text parsed once (2026-10-24: an
+/// _ok call then the value's call parsed every Duration, Time and base64
+/// value twice, base64 decoding its bytes twice).
+fn (var b: Builder) dec_opt(d: Dec, o: Int, msg: Str) { b.dec_ok(d, b.dec_some(d, o, msg)) }
+
+/// The Some of option o, failing with msg on None (dec_opt).
+fn (var b: Builder) dec_some(d: Dec, o: Int, msg: Str) -> Int {
+  let ot = b.vty(o)
+  let some = b.m.variant_index(ot, "Some")
+  let none = b.add(Op.Ne, b.bool_t(), Aux.None, [b.add(Op.Tag, b.int_t(), Aux.None, [o]), b.cint(some)])
+  let (no, join) = b.if_then_begin(none)
+  b.dec_fail(d, msg)
+  b.if_then_end(no, join)
+  b.add(Op.Payload, b.m.types[ot].variants[some].fields[0].ty, Aux.P(tag: some, field: 0), [o])
+}
+
 /// Returns v as the decoded value (ok).
 fn (var b: Builder) dec_ok(d: Dec, v: Int) {
   let ok_i = b.m.variant_index(d.rt, "Ok")
@@ -682,27 +699,18 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
   if b.is_prelude_named(ct, ["Duration"]) {
     b.dec_need(d, JK_STR, "expected duration string")
     let txt = b.dec_str(d, i)
-    let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.llrt("duration_ok", bt, [txt])]))
-    b.dec_fail(d, "expected duration string such as \"1.5s\"")
-    b.if_then_end(no, join)
-    b.dec_ok(d, b.llrt("duration", it, [txt]))
+    b.dec_opt(d, b.llrt("duration_opt", it, [txt]), "expected duration string such as \"1.5s\"")
     return
   }
   if b.is_prelude_named(ct, ["Time"]) {
     b.dec_need(d, JK_STR, "expected RFC 3339 time string")
-    let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.json_rt("json_time_ok", bt, [d.src, d.tape, i])]))
-    b.dec_fail(d, "expected RFC 3339 time string")
-    b.if_then_end(no, join)
-    b.dec_ok(d, b.json_rt("json_time", it, [d.src, d.tape, i]))
+    b.dec_opt(d, b.json_rt("json_time_opt", it, [d.src, d.tape, i]), "expected RFC 3339 time string")
     return
   }
   if b.is_prelude_named(ct, ["Bytes"]) {
     b.dec_need(d, JK_STR, "expected base64 string")
     let txt = b.dec_str(d, i)
-    let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.json_rt("b64_ok", bt, [txt])]))
-    b.dec_fail(d, "expected base64 string")
-    b.if_then_end(no, join)
-    b.dec_ok(d, b.json_rt("b64_decode", st, [txt]))
+    b.dec_opt(d, b.json_rt("b64_opt", st, [txt]), "expected base64 string")
     return
   }
   match b.tkind(t) {
@@ -739,10 +747,7 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
     }
     Float => {
       b.dec_need(d, JK_NUM, "expected number")
-      let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.json_rt("json_float_ok", bt, [d.src, d.tape, i])]))
-      b.dec_fail(d, "expected number")
-      b.if_then_end(no, join)
-      let f = b.json_rt("json_float", b.float_t(), [d.src, d.tape, i])
+      let f = b.dec_some(d, b.json_rt("json_float_opt", b.float_t(), [d.src, d.tape, i]), "expected number")
       if b.m.is_f32(t) {
         // strconv.ParseFloat(s, 32): a value that rounds past the largest
         // Float32 (2^128 - 2^103 and beyond) is out of range

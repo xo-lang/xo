@@ -3367,14 +3367,9 @@ fn llrt_append_quote(s: Str, t: Str) -> Str { text.append_quote(s, t.bytes()) }
 
 fn llrt_append_bytes_quote(s: Str, b: Bytes) -> Str { text.append_quote(s, b) }
 
-fn llrt_duration_ok(s: Str) -> Bool {
-  match text.parse_duration(s) {
-    Some(_) => true
-    None => false
-  }
-}
-
-fn llrt_duration(s: Str) -> Int { text.parse_duration(s) ?? 0 }
+/// A Duration's text parsed once, for the JSON decoder (compiler/ssa
+/// json.xo dec_opt).
+fn llrt_duration_opt(s: Str) -> Int? { text.parse_duration(s) }
 
 fn llrt_time_ok(s: Str) -> Bool {
   match text.parse_time(s) {
@@ -3575,9 +3570,7 @@ fn llrt_json_next(tape: List[Int], i: Int) -> Int { jsontext.next(tape, i) }
 
 fn llrt_json_str(src: Bytes, tape: List[Int], i: Int) -> Str { jsontext.str_at(src, tape, i) }
 
-fn llrt_json_time_ok(src: Bytes, tape: List[Int], i: Int) -> Bool { jsontext.time_at(src, tape, i) != None }
-
-fn llrt_json_time(src: Bytes, tape: List[Int], i: Int) -> Int { jsontext.time_at(src, tape, i) ?? 0 }
+fn llrt_json_time_opt(src: Bytes, tape: List[Int], i: Int) -> Int? { jsontext.time_at(src, tape, i) }
 
 fn llrt_json_find(src: Bytes, tape: List[Int], i: Int, key: Str) -> Int { jsontext.find(src, tape, i, key) }
 
@@ -3591,9 +3584,7 @@ fn llrt_json_int(src: Bytes, tape: List[Int], i: Int) -> Int { jsontext.int_at(s
 
 fn llrt_json_uint_ok(src: Bytes, tape: List[Int], i: Int) -> Bool { jsontext.uint_ok(src, tape, i) }
 
-fn llrt_json_float_ok(src: Bytes, tape: List[Int], i: Int) -> Bool { jsontext.float_ok(src, tape, i) }
-
-fn llrt_json_float(src: Bytes, tape: List[Int], i: Int) -> Float { jsontext.float_at(src, tape, i) }
+fn llrt_json_float_opt(src: Bytes, tape: List[Int], i: Int) -> Float? { jsontext.float_opt(src, tape, i) }
 
 fn llrt_rs_append_json_str(s: Str, t: Str) -> Str { jsontext.append_str(s, t) }
 
@@ -3603,9 +3594,7 @@ fn llrt_rs_append_json_float(s: Str, f: Float) -> Str { jsontext.append_float(s,
 
 fn llrt_rs_append_b64_quoted(s: Str, b: Bytes) -> Str { jsontext.append_b64(s, b) }
 
-fn llrt_b64_ok(s: Str) -> Bool { jsontext.b64_ok(s) }
-
-fn llrt_b64_decode(s: Str) -> Bytes { jsontext.b64_decode(s) }
+fn llrt_b64_opt(s: Str) -> Bytes? { num.from_base64(s) }
 
 // The integer operations of generated code (the zero-C audit's portable
 // group, decisions 0193 and 0195): in Xo (std/native/llrt/ints.xo). The

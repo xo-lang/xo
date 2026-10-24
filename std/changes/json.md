@@ -1,5 +1,24 @@
 # std/json changes
 
+## 2026-10-24: perf: a decoded Duration, Time, base64 Bytes or Float is parsed once
+
+- Kind: perf
+- Commit: this commit
+- Found by: Xo Lang 3 (the JSON Time decode's +1.5% instructions: json_time_ok and json_time each parsed the text)
+- Go reference: none (internal scan)
+- Test: goldens base64_basic, duration_parse_edges, json_decode_fields, json_sized_ints, json_text, json_value, native_json, std_error_display and codex_gaps unchanged on arm64, LLVM (Go parity) and the amd64 Docker sample; bench/perf/jsontime and a Float, Duration, Bytes and Time record decode print the same checksums before and after
+
+The native decoder checked each of these values with one runtime call and then
+read it with a second, and both calls parsed the text (base64 decoded its
+bytes twice, a Float ran parse_float_at twice). Each is now one call that
+returns an Option (llrt_duration_opt, llrt_json_time_opt, llrt_b64_opt,
+llrt_json_float_opt), and the decoder fails on None and reads the Some.
+`xo bench --ab` (A the parent, quiet machine, 20 rounds): bench/perf/jsontime
+(2000 times decoded 200 times) wall 29.01 ms to 22.25 ms, 0.767 (0.76 to
+0.777), instructions 0.67; 2000 records of a Float, a Duration, base64 Bytes
+and a Time decoded 100 times, wall 0.769 (0.764 to 0.777), instructions 0.738. An Int keeps its
+pair: its value call is a digit loop with no checks.
+
 ## 2026-10-24: fix: the native decoder stops at 10,000 levels of nesting, as Go's does
 
 - Kind: fix
