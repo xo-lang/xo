@@ -17,13 +17,17 @@ the prefix; GNU sparse files described by PAX records (formats 0.0,
 name; and zip64 archives were an error. Each now gives Go's entries
 or Go's error. gzip, gunzip, tar, and zip had no other difference.
 
-## 2026-10-24: fix: tar refuses a zero byte in an entry path
+## 2026-10-24: fix: a zero byte in an entry path is refused
 
 - Kind: fix
 - Found by: differential fuzzing against the Go backend
 - Go reference: archive/tar Writer (validPAXRecord refuses a NUL in a path record)
-- Test: internal/llvm/testdata/golden/archive_formats (nul path)
+- Test: internal/llvm/testdata/golden/archive_formats (nul path); unzip of a NUL name is by the shared archive_path
 
 `archive.tar` wrote an entry path with a zero byte (`"a\0b"`) into the
-header on native builds, and failed on the Go backend. Both now return
-`archive: bad entry path`. `archive.zip` is unchanged.
+header on native builds, and failed on the Go backend; `zip` and `unzip`
+accepted it on every backend (Go's own zip does too). A zero byte is now
+part of the entry-path rule, beside empty, absolute, and `../` paths
+(a C API truncates the name at it): tar and zip return `archive: bad
+entry path`, and unzip returns `entry path ... leaves the archive`, on
+every backend. This is stricter than Go's zip, as the path rule already is.

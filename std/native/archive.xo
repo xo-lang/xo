@@ -118,7 +118,7 @@ fn clean_path(p: Str) -> Str {
 /// absolute, or leaves the root.
 fn archive_path(p0: Str) -> Str? {
   let p = p0.replace("\\", "/")
-  if p == "" || p.starts_with("/") || (p.len() >= 2 && byte_of(p.bytes(), 1) == 58) {
+  if p == "" || p.contains("\u{0}") || p.starts_with("/") || (p.len() >= 2 && byte_of(p.bytes(), 1) == 58) {
     return None
   }
   let clean = clean_path(p)
@@ -341,10 +341,6 @@ fn pax_name(real: Str) -> Str {
 fn tar(entries: List[archive.Entry]) -> Bytes ! archive.ArchiveErr {
   var out = BytesBuilder.new()
   for e in entries {
-    // a NUL in a path: Go's tar writer refuses it (an invalid PAX record)
-    if e.path.contains("\u{0}") {
-      return Err(archive_err("bad entry path ${e.path.quote()}"))
-    }
     let p = match archive_path(e.path) {
       Some(x) => x
       None => return Err(archive_err("bad entry path ${e.path.quote()}"))

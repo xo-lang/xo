@@ -3315,6 +3315,7 @@ pub fn unzip(data: Bytes) -> List[Entry] ! ArchiveErr
 - `gzip` writes no name and no time in the header, so the output depends
   on the data only; `gunzip` reads concatenated members as one stream.
 - Paths use `/`. Writing or reading an entry whose path is empty,
+  holds a zero byte (a C API would truncate it), is
   absolute (`/x`, `C:/x`), or leaves the root (`../x`, `a/../../x`) is an
   error (zip slip); so is a tar or zip entry that is a link or a device.
   Directories are written with a trailing `/` and read without it. A PAX

@@ -166,8 +166,7 @@ fn main(os: Os) ! {
     }
     out.println("path ${bad_path.quote()} ${r1} | ${r2}")
   }
-  // a NUL in a path: tar refuses it (Go's writer rejects the PAX record); zip
-  // writes it, as Go's does
+  // a NUL in a path is refused by tar and zip (the path rule)
   let nul = "a\u{0}b"
   let t1 = match archive.tar([archive.file(nul, b"x")]) {
     Ok(_) => "ok"
