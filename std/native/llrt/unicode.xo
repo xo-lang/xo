@@ -325,6 +325,26 @@ pub fn is_space(r: Int) -> Bool {
 /// size; an invalid byte is U+FFFD of size 1 (raw.xo's).
 pub fn decode(b: Bytes, i: Int) -> Int { raw.decode(b, i) }
 
+/// decode with the two byte sequence, the common one in text of Greek,
+/// Cyrillic or accented Latin, answered inline (2026-10-24: raw.decode
+/// was 22 percent of the quote profile, a call per non-ASCII rune). The
+/// rules are raw.xo's: a lead byte below 0xC2 never begins a two byte
+/// sequence (they are the overlong forms), and a continuation byte
+/// outside 0x80 to 0xBF makes the sequence invalid.
+pub fn decode2(b: Bytes, i: Int, n: Int) -> Int {
+  let c = Int(b[i])
+  if c >= 0xC2 && c <= 0xDF {
+    if n - i > 1 {
+      let c1 = Int(b[i + 1])
+      if c1 >= 0x80 && c1 <= 0xBF {
+        return ((((c & 0x1F) << 6) | (c1 & 0x3F)) << 3) | 2
+      }
+    }
+    return (0xFFFD << 3) | 1
+  }
+  raw.decode(b, i)
+}
+
 // The text operations build their result in a Str, appended in place
 // through the runtime's rs_* intrinsics (the result is unique): the bytes
 // that stay as they are go over in runs (rt.rs_append_bytes, which also
@@ -713,7 +733,7 @@ pub fn quote(b: Bytes) -> Str {
       break
     }
     let c = b[i]
-    let p = decode(b, i)
+    let p = decode2(b, i, n)
     let r = p >> 3
     let size = p & 7
     if r != 0xFFFD && is_print(r) && c >= 0x80 {
