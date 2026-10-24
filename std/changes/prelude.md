@@ -63,6 +63,21 @@ and measured 7.6 percent worse (the address is two runtime calls per
 lookup) and reverted; a little endian table layout, one load and a mask,
 is the next thing there.
 
+## 2026-10-24: perf: a checked slice's range test inlines; its fault text is a cold call
+
+- Kind: perf
+- Commit: this commit
+- Found by: DS-2's view retain/release repro (`S.cut_prefix(P) ?? b""` in a loop): every successful cut called prelude.slice_check, whose body built the fault text by interpolation and was too big to inline
+- Go reference: Go's bounds checks are an inline compare and a call to runtime.panicSlice* only on failure
+- Test: goldens str_slice_fault, cut_view, views_*, bytes_search_cut and the other view goldens (arm64, LLVM, Go parity); internal/stdtest bytes and strings corpora
+
+std/native/prelude.xo slice_check (llrt_bytes_slice_at and the other
+checked slices) is now the range test alone, 19 instructions the native
+inliner takes, and calls slice_fail (in ssa.cold_fn) only for a bad
+range. The repro: instructions 0.741, wall 0.862 (10 rounds); xo's own
+__text grows 0.33% (59,454,848 to 59,649,016 bytes), the test inlined at
+each checked slice.
+
 ## 2026-10-24: perf: to_lower and to_upper fold the ASCII spans they copy, in one pass
 
 - Kind: perf

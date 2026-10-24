@@ -1070,8 +1070,10 @@ fn float_text(x: Float) -> Str {
 /// in find's and same_key's loops that ordinary keys never take: as
 /// ordinary calls they made the loops' values callee saved, which x86_64
 /// has five of (JSON small 1.16 times LLVM's instructions, 2026-10-23).
+/// prelude.slice_fail builds a bad slice's fault text (2026-10-24: its
+/// test, slice_check, now inlines at every checked slice).
 pub fn cold_fn(name: Str) -> Bool {
-  name is "pool.lock_slow" | "alloc.refill_alloc" | "alloc.mag_count" | "pool.futex_wake" | "budget.tick_slow" | "mutex.held_add_slow" | "obj.reserve_slow" | "obj.push_slow" | "obj.rl_free_n_slow" | "stdio.out_slow" | "jsontext.key_eq_slow" | "jsontext.keys_match_slow" | "jsontext.keys_eq_slow" ||
+  name is "prelude.slice_fail" | "pool.lock_slow" | "alloc.refill_alloc" | "alloc.mag_count" | "pool.futex_wake" | "budget.tick_slow" | "mutex.held_add_slow" | "obj.reserve_slow" | "obj.push_slow" | "obj.rl_free_n_slow" | "stdio.out_slow" | "jsontext.key_eq_slow" | "jsontext.keys_match_slow" | "jsontext.keys_eq_slow" ||
     name.starts_with("xo.map.rebuild[") || name.starts_with("xo.mlog.findx[") || name.starts_with("xo.mlog.newdir[") ||
     name.starts_with("xo.maph.slowput[") || name.starts_with("xo.maph.slowrem[") || name.starts_with("xo.maph.loglookup[") || name.starts_with("xo.maph.putrest[") || name.starts_with("xo.maph.remrest[") || name.starts_with("xo.maph.logget[") || name.starts_with("xo.maph.logkvl[")
 }

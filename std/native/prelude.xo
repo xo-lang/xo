@@ -3527,11 +3527,19 @@ fn llrt_bytes_slice_at(b: Bytes, lo: Int, hi: Int, loc: Str) -> Bytes {
 }
 
 /// Faults unless lo..hi is a range of a value of length n (std/rt's
-/// StrSlice, BytesSlice).
+/// StrSlice, BytesSlice): the test, small enough to inline at every
+/// slice; the fault's text is built in slice_fail, a call only a bad
+/// range makes (2026-10-24: with the text inline, every successful
+/// cut_prefix called slice_check).
 fn slice_check(lo: Int, hi: Int, n: Int, what: Str, loc: Str) {
   if lo < 0 || hi > n || lo > hi {
-    fault.raise_str_at("slice ${lo}..${hi} out of range for ${what} of length ${n}", raw.data(loc), loc.len())
+    slice_fail(lo, hi, n, what, loc)
   }
+}
+
+/// slice_check's fault.
+fn slice_fail(lo: Int, hi: Int, n: Int, what: Str, loc: Str) {
+  fault.raise_str_at("slice ${lo}..${hi} out of range for ${what} of length ${n}", raw.data(loc), loc.len())
 }
 
 /// The clamped slice and the repeat of the SSA builders' show and
