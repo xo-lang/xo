@@ -1,5 +1,24 @@
 # std/json changes
 
+## 2026-10-24: perf: a decoded Time is parsed from the tape's bytes, not from a copy of its string
+
+- Kind: perf
+- Commit: this commit
+- Found by: Xo Lang 1 (obj.reserve_slow was about 20% of a JSON Time list decode, on both backends)
+- Go reference: none (internal scan)
+- Test: goldens time_parse_digits and text_table unchanged on arm64 and LLVM; bench/perf/jsontime prints the same checksum before and after
+
+The native decoder built a Str from each time string (a copy) and parsed that.
+It now parses the tape's bytes in place (jsontext.time_at, text.parse_time_at)
+when the string has no escapes, and falls back to the copy for one that has
+(a time string is ASCII, so an escaped one is rare). `xo bench --ab` at one
+revision (A the parent, quiet machine, 15 rounds, 2000 times decoded 200
+times): wall 32.08 ms to 28.80 ms, 0.898 (0.885 to 0.915); instructions
+644,864,162 to 654,341,788, 1.015: the check (json_time_ok) and the value
+(json_time) each parse the text, which costs the instructions the copy saved. Known cost: every ok/value pair
+of the decoder (time_ok and time here, b64_ok and b64_decode) does its work
+twice; an Option-returning rt call would fix both (a builder item).
+
 ## 2026-10-24: feature: the native backends decode and encode the sized integers and Float32
 
 - Kind: feature
