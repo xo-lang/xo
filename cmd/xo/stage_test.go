@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -203,5 +204,34 @@ func TestBuildWorkDirsPrivate(t *testing.T) {
 	}
 	if kept, _ := filepath.Glob(filepath.Join(bdir, "*", "*", "prog-*")); len(kept) == 0 {
 		t.Errorf("XO_KEEP_ASM=1 kept no prog-* file in the build directory")
+	}
+}
+
+// TestBuildStopsAtAssemblyKeepsIt: a cross build that cannot link (cc is
+// not run for another target) stops at the assembly it names, and that
+// file is there to open (the build's private work directory would have
+// been removed; 2026-10-24).
+func TestBuildStopsAtAssemblyKeepsIt(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
+		t.Skip("linux/arm64 is another target only on an arm64 Mac")
+	}
+	dir := writeFiles(t, map[string]string{
+		"app/xo.mod":  "module app\n",
+		"app/main.xo": "fn main(os: Os) {\n  os.stdio.println(\"hi\")\n}\n",
+	})
+	chdir(t, filepath.Join(dir, "app"))
+	setenv(t, "XO_BUILD_DIR", filepath.Join(dir, "build"))
+	var out, errOut bytes.Buffer
+	code := run(t, []string{"build", "--backend=arm64", "--ld=cc", "--targets=linux/arm64", "-o", filepath.Join(dir, "p"), "."}, &out, &errOut)
+	if code == 0 {
+		t.Fatalf("exit 0, want the stop at the assembly\n%s", errOut.String())
+	}
+	m := regexp.MustCompile(`its assembly: (\S+prog-linux\.s)\)`).FindStringSubmatch(errOut.String())
+	if m == nil {
+		t.Fatalf("no assembly path in the message:\n%s", errOut.String())
+	}
+	if fi, err := os.Stat(m[1]); err != nil || fi.Size() == 0 {
+		t.Errorf("the assembly the message names is not there: %v", err)
 	}
 }

@@ -1447,7 +1447,6 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // assembly) or XO_KEEP_ASM=1 keeps them: Xo's assemblers read the
     // texts in memory, and xo's were 1.1 GB, written again as its parts
     // (2.2 GB a build; 24.7 GB of the cache in 40 minutes, 2026-10-21)
-    let s = "${dir}/prog-${tgoos}.s"
     let keep_asm = (os.env.get("XO_KEEP_ASM") ?? "") == "1"
     if !o.asm_path.is_empty() {
       write_or_fail(os, dir, o.asm_path, dw_real(gm, p.text()).bytes())
@@ -1475,6 +1474,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     let macho_as = if mac_x86 { o.assembler != "cc" } else { o.assembler == "macho" || (no_cc && o.assembler.is_empty()) }
     let win = march == "amd64" && tgoos == "windows"
     let asm_only = !win && tg != host && !(no_cc && (tgoos == "linux" || tgoos == "darwin")) && !mac_x86
+    // a build that stops at the assembly leaves it as its product, in the
+    // build directory itself, where the message names it
+    let s = if asm_only { "${sdir}/prog-${tgoos}.s" } else { "${dir}/prog-${tgoos}.s" }
     // cc (or clang, windows) reads the whole file when there are no parts
     let cc_reads = if win { o.assembler == "cc" } else { !macho_as }
     if keep_asm || asm_only || (cc_reads && p.parts.len() <= 1) {
