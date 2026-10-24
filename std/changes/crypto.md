@@ -1,5 +1,22 @@
 # std/crypto changes
 
+## 2026-10-24: perf: RSA's Montgomery loops carry byte offsets (native sign4096 0.922 of the instructions, sign2048 0.883)
+
+- Kind: perf
+- Commit: this commit
+- Found by: Xo Lang 1 (native RSA at 1.13 times LLVM's instructions: mac_row's prologue and the row loops computed `8 * i` and `len % 4` checked)
+- Go reference: none (internal arithmetic; Go's own `8 * i` wraps)
+- Test: internal/llvm TestRSADiff and TestConstantTimeLLVM; tls_rsa, crypto_keys, tls12_server, tls13_server, tls_x509, http_tls_keys goldens (arm64, LLVM with Go parity); xo dev codegen test/codegen (consttime); signatures unchanged (bench/perf/rsa checks each against Go's)
+
+bigmod's mac_row computed its two loop bounds as `8 * (len - len % 4)` and
+`8 * len`, checked multiplies and a signed remainder on every call (64 calls
+a multiply at 4096 bits, rows down to one word in square_at), and prod_at,
+square_at, final_sub, add_at, sub_at and below_at scaled `8 * i` with a
+checked multiply per word. They now carry byte offsets (`wrapping_add`,
+`wrapping_shl(3)`, a mask for the four word bound); the lengths are never
+negative. Quiet `xo bench --ab` (A the parent, N=30): sign2048 wall 0.927 (0.921 to 0.94), instructions 0.883; sign4096 wall 0.946 (0.943 to 0.95), instructions 0.922; verify2048 wall within noise, instructions 0.953. Against LLVM
+the instructions went from 0.869 to 0.942 (sign4096) and 0.982 (sign2048).
+
 ## 2026-10-22: security: RSA's private exponentiation checked free of selects again
 
 - Kind: security

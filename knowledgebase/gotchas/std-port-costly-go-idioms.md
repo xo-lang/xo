@@ -53,6 +53,13 @@ Two kinds, both fixed std-side:
      itself as its own bytes and flushing runs with one
      `rt.rs_append_bytes` took it to 0.86 and 0.90
      (bench/results/maprunes-batch-2026-10-24.md, 2026-10-24).
+   - Int arithmetic is checked in Xo (Go's wraps): an index scaled per
+     iteration (`8 * i`) is a multiply with an overflow test and a fault
+     branch each time, and `len % 4` on an Int that may be negative is a
+     signed remainder (four instructions); bigmod's loops and mac_row's
+     per-call `8 * (len - len % 4)` cost RSA sign4096 7.8% of its
+     instructions (sign2048 11.7%) against byte offsets carried with
+     `wrapping_add` and `wrapping_shl(3)` and a mask (2026-10-24).
 
 ## Fix
 
@@ -62,6 +69,9 @@ Two kinds, both fixed std-side:
   builders written in place instead of small Lists.
 - Append in runs, not per element: copy an unchanged span with one
   `rt.rs_append_bytes` instead of a `raw.push_rune` per rune.
+- In a hot loop over words, carry the byte offset (`o = o.wrapping_add(8)`
+  to `n.wrapping_shl(3)`) rather than computing `8 * i`, and mask a
+  length known not negative (`end & -32`) rather than `% 4`.
 - Every port gets a timing row against Go's package next to its
   corpus (bench/results), so a slow port shows at once, not after a
   profile; profile with XO_PROF=cpu before rewriting.

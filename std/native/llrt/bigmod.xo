@@ -141,10 +141,11 @@ fn below_at(md: Mod, x: Int) -> Int {
   let d = d_at(md)
   let m = m_at(md)
   var b = 0
-  var i = 0
-  while i < md.n {
-    b = sbb(d, 8 * i, ld(x, 8 * i), ld(m, 8 * i), b)
-    i += 1
+  let oend = md.n.wrapping_shl(3)
+  var o = 0
+  while o < oend {
+    b = sbb(d, o, ld(x, o), ld(m, o), b)
+    o = o.wrapping_add(8)
   }
   ct.mask_bit(b)
 }
@@ -246,16 +247,17 @@ fn final_sub(md: Mod, h: Int, t: Int, top: Int) {
   let d = d_at(md)
   let m = m_at(md)
   var b = 0
-  var i = 0
-  while i < n {
-    b = sbb(d, 8 * i, ld(t, 8 * i), ld(m, 8 * i), b)
-    i += 1
+  let oend = n.wrapping_shl(3)
+  var o = 0
+  while o < oend {
+    b = sbb(d, o, ld(t, o), ld(m, o), b)
+    o = o.wrapping_add(8)
   }
   let keepm = ct.mask_bit(b & (top ^ 1))
-  i = 0
-  while i < n {
-    st(h, 8 * i, ct.pick(keepm, ld(t, 8 * i), ld(d, 8 * i)))
-    i += 1
+  o = 0
+  while o < oend {
+    st(h, o, ct.pick(keepm, ld(t, o), ld(d, o)))
+    o = o.wrapping_add(8)
   }
 }
 
@@ -270,8 +272,10 @@ fn final_sub(md: Mod, h: Int, t: Int, top: Int) {
 pub fn mac_row(dst: Int, src: Int, k: Int, len: Int) -> Int {
   var cw = 0
   var o = 0
-  let end4 = 8 * (len - len % 4)
-  let end = 8 * len
+  // len is not negative: the byte offsets by shifts and a mask, not a
+  // checked multiply and a signed remainder per call
+  let end = len.wrapping_shl(3)
+  let end4 = end & -32
   while o < end4 {
     let o1 = o.wrapping_add(8)
     let o2 = o.wrapping_add(16)
@@ -343,11 +347,13 @@ pub fn mac_row(dst: Int, src: Int, k: Int, len: Int) -> Int {
 /// i of g a mac_row at word i, its carry word at word i + n (still 0).
 fn prod_at(n: Int, t: Int, f: Int, g: Int) {
   rt.mem_set(t, 0, 8 * (2 * n + 2))
-  var i = 0
-  while i < n {
-    let ti = t.wrapping_add(8 * i)
-    st(ti, 8 * n, mac_row(ti, f, ld(g, 8 * i), n))
-    i += 1
+  // byte offsets carried, not 8 i per row (n is not negative)
+  let n8 = n.wrapping_shl(3)
+  var o = 0
+  while o < n8 {
+    let ti = t.wrapping_add(o)
+    st(ti, n8, mac_row(ti, f, ld(g, o), n))
+    o = o.wrapping_add(8)
   }
 }
 
@@ -358,10 +364,17 @@ fn prod_at(n: Int, t: Int, f: Int, g: Int) {
 /// prod_at makes n n).
 fn square_at(n: Int, t: Int, f: Int) {
   rt.mem_set(t, 0, 8 * (2 * n + 2))
+  // row i at word 2 i + 1 of t, f from word i + 1, its carry at word
+  // i + n: byte offsets carried (n is not negative)
   var i = 0
+  var ti = t.wrapping_add(8)
+  var fi = f
+  var ci = t.wrapping_add(n.wrapping_shl(3))
   while i < n - 1 {
-    let cw = mac_row(t.wrapping_add(8 * (2 * i + 1)), f.wrapping_add(8 * (i + 1)), ld(f, 8 * i), n - 1 - i)
-    st(t, 8 * (i + n), cw)
+    st(ci, 0, mac_row(ti, fi.wrapping_add(8), ld(fi, 0), n - 1 - i))
+    ti = ti.wrapping_add(16)
+    fi = fi.wrapping_add(8)
+    ci = ci.wrapping_add(8)
     i += 1
   }
   // doubled: the cross sum is below 2^(128 n - 1), so no carry out;
@@ -492,10 +505,11 @@ fn sqr_at(md: Mod, h: Int, f: Int) {
 fn add_at(md: Mod, h: Int, f: Int, g: Int) {
   let t = t_at(md)
   var cy = 0
-  var i = 0
-  while i < md.n {
-    cy = adc(t, 8 * i, ld(f, 8 * i), ld(g, 8 * i), cy)
-    i += 1
+  let oend = md.n.wrapping_shl(3)
+  var o = 0
+  while o < oend {
+    cy = adc(t, o, ld(f, o), ld(g, o), cy)
+    o = o.wrapping_add(8)
   }
   final_sub(md, h, t, cy)
 }
@@ -505,17 +519,18 @@ fn sub_at(md: Mod, h: Int, f: Int, g: Int) {
   let t = t_at(md)
   let m = m_at(md)
   var b = 0
-  var i = 0
-  while i < md.n {
-    b = sbb(t, 8 * i, ld(f, 8 * i), ld(g, 8 * i), b)
-    i += 1
+  let oend = md.n.wrapping_shl(3)
+  var o = 0
+  while o < oend {
+    b = sbb(t, o, ld(f, o), ld(g, o), b)
+    o = o.wrapping_add(8)
   }
   let mask = ct.mask_bit(b)
   var cy = 0
-  i = 0
-  while i < md.n {
-    cy = adc(h, 8 * i, ld(t, 8 * i), ld(m, 8 * i) & mask, cy)
-    i += 1
+  o = 0
+  while o < oend {
+    cy = adc(h, o, ld(t, o), ld(m, o) & mask, cy)
+    o = o.wrapping_add(8)
   }
 }
 
