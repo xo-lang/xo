@@ -1196,7 +1196,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     }
     t = lap(os, phases, "write", t)
     let bin = bin_path(dir, out, name, ltarget, o.many_targets)
-    var lk = link_inputs(os, ctx, o, c, dir, code, uses_time, tu, false, lctx.tgoos, tgoarch, "llvm")
+    var lk = link_inputs(os, ctx, o, c, dir, code, uses_time, tu, false, lctx.tgoos, tgoarch, "llvm", "")
     lk.flags = cross + lk.flags
     var race_rt = ""
     if o.race {
@@ -1326,9 +1326,12 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   // the inline cache's hits left undecoded until read (decision 0283
   // stage B), where the per-function cache is used
   let lazy_inl = march == "arm64" && !o.race && !release && o.cmd != "asm" && passes_off(os).is_empty() && backend_cache_mode(os) != "verify" && (os.env.get("XO_LAZY_INLINE") ?? "") != "off" && (os.env.get("XO_INLINE_BREAK") ?? "").is_empty()
-  let (inl0, pend0) = inline_or_defer(os, mi, emit_jobs(os), phases, cur_os, release, cur_rk, later, lazy_inl)
+  let (inl0, pend0, fb0) = inline_or_defer(os, mi, emit_jobs(os), phases, cur_os, release, cur_rk, later, lazy_inl)
   var inl = inl0
   var pend = pend0
+  // the first verification error of an inlined module built without
+  // inlining (its build information records it; "" for none)
+  var inl_fb = fb0
   t = lap(os, phases, "inline", t)
   var bins: List[(Str, Str)] = []
   for (ti, tg) in targets.indexed() {
@@ -1342,9 +1345,10 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       cur_rk = l.rc_keys
       mi = cur.m
       let ta = check_assumptions(os, mi, phases, l.t)
-      let (inl2, pend2) = inline_or_defer(os, mi, emit_jobs(os), phases, cur_os, release, cur_rk, later, lazy_inl)
+      let (inl2, pend2, fb2) = inline_or_defer(os, mi, emit_jobs(os), phases, cur_os, release, cur_rk, later, lazy_inl)
       inl = inl2
       pend = pend2
+      inl_fb = fb2
       t = lap(os, phases, "inline", ta)
     }
     // arm64.generate_module(cur.m, tgoos, false), timed
@@ -1366,6 +1370,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       if inline_verified(os, errs) {
         pre = keys
       } else {
+        inl_fb = errs[0]
         let (gm1, t2) = gen_module(os, o, ctx, c, cur.m, tgoos, release, jobs, phases, t)
         gm = gm1
         t = t2
@@ -1519,7 +1524,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
           tl = lap(os, phases, "link.tz", tl)
         }
         // the build information (decision 0354 stage 2)
-        match binfo_object(os, dir, native_build_info(os, o, "amd64", "${tgoos}/${tgoarch}"), tgoos, tgoarch, true) {
+        match binfo_object(os, dir, native_build_info(os, o, "amd64", "${tgoos}/${tgoarch}", inl_fb), tgoos, tgoarch, true) {
           Ok(p) => zsrcs.push(p)
           Err(e) => fail(os, "${e}")
         }
@@ -1551,7 +1556,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         continue
       }
       // the zone data (a C source clang compiles) and `use c`'s inputs
-      let wlk = link_inputs(os, ctx, o, c, dir, code, uses_time, cur_tu, false, tgoos, march, march)
+      let wlk = link_inputs(os, ctx, o, c, dir, code, uses_time, cur_tu, false, tgoos, march, march, inl_fb)
       let wst = stage(os, ctx, wbin)
       let why = win_amd64_link(os, wsrcs + wlk.srcs, wst.bin, wlk.flags + wlk.link_only)
       if !why.is_empty() {
@@ -1585,7 +1590,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       }
     }
     let bin = bin_path(dir, out, name, tg, o.many_targets)
-    let lk = link_inputs(os, ctx, o, c, dir, code, uses_time, cur_tu, no_cc, tgoos, march, march)
+    let lk = link_inputs(os, ctx, o, c, dir, code, uses_time, cur_tu, no_cc, tgoos, march, march, inl_fb)
     let flags = ["-O2"] + lk.flags
     // the program's assembly: one file, or the files of a parallel
     // generation, which assemble apart (arm64.generate_parallel)
@@ -1937,7 +1942,7 @@ struct LinkInputs {
   link_only: List[Str] = []
 }
 
-fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str, uses_time: Bool, tu: tzsel.TZUse, no_cc: Bool, tgoos: Str, tgoarch: Str, backend: Str) -> LinkInputs {
+fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str, uses_time: Bool, tu: tzsel.TZUse, no_cc: Bool, tgoos: Str, tgoarch: Str, backend: Str, inline_fb: Str) -> LinkInputs {
   // no C runtime (decision 0234; std/llrt/xo_rt.c deleted after seed
   // 0.16.0)
   var lk = LinkInputs{}
@@ -1945,7 +1950,7 @@ fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str,
     lk.link_only = if tgoos == "darwin" { ["-Wl,-x"] } else { ["-s"] }
   }
   // the build information (decision 0354 stage 2)
-  match binfo_object(os, dir, native_build_info(os, o, backend, "${tgoos}/${tgoarch}"), tgoos, tgoarch, no_cc) {
+  match binfo_object(os, dir, native_build_info(os, o, backend, "${tgoos}/${tgoarch}", inline_fb), tgoos, tgoarch, no_cc) {
     Ok(p) => {
       lk.srcs.push(p)
       if !no_cc {
@@ -2159,16 +2164,17 @@ fn passes_off(os: Os) -> List[Str] {
 /// (gotchas/arm64-inline-verify-fallback.md). XO_INLINE_BREAK=1 breaks
 /// the inlined module on purpose (internal/arm64 TestInlineFallbackLoud).
 fn inline_or_say(os: Os, var mi: ssa.Module, jobs: Int, phases: Bool, tgoos: Str, release: Bool, rc_keys: List[Str]) -> Bool {
-  let (ok, _) = inline_or_defer(os, mi, jobs, phases, tgoos, release, rc_keys, false, false)
+  let (ok, _, _) = inline_or_defer(os, mi, jobs, phases, tgoos, release, rc_keys, false, false)
   ok
 }
 
 /// inline_or_say, or with later, when the module changed, its
 /// verification left to the caller (verify_after_dce): whether the
 /// inlined module is to be generated, and whether its verification is
-/// pending. With lazy the inline cache's hits are left undecoded (arm64
+/// pending, and the first verification error when it fell back ("" when
+/// not). With lazy the inline cache's hits are left undecoded (arm64
 /// inline_cached, decision 0283 stage B).
-fn inline_or_defer(os: Os, var mi: ssa.Module, jobs: Int, phases: Bool, tgoos: Str, release: Bool, rc_keys: List[Str], later: Bool, lazy: Bool) -> (Bool, Bool) {
+fn inline_or_defer(os: Os, var mi: ssa.Module, jobs: Int, phases: Bool, tgoos: Str, release: Bool, rc_keys: List[Str], later: Bool, lazy: Bool) -> (Bool, Bool, Str) {
   let deny = os.env.get("XO_INLINE_DENY") ?? ""
   if !deny.is_empty() {
     mi.inline_deny = deny.split(",")
@@ -2187,11 +2193,11 @@ fn inline_or_defer(os: Os, var mi: ssa.Module, jobs: Int, phases: Bool, tgoos: S
   let changed = inline_through_cache(os, mi, rc_keys, jobs, release, (os.env.get("XO_INLINE_BREAK") ?? "") == "1", phases, lazy)
   t = lap(os, phases, "inline.apply", t)
   if changed && later {
-    return (true, true)
+    return (true, true, "")
   }
   let errs = if changed { verify_inlined(os, mi, tgoos, jobs, release) } else { [] }
   lap(os, phases, "inline.verify", t)
-  (inline_verified(os, errs), false)
+  (inline_verified(os, errs), false, if errs.is_empty() { "" } else { errs[0] })
 }
 
 /// The module m made ready for the arm64 generator: its undecoded

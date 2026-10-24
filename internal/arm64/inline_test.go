@@ -46,7 +46,37 @@ func TestInlineFallbackLoud(t *testing.T) {
 		if err != nil || !strings.Contains(out, "does not verify") || !strings.Contains(out, "built without inlining") {
 			t.Fatalf("%s normal: want a build that says it went on without inlining, got %v:\n%s", brk, err, out)
 		}
+		// the binary records it: `xo version -m` shows it, and `xo bench
+		// --ab` refuses the binary unless --allow-fallback (2026-10-24)
+		prog := filepath.Join(dir, "prog")
+		out, err = runXo(cli, dir, "version", "-m", prog)
+		if err != nil || !strings.Contains(out, "inline=fallback (") {
+			t.Fatalf("%s: want `xo version -m` to show inline=fallback, got %v:\n%s", brk, err, out)
+		}
+		out, err = runXo(cli, dir, "bench", "--ab", "--rounds=1", "--warmup=0", "--no-guard", prog, prog)
+		if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 2 || !strings.Contains(out, "built without inlining") {
+			t.Fatalf("%s: want `xo bench --ab` to refuse the binary with exit 2, got %v:\n%s", brk, err, out)
+		}
+		if out, err = runXo(cli, dir, "bench", "--ab", "--rounds=1", "--warmup=0", "--no-guard", "--allow-fallback", prog, prog); err != nil {
+			t.Fatalf("%s: want `xo bench --ab --allow-fallback` to run, got %v:\n%s", brk, err, out)
+		}
 	}
+	// a build that inlines records nothing
+	brk = ""
+	if out, err := build("1"); err != nil {
+		t.Fatalf("unbroken build: %v:\n%s", err, out)
+	}
+	if out, err := runXo(cli, dir, "version", "-m", filepath.Join(dir, "prog")); err != nil || strings.Contains(out, "inline=fallback") {
+		t.Fatalf("unbroken build: want no inline=fallback line, got %v:\n%s", err, out)
+	}
+}
+
+// runXo runs xo with args in dir, its combined output.
+func runXo(cli []string, dir string, args ...string) (string, error) {
+	cmd := testtmp.Guard(exec.Command(cli[0], append(append([]string{}, cli[1:]...), args...)...))
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	return string(out), err
 }
 
 // TestAssumptionCheck (decision 0342): a module in which a call's result

@@ -18,12 +18,16 @@ use std/crypto
 /// a native binary carries it as the symbol xo_buildinfo (binfo_object).
 /// `xo replay` and `xo version -m` find it by its `{"id":"` prefix.
 fn build_info_json(os: Os, sources: Map[Str, Str], dir: Str, wd: Str, std_dir: Str, o: Opts, backend: Str, target: Str) -> Str {
-  build_info(os, sources, dir, wd, std_dir, o, backend, target).0
+  build_info(os, sources, dir, wd, std_dir, o, backend, target, "").0
 }
 
 /// build_info_json and the one line a native crash report prints of it
 /// (crash.xo w_build): the xo, backend, target, ID, mode and settings.
-fn build_info(os: Os, sources: Map[Str, Str], dir: Str, wd: Str, std_dir: Str, o: Opts, backend: Str, target: Str) -> (Str, Str) {
+/// inline_fb is the first verification error of an inlined module this
+/// build fell back from (built without inlining; "" for none): recorded
+/// so `xo version -m` shows it and `xo bench --ab` refuses the binary
+/// (gotchas/arm64-inline-verify-fallback.md), outside the build ID.
+fn build_info(os: Os, sources: Map[Str, Str], dir: Str, wd: Str, std_dir: Str, o: Opts, backend: Str, target: Str, inline_fb: Str) -> (Str, Str) {
   let paths = sources.keys().sort()
   var h = StrBuilder.new()
   for p in paths {
@@ -108,11 +112,17 @@ fn build_info(os: Os, sources: Map[Str, Str], dir: Str, wd: Str, std_dir: Str, o
     }
     j = j + ",\"stamps\":{${ss.join(",")}}"
   }
+  if !inline_fb.is_empty() {
+    j = j + ",\"inline_fallback\":${json_str(inline_fb)}"
+  }
   let onoff = fn(x: Bool) -> Str { if x { "on" } else { "off" } }
   var line = "xo ${core.VERSION}, ${backend}, ${target}, id ${id}, ${if release { "release" } else { "debug" }} (debug-contracts=${onoff(debug_contracts_eff(o, release))} dbg=${onoff(dbg_eff(o, release))} error-args=${onoff(error_args_eff(o))} debug-info=${debug_info_eff(o, release)} profile-support=${onoff(profile_support_eff(o, release))} trace-support=${onoff(trace_support_eff(o, release))}"
   let opt = opt_eff(os, o, backend)
   if !opt.is_empty() {
     line = "${line} opt=${opt}"
+  }
+  if !inline_fb.is_empty() {
+    line = "${line} inline=fallback"
   }
   (j + "}", "${line})")
 }
@@ -207,8 +217,8 @@ fn binfo_link_flags(goos: Str) -> List[Str] {
 /// build_info for a native build of o's directories, with the source
 /// hashes build_native took before lowering released the checker
 /// (decision 0352).
-fn native_build_info(os: Os, o: Opts, backend: Str, target: Str) -> (Str, Str) {
-  build_info(os, o.binfo_sources, o.dirs[0], o.wd, o.std, o, backend, target)
+fn native_build_info(os: Os, o: Opts, backend: Str, target: Str, inline_fb: Str) -> (Str, Str) {
+  build_info(os, o.binfo_sources, o.dirs[0], o.wd, o.std, o, backend, target, inline_fb)
 }
 
 /// The sha256 of each of the program's sources (not std's), keyed by its

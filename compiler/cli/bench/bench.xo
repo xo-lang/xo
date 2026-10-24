@@ -4,6 +4,7 @@
 //
 //   xo bench --ab [flags] A [B] [-- ARGS...]
 
+use github.com/xo-lang/xo/compiler/cli/core
 use std/regexp
 use std/task
 
@@ -17,7 +18,7 @@ pub fn usage() -> Str {
   [
     "usage: xo bench --ab [--rounds=N] [--warmup=N] [--env-a=K=V] [--env-b=K=V] [--args-a=WORDS] [--args-b=WORDS]",
     "                     [--max-load=X] [--load-wait=D] [--guard=CMD] [--no-guard] [--ops=N]",
-    "                     [--metrics=a,b] [--keep-loaded] [--allow-fail] [--timeout=D]",
+    "                     [--metrics=a,b] [--keep-loaded] [--allow-fail] [--allow-fallback] [--timeout=D]",
     "                     [--alpha=P] [--seed=N] [--json] A [B] [-- ARGS...]",
   ].join("\n")
 }
@@ -38,6 +39,7 @@ struct Opts {
   metrics: List[Str] = []
   keep_loaded: Bool = false
   allow_fail: Bool = false
+  allow_fallback: Bool = false
   timeout: Duration = Duration.from_secs_int(600)
   alpha: Float = 0.05
   seed: Int = 1
@@ -101,6 +103,8 @@ fn parse_opts(args: List[Str]) -> Opts ! Str {
       o.keep_loaded = true
     } else if a == "--allow-fail" {
       o.allow_fail = true
+    } else if a == "--allow-fallback" {
+      o.allow_fallback = true
     } else if a == "--no-guard" {
       o.no_guard = true
     } else if let Some(v) = flag_val(a, "rounds") {
@@ -529,6 +533,23 @@ fn vals_json(m: Map[Str, Float]) -> Str {
 }
 
 /// run is `xo bench ARGS` and returns the exit status.
+/// The first verification error a binary's build information records
+/// when it was built without inlining (compiler/xo binfo.xo
+/// inline_fallback), or "" (none, or no build information: a command,
+/// a script, an older xo's binary).
+fn inline_fallback(os: Os, prog: Str) -> Str uses fs.read {
+  let data = os.fs.read(prog).ok() ?? b""
+  let text = core.find_build_info(data, "")
+  let key = "\"inline_fallback\":\""
+  let i = text.find(key) ?? -1
+  if i < 0 {
+    return ""
+  }
+  let rest = text[i + key.len()..text.len()]
+  let j = rest.find("\",\"") ?? rest.find("\"}") ?? rest.len()
+  rest[0..j]
+}
+
 pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, proc, stdio) {
   let o = match parse_opts(args) {
     Ok(o) => o
@@ -539,6 +560,15 @@ pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, p
   }
   let pa = o.progs[0]
   let pb = if o.progs.len() == 2 { o.progs[1] } else { pa }
+  if !o.allow_fallback {
+    for p in o.progs {
+      let why = inline_fallback(os, p)
+      if !why.is_empty() {
+        os.stdio.eprintln("xo bench: ${p} was built without inlining (its inlined module did not verify: ${why}), so its numbers are not the program's; fix the build, or pass --allow-fallback")
+        return 2
+      }
+    }
+  }
   let aa = side_args(o, true)
   let ab = side_args(o, false)
   var rounds: List[Round] = []

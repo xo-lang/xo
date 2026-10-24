@@ -104,6 +104,7 @@ struct BinfoView {
   settings: BinfoSettings? = None
   stamps: Map[Str, Str] = {}
   sources: Map[Str, Str] = {}
+  inline_fallback: Str = ""
 } derive Json
 
 /// `xo version -m [--json] BINARY...` (decision 0354 stage 2): the build
@@ -179,6 +180,10 @@ fn version_m(os: Os, args: List[Str]) -> Int {
     }
     if !v.tzdata.is_empty() {
       b.write("\tbuild\ttzdata=${v.tzdata}\n")
+    }
+    if !v.inline_fallback.is_empty() {
+      // built without inlining: its inlined module did not verify
+      b.write("\tbuild\tinline=fallback (${v.inline_fallback})\n")
     }
     for k in v.stamps.keys().sort() {
       b.write("\tstamp\t${k}=${v.stamps.get(k) ?? ""}\n")

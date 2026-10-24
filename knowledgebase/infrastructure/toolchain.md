@@ -1624,8 +1624,15 @@ none). build_native hashes the sources before lower releases the
 checker (decision 0352) and carries them in Opts.binfo_sources. `xo
 version -m [--json] BINARY...` and `xo replay` find the object by its
 `{"id":"` prefix (compiler/cli/core buildinfo.xo); replay passes the
-recorded debug-contracts, dbg and error-args settings explicitly. Last
-verified: 2026-10-23.
+recorded debug-contracts, dbg and error-args settings explicitly. A
+native build whose inlined module did not verify, built without
+inlining (gotchas/arm64-inline-verify-fallback.md), records the first
+verification error as `"inline_fallback"` (outside the build ID): `xo
+version -m` prints `build inline=fallback (ERROR)`, the crash report's
+line ends `inline=fallback`, and `xo bench --ab` refuses such a binary
+(exit 2, naming it) unless `--allow-fallback` (2026-10-24; a scratch
+measurement read a fallback build's numbers as a 3 to 7% slowdown).
+Last verified: 2026-10-24.
 
 ### HTTP callgrind: short or full
 
