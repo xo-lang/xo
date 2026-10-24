@@ -58,6 +58,31 @@ and the change is on `314384917`; the difference between them is Lang
 The ASCII rows move only by the fused fold from the earlier change,
 which is the base here.
 
+## xo bench --ab, arm64, 12 rounds
+
+The two programs are built from the same `main.xo`
+(9ff9d2cdec660868f784eec7232c98da2635efe5b031d694fe67ca677a338638) and
+differ only in `std/native/llrt/unicode.xo` (and a blank line in
+`obj.xo`), which `xo version -m` prints; the base xo is from e50722a01
+and the change on 314384917. Interleaved by `xo bench --ab` in the lead's
+quiet window (2026-10-24 09:56), all twelve rounds unloaded:
+
+| workload | metric | A | B | B / A | 95% interval | verdict |
+|---|---|---|---|---|---|---|
+| lower_u | wall_ms | 185.0 | 162.1 | 0.876 | 0.861 to 0.893 | better |
+| lower_u | cpu_ms | 180.0 | 150.0 | 0.833 | 0.833 to 0.912 | better |
+| lower_u | instructions | 4,552,588,129 | 4,206,539,698 | 0.924 | 0.923 to 0.924 | better |
+| upper_u | wall_ms | 189.5 | 170.5 | 0.900 | 0.883 to 0.927 | better |
+| upper_u | cpu_ms | 180.0 | 160.0 | 0.889 | 0.889 to 0.944 | better |
+| upper_u | instructions | 4,513,115,885 | 4,167,078,377 | 0.923 | 0.923 to 0.923 | better |
+| eqlower | wall_ms | 477.7 | 433.5 | 0.908 | 0.890 to 0.922 | better |
+| eqlower | cpu_ms | 470.0 | 420.0 | 0.894 | 0.884 to 0.916 | better |
+| eqlower | instructions | 11,520,076,667 | 10,826,309,885 | 0.940 | 0.940 to 0.940 | better |
+
+max_rss within noise on all three. The wall gain, 8 to 12 percent, is
+larger than the instruction ratio because the general decode's call and
+branch chain is what the sampling profile had charged.
+
 ## What is left
 
 - `u24` is still three checked reads. The fix that would pay is a table

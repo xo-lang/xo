@@ -55,7 +55,9 @@ Latin, Greek and Cyrillic are decoded in the loop instead of through
 four range checks, a bounds check and a continuation loop per rune).
 lower_u 4,596.8 M instructions to 4,206.8 M, upper_u 4,568.9 M to
 4,167.1 M, eqlower 11,596.8 M to 10,826.7 M, arm64, best of 5, base
-built from the same revision. Reading the below U+0800 case tables
+built from the same revision; the `--ab` gives wall 0.876 on lower_u,
+0.900 on upper_u and 0.908 on eqlower (instructions 0.924, 0.923, 0.940,
+every verdict better). Reading the below U+0800 case tables
 through `raw.bytes_addr` instead of three checked index reads was tried
 and measured 7.6 percent worse (the address is two runtime calls per
 lookup) and reverted; a little endian table layout, one load and a mask,
