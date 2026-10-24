@@ -329,9 +329,34 @@ fn case_append(out: Str, b: Bytes, from: Int, lower: Bool) -> Str {
   var run = from
   var i = scan.span(b, from, 0)
   while i < n {
-    let p = decode(b, i)
-    let r = p >> 3
-    let size = p & 7
+    // The loop re-enters only at a non-ASCII byte (scan.span returns the
+    // end of an ASCII run), so the two byte runes of Latin, Greek and
+    // Cyrillic, the bulk of mixed text, are decoded here rather than in
+    // raw.decode's general path. The malformed cases are the same: a
+    // lead of 0x80 to 0xC1, a truncated sequence or a bad continuation
+    // byte is U+FFFD of size one.
+    var r = 0
+    var size = 1
+    let c0 = Int(b[i])
+    if c0 < 0x80 {
+      r = c0
+    } else if c0 < 0xE0 {
+      if c0 >= 0xC2 && i + 1 < n {
+        let c1 = Int(b[i + 1])
+        if c1 >= 0x80 && c1 <= 0xBF {
+          r = ((c0 & 0x1F) << 6) | (c1 & 0x3F)
+          size = 2
+        } else {
+          r = 0xFFFD
+        }
+      } else {
+        r = 0xFFFD
+      }
+    } else {
+      let p = decode(b, i)
+      r = p >> 3
+      size = p & 7
+    }
     let x = to_case(r, lower)
     if x != r || (r == 0xFFFD && size == 1) {
       if run < i {

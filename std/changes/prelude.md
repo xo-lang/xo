@@ -35,6 +35,32 @@ more instructions on cut and 42.6% on split_absent, because find_byte's
 word scan beats it. The numbers for both attempts are in
 bench/results/strfind-2026-10-24.md.
 
+## 2026-10-24: perf: to_lower and to_upper decode two byte runes inline (the mixed-text rows)
+
+- Kind: perf
+- Commit: (filled in after the push)
+- Found by: the profile of lower_u and upper_u after the fused fold,
+  where the mixed rows stood at 0.59 of Go's instructions
+- Go reference: none (the semantics are unchanged: the same U+FFFD
+  rules for a bad lead byte, a truncated sequence and a bad
+  continuation byte as `utf8.DecodeRuneInString`)
+- Test: corpus runes, strings and bytes on arm64, LLVM and the Go
+  backend, the unicode, rune_classes and unicode_table goldens
+- Timing: bench/results/case-mixed-2026-10-24.md
+
+`unicode.case_append` re-enters only at a non-ASCII byte, since
+`scan.span` returns the end of an ASCII run, so the two byte runes of
+Latin, Greek and Cyrillic are decoded in the loop instead of through
+`raw.decode`'s general path (its ASCII arm was dead there, and it paid
+four range checks, a bounds check and a continuation loop per rune).
+lower_u 4,596.8 M instructions to 4,206.8 M, upper_u 4,568.9 M to
+4,167.1 M, eqlower 11,596.8 M to 10,826.7 M, arm64, best of 5, base
+built from the same revision. Reading the below U+0800 case tables
+through `raw.bytes_addr` instead of three checked index reads was tried
+and measured 7.6 percent worse (the address is two runtime calls per
+lookup) and reverted; a little endian table layout, one load and a mask,
+is the next thing there.
+
 ## 2026-10-24: perf: to_lower and to_upper fold the ASCII spans they copy, in one pass
 
 - Kind: perf

@@ -998,6 +998,7 @@ fn fold_copy(src: Int, d: Int, n: Int, mode: Int) {
 
 /// An empty string with room for n bytes, at least 16 (xo_rs_with_cap).
 pub fn rs_with_cap(n: Int) -> Int { rs_new_n(if n < 16 { 16 } else { n }) }
+
 /// The frees the calling thread's real-time sections deferred so far (its
 /// heap's RT_N): std/internal rt_queued (decision 0241). Real-time: inside
 /// a section the thread has its heap record, so only heap_word's fast
