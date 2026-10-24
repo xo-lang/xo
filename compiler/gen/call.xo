@@ -373,9 +373,10 @@ fn (var g: Gen) decl_call1(x: Expr, ci: check.CallInfo) -> (Str, Int) {
       let list_read = g.ostd(fo) && fr0 >= 0 && g.oprelude(fr0) && (g.oname(fr0) == "List" && borrow_recv(g.oname(fo)) || g.oname(fr0) == "Map" && borrow_map_recv(g.oname(fo)))
       let calm = g.borrow_ok(re, g.call_others(recv_e, args, aidx, -1))
       var done = false
-      if g.c.objs[fo].recv_var && g.ostd(fo) && calm {
-        // a std method writes only its receiver: an element place is
-        // passed by address
+      if g.c.objs[fo].recv_var && calm {
+        // an element place is passed by address: a method writes only
+        // its receiver of the caller's (a user method's too since
+        // 2026-10-23: place's marked copy cloned the element per call)
         if let Some(r) = g.resolve_addr_place(re) {
           code = g.place_addr(r)
           done = true
@@ -390,7 +391,21 @@ fn (var g: Gen) decl_call1(x: Expr, ci: check.CallInfo) -> (Str, Int) {
       let ae = args[aidx[i]].value
       keep = p.is_var
       if p.is_var {
-        code = "&" + g.place(ae)
+        // an element place by address when no other operand mutates
+        // its root, as a var receiver's: place's copy is marked shared,
+        // so each write in the callee copied the whole element (2026-10-23:
+        // compiler/macho link_pe's put_le(bufs[k], ...) a relocation,
+        // 85.7 s of a 6.6 MB link with an xo built by this backend)
+        var done = false
+        if g.borrow_ok(ae, g.call_others(recv_e, args, aidx, i)) {
+          if let Some(r) = g.resolve_addr_place(ae) {
+            code = "&" + g.place_addr(r)
+            done = true
+          }
+        }
+        if !done {
+          code = "&" + g.place(ae)
+        }
       } else {
         var pt = p.ty
         if !sub.is_empty() {

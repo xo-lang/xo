@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -520,5 +521,27 @@ func TestTestSeedReproduces(t *testing.T) {
 	}
 	if strings.Contains(runSeed("3"), "--- FAIL: lost update (") {
 		t.Errorf("seed 3 fails:\n%s", runSeed("3"))
+	}
+}
+
+// TestVarElemInPlace: a var argument or receiver that is a List element
+// (or a field of one) is passed by address, not as a marked copy written back, which copied the element at
+// every write in the callee (2026-10-23: Xo's PE linker in an xo built by
+// this backend took 85.7 s to link 6.6 MB, put_le(bufs[k], ...) per
+// relocation). The copying build took seconds; the bound is far above
+// the in-place time and far below the copying one.
+func TestVarElemInPlace(t *testing.T) {
+	got, _ := buildAndRun(t, filepath.Join("testdata", "var_elem_big"), xotool.ModeBuild)
+	if got.exit != 0 || !strings.Contains(got.stdout, "sum ") {
+		t.Fatalf("exit %d:\n%s%s", got.exit, got.stdout, got.stderr)
+	}
+	ms := regexp.MustCompile(`ms (\d+)`).FindAllStringSubmatch(got.stdout, -1)
+	if len(ms) != 3 {
+		t.Fatalf("want three times:\n%s", got.stdout)
+	}
+	for i, what := range []string{"a var argument List[List[Int]] element", "a var argument field of a List element", "a var receiver List element"} {
+		if n, _ := strconv.Atoi(ms[i][1]); n > 2000 {
+			t.Errorf("5,000 calls with %s of 1 M Ints took %d ms: the element is copied per call", what, n)
+		}
 	}
 }

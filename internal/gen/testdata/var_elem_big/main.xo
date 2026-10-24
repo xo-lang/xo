@@ -1,0 +1,60 @@
+// A var argument or receiver that is a List element, or a field of one
+// (TestVarElemInPlace): 5,000 calls of each, each writing four Ints of
+// 1,048,576. Passed by a marked copy, each call copied the element (8
+// MB), seconds in all; by address, a few milliseconds. Prints the
+// checksums and the times.
+
+struct Sect {
+  name: Str
+  data: List[Int]
+}
+
+fn (var s: Sect) put(at: Int, v: Int) {
+  s.data[at] = v & 0xff
+}
+
+fn put_le(var b: List[Int], at: Int, v: Int, n: Int) {
+  for k in 0..n {
+    b[at + k] = (v >> (8 * k)) & 0xff
+  }
+}
+
+fn main(os: Os) {
+  let n = 1048576
+  var bufs: List[List[Int]] = [[], []]
+  for i in 0..n {
+    bufs[1].push(i & 0xff)
+  }
+  let t0 = os.clock.now()
+  for i in 0..5000 {
+    put_le(bufs[1], (i * 64) % (n - 8), i, 4)
+  }
+  let ms = os.clock.since(t0).millis()
+  var sum = 0
+  for x in bufs[1] {
+    sum += x
+  }
+  os.stdio.println("sum ${sum}")
+  os.stdio.println("ms ${ms}")
+  var sects = [Sect{name: "a", data: []}, Sect{name: "b", data: []}]
+  for i in 0..n {
+    sects[1].data.push(i & 0xff)
+  }
+  let t1 = os.clock.now()
+  for i in 0..5000 {
+    put_le(sects[1].data, (i * 64) % (n - 8), i, 4)
+  }
+  let ms2 = os.clock.since(t1).millis()
+  let t2 = os.clock.now()
+  for i in 0..5000 {
+    sects[1].put((i * 64) % (n - 8), i + 7)
+  }
+  let ms3 = os.clock.since(t2).millis()
+  var sum2 = 0
+  for x in sects[1].data {
+    sum2 += x
+  }
+  os.stdio.println("sum ${sum2} ${sects[0].data.len()}")
+  os.stdio.println("ms ${ms2}")
+  os.stdio.println("ms ${ms3}")
+}
