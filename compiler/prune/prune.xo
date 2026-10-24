@@ -106,6 +106,12 @@ pub struct Policy {
   /// uses and not the bytes it holds (the back-end cache: 4096; 1.28M small
   /// files held 17.4 GiB by size and 25.9 GiB on the disk, 2026-10-24).
   pub block: Int = 0
+  /// A sliced run removes the empty directories below a shard that were
+  /// unused for this long (0: it leaves them to age out as dirs do). The
+  /// back-end cache's targets leave one per build kind on their first
+  /// build, and most targets are built once or twice: 1,467 empty
+  /// directories in one of 256 shards, 2026-10-24.
+  pub empty_idle: Duration = 0s
 }
 
 /// n bytes as the cache p counts them (Policy.block).
@@ -330,6 +336,43 @@ fn sliced(p: Policy) -> Bool {
   !p.dirs && (p.walk_budget.nanos() > 0 || p.slice_shards > 0)
 }
 
+/// The directories below root (a shard) that hold no file, as fis lists
+/// them, and were unused for p.empty_idle and p.keep: removed deepest first
+/// (remove fails on one that is not empty, or that a build just filled).
+fn remove_empty_dirs(fs: Fs, clock: Clock, root: Str, fis: List[FileInfo], p: Policy) uses (fs.write, clock) {
+  var full: Map[Str, Bool] = {}
+  for fi in fis {
+    if fi.is_dir {
+      continue
+    }
+    var d = dir_of(fi.path)
+    while d.len() > root.len() && !full.contains(d) {
+      full[d] = true
+      d = dir_of(d)
+    }
+  }
+  var empty: List[FileInfo] = []
+  for fi in fis {
+    if fi.is_dir && fi.path.len() > root.len() && !full.contains(fi.path) {
+      let idle = clock.since(fi.modified)
+      if idle > p.empty_idle && idle >= p.keep {
+        empty.push(fi)
+      }
+    }
+  }
+  let ord = empty.sort_by(fn(f) { -f.path.len() })
+  for f in ord {
+    fs.remove(f.path).ignore_err("not empty, or another process removed it")
+  }
+}
+
+fn dir_of(path: Str) -> Str {
+  match path.rfind("/") {
+    Some(i) => path[0..i]
+    None => ""
+  }
+}
+
 /// run with p.walk_budget: one slice of the shards, the cap applied to
 /// the sizes ledger (Policy.walk_budget).
 fn run_sliced(fs: Fs, clock: Clock, dir: Str, p: Policy) -> Stats uses (fs.read, fs.write, clock) {
@@ -380,6 +423,9 @@ fn run_sliced(fs: Fs, clock: Clock, dir: Str, p: Policy) -> Stats uses (fs.read,
     }
     var es: List[Entry] = []
     var bytes = 0
+    if p.empty_idle.nanos() > 0 && s.contains("/") {
+      remove_empty_dirs(fs, clock, "${dir}/${s}", fis, p)
+    }
     for fi in fis {
       if fi.is_dir {
         continue

@@ -518,3 +518,28 @@ test "the table names each cache once, and keeps the module cache and seeds" {
     }
   }
 }
+
+test "a sliced run removes the empty directories of a shard unused for empty_idle" {
+  put(os, "c/s/0/e0", 100)
+  put(os, "c/prune-stamp", 0)
+  os.fs.create_dir_all("c/s/0/t1/fn").or_fault("mkdir")
+  os.fs.create_dir_all("c/s/0/t2/fn").or_fault("mkdir")
+  put(os, "c/s/0/t2/fn/seg", 10)
+  os.clock.advance(30m)
+  let p = Policy{max_age: 0s, max_bytes: GB, every: 0s, keep: 1m, slice_shards: 8, empty_idle: 1h}
+  let _a = run(os.fs, os.clock, "c", p)
+  // younger than empty_idle: kept
+  expect(there(os, "c/s/0/t1/fn")) == true
+  os.clock.advance(1h)
+  let _b = run(os.fs, os.clock, "c", p)
+  expect(there(os, "c/s/0/t1/fn")) == false
+  expect(there(os, "c/s/0/t1")) == false
+  // a directory with a file, the shard itself, and its entry stay
+  expect(there(os, "c/s/0/t2/fn/seg")) == true
+  expect(there(os, "c/s/0/e0")) == true
+  // empty_idle off: nothing is removed
+  os.fs.create_dir_all("c/s/0/t3/fn").or_fault("mkdir")
+  os.clock.advance(5h)
+  let _c = run(os.fs, os.clock, "c", Policy{max_age: 0s, max_bytes: GB, every: 0s, slice_shards: 8})
+  expect(there(os, "c/s/0/t3/fn")) == true
+}

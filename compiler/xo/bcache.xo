@@ -982,6 +982,9 @@ fn backend_policy(os: Os) -> prune.Policy {
   // the cap counts the disk the cache uses: 4 KiB blocks (a file of 300
   // bytes takes 4096)
   p.block = 4096
+  // a target's directories left empty by a build that never came back go
+  // after an hour, not a week (compiler/prune Policy.empty_idle)
+  p.empty_idle = 1h
   p
 }
 

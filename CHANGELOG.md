@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The back-end cache's prune removes the empty directories a build target
+  leaves (one per build kind on its first build, and most targets are built
+  once or twice) after an hour unused instead of a week: one of the 256 shards
+  held 1,467 of them on 2026-10-24 (`Policy.empty_idle`, sliced runs).
 - The back-end cache's cap counts disk, not bytes: each file takes whole
   4 KiB blocks (prune.Policy.block), so the 16 GiB cap means 16 GiB
   allocated. The cache held about 20 GB on disk under a 16 GiB cap
