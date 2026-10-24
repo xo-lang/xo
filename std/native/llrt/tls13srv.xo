@@ -240,6 +240,14 @@ pub fn close(var s: Server) {
   }
 }
 
+/// The bytes feed kept of a record that was not complete (the head of a
+/// record cut by the end of a read), taken.
+pub fn take_rin(var s: Server) -> Bytes {
+  let r = s.rin
+  s.rin = b""
+  r
+}
+
 /// Takes bytes the client sent: every complete record is processed.
 pub fn feed(var s: Server, data: Bytes) {
   s.rin = tls13.cat2(s.rin, data)

@@ -1,5 +1,23 @@
 # std/tls changes
 
+## 2026-10-23: fix: a server read that ends the handshake and cuts a record no longer loses the record's head
+
+- Kind: fix
+- Commit: this commit
+- Found by: the `http_stream_body_h2` golden hanging in about 1 run in 300 under load (Xo Lang 3's stress loop, ciphertext and record logging)
+- Go reference: crypto/tls Conn.readRecord (bytes after the Finished stay in the record buffer)
+- Test: golden http_stream_body_h2 (20000 runs, 4 at a time: 66 hangs before, 0 after)
+
+When the client's Finished and its first application data arrived in one
+socket read, the server finished the handshake inside that read.
+tls13srv.feed and tls12srv.feed keep the head of a record the read cut
+in their `rin`, and the server's `pend` was cleared, so after the handshake
+the next read's bytes were joined to a record's tail: the next record
+header was garbage, no record was complete, and the connection waited
+for data that was already read (h2 streamed bodies stalled after the first
+64 KiB). The leftover now moves into `pend` once the handshake is done
+(tlssrv.take_rin; also tls13srv.take_rin and tls12srv.take_rin).
+
 ## 2026-10-23: behavior: TlsErr prints its message (decision 0358)
 
 - Kind: behavior

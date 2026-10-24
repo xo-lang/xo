@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [tls-server-handshake-read-cut-record.md](tls-server-handshake-read-cut-record.md): Observed and fixed 2026-10-23: a TLS server read that ended the handshake and cut a record lost the record's head (feed kept it in rin, pend was cleared); h2 streamed bodies hung in 1 run in 300
 - [loop-two-back-edges-no-hoist.md](loop-two-back-edges-no-hoist.md): Observed and fixed 2026-10-22: dfs_loops gave one loop per back edge, so a loop with two (a `continue` in `while true`, jsontext.str_end) had no preheader and hoist_consts moved nothing; on x86 a 64 bit logical immediate was a movabsq at each use. Merged per header; x86 immediates only within 32 bits.
 - [cached-object-names-worktree.md](cached-object-names-worktree.md): Observed and fixed 2026-10-22: the worktree's path in each part's DWARF (inline comp_dir and line table directories) kept every worktree from reusing the back-end cache's objects (0/117 for xo); now strp into fixed .debug_str slots filled as the object leaves the compiler.
 - [check-cache-builder-reads-names.md](check-cache-builder-reads-names.md): Observed and fixed 2026-10-22: the SSA builder's main_unnamed read the checker's names, which a module skipped by XO_CHK_CACHE=auto never records, so warm builds kept main's user capability dispatch (TestModuleCheckAuto failed); the module check entry now records it.

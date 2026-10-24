@@ -158,6 +158,14 @@ pub fn ready(s: Server) -> Bool { s.state == DONE && !s.closed }
 
 /// The bytes of a record received only in part (the input ending there
 /// is crypto/tls's "unexpected EOF").
+/// The bytes feed kept of a record that was not complete (the head of a
+/// record cut by the end of a read), taken.
+pub fn take_rin(var s: Server) -> Bytes {
+  let r = s.rin
+  s.rin = b""
+  r
+}
+
 pub fn pending(s: Server) -> Int { s.rin.len() }
 
 /// Sends application data (after the handshake).

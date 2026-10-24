@@ -643,6 +643,17 @@ fn done(c: Conn) -> Bool { if c.s12.is_empty() { c.s.state == tls13srv.DONE } el
 
 fn failed(c: Conn) -> Bool { if c.s12.is_empty() { c.s.state == tls13srv.FAILED } else { c.s12[0].state == tls12srv.FAILED } }
 
+/// The bytes feed kept of a record that was not complete, taken.
+fn take_rin(var c: Conn) -> Bytes {
+  if c.s12.is_empty() {
+    return tls13srv.take_rin(c.s)
+  }
+  var y = c.s12[0]
+  let r = tls12srv.take_rin(y)
+  c.s12[0] = y
+  r
+}
+
 fn closed(c: Conn) -> Bool { if c.s12.is_empty() { c.s.closed } else { c.s12[0].closed } }
 
 fn take(var c: Conn) -> Bytes {
@@ -830,6 +841,11 @@ fn fill(var c: Conn, nb: Bool) -> Bool {
         // the handshake takes everything
         feed(c, c.pend)
         c.pend = b""
+        if done(c) {
+          // the handshake ended inside this read: what feed kept of a
+          // record the read cut (the head of the next one) goes on in pend
+          c.pend = take_rin(c)
+        }
       }
       ok = true
       break
