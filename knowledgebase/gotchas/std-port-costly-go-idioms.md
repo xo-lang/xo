@@ -29,6 +29,18 @@ Two kinds, both fixed std-side:
    - slicing a Str or Bytes copies (Go's slices share): a port of
      time's nextStdChunk that sliced the layout per field got slower
      (parse 3,768 to 6,208 M); Go compares bytes by index;
+   - a piece List grown one push at a time: `Str.split("")`,
+     `Str.split_n("")` and `Bytes.split("")`, one piece per rune, spent
+     most of their time in `obj.rl_grow_n` and `alloc.resize` (split_empty
+     841.6 M instructions, 40 ms); sizing once from the rune count as Go's
+     explode does, and making each piece with `rt.str_view`, took it to
+     327.2 M (0.39). Counting the pieces first for the *other* forms is not
+     the same win: a list grows geometrically, so it copies O(pieces) words
+     in all, while a count is a second walk over every byte (and, for
+     fields, a second decode per field), and it measured slower: fields
+     1.50x, bytes_fields 1.49x, lines 1.21x, split_after 1.10x, bytes_split
+     1.10x, split_one 1.07x, all reverted
+     (bench/results/strsplit-vs-go-2026-10-24.md, 2026-10-24);
    - small temporary Lists allocate (Go uses fixed-size arrays on the
      stack), e.g. `[0, 0, 0, 0]` per quantum in base64;
    - Xo has no package-level state, so what Go computes once per

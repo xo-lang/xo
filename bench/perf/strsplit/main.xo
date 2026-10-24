@@ -1,0 +1,180 @@
+// Str.split and Str.fields workloads against Go's strings.Split and
+// strings.Fields (the twin is twin.go.txt): texts and separators chosen so
+// a one byte, a multi byte, an absent and an empty separator split runs,
+// and both the ASCII and the non-ASCII white space paths of fields, plus
+// invalid UTF-8. The workload is picked once, outside the loop, and each
+// run prints "<workload> <checksum> <elapsed us>", the shape
+// bench/perf/unicode/measure.sh reads; the checksum is the same line the Go
+// twin prints.
+// Usage: strsplitperf <workload>
+
+const N = 200000
+
+const TEXTS: List[Str] = [
+  "the,quick,brown,fox,jumps,over,the,lazy,dog",
+  "1,2,3,4",
+  "héllo, wörld, ça va, 日本語 テキスト   ",
+  "  \t  mixed ascii and ✓ unicode ✓  ",
+  "abcabcabcabcabcabcabc",
+  "the quick brown fox jumps over the lazy dog",
+  "a\u{fffd}b, c\u{fffd} ,",
+  "",
+  ",,,",
+]
+
+const SEPS: List[Str] = [",", " ", "abc", "", "✓"]
+
+const LINES_TEXTS: List[Str] = [
+  "alpha\nbeta\ngamma\n",
+  "one\r\ntwo\r\nthree",
+  "\n\n\n",
+  "no newline here",
+  "héllo\nwörld\n",
+  "a\n",
+]
+
+fn split_after_all() -> Int {
+  var n = 0
+  for i in 0..N {
+    for p in TEXTS[i % TEXTS.len()].split_after(",") {
+      n += p.len()
+    }
+  }
+  n
+}
+
+fn lines_all() -> Int {
+  var n = 0
+  for i in 0..N {
+    for p in LINES_TEXTS[i % LINES_TEXTS.len()].lines() {
+      n += p.len()
+    }
+  }
+  n
+}
+
+// The Bytes forms, the same texts and separators: bytes.Split and
+// bytes.Fields, whose pieces are copies.
+fn bytes_split_all() -> Int {
+  let sep = ",".bytes()
+  var n = 0
+  for i in 0..N {
+    for p in TEXTS[i % TEXTS.len()].bytes().split(sep) {
+      n += p.len()
+    }
+  }
+  n
+}
+
+fn bytes_fields_all() -> Int {
+  var n = 0
+  for i in 0..N {
+    for p in TEXTS[i % TEXTS.len()].bytes().fields() {
+      n += p.len()
+    }
+  }
+  n
+}
+
+fn split_all() -> Int {
+  var n = 0
+  for i in 0..N {
+    for p in TEXTS[i % TEXTS.len()].split(SEPS[i % SEPS.len()]) {
+      n += p.len()
+    }
+  }
+  n
+}
+
+// split_one is the one byte separator alone, the path most programs take.
+fn split_one() -> Int {
+  var n = 0
+  for i in 0..N {
+    for p in TEXTS[i % TEXTS.len()].split(",") {
+      n += p.len()
+    }
+  }
+  n
+}
+
+fn split_multi() -> Int {
+  var n = 0
+  for i in 0..N {
+    for p in TEXTS[i % TEXTS.len()].split("abc") {
+      n += p.len()
+    }
+  }
+  n
+}
+
+fn split_absent() -> Int {
+  var n = 0
+  for i in 0..N {
+    for p in TEXTS[i % TEXTS.len()].split("§") {
+      n += p.len()
+    }
+  }
+  n
+}
+
+fn split_empty() -> Int {
+  var n = 0
+  for i in 0..N {
+    for p in TEXTS[i % TEXTS.len()].split("") {
+      n += p.len()
+    }
+  }
+  n
+}
+
+fn fields_all() -> Int {
+  var n = 0
+  for i in 0..N {
+    for p in TEXTS[i % TEXTS.len()].fields() {
+      n += p.len()
+    }
+  }
+  n
+}
+
+// index_all is the loop's own cost, the two lookups and the lengths, with
+// no split, so a split row can be read net of it.
+fn index_all() -> Int {
+  var n = 0
+  for i in 0..N {
+    n += TEXTS[i % TEXTS.len()].len() + SEPS[i % SEPS.len()].len()
+  }
+  n
+}
+
+fn main(os: Os) {
+  let args = os.env.args()
+  let w = if args.len() > 0 { args[0] } else { "none" }
+  let t = os.clock.now()
+  var n = 0
+  if w == "split" {
+    n = split_all()
+  } else if w == "split_one" {
+    n = split_one()
+  } else if w == "split_multi" {
+    n = split_multi()
+  } else if w == "split_absent" {
+    n = split_absent()
+  } else if w == "split_empty" {
+    n = split_empty()
+  } else if w == "split_after" {
+    n = split_after_all()
+  } else if w == "lines" {
+    n = lines_all()
+  } else if w == "bytes_split" {
+    n = bytes_split_all()
+  } else if w == "bytes_fields" {
+    n = bytes_fields_all()
+  } else if w == "fields" {
+    n = fields_all()
+  } else if w == "index" {
+    n = index_all()
+  }
+  let t1 = os.clock.since(t).nanos() / 1000
+  os.stdio.println("${w} ${n} ${t1}")
+}
