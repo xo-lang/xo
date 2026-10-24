@@ -69,14 +69,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `XO_BACKEND_CACHE=verify` rebuilds on a hit and reports a difference
   as XO1512.
 
-- `XO_COLD_PACK=on` (opt in) writes a cold build's new cache entries as
-  one shared pack segment instead of a file each (6,227 files to 638 for
-  a small program, 0.687 of the wall time on the Mac), compacted as the
-  shared pack's other segments are. It was on by default for a few hours
-  of 2026-10-23 and is off again: builds on the Windows CI runner's
-  31 GB cache took about 10 minutes each with it (decision 0351
-  addendum).
-
 - 0.27.0 (2026-10-23): breaking, a third-party `use go` needs a `require
   go` pin (XO1319, decision 0356) and std's errors print plain messages
   (0358); `xo check` about 2.5x faster warm and `--support` 2.3 to 2.6x;
