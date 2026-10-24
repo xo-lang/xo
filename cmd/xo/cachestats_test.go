@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"testing"
 )
 
@@ -43,13 +44,20 @@ func TestCacheStats(t *testing.T) {
 		if !total.MatchString(se.String()) || !regexp.MustCompile(step.want).MatchString(se.String()) {
 			t.Fatalf("%s build: want a total and %s in\n%s", step.name, step.want, se.String())
 		}
-		// a warm build reads back what the cold one stored (about 6,000
-		// entries for hello): a build whose lookups were all skipped
-		// passes the cold build's "under 100 misses" below, as one under
-		// XO_CACHE_STATS did while the stats Fs was refused by
-		// internal.dir_names (2026-10-24)
-		if m := regexp.MustCompile(`(?m)^cache stats: entry read hit: ([0-9]+) calls`).FindStringSubmatch(se.String()); step.name == "warm" && (m == nil || len(m[1]) < 4) {
-			t.Fatalf("warm build: fewer than 1000 entries read back\n%s", se.String())
+		// a warm build reads back what the cold one stored (about 20 MB for
+		// hello, from loose entries or the shared pack's segments): a build
+		// whose lookups were all skipped passes the cold build's "under 100
+		// misses" below, as one under XO_CACHE_STATS did while the stats Fs
+		// was refused by internal.dir_names (2026-10-24)
+		if step.name == "warm" {
+			read := 0
+			for _, m := range regexp.MustCompile(`(?m)^cache stats: (?:entry|pack|shared) read hit: [0-9]+ calls, ([0-9]+) bytes`).FindAllStringSubmatch(se.String(), -1) {
+				n, _ := strconv.Atoi(m[1])
+				read += n
+			}
+			if read < 1_000_000 {
+				t.Fatalf("warm build: %d bytes read back, want 1 MB or more\n%s", read, se.String())
+			}
 		}
 		// a cold build does not open entries the cache cannot hold
 		// (bcache.xo cache_get_all lists the shards: 21,413 failed opens
