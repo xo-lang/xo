@@ -639,7 +639,11 @@ fn escape_word(c: Int) -> Int {
 /// Runs of bytes kept as they are are appended at once.
 pub fn append_quote(out: Str, b: Bytes) -> Str {
   let n = b.len()
-  var o = rt.rs_push_byte(out, 34)
+  // a fresh builder, the common case (the Debug text of one string),
+  // starts with room for the text, a quarter more for escapes and a few
+  // bytes of quotes; doubling up from 16 refilled it three or four times
+  var o = if out.len() == 0 { rt.rs_with_cap(n.wrapping_add(n >> 2).wrapping_add(16)) } else { out }
+  o = rt.rs_push_byte(o, 34)
   var i = 0
   while i < n {
     // printable ASCII other than `"` and `\`

@@ -46,6 +46,28 @@ result. The order and the stability are unchanged.
 Sorting a large `List[Str]` now uses extra memory for the index lists (max
 RSS about 1.9 times Go's on 200,000 Strs, 1.28 times the old sort).
 
+## 2026-10-24: perf: Debug quoting starts its builder at the size it needs
+
+- Kind: perf
+- Commit: this commit
+- Found by: profiling the template Debug quote path, where
+  obj.reserve/reserve_slow/resize was 30% of the run: a fresh builder
+  holds 16 bytes and doubled three or four times for each string
+  (unicode.quote already pre-sizes with rs_with_cap)
+- Go reference: none (internal; the Debug text is unchanged byte for
+  byte)
+- Test: the template, strings, strconv, json, jsonencode and jsondecode
+  corpora on arm64 and llvm, the wasm goldens, and the fixed point
+  (text.xo is in the fixed point set)
+- Timing: bench/results/quote-presize-2026-10-24.md
+
+`text.append_quote` (std/native/llrt/text.xo) gives an empty builder room
+for the text, a quarter more for escapes and the quotes, so the Debug
+text of one string is built in one allocation instead of three or four.
+The quote workload runs 12.7% fewer instructions and 10% less wall time;
+nested Debug text, where the builder is not empty and only the guard runs,
+pays 0.1%.
+
 ## 2026-10-24: perf: fold_copy's SWAR loop, five of its instructions per word
 
 - Kind: perf
