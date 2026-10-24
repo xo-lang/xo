@@ -61,14 +61,13 @@ Proposed, not built. Keep every key per id; store the bytes once by content.
 - Pack segments hold the pointers for their entries (or inline small bodies);
   the part packs, whose bodies are the 713 MB of compiler/xo, point into the
   object store.
-- Prune: pointers are entries as today (oldest used first, KEEP, the cap).
-  Bodies are removed when no pointer older than KEEP... that needs a reference
-  sweep: a body is unreferenced when nothing points at it. Sweep: a prune walks
-  the pointers it keeps (it already walks them), builds the set of live hashes
-  in a bounded pass (sliced like the shard walks), and removes bodies not in
-  the set and older than KEEP. A body is always written before its pointer, and
-  a body younger than KEEP is never removed, so a store racing a sweep keeps
-  its body.
+- Prune: pointers are entries as today (oldest used first, KEEP, the cap). A
+  body is removed only when nothing points at it, so a prune also sweeps the
+  bodies: it walks the pointers it keeps (it already walks them), builds the
+  set of live hashes in a bounded pass (sliced like the shard walks), and
+  removes the bodies not in the set and older than KEEP. A body is always
+  written before its pointer, and a body younger than KEEP is never removed, so
+  a store racing a sweep keeps its body.
 
 ## Consequences
 
