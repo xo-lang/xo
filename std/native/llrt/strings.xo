@@ -57,18 +57,29 @@ fn replace_build(b: Bytes, old: Bytes, new: Bytes, n: Int, cap: Int) -> Str {
     if j < 0 {
       break
     }
-    o = rt.rs_append_bytes(rt.rs_append_bytes(o, b, start, j, 0), new, 0, new.len(), 0)
+    // an empty segment or an empty new is a no-op append that still
+    // enters reserve and move_at: skip either
+    if j > start {
+      o = rt.rs_append_bytes(o, b, start, j, 0)
+    }
+    if new.len() > 0 {
+      o = rt.rs_append_bytes(o, new, 0, new.len(), 0)
+    }
     start = j + m
     done += 1
   }
   rt.rs_append_bytes(o, b, start, sl, 0)
 }
 
-/// The room replace and replace_bytes ask for: the result's exact size for
-/// an empty old (sl + the boundaries' new), else b's own.
-fn replace_cap(sl: Int, m: Int, new: Bytes) -> Int {
+/// The room replace and replace_bytes ask for, sized as Go's ReplaceAll
+/// sizes it: sl + cnt * (new - old) when new is longer (cnt the match
+/// count), else sl; for an empty old, sl + the boundaries' new.
+fn replace_cap(sl: Int, m: Int, new: Bytes, cnt: Int) -> Int {
   if m == 0 {
     return sl + (sl + 1) * new.len()
+  }
+  if new.len() > m {
+    return sl + cnt * (new.len() - m)
   }
   sl
 }
@@ -78,10 +89,16 @@ fn replace_cap(sl: Int, m: Int, new: Bytes) -> Int {
 pub fn replace(s: Str, old: Str, new: Str) -> Str {
   let n = s.len()
   let m = old.len()
-  if m > 0 && scan.find_bytes(s.bytes(), old.bytes(), 0) < 0 {
+  let nb = new.bytes()
+  if m == 0 {
+    return replace_build(s.bytes(), old.bytes(), nb, -1, replace_cap(n, m, nb, 0))
+  }
+  // Go's paths: Count, then one buffer of the exact size
+  let cnt = scan.count_bytes(s.bytes(), old.bytes())
+  if cnt == 0 {
     return raw.str_slice(s, 0, n)
   }
-  replace_build(s.bytes(), old.bytes(), new.bytes(), -1, replace_cap(n, m, new.bytes()))
+  replace_build(s.bytes(), old.bytes(), nb, -1, replace_cap(n, m, nb, cnt))
 }
 
 /// strings.Replace with a count: the first n matches of old are replaced
@@ -111,10 +128,14 @@ pub fn replace_n(s: Str, old: Str, new: Str, n: Int) -> Str {
 pub fn replace_bytes(b: Bytes, old: Bytes, new: Bytes) -> Bytes {
   let sl = b.len()
   let m = old.len()
-  if m > 0 && scan.find_bytes(b, old, 0) < 0 {
+  if m == 0 {
+    return rt.cast[Str, Bytes](replace_build(b, old, new, -1, replace_cap(sl, m, new, 0)))
+  }
+  let cnt = scan.count_bytes(b, old)
+  if cnt == 0 {
     return b
   }
-  rt.cast[Str, Bytes](replace_build(b, old, new, -1, replace_cap(sl, m, new)))
+  rt.cast[Str, Bytes](replace_build(b, old, new, -1, replace_cap(sl, m, new, cnt)))
 }
 
 /// bytes.Replace with a count: replace_n's, b itself when nothing changes.

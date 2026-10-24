@@ -53,3 +53,6 @@ would be a 400 KB literal and test Go's buffering, not this API), then
 1,500 random replaces, 1,200 case mappings, 1,500 folds and 1,200 repeats,
 on arm64, LLVM and the Go backend; goldens `bytes_transforms` (arm64, LLVM,
 Go parity, wasm) and `bytes_repeat_fault`.
+
+Follow-up (2026-10-24): `bytestransform-fold-2026-10-24.md` takes `replace`
+from 1.23 to 1.22 and `equal_fold` from 1.26 to 0.98 net of the loop.

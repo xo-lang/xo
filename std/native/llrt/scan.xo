@@ -266,6 +266,10 @@ pub fn count_bytes(b: Bytes, sub: Bytes) -> Int {
   if m == 0 {
     return bytes_rune_count(b) + 1
   }
+  if m == 1 {
+    // bytes.Count's fast path for one byte
+    return count_byte(b, 0, b.len(), Int(sub[0]))
+  }
   var n = 0
   var i = find_bytes(b, sub, 0)
   while i >= 0 {

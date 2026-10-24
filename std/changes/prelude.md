@@ -1,5 +1,34 @@
 # prelude changes
 
+## 2026-10-24: perf: replace sizes its buffer from the match count, equal_fold takes Go's ASCII loop, simple_fold buckets its table
+
+- Kind: perf
+- Commit: (filled in after the push)
+- Found by: XO_PROF=cpu on bench/perf/bytestransform at 20,000,000
+  iterations: `simple_fold` 25% flat (a 38-test compare chain for a sparse
+  Int match), `cabi.obj_rs_append_bytes` 23% flat and `obj.reserve` 5% on
+  replace
+- Go reference: bytes.ReplaceAll and bytes.Count (Count, then one buffer of
+  the exact size), bytes.EqualFold's ASCII fast loop (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/{bytes,strings,strsearch,regexp} on
+  arm64, LLVM and the Go backend (Str and Bytes share these paths, and
+  std/regexp's case insensitive matching walks simple_fold)
+
+`Str.replace`, `Str.replace_n`, `Bytes.replace` and `Bytes.replace_n` count
+the matches first and ask for the result's exact size, as Go's ReplaceAll
+does, and skip the append call for an empty segment or an empty `new`.
+`equal_fold_bytes` and `eq_lower` compare bytes for equality first and
+return at the first difference, as Go's ASCII loop does. `simple_fold`'s 38
+odd runes are split into five buckets, so a rune that is not in the table
+costs two to five compares instead of a walk of the whole chain.
+
+`xo bench --ab`, instructions, base vs new: replace 0.993, replace_n 0.958,
+equal_fold 0.898, the untouched lower, upper and repeat 1.000. Against Go's
+bytes package net of the bench's own loop: replace 1.22 (was 1.23),
+replace_n 0.93 (was 1.00), equal_fold 0.98 (was 1.26). Replace's remainder
+is two intrinsic calls per match through the C ABI, a compiler item
+(bench/results/bytestransform-fold-2026-10-24.md).
+
 ## 2026-10-23: fix: Str.repeat faults below 0 on the native backends, as the Go backend does
 
 - Kind: fix
