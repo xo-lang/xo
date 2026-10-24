@@ -1,5 +1,44 @@
 # prelude changes
 
+## 2026-10-24: perf: the set-search and rune loops skip ASCII bytes and decode through raw.decode
+
+- Kind: perf
+- Commit: (filled in after the push)
+- Found by: the first Bytes benchmark put the new set searches at 1.5 to 5.2
+  times Go's instructions net of the loop (bench/results/bytessearch-2026-10-24.md);
+  XO_PROF=cpu at 20,000,000 iterations put contains_rune in raw.decode (31%
+  flat), bytes_decode_rune (30% flat, 63% cumulative) and index_rune_bytes
+  (20% flat), and find_any added find_short at 24% flat
+- Go reference: bytes.IndexAny, LastIndexAny, ContainsAny and ContainsRune
+  (go1.26.1); Go's IndexAny ranges over the value with DecodeRuneInString
+  inlined, and its ASCII set covers the whole chars or none of it
+- Test: corpus/bytes and corpus/strsearch on arm64, LLVM and the Go backend,
+  the strwhere corpus, the goldens bytes_search_cut, bytes_split and
+  bytes_indexed on arm64, LLVM, Go parity and wasm, and bench/perf/bytessearch
+  against Go's bytes package, all unchanged in output; the Str forms were A/B
+  checked with the same program shape against an xo built at the base commit
+  (find_any 300.4 M to 117.4 M instructions, no row worse)
+
+`scan.index_rune_bytes` reads a byte below 0x80 without decoding it (it is its
+own rune), calls `raw.decode` directly, and no longer pays the wrapper's
+bounds check and fault location per byte; `raw.decode` is Go's DecodeRune,
+which Go inlines into its range loop. `index_any_bytes` and
+`last_index_any_bytes` test a byte below 0x80 against the ASCII word set of
+chars' ASCII bytes (`ascii_set_partial`, where makeASCIISet gives up when
+chars holds a rune above 0x7f) and a byte at 0x80 and above against
+`rune_in_set`, which decodes chars once a rune and compares runes as Go's
+`for _, c := range chars` does, instead of an `index_rune_bytes` call that
+searched chars for every rune of the value. An invalid byte still decodes as
+U+FFFD, so a set holding U+FFFD still finds it.
+
+Instructions against Go's package, 200,000 calls, net of the loop
+(bench/results/bytessearch-2026-10-24.md, Xo / Go, before in brackets):
+find_any 0.67 (2.06), rfind_any 0.77 (1.47), contains_any 0.66 (2.05),
+contains_rune 1.69 (5.19); the cuts and split_after, which this does not
+touch, are unchanged at 1.2 to 3.4. The Str forms share the cores and moved
+with them: find_any 2.55 times fewer instructions, rfind_any 1.72,
+contains_any 2.57, contains_rune 2.36, with the same output.
+
 ## 2026-10-24: feature: Bytes gains find_any, rfind_any, contains_any, contains_rune, split_after, split_after_n, cut, cut_prefix and cut_suffix
 
 - Kind: feature

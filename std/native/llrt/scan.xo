@@ -296,13 +296,22 @@ pub fn index_rune_bytes(b: Bytes, r: Rune) -> Int {
   if Int(r) < 0x80 {
     return find_byte(b, 0, b.len(), Int(r))
   }
+  // A byte below 0x80 is its own rune, so it can never be r: only decode
+  // at 0x80 and above. raw.decode is Go's DecodeRune with no bounds check
+  // and no fault location, which the wrapper bytes_decode_rune pays per
+  // byte (XO_PROF put 92% of contains_rune in it).
+  let n = b.len()
   var i = 0
-  while i < b.len() {
-    let (x, sz) = b.decode_rune(i)
-    if x == r {
+  while i < n {
+    if Int(b[i]) < 0x80 {
+      i += 1
+      continue
+    }
+    let p = raw.decode(b, i)
+    if Rune(p >> 3) == r {
       return i
     }
-    i += sz
+    i += p & 7
   }
   -1
 }
@@ -343,6 +352,42 @@ fn in_set(lo: Int, hi: Int, c: Int) -> Bool {
   false
 }
 
+/// The ASCII bytes of b as two 64 bit words, skipping any byte of 0x80 and
+/// above (makeASCIISet gives up on those; the rune loop below still tests
+/// them against the whole chars, but an ASCII byte of the value can only
+/// match an ASCII byte of chars, so the set answers for all of them).
+fn ascii_set_partial(b: Bytes) -> (Int, Int) {
+  var lo = 0
+  var hi = 0
+  var i = 0
+  let n = b.len()
+  while i < n {
+    let c = Int(b[i])
+    if c < 64 {
+      lo = lo | shl(1, c)
+    } else if c < 0x80 {
+      hi = hi | shl(1, c - 64)
+    }
+    i += 1
+  }
+  (lo, hi)
+}
+
+/// Whether the runes of set (Go's `for _, c := range chars`) hold r: one
+/// raw.decode a step, no per-rune IndexRune call.
+fn rune_in_set(set: Bytes, r: Rune) -> Bool {
+  var j = 0
+  let m = set.len()
+  while j < m {
+    let q = raw.decode(set, j)
+    if Rune(q >> 3) == r {
+      return true
+    }
+    j += q & 7
+  }
+  false
+}
+
 /// strings.IndexAny: the byte offset of the first rune of chars in s, or -1.
 /// A one byte chars is a rune search, as Go's; an ASCII chars of any length
 /// over a long s is Go's word set path, scanning the bytes of s.
@@ -373,13 +418,22 @@ pub fn index_any_bytes(b: Bytes, cb: Bytes) -> Int {
     }
     return -1
   }
+  let (alo, ahi) = ascii_set_partial(cb)
   var i = 0
   while i < n {
-    let (x, sz) = b.decode_rune(i)
-    if index_rune_bytes(cb, x) >= 0 {
+    let c = Int(b[i])
+    if c < 0x80 {
+      if in_set(alo, ahi, c) {
+        return i
+      }
+      i += 1
+      continue
+    }
+    let p = raw.decode(b, i)
+    if rune_in_set(cb, Rune(p >> 3)) {
       return i
     }
-    i += sz
+    i += p & 7
   }
   -1
 }
@@ -407,11 +461,12 @@ fn decode_last(b: Bytes, end: Int) -> (Rune, Int) {
   if i < 0 {
     i = 0
   }
-  let (r, sz) = b.decode_rune(i)
+  let p = raw.decode(b, i)
+  let sz = p & 7
   if i + sz != end {
     return (Rune(0xFFFD), 1)
   }
-  (r, sz)
+  (Rune(p >> 3), sz)
 }
 
 /// strings.LastIndexAny: the byte offset of the last rune of chars in s, or
@@ -432,11 +487,20 @@ pub fn last_index_any_bytes(b: Bytes, cb: Bytes) -> Int {
     }
     return -1
   }
+  let (alo, ahi) = ascii_set_partial(cb)
   var end = n
   while end > 0 {
+    let c = Int(b[end - 1])
+    if c < 0x80 {
+      end -= 1
+      if in_set(alo, ahi, c) {
+        return end
+      }
+      continue
+    }
     let (x, sz) = decode_last(b, end)
     end -= sz
-    if index_rune_bytes(cb, x) >= 0 {
+    if rune_in_set(cb, x) {
       return end
     }
   }
