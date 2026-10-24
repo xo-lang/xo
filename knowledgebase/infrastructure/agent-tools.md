@@ -204,6 +204,12 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   when the fix changes code other tests use (2026-10-24: internal/arm64's
   37 minute suite reran in full for a 1.6 s TestMachoBinCache fix and held
   a bulk slot and the measurement window).
+- A change to an xo command's flags, `-h` help or printed output runs
+  the full `go test ./cmd/xo` suite (about 4 minutes), after `go test
+  ./cmd/xo -run '^TestCLIHelp$' -update-help` and a look at the diff; and
+  a `-run` pattern that matches nothing passes as "ok" (with -v, "no tests
+  to run"), so check the count of tests it ran (2026-10-24: a gate's
+  `-run 'TestHelp'` matched nothing, TestCLIHelp/test failed on main).
 
 ## Measuring
 
