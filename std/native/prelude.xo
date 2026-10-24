@@ -119,6 +119,97 @@ fn str_contains_any(s: Str, chars: Str) -> Bool { scan.index_any(s, chars) >= 0 
 
 fn str_contains_rune(s: Str, r: Rune) -> Bool { scan.index_rune(s, r) >= 0 }
 
+// The predicate forms (Go's strings *Func family): the runes of s are
+// decoded one at a time (an ASCII byte needs no decoding), so an invalid
+// byte is U+FFFD of size one, as Go's range over a string sees it, and f
+// is called exactly once per rune.
+
+/// strings.IndexFunc: the byte offset of the first rune for which f is
+/// true, None when there is none.
+fn str_find_where[E, fx: Effects](s: Str, f: fn(Rune) -> Bool ! E uses fx) -> Int? ! E uses fx {
+  let b = s.bytes()
+  let n = b.len()
+  var i = 0
+  while i < n {
+    let c = b[i]
+    if c < 0x80 {
+      if f(Rune(Int(c)))? {
+        return Some(i)
+      }
+      i += 1
+      continue
+    }
+    let d = raw.bytes_decode(b, i)
+    if f(Rune(d >> 3))? {
+      return Some(i)
+    }
+    i += d & 7
+  }
+  None
+}
+
+/// strings.LastIndexFunc: the byte offset of the last rune for which f is
+/// true, None when there is none.
+fn str_rfind_where[E, fx: Effects](s: Str, f: fn(Rune) -> Bool ! E uses fx) -> Int? ! E uses fx {
+  let b = s.bytes()
+  var end = b.len()
+  while end > 0 {
+    var start = end - 1
+    let c = b[start]
+    if c < 0x80 {
+      if f(Rune(Int(c)))? {
+        return Some(start)
+      }
+      end = start
+      continue
+    }
+    // back over at most three continuation bytes to the sequence's start
+    var k = 0
+    while start > 0 && k < 3 && b[start] >= 0x80 && b[start] <= 0xbf {
+      start -= 1
+      k += 1
+    }
+    let d = raw.bytes_decode(b, start)
+    let w = d & 7
+    if start + w == end {
+      if f(Rune(d >> 3))? {
+        return Some(start)
+      }
+      end = start
+      continue
+    }
+    // Go's DecodeLastRuneInString: a malformed tail is U+FFFD of size one
+    if f(Rune(0xfffd))? {
+      return Some(end - 1)
+    }
+    end -= 1
+  }
+  None
+}
+
+/// strings.ContainsFunc: whether s holds a rune for which f is true.
+fn str_contains_where[E, fx: Effects](s: Str, f: fn(Rune) -> Bool ! E uses fx) -> Bool ! E uses fx {
+  let b = s.bytes()
+  let n = b.len()
+  var i = 0
+  while i < n {
+    let c = b[i]
+    if c < 0x80 {
+      if f(Rune(Int(c)))? {
+        return true
+      }
+      i += 1
+      continue
+    }
+    let d = raw.bytes_decode(b, i)
+    if f(Rune(d >> 3))? {
+      return true
+    }
+    i += d & 7
+  }
+  false
+}
+
 fn str_cut(s: Str, sep: Str) -> (Str, Str)? { scan.cut(s, sep) }
 
 fn str_cut_prefix(s: Str, prefix: Str) -> Str? { scan.cut_prefix(s, prefix) }
@@ -126,6 +217,44 @@ fn str_cut_prefix(s: Str, prefix: Str) -> Str? { scan.cut_prefix(s, prefix) }
 fn str_cut_suffix(s: Str, suffix: Str) -> Str? { scan.cut_suffix(s, suffix) }
 
 fn str_fields(s: Str) -> List[Str] { strings.fields(s) }
+
+/// strings.FieldsFunc: the runs of runes for which f is false, as views of
+/// s (Go's spans: one pass calling f once per rune, the pieces then sliced
+/// from the recorded offsets).
+fn str_split_where[E, fx: Effects](s: Str, f: fn(Rune) -> Bool ! E uses fx) -> List[Str] ! E uses fx {
+  let b = s.bytes()
+  let n = b.len()
+  var spans: List[(Int, Int)] = []
+  var start = -1
+  var i = 0
+  while i < n {
+    let c = b[i]
+    var r = Rune(Int(c))
+    var w = 1
+    if c >= 0x80 {
+      let d = raw.bytes_decode(b, i)
+      r = Rune(d >> 3)
+      w = d & 7
+    }
+    if f(r)? {
+      if start >= 0 {
+        spans.push((start, i))
+        start = -1
+      }
+    } else if start < 0 {
+      start = i
+    }
+    i += w
+  }
+  if start >= 0 {
+    spans.push((start, n))
+  }
+  var out = List[Str].with_capacity(spans.len())
+  for (lo, hi) in spans {
+    out.push(raw.str_slice(s, lo, hi))
+  }
+  out
+}
 
 fn str_lines(s: Str) -> List[Str] { scan.lines(s) }
 
@@ -148,6 +277,69 @@ fn str_trim_start_chars(s: Str, chars: Str) -> Str { scan.trim_start_chars(s, ch
 
 fn str_trim_end_chars(s: Str, chars: Str) -> Str { scan.trim_end_chars(s, chars) }
 
+/// strings.TrimLeftFunc: s from its first rune for which f is false, a view
+/// of s; "" when every rune satisfies f.
+fn str_trim_start_where[E, fx: Effects](s: Str, f: fn(Rune) -> Bool ! E uses fx) -> Str ! E uses fx {
+  let b = s.bytes()
+  let n = b.len()
+  var i = 0
+  while i < n {
+    let c = b[i]
+    var r = Rune(Int(c))
+    var w = 1
+    if c >= 0x80 {
+      let d = raw.bytes_decode(b, i)
+      r = Rune(d >> 3)
+      w = d & 7
+    }
+    if !f(r)? {
+      return raw.str_from(s, i)
+    }
+    i += w
+  }
+  ""
+}
+
+/// strings.TrimRightFunc: s up to its last rune for which f is false, a
+/// view of s; "" when every rune satisfies f.
+fn str_trim_end_where[E, fx: Effects](s: Str, f: fn(Rune) -> Bool ! E uses fx) -> Str ! E uses fx {
+  let b = s.bytes()
+  var end = b.len()
+  while end > 0 {
+    var start = end - 1
+    var r = Rune(0)
+    var w = 1
+    if b[start] < 0x80 {
+      r = Rune(Int(b[start]))
+    } else {
+      var k = 0
+      while start > 0 && k < 3 && b[start] >= 0x80 && b[start] <= 0xbf {
+        start -= 1
+        k += 1
+      }
+      let d = raw.bytes_decode(b, start)
+      if start + (d & 7) == end {
+        r = Rune(d >> 3)
+        w = d & 7
+      } else {
+        // a malformed tail is U+FFFD of size one (strings.TrimRightFunc)
+        r = Rune(0xfffd)
+      }
+    }
+    if !f(r)? {
+      return raw.str_upto(s, end)
+    }
+    end -= w
+  }
+  ""
+}
+
+/// strings.TrimFunc: TrimRightFunc of TrimLeftFunc, a view of s.
+fn str_trim_where[E, fx: Effects](s: Str, f: fn(Rune) -> Bool ! E uses fx) -> Str ! E uses fx {
+  let a = str_trim_start_where(s, f)?
+  str_trim_end_where(a, f)?
+}
+
 fn str_trim_suffix(s: Str, p: Str) -> Str {
   if p.len() <= s.len() {
     // proved by the test above: no overflow, so no checked subtraction (its fault pads keep the function from inlining)
@@ -166,6 +358,65 @@ fn str_to_upper(s: Str) -> Str { unicode.map_case(s, false) }
 /// `a.to_lower() == b.to_lower()` (internal/ssa lowers that comparison to
 /// a call of this).
 fn str_eq_lower(a: Str, b: Str) -> Bool { unicode.eq_lower(a, b) }
+
+/// strings.Map: f applied to every rune of s, None dropping it. Like Go's,
+/// no copy until the first rune that changes (a valid U+FFFD that maps to
+/// itself does not count, a malformed byte does), then one buffer of s's
+/// length or more.
+fn str_map_runes[E, fx: Effects](s: Str, f: fn(Rune) -> Rune? ! E uses fx) -> Str ! E uses fx {
+  let b = s.bytes()
+  let n = b.len()
+  var i = 0
+  var w = 0
+  var first = -2
+  while i < n {
+    let c = b[i]
+    var r = Rune(Int(c))
+    w = 1
+    if c >= 0x80 {
+      let d = raw.bytes_decode(b, i)
+      r = Rune(d >> 3)
+      w = d & 7
+    }
+    let m = f(r)?
+    var stop = m.is_none()
+    var mapped = -1
+    if let Some(x) = m {
+      mapped = Int(x)
+      if mapped != Int(r) || (Int(r) == 0xfffd && w == 1) {
+        stop = true
+      }
+    }
+    if stop {
+      first = mapped
+      break
+    }
+    i += w
+  }
+  if i >= n {
+    return s
+  }
+  var o = rt.rs_append_bytes(rt.rs_with_cap(n), b, 0, i, 0)
+  if first >= 0 {
+    o = raw.push_rune(o, first)
+  }
+  i += w
+  while i < n {
+    let c = b[i]
+    var r = Rune(Int(c))
+    w = 1
+    if c >= 0x80 {
+      let d = raw.bytes_decode(b, i)
+      r = Rune(d >> 3)
+      w = d & 7
+    }
+    if let Some(x) = f(r)? {
+      o = raw.push_rune(o, Int(x))
+    }
+    i += w
+  }
+  o
+}
 
 fn str_replace(s: Str, old: Str, new: Str) -> Str { strings.replace(s, old, new) }
 fn str_replace_n(s: Str, old: Str, new: Str, n: Int) -> Str { strings.replace_n(s, old, new, n) }

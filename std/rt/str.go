@@ -287,6 +287,168 @@ func Str_runes(_ *Task, s string) List[Rune] {
 	return ListOf(out...)
 }
 
+// Str_find_where is `s.find_where(f)`: the byte offset of the first rune
+// for which f is true (strings.IndexFunc, with the effect of f).
+func Str_find_where[E any](tk *Task, s string, f func(*Task, Rune) Result[bool, E]) Result[Option[int64], E] {
+	for i, r := range s {
+		v := f(tk, Rune(r))
+		if !v.Ok {
+			return ErrTr[Option[int64]](v.E, v.Tr)
+		}
+		if v.V {
+			return Ok[Option[int64], E](Some(int64(i)))
+		}
+	}
+	return Ok[Option[int64], E](None[int64]())
+}
+
+// Str_rfind_where is `s.rfind_where(f)`: the byte offset of the last rune
+// for which f is true (strings.LastIndexFunc).
+func Str_rfind_where[E any](tk *Task, s string, f func(*Task, Rune) Result[bool, E]) Result[Option[int64], E] {
+	for i := len(s); i > 0; {
+		r, size := utf8.DecodeLastRuneInString(s[0:i])
+		i -= size
+		v := f(tk, Rune(r))
+		if !v.Ok {
+			return ErrTr[Option[int64]](v.E, v.Tr)
+		}
+		if v.V {
+			return Ok[Option[int64], E](Some(int64(i)))
+		}
+	}
+	return Ok[Option[int64], E](None[int64]())
+}
+
+// Str_contains_where is `s.contains_where(f)` (strings.ContainsFunc).
+func Str_contains_where[E any](tk *Task, s string, f func(*Task, Rune) Result[bool, E]) Result[bool, E] {
+	for _, r := range s {
+		v := f(tk, Rune(r))
+		if !v.Ok {
+			return ErrTr[bool](v.E, v.Tr)
+		}
+		if v.V {
+			return Ok[bool, E](true)
+		}
+	}
+	return Ok[bool, E](false)
+}
+
+// Str_trim_start_where is `s.trim_start_where(f)` (strings.TrimLeftFunc).
+func Str_trim_start_where[E any](tk *Task, s string, f func(*Task, Rune) Result[bool, E]) Result[string, E] {
+	for i, r := range s {
+		v := f(tk, Rune(r))
+		if !v.Ok {
+			return ErrTr[string](v.E, v.Tr)
+		}
+		if !v.V {
+			return Ok[string, E](s[i:])
+		}
+	}
+	return Ok[string, E]("")
+}
+
+// Str_trim_end_where is `s.trim_end_where(f)` (strings.TrimRightFunc).
+func Str_trim_end_where[E any](tk *Task, s string, f func(*Task, Rune) Result[bool, E]) Result[string, E] {
+	for i := len(s); i > 0; {
+		r, size := utf8.DecodeLastRuneInString(s[0:i])
+		i -= size
+		v := f(tk, Rune(r))
+		if !v.Ok {
+			return ErrTr[string](v.E, v.Tr)
+		}
+		if !v.V {
+			return Ok[string, E](s[0 : i+size])
+		}
+	}
+	return Ok[string, E]("")
+}
+
+// Str_trim_where is `s.trim_where(f)`: strings.TrimFunc.
+func Str_trim_where[E any](tk *Task, s string, f func(*Task, Rune) Result[bool, E]) Result[string, E] {
+	a := Str_trim_start_where(tk, s, f)
+	if !a.Ok {
+		return a
+	}
+	return Str_trim_end_where(tk, a.V, f)
+}
+
+// strSpan is a run of s that Str_split_where keeps: s[start:end].
+type strSpan struct{ start, end int }
+
+// Str_split_where is `s.split_where(f)`: the runs of runes for which f is
+// false (strings.FieldsFunc, one pass recording the spans, then the
+// pieces).
+func Str_split_where[E any](tk *Task, s string, f func(*Task, Rune) Result[bool, E]) Result[List[string], E] {
+	spans := make([]strSpan, 0, 32)
+	start := -1
+	for end, r := range s {
+		v := f(tk, Rune(r))
+		if !v.Ok {
+			return ErrTr[List[string]](v.E, v.Tr)
+		}
+		if v.V {
+			if start >= 0 {
+				spans = append(spans, strSpan{start, end})
+				start = -1
+			}
+		} else if start < 0 {
+			start = end
+		}
+	}
+	if start >= 0 {
+		spans = append(spans, strSpan{start, len(s)})
+	}
+	out := make([]string, len(spans))
+	for i, sp := range spans {
+		out[i] = s[sp.start:sp.end]
+	}
+	return Ok[List[string], E](ListOf(out...))
+}
+
+// Str_map_runes is `s.map_runes(f)`: f applied to every rune, None
+// dropping it (strings.Map, with the option in place of Go's negative
+// rune). No copy until the first rune that changes; a malformed byte
+// counts as a change, a valid U+FFFD that maps to itself does not.
+func Str_map_runes[E any](tk *Task, s string, f func(*Task, Rune) Result[Option[Rune], E]) Result[string, E] {
+	var first Option[Rune]
+	firstSize := 0
+	i := 0
+	for i < len(s) {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		v := f(tk, Rune(r))
+		if !v.Ok {
+			return ErrTr[string](v.E, v.Tr)
+		}
+		if !v.V.Some || v.V.V != Rune(r) || (r == utf8.RuneError && size == 1) {
+			first, firstSize = v.V, size
+			break
+		}
+		i += size
+	}
+	if i >= len(s) {
+		return Ok[string, E](s)
+	}
+	var b strings.Builder
+	b.Grow(len(s) + utf8.UTFMax)
+	b.WriteString(s[:i])
+	if first.Some {
+		b.WriteRune(rune(first.V))
+	}
+	i += firstSize
+	for i < len(s) {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		v := f(tk, Rune(r))
+		if !v.Ok {
+			return ErrTr[string](v.E, v.Tr)
+		}
+		if v.V.Some {
+			b.WriteRune(rune(v.V.V))
+		}
+		i += size
+	}
+	return Ok[string, E](b.String())
+}
+
 // Str_bytes is `s.bytes()`.
 func Str_bytes(_ *Task, s string) Bytes { return Bytes(s) }
 

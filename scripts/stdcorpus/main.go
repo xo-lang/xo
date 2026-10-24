@@ -50,6 +50,7 @@ var generators = map[string]func() string{
 	"runes":     runesCorpus,
 	"smtp":      smtpCorpus,
 	"strsearch": strsearchCorpus,
+	"strwhere":  whereCorpus,
 	"trimchars": trimcharsCorpus,
 	"strings":   stringsCorpus,
 }

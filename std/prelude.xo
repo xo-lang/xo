@@ -266,6 +266,14 @@ fn (s: Str) rfind(sub: Str) -> Int?
 /// The number of non-overlapping copies of sub (strings.Count); the count
 /// of s's runes plus one for "".
 fn (s: Str) count(sub: Str) -> Int
+/// The byte offset of the first rune for which f is true (strings.IndexFunc),
+/// None when there is none; an invalid byte of s is U+FFFD, as in find.
+fn (s: Str) find_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Int? ! E uses fx
+/// The byte offset of the last rune for which f is true
+/// (strings.LastIndexFunc), None when there is none.
+fn (s: Str) rfind_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Int? ! E uses fx
+/// Whether s holds a rune for which f is true (strings.ContainsFunc).
+fn (s: Str) contains_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Bool ! E uses fx
 /// The byte offset of the first rune of chars in s (strings.IndexAny),
 /// None for no rune of chars and for "".
 fn (s: Str) find_any(chars: Str) -> Int?
@@ -297,6 +305,9 @@ fn (s: Str) split(sep: Str) -> List[Str]
 /// The runs of non-white-space text, split around runs of white space
 /// (strings.Fields, unicode.IsSpace); pieces are views of s like split's.
 fn (s: Str) fields() -> List[Str]
+/// The runs of runes between runs of runes for which f is true
+/// (strings.FieldsFunc); pieces are views of s like split's.
+fn (s: Str) split_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> List[Str] ! E uses fx
 fn (s: Str) lines() -> List[Str]
 fn (s: Str) trim() -> Str
 fn (s: Str) trim_start() -> Str
@@ -310,8 +321,20 @@ fn (s: Str) trim_chars(chars: Str) -> Str
 fn (s: Str) trim_start_chars(chars: Str) -> Str
 /// s without its trailing runes in chars, a view of s (strings.TrimRight).
 fn (s: Str) trim_end_chars(chars: Str) -> Str
+/// s without its leading and trailing runes for which f is true, a view of
+/// s like trim (strings.TrimFunc).
+fn (s: Str) trim_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Str ! E uses fx
+/// s without its leading runes for which f is true, a view of s
+/// (strings.TrimLeftFunc).
+fn (s: Str) trim_start_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Str ! E uses fx
+/// s without its trailing runes for which f is true, a view of s
+/// (strings.TrimRightFunc).
+fn (s: Str) trim_end_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Str ! E uses fx
 fn (s: Str) to_lower() -> Str
 fn (s: Str) to_upper() -> Str
+/// f applied to every rune of s (strings.Map); None (Go's negative
+/// mapping) drops the rune, and s itself, not a copy, when nothing changes.
+fn (s: Str) map_runes[E, fx: Effects](f: fn(Rune) -> Rune? ! E uses fx) -> Str ! E uses fx
 fn (s: Str) replace(old: Str, new: Str) -> Str
 /// s with the first n copies of old replaced by new; n below 0 for every
 /// copy and 0 for none (strings.Replace). s itself, not a copy, when

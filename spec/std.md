@@ -181,6 +181,11 @@ fn (s: Str) find_any(chars: Str) -> Int?     // the first rune of chars (strings
 fn (s: Str) rfind_any(chars: Str) -> Int?    // the last rune of chars (strings.LastIndexAny)
 fn (s: Str) contains_any(chars: Str) -> Bool // strings.ContainsAny
 fn (s: Str) contains_rune(r: Rune) -> Bool   // strings.ContainsRune; an invalid byte of s reads as U+FFFD
+fn (s: Str) find_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Int? ! E uses fx   // the first rune f accepts (strings.IndexFunc)
+fn (s: Str) rfind_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Int? ! E uses fx  // the last one (strings.LastIndexFunc)
+fn (s: Str) contains_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Bool ! E uses fx     // whether one exists (strings.ContainsFunc)
+// a predicate is a closure (`s.trim_where(fn(r) { r.is_space() })`), a named function or a bound
+// method value; an unbound reference such as `Rune.is_space` is no value (XO0601)
 fn (s: Str) cut(sep: Str) -> (Str, Str)?     // before and after the first sep (strings.Cut); None when absent
 fn (s: Str) cut_prefix(prefix: Str) -> Str?  // the rest after a prefix (strings.CutPrefix); None when absent
 fn (s: Str) cut_suffix(suffix: Str) -> Str?   // s up to a suffix (strings.CutSuffix); None when absent
@@ -189,14 +194,17 @@ fn (s: Str) split_n(sep: Str, n: Int) -> List[Str]  // at most n pieces, the uns
 fn (s: Str) split_after(sep: Str) -> List[Str]      // like split, each piece keeping its separator (strings.SplitAfter)
 fn (s: Str) split_after_n(sep: Str, n: Int) -> List[Str] // strings.SplitAfterN
 fn (s: Str) fields() -> List[Str]            // runs of non-white-space text (strings.Fields, unicode.IsSpace)
+fn (s: Str) split_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> List[Str] ! E uses fx // the runs f rejects (strings.FieldsFunc); views of s like split
 fn (s: Str) lines() -> List[Str]             // splits on \n, strips \r
 fn (s: Str) trim() -> Str                    // also trim_start, trim_end
 fn (s: Str) trim_prefix(p: Str) -> Str       // also trim_suffix
 fn (s: Str) trim_chars(chars: Str) -> Str    // also trim_start_chars, trim_end_chars (strings.Trim, TrimLeft, TrimRight)
-// split, split_n, split_after, split_after_n, fields, lines, trim, trim_start, trim_end, trim_chars,
-// trim_start_chars, trim_end_chars, trim_prefix and trim_suffix return views of s on native
-// targets (O(1) per piece, no copy; a piece keeps s alive), as slices do (core 3.6)
+fn (s: Str) trim_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Str ! E uses fx       // strings.TrimFunc; also trim_start_where, trim_end_where
+// split, split_n, split_after, split_after_n, fields, split_where, lines, trim, trim_start, trim_end, trim_chars,
+// trim_start_chars, trim_end_chars, trim_where, trim_start_where, trim_end_where, trim_prefix and trim_suffix
+// return views of s on native targets (O(1) per piece, no copy; a piece keeps s alive), as slices do (core 3.6)
 fn (s: Str) to_lower() -> Str                // also to_upper (Unicode aware)
+fn (s: Str) map_runes[E, fx: Effects](f: fn(Rune) -> Rune? ! E uses fx) -> Str ! E uses fx        // strings.Map; None drops the rune, and s itself when nothing changes
 fn (s: Str) replace(old: Str, new: Str) -> Str
 fn (s: Str) replace_n(old: Str, new: Str, n: Int) -> Str  // the first n copies (strings.Replace); n below 0 for every one, 0 for none
 fn (s: Str) repeat(n: Int) -> Str            // strings.Repeat; empty for 0, a fault below 0
@@ -4074,7 +4082,7 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
 
 Every function and method of std/prelude.xo, by type, as declared there
 (the sections above explain them); interface methods take `self`.
-408 declarations.
+416 declarations.
 
 ### Range
 
@@ -4259,6 +4267,9 @@ fn (s: Str) equal_fold(other: Str) -> Bool
 fn (s: Str) find(sub: Str) -> Int?
 fn (s: Str) rfind(sub: Str) -> Int?
 fn (s: Str) count(sub: Str) -> Int
+fn (s: Str) find_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Int? ! E uses fx
+fn (s: Str) rfind_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Int? ! E uses fx
+fn (s: Str) contains_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Bool ! E uses fx
 fn (s: Str) find_any(chars: Str) -> Int?
 fn (s: Str) rfind_any(chars: Str) -> Int?
 fn (s: Str) contains_any(chars: Str) -> Bool
@@ -4271,6 +4282,7 @@ fn (s: Str) cut_prefix(prefix: Str) -> Str?
 fn (s: Str) cut_suffix(suffix: Str) -> Str?
 fn (s: Str) split(sep: Str) -> List[Str]
 fn (s: Str) fields() -> List[Str]
+fn (s: Str) split_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> List[Str] ! E uses fx
 fn (s: Str) lines() -> List[Str]
 fn (s: Str) trim() -> Str
 fn (s: Str) trim_start() -> Str
@@ -4280,8 +4292,12 @@ fn (s: Str) trim_suffix(p: Str) -> Str
 fn (s: Str) trim_chars(chars: Str) -> Str
 fn (s: Str) trim_start_chars(chars: Str) -> Str
 fn (s: Str) trim_end_chars(chars: Str) -> Str
+fn (s: Str) trim_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Str ! E uses fx
+fn (s: Str) trim_start_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Str ! E uses fx
+fn (s: Str) trim_end_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Str ! E uses fx
 fn (s: Str) to_lower() -> Str
 fn (s: Str) to_upper() -> Str
+fn (s: Str) map_runes[E, fx: Effects](f: fn(Rune) -> Rune? ! E uses fx) -> Str ! E uses fx
 fn (s: Str) replace(old: Str, new: Str) -> Str
 fn (s: Str) replace_n(old: Str, new: Str, n: Int) -> Str
 fn (s: Str) repeat(n: Int) -> Str

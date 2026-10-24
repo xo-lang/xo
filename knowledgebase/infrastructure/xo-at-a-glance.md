@@ -46,7 +46,8 @@ Last verified: 2026-10-22 (spec/core.md and spec/std.md at main).
 - Strings: interpolation `"${x}"`, Debug interpolation `"${x:?}"`, raw
   multi-line strings `r"""..."""` and `r#"""..."""#` (0320).
 - Slices of `Str` and `Bytes` are O(1) views on native targets (0330):
-  `s[a..b]`, `split`, `lines`, `trim*`, `trim_prefix/suffix` share the
+  `s[a..b]`, `split`, `lines`, `trim*`, `trim_prefix/suffix`,
+  `split_where` and `trim*_where` share the
   buffer, so a small piece keeps a large source alive (copy with
   `s.clone()`, also on Bytes; no automatic compaction, design note in
   bench/results/views-retention-2026-10-22.md); a Str or
@@ -110,7 +111,8 @@ Prelude collections include `sort`, `sort_by`, `group_by`,
   `xs.any(fn ...)`), `XO0909` a list update that copies the list each
   iteration, `XO0910` a value over 8 words copied into a closure or an
   Option in a loop, `XO0911` a view of a parameter's text (a slice, trim,
-  or element of split or lines made in a loop) stored in a field or a
+  a piece of split or split_where, or a trim*_where made in a loop) stored
+  in a field or a
   returned collection, which keeps the whole input alive (`clone()` it).
 - `xo prof FILE|URL`: a URL is a running server's std/debug
   `/debug/profile?seconds=N` or `/debug/heap` (0325), fetched then

@@ -1,0 +1,16 @@
+exit 0
+--- stdout
+find 0 3 true of false
+trim 2 hix xhi all 0
+split a|b|c of a|b|c none 0
+map ABC ab 
+method value true 2
+identity true KEEP
+found 1
+err X at a rune
+err X at a rune
+err X in map
+kept 3 [a] [c]
+trimmed view [hi] first space 1
+view a/b a b 3
+--- stderr

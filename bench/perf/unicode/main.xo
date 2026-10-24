@@ -175,6 +175,55 @@ fn quote(s: Str) -> Int {
   sum
 }
 
+// The predicate forms of Str (Go's *Func family). Each scans the whole
+// input: the sentinel rune is the last (or first) one, a space run is
+// long, and the fields and case mapping walk every rune.
+
+fn marker(r: Rune) -> Bool { Int(r) == 0x10ffff }
+
+fn index_func(a: Str, b: Str) -> Int {
+  var sum = 0
+  for _ in 0..REPS {
+    sum = (sum + (a.find_where(marker) ?? 0)) % 1000000007
+    sum = (sum + (b.rfind_where(marker) ?? 0)) % 1000000007
+    if a.contains_where(marker) {
+      sum += 1
+    }
+  }
+  sum
+}
+
+fn trim_func(s: Str) -> Int {
+  var sum = 0
+  for _ in 0..REPS {
+    sum = (sum + sample(s.trim_where(fn(r) { r.is_space() }))) % 1000000007
+    sum = (sum + s.trim_start_where(fn(r) { r.is_space() }).len()) % 1000000007
+    sum = (sum + s.trim_end_where(fn(r) { r == Rune(32) }).len()) % 1000000007
+  }
+  sum
+}
+
+fn fields_func(s: Str) -> Int {
+  var sum = 0
+  for _ in 0..REPS {
+    let ps = s.split_where(fn(r) { r.is_space() })
+    sum = (sum + ps.len()) % 1000000007
+    for p in ps {
+      sum = (sum + p.len()) % 1000000007
+    }
+  }
+  sum
+}
+
+fn map_func(s: Str) -> Int {
+  var sum = 0
+  for _ in 0..REPS {
+    sum = (sum + sample(s.map_runes(fn(r) { Some(r.to_upper()) }))) % 1000000007
+    sum = (sum + s.map_runes(fn(r) { if r.is_digit() { None } else { Some(r) } }).len()) % 1000000007
+  }
+  sum
+}
+
 fn main(os: Os) {
   let args = os.env.args()
   let w = args.get(0) ?? "lower"
@@ -195,6 +244,10 @@ fn main(os: Os) {
     "title" => title_sum(rs)
     "utf8len" => utf8_len_sum(rs)
     "quote" => quote((ASCII + MIXED + "\t\u{7}\u{0}").repeat(400))
+    "indexfunc" => index_func((ASCII + MIXED).repeat(2000) + "\u{10ffff}", "\u{10ffff}" + (ASCII + MIXED).repeat(2000))
+    "trimfunc" => trim_func(" ".repeat(2000) + ASCII + " ".repeat(2000))
+    "fieldsfunc" => fields_func(ASCII.repeat(200))
+    "mapfunc" => map_func((ASCII + MIXED).repeat(500))
     _ => -1
   }
   let us = os.clock.since(t).nanos() / 1000

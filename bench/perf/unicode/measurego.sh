@@ -12,7 +12,7 @@ OUT=$1
 SRC=$(cd "$(dirname "$0")" && pwd)
 mkdir -p "$OUT"
 (cd "$SRC/go" && go build -o "$OUT/u-go" .)
-for w in lower upper lower_u upper_u eqlower classify runecase classes latin1 title utf8len quote; do
+for w in lower upper lower_u upper_u eqlower classify runecase classes latin1 title utf8len quote indexfunc trimfunc fieldsfunc mapfunc; do
 	best=""
 	bt=""
 	ck=""

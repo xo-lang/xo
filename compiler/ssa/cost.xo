@@ -639,10 +639,20 @@ fn type_label(m: Module, t: Int) -> Str {
   m.types[t].name
 }
 
+/// Whether a call's name is base, or base with a generic instantiation
+/// suffix (`prelude.str_split_where[()]`): a prelude method with an effect
+/// parameter carries its type arguments in the call's name.
+fn named(n: Str, base: Str) -> Bool {
+  if n == base {
+    return true
+  }
+  n.starts_with(base) && (n.find("[") ?? -1) == base.len()
+}
+
 /// The calls whose result is a view of their first argument (decision
 /// 0330): a slice, and the trims.
 fn view_call(name: Str) -> Bool {
-  name is "rt.str_view" | "prelude.str_trim" | "prelude.str_trim_start" | "prelude.str_trim_end" | "prelude.str_trim_prefix" | "prelude.str_trim_suffix" | "prelude.str_cut" | "prelude.str_cut_prefix" | "prelude.str_cut_suffix" | "prelude.str_trim_chars" | "prelude.str_trim_start_chars" | "prelude.str_trim_end_chars"
+  named(name, "rt.str_view") || named(name, "prelude.str_trim") || named(name, "prelude.str_trim_start") || named(name, "prelude.str_trim_end") || named(name, "prelude.str_trim_prefix") || named(name, "prelude.str_trim_suffix") || named(name, "prelude.str_cut") || named(name, "prelude.str_cut_prefix") || named(name, "prelude.str_cut_suffix") || named(name, "prelude.str_trim_chars") || named(name, "prelude.str_trim_start_chars") || named(name, "prelude.str_trim_end_chars") || named(name, "prelude.str_trim_where") || named(name, "prelude.str_trim_start_where") || named(name, "prelude.str_trim_end_where")
 }
 
 /// The value a Field, Rebind, or Payload chain starts from (a Payload: an
@@ -684,7 +694,7 @@ fn param_view_at(f: Func, x: Int, depth: Int) -> Bool {
       return false
     }
     let ln = aux_name(f.values[l].aux)
-    if ln is "prelude.str_split" | "prelude.str_split_n" | "prelude.str_split_after" | "prelude.str_split_after_n" | "prelude.str_fields" | "prelude.str_lines" {
+    if named(ln, "prelude.str_split") || named(ln, "prelude.str_split_n") || named(ln, "prelude.str_split_after") || named(ln, "prelude.str_split_after_n") || named(ln, "prelude.str_fields") || named(ln, "prelude.str_split_where") || named(ln, "prelude.str_lines") {
       return param_text(f, f.values[l].args[0], depth)
     }
   }

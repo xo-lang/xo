@@ -150,6 +150,58 @@ Go splits into at most n pieces by *byte* length and leaves no piece at
 all for an empty value, so `"".split("")` is `[]` while `"".split(",")`
 is `[""]`. The corpus caught a first version that returned `[""]` for
 both.
+## 2026-10-23: feature: the predicate forms of Str (Go's strings *Func family)
+
+- Kind: feature
+- Commit: this commit
+- Found by: lead request; Go's *Func family had no Xo form, so a port that
+  asks a question about runes (IndexFunc, ContainsFunc, TrimFunc,
+  FieldsFunc, Map) had to hand roll a decoder and a loop each time
+- Go reference: strings.IndexFunc, LastIndexFunc, ContainsFunc, TrimFunc,
+  TrimLeftFunc, TrimRightFunc, FieldsFunc and Map (go1.26.1)
+- Test: corpus/strwhere (Go's indexFuncTests, trimFuncTests,
+  FieldsFuncTests with fieldstests and the TestMap cases, plus 2000
+  seeded random inputs each, plain and as a view of a longer buffer;
+  arm64 and LLVM), golden strwhere (a closure, a named function, a bound
+  method value, a failing closure on every method, views kept past their
+  source function; arm64, LLVM, Go parity and wasm), and cmd/xo's
+  TestVetCostViewStoreWhereTrim, TestVetCostViewStoreWherePiece and
+  TestVetCostViewWhereUsedNoNote
+- Timing: bench/results/str-func-2026-10-23.md (indexfunc, trimfunc,
+  fieldsfunc and mapfunc against Go's four calls: 0.48 to 0.83 of Go's
+  instructions on the first three, 1.20 to 1.38 on mapfunc)
+
+`Str.find_where`, `rfind_where`, `contains_where`, `trim_where`,
+`trim_start_where`, `trim_end_where`, `split_where` and `map_runes` are
+the *Func family with effect polymorphism (`[E, fx: Effects]`, `! E uses
+fx`), like List.find and Map.filter, so a predicate that fails propagates
+and the walk stops there. The pieces keep the views of the string methods
+(split_where and the trims return views of s on native targets) and
+XO0911 names them (compiler/ssa/cost.xo view_call and param_view_at,
+compiler/gen/own.xo fresh_std). A call of a prelude method with an effect
+parameter carries its instantiation in the SSA name
+(`prelude.str_split_where[()]`), where the other entries there are bare,
+so both lists match through a `named` helper that also accepts a name
+followed by `[`; without it the stored-view note never fired for
+split_where (cmd/xo/vetcost_rune_where_test.go). `map_runes` takes
+`fn(Rune) -> Rune?`:
+None is Go's negative mapping, and like Go's Map it copies nothing until
+the first rune that changes (a valid U+FFFD mapping to itself is not a
+change, a malformed byte is). The output is built with `raw.push_rune`,
+the llrt form: `rt.rs_push_rune` is lowered only for
+StrBuilder.write_rune, so a hand written call to it is an undefined symbol
+on native (gotchas/rt-call-not-lowered-link-error.md). f is called exactly
+once per rune by every
+method, including split_where (one pass records its spans, as Go's
+FieldsFunc does, then the pieces are sliced from them).
+`strings.IndexFunc`, `LastIndexFunc`, `ContainsFunc`, `TrimFunc`,
+`TrimLeftFunc`, `TrimRightFunc`, `FieldsFunc` and `Map` in another
+language get XO0601 with the Xo name (compiler/check/habits.xo).
+
+A predicate is a closure (`fn(r) { r.is_space() }`), a named function or
+a bound method value (`m.hits`); `Rune.is_space` is not a value
+(XO0601, gotchas/rune-method-not-a-value.md), so the type name cannot
+stand for its method.
 
 ## 2026-10-23: feature: the rest of the Rune classes, to_title and utf8_len
 

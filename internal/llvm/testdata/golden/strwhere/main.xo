@@ -1,0 +1,85 @@
+// The *Func family of Str (strings.IndexFunc, LastIndexFunc, ContainsFunc,
+// TrimFunc, TrimLeftFunc, TrimRightFunc, FieldsFunc and Map) with the
+// argument forms a caller has: a closure, a named function, a bound
+// method value (fn(Rune) is not a value a caller can take from a Rune's
+// method: `Rune.is_space` has no associated function, XO0601), and a
+// closure that fails, so an effect in f propagates out of every method.
+// Views that outlive their source are kept in a struct and returned.
+
+struct Tok {
+  piece: Str
+}
+
+struct Marked {
+  r: Rune
+}
+
+fn (m: Marked) hits(x: Rune) -> Bool { x == m.r }
+
+fn is_space_rune(r: Rune) -> Bool { r.is_space() }
+
+fn first_space(s: Str) -> Int? {
+  s.find_where(fn(r) { r.is_space() })
+}
+
+fn trimmed(text: Str) -> Str {
+  text.trim_where(fn(r) { r == Rune(32) })
+}
+
+fn fail_at_x(r: Rune) -> Bool ! Str {
+  if r == Rune(88) {
+    return Err("X at a rune")
+  }
+  r.is_space()
+}
+
+fn keep_pieces(text: Str) -> List[Tok] {
+  var out: List[Tok] = []
+  for piece in text.split_where(fn(r) { r.is_space() }) {
+    out.push(Tok{piece: piece})
+  }
+  out
+}
+
+fn main(os: Os) {
+  os.stdio.println("find ${" a b".find_where(is_space_rune) ?? -1} ${"a b ".rfind_where(is_space_rune) ?? -1} ${"ab1".contains_where(fn(r) { r.is_digit() })} of ${"ab".contains_where(fn(r) { r.is_digit() })}")
+  os.stdio.println("trim ${"  hi  ".trim_where(is_space_rune).len()} ${"xxhix".trim_start_where(fn(r) { r == Rune(120) })} ${"xhixx".trim_end_where(fn(r) { r == Rune(120) })} all ${"xxx".trim_where(fn(r) { r == Rune(120) }).len()}")
+  os.stdio.println("split ${"a b  c".split_where(is_space_rune).join("|")} of ${"aXbXXc".split_where(fn(r) { r == Rune(88) }).join("|")} none ${"   ".split_where(is_space_rune).len()}")
+  os.stdio.println("map ${"abc".map_runes(fn(r) { Some(r.to_upper()) })} ${"a1b2".map_runes(fn(r) { if r.is_digit() { None } else { Some(r) } })} ${"ab".map_runes(fn(r) { None })}")
+
+  // a bound method value is a fn(Rune) -> Bool here
+  let m = Marked{r: Rune(32)}
+  os.stdio.println("method value ${"ab c".contains_where(m.hits)} ${"ab c".find_where(m.hits) ?? -1}")
+
+  // s itself, not a copy, when nothing changes
+  let same = "keep"
+  os.stdio.println("identity ${same.map_runes(fn(r) { Some(r) }) == same} ${same.map_runes(fn(r) { Some(r.to_upper()) })}")
+
+  // an effect in f propagates: the first failing rune ends the call
+  match "a Xb".find_where(fail_at_x) {
+    Ok(i) => os.stdio.println("found ${i ?? -1}")
+    Err(e) => os.stdio.println("err ${e}")
+  }
+  match "a bX".trim_where(fail_at_x) {
+    Ok(s) => os.stdio.println("trimmed [${s}]")
+    Err(e) => os.stdio.println("err ${e}")
+  }
+  match "X a".split_where(fail_at_x) {
+    Ok(ps) => os.stdio.println("pieces ${ps.len()}")
+    Err(e) => os.stdio.println("err ${e}")
+  }
+  match "aX".map_runes(fn(r) { if Int(r) == 88 { Err("X in map") } else { Ok(Some(r)) } }) {
+    Ok(s) => os.stdio.println("mapped ${s}")
+    Err(e) => os.stdio.println("err ${e}")
+  }
+
+  // views of a local outlive the function that made them
+  let toks = keep_pieces("a b  c")
+  os.stdio.println("kept ${toks.len()} [${toks[0].piece}] [${toks[2].piece}]")
+  os.stdio.println("trimmed view [${trimmed("  hi  ")}] first space ${first_space("a b") ?? -1}")
+
+  // a piece of a view of a longer text
+  let long = "Q a b Q"
+  let view = long[1..(long.len() - 1)]
+  os.stdio.println("view ${view.split_where(is_space_rune).join("/")} ${view.trim_where(fn(r) { r == Rune(32) })} ${view.find_where(fn(r) { r == Rune(98) }) ?? -1}")
+}

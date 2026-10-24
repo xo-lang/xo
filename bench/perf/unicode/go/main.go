@@ -182,6 +182,64 @@ func quote(s string) int64 {
 	return sum
 }
 
+// The predicate forms of Str (Go's *Func family), the same workloads as
+// the Xo program.
+
+func marker(r rune) bool { return r == 0x10ffff }
+
+func indexFunc(a, b string) int64 {
+	var sum int64
+	for i := 0; i < reps; i++ {
+		sum = (sum + int64(strings.IndexFunc(a, marker))) % mod
+		sum = (sum + int64(strings.LastIndexFunc(b, marker))) % mod
+		if strings.ContainsFunc(a, marker) {
+			sum++
+		}
+	}
+	return sum
+}
+
+func trimFunc(s string) int64 {
+	space := func(r rune) bool { return unicode.IsSpace(r) }
+	asciiSpace := func(r rune) bool { return r == ' ' }
+	var sum int64
+	for i := 0; i < reps; i++ {
+		sum = (sum + sample(strings.TrimFunc(s, space))) % mod
+		sum = (sum + int64(len(strings.TrimLeftFunc(s, space)))) % mod
+		sum = (sum + int64(len(strings.TrimRightFunc(s, asciiSpace)))) % mod
+	}
+	return sum
+}
+
+func fieldsFunc(s string) int64 {
+	space := func(r rune) bool { return unicode.IsSpace(r) }
+	var sum int64
+	for i := 0; i < reps; i++ {
+		ps := strings.FieldsFunc(s, space)
+		sum = (sum + int64(len(ps))) % mod
+		for _, p := range ps {
+			sum = (sum + int64(len(p))) % mod
+		}
+	}
+	return sum
+}
+
+func mapFunc(s string) int64 {
+	up := func(r rune) rune { return unicode.ToUpper(r) }
+	dropDigits := func(r rune) rune {
+		if unicode.IsDigit(r) {
+			return -1
+		}
+		return r
+	}
+	var sum int64
+	for i := 0; i < reps; i++ {
+		sum = (sum + sample(strings.Map(up, s))) % mod
+		sum = (sum + int64(len(strings.Map(dropDigits, s)))) % mod
+	}
+	return sum
+}
+
 func main() {
 	w := "lower"
 	if len(os.Args) > 1 {
@@ -217,6 +275,14 @@ func main() {
 		sum = utf8LenSum(rs)
 	case "quote":
 		sum = quote(strings.Repeat(ascii+mixed+"\t\u0007\u0000", 400))
+	case "indexfunc":
+		sum = indexFunc(strings.Repeat(ascii+mixed, 2000)+"\U0010FFFF", "\U0010FFFF"+strings.Repeat(ascii+mixed, 2000))
+	case "trimfunc":
+		sum = trimFunc(strings.Repeat(" ", 2000) + ascii + strings.Repeat(" ", 2000))
+	case "fieldsfunc":
+		sum = fieldsFunc(strings.Repeat(ascii, 200))
+	case "mapfunc":
+		sum = mapFunc(strings.Repeat(ascii+mixed, 500))
 	default:
 		sum = -1
 	}
