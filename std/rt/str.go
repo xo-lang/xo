@@ -1,6 +1,7 @@
 package rt
 
 import (
+	"math"
 	"strconv"
 	"strings"
 	"unicode"
@@ -264,6 +265,15 @@ func Str_replace_n(_ *Task, s, old, new string, n int64) string {
 func Str_repeat(_ *Task, s string, n int64) string {
 	if n < 0 {
 		FaultHere("negative repeat count %d", n)
+	}
+	if n == 0 || len(s) == 0 {
+		return ""
+	}
+	if int64(len(s)) > math.MaxInt64/n {
+		FaultHere("strings: Repeat output length overflow")
+	}
+	if int64(len(s))*n > 4294967295 {
+		FaultHere("strings: Repeat output over 4 GiB")
 	}
 	return strings.Repeat(s, int(n))
 }

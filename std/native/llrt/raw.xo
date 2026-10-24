@@ -278,17 +278,10 @@ pub fn str_join(xs: List[Str], sep: Str) -> Str {
 }
 
 /// n copies of s (strings.Repeat).
+/// k copies of s: the copy of strings.Repeat, its checks in the caller
+/// (std/native/prelude.xo str_repeat, which names the caller's line).
 pub fn str_repeat(s: Str, k: Int) -> Str {
   let n = s.len()
-  if k <= 0 || n == 0 {
-    return ""
-  }
-  if n > 9223372036854775807 / k {
-    fault("strings: Repeat output length overflow")
-  }
-  if n * k > 4294967295 {
-    fault("strings: Repeat output over 4 GiB")
-  }
   let out = rt.rs_set_len(rt.rs_with_cap(n * k), n * k)
   let d = data(out)
   for i in 0..k {

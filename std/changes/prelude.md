@@ -1,5 +1,29 @@
 # prelude changes
 
+## 2026-10-23: fix: Str.repeat faults below 0 on the native backends, as the Go backend does
+
+- Kind: fix
+- Commit: this commit
+- Found by: bringing Bytes.repeat in line with Str.repeat (Bytes.repeat
+  faults below 0 on both backends); native `raw.str_repeat` returned ""
+  for any count below 0, where the Go backend faults, so the same program
+  gave "" on arm64 and LLVM and exited 70 through the Go backend
+- Go reference: strings.Repeat (go1.26.1) panics with "negative repeat
+  count"; the Go backend already faulted
+- Test: golden str_repeat_fault (arm64 and LLVM exit 70 with "fault:
+  negative repeat count -1 at main.xo:9", Go parity), corpus/bytes
+  (Bytes.repeat's rows), and no call site in compiler/, std/ or bench/
+  passes a count that can be negative (the padding ones test the width
+  first)
+
+`Str.repeat` now faults with "negative repeat count N" at the caller's line
+when the count is below 0, and with Go's messages for a result that would
+overflow Int or exceed 4 GiB, on the native backends as on the Go backend
+(which gains the last two checks, so a count that only the Go backend could
+satisfy is refused the same way). `raw.str_repeat` is the copy alone; the
+checks and their caller-relative faults are in std/native/prelude.xo
+str_repeat, the arrangement Bytes.repeat already had.
+
 ## 2026-10-23: feature: Bytes.replace, replace_n, to_lower, to_upper, equal_fold and repeat
 
 - Kind: feature

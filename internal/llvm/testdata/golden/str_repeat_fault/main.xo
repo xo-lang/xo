@@ -1,0 +1,10 @@
+// A negative repeat count faults, as Go's strings.Repeat panics, with the
+// caller's line on every backend (std.md: Str.repeat is strings.Repeat).
+
+fn main(os: Os) {
+  let out = os.stdio
+  out.println("repeat 2: " + "ab".repeat(2))
+  out.println("repeat 0: [" + "ab".repeat(0) + "]")
+  out.println("before the fault")
+  out.println("repeat -1: " + "ab".repeat(-1))
+}

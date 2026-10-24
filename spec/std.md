@@ -199,7 +199,7 @@ fn (s: Str) trim_chars(chars: Str) -> Str    // also trim_start_chars, trim_end_
 fn (s: Str) to_lower() -> Str                // also to_upper (Unicode aware)
 fn (s: Str) replace(old: Str, new: Str) -> Str
 fn (s: Str) replace_n(old: Str, new: Str, n: Int) -> Str  // the first n copies (strings.Replace); n below 0 for every one, 0 for none
-fn (s: Str) repeat(n: Int) -> Str
+fn (s: Str) repeat(n: Int) -> Str            // strings.Repeat; empty for 0, a fault below 0
 fn (s: Str) clone() -> Str                   // an explicit copy in a buffer of its own (a slice or split piece shares its source on native targets)
 fn (s: Str) runes() -> List[Rune]
 fn (s: Str) bytes() -> Bytes

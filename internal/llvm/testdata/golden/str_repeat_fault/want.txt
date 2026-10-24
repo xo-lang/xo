@@ -1,0 +1,7 @@
+exit 70
+--- stdout
+repeat 2: abab
+repeat 0: []
+before the fault
+--- stderr
+fault: negative repeat count -1 at main.xo:9

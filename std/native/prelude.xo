@@ -170,7 +170,25 @@ fn str_eq_lower(a: Str, b: Str) -> Bool { unicode.eq_lower(a, b) }
 fn str_replace(s: Str, old: Str, new: Str) -> Str { strings.replace(s, old, new) }
 fn str_replace_n(s: Str, old: Str, new: Str, n: Int) -> Str { strings.replace_n(s, old, new, n) }
 
-fn str_repeat(s: Str, n: Int) -> Str { raw.str_repeat(s, n) }
+/// strings.Repeat: empty for 0, a fault below 0 and above 4 GiB, as the Go
+/// backend faults and as Bytes.repeat does; the fault names the caller's
+/// line (the Go backend's FaultHere does too).
+fn str_repeat(s: Str, n: Int, at: rt.Loc) -> Str {
+  if n < 0 {
+    rt.fault_at("negative repeat count ${n}", at)
+  }
+  let k = s.len()
+  if n == 0 || k == 0 {
+    return ""
+  }
+  if k > 9223372036854775807 / n {
+    rt.fault_at("strings: Repeat output length overflow", at)
+  }
+  if k * n > 4294967295 {
+    rt.fault_at("strings: Repeat output over 4 GiB", at)
+  }
+  raw.str_repeat(s, n)
+}
 
 /// A copy in a buffer of its own (decision 0330): s may be a view.
 fn str_clone(s: Str) -> Str { raw.str_at(raw.data(s), s.len()) }
