@@ -166,6 +166,37 @@ builds 9.5 to 18.4 s, an empty cache to 105 MB. Whether XO_COLD_PACK
 can go back to on by default is open: the slow runs never measured the
 shared pack itself.
 
+## Addendum (2026-10-24): where the store churn comes from, and what a target's pack no longer copies
+
+Measured on the owner's cache from its `store-log` (527,955 stores, 2,205 GB
+in 52 hours, 23 to 82 GB per hour; 474 code generation keys):
+
+- Pack segments are 59% of the bytes (part 666 GB, inl 182, fn 177, fe 151,
+  rc 109, sum 13), loose entries 41% (fn 313, obj 202, fe 168, inl 137, rc 77,
+  sum 8). A pack segment is a copy of entries that are already loose or in
+  the shared pack.
+- By cache identity (code generation key) lifetime: under 30 minutes 35% of
+  the bytes (360 keys), 30 minutes to 10 hours 64% (111 keys, live keys with
+  several agents building; one key stored 117 GB in 219 minutes), over 10
+  hours 2%. A write budget per key would not touch the live keys.
+- Steady state is not rewritten: after the pack is formed, an edit build
+  appends only the changed entries (fe 3 of 2,656; rc, sum, inl 0). The cost
+  is the formation: a target (working directory, command words) writes the
+  whole used set as its pack on its third build, parts on its second.
+
+A compiler build target (`xo build compiler/xo`, fresh cache): build 0 stored
+1,151 MB loose; build 1 added 1,569 MB (parts pack 709, fn 417, inl 191,
+rc 143, fe 91, sum 18); build 2 added 443 MB more (a second inl, rc, fe and
+sum segment: the 3rd build's copy of what the shared pack served).
+
+Change: `pack_store` does not copy an entry the shared pack served in this
+build (`Pack.shared_used`) into the target's pack, which reads it from the
+shared pack as before. Total after three builds: 3,164 MB before, 2,721 MB
+(-14%); with `XO_COLD_PACK=on` 2,138 MB (-32%). Not changed: `PACK_AFTER`
+(a compiler edit loop is 1.3 to 2.5 s faster per edit with the pack, and a
+delay only moves the write), and fn, which stays loose and is copied into
+the pack (417 MB); a cold-pack store for fn and obj is the next step.
+
 ## Consequences
 
 - Stage 1 changes the cache layout (a new `packs/shared` tree) but not
