@@ -136,7 +136,12 @@ fn fn_cache_load(os: Os, ctx: Ctx, m: ssa.Module, tgoos: Str, jobs: Int, release
     }
   }
   let (entries, pk) = cache_get_packed(os, dir, "fn", target, want, jobs)
-  (arm64.FnCache{keys: keys, entries: entries, verify: verify, part_keys: pkeys, part_entries: pents}, dir, Pack{root: pk.root, dir: pk.dir, segs: pk.segs, held: pk.held, from_pack: pk.from_pack, fresh: pk.fresh, seen: pk.seen, wait: pk.wait, parts: ppk})
+  // pk whole: its shared pack fields too (a Pack literal of the other fields
+  // left fn out of the shared and the cold-pack stores: fn was 313 GB loose
+  // and 177 GB in target packs of the store-log's 2,205 GB, 2026-10-24)
+  var fpk = pk
+  fpk.parts = ppk
+  (arm64.FnCache{keys: keys, entries: entries, verify: verify, part_keys: pkeys, part_entries: pents}, dir, fpk)
 }
 
 /// Stores the entries a cached generation made (fn_cache_load's dir),
