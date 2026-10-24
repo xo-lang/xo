@@ -39,6 +39,7 @@ var generators = map[string]func() string{
 	"equalfold":  equalfoldCorpus,
 	"httpurl":    httpurlCorpus,
 	"json":       jsonCorpus,
+	"jsondecode": jsonDecodeCorpus,
 	"jsonencode": jsonEncodeCorpus,
 	"mail":       mailCorpus,
 	"mime":       mimeCorpus,
