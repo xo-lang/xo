@@ -40,6 +40,7 @@ path "a/../../up" archive: bad entry path "a/../../up" | archive: bad entry path
 path "C:/x" archive: bad entry path "C:/x" | archive: bad entry path "C:/x"
 path "." archive: bad entry path "." | archive: bad entry path "."
 path "a\\..\\..\\b" archive: bad entry path "a\\..\\..\\b" | archive: bad entry path "a\\..\\..\\b"
+nul path archive: bad entry path "a\x00b" | archive: bad entry path "a\x00b"
 tar_symlink archive: untar: entry "link" is not a file or a directory
 tar_escape archive: untar: entry path "../evil.txt" leaves the archive
 tar_gnu file "dir/nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn.txt" 416 1700000000000 3 ab137b027d5988d4; dir "d2" 488 1700000000000 0 e3b0c44298fc1c14

@@ -168,15 +168,15 @@ fn main(os: Os) ! {
   }
   // a NUL in a path is refused by tar and zip (the path rule)
   let nul = "a\u{0}b"
-  let t1 = match archive.tar([archive.file(nul, b"x")]) {
+  let nt = match archive.tar([archive.file(nul, b"x")]) {
     Ok(_) => "ok"
     Err(e) => "${e}"
   }
-  let z1 = match archive.zip([archive.file(nul, b"x")]) {
+  let nz = match archive.zip([archive.file(nul, b"x")]) {
     Ok(_) => "ok"
     Err(e) => "${e}"
   }
-  out.println("nul path ${t1} | ${z1}")
+  out.println("nul path ${nt} | ${nz}")
   // archives written by Go's packages in other ways
   for line in os.fs.read_text("vectors.txt")?.lines() {
     let parts = line.split("=")
