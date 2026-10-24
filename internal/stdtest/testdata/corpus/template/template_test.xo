@@ -3009,6 +3009,19 @@ const CASES: List[(Str, Bool, Str)] = [
   ("{{- .e}}{{\"x\"}}", false, "x"),
 ]
 
+/// (set kind, main source, the name render_named executes, missingkey=error, Go's output or err TEXT)
+const NAMED_CASES: List[(Int, Str, Str, Bool, Str)] = [
+  (0, "A{{.s}}B", "main", false, "AhelloB"),
+  (0, "{{define \"d\"}}D{{.i}}{{end}}M", "d", false, "D17"),
+  (0, "{{define \"d\"}}D{{.i}}{{end}}M", "main", false, "M"),
+  (0, "M", "nope", false, "err template: no template \"nope\" associated with template \"main\""),
+  (0, "{{.missing}}", "main", true, "err template: main:1:2: executing \"main\" at <.missing>: map has no entry for key \"missing\""),
+  (1, "A{{template \"sub\" .}}B", "main", false, "As:helloB"),
+  (1, "A{{template \"sub\" .}}B", "sub", false, "s:hello"),
+  (2, "{{template \"a\" .}}", "a", false, "[B17]"),
+  (2, "X", "b", false, "B17"),
+]
+
 fn first_bad[T](bad: List[T]) -> List[T] { bad[0..(if bad.len() < 20 { bad.len() } else { 20 })] }
 
 test "parse and render give Go's output and errors" {
@@ -3024,6 +3037,35 @@ test "parse and render give Go's output and errors" {
     }
     if got != want {
       bad.push((src, got, want))
+    }
+  }
+  expect(first_bad(bad)) == []
+}
+
+fn named_set(kind: Int, main: Str) -> template.Template ! template.TemplateErr {
+  let base = template.parse("main", main)?
+  if kind == 1 {
+    return base.add("sub", "s:{{.s}}")?
+  }
+  if kind == 2 {
+    return base.add("a", "[{{template \"b\" .}}]")?.add("b", "B{{.i}}")?
+  }
+  base
+}
+
+test "render_named executes the named template of the set" {
+  let data = json.parse_value(DATA).ok() ?? json.Value.Null
+  var bad: List[(Str, Str, Str)] = []
+  for (kind, main, name, missing, want) in NAMED_CASES {
+    let got = match named_set(kind, main) {
+      Ok(t) => match t.missing_key(missing).render_named(name, data) {
+        Ok(s) => s
+        Err(e) => "err ${e.msg}"
+      }
+      Err(e) => "err ${e.msg}"
+    }
+    if got != want {
+      bad.push(("set ${kind} ${name}", got, want))
     }
   }
   expect(first_bad(bad)) == []

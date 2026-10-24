@@ -164,6 +164,37 @@ func tmplBody(r *rand.Rand, b *strings.Builder, vars []string, depth int, inRang
 	}
 }
 
+// tmplRunNamed is std/rt's render_named: kind picks the extra templates of
+// the set (1: one named sub, 2: a calling a, which calls b), then
+// Go's ExecuteTemplate(name).
+func tmplRunNamed(main string, kind int, name string, data any, missingErr bool) string {
+	t, err := template.New("main").Parse(main)
+	if err != nil {
+		return "err " + textOf(err.Error())
+	}
+	switch kind {
+	case 1:
+		if _, err := t.New("sub").Parse("s:{{.s}}"); err != nil {
+			return "err " + textOf(err.Error())
+		}
+	case 2:
+		if _, err := t.New("a").Parse(`[{{template "b" .}}]`); err != nil {
+			return "err " + textOf(err.Error())
+		}
+		if _, err := t.New("b").Parse("B{{.i}}"); err != nil {
+			return "err " + textOf(err.Error())
+		}
+	}
+	if missingErr {
+		t.Option("missingkey=error")
+	}
+	var b strings.Builder
+	if err := t.ExecuteTemplate(&b, name, data); err != nil {
+		return "err " + textOf(err.Error())
+	}
+	return textOf(b.String())
+}
+
 func templateCorpus() string {
 	r := rand.New(rand.NewSource(8))
 	dec := json.NewDecoder(bytes.NewReader([]byte(tmplData)))
@@ -182,6 +213,30 @@ func templateCorpus() string {
 		src := textOf(b.String())
 		missing := r.Intn(8) == 0
 		fmt.Fprintf(&o, "  (%s, %v, %s),\n", xq(src), missing, xq(tmplRun(src, data, missing)))
+	}
+	o.WriteString("]\n")
+	// render_named: ExecuteTemplate of a name in the set. kind 0 is the
+	// template parse built (define blocks included), 1 adds a sub template
+	// the main one calls, 2 adds a calling b.
+	o.WriteString("\n/// (set kind, main source, the name render_named executes, missingkey=error, Go's output or err TEXT)\nconst NAMED_CASES: List[(Int, Str, Str, Bool, Str)] = [\n")
+	for _, c := range []struct {
+		kind int
+		main string
+		name string
+	}{
+		{0, "A{{.s}}B", "main"},
+		{0, `{{define "d"}}D{{.i}}{{end}}M`, "d"},
+		{0, `{{define "d"}}D{{.i}}{{end}}M`, "main"},
+		{0, "M", "nope"},
+		{0, "{{.missing}}", "main"},
+		{1, `A{{template "sub" .}}B`, "main"},
+		{1, `A{{template "sub" .}}B`, "sub"},
+		{2, `{{template "a" .}}`, "a"},
+		{2, "X", "b"},
+	} {
+		missing := c.name == "main" && c.main == "{{.missing}}"
+		fmt.Fprintf(&o, "  (%d, %s, %s, %v, %s),\n", c.kind, xq(c.main), xq(c.name), missing,
+			xq(tmplRunNamed(c.main, c.kind, c.name, data, missing)))
 	}
 	o.WriteString("]\n")
 	o.WriteString(templateTests)
@@ -204,6 +259,35 @@ test "parse and render give Go's output and errors" {
     }
     if got != want {
       bad.push((src, got, want))
+    }
+  }
+  expect(first_bad(bad)) == []
+}
+
+fn named_set(kind: Int, main: Str) -> template.Template ! template.TemplateErr {
+  let base = template.parse("main", main)?
+  if kind == 1 {
+    return base.add("sub", "s:{{.s}}")?
+  }
+  if kind == 2 {
+    return base.add("a", "[{{template \"b\" .}}]")?.add("b", "B{{.i}}")?
+  }
+  base
+}
+
+test "render_named executes the named template of the set" {
+  let data = json.parse_value(DATA).ok() ?? json.Value.Null
+  var bad: List[(Str, Str, Str)] = []
+  for (kind, main, name, missing, want) in NAMED_CASES {
+    let got = match named_set(kind, main) {
+      Ok(t) => match t.missing_key(missing).render_named(name, data) {
+        Ok(s) => s
+        Err(e) => "err ${e.msg}"
+      }
+      Err(e) => "err ${e.msg}"
+    }
+    if got != want {
+      bad.push(("set ${kind} ${name}", got, want))
     }
   }
   expect(first_bad(bad)) == []
