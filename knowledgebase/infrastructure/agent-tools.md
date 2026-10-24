@@ -191,6 +191,15 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   (an import or intrinsic the seed lacks fails xobuild's smoke), run the
   script's steps under Wine, and check every tool it calls exists on
   the runner (no clang, no cdb by default).
+- A change to the build cache's lookup, store, listing or prune paths
+  is timed against the real shared user cache (tens of GB, every shard
+  full), not only a small private one, before it is pushed (lead,
+  2026-10-24: 284b87da9 listed whole shard directories with a stat per
+  entry; fast on a private cache, 120 s timeouts on the 19 GB user
+  cache, main slowed for 1 h 40 min until 712928e22 reverted it; gotcha
+  fs-read-dir-stats-every-entry.md): one cross-target `xo dev goldens
+  --build-only` of a few goldens with the new xo, against the user
+  cache, with its wall time beside main's.
 - A slow build or run starts with a breakdown before any hypothesis
   (lead, 2026-10-23: four Windows CI runs and about five agent-hours
   went to cache theories, cold pack, prune, cold keys, pack size, until
