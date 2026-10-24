@@ -27,6 +27,30 @@ result. The order and the stability are unchanged.
 Sorting a large `List[Str]` now uses extra memory for the index lists (max
 RSS about 1.9 times Go's on 200,000 Strs, 1.28 times the old sort).
 
+## 2026-10-24: perf: fold_copy's SWAR loop, five of its instructions per word
+
+- Kind: perf
+- Commit: this commit
+- Found by: Xo Lang 1's instruction count of obj.fold_copy's loop: the
+  case was tested per word, 0x20 per letter took a shift, a mask and a
+  multiply, and the high-byte test repeated an AND between8 had done
+- Go reference: none (internal; Go's case mapping output is unchanged)
+- Test: the strings, runes, equalfold, strconv and template corpora on
+  arm64 and llvm, the wasm goldens, and the fixed point (obj.xo is in
+  the fixed point set); every checksum of the workloads is identical to
+  the base's
+- Timing: bench/results/fold-copy-2026-10-24.md
+
+`fold_copy` (std/native/llrt/obj.xo) copies a span while folding its
+ASCII case. The case now picks one of two loops (`fold_copy_lo`,
+`fold_copy_up`) once instead of a compare and a select per word, a word
+with no letters adds zero so the `letters != 0` branch is gone too, 0x20
+per letter is `letters.shr_logical(2)` instead of a shift, a mask and a
+multiply, and `between8(...) & (w ^ -1)` replaces the masked form, since
+`between8` already keeps only byte high bits. ASCII case mapping runs 16
+to 18% fewer instructions and 9 to 10% less wall time; mixed text, where
+decoding and the case tables dominate, 1 to 2%.
+
 ## 2026-10-24: perf: a 2-byte case in the UTF-8 validation behind every Bytes-to-Str conversion
 
 - Kind: perf

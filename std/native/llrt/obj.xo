@@ -966,33 +966,66 @@ fn overlaps(a: Int, b: Int, n: Int) -> Bool {
   subw(a, b) < n && subw(b, a) < n
 }
 
-/// The n bytes at src with their ASCII letters lowered (mode 1) or raised
-/// (mode 2), written to d once: fold's work and move_at's copy in one
-/// pass, so each byte is loaded and stored once instead of twice.
-fn fold_copy(src: Int, d: Int, n: Int, mode: Int) {
-  let first = if mode == 1 { 65 } else { 97 }
-  let last = if mode == 1 { 90 } else { 122 }
-  let under = (0x80 - first) * F_ONES
-  let over = (0x7f - last) * F_ONES
+/// The n bytes at src with their ASCII letters lowered, written to d once:
+/// fold's work and move_at's copy in one pass, so each byte is loaded and
+/// stored once instead of twice (fold_copy_up raises). The case is chosen
+/// once, outside the loops, where a per-word test cost a compare and a
+/// select; 0x20 in each letter's byte is its high bit shifted down by two,
+/// since a letter bit is a byte's bit 7 and the shift is logical so the
+/// top byte is not sign extended (times 32 is the same value in three
+/// instructions). A word with no letters is added to with zero and stored
+/// unchanged.
+fn fold_copy_lo(src: Int, d: Int, n: Int) {
+  let under = (0x80 - 65) * F_ONES
+  let over = (0x7f - 90) * F_ONES
   var i = 0
   while subw(n, i) >= 8 {
     let w = rt.mem_load(src, i, 8)
-    let letters = between8(w & F_LOW7S, under, over) & ((w & F_HIGHS) ^ -1)
-    var v = w
-    if letters != 0 {
-      let k = ((letters >> 7) & 0x01FFFFFFFFFFFFFF) * 32
-      v = if mode == 1 { w.wrapping_add(k) } else { w.wrapping_sub(k) }
-    }
-    rt.mem_store(d, i, v, 8)
+    let letters = between8(w & F_LOW7S, under, over) & (w ^ -1)
+    rt.mem_store(d, i, w.wrapping_add(letters.shr_logical(2)), 8)
     i = addw(i, 8)
   }
   while i < n {
-    var c = rt.mem_load(src, i, 1)
-    if subw(c, first) < 26 && c >= first {
-      c = addw(c, if mode == 1 { 32 } else { -32 })
+    let c = rt.mem_load(src, i, 1)
+    var v = c
+    if subw(c, 65) < 26 && c >= 65 {
+      v = addw(c, 32)
     }
-    rt.mem_store(d, i, c, 1)
+    rt.mem_store(d, i, v, 1)
     i = addw(i, 1)
+  }
+}
+
+/// fold_copy_lo's opposite: the n bytes at src with their ASCII letters
+/// raised.
+fn fold_copy_up(src: Int, d: Int, n: Int) {
+  let under = (0x80 - 97) * F_ONES
+  let over = (0x7f - 122) * F_ONES
+  var i = 0
+  while subw(n, i) >= 8 {
+    let w = rt.mem_load(src, i, 8)
+    let letters = between8(w & F_LOW7S, under, over) & (w ^ -1)
+    rt.mem_store(d, i, w.wrapping_sub(letters.shr_logical(2)), 8)
+    i = addw(i, 8)
+  }
+  while i < n {
+    let c = rt.mem_load(src, i, 1)
+    var v = c
+    if subw(c, 97) < 26 && c >= 97 {
+      v = subw(c, 32)
+    }
+    rt.mem_store(d, i, v, 1)
+    i = addw(i, 1)
+  }
+}
+
+/// The n bytes at src with their ASCII letters lowered (mode 1) or raised
+/// (mode 2), written to d once.
+fn fold_copy(src: Int, d: Int, n: Int, mode: Int) {
+  if mode == 1 {
+    fold_copy_lo(src, d, n)
+  } else {
+    fold_copy_up(src, d, n)
   }
 }
 

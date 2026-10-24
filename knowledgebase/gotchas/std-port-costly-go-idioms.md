@@ -72,6 +72,13 @@ Two kinds, both fixed std-side:
 - In a hot loop over words, carry the byte offset (`o = o.wrapping_add(8)`
   to `n.wrapping_shl(3)`) rather than computing `8 * i`, and mask a
   length known not negative (`end & -32`) rather than `% 4`.
+- In a SWAR loop, choose the direction outside it (two loops, not a
+  compare and a select per word), keep a byte mask as a mask:
+  `letters.shr_logical(2)` is the 0x20 per letter that
+  `((letters >> 7) & mask) * 32` takes three instructions for, and
+  `between8(...) & (w ^ -1)` is one and-not where masking a masked value
+  again is two instructions. obj.fold_copy lost five of 21 instructions
+  per word to these (bench/results/fold-copy-2026-10-24.md).
 - Every port gets a timing row against Go's package next to its
   corpus (bench/results), so a slow port shows at once, not after a
   profile; profile with XO_PROF=cpu before rewriting.
