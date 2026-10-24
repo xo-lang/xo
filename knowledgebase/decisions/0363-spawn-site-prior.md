@@ -148,9 +148,18 @@ clean, checksums equal, `xo bench --ab` 20 rounds, quiet window, wall B/A
 
 The two lock-bound rows keep their gain (the same as the first flag, 0.654
 and 0.252) and the three pools that were 0.79 to 6.17 are back to the
-parent. Not run with this flag: the CRUD and HTTP benches, TestRuntime* and
---race (the first flag's pass does not carry over, since a different set of
-sites is flagged), and the 13 real bench pools. What the narrower flag
+parent. Other checks with the tighter flag (same day): TestRuntime* (internal/llvm,
+internal/repotest) pass; --race builds of mutex, rwmutex, spawn, fanout,
+pingpong, pmap, the read-mostly guard and the three pools run with no race
+report and the parent's checksums; the CRUD HTTP bench (5 x 10 s, 32 workers,
+arm64, quiet window) gives 143,344 rps (A) against 142,833 rps (B), p50 200
+against 203 us, p99 669 against 655 us, p99.9 1,051 against 1,031 us, no
+errors, within noise (the server CPU per request, sampled by ps, reads 22.87
+and 25.35 us and varied from 21.2 to 25.8 us across the A runs of the
+earlier run, so it is not a result). Not run: the 13 real bench pools
+(bench/paper, bench/planted-xo*, bench/xo/v0.4 worker pools), which need
+network access or inputs the harness does not supply; the three synthetic
+pools stand in for them. What the narrower flag
 misses: a lock in a loop with a non-lock call in it (such a site is a pool
 or a mixed workload, not one this experiment moves), so it is a flag for
 programs whose loop is the lock.
