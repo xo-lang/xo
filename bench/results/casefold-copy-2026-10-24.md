@@ -31,6 +31,27 @@ the counts: lower 16.74 to 16.56 ms, upper 16.75 to 16.06 ms, lower_az
 3.53 to 3.34 ms, upper_az 3.56 to 3.31 ms, lower_u 1.078 to 1.081 s
 (noise).
 
+## xo bench --ab, arm64, 12 rounds
+
+The two programs above, interleaved by `xo bench --ab` in the lead's
+quiet window (2026-10-24 08:17), all twelve rounds unloaded, load 2.7 to
+2.8:
+
+| workload | metric | A | B | B / A | 95% interval | verdict |
+|---|---|---|---|---|---|---|
+| lower | wall_ms | 19.96 | 18.65 | 0.934 | 0.906 to 0.955 | better |
+| lower | instructions | 392,823,162 | 378,189,024 | 0.963 | 0.963 to 0.963 | better |
+| upper | wall_ms | 19.80 | 18.57 | 0.938 | 0.921 to 0.948 | better |
+| upper | instructions | 402,360,499 | 386,529,491 | 0.961 | 0.961 to 0.961 | better |
+| lower_az | wall_ms | 6.638 | 6.307 | 0.950 | 0.916 to 0.979 | better |
+| lower_az | instructions | 107,260,132 | 104,361,656 | 0.973 | 0.973 to 0.973 | better |
+
+cpu_ms was too coarse to judge in all three (A's median 10.0 ms, the
+centisecond resolution), max_rss within noise. The wall gain, about 6
+percent, is larger than the best-of-5 counts suggested, because the
+fused loop also removes the second pass's cache traffic over the
+destination.
+
 What it says:
 
 - The fused pass removes one read and one write of every copied byte. An

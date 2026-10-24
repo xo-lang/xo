@@ -30,7 +30,10 @@ XO_INLINE_STRICT=1: lower 392.8 M to 378.5 M (0.963), upper 402.5 M to
 387.2 M (0.962), lower_az 107.3 M to 104.6 M (0.975), upper_az 107.4 M
 to 104.5 M (0.973), lower_u 4,596.8 M to 4,554.8 M (0.991), upper_u
 4,568.9 M to 4,515.0 M (0.988), eqlower 11,596.8 M to 11,522.3 M
-(0.994); the eleven other workloads are within 0.1%. `between8` takes
+(0.994); the eleven other workloads are within 0.1%. `xo bench --ab`, 12
+interleaved rounds in the 2026-10-24 quiet window: wall 0.934 on lower
+(19.96 to 18.65 ms), 0.938 on upper, 0.950 on lower_az, instructions
+0.963, 0.961 and 0.973, every verdict better; cpu_ms too coarse. `between8` takes
 its two range constants from the caller now; hoisting them out of the
 loop measured no change (the compiler already did), and they are hoisted
 anyway.
