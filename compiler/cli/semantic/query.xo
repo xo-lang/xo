@@ -56,15 +56,16 @@ pub fn load_session_pc(os: Os, dirs0: List[Str], exact: Bool, overlay: Map[Str, 
 }
 
 /// The std and runtime modules a name may refer to (decision 0289): the
-/// module of its import path (`std/tls.client`, `native/llrt/pool.f`), or
-/// the std module and the runtime module named by its first segment
-/// (`tls.client`, `pool.park_wait`), those std has a file for.
+/// module of its import path (`std/tls.client`, `native/prelude.f`,
+/// `native/llrt/pool.f`), or the std, native std, and runtime modules
+/// named by its first segment (`tls.client`, `prelude.str_trim_end_chars`,
+/// `pool.park_wait`), those std has a file for.
 pub fn preloads_for(os: Os, std_dir: Str, name: Str) -> List[Str] uses fs.read {
   var cands: List[Str] = []
   if let Some(i) = last_index(name, "/") {
     let tail = name[i..]
     let p = name[0..i + (tail.find(".") ?? tail.len())]
-    if p.starts_with("std/") || p.starts_with("native/llrt/") {
+    if p.starts_with("std/") || p.starts_with("native/") {
       cands.push(p)
     }
   } else {
@@ -72,14 +73,22 @@ pub fn preloads_for(os: Os, std_dir: Str, name: Str) -> List[Str] uses fs.read {
     let first = name.split(".")[0]
     let b = first.bytes()
     if !first.is_empty() && b[0] >= 'a' && b[0] <= 'z' {
-      cands = ["std/${first}", "native/llrt/${first}"]
+      // std/X, the native backends' std/native/X (prelude.str_trim_end_chars
+      // is native/prelude's), and the runtime's native/llrt/X
+      cands = ["std/${first}", "native/${first}", "native/llrt/${first}"]
     }
   }
   var out: List[Str] = []
   for p in cands {
     // listed, not stat'ed: a case-insensitive file system (macOS) finds
     // chan.xo for Chan.xo
-    let (dir, base) = if p.starts_with("std/") { (std_dir, p.trim_prefix("std/")) } else { ("${std_dir}/native/llrt", p.trim_prefix("native/llrt/")) }
+    let (dir, base) = if p.starts_with("std/") {
+      (std_dir, p.trim_prefix("std/"))
+    } else if p.starts_with("native/llrt/") {
+      ("${std_dir}/native/llrt", p.trim_prefix("native/llrt/"))
+    } else {
+      ("${std_dir}/native", p.trim_prefix("native/"))
+    }
     if let Ok(es) = os.fs.read_dir(dir) {
       if es.any(fn(e) { !e.is_dir && e.name == "${base}.xo" }) {
         out.push(p)
@@ -96,7 +105,13 @@ pub fn preloads_for(os: Os, std_dir: Str, name: Str) -> List[Str] uses fs.read {
 pub fn preloads_wide(os: Os, std_dir: Str, name: Str) -> List[Str] uses fs.read {
   var out: List[Str] = []
   for p in preloads_for(os, std_dir, name) {
-    let (sub, prefix) = if p.starts_with("native/llrt/") { ("native/llrt/", "native/llrt/") } else { ("", "std/") }
+    let (sub, prefix) = if p.starts_with("native/llrt/") {
+      ("native/llrt/", "native/llrt/")
+    } else if p.starts_with("native/") {
+      ("native/", "native/")
+    } else {
+      ("", "std/")
+    }
     if let Ok(es) = os.fs.read_dir("${std_dir}/${sub}") {
       for fi in es {
         if fi.is_dir || !fi.name.ends_with(".xo") || fi.name.ends_with("_test.xo") || fi.name.ends_with("_c.xo") {
@@ -449,9 +464,21 @@ fn (s: Session) resolve(name: Str) -> List[QDef] {
   }
   let parts = name.split(".")
   if parts.len() > 1 {
+    // a std module's implementation for the native backends
+    // (std/native/http.xo, module native/http) shares its name: it
+    // answers only for what the std module does not declare
+    // (prelude.str_trim_end_chars), so http.client stays std's
+    let impl = fn(m: Int) -> Bool { s.c.mods[m].path.starts_with("native/") && !s.c.mods[m].path.starts_with("native/llrt/") }
     for m in s.c.order {
-      if s.c.mods[m].name == parts[0] {
+      if s.c.mods[m].name == parts[0] && !impl(m) {
         add_defs(out, seen, s.lookup(m, parts[1..]))
+      }
+    }
+    if out.is_empty() {
+      for m in s.c.order {
+        if s.c.mods[m].name == parts[0] && impl(m) {
+          add_defs(out, seen, s.lookup(m, parts[1..]))
+        }
       }
     }
     // `main.f`: the program's own modules (main's module is named for

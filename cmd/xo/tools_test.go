@@ -628,6 +628,17 @@ func TestAgentNames(t *testing.T) {
 	if f := firstFile("def", d, "pool.park_wait"); !strings.HasSuffix(f, "llrt/pool.xo") {
 		t.Errorf("def pool.park_wait in %s", f)
 	}
+	// the native backends' std modules (std/native/X.xo), by their name
+	// alone and by their path (2026-10-23: both answered "no declaration
+	// named", with the declaration as the did-you-mean)
+	for _, name := range []string{"prelude.str_trim_end_chars", "native/prelude.str_trim_end_chars"} {
+		if f := firstFile("def", d, name); !strings.HasSuffix(f, "std/native/prelude.xo") {
+			t.Errorf("def %s in %s", name, f)
+		}
+	}
+	if f := firstFile("def", d, "http.handoff_response"); !strings.HasSuffix(f, "std/native/http.xo") {
+		t.Errorf("def http.handoff_response in %s", f)
+	}
 	if f := firstFile("doc", d, "std/tls.client"); !strings.HasSuffix(f, "std/tls.xo") {
 		t.Errorf("doc std/tls.client in %s", f)
 	}

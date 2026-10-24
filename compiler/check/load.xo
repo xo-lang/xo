@@ -480,9 +480,14 @@ pub fn (var c: Checker) check_dirs(dirs: List[Str]) -> () ! Str uses fs.read {
       c.load_std(p.trim_prefix("std/"))
     } else if p.starts_with("native/") {
       // an implementation module loads with its std module (load_native,
-      // in native mode); an intrinsics module (native/rtcrypto) by itself
-      if c.load_std(p.trim_prefix("native/")) < 0 {
+      // in native mode), and when named here (xo def native/prelude.f,
+      // prelude.f) in any mode; an intrinsics module (native/rtcrypto) by
+      // itself
+      let sm = c.load_std(p.trim_prefix("native/"))
+      if sm < 0 {
         c.load_native_rt(p)
+      } else if !c.native {
+        let _m = c.load_impl(c.mods[sm].path)
       }
     }
   }
