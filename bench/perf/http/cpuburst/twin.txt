@@ -1,0 +1,3 @@
+# twincheck: both sides are servers (they listen and serve), compared by
+# run.sh and ci.sh, not by one printed line.
+skip: a server, driven by run.sh and ci.sh

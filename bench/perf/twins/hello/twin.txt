@@ -1,0 +1,2 @@
+# twincheck: hello prints one line, no arguments.
+- -

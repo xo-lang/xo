@@ -1,0 +1,5 @@
+# twincheck: trimchars' workloads (the same names on both sides).
+- - index
+- - trim
+- - trim_start
+- - trim_end

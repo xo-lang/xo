@@ -49,7 +49,11 @@ func main() {
 			if err != nil {
 				panic(err)
 			}
-			sum += len(r)
+			// Xo's internal.crypto_op("chacha.open") returns a 1 byte
+			// status then the plaintext (std/native/llrt/chacha.xo), so its
+			// checksum counts one more byte a record than Go's Open. Without
+			// the +1 the two sides never agreed (twincheck, 2026-10-24).
+			sum += len(r) + 1
 		}
 	case "xor":
 		out := make([]byte, len(pt))

@@ -1,0 +1,3 @@
+# twincheck: the CRUD server's twins are servers, compared by parity.sh and
+# measured by run.sh, not by one printed line.
+skip: a server, compared by parity.sh and measured by run.sh

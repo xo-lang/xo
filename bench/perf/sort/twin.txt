@@ -1,0 +1,4 @@
+# twincheck: sort's workloads (the same names on both sides).
+- - ints
+- - strs
+- - floats

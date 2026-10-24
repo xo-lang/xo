@@ -1,0 +1,9 @@
+# twincheck: both sides run every workload of chacha. N=2000 keeps the
+# check quick; the results' runs use 20000. The twin imports
+# golang.org/x/crypto, so it needs that module (offline, from the cache).
+env N=2000
+require golang.org/x/crypto v0.57.0
+- - seal
+- - open
+- - xor
+- - poly

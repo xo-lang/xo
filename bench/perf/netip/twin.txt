@@ -1,0 +1,2 @@
+# twincheck: netip's program takes no arguments (one workload).
+- -

@@ -1,0 +1,7 @@
+# twincheck: bytessplit's workloads (the same names on both sides).
+- - index
+- - split
+- - split_n
+- - fields
+- - trim
+- - affix

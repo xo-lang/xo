@@ -1,0 +1,8 @@
+# twincheck: one Xo program per concurrency workload; the Go twin is one
+# program that takes the workload as its argument.
+xo/spawn go -- spawn
+xo/fanout go -- fanout
+xo/pingpong go -- pingpong
+xo/mutex go -- mutex
+xo/rwmutex go -- rwmutex
+xo/pmap go -- pmap

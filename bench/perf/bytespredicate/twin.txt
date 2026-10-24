@@ -1,0 +1,10 @@
+# twincheck: bytespredicate's workloads (the same names on both sides).
+- - index
+- - find_where
+- - rfind_where
+- - contains_where
+- - trim_where
+- - trim_start_where
+- - trim_end_where
+- - split_where
+- - map_runes

@@ -1,0 +1,10 @@
+# twincheck: bytessearch's workloads (the same names on both sides).
+- - index
+- - find_any
+- - rfind_any
+- - contains_any
+- - contains_rune
+- - cut
+- - cut_prefix
+- - cut_suffix
+- - split_after

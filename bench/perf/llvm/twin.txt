@@ -1,0 +1,9 @@
+# twincheck: one Xo program per benchmark; the Go twin is one program that
+# takes the workload as its argument.
+xo/fib go -- fib
+xo/sieve go -- sieve
+xo/nbody go -- nbody
+xo/sort go -- sort
+xo/interp go -- interp
+xo/collatz go -- collatz
+xo/strings go -- strings

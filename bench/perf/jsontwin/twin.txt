@@ -1,0 +1,3 @@
+# twincheck: jsontwin's two workloads (the same names on both sides).
+- - decode
+- - encode

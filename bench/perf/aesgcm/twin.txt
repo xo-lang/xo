@@ -1,0 +1,7 @@
+# twincheck: both sides run every workload of aesgcm. N=2000 keeps the
+# check quick; the results' runs use 20000.
+env N=2000
+- - seal
+- - open
+- - seal1
+- - open1

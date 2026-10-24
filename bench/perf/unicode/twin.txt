@@ -1,0 +1,19 @@
+# twincheck: unicode prints its own timing as the line's third field
+# ("<workload> <sum> <microseconds>"), so the checksum is the first two.
+compare fields 2
+- - lower
+- - upper
+- - lower_u
+- - upper_u
+- - eqlower
+- - classify
+- - runecase
+- - classes
+- - latin1
+- - title
+- - utf8len
+- - quote
+- - indexfunc
+- - trimfunc
+- - fieldsfunc
+- - mapfunc

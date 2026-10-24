@@ -1,0 +1,8 @@
+# twincheck: bytestransform's workloads (the same names on both sides).
+- - index
+- - replace
+- - replace_n
+- - lower
+- - upper
+- - fold
+- - repeat

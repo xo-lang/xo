@@ -205,6 +205,21 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   (an import or intrinsic the seed lacks fails xobuild's smoke), run the
   script's steps under Wine, and check every tool it calls exists on
   the runner (no clang, no cdb by default).
+- Before writing a bench results file, run `go run ./scripts/twincheck DIR`
+  (through heavy.sh): it builds the bench program and its Go twin, runs
+  both, and compares the lines they print, so a results table's checksums
+  are known to agree. It found that bench/perf/aesgcm's and chacha's `open`
+  checksums had never matched (Xo's internal.crypto_op("aes.open" and
+  "chacha.open") returns a status byte then the plaintext, which the twins
+  did not count; 2026-10-24). A bench directory's `twin.txt` says how to run
+  it: cases (`XOPROG GOPROG [ARGS] [-- GOARGS]`, `-` for the directory's
+  default program), `compare fields N` for a program that prints its own
+  timing as another field, `env KEY=VALUE` for a smaller iteration count,
+  `require MODULE VERSION` for a twin importing outside the standard library
+  (built offline from the module cache), and `skip REASON` for a server.
+  It is a pre-results step, not part of the hourly tier: it builds every
+  program twice. A mismatch in a bench that has a results file is a finding
+  to report, not to fix quietly.
 - A change to the build cache's lookup, store, listing or prune paths
   is timed against the real shared user cache (tens of GB, every shard
   full), not only a small private one, before it is pushed (lead,
