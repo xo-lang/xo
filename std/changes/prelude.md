@@ -1,5 +1,40 @@
 # prelude changes
 
+## 2026-10-24: perf: to_lower and to_upper fold the ASCII spans they copy, in one pass
+
+- Kind: perf
+- Commit: (filled in after the push)
+- Found by: the profile of bench/perf/unicode's case workloads: an ASCII
+  text is a single copied span that is then folded in place, so every
+  byte was read and written twice (obj.rs_append_bytes: move_at, then
+  fold)
+- Go reference: strings.ToLower and ToUpper map rune by rune into a
+  Builder and never copy a span they then revisit; the runtime copies the
+  unchanged spans and keeps that per-rune decode out of the ASCII case
+- Test: corpus runes, strings, bytes and equalfold on arm64 and LLVM, the
+  native_eq_lower and equal_fold_view goldens on both with Go parity, and
+  the checksums of bench/perf/unicode identical on arm64, LLVM, wasm and
+  Go (lower_az and upper_az are new workloads: a text of letters only,
+  where every byte of every eight byte word folds)
+- Timing: bench/results/casefold-copy-2026-10-24.md
+- Follow-up on: case-fold-2026-10-24.md (whose fold is eight bytes at a
+  time already; this change removes the separate copy pass around it)
+
+`rs_append_bytes` now takes the folded path in one pass (`fold_copy`): it
+loads the source word, folds it, and stores it to the destination, where
+before it copied the span and then walked it again to fold. The same
+append is used when the ranges could overlap (`overlaps`: `reserve` can
+return the receiver's own buffer), where it still copies then folds.
+Instructions retired, best of 5, arm64 native, both sides built with
+XO_INLINE_STRICT=1: lower 392.8 M to 378.5 M (0.963), upper 402.5 M to
+387.2 M (0.962), lower_az 107.3 M to 104.6 M (0.975), upper_az 107.4 M
+to 104.5 M (0.973), lower_u 4,596.8 M to 4,554.8 M (0.991), upper_u
+4,568.9 M to 4,515.0 M (0.988), eqlower 11,596.8 M to 11,522.3 M
+(0.994); the eleven other workloads are within 0.1%. `between8` takes
+its two range constants from the caller now; hoisting them out of the
+loop measured no change (the compiler already did), and they are hoisted
+anyway.
+
 ## 2026-10-24: perf: the empty-separator split sizes its piece list from the rune count, and its pieces are unchecked views (Str and Bytes)
 
 - Kind: perf

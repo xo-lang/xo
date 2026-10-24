@@ -895,9 +895,17 @@ pub fn rs_append_bytes(a: Int, an: Int, b: Int, lo: Int, hi: Int, mode: Int) -> 
   let n = subw(hi, lo)
   let s = reserve(a, an, n)
   let d = addw(addw(s, S_HDR), an & LEN_MASK)
-  move_at(d, addw(addw(b, S_HDR), lo), n)
-  if mode != 0 {
-    fold(d, n, mode)
+  let src = addw(addw(b, S_HDR), lo)
+  if mode != 0 && !overlaps(src, d, n) {
+    // one pass: the bytes are read once and written once, where a copy
+    // then a fold reads and writes them twice (measurably, bench/perf/
+    // unicode lower, upper and lower_az, upper_az)
+    fold_copy(src, d, n, mode)
+  } else {
+    move_at(d, src, n)
+    if mode != 0 {
+      fold(d, n, mode)
+    }
   }
   s
 }
@@ -910,9 +918,10 @@ const F_LOW7S: Int = 9187201950435737471
 /// and at most hi; no sum carries into the next byte, since a byte is at
 /// most 0x7f and 0x7f + (0x7f - hi) is below 0x100. The sums wrap: a word
 /// of seven bit bytes fills the Int's bits, so the addition overflows it.
-fn between8(w: Int, lo: Int, hi: Int) -> Int {
-  let over = w.wrapping_add((0x7f - hi) * F_ONES)
-  w.wrapping_add((0x80 - lo) * F_ONES) & (over ^ -1) & F_HIGHS
+/// under and over are (0x80 - lo) and (0x7f - hi) in every byte, computed
+/// once by the caller so the loop has no multiplication in it.
+fn between8(w: Int, under: Int, over: Int) -> Int {
+  w.wrapping_add(under) & (w.wrapping_add(over) ^ -1) & F_HIGHS
 }
 
 /// The n bytes at d with their ASCII letters lowered (mode 1) or raised
@@ -925,10 +934,12 @@ fn fold(d: Int, n: Int, mode: Int) {
   // the first letter of the case to change, and the change
   let first = if mode == 1 { 65 } else { 97 }
   let last = if mode == 1 { 90 } else { 122 }
+  let under = (0x80 - first) * F_ONES
+  let over = (0x7f - last) * F_ONES
   var i = 0
   while subw(n, i) >= 8 {
     let w = rt.mem_load(d, i, 8)
-    let letters = between8(w & F_LOW7S, first, last) & ((w & F_HIGHS) ^ -1)
+    let letters = between8(w & F_LOW7S, under, over) & ((w & F_HIGHS) ^ -1)
     if letters != 0 {
       // 0x20 in each letter's byte: its high bit, shifted down (the shift
       // replicates a sign bit in the top seven, cleared here), times 32,
@@ -948,9 +959,45 @@ fn fold(d: Int, n: Int, mode: Int) {
   }
 }
 
+/// Whether the n byte ranges at a and b overlap: the append folds and
+/// copies in one pass, which needs the source and the destination apart,
+/// and reserve can hand back the receiver's own buffer.
+fn overlaps(a: Int, b: Int, n: Int) -> Bool {
+  subw(a, b) < n && subw(b, a) < n
+}
+
+/// The n bytes at src with their ASCII letters lowered (mode 1) or raised
+/// (mode 2), written to d once: fold's work and move_at's copy in one
+/// pass, so each byte is loaded and stored once instead of twice.
+fn fold_copy(src: Int, d: Int, n: Int, mode: Int) {
+  let first = if mode == 1 { 65 } else { 97 }
+  let last = if mode == 1 { 90 } else { 122 }
+  let under = (0x80 - first) * F_ONES
+  let over = (0x7f - last) * F_ONES
+  var i = 0
+  while subw(n, i) >= 8 {
+    let w = rt.mem_load(src, i, 8)
+    let letters = between8(w & F_LOW7S, under, over) & ((w & F_HIGHS) ^ -1)
+    var v = w
+    if letters != 0 {
+      let k = ((letters >> 7) & 0x01FFFFFFFFFFFFFF) * 32
+      v = if mode == 1 { w.wrapping_add(k) } else { w.wrapping_sub(k) }
+    }
+    rt.mem_store(d, i, v, 8)
+    i = addw(i, 8)
+  }
+  while i < n {
+    var c = rt.mem_load(src, i, 1)
+    if subw(c, first) < 26 && c >= first {
+      c = addw(c, if mode == 1 { 32 } else { -32 })
+    }
+    rt.mem_store(d, i, c, 1)
+    i = addw(i, 1)
+  }
+}
+
 /// An empty string with room for n bytes, at least 16 (xo_rs_with_cap).
 pub fn rs_with_cap(n: Int) -> Int { rs_new_n(if n < 16 { 16 } else { n }) }
-
 /// The frees the calling thread's real-time sections deferred so far (its
 /// heap's RT_N): std/internal rt_queued (decision 0241). Real-time: inside
 /// a section the thread has its heap record, so only heap_word's fast

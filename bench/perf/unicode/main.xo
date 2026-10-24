@@ -5,6 +5,9 @@
 
 const ASCII = "The Quick Brown Fox Jumps Over The Lazy Dog; HTTP/1.1 200 OK, Content-Type: text/plain. 0123456789 mixed CASE words\n"
 const MIXED = "Ελληνικά ΚΕΙΜΕΝΟ Кириллица ТЕКСТ Ünïcödé ÀÉÎÕÜ straße İstanbul ǅemal ﬁne 日本語 ﾃｷｽﾄ Ⅻ ⓐⓑ 𐐀𐐨 ascii Words\n"
+// LETTERS is dense in letters, so to_lower and to_upper change every byte
+// of each eight byte word rather than finding gaps between them.
+const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 const REPS = 200
 
 // sample is a checksum of s: its length and every 61st byte.
@@ -229,6 +232,7 @@ fn main(os: Os) {
   let w = args.get(0) ?? "lower"
   let a = ASCII.repeat(4000)
   let u = MIXED.repeat(2000)
+  let az = LETTERS.repeat(2000)
   let rs = (ASCII + MIXED).repeat(1000).runes()
   let t = os.clock.now()
   let sum = match w {
@@ -236,6 +240,8 @@ fn main(os: Os) {
     "upper" => upper(a)
     "lower_u" => lower(u)
     "upper_u" => upper(u)
+    "lower_az" => lower(az)
+    "upper_az" => upper(az)
     "eqlower" => eq_lower(a, a.to_upper()) + eq_lower(u, u.to_upper())
     "classify" => classify(rs)
     "runecase" => rune_case(rs)

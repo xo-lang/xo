@@ -18,8 +18,11 @@ import (
 const (
 	ascii = "The Quick Brown Fox Jumps Over The Lazy Dog; HTTP/1.1 200 OK, Content-Type: text/plain. 0123456789 mixed CASE words\n"
 	mixed = "Ελληνικά ΚΕΙΜΕΝΟ Кириллица ТЕКСТ Ünïcödé ÀÉÎÕÜ straße İstanbul ǅemal ﬁne 日本語 ﾃｷｽﾄ Ⅻ ⓐⓑ 𐐀𐐨 ascii Words\n"
-	reps  = 200
-	mod   = 1000000007
+	reps = 200
+	mod  = 1000000007
+	// letters is dense in letters, so ToLower and ToUpper change every byte
+	// of each word rather than finding gaps between them.
+	letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 )
 
 // sample is a checksum of s: its length and every 61st byte.
@@ -247,6 +250,7 @@ func main() {
 	}
 	a := strings.Repeat(ascii, 4000)
 	u := strings.Repeat(mixed, 2000)
+	az := strings.Repeat(letters, 2000)
 	rs := []rune(strings.Repeat(ascii+mixed, 1000))
 	t := time.Now()
 	var sum int64
@@ -259,6 +263,10 @@ func main() {
 		sum = lower(u)
 	case "upper_u":
 		sum = upper(u)
+	case "lower_az":
+		sum = lower(az)
+	case "upper_az":
+		sum = upper(az)
 	case "eqlower":
 		sum = eqLower(a, strings.ToUpper(a)) + eqLower(u, strings.ToUpper(u))
 	case "classify":

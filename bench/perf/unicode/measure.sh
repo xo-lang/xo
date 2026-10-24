@@ -19,7 +19,7 @@ for be in "$@"; do
 	cp "$SRC/main.xo" "$SRC/xo.mod" "$OUT/src-$be/"
 	(cd "$OUT/src-$be" && "$XO" build --backend="$be" -o "$OUT/u-$be" .)
 done
-for w in lower upper lower_u upper_u eqlower classify runecase classes latin1 title utf8len quote indexfunc trimfunc fieldsfunc mapfunc; do
+for w in lower upper lower_u upper_u lower_az upper_az eqlower classify runecase classes latin1 title utf8len quote indexfunc trimfunc fieldsfunc mapfunc; do
 	for be in "$@"; do
 		best=""
 		bt=""
