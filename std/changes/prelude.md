@@ -27,7 +27,10 @@ retired, best of 3, base = the parent commit's std, arm64 native:
 split_empty 841.6 M to 327.2 M (0.39) and split, one of whose five
 separators is "", 279.2 M to 176.2 M (0.63). split_one, split_multi,
 split_absent, split_after, lines, bytes_split, bytes_fields, fields and
-the control loop are within 1% of the base.
+the control loop are within 1% of the base. `xo bench --ab`, 12 rounds in
+a quiet window: split wall 0.741 (95% 0.713 to 0.766) and instructions
+0.631, split_empty wall 0.526 (0.520 to 0.532) and instructions 0.389,
+the three rows that do not take the empty-separator path within noise.
 
 Counting the pieces first for the other forms was measured and reverted:
 split_one 120.9 M to 129.7 M, fields 234.8 M to 353.4 M, bytes_fields
