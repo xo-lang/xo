@@ -450,20 +450,28 @@ pub fn append_time(out: Str, t: Int) -> Str {
   rt.rs_push_words(out, w0, w1, c, cat(digits_word(x % q, r), r, 90), 8 | (8 << 4) | ((4 + j) << 8) | ((r + 1) << 12))
 }
 
-/// The value of the k decimal digits of b from at, or -1 when one is not
-/// a digit.
-fn num(b: Bytes, at: Int, k: Int) -> Int {
-  var x = 0
-  var i = 0
-  while i < k {
-    let c = Int(b[at + i]) - 48
-    if c < 0 || c > 9 {
-      return -1
-    }
-    x = x * 10 + c
-    i += 1
+/// The two decimal digits at b[at..at + 2] as a number, or -1 when one is
+/// not a digit.
+fn num2(b: Bytes, at: Int) -> Int {
+  // two digits with one test, no loop (2026-10-24: a loop of k digits,
+  // k a constant once inlined, kept its counter and a test a digit; LLVM
+  // unrolls it: bench/perf/text time_parse 1.22x LLVM on arm64)
+  let c0 = Int(b[at]) - 48
+  let c1 = Int(b[at + 1]) - 48
+  if (c0 | c1 | (9 - c0) | (9 - c1)) < 0 {
+    return -1
   }
-  x
+  c0 * 10 + c1
+}
+
+/// The four decimal digits at b[at..at + 4] as a number, or -1 (num2's).
+fn num4(b: Bytes, at: Int) -> Int {
+  let h = num2(b, at)
+  let l = num2(b, at + 2)
+  if (h | l) < 0 {
+    return -1
+  }
+  h * 100 + l
 }
 
 /// Whether x is in lo..=hi.
@@ -503,15 +511,15 @@ pub fn parse_time(s: Str) -> Int? {
   if n < 19 {
     return None
   }
-  let year = num(b, 0, 4)
-  let month = num(b, 5, 2)
+  let year = num4(b, 0)
+  let month = num2(b, 5)
   if !within(year, 0, 9999) || !within(month, 1, 12) {
     return None
   }
-  let day = num(b, 8, 2)
-  let hour = num(b, 11, 2)
-  let min = num(b, 14, 2)
-  let sec = num(b, 17, 2)
+  let day = num2(b, 8)
+  let hour = num2(b, 11)
+  let min = num2(b, 14)
+  let sec = num2(b, 17)
   if !within(day, 1, days_in(month, year)) || !within(hour, 0, 23) || !within(min, 0, 59) || !within(sec, 0, 59) {
     return None
   }
@@ -540,8 +548,8 @@ pub fn parse_time(s: Str) -> Int? {
     if n - i != 6 {
       return None
     }
-    let hr = num(b, i + 1, 2)
-    let mm = num(b, i + 4, 2)
+    let hr = num2(b, i + 1)
+    let mm = num2(b, i + 4)
     if !within(hr, 0, 23) || !within(mm, 0, 59) || !((b[i] == 45 || b[i] == 43) && b[i + 3] == 58) {
       return None
     }

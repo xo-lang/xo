@@ -1,0 +1,42 @@
+// RFC 3339 times decoded from JSON (std/native/llrt text.xo parse_time):
+// each field's digits checked as a group (num2, num4), so a byte just
+// below or above '0' to '9' in any position is still refused; ranges,
+// fractions, and offsets as before.
+
+use std/json
+
+fn main(os: Os) {
+  let cases = [
+    "2026-10-24T01:02:03Z",
+    "1970-01-01T00:00:00Z",
+    "2099-12-31T23:59:59Z",
+    "2024-02-29T12:00:00Z",
+    "2023-02-29T12:00:00Z",
+    "2026-13-01T00:00:00Z",
+    "2026-00-01T00:00:00Z",
+    "2026-10-32T00:00:00Z",
+    "2026-10-24T24:00:00Z",
+    "2026-10-24T23:60:00Z",
+    "2026-10-24T23:59:60Z",
+    "/026-10-24T01:02:03Z",
+    "2:26-10-24T01:02:03Z",
+    "202/-10-24T01:02:03Z",
+    "2026-1:-24T01:02:03Z",
+    "2026-10-2/T01:02:03Z",
+    "2026-10-24T01:0/:03Z",
+    "2026-10-24T01:02:0:Z",
+    "2026-10-24T01:02:03.5Z",
+    "2026-10-24T01:02:03.123456789Z",
+    "2026-10-24T01:02:03+05:30",
+    "2026-10-24T01:02:03-0/:00",
+    "2026-10-24T01:02:03+05:3:",
+    "2026-10-24 01:02:03Z",
+    "2026-10-24T01:02:03",
+  ]
+  for c in cases {
+    match json.decode_str[Time]("\"${c}\"") {
+      Ok(t) => os.stdio.println("${c} ok ${(t - Time.UNIX_EPOCH).nanos()}")
+      Err(_) => os.stdio.println("${c} refused")
+    }
+  }
+}

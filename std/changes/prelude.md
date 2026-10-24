@@ -1,5 +1,29 @@
 # prelude changes
 
+## 2026-10-24: perf: RFC 3339 parsing reads each field's digits without a loop
+
+- Kind: perf
+- Commit: (filled in after the push)
+- Found by: callgrind of bench/perf/text time_parse, native against LLVM
+  (linux/amd64): text.parse_time 68.5 M instructions against 47.9 M, the
+  difference in num()'s loop of k digits (k 2 or 4 once inlined), which
+  LLVM unrolls and the native backends' unroll_small does not (its body
+  has the early return, more than one block)
+- Go reference: none (time.Parse's RFC 3339 path checks the same fields)
+- Test: internal/llvm/testdata/golden/time_parse_digits (each position
+  with a byte just below and above '0' to '9', ranges, fractions,
+  offsets) on arm64, LLVM and the Go backend; the old and new std print
+  the same
+
+`text.parse_time` (Time's JSON decoding and `llrt_time`) reads a two
+digit field as two bytes checked together, `(c0 | c1 | (9 - c0) | (9 - c1))
+< 0`, and the year as two of those, in place of a loop with a test per
+digit. No output changes.
+
+`xo bench --ab` arm64, base vs new: time_parse instructions 0.879, wall
+0.919; dur_parse and time_fmt 1.000. Native against LLVM on time_parse:
+1.22 to about 1.07.
+
 ## 2026-10-24: perf: replace sizes its buffer from the match count, equal_fold takes Go's ASCII loop, simple_fold buckets its table
 
 - Kind: perf
