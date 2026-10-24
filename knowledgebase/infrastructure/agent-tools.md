@@ -334,7 +334,11 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   tree's current bin/xo, else a cached build whose checker sources,
   internal/xotool CheckerDirs, are the tree's; --no-gc adds compiler/ssa)
   and the tree's std, building only when there is none. Never check with
-  an older worktree's bin/xo: its checker and std differ (2026-10-21).
+  an older worktree's bin/xo: its checker and std differ (2026-10-21). A
+  directory inside std is refused with that advice (2026-10-24): std's
+  modules are checked as a program's dependencies, so `xocheck
+  std/native/llrt` printed 7,530 "module native/llrt/raw not found"
+  errors; check a program that uses the module.
 - Output identity (a change that claims no output change): `go run
   ./scripts/identity [-targets T,...] [-backend B] [-step N] [-std DIR]
   [-out DIR] BASE NEW [DIR...]`. BASE and NEW are xo binaries or git
