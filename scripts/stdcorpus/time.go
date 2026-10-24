@@ -18,16 +18,20 @@ import (
 // Duration.parse (Go's time.ParseDuration), the Display of a Duration (Go's
 // Duration.String), Duration.from_nanos/from_millis and nanos/millis,
 // Time.parse_rfc3339 and format_rfc3339 (Go's time.Parse and Time.Format
-// with RFC3339Nano, in UTC), and Time.from_unix/from_unix_millis with
-// unix/unix_millis.
+// with RFC3339Nano, in UTC), Time.from_unix/from_unix_millis with
+// unix/unix_millis, and std.md 13.2's Date arithmetic: weekday, add_days,
+// add_months and days_until.
 //
 // The inputs are Go's: time_test.go's parseDurationTests, and
 // format_test.go's parseTests (the RFC3339 rows), parseErrorTests (the
 // RFC3339 rows) and longFractionalDigitsTests, plus rfc3339Formats' texts
-// and seeded random durations and instants. The expectations are Go's own
-// results on them, except where Xo deliberately differs; those rows carry a
-// comment naming the reason. Go's time tests are Copyright 2009 The Go
-// Authors, BSD-style license.
+// and seeded random durations and instants. The Date rows are calendar
+// dates at the ends of years, months and leap rules, against Go's
+// time.Time at midnight UTC (Weekday, AddDate, Sub), with add_months'
+// clamping done explicitly since Go's AddDate normalizes instead. The
+// expectations are Go's own results on them, except where Xo deliberately
+// differs; those rows carry a comment naming the reason. Go's time tests
+// are Copyright 2009 The Go Authors, BSD-style license.
 
 // goTimeTable returns the elements of the composite literal a test file's
 // var name holds.
@@ -192,7 +196,8 @@ func timeRandomDuration(r *rand.Rand) string {
 
 func timeCorpus() string {
 	var o strings.Builder
-	o.WriteString(header("time.ParseDuration, Duration.String and the RFC 3339 and Unix conversions of time.Time on the inputs of Go's time_test.go (parseDurationTests) and format_test.go (parseTests, parseErrorTests and longFractionalDigitsTests for RFC 3339, and rfc3339Formats), on seeded random durations and instants, and on the ends of Time's range from decision 0364, against Duration.parse, the Display of a Duration, Duration.from_nanos and Duration.from_millis, Time.parse_rfc3339 and format_rfc3339, and Time.from_unix, from_unix_millis, unix and unix_millis (Go's time tests are Copyright 2009 The Go Authors, BSD-style license)"))
+	o.WriteString(header("time.ParseDuration, Duration.String and the RFC 3339 and Unix conversions of time.Time on the inputs of Go's time_test.go (parseDurationTests) and format_test.go (parseTests, parseErrorTests and longFractionalDigitsTests for RFC 3339, and rfc3339Formats), on seeded random durations and instants, and on the ends of Time's range from decision 0364, against Duration.parse, the Display of a Duration, Duration.from_nanos and Duration.from_millis, Time.parse_rfc3339 and format_rfc3339, and Time.from_unix, from_unix_millis, unix and unix_millis; and std.md 13.2's Date arithmetic (weekday, add_days, add_months, days_until) against Go's time.Time at midnight UTC (Go's time tests are Copyright 2009 The Go Authors, BSD-style license)"))
+	o.WriteString("\nuse std/time\n")
 
 	// Duration.parse and the Display of a Duration. The inputs are Go's
 	// parseDurationTests; the expectation is Go's ParseDuration and
@@ -342,6 +347,145 @@ func timeCorpus() string {
 	}
 	o.WriteString("]\n")
 
+	// Date arithmetic (std.md 13.2). Go's time at midnight UTC is the
+	// oracle: weekday is Time.Weekday, add_days is AddDate(0, 0, n) (the
+	// same civil date), and days_until is the difference of the two
+	// midnights in whole days. add_months is where Xo differs on purpose:
+	// std.md 13.2 says it clamps the day (Jan 31 + 1 month is Feb 28 or
+	// 29), where Go's AddDate normalizes (2024-01-31 + 1 month is
+	// 2024-03-02), so the expectation clamps explicitly and every row where
+	// Go's AddDate would give another date says so in its label.
+	gdate := func(y, m, d int) time.Time { return time.Date(y, time.Month(m), d, 0, 0, 0, 0, time.UTC) }
+	dateShown := func(t time.Time) string {
+		y := t.Year()
+		if y < 0 {
+			return fmt.Sprintf("-%04d-%02d-%02d", -y, int(t.Month()), t.Day())
+		}
+		return fmt.Sprintf("%04d-%02d-%02d", y, int(t.Month()), t.Day())
+	}
+	validDate := func(y, m, d int) bool {
+		if y < 1 || y > 9999 {
+			return false
+		}
+		t := gdate(y, m, d)
+		return t.Year() == y && int(t.Month()) == m && t.Day() == d
+	}
+	inRange := func(t time.Time) bool { return t.Year() >= 1 && t.Year() <= 9999 }
+	daysIn := func(y, m int) int { return gdate(y, m+1, 0).Day() }
+	normMonth := func(y, m, n int) (int, int) {
+		total := y*12 + (m - 1) + n
+		ny := total / 12
+		nm := total % 12
+		if nm < 0 {
+			nm += 12
+			ny--
+		}
+		return ny, nm + 1
+	}
+
+	// The dates: the epoch week, month ends and leap days in every century
+	// rule, the Gregorian change, the ends of the four digit years, and
+	// seeded dates. time.date takes years 1 to 9999 (its CivilErr for
+	// anything else), so the dates stay inside that range, as do the
+	// results of the arithmetic rows.
+	dates := [][3]int{
+		{1970, 1, 1}, {1970, 1, 2}, {1970, 1, 5}, {1969, 12, 31},
+		{2000, 2, 29}, {2024, 2, 29}, {2023, 2, 28}, {2100, 2, 28},
+		{2400, 2, 29}, {1900, 2, 28}, {1900, 3, 1}, {1600, 2, 29},
+		{1582, 10, 15}, {1582, 10, 4},
+		{1, 1, 1}, {4, 2, 29}, {100, 3, 1}, {400, 2, 29}, {9999, 12, 31},
+		{2026, 1, 31}, {2026, 3, 31}, {2026, 5, 31}, {2026, 7, 31},
+		{2026, 8, 31}, {2026, 10, 31}, {2026, 12, 31},
+		{2026, 4, 30}, {2026, 6, 30}, {2026, 9, 30}, {2026, 11, 30},
+		{2026, 10, 24}, {2024, 1, 31}, {2024, 3, 31}, {2024, 12, 31},
+	}
+	rdt := rand.New(rand.NewSource(83))
+	for i := 0; i < 40; i++ {
+		y := 1 + rdt.Intn(9999)
+		m := 1 + rdt.Intn(12)
+		d := 1 + rdt.Intn(28)
+		dates = append(dates, [3]int{y, m, d})
+	}
+
+	const dateLab = "std.md 13.2 Date.weekday (Go's time.Weekday at midnight UTC)"
+	o.WriteString("\n/// (year, month, day, Go's Weekday, the rule)\nconst DATE_WEEKDAY_CASES: List[(Int, Int, Int, Str, Str)] = [\n")
+	for _, dt := range dates {
+		y, m, d := dt[0], dt[1], dt[2]
+		if !validDate(y, m, d) {
+			fmt.Fprintf(os.Stderr, "stdcorpus: date %d-%d-%d is not a Go date\n", y, m, d)
+			os.Exit(1)
+		}
+		fmt.Fprintf(&o, "  (%d, %d, %d, %q, %q),\n", y, m, d, gdate(y, m, d).Weekday().String(), dateLab)
+	}
+	o.WriteString("]\n")
+
+	const daysLab = "std.md 13.2 Date.add_days (Go's AddDate(0, 0, n) at midnight UTC)"
+	o.WriteString("\n/// (year, month, day, n, the date after n days, the rule)\nconst DATE_DAYS_CASES: List[(Int, Int, Int, Int, Str, Str)] = [\n")
+	for _, n := range []int{-1461, -366, -365, -31, -1, 0, 1, 28, 31, 365, 366, 1461, 36525} {
+		for _, dt := range dates {
+			y, m, d := dt[0], dt[1], dt[2]
+			if !validDate(y, m, d) {
+				continue
+			}
+			add := gdate(y, m, d).AddDate(0, 0, n)
+			if !inRange(add) {
+				continue
+			}
+			fmt.Fprintf(&o, "  (%d, %d, %d, %d, %q, %q),\n", y, m, d, n,
+				dateShown(add), daysLab)
+		}
+	}
+	o.WriteString("]\n")
+
+	o.WriteString("\n/// (year, month, day, n, the date after n months with the day clamped, the rule)\nconst DATE_MONTHS_CASES: List[(Int, Int, Int, Int, Str, Str)] = [\n")
+	for _, n := range []int{-25, -24, -13, -12, -11, -2, -1, 0, 1, 2, 11, 12, 13, 24, 25} {
+		for _, dt := range dates {
+			y, m, d := dt[0], dt[1], dt[2]
+			if !validDate(y, m, d) {
+				continue
+			}
+			wy, wm := normMonth(y, m, n)
+			wd := d
+			if wd > daysIn(wy, wm) {
+				wd = daysIn(wy, wm)
+			}
+			want := gdate(wy, wm, wd)
+			if !inRange(want) {
+				continue
+			}
+			lab := "std.md 13.2 Date.add_months (Go's AddDate gives the same date here)"
+			if add := gdate(y, m, d).AddDate(0, n, 0); dateShown(add) != dateShown(want) {
+				lab = "std.md 13.2: add_months clamps the day; Go's AddDate(0, n, 0) normalizes to " + dateShown(add)
+			}
+			fmt.Fprintf(&o, "  (%d, %d, %d, %d, %q, %q),\n", y, m, d, n, dateShown(want), lab)
+		}
+	}
+	o.WriteString("]\n")
+
+	const untilLab = "std.md 13.2 Date.days_until (whole days between the two midnights UTC)"
+	o.WriteString("\n/// (from year, month, day, to year, month, day, days from the first to the second, the rule)\nconst DATE_UNTIL_CASES: List[(Int, Int, Int, Int, Int, Int, Int, Str)] = [\n")
+	until := func(dt, ot [3]int) {
+		if !validDate(dt[0], dt[1], dt[2]) || !validDate(ot[0], ot[1], ot[2]) {
+			return
+		}
+		// Unix seconds, not Sub: a time.Duration holds about 292 years and
+		// Sub saturates past that, while these dates span up to 9998.
+		span := int((gdate(ot[0], ot[1], ot[2]).Unix() - gdate(dt[0], dt[1], dt[2]).Unix()) / 86400)
+		fmt.Fprintf(&o, "  (%d, %d, %d, %d, %d, %d, %d, %q),\n", dt[0], dt[1], dt[2], ot[0], ot[1], ot[2], span, untilLab)
+	}
+	for _, dt := range dates {
+		for _, k := range []int{1, 2, 7, 30, 365} {
+			back := ((len(dates)-k)%len(dates) + len(dates)) % len(dates)
+			until(dt, dates[back])
+			until(dt, dates[k%len(dates)])
+		}
+	}
+	ru := rand.New(rand.NewSource(89))
+	for i := 0; i < 120; i++ {
+		until(dates[ru.Intn(len(dates))], dates[ru.Intn(len(dates))])
+	}
+	o.WriteString("]\n")
+
 	o.WriteString(`
 fn show3(bad: List[(Str, Str, Str)]) -> List[(Str, Str, Str)] {
   bad[0..(if bad.len() < 20 { bad.len() } else { 20 })]
@@ -449,6 +593,65 @@ test "UNIX_EPOCH is from_unix 0" {
   expect(Time.UNIX_EPOCH.unix()) == 0
   expect(Time.UNIX_EPOCH.unix_millis()) == 0
   expect("${Time.UNIX_EPOCH}") == "1970-01-01T00:00:00Z"
+}
+
+test "Date.weekday is Go's Weekday" {
+  var bad: List[(Str, Str, Str)] = []
+  for (y, m, d, want, _) in DATE_WEEKDAY_CASES {
+    let got = match time.date(y, m, d) {
+      Ok(dt) => "${dt.weekday()}"
+      Err(e) => "!error ${e.display()}"
+    }
+    if got != want {
+      bad.push(("${y}-${m}-${d}", got, want))
+    }
+  }
+  expect(show3(bad)) == []
+}
+
+test "Date.add_days is Go's AddDate(0, 0, n)" {
+  var bad: List[(Str, Str, Str)] = []
+  for (y, m, d, n, want, _) in DATE_DAYS_CASES {
+    let got = match time.date(y, m, d) {
+      Ok(dt) => "${dt.add_days(n)}"
+      Err(e) => "!error ${e.display()}"
+    }
+    if got != want {
+      bad.push(("${y}-${m}-${d} plus ${n} days", got, want))
+    }
+  }
+  expect(show3(bad)) == []
+}
+
+test "Date.add_months clamps the day" {
+  var bad: List[(Str, Str, Str)] = []
+  for (y, m, d, n, want, _) in DATE_MONTHS_CASES {
+    let got = match time.date(y, m, d) {
+      Ok(dt) => "${dt.add_months(n)}"
+      Err(e) => "!error ${e.display()}"
+    }
+    if got != want {
+      bad.push(("${y}-${m}-${d} plus ${n} months", got, want))
+    }
+  }
+  expect(show3(bad)) == []
+}
+
+test "Date.days_until is the whole days between the two dates" {
+  var bad: List[(Str, Str, Str)] = []
+  for (y1, m1, d1, y2, m2, d2, want, _) in DATE_UNTIL_CASES {
+    let got = match time.date(y1, m1, d1) {
+      Ok(a) => match time.date(y2, m2, d2) {
+        Ok(b) => "${a.days_until(b)}"
+        Err(e) => "!error ${e.display()}"
+      }
+      Err(e) => "!error ${e.display()}"
+    }
+    if got != "${want}" {
+      bad.push(("${y1}-${m1}-${d1} to ${y2}-${m2}-${d2}", got, "${want}"))
+    }
+  }
+  expect(show3(bad)) == []
 }
 `)
 	return o.String()
