@@ -30,7 +30,8 @@
 #   chkcache the module check cache's auto mode against a cold check
 #            (internal/arm64 TestModuleCheckAuto, ...Generic, ...Zones):
 #            run after the steps named when the branch changes
-#            compiler/check or compiler/ssa, since XO_CHK_CACHE=auto is the
+#            compiler/check, compiler/ssa or compiler/xo (the build
+#            driver; its output must be the same warm and cold), since XO_CHK_CACHE=auto is the
 #            default of xo build and run (owner, 2026-10-22; two warm and
 #            cold differences slipped past the per-push gates before);
 #            XO_GATE_CHKCACHE=0 skips that
@@ -101,10 +102,14 @@ go_backend() {
 }
 # check_change: the branch changes the checker or the SSA builder, whose
 # whole-program passes the module check cache's skipped modules must
-# replay (gotchas/module-check-cache-skips-whole-program-passes.md).
+# replay (gotchas/module-check-cache-skips-whole-program-passes.md), or
+# the build driver (compiler/xo), whose output the tests compare byte for
+# byte between a warm and a cold build (lead, 2026-10-24: 1ca32d5cc's
+# random work-dir names reached the linked binary's N_OSO paths, its gate
+# skipped this step, and main was red 11:50 to 14:15).
 check_change() {
   base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
-  { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | grep -q -E '^compiler/(check|ssa)/'
+  { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | grep -q -E '^compiler/(check|ssa|xo)/'
 }
 chkcache_ran=0
 # native_change: the branch changes the native backend (compiler/arm64
