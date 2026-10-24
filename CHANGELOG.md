@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Windows: the checkout's `xo.exe` (scripts/xobuild) is built natively
+  (`--backend=amd64`, as the release's), not with the Go backend, whose
+  build of xo spent 540 to 600 s in each program's link (CI's runner);
+  builds there are 9.5 to 18 s again (run 40057967924). The CI script
+  suite takes `--seed-archive NAME SHA256` to seed xobuild from a
+  release archive.
+
 - `XO_WHOLE_BUILD=on` (opt in, decision 0360 stage 1): `xo build` and
   `xo run` of an unchanged program reuse its binary through the run cache
   `xo test` uses, printing what the build printed (a warm build of a

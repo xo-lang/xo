@@ -152,6 +152,20 @@ Windows), at the cap and with an 8 GB cap, put both xos' builds at 4.6
 to 19 s with bounded prunes. The cause is not found, so XO_COLD_PACK=on
 opts in and a cold build stores loose as 0.27.0 does.
 
+Resolved (2026-10-23 night): not the cache. The checkout's xo.exe was
+built by xobuild with the Go backend on Windows, the archive's natively,
+and that Go backend xo spent nearly all of each build in the link phase
+(run 40046075110: link 538 to 605 s, the other phases normal; on the
+Mac a Go backend xo linked tsan_race for windows/amd64 in 85.7 s against
+34 ms). The Go backend copied a List element passed to a `var`
+parameter at every call (fixed in 53950e801,
+gotchas/go-backend-var-element-copy.md), and xobuild now builds xo
+natively on Windows (internal/xotool hostBackendNative). Run (f), CI
+40057967924, a native xo.exe from the 0.27.0 seed (`--seed-archive`):
+builds 9.5 to 18.4 s, an empty cache to 105 MB. Whether XO_COLD_PACK
+can go back to on by default is open: the slow runs never measured the
+shared pack itself.
+
 ## Consequences
 
 - Stage 1 changes the cache layout (a new `packs/shared` tree) but not
