@@ -14,13 +14,21 @@
 # std as the std dir (bench/results/clocks-2026-10-14.md); earlier
 # results files keep the comparisons.
 #
-# usage: bench/perf/sysio/measure.sh <xo1 binary> <std dir> <out dir> <backend...>
-# WORKLOADS overrides the list; VARIANTS the variants.
+# usage: bench/perf/sysio/measure.sh <xo1 binary> [<std dir>] <out dir> <backend...>
+# The std dir is optional (the other benches' form, which sweep.py uses):
+# without one, the std beside the xo (bin/../std). WORKLOADS overrides
+# the list; VARIANTS the variants.
 set -e
 XO=$1
-STD=$2
-OUT=$3
-shift 3
+if [ -f "$2/prelude.xo" ]; then
+	STD=$2
+	shift 2
+else
+	STD=$(cd "$(dirname "$XO")/../std" && pwd)
+	shift 1
+fi
+OUT=$1
+shift 1
 SRC=$(cd "$(dirname "$0")" && pwd)
 OS=$(uname -s)
 DEFV="xo nolibc"
