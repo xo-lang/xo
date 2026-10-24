@@ -165,6 +165,14 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   declaration that internal/stdcoverage/allow.txt does not name with its
   reason, and for an allowlist line that matches nothing; a new std
   function or method needs a corpus, a golden, or such a line.
+- `go run ./scripts/stdfuzz` is the backend differential fuzzer: it
+  generates one Xo program of seeded random inputs through pure std
+  functions (strings, bytes, strconv, json encode/parse, path, url,
+  base64/base32/hex, time formatting and parsing), runs it on arm64, LLVM
+  and the Go backend, and compares the outputs line by line. A divergence
+  prints the case, its source and a `-only=NAME` rerun; report it, do not
+  fix it in the tool. `-seed` and `-n` widen a run, `-area` narrows it, and
+  `-keep=/DIR` keeps the generated program.
 - `go run ./scripts/stdgen` after changing a std type (a struct, enum,
   newtype, or interface in std/*.xo) or a std function's signature:
   regenerates std/rt/std_gen_M.go, the Go backend's declarations of
