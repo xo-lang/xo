@@ -36,8 +36,8 @@
 // go-compiler-final tag (the last commit with the Go compiler, built
 // once with `go build ./cmd/xo` from `git archive go-compiler-final`
 // into <user cache>/xo/seed) build through the hops of
-// scripts/seed-chain.txt. The backend is the host's: the Go backend on Windows (as
-// scripts/windows-batch.sh builds xo1), arm64 on an arm64 host, else LLVM
+// scripts/seed-chain.txt. The backend is the host's: amd64 on Windows (the
+// chain's hops there the Go backend), arm64 on an arm64 host, else LLVM
 // split into 12 modules without LTO (decision 0168), as
 // scripts/bootstrap-xo.sh builds xo.
 //
@@ -755,8 +755,9 @@ func SmokeXo(root, xo string) error {
 		return err
 	}
 	// the native backend of the host's architecture even where xo itself
-	// is built with the Go backend (Windows): the native SSA builder is
-	// what a miscompiled xo broke there
+	// is built with another (LLVM on x86-64 Linux, the Go backend for
+	// Windows chain hops): the native SSA builder is what a miscompiled
+	// xo broke there
 	backend := "arm64"
 	if runtime.GOARCH == "amd64" {
 		backend = "amd64"
@@ -898,7 +899,7 @@ func SeedFromTag(root string, log io.Writer) (string, error) {
 	if out, err := runIn(tree, nil, "go", "build", "-o", goXo, "./cmd/xo"); err != nil {
 		return "", fmt.Errorf("go build ./cmd/xo at %s: %v\n%s", SeedTag, err, out)
 	}
-	backend, env := hostBackend()
+	backend, env := chainBackend()
 	env = append(env, "XO_SELF_DRIVER=0")
 	if err := os.MkdirAll(filepath.Join(tree, "bin"), 0o755); err != nil {
 		return "", err
@@ -933,6 +934,16 @@ func LLVMOpt() string {
 	return "O0"
 }
 
+// chainBackend is the backend a seed chain hop and the go-compiler-final
+// root build xo with: hostBackend's, except the Go backend on Windows
+// (those commits predate native windows/amd64, decision 0254 6b).
+func chainBackend() (string, []string) {
+	if runtime.GOOS == "windows" {
+		return "go", nil
+	}
+	return hostBackend()
+}
+
 // hostBackend is hostBackendNative's backend and environment, with
 // XO_NOLIBC=0 on Linux: since decision 0243 a Linux program without `use
 // c` links no C library by default, but the toolchain's own native Linux
@@ -951,9 +962,11 @@ func hostBackend() (string, []string) {
 // environment it needs.
 func hostBackendNative() (string, []string) {
 	if runtime.GOOS == "windows" {
-		// the Go backend (compiler/gen and the go command), as
-		// scripts/windows-batch.sh built xo1 there
-		return "go", nil
+		// native, as scripts/release.sh builds the release's xo.exe
+		// (decision 0254 6b: Xo's PE linker, no C runtime). It was the
+		// Go backend until 2026-10-23: that xo.exe's link phase took
+		// 540 s a program on CI's runner, the release's 10 to 21 s.
+		return "amd64", nil
 	}
 	if runtime.GOARCH == "arm64" {
 		return "arm64", nil

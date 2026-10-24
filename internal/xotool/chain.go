@@ -107,7 +107,7 @@ func Chain(root, seed string, log io.Writer) (string, error) {
 		}
 		fmt.Fprintf(log, "xotool: seed chain hop %s (std of %s) built by %s\n", h.Commit, orSelf(h.Std, h.Commit), cur)
 		t0 := time.Now()
-		backend, env := hostBackend()
+		backend, env := chainBackend()
 		tmp := bin + ".tmp"
 		if out, err := runIn(tree, env, cur, "build", "--backend="+backend, "--std="+xoPath(std), "-o", xoPath(tmp), xoPath(filepath.Join(tree, CompilerDir(tree), "xo"))); err != nil {
 			return "", fmt.Errorf("hop %s: %v\n%s", h.Commit, err, lastLines(out, 20))

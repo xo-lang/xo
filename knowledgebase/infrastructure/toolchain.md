@@ -4413,8 +4413,11 @@ from source (decision 0216 item 3) and a new platform (a build of the
 same key already in the cache is reused: point `XO_CHECKOUT_CACHE` at an
 empty directory for a full replay); the log says "xotool: building the
 go-compiler-final root and walking scripts/seed-chain.txt". The backend: arm64 on an arm64
-host, the LLVM backend split into 12 modules without LTO on x86-64, the
-Go backend on Windows. `XO_CHECKOUT_CACHE` moves the cache. The Go tests
+host, the LLVM backend split into 12 modules without LTO on x86-64,
+amd64 on Windows (since 2026-10-23, as release.sh builds the release's
+xo.exe; the Go backend's xo.exe took 540 s a link on CI's runner; the
+chain's hops there still use the Go backend, internal/xotool
+chainBackend). `XO_CHECKOUT_CACHE` moves the cache. The Go tests
 build it on first use unless `XO_CLI` names an xo. On the development
 Mac a build with a cached xo1 as the seed took 391 s and 6.09 GB peak
 RSS (2026-10-13, other agents running). Last verified: 2026-10-13.
