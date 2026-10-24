@@ -1,0 +1,43 @@
+// json nesting depth (std.md 5): parse_value and decode accept 10000
+// levels of arrays or objects and reject 10001 with Go's text
+// ("invalid character '[' exceeded max depth"), the same on every backend.
+use std/json
+
+struct N {
+  a: N?
+} derive Json
+
+/// n levels: arrays "[[...]]", or objects {"a":{"a":...{}}}
+fn nest(obj: Bool, n: Int) -> Str {
+  var s = ""
+  var i = 0
+  while i < n - 1 {
+    s += if obj { "{\"a\":" } else { "[" }
+    i += 1
+  }
+  s += if obj { "{}" } else { "[]" }
+  i = 0
+  while i < n - 1 {
+    s += if obj { "}" } else { "]" }
+    i += 1
+  }
+  s
+}
+
+fn main(os: Os) {
+  for (name, obj) in [("array", false), ("object", true)] {
+    for n in [1, 9999, 10000, 10001, 10002] {
+      let t = nest(obj, n)
+      match json.parse_value(t) {
+        Ok(v) => os.stdio.println("${name} ${n}: parse_value ok, encoded ${v.encode().len()} bytes")
+        Err(e) => os.stdio.println("${name} ${n}: parse_value ${e}")
+      }
+      if obj {
+        match json.decode_str[N](t) {
+          Ok(_) => os.stdio.println("${name} ${n}: decode ok")
+          Err(e) => os.stdio.println("${name} ${n}: decode ${e}")
+        }
+      }
+    }
+  }
+}

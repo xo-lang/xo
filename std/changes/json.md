@@ -1,5 +1,19 @@
 # std/json changes
 
+## 2026-10-24: fix: the native decoder stops at 10,000 levels of nesting, as Go's does
+
+- Kind: fix
+- Commit: this commit
+- Found by: Xo Lang DS-2's JSON decode corpus (the Go backend failed past 10,000 levels, native did not)
+- Go reference: encoding/json scanner.go maxNestingDepth, pushParseState
+- Test: golden json_depth (arrays and objects at 1, 9999, 10000, 10001 and 10002 levels, parse_value and decode), same output on arm64, LLVM and Go parity
+
+`parse_value` and `decode` on the native backends accepted any depth. They now
+fail the 10,001st open bracket with Go's text, `invalid character '[' exceeded
+max depth` (`'{'` for an object), so the backends agree and hostile input is
+bounded (the tape builder keeps its open containers in a list that grew with
+the depth).
+
 ## 2026-10-24: perf: a decoded Time is parsed from the tape's bytes, not from a copy of its string
 
 - Kind: perf

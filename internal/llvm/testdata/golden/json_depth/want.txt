@@ -1,0 +1,18 @@
+exit 0
+--- stdout
+array 1: parse_value ok, encoded 2 bytes
+array 9999: parse_value ok, encoded 19998 bytes
+array 10000: parse_value ok, encoded 20000 bytes
+array 10001: parse_value at $: invalid JSON: invalid character '[' exceeded max depth
+array 10002: parse_value at $: invalid JSON: invalid character '[' exceeded max depth
+object 1: parse_value ok, encoded 2 bytes
+object 1: decode ok
+object 9999: parse_value ok, encoded 59990 bytes
+object 9999: decode ok
+object 10000: parse_value ok, encoded 59996 bytes
+object 10000: decode ok
+object 10001: parse_value at $: invalid JSON: invalid character '{' exceeded max depth
+object 10001: decode at $: invalid JSON: invalid character '{' exceeded max depth
+object 10002: parse_value at $: invalid JSON: invalid character '{' exceeded max depth
+object 10002: decode at $: invalid JSON: invalid character '{' exceeded max depth
+--- stderr

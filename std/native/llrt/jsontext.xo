@@ -81,6 +81,10 @@ const C_NUM: Int = 10
 const C_DOT: Int = 11
 const C_EXP: Int = 12
 const C_TOP: Int = 13
+const C_DEPTH: Int = 14
+
+/// The deepest nesting of arrays and objects (encoding/json's maxNestingDepth).
+const MAX_DEPTH: Int = 10000
 const C_LIT: Int = 16
 
 /// Decoder.tokenError's context per state (0 to 8). encoding/json has
@@ -372,6 +376,9 @@ fn scan(b: Bytes) -> (List[Int], Int) {
         stack.push(cnt)
       }
       sp += 2
+      if sp > 2 * MAX_DEPTH {
+        return (tape, (C_DEPTH << 8) | c)
+      }
       top = tape.len()
       arr = c == 91
       tape.push(if arr { K_ARR } else { K_OBJ })
@@ -478,6 +485,7 @@ fn err_text(e: Int) -> Str {
     11 => "after decimal point in numeric literal"
     12 => "in exponent of numeric literal"
     13 => "after top-level value"
+    14 => "exceeded max depth"
     _ => ""
   }
   if s == "" {

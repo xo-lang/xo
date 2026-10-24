@@ -6,6 +6,8 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- JSON text nested deeper than 10,000 levels is an error on the native backends too
+  (`invalid character '[' exceeded max depth`, as Go's and the Go backend's).
 - LLVM builds write their IR and split modules in a directory of their own and
   remove it after the link (they shared one per split setting, like the native
   path did, and left every `prog*.ll` until the prune); `XO_KEEP_ASM=1` keeps them.

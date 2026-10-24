@@ -1692,6 +1692,10 @@ fn (v: Value) get(key: Str) -> Value?        // an object's field
   order of the text, each key once at its first position with its last
   value (as `decode` reads objects; Go's map has no order).
 - Errors are `decode`'s (`at $: invalid JSON: ...`, Go's texts).
+- Arrays and objects nest at most 10,000 deep (Go's limit, also a bound on
+  hostile input): the 10,001st opening bracket is `invalid character '['
+  exceeded max depth` (`'{'` for an object), on every backend. Golden
+  `json_depth`.
 - `encode` writes the parts as `encode` does (strings escaped, numbers,
   objects in their order); `parse_value(v.encode())` gives `v` back.
 - Uses: JSON whose shape varies (webhook bodies), and std/template's data
