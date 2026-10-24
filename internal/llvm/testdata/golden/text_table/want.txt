@@ -135,8 +135,8 @@ json time "2026-10-12T13:45:01" err at $: expected RFC 3339 time string
 json time "2026-10-12T24:00:00Z" err at $: expected RFC 3339 time string
 json time "2026-10-12T13:45:01.Z" err at $: expected RFC 3339 time string
 json time "2026-10-12T13:45:01+0200" err at $: expected RFC 3339 time string
-json time "0000-01-01T00:00:00Z" = 1753-08-29T22:43:41.128654848Z
-json time "9999-12-31T23:59:59.999999999Z" = 1816-03-30T05:56:08.066277375Z
+json time "0000-01-01T00:00:00Z" err at $: expected RFC 3339 time string
+json time "9999-12-31T23:59:59.999999999Z" err at $: expected RFC 3339 time string
 json time "1677-09-21T00:12:43.145224192Z" = 1677-09-21T00:12:43.145224192Z
 json time "2026-1-12T13:45:01Z" err at $: expected RFC 3339 time string
 json time "2026-10-12T13:45:01z" err at $: expected RFC 3339 time string
