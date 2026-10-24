@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+won 1500 lost 1000 value 1000 spins 3 flag 1
+--- stderr

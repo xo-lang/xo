@@ -1,0 +1,28 @@
+// A compare and swap a branch tests (compiler/arm64 opt.xo thread_cset:
+// on x86_64 the branch reads cmpxchg's ZF, no sete and movzbl): taken and
+// not taken, negated, its Bool also stored, and a spin until success.
+fn main(os: Os) {
+  let a = Atomic[Int].new(0)
+  var won = 0
+  var lost = 0
+  for i in 0..1000 {
+    let cur = a.get()
+    if a.compare_and_swap(cur, cur + 1) {
+      won += 1
+    }
+    if !a.compare_and_swap(-5, i) {
+      lost += 1
+    }
+    let ok = a.compare_and_swap(cur + 1, cur + 1)
+    if ok && i % 2 == 0 {
+      won += 1
+    }
+  }
+  let f = Atomic[Int].new(3)
+  var spins = 0
+  while !f.compare_and_swap(0, 1) {
+    spins += 1
+    f.set(f.get() - 1)
+  }
+  os.stdio.println("won ${won} lost ${lost} value ${a.get()} spins ${spins} flag ${f.get()}")
+}
