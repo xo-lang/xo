@@ -168,7 +168,9 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 - `go run ./scripts/stdfuzz` is the backend differential fuzzer: it
   generates one Xo program of seeded random inputs through pure std
   functions (strings, bytes, strconv, json encode/parse, path, url,
-  base64/base32/hex, time formatting and parsing), runs it on arm64, LLVM
+  base64/base32/hex, time formatting and parsing, regexp, csv, netip,
+  big), including the Str and Bytes methods that take a Rune closure,
+  runs it on arm64, LLVM
   and the Go backend, and compares the outputs line by line. A divergence
   prints the case, its source and a `-only=NAME` rerun; report it, do not
   fix it in the tool. `-seed` and `-n` widen a run, `-area` narrows it, and

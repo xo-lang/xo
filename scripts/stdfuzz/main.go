@@ -84,6 +84,24 @@ fn fz_ls(xs: List[Str]) -> Str {
   }
   "${xs.len()}/${out}"
 }
+fn fz_is_letter(r: Rune) -> Bool { r.is_letter() }
+fn fz_is_digit(r: Rune) -> Bool { r.is_digit() }
+fn fz_upper_keep(r: Rune) -> Rune? {
+  if r.is_digit() { None } else { Some(r.to_upper()) }
+}
+fn fz_lss(rows: List[List[Str]]) -> Str {
+  var out = ""
+  for row in rows {
+    if out != "" { out = out + ";" }
+    var one = ""
+    for f in row {
+      if one != "" { one = one + "," }
+      one = one + fz_hx(f)
+    }
+    out = out + one
+  }
+  "${rows.len()}/${out}"
+}
 fn fz_lb(xs: List[Bytes]) -> Str {
   var out = ""
   for x in xs {
@@ -195,10 +213,7 @@ func main() {
 		if err != nil {
 			msg := err.Error()
 			if ee, ok := err.(*exec.ExitError); ok {
-				msg = strings.TrimSpace(string(ee.Stderr))
-				if i := strings.LastIndexByte(msg, '\n'); i >= 0 && strings.Contains(msg, "fz_") {
-					msg = msg[i+1:]
-				}
+				msg = firstLines(string(ee.Stderr), 4)
 			}
 			failed[b] = msg
 		}
@@ -300,6 +315,22 @@ func lines(out string) []string {
 		}
 	}
 	return ls
+}
+
+// firstLines is the first n non-empty lines of a backend's stderr, where a
+// compile error and its notes are.
+func firstLines(s string, n int) string {
+	var out []string
+	for _, l := range strings.Split(s, "\n") {
+		if strings.TrimSpace(l) == "" {
+			continue
+		}
+		out = append(out, strings.TrimRight(l, " \t"))
+		if len(out) == n {
+			break
+		}
+	}
+	return strings.Join(out, "\n")
 }
 
 // parseOut maps each backend's stdout to name to value, keeping only lines

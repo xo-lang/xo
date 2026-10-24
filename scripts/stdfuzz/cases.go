@@ -69,6 +69,102 @@ fn fz_stamp(s: Str) -> Str {
 }
 `
 
+const regexpHelpers = `
+fn fz_re_m(p: Str, s: Str) -> Str {
+  match regexp.compile(p) {
+    Ok(r) => fz_bool(r.is_match(s))
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_re_f(p: Str, s: Str) -> Str {
+  match regexp.compile(p) {
+    Ok(r) => fz_opt_s(r.find(s))
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_re_a(p: Str, s: Str) -> Str {
+  match regexp.compile(p) {
+    Ok(r) => fz_ls(r.find_all(s))
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_re_sp(p: Str, s: Str) -> Str {
+  match regexp.compile(p) {
+    Ok(r) => fz_ls(r.split(s))
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_re_r(p: Str, s: Str, repl: Str) -> Str {
+  match regexp.compile(p) {
+    Ok(r) => fz_hx(r.replace_all(s, repl))
+    Err(e) => "err:${e.display()}"
+  }
+}
+`
+
+const csvHelpers = `
+fn fz_csv(s: Str) -> Str {
+  match csv.parse(s) {
+    Ok(rows) => fz_lss(rows)
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_csv_semi(s: Str) -> Str {
+  match csv.parse(s, sep: ';') {
+    Ok(rows) => fz_lss(rows)
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_csv_lazy(s: Str) -> Str {
+  match csv.parse(s, lazy_quotes: true, trim_leading_space: true) {
+    Ok(rows) => fz_lss(rows)
+    Err(e) => "err:${e.display()}"
+  }
+}
+`
+
+const netipHelpers = `
+fn fz_addr(s: Str) -> Str {
+  match netip.parse_addr(s) {
+    Ok(a) => fz_hx("${a}")
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_addr6(s: Str) -> Str {
+  match netip.parse_addr(s) {
+    Ok(a) => fz_hx("${fz_bools(a.is_4(), a.is_6(), a.is_4in6(), a.is_loopback(), a.is_private())}-${a.bytes().to_hex()}")
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_pfx(s: Str) -> Str {
+  match netip.parse_prefix(s) {
+    Ok(p) => fz_hx("${p} ${p.masked()}")
+    Err(e) => "err:${e.display()}"
+  }
+}
+`
+
+const bigHelpers = `
+fn fz_big_ops(a: Int, b: Int) -> Str {
+  let x = big.from_int(a)
+  let y = big.from_int(b)
+  let q = if y.sign() == 0 { "-" } else { "${x.quo(y)}/${x.rem(y)}" }
+  fz_hx("${x.add(y)};${x.sub(y)};${x.mul(y)};${x.cmp(y)};${x.cmp_abs(y)};${q};${x.and(y)};${x.or(y)};${x.xor(y)};${x.gcd(y)};${x.lsh(3)};${x.rsh(3)}")
+}
+fn fz_big_parse(s: Str) -> Str {
+  match big.parse(s) {
+    Ok(x) => fz_hx("${x}")
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_big_hex(s: Str) -> Str {
+  match big.parse(s, base: 16) {
+    Ok(x) => fz_hx("${x}")
+    Err(e) => "err:${e.display()}"
+  }
+}
+`
+
 // A fuzzCase is one line of the generated program: the name it prints and
 // the Xo expression that computes its value as a Str, so every result
 // compares as one line of text.
@@ -100,6 +196,10 @@ func allAreas() []area {
 		{"url", []string{"std/url"}, urlHelpers, genURL},
 		{"base64", []string{"std/base64", "std/base32"}, baseHelpers, genBase},
 		{"time", []string{"std/time"}, timeHelpers, genTime},
+		{"regexp", []string{"std/regexp"}, regexpHelpers, genRegexp},
+		{"csv", []string{"std/csv"}, csvHelpers, genCSV},
+		{"netip", []string{"std/netip"}, netipHelpers, genNetip},
+		{"big", []string{"std/big"}, bigHelpers, genBig},
 	}
 }
 
@@ -158,7 +258,7 @@ func genStrings(r *rand.Rand, n int) []fuzzCase {
 		S := xq(s)
 		name := fmt.Sprintf("strings.%04d", i)
 		k := r.Intn(4)
-		switch i % 32 {
+		switch i % 40 {
 		case 0:
 			out = append(out, fuzzCase{name, "fz_hx(" + S + ".trim())"})
 		case 1:
@@ -224,6 +324,22 @@ func genStrings(r *rand.Rand, n int) []fuzzCase {
 		case 31:
 			out = append(out, fuzzCase{name, fmt.Sprintf("fz_bools(%s.is_empty(), %s.contains_rune('a'), %s.runes().len() == %s.rune_count(), true, false)",
 				S, S, S, S)})
+		case 32:
+			out = append(out, fuzzCase{name, "fz_opt_i(" + S + ".find_where(fz_is_letter))"})
+		case 33:
+			out = append(out, fuzzCase{name, "fz_opt_i(" + S + ".rfind_where(fz_is_digit))"})
+		case 34:
+			out = append(out, fuzzCase{name, "fz_bool(" + S + ".contains_where(fz_is_letter))"})
+		case 35:
+			out = append(out, fuzzCase{name, "fz_hx(" + S + ".trim_where(fz_is_digit))"})
+		case 36:
+			out = append(out, fuzzCase{name, "fz_hx(" + S + ".trim_start_where(fz_is_letter))"})
+		case 37:
+			out = append(out, fuzzCase{name, "fz_hx(" + S + ".trim_end_where(fz_is_letter))"})
+		case 38:
+			out = append(out, fuzzCase{name, "fz_ls(" + S + ".split_where(fz_is_letter))"})
+		case 39:
+			out = append(out, fuzzCase{name, "fz_hx(" + S + ".map_runes(fz_upper_keep))"})
 		}
 	}
 	return out
@@ -237,7 +353,7 @@ func genBytes(r *rand.Rand, n int) []fuzzCase {
 		B, SUB := xbytes(b), xbytes(sub)
 		name := fmt.Sprintf("bytes.%04d", i)
 		k := r.Intn(4)
-		switch i % 24 {
+		switch i % 32 {
 		case 0:
 			out = append(out, fuzzCase{name, B + ".to_hex()"})
 		case 1:
@@ -287,6 +403,22 @@ func genBytes(r *rand.Rand, n int) []fuzzCase {
 		case 23:
 			out = append(out, fuzzCase{name, fmt.Sprintf("fz_bools(%s.ends_with(%s), %s.equal_fold(%s), %s.contains_any(%s), %s.is_empty(), false)",
 				B, SUB, xbytes([]byte(cut)), xbytes([]byte(cut)), B, xq(cut), B)})
+		case 24:
+			out = append(out, fuzzCase{name, "fz_opt_i(" + B + ".find_where(fz_is_letter))"})
+		case 25:
+			out = append(out, fuzzCase{name, "fz_opt_i(" + B + ".rfind_where(fz_is_digit))"})
+		case 26:
+			out = append(out, fuzzCase{name, "fz_bool(" + B + ".contains_where(fz_is_letter))"})
+		case 27:
+			out = append(out, fuzzCase{name, B + ".trim_where(fz_is_digit).to_hex()"})
+		case 28:
+			out = append(out, fuzzCase{name, B + ".trim_start_where(fz_is_letter).to_hex()"})
+		case 29:
+			out = append(out, fuzzCase{name, B + ".trim_end_where(fz_is_letter).to_hex()"})
+		case 30:
+			out = append(out, fuzzCase{name, "fz_lb(" + B + ".split_where(fz_is_letter))"})
+		case 31:
+			out = append(out, fuzzCase{name, B + ".map_runes(fz_upper_keep).to_hex()"})
 		}
 	}
 	return out
@@ -481,6 +613,127 @@ func genTime(r *rand.Rand, n int) []fuzzCase {
 		case 5:
 			off := r.Intn(47*3600) - 23*3600
 			out = append(out, fuzzCase{name, "fz_hx(time.format(Time.from_unix(" + fmt.Sprint(r.Int63n(2000000000)) + "), time.fixed(\"X\", Duration.from_secs_int(" + fmt.Sprint(off) + ")), time.RFC3339))"})
+		}
+	}
+	return out
+}
+
+// genRegexp covers compile, match, find, find_all, split and replace_all.
+func genRegexp(r *rand.Rand, n int) []fuzzCase {
+	pats := []string{"a", "a+", "^a", "a$", "(a)(b)?", "[a-c]+", "[^x]", "\\d+", "\\s", "(?i)a",
+		"a|b", ".", "a{2,3}", "(?P<n>a)", "\\b", "^$", "[", "(a", "*x", "a**", "\\p{L}", "é", "\\p{Han}"}
+	repls := []string{"", "X", "$1", "${n}", "a$", "\\n"}
+	out := make([]fuzzCase, 0, n)
+	for i := 0; i < n; i++ {
+		p, s := pick(r, pats), randStr(r)
+		name := fmt.Sprintf("regexp.%04d", i)
+		switch i % 6 {
+		case 0:
+			out = append(out, fuzzCase{name, "fz_re_m(" + xq(p) + ", " + xq(s) + ")"})
+		case 1:
+			out = append(out, fuzzCase{name, "fz_re_f(" + xq(p) + ", " + xq(s) + ")"})
+		case 2:
+			out = append(out, fuzzCase{name, "fz_re_a(" + xq(p) + ", " + xq(s) + ")"})
+		case 3:
+			out = append(out, fuzzCase{name, "fz_re_sp(" + xq(p) + ", " + xq(s) + ")"})
+		case 4:
+			out = append(out, fuzzCase{name, "fz_re_r(" + xq(p) + ", " + xq(s) + ", " + xq(pick(r, repls)) + ")"})
+		case 5:
+			out = append(out, fuzzCase{name, "fz_hx(regexp.quote(" + xq(s) + "))"})
+		}
+	}
+	return out
+}
+
+// csvText draws CSV-ish text: quoted fields, embedded separators and
+// newlines, comments, blank lines and broken quoting.
+func csvText(r *rand.Rand) string {
+	if r.Intn(3) == 0 {
+		return pick(r, []string{"", "a", "a,b", "a,b\nc,d", "\"a\",\"b\"", "a,\"b,c\",d",
+			"#c\na,b", "a;b", "a,\"b", "\"a\"x,b", " a , b ", "a\r\nb", "\n\n", ",\n,,"})
+	}
+	fields := []string{"a", "b", "x,y", "q\"r", " lead", "trail ", "é", "🚀", "", ";"}
+	var b strings.Builder
+	for i, rows := 0, r.Intn(4); i < rows; i++ {
+		for j, cols := 0, 1+r.Intn(4); j < cols; j++ {
+			if j > 0 {
+				b.WriteString(pick(r, []string{",", ";", ",\"", "\""}))
+			}
+			f := pick(r, fields)
+			if r.Intn(4) == 0 {
+				b.WriteString("\"" + f + "\"")
+			} else {
+				b.WriteString(f)
+			}
+		}
+		b.WriteString(pick(r, []string{"\n", "\r\n", "\n#c\n"}))
+	}
+	return b.String()
+}
+
+// genCSV covers parse with its options and format.
+func genCSV(r *rand.Rand, n int) []fuzzCase {
+	out := make([]fuzzCase, 0, n)
+	for i := 0; i < n; i++ {
+		s := csvText(r)
+		name := fmt.Sprintf("csv.%04d", i)
+		switch i % 4 {
+		case 0:
+			out = append(out, fuzzCase{name, "fz_csv(" + xq(s) + ")"})
+		case 1:
+			out = append(out, fuzzCase{name, "fz_csv_semi(" + xq(s) + ")"})
+		case 2:
+			out = append(out, fuzzCase{name, "fz_csv_lazy(" + xq(s) + ")"})
+		case 3:
+			rows := fmt.Sprintf("[[%s, %s], [%s, %s]]", xq(pick(r, pool)), xq(pick(r, subs)),
+				xq(pick(r, []string{"a\"b", "c,d", " e"})), xq(pick(r, subs)))
+			out = append(out, fuzzCase{name, "fz_hx(csv.format(" + rows + ", crlf: " + fmt.Sprint(r.Intn(2) == 0) + "))"})
+		}
+	}
+	return out
+}
+
+// genNetip covers address and prefix parsing, display and predicates.
+func genNetip(r *rand.Rand, n int) []fuzzCase {
+	addrs := []string{"1.2.3.4", "0.0.0.0", "255.255.255.255", "127.0.0.1", "192.168.1.1",
+		"10.0.0.1", "169.254.1.1", "224.0.0.1", "::1", "::", "2001:db8::1", "fe80::1",
+		"::ffff:1.2.3.4", "64:ff9b::1.2.3.4", "1.2.3", "01.2.3.4", "1.2.3.4.5", "::g",
+		"2001:db8::1%eth0", "", "1.2.3.4 ", " 1.2.3.4", "[::1]"}
+	prefixes := []string{"10.0.0.0/8", "192.168.0.0/16", "0.0.0.0/0", "1.2.3.4/32", "1.2.3.4/33",
+		"2001:db8::/32", "::/0", "::1/128", "1.2.3.4/-1", "10.0.0.0", "10.0.0.0/8/9", ""}
+	out := make([]fuzzCase, 0, n)
+	for i := 0; i < n; i++ {
+		name := fmt.Sprintf("netip.%04d", i)
+		switch i % 3 {
+		case 0:
+			out = append(out, fuzzCase{name, "fz_addr(" + xq(pick(r, addrs)) + ")"})
+		case 1:
+			out = append(out, fuzzCase{name, "fz_addr6(" + xq(pick(r, addrs)) + ")"})
+		case 2:
+			out = append(out, fuzzCase{name, "fz_pfx(" + xq(pick(r, prefixes)) + ")"})
+		}
+	}
+	return out
+}
+
+// genBig covers big.parse and the arithmetic, bitwise and compare methods.
+func genBig(r *rand.Rand, n int) []fuzzCase {
+	dec := []string{"0", "1", "-1", "42", "-42", "9223372036854775807",
+		"-9223372036854775808", "123456789012345678901234567890",
+		"-123456789012345678901234567890", "0007", "+7", " 7", "7 ", "", "-", "12a",
+		"1e3", "ffffffffffffffffffffffff", "-0"}
+	hex := []string{"0", "1", "ff", "-ff", "deadBEEF", "7fffffffffffffffffffffffffffffff",
+		"-80000000000000000000000000000000", "g", ""}
+	out := make([]fuzzCase, 0, n)
+	for i := 0; i < n; i++ {
+		name := fmt.Sprintf("big.%04d", i)
+		switch i % 3 {
+		case 0:
+			out = append(out, fuzzCase{name, "fz_big_parse(" + xq(pick(r, dec)) + ")"})
+		case 1:
+			out = append(out, fuzzCase{name, "fz_big_hex(" + xq(pick(r, hex)) + ")"})
+		case 2:
+			out = append(out, fuzzCase{name, "fz_big_ops(" + fmt.Sprint(r.Int63()-r.Int63()) + ", " + fmt.Sprint(r.Int63()-r.Int63()) + ")"})
 		}
 	}
 	return out
