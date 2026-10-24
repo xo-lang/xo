@@ -32,7 +32,15 @@ Two kinds, both fixed std-side:
    - small temporary Lists allocate (Go uses fixed-size arrays on the
      stack), e.g. `[0, 0, 0, 0]` per quantum in base64;
    - Xo has no package-level state, so what Go computes once per
-     process can be recomputed per call.
+     process can be recomputed per call;
+   - a per-element write into a Builder costs a call chain in Xo, where
+     Go's inlined `WriteByte` is nearly free: `Str.map_runes` pushed
+     every rune through `raw.push_rune` and its runtime calls
+     (`obj.rs_push_byte`, `obj.reserve`), half the mapping time, at 1.20
+     and 1.38 times Go's instructions; keeping a rune that maps to
+     itself as its own bytes and flushing runs with one
+     `rt.rs_append_bytes` took it to 0.86 and 0.90
+     (bench/results/maprunes-batch-2026-10-24.md, 2026-10-24).
 
 ## Fix
 
@@ -40,6 +48,8 @@ Two kinds, both fixed std-side:
   when Go has a special case for speed, port that too.
 - Index bytes rather than slicing strings in hot loops; use tables and
   builders written in place instead of small Lists.
+- Append in runs, not per element: copy an unchanged span with one
+  `rt.rs_append_bytes` instead of a `raw.push_rune` per rune.
 - Every port gets a timing row against Go's package next to its
   corpus (bench/results), so a slow port shows at once, not after a
   profile; profile with XO_PROF=cpu before rewriting.
