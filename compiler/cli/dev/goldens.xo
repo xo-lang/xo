@@ -202,7 +202,9 @@ fn one(os: Os, cfg: Config, key: Str, p: Prog) -> Outcome {
   if !key.is_empty() && !cfg.force && cached(os.fs, cfg.cache, key) {
     return Outcome{name: p.name, dir: p.dir, status: "cached"}
   }
-  if cfg.run_cmd {
+  // `xo run` has no wasm backend (a module is built, then run under Node's
+  // WASI as TestSelfhostWasm does), so --cmd=run builds and runs it here
+  if cfg.run_cmd && cfg.backend != "wasm" {
     return run_one(os, cfg, key, p)
   }
   let bin = bin_path(cfg, p)
@@ -231,14 +233,31 @@ fn one(os: Os, cfg: Config, key: Str, p: Prog) -> Outcome {
     Ok(out) => {
       let built = os.fs.exists(bin).ok() ?? false
       if out.code != 0 && !(test_prog && built) {
-        let lines = (out.stderr.to_str() ?? "").trim().split("\n")
-        return fail("build: ${lines[lines.len() - 1]}")
+        return fail("build: ${last_msg(out.stderr.to_str() ?? "")}")
       }
     }
     Err(task.Timed.TimedOut) => return fail("build: timed out after ${cfg.timeout.seconds()} s")
     Err(task.Timed.Failed(e)) => return fail("build: ${e}")
   }
   finish(os, cfg, key, p, build_ms)
+}
+
+/// The last line of a failed command's stderr, without the leak check's
+/// "xo leakcheck: skipped" line a compiler that exits adds under
+/// XO_LEAKCHECK (it hid the real message).
+fn last_msg(s: Str) -> Str {
+  let ls = s.trim().split("\n").filter(fn(l: Str) { !l.starts_with("xo leakcheck:") })
+  if ls.is_empty() { "" } else { ls[ls.len() - 1] }
+}
+
+/// compiler/wasm/run.mjs: $XO_WASM_RUNNER, else beside the xo binary's
+/// checkout (bin/xo of a checkout; a release has no compiler directory).
+fn wasm_runner(os: Os, cfg: Config) -> Str {
+  let e = os.env.get("XO_WASM_RUNNER") ?? ""
+  if !e.is_empty() {
+    return e
+  }
+  "${parent(parent(cfg.xo))}/compiler/wasm/run.mjs"
 }
 
 fn bin_path(cfg: Config, p: Prog) -> Str {
@@ -255,10 +274,21 @@ fn finish(os: Os, cfg: Config, key: Str, p: Prog, build_ms: Int) -> Outcome {
     return Outcome{name: p.name, dir: p.dir, status: "pass", build_ms: build_ms}
   }
   let h = harness(os.fs, p.dir)
-  var c = os.proc.cmd(bin, h.args).dir(p.dir).stdin(h.stdin)
+  var exe = bin
+  var exe_args = h.args
+  if cfg.backend == "wasm" {
+    // a module runs under Node's WASI (compiler/wasm/run.mjs)
+    exe = "node"
+    exe_args = ["--no-warnings", wasm_runner(os, cfg), bin]
+    for a in h.args {
+      exe_args.push(a)
+    }
+  }
+  var c = os.proc.cmd(exe, exe_args).dir(p.dir).stdin(h.stdin)
   if cfg.backend == "go" {
     c = c.env(os.env.only(os.env.vars().keys().filter(fn(k: Str) { !(k is "GOGC" | "GOMEMLIMIT" | "XO_GC_MIN_HEAP") })))
-  } else {
+  } else if cfg.backend != "wasm" {
+    // (judge checks no leaks of a wasm run: its exit line would only add noise)
     c = c.set_env("XO_LEAKCHECK", "1")
   }
   for (k, v) in h.env {
@@ -336,8 +366,7 @@ fn run_one(os: Os, cfg: Config, key: Str, p: Prog) -> Outcome {
   }
   let se = out.stderr.to_str() ?? ""
   if out.code != 0 && (se.starts_with("xo: ") || se.starts_with("xo1: ")) {
-    let lines = se.trim().split("\n")
-    return Outcome{name: p.name, dir: p.dir, status: "fail", why: "build: ${lines[lines.len() - 1]}", run_ms: ms}
+    return Outcome{name: p.name, dir: p.dir, status: "fail", why: "build: ${last_msg(se)}", run_ms: ms}
   }
   judge(os, cfg, key, p, out, 0, ms)
 }
@@ -357,6 +386,14 @@ pub fn run_goldens(os: Os, cfg0: Config, dirs: List[Str]) -> List[Outcome] uses 
   var progs = match programs(os.fs, dirs) {
     Ok(ps) => ps
     Err(e) => return [Outcome{name: "(discovery)", dir: dirs.join(" "), status: "fail", why: e}]
+  }
+  if cfg.backend == "wasm" {
+    // want_wasm.txt, when a golden's output names the target (target.os is
+    // Wasi in a WASI module), as TestSelfhostWasm reads it
+    progs = progs.map(fn(p: Prog) {
+      let ww = "${p.dir}/want_wasm.txt"
+      if os.fs.exists(ww).ok() ?? false { p with {want: ww} } else { p }
+    })
   }
   if cfg.backend == "go" {
     // a golden whose Go backend output differs (native-only std, such as

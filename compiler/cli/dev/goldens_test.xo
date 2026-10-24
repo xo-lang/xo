@@ -22,3 +22,9 @@ test "discovery fails on a directory it cannot list instead of finding fewer pro
   expect(module_dirs(os.fs, ["nosuch"]).is_err()) == true
   expect(module_dirs(os.fs, ["g"])) == Ok(["g/one"])
 }
+
+test "last_msg skips the leak check line a compiler adds when it exits" {
+  expect(last_msg("xo: --backend=wasm: want arm64\nxo leakcheck: skipped (os.proc.exit)\n") == "xo: --backend=wasm: want arm64")
+  expect(last_msg("a\nb\n") == "b")
+  expect(last_msg("") == "")
+}
