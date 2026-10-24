@@ -362,7 +362,8 @@ fn str_eq_lower(a: Str, b: Str) -> Bool { unicode.eq_lower(a, b) }
 /// strings.Map: f applied to every rune of s, None dropping it. Like Go's,
 /// no copy until the first rune that changes (a valid U+FFFD that maps to
 /// itself does not count, a malformed byte does), then one buffer of s's
-/// length or more.
+/// length or more; a rune that maps to itself keeps its own bytes, so a run
+/// of them costs one append, and an ASCII result is pushed as a byte.
 fn str_map_runes[E, fx: Effects](s: Str, f: fn(Rune) -> Rune? ! E uses fx) -> Str ! E uses fx {
   let b = s.bytes()
   let n = b.len()
@@ -401,6 +402,10 @@ fn str_map_runes[E, fx: Effects](s: Str, f: fn(Rune) -> Rune? ! E uses fx) -> St
     o = raw.push_rune(o, first)
   }
   i += w
+  // A rune that maps to itself keeps its own bytes: a run of them is one
+  // append, not a push_rune a rune (Go writes byte by byte, but its
+  // WriteByte is inlined while a push here is a call into the runtime).
+  var cp = i
   while i < n {
     let c = b[i]
     var r = Rune(Int(c))
@@ -410,10 +415,33 @@ fn str_map_runes[E, fx: Effects](s: Str, f: fn(Rune) -> Rune? ! E uses fx) -> St
       r = Rune(d >> 3)
       w = d & 7
     }
-    if let Some(x) = f(r)? {
-      o = raw.push_rune(o, Int(x))
+    let m = f(r)?
+    var any = false
+    var mapped = -1
+    if let Some(x) = m {
+      any = true
+      mapped = Int(x)
+    }
+    let same = any && mapped == Int(r) && !(Int(r) == 0xfffd && w == 1)
+    if same {
+      i += w
+      continue
+    }
+    if cp < i {
+      o = rt.rs_append_bytes(o, b, cp, i, 0)
+    }
+    if any {
+      if mapped >= 0 && mapped < 0x80 {
+        o = rt.rs_push_byte(o, mapped)
+      } else {
+        o = raw.push_rune(o, mapped)
+      }
     }
     i += w
+    cp = i
+  }
+  if cp < i {
+    o = rt.rs_append_bytes(o, b, cp, i, 0)
   }
   o
 }

@@ -1,5 +1,34 @@
 # prelude changes
 
+## 2026-10-24: perf: Str.map_runes keeps unchanged runes as their own bytes and appends runs
+
+- Kind: perf
+- Commit: (filled in after the push)
+- Found by: the str-func timing row put map_runes at 1.20 times Go's
+  instructions on arm64 and 1.38 on LLVM; a CPU profile of the mapfunc
+  workload (XO_PROF=cpu, 200 Hz) put half of the mapping time under
+  raw.push_rune and its runtime calls (obj.rs_push_byte, obj.reserve),
+  against a fifth in the caller's closures and a tenth in decoding
+- Go reference: strings.Map writes byte by byte into one strings.Builder
+  whose WriteByte is inlined; this one appended a rune at a time
+- Test: corpus/strwhere on arm64, LLVM and the Go backend (Go's TestMap
+  rows and 2,000 seeded randoms with invalid UTF-8) and the golden
+  strwhere on arm64, LLVM, Go parity and wasm, all unchanged in output
+
+Past the first rune that changes, a rune whose mapping is itself now keeps
+its own bytes, and a run of them is flushed with one
+`rt.rs_append_bytes`; a mapped result below 0x80 goes through
+`rt.rs_push_byte` rather than `raw.push_rune`'s scalar checks. The
+predicate is still called exactly once per rune, in order, and a
+malformed byte that maps to U+FFFD still counts as a change and is
+re-encoded, as Go's Map does.
+
+`xo bench --ab --rounds=12` arm64, base vs new on the mapfunc binary:
+instructions 0.714, wall 0.771, cpu 0.778 (loaded machine, 1 minute load
+28 to 33). Against Go, same host and day: 0.86 of Go's instructions on
+arm64 and 0.90 on LLVM, from 1.20 and 1.38
+(bench/results/maprunes-batch-2026-10-24.md).
+
 ## 2026-10-24: perf: RFC 3339 parsing reads each field's digits without a loop
 
 - Kind: perf
