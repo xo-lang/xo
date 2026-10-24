@@ -1353,20 +1353,27 @@ fn (r: Rc) rc_ops(var f: Func, op: Op, l: Leaf, bl: Int, n: Int) -> List[Int] {
 /// of these: x509.parse's 588 releases of a setfield's old value
 /// (2026-10-17, Xo lang 4's count).
 fn immortal_leaf(f: Func, l: Leaf, sums: Map[Str, List[Bool]]) -> Bool {
-  imm_at(f, l.root, l.path.split("."), 1, sums, 0)
+  imm_at(f, l.root, l.path.split("."), 1, sums, 0, [])
 }
 
 /// Whether the part at path parts[k..] of value v is immortal
 /// (immortal_leaf): through struct and tuple literals, field updates, a
 /// call of a function of sums, and block parameters whose every incoming
-/// argument is (an inlined call's continuation; around a loop the depth
-/// bound answers no).
-fn imm_at(f: Func, v: Int, parts: List[Str], k: Int, sums: Map[Str, List[Bool]], depth: Int) -> Bool {
+/// argument is (an inlined call's continuation); a parameter already
+/// being walked at the same part counts, so around a loop the arguments
+/// from outside it decide (2026-10-24: a constant's list carried around
+/// a loop with the empty list before its first read was released each
+/// time the loop began, a call that kept the loop's constants in it).
+fn imm_at(f: Func, v: Int, parts: List[Str], k: Int, sums: Map[Str, List[Bool]], depth: Int, walking: List[(Int, Int)]) -> Bool {
   if depth > 24 {
     return false
   }
   let x = f.values[v]
   if x.op == Op.Param && x.block > 0 {
+    if walking.contains((v, k)) {
+      return true
+    }
+    let w2 = walking + [(v, k)]
     var pi = -1
     for (i, p) in f.blocks[x.block].params.indexed() {
       if p == v {
@@ -1379,7 +1386,7 @@ fn imm_at(f: Func, v: Int, parts: List[Str], k: Int, sums: Map[Str, List[Bool]],
     }
     for e in es {
       let args = f.edges[e].args
-      if pi >= args.len() || args[pi] < 0 || !imm_at(f, args[pi], parts, k, sums, depth + 1) {
+      if pi >= args.len() || args[pi] < 0 || !imm_at(f, args[pi], parts, k, sums, depth + 1, w2) {
         return false
       }
     }
@@ -1392,7 +1399,7 @@ fn imm_at(f: Func, v: Int, parts: List[Str], k: Int, sums: Map[Str, List[Bool]],
       // is immortal (2026-10-24: view_lens hands an option of a view the
       // empty string, and drops its releases)
       for a in x.args {
-        if !imm_at(f, a, parts, k, sums, depth + 1) {
+        if !imm_at(f, a, parts, k, sums, depth + 1, walking) {
           return false
         }
       }
@@ -1405,13 +1412,13 @@ fn imm_at(f: Func, v: Int, parts: List[Str], k: Int, sums: Map[Str, List[Bool]],
     if idx < 0 || idx >= x.args.len() {
       return false
     }
-    return imm_at(f, x.args[idx], parts, k + 1, sums, depth + 1)
+    return imm_at(f, x.args[idx], parts, k + 1, sums, depth + 1, walking)
   }
   if x.op == Op.SetField {
     if aux_int(x.aux) == idx {
-      return imm_at(f, x.args[1], parts, k + 1, sums, depth + 1)
+      return imm_at(f, x.args[1], parts, k + 1, sums, depth + 1, walking)
     }
-    return imm_at(f, x.args[0], parts, k, sums, depth + 1)
+    return imm_at(f, x.args[0], parts, k, sums, depth + 1, walking)
   }
   if x.op == Op.Call && k == parts.len() - 1 {
     // a field of a call of a function whose one return is a struct

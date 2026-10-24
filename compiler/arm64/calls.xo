@@ -3098,6 +3098,9 @@ fn (var g: G) rt_call(v: Int) {
       g.set(v, g.zeros(x.ty))
     }
   }
+  // rt.const_once: a constant's first read, once (cache_const_reads
+  // keeps its list around the loop; the loop's constants stay hoisted)
+  g.mark_cold_call(name0)
 }
 
 /// The parts of a platform call's name `rt.pc.<os>.<sym>[/<n>]`

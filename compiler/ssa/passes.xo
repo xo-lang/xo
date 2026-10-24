@@ -742,7 +742,12 @@ pub fn merge_straight(var f: Func, m: Module, calls: List[Bool]) -> Bool {
 /// (Go's cse pass: arithmetic, a field or tag of a value, with
 /// a type that is not counted, so no retain or release pairs with it).
 /// An earlier twin that faulted (overflow) never let control reach the
-/// later one. False when nothing changed.
+/// later one. A length call is pure too, and so is an element read
+/// (list.index: a list is a value) whose counted result, its twin's
+/// too, is only ever read from (borrow_only): no count moves with it
+/// (2026-10-24: `XS[i % XS.len()]` read the constant's list twice, so
+/// the index was not seen to be below its length). False when nothing
+/// changed.
 pub fn cse(var f: Func, m: Module) -> Bool {
   if f.blocks.is_empty() {
     return false
@@ -757,14 +762,31 @@ pub fn cse(var f: Func, m: Module) -> Bool {
   var have: Map[Str, List[Int]] = {}
   var repl: Map[Int, Int] = {}
   var dead: Map[Int, Bool] = {}
+  // values used other than as a list read's or length's operand, once a
+  // counted element read is met
+  var shared: Map[Int, Bool] = {}
+  var scanned = false
   var i = post.len() - 1
   while i >= 0 {
     let b = post[i]
     i -= 1
     for v in f.blocks[b].instrs {
       let x = f.values[v]
-      if !cse_op(x.op) || x.ty < 0 || m.heap(x.ty) {
+      let call = if x.op == Op.Call { cse_call(x.aux) } else { "" }
+      if call.is_empty() && (!cse_op(x.op) || x.ty < 0 || m.heap(x.ty)) {
         continue
+      }
+      if !call.is_empty() && x.ty >= 0 && m.heap(x.ty) {
+        if call != "list.index" {
+          continue
+        }
+        if !scanned {
+          shared = read_only_uses(f)
+          scanned = true
+        }
+        if shared.contains(v) {
+          continue
+        }
       }
       // one with a landing stays (its block branches on the landing);
       // it may still be the twin a later one takes
@@ -774,7 +796,12 @@ pub fn cse(var f: Func, m: Module) -> Bool {
         None => {}
         I(n) => key = "${key} #${n}"
         P(t, fl) => key = "${key} #${t}.${fl}"
-        F(..) | B(..) | S(..) | Bs(..) => continue
+        S(n) => if call.is_empty() {
+          continue
+        } else {
+          key = "${key} ${n}"
+        }
+        F(..) | B(..) | Bs(..) => continue
       }
       // a constant operand by its value: each use site has its own Const
       var args: List[Str] = []
@@ -978,6 +1005,43 @@ fn tuple_operand_owned(f: Func, m: Module, a: Int) -> Bool {
 /// emitter folds a compare used once into its branch's flags).
 fn cse_op(op: Op) -> Bool {
   op is Op.Add | Op.Sub | Op.Mul | Op.Neg | Op.And | Op.Or | Op.Xor | Op.Not | Op.Shl | Op.Shr | Op.IntConv | Op.Field | Op.Tag
+}
+
+/// The name of a call cse may merge with an identical dominating one
+/// (a length, or an element read with borrow_only's condition), else "".
+fn cse_call(aux: Aux) -> Str {
+  match aux {
+    S(n) => if n is "list.len" | "Str.len" | "bytes.len" | "list.index" { n } else { "" }
+    None | I(..) | F(..) | B(..) | Bs(..) | P(..) => ""
+  }
+}
+
+/// The values of f used other than as the list or text operand of a
+/// list.index or length call (an operand of anything else, a jump's
+/// argument, a debug binding): a counted list element read whose value
+/// is not one of them only borrows (cse).
+fn read_only_uses(f: Func) -> Map[Int, Bool] {
+  var out: Map[Int, Bool] = {}
+  for b in f.blocks {
+    for v in b.instrs {
+      let x = f.values[v]
+      let name = if x.op == Op.Call { cse_call(x.aux) } else { "" }
+      for (k, a) in x.args.indexed() {
+        if k > 0 || name.is_empty() {
+          out[a] = true
+        }
+      }
+      for se in x.succs {
+        for a in f.edges[se].args {
+          out[a] = true
+        }
+      }
+    }
+  }
+  for d in f.dbinds {
+    out[d.value] = true
+  }
+  out
 }
 
 /// Whether op's two operands may be swapped.

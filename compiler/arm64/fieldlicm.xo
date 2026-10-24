@@ -377,6 +377,9 @@ fn new_proof(f: ssa.Func, rpo: List[Int]) -> Proof {
 /// length (len_root), took its true edge into a block that has only that
 /// edge and dominates at.
 fn (pr: Proof) proven(f: ssa.Func, at: Int, idx: Int, l: Int) -> Bool {
+  if pr.rem_of_len(f, idx, l) {
+    return true
+  }
   if !pr.less.contains(idx) {
     return false
   }
@@ -391,6 +394,23 @@ fn (pr: Proof) proven(f: ssa.Func, at: Int, idx: Int, l: Int) -> Bool {
     }
   }
   false
+}
+
+/// Whether idx is `a % n` with a never negative and n the length of
+/// list l: in [0, n), a length of 0 having faulted in the remainder
+/// (2026-10-24: `XS[i % XS.len()]` kept its bounds check, where Go's
+/// prove pass drops it).
+fn (pr: Proof) rem_of_len(f: ssa.Func, idx: Int, l: Int) -> Bool {
+  let x = f.values[idx]
+  if x.op != ssa.Op.Rem || x.args.len() != 2 {
+    return false
+  }
+  let nv = f.values[x.args[1]]
+  if nv.op != ssa.Op.Call || aux_str(nv.aux) != "list.len" || nv.args.len() != 1 {
+    return false
+  }
+  let r = len_root(f, l, [], FIELD_DEPTH)
+  r >= 0 && len_root(f, nv.args[0], [], FIELD_DEPTH) == r && pr.nonneg(f, x.args[0], [], FIELD_DEPTH)
 }
 
 /// The values n with `x < n` known in block at.
@@ -452,8 +472,10 @@ fn len_root(f: ssa.Func, x: Int, seen: List[Int], d: Int) -> Int {
 /// Whether Int value v is never negative: a constant at least 0, a
 /// length, a block parameter whose incoming values are (one being walked
 /// counts), or the sum of two such: a checked add (it faults rather than
-/// wrap), or an unchecked add of 0 or 1 to a where `a < n` holds (n a
-/// length or another value not negative), so the sum is at most n.
+/// wrap), or an unchecked add of 0 or 1 to a where `a < n` holds for
+/// some n, so the sum is at most n and does not wrap (2026-10-24: n
+/// need not be a length or not negative, so `for i in 0..n` with n a
+/// parameter counts).
 fn (pr: Proof) nonneg(f: ssa.Func, v: Int, seen: List[Int], d: Int) -> Bool {
   if d <= 0 {
     return false
@@ -505,10 +527,8 @@ fn (pr: Proof) nonneg(f: ssa.Func, v: Int, seen: List[Int], d: Int) -> Bool {
         if !small {
           continue
         }
-        for n in pr.bounds(x.block, x.args[j]) {
-          if pr.nonneg(f, n, seen, d - 1) {
-            return true
-          }
+        if !pr.bounds(x.block, x.args[j]).is_empty() {
+          return true
         }
       }
       false

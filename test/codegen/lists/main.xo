@@ -2,9 +2,12 @@
 
 // A loop over 0..xs.len() needs no bounds check on arm64 (the length
 // fact of the loop), and reads by a scaled register offset (decision
-// 0208). The LLVM emitter types the loads for alias analysis (tbaa).
+// 0208). The LLVM emitter types the loads for alias analysis (tbaa). A
+// bounds check is a b.hs to the function's local fault label (the
+// pattern was -"_xo_fault_index", a name the code never has, until
+// 2026-10-24).
 fn sum(xs: List[Int]) -> Int {
-  // arm64: "ldr x[0-9]+, \[x[0-9]+, x[0-9]+, lsl #3\]" -"_xo_fault_index"
+  // arm64: "ldr x[0-9]+, \[x[0-9]+, x[0-9]+, lsl #3\]" -"b\.hs"
   // llvm: "load i64, ptr %t[0-9]+, !tbaa"
   var s = 0
   for i in 0..xs.len() {
@@ -13,7 +16,33 @@ fn sum(xs: List[Int]) -> Int {
   s
 }
 
+// An index `i % xs.len()` with i never negative is below the length (a
+// length of 0 faults in the remainder): no bounds check (2026-10-24).
+fn pick(xs: List[Int], n: Int) -> Int {
+  // arm64: "sdiv" -"b\.hs"
+  var s = 0
+  for i in 0..n {
+    s += xs[i % xs.len()]
+  }
+  s
+}
+
+const XS: List[Int] = [3, 1, 4, 1, 5, 9]
+
+// A constant's list read in a loop is kept around it after the first
+// read (cache_const_reads), the length's read and the element's are one
+// read, and the list is immortal, so no release: no bounds check and no
+// drop call (2026-10-24).
+fn cycle(n: Int) -> Int {
+  // arm64: "_xo_x_const_once" -"b\.hs" -"bl Lxo_drop"
+  var s = 0
+  for i in 0..n {
+    s += XS[i % XS.len()]
+  }
+  s
+}
+
 fn main(os: Os) {
   let n = os.env.args().len()
-  os.stdio.println("${sum([1, 2, n])}")
+  os.stdio.println("${sum([1, 2, n])} ${pick([1, 2, n], 5)} ${cycle(7)}")
 }
