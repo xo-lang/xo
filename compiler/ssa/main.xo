@@ -129,6 +129,7 @@ fn dump_body(os: Os, args: List[Str]) ! {
     }
     if rejected(c) {
       out.write("== rejected\n")
+      os.stdio.eprintln("xo dev dump ssa: rejected: ${first_error(c)}")
       continue
     }
     let (lower_off, lower_err) = parse_lowerings(os.env.get("XO_LOWER") ?? "")
@@ -216,6 +217,18 @@ fn closure_parent(name: Str) -> Str {
     return ""
   }
   name.trim_suffix(".fn${last}")
+}
+
+/// The checker's first error, as `file:line:col: code message`, which a
+/// rejected run prints on standard error (2026-10-24: `== rejected` alone
+/// left DS-2 guessing why a tuple program was refused).
+fn first_error(c: check.Checker) -> Str {
+  for d in c.diags {
+    if !d.warning || d.code == "XO0900" {
+      return "${d.file}:${d.line}:${d.col}: ${d.code} ${d.message}"
+    }
+  }
+  ""
 }
 
 /// Whether the checker reported an error (build.go checkOpts).
