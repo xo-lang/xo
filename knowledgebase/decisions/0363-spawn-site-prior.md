@@ -121,6 +121,40 @@ data leaves open: a tighter flag (the lock is the only work in the loop body,
 or the loop body between lock takes has no call), which mutex and rwmutex
 satisfy and these pools do not.
 
+### Tighter flag (2026-10-24, same day)
+
+The pools above fail the third criterion, so the flag was narrowed
+(`lockish` 07f3c4286, saved as refs/recover/2026-10-24/lockish, never
+pushed): a spawn is flagged only when a loop of its closure takes a Mutex and
+every call outside the closures built in that loop is a Mutex take or an
+Atomic method. A worker pool calls `queue.recv()` and its work function
+between lock takes, so it is no longer flagged; conc `mutex` and `rwmutex`
+(the lock is the work, `steps()` runs under it) still are. Same method, xos
+clean, checksums equal, `xo bench --ab` 20 rounds, quiet window, wall B/A
+(95% interval), B = the tighter flag:
+
+| Program | B / A | Verdict |
+|---|---|---|
+| conc mutex | 0.650 (0.636 to 0.660) | better |
+| conc rwmutex | 0.255 (0.251 to 0.257) | better |
+| read-mostly rwmutex (1 write in 1,000) | 0.575 (0.539 to 0.631) | better |
+| pmap | 1.002 (0.996 to 1.008) | noise |
+| fanout | 0.997 (0.985 to 1.011) | noise |
+| spawn | 0.996 (0.966 to 1.025) | noise |
+| pingpong | 0.998 (0.992 to 1.010) | noise |
+| worker pool, 100 rounds per job | 1.006 (0.998 to 1.021) | noise |
+| worker pool, 1,000 rounds per job | 1.006 (0.996 to 1.018) | noise |
+| worker pool, 10,000 rounds per job | 0.996 (0.989 to 1.009) | noise |
+
+The two lock-bound rows keep their gain (the same as the first flag, 0.654
+and 0.252) and the three pools that were 0.79 to 6.17 are back to the
+parent. Not run with this flag: the CRUD and HTTP benches, TestRuntime* and
+--race (the first flag's pass does not carry over, since a different set of
+sites is flagged), and the 13 real bench pools. What the narrower flag
+misses: a lock in a loop with a non-lock call in it (such a site is a pool
+or a mixed workload, not one this experiment moves), so it is a flag for
+programs whose loop is the lock.
+
 ## Consequences
 
 If it works: the two lock-bound rows approach the serial run without a knob
