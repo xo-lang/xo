@@ -13,6 +13,8 @@
 struct CStats {
   n: Map[Str, Int] = {}
   bytes: Map[Str, Int] = {}
+  /// XO_CACHE_STATS=keys: one line per entry read or stored, in order
+  log: List[Str] = []
 }
 
 /// The timing Fs: forwards every call to inner.
@@ -21,6 +23,8 @@ struct StatFs {
   st: Mutex[CStats]
   /// the cache directories, each ending in "/"
   roots: List[Str]
+  /// log every entry read or stored (XO_CACHE_STATS=keys)
+  keys: Bool = false
 }
 
 /// The area of path: "" when it is not under a cache directory.
@@ -52,9 +56,13 @@ fn (f: StatFs) note(path: Str, op: Str, size: Int) {
     return
   }
   let k = "${a} ${op}"
+  let logit = f.keys && a != "prune" && (op is "read hit" | "write" | "rename")
   f.st.with(fn(var s) {
     s.n[k] = (s.n.get(k) ?? 0) + 1
     s.bytes[k] = (s.bytes.get(k) ?? 0) + size
+    if logit {
+      s.log.push("${a} ${op} ${size} ${path}")
+    }
   })
 }
 
@@ -225,9 +233,10 @@ fn (f: StatFs) try_lock(path: Str) -> FileLock? ! FsErr uses fs.write {
   r
 }
 
-/// Whether XO_CACHE_STATS=1 asks for the summary.
+/// Whether XO_CACHE_STATS=1 (or keys) asks for the summary.
 fn cache_stats_on(os: Os) -> Bool {
-  (os.env.get("XO_CACHE_STATS") ?? "") == "1"
+  let v = os.env.get("XO_CACHE_STATS") ?? ""
+  v == "1" || v == "keys"
 }
 
 /// os with its Fs timed into st (XO_CACHE_STATS=1): the cache directories
@@ -240,7 +249,7 @@ fn stats_os(os: Os, ctx: Ctx, st: Mutex[CStats]) -> Os {
       roots.push("${d.trim_suffix("/")}/")
     }
   }
-  Os{net: os.net, fs: StatFs{inner: os.fs, st: st, roots: roots}, clock: os.clock, rand: os.rand, env: os.env, proc: os.proc, stdio: os.stdio, tasks: os.tasks}
+  Os{net: os.net, fs: StatFs{inner: os.fs, st: st, roots: roots, keys: (os.env.get("XO_CACHE_STATS") ?? "") == "keys"}, clock: os.clock, rand: os.rand, env: os.env, proc: os.proc, stdio: os.stdio, tasks: os.tasks}
 }
 
 /// The summary: "cache stats: AREA OP: N calls, B bytes", the most calls
@@ -259,5 +268,8 @@ fn cache_stats_text(st: Mutex[CStats]) -> Str {
     b.write("cache stats: ${k}: ${n} calls, ${by} bytes\n")
   }
   b.write("cache stats: total: ${calls} calls, ${bytes} bytes\n")
+  for l in s.log {
+    b.write("cache key: ${l}\n")
+  }
   b.freeze()
 }
