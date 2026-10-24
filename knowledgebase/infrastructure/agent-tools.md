@@ -205,6 +205,12 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   day came from old tables: two already fixed, one misread, two
   stale), re-measure it on today's main and cite the figure's file:line
   and date; rankings name their source the same way.
+- Build both sides of an A/B (`xo build` in a scratch script, `xo bench
+  --ab`) with `XO_INLINE_STRICT=1`: without it a module that fails
+  verification builds without inlining and says so in one warning line
+  that `| tail -1` or `> /dev/null` hides (gotchas/arm64-inline-verify-fallback.md;
+  observed again 2026-10-24 on an RC change). gate.sh, hourly.sh, the Go
+  tests and bootstrap-xo.sh already set it.
 - Before asking for a Windows CI run (lead, 2026-10-22: four of five
   crash and PDB runs failed on setup, not on the code): build the
   script's programs on the Mac with the oldest seed that CI may use
