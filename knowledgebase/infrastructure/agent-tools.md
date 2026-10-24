@@ -211,6 +211,16 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   day came from old tables: two already fixed, one misread, two
   stale), re-measure it on today's main and cite the figure's file:line
   and date; rankings name their source the same way.
+- An A/B pair differs in the change only (lead, 2026-10-24: three runs
+  thrown away that day): build both programs from one revision, the base
+  from that revision's file and not a moved origin/main (`git show
+  origin/main:FILE` picked up another push), with xos built from committed
+  trees (a dirty tree's xo, XO_DIRTY set, runs on cold caches and measured
+  5 times slower), and print each xo's `xo version -m` and each build's exit
+  status (`set -o pipefail`; a failed xobuild behind `| tail` left the old
+  xo in place). Start a measurement only on the lead's go in a window,
+  never automatically when the load drops: two runs started that way
+  overlapped another agent's window.
 - Build both sides of an A/B (`xo build` in a scratch script, `xo bench
   --ab`) with `XO_INLINE_STRICT=1`: without it a module that fails
   verification builds without inlining and says so in one warning line
