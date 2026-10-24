@@ -600,6 +600,19 @@ fn (var g: G) str_base(ws: List[Int]) -> Int {
   if let Some(x) = g.cm.bases.get((obj, w1, -16)) {
     return x
   }
+  if let Some(k) = g.kvals.get(w1) {
+    // a constant's second word (a literal: its view offset known, 0 for
+    // a whole object): the header and the offset in one add (2026-10-23:
+    // a constant table's word was a move, a shift, and two adds on
+    // x86_64 for every read, num.xo pow10_hi in json enc_floats)
+    let off = k.shr_logical(32)
+    if off >= 0 && off < 4080 {
+      let d0 = g.def1(false, "add $d0, $u0, #${16 + off}", [obj])
+      let _mk = g.m_()
+      g.cm.bases[(obj, w1, -16)] = d0
+      return d0
+    }
+  }
   var s = 0
   if g.x86 {
     let off = g.def1(false, "lsr $d0, $u0, #32", [w1])

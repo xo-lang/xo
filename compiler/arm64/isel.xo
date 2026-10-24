@@ -339,6 +339,7 @@ fn (var g: G) rt(name: Str, args: List[Src], res: List[Bool]) -> List[Int] {
 
 fn (var g: G) imm(n: Int) -> Int {
   let r = g.konst(g.def1(false, mov_imm(n), []))
+  g.kvals[r] = n
   if g.m.debug_info {
     g.kints[r] = n
   }

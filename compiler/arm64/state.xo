@@ -358,6 +358,9 @@ struct G {
   /// constant (imm) or a symbol's address (sym_addr), for the variables'
   /// locations of words no register keeps (dwvars.xo)
   kints: Map[Int, Int] = {}
+  /// the value of each register g.imm loaded (str_base: a literal's
+  /// length and view offset word)
+  kvals: Map[Int, Int] = {}
   ksyms: Map[Int, Str] = {}
   /// FAR_BASE when the frame is past MAX_FRAME, or 0
   base: Int = 0
@@ -458,6 +461,7 @@ fn (var g: G) begin_func(fi: Int) {
   g.dv_copies_made = false
   g.vranges = []
   g.kints = {}
+  g.kvals = {}
   g.ksyms = {}
   g.dl_n = 0
   g.du_n = 0
