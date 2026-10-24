@@ -9,6 +9,8 @@
 // Not timed: a type that is an Fs performs only fs effects, so it cannot
 // read the clock; --phase-times says which phase the time went to.
 
+use std/crypto
+
 /// Counts and bytes per "AREA OP".
 struct CStats {
   n: Map[Str, Int] = {}
@@ -50,7 +52,11 @@ fn (f: StatFs) area(path: Str) -> Str {
   }
 }
 
-fn (f: StatFs) note(path: Str, op: Str, size: Int) {
+fn (f: StatFs) note(path: Str, op: Str, size: Int) { f.note_sum(path, op, size, "") }
+
+/// note, with the content's hash on a logged write (XO_CACHE_STATS=keys
+/// only: two entries of different keys with one hash hold the same bytes).
+fn (f: StatFs) note_sum(path: Str, op: Str, size: Int, sum: Str) {
   let a = f.area(path)
   if a.is_empty() {
     return
@@ -61,7 +67,7 @@ fn (f: StatFs) note(path: Str, op: Str, size: Int) {
     s.n[k] = (s.n.get(k) ?? 0) + 1
     s.bytes[k] = (s.bytes.get(k) ?? 0) + size
     if logit {
-      s.log.push("${a} ${op} ${size} ${path}")
+      s.log.push(if sum.is_empty() { "${a} ${op} ${size} ${path}" } else { "${a} ${op} ${size} ${path} sum ${sum}" })
     }
   })
 }
@@ -115,7 +121,8 @@ fn (f: StatFs) walk(dir: Str) -> List[FileInfo] ! FsErr uses fs.read {
 
 fn (f: StatFs) write(path: Str, data: Bytes) -> () ! FsErr uses fs.write {
   let r = f.inner.write(path, data)
-  f.note(path, "write", data.len())
+  let sum = if f.keys { crypto.sha256(data).to_hex()[0..16] } else { "" }
+  f.note_sum(path, "write", data.len(), sum)
   r
 }
 
