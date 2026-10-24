@@ -1308,7 +1308,17 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   }
   // arm64 (and amd64, the arm64 MIR retargeted): the assembly of each
   // target; the host's is linked
-  let dir = "${bdir}/${march}"
+  let sdir = "${bdir}/${march}"
+  write_or_fail(os, sdir, "", b"")
+  // the files of this build (the assembly, the part objects, the zone and
+  // build information objects) are in a directory of its own: builds of
+  // one program share sdir, and one writing prog-darwin.1.o while another
+  // linked it gave "not a 64 bit Mach-O file" (two concurrent builds,
+  // 2026-10-24; builds with other flags would link mismatched parts). The
+  // program of a build without -o stays in sdir. XO_KEEP_ASM=1 keeps the
+  // files where they were, in sdir.
+  let work_keep = (os.env.get("XO_KEEP_ASM") ?? "") == "1"
+  let dir = if work_keep { sdir } else { "${sdir}/w-${os.rand.bytes(6).to_hex()}" }
   write_or_fail(os, dir, "", b"")
   // decision 0352: a build for one target OS reads only the modules, the
   // diagnostics and (xo dev's reuse) the parse cache of the checker from
@@ -1474,7 +1484,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     if march == "amd64" && tgoos == "windows" {
       // the amd64 backend's windows/amd64 program (decision 0254 6b):
       // clang's assembler and lld-link (win_amd64_link)
-      let wbin = bin_path(dir, out, name, tg, o.many_targets)
+      let wbin = bin_path(sdir, out, name, tg, o.many_targets)
       var wsrcs = [s]
       if p.parts.len() > 1 {
         wsrcs = []
@@ -1592,7 +1602,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         fail(os, "the arm64 backend needs a C compiler to assemble and link: install one (macOS: xcode-select --install; Debian or Ubuntu: apt-get install gcc, or clang) or set XO_CC")
       }
     }
-    let bin = bin_path(dir, out, name, tg, o.many_targets)
+    let bin = bin_path(sdir, out, name, tg, o.many_targets)
     let lk = link_inputs(os, ctx, o, c, dir, code, uses_time, cur_tu, no_cc, tgoos, march, march, inl_fb)
     let flags = ["-O2"] + lk.flags
     // the program's assembly: one file, or the files of a parallel
@@ -1735,6 +1745,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     }
     t = lap(os, phases, "cc", t)
     bins.push((tg, bin))
+  }
+  if dir != sdir {
+    os.fs.remove_all(dir).ignore_err("only disk: the prune takes it after 30 minutes")
   }
   if !inl_fb.is_empty() {
     // the last line before the outputs (owner, 2026-10-24: the warning

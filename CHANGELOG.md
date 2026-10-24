@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Concurrent `xo build` of one program no longer share the files they link: each
+  build writes its assembly and part objects in its own directory under the
+  build directory (removed after the link; `XO_KEEP_ASM=1` keeps them in
+  place). Before, one build could truncate a part object another was linking
+  ("not a 64 bit Mach-O file").
 - std/json on the native backends decodes and encodes the sized integers
   (Int8, Int16, Int32, UInt8, UInt16, UInt32, UInt64) and Float32; a struct with
   one of them used to fail to build there ("converting `Int` to `Int16`"), with

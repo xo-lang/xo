@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -147,5 +148,60 @@ func TestBuildDevNull(t *testing.T) {
 		if code := run(t, append(args, filepath.Join(dir, "app")), &out, &errb); code != 0 {
 			t.Errorf("xo build %s -o /dev/null: exit %d\n%s%s", be, code, out.String(), errb.String())
 		}
+	}
+}
+
+// TestBuildWorkDirsPrivate: the files of a build (assembly, part objects)
+// are in a directory of that build, so concurrent builds of one program
+// never write the file another links (two concurrent builds failed once
+// with "prog-darwin.1.o: not a 64 bit Mach-O file", 2026-10-24); the
+// directory is gone after the link, and XO_KEEP_ASM=1 keeps the assembly
+// beside the build directory's other files.
+func TestBuildWorkDirsPrivate(t *testing.T) {
+	t.Parallel()
+	dir := writeFiles(t, map[string]string{
+		"app/xo.mod":  "module app\n",
+		"app/main.xo": "fn main(os: Os) {\n  os.stdio.println(\"hi\")\n}\n",
+		"out/.keep":   "",
+	})
+	chdir(t, filepath.Join(dir, "app"))
+	setenv(t, "XO_BIN_CACHE", "off")
+	setenv(t, "XO_WHOLE_BUILD", "off")
+	bdir := filepath.Join(dir, "build")
+	setenv(t, "XO_BUILD_DIR", bdir)
+	for round := 0; round < 4; round++ {
+		var wg sync.WaitGroup
+		codes := make([]int, 4)
+		errs := make([]string, 4)
+		for i := range codes {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				var out, errOut bytes.Buffer
+				codes[i] = run(t, []string{"build", "-o", filepath.Join(dir, "out", "p"+strconv.Itoa(i)), "."}, &out, &errOut)
+				errs[i] = errOut.String()
+			}()
+		}
+		wg.Wait()
+		for i, c := range codes {
+			if c != 0 {
+				t.Errorf("round %d build %d: exit %d\n%s", round, i, c, errs[i])
+			}
+		}
+	}
+	if left, _ := filepath.Glob(filepath.Join(bdir, "*", "*", "w-*")); len(left) > 0 {
+		t.Errorf("work directories left after the links: %v", left)
+	}
+	if kept, _ := filepath.Glob(filepath.Join(bdir, "*", "*", "prog-*.o")); len(kept) > 0 && runtime.GOARCH == "arm64" {
+		t.Errorf("part objects left in the build directory: %v", kept)
+	}
+
+	setenv(t, "XO_KEEP_ASM", "1")
+	var out, errOut bytes.Buffer
+	if c := run(t, []string{"build", "-o", filepath.Join(dir, "out", "keep"), "."}, &out, &errOut); c != 0 {
+		t.Fatalf("XO_KEEP_ASM build: exit %d\n%s", c, errOut.String())
+	}
+	if kept, _ := filepath.Glob(filepath.Join(bdir, "*", "*", "prog-*")); len(kept) == 0 {
+		t.Errorf("XO_KEEP_ASM=1 kept no prog-* file in the build directory")
 	}
 }
