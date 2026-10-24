@@ -218,3 +218,214 @@ fn reachable(f: Func) -> List[Bool] {
   }
   reach
 }
+
+// A constant read in a loop, cached across its iterations (2026-10-24,
+// DS-1's `XS[i % XS.len()]` at 30 instructions an iteration against Go's
+// 13): the read that reuse_const_reads keeps still ran its fast path every
+// iteration (the services record, two acquiring loads, two tests). The
+// loop header carries whether the read has given a list yet, and the
+// list; the read takes the list when it has, else reads as before, and
+// every back edge passes true and the list read. Unlike a read before the
+// loop, this sees a constant first built inside the loop; a built slot
+// never changes until exit (consts.xo), and a read that faults never
+// reaches a back edge.
+
+/// The fast path's result of constant idx before loop header h: whether
+/// the slot was built, and its list.
+struct Pre {
+  ok: Int
+  list: Int
+}
+
+/// The preheader edge of loop header h: the only edge into h from a
+/// block h does not dominate, that block ending in a jump to h; -1 when
+/// h is not a loop header or has no such edge.
+fn preheader(f: Func, idom: List[Int], h: Int) -> Int {
+  var outside = -1
+  var back = false
+  for e in f.blocks[h].preds {
+    let fr = f.edges[e].from
+    if fr < 0 || idom[fr] < 0 {
+      continue
+    }
+    if dominates(idom, h, fr) {
+      back = true
+    } else if outside >= 0 {
+      return -1
+    } else {
+      outside = e
+    }
+  }
+  if !back || outside < 0 {
+    return -1
+  }
+  let p = f.edges[outside].from
+  let t = f.term(p)
+  if t < 0 || f.values[t].op != Op.Jump || f.values[t].succs.len() != 1 {
+    return -1
+  }
+  outside
+}
+
+/// Caches each inline constant read in a loop that it runs every
+/// iteration (its join dominates each back edge) in the innermost such
+/// loop's header; whether any was.
+pub fn cache_const_reads(var f: Func) -> Bool {
+  var any = false
+  var done: Map[Int, Bool] = {}
+  while true {
+    // the reads as f is now (each cache adds blocks and parameters)
+    var next = -1
+    let reads = const_reads(f)
+    for (i, r) in reads.indexed() {
+      if !done.contains(r.start) {
+        next = i
+        break
+      }
+    }
+    if next < 0 {
+      return any
+    }
+    let r = reads[next]
+    done[r.start] = true
+    let idom = dominators(f)
+    if idom[r.start] < 0 {
+      continue
+    }
+    let h = inner_loop(f, idom, r.start)
+    if h < 0 {
+      continue
+    }
+    // every back edge from a block the read's join dominates
+    var ok = true
+    var latches: List[Int] = []
+    for e in f.blocks[h].preds {
+      let fr = f.edges[e].from
+      if fr >= 0 && idom[fr] >= 0 && dominates(idom, h, fr) {
+        if !dominates(idom, r.join, fr) {
+          ok = false
+        }
+        latches.push(e)
+      }
+    }
+    if !ok || latches.is_empty() {
+      continue
+    }
+    let e0 = preheader(f, idom, h)
+    let bt = f.values[r.loads[3]].ty
+    let lt = f.values[r.res].ty
+    let seen = f.add_param(h, bt)
+    let list = f.add_param(h, lt)
+    let p = f.edges[e0].from
+    let no = f.add(p, Op.Const, bt, Aux.B(b: false), [])
+    let empty = f.add(p, Op.Call, lt, Aux.S(s: "rt.rl_empty"), [])
+    before_jump(f, p, [no, empty])
+    f.edges[e0].args = f.edges[e0].args + [no, empty]
+    for e in latches {
+      let fr = f.edges[e].from
+      let yes = f.add(fr, Op.Const, bt, Aux.B(b: true), [])
+      before_jump(f, fr, [yes])
+      f.edges[e].args = f.edges[e].args + [yes, r.res]
+    }
+    // the read moves to a block the split makes: not cached again
+    let n0 = f.blocks.len()
+    if split_read(f, r, Pre{ok: seen, list: list}) {
+      any = true
+    }
+    for nb in n0..f.blocks.len() {
+      done[nb] = true
+    }
+  }
+  any
+}
+
+/// The innermost loop header h that dominates block s with s in its loop
+/// (h reachable from s) and one preheader; -1 for none.
+fn inner_loop(f: Func, idom: List[Int], s: Int) -> Int {
+  var seen: List[Bool] = []
+  for _ in 0..f.blocks.len() {
+    seen.push(false)
+  }
+  var stack = [s]
+  seen[s] = true
+  while !stack.is_empty() {
+    let b = stack.pop() ?? 0
+    let t = f.term(b)
+    if t < 0 {
+      continue
+    }
+    for e in f.values[t].succs {
+      let to = f.edges[e].to
+      if !seen[to] {
+        seen[to] = true
+        stack.push(to)
+      }
+    }
+  }
+  var b = s
+  while b > 0 {
+    if seen[b] && preheader(f, idom, b) >= 0 {
+      return b
+    }
+    if idom[b] == b {
+      break
+    }
+    b = idom[b]
+  }
+  -1
+}
+
+/// Moves vs, just added at the end of block b, before b's terminator.
+fn before_jump(var f: Func, b: Int, vs: List[Int]) {
+  let ins = f.blocks[b].instrs
+  var out: List[Int] = []
+  for v in ins {
+    if !vs.contains(v) {
+      out.push(v)
+    }
+  }
+  let t = out.pop() ?? -1
+  for v in vs {
+    out.push(v)
+  }
+  out.push(t)
+  f.blocks[b].instrs = out
+}
+
+/// Splits read r's start block before its loads: the block tests p.ok
+/// and jumps to r's join with p.list, or goes on to the read; whether it
+/// did (not when a value the join takes is defined among the loads).
+fn split_read(var f: Func, r: CRead, p: Pre) -> Bool {
+  let ins = f.blocks[r.start].instrs
+  var k = ins.len()
+  for (i, v) in ins.indexed() {
+    if r.loads.contains(v) && i < k {
+      k = i
+    }
+  }
+  if k >= ins.len() {
+    return false
+  }
+  let rest = ins[k..ins.len()]
+  for (i, a) in r.args.indexed() {
+    if i != r.pi && rest.contains(a) {
+      return false
+    }
+  }
+  let s2 = f.new_block()
+  f.blocks[s2].instrs = rest
+  for v in rest {
+    f.values[v].block = s2
+  }
+  // the read's branch now leaves the new block
+  for e in f.values[r.br].succs {
+    f.edges[e].from = s2
+  }
+  f.blocks[r.start].instrs = ins[0..k]
+  let fast = f.new_block()
+  let _b = f.branch(r.start, p.ok, fast, s2)
+  var jargs = r.args
+  jargs[r.pi] = p.list
+  let _j = f.jump(fast, r.join, jargs)
+  true
+}
