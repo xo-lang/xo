@@ -657,9 +657,8 @@ fn bytes_split(b: Bytes, sep: Bytes) -> List[Bytes] {
 /// bytes.SplitN: b cut at each sep, at most n pieces with the unsplit rest
 /// in the last (n below 0: every piece, n 0: an empty list).
 fn bytes_split_n(b: Bytes, sep: Bytes, n: Int) -> List[Bytes] {
-  var out: List[Bytes] = []
   if n == 0 {
-    return out
+    return List[Bytes].with_capacity(0)
   }
   let sl = b.len()
   let m = sep.len()
@@ -667,6 +666,9 @@ fn bytes_split_n(b: Bytes, sep: Bytes, n: Int) -> List[Bytes] {
     // an empty sep splits after each UTF-8 sequence, as Go's explode
     return scan.explode_bytes(b, n)
   }
+  // no count first: the list's growth is cheaper than a second pass over
+  // the bytes (measured, bench/results/strsplit-vs-go-2026-10-24.md)
+  var out: List[Bytes] = []
   var start = 0
   var count = 0
   while n < 0 || count < n - 1 {

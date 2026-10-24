@@ -995,22 +995,28 @@ fn tail16(b: Bytes, i: Int, n: Int, c: Int) -> Int {
 /// strings.Split: an empty separator splits into UTF-8 sequences (an
 /// invalid byte alone).
 pub fn split(s: Str, sep: Str) -> List[Str] {
-  var out: List[Str] = []
   let n = s.len()
   let m = sep.len()
   let b = s.bytes()
   var start = 0
   if m == 0 {
+    // one piece per UTF-8 sequence: counted first (a word scan), so the
+    // list allocates once, as Go's explode sizes its slice
+    var out = List[Str].with_capacity(bytes_rune_count(b))
     while start < n {
       let k = if b[start] < 0x80 { 1 } else { raw.bytes_decode(b, start) & 7 }
-      out.push(raw.str_slice(s, start, start + k))
+      // one sequence, so both ends are boundaries by construction
+      out.push(rt.str_view(s, start, start + k))
       start += k
     }
     return out
   }
   if m == 1 {
-    // one byte: 16 at a time, every match of a step in turn
     let c = Int(sep.bytes()[0])
+    // no count first: the list's own growth is cheaper than a second pass
+    // over the string (measured, bench/results/strsplit-vs-go-2026-10-24.md)
+    var out: List[Str] = []
+    // one byte: 16 at a time, every match of a step in turn
     let last = n - 16
     var i = 0
     while i <= last {
@@ -1032,15 +1038,17 @@ pub fn split(s: Str, sep: Str) -> List[Str] {
         k = k & subw(k, 1)
       }
     }
-  } else {
-    while true {
-      let i = find(s, sep, start)
-      if i < 0 {
-        break
-      }
-      out.push(raw.str_cut(s, start, i))
-      start = i + m
+    out.push(raw.str_cut(s, start, n))
+    return out
+  }
+  var out: List[Str] = []
+  while true {
+    let i = find(s, sep, start)
+    if i < 0 {
+      break
     }
+    out.push(raw.str_cut(s, start, i))
+    start = i + m
   }
   out.push(raw.str_cut(s, start, n))
   out
@@ -1050,8 +1058,8 @@ pub fn split(s: Str, sep: Str) -> List[Str] {
 /// in the last (n below 0: every piece, n 0: none), and each piece ending
 /// save bytes past its separator (split_after's sep length, 0 otherwise).
 fn split_save(s: Str, sep: Str, save: Int, n: Int) -> List[Str] {
-  var out: List[Str] = []
   if n == 0 {
+    var out: List[Str] = []
     return out
   }
   if sep.is_empty() {
@@ -1060,6 +1068,9 @@ fn split_save(s: Str, sep: Str, save: Int, n: Int) -> List[Str] {
   if n < 0 && save == 0 {
     return split(s, sep)
   }
+  // at most n pieces: no count first, the list's growth is cheaper than a
+  // second pass (measured)
+  var out: List[Str] = []
   let sl = s.len()
   let m = sep.len()
   var start = 0
@@ -1086,18 +1097,23 @@ fn explode_n(s: Str, n: Int) -> List[Str] {
   }
   let b = s.bytes()
   let sl = b.len()
+  // Go's cap: the rune count, or n when it is smaller, so the list
+  // allocates once and a large n never reserves more than the text holds
+  let rc = bytes_rune_count(b)
+  out = List[Str].with_capacity(if n > 0 && n < rc { n } else { rc })
   var start = 0
   var i = 0
   var count = 0
   while i < sl && (n < 0 || count < n - 1) {
     let k = if b[i] < 0x80 { 1 } else { raw.bytes_decode(b, i) & 7 }
-    out.push(raw.str_slice(s, start, start + k))
+    // one sequence, so both ends are boundaries by construction
+    out.push(rt.str_view(s, start, start + k))
     start += k
     i += k
     count += 1
   }
   if start < sl {
-    out.push(raw.str_slice(s, start, sl))
+    out.push(raw.str_cut(s, start, sl))
   }
   out
 }
@@ -1110,11 +1126,13 @@ pub fn split_n(s: Str, sep: Str, n: Int) -> List[Str] { split_save(s, sep, 0, n)
 /// byte alone), at most n pieces with the rest in the last (n below 0: one
 /// piece per rune, n 0: none).
 pub fn explode_bytes(b: Bytes, n: Int) -> List[Bytes] {
-  var out: List[Bytes] = []
   if n == 0 {
-    return out
+    return List[Bytes].with_capacity(0)
   }
   let sl = b.len()
+  // Go's explode: the rune count, capped by n, sizes the list
+  let rc = bytes_rune_count(b)
+  var out = List[Bytes].with_capacity(if n > 0 && rc > n { n } else { rc })
   var i = 0
   var count = 0
   while i < sl && (n < 0 || count < n - 1) {
@@ -1172,9 +1190,11 @@ pub fn split_after_n(s: Str, sep: Str, n: Int) -> List[Str] { split_save(s, sep,
 /// The lines of s: split on \n, a trailing \r of each removed, and no
 /// empty last line after a final newline.
 pub fn lines(s: Str) -> List[Str] {
-  var out: List[Str] = []
   let n = s.len()
   let b = s.bytes()
+  // no count first: the list's growth is cheaper than a second pass over
+  // the string (measured, bench/results/strsplit-vs-go-2026-10-24.md)
+  var out: List[Str] = []
   var start = 0
   let last = n - 16
   var i = 0

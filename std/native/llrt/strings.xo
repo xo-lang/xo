@@ -242,6 +242,8 @@ fn field_from(b: Bytes, i: Int) -> (Int, Int) {
 /// bytes.Fields: the runs of non-white-space bytes, split around runs of
 /// white space (unicode.IsSpace), as views of b.
 pub fn fields_bytes(b: Bytes) -> List[Bytes] {
+  // no count first: the list's growth is cheaper than a second pass over
+  // the bytes (measured, bench/results/strsplit-vs-go-2026-10-24.md)
   var out: List[Bytes] = []
   var i = 0
   while i < b.len() {
@@ -258,10 +260,13 @@ pub fn fields_bytes(b: Bytes) -> List[Bytes] {
 /// strings.Fields: the same fields of the text, each one a view of s (a
 /// field boundary is a rune boundary of the valid text).
 pub fn fields(s: Str) -> List[Str] {
-  var out: List[Str] = []
   let b = s.bytes()
+  let n = b.len()
+  // no count first: the list's growth is cheaper than a second pass over
+  // the string (measured, bench/results/strsplit-vs-go-2026-10-24.md)
+  var out: List[Str] = []
   var i = 0
-  while i < b.len() {
+  while i < n {
     let (start, end) = field_from(b, i)
     if start < 0 {
       break

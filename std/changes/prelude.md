@@ -1,5 +1,42 @@
 # prelude changes
 
+## 2026-10-24: perf: the empty-separator split sizes its piece list from the rune count, and its pieces are unchecked views (Str and Bytes)
+
+- Kind: perf
+- Commit: (filled in after the push)
+- Found by: the split benchmark against Go's strings package
+  (bench/perf/strsplit): the empty separator's list grew one push at a
+  time to one piece per rune (`obj.rl_grow_n`, `alloc.resize`, 841.6 M
+  instructions), and every piece paid the checked `raw.str_slice`
+- Go reference: strings.genSplit's explode sizes its slice with
+  `utf8.RuneCountInString`, capped by n, before the loop, and its pieces
+  are plain string headers
+- Test: corpus/strings and corpus/bytes on arm64, LLVM and the Go
+  backend, the goldens split_view, views_split and bytes_split on arm64
+  and LLVM with Go parity and on wasm, and the split and split_empty
+  workloads of bench/perf/strsplit, whose checksums match the Go twin on
+  native and LLVM
+- Timing: bench/results/strsplit-vs-go-2026-10-24.md
+
+`Str.split("")`, `Str.split_n("")`, `Bytes.split("")` and
+`Bytes.split_n("")` size their list once from the rune count
+(`scan.bytes_rune_count`, capped by n as Go does) instead of growing it,
+and make each piece with `rt.str_view`, whose bounds are UTF-8 boundaries
+by construction, instead of the checked `raw.str_slice`. Instructions
+retired, best of 3, base = the parent commit's std, arm64 native:
+split_empty 841.6 M to 327.2 M (0.39) and split, one of whose five
+separators is "", 279.2 M to 176.2 M (0.63). split_one, split_multi,
+split_absent, split_after, lines, bytes_split, bytes_fields, fields and
+the control loop are within 1% of the base.
+
+Counting the pieces first for the other forms was measured and reverted:
+split_one 120.9 M to 129.7 M, fields 234.8 M to 353.4 M, bytes_fields
+242.9 M to 362.3 M, split_after 158.5 M to 173.8 M, lines 111.6 M to
+134.9 M, bytes_split 154.4 M to 169.4 M. A list's growth is geometric,
+so it copies O(pieces) words in all, while counting is a second walk over
+every byte (and, for fields, a second decode per field); only the empty
+separator, where there is a piece per rune, wins.
+
 ## 2026-10-24: feature: Bytes gains the predicate forms (find_where, rfind_where, contains_where, the trim_where family, split_where, map_runes) and Str's share their walks
 
 - Kind: feature
@@ -45,7 +82,6 @@ execute fewer instructions than Go's, because Go's walks call the predicate
 through a func value and Xo's closure is direct; trim_end_where's backward
 walk pays a second decode on a malformed tail, where Go reads at most four
 bytes.
-
 ## 2026-10-24: perf: the set-search and rune loops skip ASCII bytes and decode through raw.decode
 
 - Kind: perf
