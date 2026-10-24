@@ -4,7 +4,9 @@ package main
 
 import (
 	"bytes"
+	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -204,6 +206,79 @@ func TestBuildWorkDirsPrivate(t *testing.T) {
 	}
 	if kept, _ := filepath.Glob(filepath.Join(bdir, "*", "*", "prog-*")); len(kept) == 0 {
 		t.Errorf("XO_KEEP_ASM=1 kept no prog-* file in the build directory")
+	}
+}
+
+// TestBuildLLVMWorkDirsPrivate: concurrent LLVM builds of different
+// programs each write their IR and split modules into a directory of
+// their own, removed after the link, so no prog*.ll is left in the build
+// directory and no build reads another's IR; XO_KEEP_ASM=1 keeps them
+// (2026-10-24: the shared llvm directory raced like the native one, and
+// its IR stayed on disk until the prune).
+func TestBuildLLVMWorkDirsPrivate(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("clang"); err != nil {
+		t.Skip("no clang")
+	}
+	files := map[string]string{"out/.keep": ""}
+	for i := 0; i < 3; i++ {
+		n := strconv.Itoa(i)
+		files["app"+n+"/xo.mod"] = "module app\n"
+		files["app"+n+"/main.xo"] = "fn main(os: Os) {\n  os.stdio.println(\"hi " + n + "\")\n}\n"
+	}
+	dir := writeFiles(t, files)
+	setenv(t, "XO_BIN_CACHE", "off")
+	setenv(t, "XO_WHOLE_BUILD", "off")
+	bdir := filepath.Join(dir, "build")
+	setenv(t, "XO_BUILD_DIR", bdir)
+	leftover := func() []string {
+		var left []string
+		filepath.WalkDir(bdir, func(p string, d fs.DirEntry, err error) error {
+			if err == nil && !d.IsDir() && strings.HasSuffix(p, ".ll") {
+				left = append(left, p)
+			}
+			return nil
+		})
+		return left
+	}
+	for _, split := range []string{"1", "3"} {
+		setenv(t, "XO_LLVM_SPLIT", split)
+		var wg sync.WaitGroup
+		codes := make([]int, 3)
+		errs := make([]string, 3)
+		for i := range codes {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				n := strconv.Itoa(i)
+				var out, errOut bytes.Buffer
+				codes[i] = run(t, []string{"build", "--backend=llvm", "-o", filepath.Join(dir, "out", "p"+split+n), filepath.Join(dir, "app"+n)}, &out, &errOut)
+				errs[i] = errOut.String()
+			}()
+		}
+		wg.Wait()
+		for i, c := range codes {
+			if c != 0 {
+				t.Errorf("split %s build %d: exit %d\n%s", split, i, c, errs[i])
+				continue
+			}
+			got, err := exec.Command(filepath.Join(dir, "out", "p"+split+strconv.Itoa(i))).Output()
+			if err != nil || string(got) != "hi "+strconv.Itoa(i)+"\n" {
+				t.Errorf("split %s program %d printed %q (%v)", split, i, got, err)
+			}
+		}
+		if left := leftover(); len(left) > 0 {
+			t.Errorf("split %s: IR left in the build directory: %v", split, left)
+		}
+	}
+
+	setenv(t, "XO_KEEP_ASM", "1")
+	var out, errOut bytes.Buffer
+	if c := run(t, []string{"build", "--backend=llvm", "-o", filepath.Join(dir, "out", "keep"), filepath.Join(dir, "app0")}, &out, &errOut); c != 0 {
+		t.Fatalf("XO_KEEP_ASM build: exit %d\n%s", c, errOut.String())
+	}
+	if len(leftover()) == 0 {
+		t.Errorf("XO_KEEP_ASM=1 kept no .ll file in the build directory")
 	}
 }
 

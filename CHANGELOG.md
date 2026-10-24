@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- LLVM builds write their IR and split modules in a directory of their own and
+  remove it after the link (they shared one per split setting, like the native
+  path did, and left every `prog*.ll` until the prune); `XO_KEEP_ASM=1` keeps them.
 - The build directories (`<user cache>/xo/build`) thin themselves: every file but the
   programs in a `bin/` goes two hours after its last use, and the cap is 6 GiB
   (was 20): 837 directories held 12 GB, mostly part objects, with nothing removed.

@@ -29,3 +29,10 @@ as before. A build that fails leaves its `w-*` directory for the build
 directory's 30 minute prune. A cross build that stops at the assembly (asm_only)
 writes it in `<build dir>/arm64` itself, where its message names it (test
 TestBuildStopsAtAssemblyKeepsIt). Test: cmd/xo TestBuildWorkDirsPrivate.
+
+The LLVM path had the same shape (`<build dir>/llvm[-split...]` was shared by
+split settings, and its `prog*.ll` and `<dir>-modules` stayed on disk until the
+prune). Since 2026-10-24 each LLVM build writes `<dir>-w-<random>` (and its
+`-modules` beside it) and removes both after the link; `XO_KEEP_ASM=1` keeps the
+shared directory. Test: cmd/xo TestBuildLLVMWorkDirsPrivate (fails on the
+earlier xo: the IR stays in `llvm/`).

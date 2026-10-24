@@ -1187,6 +1187,16 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       // the same program may run at the same time)
       dir = "${dir}-split${if split.stable { split.modules } else { parts.len() }}${if split.by_file { "files" } else { "" }}-${split.lto}"
     }
+    // the IR and the split modules live in a directory of this build alone
+    // (a concurrent build of another program with the same split settings
+    // wrote the same names into the shared one), removed after the link;
+    // XO_KEEP_ASM=1 keeps the shared directory. A program built without -o
+    // stays in sdir
+    let sdir = dir
+    let work_keep = (os.env.get("XO_KEEP_ASM") ?? "") == "1"
+    if !work_keep {
+      dir = "${dir}-w-${os.rand.bytes(6).to_hex()}"
+    }
     write_or_fail(os, dir, "", b"")
     var lls: List[Str] = []
     for (i, part) in parts.indexed() {
@@ -1198,7 +1208,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       write_or_fail(os, dir, o.asm_path, code.bytes())
     }
     t = lap(os, phases, "write", t)
-    let bin = bin_path(dir, out, name, ltarget, o.many_targets)
+    let bin = bin_path(sdir, out, name, ltarget, o.many_targets)
     var lk = link_inputs(os, ctx, o, c, dir, code, uses_time, tu, false, lctx.tgoos, tgoarch, "llvm", "")
     lk.flags = cross + lk.flags
     var race_rt = ""
@@ -1302,6 +1312,10 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       if !rerr.is_empty() {
         fail(os, rerr)
       }
+    }
+    if !work_keep {
+      os.fs.remove_all(dir).ignore_err("only disk: the prune takes it after 30 minutes")
+      os.fs.remove_all("${dir}-modules").ignore_err("only disk: the prune takes it after 30 minutes")
     }
     lap(os, phases, "cc", t)
     return finish(os, ctx, o, c, root, [(ltarget, bin)], tests, fz)
