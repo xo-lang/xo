@@ -1266,7 +1266,12 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     let (hit, entry) = fetch_bin(os, ctx, key, st.bin)
     if !hit {
       let lto = if multi { split.lto } else { lto1 }
-      let lflags = (if dsym { lk.flags + lto_object_flags(os, dir, lto) } else { lk.flags }) + pad + lk.link_only
+      // darwin's linker records each object's path (the LTO object in dir)
+      // in the program: relative to the private directory, two builds of
+      // one program are equal byte for byte (as build_native's cc link)
+      let oso_prefix = if dsym && dir != sdir { "${dir}/" } else { "" }
+      let opad: List[Str] = if oso_prefix.is_empty() { [] } else { ["-Wl,-oso_prefix,${oso_prefix}"] }
+      let lflags = (if dsym { lk.flags + lto_object_flags(os, dir, lto) + opad } else { lk.flags }) + pad + lk.link_only
       let msg = if split.stable {
         // beside dir, not in it: the binary cache's key hashes every
         // file of dir, and the modules are made only after its miss
@@ -1291,7 +1296,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         fail_stage(os, st, "${cc} failed${ir_failure_sources(os, lm, msg)}")
       }
       if dsym {
-        cc_dsym(os, st.bin, o.dsym, lsplit, "")
+        cc_dsym(os, st.bin, o.dsym, lsplit, oso_prefix)
       }
       store_bin(os, ctx, entry, st.bin)
     }

@@ -46,4 +46,4 @@ builds of one program differed byte for byte and
 `-Wl,-oso_prefix,DIR/` (the entries are `prog-darwin.0.o`) and dsymutil
 gets `--oso-prepend-path=DIR/` (Apple's dsymutil has no `--oso-prefix`;
 the wrong flag failed silently and a plain `--debug-info=on` build
-lost its line tables). `TestBuildCCLinkOSOPaths` checks both.
+lost its line tables). `TestBuildCCLinkOSOPaths` checks both, for the native and the LLVM link (the LLVM one names `lto.o`).

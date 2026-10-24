@@ -252,6 +252,29 @@ func TestBuildCCLinkOSOPaths(t *testing.T) {
 	if !bytes.Contains(lines, []byte("main.xo")) {
 		t.Errorf("no line table for main.xo in the program")
 	}
+
+	// the same for the LLVM backend (its objects are an LTO object)
+	for i := range prog {
+		os.Remove(out)
+		var o, e bytes.Buffer
+		if c := run(t, []string{"build", "--backend=llvm", "--debug-info=on", "-o", out, "."}, &o, &e); c != 0 {
+			t.Fatalf("llvm build %d: exit %d\n%s", i, c, e.String())
+		}
+		prog[i], err = os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !bytes.Equal(prog[0], prog[1]) {
+		t.Errorf("two LLVM builds of one program differ byte for byte")
+	}
+	lines, err = exec.Command("dwarfdump", "--debug-line", out).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(lines, []byte("main.xo")) {
+		t.Errorf("no line table for main.xo in the LLVM program")
+	}
 }
 
 // TestBuildLLVMWorkDirsPrivate: concurrent LLVM builds of different
