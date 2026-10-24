@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -73,7 +74,7 @@ func TestStdinNative(t *testing.T) {
 	for _, c := range cases {
 		want := ""
 		for _, be := range backends {
-			cmd := exec.Command(bins[be], c.mode)
+			cmd := testtmp.Guard(exec.Command(bins[be], c.mode))
 			w, err := cmd.StdinPipe()
 			if err != nil {
 				t.Fatal(err)

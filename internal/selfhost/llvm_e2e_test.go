@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -63,7 +64,7 @@ func TestSelfhostLLVMEndToEnd(t *testing.T) {
 	t.Chdir(root)
 	setModEnv(t, root)
 	t0 := time.Now()
-	cmd := exec.Command(emitter, "--std=std", "--wd="+workDir(t), dir)
+	cmd := testtmp.Guard(exec.Command(emitter, "--std=std", "--wd="+workDir(t), dir))
 	cmd.Dir = root
 	out, err := cmd.Output()
 	if err != nil {
@@ -108,7 +109,7 @@ func TestSelfhostLLVMEndToEnd(t *testing.T) {
 	bin := res.Binaries[xotool.Host()]
 	t.Logf("xo built %s with the LLVM backend in %v", filepath.Base(bin), time.Since(t0).Round(time.Second))
 	run := func(b string) string {
-		c := exec.Command(b, args...)
+		c := testtmp.Guard(exec.Command(b, args...))
 		c.Dir = root
 		var o, e bytes.Buffer
 		c.Stdout, c.Stderr = &o, &e

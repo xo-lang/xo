@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/xo-lang/xo/internal/testtmp"
 )
 
 // wholeWarnSrc prints "one" and draws warning XO0540, which a hit must
@@ -96,7 +98,7 @@ func TestWholeBuildCache(t *testing.T) {
 	}
 	ran := func(what, want string) {
 		t.Helper()
-		got, err := exec.Command(out).Output()
+		got, err := testtmp.Guard(exec.Command(out)).Output()
 		if err != nil || string(got) != want {
 			t.Fatalf("%s: the binary printed %q (%v), want %q", what, got, err, want)
 		}

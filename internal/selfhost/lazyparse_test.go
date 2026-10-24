@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -38,7 +39,7 @@ func TestParserLazyBodies(t *testing.T) {
 		for i := 0; i < len(files); i += 200 {
 			j := min(i+200, len(files))
 			args := append(append(append([]string{}, cli[1:]...), "dev", "dump", "ast"), flags...)
-			cmd := exec.Command(cli[0], append(args, files[i:j]...)...)
+			cmd := testtmp.Guard(exec.Command(cli[0], append(args, files[i:j]...)...))
 			cmd.Dir = root
 			b, err := cmd.Output()
 			if err != nil {

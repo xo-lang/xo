@@ -56,7 +56,7 @@ func TestRealtimeNative(t *testing.T) {
 
 			dir = filepath.Join("testdata", "golden", "realtime_section")
 			_, b = buildRun(t, dir, opts)
-			cmd := exec.Command(b.Binaries[xotool.Host()])
+			cmd := testtmp.Guard(exec.Command(b.Binaries[xotool.Host()]))
 			cmd.Dir = dir
 			cmd.Env = append(os.Environ(), "XO_RTSTATS=1")
 			var stderr bytes.Buffer

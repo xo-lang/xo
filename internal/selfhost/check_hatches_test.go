@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/xo-lang/xo/internal/gotool"
+	"github.com/xo-lang/xo/internal/testtmp"
 )
 
 // hatchesFixture is a module tree with its own module cache: a dependency
@@ -124,7 +125,7 @@ func runXoBinding(t *testing.T, bin, dir string, args, runs []string) string {
 			}
 		}
 		for _, b := range todo {
-			cmd := exec.Command(gobind, "--dir", b[0], b[1])
+			cmd := testtmp.Guard(exec.Command(gobind, "--dir", b[0], b[1]))
 			cmd.Dir = dir
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Logf("xo-gobind --dir %s %s: %v\n%s", b[0], b[1], err, out)
