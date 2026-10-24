@@ -902,17 +902,47 @@ pub fn rs_append_bytes(a: Int, an: Int, b: Int, lo: Int, hi: Int, mode: Int) -> 
   s
 }
 
+const F_ONES: Int = 72340172838076673
+const F_HIGHS: Int = -9187201950435737472
+const F_LOW7S: Int = 9187201950435737471
+
+/// The high bit of each byte of w (each below 0x80) that is at least lo
+/// and at most hi; no sum carries into the next byte, since a byte is at
+/// most 0x7f and 0x7f + (0x7f - hi) is below 0x100. The sums wrap: a word
+/// of seven bit bytes fills the Int's bits, so the addition overflows it.
+fn between8(w: Int, lo: Int, hi: Int) -> Int {
+  let over = w.wrapping_add((0x7f - hi) * F_ONES)
+  w.wrapping_add((0x80 - lo) * F_ONES) & (over ^ -1) & F_HIGHS
+}
+
 /// The n bytes at d with their ASCII letters lowered (mode 1) or raised
-/// (mode 2).
+/// (mode 2), eight bytes at a time: the letters' bytes are found with a
+/// range test on seven bit copies (a byte at or above 0x80 never counts)
+/// and 0x20 is added to each, whose bytes cannot carry into the next one
+/// ('A' to 'Z' plus 0x20 stays below 0x100, and so does the borrow the
+/// other way).
 fn fold(d: Int, n: Int, mode: Int) {
   // the first letter of the case to change, and the change
   let first = if mode == 1 { 65 } else { 97 }
-  let delta = if mode == 1 { 32 } else { -32 }
+  let last = if mode == 1 { 90 } else { 122 }
   var i = 0
+  while subw(n, i) >= 8 {
+    let w = rt.mem_load(d, i, 8)
+    let letters = between8(w & F_LOW7S, first, last) & ((w & F_HIGHS) ^ -1)
+    if letters != 0 {
+      // 0x20 in each letter's byte: its high bit, shifted down (the shift
+      // replicates a sign bit in the top seven, cleared here), times 32,
+      // whose bytes cannot carry into the next
+      let k = ((letters >> 7) & 0x01FFFFFFFFFFFFFF) * 32
+      let v = if mode == 1 { w.wrapping_add(k) } else { w.wrapping_sub(k) }
+      rt.mem_store(d, i, v, 8)
+    }
+    i = addw(i, 8)
+  }
   while i < n {
     let c = rt.mem_load(d, i, 1)
     if subw(c, first) < 26 && c >= first {
-      rt.mem_store(d, i, addw(c, delta), 1)
+      rt.mem_store(d, i, addw(c, if mode == 1 { 32 } else { -32 }), 1)
     }
     i = addw(i, 1)
   }

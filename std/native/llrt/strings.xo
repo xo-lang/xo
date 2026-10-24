@@ -22,6 +22,33 @@ fn seq_size(b: Bytes, i: Int) -> Int {
   unicode.decode(b, i) & 7
 }
 
+/// The first n (1 to 8) bytes of b as a word, the first in the low bits
+/// (a shift of a byte at bit 56 wraps, as the word wants).
+fn word_of(b: Bytes, n: Int) -> Int {
+  var w = 0
+  var k = 0
+  while k < n {
+    w = w | Int(b[k]).wrapping_shl(k * 8)
+    k += 1
+  }
+  w
+}
+
+/// o + new, the replacement of replace: a word store when its bytes fit
+/// one (rt.rs_push_word, a store and no copy), else an append. Nothing
+/// when new is empty, which the callers would otherwise pay a no-op
+/// append for.
+fn push_new(o: Str, new: Bytes, nw: Int) -> Str {
+  let n = new.len()
+  if n == 0 {
+    return o
+  }
+  if n <= 8 {
+    return rt.rs_push_word(o, nw, n)
+  }
+  rt.rs_append_bytes(o, new, 0, n, 0)
+}
+
 /// The buffer of replace, replace_n, replace_bytes and replace_bytes_n: b
 /// with the first n copies of old replaced by new (n below 0: every one),
 /// built in a Str of room `cap`. An empty old inserts new before every
@@ -30,12 +57,14 @@ fn seq_size(b: Bytes, i: Int) -> Int {
 fn replace_build(b: Bytes, old: Bytes, new: Bytes, n: Int, cap: Int) -> Str {
   let sl = b.len()
   let m = old.len()
+  let nl = new.len()
+  let nw = if nl > 0 && nl <= 8 { word_of(new, nl) } else { 0 }
   if m == 0 {
     var o = rt.rs_with_cap(cap)
     var start = 0
     var done = 0
     while (n < 0 || done < n) && start <= sl {
-      o = rt.rs_append_bytes(o, new, 0, new.len(), 0)
+      o = push_new(o, new, nw)
       done += 1
       if start >= sl {
         break
@@ -57,14 +86,12 @@ fn replace_build(b: Bytes, old: Bytes, new: Bytes, n: Int, cap: Int) -> Str {
     if j < 0 {
       break
     }
-    // an empty segment or an empty new is a no-op append that still
-    // enters reserve and move_at: skip either
+    // an empty segment is a no-op append that still enters reserve and
+    // move_at: skip it
     if j > start {
       o = rt.rs_append_bytes(o, b, start, j, 0)
     }
-    if new.len() > 0 {
-      o = rt.rs_append_bytes(o, new, 0, new.len(), 0)
-    }
+    o = push_new(o, new, nw)
     start = j + m
     done += 1
   }

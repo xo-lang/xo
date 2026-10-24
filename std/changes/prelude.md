@@ -77,6 +77,36 @@ contains_any 2.05, contains_rune 5.19, rfind_any 1.47, cut 1.72, cut_prefix
 3.41, cut_suffix 2.82, split_after 1.16. The set searches leave Go's ASCII
 set fast path when a set holds a rune above 0x7f and pay a decode per byte,
 which is the first of the three follow-ups the results file lists.
+## 2026-10-24: perf: the appended runs' case fold goes eight bytes at a time, and a replacement of up to eight bytes is a word store
+
+- Kind: perf
+- Commit: (filled in after the push)
+- Found by: a CPU profile of a `to_lower`/`to_upper`/`replace` program
+  (XO_PROF=cpu, 100 Hz, 128 samples) put 19.5% of the wall time in
+  `obj.fold`, the per-byte ASCII case change of every run an append copies,
+  and 46% under `cabi.obj_rs_append_bytes`, the general append replace paid
+  for a replacement that usually fits a word
+- Go reference: unicode.ToUpper and strings.Map walk runes with an inlined
+  per-byte table test; Xo's fold loaded and stored every byte through
+  intrinsics, and replace appended every replacement with the general path
+- Test: corpus/strings, corpus/bytes, corpus/runes and corpus/equalfold on
+  arm64, LLVM and the Go backend, goldens native_prelude, unicode_table,
+  bytes_transforms and replace_n on arm64, LLVM with Go parity, and wasm,
+  all unchanged in output
+- Timing: bench/results/case-fold-2026-10-24.md
+
+`obj.fold` now finds the letters of an eight byte word with a range test on
+seven bit copies (`between8`) and changes them all in one store, adding
+0x20 to 'A' to 'Z' or taking it from 'a' to 'z', which cannot carry into
+the next byte; a byte at or above 0x80 never counts as a letter, so a run
+that holds unchanged non-ASCII runes stays as it is, and the last n % 8
+bytes keep the byte loop. `strings.replace_build` builds a replacement of 1
+to 8 bytes as a word once and stores it with `rt.rs_push_word` at each
+match. On the bytestransform bench, replace drops to 0.765 of its
+instructions and lower and upper to 0.954 and 0.926, which puts replace
+below Go (0.89 net of the harness loop, from 1.22). Skipping the fold for a
+run with no letter of the case was measured too and reverted: 1.013 of the
+instructions, because the runs it skips are a few bytes each.
 
 ## 2026-10-24: perf: Str.map_runes keeps unchanged runes as their own bytes and appends runs
 

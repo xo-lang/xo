@@ -49,6 +49,7 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [git-pull-rebase-stops-silently.md](git-pull-rebase-stops-silently.md): Observed 2026-10-17: a quiet `git pull --rebase` that stopped on a conflict let a gate run on a half finished rebase; check `git status`; repotest TestNoConflictMarkers fails on markers.
 - [git-stash-shared-across-worktrees.md](git-stash-shared-across-worktrees.md): Observed 2026-10-15: `git stash pop` in a worktree can apply another agent's stash; use `git pull --rebase --autostash`.
 - [go-integer-overflow.md](go-integer-overflow.md): Go integers wrap silently; generated code calls checked rt operations.
+- [xo-checked-word-arithmetic.md](xo-checked-word-arithmetic.md): Observed 2026-10-24: a SWAR word trick's `<<` and `+` fault in Xo where C wraps; use `wrapping_shl`, `wrapping_add`; `mask / 4` is not an unsigned `>> 2`; clear each byte's high bit before a range test.
 - [go-map-iteration-order.md](go-map-iteration-order.md): Go map order is random; Xo `Map` is an insertion ordered entry log plus hash index in rt.
 - [go-line-directives.md](go-line-directives.md): `//line` directive rules; lines after a directive count up, so the generator repeats it per Go line; relative paths kept verbatim; line but no column at run time.
 - [defer-differs-from-go.md](defer-differs-from-go.md): Xo `defer` is block scoped; blocks with defer run as closures.
