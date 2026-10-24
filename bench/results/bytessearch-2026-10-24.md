@@ -112,3 +112,73 @@ cutPrefixTests, cutSuffixTests and splitaftertests, then 7,500 seeded texts,
 sets and records with invalid UTF-8, and runs on arm64, LLVM and the Go
 backend; golden `bytes_search_cut` on arm64, LLVM, Go parity and wasm; the
 strsearch and strwhere corpora cover the Str forms.
+
+## One set build a call, 2026-10-24 08:29 (quiet window)
+
+`ascii_set_partial` returns the words and whether every byte was ASCII, so
+`index_any_bytes` and `last_index_any_bytes` build the ASCII set once a call
+instead of building `ascii_set` (which gives up at the first byte above
+0x7f) and then rebuilding from the start. Same program and tables, base and
+change built from one source that differs only in std/native/llrt/scan.xo
+(+15 -12), both with XO_INLINE_STRICT=1; `xo bench --ab --rounds=10`,
+instructions per run (200,000 calls), A/B with the base as A, the change as
+B, so a ratio below 1 is the change doing less:
+
+| workload | base, M | one set, M | ratio | verdict |
+|---|---|---|---|---|
+| index (control) | 28.804 | 28.760 | 0.9985 | within noise |
+| find_any | 116.738 | 113.747 | 0.9744 | better |
+| rfind_any | 147.252 | 145.305 | 0.9868 | better |
+| contains_any | 115.848 | 112.844 | 0.9741 | better |
+| contains_rune | 83.882 | 83.909 | 1.0003 | within noise |
+| cut | 77.580 | 77.542 | 0.9995 | within noise |
+| cut_prefix | 53.925 | 53.919 | 0.9999 | within noise |
+| cut_suffix | 54.016 | 53.970 | 0.9991 | within noise |
+| split_after | 224.728 | 224.884 | 1.0007 | within the control's spread |
+| base against itself | 224.717 | 224.738 | 1.0001 | within noise |
+
+Wall time from a second run of the same pair at the same rounds (full JSONs
+in /tmp/pi2-ab2/json at the time, the numbers below are the record), median
+of 10, ms, base to change, with the interval the tool reports:
+
+| workload | base, ms | one set, ms | ratio | interval | verdict |
+|---|---|---|---|---|---|
+| find_any | 7.971 | 7.954 | 0.998 | 0.950 to 1.062 | within noise |
+| rfind_any | 7.626 | 7.624 | 1.000 | 0.962 to 1.021 | within noise |
+| contains_any | 7.447 | 7.252 | 0.974 | 0.950 to 0.989 | better |
+| split_after | 12.099 | 12.285 | 1.015 | 0.989 to 1.039 | within noise |
+| base against itself | 7.590 | 7.521 | 0.991 | 0.948 to 1.024 | within noise |
+
+So the claim is instructions, not wall: two of the three winning rows are
+within noise on wall, and the third, contains_any at 0.974, has an interval
+(0.950 to 0.989) barely narrower than the base-against-base control's own
+(0.948 to 1.024) with a 2.6% swing between two runs of one binary. Where
+the instruction counts reproduce to three digits between runs (find_any
+0.9745, rfind_any 0.9865, contains_any 0.9740 both times) and the wall
+ratios move by a few percent between runs, the instruction count is the
+measurement.
+
+So -2.56% for find_any, -1.32% for rfind_any and -2.59% for contains_any,
+and nothing else moves. The last two rows are controls: the base against
+itself, and split_after, which does not call the set search (its +0.07% is
+0.8 instructions an iteration, and the base-against-base row spans the same
+distance).
+
+Two negative results from the same session, recorded so they are not
+re-tried blind:
+
+- Measuring either side of an A/B against a std copied from a moved
+  origin/main is a cross-base comparison. The first attempt took the base
+  std from `git show origin/main:std/native/llrt/scan.xo` while the
+  worktree HEAD was older; origin/main already had the split-family work
+  (the empty-separator list sizing and the unchecked views), so
+  split_after showed 224.7 M against 238.0 M (+5.9%) that belonged to that
+  change, not to this one. The re-cut pair above is the corrected
+  measurement.
+- The shift intrinsics in `in_set` and the set build (Int.shr_logical,
+  Int.wrapping_shl instead of the shl and shr wrappers) changed nothing:
+  every row within 0.04%, all verdicts within noise, in the same window and
+  the same pair of builds (the base and one-set rows above may be compared
+  with the third build of that run). The wrappers were already inlined, so
+  the scan.shr frames XO_PROF showed were sample attribution, not calls.
+  Not landed.

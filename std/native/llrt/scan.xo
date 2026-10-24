@@ -352,13 +352,16 @@ fn in_set(lo: Int, hi: Int, c: Int) -> Bool {
   false
 }
 
-/// The ASCII bytes of b as two 64 bit words, skipping any byte of 0x80 and
-/// above (makeASCIISet gives up on those; the rune loop below still tests
-/// them against the whole chars, but an ASCII byte of the value can only
-/// match an ASCII byte of chars, so the set answers for all of them).
-fn ascii_set_partial(b: Bytes) -> (Int, Int) {
+/// The ASCII bytes of b as two 64 bit words, and whether every byte is
+/// ASCII. ascii_set above stops at the first byte of 0x80 and above (it only
+/// wants the give-up); a set search needs the words either way, so this keeps
+/// the ASCII bytes it has seen and says whether all of them were: one build
+/// a call instead of one to give up on and one to use (XO_PROF: ascii_set was
+/// 4.8% of find_any on top of this function's 10.6%).
+fn ascii_set_partial(b: Bytes) -> (Int, Int, Bool) {
   var lo = 0
   var hi = 0
+  var ascii = true
   var i = 0
   let n = b.len()
   while i < n {
@@ -367,10 +370,12 @@ fn ascii_set_partial(b: Bytes) -> (Int, Int) {
       lo = lo | shl(1, c)
     } else if c < 0x80 {
       hi = hi | shl(1, c - 64)
+    } else {
+      ascii = false
     }
     i += 1
   }
-  (lo, hi)
+  (lo, hi, ascii)
 }
 
 /// Whether the runes of set (Go's `for _, c := range chars`) hold r: one
@@ -407,7 +412,7 @@ pub fn index_any_bytes(b: Bytes, cb: Bytes) -> Int {
     }
     return index_rune_bytes(b, Rune(c))
   }
-  let (lo, hi, ascii) = ascii_set(cb)
+  let (lo, hi, ascii) = ascii_set_partial(cb)
   if ascii && n > 8 {
     var i = 0
     while i < n {
@@ -418,12 +423,11 @@ pub fn index_any_bytes(b: Bytes, cb: Bytes) -> Int {
     }
     return -1
   }
-  let (alo, ahi) = ascii_set_partial(cb)
   var i = 0
   while i < n {
     let c = Int(b[i])
     if c < 0x80 {
-      if in_set(alo, ahi, c) {
+      if in_set(lo, hi, c) {
         return i
       }
       i += 1
@@ -476,7 +480,7 @@ pub fn last_index_any_bytes(b: Bytes, cb: Bytes) -> Int {
   if cb.len() == 0 {
     return -1
   }
-  let (lo, hi, ascii) = ascii_set(cb)
+  let (lo, hi, ascii) = ascii_set_partial(cb)
   if ascii && n > 8 {
     var i = n - 1
     while i >= 0 {
@@ -487,13 +491,12 @@ pub fn last_index_any_bytes(b: Bytes, cb: Bytes) -> Int {
     }
     return -1
   }
-  let (alo, ahi) = ascii_set_partial(cb)
   var end = n
   while end > 0 {
     let c = Int(b[end - 1])
     if c < 0x80 {
       end -= 1
-      if in_set(alo, ahi, c) {
+      if in_set(lo, hi, c) {
         return end
       }
       continue

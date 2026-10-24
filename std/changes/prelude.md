@@ -38,6 +38,41 @@ its two range constants from the caller now; hoisting them out of the
 loop measured no change (the compiler already did), and they are hoisted
 anyway.
 
+## 2026-10-24: perf: IndexAny and LastIndexAny build one ASCII set a call
+
+- Kind: perf
+- Commit: (filled in after the push)
+- Found by: XO_PROF=cpu at 20,000,000 iterations on bench/perf/bytessearch
+  put scan.ascii_set at 4.8% of find_any and 2.0% of rfind_any on top of
+  scan.ascii_set_partial's 10.6% and 6.2%: a chars holding a rune above
+  0x7f made index_any_bytes build Go's makeASCIISet, give up at that byte as
+  Go does, and then build the partial set it actually uses from the start
+- Go reference: bytes.IndexAny and bytes.LastIndexAny (go1.26.1): Go's
+  makeASCIISet returns ok=false at the first byte above 0x7f and the slow
+  path then ranges over the value, so Go builds one set a call
+- Test: corpus/bytes and corpus/strsearch on arm64, LLVM and the Go backend,
+  and golden bytes_search_cut on arm64, LLVM, Go parity and wasm, all
+  unchanged in output; `xo bench --ab` of the bench program built against
+  the base std and against this one, both sides with XO_INLINE_STRICT=1
+  (find_any 116.74 to 113.75 M instructions, ratio 0.9745, verdict better;
+  rfind_any 0.9865; contains_any 0.9740; the other six rows within noise,
+  the base against itself 1.00002). The claim is instructions: wall is
+  within noise for find_any (0.998, 0.950 to 1.062) and rfind_any (1.000,
+  0.962 to 1.021), and contains_any's 0.974 (0.950 to 0.989) is no wider
+  than the base-against-base control's own interval (0.948 to 1.024)
+- Timing: bench/results/bytessearch-2026-10-24.md
+
+`ascii_set_partial` now returns the two 64 bit words and whether every byte
+was ASCII, so `index_any_bytes` and `last_index_any_bytes` build the set
+once: the ASCII word path runs when chars is all ASCII and the value is
+longer than 8 bytes, and the same words serve the rune loop below otherwise.
+`ascii_set` stays for the trim family, which only needs the give-up.
+
+Instructions per 200,000 calls (bench/results/bytessearch-2026-10-24.md):
+find_any 116.74 to 113.75 M, rfind_any 147.25 to 145.30 M, contains_any
+115.85 to 112.84 M; contains_rune, cut, cut_prefix, cut_suffix and
+split_after do not build the set and do not move.
+
 ## 2026-10-24: perf: the empty-separator split sizes its piece list from the rune count, and its pieces are unchecked views (Str and Bytes)
 
 - Kind: perf
