@@ -36,8 +36,9 @@
 // go-compiler-final tag (the last commit with the Go compiler, built
 // once with `go build ./cmd/xo` from `git archive go-compiler-final`
 // into <user cache>/xo/seed) build through the hops of
-// scripts/seed-chain.txt. The backend is the host's: amd64 on Windows (the
-// chain's hops there the Go backend), arm64 on an arm64 host, else LLVM
+// scripts/seed-chain.txt. The backend is the host's native one: amd64 on
+// Windows and x86-64 hosts (the chain's hops there the Go backend and
+// LLVM), arm64 on an arm64 host, else LLVM
 // split into 12 modules without LTO (decision 0168), as
 // scripts/bootstrap-xo.sh builds xo.
 //
@@ -755,9 +756,8 @@ func SmokeXo(root, xo string) error {
 		return err
 	}
 	// the native backend of the host's architecture even where xo itself
-	// is built with another (LLVM on x86-64 Linux, the Go backend for
-	// Windows chain hops): the native SSA builder is what a miscompiled
-	// xo broke there
+	// is built with another (a chain hop's Go backend or LLVM): the
+	// native SSA builder is what a miscompiled xo broke there
 	backend := "arm64"
 	if runtime.GOARCH == "amd64" {
 		backend = "amd64"
@@ -936,10 +936,18 @@ func LLVMOpt() string {
 
 // chainBackend is the backend a seed chain hop and the go-compiler-final
 // root build xo with: hostBackend's, except the Go backend on Windows
-// (those commits predate native windows/amd64, decision 0254 6b).
+// and LLVM on other x86-64 hosts (those commits predate native
+// windows/amd64, decision 0254 6b, and amd64 self builds, 0362).
 func chainBackend() (string, []string) {
 	if runtime.GOOS == "windows" {
 		return "go", nil
+	}
+	if runtime.GOARCH == "amd64" {
+		backend, env := llvmBackend()
+		if runtime.GOOS == "linux" && os.Getenv("XO_NOLIBC") == "" {
+			env = append(env, "XO_NOLIBC=0")
+		}
+		return backend, env
 	}
 	return hostBackend()
 }
@@ -948,8 +956,8 @@ func chainBackend() (string, []string) {
 // XO_NOLIBC=0 on Linux: since decision 0243 a Linux program without `use
 // c` links no C library by default, but the toolchain's own native Linux
 // builds of compiler/xo keep the C library until a Linux self rebuild
-// fixed point has passed with none (0243, pending; the seeds' Linux xo is
-// cross built with the Go backend, which no-libc does not touch).
+// fixed point is recorded as passing with none (0243; decision 0362 has
+// the releases' and seeds' Linux xo cross built natively with none).
 func hostBackend() (string, []string) {
 	backend, env := hostBackendNative()
 	if runtime.GOOS == "linux" && os.Getenv("XO_NOLIBC") == "" {
@@ -971,6 +979,18 @@ func hostBackendNative() (string, []string) {
 	if runtime.GOARCH == "arm64" {
 		return "arm64", nil
 	}
+	if runtime.GOARCH == "amd64" {
+		// native on x86-64 too (decision 0362, 2026-10-24): a Docker
+		// linux/amd64 build of xo took 212 s against 893 s by LLVM -O0,
+		// and that xo built compiler/xo in 211 s against 532 s
+		return "amd64", nil
+	}
+	return llvmBackend()
+}
+
+// llvmBackend is the LLVM backend and the environment a development
+// build of xo uses with it (split modules, no LTO, clang -O0).
+func llvmBackend() (string, []string) {
 	var env []string
 	if os.Getenv("XO_LLVM_SPLIT") == "" {
 		env = append(env, "XO_LLVM_SPLIT=12")

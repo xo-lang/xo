@@ -12,8 +12,8 @@
 # go-compiler-final tag (decision 0215: the last commit with the Go
 # compiler; `go run ./scripts/xobuild` builds it once with Go and caches
 # it, internal/xotool). Every stage gets the checkout's std (--std). The backend is
-# $XO_BOOTSTRAP_BACKEND, by default arm64 on an arm64 host and llvm on
-# an x86-64 host (where xo1 is built by the LLVM backend; the LLVM
+# $XO_BOOTSTRAP_BACKEND, by default the host's native backend (arm64,
+# or amd64 on an x86-64 host since decision 0362), else llvm (the LLVM
 # builds are split into $XO_LLVM_SPLIT modules, default 12, without LTO
 # unless $XO_LLVM_LTO says thin, as internal/selfdriver builds xo1,
 # decision 0168; --asm writes the LLVM IR). OUTDIR defaults to
@@ -100,7 +100,10 @@ export XO_RTPACK=${XO_BOOTSTRAP_RTPACK:-off}
 export XO_NOLIBC=${XO_NOLIBC:-0}
 backend=${XO_BOOTSTRAP_BACKEND:-}
 if [ -z "$backend" ]; then
-  case "$(uname -m)" in arm64|aarch64) backend=arm64 ;; *) backend=llvm ;; esac
+  # amd64 on an x86-64 host too since 2026-10-24 (decision 0362: a
+  # Docker linux/amd64 build of xo 212 s natively against 893 s by LLVM
+  # -O0, and that xo builds compiler/xo in 211 s against 532 s)
+  case "$(uname -m)" in arm64|aarch64) backend=arm64 ;; x86_64|amd64) backend=amd64 ;; *) backend=llvm ;; esac
 fi
 if [ "$backend" = llvm ]; then
   # clang -O0 for the development fixed point (decision 0220); the

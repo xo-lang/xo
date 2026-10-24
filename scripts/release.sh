@@ -19,9 +19,9 @@
 #   linux/arm64  the darwin xo1: --backend=arm64 --target=linux/arm64
 #                --ld=macho (decision 0182 stage 3: compiler/macho's ELF
 #                writer and linker)
-#   linux/amd64  the darwin xo1: --backend=go --targets=linux/amd64 (no
-#                native backend for amd64: compiler/gen and the Go
-#                toolchain)
+#   linux/amd64  the darwin xo1: --backend=amd64 --targets=linux/amd64
+#                (decision 0362: compiler/macho's ELF writer and linker,
+#                no C library, as linux/arm64; it was --backend=go)
 #   windows/amd64 the darwin xo1: --backend=amd64 --targets=windows/amd64,
 #                linked by Xo's PE linker with no C runtime (decision 0254
 #                6b step 4; owner 2026-10-22: no Microsoft SDK); with
@@ -94,8 +94,7 @@
 #
 # Compilers: the host's Apple clang (run this script on a Mac; no C
 # runtime is compiled since decision 0234, so no zig for linux/arm64)
-# and Go (xo-gobind, the linux/amd64 xo1's go build, and building the
-# seed when there is no xo yet).
+# and Go (xo-gobind, and building the seed when there is no xo yet).
 #
 # ThreadSanitizer's runtime (decision 0273 part 3) is built first, from
 # the pinned LLVM sources, into the checkout's lib/xo/race (git ignored):
@@ -296,8 +295,8 @@ echo "== darwin/amd64: xo1 cross builds xo1 with the amd64 backend" >&2
 run "$xo1" build --backend=amd64 "${stamp[@]}" \
 	--target=darwin/amd64 -o "$darwin_amd64/bin/xo" compiler/xo >&2
 
-echo "== linux/amd64: xo1 builds xo1 with the Go backend" >&2
-run "$xo1" build --backend=go "${stamp[@]}" --targets=linux/amd64 -o "$linux_amd64/bin/xo" compiler/xo >&2
+echo "== linux/amd64: xo1 cross builds xo1 with the amd64 backend (compiler/macho's ELF link, no cc)" >&2
+run "$xo1" build --backend=amd64 "${stamp[@]}" --targets=linux/amd64 -o "$linux_amd64/bin/xo" compiler/xo >&2
 
 if [ "$win" = native ]; then
 	echo "== windows/amd64: xo1 cross builds xo1 with the amd64 backend and Xo's PE linker" >&2

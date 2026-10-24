@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Every released xo is built by its platform's native backend (decision
+  0362): linux/amd64 joins (it was the Go backend; a static binary with
+  no C library, which rebuilds itself to the same bytes), and seeds are
+  cross built natively. Development builds of xo on x86-64 hosts are
+  native too: about 4 times faster to build than LLVM -O0, and the xo
+  they make builds 2.5 times faster.
+
 - Windows: the checkout's `xo.exe` (scripts/xobuild) is built natively
   (`--backend=amd64`, as the release's), not with the Go backend, whose
   build of xo spent 540 to 600 s in each program's link (CI's runner);

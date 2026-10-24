@@ -180,11 +180,17 @@ XO_SEED_COMMIT=$commit XO_SEED_NOTE="native darwin/arm64 build at -O2, fixed poi
   bash scripts/seed-pack.sh bin/xo "$out" > "$log/pack-darwin-arm64.log"
 
 step "6. cross builds"
+# each platform's native backend, as scripts/release.sh builds the
+# releases (decision 0362; the Linux ones with compiler/macho's ELF link
+# and no C library); XO_SEED_CROSS_BACKEND=go builds them all with the Go
+# backend as before
 for p in linux/arm64 linux/amd64 windows/amd64 darwin/amd64; do
   plat=${p/\//-}; exe=xo; [ "$plat" = windows-amd64 ] && exe=xo.exe
   d=$work/cross/$plat
   mkdir -p "$d/bin"
-  bin/xo build --backend=go --targets="$p" --std="$tree/std" -o "$d/bin/$exe" compiler/xo > "$log/cross-$plat.log" 2>&1 ||
+  be=${XO_SEED_CROSS_BACKEND:-${p#*/}}
+  ld=(); [ "$p" = linux/arm64 ] && [ "$be" = arm64 ] && ld=(--ld=macho)
+  bin/xo build --backend="$be" ${ld[@]+"${ld[@]}"} --targets="$p" --std="$tree/std" -o "$d/bin/$exe" compiler/xo > "$log/cross-$plat.log" 2>&1 ||
     { tail "$log/cross-$plat.log"; die "cross build $plat failed"; }
   (git ls-files -z -- std | tar -c -f - --null -T -) | tar -xf - -C "$d"
   # ThreadSanitizer's runtime for native --race (decision 0273's linux,
@@ -194,7 +200,7 @@ for p in linux/arm64 linux/amd64 windows/amd64 darwin/amd64; do
   bash scripts/race-runtime.sh "$work/race-$plat" "$d" "$plat" > "$log/race-runtime-$plat.log" 2>&1 ||
     { tail "$log/race-runtime-$plat.log"; die "race-runtime.sh $plat failed"; }
   XO_SEED_VERSION=$version XO_SEED_PLATFORM=$plat XO_SEED_COMMIT=$commit \
-    XO_SEED_NOTE="cross built by the darwin-arm64 $version xo with --backend=go --targets=$p (seed-cut.sh)" \
+    XO_SEED_NOTE="cross built by the darwin-arm64 $version xo with --backend=$be --targets=$p (seed-cut.sh)" \
     bash scripts/seed-pack.sh "$d/bin/$exe" "$out" > "$log/pack-$plat.log"
   echo "   $plat ok"
 done

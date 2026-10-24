@@ -136,8 +136,15 @@ The bootstrap chain, as release.sh runs it:
                                            -> darwin/arm64 xo1
     darwin xo1: --backend=arm64 --target=linux/arm64 --ld=macho
                                            -> linux/arm64 xo1 (no cc: compiler/macho's ELF link)
-    darwin xo1: --backend=go --targets=linux/amd64
-                                           -> linux/amd64 xo1 (Go toolchain)
+    darwin xo1: --backend=amd64 --target=darwin/amd64
+                                           -> darwin/amd64 xo1
+    darwin xo1: --backend=amd64 --targets=linux/amd64
+                                           -> linux/amd64 xo1 (no cc: compiler/macho's ELF link;
+                                              decision 0362, was --backend=go)
+    darwin xo1: --backend=amd64 --targets=windows/amd64
+                                           -> windows/amd64 xo1 (Xo's PE linker, no C runtime;
+                                              decision 0254 6b; XO_RELEASE_WINDOWS=llvm for the
+                                              LLVM build below)
     darwin xo1: --backend=llvm --targets=windows/amd64, split 16, ThinLTO
                                            -> windows/amd64 xo1 (only with XO_RELEASE_WINDOWS=1:
                                               XO_WIN_CLANG, an upstream clang with lld-link beside it,
@@ -430,7 +437,7 @@ python3 scripts/amd64-enc-goldens.py forms|survey DIR|objects   # regenerate the
 xo1 build --as=macho ...                                 # xo1 assembles with compiler/macho (writes OUT.o) and cc links the object; xo dev goldens --flags='--as=macho' runs the goldens that way (decision 0182; last verified: 2026-10-12)
 xo1 build --backend=arm64 ...                            # the linker when --ld is not given (decision 0182 next step 1, 2026-10-12): on a darwin host the host's link is --ld=macho's when --as is not cc and no `use c` source is linked, else cc (decision 0182 addendum, 2026-10-16: cc had been the default again from 6faa44cb that morning; last verified: 2026-10-16). A linux host links with Xo's ELF linker too (2026-10-22: `--phase-times` prints `phase link` for a hello built by the 0.25.1 linux/arm64 and linux/amd64 xo in Docker; the line here had said cc). `--ld=cc` forces cc; `--phase-times` prints `phase link` for macho and `phase cc` for cc (last verified: 2026-10-12)
 xo build|run|test (no --backend)   # the native backend (decision 0248, 2026-10-16; decision 0270, 2026-10-19, on x86-64 hosts too): arm64 or amd64 for the target's architecture (--targets, else the host's); --race keeps the native backend where race_runtime finds a ThreadSanitizer runtime for the target (lib/xo/race/: darwin/arm64, darwin/amd64, linux/arm64, linux/amd64, windows/amd64; decision 0273 addendum, owner 2026-10-22) and otherwise picks llvm, whose missing clang is an error saying no native runtime ships for that target (llvm with no clang otherwise: an error naming xcode-select --install, the distribution's clang, XO_CLANG, or --backend=go); --backend=go builds through the Go toolchain and a `use go` program needs it (with no --backend: a usage error naming the Go package); --hybrid, --holes, xo test --explore, xo run --seed and --record pick go. Contract fuzzing runs natively too (decision 0250: each target as a generated property test in the checker's overlay, `<file>.xo_contract_fuzz_test.xo`, never on disk; the program checked a second time, about 200 ms on a 20 contract module; tests named `contract fuzz: MODULE.F` as on the Go backend, `--run` matches them; regression tests written the same); a target whose generated test does not check is counted in `MODULE: contract fuzzing needs --backend=go: N contracts not fuzzed` (reason under -v). xo dump works on native programs too (decision 0251: SIGQUIT wakes the poller, whose thread writes the tree; with XO_THREADS=1 and on idle programs too). internal/xotool's Build names --backend=go when a test gives no backend (the tests were written for the Go default). Last verified: 2026-10-16
-xo build|run|test --backend=arm64|llvm for linux   # no C library by default (decision 0243, 2026-10-16) for a program with no `use c` module: a static executable, the C library functions the runtime calls defined in Xo (std/native/llrt/cabi_libc.xo and libc*.xo, decision 0230), the backends' own _start; linked on a linux host by default (arm64 backend, no --ld) with compiler/macho elflink's static mode (no loader, no imports; weak undefined symbols 0; step 3), or with --ld=cc by cc -static -nostdlib -Wl,--gc-sections -Wl,--eh-frame-hdr; the LLVM backend links with clang. A cross build for linux/arm64 from any host (`xo build --targets=linux/arm64`, no --ld) links the same way, so the Mac makes a runnable static Linux binary (all 180 goldens built on the Mac pass in Docker, 2026-10-16); with the C library a cross build still emits assembly. -s drops elflink's local symbols, as macho's. XO_NOLIBC=0 links the C library (dynamic, glibc); XO_NOLIBC=1 asks for none and fails for `use c` programs and XO_LLRT_C=net. Sockets, epoll, DNS (hosts, nsswitch, resolv.conf) and TLS roots work without libc (an https GET verified in Docker, 2026-10-16). The toolchain's own native Linux builds of compiler/xo (internal/xotool hostBackend, scripts/bootstrap-xo.sh, xo1-host-check.sh) pass XO_NOLIBC=0 until a Linux self rebuild fixed point passes with none; the seeds' Linux xo is cross built with --backend=go, which no-libc does not touch. XO_LLRT_C names only the C paths left (the std/native/llrt/*_c.xo files: net, sched, text). Last verified: 2026-10-16
+xo build|run|test --backend=arm64|llvm for linux   # no C library by default (decision 0243, 2026-10-16) for a program with no `use c` module: a static executable, the C library functions the runtime calls defined in Xo (std/native/llrt/cabi_libc.xo and libc*.xo, decision 0230), the backends' own _start; linked on a linux host by default (arm64 backend, no --ld) with compiler/macho elflink's static mode (no loader, no imports; weak undefined symbols 0; step 3), or with --ld=cc by cc -static -nostdlib -Wl,--gc-sections -Wl,--eh-frame-hdr; the LLVM backend links with clang. A cross build for linux/arm64 from any host (`xo build --targets=linux/arm64`, no --ld) links the same way, so the Mac makes a runnable static Linux binary (all 180 goldens built on the Mac pass in Docker, 2026-10-16); with the C library a cross build still emits assembly. -s drops elflink's local symbols, as macho's. XO_NOLIBC=0 links the C library (dynamic, glibc); XO_NOLIBC=1 asks for none and fails for `use c` programs and XO_LLRT_C=net. Sockets, epoll, DNS (hosts, nsswitch, resolv.conf) and TLS roots work without libc (an https GET verified in Docker, 2026-10-16). The toolchain's own native Linux builds of compiler/xo (internal/xotool hostBackend, scripts/bootstrap-xo.sh, xo1-host-check.sh) pass XO_NOLIBC=0 until a Linux self rebuild fixed point passes with none; the releases' and seeds' Linux xo are cross built by the native backends with no C library (decision 0362, 2026-10-24; a Docker linux/amd64 self rebuild of that xo, s2 = s3, with none). XO_LLRT_C names only the C paths left (the std/native/llrt/*_c.xo files: net, sched, text). Last verified: 2026-10-16
 xo1 build --backend=arm64 with XO_INLINE_STRICT=1   # a build whose inlined arm64 module does not verify fails (compiler/xo main.xo inline_or_say); without it the build says so on standard error, naming the function and the first error, and goes on without inlining. internal/xotool sets it for every Go test; XO_INLINE_BREAK=1 breaks the inlined module on purpose (internal/arm64 TestInlineFallbackLoud). Last verified: 2026-10-15
 xo build (arm64, amd64)   # decision 0342 (2026-10-22): before inlining, every call, closure, and field or payload access of the module is checked against this build's definitions (ssa check_assumptions, phase "assume" in --phase-times); a mismatch, a stale cached piece, is XO1510 and exit 1; XO_ASSUME_CHECK=off skips it (for its --ab)
 XO_INLINE_REPORT=name xo build .   # how the native backends' inliner takes each function whose name contains name (1: every function), on standard error: its expanded instructions and blocks, call sites, and small, loop, few, padded, or no (hard, pads, size). Last verified: 2026-10-20
@@ -4413,11 +4420,14 @@ from source (decision 0216 item 3) and a new platform (a build of the
 same key already in the cache is reused: point `XO_CHECKOUT_CACHE` at an
 empty directory for a full replay); the log says "xotool: building the
 go-compiler-final root and walking scripts/seed-chain.txt". The backend: arm64 on an arm64
-host, the LLVM backend split into 12 modules without LTO on x86-64,
-amd64 on Windows (since 2026-10-23, as release.sh builds the release's
-xo.exe; the Go backend's xo.exe took 540 s a link on CI's runner; the
-chain's hops there still use the Go backend, internal/xotool
-chainBackend). `XO_CHECKOUT_CACHE` moves the cache. The Go tests
+host, amd64 on x86-64 hosts (since 2026-10-24, decision 0362: a
+Docker linux/amd64 build of xo 212 s against LLVM -O0's 893 s, and that
+xo builds compiler/xo in 211 s against 532 s; was LLVM split into 12
+modules without LTO) and on Windows (since 2026-10-23, as release.sh
+builds the release's xo.exe; the Go backend's xo.exe took 540 s a link
+on CI's runner). The chain's hops keep LLVM on x86-64 and the Go
+backend on Windows (internal/xotool chainBackend: those commits predate
+both). `XO_CHECKOUT_CACHE` moves the cache. The Go tests
 build it on first use unless `XO_CLI` names an xo. On the development
 Mac a build with a cached xo1 as the seed took 391 s and 6.09 GB peak
 RSS (2026-10-13, other agents running). Last verified: 2026-10-13.
@@ -4650,9 +4660,10 @@ verified: 2026-10-13.
                                               # with a pack root: the stages link with compiler/macho (darwin)
 
 SEED builds compiler/xo with the host's native backend
-(`XO_BOOTSTRAP_BACKEND`: arm64 on arm64 hosts, llvm on x86-64 hosts with
-`XO_LLVM_SPLIT=12 XO_LLVM_LTO=none`, since ThinLTO's symbol names follow
-the build directory) (s1), s1 builds it (s2),
+(`XO_BOOTSTRAP_BACKEND`: arm64 on arm64 hosts, amd64 on x86-64 hosts
+since 2026-10-24 (decision 0362; it was llvm with `XO_LLVM_SPLIT=12
+XO_LLVM_LTO=none`, since ThinLTO's symbol names follow the build
+directory, and llvm still is for other architectures)) (s1), s1 builds it (s2),
 s2 builds it (s3); s2 and s3 must write the same assembly and the same
 binary (the fixed point), and s3 must build and run a hello program.
 Every stage runs with no `go` on PATH (a directory holding one is
