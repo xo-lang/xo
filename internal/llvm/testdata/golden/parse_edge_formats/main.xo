@@ -1,0 +1,67 @@
+// Text formats at their edges, native against the Go backend: JSON numbers
+// into Int and Float, JSON durations and RFC 3339 times, UUIDs, IP addresses,
+// base64 in its four alphabets (padding, newlines), hex, query strings and
+// media types. The parity sweep of 2026-10-24 found the backends agree on
+// every case here. (Times outside 1678 to 2262 wrap on both and are not
+// listed: the spec is silent on parse_rfc3339 there.)
+use std/json
+use std/uuid
+use std/netip
+use std/base64
+use std/url
+use std/mime
+
+fn j[T: Json](os: Os, label: Str, s: Str) {
+  match json.decode_str[T](s) {
+    Ok(v) => os.stdio.println("${label} ${s} -> ok ${json.encode_str(v)}")
+    Err(_e) => os.stdio.println("${label} ${s} -> err")
+  }
+}
+
+fn main(os: Os) {
+  for s in ["0", "-0", "1", "01", "-01", "1.0", "1e2", "1E2", "1e+2", "1.5", "-", "+1", ".5", "5.", "1e", "0x10", "9223372036854775807", "9223372036854775808", "-9223372036854775808", "-9223372036854775809", "1e400", "\"1\"", "null", "true", " 1 ", "1 2", "[1]", "NaN", "Infinity", "1_0", "00", "-0.0", "1.7976931348623157e308", "1e-400", "123456789012345678901234567890"] {
+    j[Int](os, "int", s)
+    j[Float](os, "float", s)
+  }
+  for s in ["\"1s\"", "\"1.5s\"", "\"\"", "\"0\"", "\" 1s\"", "\"1s \"", "\"1h2m\"", "\"-1s\"", "\"1d\"", "1", "null", "\"1µs\"", "\"1us\""] {
+    j[Duration](os, "dur", s)
+  }
+  for s in ["\"2026-10-24T01:02:03Z\"", "\"2026-10-24T01:02:03.5+05:30\"", "\"2026-10-24 01:02:03Z\"", "\"2026-10-24\"", "1", "\"\"", "\" 2026-10-24T01:02:03Z\"", "\"2026-10-24T01:02:03Z \"", "\"2026-10-24T01:02:03+0530\"", "\"2026-10-24T23:59:60Z\"", "\"2026-10-24T01:02:03.1234567891Z\"", "\"2026-02-30T00:00:00Z\"", "\"2026-10-24T01:02:03-00:00\""] {
+    j[Time](os, "time", s)
+  }
+  for s in ["", "00000000-0000-0000-0000-000000000000", "0000000000000000000000000000000", "{00000000-0000-0000-0000-000000000000}", "urn:uuid:00000000-0000-0000-0000-000000000000", "0000000000000000-0000-0000-00000000", "G0000000-0000-0000-0000-000000000000", "ABCDEF00-0000-0000-0000-000000000000", "00000000-0000-0000-0000-00000000000", "00000000-0000-0000-0000-0000000000000", "00000000000000000000000000000000", " 00000000-0000-0000-0000-000000000000"] {
+    match uuid.parse(s) {
+      Ok(u) => os.stdio.println("uuid ${s} -> ok ${u.display()}")
+      Err(_e) => os.stdio.println("uuid ${s} -> err")
+    }
+  }
+  for s in ["1.2.3.4", "01.2.3.4", "1.2.3", "1.2.3.4.5", "256.1.1.1", "::1", "::", "::ffff:1.2.3.4", "fe80::1%eth0", "1:2:3:4:5:6:7:8", "1:2:3:4:5:6:7:8:9", "1::2::3", "[::1]", " 1.2.3.4", "1.2.3.4 ", "0:0:0:0:0:0:0:1", "::1.2.3.4", "1.2.3.4/24", "", "abcd::", "ABCD::", "1.2.3.-4", "1.2.3.+4", "0x1.2.3.4", "1.2.3.04"] {
+    match netip.parse_addr(s) {
+      Ok(a) => os.stdio.println("ip ${s} -> ok ${a.display()}")
+      Err(_e) => os.stdio.println("ip ${s} -> err")
+    }
+  }
+  for s in ["", "AA==", "AA=", "AA", "AAA=", "AAA", "A", "AAAA", "AA==\n", "AA\n==", "A A==", "AA==AA==", "-_-_", "+/+/", "AB==", "AAB=", "====", "A===", "\r\nAAAA", "AAAA\r\n"] {
+    for enc in [base64.Base64.Std, base64.Base64.Url, base64.Base64.RawStd, base64.Base64.RawUrl] {
+      match base64.decode(s, enc) {
+        Ok(b) => os.stdio.println("b64 ${s.len()} ${s.replace("\n", "N").replace("\r", "R")} -> ok ${b.to_hex()}")
+        Err(_e) => os.stdio.println("b64 ${s.replace("\n", "N").replace("\r", "R")} -> err")
+      }
+    }
+  }
+  for s in ["", "00", "0", "000", "0G", "g0", "AbCd", "0x00", " 00", "00 ", "0\n0", "ABCDEFabcdef", "é0", "00ff00ff"] {
+    os.stdio.println("hex ${s} -> ${(Bytes.from_hex(s)).map(fn(b: Bytes) { b.to_hex() }) ?? "none"}")
+  }
+  for s in ["a=1&b=2", "a=1;b=2", "a=%zz", "a=%", "a=%4", "a=+b", "=x", "a", "&&", "a=1&a=2", "%41=%41", "a=%2", "a%=b", "a=b=c", "a b=c", "k=é", "k=%e9", "a=%00", "a=\n"] {
+    match url.parse_query(s) {
+      Ok(v) => os.stdio.println("q ${s} -> ok ${v.encode()}")
+      Err(_e) => os.stdio.println("q ${s} -> err")
+    }
+  }
+  for s in ["text/html", "text/html; charset=utf-8", "TEXT/HTML", "text/html;charset=\"utf-8\"", "text", "text/", "/html", "text/html;", "text/html; a=b; a=c", "text/html; a", "text/html; a=\"b", "text/html; a*=utf-8''b", "text / html", " text/html", "text/html ", "text/html; A=B", "multipart/form-data; boundary=x", "", ";", "a/b; c=\"d\\\"e\"", "text/hé"] {
+    match mime.parse_media_type(s) {
+      Ok(m) => os.stdio.println("mime ${s} -> ok ${m.kind} ${m.params.keys().sort().map(fn(k: Str) { k + "=" + (m.params.get(k) ?? "") }).join(",")}")
+      Err(_e) => os.stdio.println("mime ${s} -> err")
+    }
+  }
+}

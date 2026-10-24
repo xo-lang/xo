@@ -1,0 +1,272 @@
+exit 0
+--- stdout
+int 0 -> ok 0
+float 0 -> ok 0
+int -0 -> ok 0
+float -0 -> ok -0
+int 1 -> ok 1
+float 1 -> ok 1
+int 01 -> err
+float 01 -> err
+int -01 -> err
+float -01 -> err
+int 1.0 -> err
+float 1.0 -> ok 1
+int 1e2 -> err
+float 1e2 -> ok 100
+int 1E2 -> err
+float 1E2 -> ok 100
+int 1e+2 -> err
+float 1e+2 -> ok 100
+int 1.5 -> err
+float 1.5 -> ok 1.5
+int - -> err
+float - -> err
+int +1 -> err
+float +1 -> err
+int .5 -> err
+float .5 -> err
+int 5. -> err
+float 5. -> err
+int 1e -> err
+float 1e -> err
+int 0x10 -> err
+float 0x10 -> err
+int 9223372036854775807 -> ok 9223372036854775807
+float 9223372036854775807 -> ok 9223372036854776000
+int 9223372036854775808 -> err
+float 9223372036854775808 -> ok 9223372036854776000
+int -9223372036854775808 -> ok -9223372036854775808
+float -9223372036854775808 -> ok -9223372036854776000
+int -9223372036854775809 -> err
+float -9223372036854775809 -> ok -9223372036854776000
+int 1e400 -> err
+float 1e400 -> err
+int "1" -> err
+float "1" -> err
+int null -> err
+float null -> err
+int true -> err
+float true -> err
+int  1  -> ok 1
+float  1  -> ok 1
+int 1 2 -> err
+float 1 2 -> err
+int [1] -> err
+float [1] -> err
+int NaN -> err
+float NaN -> err
+int Infinity -> err
+float Infinity -> err
+int 1_0 -> err
+float 1_0 -> err
+int 00 -> err
+float 00 -> err
+int -0.0 -> err
+float -0.0 -> ok -0
+int 1.7976931348623157e308 -> err
+float 1.7976931348623157e308 -> ok 1.7976931348623157e+308
+int 1e-400 -> err
+float 1e-400 -> ok 0
+int 123456789012345678901234567890 -> err
+float 123456789012345678901234567890 -> ok 1.2345678901234568e+29
+dur "1s" -> ok "1s"
+dur "1.5s" -> ok "1.5s"
+dur "" -> err
+dur "0" -> ok "0s"
+dur " 1s" -> ok "1s"
+dur "1s " -> ok "1s"
+dur "1h2m" -> ok "1h2m0s"
+dur "-1s" -> ok "-1s"
+dur "1d" -> err
+dur 1 -> err
+dur null -> err
+dur "1µs" -> ok "1µs"
+dur "1us" -> ok "1µs"
+time "2026-10-24T01:02:03Z" -> ok "2026-10-24T01:02:03Z"
+time "2026-10-24T01:02:03.5+05:30" -> ok "2026-10-23T19:32:03.5Z"
+time "2026-10-24 01:02:03Z" -> err
+time "2026-10-24" -> err
+time 1 -> err
+time "" -> err
+time " 2026-10-24T01:02:03Z" -> err
+time "2026-10-24T01:02:03Z " -> err
+time "2026-10-24T01:02:03+0530" -> err
+time "2026-10-24T23:59:60Z" -> err
+time "2026-10-24T01:02:03.1234567891Z" -> ok "2026-10-24T01:02:03.123456789Z"
+time "2026-02-30T00:00:00Z" -> err
+time "2026-10-24T01:02:03-00:00" -> ok "2026-10-24T01:02:03Z"
+uuid  -> err
+uuid 00000000-0000-0000-0000-000000000000 -> ok 00000000-0000-0000-0000-000000000000
+uuid 0000000000000000000000000000000 -> err
+uuid {00000000-0000-0000-0000-000000000000} -> ok 00000000-0000-0000-0000-000000000000
+uuid urn:uuid:00000000-0000-0000-0000-000000000000 -> ok 00000000-0000-0000-0000-000000000000
+uuid 0000000000000000-0000-0000-00000000 -> err
+uuid G0000000-0000-0000-0000-000000000000 -> err
+uuid ABCDEF00-0000-0000-0000-000000000000 -> ok abcdef00-0000-0000-0000-000000000000
+uuid 00000000-0000-0000-0000-00000000000 -> err
+uuid 00000000-0000-0000-0000-0000000000000 -> err
+uuid 00000000000000000000000000000000 -> ok 00000000-0000-0000-0000-000000000000
+uuid  00000000-0000-0000-0000-000000000000 -> err
+ip 1.2.3.4 -> ok 1.2.3.4
+ip 01.2.3.4 -> err
+ip 1.2.3 -> err
+ip 1.2.3.4.5 -> err
+ip 256.1.1.1 -> err
+ip ::1 -> ok ::1
+ip :: -> ok ::
+ip ::ffff:1.2.3.4 -> ok ::ffff:1.2.3.4
+ip fe80::1%eth0 -> ok fe80::1%eth0
+ip 1:2:3:4:5:6:7:8 -> ok 1:2:3:4:5:6:7:8
+ip 1:2:3:4:5:6:7:8:9 -> err
+ip 1::2::3 -> err
+ip [::1] -> err
+ip  1.2.3.4 -> err
+ip 1.2.3.4  -> err
+ip 0:0:0:0:0:0:0:1 -> ok ::1
+ip ::1.2.3.4 -> ok ::102:304
+ip 1.2.3.4/24 -> err
+ip  -> err
+ip abcd:: -> ok abcd::
+ip ABCD:: -> ok abcd::
+ip 1.2.3.-4 -> err
+ip 1.2.3.+4 -> err
+ip 0x1.2.3.4 -> err
+ip 1.2.3.04 -> err
+b64 0  -> ok 
+b64 0  -> ok 
+b64 0  -> ok 
+b64 0  -> ok 
+b64 4 AA== -> ok 00
+b64 4 AA== -> ok 00
+b64 AA== -> err
+b64 AA== -> err
+b64 AA= -> err
+b64 AA= -> err
+b64 AA= -> err
+b64 AA= -> err
+b64 AA -> err
+b64 AA -> err
+b64 2 AA -> ok 00
+b64 2 AA -> ok 00
+b64 4 AAA= -> ok 0000
+b64 4 AAA= -> ok 0000
+b64 AAA= -> err
+b64 AAA= -> err
+b64 AAA -> err
+b64 AAA -> err
+b64 3 AAA -> ok 0000
+b64 3 AAA -> ok 0000
+b64 A -> err
+b64 A -> err
+b64 A -> err
+b64 A -> err
+b64 4 AAAA -> ok 000000
+b64 4 AAAA -> ok 000000
+b64 4 AAAA -> ok 000000
+b64 4 AAAA -> ok 000000
+b64 5 AA==N -> ok 00
+b64 5 AA==N -> ok 00
+b64 AA==N -> err
+b64 AA==N -> err
+b64 5 AAN== -> ok 00
+b64 5 AAN== -> ok 00
+b64 AAN== -> err
+b64 AAN== -> err
+b64 A A== -> err
+b64 A A== -> err
+b64 A A== -> err
+b64 A A== -> err
+b64 AA==AA== -> err
+b64 AA==AA== -> err
+b64 AA==AA== -> err
+b64 AA==AA== -> err
+b64 -_-_ -> err
+b64 4 -_-_ -> ok fbffbf
+b64 -_-_ -> err
+b64 4 -_-_ -> ok fbffbf
+b64 4 +/+/ -> ok fbffbf
+b64 +/+/ -> err
+b64 4 +/+/ -> ok fbffbf
+b64 +/+/ -> err
+b64 4 AB== -> ok 00
+b64 4 AB== -> ok 00
+b64 AB== -> err
+b64 AB== -> err
+b64 4 AAB= -> ok 0000
+b64 4 AAB= -> ok 0000
+b64 AAB= -> err
+b64 AAB= -> err
+b64 ==== -> err
+b64 ==== -> err
+b64 ==== -> err
+b64 ==== -> err
+b64 A=== -> err
+b64 A=== -> err
+b64 A=== -> err
+b64 A=== -> err
+b64 6 RNAAAA -> ok 000000
+b64 6 RNAAAA -> ok 000000
+b64 6 RNAAAA -> ok 000000
+b64 6 RNAAAA -> ok 000000
+b64 6 AAAARN -> ok 000000
+b64 6 AAAARN -> ok 000000
+b64 6 AAAARN -> ok 000000
+b64 6 AAAARN -> ok 000000
+hex  -> 
+hex 00 -> 00
+hex 0 -> none
+hex 000 -> none
+hex 0G -> none
+hex g0 -> none
+hex AbCd -> abcd
+hex 0x00 -> none
+hex  00 -> none
+hex 00  -> none
+hex 0
+0 -> none
+hex ABCDEFabcdef -> abcdefabcdef
+hex é0 -> none
+hex 00ff00ff -> 00ff00ff
+q a=1&b=2 -> ok a=1&b=2
+q a=1;b=2 -> err
+q a=%zz -> err
+q a=% -> err
+q a=%4 -> err
+q a=+b -> ok a=+b
+q =x -> ok =x
+q a -> ok a=
+q && -> ok 
+q a=1&a=2 -> ok a=1&a=2
+q %41=%41 -> ok A=A
+q a=%2 -> err
+q a%=b -> err
+q a=b=c -> ok a=b%3Dc
+q a b=c -> ok a+b=c
+q k=é -> ok k=%C3%A9
+q k=%e9 -> ok k=%25E9
+q a=%00 -> ok a=%00
+q a=
+ -> ok a=%0A
+mime text/html -> ok text/html 
+mime text/html; charset=utf-8 -> ok text/html charset=utf-8
+mime TEXT/HTML -> ok text/html 
+mime text/html;charset="utf-8" -> ok text/html charset=utf-8
+mime text -> ok text 
+mime text/ -> err
+mime /html -> err
+mime text/html; -> ok text/html 
+mime text/html; a=b; a=c -> err
+mime text/html; a -> err
+mime text/html; a="b -> err
+mime text/html; a*=utf-8''b -> ok text/html a=b
+mime text / html -> err
+mime  text/html -> ok text/html 
+mime text/html  -> ok text/html 
+mime text/html; A=B -> ok text/html a=B
+mime multipart/form-data; boundary=x -> ok multipart/form-data boundary=x
+mime  -> err
+mime ; -> err
+mime a/b; c="d\"e" -> ok a/b c=d"e
+mime text/hé -> err
+--- stderr

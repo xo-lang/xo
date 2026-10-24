@@ -1,0 +1,139 @@
+exit 0
+--- stdout
+int 0 -> 0
+int -0 -> 0
+int +0 -> 0
+int +5 -> 5
+int -5 -> -5
+int 007 -> 7
+int 1_000 -> none
+int 0x10 -> none
+int 0b1 -> none
+int 0o7 -> none
+int  1 -> none
+int 1  -> none
+int  -> none
+int - -> none
+int + -> none
+int --1 -> none
+int 9223372036854775807 -> 9223372036854775807
+int 9223372036854775808 -> none
+int -9223372036854775808 -> -9223372036854775808
+int -9223372036854775809 -> none
+int ١٢ -> none
+int 1e3 -> none
+int 1.0 -> none
+int ٣ -> none
+int １２ -> none
+hex ff -> 255 b36 555 b2 none
+hex FF -> 255 b36 555 b2 none
+hex 0xff -> none b36 43323 b2 none
+hex -ff -> -255 b36 -555 b2 none
+hex +ff -> 255 b36 555 b2 none
+hex 1_0 -> none b36 none b2 none
+hex z -> none b36 35 b2 none
+hex Z -> none b36 35 b2 none
+hex zz -> none b36 1295 b2 none
+hex  -> none b36 none b2 none
+hex 10 -> 16 b36 36 b2 2
+hex 7fffffffffffffff -> 9223372036854775807 b36 none b2 none
+hex 8000000000000000 -> none b36 none b2 none
+hex -8000000000000000 -> -9223372036854775808 b36 none b2 none
+hex -8000000000000001 -> none b36 none b2 none
+float 0 -> 0.0
+float -0 -> -0.0
+float +0 -> 0.0
+float 1.5 -> 1.5
+float .5 -> 0.5
+float 5. -> 5.0
+float 1e3 -> 1000.0
+float 1E3 -> 1000.0
+float 1e+3 -> 1000.0
+float 1e-3 -> 0.001
+float 1e -> none
+float e3 -> none
+float 1_0.5 -> 10.5
+float 0x1p-2 -> 0.25
+float 0x10 -> none
+float inf -> +Inf
+float Inf -> +Inf
+float -inf -> -Inf
+float +Inf -> +Inf
+float infinity -> +Inf
+float Infinity -> +Inf
+float nan -> NaN
+float NaN -> NaN
+float -nan -> none
+float  1 -> none
+float 1  -> none
+float  -> none
+float - -> none
+float . -> none
+float 1.2.3 -> none
+float 1e400 -> none
+float -1e400 -> none
+float 1e-400 -> 0.0
+float 4.9e-324 -> 5e-324
+float 1.7976931348623157e308 -> 1.7976931348623157e+308
+float 1.7976931348623159e308 -> none
+float 0.1 -> 0.1
+float 123456789012345678901234567890 -> 1.2345678901234568e+29
+float 1,5 -> none
+float ١ -> none
+float 1d3 -> none
+float 0b1 -> none
+bool true -> true
+bool false -> false
+bool True -> true
+bool TRUE -> true
+bool t -> true
+bool T -> true
+bool 1 -> true
+bool 0 -> false
+bool f -> false
+bool F -> false
+bool yes -> none
+bool  -> none
+bool  true -> none
+bool False -> false
+bool FALSE -> false
+dur 1s -> ok 1000000000
+dur 1.5s -> ok 1500000000
+dur .5s -> ok 500000000
+dur 5.s -> ok 5000000000
+dur 1h2m3s -> ok 3723000000000
+dur -1s -> ok -1000000000
+dur +1s -> ok 1000000000
+dur 0 -> ok 0
+dur -0 -> ok 0
+dur +0 -> ok 0
+dur 1 -> err
+dur s -> err
+dur  -> err
+dur 1d -> err
+dur 1w -> err
+dur 1ms -> ok 1000000
+dur 1us -> ok 1000
+dur 1µs -> ok 1000
+dur 1μs -> ok 1000
+dur 1ns -> ok 1
+dur 1.5ns -> ok 1
+dur 1h1h -> ok 7200000000000
+dur 1 s -> err
+dur  1s -> ok 1000000000
+dur 1s  -> ok 1000000000
+dur 1e3s -> err
+dur 9223372036854775807ns -> ok 9223372036854775807
+dur 9223372036854775808ns -> err
+dur 2562047h47m16.854775807s -> ok 9223372036854775807
+dur 2562047h47m16.854775808s -> err
+dur 0.000000001s -> ok 1
+dur 1_0s -> err
+dur 1S -> err
+dur 1M -> err
+dur 1m1 -> err
+dur 1.s -> ok 1000000000
+dur -.5s -> ok -500000000
+dur 1.0000000001s -> ok 1000000000
+dur 100000000000000000000ns -> err
+--- stderr

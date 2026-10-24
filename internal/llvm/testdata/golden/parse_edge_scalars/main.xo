@@ -1,0 +1,32 @@
+// Scalar parsers at their edges, native against the Go backend (Go's
+// strconv and time.ParseDuration are lenient or differ in places): Int.parse
+// and parse_base, Float.parse, Bool.parse, Duration.parse on signs, bases,
+// underscores, spaces, overflow, hex floats, inf and nan, and units. Found by
+// the parity sweep of 2026-10-24: the two backends agree on every case here.
+fn show_int(v: Int?) -> Str { v.map(fn(n: Int) { "${n}" }) ?? "none" }
+fn show_float(v: Float?) -> Str { v.map(fn(n: Float) { "${n}" }) ?? "none" }
+fn show_bool(v: Bool?) -> Str { v.map(fn(n: Bool) { "${n}" }) ?? "none" }
+
+fn main(os: Os) {
+  let ints = ["0", "-0", "+0", "+5", "-5", "007", "1_000", "0x10", "0b1", "0o7", " 1", "1 ", "", "-", "+", "--1", "9223372036854775807", "9223372036854775808", "-9223372036854775808", "-9223372036854775809", "١٢", "1e3", "1.0", "٣", "１２"]
+  for s in ints {
+    os.stdio.println("int ${s} -> ${show_int(Int.parse(s))}")
+  }
+  for s in ["ff", "FF", "0xff", "-ff", "+ff", "1_0", "z", "Z", "zz", "", "10", "7fffffffffffffff", "8000000000000000", "-8000000000000000", "-8000000000000001"] {
+    os.stdio.println("hex ${s} -> ${show_int(Int.parse_base(s, 16))} b36 ${show_int(Int.parse_base(s, 36))} b2 ${show_int(Int.parse_base(s, 2))}")
+  }
+  let floats = ["0", "-0", "+0", "1.5", ".5", "5.", "1e3", "1E3", "1e+3", "1e-3", "1e", "e3", "1_0.5", "0x1p-2", "0x10", "inf", "Inf", "-inf", "+Inf", "infinity", "Infinity", "nan", "NaN", "-nan", " 1", "1 ", "", "-", ".", "1.2.3", "1e400", "-1e400", "1e-400", "4.9e-324", "1.7976931348623157e308", "1.7976931348623159e308", "0.1", "123456789012345678901234567890", "1,5", "١", "1d3", "0b1"]
+  for s in floats {
+    os.stdio.println("float ${s} -> ${show_float(Float.parse(s))}")
+  }
+  for s in ["true", "false", "True", "TRUE", "t", "T", "1", "0", "f", "F", "yes", "", " true", "False", "FALSE"] {
+    os.stdio.println("bool ${s} -> ${show_bool(Bool.parse(s))}")
+  }
+  let durs = ["1s", "1.5s", ".5s", "5.s", "1h2m3s", "-1s", "+1s", "0", "-0", "+0", "1", "s", "", "1d", "1w", "1ms", "1us", "1µs", "1μs", "1ns", "1.5ns", "1h1h", "1 s", " 1s", "1s ", "1e3s", "9223372036854775807ns", "9223372036854775808ns", "2562047h47m16.854775807s", "2562047h47m16.854775808s", "0.000000001s", "1_0s", "1S", "1M", "1m1", "1.s", "-.5s", "1.0000000001s", "100000000000000000000ns"]
+  for s in durs {
+    match Duration.parse(s) {
+      Ok(d) => os.stdio.println("dur ${s} -> ok ${d.nanos()}")
+      Err(_e) => os.stdio.println("dur ${s} -> err")
+    }
+  }
+}
