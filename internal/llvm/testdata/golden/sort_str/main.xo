@@ -1,0 +1,57 @@
+// List.sort on Strs (an index merge sort keyed by each string's first seven
+// bytes, then the string): sizes around the run length, strings shorter and
+// longer than the prefix, a NUL byte against the zero padding, non-ASCII
+// bytes (compared as unsigned bytes), duplicates, sorted and reversed input,
+// each against an insertion sort.
+fn reference(xs: List[Str]) -> List[Str] {
+  var out: List[Str] = []
+  for x in xs {
+    var i = out.len()
+    out.push(x)
+    while i > 0 && out[i - 1] > x {
+      out[i] = out[i - 1]
+      i -= 1
+    }
+    out[i] = x
+  }
+  out
+}
+
+fn gen(n: Int, seed: Int) -> List[Str] {
+  let parts = ["a", "b", "ab", "é", "z", "", "\0", "key", "ÿ", "abcdefg", "abcdefgh", "Z"]
+  var xs: List[Str] = []
+  var s = seed
+  for _ in 0..n {
+    var t = ""
+    s = (s * 1103515245 + 12345) % 2147483648
+    let k = s % 5
+    for _ in 0..k {
+      s = (s * 1103515245 + 12345) % 2147483648
+      t = t + parts[s % parts.len()]
+    }
+    xs.push(t)
+  }
+  xs
+}
+
+fn main(os: Os) {
+  var bad = 0
+  for n in [0, 1, 2, 3, 15, 16, 17, 31, 32, 33, 47, 100, 257, 1000] {
+    let xs = gen(n, n + 5)
+    let want = reference(xs)
+    if xs.sort() != want {
+      bad += 1
+    }
+    if want.sort() != want {
+      bad += 1
+    }
+    if want.reverse().sort() != want {
+      bad += 1
+    }
+  }
+  os.stdio.println("str mismatches ${bad}")
+  let w = ["pear", "apple", "fig", "apple", "", "Fig", "ab\0", "ab", "é", "e", "zz", "abcdefgh", "abcdefg", "abcdefgi"]
+  os.stdio.println("${w.sort().join("|").bytes().len()}")
+  os.stdio.println(w.sort()[3])
+  os.stdio.println(w.sort()[12])
+}

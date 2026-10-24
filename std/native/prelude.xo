@@ -1385,6 +1385,11 @@ fn list_sort[T: Ord](xs: List[T]) -> List[T] {
   if n < 2 {
     return xs
   }
+  if let Some(ss) = rt.any_get[List[Str]](rt.any_of[List[T]](xs)) {
+    if let Some(r) = rt.any_get[List[T]](rt.any_of[List[Str]](list_sort_str(ss))) {
+      return r
+    }
+  }
   var a = xs
   var lo = 0
   while lo < n {
@@ -1448,6 +1453,109 @@ fn list_sort[T: Ord](xs: List[T]) -> List[T] {
     width *= 2
   }
   a
+}
+
+/// The first seven bytes of s as a big endian number, short strings padded
+/// with zeros: a < b when the prefix of a is less than b's, and equal
+/// prefixes are decided by comparing the strings.
+fn str_prefix7(s: Str) -> Int {
+  let b = s.bytes()
+  var p = 0
+  var i = 0
+  while i < 7 {
+    p = p * 256 + (if i < b.len() { Int(b[i]) } else { 0 })
+    i += 1
+  }
+  p
+}
+
+/// list_sort for Strs: a stable bottom up merge sort of the indices, ordered
+/// by each string's seven byte prefix and then the strings, so the merges
+/// move Ints and never count a string (each move of a Str counted the string
+/// it copied and released the one it replaced); the Strs are gathered once.
+fn list_sort_str(xs: List[Str]) -> List[Str] {
+  let n = xs.len()
+  var pre: List[Int] = List.with_capacity(n)
+  var a: List[Int] = List.with_capacity(n)
+  for i in 0..n {
+    pre.push(str_prefix7(xs[i]))
+    a.push(i)
+  }
+  var s = 0
+  while s < n {
+    let e = if s + 16 < n { s + 16 } else { n }
+    var i = s + 1
+    while i < e {
+      let x = a[i]
+      let px = pre[x]
+      var j = i
+      while j > s {
+        let y = a[j - 1]
+        let py = pre[y]
+        if px < py || (px == py && xs[x] < xs[y]) {
+          a[j] = y
+          j -= 1
+        } else {
+          break
+        }
+      }
+      a[j] = x
+      i += 1
+    }
+    s = e
+  }
+  var b = a
+  var width = 16
+  while width < n {
+    var lo = 0
+    while lo < n {
+      var mid = lo + width
+      if mid > n {
+        mid = n
+      }
+      var hi = mid + width
+      if hi > n {
+        hi = n
+      }
+      var i = lo
+      var j = mid
+      var k = lo
+      while i < mid && j < hi {
+        let x = a[j]
+        let y = a[i]
+        let px = pre[x]
+        let py = pre[y]
+        if px < py || (px == py && xs[x] < xs[y]) {
+          b[k] = x
+          j += 1
+        } else {
+          b[k] = y
+          i += 1
+        }
+        k += 1
+      }
+      while i < mid {
+        b[k] = a[i]
+        i += 1
+        k += 1
+      }
+      while j < hi {
+        b[k] = a[j]
+        j += 1
+        k += 1
+      }
+      lo = hi
+    }
+    let t = a
+    a = b
+    b = t
+    width *= 2
+  }
+  var out: List[Str] = List.with_capacity(n)
+  for i in 0..n {
+    out.push(xs[a[i]])
+  }
+  out
 }
 
 /// A stable bottom up merge sort: less(a, b) when a sorts before b.

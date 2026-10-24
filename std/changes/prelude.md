@@ -1,5 +1,29 @@
 # prelude changes
 
+## 2026-10-24: perf: List.sort of Strs sorts indices by a seven byte prefix, so a merge never counts a string
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/sort strs at 1.18 of Go with equal instructions
+  (e40e58193): the merges moved Strs, and each move counted the string it
+  copied and released the one it replaced, two writes to cold string objects
+  per element per pass (the profile: list_sort[Str] 69%, memcmp 23%)
+- Go reference: slices.Sort (pdqsort); Xo's sort stays stable
+- Test: golden sort_str (sizes around the run length, strings shorter and
+  longer than the prefix, a NUL byte against the zero padding, non-ASCII
+  bytes, duplicates, sorted and reversed input, each against an insertion
+  sort); the 15 goldens that sort
+- Timing: bench/perf/sort strs, xo bench --ab, 15 rounds, A and B built by
+  one xo on main 9706c67e4: wall 0.894 (0.888 to 0.916), instructions 0.777;
+  ints and floats within noise; against Go strs 1.18 to about 1.05 (max RSS
+  1.9x Go's, the index lists)
+
+`list_sort` (std/native/prelude.xo) hands a `List[Str]` to `list_sort_str`
+(the type is told apart with `rt.any_get`, once a sort): runs of 16 by
+insertion, then bottom up merges, of a list of indices ordered by the first
+seven bytes of each string and then the strings, and one pass gathers the
+result. The order and the stability are unchanged.
+
 ## 2026-10-24: perf: a 2-byte case in the UTF-8 validation behind every Bytes-to-Str conversion
 
 - Kind: perf
