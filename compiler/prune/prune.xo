@@ -140,6 +140,10 @@ pub struct Stats {
   /// a sliced run: the shards the sizes ledger has no size for yet (its
   /// bytes count those as empty)
   pub unmeasured: Int = 0
+  /// dirs: the files below an entry removed by drop_suffix or thin_keep,
+  /// and their bytes (counted per file, as the entry sizes are)
+  pub cut_files: Int = 0
+  pub cut_bytes: Int = 0
 }
 
 struct Entry {
@@ -230,7 +234,10 @@ pub fn run(fs: Fs, clock: Clock, dir: Str, p: Policy) -> Stats uses (fs.read, fs
   var kept: List[Entry] = []
   var total = 0
   var subdirs: List[Entry] = []
-  let all = entries(fs, clock, dir, p, subdirs)
+  var cut: List[Int] = [0, 0]
+  let all = entries(fs, clock, dir, p, subdirs, cut)
+  st.cut_files = cut[0]
+  st.cut_bytes = cut[1]
   // the budget is for the removals: a walk longer than it still lets a
   // run make progress
   let start = clock.now()
@@ -299,7 +306,7 @@ pub fn run(fs: Fs, clock: Clock, dir: Str, p: Policy) -> Stats uses (fs.read, fs
   fs.remove(lock).ignore_err("another run's lock went stale")
   st.bytes = total
   // one line per run: what the walk found and what the run left
-  let line = "${clock.now().unix()} walk ${start.unix_millis() - t0.unix_millis()} ms, ${all.len()} entries, ${before} bytes before, ${total} after, ${st.removed.len()} removed${if st.partial { ", partial" } else { "" }}, cap ${p.max_bytes}\n"
+  let line = "${clock.now().unix()} walk ${start.unix_millis() - t0.unix_millis()} ms, ${all.len()} entries, ${before} bytes before, ${total} after, ${st.removed.len()} removed${if st.cut_files > 0 { ", ${st.cut_files} files ${st.cut_bytes} bytes cut" } else { "" }}${if st.partial { ", partial" } else { "" }}, cap ${p.max_bytes}\n"
   fs.append("${dir}/prune-log", line.bytes()).ignore_err("only the log")
   st
 }
@@ -701,7 +708,7 @@ fn under(rel: Str, name: Str) -> Bool {
 /// The entries of the cache in dir; files left under a temporary name
 /// (".tmp" in the name) for over keep are removed on the way. Without
 /// dirs, the directories below the top level go to subdirs in walk order.
-fn entries(fs: Fs, clock: Clock, dir: Str, p: Policy, var subdirs: List[Entry]) -> List[Entry] uses (fs.read, fs.write, clock) {
+fn entries(fs: Fs, clock: Clock, dir: Str, p: Policy, var subdirs: List[Entry], var cut: List[Int]) -> List[Entry] uses (fs.read, fs.write, clock) {
   let dirs = p.dirs
   let keep = p.keep
   var out: List[Entry] = []
@@ -724,11 +731,15 @@ fn entries(fs: Fs, clock: Clock, dir: Str, p: Policy, var subdirs: List[Entry]) 
             }
             if !p.drop_suffix.is_empty() && f.name.ends_with(p.drop_suffix) && clock.since(f.modified) >= p.drop_idle {
               if fs.remove(f.path).is_ok() {
+                cut[0] += 1
+                cut[1] += counted(p, f.size)
                 continue
               }
             }
             if !p.thin_keep.is_empty() && clock.since(f.modified) >= p.thin_idle && !under(f.path.trim_prefix("${path}/"), p.thin_keep) {
               if fs.remove(f.path).is_ok() {
+                cut[0] += 1
+                cut[1] += counted(p, f.size)
                 continue
               }
             }

@@ -489,6 +489,8 @@ test "a build directory thins to its bin/ after the idle time, however recently 
   expect(there(os, "b/aa/arm64/fresh.o")) == true
   expect(there(os, "b/aa/arm64/bin/app")) == true
   expect(st.bytes) == 310
+  expect(st.cut_files) == 2
+  expect(st.cut_bytes) == 1500
 }
 
 test "a build directory's bin/ outlives the thin idle time" {
