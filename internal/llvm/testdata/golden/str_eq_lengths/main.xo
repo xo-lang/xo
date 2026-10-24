@@ -1,0 +1,41 @@
+// Str == and != test the lengths inline before str.eq (2026-10-23):
+// equal and unequal lengths, empty strings, literals on either side,
+// match arms on Str literals, a Bool kept as a value, and keys in a
+// List scan.
+
+fn count(xs: List[Str], want: Str) -> Int {
+  var n = 0
+  for x in xs {
+    if x == want {
+      n += 1
+    }
+  }
+  n
+}
+
+fn kind(s: Str) -> Int {
+  match s {
+    "" => 0
+    "a" => 1
+    "ab" => 2
+    "abc" => 3
+    "abd" => 4
+    _ => -1
+  }
+}
+
+fn main(os: Os) {
+  let xs = ["", "a", "ab", "abc", "abd", "abc", "abc", "héllo", "hello", "hellö", "a long string past sixteen bytes", "a long string past sixteen bytez"]
+  for w in ["", "a", "abc", "abd", "abe", "hello", "héllo", "a long string past sixteen bytes", "nope"] {
+    os.stdio.println("${w.quote()} ${count(xs, w)} ${kind(w)}")
+  }
+  var eqs: List[Bool] = []
+  for (i, a) in xs.indexed() {
+    let b = xs[(i + 1) % xs.len()]
+    let e = a == b
+    let ne = a != b
+    eqs.push(e)
+    os.stdio.println("${a.quote()} ${b.quote()} ${e} ${ne} ${a == "abc"} ${"abc" != a}")
+  }
+  os.stdio.println("${eqs.filter(fn(e) { e }).len()} ${xs.index_of("abc") ?? -1} ${xs.contains("abe")}")
+}

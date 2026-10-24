@@ -1702,7 +1702,7 @@ fn (var b: Builder) compare_values(op: lexer.Kind, l: Int, r: Int) -> Int {
     Int | Float | Bool => return b.compare(o, l, r)
     Str => {
       if o == Op.Eq || o == Op.Ne {
-        let eq = b.call("str.eq", bt, "", [l, r])
+        let eq = b.str_eq(l, r)
         if o == Op.Ne {
           return b.add(Op.Not, bt, Aux.None, [eq])
         }
@@ -2139,13 +2139,11 @@ fn (var b: Builder) pattern(v: Int, p: Pattern, fail: Int) {
     }
     LitPat(value: value, ..) => {
       let lit = b.value_as(value, vt)
-      var c = -1
       if b.tkind(vt) == Kind.Str {
-        c = b.call("str.eq", bt, "", [v, lit])
+        b.str_eq_br(v, lit, fail)
       } else {
-        c = b.add(Op.Eq, bt, Aux.None, [v, lit])
+        b.test_br(b.add(Op.Eq, bt, Aux.None, [v, lit]), fail)
       }
-      b.test_br(c, fail)
     }
     RangePat(lo: lo, hi: hi, inclusive: inclusive, ..) => {
       let lv = b.value_as(lo, vt)

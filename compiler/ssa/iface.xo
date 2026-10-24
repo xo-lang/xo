@@ -749,9 +749,47 @@ fn (var b: Builder) syn_type(f: Int, e: Expr, t: Int) {
 fn (var b: Builder) eq_values(l: Int, r: Int) -> Int {
   let bt = b.bool_t()
   if b.tkind(b.vty(l)) == Kind.Str {
-    return b.call("str.eq", bt, "", [l, r])
+    return b.str_eq(l, r)
   }
   b.add(Op.Eq, bt, Aux.None, [l, r])
+}
+
+/// `l == r` of two Strs: the lengths first, inline, then str.eq (a call
+/// on the native backends) only when they match, in the shape of `&&`
+/// (2026-10-23: bench/perf/callbacks for compared 1000 names of 5 to 7
+/// bytes with "nobody" through obj.str_eq, 28 instructions an element
+/// on amd64 against LLVM's 6, which inlines str_eq's length test).
+fn (var b: Builder) str_eq(l: Int, r: Int) -> Int {
+  let bt = b.bool_t()
+  let join = b.new_block()
+  let res = b.s.f.add_param(join, bt)
+  let (yes, no) = b.branch(b.add(Op.Eq, bt, Aux.None, [b.str_len_of(l), b.str_len_of(r)]))
+  b.s.cur = no
+  b.jump(join, [b.cbool(false)])
+  b.s.cur = yes
+  b.jump(join, [b.call("str.eq", bt, "", [l, r])])
+  b.seal(join)
+  b.s.cur = join
+  res
+}
+
+/// Branches to fail unless Strs l and r are equal: the lengths, then
+/// str.eq (str_eq's tests, with no Bool join).
+fn (var b: Builder) str_eq_br(l: Int, r: Int, fail: Int) {
+  let bt = b.bool_t()
+  b.test_br(b.add(Op.Eq, bt, Aux.None, [b.str_len_of(l), b.str_len_of(r)]), fail)
+  b.test_br(b.call("str.eq", bt, "", [l, r]), fail)
+}
+
+/// A Str's length: a constant for a literal, else Str.len.
+fn (var b: Builder) str_len_of(s: Int) -> Int {
+  let v = b.s.f.values[s]
+  if v.op == Op.Const {
+    if let Aux.S(s: t) = v.aux {
+      return b.cint(t.len())
+    }
+  }
+  b.call("Str.len", b.int_t(), "", [s])
 }
 
 /// Returns from the generated function under construction with false when

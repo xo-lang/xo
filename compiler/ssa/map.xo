@@ -406,7 +406,7 @@ fn (var b: Builder) map_scan(t: Int) -> Str {
     // the lengths first, inline: str.eq is a call on arm64
     let samelen = b.add(Op.Eq, bt, Aux.None, [b.call("Str.len", it, "", [lk]), b.call("Str.len", it, "", [k])])
     let (lno3, ljoin3) = b.if_then_begin(samelen)
-    let (lno2, ljoin2) = b.if_then_begin(b.eq_values(lk, k))
+    let (lno2, ljoin2) = b.if_then_begin(b.call("str.eq", bt, "", [lk, k]))
     b.retv(li)
     b.if_then_end(lno2, ljoin2)
     b.if_then_end(lno3, ljoin3)

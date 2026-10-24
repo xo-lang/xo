@@ -1,0 +1,25 @@
+exit 0
+--- stdout
+"" 1 0
+"a" 1 1
+"abc" 3 3
+"abd" 1 4
+"abe" 0 -1
+"hello" 1 -1
+"héllo" 1 -1
+"a long string past sixteen bytes" 1 -1
+"nope" 0 -1
+"" "a" false true false true
+"a" "ab" false true false true
+"ab" "abc" false true false true
+"abc" "abd" false true true false
+"abd" "abc" false true false true
+"abc" "abc" true false true false
+"abc" "héllo" false true true false
+"héllo" "hello" false true false true
+"hello" "hellö" false true false true
+"hellö" "a long string past sixteen bytes" false true false true
+"a long string past sixteen bytes" "a long string past sixteen bytez" false true false true
+"a long string past sixteen bytez" "" false true false true
+1 3 false
+--- stderr
