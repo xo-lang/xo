@@ -560,15 +560,12 @@ struct Patched {
 	}
 	o.WriteString("]\n")
 
-	// Deep nesting: one array per level, and an object per level, at the
-	// depths Go's scanner takes. The expectation is Go's Unmarshal, whose
-	// scanner stops past 10000 (encoding/json's jsMaxNestingDepth); the
-	// Go backend's own scanner ports that limit. (At 10001 and deeper the
-	// native backends take the text where these two refuse it: a finding
-	// reported with this corpus, not a row, since no single expectation
-	// holds on all three backends.)
-	o.WriteString("\n/// (JSON text, whether Go's encoding/json takes it)\nconst DEPTH_CASES: List[(Str, Bool)] = [\n")
-	for _, n := range []int{1, 2, 10, 100, 1000, 9999, 10000} {
+	// Deep nesting: one array per level, and an object per level, up to the
+	// depth Go's own scanner stops at (encoding/json's jsMaxNestingDepth,
+	// 10000), then the levels just past it. All three backends stop at the
+	// same place as of the native decoder's cap (2026-10-24).
+	o.WriteString("\n/// (JSON text, whether Go's encoding/json takes it: its scanner stops past 10000 levels, as all three backends do)\nconst DEPTH_CASES: List[(Str, Bool)] = [\n")
+	for _, n := range []int{1, 2, 10, 100, 1000, 9999, 10000, 10001, 20000} {
 		text := strings.Repeat("[", n) + strings.Repeat("]", n)
 		var v any
 		fmt.Fprintf(&o, "  (%s, %v),\n", xq(text), json.Unmarshal([]byte(text), &v) == nil)
