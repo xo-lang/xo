@@ -280,6 +280,10 @@ fn unit_limit(unit: Int) -> Int {
   }
 }
 
+/// Whether byte c at an end of a duration's text is ASCII and not white
+/// space, so no white space is trimmed there.
+fn plain_end(c: Int) -> Bool { c < 0x80 && c != 32 && (c < 9 || c > 13) }
+
 /// Whether byte c of a duration's text starts a number (`.` or a digit).
 fn num_start(c: Int) -> Bool { c == 46 || (c >= 48 && c <= 57) }
 
@@ -288,8 +292,16 @@ fn num_start(c: Int) -> Bool { c == 46 || (c >= 48 && c <= 57) }
 /// negated (to 2^63, as Go's uint64 is), so -2^63 parses.
 pub fn parse_duration(s: Str) -> Int? {
   let b = s.bytes()
-  var i = strings.space_end(b, 0, b.len())
-  let n = strings.space_start(b, i, b.len())
+  // the white space's bounds through calls only when an end byte is
+  // space or not ASCII (2026-10-24: the two calls were most of a short
+  // text's parse, the native inliner taking neither)
+  let bl = b.len()
+  var i = 0
+  var n = bl
+  if bl == 0 || !plain_end(Int(b[0])) || !plain_end(Int(b[bl - 1])) {
+    i = strings.space_end(b, 0, bl)
+    n = strings.space_start(b, i, bl)
+  }
   var neg = false
   if i < n && (b[i] == 45 || b[i] == 43) {
     neg = b[i] == 45
@@ -307,19 +319,26 @@ pub fn parse_duration(s: Str) -> Int? {
     if !num_start(Int(b[i])) {
       return None
     }
-    // the negated integer part
+    // the negated integer part; each digit's byte read once, and no
+    // overflow check where the guards before it rule one out (nv at
+    // least -922337203685477580, so nv * 10 fits; c is 0 to 9; t at
+    // least MIN_INT + c), which LLVM's ranges remove and the native
+    // backends did not (2026-10-24: dur_parse 1.11x LLVM's instructions)
     var nv = 0
     let pl = i
-    while i < n && b[i] >= 48 && b[i] <= 57 {
+    while i < n {
       let c = Int(b[i]) - 48
+      if c < 0 || c > 9 {
+        break
+      }
       if nv < -922337203685477580 {
         return None
       }
-      let t = nv * 10
-      if t < MIN_INT + c {
+      let t = nv.wrapping_mul(10)
+      if t < MIN_INT.wrapping_add(c) {
         return None
       }
-      nv = t - c
+      nv = t.wrapping_sub(c)
       i += 1
     }
     let pre = i != pl
@@ -331,17 +350,20 @@ pub fn parse_duration(s: Str) -> Int? {
       i += 1
       let pf = i
       var overflow = false
-      while i < n && b[i] >= 48 && b[i] <= 57 {
+      while i < n {
+        let c = Int(b[i]) - 48
+        if c < 0 || c > 9 {
+          break
+        }
         if !overflow {
-          let c = Int(b[i]) - 48
           if nf < -922337203685477580 {
             overflow = true
           } else {
-            let t = nf * 10
-            if t < MIN_INT + c {
+            let t = nf.wrapping_mul(10)
+            if t < MIN_INT.wrapping_add(c) {
               overflow = true
             } else {
-              nf = t - c
+              nf = t.wrapping_sub(c)
               scale *= 10.0
             }
           }

@@ -1,0 +1,70 @@
+// Duration.parse at the overflow edges (std/native/llrt text.xo
+// parse_duration, whose digit loops use wrapping operations where its
+// guards rule an overflow out): the largest and smallest durations and
+// one past each, in nanoseconds and in hours, minutes and seconds; long
+// runs of leading zeros; huge and overflowing fractions; signs, spaces
+// and malformed texts; white space and non-ASCII bytes at either end
+// (the white space trim runs only when an end byte needs it). The same on every backend as Go's
+// time.ParseDuration.
+const CASES: List[Str] = [
+  "9223372036854775807ns",
+  "9223372036854775808ns",
+  "-9223372036854775808ns",
+  "-9223372036854775809ns",
+  "922337203685477580ns",
+  "922337203685477581ns",
+  "9223372036854775800ns",
+  "92233720368547758070ns",
+  "2562047h47m16.854775807s",
+  "2562047h47m16.854775808s",
+  "-2562047h47m16.854775808s",
+  "-2562047h47m16.854775809s",
+  "2562048h",
+  "153722867m",
+  "153722868m",
+  "9223372036s",
+  "9223372037s",
+  "000000000000000000000000000000000000001s",
+  "-0000000000000000000000000000000000000002h",
+  "00000000000000000000000000000000000000000",
+  "1.000000000000000000000000000000000000001s",
+  "0.99999999999999999999999999999999999999s",
+  "9223372036.854775807s",
+  "9223372036.854775808s",
+  "1.9999999999999999999999h",
+  "0.000000000000000000000000000000000000001ns",
+  "922337203685477580.9ns",
+  "1h30m",
+  "1.5h30m",
+  "+5s",
+  "  5s \t",
+  "-0",
+  "0",
+  "5.",
+  "5.s",
+  ".5s",
+  ".s",
+  "s",
+  "5",
+  "1e3s",
+  "5x",
+  "5ss",
+  "",
+  "-",
+  "1µs1us1μs",
+  "\u{3000}5s\u{3000}",
+  "\u{85}7ms",
+  "5µs",
+  "5s\u{a0}",
+  "\u{2028}",
+  " ",
+]
+
+fn main(os: Os) {
+  for c in CASES {
+    match Duration.parse(c) {
+      Ok(d) => os.stdio.println("${c.quote()} ${d.nanos()}")
+      Err(_) => os.stdio.println("${c.quote()} err")
+    }
+  }
+}

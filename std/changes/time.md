@@ -1,5 +1,25 @@
 # std/time changes
 
+## 2026-10-24: perf: Duration.parse's digit loops on the native backends
+
+- Kind: perf
+- Commit: this commit
+- Found by: Xo Lang 1, a dur_parse loop at 1.24x LLVM's wall time with 1.06x its instructions (quiet --ab, 30 rounds)
+- Go reference: time.ParseDuration (unchanged results)
+- Test: golden duration_parse_edges (51 texts at the overflow edges: the largest and smallest durations and one past each, long runs of leading zeros, huge fractions, Unicode white space at either end; the same on arm64, LLVM and the Go backend), parse_edge_scalars, parse_edge_formats
+
+std/native/llrt text.xo parse_duration read each digit's byte three times
+and checked `nv * 10`, `MIN_INT + c` and `t - c` for overflow, which its
+guards already rule out (nv at least -922337203685477580, c 0 to 9, t at
+least MIN_INT + c); LLVM's ranges dropped those checks and the native
+backends did not. Each byte is read once and the guarded operations wrap.
+The white space trim (strings.space_end and space_start, two calls the
+native inliner does not take) runs only when the text's first or last
+byte is white space or not ASCII. Quiet --ab, 30 rounds, against main: a
+loop of 2,000,000 parses wall 0.885 (0.865 to 0.902), instructions 0.874;
+bench/perf/text dur_parse wall about 0.93 net of its setup; against LLVM
+the loop's wall went from 1.238 to 1.105.
+
 ## 2026-10-24: fix: Time.parse_rfc3339 on the native backends refuses what RFC 3339 forbids
 
 - Kind: fix
