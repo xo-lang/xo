@@ -224,16 +224,29 @@ pub fn find_bytes(b: Bytes, sub: Bytes, from: Int) -> Int {
   if m > n - f {
     return -1
   }
-  let c = Int(sub[0])
+  if m == n - f {
+    // one start can match: Go's bytes.Index case n == len(s), Equal once
+    if eq_at(b, f, sub, 0, m) {
+      return f
+    }
+    return -1
+  }
   // the starts that leave room for sub
   let last = n - m + 1
+  let c = Int(sub[0])
   var i = f
   while true {
     i = find_byte(b, i, last, c)
     if i < 0 {
       return -1
     }
-    if m == 1 || eq_at(b, i + 1, sub, 1, m - 1) {
+    if m == 1 {
+      return i
+    }
+    // Go's bytes.Index second byte test before the whole compare: a
+    // candidate whose first byte matched often fails here, and eq_at is a
+    // call where this is one load and a compare
+    if Int(b[i + 1]) == Int(sub[1]) && (m == 2 || eq_at(b, i + 2, sub, 2, m - 2)) {
       return i
     }
     i += 1

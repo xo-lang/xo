@@ -92,6 +92,39 @@ func goIndexCases() []strsearchCase {
 	return cs
 }
 
+// shortHayCases are the edges of find_bytes' short-haystack path (Go's
+// bytes.Index brute force for len(s) <= 64): a one byte and a two byte
+// separator, a separator as long as the haystack, a match at the first and
+// at the last start, a near miss on the second byte (and at the last
+// start), non-ASCII bytes, and a haystack of exactly 64 and of 65 bytes
+// with the match at the last start and absent.
+func shortHayCases() []strsearchCase {
+	return []strsearchCase{
+		{"abcabc", "b"},
+		{"abcabc", "bc"},
+		{"abcabc", "cb"},
+		{"abc", "abc"},
+		{"abc", "abd"},
+		{"abcdef", "abc"},
+		{"xyzabc", "abc"},
+		{"aabxabc", "abc"},
+		{"axcabc", "abc"},
+		{"aaaab", "aac"},
+		{"aabcabca", "abc"},
+		{"héllo wörld", "wö"},
+		{"日本語のテキスト", "語の"},
+		{"✓x ✓y", "✓x"},
+		{"x✓", "✓"},
+		{strings.Repeat("a", 61) + "abc", "abc"},
+		{strings.Repeat("a", 62) + "abc", "abc"},
+		{strings.Repeat("a", 64), "abc"},
+		{strings.Repeat("a", 65), "abc"},
+		{strings.Repeat("a", 63) + "ab", "abc"},
+		{strings.Repeat("é", 32) + "ab", "ab"},
+		{strings.Repeat("é", 33) + "ab", "ab"},
+	}
+}
+
 // goCountCases are Go's strings_test.go CountTests as (s, sub) inputs; the
 // count itself comes from strings.Count. Go's strings tests are Copyright
 // 2009 The Go Authors, BSD-style license.
@@ -682,10 +715,11 @@ func strsearchText(c strsearchCase) strsearchCase { return strsearchCase{textOf(
 func strsearchCorpus() string {
 	r := rand.New(rand.NewSource(31))
 	var o strings.Builder
-	o.WriteString(header("strings.Index, LastIndex, Contains, IndexAny, LastIndexAny, ContainsAny, ContainsRune, Split, SplitN, SplitAfterN, Fields, ReplaceAll and Join on the inputs of Go's strings_test.go (indexTests, lastIndexTests, indexAnyTests, lastIndexAnyTests, ContainsAnyTests, ContainsRuneTests, splittests, splitaftertests, fieldstests, ReplaceTests) and on seeded random inputs, against Str.find, rfind, contains, find_any, rfind_any, contains_any, contains_rune, split, split_n, split_after, split_after_n, fields, replace and List[Str].join, and strings.Count (countTests) against Str.count (Go's strings tests are Copyright 2009 The Go Authors, BSD-style license)"))
+	o.WriteString(header("strings.Index, LastIndex, Contains, IndexAny, LastIndexAny, ContainsAny, ContainsRune, Split, SplitN, SplitAfterN, Fields, ReplaceAll and Join on the inputs of Go's strings_test.go (indexTests, lastIndexTests, indexAnyTests, lastIndexAnyTests, ContainsAnyTests, ContainsRuneTests, splittests, splitaftertests, fieldstests, ReplaceTests) and on seeded random inputs, against Str.find, rfind, contains, find_any, rfind_any, contains_any, contains_rune, split, split_n, split_after, split_after_n, fields, replace and List[Str].join, and strings.Count (countTests) against Str.count, plus the edges of bytes.Index's brute-force path for a haystack of at most 64 bytes (a separator of one and of two bytes, a separator as long as the haystack, a match at the first and at the last start, a near miss on the second byte, non-ASCII bytes, and haystacks of exactly 64 and 65 bytes) (Go's strings tests are Copyright 2009 The Go Authors, BSD-style license)"))
 
 	// index, rfind and contains
 	idx := goIndexCases()
+	idx = append(idx, shortHayCases()...)
 	for i := 0; i < 5000; i++ {
 		idx = append(idx, strsearchRandomIndex(r))
 	}

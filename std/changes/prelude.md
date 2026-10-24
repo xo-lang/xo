@@ -1,5 +1,40 @@
 # prelude changes
 
+## 2026-10-24: perf: find tests the separator's second byte before the whole compare
+
+- Kind: perf
+- Commit: (filled in after the push)
+- Found by: the profile of bench/perf/bytessearch's cut row. scan.find_bytes
+  was 22 to 26% flat and up to 54% cumulative, and every candidate whose
+  first byte matched went straight into an eq_at call
+- Go reference: bytes.Index (go1.26.1) tests `s[i+1] == c1` before
+  `Equal(s[i:i+n], sep)`, and takes `n == len(s)` as one Equal with no
+  scan; ported exactly, with our find_byte's 16 byte word scan kept as the
+  skip
+- Test: the strsearch corpus (22 new shortHayCases edges: one and two byte
+  separators, m == n, a match at the first and last start, a near miss on
+  the second byte, non-ASCII bytes, haystacks of 64 and 65 bytes) on
+  arm64, LLVM and the Go backend; bench outputs identical on all nine
+  bytessearch and all eight strsplit workloads; the fixed point
+- Timing: bench/results/strfind-2026-10-24.md
+
+`find_bytes` keeps find_byte as its skip and adds Go's prefix test: a
+candidate whose first byte matched now compares sub[1] with one load, and
+that candidate is rejected without an eq_at call when the second byte
+differs; m == 2 never calls eq_at, and m == n - f is one eq_at. Base over
+change, xo bench --ab, 10 rounds, two binaries from the same revision with
+only scan.xo differing, XO_INLINE_STRICT=1: cut 1.046 (71.85 M against
+75.18 M, interval 1.016 to 1.054), strsplit split_multi 1.046 (1.042 to
+1.049), split_after 1.008 (1.003 to 1.015), and the fourteen other rows
+within noise, none worse.
+
+Go's other half of that path, its brute force for len(s) at most 64
+(bytealg.MaxBruteForce; IndexString compares in registers on arm64), was
+ported first and rejected: a byte walk over the candidates measured 19.9%
+more instructions on cut and 42.6% on split_absent, because find_byte's
+word scan beats it. The numbers for both attempts are in
+bench/results/strfind-2026-10-24.md.
+
 ## 2026-10-24: perf: to_lower and to_upper fold the ASCII spans they copy, in one pass
 
 - Kind: perf
