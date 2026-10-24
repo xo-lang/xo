@@ -1,5 +1,30 @@
 # prelude changes
 
+## 2026-10-24: perf: Bytes.trim_prefix and trim_suffix compare with words, as Str's do
+
+- Kind: perf
+- Commit: this commit
+- Found by: `bench/results/bytes-split-2026-10-23.md` had the affix row
+  (trim_prefix and trim_suffix) as the one row where Xo ran more
+  instructions than Go's bytes package (1.80 gross, 1.96 net of the loop)
+- Go reference: bytes.TrimPrefix and TrimSuffix through HasPrefix and
+  Equal (go1.26.1)
+- Test: corpus/bytes on arm64, LLVM and the Go backend (its TrimPrefix
+  and TrimSuffix rows), goldens bytes_split and bytes_transforms (arm64,
+  LLVM, Go parity)
+- Timing: bench/results/bytes-affix-2026-10-24.md
+
+`Bytes.trim_prefix` and `trim_suffix` tested with `scan.eq_at`, the
+general five argument compare, whose branch ladder falls to a byte loop
+below four bytes; the profile of the affix workload put 42% of the row
+there (its affixes are 1 to 3 bytes, so the word paths never ran). They
+now call `scan.eq_bytes`, which is `scan.eq_text`'s shape for Bytes: the
+first and last word on `raw.bytes_addr`, no Bytes values and no bounds
+checks, since the caller has already tested `p.len() <= b.len()`.
+`scan.eq_at` is unchanged for its other callers. Affix row 49.15 M to
+44.04 M instructions against Go's 38.2 M at one revision (1.29 to 1.15
+gross, 1.32 to 0.97 net of the benchmark's loop).
+
 ## 2026-10-24: perf: case_append encodes a changed rune in place
 
 - Kind: perf

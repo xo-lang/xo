@@ -207,6 +207,32 @@ pub fn eq_text(s: Str, i: Int, p: Str) -> Bool {
   n == 0 || rt.mem_load(a, 0, 1) == rt.mem_load(b, 0, 1)
 }
 
+/// eq_text for Bytes: whether the p.len() bytes of b from bi are p's, for
+/// a caller that knows 0 <= bi and bi + p.len() <= b.len() (the Bytes
+/// trim_prefix and trim_suffix tests).
+pub fn eq_bytes(b: Bytes, bi: Int, p: Bytes) -> Bool {
+  let n = p.len()
+  let a = raw.bytes_addr(b).wrapping_add(bi)
+  let c = raw.bytes_addr(p)
+  var t = 0
+  if n >= 4 {
+    // 4-byte words, then the last word (overlapping)
+    while n.wrapping_sub(t) > 4 {
+      if rt.mem_load(a, t, 4) != rt.mem_load(c, t, 4) {
+        return false
+      }
+      t = t.wrapping_add(4)
+    }
+    let e = n.wrapping_sub(4)
+    return rt.mem_load(a, e, 4) == rt.mem_load(c, e, 4)
+  }
+  if n >= 2 {
+    let e = n.wrapping_sub(2)
+    return rt.mem_load(a, 0, 2) == rt.mem_load(c, 0, 2) && rt.mem_load(a, e, 2) == rt.mem_load(c, e, 2)
+  }
+  n == 0 || rt.mem_load(a, 0, 1) == rt.mem_load(c, 0, 1)
+}
+
 /// bytes.Index of sub in b from `from`: find's search over Bytes (a Str's
 /// bytes are valid UTF-8, which the search never asks about).
 pub fn find_bytes(b: Bytes, sub: Bytes, from: Int) -> Int {

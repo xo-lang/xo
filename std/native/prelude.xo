@@ -704,7 +704,7 @@ fn bytes_trim(b: Bytes) -> Bytes { strings.trim_bytes(b, 0) }
 
 /// bytes.TrimPrefix: b itself when p is not a prefix.
 fn bytes_trim_prefix(b: Bytes, p: Bytes) -> Bytes {
-  if p.len() <= b.len() && scan.eq_at(b, 0, p, 0, p.len()) {
+  if p.len() <= b.len() && scan.eq_bytes(b, 0, p) {
     return b[p.len()..b.len()]
   }
   b
@@ -716,7 +716,7 @@ fn bytes_trim_suffix(b: Bytes, p: Bytes) -> Bytes {
     // proved by the test above: no overflow, so no checked subtraction (its
     // fault pads keep the function from inlining)
     let k = rt.int_wrap(1, b.len(), p.len())
-    if scan.eq_at(b, k, p, 0, p.len()) {
+    if scan.eq_bytes(b, k, p) {
       return b[0..k]
     }
   }
