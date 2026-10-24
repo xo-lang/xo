@@ -192,6 +192,12 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   2026-10-22).
 - Test programs started by Go tests run in their own process group and
   are stopped (TERM, then KILL) when the test ends (testtmp.Guard).
+- A long package suite that fails only some tests: when the fix changes
+  only those tests' own code, rerun only them (`go test ./PKG -run
+  'TestA$|TestB$'`, a gate), not the whole suite; rerun the suite only
+  when the fix changes code other tests use (2026-10-24: internal/arm64's
+  37 minute suite reran in full for a 1.6 s TestMachoBinCache fix and held
+  a bulk slot and the measurement window).
 
 ## Measuring
 
