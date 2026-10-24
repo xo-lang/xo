@@ -1,0 +1,98 @@
+# 0363: A prior for a new spawn site that takes a Mutex (initial placement)
+
+Status: Proposed (Xo Lang 3, 2026-10-24; for the owner's Sunday review; nothing built).
+
+## Context
+
+ADR 0359 (AD) classifies a spawn site by what its finished tasks cost and keeps
+a site of short tasks on the spawner. It learns from task ends, so it helps a
+program that spawns bursts repeatedly and does nothing for a one-shot burst
+that finishes before the site has learned. The two release-table rows that are
+lock-bound are exactly such bursts: conc `rwmutex` (one burst of 64 tasks,
+37 ms, 3.9x Go's wall) and `mutex` (8 tasks, 11 ms).
+
+Measured 2026-10-23/24 on the Mac (arm64, 12 threads, quiet window), all by
+`xo bench --ab` or counters, patches kept on local branches:
+
+- `XO_THREADS=1` runs the 64-task rwmutex repro (rwrep, 20 bursts) in 126 ms
+  against 671 ms with 12 workers, with 0 parks against 5.06M. Every access
+  parks exactly once (writers 1.276M of 1.28M, readers 3.78M of 3.84M; no
+  spurious re-parks). The structure is a writers-preferred lock with a writer
+  present most of the time; threads only fight for one lock word.
+- A learned lock-take classification of the site (wip/lock-classify): rwrep
+  0.386, mrep 0.544 (better), but rwmutex 1.008 and mutex 0.998: the repeated
+  bursts learn after the first, the one-shot rows never do.
+- Reader spin before parking (wip/mutex-spin, owner declined the knob): all
+  rows equal or worse at N=16 and 64; mutex 1.23 to 1.27 worse.
+- Mid-burst throttle, no stealing once N tasks are parked on a Mutex
+  (wip/mid-burst): rwmutex 37.6 ms to 215-231 ms. By the first parks the burst
+  is spread over the workers, and starving the rest queues work behind parked
+  lock holders.
+- Variant G of 0359 (no wake per spawn, static) reproduced the serial run:
+  rwmutex 0.37 of main's wall, mutex 0.67; the owner chose AD over G (0359
+  records G as an alternative).
+- The park/signal pair is about 15% of CPU; a wake is 0.8 us (a macOS XO_PROF
+  artifact had shown 31%, gotchas/xo-prof-macos-overstates-ulock-wake.md).
+
+So the lever is the initial placement of a site's first burst, before any task
+has finished.
+
+## Proposal
+
+A compile-time prior for a spawn site, with AD as the run-time correction.
+
+1. The checker marks a `spawn` site `lockish` when its closure (directly, and
+   through the calls it can resolve in the same module, to a bounded depth of 2)
+   calls `Mutex.with`, `with_read`, `lock`, or `rlock` inside a loop. This
+   is a flag on the site (a bit next to the site's loc in the spawn call),
+   not new syntax.
+2. A new `lockish` site starts in the small state AD already has (its burst
+   stays on the spawner, no wake per spawn, run serially at the join). AD's
+   average then corrects it: a task that runs long (over SITE_SMALL_NS, 20 us)
+   per take marks the site big, so a lock held across real work still spreads.
+3. A site not marked `lockish` starts as today (big until it learns).
+
+Runtime cost: one flag load per spawn. No new runtime state (AD's site table).
+No language change; a hint a user can see only through `xo explain`/trace.
+
+## Experiment (to run only after the owner has seen this)
+
+Compiler change in compiler/check or ssa (the site flag), runtime change in
+pool.xo scope_add_at (initial site state). Verdict by `xo bench --ab`, 20
+rounds, quiet window, on the eight conc rows (rwmutex and mutex must move
+toward 0.37 and 0.67 of main; pmap, spawn, fanout, pingpong within noise),
+CRUD and the HTTP benches (p99 included), plus the TestRuntime* tests and a
+--race pass in the gate. Also the Go-twin comparison in
+bench/results/release-vs-go-*.md.
+
+## What would make it a no
+
+- rwmutex/mutex do not move: the cost is in the lock, not placement.
+- Any other conc row or CRUD/HTTP p99 gets worse than noise: a flagged site
+  that scales (a read-mostly lock where parallel readers do run in parallel)
+  loses its parallelism. The correction by AD takes one burst, so a one-shot
+  read-mostly burst would pay. Guard to test: a read-mostly variant of rwmutex
+  (1 write in 1,000).
+- The static flag is wrong too often: a closure that locks once or locks
+  through a helper the checker cannot see (miss, not harm) or a closure that
+  takes a Mutex in a loop around long work (flag false positive, corrected
+  after one burst). Count both on std/ and bench/ programs before building.
+
+## Consequences
+
+If it works: the two lock-bound rows approach the serial run without a knob
+and without waiting for a program to burst twice. A spawn site taking a Mutex
+in a loop would run serially at first by default, which is the right
+default for the Mutex semantics Xo has (writer preferred, park on contention)
+and wrong only for a lock held briefly around parallel-friendly work.
+
+## Alternatives
+
+- Learn faster inside the burst (the lock-take classification, the mid-burst
+  throttle): measured above, they act after the burst is spread.
+- G (no wake per spawn for every site): static and simple, but costs parallel
+  rows; the owner chose AD.
+- A user hint on `spawn` (`spawn_heavy`, listed in 0359): the owner
+  would write it; this proposal derives the same bit.
+- Spin before parking: measured, worse.
+- Make parking cheaper: at most 15% of CPU; no lever.
