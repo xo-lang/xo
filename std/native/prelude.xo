@@ -3575,6 +3575,10 @@ fn llrt_json_next(tape: List[Int], i: Int) -> Int { jsontext.next(tape, i) }
 
 fn llrt_json_str(src: Bytes, tape: List[Int], i: Int) -> Str { jsontext.str_at(src, tape, i) }
 
+fn llrt_json_time_ok(src: Bytes, tape: List[Int], i: Int) -> Bool { jsontext.time_at(src, tape, i) != None }
+
+fn llrt_json_time(src: Bytes, tape: List[Int], i: Int) -> Int { jsontext.time_at(src, tape, i) ?? 0 }
+
 fn llrt_json_find(src: Bytes, tape: List[Int], i: Int, key: Str) -> Int { jsontext.find(src, tape, i, key) }
 
 fn llrt_json_find_all(src: Bytes, tape: List[Int], i: Int, keys: Str, nk: Int) -> List[Int] { jsontext.find_all(src, tape, i, keys, nk) }

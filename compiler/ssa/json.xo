@@ -690,11 +690,10 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
   }
   if b.is_prelude_named(ct, ["Time"]) {
     b.dec_need(d, JK_STR, "expected RFC 3339 time string")
-    let txt = b.dec_str(d, i)
-    let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.llrt("time_ok", bt, [txt])]))
+    let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.json_rt("json_time_ok", bt, [d.src, d.tape, i])]))
     b.dec_fail(d, "expected RFC 3339 time string")
     b.if_then_end(no, join)
-    b.dec_ok(d, b.llrt("time", it, [txt]))
+    b.dec_ok(d, b.json_rt("json_time", it, [d.src, d.tape, i]))
     return
   }
   if b.is_prelude_named(ct, ["Bytes"]) {

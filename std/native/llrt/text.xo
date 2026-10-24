@@ -527,56 +527,54 @@ fn days_from_civil(year: Int, m: Int, d: Int) -> Int {
 /// (parseRFC3339) accepts, in nanoseconds since the Unix epoch (std/json
 /// decoding a Time). None for a time outside the range of Time (decision
 /// 0364; it wrapped like Go's UnixNano before).
-pub fn parse_time(s: Str) -> Int? {
-  let b = s.bytes()
-  let n = b.len()
+pub fn parse_time_at(b: Bytes, o: Int, n: Int) -> Int? {
   if n < 19 {
     return None
   }
-  let year = num4(b, 0)
-  let month = num2(b, 5)
+  let year = num4(b, o + 0)
+  let month = num2(b, o + 5)
   if !within(year, 0, 9999) || !within(month, 1, 12) {
     return None
   }
-  let day = num2(b, 8)
-  let hour = num2(b, 11)
-  let min = num2(b, 14)
-  let sec = num2(b, 17)
+  let day = num2(b, o + 8)
+  let hour = num2(b, o + 11)
+  let min = num2(b, o + 14)
+  let sec = num2(b, o + 17)
   if !within(day, 1, days_in(month, year)) || !within(hour, 0, 23) || !within(min, 0, 59) || !within(sec, 0, 59) {
     return None
   }
-  if b[4] != 45 || b[7] != 45 || b[10] != 84 || b[13] != 58 || b[16] != 58 {
+  if b[o + 4] != 45 || b[o + 7] != 45 || b[o + 10] != 84 || b[o + 13] != 58 || b[o + 16] != 58 {
     return None
   }
   var i = 19
   var nsec = 0
-  if n - i >= 2 && b[i] == 46 && b[i + 1] >= 48 && b[i + 1] <= 57 {
+  if n - i >= 2 && b[o + i] == 46 && b[o + i + 1] >= 48 && b[o + i + 1] <= 57 {
     var j = i + 1
-    while j < n && b[j] >= 48 && b[j] <= 57 {
+    while j < n && b[o + j] >= 48 && b[o + j] <= 57 {
       j += 1
     }
     var k = 0
     while k < 9 {
       nsec = nsec * 10
       if i + 1 + k < j {
-        nsec += Int(b[i + 1 + k]) - 48
+        nsec += Int(b[o + i + 1 + k]) - 48
       }
       k += 1
     }
     i = j
   }
   var zone = 0
-  if !(n - i == 1 && b[i] == 90) {
+  if !(n - i == 1 && b[o + i] == 90) {
     if n - i != 6 {
       return None
     }
-    let hr = num2(b, i + 1)
-    let mm = num2(b, i + 4)
-    if !within(hr, 0, 23) || !within(mm, 0, 59) || !((b[i] == 45 || b[i] == 43) && b[i + 3] == 58) {
+    let hr = num2(b, o + i + 1)
+    let mm = num2(b, o + i + 4)
+    if !within(hr, 0, 23) || !within(mm, 0, 59) || !((b[o + i] == 45 || b[o + i] == 43) && b[o + i + 3] == 58) {
       return None
     }
     zone = (hr * 60 + mm) * 60
-    if b[i] == 45 {
+    if b[o + i] == 45 {
       zone = -zone
     }
   }
@@ -594,6 +592,11 @@ pub fn parse_time(s: Str) -> Int? {
     return None
   }
   Some(ns)
+}
+
+pub fn parse_time(s: Str) -> Int? {
+  let b = s.bytes()
+  parse_time_at(b, 0, b.len())
 }
 
 // ---------------------------------------------------------------------------

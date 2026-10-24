@@ -28,6 +28,7 @@
 use native/llrt/num
 use native/llrt/raw
 use native/llrt/scan as scans
+use native/llrt/text
 use native/llrt/unicode
 use native/rt
 
@@ -551,6 +552,18 @@ pub fn str_at(src: Bytes, tape: List[Int], i: Int) -> Str {
     }
   }
   unquote(src, lo, lo + n)
+}
+
+/// The Time of the string node at i (text.parse_time), read in place when the
+/// string has no escapes (a time string is ASCII): no copy of the text.
+/// None for a time that does not parse.
+pub fn time_at(src: Bytes, tape: List[Int], i: Int) -> Int? {
+  let raw = tape[i + 2]
+  let n = raw & LEN_MASK
+  if raw == n {
+    return text.parse_time_at(src, tape[i + 1], n)
+  }
+  text.parse_time(str_at(src, tape, i))
 }
 
 /// The bytes lo..hi of b (a string's raw text) unquoted.
