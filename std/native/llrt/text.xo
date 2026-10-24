@@ -14,6 +14,7 @@
 // appended with one call (rt.rs_push_word: up to 8 bytes, the first in
 // the low byte; rt.rs_push_words: four such pieces), since an append is
 // a C call.
+use native/llrt/raw
 use native/llrt/scan
 use native/llrt/strings
 use native/llrt/unicode
@@ -472,28 +473,35 @@ pub fn append_time(out: Str, t: Int) -> Str {
   rt.rs_push_words(out, w0, w1, c, cat(digits_word(x % q, r), r, 90), 8 | (8 << 4) | ((4 + j) << 8) | ((r + 1) << 12))
 }
 
-/// The two decimal digits at b[at..at + 2] as a number, or -1 when one is
-/// not a digit.
-fn num2(b: Bytes, at: Int) -> Int {
+/// The byte at p + at (parse_time_at's reads, unchecked: it checks its
+/// span once). A load loses the byte's range 0 to 255, so the arithmetic
+/// on it wraps (it cannot overflow) rather than check: a mask to keep the
+/// range cost an `and` a byte, 1.3% more instructions (2026-10-24).
+fn byte_at(p: Int, at: Int) -> Int { rt.mem_load(p, at, 1) }
+
+/// The two decimal digits at p + at as a number, or -1 when one is not a
+/// digit.
+fn num2(p: Int, at: Int) -> Int {
   // two digits with one test, no loop (2026-10-24: a loop of k digits,
   // k a constant once inlined, kept its counter and a test a digit; LLVM
   // unrolls it: bench/perf/text time_parse 1.22x LLVM on arm64)
-  let c0 = Int(b[at]) - 48
-  let c1 = Int(b[at + 1]) - 48
-  if (c0 | c1 | (9 - c0) | (9 - c1)) < 0 {
+  let c0 = byte_at(p, at).wrapping_sub(48)
+  let c1 = byte_at(p, at + 1).wrapping_sub(48)
+  if (c0 | c1 | (9).wrapping_sub(c0) | (9).wrapping_sub(c1)) < 0 {
     return -1
   }
-  c0 * 10 + c1
+  // digits: no overflow to check
+  c0.wrapping_mul(10).wrapping_add(c1)
 }
 
-/// The four decimal digits at b[at..at + 4] as a number, or -1 (num2's).
-fn num4(b: Bytes, at: Int) -> Int {
-  let h = num2(b, at)
-  let l = num2(b, at + 2)
+/// The four decimal digits at p + at as a number, or -1 (num2's).
+fn num4(p: Int, at: Int) -> Int {
+  let h = num2(p, at)
+  let l = num2(p, at + 2)
   if (h | l) < 0 {
     return -1
   }
-  h * 100 + l
+  h.wrapping_mul(100).wrapping_add(l)
 }
 
 /// Whether x is in lo..=hi.
@@ -513,74 +521,82 @@ fn days_in(m: Int, y: Int) -> Int {
   31
 }
 
-/// The days since 1970-01-01 of a date.
+/// The days since 1970-01-01 of a date (year 0 to 9999, month 1 to 12,
+/// day 1 to 31, as parse_time_at checks them: no overflow to check).
 fn days_from_civil(year: Int, m: Int, d: Int) -> Int {
   let y = if m <= 2 { year - 1 } else { year }
   let era = (if y >= 0 { y } else { y - 399 }) / 400
-  let yoe = y - era * 400
+  let yoe = y.wrapping_sub(era.wrapping_mul(400))
   let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1
-  let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
-  era * 146097 + doe - 719468
+  let doe = yoe.wrapping_mul(365).wrapping_add(yoe / 4).wrapping_sub(yoe / 100).wrapping_add(doy)
+  era.wrapping_mul(146097).wrapping_add(doe).wrapping_sub(719468)
 }
 
 /// time.Parse(time.RFC3339Nano, s) for the RFC 3339 forms its fast path
 /// (parseRFC3339) accepts, in nanoseconds since the Unix epoch (std/json
 /// decoding a Time). None for a time outside the range of Time (decision
-/// 0364; it wrapped like Go's UnixNano before).
+/// 0364; it wrapped like Go's UnixNano before), and for a span o, n that
+/// is not inside b (it faulted before 2026-10-24; the callers, parse_time
+/// and the JSON tape, pass spans inside b).
 pub fn parse_time_at(b: Bytes, o: Int, n: Int) -> Int? {
-  if n < 19 {
+  // the span checked once; its bytes are read unchecked after (2026-10-24:
+  // 31 bounds checks and 29 overflow checks made native 1.13x LLVM's
+  // instructions on a JSON Time list decode)
+  if n < 19 || o < 0 || n > b.len() - o {
     return None
   }
-  let year = num4(b, o + 0)
-  let month = num2(b, o + 5)
+  let p = raw.bytes_addr(b).wrapping_add(o)
+  let year = num4(p, 0)
+  let month = num2(p, 5)
   if !within(year, 0, 9999) || !within(month, 1, 12) {
     return None
   }
-  let day = num2(b, o + 8)
-  let hour = num2(b, o + 11)
-  let min = num2(b, o + 14)
-  let sec = num2(b, o + 17)
+  let day = num2(p, 8)
+  let hour = num2(p, 11)
+  let min = num2(p, 14)
+  let sec = num2(p, 17)
   if !within(day, 1, days_in(month, year)) || !within(hour, 0, 23) || !within(min, 0, 59) || !within(sec, 0, 59) {
     return None
   }
-  if b[o + 4] != 45 || b[o + 7] != 45 || b[o + 10] != 84 || b[o + 13] != 58 || b[o + 16] != 58 {
+  if byte_at(p, 4) != 45 || byte_at(p, 7) != 45 || byte_at(p, 10) != 84 || byte_at(p, 13) != 58 || byte_at(p, 16) != 58 {
     return None
   }
   var i = 19
   var nsec = 0
-  if n - i >= 2 && b[o + i] == 46 && b[o + i + 1] >= 48 && b[o + i + 1] <= 57 {
+  if n - i >= 2 && byte_at(p, i) == 46 && byte_at(p, i + 1) >= 48 && byte_at(p, i + 1) <= 57 {
     var j = i + 1
-    while j < n && b[o + j] >= 48 && b[o + j] <= 57 {
+    while j < n && byte_at(p, j) >= 48 && byte_at(p, j) <= 57 {
       j += 1
     }
     var k = 0
     while k < 9 {
-      nsec = nsec * 10
+      nsec = nsec.wrapping_mul(10)
       if i + 1 + k < j {
-        nsec += Int(b[o + i + 1 + k]) - 48
+        nsec = nsec.wrapping_add(byte_at(p, i + 1 + k).wrapping_sub(48))
       }
       k += 1
     }
     i = j
   }
   var zone = 0
-  if !(n - i == 1 && b[o + i] == 90) {
+  if !(n - i == 1 && byte_at(p, i) == 90) {
     if n - i != 6 {
       return None
     }
-    let hr = num2(b, o + i + 1)
-    let mm = num2(b, o + i + 4)
-    if !within(hr, 0, 23) || !within(mm, 0, 59) || !((b[o + i] == 45 || b[o + i] == 43) && b[o + i + 3] == 58) {
+    let hr = num2(p, i + 1)
+    let mm = num2(p, i + 4)
+    if !within(hr, 0, 23) || !within(mm, 0, 59) || !((byte_at(p, i) == 45 || byte_at(p, i) == 43) && byte_at(p, i + 3) == 58) {
       return None
     }
-    zone = (hr * 60 + mm) * 60
-    if b[o + i] == 45 {
-      zone = -zone
+    zone = hr.wrapping_mul(60).wrapping_add(mm).wrapping_mul(60)
+    if byte_at(p, i) == 45 {
+      zone = (0).wrapping_sub(zone)
     }
   }
-  let secs = days_from_civil(year, month, day) * 86400 + hour * 3600 + min * 60 + sec - zone
+  // every field checked in range above: no overflow to check
+  let secs = days_from_civil(year, month, day).wrapping_mul(86400).wrapping_add(hour.wrapping_mul(3600)).wrapping_add(min.wrapping_mul(60)).wrapping_add(sec).wrapping_sub(zone)
   if secs > -9000000000 && secs < 9000000000 {
-    return Some(secs * 1000000000 + nsec)
+    return Some(secs.wrapping_mul(1000000000).wrapping_add(nsec))
   }
   // outside the range of Time (1677-09-21 to 2262-04-11, decision 0364): not
   // a time. The product wraps once past either end and the sign shows it

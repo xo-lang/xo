@@ -1,5 +1,24 @@
 # std/time changes
 
+## 2026-10-24: perf: an RFC 3339 time is parsed with one span check (Time.parse_rfc3339, a decoded JSON Time)
+
+- Kind: perf
+- Commit: this commit
+- Found by: Xo Lang 1 (the native JSON Time decode at 1.13 times LLVM's instructions: text.parse_time_at was 1,282 instructions to LLVM's 621, with 31 bounds checks and 29 overflow checks)
+- Go reference: time/format_rfc3339.go parseRFC3339 (go1.26.1), which reads its bytes unchecked after one length test
+- Test: TestStdCorpora time, json, jsondecode, jsonencode (Go's RFC 3339 parse and error rows) on arm64 and LLVM; goldens time_parse_digits, parse_edge_formats, parse_edge_scalars, time_fixed_offsets, json_text, json_value, json_decode_fields, native_json, text_table (arm64, LLVM with Go parity)
+
+The parser checked every byte it read (b[o + k], fourteen of them in the digit
+pairs) and every sum and product. It now checks its span once and reads the
+bytes through the data address, and the arithmetic its own range checks bound
+(digits, a year of 0 to 9999, the fields, the zone, the seconds) wraps
+instead of checking. A span outside the Bytes is None (it faulted; no caller
+passes one). Quiet `xo bench --ab` (one xo, A the parent's std): a list of 1000
+Times decoded 20,000 times, wall 0.746 (0.735 to 0.752), instructions 0.783;
+bench/perf/jsontime wall 0.948 (0.936 to 0.956), instructions 0.879. The
+LLVM build gains too: native is at 0.984 of its instructions and 1.038 of its
+wall time on the first.
+
 ## 2026-10-24: behavior: Time.parse_rfc3339 and a Time decoded from JSON refuse a time outside Time's range
 
 - Kind: behavior
