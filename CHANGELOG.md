@@ -6,12 +6,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
-- A build no longer tries to open cache entries the cache cannot hold:
-  it lists the cache's shard directories, and a shard it needs 8 or
-  more entries from, and opens only those present (a cold build of a
-  small HTTP server: 21,413 failed opens to 16, 13.6 s to 7.8 s on the
-  Mac; warm builds unchanged, outputs identical).
-
 - `XO_WHOLE_BUILD=on` (opt in, decision 0360 stage 1): `xo build` and
   `xo run` of an unchanged program reuse its binary through the run cache
   `xo test` uses, printing what the build printed (a warm build of a
