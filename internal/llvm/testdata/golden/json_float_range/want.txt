@@ -1,0 +1,15 @@
+exit 0
+--- stdout
+1e308 => ok 1e+308
+-1e308 => ok -1e+308
+1e309 => at $: expected number
+-1e999 => at $: expected number
+1e400 => at $: expected number
+1e-999 => ok 0
+-1e-999 => ok -0
+[1, 1e999] => at $[1]: expected number
+{"a": [0, {"b": 2e309}]} => at $.a[1].b: expected number
+123456789012345678901234567890 => ok 1.2345678901234568e+29
+99999999999999999999e290 => at $: expected number
+decode Float 1e999 => at $: expected number
+--- stderr

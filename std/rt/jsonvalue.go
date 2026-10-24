@@ -2,6 +2,7 @@ package rt
 
 import (
 	"encoding/json"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -9,34 +10,58 @@ import (
 // json.Value (decision 0299): built from jsonParse's tree, as Json_decode
 // reads it; std/native/json.xo builds it from jsontext's tape.
 
+// jsonValueOf is jsonValueAt at "$", Null for the error (to_value's text
+// is an encoding, whose numbers are in range).
 func jsonValueOf(x any) Json_Value {
+	v, err := jsonValueAt(x, "$")
+	if err != nil {
+		return Json_Value{Tag: 1}
+	}
+	return v
+}
+
+// jsonValueAt is the Value of a parsed tree; a number out of Float64's
+// range (strconv's range error, "expected number" in decode) is an error
+// at its path, as std/native/json.xo's parse_bytes gives.
+func jsonValueAt(x any, path string) (Json_Value, *Json_DecodeErr) {
 	switch t := x.(type) {
 	case nil:
-		return Json_Value{Tag: 1}
+		return Json_Value{Tag: 1}, nil
 	case bool:
-		return Json_Value{Tag: 2, P: Json_Value_Bool{F_b: t}}
+		return Json_Value{Tag: 2, P: Json_Value_Bool{F_b: t}}, nil
 	case json.Number:
 		if n, err := strconv.ParseInt(string(t), 10, 64); err == nil {
-			return Json_Value{Tag: 3, P: Json_Value_Int{F_n: n}}
+			return Json_Value{Tag: 3, P: Json_Value_Int{F_n: n}}, nil
 		}
-		f, _ := strconv.ParseFloat(string(t), 64)
-		return Json_Value{Tag: 4, P: Json_Value_Num{F_n: f}}
+		f, err := strconv.ParseFloat(string(t), 64)
+		if err != nil && math.IsInf(f, 0) {
+			return Json_Value{}, JsonErr(path, "expected number")
+		}
+		return Json_Value{Tag: 4, P: Json_Value_Num{F_n: f}}, nil
 	case string:
-		return Json_Value{Tag: 5, P: Json_Value_Str{F_s: t}}
+		return Json_Value{Tag: 5, P: Json_Value_Str{F_s: t}}, nil
 	case []any:
 		items := make([]Json_Value, len(t))
 		for i, e := range t {
-			items[i] = jsonValueOf(e)
+			v, err := jsonValueAt(e, path+"["+strconv.Itoa(i)+"]")
+			if err != nil {
+				return Json_Value{}, err
+			}
+			items[i] = v
 		}
-		return Json_Value{Tag: 6, P: Json_Value_List{F_items: ListFromSlice(items)}}
+		return Json_Value{Tag: 6, P: Json_Value_List{F_items: ListFromSlice(items)}}, nil
 	case *jsonObj:
 		fs := make([]Tuple2[string, Json_Value], len(t.keys))
 		for i, k := range t.keys {
-			fs[i] = Tuple2[string, Json_Value]{F0: k, F1: jsonValueOf(t.vals[k])}
+			v, err := jsonValueAt(t.vals[k], path+"."+k)
+			if err != nil {
+				return Json_Value{}, err
+			}
+			fs[i] = Tuple2[string, Json_Value]{F0: k, F1: v}
 		}
-		return Json_Value{Tag: 7, P: Json_Value_Object{F_fields: ListFromSlice(fs)}}
+		return Json_Value{Tag: 7, P: Json_Value_Object{F_fields: ListFromSlice(fs)}}, nil
 	}
-	return Json_Value{Tag: 1}
+	return Json_Value{Tag: 1}, nil
 }
 
 // Json_parse_value is `json.parse_value(text)`.
@@ -45,7 +70,11 @@ func Json_parse_value(_ *Task, text string) Result[Json_Value, Json_DecodeErr] {
 	if err != nil {
 		return Err[Json_Value](*err)
 	}
-	return Ok[Json_Value, Json_DecodeErr](jsonValueOf(x))
+	v, verr := jsonValueAt(x, "$")
+	if verr != nil {
+		return Err[Json_Value](*verr)
+	}
+	return Ok[Json_Value, Json_DecodeErr](v)
 }
 
 // Json_to_value is `json.to_value(v)`: v's encoding, parsed.

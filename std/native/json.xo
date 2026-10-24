@@ -45,40 +45,79 @@ fn patch_apply_opt[T](p: json.Patch[T], current: T?) -> T? {
 // ---------------------------------------------------------------------------
 // Value (decision 0299): built from jsontext's tape, as decode reads it
 
-fn value_at(src: Bytes, tape: List[Int], i: Int) -> json.Value {
+/// None when a number is out of Float's range (strconv.ParseFloat's
+/// range error, which decode reports as "expected number"); bad_path
+/// names it.
+fn value_at(src: Bytes, tape: List[Int], i: Int) -> json.Value? {
   let k = tape[i]
   if k == 0 {
-    return json.Value.Null
+    return Some(json.Value.Null)
   }
   if k == 1 || k == 2 {
-    return json.Value.Bool(b: k == 2)
+    return Some(json.Value.Bool(b: k == 2))
   }
   if k == 3 {
     if jsontext.int_ok(src, tape, i) {
-      return json.Value.Int(n: jsontext.int_at(src, tape, i))
+      return Some(json.Value.Int(n: jsontext.int_at(src, tape, i)))
     }
-    return json.Value.Num(n: jsontext.float_at(src, tape, i))
+    let f = jsontext.float_opt(src, tape, i) ?? return None
+    return Some(json.Value.Num(n: f))
   }
   if k == 4 {
-    return json.Value.Str(s: jsontext.str_at(src, tape, i))
+    return Some(json.Value.Str(s: jsontext.str_at(src, tape, i)))
   }
   if k == 5 {
     var items: List[json.Value] = []
     var j = i + 3
     while j < tape[i + 2] {
-      items.push(value_at(src, tape, j))
+      items.push(value_at(src, tape, j) ?? return None)
       j = jsontext.next(tape, j)
     }
-    return json.Value.List(items: items)
+    return Some(json.Value.List(items: items))
   }
   let ms = jsontext.members(src, tape, i)
   var fields: List[(Str, json.Value)] = []
   var m = 0
   while m + 1 < ms.len() {
-    fields.push((jsontext.str_at(src, tape, ms[m]), value_at(src, tape, ms[m + 1])))
+    fields.push((jsontext.str_at(src, tape, ms[m]), value_at(src, tape, ms[m + 1]) ?? return None))
     m += 2
   }
-  json.Value.Object(fields: fields)
+  Some(json.Value.Object(fields: fields))
+}
+
+/// The decode path (".key", "[2]") of the first number at or under node i
+/// that is out of Float's range, or None.
+fn bad_path(src: Bytes, tape: List[Int], i: Int) -> Str? {
+  let k = tape[i]
+  if k == 3 {
+    if !jsontext.int_ok(src, tape, i) && jsontext.float_opt(src, tape, i) == None {
+      return Some("")
+    }
+    return None
+  }
+  if k == 5 {
+    var j = i + 3
+    var n = 0
+    while j < tape[i + 2] {
+      if let Some(p) = bad_path(src, tape, j) {
+        return Some("[${n}]" + p)
+      }
+      j = jsontext.next(tape, j)
+      n += 1
+    }
+    return None
+  }
+  if k == 6 {
+    let ms = jsontext.members(src, tape, i)
+    var m = 0
+    while m + 1 < ms.len() {
+      if let Some(p) = bad_path(src, tape, ms[m + 1]) {
+        return Some("." + jsontext.str_at(src, tape, ms[m]) + p)
+      }
+      m += 2
+    }
+  }
+  None
 }
 
 fn parse_value(text: Str) -> json.Value ! json.DecodeErr { parse_bytes(text.bytes()) }
@@ -90,7 +129,10 @@ fn parse_bytes(src: Bytes) -> json.Value ! json.DecodeErr {
   if tape.is_empty() {
     return Err(json.DecodeErr{path: "$", msg: "invalid JSON: ${jsontext.parse_err(src)}"})
   }
-  Ok(value_at(src, tape, 0))
+  match value_at(src, tape, 0) {
+    Some(v) => Ok(v)
+    None => Err(json.DecodeErr{path: "$" + (bad_path(src, tape, 0) ?? ""), msg: "expected number"})
+  }
 }
 
 fn to_value[T: Json](v: T) -> json.Value { parse_value(encode_str(v)).ok() ?? json.Value.Null }

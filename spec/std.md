@@ -1686,6 +1686,9 @@ fn (v: Value) encode() -> Str
 fn (v: Value) get(key: Str) -> Value?        // an object's field
 ```
 
+- A number out of Float's range (`1e999`, `-1e309`) is an error at its
+  path, `expected number`, as `decode` of a Float gives; an underflow
+  (`1e-999`) is `0.0`.
 - Go's decoding into `any`, with two differences: a number without a
   fraction or exponent that fits an Int is `Int` (Go gives float64, which
   loses ids above 2^53), any other `Num`; an object keeps its keys in the

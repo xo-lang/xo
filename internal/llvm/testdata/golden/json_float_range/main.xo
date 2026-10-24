@@ -1,0 +1,23 @@
+// json.parse_value on numbers at and past Float's range: 1e308 is a Num, an
+// overflow is refused with decode's "expected number" at the number's path
+// (the native backends once read it as 0, the Go backend as +Inf), and an
+// underflow is 0.
+use std/json
+
+fn show(text: Str) -> Str {
+  match json.parse_value(text) {
+    Ok(v) => "ok ${v.encode()}"
+    Err(e) => "at ${e.path}: ${e.msg}"
+  }
+}
+
+fn main(os: Os) {
+  for t in ["1e308", "-1e308", "1e309", "-1e999", "1e400", "1e-999", "-1e-999", "[1, 1e999]", "{\"a\": [0, {\"b\": 2e309}]}", "123456789012345678901234567890", "99999999999999999999e290"] {
+    os.stdio.println("${t} => ${show(t)}")
+  }
+  let r: Result[Float, json.DecodeErr] = json.decode_str("1e999")
+  match r {
+    Ok(f) => os.stdio.println("decode Float 1e999 => ok ${f}")
+    Err(e) => os.stdio.println("decode Float 1e999 => at ${e.path}: ${e.msg}")
+  }
+}

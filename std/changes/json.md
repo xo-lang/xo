@@ -1,5 +1,18 @@
 # std/json changes
 
+## 2026-10-24: fix: parse_value refuses a number out of Float's range on both backends
+
+- Kind: fix
+- Commit: this commit
+- Found by: Xo Lang 3 from DS-2's cross-backend fuzzer (`json.parse_value("1e999")` was `Num 0` on arm64 and LLVM, `+Inf` on the Go backend; every overflowing literal such as 1e309, -1e999 or 1e400 became 0 natively, silent data corruption)
+- Go reference: encoding/json (Unmarshal refuses with "cannot unmarshal number 1e999 into Go value of type float64"); `json.decode[Float]("1e999")` already refused on all three backends with "expected number"
+- Test: golden json_float_range (arm64, LLVM, Go parity)
+
+`parse_value` now fails with decode's error, `at $<path>: expected number`,
+naming the first number that is out of range, e.g. `$[1]` or `$.a[1].b`.
+1e308 still parses; an underflow such as 1e-999 is 0 on every backend, as
+strconv.ParseFloat gives. Lead's decision, reversible.
+
 ## 2026-10-24: perf: a decoded Duration, Time, base64 Bytes or Float is parsed once
 
 - Kind: perf
