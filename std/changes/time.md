@@ -1,5 +1,21 @@
 # std/time changes
 
+## 2026-10-24: fix: Time.parse_rfc3339 on the native backends refuses what RFC 3339 forbids
+
+- Kind: fix
+- Commit: this commit
+- Found by: the main check (TestTimeDiff) after the Go backend's parse became strict (9af520838)
+- Go reference: time.Parse(time.RFC3339Nano, ...), whose lenient fallback accepts what the RFC forbids
+- Test: golden time_parse_digits (Time.parse_rfc3339 beside the JSON decode, six new cases), TestTimeDiff
+
+`Time.parse_rfc3339` on the native backends was written as the union of Go's
+parsers (std/native/prelude.xo time_parse_rfc3339): it took a one digit hour
+("1994-08-29T2:05:34Z"), a comma fraction, and an offset up to +24:60, while
+the JSON decoder of the same type refused them (text.xo parse_time). Both
+backends and both entry points now read the one shape: two and four digit
+fields, upper case T and Z, a '.' fraction of one or more digits, a Z or
++-HH:MM offset with hours to 23 and minutes to 59.
+
 ## 2026-10-24: fix: the Go backend refuses an RFC 3339 time the spec does not allow
 
 - Kind: fix

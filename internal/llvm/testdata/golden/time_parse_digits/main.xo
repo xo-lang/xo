@@ -43,11 +43,23 @@ fn main(os: Os) {
     "2026-10-24T01:02:03.Z",
     "2026-10-24T01:02:03+5:30",
     "2026-10-24T1:02:03+05:30",
+    "1994-08-29T2:05:34.903359856-10:00",
+    "1994-08-29T02:05:34.903359856-10:00",
+    "2026-10-24T01:02:03+24:00",
+    "2026-10-24T01:02:03+23:59",
+    "2026-10-24T01:02:03+23:60",
+    "2026-10-24T01:02:03-24:00",
   ]
   for c in cases {
     match json.decode_str[Time]("\"${c}\"") {
       Ok(t) => os.stdio.println("${c} ok ${(t - Time.UNIX_EPOCH).nanos()}")
       Err(_) => os.stdio.println("${c} refused")
+    }
+    // Time.parse_rfc3339 reads the same text the same way (the native and
+    // Go backends alike; TestTimeDiff compares them on mutated texts)
+    match Time.parse_rfc3339(c) {
+      Some(t) => os.stdio.println("  parse_rfc3339 ok ${(t - Time.UNIX_EPOCH).nanos()}")
+      None => os.stdio.println("  parse_rfc3339 refused")
     }
   }
 }

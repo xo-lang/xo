@@ -153,7 +153,11 @@ func rfc3339Shape(s string) bool {
 	if len(s)-i == 1 {
 		return s[i] == 'Z'
 	}
-	return len(s)-i == 6 && (s[i] == '+' || s[i] == '-') && d(i+1) && d(i+2) && s[i+3] == ':' && d(i+4) && d(i+5)
+	if !(len(s)-i == 6 && (s[i] == '+' || s[i] == '-') && d(i+1) && d(i+2) && s[i+3] == ':' && d(i+4) && d(i+5)) {
+		return false
+	}
+	// an offset of at most 23:59 (Go's parser takes +24:60)
+	return (s[i+1]-'0')*10+(s[i+2]-'0') <= 23 && (s[i+4]-'0')*10+(s[i+5]-'0') <= 59
 }
 
 // Time_unix is `t.unix()`.

@@ -3177,138 +3177,21 @@ fn duration_ceil_seconds(d: Duration) -> Int {
 // ---------------------------------------------------------------------------
 // Time (std.md 2.6)
 
-/// time.Parse(time.RFC3339Nano, s) as the Go backend calls it: the union
-/// of Go's fast path (parseRFC3339) and its general parser for that
-/// layout, which also takes a one digit hour, a comma before the
-/// fraction, and offsets up to +24:60. Times outside the range of Time
-/// wrap like Go's UnixNano.
+/// RFC 3339 as the JSON decoder reads it (text.xo parse_time): two and four
+/// digit fields, T and Z upper case, a '.' fraction of one or more digits,
+/// a Z or +-HH:MM offset (hours to 23, minutes to 59). The Go backend checks
+/// the same shape before time.Parse (std/rt time.go parseRFC3339); Go's
+/// parser alone also takes a one digit hour, a comma fraction and offsets
+/// to +24:60. Times outside the range of Time wrap like Go's UnixNano.
 fn time_parse_rfc3339(s: Str) -> Time? {
-  let b = s.bytes()
-  let n = b.len()
-  if n < 4 || !rfc_digits(b, 0, 4) {
-    return None
+  match text.parse_time(s) {
+    Some(ns) => Some(Time.UNIX_EPOCH + Duration.from_nanos(ns))
+    None => None
   }
-  let year = rfc_num(b, 0, 4)
-  if n < 10 || b[4] != 45 || !rfc_digits(b, 5, 2) || b[7] != 45 || !rfc_digits(b, 8, 2) {
-    return None
-  }
-  let month = rfc_num(b, 5, 2)
-  let day = rfc_num(b, 8, 2)
-  if month < 1 || month > 12 || n < 12 || b[10] != 84 || !rfc_digits(b, 11, 1) {
-    return None
-  }
-  // the hour has one or two digits
-  var i = 12
-  var hour = rfc_num(b, 11, 1)
-  if rfc_digits(b, 12, 1) {
-    hour = rfc_num(b, 11, 2)
-    i = 13
-  }
-  if hour > 23 || i + 6 > n || b[i] != 58 || !rfc_digits(b, i + 1, 2) || b[i + 3] != 58 || !rfc_digits(b, i + 4, 2) {
-    return None
-  }
-  let min = rfc_num(b, i + 1, 2)
-  let sec = rfc_num(b, i + 4, 2)
-  if min > 59 || sec > 59 {
-    return None
-  }
-  i += 6
-  var nsec = 0
-  if i + 1 < n && (b[i] == 46 || b[i] == 44) && rfc_digits(b, i + 1, 1) {
-    var j = i + 1
-    while j < n && rfc_digits(b, j, 1) {
-      j += 1
-    }
-    // at most 9 digits count (parseNanoseconds)
-    var k = 0
-    while k < 9 {
-      nsec = nsec * 10
-      if i + 1 + k < j {
-        nsec += Int(b[i + 1 + k]) - 48
-      }
-      k += 1
-    }
-    i = j
-  }
-  var zone = 0
-  if i < n && b[i] == 90 {
-    i += 1
-  } else {
-    if i + 6 > n || b[i + 3] != 58 || !rfc_digits(b, i + 1, 2) || !rfc_digits(b, i + 4, 2) {
-      return None
-    }
-    let hr = rfc_num(b, i + 1, 2)
-    let mm = rfc_num(b, i + 4, 2)
-    if hr > 24 || mm > 60 {
-      return None
-    }
-    zone = (hr * 60 + mm) * 60
-    if b[i] == 45 {
-      zone = -zone
-    } else if b[i] != 43 {
-      return None
-    }
-    i += 6
-  }
-  if i != n || day < 1 || day > rfc_days_in(month, year) {
-    return None
-  }
-  let secs = rfc_days(year, month, day) * 86400 + hour * 3600 + min * 60 + sec - zone
-  Some(Time.UNIX_EPOCH + Duration.from_nanos(rt.int_wrap(0, rt.int_wrap(2, secs, 1000000000), nsec)))
-}
-
-fn rfc_digits(b: Bytes, at: Int, k: Int) -> Bool {
-  if at + k > b.len() {
-    return false
-  }
-  for i in at..at + k {
-    if b[i] < 48 || b[i] > 57 {
-      return false
-    }
-  }
-  true
-}
-
-fn rfc_num(b: Bytes, at: Int, k: Int) -> Int {
-  var v = 0
-  for i in at..at + k {
-    v = v * 10 + Int(b[i]) - 48
-  }
-  v
-}
-
-fn rfc_days_in(m: Int, y: Int) -> Int {
-  if m == 2 {
-    if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) {
-      return 29
-    }
-    return 28
-  }
-  if m == 4 || m == 6 || m == 9 || m == 11 {
-    return 30
-  }
-  31
 }
 
 /// RFC 3339 in UTC: the Display text of a Time.
 fn time_format_rfc3339(t: Time) -> Str { "${t}" }
-
-/// The days from 1970-01-01 to y-m-d (H. Hinnant's days_from_civil).
-fn rfc_days(year: Int, m: Int, d: Int) -> Int {
-  var y = year
-  if m <= 2 {
-    y -= 1
-  }
-  var era = y / 400
-  if y < 0 && y % 400 != 0 {
-    era -= 1
-  }
-  let yoe = y - era * 400
-  let mp = (m + 9) % 12
-  let doy = (153 * mp + 2) / 5 + d - 1
-  let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
-  era * 146097 + doe - 719468
-}
 
 // ---------------------------------------------------------------------------
 // The runtime's text, as the SSA builder calls it (decision 0193):
