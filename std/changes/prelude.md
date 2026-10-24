@@ -1,5 +1,30 @@
 # prelude changes
 
+## 2026-10-24: perf: a 2-byte case in the UTF-8 validation behind every Bytes-to-Str conversion
+
+- Kind: perf
+- Commit: this commit
+- Found by: profiling a non-ASCII heavy JSON decode, where
+  scan.utf8_valid and scan.seq_len were 34% of the run (bench/results/
+  decode-2026-10-24.md)
+- Go reference: none (internal; utf8.Valid's rules unchanged)
+- Test: scan_test.xo (std/native/llrt) covers the 2-byte bounds, the
+  overlong C0 and C1 leads, a lone continuation byte, the surrogate
+  range at both ends, and truncation at the end of the range for 2-, 3-
+  and 4-byte sequences, plus utf8_valid on each malformed sequence
+  inside a run of ASCII; the json decode corpora and the wasm goldens
+  (validation output is unchanged)
+- Timing: bench/results/utf8valid-2026-10-24.md
+
+`seq_len` (std/native/llrt/scan.xo) answers the 2-byte case before its
+ladder: a lead byte in `0xC2` to `0xDF` with one continuation byte in
+`0x80` to `0xBF` is size 2, anything else size 1, and the ladder now
+carries only the 3- and 4-byte leads and the invalid ones. JSON decoding
+of Greek and Cyrillic text runs 5.2% fewer instructions; an ASCII only
+document is unchanged (it never reaches `seq_len`), CJK and emoji text
+pays 0.1% for the extra range test, and the letter-class regexp row does
+not move.
+
 ## 2026-10-24: perf: Bytes.trim_prefix and trim_suffix compare with words, as Str's do
 
 - Kind: perf

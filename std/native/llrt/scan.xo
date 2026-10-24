@@ -776,12 +776,21 @@ pub fn rune_count(s: Str) -> Int { s.len() - count_cont(s.bytes(), 0, s.len()) }
 /// rules: no overlong forms, surrogates, or runes above U+10FFFF).
 fn seq_len(b: Bytes, i: Int, n: Int) -> Int {
   let c = Int(b[i])
+  if c >= 0xC2 && c <= 0xDF {
+    // the common case of a non-ASCII text, answered before the ladder:
+    // one continuation byte in 0x80 to 0xBF
+    if n - i > 1 {
+      let c1 = Int(b[i + 1])
+      if c1 >= 0x80 && c1 <= 0xBF {
+        return 2
+      }
+    }
+    return 1
+  }
   var k = 0
   var lo = 0x80
   var hi = 0xBF
-  if c >= 0xC2 && c <= 0xDF {
-    k = 1
-  } else if c >= 0xE0 && c <= 0xEF {
+  if c >= 0xE0 && c <= 0xEF {
     k = 2
     if c == 0xE0 {
       lo = 0xA0

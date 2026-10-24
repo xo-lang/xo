@@ -17,13 +17,49 @@ fn bytes_of(xs: List[Int]) -> Bytes {
 
 test "seq_len follows utf8.DecodeRune" {
   expect(seq_len(hex("c3a9"), 0, 2) == 2)
+  // the 2-byte case at both ends of its range (C2 82 is the smallest)
+  expect(seq_len(hex("c282"), 0, 2) == 2)
+  expect(seq_len(hex("dfbf"), 0, 2) == 2)
   // an overlong form, a surrogate, and a rune above U+10FFFF
   expect(seq_len(hex("c0af"), 0, 2) == 1)
   expect(seq_len(hex("eda080"), 0, 3) == 1)
   expect(seq_len(hex("f4908080"), 0, 4) == 1)
-  // a sequence cut by the end of the range
+  // every overlong 2-byte lead, a bad continuation byte, and a lone
+  // continuation byte
+  expect(seq_len(hex("c080"), 0, 2) == 1)
+  expect(seq_len(hex("c1bf"), 0, 2) == 1)
+  expect(seq_len(hex("c341"), 0, 2) == 1)
+  expect(seq_len(hex("c3c3"), 0, 2) == 1)
+  expect(seq_len(hex("80"), 0, 1) == 1)
+  expect(seq_len(hex("bf"), 0, 1) == 1)
+  // the surrogate range at both of its ends
+  expect(seq_len(hex("ed9fbf"), 0, 3) == 3)
+  expect(seq_len(hex("edbfbf"), 0, 3) == 1)
+  // a sequence cut by the end of the range, 2, 3 and 4 bytes long
+  expect(seq_len(hex("c3"), 0, 1) == 1)
   expect(seq_len(hex("e282ac"), 0, 2) == 1)
   expect(seq_len(hex("e282ac"), 0, 3) == 3)
+  expect(seq_len(hex("f09f9880"), 0, 3) == 1)
+  expect(seq_len(hex("f09f9880"), 0, 4) == 4)
+}
+
+test "utf8_valid rejects each malformed sequence" {
+  expect(utf8_valid(hex("41c2a241")))
+  expect(utf8_valid(hex("41e282ac41")))
+  expect(utf8_valid(hex("41f09f988041")))
+  // overlong C0 and C1 leads
+  expect(!utf8_valid(hex("41c0af")))
+  expect(!utf8_valid(hex("41c1bf")))
+  // a lone continuation byte, and one inside a run of text
+  expect(!utf8_valid(hex("80")))
+  expect(!utf8_valid(hex("418041")))
+  // a lead cut by the end of the value, 2, 3 and 4 bytes long
+  expect(!utf8_valid(hex("41c3")))
+  expect(!utf8_valid(hex("41e282")))
+  expect(!utf8_valid(hex("41f09f98")))
+  // the surrogate range ED A0 80 to ED BF BF
+  expect(!utf8_valid(hex("41eda08041")))
+  expect(!utf8_valid(hex("41edbfbf41")))
 }
 
 test "fix_utf8 replaces each invalid byte" {
