@@ -752,9 +752,26 @@ fn cache_get_all(os: Os, dir: Str, kind: Str, keys: List[Str], jobs: Int) -> Map
   // opening, as before.)
   // names only (internal.dir_names); a kind directory holds only shard
   // directories
+  // (A Fs that refuses dir_names, a wrapped one such as XO_CACHE_STATS's,
+  // lists the kind directory with read_dir: it holds only the 256 shard
+  // directories. Taking the refusal for an empty cache made every lookup
+  // a miss: a build under XO_CACHE_STATS=1 ran cold, 2026-10-24.)
   var shards: Map[Str, Bool] = {}
-  for nm in internal.dir_names(os.fs, "${dir}/${kind}").ok() ?? [] {
-    shards[nm] = true
+  match internal.dir_names(os.fs, "${dir}/${kind}") {
+    Ok(names) => {
+      for nm in names {
+        shards[nm] = true
+      }
+    }
+    Err(FsErr.Denied(_)) => {
+      if let Ok(fis) = os.fs.read_dir("${dir}/${kind}") {
+        for fi in fis {
+          shards[fi.name] = true
+        }
+      }
+    }
+    // no kind directory yet: no shard
+    Err(_) => {}
   }
   var seen: Map[Str, Bool] = {}
   var ks: List[Str] = []
