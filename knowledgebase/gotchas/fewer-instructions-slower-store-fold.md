@@ -28,3 +28,14 @@ codegen change claiming one runs one `xo bench --ab` in a quiet window,
 and a drop in instructions with more cycles is a reason not to land.
 The patch and notes: ~/xo-lead/notes/Xo lang 4/parked/
 mulhi-inline-intrinsic.patch; the next attempt is stp pairing.
+
+Observed again (2026-10-24, Xo Lang 1), the stp pairing tried: mac_row's
+round rewritten in LLVM's shape (row addresses formed once a round, ldp
+loads, each pair of results stored with one stp after its second word,
+the same words and carries; refs/recover/2026-10-24/macpair). The native
+code then matched LLVM's round, and RSA sign2048 was instructions 0.923
+with wall 0.990, but sign4096 instructions 0.904 with wall 1.032, worse
+(quiet --ab, 30 rounds). Not landed. Three different placements of
+mac_row's stores have now cut instructions and lost on the wall at 4096
+bits; LLVM's faster wall is likely not mac_row's shape. Next: compare
+redc_at's and square_at's hot loops on the two backends.
