@@ -20,3 +20,12 @@ Fix: after the handshake `feed`, if the connection is done, `pend` takes the
 server's `rin` (take_rin). Finding it: count bytes at each layer (client
 send, socket read, plaintext) and log each record header; the first record
 after the handshake had a nonsense type.
+
+Why it was a 1 in 300 flake: the garbage "record header" is bytes of random
+ciphertext. `step` hands a header whose length is over 16640 to feed whole
+(which rejoins the leftover head with the rest by luck), so only a length
+up to 16640 that is more than the bytes read (about one in four) waits
+forever. Regression test: golden tls_coalesced_finish (a TCP proxy joins
+the Finished and the first data in one write; 40 new connections).
+TLS 1.2 shares the fix (take_rin) but not the trigger: its client sends
+data only after the server's Finished.

@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+answered 40 of 40
+done
+--- stderr

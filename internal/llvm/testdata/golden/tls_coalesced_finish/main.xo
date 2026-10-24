@@ -1,0 +1,161 @@
+// The TLS server reading a handshake's end and the first application
+// data in one socket read (gotchas/tls-server-handshake-read-cut-record.md,
+// 2026-10-23): a TCP proxy holds the client's bytes after its
+// ClientHello (the Finished and the request) and forwards them in one
+// write, so the server's first 16 KiB read ends the handshake and cuts
+// a record. The server kept the cut record's head in its handshake
+// buffer and lost it: the request never completed (a client timeout;
+// in HTTP/2 a stream stalled after 64 KiB). Without the proxy this
+// happened about once in 300 runs under load. TLS 1.3 only: a TLS 1.2
+// client sends application data after the server's Finished, so the
+// two never share a read.
+use std/http
+
+fn sum(b: Bytes) -> Int {
+  var t = 0
+  for i in 0..b.len() {
+    t = (t * 31 + Int(b[i])) % 1000000007
+  }
+  t
+}
+
+fn body(n: Int) -> Bytes {
+  var b = BytesBuilder.with_capacity(n)
+  for i in 0..n {
+    b.write_byte(UInt8((i * 7 + 3) % 251))
+  }
+  b.freeze()
+}
+
+/// Server to client, unchanged.
+fn back(bc: Conn, sc: ServerConn) -> () ! NetErr {
+  while true {
+    match bc.read(65536)? {
+      Some(d) => sc.write(d)?
+      None => break
+    }
+  }
+}
+
+/// Client to server: the first read (the ClientHello) goes on at once,
+/// what follows is held until `hold` bytes are there and written as one.
+fn forth(sc: ServerConn, bc: Conn, hold: Int) -> () ! NetErr {
+  var held = BytesBuilder.new()
+  var n = 0
+  var seen = 0
+  var released = false
+  while true {
+    match sc.read(65536)? {
+      Some(d) => {
+        seen += 1
+        if seen == 1 || released {
+          bc.write(d)?
+        } else {
+          held.write(d)
+          n += d.len()
+          if n >= hold {
+            let all = held.freeze()
+            held = BytesBuilder.new()
+            bc.write(all)?
+            released = true
+          }
+        }
+      }
+      None => break
+    }
+  }
+}
+
+fn relay(sc: ServerConn, bc: Conn, hold: Int) {
+  scope s {
+    s.spawn(fn() {
+      match back(bc, sc) {
+        Ok(_) => ()
+        Err(_) => ()
+      }
+    })
+    match forth(sc, bc, hold) {
+      Ok(_) => ()
+      Err(_) => ()
+    }
+    bc.close()
+  }
+  sc.close()
+}
+
+fn proxy(os: Os, l: Listener, backend: Str, hold: Int) {
+  scope s {
+    while true {
+      match l.accept() {
+        Ok(sc) => {
+          match os.net.dial(backend) {
+            Ok(bc) => s.spawn_background(fn() { relay(sc, bc, hold) })
+            Err(_) => sc.close()
+          }
+        }
+        Err(_) => break
+      }
+    }
+  }
+}
+
+fn main(os: Os) {
+  let cert = match http.tls_cert(good_cert(), good_key()) {
+    Ok(c) => c
+    Err(e) => {
+      os.stdio.println("cert: ${e}")
+      return
+    }
+  }
+  var r = http.router()
+  r.handle("POST /echo", fn(req) { http.text(200, "got ${req.body.len()} bytes, sum ${sum(req.body)}") })
+  match (os.net.listen("127.0.0.1:0"), os.net.listen("127.0.0.1:0")) {
+    (Ok(sl), Ok(pl)) => {
+      let srv = http.server(sl, r).with_tls([cert])
+      let backend = srv.addr()
+      let port = pl.addr().split(":")[1]
+      scope s {
+        s.spawn_background(fn() {
+          match srv.serve() {
+            Ok(_) => ()
+            Err(e) => os.stdio.println("serve failed: ${e}")
+          }
+        })
+        s.spawn_background(fn() { proxy(os, pl, backend, 20000) })
+        // a new connection (a new handshake, new random record
+        // contents) each time: whether the cut record's length bytes
+        // read as a length the server waits on depends on the contents,
+        // about one in four, so 40 connections catch it
+        var good = 0
+        for i in 0..40 {
+          let data = body(30000 + i)
+          let c = match http.client(os.net, timeout: 10s).with_roots(ca_pem()) {
+            Ok(c) => c
+            Err(e) => {
+              os.stdio.println("roots: ${e}")
+              return
+            }
+          }
+          let want = "got ${data.len()} bytes, sum ${sum(data)}"
+          match c.send(http.new_request("POST", "https://localhost:${port}/echo", {}, data)) {
+            Ok(resp) => {
+              if resp.status == 200 && resp.text() == Some(want) {
+                good += 1
+              } else {
+                os.stdio.println("post ${i}: ${resp.status} ${resp.text() ?? "?"}")
+              }
+            }
+            Err(e) => os.stdio.println("post ${i}: ${e}")
+          }
+        }
+        os.stdio.println("answered ${good} of 40")
+      }
+      os.stdio.println("done")
+    }
+    _ => os.stdio.println("listen failed")
+  }
+}
+
+fn ca_pem() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBXTCCAQOgAwIBAgIBAjAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAVMRMwEQYDVQQD\nEwpYbyBUZXN0IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEijw7AWGYTeLp\n/9oDX6t32fPfTkDcI/F29wXFQRBDz+0AxRDpI6PQf9UdiF9aZfB5AM5J3PdtARhw\nCIekwP7z7aNCMEAwDgYDVR0PAQH/BAQDAgKEMA8GA1UdEwEB/wQFMAMBAf8wHQYD\nVR0OBBYEFLrbZ5A0fzzE42xjrFaZTWKJC9Z6MAoGCCqGSM49BAMCA0gAMEUCIHzG\n+C1Oz2qF9sqKv6CMRcep89t3K01Um1dypPN+nE7ZAiEA3+DkafbsP8oH5cfghe/i\nMsgJIwR+YEK89sPkPWqn3nI=\n-----END CERTIFICATE-----\n".bytes() }
+fn good_cert() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBlzCCAT2gAwIBAgIBBDAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAPMQ0wCwYDVQQD\nEwRnb29kMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE9O8DlRiEOqE5kBcoi9Xg\nkTscb94E/jndT7qf0pYOYj1zJGJbD2l1bZAVsrAY5C3Wv2aAF51muJPDyheawAHK\nSqOBgTB/MA4GA1UdDwEB/wQEAwIHgDATBgNVHSUEDDAKBggrBgEFBQcDATAfBgNV\nHSMEGDAWgBS622eQNH88xONsY6xWmU1iiQvWejA3BgNVHREEMDAugglsb2NhbGhv\nc3SCCWdvb2QudGVzdIcEfwAAAYcQAAAAAAAAAAAAAAAAAAAAATAKBggqhkjOPQQD\nAgNIADBFAiAckDQ7jBugRRKa+Ugpt8hKU8GY0WGo4eWxak8QHej1hgIhAORlgKwn\niJ4cvV9cxqu4a2fovArW28G2KaR4WLfzeSBL\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nMIIBXTCCAQOgAwIBAgIBAjAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAVMRMwEQYDVQQD\nEwpYbyBUZXN0IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEijw7AWGYTeLp\n/9oDX6t32fPfTkDcI/F29wXFQRBDz+0AxRDpI6PQf9UdiF9aZfB5AM5J3PdtARhw\nCIekwP7z7aNCMEAwDgYDVR0PAQH/BAQDAgKEMA8GA1UdEwEB/wQFMAMBAf8wHQYD\nVR0OBBYEFLrbZ5A0fzzE42xjrFaZTWKJC9Z6MAoGCCqGSM49BAMCA0gAMEUCIHzG\n+C1Oz2qF9sqKv6CMRcep89t3K01Um1dypPN+nE7ZAiEA3+DkafbsP8oH5cfghe/i\nMsgJIwR+YEK89sPkPWqn3nI=\n-----END CERTIFICATE-----\n".bytes() }
+fn good_key() -> Bytes { "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgRJJMUtA6v5smeBFF\npZ933x7IwE6wYj/9NyjqnMscBwmhRANCAAT07wOVGIQ6oTmQFyiL1eCROxxv3gT+\nOd1Pup/Slg5iPXMkYlsPaXVtkBWysBjkLda/ZoAXnWa4k8PKF5rAAcpK\n-----END PRIVATE KEY-----\n".bytes() }

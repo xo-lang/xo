@@ -7,6 +7,7 @@
 - Found by: the `http_stream_body_h2` golden hanging in about 1 run in 300 under load (Xo Lang 3's stress loop, ciphertext and record logging)
 - Go reference: crypto/tls Conn.readRecord (bytes after the Finished stay in the record buffer)
 - Test: golden http_stream_body_h2 (20000 runs, 4 at a time: 66 hangs before, 0 after)
+- Regression test: golden tls_coalesced_finish (a proxy joins the client's Finished and its first data in one write, 40 connections: the server before the fix timed out on 3 of 40, after it answers all)
 
 When the client's Finished and its first application data arrived in one
 socket read, the server finished the handshake inside that read.
