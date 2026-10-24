@@ -10,6 +10,7 @@ import (
 	"hash/crc32"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -270,6 +271,140 @@ func zip64Fixture(name, data string, mtime time.Time) []byte {
 	return b.Bytes()
 }
 
+// paxRecord is one PAX record: "<len> key=value\n", where len counts the
+// whole record including its own digits (Go's formatPAXRecord).
+func paxRecord(k, v string) string {
+	body := " " + k + "=" + v + "\n"
+	n := len(body)
+	for d := 1; ; d++ {
+		if len(strconv.Itoa(n+d))+len(body) == n+d {
+			return strconv.Itoa(n+d) + body
+		}
+	}
+}
+
+// tarBlock is one ustar header block, with the checksum the format wants.
+func tarBlock(name string, mode, size int64, mtime time.Time, typ byte) []byte {
+	b := make([]byte, 512)
+	copy(b[0:100], name)
+	putOctal := func(off, n int, v int64) {
+		s := fmt.Sprintf("%0*o", n-1, v)
+		if len(s) > n-1 {
+			s = s[len(s)-(n-1):]
+		}
+		copy(b[off:off+n-1], s)
+		b[off+n-1] = 0
+	}
+	putOctal(100, 8, mode)
+	putOctal(108, 8, 0)
+	putOctal(116, 8, 0)
+	putOctal(124, 12, size)
+	putOctal(136, 12, mtime.Unix())
+	b[156] = typ
+	copy(b[257:263], "ustar\x00")
+	copy(b[263:265], "00")
+	copy(b[265:297], "root")
+	copy(b[297:329], "root")
+	for i := 148; i < 156; i++ {
+		b[i] = ' '
+	}
+	sum := 0
+	for _, c := range b {
+		sum += int(c)
+	}
+	putOctal(148, 7, int64(sum))
+	b[155] = ' '
+	return b
+}
+
+// pad512 rounds a payload up to a block.
+func pad512(b []byte) []byte {
+	out := make([]byte, (len(b)+511)/512*512)
+	copy(out, b)
+	return out
+}
+
+// sparseArchive is the logical content of both sparse fixtures: 8 bytes at 0,
+// 4 at 1024, and a logical size of 2048, so 2036 bytes of holes are zeros.
+func sparseContent() []byte {
+	want := make([]byte, 2048)
+	copy(want[0:], "ABCDEFGH")
+	copy(want[1024:], "WXYZ")
+	return want
+}
+
+// sparse01Fixture is a GNU PAX sparse archive in format 0.1: the map lives in
+// GNU.sparse.offset and GNU.sparse.numbytes records (the shape Go converts
+// from the 0.0 headers it lists), and the data area holds only the two
+// blocks, so the header's size is the physical 12 bytes while the entry reads
+// as 2048.
+func sparse01Fixture() []byte {
+	phys := "ABCDEFGH" + "WXYZ"
+	pax := paxRecord("GNU.sparse.size", "2048") +
+		paxRecord("GNU.sparse.numblocks", "2") +
+		paxRecord("GNU.sparse.offset", "0") +
+		paxRecord("GNU.sparse.numbytes", "8") +
+		paxRecord("GNU.sparse.offset", "1024") +
+		paxRecord("GNU.sparse.numbytes", "4") +
+		paxRecord("GNU.sparse.name", "sparse.bin")
+	var b bytes.Buffer
+	b.Write(tarBlock("./PaxHeaders.0/sparse.bin", 0o644, int64(len(pax)), archTime(1700000000), 'x'))
+	b.Write(pad512([]byte(pax)))
+	b.Write(tarBlock("GNUSparseFile.0/sparse.bin", 0o644, int64(len(phys)), archTime(1700000000), '0'))
+	b.Write(pad512([]byte(phys)))
+	b.Write(make([]byte, 1024))
+	return b.Bytes()
+}
+
+// sparse10Fixture is a GNU PAX sparse archive in format 1.0: GNU.sparse.major
+// 1 and minor 0, and the map as the first block of the data area ("<n>" then
+// pairs of offset and length), then the blocks themselves.
+func sparse10Fixture() []byte {
+	phys := "ABCDEFGH" + "WXYZ"
+	sparseMap := "2\n0\n8\n1024\n4\n"
+	body := pad512([]byte(sparseMap))
+	body = append(body, phys...)
+	pax := paxRecord("GNU.sparse.major", "1") +
+		paxRecord("GNU.sparse.minor", "0") +
+		paxRecord("GNU.sparse.name", "sparse.bin") +
+		paxRecord("GNU.sparse.realsize", "2048")
+	var b bytes.Buffer
+	b.Write(tarBlock("./PaxHeaders.0/sparse.bin", 0o644, int64(len(pax)), archTime(1700000000), 'x'))
+	b.Write(pad512([]byte(pax)))
+	b.Write(tarBlock("GNUSparseFile.0/sparse.bin", 0o644, int64(len(body)), archTime(1700000000), '0'))
+	b.Write(pad512(body))
+	b.Write(make([]byte, 1024))
+	return b.Bytes()
+}
+
+// checkSparse reads a sparse fixture the way Go does and requires one entry
+// named sparse.bin whose data is the 2048 bytes with the two blocks, so a
+// fixture whose holes Go does not fill (or whose map it does not read) never
+// reaches the corpus.
+func checkSparse(name string, data []byte) {
+	tr := tar.NewReader(bytes.NewReader(data))
+	h, err := tr.Next()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "stdcorpus: Go cannot read the sparse fixture %s: %v\n", name, err)
+		os.Exit(1)
+	}
+	body, err := io.ReadAll(tr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "stdcorpus: Go cannot read the sparse fixture %s: %v\n", name, err)
+		os.Exit(1)
+	}
+	want := sparseContent()
+	if h.Name != "sparse.bin" || !bytes.Equal(body, want) {
+		fmt.Fprintf(os.Stderr, "stdcorpus: Go reads the sparse fixture %s as %q with %d bytes (want sparse.bin with %d)\n",
+			name, h.Name, len(body), len(want))
+		os.Exit(1)
+	}
+	if _, err := tr.Next(); err != io.EOF {
+		fmt.Fprintf(os.Stderr, "stdcorpus: the sparse fixture %s holds more than one entry\n", name)
+		os.Exit(1)
+	}
+}
+
 func archiveCorpus() string {
 	var o strings.Builder
 	o.WriteString(header("archive/tar and archive/zip reading the fixtures this generator writes with Go's writers (and, for zip64, lays out by hand), compared entry by entry: path, size, permission bits, whether a directory, the modified time and the SHA-256 of the data, plus the archives Xo's path rules refuse (an absolute path, one leaving the root, a symbolic link, a hard link). Go's archive tests are Copyright 2009 The Go Authors, BSD-style license)"))
@@ -345,6 +480,10 @@ func archiveCorpus() string {
 				}
 				return b.Bytes()
 			}()},
+		{name: "TAR_SPARSE_01", kind: "tar", ok: true, entry: "GNU PAX sparse 0.1: two blocks in a 2048 byte file, so 2036 bytes of holes; the map is in GNU.sparse.offset and GNU.sparse.numbytes records and the header's size is the physical 12 bytes",
+			data: sparse01Fixture()},
+		{name: "TAR_SPARSE_10", kind: "tar", ok: true, entry: "GNU PAX sparse 1.0: the same two blocks, with the map as the first block of the data area and GNU.sparse.realsize for the logical size",
+			data: sparse10Fixture()},
 		{name: "TAR_EMPTY", kind: "tar", ok: true, entry: "USTAR: no entries",
 			data: tarFixture(tar.FormatUSTAR, nil)},
 		{name: "TAR_SYMLINK", kind: "tar", ok: false, entry: "USTAR: a symbolic link", why: "links are an error (std/archive.xo)",
@@ -391,6 +530,9 @@ func archiveCorpus() string {
 			summary, err = tarSummary(f.data)
 		} else {
 			summary, err = zipSummary(f.data)
+		}
+		if f.name == "TAR_SPARSE_01" || f.name == "TAR_SPARSE_10" {
+			checkSparse(f.name, f.data)
 		}
 		if err != nil {
 			// every fixture must be readable by Go; the refusals are Xo's
