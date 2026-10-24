@@ -1,5 +1,27 @@
 # prelude changes
 
+## 2026-10-24: perf: the Unicode tables are little endian, so u24 is one load
+
+- Kind: perf
+- Commit: this commit
+- Found by: the mixed case mapping profile (u24, three bounds checked
+  index reads per table value, was 34 percent of lower_u)
+- Go reference: unicode and strconv's tables behind strings.ToLower,
+  ToUpper, unicode.ToLower and ToUpper (go1.26.1); the tables are
+  regenerated from them by internal/llvm TestUnicodeTables
+- Test: corpora runes, strings, trimchars, equalfold and strwhere on
+  arm64, LLVM and the Go backend; goldens unicode_table and
+  native_eq_lower on arm64, LLVM and Go parity; TestUnicodeTables
+- Timing: bench/results/unicode-u24-2026-10-24.md
+
+`std/native/llrt/unicode_tables.xo` is generated 24 bit little endian
+with eight zero bytes at each table's end, and `u24` is
+`rt.bytes_word(t, i) & 0xffffff`: one load and a mask in place of three
+checked reads and two shifts. lower_u 0.844, upper_u 0.843, runecase
+0.759 and eqlower 0.878 of the base; the ASCII case rows are unchanged.
+`unicode_classes.xo` (regexp) keeps its big endian layout and its own
+reader.
+
 ## 2026-10-24: perf: Str.trim_chars trims a one byte cutset's two ends in one pass
 
 - Kind: perf

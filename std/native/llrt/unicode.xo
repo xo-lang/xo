@@ -17,9 +17,12 @@ use native/llrt/scan
 use native/llrt/unicode_tables
 use native/rt
 
-/// The 24 bit big endian value at byte i of t.
+/// The 24 bit value at byte i of t: one load and a mask, the tables being
+/// little endian with eight zero bytes of pad (internal/llvm
+/// TestUnicodeTables). The three checked index reads it replaces were 34
+/// percent of the mixed case mapping profile (2026-10-24).
 fn u24(t: Bytes, i: Int) -> Int {
-  (Int(t[i]) << 16) | (Int(t[i + 1]) << 8) | Int(t[i + 2])
+  rt.bytes_word(t, i) & 0xffffff
 }
 
 /// The 24 bit two's complement value at byte i of t.
