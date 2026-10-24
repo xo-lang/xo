@@ -1,0 +1,16 @@
+exit 0
+--- stdout
+1: 1 equal
+2: 1 equal
+3: 1 equal
+4: 1 equal
+5: 1 equal
+8: 1 equal
+9: 1 equal
+16: 1 equal
+17: 1 equal
+2: 1 equal
+4: 1 equal
+11: 1 equal
+hits 10243
+--- stderr

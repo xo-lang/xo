@@ -12,7 +12,32 @@ fn token_len(hs: List[Str]) -> Int {
   n
 }
 
+// A Str compared with a constant of 1 to 16 bytes, once the lengths are
+// equal, is two overlapping loads and immediates, not a call of obj.str_eq
+// (compiler/arm64 calls.xo str_eq_const, 2026-10-24); 17 bytes stays a call.
+fn count_nobody(hs: List[Str]) -> Int {
+  // arm64: "ccmp" -"_xo_x_obj_str_eq"
+  var n = 0
+  for h in hs {
+    if h == "nobody" {
+      n += 1
+    }
+  }
+  n
+}
+
+fn count_long(hs: List[Str]) -> Int {
+  // arm64: "_xo_x_obj_str_eq"
+  var n = 0
+  for h in hs {
+    if h == "abcdefghijklmnopq" {
+      n += 1
+    }
+  }
+  n
+}
+
 fn main(os: Os) {
-  let hs = ["Bearer abc", "x", "Bearer"]
-  os.stdio.println("${token_len(hs)}")
+  let hs = ["Bearer abc", "x", "Bearer", "nobody"]
+  os.stdio.println("${token_len(hs)} ${count_nobody(hs)} ${count_long(hs)}")
 }

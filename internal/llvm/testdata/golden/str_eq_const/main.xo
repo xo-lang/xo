@@ -1,0 +1,89 @@
+// Str == a constant of 1 to 16 bytes, which the native backend compares in
+// line (two overlapping loads of 1, 2, 4 or 8 bytes) once the lengths are
+// equal (2026-10-24): every load size, a Str one byte shorter and one
+// longer, equal, differing at the first and at the last byte, as a whole
+// string and as a view at an offset, in both operand orders, and in a match.
+
+/// s built at run time (no constant folding): its runes written one by one.
+fn built(s: Str, os: Os) -> Str {
+  var b = StrBuilder.new()
+  for r in s.runes() {
+    b.write("${r}")
+  }
+  // an argument count that is never 99 keeps the build from folding it
+  if os.env.args().len() == 99 {
+    b.write("!")
+  }
+  b.freeze()
+}
+
+/// The same text as a view into a longer Str, at offset 3.
+fn viewed(s: Str, os: Os) -> Str {
+  let w = built("<<<${s}>>>", os)
+  w[3..3 + s.len()]
+}
+
+/// Checks eq on s built and as a view; 1 when it matched.
+fn one(os: Os, k: Str, label: Str, s: Str, want: Bool, eq: fn(Str) -> Bool) -> Int {
+  let a = built(s, os)
+  let v = viewed(s, os)
+  if eq(a) != want {
+    os.stdio.println("FAIL ${k.len()} ${label} built: want ${want}")
+  }
+  if eq(v) != want {
+    os.stdio.println("FAIL ${k.len()} ${label} view: want ${want}")
+  }
+  if eq(a) { 1 } else { 0 }
+}
+
+/// An ASCII constant k: equal, first byte differs, last byte differs, one
+/// byte shorter, one byte longer.
+fn row(os: Os, k: Str, eq: fn(Str) -> Bool) {
+  let n = k.len()
+  var hits = one(os, k, "equal", k, true, eq)
+  hits += one(os, k, "first", "#${k[1..n]}", false, eq)
+  hits += one(os, k, "last", "${k[0..n - 1]}#", false, eq)
+  hits += one(os, k, "shorter", k[0..n - 1], false, eq)
+  hits += one(os, k, "longer", "${k}x", false, eq)
+  os.stdio.println("${n}: ${hits} equal")
+}
+
+/// A constant k with bytes from 0x80 up: equal, other (the same length,
+/// different), and one byte longer.
+fn row2(os: Os, k: Str, other: Str, eq: fn(Str) -> Bool) {
+  var hits = one(os, k, "equal", k, true, eq)
+  hits += one(os, k, "other", other, false, eq)
+  hits += one(os, k, "longer", "${k}x", false, eq)
+  os.stdio.println("${k.len()}: ${hits} equal")
+}
+
+fn main(os: Os) {
+  row(os, "a", fn(s) { s == "a" })
+  row(os, "ab", fn(s) { "ab" == s })
+  row(os, "abc", fn(s) { s == "abc" })
+  row(os, "abcd", fn(s) { s == "abcd" })
+  row(os, "abcde", fn(s) { "abcde" == s })
+  row(os, "abcdefgh", fn(s) { s == "abcdefgh" })
+  row(os, "abcdefghi", fn(s) { s == "abcdefghi" })
+  row(os, "abcdefghijklmnop", fn(s) { s == "abcdefghijklmnop" })
+  // a 17 byte constant stays a call
+  row(os, "abcdefghijklmnopq", fn(s) { s == "abcdefghijklmnopq" })
+  // bytes from 0x80 up and NULs
+  row2(os, "é", "è", fn(s) { s == "é" })
+  row2(os, "\u{0}ü\u{0}", "\u{0}ö\u{0}", fn(s) { s == "\u{0}ü\u{0}" })
+  row2(os, "日本語ab", "日本語ac", fn(s) { s == "日本語ab" })
+  // in a loop and in a match
+  var hits = 0
+  for i in 0..1000 {
+    let s = built(if i % 7 == 0 { "nobody" } else { "user${i}" }, os)
+    if s == "nobody" {
+      hits += 1
+    }
+    match s {
+      "user10" => hits += 100
+      "user999" => hits += 10000
+      _ => {}
+    }
+  }
+  os.stdio.println("hits ${hits}")
+}

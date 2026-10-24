@@ -674,6 +674,111 @@ fn (var g: G) bytes_load(ws: List[Int], iv: Int, i: Int) -> Int {
   g.def1(false, "ldrb $wd0, [$u0, $u1]", [d, i])
 }
 
+/// str.eq of a Str and a constant of 1 to 16 bytes, when the block is the
+/// equal branch of a test of the Str's length against the constant's (the
+/// builder's str_eq and str_eq_br test the lengths first): in line, the
+/// constant's bytes against two overlapping loads of 1, 2, 4 or 8 bytes
+/// at 0 and at n - k, no call (2026-10-24: `u.name == "nobody"` in a loop
+/// called obj.str_eq for every name of length 6, 1.58 times LLVM's
+/// instructions, where LLVM compares two words). Without the length test
+/// a load could read past a shorter Str, so it stays a call.
+fn (var g: G) str_eq_const(v: Int, x: ssa.Value, xd: Int, yd: Int) -> Bool {
+  for k in 0..2 {
+    let cv = g.f.values[g.through_params(x.args[k])]
+    if cv.op != ssa.Op.Const {
+      continue
+    }
+    let bs = const_bytes(cv.aux) ?? b""
+    let n = bs.len()
+    if n < 1 || n > 16 || !g.len_proved(x.block, x.args[1 - k], n) {
+      continue
+    }
+    let data = if k == 0 { yd } else { xd }
+    let sz = if n >= 8 { 8 } else if n >= 4 { 4 } else if n >= 2 { 2 } else { 1 }
+    // ldr, ldrh, ldrb: an offset the scaled form cannot hold is encoded
+    // unscaled (ldur; macho enc.xo, and clang's assembler likewise)
+    let op = match sz {
+      8 => "ldr $d0"
+      4 => "ldr $wd0"
+      2 => "ldrh $wd0"
+      _ => "ldrb $wd0"
+    }
+    let l1 = g.def1(false, "${op}, [$u0]", [data])
+    let c1 = g.imm(le_word(bs, 0, sz))
+    if n == sz {
+      g.set(v, [g.def1(false, "cmp $u0, $u1\ncset $d0, eq", [l1, c1])])
+      return true
+    }
+    let l2 = g.def1(false, "${op}, [$u0, #${n - sz}]", [data])
+    let c2 = g.imm(le_word(bs, n - sz, sz))
+    g.set(v, [g.def1(false, "cmp $u0, $u1\nccmp $u2, $u3, #0, eq\ncset $d0, eq", [l1, c1, l2, c2])])
+    return true
+  }
+  false
+}
+
+/// The sz bytes of bs from at as a little endian word.
+fn le_word(bs: Bytes, at: Int, sz: Int) -> Int {
+  var w = 0
+  var i = sz - 1
+  while i >= 0 {
+    w = w.wrapping_shl(8) | Int(bs[at + i])
+    i -= 1
+  }
+  w
+}
+
+/// Whether block blk is entered only by the true edge of a branch on
+/// `Str.len(s) == n` (str_eq_const's guard).
+fn (g: G) len_proved(blk: Int, s: Int, n: Int) -> Bool {
+  let ps = g.f.blocks[blk].preds
+  if ps.len() != 1 {
+    return false
+  }
+  let e = ps[0]
+  let ins = g.f.blocks[g.f.edges[e].from].instrs
+  if ins.is_empty() {
+    return false
+  }
+  let t = g.f.values[ins[ins.len() - 1]]
+  if t.op != ssa.Op.Branch || t.succs.is_empty() || t.succs[0] != e || t.args.is_empty() {
+    return false
+  }
+  let c = g.f.values[t.args[0]]
+  if c.op != ssa.Op.Eq || c.args.len() != 2 {
+    return false
+  }
+  let st = g.through_params(s)
+  for j in 0..2 {
+    let o = g.f.values[c.args[1 - j]]
+    if g.len_is(c.args[j], n) && o.op == ssa.Op.Call && aux_str(o.aux) == "Str.len" && o.args.len() == 1 && g.through_params(o.args[0]) == st {
+      return true
+    }
+  }
+  false
+}
+
+/// Whether Int value v is n: the constant n, or Str.len of a constant of
+/// n bytes (a comparison with a literal before fold_consts folds it).
+fn (g: G) len_is(v: Int, n: Int) -> Bool {
+  let (k, ok) = g.const_int(v)
+  if ok {
+    return k == n
+  }
+  let x = g.f.values[v]
+  if x.op != ssa.Op.Call || aux_str(x.aux) != "Str.len" || x.args.len() != 1 {
+    return false
+  }
+  let cv = g.f.values[g.through_params(x.args[0])]
+  if cv.op != ssa.Op.Const {
+    return false
+  }
+  if let Some(bs) = const_bytes(cv.aux) {
+    return bs.len() == n
+  }
+  false
+}
+
 fn (var g: G) bounds_check(v: Int, l: Int, i: Int) {
   let pos = g.f.values[v].pos
   if pos.is_empty() {
@@ -1031,6 +1136,9 @@ fn (var g: G) call_op(v: Int) {
         let s1 = g.def1(false, "cmp $u0, #0\ncset $d0, ne\ncneg $d0, $d0, lt", [c])
         let s2 = g.def1(false, "cmp $u0, $u1\ncset $d0, ne\ncneg $d0, $d0, lt", [an, bn])
         g.set(v, [g.def1(false, "cmp $u0, #0\ncsel $d0, $u1, $u2, ne", [c, s1, s2])])
+        return
+      }
+      if !g.x86 && g.str_eq_const(v, x, xd, yd) {
         return
       }
       let r = g.rt("xo_x_obj_str_eq", regs([xd, g.str_len(a), yd, g.str_len(b)]), [false])
