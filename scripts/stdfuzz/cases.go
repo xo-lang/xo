@@ -1,10 +1,17 @@
 package main
 
 import (
+	"archive/tar"
+	"archive/zip"
+	"bytes"
+	"compress/flate"
+	"compress/gzip"
+	"compress/zlib"
 	"fmt"
 	"math"
 	"math/rand"
 	"strings"
+	"time"
 )
 
 // jsonHelpers, urlHelpers, baseHelpers and timeHelpers wrap the match, whose
@@ -165,6 +172,182 @@ fn fz_big_hex(s: Str) -> Str {
 }
 `
 
+const compressHelpers = `
+fn fz_gz(b: Bytes, level: compress.Level) -> Str { fz_hx(compress.gzip(b, level).to_hex()) }
+fn fz_gz_rt(b: Bytes, level: compress.Level) -> Str {
+  match compress.gunzip(compress.gzip(b, level)) {
+    Ok(x) => x.to_hex()
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_deflate_rt(b: Bytes) -> Str {
+  match compress.inflate(compress.deflate(b)) {
+    Ok(x) => x.to_hex()
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_zlib_rt(b: Bytes) -> Str {
+  match compress.unzlib(compress.zlib(b)) {
+    Ok(x) => x.to_hex()
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_gunzip(b: Bytes) -> Str {
+  match compress.gunzip(b) {
+    Ok(x) => x.to_hex()
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_inflate(b: Bytes) -> Str {
+  match compress.inflate(b) {
+    Ok(x) => x.to_hex()
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_unzlib(b: Bytes) -> Str {
+  match compress.unzlib(b) {
+    Ok(x) => x.to_hex()
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_stream(b: Bytes, f: compress.Format) -> Str {
+  var c = compress.compressor(f)
+  let w = c.write(b)
+  let fl = c.flush()
+  let fin = c.finish()
+  fz_hx("${w.to_hex()};${fl.to_hex()};${fin.to_hex()}")
+}
+`
+
+const archiveHelpers = `
+fn fz_tar(name: Str, b: Bytes) -> Str {
+  match archive.tar([archive.file(name, b)]) {
+    Ok(t) => t.to_hex()
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_zip(name: Str, b: Bytes) -> Str {
+  match archive.zip([archive.file(name, b)]) {
+    Ok(t) => t.to_hex()
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_entries(es: List[archive.Entry]) -> Str {
+  var out = ""
+  for e in es {
+    if out != "" { out = out + ";" }
+    out = out + fz_hx("${e.path}:${e.data.to_hex()}:${e.mode}:${e.is_dir}:${e.modified.unix()}")
+  }
+  "${es.len()}/${out}"
+}
+fn fz_untar(name: Str, b: Bytes) -> Str {
+  match archive.tar([archive.file(name, b)]) {
+    Ok(t) => match archive.untar(t) {
+      Ok(es) => fz_entries(es)
+      Err(e) => "err:${e.display()}"
+    }
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_unzip(name: Str, b: Bytes) -> Str {
+  match archive.zip([archive.file(name, b)]) {
+    Ok(t) => match archive.unzip(t) {
+      Ok(es) => fz_entries(es)
+      Err(e) => "err:${e.display()}"
+    }
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_unzip_raw(b: Bytes) -> Str {
+  match archive.unzip(b) {
+    Ok(es) => fz_entries(es)
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_untar_raw(b: Bytes) -> Str {
+  match archive.untar(b) {
+    Ok(es) => fz_entries(es)
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_agunzip(b: Bytes) -> Str {
+  match archive.gunzip(b) {
+    Ok(x) => x.to_hex()
+    Err(e) => "err:${e.display()}"
+  }
+}
+`
+
+const mimeHelpers = `
+fn fz_mt(v: Str) -> Str {
+  match mime.parse_media_type(v) {
+    Ok(m) => fz_hx(mime.format_media_type(m.kind, m.params))
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_mime_ext(ext: Str) -> Str { fz_opt_s(mime.type_by_extension(ext)) }
+fn fz_mime_exts(kind: Str) -> Str {
+  match mime.extensions_by_type(kind) {
+    Ok(xs) => fz_ls(xs)
+    Err(e) => "err:${e.display()}"
+  }
+}
+`
+
+const multipartHelpers = `
+fn fz_parts(ps: List[multipart.Part]) -> Str {
+  var out = ""
+  for p in ps {
+    if out != "" { out = out + ";" }
+    out = out + fz_hx("${p.name}:${p.filename ?? ""}:${p.data.to_hex()}")
+  }
+  "${ps.len()}/${out}"
+}
+fn fz_mp(body: Bytes, boundary: Str) -> Str {
+  match multipart.parse(body, boundary) {
+    Ok(ps) => fz_parts(ps)
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_mp_write(name: Str, b: Bytes, boundary: Str) -> Str {
+  let part = multipart.Part{name: name, filename: None, headers: {}, data: b}
+  fz_hx(multipart.write([part], boundary).to_hex())
+}
+fn fz_mp_form(body: Bytes, boundary: Str) -> Str {
+  match multipart.parse_form(body, boundary) {
+    Ok(f) => fz_hx("${f.values.encode()}")
+    Err(e) => "err:${e.display()}"
+  }
+}
+`
+
+const xmlHelpers = `
+fn fz_xml(text: Str) -> Str {
+  match xml.parse(text) {
+    Ok(e) => match e.encode() {
+      Ok(s) => fz_hx(s)
+      Err(err) => "err:${err.display()}"
+    }
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_xml_loose(text: Str) -> Str {
+  match xml.parse(text, strict: false) {
+    Ok(e) => match e.encode() {
+      Ok(s) => fz_hx(s)
+      Err(err) => "err:${err.display()}"
+    }
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_xml_n(text: Str) -> Str {
+  match xml.tokens(text) {
+    Ok(ts) => "${ts.len()}"
+    Err(e) => "err:${e.display()}"
+  }
+}
+`
+
 // A fuzzCase is one line of the generated program: the name it prints and
 // the Xo expression that computes its value as a Str, so every result
 // compares as one line of text.
@@ -200,6 +383,11 @@ func allAreas() []area {
 		{"csv", []string{"std/csv"}, csvHelpers, genCSV},
 		{"netip", []string{"std/netip"}, netipHelpers, genNetip},
 		{"big", []string{"std/big"}, bigHelpers, genBig},
+		{"compress", []string{"std/compress"}, compressHelpers, genCompress},
+		{"archive", []string{"std/archive"}, archiveHelpers, genArchive},
+		{"mime", []string{"std/mime"}, mimeHelpers, genMime},
+		{"multipart", []string{"std/multipart"}, multipartHelpers, genMultipart},
+		{"xml", []string{"std/xml"}, xmlHelpers, genXML},
 	}
 }
 
@@ -734,6 +922,253 @@ func genBig(r *rand.Rand, n int) []fuzzCase {
 			out = append(out, fuzzCase{name, "fz_big_hex(" + xq(pick(r, hex)) + ")"})
 		case 2:
 			out = append(out, fuzzCase{name, "fz_big_ops(" + fmt.Sprint(r.Int63()-r.Int63()) + ", " + fmt.Sprint(r.Int63()-r.Int63()) + ")"})
+		}
+	}
+	return out
+}
+
+// genCompress covers gzip, deflate and zlib, the round trips, the
+// streaming compressor and input a decoder must refuse.
+func genCompress(r *rand.Rand, n int) []fuzzCase {
+	goLevels := []int{flate.DefaultCompression, flate.BestSpeed, flate.BestCompression, flate.NoCompression, flate.HuffmanOnly}
+	levels := []string{"compress.Level.Default", "compress.Level.BestSpeed",
+		"compress.Level.BestCompression", "compress.Level.NoCompression", "compress.Level.HuffmanOnly"}
+	formats := []string{"compress.Format.Gzip", "compress.Format.Deflate", "compress.Format.Zlib"}
+	out := make([]fuzzCase, 0, n)
+	for i := 0; i < n; i++ {
+		b := randBytes(r)
+		if r.Intn(4) == 0 {
+			b = []byte(strings.Repeat(pick(r, pool), 1+r.Intn(200)))
+		}
+		B := xbytes(b)
+		name := fmt.Sprintf("compress.%04d", i)
+		switch i % 10 {
+		case 0:
+			out = append(out, fuzzCase{name, "fz_gz(" + B + ", " + pick(r, levels) + ")"})
+		case 1:
+			out = append(out, fuzzCase{name, "fz_gz_rt(" + B + ", " + pick(r, levels) + ")"})
+		case 2:
+			out = append(out, fuzzCase{name, "fz_deflate_rt(" + B + ")"})
+		case 3:
+			out = append(out, fuzzCase{name, "fz_zlib_rt(" + B + ")"})
+		case 4:
+			out = append(out, fuzzCase{name, "fz_gunzip(" + B + ")"})
+		case 5:
+			out = append(out, fuzzCase{name, "fz_stream(" + B + ", " + pick(r, formats) + ")"})
+		case 6:
+			out = append(out, fuzzCase{name, "fz_hx(compress.deflate(" + B + ", " + pick(r, levels) + ").to_hex())"})
+		case 7:
+			out = append(out, fuzzCase{name, "fz_gunzip(" + xbytes(goGzip(b, goLevels[r.Intn(len(goLevels))])) + ")"})
+		case 8:
+			out = append(out, fuzzCase{name, "fz_inflate(" + xbytes(goDeflate(b, goLevels[r.Intn(len(goLevels))])) + ")"})
+		case 9:
+			out = append(out, fuzzCase{name, "fz_unzlib(" + xbytes(goZlib(b, goLevels[r.Intn(len(goLevels))])) + ")"})
+		}
+	}
+	return out
+}
+
+// genArchive covers tar, zip and gzip archives: the bytes written, the
+// entries read back, and input an archive reader must refuse.
+func genArchive(r *rand.Rand, n int) []fuzzCase {
+	names := []string{"a.txt", "dir/b", "", "a", "a b", "é.txt", "a/b/c", "/abs", "../x", "a\x00b"}
+	out := make([]fuzzCase, 0, n)
+	for i := 0; i < n; i++ {
+		b, name := randBytes(r), pick(r, names)
+		B, N := xbytes(b), xq(name)
+		switch i % 8 {
+		case 0:
+			out = append(out, fuzzCase{fmt.Sprintf("archive.%04d", i), "fz_tar(" + N + ", " + B + ")"})
+		case 1:
+			out = append(out, fuzzCase{fmt.Sprintf("archive.%04d", i), "fz_zip(" + N + ", " + B + ")"})
+		case 2:
+			out = append(out, fuzzCase{fmt.Sprintf("archive.%04d", i), "fz_untar(" + N + ", " + B + ")"})
+		case 3:
+			out = append(out, fuzzCase{fmt.Sprintf("archive.%04d", i), "fz_unzip(" + N + ", " + B + ")"})
+		case 4:
+			out = append(out, fuzzCase{fmt.Sprintf("archive.%04d", i), "fz_untar_raw(" + B + ")"})
+		case 5:
+			out = append(out, fuzzCase{fmt.Sprintf("archive.%04d", i), "fz_agunzip(" + B + ")"})
+		case 6:
+			gname := pick(r, []string{"a.txt", "dir/b", "dir/a/b.txt", "x", "a b.txt"})
+			out = append(out, fuzzCase{fmt.Sprintf("archive.%04d", i), "fz_untar_raw(" + xbytes(goTar(gname, b)) + ")"})
+		case 7:
+			gname := pick(r, []string{"a.txt", "dir/b", "dir/a/b.txt", "x", "a b.txt"})
+			out = append(out, fuzzCase{fmt.Sprintf("archive.%04d", i), "fz_unzip_raw(" + xbytes(goZip(gname, b)) + ")"})
+		}
+	}
+	return out
+}
+
+// The payloads below are written by Go's own packages at generation time,
+// so the Xo decoders are checked against Go's writers, not only against
+// Xo's.
+
+func goGzip(data []byte, level int) []byte {
+	var b bytes.Buffer
+	w, err := gzip.NewWriterLevel(&b, level)
+	if err != nil {
+		panic(err)
+	}
+	if _, err := w.Write(data); err != nil {
+		panic(err)
+	}
+	if err := w.Close(); err != nil {
+		panic(err)
+	}
+	return b.Bytes()
+}
+
+func goDeflate(data []byte, level int) []byte {
+	var b bytes.Buffer
+	w, err := flate.NewWriter(&b, level)
+	if err != nil {
+		panic(err)
+	}
+	if _, err := w.Write(data); err != nil {
+		panic(err)
+	}
+	if err := w.Close(); err != nil {
+		panic(err)
+	}
+	return b.Bytes()
+}
+
+func goZlib(data []byte, level int) []byte {
+	var b bytes.Buffer
+	w, err := zlib.NewWriterLevel(&b, level)
+	if err != nil {
+		panic(err)
+	}
+	if _, err := w.Write(data); err != nil {
+		panic(err)
+	}
+	if err := w.Close(); err != nil {
+		panic(err)
+	}
+	return b.Bytes()
+}
+
+func goTar(name string, data []byte) []byte {
+	var b bytes.Buffer
+	w := tar.NewWriter(&b)
+	h := &tar.Header{Name: name, Mode: 0o644, Size: int64(len(data)), ModTime: time.Unix(0, 0)}
+	if err := w.WriteHeader(h); err != nil {
+		panic(err)
+	}
+	if _, err := w.Write(data); err != nil {
+		panic(err)
+	}
+	if err := w.Close(); err != nil {
+		panic(err)
+	}
+	return b.Bytes()
+}
+
+func goZip(name string, data []byte) []byte {
+	var b bytes.Buffer
+	w := zip.NewWriter(&b)
+	h := &zip.FileHeader{Name: name, Method: zip.Deflate}
+	h.SetModTime(time.Unix(0, 0))
+	f, err := w.CreateHeader(h)
+	if err != nil {
+		panic(err)
+	}
+	if _, err := f.Write(data); err != nil {
+		panic(err)
+	}
+	if err := w.Close(); err != nil {
+		panic(err)
+	}
+	return b.Bytes()
+}
+
+// genMime covers media type parsing and formatting, the extension table
+// and content sniffing.
+func genMime(r *rand.Rand, n int) []fuzzCase {
+	types := []string{"text/html", "text/html; charset=utf-8", "TEXT/HTML; CHARSET=UTF-8",
+		"text/plain; charset=\"utf-8\"", "text/plain; charset=utf-8; boundary=x",
+		"multipart/form-data; boundary=--abc", "application/json", "a/b",
+		"text/plain; charset*=utf-8''a%20b", "text/plain; title*0*=utf-8''a; title*1*=b",
+		"", " ", "text", "text/", "/plain", "text/plain;", "text/plain; =x",
+		"text/plain; a=\"b", "text/plain; charset=ü", "*/*", "x/y; z=1; z=2"}
+	exts := []string{".html", ".HTML", "html", ".png", ".json", ".txt", ".unknown", "", ".tar.gz", ".js", ".wasm"}
+	kinds := []string{"text/html", "application/json", "image/png", "text/plain", "audio/mpeg", "x/y", ""}
+	out := make([]fuzzCase, 0, n)
+	for i := 0; i < n; i++ {
+		name := fmt.Sprintf("mime.%04d", i)
+		switch i % 5 {
+		case 0:
+			out = append(out, fuzzCase{name, "fz_mt(" + xq(pick(r, types)) + ")"})
+		case 1:
+			out = append(out, fuzzCase{name, "fz_mime_ext(" + xq(pick(r, exts)) + ")"})
+		case 2:
+			out = append(out, fuzzCase{name, "fz_mime_exts(" + xq(pick(r, kinds)) + ")"})
+		case 3:
+			out = append(out, fuzzCase{name, "fz_hx(mime.detect_content_type(" + xbytes(randBytes(r)) + "))"})
+		case 4:
+			kind := pick(r, kinds)
+			params := "{}"
+			if r.Intn(2) == 0 {
+				params = "{\"charset\": " + xq(pick(r, []string{"utf-8", "US-ASCII", "iso-8859-1", "ü", ""})) + "}"
+			}
+			out = append(out, fuzzCase{name, "fz_hx(mime.format_media_type(" + xq(kind) + ", " + params + "))"})
+		}
+	}
+	return out
+}
+
+// genMultipart covers parse, parse_form, write and the content type over
+// bodies both built by hand and written by write itself.
+func genMultipart(r *rand.Rand, n int) []fuzzCase {
+	boundaries := []string{"abc", "--abc", "", "a b", "----=_Part_1", "x", "é", "a\"b", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+	out := make([]fuzzCase, 0, n)
+	for i := 0; i < n; i++ {
+		boundary := pick(r, boundaries)
+		b := randBytes(r)
+		name := fmt.Sprintf("multipart.%04d", i)
+		switch i % 5 {
+		case 0:
+			body := "--" + boundary + "\r\nContent-Disposition: form-data; name=\"a\"\r\n\r\nhi\r\n--" + boundary + "--\r\n"
+			out = append(out, fuzzCase{name, "fz_mp(" + xbytes([]byte(body)) + ", " + xq(boundary) + ")"})
+		case 1:
+			out = append(out, fuzzCase{name, "fz_mp(" + xbytes(b) + ", " + xq(boundary) + ")"})
+		case 2:
+			out = append(out, fuzzCase{name, "fz_mp_write(" + xq(pick(r, pool)) + ", " + xbytes(b) + ", " + xq(boundary) + ")"})
+		case 3:
+			out = append(out, fuzzCase{name, "fz_mp_form(" + xbytes(b) + ", " + xq(boundary) + ")"})
+		case 4:
+			out = append(out, fuzzCase{name, "fz_hx(multipart.form_data_content_type(" + xq(boundary) + "))"})
+		}
+	}
+	return out
+}
+
+// genXML covers parse and encode (strict and loose) and the token count
+// over documents, malformed documents and fragments.
+func genXML(r *rand.Rand, n int) []fuzzCase {
+	texts := []string{"<a/>", "<a></a>", "<a x=\"1\">t</a>", "<a><b/><c>d</c></a>",
+		"<a x='1' y=\"2\"/>", "<a>&amp;&lt;&#65;&#x41;</a>", "<a><![CDATA[x<y]]></a>",
+		"<?xml version=\"1.0\"?><a/>", "<!-- c --><a/>", "<a><!-- c --></a>",
+		"<a xmlns=\"u\"><b xmlns=\"v\"/></a>", "<a>text</a>", "<a><b></a>", "<a>",
+		"", "text", "<a/><b/>", " <a/> ", "<a x=\"1\" x=\"2\"/>", "<1a/>", "<a b/>",
+		"<!DOCTYPE a><a/>", "<a>\u0001</a>", "<a>&bogus;</a>", "<a>é🚀</a>", "<a><b><c><d/></c></b></a>"}
+	out := make([]fuzzCase, 0, n)
+	for i := 0; i < n; i++ {
+		s := pick(r, texts)
+		if r.Intn(3) == 0 {
+			s = "<r>" + s + "</r>"
+		}
+		name := fmt.Sprintf("xml.%04d", i)
+		switch i % 4 {
+		case 0:
+			out = append(out, fuzzCase{name, "fz_xml(" + xq(s) + ")"})
+		case 1:
+			out = append(out, fuzzCase{name, "fz_xml_loose(" + xq(s) + ")"})
+		case 2:
+			out = append(out, fuzzCase{name, "fz_xml_n(" + xq(s) + ")"})
+		case 3:
+			out = append(out, fuzzCase{name, "fz_hx(xml.escape(" + xq(pick(r, pool)) + "))"})
 		}
 	}
 	return out
