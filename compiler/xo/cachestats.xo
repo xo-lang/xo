@@ -72,6 +72,43 @@ fn (f: StatFs) note_sum(path: Str, op: Str, size: Int, sum: Str) {
   })
 }
 
+/// XO_CACHE_STATS=keys: the entries of a stored pack segment, one log line
+/// each (`AREA item SIZE PATH sum HASH`, the hash of the entry's bytes), to
+/// tell entries that two stores hold in common whatever their keys.
+fn (f: StatFs) note_items(path: Str, data: Bytes) {
+  let head = "${PACK_VERSION}\n"
+  if data.len() < head.len() || data[0..head.len()].to_str() != Some(head) {
+    return
+  }
+  let (n, p0) = get_uv(data, head.len())
+  if n < 0 {
+    return
+  }
+  var sizes: List[Int] = []
+  var pos = p0
+  for _ in 0..n {
+    let (kl, p1) = get_uv(data, pos)
+    if kl < 0 {
+      return
+    }
+    let (bl, p2) = get_uv(data, p1 + kl)
+    if bl < 0 {
+      return
+    }
+    sizes.push(bl)
+    pos = p2
+  }
+  let a = f.area(path)
+  for bl in sizes {
+    if pos + bl > data.len() {
+      return
+    }
+    let h = crypto.sha256(data[pos..pos + bl]).to_hex()[0..16]
+    f.st.with(fn(var st) { st.log.push("${a} item ${bl} ${path} sum ${h}") })
+    pos += bl
+  }
+}
+
 fn (f: StatFs) sub(dir: Str) -> Fs { f.inner.sub(dir) }
 fn (f: StatFs) cwd() -> Fs { f.inner.cwd() }
 fn (f: StatFs) cwd_path() -> Str ! FsErr { f.inner.cwd_path() }
@@ -123,6 +160,9 @@ fn (f: StatFs) write(path: Str, data: Bytes) -> () ! FsErr uses fs.write {
   let r = f.inner.write(path, data)
   let sum = if f.keys { crypto.sha256(data).to_hex()[0..16] } else { "" }
   f.note_sum(path, "write", data.len(), sum)
+  if f.keys && path.contains("/packs/") {
+    f.note_items(path, data)
+  }
   r
 }
 
