@@ -43,5 +43,11 @@ func TestCacheStats(t *testing.T) {
 		if !total.MatchString(se.String()) || !regexp.MustCompile(step.want).MatchString(se.String()) {
 			t.Fatalf("%s build: want a total and %s in\n%s", step.name, step.want, se.String())
 		}
+		// a cold build does not open entries the cache cannot hold
+		// (bcache.xo cache_get_all lists the shards: 21,413 failed opens
+		// for a cold CRUD build before, 2026-10-23)
+		if m := regexp.MustCompile(`(?m)^cache stats: entry read miss: ([0-9]+) calls`).FindStringSubmatch(se.String()); step.name == "cold" && m != nil && len(m[1]) > 2 {
+			t.Fatalf("cold build: %s entry reads missed, want under 100\n%s", m[1], se.String())
+		}
 	}
 }
