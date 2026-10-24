@@ -26,4 +26,6 @@ Each build writes its files in `<build dir>/arm64/w-<random>` and removes it
 after the links (main.xo); the program of a build without `-o` stays in
 `<build dir>/arm64/bin`. `XO_KEEP_ASM=1` keeps the files in `<build dir>/arm64`
 as before. A build that fails leaves its `w-*` directory for the build
-directory's 30 minute prune. Test: cmd/xo TestBuildWorkDirsPrivate.
+directory's 30 minute prune. A cross build that stops at the assembly (asm_only)
+writes it in `<build dir>/arm64` itself, where its message names it (test
+TestBuildStopsAtAssemblyKeepsIt). Test: cmd/xo TestBuildWorkDirsPrivate.
