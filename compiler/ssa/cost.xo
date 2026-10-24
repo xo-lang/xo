@@ -38,7 +38,7 @@ pub fn cost_notes(m: Module, keep: List[Str]) -> List[CostNote] {
       continue
     }
     let inloop = loop_blocks(f)
-    for n in copy_feeds_loop(f, inloop) + elem_count_per_iter(f, inloop) + callback_walks(m, f) + reuse_in_loop(f, inloop) + large_copies(m, f, inloop, nwords) + view_stores(f, inloop) {
+    for n in copy_feeds_loop(f, inloop) + elem_count_per_iter(f, inloop) + callback_walks(m, f) + reuse_in_loop(f, inloop) + large_copies(m, f, inloop, nwords) + view_stores(m, f, inloop) {
       var n2 = n
       n2.file = file
       out.push(n2)
@@ -705,7 +705,7 @@ fn param_view_at(f: Func, x: Int, depth: Int) -> Bool {
 /// of, a collection it is pushed or put into, a block parameter it flows
 /// into, a tuple element read back out by a destructure) is stored
 /// long-lived: set as a field, or returned inside a struct or a collection.
-fn view_stored(f: Func, x0: Int, users: List[List[Int]]) -> Bool {
+fn view_stored(m: Module, f: Func, x0: Int, users: List[List[Int]]) -> Bool {
   var work = [(x0, false)]
   var seen: Map[Int, Bool] = {}
   while !work.is_empty() {
@@ -723,9 +723,13 @@ fn view_stored(f: Func, x0: Int, users: List[List[Int]]) -> Bool {
         work.push((u, agg))
       } else if w.op == Op.Field {
         // an element read back out: a tuple destructured by `let (a, b) =
-        // x.cut(sep)` reads each element with field 0 / field 1 (2026-10-24),
-        // and a struct field read is the same value later
-        work.push((u, agg))
+        // x.cut(sep)` reads each element with field 0 / field 1 (2026-10-24).
+        // The whole tuple reaches both element reads, so only a field whose
+        // type can hold a text view continues the chain: an Int element
+        // stored beside the view is not the view being stored.
+        if w.ty >= 0 && w.ty < m.types.len() && m.types[w.ty].kind == Kind.Str {
+          work.push((u, agg))
+        }
       } else if w.op == Op.Payload {
         // an Option or a Result unwrapped (`view ?? ""`, a view_call's
         // Option): the view itself again, not inside an aggregate (a
@@ -773,7 +777,7 @@ fn view_stored(f: Func, x0: Int, users: List[List[Int]]) -> Bool {
 /// long-lived, in a struct field, a collection, or a returned struct: the
 /// small view keeps the whole input alive, however large, until the holder
 /// is dropped.
-fn view_stores(f: Func, inloop: List[Bool]) -> List[CostNote] {
+fn view_stores(m: Module, f: Func, inloop: List[Bool]) -> List[CostNote] {
   var users: List[List[Int]] = []
   for _ in f.values {
     users.push([])
@@ -795,7 +799,7 @@ fn view_stores(f: Func, inloop: List[Bool]) -> List[CostNote] {
     // an element of a split; one slice of an argument (a path, a name) is
     // too common and too small to note
     let tokenizer = x.op == Op.Call && (aux_name(x.aux) == "list.index" || (x.block >= 0 && x.block < inloop.len() && inloop[x.block]))
-    if line <= 0 || seen.contains(line) || !tokenizer || !param_view(f, vi) || !view_stored(f, vi, users) {
+    if line <= 0 || seen.contains(line) || !tokenizer || !param_view(f, vi) || !view_stored(m, f, vi, users) {
       continue
     }
     seen[line] = true

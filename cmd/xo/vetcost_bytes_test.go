@@ -89,6 +89,35 @@ fn main(os: Os) {
 }
 `
 
+// vetcostBytesMixedTupleProg: the second control, a mixed tuple `(view,
+// Int)` whose Int is stored in a struct field and whose view is only
+// measured, so no note is right. The whole tuple reaches both element reads
+// (the destructure reads field 0 and field 1 of it), so following a field
+// without looking at its type would note the view stored beside it: cost.xo's
+// Op.Field edge only continues through a field whose type can hold a text
+// view.
+const vetcostBytesMixedTupleProg = `
+struct Num {
+  n: Int
+}
+
+fn nums(data: Bytes) -> List[Num] {
+  var out: List[Num] = []
+  var total = 0
+  for line in data.split(b"\n") {
+    let (v, k) = (line.trim_start_chars(" "), line.len())
+    out.push(Num{n: k})
+    total += v.len()
+  }
+  out.push(Num{n: total})
+  out
+}
+
+fn main(os: Os) {
+  os.stdio.println("${nums(b" a\nb ").len()}")
+}
+`
+
 // vetcostBytesTrimWhereProg: a Bytes parameter's trim_where view stored in a
 // returned collection inside a loop (XO0911, line 9, the push). trim_where carries an
 // effect parameter, so the call's name has a generic instantiation suffix
@@ -183,14 +212,25 @@ func TestVetCostViewStoreBytesCut(t *testing.T) {
 	}
 }
 
-// TestVetCostViewStoreBytesCutControl: the negative control, a cut that is
-// destructured and whose pieces are consumed in the loop and never stored,
-// which must not be noted: the same Op.Field edge that notes
+// TestVetCostViewStoreBytesCutControl: the negative controls, which must not
+// be noted. A cut that is destructured and whose pieces are consumed in the
+// loop and never stored: the same Op.Field edge that notes
 // vetcostBytesCutDestructureProg is asserted here not to fire when nothing
-// keeps the view (without the guard the test above would pass on any note).
+// keeps the view. A mixed tuple whose Int is stored and whose view is only
+// measured: the tuple reaches both element reads, so the edge's type test is
+// asserted not to follow the Int. Without the guards the test above would
+// pass on any note.
 func TestVetCostViewStoreBytesCutControl(t *testing.T) {
 	t.Parallel()
-	if lines := vetcostBytesLines(t, vetcostBytesCutConsumedProg); len(lines) != 0 {
-		t.Errorf("the control noted XO0911 at lines %v, want none", lines)
+	for _, tc := range []struct {
+		name string
+		prog string
+	}{
+		{"consumed", vetcostBytesCutConsumedProg},
+		{"mixed_tuple", vetcostBytesMixedTupleProg},
+	} {
+		if lines := vetcostBytesLines(t, tc.prog); len(lines) != 0 {
+			t.Errorf("%s: the control noted XO0911 at lines %v, want none", tc.name, lines)
+		}
 	}
 }
