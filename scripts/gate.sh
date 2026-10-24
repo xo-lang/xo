@@ -18,7 +18,8 @@
 #            2026-10-22; llvm_goldens below): XO_GATE_LLVM=all runs
 #            every one
 #   corpora  internal/stdtest's differential corpora on the Go backend
-#            (TestStdCorpora/go/): run when the branch changes std/rt or
+#            (TestStdCorpora/go/) and internal/llvm's Test*Diff
+#            differential tests: run when the branch changes std/rt or
 #            compiler/gen (go_backend); skipped otherwise
 #   cmd      the full tests of cmd/xo
 #   gen      the full tests of internal/gen
@@ -199,6 +200,12 @@ for step in "$@"; do
   corpora)
     if go_backend; then
       full corpora ./internal/stdtest -run '^TestStdCorpora$/^go/'
+      # the native-against-Go differential tests of internal/llvm
+      # (TestTimeDiff, TestNumDiff, TestJSONTextDiff, ...: lead,
+      # 2026-10-24: 7822046d4 made the Go backend's RFC 3339 parse strict,
+      # passed its gate, and TestTimeDiff, a -short test the gate never
+      # ran, kept main red for 1 h 30 min)
+      full diffs ./internal/llvm -run 'Diff$'
     else
       echo "corpora: skipped (no std/rt or compiler/gen change)"
     fi ;;
