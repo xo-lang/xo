@@ -1,0 +1,112 @@
+// The Go twin of bench/perf/bytestransform/main.xo: the same texts, olds,
+// news and loop counts through bytes.ReplaceAll, Replace, ToLower, ToUpper,
+// EqualFold and Repeat, printing the same "<workload> <checksum>" line. It
+// is a .txt so the Go tool does not build it as part of the repository;
+// copy it out and `go build` it.
+package main
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+)
+
+const n = 200000
+
+var texts = [][]byte{
+	[]byte("  the quick brown fox, jumps over the lazy dog  "),
+	[]byte("1,2,3,4"),
+	[]byte("héllo, wörld, ça va, 日本語 テキスト   "),
+	[]byte("  \t  mixed ascii and ✓ unicode ✓  "),
+	[]byte("abcabcabcabcabcabcabc"),
+	[]byte("a\xffb, c\x80 ,"),
+}
+
+var olds = [][]byte{[]byte("a"), []byte(","), []byte("abc"), []byte(""), []byte("\xff")}
+var news = [][]byte{[]byte(""), []byte("X"), []byte("<>"), []byte("é")}
+var folds = [][]byte{[]byte("HELLO"), []byte("1,2,3,4"), []byte("ABCABCABCABCABCABCABC"), []byte("✓"), []byte("\xfe")}
+var ns = []int{1, 0, -1, 2, 1000}
+var repeats = []int{0, 1, 2, 3}
+
+func replaceAll() int {
+	sum := 0
+	for i := 0; i < n; i++ {
+		sum += len(bytes.ReplaceAll(texts[i%len(texts)], olds[i%len(olds)], news[i%len(news)]))
+	}
+	return sum
+}
+
+func replaceNAll() int {
+	sum := 0
+	for i := 0; i < n; i++ {
+		sum += len(bytes.Replace(texts[i%len(texts)], olds[i%len(olds)], news[i%len(news)], ns[i%len(ns)]))
+	}
+	return sum
+}
+
+func lowerAll() int {
+	sum := 0
+	for i := 0; i < n; i++ {
+		sum += len(bytes.ToLower(texts[i%len(texts)]))
+	}
+	return sum
+}
+
+func upperAll() int {
+	sum := 0
+	for i := 0; i < n; i++ {
+		sum += len(bytes.ToUpper(texts[i%len(texts)]))
+	}
+	return sum
+}
+
+func foldAll() int {
+	sum := 0
+	for i := 0; i < n; i++ {
+		if bytes.EqualFold(texts[i%len(texts)], folds[i%len(folds)]) {
+			sum++
+		}
+	}
+	return sum
+}
+
+func repeatAll() int {
+	sum := 0
+	for i := 0; i < n; i++ {
+		sum += len(bytes.Repeat(texts[i%len(texts)], repeats[i%len(repeats)]))
+	}
+	return sum
+}
+
+func indexAll() int {
+	sum := 0
+	for i := 0; i < n; i++ {
+		sum += len(texts[i%len(texts)]) + len(olds[i%len(olds)])
+	}
+	return sum
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	sum := 0
+	switch w {
+	case "replace":
+		sum = replaceAll()
+	case "replace_n":
+		sum = replaceNAll()
+	case "lower":
+		sum = lowerAll()
+	case "upper":
+		sum = upperAll()
+	case "fold":
+		sum = foldAll()
+	case "repeat":
+		sum = repeatAll()
+	case "index":
+		sum = indexAll()
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

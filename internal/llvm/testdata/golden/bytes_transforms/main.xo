@@ -1,0 +1,51 @@
+// std/native's Bytes text methods: replace, replace_n, to_lower,
+// to_upper, equal_fold and repeat on Go's bytes_test.go cases, the same
+// output on every backend.
+
+fn hex(b: Bytes) -> Str { b.to_hex() }
+
+fn main(os: Os) {
+  let out = os.stdio
+  let b = b"banana"
+  out.println("replace a: " + (b.replace(b"a", b"<>").to_str() ?? ""))
+  out.println("replace an: " + (b.replace(b"an", b"<>").to_str() ?? ""))
+  out.println("replace ana: " + (b.replace(b"ana", b"<>").to_str() ?? ""))
+  out.println("replace none: " + (b.replace(b"z", b"<>").to_str() ?? ""))
+  out.println("replace empty old: " + (b.replace(b"", b"<>").to_str() ?? ""))
+  out.println("replace empty in empty: " + (b"".replace(b"", b"<>").to_str() ?? ""))
+  out.println("replace radar: " + (b"radar".replace(b"r", b"<r>").to_str() ?? ""))
+  out.println("replace smiles: " + (b"☺☻☹".replace(b"", b"<>").to_str() ?? ""))
+  out.println("replace_n 1: " + (b.replace_n(b"a", b"<>", 1).to_str() ?? ""))
+  out.println("replace_n 5 empty: " + (b.replace_n(b"", b"<>", 5).to_str() ?? ""))
+  out.println("replace_n 6 empty: " + (b.replace_n(b"", b"<>", 6).to_str() ?? ""))
+  out.println("replace_n 1000: " + (b.replace_n(b"a", b"<>", 1000).to_str() ?? ""))
+  out.println("replace_n 0: " + (b.replace_n(b"a", b"<>", 0).to_str() ?? ""))
+  out.println("lower: " + (b"AbC123 azAZ09_".to_lower().to_str() ?? ""))
+  out.println("upper: " + (b"AbC123 azAZ09_".to_upper().to_str() ?? ""))
+  out.println("lower nonascii: " + hex(b"ⱯɐÉ".to_lower()))
+  out.println("upper nonascii: " + hex(b"ⱯɐÉ".to_upper()))
+  out.println("lower widths: " + hex(b"İß".to_lower()))
+  out.println("upper widths: " + hex(b"ıß".to_upper()))
+  out.println("lower invalid: " + hex(b"\xffA\x80".to_lower()))
+  out.println("upper invalid: " + hex(b"\xffa\xc3".to_upper()))
+  out.println("lower already: " + (b"abc".to_lower().to_str() ?? ""))
+  out.println("lower empty: " + hex(b"".to_lower()) + "|")
+  out.println("fold ascii: ${b"123abc".equal_fold(b"123ABC")}")
+  out.println("fold unicode: ${b"αβδ".equal_fold(b"ΑΒΔ")}")
+  out.println("fold kelvin: ${b"abcdefghijk".equal_fold(b"abcdefghij\u{212a}")}")
+  out.println("fold orbit: ${b"k".equal_fold(b"\u{212a}")}")
+  out.println("fold invalid: ${b"\xff".equal_fold(b"\xfe")}")
+  out.println("fold lengths: ${b"\xff".equal_fold(b"\xff\xff")}")
+  out.println("fold sharp s: ${b"straße".equal_fold(b"STRASSE")}")
+  out.println("fold mismatch: ${b"abc".equal_fold(b"XYZ")}")
+  out.println("repeat 3: " + (b"abc ".repeat(3).to_str() ?? ""))
+  out.println("repeat 1: " + (b"-".repeat(1).to_str() ?? ""))
+  out.println("repeat 10: " + (b"-".repeat(10).to_str() ?? ""))
+  out.println("repeat 0: " + hex(b"-".repeat(0)) + "|")
+  out.println("repeat empty: " + hex(b"".repeat(5)) + "|")
+  out.println("repeat nul: " + hex(b"\x00".repeat(4)))
+  out.println("repeat invalid: " + hex(b"\xff\x80".repeat(3)))
+  out.println("view replace: " + ((b"zz" + b"banana")[2..8].replace(b"a", b"A").to_str() ?? ""))
+  out.println("view lower: " + ((b"zz" + b"AbC")[2..5].to_lower().to_str() ?? ""))
+  out.println("view repeat: " + ((b"zz" + b"ab")[2..4].repeat(2).to_str() ?? ""))
+}

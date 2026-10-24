@@ -1,0 +1,3 @@
+fn strip_commas(b: Bytes) -> Bytes {
+  b.replace(b",", b"")
+}

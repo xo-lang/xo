@@ -1,0 +1,3 @@
+fn twice(b: Bytes) -> Bytes {
+  bytes.Repeat(b, 2)
+}

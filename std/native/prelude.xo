@@ -436,6 +436,42 @@ fn bytes_count(b: Bytes, sub: Bytes) -> Int {
   c
 }
 
+/// bytes.ReplaceAll: b itself when nothing changes (Xo values are
+/// immutable, so no copy is needed), one buffer otherwise.
+fn bytes_replace(b: Bytes, old: Bytes, new: Bytes) -> Bytes { strings.replace_bytes(b, old, new) }
+
+/// bytes.Replace with a count, b itself when nothing changes.
+fn bytes_replace_n(b: Bytes, old: Bytes, new: Bytes, n: Int) -> Bytes { strings.replace_bytes_n(b, old, new, n) }
+
+/// bytes.ToLower and bytes.ToUpper: the mapping of Str.to_lower, an
+/// invalid byte as U+FFFD as Go's, b itself when already in the case.
+fn bytes_to_lower(b: Bytes) -> Bytes { unicode.map_case_bytes(b, true) }
+
+fn bytes_to_upper(b: Bytes) -> Bytes { unicode.map_case_bytes(b, false) }
+
+/// bytes.EqualFold: Str.equal_fold's comparison over two byte slices.
+fn bytes_equal_fold(a: Bytes, b: Bytes) -> Bool { unicode.equal_fold_bytes(a, b) }
+
+/// bytes.Repeat: none for n 0, a fault below 0 as Go's bytes.Repeat (and
+/// as the Go backend, so the message and the caller's line agree), and the
+/// same two length faults as Str.repeat (4 GiB is the most a Bytes holds).
+fn bytes_repeat(b: Bytes, n: Int, at: rt.Loc) -> Bytes {
+  if n < 0 {
+    rt.fault_at("negative repeat count ${n}", at)
+  }
+  let k = b.len()
+  if n == 0 || k == 0 {
+    return b""
+  }
+  if k > 9223372036854775807 / n {
+    rt.fault_at("bytes: Repeat output length overflow", at)
+  }
+  if k * n > 4294967295 {
+    rt.fault_at("bytes: Repeat output over 4 GiB", at)
+  }
+  raw.bytes_repeat(b, n)
+}
+
 fn bytes_indexed(b: Bytes) -> List[(Int, UInt8)] {
   var out: List[(Int, UInt8)] = []
   for i in 0..b.len() {

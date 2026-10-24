@@ -209,10 +209,10 @@ pub fn eq_text(s: Str, i: Int, p: Str) -> Bool {
   n == 0 || rt.mem_load(a, 0, 1) == rt.mem_load(b, 0, 1)
 }
 
-/// strings.Index of sub in s from `from` (rt.str_find): from below 0 is
-/// 0, from past the end finds nothing, an empty sub is found at from.
-pub fn find(s: Str, sub: Str, from: Int) -> Int {
-  let n = s.len()
+/// bytes.Index of sub in b from `from`: find's search over Bytes (a Str's
+/// bytes are valid UTF-8, which the search never asks about).
+pub fn find_bytes(b: Bytes, sub: Bytes, from: Int) -> Int {
+  let n = b.len()
   let m = sub.len()
   let f = if from < 0 { 0 } else { from }
   if f > n {
@@ -224,9 +224,7 @@ pub fn find(s: Str, sub: Str, from: Int) -> Int {
   if m > n - f {
     return -1
   }
-  let b = s.bytes()
-  let p = sub.bytes()
-  let c = Int(p[0])
+  let c = Int(sub[0])
   // the starts that leave room for sub
   let last = n - m + 1
   var i = f
@@ -235,12 +233,18 @@ pub fn find(s: Str, sub: Str, from: Int) -> Int {
     if i < 0 {
       return -1
     }
-    if m == 1 || eq_at(b, i + 1, p, 1, m - 1) {
+    if m == 1 || eq_at(b, i + 1, sub, 1, m - 1) {
       return i
     }
     i += 1
   }
   -1
+}
+
+/// strings.Index of sub in s from `from` (rt.str_find): from below 0 is
+/// 0, from past the end finds nothing, an empty sub is found at from.
+pub fn find(s: Str, sub: Str, from: Int) -> Int {
+  find_bytes(s.bytes(), sub.bytes(), from)
 }
 
 /// Whether the bytes of s from i (clamped to 0 and s.len()) start with
@@ -254,20 +258,27 @@ pub fn has_at(s: Str, i: Int, p: Str) -> Bool {
 
 pub fn contains(s: Str, sub: Str) -> Bool { find(s, sub, 0) >= 0 }
 
+/// bytes.Count: the number of non-overlapping copies of sub in b; for ""
+/// the count of b's runes plus one (Go's RuneCount(b) + 1, an invalid
+/// byte one rune).
+pub fn count_bytes(b: Bytes, sub: Bytes) -> Int {
+  let m = sub.len()
+  if m == 0 {
+    return bytes_rune_count(b) + 1
+  }
+  var n = 0
+  var i = find_bytes(b, sub, 0)
+  while i >= 0 {
+    n += 1
+    i = find_bytes(b, sub, i + m)
+  }
+  n
+}
+
 /// strings.Count: the number of non-overlapping copies of sub in s; for ""
 /// the count of s's runes plus one (Go's utf8.RuneCountInString(s) + 1).
 pub fn count(s: Str, sub: Str) -> Int {
-  let m = sub.len()
-  if m == 0 {
-    return rune_count(s) + 1
-  }
-  var n = 0
-  var i = find(s, sub, 0)
-  while i >= 0 {
-    n += 1
-    i = find(s, sub, i + m)
-  }
-  n
+  count_bytes(s.bytes(), sub.bytes())
 }
 
 pub fn starts_with(s: Str, p: Str) -> Bool { p.len() <= s.len() && eq_at(s.bytes(), 0, p.bytes(), 0, p.len()) }

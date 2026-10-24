@@ -1,5 +1,46 @@
 # prelude changes
 
+## 2026-10-23: feature: Bytes.replace, replace_n, to_lower, to_upper, equal_fold and repeat
+
+- Kind: feature
+- Commit: this commit
+- Found by: Bytes had find, rfind, contains, starts_with, ends_with, count,
+  split, fields and the trims, so a port of Go code that rewrites, case
+  maps or folds bytes fell back to Str, whose methods need valid UTF-8
+- Go reference: bytes.ReplaceAll, Replace, ToLower, ToUpper, EqualFold and
+  Repeat (go1.26.1), with Go's tables as the oracle
+- Test: corpus/bytes on arm64, LLVM and the Go backend (Go's ReplaceTests,
+  upperTests, lowerTests, EqualFoldTests and RepeatTests, then 1,500
+  random replaces, 1,200 case mappings, 1,500 folds and 1,200 repeats,
+  5,454 cases in all, with invalid UTF-8, empty values and views) and
+  goldens bytes_transforms (arm64, LLVM, Go parity, wasm) and
+  bytes_repeat_fault (arm64, LLVM, Go parity)
+- Timing: bench/results/bytestransform-2026-10-23.md
+
+`Bytes.replace` and `replace_n` are Go's ReplaceAll and Replace: an empty
+old inserts new before every UTF-8 sequence and at the end, and `replace_n`
+takes the count (-1 every copy, 0 none). Both return the receiver itself
+when nothing changes, since a Bytes is immutable, where the Str forms copy
+as Go does. `to_lower` and `to_upper` are ToLower and ToUpper; an invalid
+byte becomes U+FFFD, which is Go's mapping of the replacement rune.
+`equal_fold` is EqualFold's Unicode simple folding (`"straße"` is not
+`"STRASSE"`, as in Go), and `repeat` is Repeat: empty for 0, a fault below
+0 and above 4 GiB (the most a Bytes holds), as Go panics.
+
+The work is shared rather than duplicated: `replace_build` in
+std/native/llrt/strings.xo is one loop for the Str and Bytes forms
+(building a Str the Bytes forms relabel), `replace` and `replace_n` keep
+their exact pre-sizing through its `cap`; `scan.find_bytes` and
+`scan.count_bytes` are `find` and `count` moved onto Bytes, with the Str
+forms calling them, so Str's search has no second copy; and `map_case`
+and `fold_equal` are one per family, shared by Str and Bytes. Str's
+behavior is unchanged: the strings and strsearch corpora and the
+strings golden are the check.
+
+Habit: a Go program's `bytes.ReplaceAll`, `bytes.Replace`,
+`bytes.ToLower`, `bytes.ToUpper`, `bytes.EqualFold` and `bytes.Repeat`
+now get the method form and the fix (XO0601), like the other bytes calls.
+
 ## 2026-10-23: feature: Bytes.split, split_n, fields, trim, trim_prefix and trim_suffix
 
 - Kind: feature

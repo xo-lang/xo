@@ -369,6 +369,26 @@ fn (b: Bytes) trim_prefix(p: Bytes) -> Bytes
 /// b without the suffix p (bytes.TrimSuffix), a view of b; b itself when p
 /// is not a suffix.
 fn (b: Bytes) trim_suffix(p: Bytes) -> Bytes
+/// b with every copy of old replaced by new (bytes.ReplaceAll); b itself,
+/// not a copy, when nothing changes, since a Bytes is immutable.
+fn (b: Bytes) replace(old: Bytes, new: Bytes) -> Bytes
+/// b with the first n copies of old replaced by new; n below 0 for every
+/// copy and 0 for none (bytes.Replace). b itself, not a copy, when
+/// nothing changes.
+fn (b: Bytes) replace_n(old: Bytes, new: Bytes, n: Int) -> Bytes
+/// b lowered (bytes.ToLower): ASCII bytes the fast way, a rune outside
+/// ASCII by Go's Unicode mapping, and each byte of an invalid sequence as
+/// U+FFFD, as Go maps it; b itself when it is already in the case.
+fn (b: Bytes) to_lower() -> Bytes
+/// b raised (bytes.ToUpper), as to_lower.
+fn (b: Bytes) to_upper() -> Bytes
+/// Whether b and other are equal under Unicode simple case folding
+/// (bytes.EqualFold, not only ASCII case); two bytes of invalid sequences
+/// compare equal, as both decode to U+FFFD.
+fn (b: Bytes) equal_fold(other: Bytes) -> Bool
+/// n copies of b (bytes.Repeat); empty for n 0, and a fault for n below 0
+/// as Go's bytes.Repeat, and past 4 GiB a fault.
+fn (b: Bytes) repeat(n: Int) -> Bytes
 fn (b: Bytes) indexed() -> List[(Int, UInt8)]
 /// n zero bytes (Go's make([]byte, n)); a fault for n < 0.
 fn (static: Bytes) zeroed(n: Int) -> Bytes

@@ -1,0 +1,3 @@
+fn same(a: Bytes, b: Bytes) -> Bool {
+  bytes.EqualFold(a, b)
+}

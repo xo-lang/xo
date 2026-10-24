@@ -22,46 +22,78 @@ fn seq_size(b: Bytes, i: Int) -> Int {
   unicode.decode(b, i) & 7
 }
 
-/// strings.ReplaceAll: an empty old inserts new before every UTF-8
-/// sequence and at the end.
-pub fn replace(s: Str, old: Str, new: Str) -> Str {
-  let n = s.len()
+/// The buffer of replace, replace_n, replace_bytes and replace_bytes_n: b
+/// with the first n copies of old replaced by new (n below 0: every one),
+/// built in a Str of room `cap`. An empty old inserts new before every
+/// UTF-8 sequence and at the end (an invalid byte is one sequence), as Go
+/// does.
+fn replace_build(b: Bytes, old: Bytes, new: Bytes, n: Int, cap: Int) -> Str {
+  let sl = b.len()
   let m = old.len()
-  let b = s.bytes()
   if m == 0 {
-    var o = rt.rs_append(rt.rs_with_cap(n + (n + 1) * new.len()), new)
-    var i = 0
-    while i < n {
-      let k = seq_size(b, i)
-      o = rt.rs_append(rt.rs_append_bytes(o, b, i, i + k, 0), new)
-      i += k
+    var o = rt.rs_with_cap(cap)
+    var start = 0
+    var done = 0
+    while (n < 0 || done < n) && start <= sl {
+      o = rt.rs_append_bytes(o, new, 0, new.len(), 0)
+      done += 1
+      if start >= sl {
+        break
+      }
+      let k = seq_size(b, start)
+      o = rt.rs_append_bytes(o, b, start, start + k, 0)
+      start += k
+    }
+    if start < sl {
+      o = rt.rs_append_bytes(o, b, start, sl, 0)
     }
     return o
   }
-  var i = scan.find(s, old, 0)
-  if i < 0 {
-    // nothing to replace: a copy, as strings.ReplaceAll makes
+  var o = rt.rs_with_cap(cap)
+  var start = 0
+  var done = 0
+  while n < 0 || done < n {
+    let j = scan.find_bytes(b, old, start)
+    if j < 0 {
+      break
+    }
+    o = rt.rs_append_bytes(rt.rs_append_bytes(o, b, start, j, 0), new, 0, new.len(), 0)
+    start = j + m
+    done += 1
+  }
+  rt.rs_append_bytes(o, b, start, sl, 0)
+}
+
+/// The room replace and replace_bytes ask for: the result's exact size for
+/// an empty old (sl + the boundaries' new), else b's own.
+fn replace_cap(sl: Int, m: Int, new: Bytes) -> Int {
+  if m == 0 {
+    return sl + (sl + 1) * new.len()
+  }
+  sl
+}
+
+/// strings.ReplaceAll: an empty old inserts new before every UTF-8
+/// sequence and at the end. A copy when nothing matches, as Go makes.
+pub fn replace(s: Str, old: Str, new: Str) -> Str {
+  let n = s.len()
+  let m = old.len()
+  if m > 0 && scan.find_bytes(s.bytes(), old.bytes(), 0) < 0 {
     return raw.str_slice(s, 0, n)
   }
-  var o = rt.rs_with_cap(n)
-  var start = 0
-  while i >= 0 {
-    o = rt.rs_append(rt.rs_append_bytes(o, b, start, i, 0), new)
-    start = i + m
-    i = scan.find(s, old, start)
-  }
-  rt.rs_append_bytes(o, b, start, n, 0)
+  replace_build(s.bytes(), old.bytes(), new.bytes(), -1, replace_cap(n, m, new.bytes()))
 }
 
 /// strings.Replace with a count: the first n matches of old are replaced
 /// (n below 0: every one; 0: none). Go's paths: the same text, not a copy,
-/// when old is new or n is 0, and when there is no match; one allocation
-/// sized from the count otherwise. An empty old inserts new at rune
-/// boundaries, and at the end (Count of "" is the rune count plus one).
+/// when old is new, n is 0 or there is no match; one allocation sized from
+/// the count otherwise.
 pub fn replace_n(s: Str, old: Str, new: Str, n: Int) -> Str {
   if old == new || n == 0 {
     return s
   }
+  let sl = s.len()
+  let m = old.len()
   let cnt = scan.count(s, old)
   if cnt <= 0 {
     return s
@@ -70,31 +102,37 @@ pub fn replace_n(s: Str, old: Str, new: Str, n: Int) -> Str {
     // every match: ReplaceAll's path
     return replace(s, old, new)
   }
-  let sl = s.len()
+  let cap = if m == 0 { sl + n * new.len() } else { sl + n * (new.len() - m) }
+  replace_build(s.bytes(), old.bytes(), new.bytes(), n, cap)
+}
+
+/// bytes.ReplaceAll: replace's mapping over Bytes, b itself (not a copy)
+/// when nothing changes, since Xo values are immutable.
+pub fn replace_bytes(b: Bytes, old: Bytes, new: Bytes) -> Bytes {
+  let sl = b.len()
   let m = old.len()
-  let b = s.bytes()
-  var o = rt.rs_with_cap(sl + n * (new.len() - m))
-  var start = 0
-  var i = 0
-  while i < n {
-    var j = start
-    if m == 0 {
-      // before each UTF-8 sequence: after the first, one sequence on (no
-      // sequence at the end, as Go's DecodeRuneInString gives no width
-      // there, so a count at the end inserts after the last rune)
-      if i > 0 && j < sl {
-        j += seq_size(b, j)
-      }
-    } else {
-      // an absolute offset, as scan.find returns it
-      j = scan.find(s, old, start)
-    }
-    o = rt.rs_append_bytes(o, b, start, j, 0)
-    o = rt.rs_append(o, new)
-    start = j + m
-    i += 1
+  if m > 0 && scan.find_bytes(b, old, 0) < 0 {
+    return b
   }
-  rt.rs_append_bytes(o, b, start, sl, 0)
+  rt.cast[Str, Bytes](replace_build(b, old, new, -1, replace_cap(sl, m, new)))
+}
+
+/// bytes.Replace with a count: replace_n's, b itself when nothing changes.
+pub fn replace_bytes_n(b: Bytes, old: Bytes, new: Bytes, n: Int) -> Bytes {
+  if old == new || n == 0 {
+    return b
+  }
+  let sl = b.len()
+  let m = old.len()
+  let cnt = scan.count_bytes(b, old)
+  if cnt <= 0 {
+    return b
+  }
+  if n < 0 || cnt < n {
+    return replace_bytes(b, old, new)
+  }
+  let cap = if m == 0 { sl + n * new.len() } else { sl + n * (new.len() - m) }
+  rt.cast[Str, Bytes](replace_build(b, old, new, n, cap))
 }
 
 /// Whether the rune r is white space (unicode.IsSpace).

@@ -297,6 +297,19 @@ pub fn str_repeat(s: Str, k: Int) -> Str {
   out
 }
 
+/// k copies of b: the copy of bytes.Repeat, its checks in the caller
+/// (std/native/prelude.xo, which reports the caller's line).
+pub fn bytes_repeat(b: Bytes, k: Int) -> Bytes {
+  let n = b.len()
+  let out = bytes_buf(n * k)
+  let d = bytes_addr(out)
+  let src = bytes_addr(b)
+  for i in 0..k {
+    rt.mem_copy(d + i * n, src, n)
+  }
+  out
+}
+
 /// s + the UTF-8 of r, U+FFFD when r is not a scalar value
 /// (BytesBuilder.write_rune, utf8.AppendRune; xo_bytes.c's
 /// xo_rs_push_rune before).

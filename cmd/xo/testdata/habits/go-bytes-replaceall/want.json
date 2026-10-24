@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "name `bytes` not found",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 3,
+      "end_line": 2,
+      "end_col": 8
+    },
+    "notes": [
+      {
+        "message": "`bytes.ReplaceAll` is Go's library; Xo calls the method on the value: `b.replace(b\",\", b\"\")` (spec/std.md 2)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `.replace(...)`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 3,
+              "end_line": 2,
+              "end_col": 33
+            },
+            "replace": "b.replace(b\",\", b\"\")"
+          }
+        ]
+      }
+    ]
+  }
+]

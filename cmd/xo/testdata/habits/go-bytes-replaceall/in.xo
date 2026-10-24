@@ -1,0 +1,3 @@
+fn strip_commas(b: Bytes) -> Bytes {
+  bytes.ReplaceAll(b, b",", b"")
+}

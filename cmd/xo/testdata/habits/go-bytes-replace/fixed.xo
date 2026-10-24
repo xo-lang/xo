@@ -1,0 +1,3 @@
+fn first_b(b: Bytes) -> Bytes {
+  b.replace_n(b"a", b"b", 1)
+}

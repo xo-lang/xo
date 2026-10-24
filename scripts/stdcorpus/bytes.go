@@ -8,8 +8,9 @@ import (
 )
 
 // The bytes corpus: Go's bytes package as the oracle for Bytes.contains,
-// starts_with, ends_with, count, split, split_n, fields, trim, trim_prefix
-// and trim_suffix, on Go's own test cases, on the boundary cases the methods
+// starts_with, ends_with, count, split, split_n, fields, trim, trim_prefix,
+// trim_suffix, replace, replace_n, to_lower, to_upper, equal_fold and
+// repeat, on Go's own test cases, on the boundary cases the methods
 // document, and on seeded random bytes (invalid UTF-8 included: these are
 // bytes, not text).
 
@@ -304,6 +305,188 @@ func xbytesList(parts [][]byte) string {
 	return b.String()
 }
 
+// bytesReplaceCase is one replace input: the bytes, old, new and the count
+// (n below 0: every copy).
+type bytesReplaceCase struct {
+	b, old, new []byte
+	n           int
+}
+
+// goBytesReplaceCases are Go's bytes_test.go ReplaceTests, which its
+// TestReplace runs through bytes.Replace and, for n -1, bytes.ReplaceAll.
+// Go's bytes tests are Copyright 2009 The Go Authors, BSD-style license.
+func goBytesReplaceCases() []bytesReplaceCase {
+	return []bytesReplaceCase{
+		{[]byte("hello"), []byte("l"), []byte("L"), 0},
+		{[]byte("hello"), []byte("l"), []byte("L"), -1},
+		{[]byte("hello"), []byte("x"), []byte("X"), -1},
+		{[]byte(""), []byte("x"), []byte("X"), -1},
+		{[]byte("radar"), []byte("r"), []byte("<r>"), -1},
+		{[]byte(""), []byte(""), []byte("<>"), -1},
+		{[]byte("banana"), []byte("a"), []byte("<>"), -1},
+		{[]byte("banana"), []byte("a"), []byte("<>"), 1},
+		{[]byte("banana"), []byte("a"), []byte("<>"), 1000},
+		{[]byte("banana"), []byte("an"), []byte("<>"), -1},
+		{[]byte("banana"), []byte("ana"), []byte("<>"), -1},
+		{[]byte("banana"), []byte(""), []byte("<>"), -1},
+		{[]byte("banana"), []byte(""), []byte("<>"), 10},
+		{[]byte("banana"), []byte(""), []byte("<>"), 6},
+		{[]byte("banana"), []byte(""), []byte("<>"), 5},
+		{[]byte("banana"), []byte(""), []byte("<>"), 1},
+		{[]byte("banana"), []byte("a"), []byte("a"), -1},
+		{[]byte("banana"), []byte("a"), []byte("a"), 1},
+		{[]byte("☺☻☹"), []byte(""), []byte("<>"), -1},
+	}
+}
+
+// goBytesCaseCases are the inputs of Go's bytes_test.go upperTests and
+// lowerTests, which its TestToUpper and TestToLower run through
+// bytes.ToUpper and bytes.ToLower. Go's bytes tests are Copyright 2009 The
+// Go Authors, BSD-style license.
+func goBytesCaseCases() [][]byte {
+	return [][]byte{
+		// upperTests
+		[]byte(""),
+		[]byte("ONLYUPPER"),
+		[]byte("abc"),
+		[]byte("AbC123"),
+		[]byte("azAZ09_"),
+		[]byte("longStrinGwitHmixofsmaLLandcAps"),
+		[]byte("long\u0250string\u0250with\u0250nonascii\u2C6Fchars"),
+		[]byte("\u0250\u0250\u0250\u0250\u0250"),
+		[]byte("a\u0080\U0010FFFF"),
+		// lowerTests
+		[]byte("abc"),
+		[]byte("AbC123"),
+		[]byte("azAZ09_"),
+		[]byte("longStrinGwitHmixofsmaLLandcAps"),
+		[]byte("LONG\u2C6FSTRING\u2C6FWITH\u2C6FNONASCII\u2C6FCHARS"),
+		[]byte("\u2C6D\u2C6D\u2C6D\u2C6D\u2C6D"),
+		[]byte("A\u0080\U0010FFFF"),
+	}
+}
+
+// goBytesEqualFoldCases are the pairs of Go's bytes_test.go
+// EqualFoldTests. Go's bytes tests are Copyright 2009 The Go Authors,
+// BSD-style license.
+func goBytesEqualFoldCases() [][2][]byte {
+	return [][2][]byte{
+		{[]byte("abc"), []byte("abc")},
+		{[]byte("ABcd"), []byte("ABcd")},
+		{[]byte("123abc"), []byte("123ABC")},
+		{[]byte("αβδ"), []byte("ΑΒΔ")},
+		{[]byte("abc"), []byte("xyz")},
+		{[]byte("abc"), []byte("XYZ")},
+		{[]byte("abcdefghijk"), []byte("abcdefghijX")},
+		{[]byte("abcdefghijk"), []byte("abcdefghij\u212A")},
+		{[]byte("abcdefghijK"), []byte("abcdefghij\u212A")},
+		{[]byte("abcdefghijkz"), []byte("abcdefghij\u212Ay")},
+		{[]byte("abcdefghijKz"), []byte("abcdefghij\u212Ay")},
+	}
+}
+
+// bytesRepeatCase is one repeat input: the bytes and the count.
+type bytesRepeatCase struct {
+	b []byte
+	n int
+}
+
+// goBytesRepeatCases are Go's bytes_test.go RepeatTests. Its two entries
+// over Go's internal chunk limit (65536 NUL bytes, and a 131 KB text
+// repeated twice) would be a 400 KB corpus literal and test Go's chunk
+// buffer, which the native runtime does not have; a 40 byte NUL run stands
+// in for the first. Go's bytes tests are Copyright 2009 The Go Authors,
+// BSD-style license.
+func goBytesRepeatCases() []bytesRepeatCase {
+	return []bytesRepeatCase{
+		{[]byte(""), 0},
+		{[]byte(""), 1},
+		{[]byte(""), 2},
+		{[]byte("-"), 0},
+		{[]byte("-"), 1},
+		{[]byte("-"), 10},
+		{[]byte("abc "), 3},
+		{[]byte("\x00"), 40},
+	}
+}
+
+// bytesCaseAlphabet is the alphabet of the case and fold sections: ASCII
+// letters, a digit, text, the widths that change under case mapping
+// (U+0130 down to i, U+0250 up to U+2C6F, U+00DF up to U+1E9E), the
+// SimpleFold orbit members (k, K, the Kelvin sign U+212A; sigma's three
+// forms), and bytes no UTF-8 sequence can hold.
+var bytesCaseAlphabet = []string{
+	"a", "b", "k", "s", "z", "A", "B", "K", "S", "0", " ", "-", "\n",
+	"é", "É", "日", "σ", "ς", "Σ", "ß", "İ", "ı", "ɐ", "Ɐ", "Ɑ", "K", "Å", "\u212A",
+	"\u1E9E", "\u0130", "\xff", "\x80", "\xc3", "\xed\xa0\x80",
+}
+
+func bytesCaseGen(r *rand.Rand, n int) []byte {
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		b.WriteString(bytesCaseAlphabet[r.Intn(len(bytesCaseAlphabet))])
+	}
+	return []byte(b.String())
+}
+
+// bytesRandomReplace is a random replace input: old is empty, one piece,
+// unrelated, longer than b or a piece of it, new is empty or short, and the
+// count is every kind.
+func bytesRandomReplace(r *rand.Rand) bytesReplaceCase {
+	b := bytesGen(r, bytesLens[r.Intn(len(bytesLens))])
+	old := bytesRandomSub(r, b)
+	if r.Intn(3) == 0 {
+		old = nil
+	}
+	new := bytesGen(r, r.Intn(4))
+	n := -1
+	switch r.Intn(6) {
+	case 0:
+		n = 0
+	case 1:
+		n = 1
+	case 2:
+		n = 2
+	case 3:
+		n = 3
+	case 4:
+		n = 1000
+	}
+	return bytesReplaceCase{b, old, new, n}
+}
+
+// bytesRandomCase is a random byte text over bytesCaseAlphabet, for
+// to_lower and to_upper.
+func bytesRandomCase(r *rand.Rand) []byte {
+	return bytesCaseGen(r, r.Intn(9))
+}
+
+// bytesRandomFold is a random fold input: a case flipped copy (a fold
+// match), an unrelated text, or a copy with one byte changed.
+func bytesRandomFold(r *rand.Rand) [2][]byte {
+	a := bytesCaseGen(r, r.Intn(8))
+	switch r.Intn(3) {
+	case 0:
+		if r.Intn(2) == 0 {
+			return [2][]byte{a, bytes.ToUpper(append([]byte{}, a...))}
+		}
+		return [2][]byte{a, bytes.ToLower(append([]byte{}, a...))}
+	case 1:
+		return [2][]byte{a, bytesCaseGen(r, r.Intn(8))}
+	}
+	b := append([]byte{}, a...)
+	if len(b) > 0 {
+		b[r.Intn(len(b))] ^= byte(1 << r.Intn(8))
+	}
+	return [2][]byte{a, b}
+}
+
+// bytesRandomRepeat is a random repeat input: up to 6 bytes and a count of
+// 0 to 5.
+func bytesRandomRepeat(r *rand.Rand) bytesRepeatCase {
+	return bytesRepeatCase{bytesGen(r, r.Intn(7)), r.Intn(6)}
+}
+
 func bytesCorpus() string {
 	r := rand.New(rand.NewSource(59))
 	var cs []bytesCase
@@ -316,7 +499,7 @@ func bytesCorpus() string {
 	}
 
 	var o strings.Builder
-	o.WriteString(header("Go's bytes.Contains, HasPrefix, HasSuffix and Count on Go's bytes_test.go cases (containsTests, the TestCountByte and TestCountByteNoMatch windows), on the boundary cases the methods document, and on seeded random bytes with invalid UTF-8 (Go's bytes tests are Copyright 2009 The Go Authors, BSD-style license)"))
+	o.WriteString(header("Go's bytes.Contains, HasPrefix, HasSuffix, Count, SplitN, Fields, TrimSpace, TrimPrefix, TrimSuffix, Replace, ToLower, ToUpper, EqualFold and Repeat on Go's bytes_test.go cases (containsTests, the TestCountByte and TestCountByteNoMatch windows, splittests, fieldstests, trimSpaceTests, trimTests, ReplaceTests, upperTests, lowerTests, EqualFoldTests, RepeatTests), on the boundary cases the methods document, and on seeded random bytes with invalid UTF-8 (Go's bytes tests are Copyright 2009 The Go Authors, BSD-style license)"))
 	o.WriteString("\n/// (b, sub, Go's Contains, HasPrefix, HasSuffix and Count)\nconst CASES: List[(Bytes, Bytes, Bool, Bool, Bool, Int)] = [\n")
 	for _, c := range cs {
 		fmt.Fprintf(&o, "  (%s, %s, %v, %v, %v, %d),\n", xbytes(c.b), xbytes(c.sub),
@@ -372,6 +555,55 @@ func bytesCorpus() string {
 	}
 	o.WriteString("]\n")
 
+	// replace and replace_n (its own seed, so the sections above keep
+	// their inputs)
+	rp := goBytesReplaceCases()
+	rrp := rand.New(rand.NewSource(79))
+	for i := 0; i < 1500; i++ {
+		rp = append(rp, bytesRandomReplace(rrp))
+	}
+	o.WriteString("\n/// (b, old, new, n, Go's Replace with n; n below 0 is ReplaceAll)\nconst REPLACE_CASES: List[(Bytes, Bytes, Bytes, Int, Bytes)] = [\n")
+	for _, c := range rp {
+		fmt.Fprintf(&o, "  (%s, %s, %s, %d, %s),\n", xbytes(c.b), xbytes(c.old), xbytes(c.new), c.n, xbytes(bytes.Replace(c.b, c.old, c.new, c.n)))
+	}
+	o.WriteString("]\n")
+
+	// to_lower and to_upper
+	cm := goBytesCaseCases()
+	rcm := rand.New(rand.NewSource(83))
+	for i := 0; i < 1200; i++ {
+		cm = append(cm, bytesRandomCase(rcm))
+	}
+	o.WriteString("\n/// (b, Go's ToLower, Go's ToUpper)\nconst CASE_CASES: List[(Bytes, Bytes, Bytes)] = [\n")
+	for _, c := range cm {
+		fmt.Fprintf(&o, "  (%s, %s, %s),\n", xbytes(c), xbytes(bytes.ToLower(c)), xbytes(bytes.ToUpper(c)))
+	}
+	o.WriteString("]\n")
+
+	// equal_fold
+	ef := goBytesEqualFoldCases()
+	ref := rand.New(rand.NewSource(89))
+	for i := 0; i < 1500; i++ {
+		ef = append(ef, bytesRandomFold(ref))
+	}
+	o.WriteString("\n/// (a, b, Go's EqualFold)\nconst FOLD_CASES: List[(Bytes, Bytes, Bool)] = [\n")
+	for _, c := range ef {
+		fmt.Fprintf(&o, "  (%s, %s, %v),\n", xbytes(c[0]), xbytes(c[1]), bytes.EqualFold(c[0], c[1]))
+	}
+	o.WriteString("]\n")
+
+	// repeat
+	rpt := goBytesRepeatCases()
+	rrpt := rand.New(rand.NewSource(97))
+	for i := 0; i < 1200; i++ {
+		rpt = append(rpt, bytesRandomRepeat(rrpt))
+	}
+	o.WriteString("\n/// (b, n, Go's Repeat)\nconst REPEAT_CASES: List[(Bytes, Int, Bytes)] = [\n")
+	for _, c := range rpt {
+		fmt.Fprintf(&o, "  (%s, %d, %s),\n", xbytes(c.b), c.n, xbytes(bytes.Repeat(c.b, c.n)))
+	}
+	o.WriteString("]\n")
+
 	o.WriteString(bytesTests)
 	return o.String()
 }
@@ -397,6 +629,63 @@ test "contains, starts_with, ends_with and count are Go's" {
   expect(show(bad)) == []
 }
 
+
+test "replace and replace_n are Go's" {
+  for (b, old, new, n, want) in REPLACE_CASES {
+    expect((b, old, new, n, b.replace_n(old, new, n))) == (b, old, new, n, want)
+    if n < 0 {
+      // ReplaceAll is replace_n with every copy
+      expect((b, old, new, b.replace(old, new))) == (b, old, new, want)
+    }
+  }
+}
+
+test "to_lower and to_upper are Go's" {
+  for (b, low, up) in CASE_CASES {
+    expect((b, b.to_lower(), b.to_upper())) == (b, low, up)
+  }
+}
+
+test "equal_fold is Go's EqualFold" {
+  for (a, b, want) in FOLD_CASES {
+    expect((a, b, a.equal_fold(b), b.equal_fold(a))) == (a, b, want, want)
+  }
+}
+
+test "repeat is Go's Repeat" {
+  for (b, n, want) in REPEAT_CASES {
+    expect((b, n, b.repeat(n))) == (b, n, want)
+  }
+}
+
+test "the transforms on a view of a longer value" {
+  for (b, old, new, n, want) in REPLACE_CASES {
+    let lb = b"zz" + b
+    let lo = b"zz" + old
+    let ln = b"zz" + new
+    let vb = lb[2..lb.len()]
+    let vo = lo[2..lo.len()]
+    let vn = ln[2..ln.len()]
+    expect((b, old, new, n, vb.replace_n(vo, vn, n))) == (b, old, new, n, want)
+  }
+  for (b, low, up) in CASE_CASES {
+    let lb = b"zz" + b
+    let vb = lb[2..lb.len()]
+    expect((b, vb.to_lower(), vb.to_upper())) == (b, low, up)
+  }
+  for (a, b, want) in FOLD_CASES {
+    let la = b"zz" + a
+    let lb = b"zz" + b
+    let va = la[2..la.len()]
+    let vb = lb[2..lb.len()]
+    expect((a, b, va.equal_fold(vb))) == (a, b, want)
+  }
+  for (b, n, want) in REPEAT_CASES {
+    let lb = b"zz" + b
+    let vb = lb[2..lb.len()]
+    expect((b, n, vb.repeat(n))) == (b, n, want)
+  }
+}
 test "the four methods on a view of a longer value" {
   // "zz" + b sliced back is a view of a longer Bytes
   var bad: List[(Bytes, Bytes, Str, Str)] = []

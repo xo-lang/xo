@@ -351,22 +351,41 @@ fn case_append(out: Str, b: Bytes, from: Int, lower: Bool) -> Str {
   o
 }
 
-/// strings.ToLower (lower) or strings.ToUpper.
-pub fn map_case(s: Str, lower: Bool) -> Str {
-  let b = s.bytes()
-  // ASCII already in the case: s itself, no copy (`req.method.to_upper()`
-  // of every HTTP request)
+/// Whether every byte of b is ASCII and already in the case (lower): the
+/// fast path of map_case and map_case_bytes.
+fn case_done(b: Bytes, lower: Bool) -> Bool {
   let lo = if lower { 65 } else { 97 }
   let hi = if lower { 90 } else { 122 }
   var i = 0
   while i < b.len() {
     let c = Int(b[i])
     if c >= 0x80 || (c >= lo && c <= hi) {
-      return case_append(rt.rs_with_cap(b.len()), b, 0, lower)
+      return false
     }
     i += 1
   }
-  s
+  true
+}
+
+/// strings.ToLower (lower) or strings.ToUpper.
+pub fn map_case(s: Str, lower: Bool) -> Str {
+  let b = s.bytes()
+  // ASCII already in the case: s itself, no copy (`req.method.to_upper()`
+  // of every HTTP request)
+  if case_done(b, lower) {
+    return s
+  }
+  case_append(rt.rs_with_cap(b.len()), b, 0, lower)
+}
+
+/// bytes.ToLower (lower) or bytes.ToUpper: map_case's mapping, the buffer
+/// (a runtime Str) relabelled as Bytes. ASCII already in the case: b
+/// itself, no copy.
+pub fn map_case_bytes(b: Bytes, lower: Bool) -> Bytes {
+  if case_done(b, lower) {
+    return b
+  }
+  rt.cast[Str, Bytes](case_append(rt.rs_with_cap(b.len()), b, 0, lower))
 }
 
 /// `a.to_lower() == b.to_lower()` without making the lowered strings:
@@ -479,8 +498,13 @@ pub fn simple_fold(r: Int) -> Int {
 /// or an ASCII upper and lower case of one letter matching directly and
 /// any other pair by walking the SimpleFold orbit of the smaller rune.
 pub fn equal_fold(a: Str, b: Str) -> Bool {
-  let x = a.bytes()
-  let y = b.bytes()
+  equal_fold_bytes(a.bytes(), b.bytes())
+}
+
+/// bytes.EqualFold: equal_fold's comparison of two byte slices, which is
+/// what a Str's bytes are (two different bytes of invalid sequences
+/// compare equal, as both decode to U+FFFD, which is Go's rule).
+pub fn equal_fold_bytes(x: Bytes, y: Bytes) -> Bool {
   let n = x.len()
   let m = y.len()
   var i = 0

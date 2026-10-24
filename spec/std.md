@@ -227,6 +227,12 @@ fn (b: Bytes) trim() -> Bytes                // white space at both ends (bytes.
 fn (b: Bytes) trim_prefix(p: Bytes) -> Bytes // also trim_suffix (bytes.TrimPrefix, TrimSuffix)
 // split, split_n, fields, trim, trim_prefix and trim_suffix return views of b on native
 // targets (O(1) per piece, no copy; a piece keeps b alive), as slices do (core 3.6)
+fn (b: Bytes) replace(old: Bytes, new: Bytes) -> Bytes  // bytes.ReplaceAll; b itself when nothing changes
+fn (b: Bytes) replace_n(old: Bytes, new: Bytes, n: Int) -> Bytes  // the first n copies (bytes.Replace); n below 0 for every one, 0 for none
+fn (b: Bytes) to_lower() -> Bytes            // bytes.ToLower; an invalid byte becomes U+FFFD, as Go maps it
+fn (b: Bytes) to_upper() -> Bytes            // bytes.ToUpper
+fn (b: Bytes) equal_fold(other: Bytes) -> Bool  // bytes.EqualFold, Unicode simple case folding
+fn (b: Bytes) repeat(n: Int) -> Bytes        // bytes.Repeat; empty for 0, a fault below 0
 fn (b: Bytes) clone() -> Bytes               // an explicit copy in a buffer of its own
 fn (b: Bytes) indexed() -> List[(Int, UInt8)]  // each byte with its offset, as List.indexed
 fn (static: Bytes) zeroed(n: Int) -> Bytes   // n zero bytes (make([]byte, n)); a fault for n < 0
@@ -4068,7 +4074,7 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
 
 Every function and method of std/prelude.xo, by type, as declared there
 (the sections above explain them); interface methods take `self`.
-402 declarations.
+408 declarations.
 
 ### Range
 
@@ -4312,6 +4318,12 @@ fn (b: Bytes) fields() -> List[Bytes]
 fn (b: Bytes) trim() -> Bytes
 fn (b: Bytes) trim_prefix(p: Bytes) -> Bytes
 fn (b: Bytes) trim_suffix(p: Bytes) -> Bytes
+fn (b: Bytes) replace(old: Bytes, new: Bytes) -> Bytes
+fn (b: Bytes) replace_n(old: Bytes, new: Bytes, n: Int) -> Bytes
+fn (b: Bytes) to_lower() -> Bytes
+fn (b: Bytes) to_upper() -> Bytes
+fn (b: Bytes) equal_fold(other: Bytes) -> Bool
+fn (b: Bytes) repeat(n: Int) -> Bytes
 fn (b: Bytes) indexed() -> List[(Int, UInt8)]
 fn (static: Bytes) zeroed(n: Int) -> Bytes
 ```

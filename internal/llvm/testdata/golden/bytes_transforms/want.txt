@@ -1,0 +1,44 @@
+exit 0
+--- stdout
+replace a: b<>n<>n<>
+replace an: b<><>a
+replace ana: b<>na
+replace none: banana
+replace empty old: <>b<>a<>n<>a<>n<>a<>
+replace empty in empty: <>
+replace radar: <r>ada<r>
+replace smiles: <>☺<>☻<>☹<>
+replace_n 1: b<>nana
+replace_n 5 empty: <>b<>a<>n<>a<>na
+replace_n 6 empty: <>b<>a<>n<>a<>n<>a
+replace_n 1000: b<>n<>n<>
+replace_n 0: banana
+lower: abc123 azaz09_
+upper: ABC123 AZAZ09_
+lower nonascii: c990c990c3a9
+upper nonascii: e2b1afe2b1afc389
+lower widths: 69c39f
+upper widths: 49c39f
+lower invalid: efbfbd61efbfbd
+upper invalid: efbfbd41efbfbd
+lower already: abc
+lower empty: |
+fold ascii: true
+fold unicode: true
+fold kelvin: true
+fold orbit: true
+fold invalid: true
+fold lengths: false
+fold sharp s: false
+fold mismatch: false
+repeat 3: abc abc abc 
+repeat 1: -
+repeat 10: ----------
+repeat 0: |
+repeat empty: |
+repeat nul: 00000000
+repeat invalid: ff80ff80ff80
+view replace: bAnAnA
+view lower: abc
+view repeat: abab
+--- stderr

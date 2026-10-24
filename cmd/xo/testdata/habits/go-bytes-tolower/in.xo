@@ -1,0 +1,3 @@
+fn lower(b: Bytes) -> Bytes {
+  bytes.ToLower(b)
+}

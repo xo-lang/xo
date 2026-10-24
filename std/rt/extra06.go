@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/hex"
+	"math"
 )
 
 // Std additions from the stage 2 benchmark (std.md 0.6).
@@ -152,6 +153,58 @@ func Bytes_trim_prefix(_ *Task, b, p Bytes) Bytes {
 // Bytes_trim_suffix is `b.trim_suffix(p)`: bytes.TrimSuffix.
 func Bytes_trim_suffix(_ *Task, b, p Bytes) Bytes {
 	return Bytes(bytes.TrimSuffix([]byte(b), []byte(p)))
+}
+
+// Bytes_replace is `b.replace(old, new)`: bytes.ReplaceAll, the receiver
+// itself when nothing changes (a Bytes is immutable, so Go's string value
+// is already that; the shortcut also skips Go's copy).
+func Bytes_replace(_ *Task, b, old, new Bytes) Bytes {
+	if len(old) > 0 && !bytes.Contains([]byte(b), []byte(old)) {
+		return b
+	}
+	return Bytes(bytes.ReplaceAll([]byte(b), []byte(old), []byte(new)))
+}
+
+// Bytes_replace_n is `b.replace_n(old, new, n)`: bytes.Replace, the
+// receiver when nothing changes.
+func Bytes_replace_n(_ *Task, b, old, new Bytes, n int64) Bytes {
+	if string(old) == string(new) || n == 0 {
+		return b
+	}
+	if len(old) > 0 && !bytes.Contains([]byte(b), []byte(old)) {
+		return b
+	}
+	return Bytes(bytes.Replace([]byte(b), []byte(old), []byte(new), int(n)))
+}
+
+// Bytes_to_lower is `b.to_lower()`: bytes.ToLower (an invalid byte as
+// U+FFFD, as Go maps it).
+func Bytes_to_lower(_ *Task, b Bytes) Bytes { return Bytes(bytes.ToLower([]byte(b))) }
+
+// Bytes_to_upper is `b.to_upper()`: bytes.ToUpper.
+func Bytes_to_upper(_ *Task, b Bytes) Bytes { return Bytes(bytes.ToUpper([]byte(b))) }
+
+// Bytes_equal_fold is `b.equal_fold(other)`: bytes.EqualFold.
+func Bytes_equal_fold(_ *Task, b, other Bytes) bool {
+	return bytes.EqualFold([]byte(b), []byte(other))
+}
+
+// Bytes_repeat is `b.repeat(n)`: bytes.Repeat, empty for n 0 and a fault
+// for n below 0, as Go's and as Str_repeat (native raw.bytes_repeat).
+func Bytes_repeat(_ *Task, b Bytes, n int64) Bytes {
+	if n < 0 {
+		FaultHere("negative repeat count %d", n)
+	}
+	if n == 0 || len(b) == 0 {
+		return Bytes("")
+	}
+	if int64(len(b)) > math.MaxInt64/n {
+		FaultHere("bytes: Repeat output length overflow")
+	}
+	if int64(len(b))*n > 4294967295 {
+		FaultHere("bytes: Repeat output over 4 GiB")
+	}
+	return Bytes(bytes.Repeat([]byte(b), int(n)))
 }
 
 // Bytes_indexed is `b.indexed()`: each byte with its offset.

@@ -1,0 +1,9 @@
+// A negative repeat count faults, as Go's bytes.Repeat panics, with the
+// caller's line on every backend (std.md: Bytes.repeat is bytes.Repeat).
+
+fn main(os: Os) {
+  let out = os.stdio
+  out.println("repeat 2: " + (b"ab".repeat(2).to_str() ?? ""))
+  out.println("before the fault")
+  out.println("repeat -1: " + (b"ab".repeat(-1).to_str() ?? ""))
+}

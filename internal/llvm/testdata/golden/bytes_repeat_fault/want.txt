@@ -1,0 +1,6 @@
+exit 70
+--- stdout
+repeat 2: abab
+before the fault
+--- stderr
+fault: negative repeat count -1 at main.xo:8

@@ -1,0 +1,3 @@
+fn twice(b: Bytes) -> Bytes {
+  b.repeat(2)
+}
