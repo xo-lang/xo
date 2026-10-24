@@ -63,6 +63,26 @@ fn lock_shared(f: Fs, p: Str) -> SharedLock ! FsErr uses fs.write {
 
 fn (l: SharedLock) unlock() { fsops.unlock(l.h) }
 
+fn dir_names(f: Fs, dir: Str) -> List[Str] ! FsErr uses fs.read {
+  if rt.fs_mode(f) != 0 || rt.fs_root(f) != "" {
+    return Err(FsErr.Denied(path: dir))
+  }
+  if rt.fs_canceled() {
+    return Err(FsErr.Canceled)
+  }
+  let names = fsops.names(dir, dir)
+  // the status as native/prelude's fs_err maps it
+  match sysio.status() {
+    0 => Ok(names)
+    1 => Err(FsErr.NotFound(path: dir))
+    4 => Err(FsErr.NotDir(path: dir))
+    5 => Err(FsErr.IsDir(path: dir))
+    6 => Err(FsErr.Denied(path: dir))
+    7 => Err(FsErr.Io(path: dir, msg: sysio.msg()[1]))
+    _ => Err(FsErr.Canceled)
+  }
+}
+
 /// The check of std/native/sys_c.xo (decision 0232): "present", three
 /// bytes: whether getpid returned a positive process ID (a strong C call),
 /// whether getpid is linked, whether ThreadSanitizer is (rt.sym_present

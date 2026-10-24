@@ -20,6 +20,13 @@ fn lock_shared(f: Fs, path: Str) -> SharedLock ! FsErr uses fs.write
 /// Releases the lock; unlocking again does nothing.
 fn (l: SharedLock) unlock()
 
+/// The names in the directory, in the directory's order, without a stat
+/// of any entry (Fs.read_dir stats every one, and returns them sorted: a
+/// shard of the build cache with thousands of entries costs thousands of
+/// stats). Names are as the system gave them (no outside bytes scan).
+/// Only the unrestricted root Fs (`os.fs`) takes it, as lock_shared.
+fn dir_names(f: Fs, dir: Str) -> List[Str] ! FsErr uses fs.read
+
 /// A primitive of the native TLS stack's (work item B31, decision 0202)
 /// for the golden tests that diff it against Go's crypto (std/rt's
 /// internal_crypto.go): op is "area.what", a to d its inputs (unused ones

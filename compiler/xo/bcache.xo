@@ -15,6 +15,7 @@ use github.com/xo-lang/xo/compiler/parser
 use github.com/xo-lang/xo/compiler/prune
 use github.com/xo-lang/xo/compiler/ssa
 use std/crypto
+use std/internal
 
 /// $XO_BACKEND_CACHE: "off", "verify", or "on" (the default).
 fn backend_cache_mode(os: Os) -> Str {
@@ -736,10 +737,29 @@ fn verify_by_keys(os: Os, var mi: ssa.Module, keys: List[Str], dir: Str, id: Str
 /// on up to jobs tasks: thousands of small files, which one task reads in
 /// about a second.
 fn cache_get_all(os: Os, dir: Str, kind: Str, keys: List[Str], jobs: Int) -> Map[Str, Bytes] {
+  // the shard directories the cache holds for kind, listed once: a key
+  // whose shard is not there is not opened. A cold build's keys are all
+  // new, and each failed open cost about 10 ms on the Windows CI runner
+  // (21,413 of them in a cold CRUD build, 2026-10-23); with no kind
+  // directory at all, none is opened. A shard made after the listing
+  // only means an entry made again.
+  // (Only the shard names: listing a shard to open just the keys it holds
+  // was measured on the 23 GB user cache, 2026-10-24: a shard of the fe
+  // kind holds about 2,000 entries and lists in 7 ms, so a build touching
+  // every shard paid 1.8 s to save about 4,000 failed opens at tens of
+  // microseconds each; 5c9fe1bf1 stat'ed them too, gotchas/
+  // fs-read-dir-stats-every-entry.md. A cache that has every shard keeps
+  // opening, as before.)
+  // names only (internal.dir_names); a kind directory holds only shard
+  // directories
+  var shards: Map[Str, Bool] = {}
+  for nm in internal.dir_names(os.fs, "${dir}/${kind}").ok() ?? [] {
+    shards[nm] = true
+  }
   var seen: Map[Str, Bool] = {}
   var ks: List[Str] = []
   for k in keys {
-    if !k.is_empty() && !seen.contains(k) {
+    if k.len() >= 2 && !seen.contains(k) && shards.contains(k[0..2]) {
       seen[k] = true
       ks.push(k)
     }

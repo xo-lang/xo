@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- A build no longer tries to open cache entries in a shard the cache does
+  not have: it lists the kind's shard directories by name only (new
+  std/internal dir_names: no stat of any entry, which fs.read_dir does, and
+  which made the first form of this, 284b87da9, time out against a 19 GB
+  cache). A cold build in an empty cache opens next to nothing; a cache
+  that has every shard (the user cache: 23 GB, 256 shards of about 2,000
+  entries) opens as before, at no cost: listing each shard to open only its
+  keys was measured and dropped (7 ms a shard, 1.8 s a build).
+
 - Every released xo is built by its platform's native backend (decision
   0362): linux/amd64 joins (it was the Go backend; a static binary with
   no C library, which rebuilds itself to the same bytes), and seeds are

@@ -1,0 +1,42 @@
+// std/internal's dir_names (the build cache's shard listing): the names in
+// a directory with no stat of any entry, in the directory's order (sorted
+// here), on the root Fs only; a missing directory is NotFound, a file
+// NotDir, a sub Fs Denied.
+use std/internal
+
+fn main(os: Os) {
+  let d = "dir_names_tmp"
+  os.fs.remove_all(d).ok()
+  os.fs.create_dir_all("${d}/sub").or_fault("mkdir")
+  os.fs.write("${d}/b.txt", b"b").or_fault("write")
+  os.fs.write("${d}/a.txt", b"a").or_fault("write")
+  os.fs.write("${d}/sub/c.txt", b"c").or_fault("write")
+  match internal.dir_names(os.fs, d) {
+    Ok(names) => os.stdio.println("names ${names.sort().join(",")}")
+    Err(e) => os.stdio.println("names err ${e}")
+  }
+  match internal.dir_names(os.fs, "${d}/sub") {
+    Ok(names) => os.stdio.println("sub ${names.join(",")}")
+    Err(e) => os.stdio.println("sub err ${e}")
+  }
+  match internal.dir_names(os.fs, "${d}/nosuch") {
+    Ok(names) => os.stdio.println("nosuch ${names.len()}")
+    Err(FsErr.NotFound(_)) => os.stdio.println("nosuch not found")
+    Err(e) => os.stdio.println("nosuch other ${e}")
+  }
+  match internal.dir_names(os.fs, "${d}/a.txt") {
+    Ok(names) => os.stdio.println("file ${names.len()}")
+    Err(FsErr.NotDir(_)) => os.stdio.println("file not a directory")
+    Err(e) => os.stdio.println("file other ${e}")
+  }
+  match internal.dir_names(os.fs.sub(d), ".") {
+    Ok(names) => os.stdio.println("sub fs ${names.len()}")
+    Err(FsErr.Denied(_)) => os.stdio.println("sub fs denied")
+    Err(e) => os.stdio.println("sub fs other ${e}")
+  }
+  match internal.dir_names(os.fs, d + "/") {
+    Ok(names) => os.stdio.println("trailing slash ${names.len()}")
+    Err(e) => os.stdio.println("trailing slash err ${e}")
+  }
+  os.fs.remove_all(d).or_fault("cleanup")
+}

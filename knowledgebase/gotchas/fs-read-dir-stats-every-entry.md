@@ -33,3 +33,18 @@ bring the miss reduction back: list names only (a names-only listing, no
 stat per entry), and measure on the real shared user cache, with its
 size stated, before pushing, never only on a small private one. A cache
 change's measurement names the cache it ran against.
+
+## Redone (2026-10-24)
+
+The miss reduction is back in its cheap half: `internal.dir_names`
+(std/internal, the root Fs only; std/native/internal.xo, std/rt/internal.go;
+golden dir_names) lists the kind's shard directory names with no stat, and
+cache_get_all opens no key whose shard is missing (a cold build in an empty
+cache). The expensive half, listing a shard to open only the keys it
+holds, is dropped: a names-only listing is still a readdir of the whole
+shard. On the real user cache (23 GB) the fe kind holds 512k entries,
+about 2,000 per shard, and 7 ms a shard (all 256 shards: 1.8 s) at load 40,
+against about 4,000 failed opens a cold build at tens of microseconds on
+the Mac. The Windows runner's 10 ms an open is the case where a shard
+listing could still win; measure there before bringing it back, on a cache
+of its real size.

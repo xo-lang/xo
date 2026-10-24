@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+names a.txt,b.txt,sub
+sub c.txt
+nosuch not found
+file not a directory
+sub fs denied
+trailing slash 3
+--- stderr
