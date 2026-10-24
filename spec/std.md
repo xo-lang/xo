@@ -1660,6 +1660,7 @@ fn (p: Patch[T]) apply_opt(current: T?) -> T? // Absent keeps, Null clears, Valu
 | `Patch[T]` field | missing key is `Absent`, `null` is `Null`, value is `Value(v)` |
 | unknown keys | ignored |
 | `Int`, `Float`, `Bool`, `Str` | number, number, boolean, string |
+| `Int8`, `Int16`, `Int32`, `UInt8`, `UInt16`, `UInt32`, `UInt64`, `Float32` | number; decoding refuses a number out of the type's range (`expected integer` for a signed type, `expected non negative integer` for an unsigned one, `expected number` for a Float32 past its largest value), on every backend |
 | `List[T]`, `Set[T]` | array |
 | `Map[Str, V]` | object |
 | enum unit variant | string `"Variant"` |

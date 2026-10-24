@@ -1,0 +1,63 @@
+// std/json decodes and encodes the sized integer types and Float32 on the
+// native backends as the Go backend does (std/rt json.go jsonInt, jsonUint
+// and the float32 case): a number out of the type's range is an error, a
+// signed type says "expected integer" and an unsigned one "expected non
+// negative integer", a UInt64 reads up to 18446744073709551615.
+
+use std/json
+
+struct S {
+  a: Int8
+  b: Int16
+  c: Int32
+  d: UInt8
+  e: UInt16
+  f: UInt32
+  g: UInt64
+  h: Float32
+} derive Json
+
+fn body(a: Str, b: Str, c: Str, d: Str, e: Str, f: Str, g: Str, h: Str) -> Str {
+  "{\"a\":${a},\"b\":${b},\"c\":${c},\"d\":${d},\"e\":${e},\"f\":${f},\"g\":${g},\"h\":${h}}"
+}
+
+fn show(os: Os, label: Str, text: Str) {
+  match json.decode_str[S](text) {
+    Ok(s) => os.stdio.println("${label}: ok ${s.a} ${s.b} ${s.c} ${s.d} ${s.e} ${s.f} ${s.g} ${s.h} | ${json.encode_str(s)}")
+    Err(e) => os.stdio.println("${label}: ${e}")
+  }
+}
+
+fn main(os: Os) {
+  show(os, "plain", body("-5", "-300", "-70000", "200", "60000", "4000000000", "5", "1.5"))
+  show(os, "max", body("127", "32767", "2147483647", "255", "65535", "4294967295", "18446744073709551615", "3.4028234663852886e38"))
+  show(os, "min", body("-128", "-32768", "-2147483648", "0", "0", "0", "0", "-3.4028234663852886e38"))
+  show(os, "a high", body("128", "0", "0", "0", "0", "0", "0", "0"))
+  show(os, "a low", body("-129", "0", "0", "0", "0", "0", "0", "0"))
+  show(os, "b high", body("0", "32768", "0", "0", "0", "0", "0", "0"))
+  show(os, "b low", body("0", "-32769", "0", "0", "0", "0", "0", "0"))
+  show(os, "c high", body("0", "0", "2147483648", "0", "0", "0", "0", "0"))
+  show(os, "c low", body("0", "0", "-2147483649", "0", "0", "0", "0", "0"))
+  show(os, "d high", body("0", "0", "0", "256", "0", "0", "0", "0"))
+  show(os, "d neg", body("0", "0", "0", "-1", "0", "0", "0", "0"))
+  show(os, "e high", body("0", "0", "0", "0", "65536", "0", "0", "0"))
+  show(os, "f high", body("0", "0", "0", "0", "0", "4294967296", "0", "0"))
+  show(os, "f neg", body("0", "0", "0", "0", "0", "-1", "0", "0"))
+  show(os, "g high", body("0", "0", "0", "0", "0", "0", "18446744073709551616", "0"))
+  show(os, "g 20 digits", body("0", "0", "0", "0", "0", "0", "99999999999999999999", "0"))
+  show(os, "g 21 digits", body("0", "0", "0", "0", "0", "0", "100000000000000000000", "0"))
+  show(os, "g neg", body("0", "0", "0", "0", "0", "0", "-1", "0"))
+  show(os, "g above Int", body("0", "0", "0", "0", "0", "0", "9223372036854775808", "0"))
+  show(os, "a fraction", body("1.5", "0", "0", "0", "0", "0", "0", "0"))
+  show(os, "d fraction", body("0", "0", "0", "1.5", "0", "0", "0", "0"))
+  show(os, "a string", body("\"1\"", "0", "0", "0", "0", "0", "0", "0"))
+  show(os, "h string", body("0", "0", "0", "0", "0", "0", "0", "\"1\""))
+  show(os, "h fine", body("0", "0", "0", "0", "0", "0", "0", "0.1"))
+  show(os, "h round", body("0", "0", "0", "0", "0", "0", "0", "16777217"))
+  show(os, "h past the limit", body("0", "0", "0", "0", "0", "0", "0", "3.4028236e38"))
+  show(os, "h below limit", body("0", "0", "0", "0", "0", "0", "0", "3.4028235677973362e38"))
+  show(os, "h past the negative limit", body("0", "0", "0", "0", "0", "0", "0", "-3.4028236e38"))
+  show(os, "h huge", body("0", "0", "0", "0", "0", "0", "0", "1e39"))
+  show(os, "h tiny", body("0", "0", "0", "0", "0", "0", "0", "1e-50"))
+  show(os, "g exp", body("0", "0", "0", "0", "0", "0", "1e3", "0"))
+}

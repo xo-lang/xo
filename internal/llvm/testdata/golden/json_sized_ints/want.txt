@@ -1,0 +1,34 @@
+exit 0
+--- stdout
+plain: ok -5 -300 -70000 200 60000 4000000000 5 1.5 | {"a":-5,"b":-300,"c":-70000,"d":200,"e":60000,"f":4000000000,"g":5,"h":1.5}
+max: ok 127 32767 2147483647 255 65535 4294967295 18446744073709551615 3.4028234663852886e+38 | {"a":127,"b":32767,"c":2147483647,"d":255,"e":65535,"f":4294967295,"g":18446744073709551615,"h":3.4028234663852886e+38}
+min: ok -128 -32768 -2147483648 0 0 0 0 -3.4028234663852886e+38 | {"a":-128,"b":-32768,"c":-2147483648,"d":0,"e":0,"f":0,"g":0,"h":-3.4028234663852886e+38}
+a high: at $.a: expected integer
+a low: at $.a: expected integer
+b high: at $.b: expected integer
+b low: at $.b: expected integer
+c high: at $.c: expected integer
+c low: at $.c: expected integer
+d high: at $.d: expected non negative integer
+d neg: at $.d: expected non negative integer
+e high: at $.e: expected non negative integer
+f high: at $.f: expected non negative integer
+f neg: at $.f: expected non negative integer
+g high: at $.g: expected non negative integer
+g 20 digits: at $.g: expected non negative integer
+g 21 digits: at $.g: expected non negative integer
+g neg: at $.g: expected non negative integer
+g above Int: ok 0 0 0 0 0 0 9223372036854775808 0.0 | {"a":0,"b":0,"c":0,"d":0,"e":0,"f":0,"g":9223372036854775808,"h":0}
+a fraction: at $.a: expected integer
+d fraction: at $.d: expected non negative integer
+a string: at $.a: expected integer
+h string: at $.h: expected number
+h fine: ok 0 0 0 0 0 0 0 0.10000000149011612 | {"a":0,"b":0,"c":0,"d":0,"e":0,"f":0,"g":0,"h":0.10000000149011612}
+h round: ok 0 0 0 0 0 0 0 1.6777216e+07 | {"a":0,"b":0,"c":0,"d":0,"e":0,"f":0,"g":0,"h":16777216}
+h past the limit: at $.h: expected number
+h below limit: ok 0 0 0 0 0 0 0 3.4028234663852886e+38 | {"a":0,"b":0,"c":0,"d":0,"e":0,"f":0,"g":0,"h":3.4028234663852886e+38}
+h past the negative limit: at $.h: expected number
+h huge: at $.h: expected number
+h tiny: ok 0 0 0 0 0 0 0 0.0 | {"a":0,"b":0,"c":0,"d":0,"e":0,"f":0,"g":0,"h":0}
+g exp: at $.g: expected non negative integer
+--- stderr

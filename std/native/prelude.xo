@@ -3585,6 +3585,8 @@ fn llrt_json_int_ok(src: Bytes, tape: List[Int], i: Int) -> Bool { jsontext.int_
 
 fn llrt_json_int(src: Bytes, tape: List[Int], i: Int) -> Int { jsontext.int_at(src, tape, i) }
 
+fn llrt_json_uint_ok(src: Bytes, tape: List[Int], i: Int) -> Bool { jsontext.uint_ok(src, tape, i) }
+
 fn llrt_json_float_ok(src: Bytes, tape: List[Int], i: Int) -> Bool { jsontext.float_ok(src, tape, i) }
 
 fn llrt_json_float(src: Bytes, tape: List[Int], i: Int) -> Float { jsontext.float_at(src, tape, i) }

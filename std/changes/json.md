@@ -1,5 +1,27 @@
 # std/json changes
 
+## 2026-10-24: feature: the native backends decode and encode the sized integers and Float32
+
+- Kind: feature
+- Commit: this commit
+- Found by: the parity sweep of the Go backend against native (owner decision, 2026-10-24)
+- Go reference: std/rt json.go jsonInt, jsonUint and the float32 case (unchanged)
+- Test: golden json_sized_ints (a struct of Int8, Int16, Int32, UInt8, UInt16, UInt32, UInt64 and Float32: both ends of every range, one past each, a UInt64 above Int's range and its 20 and 21 digit texts, fractions and strings, Float32 rounding and overflow), same output on arm64, LLVM and Go parity
+
+A struct with an Int8, Int16, Int32, UInt8, UInt16, UInt32, UInt64 or Float32
+field failed to build on the native backends ("converting `Int` to `Int16`":
+the generated decoder produced an Int and had no way to narrow it), so only
+`--backend=go` could use them. The decoder now checks the type's range (the
+messages are the Go backend's: "expected integer" for a signed type,
+"expected non negative integer" for an unsigned one, "expected number" for a
+Float32 past 2^128 - 2^103) and narrows; a UInt64 reads up to
+18446744073709551615 (jsontext.uint_ok) and encodes as an unsigned number; a
+Float32 encodes as the number of its value, 0.1 as 0.10000000149011612, as the
+Go backend does. One difference remains: a Float32 text within 1e-16 of the
+overflow threshold is rounded twice on native (to a Float, then to a Float32)
+where Go rounds once, so the single decimal texts around 3.4028235677973366e38
+may be accepted where Go refuses them.
+
 ## 2026-10-23: perf: find_all compares keys a word at a time, from the next expected field
 
 - Kind: perf

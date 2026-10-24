@@ -225,11 +225,18 @@ fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
       return
     }
     Int => {
+      if b.is_prelude_named(ct, ["UInt64"]) {
+        // the unsigned text: a UInt64 above Int's range is a negative word
+        b.retv(b.show_text("append_u64", acc, v))
+        return
+      }
       b.retv(b.num_text(acc, v))
       return
     }
     Float => {
-      b.retv(b.json_rt("rs_append_json_float", st, [acc, v]))
+      // a Float32 is written as the Float of its value (std/rt json.go)
+      let fv = if b.m.is_f32(t) { b.rt("f32_round", b.float_t(), [v]) } else { v }
+      b.retv(b.json_rt("rs_append_json_float", st, [acc, fv]))
       return
     }
     Bool => {
@@ -707,10 +714,28 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
     }
     Int => {
       b.dec_need(d, JK_NUM, "expected integer")
-      let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.json_rt("json_int_ok", bt, [d.src, d.tape, i])]))
-      b.dec_fail(d, "expected integer")
+      // the sized types, as std/rt json.go jsonInt and jsonUint read them:
+      // a signed type refuses a number out of its range with "expected
+      // integer", an unsigned one with "expected non negative integer"
+      // (a UInt64 reads up to 2^64 - 1, its bits in the Int word)
+      let sized = b.m.types[t].bits != 0
+      let unsigned = b.m.types[t].unsigned
+      let msg = if unsigned { "expected non negative integer" } else { "expected integer" }
+      let wide = b.m.is_u64(t)
+      let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.json_rt(if wide { "json_uint_ok" } else { "json_int_ok" }, bt, [d.src, d.tape, i])]))
+      b.dec_fail(d, if sized { msg } else { "expected integer" })
       b.if_then_end(no, join)
-      b.dec_ok(d, b.json_rt("json_int", it, [d.src, d.tape, i]))
+      let n = b.json_rt("json_int", it, [d.src, d.tape, i])
+      if !sized {
+        b.dec_ok(d, n)
+        return
+      }
+      if !wide {
+        let (no2, join2) = b.if_then_begin(b.out_of(n, t))
+        b.dec_fail(d, msg)
+        b.if_then_end(no2, join2)
+      }
+      b.dec_ok(d, b.add(Op.IntConv, t, Aux.None, [n]))
       return
     }
     Float => {
@@ -718,7 +743,23 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
       let (no, join) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.json_rt("json_float_ok", bt, [d.src, d.tape, i])]))
       b.dec_fail(d, "expected number")
       b.if_then_end(no, join)
-      b.dec_ok(d, b.json_rt("json_float", b.float_t(), [d.src, d.tape, i]))
+      let f = b.json_rt("json_float", b.float_t(), [d.src, d.tape, i])
+      if b.m.is_f32(t) {
+        // strconv.ParseFloat(s, 32): a value that rounds past the largest
+        // Float32 (2^128 - 2^103 and beyond) is out of range
+        let ft = b.float_t()
+        // (strictly past the midpoint 2^128 - 2^103, as a Float: a text
+        // within 1e-16 of it may differ from Go's single rounding)
+        let lim = b.add(Op.Const, ft, Aux.F(f: 340282356779733661637539395458142568448.0), [])
+        let nlim = b.add(Op.Const, ft, Aux.F(f: -340282356779733661637539395458142568448.0), [])
+        let over = b.add(Op.Or, bt, Aux.None, [b.add(Op.Gt, bt, Aux.None, [f, lim]), b.add(Op.Lt, bt, Aux.None, [f, nlim])])
+        let (no2, join2) = b.if_then_begin(over)
+        b.dec_fail(d, "expected number")
+        b.if_then_end(no2, join2)
+        b.dec_ok(d, b.rt("f32_round", t, [f]))
+        return
+      }
+      b.dec_ok(d, f)
       return
     }
     Bool => {

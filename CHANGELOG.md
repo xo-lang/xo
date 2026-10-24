@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- std/json on the native backends decodes and encodes the sized integers
+  (Int8, Int16, Int32, UInt8, UInt16, UInt32, UInt64) and Float32; a struct with
+  one of them used to fail to build there ("converting `Int` to `Int16`"), with
+  the Go backend's range errors and a UInt64 up to 18446744073709551615.
 - `Time.parse_rfc3339` and a `Time` decoded from JSON refuse a time outside
   the range of `Time` (1677-09-21 to 2262-04-11) with `None` or the decode
   error "expected RFC 3339 time string", where they returned a wrapped time

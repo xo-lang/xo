@@ -931,6 +931,45 @@ pub fn int_ok(src: Bytes, tape: List[Int], i: Int) -> Bool {
   v < 922337203685477580 || (v == 922337203685477580 && c <= (if neg { 8 } else { 7 }))
 }
 
+/// Whether the number node at i is a UInt64 (strconv.ParseUint of its
+/// text: digits only, no sign, at most 18446744073709551615). The value
+/// comes from int_at, whose digits wrap like a UInt64.
+pub fn uint_ok(src: Bytes, tape: List[Int], i: Int) -> Bool {
+  let lo = tape[i + 1]
+  let end = lo + tape[i + 2]
+  let nd = end - lo
+  if nd > 20 || nd == 0 {
+    return false
+  }
+  // the first 18 digits (at most 18 cannot overflow an Int), then the rest
+  let head = if nd > 18 { lo + 18 } else { end }
+  var v = 0
+  var p = lo
+  while p < head {
+    let c = Int(src[p]) - 48
+    if c < 0 || c > 9 {
+      return false
+    }
+    v = v * 10 + c
+    p += 1
+  }
+  if nd <= 19 {
+    // 19 digits are below 10^19 < 2^64
+    if nd == 19 {
+      let c = Int(src[lo + 18]) - 48
+      return c >= 0 && c <= 9
+    }
+    return true
+  }
+  // 20 digits: 18446744073709551615 is 184467440737095516 then 15
+  let c1 = Int(src[lo + 18]) - 48
+  let c2 = Int(src[lo + 19]) - 48
+  if c1 < 0 || c1 > 9 || c2 < 0 || c2 > 9 {
+    return false
+  }
+  v < 184467440737095516 || (v == 184467440737095516 && c1 * 10 + c2 <= 15)
+}
+
 /// The Int of the number node at i, which int_ok accepted (the digits
 /// wrap like a UInt64 so that -9223372036854775808 comes out).
 pub fn int_at(src: Bytes, tape: List[Int], i: Int) -> Int {
