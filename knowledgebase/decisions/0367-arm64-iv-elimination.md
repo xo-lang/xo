@@ -1,6 +1,8 @@
 # 0367: arm64 loops drop the index beside a pointer induction variable, with post-indexed loads (extends 0054)
 
-Status: Proposed (Xo Lang 1, 2026-10-24; for the owner via the lead, with 0366; nothing built)
+Status: Proposed, stopped at measurement step 1 (owner approved building
+it, 2026-10-24 ~16:50, after step 1; step 1 found no wall gain on the
+M-series: see "Step 1 result"). Nothing built.
 
 ## Context
 
@@ -57,6 +59,30 @@ In compiler/arm64 lsr.xo, after plan_lsr's pointer parameters:
    wall on every RSA store change, so stores are not touched here).
 3. Under XO_PASSES=-lsr neither applies (the build stays correct); x86
    (whose addressing has no post-increment) gets step 1 only.
+
+## Step 1 result (2026-10-24)
+
+A scratch harness (one clang -O2 build, a C driver): the i_for walk,
+1,000 structs of three words searched 20,000 times for a value never
+found (20M elements), with three loop shapes in assembly: native, xo's
+loop (index and pointer, `cmp i, n`, 7 instructions a struct); llvm,
+LLVM's (`ldr x, [p], #24` post-indexed and `subs n, n, #1`, 5); idx, the
+index eliminated without post-indexing (the pointer against an end
+pointer, 6). All three agree. Quiet `xo bench --ab`, 20 rounds, load 5,
+native as A:
+
+| shape | wall | instructions |
+|---|---|---|
+| llvm (post-index, down counter) | 0.992 (0.985 to 1.009), noise | 0.766 |
+| idx (end pointer) | 0.994 (0.979 to 1.002), noise | 0.883 |
+
+The walk runs at about 0.48 ns an element (about 1.5 cycles): the load,
+compare and branch chain bounds it, and the M-series core retires the two
+extra instructions in the same cycles. Fewer instructions with no wall
+change: not built (the plan's stop). The callbacks rows' instruction
+ratio against LLVM (ifor 1.35) is this loop shape and costs no time here;
+a narrower core (the x86 or a smaller arm64) could still gain, which a
+measurement there would decide.
 
 ## Measurement plan
 
