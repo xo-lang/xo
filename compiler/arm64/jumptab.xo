@@ -11,6 +11,11 @@ const JUMP_TABLE_SLACK = 3
 /// a table becomes a compare tree (2026-10-24: unicode fold tables test
 /// a dozen keys, most of them past imm12, one after another).
 const COMPARE_TREE_MIN = 6
+/// The most values a chain of keys past imm12 is taken for (a tree, or
+/// with the immediate tests only, the chain as before them): a 65,535 arm
+/// match made one tree of every key, 26% more memory to compile than the
+/// table and chain it had (TestSwitch65535Arms, 2026-10-24).
+const COMPARE_TREE_MAX = 4096
 
 /// A chain test: the register and constant of a block's terminator when
 /// it is `cmp r, #k`, or `cmp r, k` with k a register holding a constant
@@ -73,24 +78,27 @@ struct Chain {
   ok: Bool = false
 }
 
-fn (g: G) chain(head: Int, nuse: Map[Int, Int]) -> Chain {
+fn (g: G) chain(head: Int, nuse: Map[Int, Int], regs: Bool) -> Chain {
   let c0 = g.chain_test(head)
-  if !c0.ok {
+  if !c0.ok || (!regs && c0.kreg >= 0) {
     return Chain{}
   }
   var ch = Chain{ok: true}
   var seen: Map[Int, Bool] = {}
   seen[head] = true
+  // the keys so far, by value: List.contains made a long chain quadratic
+  var kseen: Map[Int, Bool] = {}
   var b = head
   while true {
     let c = g.chain_test(b)
-    if !ch.keys.contains(c.k) {
+    if !kseen.contains(c.k) {
+      kseen[c.k] = true
       ch.keys.push(c.k)
       ch.hits.push(c.hit)
     }
     let nx = c.next
     let c2 = g.chain_test(nx)
-    if !c2.ok || c2.r != c0.r || !g.only_test(nx, c2, nuse) || seen.contains(nx) || g.blocks[nx].cold {
+    if !c2.ok || c2.r != c0.r || (!regs && c2.kreg >= 0) || !g.only_test(nx, c2, nuse) || seen.contains(nx) || g.blocks[nx].cold {
       ch.def = nx
       return ch
     }
@@ -193,12 +201,36 @@ fn (var g: G) jump_tables() {
   let nuse = g.reg_uses()
   var trees: Map[Int, List[Int]] = {}
   let cur = g.cur
+  // the blocks of a chain already made a tree or a table: each is the head
+  // of a shorter chain, the rest of the same one, so building from it too
+  // made a tree for every suffix (2026-10-24: a 65,535 arm match, keys
+  // past imm12 counted as tests, exceeded the 18 GB memory budget; the
+  // scale suite's TestSwitch65535Arms)
+  var used: Map[Int, Bool] = {}
+  // the blocks of a chain too long for a tree: each later head in it takes
+  // the immediate tests only at once (its own chain, the rest of this
+  // one, walked again from every block was quadratic: 825 s of CPU)
+  var long: Map[Int, Bool] = {}
   for head in g.hot {
-    let ch = g.chain(head, nuse)
+    if used.contains(head) {
+      continue
+    }
+    var ch = if long.contains(head) { g.chain(head, nuse, false) } else { g.chain(head, nuse, true) }
+    if !long.contains(head) && ch.keys.len() > COMPARE_TREE_MAX {
+      // too long for a tree: the chain of its immediate tests, as before
+      // keys past imm12 counted
+      for b in ch.blocks {
+        long[b] = true
+      }
+      ch = g.chain(head, nuse, false)
+    }
     if !ch.ok || ch.keys.len() < COMPARE_TREE_MIN {
       continue
     }
-    if ch.keys.len() < JUMP_TABLE_MIN || !g.table_fits(ch) {
+    for b in ch.blocks {
+      used[b] = true
+    }
+    if (ch.keys.len() < JUMP_TABLE_MIN || !g.table_fits(ch)) && ch.keys.len() <= COMPARE_TREE_MAX {
       // a compare tree from the head's test on: keys in order
       var ord: List[Int] = []
       for i in 0..ch.keys.len() {
@@ -282,7 +314,7 @@ fn (var g: G) jump_tables() {
     if placed.contains(head) {
       continue
     }
-    let ch = g.chain(head, uses2)
+    let ch = g.chain(head, uses2, true)
     if ch.blocks.is_empty() {
       continue
     }
