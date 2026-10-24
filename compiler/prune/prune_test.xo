@@ -251,6 +251,20 @@ test "the size cap under a budget: least recently used first, then on" {
   expect(there(os, "c/aa/3")) == true
 }
 
+test "the cap counts blocks: small files take a whole block each (Policy.block)" {
+  for i in 0..4 {
+    put(os, "c/aa/${i}", 40)
+    os.clock.advance(3h)
+  }
+  // 160 bytes held, 16,384 on a 4 KiB volume: a cap of 10,000 evicts the two oldest
+  let exact = Policy{max_age: 0s, max_bytes: 10000, every: 0s}
+  expect(run(os.fs, os.clock, "c", exact).removed) == []
+  let blocks = Policy{max_age: 0s, max_bytes: 10000, every: 0s, block: 4096}
+  let st = run(os.fs, os.clock, "c", blocks)
+  expect(st.removed) == ["c/aa/0", "c/aa/1"]
+  expect(st.bytes) == 8192
+}
+
 test "a burst does not prune again a cache it could not bring under its cap until keep passes" {
   // every entry in use: a prune cannot get under the cap
   put(os, "c/aa/1", 600)

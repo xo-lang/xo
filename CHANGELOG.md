@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The back-end cache's cap counts disk, not bytes: each file takes whole
+  4 KiB blocks (prune.Policy.block), so the 16 GiB cap means 16 GiB
+  allocated. The cache held about 20 GB on disk under a 16 GiB cap
+  because its many small entries (a few hundred bytes each) take a block
+  each; the first prune of a full cache after this removes the
+  difference (about 2 to 3 GB on the 2026-10-24 cache), least recently
+  used first. `XO_BACKEND_CACHE_MAX` is counted the same way.
 - A build no longer tries to open cache entries in a shard the cache does
   not have: it lists the kind's shard directories by name only (new
   std/internal dir_names: no stat of any entry, which fs.read_dir does, and

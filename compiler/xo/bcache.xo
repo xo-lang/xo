@@ -962,6 +962,9 @@ fn backend_policy(os: Os) -> prune.Policy {
   let base = prune.from_env(os.env, prune.Policy{max_age: 168h, max_bytes: BACKEND_CAP_GB * prune.GB, keep: BACKEND_KEEP, every: BACKEND_EVERY, walk_budget: BACKEND_WALK})
   var p = cap_env(os, base, "XO_BACKEND_CACHE_MAX")
   p.burst = p.max_bytes / 8
+  // the cap counts the disk the cache uses: 4 KiB blocks (a file of 300
+  // bytes takes 4096)
+  p.block = 4096
   p
 }
 
