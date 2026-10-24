@@ -1291,7 +1291,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         fail_stage(os, st, "${cc} failed${ir_failure_sources(os, lm, msg)}")
       }
       if dsym {
-        cc_dsym(os, st.bin, o.dsym, lsplit)
+        cc_dsym(os, st.bin, o.dsym, lsplit, "")
       }
       store_bin(os, ctx, entry, st.bin)
     }
@@ -1730,13 +1730,18 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         t = lap(os, phases, "assemble", t)
         cache_note(os, phases, "objects", progs.len() - nasm, progs.len())
       }
-      let msg = cc_build(os, ctx, cc, flags + cpad + lk.link_only, lsrcs, cst.bin)
+      // darwin's linker records each object's path in the program (the debug
+      // map, N_OSO): relative to the private directory, two builds of one
+      // program are byte for byte equal (TestModuleCheckAuto)
+      let oso_prefix = if tgoos == "darwin" && dir != sdir { "${dir}/" } else { "" }
+      let opad: List[Str] = if oso_prefix.is_empty() { [] } else { ["-Wl,-oso_prefix,${oso_prefix}"] }
+      let msg = cc_build(os, ctx, cc, flags + cpad + opad + lk.link_only, lsrcs, cst.bin)
       if !msg.is_empty() {
         os.stdio.eprint(msg)
         fail_stage(os, cst, "${cc} failed")
       }
       if cdsym {
-        cc_dsym(os, cst.bin, o.dsym, csplit)
+        cc_dsym(os, cst.bin, o.dsym, csplit, oso_prefix)
       }
       store_bin(os, ctx, entry, cst.bin)
     }

@@ -67,10 +67,13 @@ const DWARF_HEADERPAD = "-Wl,-headerpad,0x1000"
 /// executable, as compiler/macho's link writes it, and the bundle kept
 /// only for --dsym (keep); when embedding fails the bundle stays and a
 /// warning says why.
-fn cc_dsym(os: Os, bin: Str, keep: Bool, split: Bool) {
+fn cc_dsym(os: Os, bin: Str, keep: Bool, split: Bool, oso_prefix: Str) {
   let d = "${bin}.dSYM"
   os.fs.remove_all(d).ignore_err("none from an earlier link")
-  match os.proc.run("dsymutil", [bin, "-o", d]) {
+  // the object paths in bin are relative to oso_prefix when the link was given
+  // -oso_prefix (a build's private directory, build_native)
+  let dargs = if oso_prefix.is_empty() { [bin, "-o", d] } else { [bin, "-o", d, "--oso-prepend-path=${oso_prefix}"] }
+  match os.proc.run("dsymutil", dargs) {
     Ok(r) => if r.code != 0 {
       os.fs.remove_all(d).ignore_err("a failed dsymutil")
       return

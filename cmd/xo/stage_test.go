@@ -209,6 +209,51 @@ func TestBuildWorkDirsPrivate(t *testing.T) {
 	}
 }
 
+// TestBuildCCLinkOSOPaths: a program linked by cc on darwin (a `use c`
+// source) records its objects' paths relative to the build's private
+// directory, so two builds are equal byte for byte (TestModuleCheckAuto
+// failed on the random directory's name, 2026-10-24), and its line
+// tables are still in the program after the directory is gone (dsymutil
+// finds the objects by --oso-prepend-path).
+func TestBuildCCLinkOSOPaths(t *testing.T) {
+	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
+		t.Skip("darwin/arm64: the Mach-O debug map")
+	}
+	if _, err := exec.LookPath("dwarfdump"); err != nil {
+		t.Skip("no dwarfdump")
+	}
+	src, err := filepath.Abs(filepath.Join("..", "..", "internal", "llvm", "testdata", "golden", "use_c_add"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, src)
+	setenv(t, "XO_BIN_CACHE", "off")
+	setenv(t, "XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
+	out := filepath.Join(t.TempDir(), "p")
+	var prog [2][]byte
+	for i := range prog {
+		os.Remove(out)
+		var o, e bytes.Buffer
+		if c := run(t, []string{"build", "--backend=arm64", "--debug-info=on", "-o", out, "."}, &o, &e); c != 0 {
+			t.Fatalf("build %d: exit %d\n%s", i, c, e.String())
+		}
+		prog[i], err = os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !bytes.Equal(prog[0], prog[1]) {
+		t.Errorf("two builds of one program differ byte for byte")
+	}
+	lines, err := exec.Command("dwarfdump", "--debug-line", out).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(lines, []byte("main.xo")) {
+		t.Errorf("no line table for main.xo in the program")
+	}
+}
+
 // TestBuildLLVMWorkDirsPrivate: concurrent LLVM builds of different
 // programs each write their IR and split modules into a directory of
 // their own, removed after the link, so no prog*.ll is left in the build

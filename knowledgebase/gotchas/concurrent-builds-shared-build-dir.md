@@ -36,3 +36,14 @@ prune). Since 2026-10-24 each LLVM build writes `<dir>-w-<random>` (and its
 `-modules` beside it) and removes both after the link; `XO_KEEP_ASM=1` keeps the
 shared directory. Test: cmd/xo TestBuildLLVMWorkDirsPrivate (fails on the
 earlier xo: the IR stays in `llvm/`).
+
+## Follow-up (2026-10-24): the directory name reached the program
+
+Observed. The random `w-<hex>` name was recorded in the program by
+darwin's linker (the N_OSO debug-map entries name each object), so two
+builds of one program differed byte for byte and
+`TestModuleCheckAuto` failed. The cc link now passes
+`-Wl,-oso_prefix,DIR/` (the entries are `prog-darwin.0.o`) and dsymutil
+gets `--oso-prepend-path=DIR/` (Apple's dsymutil has no `--oso-prefix`;
+the wrong flag failed silently and a plain `--debug-info=on` build
+lost its line tables). `TestBuildCCLinkOSOPaths` checks both.
