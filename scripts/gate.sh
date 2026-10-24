@@ -37,8 +37,10 @@
 #   cross    internal/arm64 TestAmd64CrossBuilds (four programs built for
 #            linux, windows and darwin amd64): run after the steps named
 #            when the branch changes compiler/arm64 or compiler/ssa;
-#            XO_GATE_CROSS=0 skips that
-#   warm     the backend caches across xo builds (decision 0275): the
+#            XO_GATE_CROSS=0 skips that; and internal/arm64
+#            TestSwitch65535Arms when it changes compiler/arm64/jumptab.xo
+#            (the match lowering; XO_GATE_SCALE=0 skips that)
+#   warm    the backend caches across xo builds (decision 0275): the
 #            parent commit's xo is built, then TestFrontCacheAcrossPrograms
 #            fills a cache with it and builds every program again with
 #            this xo, through the cache and with it off (XO_TEST_WARM_XO);
@@ -116,6 +118,15 @@ native_change() {
   { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | grep -q -E '^compiler/(arm64|ssa)/'
 }
 cross_ran=0
+# scale_change: the branch changes the match lowering (compiler/arm64
+# jumptab.xo), so internal/arm64's TestSwitch65535Arms (about 100 s) runs
+# after the steps named (lead, 2026-10-24: 9479f31cd's compare tree made
+# that match quadratic, past XO_MAX_MEM, and only the 8 hourly full tier
+# saw it). XO_GATE_SCALE=0 skips it.
+scale_change() {
+  base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
+  { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | grep -q -E '^compiler/arm64/jumptab\.xo$'
+}
 # llvm_goldens: the golden programs the llvm step runs (owner,
 # 2026-10-22: the whole package cost 46 to 56 minutes a gate), "all" or
 # XO_LLVM_GOLDENS's list (internal/llvm golden_select_test.go): those
@@ -254,6 +265,9 @@ fi
 if [ "$cross_ran" = 0 ] && [ "${XO_GATE_CROSS:-1}" != 0 ] && native_change; then
   cross_ran=1
   full cross ./internal/arm64 -run '^TestAmd64CrossBuilds$'
+fi
+if [ "${XO_GATE_SCALE:-1}" != 0 ] && scale_change; then
+  full scale ./internal/arm64 -run '^TestSwitch65535Arms$'
 fi
 echo GATE-DONE
 exit $failed
