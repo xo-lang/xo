@@ -359,3 +359,53 @@ func split(src []byte, key func(ast.Decl) string) (map[string]string, error) {
 	}
 	return out, nil
 }
+
+// Run regenerates the generated files at root, or with check reports every
+// one that is stale, missing, or left over and writes nothing:
+// scripts/stdsync runs it beside the other generated files a std change
+// touches, and scripts/stdgen runs it alone.
+func Run(root string, xo []string, check bool) (stale []string, err error) {
+	files, err := Generate(root, xo)
+	if err != nil {
+		return nil, err
+	}
+	have, err := Generated(root)
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range have {
+		if _, ok := files[p]; ok {
+			continue
+		}
+		if check {
+			stale = append(stale, p+" is left over")
+			continue
+		}
+		if err := os.Remove(filepath.Join(root, p)); err != nil {
+			return nil, err
+		}
+	}
+	paths := make([]string, 0, len(files))
+	for p := range files {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	for _, p := range paths {
+		path := filepath.Join(root, p)
+		if check {
+			old, err := os.ReadFile(path)
+			if err != nil {
+				stale = append(stale, p+" is missing")
+				continue
+			}
+			if !bytes.Equal(old, files[p]) {
+				stale = append(stale, p+" is stale")
+			}
+			continue
+		}
+		if err := os.WriteFile(path, files[p], 0o644); err != nil {
+			return nil, err
+		}
+	}
+	return stale, nil
+}

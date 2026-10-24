@@ -132,10 +132,24 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   private access (decision 0262); internal/stdtest runs every std module
   that has tests. Tests under std/ and compiler/ live only in `_test.xo`
   files.
-- `go run ./scripts/stdindex` after changing std/prelude.xo: spec/std.md
-  Appendix A lists every prelude function and method by type (look there
-  for a method's exact name and signature); TestStdIndexCurrent fails
-  while it is stale.
+- internal/llvm timeout (2026-10-24): the package's goldens need 46+ minutes
+  (each builds and links with clang), and go test's default timeout is 10
+  minutes, so a bare `go test ./internal/llvm` FAILs at 600s naming no test,
+  after ten minutes of work (two agents lost a run each that evening). Run
+  one golden with `-run 'TestGolden/NAME$'` (NAME is a directory under
+  internal/llvm/testdata/golden; XO_TEST_GO_PARITY=1 adds the Go backend
+  comparison), or the whole package with `-timeout 90m`. The test binary
+  itself now stops such a run at once with that advice
+  (internal/llvm/golden_timeout_test.go), and -short is unaffected.
+- `go run ./scripts/stdsync [-check]` after changing std/prelude.xo: one
+  command for every file a prelude change derives, spec/std.md's Appendix A
+  index (every prelude function and method by type, internal/stdindex), the
+  habit goldens (their want.json text and fixed.xo name prelude methods;
+  regenerated only when the prelude's declarations changed, checked against
+  cmd/xo/testdata/habits/prelude.sha256), and std/rt's generated files.
+  `-check` names each stale artifact and prints the one command that fixes
+  them all. TestStdIndexCurrent and stdgen -check name it in their failure
+  messages too.
 - `go run ./scripts/stdgen` after changing a std type (a struct, enum,
   newtype, or interface in std/*.xo) or a std function's signature:
   regenerates std/rt/std_gen_M.go, the Go backend's declarations of

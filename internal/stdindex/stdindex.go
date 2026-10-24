@@ -1,8 +1,9 @@
 // Package stdindex makes spec/std.md's prelude index: every function and
 // method std/prelude.xo declares, by type, as the prelude declares it
 // (2026-10-20 poll: agents grepped the prelude for Str.find and
-// Rand.bytes). scripts/stdindex writes it into spec/std.md; the repotest
-// TestStdIndexCurrent fails when the two disagree.
+// Rand.bytes). scripts/stdsync writes it into spec/std.md beside the other
+// files a prelude change derives (scripts/stdindex writes this one alone);
+// the repotest TestStdIndexCurrent fails when the two disagree.
 package stdindex
 
 import (
@@ -13,9 +14,15 @@ import (
 
 // Begin and End mark the generated part of spec/std.md.
 const (
-	Begin = "<!-- BEGIN prelude index: generated from std/prelude.xo by `go run ./scripts/stdindex`; do not edit -->"
+	Begin = "<!-- BEGIN prelude index: generated from std/prelude.xo by `go run ./scripts/stdsync`; do not edit -->"
 	End   = "<!-- END prelude index -->"
 )
+
+// beginPrefix finds the block in a spec whose Begin line still names an
+// older command (the marker named scripts/stdindex until 2026-10-24):
+// matching the prefix, not the whole line, means a rewording replaces the
+// block instead of appending a second one.
+const beginPrefix = "<!-- BEGIN prelude index"
 
 var (
 	ifaceRe  = regexp.MustCompile(`^interface ([A-Za-z0-9_]+)`)
@@ -82,7 +89,7 @@ func Index(prelude string) string {
 // Splice is spec (spec/std.md's text) with its prelude index replaced by
 // index, or appended when it has none.
 func Splice(spec, index string) string {
-	i := strings.Index(spec, Begin)
+	i := strings.Index(spec, beginPrefix)
 	j := strings.Index(spec, End)
 	if i < 0 || j < i {
 		return strings.TrimRight(spec, "\n") + "\n\n" + index
@@ -94,7 +101,7 @@ func Splice(spec, index string) string {
 
 // Current is the index spec holds, "" for none.
 func Current(spec string) string {
-	i := strings.Index(spec, Begin)
+	i := strings.Index(spec, beginPrefix)
 	j := strings.Index(spec, End)
 	if i < 0 || j < i {
 		return ""

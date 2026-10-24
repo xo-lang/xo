@@ -28,6 +28,9 @@ func TestMain(m *testing.M) {
 		exitingServer()
 	}
 	flag.Parse()
+	// a run that would die at go test's 10 minute timeout says so at once,
+	// with the command that runs it instead (golden_timeout_test.go)
+	exitOnGoldenTimeout()
 	// identical builds reuse one binary, within and across runs
 	xotool.EnableTestBinCache()
 	// identical C compiles (the sanitized drivers) reuse one binary too

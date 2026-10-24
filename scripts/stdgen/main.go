@@ -6,17 +6,18 @@
 //	go run ./scripts/stdgen          # write the file
 //	go run ./scripts/stdgen -check   # exit 1 when a file is stale, missing, or left over
 //
+// go run ./scripts/stdsync does this and spec/std.md's prelude index and the
+// habit goldens in one command, which is what a std/prelude.xo change needs;
+// this command stays for a std type's change alone.
+//
 // It runs the xo the tests run (internal/xotool: $XO_CLI, else the
 // checkout's bin/xo, built when stale).
 package main
 
 import (
-	"bytes"
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
-	"sort"
 
 	"github.com/xo-lang/xo/internal/stdgen"
 	"github.com/xo-lang/xo/internal/xotool"
@@ -40,45 +41,15 @@ func run(check bool) error {
 	if err != nil {
 		return err
 	}
-	files, err := stdgen.Generate(root, xo)
+	stale, err := stdgen.Run(root, xo, check)
 	if err != nil {
 		return err
 	}
-	have, err := stdgen.Generated(root)
-	if err != nil {
-		return err
+	for _, s := range stale {
+		fmt.Fprintln(os.Stderr, "stdgen:", s+": run go run ./scripts/stdsync")
 	}
-	for _, p := range have {
-		if _, ok := files[p]; ok {
-			continue
-		}
-		if check {
-			return fmt.Errorf("%s is left over (no std module generates it): run go run ./scripts/stdgen", p)
-		}
-		if err := os.Remove(filepath.Join(root, p)); err != nil {
-			return err
-		}
-	}
-	paths := make([]string, 0, len(files))
-	for p := range files {
-		paths = append(paths, p)
-	}
-	sort.Strings(paths)
-	for _, p := range paths {
-		path := filepath.Join(root, p)
-		if check {
-			old, err := os.ReadFile(path)
-			if err != nil {
-				return fmt.Errorf("%s is missing: run go run ./scripts/stdgen", p)
-			}
-			if !bytes.Equal(old, files[p]) {
-				return fmt.Errorf("%s is stale: run go run ./scripts/stdgen", p)
-			}
-			continue
-		}
-		if err := os.WriteFile(path, files[p], 0o644); err != nil {
-			return err
-		}
+	if len(stale) > 0 {
+		os.Exit(1)
 	}
 	return nil
 }

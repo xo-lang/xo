@@ -41,5 +41,7 @@ The generated declarations are one file per std module
 (`std/rt/std_gen_M.go`, `std/rt/std_sigs_M.go`), because the shared
 file conflicted on almost every rebase of a std push that touched a
 type (csvpar, tmpl, and mailmsg on 2026-10-21). A conflict in one of
-them is still resolved by `go run ./scripts/stdgen`, and `stdgen -check`
-also fails on a file left over from a removed module.
+them is still resolved by `go run ./scripts/stdgen` (or
+`go run ./scripts/stdsync`, which does it beside spec/std.md's prelude
+index and the habit goldens), and `stdgen -check` also fails on a file left
+over from a removed module; its message names stdsync.

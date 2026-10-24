@@ -2,6 +2,10 @@
 // std/prelude.xo (internal/stdindex): run it after changing the prelude.
 //
 //	go run ./scripts/stdindex
+//
+// go run ./scripts/stdsync does this and the other files a prelude change
+// derives (the habit goldens and std/rt's generated files); this command
+// stays for the index alone.
 package main
 
 import (

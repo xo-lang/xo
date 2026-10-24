@@ -4094,7 +4094,7 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
     tokens in all three modes, parse, and encode, plus EscapeText
     (internal/stdtest/testdata/corpus/xml, scripts/stdcorpus xml).
 
-<!-- BEGIN prelude index: generated from std/prelude.xo by `go run ./scripts/stdindex`; do not edit -->
+<!-- BEGIN prelude index: generated from std/prelude.xo by `go run ./scripts/stdsync`; do not edit -->
 
 ## Appendix A. Prelude index
 

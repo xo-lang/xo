@@ -34,3 +34,27 @@ func TestIndex(t *testing.T) {
 		t.Errorf("Splice is not idempotent:\n%s", once)
 	}
 }
+
+// TestSpliceMarkerReworded: a spec whose Begin line still names an older
+// command holds one block, and splicing replaces it rather than appending a
+// second one (the marker named scripts/stdindex until 2026-10-24).
+func TestSpliceMarkerReworded(t *testing.T) {
+	index := Index("fn (s: Str) len() -> Int\n")
+	spec := "# std\n\n<!-- BEGIN prelude index: generated from std/prelude.xo by `go run ./scripts/stdindex`; do not edit -->\n\nold text\n\n" + End + "\n\nprose after\n"
+	if !strings.Contains(Begin, "scripts/stdsync") {
+		t.Fatal("the marker does not name scripts/stdsync")
+	}
+	if Current(spec) == "" {
+		t.Fatal("Current does not find a block with the older marker")
+	}
+	once := Splice(spec, index)
+	if got := strings.Count(once, End); got != 1 {
+		t.Fatalf("Splice left %d blocks:\n%s", got, once)
+	}
+	if Current(once) != index {
+		t.Errorf("the block is not the index:\n%s", once)
+	}
+	if !strings.HasSuffix(once, "prose after\n") {
+		t.Errorf("Splice lost the text after the block:\n%s", once)
+	}
+}
