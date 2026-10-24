@@ -346,7 +346,7 @@ fn main(os: Os) ! {
   }
   if o.cmd is "build" | "run" {
     // the run cache for a build or run (decision 0360 stage 1,
-    // XO_WHOLE_BUILD=on): an unchanged program's binary, copied to the
+    // on by default, XO_WHOLE_BUILD=off): an unchanged program's binary, copied to the
     // output or run, with what its build printed
     let t0 = os.clock.now()
     o.run_start = t0.unix_millis()
@@ -1392,7 +1392,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     t = lap(os, phases, "emit", t)
     if !fdir.is_empty() {
       // a build the run cache keys (a test's, or a build's or run's under
-      // XO_WHOLE_BUILD=on): the unchanged builds after it are served
+      // on by default): the unchanged builds after it are served
       // whole, so its first is the only one that can pack the parts
       fn_cache_store(os, fdir, fpk, fc, p.stores, p.part_stores, !o.run_key.is_empty())
       cache_note(os, phases, "functions", p.reused, fc.keys.len())

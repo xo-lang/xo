@@ -16,8 +16,8 @@
 // a warning was not stored, and such a program never hit). A build whose
 // inputs changed while it ran is not stored.
 //
-// `xo build` and `xo run` use the same entries under XO_WHOLE_BUILD=on
-// (decision 0360 stage 1): the key's command line is theirs (it names
+// `xo build` and `xo run` use the same entries (decision 0360; on by
+// default, XO_WHOLE_BUILD=off turns it off): the key's command line is theirs (it names
 // the subcommand, so their entries never meet a test run's), an entry
 // also keeps the outputs a build wrote (target and path), and a hit
 // copies the binary to each output, or runs it.
@@ -44,10 +44,11 @@ struct RunOut {
   outs: List[(Str, Str)] = []
 }
 
-/// Whether `xo build` and `xo run` use the run cache (decision 0360
-/// stage 1, opt in while it is measured).
+/// Whether `xo build` and `xo run` use the run cache (decision 0360: on
+/// by default since the owner's decision of 2026-10-23; XO_WHOLE_BUILD=off
+/// turns it off, and XO_BIN_CACHE=off turns off every run cache entry).
 fn whole_build_on(os: Os) -> Bool {
-  (os.env.get("XO_WHOLE_BUILD") ?? "") == "on"
+  (os.env.get("XO_WHOLE_BUILD") ?? "") != "off"
 }
 
 /// The flags of `xo test` that only change how the tests run, not the

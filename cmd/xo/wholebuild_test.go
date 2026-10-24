@@ -32,8 +32,8 @@ test "one" {
 }
 `
 
-// TestWholeBuildCache: under XO_WHOLE_BUILD=on, `xo build` and `xo run`
-// use the run cache of `xo test` (decision 0360 stage 1): an unchanged
+// TestWholeBuildCache: by default `xo build` and `xo run` use the run
+// cache of `xo test` (decision 0360 stage 1): an unchanged
 // program's binary is copied to the output (or run) with what its build
 // printed, its warning included, and every input change misses: an edit,
 // a new file, an XO_ variable, a flag, an xo.work above the module (a
@@ -52,13 +52,15 @@ func TestWholeBuildCache(t *testing.T) {
 	setenv(t, "XO_BUILD_DIR", filepath.Join(tmp, "build"))
 	setenv(t, "XO_BIN_CACHE", filepath.Join(tmp, "bin"))
 	setenv(t, "XO_BACKEND_CACHE_DIR", filepath.Join(tmp, "backend"))
-	setenv(t, "XO_WHOLE_BUILD", "on")
 	// a copy of std, so a std file can be edited
 	std := filepath.Join(tmp, "std")
 	if err := os.CopyFS(std, os.DirFS(filepath.Join(repoRoot, "std"))); err != nil {
 		t.Fatal(err)
 	}
 	setenv(t, "XO_STD", std)
+	// the default, named so that switching it off and back keeps one key
+	// (the key holds every XO_ variable)
+	setenv(t, "XO_WHOLE_BUILD", "on")
 	dir := filepath.Join(tmp, "prog")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -109,6 +111,10 @@ func TestWholeBuildCache(t *testing.T) {
 	}
 	so1, se1 := build("first build", false)
 	ran("first build", "one\n")
+	// XO_WHOLE_BUILD=off: the entry is not used
+	setenv(t, "XO_WHOLE_BUILD", "off")
+	build("XO_WHOLE_BUILD=off", false)
+	setenv(t, "XO_WHOLE_BUILD", "on")
 	so2, se2 := build("unchanged", true)
 	if so2 != so1 || se2 != se1 {
 		t.Fatalf("a hit printed otherwise than the build\n--- build\n%s%s--- hit\n%s%s", so1, se1, so2, se2)

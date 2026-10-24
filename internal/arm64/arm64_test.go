@@ -36,6 +36,10 @@ func TestMain(m *testing.M) {
 	// each xotool.Build in a directory of its own, removed after it
 	// (gotchas/property-tests-fill-build-dir.md)
 	os.Setenv("XO_TEST_BUILD_SCRATCH", "1")
+	// the cache tests build one program twice and read the front end and
+	// module caches on the second build; a whole-build hit (decision 0360,
+	// default on) would skip them
+	os.Setenv("XO_WHOLE_BUILD", "off")
 	code := m.Run()
 	xotool.CleanupTemp() // the builds without an output path (xotool.TempDir)
 	os.RemoveAll(dir)

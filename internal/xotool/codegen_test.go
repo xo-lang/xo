@@ -51,7 +51,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_GOBIND_DIR":           {"content", ""},
 	"XO_MODCACHE":             {"content", ""},
 	"XO_OFFLINE":              {"none", ""},
-	"XO_WHOLE_BUILD":          {"none", ""}, // whether a build or run uses the run cache (decision 0360), whose key holds every XO_ value
+	"XO_WHOLE_BUILD":          {"none", ""}, // off: a build or run does not use the run cache (decision 0360), whose key holds every XO_ value
 	"XO_WORK":                 {"content", ""},
 	"XO_LLVM_OPT":             {"link", ""},
 	"XO_LLVM_LTO":             {"link", ""},

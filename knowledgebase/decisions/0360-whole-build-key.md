@@ -1,7 +1,8 @@
 # 0360: A whole-build key: reuse the linked binary when nothing that feeds the build changed
 
-Status: Proposed (Xo Lang 2, 2026-10-23): 0351's stage 3. The lead
-approved stages 1 and 2 (opt-in, `XO_WHOLE_BUILD=on`) on 2026-10-23,
+Status: Accepted (owner, 2026-10-23): whole-build reuse is on by
+default (stage 3); `XO_WHOLE_BUILD=off` turns it off. 0351's stage 3,
+by Xo Lang 2. The lead approved stages 1 and 2 (opt-in, `XO_WHOLE_BUILD=on`) on 2026-10-23,
 with content hashing by default and the stat path opt-in (below), then
 reversed their order once 0236's run cache turned up (see "Stage 1, as
 built"); stage 3, on by default, goes to the owner with stage 2's

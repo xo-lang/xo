@@ -1,5 +1,5 @@
-// `xo build` and `xo run` through the run cache (decision 0360 stage 1,
-// opt in with XO_WHOLE_BUILD=on): the key and the input list of `xo
+// `xo build` and `xo run` through the run cache (decision 0360; on by
+// default, XO_WHOLE_BUILD=off turns it off): the key and the input list of `xo
 // test`'s run cache (testcache.xo), so an unchanged program skips the
 // check, the passes and the link. The build's standard output and error
 // are kept with the binary and a hit prints them again, so a hit shows

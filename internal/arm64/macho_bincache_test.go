@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/xo-lang/xo/internal/xotool"
@@ -53,7 +54,9 @@ func TestMachoBinCache(t *testing.T) {
 	entries := func() int {
 		n := 0
 		filepath.Walk(cache, func(p string, fi os.FileInfo, err error) error {
-			if err == nil && !fi.IsDir() && filepath.Base(filepath.Dir(p)) != "run" {
+			// the run cache (the test cache and, since decision 0360 stage 3, the
+			// whole-build entries: run/<xx>/KEY.bin and .m) is not the binary cache
+			if err == nil && !fi.IsDir() && !strings.Contains(filepath.ToSlash(p), "/run/") {
 				n++
 			}
 			return nil

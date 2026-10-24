@@ -29,10 +29,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   suite takes `--seed-archive NAME SHA256` to seed xobuild from a
   release archive.
 
-- `XO_WHOLE_BUILD=on` (opt in, decision 0360 stage 1): `xo build` and
-  `xo run` of an unchanged program reuse its binary through the run cache
-  `xo test` uses, printing what the build printed (a warm build of a
-  small HTTP server 0.56 s to 0.056 s, hello 0.30 s to 0.044 s). `xo
+- `xo build` and `xo run` of an unchanged program reuse its binary
+  through the run cache `xo test` uses, printing what the build printed
+  (a warm build of a small HTTP server 0.54 s to 0.039 s, hello 0.28 s
+  to 0.040 s); on by default since 2026-10-23 (the owner's decision),
+  `XO_WHOLE_BUILD=off` turns it off (decision 0360). `xo
   test` of a program with a warning is now cached too, the warning
   printed on each hit (it was never stored before). The entries list
   what the build actually read, looked for (an `xo.work` above the
