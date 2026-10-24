@@ -79,6 +79,19 @@ Two kinds, both fixed std-side:
   `between8(...) & (w ^ -1)` is one and-not where masking a masked value
   again is two instructions. obj.fold_copy lost five of 21 instructions
   per word to these (bench/results/fold-copy-2026-10-24.md).
+- In a hot loop, take the checks out of arithmetic that cannot
+  overflow: `lo.wrapping_add(hi).shr_logical(1)`,
+  `m.wrapping_mul(6)` and `lo.wrapping_add(1)` in a binary search print
+  as `add`, `lsr`, `mul`, `add`, where the plain forms print an
+  `adds`/`b.vs` fault path and a signed division's `asr`;
+  unicode.in_ranges went from 17 to 13 instructions an iteration
+  (bench/results/in-ranges-2026-10-24.md). The ASCII letter fold
+  `(r | 32) - 97 < 26` is NOT one of these: `-` is signed, so it prints
+  as a checked `subs` plus a signed compare, and a control byte reads
+  as a letter. Write the two sided test on the folded value
+  (`x = r | 32` then `x >= 97 && x <= 122`), one unsigned compare, and
+  put the `r >= 0x80` dispatch first so a non-ASCII rune pays nothing
+  for it.
 - Every port gets a timing row against Go's package next to its
   corpus (bench/results), so a slow port shows at once, not after a
   profile; profile with XO_PROF=cpu before rewriting.

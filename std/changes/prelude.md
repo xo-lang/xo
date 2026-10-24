@@ -1,5 +1,32 @@
 # prelude changes
 
+## 2026-10-24: perf: the Rune class binary search is unchecked, and is_letter folds its ASCII cases
+
+- Kind: perf
+- Commit: this commit
+- Found by: Xo Lang 1 (the native-vs-LLVM sweep: bench/perf/unicode
+  classes); the loop's midpoint, table offset and index steps each
+  carried an overflow check for a value that cannot overflow
+- Go reference: unicode's RangeTable search (go1.26.1), which also
+  tests `r | 32` against one range for the Latin letters
+- Test: corpora runes (every class method against Go's unicode and
+  strconv), where, trimchars, regexp, bytes and strings on arm64 and
+  LLVM; the wasm goldens; the full fixed point
+- Timing: bench/results/in-ranges-2026-10-24.md
+
+`unicode.in_ranges` takes its midpoint with
+`lo.wrapping_add(hi).shr_logical(1)` and its table offsets with
+`wrapping_mul` and `wrapping_add`: `0 <= lo <= hi <= n`, so no step can
+overflow, and the checked forms printed an `adds`/`b.vs` fault path and
+a signed division's `asr` per iteration. The iteration is 13
+instructions from 17. `unicode.is_letter` tests the ASCII letters as
+`(r | 32)` in `97 to 122`, one unsigned range compare for both cases
+where the two ranges were two compares and a branch, after the
+`r >= 0x80` dispatch so a non-ASCII rune pays nothing extra. The
+classes row is 0.870 instructions and 0.936 wall of the base; latin1
+(no search) 0.998 and fieldsfunc (is_space, untouched) 1.000, the
+controls.
+
 ## 2026-10-24: perf: Str.split_where's pieces are views made with no clamp or slice check
 
 - Kind: perf
