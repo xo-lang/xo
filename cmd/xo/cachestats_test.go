@@ -43,6 +43,14 @@ func TestCacheStats(t *testing.T) {
 		if !total.MatchString(se.String()) || !regexp.MustCompile(step.want).MatchString(se.String()) {
 			t.Fatalf("%s build: want a total and %s in\n%s", step.name, step.want, se.String())
 		}
+		// a warm build reads back what the cold one stored (about 6,000
+		// entries for hello): a build whose lookups were all skipped
+		// passes the cold build's "under 100 misses" below, as one under
+		// XO_CACHE_STATS did while the stats Fs was refused by
+		// internal.dir_names (2026-10-24)
+		if m := regexp.MustCompile(`(?m)^cache stats: entry read hit: ([0-9]+) calls`).FindStringSubmatch(se.String()); step.name == "warm" && (m == nil || len(m[1]) < 4) {
+			t.Fatalf("warm build: fewer than 1000 entries read back\n%s", se.String())
+		}
 		// a cold build does not open entries the cache cannot hold
 		// (bcache.xo cache_get_all lists the shards: 21,413 failed opens
 		// for a cold CRUD build before, 2026-10-23)
