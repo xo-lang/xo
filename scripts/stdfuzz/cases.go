@@ -976,7 +976,7 @@ func genArchive(r *rand.Rand, n int) []fuzzCase {
 	for i := 0; i < n; i++ {
 		b, name := randBytes(r), pick(r, names)
 		B, N := xbytes(b), xq(name)
-		switch i % 8 {
+		switch i % 9 {
 		case 0:
 			out = append(out, fuzzCase{fmt.Sprintf("archive.%04d", i), "fz_tar(" + N + ", " + B + ")"})
 		case 1:
@@ -995,6 +995,12 @@ func genArchive(r *rand.Rand, n int) []fuzzCase {
 		case 7:
 			gname := pick(r, []string{"a.txt", "dir/b", "dir/a/b.txt", "x", "a b.txt"})
 			out = append(out, fuzzCase{fmt.Sprintf("archive.%04d", i), "fz_unzip_raw(" + xbytes(goZip(gname, b)) + ")"})
+		case 8:
+			// Go's zip writer accepts a NUL in a name; every backend's
+			// unzip must refuse it with "bad entry path" (decision 0164's
+			// path rules, the tar NUL fix of 2026-10-24).
+			zname := pick(r, []string{"a\x00b", "a\x00b.txt", "d/a\x00b"})
+			out = append(out, fuzzCase{fmt.Sprintf("archive.%04d", i), "fz_unzip_raw(" + xbytes(goZip(zname, b)) + ")"})
 		}
 	}
 	return out
