@@ -710,13 +710,17 @@ fn (var b: Builder) const_value(c: Int, t: Int) -> Int {
       b.const_entry(name, body, lt, f)
     }
   }
-  let fa = b.add(Op.FuncAddr, it, Aux.S(s: name), [])
   let dl = b.drop_list(t)
-  let da = b.add(Op.FuncAddr, it, Aux.S(s: dl), [])
   // one value for the number: the front end's cache renumbers it
   // (fecache.xo fe_const_ids), the fast path's load included
   let idv = b.cint(id)
-  let l = if b.const_fast() { b.const_read(lt, fa, da, idv) } else { b.rt("const_once", lt, [fa, da, idv]) }
+  let l = if b.const_fast() {
+    b.const_read(lt, name, dl, idv)
+  } else {
+    let fa = b.add(Op.FuncAddr, it, Aux.S(s: name), [])
+    let da = b.add(Op.FuncAddr, it, Aux.S(s: dl), [])
+    b.rt("const_once", lt, [fa, da, idv])
+  }
   b.call("list.index", t, "", [l, b.cint(0)])
 }
 
@@ -739,8 +743,11 @@ const CONST_ACQUIRE = 1
 /// record, its constants table, the constant's slot (consts.once's fast
 /// path, without its calls: 2026-10-23, bench/perf/trimchars index read
 /// two tables a loop through cabi.const_once, consts.once and table());
-/// rt.const_once otherwise (not built yet, being built, or faulted).
-fn (var b: Builder) const_read(lt: Int, fa: Int, da: Int, idv: Int) -> Int {
+/// rt.const_once otherwise (not built yet, being built, or faulted), the
+/// addresses of the constant's entry fname and drop function dname made
+/// there (2026-10-24: made before the read, they were four instructions
+/// every read of a constant, built or not).
+fn (var b: Builder) const_read(lt: Int, fname: Str, dname: Str, idv: Int) -> Int {
   let it = b.int_t()
   let bt = b.bool_t()
   let join = b.new_block()
@@ -765,6 +772,8 @@ fn (var b: Builder) const_read(lt: Int, fa: Int, da: Int, idv: Int) -> Int {
   b.jump(join, [l])
   b.seal(slow)
   b.s.cur = slow
+  let fa = b.add(Op.FuncAddr, it, Aux.S(s: fname), [])
+  let da = b.add(Op.FuncAddr, it, Aux.S(s: dname), [])
   b.jump(join, [b.rt("const_once", lt, [fa, da, idv])])
   b.seal(join)
   b.s.cur = join

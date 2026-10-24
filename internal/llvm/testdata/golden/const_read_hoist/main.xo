@@ -1,0 +1,54 @@
+// Constant reads in loops (compiler/ssa show.xo const_read, constreuse.xo):
+// a constant first built inside a loop, a loop that never runs over a
+// constant whose initializer faults (never read, never faults), a
+// faulting read in a loop (faults at its first iteration, each call),
+// and a read in a nested loop.
+use std/task
+
+const LATE: List[Int] = [10, 20, 30]
+
+fn boom() -> List[Int] {
+  let xs: List[Int] = []
+  [xs[1]]
+}
+
+const BAD: List[Int] = boom()
+
+fn sum_late(n: Int) -> Int {
+  var s = 0
+  for i in 0..n {
+    s += LATE[i % LATE.len()]
+  }
+  s
+}
+
+fn never(n: Int) -> Int {
+  var s = 0
+  for i in 0..n {
+    s += BAD[i % BAD.len()]
+  }
+  s
+}
+
+fn nested(n: Int) -> Int {
+  var s = 0
+  for i in 0..n {
+    for j in 0..n {
+      s += LATE[(i + j) % LATE.len()]
+    }
+  }
+  s
+}
+
+fn main(os: Os) {
+  // LATE's first read is inside sum_late's loop
+  os.stdio.println("late ${sum_late(7)} ${sum_late(7)}")
+  os.stdio.println("never ${never(0)}")
+  for _ in 0..2 {
+    match task.isolate(fn() -> Int { never(3) }) {
+      Ok(v) => os.stdio.println("bad ${v}")
+      Err(_) => os.stdio.println("bad faulted")
+    }
+  }
+  os.stdio.println("nested ${nested(9)}")
+}
