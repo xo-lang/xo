@@ -1,0 +1,46 @@
+// std/json decode of a List[Time]: 2000 RFC 3339 strings (Z, fractions and
+// +-HH:MM offsets), 200 rounds. The cost of reading each time string
+// (a copy of the text before the parse until 2026-10-24).
+// Usage: jsontime; prints "decode <checksum>".
+use std/json
+
+const COUNT = 2000
+const ROUNDS = 200
+
+fn doc() -> Str {
+  var parts: List[Str] = List.with_capacity(COUNT)
+  var seed = 4242
+  for _ in 0..COUNT {
+    seed = (seed * 1103515245 + 12345) % 2147483648
+    let y = 1990 + seed % 60
+    let mo = 1 + seed / 7 % 12
+    let d = 1 + seed / 13 % 28
+    let h = seed / 17 % 24
+    let mi = seed / 19 % 60
+    let s = seed / 23 % 60
+    let two = fn(n: Int) -> Str { if n < 10 { "0${n}" } else { "${n}" } }
+    let frac = if seed % 3 == 0 { ".${seed % 1000000}" } else { "" }
+    let zone = if seed % 5 == 0 { "+0${seed % 10}:30" } else { "Z" }
+    parts.push("\"${y}-${two(mo)}-${two(d)}T${two(h)}:${two(mi)}:${two(s)}${frac}${zone}\"")
+  }
+  "[${parts.join(",")}]"
+}
+
+fn main(os: Os) {
+  let text = doc()
+  var sum = 0
+  for _ in 0..ROUNDS {
+    match json.decode[List[Time]](text) {
+      Ok(ts) => {
+        for t in ts {
+          sum += t.unix_millis() % 1000003
+        }
+      }
+      Err(e) => {
+        os.stdio.println("error: ${e}")
+        os.proc.exit(1)
+      }
+    }
+  }
+  os.stdio.println("decode ${sum}")
+}
