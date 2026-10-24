@@ -189,13 +189,32 @@ A compiler build target (`xo build compiler/xo`, fresh cache): build 0 stored
 rc 143, fe 91, sum 18); build 2 added 443 MB more (a second inl, rc, fe and
 sum segment: the 3rd build's copy of what the shared pack served).
 
-Change: `pack_store` does not copy an entry the shared pack served in this
-build (`Pack.shared_used`) into the target's pack, which reads it from the
-shared pack as before. Total after three builds: 3,164 MB before, 2,721 MB
-(-14%); with `XO_COLD_PACK=on` 2,138 MB (-32%). Not changed: `PACK_AFTER`
-(a compiler edit loop is 1.3 to 2.5 s faster per edit with the pack, and a
-delay only moves the write), and fn, which stays loose and is copied into
-the pack (417 MB); a cold-pack store for fn and obj is the next step.
+Changes:
+
+- `pack_store` does not copy an entry the shared pack served in this build
+  (`Pack.shared_used`) into the target's pack, which reads it from the shared
+  pack as before.
+- `fn_cache_load` built the fn kind's `Pack` from an explicit field list that
+  lacked the shared pack fields (`shared_dir`, `shared_used`, `shared_segs`,
+  `shared_held`), so fn (313 GB loose and 177 GB in target packs of the
+  store-log) was out of the shared pack, out of the cold-pack store and out of
+  the rule above. It now copies the whole `Pack`.
+- `XO_COLD_PACK` is on by default (owner, 2026-10-24, conditional on the check
+  below, which passed); `XO_COLD_PACK=off` writes loose files as before. It
+  had been opt in since the evening of 2026-10-23 for the Windows CI runner's
+  10 minute builds on a 31 GB cache, cause not found; the owner took that risk
+  with the Windows runner's next run as the check.
+
+Compiler self-build, fresh cache, MB on disk after three builds: 3,164 before,
+2,721 with the first change alone (-14%), about 1,700 with all three (-46%),
+with 126 loose files instead of about 48,000. Check (one revision, clean xos,
+quiet machine, all exit codes 0): `http_server` in two directories, four builds
+each, one cache: cold build 3.36 s base, 3.40 s changed, 2.06 s with the cold
+pack; later builds 0.48 to 0.71 s in all three, the second directory as fast as
+the first (no loss of cross-directory hits). `compiler/xo` cold and three edits:
+base 37.9, 5.7, 5.1, 5.0 s; changed 37.8, 5.6, 5.0, 5.0; with the cold pack
+31.8, 6.0, 5.0, 5.1. Not changed: `PACK_AFTER` (a compiler edit loop is 1.3 to
+2.5 s faster per edit with the pack, and a delay only moves the write).
 
 ## Consequences
 
