@@ -1,0 +1,3 @@
+fn has(b: Bytes, sub: Bytes) -> Bool {
+  b.contains(sub)
+}

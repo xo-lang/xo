@@ -1,0 +1,3 @@
+fn commas(b: Bytes) -> Int {
+  bytes.Count(b, b",")
+}

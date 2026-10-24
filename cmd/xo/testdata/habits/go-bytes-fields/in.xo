@@ -1,0 +1,3 @@
+fn words(b: Bytes) -> List[Bytes] {
+  bytes.Fields(b)
+}

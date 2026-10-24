@@ -1,0 +1,3 @@
+fn count_comma(b: Bytes) -> Int {
+  b.count(b",")
+}

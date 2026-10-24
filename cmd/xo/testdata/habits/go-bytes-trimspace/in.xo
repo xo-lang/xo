@@ -1,0 +1,3 @@
+fn clean(b: Bytes) -> Bytes {
+  bytes.TrimSpace(b)
+}

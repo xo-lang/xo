@@ -1,0 +1,5 @@
+import "bytes"
+
+fn count_comma(b: Bytes) -> Int {
+  bytes.Count(b, b",")
+}

@@ -1,0 +1,3 @@
+fn cut(b: Bytes) -> Bytes {
+  bytes.TrimPrefix(b, b"v")
+}

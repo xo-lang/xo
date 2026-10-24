@@ -1,0 +1,66 @@
+[
+  {
+    "code": "XO0177",
+    "severity": "error",
+    "message": "`import` is Go, Python, or TypeScript syntax; Xo imports a module with `use`, for example `use std/json` (core 4.1)",
+    "span": {
+      "file": "main.xo",
+      "line": 1,
+      "col": 1,
+      "end_line": 1,
+      "end_col": 15
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "replace with `use`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 1,
+              "end_line": 2,
+              "end_col": 1
+            },
+            "replace": ""
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "name `bytes` not found",
+    "span": {
+      "file": "main.xo",
+      "line": 4,
+      "col": 3,
+      "end_line": 4,
+      "end_col": 8
+    },
+    "notes": [
+      {
+        "message": "`bytes.Count` is Go's library; Xo calls the method on the value: `b.count(b\",\")` (spec/std.md 2)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `.count(...)`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 4,
+              "col": 3,
+              "end_line": 4,
+              "end_col": 23
+            },
+            "replace": "b.count(b\",\")"
+          }
+        ]
+      }
+    ]
+  }
+]

@@ -1,0 +1,3 @@
+fn ends(b: Bytes) -> Bool {
+  bytes.HasSuffix(b, b"\n")
+}

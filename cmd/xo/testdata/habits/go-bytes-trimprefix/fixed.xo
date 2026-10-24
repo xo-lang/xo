@@ -1,0 +1,3 @@
+fn cut(b: Bytes) -> Bytes {
+  b.trim_prefix(b"v")
+}

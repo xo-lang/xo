@@ -1,0 +1,3 @@
+fn tagged(b: Bytes) -> Bool {
+  bytes.HasPrefix(b, b"x-")
+}

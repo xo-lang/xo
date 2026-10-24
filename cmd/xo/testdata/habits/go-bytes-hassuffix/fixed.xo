@@ -1,0 +1,3 @@
+fn ends(b: Bytes) -> Bool {
+  b.ends_with(b"\n")
+}

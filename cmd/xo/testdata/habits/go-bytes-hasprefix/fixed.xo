@@ -1,0 +1,3 @@
+fn tagged(b: Bytes) -> Bool {
+  b.starts_with(b"x-")
+}

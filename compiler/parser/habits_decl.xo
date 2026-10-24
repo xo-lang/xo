@@ -142,7 +142,7 @@ fn go_import(path: Bytes) -> Bytes? {
   if path == b"net/http" || path == b"http" {
     return Some(b"std/http")
   }
-  for x in ["strings", "strconv", "errors", "math", "sort", "unicode/utf8", "fmt", "os", "time", "sync", "context", "log"] {
+  for x in ["strings", "strconv", "errors", "bytes", "math", "sort", "unicode/utf8", "fmt", "os", "time", "sync", "context", "log"] {
     if path == x.bytes() {
       return Some(b"")
     }
