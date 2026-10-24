@@ -1,0 +1,38 @@
+// A view used only for its length with a call that faults between the
+// view and its length (compiler/arm64 viewlen.xo view_lens takes views
+// inlined at a call site with a landing pad, whose count it never takes
+// and so never releases, on the unwinding path too): the faults are
+// caught, the counts stay balanced (TestGoldenRun's leak check), and the
+// lengths are right.
+use std/task
+
+fn risky(i: Int) -> Int {
+  let xs = [1, 2, 3]
+  xs[i % 5]
+}
+
+fn measure(s: Str, p: Str, i: Int) -> Int {
+  let v = s.trim_prefix(p)
+  let k = risky(i)
+  v.len() + k
+}
+
+fn cut(s: Bytes, p: Bytes, i: Int) -> Int {
+  let v = s.cut_prefix(p) ?? b""
+  let k = risky(i)
+  v.len() + k
+}
+
+fn main(os: Os) {
+  let texts = ["  hello, world", "plain", "  ", ""]
+  var ok = 0
+  var faulted = 0
+  for i in 0..40 {
+    let s = texts[i % texts.len()] + "${i}"
+    match task.isolate(fn() -> Int { measure(s, "  ", i) + cut(s.bytes(), b"  ", i) }) {
+      Ok(n) => ok += n
+      Err(_) => faulted += 1
+    }
+  }
+  os.stdio.println("ok ${ok} faulted ${faulted}")
+}

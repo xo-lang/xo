@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+ok 333 faulted 16
+--- stderr

@@ -48,8 +48,11 @@ fn view_lens(var f: ssa.Func) -> Bool {
       }
     }
   }
-  // candidates: views that cannot fault, and Str parameters of blocks
-  // other than the entry (a function's parameters may be borrowed)
+  // candidates: views (rt.str_view cannot fault: a landing pad on one is
+  // the inlined call site's, which every value copied from the callee
+  // gets; 2026-10-24: requiring none skipped every inlined view), and Str
+  // parameters of blocks other than the entry (a function's parameters
+  // may be borrowed)
   var cand: List[Bool] = []
   for _ in 0..n {
     cand.push(false)
@@ -60,12 +63,12 @@ fn view_lens(var f: ssa.Func) -> Bool {
     }
     for v in f.blocks[b].instrs {
       let x = f.values[v]
-      cand[v] = cand[v] || (x.op == ssa.Op.Call && aux_str(x.aux) == "rt.str_view" && x.args.len() == 3 && x.pad < 0 && x.ty == st)
+      cand[v] = cand[v] || (x.op == ssa.Op.Call && aux_str(x.aux) == "rt.str_view" && x.args.len() == 3 && x.ty == st)
     }
   }
   for v in f.blocks[0].instrs {
     let x = f.values[v]
-    cand[v] = x.op == ssa.Op.Call && aux_str(x.aux) == "rt.str_view" && x.args.len() == 3 && x.pad < 0 && x.ty == st
+    cand[v] = x.op == ssa.Op.Call && aux_str(x.aux) == "rt.str_view" && x.args.len() == 3 && x.ty == st
   }
   // drop a candidate with any other use, until none changes
   var changed = true
@@ -115,6 +118,7 @@ fn view_lens(var f: ssa.Func) -> Bool {
       f.values[v].op = ssa.Op.Sub
       f.values[v].aux = ssa.Aux.None
       f.values[v].args = [a[2], a[1]]
+      f.values[v].pad = -1
       f.values[v].ty = it
       view[v] = true
     }
