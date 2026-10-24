@@ -1032,6 +1032,10 @@ fn (var g: G) compare(v: Int) -> Cmp {
   var a = g.arg(v, 0)
   var b = g.arg(v, 1)
   for x in [a, b] {
+    if g.ext_test(x) {
+      let (inner, ext) = g.ext_of(x)
+      return Cmp{text: "cmp $u0, $wu0, ${ext}", us: [g.word(inner)], cond: int_cond(o)}
+    }
     if g.rem_test(x) {
       let (k, _) = g.pow2(g.arg(x, 1))
       return Cmp{text: "tst $u0, #${pow2i(k) - 1}", us: [g.word(g.arg(x, 0))], cond: int_cond(o)}
@@ -1176,7 +1180,12 @@ fn (var g: G) instr1(v: Int) {
   let x = g.f.values[v]
   match x.op {
     Const | Cap => {}
-    Add | Sub => g.add_sub(v)
+    Add | Sub => {
+      if g.ext_add(v) {
+        return // ext_test's bias, never computed
+      }
+      g.add_sub(v)
+    }
     Mul => g.mul(v)
     Div | Rem => g.div_rem(v)
     And | Or | Xor => {
@@ -1262,7 +1271,12 @@ fn (var g: G) instr1(v: Int) {
       let b = g.word(x.args[1])
       g.set(v, [g.def1(false, "${ins} $d0, $u0, $u1", [a, b])])
     }
-    Shl | Shr => g.shift(v)
+    Shl | Shr => {
+      if g.ext_test(v) {
+        return // lowered by the comparison (ext_test)
+      }
+      g.shift(v)
+    }
     Neg => {
       let (nc, isn) = g.neg_const(v)
       if isn {
@@ -3008,6 +3022,59 @@ fn (g: G) rem_test(v: Int) -> Bool {
   }
   let (_, ok) = g.pow2(x.args[1])
   ok && g.zero_test_use(v)
+}
+
+/// Whether v is a sized integer's range test word compared with 0 (ssa
+/// show.xo out_of: `(r + 2^(b-1)) >> b`, or `r >> b` unsigned, b 8, 16
+/// or 32), its only use: on arm64 one compare of r with its own low b
+/// bits extended (`cmp x, w, sxtw`), not an add, a shift and a test
+/// (2026-10-24: portable arith32 1.19x LLVM, three such checks a step).
+fn (var g: G) ext_test(v: Int) -> Bool {
+  if g.x86 {
+    return false
+  }
+  let x = g.f.values[v]
+  if x.op != ssa.Op.Shr || g.nuses[v] != 1 || !g.zero_test_use(v) {
+    return false
+  }
+  let (bits, ok) = g.const_int(x.args[1])
+  if !ok || !(bits is 8 | 16 | 32) {
+    return false
+  }
+  let (_, ext) = g.ext_of(v)
+  !ext.is_empty()
+}
+
+/// ext_test's value r and its extend (sxtb, sxth, sxtw, or the uxt
+/// forms when r is not biased), "" when the shift's operand is neither.
+fn (var g: G) ext_of(v: Int) -> (Int, Str) {
+  let x = g.f.values[v]
+  let (bits, _) = g.const_int(x.args[1])
+  let sfx = if bits == 8 { "b" } else if bits == 16 { "h" } else { "w" }
+  let a = x.args[0]
+  let y = g.f.values[a]
+  if y.op == ssa.Op.Add && g.nuses[a] == 1 && y.pos.is_empty() {
+    let (k, kc) = g.const_int(y.args[1])
+    if kc && k == 1 << (bits - 1) {
+      return (y.args[0], "sxt${sfx}")
+    }
+  }
+  // unsigned: r >> b, r not negative (a product or sum of narrow values)
+  let (lo, _) = g.bounds(a)
+  if lo >= 0 {
+    return (a, "uxt${sfx}")
+  }
+  (-1, "")
+}
+
+/// Whether v is the bias add of an ext_test (its one use), which the
+/// comparison reads through.
+fn (var g: G) ext_add(v: Int) -> Bool {
+  if g.x86 || g.nuses[v] != 1 {
+    return false
+  }
+  let u = g.users[v]
+  u >= 0 && g.op(u) == ssa.Op.Shr && g.arg(u, 0) == v && g.ext_test(u) && g.ext_of(u).0 != v
 }
 
 /// Whether the one user of v is `v == 0` or `v != 0`.

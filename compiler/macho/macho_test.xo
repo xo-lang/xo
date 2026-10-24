@@ -488,6 +488,10 @@ const ENCODINGS: List[(Str, Int)] = [
   ("msr nzcv, x9", 0xd51b4209),
   ("mrs x9, tpidr_el0", 0xd53bd049),
   ("stlr x9, [x10]", 0xc89ffd49),
+  ("cmp x19, w19, sxtw", 0xeb33c27f),
+  ("cmp x1, w1, sxth", 0xeb21a03f),
+  ("cmp x2, w2, uxtb", 0xeb22005f),
+  ("cmn x3, w4, uxtw", 0xab24407f),
 ]
 
 test "every instruction encodes as the system assembler encodes it" {
@@ -503,8 +507,8 @@ test "every instruction encodes as the system assembler encodes it" {
 
 test "every encoding round trips through Op (decision 0274 step 2)" {
   // parse each instruction to an Op, print it, and encode the printed
-  // text: the same word; and only system registers and barrier options
-  // stay Raw
+  // text: the same word; and only system registers, barrier options and
+  // a compare's register extends (cmp x1, w2, sxtw) stay Raw
   var bad: List[Str] = []
   var raw: List[Str] = []
   for (ins, want) in ENCODINGS {
@@ -522,7 +526,7 @@ test "every encoding round trips through Op (decision 0274 step 2)" {
     }
     for x in o.ops {
       if let Operand.Raw(b: r) = x {
-        if !(bstr(r) is "ish" | "ishld" | "nzcv" | "tpidr_el0" | "#0.0" | "b30") {
+        if !(bstr(r) is "ish" | "ishld" | "nzcv" | "tpidr_el0" | "#0.0" | "b30" | "sxtb" | "sxth" | "sxtw" | "uxtb" | "uxth" | "uxtw") {
           raw.push("${ins}: `${bstr(r)}`")
         }
       }

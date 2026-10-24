@@ -1,0 +1,13 @@
+exit 0
+--- stdout
+2147483647 -2147483648
+32761 -32768
+-128 127
+4294967295 65535 255
+add32 faulted
+mul16 faulted
+sub8 faulted
+add_u32 faulted
+mul_u16 faulted
+add_u8 faulted
+--- stderr

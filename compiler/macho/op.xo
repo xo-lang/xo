@@ -229,6 +229,31 @@ pub fn encode_op(o: Op) -> Int {
         return -1
       }
       let zk = zr_kind(o.ops[0])
+      if n == 3 {
+        // an extended register: `cmp x1, w2, sxtw` compares x1 with w2
+        // sign extended (subs xzr, x1, w2, sxtw; isel's sized range test)
+        if let Operand.Raw(b: eb) = o.ops[2] {
+          let opt = match bstr(eb) {
+            "uxtb" => 0
+            "uxth" => 1
+            "uxtw" => 2
+            "sxtb" => 4
+            "sxth" => 5
+            "sxtw" => 6
+            _ => -1
+          }
+          if opt < 0 {
+            return -1
+          }
+          let (rn, sfn) = gp_of(o.ops[0], true)
+          let (rm, sfm) = gp_of(o.ops[1], false)
+          if rn < 0 || rm < 0 || sfn != 1 || sfm != 0 {
+            return -1
+          }
+          let base = if o.m == "cmp" { 0xEB200000 } else { 0xAB200000 }
+          return base | (rm * 0x10000) | (opt * 0x2000) | (rn * 32) | 31
+        }
+      }
       if let Operand.Reg(n: s, kind: ks) = o.ops[0] {
         return addsub_word(if o.m == "cmp" { "subs" } else { "adds" }, 31, zk, s, ks, o.ops[1], o.ops[2..])
       }

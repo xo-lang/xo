@@ -1,0 +1,28 @@
+// Sized integer range checks (ssa show.xo out_of) at each width and
+// sign, lowered on arm64 as one compare with an extended register (isel
+// ext_test): the edge values pass, one past them faults.
+
+use std/task
+
+fn add32(a: Int32, b: Int32) -> Int32 { a + b }
+fn mul16(a: Int16, b: Int16) -> Int16 { a * b }
+fn sub8(a: Int8, b: Int8) -> Int8 { a - b }
+fn add_u32(a: UInt32, b: UInt32) -> UInt32 { a + b }
+fn mul_u16(a: UInt16, b: UInt16) -> UInt16 { a * b }
+fn add_u8(a: UInt8, b: UInt8) -> UInt8 { a + b }
+
+fn main(os: Os) {
+  os.stdio.println("${add32(2147483646, 1)} ${add32(-2147483647, -1)}")
+  os.stdio.println("${mul16(181, 181)} ${mul16(-128, 256)}")
+  os.stdio.println("${sub8(-127, 1)} ${sub8(126, -1)}")
+  os.stdio.println("${add_u32(4294967294, 1)} ${mul_u16(255, 257)} ${add_u8(254, 1)}")
+  let r1 = task.isolate(fn() -> Int32 { add32(2147483647, 1) })
+  let r2 = task.isolate(fn() -> Int16 { mul16(182, 181) })
+  let r3 = task.isolate(fn() -> Int8 { sub8(-128, 1) })
+  let r4 = task.isolate(fn() -> UInt32 { add_u32(4294967295, 1) })
+  let r5 = task.isolate(fn() -> UInt16 { mul_u16(256, 256) })
+  let r6 = task.isolate(fn() -> UInt8 { add_u8(255, 1) })
+  for (n, ok) in [("add32", r1.is_ok()), ("mul16", r2.is_ok()), ("sub8", r3.is_ok()), ("add_u32", r4.is_ok()), ("mul_u16", r5.is_ok()), ("add_u8", r6.is_ok())] {
+    os.stdio.println("${n} ${if ok { "ok" } else { "faulted" }}")
+  }
+}
