@@ -1,6 +1,6 @@
 # 0363: A prior for a new spawn site that takes a Mutex (initial placement)
 
-Status: Proposed (Xo Lang 3, 2026-10-24; for the owner's Sunday review; nothing built).
+Status: Accepted (owner, 2026-10-24), with the tighter rule of "Tighter flag" below as the decision (the first flag, any Mutex take in a loop, failed the worker-pool check). Built by Xo Lang 3.
 
 ## Context
 

@@ -43,6 +43,10 @@ struct ScopeCtx {
 enum Walk {
   Call(e: Expr)
   Bind(value: Expr, vo: Int)
+  /// a loop body begins (true) or ends (false), for lockish
+  Loop(enter: Bool)
+  /// a closure body begins (true) or ends (false), for lockish
+  Fn(enter: Bool)
 }
 
 /// The `file:line` of sp as a Str constant (loc): where the runtime's
@@ -402,13 +406,17 @@ fn (var b: Builder) walk_stmt(st: Stmt, var out: List[Walk]) {
     ForStmt(iter: iter, bound: bound, body: body, ..) => {
       b.walk_expr(iter, out)
       b.walk_list(bound, out)
+      out.push(Walk.Loop(enter: true))
       b.walk_block(body, out)
+      out.push(Walk.Loop(enter: false))
     }
     WhileStmt(cond: cond, value: value, bound: bound, body: body, ..) => {
       b.walk_opt(cond, out)
       b.walk_list(value, out)
       b.walk_list(bound, out)
+      out.push(Walk.Loop(enter: true))
       b.walk_block(body, out)
+      out.push(Walk.Loop(enter: false))
     }
     ConstDecl(d) => b.walk_expr(d.value, out)
     _ => {}
@@ -493,8 +501,16 @@ fn (var b: Builder) walk_expr(e: Expr, var out: List[Walk]) {
       }
     }
     Block(bl) => b.walk_block(bl, out)
-    FnLit(lit) => b.walk_block(lit.body, out)
-    WhileExpr(body: body, ..) => b.walk_block(body, out)
+    FnLit(lit) => {
+      out.push(Walk.Fn(enter: true))
+      b.walk_block(lit.body, out)
+      out.push(Walk.Fn(enter: false))
+    }
+    WhileExpr(body: body, ..) => {
+      out.push(Walk.Loop(enter: true))
+      b.walk_block(body, out)
+      out.push(Walk.Loop(enter: false))
+    }
     _ => {}
   }
 }
@@ -537,6 +553,9 @@ fn (var b: Builder) spawn(x: Expr, h: Int, background: Bool, ret: Bool) -> Int {
   if b.consumed(x) {
     flags += 2
   }
+  if b.lockish(arg) {
+    flags += 4
+  }
   let site = b.sites.get(b.c.expr_key_in(b.s.file, x)) ?? -1
   if site >= 0 && site < b.fe_site0 {
     b.fe_touch("sites")
@@ -553,6 +572,86 @@ fn (var b: Builder) spawn(x: Expr, h: Int, background: Bool, ret: Bool) -> Int {
     return b.unit()
   }
   b.coerce_at(t, b.nat_of(x), Some(x))
+}
+
+/// Whether the closure f of a spawn spends a loop of its own body on a
+/// Mutex (`with` or `with_read`) and nothing else (decision 0363): the loop
+/// takes a Mutex, and outside the closures it builds every call is a Mutex
+/// take or an Atomic method, so the lock is the work and a worker that
+/// runs the loop alone is as fast as eight (a worker pool that takes a
+/// lock to store a result after other calls is not flagged). Calls it
+/// makes to other functions are not followed. Flags bit 2.
+fn (var b: Builder) lockish(f: Expr) -> Bool {
+  let lit = match f {
+    FnLit(l) => l
+    _ => return false
+  }
+  var items: List[Walk] = []
+  b.walk_block(lit.body, items)
+  // one frame per open loop: took a Mutex, made another call
+  var took: List[Bool] = []
+  var other: List[Bool] = []
+  var inner = 0
+  for it in items {
+    match it {
+      Loop(enter) => {
+        if inner == 0 {
+          if enter {
+            took.push(false)
+            other.push(false)
+          } else {
+            let t = took.pop() ?? false
+            let o = other.pop() ?? true
+            if t && !o {
+              return true
+            }
+          }
+        }
+      }
+      Fn(enter) => inner += if enter { 1 } else { -1 }
+      Call(e) => {
+        if inner == 0 && took.len() > 0 {
+          let m = b.is_mutex_take(e)
+          let a = !m && b.is_atomic_call(e)
+          for k in 0..took.len() {
+            if m {
+              took[k] = true
+            } else if !a {
+              other[k] = true
+            }
+          }
+        }
+      }
+      Bind(..) => {}
+    }
+  }
+  false
+}
+
+fn (var b: Builder) is_atomic_call(e: Expr) -> Bool {
+  let ci = match b.c.call_in(b.s.file, e) {
+    Some(c) => c
+    None => return false
+  }
+  let fo = ci.fn_obj
+  if fo < 0 {
+    return false
+  }
+  let r = b.c.objs[fo].recv
+  r >= 0 && b.obj_name(r) == "Atomic"
+}
+
+fn (var b: Builder) is_mutex_take(e: Expr) -> Bool {
+  let ci = match b.c.call_in(b.s.file, e) {
+    Some(c) => c
+    None => return false
+  }
+  let fo = ci.fn_obj
+  if fo < 0 {
+    return false
+  }
+  let r = b.c.objs[fo].recv
+  r >= 0 && b.obj_name(r) == "Mutex" && b.obj_name(fo) is "with" | "with_read"
 }
 
 /// The entry function that runs a task whose closure has type ft (fails:

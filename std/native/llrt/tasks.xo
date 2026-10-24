@@ -600,6 +600,9 @@ fn spawn(s: Int, fl: Int, env: Int, run: Int, drop: Int, flags: Int, site: Int, 
   st(t, T_SITE, site)
   st(t, T_LOC_P, lp)
   st(t, T_LOC_N, ln)
+  if flags & 4 != 0 {
+    pool.site_prior(pl, t)
+  }
   let cur = ctx.cur()
   if tracerec.built() && ld(cur, ctx.C_TRACE) != 0 {
     tracerec.ev(tracerec.K_SPAWN, tracerec.site(lp, ln), cur, t)

@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- A spawned task that loops over a Mutex (every call in its loop is a `Mutex.with`,
+  `with_read` or an Atomic method) starts its spawn site small, so a one-shot burst
+  of lock-bound tasks runs on the spawner instead of waking a worker per spawn
+  (decision 0363): conc `rwmutex` 0.25 and `mutex` 0.65 of the wall time, a
+  read-mostly lock 0.57; worker pools, CRUD and the other conc rows within noise.
 - JSON text nested deeper than 10,000 levels is an error on the native backends too
   (`invalid character '[' exceeded max depth`, as Go's and the Go backend's).
 - LLVM builds write their IR and split modules in a directory of their own and
