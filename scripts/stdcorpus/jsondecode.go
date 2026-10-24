@@ -187,7 +187,7 @@ type decodeRow struct {
 
 func jsonDecodeCorpus() string {
 	var o strings.Builder
-	o.WriteString(header("encoding/json decoding into Go twins of the corpus's types — the text std/rt/json.go encodes, so a decode that differs shows — for std/json's decode and decode_str, then parse_value and from_value against the Value rules of decision 0299 (Int or Float, object key order, duplicate keys) and the malformed texts Go's scanner refuses; Time and Duration fields as std.md 5 and decision 0364 read them (Go's encoding/json tests are Copyright 2009 The Go Authors, BSD-style license)"))
+	o.WriteString(header("encoding/json decoding into Go twins of the corpus's types — the text std/rt/json.go encodes, so a decode that differs shows — for std/json's decode and decode_str, then parse_value and from_value against the Value rules of decision 0299 (Int or Float, object key order, duplicate keys) and the malformed texts Go's scanner refuses; Patch[T] fields and their apply_to and apply_opt; Time and Duration fields as std.md 5 and decision 0364 read them (Go's encoding/json tests are Copyright 2009 The Go Authors, BSD-style license)"))
 	o.WriteString("\nuse std/json\n")
 
 	o.WriteString(`
@@ -481,6 +481,60 @@ struct Patched {
 	}
 	o.WriteString("]\n")
 
+	// Patch applied: std.md 5 says apply_to gives Value(v) and keeps the
+	// current value for Absent and Null, while apply_opt keeps Absent,
+	// clears Null and sets Value(v). The expectation is that rule, with
+	// the current value either present (Some) or absent (None).
+	const applyLab = "std.md 5 std/json: apply_to gives Value(v) and keeps current for Absent and Null; apply_opt keeps Absent, clears Null and sets Value(v)"
+	type patchKind int
+	const (
+		pkAbsent patchKind = iota
+		pkNull
+		pkValue
+	)
+	applyTo := func(k patchKind, v, cur int64) int64 {
+		if k == pkValue {
+			return v
+		}
+		return cur
+	}
+	applyOpt := func(k patchKind, v, cur int64, has bool) (int64, bool) {
+		switch k {
+		case pkNull:
+			return 0, false
+		case pkValue:
+			return v, true
+		}
+		return cur, has
+	}
+	optTextInt := func(n int64, has bool) string {
+		if !has {
+			return "none"
+		}
+		return fmt.Sprintf("some %d", n)
+	}
+	o.WriteString("\n/// (JSON text, current Int, apply_to, apply_opt of Some(current), apply_opt of None, the rule)\nconst APPLY_CASES: List[(Str, Int, Int, Str, Str, Str)] = [\n")
+	for _, p := range []struct {
+		text string
+		k    patchKind
+		v    int64
+	}{
+		{`{"q":0}`, pkAbsent, 0},
+		{`{"p":null,"q":0}`, pkNull, 0},
+		{`{"p":5,"q":0}`, pkValue, 5},
+		{`{"p":0,"q":0}`, pkValue, 0},
+		{`{"p":-1,"q":0}`, pkValue, -1},
+		{`{"p":9223372036854775807,"q":0}`, pkValue, 9223372036854775807},
+	} {
+		for _, cur := range []int64{7, -3, 0} {
+			someN, someOK := applyOpt(p.k, p.v, cur, true)
+			noneN, noneOK := applyOpt(p.k, p.v, 0, false)
+			fmt.Fprintf(&o, "  (%s, %d, %d, %s, %s, %q),\n", xq(p.text), cur,
+				applyTo(p.k, p.v, cur), xq(optTextInt(someN, someOK)), xq(optTextInt(noneN, noneOK)), applyLab)
+		}
+	}
+	o.WriteString("]\n")
+
 	// Value: the texts std/json reads into a Value, and the ones it refuses.
 	// A canonical text is decision 0299's reading, not Go's, which is why
 	// duplicates, -0 and an exponent all have their own rows.
@@ -591,6 +645,13 @@ fn show3(bad: List[(Str, Str, Str)]) -> List[(Str, Str, Str)] {
   bad[0..(if bad.len() < 20 { bad.len() } else { 20 })]
 }
 
+fn int_opt_text(o: Int?) -> Str {
+  match o {
+    Some(n) => "some ${n}"
+    None => "none"
+  }
+}
+
 /// One typed decode: the value re-encoded, or !error.
 fn typed_got[T: Json](text: Str) -> Str {
   match json.decode_str[T](text) {
@@ -666,6 +727,22 @@ test "a Patch field is Absent, Null or Value" {
       Err(_) => "!error"
     }
     let want = "${want_p} ${want_q}"
+    if got != want {
+      bad.push((text, got, want))
+    }
+  }
+  expect(show3(bad)) == []
+}
+
+test "Patch.apply_to and apply_opt follow the documented rules" {
+  var bad: List[(Str, Str, Str)] = []
+  let no_value: Int? = None
+  for (text, current, want_to, want_some, want_none, _) in APPLY_CASES {
+    let got = match json.decode_str[Patched](text) {
+      Ok(v) => "${v.p.apply_to(current)} ${int_opt_text(v.p.apply_opt(Some(current)))} ${int_opt_text(v.p.apply_opt(no_value))}"
+      Err(_) => "!error"
+    }
+    let want = "${want_to} ${want_some} ${want_none}"
     if got != want {
       bad.push((text, got, want))
     }
