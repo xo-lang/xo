@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 	"unicode/utf8"
 	"unsafe"
 )
@@ -355,8 +354,8 @@ func JsonDec[T any](tk *Task, dst *T, x any, path string) *Json_DecodeErr {
 		if !ok {
 			return JsonErr(path, "expected RFC 3339 time string")
 		}
-		t, err := time.Parse(time.RFC3339Nano, s)
-		if err != nil {
+		t, ok := parseRFC3339(s)
+		if !ok {
 			return JsonErr(path, "expected RFC 3339 time string")
 		}
 		*d = Time(t.UnixNano())

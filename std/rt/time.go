@@ -109,11 +109,51 @@ func Time_from_unix(_ *Task, secs int64) Time { return Time(MulS(secs, 1e9, ""))
 
 // Time_parse_rfc3339 is `Time.parse_rfc3339(s)`.
 func Time_parse_rfc3339(_ *Task, s string) Option[Time] {
-	t, err := time.Parse(time.RFC3339Nano, s)
-	if err != nil {
+	t, ok := parseRFC3339(s)
+	if !ok {
 		return Option[Time]{}
 	}
 	return Some(Time(t.UnixNano()))
+}
+
+// parseRFC3339 reads an RFC 3339 time as the native backends do (text.xo
+// parse_time): the fixed two and four digit fields, an upper case T and Z, a
+// '.' fraction of one or more digits, a Z or +-HH:MM offset. Go's time.Parse
+// alone also takes a one digit hour, minute, second, month or day (its
+// lenient fallback after the strict parser refuses), a lower case t or z and
+// a comma fraction, which the spec (RFC 3339) does not.
+func parseRFC3339(s string) (time.Time, bool) {
+	if !rfc3339Shape(s) {
+		return time.Time{}, false
+	}
+	t, err := time.Parse(time.RFC3339Nano, s)
+	return t, err == nil
+}
+
+func rfc3339Shape(s string) bool {
+	d := func(i int) bool { return s[i] >= '0' && s[i] <= '9' }
+	if len(s) < 20 {
+		return false
+	}
+	for _, i := range []int{0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18} {
+		if !d(i) {
+			return false
+		}
+	}
+	if s[4] != '-' || s[7] != '-' || s[10] != 'T' || s[13] != ':' || s[16] != ':' {
+		return false
+	}
+	i := 19
+	if len(s)-i >= 2 && s[i] == '.' && d(i+1) {
+		i++
+		for i < len(s) && d(i) {
+			i++
+		}
+	}
+	if len(s)-i == 1 {
+		return s[i] == 'Z'
+	}
+	return len(s)-i == 6 && (s[i] == '+' || s[i] == '-') && d(i+1) && d(i+2) && s[i+3] == ':' && d(i+4) && d(i+5)
 }
 
 // Time_unix is `t.unix()`.

@@ -1,5 +1,22 @@
 # std/time changes
 
+## 2026-10-24: fix: the Go backend refuses an RFC 3339 time the spec does not allow
+
+- Kind: fix
+- Commit: this commit
+- Found by: Xo Lang 1's time_parse_digits golden (ad8786870): the Go backend took a one digit hour
+- Go reference: time.Parse(time.RFC3339Nano, ...) (its lenient fallback accepts what RFC 3339 forbids)
+- Test: golden time_parse_digits (arm64, LLVM, Go parity), eleven new cases
+
+`Time.parse_rfc3339` and a `Time` decoded from JSON on the Go backend (std/rt
+time.go parseRFC3339) called time.Parse, which after its strict RFC 3339
+parser refuses falls back to a lenient layout parse: it accepted
+"2026-10-24T0:02:03Z" (a one digit hour, minute, second, month or day), a
+lower case t or z, and a comma fraction. The native backends refuse those
+(text.xo parse_time: fixed two and four digit fields, T, a '.' fraction, Z or
++-HH:MM). The Go backend now checks the same shape first, then lets time.Parse
+check the ranges.
+
 ## 2026-10-23: perf: the monotonic clock on macOS is CLOCK_UPTIME_RAW, as Go's nanotime
 
 - Kind: perf
