@@ -412,7 +412,9 @@ fn tz_object_coff(os: Os, dir: Str, sel: tzsel.TZSel) -> Str ! FsErr {
 /// not.
 /// bin is where the program is written (a stage's, ld.xo Stage), out
 /// the path it will have: the debug directory names out's PDB.
-fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)], race: Bool) -> Str {
+/// phases: each step's time on stderr (--phase-times, as pe.NAME).
+fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)], race: Bool, phases: Bool) -> Str {
+  var t = os.clock.now()
   var objs: List[macho.CObj] = []
   for p in paths {
     let b = match os.fs.read(p) {
@@ -432,6 +434,7 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
       dwarf = dwarf || s.name == ".debug_info"
     }
   }
+  t = lap(os, phases, "pe.read ${paths.len()} objects", t)
   let pdb = if dwarf { "${bin.trim_suffix(".exe")}.pdb" } else { "" }
   // the debug directory names the PDB where it will be, not in the
   // stage: the same program has the same bytes
@@ -441,18 +444,22 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
   // an older one takes after the last backslash only
   match macho.link_pe(objs, macho.PEOpts{entry: "xo_win_start", imports: macho.pe_imports(), resources: pe_resources(bin, stamps), fixed_base: race, pdb: pdb_named.replace("/", "\\")}) {
     Ok(img0) => {
+      t = lap(os, phases, "pe.link_pe ${img0.len()} bytes", t)
       var img = img0
       if dwarf {
         match macho.pe_pdb(img0) {
           Ok((i2, p)) => {
             img = i2
+            t = lap(os, phases, "pe.pdb ${p.len()} bytes", t)
             if let Err(e) = os.fs.write(pdb, p) {
               return "${pdb}: ${e}"
             }
+            t = lap(os, phases, "pe.pdb_write", t)
           }
           Err(e) => return "${bin}: the PDB: ${e}"
         }
       }
+      let _t = lap(os, phases, "pe.write_start", t)
       match os.fs.write(bin, img) {
         Ok(_) => ""
         Err(e) => "${bin}: ${e}"

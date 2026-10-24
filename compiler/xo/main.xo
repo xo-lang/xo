@@ -1499,6 +1499,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         // Xo's PE linker, no C runtime (decision 0254 6b step 4): the
         // objects, the zone data's, imports by the table
         var zsrcs: List[Str] = []
+        // link's steps under --phase-times, as link.NAME (2026-10-23:
+        // CI's windows builds spent 540 s in link, the rest normal)
+        var tl = os.clock.now()
         if uses_time {
           let sel = tzsel.tz_select(os, ctx.std, cur_tu, o.tzdata, tgoos)
           if !sel.err.is_empty() {
@@ -1513,12 +1516,14 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
             Ok(p) => zsrcs.push(p)
             Err(e) => fail(os, "${e}")
           }
+          tl = lap(os, phases, "link.tz", tl)
         }
         // the build information (decision 0354 stage 2)
         match binfo_object(os, dir, native_build_info(os, o, "amd64", "${tgoos}/${tgoarch}"), tgoos, tgoarch, true) {
           Ok(p) => zsrcs.push(p)
           Err(e) => fail(os, "${e}")
         }
+        tl = lap(os, phases, "link.binfo", tl)
         if o.race {
           // ThreadSanitizer's Go flavor object (decision 0273's Windows
           // addendum)
@@ -1527,9 +1532,12 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
             fail(os, rwhy)
           }
           zsrcs.push(rp)
+          tl = lap(os, phases, "link.race_runtime", tl)
         }
         let wst = stage(os, ctx, wbin)
-        let why = pe_link(os, wsrcs + zsrcs, wst.bin, wbin, o.stamps, o.race)
+        tl = lap(os, phases, "link.stage", tl)
+        let why = pe_link(os, wsrcs + zsrcs, wst.bin, wbin, o.stamps, o.race, phases)
+        tl = lap(os, phases, "link.pe_link", tl)
         if !why.is_empty() {
           fail_stage(os, wst, why)
         }
@@ -1537,6 +1545,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         if !werr.is_empty() {
           fail(os, werr)
         }
+        tl = lap(os, phases, "link.commit", tl)
         t = lap(os, phases, "link", t)
         bins.push((tg, wbin))
         continue
