@@ -2478,7 +2478,8 @@ func TestCacheStoreLog(t *testing.T) {
 			}
 			f := strings.Fields(l)
 			ids[f[5]] = true
-			if f[2] == "fn" {
+			// loose, or a segment of the shared pack (XO_COLD_PACK, on by default)
+			if f[2] == "fn" || f[2] == "pack/fn" {
 				fns++
 			}
 		}

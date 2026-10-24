@@ -1498,7 +1498,11 @@ fn pack_store(os: Os, p: Pack, entries: Map[Str, Bytes], stores: List[(Str, Byte
     // build target's pack wrote the same entries once per target (a
     // compiler build target: 443 MB of inl, rc, fe and sum segments, and
     // the store-log's 1,300 GB of pack segments in 52 hours, 2026-10-24)
-    if p.shared_used.contains(k) && !p.from_pack.contains(k) {
+    // (not fe: its target pack, with its list of keys no build stored, is
+    // what spares the lookups of the 4,300 bodies a program lacks; a pack
+    // without segments has no list, and a new directory's build opened
+    // each of them: TestFrontCacheNegKeys, TestSharedPackNegKeys)
+    if p.shared_used.contains(k) && !p.from_pack.contains(k) && !p.dir.ends_with("/fe") {
       continue
     }
     used.push((k, b))
