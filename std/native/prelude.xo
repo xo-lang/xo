@@ -646,25 +646,8 @@ fn bytes_split_n(b: Bytes, sep: Bytes, n: Int) -> List[Bytes] {
   let sl = b.len()
   let m = sep.len()
   if m == 0 {
-    // an empty sep splits after each UTF-8 sequence, as Go's explode: no
-    // piece at all for an empty value, and the last piece is the rest
-    var lim = n
-    if lim <= 0 || lim > sl {
-      lim = sl
-    }
-    var i = 0
-    var count = 0
-    while i < sl {
-      if count + 1 >= lim {
-        out.push(b[i..sl])
-        return out
-      }
-      let k = if b[i] < 0x80 { 1 } else { raw.bytes_decode(b, i) & 7 }
-      out.push(b[i..i + k])
-      i += k
-      count += 1
-    }
-    return out
+    // an empty sep splits after each UTF-8 sequence, as Go's explode
+    return scan.explode_bytes(b, n)
   }
   var start = 0
   var count = 0
@@ -735,6 +718,38 @@ fn bytes_count(b: Bytes, sub: Bytes) -> Int {
 
 /// bytes.ReplaceAll: b itself when nothing changes (Xo values are
 /// immutable, so no copy is needed), one buffer otherwise.
+/// bytes.IndexAny: the first rune of chars in b; chars is a Str because a
+/// set of runes is text, as Go's bytes.IndexAny takes a string.
+fn bytes_find_any(b: Bytes, chars: Str) -> Int? {
+  let i = scan.index_any_bytes(b, chars.bytes())
+  if i < 0 {
+    return None
+  }
+  Some(i)
+}
+
+fn bytes_rfind_any(b: Bytes, chars: Str) -> Int? {
+  let i = scan.last_index_any_bytes(b, chars.bytes())
+  if i < 0 {
+    return None
+  }
+  Some(i)
+}
+
+fn bytes_contains_any(b: Bytes, chars: Str) -> Bool { scan.index_any_bytes(b, chars.bytes()) >= 0 }
+
+fn bytes_contains_rune(b: Bytes, r: Rune) -> Bool { scan.index_rune_bytes(b, r) >= 0 }
+
+fn bytes_cut(b: Bytes, sep: Bytes) -> (Bytes, Bytes)? { scan.cut_bytes(b, sep) }
+
+fn bytes_cut_prefix(b: Bytes, p: Bytes) -> Bytes? { scan.cut_prefix_bytes(b, p) }
+
+fn bytes_cut_suffix(b: Bytes, p: Bytes) -> Bytes? { scan.cut_suffix_bytes(b, p) }
+
+fn bytes_split_after(b: Bytes, sep: Bytes) -> List[Bytes] { scan.split_after_bytes(b, sep) }
+
+fn bytes_split_after_n(b: Bytes, sep: Bytes, n: Int) -> List[Bytes] { scan.split_after_n_bytes(b, sep, n) }
+
 fn bytes_replace(b: Bytes, old: Bytes, new: Bytes) -> Bytes { strings.replace_bytes(b, old, new) }
 
 /// bytes.Replace with a count, b itself when nothing changes.

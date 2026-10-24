@@ -130,8 +130,17 @@ var (
 	_ func(*Task, Bytes, Bytes) bool                                = Bytes_starts_with
 	_ func(*Task, Bytes, Bytes) bool                                = Bytes_ends_with
 	_ func(*Task, Bytes, Bytes) int64                               = Bytes_count
+	_ func(*Task, Bytes, string) Option[int64]                      = Bytes_find_any
+	_ func(*Task, Bytes, string) Option[int64]                      = Bytes_rfind_any
+	_ func(*Task, Bytes, string) bool                               = Bytes_contains_any
+	_ func(*Task, Bytes, Rune) bool                                 = Bytes_contains_rune
 	_ func(*Task, Bytes, Bytes) List[Bytes]                         = Bytes_split
 	_ func(*Task, Bytes, Bytes, int64) List[Bytes]                  = Bytes_split_n
+	_ func(*Task, Bytes, Bytes) List[Bytes]                         = Bytes_split_after
+	_ func(*Task, Bytes, Bytes, int64) List[Bytes]                  = Bytes_split_after_n
+	_ func(*Task, Bytes, Bytes) Option[Tuple2[Bytes, Bytes]]        = Bytes_cut
+	_ func(*Task, Bytes, Bytes) Option[Bytes]                       = Bytes_cut_prefix
+	_ func(*Task, Bytes, Bytes) Option[Bytes]                       = Bytes_cut_suffix
 	_ func(*Task, Bytes) List[Bytes]                                = Bytes_fields
 	_ func(*Task, Bytes) Bytes                                      = Bytes_trim
 	_ func(*Task, Bytes, Bytes) Bytes                               = Bytes_trim_prefix

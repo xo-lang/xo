@@ -6,7 +6,7 @@ source of truth, and `xo doc NAME` shows a type's methods (prelude types
 included). Two features were reported missing on 2026-10-21 that Xo had
 (match guards, `Set`); check here, then the spec, then ask.
 
-Last verified: 2026-10-22 (spec/core.md and spec/std.md at main).
+Last verified: 2026-10-24 (spec/core.md and spec/std.md at main).
 
 ## Types (core 2)
 
@@ -98,7 +98,8 @@ compile time when constant; `time.layout(text)` gives a `Layout` parsed
 once (`const ISO: Layout = layout(...)`, 0332).
 Prelude collections include `sort`, `sort_by`, `group_by`,
 `fold`, `contains`, `indexed` (List and Bytes), `to_set`, `reverse`, `join`,
-`split`; Bytes has `indexed` and `find`; `xo doc List` lists the rest.
+`split`; Bytes has `indexed`, `find`, `find_any`, `contains_any`,
+`contains_rune`, `split_after`, `cut`, `cut_prefix` and `cut_suffix`; `xo doc List` lists the rest.
 
 ## Tools (spec 10, agent-tools.md)
 
@@ -110,10 +111,10 @@ Prelude collections include `sort`, `sort_by`, `group_by`,
   counted up and down each iteration (including callback walks such as
   `xs.any(fn ...)`), `XO0909` a list update that copies the list each
   iteration, `XO0910` a value over 8 words copied into a closure or an
-  Option in a loop, `XO0911` a view of a parameter's text (a slice, trim,
-  a piece of split or split_where, or a trim*_where made in a loop) stored
-  in a field or a
-  returned collection, which keeps the whole input alive (`clone()` it).
+  Option in a loop, `XO0911` a view of a parameter's text or bytes (a
+  slice, trim, cut, a piece of split, lines or split_where, or a
+  trim*_where made in a loop) stored in a field or a returned collection,
+  which keeps the whole input alive (`clone()` it).
 - `xo prof FILE|URL`: a URL is a running server's std/debug
   `/debug/profile?seconds=N` or `/debug/heap` (0325), fetched then
   summarized like a file; `/debug/sched` is printed.

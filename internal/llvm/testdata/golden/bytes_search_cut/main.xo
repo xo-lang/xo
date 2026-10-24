@@ -1,0 +1,44 @@
+// Bytes find_any, rfind_any, contains_any, contains_rune, cut, cut_prefix,
+// cut_suffix, split_after and split_after_n: a value holding an invalid
+// byte (0xff, which the searches see as U+FFFD, as Go's do), the same
+// methods on a view of a longer value, the empty value and the empty
+// separator, and the pieces' lengths.
+
+fn lens(xs: List[Bytes]) -> Str {
+  var out = ""
+  for x in xs {
+    out = out + (if out.is_empty() { "" } else { "," }) + "${x.len()}"
+  }
+  out
+}
+
+fn main(os: Os) {
+  let b = b"a\xffb\xcf\x80:tail"
+  os.stdio.println("find_any ${b.find_any("bx") ?? -1} ${b.find_any("\u{fffd}") ?? -1} ${b.find_any("π") ?? -1} ${b.find_any("") ?? -1}")
+  os.stdio.println("rfind_any ${b.rfind_any("bx") ?? -1} ${b.rfind_any("\u{fffd}") ?? -1} ${b.rfind_any("") ?? -1}")
+  os.stdio.println("contains_any ${b.contains_any("zb")} ${b.contains_any("π")} ${b.contains_any("")}")
+  os.stdio.println("contains_rune ${b.contains_rune('a')} ${b.contains_rune(Rune(0xFFFD))} ${b.contains_rune('π')} ${b.contains_rune('z')}")
+
+  let (before, after) = b.cut(b":") ?? (b"", b"")
+  os.stdio.println("cut ${before.len()} ${after.len()} ${b.cut(b"zz") == None} ${b.cut(b"") == None}")
+  let (e1, e2) = b.cut(b"") ?? (b"", b"")
+  os.stdio.println("cut empty ${e1.len()} ${e2.len()} same ${e2 == b}")
+  let cp = b.cut_prefix(b"a\xff") ?? b"?"
+  let cs = b.cut_suffix(b"tail") ?? b"?"
+  os.stdio.println("cut_prefix ${cp.len()} ${b.cut_prefix(b"zz") == None} ${b.cut_prefix(b"") == None}")
+  os.stdio.println("cut_suffix ${cs.len()} ${b.cut_suffix(b"zz") == None} ${b.cut_suffix(b"") == None}")
+
+  os.stdio.println("split_after ${lens(b.split_after(b":"))} ${lens(b.split_after(b""))}")
+  os.stdio.println("split_after_n ${lens(b.split_after_n(b":", 1))} ${lens(b.split_after_n(b"", 2))} ${lens(b.split_after_n(b":", 0))}")
+
+  // a view of a longer value: every piece and every found offset is a view
+  let long = b"zz" + b + b"zz"
+  let v = long[2..long.len() - 2]
+  os.stdio.println("view ${v.find_any("bπ") ?? -1} ${v.rfind_any("\u{fffd}") ?? -1} ${v.cut(b":") != None} ${lens(v.split_after(b":"))}")
+  let (vb, va) = v.cut(b":") ?? (b"", b"")
+  os.stdio.println("view cut ${vb.len()} ${va.len()} ${vb == before} ${va == after}")
+
+  // the empty value
+  let e = b""
+  os.stdio.println("empty ${e.find_any("ab") ?? -1} ${e.rfind_any("ab") ?? -1} ${e.contains_any("ab")} ${e.contains_rune('a')} ${e.cut(b",") == None} ${e.cut(b"") != None} ${lens(e.split_after(b","))} ${lens(e.split_after(b""))}")
+}

@@ -1,0 +1,3 @@
+fn pieces(b: Bytes) -> List[Bytes] {
+  bytes.SplitAfter(b, b",")
+}

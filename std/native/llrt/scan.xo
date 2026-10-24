@@ -292,8 +292,7 @@ pub fn ends_with(s: Str, p: Str) -> Bool { p.len() <= s.len() && eq_at(s.bytes()
 /// strings.IndexRune: the byte offset of r in s, or -1. r below 0x80 is a
 /// byte search; otherwise s is decoded (an invalid byte decodes as U+FFFD,
 /// so a U+FFFD r finds it, as Go's does).
-pub fn index_rune(s: Str, r: Rune) -> Int {
-  let b = s.bytes()
+pub fn index_rune_bytes(b: Bytes, r: Rune) -> Int {
   if Int(r) < 0x80 {
     return find_byte(b, 0, b.len(), Int(r))
   }
@@ -307,6 +306,9 @@ pub fn index_rune(s: Str, r: Rune) -> Int {
   }
   -1
 }
+
+/// strings.IndexRune: index_rune_bytes over s's bytes.
+pub fn index_rune(s: Str, r: Rune) -> Int { index_rune_bytes(s.bytes(), r) }
 
 /// Go's makeASCIISet: the bytes of b as two 64 bit words, and whether every
 /// byte is ASCII (only then does the set answer for all of them).
@@ -344,20 +346,23 @@ fn in_set(lo: Int, hi: Int, c: Int) -> Bool {
 /// strings.IndexAny: the byte offset of the first rune of chars in s, or -1.
 /// A one byte chars is a rune search, as Go's; an ASCII chars of any length
 /// over a long s is Go's word set path, scanning the bytes of s.
-pub fn index_any(s: Str, chars: Str) -> Int {
-  let n = s.len()
-  let cb = chars.bytes()
+pub fn index_any_bytes(b: Bytes, cb: Bytes) -> Int {
+  let n = b.len()
   let m = cb.len()
   if m == 0 {
     return -1
   }
   if m == 1 {
-    // one byte is ASCII: a Str holds valid UTF-8, so a byte of 0x80 or
-    // above never stands alone (Go's RuneError case for it cannot arise)
-    return index_rune(s, Rune(Int(cb[0])))
+    // one rune of chars; a byte of 0x80 or above alone is not UTF-8, so
+    // it searches for U+FFFD, as Go's IndexAny does (a Str can never hold
+    // such a byte, so the Str form only takes the ASCII branch)
+    let c = Int(cb[0])
+    if c >= 0x80 {
+      return index_rune_bytes(b, Rune(0xFFFD))
+    }
+    return index_rune_bytes(b, Rune(c))
   }
   let (lo, hi, ascii) = ascii_set(cb)
-  let b = s.bytes()
   if ascii && n > 8 {
     var i = 0
     while i < n {
@@ -371,13 +376,16 @@ pub fn index_any(s: Str, chars: Str) -> Int {
   var i = 0
   while i < n {
     let (x, sz) = b.decode_rune(i)
-    if index_rune(chars, x) >= 0 {
+    if index_rune_bytes(cb, x) >= 0 {
       return i
     }
     i += sz
   }
   -1
 }
+
+/// strings.IndexAny: index_any_bytes over s's and chars' bytes.
+pub fn index_any(s: Str, chars: Str) -> Int { index_any_bytes(s.bytes(), chars.bytes()) }
 
 /// utf8.DecodeLastRuneInString: the last rune of b[0..end] and its size (a
 /// byte that is not part of a complete sequence decodes as U+FFFD of 1).
@@ -408,14 +416,12 @@ fn decode_last(b: Bytes, end: Int) -> (Rune, Int) {
 
 /// strings.LastIndexAny: the byte offset of the last rune of chars in s, or
 /// -1.
-pub fn last_index_any(s: Str, chars: Str) -> Int {
-  let n = s.len()
-  let cb = chars.bytes()
+pub fn last_index_any_bytes(b: Bytes, cb: Bytes) -> Int {
+  let n = b.len()
   if cb.len() == 0 {
     return -1
   }
   let (lo, hi, ascii) = ascii_set(cb)
-  let b = s.bytes()
   if ascii && n > 8 {
     var i = n - 1
     while i >= 0 {
@@ -430,12 +436,15 @@ pub fn last_index_any(s: Str, chars: Str) -> Int {
   while end > 0 {
     let (x, sz) = decode_last(b, end)
     end -= sz
-    if index_rune(chars, x) >= 0 {
+    if index_rune_bytes(cb, x) >= 0 {
       return end
     }
   }
   -1
 }
+
+/// strings.LastIndexAny: last_index_any_bytes over s's and chars' bytes.
+pub fn last_index_any(s: Str, chars: Str) -> Int { last_index_any_bytes(s.bytes(), chars.bytes()) }
 
 /// strings.Cut: the text before and after the first sep, as views of s;
 /// None when sep does not occur, and sep "" cuts at the start.
@@ -463,6 +472,37 @@ pub fn cut_suffix(s: Str, suffix: Str) -> Str? {
     return None
   }
   Some(s[0..s.len() - suffix.len()])
+}
+
+/// bytes.Cut: the bytes before and after the first sep, as views of b;
+/// None when sep does not occur, and sep "" cuts at the start. The Str
+/// form above slices the same way, so the two are kept apart by the piece
+/// type, as Go keeps bytes.Cut and strings.Cut apart.
+pub fn cut_bytes(b: Bytes, sep: Bytes) -> (Bytes, Bytes)? {
+  let i = find_bytes(b, sep, 0)
+  if i < 0 {
+    return None
+  }
+  Some((b[0..i], b[i + sep.len()..b.len()]))
+}
+
+/// bytes.CutPrefix: the rest of b after p, a view of b; None when p is not
+/// a prefix, and p "" gives b.
+pub fn cut_prefix_bytes(b: Bytes, p: Bytes) -> Bytes? {
+  if !(p.len() <= b.len() && eq_at(b, 0, p, 0, p.len())) {
+    return None
+  }
+  Some(b[p.len()..b.len()])
+}
+
+/// bytes.CutSuffix: b up to p, a view of b; None when p is not a suffix,
+/// and p "" gives b.
+pub fn cut_suffix_bytes(b: Bytes, p: Bytes) -> Bytes? {
+  let n = b.len()
+  if !(p.len() <= n && eq_at(b, n - p.len(), p, 0, p.len())) {
+    return None
+  }
+  Some(b[0..n - p.len()])
 }
 
 /// strings.Trim: s without its leading and trailing runes in chars, as a
@@ -1001,6 +1041,63 @@ fn explode_n(s: Str, n: Int) -> List[Str] {
 /// strings.SplitN: s cut at sep, at most n pieces (n below 0: all, n 0:
 /// none, the rest in the last piece).
 pub fn split_n(s: Str, sep: Str, n: Int) -> List[Str] { split_save(s, sep, 0, n) }
+
+/// Go's explode for Bytes: b cut after each UTF-8 sequence (an invalid
+/// byte alone), at most n pieces with the rest in the last (n below 0: one
+/// piece per rune, n 0: none).
+pub fn explode_bytes(b: Bytes, n: Int) -> List[Bytes] {
+  var out: List[Bytes] = []
+  if n == 0 {
+    return out
+  }
+  let sl = b.len()
+  var i = 0
+  var count = 0
+  while i < sl && (n < 0 || count < n - 1) {
+    let k = if b[i] < 0x80 { 1 } else { raw.bytes_decode(b, i) & 7 }
+    out.push(b[i..i + k])
+    i += k
+    count += 1
+  }
+  if i < sl {
+    out.push(b[i..sl])
+  }
+  out
+}
+
+/// Go's genSplit for Bytes: b cut at each sep, each piece ending save bytes
+/// past its separator, at most n pieces with the unsplit rest in the last
+/// (n below 0: every piece, n 0: none).
+fn split_save_bytes(b: Bytes, sep: Bytes, save: Int, n: Int) -> List[Bytes] {
+  var out: List[Bytes] = []
+  if n == 0 {
+    return out
+  }
+  if sep.is_empty() {
+    return explode_bytes(b, n)
+  }
+  let sl = b.len()
+  let m = sep.len()
+  var start = 0
+  var i = 1
+  while n < 0 || i < n {
+    let at = find_bytes(b, sep, start)
+    if at < 0 {
+      break
+    }
+    out.push(b[start..at + save])
+    start = at + m
+    i += 1
+  }
+  out.push(b[start..sl])
+  out
+}
+
+/// bytes.SplitAfter: like split, each piece keeping its separator.
+pub fn split_after_bytes(b: Bytes, sep: Bytes) -> List[Bytes] { split_save_bytes(b, sep, sep.len(), -1) }
+
+/// bytes.SplitAfterN: at most n pieces, each keeping its separator.
+pub fn split_after_n_bytes(b: Bytes, sep: Bytes, n: Int) -> List[Bytes] { split_save_bytes(b, sep, sep.len(), n) }
 
 /// strings.SplitAfter: like split, each piece keeping its separator.
 pub fn split_after(s: Str, sep: Str) -> List[Str] { split_save(s, sep, sep.len(), -1) }

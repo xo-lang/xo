@@ -1,5 +1,44 @@
 # prelude changes
 
+## 2026-10-24: feature: Bytes gains find_any, rfind_any, contains_any, contains_rune, split_after, split_after_n, cut, cut_prefix and cut_suffix
+
+- Kind: feature
+- Commit: (filled in after the push)
+- Found by: the Bytes methods mirrored Str's one at a time; the set
+  searches (bytes.IndexAny, LastIndexAny, ContainsAny, ContainsRune) and
+  the cut family (bytes.Cut, CutPrefix, CutSuffix, SplitAfter, SplitAfterN)
+  had no Bytes form, though Str had all nine
+- Go reference: bytes.IndexAny, LastIndexAny, ContainsAny, ContainsRune,
+  Cut, CutPrefix, CutSuffix, SplitAfter and SplitAfterN (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/bytes on arm64, LLVM and the Go
+  backend (Go's indexAnyTests, lastIndexAnyTests, ContainsRuneTests,
+  cutTests, cutPrefixTests, cutSuffixTests and splitaftertests, then seeded
+  random bytes with invalid UTF-8); golden bytes_search_cut on arm64, LLVM,
+  Go parity and wasm; bench/perf/bytessearch against Go's bytes package
+
+Bytes gets the nine methods Str has had, with Go's semantics: `find_any`,
+`rfind_any`, `contains_any` and `contains_rune` take a set of runes, so a
+byte that starts an invalid sequence is U+FFFD and a set holding U+FFFD
+finds it; `split_after` and `split_after_n` are SplitAfter and SplitAfterN
+(an empty sep explodes, each piece keeps its separator); `cut`,
+`cut_prefix` and `cut_suffix` return views of b through an Option, so a
+piece kept alive keeps b alive, as the other slicing methods do.
+
+The work is shared rather than copied: `scan.index_rune_bytes`,
+`index_any_bytes`, `last_index_any_bytes`, `cut_bytes`, `cut_prefix_bytes`,
+`cut_suffix_bytes`, `split_save_bytes` and `explode_bytes` hold the code,
+and the Str forms (`scan.index_rune`, `index_any`, `last_index_any`) call
+them. The two split loops stay one per piece type, since a Str piece and a
+Bytes piece are different slices. On the Go backend the nine call Go's
+bytes package directly.
+
+Timing, beside Go's package (`bench/results/bytessearch-2026-10-24.md`, 200,000
+calls, instructions net of the bench's own loop, Xo / Go): find_any 2.06,
+contains_any 2.05, contains_rune 5.19, rfind_any 1.47, cut 1.72, cut_prefix
+3.41, cut_suffix 2.82, split_after 1.16. The set searches leave Go's ASCII
+set fast path when a set holds a rune above 0x7f and pay a decode per byte,
+which is the first of the three follow-ups the results file lists.
+
 ## 2026-10-24: perf: Str.map_runes keeps unchanged runes as their own bytes and appends runs
 
 - Kind: perf

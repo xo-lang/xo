@@ -1,0 +1,3 @@
+fn parts(b: Bytes) -> (Bytes, Bytes)? {
+  bytes.Cut(b, b":")
+}

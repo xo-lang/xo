@@ -374,12 +374,35 @@ fn (b: Bytes) ends_with(p: Bytes) -> Bool
 /// The number of non-overlapping copies of sub in b (bytes.Count); for an
 /// empty sub the rune count plus one, an invalid byte counting as one rune.
 fn (b: Bytes) count(sub: Bytes) -> Int
+/// The byte offset of the first rune of chars in b (bytes.IndexAny), None
+/// for no rune of chars and for ""; an invalid byte of b reads as U+FFFD.
+fn (b: Bytes) find_any(chars: Str) -> Int?
+/// The byte offset of the last rune of chars in b (bytes.LastIndexAny).
+fn (b: Bytes) rfind_any(chars: Str) -> Int?
+/// Whether b holds a rune of chars (bytes.ContainsAny); false for "".
+fn (b: Bytes) contains_any(chars: Str) -> Bool
+/// Whether b holds r (bytes.ContainsRune); an invalid byte of b reads as
+/// U+FFFD, so a U+FFFD r finds it.
+fn (b: Bytes) contains_rune(r: Rune) -> Bool
 /// b cut at each sep, the pieces views of b (bytes.Split); an empty sep
 /// splits after each UTF-8 sequence, an invalid byte alone.
 fn (b: Bytes) split(sep: Bytes) -> List[Bytes]
 /// b cut at each sep, at most n pieces with the unsplit rest in the last;
 /// n below 0 means every piece and n 0 an empty list (bytes.SplitN).
 fn (b: Bytes) split_n(sep: Bytes, n: Int) -> List[Bytes]
+/// Like split, each piece keeping its separator (bytes.SplitAfter).
+fn (b: Bytes) split_after(sep: Bytes) -> List[Bytes]
+/// At most n pieces, each keeping its separator (bytes.SplitAfterN).
+fn (b: Bytes) split_after_n(sep: Bytes, n: Int) -> List[Bytes]
+/// The bytes before and after the first sep (bytes.Cut), as views of b;
+/// None when sep does not occur, and sep "" cuts at the start.
+fn (b: Bytes) cut(sep: Bytes) -> (Bytes, Bytes)?
+/// The rest of b after prefix (bytes.CutPrefix), a view of b; None when b
+/// does not start with prefix, and prefix "" gives b.
+fn (b: Bytes) cut_prefix(prefix: Bytes) -> Bytes?
+/// b up to its suffix (bytes.CutSuffix), a view of b; None when b does not
+/// end with suffix, and suffix "" gives b.
+fn (b: Bytes) cut_suffix(suffix: Bytes) -> Bytes?
 /// The runs of non-white-space bytes, split around runs of white space
 /// (bytes.Fields, unicode.IsSpace); pieces are views of b.
 fn (b: Bytes) fields() -> List[Bytes]

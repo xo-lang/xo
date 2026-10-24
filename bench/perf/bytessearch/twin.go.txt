@@ -1,0 +1,145 @@
+// The Go twin of bench/perf/bytessearch/main.xo: the same texts, separator
+// and set tables and loop counts through bytes.IndexAny, LastIndexAny,
+// ContainsAny, ContainsRune, Cut, CutPrefix, CutSuffix and SplitAfter,
+// printing the same "<workload> <checksum>" line. Xo's Str set "\u{fffd}b"
+// is Go's "\xffb": an invalid byte of a Go string reads as U+FFFD too. It is
+// a .txt so the Go tool does not build it as part of the repository; copy it
+// out and `go build` it.
+package main
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+)
+
+const n = 200000
+
+var texts = [][]byte{
+	[]byte("  the quick brown fox, jumps over the lazy dog  "),
+	[]byte("1,2,3,4"),
+	[]byte("héllo, wörld, ça va, 日本語 テキスト   "),
+	[]byte("  \t  mixed ascii and ✓ unicode ✓  "),
+	[]byte("abcabcabcabcabcabcabc"),
+	[]byte("a\xffb, c\x80 ,"),
+}
+
+var seps = [][]byte{[]byte(","), []byte(" "), []byte("abc"), []byte(""), []byte("✓"), []byte(":")}
+var chars = []string{"aπ☺", "xyz", "", "\xffb", ":,✓"}
+var runes = []rune{'a', '�', 'π', 'z'}
+
+func indexAll() int {
+	sum := 0
+	for i := 0; i < n; i++ {
+		sum += len(texts[i%len(texts)])
+	}
+	return sum
+}
+
+func findAnyAll() int {
+	sum := 0
+	for i := 0; i < n; i++ {
+		sum += bytes.IndexAny(texts[i%len(texts)], chars[i%len(chars)])
+	}
+	return sum
+}
+
+func rfindAnyAll() int {
+	sum := 0
+	for i := 0; i < n; i++ {
+		sum += bytes.LastIndexAny(texts[i%len(texts)], chars[i%len(chars)])
+	}
+	return sum
+}
+
+func containsAnyAll() int {
+	sum := 0
+	for i := 0; i < n; i++ {
+		if bytes.ContainsAny(texts[i%len(texts)], chars[i%len(chars)]) {
+			sum++
+		}
+	}
+	return sum
+}
+
+func containsRuneAll() int {
+	sum := 0
+	for i := 0; i < n; i++ {
+		if bytes.ContainsRune(texts[i%len(texts)], runes[i%len(runes)]) {
+			sum++
+		}
+	}
+	return sum
+}
+
+func cutAll() int {
+	sum := 0
+	for i := 0; i < n; i++ {
+		before, after, ok := bytes.Cut(texts[i%len(texts)], seps[i%len(seps)])
+		if ok {
+			sum += len(before) + len(after)
+		}
+	}
+	return sum
+}
+
+func cutPrefixAll() int {
+	sum := 0
+	for i := 0; i < n; i++ {
+		rest, ok := bytes.CutPrefix(texts[i%len(texts)], seps[i%len(seps)])
+		if ok {
+			sum += len(rest)
+		}
+	}
+	return sum
+}
+
+func cutSuffixAll() int {
+	sum := 0
+	for i := 0; i < n; i++ {
+		up, ok := bytes.CutSuffix(texts[i%len(texts)], seps[i%len(seps)])
+		if ok {
+			sum += len(up)
+		}
+	}
+	return sum
+}
+
+func splitAfterAll() int {
+	sum := 0
+	for i := 0; i < n; i++ {
+		for _, p := range bytes.SplitAfter(texts[i%len(texts)], seps[i%len(seps)]) {
+			sum += len(p)
+		}
+	}
+	return sum
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	sum := 0
+	switch w {
+	case "find_any":
+		sum = findAnyAll()
+	case "rfind_any":
+		sum = rfindAnyAll()
+	case "contains_any":
+		sum = containsAnyAll()
+	case "contains_rune":
+		sum = containsRuneAll()
+	case "cut":
+		sum = cutAll()
+	case "cut_prefix":
+		sum = cutPrefixAll()
+	case "cut_suffix":
+		sum = cutSuffixAll()
+	case "split_after":
+		sum = splitAfterAll()
+	case "index":
+		sum = indexAll()
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

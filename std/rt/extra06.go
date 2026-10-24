@@ -135,6 +135,75 @@ func Bytes_split_n(_ *Task, b, sep Bytes, n int64) List[Bytes] {
 	return bytesList(bytes.SplitN([]byte(b), []byte(sep), int(n)))
 }
 
+// Bytes_find_any is `b.find_any(chars)`: bytes.IndexAny, the set of runes
+// chars being text, as Go's takes a string.
+func Bytes_find_any(_ *Task, b Bytes, chars string) Option[int64] {
+	i := bytes.IndexAny([]byte(b), chars)
+	if i < 0 {
+		return Option[int64]{}
+	}
+	return Some(int64(i))
+}
+
+// Bytes_rfind_any is `b.rfind_any(chars)`: bytes.LastIndexAny.
+func Bytes_rfind_any(_ *Task, b Bytes, chars string) Option[int64] {
+	i := bytes.LastIndexAny([]byte(b), chars)
+	if i < 0 {
+		return Option[int64]{}
+	}
+	return Some(int64(i))
+}
+
+// Bytes_contains_any is `b.contains_any(chars)`: bytes.ContainsAny.
+func Bytes_contains_any(_ *Task, b Bytes, chars string) bool {
+	return bytes.ContainsAny([]byte(b), chars)
+}
+
+// Bytes_contains_rune is `b.contains_rune(r)`: bytes.ContainsRune.
+func Bytes_contains_rune(_ *Task, b Bytes, r Rune) bool {
+	return bytes.ContainsRune([]byte(b), rune(r))
+}
+
+// Bytes_cut is `b.cut(sep)`: the bytes before and after the first sep
+// (bytes.Cut), and None when sep is not there.
+func Bytes_cut(_ *Task, b, sep Bytes) Option[Tuple2[Bytes, Bytes]] {
+	before, after, ok := bytes.Cut([]byte(b), []byte(sep))
+	if !ok {
+		return Option[Tuple2[Bytes, Bytes]]{}
+	}
+	return Some(Tuple2[Bytes, Bytes]{Bytes(before), Bytes(after)})
+}
+
+// Bytes_cut_prefix is `b.cut_prefix(p)`: the rest of b after a leading p
+// (bytes.CutPrefix), and None when b does not start with it.
+func Bytes_cut_prefix(_ *Task, b, p Bytes) Option[Bytes] {
+	rest, ok := bytes.CutPrefix([]byte(b), []byte(p))
+	if !ok {
+		return Option[Bytes]{}
+	}
+	return Some(Bytes(rest))
+}
+
+// Bytes_cut_suffix is `b.cut_suffix(p)`: b up to a trailing p
+// (bytes.CutSuffix), and None when b does not end with it.
+func Bytes_cut_suffix(_ *Task, b, p Bytes) Option[Bytes] {
+	up, ok := bytes.CutSuffix([]byte(b), []byte(p))
+	if !ok {
+		return Option[Bytes]{}
+	}
+	return Some(Bytes(up))
+}
+
+// Bytes_split_after is `b.split_after(sep)`: bytes.SplitAfter.
+func Bytes_split_after(_ *Task, b, sep Bytes) List[Bytes] {
+	return bytesList(bytes.SplitAfter([]byte(b), []byte(sep)))
+}
+
+// Bytes_split_after_n is `b.split_after_n(sep, n)`: bytes.SplitAfterN.
+func Bytes_split_after_n(_ *Task, b, sep Bytes, n int64) List[Bytes] {
+	return bytesList(bytes.SplitAfterN([]byte(b), []byte(sep), int(n)))
+}
+
 // Bytes_fields is `b.fields()`: bytes.Fields.
 func Bytes_fields(_ *Task, b Bytes) List[Bytes] {
 	return bytesList(bytes.Fields([]byte(b)))

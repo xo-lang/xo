@@ -487,6 +487,179 @@ func bytesRandomRepeat(r *rand.Rand) bytesRepeatCase {
 	return bytesRepeatCase{bytesGen(r, r.Intn(7)), r.Intn(6)}
 }
 
+// bytesAnyCase is one (b, chars) input of find_any, rfind_any and
+// contains_any. chars is text (a Str), as Go's bytes.IndexAny takes a
+// string.
+type bytesAnyCase struct {
+	b     []byte
+	chars []byte
+}
+
+// bytesRuneCase is one (b, r) input of contains_rune.
+type bytesRuneCase struct {
+	b []byte
+	r rune
+}
+
+// bytesCutCase is one (b, sep) input of cut, cut_prefix and cut_suffix.
+type bytesCutCase struct {
+	b, sep []byte
+}
+
+// bytesSplitAfterCase is one input of split_after and split_after_n.
+type bytesSplitAfterCase struct {
+	b, sep []byte
+	n      int
+}
+
+// goBytesAnyCases are the inputs of Go's bytes_test.go indexAnyTests and
+// lastIndexAnyTests, unioned (they overlap). Go's bytes tests are Copyright
+// 2009 The Go Authors, BSD-style license.
+func goBytesAnyCases() []bytesAnyCase {
+	dots := "1....2....3....4"
+	in := [][2]string{
+		{"", ""}, {"", "a"}, {"", "abc"}, {"a", ""}, {"a", "a"},
+		{"\x80", "\xffb"}, {"aaa", "a"}, {"abc", "xyz"}, {"abc", "xcz"}, {"abc", "ab"},
+		{"ab☺c", "x☺yz"}, {"a☺b☻c☹d", "cx"}, {"a☺b☻c☹d", "uvw☻xyz"},
+		{"aRegExp*", ".(|)*+?^$[]"}, {"a.RegExp*", ".(|)*+?^$[]"},
+		{dots + dots + dots, " "},
+		{"012abcba210", "\xffb"}, {"012\x80bcb\x80210", "\xffb"},
+		{"0123456\xcf\x80abc", "\xcfb\x80"},
+	}
+	var out []bytesAnyCase
+	for _, c := range in {
+		out = append(out, bytesAnyCase{[]byte(c[0]), []byte(c[1])})
+	}
+	return out
+}
+
+// goBytesRuneCases are Go's bytes_test.go ContainsRuneTests. Go's bytes
+// tests are Copyright 2009 The Go Authors, BSD-style license.
+func goBytesRuneCases() []bytesRuneCase {
+	return []bytesRuneCase{
+		{[]byte(""), 'a'},
+		{[]byte("a"), 'a'},
+		{[]byte("aaa"), 'a'},
+		{[]byte("abc"), 'y'},
+		{[]byte("abc"), 'c'},
+		{[]byte("a☺b☻c☹d"), 'x'},
+		{[]byte("a☺b☻c☹d"), '☻'},
+		{[]byte("aRegExp*"), '*'},
+	}
+}
+
+// goBytesCutCases are Go's bytes_test.go cutTests. Go's bytes tests are
+// Copyright 2009 The Go Authors, BSD-style license.
+func goBytesCutCases() []bytesCutCase {
+	in := [][2]string{
+		{"abc", "b"}, {"abc", "a"}, {"abc", "c"}, {"abc", "abc"},
+		{"abc", ""}, {"abc", "d"}, {"", "d"}, {"", ""},
+	}
+	var out []bytesCutCase
+	for _, c := range in {
+		out = append(out, bytesCutCase{[]byte(c[0]), []byte(c[1])})
+	}
+	return out
+}
+
+// goBytesCutPrefixCases are Go's bytes_test.go cutPrefixTests, and
+// goBytesCutSuffixCases its cutSuffixTests. Go's bytes tests are Copyright
+// 2009 The Go Authors, BSD-style license.
+func goBytesCutPrefixCases() []bytesCutCase {
+	in := [][2]string{
+		{"abc", "a"}, {"abc", "abc"}, {"abc", ""}, {"abc", "d"}, {"", "d"}, {"", ""},
+	}
+	var out []bytesCutCase
+	for _, c := range in {
+		out = append(out, bytesCutCase{[]byte(c[0]), []byte(c[1])})
+	}
+	return out
+}
+
+func goBytesCutSuffixCases() []bytesCutCase {
+	in := [][2]string{
+		{"abc", "bc"}, {"abc", "abc"}, {"abc", ""}, {"abc", "d"}, {"", "d"}, {"", ""},
+	}
+	var out []bytesCutCase
+	for _, c := range in {
+		out = append(out, bytesCutCase{[]byte(c[0]), []byte(c[1])})
+	}
+	return out
+}
+
+// goBytesSplitAfterCases are Go's bytes_test.go splitaftertests on its
+// fixtures. Go's bytes tests are Copyright 2009 The Go Authors, BSD-style
+// license.
+func goBytesSplitAfterCases() []bytesSplitAfterCase {
+	abcd, faces, commas, dots := "abcd", "☺☻☹", "1,2,3,4", "1....2....3....4"
+	in := []bytesSplitAfterCase{
+		{[]byte(abcd), []byte("a"), -1},
+		{[]byte(abcd), []byte("z"), -1},
+		{[]byte(abcd), []byte(""), -1},
+		{[]byte(commas), []byte(","), -1},
+		{[]byte(dots), []byte("..."), -1},
+		{[]byte(faces), []byte("☹"), -1},
+		{[]byte(faces), []byte("~"), -1},
+		{[]byte(faces), []byte(""), -1},
+		{[]byte("1 2 3 4"), []byte(" "), 3},
+		{[]byte("1 2 3"), []byte(" "), 3},
+		{[]byte("1 2"), []byte(" "), 3},
+		{[]byte("123"), []byte(""), 2},
+		{[]byte("123"), []byte(""), 17},
+	}
+	return in
+}
+
+// bytesRandomAny is a random (b, chars): chars is empty, one byte, text
+// holding a multi byte rune and an invalid byte, or a piece of b (which can
+// start inside a sequence, so the set holds an invalid byte).
+func bytesRandomAny(r *rand.Rand) bytesAnyCase {
+	b := bytesGen(r, bytesLens[r.Intn(len(bytesLens))])
+	var chars []byte
+	switch r.Intn(5) {
+	case 0:
+		chars = nil
+	case 1:
+		chars = bytesGen(r, 1)
+	case 2:
+		chars = []byte("aπ☺\xffb")
+	default:
+		if len(b) > 0 {
+			chars = b[r.Intn(len(b)):]
+			if len(chars) > 3 {
+				chars = chars[:1+r.Intn(3)]
+			}
+		} else {
+			chars = bytesGen(r, 1)
+		}
+	}
+	return bytesAnyCase{b, chars}
+}
+
+// bytesRandomCut is a random (b, sep): sep empty, one byte, unrelated, a
+// piece of b, or longer than b.
+func bytesRandomCut(r *rand.Rand) bytesCutCase {
+	b := bytesGen(r, bytesLens[r.Intn(len(bytesLens))])
+	var sep []byte
+	switch r.Intn(5) {
+	case 0:
+		sep = nil
+	case 1, 2:
+		sep = bytesGen(r, 1+r.Intn(2))
+	default:
+		sep = bytesRandomSub(r, b)
+	}
+	return bytesCutCase{b, sep}
+}
+
+// bytesRandomRune is a random (b, r): r is ASCII, a two or three byte rune,
+// U+FFFD or the last code point.
+func bytesRandomRune(r *rand.Rand) bytesRuneCase {
+	b := bytesGen(r, bytesLens[r.Intn(len(bytesLens))])
+	rs := []rune{'a', 'A', '0', ':', 'é', 'π', '☺', '☹', 0xFFFD, 0x10FFFF}
+	return bytesRuneCase{b, rs[r.Intn(len(rs))]}
+}
+
 func bytesCorpus() string {
 	r := rand.New(rand.NewSource(59))
 	var cs []bytesCase
@@ -499,7 +672,7 @@ func bytesCorpus() string {
 	}
 
 	var o strings.Builder
-	o.WriteString(header("Go's bytes.Contains, HasPrefix, HasSuffix, Count, SplitN, Fields, TrimSpace, TrimPrefix, TrimSuffix, Replace, ToLower, ToUpper, EqualFold and Repeat on Go's bytes_test.go cases (containsTests, the TestCountByte and TestCountByteNoMatch windows, splittests, fieldstests, trimSpaceTests, trimTests, ReplaceTests, upperTests, lowerTests, EqualFoldTests, RepeatTests), on the boundary cases the methods document, and on seeded random bytes with invalid UTF-8 (Go's bytes tests are Copyright 2009 The Go Authors, BSD-style license)"))
+	o.WriteString(header("Go's bytes.Contains, HasPrefix, HasSuffix, Count, SplitN, SplitAfter, Fields, TrimSpace, TrimPrefix, TrimSuffix, Replace, ToLower, ToUpper, EqualFold, Repeat, IndexAny, LastIndexAny, ContainsAny, ContainsRune, Cut, CutPrefix and CutSuffix on Go's bytes_test.go cases (containsTests, the TestCountByte and TestCountByteNoMatch windows, splittests, splitaftertests, fieldstests, trimSpaceTests, trimTests, ReplaceTests, upperTests, lowerTests, EqualFoldTests, RepeatTests, indexAnyTests, lastIndexAnyTests, ContainsRuneTests, cutTests, cutPrefixTests, cutSuffixTests), on the boundary cases the methods document, and on seeded random bytes with invalid UTF-8 (Go's bytes tests are Copyright 2009 The Go Authors, BSD-style license)"))
 	o.WriteString("\n/// (b, sub, Go's Contains, HasPrefix, HasSuffix and Count)\nconst CASES: List[(Bytes, Bytes, Bool, Bool, Bool, Int)] = [\n")
 	for _, c := range cs {
 		fmt.Fprintf(&o, "  (%s, %s, %v, %v, %v, %d),\n", xbytes(c.b), xbytes(c.sub),
@@ -601,6 +774,92 @@ func bytesCorpus() string {
 	o.WriteString("\n/// (b, n, Go's Repeat)\nconst REPEAT_CASES: List[(Bytes, Int, Bytes)] = [\n")
 	for _, c := range rpt {
 		fmt.Fprintf(&o, "  (%s, %d, %s),\n", xbytes(c.b), c.n, xbytes(bytes.Repeat(c.b, c.n)))
+	}
+	o.WriteString("]\n")
+
+	// find_any, rfind_any and contains_any (its own seed, so the sections
+	// above keep their inputs)
+	an := goBytesAnyCases()
+	ran := rand.New(rand.NewSource(101))
+	for i := 0; i < 1500; i++ {
+		an = append(an, bytesRandomAny(ran))
+	}
+	o.WriteString("\n/// (b, chars, Go's IndexAny, LastIndexAny and ContainsAny joined by U+001F; -1 for no match)\nconst ANY_CASES: List[(Bytes, Str, Str)] = [\n")
+	for _, c := range an {
+		chars := textOf(string(c.chars))
+		fmt.Fprintf(&o, "  (%s, %s, %s),\n", xbytes(c.b), xq(chars),
+			xq(fmt.Sprintf("%d\x1f%d\x1f%v", bytes.IndexAny(c.b, chars), bytes.LastIndexAny(c.b, chars), bytes.ContainsAny(c.b, chars))))
+	}
+	o.WriteString("]\n")
+
+	// contains_rune
+	rn := goBytesRuneCases()
+	rrn := rand.New(rand.NewSource(103))
+	for i := 0; i < 1200; i++ {
+		rn = append(rn, bytesRandomRune(rrn))
+	}
+	o.WriteString("\n/// (b, r, Go's ContainsRune)\nconst RUNE_CASES: List[(Bytes, Rune, Bool)] = [\n")
+	for _, c := range rn {
+		fmt.Fprintf(&o, "  (%s, %s, %v),\n", xbytes(c.b), xr(c.r), bytes.ContainsRune(c.b, c.r))
+	}
+	o.WriteString("]\n")
+
+	// cut, cut_prefix and cut_suffix
+	cu := goBytesCutCases()
+	rcu := rand.New(rand.NewSource(107))
+	for i := 0; i < 1200; i++ {
+		cu = append(cu, bytesRandomCut(rcu))
+	}
+	o.WriteString("\n/// (b, sep, whether Go's Cut finds it, its before and after)\nconst CUT_CASES: List[(Bytes, Bytes, Bool, Bytes, Bytes)] = [\n")
+	for _, c := range cu {
+		before, after, ok := bytes.Cut(c.b, c.sep)
+		if !ok {
+			before, after = []byte{}, []byte{}
+		}
+		fmt.Fprintf(&o, "  (%s, %s, %v, %s, %s),\n", xbytes(c.b), xbytes(c.sep), ok, xbytes(before), xbytes(after))
+	}
+	o.WriteString("]\n")
+
+	cp := goBytesCutPrefixCases()
+	rcp := rand.New(rand.NewSource(109))
+	for i := 0; i < 1200; i++ {
+		cp = append(cp, bytesRandomCut(rcp))
+	}
+	o.WriteString("\n/// (b, prefix, whether Go's CutPrefix finds it, its after)\nconst CUTP_CASES: List[(Bytes, Bytes, Bool, Bytes)] = [\n")
+	for _, c := range cp {
+		after, ok := bytes.CutPrefix(c.b, c.sep)
+		if !ok {
+			after = []byte{}
+		}
+		fmt.Fprintf(&o, "  (%s, %s, %v, %s),\n", xbytes(c.b), xbytes(c.sep), ok, xbytes(after))
+	}
+	o.WriteString("]\n")
+
+	csx := goBytesCutSuffixCases()
+	rcsx := rand.New(rand.NewSource(113))
+	for i := 0; i < 1200; i++ {
+		csx = append(csx, bytesRandomCut(rcsx))
+	}
+	o.WriteString("\n/// (b, suffix, whether Go's CutSuffix finds it, its before)\nconst CUTS_CASES: List[(Bytes, Bytes, Bool, Bytes)] = [\n")
+	for _, c := range csx {
+		before, ok := bytes.CutSuffix(c.b, c.sep)
+		if !ok {
+			before = []byte{}
+		}
+		fmt.Fprintf(&o, "  (%s, %s, %v, %s),\n", xbytes(c.b), xbytes(c.sep), ok, xbytes(before))
+	}
+	o.WriteString("]\n")
+
+	// split_after and split_after_n
+	sa := goBytesSplitAfterCases()
+	rsa := rand.New(rand.NewSource(127))
+	for i := 0; i < 1200; i++ {
+		c := bytesRandomSplit(rsa)
+		sa = append(sa, bytesSplitAfterCase{c.b, c.sep, c.n})
+	}
+	o.WriteString("\n/// (b, sep, n, Go's SplitAfterN)\nconst SPLITAFTER_CASES: List[(Bytes, Bytes, Int, List[Bytes])] = [\n")
+	for _, c := range sa {
+		fmt.Fprintf(&o, "  (%s, %s, %d, %s),\n", xbytes(c.b), xbytes(c.sep), c.n, xbytesList(bytes.SplitAfterN(c.b, c.sep, c.n)))
 	}
 	o.WriteString("]\n")
 
@@ -750,6 +1009,103 @@ test "the split and trim family on a view of a longer value" {
     let long = b"zz" + b
     let view = long[2..long.len()]
     expect((b, view.fields())) == (b, want)
+  }
+}
+
+fn any_of(b: Bytes, chars: Str) -> Str {
+  "${b.find_any(chars) ?? -1}\u{1f}${b.rfind_any(chars) ?? -1}\u{1f}${b.contains_any(chars)}"
+}
+
+test "find_any, rfind_any and contains_any are Go's" {
+  for (b, chars, want) in ANY_CASES {
+    expect((b, chars, any_of(b, chars))) == (b, chars, want)
+  }
+}
+
+test "contains_rune is Go's" {
+  for (b, r, want) in RUNE_CASES {
+    expect((b, r, b.contains_rune(r))) == (b, r, want)
+  }
+}
+
+test "cut is Go's Cut" {
+  for (b, sep, found, before, after) in CUT_CASES {
+    let (f, x, y) = match b.cut(sep) {
+      Some((p, q)) => (true, p, q)
+      None => (false, b"", b"")
+    }
+    expect((b, sep, f, x, y)) == (b, sep, found, before, after)
+  }
+}
+
+test "cut_prefix is Go's CutPrefix" {
+  for (b, p, found, after) in CUTP_CASES {
+    let (f, x) = match b.cut_prefix(p) {
+      Some(y) => (true, y)
+      None => (false, b"")
+    }
+    expect((b, p, f, x)) == (b, p, found, after)
+  }
+}
+
+test "cut_suffix is Go's CutSuffix" {
+  for (b, p, found, before) in CUTS_CASES {
+    let (f, x) = match b.cut_suffix(p) {
+      Some(y) => (true, y)
+      None => (false, b"")
+    }
+    expect((b, p, f, x)) == (b, p, found, before)
+  }
+}
+
+test "split_after and split_after_n are Go's" {
+  for (b, sep, n, want) in SPLITAFTER_CASES {
+    expect((b, sep, n, b.split_after_n(sep, n))) == (b, sep, n, want)
+    if n < 0 {
+      expect((b, sep, b.split_after(sep))) == (b, sep, want)
+    }
+  }
+}
+
+test "the search and cut family on a view of a longer value" {
+  // "zz" + b sliced back is a view of a longer Bytes, so every piece and
+  // every found offset is a view's
+  for (b, chars, want) in ANY_CASES {
+    let long = b"zz" + b
+    let view = long[2..long.len()]
+    expect((b, chars, any_of(view, chars))) == (b, chars, want)
+  }
+  for (b, sep, found, before, after) in CUT_CASES {
+    let long = b"zz" + b
+    let view = long[2..long.len()]
+    let (f, x, y) = match view.cut(sep) {
+      Some((p, q)) => (true, p, q)
+      None => (false, b"", b"")
+    }
+    expect((b, sep, f, x, y)) == (b, sep, found, before, after)
+  }
+  for (b, p, found, after) in CUTP_CASES {
+    let long = b"zz" + b
+    let view = long[2..long.len()]
+    let (f, x) = match view.cut_prefix(p) {
+      Some(y) => (true, y)
+      None => (false, b"")
+    }
+    expect((b, p, f, x)) == (b, p, found, after)
+  }
+  for (b, p, found, before) in CUTS_CASES {
+    let long = b"zz" + b
+    let view = long[2..long.len()]
+    let (f, x) = match view.cut_suffix(p) {
+      Some(y) => (true, y)
+      None => (false, b"")
+    }
+    expect((b, p, f, x)) == (b, p, found, before)
+  }
+  for (b, sep, n, want) in SPLITAFTER_CASES {
+    let long = b"zz" + b
+    let view = long[2..long.len()]
+    expect((b, sep, n, view.split_after_n(sep, n))) == (b, sep, n, want)
   }
 }
 `
