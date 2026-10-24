@@ -1,3 +1,5 @@
+use std/testing
+
 test "rusage reads macOS time -l" {
   let err = "        0.40 real         0.31 user         0.02 sys\n             8306688  maximum resident set size\n  25632703  instructions retired\n"
   let m = rusage("darwin", err)
@@ -49,4 +51,32 @@ test "fmt and jnum guard NaN and infinity" {
   expect(jnum(nan) == "null")
   expect(jnum(inf) == "null")
   expect(jnum(1.5) == "1.5")
+}
+
+test "a quiet window holds a run unless it is the window's measurement" {
+  os.env.set("XO_QUIET_FILE", "/quiet")
+  os.fs.write("/quiet", "${os.clock.now().unix() + 3600}".bytes())?
+  // wait_ok's answer with the environment set as named: 1 for true
+  let ok = fn(heavy: Str, inwin: Str) -> Int {
+    os.env.set("HEAVY_QUIET", heavy)
+    os.env.set("XO_BENCH_IN_WINDOW", inwin)
+    testing.run_main(fn(o: Os) -> () ! Error {
+      var op = match parse_opts(["--ab", "a", "b"]) {
+        Ok(x) => x
+        Err(_) => o.proc.exit(2)
+      }
+      op.max_load = 0.0
+      op.load_wait = Duration.from_secs_int(30)
+      if wait_ok(o, Host{goos: "darwin"}, op) { o.proc.exit(1) }
+      Ok(())
+    }, os)
+  }
+  // another session's window: the run waits out load_wait
+  expect(ok("", "")) == 0
+  // started for the window by heavy.sh (HEAVY_QUIET=1), or by hand
+  expect(ok("1", "")) == 1
+  expect(ok("", "1")) == 1
+  // the window closed: any run proceeds
+  os.fs.write("/quiet", "1".bytes())?
+  expect(ok("", "")) == 1
 }

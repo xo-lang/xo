@@ -169,12 +169,19 @@ fn load1(os: Os, goos: Str) -> Float uses (fs.read, proc) {
 }
 
 /// quiet_file is the lead's quiet window file: a future epoch inside it
-/// means another session is measuring and no load may be generated.
+/// means a measurement window is open: only runs started for it
+/// (HEAVY_QUIET=1, which heavy.sh passes to its child, or
+/// XO_BENCH_IN_WINDOW=1) proceed, and every other run waits.
 fn quiet_file(os: Os) -> Str uses env {
   match os.env.get("XO_QUIET_FILE") {
     Some(p) => p
     None => "${os.env.get("HOME") ?? ""}/xo-lead/quiet"
   }
+}
+
+/// Whether this run is the window's own measurement (quiet_file).
+fn in_window_run(os: Os) -> Bool uses env {
+  (os.env.get("HEAVY_QUIET") ?? "") == "1" || (os.env.get("XO_BENCH_IN_WINDOW") ?? "") == "1"
 }
 
 fn window_open(os: Os) -> Bool uses (clock, env, fs.read) {
@@ -185,14 +192,15 @@ fn window_open(os: Os) -> Bool uses (clock, env, fs.read) {
   }
 }
 
-/// wait_ok waits until the guards allow a run: the quiet window closed,
-/// the load under max_load, the guard command successful. It returns false
+/// wait_ok waits until the guards allow a run: the quiet window closed
+/// (or this run is its measurement, in_window_run), the load under
+/// max_load, the guard command successful. It returns false
 /// when load_wait passes first (the round runs, marked loaded).
 fn wait_ok(os: Os, h: Host, o: Opts) -> Bool uses (clock, env, fs.read, proc) {
   let t0 = os.clock.now()
   while true {
     var busy = false
-    if !o.no_guard && o.guard.is_empty() && window_open(os) {
+    if !o.no_guard && o.guard.is_empty() && window_open(os) && !in_window_run(os) {
       busy = true
     }
     if o.max_load > 0.0 && load1(os, h.goos) >= o.max_load {

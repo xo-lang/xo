@@ -205,7 +205,13 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   A [B] [--env-b=K=V] [--max-load=X] -- ARGS` (decision 0340,
   toolchain.md "A/B measurement"): interleaved rounds, median, spread, a
   95% interval for B/A, "within noise" when it includes 1.0. Use it
-  instead of a hand rolled loop; it waits for the quiet window file.
+  instead of a hand rolled loop. While the lead's measurement window is
+  open (a future epoch in ~/xo-lead/quiet), only the window's own runs
+  proceed: started through heavy.sh with HEAVY_QUIET=1 (heavy.sh passes
+  it to the run), or with XO_BENCH_IN_WINDOW=1 by hand; every other run
+  waits for the window to close (2026-10-23: two queued `--ab` runs
+  without it sat idle through a whole window, then ran under load). The
+  load guard (--max-load) applies either way.
 - The compiler's own edit-build time: `xo build --backend=arm64
   --phase-times ./xo` in compiler/ prints each phase, its sub-phases
   (insert_rc.plan|read|apply, inline.apply|verify) and the cache's hits
