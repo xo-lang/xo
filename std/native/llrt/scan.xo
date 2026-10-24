@@ -143,44 +143,42 @@ pub fn count_byte(b: Bytes, from: Int, to: Int, c: Int) -> Int {
   n
 }
 
-/// Whether the n bytes of a from ai are the n bytes of b from bi (both
-/// ranges inside their values).
+/// Whether a[ai..ai+n] equals b[bi..bi+n] (both ranges in bounds): a
+/// short compare inline, small enough for the native inliner to take
+/// (2026-10-24: with every length's path in it, 173 instructions, it was
+/// a call at every cut_prefix and has_prefix; once inlined, a constant n
+/// folds to its one path); 8 bytes and more in eq_long.
 pub fn eq_at(a: Bytes, ai: Int, b: Bytes, bi: Int, n: Int) -> Bool {
-  // 8 to 16 bytes: two words, the second ending at the end (overlapping
-  // the first); 4 to 7: the same with 4 byte words. With a literal for b
-  // n is a constant once inlined, so no loop remains.
-  if n >= 8 && n <= 16 {
-    return rt.bytes_word(a, ai) == rt.bytes_word(b, bi) && rt.bytes_word(a, ai + n - 8) == rt.bytes_word(b, bi + n - 8)
-  }
-  if n >= 4 && n < 8 {
-    let pa = raw.bytes_addr(a).wrapping_add(ai)
-    let pb = raw.bytes_addr(b).wrapping_add(bi)
-    return rt.mem_load(pa, 0, 4) == rt.mem_load(pb, 0, 4) && rt.mem_load(pa, n - 4, 4) == rt.mem_load(pb, n - 4, 4)
-  }
   if n >= 8 {
-    var t = 0
-    while n - t > 8 {
-      if rt.bytes_word(a, ai + t) != rt.bytes_word(b, bi + t) {
-        return false
-      }
-      t += 8
-    }
-    return rt.bytes_word(a, ai + n - 8) == rt.bytes_word(b, bi + n - 8)
+    return eq_long(a, ai, b, bi, n)
   }
+  let pa = raw.bytes_addr(a).wrapping_add(ai)
+  let pb = raw.bytes_addr(b).wrapping_add(bi)
   if n >= 4 {
     // 4 to 7 bytes: the first four and the last four, overlapping
-    let pa = raw.bytes_addr(a) + ai
-    let pb = raw.bytes_addr(b) + bi
     return rt.mem_load(pa, 0, 4) == rt.mem_load(pb, 0, 4) && rt.mem_load(pa, n - 4, 4) == rt.mem_load(pb, n - 4, 4)
   }
+  if n >= 2 {
+    // 2 or 3 bytes: the first two and the last two, overlapping
+    return rt.mem_load(pa, 0, 2) == rt.mem_load(pb, 0, 2) && rt.mem_load(pa, n - 2, 2) == rt.mem_load(pb, n - 2, 2)
+  }
+  n <= 0 || rt.mem_load(pa, 0, 1) == rt.mem_load(pb, 0, 1)
+}
+
+/// eq_at for 8 bytes and more: 8 to 16 as two words (the second ending
+/// at the end, overlapping the first), longer a word at a time.
+fn eq_long(a: Bytes, ai: Int, b: Bytes, bi: Int, n: Int) -> Bool {
+  if n <= 16 {
+    return rt.bytes_word(a, ai) == rt.bytes_word(b, bi) && rt.bytes_word(a, ai + n - 8) == rt.bytes_word(b, bi + n - 8)
+  }
   var t = 0
-  while t < n {
-    if a[ai + t] != b[bi + t] {
+  while n - t > 8 {
+    if rt.bytes_word(a, ai + t) != rt.bytes_word(b, bi + t) {
       return false
     }
-    t += 1
+    t += 8
   }
-  true
+  rt.bytes_word(a, ai + n - 8) == rt.bytes_word(b, bi + n - 8)
 }
 
 /// Whether p is the text of s at i, for a caller that knows 0 <= i and

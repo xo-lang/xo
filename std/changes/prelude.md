@@ -67,6 +67,24 @@ inlining the ASCII paths too, or the loops of trim_start_chars and
 trim_end_chars as well, made those two rows 5 to 8 percent worse through
 the inliner's decisions, and was measured and reverted.
 
+## 2026-10-24: perf: a short byte comparison inlines and is at most two loads a side
+
+- Kind: perf
+- Commit: this commit
+- Found by: DS-2's view repro (`S.cut_prefix(P) ?? b""`, a two byte prefix), after the slice_check split
+- Go reference: bytes.HasPrefix compares with a string compare (memequal), which loads, not loops, for short lengths
+- Test: TestStdCorpora bytes, strings and strsearch (arm64, LLVM); goldens bytes_search_cut, cut_view and the view goldens
+
+std/native/llrt scan.xo eq_at, which cut_prefix, cut_suffix, has_prefix
+and the finds verify with, was 173 instructions with every length's path
+in it, so the native inliner left it a call, and it compared 1 to 3
+bytes one at a time with a bounds check each. It is now the short paths
+only (4 to 7 bytes as two 4 byte loads, 2 or 3 as two 2 byte loads,
+overlapping, 1 as one), inlined, so a constant length folds to one path;
+8 bytes and more call eq_long. The repro: instructions 0.72 on top of
+the slice_check split (0.80 from the loads, 0.90 more from inlining);
+bytessearch cut_prefix and cut_suffix 0.96, index 1.009.
+
 ## 2026-10-24: perf: find tests the separator's second byte before the whole compare
 
 - Kind: perf
