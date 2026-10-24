@@ -1,0 +1,55 @@
+// A constant's list is immortal (consts.xo), so the reference counting
+// skips its retains and releases (ssa rc.xo const_list); its elements
+// keep theirs: stored, copied, updated and dropped many times, and read
+// from several tasks, a constant stays whole.
+const ROWS: List[List[Str]] = [["a", "bb"], ["ccc", "dddd"], ["eeeee", "f"]]
+const NUMS: List[Int] = [3, 1, 4, 1, 5, 9, 2, 6]
+
+struct Holder {
+  row: List[Str]
+  nums: List[Int]
+}
+
+fn churn(n: Int) -> Int {
+  var keep: List[Holder] = []
+  var total = 0
+  for i in 0..n {
+    let h = Holder{row: ROWS[i % ROWS.len()], nums: NUMS}
+    total += h.row[0].len() + h.nums[i % NUMS.len()]
+    if i % 7 == 0 {
+      keep.push(h)
+    }
+    if keep.len() > 20 {
+      keep = []
+    }
+  }
+  total + keep.len()
+}
+
+fn grow(r0: List[Str]) -> List[Str] {
+  var r = r0
+  r.push("x")
+  r
+}
+
+fn main(os: Os) {
+  // a copy of a constant updates its own buffer, not the constant's
+  var mine = NUMS
+  mine.push(10)
+  let row = grow(ROWS[1])
+  os.stdio.println("copy ${mine.len()} ${mine[mine.len() - 1]} ${NUMS.len()} ${NUMS[0]} ${row.len()} ${ROWS[1].len()}")
+  os.stdio.println("churn ${churn(100000)}")
+  let sums = scope s {
+    var ts = []
+    for k in 0..4 {
+      ts.push(s.spawn(fn() -> Int { churn(50000 + k) }))
+    }
+    var out: List[Int] = []
+    for t in ts {
+      out.push(t.await)
+    }
+    out
+  }
+  os.stdio.println("tasks ${sums.map(fn(x) { "${x}" }).join(" ")}")
+  os.stdio.println("rows ${ROWS.map(fn(r) { r.join(",") }).join(";")} nums ${NUMS.map(fn(x) { "${x}" }).join(",")}")
+}

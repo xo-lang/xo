@@ -53,3 +53,14 @@ tlssrv.flush measured 3,667 to 353 instructions, a figure from the
 uninlined build; with the fix (cse keeps a value with a landing pad) it
 was 3,043. A pass added to inline_module is subject to the same
 fallback: measure it with XO_INLINE_STRICT=1.
+
+Observed again (2026-10-24, Xo Lang 1): making a constant read's list
+immortal in rc.xo (imm_at const_list: no retain or release) left a
+borrowed element of that list "not alive" in the verifier (alive() of a
+projection asks its parent's count, which is never counted now), so
+every program that read a constant in an inlined function was built
+without inlining. The A/B, built in a scratch script that kept only
+`| tail -1` of the build, read DS-2's constant loops as 3% and 7% more
+instructions; the warning line never showed. Fix: verify.xo alive()
+treats an immortal owned value as alive. Build every A/B binary with
+XO_INLINE_STRICT=1, and never drop a measurement build's standard error.

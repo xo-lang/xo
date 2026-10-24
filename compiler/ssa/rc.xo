@@ -1386,7 +1386,7 @@ fn imm_at(f: Func, v: Int, parts: List[Str], k: Int, sums: Map[Str, List[Bool]],
     return true
   }
   if k >= parts.len() {
-    return imm_value(x)
+    return imm_value(x) || const_list(f, x)
   }
   let idx = Int.parse(parts[k]) ?? -1
   if x.op is Op.Struct | Op.Tuple {
@@ -1428,6 +1428,25 @@ fn imm_value(x: Value) -> Bool {
     Closure => x.args.is_empty()
     _ => false
   }
+}
+
+/// Whether x is a constant's list of one (show.xo const_read): what
+/// rt.const_once returns, or the fast path's load of a built slot from
+/// the constants table; consts.xo makes a built list immortal (2026-10-24:
+/// every read of a constant in a loop released it through a call).
+fn const_list(f: Func, x: Value) -> Bool {
+  if x.op != Op.Call {
+    return false
+  }
+  let n = aux_name(x.aux)
+  if n == "rt.const_once" {
+    return true
+  }
+  if n != "rt.mem_load" || x.args.is_empty() || x.args[0] < 0 {
+    return false
+  }
+  let t = f.values[x.args[0]]
+  t.op == Op.Call && aux_name(t.aux) == "rt.slot_load" && t.args.len() == 3 && const_int(f, t.args[1]) == Some(CONST_TABLE_WORD)
 }
 
 /// The functions of fs whose one return is a struct literal, with which

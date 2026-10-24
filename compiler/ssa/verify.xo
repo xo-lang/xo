@@ -840,7 +840,9 @@ fn (var r: Rc) alive(f: Func, i: Int) -> Bool {
       let p = r.parent(f, root)
       r.alive(f, r.lid(p))
     }
-    Owned => r.cur[i] > 0
+    // an immortal value is never counted (rc_ops skips it) and always
+    // alive: a constant's list, whose element a read borrows
+    Owned => r.cur[i] > 0 || r.imm_id(f, i)
   }
 }
 
