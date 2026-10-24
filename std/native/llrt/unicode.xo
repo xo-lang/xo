@@ -365,7 +365,18 @@ fn case_append(out: Str, b: Bytes, from: Int, lower: Bool) -> Str {
       if run < i {
         o = rt.rs_append_bytes(o, b, run, i, mode)
       }
-      o = raw.push_rune(o, x)
+      // raw.push_rune's encoding without its call and its scalar value
+      // check: x is a rune the decoder produced or a table value, so it is
+      // a scalar value already.
+      if x < 0x80 {
+        o = rt.rs_push_byte(o, x)
+      } else if x < 0x800 {
+        o = rt.rs_push_word(o, (0xC0 | (x >> 6)) | ((0x80 | (x & 0x3F)) << 8), 2)
+      } else if x < 0x10000 {
+        o = rt.rs_push_word(o, (0xE0 | (x >> 12)) | ((0x80 | ((x >> 6) & 0x3F)) << 8) | ((0x80 | (x & 0x3F)) << 16), 3)
+      } else {
+        o = rt.rs_push_word(o, (0xF0 | (x >> 18)) | ((0x80 | ((x >> 12) & 0x3F)) << 8) | ((0x80 | ((x >> 6) & 0x3F)) << 16) | ((0x80 | (x & 0x3F)) << 24), 4)
+      }
       run = i + size
     }
     i += size

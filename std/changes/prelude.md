@@ -1,5 +1,27 @@
 # prelude changes
 
+## 2026-10-24: perf: case_append encodes a changed rune in place
+
+- Kind: perf
+- Commit: this commit
+- Found by: the mixed case mapping profile; each changed rune took
+  raw.push_rune's call and its scalar value check, then the
+  rt.rs_push_word path into obj.rs_push_word
+- Go reference: strings.ToLower, ToUpper and EqualFold (go1.26.1), whose
+  Map writes the mapped rune into its builder directly
+- Test: corpora runes, strings, trimchars, equalfold and strwhere on
+  arm64, LLVM and the Go backend; goldens unicode_table and
+  native_eq_lower on arm64, LLVM and Go parity; the wasm case goldens;
+  the full fixed point
+- Timing: bench/results/unicode-push-2026-10-24.md
+
+`unicode.case_append` encodes the changed rune where it stands, with
+rt.rs_push_byte for one byte and rt.rs_push_word for two, three and
+four, since the rune came from the decoder or a case table and is a
+scalar value already. lower_u 0.870, upper_u 0.880 and eqlower 0.860 of
+the base; runecase and the ASCII rows are controls and stay within
+noise. raw.push_rune is unchanged for its other callers.
+
 ## 2026-10-24: perf: the Unicode tables are little endian, so u24 is one load
 
 - Kind: perf
