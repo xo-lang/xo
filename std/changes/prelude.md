@@ -24,6 +24,9 @@ insertion, then bottom up merges, of a list of indices ordered by the first
 seven bytes of each string and then the strings, and one pass gathers the
 result. The order and the stability are unchanged.
 
+Sorting a large `List[Str]` now uses extra memory for the index lists (max
+RSS about 1.9 times Go's on 200,000 Strs, 1.28 times the old sort).
+
 ## 2026-10-24: perf: a 2-byte case in the UTF-8 validation behind every Bytes-to-Str conversion
 
 - Kind: perf
