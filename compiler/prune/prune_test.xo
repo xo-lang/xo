@@ -474,6 +474,32 @@ test "a build directory's assembly goes after its idle time, whatever the direct
   expect(st.bytes) == 10
 }
 
+test "a build directory thins to its bin/ after the idle time, however recently the directory was used" {
+  put(os, "b/aa/arm64/w-1/prog-darwin.0.o", 1000)
+  put(os, "b/aa/llvm-split/prog.ll", 500)
+  put(os, "b/aa/arm64/bin/app", 300)
+  os.clock.advance(3h)
+  // a build of the directory just now: kept whole, its old files thinned
+  put(os, "b/aa/arm64/fresh.o", 10)
+  put(os, "b/aa/arm64/bin/app", 300)
+  let p = Policy{dirs: true, max_bytes: 1 * GB, keep: 30m, thin_keep: "bin", thin_idle: 2h}
+  let st = run(os.fs, os.clock, "b", p)
+  expect(there(os, "b/aa/arm64/w-1/prog-darwin.0.o")) == false
+  expect(there(os, "b/aa/llvm-split/prog.ll")) == false
+  expect(there(os, "b/aa/arm64/fresh.o")) == true
+  expect(there(os, "b/aa/arm64/bin/app")) == true
+  expect(st.bytes) == 310
+}
+
+test "a build directory's bin/ outlives the thin idle time" {
+  put(os, "b/aa/arm64/bin/app", 300)
+  os.clock.advance(5h)
+  put(os, "b/aa/stamp", 0)
+  let p = Policy{dirs: true, max_bytes: 1 * GB, keep: 30m, thin_keep: "bin", thin_idle: 2h}
+  run(os.fs, os.clock, "b", p)
+  expect(there(os, "b/aa/arm64/bin/app")) == true
+}
+
 test "clean empties a cache: entries go, its stamp and lock files stay, dry removes nothing" {
   put(os, "r/xo/build/a1/prog", 100)
   put(os, "r/xo/build/b2/prog.s", 50)

@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The build directories (`<user cache>/xo/build`) thin themselves: every file but the
+  programs in a `bin/` goes two hours after its last use, and the cap is 6 GiB
+  (was 20): 837 directories held 12 GB, mostly part objects, with nothing removed.
 - Concurrent `xo build` of one program no longer share the files they link: each
   build writes its assembly and part objects in its own directory under the
   build directory (removed after the link; `XO_KEEP_ASM=1` keeps them in

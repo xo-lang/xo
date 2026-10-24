@@ -69,7 +69,7 @@ fn build_dir(os: Os, ctx: Ctx, wd: Str, dirs: List[Str], mode: Int, mono: Bool, 
     // prune.KEEP's 2 hours (about 50 builds an hour held 31.7 GB under a
     // 20 GB cap, 2026-10-21), and its assembly files (written for cc, or
     // with XO_KEEP_ASM) go after 10 minutes whatever the directory's age
-    prune.run(os.fs, os.clock, base, cap_env(os, prune.from_env(os.env, prune.Policy{dirs: true, keep: BUILD_DIR_KEEP, drop_suffix: ".s", drop_idle: 10m}), "XO_BUILD_DIR_MAX"))
+    prune.run(os.fs, os.clock, base, cap_env(os, prune.from_env(os.env, prune.Policy{dirs: true, keep: BUILD_DIR_KEEP, max_bytes: BUILD_DIR_CAP_GB * prune.GB, drop_suffix: ".s", drop_idle: 10m, thin_keep: "bin", thin_idle: 2h}), "XO_BUILD_DIR_MAX"))
   }
   Ok(dir)
 }
@@ -166,6 +166,12 @@ fn sweep_asm(os: Os, dir: Str) {
 /// How long a build directory is kept after its last use (build_dir's
 /// prune).
 const BUILD_DIR_KEEP: Duration = 30m
+
+/// The build directories' cap in GiB ($XO_BUILD_DIR_MAX, bytes, sets it):
+/// 6 where Policy's default is 20 (12 GB of 837 directories held under it
+/// with nothing older than 24 hours, 2026-10-24). A directory's files
+/// other than its bin/ go after two hours idle.
+const BUILD_DIR_CAP_GB = 6
 
 /// How long one build may prune a cache (cap_env).
 const PRUNE_BUDGET: Duration = 2s

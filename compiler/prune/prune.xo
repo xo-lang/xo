@@ -101,6 +101,13 @@ pub struct Policy {
   /// directories the keep protected, 2026-10-21).
   pub drop_suffix: Str = ""
   pub drop_idle: Duration = 0s
+  /// With dirs: every file below an entry that is unused for thin_idle
+  /// is removed by every run, except the files below a directory named
+  /// thin_keep (the build directories: the intermediate files of a build
+  /// are not read after its link, the program in bin/ is the user's;
+  /// 710 directories held 7.9 GB of part objects, 2026-10-24).
+  pub thin_keep: Str = ""
+  pub thin_idle: Duration = 0s
   /// Over one: a file counts as its size rounded up to a multiple of this,
   /// the allocation unit of the volume, so the cap bounds the disk the cache
   /// uses and not the bytes it holds (the back-end cache: 4096; 1.28M small
@@ -677,6 +684,20 @@ fn stored(fs: Fs, dir: Str) -> Int uses fs.read {
   }
 }
 
+/// Whether the relative path rel has a directory named name above its
+/// file name.
+fn under(rel: Str, name: Str) -> Bool {
+  let parts = rel.split("/")
+  var i = 0
+  while i + 1 < parts.len() {
+    if parts[i] == name {
+      return true
+    }
+    i += 1
+  }
+  false
+}
+
 /// The entries of the cache in dir; files left under a temporary name
 /// (".tmp" in the name) for over keep are removed on the way. Without
 /// dirs, the directories below the top level go to subdirs in walk order.
@@ -702,6 +723,11 @@ fn entries(fs: Fs, clock: Clock, dir: Str, p: Policy, var subdirs: List[Entry]) 
               continue
             }
             if !p.drop_suffix.is_empty() && f.name.ends_with(p.drop_suffix) && clock.since(f.modified) >= p.drop_idle {
+              if fs.remove(f.path).is_ok() {
+                continue
+              }
+            }
+            if !p.thin_keep.is_empty() && clock.since(f.modified) >= p.thin_idle && !under(f.path.trim_prefix("${path}/"), p.thin_keep) {
               if fs.remove(f.path).is_ok() {
                 continue
               }
