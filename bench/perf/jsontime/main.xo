@@ -30,7 +30,7 @@ fn main(os: Os) {
   let text = doc()
   var sum = 0
   for _ in 0..ROUNDS {
-    match json.decode[List[Time]](text) {
+    match json.decode[List[Time]](text.bytes()) {
       Ok(ts) => {
         for t in ts {
           sum += t.unix_millis() % 1000003
