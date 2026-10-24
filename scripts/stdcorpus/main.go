@@ -57,6 +57,7 @@ var generators = map[string]func() string{
 	"regexp":     regexpCorpus,
 	"runes":      runesCorpus,
 	"smtp":       smtpCorpus,
+	"sql":        sqlCorpus,
 	"strsearch":  strsearchCorpus,
 	"strwhere":   whereCorpus,
 	"trimchars":  trimcharsCorpus,
