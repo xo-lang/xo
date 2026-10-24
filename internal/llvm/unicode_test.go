@@ -63,6 +63,11 @@ func put24le(b []byte, v int) []byte {
 // bytes before the table's end.
 var tablePad = make([]byte, 8)
 
+// runeIXShift is the log2 of a class index block: a class's <NAME>_IX has an
+// entry per 1 << runeIXShift runes from U+0080, the first range a rune of
+// that block can be in (std/native/llrt/unicode.xo in_ranges_ix).
+const runeIXShift = 10
+
 // unicodeTables is the text of std/native/llrt/unicode_tables.xo: the case
 // ranges of Go's unicode package (unicode.CaseRanges, with the title delta
 // as well as the upper and lower ones), which the native runtime's
@@ -166,6 +171,26 @@ func unicodeTables() []byte {
 		fmt.Fprintf(&b, "/// The runes at or above U+0080 for which %s is true: %s_N\n", c.doc, c.name)
 		b.WriteString("/// inclusive ranges of 6 bytes, lo and hi.\n")
 		fmt.Fprintf(&b, "pub const %s: Bytes = %s\n", c.name, xoBytesLit(t))
+		// the two level index: a 16 bit entry per runeIXShift rune block,
+		// the first range a rune of that block can be in, so a lookup is
+		// one load and a scan of the one or two ranges the block holds
+		// instead of a binary search of the whole table
+		ix := make([]byte, 0, 16)
+		nblocks := (unicode.MaxRune + 1 - 0x80 + 1<<runeIXShift - 1) >> runeIXShift
+		j := 0
+		for blk := rune(0); blk < rune(nblocks); blk++ {
+			start := rune(0x80) + blk<<runeIXShift
+			for j < len(rs) && rs[j][1] < start {
+				j++
+			}
+			ix = append(ix, byte(j), byte(j>>8))
+		}
+		ix = append(ix, tablePad...)
+		fmt.Fprintf(&b, "\n/// The number of blocks in %s_IX: runeIXShift runes each from U+0080.\n", c.name)
+		fmt.Fprintf(&b, "pub const %s_IX_N: Int = %d\n\n", c.name, nblocks)
+		fmt.Fprintf(&b, "/// For %s: %s_IX_N 16 bit first candidate range indices, one per\n", c.doc, c.name)
+		b.WriteString("/// runeIXShift rune block from U+0080, little endian.\n")
+		fmt.Fprintf(&b, "pub const %s_IX: Bytes = %s\n", c.name, xoBytesLit(ix))
 	}
 	return b.Bytes()
 }

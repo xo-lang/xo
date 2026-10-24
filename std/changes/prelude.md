@@ -17,15 +17,39 @@
 `unicode.in_ranges` takes its midpoint with
 `lo.wrapping_add(hi).shr_logical(1)` and its table offsets with
 `wrapping_mul` and `wrapping_add`: `0 <= lo <= hi <= n`, so no step can
-overflow, and the checked forms printed an `adds`/`b.vs` fault path and
-a signed division's `asr` per iteration. The iteration is 13
-instructions from 17. `unicode.is_letter` tests the ASCII letters as
+overflow, and the checked forms printed an `adds`/`b.vs` fault path per
+iteration (the multiply and the other sums were already proved in
+range). `unicode.is_letter` tests the ASCII letters as
 `(r | 32)` in `97 to 122`, one unsigned range compare for both cases
 where the two ranges were two compares and a branch, after the
 `r >= 0x80` dispatch so a non-ASCII rune pays nothing extra. The
 classes row is 0.870 instructions and 0.936 wall of the base; latin1
 (no search) 0.998 and fieldsfunc (is_space, untouched) 1.000, the
 controls.
+
+## 2026-10-24: perf: a two level index for the Rune class search
+
+- Kind: perf
+- Commit: this commit
+- Found by: Xo Lang 1's measurement of the classes row, where the
+  binary search was most of what was left after the overflow checks went
+- Go reference: none: Go's RangeTable is the flat sorted table this
+  replaces
+- Test: corpora runes, words, trimchars, regexp, strs and where on arm64
+  and LLVM; TestUnicodeTables (it regenerates the tables and compares);
+  the wasm goldens; the full fixed point
+- Timing: bench/results/rune-class-index-2026-10-24.md
+
+`unicode.in_ranges` binary searched a class's whole range table on every
+rune at or above U+0800: LETTER has 657 ranges, 10 steps. Each class now
+has `<CLASS>_IX`, a 16 bit entry per 1,024 rune block naming the first
+range a rune of that block can be in, generated with the ranges by
+internal/llvm TestUnicodeTables, so a lookup is one load and a scan of
+the one or two ranges the block holds. Twelve classes of 1,088 blocks
+cost 26,208 bytes of static data. The classes row goes from 0.870 to
+0.767 of the base (445.71 M against 581.05 M instructions), and the
+checksum is unchanged. A 512 rune block (52,224 bytes) reaches 0.726;
+4,096 runes (6,528 bytes) only 0.831.
 
 ## 2026-10-24: perf: Str.split_where's pieces are views made with no clamp or slice check
 
