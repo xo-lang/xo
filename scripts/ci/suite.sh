@@ -203,6 +203,30 @@ case "$suite" in
   fixed-point) run_fixed_point ;;
   measure) run_measure "$@" ;;
   script)
+    # --seed-archive NAME SHA256 (2026-10-23): xobuild's seed is the xo
+    # of a release archive (a path in the checkout, else ci/release/NAME
+    # of the seed bucket), checked against SHA256 and unpacked under
+    # .tools, ahead of any cached build (XO_SEED is xobuild's first
+    # choice): the Windows runner's cached builds were the Go backend's,
+    # whose link of compiler/xo outlasted the job (run 40051151379)
+    if [ "${1:-}" = --seed-archive ]; then
+      sa=${2:?--seed-archive NAME SHA256}; ssum=${3:?--seed-archive NAME SHA256}; shift 3
+      sd=$PWD/.tools/seed-archive; rm -rf "$sd"; mkdir -p "$sd"
+      step "seed archive $sa"
+      sf=$sa
+      if [ ! -f "$sf" ]; then
+        sf="$sd/$(basename "$sa")"
+        aws s3 cp --only-show-errors "s3://${XO_SEED_BUCKET:?XO_SEED_BUCKET}/ci/release/$(basename "$sa")" "$sf" || { echo "seed archive: $sa is not in the checkout or the bucket (ci/release/)"; exit 2; }
+      fi
+      got=$(sha256sum "$sf" | cut -d' ' -f1)
+      [ "$got" = "$ssum" ] || { echo "seed archive: SHA-256 $got, want $ssum"; exit 2; }
+      tar -xzf "$sf" -C "$sd" || { echo "seed archive: unpack failed"; exit 2; }
+      sx=$(ls "$sd"/xo-*/bin/xo.exe "$sd"/xo-*/bin/xo 2>/dev/null | head -1)
+      [ -n "$sx" ] || { echo "seed archive: no bin/xo in $sa"; exit 2; }
+      export XO_SEED
+      XO_SEED=$(if command -v cygpath >/dev/null; then cygpath -w "$sx"; else echo "$sx"; fi)
+      echo "seed archive: XO_SEED=$XO_SEED"; end
+    fi
     sc=${1:?script: PATH}; shift
     [ -f "$sc" ] || { echo "script: no $sc in the checkout"; exit 2; }
     np() { if command -v cygpath >/dev/null; then cygpath -w "$1"; else echo "$1"; fi; }
