@@ -1,7 +1,8 @@
 # 0368: specialize a function for a constant argument (a closure of nothing, or a literal) at its call site
 
-Status: Proposed (Xo Lang 1, 2026-10-24; for the owner via the lead;
-nothing built; step 1 of the measurement plan first)
+Status: Proposed, step 1 passed (Xo Lang 1, 2026-10-24: the hand clones
+beat both bars; see "Step 1 result"); the pass awaits the owner's
+approval to build. Nothing built.
 
 ## Context
 
@@ -52,6 +53,26 @@ A module-level SSA pass, `specialize_args`, before inlining:
 4. Not specialized: a parameter the callee stores or returns (the
    constant would escape into a value whose identity matters), and
    closures with captures (step 4 of a later decision, if wanted).
+
+## Step 1 result (2026-10-24)
+
+One xo (tw417, with f6e2fd3d5's split_where change), only std or the bench
+copy differing; quiet `xo bench --ab`, 15 rounds, load 1:
+
+| row | wall | instructions |
+|---|---|---|
+| fieldsfunc, where_spans hand cloned for is_space, against f6e2fd3d5's std | 0.661 (0.644 to 0.668) | 0.813 |
+| fieldsfunc with the clone, against LLVM (A) | 0.931 (0.922 to 0.943): native faster | 1.019 |
+| fieldsfunc without it, against LLVM (A) | 1.446 | 1.253 |
+| callbacks for, walk passing the literal "nobody", against the bench | 0.806 (0.791 to 0.831) | 0.739 |
+| callbacks for with the literal, against LLVM (A) | 1.357 | 1.063 |
+| callbacks for without it, against LLVM (A) | 1.685 | 1.437 |
+
+Both bars cleared: fieldsfunc from 1.45 of LLVM's wall to 0.93 (the bar
+was within 1.2), callbacks for 19% faster (the bar 10%). What callbacks
+for keeps against LLVM (1.36 of its wall at 1.06 of its instructions) is
+not the loop shape (decision 0367's step 1 found that free on M-series);
+to be profiled with the pass built.
 
 ## Measurement plan
 
