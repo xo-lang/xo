@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"math"
+	"unicode/utf8"
 )
 
 // Std additions from the stage 2 benchmark (std.md 0.6).
@@ -162,6 +163,137 @@ func Bytes_contains_any(_ *Task, b Bytes, chars string) bool {
 // Bytes_contains_rune is `b.contains_rune(r)`: bytes.ContainsRune.
 func Bytes_contains_rune(_ *Task, b Bytes, r Rune) bool {
 	return bytes.ContainsRune([]byte(b), rune(r))
+}
+
+// Bytes_find_where is `b.find_where(f)`: the byte offset of the first rune
+// for which f is true (bytes.IndexFunc, with the effect of f).
+func Bytes_find_where[E any](tk *Task, b Bytes, f func(*Task, Rune) Result[bool, E]) Result[Option[int64], E] {
+	for i, r := range string(b) {
+		v := f(tk, Rune(r))
+		if !v.Ok {
+			return ErrTr[Option[int64]](v.E, v.Tr)
+		}
+		if v.V {
+			return Ok[Option[int64], E](Some(int64(i)))
+		}
+	}
+	return Ok[Option[int64], E](None[int64]())
+}
+
+// Bytes_rfind_where is `b.rfind_where(f)`: the byte offset of the last rune
+// for which f is true (bytes.LastIndexFunc).
+func Bytes_rfind_where[E any](tk *Task, b Bytes, f func(*Task, Rune) Result[bool, E]) Result[Option[int64], E] {
+	s := string(b)
+	for i := len(s); i > 0; {
+		r, size := utf8.DecodeLastRuneInString(s[0:i])
+		i -= size
+		v := f(tk, Rune(r))
+		if !v.Ok {
+			return ErrTr[Option[int64]](v.E, v.Tr)
+		}
+		if v.V {
+			return Ok[Option[int64], E](Some(int64(i)))
+		}
+	}
+	return Ok[Option[int64], E](None[int64]())
+}
+
+// Bytes_contains_where is `b.contains_where(f)` (bytes.ContainsFunc).
+func Bytes_contains_where[E any](tk *Task, b Bytes, f func(*Task, Rune) Result[bool, E]) Result[bool, E] {
+	for _, r := range string(b) {
+		v := f(tk, Rune(r))
+		if !v.Ok {
+			return ErrTr[bool](v.E, v.Tr)
+		}
+		if v.V {
+			return Ok[bool, E](true)
+		}
+	}
+	return Ok[bool, E](false)
+}
+
+// Bytes_trim_start_where is `b.trim_start_where(f)` (bytes.TrimLeftFunc).
+func Bytes_trim_start_where[E any](tk *Task, b Bytes, f func(*Task, Rune) Result[bool, E]) Result[Bytes, E] {
+	s := string(b)
+	for i, r := range s {
+		v := f(tk, Rune(r))
+		if !v.Ok {
+			return ErrTr[Bytes](v.E, v.Tr)
+		}
+		if !v.V {
+			return Ok[Bytes, E](Bytes(s[i:]))
+		}
+	}
+	return Ok[Bytes, E](Bytes(""))
+}
+
+// Bytes_trim_end_where is `b.trim_end_where(f)` (bytes.TrimRightFunc).
+func Bytes_trim_end_where[E any](tk *Task, b Bytes, f func(*Task, Rune) Result[bool, E]) Result[Bytes, E] {
+	s := string(b)
+	for i := len(s); i > 0; {
+		r, size := utf8.DecodeLastRuneInString(s[0:i])
+		i -= size
+		v := f(tk, Rune(r))
+		if !v.Ok {
+			return ErrTr[Bytes](v.E, v.Tr)
+		}
+		if !v.V {
+			return Ok[Bytes, E](Bytes(s[0 : i+size]))
+		}
+	}
+	return Ok[Bytes, E](Bytes(""))
+}
+
+// Bytes_trim_where is `b.trim_where(f)`: bytes.TrimFunc.
+func Bytes_trim_where[E any](tk *Task, b Bytes, f func(*Task, Rune) Result[bool, E]) Result[Bytes, E] {
+	a := Bytes_trim_start_where(tk, b, f)
+	if !a.Ok {
+		return a
+	}
+	return Bytes_trim_end_where(tk, a.V, f)
+}
+
+// Bytes_split_where is `b.split_where(f)`: the runs of runes for which f is
+// false (bytes.FieldsFunc, one pass recording the spans, then the pieces).
+func Bytes_split_where[E any](tk *Task, b Bytes, f func(*Task, Rune) Result[bool, E]) Result[List[Bytes], E] {
+	s := string(b)
+	spans := make([]strSpan, 0, 32)
+	start := -1
+	for end, r := range s {
+		v := f(tk, Rune(r))
+		if !v.Ok {
+			return ErrTr[List[Bytes]](v.E, v.Tr)
+		}
+		if v.V {
+			if start >= 0 {
+				spans = append(spans, strSpan{start, end})
+				start = -1
+			}
+		} else if start < 0 {
+			start = end
+		}
+	}
+	if start >= 0 {
+		spans = append(spans, strSpan{start, len(s)})
+	}
+	out := make([]Bytes, len(spans))
+	for i, sp := range spans {
+		out[i] = Bytes(s[sp.start:sp.end])
+	}
+	return Ok[List[Bytes], E](ListOf(out...))
+}
+
+// Bytes_map_runes is `b.map_runes(f)`: f applied to every rune, None
+// dropping it (bytes.Map), and b itself when nothing changes.
+func Bytes_map_runes[E any](tk *Task, b Bytes, f func(*Task, Rune) Result[Option[Rune], E]) Result[Bytes, E] {
+	r := Str_map_runes(tk, string(b), f)
+	if !r.Ok {
+		return ErrTr[Bytes](r.E, r.Tr)
+	}
+	if r.V == string(b) {
+		return Ok[Bytes, E](b)
+	}
+	return Ok[Bytes, E](Bytes(r.V))
 }
 
 // Bytes_cut is `b.cut(sep)`: the bytes before and after the first sep

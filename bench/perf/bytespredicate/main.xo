@@ -1,0 +1,135 @@
+// Bytes find_where, rfind_where, contains_where, trim_where,
+// trim_start_where, trim_end_where, split_where and map_runes workloads
+// against Go's bytes package (the twin is twin.go.txt): the texts hold ASCII,
+// multi byte runes, spaces in the middle and at both ends, and invalid UTF-8
+// (which reads as U+FFFD), so the decodes, the found and the absent cases and
+// the empty result all run. The workload is picked once, outside the loop.
+// Usage: bytespredicate <workload>; prints "<workload> <checksum>", the same
+// line the Go twin prints.
+
+const N = 200000
+
+const TEXTS: List[Bytes] = [
+  b"  the quick brown fox, jumps over the lazy dog  ",
+  b"1,2,3,4",
+  b"  héllo, wörld, ça va, 日本語 テキスト   ",
+  b"  \t  mixed ascii and ✓ unicode ✓  ",
+  b"abcabcabcabcabcabcabc",
+  b"a\xffb, c\x80 ,",
+]
+
+fn is_space(r: Rune) -> Bool { r.is_space() }
+fn is_letter(r: Rune) -> Bool { r.is_letter() }
+fn is_fffd(r: Rune) -> Bool { r == Rune(0xFFFD) }
+
+fn rot13(r: Rune) -> Rune? {
+  if r >= Rune(97) && r <= Rune(122) {
+    Some(Rune(97 + (Int(r) - 97 + 13) % 26))
+  } else if r >= Rune(65) && r <= Rune(90) {
+    Some(Rune(65 + (Int(r) - 65 + 13) % 26))
+  } else {
+    Some(r)
+  }
+}
+
+fn index_all() -> Int {
+  var n = 0
+  for i in 0..N {
+    n += TEXTS[i % TEXTS.len()].len()
+  }
+  n
+}
+
+fn find_where_all() -> Int {
+  var n = 0
+  for i in 0..N {
+    n += TEXTS[i % TEXTS.len()].find_where(is_space) ?? -1
+  }
+  n
+}
+
+fn rfind_where_all() -> Int {
+  var n = 0
+  for i in 0..N {
+    n += TEXTS[i % TEXTS.len()].rfind_where(is_space) ?? -1
+  }
+  n
+}
+
+fn contains_where_all() -> Int {
+  var n = 0
+  for i in 0..N {
+    if TEXTS[i % TEXTS.len()].contains_where(is_fffd) {
+      n += 1
+    }
+  }
+  n
+}
+
+fn trim_where_all() -> Int {
+  var n = 0
+  for i in 0..N {
+    n += TEXTS[i % TEXTS.len()].trim_where(is_space).len()
+  }
+  n
+}
+
+fn trim_start_where_all() -> Int {
+  var n = 0
+  for i in 0..N {
+    n += TEXTS[i % TEXTS.len()].trim_start_where(is_letter).len()
+  }
+  n
+}
+
+fn trim_end_where_all() -> Int {
+  var n = 0
+  for i in 0..N {
+    n += TEXTS[i % TEXTS.len()].trim_end_where(is_fffd).len()
+  }
+  n
+}
+
+fn split_where_all() -> Int {
+  var n = 0
+  for i in 0..N {
+    for p in TEXTS[i % TEXTS.len()].split_where(is_space) {
+      n += p.len()
+    }
+  }
+  n
+}
+
+fn map_runes_all() -> Int {
+  var n = 0
+  for i in 0..N {
+    n += TEXTS[i % TEXTS.len()].map_runes(rot13).len()
+  }
+  n
+}
+
+fn main(os: Os) {
+  let args = os.env.args()
+  let w = if args.len() > 0 { args[0] } else { "none" }
+  var n = 0
+  if w == "find_where" {
+    n = find_where_all()
+  } else if w == "rfind_where" {
+    n = rfind_where_all()
+  } else if w == "contains_where" {
+    n = contains_where_all()
+  } else if w == "trim_where" {
+    n = trim_where_all()
+  } else if w == "trim_start_where" {
+    n = trim_start_where_all()
+  } else if w == "trim_end_where" {
+    n = trim_end_where_all()
+  } else if w == "split_where" {
+    n = split_where_all()
+  } else if w == "map_runes" {
+    n = map_runes_all()
+  } else if w == "index" {
+    n = index_all()
+  }
+  os.stdio.println("${w} ${n}")
+}

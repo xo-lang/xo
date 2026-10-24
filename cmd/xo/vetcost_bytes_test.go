@@ -62,6 +62,46 @@ fn main(os: Os) {
 }
 `
 
+// vetcostBytesTrimWhereProg: a Bytes parameter's trim_where view stored in a
+// returned collection inside a loop (XO0911, line 9, the push). trim_where carries an
+// effect parameter, so the call's name has a generic instantiation suffix
+// (`prelude.bytes_trim_where[()]`), which cost.xo's named() matches.
+const vetcostBytesTrimWhereProg = `
+struct Tok {
+  name: Bytes
+}
+
+fn words(data: Bytes) -> List[Tok] {
+  var out: List[Tok] = []
+  for line in data.split(b"\n") {
+    out.push(Tok{name: line.trim_where(fn(r) { r.is_space() })})
+  }
+  out
+}
+
+fn main(os: Os) {
+  os.stdio.println("${words(b" a \nb ").len()}")
+}
+`
+
+// vetcostBytesSplitWhereProg: the same through split_where's pieces (XO0911,
+// line 5, the call whose pieces are stored).
+const vetcostBytesSplitWhereProg = `
+fn pieces(data: Bytes) -> List[Bytes] {
+  var out: List[Bytes] = []
+  for line in data.split(b"\n") {
+    for p in line.split_where(fn(r) { r.is_space() }) {
+      out.push(p)
+    }
+  }
+  out
+}
+
+fn main(os: Os) {
+  os.stdio.println("${pieces(b"a b\nc").len()}")
+}
+`
+
 // vetcostBytesLines runs xo vet --cost on prog and returns the line of
 // every XO0911 note.
 func vetcostBytesLines(t *testing.T, prog string) []int {
@@ -91,9 +131,11 @@ func vetcostBytesLines(t *testing.T, prog string) []int {
 	return lines
 }
 
-// TestVetCostViewStoreBytesCut: XO0911 names the Bytes cut family
-// (compiler/ssa/cost.xo view_call: cut, cut_prefix, cut_suffix) beside the
-// Str forms, through the tuple and the Option a cut returns.
+// TestVetCostViewStoreBytesCut: XO0911 names the Bytes cut and predicate
+// families (compiler/ssa/cost.xo view_call: cut, cut_prefix, cut_suffix,
+// trim_where, trim_start_where, trim_end_where; the split family:
+// split_where) beside the Str forms, through the tuple, the Option and the
+// List they return.
 func TestVetCostViewStoreBytesCut(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -103,6 +145,8 @@ func TestVetCostViewStoreBytesCut(t *testing.T) {
 	}{
 		{"cut_prefix", vetcostBytesCutPrefixProg, 9},
 		{"cut", vetcostBytesCutProg, 5},
+		{"trim_where", vetcostBytesTrimWhereProg, 9},
+		{"split_where", vetcostBytesSplitWhereProg, 5},
 	} {
 		if lines := vetcostBytesLines(t, tc.prog); len(lines) != 1 || lines[0] != tc.line {
 			t.Errorf("%s: XO0911 at lines %v, want [%d]", tc.name, lines, tc.line)

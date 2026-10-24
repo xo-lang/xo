@@ -864,6 +864,7 @@ func bytesCorpus() string {
 	o.WriteString("]\n")
 
 	o.WriteString(bytesTests)
+	o.WriteString(byteswhereCorpus())
 	return o.String()
 }
 

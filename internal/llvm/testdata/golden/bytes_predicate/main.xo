@@ -1,0 +1,60 @@
+// The Bytes predicate forms: find_where, rfind_where and contains_where
+// (bytes.IndexFunc, LastIndexFunc, ContainsFunc), trim_where, trim_start_where
+// and trim_end_where (TrimFunc, TrimLeftFunc, TrimRightFunc), split_where
+// (FieldsFunc) and map_runes (Map), on ASCII, a multi byte rune, invalid
+// UTF-8 (which reads as U+FFFD), the empty value, and a view of a longer one.
+// One line each, so a backend that differs shows on its line.
+
+fn is_space(r: Rune) -> Bool { r.is_space() }
+fn is_digit(r: Rune) -> Bool { r.is_digit() }
+fn is_x(r: Rune) -> Bool { r == Rune(88) }
+fn is_fffd(r: Rune) -> Bool { r == Rune(0xFFFD) }
+fn upper(r: Rune) -> Rune? { Some(r.to_upper()) }
+fn no_space(r: Rune) -> Rune? {
+  if r.is_space() { None } else { Some(r) }
+}
+
+fn plain(b: Bytes) -> Str {
+  var out = ""
+  var first = true
+  for x in b {
+    if !first {
+      out = "${out},"
+    }
+    out = "${out}${x}"
+    first = false
+  }
+  out
+}
+
+fn hex_of(xs: List[Bytes]) -> Str {
+  var out = "${xs.len()}"
+  for x in xs {
+    out = "${out} ${x.to_hex()}"
+  }
+  out
+}
+
+fn main(os: Os) {
+  let stdio = os.stdio
+  let a: Bytes = b"  a1 b2  "
+  let u: Bytes = b"héllo 世界 x"
+  let bad: Bytes = b"a\xffb\x80c"
+  let none: Bytes = b""
+  stdio.println("find_where ${a.find_where(is_digit) ?? -1} ${a.find_where(is_x) ?? -1}")
+  stdio.println("rfind_where ${a.rfind_where(is_digit) ?? -1} ${a.rfind_where(is_x) ?? -1}")
+  stdio.println("contains_where ${a.contains_where(is_digit)} ${a.contains_where(is_x)}")
+  stdio.println("find_where fffd ${bad.find_where(is_fffd) ?? -1} ${bad.rfind_where(is_fffd) ?? -1} ${bad.contains_where(is_fffd)}")
+  stdio.println("trim_where ${a.trim_where(is_space).to_hex()} ${u.trim_where(is_x).to_hex()}")
+  stdio.println("trim_start_where ${a.trim_start_where(is_digit).to_hex()} ${u.trim_start_where(is_x).to_hex()}")
+  stdio.println("trim_end_where ${a.trim_end_where(is_space).to_hex()} ${u.trim_end_where(is_x).to_hex()}")
+  stdio.println("trim all ${b"   ".trim_where(is_space).to_hex()} ${none.trim_where(is_space).to_hex()}")
+  stdio.println("split_where ${hex_of(a.split_where(is_space))} ${hex_of(none.split_where(is_space))}")
+  stdio.println("split_where fffd ${hex_of(bad.split_where(is_fffd))}")
+  stdio.println("map_runes ${u.map_runes(upper).to_hex()} ${a.map_runes(no_space).to_hex()}")
+  stdio.println("map_runes same ${u.map_runes(fn(r) { Some(r) }) == u} ${plain(u.map_runes(fn(r) { Some(r) }))}")
+  let v = b"  \x80 x \xc0  "
+  let view = v[2..v.len() - 2]
+  stdio.println("view ${view.trim_where(is_space).to_hex()} ${hex_of(view.split_where(is_space))}")
+  stdio.println("view trim_start ${view.trim_start_where(is_fffd).to_hex()} ${view.trim_end_where(is_fffd).to_hex()}")
+}

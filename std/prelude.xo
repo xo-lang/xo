@@ -384,6 +384,14 @@ fn (b: Bytes) contains_any(chars: Str) -> Bool
 /// Whether b holds r (bytes.ContainsRune); an invalid byte of b reads as
 /// U+FFFD, so a U+FFFD r finds it.
 fn (b: Bytes) contains_rune(r: Rune) -> Bool
+/// The byte offset of the first rune for which f is true (bytes.IndexFunc),
+/// None when there is none; an invalid byte of b is U+FFFD, as in find.
+fn (b: Bytes) find_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Int? ! E uses fx
+/// The byte offset of the last rune for which f is true
+/// (bytes.LastIndexFunc), None when there is none.
+fn (b: Bytes) rfind_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Int? ! E uses fx
+/// Whether b holds a rune for which f is true (bytes.ContainsFunc).
+fn (b: Bytes) contains_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Bool ! E uses fx
 /// b cut at each sep, the pieces views of b (bytes.Split); an empty sep
 /// splits after each UTF-8 sequence, an invalid byte alone.
 fn (b: Bytes) split(sep: Bytes) -> List[Bytes]
@@ -406,6 +414,9 @@ fn (b: Bytes) cut_suffix(suffix: Bytes) -> Bytes?
 /// The runs of non-white-space bytes, split around runs of white space
 /// (bytes.Fields, unicode.IsSpace); pieces are views of b.
 fn (b: Bytes) fields() -> List[Bytes]
+/// The runs of runes between runs of runes for which f is true
+/// (bytes.FieldsFunc); pieces are views of b.
+fn (b: Bytes) split_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> List[Bytes] ! E uses fx
 /// b without its leading and trailing white space (bytes.TrimSpace,
 /// unicode.IsSpace), a view of b; b itself when there is none.
 fn (b: Bytes) trim() -> Bytes
@@ -415,6 +426,15 @@ fn (b: Bytes) trim_prefix(p: Bytes) -> Bytes
 /// b without the suffix p (bytes.TrimSuffix), a view of b; b itself when p
 /// is not a suffix.
 fn (b: Bytes) trim_suffix(p: Bytes) -> Bytes
+/// b without its leading and trailing runes for which f is true, a view of
+/// b like trim (bytes.TrimFunc).
+fn (b: Bytes) trim_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Bytes ! E uses fx
+/// b without its leading runes for which f is true, a view of b
+/// (bytes.TrimLeftFunc).
+fn (b: Bytes) trim_start_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Bytes ! E uses fx
+/// b without its trailing runes for which f is true, a view of b
+/// (bytes.TrimRightFunc).
+fn (b: Bytes) trim_end_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Bytes ! E uses fx
 /// b with every copy of old replaced by new (bytes.ReplaceAll); b itself,
 /// not a copy, when nothing changes, since a Bytes is immutable.
 fn (b: Bytes) replace(old: Bytes, new: Bytes) -> Bytes
@@ -428,6 +448,9 @@ fn (b: Bytes) replace_n(old: Bytes, new: Bytes, n: Int) -> Bytes
 fn (b: Bytes) to_lower() -> Bytes
 /// b raised (bytes.ToUpper), as to_lower.
 fn (b: Bytes) to_upper() -> Bytes
+/// f applied to every rune of b (bytes.Map); None (Go's negative mapping)
+/// drops the rune, and b itself, not a copy, when nothing changes.
+fn (b: Bytes) map_runes[E, fx: Effects](f: fn(Rune) -> Rune? ! E uses fx) -> Bytes ! E uses fx
 /// Whether b and other are equal under Unicode simple case folding
 /// (bytes.EqualFold, not only ASCII case); two bytes of invalid sequences
 /// compare equal, as both decode to U+FFFD.

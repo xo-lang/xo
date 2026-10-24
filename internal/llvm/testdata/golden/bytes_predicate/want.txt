@@ -1,0 +1,17 @@
+exit 0
+--- stdout
+find_where 3 -1
+rfind_where 6 -1
+contains_where true false
+find_where fffd 1 3 true
+trim_where 6131206232 68c3a96c6c6f20e4b896e7958c2078
+trim_start_where 202061312062322020 68c3a96c6c6f20e4b896e7958c2078
+trim_end_where 20206131206232 68c3a96c6c6f20e4b896e7958c2078
+trim all  
+split_where 2 6131 6232 0
+split_where fffd 3 61 62 63
+map_runes 48c3894c4c4f20e4b896e7958c2058 61316232
+map_runes same true 104,195,169,108,108,111,32,228,184,150,231,149,140,32,120
+view 80207820c0 3 80 78 c0
+view trim_start 207820c0 80207820
+--- stderr

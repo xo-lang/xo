@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "name `bytes` not found",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 3,
+      "end_line": 2,
+      "end_col": 8
+    },
+    "notes": [
+      {
+        "message": "`bytes.TrimLeftFunc` is Go's library; Xo calls the method on the value: `b.trim_start_where(fn(r) { r.is_space() })` (spec/std.md 2)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `.trim_start_where(...)`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 3,
+              "end_line": 2,
+              "end_col": 48
+            },
+            "replace": "b.trim_start_where(fn(r) { r.is_space() })"
+          }
+        ]
+      }
+    ]
+  }
+]

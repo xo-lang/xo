@@ -99,7 +99,10 @@ once (`const ISO: Layout = layout(...)`, 0332).
 Prelude collections include `sort`, `sort_by`, `group_by`,
 `fold`, `contains`, `indexed` (List and Bytes), `to_set`, `reverse`, `join`,
 `split`; Bytes has `indexed`, `find`, `find_any`, `contains_any`,
-`contains_rune`, `split_after`, `cut`, `cut_prefix` and `cut_suffix`; `xo doc List` lists the rest.
+`contains_rune`, `find_where`, `rfind_where`, `contains_where`, `split_after`,
+`split_where`, `cut`, `cut_prefix`, `cut_suffix`, `trim_where`,
+`trim_start_where`, `trim_end_where` and `map_runes`; `xo doc List`
+lists the rest.
 
 ## Tools (spec 10, agent-tools.md)
 

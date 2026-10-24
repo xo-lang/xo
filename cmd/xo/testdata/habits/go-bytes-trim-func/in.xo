@@ -1,0 +1,3 @@
+fn trimmed(b: Bytes) -> Bytes {
+  bytes.TrimLeftFunc(b, fn(r) { r.is_space() })
+}

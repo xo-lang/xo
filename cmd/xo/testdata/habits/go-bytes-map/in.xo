@@ -1,0 +1,3 @@
+fn upper(b: Bytes) -> Bytes? {
+  bytes.Map(b, fn(r) { Some(r.to_upper()) })
+}

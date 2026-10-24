@@ -1,5 +1,51 @@
 # prelude changes
 
+## 2026-10-24: feature: Bytes gains the predicate forms (find_where, rfind_where, contains_where, the trim_where family, split_where, map_runes) and Str's share their walks
+
+- Kind: feature
+- Commit: (filled in after the push)
+- Found by: Str had the predicate forms (strings.IndexFunc and its family,
+  2026-10-23) and Bytes had none, so walking or mapping a Bytes value meant
+  turning it into a Str first, either a validation pass that rejects invalid
+  UTF-8 or a decode that changes the bytes
+- Go reference: bytes.IndexFunc, LastIndexFunc, ContainsFunc, TrimFunc,
+  TrimLeftFunc, TrimRightFunc, FieldsFunc and Map (go1.26.1); Go's walks call
+  the predicate through a func value once per rune
+- Test: corpus/bytes (Go's own tables plus 7,500 seeded texts, sets and
+  records with invalid UTF-8) on arm64, LLVM and the Go backend, the new
+  golden bytes_predicate on arm64, LLVM, Go parity and wasm, the habit cases
+  go-bytes-index-func, go-bytes-trim-func and go-bytes-map, XO0911 for the
+  trim and split views (cmd/xo vetcost_bytes_test.go), and
+  bench/perf/bytespredicate against Go's bytes package
+
+`Bytes` gets the eight predicate methods: `find_where` and `rfind_where`
+(Option[Int], the byte offset of the first or last rune the predicate
+accepts), `contains_where`, `trim_where`, `trim_start_where`,
+`trim_end_where` (their results are views of the receiver on the native
+targets, as `trim` is), `split_where` (the runs of runes the predicate
+rejects; each piece is a view) and `map_runes` (the runes mapped, with a
+`None` dropping the rune). An invalid byte decodes as U+FFFD of size one, as
+Go's range over a string sees it, so a predicate can find and map it.
+
+Str's forms and Bytes' share one walk each: `where_index`,
+`where_last_index`, `where_trim_left`, `where_trim_right` and `where_spans`
+in std/native/prelude.xo run over Bytes and return offsets, and each pair of
+Str and Bytes methods makes its own type's result, so the two families cannot
+drift. The Str forms were moved onto the shared walks without a change of
+output (the strwhere corpus and the predicate goldens unchanged), and they
+now call `raw.decode` directly instead of the checked `bytes_decode_rune`
+wrapper, which the perf entry below shows is the same rune at fewer
+instructions.
+
+Instructions against Go's package, 200,000 calls, net of the loop
+(bench/results/bytespredicate-2026-10-24.md, Xo / Go): find_where 0.26,
+rfind_where 0.29, contains_where 0.35, trim_start_where 0.60, split_where
+0.62, trim_where 0.65, map_runes 1.00, trim_end_where 1.13. Six of the eight
+execute fewer instructions than Go's, because Go's walks call the predicate
+through a func value and Xo's closure is direct; trim_end_where's backward
+walk pays a second decode on a malformed tail, where Go reads at most four
+bytes.
+
 ## 2026-10-24: perf: the set-search and rune loops skip ASCII bytes and decode through raw.decode
 
 - Kind: perf

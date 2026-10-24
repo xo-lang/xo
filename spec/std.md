@@ -232,6 +232,11 @@ fn (b: Bytes) find_any(chars: Str) -> Int?   // the first rune of chars (bytes.I
 fn (b: Bytes) rfind_any(chars: Str) -> Int?  // the last rune of chars (bytes.LastIndexAny)
 fn (b: Bytes) contains_any(chars: Str) -> Bool // bytes.ContainsAny
 fn (b: Bytes) contains_rune(r: Rune) -> Bool // bytes.ContainsRune; an invalid byte of b reads as U+FFFD
+fn (b: Bytes) find_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Int? ! E uses fx   // the first rune f accepts (bytes.IndexFunc)
+fn (b: Bytes) rfind_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Int? ! E uses fx  // the last one (bytes.LastIndexFunc)
+fn (b: Bytes) contains_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Bool ! E uses fx     // whether one exists (bytes.ContainsFunc)
+// a predicate is a closure (`b.split_where(fn(r) { r.is_space() })`), a named function or a bound
+// one, as Str's find_where takes it (strings.IndexFunc there)
 fn (b: Bytes) split(sep: Bytes) -> List[Bytes]     // bytes.Split; an empty sep splits after each UTF-8 sequence (Go's explode), and an empty b gives no piece
 fn (b: Bytes) split_n(sep: Bytes, n: Int) -> List[Bytes]  // at most n pieces, the unsplit rest in the last (bytes.SplitN); n below 0 is split, 0 is no piece
 fn (b: Bytes) split_after(sep: Bytes) -> List[Bytes]      // like split, each piece keeping its separator (bytes.SplitAfter)
@@ -240,15 +245,18 @@ fn (b: Bytes) cut(sep: Bytes) -> (Bytes, Bytes)?  // before and after the first 
 fn (b: Bytes) cut_prefix(prefix: Bytes) -> Bytes? // the rest after a prefix (bytes.CutPrefix); None when absent
 fn (b: Bytes) cut_suffix(suffix: Bytes) -> Bytes? // b up to a suffix (bytes.CutSuffix); None when absent
 fn (b: Bytes) fields() -> List[Bytes]        // runs of non-white-space bytes (bytes.Fields, unicode.IsSpace)
+fn (b: Bytes) split_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> List[Bytes] ! E uses fx // the runs f rejects (bytes.FieldsFunc)
 fn (b: Bytes) trim() -> Bytes                // white space at both ends (bytes.TrimSpace)
 fn (b: Bytes) trim_prefix(p: Bytes) -> Bytes // also trim_suffix (bytes.TrimPrefix, TrimSuffix)
-// split, split_n, split_after, split_after_n, cut, cut_prefix, cut_suffix, fields, trim,
-// trim_prefix and trim_suffix return views of b on native targets (O(1) per piece, no copy;
-// a piece keeps b alive), as slices do (core 3.6)
+fn (b: Bytes) trim_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Bytes ! E uses fx       // bytes.TrimFunc; also trim_start_where, trim_end_where (TrimLeftFunc, TrimRightFunc)
+// split, split_n, split_after, split_after_n, cut, cut_prefix, cut_suffix, fields, split_where, trim,
+// trim_prefix, trim_suffix, trim_where, trim_start_where and trim_end_where return views of b on native
+// targets (O(1) per piece, no copy; a piece keeps b alive), as slices do (core 3.6)
 fn (b: Bytes) replace(old: Bytes, new: Bytes) -> Bytes  // bytes.ReplaceAll; b itself when nothing changes
 fn (b: Bytes) replace_n(old: Bytes, new: Bytes, n: Int) -> Bytes  // the first n copies (bytes.Replace); n below 0 for every one, 0 for none
 fn (b: Bytes) to_lower() -> Bytes            // bytes.ToLower; an invalid byte becomes U+FFFD, as Go maps it
 fn (b: Bytes) to_upper() -> Bytes            // bytes.ToUpper
+fn (b: Bytes) map_runes[E, fx: Effects](f: fn(Rune) -> Rune? ! E uses fx) -> Bytes ! E uses fx      // bytes.Map; None drops the rune, and b itself when nothing changes
 fn (b: Bytes) equal_fold(other: Bytes) -> Bool  // bytes.EqualFold, Unicode simple case folding
 fn (b: Bytes) repeat(n: Int) -> Bytes        // bytes.Repeat; empty for 0, a fault below 0
 fn (b: Bytes) clone() -> Bytes               // an explicit copy in a buffer of its own
@@ -4092,7 +4100,7 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
 
 Every function and method of std/prelude.xo, by type, as declared there
 (the sections above explain them); interface methods take `self`.
-425 declarations.
+433 declarations.
 
 ### Range
 
@@ -4342,6 +4350,9 @@ fn (b: Bytes) find_any(chars: Str) -> Int?
 fn (b: Bytes) rfind_any(chars: Str) -> Int?
 fn (b: Bytes) contains_any(chars: Str) -> Bool
 fn (b: Bytes) contains_rune(r: Rune) -> Bool
+fn (b: Bytes) find_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Int? ! E uses fx
+fn (b: Bytes) rfind_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Int? ! E uses fx
+fn (b: Bytes) contains_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Bool ! E uses fx
 fn (b: Bytes) split(sep: Bytes) -> List[Bytes]
 fn (b: Bytes) split_n(sep: Bytes, n: Int) -> List[Bytes]
 fn (b: Bytes) split_after(sep: Bytes) -> List[Bytes]
@@ -4350,13 +4361,18 @@ fn (b: Bytes) cut(sep: Bytes) -> (Bytes, Bytes)?
 fn (b: Bytes) cut_prefix(prefix: Bytes) -> Bytes?
 fn (b: Bytes) cut_suffix(suffix: Bytes) -> Bytes?
 fn (b: Bytes) fields() -> List[Bytes]
+fn (b: Bytes) split_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> List[Bytes] ! E uses fx
 fn (b: Bytes) trim() -> Bytes
 fn (b: Bytes) trim_prefix(p: Bytes) -> Bytes
 fn (b: Bytes) trim_suffix(p: Bytes) -> Bytes
+fn (b: Bytes) trim_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Bytes ! E uses fx
+fn (b: Bytes) trim_start_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Bytes ! E uses fx
+fn (b: Bytes) trim_end_where[E, fx: Effects](f: fn(Rune) -> Bool ! E uses fx) -> Bytes ! E uses fx
 fn (b: Bytes) replace(old: Bytes, new: Bytes) -> Bytes
 fn (b: Bytes) replace_n(old: Bytes, new: Bytes, n: Int) -> Bytes
 fn (b: Bytes) to_lower() -> Bytes
 fn (b: Bytes) to_upper() -> Bytes
+fn (b: Bytes) map_runes[E, fx: Effects](f: fn(Rune) -> Rune? ! E uses fx) -> Bytes ! E uses fx
 fn (b: Bytes) equal_fold(other: Bytes) -> Bool
 fn (b: Bytes) repeat(n: Int) -> Bytes
 fn (b: Bytes) indexed() -> List[(Int, UInt8)]

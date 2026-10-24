@@ -1,0 +1,3 @@
+fn first_space(b: Bytes) -> Int? {
+  b.find_where(fn(r) { r.is_space() })
+}

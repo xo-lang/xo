@@ -1,0 +1,3 @@
+fn first_space(b: Bytes) -> Int? {
+  bytes.IndexFunc(b, fn(r) { r.is_space() })
+}
