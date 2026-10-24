@@ -191,6 +191,15 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   (an import or intrinsic the seed lacks fails xobuild's smoke), run the
   script's steps under Wine, and check every tool it calls exists on
   the runner (no clang, no cdb by default).
+- A slow build or run starts with a breakdown before any hypothesis
+  (lead, 2026-10-23: four Windows CI runs and about five agent-hours
+  went to cache theories, cold pack, prune, cold keys, pack size, until
+  `--phase-times` showed 538 of 564 s in link; the cause was xo.exe
+  built with the Go backend): the first run of an investigation sets
+  `--phase-times` and `XO_CACHE_STATS=1` (windows-race.sh sets both), or
+  `XO_PROF=cpu` for a program, and compares the same breakdown from a
+  known good xo. Check how each xo under comparison was built (`xo
+  version -m`: backend, release preset) before blaming the code.
 - A measurement needing a quiet machine waits with
   `~/xo-lead/agents/quiet.sh wait [LOAD]` inside the lead's window.
 - Which tool answers what (owner, 2026-10-22): `xo bench --ab` decides
