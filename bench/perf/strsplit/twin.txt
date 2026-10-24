@@ -1,0 +1,14 @@
+# twincheck: strsplit prints its own timing as the line's third field
+# ("<workload> <sum> <microseconds>"), so the checksum is the first two.
+compare fields 2
+- - split
+- - split_one
+- - split_multi
+- - split_absent
+- - split_empty
+- - split_after
+- - lines
+- - bytes_split
+- - bytes_fields
+- - fields
+- - index
