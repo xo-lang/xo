@@ -7,14 +7,20 @@
 
 const JUMP_TABLE_MIN = 8
 const JUMP_TABLE_SLACK = 3
+/// A chain of at least this many distinct values that is too sparse for
+/// a table becomes a compare tree (2026-10-24: unicode fold tables test
+/// a dozen keys, most of them past imm12, one after another).
+const COMPARE_TREE_MIN = 6
 
 /// A chain test: the register and constant of a block's terminator when
-/// it is `cmp r, #k` with b.eq or b.ne, the target taken when r == k, and
-/// the one that continues the chain.
+/// it is `cmp r, #k`, or `cmp r, k` with k a register holding a constant
+/// (a key past imm12, kreg), with b.eq or b.ne, the target taken when
+/// r == k, and the one that continues the chain.
 struct ChainTest {
   ok: Bool
   r: Int = 0
   k: Int = 0
+  kreg: Int = -1
   hit: Int = -1
   next: Int = -1
 }
@@ -26,24 +32,34 @@ fn (g: G) chain_test(b: Int) -> ChainTest {
     return bad
   }
   let inst = g.blocks[b].insts[n - 1]
-  if inst.kind != K_CONDBR || inst.us.len() != 1 || (inst.cond != "eq" && inst.cond != "ne") {
+  if inst.kind != K_CONDBR || inst.x86 || (inst.cond != "eq" && inst.cond != "ne") {
     return bad
   }
-  if !inst.text.starts_with("cmp $u0, #") {
-    return bad
-  }
-  let num = inst.text.trim_prefix("cmp $u0, #")
-  if !is_signed_digits(num) {
-    return bad
-  }
-  let k = match Int.parse(num) {
-    Some(v) => v
-    None => return bad
+  var k = 0
+  var kreg = -1
+  if inst.us.len() == 2 && inst.text == "cmp $u0, $u1" {
+    kreg = inst.us[1]
+    k = match g.kvals.get(kreg) {
+      Some(v) => v
+      None => return bad
+    }
+  } else {
+    if inst.us.len() != 1 || !inst.text.starts_with("cmp $u0, #") {
+      return bad
+    }
+    let num = inst.text.trim_prefix("cmp $u0, #")
+    if !is_signed_digits(num) {
+      return bad
+    }
+    k = match Int.parse(num) {
+      Some(v) => v
+      None => return bad
+    }
   }
   if inst.cond == "eq" {
-    return ChainTest{ok: true, r: inst.us[0], k: k, hit: inst.targets[0], next: inst.targets[1]}
+    return ChainTest{ok: true, r: inst.us[0], k: k, kreg: kreg, hit: inst.targets[0], next: inst.targets[1]}
   }
-  ChainTest{ok: true, r: inst.us[0], k: k, hit: inst.targets[1], next: inst.targets[0]}
+  ChainTest{ok: true, r: inst.us[0], k: k, kreg: kreg, hit: inst.targets[1], next: inst.targets[0]}
 }
 
 /// A compare chain: the blocks after its head that hold nothing but a
@@ -57,7 +73,7 @@ struct Chain {
   ok: Bool = false
 }
 
-fn (g: G) chain(head: Int) -> Chain {
+fn (g: G) chain(head: Int, nuse: Map[Int, Int]) -> Chain {
   let c0 = g.chain_test(head)
   if !c0.ok {
     return Chain{}
@@ -74,7 +90,7 @@ fn (g: G) chain(head: Int) -> Chain {
     }
     let nx = c.next
     let c2 = g.chain_test(nx)
-    if !c2.ok || c2.r != c0.r || g.blocks[nx].insts.len() != 1 || seen.contains(nx) || g.blocks[nx].cold {
+    if !c2.ok || c2.r != c0.r || !g.only_test(nx, c2, nuse) || seen.contains(nx) || g.blocks[nx].cold {
       ch.def = nx
       return ch
     }
@@ -85,13 +101,125 @@ fn (g: G) chain(head: Int) -> Chain {
   ch
 }
 
-/// Replaces dense compare chains with K_SWITCH terminators and lays out
+/// Whether block b holds nothing but its chain test c: the compare, or
+/// the constant's mov and the compare when the key is in a register no
+/// other instruction reads (nuse: the reads of each register).
+fn (g: G) only_test(b: Int, c: ChainTest, nuse: Map[Int, Int]) -> Bool {
+  let ins = g.blocks[b].insts
+  if ins.len() == 1 {
+    return true
+  }
+  if ins.len() != 2 || c.kreg < 0 {
+    return false
+  }
+  let mv = ins[0]
+  mv.kind == K_PLAIN && mv.konst && mv.defs == [c.kreg] && (nuse.get(c.kreg) ?? 0) == 1
+}
+
+/// The number of reads of each register in g.
+fn (g: G) reg_uses() -> Map[Int, Int] {
+  var n: Map[Int, Int] = {}
+  for b in g.all_blocks() {
+    for ins in g.blocks[b].insts {
+      for u in ins.us {
+        n[u] = (n.get(u) ?? 0) + 1
+      }
+    }
+  }
+  n
+}
+
+/// Ends block b with a test of r against k: cond taken to t, else f
+/// (a key past imm12 in a new constant register).
+fn (var g: G) key_test(b: Int, r: Int, k: Int, cond: Str, t: Int, f: Int) {
+  g.cur = b
+  if k >= 0 && k < 4096 {
+    let _c = g.add(Inst{kind: K_CONDBR, text: "cmp $u0, #${k}", us: [r], cond: cond, targets: [t, f]})
+    return
+  }
+  let kr = g.imm(k)
+  let _c = g.add(Inst{kind: K_CONDBR, text: "cmp $u0, $u1", us: [r, kr], cond: cond, targets: [t, f]})
+}
+
+/// A compare tree over keys (ascending) and their targets, def when none
+/// matches: the middle key tested for equality, then below it or above
+/// it; three keys or fewer one after another. Its first block, and the
+/// blocks it made in order in out.
+fn (var g: G) key_tree(r: Int, keys: List[Int], hits: List[Int], def: Int, var out: List[Int]) -> Int {
+  let n = keys.len()
+  if n <= 3 {
+    var bs: List[Int] = []
+    for _ in 0..n {
+      let nb = g.new_block(false)
+      bs.push(nb)
+      out.push(nb)
+    }
+    for i in 0..n {
+      let next = if i + 1 < n { bs[i + 1] } else { def }
+      g.key_test(bs[i], r, keys[i], "eq", hits[i], next)
+    }
+    return if n == 0 { def } else { bs[0] }
+  }
+  let m = n / 2
+  let eq = g.new_block(false)
+  out.push(eq)
+  let lt = g.new_block(false)
+  out.push(lt)
+  let left = g.key_tree(r, keys[0..m], hits[0..m], def, out)
+  let right = g.key_tree(r, keys[m + 1..n], hits[m + 1..n], def, out)
+  g.key_test(eq, r, keys[m], "eq", hits[m], lt)
+  g.key_test(lt, r, keys[m], "lt", left, right)
+  eq
+}
+
+/// Whether chain ch's table fits: its keys from 0 to 4095, the table at
+/// most JUMP_TABLE_SLACK times as long as the keys.
+fn (g: G) table_fits(ch: Chain) -> Bool {
+  var lo = ch.keys[0]
+  var hi = ch.keys[0]
+  for k in ch.keys {
+    lo = imin(lo, k)
+    hi = imax(hi, k)
+  }
+  let size = hi - lo + 1
+  lo >= 0 && lo < 4096 && size <= 4096 && size <= JUMP_TABLE_SLACK * ch.keys.len()
+}
+
+/// Replaces dense compare chains with K_SWITCH terminators, sparse ones
+/// of COMPARE_TREE_MIN values or more with a compare tree, and lays out
 /// the other chains as a run of tests.
 fn (var g: G) jump_tables() {
   var changed = false
+  let nuse = g.reg_uses()
+  var trees: Map[Int, List[Int]] = {}
+  let cur = g.cur
   for head in g.hot {
-    let ch = g.chain(head)
-    if !ch.ok || ch.keys.len() < JUMP_TABLE_MIN {
+    let ch = g.chain(head, nuse)
+    if !ch.ok || ch.keys.len() < COMPARE_TREE_MIN {
+      continue
+    }
+    if ch.keys.len() < JUMP_TABLE_MIN || !g.table_fits(ch) {
+      // a compare tree from the head's test on: keys in order
+      var ord: List[Int] = []
+      for i in 0..ch.keys.len() {
+        ord.push(i)
+      }
+      let sorted = ord.sort_by(fn(i: Int) -> Int { ch.keys[i] })
+      var keys: List[Int] = []
+      var hits: List[Int] = []
+      for i in sorted {
+        keys.push(ch.keys[i])
+        hits.push(ch.hits[i])
+      }
+      let n = g.blocks[head].insts.len()
+      let r = g.blocks[head].insts[n - 1].us[0]
+      var made: List[Int] = []
+      let root = g.key_tree(r, keys, hits, ch.def, made)
+      var ins = g.take_insts(head)
+      ins[n - 1] = Inst{kind: K_JUMP, line: ins[n - 1].line, inl: ins[n - 1].inl, targets: [root]}
+      g.put_insts(head, ins)
+      trees[head] = made
+      changed = true
       continue
     }
     var lo = ch.keys[0]
@@ -118,9 +246,34 @@ fn (var g: G) jump_tables() {
     g.put_insts(head, ins)
     changed = true
   }
+  g.cur = cur
+  // each compare tree right after its head, in the order it was made,
+  // before thread drops a head that only jumps to its tree now
+  if !trees.is_empty() {
+    var intree: Map[Int, Bool] = {}
+    for (_, made) in trees {
+      for b in made {
+        intree[b] = true
+      }
+    }
+    var out: List[Int] = []
+    for b in g.hot {
+      if intree.contains(b) {
+        continue
+      }
+      out.push(b)
+      if let Some(made) = trees.get(b) {
+        for x in made {
+          out.push(x)
+        }
+      }
+    }
+    g.hot = out
+  }
   if changed {
     g.thread() // drops the chain blocks nothing reaches now
   }
+  let uses2 = g.reg_uses()
   var placed: Map[Int, Bool] = {}
   var i = 0
   while i < g.hot.len() {
@@ -129,7 +282,7 @@ fn (var g: G) jump_tables() {
     if placed.contains(head) {
       continue
     }
-    let ch = g.chain(head)
+    let ch = g.chain(head, uses2)
     if ch.blocks.is_empty() {
       continue
     }

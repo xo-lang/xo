@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+fold 8589838128 12
+signed -a-b-c--d--e--f--g--h-
+--- stderr

@@ -1,0 +1,53 @@
+// A sparse Int match becomes a compare tree (compiler/arm64 jumptab.xo
+// key_tree): keys past imm12 in registers, negative keys, a key past
+// 2^32, and values between, below and above every key.
+fn fold(r: Int) -> Int {
+  match r {
+    0x4b => 0x6b
+    0x53 => 0x73
+    0xb5 => 0x39c
+    0xc5 => 0xe5
+    0x1c4 => 0x1c5
+    0x212a => 0x4b
+    0x212b => 0xc5
+    0x2126 => 0x3a9
+    0x1e9e => 0xdf
+    0x3a3 => 0x3c2
+    0x10400 => 0x10428
+    0x1e900 => 0x1e922
+    _ => r
+  }
+}
+
+fn signed(x: Int) -> Str {
+  match x {
+    -70000 => "a"
+    -5000 => "b"
+    -3 => "c"
+    0 => "d"
+    9 => "e"
+    4096 => "f"
+    123456789 => "g"
+    5000000000 => "h"
+    _ => "-"
+  }
+}
+
+fn main(os: Os) {
+  var sum = 0
+  var hits = 0
+  for i in 0..0x20000 {
+    let f = fold(i)
+    sum += f
+    if f != i {
+      hits += 1
+    }
+  }
+  os.stdio.println("fold ${sum} ${hits}")
+  let probes = [-70001, -70000, -69999, -5000, -4, -3, -2, -1, 0, 1, 8, 9, 10, 4095, 4096, 4097, 123456788, 123456789, 123456790, 4999999999, 5000000000, 5000000001]
+  var out: List[Str] = []
+  for p in probes {
+    out.push(signed(p))
+  }
+  os.stdio.println("signed ${out.join("")}")
+}
