@@ -113,6 +113,8 @@ func bigOp(op string, a, b *big.Int, k int) string {
 		return strconv.FormatInt(int64(math.Float64bits(f)), 10)
 	case "cmp":
 		return strconv.Itoa(a.Cmp(b))
+	case "cmpabs":
+		return strconv.Itoa(a.CmpAbs(b))
 	case "prime":
 		return strconv.FormatBool(a.ProbablyPrime(k))
 	}
@@ -124,7 +126,7 @@ func bigCorpus() string {
 	var o strings.Builder
 	o.WriteString(header("math/big's Int on seeded random operands of up to 1,500 bits (runs of ones and zeros, both signs), every std/big operation, and SetString on valid and invalid texts"))
 	o.WriteString("use std/big\n\n/// (op, a in hex, b in hex, k: a shift, bit, base, exponent, or rounds; Go's result: hex, a number (a Float as its bits), none)\nconst OPS: List[(Str, Str, Str, Int, Str)] = [\n")
-	ops := []string{"add", "sub", "mul", "quo", "rem", "div", "mod", "gcd", "modinv", "expmod", "sqrt", "lsh", "rsh", "and", "or", "xor", "andnot", "not", "bit", "bitlen", "tz", "text", "bytes", "toint", "tofloat", "cmp", "prime"}
+	ops := []string{"add", "sub", "mul", "quo", "rem", "div", "mod", "gcd", "modinv", "expmod", "sqrt", "lsh", "rsh", "and", "or", "xor", "andnot", "not", "bit", "bitlen", "tz", "text", "bytes", "toint", "tofloat", "cmp", "cmpabs", "prime"}
 	for i := 0; i < 2600; i++ {
 		op := ops[i%len(ops)]
 		size := []int{64, 64, 130, 200, 600, 1500}[r.Intn(6)]
@@ -248,6 +250,7 @@ fn run(op: Str, a: big.BigInt, b: big.BigInt, k: Int) -> Str {
     "toint" => a.to_int().map(fn(n) { "${n}" }) ?? "none"
     "tofloat" => "${a.to_float().to_bits()}"
     "cmp" => "${a.cmp(b)}"
+    "cmpabs" => "${a.cmp_abs(b)}"
     _ => "${a.probably_prime(k)}"
   }
 }

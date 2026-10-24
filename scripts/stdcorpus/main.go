@@ -53,6 +53,7 @@ var generators = map[string]func() string{
 	"xml":        xmlCorpus,
 	"netip":      netipCorpus,
 	"path":       pathCorpus,
+	"prelude":    preludeCorpus,
 	"regexp":     regexpCorpus,
 	"runes":      runesCorpus,
 	"smtp":       smtpCorpus,
