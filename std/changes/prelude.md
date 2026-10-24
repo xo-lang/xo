@@ -1,5 +1,28 @@
 # prelude changes
 
+## 2026-10-24: perf: Str.trim_chars trims a one byte cutset's two ends in one pass
+
+- Kind: perf
+- Commit: this commit
+- Found by: the gap sweep after the mixed-text case work: re-measured
+  against Go on today's main, trim was 1.765 of Go's instructions overall
+  and 167 per call against 81
+- Go reference: strings.Trim, TrimLeft, TrimRight (go1.26.1)
+- Test: bench/perf/trimchars against its Go twin, `xo bench --ab`
+  at one revision, A the base; corpora strings, bytes and unicode on
+  arm64, LLVM and the Go backend; goldens trim_chars_view and
+  trim_affix_lens; the full fixed point
+- Timing: bench/results/trim-one-byte-2026-10-24.md
+
+A one byte ASCII cutset took trim_chars to trim_end_byte and
+trim_start_byte: two frames, two `s.bytes()`, two views. Both ends fit in
+one pass over the bytes and one view, and that measures 0.917 of the
+base on the trim row (69.4 M to 63.7 M instructions), with
+trim_start_chars and trim_end_chars unchanged. The one byte path only:
+inlining the ASCII paths too, or the loops of trim_start_chars and
+trim_end_chars as well, made those two rows 5 to 8 percent worse through
+the inliner's decisions, and was measured and reverted.
+
 ## 2026-10-24: perf: find tests the separator's second byte before the whole compare
 
 - Kind: perf

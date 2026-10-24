@@ -595,7 +595,21 @@ pub fn trim_chars(s: Str, chars: Str) -> Str {
   }
   let cb = chars.bytes()
   if chars.len() == 1 && cb[0] < 0x80 {
-    return trim_start_byte(trim_end_byte(s, cb[0]), cb[0])
+    // One byte: both ends in one pass over the bytes and one view, where
+    // trim_end_byte and trim_start_byte were two frames, two s.bytes() and
+    // two views (2026-10-24, bench/perf/trimchars: 0.917 of the two calls).
+    let b = s.bytes()
+    let n = b.len()
+    let c = cb[0]
+    var lo = 0
+    while lo < n && b[lo] == c {
+      lo += 1
+    }
+    var hi = n
+    while hi > lo && b[hi - 1] == c {
+      hi -= 1
+    }
+    return rt.str_view(s, lo, hi)
   }
   let (lo, hi, ascii) = ascii_set(cb)
   if ascii {
