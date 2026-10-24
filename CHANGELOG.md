@@ -25,7 +25,7 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   pack fields of its Pack, so fn had been written loose and copied into every
   target's pack), and a build target's pack no longer copies the entries the
   shared pack served. A compiler self-build's cache after three builds: 3,164 MB
-  and about 48,000 files before, about 1,700 MB and 126 files now; a cold
+  and about 48,000 files before, about 1,800 MB and 126 files now; a cold
   http_server build 2.3 s against 6.7 s on the Mac. (Decision 0351 addendum.)
 - The back-end cache's cap counts disk, not bytes: each file takes whole
   4 KiB blocks (prune.Policy.block), so the 16 GiB cap means 16 GiB

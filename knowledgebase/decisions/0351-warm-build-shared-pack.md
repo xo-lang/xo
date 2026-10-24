@@ -193,7 +193,11 @@ Changes:
 
 - `pack_store` does not copy an entry the shared pack served in this build
   (`Pack.shared_used`) into the target's pack, which reads it from the shared
-  pack as before.
+  pack as before. The fe kind is the exception: its target pack carries the
+  list of keys no build stored, which spares a new directory's build about
+  4,300 failed opens (10 ms each on the Windows runner), and a pack with no
+  segments has no list (TestFrontCacheNegKeys, TestSharedPackNegKeys found it
+  in the default-change gate); fe's 91 MB stay copied.
 - `fn_cache_load` built the fn kind's `Pack` from an explicit field list that
   lacked the shared pack fields (`shared_dir`, `shared_used`, `shared_segs`,
   `shared_held`), so fn (313 GB loose and 177 GB in target packs of the
@@ -206,7 +210,7 @@ Changes:
   with the Windows runner's next run as the check.
 
 Compiler self-build, fresh cache, MB on disk after three builds: 3,164 before,
-2,721 with the first change alone (-14%), about 1,700 with all three (-46%),
+2,721 with the first change alone (-14%), about 1,800 with all three (-43%; fe stays copied),
 with 126 loose files instead of about 48,000. Check (one revision, clean xos,
 quiet machine, all exit codes 0): `http_server` in two directories, four builds
 each, one cache: cold build 3.36 s base, 3.40 s changed, 2.06 s with the cold
