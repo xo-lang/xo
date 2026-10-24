@@ -264,6 +264,27 @@ fn (var l: Linker) fail(why: Str) {
   }
 }
 
+/// Whether name (with or without the platform's leading `_`) is the Xo
+/// runtime's (`xo_...`): no library defines one, so one still undefined
+/// is an error at link time, not an import dyld fails on at run time.
+pub fn xo_runtime_name(name: Str) -> Bool {
+  name.trim_prefix("_").starts_with("xo_")
+}
+
+/// The words an undefined runtime symbol's error adds: `xo_NAME` is what
+/// a call of `rt.NAME` becomes, and std/native/rt.xo declares some rt
+/// functions only for the paths that lower them (2026-10-24: a direct
+/// `rt.rs_push_rune` linked, and dyld said "Symbol not found:
+/// _xo_rs_push_rune" when the program ran).
+pub fn rt_hint(name: Str) -> Str {
+  let n = name.trim_prefix("_")
+  if !n.starts_with("xo_") {
+    return ""
+  }
+  let r = n.trim_prefix("xo_")
+  ": `rt.${r}` (std/native/rt.xo) has no lowering on this backend when called directly; call the std function that wraps it"
+}
+
 fn is_ext(s: ISym) -> Bool {
   (s.typ & N_EXT) != 0 && (s.typ & N_STAB) == 0
 }
@@ -367,6 +388,19 @@ fn (var l: Linker) resolve() {
   for n in names {
     if !strong.contains(n) {
       l.weak_imports.add(n)
+    } else if xo_runtime_name(bstr(n)) {
+      var from = ""
+      for o in l.objs {
+        if !o.live {
+          continue
+        }
+        for s in o.syms {
+          if s.name == n && is_ext(s) && !is_defined(s) && from.is_empty() {
+            from = o.path
+          }
+        }
+      }
+      l.fail("${bstr(n)} is not defined (referenced from ${from})${rt_hint(bstr(n))}")
     }
   }
   l.imports = names.to_list().sort_by(fn(n: Bytes) -> Str { bstr(n) })

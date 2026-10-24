@@ -787,7 +787,7 @@ fn (var l: ELinker) collect_imports() {
     // no libraries: weak references are 0, others are missing
     for (name, weak) in l.undefined() {
       if !weak {
-        l.fail("${bstr(name)} is not defined (a static link with no C library)")
+        l.fail("${bstr(name)} is not defined (a static link with no C library)${rt_hint(bstr(name))}")
         return
       }
       l.import_ix.put(name, l.imports.len())
@@ -800,6 +800,10 @@ fn (var l: ELinker) collect_imports() {
   var gcc = false
   var dl = false
   for (name, weak) in l.undefined() {
+    if !weak && xo_runtime_name(bstr(name)) {
+      l.fail("${bstr(name)} is not defined${rt_hint(bstr(name))}")
+      return
+    }
     let (lib, ver) = vers.get(name) ?? ("libc.so.6", base)
     gcc = gcc || lib == "libgcc_s.so.1"
     dl = dl || lib == "libdl.so.2"

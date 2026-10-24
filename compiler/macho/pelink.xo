@@ -431,7 +431,7 @@ pub fn link_pe(objs: List[CObj], o: PEOpts) -> Result[Bytes, Str] {
       for r in s.relocs {
         let t = targets[oi][r.sym]
         if t.obj < 0 && t.imp.is_empty() && !t.tls_index && !t.abs {
-          return Err("${ob.path}: undefined symbol ${ob.syms[r.sym].name}")
+          return Err("${ob.path}: undefined symbol ${ob.syms[r.sym].name}${rt_hint(ob.syms[r.sym].name)}")
         }
         let at = p.off + r.addr
         let site = rva[p.out] + at
