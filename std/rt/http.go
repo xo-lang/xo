@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf8"
 )
 
 // std/http (std.md 4).
@@ -496,6 +497,26 @@ func Http_Request_json[T any](tk *Task, r Http_Request) Result[T, Json_DecodeErr
 	return Json_decode[T](tk, r.F_body)
 }
 
+// pathKeepInvalid is a decoded URL path as a Str can hold it: every byte that
+// is not part of valid UTF-8 stays its %XX escape (the native new_request's
+// url_parts decodes the same way).
+func pathKeepInvalid(p string) string {
+	if utf8.ValidString(p) {
+		return p
+	}
+	var b strings.Builder
+	for i := 0; i < len(p); {
+		r, n := utf8.DecodeRuneInString(p[i:])
+		if r == utf8.RuneError && n == 1 {
+			b.WriteString("%" + strings.ToUpper(strconv.FormatInt(int64(p[i])+256, 16)[1:]))
+		} else {
+			b.WriteString(p[i : i+n])
+		}
+		i += n
+	}
+	return b.String()
+}
+
 // Http_new_request is `http.new_request(method, url, headers, body)`:
 // remote_ip is "127.0.0.1".
 func Http_new_request(tk *Task, method, rawURL string, headers Map[string, string], body Bytes) Http_Request {
@@ -505,10 +526,16 @@ func Http_new_request(tk *Task, method, rawURL string, headers Map[string, strin
 		Map_put(tk, &h, textproto.CanonicalMIMEHeaderKey(k), v)
 	}
 	raw := ""
+	path := u.F_path
 	if pu, err := url.Parse(rawURL); err == nil {
 		raw = pu.RawQuery
+		// the request's path is Go's URL.Path (its escaped form when the decoded
+		// bytes are not UTF-8, which a Str cannot hold), "" for a URL with none
+		// or an opaque one (url.path of the loose parse says "/" for the
+		// first), as the native new_request's
+		path = pathKeepInvalid(pu.Path)
 	}
-	return Http_Request{F_method: strings.ToUpper(method), F_path: u.F_path, F_url: u, F_headers: h, F_body: body, F_remote_ip: "127.0.0.1", XRawQuery: raw}
+	return Http_Request{F_method: strings.ToUpper(method), F_path: path, F_url: u, F_headers: h, F_body: body, F_remote_ip: "127.0.0.1", XRawQuery: raw}
 }
 
 // M_query_all is `req.query_all(name)` (decision 0279): Go's

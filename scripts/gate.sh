@@ -17,6 +17,9 @@
 #            golden programs are only those the change touches (owner,
 #            2026-10-22; llvm_goldens below): XO_GATE_LLVM=all runs
 #            every one
+#   corpora  internal/stdtest's differential corpora on the Go backend
+#            (TestStdCorpora/go/): run when the branch changes std/rt or
+#            compiler/gen (go_backend); skipped otherwise
 #   cmd      the full tests of cmd/xo
 #   gen      the full tests of internal/gen
 #   alloff   internal/arm64's goldens with every optional pass off
@@ -192,6 +195,12 @@ for step in "$@"; do
         full llvm ./internal/llvm
       fi
       unset XO_LLVM_GOLDENS
+    fi ;;
+  corpora)
+    if go_backend; then
+      full corpora ./internal/stdtest -run '^TestStdCorpora$/^go/'
+    else
+      echo "corpora: skipped (no std/rt or compiler/gen change)"
     fi ;;
   cmd) full cmd ./cmd/xo ;;
   gen) full gen ./internal/gen ;;

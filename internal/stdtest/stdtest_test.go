@@ -83,6 +83,21 @@ func backends() []string {
 	return []string{"llvm", native}
 }
 
+// corporaBackends are the backends the corpora run on: backends(), and the
+// Go backend where the go command exists (std/rt is its runtime, which the
+// std module tests do not reach; before 2026-10-23 a -run with /go/ matched
+// nothing). XO_STDTEST_BACKENDS names them exactly instead.
+func corporaBackends() []string {
+	bs := backends()
+	if os.Getenv("XO_STDTEST_BACKENDS") != "" {
+		return bs
+	}
+	if _, err := exec.LookPath("go"); err == nil {
+		bs = append(bs, "go")
+	}
+	return bs
+}
+
 // jobs is how many xo test processes run at once.
 func jobs() int {
 	if v, err := strconv.Atoi(os.Getenv("XO_STDTEST_JOBS")); err == nil && v > 0 {
@@ -129,7 +144,8 @@ func TestStdModules(t *testing.T) {
 
 // TestStdCorpora runs the large differential corpora generated from Go
 // (testdata/corpus/NAME: a plain test directory using std's public API)
-// on each backend; outside -short, whose std module tests keep samples.
+// on each backend, the Go backend included; outside -short, whose std module
+// tests keep samples.
 func TestStdCorpora(t *testing.T) {
 	if testing.Short() {
 		t.Skip("the corpora run outside -short; the std module tests keep samples")
@@ -147,7 +163,7 @@ func TestStdCorpora(t *testing.T) {
 		t.Fatalf("no corpus directories: %v", err)
 	}
 	sem := make(chan struct{}, jobs())
-	for _, b := range backends() {
+	for _, b := range corporaBackends() {
 		for _, d := range dirs {
 			abs, err := filepath.Abs(d)
 			if err != nil {

@@ -1,5 +1,20 @@
 # std/http changes
 
+## 2026-10-23: fix: http.new_request's path on the Go backend
+
+- Kind: fix
+- Commit: this commit
+- Found by: TestStdCorpora on the Go backend (added the same day; before it a -run with /go/ matched nothing)
+- Go reference: net/url URL.Path and URL.EscapedPath
+- Test: internal/stdtest/testdata/corpus/httpurl on the Go backend
+
+`http.new_request` set `req.path` to the loose parse's path on the Go
+backend: "/" for a URL with no path (`http://www.google.com`), the escaped
+form for a path with escapes (`/a%20b`). The native backends, and Go, give
+"" for no path (and for an opaque URL), the decoded path otherwise, and
+`%XX` only for bytes that are not UTF-8 (`/é/%FF`). The Go backend now
+does the same. `req.url.path` was already right.
+
 ## 2026-10-23: behavior: HttpErr, ClientErr, UrlErr, CookieErr and TlsErr print plain messages (decision 0358)
 
 - Kind: behavior
