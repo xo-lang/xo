@@ -1,0 +1,33 @@
+// Bytes.split, split_n, fields, trim, trim_prefix and trim_suffix
+// (bytes.Split, SplitN, Fields, TrimSpace, TrimPrefix, TrimSuffix): text, an
+// empty separator, a count of every kind, runs of ASCII and non-ASCII white
+// space, bytes no UTF-8 sequence can hold, NUL, empty values on both sides,
+// and a view of a longer value.
+fn show(xs: List[Bytes]) -> Str {
+  "[" + xs.map(fn(x) { x.quote() }).join(", ") + "]"
+}
+
+fn q(x: Bytes) -> Str { x.quote() }
+
+fn main(os: Os) {
+  let out = os.stdio
+  let t = b" a,b, c ,d "
+  out.println("${show(t.split(b","))}")
+  out.println("${show(t.split_n(b",", 1))} ${show(t.split_n(b",", 2))} ${show(t.split_n(b",", 9))} ${show(t.split_n(b",", 0))}")
+  out.println("${show(t.split(b""))} ${show(t.split_n(b"", 3))}")
+  out.println("${show(b"".split(b""))} ${show(b"".split(b","))} ${show(b"abc".split(b""))}")
+  out.println("${show(b"\xff\x80".split(b""))} ${show(b"a\xffb".split_n(b"", 2))}")
+  out.println("${show(b"..a..b..".split(b".."))} ${show(b"ab".split(b"ab"))} ${show(b"ab".split(b"z"))}")
+  out.println("${show(b"  a \t b  c  d ".fields())} ${show(b"".fields())} ${show(b" \t ".fields())}")
+  out.println("${show(b" a\u{2000}b\u{3000}c\xff ".fields())}")
+  out.println("${q(b" \t\n x\r\n ".trim())} ${q(b"\xff x \xc3".trim())} ${q(b"   ".trim())}")
+  out.println("${q(b"\u{2000}\u{00a0}a\u{0085}".trim())}")
+  out.println("${q(b"foobar".trim_prefix(b"foo"))} ${q(b"foobar".trim_prefix(b"bar"))} ${q(b"foobar".trim_prefix(b""))}")
+  out.println("${q(b"foobar".trim_suffix(b"bar"))} ${q(b"foobar".trim_suffix(b"foo"))} ${q(b"foobar".trim_suffix(b""))}")
+  let long = b"zz" + t
+  let view = long[2..long.len()]
+  out.println("${show(view.split(b","))} ${q(view.trim())}")
+  // the pieces are views of the view, which is a view of a longer buffer
+  let pieces = view.split(b",")
+  out.println("${pieces.len()} ${show(pieces)} ${pieces.map(fn(x) { x.quote() }).join(" - ")}")
+}

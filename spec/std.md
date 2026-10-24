@@ -220,6 +220,13 @@ fn (b: Bytes) contains(sub: Bytes) -> Bool   // bytes.Contains; true for an empt
 fn (b: Bytes) starts_with(p: Bytes) -> Bool  // bytes.HasPrefix; true for an empty p
 fn (b: Bytes) ends_with(p: Bytes) -> Bool    // bytes.HasSuffix; true for an empty p
 fn (b: Bytes) count(sub: Bytes) -> Int       // bytes.Count, non-overlapping; the rune count plus one for an empty sub
+fn (b: Bytes) split(sep: Bytes) -> List[Bytes]     // bytes.Split; an empty sep splits after each UTF-8 sequence (Go's explode), and an empty b gives no piece
+fn (b: Bytes) split_n(sep: Bytes, n: Int) -> List[Bytes]  // at most n pieces, the unsplit rest in the last (bytes.SplitN); n below 0 is split, 0 is no piece
+fn (b: Bytes) fields() -> List[Bytes]        // runs of non-white-space bytes (bytes.Fields, unicode.IsSpace)
+fn (b: Bytes) trim() -> Bytes                // white space at both ends (bytes.TrimSpace)
+fn (b: Bytes) trim_prefix(p: Bytes) -> Bytes // also trim_suffix (bytes.TrimPrefix, TrimSuffix)
+// split, split_n, fields, trim, trim_prefix and trim_suffix return views of b on native
+// targets (O(1) per piece, no copy; a piece keeps b alive), as slices do (core 3.6)
 fn (b: Bytes) clone() -> Bytes               // an explicit copy in a buffer of its own
 fn (b: Bytes) indexed() -> List[(Int, UInt8)]  // each byte with its offset, as List.indexed
 fn (static: Bytes) zeroed(n: Int) -> Bytes   // n zero bytes (make([]byte, n)); a fault for n < 0
@@ -4061,7 +4068,7 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
 
 Every function and method of std/prelude.xo, by type, as declared there
 (the sections above explain them); interface methods take `self`.
-396 declarations.
+402 declarations.
 
 ### Range
 
@@ -4299,6 +4306,12 @@ fn (b: Bytes) contains(sub: Bytes) -> Bool
 fn (b: Bytes) starts_with(p: Bytes) -> Bool
 fn (b: Bytes) ends_with(p: Bytes) -> Bool
 fn (b: Bytes) count(sub: Bytes) -> Int
+fn (b: Bytes) split(sep: Bytes) -> List[Bytes]
+fn (b: Bytes) split_n(sep: Bytes, n: Int) -> List[Bytes]
+fn (b: Bytes) fields() -> List[Bytes]
+fn (b: Bytes) trim() -> Bytes
+fn (b: Bytes) trim_prefix(p: Bytes) -> Bytes
+fn (b: Bytes) trim_suffix(p: Bytes) -> Bytes
 fn (b: Bytes) indexed() -> List[(Int, UInt8)]
 fn (static: Bytes) zeroed(n: Int) -> Bytes
 ```

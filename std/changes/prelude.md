@@ -1,5 +1,38 @@
 # prelude changes
 
+## 2026-10-23: feature: Bytes.split, split_n, fields, trim, trim_prefix and trim_suffix
+
+- Kind: feature
+- Commit: this commit
+- Found by: lead request; Bytes had find, rfind, contains, starts_with,
+  ends_with and count, so a port of Go code that splits or trims bytes had
+  to hand roll it
+- Go reference: bytes.Split, SplitN, Fields, TrimSpace, TrimPrefix and
+  TrimSuffix (go1.26.1), explode included (an empty separator, the byte
+  length as its limit, and no piece at all for an empty value)
+- Test: corpus/bytes on arm64, LLVM and the Go backend (Go's splittests,
+  fieldstests, trimSpaceTests and the TrimPrefix and TrimSuffix cases of
+  trimTests, then 4,800 seeded texts and records with invalid UTF-8, NUL
+  inside pieces, 4,854 cases in all, plus a format then parse round trip)
+  and golden bytes_split (arm64, LLVM, Go parity)
+- Timing: bench/results/bytes-split-2026-10-23.md
+
+`Bytes.split`, `split_n`, `fields`, `trim`, `trim_prefix` and
+`trim_suffix` are Go's bytes package functions, as Str's split, fields
+and trims are Go's strings ones. `trim` is TrimSpace, named as Str's is:
+Str calls TrimSpace `trim` and left and right trims `trim_start` and
+`trim_end`, so the bytes methods follow the same names rather than Go's
+TrimSpace (owner: consistency with Str wins). Every piece and every trim
+is a view of the value (decision 0330): 1000 `trim` calls on a 2 MiB
+value take 7 us, so nothing is copied. `fields` and its bytes form share
+one field scanner, so Str's fields keeps its single list.
+
+The one Go behavior worth naming is explode's: with an empty separator,
+Go splits into at most n pieces by *byte* length and leaves no piece at
+all for an empty value, so `"".split("")` is `[]` while `"".split(",")`
+is `[""]`. The corpus caught a first version that returned `[""]` for
+both.
+
 ## 2026-10-23: feature: the rest of the Rune classes, to_title and utf8_len
 
 - Kind: feature

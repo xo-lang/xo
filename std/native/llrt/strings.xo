@@ -108,52 +108,80 @@ fn is_space(r: Int) -> Bool {
 /// Whether c, a byte, is ASCII white space (unicode.IsSpace's ASCII set).
 fn ascii_space(c: Int) -> Bool { c == 32 || (c >= 9 && c <= 13) }
 
-/// strings.Fields: the runs of non-white-space text, split around runs of
-/// white space (unicode.IsSpace), as views of s. ASCII takes the byte path
-/// of Go's fast path; only a non-ASCII byte decodes a rune.
-pub fn fields(s: Str) -> List[Str] {
-  var out: List[Str] = []
-  let n = s.len()
-  let b = s.bytes()
-  var i = 0
-  while i < n {
-    // skip a run of white space
-    while i < n {
-      let c = Int(b[i])
-      if c < 0x80 {
-        if ascii_space(c) {
-          i += 1
-          continue
-        }
+/// The field of b from i on: its start and end offsets, or (-1, -1) when
+/// only white space is left. ASCII takes the byte path of Go's fast path;
+/// only a non-ASCII byte decodes a rune.
+fn field_from(b: Bytes, i: Int) -> (Int, Int) {
+  let n = b.len()
+  var at = i
+  // skip a run of white space
+  while at < n {
+    let c = Int(b[at])
+    if c < 0x80 {
+      if !ascii_space(c) {
         break
       }
-      let p = unicode.decode(b, i)
-      if (p & 7) == 1 || !is_space(p >> 3) {
-        break
-      }
-      i += p & 7
+      at += 1
+      continue
     }
-    if i >= n {
+    let p = unicode.decode(b, at)
+    if (p & 7) == 1 || !is_space(p >> 3) {
       break
     }
-    let start = i
-    // the field runs to the next white space
-    while i < n {
-      let c = Int(b[i])
-      if c < 0x80 {
-        if ascii_space(c) {
-          break
-        }
-        i += 1
-      } else {
-        let p = unicode.decode(b, i)
-        if (p & 7) != 1 && is_space(p >> 3) {
-          break
-        }
-        i += p & 7
+    at += p & 7
+  }
+  if at >= n {
+    return (-1, -1)
+  }
+  let start = at
+  // the field runs to the next white space
+  while at < n {
+    let c = Int(b[at])
+    if c < 0x80 {
+      if ascii_space(c) {
+        break
       }
+      at += 1
+      continue
     }
-    out.push(raw.str_cut(s, start, i))
+    let p = unicode.decode(b, at)
+    if (p & 7) != 1 && is_space(p >> 3) {
+      break
+    }
+    at += p & 7
+  }
+  (start, at)
+}
+
+/// bytes.Fields: the runs of non-white-space bytes, split around runs of
+/// white space (unicode.IsSpace), as views of b.
+pub fn fields_bytes(b: Bytes) -> List[Bytes] {
+  var out: List[Bytes] = []
+  var i = 0
+  while i < b.len() {
+    let (start, end) = field_from(b, i)
+    if start < 0 {
+      break
+    }
+    out.push(b[start..end])
+    i = end
+  }
+  out
+}
+
+/// strings.Fields: the same fields of the text, each one a view of s (a
+/// field boundary is a rune boundary of the valid text).
+pub fn fields(s: Str) -> List[Str] {
+  var out: List[Str] = []
+  let b = s.bytes()
+  var i = 0
+  while i < b.len() {
+    let (start, end) = field_from(b, i)
+    if start < 0 {
+      break
+    }
+    out.push(raw.str_cut(s, start, end))
+    i = end
   }
   out
 }
@@ -208,8 +236,28 @@ pub fn space_start(b: Bytes, lo: Int, hi: Int) -> Int {
   n
 }
 
-/// strings.TrimSpace (mode 0), TrimLeftFunc (1), or TrimRightFunc (2)
-/// with unicode.IsSpace. s itself when nothing is trimmed.
+/// bytes.TrimSpace (mode 0), TrimLeftFunc (1) or TrimRightFunc (2) with
+/// unicode.IsSpace, on the bytes. b itself when nothing is trimmed.
+pub fn trim_bytes(b: Bytes, mode: Int) -> Bytes {
+  let n = b.len()
+  var lo = 0
+  var hi = n
+  if mode != 2 {
+    lo = space_end(b, 0, n)
+  }
+  if mode != 1 {
+    hi = space_start(b, lo, n)
+  }
+  if lo == 0 && hi == n {
+    return b
+  }
+  b[lo..hi]
+}
+
+/// strings.TrimSpace (mode 0), TrimLeftFunc (1) or TrimRightFunc (2) with
+/// unicode.IsSpace. s itself when nothing is trimmed; otherwise the same
+/// offsets trim_bytes finds, cut from s itself (no cast of outside bytes,
+/// decision 0259).
 pub fn trim(s: Str, mode: Int) -> Str {
   let b = s.bytes()
   let n = b.len()

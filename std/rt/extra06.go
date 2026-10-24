@@ -115,6 +115,45 @@ func Bytes_count(_ *Task, b, sub Bytes) int64 {
 	return int64(bytes.Count([]byte(b), []byte(sub)))
 }
 
+// bytesList is parts as a List[Bytes], the Go backend's Bytes being a string.
+func bytesList(parts [][]byte) List[Bytes] {
+	out := make([]Bytes, len(parts))
+	for i, p := range parts {
+		out[i] = Bytes(p)
+	}
+	return ListOf(out...)
+}
+
+// Bytes_split is `b.split(sep)`: bytes.Split.
+func Bytes_split(_ *Task, b, sep Bytes) List[Bytes] {
+	return bytesList(bytes.Split([]byte(b), []byte(sep)))
+}
+
+// Bytes_split_n is `b.split_n(sep, n)`: bytes.SplitN.
+func Bytes_split_n(_ *Task, b, sep Bytes, n int64) List[Bytes] {
+	return bytesList(bytes.SplitN([]byte(b), []byte(sep), int(n)))
+}
+
+// Bytes_fields is `b.fields()`: bytes.Fields.
+func Bytes_fields(_ *Task, b Bytes) List[Bytes] {
+	return bytesList(bytes.Fields([]byte(b)))
+}
+
+// Bytes_trim is `b.trim()`: bytes.TrimSpace.
+func Bytes_trim(_ *Task, b Bytes) Bytes {
+	return Bytes(bytes.TrimSpace([]byte(b)))
+}
+
+// Bytes_trim_prefix is `b.trim_prefix(p)`: bytes.TrimPrefix.
+func Bytes_trim_prefix(_ *Task, b, p Bytes) Bytes {
+	return Bytes(bytes.TrimPrefix([]byte(b), []byte(p)))
+}
+
+// Bytes_trim_suffix is `b.trim_suffix(p)`: bytes.TrimSuffix.
+func Bytes_trim_suffix(_ *Task, b, p Bytes) Bytes {
+	return Bytes(bytes.TrimSuffix([]byte(b), []byte(p)))
+}
+
 // Bytes_indexed is `b.indexed()`: each byte with its offset.
 func Bytes_indexed(_ *Task, b Bytes) List[Tuple2[int64, uint8]] {
 	out := make([]Tuple2[int64, uint8], len(b))

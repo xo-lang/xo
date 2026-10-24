@@ -1,0 +1,100 @@
+// Bytes.split, split_n, fields, trim, trim_prefix and trim_suffix workloads
+// against Go's bytes package (the twin is twin.go.txt): texts and
+// separators chosen so an empty, a one byte, a multi byte and an absent
+// separator, the ASCII and the non-ASCII white space paths, and invalid
+// UTF-8 all run. The workload is picked once, outside the loop.
+// Usage: bytessplit <workload>; prints "<workload> <checksum>", the same
+// line the Go twin prints.
+
+const N = 200000
+
+const TEXTS: List[Bytes] = [
+  b"  the quick brown fox, jumps over the lazy dog  ",
+  b"1,2,3,4",
+  b"héllo, wörld, ça va, 日本語 テキスト   ",
+  b"  \t  mixed ascii and ✓ unicode ✓  ",
+  b"abcabcabcabcabcabcabc",
+  b"a\xffb, c\x80 ,",
+]
+
+const SEPS: List[Bytes] = [b",", b" ", b"abc", b"", b"✓"]
+const NS: List[Int] = [2, 3, -1, 0, 5]
+const AFFIXES: List[Bytes] = [b"  ", b"a", b"h\xc3", b"", b",1"]
+
+fn split_all() -> Int {
+  var n = 0
+  for i in 0..N {
+    for p in TEXTS[i % TEXTS.len()].split(SEPS[i % SEPS.len()]) {
+      n += p.len()
+    }
+  }
+  n
+}
+
+fn split_n_all() -> Int {
+  var n = 0
+  for i in 0..N {
+    for p in TEXTS[i % TEXTS.len()].split_n(SEPS[i % SEPS.len()], NS[i % NS.len()]) {
+      n += p.len()
+    }
+  }
+  n
+}
+
+fn fields_all() -> Int {
+  var n = 0
+  for i in 0..N {
+    for p in TEXTS[i % TEXTS.len()].fields() {
+      n += p.len()
+    }
+  }
+  n
+}
+
+fn trim_all() -> Int {
+  var n = 0
+  for i in 0..N {
+    n += TEXTS[i % TEXTS.len()].trim().len()
+  }
+  n
+}
+
+fn affix_all() -> Int {
+  var n = 0
+  for i in 0..N {
+    let t = TEXTS[i % TEXTS.len()]
+    let p = AFFIXES[i % AFFIXES.len()]
+    n += t.trim_prefix(p).len() + t.trim_suffix(p).len()
+  }
+  n
+}
+
+// index_all is the loop's own cost, the two table lookups and the lengths,
+// with no split or trim, so a row can be read net of it.
+fn index_all() -> Int {
+  var n = 0
+  for i in 0..N {
+    n += TEXTS[i % TEXTS.len()].len() + SEPS[i % SEPS.len()].len()
+  }
+  n
+}
+
+fn main(os: Os) {
+  let args = os.env.args()
+  let w = if args.len() > 0 { args[0] } else { "none" }
+  var n = 0
+  if w == "split" {
+    n = split_all()
+  } else if w == "split_n" {
+    n = split_n_all()
+  } else if w == "fields" {
+    n = fields_all()
+  } else if w == "trim" {
+    n = trim_all()
+  } else if w == "affix" {
+    n = affix_all()
+  } else if w == "index" {
+    n = index_all()
+  }
+  os.stdio.println("${w} ${n}")
+}

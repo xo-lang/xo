@@ -7,10 +7,11 @@ import (
 	"strings"
 )
 
-// The bytes corpus: Go's bytes.Contains, HasPrefix, HasSuffix and Count as
-// the oracle for Bytes.contains, starts_with, ends_with and count, on Go's
-// own test cases, on the boundary cases the methods document, and on seeded
-// random bytes (invalid UTF-8 included: these are bytes, not text).
+// The bytes corpus: Go's bytes package as the oracle for Bytes.contains,
+// starts_with, ends_with, count, split, split_n, fields, trim, trim_prefix
+// and trim_suffix, on Go's own test cases, on the boundary cases the methods
+// document, and on seeded random bytes (invalid UTF-8 included: these are
+// bytes, not text).
 
 // bytesCase is one (b, sub) input of the four methods.
 type bytesCase struct{ b, sub []byte }
@@ -125,6 +126,184 @@ func bytesRandomSub(r *rand.Rand, b []byte) []byte {
 	return sub
 }
 
+// bytesSplitCase is one split input with its count.
+type bytesSplitCase struct {
+	b, sep []byte
+	n      int
+}
+
+// bytesBigN is Go's math.MaxInt / 4 in splittests: a count above any number
+// of pieces a value can have.
+var bytesBigN = int(^uint(0)>>1) / 4
+
+// goBytesSplitCases are Go's bytes_test.go splittests (bytes.SplitN) on Go's
+// fixtures abcd, faces, commas and dots. Go's bytes tests are Copyright 2009
+// The Go Authors, BSD-style license.
+func goBytesSplitCases() []bytesSplitCase {
+	return []bytesSplitCase{
+		{[]byte(""), []byte(""), -1},
+		{[]byte("abcd"), []byte("a"), 0},
+		{[]byte("abcd"), []byte(""), 2},
+		{[]byte("abcd"), []byte("a"), -1},
+		{[]byte("abcd"), []byte("z"), -1},
+		{[]byte("abcd"), []byte(""), -1},
+		{[]byte("1,2,3,4"), []byte(","), -1},
+		{[]byte("1....2....3....4"), []byte("..."), -1},
+		{[]byte("☺☻☹"), []byte("☹"), -1},
+		{[]byte("☺☻☹"), []byte("~"), -1},
+		{[]byte("☺☻☹"), []byte(""), -1},
+		{[]byte("1 2 3 4"), []byte(" "), 3},
+		{[]byte("1 2"), []byte(" "), 3},
+		{[]byte("123"), []byte(""), 2},
+		{[]byte("123"), []byte(""), 17},
+		{[]byte("bT"), []byte("T"), bytesBigN},
+		{[]byte("\xff-\xff"), []byte(""), -1},
+		{[]byte("\xff-\xff"), []byte("-"), -1},
+	}
+}
+
+// goBytesFieldsCases are Go's bytes_test.go fieldstests. Go's bytes tests are
+// Copyright 2009 The Go Authors, BSD-style license.
+func goBytesFieldsCases() [][]byte {
+	return [][]byte{
+		[]byte(""),
+		[]byte(" "),
+		[]byte(" \t "),
+		[]byte("  abc  "),
+		[]byte("1 2 3 4"),
+		[]byte("1  2  3  4"),
+		[]byte("1\t\t2\t\t3\t4"),
+		[]byte("1\u20002\u20013\u20024"),
+		[]byte("\u2000\u2001\u2002"),
+		[]byte("\n™\t™\n"),
+		[]byte("☺☻☹"),
+	}
+}
+
+// goTrimSpaceCases are Go's bytes_test.go trimSpaceTests, in the order Go
+// has them (its space is every kind of white space). Go's bytes tests are
+// Copyright 2009 The Go Authors, BSD-style license.
+func goTrimSpaceCases() [][]byte {
+	const space = "\t\v\r\f\n\u0085\u00a0\u2000\u3000"
+	return [][]byte{
+		[]byte(""),
+		[]byte("  a"),
+		[]byte("b  "),
+		[]byte("abc"),
+		[]byte(space + "abc" + space),
+		[]byte(" "),
+		[]byte("\u3000 "),
+		[]byte(" \u3000"),
+		[]byte(" \t\r\n \t\t\r\r\n\n "),
+		[]byte(" \t\r\n x\t\t\r\r\n\n "),
+		[]byte(" \u2000\t\r\n x\t\t\r\r\ny\n \u3000"),
+		[]byte("1 \t\r\n2"),
+		[]byte(" x\x80"),
+		[]byte(" x\xc0"),
+		[]byte("x \xc0\xc0 "),
+		[]byte("x \xc0"),
+		[]byte("x \xc0 "),
+		[]byte("x \xc0\xc0 "),
+		[]byte("x ☺\xc0\xc0 "),
+		[]byte("x ☺ "),
+	}
+}
+
+// goTrimAffixCases are the TrimPrefix and TrimSuffix cases of Go's
+// bytes_test.go trimTests. Go's bytes tests are Copyright 2009 The Go
+// Authors, BSD-style license.
+func goTrimAffixCases() [][2][]byte {
+	return [][2][]byte{
+		{[]byte("aabb"), []byte("a")},
+		{[]byte("aabb"), []byte("b")},
+		{[]byte("aabb"), []byte("aabb")},
+		{[]byte("aabb"), []byte("")},
+		{[]byte(""), []byte("a")},
+	}
+}
+
+// bytesSpaceAlphabet is the white space of both kinds (ASCII and the
+// non-ASCII runes unicode.IsSpace holds), text, NUL and bytes no UTF-8
+// sequence can hold.
+var bytesSpaceAlphabet = []string{
+	" ", "\t", "\n", "\v", "\f", "\r", "\u0085", "\u00a0", "\u2000", "\u3000",
+	"a", "b", "é", "日", "\xff", "\x80", "\xc3", "\xed\xa0\x80", "\x00",
+}
+
+// bytesRandomSpace is up to 8 pieces of bytesSpaceAlphabet, so runs of white
+// space, none at all, and a run at either end all occur.
+func bytesRandomSpace(r *rand.Rand) []byte {
+	var b strings.Builder
+	for i := 0; i < r.Intn(9); i++ {
+		b.WriteString(bytesSpaceAlphabet[r.Intn(len(bytesSpaceAlphabet))])
+	}
+	return []byte(b.String())
+}
+
+// bytesRandomSplit is a random split input: an empty, one piece, unrelated,
+// longer or interior separator, and a count of every kind.
+func bytesRandomSplit(r *rand.Rand) bytesSplitCase {
+	b := bytesGen(r, bytesLens[r.Intn(len(bytesLens))])
+	var sep []byte
+	switch r.Intn(5) {
+	case 0:
+		sep = nil
+	case 1, 2:
+		sep = bytesGen(r, 1+r.Intn(2))
+	default:
+		sep = bytesRandomSub(r, b)
+	}
+	n := -1
+	switch r.Intn(6) {
+	case 0:
+		n = 0
+	case 1:
+		n = 1
+	case 2:
+		n = 2
+	case 3:
+		n = 3
+	case 4:
+		n = 1 << 40
+	}
+	return bytesSplitCase{b, sep, n}
+}
+
+// bytesRandomAffix is a random affix input: an empty p, a prefix, a suffix,
+// an unrelated piece or a p longer than b.
+func bytesRandomAffix(r *rand.Rand) [2][]byte {
+	b := bytesGen(r, bytesLens[r.Intn(len(bytesLens))])
+	switch r.Intn(6) {
+	case 0:
+		return [2][]byte{b, nil}
+	case 1:
+		return [2][]byte{b, bytesGen(r, 1+r.Intn(3))}
+	case 2, 3:
+		if len(b) > 0 {
+			return [2][]byte{b, b[:1+r.Intn(len(b))]}
+		}
+	case 4:
+		if len(b) > 0 {
+			return [2][]byte{b, b[len(b)-(1+r.Intn(len(b))):]}
+		}
+	}
+	return [2][]byte{b, append(bytesGen(r, 1+r.Intn(2)), b...)}
+}
+
+// xbytesList is parts as an Xo List[Bytes] literal.
+func xbytesList(parts [][]byte) string {
+	var b strings.Builder
+	b.WriteString("[")
+	for i, p := range parts {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(xbytes(p))
+	}
+	b.WriteString("]")
+	return b.String()
+}
+
 func bytesCorpus() string {
 	r := rand.New(rand.NewSource(59))
 	var cs []bytesCase
@@ -144,6 +323,55 @@ func bytesCorpus() string {
 			bytes.Contains(c.b, c.sub), bytes.HasPrefix(c.b, c.sub), bytes.HasSuffix(c.b, c.sub), bytes.Count(c.b, c.sub))
 	}
 	o.WriteString("]\n")
+
+	// split (its own seed, so the section above keeps its inputs)
+	sp := goBytesSplitCases()
+	rsp := rand.New(rand.NewSource(61))
+	for i := 0; i < 1200; i++ {
+		sp = append(sp, bytesRandomSplit(rsp))
+	}
+	o.WriteString("\n/// (b, sep, n, Go's SplitN)\nconst SPLIT_CASES: List[(Bytes, Bytes, Int, List[Bytes])] = [\n")
+	for _, c := range sp {
+		fmt.Fprintf(&o, "  (%s, %s, %d, %s),\n", xbytes(c.b), xbytes(c.sep), c.n, xbytesList(bytes.SplitN(c.b, c.sep, c.n)))
+	}
+	o.WriteString("]\n")
+
+	// fields
+	fd := goBytesFieldsCases()
+	rfd := rand.New(rand.NewSource(67))
+	for i := 0; i < 1200; i++ {
+		fd = append(fd, bytesRandomSpace(rfd))
+	}
+	o.WriteString("\n/// (b, Go's Fields)\nconst FIELDS_CASES: List[(Bytes, List[Bytes])] = [\n")
+	for _, c := range fd {
+		fmt.Fprintf(&o, "  (%s, %s),\n", xbytes(c), xbytesList(bytes.Fields(c)))
+	}
+	o.WriteString("]\n")
+
+	// trim (TrimSpace)
+	tr := goTrimSpaceCases()
+	rtr := rand.New(rand.NewSource(71))
+	for i := 0; i < 1200; i++ {
+		tr = append(tr, bytesRandomSpace(rtr))
+	}
+	o.WriteString("\n/// (b, Go's TrimSpace)\nconst TRIM_CASES: List[(Bytes, Bytes)] = [\n")
+	for _, c := range tr {
+		fmt.Fprintf(&o, "  (%s, %s),\n", xbytes(c), xbytes(bytes.TrimSpace(c)))
+	}
+	o.WriteString("]\n")
+
+	// trim_prefix and trim_suffix
+	af := goTrimAffixCases()
+	raf := rand.New(rand.NewSource(73))
+	for i := 0; i < 1200; i++ {
+		af = append(af, bytesRandomAffix(raf))
+	}
+	o.WriteString("\n/// (b, p, Go's TrimPrefix, Go's TrimSuffix)\nconst AFFIX_CASES: List[(Bytes, Bytes, Bytes, Bytes)] = [\n")
+	for _, c := range af {
+		fmt.Fprintf(&o, "  (%s, %s, %s, %s),\n", xbytes(c[0]), xbytes(c[1]), xbytes(bytes.TrimPrefix(c[0], c[1])), xbytes(bytes.TrimSuffix(c[0], c[1])))
+	}
+	o.WriteString("]\n")
+
 	o.WriteString(bytesTests)
 	return o.String()
 }
@@ -182,5 +410,57 @@ test "the four methods on a view of a longer value" {
     }
   }
   expect(show(bad)) == []
+}
+
+test "split_n is Go's SplitN" {
+  for (b, sep, n, want) in SPLIT_CASES {
+    expect((b, sep, n, b.split_n(sep, n))) == (b, sep, n, want)
+  }
+}
+
+test "split is SplitN with every piece" {
+  for (b, sep, n, want) in SPLIT_CASES {
+    if n < 0 {
+      expect((b, sep, b.split(sep))) == (b, sep, want)
+    }
+  }
+}
+
+test "fields is Go's Fields" {
+  for (b, want) in FIELDS_CASES {
+    expect((b, b.fields())) == (b, want)
+  }
+}
+
+test "trim is Go's TrimSpace" {
+  for (b, want) in TRIM_CASES {
+    expect((b, b.trim())) == (b, want)
+  }
+}
+
+test "trim_prefix and trim_suffix are Go's" {
+  for (b, p, wp, ws) in AFFIX_CASES {
+    expect((b, p, b.trim_prefix(p), b.trim_suffix(p))) == (b, p, wp, ws)
+  }
+}
+
+test "the split and trim family on a view of a longer value" {
+  // "zz" + b sliced back is a view of a longer Bytes: the pieces are views
+  // of a view
+  for (b, sep, n, want) in SPLIT_CASES {
+    let long = b"zz" + b
+    let view = long[2..long.len()]
+    expect((b, sep, n, view.split_n(sep, n))) == (b, sep, n, want)
+  }
+  for (b, want) in TRIM_CASES {
+    let long = b"zz" + b
+    let view = long[2..long.len()]
+    expect((b, view.trim())) == (b, want)
+  }
+  for (b, want) in FIELDS_CASES {
+    let long = b"zz" + b
+    let view = long[2..long.len()]
+    expect((b, view.fields())) == (b, want)
+  }
 }
 `

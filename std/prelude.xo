@@ -351,6 +351,24 @@ fn (b: Bytes) ends_with(p: Bytes) -> Bool
 /// The number of non-overlapping copies of sub in b (bytes.Count); for an
 /// empty sub the rune count plus one, an invalid byte counting as one rune.
 fn (b: Bytes) count(sub: Bytes) -> Int
+/// b cut at each sep, the pieces views of b (bytes.Split); an empty sep
+/// splits after each UTF-8 sequence, an invalid byte alone.
+fn (b: Bytes) split(sep: Bytes) -> List[Bytes]
+/// b cut at each sep, at most n pieces with the unsplit rest in the last;
+/// n below 0 means every piece and n 0 an empty list (bytes.SplitN).
+fn (b: Bytes) split_n(sep: Bytes, n: Int) -> List[Bytes]
+/// The runs of non-white-space bytes, split around runs of white space
+/// (bytes.Fields, unicode.IsSpace); pieces are views of b.
+fn (b: Bytes) fields() -> List[Bytes]
+/// b without its leading and trailing white space (bytes.TrimSpace,
+/// unicode.IsSpace), a view of b; b itself when there is none.
+fn (b: Bytes) trim() -> Bytes
+/// b without the prefix p (bytes.TrimPrefix), a view of b; b itself when p
+/// is not a prefix.
+fn (b: Bytes) trim_prefix(p: Bytes) -> Bytes
+/// b without the suffix p (bytes.TrimSuffix), a view of b; b itself when p
+/// is not a suffix.
+fn (b: Bytes) trim_suffix(p: Bytes) -> Bytes
 fn (b: Bytes) indexed() -> List[(Int, UInt8)]
 /// n zero bytes (Go's make([]byte, n)); a fault for n < 0.
 fn (static: Bytes) zeroed(n: Int) -> Bytes

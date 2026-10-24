@@ -130,6 +130,12 @@ var (
 	_ func(*Task, Bytes, Bytes) bool                                = Bytes_starts_with
 	_ func(*Task, Bytes, Bytes) bool                                = Bytes_ends_with
 	_ func(*Task, Bytes, Bytes) int64                               = Bytes_count
+	_ func(*Task, Bytes, Bytes) List[Bytes]                         = Bytes_split
+	_ func(*Task, Bytes, Bytes, int64) List[Bytes]                  = Bytes_split_n
+	_ func(*Task, Bytes) List[Bytes]                                = Bytes_fields
+	_ func(*Task, Bytes) Bytes                                      = Bytes_trim
+	_ func(*Task, Bytes, Bytes) Bytes                               = Bytes_trim_prefix
+	_ func(*Task, Bytes, Bytes) Bytes                               = Bytes_trim_suffix
 	_ func(*Task, Bytes) List[Tuple2[int64, uint8]]                 = Bytes_indexed
 	_ func(*Task, int64) Bytes                                      = Bytes_zeroed
 	_ func(*Task, string) string                                    = Str_quote
