@@ -141,7 +141,7 @@ fn value_flags() -> List[Str] {
 
 /// The boolean flags.
 fn bool_flags() -> List[Str] {
-  ["json", "ci", "release", "error-args", "hybrid", "mono", "no-mono", "arenas", "no-arenas", "no-preempt", "no-gc", "holes", "race", "v", "real", "phase-times", "offline", "s", "debug-info", "dsym", "profile-support", "trace-support", "watch", "debug-contracts", "dbg"]
+  ["json", "ci", "release", "error-args", "hybrid", "mono", "no-mono", "arenas", "no-arenas", "no-preempt", "no-gc", "holes", "race", "v", "real", "fail-empty", "phase-times", "offline", "s", "debug-info", "dsym", "profile-support", "trace-support", "watch", "debug-contracts", "dbg"]
 }
 
 /// The usage of xo1's hidden commands (asm, keys) and of an unknown one;
@@ -661,6 +661,8 @@ fn set_bool(os: Os, var o: Opts, name: Str, on: Bool) {
   } else if name == "real" {
     o.real = on
     o.topts.real = on
+  } else if name == "fail-empty" {
+    o.topts.fail_empty = on
   } else if name == "phase-times" {
     o.phases = on
   } else if name == "offline" {

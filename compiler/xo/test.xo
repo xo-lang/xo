@@ -205,6 +205,13 @@ struct TestOpts {
   /// name a line, which `xo test --watch` sets for the tests an edit
   /// reaches (decision 0267).
   only: List[Str] = []
+  /// what the run tests, for the line a run of no tests prints: the
+  /// directories, or "the std module M"
+  target: Str = ""
+  /// --fail-empty: a run of no tests fails (exit 1) instead of only
+  /// saying so (2026-10-24: a gate's `--std-module=time`, which has no
+  /// tests, printed "ok: 0 passed" and read as a pass)
+  fail_empty: Bool = false
 }
 
 /// Whether the run takes test t: --run's text and the --watch selection.
@@ -376,7 +383,23 @@ fn run_tests(os: Os, bin: Str, tests: List[TestInfo], o: TestOpts) -> Int {
     let status = if failed > 0 { "FAIL" } else { "ok" }
     os.stdio.println("${status}: ${pass} passed, ${failed} failed, ${skip} skipped")
   }
+  if pass + failed + skip == 0 {
+    // said on standard error, JSON or not: a run that tested nothing
+    // must not read as a pass
+    os.stdio.eprintln("xo test: no tests in ${if o.target.is_empty() { "the package" } else { o.target }}${if o.run.is_empty() { "" } else { " match --run=${o.run}" }}${if o.fail_empty { " (--fail-empty)" } else { "" }}")
+    if o.fail_empty {
+      return 1
+    }
+  }
   if failed > 0 { 1 } else { 0 }
+}
+
+/// What a run of o tests, for the line a run of no tests prints.
+fn test_target(o: Opts) -> Str {
+  if !o.std_module.is_empty() {
+    return "the std module ${o.std_module}"
+  }
+  o.dirs.join(" ")
 }
 
 fn print_logs(os: Os, lines: List[Str]) {

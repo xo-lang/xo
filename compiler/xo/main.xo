@@ -320,7 +320,9 @@ fn main(os: Os) ! {
         lap(os, o.phases, "run_cache", t0)
         // the build's warnings, as it printed them (decision 0360)
         replay_output(os, hit.output)
-        let code = run_tests(os, hit.bin, hit.tests, o.topts)
+        var hto = o.topts
+        hto.target = test_target(o)
+        let code = run_tests(os, hit.bin, hit.tests, hto)
         prof_tests(os, o.topts)
         os.fs.remove(hit.bin).ignore_err("a prune removes it later")
         os.proc.exit(code)
@@ -403,6 +405,7 @@ fn main(os: Os) ! {
     var to = o.topts
     to.profile_dir = o.wd
     to.std = o.std
+    to.target = test_target(o)
     let code = run_tests(os, nb.bin, nb.tests, to)
     prof_tests(os, to)
     if !o.trace.is_empty() {

@@ -131,7 +131,13 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 - `xo test --std-module=MODULE` runs a std module's `_test.xo` files with
   private access (decision 0262); internal/stdtest runs every std module
   that has tests. Tests under std/ and compiler/ live only in `_test.xo`
-  files.
+  files. Only std/native and std/native/llrt have them (2026-10-24; `find
+  std -name '*_test.xo'`): another module (std/time, std/strings) runs no
+  tests, and its checks are internal/stdtest's corpora (TestStdCorpora)
+  and the goldens. A run of no tests says "xo test: no tests in ..." on
+  standard error and still exits 0; gate scripts pass `--fail-empty` so
+  it fails (2026-10-24: a gate's `--std-module=time` printed "ok: 0
+  passed" and read as a pass).
 - internal/llvm timeout (2026-10-24): the package's goldens need 46+ minutes
   (each builds and links with clang), and go test's default timeout is 10
   minutes, so a bare `go test ./internal/llvm` FAILs at 600s naming no test,
