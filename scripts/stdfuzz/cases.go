@@ -348,6 +348,219 @@ fn fz_xml_n(text: Str) -> Str {
 }
 `
 
+const sqlHelpers = `
+fn fz_sq_i(r: sql.Row, c: Str) -> Str {
+  match r.int(c) {
+    Ok(v) => "${v}"
+    Err(e) => "!${e.display()}"
+  }
+}
+fn fz_sq_s(r: sql.Row, c: Str) -> Str {
+  match r.str(c) {
+    Ok(v) => v
+    Err(e) => "!${e.display()}"
+  }
+}
+fn fz_sq_f(r: sql.Row, c: Str) -> Str {
+  match r.float(c) {
+    Ok(v) => "${v}"
+    Err(e) => "!${e.display()}"
+  }
+}
+fn fz_sq_by(r: sql.Row, c: Str) -> Str {
+  match r.bytes(c) {
+    Ok(v) => v.to_hex()
+    Err(e) => "!${e.display()}"
+  }
+}
+fn fz_sq_io(r: sql.Row, c: Str) -> Str {
+  match r.int_opt(c) {
+    Ok(v) => match v {
+      Some(x) => "${x}"
+      None => "null"
+    }
+    Err(e) => "!${e.display()}"
+  }
+}
+fn fz_sq_bo(r: sql.Row, c: Str) -> Str {
+  match r.bytes_opt(c) {
+    Ok(v) => match v {
+      Some(x) => x.to_hex()
+      None => "null"
+    }
+    Err(e) => "!${e.display()}"
+  }
+}
+fn fz_row(r: sql.Row) -> Str {
+  "${fz_sq_i(r, "id")}|${fz_sq_s(r, "name")}|${fz_sq_io(r, "n")}|${fz_sq_f(r, "f")}|${fz_sq_by(r, "b")}|${fz_sq_bo(r, "bnull")}"
+}
+fn fz_rows(rs: List[sql.Row]) -> Str {
+  var out = ""
+  for r in rs {
+    if out != "" { out = out + ";" }
+    out = out + fz_row(r)
+  }
+  "${rs.len()}/${out}"
+}
+fn fz_sql_rt(s: Str, n: Int, b: Bytes) -> Str {
+  let schema = "create table t (id integer primary key, name text, n integer, f real, b blob, bnull blob)"
+  match sql.memory(schema) {
+    Ok(db) => match db.exec("insert into t (id, name, n, f, b) values ($1, $2, $3, $4, $5)", [sql.int(7), sql.str(s), sql.int(n), sql.float(1.25), sql.bytes(b)]) {
+      Ok(res) => match db.query("select id, name, n, f, b, bnull from t order by id") {
+        Ok(rows) => fz_hx("${fz_rows(rows)};${res.rows_affected};${res.last_insert_id}")
+        Err(e) => "err:${e.display()}"
+      }
+      Err(e) => "err:${e.display()}"
+    }
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_sql_norows() -> Str {
+  match sql.memory("create table t (id integer primary key)") {
+    Ok(db) => match db.query_one("select id from t where id = 1") {
+      Ok(r) => "unexpected row ${fz_sq_i(r, "id")}"
+      Err(e) => "err:${e.display()}"
+    }
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_sql_mismatch(s: Str) -> Str {
+  match sql.memory("create table t (name text)") {
+    Ok(db) => match db.exec("insert into t (name) values ($1)", [sql.str(s)]) {
+      Ok(_) => match db.query_one("select name from t") {
+        Ok(r) => fz_hx("int:${fz_sq_i(r, "name")};nocol:${fz_sq_s(r, "nope")}")
+        Err(e) => "err:${e.display()}"
+      }
+      Err(e) => "err:${e.display()}"
+    }
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_sql_bad(q: Str) -> Str {
+  match sql.memory("") {
+    Ok(db) => match db.query(q) {
+      Ok(rows) => "rows ${rows.len()}"
+      Err(e) => "err:${e.display()}"
+    }
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_sql_dup(n: Int) -> Str {
+  match sql.memory("create table t (id integer primary key, v text)") {
+    Ok(db) => match db.exec("insert into t (id, v) values ($1, $2)", [sql.int(n), sql.str("a")]) {
+      Ok(_) => match db.exec("insert into t (id, v) values ($1, $2)", [sql.int(n), sql.str("b")]) {
+        Ok(_) => "unexpected second insert"
+        Err(e) => "err:${e.display()}"
+      }
+      Err(e) => "err:${e.display()}"
+    }
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_sql_tx(n: Int) -> Str {
+  match sql.memory("create table t (id integer primary key)") {
+    Ok(db) => match db.begin() {
+      Ok(tx) => match tx.exec("insert into t (id) values ($1)", [sql.int(n)]) {
+        Ok(_) => match tx.rollback() {
+          Ok(_) => match db.query("select id from t") {
+            Ok(rows) => "rolled back ${rows.len()}"
+            Err(e) => "err:${e.display()}"
+          }
+          Err(e) => "err:${e.display()}"
+        }
+        Err(e) => "err:${e.display()}"
+      }
+      Err(e) => "err:${e.display()}"
+    }
+    Err(e) => "err:${e.display()}"
+  }
+}
+`
+
+const httpHelpers = `
+fn fz_cookies(cs: List[http.Cookie]) -> Str {
+  var out = ""
+  for c in cs {
+    if out != "" { out = out + ";" }
+    out = out + fz_hx(c.display())
+  }
+  "${cs.len()}/${out}"
+}
+fn fz_cookie(line: Str) -> Str {
+  match http.parse_cookie(line) {
+    Ok(cs) => fz_cookies(cs)
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_set_cookie(line: Str) -> Str {
+  match http.parse_set_cookie(line) {
+    Ok(c) => fz_hx(c.display())
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_req(url: Str) -> Str {
+  let r = http.new_request("GET", url)
+  fz_hx("${fz_opt_s(r.query("a"))}|${fz_ls(r.query_all("a"))}|${fz_opt_s(r.header("X"))}|${fz_ls(r.header_values("x"))}")
+}
+fn fz_form(body: Bytes) -> Str {
+  let r = http.new_request("POST", "http://h/p", {}, body)
+  match r.form() {
+    Ok(v) => fz_hx(v.encode())
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_text(status: Int, s: Str) -> Str {
+  let r = http.text(status, s)
+  fz_hx("${r.status}|${r.body.to_hex()}")
+}
+fn fz_json_resp(s: Str) -> Str {
+  let r = http.json(201, s)
+  fz_hx("${r.status}|${r.body.to_hex()}")
+}
+`
+
+const templateHelpers = `
+fn fz_tmpl(src: Str, data: Str) -> Str {
+  match template.parse("t", src) {
+    Ok(t) => match json.parse_value(data) {
+      Ok(v) => match t.render(v) {
+        Ok(s) => fz_hx(s)
+        Err(e) => "err:${e.display()}"
+      }
+      Err(e) => "err:${e.display()}"
+    }
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_tmpl_missing(src: Str, data: Str) -> Str {
+  match template.parse("t", src) {
+    Ok(t) => match json.parse_value(data) {
+      Ok(v) => match t.missing_key(error: true).render(v) {
+        Ok(s) => fz_hx(s)
+        Err(e) => "err:${e.display()}"
+      }
+      Err(e) => "err:${e.display()}"
+    }
+    Err(e) => "err:${e.display()}"
+  }
+}
+fn fz_tmpl_named(src: Str, src2: Str, data: Str) -> Str {
+  match template.parse("t", src) {
+    Ok(t) => match t.add("other", src2) {
+      Ok(t2) => match json.parse_value(data) {
+        Ok(v) => match t2.render_named("other", v) {
+          Ok(s) => fz_hx(s)
+          Err(e) => "err:${e.display()}"
+        }
+        Err(e) => "err:${e.display()}"
+      }
+      Err(e) => "err:${e.display()}"
+    }
+    Err(e) => "err:${e.display()}"
+  }
+}
+`
+
 // A fuzzCase is one line of the generated program: the name it prints and
 // the Xo expression that computes its value as a Str, so every result
 // compares as one line of text.
@@ -388,6 +601,9 @@ func allAreas() []area {
 		{"mime", []string{"std/mime"}, mimeHelpers, genMime},
 		{"multipart", []string{"std/multipart"}, multipartHelpers, genMultipart},
 		{"xml", []string{"std/xml"}, xmlHelpers, genXML},
+		{"sql", []string{"std/sql"}, sqlHelpers, genSQL},
+		{"http", []string{"std/http"}, httpHelpers, genHTTP},
+		{"template", []string{"std/template", "std/json"}, templateHelpers, genTemplate},
 	}
 }
 
@@ -1175,6 +1391,102 @@ func genXML(r *rand.Rand, n int) []fuzzCase {
 			out = append(out, fuzzCase{name, "fz_xml_n(" + xq(s) + ")"})
 		case 3:
 			out = append(out, fuzzCase{name, "fz_hx(xml.escape(" + xq(pick(r, pool)) + "))"})
+		}
+	}
+	return out
+}
+
+// genSQL covers the in memory driver: a typed round trip through exec and
+// query with every accessor, the optional accessors over NULL, the error
+// paths (no rows, wrong type, no such column, syntax, unique violation,
+// a transaction rolled back) and the query parameter list.
+func genSQL(r *rand.Rand, n int) []fuzzCase {
+	sqlTexts := []string{"", "a", "a'b", "a\"b", "é🚀", "a; b", "line\nbreak", strings.Repeat("x", 300)}
+	queries := []string{"", "select", "select * from", "select * from nope", "select 1 from",
+		"insert into t values", "select 'a'", "select 1 + 1", ";;;", "select 1/0"}
+	out := make([]fuzzCase, 0, n)
+	for i := 0; i < n; i++ {
+		name := fmt.Sprintf("sql.%04d", i)
+		switch i % 6 {
+		case 0:
+			out = append(out, fuzzCase{name, "fz_sql_rt(" + xq(pick(r, sqlTexts)) + ", " + fmt.Sprint(r.Int63()-r.Int63()) + ", " + xbytes(randBytes(r)) + ")"})
+		case 1:
+			out = append(out, fuzzCase{name, "fz_sql_norows()"})
+		case 2:
+			out = append(out, fuzzCase{name, "fz_sql_mismatch(" + xq(pick(r, sqlTexts)) + ")"})
+		case 3:
+			out = append(out, fuzzCase{name, "fz_sql_bad(" + xq(pick(r, queries)) + ")"})
+		case 4:
+			out = append(out, fuzzCase{name, "fz_sql_dup(" + fmt.Sprint(r.Intn(5)) + ")"})
+		case 5:
+			out = append(out, fuzzCase{name, "fz_sql_tx(" + fmt.Sprint(r.Intn(100)) + ")"})
+		}
+	}
+	return out
+}
+
+// genHTTP covers cookie and Set-Cookie parsing and printing, the request
+// line's query and headers, the form of a url-encoded body, and the
+// text and json responses.
+func genHTTP(r *rand.Rand, n int) []fuzzCase {
+	cookieLines := []string{"a=b", "a=b; c=d", "a=\"b\"", "a=", "=b", "a", "", "; ", "a=b;",
+		"a=b; c", "a b=c", "a=b; a=c", "$Version=1; a=b", "a=é", "a=\"b\\\"c\"",
+		"a=b; Path=/; Domain=x; Max-Age=10; Secure; HttpOnly; SameSite=Lax"}
+	urls := []string{"http://h/", "http://h/p?a=1", "http://h/p?a=1&a=2&b=%20",
+		"http://h/p?a", "http://h/p?a=", "http://h/p?a=%zz", "http://h/p?", "http://h/p#f",
+		"http://h/p?a=b+c", "http://h/p?a=%C3%A9", "http://h/p?A=1&a=2", "http://h/p?a=1;b=2"}
+	out := make([]fuzzCase, 0, n)
+	for i := 0; i < n; i++ {
+		name := fmt.Sprintf("http.%04d", i)
+		switch i % 6 {
+		case 0:
+			out = append(out, fuzzCase{name, "fz_cookie(" + xq(pick(r, cookieLines)) + ")"})
+		case 1:
+			out = append(out, fuzzCase{name, "fz_set_cookie(" + xq(pick(r, cookieLines)) + ")"})
+		case 2:
+			out = append(out, fuzzCase{name, "fz_req(" + xq(pick(r, urls)) + ")"})
+		case 3:
+			body := pick(r, []string{"a=1", "a=1&b=2", "a=%20", "a", "a=1&a=2", "a=%zz", "", "a=1;b=2", "a=b+c"})
+			out = append(out, fuzzCase{name, "fz_form(" + xbytes([]byte(body)) + ")"})
+		case 4:
+			out = append(out, fuzzCase{name, "fz_text(" + fmt.Sprint(r.Intn(600)) + ", " + xq(pick(r, pool)) + ")"})
+		case 5:
+			out = append(out, fuzzCase{name, "fz_json_resp(" + xq(pick(r, pool)) + ")"})
+		}
+	}
+	return out
+}
+
+// genTemplate covers Go's text/template over a json.Value: fields,
+// pipelines, if, range, with, built in functions, the named templates
+// and missingkey=error, plus parse and execution errors.
+func genTemplate(r *rand.Rand, n int) []fuzzCase {
+	srcs := []string{"", "plain", "{{.}}", "{{.a}}", "a {{.b}} c", "{{.a.b}}",
+		"{{if .x}}y{{else}}z{{end}}", "{{if eq .a 1}}one{{else}}other{{end}}",
+		"{{range .l}}{{.}},{{end}}", "{{range $i, $v := .l}}{{$i}}:{{$v}};{{end}}",
+		"{{len .l}}", "{{index .l 1}}", "{{with .s}}{{.}}{{end}}",
+		"{{.missing}}", "{{.a | printf \"%v\"}}", "{{html .b}}", "{{js .b}}",
+		"{{urlquery .b}}", "{{printf \"%d-%s\" .a .b}}", "{{and .x .a}}", "{{or .y .b}}",
+		"{{not .x}}", "{{.b}}{{.b}}", "{{/* c */}}x", "{{- .a -}}",
+		"{{", "{{.a", "{{end}}", "{{nope}}", "{{if}}{{end}}", "{{range .x}}{{end}}",
+		"{{template \"other\"}}", "{{.a.b.c}}", "{{index .l 9}}", "{{slice .b 1}}"}
+	datas := []string{"{}", "null", "1", "\"s\"", "[]", "[1,2,3]",
+		"{\"a\":1,\"b\":\"x\",\"l\":[1,2,3],\"x\":true}",
+		"{\"a\":{\"b\":2},\"l\":[],\"x\":false}",
+		"{\"a\":null,\"b\":\"<&>\\\"\",\"l\":[{\"a\":1}],\"x\":1}",
+		"{\"a\":1.5,\"b\":\"é\",\"l\":[null,true]}", "{\"a\":1E2,\"l\":[1]}",
+		"{\"a\":1,\"b\":\"x\",\"l\":[[1],[2]]}"}
+	out := make([]fuzzCase, 0, n)
+	for i := 0; i < n; i++ {
+		src, data := pick(r, srcs), pick(r, datas)
+		name := fmt.Sprintf("template.%04d", i)
+		switch i % 3 {
+		case 0:
+			out = append(out, fuzzCase{name, "fz_tmpl(" + xq(src) + ", " + xq(data) + ")"})
+		case 1:
+			out = append(out, fuzzCase{name, "fz_tmpl_missing(" + xq(src) + ", " + xq(data) + ")"})
+		case 2:
+			out = append(out, fuzzCase{name, "fz_tmpl_named(" + xq(src) + ", " + xq(pick(r, srcs)) + ", " + xq(data) + ")"})
 		}
 	}
 	return out
