@@ -78,6 +78,49 @@ bench/results/release-vs-go-*.md.
   takes a Mutex in a loop around long work (flag false positive, corrected
   after one burst). Count both on std/ and bench/ programs before building.
 
+## Experiment results (2026-10-24, Xo Lang 3; status stays Proposed)
+
+Prototype on local branch `lockish` (saved as refs/recover/2026-10-24/lockish,
+4cbdd841f, never pushed): `lockish` in compiler/ssa/conc.xo sets spawn flag
+bit 2 for a closure whose own body calls `Mutex.with` or `with_read` inside a
+loop; `pool.site_prior` seeds that site's average to 1 ns. A = origin/main
+561482d1c, B = the prototype, both xos clean, XO_INLINE_STRICT=1, checksums
+equal. `xo bench --ab`, 20 rounds, quiet window, wall B/A (95% interval):
+
+| Program | B / A | Verdict |
+|---|---|---|
+| conc mutex | 0.654 (0.640 to 0.663) | better |
+| conc rwmutex | 0.252 (0.250 to 0.255) | better |
+| read-mostly rwmutex (1 write in 1,000) | 0.568 (0.507 to 0.609) | better |
+| pmap | 0.990 (0.958 to 1.030) | noise |
+| fanout | 0.998 (0.985 to 1.013) | noise |
+| spawn | 1.014 (0.978 to 1.044) | noise |
+| pingpong | 1.006 (0.992 to 1.014) | noise |
+| CRUD HTTP, 5 x 10 s, 32 workers | 142,576 vs 142,727 rps; p99 661 vs 671 us | noise |
+| worker pool, 100 rounds of work per job | 0.788 (0.694 to 0.803) | better |
+| worker pool, 1,000 rounds per job | 1.416 (1.405 to 1.426) | worse |
+| worker pool, 10,000 rounds per job | 6.173 (6.141 to 6.214) | worse |
+
+TestRuntime* (internal/llvm, internal/repotest) pass, and --race builds of
+mutex, rwmutex, spawn, fanout and pmap give the same checksums.
+
+Survey (std/, compiler/, bench/): no real site in std/ or compiler/; bench/
+has the 2 intended sites and 13 worker-pool sites (a lock around a result
+store after real work); misses through a same-module helper are 4 in
+internal tests, 1 in compiler, 0 in std.
+
+Reading: the lock-bound rows move to or past the targets (0.67, 0.37) and
+nothing else moves, but the worker-pool false positive is the third "no"
+criterion above, and it is not corrected after one burst: the worker pool's
+one burst is the whole run, the first task starts on the spawner and drains
+the shared queue before the other seven exist, so a pool with 10,000 rounds
+of work per job runs fully serial (6.2x slower, 468 ms against 76 ms).
+Worker pools with a lock around a result store are the common shape (13 of
+the 15 bench sites), so the flag as defined fails the experiment. What the
+data leaves open: a tighter flag (the lock is the only work in the loop body,
+or the loop body between lock takes has no call), which mutex and rwmutex
+satisfy and these pools do not.
+
 ## Consequences
 
 If it works: the two lock-bound rows approach the serial run without a knob
