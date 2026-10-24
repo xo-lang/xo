@@ -3149,10 +3149,11 @@ fn (var g: G) div_rem(v: Int) {
     }
     return
   }
-  // x86_64 also through a narrow constant's word (2026-10-19: Int32's
-  // `% 46000` was an idivq, tens of cycles; arm64's sdiv is cheaper than
-  // the multiply high and shifts)
-  let (kc0, c0) = if g.x86 { g.const_word(x.args[1]) } else { g.const_word64(x.args[1]) }
+  // through a narrow constant's word too (2026-10-19: Int32's `% 46000`
+  // was an idivq on x86_64, tens of cycles; 2026-10-24: and an sdiv on
+  // arm64, which LLVM makes the multiply high too: quiet --ab, divmod
+  // wall 0.880, arith32 0.949)
+  let (kc0, c0) = g.const_word(x.args[1])
   let (kn, cn) = g.neg_const(x.args[1])
   let kc = if c0 { kc0 } else { kn }
   let is_const = c0 || cn
