@@ -3342,7 +3342,7 @@ fn duration_ceil_seconds(d: Duration) -> Int {
 /// a Z or +-HH:MM offset (hours to 23, minutes to 59). The Go backend checks
 /// the same shape before time.Parse (std/rt time.go parseRFC3339); Go's
 /// parser alone also takes a one digit hour, a comma fraction and offsets
-/// to +24:60. Times outside the range of Time wrap like Go's UnixNano.
+/// to +24:60. None for a time outside the range of Time (decision 0364).
 fn time_parse_rfc3339(s: Str) -> Time? {
   match text.parse_time(s) {
     Some(ns) => Some(Time.UNIX_EPOCH + Duration.from_nanos(ns))

@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `Time.parse_rfc3339` and a `Time` decoded from JSON refuse a time outside
+  the range of `Time` (1677-09-21 to 2262-04-11) with `None` or the decode
+  error "expected RFC 3339 time string", where they returned a wrapped time
+  (2300-01-01 came back in the 1700s); native and Go backends agree (decision
+  0364).
 - The back-end cache's prune removes the empty directories a build target
   leaves (one per build kind on its first build, and most targets are built
   once or twice) after an hour unused instead of a week: one of the 256 shards

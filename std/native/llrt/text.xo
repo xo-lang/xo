@@ -525,8 +525,8 @@ fn days_from_civil(year: Int, m: Int, d: Int) -> Int {
 
 /// time.Parse(time.RFC3339Nano, s) for the RFC 3339 forms its fast path
 /// (parseRFC3339) accepts, in nanoseconds since the Unix epoch (std/json
-/// decoding a Time). Times outside the range of Time wrap like Go's
-/// UnixNano.
+/// decoding a Time). None for a time outside the range of Time (decision
+/// 0364; it wrapped like Go's UnixNano before).
 pub fn parse_time(s: Str) -> Int? {
   let b = s.bytes()
   let n = b.len()
@@ -584,7 +584,16 @@ pub fn parse_time(s: Str) -> Int? {
   if secs > -9000000000 && secs < 9000000000 {
     return Some(secs * 1000000000 + nsec)
   }
-  Some(secs.wrapping_mul(1000000000).wrapping_add(nsec))
+  // outside the range of Time (1677-09-21 to 2262-04-11, decision 0364): not
+  // a time. The product wraps once past either end and the sign shows it
+  if secs < -9223372037 || secs > 9223372036 {
+    return None
+  }
+  let ns = secs.wrapping_mul(1000000000).wrapping_add(nsec)
+  if (secs >= 0 && ns < 0) || (secs < 0 && ns >= 0) {
+    return None
+  }
+  Some(ns)
 }
 
 // ---------------------------------------------------------------------------

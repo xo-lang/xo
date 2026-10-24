@@ -355,7 +355,7 @@ func JsonDec[T any](tk *Task, dst *T, x any, path string) *Json_DecodeErr {
 			return JsonErr(path, "expected RFC 3339 time string")
 		}
 		t, ok := parseRFC3339(s)
-		if !ok {
+		if !ok || !inTimeRange(t) {
 			return JsonErr(path, "expected RFC 3339 time string")
 		}
 		*d = Time(t.UnixNano())

@@ -110,10 +110,17 @@ func Time_from_unix(_ *Task, secs int64) Time { return Time(MulS(secs, 1e9, ""))
 // Time_parse_rfc3339 is `Time.parse_rfc3339(s)`.
 func Time_parse_rfc3339(_ *Task, s string) Option[Time] {
 	t, ok := parseRFC3339(s)
-	if !ok {
+	if !ok || !inTimeRange(t) {
 		return Option[Time]{}
 	}
 	return Some(Time(t.UnixNano()))
+}
+
+// inTimeRange reports whether t is a Time: 1677-09-21T00:12:43.145224192Z
+// to 2262-04-11T23:47:16.854775807Z, the nanoseconds of an int64 (decision
+// 0364; UnixNano wraps outside it).
+func inTimeRange(t time.Time) bool {
+	return !t.Before(time.Unix(0, math.MinInt64)) && !t.After(time.Unix(0, math.MaxInt64))
 }
 
 // parseRFC3339 reads an RFC 3339 time as the native backends do (text.xo

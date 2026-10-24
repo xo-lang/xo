@@ -431,7 +431,7 @@ struct DurationErr { input: Str }  // displays as `invalid duration "1x": expect
 Time.UNIX_EPOCH: Time
 Time.from_unix(secs: Int) -> Time
 Time.from_unix_millis(ms: Int) -> Time
-Time.parse_rfc3339(s: Str) -> Time?
+Time.parse_rfc3339(s: Str) -> Time?   // None for text that is not RFC 3339 or a time outside Time's range (1677-09-21 to 2262-04-11, int64 nanoseconds since 1970; decision 0364)
 fn (t: Time) unix() -> Int
 fn (t: Time) unix_millis() -> Int
 fn (t: Time) format_rfc3339() -> Str
@@ -1667,7 +1667,7 @@ fn (p: Patch[T]) apply_opt(current: T?) -> T? // Absent keeps, Null clears, Valu
 | tuple `(A, B, ...)` | array `[a, b, ...]`; decodes only from an array of exactly that length (decision 0088) |
 | `()` | `null` |
 | `Duration` | string `"1.5s"` (any `Duration.parse` form decodes) |
-| `Time` | RFC 3339 string |
+| `Time` | RFC 3339 string (decoding refuses a time outside the range of `Time`, decision 0364) |
 | `Bytes` | base64 string |
 
 Builtin types listed above implement `Json`, so `http.json(200, {"msg": "hi"})`

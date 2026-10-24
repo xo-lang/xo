@@ -1,5 +1,21 @@
 # std/time changes
 
+## 2026-10-24: behavior: Time.parse_rfc3339 and a Time decoded from JSON refuse a time outside Time's range
+
+- Kind: behavior
+- Commit: this commit
+- Found by: the parity sweep of the Go backend's lenient parses (owner decision, 2026-10-24; spec gap queued 2026-10-23)
+- Go reference: time.Parse then UnixNano (which wraps outside 1677-09-21T00:12:43.145224192Z to 2262-04-11T23:47:16.854775807Z)
+- Test: golden time_parse_digits (13 texts at and one past either end of the range, and far outside it: years 0001, 1500, 2300 and 9999)
+
+`Time.parse_rfc3339` returned `Some` of a wrapped nanosecond count for a time
+outside the 64-bit range of `Time` (2300-01-01 came back as a time in the
+1700s), and std/json decoded it the same way. Both now answer `None` and the
+decode error "expected RFC 3339 time string", as for any text that is not a
+time; the range's two ends, to the nanosecond, are accepted. The native
+backends (std/native/llrt text.xo parse_time) and the Go backend (std/rt
+time.go inTimeRange) agree.
+
 ## 2026-10-24: perf: Duration.parse's digit loops on the native backends
 
 - Kind: perf
