@@ -703,8 +703,8 @@ fn param_view_at(f: Func, x: Int, depth: Int) -> Bool {
 
 /// Whether value x (or what carries it: a struct or variant it is a field
 /// of, a collection it is pushed or put into, a block parameter it flows
-/// into) is stored long-lived: set as a field, or returned inside a struct
-/// or a collection.
+/// into, a tuple element read back out by a destructure) is stored
+/// long-lived: set as a field, or returned inside a struct or a collection.
 fn view_stored(f: Func, x0: Int, users: List[List[Int]]) -> Bool {
   var work = [(x0, false)]
   var seen: Map[Int, Bool] = {}
@@ -720,6 +720,11 @@ fn view_stored(f: Func, x0: Int, users: List[List[Int]]) -> Bool {
       if w.op is Op.Struct | Op.Variant | Op.Box {
         work.push((u, true))
       } else if w.op is Op.Tuple | Op.Rebind {
+        work.push((u, agg))
+      } else if w.op == Op.Field {
+        // an element read back out: a tuple destructured by `let (a, b) =
+        // x.cut(sep)` reads each element with field 0 / field 1 (2026-10-24),
+        // and a struct field read is the same value later
         work.push((u, agg))
       } else if w.op == Op.Payload {
         // an Option or a Result unwrapped (`view ?? ""`, a view_call's

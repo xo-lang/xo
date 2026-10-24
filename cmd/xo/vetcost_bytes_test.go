@@ -29,8 +29,12 @@ fn main(os: Os) {
 // vetcostBytesCutProg: the same with bytes.cut, whose tuple of views goes
 // into a returned collection through the Option's payload (XO0911, line 5,
 // the push).
-// A cut destructured into a struct field is not noted: the tuple
-// destructure is not a chain the analysis follows (a gap, not a wrong note).
+//
+// The destructures are the analysis' own edges now: `let (name, rest) =
+// x.cut(sep)` reads the tuple's elements with field 0 and field 1, and
+// cost.xo's view_stored follows an Op.Field like a Rebind, so a piece put in
+// a struct field is noted where the cut is made (vetcostBytesCutDestructureProg)
+// and a piece only measured is not (vetcostBytesCutConsumedProg).
 const vetcostBytesCutProg = `
 fn parse(data: Bytes) -> List[(Bytes, Bytes)] {
   var out: List[(Bytes, Bytes)] = []
@@ -42,6 +46,29 @@ fn parse(data: Bytes) -> List[(Bytes, Bytes)] {
 
 fn main(os: Os) {
   os.stdio.println("${parse(b"a=1\nb=2")[0].0.len()}")
+}
+`
+
+// vetcostBytesCutDestructureProg: a cut destructured into a struct field
+// inside a loop (XO0911, line 9, the `let`): the tuple's elements are read
+// with field 0 and field 1 out of the block parameter the tuple flows into,
+// and the first one is stored in the returned collection's struct.
+const vetcostBytesCutDestructureProg = `
+struct Tok {
+  name: Bytes
+}
+
+fn firsts(data: Bytes) -> List[Tok] {
+  var out: List[Tok] = []
+  for line in data.split(b"\n") {
+    let (name, _rest) = line.cut(b"=") ?? (b"", b"")
+    out.push(Tok{name: name})
+  }
+  out
+}
+
+fn main(os: Os) {
+  os.stdio.println("${firsts(b"a=1\nb=2").len()}")
 }
 `
 
@@ -135,7 +162,8 @@ func vetcostBytesLines(t *testing.T, prog string) []int {
 // families (compiler/ssa/cost.xo view_call: cut, cut_prefix, cut_suffix,
 // trim_where, trim_start_where, trim_end_where; the split family:
 // split_where) beside the Str forms, through the tuple, the Option and the
-// List they return.
+// List they return, and through a destructure of the tuple into a struct
+// field (view_stored's Op.Field).
 func TestVetCostViewStoreBytesCut(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -145,6 +173,7 @@ func TestVetCostViewStoreBytesCut(t *testing.T) {
 	}{
 		{"cut_prefix", vetcostBytesCutPrefixProg, 9},
 		{"cut", vetcostBytesCutProg, 5},
+		{"cut_destructure", vetcostBytesCutDestructureProg, 9},
 		{"trim_where", vetcostBytesTrimWhereProg, 9},
 		{"split_where", vetcostBytesSplitWhereProg, 5},
 	} {
@@ -154,9 +183,11 @@ func TestVetCostViewStoreBytesCut(t *testing.T) {
 	}
 }
 
-// TestVetCostViewStoreBytesCutControl: the negative control, a cut whose
-// pieces are consumed in the loop and never stored, which must not be noted
-// (without the guard it would make the test above pass on any note).
+// TestVetCostViewStoreBytesCutControl: the negative control, a cut that is
+// destructured and whose pieces are consumed in the loop and never stored,
+// which must not be noted: the same Op.Field edge that notes
+// vetcostBytesCutDestructureProg is asserted here not to fire when nothing
+// keeps the view (without the guard the test above would pass on any note).
 func TestVetCostViewStoreBytesCutControl(t *testing.T) {
 	t.Parallel()
 	if lines := vetcostBytesLines(t, vetcostBytesCutConsumedProg); len(lines) != 0 {
