@@ -19,6 +19,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   leaves (one per build kind on its first build, and most targets are built
   once or twice) after an hour unused instead of a week: one of the 256 shards
   held 1,467 of them on 2026-10-24 (`Policy.empty_idle`, sliced runs).
+- `XO_COLD_PACK` is on by default (owner, 2026-10-24; `XO_COLD_PACK=off` writes
+  loose files as before). A build's new cache entries of a kind go to the
+  shared pack as one segment, fn included (fn_cache_load dropped the shared
+  pack fields of its Pack, so fn had been written loose and copied into every
+  target's pack), and a build target's pack no longer copies the entries the
+  shared pack served. A compiler self-build's cache after three builds: 3,164 MB
+  and about 48,000 files before, about 1,700 MB and 126 files now; a cold
+  http_server build 2.3 s against 6.7 s on the Mac. (Decision 0351 addendum.)
 - The back-end cache's cap counts disk, not bytes: each file takes whole
   4 KiB blocks (prune.Policy.block), so the 16 GiB cap means 16 GiB
   allocated. The cache held about 20 GB on disk under a 16 GiB cap
