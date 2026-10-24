@@ -46,6 +46,11 @@ func TestInlineFallbackLoud(t *testing.T) {
 		if err != nil || !strings.Contains(out, "does not verify") || !strings.Contains(out, "built without inlining") {
 			t.Fatalf("%s normal: want a build that says it went on without inlining, got %v:\n%s", brk, err, out)
 		}
+		// and once more at the end of the build, with the count (owner,
+		// 2026-10-24): after the inlining step's warning
+		if w, sum := strings.Index(out, "does not verify ("), strings.LastIndex(out, "did not verify; the first:"); sum < 0 || sum < w || !strings.Contains(out[sum:], "xo version -m") {
+			t.Fatalf("%s normal: want the summary line after the warning, got:\n%s", brk, out)
+		}
 		// the binary records it: `xo version -m` shows it, and `xo bench
 		// --ab` refuses the binary unless --allow-fallback (2026-10-24)
 		prog := filepath.Join(dir, "prog")

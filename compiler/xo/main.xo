@@ -1373,7 +1373,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       if inline_verified(os, errs) {
         pre = keys
       } else {
-        inl_fb = errs[0]
+        inl_fb = fallback_text(errs)
         let (gm1, t2) = gen_module(os, o, ctx, c, cur.m, tgoos, release, jobs, phases, t)
         gm = gm1
         t = t2
@@ -1735,6 +1735,12 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     }
     t = lap(os, phases, "cc", t)
     bins.push((tg, bin))
+  }
+  if !inl_fb.is_empty() {
+    // the last line before the outputs (owner, 2026-10-24: the warning
+    // at the inlining step scrolled past or was cut by `| tail -1`, and
+    // a fallback build was measured as a slowdown)
+    os.stdio.eprintln("xo: warning: built without inlining (${inl_fb}): slower than it should be; `xo version -m BINARY` shows it, XO_INLINE_STRICT=1 makes it an error")
   }
   if o.cmd == "asm" {
     return Native{pc: c.parse_cache}
@@ -2200,7 +2206,7 @@ fn inline_or_defer(os: Os, var mi: ssa.Module, jobs: Int, phases: Bool, tgoos: S
   }
   let errs = if changed { verify_inlined(os, mi, tgoos, jobs, release) } else { [] }
   lap(os, phases, "inline.verify", t)
-  (inline_verified(os, errs), false, if errs.is_empty() { "" } else { errs[0] })
+  (inline_verified(os, errs), false, fallback_text(errs))
 }
 
 /// The module m made ready for the arm64 generator: its undecoded
@@ -2279,6 +2285,21 @@ fn check_assumptions(os: Os, var m: ssa.Module, phases: Bool, t: Time) -> Time {
   print_diags(os, ds)
   os.proc.exit(1)
   t2
+}
+
+/// What a build that fell back from inlining records and summarizes:
+/// how many functions failed the verification and the first error
+/// ("" when it verified).
+fn fallback_text(errs: List[Str]) -> Str {
+  if errs.is_empty() {
+    return ""
+  }
+  var fns: Map[Str, Bool] = {}
+  for e in errs {
+    fns[e.split(": ")[0]] = true
+  }
+  let n = fns.len()
+  "${n} ${if n == 1 { "function" } else { "functions" }} did not verify; the first: ${errs[0]}"
 }
 
 /// Whether the inlined module verified (errs empty); else says so on
