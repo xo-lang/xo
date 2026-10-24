@@ -309,12 +309,15 @@ fn str_fields(s: Str) -> List[Str] { strings.fields(s) }
 
 /// strings.FieldsFunc: the runs of runes for which f is false, as views of
 /// s (one pass calling f once per rune, the pieces then sliced from the
-/// recorded offsets).
+/// recorded offsets, which are in range by construction: raw.str_cut, no
+/// clamp and no slice check; 2026-10-24: raw.str_slice's clamps and
+/// llrt_str_slice_chk call per field made fieldsfunc 2.5 times LLVM's time
+/// on native, where LLVM inlines them away).
 fn str_split_where[E, fx: Effects](s: Str, f: fn(Rune) -> Bool ! E uses fx) -> List[Str] ! E uses fx {
   let spans = where_spans(s.bytes(), f)?
   var out = List[Str].with_capacity(spans.len())
   for (lo, hi) in spans {
-    out.push(raw.str_slice(s, lo, hi))
+    out.push(raw.str_cut(s, lo, hi))
   }
   out
 }

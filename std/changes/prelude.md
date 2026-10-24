@@ -1,5 +1,24 @@
 # prelude changes
 
+## 2026-10-24: perf: Str.split_where's pieces are views made with no clamp or slice check
+
+- Kind: perf
+- Commit: this commit
+- Found by: Xo Lang 1 (the native-vs-LLVM sweep: unicode fieldsfunc at 1.28 of LLVM's instructions; XO_PROF: raw.str_slice 132 ms of samples against LLVM's 36, LLVM inlining it)
+- Go reference: none (strings.FieldsFunc slices its spans the same way)
+- Test: TestStdCorpora strwhere, bytes and strings on the Go backend, arm64 and LLVM; goldens strwhere, fields_view, split_view, views_split, bytes_split (arm64, LLVM with Go parity)
+
+`str_split_where` sliced each field with raw.str_slice, which clamps both
+ends, tests them for UTF-8 boundaries and calls the slice check before the
+view; the spans where_spans records are in range by construction, so the
+pieces are now raw.str_cut (the boundary test only, a view or a copy as
+before). Bytes.split_where already takes views with only a bounds check.
+Quiet `xo bench --ab` (one xo, A the parent's std, 15 rounds):
+bench/perf/unicode fieldsfunc wall 0.946 (0.897 to 0.961), instructions
+0.836. Against LLVM the row is 1.446 of its wall and 1.253 of its
+instructions after this; the rest is the closure call per rune in
+where_spans (decision 0368).
+
 ## 2026-10-24: perf: List.sort of Strs sorts indices by a seven byte prefix, so a merge never counts a string
 
 - Kind: perf
