@@ -41,6 +41,7 @@ var generators = map[string]func() string{
 	"mime":      mimeCorpus,
 	"multipart": multipartCorpus,
 	"template":  templateCorpus,
+	"strconv":   strconvCorpus,
 	"time":      timeCorpus,
 	"url":       urlCorpus,
 	"uuid":      uuidCorpus,
