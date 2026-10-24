@@ -77,7 +77,7 @@ func Archive_tar(_ *Task, entries List[Archive_Entry]) Result[Bytes, Archive_Arc
 	w := tar.NewWriter(&b)
 	for _, e := range entries.s {
 		p, ok := archivePath(e.F_path)
-		if !ok {
+		if !ok || strings.Contains(e.F_path, "\x00") {
 			return Err[Bytes](archiveErr("bad entry path " + strconv.Quote(e.F_path)))
 		}
 		h := &tar.Header{Name: p, Mode: e.F_mode & 0o7777, ModTime: entryTime(e), Typeflag: tar.TypeReg, Size: int64(len(e.F_data)), Format: tar.FormatPAX}

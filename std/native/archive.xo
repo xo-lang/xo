@@ -341,6 +341,10 @@ fn pax_name(real: Str) -> Str {
 fn tar(entries: List[archive.Entry]) -> Bytes ! archive.ArchiveErr {
   var out = BytesBuilder.new()
   for e in entries {
+    // a NUL in a path: Go's tar writer refuses it (an invalid PAX record)
+    if e.path.contains("\u{0}") {
+      return Err(archive_err("bad entry path ${e.path.quote()}"))
+    }
     let p = match archive_path(e.path) {
       Some(x) => x
       None => return Err(archive_err("bad entry path ${e.path.quote()}"))

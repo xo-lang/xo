@@ -16,3 +16,14 @@ the prefix; GNU sparse files described by PAX records (formats 0.0,
 0.1, and 1.0) came out as their raw data under the `GNUSparseFile.0/`
 name; and zip64 archives were an error. Each now gives Go's entries
 or Go's error. gzip, gunzip, tar, and zip had no other difference.
+
+## 2026-10-24: fix: tar refuses a zero byte in an entry path
+
+- Kind: fix
+- Found by: differential fuzzing against the Go backend
+- Go reference: archive/tar Writer (validPAXRecord refuses a NUL in a path record)
+- Test: internal/llvm/testdata/golden/archive_formats (nul path)
+
+`archive.tar` wrote an entry path with a zero byte (`"a\0b"`) into the
+header on native builds, and failed on the Go backend. Both now return
+`archive: bad entry path`. `archive.zip` is unchanged.
