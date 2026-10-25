@@ -1223,25 +1223,35 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       let ones = 0x0101010101010101
       let under = (if lower { 0x80 - 65 } else { 0x80 - 97 }) * ones
       let over = (if lower { 0x7f - 90 } else { 0x7f - 122 }) * ones
-      let dst = g.op(x.args[0])
-      let src = g.op(x.args[1])
-      let i0 = g.op(x.args[2])
+      // the dst and src operands are raw addresses (Ints), so each needs
+      // the inttoptr that raw_at gives before a getelementptr: an i64
+      // operand where clang wants a ptr is what it refused
+      // ("%v0 defined with type 'i64' but expected 'ptr'", 2026-10-25)
+      let dp0 = g.raw_at(x.args[0], x.args[2])
+      let sp0 = g.raw_at(x.args[1], x.args[2])
+      let dp1 = g.def("getelementptr i8, ptr ${dp0}, i64 8")
+      let sp1 = g.def("getelementptr i8, ptr ${sp0}, i64 8")
+      // the masks are decimal and the high-bit one is the low seven's
+      // complement: LLVM's IR takes no hexadecimal integer literal (clang:
+      // "floating point constant invalid for type" for 0x7f7f..., and
+      // 0x8080808080808080 written positively does not fit an i64), 2026-10-25
+      let low7 = 9187201950435737471
+      let high = g.def("xor i64 ${low7}, -1")
       var j = 0
       while j < 2 {
-        let off = if j == 0 { i0 } else { g.def("add i64 ${i0}, 8") }
-        let sp = g.def("getelementptr i8, ptr ${src}, i64 ${off}")
+        let sp = if j == 0 { sp0 } else { sp1 }
+        let dp = if j == 0 { dp0 } else { dp1 }
         let w = g.def("load i64, ptr ${sp}, align 1")
-        let t = g.def("and i64 ${w}, 0x7f7f7f7f7f7f7f7f")
+        let t = g.def("and i64 ${w}, ${low7}")
         let a = g.def("add i64 ${t}, ${under}")
         let b = g.def("add i64 ${t}, ${over}")
         let nb = g.def("xor i64 ${b}, -1")
         let nw = g.def("xor i64 ${w}, -1")
         var letters = g.def("and i64 ${a}, ${nb}")
-        letters = g.def("and i64 ${letters}, 0x8080808080808080")
+        letters = g.def("and i64 ${letters}, ${high}")
         letters = g.def("and i64 ${letters}, ${nw}")
         let k = g.def("lshr i64 ${letters}, 2")
         let v0 = if lower { g.def("add i64 ${w}, ${k}") } else { g.def("sub i64 ${w}, ${k}") }
-        let dp = g.def("getelementptr i8, ptr ${dst}, i64 ${off}")
         g.emit("store i64 ${v0}, ptr ${dp}, align 1")
         j += 1
       }

@@ -84,6 +84,19 @@ std code calls it yet, so the next seed carries the ability to lower it;
 then the std call site, once a seed that knows the intrinsic exists
 (owner approved 0.31.0 for 2026-10-25).
 
+- Step 1 shipped with two faults in its LLVM expansion, both fixed in the
+  commit that adds this note. It passed the two raw addresses (i64
+  operands) into a getelementptr's ptr operand, so clang refused the IR of
+  any caller ("defined with type 'i64' but expected 'ptr'"); both are
+  inttoptr'd through g.raw_at now, as rt.mem_load and rt.rs_put_word
+  already do. And it wrote its two masks as hexadecimal literals, which
+  LLVM's IR reads as floating point constants ("floating point constant
+  invalid for type"), with 0x8080808080808080 also too large for a
+  positive i64; both are decimal now. Step 1's gate could not see either
+  because nothing in main calls the intrinsic, so no test built an LLVM
+  caller: the first caller is step 2's std call site, and its first LLVM
+  build found both, one clang error at a time.
+
 ## Alternatives
 
 - 0366's widening MIR pass: a general loop shape recognizer with a wide
