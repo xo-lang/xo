@@ -1462,16 +1462,17 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     if !p.skipped.is_empty() {
       fail_unsupported(os, "the emitter skipped ${p.skipped[0]}")
     }
-    // the functions nothing reaches emptied (arm64 hollow.xo): Mach-O on
-    // arm64 (x86_64's AT&T text not yet checked), a program whose link
-    // has no `use c` objects (they could call an
-    // export by name), not `xo asm`; XO_PASSES=-hollow keeps them
-    if tgoos == "darwin" && march == "arm64" && o.cmd != "asm" && !c.mods.any(fn(m) { !m.c_prefix.is_empty() }) && pass_on(os, "hollow") {
+    // the functions nothing reaches emptied (arm64 hollow.xo): arm64's
+    // Mach-O (darwin) and ELF (linux) text (x86_64's AT&T text not yet
+    // checked), a program whose link has no `use c` objects (they could
+    // call an export by name), not `xo asm`; XO_PASSES=-hollow keeps them
+    if (tgoos is "darwin" | "linux") && march == "arm64" && o.cmd != "asm" && !c.mods.any(fn(m) { !m.c_prefix.is_empty() }) && pass_on(os, "hollow") {
+      let elf = tgoos == "linux"
       if p.parts.len() > 1 {
-        let (hp, _hs) = arm64.hollow_unreached(p.parts)
+        let (hp, _hs) = if elf { arm64.hollow_unreached_elf(p.parts) } else { arm64.hollow_unreached(p.parts) }
         p.parts = hp
       } else {
-        let (hp, _hs) = arm64.hollow_unreached([p.asm])
+        let (hp, _hs) = if elf { arm64.hollow_unreached_elf([p.asm]) } else { arm64.hollow_unreached([p.asm]) }
         p.asm = hp[0]
       }
       t = lap(os, phases, "hollow", t)

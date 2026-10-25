@@ -108,3 +108,53 @@ test "nothing unreached leaves the assembly as it is" {
   expect(parts[0]) == src
   expect(msg) == ""
 }
+
+test "on ELF an unreached export and its data go, as on Mach-O" {
+  let asm = [
+    "\t.text",
+    "\t.p2align 2",
+    "\t.globl main",
+    "\t.type main, %function",
+    "main:",
+    "\tbl xo_f_live",
+    "\tadrp x0, .Lxo_t_str0",
+    "\tret",
+    "\t.size main, .-main",
+    "\t.p2align 2",
+    "\t.hidden xo_f_live",
+    "xo_f_live:",
+    "\tbl memcpy",
+    "\tret",
+    "\t.size xo_f_live, .-xo_f_live",
+    "\t.globl memcpy",
+    "\t.type memcpy, %function",
+    "memcpy:",
+    "\tret",
+    "\t.size memcpy, .-memcpy",
+    "\t.p2align 2",
+    "\t.globl xo_x_unused",
+    "\t.type xo_x_unused, %function",
+    "xo_x_unused:",
+    "\tadrp x3, .Lxo_t_loc1",
+    "\tb xo_f_live",
+    "\t.size xo_x_unused, .-xo_x_unused",
+    "\t.section .rodata.str1.1,\"aMS\",@progbits,1",
+    ".Lxo_t_loc1:",
+    "\t.asciz \"dead.xo:1:1\"",
+    "\t.section .rodata",
+    "\t.p2align 3",
+    ".Lxo_t_str0:",
+    "\t.quad 0",
+    "",
+  ].join("\n")
+  let (parts, msg) = hollow_unreached_elf([asm])
+  let out = parts[0]
+  expect(out.contains("xo_x_unused:\n\tbrk #${HOLLOW_BRK}\n")) == true
+  expect(out.contains("\t.size xo_x_unused, .-xo_x_unused")) == true
+  expect(out.contains("xo_f_live:\n\tbl memcpy")) == true
+  // the runtime's own memcpy (no xo_ prefix) is a function its call reaches
+  expect(out.contains("memcpy:\n\tret")) == true
+  expect(out.contains(".Lxo_t_loc1:")) == false
+  expect(out.contains(".Lxo_t_str0:\n\t.quad 0")) == true
+  expect(msg.starts_with("hollowed 1 functions and dropped 1 data objects of 6,")) == true
+}

@@ -44,12 +44,59 @@ struct HChunk {
 /// The parts with the functions nothing reaches emptied, and a line of
 /// counts ("" when nothing was emptied). For a Mach-O build of a program
 /// whose link has no C objects that could call an export by name.
-pub fn hollow_unreached(parts: List[Str]) -> (List[Str], Str) {
+pub fn hollow_unreached(parts: List[Str]) -> (List[Str], Str) { hollow_text(parts, false) }
+
+/// hollow_unreached of ELF text (linux): symbols with no leading `_`
+/// (`xo_...`, `main`), local labels `.Lxo_...`, `.text` and `.debug_*`
+/// sections, and `.hidden`, `.type` and `.size` lines that name a symbol
+/// without using it (2026-10-25).
+pub fn hollow_unreached_elf(parts: List[Str]) -> (List[Str], Str) { hollow_text(parts, true) }
+
+fn hollow_text(parts: List[Str], elf: Bool) -> (List[Str], Str) {
+  let loc = if elf { ".Lxo_" } else { "Lxo_" }
+  let gpre = if elf { "xo_" } else { "_" }
+  // the Mach-O symbol prefix: the markers are `_xo_utext_*` there
+  let mpre = if elf { "" } else { "_" }
   var chunks: List[HChunk] = []
   var by_name: Map[Str, Int] = {}
   // the symbols a chunk names, by chunk; and those outside any chunk
   var refs: List[List[Str]] = []
-  var roots: Map[Str, Bool] = {"_main": true}
+  var roots: Map[Str, Bool] = if elf { {"main": true, "_start": true} } else { {"_main": true} }
+  // ELF: the global labels without the xo_ prefix (the nolibc runtime's
+  // memcpy, free, _start ...), found first, so the scan sees their calls
+  // (a first cut missed them: memcpy's body went with the function above
+  // it, and every copy trapped, 2026-10-25)
+  var extra: Map[Str, Bool] = {}
+  var first: List[Bool] = []
+  for _ in 0..256 {
+    first.push(false)
+  }
+  if elf {
+    for p in parts {
+      let b = p.bytes()
+      let n = b.len()
+      var i = 0
+      while i < n {
+        var j = i
+        while j < n && b[j] != 10 {
+          j += 1
+        }
+        if j > i && b[j - 1] == 58 && elf_sym_start(b[i]) && !starts_at(b, i, j, "xo_") {
+          var ok = true
+          for k in i..j - 1 {
+            if !ident_byte(b[k]) {
+              ok = false
+            }
+          }
+          if ok {
+            extra[p[i..j - 1]] = true
+            first[Int(b[i])] = true
+          }
+        }
+        i = j + 1
+      }
+    }
+  }
   // the local labels __DWARF names: a data object among them stays (its
   // label must still assemble)
   var dwarf_names: Map[Str, Bool] = {}
@@ -72,21 +119,23 @@ pub fn hollow_unreached(parts: List[Str]) -> (List[Str], Str) {
       // the line b[i..j]
       if j > i {
         let c0 = b[i]
-        if c0 == 9 && starts_at(b, i, j, "\t.section ") {
+        // a label `_name:` (ELF: `xo_name:` or `main:`) of a symbol
+        let glabel = b[j - 1] == 58 && (if elf { starts_at(b, i, j, "xo_") || (elf_sym_start(c0) && extra.contains(p[i..j - 1])) } else { c0 == 95 })
+        if c0 == 9 && (starts_at(b, i, j, "\t.section ") || (elf && (j - i == 6 && starts_at(b, i, j, "\t.text") || j - i == 6 && starts_at(b, i, j, "\t.data") || j - i == 5 && starts_at(b, i, j, "\t.bss")))) {
           if cur >= 0 {
             chunks[cur].end = i
             cur = -1
           }
-          in_text = starts_at(b, i, j, "\t.section __TEXT,__text")
-          dwarf = starts_at(b, i, j, "\t.section __DWARF")
-        } else if !in_text && !dwarf && b[j - 1] == 58 && (c0 == 95 || starts_at(b, i, j, "Lxo_")) {
+          in_text = if elf { j - i == 6 && starts_at(b, i, j, "\t.text") || starts_at(b, i, j, "\t.section .text") } else { starts_at(b, i, j, "\t.section __TEXT,__text") }
+          dwarf = if elf { starts_at(b, i, j, "\t.section .debug") } else { starts_at(b, i, j, "\t.section __DWARF") }
+        } else if !in_text && !dwarf && b[j - 1] == 58 && (glabel || starts_at(b, i, j, loc)) {
           // a label in data: a local one starts a data object (to the next
           // label or section), a global one ends it (its data are roots)
           if cur >= 0 {
             chunks[cur].end = i
             cur = -1
           }
-          if c0 != 95 {
+          if !glabel {
             let name = p[i..j - 1]
             cur = chunks.len()
             chunks.push(HChunk{part: pi, start: i, end: n, name: name, data: true})
@@ -95,7 +144,7 @@ pub fn hollow_unreached(parts: List[Str]) -> (List[Str], Str) {
               by_name[name] = cur
             }
           }
-        } else if in_text && c0 == 95 && b[j - 1] == 58 {
+        } else if in_text && glabel {
           // a global label `_name:`
           let name = p[i..j - 1]
           if cur < 0 || body {
@@ -110,23 +159,23 @@ pub fn hollow_unreached(parts: List[Str]) -> (List[Str], Str) {
           if !by_name.contains(name) {
             by_name[name] = cur
           }
-          if name.starts_with("_xo_utext_") || name.starts_with("_xo_utend_") {
+          if name.starts_with("${mpre}xo_utext_") || name.starts_with("${mpre}xo_utend_") {
             roots[name] = true
           }
-        } else if in_text && cur >= 0 && starts_at(b, i, j, "Lxo_") && b[j - 1] == 58 {
+        } else if in_text && cur >= 0 && starts_at(b, i, j, loc) && b[j - 1] == 58 {
           // a shared local label in the chunk (Lxo_drop1: other functions
           // branch to it): a name of the chunk
           let name = p[i..j - 1]
           if !by_name.contains(name) {
             by_name[name] = cur
           }
-        } else if c0 == 9 && (starts_at(b, i, j, "\t.globl") || starts_at(b, i, j, "\t.private_extern") || starts_at(b, i, j, "\t.p2align")) {
+        } else if c0 == 9 && (starts_at(b, i, j, "\t.globl") || starts_at(b, i, j, "\t.private_extern") || starts_at(b, i, j, "\t.p2align") || starts_at(b, i, j, "\t.hidden") || starts_at(b, i, j, "\t.type") || starts_at(b, i, j, "\t.size")) {
           // a symbol's declaration names it without using it (the next
           // function's .globl sits in the range of the one above)
         } else if c0 == 9 && dwarf {
           var k = i + 1
           while k < j {
-            if b[k] == 76 && starts_at(b, k, j, "Lxo_") && !ident_byte(b[k - 1]) {
+            if starts_at(b, k, j, loc) && !ident_byte(b[k - 1]) {
               var e = k + 4
               while e < j && ident_byte(b[e]) {
                 e += 1
@@ -145,7 +194,7 @@ pub fn hollow_unreached(parts: List[Str]) -> (List[Str], Str) {
           // and the shared local Lxo_ ones)
           var k = i + 1
           while k < j {
-            if (b[k] == 95 || (b[k] == 76 && starts_at(b, k, j, "Lxo_"))) && !ident_byte(b[k - 1]) {
+            if (starts_at(b, k, j, gpre) || starts_at(b, k, j, loc) || (elf && first[Int(b[k])] && elf_extra_at(b, k, j, p, extra))) && !ident_byte(b[k - 1]) {
               var e = k + 1
               while e < j && ident_byte(b[e]) {
                 e += 1
@@ -229,7 +278,7 @@ pub fn hollow_unreached(parts: List[Str]) -> (List[Str], Str) {
           while j < ch.end && b[j] != 10 {
             j += 1
           }
-          if starts_at(b, i, j, "\t.p2align") || starts_at(b, i, j, "\t.align") || starts_at(b, i, j, "\t.globl") || starts_at(b, i, j, "\t.private_extern") {
+          if keep_line(b, i, j) {
             sb.write(p[i..(if j < ch.end { j + 1 } else { j })])
           } else {
             dropped += j - i
@@ -251,7 +300,7 @@ pub fn hollow_unreached(parts: List[Str]) -> (List[Str], Str) {
           while j < ch.end && b[j] != 10 {
             j += 1
           }
-          let keep = j == i || b[i] != 9 || starts_at(b, i, j, "\t.p2align") || starts_at(b, i, j, "\t.globl") || starts_at(b, i, j, "\t.private_extern") || starts_at(b, i, j, "\t.align")
+          let keep = j == i || b[i] != 9 || keep_line(b, i, j)
           if keep {
             sb.write(p[i..(if j < ch.end { j + 1 } else { j })])
           } else {
@@ -274,6 +323,27 @@ pub fn hollow_unreached(parts: List[Str]) -> (List[Str], Str) {
     out.push(sb.freeze())
   }
   (out, "hollowed ${dead - dead_data} functions and dropped ${dead_data} data objects of ${chunks.len()}, ${dropped} bytes of assembly")
+}
+
+/// Whether c can start an ELF symbol of the program's own labels (not a
+/// local `.L` one).
+fn elf_sym_start(c: UInt8) -> Bool {
+  (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || c == 95
+}
+
+/// Whether the identifier at b[k..] (to j) is one of extra.
+fn elf_extra_at(b: Bytes, k: Int, j: Int, p: Str, extra: Map[Str, Bool]) -> Bool {
+  var e = k
+  while e < j && ident_byte(b[e]) {
+    e += 1
+  }
+  extra.contains(p[k..e])
+}
+
+/// Whether line b[i..j] is a layout or symbol directive a dead function or
+/// data object keeps.
+fn keep_line(b: Bytes, i: Int, j: Int) -> Bool {
+  starts_at(b, i, j, "\t.p2align") || starts_at(b, i, j, "\t.align") || starts_at(b, i, j, "\t.globl") || starts_at(b, i, j, "\t.private_extern") || starts_at(b, i, j, "\t.hidden") || starts_at(b, i, j, "\t.type") || starts_at(b, i, j, "\t.size")
 }
 
 /// Whether line b[i..j] starts with t.

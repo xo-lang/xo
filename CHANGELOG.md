@@ -11,6 +11,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   call in tail position stays a branch instead of pushing its caller over the inline
   limit (decision 0184 addendum): `unicode.is_*` class tests 0.80 of the wall time,
   `map_runes` 0.97, `split` 0.98; xo itself 0.46% larger.
+- linux/arm64 binaries are smaller too: the code and data of functions nothing calls
+  go, as on darwin/arm64 (decision 0371's ELF addendum): a release hello world is
+  283,672 bytes instead of 379,320 (-25%), a CRUD server 3.8% smaller.
 - darwin/arm64 binaries also drop the fault-location strings and string literal
   objects that only removed functions used (decision 0371's addendum): a release
   hello world is 299,289 bytes instead of 332,314 (-9.9%), a CRUD server 1.6% smaller.

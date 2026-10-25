@@ -135,3 +135,30 @@ __text is unchanged. compiler/arm64 hollow_test.xo now also checks:
 - a location string named only by a hollowed function goes;
 - a Str object named by main stays;
 - a string named only by DWARF stays.
+
+## Addendum: linux/arm64 ELF (2026-10-25)
+
+The pass now runs on linux/arm64 too (hollow_unreached_elf). It reads
+ELF assembly text:
+- symbols with no leading `_` (`xo_...`, `main`);
+- local labels `.Lxo_...`;
+- `.text`, `.data`, `.bss` and `.section` switches, and `.debug_*`
+  sections in place of __DWARF;
+- `.hidden`, `.type` and `.size` lines, which name a symbol without
+  using it and stay with a hollowed function.
+
+Calls into libc (`bl memcpy`) are not the program's symbols and stay
+calls.
+
+Release builds for linux/arm64, the same xo with XO_PASSES=-hollow as
+the base:
+
+| program | file off | file on | change |
+|---|---|---|---|
+| hello | 379,320 | 283,672 | -25.2% |
+| bench/perf/http/xo | 2,098,608 | 2,018,400 | -3.8% |
+
+compiler/arm64 hollow_test.xo has an ELF case: an unreached export and
+its location string go, while a Str object main names and a libc call
+stay. The Docker linux/arm64 goldens are the gate. x86_64 (AT&T text) is
+still not covered.
