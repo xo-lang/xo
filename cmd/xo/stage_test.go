@@ -320,6 +320,67 @@ func TestBuildNativeReproducible(t *testing.T) {
 	}
 }
 
+// TestReleaseTracebackDebugInfo: a --release build has no debug info, so
+// the DWARF readers are neither built nor linked (dwline.built() folds
+// to false, decision 0354's addendum) and its traceback names the
+// functions only; --release --debug-info=on keeps them and the traceback
+// has file:line.
+func TestReleaseTracebackDebugInfo(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs programs")
+	}
+	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
+		t.Skip("darwin/arm64: the dSYM")
+	}
+	src, err := filepath.Abs(filepath.Join("..", "..", "internal", "arm64", "testdata", "traceback"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, src)
+	setenv(t, "XO_BIN_CACHE", "off")
+	build := func(extra ...string) string {
+		out := filepath.Join(t.TempDir(), "prog")
+		args := append([]string{"build", "--release"}, extra...)
+		args = append(args, "-o", out, ".")
+		var o, e bytes.Buffer
+		if c := run(t, args, &o, &e); c != 0 {
+			t.Fatalf("build %v: exit %d\n%s", extra, c, e.String())
+		}
+		return out
+	}
+	trace := func(bin string) string {
+		cmd := exec.Command(bin)
+		var eb bytes.Buffer
+		cmd.Stderr = &eb
+		if err := cmd.Run(); err == nil {
+			t.Fatalf("%s: no fault", bin)
+		}
+		return eb.String()
+	}
+	const head = "fault: index 7 out of range for List of length 3 at main.xo:5:12\ntraceback:\n"
+	rel := build()
+	if got, want := trace(rel), head+"  down\n  down\n  down\n  down\n  main\n"; got != want {
+		t.Errorf("release traceback:\n%s\nwant:\n%s", got, want)
+	}
+	di := build("--debug-info=on")
+	want := head + "  down (main.xo:5)\n  down (main.xo:7)\n  down (main.xo:7)\n  down (main.xo:7)\n  main (main.xo:11)\n"
+	if got := trace(di); got != want {
+		t.Errorf("--debug-info=on traceback:\n%s\nwant:\n%s", got, want)
+	}
+	if _, err := exec.LookPath("nm"); err == nil {
+		syms := func(bin string) string {
+			b, _ := exec.Command("nm", bin).Output()
+			return string(b)
+		}
+		if strings.Contains(syms(rel), "dwline") {
+			t.Errorf("the release program links the DWARF readers")
+		}
+		if !strings.Contains(syms(di), "dwline") {
+			t.Errorf("the --debug-info=on program has no DWARF readers")
+		}
+	}
+}
+
 // TestBuildLLVMWorkDirsPrivate: concurrent LLVM builds of different
 // programs each write their IR and split modules into a directory of
 // their own, removed after the link, so no prog*.ll is left in the build

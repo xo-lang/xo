@@ -107,3 +107,31 @@ native binary cannot say how it was built.
   come first, and a profile would only set them.
 - **Recording the flags typed instead of the effective values**: replay
   would then depend on the defaults of the xo that replays it.
+
+## Addendum (2026-10-24): debug information also decides what code a program has
+
+A build without debug information (`--release`'s default, `-s`,
+`--debug-info=off`) cannot read any: its program has no line tables and no
+variable info for `dwline.xo` (the traceback's `file:line`, the profiler's
+lines, `XO_TRACEBACK=locals`) to find. The readers were linked anyway: 86 KB
+of hello's text, and in the CRUD the same. The setting joins the ones the
+SSA builder folds (as `prof.supported` and `tracerec.built` do for the
+profiler and the trace recorder): `Checker.dwarf` is the build's debug
+information (on or split, and not `-s`; `xo asm` keeps it true), and a call
+of `native/llrt/dwline.built()` is that value. `dwline.load`, `vars_load` and
+`frame_vars` return at once when it is false, so the DWARF readers are neither
+built nor linked.
+
+What a release binary contains changes, not what it prints: its crash
+traceback names the functions (from the symbol table, prof.symbols) and shows
+no `file:line`, as before, since without line tables `dwline.load` returned
+nothing; `--release --debug-info=on` keeps the readers and the `file:line`.
+`built()` is an ordinary function that returns true, so a compiler without the
+fold (an older seed) builds the runtime as before; the cache key of the front
+end gains `dwarf=`.
+
+Measured with `xo build --release` (text = `__text`): hello 322,104 to
+235,612 bytes (-26.9%; the Map removal of a145bfd56 had taken it from 484,588),
+CRUD 1,605,596 to 1,519,088; a `--debug-info=on` hello stays at 322,104.
+Test: `TestReleaseTracebackDebugInfo` (cmd/xo), a release traceback without
+`file:line` and without `dwline` symbols, and `--debug-info=on` with both.
