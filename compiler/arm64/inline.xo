@@ -116,7 +116,7 @@ fn inline_intrinsic(n: Str) -> Bool {
     // calling one counted as a non-leaf and paid for its constants, as
     // DS-1 found for unicode in_ranges' rt.bytes_word); internal/repotest
     // TestInlineIntrinsicsListed keeps calls.xo's names and these apart
-    n is "rt.bytes_word" | "rt.bytes_eq16" | "rt.bytes_eq16_bits" | "rt.bytes_high16" | "rt.bytes_high16_bits" | "rt.case_fold16" | "rt.list_swap" | "rt.clz" | "rt.ctz" | "rt.popcount" | "rt.float_bits" | "rt.float_from_bits" | "rt.i64_mul_hi" | "rt.u64_mul_hi" | "rt.f32_round" | "rt.i64_to_f32" | "rt.u64_to_f32" | "rt.u64_to_float" | "rt.list_esize" | "rt.rs_put_word" | "rt.rs_set_len" | "rt.obj_addr" | "rt.slot_addr" | "rt.clmul_hi" | "rt.clmul_lo"
+    n is "rt.bytes_word" | "rt.bytes_eq16" | "rt.bytes_eq16_bits" | "rt.bytes_high16" | "rt.bytes_high16_bits" | "rt.case_fold16" | "rt.list_swap" | "rt.list_swap2" | "rt.clz" | "rt.ctz" | "rt.popcount" | "rt.float_bits" | "rt.float_from_bits" | "rt.i64_mul_hi" | "rt.u64_mul_hi" | "rt.f32_round" | "rt.i64_to_f32" | "rt.u64_to_f32" | "rt.u64_to_float" | "rt.list_esize" | "rt.rs_put_word" | "rt.rs_set_len" | "rt.obj_addr" | "rt.slot_addr" | "rt.clmul_hi" | "rt.clmul_lo"
 }
 
 /// The rt.u64_adc and rt.u64_adc_carry calls of a block with the same

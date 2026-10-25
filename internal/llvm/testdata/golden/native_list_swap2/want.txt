@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+zbxd acyw 255 1 250 2 0 7 -2 5 7 -32768 0
+--- stderr

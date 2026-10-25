@@ -1,12 +1,14 @@
 # 0374: List.sort_in_place, a stable sort that mutates the receiver
 
-Status: Proposed, steps 1 and 2 built (DS-1, 2026-10-25: rt.list_swap in
-four lowerings with a caller on every backend and the golden
+Status: Proposed, steps 1, 2 and 3a built (DS-1, 2026-10-25: rt.list_swap
+in four lowerings with a caller on every backend and the golden
 native_list_swap, then `List.sort_in_place` and `sort_in_place_by` in
 std/prelude.xo, the native merge with half a list of scratch, the Go
 backend's `slices.SortStableFunc` form, and the measurement in
-bench/results/sortip-2026-10-25.md; step 3, the swap inside the merge,
-is pending). The owner chose
+bench/results/sortip-2026-10-25.md; then step 3a, `rt.list_swap2`, the
+primitive step 3 needs, landed alone with a caller on every backend and
+the golden native_list_swap2; step 3b, the merge that calls it, waits for
+the seed that carries the intrinsic). The owner chose
 option 1 on 2026-10-25: "superior, and we are not at v1 so API changes
 are fine"; written for review before the implementation, per the lead.
 
@@ -196,7 +198,7 @@ fn (var xs: List[T]) sort_in_place_by[K: Ord, E, fx: Effects](key: fn(T) -> K ! 
   comparison because both pay a keys and an index array: 1.12, 1.09 and
   1.12 times its instructions and 0.86, 0.89 and 0.81 of its extra RSS.
 
-### Step 3 design: how the moves become swaps (measured, not landed)
+### Step 3 design: how the moves become swaps (approved 2026-10-25)
 
 The plan said "the merge's moves switch to `rt.list_swap`". `rt.list_swap`
 swaps two elements of ONE list's array, and std Xo cannot make a list hold
@@ -325,12 +327,64 @@ own allocation, so a sort could not use a smaller scratch.
 So step 3 is `list_swap2` plus the half-buffer merge, landed and gated
 before the next seed, with step 2 the form that ships until then.
 
+The lead approved this design on 2026-10-25 with one tweak: the scratch is
+built with `List.with_capacity(left_max)` before the pushes, so it does not
+grow by reallocation while it is filled. The intrinsic lands alone first
+(step 3a), as step 1 did, since a seed has to carry an intrinsic before std
+may call it; the merge that calls it (step 3b) follows that seed.
+
+### Step 3a as built: rt.list_swap2 (backend only)
+
+- `std/native/rt.xo` declares `fn list_swap2[T](a: List[T], i: Int, b:
+  List[T], j: Int)` beside `list_swap`, with the contract: both arrays
+  must be uniquely owned because the swap does no copy-on-write, both
+  indices are bounds checked, both elements are loaded before either is
+  stored, and `a == b` is the one allowed alias (the two writes then land
+  in the same array; with `i == j` it writes back what it read).
+- Lowerings: arm64 (and amd64, which retargets the same code) two
+  `elem_addr` and two `load_elem`/`store_elem` pairs, both indices bounds
+  checked; LLVM two `elem_ptr` and `elem_load`/`elem_store`, which widen a
+  packed element (decision 0369) on load and narrow it on store; wasm the
+  wasm emitter's `elem_addr`, `load_leaves` and `store_leaves`. It is in
+  `compiler/arm64/inline.xo`'s intrinsic list, so a caller is a leaf, and
+  it is dispatched from `compiler/ssa/json.xo` generic_intrinsic (the type
+  argument), not from the by-name arms of `call_op`/`call`, which "rt."
+  never reaches. The call's type is Unit, so arm64's `set` is empty.
+- The two `List[T]` parameters are one `T`, so a call whose lists hold
+  different element types is a checker error (`List[Int]` against
+  `List[Str]` reports XO0401 "expected `List[Int]`, found `List[Str]`"),
+  not a silent width mismatch, and one element size serves both sides.
+- A caller on every backend: `std/native/internal.xo`'s `probe_list_swap2`
+  answers `internal.crypto_op("rt.list_swap2")`,
+  `std/rt/internal_crypto.go` mirrors it for the Go backend, and
+  `internal/llvm/testdata/golden/native_list_swap2` runs it on arm64, LLVM,
+  wasm (with the golden's `XO_LEAKCHECK=1` pass) and the Go backend, whose
+  output must be identical: `zbxd acyw 255 1 250 2 0 7 -2 5 7 -32768 0`.
+- Tests: nine in `std/native/prelude_test.xo` (39 in the module): Ints
+  across two lists, lists of different lengths, the same list as both
+  arguments, Strs with a reference held outside the lists, the same
+  string's own count before and after it crosses lists, packed `UInt8`
+  255/250, packed `Int16` at -32768, a two word tuple, and the rest of both
+  lists undisturbed.
+- The counting row reads the object's own count
+  (`rt.slot_load(rt.obj_addr(s), 0, 0)`) rather than `heapos.nfree`, which
+  step 1's row used: a string allocated inside the measured window moves
+  the free totals on its own (two control rows with no swap at all showed
+  it), and an `obj_addr` of an element holds a temporary reference, so the
+  counts are read before the identity checks.
+  `gotchas/nfree-not-a-balance-oracle.md` records both.
+- Gate: ds-gate-base, the module's 39 tests on arm64 and LLVM, the golden
+  `native_list_swap2` on arm64, LLVM and Go parity, the wasm goldens with
+  the leak check, repotest's intrinsic checks, `go test -short`, and the
+  fixed point (s1 = s2 = s3).
+
 ## Consequences
 
-- Memory, unique receiver: at most n/2 words of scratch, and none once
-  step 3 lands, against 5n for `sort` today (76.3 MB to 0 at 2,000,000
-  Strs). Shared receiver: 2n, the same as `sort`, because the copy is
-  the point.
+- Memory, unique receiver: at most n/2 elements of scratch, and step 3 keeps
+  that scratch (it holds references, never copies of a string's text, so on
+  Strs it is the same 22.7 MB step 2 measured, not `sort`'s 80.0), against
+  5n for `sort` today (76.3 MB at 2,000,000 Strs). Shared receiver: 2n, the
+  same as `sort`, because the copy is the point.
 - Instructions: the half buffer measured 1.48 times the index sort; with
   the swap intrinsic the moves stop counting, which is where 62 percent
   of SymMerge's time went, and the projection is about the index sort's

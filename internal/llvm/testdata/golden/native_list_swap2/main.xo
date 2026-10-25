@@ -1,0 +1,13 @@
+// The cross-list element swap of decision 0374 step 3 (rt.list_swap2,
+// std/native/rt.xo): two string lists swapped across, the same list as
+// both arguments, the identity swap, and packed UInt8 and Int16 lists,
+// through internal.crypto_op so every backend runs its own lowering
+// (arm64, LLVM, WebAssembly) and the Go backend runs std/rt's answer. The
+// strings move as references with no count either way, so a miscount
+// shows as the wasm run's leak check at exit. Output: the two lists'
+// orders, the packed values, and the mismatches.
+use std/internal
+
+fn main(os: Os) uses stdio {
+  os.stdio.println("${internal.crypto_op("rt.list_swap2", b"", b"", b"", b"").to_str() ?? ""}")
+}

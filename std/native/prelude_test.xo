@@ -10,6 +10,12 @@
 use native/rt
 use native/llrt/heapos
 
+// rt.list_swap2 (decision 0374 step 3a) is here for the same reason. Its
+// counting row reads one string's own count (its object's first word,
+// as llrt/obj.xo's count does) and not the free-list total: a string
+// allocated and freed inside the measured window moves heapos.nfree on
+// its own, so a two-list helper changed the total with no swap at all.
+
 // rt.list_swap (decision 0374 step 1) lives in native/rt. Its tests are
 // here rather than in a test file beside that module: a test module takes
 // the name of a source module beside it, and native/rt's source is
@@ -162,6 +168,122 @@ test "list_swap: a swap inside a longer list disturbs nothing else" {
   var xs = [1, 2, 3, 4, 5, 6, 7, 8, 9]
   rt.list_swap(xs, 2, 6)
   expect(xs == [1, 2, 7, 4, 5, 6, 3, 8, 9])
+}
+
+// rt.list_swap2 (decision 0374 step 3): one element of each list trade
+// places, so the two lists permute their elements between them and no
+// element is counted or released either. a == b is the list_swap case,
+// which the rows below check both ways.
+test "list_swap2: two Int lists trade elements" {
+  var xs = [3, 1, 4]
+  var ys = [1, 5, 9]
+  rt.list_swap2(xs, 0, ys, 2)
+  expect(xs == [9, 1, 4])
+  expect(ys == [1, 5, 3])
+  rt.list_swap2(xs, 2, ys, 0)
+  expect(xs == [9, 1, 1])
+  expect(ys == [4, 5, 3])
+}
+
+test "list_swap2: the lists may differ in length" {
+  var xs = [1, 2]
+  var ys = [8, 9, 10, 11]
+  rt.list_swap2(xs, 1, ys, 3)
+  expect(xs == [1, 11])
+  expect(ys == [8, 9, 10, 2])
+}
+
+test "list_swap2: the same list twice is list_swap" {
+  var xs = [7, 8, 9]
+  rt.list_swap2(xs, 0, xs, 2)
+  expect(xs == [9, 8, 7])
+  rt.list_swap2(xs, 1, xs, 1)
+  expect(xs == [9, 8, 7])
+}
+
+test "list_swap2: Str elements keep their text and their count" {
+  var xs = ["alpha", "beta", "gamma"]
+  var ys = ["delta", "epsilon"]
+  // one more reference to a moved element, held outside the lists across
+  // the swap: the swap must not release what a list still holds
+  let held = xs[0]
+  rt.list_swap2(xs, 0, ys, 1)
+  expect(xs == ["epsilon", "beta", "gamma"])
+  expect(ys == ["delta", "alpha"])
+  expect(held == "alpha")
+  rt.list_swap2(xs, 2, ys, 0)
+  expect(xs == ["epsilon", "beta", "delta"])
+  expect(ys == ["gamma", "alpha"])
+}
+
+test "list_swap2: a cross-list Str swap changes no element's count" {
+  // the count of a specific object, read from its first word (llrt/obj.xo
+  // count does the same), before and after it crosses lists: the swap
+  // must not retain or release either side, and each object must still be
+  // the one the other slot held
+  var xs: List[Str] = ["alpha" + "!", "beta" + "!"]
+  var ys: List[Str] = ["gamma" + "!", "delta" + "!"]
+  let px = rt.obj_addr(xs[0])
+  let py = rt.obj_addr(ys[1])
+  let cx = rt.slot_load(px, 0, 0)
+  let cy = rt.slot_load(py, 0, 0)
+  expect(cx == 1)
+  expect(cy == 1)
+  rt.list_swap2(xs, 0, ys, 1)
+  // the counts are read before the identity checks: each obj_addr of an
+  // element holds a temporary reference to the string, so a count read
+  // after one sees 2 and not the swap's 1
+  let c2x = rt.slot_load(px, 0, 0)
+  let c2y = rt.slot_load(py, 0, 0)
+  expect(c2x == cx)
+  expect(c2y == cy)
+  expect(rt.obj_addr(ys[1]) == px)
+  expect(rt.obj_addr(xs[0]) == py)
+}
+
+test "list_swap2: packed UInt8 elements swap as single bytes" {
+  var xs: List[UInt8] = [0, 1, 2]
+  var ys: List[UInt8] = [250, 255, 7]
+  rt.list_swap2(xs, 0, ys, 1)
+  var w1: List[UInt8] = [255, 1, 2]
+  var w2: List[UInt8] = [250, 0, 7]
+  expect(xs == w1)
+  expect(ys == w2)
+  rt.list_swap2(xs, 2, ys, 0)
+  var w3: List[UInt8] = [255, 1, 250]
+  var w4: List[UInt8] = [2, 0, 7]
+  expect(xs == w3)
+  expect(ys == w4)
+}
+
+test "list_swap2: packed Int16 elements keep their sign" {
+  // -32768 is the type's minimum: a swap that went through a wider or an
+  // unsigned load would come back 32768 or something else
+  var xs: List[Int16] = [-32768, 5]
+  var ys: List[Int16] = [7, -2]
+  rt.list_swap2(xs, 0, ys, 1)
+  var w1: List[Int16] = [-2, 5]
+  var w2: List[Int16] = [7, -32768]
+  expect(xs == w1)
+  expect(ys == w2)
+}
+
+test "list_swap2: a two word tuple swaps both words across lists" {
+  var xs: List[(Int, Int)] = [(1, 2), (3, 4)]
+  var ys: List[(Int, Int)] = [(5, 6)]
+  rt.list_swap2(xs, 1, ys, 0)
+  var w1: List[(Int, Int)] = [(1, 2), (5, 6)]
+  var w2: List[(Int, Int)] = [(3, 4)]
+  expect(xs == w1)
+  expect(ys == w2)
+}
+
+test "list_swap2: a cross-list swap disturbs nothing else" {
+  var xs = [1, 2, 3, 4, 5]
+  var ys = [6, 7, 8, 9]
+  rt.list_swap2(xs, 2, ys, 1)
+  expect(xs == [1, 2, 7, 4, 5])
+  expect(ys == [6, 3, 8, 9])
 }
 
 fn mm_next(x: Int) -> Int { (x * 1103515245 + 12345) % 2147483648 }

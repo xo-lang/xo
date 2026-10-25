@@ -374,6 +374,18 @@ fn obj_at[T](a: Int) -> T
 /// element write; swapping a shared list writes the other holder's array
 /// (gotchas/list-swap-bypasses-copy-on-write.md).
 fn list_swap[T](xs: List[T], i: Int, j: Int)
+/// Swaps the element at i of a with the element at j of b as words, with
+/// no count and no release: the two lists' elements are permuted between
+/// them, so each one is still referenced exactly once (lowered inline:
+/// two element addresses, two loads and two stores; decision 0374 step
+/// 3). Faults when i is outside a or j is outside b. Both elements are
+/// loaded before either is stored, so a == b with i == j writes back what
+/// it read, and a == b behaves exactly as list_swap. Unchecked: both
+/// arrays must be uniquely owned, because the swap does no copy-on-write,
+/// so a caller makes each list unique first, for example with one counted
+/// element write; a == b is the one allowed alias, since the two writes
+/// then land in the same array (gotchas/list-swap-bypasses-copy-on-write.md).
+fn list_swap2[T](a: List[T], i: Int, b: List[T], j: Int)
 
 /// a as a B: a std type and its implementation type (http.Response and
 /// the implementation's Response), which lower to one type (decision

@@ -1268,6 +1268,41 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
         g.elem_store(et, va, pb, md)
       }
     }
+    "rt.list_swap2" => {
+      // decision 0374 step 3: one element of each list trade places with
+      // no count and no release (the two lists permute their elements
+      // between them, so each element stays referenced once), both loaded
+      // before either is stored so a == b with i == j writes back what it
+      // read; the call's type is Unit, so nothing is set
+      let md = g.sc_md(v)
+      let et = g.m.types[g.vty(x.args[0])].elems[0]
+      let l1 = g.op(x.args[0])
+      let l2 = g.op(x.args[2])
+      if !x.pos.is_empty() {
+        let n1 = g.list_len(l1, md)
+        let a1 = g.op(x.args[1])
+        let bad1 = g.def("icmp uge i64 ${a1}, ${n1}")
+        let b1 = g.op(x.args[1])
+        let lc1 = g.loc(v)
+        g.fault_if(bad1, "@xo_x_fault_raise_index(i64 ${b1}, i64 ${n1}, i64 ptrtoint (ptr ${lc1} to i64))")
+        let n2 = g.list_len(l2, md)
+        let a2 = g.op(x.args[3])
+        let bad2 = g.def("icmp uge i64 ${a2}, ${n2}")
+        let b2 = g.op(x.args[3])
+        let lc2 = g.loc(v)
+        g.fault_if(bad2, "@xo_x_fault_raise_index(i64 ${b2}, i64 ${n2}, i64 ptrtoint (ptr ${lc2} to i64))")
+      }
+      if g.kind(et) != ssa.Kind.Unit {
+        let pa = g.elem_ptr(et, l1, g.op(x.args[1]))
+        let pb = g.elem_ptr(et, l2, g.op(x.args[3]))
+        // as list_swap's: a packed element (decision 0369) is loaded at
+        // its width and widened, stored back narrowed
+        let va = g.elem_load(et, pa, md)
+        let vb = g.elem_load(et, pb, md)
+        g.elem_store(et, vb, pa, md)
+        g.elem_store(et, va, pb, md)
+      }
+    }
     "rt.bytes_eq16" | "rt.bytes_high16" => {
       let (_, d, _) = g.str_parts(g.op(x.args[0]))
       let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(x.args[1])}")

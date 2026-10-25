@@ -128,6 +128,12 @@ fn rt_op(what: Str) -> Bytes? {
     // backend runs its own lowering, and the Go backend std/rt's answer
     return Some(probe_list_swap().bytes())
   }
+  if what == "list_swap2" {
+    // rt.list_swap2 of decision 0374 step 3, for the golden
+    // native_list_swap2: every backend runs its own lowering, and the Go
+    // backend std/rt's answer
+    return Some(probe_list_swap2().bytes())
+  }
   if what == "fn_addr" {
     let buf = rt.heap_large(32)
     let n = rt.call_c2(rt.fn_addr("fmt_int"), buf, 12345)
@@ -384,6 +390,66 @@ fn probe_list_swap() -> Str {
     }
   }
   "${o} ${ns[0]} ${ns[1]} ${ns[2]} ${ps[0]} ${ps[1]} ${ps[2]} ${ps[3]} ${ps[4]} ${bad}"
+}
+
+/// crypto_op's "rt.list_swap2": one element of each list swapped across
+/// of decision 0374 step 3, on two string lists and two packed lists, with
+/// the same list as both arguments (the list_swap case) and i == j; the
+/// two lists' orders and the mismatches (0 when every element moved as it
+/// should). The strings move as references without a count either way, so
+/// a miscount shows as the golden's leak check (XO_LEAKCHECK=1) failing at
+/// exit.
+fn probe_list_swap2() -> Str {
+  var xs: List[Str] = ["a", "b", "c", "d"]
+  var ys: List[Str] = ["w", "x", "y", "z"]
+  rt.list_swap2(xs, 0, ys, 3)
+  rt.list_swap2(xs, 2, ys, 1)
+  // the same list as both arguments, and the identity swap
+  rt.list_swap2(ys, 0, ys, 3)
+  rt.list_swap2(xs, 1, xs, 1)
+  let xwant = ["z", "b", "x", "d"]
+  let ywant = ["a", "c", "y", "w"]
+  var bad = 0
+  var o = ""
+  var p = ""
+  for i in 0..4 {
+    if xs[i] != xwant[i] {
+      bad += 1
+    }
+    if ys[i] != ywant[i] {
+      bad += 1
+    }
+    o = o + xs[i]
+    p = p + ys[i]
+  }
+  // packed lists (decision 0369): one byte an element on the native
+  // backends and LLVM and eight on wasm, so these rows take the other path
+  // there; 255, 250 and -32768 would come back 0, -1, 32768 or a
+  // neighbour's byte through a word or a signed load
+  var ps1: List[UInt8] = [0, 1, 2]
+  var ps2: List[UInt8] = [250, 255, 7]
+  rt.list_swap2(ps1, 0, ps2, 1)
+  rt.list_swap2(ps1, 2, ps2, 0)
+  let p1want: List[UInt8] = [255, 1, 250]
+  let p2want: List[UInt8] = [2, 0, 7]
+  for i in 0..3 {
+    if ps1[i] != p1want[i] {
+      bad += 1
+    }
+    if ps2[i] != p2want[i] {
+      bad += 1
+    }
+  }
+  var ss1: List[Int16] = [-32768, 5]
+  var ss2: List[Int16] = [7, -2]
+  rt.list_swap2(ss1, 0, ss2, 1)
+  if ss1[0] != -2 || ss1[1] != 5 {
+    bad += 1
+  }
+  if ss2[0] != 7 || ss2[1] != -32768 {
+    bad += 1
+  }
+  "${o} ${p} ${ps1[0]} ${ps1[1]} ${ps1[2]} ${ps2[0]} ${ps2[1]} ${ps2[2]} ${ss1[0]} ${ss1[1]} ${ss2[0]} ${ss2[1]} ${bad}"
 }
 
 /// crypto_op's "rt.mem_check": libcstr's memcpy, memmove, and memset against

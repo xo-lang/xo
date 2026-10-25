@@ -200,6 +200,25 @@ fn (var g: Gen) call(v: Int) {
         g.store_leaves(b, 0, wa, el)
       }
     }
+    "rt.list_swap2" => {
+      // decision 0374 step 3: one element of each list trade places with
+      // no count and no release (the two lists permute their elements
+      // between them, so each element stays referenced once), both read
+      // before either is written so a == b with i == j writes back what it
+      // read; elem_addr bounds checks both indices, one per list
+      let et = g.m.types[g.vty(x.args[0])].elems[0]
+      let el = g.leaves(et)
+      if !el.is_empty() {
+        let a = g.elem_addr(v, x.args[0], x.args[1], et)
+        let b = g.elem_addr(v, x.args[2], x.args[3], et)
+        let wa = g.scratch(el)
+        let wb = g.scratch(el)
+        g.load_leaves(a, 0, wa, el)
+        g.load_leaves(b, 0, wb, el)
+        g.store_leaves(a, 0, wb, el)
+        g.store_leaves(b, 0, wa, el)
+      }
+    }
     "list.set" => {
       let et = g.vty(x.args[2])
       let a = g.elem_addr(v, x.args[0], x.args[1], et)

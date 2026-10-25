@@ -122,6 +122,39 @@ func Internal_crypto_op(_ *Task, op string, a, b, c, d Bytes) Bytes {
 				strconv.FormatInt(ns[0], 10)+" "+
 				strconv.FormatInt(ns[1], 10)+" "+
 				strconv.FormatInt(ns[2], 10)+packed+" 0"), true
+		case "list_swap2":
+			// the cross-list element swap of decision 0374 step 3
+			// (std/native/internal.xo probe_list_swap2): Go's parallel
+			// assignment in place of rt.list_swap2, the same list as both
+			// arguments, and packed lists (0369) whose bytes 255 and 250
+			// and Int16 -32768 must survive
+			xs := []string{"a", "b", "c", "d"}
+			ys := []string{"w", "x", "y", "z"}
+			xs[0], ys[3] = ys[3], xs[0]
+			xs[2], ys[1] = ys[1], xs[2]
+			ys[0], ys[3] = ys[3], ys[0]
+			xs[1], xs[1] = xs[1], xs[1]
+			p1 := []uint8{0, 1, 2}
+			p2 := []uint8{250, 255, 7}
+			p1[0], p2[1] = p2[1], p1[0]
+			p1[2], p2[0] = p2[0], p1[2]
+			s1 := []int16{-32768, 5}
+			s2 := []int16{7, -2}
+			s1[0], s2[1] = s2[1], s1[0]
+			nums := ""
+			for _, v := range p1 {
+				nums += " " + strconv.FormatUint(uint64(v), 10)
+			}
+			for _, v := range p2 {
+				nums += " " + strconv.FormatUint(uint64(v), 10)
+			}
+			for _, v := range s1 {
+				nums += " " + strconv.FormatInt(int64(v), 10)
+			}
+			for _, v := range s2 {
+				nums += " " + strconv.FormatInt(int64(v), 10)
+			}
+			r, ok = Bytes(strings.Join(xs, "")+" "+strings.Join(ys, "")+nums+" 0"), true
 		}
 	case "tls13srv":
 		r, ok = cryptoTLS13Srv(what, a, b, c, d)
