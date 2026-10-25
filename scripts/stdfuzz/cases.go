@@ -23,8 +23,11 @@ import (
 	"math/rand"
 	"net"
 	"net/url"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
+	"unicode"
 )
 
 // jsonHelpers, urlHelpers, baseHelpers and timeHelpers wrap the match, whose
@@ -795,6 +798,7 @@ func allAreas() []area {
 		{"x509", []string{"std/internal"}, x509Helpers, genX509},
 		{"ecc", []string{"std/internal"}, eccHelpers, genECC},
 		{"limits", []string{"std/base32", "std/base64", "std/compress", "std/csv", "std/json", "std/url"}, limitsHelpers, genLimits},
+		{"runes", nil, runesHelpers, genRunes},
 	}
 }
 
@@ -2164,6 +2168,121 @@ func genLimits(r *rand.Rand, n int) []fuzzCase {
 			sz = 65536
 		}
 		out = append(out, fuzzCase{name, fmt.Sprintf("fz_lim(%d, %s, %d)", kind, xq(pick(r, pats)), sz)})
+	}
+	return out
+}
+
+// runesHelpers put every Rune predicate, the three case mappings, the UTF-8
+// width and both quotes of one rune into a single Str, so one case covers
+// the whole surface. Rune.try is the only constructor, so an Int outside
+// the scalar range answers "none" (std/prelude.xo line 175).
+const runesHelpers = `
+fn fz_rune_one(r: Rune) -> Str {
+  let a = fz_bools(r.is_digit(), r.is_letter(), r.is_space(), r.is_upper(), r.is_lower())
+  let b = fz_bools(r.is_title(), r.is_punct(), r.is_control(), r.is_graphic(), r.is_mark())
+  let c = fz_bool(r.is_symbol()) + fz_bool(r.is_number()) + fz_bool(r.is_print())
+  let up = r.to_upper()
+  let lo = r.to_lower()
+  let ti = r.to_title()
+  "${a}${b}${c}|${fz_hx("${up}")}|${fz_hx("${lo}")}|${fz_hx("${ti}")}|${r.utf8_len()}|${fz_hx(r.quote())}|${fz_hx("${r}".quote())}"
+}
+fn fz_rune_try(x: Int) -> Str {
+  match Rune.try(x) {
+    Some(r) => fz_rune_one(r)
+    None => "none"
+  }
+}
+`
+
+// The runes area guards the Unicode tables and fast paths of
+// std/native/llrt/unicode.xo: every class predicate, the case mappings, the
+// UTF-8 width, Rune.quote and Str.quote of the rune. The Go backend is the
+// oracle (its runtime is Go's unicode, strconv and utf8), so the generator
+// only has to pick inputs, and it weights them toward the places the native
+// implementation can disagree: every rune where a class answer, a case
+// mapping or strconv.IsPrint changes, the 1024 rune index block edges, the
+// U+0800 and U+10000 bitmap and escape edges, the surrogates, and values
+// outside the scalar range.
+var runePoolOnce sync.Once
+var runePoolVal []int64
+
+func runePool() []int64 {
+	runePoolOnce.Do(func() {
+		seen := map[int64]bool{}
+		add := func(xs ...int64) {
+			for _, x := range xs {
+				if !seen[x] {
+					seen[x] = true
+					runePoolVal = append(runePoolVal, x)
+				}
+			}
+		}
+		preds := []func(rune) bool{unicode.IsDigit, unicode.IsLetter, unicode.IsSpace,
+			unicode.IsUpper, unicode.IsLower, unicode.IsTitle, unicode.IsPunct,
+			unicode.IsControl, unicode.IsGraphic, unicode.IsMark, unicode.IsSymbol,
+			unicode.IsNumber, strconv.IsPrint}
+		for _, f := range preds {
+			prev := f(rune(0))
+			for x := int64(1); x <= 0x10FFFF; x++ {
+				cur := f(rune(x))
+				if cur != prev {
+					add(x-1, x, x+1)
+					prev = cur
+				}
+			}
+		}
+		// every rune a case mapping changes, at both ends of its run
+		for x := int64(0); x <= 0x10FFFF; x++ {
+			r := rune(x)
+			if unicode.ToUpper(r) != r || unicode.ToLower(r) != r || unicode.ToTitle(r) != r {
+				add(x)
+			}
+		}
+		// the index blocks of in_ranges (IX_SHIFT 10, based at U+0080) and
+		// the plain 1024 boundaries
+		for k := int64(0); k <= (0x10FFFF-0x80)/1024; k++ {
+			b := 0x80 + k*1024
+			add(b-1, b, k*1024, k*1024-1)
+		}
+		// the bitmap edges, the UTF-8 width edges and the escape widths
+		for _, b := range []int64{0x7f, 0x80, 0x7ff, 0x800, 0xffff, 0x10000, 0x10ffff} {
+			add(b-1, b, b+1)
+		}
+		for x := int64(0xD800); x <= 0xDFFF; x++ {
+			add(x)
+		}
+		add(0x110000, 0x110001, 0x11FFFF, 0x1FFFFF, 0x7FFFFFFF, 0xFFFFFFFF,
+			math.MaxInt64, -1, -2, math.MinInt64)
+	})
+	return runePoolVal
+}
+
+// xoInt is an Int literal; MinInt64 must stay an expression, since its
+// digits with the sign do not fit an Int on their own.
+func xoInt(x int64) string {
+	if x == math.MinInt64 {
+		return "(-9223372036854775807 - 1)"
+	}
+	return strconv.FormatInt(x, 10)
+}
+
+func genRunes(r *rand.Rand, n int) []fuzzCase {
+	pool := runePool()
+	out := make([]fuzzCase, 0, n)
+	for i := 0; i < n; i++ {
+		var x int64
+		switch r.Intn(10) {
+		case 0, 1, 2, 3, 4, 5, 6, 7:
+			x = pool[r.Intn(len(pool))]
+		case 8:
+			x = int64(r.Intn(0x110000))
+		default:
+			x = int64(r.Intn(0x110000))
+			if r.Intn(3) == 0 {
+				x = -x - 1
+			}
+		}
+		out = append(out, fuzzCase{Name: fmt.Sprintf("runes.%04d", i), Expr: fmt.Sprintf("fz_rune_try(%s)", xoInt(x))})
 	}
 	return out
 }

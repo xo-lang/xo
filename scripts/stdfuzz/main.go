@@ -12,7 +12,9 @@
 //	go run ./scripts/stdfuzz -keep=/tmp/fz    # keep the program for a repro
 //
 // The inputs are seeded, so a report reproduces exactly. The areas are
-// strings, bytes, strconv, json, path, url, base64/base32/hex and time.
+// strings, bytes, strconv, json, runes, path, url, base64/base32/hex,
+// time, regexp, csv, netip, big, compress, archive, mime, multipart, xml,
+// sql, http, template, cryptostream, x509, ecc and limits.
 package main
 
 import (
