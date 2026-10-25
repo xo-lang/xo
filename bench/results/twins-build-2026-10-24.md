@@ -4,8 +4,8 @@ Written by bench/perf/twins/build.sh. The CRUD server is bench/perf/http's users
 
 ## Machine and versions
 
-- Darwin 27.0.0 arm64, Apple M4 Pro, 12 CPUs, 24 GB, load average at start 4.22
-- xo 0.29.0 commit e7de76b1 key 112b09aa7ba1e90f, NOT THIS CHECKOUT (its key is 7a95a103705157dc)
+- Darwin 27.0.0 arm64, Apple M4 Pro, 12 CPUs, 24 GB, load average at start 3.74
+- xo 0.29.0 commit e7de76b1 key 112b09aa7ba1e90f, NOT THIS CHECKOUT (its key is bd64c24ce08debf2)
 - go version go1.26.1 darwin/arm64
 - cargo 1.99.1 (5f94df478 2026-08-27), rustc 1.99.1 (58cf8f9c3 2026-10-13)
 - node v22.22.1 (Homebrew, for tsc, esbuild and the startup row), typescript 5.9.3, esbuild 0.28.2, pinned in package-lock.json
@@ -17,18 +17,18 @@ Wall milliseconds of one build; peak MB is the build's largest resident set (col
 
 | program | side | cold ms | second ms | warm ms | edit ms | peak MB (c/w/e) | size MB |
 |---|---|---|---|---|---|---|---|
-| crud | xo | 2440 | 30 | 30 | 520 | 984 / 14 / 547 | 6.23 |
-| hello | xo | 1150 | 30 | 30 | 290 | 506 / 14 / 313 | 1.90 |
-| crud | go | 2940 | 80 | 80 | 240 | 303 / 32 / 151 | 8.03 |
-| hello | go | 1420 | 30 | 40 | 100 | 315 / 25 / 69 | 2.36 |
-| crud | rust | 7910 | 30 | 30 | 2940 | 409 / 41 / 413 | 1.12 |
-| hello | rust | 1270 | 10 | 10 | 1220 | 191 / 20 / 193 | 0.41 |
-| project | node | 920 | 560 | 540 | 530 | 207 / 200 / 200 | 28.0 KB (dist) |
-| bundle | node | 360 | 170 | 170 | 170 | 75 / 76 / 76 | 3.0 KB |
-| server_asyncio | python | 70 | 40 | 40 | 40 | 23 / 22 / 22 | n/a |
-| server_starlette | python | 230 | 70 | 70 | 70 | 32 / 31 / 31 | n/a |
+| crud | xo | 2280 | 30 | 30 | 500 | 992 / 14 / 547 | 6.23 |
+| hello | xo | 1130 | 30 | 30 | 280 | 504 / 14 / 311 | 1.90 |
+| crud | go | 2930 | 80 | 80 | 240 | 311 / 33 / 151 | 8.03 |
+| hello | go | 1420 | 30 | 30 | 90 | 308 / 25 / 67 | 2.36 |
+| crud | rust | 7550 | 30 | 30 | 2910 | 410 / 41 / 419 | 1.12 |
+| hello | rust | 1250 | 10 | 10 | 1200 | 192 / 20 / 193 | 0.41 |
+| project | node | 690 | 520 | 520 | 520 | 206 / 201 / 200 | 28.0 KB (dist) |
+| bundle | node | 370 | 170 | 160 | 160 | 76 / 76 / 76 | 3.0 KB |
+| server_asyncio | python | 40 | 40 | 40 | 40 | 23 / 22 / 22 | n/a |
+| server_starlette | python | 70 | 70 | 70 | 70 | 32 / 31 / 31 | n/a |
 
-Node single executable application (the bundle injected into a copy of the official node v22.22.1 binary with postject, signed ad hoc): 5060 ms, peak 884 MB, 106.87 MB.
+Node single executable application (the bundle injected into a copy of the official node v22.22.1 binary with postject, signed ad hoc): 4890 ms, peak 885 MB, 106.87 MB.
 
 ## What ships
 
@@ -46,19 +46,34 @@ Node single executable application (the bundle injected into a copy of the offic
 
 ## Startup (hello, `xo bench --ab`, 20 rounds, A = the other language, B = Xo)
 
-| hello, go | load 2.49 |
-    wall_ms               3.498       3.045       9.664% 8.047%     0.87    0.844 to 0.929    better (n=20)
+| hello, go | load 3.98 |
+    wall_ms               2.849       2.605       8.415% 5.509%     0.914   0.883 to 0.936    better (n=20)
     cpu_ms                0           0           0% 0%             1.0     1.0 to 1.0        too coarse (n=20)
     max_rss_kb            4192        2592        2.672% 0%         0.618   0.616 to 0.628    better (n=20)
-| hello, rust | load 2.49 |
-    wall_ms               2.764       2.885       7.417% 7.106%     1.044   1.012 to 1.075    worse (n=20)
+| hello, rust | load 3.98 |
+    wall_ms               2.483       2.572       6.444% 10.26%     1.036   1.016 to 1.115    worse (n=20)
     cpu_ms                0           0           0% 0%             1.0     1.0 to 1.0        too coarse (n=20)
-    max_rss_kb            1824        2592        0% 0%             1.421   1.421 to 1.421    worse (n=20)
-| hello, node | load 2.49 |
-    wall_ms               47.39       3.008       1.617% 10.52%     0.063   0.06 to 0.066     better (n=20)
+    max_rss_kb            1824        2600        0% 0.615%         1.425   1.421 to 1.43     worse (n=20)
+| hello, node | load 3.98 |
+    wall_ms               46.16       2.815       1.879% 3.854%     0.061   0.06 to 0.062     better (n=20)
     cpu_ms                30.0        0           0% 0%             0       0 to 0            too coarse (n=20)
-    max_rss_kb            36536       2600        0.263% 0.615%     0.071   0.071 to 0.071    better (n=20)
-| hello, python | load 4.22 |
-    wall_ms               18.81       2.873       1.721% 6.275%     0.153   0.15 to 0.156     better (n=20)
+    max_rss_kb            36488       2592        0.362% 0.154%     0.071   0.071 to 0.071    better (n=20)
+| hello, python | load 3.74 |
+    wall_ms               17.53       2.678       2.201% 8.242%     0.153   0.145 to 0.158    better (n=20)
     cpu_ms                10.0        0           0% 0%             0       0 to 0            too coarse (n=20)
-    max_rss_kb            13936       2608        0.258% 1.84%      0.187   0.186 to 0.189    better (n=20)
+    max_rss_kb            13936       2600        0.172% 1.846%     0.187   0.186 to 0.188    better (n=20)
+
+## Three runs (quiet.sh wait 2 first; the table above is run 3)
+
+Three consecutive runs of bench/perf/twins/build.sh with the 0.29.0 xo (e7de76b1), 2026-10-24 21:04 to 21:08. Load average (1 minute) at each run's start from uptime: run 1 1.98, run 2 4.28, run 3 3.41 (the machine's own builds raise it, so the file's "load average at start" lines read higher than the wait's 2). The website uses the best of the three per row. Milliseconds: cold / second / warm / edit.
+
+| program | side | run 1 | run 2 | run 3 | best |
+|---|---|---|---|---|---|
+| crud | xo | 2260 / 30 / 30 / 500 | 2290 / 40 / 30 / 510 | 2280 / 30 / 30 / 500 | 2260 / 30 / 30 / 500 |
+| hello | xo | 1110 / 30 / 30 / 280 | 1130 / 30 / 30 / 280 | 1130 / 30 / 30 / 280 | 1110 / 30 / 30 / 280 |
+| crud | go | 2900 / 80 / 80 / 240 | 2910 / 80 / 80 / 240 | 2930 / 80 / 80 / 240 | 2900 / 80 / 80 / 240 |
+| hello | go | 1400 / 30 / 30 / 90 | 1400 / 30 / 30 / 90 | 1420 / 30 / 30 / 90 | 1400 / 30 / 30 / 90 |
+| crud | rust | 7570 / 30 / 30 / 2880 | 7650 / 30 / 30 / 2900 | 7550 / 30 / 30 / 2910 | 7550 / 30 / 30 / 2880 |
+| hello | rust | 1260 / 10 / 10 / 1200 | 1270 / 10 / 10 / 1200 | 1250 / 10 / 10 / 1200 | 1250 / 10 / 10 / 1200 |
+
+Go's edit build (240 ms for crud, 90 ms for hello) is faster than Xo's (500 and 280 ms) in every run. Xo's startup against Go's hello (wall ratio): 0.898, 0.903, 0.914.
