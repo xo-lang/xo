@@ -7,6 +7,7 @@ import (
 	"compress/flate"
 	"compress/gzip"
 	"compress/zlib"
+	"crypto"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ecdsa"
@@ -622,6 +623,90 @@ fn fz_x509_pair(i: Int, j: Int) -> Str {
 }
 `
 
+const eccHelpers = `
+fn fz_eop(curve: Str, what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Str {
+  internal.crypto_op("${curve}.${what}", a, b, c, d).to_hex()
+}
+fn fz_ecv(k: Int, h: Int, which: Int) -> Str {
+  let curve = if k == 0 { "p256" } else { "p384" }
+  let sig = if which == 0 { EC_SIG[h] } else if which == 1 { EC_SIG_BAD[h] } else { EC_SIG_SHORT[h] }
+  match Bytes.from_hex(EC_PUB[k]) {
+    Some(pk) => match Bytes.from_hex(EC_HASH[h]) {
+      Some(hash) => match Bytes.from_hex(sig) {
+        Some(s) => fz_eop(curve, "verify", pk, hash, s, b"")
+        None => "bad hex"
+      }
+      None => "bad hex"
+    }
+    None => "bad hex"
+  }
+}
+fn fz_ecpub(k: Int) -> Str {
+  let curve = if k == 0 { "p256" } else { "p384" }
+  match Bytes.from_hex(EC_PRIV[k]) {
+    Some(priv) => fz_eop(curve, "public", priv, b"", b"", b"")
+    None => "bad hex"
+  }
+}
+fn fz_ecdh(k: Int) -> Str {
+  let curve = if k == 0 { "p256" } else { "p384" }
+  match Bytes.from_hex(EC_PRIV[k]) {
+    Some(a) => match Bytes.from_hex(EC_PUB_B[k]) {
+      Some(b) => match Bytes.from_hex(EC_PRIV_B[k]) {
+        Some(c) => match Bytes.from_hex(EC_PUB[k]) {
+          Some(d) => "${fz_eop(curve, "ecdh", a, b, b"", b"")},${fz_eop(curve, "ecdh", c, d, b"", b"")}"
+          None => "bad hex"
+        }
+        None => "bad hex"
+      }
+      None => "bad hex"
+    }
+    None => "bad hex"
+  }
+}
+fn fz_ecdh_bad(k: Int, cutn: Int) -> Str {
+  let curve = if k == 0 { "p256" } else { "p384" }
+  let peer = EC_PUB_B[k]
+  let cut = if cutn * 2 < peer.len() { cutn * 2 } else { peer.len() }
+  match Bytes.from_hex(EC_PRIV[k]) {
+    Some(a) => match Bytes.from_hex(peer[0..cut]) {
+      Some(b) => fz_eop(curve, "ecdh", a, b, b"", b"")
+      None => "bad hex"
+    }
+    None => "bad hex"
+  }
+}
+fn fz_rsa(kind: Int) -> Str {
+  match Bytes.from_hex(RSA_PUB) {
+    Some(pk) => match Bytes.from_hex(RSA_HASH) {
+      Some(hash) => {
+        let id = b"\x00"
+        match kind {
+          0 => fz_eop("rsa", "verify_pkcs1", id, pk, hash, Bytes.from_hex(RSA_SIG) ?? b"")
+          1 => fz_eop("rsa", "verify_pkcs1", id, pk, hash, Bytes.from_hex(RSA_SIG_BAD) ?? b"")
+          2 => fz_eop("rsa", "verify_pss", id, pk, hash, Bytes.from_hex(RSA_PSS) ?? b"")
+          _ => fz_eop("rsa", "verify_pss", id, pk, hash, Bytes.from_hex(RSA_SIG) ?? b"")
+        }
+      }
+      None => "bad hex"
+    }
+    None => "bad hex"
+  }
+}
+fn fz_rsa_sign() -> Str {
+  match Bytes.from_hex(RSA_PRIV) {
+    Some(priv) => match Bytes.from_hex(RSA_HASH) {
+      Some(hash) => {
+        let sig = fz_eop("rsa", "sign_pkcs1", b"\x00", priv, hash, b"")
+        if sig == RSA_SIG { "same as Go" } else { "differs ${sig}" }
+      }
+      None => "bad hex"
+    }
+    None => "bad hex"
+  }
+}
+`
+
 // A fuzzCase is one line of the generated program: the name it prints and
 // the Xo expression that computes its value as a Str, so every result
 // compares as one line of text.
@@ -667,6 +752,7 @@ func allAreas() []area {
 		{"template", []string{"std/template", "std/json"}, templateHelpers, genTemplate},
 		{"cryptostream", []string{"std/internal"}, cryptoHelpers, genCrypto},
 		{"x509", []string{"std/internal"}, x509Helpers, genX509},
+		{"ecc", []string{"std/internal"}, eccHelpers, genECC},
 	}
 }
 
@@ -1821,6 +1907,186 @@ func genX509(r *rand.Rand, n int) []fuzzCase {
 			out = append(out, fuzzCase{name, fmt.Sprintf("fz_x509_cut(%d, %d)", idx, cut)})
 		default:
 			out = append(out, fuzzCase{name, fmt.Sprintf("fz_x509_pair(%d, %d)", idx, r.Intn(len(hexes)))})
+		}
+	}
+	return out
+}
+
+// ---------------------------------------------------------------------------
+// ecc: ECDSA verify/ECDH on P-256 and P-384, and RSA verify, with keys and
+// signatures made deterministically here.
+
+type ecSet struct {
+	curve string
+	priv  []byte
+	pub   []byte
+	hash  []byte
+	sig   []byte
+	bad   []byte // sig with one byte flipped
+	short []byte // sig cut in half
+	pubB  []byte
+	privB []byte
+}
+
+type rsaSet struct {
+	priv   []byte
+	pub    []byte
+	hash   []byte
+	sig    []byte
+	sigBad []byte
+	pss    []byte
+}
+
+var (
+	ecOnce  []ecSet
+	rsaOnce *rsaSet
+)
+
+func ecSets() []ecSet {
+	if ecOnce != nil {
+		return ecOnce
+	}
+	dr := detReader{rand.New(rand.NewSource(1234))}
+	for _, c := range []struct {
+		name  string
+		curve elliptic.Curve
+	}{
+		{"p256", elliptic.P256()},
+		{"p384", elliptic.P384()},
+	} {
+		size := (c.curve.Params().BitSize + 7) / 8
+		key, err := ecdsa.GenerateKey(c.curve, dr)
+		if err != nil {
+			panic(err)
+		}
+		peer, err := ecdsa.GenerateKey(c.curve, dr)
+		if err != nil {
+			panic(err)
+		}
+		hash := randBytesN(dr.r, size)
+		sig, err := ecdsa.SignASN1(dr, key, hash)
+		if err != nil {
+			panic(err)
+		}
+		bad := append([]byte(nil), sig...)
+		bad[len(bad)/2] ^= 1
+		ecOnce = append(ecOnce, ecSet{
+			curve: c.name,
+			priv:  key.D.FillBytes(make([]byte, size)),
+			pub:   elliptic.Marshal(c.curve, key.X, key.Y),
+			hash:  hash,
+			sig:   sig,
+			bad:   bad,
+			short: sig[:len(sig)/2],
+			pubB:  elliptic.Marshal(c.curve, peer.X, peer.Y),
+			privB: peer.D.FillBytes(make([]byte, size)),
+		})
+	}
+	return ecOnce
+}
+
+func rsaSetOf() *rsaSet {
+	if rsaOnce != nil {
+		return rsaOnce
+	}
+	dr := detReader{rand.New(rand.NewSource(4321))}
+	key, err := rsa.GenerateKey(dr, 2048)
+	if err != nil {
+		panic(err)
+	}
+	hash := randBytesN(dr.r, 32)
+	sig, err := rsa.SignPKCS1v15(nil, key, crypto.SHA256, hash)
+	if err != nil {
+		panic(err)
+	}
+	pss, err := rsa.SignPSS(dr, key, crypto.SHA256, hash, &rsa.PSSOptions{SaltLength: 32, Hash: crypto.SHA256})
+	if err != nil {
+		panic(err)
+	}
+	bad := append([]byte(nil), sig...)
+	bad[len(bad)/2] ^= 1
+	rsaOnce = &rsaSet{
+		priv:   x509.MarshalPKCS1PrivateKey(key),
+		pub:    x509.MarshalPKCS1PublicKey(&key.PublicKey),
+		hash:   hash,
+		sig:    sig,
+		sigBad: bad,
+		pss:    pss,
+	}
+	return rsaOnce
+}
+
+func eccTable() string {
+	var b strings.Builder
+	ecs := ecSets()
+	b.WriteString("\n/// the ECDSA key material the ecc cases use, in hex (made by the generator with crypto/ecdsa from a fixed seed): priv, pub, hash, sig, a flipped sig, a short sig, a peer pub and peer priv, per curve p256 then p384\nconst EC_PRIV: List[Str] = [\n")
+	for _, e := range ecs {
+		fmt.Fprintf(&b, "  %s,\n", xq(fmt.Sprintf("%x", e.priv)))
+	}
+	b.WriteString("]\nconst EC_PUB: List[Str] = [\n")
+	for _, e := range ecs {
+		fmt.Fprintf(&b, "  %s,\n", xq(fmt.Sprintf("%x", e.pub)))
+	}
+	b.WriteString("]\nconst EC_HASH: List[Str] = [\n")
+	for _, e := range ecs {
+		fmt.Fprintf(&b, "  %s,\n", xq(fmt.Sprintf("%x", e.hash)))
+	}
+	b.WriteString("]\nconst EC_SIG: List[Str] = [\n")
+	for _, e := range ecs {
+		fmt.Fprintf(&b, "  %s,\n", xq(fmt.Sprintf("%x", e.sig)))
+	}
+	b.WriteString("]\nconst EC_SIG_BAD: List[Str] = [\n")
+	for _, e := range ecs {
+		fmt.Fprintf(&b, "  %s,\n", xq(fmt.Sprintf("%x", e.bad)))
+	}
+	b.WriteString("]\nconst EC_SIG_SHORT: List[Str] = [\n")
+	for _, e := range ecs {
+		fmt.Fprintf(&b, "  %s,\n", xq(fmt.Sprintf("%x", e.short)))
+	}
+	b.WriteString("]\nconst EC_PUB_B: List[Str] = [\n")
+	for _, e := range ecs {
+		fmt.Fprintf(&b, "  %s,\n", xq(fmt.Sprintf("%x", e.pubB)))
+	}
+	b.WriteString("]\nconst EC_PRIV_B: List[Str] = [\n")
+	for _, e := range ecs {
+		fmt.Fprintf(&b, "  %s,\n", xq(fmt.Sprintf("%x", e.privB)))
+	}
+	b.WriteString("]\n")
+	r := rsaSetOf()
+	fmt.Fprintf(&b, "\n/// the RSA-2048 key material the ecc cases use, in hex\nconst RSA_PRIV: Str = %s\nconst RSA_PUB: Str = %s\nconst RSA_HASH: Str = %s\nconst RSA_SIG: Str = %s\nconst RSA_SIG_BAD: Str = %s\nconst RSA_PSS: Str = %s\n",
+		xq(fmt.Sprintf("%x", r.priv)), xq(fmt.Sprintf("%x", r.pub)), xq(fmt.Sprintf("%x", r.hash)),
+		xq(fmt.Sprintf("%x", r.sig)), xq(fmt.Sprintf("%x", r.sigBad)), xq(fmt.Sprintf("%x", r.pss)))
+	return b.String()
+}
+
+// genECC covers ECDSA verify (good, one flipped byte, half a signature),
+// the public key of a scalar, ECDH both ways and with a bad peer point, on
+// P-256 and P-384; and RSA PKCS #1 v1.5 and PSS verify with the same
+// mutations, plus the native PKCS #1 signature against Go's.
+func genECC(r *rand.Rand, n int) []fuzzCase {
+	preludes = append(preludes, eccTable())
+	ecs := ecSets()
+	out := make([]fuzzCase, 0, n)
+	for i := 0; i < n; i++ {
+		name := fmt.Sprintf("ecc.%04d", i)
+		k := r.Intn(len(ecs))
+		switch i % 8 {
+		case 0:
+			out = append(out, fuzzCase{name, fmt.Sprintf("fz_ecv(%d, %d, 0)", k, k)})
+		case 1:
+			out = append(out, fuzzCase{name, fmt.Sprintf("fz_ecv(%d, %d, 1)", k, k)})
+		case 2:
+			out = append(out, fuzzCase{name, fmt.Sprintf("fz_ecv(%d, %d, 2)", k, k)})
+		case 3:
+			out = append(out, fuzzCase{name, fmt.Sprintf("fz_ecpub(%d)", k)})
+		case 4:
+			out = append(out, fuzzCase{name, fmt.Sprintf("fz_ecdh(%d)", k)})
+		case 5:
+			out = append(out, fuzzCase{name, fmt.Sprintf("fz_ecdh_bad(%d, %d)", k, r.Intn(40))})
+		case 6:
+			out = append(out, fuzzCase{name, fmt.Sprintf("fz_rsa(%d)", r.Intn(4))})
+		case 7:
+			out = append(out, fuzzCase{name, "fz_rsa_sign()"})
 		}
 	}
 	return out
