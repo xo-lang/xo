@@ -13,3 +13,4 @@
 - [xo-at-a-glance.md](xo-at-a-glance.md): what the language, std and tools already have, with spec sections; read before reporting a feature as missing
 - [scale-suite.md](scale-suite.md): the scale suite (internal/progen Scale, scripts/scale): one knob of program size swept at a time against build time, peak memory and binary size, outputs checked on every backend, the count field edges per object format, growth thresholds and runtime budget
 - [pi-deepseek-experiment.md](pi-deepseek-experiment.md): the DeepSeek/Pi experiment (2026-10-23): DeepSeek through the Pi agent as an Xo team member, its setup, gaps against Claude Code, safety findings, and the Pi extensions and config it needs
+- [memory-footprint.md](memory-footprint.md): where Strs and Lists cost more memory than Go (a Str 56 bytes against 36, a sized int list element 8 bytes, the Str sort's 5n scratch), what XO_HEAPSTATS shows, and the Proposed ADRs 0369 and 0370
