@@ -1,0 +1,94 @@
+// Tests of dwline.xo's offset tables (`xo test --std-module=native/llrt/dwline`,
+// run by internal/stdtest): IntIdx and the tables built on it, which
+// replaced the generic Map (decision 0371). A producer we do not control
+// may skip abbreviation codes or order entries any way.
+
+test "IntIdx finds keys put in increasing order" {
+  var t = IntIdx{}
+  for i in 0..100 {
+    t.put(i * 3 + 1, i)
+  }
+  expect(t.sorted)
+  expect(t.get(1) == 0)
+  expect(t.get(298) == 99)
+  expect(t.get(151) == 50)
+  expect(t.get(0) == -1)
+  expect(t.get(2) == -1)
+  expect(t.get(1000) == -1)
+}
+
+test "IntIdx replaces a key put again" {
+  var t = IntIdx{}
+  t.put(5, 1)
+  t.put(9, 2)
+  t.put(9, 3)
+  t.put(5, 4)
+  expect(t.keys.len() == 2)
+  expect(t.get(5) == 4)
+  expect(t.get(9) == 3)
+  expect(t.sorted)
+}
+
+test "IntIdx searches linearly after a key out of order" {
+  var t = IntIdx{}
+  t.put(10, 1)
+  t.put(30, 2)
+  t.put(20, 3)
+  t.put(40, 4)
+  expect(!t.sorted)
+  expect(t.get(10) == 1)
+  expect(t.get(20) == 3)
+  expect(t.get(30) == 2)
+  expect(t.get(40) == 4)
+  expect(t.get(25) == -1)
+  t.put(20, 7)
+  expect(t.get(20) == 7)
+  expect(t.keys.len() == 4)
+}
+
+test "an abbreviation table whose codes skip numbers" {
+  var t = AbTab{}
+  t.put(1, Abbrev{tag: 0x11, kids: true, attrs: []})
+  t.put(2, Abbrev{tag: 0x2e, kids: false, attrs: []})
+  t.put(7, Abbrev{tag: 0x1d, kids: true, attrs: []})
+  t.put(300, Abbrev{tag: 0x05, kids: false, attrs: []})
+  expect((t.get(1) ?? Abbrev{tag: 0, kids: false, attrs: []}).tag == 0x11)
+  expect((t.get(7) ?? Abbrev{tag: 0, kids: false, attrs: []}).tag == 0x1d)
+  expect((t.get(300) ?? Abbrev{tag: 0, kids: false, attrs: []}).tag == 0x05)
+  expect(t.get(3) == None)
+  expect(t.get(6) == None)
+  // codes in any order
+  var u = AbTab{}
+  u.put(9, Abbrev{tag: 1, kids: false, attrs: []})
+  u.put(2, Abbrev{tag: 2, kids: false, attrs: []})
+  u.put(5, Abbrev{tag: 3, kids: false, attrs: []})
+  expect((u.get(2) ?? Abbrev{tag: 0, kids: false, attrs: []}).tag == 2)
+  expect((u.get(9) ?? Abbrev{tag: 0, kids: false, attrs: []}).tag == 1)
+  expect((u.get(5) ?? Abbrev{tag: 0, kids: false, attrs: []}).tag == 3)
+  expect(u.get(4) == None)
+}
+
+test "a type table keeps a type replaced in place" {
+  var t = TyTab{}
+  t.put(100, VTy{tag: 0x13, name: "a"})
+  t.put(200, VTy{tag: 0x13, name: "b"})
+  var x = t.get(100) ?? VTy{}
+  x.m_names.push("f")
+  t.put(100, x)
+  expect((t.get(100) ?? VTy{}).m_names.len() == 1)
+  expect((t.get(200) ?? VTy{}).name == "b")
+  expect(t.get(150) == None)
+}
+
+test "intern gives one index to one name, in any order" {
+  var out = Lines{}
+  var at: List[Int] = []
+  let names = ["b.xo", "a.xo", "c.xo", "a.xo", "b.xo", "d/e.xo", "c.xo"]
+  var got: List[Int] = []
+  for n in names {
+    got.push(intern(n, at, out))
+  }
+  expect(out.names.len() == 4)
+  expect(got == [0, 1, 2, 1, 0, 3, 2])
+  expect(out.names[0] == "b.xo" && out.names[3] == "d/e.xo")
+}

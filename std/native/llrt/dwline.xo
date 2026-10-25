@@ -35,7 +35,8 @@ pub struct Lines {
   pub inl_line: List[Int] = []
   /// each line program's files (by its offset in .debug_line): names
   /// indexes by the program's file numbers
-  ufiles: Map[Int, List[Int]] = {}
+  uf_ix: IntIdx = IntIdx{}
+  uf: List[List[Int]] = []
 }
 
 /// The sections a line program reads: .debug_line, and the string
@@ -638,7 +639,7 @@ fn join(dir: Str, p: Str) -> Str {
 /// Every unit's line program into out (rows with addresses in [lo, hi)
 /// after bias), then the rows sorted.
 fn parse(s: Sects, bias: Int, lo: Int, hi: Int, var out: Lines) {
-  var at: Map[Str, Int] = {}
+  var at: List[Int] = []
   var ra: List[Int] = []
   var rf: List[Int] = []
   var rl: List[Int] = []
@@ -748,7 +749,8 @@ fn parse(s: Sects, bias: Int, lo: Int, hi: Int, var out: Lines) {
         fmap.push(intern(join(if di < dirs.len() { dirs[di] } else { "" }, name), at, out))
       }
     }
-    out.ufiles[u - s.line] = fmap
+    out.uf_ix.put(u - s.line, out.uf.len())
+    out.uf.push(fmap)
     if !ok || line_range == 0 {
       u = next
       continue
@@ -840,13 +842,96 @@ fn parse(s: Sects, bias: Int, lo: Int, hi: Int, var out: Lines) {
 }
 
 /// The index of file name in out.names, added once.
-fn intern(name: Str, var at: Map[Str, Int], var out: Lines) -> Int {
-  if let Some(k) = at.get(name) {
-    return k
+fn intern(name: Str, var at: List[Int], var out: Lines) -> Int {
+  // at: the indexes of out.names this parse added, ordered by name (a
+  // sorted List searched by halves, not a Map: decision 0371)
+  var lo = 0
+  var hi = at.len()
+  while lo < hi {
+    let m = (lo + hi) / 2
+    let x = out.names[at[m]]
+    if x == name {
+      return at[m]
+    }
+    if x < name {
+      lo = m + 1
+    } else {
+      hi = m
+    }
   }
   out.names.push(name)
-  at[name] = out.names.len() - 1
-  out.names.len() - 1
+  let k = out.names.len() - 1
+  at.insert(lo, k)
+  k
+}
+
+/// An Int to Int table that is two Lists, searched by halves, for the
+/// DWARF readers (decision 0371): the generic Map costs 9 to 20 KB of
+/// code per key and value type, and dwline used eight of them. Keys
+/// arrive in increasing order (a .debug_info offset, a line program's
+/// offset, an abbreviation code), so a put appends; a key that is not
+/// above the last is looked for, replaced when present, else appended and
+/// the table searched linearly from then on (a producer we do not
+/// control may number its codes or order its entries any way). A value
+/// is an Int: a typed side List holds the rest, this table maps to its
+/// index.
+struct IntIdx {
+  keys: List[Int] = []
+  vals: List[Int] = []
+  sorted: Bool = true
+}
+
+/// The position of key k, or -1.
+fn (t: IntIdx) find(k: Int) -> Int {
+  if !t.sorted {
+    for i in 0..t.keys.len() {
+      if t.keys[i] == k {
+        return i
+      }
+    }
+    return -1
+  }
+  var lo = 0
+  var hi = t.keys.len()
+  while lo < hi {
+    let m = (lo + hi) / 2
+    let x = t.keys[m]
+    if x == k {
+      return m
+    }
+    if x < k {
+      lo = m + 1
+    } else {
+      hi = m
+    }
+  }
+  -1
+}
+
+/// The value of key k, or -1 when it is absent.
+fn (t: IntIdx) get(k: Int) -> Int {
+  let i = t.find(k)
+  if i < 0 {
+    return -1
+  }
+  t.vals[i]
+}
+
+fn (var t: IntIdx) put(k: Int, v: Int) {
+  let n = t.keys.len()
+  if n == 0 || k > t.keys[n - 1] {
+    t.keys.push(k)
+    t.vals.push(v)
+    return
+  }
+  let i = t.find(k)
+  if i >= 0 {
+    t.vals[i] = v
+    return
+  }
+  t.sorted = false
+  t.keys.push(k)
+  t.vals.push(v)
 }
 
 // ---------------------------------------------------------------------------
@@ -867,9 +952,35 @@ struct Abbrev {
   attrs: List[AbAttr]
 }
 
+/// An abbreviation table: the codes, searched by halves (IntIdx; a table
+/// whose codes skip numbers or come in any order is found by the
+/// fallback), and the abbreviations.
+struct AbTab {
+  ix: IntIdx = IntIdx{}
+  ab: List[Abbrev] = []
+}
+
+fn (t: AbTab) get(code: Int) -> Abbrev? {
+  let i = t.ix.get(code)
+  if i < 0 {
+    return None
+  }
+  Some(t.ab[i])
+}
+
+fn (var t: AbTab) put(code: Int, a: Abbrev) {
+  let i = t.ix.get(code)
+  if i >= 0 {
+    t.ab[i] = a
+    return
+  }
+  t.ix.put(code, t.ab.len())
+  t.ab.push(a)
+}
+
 /// The abbreviation table at offset off of .debug_abbrev, by code.
-fn abbrevs(s: Sects, off: Int) -> Map[Int, Abbrev] {
-  var out: Map[Int, Abbrev] = {}
+fn abbrevs(s: Sects, off: Int) -> AbTab {
+  var out = AbTab{}
   if off >= s.abbrev_n {
     return out
   }
@@ -894,7 +1005,7 @@ fn abbrevs(s: Sects, off: Int) -> Map[Int, Abbrev] {
       }
       attrs.push(AbAttr{at: at, form: form, imp: imp})
     }
-    out[code] = Abbrev{tag: tag, kids: kids, attrs: attrs}
+    out.put(code, Abbrev{tag: tag, kids: kids, attrs: attrs})
   }
   out
 }
@@ -1114,8 +1225,9 @@ fn parse_info(s: Sects, bias: Int, var out: Lines) {
     return
   }
   // the entries' names and origins by offset in .debug_info
-  var names: Map[Int, Str] = {}
-  var origins: Map[Int, Int] = {}
+  var names = IntIdx{}
+  var name_v: List[Str] = []
+  var origins = IntIdx{}
   var recs: List[InlRec] = []
   var p = s.info
   let end = s.info + s.info_n
@@ -1210,7 +1322,8 @@ fn parse_info(s: Sects, bias: Int, var out: Lines) {
           0x59 => cline = v.n
           0x10 => {
             // stmt_list: this unit's line program
-            files = out.ufiles.get(v.n) ?? []
+            let ui = out.uf_ix.get(v.n)
+            files = if ui >= 0 { out.uf[ui] } else { [] }
           }
           0x72 => u.str_base = v.n
           0x73 => u.addr_base = v.n
@@ -1234,10 +1347,11 @@ fn parse_info(s: Sects, bias: Int, var out: Lines) {
         u.low = low
       }
       if !name.is_empty() {
-        names[die] = name
+        names.put(die, name_v.len())
+        name_v.push(name)
       }
       if origin >= 0 {
-        origins[die] = origin
+        origins.put(die, origin)
       }
       var here = inl_at[inl_at.len() - 1]
       if ab.tag == 0x1d {
@@ -1269,11 +1383,12 @@ fn parse_info(s: Sects, bias: Int, var out: Lines) {
     var o = rec.origin
     var guard = 0
     while o >= 0 && guard < 4 {
-      if let Some(nm) = names.get(o) {
-        name = nm
+      let ni = names.get(o)
+      if ni >= 0 {
+        name = name_v[ni]
         break
       }
-      o = origins.get(o) ?? -1
+      o = origins.get(o)
       guard += 1
     }
     if name.is_empty() {
@@ -1407,10 +1522,34 @@ struct VFn {
   vars: List[VVar] = []
 }
 
+/// The types by their .debug_info offset (an IntIdx and the VTys).
+struct TyTab {
+  ix: IntIdx = IntIdx{}
+  ts: List[VTy] = []
+}
+
+fn (t: TyTab) get(k: Int) -> VTy? {
+  let i = t.ix.get(k)
+  if i < 0 {
+    return None
+  }
+  Some(t.ts[i])
+}
+
+fn (var t: TyTab) put(k: Int, ty: VTy) {
+  let i = t.ix.get(k)
+  if i >= 0 {
+    t.ts[i] = ty
+    return
+  }
+  t.ix.put(k, t.ts.len())
+  t.ts.push(ty)
+}
+
 /// The program's variables: functions sorted by lo, types by offset.
 pub struct Vars {
   fns: List[VFn] = []
-  types: Map[Int, VTy] = {}
+  types: TyTab = TyTab{}
   units: List[Unit] = []
   s: Sects = Sects{}
   bias: Int = 0
@@ -1452,10 +1591,13 @@ fn parse_vars(var v: Vars) {
   let s = v.s
   // the named variables by offset, for the inlined copies that name
   // theirs through DW_AT_abstract_origin (LLVM's)
-  var named: Map[Int, (Str, Int)] = {}
-  var decls: Map[Int, Int] = {}
+  var named = IntIdx{}
+  var named_n: List[Str] = []
+  var named_t: List[Int] = []
+  var decls = IntIdx{}
   // the functions' names by offset, for the inlined calls' origins
-  var fnames: Map[Int, Str] = {}
+  var fnames = IntIdx{}
+  var fname_v: List[Str] = []
   var p = s.info
   let end = s.info + s.info_n
   while p + 11 <= end {
@@ -1602,7 +1744,8 @@ fn parse_vars(var v: Vars) {
         kid_inl = (name, origin, cur_inl.2 + 1)
       }
       if ab.tag == 0x2e && !name.is_empty() {
-        fnames[die] = name
+        fnames.put(die, fname_v.len())
+        fname_v.push(name)
       }
       if ab.tag == 0x1d || ab.tag == 0x0b {
         // an inlined call or a lexical block: its variables' scope
@@ -1628,8 +1771,10 @@ fn parse_vars(var v: Vars) {
         }
         0x34 | 0x05 => {
           if !name.is_empty() {
-            named[die] = (name, ty)
-            decls[die] = dline
+            named.put(die, named_n.len())
+            named_n.push(name)
+            named_t.push(ty)
+            decls.put(die, dline)
           }
           if cur_fn >= 0 && (!name.is_empty() || origin >= 0) && (loc.blk_n > 0 || loc_list) {
             var vv = VVar{name: name, ty: ty, param: ab.tag == 0x05, unit: ui, origin: origin, within: cur_scope, inl: cur_inl.0, inl_origin: cur_inl.1, depth: cur_inl.2, decl: dline}
@@ -1651,7 +1796,7 @@ fn parse_vars(var v: Vars) {
         0x24 | 0x13 | 0x17 | 0x16 | 0x0f | 0x04 | 0x01 => {
           // an array type (0x01): its element type as target (a List's
           // object's items, show)
-          v.types[die] = VTy{tag: ab.tag, name: name, size: size, enc: enc, target: ty}
+          v.types.put(die, VTy{tag: ab.tag, name: name, size: size, enc: enc, target: ty})
           kid_ty = die
         }
         0x0d => {
@@ -1661,7 +1806,7 @@ fn parse_vars(var v: Vars) {
               t.m_names.push(name)
               t.m_types.push(ty)
               t.m_offs.push(mloc)
-              v.types[cur_ty] = t
+              v.types.put(cur_ty, t)
             }
           }
         }
@@ -1671,7 +1816,7 @@ fn parse_vars(var v: Vars) {
               var t = t0
               t.e_names.push(name)
               t.e_vals.push(cval)
-              v.types[cur_ty] = t
+              v.types.put(cur_ty, t)
             }
           }
         }
@@ -1691,16 +1836,18 @@ fn parse_vars(var v: Vars) {
     var changed = false
     for (k, vv) in vs.indexed() {
       if vv.name.is_empty() && vv.origin >= 0 {
-        if let Some((n, t)) = named.get(vv.origin) {
-          vs[k].name = n
-          vs[k].ty = t
-          vs[k].decl = decls.get(vv.origin) ?? 0
+        let ni = named.get(vv.origin)
+        if ni >= 0 {
+          vs[k].name = named_n[ni]
+          vs[k].ty = named_t[ni]
+          vs[k].decl = if decls.find(vv.origin) >= 0 { decls.get(vv.origin) } else { 0 }
           changed = true
         }
       }
       if vv.inl.is_empty() && vv.inl_origin >= 0 {
-        if let Some(n) = fnames.get(vv.inl_origin) {
-          vs[k].inl = n
+        let fi2 = fnames.get(vv.inl_origin)
+        if fi2 >= 0 {
+          vs[k].inl = fname_v[fi2]
           changed = true
         }
       }
@@ -1764,7 +1911,7 @@ pub fn frame_locals(v: Vars, pc: Int, rg: Regs) -> List[Str] {
 /// not set yet), else 0.
 pub fn frame_vars(v: Vars, pc: Int, rg: Regs) -> List[(Str, Int, Str, Int)] {
   var out: List[(Str, Int, Str, Int)] = []
-  var seen: Map[Str, Bool] = {}
+  var seen: List[Str] = []
   let fi = fn_at_pc(v, pc)
   if fi < 0 {
     return out
@@ -1808,10 +1955,10 @@ pub fn frame_vars(v: Vars, pc: Int, rg: Regs) -> List[(Str, Int, Str, Int)] {
   out
 }
 
-fn add_var(var out: List[(Str, Int, Str, Int)], var seen: Map[Str, Bool], vv: VVar, line: Str, decl: Int) {
+fn add_var(var out: List[(Str, Int, Str, Int)], var seen: List[Str], vv: VVar, line: Str, decl: Int) {
   let k = "${vv.inl}\n${vv.depth}\n${line}"
   if !seen.contains(k) {
-    seen[k] = true
+    seen.push(k)
     out.push((vv.inl, vv.depth, line, decl))
   }
 }
