@@ -113,13 +113,12 @@ func TestDebugVars(t *testing.T) {
 // backend with debug information (the default) and without it
 // (--debug-info=off: -s would also strip the symbols that name the
 // functions) has,
-// for every function of the build without it, a function with the same
-// machine code (otool -tV, addresses, branch targets and callee names
-// normalized) in the build with it. The build with it may hold more
-// functions: the runtime's DWARF
-// readers (native/llrt/dwline; dwline.built() folds to the build's debug
-// information, decision 0354's addendum), which a build without debug
-// information neither builds nor links, and what only they reach.
+// for every function of the program (not the runtime's), a function with
+// the same machine code (otool -tV, addresses, branch targets and callee
+// names normalized) in the build with it. The runtime is excepted:
+// dwline.built() folds to the build's debug information (decision 0354's
+// addendum), so the DWARF readers are in the build with it only, and a
+// runtime function that calls them differs by the branch.
 func TestDebugInfoSameCode(t *testing.T) {
 	if runtime.GOOS != "darwin" || !native() {
 		t.Skip("darwin/arm64 only")
@@ -168,6 +167,27 @@ func TestDebugInfoSameCode(t *testing.T) {
 		flush()
 		return out
 	}
+	// the runtime's modules (std/native, std/native/llrt), their
+	// generics (xo.*) and glue: not the program's own code, and a runtime
+	// function that holds a branch on dwline.built() differs by it
+	runtimeMod := map[string]bool{"xo": true, "drop": true, "dropp": true, "dup": true, "cabi": true}
+	for _, pat := range []string{"../../std/native/*.xo", "../../std/native/llrt/*.xo"} {
+		fs, _ := filepath.Glob(pat)
+		for _, f := range fs {
+			runtimeMod[strings.TrimSuffix(filepath.Base(f), ".xo")] = true
+		}
+	}
+	unescape := strings.NewReplacer("_2e", ".", "_5b", "[", "_20", " ", "_5d", "]", "_2c", ",")
+	userFunc := func(sym string) bool {
+		if !strings.HasPrefix(sym, "_xo_f_") {
+			return false
+		}
+		n := unescape.Replace(strings.TrimPrefix(sym, "_xo_f_"))
+		if i := strings.IndexAny(n, ".[ "); i >= 0 {
+			n = n[:i]
+		}
+		return !runtimeMod[n]
+	}
 	for _, dir := range goldenDirs(t) {
 		dir := dir
 		t.Run(filepath.Base(dir), func(t *testing.T) {
@@ -197,7 +217,7 @@ func TestDebugInfoSameCode(t *testing.T) {
 				// a function nothing reaches is one brk (the hollow pass,
 				// decision 0371): the DWARF readers in a build without
 				// debug information
-				if body == "brk\tX\n" || have[body] {
+				if !userFunc(name) || body == "brk\tX\n" || have[body] {
 					continue
 				}
 				if bad++; bad <= 5 {
