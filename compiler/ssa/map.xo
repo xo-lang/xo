@@ -1164,7 +1164,9 @@ fn (var b: Builder) for_map(label: Bytes, p: Pattern, bound: List[Expr], body: p
   // a root table (no parents) from position 0: eachpos and mlog_at read
   // own positions as absolute ones (a flatten's table starts at 0; a
   // view with a base reads through its parents)
-  let root = b.add(Op.And, b.bool_t(), Aux.None, [b.bop(Op.Eq, b.call("list.len", b.int_t(), "", [b.mf(lt, 7, tbl)]), b.cint(0)), b.bop(Op.Eq, b.mf(lt, 3, tbl), b.cint(0))])
+  let tkl = b.mf(lt, 0, tbl)
+  let tkt = mlog_k(b.m, lt)
+  let root = b.add(Op.And, b.bool_t(), Aux.None, [b.bop(Op.Eq, b.call("list.len", b.int_t(), "", [b.mf(tkt, 7, tkl)]), b.cint(0)), b.bop(Op.Eq, b.mf(tkt, 3, tkl), b.cint(0))])
   let (rb, fb) = b.branch(root)
   b.s.cur = fb
   b.jump(lists, [])
@@ -1216,9 +1218,12 @@ fn (var b: Builder) for_mlog_root(label: Bytes, p: Pattern, bound: List[Expr], b
   let it = b.int_t()
   let bt = b.bool_t()
   let lt = b.vty(tbl)
-  let et = mlog_entry_of(b.m, lt)
-  let ps = b.call(b.mlog_eachpos(lt), b.m.list(it), "", [tbl])
-  let dir = b.mf(lt, 0, tbl)
+  let kt0 = mlog_k(b.m, lt)
+  let et = mlog_entry_of(b.m, kt0)
+  let kl = b.mf(lt, 0, tbl)
+  let ps = b.call(b.mlog_eachpos(kt0), b.m.list(it), "", [kl])
+  let dir = b.mf(kt0, 0, kl)
+  let vdir = b.mf(lt, 1, tbl)
   let set = b.m.types[t].name.starts_with("Set[")
   let n = b.call("list.len", it, "", [ps])
   let idx = b.local()
@@ -1235,14 +1240,15 @@ fn (var b: Builder) for_mlog_root(label: Bytes, p: Pattern, bound: List[Expr], b
   b.seal(bodyb)
   b.s.cur = bodyb
   b.loop_tick(tick)
-  let e = b.mlog_at(et, dir, b.call("list.index", it, "", [ps, i]))
+  let pi = b.call("list.index", it, "", [ps, i])
+  let e = b.mlog_at(et, dir, pi)
   let kt = map_key(b.m, t)
   let k = b.add(Op.Field, kt, Aux.I(n: 3), [e])
   var elem = k
   let fail = b.new_block()
   if !set {
     let vt = map_val(b.m, t)
-    let v = b.add(Op.Field, vt, Aux.I(n: 4), [e])
+    let v = b.mlog_at(vt, vdir, pi)
     var els: List[Pattern] = []
     if let TuplePat(elems: es, ..) = p {
       els = es
@@ -1308,74 +1314,6 @@ fn (var b: Builder) for_map_lists(label: Bytes, p: Pattern, bound: List[Expr], b
   if !set {
     let vt = map_val(b.m, t)
     let v = b.call("list.index", vt, "", [vals, i])
-    var els: List[Pattern] = []
-    if let TuplePat(elems: es, ..) = p {
-      els = es
-    }
-    if els.len() == 2 {
-      // `(k, v)` binds the key and the value apart, both borrowed from
-      // the map's lists (a tuple consumed them; stmt.xo's indexed loop)
-      b.pattern(k, els[0], fail)
-      b.pattern(v, els[1], fail)
-      elem = -1
-    } else {
-      elem = b.add(Op.Tuple, b.m.tuple([kt, vt]), Aux.None, [k, v])
-    }
-  }
-  if elem >= 0 {
-    b.pattern(elem, p, fail)
-  }
-  b.end_fail(fail)
-  b.s.loops.push(LoopCtx{label: label, brk: exit, cont: latch, exits: b.s.exits.len()})
-  b.block(body)
-  b.s.loops.pop()
-  b.jump(latch, [])
-  b.seal(latch)
-  b.s.cur = latch
-  let ci = b.read(idx)
-  b.write_var(idx, b.add(Op.Add, it, Aux.None, [ci, b.cint(1)]))
-  b.jump(head, [])
-  b.seal(head)
-  b.seal(exit)
-  b.s.cur = exit
-}
-
-/// for_map over a map on the log representation (decision 0291): its
-/// entries in their chunks (xo.mlog.iterdir), with no copy of a clean table.
-fn (var b: Builder) for_mlog(label: Bytes, p: Pattern, bound: List[Expr], body: parser.Block, mv: Int) {
-  let it = b.int_t()
-  let bt = b.bool_t()
-  let t = b.vty(mv)
-  let et = mlog_entry_of(b.m, t)
-  let src = b.call(b.mlog_iterdir(t), b.m.types[t].fields[0].ty, "", [mv])
-  let set = b.m.types[t].name.starts_with("Set[")
-  let n = b.mf(t, 4, mv)
-  let idx = b.local()
-  b.write_var(idx, b.cint(0))
-  let tick = b.loop_bound(bound)
-  let head = b.new_block()
-  let tst = b.new_block()
-  let bodyb = b.new_block()
-  let latch = b.new_block()
-  let exit = b.new_block()
-  b.jump(head, [])
-  b.s.cur = head
-  let i = b.read(idx)
-  b.s.f.branch(b.s.cur, b.add(Op.Lt, bt, Aux.None, [i, n]), tst, exit)
-  b.seal(tst)
-  b.s.cur = tst
-  b.jump(bodyb, [])
-  b.seal(bodyb)
-  b.s.cur = bodyb
-  b.loop_tick(tick)
-  let kt = map_key(b.m, t)
-  let e = b.mlog_at(et, src, i)
-  let k = b.add(Op.Field, kt, Aux.I(n: 3), [e])
-  var elem = k
-  let fail = b.new_block()
-  if !set {
-    let vt = map_val(b.m, t)
-    let v = b.add(Op.Field, vt, Aux.I(n: 4), [e])
     var els: List[Pattern] = []
     if let TuplePat(elems: es, ..) = p {
       els = es

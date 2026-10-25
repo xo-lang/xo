@@ -1,6 +1,7 @@
 package arm64
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -167,4 +168,79 @@ func TestHollowUnreached(t *testing.T) {
 		t.Error("no drop helper (_xo_h, _xo_f_drop) is one brk")
 	}
 	t.Logf("one brk: export %s, drop helper %s", export, drop)
+}
+
+// TestMapLogStress runs the map_log_stress golden (decision 0372: copies
+// of one table written by their tasks while others read it, and a Mutex
+// store's writes and snapshots across tasks, every read checked) five
+// times at each of XO_THREADS 1, 2, 4 and 8, and its --race build at 2
+// and 8, which must report no race.
+func TestMapLogStress(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a program twice and runs it 22 times")
+	}
+	if runtime.GOARCH != "arm64" {
+		t.Skip("the arm64 backend builds for the host")
+	}
+	dir := filepath.Join("..", "llvm", "testdata", "golden", "map_log_stress")
+	const want = "bad 0 base true small 40\n"
+	// the --race build links clang's ThreadSanitizer runtime, found as
+	// internal/llvm TestTSanSharedMaps finds it; with none the race
+	// subtest says so and skips
+	raceEnv, why := tsanRuntimeEnv()
+	run := func(t *testing.T, race bool, env []string, threads []int, runs int) {
+		res, err := xotool.Build([]string{dir}, xotool.Options{Backend: xotool.BackendArm64, Race: race, Env: env})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Failed {
+			t.Fatalf("build (race %v) failed:\n%s", race, res.Output)
+		}
+		if res.Dir != "" {
+			defer os.RemoveAll(res.Dir)
+		}
+		bin := res.Binaries[xotool.Host()]
+		for _, n := range threads {
+			for i := 0; i < runs; i++ {
+				cmd := exec.Command(bin)
+				cmd.Env = append(os.Environ(), fmt.Sprintf("XO_THREADS=%d", n))
+				out, err := testtmp.Guard(cmd).CombinedOutput()
+				if err != nil || string(out) != want {
+					t.Fatalf("race %v XO_THREADS=%d run %d: %v\n%s", race, n, i, err, out)
+				}
+			}
+		}
+	}
+	t.Run("plain", func(t *testing.T) { run(t, false, nil, []int{1, 2, 4, 8}, 5) })
+	t.Run("race", func(t *testing.T) {
+		if why != "" {
+			t.Log("the --race half did not run: " + why)
+			t.Skip(why)
+		}
+		run(t, true, raceEnv, []int{2, 8}, 1)
+	})
+}
+
+// tsanRuntimeEnv is the environment of a darwin --race build
+// (XO_RACE_RUNTIME, clang's ThreadSanitizer runtime), or why there is none.
+func tsanRuntimeEnv() ([]string, string) {
+	if runtime.GOOS != "darwin" {
+		return nil, "the arm64 --race build links here on darwin only"
+	}
+	if os.Getenv("XO_RACE_RUNTIME") != "" {
+		return nil, ""
+	}
+	cl, err := xotool.Clang()
+	if err != nil {
+		return nil, "no clang: " + err.Error()
+	}
+	out, err := exec.Command(cl, "-print-file-name=lib/darwin/libclang_rt.tsan_osx_dynamic.dylib").Output()
+	if err != nil {
+		return nil, "no ThreadSanitizer runtime: " + err.Error()
+	}
+	p := strings.TrimSpace(string(out))
+	if _, err := os.Stat(p); err != nil || !filepath.IsAbs(p) {
+		return nil, "no ThreadSanitizer runtime at " + p
+	}
+	return []string{"XO_RACE_RUNTIME=" + p}, ""
 }

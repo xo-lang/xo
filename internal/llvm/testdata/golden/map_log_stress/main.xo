@@ -1,0 +1,93 @@
+// Concurrent Map stress (decision 0372's landing bar): copies of one
+// table written by their tasks (forks of a shared table, claims on its
+// log) while other tasks read the shared value, and a Mutex store whose
+// writes and snapshots cross tasks; every read is checked.
+
+fn check(m: Map[Str, Int], n: Int) -> Int {
+  var s = 0
+  for i in 0..n {
+    s += m.get("k${i}") ?? -1000000
+  }
+  s
+}
+
+fn main(os: Os) {
+  let n = 2000
+  var base: Map[Str, Int] = {}
+  for i in 0..n {
+    base.put("k${i}", i)
+  }
+  let want = check(base, n)
+  var small: Map[Str, Int] = {}
+  for i in 0..40 {
+    small.put("k${i}", i)
+  }
+  let store = Mutex[Map[Str, Int]].new(base)
+  let bad = Atomic[Int].new(0)
+  scope sc {
+    for t in 0..4 {
+      sc.spawn(fn() {
+        var mine = base
+        var tiny = small
+        for r in 0..20 {
+          for i in 0..n {
+            if (i + t + r) % 7 == 0 {
+              mine.put("k${i}", i + 1)
+            }
+          }
+          for i in 0..n {
+            if (i + r) % 11 == 0 {
+              let _x = mine.remove("x${i}")
+            } else if i % 13 == 0 {
+              mine.put("x${i}", i)
+            }
+          }
+          for i in 0..40 {
+            if (i + r) % 3 == 0 {
+              tiny.put("k${i}", i + r)
+            }
+          }
+        }
+        for i in 0..n {
+          let v = mine.get("k${i}") ?? -1
+          if v != i && v != i + 1 {
+            let _b = bad.add(1)
+          }
+        }
+        var seen = 0
+        for (k, v) in mine {
+          if k.starts_with("k") && v >= 0 {
+            seen += 1
+          }
+        }
+        if seen != n {
+          let _b = bad.add(1)
+        }
+      })
+    }
+    for _t in 0..4 {
+      sc.spawn(fn() {
+        for _r in 0..30 {
+          if check(base, n) != want {
+            let _b = bad.add(1)
+          }
+        }
+      })
+    }
+    for t in 0..4 {
+      sc.spawn(fn() {
+        for r in 0..200 {
+          store.with(fn(var m) {
+            m.put("s${(r * 7 + t) % 300}", r)
+            let _x = m.remove("s${(r * 3 + t) % 300}")
+          })
+          let snap = store.with(fn(m) { m })
+          if check(snap, n) != want {
+            let _b = bad.add(1)
+          }
+        }
+      })
+    }
+  }
+  os.stdio.println("bad ${bad.add(0)} base ${check(base, n) == want} small ${small.len()}")
+}

@@ -1,6 +1,8 @@
 // Map and Set on the log and fork representation (decision 0291; std/rt
 // map.go is the Go backend's, and its soundness argument is this one's),
 // behind check.Checker map_log until the switch. A Map[K, V] is the struct
+// {kl, vdir, vpar} (decision 0372 stage B): kl the key side
+// xo.MapLogK[K], whose functions are one per key type,
 //
 //   dir     List[List[E]]  the table's entry log in chunks of 8, 16, 32,
 //                          ... entries after MLOG_PAD empty slots; the
@@ -22,7 +24,12 @@
 //   keys    Int            distinct keys of the table (its owner's count)
 //   parents List[Level]    the views this table forked from, nearest first
 //
-// with E = MapEntry[K, V] {h, prev, org, k, v} (prev: the previous entry
+// and vdir the value log (List[List[V]], own entry i's value at i's slot
+// and offset of dir: a record appends it after its entry, at the same own
+// index; a reader reads a value only of an entry in its own view), vpar
+// the value levels (MapVLevel[V] {vdir, lv}: a parent's value log, or a
+// lists level's values), one for each of kl's parents in their order;
+// with E = MapEntry[K] {h, prev, org, k} (prev: the previous entry
 // of k in the table, or -1; org: the position that gives k its place in
 // insertion order, -1 for a tombstone) and Level {dir, idx, base, len}.
 // A put claims the next position of its table (rt.slot_cas from len to
@@ -52,34 +59,61 @@ const MLOG_ACQ = 1
 const MLOG_REL = 2
 const MLOG_ACQ_REL = 3
 
-/// The entry type of the log map type t (fields: h, prev, org, k, v).
+/// The entry type of the key side type t (xo.MapLogK[K]; fields: h, prev,
+/// org, k).
 fn mlog_entry_of(m: Module, t: Int) -> Int { m.types[m.types[m.types[t].fields[0].ty].elems[0]].elems[0] }
 
-/// The key and value types of the log map type t.
+/// The key type of the key side type t.
 fn mlog_key(m: Module, t: Int) -> Int { m.types[mlog_entry_of(m, t)].fields[3].ty }
 
-fn mlog_val(m: Module, t: Int) -> Int { m.types[mlog_entry_of(m, t)].fields[4].ty }
+/// The key side type (xo.MapLogK[K]) of the log map type t.
+fn mlog_k(m: Module, t: Int) -> Int { m.types[t].fields[0].ty }
 
-/// The log representation of Map[k, v] (or Set[k], v unit) named name.
+/// The value type of the log map type t (its value log's element).
+fn mlog_val(m: Module, t: Int) -> Int { m.types[m.types[m.types[t].fields[1].ty].elems[0]].elems[0] }
+
+/// The log representation of Map[k, v] (or Set[k], v unit) named name:
+/// the key side xo.MapLogK[K] (mlog_ktype), the value log (vdir, the key
+/// side's chunk layout: own entry i's value at the same slot and offset)
+/// and the value levels (vpar, one for each of the key side's parents,
+/// in its order: a log level's value log, a lists level's values).
 fn (var b: Builder) mlog_type(name: Str, k: Int, v: Int) -> Int {
   let (t, created) = b.m.named(name, Kind.Struct)
   if created {
+    let kt = b.mlog_ktype(k)
+    let vl = b.m.list(v)
+    let vd = b.m.list(vl)
+    let (vlt, vnew) = b.m.named("xo.MapVLevel[${b.m.types[v].name}]", Kind.Struct)
+    if vnew {
+      b.m.types[vlt].fields = [SField{name: "vdir", ty: vd}, SField{name: "lv", ty: vl}]
+    }
+    b.m.types[t].fields = [SField{name: "kl", ty: kt}, SField{name: "vdir", ty: vd}, SField{name: "vpar", ty: b.m.list(vlt)}]
+  }
+  t
+}
+
+/// The key side of the log maps of key type k (decision 0372 stage B):
+/// every function of it is one per key type, whatever the value type.
+fn (var b: Builder) mlog_ktype(k: Int) -> Int {
+  let kn = b.m.types[k].name
+  let (t, created) = b.m.named("xo.MapLogK[${kn}]", Kind.Struct)
+  if created {
     let it = b.int_t()
-    let (et, enew) = b.m.named("xo.MapEntry[${b.m.types[k].name}, ${b.m.types[v].name}]", Kind.Struct)
+    let (et, enew) = b.m.named("xo.MapEntry[${kn}]", Kind.Struct)
     if enew {
-      b.m.types[et].fields = [SField{name: "h", ty: it}, SField{name: "prev", ty: it}, SField{name: "org", ty: it}, SField{name: "k", ty: k}, SField{name: "v", ty: v}]
+      b.m.types[et].fields = [SField{name: "h", ty: it}, SField{name: "prev", ty: it}, SField{name: "org", ty: it}, SField{name: "k", ty: k}]
     }
     let dt = b.m.list(b.m.list(et))
     let il = b.m.list(it)
-    let (lv, lnew) = b.m.named("xo.MapLevel[${b.m.types[k].name}, ${b.m.types[v].name}]", Kind.Struct)
+    let (lv, lnew) = b.m.named("xo.MapLevel[${kn}]", Kind.Struct)
     if lnew {
       b.m.types[lv].fields = [SField{name: "dir", ty: dt}, SField{name: "idx", ty: il}, SField{name: "base", ty: it}, SField{name: "len", ty: it}]
       if b.m.map_branch {
         // a lists level (maphyb.xo maph_fork_lists): a hybrid lists
-        // value's keys, values, live flags, slots and live count, the
-        // oldest level of a fork (positions 0 to len); empty in a log
-        // level
-        b.m.types[lv].fields = b.m.types[lv].fields + [SField{name: "lk", ty: b.m.list(k)}, SField{name: "lv", ty: b.m.list(v)}, SField{name: "ll", ty: b.m.list(b.bool_t())}, SField{name: "ls", ty: il}, SField{name: "ln", ty: it}]
+        // value's keys, live flags, slots and live count, the oldest
+        // level of a fork (positions 0 to len; its values are the value
+        // level's lv); empty in a log level
+        b.m.types[lv].fields = b.m.types[lv].fields + [SField{name: "lk", ty: b.m.list(k)}, SField{name: "ll", ty: b.m.list(b.bool_t())}, SField{name: "ls", ty: il}, SField{name: "ln", ty: it}]
       }
     }
     b.m.types[t].coll = true
@@ -95,16 +129,6 @@ fn (var b: Builder) iop(op: Op, x: Int, y: Int) -> Int { b.add(op, b.int_t(), Au
 fn (var b: Builder) iwrap(op: Op, x: Int, y: Int) -> Int { b.add(op, b.int_t(), Aux.S(s: "wrap"), [x, y]) }
 
 fn (var b: Builder) bop(op: Op, x: Int, y: Int) -> Int { b.add(op, b.bool_t(), Aux.None, [x, y]) }
-
-/// A Map or Set with no entries and no table.
-fn (var b: Builder) mlog_empty(t: Int) -> Int {
-  var fs: List[Int] = []
-  for i in 0..8 {
-    let ft = b.m.types[t].fields[i].ty
-    fs.push(if b.tkind(ft) == Kind.List { b.call("list.new", ft, "", []) } else { b.cint(0) })
-  }
-  b.add(Op.Struct, t, Aux.None, fs)
-}
 
 /// The directory slot and offset of own entry i (i >= 0): slot c (c >= 3,
 /// the directory's first MLOG_PAD slots are empty) holds the 2^c entries
@@ -152,12 +176,12 @@ fn (var b: Builder) mlog_at(et: Int, dir: Int, i: Int) -> Int {
   b.call("list.index", et, "", [chunk, off])
 }
 
-/// A log level of level type lvt: dir, idx, base, len, and with
+/// A log level of key level type lvt: dir, idx, base, len, and with
 /// map_branch an empty lists part.
 fn (var b: Builder) mlog_level(lvt: Int, dir: Int, idx: Int, base: Int, lim: Int) -> Int {
   var fs = [dir, idx, base, lim]
   if b.m.map_branch {
-    for i in 4..8 {
+    for i in 4..7 {
       fs.push(b.call("list.new", b.m.types[lvt].fields[i].ty, "", []))
     }
     fs.push(b.cint(0))
@@ -170,8 +194,8 @@ fn (var b: Builder) mlog_lvl_lists(lvt: Int, lvl: Int) -> Int {
   b.bop(Op.Gt, b.call("list.len", b.int_t(), "", [b.add(Op.Field, b.m.types[lvt].fields[4].ty, Aux.I(n: 4), [lvl])]), b.cint(0))
 }
 
-/// The entry at own index i of level lvl (of type lvt) of log map type t:
-/// its log's, or for a lists level one made from the lists (no hash,
+/// The entry at own index i of level lvl (of type lvt) of key side type
+/// t: its log's, or for a lists level one made from the lists (no hash,
 /// no prev, its own origin when live, else a removal's -1).
 fn (var b: Builder) mlog_lvl_at(t: Int, lvt: Int, lvl: Int, i: Int) -> Int {
   let et = mlog_entry_of(b.m, t)
@@ -186,14 +210,34 @@ fn (var b: Builder) mlog_lvl_at(t: Int, lvt: Int, lvl: Int, i: Int) -> Int {
   b.s.cur = ls
   let orgv = b.local()
   b.write_var(orgv, b.cint(-1))
-  let (nl, jl) = b.if_then_begin(b.call("list.index", b.bool_t(), "", [b.add(Op.Field, lf[6].ty, Aux.I(n: 6), [lvl]), i]))
+  let (nl, jl) = b.if_then_begin(b.call("list.index", b.bool_t(), "", [b.add(Op.Field, lf[5].ty, Aux.I(n: 5), [lvl]), i]))
   b.write_var(orgv, i)
   b.if_then_end(nl, jl)
   let k = b.call("list.index", mlog_key(b.m, t), "", [b.add(Op.Field, lf[4].ty, Aux.I(n: 4), [lvl]), i])
-  let v = b.call("list.index", mlog_val(b.m, t), "", [b.add(Op.Field, lf[5].ty, Aux.I(n: 5), [lvl]), i])
-  b.jump(join, [b.add(Op.Struct, et, Aux.None, [b.cint(0), b.cint(-1), b.read(orgv), k, v])])
+  b.jump(join, [b.add(Op.Struct, et, Aux.None, [b.cint(0), b.cint(-1), b.read(orgv), k])])
   b.s.cur = lg
   b.jump(join, [b.mlog_at(et, dir, i)])
+  b.seal(join)
+  b.s.cur = join
+  res
+}
+
+/// The value at own index i of the level of key level lvl (type lvt) and
+/// value level vlvl (type vlt), of value type vt: its value log's, or a
+/// lists level's value.
+fn (var b: Builder) mlog_vlvl_at(vt: Int, lvt: Int, lvl: Int, vlt: Int, vlvl: Int, i: Int) -> Int {
+  let vf = b.m.types[vlt].fields
+  let vdir = b.add(Op.Field, vf[0].ty, Aux.I(n: 0), [vlvl])
+  if !b.m.map_branch {
+    return b.mlog_at(vt, vdir, i)
+  }
+  let join = b.new_block()
+  let res = b.s.f.add_param(join, vt)
+  let (ls, lg) = b.branch(b.mlog_lvl_lists(lvt, lvl))
+  b.s.cur = ls
+  b.jump(join, [b.call("list.index", vt, "", [b.add(Op.Field, vf[1].ty, Aux.I(n: 1), [vlvl]), i])])
+  b.s.cur = lg
+  b.jump(join, [b.mlog_at(vt, vdir, i)])
   b.seal(join)
   b.s.cur = join
   res
@@ -207,7 +251,7 @@ fn (var b: Builder) mlog_lprobe(t: Int, lvt: Int) -> Str {
   let kt = mlog_key(b.m, t)
   let lf = b.m.types[lvt].fields
   let name = "xo.mlog.lprobe[${b.m.types[t].name}]"
-  let fi = b.thunk_func(name, [lf[4].ty, lf[6].ty, lf[7].ty, kt, it], [it], [])
+  let fi = b.thunk_func(name, [lf[4].ty, lf[5].ty, lf[6].ty, kt, it], [it], [])
   if fi < 0 {
     return name
   }
@@ -583,7 +627,7 @@ fn (var b: Builder) mlog_findx(t: Int) -> Str {
     // a lists level, always the oldest: the lists' find
     let lf = b.m.types[lvt].fields
     let (nls, jls) = b.if_then_begin(b.mlog_lvl_lists(lvt, lvl))
-    let lj = b.call(b.mlog_lprobe(t, lvt), it, "", [b.add(Op.Field, lf[4].ty, Aux.I(n: 4), [lvl]), b.add(Op.Field, lf[6].ty, Aux.I(n: 6), [lvl]), b.add(Op.Field, lf[7].ty, Aux.I(n: 7), [lvl]), k, h])
+    let lj = b.call(b.mlog_lprobe(t, lvt), it, "", [b.add(Op.Field, lf[4].ty, Aux.I(n: 4), [lvl]), b.add(Op.Field, lf[5].ty, Aux.I(n: 5), [lvl]), b.add(Op.Field, lf[6].ty, Aux.I(n: 6), [lvl]), k, h])
     let (nlh, jlh) = b.if_then_begin(b.bop(Op.Ge, lj, b.cint(0)))
     b.retv(b.iop(Op.Add, b.iop(Op.Mul, b.iop(Op.Add, lev, b.cint(1)), b.cint(MLOG_LEVEL)), lj))
     b.if_then_end(nlh, jlh)
@@ -614,7 +658,8 @@ fn (var b: Builder) mlog_findx(t: Int) -> Str {
   name
 }
 
-/// The entry of a find's result w (>= 0) in the map value mv.
+/// The entry of a find's result w (>= 0) in the key side value mv (of
+/// type t).
 fn (var b: Builder) mlog_entry_at(t: Int, mv: Int, w: Int) -> Int {
   let it = b.int_t()
   let et = mlog_entry_of(b.m, t)
@@ -636,10 +681,105 @@ fn (var b: Builder) mlog_entry_at(t: Int, mv: Int, w: Int) -> Int {
   res
 }
 
-/// The value of a find's result w (>= 0) in the map value mv.
+/// The value of a find's result w (>= 0) in the log map value mv (of
+/// type t): its value log's at the entry's own index, or its value
+/// level's.
 fn (var b: Builder) mlog_value_at(t: Int, mv: Int, w: Int) -> Int {
-  let e = b.mlog_entry_at(t, mv, w)
-  b.add(Op.Field, mlog_val(b.m, t), Aux.I(n: 4), [e])
+  let it = b.int_t()
+  let vt = mlog_val(b.m, t)
+  let kt = mlog_k(b.m, t)
+  let kl = b.mf(t, 0, mv)
+  let lev = b.iop(Op.Div, w, b.cint(MLOG_LEVEL))
+  let pos = b.iop(Op.Sub, w, b.iop(Op.Mul, lev, b.cint(MLOG_LEVEL)))
+  let join = b.new_block()
+  let res = b.s.f.add_param(join, vt)
+  let (own, up) = b.branch(b.bop(Op.Eq, lev, b.cint(0)))
+  b.s.cur = own
+  b.jump(join, [b.mlog_at(vt, b.mf(t, 1, mv), b.iop(Op.Sub, pos, b.mf(kt, 3, kl)))])
+  b.s.cur = up
+  let parents = b.mf(kt, 7, kl)
+  let lvt = b.m.types[b.vty(parents)].elems[0]
+  let vpar = b.mf(t, 2, mv)
+  let vlt = b.m.types[b.vty(vpar)].elems[0]
+  let li = b.iop(Op.Sub, lev, b.cint(1))
+  let lvl = b.call("list.index", lvt, "", [parents, li])
+  let vlvl = b.call("list.index", vlt, "", [vpar, li])
+  let lbase = b.add(Op.Field, it, Aux.I(n: 2), [lvl])
+  b.jump(join, [b.mlog_vlvl_at(vt, lvt, lvl, vlt, vlvl, b.iop(Op.Sub, pos, lbase))])
+  b.seal(join)
+  b.s.cur = join
+  res
+}
+
+/// xo.mlog.vals[T](m, ws) -> List[V]: the values of find results ws in
+/// the log map value m.
+fn (var b: Builder) mlog_vals(t: Int) -> Str {
+  let it = b.int_t()
+  let vl = b.m.list(mlog_val(b.m, t))
+  let il = b.m.list(it)
+  let name = "xo.mlog.vals[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t, il], [vl], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let mp = b.param(0)
+  let ws = b.param(1)
+  let n = b.call("list.len", it, "", [ws])
+  let out = b.local()
+  b.write_var(out, b.call("list.new", vl, "", [n]))
+  let iv = b.local()
+  let (i, ih, ix) = b.for_up_to_begin(n, iv)
+  let v = b.mlog_value_at(t, mp, b.call("list.index", it, "", [ws, i]))
+  b.write_var(out, b.call("list.push", vl, "", [b.read(out), v]))
+  b.for_up_to_end(i, iv, ih, ix)
+  b.retv(b.read(out))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// xo.mlog.vtable[D](vals) -> D: a fresh value log (D, a List[List[V]])
+/// of vals in the key side's chunk layout (mlog_table's entries).
+fn (var b: Builder) mlog_vtable(vd: Int) -> Str {
+  let it = b.int_t()
+  let vl = b.m.types[vd].elems[0]
+  let name = "xo.mlog.vtable[${b.m.types[vd].name}]"
+  let fi = b.thunk_func(name, [vl], [vd], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let vals = b.param(0)
+  let n = b.call("list.len", it, "", [vals])
+  let dv = b.local()
+  b.write_var(dv, b.mlog_newdir(vd))
+  let iv = b.local()
+  let (i, ih, ix) = b.for_up_to_begin(n, iv)
+  let v = b.call("list.index", b.m.types[vl].elems[0], "", [vals, i])
+  let (c, _off) = b.mlog_slot(i)
+  let (nn, jn) = b.if_then_begin(b.bop(Op.Eq, c, b.call("list.len", it, "", [b.read(dv)])))
+  b.mlog_push(b.read(dv), b.call("list.new", vl, "", [b.iop(Op.Shl, b.cint(1), c)]))
+  b.if_then_end(nn, jn)
+  b.mlog_push(b.call("list.index", vl, "", [b.read(dv), c]), v)
+  b.for_up_to_end(i, iv, ih, ix)
+  b.retv(b.read(dv))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// The value log vdir with v appended at own index i (a new chunk first
+/// when i starts one), in place (log.push: the chunks are shared as the
+/// key side's are).
+fn (var b: Builder) mlog_vpush(vdir: Int, i: Int, v: Int) {
+  let it = b.int_t()
+  let vl = b.m.types[b.vty(vdir)].elems[0]
+  let (c, _off) = b.mlog_slot(i)
+  let (nc, jc) = b.if_then_begin(b.bop(Op.Eq, c, b.call("list.len", it, "", [vdir])))
+  b.mlog_push(vdir, b.call("list.new", vl, "", [b.iop(Op.Shl, b.cint(1), c)]))
+  b.if_then_end(nc, jc)
+  b.mlog_push(b.call("list.index", vl, "", [vdir, c]), v)
 }
 
 /// The index of the own entries [base, lim) of the log dir: each key's
@@ -713,17 +853,20 @@ fn (var b: Builder) mlog_build_index(t: Int, dir: Int, base: Int, lim: Int, keys
   slots
 }
 
-/// The live entries of m's view in insertion order with their current
-/// values, as fresh entries (prev and org -1): the flatten and the
-/// iterations.
+/// xo.mlog.each[K](m) -> (List[E], List[Int]): the live entries of the
+/// key side m's view in insertion order, as fresh entries (prev and org
+/// -1), and each one's current entry as a find result (mlog_value_at
+/// reads its value): the flatten and the iterations.
 fn (var b: Builder) mlog_each(t: Int) -> Str {
   let it = b.int_t()
   let et = mlog_entry_of(b.m, t)
   let kt = mlog_key(b.m, t)
   let find = b.mlog_find(t)
   let el = b.m.list(et)
+  let wl = b.m.list(it)
+  let rt = b.m.tuple([el, wl])
   let name = "xo.mlog.each[${b.m.types[t].name}]"
-  let fi = b.thunk_func(name, [t], [el], [])
+  let fi = b.thunk_func(name, [t], [rt], [])
   if fi < 0 {
     return name
   }
@@ -732,6 +875,8 @@ fn (var b: Builder) mlog_each(t: Int) -> Str {
   let n = b.mf(t, 4, mp)
   let out = b.local()
   b.write_var(out, b.call("list.new", el, "", [n]))
+  let wsv = b.local()
+  b.write_var(wsv, b.call("list.new", wl, "", [n]))
   let parents = b.mf(t, 7, mp)
   let lvt = b.m.types[b.vty(parents)].elems[0]
   let np = b.call("list.len", it, "", [parents])
@@ -746,10 +891,11 @@ fn (var b: Builder) mlog_each(t: Int) -> Str {
   let (fi0, fh, fx) = b.for_up_to_begin(n, fv)
   let fe = b.mlog_at(et, rdir, fi0)
   let fk = b.add(Op.Field, kt, Aux.I(n: 3), [fe])
-  let ffresh = b.add(Op.Struct, et, Aux.None, [b.add(Op.Field, it, Aux.I(n: 0), [fe]), b.cint(-1), b.cint(-1), fk, b.add(Op.Field, mlog_val(b.m, t), Aux.I(n: 4), [fe])])
+  let ffresh = b.add(Op.Struct, et, Aux.None, [b.add(Op.Field, it, Aux.I(n: 0), [fe]), b.cint(-1), b.cint(-1), fk])
   b.write_var(out, b.call("list.push", el, "", [b.read(out), ffresh]))
+  b.write_var(wsv, b.call("list.push", wl, "", [b.read(wsv), fi0]))
   b.for_up_to_end(fi0, fv, fh, fx)
-  b.retv(b.read(out))
+  b.retv(b.add(Op.Tuple, rt, Aux.None, [b.read(out), b.read(wsv)]))
   b.if_then_end(ng, jg)
   let bl = b.m.list(b.bool_t())
   let il = b.m.list(it)
@@ -784,11 +930,12 @@ fn (var b: Builder) mlog_each(t: Int) -> Str {
   let x = b.call("list.index", it, "", [ords, w0])
   let (nx, jx) = b.if_then_begin(b.bop(Op.Ne, x, b.cint(0)))
   let ce = b.mlog_at(et, rdir, b.iop(Op.Sub, x, b.cint(1)))
-  let cfresh = b.add(Op.Struct, et, Aux.None, [b.add(Op.Field, it, Aux.I(n: 0), [ce]), b.cint(-1), b.cint(-1), b.add(Op.Field, kt, Aux.I(n: 3), [ce]), b.add(Op.Field, mlog_val(b.m, t), Aux.I(n: 4), [ce])])
+  let cfresh = b.add(Op.Struct, et, Aux.None, [b.add(Op.Field, it, Aux.I(n: 0), [ce]), b.cint(-1), b.cint(-1), b.add(Op.Field, kt, Aux.I(n: 3), [ce])])
   b.write_var(out, b.call("list.push", el, "", [b.read(out), cfresh]))
+  b.write_var(wsv, b.call("list.push", wl, "", [b.read(wsv), b.iop(Op.Sub, x, b.cint(1))]))
   b.if_then_end(nx, jx)
   b.for_up_to_end(w0, wv, wh, wx)
-  b.retv(b.read(out))
+  b.retv(b.add(Op.Tuple, rt, Aux.None, [b.read(out), b.read(wsv)]))
   b.if_then_end(nr, jr)
   // the levels from the oldest (np) to m's table (0); a level's end is
   // its child's base
@@ -869,8 +1016,9 @@ fn (var b: Builder) mlog_each(t: Int) -> Str {
   let (nw, jw) = b.if_then_begin(b.bop(Op.Ge, w, b.cint(0)))
   let cur = b.mlog_entry_at(t, mp, w)
   let (ns, js) = b.if_then_begin(b.bop(Op.Eq, b.add(Op.Field, it, Aux.I(n: 2), [cur]), pos))
-  let fresh = b.add(Op.Struct, et, Aux.None, [h, b.cint(-1), b.cint(-1), k, b.add(Op.Field, mlog_val(b.m, t), Aux.I(n: 4), [cur])])
+  let fresh = b.add(Op.Struct, et, Aux.None, [h, b.cint(-1), b.cint(-1), k])
   b.write_var(out, b.call("list.push", el, "", [b.read(out), fresh]))
+  b.write_var(wsv, b.call("list.push", wl, "", [b.read(wsv), w]))
   b.if_then_end(ns, js)
   b.if_then_end(nw, jw)
   b.if_then_end(no, jo)
@@ -880,7 +1028,7 @@ fn (var b: Builder) mlog_each(t: Int) -> Str {
   b.seal(head)
   b.seal(fin)
   b.s.cur = fin
-  b.retv(b.read(out))
+  b.retv(b.add(Op.Tuple, rt, Aux.None, [b.read(out), b.read(wsv)]))
   b.finish_fn()
   b.end(saved)
   name
@@ -1000,13 +1148,24 @@ fn (var b: Builder) mlog_table(t: Int, es: Int, claim: Int) -> Int {
   b.add(Op.Struct, t, Aux.None, [dir2, b.read(xv), used, b.cint(0), n, n, n, parents])
 }
 
-/// xo.mlog.claim[T](m) -> T: m owning the next position of its table (it
-/// won the claim, or forked or flattened into a table only it has).
-fn (var b: Builder) mlog_claim(t: Int) -> Str {
+/// The result of xo.mlog.claimk[K] for key side type t: (the key side,
+/// how, the flatten's find results), how 0 when m won the claim, 1 for a
+/// first table, 2 for a flatten (its entries' current ones in m were the
+/// find results), 3 for a fork (m's view its parent).
+fn (var b: Builder) mlog_claim_type(t: Int) -> Int {
+  b.m.tuple([t, b.int_t(), b.m.list(b.int_t())])
+}
+
+/// xo.mlog.claimk[K](m) -> mlog_claim_type: the key side m owning the next
+/// position of its table (it won the claim, or forked or flattened into a
+/// table only it has).
+fn (var b: Builder) mlog_claimk(t: Int) -> Str {
   let it = b.int_t()
   let each = b.mlog_each(t)
-  let name = "xo.mlog.claim[${b.m.types[t].name}]"
-  let fi = b.thunk_func(name, [t], [t], [])
+  let rt = b.mlog_claim_type(t)
+  let wl = b.m.list(it)
+  let name = "xo.mlog.claimk[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t], [rt], [])
   if fi < 0 {
     return name
   }
@@ -1015,24 +1174,26 @@ fn (var b: Builder) mlog_claim(t: Int) -> Str {
   let mp = b.param(0)
   let used = b.mf(t, 2, mp)
   let lim = b.mf(t, 5, mp)
+  let none = b.call("list.new", wl, "", [])
   let (nt, jt) = b.if_then_begin(b.bop(Op.Eq, b.call("list.len", it, "", [used]), b.cint(0)))
   // no table yet: a fresh one, position 0 claimed
   var u0 = b.call("list.new", il, "", [b.cint(1)])
   u0 = b.call("list.push", il, "", [u0, b.cint(1)])
   let d0 = b.mlog_newdir(b.m.types[t].fields[0].ty)
-  b.retv(b.add(Op.SetField, t, Aux.I(n: 0), [b.add(Op.SetField, t, Aux.I(n: 2), [mp, u0]), d0]))
+  b.retv(b.add(Op.Tuple, rt, Aux.None, [b.add(Op.SetField, t, Aux.I(n: 0), [b.add(Op.SetField, t, Aux.I(n: 2), [mp, u0]), d0]), b.cint(1), none]))
   b.if_then_end(nt, jt)
   let won = b.rt("slot_cas", b.bool_t(), [used, b.cint(0), lim, b.iop(Op.Add, lim, b.cint(1)), b.cint(MLOG_ACQ_REL)])
   let (nw, jw) = b.if_then_begin(won)
-  b.retv(mp)
+  b.retv(b.add(Op.Tuple, rt, Aux.None, [mp, b.cint(0), none]))
   b.if_then_end(nw, jw)
   let parents = b.mf(t, 7, mp)
   let lvt = b.m.types[b.vty(parents)].elems[0]
   let np = b.call("list.len", it, "", [parents])
   let (nd, jd) = b.if_then_begin(b.bop(Op.Ge, np, b.cint(MLOG_DEPTH)))
   // too deep: a flattened table, its next position claimed
-  let es = b.call(each, b.m.list(mlog_entry_of(b.m, t)), "", [mp])
-  b.retv(b.mlog_table(t, es, b.cint(1)))
+  let er = b.call(each, b.m.tuple([b.m.list(mlog_entry_of(b.m, t)), wl]), "", [mp])
+  let es = b.add(Op.Field, b.m.list(mlog_entry_of(b.m, t)), Aux.I(n: 0), [er])
+  b.retv(b.add(Op.Tuple, rt, Aux.None, [b.mlog_table(t, es, b.cint(1)), b.cint(2), b.add(Op.Field, wl, Aux.I(n: 1), [er])]))
   b.if_then_end(nd, jd)
   // a fork: a table whose parent is m's view
   let lvl = b.mlog_level(lvt, b.mf(t, 0, mp), b.mf(t, 1, mp), b.mf(t, 3, mp), lim)
@@ -1048,26 +1209,84 @@ fn (var b: Builder) mlog_claim(t: Int) -> Str {
   u1 = b.call("list.push", il, "", [u1, b.iop(Op.Add, lim, b.cint(1))])
   let dir = b.mlog_newdir(b.m.types[t].fields[0].ty)
   let idx = b.call("list.new", il, "", [])
-  b.retv(b.add(Op.Struct, t, Aux.None, [dir, idx, u1, lim, b.mf(t, 4, mp), lim, b.cint(0), b.read(pv)]))
+  b.retv(b.add(Op.Tuple, rt, Aux.None, [b.add(Op.Struct, t, Aux.None, [dir, idx, u1, lim, b.mf(t, 4, mp), lim, b.cint(0), b.read(pv)]), b.cint(3), none]))
   b.finish_fn()
   b.end(saved)
   name
 }
 
-/// xo.mlog.record[T](m, h, k, v, del) -> T: an entry of k (a tombstone when
-/// del, v then the removed value) appended at the position m claimed.
-fn (var b: Builder) mlog_record(t: Int) -> Str {
+/// xo.mlog.claim[T](m) -> T: the log map m owning the next position of its
+/// table (xo.mlog.claimk), its values following: the same value log when
+/// it won, a fresh one for a first table or a fork (whose value level is
+/// m's value log), the flatten's values in one.
+fn (var b: Builder) mlog_claim(t: Int) -> Str {
+  let it = b.int_t()
+  let kt = mlog_k(b.m, t)
+  let claimk = b.mlog_claimk(kt)
+  let vals = b.mlog_vals(t)
+  let vd = b.m.types[t].fields[1].ty
+  let vtab = b.mlog_vtable(vd)
+  let name = "xo.mlog.claim[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t], [t], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let mp = b.param(0)
+  let wl = b.m.list(it)
+  let r = b.call(claimk, b.mlog_claim_type(kt), "", [b.mf(t, 0, mp)])
+  let k2 = b.add(Op.Field, kt, Aux.I(n: 0), [r])
+  let how = b.add(Op.Field, it, Aux.I(n: 1), [r])
+  let vpar = b.mf(t, 2, mp)
+  let vpt = b.vty(vpar)
+  let vlt = b.m.types[vpt].elems[0]
+  let (nw, jw) = b.if_then_begin(b.bop(Op.Eq, how, b.cint(0)))
+  b.retv(b.add(Op.SetField, t, Aux.I(n: 0), [mp, k2]))
+  b.if_then_end(nw, jw)
+  let (nf, jf) = b.if_then_begin(b.bop(Op.Eq, how, b.cint(1)))
+  b.retv(b.add(Op.Struct, t, Aux.None, [k2, b.mlog_newdir(vd), vpar]))
+  b.if_then_end(nf, jf)
+  let (nl, jl) = b.if_then_begin(b.bop(Op.Eq, how, b.cint(2)))
+  let vs = b.call(vals, b.m.types[vd].elems[0], "", [mp, b.add(Op.Field, wl, Aux.I(n: 2), [r])])
+  b.retv(b.add(Op.Struct, t, Aux.None, [k2, b.call(vtab, vd, "", [vs]), b.call("list.new", vpt, "", [])]))
+  b.if_then_end(nl, jl)
+  // a fork: m's value log is the new parent level's, nearest first
+  let vlvl = b.add(Op.Struct, vlt, Aux.None, [b.mf(t, 1, mp), b.call("list.new", b.m.types[vlt].fields[1].ty, "", [])])
+  let np = b.call("list.len", it, "", [vpar])
+  let pv = b.local()
+  b.write_var(pv, b.call("list.new", vpt, "", [b.iop(Op.Add, np, b.cint(1))]))
+  b.write_var(pv, b.call("list.push", vpt, "", [b.read(pv), vlvl]))
+  let iv = b.local()
+  let (i, ih, ix) = b.for_up_to_begin(np, iv)
+  b.write_var(pv, b.call("list.push", vpt, "", [b.read(pv), b.call("list.index", vlt, "", [vpar, i])]))
+  b.for_up_to_end(i, iv, ih, ix)
+  b.retv(b.add(Op.Struct, t, Aux.None, [k2, b.mlog_newdir(vd), b.read(pv)]))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// The result of xo.mlog.recordk[K] for key side type t: (the key side,
+/// the entry's own index, whether the table is to be flattened).
+fn (var b: Builder) mlog_record_type(t: Int) -> Int {
+  b.m.tuple([t, b.int_t(), b.bool_t()])
+}
+
+/// xo.mlog.recordk[K](m, h, k, del) -> mlog_record_type: an entry of k (a
+/// tombstone when del) appended at the position the key side m claimed;
+/// the caller appends its value at the same own index (xo.mlog.record),
+/// then flattens when told (too much garbage, or a root's first index).
+fn (var b: Builder) mlog_recordk(t: Int) -> Str {
   let it = b.int_t()
   let bt = b.bool_t()
   let et = mlog_entry_of(b.m, t)
   let el = b.m.list(et)
   let kt = mlog_key(b.m, t)
-  let vt = mlog_val(b.m, t)
   let probe = b.mlog_probe(t)
   let find = b.mlog_find(t)
-  let each = b.mlog_each(t)
-  let name = "xo.mlog.record[${b.m.types[t].name}]"
-  let fi = b.thunk_func(name, [t, it, kt, vt, bt], [t], [])
+  let rt = b.mlog_record_type(t)
+  let name = "xo.mlog.recordk[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t, it, kt, bt], [rt], [])
   if fi < 0 {
     return name
   }
@@ -1076,8 +1295,7 @@ fn (var b: Builder) mlog_record(t: Int) -> Str {
   let mp = b.param(0)
   let h = b.param(1)
   let k = b.param(2)
-  let v = b.param(3)
-  let del = b.param(4)
+  let del = b.param(3)
   let base = b.mf(t, 3, mp)
   let lim = b.mf(t, 5, mp)
   let i = b.iop(Op.Sub, lim, base)
@@ -1139,7 +1357,7 @@ fn (var b: Builder) mlog_record(t: Int) -> Str {
   b.write_var(nv, b.iop(Op.Add, b.read(nv), b.cint(1)))
   b.write_var(orgv, lim)
   b.if_then_end(no, jo)
-  let e = b.add(Op.Struct, et, Aux.None, [h, j, b.read(orgv), k, v])
+  let e = b.add(Op.Struct, et, Aux.None, [h, j, b.read(orgv), k])
   // the entry: a new chunk first when this position starts one
   let (c, _off) = b.mlog_slot(i)
   let (nc, jc) = b.if_then_begin(b.bop(Op.Eq, c, b.call("list.len", it, "", [b.read(dv)])))
@@ -1168,9 +1386,47 @@ fn (var b: Builder) mlog_record(t: Int) -> Str {
   // owner then writes in place: the lists' copy on first write, once)
   let fork_big = b.bop(Op.Gt, b.iop(Op.Mul, own1, b.cint(8)), b.iop(Op.Add, base, b.cint(256)))
   let fork_g = b.add(Op.And, bt, Aux.None, [has_parent, b.add(Op.Or, bt, Aux.None, [b.bop(Op.Gt, own1, b.iop(Op.Add, n1, b.cint(32))), fork_big])])
-  let (nf, jf) = b.if_then_begin(b.add(Op.Or, bt, Aux.None, [b.add(Op.Or, bt, Aux.None, [root_g, fork_g]), b.read(firstv)]))
-  let es = b.call(each, el, "", [m1])
-  b.retv(b.mlog_table(t, es, b.cint(0)))
+  let flat = b.add(Op.Or, bt, Aux.None, [b.add(Op.Or, bt, Aux.None, [root_g, fork_g]), b.read(firstv)])
+  b.retv(b.add(Op.Tuple, rt, Aux.None, [m1, i, flat]))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// xo.mlog.record[T](m, h, k, v, del) -> T: an entry of k (a tombstone when
+/// del, v then the removed value, kept so the value log follows the key
+/// side's positions) appended at the position m claimed (xo.mlog.recordk),
+/// and v at the same own index of the value log; flattened (the key side
+/// by its xo.mlog.each, the values by its find results) when recordk says.
+fn (var b: Builder) mlog_record(t: Int) -> Str {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let kt = mlog_k(b.m, t)
+  let et = mlog_entry_of(b.m, kt)
+  let el = b.m.list(et)
+  let wl = b.m.list(it)
+  let recordk = b.mlog_recordk(kt)
+  let each = b.mlog_each(kt)
+  let vals = b.mlog_vals(t)
+  let vd = b.m.types[t].fields[1].ty
+  let vtab = b.mlog_vtable(vd)
+  let name = "xo.mlog.record[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t, it, mlog_key(b.m, kt), mlog_val(b.m, t), bt], [t], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let mp = b.param(0)
+  let r = b.call(recordk, b.mlog_record_type(kt), "", [b.mf(t, 0, mp), b.param(1), b.param(2), b.param(4)])
+  let k1 = b.add(Op.Field, kt, Aux.I(n: 0), [r])
+  let i = b.add(Op.Field, it, Aux.I(n: 1), [r])
+  let vdir = b.mf(t, 1, mp)
+  b.mlog_vpush(vdir, i, b.param(3))
+  let m1 = b.add(Op.Struct, t, Aux.None, [k1, vdir, b.mf(t, 2, mp)])
+  let (nf, jf) = b.if_then_begin(b.add(Op.Field, bt, Aux.I(n: 2), [r]))
+  let er = b.call(each, b.m.tuple([el, wl]), "", [k1])
+  let vs = b.call(vals, b.m.types[vd].elems[0], "", [m1, b.add(Op.Field, wl, Aux.I(n: 1), [er])])
+  b.retv(b.add(Op.Struct, t, Aux.None, [b.mlog_table(kt, b.add(Op.Field, el, Aux.I(n: 0), [er]), b.cint(0)), b.call(vtab, vd, "", [vs]), b.call("list.new", b.m.types[t].fields[2].ty, "", [])]))
   b.if_then_end(nf, jf)
   b.retv(m1)
   b.finish_fn()
@@ -1178,19 +1434,19 @@ fn (var b: Builder) mlog_record(t: Int) -> Str {
   name
 }
 
-/// xo.mlog.put[T](m, k, v) -> T.
-fn (var b: Builder) mlog_put(t: Int) -> Str {
+/// xo.mlog.putpos[K](m, k) -> Int: the own index of k's newest entry when
+/// the key side m is the only value of a root table whose view is the
+/// whole log and that entry is live (the put's fast path then replaces
+/// its value in place, as the lists' put does: no claim, no new entry,
+/// no garbage to flatten later), else -1.
+fn (var b: Builder) mlog_putpos(t: Int) -> Str {
   let it = b.int_t()
   let bt = b.bool_t()
   let kt = mlog_key(b.m, t)
-  let vt = mlog_val(b.m, t)
   let et = mlog_entry_of(b.m, t)
-  let el = b.m.list(et)
-  let claim = b.mlog_claim(t)
-  let record = b.mlog_record(t)
   let probe = b.mlog_probe(t)
-  let name = "xo.mlog.put[${b.m.types[t].name}]"
-  let fi = b.thunk_func(name, [t, kt, vt], [t], [])
+  let name = "xo.mlog.putpos[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t, kt], [it], [])
   if fi < 0 {
     return name
   }
@@ -1198,17 +1454,12 @@ fn (var b: Builder) mlog_put(t: Int) -> Str {
   let saved = b.begin(fi, b.s.file)
   let mp = b.param(0)
   let k = b.param(1)
-  let v = b.param(2)
-  // the unshared fast path: m is the only value of a root table (put owns
-  // m, so a caller that keeps its m retained it: the directory and the
-  // claim cell then count two) whose view is the whole log, and k's newest
-  // entry is live: the entry's value is replaced in place, as the lists'
-  // put does (no claim, no new entry, no garbage to flatten later)
-  // A loop walking the table in place (map.xo for_mlog_root) holds a
-  // count of its directory for the whole walk, so the directory is never
-  // sole during a walk and a put in the loop's body appends: a test
-  // here that stops reading the directory's count would let the body
-  // change an entry the walk reads later.
+  // put owns m, so a caller that keeps its m retained it: the directory
+  // and the claim cell then count two. A loop walking the table in place
+  // (map.xo for_mlog_root) holds a count of its directory for the whole
+  // walk, so the directory is never sole during a walk and a put in the
+  // loop's body appends: a test here that stops reading the directory's
+  // count would let the body change an entry the walk reads later.
   let used = b.mf(t, 2, mp)
   let (nt, jt) = b.if_then_begin(b.bop(Op.Gt, b.call("list.len", it, "", [used]), b.cint(0)))
   let dir = b.mf(t, 0, mp)
@@ -1221,22 +1472,49 @@ fn (var b: Builder) mlog_put(t: Int) -> Str {
   let j = b.add(Op.Field, it, Aux.I(n: 1), [r])
   let (nj, jj) = b.if_then_begin(b.bop(Op.Ge, j, b.cint(0)))
   let i = b.iop(Op.Sub, j, base)
-  let e = b.mlog_at(et, dir, i)
-  let org = b.add(Op.Field, it, Aux.I(n: 2), [e])
-  let (no, jo) = b.if_then_begin(b.bop(Op.Ge, org, b.cint(0)))
-  let (c, off) = b.mlog_slot(i)
-  let chunk = b.call("list.index", el, "", [dir, c])
-  let ne = b.add(Op.Struct, et, Aux.None, [b.add(Op.Field, it, Aux.I(n: 0), [e]), b.add(Op.Field, it, Aux.I(n: 1), [e]), org, b.add(Op.Field, kt, Aux.I(n: 3), [e]), v])
-  b.mlog_share_into(chunk, ne)
-  b.call("log.set", -1, "", [chunk, off, ne])
-  b.retv(mp)
+  let (no, jo) = b.if_then_begin(b.bop(Op.Ge, b.add(Op.Field, it, Aux.I(n: 2), [b.mlog_at(et, dir, i)]), b.cint(0)))
+  b.retv(i)
   b.if_then_end(no, jo)
   b.if_then_end(nj, jj)
   b.if_then_end(nw, jw)
   b.if_then_end(ns, js)
   b.if_then_end(nt, jt)
+  b.retv(b.cint(-1))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// xo.mlog.put[T](m, k, v) -> T: v replaced in place at xo.mlog.putpos's
+/// index when the value log is held once too, else a claim and a record.
+fn (var b: Builder) mlog_put(t: Int) -> Str {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let kt = mlog_k(b.m, t)
+  let vt = mlog_val(b.m, t)
+  let putpos = b.mlog_putpos(kt)
+  let claim = b.mlog_claim(t)
+  let record = b.mlog_record(t)
+  let name = "xo.mlog.put[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t, mlog_key(b.m, kt), vt], [t], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let mp = b.param(0)
+  let k = b.param(1)
+  let v = b.param(2)
+  let i = b.call(putpos, it, "", [b.mf(t, 0, mp), k])
+  let vdir = b.mf(t, 1, mp)
+  let (ni, ji) = b.if_then_begin(b.add(Op.And, bt, Aux.None, [b.bop(Op.Ge, i, b.cint(0)), b.mlog_sole(vdir)]))
+  let (c, off) = b.mlog_slot(i)
+  let chunk = b.call("list.index", b.m.types[b.vty(vdir)].elems[0], "", [vdir, c])
+  b.mlog_share_into(chunk, v)
+  b.call("log.set", -1, "", [chunk, off, v])
+  b.retv(mp)
+  b.if_then_end(ni, ji)
   let m1 = b.call(claim, t, "", [mp])
-  b.retv(b.call(record, t, "", [m1, b.mlog_hash_if(t, m1, k), k, v, b.cbool(false)]))
+  b.retv(b.call(record, t, "", [m1, b.mlog_hash_if(kt, b.mf(t, 0, m1), k), k, v, b.cbool(false)]))
   b.finish_fn()
   b.end(saved)
   name
@@ -1314,21 +1592,22 @@ fn (var b: Builder) immortal_count() -> Int {
 /// xo.mlog.remove[T](m, k) -> (T, V?).
 fn (var b: Builder) mlog_remove(t: Int, ot: Int) -> Str {
   let it = b.int_t()
-  let kt = mlog_key(b.m, t)
-  let find = b.mlog_find(t)
+  let kt = mlog_k(b.m, t)
+  let find = b.mlog_find(kt)
   let claim = b.mlog_claim(t)
   let record = b.mlog_record(t)
   let rt = b.m.tuple([t, ot])
   let name = "xo.mlog.remove[${b.m.types[t].name}]${opt_suffix(b.m, mlog_val(b.m, t), ot)}"
-  let fi = b.thunk_func(name, [t, kt], [rt], [])
+  let fi = b.thunk_func(name, [t, mlog_key(b.m, kt)], [rt], [])
   if fi < 0 {
     return name
   }
   let saved = b.begin(fi, b.s.file)
   let mp = b.param(0)
   let k = b.param(1)
-  let h = b.mlog_hash_if(t, mp, k)
-  let w = b.call(find, it, "", [mp, k, h])
+  let kl = b.mf(t, 0, mp)
+  let h = b.mlog_hash_if(kt, kl, k)
+  let w = b.call(find, it, "", [kl, k, h])
   let (no, join) = b.if_then_begin(b.bop(Op.Lt, w, b.cint(0)))
   let none = b.add(Op.Variant, ot, Aux.I(n: b.m.variant_index(ot, "None")), [])
   b.retv(b.add(Op.Tuple, rt, Aux.None, [mp, none]))
@@ -1339,9 +1618,9 @@ fn (var b: Builder) mlog_remove(t: Int, ot: Int) -> Str {
   // one (a fork, whose parents are probed by hash)
   let h2v = b.local()
   b.write_var(h2v, h)
-  let mp_plain = b.add(Op.And, b.bool_t(), Aux.None, [b.bop(Op.Eq, b.call("list.len", it, "", [b.mf(t, 1, mp)]), b.cint(0)), b.bop(Op.Eq, b.call("list.len", it, "", [b.mf(t, 7, mp)]), b.cint(0))])
+  let mp_plain = b.add(Op.And, b.bool_t(), Aux.None, [b.bop(Op.Eq, b.call("list.len", it, "", [b.mf(kt, 1, kl)]), b.cint(0)), b.bop(Op.Eq, b.call("list.len", it, "", [b.mf(kt, 7, kl)]), b.cint(0))])
   let (nq, jq) = b.if_then_begin(mp_plain)
-  b.write_var(h2v, b.mlog_hash_if(t, m1, k))
+  b.write_var(h2v, b.mlog_hash_if(kt, b.mf(t, 0, m1), k))
   b.if_then_end(nq, jq)
   let m2 = b.call(record, t, "", [m1, b.read(h2v), k, old, b.cbool(true)])
   let some = b.add(Op.Variant, ot, Aux.I(n: b.m.variant_index(ot, "Some")), [old])
@@ -1351,11 +1630,13 @@ fn (var b: Builder) mlog_remove(t: Int, ot: Int) -> Str {
   name
 }
 
-/// The find of k in the map value mv (of the log type t): -1 or a result
-/// for mlog_value_at.
+/// The find of k in the log map value mv (of type t): -1 or a result for
+/// mlog_value_at.
 fn (var b: Builder) mlog_lookup(t: Int, mv: Int, k: Int) -> Int {
   let it = b.int_t()
-  b.call(b.mlog_find(t), it, "", [mv, k, b.mlog_hash_if(t, mv, k)])
+  let kt = mlog_k(b.m, t)
+  let kl = b.mf(t, 0, mv)
+  b.call(b.mlog_find(kt), it, "", [kl, k, b.mlog_hash_if(kt, kl, k)])
 }
 
 /// k's hash when map m's table has an index or parents (whose indexes
@@ -1374,60 +1655,20 @@ fn (var b: Builder) mlog_hash_if(t: Int, m: Int, k: Int) -> Int {
   b.read(hv)
 }
 
-/// xo.mlog.iterdir[T](m) -> List[List[E]]: m's live entries in order, in
-/// the log's chunk layout (entry i at mlog_at), for a loop: a root table
-/// with no garbage is its own log (no copy), any other view its xo.mlog.each
-/// entries cut into chunks.
-fn (var b: Builder) mlog_iterdir(t: Int) -> Str {
-  let it = b.int_t()
-  let et = mlog_entry_of(b.m, t)
-  let each = b.mlog_each(t)
-  let el = b.m.list(et)
-  let dt = b.m.types[t].fields[0].ty
-  let name = "xo.mlog.iterdir[${b.m.types[t].name}]"
-  let fi = b.thunk_func(name, [t], [dt], [])
-  if fi < 0 {
-    return name
-  }
-  let saved = b.begin(fi, b.s.file)
-  let mp = b.param(0)
-  let n = b.mf(t, 4, mp)
-  let clean = b.add(Op.And, b.bool_t(), Aux.None, [b.bop(Op.Eq, b.call("list.len", it, "", [b.mf(t, 7, mp)]), b.cint(0)), b.bop(Op.Eq, b.mf(t, 5, mp), n)])
-  let (nc, jc) = b.if_then_begin(clean)
-  b.retv(b.mf(t, 0, mp))
-  b.if_then_end(nc, jc)
-  let es = b.call(each, el, "", [mp])
-  let dv = b.local()
-  b.write_var(dv, b.mlog_newdir(dt))
-  let cv = b.local()
-  b.write_var(cv, b.call("list.new", el, "", [b.cint(MLOG_CHUNK)]))
-  let iv = b.local()
-  let (i, head, exit) = b.for_up_to_begin(n, iv)
-  let (c, off) = b.mlog_slot(i)
-  // a chunk is full at its last offset: the next entry starts chunk c + 1
-  b.write_var(cv, b.call("list.push", el, "", [b.read(cv), b.call("list.index", et, "", [es, i])]))
-  let last = b.iop(Op.Sub, b.iop(Op.Shl, b.cint(1), c), b.cint(1))
-  let (nf, jf) = b.if_then_begin(b.bop(Op.Eq, off, last))
-  b.write_var(dv, b.call("list.push", dt, "", [b.read(dv), b.read(cv)]))
-  b.write_var(cv, b.call("list.new", el, "", [b.iop(Op.Shl, b.cint(2), c)]))
-  b.if_then_end(nf, jf)
-  b.for_up_to_end(i, iv, head, exit)
-  b.retv(b.call("list.push", dt, "", [b.read(dv), b.read(cv)]))
-  b.finish_fn()
-  b.end(saved)
-  name
-}
-
 /// xo.mlog.kv[T](m) -> (List[K], List[V]): the live entries' keys and
 /// values in order, from one pass (map.xo map_kvl).
 fn (var b: Builder) mlog_kv(t: Int) -> Str {
   let it = b.int_t()
-  let et = mlog_entry_of(b.m, t)
-  let kt = mlog_key(b.m, t)
+  let ktt = mlog_k(b.m, t)
+  let et = mlog_entry_of(b.m, ktt)
+  let kt = mlog_key(b.m, ktt)
   let vt = mlog_val(b.m, t)
-  let each = b.mlog_each(t)
+  let each = b.mlog_each(ktt)
+  let vals = b.mlog_vals(t)
   let kl = b.m.list(kt)
   let vl = b.m.list(vt)
+  let el = b.m.list(et)
+  let wl = b.m.list(it)
   let rt = b.m.tuple([kl, vl])
   let name = "xo.mlog.kv[${b.m.types[t].name}]"
   let fi = b.thunk_func(name, [t], [rt], [])
@@ -1436,19 +1677,18 @@ fn (var b: Builder) mlog_kv(t: Int) -> Str {
   }
   let saved = b.begin(fi, b.s.file)
   let mp = b.param(0)
-  let es = b.call(each, b.m.list(et), "", [mp])
+  let er = b.call(each, b.m.tuple([el, wl]), "", [b.mf(t, 0, mp)])
+  let es = b.add(Op.Field, el, Aux.I(n: 0), [er])
   let n = b.call("list.len", it, "", [es])
   let ks = b.local()
-  let vs = b.local()
   b.write_var(ks, b.call("list.new", kl, "", [n]))
-  b.write_var(vs, b.call("list.new", vl, "", [n]))
   let iv = b.local()
   let (i, head, exit) = b.for_up_to_begin(n, iv)
   let e = b.call("list.index", et, "", [es, i])
   b.write_var(ks, b.call("list.push", kl, "", [b.read(ks), b.add(Op.Field, kt, Aux.I(n: 3), [e])]))
-  b.write_var(vs, b.call("list.push", vl, "", [b.read(vs), b.add(Op.Field, vt, Aux.I(n: 4), [e])]))
   b.for_up_to_end(i, iv, head, exit)
-  b.retv(b.add(Op.Tuple, rt, Aux.None, [b.read(ks), b.read(vs)]))
+  let vs = b.call(vals, vl, "", [mp, b.add(Op.Field, wl, Aux.I(n: 1), [er])])
+  b.retv(b.add(Op.Tuple, rt, Aux.None, [b.read(ks), vs]))
   b.finish_fn()
   b.end(saved)
   name
@@ -1458,13 +1698,18 @@ fn (var b: Builder) mlog_kv(t: Int) -> Str {
 /// or (key, value) tuples (2) in order.
 fn (var b: Builder) mlog_list(t: Int, what: Int) -> Str {
   let it = b.int_t()
-  let et = mlog_entry_of(b.m, t)
-  let kt = mlog_key(b.m, t)
+  let ktt = mlog_k(b.m, t)
+  let et = mlog_entry_of(b.m, ktt)
+  let kt = mlog_key(b.m, ktt)
   let vt = mlog_val(b.m, t)
-  let each = b.mlog_each(t)
+  let each = b.mlog_each(ktt)
+  let vals = b.mlog_vals(t)
   let pair = b.m.tuple([kt, vt])
   let xt = [kt, vt, pair][what]
   let lt = b.m.list(xt)
+  let el = b.m.list(et)
+  let wl = b.m.list(it)
+  let vl = b.m.list(vt)
   let name = "${["xo.mlog.keys[", "xo.mlog.values[", "xo.mlog.entries["][what]}${b.m.types[t].name}]"
   let fi = b.thunk_func(name, [t], [lt], [])
   if fi < 0 {
@@ -1472,19 +1717,29 @@ fn (var b: Builder) mlog_list(t: Int, what: Int) -> Str {
   }
   let saved = b.begin(fi, b.s.file)
   let mp = b.param(0)
-  let es = b.call(each, b.m.list(et), "", [mp])
-  let n = b.call("list.len", it, "", [es])
-  let out = b.local()
-  b.write_var(out, b.call("list.new", lt, "", [n]))
-  let iv = b.local()
-  let (i, head, exit) = b.for_up_to_begin(n, iv)
-  let e = b.call("list.index", et, "", [es, i])
-  let k = b.add(Op.Field, kt, Aux.I(n: 3), [e])
-  let v = b.add(Op.Field, vt, Aux.I(n: 4), [e])
-  let x = [k, v, b.add(Op.Tuple, pair, Aux.None, [k, v])][what]
-  b.write_var(out, b.call("list.push", lt, "", [b.read(out), x]))
-  b.for_up_to_end(i, iv, head, exit)
-  b.retv(b.read(out))
+  let er = b.call(each, b.m.tuple([el, wl]), "", [b.mf(t, 0, mp)])
+  if what == 1 {
+    b.retv(b.call(vals, vl, "", [mp, b.add(Op.Field, wl, Aux.I(n: 1), [er])]))
+  } else {
+    let es = b.add(Op.Field, el, Aux.I(n: 0), [er])
+    var vs = -1
+    if what == 2 {
+      vs = b.call(vals, vl, "", [mp, b.add(Op.Field, wl, Aux.I(n: 1), [er])])
+    }
+    let n = b.call("list.len", it, "", [es])
+    let out = b.local()
+    b.write_var(out, b.call("list.new", lt, "", [n]))
+    let iv = b.local()
+    let (i, head, exit) = b.for_up_to_begin(n, iv)
+    let k = b.add(Op.Field, kt, Aux.I(n: 3), [b.call("list.index", et, "", [es, i])])
+    var x = k
+    if what == 2 {
+      x = b.add(Op.Tuple, pair, Aux.None, [k, b.call("list.index", vt, "", [vs, i])])
+    }
+    b.write_var(out, b.call("list.push", lt, "", [b.read(out), x]))
+    b.for_up_to_end(i, iv, head, exit)
+    b.retv(b.read(out))
+  }
   b.finish_fn()
   b.end(saved)
   name

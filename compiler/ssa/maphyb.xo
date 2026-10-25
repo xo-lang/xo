@@ -145,14 +145,16 @@ fn (var b: Builder) maph_value(t: Int, mv: Int, idx: Int) -> Int {
 }
 
 /// xo.maph.tolog[T](m) -> L: the log table of m's live entries, in order
-/// (the conversion: a flatten's cost, once).
+/// (the conversion: a flatten's cost, once): the key side from the keys
+/// (xo.maph.ktolog[K]), the values from the live flags (xo.map.vcompact).
 fn (var b: Builder) maph_tolog(t: Int) -> Str {
   let it = b.int_t()
   let lt = b.maph_lt(t)
-  let et = mlog_entry_of(b.m, lt)
-  let el = b.m.list(et)
-  let kt = map_key(b.m, t)
-  let vt = map_val(b.m, t)
+  let kt = mlog_k(b.m, lt)
+  let ktolog = b.maph_ktolog(t)
+  let compact = b.map_vcompact(t)
+  let vd = b.m.types[lt].fields[1].ty
+  let vtab = b.mlog_vtable(vd)
   let name = "xo.maph.tolog[${b.m.types[t].name}]"
   let fi = b.thunk_func(name, [t], [lt], [])
   if fi < 0 {
@@ -160,19 +162,43 @@ fn (var b: Builder) maph_tolog(t: Int) -> Str {
   }
   let saved = b.begin(fi, b.s.file)
   let mp = b.param(0)
-  let keys = b.mfield(t, 0, mp)
-  let vals = b.mfield(t, 1, mp)
-  let live = b.mfield(t, 2, mp)
+  let n = b.add(Op.Field, it, Aux.I(n: 4), [mp])
+  let kl = b.call(ktolog, kt, "", [b.mfield(t, 0, mp), b.mfield(t, 2, mp), n])
+  let vs = b.call(compact, b.m.types[t].fields[1].ty, "", [b.mfield(t, 1, mp), b.mfield(t, 2, mp), n])
+  b.retv(b.add(Op.Struct, lt, Aux.None, [kl, b.call(vtab, vd, "", [vs]), b.call("list.new", b.m.types[lt].fields[2].ty, "", [])]))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// xo.maph.ktolog[K](keys, live, n) -> the key side of a fresh table of
+/// the live keys, in order (maph_tolog's).
+fn (var b: Builder) maph_ktolog(t: Int) -> Str {
+  let it = b.int_t()
+  let lt = b.maph_lt(t)
+  let kt = mlog_k(b.m, lt)
+  let et = mlog_entry_of(b.m, kt)
+  let el = b.m.list(et)
+  let kty = map_key(b.m, t)
+  let fs = b.m.types[t].fields
+  let name = "xo.maph.ktolog[${b.m.types[kt].name}]"
+  let fi = b.thunk_func(name, [fs[0].ty, fs[2].ty, it], [kt], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let keys = b.param(0)
+  let live = b.param(1)
   let es = b.local()
-  b.write_var(es, b.call("list.new", el, "", [b.add(Op.Field, it, Aux.I(n: 4), [mp])]))
+  b.write_var(es, b.call("list.new", el, "", [b.param(2)]))
   let iv = b.local()
   let (i, head, exit) = b.for_up_to_begin(b.call("list.len", it, "", [keys]), iv)
   let (no, join) = b.if_then_begin(b.call("list.index", b.bool_t(), "", [live, i]))
-  let e = b.add(Op.Struct, et, Aux.None, [b.cint(0), b.cint(-1), b.cint(0), b.call("list.index", kt, "", [keys, i]), b.call("list.index", vt, "", [vals, i])])
+  let e = b.add(Op.Struct, et, Aux.None, [b.cint(0), b.cint(-1), b.cint(0), b.call("list.index", kty, "", [keys, i])])
   b.write_var(es, b.call("list.push", el, "", [b.read(es), e]))
   b.if_then_end(no, join)
   b.for_up_to_end(i, iv, head, exit)
-  b.retv(b.mlog_table(lt, b.read(es), b.cint(0)))
+  b.retv(b.mlog_table(kt, b.read(es), b.cint(0)))
   b.finish_fn()
   b.end(saved)
   name
@@ -190,7 +216,7 @@ fn (var b: Builder) maph_of_log(t: Int, lv: Int) -> Int {
   for i in 0..4 {
     fs.push(b.call("list.new", b.m.types[t].fields[i].ty, "", []))
   }
-  b.add(Op.Struct, t, Aux.None, fs + [b.add(Op.Field, it, Aux.I(n: 4), [lv]), lg])
+  b.add(Op.Struct, t, Aux.None, fs + [b.add(Op.Field, it, Aux.I(n: 4), [b.mf(lt, 0, lv)]), lg])
 }
 
 /// The functions maph_put_pro's code calls (made before the put's own).
@@ -316,7 +342,9 @@ fn (var b: Builder) maph_slowput(t: Int) -> Str {
   if !gb.is_empty() {
     // a fork written by its only holder: back to the lists after
     // MAPH_GOBACK writes (maph_goback), then the lists' put
-    let due = b.add(Op.And, b.bool_t(), Aux.None, [b.bop(Op.Gt, b.call("list.len", it, "", [b.mf(lt, 7, lvt)]), b.cint(0)), b.mlog_sole(b.mf(lt, 0, lvt))])
+    let klv = b.mf(lt, 0, lvt)
+    let kt = mlog_k(b.m, lt)
+    let due = b.add(Op.And, b.bool_t(), Aux.None, [b.bop(Op.Gt, b.call("list.len", it, "", [b.mf(kt, 7, klv)]), b.cint(0)), b.mlog_sole(b.mf(kt, 0, klv))])
     let (np, jp) = b.if_then_begin(due)
     let gr = b.call(gb, b.m.tuple([t, b.bool_t()]), "", [lvt])
     let (ng, jg) = b.if_then_begin(b.add(Op.Field, b.bool_t(), Aux.I(n: 1), [gr]))
@@ -326,7 +354,7 @@ fn (var b: Builder) maph_slowput(t: Int) -> Str {
   }
   let lv2 = b.call(gput, lt, "", [lvt, k, v])
   let lg2 = b.call("list.set", ll, "", [b.add(Op.Field, ll, Aux.I(n: 0), [tk]), b.cint(0), lv2])
-  let n2 = b.add(Op.Field, it, Aux.I(n: 4), [b.call("list.index", lt, "", [lg2, b.cint(0)])])
+  let n2 = b.add(Op.Field, it, Aux.I(n: 4), [b.mf(lt, 0, b.call("list.index", lt, "", [lg2, b.cint(0)]))])
   b.retv(b.add(Op.SetField, t, Aux.I(n: 4), [b.add(Op.SetField, t, Aux.I(n: 5), [mp, lg2]), n2]))
   b.if_then_end(nl, jl)
   let lv = b.call(conv, lt, "", [mp])
@@ -381,7 +409,7 @@ fn (var b: Builder) maph_slowrem(t: Int, ot: Int) -> Str {
   let tk = b.call("list.take", b.m.tuple([ll, lt]), "", [b.mfield(t, 5, mp), b.cint(0)])
   let r = b.call(grem, lrt, "", [b.add(Op.Field, lt, Aux.I(n: 1), [tk]), k])
   let lg2 = b.call("list.set", ll, "", [b.add(Op.Field, ll, Aux.I(n: 0), [tk]), b.cint(0), b.add(Op.Field, lt, Aux.I(n: 0), [r])])
-  let n2 = b.add(Op.Field, it, Aux.I(n: 4), [b.call("list.index", lt, "", [lg2, b.cint(0)])])
+  let n2 = b.add(Op.Field, it, Aux.I(n: 4), [b.mf(lt, 0, b.call("list.index", lt, "", [lg2, b.cint(0)]))])
   let m2 = b.add(Op.SetField, t, Aux.I(n: 4), [b.add(Op.SetField, t, Aux.I(n: 5), [mp, lg2]), n2])
   b.retv(b.add(Op.Tuple, rt, Aux.None, [m2, b.add(Op.Field, ot, Aux.I(n: 1), [r])]))
   b.if_then_end(nl, jl)
@@ -490,31 +518,41 @@ fn (var b: Builder) maph_branches(t: Int, mp: Int) -> Int {
 }
 
 /// The log table of lists value mp as a fork whose one parent is mp's
-/// lists (positions 0 to their length), its next position unclaimed.
+/// lists (positions 0 to their length), its next position unclaimed: the
+/// key level holds the keys, live flags and slots, the value level the
+/// values.
 fn (var b: Builder) maph_fork_lists(t: Int, mp: Int) -> Int {
   let it = b.int_t()
   let lt = b.maph_lt(t)
-  let dt = b.m.types[lt].fields[0].ty
-  let il = b.m.types[lt].fields[1].ty
-  let plt = b.m.types[lt].fields[7].ty
+  let kt = mlog_k(b.m, lt)
+  let dt = b.m.types[kt].fields[0].ty
+  let il = b.m.types[kt].fields[1].ty
+  let plt = b.m.types[kt].fields[7].ty
   let lvt = b.m.types[plt].elems[0]
+  let vd = b.m.types[lt].fields[1].ty
+  let vpt = b.m.types[lt].fields[2].ty
+  let vlt = b.m.types[vpt].elems[0]
   let lim = b.call("list.len", it, "", [b.mfield(t, 0, mp)])
   let n = b.add(Op.Field, it, Aux.I(n: 4), [mp])
-  let lvl = b.add(Op.Struct, lvt, Aux.None, [b.call("list.new", dt, "", []), b.call("list.new", il, "", []), b.cint(0), lim, b.mfield(t, 0, mp), b.mfield(t, 1, mp), b.mfield(t, 2, mp), b.mfield(t, 3, mp), n])
+  let lvl = b.add(Op.Struct, lvt, Aux.None, [b.call("list.new", dt, "", []), b.call("list.new", il, "", []), b.cint(0), lim, b.mfield(t, 0, mp), b.mfield(t, 2, mp), b.mfield(t, 3, mp), n])
   var ps = b.call("list.new", plt, "", [b.cint(1)])
   ps = b.call("list.push", plt, "", [ps, lvl])
   var used = b.call("list.new", il, "", [b.cint(1)])
   used = b.call("list.push", il, "", [used, lim])
-  b.add(Op.Struct, lt, Aux.None, [b.mlog_newdir(dt), b.call("list.new", il, "", []), used, lim, n, lim, b.cint(0), ps])
+  let kl = b.add(Op.Struct, kt, Aux.None, [b.mlog_newdir(dt), b.call("list.new", il, "", []), used, lim, n, lim, b.cint(0), ps])
+  let vlvl = b.add(Op.Struct, vlt, Aux.None, [b.call("list.new", vd, "", []), b.mfield(t, 1, mp)])
+  var vps = b.call("list.new", vpt, "", [b.cint(1)])
+  vps = b.call("list.push", vpt, "", [vps, vlvl])
+  b.add(Op.Struct, lt, Aux.None, [kl, b.mlog_newdir(vd), vps])
 }
 
-/// xo.maph.entry[T](lv, p) -> E: the entry at position p of log table
-/// lv's view (its own, else the nearest parent level holding p).
+/// xo.maph.entry[K](kl, p) -> E: the entry at position p of the key side
+/// kl's view (its own, else the nearest parent level holding p).
 fn (var b: Builder) maph_entry(t: Int) -> Str {
   let it = b.int_t()
-  let lt = b.maph_lt(t)
+  let lt = mlog_k(b.m, b.maph_lt(t))
   let et = mlog_entry_of(b.m, lt)
-  let name = "xo.maph.entry[${b.m.types[t].name}]"
+  let name = "xo.maph.entry[${b.m.types[lt].name}]"
   let fi = b.thunk_func(name, [lt, it], [et], [])
   if fi < 0 {
     return name
@@ -542,6 +580,44 @@ fn (var b: Builder) maph_entry(t: Int) -> Str {
   name
 }
 
+/// xo.maph.vpos[T](lv, p) -> V: the value at position p of log table lv's
+/// view (maph_entry's, for the values).
+fn (var b: Builder) maph_vpos(t: Int) -> Str {
+  let it = b.int_t()
+  let lt = b.maph_lt(t)
+  let kt = mlog_k(b.m, lt)
+  let vt = mlog_val(b.m, lt)
+  let name = "xo.maph.vpos[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [lt, it], [vt], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let lv = b.param(0)
+  let p = b.param(1)
+  let kl = b.mf(lt, 0, lv)
+  let base = b.mf(kt, 3, kl)
+  let (no, jo) = b.if_then_begin(b.bop(Op.Ge, p, base))
+  b.retv(b.mlog_at(vt, b.mf(lt, 1, lv), b.iop(Op.Sub, p, base)))
+  b.if_then_end(no, jo)
+  let parents = b.mf(kt, 7, kl)
+  let lvt = b.m.types[b.vty(parents)].elems[0]
+  let vpar = b.mf(lt, 2, lv)
+  let vlt = b.m.types[b.vty(vpar)].elems[0]
+  let iv = b.local()
+  let (i, ih, ix) = b.for_up_to_begin(b.call("list.len", it, "", [parents]), iv)
+  let lvl = b.call("list.index", lvt, "", [parents, i])
+  let lb = b.add(Op.Field, it, Aux.I(n: 2), [lvl])
+  let (nl, jl) = b.if_then_begin(b.bop(Op.Ge, p, lb))
+  b.retv(b.mlog_vlvl_at(vt, lvt, lvl, vlt, b.call("list.index", vlt, "", [vpar, i]), b.iop(Op.Sub, p, lb)))
+  b.if_then_end(nl, jl)
+  b.for_up_to_end(i, iv, ih, ix)
+  b.retv(b.mlog_at(vt, b.mf(lt, 1, lv), b.cint(0)))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
 /// xo.maph.goback[T](lv) -> (T, Bool) (ssa.cold_fn): the lists value of
 /// fork lv, whose directory has one holder: its oldest level's lists with
 /// the puts after them, when that level is a lists level, MAPH_GOBACK or
@@ -551,11 +627,15 @@ fn (var b: Builder) maph_goback(t: Int) -> Str {
   let it = b.int_t()
   let bt = b.bool_t()
   let lt = b.maph_lt(t)
-  let et = mlog_entry_of(b.m, lt)
-  let plt = b.m.types[lt].fields[7].ty
+  let kt = mlog_k(b.m, lt)
+  let et = mlog_entry_of(b.m, kt)
+  let plt = b.m.types[kt].fields[7].ty
   let lvt = b.m.types[plt].elems[0]
   let lf = b.m.types[lvt].fields
+  let vpt = b.m.types[lt].fields[2].ty
+  let vlt = b.m.types[vpt].elems[0]
   let ent = b.maph_entry(t)
+  let vpos = b.maph_vpos(t)
   let put = b.maph_listput(t)
   let rt = b.m.tuple([t, bt])
   let name = "xo.maph.goback[${b.m.types[t].name}]"
@@ -570,29 +650,33 @@ fn (var b: Builder) maph_goback(t: Int) -> Str {
     fs.push(b.call("list.new", b.m.types[t].fields[i].ty, "", []))
   }
   let none = b.add(Op.Tuple, rt, Aux.None, [b.add(Op.Struct, t, Aux.None, fs + [b.cint(0), b.call("list.new", b.m.types[t].fields[5].ty, "", [])]), b.cbool(false)])
-  let parents = b.mf(lt, 7, lv)
-  let old = b.call("list.index", lvt, "", [parents, b.iop(Op.Sub, b.call("list.len", it, "", [parents]), b.cint(1))])
+  let kl = b.mf(lt, 0, lv)
+  let parents = b.mf(kt, 7, kl)
+  let last = b.iop(Op.Sub, b.call("list.len", it, "", [parents]), b.cint(1))
+  let old = b.call("list.index", lvt, "", [parents, last])
   let (nn, jn) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.mlog_lvl_lists(lvt, old)]))
   b.retv(none)
   b.if_then_end(nn, jn)
   let at = b.add(Op.Field, it, Aux.I(n: 3), [old])
-  let cnt = b.iop(Op.Sub, b.mf(lt, 5, lv), at)
+  let cnt = b.iop(Op.Sub, b.mf(kt, 5, kl), at)
   let (nf, jf) = b.if_then_begin(b.bop(Op.Lt, cnt, b.cint(MAPH_GOBACK)))
   b.retv(none)
   b.if_then_end(nf, jf)
   let iv = b.local()
   let (i, ih, ix) = b.for_up_to_begin(cnt, iv)
-  let e = b.call(ent, et, "", [lv, b.iop(Op.Add, at, i)])
+  let e = b.call(ent, et, "", [kl, b.iop(Op.Add, at, i)])
   let (nr, jr) = b.if_then_begin(b.bop(Op.Lt, b.add(Op.Field, it, Aux.I(n: 2), [e]), b.cint(0)))
   b.retv(none)
   b.if_then_end(nr, jr)
   b.for_up_to_end(i, iv, ih, ix)
   let mv = b.local()
-  b.write_var(mv, b.add(Op.Struct, t, Aux.None, [b.add(Op.Field, lf[4].ty, Aux.I(n: 4), [old]), b.add(Op.Field, lf[5].ty, Aux.I(n: 5), [old]), b.add(Op.Field, lf[6].ty, Aux.I(n: 6), [old]), b.add(Op.Field, lf[7].ty, Aux.I(n: 7), [old]), b.add(Op.Field, it, Aux.I(n: 8), [old]), b.call("list.new", b.m.types[t].fields[5].ty, "", [])]))
+  let vold = b.call("list.index", vlt, "", [b.mf(lt, 2, lv), last])
+  b.write_var(mv, b.add(Op.Struct, t, Aux.None, [b.add(Op.Field, lf[4].ty, Aux.I(n: 4), [old]), b.add(Op.Field, b.m.types[vlt].fields[1].ty, Aux.I(n: 1), [vold]), b.add(Op.Field, lf[5].ty, Aux.I(n: 5), [old]), b.add(Op.Field, lf[6].ty, Aux.I(n: 6), [old]), b.add(Op.Field, it, Aux.I(n: 7), [old]), b.call("list.new", b.m.types[t].fields[5].ty, "", [])]))
   let jv = b.local()
   let (j, jh, jx) = b.for_up_to_begin(cnt, jv)
-  let e2 = b.call(ent, et, "", [lv, b.iop(Op.Add, at, j)])
-  b.write_var(mv, b.call(put, t, "", [b.read(mv), b.add(Op.Field, b.m.types[et].fields[3].ty, Aux.I(n: 3), [e2]), b.add(Op.Field, b.m.types[et].fields[4].ty, Aux.I(n: 4), [e2])]))
+  let pj = b.iop(Op.Add, at, j)
+  let e2 = b.call(ent, et, "", [kl, pj])
+  b.write_var(mv, b.call(put, t, "", [b.read(mv), b.add(Op.Field, b.m.types[et].fields[3].ty, Aux.I(n: 3), [e2]), b.call(vpos, mlog_val(b.m, lt), "", [lv, pj])]))
   b.for_up_to_end(j, jv, jh, jx)
   b.retv(b.add(Op.Tuple, rt, Aux.None, [b.read(mv), b.cbool(true)]))
   b.finish_fn()
