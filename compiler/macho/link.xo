@@ -59,6 +59,13 @@ pub struct LinkOpts {
   /// No local symbols in the symbol table (`xo build -s`, as `ld -x`):
   /// the exports, the imports, and __mh_execute_header stay
   pub strip: Bool = false
+  /// A --release link keeps the local symbols in __TEXT,__text only:
+  /// those are the function names std/native/llrt's prof reads for a
+  /// traceback. The other local symbols (data, TLS) are dropped: nothing
+  /// looks them up, the loader uses the rebase and bind tables. A debug
+  /// link keeps them all. 67 LSDA symbols were the largest block before
+  /// 2026-10-25 (compiler/arm64 emit.xo lsda_label made them local).
+  pub release: Bool = false
   /// The reach of a bl or b the branch islands assume, 0 for the
   /// instruction's ±128 MiB (BRANCH_REACH): a test's smaller value makes
   /// islands in a small program
@@ -456,6 +463,17 @@ fn (l: Linker) sym_addr(o: Int, i: Int) -> Int {
   }
   let sect = l.objs[o].sects[s.sect - 1]
   l.osects[sect.out].addr + sect.off + (s.value - sect.addr)
+}
+
+/// Whether output section out is __TEXT,__text: the only place a
+/// --release link keeps a local symbol (a function's name, which the
+/// traceback reads).
+fn (l: Linker) is_text_sect(out: Int) -> Bool {
+  if out < 0 || out >= l.osects.len() {
+    return false
+  }
+  let s = l.osects[out]
+  s.seg == "__TEXT" && s.name == "__text"
 }
 
 /// The output address of an object address in a section of the object
@@ -1693,6 +1711,11 @@ fn (var l: Linker) symbols() -> (Bytes, Bytes, Int, Int, Int, Bytes) {
           exts.push((s.name, sect.out + 1, a))
         }
       } else if !l.opts.strip {
+        // a --release link keeps the local names a traceback reads (the
+        // functions in __TEXT,__text) and drops the other local symbols
+        if l.opts.release && !l.is_text_sect(sect.out) {
+          continue
+        }
         locs.push((s.name, sect.out + 1, a))
       }
     }

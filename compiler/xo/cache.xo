@@ -260,12 +260,13 @@ fn native_bin_key(os: Os, ctx: Ctx, dir: Str, cc: Str, flags: List[Str], srcs: L
 
 /// The cache key of a link by compiler/macho (no cc) of srcs for tgoos
 /// with flags: xo's own identity (it is the linker), the flags, the
-/// target, strip, nolibc, --dsym, and the --race runtime's path, the sources (one outside dir by its
+/// target, strip, release (its symbol table differs), nolibc, --dsym, and
+/// the --race runtime's path, the sources (one outside dir by its
 /// contents), and every file of dir but its bin directory. "" when the
 /// cache is off or an input cannot be read. A test build linked by
 /// compiler/macho never used the cache (internal/arm64: 9 lookups in a
 /// full run, 2026-10-20).
-fn macho_bin_key(os: Os, ctx: Ctx, dir: Str, tgoos: Str, flags: List[Str], srcs: List[Str], strip: Bool, nolibc: Bool, race_rt: Str, dsym: Bool) -> Str {
+fn macho_bin_key(os: Os, ctx: Ctx, dir: Str, tgoos: Str, flags: List[Str], srcs: List[Str], strip: Bool, nolibc: Bool, race_rt: Str, dsym: Bool, release: Bool) -> Str {
   if ctx.bin_cache.is_empty() {
     return ""
   }
@@ -278,7 +279,8 @@ fn macho_bin_key(os: Os, ctx: Ctx, dir: Str, tgoos: Str, flags: List[Str], srcs:
   k.strs(flags)
   // race_rt: the --race runtime's path, which the executable loads
   // dsym: an entry stored without --dsym has no bundle to fetch
-  k.str("${tgoos} strip=${strip} nolibc=${nolibc} race=${race_rt} dsym=${dsym}")
+  // release: its symbol table keeps fewer local symbols (LinkOpts.release)
+  k.str("${tgoos} strip=${strip} release=${release} nolibc=${nolibc} race=${race_rt} dsym=${dsym}")
   for s in srcs {
     if s.starts_with("${dir}/") {
       k.str(s.trim_prefix("${dir}/"))

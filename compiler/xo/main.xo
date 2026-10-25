@@ -1721,11 +1721,11 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       // --debug-info=split (decision 0355): the DWARF in PROG.debug
       // (linux) or PROG.dSYM (darwin) beside the program, not in it
       let split_dbg = gm.debug_info && debug_info_eff(o, release) == "split"
-      let mkey = macho_bin_key(os, ctx, dir, tgoos, flags + (if split_dbg { ["debug-info=split"] } else { [] }), srcs, o.strip, nl, race_rt, o.dsym)
+      let mkey = macho_bin_key(os, ctx, dir, tgoos, flags + (if split_dbg { ["debug-info=split"] } else { [] }), srcs, o.strip, nl, race_rt, o.dsym, release)
       let mst = stage(os, ctx, bin)
       let (mhit, mentry) = fetch_bin(os, ctx, mkey, mst.bin)
       if !mhit {
-        let why = macho_link(os, ctx, tgoos, flags, srcs, mst.bin, o.strip, nl, race_rt, o.dsym, split_dbg)
+        let why = macho_link(os, ctx, tgoos, flags, srcs, mst.bin, o.strip, nl, race_rt, o.dsym, split_dbg, release)
         if !why.is_empty() {
           fail_stage(os, mst, why)
         }

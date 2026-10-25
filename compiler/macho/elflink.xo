@@ -123,6 +123,11 @@ pub struct ElfLinkOpts {
   pub static: Bool = false
   /// leave the local symbols out of .symtab (`-s`, as LinkOpts.strip)
   pub strip: Bool = false
+  /// a --release link keeps the local function symbols (STT_FUNC, the
+  /// names std/native/llrt's prof reads for a traceback) and drops the
+  /// other local symbols (STT_OBJECT, STT_TLS): the loader uses the
+  /// dynamic tables, not .symtab. A debug link keeps them all.
+  pub release: Bool = false
   /// split debug information (decision 0355): the name of the debug
   /// file (PROG.debug) the executable's .gnu_debuglink names; its DWARF
   /// and symbols go there (link_elf_split's second result), and both
@@ -2009,7 +2014,7 @@ fn (l: ELinker) symtab(shown: List[Int]) -> (Bytes, Bytes, Int) {
       if s.shndx == SHN_UNDEF || s.shndx == SHN_ABS || s.shndx >= SHN_LORESERVE && s.shndx != SHN_COMMON {
         continue
       }
-      if bind == STB_LOCAL && l.opts.strip {
+      if bind == STB_LOCAL && (l.opts.strip || (l.opts.release && typ != STT_FUNC)) {
         continue
       }
       var out = O_BSS
