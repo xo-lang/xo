@@ -172,8 +172,7 @@ builds, XO_DIRTY empty), and the spawn call's flags argument (x6 before the
 call to `task_spawn_fn`) read from the disassembly. The method detects the
 flag: conc `mutex` and `rwmutex` read 0x0 before and 0x4 after, and the
 paper/v0.3 pool reads 0x0 both times (its other differences are page offsets
-and the runtime's own changed functions; a byte compare of two builds is
-useless, since the binaries differ between cache directories).
+and the runtime's own changed functions; a byte compare of the two builds also differs, because the f0ec4f1d9 runtime changed, and builds named differently differ in the ad hoc signature's identifier, see gotchas/build-output-name-in-signature.md).
 
 - Only 1 of the 13 builds with today's compiler: paper/v0.3/02-worker-pool.
   The others are not buildable as they stand (paper v0.1 and v0.2 and the

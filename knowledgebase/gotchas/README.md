@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [build-output-name-in-signature.md](build-output-name-in-signature.md): Observed 2026-10-24: two builds differing by one byte were named differently (the ad hoc signature's identifier is the output's base name), not a reproducibility bug; compare outputs of one name
 - [concurrent-builds-shared-build-dir.md](concurrent-builds-shared-build-dir.md): Observed and fixed 2026-10-24: two concurrent builds of one program wrote and linked the same `prog-darwin.N.o` in the program's build directory (a truncating write under the other's link: "not a 64 bit Mach-O file"); each build now has its own `w-*` directory
 - [mem-load-loses-byte-range.md](mem-load-loses-byte-range.md): Observed 2026-10-24: `rt.mem_load(p, i, 1)` in place of `b[i]` returns an Int of unknown range, so every product after it got an overflow check (parse_time 6 to 86 checks, 8% more instructions); make the byte arithmetic wrapping (a mask cost an `and` a byte), and count the checks before claiming a bounds check saved
 - [llvm-goldens-timeout.md](llvm-goldens-timeout.md): Observed 2026-10-24: a bare `go test ./internal/llvm` dies at go test's 10 minute default timeout (the package needs 46+ min) with a FAIL that names no test; run one golden with `-run 'TestGolden/NAME$'` or the package with `-timeout 90m`, and since then the test binary stops such a run at once with that advice
