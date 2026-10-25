@@ -189,25 +189,61 @@ fn (var b: Builder) mstruct(t: Int, fs: List[Int], src: Int) -> Int {
   b.add(Op.Struct, t, Aux.None, fs + [b.mfield(t, 5, src)])
 }
 
+/// Whether a Map's key side is generated once per key type (decision
+/// 0372 stage A: the pass map_core, off under XO_PASSES=-map_core): its
+/// functions then take the key lists (keys, live, slots) instead of the
+/// map, and every Map and Set of one key type calls one copy.
+fn (b: Builder) map_core() -> Bool {
+  b.m.map_core
+}
+
+/// The arguments of a key side function of map mv (of struct t) before
+/// its own: the map, or with map_core its keys, live and slots lists.
+fn (var b: Builder) mkeyargs(t: Int, mv: Int) -> List[Int] {
+  if b.map_core() {
+    return [b.mfield(t, 0, mv), b.mfield(t, 2, mv), b.mfield(t, 3, mv)]
+  }
+  [mv]
+}
+
+/// The parameter types of mkeyargs(t, _) and the name part of a key side
+/// function of t: the key type's with map_core, else the map's.
+fn (var b: Builder) mkeysig(t: Int) -> (List[Int], Str) {
+  if b.map_core() {
+    let fs = b.m.types[t].fields
+    return ([fs[0].ty, fs[2].ty, fs[3].ty], b.m.types[map_key(b.m, t)].name)
+  }
+  ([t], b.m.types[t].name)
+}
+
+/// The keys, live and slots lists of a key side function's parameters
+/// (mkeyargs).
+fn (var b: Builder) mkeyparams(t: Int) -> (Int, Int, Int) {
+  if b.map_core() {
+    return (b.param(0), b.param(1), b.param(2))
+  }
+  let mp = b.param(0)
+  (b.mfield(t, 0, mp), b.mfield(t, 2, mp), b.mfield(t, 3, mp))
+}
+
 /// xo.map.find[T](m, k, h) -> Int: the index of k's live entry, or -1
-/// (mapFind).
+/// (mapFind); with map_core xo.map.find[K](keys, live, slots, k, h).
 fn (var b: Builder) map_find(t: Int) -> Str {
   let it = b.int_t()
   let bt = b.bool_t()
   let kt = map_key(b.m, t)
-  let name = "xo.map.find[${b.m.types[t].name}]"
-  let fi = b.thunk_func(name, [t, kt, it], [it], [])
+  let (ps, tn) = b.mkeysig(t)
+  let name = "xo.map.find[${tn}]"
+  let fi = b.thunk_func(name, ps + [kt, it], [it], [])
   if fi < 0 {
     return name
   }
   let saved = b.begin(fi, b.s.file)
-  let mp = b.param(0)
-  let k = b.param(1)
-  let h = b.param(2)
-  let slots = b.mfield(t, 3, mp)
+  let np = ps.len()
+  let (keys, live, slots) = b.mkeyparams(t)
+  let k = b.param(np)
+  let h = b.param(np + 1)
   let n = b.call("list.len", it, "", [slots])
-  let keys = b.mfield(t, 0, mp)
-  let live = b.mfield(t, 2, mp)
   let (no, join) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [n, b.cint(0)]))
   b.retv(b.cint(-1))
   b.if_then_end(no, join)
@@ -387,16 +423,15 @@ fn (var b: Builder) map_scan(t: Int) -> Str {
   let it = b.int_t()
   let bt = b.bool_t()
   let kt = map_key(b.m, t)
-  let name = "xo.map.scan[${b.m.types[t].name}]"
-  let fi = b.thunk_func(name, [t, kt], [it], [])
+  let (ps, tn) = b.mkeysig(t)
+  let name = "xo.map.scan[${tn}]"
+  let fi = b.thunk_func(name, ps + [kt], [it], [])
   if fi < 0 {
     return name
   }
   let saved = b.begin(fi, b.s.file)
-  let mp = b.param(0)
-  let k = b.param(1)
-  let keys = b.mfield(t, 0, mp)
-  let live = b.mfield(t, 2, mp)
+  let (keys, live, _slots) = b.mkeyparams(t)
+  let k = b.param(ps.len())
   let lv = b.local()
   let total = b.call("list.len", it, "", [keys])
   let (li, lhead, lexit) = b.for_up_to_begin(total, lv)
@@ -446,11 +481,11 @@ fn (var b: Builder) lists_lookup(t: Int, mv: Int, k: Int) -> Int {
   let (yes, no) = b.branch(b.add(Op.Eq, bt, Aux.None, [tcap, b.cint(0)]))
   let join = b.new_block()
   b.s.cur = yes
-  b.write_var(res, b.call(scan, it, "", [mv, k]))
+  b.write_var(res, b.call(scan, it, "", b.mkeyargs(t, mv) + [k]))
   b.jump(join, [])
   b.s.cur = no
   let h = b.call(hf, it, "", [k])
-  b.write_var(res, b.call(find, it, "", [mv, k, h]))
+  b.write_var(res, b.call(find, it, "", b.mkeyargs(t, mv) + [k, h]))
   b.jump(join, [])
   b.seal(join)
   b.s.cur = join
@@ -530,6 +565,10 @@ fn (var b: Builder) maph_putrest(t: Int, rebuild: Str, hash: Str) -> Str {
 /// The lists' put of k and v into mp, its every path returning the new
 /// map (maph_marked with sh: -1 when not marked).
 fn (var b: Builder) put_body(t: Int, mp: Int, k: Int, v: Int, sh: Int, rebuild: Str, hash: Str) {
+  if b.map_core() {
+    b.put_body_core(t, mp, k, v, sh)
+    return
+  }
   let it = b.int_t()
   let bt = b.bool_t()
   let idx = b.lists_lookup(t, mp, k)

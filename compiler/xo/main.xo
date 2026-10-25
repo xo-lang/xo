@@ -649,6 +649,7 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   // HTTP CRUD xo bench --ab showed no loss) except on wasm, and
   // XO_MAP_LOG=1 builds the hybrid without branching
   c.map_log = (os.env.get("XO_MAP_LOG") ?? "") != "0"
+  c.map_core = pass_on(os, "map_core")
   c.map_branch = (os.env.get("XO_MAP_LOG") ?? "") != "1"
   // the SSA builder's lowerings $XO_LOWER turns off (miscompile triage)
   let (lower_off, lower_err) = ssa.parse_lowerings(os.env.get("XO_LOWER") ?? "")

@@ -1,0 +1,279 @@
+// A Map's key side once per key type (decision 0372 stage A, the pass
+// map_core): the put of the lists' representation (map.xo put_body) is a
+// function of the key type alone, xo.map.putk[K], over the keys, live,
+// slots and count of the map, and a typed write of the values list at the
+// index it returns. When the put grows the table, the values are
+// compacted by the old live flags first (xo.map.vcompact[V], a function
+// of the value type alone), before putk rebuilds the keys: the old values
+// are freed before the new table is built, and putk takes the map's key
+// lists as the only holder (a first cut held the old lists and a copy of
+// the live flags through the rebuild: a 200k entry map's peak RSS 1.15
+// to 1.2 times the typed put's, 2026-10-24).
+
+/// The result of xo.map.putk[K] for map struct t: (keys, live, slots, n,
+/// the new entry's index).
+fn (var b: Builder) putk_type(t: Int) -> Int {
+  let fs = b.m.types[t].fields
+  let it = b.int_t()
+  b.m.tuple([fs[0].ty, fs[2].ty, fs[3].ty, it, it])
+}
+
+/// Whether a put of a new key into a map of total entries (live or not)
+/// and a table of tcap slots grows the table (putk rebuilds it).
+fn (var b: Builder) map_grows(total: Int, tcap: Int) -> Int {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let notab = b.add(Op.Eq, bt, Aux.None, [tcap, b.cint(0)])
+  let few = b.add(Op.Lt, bt, Aux.None, [total, b.cint(SMALL_MAP)])
+  let full = b.add(Op.Gt, bt, Aux.None, [b.add(Op.Mul, it, Aux.None, [b.add(Op.Add, it, Aux.None, [total, b.cint(1)]), b.cint(4)]), b.add(Op.Mul, it, Aux.None, [tcap, b.cint(3)])])
+  b.add(Op.Or, bt, Aux.None, [b.add(Op.And, bt, Aux.None, [notab, b.add(Op.Not, bt, Aux.None, [few])]), b.add(Op.And, bt, Aux.None, [b.add(Op.Not, bt, Aux.None, [notab]), full])])
+}
+
+/// xo.map.putk[K](keys, live, slots, n, k) -> putk_type: the key side of
+/// put_body's insert of a key that is not there (state 1 or 2).
+fn (var b: Builder) map_putk(t: Int) -> Str {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let kt = map_key(b.m, t)
+  let fs = b.m.types[t].fields
+  let rt = b.putk_type(t)
+  let name = "xo.map.putk[${b.m.types[kt].name}]"
+  let rebuild = b.map_rebuildk(t)
+  let hash = b.hash_func(kt)
+  let fi = b.thunk_func(name, [fs[0].ty, fs[2].ty, fs[3].ty, it, kt], [rt], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let keys0 = b.param(0)
+  let live0 = b.param(1)
+  let slots0 = b.param(2)
+  let n0 = b.param(3)
+  let k = b.param(4)
+  // k is not there (put_body_core looked it up first): an insert
+  let tcap0 = b.call("list.len", it, "", [slots0])
+  let total = b.call("list.len", it, "", [keys0])
+  // a small map with no table: the entry appended, no hash
+  let notab = b.add(Op.Eq, bt, Aux.None, [tcap0, b.cint(0)])
+  let few = b.add(Op.Lt, bt, Aux.None, [total, b.cint(SMALL_MAP)])
+  let (sno, sjoin) = b.if_then_begin(b.add(Op.And, bt, Aux.None, [notab, few]))
+  let sk = b.call("list.push", fs[0].ty, "", [keys0, k])
+  let sl = b.call("list.push", fs[2].ty, "", [live0, b.cbool(true)])
+  let sn = b.add(Op.Add, it, Aux.None, [n0, b.cint(1)])
+  b.retv(b.add(Op.Tuple, rt, Aux.None, [sk, sl, slots0, sn, total]))
+  b.if_then_end(sno, sjoin)
+  let kv = b.local()
+  let lv = b.local()
+  let sv = b.local()
+  b.write_var(kv, keys0)
+  b.write_var(lv, live0)
+  b.write_var(sv, slots0)
+  let t1 = b.add(Op.Add, it, Aux.None, [total, b.cint(1)])
+  let t4 = b.add(Op.Mul, it, Aux.None, [t1, b.cint(4)])
+  let c3 = b.add(Op.Mul, it, Aux.None, [tcap0, b.cint(3)])
+  let (no2, join2) = b.if_then_begin(b.add(Op.Gt, bt, Aux.None, [t4, c3]))
+  let want = b.add(Op.Add, it, Aux.None, [n0, b.cint(1)])
+  let rb = b.call(rebuild, b.m.tuple([fs[0].ty, fs[2].ty, fs[3].ty]), "", [keys0, live0, want])
+  b.write_var(kv, b.add(Op.Field, fs[0].ty, Aux.I(n: 0), [rb]))
+  b.write_var(lv, b.add(Op.Field, fs[2].ty, Aux.I(n: 1), [rb]))
+  b.write_var(sv, b.add(Op.Field, fs[3].ty, Aux.I(n: 2), [rb]))
+  b.if_then_end(no2, join2)
+  var keys = b.read(kv)
+  var live = b.read(lv)
+  let pos = b.call("list.len", it, "", [keys])
+  let h = b.call(hash, it, "", [k])
+  keys = b.call("list.push", fs[0].ty, "", [keys, k])
+  live = b.call("list.push", fs[2].ty, "", [live, b.cbool(true)])
+  let slots = b.insert_slot(b.read(sv), h, pos)
+  // a rebuild keeps the n0 live entries
+  let n1 = b.add(Op.Add, it, Aux.None, [n0, b.cint(1)])
+  b.retv(b.add(Op.Tuple, rt, Aux.None, [keys, live, slots, n1, pos]))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// xo.map.rebuildk[K](keys, live, want) -> (keys, live, slots):
+/// map_rebuild's key side, the live keys in order in a table with room
+/// for want entries (the values were compacted by the same live flags
+/// first, xo.map.vcompact).
+fn (var b: Builder) map_rebuildk(t: Int) -> Str {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let kt = map_key(b.m, t)
+  let fs = b.m.types[t].fields
+  let klt = fs[0].ty
+  let llt = fs[2].ty
+  let slt = fs[3].ty
+  let name = "xo.map.rebuildk[${b.m.types[kt].name}]"
+  let fi = b.thunk_func(name, [klt, llt, it], [b.m.tuple([klt, llt, slt])], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let keys = b.param(0)
+  let live = b.param(1)
+  let want = b.param(2)
+  let nk = b.local()
+  let nl = b.local()
+  let twice = b.add(Op.Mul, it, Aux.None, [want, b.cint(2)])
+  let room = b.add(Op.Add, it, Aux.None, [twice, b.cint(6)])
+  b.write_var(nk, b.call("list.new", klt, "", [room]))
+  b.write_var(nl, b.call("list.new", llt, "", [room]))
+  let iv = b.local()
+  let n0 = b.call("list.len", it, "", [keys])
+  let (i, head, exit) = b.for_up_to_begin(n0, iv)
+  let (no, join) = b.if_then_begin(b.map_live(live, i))
+  let ek = b.call("list.index", kt, "", [keys, i])
+  b.write_var(nk, b.call("list.push", klt, "", [b.read(nk), ek]))
+  b.write_var(nl, b.call("list.push", llt, "", [b.read(nl), b.cbool(true)]))
+  b.if_then_end(no, join)
+  b.for_up_to_end(i, iv, head, exit)
+  // the table: a power of two, at least 8, at least twice want
+  let cv = b.local()
+  b.write_var(cv, b.cint(8))
+  let h2 = b.new_block()
+  let grow = b.new_block()
+  let done = b.new_block()
+  b.jump(h2, [])
+  b.s.cur = h2
+  let c = b.read(cv)
+  let w2 = b.add(Op.Mul, it, Aux.None, [want, b.cint(2)])
+  b.s.f.branch(b.s.cur, b.add(Op.Lt, bt, Aux.None, [c, w2]), grow, done)
+  b.seal(grow)
+  b.s.cur = grow
+  b.write_var(cv, b.add(Op.Mul, it, Aux.None, [c, b.cint(2)]))
+  b.jump(h2, [])
+  b.seal(h2)
+  b.seal(done)
+  b.s.cur = done
+  let sv = b.local()
+  b.write_var(sv, b.call("list.new", slt, "", []))
+  let iv2 = b.local()
+  let (j, head2, exit2) = b.for_up_to_begin(b.read(cv), iv2)
+  b.write_var(sv, b.call("list.push", slt, "", [b.read(sv), b.cint(0)]))
+  b.for_up_to_end(j, iv2, head2, exit2)
+  let keys2 = b.read(nk)
+  let iv3 = b.local()
+  let n2 = b.call("list.len", it, "", [keys2])
+  let (k3, head3, exit3) = b.for_up_to_begin(n2, iv3)
+  let kk = b.call("list.index", kt, "", [keys2, k3])
+  let hh = b.call(b.hash_func(kt), it, "", [kk])
+  b.write_var(sv, b.insert_slot(b.read(sv), hh, k3))
+  b.for_up_to_end(k3, iv3, head3, exit3)
+  b.retv(b.add(Op.Tuple, b.m.tuple([klt, llt, slt]), Aux.None, [keys2, b.read(nl), b.read(sv)]))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// xo.map.vcompact[V](vals, live, want) -> List[V]: the values whose live
+/// flag is set, in order, with room for want entries (map_rebuild's
+/// values).
+fn (var b: Builder) map_vcompact(t: Int) -> Str {
+  let it = b.int_t()
+  let vt = map_val(b.m, t)
+  let fs = b.m.types[t].fields
+  let vlt = fs[1].ty
+  let name = "xo.map.vcompact[${b.m.types[vt].name}]"
+  let fi = b.thunk_func(name, [vlt, fs[2].ty, it], [vlt], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let vals = b.param(0)
+  let live = b.param(1)
+  let want = b.param(2)
+  let nv = b.local()
+  let room = b.add(Op.Add, it, Aux.None, [b.add(Op.Mul, it, Aux.None, [want, b.cint(2)]), b.cint(6)])
+  b.write_var(nv, b.call("list.new", vlt, "", [room]))
+  let iv = b.local()
+  let (i, head, exit) = b.for_up_to_begin(b.call("list.len", it, "", [vals]), iv)
+  let (no, join) = b.if_then_begin(b.map_live(live, i))
+  let ev = b.call("list.index", vt, "", [vals, i])
+  b.write_var(nv, b.call("list.push", vlt, "", [b.read(nv), ev]))
+  b.if_then_end(no, join)
+  b.for_up_to_end(i, iv, head, exit)
+  b.retv(b.read(nv))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
+/// put_body with map_core: the key side by xo.map.putk[K], then the
+/// values list written at its index (set, or pushed after the rebuild's
+/// compaction), every path returning the new map (maph_marked with sh).
+fn (var b: Builder) put_body_core(t: Int, mp: Int, k: Int, v: Int, sh: Int) {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let fs = b.m.types[t].fields
+  let rt = b.putk_type(t)
+  let compact = b.map_vcompact(t)
+  // k's entry there (the hot path of a put loop over known keys): its
+  // value replaced in line, as the lists' put did, with no call of putk
+  // (whose tuple of lists cost 52 instructions a put)
+  let idx0 = b.lists_lookup(t, mp, k)
+  let (nf, jf) = b.if_then_begin(b.add(Op.Ge, bt, Aux.None, [idx0, b.cint(0)]))
+  let vs0 = b.call("list.set", fs[1].ty, "", [b.mfield(t, 1, mp), idx0, v])
+  b.retv(b.maph_marked(t, b.add(Op.SetField, t, Aux.I(n: 1), [mp, vs0]), sh))
+  b.if_then_end(nf, jf)
+  // in xo.map.put, a new key with room in the table (or a small map's
+  // scan): appended in line, as the lists' put did; only a put that grows
+  // the table calls putk (a tuple of lists cost 62 instructions an
+  // insert). The hybrid's cold puts (putrest, listput) always call putk.
+  let keys0 = b.mfield(t, 0, mp)
+  let n0 = b.add(Op.Field, it, Aux.I(n: 4), [mp])
+  if b.s.f.name.starts_with("xo.map.put[") {
+    b.put_insert_inline(t, mp, k, v, sh, n0)
+  }
+  // every field of mp read before putk, so mp is not held through it
+  let live0 = b.mfield(t, 2, mp)
+  let slots0 = b.mfield(t, 3, mp)
+  let vals0 = b.mfield(t, 1, mp)
+  let lg = if b.m.map_log { b.mfield(t, 5, mp) } else { -1 }
+  let vv = b.local()
+  b.write_var(vv, vals0)
+  let (no2, join2) = b.if_then_begin(b.map_grows(b.call("list.len", it, "", [keys0]), b.call("list.len", it, "", [slots0])))
+  b.write_var(vv, b.call(compact, fs[1].ty, "", [vals0, live0, b.add(Op.Add, it, Aux.None, [n0, b.cint(1)])]))
+  b.if_then_end(no2, join2)
+  let r = b.call(b.map_putk(t), rt, "", [keys0, live0, slots0, n0, k])
+  let keys = b.add(Op.Field, fs[0].ty, Aux.I(n: 0), [r])
+  let live = b.add(Op.Field, fs[2].ty, Aux.I(n: 1), [r])
+  let slots = b.add(Op.Field, fs[3].ty, Aux.I(n: 2), [r])
+  let n = b.add(Op.Field, it, Aux.I(n: 3), [r])
+  let vp = b.call("list.push", fs[1].ty, "", [b.read(vv), v])
+  var nfs = [keys, vp, live, slots, n]
+  if lg >= 0 {
+    nfs.push(lg)
+  }
+  b.retv(b.maph_marked(t, b.add(Op.Struct, t, Aux.None, nfs), sh))
+}
+
+/// put_body_core's inserts in line (xo.map.put alone): a small map's
+/// append with no table, or an append with room in the table; any other
+/// put goes on to putk.
+fn (var b: Builder) put_insert_inline(t: Int, mp: Int, k: Int, v: Int, sh: Int, n0: Int) {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let fs = b.m.types[t].fields
+  let keys0 = b.mfield(t, 0, mp)
+  let total = b.call("list.len", it, "", [keys0])
+  let tcap = b.call("list.len", it, "", [b.mfield(t, 3, mp)])
+  let notab = b.add(Op.Eq, bt, Aux.None, [tcap, b.cint(0)])
+  let few = b.add(Op.Lt, bt, Aux.None, [total, b.cint(SMALL_MAP)])
+  let (sno, sjoin) = b.if_then_begin(b.add(Op.And, bt, Aux.None, [notab, few]))
+  let sk = b.call("list.push", fs[0].ty, "", [keys0, k])
+  let sv = b.call("list.push", fs[1].ty, "", [b.mfield(t, 1, mp), v])
+  let sl = b.call("list.push", fs[2].ty, "", [b.mfield(t, 2, mp), b.cbool(true)])
+  b.retv(b.maph_marked(t, b.mstruct(t, [sk, sv, sl, b.mfield(t, 3, mp), b.add(Op.Add, it, Aux.None, [n0, b.cint(1)])], mp), sh))
+  b.if_then_end(sno, sjoin)
+  let room = b.add(Op.Le, bt, Aux.None, [b.add(Op.Mul, it, Aux.None, [b.add(Op.Add, it, Aux.None, [total, b.cint(1)]), b.cint(4)]), b.add(Op.Mul, it, Aux.None, [tcap, b.cint(3)])])
+  let (rno, rjoin) = b.if_then_begin(b.add(Op.And, bt, Aux.None, [room, b.add(Op.Not, bt, Aux.None, [notab])]))
+  let h = b.call(b.hash_func(map_key(b.m, t)), it, "", [k])
+  let ik = b.call("list.push", fs[0].ty, "", [keys0, k])
+  let iv = b.call("list.push", fs[1].ty, "", [b.mfield(t, 1, mp), v])
+  let il = b.call("list.push", fs[2].ty, "", [b.mfield(t, 2, mp), b.cbool(true)])
+  let isl = b.insert_slot(b.mfield(t, 3, mp), h, total)
+  b.retv(b.maph_marked(t, b.mstruct(t, [ik, iv, il, isl, b.add(Op.Add, it, Aux.None, [n0, b.cint(1)])], mp), sh))
+  b.if_then_end(rno, rjoin)
+}

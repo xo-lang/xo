@@ -11,6 +11,9 @@ use github.com/xo-lang/xo/compiler/ssa
 /// isel uses and the MIR passes (isel.xo function).
 pub fn passes() -> List[Str] {
   [
+    // compiler/ssa map.xo (decision 0372 stage A): a Map's key side
+    // generated once per key type
+    "map_core",
     // module, before code generation
     "inline",
     "devirtualize",

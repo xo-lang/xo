@@ -385,6 +385,9 @@ pub struct Module {
   /// Map and Set on the log and fork representation (decision 0291,
   /// check.Checker map_log): in the fn and part cache keys.
   pub map_log: Bool = false
+  /// A Map's key side once per key type (decision 0372 stage A,
+  /// check.Checker map_core): in the fn and part cache keys.
+  pub map_core: Bool = false
   /// Decision 0291's branching (the default on the native backends since
   /// 2026-10-22; XO_MAP_LOG=1 turns it off): a lists Map of 1024 or more
   /// entries written while shared forks its own lists in O(1)
