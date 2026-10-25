@@ -606,6 +606,14 @@ b"raw bytes\x00"                          // Bytes, escapes but no interpolation
 | `()` | Unit |
 | `Never` | The type with no values. Type of `return`, `break`, `continue`, `fault(...)`, `proc.exit(...)`, and infinite loops. Converts to every type. |
 
+Representation note (2026-10-24, not a language rule): on the native and
+LLVM backends a `List[T]` element takes 8 bytes for every `T` that is an
+integer of any width, `Float32`, `Rune` or `Duration`, and 8 bytes a word
+for a larger `T` (a `Str` is 16); only `List[Bool]` is 1 byte an element and
+`Bytes` is packed. A `List[UInt8]` of a million elements is 8 MB, a `Bytes`
+of them 1 MB. The Go backend stores Go's own sized types (decision 0369,
+Proposed, costs packing the others).
+
 A `Str` is always valid UTF-8: literals are, operations on `Str` keep it, and
 std makes outside bytes valid where they become a `Str` (std.md 0, decision
 0259), so slicing faults only at an offset inside a sequence of valid text.
