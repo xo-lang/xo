@@ -439,9 +439,25 @@ func Ensure(root string, log io.Writer) (string, error) {
 	}
 	defer useCheckout(base, key)
 	built := filepath.Join(base, "checkout", key, exeName("xo"))
-	if !isFile(built) {
-		if err := buildLocked(root, built, log); err != nil {
-			return "", err
+	// the shared entry is for a tree with no uncommitted change and is reused
+	// only by such a tree: its provenance stamps (XO_DIRTY) would read another
+	// tree's state otherwise (gotchas/cached-xo-stamped-dirty.md, 2026-10-24);
+	// a tree with uncommitted changes builds into a private directory, which
+	// is removed after the copy
+	_, dirty := gitState(root)
+	if !stampMatches(filepath.Dir(built), dirty) || !isFile(built) {
+		if dirty == "" {
+			built = filepath.Join(base, "checkout", key, exeName("xo"))
+			if err := buildLockedForce(root, built, log, true); err != nil {
+				return "", err
+			}
+		} else {
+			tmp := filepath.Join(base, "checkout", fmt.Sprintf(".tmp-%d-%s", os.Getpid(), key))
+			defer os.RemoveAll(tmp)
+			built = filepath.Join(tmp, exeName("xo"))
+			if err := buildLocked(root, built, log); err != nil {
+				return "", err
+			}
 		}
 	}
 	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
@@ -488,6 +504,12 @@ func SeedFallback() string { return strings.TrimSpace(os.Getenv("XO_SEED_FALLBAC
 
 // buildLocked builds root's compiler/xo into out once across processes.
 func buildLocked(root, out string, log io.Writer) error {
+	return buildLockedForce(root, out, log, false)
+}
+
+// buildLockedForce is buildLocked; with force an existing out is built
+// again (a shared entry whose stamps do not match the tree's).
+func buildLockedForce(root, out string, log io.Writer, force bool) error {
 	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 		return err
 	}
@@ -496,8 +518,11 @@ func buildLocked(root, out string, log io.Writer) error {
 		return err
 	}
 	defer unlock()
-	if isFile(out) {
+	if isFile(out) && !force {
 		return nil
+	}
+	if force {
+		os.Remove(out)
 	}
 	seeds, err := Seeds(root)
 	if err != nil {
@@ -670,6 +695,7 @@ func Seeds(root string) ([]Seed, error) {
 // _xo_x_task_spawn_fn`, 2026-10-16, gotchas/xobuild-dirty-build-as-ancestor.md),
 // so it gets neither file (an older one is removed).
 func recordCommit(root, dir string) {
+	recordStamp(root, dir)
 	commitFile := filepath.Join(dir, "commit")
 	cleanFile := filepath.Join(dir, "clean")
 	os.Remove(cleanFile)
@@ -680,6 +706,37 @@ func recordCommit(root, dir string) {
 	}
 	os.WriteFile(commitFile, []byte(c+"\n"), 0o644)
 	os.WriteFile(cleanFile, []byte("compiler/ and std/ had no uncommitted changes\n"), 0o644)
+}
+
+// recordStamp writes dir/stamp: the commit and the diff hash gitState finds
+// ("-" for none), the provenance stamps the xo beside it carries.
+func recordStamp(root, dir string) {
+	c, d := gitState(root)
+	if d == "" {
+		d = "-"
+	}
+	os.WriteFile(filepath.Join(dir, "stamp"), []byte(c+" "+d+"\n"), 0o644)
+}
+
+// stampMatches reports whether the shared cache entry in dir was built by a
+// tree in the state dirty ("" for no uncommitted change, else gitState's diff
+// hash): its stamp file records the same diff hash. An entry with no stamp
+// file (one stored before 2026-10-25, possibly from a dirty tree) matches no
+// tree and is built again.
+func stampMatches(dir, dirty string) bool {
+	b, err := os.ReadFile(filepath.Join(dir, "stamp"))
+	if err != nil {
+		return false
+	}
+	f := strings.Fields(string(b))
+	if len(f) != 2 {
+		return false
+	}
+	d := f[1]
+	if d == "-" {
+		d = ""
+	}
+	return d == dirty
 }
 
 // sourcesClean reports whether root's compiler/ and std/ match HEAD: no

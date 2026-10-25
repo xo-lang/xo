@@ -2,6 +2,7 @@ package xotool
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -279,5 +280,62 @@ func TestVerifyBuilt(t *testing.T) {
 	}
 	if n == 0 {
 		t.Skip("no stamped xo in the cache")
+	}
+}
+
+// TestStampMatches: a shared checkout cache entry is reused only by a tree in
+// the same uncommitted state as the tree that built it (the stamp file
+// recordStamp writes beside it), so a clean tree never gets an xo stamped with
+// another tree's XO_DIRTY (gotchas/cached-xo-stamped-dirty.md).
+func TestStampMatches(t *testing.T) {
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "-A")
+	git("commit", "-q", "-m", "a")
+	entry := filepath.Join(t.TempDir(), "entry")
+	if err := os.MkdirAll(entry, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// no stamp file: matches no tree
+	_, clean := gitState(dir)
+	if clean != "" {
+		t.Fatalf("a fresh commit reads dirty %q", clean)
+	}
+	if stampMatches(entry, clean) {
+		t.Error("an entry with no stamp file matched a clean tree")
+	}
+	// a clean tree's entry: matches a clean tree, not a dirty one
+	recordStamp(dir, entry)
+	if !stampMatches(entry, "") {
+		t.Error("a clean tree's entry did not match a clean tree")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("two\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, dirty := gitState(dir)
+	if dirty == "" {
+		t.Fatal("a modified tracked file reads clean")
+	}
+	if stampMatches(entry, dirty) {
+		t.Error("a clean tree's entry matched a dirty tree")
+	}
+	// a dirty tree's entry: never matches a clean tree
+	recordStamp(dir, entry)
+	if stampMatches(entry, "") {
+		t.Error("a dirty tree's entry matched a clean tree")
+	}
+	if !stampMatches(entry, dirty) {
+		t.Error("a dirty tree's entry did not match the same dirty state")
 	}
 }
