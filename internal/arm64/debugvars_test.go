@@ -181,7 +181,12 @@ func TestDebugInfoSameCode(t *testing.T) {
 		var body strings.Builder
 		flush := func() {
 			if name != "" {
-				out[name] = body.String()
+				// the padding that aligns the next function is not code
+				b := body.String()
+				for strings.HasSuffix(b, "nop\n") {
+					b = strings.TrimSuffix(b, "nop\n")
+				}
+				out[name] = b
 			}
 			body.Reset()
 		}
