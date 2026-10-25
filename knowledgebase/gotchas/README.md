@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [case-fold-swar-vs-neon.md](case-fold-swar-vs-neon.md): Observed 2026-10-25: the ASCII case fold that a plan called a per rune loop to replace with SWAR is already eight byte SWAR in obj.fold_copy_lo; the 1.755 of LLVM's instructions on the ASCII rows is clang widening that same loop to NEON, and a std unroll gains arm64 14% while costing LLVM 1.7%
 - [same-code-test-inline-hole.md](same-code-test-inline-hole.md): Observed 2026-10-25: TestDebugInfoSameCode builds without inlining because dwline.built() changes the call graph the inliner sees; the promise is untested for inlining until the fold moves after it
 - [build-output-name-in-signature.md](build-output-name-in-signature.md): Observed 2026-10-24: two builds differing by one byte were named differently (the ad hoc signature's identifier is the output's base name), not a reproducibility bug; compare outputs of one name
 - [concurrent-builds-shared-build-dir.md](concurrent-builds-shared-build-dir.md): Observed and fixed 2026-10-24: two concurrent builds of one program wrote and linked the same `prog-darwin.N.o` in the program's build directory (a truncating write under the other's link: "not a 64 bit Mach-O file"); each build now has its own `w-*` directory

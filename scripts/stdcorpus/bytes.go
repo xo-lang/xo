@@ -366,6 +366,41 @@ func goBytesCaseCases() [][]byte {
 	}
 }
 
+// caseBoundaryCases are the inputs the ASCII fold's word loop needs: every
+// length below, at and just past its words (0, 7, 8, 9, 15, 16 and 17), a
+// byte at or above 0x80 at each position of an eight byte and a sixteen
+// byte word, and the bytes next to each letter range (0x40, 0x5b, 0x60 and
+// 0x7b around A-Z and a-z), which a range test on the wrong side takes for
+// letters. The expectations are Go's bytes.ToLower and bytes.ToUpper, as for
+// the rows above.
+func caseBoundaryCases() [][]byte {
+	var cs [][]byte
+	for _, s := range []string{"a", "A", "ab", "Ab", "aB"} {
+		for _, n := range []int{0, 1, 7, 8, 9, 15, 16, 17, 23, 24, 25} {
+			cs = append(cs, []byte(strings.Repeat(s[:1], n)))
+		}
+	}
+	for _, w := range []string{"abcdefgh", "ABCDEFGH", "abcdefghijklmnop", "ABCDEFGHIJKLMNOP"} {
+		cs = append(cs, []byte(w))
+		for k := 0; k < len(w); k++ {
+			for _, hi := range []byte{0x80, 0xc3, 0xff} {
+				b := []byte(w)
+				b[k] = hi
+				cs = append(cs, b)
+			}
+		}
+	}
+	for _, s := range []string{
+		"@AZ[", "@az[", "[A", "Z@", "Z[", "A@", "z`", "z{", "`a", "{a", "Z[\\]", "z{|}",
+		"@ABCDEFGHIJKLMNOPQRSTUVWXYZ[", "`abcdefghijklmnopqrstuvwxyz{",
+		"@ABCDEFG[A@", "`abcdefg{`a", "[Z@A][", "{z`a{",
+		"Aa@[{@`a", "ABCDEFGHIJKLMNOPqrstuvwxyz@[`{",
+	} {
+		cs = append(cs, []byte(s))
+	}
+	return cs
+}
+
 // goBytesEqualFoldCases are the pairs of Go's bytes_test.go
 // EqualFoldTests. Go's bytes tests are Copyright 2009 The Go Authors,
 // BSD-style license.
@@ -754,6 +789,7 @@ func bytesCorpus() string {
 
 	// to_lower and to_upper
 	cm := goBytesCaseCases()
+	cm = append(cm, caseBoundaryCases()...)
 	rcm := rand.New(rand.NewSource(83))
 	for i := 0; i < 1200; i++ {
 		cm = append(cm, bytesRandomCase(rcm))
