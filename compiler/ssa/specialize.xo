@@ -108,17 +108,32 @@ fn spec_param(f: Func, k: Int) -> Bool {
   k < f.blocks[0].params.len() && !f.var_params.contains(k)
 }
 
-/// Whether function fi of m compares parameter k: an operand of str.eq or
-/// str.cmp, or of an Eq or Ne, in fi or in a callee it passes the
-/// parameter to (depth levels down: walk passes its `want` to by_for,
-/// which compares it). A literal there folds or compares in line; one that
-/// is only passed on, a fault location, gains nothing from a clone.
+/// Whether function fi of m compares parameter k and puts it to no use a
+/// literal cannot help: spec_uses is 1.
 fn spec_compared(m: Module, fi: Int, k: Int, depth: Int) -> Bool {
+  spec_uses(m, fi, k, depth) == 1
+}
+
+/// What function fi of m does with parameter k, for a literal argument:
+/// 1 when it compares it (an operand of str.eq or str.cmp, an Eq or Ne)
+/// and every other use is neutral, 0 when every use is neutral, -1 when
+/// one use gains nothing from a literal and a clone would only add code.
+/// Neutral: a Str.len, a capture of a closure, and an argument of a
+/// callee whose own uses are neutral or compare (depth levels down: walk
+/// passes its `want` to by_for, which compares it, and to by_any, whose
+/// closure captures it). Against: any other operation (a hash, a store
+/// into a list or a field), or a call of a function with no body here (a
+/// fault location's runtime call). A Map's generated operations hash
+/// and store their key before they compare it: with compares alone,
+/// CRUD's `m["id"] = ...` made 43 clones of map put, slowput and record,
+/// 60 KB of its 149 KB of map code that folded nothing (2026-10-24).
+fn spec_uses(m: Module, fi: Int, k: Int, depth: Int) -> Int {
   let f = m.funcs[fi]
   if k >= f.blocks[0].params.len() {
-    return false
+    return -1
   }
   let p = f.blocks[0].params[k]
+  var r = 0
   for bl in f.blocks {
     for v in bl.instrs {
       let x = f.values[v]
@@ -130,21 +145,31 @@ fn spec_compared(m: Module, fi: Int, k: Int, depth: Int) -> Bool {
         None | I(..) | F(..) | B(..) | Bs(..) | P(..) => ""
       }
       if x.op is Op.Eq | Op.Ne || (x.op == Op.Call && name is "str.eq" | "str.cmp") {
-        return true
+        r = 1
+        continue
       }
-      if depth > 0 && x.op == Op.Call {
-        let ci = m.func_at.get(name) ?? -1
-        if ci >= 0 && ci != fi && !m.funcs[ci].blocks.is_empty() {
-          for (j, a) in x.args.indexed() {
-            if a == p && spec_compared(m, ci, j, depth - 1) {
-              return true
-            }
+      if x.op == Op.Closure || (x.op == Op.Call && name == "Str.len") {
+        continue
+      }
+      if depth <= 0 || x.op != Op.Call {
+        return -1
+      }
+      let ci = m.func_at.get(name) ?? -1
+      if ci < 0 || ci == fi || m.funcs[ci].blocks.is_empty() {
+        return -1
+      }
+      for (j, a) in x.args.indexed() {
+        if a == p {
+          let u = spec_uses(m, ci, j, depth - 1)
+          if u < 0 {
+            return -1
           }
+          r = r.max(u)
         }
       }
     }
   }
-  false
+  r
 }
 
 /// The key of value a of f as a constant argument: a closure of nothing

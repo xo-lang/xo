@@ -1,0 +1,52 @@
+// specialize_args's literal rule (decision 0368, addendum 2026-10-24): a
+// Str literal clones a callee that compares its parameter and puts it to
+// no use a literal cannot help.
+
+/// walk passes its parameter 0 to by_for, which compares it, and to
+/// by_any, whose closure captures it; put hashes its parameter 0 and
+/// compares it; log only passes it to a function with no body.
+fn spec_module() -> Module {
+  var m = Module{}
+  for n in ["walk", "by_for", "by_any", "put", "hash", "log", "rt_log"] {
+    let _f = m.new_func(n, [-1], [])
+  }
+  var w = m.funcs[0]
+  let wp = w.blocks[0].params[0]
+  let _a = w.add(0, Op.Call, -1, Aux.S(s: "by_for"), [wp])
+  let _b = w.add(0, Op.Call, -1, Aux.S(s: "by_any"), [wp])
+  let _l = w.add(0, Op.Call, -1, Aux.S(s: "Str.len"), [wp])
+  m.funcs[0] = w
+  var bf = m.funcs[1]
+  let _e = bf.add(0, Op.Call, -1, Aux.S(s: "str.eq"), [bf.blocks[0].params[0], bf.blocks[0].params[0]])
+  m.funcs[1] = bf
+  var ba = m.funcs[2]
+  let _c = ba.add(0, Op.Closure, -1, Aux.S(s: "by_any.fn1"), [ba.blocks[0].params[0]])
+  m.funcs[2] = ba
+  var pu = m.funcs[3]
+  let pp = pu.blocks[0].params[0]
+  let _h = pu.add(0, Op.Call, -1, Aux.S(s: "hash"), [pp])
+  let _q = pu.add(0, Op.Call, -1, Aux.S(s: "str.eq"), [pp, pp])
+  m.funcs[3] = pu
+  var h = m.funcs[4]
+  let _x = h.add(0, Op.Mul, -1, Aux.None, [h.blocks[0].params[0], h.blocks[0].params[0]])
+  m.funcs[4] = h
+  var lg = m.funcs[5]
+  let _r = lg.add(0, Op.Call, -1, Aux.S(s: "rt_log"), [lg.blocks[0].params[0]])
+  m.funcs[5] = lg
+  // rt_log: no body
+  m.funcs[6].blocks = []
+  m
+}
+
+test "a literal clones a callee that compares it and hashes nothing" {
+  let m = spec_module()
+  expect(spec_uses(m, 1, 0, 3)) == 1
+  expect(spec_uses(m, 2, 0, 3)) == 0
+  // compared in by_for, captured in by_any, its length read: cloned
+  expect(spec_compared(m, 0, 0, 3)) == true
+  // hashed before it is compared: not cloned
+  expect(spec_uses(m, 3, 0, 3)) == -1
+  expect(spec_compared(m, 3, 0, 3)) == false
+  // only passed to a function with no body: not cloned
+  expect(spec_compared(m, 5, 0, 3)) == false
+}

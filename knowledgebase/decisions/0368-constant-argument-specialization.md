@@ -168,3 +168,42 @@ have found).
   callbacks case is not a closure.
 - A per-std-function special case (fields_where for is_space): narrow.
 - Leave it: fieldsfunc at about 2.5 times LLVM's time on native.
+
+## Addendum: literals only where nothing else uses them (2026-10-24)
+
+Sizing native code for the Xo Lead (size step 2) found 45 `#spec` clones
+in a release bench/perf/http/xo. They took 63,008 bytes, 60,612 of them
+copies of a Map's generated operations: `xo.map.put`,
+`xo.maph.slowput`, `xo.mlog.record` and the functions they call, made
+for the constant Str keys of `m["id"] = ...`. Those operations compare
+the key, so spec_compared took them, but they hash and store it first,
+and the literal folds nothing there.
+
+The rule is now spec_uses (compiler/ssa specialize.xo), as the Lead
+asked: a general rule, not a list of callees.
+
+- A Str literal clones the callee only when it compares the parameter
+  and every other use is neutral.
+- Neutral uses: a Str.len, a closure's capture, and passing it to a
+  callee whose own uses are neutral or compare, three levels down.
+- Any other use counts against: a hash, a store, or a call of a function
+  with no body.
+
+Results, the old rule (main's xo, 3a435412a) against the new one,
+release builds, minimum of 5 runs:
+
+| row | before | after |
+|---|---|---|
+| bench/perf/http/xo __text | 1,519,088 (45 clones) | 1,467,848 (1 clone) |
+| unicode fieldsfunc instructions | 176,267,676 | 176,269,610 |
+| unicode trimfunc instructions | 52,830,942 | 52,793,159 |
+| callbacks for instructions | 189,292,852 | 189,159,622 |
+| callbacks any instructions | 940,045,937 | 940,012,388 |
+| xo itself, s2 of the fixed point, __text | 60,128,952 | 59,996,112 |
+
+The callbacks and unicode binaries keep their clones and their size.
+The first cut, compares only with every use a compare, lost callbacks
+for's clone (189 to 256 million instructions): walk also hands `want`
+to by_any's closure. A size cap does not separate the cases either: map
+find has 48 SSA values and walk 131. compiler/ssa specialize_test.xo
+covers the rule.

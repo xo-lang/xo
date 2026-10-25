@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- A Map used with literal keys (`m["id"] = ...`) no longer gets copies of its put
+  and lookup code per key on the native and LLVM backends (decision 0368's addendum:
+  a literal clones a callee only when the callee compares it and does not hash or
+  store it): a release CRUD server's __text goes from 1,519,088 to 1,467,848 bytes
+  (-3.4%), with the closure and compare specializations as fast as before.
 - A keyword where a pattern binds a name (`Some(pub) =>`) is its parse error alone:
   the bindings only the unparsed part read are no longer "never used" (they came
   first and named the wrong lines), a keyword read as a name says so (XO0160, not
