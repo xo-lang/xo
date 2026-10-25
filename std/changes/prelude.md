@@ -23,6 +23,30 @@ of the base's instructions, the unicode quote row 0.988, the text quote
 row 0.999 and the classes row 1.002, the last because its is_print call
 is not in a loop.
 
+## 2026-10-24: perf: Duration.parse takes one branch a digit instead of four
+
+- Kind: perf
+- Commit: this commit
+- Found by: profiling bench/perf/text's dur_parse (107 native samples,
+  76 LLVM): both backends spend 79 percent of it in the integer or the
+  fraction digit loop of text.parse_duration
+- Go reference: time.ParseDuration has the same two guards a digit
+  (`if v > 1<<63/10` and the overflow of the multiply), which is where
+  the per digit cost came from
+- Test: the time and strconv corpora on arm64 and LLVM; stdfuzz area
+  time; the wasm goldens; the full fixed point
+- Timing: bench/results/dur-parse-2026-10-24.md
+
+The digit test is `!(c >= 0 && c <= 9)` on the computed digit, one
+unsigned compare where `c < 0 || c > 9` took two branches and a second
+`sub`. The per digit magnitude guard is gone: eighteen digits cannot
+leave the range, and a longer run is read again with the guard after the
+loop; and with that guard the product is exact, so the second guard
+folds into one test after the loop for the one sum that leaves the range
+(the last digit of -2^63, which wraps positive). dur_parse goes from
+148,877,955 to 141,418,651 instructions, 0.950, wall 0.931 within noise.
+The bounds check against the Bytes' length is what is left per digit.
+
 ## 2026-10-24: perf: quote calls scan.span only where a run can start, and the two byte decode is one function
 
 - Kind: perf

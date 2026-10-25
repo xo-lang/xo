@@ -327,20 +327,38 @@ pub fn parse_duration(s: Str) -> Int? {
     // backends did not (2026-10-24: dur_parse 1.11x LLVM's instructions)
     var nv = 0
     let pl = i
+    // the range test as one boolean on the value: `c < 0 || c > 9`
+    // compiles to two branches a digit, `!(c >= 0 && c <= 9)` to one
+    // compare and one, with the digit computed once (2026-10-24,
+    // dur_parse). Eighteen digits cannot leave the range (10^18 < 2^63 /
+    // 10), so the magnitude guard is not per digit: a longer run is read
+    // again below
     while i < n {
       let c = Int(b[i]) - 48
-      if c < 0 || c > 9 {
+      if !(c >= 0 && c <= 9) {
         break
       }
-      if nv < -922337203685477580 {
-        return None
-      }
-      let t = nv.wrapping_mul(10)
-      if t < MIN_INT.wrapping_add(c) {
-        return None
-      }
-      nv = t.wrapping_sub(c)
+      nv = nv.wrapping_mul(10).wrapping_sub(c)
       i += 1
+    }
+    if i - pl > 18 {
+      // only a 19 digit run can reach the range, and only
+      // -9223372036854775808 exactly: the guard bounds the product, and
+      // the one sum that leaves the range wraps positive (2026-10-24: the
+      // per digit guard was a compare and a branch)
+      nv = 0
+      var j = pl
+      while j < i {
+        let c = Int(b[j]) - 48
+        if nv < -922337203685477580 {
+          return None
+        }
+        nv = nv.wrapping_mul(10).wrapping_sub(c)
+        j += 1
+      }
+      if nv > 0 {
+        return None
+      }
     }
     let pre = i != pl
     var post = false
@@ -352,19 +370,22 @@ pub fn parse_duration(s: Str) -> Int? {
       let pf = i
       var overflow = false
       while i < n {
-        let c = Int(b[i]) - 48
-        if c < 0 || c > 9 {
+        let d = Int(b[i])
+        if !(d >= 48 && d <= 57) {
           break
         }
+        let c = d - 48
         if !overflow {
           if nf < -922337203685477580 {
             overflow = true
           } else {
-            let t = nf.wrapping_mul(10)
-            if t < MIN_INT.wrapping_add(c) {
+            // the same single test as the integer part: the magnitude
+            // guard makes the product exact, and a wrap past the end is
+            // the one sum that changes the sign
+            nf = nf.wrapping_mul(10).wrapping_sub(c)
+            if nf > 0 {
               overflow = true
             } else {
-              nf = t.wrapping_sub(c)
               scale *= 10.0
             }
           }
