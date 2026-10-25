@@ -771,15 +771,26 @@ fn (var b: Builder) mlog_vtable(vd: Int) -> Str {
 
 /// The value log vdir with v appended at own index i (a new chunk first
 /// when i starts one), in place (log.push: the chunks are shared as the
-/// key side's are).
-fn (var b: Builder) mlog_vpush(vdir: Int, i: Int, v: Int) {
+/// key side's are); a table's value log is made at its first value (a
+/// fork or a first table starts with the shared empty list: no value of
+/// it has a position in its view yet, so none reads it), and the result
+/// is the value log the map holds from then on.
+fn (var b: Builder) mlog_vpush(vdir0: Int, i: Int, v: Int) -> Int {
   let it = b.int_t()
-  let vl = b.m.types[b.vty(vdir)].elems[0]
+  let vd = b.vty(vdir0)
+  let vl = b.m.types[vd].elems[0]
+  let dv = b.local()
+  b.write_var(dv, vdir0)
+  let (ne, je) = b.if_then_begin(b.bop(Op.Eq, b.call("list.len", it, "", [vdir0]), b.cint(0)))
+  b.write_var(dv, b.mlog_newdir(vd))
+  b.if_then_end(ne, je)
+  let vdir = b.read(dv)
   let (c, _off) = b.mlog_slot(i)
   let (nc, jc) = b.if_then_begin(b.bop(Op.Eq, c, b.call("list.len", it, "", [vdir])))
   b.mlog_push(vdir, b.call("list.new", vl, "", [b.iop(Op.Shl, b.cint(1), c)]))
   b.if_then_end(nc, jc)
   b.mlog_push(b.call("list.index", vl, "", [vdir, c]), v)
+  vdir
 }
 
 /// The index of the own entries [base, lim) of the log dir: each key's
@@ -1234,7 +1245,19 @@ fn (var b: Builder) mlog_claim(t: Int) -> Str {
   let saved = b.begin(fi, b.s.file)
   let mp = b.param(0)
   let wl = b.m.list(it)
-  let r = b.call(claimk, b.mlog_claim_type(kt), "", [b.mf(t, 0, mp)])
+  // the hot case in line: m wins its table's next position (a fork's
+  // own puts, a sole table's appends), with no call of claimk; when it
+  // loses, claimk's own claim of the same position fails too (the cell
+  // only grows), and it forks or flattens
+  let kl0 = b.mf(t, 0, mp)
+  let used = b.mf(kt, 2, kl0)
+  let (nu, ju) = b.if_then_begin(b.bop(Op.Gt, b.call("list.len", it, "", [used]), b.cint(0)))
+  let lim = b.mf(kt, 5, kl0)
+  let (nc, jc) = b.if_then_begin(b.rt("slot_cas", b.bool_t(), [used, b.cint(0), lim, b.iop(Op.Add, lim, b.cint(1)), b.cint(MLOG_ACQ_REL)]))
+  b.retv(mp)
+  b.if_then_end(nc, jc)
+  b.if_then_end(nu, ju)
+  let r = b.call(claimk, b.mlog_claim_type(kt), "", [kl0])
   let k2 = b.add(Op.Field, kt, Aux.I(n: 0), [r])
   let how = b.add(Op.Field, it, Aux.I(n: 1), [r])
   let vpar = b.mf(t, 2, mp)
@@ -1244,23 +1267,33 @@ fn (var b: Builder) mlog_claim(t: Int) -> Str {
   b.retv(b.add(Op.SetField, t, Aux.I(n: 0), [mp, k2]))
   b.if_then_end(nw, jw)
   let (nf, jf) = b.if_then_begin(b.bop(Op.Eq, how, b.cint(1)))
-  b.retv(b.add(Op.Struct, t, Aux.None, [k2, b.mlog_newdir(vd), vpar]))
+  b.retv(b.add(Op.Struct, t, Aux.None, [k2, b.call("list.new", vd, "", []), vpar]))
   b.if_then_end(nf, jf)
   let (nl, jl) = b.if_then_begin(b.bop(Op.Eq, how, b.cint(2)))
   let vs = b.call(vals, b.m.types[vd].elems[0], "", [mp, b.add(Op.Field, wl, Aux.I(n: 2), [r])])
   b.retv(b.add(Op.Struct, t, Aux.None, [k2, b.call(vtab, vd, "", [vs]), b.call("list.new", vpt, "", [])]))
   b.if_then_end(nl, jl)
   // a fork: m's value log is the new parent level's, nearest first
-  let vlvl = b.add(Op.Struct, vlt, Aux.None, [b.mf(t, 1, mp), b.call("list.new", b.m.types[vlt].fields[1].ty, "", [])])
-  let np = b.call("list.len", it, "", [vpar])
-  let pv = b.local()
-  b.write_var(pv, b.call("list.new", vpt, "", [b.iop(Op.Add, np, b.cint(1))]))
-  b.write_var(pv, b.call("list.push", vpt, "", [b.read(pv), vlvl]))
-  let iv = b.local()
-  let (i, ih, ix) = b.for_up_to_begin(np, iv)
-  b.write_var(pv, b.call("list.push", vpt, "", [b.read(pv), b.call("list.index", vlt, "", [vpar, i])]))
-  b.for_up_to_end(i, iv, ih, ix)
-  b.retv(b.add(Op.Struct, t, Aux.None, [k2, b.mlog_newdir(vd), b.read(pv)]))
+  // (xo.mlog.vfork[V], one per value type)
+  let fname = "xo.mlog.vfork[${b.m.types[vpt].name}]"
+  let ffi = b.thunk_func(fname, [vd, vpt], [vpt], [])
+  if ffi >= 0 {
+    let fsaved = b.begin(ffi, b.s.file)
+    let fvpar = b.param(1)
+    let vlvl = b.add(Op.Struct, vlt, Aux.None, [b.param(0), b.call("list.new", b.m.types[vlt].fields[1].ty, "", [])])
+    let np = b.call("list.len", it, "", [fvpar])
+    let pv = b.local()
+    b.write_var(pv, b.call("list.new", vpt, "", [b.iop(Op.Add, np, b.cint(1))]))
+    b.write_var(pv, b.call("list.push", vpt, "", [b.read(pv), vlvl]))
+    let iv = b.local()
+    let (i, ih, ix) = b.for_up_to_begin(np, iv)
+    b.write_var(pv, b.call("list.push", vpt, "", [b.read(pv), b.call("list.index", vlt, "", [fvpar, i])]))
+    b.for_up_to_end(i, iv, ih, ix)
+    b.retv(b.read(pv))
+    b.finish_fn()
+    b.end(fsaved)
+  }
+  b.retv(b.add(Op.Struct, t, Aux.None, [k2, b.call("list.new", vd, "", []), b.call(fname, vpt, "", [b.mf(t, 1, mp), vpar])]))
   b.finish_fn()
   b.end(saved)
   name
@@ -1393,6 +1426,29 @@ fn (var b: Builder) mlog_recordk(t: Int) -> Str {
   name
 }
 
+/// xo.mlog.flatten[K](m) -> (K side, List[Int]): a fresh table of the key
+/// side m's live entries in order, and their find results in m (the
+/// values follow them, xo.mlog.vals).
+fn (var b: Builder) mlog_flatten(t: Int) -> Str {
+  let it = b.int_t()
+  let et = mlog_entry_of(b.m, t)
+  let el = b.m.list(et)
+  let wl = b.m.list(it)
+  let each = b.mlog_each(t)
+  let rt = b.m.tuple([t, wl])
+  let name = "xo.mlog.flatten[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t], [rt], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  let er = b.call(each, b.m.tuple([el, wl]), "", [b.param(0)])
+  b.retv(b.add(Op.Tuple, rt, Aux.None, [b.mlog_table(t, b.add(Op.Field, el, Aux.I(n: 0), [er]), b.cint(0)), b.add(Op.Field, wl, Aux.I(n: 1), [er])]))
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
 /// xo.mlog.record[T](m, h, k, v, del) -> T: an entry of k (a tombstone when
 /// del, v then the removed value, kept so the value log follows the key
 /// side's positions) appended at the position m claimed (xo.mlog.recordk),
@@ -1402,11 +1458,9 @@ fn (var b: Builder) mlog_record(t: Int) -> Str {
   let it = b.int_t()
   let bt = b.bool_t()
   let kt = mlog_k(b.m, t)
-  let et = mlog_entry_of(b.m, kt)
-  let el = b.m.list(et)
   let wl = b.m.list(it)
   let recordk = b.mlog_recordk(kt)
-  let each = b.mlog_each(kt)
+  let flatten = b.mlog_flatten(kt)
   let vals = b.mlog_vals(t)
   let vd = b.m.types[t].fields[1].ty
   let vtab = b.mlog_vtable(vd)
@@ -1420,13 +1474,12 @@ fn (var b: Builder) mlog_record(t: Int) -> Str {
   let r = b.call(recordk, b.mlog_record_type(kt), "", [b.mf(t, 0, mp), b.param(1), b.param(2), b.param(4)])
   let k1 = b.add(Op.Field, kt, Aux.I(n: 0), [r])
   let i = b.add(Op.Field, it, Aux.I(n: 1), [r])
-  let vdir = b.mf(t, 1, mp)
-  b.mlog_vpush(vdir, i, b.param(3))
+  let vdir = b.mlog_vpush(b.mf(t, 1, mp), i, b.param(3))
   let m1 = b.add(Op.Struct, t, Aux.None, [k1, vdir, b.mf(t, 2, mp)])
   let (nf, jf) = b.if_then_begin(b.add(Op.Field, bt, Aux.I(n: 2), [r]))
-  let er = b.call(each, b.m.tuple([el, wl]), "", [k1])
-  let vs = b.call(vals, b.m.types[vd].elems[0], "", [m1, b.add(Op.Field, wl, Aux.I(n: 1), [er])])
-  b.retv(b.add(Op.Struct, t, Aux.None, [b.mlog_table(kt, b.add(Op.Field, el, Aux.I(n: 0), [er]), b.cint(0)), b.call(vtab, vd, "", [vs]), b.call("list.new", b.m.types[t].fields[2].ty, "", [])]))
+  let fr = b.call(flatten, b.m.tuple([kt, wl]), "", [k1])
+  let vs = b.call(vals, b.m.types[vd].elems[0], "", [m1, b.add(Op.Field, wl, Aux.I(n: 1), [fr])])
+  b.retv(b.add(Op.Struct, t, Aux.None, [b.add(Op.Field, kt, Aux.I(n: 0), [fr]), b.call(vtab, vd, "", [vs]), b.call("list.new", b.m.types[t].fields[2].ty, "", [])]))
   b.if_then_end(nf, jf)
   b.retv(m1)
   b.finish_fn()

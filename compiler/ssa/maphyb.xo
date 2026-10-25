@@ -205,8 +205,21 @@ fn (var b: Builder) maph_ktolog(t: Int) -> Str {
 }
 
 /// The hybrid map of log table lv (a conversion's result): empty lists, n
-/// mirrored.
+/// mirrored (xo.maph.oflog[T], called from the slow paths).
 fn (var b: Builder) maph_of_log(t: Int, lv: Int) -> Int {
+  let lt = b.maph_lt(t)
+  let name = "xo.maph.oflog[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [lt], [t], [])
+  if fi >= 0 {
+    let saved = b.begin(fi, b.s.file)
+    b.retv(b.maph_of_log_body(t, b.param(0)))
+    b.finish_fn()
+    b.end(saved)
+  }
+  b.call(name, t, "", [lv])
+}
+
+fn (var b: Builder) maph_of_log_body(t: Int, lv: Int) -> Int {
   let it = b.int_t()
   let lt = b.maph_lt(t)
   let ll = b.m.list(lt)
@@ -522,6 +535,19 @@ fn (var b: Builder) maph_branches(t: Int, mp: Int) -> Int {
 /// key level holds the keys, live flags and slots, the value level the
 /// values.
 fn (var b: Builder) maph_fork_lists(t: Int, mp: Int) -> Int {
+  let lt = b.maph_lt(t)
+  let name = "xo.maph.fork[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t], [lt], [])
+  if fi >= 0 {
+    let saved = b.begin(fi, b.s.file)
+    b.retv(b.maph_fork_body(t, b.param(0)))
+    b.finish_fn()
+    b.end(saved)
+  }
+  b.call(name, lt, "", [mp])
+}
+
+fn (var b: Builder) maph_fork_body(t: Int, mp: Int) -> Int {
   let it = b.int_t()
   let lt = b.maph_lt(t)
   let kt = mlog_k(b.m, lt)
@@ -532,18 +558,28 @@ fn (var b: Builder) maph_fork_lists(t: Int, mp: Int) -> Int {
   let vd = b.m.types[lt].fields[1].ty
   let vpt = b.m.types[lt].fields[2].ty
   let vlt = b.m.types[vpt].elems[0]
-  let lim = b.call("list.len", it, "", [b.mfield(t, 0, mp)])
-  let n = b.add(Op.Field, it, Aux.I(n: 4), [mp])
-  let lvl = b.add(Op.Struct, lvt, Aux.None, [b.call("list.new", dt, "", []), b.call("list.new", il, "", []), b.cint(0), lim, b.mfield(t, 0, mp), b.mfield(t, 2, mp), b.mfield(t, 3, mp), n])
-  var ps = b.call("list.new", plt, "", [b.cint(1)])
-  ps = b.call("list.push", plt, "", [ps, lvl])
-  var used = b.call("list.new", il, "", [b.cint(1)])
-  used = b.call("list.push", il, "", [used, lim])
-  let kl = b.add(Op.Struct, kt, Aux.None, [b.mlog_newdir(dt), b.call("list.new", il, "", []), used, lim, n, lim, b.cint(0), ps])
+  let fs = b.m.types[t].fields
+  let kname = "xo.maph.kfork[${b.m.types[kt].name}]"
+  let kfi = b.thunk_func(kname, [fs[0].ty, fs[2].ty, fs[3].ty, it], [kt], [])
+  if kfi >= 0 {
+    let saved = b.begin(kfi, b.s.file)
+    let keys = b.param(0)
+    let n = b.param(3)
+    let lim = b.call("list.len", it, "", [keys])
+    let lvl = b.add(Op.Struct, lvt, Aux.None, [b.call("list.new", dt, "", []), b.call("list.new", il, "", []), b.cint(0), lim, keys, b.param(1), b.param(2), n])
+    var ps = b.call("list.new", plt, "", [b.cint(1)])
+    ps = b.call("list.push", plt, "", [ps, lvl])
+    var used = b.call("list.new", il, "", [b.cint(1)])
+    used = b.call("list.push", il, "", [used, lim])
+    b.retv(b.add(Op.Struct, kt, Aux.None, [b.mlog_newdir(dt), b.call("list.new", il, "", []), used, lim, n, lim, b.cint(0), ps]))
+    b.finish_fn()
+    b.end(saved)
+  }
+  let kl = b.call(kname, kt, "", [b.mfield(t, 0, mp), b.mfield(t, 2, mp), b.mfield(t, 3, mp), b.add(Op.Field, it, Aux.I(n: 4), [mp])])
   let vlvl = b.add(Op.Struct, vlt, Aux.None, [b.call("list.new", vd, "", []), b.mfield(t, 1, mp)])
   var vps = b.call("list.new", vpt, "", [b.cint(1)])
   vps = b.call("list.push", vpt, "", [vps, vlvl])
-  b.add(Op.Struct, lt, Aux.None, [kl, b.mlog_newdir(vd), vps])
+  b.add(Op.Struct, lt, Aux.None, [kl, b.call("list.new", vd, "", []), vps])
 }
 
 /// xo.maph.entry[K](kl, p) -> E: the entry at position p of the key side
