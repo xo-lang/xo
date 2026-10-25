@@ -1,5 +1,18 @@
 # std/json changes
 
+## 2026-10-25: perf: a list element's error path is built only on an error
+
+- Kind: perf
+- Commit: this commit
+- Found by: Xo Lang 3 (a profile of the JSON Time list decode: obj.reserve and reserve_slow were 15% of it, the "[k]" path segment built for every element)
+- Go reference: none (internal)
+- Test: goldens json_decode_fields, json_decode_errors and the other json goldens unchanged on arm64 and LLVM; bench/perf/jsontime 0.68 of the instructions, bench/perf/json 0.96
+
+The native decoder of a List or Set made the path segment `[k]` (two string
+concats and an allocation) for each element before decoding it, and used it
+only to name the element in a decode error. It is now made in the error branch;
+error messages are the same (`at $[1].name: expected string`).
+
 ## 2026-10-24: fix: parse_value refuses a number out of Float's range on both backends
 
 - Kind: fix
