@@ -7,7 +7,7 @@ _xo_f_main:
 LpGL1jtk_f1_begin:
 	.cfi_startproc
 	.cfi_personality 155, _xo_x_personality
-	.cfi_lsda 16, GCC_except_table_xopGL1jtk_1
+	.cfi_lsda 16, LpGL1jtk_f1_lsda
 	stp x29, x30, [sp, #-48]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]

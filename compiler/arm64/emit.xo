@@ -1845,14 +1845,13 @@ fn (g: G) lbl_prefix() -> Str {
   "${g.ns}f${g.nfunc}"
 }
 
-/// The function's call site table: a symbol on Mach-O (decision 0085).
+/// The function's call site table (`.cfi_lsda`): an assembler-local label
+/// on every object format, so a binary's symbol table has no LSDA names
+/// (nothing looks them up: the unwinder takes the pointer from the FDE,
+/// and std/native/llrt's prof reads __text symbols only). Darwin named it
+/// a symbol until 2026-10-25: 67 of hello's 856 symbols and 559 of CRUD's
+/// 2,971, 3.1 KB and 25.8 KB of the files.
 fn (g: G) lsda_label() -> Str {
-  if g.os == "darwin" {
-    if g.canon {
-      return "GCC_except_table_xo${FN_TOKEN}"
-    }
-    return "GCC_except_table_xo${g.ns}${g.nfunc}"
-  }
   g.local("${g.lbl_prefix()}_lsda")
 }
 
