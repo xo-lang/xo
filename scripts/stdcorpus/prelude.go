@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -79,9 +80,38 @@ func strconvQuoteTable(name string) [][]string {
 	return nil
 }
 
+// sortShape names a List.sort row: its length, and whether it is all one
+// key, in nondecreasing order, or in decreasing order.
+func sortShape(keys []string) string {
+	if len(keys) == 0 {
+		return "no keys"
+	}
+	same, up, down := true, true, true
+	for i := 1; i < len(keys); i++ {
+		if keys[i] != keys[0] {
+			same = false
+		}
+		if keys[i] < keys[i-1] {
+			up = false
+		}
+		if keys[i] > keys[i-1] {
+			down = false
+		}
+	}
+	switch {
+	case same && len(keys) > 1:
+		return fmt.Sprintf("%d equal keys", len(keys))
+	case up:
+		return fmt.Sprintf("%d keys in order", len(keys))
+	case down:
+		return fmt.Sprintf("%d keys reversed", len(keys))
+	}
+	return fmt.Sprintf("%d keys", len(keys))
+}
+
 func preludeCorpus() string {
 	var o strings.Builder
-	o.WriteString(header("Go's math.IsInf and strconv.Unquote (quote_test.go's unquotetests and misquoted), std.md 2.5's Option.or_err and Option.and_then, and std.md 2.6's Duration.ceil_seconds, on Go's tables and seeded texts, Float bit patterns and nanosecond counts: the prelude methods no other corpus reaches (Go's strconv tests are Copyright 2009 The Go Authors, BSD-style license)"))
+	o.WriteString(header("Go's math.IsInf and strconv.Unquote (quote_test.go's unquotetests and misquoted), std.md 2.5's Option.or_err and Option.and_then, std.md 2.6's Duration.ceil_seconds, and List.sort of Strs (Go's sort.Strings order) on Go's tables and seeded texts, Float bit patterns, nanosecond counts and key shapes: the prelude methods no other corpus reaches (Go's strconv tests are Copyright 2009 The Go Authors, BSD-style license)"))
 
 	// Float.is_inf: Go's math.IsInf(f, 0). Both infinities are true, a NaN is
 	// not, and no finite Float is, the largest and the subnormals included.
@@ -183,6 +213,50 @@ func preludeCorpus() string {
 	}
 	o.WriteString("]\n")
 
+	// List.sort of Strs: the shapes a merge based sort has to get right,
+	// the lengths around a half list (0, 1, 2, 12, 13 and 50), all equal,
+	// already sorted and reversed, keys that share a prefix (a sort may
+	// compare a seven byte prefix first and must still order the whole
+	// string), and keys where one is a prefix of another. Go's sort.Strings
+	// gives the order; it sorts unstably, which for equal strings is the
+	// same output, so the row is an exact oracle, and the stability the spec
+	// promises is not observable on Strs (two equal Strs are one text).
+	rs := rand.New(rand.NewSource(107))
+	var sortRows [][]string
+	sortRows = append(sortRows, nil)
+	sortRows = append(sortRows, []string{"b"})
+	sortRows = append(sortRows, []string{"b", "a"})
+	sortRows = append(sortRows, []string{"a", "b"})
+	sortRows = append(sortRows, []string{"", "a", "ab", "b", "aa"})
+	sortRows = append(sortRows, []string{"abcdefgh2", "abcdefgh1", "abcdefgh10", "abcdefgh0", "abcdefghi", "abcdefg"})
+	for _, n := range []int{12, 13, 50} {
+		var ks []string
+		for i := 0; i < n; i++ {
+			ks = append(ks, fmt.Sprintf("k%02d", rs.Intn(60)))
+		}
+		sortRows = append(sortRows, ks)
+		srt := append([]string(nil), ks...)
+		sort.Strings(srt)
+		sortRows = append(sortRows, srt)
+		var rev []string
+		for i := len(srt) - 1; i >= 0; i-- {
+			rev = append(rev, srt[i])
+		}
+		sortRows = append(sortRows, rev)
+	}
+	eq := make([]string, 13)
+	for i := range eq {
+		eq[i] = "same"
+	}
+	sortRows = append(sortRows, eq)
+	o.WriteString("\n/// (the keys joined by a unit separator, the keys in Go's sort.Strings order, the shape)\nconst SORT_STR_CASES: List[(Str, Str, Str)] = [\n")
+	for _, keys := range sortRows {
+		want := append([]string(nil), keys...)
+		sort.Strings(want)
+		fmt.Fprintf(&o, "  (%q, %q, %q),\n", strings.Join(keys, "\x1f"), strings.Join(want, "\x1f"), sortShape(keys))
+	}
+	o.WriteString("]\n")
+
 	o.WriteString(`
 fn show3(bad: List[(Str, Str, Str)]) -> List[(Str, Str, Str)] {
   bad[0..(if bad.len() < 20 { bad.len() } else { 20 })]
@@ -204,6 +278,15 @@ fn res_text(r: Result[Int, Str]) -> Str {
 
 fn inc(n: Int) -> Int? { n.checked_add(1) }
 fn nothing(_n: Int) -> Int? { None }
+
+/// The unit separated keys of a SORT_STR_CASES row.
+fn split_keys(s: Str) -> List[Str] {
+  if s == "" {
+    []
+  } else {
+    s.split("\u{1f}")
+  }
+}
 
 test "Float.is_inf is Go's math.IsInf" {
   var bad: List[(Str, Str, Str)] = []
@@ -257,6 +340,36 @@ test "Duration.ceil_seconds rounds up only a positive remainder" {
     }
   }
   expect(show3(bad)) == []
+}
+
+test "List.sort of Strs orders every shape Go's sort.Strings orders" {
+  var bad: List[(Str, Str, Str)] = []
+  for (keys, want, shape) in SORT_STR_CASES {
+    let got = split_keys(keys).sort().join("\u{1f}")
+    if got != want {
+      bad.push((shape, got, want))
+    }
+  }
+  expect(show3(bad)) == []
+}
+
+test "List.sort leaves the receiver in its order and returns a new list" {
+  let xs = ["b", "a", "c"]
+  let s = xs.sort()
+  expect(xs.join(",")) == "b,a,c"
+  expect(s.join(",")) == "a,b,c"
+  let one = ["a", "a", "b", "a"]
+  let one_s = one.sort()
+  expect(one.join(",")) == "a,a,b,a"
+  expect(one_s.join(",")) == "a,a,a,b"
+}
+
+test "List.sort_by keeps equal keys in input order" {
+  let xs = [("b", 1), ("a", 2), ("b", 3), ("a", 4), ("b", 5)]
+  let got = xs.sort_by(fn(p) { p.0 })
+  expect(got.map(fn(p) { "${p.0}${p.1}" }).join(",")) == "a2,a4,b1,b3,b5"
+  let same = [("k", 3), ("k", 1), ("k", 2)]
+  expect(same.sort_by(fn(p) { p.0 }).map(fn(p) { "${p.1}" }).join(",")) == "3,1,2"
 }
 `)
 	return o.String()
