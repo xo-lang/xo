@@ -277,6 +277,49 @@ func TestBuildCCLinkOSOPaths(t *testing.T) {
 	}
 }
 
+// TestBuildNativeReproducible: a native program built twice, each time
+// with a private backend cache, plain and --release, is equal byte for
+// byte when the output has one name (2026-10-24: two builds named p1 and
+// p2 differed in one byte, the ad hoc signature's identifier, which is
+// the output's base name; gotchas/build-output-name-in-signature.md).
+func TestBuildNativeReproducible(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds native programs")
+	}
+	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
+		t.Skip("darwin/arm64: the ad hoc signature")
+	}
+	src, err := filepath.Abs(filepath.Join("..", "..", "internal", "llvm", "testdata", "golden", "arith"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, src)
+	setenv(t, "XO_BIN_CACHE", "off")
+	for _, mode := range []string{"", "--release"} {
+		var prog [2][]byte
+		for i := range prog {
+			setenv(t, "XO_BACKEND_CACHE_DIR", filepath.Join(t.TempDir(), "cache"))
+			out := filepath.Join(t.TempDir(), "prog")
+			args := []string{"build"}
+			if mode != "" {
+				args = append(args, mode)
+			}
+			args = append(args, "-o", out, ".")
+			var o, e bytes.Buffer
+			if c := run(t, args, &o, &e); c != 0 {
+				t.Fatalf("build %d %q: exit %d\n%s", i, mode, c, e.String())
+			}
+			prog[i], err = os.ReadFile(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if !bytes.Equal(prog[0], prog[1]) {
+			t.Errorf("two native builds %q of one program differ byte for byte", mode)
+		}
+	}
+}
+
 // TestBuildLLVMWorkDirsPrivate: concurrent LLVM builds of different
 // programs each write their IR and split modules into a directory of
 // their own, removed after the link, so no prog*.ll is left in the build
