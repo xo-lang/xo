@@ -279,3 +279,45 @@ there and `dbg(x)` is `x` (core 11.4, 2.x flags table). The goldens are meant
 to run as development builds; this is the expected release difference, not a
 miscompile. Run them with `xo dev goldens --flags=--release` and expect exactly
 these two.
+
+## Addendum (2026-10-25, Xo Lead): the symbol tables of a release build
+
+A release binary kept every local symbol: 856 of hello's, 2,971 of the CRUD
+server's, of which the `__TEXT,__text` function names are the only ones
+anything reads at run time (std/native/llrt/prof.xo's traceback: a release
+build has no profiler, `profile_support_eff` is false, so tracebacks and
+crash reports are the readers). Two changes, measured on release
+darwin/arm64 builds of bench/size/native/xo/hello and bench/perf/http/xo:
+
+- the LSDA labels the arm64/x86 emitters made on darwin
+  (`GCC_except_table_...`) are assembler-local, as they already were on ELF:
+  nothing looks them up (the unwinder takes the LSDA pointer from the FDE's
+  CIE, and prof reads __text symbols only). Hello loses 67 of its 856
+  symbols and 2,037 bytes of string table, CRUD 559 of 2,971 and 16,905
+  bytes. All the fault, defer and landing-pad goldens and the traceback
+  tests pass unchanged.
+- `LinkOpts.release` (set by `--release`, part of the binary cache key)
+  keeps local symbols only in `__TEXT,__text`: the function names a
+  traceback prints. Local data and TLS symbols go, in the Mach-O and ELF
+  linkers; debug builds keep everything. Hello ends at 780 symbols, CRUD at
+  2,397.
+
+Measured on release darwin/arm64 builds of bench/size/native/xo/hello and
+bench/perf/http/xo against the same tree before the change: hello
+216,777 to 213,337 bytes (-1.6%), CRUD 1,949,960 to 1,923,368 (-1.4%).
+`sizebreak` __text grows by 360 bytes in both, the price of the no-symbol
+check below; the win is in __LINKEDIT (symbol and string tables). On
+linux/arm64 the ELF linker already wrote neither the LSDA labels nor
+non-text locals, so only the 360 bytes show there (hello 204,656 to
+205,024, its __text 133,968 to 134,256).
+
+`-s` still drops every local symbol. That used to make a traceback name
+every frame `_mh_execute_header` (the image header is a defined symbol at
+the image base, and the nearest symbol for every pc), and it never stopped
+at main; prof now skips that symbol, and the first frame past the runtime's
+own that no symbol covers prints
+`traceback: (no function symbols: built with -s, or stripped)`
+(gotchas/stripped-traceback-header-symbol.md). A compact function-name
+table (sorted, prefix-compressed, read by prof instead of LC_SYMTAB) was
+designed and parked: about 15.8 KB more on hello and 54.8 KB on CRUD, but
+nm, atos, sample and crash reports lose function names, an owner decision.

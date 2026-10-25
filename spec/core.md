@@ -2431,7 +2431,10 @@ failed `Int32(x)` conversion, evaluated hole, explicit `fault("msg")`.
   line from the program's DWARF line tables, decision 0239; inlined calls
   show the caller's line), by default since 2026-10-22 (owner; a hardware
   fault's report has its frames too, decision 0343); `XO_TRACEBACK=0`
-  leaves the frames out. With `XO_TRACEBACK=locals` each frame is followed by its
+  leaves the frames out. A build with no function symbols left (`-s`, or a
+  program stripped after the link) prints
+  `traceback: (no function symbols: built with -s, or stripped)` instead
+  of frames it cannot name. With `XO_TRACEBACK=locals` each frame is followed by its
   variables, `      NAME = VALUE` (decision 0268: from the program's
   DWARF, read at the fault; `<unavailable>` where the frame does not
   keep the value; numbers, `Bool`, `Str` text, a list's first elements

@@ -937,6 +937,13 @@ fn macho_symbols(lo: Int, hi: Int, var addrs: List[Int], var names: List[Str]) {
     if name.len() > 0 && name.bytes()[0] == 95 {
       name = name[1..name.len()]
     }
+    // the image's header symbol sits at the start of __text: with the
+    // function symbols gone (-s, or a strip after the link) it is the
+    // nearest symbol for every pc, and a traceback printed it as every
+    // frame (2026-10-25)
+    if name == "_mh_execute_header" {
+      continue
+    }
     addrs.push(a)
     names.push(name)
   }
@@ -1331,7 +1338,9 @@ pub fn write_file(path: Str, data: Bytes) -> Bool {
 /// (FILE:LINE)` (the line from the DWARF line tables when the program
 /// has them), from the first frame past the runtime's own (fault.,
 /// cabi.fault, unwind.) to the program's main (or xo_entry, which LLVM
-/// inlines main into).
+/// inlines main into). A build with no function symbols (`-s`, or a strip
+/// after the link) prints `traceback: (no function symbols: built with -s,
+/// or stripped)` instead: nothing could name its frames.
 pub fn trace_text(pcs: List[Int]) -> Str { trace_text_at(pcs, []) }
 
 /// trace_text with each frame's variables under it (decision 0268,
@@ -1342,6 +1351,9 @@ pub fn trace_text_at(pcs: List[Int], regs: List[Int]) -> Str {
   let syms = symbols(1, 9223372036854775807)
   let lines = dwline.load(1, 9223372036854775807)
   var names = syms.names
+  // the symbol table's own entries: func_of appends a name at and past
+  // this index for a pc no symbol covers
+  let nsyms = names.len()
   var b = StrBuilder.new()
   b.write("traceback:\n")
   var vars = dwline.Vars{}
@@ -1361,6 +1373,12 @@ pub fn trace_text_at(pcs: List[Int], regs: List[Int]) -> Str {
     // a return address: its call is at pc - 1
     let f = func_of(syms, pc - 1, names)
     let name = names[f]
+    // a build with no function symbols (-s, or a strip after the link):
+    // the first frame past the runtime's own has no symbol at all, so no
+    // frame can be named (2026-10-25)
+    if !started && f >= nsyms {
+      return "traceback: (no function symbols: built with -s, or stripped)\n"
+    }
     // (windows: the Win64 thunks the trace and the fault went through,
     // xo_w64_RtlCaptureContext and xo_w64_xo_callc2)
     if !started && (name.starts_with("fault.") || name.starts_with("fault_") || name.starts_with("cabi.fault") || name.starts_with("unwind.") || name.starts_with("xo_fault") || name.starts_with("xo_w64_")) {
