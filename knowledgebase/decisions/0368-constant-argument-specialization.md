@@ -102,7 +102,9 @@ have found).
   they are added (a clone's constant reaches its own calls:
   str_split_where's closure clones where_spans). At most SPEC_MAX_CLONES
   (256) a module; one clone per (callee, parameter, constant), named
-  `callee#specN`, its cache key cleared.
+  `callee#spec` and a hash of that key (until 2026-10-24 a counter, `#specN`,
+  which numbered one clone apart on two targets whose modules differ:
+  TestWindowsAmd64Identity pairs functions by name), its cache key cleared.
 - The clone: the callee's copy with the constant's operation at the
   start of the entry block and every use of the parameter replaced; the
   parameter stays (unused), so call sites keep their arguments. A

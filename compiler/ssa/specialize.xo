@@ -66,7 +66,7 @@ fn (var b: Builder) specialize_pass(var clones: Map[Str, Int], closures: Bool) {
             if clones.len() >= SPEC_MAX_CLONES {
               break
             }
-            c = b.m.add_clone(spec_clone(b.m.funcs[ci], k, b.m.funcs[fi].values[a], "${name}#spec${clones.len()}"))
+            c = b.m.add_clone(spec_clone(b.m.funcs[ci], k, b.m.funcs[fi].values[a], b.spec_name(name, ck)))
             clones[ck] = c
           }
           b.m.funcs[fi].values[v].aux = Aux.S(s: b.m.funcs[c].name)
@@ -78,6 +78,23 @@ fn (var b: Builder) specialize_pass(var clones: Map[Str, Int], closures: Bool) {
     }
     fi += 1
   }
+}
+
+/// The name of the clone of callee name for key ck (callee#k=constant):
+/// `name#spec` and a hash of ck, so it depends on the constant alone, not
+/// on the order the clones were made in (a counter numbered the same clone
+/// apart on two targets whose modules differ, and TestWindowsAmd64Identity
+/// paired functions by name, 2026-10-24); a later suffix only on a
+/// collision.
+fn (b: Builder) spec_name(name: Str, ck: Str) -> Str {
+  let h = fe_mix(0, ck) & 281474976710655
+  var n = "${name}#spec${h.to_str_base(16)}"
+  var i = 0
+  while b.m.func_at.contains(n) {
+    i += 1
+    n = "${name}#spec${h.to_str_base(16)}.${i}"
+  }
+  n
 }
 
 /// Whether f may be cloned: a plain function with a body of at most
