@@ -110,7 +110,9 @@ func TestDebugVars(t *testing.T) {
 
 // TestDebugInfoSameCode is decision 0252's gate: debug information does
 // not change the code you debug. Every golden program built by the arm64
-// backend with debug information (the default) and without it (-s) has,
+// backend with debug information (the default) and without it
+// (--debug-info=off: -s would also strip the symbols that name the
+// functions) has,
 // for every function of the build without it, the same machine code
 // (otool -tV, addresses and branch targets normalized) in the build with
 // it. The build with it may hold more functions: the runtime's DWARF
@@ -148,7 +150,7 @@ func TestDebugInfoSameCode(t *testing.T) {
 		}
 		for _, l := range strings.Split(string(b), "\n") {
 			switch {
-			case strings.HasSuffix(l, ":") && !strings.HasPrefix(l, "\t") && !strings.HasPrefix(l, "("):
+			case strings.HasSuffix(l, ":") && strings.HasPrefix(l, "_"):
 				flush()
 				name = strings.TrimSuffix(l, ":")
 			case name != "" && len(l) > 17 && l[16] == '\t':
@@ -166,7 +168,7 @@ func TestDebugInfoSameCode(t *testing.T) {
 		t.Run(filepath.Base(dir), func(t *testing.T) {
 			t.Parallel()
 			var bins [2]map[string]string
-			for i, flags := range [][]string{nil, {"-s"}} {
+			for i, flags := range [][]string{nil, {"--debug-info=off"}} {
 				res, err := xotool.Build([]string{dir}, xotool.Options{Backend: xotool.BackendArm64, Flags: flags})
 				if err != nil {
 					t.Fatalf("build: %v", err)
