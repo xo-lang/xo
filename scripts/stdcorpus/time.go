@@ -207,6 +207,17 @@ func timeCorpus() string {
 	// Xo trims white space before parsing (std.md 2.6), which Go does not:
 	// a deliberate difference, so the expectation is Xo's own reading.
 	durs = append(durs, "  1.5s  ", "\t2h\n", " 0 ")
+	// fractions at the end of the range a Duration keeps: Go's
+	// leadingFraction stops accumulating at the overflow and keeps the
+	// digits it read, so a fraction of 19 digits that passes 2^63 keeps
+	// eighteen of them and scales by what it read (2026-10-25: Xo kept the
+	// wrapped value and read 1s where Go reads 1.9223372036854775s)
+	durs = append(durs, "1.922337203685477580s", "1.9223372036854775807s",
+		"1.9223372036854775808s", "1.9223372036854775809s",
+		"1.9999999999999999999s", "-1.9223372036854775809s",
+		"1.9223372036854775809ns", "1.12345678901234567890s",
+		"1.922337203685477581999999999s",
+		"9223372036854775.8079223372036854775809s")
 	rd := rand.New(rand.NewSource(71))
 	for i := 0; i < 500; i++ {
 		durs = append(durs, timeRandomDuration(rd))

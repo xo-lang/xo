@@ -1,0 +1,37 @@
+// Tests of text.xo's private helpers: `xo test --std-module=native/llrt/text`,
+// run by internal/stdtest.
+
+/// The nanoseconds a duration's text parses to, or -1.
+fn nanos(s: Str) -> Int { parse_duration(s) ?? -1 }
+
+// Go's leadingFraction stops accumulating at the overflow and keeps the
+// digits it had, so a fraction of 19 digits that passes 2^63 keeps
+// eighteen of them and scales by what it read (2026-10-25: the merged
+// guard kept the wrapped value instead, and the run read 1s).
+test "a fraction that passes 2^63 keeps the digits it read" {
+  // 1s and 922337203685477580 / 10^18 of a second, as go's
+  // time.ParseDuration reads it
+  expect(nanos("1.9223372036854775809s") == 1922337203)
+  expect(nanos("1.9223372036854775808s") == 1922337203)
+  expect(nanos("1.9223372036854775807s") == 1922337203)
+  expect(nanos("1.922337203685477580s") == 1922337203)
+  expect(nanos("-1.9223372036854775809s") == -1922337203)
+  expect(nanos("1.9999999999999999999s") == 2000000000)
+  expect(nanos("1.9223372036854775809ns") == 1)
+  expect(nanos("1.12345678901234567890s") == 1123456789)
+}
+
+test "a fraction below 2^63 keeps every digit" {
+  expect(nanos("1.5s") == 1500000000)
+  expect(nanos("0.000000001s") == 1)
+  expect(nanos("1.000000000s") == 1000000000)
+  expect(nanos(".5s") == 500000000)
+}
+
+test "the integer part guards 2^63" {
+  expect(nanos("9223372036854775807ns") == 9223372036854775807)
+  expect(nanos("-9223372036854775808ns") == -9223372036854775808)
+  expect(nanos("9223372036854775808ns") == -1)
+  expect(nanos("-9223372036854775809ns") == -1)
+  expect(nanos("9999999999999999999999ns") == -1)
+}

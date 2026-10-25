@@ -43,9 +43,17 @@ unsigned compare where `c < 0 || c > 9` took two branches and a second
 leave the range, and a longer run is read again with the guard after the
 loop; and with that guard the product is exact, so the second guard
 folds into one test after the loop for the one sum that leaves the range
-(the last digit of -2^63, which wraps positive). dur_parse goes from
-148,877,955 to 141,418,651 instructions, 0.950, wall 0.931 within noise.
+(the last digit of -2^63, which wraps positive). The fraction keeps its
+guard a digit, since Go's parse saturates there, and takes the single
+range test into a temporary so the value it keeps is the last one that
+did not wrap: a fraction of 19 digits that passes 2^63 keeps the digits
+it read, as Go's leadingFraction does (the first form of this change
+kept the wrapped value and read 1s for `1.9223372036854775809s`; found
+by Xo Lead reviewing the commit, 2026-10-25). dur_parse goes from
+148,684,444 to 143,660,045 instructions, 0.966, wall 0.971 within noise.
 The bounds check against the Bytes' length is what is left per digit.
+std/native/llrt/text_test.xo pins the fraction cases, the time corpus
+carries them with Go's answers, and stdfuzz's time area draws from them.
 
 ## 2026-10-24: perf: quote calls scan.span only where a run can start, and the two byte decode is one function
 

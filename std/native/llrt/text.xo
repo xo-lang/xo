@@ -379,13 +379,15 @@ pub fn parse_duration(s: Str) -> Int? {
           if nf < -922337203685477580 {
             overflow = true
           } else {
-            // the same single test as the integer part: the magnitude
-            // guard makes the product exact, and a wrap past the end is
-            // the one sum that changes the sign
-            nf = nf.wrapping_mul(10).wrapping_sub(c)
-            if nf > 0 {
+            // the same single test as the integer part, but the wrapped
+            // value is not kept: Go's leadingFraction stops accumulating
+            // at the overflow and keeps the digits it had ("1.<19 digits
+            // ending past 2^63>s" scales by what it read, not by 10^19)
+            let t = nf.wrapping_mul(10).wrapping_sub(c)
+            if t > 0 {
               overflow = true
             } else {
+              nf = t
               scale *= 10.0
             }
           }
