@@ -31,7 +31,7 @@ func TestAmd64DebugInfoSameCode(t *testing.T) {
 	for _, name := range []string{"http_server", "fault_unwind", "float_libm", "json_text"} {
 		t.Run(name, func(t *testing.T) {
 			dir := filepath.Join("..", "llvm", "testdata", "golden", name)
-			ins := func(flags ...string) []string {
+			ins := func(flags ...string) map[string][]string {
 				out := filepath.Join(t.TempDir(), "a.s")
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 				defer cancel()
@@ -48,22 +48,39 @@ func TestAmd64DebugInfoSameCode(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				var lines []string
+				// each function's instructions by its label; the build
+				// with debug information may hold more functions (the
+				// runtime's DWARF readers, dwline.built(), decision 0354's
+				// addendum)
+				fns := map[string][]string{}
+				cur := ""
 				for _, l := range strings.Split(string(text), "\n") {
-					if strings.HasPrefix(l, "\t") && !strings.HasPrefix(l, "\t.") {
-						lines = append(lines, l)
+					switch {
+					case strings.HasPrefix(l, "\t") && !strings.HasPrefix(l, "\t."):
+						fns[cur] = append(fns[cur], l)
+					case !strings.HasPrefix(l, "\t") && !strings.HasPrefix(l, ".") && strings.HasSuffix(l, ":"):
+						cur = strings.TrimSuffix(l, ":")
 					}
 				}
-				return lines
+				return fns
 			}
 			with := ins()
 			without := ins("-s")
-			if len(with) != len(without) {
-				t.Fatalf("%d instructions with debug information, %d without", len(with), len(without))
+			if len(without) == 0 {
+				t.Fatalf("no functions found in the assembly")
 			}
-			for i := range with {
-				if with[i] != without[i] {
-					t.Fatalf("instruction %d differs with debug information:\n  with:    %s\n  without: %s", i, with[i], without[i])
+			for name, want := range without {
+				got, ok := with[name]
+				if !ok {
+					t.Fatalf("%s is in the build without debug information, not in the one with it", name)
+				}
+				if len(got) != len(want) {
+					t.Fatalf("%s: %d instructions with debug information, %d without", name, len(got), len(want))
+				}
+				for i := range got {
+					if got[i] != want[i] {
+						t.Fatalf("%s: instruction %d differs with debug information:\n  with:    %s\n  without: %s", name, i, got[i], want[i])
+					}
 				}
 			}
 		})

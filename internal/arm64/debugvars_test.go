@@ -109,9 +109,14 @@ func TestDebugVars(t *testing.T) {
 }
 
 // TestDebugInfoSameCode is decision 0252's gate: debug information does
-// not change code generation. Every golden program built by the arm64
-// backend with debug information (the default) and without it (-s) has
-// the same machine code (otool -t).
+// not change the code you debug. Every golden program built by the arm64
+// backend with debug information (the default) and without it (-s) has,
+// for every function of the build without it, the same machine code
+// (otool -tV, addresses and branch targets normalized) in the build with
+// it. The build with it may hold more functions: the runtime's DWARF
+// readers (native/llrt/dwline; dwline.built() folds to the build's debug
+// information, decision 0354's addendum), which a build without debug
+// information neither builds nor links, and what only they reach.
 func TestDebugInfoSameCode(t *testing.T) {
 	if runtime.GOOS != "darwin" || !native() {
 		t.Skip("darwin/arm64 only")
@@ -122,23 +127,45 @@ func TestDebugInfoSameCode(t *testing.T) {
 	if _, err := exec.LookPath("otool"); err != nil {
 		t.Skip("no otool")
 	}
-	text := func(t *testing.T, bin string) []byte {
+	addr := regexp.MustCompile(`0x[0-9a-f]+`)
+	page := regexp.MustCompile(`(adrp\t\w+), \d+`)
+	// funcs: each function's instructions by its symbol, as otool -tV
+	// prints them, without addresses
+	funcs := func(t *testing.T, bin string) map[string]string {
 		t.Helper()
-		b, err := exec.Command("otool", "-t", bin).Output()
+		b, err := exec.Command("otool", "-tV", bin).Output()
 		if err != nil {
-			t.Fatalf("otool -t %s: %v", bin, err)
+			t.Fatalf("otool -tV %s: %v", bin, err)
 		}
-		// the first line names the file
-		if i := bytes.IndexByte(b, '\n'); i >= 0 {
-			b = b[i+1:]
+		out := map[string]string{}
+		var name string
+		var body strings.Builder
+		flush := func() {
+			if name != "" {
+				out[name] = body.String()
+			}
+			body.Reset()
 		}
-		return b
+		for _, l := range strings.Split(string(b), "\n") {
+			switch {
+			case strings.HasSuffix(l, ":") && !strings.HasPrefix(l, "\t") && !strings.HasPrefix(l, "("):
+				flush()
+				name = strings.TrimSuffix(l, ":")
+			case name != "" && len(l) > 17 && l[16] == '\t':
+				l = addr.ReplaceAllString(l[17:], "X")
+				l = page.ReplaceAllString(l, "$1, N")
+				body.WriteString(l)
+				body.WriteByte('\n')
+			}
+		}
+		flush()
+		return out
 	}
 	for _, dir := range goldenDirs(t) {
 		dir := dir
 		t.Run(filepath.Base(dir), func(t *testing.T) {
 			t.Parallel()
-			var bins [2][]byte
+			var bins [2]map[string]string
 			for i, flags := range [][]string{nil, {"-s"}} {
 				res, err := xotool.Build([]string{dir}, xotool.Options{Backend: xotool.BackendArm64, Flags: flags})
 				if err != nil {
@@ -150,10 +177,27 @@ func TestDebugInfoSameCode(t *testing.T) {
 				if res.Failed {
 					t.Fatalf("build failed:\n%s", res.Output)
 				}
-				bins[i] = text(t, res.Binaries[xotool.Host()])
+				bins[i] = funcs(t, res.Binaries[xotool.Host()])
 			}
-			if !bytes.Equal(bins[0], bins[1]) {
-				t.Errorf("the code differs with debug information (%d against %d bytes of otool -t)", len(bins[0]), len(bins[1]))
+			bad := 0
+			for name, body := range bins[1] {
+				with, ok := bins[0][name]
+				if ok && with == body {
+					continue
+				}
+				if bad++; bad <= 5 {
+					if !ok {
+						t.Errorf("%s is in the build without debug information, not in the one with it", name)
+					} else {
+						t.Errorf("%s: the code differs with debug information", name)
+					}
+				}
+			}
+			if bad > 5 {
+				t.Errorf("... and %d more", bad-5)
+			}
+			if len(bins[1]) == 0 {
+				t.Errorf("no functions found in otool -tV")
 			}
 		})
 	}
