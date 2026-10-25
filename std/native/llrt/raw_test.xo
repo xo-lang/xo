@@ -1,0 +1,34 @@
+// Tests of raw.xo's address helpers on a Str view (decision 0330): `xo
+// test --std-module=native/llrt/raw`, run by internal/stdtest. A view's
+// object pointer is the view's first byte, so data and str_byte read the
+// view (2026-10-25, from the first duration digit loop work).
+
+test "a view is its own bytes" {
+  let v = str_slice("hello world", 6, 11)
+  expect(v == "world")
+  expect(v.bytes().len() == 5)
+  expect(Int(v.bytes()[0]) == 119)
+  expect(v.to_upper() == "WORLD")
+}
+
+test "data of a view is the view's first byte" {
+  let v = str_slice("abcdefghij", 7, 10)
+  expect(v == "hij")
+  expect(byte_at(data(v), 0) == 104)
+  expect(byte_at(data(v), 2) == 106)
+}
+
+test "str_byte of a view is the view's byte" {
+  let v = str_slice("abcdefghij", 7, 10)
+  expect(str_byte(v, 0) == 104)
+  expect(str_byte(v, 2) == 106)
+  expect(str_byte(v, 3) == -1)
+}
+
+test "a view of a view" {
+  let v = str_slice("abcdefghij", 7, 10)
+  let w = str_slice(v, 1, 3)
+  expect(w == "ij")
+  expect(byte_at(data(w), 0) == 105)
+  expect(str_byte(w, 1) == 106)
+}
