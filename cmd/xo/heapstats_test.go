@@ -10,7 +10,7 @@ import (
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
-const heapStatsProg = `fn main() {
+const heapStatsProg = `fn main(os: Os) {
   // a single threaded loop of allocations and frees: the pops of blocks
   // that were never counted when freed once drove the per class counts
   // negative
@@ -21,7 +21,7 @@ const heapStatsProg = `fn main() {
       keep.push(s)
     }
   }
-  println(keep.len())
+  os.stdio.println("${keep.len()}")
 }
 `
 
