@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/xo-lang/xo/internal/testtmp"
@@ -108,6 +109,37 @@ func TestDebugVars(t *testing.T) {
 	}
 }
 
+var runtimeMods = struct {
+	sync.Once
+	m map[string]bool
+}{}
+
+// programFunc reports whether symbol sym (_xo_f_NAME on darwin, xo_f_NAME
+// in the assembly) is a function of the program, not of the runtime (the
+// modules of std/native and std/native/llrt), its generics (xo.*) or its
+// glue (drop, dup, share): a runtime function that calls the DWARF
+// readers differs by the branch on dwline.built().
+func programFunc(sym string) bool {
+	runtimeMods.Do(func() {
+		runtimeMods.m = map[string]bool{"xo": true, "drop": true, "dropp": true, "dup": true, "share": true, "cabi": true}
+		for _, pat := range []string{"../../std/native/*.xo", "../../std/native/llrt/*.xo"} {
+			fs, _ := filepath.Glob(pat)
+			for _, f := range fs {
+				runtimeMods.m[strings.TrimSuffix(filepath.Base(f), ".xo")] = true
+			}
+		}
+	})
+	sym = strings.TrimPrefix(sym, "_")
+	if !strings.HasPrefix(sym, "xo_f_") {
+		return false
+	}
+	n := strings.NewReplacer("_2e", ".", "_5b", "[", "_20", " ", "_5d", "]", "_2c", ",").Replace(strings.TrimPrefix(sym, "xo_f_"))
+	if i := strings.IndexAny(n, ".[ "); i >= 0 {
+		n = n[:i]
+	}
+	return !runtimeMods.m[n]
+}
+
 // TestDebugInfoSameCode is decision 0252's gate: debug information does
 // not change the code you debug. Every golden program built by the arm64
 // backend with debug information (the default) and without it
@@ -167,34 +199,15 @@ func TestDebugInfoSameCode(t *testing.T) {
 		flush()
 		return out
 	}
-	// the runtime's modules (std/native, std/native/llrt), their
-	// generics (xo.*) and glue: not the program's own code, and a runtime
-	// function that holds a branch on dwline.built() differs by it
-	runtimeMod := map[string]bool{"xo": true, "drop": true, "dropp": true, "dup": true, "share": true, "cabi": true}
-	for _, pat := range []string{"../../std/native/*.xo", "../../std/native/llrt/*.xo"} {
-		fs, _ := filepath.Glob(pat)
-		for _, f := range fs {
-			runtimeMod[strings.TrimSuffix(filepath.Base(f), ".xo")] = true
-		}
-	}
-	unescape := strings.NewReplacer("_2e", ".", "_5b", "[", "_20", " ", "_5d", "]", "_2c", ",")
-	userFunc := func(sym string) bool {
-		if !strings.HasPrefix(sym, "_xo_f_") {
-			return false
-		}
-		n := unescape.Replace(strings.TrimPrefix(sym, "_xo_f_"))
-		if i := strings.IndexAny(n, ".[ "); i >= 0 {
-			n = n[:i]
-		}
-		return !runtimeMod[n]
-	}
 	for _, dir := range goldenDirs(t) {
 		dir := dir
 		t.Run(filepath.Base(dir), func(t *testing.T) {
 			t.Parallel()
 			var bins [2]map[string]string
 			for i, flags := range [][]string{nil, {"--debug-info=off"}} {
-				res, err := xotool.Build([]string{dir}, xotool.Options{Backend: xotool.BackendArm64, Flags: flags})
+				// no inlining in either: which calls are inlined follows the
+				// call graph, and the DWARF readers are callers in one build
+				res, err := xotool.Build([]string{dir}, xotool.Options{Backend: xotool.BackendArm64, Flags: flags, Env: []string{"XO_PASSES=-inline"}})
 				if err != nil {
 					t.Fatalf("build: %v", err)
 				}
@@ -217,7 +230,7 @@ func TestDebugInfoSameCode(t *testing.T) {
 				// a function nothing reaches is one brk (the hollow pass,
 				// decision 0371): the DWARF readers in a build without
 				// debug information
-				if !userFunc(name) || body == "brk\tX\n" || have[body] {
+				if !programFunc(name) || body == "brk\tX\n" || have[body] {
 					continue
 				}
 				if bad++; bad <= 5 {
