@@ -61,9 +61,9 @@ struct Opts {
   /// --trimpath: the DWARF directories relative to the working directory,
   /// not absolute (trimpath_eff; on unless given)
   trimpath: Int = -1
-  /// --pack-lists (experimental, decision 0369): a List of a sized integer
-  /// stores its elements in their width; the native and LLVM backends
-  pack_lists: Bool = false
+  /// --pack-lists (decision 0369, on unless --pack-lists=false): a List of a sized
+  /// integer stores its elements in their width; the native and LLVM backends
+  pack_lists: Bool = true
   /// --error-args: parameter values in error frames (11.1)
   error_args: Int = -1
   /// --debug-contracts: the `(debug)` contract clauses (spec 8)
