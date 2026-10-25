@@ -795,8 +795,7 @@ fn (var g: G) bounds_check(v: Int, l: Int, i: Int) {
   // the per block memo does not carry into a loop
   let x = g.f.values[v]
   if !g.proved_index(iv, n, -1) && !g.proof.proven(g.f, x.block, x.args[1], x.args[0]) {
-    let lb = g.loc_label(pos)
-    g.check("cmp $u0, $u1", [i, n], "hs", "xo_fault_index", [rsrc(i), rsrc(n), symsrc(lb)])
+    g.check("cmp $u0, $u1", [i, n], "hs", "xo_fault_index", [rsrc(i), rsrc(n)] + g.loc_args(pos))
   }
   g.index_facts(i)
   g.less_fact(iv, n)
@@ -1175,8 +1174,7 @@ fn (var g: G) call_op(v: Int) {
       let a = g.word(x.args[0])
       if !x.pos.is_empty() {
         let mn = g.imm(MIN_INT)
-        let lb = g.loc_label(x.pos)
-        g.check("cmp $u0, $u1", [a, mn], "eq", "xo_fault_abs", [rsrc(a), symsrc(lb)])
+        g.check("cmp $u0, $u1", [a, mn], "eq", "xo_fault_abs", [rsrc(a)] + g.loc_args(x.pos))
       }
       g.set(v, [g.def1(false, "cmp $u0, #0\ncneg $d0, $u0, lt", [a])])
     }
@@ -1206,8 +1204,7 @@ fn (var g: G) call_op(v: Int) {
       }
       let alen = g.str_len(a)
       if !x.pos.is_empty() && !g.proved_index(x.args[1], alen, k) {
-        let lb = g.loc_label(x.pos)
-        g.check("cmp $u0, $u1", [i, alen], "hs", "xo_fault_bytes_index", [rsrc(i), rsrc(alen), symsrc(lb)])
+        g.check("cmp $u0, $u1", [i, alen], "hs", "xo_fault_bytes_index", [rsrc(i), rsrc(alen)] + g.loc_args(x.pos))
       }
       if !x.pos.is_empty() {
         // what the check (or the proof) says holds after it

@@ -19,7 +19,7 @@
 use std/crypto
 use github.com/xo-lang/xo/compiler/ssa
 
-const PART_CACHE_VERSION = "xo part cache v3"
+const PART_CACHE_VERSION = "xo part cache v4"
 
 /// The key of each part of m for os from the functions' keys (fkeys,
 /// fcache.xo function_keys), "" for a part with a function not cached;

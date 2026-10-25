@@ -1,0 +1,28 @@
+// Tests of pos_split: a fault position "file:line:col" as the file, line,
+// and column the emitters pass to the runtime's fault entry points
+// (decision 0228's 2026-10-25 addendum).
+
+/// The split as one text, so a table of cases compares with ==.
+fn split_text(pos: Str) -> Str {
+  let (file, line, col) = pos_split(pos)
+  "${file}|${line}|${col}"
+}
+
+test "pos_split: the last two colons delimit the line and column" {
+  expect(split_text("main.xo:12:7")) == "main.xo|12|7"
+  expect(split_text("std/native/llrt/scan.xo:1234:56")) == "std/native/llrt/scan.xo|1234|56"
+  expect(split_text("a/b:1:1")) == "a/b|1|1"
+  // a file name with colons of its own keeps them (the last two delimit)
+  expect(split_text("C:/x/y.xo:9:3")) == "C:/x/y.xo|9|3"
+  expect(split_text("a:b:c:4:5")) == "a:b:c|4|5"
+}
+
+test "pos_split: another shape is its own file with line 0" {
+  // `file:line` (Builder pos_line) and anything unparsable
+  expect(split_text("main.xo:12")) == "main.xo:12|0|0"
+  expect(split_text("main.xo")) == "main.xo|0|0"
+  expect(split_text("")) == "|0|0"
+  expect(split_text("a.xo:x:7")) == "a.xo:x:7|0|0"
+  expect(split_text("a.xo:0:7")) == "a.xo:0:7|0|0"
+  expect(split_text("a.xo:7:0")) == "a.xo:7:0|0|0"
+}

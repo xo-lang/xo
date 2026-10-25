@@ -28,8 +28,9 @@ use native/rt
 use native/sys_darwin
 use native/sys_windows
 
-/// rt.static_word: the heap profile's record (0: off).
-const W_HPROF = 66
+/// rt.static_word: the heap profile's record (0: off). Word 90 since
+/// 2026-10-25, when fault.xo's range grew to 64-66; 66 until then.
+const W_HPROF = 90
 
 // The record (byte offsets): the slot table's address, its slot count,
 // the next free slot (atomic), the samples lost to a full table or

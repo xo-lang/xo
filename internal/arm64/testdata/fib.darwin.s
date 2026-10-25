@@ -166,6 +166,8 @@ LpGL1jtk_f2_fault1:
 	mov x1, #43
 	adrp x3, Lxo_pGL1jtk_loc0@PAGE
 	add x3, x3, Lxo_pGL1jtk_loc0@PAGEOFF
+	mov x4, #3
+	mov x5, #25
 	bl _xo_x_fault_raise_overflow
 	brk #1
 	.cfi_endproc

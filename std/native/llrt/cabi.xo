@@ -102,30 +102,32 @@ fn on_overflow(e: Int) -> Int { entry.on_overflow(e) }
 
 // ---------------------------------------------------------------------------
 // The fault entry points of generated code (decision 0228; fault.xo
-// raise_*): the arm64 and LLVM emitters call these exports directly
-// (loc is the zero terminated location); xo_rt.c's xo_fault_* forward
-// to them for code from an xo whose emitters named those. The raisers
-// never return; continue returns on a cancellation.
+// raise_*): the arm64 and LLVM emitters call these exports directly. A
+// checked operation passes its position as the zero terminated file name
+// and the line and column, which the runtime makes into "file:line:col"
+// when the fault is recorded (fault.xo set_pos); `fault(msg)` and the
+// contracts pass the location's bytes (fault_raise). The raisers never
+// return; continue returns on a cancellation.
 
-fn fault_raise_text(p: Int, n: Int, loc: Int) { fault.raise_text(p, n, loc) }
+fn fault_raise_text(p: Int, n: Int, file: Int, line: Int, col: Int) { fault.raise_text(p, n, file, line, col) }
 
-fn fault_raise_overflow(a: Int, op: Int, b: Int, loc: Int) { fault.raise_overflow(a, op, b, loc) }
+fn fault_raise_overflow(a: Int, op: Int, b: Int, file: Int, line: Int, col: Int) { fault.raise_overflow(a, op, b, file, line, col) }
 
-fn fault_raise_shl(a: Int, b: Int, loc: Int) { fault.raise_shl(a, b, loc) }
+fn fault_raise_shl(a: Int, b: Int, file: Int, line: Int, col: Int) { fault.raise_shl(a, b, file, line, col) }
 
-fn fault_raise_shift(n: Int, loc: Int) { fault.raise_shift(n, loc) }
+fn fault_raise_shift(n: Int, file: Int, line: Int, col: Int) { fault.raise_shift(n, file, line, col) }
 
-fn fault_raise_divzero(a: Int, op: Int, loc: Int) { fault.raise_divzero(a, op, loc) }
+fn fault_raise_divzero(a: Int, op: Int, file: Int, line: Int, col: Int) { fault.raise_divzero(a, op, file, line, col) }
 
-fn fault_raise_neg(a: Int, loc: Int) { fault.raise_neg(a, loc) }
+fn fault_raise_neg(a: Int, file: Int, line: Int, col: Int) { fault.raise_neg(a, file, line, col) }
 
-fn fault_raise_abs(a: Int, loc: Int) { fault.raise_abs(a, loc) }
+fn fault_raise_abs(a: Int, file: Int, line: Int, col: Int) { fault.raise_abs(a, file, line, col) }
 
-fn fault_raise_index(i: Int, n: Int, loc: Int) { fault.raise_index(i, n, loc) }
+fn fault_raise_index(i: Int, n: Int, file: Int, line: Int, col: Int) { fault.raise_index(i, n, file, line, col) }
 
-fn fault_raise_bytes_index(i: Int, n: Int, loc: Int) { fault.raise_bytes_index(i, n, loc) }
+fn fault_raise_bytes_index(i: Int, n: Int, file: Int, line: Int, col: Int) { fault.raise_bytes_index(i, n, file, line, col) }
 
-fn fault_raise_float_int(f: Float, loc: Int) { fault.raise_float_int(f, loc) }
+fn fault_raise_float_int(f: Float, file: Int, line: Int, col: Int) { fault.raise_float_int(f, file, line, col) }
 
 /// `fault(msg)` and a failed contract: the n bytes of the message at p,
 /// the ln bytes of the location at lp (xo_fault_raise). Never returns.
@@ -153,7 +155,16 @@ fn fault_detail(p: Int, n: Int) { fault.detail(ctx.cur(), p, n) }
 /// and raises it; with msg 0 raises the fault already recorded (fault.xo
 /// fire, cont): never returns (was xo_rt.c fault_raise_msg).
 fn fault_raise_msg(m: Int, loc: Int) {
-  fault_raise_cur(m, loc, rt.fn_addr("personality"))
+  fault_raise_cur(m, loc, 0, 0, 0, rt.fn_addr("personality"))
+}
+
+/// Raises a fault at the position (file, line, col) (fault.xo fire_pos,
+/// the second raise entry the checked operations of generated code call):
+/// with a message m the record's location is made from the position
+/// (fault.xo set_pos); m 0 hands on the fault already recorded. Never
+/// returns.
+fn fault_raise_pos(m: Int, file: Int, line: Int, col: Int) {
+  fault_raise_cur(m, 0, file, line, col, rt.fn_addr("personality"))
 }
 
 /// Standard input's pump thread on Windows (stdin.xo pump_main): its
@@ -702,20 +713,24 @@ fn fault_traceback(t: Int, now: Int) -> Int {
 }
 
 /// Raises a fault in the current context (xo_rt.c fault_raise_msg, the
-/// address fault.xo's raisers call): with a message m (zero terminated,
-/// at the zero terminated location loc) it records it first; m 0 hands
-/// on the fault already recorded (fault.xo cont). The context's real-time
-/// sections end, it is marked faulting and unwinding, and unwind.xo
-/// walks from here with its exception object (ctx.xo C_FAULT_EXC, at the
-/// area's first 16 byte aligned address) up to its boundary, the frames
-/// of generated code named by pers (the personality's address);
-/// nothing caught reports it and ends the
+/// address fault.xo's raisers call): with a message m it records it
+/// first, at the zero terminated location loc (file 0) or at the position
+/// (file, line, col); m 0 hands on the fault already recorded (fault.xo
+/// cont). The context's real-time sections end, it is marked faulting and
+/// unwinding, and unwind.xo walks from here with its exception object
+/// (ctx.xo C_FAULT_EXC, at the area's first 16 byte aligned address) up
+/// to its boundary, the frames of generated code named by pers (the
+/// personality's address); nothing caught reports it and ends the
 /// program (fault.xo exit). Never returns. Was xo_rt.c's fault_raise
 /// and fault_set over the C's xo_ctx (the zero-C inventory's rank 13).
-fn fault_raise_cur(m: Int, loc: Int, pers: Int) {
+fn fault_raise_cur(m: Int, loc: Int, file: Int, line: Int, col: Int, pers: Int) {
   let c = ctx.cur()
   if m != 0 {
-    fault.set(c, m, raw.cstr_len(m), loc, raw.cstr_len(loc))
+    if file != 0 {
+      fault.set_pos(c, m, raw.cstr_len(m), file, line, col)
+    } else {
+      fault.set(c, m, raw.cstr_len(m), loc, raw.cstr_len(loc))
+    }
   }
   rtsec.fault_leave()
   rt.mem_store(c, ctx.C_FAULTING, 1, 4)

@@ -82,6 +82,7 @@ const ACQUIRE = 1
 pub fn init() {
   obj.heap_init(heapos.main_record(), rt.fn_addr("heap_thread"))
   fault.init(rt.fn_addr("fault_raise_msg"))
+  fault.init_pos(rt.fn_addr("fault_raise_pos"))
   ctx.init()
   let _p = poll.poll_svc()
   stop.init()

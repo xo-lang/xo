@@ -207,6 +207,25 @@ pub struct Value {
   pub inl: Int = -1
 }
 
+/// The file, line, and column of a position "file:line:col" (Builder
+/// pos_in): the last two colons delimit them, so a file name with a
+/// colon of its own keeps it. The line and column are 0 for a position
+/// of another shape, and the file is then the whole position (the
+/// runtime's fault location prints it as it is).
+pub fn pos_split(pos: Str) -> (Str, Int, Int) {
+  let a = pos.rfind(":") ?? -1
+  let b = if a > 0 { pos[0..a].rfind(":") ?? -1 } else { -1 }
+  if b < 0 {
+    return (pos, 0, 0)
+  }
+  let line = Int.parse(pos[b + 1..a]) ?? 0
+  let col = Int.parse(pos[a + 1..pos.len()]) ?? 0
+  if line <= 0 || col <= 0 {
+    return (pos, 0, 0)
+  }
+  (pos[0..b], line, col)
+}
+
 /// A call the arm64 inliner copied a callee in at: the callee's name and
 /// source file, the call's packed line (Value.line) in the enclosing
 /// code, and the site that code was itself copied in at (-1: the

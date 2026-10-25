@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [fault-position-abi.md](fault-position-abi.md): Observed 2026-10-25: what a checked operation's stub passes to the runtime is an ABI that is not in the function cache key, so changing it needs both cache versions bumped, an asm golden re-record, and a separate two-argument `fault_raise_msg` kept for qsort's comparator
 - [case-fold-swar-vs-neon.md](case-fold-swar-vs-neon.md): Observed 2026-10-25: the ASCII case fold that a plan called a per rune loop to replace with SWAR is already eight byte SWAR in obj.fold_copy_lo; the 1.755 of LLVM's instructions on the ASCII rows is clang widening that same loop to NEON, and a std unroll gains arm64 14% while costing LLVM 1.7%
 - [same-code-test-inline-hole.md](same-code-test-inline-hole.md): Observed 2026-10-25: TestDebugInfoSameCode builds without inlining because dwline.built() changes the call graph the inliner sees; the promise is untested for inlining until the fold moves after it
 - [build-output-name-in-signature.md](build-output-name-in-signature.md): Observed 2026-10-24: two builds differing by one byte were named differently (the ad hoc signature's identifier is the output's base name), not a reproducibility bug; compare outputs of one name

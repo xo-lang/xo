@@ -168,6 +168,8 @@ xo_f_fib:
 	mov x1, #43
 	adrp x3, .Lxo_pGL1jtk_loc0
 	add x3, x3, :lo12:.Lxo_pGL1jtk_loc0
+	mov x4, #3
+	mov x5, #25
 	bl xo_x_fault_raise_overflow
 	brk #1
 	.cfi_endproc

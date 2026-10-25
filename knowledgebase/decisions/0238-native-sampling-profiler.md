@@ -92,7 +92,8 @@ selfhost/xo `--profile=cpu` for run and test.
 
 ## Implementation (heap profile, 2026-10-16)
 
-std/native/llrt/heapprof.xo (the sampler, static word 66), obj.xo
+std/native/llrt/heapprof.xo (the sampler, static word 90 since
+2026-10-25 and 66 before, when fault.xo's range took 66), obj.xo
 (halloc, hfree, hresize), heapos.xo (two words more per heap record,
 the hook copied into a thread's new record), prof.xo (start_heap,
 finish_heap, the writer), unwind.xo prof_trace, cabi.xo heap_prof;

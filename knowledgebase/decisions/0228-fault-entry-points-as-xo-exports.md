@@ -75,3 +75,43 @@ index out of range, a shift, negation, abs, a Float to Int conversion,
   rt_fault_leave (the real-time section drain), and the personality's
   address. These stay C with fault_raise until B06's remaining glue
   moves.
+
+## Addendum 2026-10-25: the location as a file, line, and column
+
+The location argument was the address of a `.asciz` "file:line:col", one
+per checked operation: 562 strings and 18.0 KB in the release hello, 2,917
+and 94.2 KB in CRUD, 771 of CRUD's repeating the same std/native/llrt
+path.
+
+The emitters now split the position (ssa.pos_split) and pass the file
+name, the line, and the column: a per part deduped `.asciz` for the file
+name (33 in hello, 83 in CRUD), an `adrp`+`add` for it, and one `movz` per
+number in the stub. `cabi.xo`'s entries take them after the operation's
+own arguments; `fault.xo` `set_pos` makes "file:line:col" in one heap
+block where the fault is recorded (the raise does not return). The second
+raise export is `fault_raise_pos`, reached through `rt.static_word` 90
+(`fault_init_pos`), so `fault_raise_msg`'s two-argument C call stays as it
+is: the qsort comparator in the fault tests calls it with (message,
+location).
+
+`fault(msg)` and contracts (`b.fault` lowers to `fault_raise(text, loc)`)
+keep the old two-argument location; a fault whose position is not
+`file:line:col` (line 0) is printed as its whole text.
+
+Costs and checks: the stub gains two instructions per checked operation
+and loses no relocation; the location's text is no longer duplicated per
+operation. The format is byte for byte the same, which the fault goldens
+check on arm64, amd64, and LLVM (bytes_oob, fault_unwind, fault_audit,
+lsr_fault_neg, and the others). The function and part cache versions are
+bumped (v8, v4); the old selfhost IR dump replays that call the
+three-argument exports are stale from here (decision 0217 keeps those
+dumps frozen, so they are not re-recorded).
+
+Measured (bench/results/fault-locations-2026-10-25.md, darwin/arm64
+release, the same source tree): hello's `__cstring` 17,662 to 1,278 B and
+CRUD's 88,910 to 5,485 B, `__text` 172,492 to 179,660 and 1,412,032 to
+1,444,720 B (11 to 13 B a site), and the binaries 5.5% and 2.5% smaller.
+Every arm64 run golden, the 49 LLVM goldens that print a fault, the
+linux/amd64 fault goldens and Docker sample, the slice fault corpus, and
+the fixed point pass with the same stderr.
+

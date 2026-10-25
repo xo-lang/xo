@@ -30,6 +30,14 @@ use native/rt
 /// raises the fault already recorded; never returns), set by init.
 const RAISE = 64
 
+/// rt.static_word: the address of cabi.xo fault_raise_pos, the raise of
+/// a generated code position (a file name, line, and column rather than
+/// a "file:line:col" string: the checked operations of every native
+/// build pass those three words, and the file name is shared by all the
+/// sites of the file), set by init_pos. Word 66, next to RAISE and TB,
+/// so this file owns one range (90 until 2026-10-25).
+const RAISE_POS = 66
+
 /// xo_ctx's fields: `unwinding` and `faulting` (C ints), the message,
 /// location, and detail (char pointers, NULL when unset).
 const C_UNWINDING = layout.C_UNWINDING
@@ -85,6 +93,22 @@ fn drop(c: Int, off: Int) {
 pub fn set(c: Int, mp: Int, mn: Int, lp: Int, ln: Int) {
   let m = dup(mp, mn)
   let l = dup(lp, ln)
+  drop(c, C_FAULT_MSG)
+  drop(c, C_LOC)
+  rt.mem_store(c, C_FAULT_MSG, m, 8)
+  rt.mem_store(c, C_LOC, l, 8)
+  if traceback_on() {
+    trace(c)
+  }
+}
+
+/// Records the fault of the context c at the position (the zero
+/// terminated file name at file, and line, col): as set, but the location
+/// is made here, one block (pos_text) rather than a copy of a "file:line:
+/// col" string the compiler emitted per checked operation.
+pub fn set_pos(c: Int, mp: Int, mn: Int, file: Int, line: Int, col: Int) {
+  let m = dup(mp, mn)
+  let l = pos_text(file, line, col)
   drop(c, C_FAULT_MSG)
   drop(c, C_LOC)
   rt.mem_store(c, C_FAULT_MSG, m, 8)
@@ -276,6 +300,10 @@ fn put_at(b: Int, o: Int, p: Int, n: Int) -> Int {
 /// program runs).
 pub fn init(raise_msg: Int) { rt.mem_store(rt.static_word(RAISE), 0, raise_msg, 8) }
 
+/// Sets the address of cabi.xo fault_raise_pos, the raise of a generated
+/// code position (at start, beside init).
+pub fn init_pos(raise_pos: Int) { rt.mem_store(rt.static_word(RAISE_POS), 0, raise_pos, 8) }
+
 /// Looks up XO_TRACEBACK (not empty or 0) once, at start after the
 /// environment is kept (entry.xo, beside prof.start); print is the
 /// address of the function that prints a traceback.
@@ -332,6 +360,15 @@ fn fire(m: Int, loc: Int) {
   let _r = rt.call_c2(rt.mem_load(rt.static_word(RAISE), 0, 8), m, loc)
 }
 
+/// Raises the fault whose zero terminated message is at m at the
+/// position (the zero terminated file name at file, line, col): never
+/// returns. The location is made ("file:line:col") where the fault is
+/// recorded, so the file name is stored once per file rather than once
+/// per checked operation (cabi.xo fault_raise_pos, set_pos).
+fn fire_pos(m: Int, file: Int, line: Int, col: Int) {
+  let _r = rt.call_c4(rt.mem_load(rt.static_word(RAISE_POS), 0, 8), m, file, line, col)
+}
+
 /// The thread's message buffer holding s: s copied there, zero
 /// terminated (a message longer than the buffer goes to a malloc'd block,
 /// never freed, as the raise does not return).
@@ -348,32 +385,33 @@ fn at(p: Int, n: Int) -> Int {
   b
 }
 
-/// `fault(msg)` (xo_fault): the n bytes at p.
-pub fn raise_text(p: Int, n: Int, loc: Int) { fire(at(p, n), loc) }
+/// `fault(msg)` (xo_fault): the n bytes at p, at the position (file,
+/// line, col).
+pub fn raise_text(p: Int, n: Int, file: Int, line: Int, col: Int) { fire_pos(at(p, n), file, line, col) }
 
-pub fn raise_overflow(a: Int, op: Int, b: Int, loc: Int) { fire(text("integer overflow: ${a} ${raw.byte_str(op)} ${b} does not fit Int"), loc) }
+pub fn raise_overflow(a: Int, op: Int, b: Int, file: Int, line: Int, col: Int) { fire_pos(text("integer overflow: ${a} ${raw.byte_str(op)} ${b} does not fit Int"), file, line, col) }
 
-pub fn raise_shl(a: Int, b: Int, loc: Int) { fire(text("integer overflow: ${a} << ${b} does not fit Int"), loc) }
+pub fn raise_shl(a: Int, b: Int, file: Int, line: Int, col: Int) { fire_pos(text("integer overflow: ${a} << ${b} does not fit Int"), file, line, col) }
 
-pub fn raise_shift(n: Int, loc: Int) { fire(text("shift amount ${n} out of range for Int"), loc) }
+pub fn raise_shift(n: Int, file: Int, line: Int, col: Int) { fire_pos(text("shift amount ${n} out of range for Int"), file, line, col) }
 
-pub fn raise_divzero(a: Int, op: Int, loc: Int) { fire(text("division by zero: ${a} ${raw.byte_str(op)} 0"), loc) }
+pub fn raise_divzero(a: Int, op: Int, file: Int, line: Int, col: Int) { fire_pos(text("division by zero: ${a} ${raw.byte_str(op)} 0"), file, line, col) }
 
-pub fn raise_neg(a: Int, loc: Int) { fire(text("integer overflow: -(${a}) does not fit Int"), loc) }
+pub fn raise_neg(a: Int, file: Int, line: Int, col: Int) { fire_pos(text("integer overflow: -(${a}) does not fit Int"), file, line, col) }
 
-pub fn raise_abs(a: Int, loc: Int) { fire(text("integer overflow: abs(${a}) does not fit Int"), loc) }
+pub fn raise_abs(a: Int, file: Int, line: Int, col: Int) { fire_pos(text("integer overflow: abs(${a}) does not fit Int"), file, line, col) }
 
-pub fn raise_index(i: Int, n: Int, loc: Int) { fire(text("index ${i} out of range for List of length ${n}"), loc) }
+pub fn raise_index(i: Int, n: Int, file: Int, line: Int, col: Int) { fire_pos(text("index ${i} out of range for List of length ${n}"), file, line, col) }
 
 /// `b[i]` out of range on Bytes (std/rt BytesAt).
-pub fn raise_bytes_index(i: Int, n: Int, loc: Int) { fire(text("index ${i} out of range for Bytes of length ${n}"), loc) }
+pub fn raise_bytes_index(i: Int, n: Int, file: Int, line: Int, col: Int) { fire_pos(text("index ${i} out of range for Bytes of length ${n}"), file, line, col) }
 
-pub fn raise_float_int(f: Float, loc: Int) {
+pub fn raise_float_int(f: Float, file: Int, line: Int, col: Int) {
   if f != f {
-    fire(text("cannot convert NaN to Int"), loc)
+    fire_pos(text("cannot convert NaN to Int"), file, line, col)
     return
   }
-  fire(text("${num.go_g_text(f)} is out of range for Int"), loc)
+  fire_pos(text("${num.go_g_text(f)} is out of range for Int"), file, line, col)
 }
 
 /// A zero terminated copy of the n bytes at p (a location that is not
@@ -383,6 +421,49 @@ fn zcopy(p: Int, n: Int) -> Int {
   rt.mem_copy(l, p, n)
   rt.mem_store(l, n, 0, 1)
   l
+}
+
+/// The location "file:line:col" of a fault raised with a position: the
+/// zero terminated file name at file, then the line and the column. line
+/// 0 means the position was not of that shape: the file name is the whole
+/// location. The block is dup's shape (its first byte where heap_large's
+/// prefix is; the raise's set_pos stores it as the record's location).
+fn pos_text(file: Int, line: Int, col: Int) -> Int {
+  let n = raw.cstr_len(file)
+  if line == 0 {
+    let b = rt.heap_large(n + 1) - 8
+    rt.mem_copy(b, file, n)
+    rt.mem_store(b, n, 0, 1)
+    return b
+  }
+  // two colons and two decimals of at most 20 digits
+  let b = rt.heap_large(n + 42) - 8
+  rt.mem_copy(b, file, n)
+  var o = n
+  rt.mem_store(b, o, 58, 1)
+  o = o + 1 + put_uint(b, o + 1, line)
+  rt.mem_store(b, o, 58, 1)
+  o = o + 1 + put_uint(b, o + 1, col)
+  rt.mem_store(b, o, 0, 1)
+  b
+}
+
+/// The decimal of n (0 or more) at b + o; its digit count.
+fn put_uint(b: Int, o: Int, n: Int) -> Int {
+  var d = 1
+  var t = n
+  while t >= 10 {
+    t = t / 10
+    d += 1
+  }
+  var i = d
+  var v = n
+  while i > 0 {
+    rt.mem_store(b, o + i - 1, 48 + v % 10, 1)
+    v = v / 10
+    i -= 1
+  }
+  d
 }
 
 /// Raises the fault m at the ln bytes at lp.

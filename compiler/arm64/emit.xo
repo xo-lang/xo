@@ -115,6 +115,18 @@ fn (g: G) out_arg_bytes() -> Int {
         }
         out = imax(out, 8 * n)
       }
+      // a fault stub's call too (a checked operation's arguments plus the
+      // position's file, line, and column): past the registers on Win64
+      // (decision 0228's 2026-10-25 addendum)
+      if inst.has_fault {
+        var n = 0
+        for l in g.call_locs(inst.fargs, -1) {
+          if l.reg < 0 {
+            n = imax(n, l.slot + 1)
+          }
+        }
+        out = imax(out, 8 * n)
+      }
     }
   }
   out

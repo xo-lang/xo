@@ -1299,8 +1299,7 @@ fn (var g: G) instr1(v: Int) {
         g.set(v, [g.def1(false, "neg $d0, $u0", [a])])
         return
       }
-      let l = g.loc_label(x.pos)
-      g.set(v, [g.checked(false, "negs $d0, $u0", [a], "neg", "vs", "xo_fault_neg", [rsrc(a), symsrc(l)])])
+      g.set(v, [g.checked(false, "negs $d0, $u0", [a], "neg", "vs", "xo_fault_neg", [rsrc(a)] + g.loc_args(x.pos))])
     }
     Not => {
       if g.nuses[v] == 0 && g.lazy[x.args[0]] {
@@ -1360,11 +1359,10 @@ fn (var g: G) instr1(v: Int) {
       let t = g.def1(true, "frintz $d0, $u0", [a])
       if !x.pos.is_empty() {
         let lo = g.fimm(float_bits(-9223372036854775808.0))
-        let l = g.loc_label(x.pos)
-        g.check("fcmp $u0, $u1", [t, lo], "lt", "xo_fault_float_int", [rsrc(a), symsrc(l)])
+        let la = g.loc_args(x.pos)
+        g.check("fcmp $u0, $u1", [t, lo], "lt", "xo_fault_float_int", [rsrc(a)] + la)
         let hi = g.fimm(float_bits(9223372036854775808.0))
-        let l2 = g.loc_label(x.pos)
-        g.check("fcmp $u0, $u1", [t, hi], "ge", "xo_fault_float_int", [rsrc(a), symsrc(l2)])
+        g.check("fcmp $u0, $u1", [t, hi], "ge", "xo_fault_float_int", [rsrc(a)] + la)
       }
       g.set(v, [g.def1(false, "fcvtzs $d0, $u0", [t])])
     }
@@ -1418,8 +1416,7 @@ fn (var g: G) instr1(v: Int) {
       let d = g.str_data(ws)
       let n = g.str_len(ws)
       let w1 = g.real(n)
-      let l = g.loc_label(x.pos)
-      let _c = g.add(Inst{kind: K_CALL, sym: g.sym(fault_entry("xo_fault")), srcs: [rsrc(d), rsrc(n), symsrc(l)], us: [d, w1], noret: true})
+      let _c = g.add(Inst{kind: K_CALL, sym: g.sym(fault_entry("xo_fault")), srcs: [rsrc(d), rsrc(n)] + g.loc_args(x.pos), us: [d, w1], noret: true})
       let _t = g.add(Inst{kind: K_TRAP})
     }
     Retain => {
@@ -2884,8 +2881,7 @@ fn (var g: G) mul(v: Int) {
         // the product of two values below 2^32 is below 2^64: an Int
         // when bit 63 is clear
         let r = g.def1(false, text, us)
-        let l = g.loc_label(x.pos)
-        g.check("cmp $u0, #0", [r], "lt", "xo_fault_overflow", [rsrc(a), isrc(42), rsrc(b), symsrc(l)])
+        g.check("cmp $u0, #0", [r], "lt", "xo_fault_overflow", [rsrc(a), isrc(42), rsrc(b)] + g.loc_args(x.pos))
         g.set(v, [r])
         return
       }
@@ -2903,12 +2899,12 @@ fn (var g: G) mul(v: Int) {
     // decision 0254: imul and its overflow flag, not arm64's smulh and
     // compare (eight x86 instructions through rdx:rax); a constant factor
     // is imul's immediate
-    let l = g.loc_label(x.pos)
+    let la = g.loc_args(x.pos)
     let (k, kc) = g.const_int(q)
     let r = if kc && imm32(k) {
-      g.checked(false, "x86_mulo $d0, $u0, #${k}", [g.word(p)], "", "vs", "xo_fault_overflow", [rsrc(a), isrc(42), rsrc(b), symsrc(l)])
+      g.checked(false, "x86_mulo $d0, $u0, #${k}", [g.word(p)], "", "vs", "xo_fault_overflow", [rsrc(a), isrc(42), rsrc(b)] + la)
     } else {
-      g.checked(false, "x86_mulo $d0, $u0, $u1", [a, b], "", "vs", "xo_fault_overflow", [rsrc(a), isrc(42), rsrc(b), symsrc(l)])
+      g.checked(false, "x86_mulo $d0, $u0, $u1", [a, b], "", "vs", "xo_fault_overflow", [rsrc(a), isrc(42), rsrc(b)] + la)
     }
     g.set(v, [r])
     return
@@ -2920,8 +2916,7 @@ fn (var g: G) mul(v: Int) {
     r = g.def1(false, "mul $d0, $u0, $u1", [a, b])
   }
   let hi = g.def1(false, "smulh $d0, $u0, $u1", [a, b])
-  let l = g.loc_label(x.pos)
-  g.check("cmp $u0, $u1, asr #63", [hi, r], "ne", "xo_fault_overflow", [rsrc(a), isrc(42), rsrc(b), symsrc(l)])
+  g.check("cmp $u0, $u1, asr #63", [hi, r], "ne", "xo_fault_overflow", [rsrc(a), isrc(42), rsrc(b)] + g.loc_args(x.pos))
   g.set(v, [r])
 }
 
@@ -3053,8 +3048,8 @@ fn (var g: G) add_sub(v: Int) {
       l = r
       r = t
     }
-    let pl = g.loc_label(x.pos)
-    g.set(v, [g.checked(false, text, [av], ins, "vs", "xo_fault_overflow", [l, isrc(op_char(x.op)), r, symsrc(pl)])])
+    let pl = g.loc_args(x.pos)
+    g.set(v, [g.checked(false, text, [av], ins, "vs", "xo_fault_overflow", [l, isrc(op_char(x.op)), r] + pl)])
     g.offset_facts(v, a, n0)
     return
   }
@@ -3083,8 +3078,8 @@ fn (var g: G) add_sub(v: Int) {
     l = r
     r = t
   }
-  let pl = g.loc_label(x.pos)
-  g.set(v, [g.checked(false, text, [av, bv], ins, "vs", "xo_fault_overflow", [l, isrc(op_char(x.op)), r, symsrc(pl)])])
+  let pl = g.loc_args(x.pos)
+  g.set(v, [g.checked(false, text, [av, bv], ins, "vs", "xo_fault_overflow", [l, isrc(op_char(x.op)), r] + pl)])
   if bconst {
     g.offset_facts(v, a, n0)
   }
@@ -3335,14 +3330,12 @@ fn (var g: G) div_rem(v: Int) {
   // (2026-10-23: portable divmod's checked `xs[i] / d`)
   let sdiv = if g.x86 && (nonzero || zchk) && (no_overflow || ochk) { "sdivs" } else { "sdiv" }
   if zchk {
-    let l = g.loc_label(x.pos)
-    g.check("cmp $u0, #0", [b], "eq", "xo_fault_divzero", [rsrc(a), isrc(op_char(x.op)), symsrc(l)])
+    g.check("cmp $u0, #0", [b], "eq", "xo_fault_divzero", [rsrc(a), isrc(op_char(x.op))] + g.loc_args(x.pos))
   }
   if is_div {
     if ochk {
       let mn = g.imm(MIN_INT)
-      let l = g.loc_label(x.pos)
-      g.check("cmp $u0, $u1\nccmn $u2, #1, #0, eq", [a, mn, b], "eq", "xo_fault_overflow", [rsrc(a), isrc(47), rsrc(b), symsrc(l)])
+      g.check("cmp $u0, $u1\nccmn $u2, #1, #0, eq", [a, mn, b], "eq", "xo_fault_overflow", [rsrc(a), isrc(47), rsrc(b)] + g.loc_args(x.pos))
     }
     g.set(v, [g.def1(false, "${sdiv} $d0, $u0, $u1", [a, b])])
     return
@@ -3435,8 +3428,7 @@ fn (var g: G) shift(v: Int) {
     let r = g.def1(false, "lsl $d0, $u0, #${k}", [a])
     if !x.pos.is_empty() && !g.safe_shl(x.args[0], k) {
       let back = g.def1(false, "asr $d0, $u0, #${k}", [r])
-      let l = g.loc_label(x.pos)
-      g.check("cmp $u0, $u1", [back, a], "ne", "xo_fault_shl", [rsrc(a), isrc(k), symsrc(l)])
+      g.check("cmp $u0, $u1", [back, a], "ne", "xo_fault_shl", [rsrc(a), isrc(k)] + g.loc_args(x.pos))
     }
     g.set(v, [r])
     return
@@ -3444,8 +3436,7 @@ fn (var g: G) shift(v: Int) {
   let b = g.word(x.args[1])
   let (klo, khi) = g.bounds(x.args[1])
   if !x.pos.is_empty() && (klo < 0 || khi > 63) {
-    let l = g.loc_label(x.pos)
-    g.check("cmp $u0, #64", [b], "hs", "xo_fault_shift", [rsrc(b), symsrc(l)])
+    g.check("cmp $u0, #64", [b], "hs", "xo_fault_shift", [rsrc(b)] + g.loc_args(x.pos))
   }
   if x.op == ssa.Op.Shr {
     g.set(v, [g.def1(false, "asr $d0, $u0, $u1", [a, b])])
@@ -3454,8 +3445,7 @@ fn (var g: G) shift(v: Int) {
   let r = g.def1(false, "lsl $d0, $u0, $u1", [a, b])
   if !x.pos.is_empty() && !(klo >= 0 && khi <= 63 && g.safe_shl(x.args[0], khi)) {
     let back = g.def1(false, "asr $d0, $u0, $u1", [r, b])
-    let l = g.loc_label(x.pos)
-    g.check("cmp $u0, $u1", [back, a], "ne", "xo_fault_shl", [rsrc(a), rsrc(b), symsrc(l)])
+    g.check("cmp $u0, $u1", [back, a], "ne", "xo_fault_shl", [rsrc(a), rsrc(b)] + g.loc_args(x.pos))
   }
   g.set(v, [r])
 }

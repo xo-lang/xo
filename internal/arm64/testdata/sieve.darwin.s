@@ -144,6 +144,8 @@ LpGL1jtk_f1_fault1:
 	mov x1, #43
 	adrp x3, Lxo_pGL1jtk_loc0@PAGE
 	add x3, x3, Lxo_pGL1jtk_loc0@PAGEOFF
+	mov x4, #24
+	mov x5, #5
 	bl _xo_x_fault_raise_overflow
 	brk #1
 	.cfi_endproc
@@ -291,8 +293,10 @@ LpGL1jtk_f2_fault1:
 	mov x0, x22
 	mov x1, #43
 	mov x2, #1
-	adrp x3, Lxo_pGL1jtk_loc1@PAGE
-	add x3, x3, Lxo_pGL1jtk_loc1@PAGEOFF
+	adrp x3, Lxo_pGL1jtk_loc0@PAGE
+	add x3, x3, Lxo_pGL1jtk_loc0@PAGEOFF
+	mov x4, #4
+	mov x5, #15
 LpGL1jtk_f2_cs1a:
 	bl _xo_x_fault_raise_overflow
 LpGL1jtk_f2_cs1b:
@@ -305,8 +309,10 @@ LpGL1jtk_f2_fault2:
 	str x11, [sp, #0]
 	mov x0, x11
 	mov x1, x19
-	adrp x2, Lxo_pGL1jtk_loc2@PAGE
-	add x2, x2, Lxo_pGL1jtk_loc2@PAGEOFF
+	adrp x2, Lxo_pGL1jtk_loc0@PAGE
+	add x2, x2, Lxo_pGL1jtk_loc0@PAGEOFF
+	mov x3, #9
+	mov x4, #8
 LpGL1jtk_f2_cs2a:
 	bl _xo_x_fault_raise_index
 LpGL1jtk_f2_cs2b:
@@ -319,8 +325,10 @@ LpGL1jtk_f2_fault3:
 	mov x0, x15
 	mov x1, #43
 	mov x2, #1
-	adrp x3, Lxo_pGL1jtk_loc3@PAGE
-	add x3, x3, Lxo_pGL1jtk_loc3@PAGEOFF
+	adrp x3, Lxo_pGL1jtk_loc0@PAGE
+	add x3, x3, Lxo_pGL1jtk_loc0@PAGEOFF
+	mov x4, #10
+	mov x5, #7
 LpGL1jtk_f2_cs3a:
 	bl _xo_x_fault_raise_overflow
 LpGL1jtk_f2_cs3b:
@@ -331,8 +339,10 @@ LpGL1jtk_f2_fault4:
 	mov x0, x11
 	mov x2, x11
 	mov x1, #42
-	adrp x3, Lxo_pGL1jtk_loc4@PAGE
-	add x3, x3, Lxo_pGL1jtk_loc4@PAGEOFF
+	adrp x3, Lxo_pGL1jtk_loc0@PAGE
+	add x3, x3, Lxo_pGL1jtk_loc0@PAGEOFF
+	mov x4, #11
+	mov x5, #15
 LpGL1jtk_f2_cs4a:
 	bl _xo_x_fault_raise_overflow
 LpGL1jtk_f2_cs4b:
@@ -345,8 +355,10 @@ LpGL1jtk_f2_fault5:
 	stp x9, x11, [sp, #0]
 	mov x0, x9
 	mov x1, x19
-	adrp x2, Lxo_pGL1jtk_loc5@PAGE
-	add x2, x2, Lxo_pGL1jtk_loc5@PAGEOFF
+	adrp x2, Lxo_pGL1jtk_loc0@PAGE
+	add x2, x2, Lxo_pGL1jtk_loc0@PAGEOFF
+	mov x3, #13
+	mov x4, #9
 LpGL1jtk_f2_cs5a:
 	bl _xo_x_fault_raise_index
 LpGL1jtk_f2_cs5b:
@@ -361,8 +373,10 @@ LpGL1jtk_f2_fault6:
 	mov x0, x15
 	mov x2, x11
 	mov x1, #43
-	adrp x3, Lxo_pGL1jtk_loc6@PAGE
-	add x3, x3, Lxo_pGL1jtk_loc6@PAGEOFF
+	adrp x3, Lxo_pGL1jtk_loc0@PAGE
+	add x3, x3, Lxo_pGL1jtk_loc0@PAGEOFF
+	mov x4, #14
+	mov x5, #9
 LpGL1jtk_f2_cs6a:
 	bl _xo_x_fault_raise_overflow
 LpGL1jtk_f2_cs6b:

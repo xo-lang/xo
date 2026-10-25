@@ -286,9 +286,14 @@ fn (var g: Gen) fault_if(cond: Str, call: Str) {
   g.start(ok)
 }
 
+/// The fault position of v as the call arguments after the operation's
+/// own: the file name's address (one global per file, g.cstr), the line,
+/// and the column (ssa.pos_split; decision 0228's 2026-10-25
+/// addendum). A position of another shape is its own file text with line
+/// 0, which the runtime prints as it is.
 fn (var g: Gen) loc(v: Int) -> Str {
-  let p = g.f.values[v].pos
-  g.cstr(p)
+  let (file, line, col) = ssa.pos_split(g.f.values[v].pos)
+  "ptr ${g.cstr(file)}, i64 ${line}, i64 ${col}"
 }
 
 /// The address of element i of list l (elemPtr).
@@ -881,7 +886,7 @@ fn (var g: Gen) instr_body(v: Int) {
       let b0 = g.op(args[0])
       let b1 = g.op(args[1])
       let l = g.loc(v)
-      g.fault_if(ov, "@xo_x_fault_raise_overflow(i64 ${b0}, i64 ${op_char(x.op)}, i64 ${b1}, i64 ptrtoint (ptr ${l} to i64))")
+      g.fault_if(ov, "@xo_x_fault_raise_overflow(i64 ${b0}, i64 ${op_char(x.op)}, i64 ${b1}, ${l})")
       g.set(v, "extractvalue { i64, i1 } ${r}, 0")
     }
     Div | Rem => {
@@ -900,7 +905,7 @@ fn (var g: Gen) instr_body(v: Int) {
         let z = g.def("icmp eq i64 ${a1}, 0")
         let b0 = g.op(args[0])
         let l = g.loc(v)
-        g.fault_if(z, "@xo_x_fault_raise_divzero(i64 ${b0}, i64 ${op_char(x.op)}, i64 ptrtoint (ptr ${l} to i64))")
+        g.fault_if(z, "@xo_x_fault_raise_divzero(i64 ${b0}, i64 ${op_char(x.op)}, ${l})")
       }
       if x.op == ssa.Op.Div {
         if !x.pos.is_empty() && !(is_const && k != -1) {
@@ -912,7 +917,7 @@ fn (var g: Gen) instr_body(v: Int) {
           let b0 = g.op(args[0])
           let b1 = g.op(args[1])
           let l = g.loc(v)
-          g.fault_if(both, "@xo_x_fault_raise_overflow(i64 ${b0}, i64 ${op_char(x.op)}, i64 ${b1}, i64 ptrtoint (ptr ${l} to i64))")
+          g.fault_if(both, "@xo_x_fault_raise_overflow(i64 ${b0}, i64 ${op_char(x.op)}, i64 ${b1}, ${l})")
         }
         let a0 = g.op(args[0])
         let a1 = g.op(args[1])
@@ -950,7 +955,7 @@ fn (var g: Gen) instr_body(v: Int) {
         let bad = g.def("icmp uge i64 ${a1}, 64")
         let b1 = g.op(args[1])
         let l = g.loc(v)
-        g.fault_if(bad, "@xo_x_fault_raise_shift(i64 ${b1}, i64 ptrtoint (ptr ${l} to i64))")
+        g.fault_if(bad, "@xo_x_fault_raise_shift(i64 ${b1}, ${l})")
       }
       if x.op == ssa.Op.Shr {
         let a0 = g.op(args[0])
@@ -969,7 +974,7 @@ fn (var g: Gen) instr_body(v: Int) {
         let c0 = g.op(args[0])
         let c1 = g.op(args[1])
         let l = g.loc(v)
-        g.fault_if(lost, "@xo_x_fault_raise_shl(i64 ${c0}, i64 ${c1}, i64 ptrtoint (ptr ${l} to i64))")
+        g.fault_if(lost, "@xo_x_fault_raise_shl(i64 ${c0}, i64 ${c1}, ${l})")
       }
       g.alias(v, r)
     }
@@ -984,7 +989,7 @@ fn (var g: Gen) instr_body(v: Int) {
         let bad = g.def("icmp eq i64 ${a0}, ${IMMORTAL}")
         let b0 = g.op(args[0])
         let l = g.loc(v)
-        g.fault_if(bad, "@xo_x_fault_raise_neg(i64 ${b0}, i64 ptrtoint (ptr ${l} to i64))")
+        g.fault_if(bad, "@xo_x_fault_raise_neg(i64 ${b0}, ${l})")
       }
       let a0 = g.op(args[0])
       g.set(v, "sub nsw i64 0, ${a0}")
@@ -1065,7 +1070,7 @@ fn (var g: Gen) instr_body(v: Int) {
         let bad = g.def("xor i1 ${inr}, true")
         let b0 = g.op(args[0])
         let l = g.loc(v)
-        g.fault_if(bad, "@xo_x_fault_raise_float_int(double ${b0}, i64 ptrtoint (ptr ${l} to i64))")
+        g.fault_if(bad, "@xo_x_fault_raise_float_int(double ${b0}, ${l})")
       }
       g.set(v, "fptosi double ${t} to i64")
     }
@@ -1252,7 +1257,7 @@ fn (var g: Gen) instr_body(v: Int) {
       let (_, data, n) = g.str_parts(m)
       let l = g.loc(v)
       let pd = g.def("ptrtoint ptr ${data} to i64")
-      g.emit("call void @xo_x_fault_raise_text(i64 ${pd}, i64 ${n}, i64 ptrtoint (ptr ${l} to i64))")
+      g.emit("call void @xo_x_fault_raise_text(i64 ${pd}, i64 ${n}, ${l})")
       g.emit("unreachable")
     }
     Retain => {

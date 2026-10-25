@@ -145,6 +145,8 @@ xo_f_main:
 	mov x1, #43
 	adrp x3, .Lxo_pGL1jtk_loc0
 	add x3, x3, :lo12:.Lxo_pGL1jtk_loc0
+	mov x4, #24
+	mov x5, #5
 	bl xo_x_fault_raise_overflow
 	brk #1
 	.cfi_endproc
@@ -293,8 +295,10 @@ xo_f_sieve:
 	mov x0, x22
 	mov x1, #43
 	mov x2, #1
-	adrp x3, .Lxo_pGL1jtk_loc1
-	add x3, x3, :lo12:.Lxo_pGL1jtk_loc1
+	adrp x3, .Lxo_pGL1jtk_loc0
+	add x3, x3, :lo12:.Lxo_pGL1jtk_loc0
+	mov x4, #4
+	mov x5, #15
 .LpGL1jtk_f2_cs1a:
 	bl xo_x_fault_raise_overflow
 .LpGL1jtk_f2_cs1b:
@@ -307,8 +311,10 @@ xo_f_sieve:
 	str x11, [sp, #0]
 	mov x0, x11
 	mov x1, x19
-	adrp x2, .Lxo_pGL1jtk_loc2
-	add x2, x2, :lo12:.Lxo_pGL1jtk_loc2
+	adrp x2, .Lxo_pGL1jtk_loc0
+	add x2, x2, :lo12:.Lxo_pGL1jtk_loc0
+	mov x3, #9
+	mov x4, #8
 .LpGL1jtk_f2_cs2a:
 	bl xo_x_fault_raise_index
 .LpGL1jtk_f2_cs2b:
@@ -321,8 +327,10 @@ xo_f_sieve:
 	mov x0, x15
 	mov x1, #43
 	mov x2, #1
-	adrp x3, .Lxo_pGL1jtk_loc3
-	add x3, x3, :lo12:.Lxo_pGL1jtk_loc3
+	adrp x3, .Lxo_pGL1jtk_loc0
+	add x3, x3, :lo12:.Lxo_pGL1jtk_loc0
+	mov x4, #10
+	mov x5, #7
 .LpGL1jtk_f2_cs3a:
 	bl xo_x_fault_raise_overflow
 .LpGL1jtk_f2_cs3b:
@@ -333,8 +341,10 @@ xo_f_sieve:
 	mov x0, x11
 	mov x2, x11
 	mov x1, #42
-	adrp x3, .Lxo_pGL1jtk_loc4
-	add x3, x3, :lo12:.Lxo_pGL1jtk_loc4
+	adrp x3, .Lxo_pGL1jtk_loc0
+	add x3, x3, :lo12:.Lxo_pGL1jtk_loc0
+	mov x4, #11
+	mov x5, #15
 .LpGL1jtk_f2_cs4a:
 	bl xo_x_fault_raise_overflow
 .LpGL1jtk_f2_cs4b:
@@ -347,8 +357,10 @@ xo_f_sieve:
 	stp x9, x11, [sp, #0]
 	mov x0, x9
 	mov x1, x19
-	adrp x2, .Lxo_pGL1jtk_loc5
-	add x2, x2, :lo12:.Lxo_pGL1jtk_loc5
+	adrp x2, .Lxo_pGL1jtk_loc0
+	add x2, x2, :lo12:.Lxo_pGL1jtk_loc0
+	mov x3, #13
+	mov x4, #9
 .LpGL1jtk_f2_cs5a:
 	bl xo_x_fault_raise_index
 .LpGL1jtk_f2_cs5b:
@@ -363,8 +375,10 @@ xo_f_sieve:
 	mov x0, x15
 	mov x2, x11
 	mov x1, #43
-	adrp x3, .Lxo_pGL1jtk_loc6
-	add x3, x3, :lo12:.Lxo_pGL1jtk_loc6
+	adrp x3, .Lxo_pGL1jtk_loc0
+	add x3, x3, :lo12:.Lxo_pGL1jtk_loc0
+	mov x4, #14
+	mov x5, #9
 .LpGL1jtk_f2_cs6a:
 	bl xo_x_fault_raise_overflow
 .LpGL1jtk_f2_cs6b:

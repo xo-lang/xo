@@ -395,6 +395,17 @@ fn (var g: G) loc_label(s: Str) -> Str {
   l
 }
 
+/// A fault position's stub arguments after the operation's own: the file
+/// name's address and the line and column (ssa.pos_split), so the file's
+/// text is stored once per part rather than a "file:line:col" string per
+/// checked operation (decision 0228's 2026-10-25 addendum). A
+/// position of another shape is its own file text with line 0, which the
+/// runtime prints as it is.
+fn (var g: G) loc_args(pos: Str) -> List[Src] {
+  let (file, line, col) = ssa.pos_split(pos)
+  [symsrc(g.loc_label(file)), isrc(line), isrc(col)]
+}
+
 fn (g: G) data(var out: List[Str]) {
   if !g.str_ord.is_empty() {
     // read only: the immortal counts of literals are never written
