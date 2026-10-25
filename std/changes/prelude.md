@@ -1,5 +1,26 @@
 # prelude changes
 
+## 2026-10-25: perf: parse_duration reads its digits from one address
+
+- Kind: perf
+- Commit: this commit
+- Found by: the duration digit loop's remaining per digit cost, the
+  bounds check and the address add of `b[i]` (bench/results/dur-parse-2026-10-24.md)
+- Go reference: Go's ParseDuration indexes a string, which is an address
+  and a length with no per byte check
+- Test: std/native/llrt/text_test.xo on arm64 and llvm; the time and
+  strconv corpora; stdfuzz area time; the wasm goldens; the full fixed
+  point
+- Timing: bench/results/dur-parse-2026-10-24.md
+
+`text.parse_duration` takes the bytes' address once with
+`raw.bytes_addr` and reads the digit, fraction and unit loops with
+`raw.byte_at`: each loop's own `i < n` is a bound of at most the length,
+so the per read check and the address add go. It is 5.6% fewer
+instructions on bench/perf/text's dur_parse (0.944), with wall within
+noise and RSS flat. raw.data and raw.byte_at read a view's own bytes,
+which std/native/llrt/raw_test.xo shows.
+
 ## 2026-10-24: perf: one printable bitmap for the BMP, which takes is_print under the arm64 inliner's size
 
 - Kind: perf

@@ -293,6 +293,11 @@ fn num_start(c: Int) -> Bool { c == 46 || (c >= 48 && c <= 57) }
 /// negated (to 2^63, as Go's uint64 is), so -2^63 parses.
 pub fn parse_duration(s: Str) -> Int? {
   let b = s.bytes()
+  // the bytes' address, once: the digit loops read b[i] under `i < n`,
+  // whose n is at most the length, so raw.byte_at is in range without the
+  // per read bound and address the index lowering adds (2026-10-25;
+  // raw.data reads a view's own bytes, std/native/llrt/raw_test.xo)
+  let pa = raw.bytes_addr(b)
   // the white space's bounds through calls only when an end byte is
   // space or not ASCII (2026-10-24: the two calls were most of a short
   // text's parse, the native inliner taking neither)
@@ -334,7 +339,7 @@ pub fn parse_duration(s: Str) -> Int? {
     // 10), so the magnitude guard is not per digit: a longer run is read
     // again below
     while i < n {
-      let c = Int(b[i]) - 48
+      let c = raw.byte_at(pa, i) - 48
       if !(c >= 0 && c <= 9) {
         break
       }
@@ -349,7 +354,7 @@ pub fn parse_duration(s: Str) -> Int? {
       nv = 0
       var j = pl
       while j < i {
-        let c = Int(b[j]) - 48
+        let c = raw.byte_at(pa, j) - 48
         if nv < -922337203685477580 {
           return None
         }
@@ -370,7 +375,7 @@ pub fn parse_duration(s: Str) -> Int? {
       let pf = i
       var overflow = false
       while i < n {
-        let d = Int(b[i])
+        let d = raw.byte_at(pa, i)
         if !(d >= 48 && d <= 57) {
           break
         }
@@ -400,7 +405,7 @@ pub fn parse_duration(s: Str) -> Int? {
       return None
     }
     let us = i
-    while i < n && !num_start(Int(b[i])) {
+    while i < n && !num_start(raw.byte_at(pa, i)) {
       i += 1
     }
     if i == us {
