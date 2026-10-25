@@ -2503,7 +2503,9 @@ func TestCacheStoreLog(t *testing.T) {
 // built in another directory reuses every object, its binary is that
 // directory's cache-off build, and its debug information names that
 // directory, not the first one or a placeholder (the DWARF on darwin, the
-// executable's .debug_str on linux).
+// executable's .debug_str on linux). Built with --trimpath=off: the default
+// records the directories relative to the working directory, which holds no
+// path to name (decision 0354's addendum).
 func TestBackendCacheObjectsAcrossDirs(t *testing.T) {
 	if !native() {
 		t.Skip("the host is not arm64")
@@ -2546,7 +2548,7 @@ func TestBackendCacheObjectsAcrossDirs(t *testing.T) {
 			t.Helper()
 			out := filepath.Join(work, "out", "prog")
 			os.RemoveAll(filepath.Join(work, "out"))
-			args := []string{"build", "--backend=arm64", "--phase-times", "-o", out}
+			args := []string{"build", "--backend=arm64", "--phase-times", "--trimpath=off", "-o", out}
 			if target != "" {
 				args = append(args, "--targets="+target)
 			}
