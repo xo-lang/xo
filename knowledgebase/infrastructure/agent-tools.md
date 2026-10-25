@@ -103,6 +103,13 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 ## Testing
 
+- Docker (2026-10-25): start Docker Desktop for a run with
+  `~/xo-lead/agents/docker-up.sh` and stop it after with `docker-up.sh stop`,
+  never `open -a Docker`: twice Docker Desktop came up "running" while
+  `docker info` hung, and the waiting agent lost 15 minutes. The script
+  waits for the daemon, force stops and starts it once when it does not
+  answer in 90 s, and exits 1 for the lead after a second failure.
+
 - Default changes (2026-10-25): a push that changes a default (a flag on
   by default, a default-on pass) runs its full suites on the exact tree it
   pushes, after its last commit, not on an earlier commit of the same
