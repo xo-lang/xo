@@ -70,7 +70,7 @@ fn (var g: Gen) call(v: Int) {
         // with room for a number of elements
         let a0 = g.op(args[0])
         // obj.xo's export, with no C level
-        let r = g.def("call i64 @xo_x_obj_rl_new_n(i64 ${a0}, i64 ${g.size(et)}) #6")
+        let r = g.def("call i64 @xo_x_obj_rl_new_n(i64 ${a0}, i64 ${g.esize(et)}) #6")
         let p = g.def("inttoptr i64 ${r} to ptr")
         // the header obj.rl_new_n wrote (count 1, length 0, capacity
         // max(n, 4)), again where LLVM sees it: it then knows the new list
@@ -117,6 +117,10 @@ fn (var g: Gen) call(v: Int) {
       if g.is_agg(et) && g.root_borrowed(args[0]) {
         g.addr[v] = p
       }
+      if g.pnarrow(et) > 0 {
+        g.alias(v, g.elem_load(et, p, md))
+        return
+      }
       let l = g.ll(et)
       g.set(v, "load ${l}, ptr ${p}${TBAA_ELEM}${md}")
     }
@@ -135,11 +139,9 @@ fn (var g: Gen) call(v: Int) {
       }
       let a1 = g.op(args[1])
       let p = g.elem_ptr(et, l, a1)
-      let el = g.ll(et)
-      let ev = g.def("load ${el}, ptr ${p}${TBAA_ELEM}${md}")
-      let el2 = g.ll(et)
+      let ev = g.elem_load(et, p, md)
       let h = g.hole(et)
-      g.emit("store ${el2} ${h}, ptr ${p}${TBAA_ELEM}${md}")
+      g.elem_store(et, h, p, md)
       let rt = g.ll(vt)
       let t = g.def("insertvalue ${rt} undef, ptr ${l}, 0")
       let el3 = g.ll(et)
@@ -164,8 +166,7 @@ fn (var g: Gen) call(v: Int) {
       let p = g.elem_ptr(et, b0, b1)
       var ev = "zeroinitializer"
       if g.kind(et) != ssa.Kind.Unit {
-        let l = g.ll(et)
-        ev = g.def("load ${l}, ptr ${p}${TBAA_ELEM}${md}")
+        ev = g.elem_load(et, p, md)
       }
       let sv = g.variant(ot, some, [ev])
       let yes_end = g.label
@@ -203,8 +204,7 @@ fn (var g: Gen) call(v: Int) {
         }
       }
       if g.kind(et) != ssa.Kind.Unit {
-        let t2 = g.typed(args[2])
-        g.emit("store ${t2}, ptr ${p}${TBAA_ELEM}${md}")
+        g.elem_store(et, g.op(args[2]), p, md)
       }
       g.alias(v, l)
     }
@@ -222,15 +222,14 @@ fn (var g: Gen) call(v: Int) {
       g.start(grow)
       // obj.xo's export, with no C level (was xo_rt.c xo_rl_grow)
       let li = g.def("ptrtoint ptr ${l} to i64")
-      let gi = g.def("call i64 @xo_x_obj_rl_grow_n(i64 ${li}, i64 ${g.size(et)}) #8")
+      let gi = g.def("call i64 @xo_x_obj_rl_grow_n(i64 ${li}, i64 ${g.esize(et)}) #8")
       let l2 = g.def("inttoptr i64 ${gi} to ptr")
       g.emit("br label %${room}")
       g.start(room)
       let lm = g.def("phi ptr [ ${l}, %${from} ], [ ${l2}, %${grow} ]")
       if g.kind(et) != ssa.Kind.Unit {
         let p = g.elem_ptr(et, lm, n)
-        let t1 = g.typed(args[1])
-        g.emit("store ${t1}, ptr ${p}${TBAA_ELEM}${md}")
+        g.elem_store(et, g.op(args[1]), p, md)
       }
       let n1 = g.def("add nuw nsw i64 ${n}, 1")
       let lp = g.def("getelementptr %xo.rlist, ptr ${lm}, i32 0, i32 1")
@@ -255,8 +254,7 @@ fn (var g: Gen) call(v: Int) {
         }
       }
       if g.kind(et) != ssa.Kind.Unit {
-        let t2 = g.typed(args[2])
-        g.emit("store ${t2}, ptr ${p}${TBAA_ELEM}${md}")
+        g.elem_store(et, g.op(args[2]), p, md)
       }
     }
     "log.push" => {
@@ -267,8 +265,7 @@ fn (var g: Gen) call(v: Int) {
       let n = g.list_len(l, md)
       if g.kind(et) != ssa.Kind.Unit {
         let p = g.elem_ptr(et, l, n)
-        let t1 = g.typed(args[1])
-        g.emit("store ${t1}, ptr ${p}${TBAA_ELEM}${md}")
+        g.elem_store(et, g.op(args[1]), p, md)
       }
       let n1 = g.def("add nuw nsw i64 ${n}, 1")
       let lp = g.def("getelementptr %xo.rlist, ptr ${l}, i32 0, i32 1")
@@ -294,8 +291,7 @@ fn (var g: Gen) call(v: Int) {
       var ev = "zeroinitializer"
       if g.kind(et) != ssa.Kind.Unit {
         let p = g.elem_ptr(et, l, n1)
-        let el = g.ll(et)
-        ev = g.def("load ${el}, ptr ${p}${TBAA_ELEM}${md}")
+        ev = g.elem_load(et, p, md)
       }
       let sv = g.variant(ot, some, [ev])
       let yes_end = g.label
@@ -1386,7 +1382,7 @@ fn (var g: Gen) inline_raw(v: Int) -> Bool {
       let r = g.def("call i32 @memcmp(ptr ${a}, ptr ${b}, i64 ${g.op(x.args[2])})")
       g.set(v, "sext i32 ${r} to i64")
     }
-    "rt.list_esize" => g.alias(v, "${g.size(g.m.types[g.vty(x.args[0])].elems[0])}")
+    "rt.list_esize" => g.alias(v, "${g.esize(g.m.types[g.vty(x.args[0])].elems[0])}")
     "rt.obj_addr" => {
       var o = g.op(x.args[0])
       if g.m.types[g.vty(x.args[0])].kind == ssa.Kind.Str {

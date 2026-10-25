@@ -651,6 +651,49 @@ fn (var g: Gen) size(t: Int) -> Int {
   s
 }
 
+/// The bits (8, 16 or 32) a list element of the sized integer or Float32
+/// type t takes with --pack-lists (decision 0369), else 0.
+fn (var g: Gen) pnarrow(t: Int) -> Int {
+  if !g.m.pack_lists {
+    return 0
+  }
+  let k = g.m.types[t].kind
+  if k != ssa.Kind.Int && k != ssa.Kind.Float {
+    return 0
+  }
+  match g.m.types[t].name {
+    "Int8" | "UInt8" => 8
+    "Int16" | "UInt16" => 16
+    "Int32" | "UInt32" | "Rune" | "Float32" => 32
+    _ => 0
+  }
+}
+
+/// The size in bytes of a list element of type t.
+fn (var g: Gen) esize(t: Int) -> Int {
+  let w = g.pnarrow(t)
+  if w > 0 {
+    return w / 8
+  }
+  g.size(t)
+}
+
+/// The LLVM type a list element of t is stored as.
+fn (var g: Gen) elem_ll(t: Int) -> Str {
+  let w = g.pnarrow(t)
+  if w == 0 {
+    return g.ll(t)
+  }
+  if g.m.types[t].kind == ssa.Kind.Float {
+    return "float"
+  }
+  "i${w}"
+}
+
+fn (var g: Gen) narrow_signed(t: Int) -> Bool {
+  g.m.types[t].name is "Int8" | "Int16" | "Int32" | "Rune"
+}
+
 fn (var g: Gen) kind(t: Int) -> ssa.Kind {
   g.m.types[t].kind
 }
@@ -995,7 +1038,7 @@ fn (var g: Gen) rc_fn(kind: Str, t: Int) -> Str {
         rc_mark(b, obj)
         if k == ssa.Kind.List && g.heap(g.m.types[t].elems[0]) {
           let et = g.m.types[t].elems[0]
-          let sz = g.size(et)
+          let sz = g.esize(et)
           let ef = g.elem_fn("share", et)
           let po = b.tmp()
           b.w("  ${po} = ptrtoint ptr ${obj} to i64\n  call void @xo_x_obj_rl_share(i64 ${po}, i64 ${sz}, i64 ptrtoint (ptr ${ef} to i64)) #6\n")
@@ -1161,7 +1204,7 @@ fn (var g: Gen) drop_free(var b: H, t: Int, obj: Str) {
     Str => b.w("  call void @xo_x_obj_rc_free(i64 ${po}) #8\n")
     List => {
       let et = g.m.types[t].elems[0]
-      let sz = g.size(et)
+      let sz = g.esize(et)
       let ef = g.elem_fn("drop", et)
       // obj.xo's export, inlined at the call as the C entry
       // xo_rl_free inlined it (XO_INLINE_CALL)
@@ -1633,10 +1676,21 @@ fn (var g: Gen) eq_fn(t: Int) -> Str {
       if !g.is_void(et) {
         let da = e.def("getelementptr %xo.rlist, ptr %a, i64 1")
         let db = e.def("getelementptr %xo.rlist, ptr %b, i64 1")
-        let xa = e.def("getelementptr ${g.ll(et)}, ptr ${da}, i64 %i")
-        let xb = e.def("getelementptr ${g.ll(et)}, ptr ${db}, i64 %i")
-        let x = e.def("load ${g.ll(et)}, ptr ${xa}${TBAA_ELEM}")
-        let y = e.def("load ${g.ll(et)}, ptr ${xb}${TBAA_ELEM}")
+        let xa = e.def("getelementptr ${g.elem_ll(et)}, ptr ${da}, i64 %i")
+        let xb = e.def("getelementptr ${g.elem_ll(et)}, ptr ${db}, i64 %i")
+        var x = e.def("load ${g.elem_ll(et)}, ptr ${xa}${TBAA_ELEM}")
+        var y = e.def("load ${g.elem_ll(et)}, ptr ${xb}${TBAA_ELEM}")
+        if g.pnarrow(et) > 0 {
+          // packed elements (decision 0369) widened to the register type
+          if g.m.types[et].kind == ssa.Kind.Float {
+            x = e.def("fpext float ${x} to double")
+            y = e.def("fpext float ${y} to double")
+          } else {
+            let ext = if g.narrow_signed(et) { "sext" } else { "zext" }
+            x = e.def("${ext} ${g.elem_ll(et)} ${x} to i64")
+            y = e.def("${ext} ${g.elem_ll(et)} ${y} to i64")
+          }
+        }
         r = g.eq_of(e, et, x, y)
       }
       e.emit("br i1 ${r}, label %next, label %no")

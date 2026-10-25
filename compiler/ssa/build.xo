@@ -465,6 +465,7 @@ fn program_builder(c: check.Checker, line_root: Str, tests: Bool, release: Bool,
   b.soft_cpu = soft_cpu
   b.prof = prof
   b.trace_support = trace_support
+  b.m.pack_lists = c.pack_lists
   b.nolibc = nolibc
   b.tests = tests
   b.release = release

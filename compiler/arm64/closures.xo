@@ -431,7 +431,14 @@ fn (var g: G) eq_helper(t: Int) -> Str {
         let lp = g.helper_label("eq_loop")
         b.push("\tmov x21, x9\n\tmov x22, #0\n\tadd x23, x0, #${LIST_HDR}\n\tadd x24, x1, #${LIST_HDR}\n")
         b.push("${lp}:\n\tcmp x22, x21\n\tb.eq ${yes}\n")
-        g.eq_at(b, et, "x23", "x24", 0, no, g.kind(et) == ssa.Kind.Bool)
+        let nw = g.narrow_w(et)
+        if nw > 0 {
+          // packed elements (decision 0369): loads of their width
+          let ld = if nw == 1 { "ldrb" } else if nw == 2 { "ldrh" } else { "ldr" }
+          b.push("\t${ld} w9, [x23]\n\t${ld} w10, [x24]\n\tcmp w9, w10\n\tb.ne ${no}\n")
+        } else {
+          g.eq_at(b, et, "x23", "x24", 0, no, g.kind(et) == ssa.Kind.Bool)
+        }
         if imm12(es) {
           b.push("\tadd x23, x23, #${es}\n\tadd x24, x24, #${es}\n")
         } else {

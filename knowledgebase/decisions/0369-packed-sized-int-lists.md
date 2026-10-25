@@ -106,6 +106,50 @@ made (`UInt8(x)` faults), so a narrow store never truncates a legal value.
    scan is not faster or the sort index case is slower than 1.0.
 2. The audit grep above, with the count of word loops found.
 
+## Prototype measured (2026-10-25, `--pack-lists`)
+
+`--pack-lists` (an opt-in flag, default off, in `Opts`, the checker,
+`ssa.Module` and the arm64 backend cache keys) gives a `List` of `Int8`,
+`UInt8`, `Int16`, `UInt16`, `Int32`, `UInt32`, `Rune` or `Float32` an element
+of 1, 2 or 4 bytes on the native backends (arm64 and amd64 targets) and on
+LLVM; the Go backend's slices are packed already. The wasm backend keeps
+8 byte elements: compiler/wasm never reads `Module.pack_lists` and sizes a
+list element from its own lowering, so the flag (and a future default) leaves
+it as it is by construction; the `pack_lists` golden passes on wasm with and
+without the flag.
+
+- arm64 (compiler/arm64): `G.esize` (gen.xo `narrow_w`), the element loads and
+  stores (`ldrb`, `ldrh`, `ldr w`; signed 8 and 16 bit by `lsl` and `asr`,
+  signed 32 bit `ldrsw`; `strb`, `strh`, `str w`; a Float32 by `ldr s`, `fcvt`
+  and `fcvt`, `str s`), the register offset's scale (`lsl #0..#2`), the
+  immediate offsets (`fits_off`), and the list equality helper (closures.xo).
+- amd64: the x86 retargeting (x86.xo) already maps those mnemonics, so only
+  the `x86` guard in `narrow_w` was left out; the Docker linux/amd64 sample
+  (48 goldens) is identical with and without the flag.
+- LLVM (compiler/llvm): `Gen.pnarrow`, `esize`, `elem_ll`, `elem_load`,
+  `elem_store` (a narrow load then `zext`, `sext` or `fpext`; `trunc` or
+  `fptrunc` then a narrow store), the GEP element type, and the equality
+  helper's loop; every `rl_*_n` call takes `esize`.
+- The runtime's list routines (obj.xo `rl_*`) already took `esize` and copy
+  bytes; nothing else reads list memory as words by element kind (grep of
+  std/native/llrt and the SSA lowerings; the goldens, the corpora and a
+  stdfuzz program would have shown it).
+
+Correctness with the flag: every golden on the arm64 backend (376) and on LLVM
+(379), the new `pack_lists` golden (every width and Float32 through fill, set,
+concat, slice, sort, reverse, equality, contains, pop, map, filter, JSON and
+Debug, against the same `want.txt`; the Go backend prints the same), the
+arm64 run corpus (26), the std corpora (38), a stdfuzz program (7800 case
+lines) byte-identical plain and `--release`, and the amd64 sample.
+
+Measured (`--release`, 10,000,000 pushes of `i % 1000` into a `List[UInt32]`
+and of `i % 251` into a `List[UInt8]`, then a sum of each): max RSS 239.4 to
+65.2 MB on arm64 (0.27) and 239.2 to 64.9 MB on LLVM, instructions 582 M to
+430 M (0.74) on arm64 and 617 M to 428 M (0.69) on LLVM. A `List[Float32]` of
+10,000,000: 159.5 to 65.2 MB, instructions 0.80. `bench/perf/http/xo`
+`__text` is unchanged (1,410,412 bytes both ways).
+Wall: to be measured in a quiet window.
+
 ## Alternatives
 
 - Do nothing, document it (this commit: the gotcha and the spec note).

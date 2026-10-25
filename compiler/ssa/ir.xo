@@ -454,6 +454,9 @@ pub struct Module {
   /// compiler/macho's dSYM; dsymutil adds the function's own offset to an
   /// address in a location list, so not for a cc link on macOS.
   pub dw_data_addrs: Bool = false
+  /// --pack-lists (decision 0369): the backends store a List of a sized integer
+  /// or Float32 in its width
+  pub pack_lists: Bool = false
   /// The directory the sources' names are relative to (DW_AT_comp_dir).
   pub comp_dir: Str = ""
   /// The directory std/'s files are named relative to (std/..): their

@@ -608,7 +608,37 @@ fn (var g: G) esize(t: Int) -> Int {
   if g.kind(t) == ssa.Kind.Bool {
     return 1
   }
+  let w = g.narrow_w(t)
+  if w > 0 {
+    return w
+  }
   8 * g.nwords(t)
+}
+
+/// The bytes (1, 2 or 4) a list element of the sized integer type t takes
+/// with --pack-lists (decision 0369), else 0.
+fn (g: G) narrow_w(t: Int) -> Int {
+  if !g.m.pack_lists || g.x86 {
+    return 0
+  }
+  if g.kind(t) == ssa.Kind.Float {
+    // a Float32 is a double in its register, a single in the list
+    return if g.m.types[t].name == "Float32" { 4 } else { 0 }
+  }
+  if g.kind(t) != ssa.Kind.Int {
+    return 0
+  }
+  match g.m.types[t].name {
+    "Int8" | "UInt8" => 1
+    "Int16" | "UInt16" => 2
+    "Int32" | "UInt32" | "Rune" => 4
+    _ => 0
+  }
+}
+
+/// Whether the packed integer type t is signed.
+fn (g: G) narrow_signed(t: Int) -> Bool {
+  g.m.types[t].name is "Int8" | "Int16" | "Int32" | "Rune"
 }
 
 /// A heap leaf of a value: its word offset and type.

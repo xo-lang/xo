@@ -1,0 +1,142 @@
+// List[T] of every sized integer type and Rune through the list operations:
+// the output must not depend on how the elements are stored (decision 0369,
+// --pack-lists keeps them in their width).
+use std/json
+
+fn mix(h: Int, v: Int) -> Int {
+  (h * 1000003 + v) % 1000000007
+}
+
+fn u8s(n: Int) -> List[UInt8] {
+  var xs: List[UInt8] = []
+  for i in 0..n {
+    xs.push(UInt8((i * 37 + 11) % 256))
+  }
+  xs
+}
+
+fn i8s(n: Int) -> List[Int8] {
+  var xs: List[Int8] = []
+  for i in 0..n {
+    xs.push(Int8((i * 37 + 11) % 256 - 128))
+  }
+  xs
+}
+
+fn u16s(n: Int) -> List[UInt16] {
+  var xs: List[UInt16] = []
+  for i in 0..n {
+    xs.push(UInt16((i * 4099 + 7) % 65536))
+  }
+  xs
+}
+
+fn i16s(n: Int) -> List[Int16] {
+  var xs: List[Int16] = []
+  for i in 0..n {
+    xs.push(Int16((i * 4099 + 7) % 65536 - 32768))
+  }
+  xs
+}
+
+fn u32s(n: Int) -> List[UInt32] {
+  var xs: List[UInt32] = []
+  for i in 0..n {
+    xs.push(UInt32((i * 2654435761 + 12345) % 4294967296))
+  }
+  xs
+}
+
+fn i32s(n: Int) -> List[Int32] {
+  var xs: List[Int32] = []
+  for i in 0..n {
+    xs.push(Int32((i * 2654435761 + 12345) % 4294967296 - 2147483648))
+  }
+  xs
+}
+
+fn runes(n: Int) -> List[Rune] {
+  var xs: List[Rune] = []
+  for i in 0..n {
+    xs.push(Rune(0x20 + (i * 131) % 0x2000))
+  }
+  xs
+}
+
+fn sum_u8(xs: List[UInt8]) -> Int {
+  var h = 0
+  for x in xs {
+    h = mix(h, Int(x))
+  }
+  h
+}
+
+fn main(os: Os) {
+  let a = u8s(300)
+  let b = i8s(300)
+  let c = u16s(300)
+  let d = i16s(300)
+  let e = u32s(300)
+  let f = i32s(300)
+  let g = runes(300)
+  var h = 0
+  for x in a { h = mix(h, Int(x)) }
+  for x in b { h = mix(h, Int(x) + 1000) }
+  for x in c { h = mix(h, Int(x)) }
+  for x in d { h = mix(h, Int(x) + 100000) }
+  for x in e { h = mix(h, Int(x)) }
+  for x in f { h = mix(h, Int(x) + 3000000000) }
+  for x in g { h = mix(h, Int(x)) }
+  os.stdio.println("fill ${h} ${a.len()} ${b.len()} ${c.len()} ${d.len()} ${e.len()} ${f.len()} ${g.len()}")
+  // index, set, first/last
+  var m = e
+  m[3] = UInt32(4294967295)
+  m[0] = UInt32(0)
+  var n2 = f
+  n2[5] = Int32(-2147483648)
+  n2[6] = Int32(2147483647)
+  var o = b
+  o[1] = Int8(-128)
+  o[2] = Int8(127)
+  os.stdio.println("set ${m[0]} ${m[3]} ${m[299]} ${n2[5]} ${n2[6]} ${o[1]} ${o[2]} ${d[0]} ${c[299]}")
+  // concat, slices
+  let cc = a + a
+  let sl = e[10..20]
+  var sh = 0
+  for x in sl { sh = mix(sh, Int(x)) }
+  os.stdio.println("concat ${cc.len()} ${sum_u8(cc)} slice ${sl.len()} ${sh}")
+  // sort, reverse, contains, equality
+  let sorted = f.sort()
+  let sd = d.sort()
+  os.stdio.println("sort ${sorted[0]} ${sorted[299]} ${sd[0]} ${sd[299]} ${e.sort()[150]} ${g.sort()[0]}")
+  let rv = c.reverse()
+  os.stdio.println("rev ${rv[0]} ${rv[299]} eq ${a == a} ${a == u8s(299)} ${c == c.reverse().reverse()}")
+  os.stdio.println("contains ${a.contains(UInt8(48))} ${f.contains(Int32(5))} ${g.contains(Rune(0x20))}")
+  // pop, insert, remove-ish, copy
+  var p = a
+  var pops = 0
+  while p.len() > 250 {
+    pops = mix(pops, Int(p.pop() ?? UInt8(0)))
+  }
+  os.stdio.println("pop ${pops} ${p.len()}")
+  // map and filter, closures over narrow elements
+  let doubled = a.map(fn(x) -> Int { Int(x) * 2 })
+  let big = f.filter(fn(x) -> Bool { x > Int32(0) })
+  os.stdio.println("map ${doubled[10]} ${doubled.len()} filter ${big.len()}")
+  // json, debug
+  os.stdio.println(json.encode_str(u16s(5)))
+  os.stdio.println(json.encode_str(i8s(5)))
+  os.stdio.println("${i32s(3):?} ${runes(3):?} ${u8s(4):?}")
+  let jd = json.decode_str[List[UInt32]]("[1,2,4294967295]") ?? _ => []
+  os.stdio.println("decoded ${jd.len()} ${jd[2]}")
+  var fl: List[Float32] = []
+  for i in 0..40 {
+    fl.push(Float32(i) * Float32(0.37) - Float32(5.5))
+  }
+  var fs: Float = 0.0
+  for x in fl {
+    fs += Float(x)
+  }
+  let fsort = fl.sort()
+  os.stdio.println("f32 ${fl.len()} ${fl[3]} ${fl[39]} ${fs} ${fsort[0]} ${fl == fl.reverse().reverse()} ${json.encode_str(fl)}")
+}

@@ -299,8 +299,48 @@ fn (var g: Gen) loc(v: Int) -> Str {
 /// The address of element i of list l (elemPtr).
 fn (var g: Gen) elem_ptr(et: Int, l: Str, i: Str) -> Str {
   let data = g.def("getelementptr %xo.rlist, ptr ${l}, i64 1")
-  let lt = g.ll(et)
+  let lt = g.elem_ll(et)
   g.def("getelementptr ${lt}, ptr ${data}, i64 ${i}")
+}
+
+/// The register value of the list element of type et at p: a packed element
+/// (--pack-lists) is loaded at its width and widened.
+fn (var g: Gen) elem_load(et: Int, p: Str, md: Str) -> Str {
+  let w = g.pnarrow(et)
+  if w == 0 {
+    let l = g.ll(et)
+    return g.def("load ${l}, ptr ${p}${TBAA_ELEM}${md}")
+  }
+  let el = g.elem_ll(et)
+  let raw = g.def("load ${el}, ptr ${p}${TBAA_ELEM}${md}")
+  if g.m.types[et].kind == ssa.Kind.Float {
+    return g.def("fpext float ${raw} to double")
+  }
+  g.def("${if g.narrow_signed(et) { "sext" } else { "zext" }} ${el} ${raw} to i64")
+}
+
+/// Stores the register value v (an operand without its type) of type et as
+/// a list element at p, narrowed when the list is packed.
+fn (var g: Gen) elem_store(et: Int, v: Str, p: Str, md: Str) {
+  let w = g.pnarrow(et)
+  if w == 0 {
+    let l = g.ll(et)
+    g.emit("store ${l} ${v}, ptr ${p}${TBAA_ELEM}${md}")
+    return
+  }
+  let el = g.elem_ll(et)
+  if v == "zeroinitializer" {
+    // a hole or a zero
+    g.emit("store ${el} ${if g.m.types[et].kind == ssa.Kind.Float { "0.0" } else { "0" }}, ptr ${p}${TBAA_ELEM}${md}")
+    return
+  }
+  var n = ""
+  if g.m.types[et].kind == ssa.Kind.Float {
+    n = g.def("fptrunc double ${v} to float")
+  } else {
+    n = g.def("trunc i64 ${v} to ${el}")
+  }
+  g.emit("store ${el} ${n}, ptr ${p}${TBAA_ELEM}${md}")
 }
 
 /// Loads the length of list l (listLen); md is the access's alias scopes
@@ -1310,7 +1350,7 @@ fn (var g: Gen) instr_body(v: Int) {
       g.start(slow)
       // a copy, or the same list when it is shared but only held here
       let b0 = g.op(a)
-      let sz = g.size(et)
+      let sz = g.esize(et)
       let dup = g.elem_fn("dup", et)
       let drop = g.elem_fn("drop", et)
       // obj.xo's export, with no C level (was xo_rt.c xo_rl_copy)

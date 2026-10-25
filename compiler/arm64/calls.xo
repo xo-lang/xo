@@ -367,12 +367,12 @@ fn (var g: G) elem_addr(l: Int, i: Int, iv: Int, et: Int) -> ElemAt {
     return at_base(b)
   }
   let nw = g.layout(et).len()
-  let is_bool = g.kind(et) == ssa.Kind.Bool
+  let is_bool = g.kind(et) == ssa.Kind.Bool || es < 8
   if iv >= 0 {
     let (k, kc) = g.const_int(iv)
     if kc && k >= 0 && k < 4096 {
       let off = LIST_HDR + k * es
-      if fits_off(off, is_bool, nw) {
+      if fits_off(off, es, nw) {
         return ElemAt{base: l, off: off}
       }
     }
@@ -380,7 +380,7 @@ fn (var g: G) elem_addr(l: Int, i: Int, iv: Int, et: Int) -> ElemAt {
   let o = g.offs.get(i) ?? Offset{a: -1, c: 0}
   if o.a >= 0 && o.c > -4096 && o.c < 4096 && es < 4096 {
     let off = LIST_HDR + o.c * es
-    if fits_off(off, is_bool, nw) {
+    if fits_off(off, es, nw) {
       return ElemAt{base: g.elem_base(l, o.a, es), off: off}
     }
   }
@@ -388,7 +388,7 @@ fn (var g: G) elem_addr(l: Int, i: Int, iv: Int, et: Int) -> ElemAt {
     return at_base(g.elem_base(l, i, es))
   }
   if is_bool {
-    return ElemAt{base: g.data_addr(l), idx: i}
+    return ElemAt{base: g.data_addr(l), idx: i, sh: if es == 4 { 2 } else if es == 2 { 1 } else { 0 }}
   }
   if es == 8 {
     return ElemAt{base: g.data_addr(l), idx: i, sh: 3}
@@ -398,9 +398,9 @@ fn (var g: G) elem_addr(l: Int, i: Int, iv: Int, et: Int) -> ElemAt {
 
 /// Whether the element words at offset off (the header counted) are in
 /// reach of one load's immediate.
-fn fits_off(off: Int, is_bool: Bool, nw: Int) -> Bool {
-  if is_bool {
-    return off >= 0 && off <= 4095
+fn fits_off(off: Int, es: Int, nw: Int) -> Bool {
+  if es < 8 {
+    return off >= 0 && off % es == 0 && off <= 4095 * es
   }
   off >= 0 && off % 8 == 0 && off + 8 * (nw - 1) <= 32760
 }
@@ -420,6 +420,30 @@ fn (var g: G) data_addr(l: Int) -> Int {
 
 /// Loads the element words at a (as integer registers when as_int).
 fn (var g: G) load_elem(a: ElemAt, et: Int, as_int: Bool) -> List[Int] {
+  let nw = g.narrow_w(et)
+  if nw > 0 && g.kind(et) == ssa.Kind.Float {
+    let f = g.def1(true, "ldr $wd0, ${at_operand(a, 0, 0)}\nfcvt $d0, $wd0", at_regs(a))
+    let _mi = g.m_()
+    g.cm.loaded[f] = at_mem(a, 0, g.cm.epoch)
+    if as_int {
+      return [g.def1(false, "fmov $d0, $u0", [f])]
+    }
+    return [f]
+  }
+  if nw > 0 {
+    let sg = g.narrow_signed(et)
+    let ins = if nw == 1 {
+      if sg { "ldrb $wd0, ${at_operand(a, 0, 0)}\nlsl $d0, $d0, #56\nasr $d0, $d0, #56" } else { "ldrb $wd0, ${at_operand(a, 0, 0)}" }
+    } else if nw == 2 {
+      if sg { "ldrh $wd0, ${at_operand(a, 0, 0)}\nlsl $d0, $d0, #48\nasr $d0, $d0, #48" } else { "ldrh $wd0, ${at_operand(a, 0, 0)}" }
+    } else {
+      if sg { "ldrsw $d0, ${at_operand(a, 0, 0)}" } else { "ldr $wd0, ${at_operand(a, 0, 0)}" }
+    }
+    let d = g.def1(false, ins, at_regs(a))
+    let _mi = g.m_()
+    g.cm.loaded[d] = at_mem(a, 0, g.cm.epoch)
+    return [d]
+  }
   if g.kind(et) == ssa.Kind.Bool {
     let d = g.def1(false, "ldrb $wd0, ${at_operand(a, 0, 0)}", at_regs(a))
     let _mi = g.m_()
@@ -459,6 +483,19 @@ fn (var g: G) store_words(v: Int) -> List[Int] {
 
 fn (var g: G) store_elem(a: ElemAt, et: Int, ws: List[Int]) {
   let _mi = g.m_()
+  let nw = g.narrow_w(et)
+  if nw > 0 && g.kind(et) == ssa.Kind.Float {
+    let sv = g.def1(true, "fcvt $wd0, $u0", [ws[0]])
+    g.store("str $wu0, ${at_operand(a, 0, 1)}", [sv] + at_regs(a))
+    return
+  }
+  if nw > 0 {
+    let st = if nw == 1 { "strb" } else if nw == 2 { "strh" } else { "str" }
+    if !g.same_loaded(ws[0], at_mem(a, 0, g.cm.epoch)) {
+      g.store("${st} $wu0, ${at_operand(a, 0, 1)}", [ws[0]] + at_regs(a))
+    }
+    return
+  }
   if g.kind(et) == ssa.Kind.Bool {
     if !g.same_loaded(ws[0], at_mem(a, 0, g.cm.epoch)) {
       g.store("strb $wu0, ${at_operand(a, 0, 1)}", [ws[0]] + at_regs(a))
