@@ -176,9 +176,16 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   certificates, ECDSA P-256/P-384 verify and ECDH, RSA verify and sign),
   plus a limits area at the chunk and buffer edges (sizes up to 1 MiB
   through counts, search, replace, split, the codecs, JSON, CSV and URL
-  escaping), and a runes area that pushes every Rune predicate, case
+  escaping), a runes area that pushes every Rune predicate, case
   mapping, utf8_len and both quotes over the class, block, bitmap,
-  surrogate and scalar-range edges (the Go backend is the oracle); it runs them on arm64, LLVM
+  surrogate and scalar-range edges, and a maps area of put, get, remove,
+  contains, len, update, put after remove and re-put over six key and value
+  type pairs (Str and Int keys, Int, Str, Option, List and struct values),
+  with growth cases around powers of two to 100,000 entries; the phase
+  summaries print the length, an order sensitive mix and the first and last
+  entries in iteration order, because a Map is insertion ordered (core.md
+  2.4, decision 0091) and that order is the contract a rewrite can break
+  (the Go backend is the oracle); it runs them on arm64, LLVM
   and the Go backend, and compares the outputs line by line. A divergence
   prints the case, its source and a `-only=NAME` rerun; report it, do not
   fix it in the tool. `-seed` and `-n` widen a run, `-area` narrows it, and

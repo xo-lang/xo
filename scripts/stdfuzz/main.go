@@ -20,7 +20,7 @@
 // The inputs are seeded, so a report reproduces exactly. The areas are
 // strings, bytes, strconv, json, runes, path, url, base64/base32/hex,
 // time, regexp, csv, netip, big, compress, archive, mime, multipart, xml,
-// sql, http, template, cryptostream, x509, ecc and limits.
+// sql, http, template, cryptostream, x509, ecc, limits, runes and maps.
 package main
 
 import (

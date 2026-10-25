@@ -753,7 +753,8 @@ fn fz_lim(kind: Int, pat: Str, n: Int) -> Str {
 
 // A fuzzCase is one line of the generated program: the name it prints and
 // the Xo expression that computes its value as a Str, so every result
-// compares as one line of text.
+// compares as one line of text. The expression may be a block whose last
+// expression is the value, which the maps area uses for its op sequences.
 type fuzzCase struct {
 	Name string // area.0001
 	Expr string // already rendered to a Str
@@ -799,6 +800,7 @@ func allAreas() []area {
 		{"ecc", []string{"std/internal"}, eccHelpers, genECC},
 		{"limits", []string{"std/base32", "std/base64", "std/compress", "std/csv", "std/json", "std/url"}, limitsHelpers, genLimits},
 		{"runes", nil, runesHelpers, genRunes},
+		{"maps", nil, mapsHelpers, genMaps},
 	}
 }
 
@@ -2289,6 +2291,251 @@ func genRunes(r *rand.Rand, n int) []fuzzCase {
 			}
 		}
 		out = append(out, fuzzCase{Name: fmt.Sprintf("runes.%04d", i), Expr: fmt.Sprintf("fz_rune_try(%s)", xoInt(x))})
+	}
+	return out
+}
+
+// mapsHelpers is the Map area's support: a struct value type, an order
+// sensitive mix over a Str, and one renderer per value type, so a case's
+// single line can carry the iteration order of the whole map.
+const mapsHelpers = `
+struct FzVal {
+  a: Int
+  b: Str
+}
+fn fz_mix(h: Int, s: Str) -> Int {
+  var x = h
+  for c in s.runes() {
+    x = (x ^ Int(c)).wrapping_mul(1099511628211)
+  }
+  x
+}
+fn fz_v_int(n: Int) -> Str { "${n}" }
+fn fz_v_str(s: Str) -> Str { fz_hx(s) }
+fn fz_v_opt(n: Int?) -> Str {
+  match n {
+    Some(x) => "${x}"
+    None => "-"
+  }
+}
+fn fz_v_list(xs: List[Int]) -> Str {
+  var t = ""
+  for x in xs {
+    t = t + "," + "${x}"
+  }
+  t
+}
+fn fz_v_struct(v: FzVal) -> Str { "${v.a}/${fz_hx(v.b)}" }
+`
+
+// mapKind is one key and value type pair the maps area runs: the Xo type,
+// the literal makers, the renderers of the phase summaries, and the update
+// statement (empty for the types where the mutator adds nothing).
+type mapKind struct {
+	name string
+	typ  string
+	kf   string // renders a key expression to a Str
+	vf   string // renders a value expression to a Str
+	key  func(r *rand.Rand, i int) string
+	val  func(r *rand.Rand, i int) string
+	upd  string // an m.update call with one %s for the key, or ""
+}
+
+// mapKinds are the key and value types the area runs: short, long and empty
+// Str keys, negative, zero and huge Int keys, and Int, Str, Option, List and
+// struct values.
+var mapKinds = []mapKind{
+	{
+		name: "str-int", typ: "Map[Str, Int]", kf: "fz_hx", vf: "fz_v_int",
+		key: func(r *rand.Rand, i int) string {
+			switch r.Intn(4) {
+			case 0:
+				return xq("")
+			case 1:
+				return xq(strings.Repeat("long", 1+r.Intn(8)) + fmt.Sprintf("%d", i))
+			default:
+				return xq(fmt.Sprintf("k%d", i))
+			}
+		},
+		val: func(r *rand.Rand, i int) string { return xoInt(mapInt(r, i)) },
+		upd: "m.update(%s, 7, fn(var v: Int) -> Int { v = v.wrapping_add(1); v })",
+	},
+	{
+		name: "int-str", typ: "Map[Int, Str]", kf: "fz_v_int", vf: "fz_v_str",
+		key: func(r *rand.Rand, i int) string { return xoInt(mapInt(r, i)) },
+		val: func(r *rand.Rand, i int) string {
+			return xq(randStr(r) + fmt.Sprintf("v%d", i))
+		},
+		upd: "m.update(%s, \"init\", fn(var v: Str) -> Str { v = v + \"!\"; v })",
+	},
+	{
+		name: "str-str", typ: "Map[Str, Str]", kf: "fz_hx", vf: "fz_v_str",
+		key: func(r *rand.Rand, i int) string { return xq(fmt.Sprintf("k%d", i)) },
+		val: func(r *rand.Rand, i int) string { return xq(randStr(r)) },
+	},
+	{
+		name: "str-opt", typ: "Map[Str, Int?]", kf: "fz_hx", vf: "fz_v_opt",
+		key: func(r *rand.Rand, i int) string { return xq(fmt.Sprintf("k%d", i)) },
+		val: func(r *rand.Rand, i int) string {
+			switch r.Intn(3) {
+			case 0:
+				return "None"
+			case 1:
+				return "Some(0)"
+			default:
+				return fmt.Sprintf("Some(%d)", mapInt(r, i))
+			}
+		},
+	},
+	{
+		name: "int-list", typ: "Map[Int, List[Int]]", kf: "fz_v_int", vf: "fz_v_list",
+		key: func(r *rand.Rand, i int) string { return xoInt(mapInt(r, i)) },
+		val: func(r *rand.Rand, i int) string {
+			switch r.Intn(3) {
+			case 0:
+				return "[]"
+			case 1:
+				return fmt.Sprintf("[%d]", i)
+			default:
+				return fmt.Sprintf("[%d, -1, %d]", i, mapInt(r, i))
+			}
+		},
+	},
+	{
+		name: "str-struct", typ: "Map[Str, FzVal]", kf: "fz_hx", vf: "fz_v_struct",
+		key: func(r *rand.Rand, i int) string { return xq(fmt.Sprintf("k%d", i)) },
+		val: func(r *rand.Rand, i int) string {
+			return fmt.Sprintf("FzVal{a: %d, b: %s}", mapInt(r, i), xq(fmt.Sprintf("s%d", i)))
+		},
+	},
+}
+
+// mapInt draws an Int key or value: negative, zero, huge and small values,
+// so a rewrite that gets signs or widths wrong shows.
+func mapInt(r *rand.Rand, i int) int64 {
+	switch r.Intn(7) {
+	case 0:
+		return 0
+	case 1:
+		return -1
+	case 2:
+		return math.MaxInt64
+	case 3:
+		return math.MinInt64
+	default:
+		return int64(r.Int63()) - int64(r.Int63())/3
+	}
+}
+
+// mapPhase emits the phase summary: the length, an order sensitive mix of
+// every entry in iteration order, and the first and last four entries in
+// that same order (core.md line 596: a Map is insertion ordered, and the
+// order is part of the contract, so it is printed, not sorted).
+func mapPhase(b *strings.Builder, k mapKind, ph int) {
+	fmt.Fprintf(b, `  var h%d = 0
+  var seen%d = 0
+  var sample%d = ""
+  for (k, v) in m {
+    h%d = fz_mix(h%d, %s(k) + "=" + %s(v))
+    if seen%d < 4 || seen%d + 4 >= m.len() {
+      sample%d = sample%d + "|" + %s(k) + "=" + %s(v)
+    }
+    seen%d += 1
+  }
+  out = out + " ${m.len()}:${h%d}:${sample%d}"
+`, ph, ph, ph, ph, ph, k.kf, k.vf, ph, ph, ph, ph, k.kf, k.vf, ph, ph, ph)
+}
+
+// mapOps emits a phase's random operations, over keys that repeat so each
+// one hits: put, get, remove, contains, len, update, a put after a remove,
+// a second put of a removed key, and a clear (m = {}; Map has no method).
+func mapOps(b *strings.Builder, r *rand.Rand, k mapKind, i, nops int, seq *int) {
+	keys := make([]string, 5)
+	for j := range keys {
+		keys[j] = k.key(r, i+j)
+	}
+	for j := 0; j < nops; j++ {
+		key := keys[r.Intn(len(keys))]
+		switch r.Intn(9) {
+		case 0, 1:
+			fmt.Fprintf(b, "  m.put(%s, %s)\n", key, k.val(r, i+j))
+		case 2:
+			fmt.Fprintf(b, "  match m.get(%s) {\n    Some(x) => out = out + \"g\" + %s(x)\n    None => out = out + \"g-\"\n  }\n", key, k.vf)
+		case 3:
+			fmt.Fprintf(b, "  match m.remove(%s) {\n    Some(x) => out = out + \"r\" + %s(x)\n    None => out = out + \"r-\"\n  }\n", key, k.vf)
+		case 4:
+			fmt.Fprintf(b, "  out = out + (if m.contains(%s) { \"c1\" } else { \"c0\" })\n", key)
+		case 5:
+			fmt.Fprintf(b, "  out = out + \"n${m.len()}\"\n")
+		case 6:
+			if k.upd != "" {
+				// each update binds a fresh name: one block cannot declare u twice
+				*seq++
+				fmt.Fprintf(b, "  let u%d = "+k.upd+"\n  out = out + \"u\" + %s(u%d)\n", *seq, key, k.vf, *seq)
+			} else {
+				fmt.Fprintf(b, "  m.put(%s, %s)\n", key, k.val(r, i+j))
+			}
+		case 7:
+			fmt.Fprintf(b, "  let _ = m.remove(%s)\n  m.put(%s, %s)\n", key, key, k.val(r, i+j))
+		default:
+			if r.Intn(6) == 0 {
+				b.WriteString("  m = {}\n  out = out + \"x0\"\n")
+			} else {
+				fmt.Fprintf(b, "  m.put(%s, %s)\n", key, k.val(r, i+j))
+			}
+		}
+	}
+}
+
+// genMaps covers Map's operations and its insertion order over six key and
+// value type pairs, plus a few growth cases that cross the size thresholds
+// (within a power of two and just past it, up to 100,000 entries).
+func genMaps(r *rand.Rand, n int) []fuzzCase {
+	out := make([]fuzzCase, 0, n)
+	sizes := []int{1, 2, 3, 4, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65,
+		127, 128, 129, 255, 256, 257, 1023, 1024, 1025, 4095, 4096, 4097,
+		65535, 65536, 65537, 100000}
+	growth := 6
+	if growth > n {
+		growth = n
+	}
+	for g := 0; g < growth; g++ {
+		size := sizes[r.Intn(len(sizes))]
+		if g == growth-1 {
+			size = 100000
+		}
+		var b strings.Builder
+		b.WriteString("{\n")
+		if g%2 == 0 {
+			fmt.Fprintf(&b, "  var m: Map[Str, Int] = {}\n  var out = \"\"\n")
+			fmt.Fprintf(&b, "  for i in 0..%d { m.put(\"k${i}\", i * 7 - 3) }\n", size)
+			mapPhase(&b, mapKinds[0], 0)
+			fmt.Fprintf(&b, "  for i in 0..%d { if i %% 3 == 0 { let _ = m.remove(\"k${i}\") } }\n", size)
+			mapPhase(&b, mapKinds[0], 1)
+			fmt.Fprintf(&b, "  for i in 0..%d { if i %% 3 == 0 { m.put(\"k${i}\", -i) } }\n", size)
+			mapPhase(&b, mapKinds[0], 2)
+		} else {
+			fmt.Fprintf(&b, "  var m: Map[Int, Str] = {}\n  var out = \"\"\n")
+			fmt.Fprintf(&b, "  for i in 0..%d { m.put(i - 4, \"v${i}\") }\n", size)
+			mapPhase(&b, mapKinds[1], 0)
+			fmt.Fprintf(&b, "  for i in 0..%d { if i %% 5 == 0 { let _ = m.remove(i - 4) } }\n", size)
+			mapPhase(&b, mapKinds[1], 1)
+		}
+		fmt.Fprintf(&b, "  out\n  }")
+		out = append(out, fuzzCase{Name: fmt.Sprintf("maps.growth%02d", g), Expr: b.String()})
+	}
+	for i := growth; i < n; i++ {
+		k := mapKinds[r.Intn(len(mapKinds))]
+		var b strings.Builder
+		b.WriteString("{\n")
+		fmt.Fprintf(&b, "  var m: %s = {}\n  var out = \"\"\n", k.typ)
+		var seq int
+		for ph := 0; ph < 3; ph++ {
+			mapOps(&b, r, k, i*3+ph, 3+r.Intn(4), &seq)
+			mapPhase(&b, k, ph)
+		}
+		fmt.Fprintf(&b, "  out\n  }")
+		out = append(out, fuzzCase{Name: fmt.Sprintf("maps.%04d", i), Expr: b.String()})
 	}
 	return out
 }
