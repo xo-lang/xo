@@ -4082,7 +4082,9 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
     order, as Unmarshal does: a repeated element overwrites a scalar,
     adds to a List, and merges into a struct or Option struct; text of
     numbers and booleans is trimmed and parsed with `strconv`'s errors
-    (`strconv.ParseInt: parsing "x": invalid syntax`); unknown elements
+    (`strconv.ParseInt` and `strconv.ParseFloat`: `parsing "x": invalid
+    syntax`, or `value out of range` for an integer or a float that
+    overflows); unknown elements
     and attributes are ignored; a text with no element is `EOF`.
   - Not as Go: the document is read whole before fields are set, so a
     syntax error anywhere wins over a value error before it, and text
@@ -4096,6 +4098,11 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
   - Tests: a Go-generated corpus of 1,500 documents decoded into a
     struct and re-encoded (compact and indented) in the xml corpus, on
     go, arm64, and LLVM; errorcheck `derive_xml`.
+  - Tests: a Go-generated corpus of the helpers themselves (1,600
+    documents and piece lists, 51 texts, 22 floats) against
+    `encoding/xml` and `strconv` on the same input
+    (internal/stdtest/testdata/corpus/xmlcodec, scripts/stdcorpus
+    xmlcodec).
 - Tests:
   - Golden `xml_basic` on every backend.
   - A Go-generated corpus of 2,000 documents (namespaces, entities,

@@ -381,10 +381,8 @@ var xcFixedRows = []xcRow{
 
 // xcStrings are int_of, float_of and bool_of's inputs: the values Go
 // accepts, the ones it rejects, and the edge shapes (signs, zeros,
-// underscores, non-ASCII digits, spaces, and the range limits). The float
-// inputs stay inside float64's range: Go's ParseFloat reports an overflow
-// as `value out of range` and std's float_of as `invalid syntax` (both
-// reject the value; only the message differs, reported 2026-10-25).
+// underscores, non-ASCII digits, spaces, the range limits, and the
+// floating point forms: decimal, hexadecimal, inf and nan).
 var xcStrings = []string{
 	"", " ", "\t\n", "12", " 42 ", "-3", "+3", "007", "-0", "0",
 	"1_000", "12a", "abc", "1.5", "0x10", "١٢",
@@ -392,6 +390,20 @@ var xcStrings = []string{
 	"-9223372036854775809", "99999999999999999999", "123456789012345678",
 	"1e3", "0.1", ".5", "5.", "1e-400", "Inf", "NaN",
 	"infinity", "+Inf", "-Inf", "0x1p-2", "1,5", "1 000",
+	// float64's edges: just inside, just past, and the exponent and
+	// mantissa forms that overflow
+	"1e308", "1e309", "-1e309", " 1e309 ", "1.7976931348623157e308",
+	"1.7976931348623159e308", "1e-309", "1e100000", "1e-100000",
+	"0x1p1023", "0x1p1024", "0x1.fffffffffffff8p1023", strings.Repeat("9", 400),
+	"0.1" + strings.Repeat("0", 320) + "1",
+	"1e999999999999999999999", "-1e999999999999999999999",
+	"1e-999999999999999999999", "0x1p99999999999999999999",
+	// syntax Go rejects: a bad underscore, a missing exponent, a hex
+	// float without p, and a special word with more after it
+	"1__0", "1_", "_1", "1_.5", "1._5", "1_0.5", "1e", "1e+", "1e-",
+	"1e_1", "1e1_", "1e1_0", "1E+3", "0x", "0x1", "0X1P", "0x1p", "0x1p+",
+	"0x_1p0", "0x1.8p1", "0x1P-2", "0x1p1_0", "infinityy", "in", "nana",
+	"-nan", "+nan", "1e309x", "++1", "1.2.3", "1e 3", "nan(1)",
 	"true", "TRUE", " True ", "t", "T", "1", "0", "yes", "false", "F",
 	"FALSE", "TRUEs", "2", " 42 ", "\r\n7\r\n", "１２",
 }

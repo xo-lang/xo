@@ -61,7 +61,9 @@ fn float_text(f: Float) -> Str
 /// Go's strconv.ParseInt of the text with spaces trimmed (0 when empty):
 /// `strconv.ParseInt: parsing "x": invalid syntax` or `value out of range`.
 fn int_of(s: Str) -> Int ! xml.XmlErr
-/// Go's strconv.ParseFloat (0 when empty).
+/// Go's strconv.ParseFloat of the text with spaces trimmed (0 when
+/// empty): `strconv.ParseFloat: parsing "x": invalid syntax` or `value
+/// out of range`.
 fn float_of(s: Str) -> Float ! xml.XmlErr
 /// Go's strconv.ParseBool (false when empty).
 fn bool_of(s: Str) -> Bool ! xml.XmlErr

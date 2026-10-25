@@ -166,6 +166,161 @@ fn int_of(s0: Str) -> Int ! xml.XmlErr {
   }
 }
 
+/// The byte of b at i as an Int, -1 past the end.
+fn code_at(b: Bytes, i: Int) -> Int {
+  if i < b.len() {
+    Int(b[i])
+  } else {
+    -1
+  }
+}
+
+/// code_at lowercased when it is an ASCII letter (Go's lower).
+fn lower_code_at(b: Bytes, i: Int) -> Int {
+  let c = code_at(b, i)
+  if c >= 65 && c <= 90 {
+    c + 32
+  } else {
+    c
+  }
+}
+
+/// Whether the bytes of b from i are exactly the letters of w, case
+/// ignored, with nothing after them.
+fn word_at_end(b: Bytes, i: Int, w: Bytes) -> Bool {
+  if i + w.len() != b.len() {
+    return false
+  }
+  var k = 0
+  while k < w.len() {
+    if lower_code_at(b, i + k) != Int(w[k]) {
+      return false
+    }
+    k += 1
+  }
+  true
+}
+
+/// strconv.underscoreOK on the first n bytes of b: every underscore
+/// between digits, and a 0x prefix counts as a digit.
+fn underscore_ok(b: Bytes, n: Int) -> Bool {
+  var i = 0
+  // saw: 0 the start, 1 a digit or base prefix, 2 an underscore, 3 other
+  var saw = 0
+  if n >= 1 && (Int(b[0]) == 45 || Int(b[0]) == 43) {
+    i = 1
+  }
+  var hex = false
+  if n - i >= 2 && Int(b[i]) == 48 && lower_code_at(b, i + 1) == 120 {
+    i += 2
+    saw = 1
+    hex = true
+  }
+  while i < n {
+    let c = lower_code_at(b, i)
+    if (c >= 48 && c <= 57) || (hex && c >= 97 && c <= 102) {
+      saw = 1
+    } else if c == 95 {
+      if saw != 1 {
+        return false
+      }
+      saw = 2
+    } else {
+      if saw == 2 {
+        return false
+      }
+      saw = 3
+    }
+    i += 1
+  }
+  saw != 2
+}
+
+/// Whether s is a Float text Go's strconv.ParseFloat accepts on its way to
+/// a value: atof.go's special words, its decimal and hexadecimal forms,
+/// and its underscore rule. The value is not computed, so a text that
+/// overflows (which Float.parse answers None for, as it does a syntax
+/// error) is told from one that is malformed.
+fn float_syntax(s: Str) -> Bool {
+  let b = s.bytes()
+  let n = b.len()
+  var i = 0
+  var signed = false
+  if code_at(b, 0) == 43 || code_at(b, 0) == 45 {
+    signed = true
+    i = 1
+  }
+  // inf and infinity take a sign; nan does not (special)
+  let c = lower_code_at(b, i)
+  if c == 105 {
+    return word_at_end(b, i, b"inf") || word_at_end(b, i, b"infinity")
+  }
+  if c == 110 && !signed {
+    return word_at_end(b, i, b"nan")
+  }
+  var hex = false
+  if code_at(b, i) == 48 && lower_code_at(b, i + 1) == 120 {
+    hex = true
+    i += 2
+  }
+  // the mantissa: digits, one point, underscores between digits
+  var digits = false
+  var dot = false
+  var underscores = false
+  while i < n {
+    let d = lower_code_at(b, i)
+    if (d >= 48 && d <= 57) || (hex && d >= 97 && d <= 102) {
+      digits = true
+    } else if d == 46 {
+      if dot {
+        break
+      }
+      dot = true
+    } else if d == 95 {
+      underscores = true
+    } else {
+      break
+    }
+    i += 1
+  }
+  if !digits {
+    return false
+  }
+  // the exponent: p for a hex float (required), e for a decimal one
+  var exp = false
+  if hex {
+    if lower_code_at(b, i) != 112 {
+      return false
+    }
+    exp = true
+    i += 1
+  } else if lower_code_at(b, i) == 101 {
+    exp = true
+    i += 1
+  }
+  if exp {
+    if code_at(b, i) == 43 || code_at(b, i) == 45 {
+      i += 1
+    }
+    var exp_digits = false
+    while i < n {
+      let d = lower_code_at(b, i)
+      if d >= 48 && d <= 57 {
+        exp_digits = true
+      } else if d == 95 {
+        underscores = true
+      } else {
+        return false
+      }
+      i += 1
+    }
+    if !exp_digits {
+      return false
+    }
+  }
+  i == n && (!underscores || underscore_ok(b, i))
+}
+
 fn float_of(s0: Str) -> Float ! xml.XmlErr {
   let s = s0.trim()
   if s.is_empty() {
@@ -173,7 +328,10 @@ fn float_of(s0: Str) -> Float ! xml.XmlErr {
   }
   match Float.parse(s) {
     Some(f) => f
-    None => Err(fail("strconv.ParseFloat: parsing ${s.quote()}: invalid syntax"))
+    None => {
+      let why = if float_syntax(s) { "value out of range" } else { "invalid syntax" }
+      Err(fail("strconv.ParseFloat: parsing ${s.quote()}: ${why}"))
+    }
   }
 }
 
