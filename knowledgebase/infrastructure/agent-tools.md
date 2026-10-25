@@ -105,6 +105,15 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 ## Testing
 
+- New intrinsics (2026-10-25): an rt intrinsic that lands before its
+  first std caller (a seed has to know it first, gotchas/seed-older-than-intrinsics.md)
+  still lands with a test that builds a caller on every backend that
+  lowers it, such as a std-internal `_test.xo` run with `xo test
+  --std-module=MODULE --backend=arm64` and `--backend=llvm`. rt.case_fold16
+  (115e372a5) landed without one, and its LLVM lowering emitted invalid IR
+  twice (an i64 where a ptr was due, then hexadecimal integer literals),
+  found only when the caller arrived (eec0768d3).
+
 - Docker (2026-10-25): start Docker Desktop for a run with
   `~/xo-lead/agents/docker-up.sh` and stop it after with `docker-up.sh stop`,
   never `open -a Docker`: twice Docker Desktop came up "running" while
