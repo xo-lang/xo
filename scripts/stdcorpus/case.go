@@ -15,7 +15,7 @@ func caseInputs(r *rand.Rand) []string {
 	// the lane's boundaries: lengths around 8 and 16, so the tail, the
 	// words and the runs of the SWAR path all start and end at every
 	// offset; the letters alternate case so both directions change bytes
-	base := "AbCdEfGhIjKlMnOpQrStUvWxYz"
+	base := "AbCdEfGhIjKlMnOpQrStUvWxYzAbCdEfGhIjKlMn"
 	for _, n := range []int{0, 1, 2, 7, 8, 9, 15, 16, 17, 23, 24, 25, 31, 32, 33} {
 		cs = append(cs, base[:n], strings.ToUpper(base[:n]), strings.ToLower(base[:n]))
 	}
@@ -40,6 +40,25 @@ func caseInputs(r *rand.Rand) []string {
 	} {
 		cs = append(cs, s)
 	}
+	// the lane's own boundaries: every byte next to a letter range and the
+	// bytes above ASCII, at offsets 0, 15 and 63 inside runs of 16, 17, 64
+	// and 65 bytes, where the 16 byte lane and its four lane step are what
+	// fold them (a 4 byte run never reaches the lane, which is how the LLVM
+	// lane's `ule 26` for `ule 25` shipped: '[' lowered to '{' and '{'
+	// raised to '[', and arm64's `cmhs #0x19` was right throughout)
+	fill := "AbCdEfGhIjKlMnOpQrStUvWxYzAbCdEfGhIjKlMnOpQrStUvWxYzAbCdEfGhIjKlM"
+	for _, n := range []int{16, 17, 64, 65} {
+		for _, at := range []int{0, 15, 63} {
+			if at >= n {
+				continue
+			}
+			for _, c := range []byte{0x40, 0x5b, 0x60, 0x7b, 0x7f, 0x80, 0xc0, 0xda, 0xff} {
+				b := []byte(fill[:n])
+				b[at] = c
+				cs = append(cs, string(b))
+			}
+		}
+	}
 	// seeded random mixed case texts over every alphabet the fold must
 	// leave alone as well as the two it changes
 	alpha := []string{"a", "b", "z", "A", "B", "Z", "@", "[", "`", "{", "0", "9", " ", "/", "\t", "\n", "é", "É", "日", "\u0080", "߿", "ࠀ", "İ", "ß"}
@@ -60,7 +79,7 @@ func caseInputs(r *rand.Rand) []string {
 func caseCorpus() string {
 	r := rand.New(rand.NewSource(36))
 	var o strings.Builder
-	o.WriteString(header("Go's strings.ToLower and strings.ToUpper on the boundaries of the 16 byte case fold (lengths 0 to 33 around 8 and 16, a non-ASCII byte at every position of a word, the bytes next to the letter ranges) and on seeded random mixed case texts, against Str.to_lower and Str.to_upper"))
+	o.WriteString(header("Go's strings.ToLower and strings.ToUpper on the boundaries of the 16 byte case fold (lengths 0 to 33 around 8 and 16, a non-ASCII byte at every position of a word, the bytes next to the letter ranges, and those same bytes at offsets 0, 15 and 63 of runs of 16, 17, 64 and 65 bytes, where the lane folds them) and on seeded random mixed case texts, against Str.to_lower and Str.to_upper"))
 	cs := caseInputs(r)
 	o.WriteString("/// (s, Go's ToLower and ToUpper joined by U+001F)\nconst CASES: List[(Str, Str)] = [\n")
 	seen := map[string]bool{}

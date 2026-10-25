@@ -1233,7 +1233,11 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       // for exactly the letters, and no byte at 0x80 or above lands in it
       // (the property ADR 0373 rests on)
       let d = g.def("sub <16 x i8> ${c}, ${g.splat8(if lower { 65 } else { 97 })}")
-      let m = g.def("icmp ule <16 x i8> ${d}, ${g.splat8(26)}")
+      // d is in 0 to 25 for a letter (0 to 25 inclusive, so `ule 25`: `ule
+      // 26` let '[' (d = 26) lower to '{' and '{' raise to '[', which the
+      // corpus's runs of 16, 17, 64 and 65 bytes caught; arm64's cmhs is
+      // `d <= 25` and wasm's `lt_u 26` is the same)
+      let m = g.def("icmp ule <16 x i8> ${d}, ${g.splat8(25)}")
       let delta = g.def("select <16 x i1> ${m}, <16 x i8> ${g.splat8(32)}, <16 x i8> zeroinitializer")
       let r = if lower { g.def("add <16 x i8> ${c}, ${delta}") } else { g.def("sub <16 x i8> ${c}, ${delta}") }
       g.emit("store <16 x i8> ${r}, ptr ${dp}, align 1")
