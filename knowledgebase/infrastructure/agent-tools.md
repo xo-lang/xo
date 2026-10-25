@@ -382,6 +382,7 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   certificate subjects and whether the RFC 3161 timestamp is there;
   internal/llvm TestWindowsCertTableAppends checks that a signed
   layout still parses (code-signing.md "Windows").
+- `scripts/cache-churn.sh [--dir DIR] [--since UNIX] [--live-min N]` (2026-10-24, decision 0365's churn measurement): the back-end cache's store churn by hour and for the last 24 hours and the whole period, from DIR/store-log and DIR/prune-log: GB stored, GB pruned, distinct ids, GB stored by retired ids (an id with no store in the last N minutes, default 60) and their share. Read only; `--since` defaults to 2026-10-24 about 20:45 local. Run it on the cache's machine, e.g. Sunday morning for the owner's review.
 
 ## Coordinating (scripts/lead/README.md)
 
