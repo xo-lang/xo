@@ -91,10 +91,17 @@ into both loops (the assembly of `unicode.case_append` has the `sub
 `raw.decode` for 3 and 4 byte runes). It is the packed form: `decode2`
 returns `(rune << 3) | size` like `raw.decode`, so each non-ASCII rune
 pays a shift and a mask to unpack it, where the hand-inlined copy
-assigned the rune and its size directly. A helper returning the two
-values as a tuple would remove those two instructions if
-`fold_tuples` removes the tuple; that is the next step for these rows,
-not a second copy of the rules.
+assigned the rune and its size directly.
+
+Returning the two values as a tuple was measured (`decode2` -> `(Int,
+Int)` with `fold_tuples`, so no tuple is left in the code) and does not
+recover the cost: quote 0.990 against the packed form, which is a small
+win, but lower_u 1.008, upper_u 1.008 and eqlower 1.007, so the case
+rows end up 2.8% over the hand-inlined copy instead of 2.0%. The packed
+form stays. Recovering the last 2% needs a second copy of the rules,
+which is the trade this change declined; the honest alternative is to
+make the two loops' structure carry the size without a helper (the
+fallback path already knows it) as a separate, measurable change.
 
 ### Where the profile is now, and two shapes that did not pay
 
