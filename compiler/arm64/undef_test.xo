@@ -1,0 +1,29 @@
+// undefined_xo (undef.xo): the program's symbols named but not defined.
+
+test "a call of a runtime symbol no function defines is reported with its caller" {
+  let asm = [
+    "\t.section __TEXT,__text,regular,pure_instructions",
+    "// func main",
+    "_main:",
+    "\tbl _xo_f_live",
+    "\tbl _xo_rs_push_rune",
+    "\tbl _xo_c_addc_14f1dda4_addc_add",
+    "\tbl _xo_tz_table",
+    "\tadrp x0, _xo_tsan_runtime@GOTPAGE",
+    "\tret",
+    "// func live",
+    "\t.globl _xo_f_live",
+    "_xo_f_live:",
+    "\tbl _xo_rs_push_rune",
+    "\tret",
+    "\t.weak_reference _xo_tsan_runtime",
+    "\t.section __DATA,__const",
+    "\t.quad _xo_f_live",
+    "\t.quad _xo_x_gone",
+    "\t.ascii \"\\tbl _xo_in_a_string\"",
+    "",
+  ].join("\n")
+  expect(undefined_xo([asm])) == [("_xo_rs_push_rune", "main"), ("_xo_x_gone", "live")]
+  // defined in another part
+  expect(undefined_xo([asm, "_xo_rs_push_rune:\n\tret\n_xo_x_gone:\n\tret\n"])) == []
+}

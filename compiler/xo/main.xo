@@ -1476,6 +1476,18 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       }
       t = lap(os, phases, "hollow", t)
     }
+    // a symbol of the program that nothing defines (arm64 undef.xo): an
+    // rt.* intrinsic no backend lowers, called directly, would stop the
+    // link with no hint of the call
+    if tgoos == "darwin" && o.cmd != "asm" {
+      let und = arm64.undefined_xo(if p.parts.len() > 1 { p.parts } else { [p.asm] })
+      if !und.is_empty() {
+        let (sym, at) = und[0]
+        let rt = if sym.starts_with("_xo_x_") { "" } else { " (the runtime call rt.${sym.trim_prefix("_xo_")}: no backend lowers it, so call it through its std wrapper)" }
+        fail(os, "`${sym}` is named in `${at}` but no function of the program defines it${rt}${if und.len() > 1 { "; ${und.len() - 1} more" } else { "" }}")
+      }
+      t = lap(os, phases, "undef", t)
+    }
     // the whole text: empty with parts (p.text() joins them where read)
     let code = p.asm
     if o.cmd == "asm" {

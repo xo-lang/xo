@@ -1,0 +1,79 @@
+// Runtime symbols nothing defines (2026-10-25): a direct call of an rt.*
+// intrinsic that no backend lowers falls through to a call of its symbol
+// (calls.xo rt_call: rt.NAME as _xo_NAME), which no function of the
+// program defines, and the build stopped at the link with "Symbol not
+// found: _xo_rs_push_rune" and no hint of the call (DS-1, 2026-10-24:
+// rt.rs_push_rune called outside BytesBuilder.write_rune). The assembly
+// names every symbol a function calls or takes the address of; one of
+// the program's own (`_xo_`) that no part defines and none declares weak
+// (rt.tsan_runtime's .weak_reference) is reported with the function that
+// names it first, before the link.
+
+/// The `_xo_` symbols the parts name but none defines (a global label)
+/// or declares weak, but those the link defines (_xo_tz_*, _xo_c_*), each with the first function (its `// func NAME`
+/// comment) that names it, in the order first named. Mach-O text, whose
+/// symbols start with `_`.
+pub fn undefined_xo(parts: List[Str]) -> List[(Str, Str)] {
+  var defined: Map[Str, Bool] = {}
+  var weak: Map[Str, Bool] = {}
+  var named: List[(Str, Str)] = []
+  var seen: Map[Str, Bool] = {}
+  for p in parts {
+    let b = p.bytes()
+    let n = b.len()
+    var fname = ""
+    var i = 0
+    while i < n {
+      var j = i
+      while j < n && b[j] != 10 {
+        j += 1
+      }
+      if j > i {
+        if starts_at(b, i, j, "// func ") {
+          fname = p[i + 8..j]
+        } else if starts_at(b, i, j, "_xo_") && b[j - 1] == 58 {
+          defined[p[i..j - 1]] = true
+        } else if b[i] == 9 {
+          if starts_at(b, i, j, "\t.weak_reference ") || starts_at(b, i, j, "\t.weak_definition ") {
+            let k = if starts_at(b, i, j, "\t.weak_reference ") { i + 17 } else { i + 18 }
+            weak[p[k..j].trim()] = true
+          } else if !(starts_at(b, i, j, "\t.globl") || starts_at(b, i, j, "\t.private_extern") || starts_at(b, i, j, "\t.ascii") || starts_at(b, i, j, "\t.asciz") || starts_at(b, i, j, "\t.string")) {
+            // (not a string's bytes: a Str literal may hold `_xo_` text)
+            // the `_xo_` tokens of an instruction or a data directive
+            var k = i + 1
+            while k + 4 <= j {
+              if b[k] == 95 && starts_at(b, k, j, "_xo_") && !ident_byte(b[k - 1]) {
+                var e = k + 4
+                while e < j && ident_byte(b[e]) {
+                  e += 1
+                }
+                let s = p[k..e]
+                if !seen.contains(s) {
+                  seen[s] = true
+                  named.push((s, fname))
+                }
+                k = e
+              } else {
+                k += 1
+              }
+            }
+          }
+        }
+      }
+      i = j + 1
+    }
+  }
+  var out: List[(Str, Str)] = []
+  for (s, f) in named {
+    // defined outside the program's assembly: the time zone table the
+    // link writes (compiler/xo ld.xo, _xo_tz_*), a `use c` module's
+    // functions (_xo_c_*), in its C objects
+    if s.starts_with("_xo_tz_") || s.starts_with("_xo_c_") {
+      continue
+    }
+    if !defined.contains(s) && !weak.contains(s) {
+      out.push((s, f))
+    }
+  }
+  out
+}
