@@ -1943,6 +1943,32 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       // nibbles' low bits gathered, pairs at a time
       g.set(v, [g.def1(false, "and $d0, $u0, #0x1111111111111111\norr $d0, $d0, $d0, lsr #3\nand $d0, $d0, #0x0303030303030303\norr $d0, $d0, $d0, lsr #6\nand $d0, $d0, #0x000f000f000f000f\norr $d0, $d0, $d0, lsr #12\nand $d0, $d0, #0x000000ff000000ff\norr $d0, $d0, $d0, lsr #24\nand $d0, $d0, #0xffff", [nib])])
     }
+    "rt.case_fold16" => {
+      // 16 bytes of ASCII case folding in one lane (decision 0373): the
+      // range test is one unsigned compare of the bytes shifted down by
+      // the case's first letter, so every byte that is not a letter
+      // wraps outside 0x00 to 0x19 (0x00 to 0x40 land at 0xbf and above,
+      // 0x80 and above at 0x3f and above); the two shifts turn the all
+      // ones mask into 0x20 a byte, which is how it is built without a
+      // third constant, A64 having no byte wide immediate arithmetic or
+      // logic. v29 to v31 are the emitter's scratch registers
+      // (regalloc.xo:13). mode is the constant 1 or 2 of the two call
+      // sites in std/native/llrt/obj.xo (rt.xo says so).
+      let (mode, ok) = g.const_int(x.args[3])
+      if !ok || (mode != 1 && mode != 2) {
+        return false
+      }
+      let lo = if mode == 1 { 0x41 } else { 0x61 }
+      let d = if mode == 1 { "add" } else { "sub" }
+      let text = "ldr q30, [$u1, $u2]\nmovi v29.16b, #${lo}\nmovi v31.16b, #0x19\nsub v30.16b, v30.16b, v29.16b\ncmhs v31.16b, v31.16b, v30.16b\nushr v31.16b, v31.16b, #7\nshl v31.16b, v31.16b, #5\n${d} v30.16b, v30.16b, v31.16b\nadd v30.16b, v30.16b, v29.16b\nstr q30, [$u0, $u2]"
+      let us = [g.word(x.args[0]), g.word(x.args[1]), g.word(x.args[2])]
+      if g.x86 {
+        g.x86_case_fold16(us, mode)
+      } else {
+        g.store(text, us)
+      }
+      g.set(v, [])
+    }
     "rt.rs_put_word" => {
       let ws = g.words(x.args[0])
       let d = g.str_data(ws)

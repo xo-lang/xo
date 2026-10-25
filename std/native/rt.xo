@@ -161,6 +161,14 @@ fn bytes_eq16_bits(b: Bytes, i: Int, c: Int) -> Int
 /// bytes_high16 with one bit a byte (pmovmskb alone), as
 /// bytes_eq16_bits.
 fn bytes_high16_bits(b: Bytes, i: Int) -> Int
+/// The 16 bytes at src from i with their ASCII letters lowered (mode 1)
+/// or raised (mode 2), written to dst from i (lowered inline: arm64 a
+/// NEON fold of the lane, x86_64 the same with SSE2, LLVM the eight byte
+/// SWAR words of std/native/llrt/obj.xo fold_copy_lo, wasm a byte loop);
+/// a byte below 0x80 outside the case's range, and every byte at or
+/// above 0x80, is copied unchanged. Unchecked: 0 <= i, i + 16 is within
+/// both bounds, and the two ranges do not overlap.
+fn case_fold16(dst: Int, src: Int, i: Int, mode: Int)
 /// s with the 8 bytes of w (the lowest first) at i, in place (lowered
 /// inline to one store; decision 0201). Unchecked: s is a new string of
 /// rs_with_cap (unique) with room for i + 8 bytes.

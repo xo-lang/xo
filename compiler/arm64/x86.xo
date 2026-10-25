@@ -1634,6 +1634,21 @@ fn (var g: G) x86_store(text: Str, us: List[Int]) {
   g.clobber()
 }
 
+/// rt.case_fold16 on x86_64 (SSE2), decision 0373: the same lane fold as
+/// arm64's, with pminub for the unsigned compare (SSE2 compares bytes by
+/// signed value only) and pxor for the case bit (0x20 is exactly the bit
+/// the two cases differ in, and a byte outside the range gets 0). Only
+/// xmm14, xmm15 and r11 are scratch on x86_64 (regalloc.xo) and the
+/// emitter has no constant data section, so each constant is broadcast
+/// from r11d and the source is loaded a second time rather than kept in a
+/// third register: 17 instructions a 16 bytes, against 30 for the eight
+/// byte SWAR loop on this backend.
+fn (var g: G) x86_case_fold16(us: List[Int], mode: Int) {
+  let lo = if mode == 1 { 0x41 } else { 0x61 }
+  let t = ["movl $${lo * 16843009}, %r11d", "movd %r11d, %xmm14", "pshufd $0, %xmm14, %xmm14", "movdqu ($u1,$u2), %xmm15", "psubb %xmm14, %xmm15", "movl $0x19191919, %r11d", "movd %r11d, %xmm14", "pshufd $0, %xmm14, %xmm14", "pminub %xmm15, %xmm14", "pcmpeqb %xmm15, %xmm14", "movl $0x20202020, %r11d", "movd %r11d, %xmm15", "pshufd $0, %xmm15, %xmm15", "pand %xmm15, %xmm14", "movdqu ($u1,$u2), %xmm15", "pxor %xmm14, %xmm15", "movdqu %xmm15, ($u0,$u2)"]
+  g.x86_store(t.join("\n"), us)
+}
+
 /// rt.bytes_eq16 and rt.bytes_high16 on x86_64 (SSE2): the 16 bytes at
 /// $u0 + $u1 compared, narrowed to 4 bits a byte as arm64's shrn does (the
 /// contract std/native/llrt/scan.xo reads).

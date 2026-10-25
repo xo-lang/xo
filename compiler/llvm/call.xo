@@ -1210,6 +1210,42 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       let m = g.def("bitcast <16 x i1> ${e} to i16")
       g.set(v, "zext i16 ${m} to i64")
     }
+    "rt.case_fold16" => {
+      // decision 0373's intrinsic, expanded to the two eight byte SWAR
+      // words of std/native/llrt/obj.xo fold_copy_lo: this backend's fold
+      // is the arithmetic clang already widens, so its code is the code it
+      // had while the std loop itself stepped by eight bytes
+      let mode = match g.f.values[x.args[3]].aux {
+        I(n) => n
+        _ => 1
+      }
+      let lower = mode != 2
+      let ones = 0x0101010101010101
+      let under = (if lower { 0x80 - 65 } else { 0x80 - 97 }) * ones
+      let over = (if lower { 0x7f - 90 } else { 0x7f - 122 }) * ones
+      let dst = g.op(x.args[0])
+      let src = g.op(x.args[1])
+      let i0 = g.op(x.args[2])
+      var j = 0
+      while j < 2 {
+        let off = if j == 0 { i0 } else { g.def("add i64 ${i0}, 8") }
+        let sp = g.def("getelementptr i8, ptr ${src}, i64 ${off}")
+        let w = g.def("load i64, ptr ${sp}, align 1")
+        let t = g.def("and i64 ${w}, 0x7f7f7f7f7f7f7f7f")
+        let a = g.def("add i64 ${t}, ${under}")
+        let b = g.def("add i64 ${t}, ${over}")
+        let nb = g.def("xor i64 ${b}, -1")
+        let nw = g.def("xor i64 ${w}, -1")
+        var letters = g.def("and i64 ${a}, ${nb}")
+        letters = g.def("and i64 ${letters}, 0x8080808080808080")
+        letters = g.def("and i64 ${letters}, ${nw}")
+        let k = g.def("lshr i64 ${letters}, 2")
+        let v0 = if lower { g.def("add i64 ${w}, ${k}") } else { g.def("sub i64 ${w}, ${k}") }
+        let dp = g.def("getelementptr i8, ptr ${dst}, i64 ${off}")
+        g.emit("store i64 ${v0}, ptr ${dp}, align 1")
+        j += 1
+      }
+    }
     "rt.bytes_eq16" | "rt.bytes_high16" => {
       let (_, d, _) = g.str_parts(g.op(x.args[0]))
       let p = g.def("getelementptr i8, ptr ${d}, i64 ${g.op(x.args[1])}")

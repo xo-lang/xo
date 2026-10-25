@@ -1931,6 +1931,66 @@ fn rt2_text(var g: Gen) -> Str {
       i64.shl
       i64.or)
 
+    ;; decision 0373: the 16 bytes of src from i with their ASCII letters
+    ;; lowered (mode 1) or raised (mode 2), to dst from i, a byte at a time
+    ;; (wasm has no lane arithmetic that helps here). A byte is a letter
+    ;; when (c - first) is below 26 as an unsigned word, which is one test:
+    ;; a byte below first wraps to 2^64 - 1 and above
+    (func $case_fold16 (param $d i64) (param $s i64) (param $i i64) (param $m i64) (local $k i64) (local $c i64) (local $f i64) (local $g i64)
+      i64.const 65
+      local.set $f
+      i64.const 32
+      local.set $g
+      local.get $m
+      i64.const 2
+      i64.eq
+      if
+        i64.const 97
+        local.set $f
+        i64.const -32
+        local.set $g
+      end
+      block $x
+        loop $l
+          local.get $k
+          i64.const 16
+          i64.ge_u
+          br_if $x
+          local.get $s
+          local.get $i
+          i64.add
+          local.get $k
+          i64.add
+          i32.wrap_i64
+          i32.load8_u
+          local.set $c
+          local.get $c
+          local.get $f
+          i64.sub
+          i64.const 26
+          i64.lt_u
+          if
+            local.get $c
+            local.get $g
+            i64.add
+            local.set $c
+          end
+          local.get $d
+          local.get $i
+          i64.add
+          local.get $k
+          i64.add
+          i32.wrap_i64
+          local.get $c
+          i64.store8
+          local.get $k
+          i64.const 1
+          i64.add
+          local.set $k
+          br $l
+        end
+      end)
+
     ;; s with the 8 bytes of w at i (unchecked: s is new with room), and s
     ;; with length n (Bytes.to_hex, decision 0201)
     (func $rs_put_word (param $a i32) (param $an i32) (param $i i64) (param $w i64) (result i32 i32)
@@ -2572,5 +2632,5 @@ fn rt2_text(var g: Gen) -> Str {
 /// The runtime functions of rt2.xo called with the operands' leaves under
 /// their std/llrt names (rt.<name> is $<name>).
 fn rt2_direct(name: Str) -> Bool {
-  name is "rs_append_time" | "bytes_hex_ok" | "bytes_from_hex" | "floor_div" | "int_wrap" | "int_fits" | "crypto_b64" | "realtime_program" | "realtime_enter" | "realtime_exit" | "rand_int" | "rand_float" | "rand_bool" | "rand_bytes" | "duration_parse_ok" | "duration_parse" | "str_byte" | "bytes_span" | "rs_append_bytes" | "rune_is_space" | "utf8_valid" | "bytes_decode" | "bytes_rune_count" | "int_parse_ok" | "int_parse" | "str_of_byte" | "str_replace" | "b64_encode" | "b64_ok" | "b64_decode" | "u64_mul_hi" | "u64_divc" | "float_bits" | "float_from_bits" | "bytes_word" | "mem_load" | "mem_store" | "mem_copy" | "mem_copy_block" | "mem_move" | "mem_set" | "mem_cmp" | "popcount" | "ctz" | "clz" | "ct_barrier" | "bytes_eq16" | "bytes_high16" | "bytes_eq16_bits" | "bytes_high16_bits" | "rs_put_word" | "rs_set_len"
+  name is "rs_append_time" | "bytes_hex_ok" | "bytes_from_hex" | "floor_div" | "int_wrap" | "int_fits" | "crypto_b64" | "realtime_program" | "realtime_enter" | "realtime_exit" | "rand_int" | "rand_float" | "rand_bool" | "rand_bytes" | "duration_parse_ok" | "duration_parse" | "str_byte" | "bytes_span" | "rs_append_bytes" | "rune_is_space" | "utf8_valid" | "bytes_decode" | "bytes_rune_count" | "int_parse_ok" | "int_parse" | "str_of_byte" | "str_replace" | "b64_encode" | "b64_ok" | "b64_decode" | "u64_mul_hi" | "u64_divc" | "float_bits" | "float_from_bits" | "bytes_word" | "mem_load" | "mem_store" | "mem_copy" | "mem_copy_block" | "mem_move" | "mem_set" | "mem_cmp" | "popcount" | "ctz" | "clz" | "ct_barrier" | "bytes_eq16" | "bytes_high16" | "bytes_eq16_bits" | "bytes_high16_bits" | "case_fold16" | "rs_put_word" | "rs_set_len"
 }

@@ -180,7 +180,8 @@ pub fn encode_op(o: Op) -> Int {
   if o.m is "cnt" | "addv" | "dup" | "movi" | "cmeq" | "cmlt" | "shrn" | "pmull" | "pmull2" | "umov" | "aese" | "aesd" | "aesmc" | "aesimc" | "uzp1" | "ushll" | "ushll2" | "rev32" | "rev64" | "ext" | "sha256h" | "sha256h2" | "sha256su0" | "sha256su1" {
     return simd_word(o.m, o.ops)
   }
-  if o.m is "mov" | "add" | "eor" | "sub" | "mul" | "and" | "umull" | "umull2" | "uzp2" | "zip2" | "sshr" && n >= 2 {
+  // decision 0373's case fold adds cmhs and bic on whole bytes
+  if o.m is "mov" | "add" | "eor" | "sub" | "mul" | "and" | "umull" | "umull2" | "uzp2" | "zip2" | "sshr" | "cmhs" | "bic" && n >= 2 {
     if let Operand.VReg(..) = o.ops[0] {
       return simd_word(o.m, o.ops)
     }
@@ -1361,8 +1362,19 @@ fn simd_word(m: Str, o: List[Operand]) -> Int {
     "fsqrt" => if n != 2 || d < 0 || x < 0 || ad != "2d" || ax != "2d" { -1 } else { 0x6ee1f800 | (x * 32) | d }
     "shl" | "sri" | "ushr" => {
       // shl vD.4s, vN.4s, #s (0 to 31); sri vD.4s, vN.4s, #s (1 to 32);
-      // shl vD.2d, vN.2d, #s (0 to 63); ushr vD.2d, vN.2d, #s (1 to 64)
+      // shl vD.2d, vN.2d, #s (0 to 63); ushr vD.2d, vN.2d, #s (1 to 64);
+      // decision 0373's case fold: shl vD.16b, vN.16b, #s (0 to 7) and
+      // ushr vD.16b, vN.16b, #s (1 to 8), each byte shifted within itself
       if n != 3 || d < 0 || x < 0 || ad != ax || i2 < 0 {
+        return -1
+      }
+      if ad == "16b" {
+        if m == "shl" {
+          return if i2 > 7 { -1 } else { 0x4f005400 | ((8 + i2) * 0x10000) | (x * 32) | d }
+        }
+        if m == "ushr" {
+          return if i2 < 1 || i2 > 8 { -1 } else { 0x6f000400 | ((16 - i2) * 0x10000) | (x * 32) | d }
+        }
         return -1
       }
       if ad == "2d" {
@@ -1402,6 +1414,21 @@ fn simd_word(m: Str, o: List[Operand]) -> Int {
       // umull vD.2d, vN.2s, vM.2s; umull2 vD.2d, vN.4s, vM.4s
       let want = if m == "umull" { "2s" } else { "4s" }
       if n != 3 || d < 0 || x < 0 || y < 0 || ad != "2d" || ax != want || ay != want { -1 } else { (if m == "umull" { 0x2ea0c000 } else { 0x6ea0c000 }) | (y * 0x10000) | (x * 32) | d }
+    }
+    // decision 0373's case fold: add, sub, cmhs (unsigned, at or above) and
+    // bic of whole bytes, three registers (the .4s forms below are the
+    // matmul and ChaCha ones)
+    "add" | "sub" | "cmhs" | "bic" if ad == "16b" => {
+      if n != 3 || d < 0 || x < 0 || y < 0 || ax != "16b" || ay != "16b" {
+        return -1
+      }
+      let base = match m {
+        "add" => 0x4e208400
+        "sub" => 0x6e208400
+        "cmhs" => 0x6e203c00
+        _ => 0x4e601c00
+      }
+      base | (y * 0x10000) | (x * 32) | d
     }
     "uzp2" | "mul" | "sub" => {
       if n != 3 || d < 0 || x < 0 || y < 0 || ad != "4s" || ax != "4s" || ay != "4s" {

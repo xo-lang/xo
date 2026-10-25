@@ -63,3 +63,17 @@ forwarder followed) and calls it through rt.call_c2. A new
 sys_windows.xo function is usable only once the seed's peimports.xo has
 it; check with the seed: `xo build --std=NEW_STD --backend=amd64
 --target=windows/amd64 hello`.
+
+Observed again, for an intrinsic only the native backends lower
+(2026-10-25, decision 0373): `rt.case_fold16`, declared in
+std/native/rt.xo and called from std/native/llrt/obj.xo's
+fold_copy_lo/up, is lowered inline by compiler/arm64, compiler/llvm,
+compiler/wasm and the x86 emitter, but an xo built before this commit
+has no lowering for it, so the call becomes `xo_case_fold16`, which
+nothing defines, and the link of compiler/xo fails. The C shim of
+2026-10-14 no longer applies: the native runtime is Xo, so there is no
+C file to keep an `xo_<name>` definition in. Land such a change in two
+steps: the backends that lower it first (a compiler only change, which
+any seed builds, since no std code calls it yet), then its use in std
+once a seed that knows it exists (owner approval to bump and cut, per
+decision 0216).
