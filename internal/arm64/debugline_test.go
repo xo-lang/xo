@@ -114,18 +114,32 @@ func TestDebugLineDarwin(t *testing.T) {
 	// a build from another directory: DW_AT_comp_dir is the module's
 	// directory (the sources' names are relative to it), not the working
 	// directory, where lldb looked for main.xo (2026-10-22)
-	other := buildIn(out, "o")
-	ci, err := exec.Command("dwarfdump", "--debug-info", other).CombinedOutput()
-	if err != nil {
-		t.Fatalf("dwarfdump: %v\n%s", err, ci)
+	compDir := func(bin string) string {
+		ci, err := exec.Command("dwarfdump", "--debug-info", bin).CombinedOutput()
+		if err != nil {
+			t.Fatalf("dwarfdump: %v\n%s", err, ci)
+		}
+		cd := regexp.MustCompile(`DW_AT_comp_dir\s+\("([^"]*)"\)`).FindSubmatch(ci)
+		if cd == nil {
+			t.Fatalf("no DW_AT_comp_dir in\n%s", ci)
+		}
+		return string(cd[1])
 	}
-	cd := regexp.MustCompile(`DW_AT_comp_dir\s+\("([^"]*)"\)`).FindSubmatch(ci)
-	if cd == nil {
-		t.Fatalf("no DW_AT_comp_dir in\n%s", ci)
-	}
+	// --trimpath=off: the absolute directory
+	other := buildIn(out, "o", "--trimpath=off")
 	want, _ := filepath.EvalSymlinks(src)
-	if got, _ := filepath.EvalSymlinks(string(cd[1])); got != want {
-		t.Errorf("a build from %s: DW_AT_comp_dir %s, want %s", out, cd[1], src)
+	if got, _ := filepath.EvalSymlinks(compDir(other)); got != want {
+		t.Errorf("a build from %s with --trimpath=off: DW_AT_comp_dir %s, want %s", out, compDir(other), src)
+	}
+	// --trimpath (the default, decision 0354's addendum): relative to the
+	// working directory, "." when the module is not below it, and the
+	// module's directory name when it is (a debugger started there finds
+	// main.xo)
+	if got := compDir(buildIn(out, "t")); got != "." {
+		t.Errorf("a build from %s: DW_AT_comp_dir %s, want .", out, got)
+	}
+	if got := compDir(buildIn(filepath.Dir(src), "u")); got != "debugline" {
+		t.Errorf("a build from %s: DW_AT_comp_dir %s, want debugline", filepath.Dir(src), got)
 	}
 	withDsym := build("d", "--dsym")
 	d := filepath.Join(withDsym+".dSYM", "Contents", "Resources", "DWARF", "d")
