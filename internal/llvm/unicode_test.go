@@ -139,13 +139,21 @@ func unicodeTables() []byte {
 	b.WriteString("\n/// unicode.ToTitle of the runes U+0080 to U+07FF, 3 bytes each from\n/// U+0080.\n")
 	fmt.Fprintf(&b, "pub const TITLE2: Bytes = %s\n", xoBytesLit(title2))
 	for _, c := range classes {
-		bits := make([]byte, (0x800-0x80)/8)
-		for r := rune(0x80); r < 0x800; r++ {
+		// PRINT's bitmap covers the whole BMP: strconv.Quote asks IsPrint of
+		// every rune it copies, runes below U+10000 are the bulk of non-ASCII
+		// text, and one bitmap from U+0080 costs one branch less than a
+		// bitmap to U+07FF and another one after it
+		hi := rune(0x800)
+		if c.name == "PRINT" {
+			hi = 0x10000
+		}
+		bits := make([]byte, (hi-0x80)/8)
+		for r := rune(0x80); r < hi; r++ {
 			if c.in(r) {
 				bits[(r-0x80)>>3] |= 1 << (r & 7)
 			}
 		}
-		fmt.Fprintf(&b, "\n/// %s of the runes U+0080 to U+07FF: bit r & 7 of byte (r - 0x80) >> 3.\n", c.doc)
+		fmt.Fprintf(&b, "\n/// %s of the runes U+0080 to U+%04X: bit r & 7 of byte (r - 0x80) >> 3.\n", c.doc, hi-1)
 		fmt.Fprintf(&b, "pub const %s_BITS: Bytes = %s\n", c.name, xoBytesLit(bits))
 	}
 	for _, c := range classes {
@@ -192,18 +200,6 @@ func unicodeTables() []byte {
 		b.WriteString("/// runeIXShift rune block from U+0080, little endian.\n")
 		fmt.Fprintf(&b, "pub const %s_IX: Bytes = %s\n", c.name, xoBytesLit(ix))
 	}
-	// the printable runes of the rest of the BMP as a bitmap: strconv.Quote
-	// asks IsPrint of every rune it copies, and runes below U+10000 are the
-	// bulk of non-ASCII text, so the search stays for the astral planes
-	pbmp := make([]byte, (0x10000-0x800)/8)
-	for r := rune(0x800); r < 0x10000; r++ {
-		if strconv.IsPrint(r) {
-			pbmp[(r-0x800)>>3] |= 1 << (r & 7)
-		}
-	}
-	pbmp = append(pbmp, tablePad...)
-	b.WriteString("\n/// strconv.IsPrint of the runes U+0800 to U+FFFF: bit r & 7 of\n/// byte (r - 0x800) >> 3.\n")
-	fmt.Fprintf(&b, "pub const PRINT_BMP: Bytes = %s\n", xoBytesLit(pbmp))
 	return b.Bytes()
 }
 

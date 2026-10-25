@@ -1,5 +1,28 @@
 # prelude changes
 
+## 2026-10-24: perf: one printable bitmap for the BMP, which takes is_print under the arm64 inliner's size
+
+- Kind: perf
+- Commit: this commit
+- Found by: the two bitmap tests in unicode.is_print put it over the
+  arm64 inliner's size limit at a call outside a loop, so class walks
+  that ask is_print kept the call
+- Go reference: none: unicode.IsPrint searches the ranges, and the
+  bitmaps here are the port's own
+- Test: TestUnicodeTables; the runes corpora on arm64 and llvm; stdfuzz
+  area runes at seeds 1 to 3; the wasm goldens; the full fixed point
+- Timing: bench/results/print-bitmap-2026-10-24.md
+
+`unicode.is_print` answers every rune below U+10000 from one bitmap from
+U+0080 (`unicode_tables.PRINT_BITS`, 8192 bytes, the sum of the 192 and
+7936 it replaces; `PRINT_BMP` is gone), so the U+0800 test goes. The
+function is 87 instructions and 21 blocks, which the arm64 inliner
+treats as "few": calls inside loops, strconv's quoting and the class
+walks, get the body, and calls outside one still call. classify is 0.905
+of the base's instructions, the unicode quote row 0.988, the text quote
+row 0.999 and the classes row 1.002, the last because its is_print call
+is not in a loop.
+
 ## 2026-10-24: perf: quote calls scan.span only where a run can start, and the two byte decode is one function
 
 - Kind: perf

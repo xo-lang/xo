@@ -102,16 +102,15 @@ pub fn is_print(r: Int) -> Bool {
   if r < 0x80 {
     return r >= 0x20 && r < 0x7F
   }
-  if r < 0x800 {
-    return has_bit(unicode_tables.PRINT_BITS, r)
-  }
   if r < 0x10000 {
-    // the rest of the BMP from a bitmap: strconv.Quote asks this of every
-    // rune it copies, and the runes below U+10000 are the bulk of
-    // non-ASCII text (2026-10-24: is_print was 21 percent of the quote
-    // profile, 15 of it in the ranges search)
-    let x = r - 0x800
-    return ((Int(unicode_tables.PRINT_BMP[x >> 3]) >> (x & 7)) & 1) != 0
+    // the whole BMP from one bitmap: strconv.Quote asks this of every rune
+    // it copies, and the runes below U+10000 are the bulk of non-ASCII
+    // text (2026-10-24: is_print was 21 percent of the quote profile, 15
+    // of it in the ranges search). One bitmap from U+0080 rather than one
+    // to U+07FF and a second after it is a branch less, and the branch
+    // kept is_print over the arm64 inliner's size limit
+    let x = r - 0x80
+    return ((Int(unicode_tables.PRINT_BITS[x >> 3]) >> (x & 7)) & 1) != 0
   }
   in_ranges(unicode_tables.PRINT, unicode_tables.PRINT_N, unicode_tables.PRINT_IX, r)
 }
