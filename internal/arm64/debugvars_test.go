@@ -113,9 +113,10 @@ func TestDebugVars(t *testing.T) {
 // backend with debug information (the default) and without it
 // (--debug-info=off: -s would also strip the symbols that name the
 // functions) has,
-// for every function of the build without it, the same machine code
-// (otool -tV, addresses and branch targets normalized) in the build with
-// it. The build with it may hold more functions: the runtime's DWARF
+// for every function of the build without it, a function with the same
+// machine code (otool -tV, addresses, branch targets and callee names
+// normalized) in the build with it. The build with it may hold more
+// functions: the runtime's DWARF
 // readers (native/llrt/dwline; dwline.built() folds to the build's debug
 // information, decision 0354's addendum), which a build without debug
 // information neither builds nor links, and what only they reach.
@@ -185,24 +186,22 @@ func TestDebugInfoSameCode(t *testing.T) {
 				}
 				bins[i] = funcs(t, res.Binaries[xotool.Host()])
 			}
+			// by body, not by name: identical functions are merged under a
+			// hash name that depends on the others in the build
+			have := map[string]bool{}
+			for _, body := range bins[0] {
+				have[body] = true
+			}
 			bad := 0
 			for name, body := range bins[1] {
 				// a function nothing reaches is one brk (the hollow pass,
 				// decision 0371): the DWARF readers in a build without
 				// debug information
-				if body == "brk\tX\n" {
-					continue
-				}
-				with, ok := bins[0][name]
-				if ok && with == body {
+				if body == "brk\tX\n" || have[body] {
 					continue
 				}
 				if bad++; bad <= 5 {
-					if !ok {
-						t.Errorf("%s is in the build without debug information, not in the one with it", name)
-					} else {
-						t.Errorf("%s: the code differs with debug information", name)
-					}
+					t.Errorf("%s: no function with its code in the build with debug information", name)
 				}
 			}
 			if bad > 5 {
