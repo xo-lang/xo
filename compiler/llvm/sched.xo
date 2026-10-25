@@ -61,8 +61,12 @@ fn (var g: Gen) sched_switch() {
   }
   g.emitted["@xo_stack_switch"] = true
   let (sw, start) = switch_asm(g.goos, g.arch())
+  // the fiber entry's .cfi_escape needs clang's CFI region around it: the
+  // uwtable attribute is what asks for one from an IR level function
+  // (Linux clang leaves it out otherwise, switch_asm)
+  let uw = if g.goos == "linux" && g.arch() == "arm64" { " uwtable" } else { "" }
   g.helpers.push(naked_fn("void @xo_stack_switch(i64 %0, i64 %1)", sw))
-  g.helpers.push(naked_fn("void @xo_fiber_entry()", start))
+  g.helpers.push(naked_fn("void @xo_fiber_entry()", start, uw))
 }
 
 /// Defines xo_unwind_save and xo_unwind_resume (rt.unwind_save and
@@ -121,9 +125,9 @@ fn (var g: Gen) sched_tlocal() {
 }
 
 /// A function of sig whose body is the assembly lines asm.
-fn naked_fn(sig: Str, asm: List[Str]) -> Str {
+fn naked_fn(sig: Str, asm: List[Str], attrs: Str = "") -> Str {
   let body = asm.join("\\0A").replace("$", "$$")
-  "define ${sig} naked noinline nounwind {\n  call void asm sideeffect \"${body}\", \"\"()\n  unreachable\n}\n\n"
+  "define ${sig} naked noinline nounwind${attrs} {\n  call void asm sideeffect \"${body}\", \"\"()\n  unreachable\n}\n\n"
 }
 
 /// The bodies of xo_stack_switch and xo_fiber_entry on goos/goarch
@@ -147,8 +151,13 @@ fn switch_asm(goos: Str, goarch: Str) -> (List[Str], List[Str]) {
     return (arm64_win_switch(), start)
   }
   if goos == "linux" {
-    // a fiber's outermost frame: its unwind entry (Linux clang gives a
-    // naked function one) has the return address undefined
+    // a fiber's outermost frame: its unwind entry has the return address
+    // undefined. The directive needs a CFI region from clang, which it
+    // emits for a naked IR function only sometimes (a split part's code
+    // gen gives one, the whole program IR does not: TestGoldenTasks and
+    // TestRaceSyncTable failed on the CI runner, 2026-10-25), so on Linux
+    // xo_fiber_entry carries the uwtable attribute (sched_switch) and
+    // clang always opens the region
     return (arm64_switch(), [".cfi_escape 0x07, 30"] + start)
   }
   (arm64_switch(), start)

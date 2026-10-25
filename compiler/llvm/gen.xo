@@ -1312,11 +1312,14 @@ fn (var g: Gen) clone_tramp() {
     "mov %rdx, %r10\\0Amov %rcx, %r8\\0Amovl $$56, %eax\\0Asyscall\\0Atest %rax, %rax\\0Ajz 1f\\0Aret\\0A1:\\0Axor %ebp, %ebp\\0Apop %rax\\0Apop %rdi\\0Acall *%rax\\0Axor %edi, %edi\\0Amovl $$60, %eax\\0Asyscall\\0Ahlt"
   } else {
     // the child is the thread's outermost frame: from it on, the
-    // function's unwind entry (Linux clang gives a naked function one)
-    // has the return address undefined, where gdb's backtrace ends
+    // function's unwind entry has the return address undefined, where
+    // gdb's backtrace ends. The .cfi_escape needs clang's CFI region: the
+    // uwtable attribute below asks for one (Linux clang leaves it out for
+    // a naked IR function without it, TestRaceSyncTable, 2026-10-25)
     "mov x4, x2\\0Amov x8, #220\\0Asvc #0\\0Acbz x0, 1f\\0Aret\\0A1:\\0A.cfi_escape 0x07, 30\\0Aldp x9, x0, [sp], #16\\0Amov x29, #0\\0Amov x30, #0\\0Ablr x9\\0Amov x0, #0\\0Amov x8, #93\\0Asvc #0\\0Abrk #1"
   }
-  g.helpers.push("define internal i64 ${name}(i64, i64, i64, i64) naked noinline nounwind {\n  call void asm sideeffect \"${body}\", \"\"()\n  unreachable\n}\n\n")
+  let uw = if g.goos == "linux" && g.arch() == "arm64" { " uwtable" } else { "" }
+  g.helpers.push("define internal i64 ${name}(i64, i64, i64, i64) naked noinline nounwind${uw} {\n  call void asm sideeffect \"${body}\", \"\"()\n  unreachable\n}\n\n")
 }
 
 /// The runtime callback that retains or releases a list element through
