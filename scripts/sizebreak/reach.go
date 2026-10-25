@@ -24,8 +24,15 @@ type ReachReport struct {
 
 // roots are the entry points every program's reachability starts from:
 // the process entry, the support entry, the runtime's program entry and the
-// program's main.
-var roots = []string{"_main", "_xo_entry", "_xo_x_rt_program", "_xo_f_main"}
+// program's main. Mach-O's symbols carry a leading underscore and ELF's do
+// not (_start, main, xo_entry, xo_f_main), so both spellings are listed.
+var roots = []string{
+	"_main", "main",
+	"_start", "start",
+	"_xo_entry", "xo_entry",
+	"_xo_x_rt_program", "xo_x_rt_program",
+	"_xo_f_main", "xo_f_main",
+}
 
 func reachability(bin *execFile) *ReachReport {
 	rep := &ReachReport{Supported: true, Text: bin.Text.Size}

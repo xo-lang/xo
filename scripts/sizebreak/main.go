@@ -4,9 +4,10 @@
 // 2026-10-24 did: the size of a text symbol is the gap to the next symbol's
 // address, the gaps are checked against the text section's size, and the
 // symbols are grouped by the `_xo_f_<module>_2e<name>` mangling of
-// compiler/. The Map runtime's three families (xo.map, xo.mlog, xo.maph) are
-// broken down by the element type each is instantiated for, because that is
-// where a Map-heavy program's bytes go.
+// compiler/ (an ELF binary's symbols have no leading underscore). The Map
+// runtime's three families (xo.map, xo.mlog, xo.maph) are broken down by the
+// element type each is instantiated for, because that is where a Map-heavy
+// program's bytes go.
 //
 // The numbers a size claim quotes are this tool's: the text section size,
 // the group table, and the top symbols. -reach adds a lower bound on dead

@@ -58,23 +58,36 @@ type Report struct {
 }
 
 // Hidden is the group of the compiler's hidden helpers (_xo_h*), which carry
-// no module: generic instantiations of drops, shares and comparisons.
+// no module: generic instantiations of drops, shares and comparisons. An ELF
+// binary's symbols have no leading underscore (xo_h*).
 const Hidden = "hidden (_xo_h*)"
 
 // NonXo is the group of the symbols that are not Xo functions: the entry
 // points, the runtime's _xo_x_* trampolines and anything the linker added.
 const NonXo = "non-Xo"
 
-// xoPrefix is the mangling of a Xo function: _xo_f_<module>_2e<name>, the
-// module and name further escaped (_5b is [, _2c is , _20 is space).
-const xoPrefix = "_xo_f_"
+// xoPrefixes are the manglings of a Xo function: Mach-O's
+// _xo_f_<module>_2e<name> and ELF's xo_f_<module>_2e<name>, whose symbols
+// have no leading underscore (the module and name are further escaped the
+// same way: _5b is [, _2c is , _20 is space).
+var xoPrefixes = []string{"_xo_f_", "xo_f_"}
+
+// xoRest returns what follows a Xo function's prefix.
+func xoRest(name string) (string, bool) {
+	for _, p := range xoPrefixes {
+		if strings.HasPrefix(name, p) {
+			return name[len(p):], true
+		}
+	}
+	return "", false
+}
 
 // moduleOf returns the module of a Xo function's symbol.
 func moduleOf(name string) (string, bool) {
-	if !strings.HasPrefix(name, xoPrefix) {
+	rest, ok := xoRest(name)
+	if !ok {
 		return "", false
 	}
-	rest := name[len(xoPrefix):]
 	parts := strings.Split(rest, "_2e")
 	// xo.map, xo.mlog and xo.maph are the Map runtime's submodules: their
 	// symbols carry two dots before the function name.
@@ -108,15 +121,15 @@ func isGlue(rest string) bool {
 // groupOf is the group a symbol belongs to: its module, Glue, Hidden or
 // NonXo.
 func groupOf(name string) string {
-	if strings.HasPrefix(name, xoPrefix) {
-		if isGlue(name[len(xoPrefix):]) {
+	if rest, ok := xoRest(name); ok {
+		if isGlue(rest) {
 			return Glue
 		}
 		if m, ok := moduleOf(name); ok {
 			return m
 		}
 	}
-	if strings.HasPrefix(name, "_xo_h") {
+	if strings.HasPrefix(name, "_xo_h") || strings.HasPrefix(name, "xo_h") {
 		return Hidden
 	}
 	return NonXo
@@ -179,10 +192,10 @@ func mapType(demangled string) string {
 // unescaped: a module name such as aesgcm starts with two hex letters, and
 // unescaping it as one string would read "_ae" as a byte.
 func displayName(name string) string {
-	if !strings.HasPrefix(name, xoPrefix) {
+	rest, ok := xoRest(name)
+	if !ok {
 		return name
 	}
-	rest := name[len(xoPrefix):]
 	if isGlue(rest) && !strings.Contains(rest, "_2e") {
 		return demangle(rest)
 	}

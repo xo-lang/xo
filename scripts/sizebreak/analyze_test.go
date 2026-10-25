@@ -75,6 +75,13 @@ func TestMangling(t *testing.T) {
 		{"_xo_hhMzpO2fs7S", "", Hidden},
 		{"_xo_f_drop_20Str", "", Glue},
 		{"_main", "", NonXo},
+		// ELF: no leading underscore (linux/amd64 and linux/arm64)
+		{"xo_f_x509_2eparse", "x509", "x509"},
+		{"xo_f_cabi__tls_2esrvtls__h2", "cabi__tls", "cabi__tls"},
+		{"xo_hhMzpO2fs7S", "", Hidden},
+		{"xo_f_drop_20Str", "", Glue},
+		{"main", "", NonXo},
+		{"memcpy", "", NonXo},
 	}
 	for _, c := range cases {
 		if m, ok := moduleOf(c.sym); c.module != "" && (!ok || m != c.module) {
@@ -94,6 +101,9 @@ func TestMangling(t *testing.T) {
 	// unescaped, or "_ae" would become a byte
 	if got := displayName("_xo_f_aesgcm_2eGcm_2egcm__bulk"); got != "aesgcm.Gcm.gcm__bulk" {
 		t.Errorf("display: %q", got)
+	}
+	if got := displayName("xo_f_aesgcm_2eGcm_2egcm__bulk"); got != "aesgcm.Gcm.gcm__bulk" {
+		t.Errorf("display of an ELF symbol: %q", got)
 	}
 	if got := displayName("_xo_f_xo_2emlog_2eprobe_5bMap_5bStr_2c_20Int_5d_5d"); got != "xo.mlog.probe[Map[Str, Int]]" {
 		t.Errorf("display of a Map family: %q", got)

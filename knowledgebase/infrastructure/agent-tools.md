@@ -279,10 +279,12 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   or test): it sizes every text symbol by the gap to the next one, checks
   the gaps against the `__text` size and fails when they do not cover it,
   groups the symbols by module from the `_xo_f_<module>_2e<name>` mangling
-  (the Map families xo.map, xo.mlog and xo.maph broken out per element
+  (an ELF binary's symbols have no leading underscore: `xo_f_...`, `xo_h*`;
+  the Map families xo.map, xo.mlog and xo.maph broken out per element
   type, then the hidden `_xo_h*` helpers and the non-Xo symbols), and
   prints the groups and the top symbols. `-reach` adds a lower bound on
-  unreachable code (direct branches plus materialized addresses, arm64;
+  unreachable code (direct branches plus materialized addresses, arm64
+  Mach-O and ELF, whose roots are `main`/`_start` without the underscore;
   indirect calls are not followed, so a listed symbol may still run). A
   size claim quotes sizebreak's `__text` and group table, not hand-run
   `nm`/`otool` numbers, so two reports compare the same way (lead,
