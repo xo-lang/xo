@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- darwin/arm64 binaries also drop the fault-location strings and string literal
+  objects that only removed functions used (decision 0371's addendum): a release
+  hello world is 299,289 bytes instead of 332,314 (-9.9%), a CRUD server 1.6% smaller.
 - Programs with several Map types are smaller on the native and LLVM backends: a
   Map's key-side code is generated once per key type, its values in a list or value
   log of their own (decision 0372). Eight `Map[Str, V]` types take 388,280 bytes of

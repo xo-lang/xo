@@ -13,6 +13,7 @@ fn hollow_asm() -> Str {
     "\t.globl _main",
     "_main:",
     "\tbl _xo_f_live",
+    "\tadrp x0, Lxo_t_str0@PAGE",
     "\tret",
     "\t.p2align 2",
     "_xo_f_live:",
@@ -25,6 +26,7 @@ fn hollow_asm() -> Str {
     "\t.p2align 2",
     "_xo_f_cabi_unused:",
     "\tbl _xo_hDead",
+    "\tadrp x3, Lxo_t_loc1@PAGE",
     "\tret",
     "\t.p2align 2",
     "_xo_f_drop_20Dead:",
@@ -41,6 +43,17 @@ fn hollow_asm() -> Str {
     "\tret",
     "\t.section __DATA,__const",
     "\t.quad _xo_f_kept",
+    "\t.section __TEXT,__cstring,cstring_literals",
+    "Lxo_t_loc1:",
+    "\t.asciz \"dead.xo:1:1\"",
+    "Lxo_t_loc2:",
+    "\t.asciz \"named by DWARF\"",
+    "\t.section __DATA,__const",
+    "\t.p2align 3",
+    "Lxo_t_str0:",
+    "\t.quad 0",
+    "\t.section __DWARF,__debug_str,regular,debug",
+    "\t.quad Lxo_t_loc2",
     "",
   ].join("\n")
 }
@@ -75,12 +88,18 @@ test "an unreached export and the drop helper only it calls become one brk" {
   expect(body_of(asm, "_xo_f_drop_20Dead")) == brk
   expect(asm.contains("_xo_hDead:\n")) == true
   // reached: from main, through a shared local label, from data
-  expect(body_of(asm, "_main")) == ["\tbl _xo_f_live", "\tret"]
+  expect(body_of(asm, "_main")) == ["\tbl _xo_f_live", "\tadrp x0, Lxo_t_str0@PAGE", "\tret"]
   expect(body_of(asm, "_xo_hShared")) == ["\tldr x1, [x0]", "\tret"]
   expect(body_of(asm, "_xo_f_kept")) == ["\tret"]
   // the export keeps its declaration
   expect(asm.contains("\t.globl _xo_x_unused\n_xo_x_unused:")) == true
-  expect(msg) == "hollowed 3 of 7 functions, 54 bytes of assembly"
+  // a fault location's string only the hollowed function named goes;
+  // one main names and one __DWARF names stay
+  expect(asm.contains("Lxo_t_loc1:")) == false
+  expect(asm.contains("dead.xo")) == false
+  expect(asm.contains("Lxo_t_loc2:")) == true
+  expect(asm.contains("Lxo_t_str0:\n\t.quad 0")) == true
+  expect(msg) == "hollowed 3 functions and dropped 1 data objects of 10, 111 bytes of assembly"
 }
 
 test "nothing unreached leaves the assembly as it is" {

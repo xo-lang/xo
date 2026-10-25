@@ -107,3 +107,31 @@ the aliased labels, a shared local label, and a data root.
   and a candidate for a later step.
 - An empty body (no brk). A missed reference would then run into the
   next function's code. Rejected (Lead, 2026-10-24).
+
+## Addendum: data objects nothing reaches (2026-10-25)
+
+Lang 3 measured a release hello with the pass on. 270 of its 819
+fault-location strings in __cstring (8,581 bytes) were named only by
+hollowed bodies, and so were many Str literal objects in __const.
+
+The pass now treats each local data object as a chunk of its own:
+- A data object is a `Lxo_` label outside the text: a location string,
+  or a literal's object. Its chunk runs to the next label or section.
+- An object nothing live names (no surviving body, and no data that is
+  itself reached) loses its label and data. Its alignment and symbol
+  directives stay, since the next object's alignment can sit in its
+  range.
+- An object that __DWARF names stays, so its label still assembles.
+- Global data labels are unchanged: their data are roots.
+
+Release builds, main 303dc270d against the change:
+
+| program | __cstring | __const | file |
+|---|---|---|---|
+| hello | 26,180 to 17,343 | 47,505 to 17,121 | 332,314 to 299,289 (-9.9%) |
+| bench/perf/http/xo | 94,566 to 88,266 | 253,721 to 222,337 | 2,030,217 to 1,997,192 (-1.6%) |
+
+__text is unchanged. compiler/arm64 hollow_test.xo now also checks:
+- a location string named only by a hollowed function goes;
+- a Str object named by main stays;
+- a string named only by DWARF stays.

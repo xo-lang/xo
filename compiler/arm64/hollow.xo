@@ -36,6 +36,9 @@ struct HChunk {
   start: Int
   end: Int
   name: Str
+  /// a local data object (a fault location's string, a Str literal's
+  /// object) outside the text: dropped whole when nothing reaches it
+  data: Bool = false
 }
 
 /// The parts with the functions nothing reaches emptied, and a line of
@@ -47,6 +50,9 @@ pub fn hollow_unreached(parts: List[Str]) -> (List[Str], Str) {
   // the symbols a chunk names, by chunk; and those outside any chunk
   var refs: List[List[Str]] = []
   var roots: Map[Str, Bool] = {"_main": true}
+  // the local labels __DWARF names: a data object among them stays (its
+  // label must still assemble)
+  var dwarf_names: Map[Str, Bool] = {}
   for (pi, p) in parts.indexed() {
     let b = p.bytes()
     let n = b.len()
@@ -73,6 +79,22 @@ pub fn hollow_unreached(parts: List[Str]) -> (List[Str], Str) {
           }
           in_text = starts_at(b, i, j, "\t.section __TEXT,__text")
           dwarf = starts_at(b, i, j, "\t.section __DWARF")
+        } else if !in_text && !dwarf && b[j - 1] == 58 && (c0 == 95 || starts_at(b, i, j, "Lxo_")) {
+          // a label in data: a local one starts a data object (to the next
+          // label or section), a global one ends it (its data are roots)
+          if cur >= 0 {
+            chunks[cur].end = i
+            cur = -1
+          }
+          if c0 != 95 {
+            let name = p[i..j - 1]
+            cur = chunks.len()
+            chunks.push(HChunk{part: pi, start: i, end: n, name: name, data: true})
+            refs.push([])
+            if !by_name.contains(name) {
+              by_name[name] = cur
+            }
+          }
         } else if in_text && c0 == 95 && b[j - 1] == 58 {
           // a global label `_name:`
           let name = p[i..j - 1]
@@ -101,6 +123,20 @@ pub fn hollow_unreached(parts: List[Str]) -> (List[Str], Str) {
         } else if c0 == 9 && (starts_at(b, i, j, "\t.globl") || starts_at(b, i, j, "\t.private_extern") || starts_at(b, i, j, "\t.p2align")) {
           // a symbol's declaration names it without using it (the next
           // function's .globl sits in the range of the one above)
+        } else if c0 == 9 && dwarf {
+          var k = i + 1
+          while k < j {
+            if b[k] == 76 && starts_at(b, k, j, "Lxo_") && !ident_byte(b[k - 1]) {
+              var e = k + 4
+              while e < j && ident_byte(b[e]) {
+                e += 1
+              }
+              dwarf_names[p[k..e]] = true
+              k = e
+            } else {
+              k += 1
+            }
+          }
         } else if c0 == 9 && !dwarf {
           if cur >= 0 {
             body = true
@@ -157,6 +193,11 @@ pub fn hollow_unreached(parts: List[Str]) -> (List[Str], Str) {
       }
     }
   }
+  for (ci, ch) in chunks.indexed() {
+    if ch.data && !live[ci] && dwarf_names.contains(ch.name) {
+      live[ci] = true
+    }
+  }
   var dead = 0
   for l in live {
     if !l {
@@ -166,6 +207,7 @@ pub fn hollow_unreached(parts: List[Str]) -> (List[Str], Str) {
   if dead == 0 {
     return (parts, "")
   }
+  var dead_data = 0
   // the parts again, a dead chunk's lines but its labels and layout
   // directives dropped
   var out: List[Str] = []
@@ -177,7 +219,26 @@ pub fn hollow_unreached(parts: List[Str]) -> (List[Str], Str) {
     var at = 0
     while ci < chunks.len() && chunks[ci].part == pi {
       let ch = chunks[ci]
-      if !live[ci] {
+      if !live[ci] && ch.data {
+        sb.write(p[at..ch.start])
+        // nothing names it: its label and data go, its layout directives
+        // stay (the next object's alignment can sit in its range)
+        var i = ch.start
+        while i < ch.end {
+          var j = i
+          while j < ch.end && b[j] != 10 {
+            j += 1
+          }
+          if starts_at(b, i, j, "\t.p2align") || starts_at(b, i, j, "\t.align") || starts_at(b, i, j, "\t.globl") || starts_at(b, i, j, "\t.private_extern") {
+            sb.write(p[i..(if j < ch.end { j + 1 } else { j })])
+          } else {
+            dropped += j - i
+          }
+          i = j + 1
+        }
+        dead_data += 1
+        at = ch.end
+      } else if !live[ci] {
         sb.write(p[at..ch.start])
         // one `brk #HOLLOW_BRK` as the body: a path the scan missed (an
         // address made at run time, a name looked up by prof.symbols, a
@@ -212,7 +273,7 @@ pub fn hollow_unreached(parts: List[Str]) -> (List[Str], Str) {
     sb.write(p[at..p.len()])
     out.push(sb.freeze())
   }
-  (out, "hollowed ${dead} of ${chunks.len()} functions, ${dropped} bytes of assembly")
+  (out, "hollowed ${dead - dead_data} functions and dropped ${dead_data} data objects of ${chunks.len()}, ${dropped} bytes of assembly")
 }
 
 /// Whether line b[i..j] starts with t.
