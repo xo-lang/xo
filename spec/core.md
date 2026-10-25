@@ -1273,7 +1273,12 @@ An `UpperCamel` name in a pattern always refers to a variant; bindings are
   assignment `m[k] = v` is allowed and means `m.put(k, v)`.
 - `Str` cannot be indexed by position (use `runes()` or slicing).
 - Ranges slice: `xs[1..]`, `xs[..n]`, `xs[a..b]` on `List`, `Bytes`, and `Str`
-  (byte offsets; slicing a `Str` inside a UTF-8 sequence faults). Slices of
+  (byte offsets; slicing a `Str` inside a UTF-8 sequence faults). A range of a
+  `Str` or `Bytes` that is not an ordered range of its length faults with
+  `slice LO..HI out of range for Str of length N` (`Bytes` in place of `Str`),
+  and a `Str` slice whose ends are not UTF-8 boundaries with `slice LO..HI of
+  Str splits a UTF-8 sequence`; every backend prints the same text (the corpus
+  of internal/stdtest/testdata/faults). Slices of
   immutable values are O(1) and share storage: on native targets the result
   of slicing a `Str` or `Bytes` is a view of the same buffer (no copy), so a
   small view keeps its whole buffer alive (as a Go substring does; there is

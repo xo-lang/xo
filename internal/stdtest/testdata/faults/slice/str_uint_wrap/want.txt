@@ -1,0 +1,4 @@
+exit 70
+--- stdout
+--- stderr
+fault: slice 0..-1 out of range for Str of length 6 at main.xo:9:20

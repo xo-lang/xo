@@ -7,7 +7,9 @@
 // instead. Modules run in parallel, XO_STDTEST_JOBS at a time (default
 // min(GOMAXPROCS, 4)). The large differential corpora generated from Go
 // are plain test directories under testdata/corpus, which TestStdCorpora
-// runs outside -short.
+// runs outside -short. Faults are programs rather than test files, one per
+// case under testdata/faults, which TestSliceFaults builds and runs on
+// every corpus backend outside -short (faults_test.go).
 package stdtest
 
 import (

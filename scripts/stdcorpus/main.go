@@ -7,6 +7,10 @@
 //	go run ./scripts/stdcorpus MODULE...   # rewrite the corpora of the modules
 //	go run ./scripts/stdcorpus -check      # exit 1 when a corpus differs
 //
+// It also writes the fault corpus programs of
+// internal/stdtest/testdata/faults (faults.go), which are programs rather
+// than xo test files: their recorded behavior is TestSliceFaults's.
+//
 // Each corpus is deterministic for a Go version (the seed is fixed);
 // regenerate with the Go version its header names.
 package main
@@ -79,6 +83,10 @@ func main() {
 	}
 	sort.Strings(mods)
 	bad := false
+	// the fault corpora are programs rather than xo test files (faults.go)
+	if writeFaultCorpora(*check) {
+		bad = true
+	}
 	for _, m := range mods {
 		gen, ok := generators[m]
 		if !ok {

@@ -1,0 +1,4 @@
+exit 70
+--- stdout
+--- stderr
+fault: slice -1..2 out of range for Bytes of length 6 at main.xo:8:23

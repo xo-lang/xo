@@ -157,6 +157,16 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   comparison), or the whole package with `-timeout 90m`. The test binary
   itself now stops such a run at once with that advice
   (internal/llvm/golden_timeout_test.go), and -short is unaffected.
+- A runtime fault cannot run inside a test binary, so its corpus is one
+  small program per case: internal/stdtest/testdata/faults/AREA/NAME/
+  main.xo with the behavior recorded in its want.txt (exit status, stdout,
+  and the `fault: ` stderr line). TestSliceFaults builds and runs every case
+  on the corpus backends (go, arm64, llvm) outside -short, about 40 s.
+  `go run ./scripts/stdcorpus` writes the programs (scripts/stdcorpus/
+  faults.go) and `go test ./internal/stdtest -run TestSliceFaults
+  -fault-update` records want.txt from the Go backend, whose message and
+  position are the oracle: a native backend that says anything else fails
+  the test. The Str and Bytes slice cases are spec/core.md 3.6.
 - `go run ./scripts/stdsync [-check]` after changing std/prelude.xo: one
   command for every file a prelude change derives, spec/std.md's Appendix A
   index (every prelude function and method by type, internal/stdindex), the
