@@ -169,8 +169,13 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   generates one Xo program of seeded random inputs through pure std
   functions (strings, bytes, strconv, json encode/parse, path, url,
   base64/base32/hex, time formatting and parsing, regexp, csv, netip,
-  big), including the Str and Bytes methods that take a Rune closure,
-  runs it on arm64, LLVM
+  big, compress, archive, mime, multipart, xml, sql, http, template),
+  including the Str and Bytes methods that take a Rune closure, and the
+  internal.crypto_op test paths (cryptostream, x509 on mutated real
+  certificates, ECDSA P-256/P-384 verify and ECDH, RSA verify and sign),
+  plus a limits area at the chunk and buffer edges (sizes up to 1 MiB
+  through counts, search, replace, split, the codecs, JSON, CSV and URL
+  escaping); it runs them on arm64, LLVM
   and the Go backend, and compares the outputs line by line. A divergence
   prints the case, its source and a `-only=NAME` rerun; report it, do not
   fix it in the tool. `-seed` and `-n` widen a run, `-area` narrows it, and
