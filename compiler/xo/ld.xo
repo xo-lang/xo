@@ -411,9 +411,10 @@ fn tz_object_coff(os: Os, dir: Str, sel: tzsel.TZSel) -> Str ! FsErr {
 /// at 0xe0_0000_0000; Go's linker turns ASLR off for it too). "" or why
 /// not.
 /// bin is where the program is written (a stage's, ld.xo Stage), out
-/// the path it will have: the debug directory names out's PDB.
+/// the path it will have: the debug directory names out's PDB (trim: by its
+/// file name only).
 /// phases: each step's time on stderr (--phase-times, as pe.NAME).
-fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)], race: Bool, phases: Bool) -> Str {
+fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)], race: Bool, phases: Bool, trim: Bool) -> Str {
   var t = os.clock.now()
   var objs: List[macho.CObj] = []
   for p in paths {
@@ -438,7 +439,13 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
   let pdb = if dwarf { "${bin.trim_suffix(".exe")}.pdb" } else { "" }
   // the debug directory names the PDB where it will be, not in the
   // stage: the same program has the same bytes
-  let pdb_named = if dwarf { "${out.trim_suffix(".exe")}.pdb" } else { "" }
+  // (--trimpath: just its file name, as MSVC's /pdbaltpath:%_PDB%; the
+  // debuggers look beside the executable first, and the record then holds
+  // no path of the machine that built it)
+  var pdb_named = if dwarf { "${out.trim_suffix(".exe")}.pdb" } else { "" }
+  if dwarf && trim {
+    pdb_named = base_name(pdb_named)
+  }
   // the debug directory names it with backslashes, as MSVC's and lld's
   // linkers do: dbghelp finds a PDB moved since by its base name, which
   // an older one takes after the last backslash only

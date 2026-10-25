@@ -401,7 +401,7 @@ func TestBuildCarriesNoBuildPaths(t *testing.T) {
 	for _, c := range []struct {
 		name  string
 		flags []string
-	}{{"plain", nil}, {"release", []string{"--release"}}, {"release-debug", []string{"--release", "--debug-info=on"}}, {"llvm", []string{"--backend=llvm"}}, {"llvm-release", []string{"--backend=llvm", "--release", "--debug-info=on"}}} {
+	}{{"plain", nil}, {"release", []string{"--release"}}, {"release-debug", []string{"--release", "--debug-info=on"}}, {"windows", []string{"--targets=windows/amd64"}}, {"llvm", []string{"--backend=llvm"}}, {"llvm-release", []string{"--backend=llvm", "--release", "--debug-info=on"}}} {
 		if strings.HasPrefix(c.name, "llvm") {
 			if _, err := exec.LookPath("clang"); err != nil {
 				continue
@@ -411,6 +411,14 @@ func TestBuildCarriesNoBuildPaths(t *testing.T) {
 		var out, errOut bytes.Buffer
 		if code := run(t, append(append([]string{"build"}, c.flags...), "-o", bin, app), &out, &errOut); code != 0 {
 			t.Fatalf("%s: build exit %d\n%s", c.name, code, errOut.String())
+		}
+		if c.name == "windows" {
+			// --targets names the file NAME-OS-ARCH.exe (and the PDB beside it)
+			m, _ := filepath.Glob(bin + "*.exe")
+			if len(m) != 1 {
+				t.Fatalf("windows: want one executable beside %s, got %v", bin, m)
+			}
+			bin = m[0]
 		}
 		data, err := os.ReadFile(bin)
 		if err != nil {
