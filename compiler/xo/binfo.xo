@@ -67,7 +67,10 @@ fn build_info(os: Os, sources: Map[Str, Str], dir: Str, wd: Str, std_dir: Str, o
     h.write("rt/${name} ${crypto.sha256(data).to_hex()}\n")
   }
   let id = crypto.sha256(h.freeze().bytes()).to_hex().bytes()[0..24].to_str() ?? ""
-  let abs_dir = abs_of(wd, dir)
+  // a native binary records no directory (dir "": the path of the build
+  // is not shipped, as Go's -trimpath); the Go backend's replay rebuilds
+  // from it
+  let abs_dir = if dir.is_empty() { "" } else { abs_of(wd, dir) }
   var j = "{\"id\":${json_str(id)},\"dir\":${json_str(abs_dir)},\"sources\":{"
   for (i, p) in paths.indexed() {
     if i > 0 {
@@ -218,13 +221,19 @@ fn binfo_link_flags(goos: Str) -> List[Str] {
 /// hashes build_native took before lowering released the checker
 /// (decision 0352).
 fn native_build_info(os: Os, o: Opts, backend: Str, target: Str, inline_fb: Str) -> (Str, Str) {
-  build_info(os, o.binfo_sources, o.dirs[0], o.wd, o.std, o, backend, target, inline_fb)
+  build_info(os, o.binfo_sources, "", o.wd, o.std, o, backend, target, inline_fb)
 }
 
 /// The sha256 of each of the program's sources (not std's), keyed by its
-/// path relative to the line root root.
+/// path relative to the line root root. The files under the std directory
+/// (the std modules and the runtime, std/native) are one entry, "<std>":
+/// the sha256 of their paths relative to the std directory and hashes in
+/// order, so it is the same wherever xo is installed and a binary does not
+/// carry the 600 lines of an xo release's files (16 KB of every program).
 fn binfo_sources(c: check.Checker, root: Str, wd: Str) -> Map[Str, Str] {
   var sources: Map[Str, Str] = {}
+  var std_lines: List[Str] = []
+  let std_abs = abs_of(wd, c.std_root())
   for f in c.files {
     let m = f.module
     if m < 0 || c.mods[m].is_std {
@@ -238,7 +247,15 @@ fn binfo_sources(c: check.Checker, root: Str, wd: Str) -> Map[Str, Str] {
     if abs.starts_with("${root}/") {
       p = abs.trim_prefix("${root}/")
     }
-    sources[p] = crypto.sha256(f.src).to_hex()
+    let h = crypto.sha256(f.src).to_hex()
+    if abs.starts_with("${std_abs}/") {
+      std_lines.push("${abs.trim_prefix("${std_abs}/")} ${h}")
+      continue
+    }
+    sources[p] = h
+  }
+  if !std_lines.is_empty() {
+    sources["<std>"] = crypto.sha256(std_lines.sort().join("\n").bytes()).to_hex()
   }
   sources
 }

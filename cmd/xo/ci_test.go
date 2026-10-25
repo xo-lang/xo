@@ -245,9 +245,9 @@ func TestVersionM(t *testing.T) {
 		flags []string
 		want  []string
 	}{
-		{"native", nil, []string{"\tbuild\tmode=debug\n", "\tbuild\tdebug-contracts=on\n", "\tbuild\tdebug-info=on\n", "\tsource\tmain.xo\t"}},
+		{"native", nil, []string{"\tbuild\tmode=debug\n", "\tbuild\tdebug-contracts=on\n", "\tbuild\tdebug-info=on\n", "\tsource\tmain.xo\t", "\tsource\t<std>\t"}},
 		{"release", []string{"--release", "--dbg=on"}, []string{"\tbuild\tmode=release\n", "\tbuild\tdebug-contracts=off\n", "\tbuild\tdbg=on\n", "\tbuild\tprofile-support=off\n", "\tbuild\tdebug-info=off\n"}},
-		{"go", []string{"--backend=go"}, []string{"\tbackend\tgo\n", "\tbuild\terror-args=on\n"}},
+		{"go", []string{"--backend=go"}, []string{"\tbackend\tgo\n", "\tbuild\terror-args=on\n", "\tdir\t"}},
 	} {
 		bin := filepath.Join(dir, c.name)
 		var out, errOut bytes.Buffer
@@ -268,6 +268,24 @@ func TestVersionM(t *testing.T) {
 		for _, w := range c.want {
 			if !strings.Contains(got, w) {
 				t.Errorf("%s: version -m lacks %q:\n%s", c.name, w, got)
+			}
+		}
+		// a native binary carries no path of the build (Go's -trimpath:
+		// the directory is the Go backend's, which xo replay rebuilds
+		// from) and one entry for xo's own files, not a line for each
+		if c.name != "go" {
+			data, err := os.ReadFile(bin)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if bytes.Contains(data, []byte(dir)) {
+				t.Errorf("%s: the binary holds the build directory %s", c.name, dir)
+			}
+			if strings.Contains(got, "\tdir\t") {
+				t.Errorf("%s: version -m prints a dir:\n%s", c.name, got)
+			}
+			if n := strings.Count(got, "\tsource\t"); n > 3 {
+				t.Errorf("%s: version -m lists %d sources, want the program's and one <std>:\n%s", c.name, n, got)
 			}
 		}
 	}

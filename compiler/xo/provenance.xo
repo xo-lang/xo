@@ -163,7 +163,10 @@ fn version_m(os: Os, args: List[Str]) -> Int {
     if !v.target.is_empty() {
       b.write("\ttarget\t${v.target}\n")
     }
-    b.write("\tid\t${v.id}\n\tdir\t${v.dir}\n")
+    b.write("\tid\t${v.id}\n")
+    if !v.dir.is_empty() {
+      b.write("\tdir\t${v.dir}\n")
+    }
     b.write("\tbuild\tmode=${if v.release { "release" } else { "debug" }}\n")
     if let Some(st) = v.settings {
       let onoff = fn(x: Bool) -> Str { if x { "on" } else { "off" } }
