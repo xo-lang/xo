@@ -337,7 +337,16 @@ fn ([var] xs: List[T]) pop() -> T?           // removes the last element
 fn ([var] xs: List[T]) insert(i: Int, x: T)
 fn ([var] xs: List[T]) remove_at(i: Int) -> T
 fn ([var] xs: List[T]) set(i: Int, x: T)     // also xs[i] = x on a var list
+fn (var xs: List[T]) sort_in_place()         // T: Ord, stable, sorts the receiver
+fn (var xs: List[T]) sort_in_place_by[K: Ord](key: fn(T) -> K)   // stable
 ```
+
+`sort_in_place` and `sort_in_place_by` order the receiver itself and return
+nothing (decision 0374); they are stable exactly like `sort` and `sort_by`. A
+list another binding shares is copied first, the way `push` and `set` copy
+one, so the other holder keeps its own order; a uniquely owned list is sorted
+in its own array with at most half a list of scratch, where `sort` builds a
+whole second list.
 
 Higher order methods (`map`, `filter`, ...) pass through the callback's effects
 and errors through effect variables (core 6.2); `map` with a failing callback
@@ -4116,7 +4125,7 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
 
 Every function and method of std/prelude.xo, by type, as declared there
 (the sections above explain them); interface methods take `self`.
-433 declarations.
+435 declarations.
 
 ### Range
 
@@ -4415,6 +4424,8 @@ fn (xs: List[T]) any[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> Bool ! E u
 fn (xs: List[T]) all[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> Bool ! E uses fx
 fn (xs: List[T]) sort() -> List[T]
 fn (xs: List[T]) sort_by[K: Ord, E, fx: Effects](key: fn(T) -> K ! E uses fx) -> List[T] ! E uses fx
+fn (var xs: List[T]) sort_in_place()
+fn (var xs: List[T]) sort_in_place_by[K: Ord, E, fx: Effects](key: fn(T) -> K ! E uses fx) -> () ! E uses fx
 fn (xs: List[T]) group_by[K: Hash, E, fx: Effects](key: fn(T) -> K ! E uses fx) -> List[(K, List[T])] ! E uses fx
 fn (xs: List[T]) reverse() -> List[T]
 fn (xs: List[T]) to_set() -> Set[T]

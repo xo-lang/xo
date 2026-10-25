@@ -483,3 +483,49 @@ test "List.sort_by keeps equal keys in input order" {
   let same = [("k", 3), ("k", 1), ("k", 2)]
   expect(same.sort_by(fn(p) { p.0 }).map(fn(p) { "${p.1}" }).join(",")) == "3,1,2"
 }
+
+test "List.sort_in_place orders every shape Go's sort.Strings orders" {
+  var bad: List[(Str, Str, Str)] = []
+  for (keys, want, shape) in SORT_STR_CASES {
+    var xs = split_keys(keys)
+    xs.sort_in_place()
+    let got = xs.join("\u{1f}")
+    if got != want {
+      bad.push((shape, got, want))
+    }
+  }
+  expect(show3(bad)) == []
+}
+
+test "List.sort_in_place leaves a shared list alone and sorts its own binding" {
+  var a = ["b", "c", "a"]
+  let b = a
+  a.sort_in_place()
+  expect(a.join(",")) == "a,b,c"
+  expect(b.join(",")) == "b,c,a"
+  var unique = ["d", "b"]
+  unique.sort_in_place()
+  expect(unique.join(",")) == "b,d"
+}
+
+test "List.sort_in_place_by keeps equal keys in input order" {
+  var xs = [("b", 1), ("a", 2), ("b", 3), ("a", 4), ("b", 5)]
+  xs.sort_in_place_by(fn(p) { p.0 })
+  expect(xs.map(fn(p) { "${p.0}${p.1}" }).join(",")) == "a2,a4,b1,b3,b5"
+  var same = [("k", 3), ("k", 1), ("k", 2)]
+  same.sort_in_place_by(fn(p) { p.0 })
+  expect(same.map(fn(p) { "${p.1}" }).join(",")) == "3,1,2"
+}
+
+test "List.sort_in_place_by orders every shape Go's sort.Strings orders" {
+  var bad: List[(Str, Str, Str)] = []
+  for (keys, want, shape) in SORT_STR_CASES {
+    var xs = split_keys(keys)
+    xs.sort_in_place_by(fn(k) { k })
+    let got = xs.join("\u{1f}")
+    if got != want {
+      bad.push((shape, got, want))
+    }
+  }
+  expect(show3(bad)) == []
+}

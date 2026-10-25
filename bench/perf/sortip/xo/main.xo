@@ -1,0 +1,115 @@
+// List.sort against List.sort_in_place on 2,000,000 elements (decision
+// 0374 step 2): Ints, Strs and UInt8, three modes each, so the sort's cost
+// is a sorted run's time, instructions and max RSS minus the same list's
+// gen run (which builds it and only reads it). Usage:
+// sortipperf gen_ints|sort_ints|ip_ints and the same for strs and u8.
+// Prints "<mode> <checksum>".
+fn ints_sum(xs: List[Int]) -> Int {
+  var h = xs[0] + xs[xs.len() / 2] * 3 + xs[xs.len() - 1]
+  var i = 0
+  while i < xs.len() {
+    h = (h * 31 + xs[i]) % 1000000007
+    i += 997
+  }
+  h
+}
+
+fn strs_sum(xs: List[Str]) -> Int {
+  var h = xs[0].len() + xs[xs.len() / 2].len() * 3 + xs[xs.len() - 1].len()
+  var i = 0
+  while i < xs.len() {
+    let b = xs[i].bytes()
+    h = (h * 31 + Int(b[b.len() - 1])) % 1000000007
+    i += 997
+  }
+  h
+}
+
+fn u8_sum(xs: List[UInt8]) -> Int {
+  var h = Int(xs[0]) + Int(xs[xs.len() / 2]) * 3 + Int(xs[xs.len() - 1])
+  var i = 0
+  while i < xs.len() {
+    h = (h * 31 + Int(xs[i])) % 1000000007
+    i += 997
+  }
+  h
+}
+
+fn ints_list() -> List[Int] {
+  var xs: List[Int] = List.with_capacity(2000000)
+  var seed = 42
+  for _ in 0..2000000 {
+    seed = (seed * 1103515245 + 12345) % 2147483648
+    xs.push(seed % 1000000)
+  }
+  xs
+}
+
+fn strs_list() -> List[Str] {
+  var xs: List[Str] = List.with_capacity(2000000)
+  var seed = 7
+  for _ in 0..2000000 {
+    seed = (seed * 1103515245 + 12345) % 2147483648
+    xs.push("key${seed % 100000000}")
+  }
+  xs
+}
+
+fn u8_list() -> List[UInt8] {
+  var xs: List[UInt8] = List.with_capacity(2000000)
+  var seed = 99
+  for _ in 0..2000000 {
+    seed = (seed * 1103515245 + 12345) % 2147483648
+    xs.push(UInt8(seed % 256))
+  }
+  xs
+}
+
+fn main(os: Os) {
+  let w = os.env.args().get(0) ?? "gen_ints"
+  var sum = 0
+  if w == "gen_ints" || w == "sort_ints" || w == "ip_ints" || w == "ipb_ints" || w == "sortb_ints" {
+    var xs = ints_list()
+    sum = ints_sum(xs)
+    if w == "sort_ints" {
+      sum = ints_sum(xs.sort())
+    } else if w == "sortb_ints" {
+      sum = ints_sum(xs.sort_by(fn(x) { x }))
+    } else if w == "ip_ints" {
+      xs.sort_in_place()
+      sum = ints_sum(xs)
+    } else if w == "ipb_ints" {
+      xs.sort_in_place_by(fn(x) { x })
+      sum = ints_sum(xs)
+    }
+  } else if w == "gen_strs" || w == "sort_strs" || w == "ip_strs" || w == "ipb_strs" || w == "sortb_strs" {
+    var ss = strs_list()
+    sum = strs_sum(ss)
+    if w == "sort_strs" {
+      sum = strs_sum(ss.sort())
+    } else if w == "sortb_strs" {
+      sum = strs_sum(ss.sort_by(fn(s) { s }))
+    } else if w == "ip_strs" {
+      ss.sort_in_place()
+      sum = strs_sum(ss)
+    } else if w == "ipb_strs" {
+      ss.sort_in_place_by(fn(s) { s })
+      sum = strs_sum(ss)
+    }
+  } else {
+    var bs = u8_list()
+    sum = u8_sum(bs)
+    if w == "sort_u8" {
+      sum = u8_sum(bs.sort())
+    } else if w == "sortb_u8" {
+      sum = u8_sum(bs.sort_by(fn(b) { b }))
+    } else if w == "ip_u8" {
+      bs.sort_in_place()
+      sum = u8_sum(bs)
+    } else if w == "ipb_u8" {
+      bs.sort_in_place_by(fn(b) { b })
+      sum = u8_sum(bs)
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

@@ -1,9 +1,12 @@
 # 0374: List.sort_in_place, a stable sort that mutates the receiver
 
-Status: Proposed, step 1 built (DS-1, 2026-10-25: rt.list_swap in four
-lowerings, its tests in std/native/prelude_test.xo and a caller on every
-backend through internal.crypto_op and the golden native_list_swap; steps
-2 and 3 pending, and step 2 needs the seed that carries the intrinsic). The owner chose
+Status: Proposed, steps 1 and 2 built (DS-1, 2026-10-25: rt.list_swap in
+four lowerings with a caller on every backend and the golden
+native_list_swap, then `List.sort_in_place` and `sort_in_place_by` in
+std/prelude.xo, the native merge with half a list of scratch, the Go
+backend's `slices.SortStableFunc` form, and the measurement in
+bench/results/sortip-2026-10-25.md; step 3, the swap inside the merge,
+is pending). The owner chose
 option 1 on 2026-10-25: "superior, and we are not at v1 so API changes
 are fine"; written for review before the implementation, per the lead.
 
@@ -138,6 +141,49 @@ fn (var xs: List[T]) sort_in_place_by[K: Ord, E, fx: Effects](key: fn(T) -> K ! 
   too: both route `rt.` to `rt_call` before their match, so an arm there
   never runs, which the first gate run found as an undefined symbol.
   internal/repotest's reachability check now reports that shape.
+
+### Step 2 as built
+
+- `std/prelude.xo` declares both forms beside the other `var` methods
+  (`sort_in_place`, and `sort_in_place_by` passing effects and errors
+  through `E`/`fx`, the shape `update` on a Map already has), and
+  `spec/std.md`'s mutating block gains them with the stability promise.
+- Native (`std/native/prelude.xo`): `merge_sort_in_place` and
+  `merge_runs_in_place` take `sort`'s shape (runs of 16 by insertion,
+  then bottom up merges, a pair already in order skipped), but the merge
+  copies its left run into a scratch list that only grows to the width it
+  needs, so at most half the list, and writes the merge back from the
+  run's start. `sort_in_place` is that with `<`; `sort_in_place_by`
+  computes the keys once, sorts an index list with the in-place merge,
+  and then permutes the elements inside the receiver one cycle at a time,
+  so the keyed form also never builds a second element array.
+- Go (`std/rt/list.go`): `List_sort_in_place` is `List_own` then
+  `slices.SortStableFunc` with `Cmp`; `List_sort_in_place_by` computes
+  the keys, sorts a permutation with `Cmp`, and gives the receiver the
+  reordered array with a fresh block, the shape `List_sort_by` already
+  has. Its nine probe modes print the same checksums as arm64's.
+- Tests: `std/native/prelude_test.xo` gains eleven, on arm64 and LLVM
+  (25 in the module): empty and one element, a sorted list, a reversed
+  one, all equal, the sizes around the 16 element run, a shared receiver
+  keeping its order while the sorted binding changes, Strs, agreement
+  with `sort` and with `sort_by` on 60 structs, and a failing key leaving
+  the list alone. They are not in a `std/prelude_test.xo` beside the
+  declarations because a `--std-module=prelude` test that uses a `var`
+  list method is reported as XO1201 "support is planned" for every
+  expression in it, which an old method shows too (a two line test whose
+  body is `var xs = [3, 1]` and `xs.push(4)`); that is not this change's,
+  and it is the lead's to route.
+- Corpus: `scripts/stdcorpus/prelude.go` runs both in-place forms over
+  `SORT_STR_CASES` against Go's `sort.Strings` (the shapes a merge has to
+  get right, the 7 byte prefix cases included), a stability row for each
+  form, and the copy-on-write row; 12 corpus tests pass on arm64 and LLVM.
+- Measurement: bench/results/sortip-2026-10-25.md, 2,000,000 Ints, Strs
+  and UInt8, the sort's cost as the sorted run minus its gen run. The
+  extra max RSS goes 80.0 to 22.7 MB on Strs (0.28), 16.0 to 14.3 MB on
+  Ints and 2.0 to 1.7 MB on UInt8; instructions go 1.42, 1.12 and 1.18
+  times `sort`'s, which is the counting step 3 removes; Strs are 0.83 of
+  `sort`'s wall (0.63 to 0.52 s), Ints and UInt8 within the timer's
+  resolution.
 
 ## Consequences
 

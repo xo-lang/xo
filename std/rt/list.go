@@ -648,6 +648,50 @@ func List_sort_by[T, K, E any](tk *Task, l List[T], key func(*Task, T) Result[K,
 	return Ok[List[T], E](ListOf(out...))
 }
 
+// List_sort_in_place is `xs.sort_in_place()` on a `var` list: stable, by
+// the Ord of T, and it sorts the receiver (decision 0374). A list another
+// binding shares is copied first, as a push copies one, so the other
+// holder keeps its order; a uniquely owned list is sorted in its own array.
+func List_sort_in_place[T any](_ *Task, l *List[T]) {
+	if len(l.s) < 2 {
+		return
+	}
+	List_own(l, 0)
+	slices.SortStableFunc(l.s, func(a, b T) int { return Cmp(a, b) })
+	markElems(l.s)
+}
+
+// List_sort_in_place_by is `xs.sort_in_place_by(key)`: stable, by the
+// key's Ord, sorted in the receiver (the same copy-on-write first).
+func List_sort_in_place_by[T, K, E any](tk *Task, l *List[T], key func(*Task, T) Result[K, E]) Result[Unit, E] {
+	if len(l.s) < 2 {
+		return Ok[Unit, E](Unit{})
+	}
+	keys := make([]K, len(l.s))
+	for i, x := range l.s {
+		r := key(tk, x)
+		if !r.Ok {
+			return ErrTr[Unit](r.E, r.Tr)
+		}
+		keys[i] = r.V
+	}
+	List_own(l, 0)
+	perm := make([]int32, len(l.s))
+	for i := range perm {
+		perm[i] = int32(i)
+	}
+	slices.SortStableFunc(perm, func(a, b int32) int { return Cmp(keys[a], keys[b]) })
+	// put each element where its index says, then give the receiver the
+	// fresh array and a block that describes it
+	out := make([]T, len(l.s))
+	for i, j := range perm {
+		out[i] = l.s[j]
+	}
+	l.s, l.b = out, newBlock(len(out))
+	markElems(l.s)
+	return Ok[Unit, E](Unit{})
+}
+
 // List_group_by is `xs.group_by(key)`: the keys in first appearance order,
 // each with its elements in input order.
 func List_group_by[T, K, E any](tk *Task, l List[T], key func(*Task, T) Result[K, E]) Result[List[Tuple2[K, List[T]]], E] {

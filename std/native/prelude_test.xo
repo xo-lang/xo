@@ -3183,3 +3183,149 @@ test "starts_with and ends_with at every length and mismatch position" {
   }
   expect(bad == 0)
 }
+
+// List.sort_in_place and List.sort_in_place_by (decision 0374 step 2): the
+// receiver itself is sorted, stable exactly like sort and sort_by, a list
+// another binding shares is copied before the sort writes, and the sizes
+// around the 16 element insertion runs hold. They live here, not in a
+// std/prelude_test.xo beside the declarations, because a --std-module=prelude
+// test that uses a var list method is reported as XO1201 "support is planned"
+// for every expression in it (the same for an old method: a test whose body
+// is `var xs = [3, 1]`, `xs.push(4)`), which is not this change's.
+
+struct SortRec {
+  key: Int
+  tag: Str
+}
+
+/// A key that fails on a negative one, for the error path.
+struct SortKeyErr {
+  msg: Str
+}
+
+fn (e: SortKeyErr) display() -> Str { e.msg }
+
+fn sort_key_or_fail(r: SortRec) -> Int ! SortKeyErr {
+  if r.key < 0 {
+    return Err(SortKeyErr{msg: "negative key"})
+  }
+  r.key
+}
+
+test "list_sort_in_place: an empty list and one element are unchanged" {
+  var empty: List[Int] = []
+  empty.sort_in_place()
+  expect(empty == [])
+  var one = [7]
+  one.sort_in_place()
+  expect(one == [7])
+}
+
+test "list_sort_in_place: an unordered list sorts in the receiver" {
+  var xs = [5, 3, 9, 1, 3, 7]
+  xs.sort_in_place()
+  expect(xs == [1, 3, 3, 5, 7, 9])
+}
+
+test "list_sort_in_place: sorted, reverse sorted and duplicate heavy lists" {
+  var sorted = [1, 2, 3, 4]
+  sorted.sort_in_place()
+  expect(sorted == [1, 2, 3, 4])
+  var rev = [4, 3, 2, 1]
+  rev.sort_in_place()
+  expect(rev == [1, 2, 3, 4])
+  var dup = [2, 1, 2, 1, 2, 1]
+  dup.sort_in_place()
+  expect(dup == [1, 1, 1, 2, 2, 2])
+}
+
+test "list_sort_in_place: the sizes around the 16 element runs" {
+  // each is its own range reversed, so the insertion runs and the merges
+  // above them both do work, and the last merge's left run is half the
+  // list (the scratch's widest)
+  for n in [15, 16, 17, 33, 100] {
+    var xs: List[Int] = []
+    var i = n
+    while i > 0 {
+      xs.push(i)
+      i -= 1
+    }
+    xs.sort_in_place()
+    expect(xs == (1..(n + 1)).to_list())
+  }
+}
+
+test "list_sort_in_place: a list another binding shares is copied first" {
+  var a = [3, 1, 2]
+  let b = a
+  a.sort_in_place()
+  expect(a == [1, 2, 3])
+  expect(b == [3, 1, 2])
+}
+
+test "list_sort_in_place: strings sort by their text" {
+  var xs = ["pear", "apple", "fig", "Apple"]
+  xs.sort_in_place()
+  expect(xs == ["Apple", "apple", "fig", "pear"])
+}
+
+test "list_sort_in_place: agrees with sort on a longer list" {
+  var xs: List[Int] = []
+  for i in 0..200 {
+    xs.push((i * 37) % 101)
+  }
+  let want = xs.sort()
+  xs.sort_in_place()
+  expect(xs == want)
+}
+
+test "list_sort_in_place_by: equal keys keep their input order" {
+  var xs = [
+    SortRec{key: 2, tag: "a"},
+    SortRec{key: 1, tag: "b"},
+    SortRec{key: 2, tag: "c"},
+    SortRec{key: 1, tag: "d"},
+    SortRec{key: 2, tag: "e"},
+  ]
+  xs.sort_in_place_by(fn(r) { r.key })
+  let tags = [xs[0].tag, xs[1].tag, xs[2].tag, xs[3].tag, xs[4].tag]
+  expect(tags == ["b", "d", "a", "c", "e"])
+}
+
+test "list_sort_in_place_by: an empty list and one element are unchanged" {
+  var empty: List[SortRec] = []
+  empty.sort_in_place_by(fn(r) { r.key })
+  expect(empty == [])
+  var one = [SortRec{key: 5, tag: "x"}]
+  one.sort_in_place_by(fn(r) { r.key })
+  expect(one[0].tag == "x")
+}
+
+test "list_sort_in_place_by: agrees with sort_by on a longer list" {
+  var xs: List[SortRec] = []
+  for i in 0..60 {
+    xs.push(SortRec{key: (i * 7) % 13, tag: "${i}"})
+  }
+  let want = xs.sort_by(fn(r) { r.key })
+  xs.sort_in_place_by(fn(r) { r.key })
+  var same = xs.len() == want.len()
+  if same {
+    for i in 0..xs.len() {
+      if xs[i].tag != want[i].tag {
+        same = false
+      }
+    }
+  }
+  expect(same)
+}
+
+test "list_sort_in_place_by: a failing key propagates and leaves the list alone" {
+  var xs = [SortRec{key: 2, tag: "a"}, SortRec{key: -1, tag: "b"}]
+  match xs.sort_in_place_by(fn(r) { sort_key_or_fail(r)? }) {
+    Ok(_) => expect(false)
+    Err(e) => expect(e.msg == "negative key")
+  }
+  expect(xs[0].tag == "a")
+  expect(xs[1].tag == "b")
+}
+

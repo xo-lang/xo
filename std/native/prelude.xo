@@ -1459,6 +1459,139 @@ fn list_sort[T: Ord](xs: List[T]) -> List[T] {
   a
 }
 
+/// A stable sort of xs in its own array, by less (decision 0374): runs of
+/// 16 by insertion, then bottom up merges that copy the left run into
+/// scratch (kept at the width it needs, so at most half the list) and
+/// write the merge back from lo, so an element never exists in two arrays
+/// and the list keeps the array it came with. Merge order is stable: the
+/// right run's element goes first only when less, and a pair of runs
+/// already in order is left alone.
+fn merge_sort_in_place[T](var xs: List[T], less: fn(T, T) -> Bool) {
+  let n = xs.len()
+  if n < 2 {
+    return
+  }
+  var lo = 0
+  while lo < n {
+    let hi = if lo + 16 < n { lo + 16 } else { n }
+    var i = lo + 1
+    while i < hi {
+      let x = xs[i]
+      var j = i
+      while j > lo && less(x, xs[j - 1]) {
+        xs[j] = xs[j - 1]
+        j -= 1
+      }
+      xs[j] = x
+      i += 1
+    }
+    lo = hi
+  }
+  var scratch: List[T] = []
+  var width = 16
+  while width < n {
+    var lo2 = 0
+    while lo2 < n {
+      var mid = lo2 + width
+      if mid > n {
+        mid = n
+      }
+      var hi = mid + width
+      if hi > n {
+        hi = n
+      }
+      if mid < hi && less(xs[mid], xs[mid - 1]) {
+        merge_runs_in_place(xs, scratch, lo2, mid, hi, less)
+      }
+      lo2 = hi
+    }
+    width *= 2
+  }
+}
+
+/// xs[lo..mid) and xs[mid..hi) merged inside xs's own array: the left run
+/// is copied into scratch first, then the merge writes back from lo, so an
+/// element is overwritten only after it has been moved. The right run's
+/// element goes first only when less, which keeps the order stable, and
+/// whatever is left of the right run is already in place.
+fn merge_runs_in_place[T](var xs: List[T], var scratch: List[T], lo: Int, mid: Int, hi: Int, less: fn(T, T) -> Bool) {
+  let left = mid - lo
+  var k = 0
+  while k < left {
+    if k < scratch.len() {
+      scratch[k] = xs[lo + k]
+    } else {
+      scratch.push(xs[lo + k])
+    }
+    k += 1
+  }
+  var i = 0
+  var j = mid
+  var w = lo
+  while i < left && j < hi {
+    if less(xs[j], scratch[i]) {
+      xs[w] = xs[j]
+      j += 1
+    } else {
+      xs[w] = scratch[i]
+      i += 1
+    }
+    w += 1
+  }
+  while i < left {
+    xs[w] = scratch[i]
+    i += 1
+    w += 1
+  }
+}
+
+/// list_sort's sort in place, for a var receiver: the compiler has already
+/// copied the list when another binding shares it, so the receiver's array
+/// is the only one the sort writes.
+fn list_sort_in_place[T: Ord](var xs: List[T]) {
+  merge_sort_in_place(xs, fn(a, b) { a < b })
+}
+
+/// list_sort_by's sort in place: the keys are computed once, the indices
+/// are sorted by them, and the elements are then put where their indices
+/// say one cycle at a time, so the elements move inside the receiver
+/// instead of into a second array (a cycle needs one held element, not a
+/// list).
+fn list_sort_in_place_by[T, K: Ord, E, fx: Effects](var xs: List[T], key: fn(T) -> K ! E uses fx) -> () ! E uses fx {
+  let n = xs.len()
+  if n < 2 {
+    return
+  }
+  var keys: List[K] = []
+  for x in xs {
+    keys.push(key(x)?)
+  }
+  var idx: List[Int] = []
+  for i in 0..n {
+    idx.push(i)
+  }
+  merge_sort_in_place(idx, fn(a, b) { keys[a] < keys[b] })
+  var k = 0
+  while k < n {
+    if idx[k] != k {
+      let held = xs[k]
+      var cur = k
+      while true {
+        let nxt = idx[cur]
+        if nxt == k {
+          xs[cur] = held
+          idx[cur] = cur
+          break
+        }
+        xs[cur] = xs[nxt]
+        idx[cur] = cur
+        cur = nxt
+      }
+    }
+    k += 1
+  }
+}
+
 /// The first seven bytes of s as a big endian number, short strings padded
 /// with zeros: a < b when the prefix of a is less than b's, and equal
 /// prefixes are decided by comparing the strings.

@@ -1,5 +1,38 @@
 # prelude changes
 
+## 2026-10-25: feature: List.sort_in_place and List.sort_in_place_by, a stable sort of the receiver
+
+- Kind: feature
+- Commit: this commit
+- Found by: `sort` costs five words an element on a List[Str] (76.3 MB
+  at 2,000,000 Strs on top of the list) and the floor is its signature,
+  not its algorithm: returning a new list means two element arrays at
+  once (bench/results/sortstr-inplace-2026-10-25.md; ADR 0374)
+- Go reference: Go's `slices.SortStableFunc` on the receiver, which is
+  stable like `sort` and `sort_by`; the native sort is a bottom-up stable
+  merge with at most half a list of scratch
+- Test: std/native/prelude_test.xo on arm64 and llvm (empty, one, the
+  sizes around the 16 element runs, duplicates, strings, a shared list
+  copied first, agreement with sort and sort_by, a failing key propagated
+  with the list left alone), the Go backend through
+  bench/perf/sortip/xo's parity run
+- Timing: bench/results/sortip-2026-10-25.md, 2,000,000 elements,
+  arm64: the sort's own max RSS goes 80.0 to 22.7 MB on Strs (0.28),
+  16.0 to 14.3 MB on Ints, 2.0 to 1.7 MB on UInt8; instructions go 1.42,
+  1.12 and 1.18 times `sort`'s, the reference counting the moves still
+  pay (step 3 of ADR 0374 removes it with `rt.list_swap`); Strs are
+  0.83 times `sort`'s wall today (0.63 to 0.52 s), Ints and UInt8 within
+  the timer's resolution
+
+`sort_in_place` and `sort_in_place_by` sort the receiver and return
+nothing, stable exactly like `sort` and `sort_by`. A list another binding
+shares is copied first, the way `push` and `set` copy one, so the other
+holder keeps its order; a uniquely owned list is sorted in its own array
+with the left run of each merge copied into a scratch that never grows
+past half the list. The keyed form computes the keys once, sorts the
+indices by them, and moves the elements inside the receiver one cycle at
+a time.
+
 ## 2026-10-25: perf: parse_duration reads its digits from one address
 
 - Kind: perf
