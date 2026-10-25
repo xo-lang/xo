@@ -240,6 +240,19 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 ## Measuring
 
+- Code size is measured with `go run ./scripts/sizebreak [-top=N] [-json]
+  [-reach] BINARY` (Mach-O and ELF; use it through heavy.sh like any build
+  or test): it sizes every text symbol by the gap to the next one, checks
+  the gaps against the `__text` size and fails when they do not cover it,
+  groups the symbols by module from the `_xo_f_<module>_2e<name>` mangling
+  (the Map families xo.map, xo.mlog and xo.maph broken out per element
+  type, then the hidden `_xo_h*` helpers and the non-Xo symbols), and
+  prints the groups and the top symbols. `-reach` adds a lower bound on
+  unreachable code (direct branches plus materialized addresses, arm64;
+  indirect calls are not followed, so a listed symbol may still run). A
+  size claim quotes sizebreak's `__text` and group table, not hand-run
+  `nm`/`otool` numbers, so two reports compare the same way (lead,
+  2026-10-24).
 - Before starting on a ranked gap (lead, 2026-10-22: five items that
   day came from old tables: two already fixed, one misread, two
   stale), re-measure it on today's main and cite the figure's file:line
