@@ -562,6 +562,17 @@ func goBytesCutCases() []bytesCutCase {
 	return out
 }
 
+// bytesCutBoundaryCases are cutBoundaryCases as Bytes: the separator
+// lengths and positions where the separator compare's word path switches
+// (2026-10-25).
+func bytesCutBoundaryCases() []bytesCutCase {
+	var out []bytesCutCase
+	for _, c := range cutBoundaryCases() {
+		out = append(out, bytesCutCase{[]byte(c.s), []byte(c.sep)})
+	}
+	return out
+}
+
 // goBytesCutPrefixCases are Go's bytes_test.go cutPrefixTests, and
 // goBytesCutSuffixCases its cutSuffixTests. Go's bytes tests are Copyright
 // 2009 The Go Authors, BSD-style license.
@@ -805,7 +816,7 @@ func bytesCorpus() string {
 	o.WriteString("]\n")
 
 	// cut, cut_prefix and cut_suffix
-	cu := goBytesCutCases()
+	cu := append(goBytesCutCases(), bytesCutBoundaryCases()...)
 	rcu := rand.New(rand.NewSource(107))
 	for i := 0; i < 1200; i++ {
 		cu = append(cu, bytesRandomCut(rcu))
@@ -820,7 +831,7 @@ func bytesCorpus() string {
 	}
 	o.WriteString("]\n")
 
-	cp := goBytesCutPrefixCases()
+	cp := append(goBytesCutPrefixCases(), bytesCutBoundaryCases()...)
 	rcp := rand.New(rand.NewSource(109))
 	for i := 0; i < 1200; i++ {
 		cp = append(cp, bytesRandomCut(rcp))
@@ -835,7 +846,7 @@ func bytesCorpus() string {
 	}
 	o.WriteString("]\n")
 
-	csx := goBytesCutSuffixCases()
+	csx := append(goBytesCutSuffixCases(), bytesCutBoundaryCases()...)
 	rcsx := rand.New(rand.NewSource(113))
 	for i := 0; i < 1200; i++ {
 		csx = append(csx, bytesRandomCut(rcsx))

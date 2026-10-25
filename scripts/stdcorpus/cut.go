@@ -100,6 +100,25 @@ func cutRandomAffix(r *rand.Rand) cutCase {
 	return cutCase{s, sep}
 }
 
+// cutBoundaryCases are the byte-length boundaries of the separator compare
+// (2026-10-25): 0, 1, 7, 8 and 9 bytes, at the start of the text, at its
+// end, in its middle, and absent from it. 8 is where the compare switches
+// from the overlapping short loads to two words, and the cut methods
+// compare a prefix or a suffix directly.
+func cutBoundaryCases() []cutCase {
+	var out []cutCase
+	for _, n := range []int{0, 1, 7, 8, 9} {
+		sep := strings.Repeat("a", n)
+		out = append(out,
+			cutCase{sep + "XYZ", sep},      // at the start
+			cutCase{"XYZ" + sep, sep},      // at the end
+			cutCase{"XY" + sep + "Z", sep}, // in the middle
+			cutCase{"XYZ", sep},            // absent
+		)
+	}
+	return out
+}
+
 // cutWant is Go's Cut as a corpus result: none, or the two pieces joined
 // by U+001F after the marker.
 func cutWant(s, sep string) string {
@@ -124,7 +143,7 @@ func cutCorpus() string {
 	r := rand.New(rand.NewSource(47))
 
 	// cut
-	cs := goCutCases()
+	cs := append(goCutCases(), cutBoundaryCases()...)
 	for i := 0; i < 2000; i++ {
 		cs = append(cs, cutRandomPair(r))
 	}
@@ -136,7 +155,7 @@ func cutCorpus() string {
 	o.WriteString("]\n")
 
 	// cut_prefix, on its own seed so cut's random inputs stay fixed
-	ps := goCutPrefixCases()
+	ps := append(goCutPrefixCases(), cutBoundaryCases()...)
 	rp := rand.New(rand.NewSource(53))
 	for i := 0; i < 2000; i++ {
 		ps = append(ps, cutRandomAffix(rp))
@@ -150,7 +169,7 @@ func cutCorpus() string {
 	o.WriteString("]\n")
 
 	// cut_suffix
-	ss := goCutSuffixCases()
+	ss := append(goCutSuffixCases(), cutBoundaryCases()...)
 	rs := rand.New(rand.NewSource(59))
 	for i := 0; i < 2000; i++ {
 		ss = append(ss, cutRandomAffix(rs))

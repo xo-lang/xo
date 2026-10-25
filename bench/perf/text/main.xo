@@ -165,6 +165,59 @@ fn rune_count(strs: List[Str]) -> Int {
   sum
 }
 
+/// The separators of the cut workloads: 1, 2, 3, 5, 7 and 8 bytes, so the
+/// separator compare's short paths and its 8 byte switch are all taken
+/// (2026-10-25).
+const CUT_SEPS: List[Str] = [".", ", ", "://", "hello", "Bearer ", "  hello"]
+
+/// Str.cut over the texts and CUT_SEPS; a hit adds its pieces, a miss 1.
+fn cut(strs: List[Str]) -> Int {
+  var h = 0
+  for _ in 0..ROUNDS {
+    for s in strs {
+      for sep in CUT_SEPS {
+        match s.cut(sep) {
+          Some((a, b)) => h = mix(h, a) + b.len()
+          None => h += 1
+        }
+      }
+    }
+  }
+  h
+}
+
+/// Str.cut_prefix over the texts and CUT_SEPS.
+fn cut_prefix(strs: List[Str]) -> Int {
+  var h = 0
+  for _ in 0..ROUNDS {
+    for s in strs {
+      for sep in CUT_SEPS {
+        match s.cut_prefix(sep) {
+          Some(rest) => h = mix(h, rest)
+          None => h += 1
+        }
+      }
+    }
+  }
+  h
+}
+
+/// Str.cut_suffix over the texts and CUT_SEPS.
+fn cut_suffix(strs: List[Str]) -> Int {
+  var h = 0
+  for _ in 0..ROUNDS {
+    for s in strs {
+      for sep in CUT_SEPS {
+        match s.cut_suffix(sep) {
+          Some(before) => h = mix(h, before)
+          None => h += 1
+        }
+      }
+    }
+  }
+  h
+}
+
 /// Bytes.rune_count and Bytes.to_str (UTF-8 validity) of text with
 /// multibyte runes (decision 0201).
 fn utf8(strs: List[Str]) -> Int {
@@ -392,6 +445,9 @@ fn main(os: Os) {
     "replace" => replace(strs)
     "trim" => trim(padded)
     "rune_count" => rune_count(strs)
+    "cut" => cut(strs)
+    "cut_prefix" => cut_prefix(strs)
+    "cut_suffix" => cut_suffix(strs)
     "utf8" => utf8(strs)
     "int_fmt" => int_fmt(xs)
     "float_fmt" => float_fmt(fs)
