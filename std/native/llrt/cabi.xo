@@ -451,7 +451,7 @@ fn poll_park_wait(c: Int) { tasks.park_wait_n(c, true, false) }
 /// A worker's poll of the network (decision 0324, pool.xo np_poll):
 /// waits at most wait ns (-1 no limit) for the next event or timer; the
 /// events handled, or -1 when it did not poll.
-fn np_poll(wait: Int, a: Int) -> Int { poll.np_poll(wait) }
+fn np_poll(wait: Int, a: Int) -> Int { poll.np_poll(wait, a) }
 
 /// Breaks a worker's wait in the network poller (decision 0324, pool.xo
 /// np_break).

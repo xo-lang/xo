@@ -1285,7 +1285,7 @@ fn np_wanted() -> Bool {
 /// calling worker (pool.xo np_poll): the events and timers handled, or -1
 /// when it did not poll (workers do not poll here, the event loop is not
 /// started, another thread holds the token).
-pub fn np_poll(wait: Int) -> Int {
+pub fn np_poll(wait: Int, p: Int) -> Int {
   let e = ev()
   if e == 0 || rt.slot_load(addw(e, EV_ONCE), 0, ACQUIRE) != 2 || rt.mem_load(e, EV_ON, 8) == 0 {
     return -1
@@ -1293,6 +1293,12 @@ pub fn np_poll(wait: Int) -> Int {
   let tok = addw(e, EV_TOK)
   if rt.slot_load(tok, 0, RELAXED) != TOK_FREE || !rt.slot_cas(tok, 0, TOK_FREE, if wait != 0 { TOK_BLOCKED } else { TOK_WORKER }, ACQUIRE) {
     return -1
+  }
+  if wait != 0 && p != 0 && pool.np_pending(p) {
+    // the token reads BLOCKED now, so a push from here on pokes; one
+    // before it (np_break saw the token held) is found by this check
+    rt.slot_store(tok, 0, TOK_FREE, SEQ_CST)
+    return 0
   }
   let n = poll_round(e, rt.mem_load(e, EV_BUF, 8), wait, true)
   rt.slot_store(e, EV_LAST / 8, sysio.mono_ns(), RELAXED)

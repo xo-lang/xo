@@ -565,7 +565,7 @@ fn wakep(p: Int) {
 fn np_poll(p: Int, w: Int, wait: Int) -> Int {
   let was = rt.mem_load(w, W_NONEXT, 8)
   rt.mem_store(w, W_NONEXT, 2, 8)
-  let n = rt.call_c2(rt.fn_addr("np_poll"), wait, 0)
+  let n = rt.call_c2(rt.fn_addr("np_poll"), wait, p)
   rt.mem_store(w, W_NONEXT, was, 8)
   if n > 0 {
     np_spread(p, w)
@@ -619,6 +619,19 @@ fn np_block(p: Int, w: Int, mf: Int) -> Int {
   let n = np_poll(p, w, if aw == 2 { NEXT_GRACE_NS } else { -1 })
   rt.slot_add(dlk, DLK_NPBLK, -1, SEQ_CST)
   n
+}
+
+/// Work in the pool or main's end, read after a worker took the poll token
+/// for a wait (poll.np_poll): np_break skips a token held by a worker or the
+/// poller thread, so a push or main's end between np_block's check and the
+/// token's change to BLOCKED broke no wait and the root slept in the poller
+/// with work pending (borrow_callbacks hung under load, 2026-10-25).
+pub fn np_pending(p: Int) -> Bool {
+  if any_work(p) == 1 {
+    return true
+  }
+  let mf = rt.slot_load(rt.mem_load(p, P_DLK, 8), DLK_MAINF, ACQUIRE)
+  mf != 0 && rt.slot_load(mf, F_ENDED_I, SEQ_CST) != 0
 }
 
 /// Breaks the wait of a worker in the poller, if one waits (wakep found
