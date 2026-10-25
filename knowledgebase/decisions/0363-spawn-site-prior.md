@@ -164,6 +164,30 @@ misses: a lock in a loop with a non-lock call in it (such a site is a pool
 or a mixed workload, not one this experiment moves), so it is a flag for
 programs whose loop is the lock.
 
+### The real bench pools (2026-10-24, after the flag landed as f0ec4f1d9)
+
+The 13 worker-pool sites of bench/ (paper, planted-xo, planted-xo2, xo/v0.4)
+were built with an xo at f0ec4f1d9's parent and one at f0ec4f1d9 (clean
+builds, XO_DIRTY empty), and the spawn call's flags argument (x6 before the
+call to `task_spawn_fn`) read from the disassembly. The method detects the
+flag: conc `mutex` and `rwmutex` read 0x0 before and 0x4 after, and the
+paper/v0.3 pool reads 0x0 both times (its other differences are page offsets
+and the runtime's own changed functions; a byte compare of two builds is
+useless, since the binaries differ between cache directories).
+
+- Only 1 of the 13 builds with today's compiler: paper/v0.3/02-worker-pool.
+  The others are not buildable as they stand (paper v0.1 and v0.2 and the
+  job queues: XO0110, XO0401, XO0410; xo/v0.4: XO1201, a tuple pattern the
+  native backends lack; planted-xo and planted-xo2: XO0701, a `log` the
+  `uses` clause does not name, and the variants have no `main`). They were
+  not edited (bench/paper is not to be edited).
+- The planted variants differ from each other by 3 to 7 lines and all keep
+  the shape `while { queue.recv() ...; work; done.with(...) }`: the loop
+  makes calls that are not Mutex takes or Atomic methods, so the rule leaves
+  them unflagged by reading, not by a build.
+- Result: no false positive among the pools that build, and none by reading
+  among the rest. A pool that is not flagged keeps AD's behavior.
+
 ## Consequences
 
 If it works: the two lock-bound rows approach the serial run without a knob
