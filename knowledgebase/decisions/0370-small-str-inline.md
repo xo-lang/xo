@@ -244,7 +244,17 @@ instructions, `reserve` from 33 to 34, `push_slow` from 25 to 26: the inliner's
 decision classes are unchanged for all 2,799 functions of the CRUD server
 (its class is "small" in both builds; the extra instruction is what takes
 the copy in `cabi.obj_rs_push_word` over the caller's budget). The general fix
-is a separate commit: a folded guard should cost the inliner nothing.
+was built (branch `fold-guard-cost`, commit 900f2a2b7: an empty `Tuple` costs the
+inliner nothing): with it the flag-off build is instruction-identical to the
+tree without 0370 (CRUD 1,448,896 bytes on both, 2,345 functions, none differing
+but the std line numbers). It was not landed: `bench/perf/sweep.py`, 134
+workloads, moves 12 slower and 5 faster beyond spread (text/cut_suffix +7.7%,
+base64 +1.7%, int_fmt +1.6%, zone_civil +1.3%, hex +1.0%, zone_offset +1.0%; tls
+aes128 -1.4%, aes128tls13 -2.0%, p256 -0.9%, x25519only -1.2%), a release
+CRUD server +4,112 bytes (+0.28%), hello +448, xo +108. Its inlining flips:
+the bench's own `cut_suffix` (and time.civil, ints.op_message) goes from "no
+(pads)" to "small", time.offset_secs from "small" to "no (size)". Because main's
+speed would move for the sake of a 64 byte flag-off difference, the +64 B stays.
 
 ## Alternatives
 
