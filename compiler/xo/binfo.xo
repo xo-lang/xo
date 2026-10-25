@@ -234,6 +234,9 @@ fn binfo_sources(c: check.Checker, root: Str, wd: Str) -> Map[Str, Str] {
   var sources: Map[Str, Str] = {}
   var std_lines: List[Str] = []
   let std_abs = abs_of(wd, c.std_root())
+  // std's path relative to the line root ("std/"), or "" when std is
+  // not under it
+  let std_rel = if std_abs.starts_with("${root}/") { "${std_abs.trim_prefix("${root}/")}/" } else { "" }
   for f in c.files {
     let m = f.module
     if m < 0 || c.mods[m].is_std {
@@ -253,6 +256,12 @@ fn binfo_sources(c: check.Checker, root: Str, wd: Str) -> Map[Str, Str] {
     let clean_abs = abs_of(wd, f.path)
     if clean_abs.starts_with("${std_abs}/") {
       std_lines.push("${clean_abs.trim_prefix("${std_abs}/")} ${h}")
+      continue
+    }
+    // the checker names a file under the line root by its path relative
+    // to the root (std/native/x.xo), whatever the working directory
+    if !std_rel.is_empty() && p.starts_with(std_rel) {
+      std_lines.push("${p.trim_prefix(std_rel)} ${h}")
       continue
     }
     sources[p] = h
