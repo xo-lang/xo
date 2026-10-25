@@ -90,7 +90,11 @@ fn (var p: Parser) parse_stmt() -> Stmt {
     }
     Const => return Stmt.ConstDecl(p.parse_const(None, false, start))
     Struct | Enum | Interface | Type | Use | Test | Pub => {
-      if p.peek(1).kind == Kind.Dot {
+      // a keyword used as a name (`pub + 1`, `pub.x`): not a declaration
+      // in the wrong place (2026-10-24: `pub` bound by a pattern that did
+      // not parse, then read, was "`pub` declarations are only allowed at
+      // top level")
+      if p.peek(1).kind == Kind.Dot || !p.decl_follows() {
         p.fail(UNEXPECTED_TOKEN, p.tok.span, "`${kind_text(p.tok.kind)}` is a keyword and cannot be used as a name")
         return Stmt.BadStmt(p.tok.span)
       }
@@ -100,6 +104,20 @@ fn (var p: Parser) parse_stmt() -> Stmt {
     _ => {}
   }
   p.parse_simple_stmt()
+}
+
+/// Whether the token after the current declaration keyword can go on a
+/// declaration: a name for struct, enum, interface, type, use, and test
+/// (a test's name is a string), a declaration keyword for pub.
+fn (p: Parser) decl_follows() -> Bool {
+  let k = p.peek(1).kind
+  if p.tok.kind == Kind.Pub {
+    return k is Kind.Fn | Kind.Struct | Kind.Enum | Kind.Interface | Kind.Type | Kind.Const | Kind.Use
+  }
+  if p.tok.kind == Kind.Test {
+    return k is Kind.String | Kind.Ident
+  }
+  k == Kind.Ident
 }
 
 /// Whether `fn (` starts a method declaration: a name follows the

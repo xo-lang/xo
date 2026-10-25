@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- A keyword where a pattern binds a name (`Some(pub) =>`) is its parse error alone:
+  the bindings only the unparsed part read are no longer "never used" (they came
+  first and named the wrong lines), a keyword read as a name says so (XO0160, not
+  "declarations are only allowed at top level"), and a block ending in a statement
+  that did not parse adds no type mismatch.
 - A spawned task that loops over a Mutex (every call in its loop is a `Mutex.with`,
   `with_read` or an Atomic method) starts its spawn site small, so a one-shot burst
   of lock-bound tasks runs on the spawner instead of waking a worker per spawn

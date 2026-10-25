@@ -731,6 +731,14 @@ fn (var c: Checker) block(b: Block, w: Want) -> Int {
   if n > 0 && c.stmt_never(b.stmts[n - 1]) {
     t = c.named("Never")
   }
+  // a block that ends in a statement that did not parse has no type to
+  // report: the parse error said what is wrong (2026-10-24: `let Some(pub)
+  // = x else ...` then `pub + 1` added "expected `Int`, found `()`")
+  if n > 0 {
+    if let BadStmt(_) = b.stmts[n - 1] {
+      t = c.bad_ty
+    }
+  }
   c.pop_scope()
   if w.kind == 0 {
     return t

@@ -1,0 +1,39 @@
+// A keyword bound by a pattern (`Some(pub)`) is the parse error alone, at
+// the keyword: the bindings the unparsed part read are not "never used"
+// (XO0110), a keyword read as a name is that (XO0160, not "declarations
+// are only allowed at top level"), and a block that ends in a statement
+// that did not parse reports no type mismatch (2026-10-24, DS-2's fuzz
+// program).
+const EC_PUB: List[Str] = ["04aa", "04bb"]
+const EC_HASH: List[Str] = ["11", "22"]
+const EC_SIG: List[Str] = ["aa", "bb"]
+
+fn fz_eop(curve: Str, what: Str, a: Bytes, b: Bytes, c: Bytes) -> Str {
+  "${curve}.${what}:${a.len()}:${b.len()}:${c.len()}"
+}
+
+fn fz_ecv(k: Int, h: Int) -> Str {
+  let curve = if k == 0 { "p256" } else { "p384" }
+  let sig = EC_SIG[h]
+  match Bytes.from_hex(EC_PUB[k]) {
+    Some(pub) => match Bytes.from_hex(EC_HASH[h]) { // ERROR XO0165
+      Some(hash) => match Bytes.from_hex(sig) {
+        Some(s) => fz_eop(curve, "verify", pub, hash, s)
+        None => "bad hex"
+      }
+      None => "bad hex"
+    }
+    None => "bad hex"
+  }
+}
+
+fn get(x: Int?) -> Int {
+  let Some(pub) = x else { // ERROR XO0165
+    return 0
+  }
+  pub + 1 // ERROR XO0160
+}
+
+fn main(os: Os) {
+  os.stdio.println("${fz_ecv(1, 1)} ${get(Some(2))}")
+}

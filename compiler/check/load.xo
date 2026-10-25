@@ -312,6 +312,11 @@ pub struct Checker {
   unused: List[Int] = []
   /// Locals reported as lost updates (XO0520), not also as unused.
   lost_vars: Map[Int, Bool] = {}
+  /// The files whose parse reported an error: their unused bindings are
+  /// not reported (a read inside the part that did not parse is lost;
+  /// 2026-10-24: `Some(pub) =>` made two lets "never used", printed before
+  /// the parse error)
+  parse_failed: Map[Str, Bool] = {}
   /// Calls warned about as split critical sections (XO0804), by key.
   split_warned: Map[Int, Bool] = {}
 
@@ -893,6 +898,9 @@ fn (var c: Checker) parse_into(m: Int, path: Str, src: Bytes, sig: Bool) {
   let r = c.parse_cached(path, src, sig)
   c.parsed.push((path, sig))
   c.diags = c.diags + parse_diags(path, r.diags)
+  if !r.diags.is_empty() {
+    c.parse_failed[path] = true
+  }
   let f = c.files.len()
   c.files.push(SrcFile{path: path, module: m, ast: r.file, iface: r.iface, is_test: path.ends_with("_test.xo"), src: src})
   c.mods[m].files.push(f)
@@ -913,6 +921,9 @@ fn (var c: Checker) add_derived_file(m: Int, path: Str, f: Int, r: parser.ParseR
   c.gen_origin[gpath] = path
   c.gen_spans[gpath] = spans
   c.diags = c.diags + parse_diags(gpath, g.diags)
+  if !g.diags.is_empty() {
+    c.parse_failed[gpath] = true
+  }
   let gf = c.files.len()
   c.files.push(SrcFile{path: gpath, module: m, ast: g.file, iface: "${r.iface}#derive", generated: true, src: src.bytes()})
   c.mods[m].files.push(gf)

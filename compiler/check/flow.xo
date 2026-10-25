@@ -1807,6 +1807,10 @@ fn (var c: Checker) report_unused() {
       continue
     }
     let o = c.objs[v]
+    // the file did not parse: the read may be in the part that was lost
+    if c.parse_failed.contains(o.file) {
+      continue
+    }
     if c.is_result(o.ty) {
       // A Result bound to a name that is never read is an ignored error,
       // even when the name starts with `_` (core 2.6).
