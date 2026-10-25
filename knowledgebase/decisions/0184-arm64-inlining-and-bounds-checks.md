@@ -82,6 +82,69 @@ stay correct: a check is removed only when it is proved.
    dead code pass before `selectCompares`, removes what the threading
    left dead (a register live into a landing pad counts as live).
 
+## Addendum: the leaf intrinsics and tail calls (2026-10-25)
+
+**The intrinsic list.** inline.xo's inline_intrinsic (the rt.* names a
+function may call and still be a leaf) named 23 of the 100 names
+compiler/arm64 calls.xo lowers to instructions. 23 more pure ones are
+now listed: rt.bytes_word, the 16-byte compares, clz, ctz and popcount,
+the float conversions, mul_hi, list_esize, rs_put_word, rs_set_len,
+obj_addr, slot_addr and clmul. internal/repotest
+TestInlineIntrinsicsListed keeps the two lists apart: a name calls.xo
+lowers must be in inline_intrinsic or in its not-leaf list with a reason
+(block kernels, C and system calls, memcpy and the like, retains, the
+unwinder, thread local storage).
+
+**Tail calls.** The list alone made unicode classify 1.195 times the
+instructions:
+- unicode.in_ranges became a leaf, so it became inlinable. The cost walk
+  then added its cost into each rune predicate that tail calls it on its
+  slow path (is_digit, is_print).
+- That pushed those predicates over INLINE_MAX_INSTRS, and classify's
+  loop called them, two calls a rune.
+
+A call in tail position is a branch on arm64 (shrink.xo mark_tails).
+So in the cost walk and at the call site, a tail call:
+- of a callee over INLINE_TAIL_MAX (8) instructions,
+- in a caller with more than INLINE_TAIL_MAX instructions of its own,
+
+stays a call and counts as one instruction. The copy of such a caller in
+a hot one holds the call where it is no longer a tail call, and the
+usual rules take it.
+
+Each condition answers a measured cost:
+- Without the caller condition, wrappers such as cabi.ctx_unwinding
+  (`return ctx.unwinding()`) kept their callee as a call: callbacks
+  any, filter and fold 1.026 to 1.029.
+- A variant that also required the callee to be a leaf (C) halved the
+  size cost but kept little of the speed. It was measured and not taken;
+  see the results.
+
+FnSum records each call's tail flag (INLINE_SUM_VERSION v2), and the
+inline cache key carries the set (INLINE_CACHE_VERSION v8).
+
+below (Xo Lead's pick, B, 2026-10-25; the owner may ask for C).
+
+Instructions against the parent's xo, the same source base:
+- unicode: classify 0.992, classes 0.928, mapfunc 0.989;
+- text: 0.98 to 1.009 (split 0.978);
+- json: 0.99 to 1.0;
+- callbacks: 0.995 to 1.001;
+- crypto: 0.998 to 1.004.
+
+Quiet `xo bench --ab`, wall over A, 20 rounds:
+
+| row | B (taken) | C (leaf callees only) |
+|---|---|---|
+| unicode classes | 0.802 (0.794 to 0.814) | 0.930 (0.919 to 0.940) |
+| unicode classify | 1.007 (noise) | 0.999 (noise) |
+| unicode mapfunc | 0.965 (0.95 to 0.98) | 0.993 (noise) |
+| text parse_int | 1.010 (noise) | 1.030 (1.005 to 1.052; its instructions 1.000) |
+| text split | 0.978 (0.963 to 0.991) | 1.011 (noise) |
+| text replace | 0.999 (noise) | 1.008 (noise) |
+| xo s2 __text | +277 KB (+0.46%) | +144 KB (+0.24%) |
+| bench/perf/http/xo __text | +6.1 KB (+0.4%) | +3.5 KB |
+
 ## Consequences
 
 - `bench/perf/unicode` on arm64 is within 5 percent of the C path

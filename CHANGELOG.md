@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Faster Unicode classification and text splitting on darwin/arm64 and linux/arm64:
+  the native inliner counts 23 more runtime operations as leaf instructions, and a
+  call in tail position stays a branch instead of pushing its caller over the inline
+  limit (decision 0184 addendum): `unicode.is_*` class tests 0.80 of the wall time,
+  `map_runes` 0.97, `split` 0.98; xo itself 0.46% larger.
 - darwin/arm64 binaries also drop the fault-location strings and string literal
   objects that only removed functions used (decision 0371's addendum): a release
   hello world is 299,289 bytes instead of 332,314 (-9.9%), a CRUD server 1.6% smaller.

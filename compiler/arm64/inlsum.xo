@@ -11,7 +11,7 @@
 
 use github.com/xo-lang/xo/compiler/ssa
 
-const INLINE_SUM_VERSION = "xo inline sum v1"
+const INLINE_SUM_VERSION = "xo inline sum v2"
 
 /// See the file comment; inline_walk reads it in the order of the body.
 pub struct FnSum {
@@ -26,6 +26,8 @@ pub struct FnSum {
   badpad: Bool = false
   /// the calls' names, in the order of the blocks and their values
   calls: List[Str] = []
+  /// for each of calls, whether it is a tail call (inline.xo tail_at)
+  tails: List[Bool] = []
   /// the names of the values (aux), each once, in value order
   names: List[Str] = []
   indirect: Bool = false
@@ -39,6 +41,9 @@ pub fn fn_sum(f: ssa.Func) -> FnSum {
   for bl in f.blocks {
     s.adc += adc_pairs(f, bl.instrs)
     for v in bl.instrs {
+      if f.values[v].op == ssa.Op.Call {
+        s.tails.push(tail_at(f, v))
+      }
       let x = f.values[v]
       if x.pad >= 0 && x.op == ssa.Op.Call && (aux_str(x.aux) is "list.set" | "list.take") && !x.pos.is_empty() {
         s.badpad = true
@@ -140,6 +145,10 @@ pub fn encode_sum(s: FnSum) -> Bytes {
       w.write_str(x)
     }
   }
+  sum_uv(w, s.tails.len())
+  for t in s.tails {
+    sum_uv(w, if t { 1 } else { 0 })
+  }
   w.freeze()
 }
 
@@ -163,7 +172,14 @@ pub fn decode_sum(b: Bytes) -> FnSum? {
   s.catches = (fl & 8) != 0
   s.calls = r.strs()
   s.names = r.strs()
-  if r.bad || r.pos != b.len() {
+  let nt = r.uv()
+  for _ in 0..nt {
+    if r.bad {
+      break
+    }
+    s.tails.push(r.uv() == 1)
+  }
+  if r.bad || s.tails.len() != s.calls.len() || r.pos != b.len() {
     return None
   }
   Some(s)

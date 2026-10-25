@@ -16,7 +16,7 @@ use std/crypto
 use github.com/xo-lang/xo/compiler/ssa
 
 /// The version of the keys and entries.
-const INLINE_CACHE_VERSION = "xo inline cache v7"
+const INLINE_CACHE_VERSION = "xo inline cache v8"
 
 /// What inline_cached did: the entries to store (key, entry), the
 /// functions read from entries, the functions whose computed result
@@ -147,7 +147,7 @@ fn key_text(st: InlineState, rc_keys: List[Str], head: Str, i: Int) -> KeyText {
   for s in name_closure(st, i).sort() {
     let ci = st.by_name.get(s) ?? -1
     let at = if ci < 0 { "-" } else if ci < i { "<" } else if ci > i { ">" } else { "=" }
-    b.write_str("name ${s.len()}:${s} ${at} ${st.small.contains(s)} ${st.loopy.contains(s)} ${st.padded.contains(s)} ${st.fewl.contains(s)}")
+    b.write_str("name ${s.len()}:${s} ${at} ${st.small.contains(s)} ${st.loopy.contains(s)} ${st.padded.contains(s)} ${st.fewl.contains(s)} ${st.tailbig.contains(s)}")
     if ci >= 0 {
       let g = st.sums[ci]
       b.write_str(" ${g.indirect} ${g.catches} ${g.nres}")

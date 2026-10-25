@@ -23,6 +23,18 @@
 use github.com/xo-lang/xo/compiler/ssa
 
 const INLINE_MAX_INSTRS = 40
+/// A call in tail position (tail_at: its result returned and nothing
+/// after it) is a branch on arm64 (shrink.xo mark_tails), so a callee
+/// over this size stays a call there and counts as one instruction in
+/// its caller's cost: inlined, it pushed a small caller over
+/// INLINE_MAX_INSTRS and out of its own hot callers (unicode classify,
+/// whose rune predicates tail call in_ranges on their slow path, 1.195
+/// times the instructions once in_ranges became a leaf, 2026-10-25).
+/// The copy of such a caller in a hot one holds the call where it is no
+/// longer a tail call, and the usual rules take it. Not in a caller of
+/// INLINE_TAIL_MAX instructions or fewer of its own (a wrapper), which
+/// takes its tail callee in as before.
+const INLINE_TAIL_MAX = 8
 const INLINE_MAX_BLOCKS = 12
 /// A larger function with at most this many call sites, whose copies
 /// stay within the budget (inline.go inlineFewSites).
@@ -99,7 +111,12 @@ struct InlineCost {
 /// nistec.sub_p256 a non-leaf, its constants counted, and a call
 /// (bench/results/arm64-inline-cost-2026-10-16.md).
 fn inline_intrinsic(n: Str) -> Bool {
-  n is "rt.prefetch" | "rt.static_word" | "rt.mem_copy" | "rt.mem_copy_block" | "rt.mem_load" | "rt.mem_store" | "rt.int_wrap" | "rt.u64_divc" | "rt.slot_load" | "rt.slot_store" | "rt.slot_swap" | "rt.slot_cas" | "rt.slot_add" | "rt.fence" | "rt.spin_hint" | "rt.preempt_poll" | "rt.ct_barrier" | "rt.u64_adc" | "rt.u64_adc_carry" | "rt.u64_carry" | "rt.u64_borrow" | "rt.rl_empty" | "rt.h_zero"
+  n is "rt.prefetch" | "rt.static_word" | "rt.mem_copy" | "rt.mem_copy_block" | "rt.mem_load" | "rt.mem_store" | "rt.int_wrap" | "rt.u64_divc" | "rt.slot_load" | "rt.slot_store" | "rt.slot_swap" | "rt.slot_cas" | "rt.slot_add" | "rt.fence" | "rt.spin_hint" | "rt.preempt_poll" | "rt.ct_barrier" | "rt.u64_adc" | "rt.u64_adc_carry" | "rt.u64_carry" | "rt.u64_borrow" | "rt.rl_empty" | "rt.h_zero" ||
+    // instructions alone too (calls.xo; 2026-10-25: missing, a function
+    // calling one counted as a non-leaf and paid for its constants, as
+    // DS-1 found for unicode in_ranges' rt.bytes_word); internal/repotest
+    // TestInlineIntrinsicsListed keeps calls.xo's names and these apart
+    n is "rt.bytes_word" | "rt.bytes_eq16" | "rt.bytes_eq16_bits" | "rt.bytes_high16" | "rt.bytes_high16_bits" | "rt.clz" | "rt.ctz" | "rt.popcount" | "rt.float_bits" | "rt.float_from_bits" | "rt.i64_mul_hi" | "rt.u64_mul_hi" | "rt.f32_round" | "rt.i64_to_f32" | "rt.u64_to_f32" | "rt.u64_to_float" | "rt.list_esize" | "rt.rs_put_word" | "rt.rs_set_len" | "rt.obj_addr" | "rt.slot_addr" | "rt.clmul_hi" | "rt.clmul_lo"
 }
 
 /// The rt.u64_adc and rt.u64_adc_carry calls of a block with the same
@@ -190,7 +207,7 @@ fn inline_walk(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int], sites: 
   // a Const) folds as one
   c.consts += s.consts
   c.instrs += s.instrs
-  for name in s.calls {
+  for (ki, name) in s.calls.indexed() {
     let ci = by_name.get(name) ?? -1
     if name == "rt.frame_addr" {
       // its frame is the function's own (decision 0233)
@@ -223,6 +240,10 @@ fn inline_walk(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int], sites: 
       // closure (find_call), so it counts as one
       c.instrs += 1
       c.leaf = false
+    } else if ki < s.tails.len() && s.tails[ki] && k.instrs > INLINE_TAIL_MAX && s.instrs > INLINE_TAIL_MAX {
+      // a tail call stays one (INLINE_TAIL_MAX): a branch, the caller a
+      // leaf as before
+      c.instrs += 1
     } else {
       c.instrs += k.instrs
       c.consts += k.consts
@@ -253,8 +274,16 @@ fn inline_walk(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int], sites: 
 /// The names of the inlinable functions of m (inline.go inlinableSet),
 /// of those inlinable only at a call inside a loop (INLINE_LOOP_*), and of
 /// those with landing pads, inlinable only at a call passing a closure.
-fn inlinable_set(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int]) -> (Map[Str, Bool], Map[Str, Bool], Map[Str, Bool], Map[Str, Bool]) {
+fn inlinable_set(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int]) -> (Map[Str, Bool], Map[Str, Bool], Map[Str, Bool], Map[Str, Bool], Map[Str, Bool]) {
   let (costs, sites) = inline_costs(m, sums, by_name)
+  // the inlinable functions over INLINE_TAIL_MAX: a call of one in tail
+  // position stays a call (find_call)
+  var tailbig: Map[Str, Bool] = {}
+  for (n, c) in costs {
+    if c.instrs > INLINE_TAIL_MAX {
+      tailbig[n] = true
+    }
+  }
   var small: Map[Str, Bool] = {}
   var loopy: Map[Str, Bool] = {}
   var padded: Map[Str, Bool] = {}
@@ -286,7 +315,7 @@ fn inlinable_set(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int]) -> (M
       }
     }
   }
-  (small, loopy, padded, fewl)
+  (small, loopy, padded, fewl, tailbig)
 }
 
 /// Whether a function's own body updates a list in place (ssa rc.xo
@@ -332,7 +361,7 @@ pub fn inline_report(m: ssa.Module, filter: Str) -> List[Str] {
   let sums = module_sums(m)
   let by_name = funcs_by_name(m)
   let (costs, sites) = inline_costs(m, sums, by_name)
-  let (small, loopy, padded, fewl) = inlinable_set(m, sums, by_name)
+  let (small, loopy, padded, fewl, _tailbig) = inlinable_set(m, sums, by_name)
   var out: List[Str] = []
   for f in m.funcs {
     if filter != "1" && !f.name.contains(filter) {
@@ -415,6 +444,8 @@ struct InlineState {
   loopy: Map[Str, Bool] = {}
   padded: Map[Str, Bool] = {}
   fewl: Map[Str, Bool] = {}
+  /// inlinable functions a tail call of stays a call (INLINE_TAIL_MAX)
+  tailbig: Map[Str, Bool] = {}
   rounds: Int = 0
 }
 
@@ -424,7 +455,7 @@ fn inline_state(m: ssa.Module) -> InlineState { inline_state_jobs(m, 1) }
 fn inline_state_jobs(m: ssa.Module, jobs: Int) -> InlineState {
   let by_name = funcs_by_name(m)
   let sums = module_sums_jobs(m, jobs)
-  let (small, loopy, padded, fewl) = inlinable_set(m, sums, by_name)
+  let (small, loopy, padded, fewl, tailbig) = inlinable_set(m, sums, by_name)
   // XO_PASSES=-inline: no call is inlined (devirtualize, which runs
   // with the call search, neither); the other passes here still run
   // the calls one function may inline: 200 left large functions' later
@@ -432,7 +463,7 @@ fn inline_state_jobs(m: ssa.Module, jobs: Int) -> InlineState {
   // stopped before ints.fits and llrt_u64_rem, checked 1.40 times
   // LLVM's instructions; any change that inlined more there hid others)
   let rounds = if pass_on(m, "inline") { 400 } else { 0 }
-  InlineState{by_name: by_name, sums: sums, small: small, loopy: loopy, padded: padded, fewl: fewl, rounds: rounds}
+  InlineState{by_name: by_name, sums: sums, small: small, loopy: loopy, padded: padded, fewl: fewl, tailbig: tailbig, rounds: rounds}
 }
 
 /// Inlines the calls of small functions in m and reports whether it
@@ -461,16 +492,21 @@ fn inline_one(var m: ssa.Module, st: InlineState, fi: Int) -> Bool {
   f.ckey = ""
   var here = false
   var loop_left = INLINE_LOOP_SITES
+  // a function of INLINE_TAIL_MAX instructions or fewer of its own (a
+  // wrapper, cabi.ctx_unwinding's `return ctx.unwinding()`) takes its
+  // tail callee in: kept a call, every check through it took one more
+  // hop (callbacks any 1.028 times the instructions, 2026-10-25)
+  let tb = if st.sums[fi].instrs > INLINE_TAIL_MAX { st.tailbig } else { {} }
   for _ in 0..st.rounds {
     if pass_on(m, "devirtualize") {
       devirtualize(f, m, st.by_name)
     }
-    var v = find_call(f, m, st.small, st.by_name)
+    var v = find_call(f, m, st.small, tb, st.by_name)
     if v < 0 {
-      v = find_closure_call(f, m, st.padded, st.by_name)
+      v = find_closure_call(f, m, st.padded, tb, st.by_name)
     }
     if v < 0 && loop_left > 0 {
-      v = find_loop_call(f, m, st.loopy, st.by_name)
+      v = find_loop_call(f, m, st.loopy, tb, st.by_name)
       if v >= 0 {
         loop_left -= 1
       }
@@ -478,7 +514,7 @@ fn inline_one(var m: ssa.Module, st: InlineState, fi: Int) -> Bool {
     if v < 0 {
       // the few sites rule's callees, at loop sites only: their own
       // pass, not the loop budget's (two sites each at most)
-      v = find_loop_call(f, m, st.fewl, st.by_name)
+      v = find_loop_call(f, m, st.fewl, tb, st.by_name)
     }
     if v < 0 {
       break
@@ -686,7 +722,49 @@ fn fold_value(f: ssa.Func, x: ssa.Value) -> Int? {
   }
 }
 
-fn find_call(f: ssa.Func, m: ssa.Module, small: Map[Str, Bool], by_name: Map[Str, Int]) -> Int {
+/// Whether call v of f is in tail position: no landing, no closure
+/// literal among its arguments, and the block
+/// ends with it and a return of its result, directly or through a jump
+/// to a block that only returns its parameter (shrink.xo mark_tails sees
+/// the same shape after lowering).
+fn tail_at(f: ssa.Func, v: Int) -> Bool {
+  let x = f.values[v]
+  if x.pad >= 0 || x.block < 0 {
+    return false
+  }
+  // a closure literal passed on: inlined, the callee's call of it
+  // becomes direct (devirtualize) and is inlined in turn (callbacks' any,
+  // filter and fold were 1.03 times the instructions with these kept)
+  for a in x.args {
+    if f.values[a].op == ssa.Op.Closure {
+      return false
+    }
+  }
+  let ins = f.blocks[x.block].instrs
+  let n = ins.len()
+  if n < 2 || ins[n - 2] != v {
+    return false
+  }
+  let t = f.values[ins[n - 1]]
+  if t.op == ssa.Op.Return {
+    return t.args.len() == 1 && t.args[0] == v
+  }
+  if t.op != ssa.Op.Jump || t.succs.len() != 1 {
+    return false
+  }
+  let e = f.edges[t.succs[0]]
+  if e.args.len() != 1 || e.args[0] != v {
+    return false
+  }
+  let tb = f.blocks[e.to]
+  if tb.params.len() != 1 || tb.instrs.len() != 1 {
+    return false
+  }
+  let r = f.values[tb.instrs[0]]
+  r.op == ssa.Op.Return && r.args.len() == 1 && r.args[0] == tb.params[0]
+}
+
+fn find_call(f: ssa.Func, m: ssa.Module, small: Map[Str, Bool], tailbig: Map[Str, Bool], by_name: Map[Str, Int]) -> Int {
   for bl in f.blocks {
     for v in bl.instrs {
       let x = f.values[v]
@@ -698,7 +776,7 @@ fn find_call(f: ssa.Func, m: ssa.Module, small: Map[Str, Bool], by_name: Map[Str
       // f appears in f once a closure that calls it is inlined (generics'
       // count[T] through fold's callback), which the inlinable sets' cycle
       // walk cannot see, and inline_one holds f out of m.funcs
-      if !small.contains(name) || name == f.name {
+      if !small.contains(name) || name == f.name || (tailbig.contains(name) && tail_at(f, v)) {
         continue
       }
       let ci = by_name.get(name) ?? -1
@@ -720,11 +798,11 @@ fn find_call(f: ssa.Func, m: ssa.Module, small: Map[Str, Bool], by_name: Map[Str
 /// f (decision 0256: inlined, its call of the closure becomes direct and
 /// is inlined in turn: hof's map and filter), find_call's rules
 /// otherwise; else -1.
-fn find_closure_call(f: ssa.Func, m: ssa.Module, padded: Map[Str, Bool], by_name: Map[Str, Int]) -> Int {
+fn find_closure_call(f: ssa.Func, m: ssa.Module, padded: Map[Str, Bool], tailbig: Map[Str, Bool], by_name: Map[Str, Int]) -> Int {
   for bl in f.blocks {
     for v in bl.instrs {
       let x = f.values[v]
-      if x.op != ssa.Op.Call || !padded.contains(aux_str(x.aux)) || aux_str(x.aux) == f.name {
+      if x.op != ssa.Op.Call || !padded.contains(aux_str(x.aux)) || aux_str(x.aux) == f.name || (tailbig.contains(aux_str(x.aux)) && tail_at(f, v)) {
         continue
       }
       var closure = false
@@ -752,12 +830,12 @@ fn find_closure_call(f: ssa.Func, m: ssa.Module, padded: Map[Str, Bool], by_name
 
 /// A call of a function of loopy inside a loop of f (find_call's rules
 /// otherwise), else -1.
-fn find_loop_call(f: ssa.Func, m: ssa.Module, loopy: Map[Str, Bool], by_name: Map[Str, Int]) -> Int {
+fn find_loop_call(f: ssa.Func, m: ssa.Module, loopy: Map[Str, Bool], tailbig: Map[Str, Bool], by_name: Map[Str, Int]) -> Int {
   for (bi, bl) in f.blocks.indexed() {
     var looped = -1
     for v in bl.instrs {
       let x = f.values[v]
-      if x.op != ssa.Op.Call || !loopy.contains(aux_str(x.aux)) || aux_str(x.aux) == f.name {
+      if x.op != ssa.Op.Call || !loopy.contains(aux_str(x.aux)) || aux_str(x.aux) == f.name || (tailbig.contains(aux_str(x.aux)) && tail_at(f, v)) {
         continue
       }
       if looped < 0 {
