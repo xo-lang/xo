@@ -278,7 +278,9 @@ func TestVersionM(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if bytes.Contains(data, []byte(dir)) {
+			// a debug build's DWARF names its directory; a release
+			// build has none
+			if c.name == "release" && bytes.Contains(data, []byte(dir)) {
 				t.Errorf("%s: the binary holds the build directory %s", c.name, dir)
 			}
 			if strings.Contains(got, "\tdir\t") {

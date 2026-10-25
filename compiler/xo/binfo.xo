@@ -248,6 +248,12 @@ fn binfo_sources(c: check.Checker, root: Str, wd: Str) -> Map[Str, Str] {
       p = abs.trim_prefix("${root}/")
     }
     let h = crypto.sha256(f.src).to_hex()
+    // under the std directory, as the checker named the file or as an
+    // absolute path
+    if f.path.starts_with("${c.std_root()}/") {
+      std_lines.push("${f.path.trim_prefix("${c.std_root()}/")} ${h}")
+      continue
+    }
     if abs.starts_with("${std_abs}/") {
       std_lines.push("${abs.trim_prefix("${std_abs}/")} ${h}")
       continue
