@@ -13,7 +13,7 @@ Written by bench/perf/twins/build.sh. The CRUD server is bench/perf/http's users
 
 ## Build and size
 
-Wall milliseconds of one build; peak MB is the build's largest resident set (cold / warm / edit); size MB is the output (a binary, Node's tsc output directory or esbuild bundle; Python has none).
+Wall milliseconds of one build; peak MB is the build's largest resident set (cold / warm / edit); size MB is the output as built (a binary, with DWARF for Xo and Go, none for Rust; the shipping-flag sizes are in What ships; Node's tsc output directory or esbuild bundle; Python has none).
 
 | program | side | cold ms | second ms | warm ms | edit ms | peak MB (c/w/e) | size MB |
 |---|---|---|---|---|---|---|---|
@@ -32,11 +32,20 @@ Node single executable application (the bundle injected into a copy of the offic
 
 ## What ships
 
+Sizes of one build with the flags named: `xo build` and `go build` keep DWARF (Xo's is about 4.1 MB of the CRUD binary), `--release` and `-s -w` drop it, and cargo's release profile has none. Measured by build.sh from the same sources as the rows above; the build times above are of the plain builds. Rerun 2026-10-24 21:39 for these rows only.
+
 | side | what | MB |
 |---|---|---|
-| xo | the CRUD server binary | 6.23 |
-| go | the CRUD server binary | 8.03 |
-| rust | the CRUD server binary | 1.12 |
+| xo | the CRUD server binary, `xo build` (with DWARF) | 6.23 |
+| xo | the CRUD server binary, `xo build --release` | 2.28 |
+| go | the CRUD server binary, `go build -trimpath` (with DWARF) | 8.03 |
+| go | the CRUD server binary, `go build -trimpath -ldflags="-s -w"` | 5.48 |
+| rust | the CRUD server binary, `cargo build --release` (no debug info) | 1.12 |
+| xo | the hello binary, `xo build` (with DWARF) | 1.90 |
+| xo | the hello binary, `xo build --release` | 0.67 |
+| go | the hello binary, `go build -trimpath` (with DWARF) | 2.36 |
+| go | the hello binary, `go build -trimpath -ldflags="-s -w"` | 1.57 |
+| rust | the hello binary, `cargo build --release` (no debug info) | 0.41 |
 | node | the esbuild bundle of the server (needs a node runtime) | 3.0 KB |
 | node | the official node v22.22.1 binary (the runtime) | 107.74 |
 | node | the single executable application | 106.87 |
