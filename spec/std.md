@@ -345,7 +345,7 @@ fn (var xs: List[T]) sort_in_place_by[K: Ord](key: fn(T) -> K)   // stable
 nothing (decision 0374); they are stable exactly like `sort` and `sort_by`. A
 list another binding shares is copied first, the way `push` and `set` copy
 one, so the other holder keeps its own order; a uniquely owned list is sorted
-in its own array with at most half a list of scratch, where `sort` builds a
+in its own array with a scratch under one list, where `sort` builds a
 whole second list.
 
 Higher order methods (`map`, `filter`, ...) pass through the callback's effects

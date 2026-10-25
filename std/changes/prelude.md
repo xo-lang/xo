@@ -1,5 +1,37 @@
 # prelude changes
 
+## 2026-10-25: perf: sort_in_place's merge moves elements by swapping, so nothing is counted
+
+- Kind: perf
+- Commit: this commit
+- Found by: step 2's measurement, where the in-place sort cost 1.12 to 1.42
+  times `sort`'s instructions because every element move counted and
+  released (bench/results/sortip-2026-10-25.md; ADR 0374 step 3)
+- Go reference: none (Go's `slices.SortStableFunc` moves values; Xo's
+  elements are reference counted, so a move costs a retain and a release
+  where a swap costs none)
+- Test: std/native/prelude_test.xo on arm64 and llvm (41 rows, including
+  the shapes around the 16 element runs, Strs with a count read before and
+  after, the shared receiver for both forms, and cycles of several lengths),
+  the Go backend through bench/perf/sortip/xo's parity run
+- Timing: bench/results/sortip-swap2-2026-10-25.md, 2,000,000 elements,
+  arm64: instructions go from 1.12, 1.42 and 1.18 times `sort`'s to 1.06,
+  1.18 and 1.07, and extra RSS from 14.3, 22.7 and 1.7 MB to 8.0, 16.0 and
+  1.1 MB, because the scratch is reserved once with `List.with_capacity`
+  instead of doubling as it fills; Strs wall goes 0.95 to 0.54 s against
+  `sort`'s 0.72. The keyed form goes from 1.12, 1.09 and 1.12 to 1.08, 1.07
+  and 1.09 times `sort_by`
+
+The merge swaps the left run into a placeholder scratch with `rt.list_swap2`
+and swaps every element of the merge back, so an element move is two loads
+and two stores and never a retain or a release. The scratch starts as copies
+of `xs[0]` (one counted retain a slot, released when it is dropped) and is
+reserved at the widest left run's width once; the receiver is made unique
+with one counted element write first, because the swaps do no copy-on-write.
+The keyed form's cycle permutation rotates its cycles with `rt.list_swap`
+transpositions for the same reason, which pays most on Strs (0.97 to 0.80 s
+of wall).
+
 ## 2026-10-25: feature: List.sort_in_place and List.sort_in_place_by, a stable sort of the receiver
 
 - Kind: feature

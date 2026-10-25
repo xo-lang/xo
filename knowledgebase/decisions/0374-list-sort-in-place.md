@@ -1,14 +1,16 @@
 # 0374: List.sort_in_place, a stable sort that mutates the receiver
 
-Status: Proposed, steps 1, 2 and 3a built (DS-1, 2026-10-25: rt.list_swap
+Status: Proposed, steps 1, 2, 3a and 3b built (DS-1, 2026-10-25: rt.list_swap
 in four lowerings with a caller on every backend and the golden
 native_list_swap, then `List.sort_in_place` and `sort_in_place_by` in
 std/prelude.xo, the native merge with half a list of scratch, the Go
 backend's `slices.SortStableFunc` form, and the measurement in
 bench/results/sortip-2026-10-25.md; then step 3a, `rt.list_swap2`, the
 primitive step 3 needs, landed alone with a caller on every backend and
-the golden native_list_swap2; step 3b, the merge that calls it, waits for
-the seed that carries the intrinsic). The owner chose
+the golden native_list_swap2; then step 3b, the merge whose moves are
+swaps, measured in bench/results/sortip-swap2-2026-10-25.md, which needs
+no new seed: compiler/ never calls sort_in_place and the released 0.31.0
+seed builds the tree, as the step 3b section records). The owner chose
 option 1 on 2026-10-25: "superior, and we are not at v1 so API changes
 are fine"; written for review before the implementation, per the lead.
 
@@ -378,18 +380,81 @@ may call it; the merge that calls it (step 3b) follows that seed.
   the leak check, repotest's intrinsic checks, `go test -short`, and the
   fixed point (s1 = s2 = s3).
 
+### Step 3b as built: the merge's moves are swaps
+
+- `std/native/prelude.xo`: `merge_sort_in_place` keeps the runs of 16 and
+  the bottom-up levels, and after the `n < 2` return it makes the receiver
+  unique with one counted element write (`let first = xs[0]; xs[0] =
+  first`) because the swaps do no copy-on-write; a one element list returns
+  before that, so it neither copies nor writes. Its scratch is reserved
+  once with `List.with_capacity(wmax)`, where `wmax` is the last merge width
+  below n (the widest left run), the lead's tweak. The design said "n/2"
+  for that width; the exact figure is the last power of two (16 based)
+  below n, which is 52 percent of n at 2,000,000 elements and under n
+  always.
+- `merge_runs_in_place`: swaps the left run into the scratch with
+  `rt.list_swap2(xs, lo + k, scratch, k)`, so the left slots hold
+  placeholders, then swaps each element of the merge into place, the right
+  run's by `rt.list_swap(xs, w, j)` inside the list and the left run's by
+  `rt.list_swap2(xs, w, scratch, i)`. Both cursors move forward, so a slot
+  is written only after its element has been consumed; the placeholders are
+  never read (the merge reads `xs[j]` only before j is consumed and
+  `scratch[i]` only while i < left), and the scratch's slots grow by
+  `scratch.push(xs[0])` only until it holds `left`, one counted retain a
+  width, released when the scratch is dropped.
+- Measurement (bench/results/sortip-swap2-2026-10-25.md, the same probe and
+  method): instructions against `sort` go from step 2's 1.12, 1.42 and 1.18
+  to **1.06, 1.18 and 1.07** on 2M Ints, Strs and UInt8, and against step 2
+  to 0.95, 0.83 and 0.91. Extra RSS goes 14.3 to 8.0 MB (Ints), 22.7 to
+  16.0 MB (Strs) and 1.7 to 1.1 MB (UInt8), because the reservation does
+  not double as the scratch fills. Strs wall 0.95 to 0.54 s against
+  `sort`'s 0.72 (indicative, load 8.9 to 13).
+- **No per-type merge choice is needed.** The design expected a few percent
+  of loss on Ints and UInt8, where a counted move counts nothing; the swap
+  merge is 5 and 9 percent cheaper there, because step 2's move still pays
+  the element store's drop and retain calls and two bounds checks while a
+  swap is two loads and two stores. The open option the design left is
+  therefore closed by the numbers, not by an untested mechanism.
+- The keyed form's cycle permutation now rotates each cycle with
+  `rt.list_swap` transpositions (one swap a cycle step, the visited index
+  set to itself so it is never followed again) instead of a held element
+  and counted writes, so it counts nothing either; it also makes the
+  receiver unique first, with the same one counted write. Measured against
+  the held-element rotation in the same binary: Strs instructions 3,742.8M
+  to 3,707.2M (0.99) and wall 0.97 to 0.80 s, Ints and UInt8 within half a
+  percent. The keyed forms are 1.08, 1.07 and 1.09 times `sort_by` (from
+  step 2's 1.12, 1.09 and 1.12).
+- Tests: 41 in the module (two new: the keyed form with a shared receiver,
+  and cycles of length 2, 3 and 5 permuting the receiver), 41 pass on arm64
+  and LLVM; the prelude corpus and the Go parity run pass unchanged.
+- Gate: ds-gate-base, the 41 tests on arm64 and LLVM, the prelude corpus,
+  the Go parity run and the crypto_op probe via internal/stdtest, the wasm
+  goldens (std/native is compiled into them), `go test -short`, and the
+  fixed point (std/native is in the fixed point set).
+- **No seed is needed for step 3b.** The seed only has to lower an
+  intrinsic that xo's own build reaches
+  (`gotchas/seed-older-than-intrinsics.md`), and `xo refs
+  List.sort_in_place --dir=compiler` (the same for `sort_in_place_by`)
+  returns only the declaration, while `xo refs List.sort` returns 181
+  references there, so no code under compiler/ calls either form. Checked
+  directly: `scripts/bootstrap-xo.sh` with the released 0.31.0 seed (it
+  knows no `list_swap2`) built s2 and s3 and s3 ran a hello program, and
+  the tree's own fixed point gave s1 = s2 = s3. The s2/s3 difference that
+  probe reports is expected: with the released seed as s1, s2 is 0.31.0's
+  code generation and s3 the tree's.
+
 ## Consequences
 
-- Memory, unique receiver: at most n/2 elements of scratch, and step 3 keeps
-  that scratch (it holds references, never copies of a string's text, so on
-  Strs it is the same 22.7 MB step 2 measured, not `sort`'s 80.0), against
-  5n for `sort` today (76.3 MB at 2,000,000 Strs). Shared receiver: 2n, the
-  same as `sort`, because the copy is the point.
-- Instructions: the half buffer measured 1.48 times the index sort; with
-  the swap intrinsic the moves stop counting, which is where 62 percent
-  of SymMerge's time went, and the projection is about the index sort's
-  count at 3n rather than 5n of memory. That projection is measured, not
-  assumed, before step 3 lands.
+- Memory, unique receiver: the scratch is reserved at the widest left run's
+  width, the last power of two (16 based) below n, which is 52 percent of n
+  at 2,000,000 and under n always; measured 8.0 MB on Ints and 16.0 MB on
+  Strs (0.20 of `sort`'s 80.0), against 5n for `sort` today. Shared
+  receiver: 2n, the same as `sort`, because the copy is the point.
+- Instructions: measured, not projected: 1.06, 1.18 and 1.07 times `sort`'s
+  on 2M Ints, Strs and UInt8 (bench/results/sortip-swap2-2026-10-25.md),
+  down from step 2's 1.12, 1.42 and 1.18; the count the moves paid is gone
+  and what remains is the half-buffer shape's placeholder traffic. The
+  keyed form is 1.08, 1.07 and 1.09 times `sort_by`.
 - spec/std.md gains the two signatures in section 2.3's mutating block
   and the stability promise for the in-place forms, in the same commit
   as the implementation; std/prelude.xo keeps its declarations beside

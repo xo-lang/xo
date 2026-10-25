@@ -514,8 +514,8 @@ fn (xs: List[T]) sort_by[K: Ord, E, fx: Effects](key: fn(T) -> K ! E uses fx) ->
 /// A stable sort of the receiver itself (decision 0374): it returns
 /// nothing, and a list another binding shares is copied first the way
 /// `push` and `set` copy one, so the other holder keeps its order. A
-/// uniquely owned list is sorted in its own array with at most half a list
-/// of scratch, where `sort` builds a whole second list.
+/// uniquely owned list is sorted in its own array with a scratch under one
+/// list, where `sort` builds a whole second list.
 fn (var xs: List[T]) sort_in_place()
 fn (var xs: List[T]) sort_in_place_by[K: Ord, E, fx: Effects](key: fn(T) -> K ! E uses fx) -> () ! E uses fx
 fn (xs: List[T]) group_by[K: Hash, E, fx: Effects](key: fn(T) -> K ! E uses fx) -> List[(K, List[T])] ! E uses fx

@@ -3391,6 +3391,26 @@ test "list_sort_in_place: strings sort by their text" {
   expect(xs == ["Apple", "apple", "fig", "pear"])
 }
 
+test "list_sort_in_place_by: a list another binding shares is copied first" {
+  var a = [3, 1, 2]
+  let b = a
+  a.sort_in_place_by(fn(x) { x })
+  expect(a == [1, 2, 3])
+  expect(b == [3, 1, 2])
+}
+
+test "list_sort_in_place_by: cycles of every length permute the elements" {
+  var xs = [5, 4, 3, 2, 1, 0]
+  xs.sort_in_place_by(fn(x) { -x })
+  expect(xs == [5, 4, 3, 2, 1, 0])
+  var ys = [1, 2, 3, 4, 5, 6, 7]
+  ys.sort_in_place_by(fn(x) { x % 3 })
+  expect(ys == [3, 6, 1, 4, 7, 2, 5])
+  var zs = [1, 2, 3, 4, 5]
+  zs.sort_in_place_by(fn(x) { x % 5 })
+  expect(zs == [5, 1, 2, 3, 4])
+}
+
 test "list_sort_in_place: agrees with sort on a longer list" {
   var xs: List[Int] = []
   for i in 0..200 {

@@ -1459,18 +1459,23 @@ fn list_sort[T: Ord](xs: List[T]) -> List[T] {
   a
 }
 
-/// A stable sort of xs in its own array, by less (decision 0374): runs of
-/// 16 by insertion, then bottom up merges that copy the left run into
-/// scratch (kept at the width it needs, so at most half the list) and
-/// write the merge back from lo, so an element never exists in two arrays
-/// and the list keeps the array it came with. Merge order is stable: the
-/// right run's element goes first only when less, and a pair of runs
-/// already in order is left alone.
+/// A stable sort of xs in its own array, by less (decision 0374 step 3b):
+/// runs of 16 by insertion, then bottom up merges that swap the left run
+/// into a placeholder scratch and swap every element of the merge back, so
+/// no element is ever counted or released and the list keeps the array it
+/// came with. Merge order is stable: the right run's element goes first
+/// only when less, and a pair of runs already in order is left alone.
 fn merge_sort_in_place[T](var xs: List[T], less: fn(T, T) -> Bool) {
   let n = xs.len()
   if n < 2 {
     return
   }
+  // the swaps write the receiver's array as raw words and the element
+  // store's copy-on-write is what a counted write goes through, so the
+  // list is made unique first with one counted element write
+  // (gotchas/list-swap-bypasses-copy-on-write.md)
+  let first = xs[0]
+  xs[0] = first
   var lo = 0
   while lo < n {
     let hi = if lo + 16 < n { lo + 16 } else { n }
@@ -1487,7 +1492,13 @@ fn merge_sort_in_place[T](var xs: List[T], less: fn(T, T) -> Bool) {
     }
     lo = hi
   }
-  var scratch: List[T] = []
+  // the widest left run a merge moves out is the last width below n; the
+  // scratch gets that much room once, so filling it does not reallocate
+  var wmax = 16
+  while wmax * 2 < n {
+    wmax *= 2
+  }
+  var scratch: List[T] = List.with_capacity(wmax)
   var width = 16
   while width < n {
     var lo2 = 0
@@ -1509,20 +1520,25 @@ fn merge_sort_in_place[T](var xs: List[T], less: fn(T, T) -> Bool) {
   }
 }
 
-/// xs[lo..mid) and xs[mid..hi) merged inside xs's own array: the left run
-/// is copied into scratch first, then the merge writes back from lo, so an
-/// element is overwritten only after it has been moved. The right run's
-/// element goes first only when less, which keeps the order stable, and
-/// whatever is left of the right run is already in place.
+/// xs[lo..mid) and xs[mid..hi) merged inside xs's own array (decision 0374
+/// step 3b): the left run is swapped into scratch, whose every slot holds a
+/// copy of xs[0] until a swap replaces it, and the merge then swaps each
+/// element into place, so every element move is one swap and nothing is
+/// counted or released. Both cursors move forward, so a slot is only
+/// written after its element has been consumed, and the copies the swaps
+/// leave in the scratch are released when the scratch is dropped. The right
+/// run's element goes first only when less, which keeps the order stable,
+/// and whatever is left of the right run is already in place.
 fn merge_runs_in_place[T](var xs: List[T], var scratch: List[T], lo: Int, mid: Int, hi: Int, less: fn(T, T) -> Bool) {
   let left = mid - lo
+  // a placeholder an element is one counted retain, once a width, not once
+  // a merge
+  while scratch.len() < left {
+    scratch.push(xs[0])
+  }
   var k = 0
   while k < left {
-    if k < scratch.len() {
-      scratch[k] = xs[lo + k]
-    } else {
-      scratch.push(xs[lo + k])
-    }
+    rt.list_swap2(xs, lo + k, scratch, k)
     k += 1
   }
   var i = 0
@@ -1530,16 +1546,16 @@ fn merge_runs_in_place[T](var xs: List[T], var scratch: List[T], lo: Int, mid: I
   var w = lo
   while i < left && j < hi {
     if less(xs[j], scratch[i]) {
-      xs[w] = xs[j]
+      rt.list_swap(xs, w, j)
       j += 1
     } else {
-      xs[w] = scratch[i]
+      rt.list_swap2(xs, w, scratch, i)
       i += 1
     }
     w += 1
   }
   while i < left {
-    xs[w] = scratch[i]
+    rt.list_swap2(xs, w, scratch, i)
     i += 1
     w += 1
   }
@@ -1554,14 +1570,19 @@ fn list_sort_in_place[T: Ord](var xs: List[T]) {
 
 /// list_sort_by's sort in place: the keys are computed once, the indices
 /// are sorted by them, and the elements are then put where their indices
-/// say one cycle at a time, so the elements move inside the receiver
-/// instead of into a second array (a cycle needs one held element, not a
-/// list).
+/// say one cycle at a time with swaps, so the elements move inside the
+/// receiver instead of into a second array and no move counts or releases
+/// (decision 0374 step 3b).
 fn list_sort_in_place_by[T, K: Ord, E, fx: Effects](var xs: List[T], key: fn(T) -> K ! E uses fx) -> () ! E uses fx {
   let n = xs.len()
   if n < 2 {
     return
   }
+  // the cycle swaps write the receiver's array as raw words, so make the
+  // list unique first with one counted element write
+  // (gotchas/list-swap-bypasses-copy-on-write.md)
+  let first = xs[0]
+  xs[0] = first
   var keys: List[K] = []
   for x in xs {
     keys.push(key(x)?)
@@ -1571,23 +1592,19 @@ fn list_sort_in_place_by[T, K: Ord, E, fx: Effects](var xs: List[T], key: fn(T) 
     idx.push(i)
   }
   merge_sort_in_place(idx, fn(a, b) { keys[a] < keys[b] })
+  // idx[k] is the position the element at k comes from; a cycle of it is
+  // rotated with one swap a step, and each visited index is set to itself
+  // so it is never followed again
   var k = 0
   while k < n {
-    if idx[k] != k {
-      let held = xs[k]
-      var cur = k
-      while true {
-        let nxt = idx[cur]
-        if nxt == k {
-          xs[cur] = held
-          idx[cur] = cur
-          break
-        }
-        xs[cur] = xs[nxt]
-        idx[cur] = cur
-        cur = nxt
-      }
+    var cur = k
+    while idx[cur] != k {
+      let nxt = idx[cur]
+      rt.list_swap(xs, cur, nxt)
+      idx[cur] = cur
+      cur = nxt
     }
+    idx[cur] = cur
     k += 1
   }
 }

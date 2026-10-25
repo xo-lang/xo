@@ -77,3 +77,29 @@ steps: the backends that lower it first (a compiler only change, which
 any seed builds, since no std code calls it yet), then its use in std
 once a seed that knows it exists (owner approval to bump and cut, per
 decision 0216).
+
+## The boundary: the seed only needs what xo's own build reaches (2026-10-25)
+
+A std change that calls a new intrinsic does not necessarily wait for a
+seed. The rule is per reached call, not per intrinsic and not per file: the
+seed fails only when it has to compile or link a call to an intrinsic it
+cannot lower inside the code xo itself is built from. A function in std
+that uses the intrinsic but that no code under compiler/ reaches is not
+compiled by the seed's xo, and an older seed builds the tree.
+
+Observed with decision 0374 step 3b: `List.sort_in_place` and
+`sort_in_place_by` in std/native/prelude.xo call `rt.list_swap` and
+`rt.list_swap2`, and the released 0.31.0 seed (which knows neither
+`list_swap2` nor a two list swap) built the tree. `scripts/bootstrap-xo.sh`
+with 0.31.0 as s1 built s2 and s3, and s3 ran a hello program; the normal
+fixed point on the same tree, with the tree's own bin/xo as s1, gave
+s1 = s2 = s3. The check before holding a std change for a seed is
+`xo refs List.METHOD --dir=compiler`: it returns only the declaration when
+nothing in compiler/ calls the method (`xo refs List.sort` returns 181
+references there, so an empty result is a real absence of callers, not a
+tool miss).
+
+Do not generalize the other way: an intrinsic reached from std code that
+xo's own modules import *and call* (the http.xo, case_fold16 and Windows
+import rows above) still needs the seed first.
+
