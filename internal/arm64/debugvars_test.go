@@ -187,6 +187,12 @@ func TestDebugInfoSameCode(t *testing.T) {
 			}
 			bad := 0
 			for name, body := range bins[1] {
+				// a function nothing reaches is one brk (the hollow pass,
+				// decision 0371): the DWARF readers in a build without
+				// debug information
+				if body == "brk\tX\n" {
+					continue
+				}
 				with, ok := bins[0][name]
 				if ok && with == body {
 					continue
