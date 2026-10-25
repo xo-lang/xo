@@ -372,10 +372,12 @@ func TestReleaseTracebackDebugInfo(t *testing.T) {
 			b, _ := exec.Command("nm", bin).Output()
 			return string(b)
 		}
-		if strings.Contains(syms(rel), "dwline") {
+		// parse_info reads .debug_info: the readers, not the small
+		// accessors (find, inline_chain) that stay linked
+		if strings.Contains(syms(rel), "dwline.parse") {
 			t.Errorf("the release program links the DWARF readers")
 		}
-		if !strings.Contains(syms(di), "dwline") {
+		if !strings.Contains(syms(di), "dwline.parse") {
 			t.Errorf("the --debug-info=on program has no DWARF readers")
 		}
 	}
