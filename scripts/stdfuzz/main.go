@@ -1,9 +1,10 @@
 // Command stdfuzz compares the three backends on the same seeded random
 // inputs through pure std functions: it generates one Xo program that
-// prints a line per case, runs it with `xo run --backend=arm64`,
-// `--backend=llvm` and `--backend=go`, and compares the outputs line by
-// line. A difference is a finding, not a bug to fix here: the report names
-// the case and its source, and -only re-runs just that case.
+// prints a line per case, builds and runs it on arm64, llvm and go (all
+// three at once, at most three at a time: 2026-10-25, they were one after
+// another and a seed took about nine minutes), and compares the outputs
+// line by line. A difference is a finding, not a bug to fix here: the
+// report names the case and its source, and -only re-runs just that case.
 //
 //	go run ./scripts/stdfuzz                  # seed 1, 200 cases per area
 //	go run ./scripts/stdfuzz -seed=7 -n=500
@@ -34,6 +35,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/xo-lang/xo/internal/xotool"
@@ -221,48 +223,22 @@ func main() {
 	backends := splitList(*backendFlag)
 	outs := make(map[string][]string, len(backends))
 	failed := map[string]string{}
-	for _, b := range backends {
+	// The backends build and run concurrently, at most three at a time
+	// (2026-10-25: one after another, a seed of all areas took about ten
+	// minutes on the 0372 critical path). They share only the generated
+	// program, which is written before any of them starts, and their
+	// outputs are compared after all finish, so a report and its exit
+	// status are the same as before.
+	runs := runConcurrently(backends, func(_ int, b string) backendRun {
 		ctx, cancel := context.WithTimeout(context.Background(), *timeout)
-		env := append(os.Environ(), "XO_STD="+filepath.Join(root, "std"))
-		if *release && isReleaseBackend(b) {
-			bin := filepath.Join(dir, "prog-"+b)
-			if runtime.GOOS == "windows" {
-				bin += ".exe"
-			}
-			build := exec.CommandContext(ctx, xo, buildArgs(b, bin, dir)...)
-			build.Env = env
-			bout, berr := build.CombinedOutput()
-			if berr != nil {
-				failed[b] = "build: " + firstLines(string(bout), 4)
-				cancel()
-				continue
-			}
-			run := exec.CommandContext(ctx, bin)
-			run.Env = env
-			out, err := run.Output()
-			cancel()
-			if err != nil {
-				msg := err.Error()
-				if ee, ok := err.(*exec.ExitError); ok {
-					msg = firstLines(string(ee.Stderr), 4)
-				}
-				failed[b] = msg
-			}
-			outs[b] = lines(string(out))
-			continue
+		defer cancel()
+		return runBackend(ctx, xo, root, dir, b, *release)
+	})
+	for i, b := range backends {
+		outs[b] = runs[i].out
+		if runs[i].fail != "" {
+			failed[b] = runs[i].fail
 		}
-		cmd := exec.CommandContext(ctx, xo, "run", "--backend="+b, dir)
-		cmd.Env = env
-		out, err := cmd.Output()
-		cancel()
-		if err != nil {
-			msg := err.Error()
-			if ee, ok := err.(*exec.ExitError); ok {
-				msg = firstLines(string(ee.Stderr), 4)
-			}
-			failed[b] = msg
-		}
-		outs[b] = lines(string(out))
 	}
 
 	if len(failed) > 0 {
@@ -308,6 +284,75 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Println("no divergence")
+}
+
+// backendRun is one backend's case lines, or the message that it did not
+// finish.
+type backendRun struct {
+	out  []string
+	fail string
+}
+
+// runBackend builds the generated program with -release when b is a native
+// backend and release is on, else runs it through `xo run`, and returns the
+// lines it printed.
+func runBackend(ctx context.Context, xo, root, dir, b string, release bool) backendRun {
+	env := append(os.Environ(), "XO_STD="+filepath.Join(root, "std"))
+	if release && isReleaseBackend(b) {
+		bin := filepath.Join(dir, "prog-"+b)
+		if runtime.GOOS == "windows" {
+			bin += ".exe"
+		}
+		build := exec.CommandContext(ctx, xo, buildArgs(b, bin, dir)...)
+		build.Env = env
+		bout, err := build.CombinedOutput()
+		if err != nil {
+			return backendRun{fail: "build: " + firstLines(string(bout), 4)}
+		}
+		run := exec.CommandContext(ctx, bin)
+		run.Env = env
+		out, err := run.Output()
+		if err != nil {
+			return backendRun{fail: exitMessage(err)}
+		}
+		return backendRun{out: lines(string(out))}
+	}
+	cmd := exec.CommandContext(ctx, xo, "run", "--backend="+b, dir)
+	cmd.Env = env
+	out, err := cmd.Output()
+	if err != nil {
+		return backendRun{fail: exitMessage(err)}
+	}
+	return backendRun{out: lines(string(out))}
+}
+
+// exitMessage is a run's failure as a report line: the error, or the first
+// lines a program that exited nonzero wrote to stderr.
+func exitMessage(err error) string {
+	if ee, ok := err.(*exec.ExitError); ok {
+		return firstLines(string(ee.Stderr), 4)
+	}
+	return err.Error()
+}
+
+// runConcurrently runs run for every backend, at most three at a time, and
+// returns the results in backend order. Three is the cap: the two native
+// builds and the Go run, which is what a seed starts.
+func runConcurrently(backends []string, run func(i int, b string) backendRun) []backendRun {
+	results := make([]backendRun, len(backends))
+	sem := make(chan struct{}, 3)
+	var wg sync.WaitGroup
+	for i, b := range backends {
+		wg.Add(1)
+		go func(i int, b string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			results[i] = run(i, b)
+		}(i, b)
+	}
+	wg.Wait()
+	return results
 }
 
 func fatal(err error) {

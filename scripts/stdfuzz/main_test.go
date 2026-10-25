@@ -2,7 +2,9 @@ package main
 
 import (
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 // TestCompare: equal values agree, a different value diverges, and a
@@ -26,6 +28,48 @@ func TestCompare(t *testing.T) {
 	}
 	if _, same := compare(backends, values, "c"); same {
 		t.Error("case c: a missing line reported no divergence")
+	}
+}
+
+// TestRunConcurrently: every backend runs, at most three overlap, the
+// results come back in backend order, and a failure keeps its message.
+func TestRunConcurrently(t *testing.T) {
+	backends := []string{"arm64", "llvm", "go", "arm64", "llvm"}
+	var mu sync.Mutex
+	live, peak := 0, 0
+	got := runConcurrently(backends, func(i int, b string) backendRun {
+		mu.Lock()
+		live++
+		if live > peak {
+			peak = live
+		}
+		mu.Unlock()
+		time.Sleep(20 * time.Millisecond)
+		mu.Lock()
+		live--
+		mu.Unlock()
+		if i == 3 {
+			return backendRun{fail: "backend 3 failed"}
+		}
+		return backendRun{out: []string{b + "|" + strings.Repeat("0", i)}}
+	})
+	if peak > 3 {
+		t.Fatalf("peak concurrency %d, want at most 3", peak)
+	}
+	if peak < 2 {
+		t.Fatalf("peak concurrency %d, want the backends to overlap", peak)
+	}
+	for i, b := range backends {
+		if i == 3 {
+			if got[i].fail != "backend 3 failed" || got[i].out != nil {
+				t.Errorf("result %d: %+v, want only its failure", i, got[i])
+			}
+			continue
+		}
+		want := b + "|" + strings.Repeat("0", i)
+		if len(got[i].out) != 1 || got[i].out[0] != want || got[i].fail != "" {
+			t.Errorf("result %d: %+v, want %q", i, got[i], want)
+		}
 	}
 }
 

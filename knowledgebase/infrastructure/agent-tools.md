@@ -185,8 +185,10 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   summaries print the length, an order sensitive mix and the first and last
   entries in iteration order, because a Map is insertion ordered (core.md
   2.4, decision 0091) and that order is the contract a rewrite can break
-  (the Go backend is the oracle); it runs them on arm64, LLVM
-  and the Go backend, and compares the outputs line by line. A divergence
+  (the Go backend is the oracle); it builds and runs
+  arm64, LLVM and the Go backend at once (at most three at a time; since
+  2026-10-25, when they ran one after another and a seed of every area took
+  about nine minutes), and compares the outputs line by line. A divergence
   prints the case, its source and a `-only=NAME` rerun; report it, do not
   fix it in the tool. `-seed` and `-n` widen a run, `-area` narrows it, and
   `-keep=/DIR` keeps the generated program. `-release` builds the arm64 and
