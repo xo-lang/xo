@@ -1,5 +1,31 @@
 # prelude changes
 
+## 2026-10-24: perf: quote decodes the two byte rune inline and asks a bitmap whether a rune is printable
+
+- Kind: perf
+- Commit: this commit
+- Found by: the profile of bench/perf/unicode's quote workload (414
+  samples): raw.decode 22.2 percent flat, is_print 21.3 percent
+  cumulative with 15.0 of it in the ranges search
+- Go reference: strconv's quoteWith uses utf8.DecodeRuneInString, which
+  answers the two byte case inline, and unicode.IsPrint, whose Latin-1
+  table is what the bitmaps here extend
+- Test: TestUnicodeTables (it regenerates the tables and compares); the
+  runes, json, jsonencode, jsondecode, strings, strconv, template and csv
+  corpora on arm64 and LLVM; the wasm goldens; the full fixed point
+- Timing: bench/results/quote-decode-2026-10-24.md
+
+`unicode.decode2` answers the two byte sequence, the whole of Greek,
+Cyrillic and accented Latin text, without calling `raw.decode`: a lead
+byte in 0xC2 to 0xDF with a continuation byte in 0x80 to 0xBF gives the
+rune of size 2, and a bad or missing continuation gives U+FFFD of size
+1, raw.xo's rules with no call; 3 and 4 byte sequences still decode as
+before. `unicode.is_print` takes the runes U+0800 to U+FFFF from a
+bitmap generated with the other tables, 7,936 bytes, and keeps the
+ranges search for the astral planes. The quote row goes 108.4 M to
+102.1 M instructions with the decode (0.941) and to 97.9 M with the
+bitmap (0.962), 0.903 of the base of both; the checksum is identical.
+
 ## 2026-10-24: perf: the Rune class binary search is unchecked, and is_letter folds its ASCII cases
 
 - Kind: perf
