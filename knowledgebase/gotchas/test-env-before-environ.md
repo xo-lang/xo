@@ -21,3 +21,10 @@ Fix: put a test's own settings after the environment,
 variable the test depends on, not only the one it changes (bc352852d).
 To reproduce a tier failure, run the test with the gate's exports
 (`XO_BACKEND_CACHE=off XO_CLI=...`).
+
+Again 2026-10-24: cmd/xo TestCacheStatsKeysHashes failed in tier 14 ("keys:
+6 hashed writes and 0 hashed pack entries") for the same reason: it set
+`XO_BACKEND_CACHE_DIR` but not `XO_BACKEND_CACHE`, so the gate's `off`
+stored nothing (only the build dir's objects were written). It passed
+alone. Fixed with `setenv(t, "XO_BACKEND_CACHE", "on")` (497e473dd). Any
+test that needs the cache to store sets it explicitly.
