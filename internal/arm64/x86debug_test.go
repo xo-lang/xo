@@ -75,6 +75,11 @@ func TestAmd64DebugInfoSameCode(t *testing.T) {
 				t.Fatalf("no functions found in the assembly")
 			}
 			for name, want := range without {
+				// the runtime's functions that call the DWARF readers differ
+				// by the branch on dwline.built() (decision 0354's addendum)
+				if !programFunc(name) {
+					continue
+				}
 				got, ok := with[name]
 				if !ok {
 					t.Fatalf("%s is in the build without debug information, not in the one with it", name)

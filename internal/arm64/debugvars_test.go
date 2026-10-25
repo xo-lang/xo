@@ -166,6 +166,8 @@ func TestDebugInfoSameCode(t *testing.T) {
 	// a callee's name: identical functions are merged under a hash name in
 	// one build and not the other
 	sym := regexp.MustCompile(`_xo_\w+`)
+	// pc-relative addresses of data and functions (adr): layout
+	adr := regexp.MustCompile(`(adr\t\w+), #-?\d+`)
 	// funcs: each function's instructions by its symbol, as otool -tV
 	// prints them, without addresses
 	funcs := func(t *testing.T, bin string) map[string]string {
@@ -192,6 +194,7 @@ func TestDebugInfoSameCode(t *testing.T) {
 				l = addr.ReplaceAllString(l[17:], "X")
 				l = page.ReplaceAllString(l, "$1, N")
 				l = sym.ReplaceAllString(l, "S")
+				l = adr.ReplaceAllString(l, "$1, N")
 				body.WriteString(l)
 				body.WriteByte('\n')
 			}
@@ -205,8 +208,14 @@ func TestDebugInfoSameCode(t *testing.T) {
 			t.Parallel()
 			var bins [2]map[string]string
 			for i, flags := range [][]string{nil, {"--debug-info=off"}} {
-				// no inlining in either: which calls are inlined follows the
-				// call graph, and the DWARF readers are callers in one build
+				// STOPGAP: no inlining in either build. Which calls are
+				// inlined follows the call graph (call-site counts and
+				// callee costs, arm64/inline.xo), and the DWARF readers are
+				// callers in the build with debug information only, so with
+				// inlining on, main differs by what it inlines
+				// (gotchas/same-code-test-inline-hole.md): "debug
+				// information changes what is inlined" is not tested until
+				// the dwline.built() fold moves after the inliner.
 				res, err := xotool.Build([]string{dir}, xotool.Options{Backend: xotool.BackendArm64, Flags: flags, Env: []string{"XO_PASSES=-inline"}})
 				if err != nil {
 					t.Fatalf("build: %v", err)
