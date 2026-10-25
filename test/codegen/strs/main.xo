@@ -37,7 +37,22 @@ fn count_long(hs: List[Str]) -> Int {
   n
 }
 
+const CS: Bytes = b"  hello, world"
+const CP: Bytes = b"  "
+
+// A view of a constant (cut_prefix's of CS) is the constant's immortal
+// object: its release at the end of the expression is no call (isel.xo
+// Release, rcpair.xo imm_post; DS-2, 2026-10-24: one release call a cut).
+fn cut_len(n: Int) -> Int {
+  // arm64: -"bl\t_xo_h" -"bl _xo_h"
+  var t = 0
+  for _ in 0..n {
+    t += (CS.cut_prefix(CP) ?? b"").len()
+  }
+  t
+}
+
 fn main(os: Os) {
   let hs = ["Bearer abc", "x", "Bearer", "nobody"]
-  os.stdio.println("${token_len(hs)} ${count_nobody(hs)} ${count_long(hs)}")
+  os.stdio.println("${token_len(hs)} ${count_nobody(hs)} ${count_long(hs)} ${cut_len(hs.len())}")
 }

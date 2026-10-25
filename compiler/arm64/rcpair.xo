@@ -103,3 +103,107 @@ fn leaf_key(f: ssa.Func, v: Int) -> Str {
 fn rc_pure(x: ssa.Value) -> Bool {
   (x.op == ssa.Op.Tuple && x.args.is_empty()) || x.op is ssa.Op.Field | ssa.Op.Const | ssa.Op.Add | ssa.Op.Sub | ssa.Op.Mul | ssa.Op.And | ssa.Op.Or | ssa.Op.Xor | ssa.Op.Not | ssa.Op.Neg | ssa.Op.Shl | ssa.Op.Shr | ssa.Op.Eq | ssa.Op.Ne | ssa.Op.Lt | ssa.Op.Le | ssa.Op.Gt | ssa.Op.Ge | ssa.Op.Tag | ssa.Op.Payload | ssa.Op.IntConv | ssa.Op.IntToFloat
 }
+
+/// Whether value v of f is an immortal object as the inlined code shows
+/// it (isel.xo's Release emits nothing for one: a view of a constant
+/// string, cut_prefix's, which the reference counting saw only as a
+/// call's result and released through a call each iteration; DS-2,
+/// 2026-10-24; the release stays in the SSA, which the verifier checks): a Str or Bytes constant, rt.str_view of one (the same object), a
+/// variant of nothing but such fields, a variant's payload whose every
+/// variant of that tag holds one, or a block parameter every edge passes
+/// one (rc.xo imm_at's rules after inlining).
+fn imm_post(f: ssa.Func, v: Int, depth: Int, walking: List[Int]) -> Bool {
+  if depth > 16 || v < 0 {
+    return false
+  }
+  let x = f.values[v]
+  match x.op {
+    Const => {
+      if let S(_) = x.aux {
+        return true
+      }
+      if let Bs(_) = x.aux {
+        return true
+      }
+      return false
+    }
+    Call => return aux_str(x.aux) == "rt.str_view" && x.args.len() >= 1 && imm_post(f, x.args[0], depth + 1, walking)
+    Variant => {
+      for a in x.args {
+        if !imm_post(f, a, depth + 1, walking) {
+          return false
+        }
+      }
+      return true
+    }
+    Payload => {
+      if let P(tag: tg, field: fd) = x.aux {
+        return payload_imm(f, x.args[0], tg, fd, depth + 1, walking)
+      }
+      return false
+    }
+    Param => {
+      if x.block <= 0 || walking.contains(v) {
+        return x.block > 0
+      }
+      let (pi, es) = param_edges(f, v)
+      if pi < 0 || es.is_empty() {
+        return false
+      }
+      for e in es {
+        let args = f.edges[e].args
+        if pi >= args.len() || !imm_post(f, args[pi], depth + 1, walking + [v]) {
+          return false
+        }
+      }
+      return true
+    }
+    _ => return false
+  }
+}
+
+/// Whether field fd of every variant of tag tg that value o can be is
+/// immortal (imm_post's Payload: a variant of another tag never reaches
+/// the payload's read).
+fn payload_imm(f: ssa.Func, o: Int, tg: Int, fd: Int, depth: Int, walking: List[Int]) -> Bool {
+  if depth > 16 {
+    return false
+  }
+  let x = f.values[o]
+  if x.op == ssa.Op.Variant {
+    if aux_int(x.aux) != tg {
+      return true
+    }
+    return fd < x.args.len() && imm_post(f, x.args[fd], depth + 1, walking)
+  }
+  if x.op == ssa.Op.Param && x.block > 0 {
+    if walking.contains(o) {
+      return true
+    }
+    let (pi, es) = param_edges(f, o)
+    if pi < 0 || es.is_empty() {
+      return false
+    }
+    for e in es {
+      let args = f.edges[e].args
+      if pi >= args.len() || !payload_imm(f, args[pi], tg, fd, depth + 1, walking + [o]) {
+        return false
+      }
+    }
+    return true
+  }
+  false
+}
+
+/// The index of block parameter v among its block's parameters and the
+/// block's incoming edges.
+fn param_edges(f: ssa.Func, v: Int) -> (Int, List[Int]) {
+  let b = f.values[v].block
+  var pi = -1
+  for (i, p) in f.blocks[b].params.indexed() {
+    if p == v {
+      pi = i
+    }
+  }
+  (pi, f.blocks[b].preds)
+}
