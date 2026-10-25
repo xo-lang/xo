@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -28,6 +29,8 @@ func TestAmd64DebugInfoSameCode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	local := regexp.MustCompile(`\.L[A-Za-z_][A-Za-z0-9_]*`)
+	digits := regexp.MustCompile(`^[0-9]+:$`)
 	for _, name := range []string{"http_server", "fault_unwind", "float_libm", "json_text"} {
 		t.Run(name, func(t *testing.T) {
 			dir := filepath.Join("..", "llvm", "testdata", "golden", name)
@@ -57,8 +60,10 @@ func TestAmd64DebugInfoSameCode(t *testing.T) {
 				for _, l := range strings.Split(string(text), "\n") {
 					switch {
 					case strings.HasPrefix(l, "\t") && !strings.HasPrefix(l, "\t."):
-						fns[cur] = append(fns[cur], l)
-					case !strings.HasPrefix(l, "\t") && !strings.HasPrefix(l, ".") && strings.HasSuffix(l, ":"):
+						// a local label's name carries the function's number
+						// and a hash of the part: not part of the code
+						fns[cur] = append(fns[cur], local.ReplaceAllString(l, ".L"))
+					case !strings.HasPrefix(l, "\t") && !strings.HasPrefix(l, ".") && strings.HasSuffix(l, ":") && !digits.MatchString(l):
 						cur = strings.TrimSuffix(l, ":")
 					}
 				}
