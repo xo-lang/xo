@@ -668,6 +668,9 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   c.set_dbg = o.dbg
   c.set_error_args = o.error_args
   c.set_trace = o.trace_support
+  // dwline.built(): the DWARF readers are in a program that has DWARF
+  // (xo asm prints assembly and keeps them)
+  c.dwarf = o.cmd == "asm" || (!o.strip && debug_info_eff(o, o.release && o.cmd != "test") != "off")
   // --race: the builder declares a windows program's race exports
   // (native/llrt/cabi_race)
   c.race = o.race

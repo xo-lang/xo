@@ -119,6 +119,11 @@ pub struct Checker {
   pub set_dbg: Int = -1
   pub set_error_args: Int = -1
   pub set_trace: Int = -1
+  /// Whether the program carries DWARF (decision 0355, 0354's addendum):
+  /// a call of native/llrt/dwline.built() is this, so a build without
+  /// debug info (--release's default, -s) neither builds nor links the
+  /// DWARF readers, which could find nothing.
+  pub dwarf: Bool = true
   pub det: Bool = false
   /// --race (decision 0273): set by the driver; on windows the builder
   /// declares std/native/llrt/cabi_race.xo's exports, the functions the

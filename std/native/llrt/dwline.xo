@@ -120,9 +120,18 @@ fn u16(p: Int) -> Int { rt.mem_load(p, 0, 2) }
 
 fn u32(p: Int) -> Int { rt.mem_load(p, 0, 4) }
 
+/// Whether the program has DWARF to read (the compiler folds a call of
+/// this to the build's debug info: a `--release` build without
+/// `--debug-info`, or `-s`, has none, so the readers are neither built nor
+/// linked, decision 0354's addendum). True where the compiler does not.
+pub fn built() -> Bool { true }
+
 /// The program's line table within [lo, hi) (its text), or none.
 pub fn load(lo: Int, hi: Int) -> Lines {
   var out = Lines{}
+  if !built() {
+    return out
+  }
   match target.os {
     TargetOs.Linux => load_elf(lo, hi, out)
     TargetOs.Darwin => load_dsym(lo, hi, out)
@@ -1560,6 +1569,9 @@ pub struct Vars {
 /// The program's variables (none, with why, when its DWARF cannot be
 /// read).
 pub fn vars_load() -> Vars {
+  if !built() {
+    return Vars{why: "no DWARF (a release or stripped build)"}
+  }
   var ok = false
   var s = Sects{}
   var bias = 0
@@ -1911,6 +1923,9 @@ pub fn frame_locals(v: Vars, pc: Int, rg: Regs) -> List[Str] {
 /// not set yet), else 0.
 pub fn frame_vars(v: Vars, pc: Int, rg: Regs) -> List[(Str, Int, Str, Int)] {
   var out: List[(Str, Int, Str, Int)] = []
+  if !built() {
+    return out
+  }
   var seen: List[Str] = []
   let fi = fn_at_pc(v, pc)
   if fi < 0 {

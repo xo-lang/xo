@@ -750,6 +750,10 @@ fn (var b: Builder) target_test(e: Expr) -> Bool? {
     // a deterministic run's scheduler (decision 0350)
     return Some(b.m.det)
   }
+  if b.llrt_flag_call(e, "native/llrt/dwline", "built") {
+    // the DWARF readers: in a program that has DWARF (Checker.dwarf)
+    return Some(b.c.dwarf)
+  }
   if b.recorder_call(e) {
     // the execution trace's recorder: in a development build, and in a
     // release build only with --trace-support (decision 0240)
