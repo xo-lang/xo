@@ -25,7 +25,8 @@ pub fn cost_notes(m: Module, keep: List[Str]) -> List[CostNote] {
   var out: List[CostNote] = []
   var nwords: Map[Int, Int] = {}
   for f in m.funcs {
-    if f.blocks.is_empty() || f.file.is_empty() {
+    // a clone (specialize.xo, decision 0368) repeats its original's lines
+    if f.blocks.is_empty() || f.file.is_empty() || f.name.contains("#spec") {
       continue
     }
     var file = ""
@@ -642,7 +643,12 @@ fn type_label(m: Module, t: Int) -> Str {
 /// Whether a call's name is base, or base with a generic instantiation
 /// suffix (`prelude.str_split_where[()]`): a prelude method with an effect
 /// parameter carries its type arguments in the call's name.
-fn named(n: Str, base: Str) -> Bool {
+fn named(n0: Str, base: Str) -> Bool {
+  // a call of a clone (`callee#specN`, decision 0368) names the callee
+  let n = match n0.find("#spec") {
+    Some(i) => n0[0..i]
+    None => n0
+  }
   if n == base {
     return true
   }

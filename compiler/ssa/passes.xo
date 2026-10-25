@@ -1326,5 +1326,6 @@ pub fn (var b: Builder) run_passes() {
   b.fold_known_calls()
   b.add_landings()
   b.cleanup_all()
+  b.specialize_args()
   b.insert_rc()
 }

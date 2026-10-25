@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+spaces 9
+spaces again 10
+letters 10
+captured 7
+picked 2
+nobody 2 ann 2 zed 0
+built 1
+bump 3 4
+depth 8
+--- stderr

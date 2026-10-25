@@ -1932,6 +1932,10 @@ fn lower(os: Os, o: Opts, var c: check.Checker, strip: Bool, root: Str, tests: B
   // the reference counting's optional pass (rc.xo chain_pads)
   b.m.passes_off = passes_off(os)
   b.m.rc_check = (os.env.get("XO_RC_CHECK") ?? "") == "1"
+  // a callee per constant argument (decision 0368), before the reference
+  // counting so its caches see the clones as functions
+  b.specialize_args()
+  t = lap(os, o.phases, "specialize_args", t)
   let rk = rc_cached(os, b, release, emit_jobs(os), o.phases, lazy)
   t = lap(os, o.phases, "insert_rc", t)
   Lowered{b: b, tu: tu, t: t, rc_keys: rk}

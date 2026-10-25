@@ -1,0 +1,206 @@
+// Specialization of a callee for a call site's constant argument
+// (decision 0368): a call that passes a closure of nothing or a literal
+// to a function the inliner does not take calls a copy of that function
+// in which the parameter is the constant, so the passes after it see the
+// constant: arm64's devirtualize turns `f(r)` into a direct call the
+// inliner takes, fold_consts and str_eq_const read the literal. LLVM gets
+// the same from its interprocedural constant propagation.
+
+/// The largest callee, in SSA values, that a call site's constant clones.
+const SPEC_MAX_VALUES = 600
+
+/// The most clones one module gets.
+const SPEC_MAX_CLONES = 256
+
+/// Clones callees for the constant arguments of their call sites
+/// (specialize_args, decision 0368); every call with the same callee,
+/// parameter, and constant calls one clone. Off under
+/// XO_PASSES=-specialize_args and on wasm.
+pub fn (var b: Builder) specialize_args() {
+  if b.m.passes_off.contains("specialize_args") || b.wasm {
+    return
+  }
+  var clones: Map[Str, Int] = {}
+  // closures first, then literals with the budget left: the literals at
+  // most call sites are fault locations a callee only passes on
+  b.specialize_pass(clones, true)
+  b.specialize_pass(clones, false)
+}
+
+/// One pass of specialize_args over the module and the clones it adds:
+/// closure arguments when closures, else literals.
+fn (var b: Builder) specialize_pass(var clones: Map[Str, Int], closures: Bool) {
+  // the clones too, as they are added: a constant a clone passes on
+  // (str_split_where's closure, which it hands to where_spans) clones the
+  // next callee; SPEC_MAX_CLONES bounds the chain
+  var fi = 0
+  while fi < b.m.funcs.len() {
+    if clones.len() >= SPEC_MAX_CLONES {
+      return
+    }
+    for bi in 0..b.m.funcs[fi].blocks.len() {
+      for v in b.m.funcs[fi].blocks[bi].instrs {
+        let x = b.m.funcs[fi].values[v]
+        if x.op != Op.Call {
+          continue
+        }
+        let name = match x.aux {
+          S(s) => s
+          None | I(..) | F(..) | B(..) | Bs(..) | P(..) => ""
+        }
+        let ci = b.m.func_at.get(name) ?? -1
+        if ci < 0 || ci == fi || !spec_callee(b.m.funcs[ci]) {
+          continue
+        }
+        for (k, a) in x.args.indexed() {
+          let key = spec_key(b.m.funcs[fi], a)
+          if key.is_empty() || key.starts_with("fn ") != closures || !spec_param(b.m.funcs[ci], k) {
+            continue
+          }
+          if !closures && !spec_compared(b.m, ci, k, 3) {
+            continue
+          }
+          let ck = "${name}#${k}=${key}"
+          var c = clones.get(ck) ?? -1
+          if c < 0 {
+            if clones.len() >= SPEC_MAX_CLONES {
+              break
+            }
+            c = b.m.add_clone(spec_clone(b.m.funcs[ci], k, b.m.funcs[fi].values[a], "${name}#spec${clones.len()}"))
+            clones[ck] = c
+          }
+          b.m.funcs[fi].values[v].aux = Aux.S(s: b.m.funcs[c].name)
+          // one constant parameter a call: the clone's other parameters
+          // stay parameters
+          break
+        }
+      }
+    }
+    fi += 1
+  }
+}
+
+/// Whether f may be cloned: a plain function with a body of at most
+/// SPEC_MAX_VALUES values that is not called through values, not an entry
+/// or an export, has no captures, and does not call itself.
+fn spec_callee(f: Func) -> Bool {
+  if f.blocks.is_empty() || f.indirect || f.entry || !f.export.is_empty() || !f.captures.is_empty() || f.values.len() > SPEC_MAX_VALUES {
+    return false
+  }
+  for bl in f.blocks {
+    for v in bl.instrs {
+      let x = f.values[v]
+      if x.op == Op.Call {
+        if let S(s) = x.aux {
+          if s == f.name {
+            return false
+          }
+        }
+      }
+    }
+  }
+  true
+}
+
+/// Whether parameter k of f may become a constant: an entry parameter
+/// that is not a `var` parameter.
+fn spec_param(f: Func, k: Int) -> Bool {
+  k < f.blocks[0].params.len() && !f.var_params.contains(k)
+}
+
+/// Whether function fi of m compares parameter k: an operand of str.eq or
+/// str.cmp, or of an Eq or Ne, in fi or in a callee it passes the
+/// parameter to (depth levels down: walk passes its `want` to by_for,
+/// which compares it). A literal there folds or compares in line; one that
+/// is only passed on, a fault location, gains nothing from a clone.
+fn spec_compared(m: Module, fi: Int, k: Int, depth: Int) -> Bool {
+  let f = m.funcs[fi]
+  if k >= f.blocks[0].params.len() {
+    return false
+  }
+  let p = f.blocks[0].params[k]
+  for bl in f.blocks {
+    for v in bl.instrs {
+      let x = f.values[v]
+      if !x.args.contains(p) {
+        continue
+      }
+      let name = match x.aux {
+        S(s) => s
+        None | I(..) | F(..) | B(..) | Bs(..) | P(..) => ""
+      }
+      if x.op is Op.Eq | Op.Ne || (x.op == Op.Call && name is "str.eq" | "str.cmp") {
+        return true
+      }
+      if depth > 0 && x.op == Op.Call {
+        let ci = m.func_at.get(name) ?? -1
+        if ci >= 0 && ci != fi && !m.funcs[ci].blocks.is_empty() {
+          for (j, a) in x.args.indexed() {
+            if a == p && spec_compared(m, ci, j, depth - 1) {
+              return true
+            }
+          }
+        }
+      }
+    }
+  }
+  false
+}
+
+/// The key of value a of f as a constant argument: a closure of nothing
+/// (its function's name) or a Str or Bytes literal; "" for anything else.
+/// Int and Bool literals are not keys: the runtime passes them at most
+/// call sites (budget.charge's count), they used up the clone budget on
+/// functions no faster for it, and the inliner folds the small callees'
+/// (2026-10-24).
+fn spec_key(f: Func, a: Int) -> Str {
+  let x = f.values[a]
+  if x.op == Op.Closure && x.args.is_empty() {
+    return match x.aux {
+      S(s) => "fn ${s}"
+      None | I(..) | F(..) | B(..) | Bs(..) | P(..) => ""
+    }
+  }
+  if x.op != Op.Const {
+    return ""
+  }
+  match x.aux {
+    S(s) => "s${s.len()} ${s}"
+    Bs(bs) => "b${bs.len()} ${bs.to_hex()}"
+    None | I(..) | B(..) | F(..) | P(..) => ""
+  }
+}
+
+/// f with parameter k the constant c (a copy of c's operation at the start
+/// of the entry block, every use of the parameter its use); the parameter
+/// stays, unused, so the calls keep their arguments.
+fn spec_clone(f: Func, k: Int, c: Value, name: Str) -> Func {
+  var g = f
+  g.name = name
+  // its own cache keys (the original's name another body)
+  g.ckey = ""
+  let p = g.blocks[0].params[k]
+  let nv = g.values.len()
+  g.values.push(Value{op: c.op, ty: c.ty, aux: c.aux, args: [], block: 0})
+  g.blocks[0].instrs = [nv] + g.blocks[0].instrs
+  for i in 0..g.values.len() {
+    for j in 0..g.values[i].args.len() {
+      if g.values[i].args[j] == p {
+        g.values[i].args[j] = nv
+      }
+    }
+  }
+  for e in 0..g.edges.len() {
+    for j in 0..g.edges[e].args.len() {
+      if g.edges[e].args[j] == p {
+        g.edges[e].args[j] = nv
+      }
+    }
+  }
+  for d in 0..g.dbinds.len() {
+    if g.dbinds[d].value == p {
+      g.dbinds[d].value = nv
+    }
+  }
+  g
+}

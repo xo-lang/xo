@@ -1,8 +1,7 @@
 # 0368: specialize a function for a constant argument (a closure of nothing, or a literal) at its call site
 
-Status: Proposed, step 1 passed (Xo Lang 1, 2026-10-24: the hand clones
-beat both bars; see "Step 1 result"); the pass awaits the owner's
-approval to build. Nothing built.
+Status: Accepted (owner, 2026-10-24 ~18:15, after step 1 passed; built
+the same day, see "As built").
 
 ## Context
 
@@ -73,6 +72,69 @@ was within 1.2), callbacks for 19% faster (the bar 10%). What callbacks
 for keeps against LLVM (1.36 of its wall at 1.06 of its instructions) is
 not the loop shape (decision 0367's step 1 found that free on M-series);
 to be profiled with the pass built.
+
+## As built (2026-10-24)
+
+compiler/ssa specialize.xo, `Builder.specialize_args`, run after the
+cleanup and before the reference counting (in run_passes, and in xo's
+lower after passes_off is read), so the reference counting's and the
+inliner's per-function caches see the clones as ordinary functions; off
+under XO_PASSES=-specialize_args and on wasm. It applies to every
+backend but wasm (LLVM gets clones too, which its own propagation would
+have found).
+
+- Candidates: an `Op.Call` to a function of the module (func_at) that is
+  not the caller, has a body of at most SPEC_MAX_VALUES (600) values, is
+  not called through values (indirect), not an entry or an export, has
+  no captures, and does not call itself; the parameter an entry
+  parameter that is not `var`; one constant parameter a call.
+- Constants: a Closure with no captures (keyed by its function's name),
+  or a Str or Bytes literal (keyed by its bytes) when the callee compares
+  that parameter: an operand of str.eq, str.cmp, Eq or Ne, in the callee
+  or in a callee it passes the parameter to, three levels down (walk
+  passes `want` to by_for, which compares it). Int and Bool literals are
+  not candidates: the runtime passes them at most call sites
+  (budget.charge's count), and with them the first build spent all 256
+  clones on runtime functions with no gain; Str literals that a callee
+  only passes on (fault locations: llrt_str_slice_chk's) likewise spent
+  the budget until spec_compared.
+- Closures first, then literals, each over the module and the clones as
+  they are added (a clone's constant reaches its own calls:
+  str_split_where's closure clones where_spans). At most SPEC_MAX_CLONES
+  (256) a module; one clone per (callee, parameter, constant), named
+  `callee#specN`, its cache key cleared.
+- The clone: the callee's copy with the constant's operation at the
+  start of the entry block and every use of the parameter replaced; the
+  parameter stays (unused), so call sites keep their arguments. A
+  retain or release of the constant is of an immortal value (rc.xo
+  imm_value: a Str constant, a closure of nothing).
+- bench/perf/unicode gets 5 live clones (where_spans, trim_where,
+  map_runes twice, dwline inline_chain). Unquiet instructions, the same
+  xo with the pass off as A: unicode fieldsfunc 0.842, trimfunc 0.801,
+  upper 1.0; callbacks for 0.740, any and ifor 1.0; json small and maps
+  1.0.
+- Measured (2026-10-24, after the full tier): quiet `xo bench --ab`, one
+  xo, the pass off (XO_PASSES=-specialize_args) as A, 15 rounds, load 3:
+
+  | row | wall | instructions |
+  |---|---|---|
+  | unicode fieldsfunc | 0.823 (0.804 to 0.832) | 0.842 |
+  | unicode trimfunc | 0.852 (0.829 to 0.86) | 0.800 |
+  | callbacks for | 0.816 (0.8 to 0.839) | 0.740 |
+  | json small / maps | 0.989 / 0.989 | 1.0 / 1.0 |
+  | bytessearch index | 1.012, noise | 1.0 |
+  | unrelated: rsa sign2048, digest sha256_big, text time_fmt and float_fmt, sort ints and strs | 0.996 to 1.003, all within noise | 0.999 to 1.0 |
+
+  xo's own __text (s2 of the fixed point): 59,747,540 with the pass,
+  59,670,844 without, +76,696 bytes (+0.13%). The gate: the ssa and arm64
+  xo tests, the codegen patterns, every arm64 golden and the amd64 cross
+  builds, every LLVM golden with Go parity, every stdtest corpus on arm64
+  and LLVM, cmd/xo, the fixed point (no inline fallbacks), the Docker
+  amd64 sample (54 of 54), and golden specialize_args (a closure down a
+  chain, a compared literal two calls down, non-constant arguments, a var
+  parameter, recursion, a closure with captures). `xo vet --cost` skips
+  the clones (they repeat their originals' lines) and names a call of a
+  clone by its callee (compiler/ssa cost.xo).
 
 ## Measurement plan
 

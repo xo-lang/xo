@@ -1,0 +1,63 @@
+// A callee cloned for a call site's constant argument (decision 0368): a
+// closure of nothing passed down a chain of calls, a literal a callee
+// compares two calls down, the same callees called with values that are
+// not constants, a var parameter, a recursive callee, a closure with
+// captures, and one constant at two call sites (one clone).
+
+/// Counts the runes of s for which f holds, through a second function.
+fn count_where(s: Str, f: fn(Rune) -> Bool) -> Int { count_in(s, f) }
+
+fn count_in(s: Str, f: fn(Rune) -> Bool) -> Int {
+  var n = 0
+  for r in s.runes() {
+    if f(r) {
+      n += 1
+    }
+  }
+  n
+}
+
+/// How many names equal want, two calls down.
+fn find(names: List[Str], want: Str) -> Int { find_in(names, want) }
+
+fn find_in(names: List[Str], want: Str) -> Int {
+  var n = 0
+  for x in names {
+    if x == want {
+      n += 1
+    }
+  }
+  n
+}
+
+/// A var parameter: not specialized.
+fn bump(var xs: List[Int], k: Int) -> Int {
+  xs.push(k)
+  xs.len()
+}
+
+/// Recursive: not cloned.
+fn depth(s: Str, n: Int) -> Int {
+  if n == 0 { s.len() } else { depth(s, n - 1) + 1 }
+}
+
+fn main(os: Os) {
+  let text = "a b  c\td e\u{3000}f ÄÖ x9 y"
+  os.stdio.println("spaces ${count_where(text, fn(r) { r.is_space() })}")
+  os.stdio.println("spaces again ${count_where(text + " ", fn(r) { r.is_space() })}")
+  os.stdio.println("letters ${count_where(text, fn(r) { r.is_letter() })}")
+  // a closure with captures stays a value
+  let k = os.env.args().len()
+  os.stdio.println("captured ${count_where(text, fn(r) { Int(r) > 100 + k })}")
+  // a value that is not a constant
+  let pick = if k > 50 { fn(r: Rune) -> Bool { r.is_digit() } } else { fn(r: Rune) -> Bool { r.is_upper() } }
+  os.stdio.println("picked ${count_where(text, pick)}")
+  let names = ["ann", "bob", "nobody", "ann", "nobody", "carol"]
+  os.stdio.println("nobody ${find(names, "nobody")} ann ${find(names, "ann")} zed ${find(names, "zed")}")
+  var who = "bo"
+  who = "${who}b"
+  os.stdio.println("built ${find(names, who)}")
+  var xs = [1, 2]
+  os.stdio.println("bump ${bump(xs, 3)} ${bump(xs, 4)}")
+  os.stdio.println("depth ${depth("abc", 5)}")
+}

@@ -704,6 +704,17 @@ fn (m: Module) heap_in(t: Int, seen: List[Int]) -> Bool {
 // ---------------------------------------------------------------------------
 // Functions
 
+/// Adds f, a function made after the front end (a clone, specialize.xo);
+/// returns its index.
+pub fn (var m: Module) add_clone(f: Func) -> Int {
+  let i = m.funcs.len()
+  if !m.func_at.contains(f.name) {
+    m.func_at[f.name] = i
+  }
+  m.funcs.push(f)
+  i
+}
+
 /// Adds a function with an entry block whose parameters have the given
 /// types; returns its index.
 pub fn (var m: Module) new_func(name: Str, params: List[Int], results: List[Int]) -> Int {

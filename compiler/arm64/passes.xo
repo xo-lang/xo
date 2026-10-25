@@ -14,6 +14,9 @@ pub fn passes() -> List[Str] {
     // module, before code generation
     "inline",
     "devirtualize",
+    // compiler/ssa specialize.xo (decision 0368): a callee per call
+    // site constant argument (a closure of nothing or a literal)
+    "specialize_args",
     "chain_pads",
     // compiler/ssa uniqvar.xo (decision 0322): a `var` List parameter
     // every call passes unique skips its entry copy-on-write check
