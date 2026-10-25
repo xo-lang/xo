@@ -1,5 +1,21 @@
 # std/time changes
 
+## 2026-10-25: perf: a duration's text is read with unchecked byte reads (Duration.parse, a decoded JSON Duration)
+
+- Kind: perf
+- Commit: this commit
+- Found by: the asm diff of text.parse_duration against LLVM on bench/perf/text dur_parse (a bounds check at each `b[i]` under `i < n`, n at most the length by space_start's contract, which the native range pass cannot relate)
+- Go reference: time/format.go ParseDuration (go1.26.1), unchanged semantics
+- Test: duration_parse_edges, parse_edge_scalars, text_table, std_error_display and codex_gaps on arm64; stdfuzz -area=time,strconv seeds 1, 7, 11 at 1500 lines per backend, no divergence
+
+The reads of b[0], b[len - 1], the sign, the lone `0`, the number start, the
+`.` and unit_of's bytes use raw.byte_at on the bytes' address, as the digit
+loops already did: each is under `i < n` with n at most the length. A text
+with a space or a non ASCII end byte still trims through strings.space_end and
+space_start, whose results stay within [lo, hi]. bench/perf/text dur_parse,
+instructions on arm64: 3.449 G to 3.276 G (0.950; LLVM 3.154 G, so 1.039 of
+LLVM's, was 1.093), the checksum unchanged.
+
 ## 2026-10-25: perf: an RFC 3339 time's fraction and digits are read in single passes (Time.parse_rfc3339, a decoded JSON Time)
 
 - Kind: perf

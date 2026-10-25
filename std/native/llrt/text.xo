@@ -230,9 +230,9 @@ pub fn append_duration(out: Str, d: Int) -> Str {
 
 /// The value of a unit of a duration's text (b from i to j): its
 /// nanoseconds, or 0.
-fn unit_of(b: Bytes, i: Int, j: Int) -> Int {
+fn unit_of(pa: Int, i: Int, j: Int) -> Int {
   let k = j - i
-  let c = Int(b[i])
+  let c = raw.byte_at(pa, i)
   if k == 1 {
     if c == 115 {
       return 1000000000
@@ -246,7 +246,7 @@ fn unit_of(b: Bytes, i: Int, j: Int) -> Int {
     return 0
   }
   if k == 2 {
-    if Int(b[i + 1]) != 115 {
+    if raw.byte_at(pa, i + 1) != 115 {
       return 0
     }
     if c == 110 {
@@ -260,8 +260,8 @@ fn unit_of(b: Bytes, i: Int, j: Int) -> Int {
     }
     return 0
   }
-  if k == 3 && Int(b[i + 2]) == 115 {
-    let c1 = Int(b[i + 1])
+  if k == 3 && raw.byte_at(pa, i + 2) == 115 {
+    let c1 = raw.byte_at(pa, i + 1)
     // "µs" (U+00B5) or "μs" (U+03BC)
     if (c == 0xC2 && c1 == 0xB5) || (c == 0xCE && c1 == 0xBC) {
       return 1000
@@ -304,16 +304,16 @@ pub fn parse_duration(s: Str) -> Int? {
   let bl = b.len()
   var i = 0
   var n = bl
-  if bl == 0 || !plain_end(Int(b[0])) || !plain_end(Int(b[bl - 1])) {
+  if bl == 0 || !plain_end(raw.byte_at(pa, 0)) || !plain_end(raw.byte_at(pa, bl - 1)) {
     i = strings.space_end(b, 0, bl)
     n = strings.space_start(b, i, bl)
   }
   var neg = false
-  if i < n && (b[i] == 45 || b[i] == 43) {
-    neg = b[i] == 45
+  if i < n && (raw.byte_at(pa, i) == 45 || raw.byte_at(pa, i) == 43) {
+    neg = raw.byte_at(pa, i) == 45
     i += 1
   }
-  if n - i == 1 && b[i] == 48 {
+  if n - i == 1 && raw.byte_at(pa, i) == 48 {
     return Some(0)
   }
   if i == n {
@@ -322,7 +322,7 @@ pub fn parse_duration(s: Str) -> Int? {
   // the negated total
   var nd = 0
   while i < n {
-    if !num_start(Int(b[i])) {
+    if !num_start(raw.byte_at(pa, i)) {
       return None
     }
     // the negated integer part; each digit's byte read once, and no
@@ -370,7 +370,7 @@ pub fn parse_duration(s: Str) -> Int? {
     // the negated fraction and its scale
     var nf = 0
     var scale = 1.0
-    if i < n && b[i] == 46 {
+    if i < n && raw.byte_at(pa, i) == 46 {
       i += 1
       let pf = i
       var overflow = false
@@ -411,7 +411,7 @@ pub fn parse_duration(s: Str) -> Int? {
     if i == us {
       return None
     }
-    let unit = unit_of(b, us, i)
+    let unit = unit_of(pa, us, i)
     if unit == 0 {
       return None
     }
