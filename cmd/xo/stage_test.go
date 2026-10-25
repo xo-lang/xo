@@ -401,7 +401,12 @@ func TestBuildCarriesNoBuildPaths(t *testing.T) {
 	for _, c := range []struct {
 		name  string
 		flags []string
-	}{{"plain", nil}, {"release", []string{"--release"}}, {"release-debug", []string{"--release", "--debug-info=on"}}} {
+	}{{"plain", nil}, {"release", []string{"--release"}}, {"release-debug", []string{"--release", "--debug-info=on"}}, {"llvm", []string{"--backend=llvm"}}, {"llvm-release", []string{"--backend=llvm", "--release", "--debug-info=on"}}} {
+		if strings.HasPrefix(c.name, "llvm") {
+			if _, err := exec.LookPath("clang"); err != nil {
+				continue
+			}
+		}
 		bin := filepath.Join(dir, c.name)
 		var out, errOut bytes.Buffer
 		if code := run(t, append(append([]string{"build"}, c.flags...), "-o", bin, app), &out, &errOut); code != 0 {
