@@ -1211,50 +1211,32 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       g.set(v, "zext i16 ${m} to i64")
     }
     "rt.case_fold16" => {
-      // decision 0373's intrinsic, expanded to the two eight byte SWAR
-      // words of std/native/llrt/obj.xo fold_copy_lo: this backend's fold
-      // is the arithmetic clang already widens, so its code is the code it
-      // had while the std loop itself stepped by eight bytes
+      // decision 0373's intrinsic as a <16 x i8> sequence: the lane's own
+      // arithmetic, not the eight byte SWAR words std writes for a backend
+      // without a lane. Written as the words first, step 2's std loop cost
+      // LLVM 1.7 percent more instructions on the ASCII rows, because
+      // clang no longer widened them itself once the loop stepped 16 bytes
+      // (bench/results/case-fold16-2026-10-25.md)
       let mode = match g.f.values[x.args[3]].aux {
         I(n) => n
         _ => 1
       }
       let lower = mode != 2
-      let ones = 0x0101010101010101
-      let under = (if lower { 0x80 - 65 } else { 0x80 - 97 }) * ones
-      let over = (if lower { 0x7f - 90 } else { 0x7f - 122 }) * ones
       // the dst and src operands are raw addresses (Ints), so each needs
       // the inttoptr that raw_at gives before a getelementptr: an i64
       // operand where clang wants a ptr is what it refused
       // ("%v0 defined with type 'i64' but expected 'ptr'", 2026-10-25)
-      let dp0 = g.raw_at(x.args[0], x.args[2])
-      let sp0 = g.raw_at(x.args[1], x.args[2])
-      let dp1 = g.def("getelementptr i8, ptr ${dp0}, i64 8")
-      let sp1 = g.def("getelementptr i8, ptr ${sp0}, i64 8")
-      // the masks are decimal and the high-bit one is the low seven's
-      // complement: LLVM's IR takes no hexadecimal integer literal (clang:
-      // "floating point constant invalid for type" for 0x7f7f..., and
-      // 0x8080808080808080 written positively does not fit an i64), 2026-10-25
-      let low7 = 9187201950435737471
-      let high = g.def("xor i64 ${low7}, -1")
-      var j = 0
-      while j < 2 {
-        let sp = if j == 0 { sp0 } else { sp1 }
-        let dp = if j == 0 { dp0 } else { dp1 }
-        let w = g.def("load i64, ptr ${sp}, align 1")
-        let t = g.def("and i64 ${w}, ${low7}")
-        let a = g.def("add i64 ${t}, ${under}")
-        let b = g.def("add i64 ${t}, ${over}")
-        let nb = g.def("xor i64 ${b}, -1")
-        let nw = g.def("xor i64 ${w}, -1")
-        var letters = g.def("and i64 ${a}, ${nb}")
-        letters = g.def("and i64 ${letters}, ${high}")
-        letters = g.def("and i64 ${letters}, ${nw}")
-        let k = g.def("lshr i64 ${letters}, 2")
-        let v0 = if lower { g.def("add i64 ${w}, ${k}") } else { g.def("sub i64 ${w}, ${k}") }
-        g.emit("store i64 ${v0}, ptr ${dp}, align 1")
-        j += 1
-      }
+      let dp = g.raw_at(x.args[0], x.args[2])
+      let sp = g.raw_at(x.args[1], x.args[2])
+      let c = g.def("load <16 x i8>, ptr ${sp}, align 1")
+      // d = c - first, wrapping, so the case is the unsigned range 0 to 25
+      // for exactly the letters, and no byte at 0x80 or above lands in it
+      // (the property ADR 0373 rests on)
+      let d = g.def("sub <16 x i8> ${c}, ${g.splat8(if lower { 65 } else { 97 })}")
+      let m = g.def("icmp ule <16 x i8> ${d}, ${g.splat8(26)}")
+      let delta = g.def("select <16 x i1> ${m}, <16 x i8> ${g.splat8(32)}, <16 x i8> zeroinitializer")
+      let r = if lower { g.def("add <16 x i8> ${c}, ${delta}") } else { g.def("sub <16 x i8> ${c}, ${delta}") }
+      g.emit("store <16 x i8> ${r}, ptr ${dp}, align 1")
     }
     "rt.bytes_eq16" | "rt.bytes_high16" => {
       let (_, d, _) = g.str_parts(g.op(x.args[0]))
@@ -1990,4 +1972,12 @@ fn (var g: Gen) chacha4(dst: Str, src: Str, st: Str) {
 /// v rotated left by k in each 32 bit lane (llvm.fshl).
 fn (var g: Gen) chacha_rotl(v: Str, k: Int) -> Str {
   g.def("call <4 x i32> @llvm.fshl.v4i32(<4 x i32> ${v}, <4 x i32> ${v}, <4 x i32> <i32 ${k}, i32 ${k}, i32 ${k}, i32 ${k}>)")
+}
+
+/// Sixteen copies of the byte v as a <16 x i8>: one insertelement into
+/// poison and a shufflevector of zeros, the shape bytes_eq16 uses for its
+/// constants (decision 0373's lane).
+fn (var g: Gen) splat8(v: Int) -> Str {
+  let e = g.def("insertelement <16 x i8> poison, i8 ${v}, i64 0")
+  g.def("shufflevector <16 x i8> ${e}, <16 x i8> poison, <16 x i32> zeroinitializer")
 }
