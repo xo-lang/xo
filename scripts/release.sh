@@ -285,6 +285,13 @@ echo "== darwin/arm64: the seed builds xo1" >&2
 run "$host_xo" build --backend=arm64 --std="$repo/std" "${stamp[@]}" -o "$darwin/bin/xo" compiler/xo >&2
 xo1="$darwin/bin/xo"
 run "$xo1" version >&2
+# the seed that built xo1 may predate --trimpath (decision 0354's addendum):
+# xo1 builds the shipped darwin/arm64 xo again, so no binary of the release
+# carries the paths of this checkout or of the home directory
+echo "== darwin/arm64: xo1 builds xo again (--trimpath, on by default)" >&2
+run "$xo1" build --backend=arm64 --std="$repo/std" "${stamp[@]}" -o "$darwin/bin/xo.next" compiler/xo >&2
+run mv "$darwin/bin/xo.next" "$darwin/bin/xo"
+xo1="$darwin/bin/xo"
 # no runtime packs since decision 0234: a program has no C runtime
 
 echo "== linux/arm64: xo1 cross builds xo1 (compiler/macho's ELF link, no cc)" >&2
@@ -310,6 +317,19 @@ elif [ "$win" = llvm ]; then
 		XO_LLVM_JOBS="${XO_RELEASE_WIN_JOBS:-4}" XO_LLVM_OPT=O2 \
 		run "$xo1" build --backend=llvm "${stamp[@]}" --targets=windows/amd64 \
 		-o "$(stage_of windows/amd64)/bin/xo.exe" compiler/xo >&2
+fi
+
+# no executable of the release holds the path of this checkout or of the
+# home directory (the build information's dir, the DWARF directories)
+if [ "$dry" != 1 ]; then
+	for f in "$darwin/bin/xo" "$darwin_amd64/bin/xo" "$linux_arm64/bin/xo" "$linux_amd64/bin/xo"; do
+		for p in "$repo" "$HOME"; do
+			if grep -aqF -- "$p" "$f"; then
+				echo "release.sh: $f holds the path $p (--trimpath)" >&2
+				exit 1
+			fi
+		done
+	done
 fi
 
 # sign the darwin executables with the Developer ID and notarize them in
