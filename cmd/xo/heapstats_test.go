@@ -11,26 +11,25 @@ import (
 )
 
 const heapStatsProg = `fn main(os: Os) {
-  // a single threaded loop of allocations and frees: the pops of blocks
-  // that were never counted when freed once drove the per class counts
-  // negative
-  var keep: List[Str] = []
-  for i in 0..20000 {
-    let s = "key${i}"
-    if i % 3 == 0 {
-      keep.push(s)
-    }
+  // 100000 Strs of a 32 byte class built and dropped single threaded:
+  // 100000 blocks (40 bytes each with the header) on the free list
+  var xs: List[Str] = []
+  for i in 0..100000 {
+    xs.push("key${i}")
   }
-  os.stdio.println("${keep.len()}")
+  os.stdio.println("${xs.len()}")
+  xs = []
+  os.stdio.println("${xs.len()}")
 }
 `
 
 var heapStatsLine = regexp.MustCompile(`on free lists (\d+) MB`)
 
 // TestHeapStatsFreeLists: XO_HEAPSTATS=1 reports the memory on the free
-// lists of a program that allocated and freed single threaded as a small
-// figure (the sum read the records' per class counts, which that mode
-// leaves alone, and printed 17592186044415 MB).
+// lists of a program that built and dropped 100000 Strs single threaded
+// as the 4 MB they are (the sum read the records' per class counts, which
+// that mode leaves alone: 0 MB here, and 17592186044415 MB when pops
+// outnumbered the counted frees).
 func TestHeapStatsFreeLists(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs a native program")
@@ -54,8 +53,8 @@ func TestHeapStatsFreeLists(t *testing.T) {
 			t.Fatalf("%s: no free list figure:\n%s", be, errb.String())
 		}
 		mb, _ := strconv.Atoi(m[1])
-		if mb > 64 {
-			t.Errorf("%s: %d MB on free lists of a program that allocated about 2 MB:\n%s", be, mb, errb.String())
+		if mb < 3 || mb > 8 {
+			t.Errorf("%s: %d MB on free lists, want about 4 (100000 blocks of 40 bytes):\n%s", be, mb, errb.String())
 		}
 	}
 }
