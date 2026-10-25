@@ -72,6 +72,38 @@ allocation and free fewer per Str).
 3. Go/no-go from the model: max RSS at 2M below 1.2 of Go's, hot Str
    benchmarks (bench/perf strings, json, maps) within noise.
 
+## Step 1 measured: the hand model (2026-10-25)
+
+A `ShortStr` of two Ints (up to 15 bytes of ASCII, big-endian, the length in
+the low byte of the second word; `derive Eq, Hash, Ord`) against `Str` for
+the keys `"key${n}"` (4 to 10 bytes), N = 2,000,000, `--release` xo, max
+RSS from `/usr/bin/time -l` (the wall is one unquiet run, not a result):
+
+| Workload | Str | ShortStr | Change |
+|---|---|---|---|
+| a `List` of N keys, built and summed | 137.2 MB | 57.2 MB | -58% (Go: 76.8 MB) |
+| a `Map` of N keys, then N lookups | 227.7 MB | 147.7 MB | -35% |
+| the list sorted (`sort()`) | 201.3 MB | 89.3 MB | -56% |
+
+So the memory side holds: 28.6 bytes a key in the list (16 for the value, the
+list's growth slack, the baseline 2.7 MB), under Go's 35.9, and the Map and
+sort peaks fall with it. The model does not show the cost: a struct of two
+Ints has no tag test, no `raw.data` and no object path, which is where the
+real implementation pays (every Str operation branches on the tag). The wall
+numbers (build 0.17 against 0.19 s, map 0.81 against 0.82 s) are inside one
+unquiet run; the sort (0.47 against 0.12 s) compares the Str sort with a
+generic `Ord` sort of integers and says nothing about the final design.
+
+Audit (step 2, counted not read): references to the Str layout or kind
+outside tests: compiler/ssa 210, compiler/arm64 48, compiler/llvm 26,
+std/native/llrt 134, std/native 151 (`xo refs` and grep for `Kind.Str`,
+`str_t(`, `"str.`, `S_HDR`, `str_at`, `str_len`, `is_str`); the SSA's string
+operations are `str.concat` (43 sites), `str.concat_int`, `str.of_bool`,
+`str.eq`, `str.cmp`, `str.concat_float`. The unknown with the most weight is
+`raw.data(s)`: every FFI, syscall and `use c` site takes the address of the
+text, which an inline Str does not have; it needs the spill rule above and
+an audit of the std/native callers.
+
 ## Alternatives
 
 - A headerless packed class for small strings (an 8 byte header with
