@@ -234,9 +234,7 @@ fn binfo_sources(c: check.Checker, root: Str, wd: Str) -> Map[Str, Str] {
   var sources: Map[Str, Str] = {}
   var std_lines: List[Str] = []
   let std_abs = abs_of(wd, c.std_root())
-  // std's path relative to the line root ("std/"), or "" when std is
-  // not under it
-  let std_rel = if std_abs.starts_with("${root}/") { "${std_abs.trim_prefix("${root}/")}/" } else { "" }
+  let std_parent = dir_name(std_abs)
   for f in c.files {
     let m = f.module
     if m < 0 || c.mods[m].is_std {
@@ -251,17 +249,15 @@ fn binfo_sources(c: check.Checker, root: Str, wd: Str) -> Map[Str, Str] {
       p = abs.trim_prefix("${root}/")
     }
     let h = crypto.sha256(f.src).to_hex()
-    // under the std directory (both paths cleaned: xo's std is
-    // bin/../std)
-    let clean_abs = abs_of(wd, f.path)
+    // under the std directory: an absolute path (cleaned: xo's std is
+    // bin/../std), or a relative one, which the checker names from the
+    // directory that holds std (std/native/x.xo)
+    var clean_abs = abs_of(wd, f.path)
+    if !is_abs_path(f.path) {
+      clean_abs = abs_of(std_parent, f.path)
+    }
     if clean_abs.starts_with("${std_abs}/") {
       std_lines.push("${clean_abs.trim_prefix("${std_abs}/")} ${h}")
-      continue
-    }
-    // the checker names a file under the line root by its path relative
-    // to the root (std/native/x.xo), whatever the working directory
-    if !std_rel.is_empty() && p.starts_with(std_rel) {
-      std_lines.push("${p.trim_prefix(std_rel)} ${h}")
       continue
     }
     sources[p] = h
