@@ -131,6 +131,9 @@ func TestDebugInfoSameCode(t *testing.T) {
 	}
 	addr := regexp.MustCompile(`0x[0-9a-f]+`)
 	page := regexp.MustCompile(`(adrp\t\w+), \d+`)
+	// a callee's name: identical functions are merged under a hash name in
+	// one build and not the other
+	sym := regexp.MustCompile(`_xo_\w+`)
 	// funcs: each function's instructions by its symbol, as otool -tV
 	// prints them, without addresses
 	funcs := func(t *testing.T, bin string) map[string]string {
@@ -156,6 +159,7 @@ func TestDebugInfoSameCode(t *testing.T) {
 			case name != "" && len(l) > 17 && l[16] == '\t':
 				l = addr.ReplaceAllString(l[17:], "X")
 				l = page.ReplaceAllString(l, "$1, N")
+				l = sym.ReplaceAllString(l, "S")
 				body.WriteString(l)
 				body.WriteByte('\n')
 			}
