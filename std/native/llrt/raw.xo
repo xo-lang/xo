@@ -181,6 +181,29 @@ pub fn decode(b: Bytes, i: Int) -> Int {
   (r << 3) | (k + 1)
 }
 
+/// decode of the two byte sequence at b[i] (n = b.len()), the one
+/// implementation of its rules: a lead byte in 0xC2 to 0xDF (below it
+/// are the overlong forms) with a continuation byte in 0x80 to 0xBF is
+/// one rune of size 2, and anything else is U+FFFD of size 1, as
+/// decode says. Two byte runes are the bulk of non-ASCII text (Greek,
+/// Cyrillic, accented Latin), and this answers them without decode's
+/// general setup: quote and case_append, the two loops that decode a
+/// rune at a time, both call it (2026-10-24: decode was 22 percent of
+/// the quote profile).
+pub fn decode2(b: Bytes, i: Int, n: Int) -> Int {
+  let c = Int(b[i])
+  if c >= 0xC2 && c <= 0xDF {
+    if i + 1 < n {
+      let c1 = Int(b[i + 1])
+      if c1 >= 0x80 && c1 <= 0xBF {
+        return ((((c & 0x1F) << 6) | (c1 & 0x3F)) << 3) | 2
+      }
+    }
+    return (0xFFFD << 3) | 1
+  }
+  decode(b, i)
+}
+
 /// utf8.DecodeRune of the bytes of b from i: the rune times 8 plus its
 /// size (U+FFFD and 0 at the end).
 pub fn bytes_decode(b: Bytes, i: Int) -> Int {

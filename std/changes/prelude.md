@@ -1,5 +1,32 @@
 # prelude changes
 
+## 2026-10-24: perf: quote calls scan.span only where a run can start, and the two byte decode is one function
+
+- Kind: perf
+- Commit: this commit
+- Found by: the quote profile above, where span was 32.1 percent
+  cumulative and half of that was its frame returning `i` unchanged for
+  every byte of a rune (a run of Greek text paid one call per rune)
+- Go reference: none: strconv's quote loop asks utf8.DecodeRuneInString
+  per rune and has no run scanner
+- Test: the strings, strconv, template, json, jsonencode, jsondecode,
+  runes and csv corpora on arm64 and LLVM; the wasm goldens; the full
+  fixed point
+- Timing: bench/results/quote-decode-2026-10-24.md
+
+`unicode.quote` tests the byte at `i` and calls `scan.span` only when it
+is a byte the loop keeps (0x20 to 0x7E other than `"` and `\`), so a
+run of non-ASCII runes costs no span call. The quote row goes 97.8 M to
+84.6 M instructions of the previous commit, 0.865, and 0.780 of the
+day's base. The two byte decode moved from `unicode.decode2` to
+`raw.decode2` so the rules live in one place, and `case_append`'s inline
+copy is gone: the inliner puts `decode2`'s fast path in both loops, and
+the 1.5 to 2.0 percent the case rows pay is the packed `(rune << 3) |
+size` form's shift and mask per rune, not a call (a tuple of rune and
+size is the next step there). A 16 byte `stops8` step for span, the
+fast path inside `raw.decode`, and a single-return `decode2` all
+measured worse and are not in the change.
+
 ## 2026-10-24: perf: quote decodes the two byte rune inline and asks a bitmap whether a rune is printable
 
 - Kind: perf

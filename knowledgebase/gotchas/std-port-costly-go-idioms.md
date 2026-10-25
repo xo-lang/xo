@@ -95,6 +95,16 @@ Two kinds, both fixed std-side:
 - Every port gets a timing row against Go's package next to its
   corpus (bench/results), so a slow port shows at once, not after a
   profile; profile with XO_PROF=cpu before rewriting.
+- Call a run scanner only where a run can start. `unicode.quote` called
+  `scan.span` at the top of every iteration, and for a byte that is not
+  kept (a control byte, `"`, `\`, or the lead byte of a rune) span
+  returns its `from` unchanged, so a run of Greek text paid one span
+  call per rune. Testing the byte at `i` first and calling span only for
+  a byte the loop keeps took the quote row from 97.8 M to 84.6 M
+  instructions, 0.865 (bench/results/quote-decode-2026-10-24.md). The
+  same profile says short runs do not pay for a wider step: a 16 byte
+  `stops8` step in span cost 4.6% on that workload, because the runs of
+  kept bytes are a few bytes long.
 - Planned helpers: zero-copy Bytes views (design note), fixed-size
   arrays (language poll), and `xo vet --cost` notes for per-iteration
   copies and allocations.

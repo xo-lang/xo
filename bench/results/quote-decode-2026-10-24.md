@@ -53,6 +53,64 @@ Against the base of both (`a0bb9076a`, the rune class index), the quote
 row goes 108,438,550 to 97,902,513, 0.903. The quote checksum is
 628,880,865 on all three builds, and classes' 129,070,000.
 
+## span: only call it where a run can start
+
+With the decode and is_print costs down, `scan.span` was the largest
+item left (32.1% cumulative). Half of that was its own frame: the loop
+called it at the top of every iteration, and for a byte that is not
+kept (a control byte, `"`, `\`, or the lead byte of a rune) span
+returned `i` unchanged. A run of Greek text therefore paid one span
+call per rune.
+
+`quote` now tests the byte at `i` first and calls `span` only when that
+byte is one it keeps (0x20 to 0x7E other than `"` and `\`), so a run of
+non-ASCII runes costs no span call at all.
+
+| workload | A (`70fd8f608`) | B | B/A | |
+|---|---|---|---|---|
+| quote | 97,803,799 | 84,612,888 | 0.865 | -13.5% |
+| lower_u (shared decode) | 3,045,759,419 | 3,105,330,564 | 1.020 | pack/unpack |
+| upper_u (shared decode) | 3,032,195,672 | 3,091,796,599 | 1.020 | pack/unpack |
+| eqlower (shared decode) | 8,061,818,568 | 8,181,290,168 | 1.015 | pack/unpack |
+| classes (control) | 434,075,174 | 434,047,292 | 1.000 | |
+| lint (control) | 28,534,345 | 28,533,946 | 1.000 | |
+
+From the base of the whole day (`a0bb9076a`) the quote row is
+108,438,550 to 84,612,888, 0.780.
+
+### One decoder, at a cost
+
+The two byte decode now lives once, as `raw.decode2`, and both loops
+that decode a rune at a time call it: `quote` and `case_append`.
+`case_append` had the case inline, and the shared form costs it 1.5 to
+2.0% on the three case rows (measured above).
+
+That 2% is not a call: the native inliner puts `decode2`'s fast path
+into both loops (the assembly of `unicode.case_append` has the `sub
+..., #194` lead byte test, and its only decode call is the fallback to
+`raw.decode` for 3 and 4 byte runes). It is the packed form: `decode2`
+returns `(rune << 3) | size` like `raw.decode`, so each non-ASCII rune
+pays a shift and a mask to unpack it, where the hand-inlined copy
+assigned the rune and its size directly. A helper returning the two
+values as a tuple would remove those two instructions if
+`fold_tuples` removes the tuple; that is the next step for these rows,
+not a second copy of the rules.
+
+### Where the profile is now, and two shapes that did not pay
+
+After the changes, span's 16 byte step was tried (two `stops8` words a
+pass, one compare and branch for sixteen bytes): quote 1.046, lower_u
+1.016, eqlower 1.012 against the same base, so it is reverted. The runs
+of kept bytes in mixed text are short, and the second word's load and
+`stops8` cost more than the loop overhead they save.
+
+Two other shapes of the shared decode were measured and rejected as
+worse: the two byte fast path inside `raw.decode` itself (quote 1.023,
+lower_u 1.077, because every 3 and 4 byte rune then pays the test, and
+`quote`/`case_append` pay a second call frame), and a single-return
+`decode2` (quote 1.005, lower_u 1.041, since the early returns are what
+let the inliner's fast path stay branch free).
+
 ## What the bitmap costs a program
 
 A program that calls `is_print` (the quote path) carries the 7,936 byte

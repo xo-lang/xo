@@ -333,26 +333,6 @@ pub fn is_space(r: Int) -> Bool {
 /// size; an invalid byte is U+FFFD of size 1 (raw.xo's).
 pub fn decode(b: Bytes, i: Int) -> Int { raw.decode(b, i) }
 
-/// decode with the two byte sequence, the common one in text of Greek,
-/// Cyrillic or accented Latin, answered inline (2026-10-24: raw.decode
-/// was 22 percent of the quote profile, a call per non-ASCII rune). The
-/// rules are raw.xo's: a lead byte below 0xC2 never begins a two byte
-/// sequence (they are the overlong forms), and a continuation byte
-/// outside 0x80 to 0xBF makes the sequence invalid.
-pub fn decode2(b: Bytes, i: Int, n: Int) -> Int {
-  let c = Int(b[i])
-  if c >= 0xC2 && c <= 0xDF {
-    if n - i > 1 {
-      let c1 = Int(b[i + 1])
-      if c1 >= 0x80 && c1 <= 0xBF {
-        return ((((c & 0x1F) << 6) | (c1 & 0x3F)) << 3) | 2
-      }
-    }
-    return (0xFFFD << 3) | 1
-  }
-  raw.decode(b, i)
-}
-
 // The text operations build their result in a Str, appended in place
 // through the runtime's rs_* intrinsics (the result is unique): the bytes
 // that stay as they are go over in runs (rt.rs_append_bytes, which also
@@ -378,30 +358,16 @@ fn case_append(out: Str, b: Bytes, from: Int, lower: Bool) -> Str {
   var i = scan.span(b, from, 0)
   while i < n {
     // The loop re-enters only at a non-ASCII byte (scan.span returns the
-    // end of an ASCII run), so the two byte runes of Latin, Greek and
-    // Cyrillic, the bulk of mixed text, are decoded here rather than in
-    // raw.decode's general path. The malformed cases are the same: a
-    // lead of 0x80 to 0xC1, a truncated sequence or a bad continuation
-    // byte is U+FFFD of size one.
+    // end of an ASCII run), and raw.decode answers the two byte runes of
+    // Latin, Greek and Cyrillic, the bulk of mixed text, before its
+    // general path.
     var r = 0
     var size = 1
     let c0 = Int(b[i])
     if c0 < 0x80 {
       r = c0
-    } else if c0 < 0xE0 {
-      if c0 >= 0xC2 && i + 1 < n {
-        let c1 = Int(b[i + 1])
-        if c1 >= 0x80 && c1 <= 0xBF {
-          r = ((c0 & 0x1F) << 6) | (c1 & 0x3F)
-          size = 2
-        } else {
-          r = 0xFFFD
-        }
-      } else {
-        r = 0xFFFD
-      }
     } else {
-      let p = decode(b, i)
+      let p = raw.decode2(b, i, n)
       r = p >> 3
       size = p & 7
     }
@@ -736,12 +702,21 @@ pub fn quote(b: Bytes) -> Str {
   var run = 0
   var i = 0
   while i < n {
-    i = scan.span(b, i, 1)
-    if i >= n {
-      break
+    // only a kept byte starts a run for span to skip; a control byte, `"`
+    // or `\`, or the lead byte of a rune, is handled here, so a run of
+    // non-ASCII runes no longer pays a span call per rune (span returned
+    // i unchanged for each of them; 2026-10-24: span was 32 percent of
+    // the quote profile)
+    let c0 = Int(b[i])
+    if c0 >= 0x20 && c0 < 0x7F && c0 != 34 && c0 != 92 {
+      i = scan.span(b, i, 1)
+      if i >= n {
+        break
+      }
+      continue
     }
     let c = b[i]
-    let p = decode2(b, i, n)
+    let p = raw.decode2(b, i, n)
     let r = p >> 3
     let size = p & 7
     if r != 0xFFFD && is_print(r) && c >= 0x80 {
