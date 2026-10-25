@@ -181,12 +181,7 @@ func TestDebugInfoSameCode(t *testing.T) {
 		var body strings.Builder
 		flush := func() {
 			if name != "" {
-				// the padding that aligns the next function is not code
-				b := body.String()
-				for strings.HasSuffix(b, "nop\n") {
-					b = strings.TrimSuffix(b, "nop\n")
-				}
-				out[name] = b
+				out[name] = body.String()
 			}
 			body.Reset()
 		}
@@ -200,6 +195,10 @@ func TestDebugInfoSameCode(t *testing.T) {
 				l = page.ReplaceAllString(l, "$1, N")
 				l = sym.ReplaceAllString(l, "S")
 				l = adr.ReplaceAllString(l, "$1, N")
+				// alignment padding (before a literal pool) is not code
+				if l == "nop" {
+					continue
+				}
 				body.WriteString(l)
 				body.WriteByte('\n')
 			}
