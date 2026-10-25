@@ -212,7 +212,7 @@ usage: xo build [--targets=all|os/arch,...] [--backend=go|llvm|arm64|amd64|wasm]
                 [--release] [--debug-contracts=on|off] [--dbg=on|off]
                 [--error-args=on|off] [--debug-info=on|off|split]
                 [--profile-support=on|off] [--trace-support=on|off] [--opt=O0..O3]
-                [-s] [--dsym] [--ld=macho|cc] [--race]
+                [--trimpath=on|off] [-s] [--dsym] [--ld=macho|cc] [--race]
                 [--stamp NAME=VALUE]... [--hybrid]
                 [--json] [-o out] <dirs...>
 
@@ -241,7 +241,10 @@ runtime's XO_PROF) and --trace-support (XO_TRACE's recorder), and sets
 explicit flag wins over the preset (a bare flag means on; on|off and
 true|false both work). --error-args=off drops parameter values from
 error frames. --opt applies to the LLVM backend (a usage error on arm64
-and amd64; the Go backend ignores it). --debug-info=split keeps the
+and amd64; the Go backend ignores it). --trimpath (on) records the DWARF compile and std directories
+relative to the working directory, so a binary carries no path of the machine
+that built it (a debugger started in that directory finds the sources);
+--trimpath=off keeps absolute paths. --debug-info=split keeps the
 DWARF beside the program: NAME.dSYM on darwin, NAME.debug (found by
 build id and .gnu_debuglink) on linux (decision 0355). Native builds carry DWARF line tables
 (in a darwin binary's __DWARF segment, a link through cc's too; --dsym

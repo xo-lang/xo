@@ -9,6 +9,7 @@
 
 use github.com/xo-lang/xo/compiler/check
 use github.com/xo-lang/xo/compiler/cli/cmdhelp
+use github.com/xo-lang/xo/compiler/hostpath
 
 /// Everything a command line sets.
 struct Opts {
@@ -57,6 +58,9 @@ struct Opts {
   dsym: Bool = false
   /// --profile-support: the runtime's profiler (XO_PROF, decision 0238)
   profile_support: Int = -1
+  /// --trimpath: the DWARF directories relative to the working directory,
+  /// not absolute (trimpath_eff; on unless given)
+  trimpath: Int = -1
   /// --error-args: parameter values in error frames (11.1)
   error_args: Int = -1
   /// --debug-contracts: the `(debug)` contract clauses (spec 8)
@@ -141,7 +145,7 @@ fn value_flags() -> List[Str] {
 
 /// The boolean flags.
 fn bool_flags() -> List[Str] {
-  ["json", "ci", "release", "error-args", "hybrid", "mono", "no-mono", "arenas", "no-arenas", "no-preempt", "no-gc", "holes", "race", "v", "real", "fail-empty", "phase-times", "offline", "s", "debug-info", "dsym", "profile-support", "trace-support", "watch", "debug-contracts", "dbg"]
+  ["json", "ci", "release", "error-args", "hybrid", "mono", "no-mono", "arenas", "no-arenas", "no-preempt", "no-gc", "holes", "race", "v", "real", "fail-empty", "phase-times", "offline", "s", "debug-info", "dsym", "profile-support", "trace-support", "trimpath", "watch", "debug-contracts", "dbg"]
 }
 
 /// The usage of xo1's hidden commands (asm, keys) and of an unknown one;
@@ -636,6 +640,8 @@ fn set_bool(os: Os, var o: Opts, name: Str, on: Bool) {
     o.dsym = on
   } else if name == "profile-support" {
     o.profile_support = if on { 1 } else { 0 }
+  } else if name == "trimpath" {
+    o.trimpath = if on { 1 } else { 0 }
   } else if name == "error-args" {
     o.error_args = if on { 1 } else { 0 }
   } else if name == "hybrid" {
@@ -684,6 +690,16 @@ fn setting(v: Int, preset: Bool) -> Bool { if v < 0 { preset } else { v == 1 } }
 /// The profiler (XO_PROF): in a debug build, out of a release one,
 /// unless --profile-support says.
 fn profile_support_eff(o: Opts, release: Bool) -> Bool { setting(o.profile_support, !release) }
+
+/// --trimpath (on unless it says): the DWARF compile and std directories
+/// are recorded relative to the working directory, so a binary does not
+/// carry the paths of the machine that built it (decision 0354's addendum;
+/// Go's -trimpath, clang's -fdebug-prefix-map)
+fn trimpath_eff(o: Opts) -> Bool { setting(o.trimpath, true) }
+
+/// target relative to the working directory cwd for a debugger started in
+/// it, "." when target is not below it (no path of the build is kept)
+fn rel_or_dot(cwd: Str, target: Str) -> Str { hostpath.rel_below(cwd, target) ?? "." }
 
 /// The execution trace's recorder, as the profiler.
 fn trace_support_eff(o: Opts, release: Bool) -> Bool { setting(o.trace_support, !release) }

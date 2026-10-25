@@ -1101,6 +1101,10 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     lm.comp_dir = abs_line_root(os, cwd, o.dirs[0])
     let lsd = dir_name(ctx.std.trim_suffix("/"))
     lm.std_root = if is_abs_path(lsd) { lsd } else { "${cwd}/${lsd}" }
+    if trimpath_eff(o) {
+      lm.comp_dir = rel_or_dot(cwd, lm.comp_dir)
+      lm.std_root = rel_or_dot(cwd, lm.std_root)
+    }
     // whole program dead function removal, as for the native backends
     // below: a function only a folded target arm called (sanhook's
     // ThreadSanitizer threads, which call pthread and mmap) is not
@@ -2326,6 +2330,10 @@ fn gen_module(os: Os, o: Opts, ctx: Ctx, c: check.Checker, m: ssa.Module, tgoos:
   gm.comp_dir = abs_line_root(os, cwd, o.dirs[0])
   let sd = dir_name(ctx.std.trim_suffix("/"))
   gm.std_root = if is_abs_path(sd) { sd } else { "${cwd}/${sd}" }
+  if trimpath_eff(o) {
+    gm.comp_dir = rel_or_dot(cwd, gm.comp_dir)
+    gm.std_root = rel_or_dot(cwd, gm.std_root)
+  }
   (gm, t)
 }
 

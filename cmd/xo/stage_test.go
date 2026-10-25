@@ -383,6 +383,51 @@ func TestReleaseTracebackDebugInfo(t *testing.T) {
 	}
 }
 
+// TestBuildCarriesNoBuildPaths: a program built in a temporary directory,
+// plain and --release, holds neither that directory nor the home directory
+// (nor the checkout it was built with) anywhere in its bytes: the build
+// information has no directory (dir is empty), and the DWARF compile and
+// std directories are relative to the working directory (--trimpath, on by
+// default; decision 0354's addendum, Go's -trimpath).
+func TestBuildCarriesNoBuildPaths(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	home, _ := os.UserHomeDir()
+	dir := writeFiles(t, map[string]string{"app/main.xo": "fn main(os: Os) {\n  os.stdio.println(\"hi\")\n}\n"})
+	setenv(t, "XO_BUILD_DIR", filepath.Join(dir, "build"))
+	app := filepath.Join(dir, "app")
+	chdir(t, dir)
+	for _, c := range []struct {
+		name  string
+		flags []string
+	}{{"plain", nil}, {"release", []string{"--release"}}, {"release-debug", []string{"--release", "--debug-info=on"}}} {
+		bin := filepath.Join(dir, c.name)
+		var out, errOut bytes.Buffer
+		if code := run(t, append(append([]string{"build"}, c.flags...), "-o", bin, app), &out, &errOut); code != 0 {
+			t.Fatalf("%s: build exit %d\n%s", c.name, code, errOut.String())
+		}
+		data, err := os.ReadFile(bin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range []string{dir, home} {
+			if p != "" && p != "/" && bytes.Contains(data, []byte(p)) {
+				t.Errorf("%s: the binary holds %s", c.name, p)
+			}
+		}
+	}
+	// --trimpath=off keeps the absolute directories
+	bin := filepath.Join(dir, "abs")
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"build", "--trimpath=off", "-o", bin, app}, &out, &errOut); code != 0 {
+		t.Fatalf("--trimpath=off: build exit %d\n%s", code, errOut.String())
+	}
+	if data, err := os.ReadFile(bin); err != nil || !bytes.Contains(data, []byte(app)) {
+		t.Errorf("--trimpath=off: the binary lacks the program's directory %s (%v)", app, err)
+	}
+}
+
 // TestBuildLLVMWorkDirsPrivate: concurrent LLVM builds of different
 // programs each write their IR and split modules into a directory of
 // their own, removed after the link, so no prog*.ll is left in the build
