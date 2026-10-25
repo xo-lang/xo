@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestCompare: equal values agree, a different value diverges, and a
 // backend with no line for the case diverges too.
@@ -23,5 +26,29 @@ func TestCompare(t *testing.T) {
 	}
 	if _, same := compare(backends, values, "c"); same {
 		t.Error("case c: a missing line reported no divergence")
+	}
+}
+
+// TestReleaseCommands: -release builds the two native backends with
+// `xo build --backend=X --release` and leaves the Go backend to `xo run`.
+func TestReleaseCommands(t *testing.T) {
+	if isReleaseBackend("go") {
+		t.Error("the Go backend would be built rather than run")
+	}
+	for _, b := range []string{"arm64", "llvm"} {
+		if !isReleaseBackend(b) {
+			t.Errorf("%s: not built for release", b)
+		}
+		got := strings.Join(buildArgs(b, "/tmp/p-"+b, "/tmp/prog"), " ")
+		want := "build --backend=" + b + " --release -o /tmp/p-" + b + " /tmp/prog"
+		if got != want {
+			t.Errorf("%s: build command %q, want %q", b, got, want)
+		}
+	}
+	if releaseFlag(true) != " -release" || releaseFlag(false) != "" {
+		t.Errorf("rerun flag: %q, %q", releaseFlag(true), releaseFlag(false))
+	}
+	if releaseNote(true) == "" || releaseNote(false) != "" {
+		t.Errorf("summary note: %q, %q", releaseNote(true), releaseNote(false))
 	}
 }

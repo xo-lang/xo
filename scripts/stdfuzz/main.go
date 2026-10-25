@@ -10,6 +10,12 @@
 //	go run ./scripts/stdfuzz -area=strings,json
 //	go run ./scripts/stdfuzz -only=strings.0042
 //	go run ./scripts/stdfuzz -keep=/tmp/fz    # keep the program for a repro
+//	go run ./scripts/stdfuzz -release         # arm64 and llvm built --release
+//
+// -release builds the two native backends with `xo build --release` and runs
+// the binaries, so the release driver's differences are compared too (the
+// DWARF readers left out, and the hollow pass that empties unreached
+// functions); the Go backend stays an oracle run.
 //
 // The inputs are seeded, so a report reproduces exactly. The areas are
 // strings, bytes, strconv, json, runes, path, url, base64/base32/hex,
@@ -25,6 +31,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -120,6 +127,7 @@ func main() {
 	areaFlag := flag.String("area", "", "comma separated areas (default all)")
 	only := flag.String("only", "", "emit only this case name, for a repro")
 	backendFlag := flag.String("backend", "arm64,llvm,go", "the backends to compare")
+	release := flag.Bool("release", false, "build arm64 and llvm with xo build --release and run the binaries; go stays an oracle run")
 	keep := flag.String("keep", "", "write the program to this directory and keep it")
 	timeout := flag.Duration("timeout", 15*time.Minute, "per backend run")
 	flag.Parse()
@@ -215,8 +223,36 @@ func main() {
 	failed := map[string]string{}
 	for _, b := range backends {
 		ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+		env := append(os.Environ(), "XO_STD="+filepath.Join(root, "std"))
+		if *release && isReleaseBackend(b) {
+			bin := filepath.Join(dir, "prog-"+b)
+			if runtime.GOOS == "windows" {
+				bin += ".exe"
+			}
+			build := exec.CommandContext(ctx, xo, buildArgs(b, bin, dir)...)
+			build.Env = env
+			bout, berr := build.CombinedOutput()
+			if berr != nil {
+				failed[b] = "build: " + firstLines(string(bout), 4)
+				cancel()
+				continue
+			}
+			run := exec.CommandContext(ctx, bin)
+			run.Env = env
+			out, err := run.Output()
+			cancel()
+			if err != nil {
+				msg := err.Error()
+				if ee, ok := err.(*exec.ExitError); ok {
+					msg = firstLines(string(ee.Stderr), 4)
+				}
+				failed[b] = msg
+			}
+			outs[b] = lines(string(out))
+			continue
+		}
 		cmd := exec.CommandContext(ctx, xo, "run", "--backend="+b, dir)
-		cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"))
+		cmd.Env = env
 		out, err := cmd.Output()
 		cancel()
 		if err != nil {
@@ -260,10 +296,10 @@ func main() {
 			}
 		}
 		fmt.Printf("  case: %s\n", byName[name])
-		fmt.Printf("  rerun: go run ./scripts/stdfuzz -seed=%d -only=%s\n", *seed, name)
+		fmt.Printf("  rerun: go run ./scripts/stdfuzz -seed=%d%s -only=%s\n", *seed, releaseFlag(*release), name)
 	}
-	fmt.Printf("stdfuzz seed %d: %d cases over %d areas, backends %s\n",
-		*seed, len(cases), len(areas), strings.Join(backends, ", "))
+	fmt.Printf("stdfuzz seed %d: %d cases over %d areas, backends %s%s\n",
+		*seed, len(cases), len(areas), strings.Join(backends, ", "), releaseNote(*release))
 	for _, b := range backends {
 		fmt.Printf("  %s: %d case lines\n", b, len(values[b]))
 	}
@@ -287,6 +323,35 @@ func splitList(s string) []string {
 		}
 	}
 	return out
+}
+
+// isReleaseBackend reports whether -release builds backend b as a binary
+// instead of running it through `xo run`: the two native backends. The Go
+// backend stays an oracle run.
+func isReleaseBackend(b string) bool {
+	return b == "arm64" || b == "llvm"
+}
+
+// buildArgs is the `xo build` command line for a release run of backend b.
+func buildArgs(b, bin, dir string) []string {
+	return []string{"build", "--backend=" + b, "--release", "-o", bin, dir}
+}
+
+// releaseFlag is appended to a rerun hint when the run used -release.
+func releaseFlag(on bool) string {
+	if on {
+		return " -release"
+	}
+	return ""
+}
+
+// releaseNote says in the summary that the native backends were built for
+// release, so a log can be told apart from a plain `xo run` one.
+func releaseNote(on bool) string {
+	if on {
+		return " (release builds for arm64 and llvm, go run for go)"
+	}
+	return ""
 }
 
 // program assembles the Xo source: the imports the areas need, the

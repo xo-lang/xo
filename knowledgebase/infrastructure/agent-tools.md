@@ -182,7 +182,12 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   and the Go backend, and compares the outputs line by line. A divergence
   prints the case, its source and a `-only=NAME` rerun; report it, do not
   fix it in the tool. `-seed` and `-n` widen a run, `-area` narrows it, and
-  `-keep=/DIR` keeps the generated program.
+  `-keep=/DIR` keeps the generated program. `-release` builds the arm64 and
+  LLVM programs with `xo build --release` and runs the binaries, so the
+  release driver's contents are compared too (the DWARF readers left out,
+  and the hollow pass that empties unreached functions); the Go backend
+  stays an oracle run, and a plain run never exercises those paths
+  (2026-10-24).
 - `go run ./scripts/stdgen` after changing a std type (a struct, enum,
   newtype, or interface in std/*.xo) or a std function's signature:
   regenerates std/rt/std_gen_M.go, the Go backend's declarations of
