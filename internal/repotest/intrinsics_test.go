@@ -86,6 +86,54 @@ func TestRuntimeIntrinsicsLowered(t *testing.T) {
 		}
 		return cabi[n]
 	}
+	// where each rt name is mentioned, per file and enclosing function:
+	// an arm in call_op (arm64) or call (LLVM) is no lowering, because
+	// both send "rt." to rt_call before their match, so the arm never runs
+	// (DS-1, 2026-10-25: rt.list_swap lowered only there linked undefined)
+	nameLists := map[string]bool{"compiler/arm64/inline.xo inline_intrinsic": true}
+	type site struct{ file, fn string }
+	sitesOf := func(be string) map[string][]site {
+		var files []string
+		if be == "wasm" {
+			files, _ = filepath.Glob(filepath.Join(root, "compiler/wasm/*.xo"))
+		} else {
+			files, _ = filepath.Glob(filepath.Join(root, "compiler/"+be+"/*.xo"))
+			files = append(files, filepath.Join(root, "compiler/ssa/exports.xo"))
+		}
+		fnRe := regexp.MustCompile(`^fn (?:\([^)]*\) )?(\w+)`)
+		nameRe := regexp.MustCompile(`"(rt\.\w+)"`)
+		out := map[string][]site{}
+		for _, f := range files {
+			data, err := os.ReadFile(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rel, err := filepath.Rel(root, f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fn := ""
+			for _, line := range strings.Split(string(data), "\n") {
+				if m := fnRe.FindStringSubmatch(line); m != nil {
+					fn = m[1]
+				}
+				// a function that only names intrinsics polls a name, it
+				// does not lower one: arm64's inline_intrinsic decides
+				// whether a caller is a leaf by name
+				if nameLists[rel+" "+fn] {
+					continue
+				}
+				for _, m := range nameRe.FindAllStringSubmatch(line, -1) {
+					out[m[1]] = append(out[m[1]], site{rel, fn})
+				}
+			}
+		}
+		return out
+	}
+	deadArms := map[string]map[string]bool{
+		"arm64": {"compiler/arm64/calls.xo call_op": true},
+		"llvm":  {"compiler/llvm/call.xo call": true},
+	}
 	// the allowed gaps: backend name reason
 	gaps := map[string]string{}
 	f, err := os.Open(filepath.Join(root, "internal/repotest/testdata/intrinsic_gaps.txt"))
@@ -107,6 +155,7 @@ func TestRuntimeIntrinsicsLowered(t *testing.T) {
 		gaps[p[0]+" "+p[1]] = p[2]
 	}
 	for _, be := range []string{"arm64", "llvm", "wasm"} {
+		sites := sitesOf(be)
 		for _, n := range names {
 			key := be + " " + n
 			_, allowed := gaps[key]
@@ -116,6 +165,22 @@ func TestRuntimeIntrinsicsLowered(t *testing.T) {
 				t.Errorf("rt.%s (std/native/rt.xo) has no lowering in the %s backend: add one (for wasm, compiler/wasm rt*.xo and its direct list), or a line `%s %s <reason>` to internal/repotest/testdata/intrinsic_gaps.txt", n, be, be, n)
 			case has && allowed:
 				t.Errorf("intrinsic_gaps.txt lists `%s` but the %s backend lowers rt.%s now: remove the line", key, be, n)
+			}
+			// a name only mentioned inside a dead arm has no lowering
+			// either, whatever the sources say (cabi exports excepted:
+			// those are the lowering)
+			ss := sites["rt."+n]
+			if len(ss) > 0 && deadArms[be] != nil && !cabi[n] {
+				all := true
+				for _, s := range ss {
+					if !deadArms[be][s.file+" "+s.fn] {
+						all = false
+						break
+					}
+				}
+				if all {
+					t.Errorf("rt.%s (std/native/rt.xo): the %s lowering is only inside %s, which rt_call reaches before its name match, so the arm never runs: move it to inline_rt or inline_raw (DS-1, 2026-10-25)", n, be, ss[0].fn)
+				}
 			}
 			delete(gaps, key)
 		}
