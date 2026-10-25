@@ -141,6 +141,15 @@ fn (var xs: List[T]) sort_in_place_by[K: Ord, E, fx: Effects](key: fn(T) -> K ! 
   too: both route `rt.` to `rt_call` before their match, so an arm there
   never runs, which the first gate run found as an undefined symbol.
   internal/repotest's reachability check now reports that shape.
+- **Precondition, recorded after step 3's first build found it:** the
+  swap does no copy-on-write, because that lives in the element store's
+  generated code, so the receiver's array must be unique when a caller
+  swaps. A swap-based sort otherwise writes a list another binding
+  shares; the std caller makes the list unique first with one counted
+  element write (gotchas/list-swap-bypasses-copy-on-write.md). The
+  intrinsic's doc in std/native/rt.xo states it, and step 3's design
+  below chooses between that std-side write and a count check in the
+  lowering.
 
 ### Step 2 as built
 

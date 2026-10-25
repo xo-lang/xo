@@ -368,7 +368,11 @@ fn obj_at[T](a: Int) -> T
 /// inline: both element addresses, two loads and two stores; decision
 /// 0374). Faults when either index is outside the list. Both elements
 /// are loaded before either is stored, so i == j writes back what it
-/// read.
+/// read. Unchecked: xs's array must not be shared, because the swap does
+/// no copy-on-write (that lives in the element store's generated code),
+/// so a caller makes xs unique first, for example with one counted
+/// element write; swapping a shared list writes the other holder's array
+/// (gotchas/list-swap-bypasses-copy-on-write.md).
 fn list_swap[T](xs: List[T], i: Int, j: Int)
 
 /// a as a B: a std type and its implementation type (http.Response and
