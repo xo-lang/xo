@@ -1992,7 +1992,7 @@ fn (var g: G) branch_op(v: Int) {
     return
   }
   var inst = Inst{kind: K_CONDBR}
-  if g.lazy[c] && (g.range_branch(x) || g.range_and(x)) {
+  if g.lazy[c] && (g.range_branch(x) || g.range_and(x) || (!g.x86 && (g.range_or(x) || g.range_or_join(x)))) {
     return
   }
   if g.lazy[c] {
@@ -2305,6 +2305,54 @@ fn (var g: G) range_branch(x: ssa.Value) -> Bool {
   g.range_test(v, lo, hi, br.succs[0], e_out)
 }
 
+/// range_branch's test for its negation, `c < lo || c > hi` (DS-1,
+/// 2026-10-24: `let d = x - 48; if d < 0 || d > 9` took a sign test and a
+/// compare, two branches, where `x >= 48 && x <= 57` takes one): branch x
+/// on `c < lo` whose false edge enters a block that holds only `c > hi`
+/// (and constants) and its branch, the two true edges reaching the same
+/// block with the same arguments; one subtract and an unsigned compare,
+/// the in range edge the inner false one.
+fn (var g: G) range_or(x: ssa.Value) -> Bool {
+  // c < lo is c <= lo - 1
+  let (v, lo1, ok) = g.bound_of(x.args[0], false)
+  if !ok || lo1 == MAX_INT {
+    return false
+  }
+  let lo = lo1 + 1
+  let e_out = x.succs[0]
+  let e_next = x.succs[1]
+  let b = g.f.blocks[g.f.edges[e_next].to]
+  let n = b.instrs.len()
+  if !b.params.is_empty() || n < 2 || b.preds.len() != 1 || !g.f.edges[e_next].args.is_empty() {
+    return false
+  }
+  let br = g.f.values[b.instrs[n - 1]]
+  if br.op != ssa.Op.Branch || br.pad >= 0 || br.args[0] != b.instrs[n - 2] || !g.lazy[br.args[0]] {
+    return false
+  }
+  for k in 0..n - 2 {
+    if g.f.values[b.instrs[k]].op != ssa.Op.Const {
+      return false
+    }
+  }
+  // c > hi is c >= hi + 1
+  let (v2, hi1, ok2) = g.bound_of(br.args[0], true)
+  if !ok2 || v2 != v || hi1 == MIN_INT || g.nuses[br.args[0]] != 1 {
+    return false
+  }
+  let hi = hi1 - 1
+  if hi < lo || hi <= -65536 || hi >= 65536 {
+    // (as range_branch: the skipped block's constants)
+    return false
+  }
+  let e2 = br.succs[0]
+  if g.f.edges[e2].to != g.f.edges[e_out].to || g.f.edges[e2].args != g.f.edges[e_out].args {
+    return false
+  }
+  g.spec[g.f.edges[e_next].to] = true
+  g.range_test(v, lo, hi, br.succs[1], e_out)
+}
+
 /// The same range test for `c >= lo && c <= hi` as the SSA builder
 /// gives a condition: branch x on `c >= lo` to block B, which holds
 /// only `c <= hi` (and constants) and jumps to J passing it, and
@@ -2383,6 +2431,89 @@ fn (var g: G) range_and(x: ssa.Value) -> Bool {
   g.spec[g.f.edges[x.succs[0]].to] = true
   g.spec[jb] = true
   g.range_test(v, lo, hi, br.succs[0], br.succs[1])
+}
+
+/// range_and for `c < lo || c > hi` (range_or's test, in the form the SSA
+/// builder gives a condition): branch x on `c < lo` to J (directly or
+/// through a block of constants) passing true, and otherwise to block B,
+/// which holds only `c > hi` (and constants) and jumps to J passing it; J
+/// only branches on that parameter. Its false target is the in range
+/// edge. arm64 only so far (the x86_64 retarget of range_test is range_branch's;
+/// its Docker amd64 sample not yet run for these).
+fn (var g: G) range_or_join(x: ssa.Value) -> Bool {
+  // c < lo is c <= lo - 1
+  let (v, lo1, ok) = g.bound_of(x.args[0], false)
+  if !ok || lo1 == MAX_INT {
+    return false
+  }
+  let lo = lo1 + 1
+  let b = g.f.blocks[g.f.edges[x.succs[1]].to]
+  let n = b.instrs.len()
+  if !b.params.is_empty() || n < 2 || b.preds.len() != 1 {
+    return false
+  }
+  let jmp = g.f.values[b.instrs[n - 1]]
+  if jmp.op != ssa.Op.Jump || jmp.pad >= 0 {
+    return false
+  }
+  let eb = jmp.succs[0]
+  let jb = g.f.edges[eb].to
+  let (jf, ef, sp) = g.forward(x.succs[0])
+  if !sp.is_empty() {
+    return false
+  }
+  let j = g.f.blocks[jb]
+  if jf != jb || j.instrs.len() != 1 || j.preds.len() != 2 || g.f32_params(jb) {
+    return false
+  }
+  let c2 = b.instrs[n - 2]
+  if g.nuses[c2] != 1 {
+    return false
+  }
+  for k in 0..n - 2 {
+    if g.f.values[b.instrs[k]].op != ssa.Op.Const {
+      return false
+    }
+  }
+  let br = g.f.values[j.instrs[0]]
+  if br.op != ssa.Op.Branch || br.pad >= 0 {
+    return false
+  }
+  let p = br.args[0]
+  var dsts: List[Int] = []
+  var srcs: List[Src] = []
+  for (i, q) in j.params.indexed() {
+    let ab = g.f.edges[eb].args[i]
+    let af = g.f.edges[ef].args[i]
+    if q == p {
+      let (f, fok) = g.word_const(af)
+      if ab != c2 || !fok || f != 1 || g.nuses[p] != 1 {
+        return false
+      }
+      continue
+    }
+    if ab != af || g.mem_only(q) >= 0 || g.vals[q].len() != 1 || g.vkind(q) == ssa.Kind.List {
+      return false
+    }
+    let w = g.word(ab)
+    if w != g.vals[q][0] {
+      dsts.push(g.vals[q][0])
+      srcs.push(rsrc(w))
+    }
+  }
+  if !j.params.contains(p) {
+    return false
+  }
+  // c > hi is c >= hi + 1
+  let (v2, hi1, ok2) = g.bound_of(c2, true)
+  if !ok2 || v2 != v || hi1 == MIN_INT || hi1 - 1 < lo {
+    return false
+  }
+  let hi = hi1 - 1
+  g.pmove(dsts, srcs)
+  g.spec[g.f.edges[x.succs[1]].to] = true
+  g.spec[jb] = true
+  g.range_test(v, lo, hi, br.succs[1], br.succs[0])
 }
 
 /// `c0 && c2` (and) or `c0 || c2` as a Bool value, without branches:
