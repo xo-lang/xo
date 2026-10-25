@@ -130,7 +130,7 @@ func TestDebugInfoSameCode(t *testing.T) {
 		t.Skip("no otool")
 	}
 	addr := regexp.MustCompile(`0x[0-9a-f]+`)
-	page := regexp.MustCompile(`(adrp\t\w+), \d+`)
+	page := regexp.MustCompile(`(adrp\t\w+), -?\d+`)
 	// a callee's name: identical functions are merged under a hash name in
 	// one build and not the other
 	sym := regexp.MustCompile(`_xo_\w+`)
@@ -170,7 +170,7 @@ func TestDebugInfoSameCode(t *testing.T) {
 	// the runtime's modules (std/native, std/native/llrt), their
 	// generics (xo.*) and glue: not the program's own code, and a runtime
 	// function that holds a branch on dwline.built() differs by it
-	runtimeMod := map[string]bool{"xo": true, "drop": true, "dropp": true, "dup": true, "cabi": true}
+	runtimeMod := map[string]bool{"xo": true, "drop": true, "dropp": true, "dup": true, "share": true, "cabi": true}
 	for _, pat := range []string{"../../std/native/*.xo", "../../std/native/llrt/*.xo"} {
 		fs, _ := filepath.Glob(pat)
 		for _, f := range fs {
