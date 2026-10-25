@@ -103,6 +103,16 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 ## Testing
 
+- Default changes (2026-10-25): a push that changes a default (a flag on
+  by default, a default-on pass) runs its full suites on the exact tree it
+  pushes, after its last commit, not on an earlier commit of the same
+  work. `--trimpath` (303dc270d) passed a full internal/arm64 run made
+  before its last commits, and TestBackendCacheObjectsAcrossDirs, which
+  expects absolute DWARF directories, was red on main for about two hours
+  (fixed in ec8602220). An inliner or cost-model change also runs the full
+  native-vs-LLVM instruction sweep before its quiet --ab, so the window's
+  rows are the sweep's movers rather than the author's choice.
+
 - Runtime changes (2026-10-23): a change to std/native/llrt pool, tasks,
   mutex, sched (the scheduler and its shared words) runs internal/llvm's
   ThreadSanitizer tests in its gate, `go test -short -count=1 -run
