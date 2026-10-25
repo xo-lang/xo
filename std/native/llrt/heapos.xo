@@ -432,12 +432,13 @@ pub fn unlock() {
 /// xo_heap, its offsets asserted there): the largest block the classes
 /// serve, the central lists' address, the counts of blocks allocated and
 /// freed (alloc.xo ALLOCS, FREES), the per class free list lengths
-/// (alloc.xo NFREE), and the link of the list of every record.
+/// (alloc.xo FREE_LISTS, MAG), and the link of the list of every record.
 const H_ALLOCS = 0
 const H_FREES = 8
 const H_MID_MAX = 56
 const H_CENTRAL = 64
-const H_NFREE = 664
+const H_FREE_LISTS = 80
+const H_MAG = 1248
 const H_NEXT = 2136
 /// Whether the record counts (alloc.xo COUNT).
 const H_COUNT = 1864
@@ -612,16 +613,46 @@ pub fn live(lp: Int, tp: Int) {
 }
 
 /// The blocks on class c's free lists over every record (the heap
-/// statistics).
+/// statistics): each record's list, its spare magazine, and the central
+/// list's magazines, counted by walking them. The records' NFREE words
+/// are not read: a single threaded heap's alloc and free leave them
+/// alone (alloc.xo recount sets them when threads start), so they go
+/// negative and summed to a wrapped figure (2026-10-24: XO_HEAPSTATS
+/// printed 17592186044415 MB on free lists).
 pub fn nfree(c: Int) -> Int {
   var n = 0
   hlock_take()
   var h = rt.mem_load(rt.static_word(W_HEAPS), 0, 8)
   while h != 0 {
-    n = n.wrapping_add(rt.mem_load(h, H_NFREE.wrapping_add(c.wrapping_shl(3)), 8))
+    let fl = h.wrapping_add(c.wrapping_shl(3))
+    n = n.wrapping_add(list_len(rt.mem_load(fl, H_FREE_LISTS, 8)))
+    n = n.wrapping_add(list_len(rt.mem_load(fl, H_MAG, 8)))
     h = rt.mem_load(h, H_NEXT, 8)
   }
+  // the central list's magazines, linked by their first block's second word
+  let h0 = rt.mem_load(rt.static_word(W_HEAPS), 0, 8)
+  if h0 != 0 {
+    let cen = rt.mem_load(h0, H_CENTRAL, 8)
+    if cen != 0 {
+      var m = rt.slot_load(cen, c, RELAXED)
+      while m != 0 {
+        n = n.wrapping_add(list_len(m))
+        m = rt.mem_load(m, 8, 8)
+      }
+    }
+  }
   hlock_give()
+  n
+}
+
+/// The length of the list of blocks linked by their first word from p.
+fn list_len(p: Int) -> Int {
+  var n = 0
+  var q = p
+  while q != 0 {
+    n = n.wrapping_add(1)
+    q = rt.mem_load(q, 0, 8)
+  }
   n
 }
 
