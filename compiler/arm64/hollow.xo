@@ -20,14 +20,28 @@
 // .private_extern and .section lines (the unwind and unsafe tables name
 // its labels, which then mark an empty range) and loses its
 // instructions, data and CFI directives (so no zero length FDE lands on
-// the next function's address); its body is one `brk #HOLLOW_BRK`, so a
-// path the scan missed faults instead of falling into the next function.
-// Mach-O only: its symbols start with `_`,
-// which the scan relies on; an ELF build is left as it is.
+// the next function's address); its body is one trap, `brk #HOLLOW_BRK`
+// on arm64 and `ud2` on amd64, so a path the scan missed faults instead of
+// falling into the next function. Mach-O (darwin) and ELF (linux) text is
+// read; a build of a program whose link has no C objects, and not
+// `xo asm`, is the pass's to change.
+//
+// x86-64 (2026-10-25): the same scan reads the amd64 emitter's AT&T text,
+// where a function's labels, its `Lxo_`/`.Lxo_` shared labels, the
+// `_xo_`/`xo_` references of `callq`, `jmp`, `lea` and RIP-relative
+// forms, the `.quad`/`.long` tables and the section switches are spelled
+// as arm64's are; the emptied body's trap is `ud2`, an invalid opcode,
+// since x86 has no immediate to carry a marker. An x86 function's own
+// branch labels (`LpGL1jtk_f1_b0:`, `.LpGL...`, no `Lxo_`) stay inside
+// their function's chunk, so the scan never takes one for a function.
 
 /// The immediate of the brk a hollowed function's body is ("HO"): a fault
 /// at that brk is a call of a function the scan found unreached.
 pub const HOLLOW_BRK = 0x484f
+
+/// The instruction a hollowed amd64 function's body is: an invalid opcode
+/// (SIGILL), which the scan's missed reference cannot run past.
+pub const HOLLOW_UD2 = "ud2"
 
 /// A function of the assembly: its part and byte range, from its label
 /// line to the start of the next function or section switch.
@@ -42,17 +56,22 @@ struct HChunk {
 }
 
 /// The parts with the functions nothing reaches emptied, and a line of
-/// counts ("" when nothing was emptied). For a Mach-O build of a program
-/// whose link has no C objects that could call an export by name.
-pub fn hollow_unreached(parts: List[Str]) -> (List[Str], Str) { hollow_text(parts, false) }
+/// counts ("" when nothing was emptied). For a Mach-O arm64 build of a
+/// program whose link has no C objects that could call an export by name.
+pub fn hollow_unreached(parts: List[Str]) -> (List[Str], Str) { hollow_text(parts, false, "brk #${HOLLOW_BRK}") }
 
-/// hollow_unreached of ELF text (linux): symbols with no leading `_`
+/// hollow_unreached of ELF arm64 text (linux): symbols with no leading `_`
 /// (`xo_...`, `main`), local labels `.Lxo_...`, `.text` and `.debug_*`
 /// sections, and `.hidden`, `.type` and `.size` lines that name a symbol
 /// without using it (2026-10-25).
-pub fn hollow_unreached_elf(parts: List[Str]) -> (List[Str], Str) { hollow_text(parts, true) }
+pub fn hollow_unreached_elf(parts: List[Str]) -> (List[Str], Str) { hollow_text(parts, true, "brk #${HOLLOW_BRK}") }
 
-fn hollow_text(parts: List[Str], elf: Bool) -> (List[Str], Str) {
+/// hollow_unreached of an amd64 build's text, Mach-O (elf false) or ELF
+/// (elf true): the same scan over the emitter's AT&T text, with `ud2` as
+/// the emptied body's trap (2026-10-25).
+pub fn hollow_unreached_amd64(parts: List[Str], elf: Bool) -> (List[Str], Str) { hollow_text(parts, elf, HOLLOW_UD2) }
+
+fn hollow_text(parts: List[Str], elf: Bool, trap: Str) -> (List[Str], Str) {
   let loc = if elf { ".Lxo_" } else { "Lxo_" }
   let gpre = if elf { "xo_" } else { "_" }
   // the Mach-O symbol prefix: the markers are `_xo_utext_*` there
@@ -289,10 +308,9 @@ fn hollow_text(parts: List[Str], elf: Bool) -> (List[Str], Str) {
         at = ch.end
       } else if !live[ci] {
         sb.write(p[at..ch.start])
-        // one `brk #HOLLOW_BRK` as the body: a path the scan missed (an
-        // address made at run time, a name looked up by prof.symbols, a
-        // table to come) faults at once instead of running into the next
-        // function
+        // one trap as the body: a path the scan missed (an address made at
+        // run time, a name looked up by prof.symbols, a table to come)
+        // faults at once instead of running into the next function
         var brk = false
         var i = ch.start
         while i < ch.end {
@@ -305,7 +323,7 @@ fn hollow_text(parts: List[Str], elf: Bool) -> (List[Str], Str) {
             sb.write(p[i..(if j < ch.end { j + 1 } else { j })])
           } else {
             if !brk {
-              sb.write("\tbrk #${HOLLOW_BRK}\n")
+              sb.write("\t${trap}\n")
               brk = true
             }
             dropped += j - i
@@ -313,7 +331,7 @@ fn hollow_text(parts: List[Str], elf: Bool) -> (List[Str], Str) {
           i = j + 1
         }
         if !brk {
-          sb.write("\tbrk #${HOLLOW_BRK}\n")
+          sb.write("\t${trap}\n")
         }
         at = ch.end
       }

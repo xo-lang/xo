@@ -33,7 +33,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_HEAP_GUARD":           {"keyed", "guard=${m.heap_guard}"},
 	"XO_NOLIBC":               {"keyed", "nolibc=${m.nolibc}"},
 	"XO_INLINE_DENY":          {"keyed", "deny ${m.inline_deny"},
-	"XO_PASSES":               {"bypass", "!gm.passes_off.is_empty()"},
+	"XO_PASSES":               {"bypass", "passes_changed(os)"}, // either a - or a + entry (main.xo passes_changed, from arm64.parse_passes)
 	"XO_NATIVE_RACE":          {"bypass", "gm.race"},
 	"XO_MAP_LOG":              {"keyed", "maplog=${m.map_log}"},
 	"XO_LOWER":                {"keyed", "lower=${c.lower_off"}, // the front end key (bcache.xo); the SSA bodies the backend keys hash differ too

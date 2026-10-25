@@ -1365,7 +1365,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   let later = defer_inline_verify(os, o, march, release)
   // the inline cache's hits left undecoded until read (decision 0283
   // stage B), where the per-function cache is used
-  let lazy_inl = march == "arm64" && !o.race && !release && o.cmd != "asm" && passes_off(os).is_empty() && backend_cache_mode(os) != "verify" && (os.env.get("XO_LAZY_INLINE") ?? "") != "off" && (os.env.get("XO_INLINE_BREAK") ?? "").is_empty()
+  let lazy_inl = march == "arm64" && !o.race && !release && o.cmd != "asm" && !passes_changed(os) && backend_cache_mode(os) != "verify" && (os.env.get("XO_LAZY_INLINE") ?? "") != "off" && (os.env.get("XO_INLINE_BREAK") ?? "").is_empty()
   let (inl0, pend0, fb0) = inline_or_defer(os, mi, emit_jobs(os), phases, cur_os, release, cur_rk, later, lazy_inl)
   var inl = inl0
   var pend = pend0
@@ -1427,9 +1427,10 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       lo.b.m = ssa.Module{}
     }
     // no per-function cache for amd64 yet (its canonical text is
-    // arm64's), nor with passes off (XO_PASSES: its keys do not say so),
-    // nor for --race (its instrumented code has the same keys)
-    let (fc, fdir, fpk) = if march == "amd64" || !gm.passes_off.is_empty() || gm.race { (arm64.FnCache{}, "", Pack{}) } else { fn_cache_load(os, ctx, gm, tgoos, jobs, release, pre) }
+    // arm64's), nor with $XO_PASSES changed either way (+ or -: its keys
+    // do not say so), nor for --race (its instrumented code has the same
+    // keys)
+    let (fc, fdir, fpk) = if march == "amd64" || passes_changed(os) || gm.race { (arm64.FnCache{}, "", Pack{}) } else { fn_cache_load(os, ctx, gm, tgoos, jobs, release, pre) }
     if !fdir.is_empty() {
       t = lap(os, phases, "fn_keys", t)
     }
@@ -1462,17 +1463,24 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     if !p.skipped.is_empty() {
       fail_unsupported(os, "the emitter skipped ${p.skipped[0]}")
     }
-    // the functions nothing reaches emptied (arm64 hollow.xo): arm64's
-    // Mach-O (darwin) and ELF (linux) text (x86_64's AT&T text not yet
-    // checked), a program whose link has no `use c` objects (they could
-    // call an export by name), not `xo asm`; XO_PASSES=-hollow keeps them
-    if (tgoos is "darwin" | "linux") && march == "arm64" && o.cmd != "asm" && !c.mods.any(fn(m) { !m.c_prefix.is_empty() }) && pass_on(os, "hollow") {
+    // the functions nothing reaches emptied (arm64 hollow.xo): Mach-O
+    // (darwin) and ELF (linux) text, arm64 everywhere and amd64 on linux
+    // (x86's emptied bodies are `ud2`; darwin/amd64 is XO_PASSES=+hollow),
+    // a program whose link has no `use c` objects (they could call an
+    // export by name), not `xo asm`; XO_PASSES=-hollow keeps them
+    if (tgoos is "darwin" | "linux") && (march == "arm64" || march == "amd64") && o.cmd != "asm" && !c.mods.any(fn(m) { !m.c_prefix.is_empty() }) && hollow_on(os, march, tgoos) {
       let elf = tgoos == "linux"
+      let ps = if p.parts.len() > 1 { p.parts } else { [p.asm] }
+      let (hp, _hs) = if march == "amd64" {
+        arm64.hollow_unreached_amd64(ps, elf)
+      } else if elf {
+        arm64.hollow_unreached_elf(ps)
+      } else {
+        arm64.hollow_unreached(ps)
+      }
       if p.parts.len() > 1 {
-        let (hp, _hs) = if elf { arm64.hollow_unreached_elf(p.parts) } else { arm64.hollow_unreached(p.parts) }
         p.parts = hp
       } else {
-        let (hp, _hs) = if elf { arm64.hollow_unreached_elf([p.asm]) } else { arm64.hollow_unreached([p.asm]) }
         p.asm = hp[0]
       }
       t = lap(os, phases, "hollow", t)
@@ -2242,11 +2250,46 @@ fn pass_on(os: Os, name: Str) -> Bool {
 }
 
 fn passes_off(os: Os) -> List[Str] {
-  let (off, err) = arm64.parse_passes(os.env.get("XO_PASSES") ?? "")
+  let (off, _on, err) = arm64.parse_passes(os.env.get("XO_PASSES") ?? "")
   if !err.is_empty() {
     fail(os, err)
   }
   off
+}
+
+/// The passes $XO_PASSES turns on (`+name`), empty unless one is named.
+fn passes_on(os: Os) -> List[Str] {
+  let (_off, on, err) = arm64.parse_passes(os.env.get("XO_PASSES") ?? "")
+  if !err.is_empty() {
+    fail(os, err)
+  }
+  on
+}
+
+/// Whether $XO_PASSES changes which passes run, with a `-name` or a
+/// `+name` entry. The caches' keys do not say which passes ran, so any
+/// entry turns them off (a `+hollow` build must not reuse a plain
+/// build's entries, or the reverse).
+fn passes_changed(os: Os) -> Bool {
+  let (off, on, err) = arm64.parse_passes(os.env.get("XO_PASSES") ?? "")
+  if !err.is_empty() {
+    fail(os, err)
+  }
+  !off.is_empty() || !on.is_empty()
+}
+
+/// Whether the hollow pass (hollow.xo, decision 0371) runs in this build:
+/// on for arm64 (Mach-O and ELF) and linux/amd64; darwin/amd64 is only
+/// with XO_PASSES=+hollow until its binaries can be run (2026-10-25: the
+/// development Mac has no Rosetta).
+fn hollow_on(os: Os, march: Str, tgoos: Str) -> Bool {
+  if !pass_on(os, "hollow") {
+    false
+  } else if march == "amd64" && tgoos == "darwin" {
+    passes_on(os).contains("hollow")
+  } else {
+    true
+  }
 }
 
 /// arm64's inlining of mi, and whether the inlined module is to be
@@ -2415,7 +2458,7 @@ fn inline_verified(os: Os, errs: List[Str]) -> Bool {
 /// breaks a function dead function removal may drop (XO_INLINE_BREAK=late
 /// breaks one after it, for the test of this path).
 fn defer_inline_verify(os: Os, o: Opts, march: Str, release: Bool) -> Bool {
-  march == "arm64" && !o.race && !release && passes_off(os).is_empty() && (os.env.get("XO_INLINE_BREAK") ?? "") != "1" && backend_cache_mode(os) != "verify" && !cache_id(os).is_empty()
+  march == "arm64" && !o.race && !release && !passes_changed(os) && (os.env.get("XO_INLINE_BREAK") ?? "") != "1" && backend_cache_mode(os) != "verify" && !cache_id(os).is_empty()
 }
 
 /// The checker's path of the std module `xo test --std-module` names

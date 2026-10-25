@@ -80,24 +80,39 @@ pub fn pass_on(m: ssa.Module, name: Str) -> Bool {
   !m.passes_off.contains(name)
 }
 
-/// The passes $XO_PASSES turns off (`-name` entries, comma separated),
-/// or why the value is wrong.
-pub fn parse_passes(v: Str) -> (List[Str], Str) {
+/// The passes $XO_PASSES turns off (`-name` entries, comma separated) and
+/// on (`+name`: one the build leaves off for a target, today only hollow on
+/// darwin/amd64; decisions 0184, 0371), or why the value is wrong. Naming a
+/// pass both ways, or twice one way, is an error.
+pub fn parse_passes(v: Str) -> (List[Str], List[Str], Str) {
   var off: List[Str] = []
+  var on: List[Str] = []
   let all = passes()
   for e0 in v.split(",") {
     let e = e0.trim()
     if e.is_empty() {
       continue
     }
-    if !e.starts_with("-") {
-      return ([], "XO_PASSES: ${e} is not -NAME (only turning passes off is supported)")
+    // starts_with, not a slice: slicing a Str inside a UTF-8 sequence
+    // faults (an entry like "é" is an error, not a crash)
+    if !e.starts_with("-") && !e.starts_with("+") {
+      return ([], [], "XO_PASSES: ${e} is not -NAME or +NAME")
     }
     let n = e[1..e.len()]
     if !all.contains(n) {
-      return ([], "XO_PASSES: no pass ${n}; the passes are ${all.join(", ")}")
+      return ([], [], "XO_PASSES: no pass ${n}; the passes are ${all.join(", ")}")
     }
-    off.push(n)
+    if e.starts_with("-") {
+      if on.contains(n) {
+        return ([], [], "XO_PASSES: ${n} is named both - and +")
+      }
+      off.push(n)
+    } else {
+      if off.contains(n) {
+        return ([], [], "XO_PASSES: ${n} is named both - and +")
+      }
+      on.push(n)
+    }
   }
-  (off, "")
+  (off, on, "")
 }

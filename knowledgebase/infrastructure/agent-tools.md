@@ -66,7 +66,9 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   lines. When the traceback is missing (it timed out or faulted) or the
   binary was stripped, `xo dev symbolize PROG < REPORT` names the
   frames from the unstripped PROG (2026-10-22).
-- `XO_PASSES=-name,...` turns optional passes off; `xo dev bisect-pass
+- `XO_PASSES=-name,...` turns optional passes off; `XO_PASSES=+name`
+  turns on the one a target leaves off (hollow on darwin/amd64, 2026-10-25);
+  `xo dev bisect-pass
   DIR` finds the first pass that changes a program's output.
 - `XO_LOWER=-name,...` turns optional SSA builder lowerings off
   (2026-10-21; compiler/ssa lowerings.xo lists them: `eq_lower`, the

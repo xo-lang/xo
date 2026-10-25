@@ -170,6 +170,188 @@ func TestHollowUnreached(t *testing.T) {
 	t.Logf("one brk: export %s, drop helper %s", export, drop)
 }
 
+// TestHollowUnreachedAmd64: the same pass on an amd64 build of the same
+// program (compiler/arm64 hollow.xo, decision 0371's amd64 addendum)
+// leaves the unreached export and drop helper one `ud2` each, and matches
+// XO_PASSES=-hollow. darwin/amd64 is off by default until its binaries can
+// be run (no Rosetta on the development Mac), so the pass is asked for
+// with XO_PASSES=+hollow.
+func TestHollowUnreachedAmd64(t *testing.T) {
+	if testing.Short() {
+		t.Skip("cross builds a program twice and disassembles it")
+	}
+	if runtime.GOARCH != "arm64" || runtime.GOOS != "darwin" {
+		t.Skip("the amd64 build for darwin is cross built here")
+	}
+	if _, err := exec.LookPath("otool"); err != nil {
+		t.Skip("no otool")
+	}
+	dir, err := testtmp.Dir("xo-hollow-amd64-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	if err := os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module hollow\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte(hollowSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// build returns the bodies of the functions whose body is one
+	// instruction, by name, and what the program printed ("" when the
+	// host cannot run an x86_64 binary)
+	build := func(env []string) (map[string]string, string) {
+		res, err := xotool.Build([]string{dir}, xotool.Options{Backend: "amd64", Targets: "darwin/amd64", Dir: dir, Env: append(env, "XO_BACKEND_CACHE=off", "XO_BIN_CACHE=off")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Failed {
+			t.Fatalf("build failed:\n%s", res.Output)
+		}
+		defer os.RemoveAll(res.Dir)
+		bin, ok := res.Binaries["darwin/amd64"]
+		if !ok {
+			t.Fatalf("no darwin/amd64 binary in %v", res.Binaries)
+		}
+		one := otoolOneInstr(t, bin)
+		run := ""
+		if out, err := exec.Command(bin).Output(); err == nil {
+			run = string(out)
+		} else {
+			t.Logf("the x86_64 binary did not run here (%v); the bodies are still checked", err)
+		}
+		return one, run
+	}
+	on, runOn := build([]string{"XO_PASSES=+hollow"})
+	off, runOff := build([]string{"XO_PASSES=-hollow"})
+	if runOn != "" && runOn != "status 200\n" {
+		t.Errorf("printed %q, want %q", runOn, "status 200\n")
+	}
+	if runOff != "" && runOff != runOn {
+		t.Errorf("printed %q with XO_PASSES=-hollow, want %q", runOff, runOn)
+	}
+	const ud2 = "ud2"
+	var export, drop string
+	for name, ins := range on {
+		if ins != ud2 {
+			continue
+		}
+		if off[name] == ud2 {
+			t.Errorf("%s is ud2 with XO_PASSES=-hollow too", name)
+		}
+		if strings.HasPrefix(name, "_xo_x_") {
+			export = name
+		}
+		if strings.HasPrefix(name, "_xo_h") || strings.HasPrefix(name, "_xo_f_drop") {
+			drop = name
+		}
+	}
+	if export == "" {
+		t.Error("no C ABI export (_xo_x_) is one ud2")
+	}
+	if drop == "" {
+		t.Error("no drop helper (_xo_h, _xo_f_drop) is one ud2")
+	}
+	t.Logf("one ud2: export %s, drop helper %s", export, drop)
+}
+
+// otoolOneInstr returns, from otool -tV of a Mach-O binary, the functions
+// whose body is one instruction, by symbol. The assembler pads a hollowed
+// 2 byte body to the function's alignment with nops, which are not the
+// body's own instructions and are dropped here.
+func otoolOneInstr(t *testing.T, bin string) map[string]string {
+	t.Helper()
+	if _, err := exec.LookPath("otool"); err != nil {
+		t.Skip("no otool")
+	}
+	out, err := exec.Command("otool", "-tV", bin).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bodies := map[string][]string{}
+	cur := ""
+	for _, l := range strings.Split(string(out), "\n") {
+		if l != "" && l[0] != ' ' && l[0] != '\t' && strings.HasSuffix(l, ":") && !strings.Contains(l, "(__TEXT") {
+			cur = strings.TrimSuffix(l, ":")
+			bodies[cur] = nil
+		} else if _, ins, ok := strings.Cut(l, "\t"); ok && cur != "" {
+			bodies[cur] = append(bodies[cur], strings.Join(strings.Fields(ins), " "))
+		}
+	}
+	one := map[string]string{}
+	for name, b := range bodies {
+		var ins []string
+		for _, x := range b {
+			if !strings.HasPrefix(x, "nop") {
+				ins = append(ins, x)
+			}
+		}
+		if len(ins) == 1 {
+			one[name] = ins[0]
+		}
+	}
+	return one
+}
+
+// TestHollowPassesChangedCaches: a build with XO_PASSES=+hollow must not
+// be served a plain build's cached functions (nor the reverse), since the
+// cache keys do not say which passes ran (compiler/xo main.xo
+// passes_changed; compiler/xo bcache.xo). The plain build fills a private
+// cache, then the same program is built with +hollow in it: the second
+// binary must carry the ud2 bodies.
+func TestHollowPassesChangedCaches(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a program twice and disassembles it")
+	}
+	if runtime.GOARCH != "arm64" || runtime.GOOS != "darwin" {
+		t.Skip("the amd64 build for darwin is cross built here")
+	}
+	dir, err := testtmp.Dir("xo-hollow-cache-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	cache := filepath.Join(dir, "cache")
+	if err := os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module hollow\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte(hollowSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	build := func(env ...string) map[string]string {
+		res, err := xotool.Build([]string{dir}, xotool.Options{Backend: "amd64", Targets: "darwin/amd64", Dir: dir,
+			Env: append([]string{"XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR=" + cache}, env...)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Failed {
+			t.Fatalf("build failed:\n%s", res.Output)
+		}
+		defer os.RemoveAll(res.Dir)
+		bin, ok := res.Binaries["darwin/amd64"]
+		if !ok {
+			t.Fatalf("no darwin/amd64 binary in %v", res.Binaries)
+		}
+		return otoolOneInstr(t, bin)
+	}
+	plain := build()
+	withHollow := build("XO_PASSES=+hollow")
+	const ud2 = "ud2"
+	var export string
+	for name, ins := range withHollow {
+		if ins == ud2 && strings.HasPrefix(name, "_xo_x_") {
+			if plain[name] == ud2 {
+				t.Errorf("%s is ud2 in the plain build too", name)
+			}
+			export = name
+		}
+	}
+	if export == "" {
+		t.Error("no C ABI export (_xo_x_) is one ud2 with XO_PASSES=+hollow over a plain build's cache")
+	}
+	t.Logf("one ud2 after the plain build filled the cache: export %s", export)
+}
+
 // TestMapLogStress runs the map_log_stress golden (decision 0372: copies
 // of one table written by their tasks while others read it, and a Mutex
 // store's writes and snapshots across tasks, every read checked) five

@@ -99,3 +99,24 @@ with windows/amd64 out of scope for the pass (PE).
   no ELF build is measured even on linux/arm64.
 - PE is outside sizebreak: the .text numbers here come from a debug/pe
   section dump.
+
+## Measured after the amd64 port (2026-10-25, later the same day)
+
+The pass now runs on amd64 (decision 0371's amd64 addendum;
+linux/amd64 by default, darwin/amd64 with XO_PASSES=+hollow). Release
+builds with the tree that carries the port, XO_PASSES=+hollow against
+XO_PASSES=-hollow, sizebreak's `__text`:
+
+| program | target | text off | text on | removed | share |
+|---|---|---|---|---|---|
+| hello | darwin/amd64 | 259,728 | 187,728 | 72,000 | 27.7% |
+| hello | linux/amd64 | 280,696 | 203,960 | 76,736 | 27.3% |
+| CRUD | darwin/amd64 | 1,880,336 | 1,832,560 | 47,776 | 2.5% |
+| CRUD | linux/amd64 | 1,946,024 | 1,895,320 | 50,704 | 2.6% |
+
+Against the estimates above: hello matches (72,000 against 77,900 B on
+darwin/amd64, 76,736 against 77,300 B on linux/amd64); CRUD comes in
+lower (47,776 against 60,350 B and 50,704 against 59,360 B), because the
+scaling assumed arm64's mix of dead code, and more of CRUD's dead x86
+code was shared or already dropped. windows/amd64 (PE) is still out of
+scope.

@@ -158,3 +158,163 @@ test "on ELF an unreached export and its data go, as on Mach-O" {
   expect(out.contains(".Lxo_t_str0:\n\t.quad 0")) == true
   expect(msg.starts_with("hollowed 1 functions and dropped 1 data objects of 6,")) == true
 }
+
+test "XO_PASSES reads +hollow and refuses a pass named both ways" {
+  let (off, on, err) = parse_passes("-hollow")
+  expect(off) == ["hollow"]
+  expect(on.is_empty()) == true
+  expect(err.is_empty()) == true
+  let (off2, on2, err2) = parse_passes("-inline, +hollow")
+  expect(off2) == ["inline"]
+  expect(on2) == ["hollow"]
+  expect(err2.is_empty()) == true
+  let (_o, _n, both) = parse_passes("+hollow,-hollow")
+  expect(both.contains("both")) == true
+  let (_o2, _n2, bare) = parse_passes("hollow")
+  expect(bare.contains("-NAME or +NAME")) == true
+  let (_o3, _n3, none) = parse_passes("+nope")
+  expect(none.contains("no pass nope")) == true
+  // a multi-byte first character is an error, not a slice fault
+  let (_o4, _n4, wide) = parse_passes("é")
+  expect(wide.contains("not -NAME or +NAME")) == true
+  let (_o5, _n5, wide2) = parse_passes("+é")
+  expect(wide2.contains("no pass é")) == true
+}
+
+/// The amd64 emitter's Mach-O text: AT&T instructions, a function's own
+/// branch labels (`Lp...`, no `Lxo_`), a shared `Lxo_drop1` label, a call,
+/// a RIP-relative lea, and a table in data naming kept.
+fn hollow_asm_amd64() -> Str {
+  [
+    "\t.section __TEXT,__text,regular,pure_instructions",
+    "# func main",
+    "\t.p2align 4",
+    "\t.globl _main",
+    "_main:",
+    "\tcallq _xo_f_main",
+    "\tret",
+    "\t.p2align 4",
+    "\t.globl _xo_f_main",
+    "_xo_f_main:",
+    "LpX_f1_begin:",
+    "\t.cfi_startproc",
+    "\tcallq _xo_f_live",
+    "\tleaq Lxo_t_str0(%rip), %r9",
+    "\tret",
+    "\t.cfi_endproc",
+    "\t.p2align 4",
+    "\t.globl _xo_f_live",
+    "_xo_f_live:",
+    "\tjmp Lxo_drop1",
+    "\t.p2align 4",
+    "\t.globl _xo_x_unused",
+    "_xo_x_unused:",
+    "\tjmp _xo_f_cabi_unused",
+    "\t.p2align 4",
+    "_xo_f_cabi_unused:",
+    "\tcallq _xo_hDead",
+    "\tleaq Lxo_t_loc1(%rip), %rax",
+    "\tret",
+    "\t.p2align 4",
+    "_xo_f_drop_20Dead:",
+    "_xo_hDead:",
+    "\tmovq (%rdi), %rax",
+    "\tret",
+    "\t.p2align 4",
+    "_xo_hShared:",
+    "\tmovq (%rdi), %rax",
+    "Lxo_drop1:",
+    "\tret",
+    "\t.p2align 4",
+    "_xo_f_kept:",
+    "\tret",
+    "\t.section __DATA,__const",
+    "\t.quad _xo_f_kept",
+    "\t.section __TEXT,__cstring,cstring_literals",
+    "Lxo_t_loc1:",
+    "\t.asciz \"dead.xo:1:1\"",
+    "Lxo_t_loc2:",
+    "\t.asciz \"named by DWARF\"",
+    "\t.section __DATA,__const",
+    "\t.p2align 3",
+    "Lxo_t_str0:",
+    "\t.quad 0",
+    "\t.section __DWARF,__debug_str,regular,debug",
+    "\t.quad Lxo_t_loc2",
+    "",
+  ].join("\n")
+}
+
+test "on amd64 Mach-O an unreached export and the drop helper only it calls become one ud2" {
+  let (parts, msg) = hollow_unreached_amd64([hollow_asm_amd64()], false)
+  let asm = parts[0]
+  let ud2 = ["\t${HOLLOW_UD2}"]
+  expect(body_of(asm, "_xo_x_unused")) == ud2
+  expect(body_of(asm, "_xo_f_cabi_unused")) == ud2
+  expect(body_of(asm, "_xo_f_drop_20Dead")) == ud2
+  expect(asm.contains("_xo_hDead:\n")) == true
+  // reached: from the entry, from main, through the shared local label,
+  // from data
+  expect(body_of(asm, "_main")) == ["\tcallq _xo_f_main", "\tret"]
+  expect(body_of(asm, "_xo_f_main")) == ["\tcallq _xo_f_live", "\tleaq Lxo_t_str0(%rip), %r9", "\tret"]
+  expect(body_of(asm, "_xo_hShared")) == ["\tmovq (%rdi), %rax", "\tret"]
+  expect(body_of(asm, "_xo_f_kept")) == ["\tret"]
+  expect(asm.contains("\t.globl _xo_x_unused\n_xo_x_unused:")) == true
+  expect(asm.contains("Lxo_t_loc1:")) == false
+  expect(asm.contains("dead.xo")) == false
+  expect(asm.contains("Lxo_t_loc2:")) == true
+  expect(asm.contains("Lxo_t_str0:\n\t.quad 0")) == true
+  expect(msg.starts_with("hollowed 3 functions and dropped 1 data objects of 11,")) == true
+}
+
+test "on amd64 ELF an unreached export becomes one ud2, and a libc symbol stays a function" {
+  let asm = [
+    "\t.text",
+    "\t.p2align 4",
+    "\t.globl main",
+    "\t.type main, @function",
+    "main:",
+    "\tcallq xo_f_live",
+    "\tleaq .Lxo_t_str0(%rip), %rax",
+    "\tret",
+    "\t.size main, .-main",
+    "\t.p2align 4",
+    "\t.hidden xo_f_live",
+    "xo_f_live:",
+    "\tcallq memcpy",
+    "\tret",
+    "\t.size xo_f_live, .-xo_f_live",
+    "\t.globl memcpy",
+    "\t.type memcpy, @function",
+    "memcpy:",
+    "\tmovq (%rdi), %rax",
+    "\tret",
+    "\t.size memcpy, .-memcpy",
+    "\t.p2align 4",
+    "\t.globl xo_x_unused",
+    "\t.type xo_x_unused, @function",
+    "xo_x_unused:",
+    "\tleaq .Lxo_t_loc1(%rip), %rax",
+    "\tjmp xo_f_live",
+    "\t.size xo_x_unused, .-xo_x_unused",
+    "\t.section .rodata.str1.1,\"aMS\",@progbits,1",
+    ".Lxo_t_loc1:",
+    "\t.asciz \"dead.xo:1:1\"",
+    "\t.section .rodata",
+    "\t.p2align 3",
+    ".Lxo_t_str0:",
+    "\t.quad 0",
+    "",
+  ].join("\n")
+  let (parts, msg) = hollow_unreached_amd64([asm], true)
+  let out = parts[0]
+  expect(out.contains("xo_x_unused:\n\t${HOLLOW_UD2}\n")) == true
+  expect(out.contains("\t.size xo_x_unused, .-xo_x_unused")) == true
+  expect(out.contains("xo_f_live:\n\tcallq memcpy")) == true
+  // a runtime function without the xo_ prefix is a function start, and the
+  // call reaches it
+  expect(out.contains("memcpy:\n\tmovq (%rdi), %rax")) == true
+  expect(out.contains(".Lxo_t_loc1:")) == false
+  expect(out.contains(".Lxo_t_str0:\n\t.quad 0")) == true
+  expect(msg.starts_with("hollowed 1 functions and dropped 1 data objects of 6,")) == true
+}

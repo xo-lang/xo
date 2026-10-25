@@ -192,8 +192,9 @@ fn fn_cache_store(os: Os, dir: Str, pk: Pack, fc: arm64.FnCache, stores: List[(S
 fn rc_cached(os: Os, var b: ssa.Builder, release: Bool, jobs: Int, phases: Bool, lazy: Bool) -> List[Str] {
   let host = host_os(os)
   let dir = backend_cache_dir(os, Ctx{goos: host, std: "", xo: "", cache: user_cache_dir(os, host)})
-  // (with XO_PASSES the entries' keys do not say which passes ran)
-  if dir.is_empty() || release || b.m.funcs.len() < 256 || !b.m.passes_off.is_empty() {
+  // (with XO_PASSES, either way, the entries' keys do not say which
+  // passes ran; passes_changed reads both - and + names)
+  if dir.is_empty() || release || b.m.funcs.len() < 256 || passes_changed(os) {
     b.insert_rc_jobs(jobs)
     return []
   }

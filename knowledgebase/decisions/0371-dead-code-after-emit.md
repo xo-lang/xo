@@ -162,3 +162,73 @@ compiler/arm64 hollow_test.xo has an ELF case: an unreached export and
 its location string go, while a Str object main names and a libc call
 stay. The Docker linux/arm64 goldens are the gate. x86_64 (AT&T text) is
 still not covered.
+
+## Addendum: amd64 (2026-10-25)
+
+The pass reads x86-64 assembly too, Mach-O and ELF, with the same scan:
+the amd64 emitter spells a function's global label, its `Lxo_`/`.Lxo_`
+shared labels, the data objects, the section switches and the
+`.globl`/`.private_extern`/`.p2align`/`.hidden`/`.type`/`.size` lines as
+arm64's; its `callq`, `jmp`, `lea` and RIP-relative operands carry the
+same `_xo_`/`xo_` names. One difference: an x86 function's own branch
+labels are `LpGL1jtk_f1_b0:` (Mach-O) or `.LpGL...` (ELF), not `Lxo_`,
+so they stay inside their function's chunk and the scan never takes one
+for a function. A hollowed body is one `ud2` (an invalid opcode, SIGILL):
+x86 has no immediate to carry a marker as arm64's `brk #0x484f` does.
+
+**Targets.** linux/amd64 runs the pass by default: the Docker amd64
+goldens build and run those binaries. darwin/amd64 is opt in, with
+`XO_PASSES=+hollow`, because nothing here can run an x86_64 Mach-O
+binary (the development Mac has no Rosetta; the owner's Intel laptop is
+offline), and a pass that only a size table checks should not change a
+shipped build. `+NAME` is new in `XO_PASSES` (compiler/arm64
+passes.xo): `-NAME` still turns a pass off, `+NAME` turns on the one a
+target leaves off, and naming one both ways is an error.
+
+Release builds, the same xo with XO_PASSES=+hollow and XO_PASSES=-hollow
+as the two sides (sizebreak's __text, 2026-10-25):
+
+| program | target | __text off | __text on | change |
+|---|---|---|---|---|
+| hello | linux/amd64 | 280,696 | 203,960 | -27.3% |
+| bench/perf/http/xo | linux/amd64 | 1,946,024 | 1,895,320 | -2.6% |
+| hello | darwin/amd64 (+hollow) | 259,728 | 187,728 | -27.7% |
+| bench/perf/http/xo | darwin/amd64 (+hollow) | 1,880,336 | 1,832,560 | -2.5% |
+
+For comparison, the same builds on arm64: hello 254,544 to 184,448
+(-27.5%, linux) and 242,340 to 170,832 (-29.5%, darwin); CRUD 1,522,560
+to 1,476,116 (-3.1%, linux) and 1,456,556 to 1,410,348 (-3.2%, darwin).
+The arm64 numbers are the same as the ELF addendum's, so the shared scan
+and the trap parameter changed nothing there.
+
+Tests: compiler/arm64 hollow_test.xo gains an amd64 Mach-O case and an
+amd64 ELF case (an unreached export and its drop helper become one
+`ud2`, a `jmp` to a shared `Lxo_drop1` keeps it, a RIP-relative `lea`
+and a `.quad` table are roots, a libc `memcpy:` label is not a function
+of the program), and XO_PASSES' `+`/`-` parsing. internal/arm64
+TestHollowUnreachedAmd64 cross builds the router program for
+darwin/amd64 with `XO_PASSES=+hollow`, disassembles it with otool (the
+assembler pads a 2 byte body with nops, which the test does not count)
+and checks the same export and drop helper against `XO_PASSES=-hollow`;
+the binary itself is not runnable here, and the test says so. The
+Docker amd64 goldens build and run linux/amd64 with the pass on, and
+internal/arm64 TestAmd64CrossBuilds builds four goldens for the three
+amd64 targets.
+
+Gates (2026-10-25): the fixed point (bootstrap-xo.sh, s1 = s2 = s3,
+identical assembly and binary, hello runs); the full internal/arm64
+package; every golden cross built for darwin/amd64 (375 of 375); and the
+full Docker amd64 run, all 375 goldens: 372 ok, 1 skip
+(proc_children_load hangs under Rosetta), 1 build note (use_c_add needs
+a C compiler), and 1 failure, slp_f64, which fails the same way with
+`XO_PASSES=-hollow` (a NaN payload sign bit: 0x7ff8... against
+0xfff8...), so it is x86 hardware behaviour in that arm64 SLP golden and
+not this pass. It is reported as a known linux/amd64 issue.
+
+`+NAME` changes which passes run without making the module's
+`passes_off` non-empty, so the four sites that turn the caches off
+when XO_PASSES is set (compiler/xo main.xo lazy inlining, the
+per-function cache, its whole-build condition, and bcache.xo's
+reference count cache) now read `passes_changed(os)`, which is true for
+either a `-` or a `+` entry: a `+hollow` build neither stores nor
+reuses entries of a plain build.
