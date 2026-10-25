@@ -255,6 +255,7 @@ CRUD server +4,112 bytes (+0.28%), hello +448, xo +108. Its inlining flips:
 the bench's own `cut_suffix` (and time.civil, ints.op_message) goes from "no
 (pads)" to "small", time.offset_secs from "small" to "no (size)". Because main's
 speed would move for the sake of a 64 byte flag-off difference, the +64 B stays.
+The +9.7% wall on cut_suffix was noise; quiet `--ab`, 25 rounds: wall neutral (2 better, 2 noise, zone_civil 1.014), instructions +1.5 to 2%.
 
 ## Container-only short strings: a hand model, stopped (2026-10-25)
 
