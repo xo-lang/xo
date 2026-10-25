@@ -1428,7 +1428,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     if !fdir.is_empty() {
       t = lap(os, phases, "fn_keys", t)
     }
-    let p = arm64.generate_cached(gm, if march == "amd64" { "${tgoos}-amd64" } else { tgoos }, jobs, fc)
+    var p = arm64.generate_cached(gm, if march == "amd64" { "${tgoos}-amd64" } else { tgoos }, jobs, fc)
     t = lap(os, phases, "emit", t)
     if !fdir.is_empty() {
       // a build the run cache keys (a test's, or a build's or run's under
@@ -1456,6 +1456,20 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     }
     if !p.skipped.is_empty() {
       fail_unsupported(os, "the emitter skipped ${p.skipped[0]}")
+    }
+    // the functions nothing reaches emptied (arm64 hollow.xo): Mach-O on
+    // arm64 (x86_64's AT&T text not yet checked), a program whose link
+    // has no `use c` objects (they could call an
+    // export by name), not `xo asm`; XO_PASSES=-hollow keeps them
+    if tgoos == "darwin" && march == "arm64" && o.cmd != "asm" && !c.mods.any(fn(m) { !m.c_prefix.is_empty() }) && !passes_off(os).contains("hollow") {
+      if p.parts.len() > 1 {
+        let (hp, _hs) = arm64.hollow_unreached(p.parts)
+        p.parts = hp
+      } else {
+        let (hp, _hs) = arm64.hollow_unreached([p.asm])
+        p.asm = hp[0]
+      }
+      t = lap(os, phases, "hollow", t)
     }
     // the whole text: empty with parts (p.text() joins them where read)
     let code = p.asm

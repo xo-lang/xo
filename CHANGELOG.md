@@ -11,6 +11,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   a literal clones a callee only when the callee compares it and does not hash or
   store it): a release CRUD server's __text goes from 1,519,088 to 1,467,848 bytes
   (-3.4%), with the closure and compare specializations as fast as before.
+- darwin/arm64 binaries no longer carry the code of functions nothing calls that the
+  earlier dead function removal had to keep (unused C ABI exports, the helpers only
+  they reach): each becomes one `brk #0x484f` after code generation (decision 0371,
+  `XO_PASSES=-hollow` turns it off). A release hello world's __text goes from
+  235,612 to 164,896 bytes (-30%), a CRUD server's by 3%.
 - A keyword where a pattern binds a name (`Some(pub) =>`) is its parse error alone:
   the bindings only the unparsed part read are no longer "never used" (they came
   first and named the wrong lines), a keyword read as a name says so (XO0160, not

@@ -14,6 +14,9 @@ pub fn passes() -> List[Str] {
     // module, before code generation
     "inline",
     "devirtualize",
+    // hollow.xo: the functions of the assembly nothing reaches emptied
+    // before it is assembled (compiler/xo, Mach-O)
+    "hollow",
     // compiler/ssa specialize.xo (decision 0368): a callee per call
     // site constant argument (a closure of nothing or a literal)
     "specialize_args",

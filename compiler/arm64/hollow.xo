@@ -1,0 +1,238 @@
+// Dead code after code generation (2026-10-24): the functions of the
+// program's assembly that nothing reaches are emptied before it is
+// assembled. reach.xo's drop_unreached runs before code generation and
+// keeps every C ABI export and the helpers the emitter makes itself (the
+// _xo_h* ones, a type's drop or equality), because the emitter calls the
+// runtime by symbol name, which the SSA does not show; here the
+// assembly shows every reference. A release CRUD server linked about
+// 59 KB of functions nothing called (71 cabi export stubs and the paths
+// only they reach: netconn's dial and client, selects, chan sends).
+//
+// The roots: _main, the symbols named outside a function's text (data,
+// tables, exception tables, but not __DWARF, which names every
+// function), and the unsafe-range markers (_xo_utext_*, _xo_utend_*).
+// A function is the text from its global label to the next one (the
+// directives before a label belong to the function above it; global
+// labels with no instruction between them name one body). Its shared
+// local labels (Lxo_drop1, which other functions branch to) are names of
+// it too. A function
+// no root reaches keeps its labels and its .p2align, .globl,
+// .private_extern and .section lines (the unwind and unsafe tables name
+// its labels, which then mark an empty range) and loses its
+// instructions, data and CFI directives (so no zero length FDE lands on
+// the next function's address); its body is one `brk #HOLLOW_BRK`, so a
+// path the scan missed faults instead of falling into the next function.
+// Mach-O only: its symbols start with `_`,
+// which the scan relies on; an ELF build is left as it is.
+
+/// The immediate of the brk a hollowed function's body is ("HO"): a fault
+/// at that brk is a call of a function the scan found unreached.
+pub const HOLLOW_BRK = 0x484f
+
+/// A function of the assembly: its part and byte range, from its label
+/// line to the start of the next function or section switch.
+struct HChunk {
+  part: Int
+  start: Int
+  end: Int
+  name: Str
+}
+
+/// The parts with the functions nothing reaches emptied, and a line of
+/// counts ("" when nothing was emptied). For a Mach-O build of a program
+/// whose link has no C objects that could call an export by name.
+pub fn hollow_unreached(parts: List[Str]) -> (List[Str], Str) {
+  var chunks: List[HChunk] = []
+  var by_name: Map[Str, Int] = {}
+  // the symbols a chunk names, by chunk; and those outside any chunk
+  var refs: List[List[Str]] = []
+  var roots: Map[Str, Bool] = {"_main": true}
+  for (pi, p) in parts.indexed() {
+    let b = p.bytes()
+    let n = b.len()
+    var in_text = false
+    var dwarf = false
+    var cur = -1
+    // whether the current chunk has a line past its labels and symbol
+    // directives: a global label before any is an alias of the same body
+    // (a drop helper's `_xo_f_drop_...:` then `_xo_h...:`)
+    var body = false
+    var i = 0
+    while i < n {
+      var j = i
+      while j < n && b[j] != 10 {
+        j += 1
+      }
+      // the line b[i..j]
+      if j > i {
+        let c0 = b[i]
+        if c0 == 9 && starts_at(b, i, j, "\t.section ") {
+          if cur >= 0 {
+            chunks[cur].end = i
+            cur = -1
+          }
+          in_text = starts_at(b, i, j, "\t.section __TEXT,__text")
+          dwarf = starts_at(b, i, j, "\t.section __DWARF")
+        } else if in_text && c0 == 95 && b[j - 1] == 58 {
+          // a global label `_name:`
+          let name = p[i..j - 1]
+          if cur < 0 || body {
+            if cur >= 0 {
+              chunks[cur].end = i
+            }
+            cur = chunks.len()
+            chunks.push(HChunk{part: pi, start: i, end: n, name: name})
+            refs.push([])
+            body = false
+          }
+          if !by_name.contains(name) {
+            by_name[name] = cur
+          }
+          if name.starts_with("_xo_utext_") || name.starts_with("_xo_utend_") {
+            roots[name] = true
+          }
+        } else if in_text && cur >= 0 && starts_at(b, i, j, "Lxo_") && b[j - 1] == 58 {
+          // a shared local label in the chunk (Lxo_drop1: other functions
+          // branch to it): a name of the chunk
+          let name = p[i..j - 1]
+          if !by_name.contains(name) {
+            by_name[name] = cur
+          }
+        } else if c0 == 9 && (starts_at(b, i, j, "\t.globl") || starts_at(b, i, j, "\t.private_extern") || starts_at(b, i, j, "\t.p2align")) {
+          // a symbol's declaration names it without using it (the next
+          // function's .globl sits in the range of the one above)
+        } else if c0 == 9 && !dwarf {
+          if cur >= 0 {
+            body = true
+          }
+          // an instruction or directive: the symbols it names (global ones
+          // and the shared local Lxo_ ones)
+          var k = i + 1
+          while k < j {
+            if (b[k] == 95 || (b[k] == 76 && starts_at(b, k, j, "Lxo_"))) && !ident_byte(b[k - 1]) {
+              var e = k + 1
+              while e < j && ident_byte(b[e]) {
+                e += 1
+              }
+              let s = p[k..e]
+              if cur >= 0 {
+                refs[cur].push(s)
+              } else {
+                roots[s] = true
+              }
+              k = e
+            } else {
+              k += 1
+            }
+          }
+        }
+      }
+      i = j + 1
+    }
+    if cur >= 0 {
+      chunks[cur].end = n
+    }
+  }
+  // reach from the roots
+  var live: List[Bool] = []
+  for _ in 0..chunks.len() {
+    live.push(false)
+  }
+  var work: List[Int] = []
+  for (s, _) in roots {
+    if let Some(ci) = by_name.get(s) {
+      if !live[ci] {
+        live[ci] = true
+        work.push(ci)
+      }
+    }
+  }
+  while let Some(ci) = work.pop() {
+    for s in refs[ci] {
+      if let Some(cj) = by_name.get(s) {
+        if !live[cj] {
+          live[cj] = true
+          work.push(cj)
+        }
+      }
+    }
+  }
+  var dead = 0
+  for l in live {
+    if !l {
+      dead += 1
+    }
+  }
+  if dead == 0 {
+    return (parts, "")
+  }
+  // the parts again, a dead chunk's lines but its labels and layout
+  // directives dropped
+  var out: List[Str] = []
+  var ci = 0
+  var dropped = 0
+  for (pi, p) in parts.indexed() {
+    let b = p.bytes()
+    var sb = StrBuilder.new()
+    var at = 0
+    while ci < chunks.len() && chunks[ci].part == pi {
+      let ch = chunks[ci]
+      if !live[ci] {
+        sb.write(p[at..ch.start])
+        // one `brk #HOLLOW_BRK` as the body: a path the scan missed (an
+        // address made at run time, a name looked up by prof.symbols, a
+        // table to come) faults at once instead of running into the next
+        // function
+        var brk = false
+        var i = ch.start
+        while i < ch.end {
+          var j = i
+          while j < ch.end && b[j] != 10 {
+            j += 1
+          }
+          let keep = j == i || b[i] != 9 || starts_at(b, i, j, "\t.p2align") || starts_at(b, i, j, "\t.globl") || starts_at(b, i, j, "\t.private_extern") || starts_at(b, i, j, "\t.align")
+          if keep {
+            sb.write(p[i..(if j < ch.end { j + 1 } else { j })])
+          } else {
+            if !brk {
+              sb.write("\tbrk #${HOLLOW_BRK}\n")
+              brk = true
+            }
+            dropped += j - i
+          }
+          i = j + 1
+        }
+        if !brk {
+          sb.write("\tbrk #${HOLLOW_BRK}\n")
+        }
+        at = ch.end
+      }
+      ci += 1
+    }
+    sb.write(p[at..p.len()])
+    out.push(sb.freeze())
+  }
+  (out, "hollowed ${dead} of ${chunks.len()} functions, ${dropped} bytes of assembly")
+}
+
+/// Whether line b[i..j] starts with t.
+fn starts_at(b: Bytes, i: Int, j: Int, t: Str) -> Bool {
+  let n = t.len()
+  if j - i < n {
+    return false
+  }
+  let tb = t.bytes()
+  var k = 0
+  while k < n {
+    if b[i + k] != tb[k] {
+      return false
+    }
+    k += 1
+  }
+  true
+}
+
+/// Whether byte c can be in an assembly symbol name.
+fn ident_byte(c: UInt8) -> Bool {
+  (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57) || c == 95 || c == 36 || c == 46
+}

@@ -1,0 +1,91 @@
+// Dead code after code generation (hollow.xo, decision 0371): the
+// functions of the assembly no root reaches become one brk.
+
+/// main calls live; a C ABI export stub and the drop helper only it
+/// calls (two global labels on one body, with a shared local stub other
+/// functions branch to) are named by nothing else; a table in data names
+/// kept, which nothing calls.
+fn hollow_asm() -> Str {
+  [
+    "\t.section __TEXT,__text,regular,pure_instructions",
+    "// func main",
+    "\t.p2align 2",
+    "\t.globl _main",
+    "_main:",
+    "\tbl _xo_f_live",
+    "\tret",
+    "\t.p2align 2",
+    "_xo_f_live:",
+    "\tbl Lxo_drop1",
+    "\tret",
+    "\t.p2align 2",
+    "\t.globl _xo_x_unused",
+    "_xo_x_unused:",
+    "\tb _xo_f_cabi_unused",
+    "\t.p2align 2",
+    "_xo_f_cabi_unused:",
+    "\tbl _xo_hDead",
+    "\tret",
+    "\t.p2align 2",
+    "_xo_f_drop_20Dead:",
+    "_xo_hDead:",
+    "\tldr x1, [x0]",
+    "\tret",
+    "\t.p2align 2",
+    "_xo_hShared:",
+    "\tldr x1, [x0]",
+    "Lxo_drop1:",
+    "\tret",
+    "\t.p2align 2",
+    "_xo_f_kept:",
+    "\tret",
+    "\t.section __DATA,__const",
+    "\t.quad _xo_f_kept",
+    "",
+  ].join("\n")
+}
+
+/// The instruction lines of the function at label name, to the next
+/// global label or section.
+fn body_of(asm: Str, name: Str) -> List[Str] {
+  var out: List[Str] = []
+  var in_fn = false
+  for l in asm.split("\n") {
+    if l.starts_with("_") && l.ends_with(":") {
+      in_fn = l == "${name}:" || (in_fn && out.is_empty())
+      continue
+    }
+    if l.starts_with("\t.section") {
+      in_fn = false
+    }
+    if in_fn && l.starts_with("\t") && !l.starts_with("\t.") {
+      out.push(l)
+    }
+  }
+  out
+}
+
+test "an unreached export and the drop helper only it calls become one brk" {
+  let (parts, msg) = hollow_unreached([hollow_asm()])
+  let asm = parts[0]
+  let brk = ["\tbrk #${HOLLOW_BRK}"]
+  expect(body_of(asm, "_xo_x_unused")) == brk
+  expect(body_of(asm, "_xo_f_cabi_unused")) == brk
+  // both labels of the helper stay, on one brk
+  expect(body_of(asm, "_xo_f_drop_20Dead")) == brk
+  expect(asm.contains("_xo_hDead:\n")) == true
+  // reached: from main, through a shared local label, from data
+  expect(body_of(asm, "_main")) == ["\tbl _xo_f_live", "\tret"]
+  expect(body_of(asm, "_xo_hShared")) == ["\tldr x1, [x0]", "\tret"]
+  expect(body_of(asm, "_xo_f_kept")) == ["\tret"]
+  // the export keeps its declaration
+  expect(asm.contains("\t.globl _xo_x_unused\n_xo_x_unused:")) == true
+  expect(msg) == "hollowed 3 of 7 functions, 54 bytes of assembly"
+}
+
+test "nothing unreached leaves the assembly as it is" {
+  let src = "\t.section __TEXT,__text,regular,pure_instructions\n_main:\n\tret\n"
+  let (parts, msg) = hollow_unreached([src])
+  expect(parts[0]) == src
+  expect(msg) == ""
+}
