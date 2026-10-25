@@ -466,6 +466,7 @@ fn program_builder(c: check.Checker, line_root: Str, tests: Bool, release: Bool,
   b.prof = prof
   b.trace_support = trace_support
   b.m.pack_lists = c.pack_lists
+  b.m.inline_str = c.inline_str
   b.nolibc = nolibc
   b.tests = tests
   b.release = release
@@ -613,6 +614,11 @@ fn (var b: Builder) declare_exports() {
       // --race on every target: the functions' entry and exit
       // (compiler/arm64 race.xo race_func_hooks)
       if b.c.race {
+        b.declare_exports_of(mi, false)
+      }
+    } else if p == "native/llrt/cabi_inl" {
+      // --inline-str (decision 0370): its view of an inline Str
+      if b.c.inline_str {
         b.declare_exports_of(mi, false)
       }
     } else if p == "native/llrt/cabi_tw" {

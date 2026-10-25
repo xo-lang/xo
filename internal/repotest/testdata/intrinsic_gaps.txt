@@ -175,6 +175,7 @@ llvm rune_of lowered by compiler/ssa itself (an intrinsic of the builder, no run
 llvm status_of lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 llvm str_find layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
 llvm str_hash lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+llvm str_inline --inline-str is arm64 only (decision 0370): a build for another backend never has an inline Str
 llvm str_repeat lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 llvm str_rune_count lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 llvm str_slice lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
@@ -216,6 +217,7 @@ wasm sched_hook the native runtime's (stacks, scheduler, unwinder, native heap):
 wasm sched_run_task the native runtime's (stacks, scheduler, unwinder, native heap): the wasm runtime has its own
 wasm stack_switch the native runtime's (stacks, scheduler, unwinder, native heap): the wasm runtime has its own
 wasm status_of lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+wasm str_inline --inline-str is arm64 only (decision 0370): a build for another backend never has an inline Str
 wasm sym_addr lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 wasm sym_present lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 wasm time_parse not supported on wasm yet (no program the wasm goldens build reaches it)

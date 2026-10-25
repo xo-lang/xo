@@ -30,6 +30,7 @@ use native/llrt/heapprof
 use native/llrt/libcmem
 use native/llrt/mutex
 use native/llrt/num
+use native/llrt/inlstr
 use native/llrt/obj
 use native/llrt/poll
 use native/llrt/prof
@@ -372,6 +373,9 @@ fn obj_rs_concat(a: Int, an: Int, b: Int, bn: Int) -> Int {
   if (an & 4294967295).wrapping_add(bn & 4294967295) > 4294967295 {
     len_over()
   }
+  if inlstr.built() && inlstr.is_inline(b) {
+    return obj.rs_append_inline(a, an, b, bn)
+  }
   obj.rs_append(a, an, view_data(b, bn), bn & 4294967295)
 }
 
@@ -381,6 +385,9 @@ fn obj_rs_append(a: Int, an: Int, b: Int, bn: Int, lenp: Int) -> Int {
     len_over()
   }
   rt.mem_store(lenp, 0, n, 8)
+  if inlstr.built() && inlstr.is_inline(b) {
+    return obj.rs_append_inline(a, an, b, bn)
+  }
   obj.rs_append(a, an, view_data(b, bn), bn & 4294967295)
 }
 
@@ -398,6 +405,9 @@ fn obj_rs_push_word(a: Int, an: Int, w: Int, n: Int, lenp: Int) -> Int {
   if t > 4294967295 {
     len_over()
   }
+  if inlstr.built() && t <= inlstr.MAX && !obj.keep_object(a) {
+    return obj.inline_push(a, an, w, n, lenp)
+  }
   rt.mem_store(lenp, 0, t, 8)
   obj.rs_push_word(a, an, w)
 }
@@ -407,6 +417,9 @@ fn obj_rs_push_words(a: Int, an: Int, w0: Int, w1: Int, w2: Int, w3: Int, lens: 
   let t = (an & 4294967295).wrapping_add(k)
   if t > 4294967295 {
     len_over()
+  }
+  if inlstr.built() && t <= inlstr.MAX && !obj.keep_object(a) {
+    return obj.inline_push_words(a, an, w0, w1, w2, w3, lens, lenp)
   }
   rt.mem_store(lenp, 0, t, 8)
   obj.rs_push_words(a, an, w0, w1, w2, w3, lens)
@@ -418,6 +431,13 @@ fn obj_rs_append_bytes(a: Int, an: Int, b: Int, bn: Int, lo: Int, hi: Int, mode:
     len_over()
   }
   rt.mem_store(lenp, 0, n, 8)
+  if inlstr.built() && inlstr.is_inline(b) {
+    return obj.rs_append_bytes_inline(a, an, b, bn, lo, hi, mode)
+  }
+  if inlstr.built() && mode == 0 && n <= inlstr.MAX && n > 0 && !obj.keep_object(a) {
+    // a short result keeps its text in its words (decision 0370)
+    return obj.inline_append(a, an, b.wrapping_add(bn.shr_logical(32)).wrapping_add(16 + lo), hi.wrapping_sub(lo), lenp)
+  }
   obj.rs_append_bytes(a, an, b.wrapping_add(bn.shr_logical(32)), lo, hi, mode)
 }
 

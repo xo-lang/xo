@@ -1,0 +1,63 @@
+// Short Strs (11 bytes or fewer, decision 0370 keeps them inline in a build
+// with --inline-str) written to a socket and a pipe: the text must reach the
+// poller's write path as bytes, not as the Str's words. A server echoes what
+// it reads; the client sends many short texts (each 1 to 13 bytes, built by
+// interpolation) and checks the echo.
+
+fn echo(c: Stream) -> () ! NetErr {
+  while {
+    match c.read(7)? {
+      Some(data) => c.write(data)?
+      None => break
+    }
+  }
+}
+
+fn texts() -> List[Str] {
+  var xs: List[Str] = []
+  for i in 0..200 {
+    xs.push("k${i}")
+    xs.push("n=${i * 7919}")
+    xs.push("short key ${i % 10}")
+    xs.push("twelve bytes${i % 10}")
+  }
+  xs
+}
+
+fn main(os: Os) {
+  let l = os.net.listen("127.0.0.1:0").ok() ?? fault("listen")
+  let addr = l.addr()
+  scope s {
+    let g = s.group()
+    s.spawn_background(fn() {
+      match l.accept() {
+        Ok(c) => g.spawn_background(fn() {
+          let _ = echo(c).is_ok()
+          c.close()
+        })
+        Err(_) => {}
+      }
+    })
+    let c = os.net.dial(addr).ok() ?? fault("dial")
+    var want = ""
+    for t in texts() {
+      want = want + t
+      c.write(t.bytes()).ignore_err("a failed write shows in the echo count")
+    }
+    var got = ""
+    while got.len() < want.len() {
+      match c.read(4096) {
+        Ok(Some(b)) => got = got + (b.to_str() ?? "?")
+        _ => break
+      }
+    }
+    c.close()
+    os.stdio.println("sent ${want.len()} bytes, echoed ${got.len()}, equal ${got == want}")
+  }
+  l.close()
+  var sum = 0
+  for t in texts() {
+    sum += t.len()
+  }
+  os.stdio.println("texts ${texts().len()} total ${sum}")
+}

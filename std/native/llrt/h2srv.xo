@@ -39,6 +39,7 @@
 use native/llrt/ctx
 use native/llrt/h2w
 use native/llrt/hpack
+use native/llrt/inlstr
 use native/llrt/http1
 use native/llrt/http1w
 use native/llrt/poll
@@ -542,6 +543,9 @@ fn queue_locked(c: Int, st: Int, rh: Int, rhn: Int, rhcap: Int, nobody: Bool, p:
 /// The hn fields of names and values as http1w.xo's 32 byte fields (the
 /// names and values must outlive it); free it with fields_free.
 fn fields_of(names: List[Str], values: List[Str]) -> Int {
+  if inlstr.built() {
+    return fields_of_inl(names, values)
+  }
   let n = names.len()
   let a = rt.heap_large(32 * n + 32)
   for i in 0..n {
@@ -553,7 +557,55 @@ fn fields_of(names: List[Str], values: List[Str]) -> Int {
   a
 }
 
-fn fields_free(a: Int) { rt.heap_release(a - 8) }
+/// fields_of when a Str may be inline (decision 0370): its text is copied
+/// to a block of its own, whose address the fields keep, since an inline
+/// Str's data address dies with this function's frame. The n, then the 2n
+/// copies' blocks (0 for none), come before the fields: fields_free_inl.
+fn fields_of_inl(names: List[Str], values: List[Str]) -> Int {
+  let n = names.len()
+  let head = 8 * (1 + 2 * n)
+  let base = rt.heap_large(head + 32 * n + 32)
+  let a = base + head
+  rt.mem_store(a, -8, n, 8)
+  for i in 0..n {
+    rt.mem_store(a, -8 * (2 + 2 * i), 0, 8)
+    rt.mem_store(a, -8 * (3 + 2 * i), 0, 8)
+    var np = raw.data(names[i])
+    var vp = raw.data(values[i])
+    if raw.is_inline(names[i]) {
+      let c = rt.heap_large(names[i].len() + 1)
+      rt.mem_copy(c, np, names[i].len())
+      rt.mem_store(a, -8 * (2 + 2 * i), c, 8)
+      np = c
+    }
+    if raw.is_inline(values[i]) {
+      let c = rt.heap_large(values[i].len() + 1)
+      rt.mem_copy(c, vp, values[i].len())
+      rt.mem_store(a, -8 * (3 + 2 * i), c, 8)
+      vp = c
+    }
+    rt.mem_store(a, 32 * i, np, 8)
+    rt.mem_store(a, 32 * i + 8, names[i].len(), 8)
+    rt.mem_store(a, 32 * i + 16, vp, 8)
+    rt.mem_store(a, 32 * i + 24, values[i].len(), 8)
+  }
+  a
+}
+
+fn fields_free(a: Int) {
+  if inlstr.built() {
+    let n = rt.mem_load(a, -8, 8)
+    for k in 0..2 * n {
+      let c = rt.mem_load(a, -8 * (2 + k), 8)
+      if c != 0 {
+        rt.heap_release(c - 8)
+      }
+    }
+    rt.heap_release(a - 8 * (1 + 2 * n) - 8)
+    return
+  }
+  rt.heap_release(a - 8)
+}
 
 /// Answers st from the connection itself (431, 400, OPTIONS *): a whole
 /// response with the fields of names and values, as a handler of

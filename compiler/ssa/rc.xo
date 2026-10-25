@@ -129,7 +129,7 @@ fn runtime_modes(name: Str) -> List[Mode]? {
   let w = Mode.Borrow
   let n = Mode.No
   match name {
-    "str.concat" => Some([c, w])
+    "str.concat" | "str.concat_obj" => Some([c, w])
     "str.concat_int" => Some([c, n])
     "str.concat_float" => Some([c, n])
     "list.set" => Some([c, n, c])

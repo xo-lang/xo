@@ -434,7 +434,7 @@ pub fn map_case_bytes(b: Bytes, lower: Bool) -> Bytes {
   if case_done(b, lower) {
     return b
   }
-  rt.cast[Str, Bytes](case_append(rt.rs_with_cap(b.len()), b, 0, lower))
+  case_append(rt.rs_with_cap(b.len()), b, 0, lower).bytes()
 }
 
 /// `a.to_lower() == b.to_lower()` without making the lowered strings:

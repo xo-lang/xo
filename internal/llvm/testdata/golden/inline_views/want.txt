@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+views 1820 hash 128374867
+--- stderr

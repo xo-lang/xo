@@ -113,9 +113,19 @@ fn (var g: G) rc_helper(kind: Str, t: Int) -> Str {
     }
     Str | List => {
       if kind == "dup" {
+        if g.inl_str() && g.kind(t) == ssa.Kind.Str {
+          // an inline Str has no object (decision 0370)
+          b.push("\ttbnz x0, #0, ${sym}_inl\n")
+        }
         b.push(g.inc_text("x0", "x1", "w2", sym, true))
+        if g.inl_str() && g.kind(t) == ssa.Kind.Str {
+          b.push("${sym}_inl:\n\tret\n")
+        }
       } else if kind == "share" {
         let ret = g.local("xo_${g.ns}${kind}${id}_ret")
+        if g.inl_str() && g.kind(t) == ssa.Kind.Str {
+          b.push("\ttbnz x0, #0, ${ret}\n")
+        }
         b.push(mark_text("x0", "x1", ret))
         if g.kind(t) == ssa.Kind.List {
           let et = g.m.types[t].elems[0]
@@ -141,10 +151,17 @@ fn (var g: G) rc_helper(kind: Str, t: Int) -> Str {
 /// The body of the drop helper of a Str or List t (x0 the object), its
 /// labels from sym and free.
 fn (var g: G) str_list_drop(var b: List[Str], sym: Str, free: Str, t: Int) {
+  if g.inl_str() && g.kind(t) == ssa.Kind.Str {
+    // an inline Str has no object to release (decision 0370)
+    b.push("\ttbnz x0, #0, ${sym}_inl\n")
+  }
   b.push(g.dec_text("x0", "x1", "w2", sym, free, ""))
   b.push("${free}:\n")
   if g.kind(t) == ssa.Kind.Str {
     b.push("\tb ${g.sym("xo_x_obj_rc_free")}\n")
+    if g.inl_str() {
+      b.push("${sym}_inl:\n\tret\n")
+    }
     return
   }
   let et = g.m.types[t].elems[0]
@@ -312,6 +329,9 @@ fn (var g: G) leaf_call(var b: List[Str], kind: Str, l: Leaf, reg: Str, base: In
   let lk = g.kind(l.t)
   if kind == "dup" && (lk is ssa.Kind.Str | ssa.Kind.List | ssa.Kind.Box | ssa.Kind.Handle) {
     b.push("\tldr x9, [${reg}, #${base + 8 * l.off}]\n")
+    if g.inl_str() && lk == ssa.Kind.Str {
+      b.push("\ttbnz x9, #0, ${lbl}_inc\n")
+    }
     b.push(g.inc_text("x9", "x10", "w11", lbl, false))
     return
   }

@@ -2,6 +2,7 @@
 // modules: text handed to and from the C runtime as an address and a
 // length. Unchecked like the intrinsics: the C caller guarantees the
 // sizes (a buffer large enough for what is written, n readable bytes).
+use native/llrt/inlstr
 use native/rt
 
 /// The address of the first byte of s (its string object's data).
@@ -212,6 +213,12 @@ pub fn bytes_decode(b: Bytes, i: Int) -> Int {
   }
   decode(b, i)
 }
+
+/// Whether s keeps its text in its words (--inline-str, decision 0370): its
+/// data address then points into the caller's frame, valid only while that
+/// function runs, so a function that stores the address copies the text to
+/// the heap first.
+pub fn is_inline(s: Str) -> Bool { inlstr.built() && rt.str_inline(s) }
 
 /// The byte i of s, or -1 out of range.
 pub fn str_byte(s: Str, i: Int) -> Int {

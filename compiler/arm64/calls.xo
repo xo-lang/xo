@@ -33,9 +33,15 @@ fn (var g: G) push_fast(v: Int, word: Bool) {
   let b = g.word(x.args[1])
   let rp = g.new_vreg(false)
   let rn = g.new_vreg(false)
+  let slow = g.new_block(true)
+  if g.inl_str() {
+    // an inline Str (decision 0370) has no object to extend in place
+    let ld = g.new_block(false)
+    let _t = g.add(Inst{kind: K_CONDBR, cond: "tbnz", bit: 0, us: [a], targets: [slow, ld]})
+    g.cur = ld
+  }
   let c = g.def1(false, "ldr $d0, [$u0]", [a])
   let before = g.m_()
-  let slow = g.new_block(true)
   let room = g.new_block(false)
   let fast = g.new_block(false)
   let cont = g.new_block(false)
@@ -76,6 +82,80 @@ fn (var g: G) push_fast(v: Int, word: Bool) {
   g.set(v, [rp, rn])
 }
 
+/// Whether this build keeps short Strs inline (--inline-str, decision
+/// 0370; arm64 only).
+fn (g: G) inl_str() -> Bool { g.m.inline_str && !g.x86 }
+
+/// The address of a new 16 bytes of the frame's memory with the two words
+/// of a Str stored in it so that an inline Str's text is contiguous at
+/// +1: w1 at +4 (its length bytes are overwritten), then w0 at +0.
+fn (var g: G) inl_spill(w0: Int, w1: Int) -> Int {
+  let off = g.mem_bytes
+  g.mem_bytes += 16
+  let slot = g.area_addr(off)
+  g.store("stur $u0, [$u1, #4]", [w1, slot])
+  g.store("str $u0, [$u1]", [w0, slot])
+  slot
+}
+
+/// The address of the text of the Str (w0, w1) when it may be inline: the
+/// object's (header, offset) on the path of a heap Str, which costs the
+/// tag test and its branch, else the text of a spilled copy (a cold block).
+fn (var g: G) str_base_inl(ws: List[Int]) -> Int {
+  if g.lit_objs.contains(ws[0]) {
+    // a literal is an object: the plain address (decision 0370)
+    let s0 = g.def1(false, "add $d0, $u0, $u1, lsr #32", [g.real(ws[0]), g.real(ws[1])])
+    return g.def1(false, "add $d0, $u0, #16", [s0])
+  }
+  let obj = g.real(ws[0])
+  let w1 = g.real(ws[1])
+  let _mi = g.m_()
+  if let Some(x) = g.cm.bases.get((obj, w1, -16)) {
+    return x
+  }
+  let before = g.m_()
+  let d = g.new_vreg(false)
+  let inl = g.new_block(true)
+  let heap = g.new_block(false)
+  let cont = g.new_block(false)
+  let _b = g.add(Inst{kind: K_CONDBR, cond: "tbnz", bit: 0, us: [obj], targets: [inl, heap]})
+  g.cur = heap
+  let s = g.def1(false, "add $d0, $u0, $u1, lsr #32", [obj, w1])
+  let n = g.def1(false, "add $d0, $u0, #16", [s])
+  g.pmove([d], regs([n]))
+  let _j = g.add(Inst{kind: K_JUMP, targets: [cont]})
+  g.cur = inl
+  let slot = g.inl_spill(obj, w1)
+  let t = g.def1(false, "add $d0, $u0, #1", [slot])
+  g.pmove([d], regs([t]))
+  let _j2 = g.add(Inst{kind: K_JUMP, targets: [cont]})
+  g.cur = cont
+  g.inherit(before)
+  g.clobber()
+  let _mj = g.m_()
+  g.cm.bases[(obj, w1, -16)] = d
+  d
+}
+
+/// Retains a Str's object unless the Str is inline (no object).
+fn (var g: G) inc_str(p0: Int) {
+  if !g.inl_str() || g.lit_objs.contains(p0) {
+    g.inc(p0)
+    return
+  }
+  let p = g.real(p0)
+  let before = g.m_()
+  let body = g.new_block(false)
+  let cont = g.new_block(false)
+  let _b = g.add(Inst{kind: K_CONDBR, cond: "tbnz", bit: 0, us: [p], targets: [cont, body]})
+  g.cur = body
+  g.inc(p)
+  let _j = g.add(Inst{kind: K_JUMP, targets: [cont]})
+  g.cur = cont
+  g.inherit(before)
+  g.clobber()
+}
+
 fn (var g: G) inc(p0: Int) {
   let p = g.real(p0)
   let c = g.def1(false, "ldr $d0, [$u0]", [p])
@@ -102,7 +182,8 @@ fn (var g: G) inc(p0: Int) {
 
 fn (var g: G) retain(t: Int, ws: List[Int]) {
   match g.kind(t) {
-    Str | List | Box | Handle => g.inc(g.real(ws[0]))
+    Str => g.inc_str(g.real(ws[0]))
+    List | Box | Handle => g.inc(g.real(ws[0]))
     Func => g.retain_func(ws)
     _ => {
       if !g.heap(t) {
@@ -121,6 +202,10 @@ fn (var g: G) release(t: Int, ws: List[Int]) {
   }
   match g.kind(t) {
     Str | List | Handle => {
+      if g.inl_str() && g.kind(t) == ssa.Kind.Str && g.lit_objs.contains(ws[0]) {
+        // a literal's count is immortal: nothing to release
+        return
+      }
       let h = g.rc_helper("drop", t)
       let _r = g.call(h, regs([ws[0]]), [])
     }
@@ -611,6 +696,30 @@ fn (var g: G) str_data(ws: List[Int]) -> Int {
 fn (var g: G) str_obj_at(ws: List[Int]) -> Int {
   let obj = g.real(ws[0])
   let w1 = g.real(ws[1])
+  if g.inl_str() {
+    // the text's address less the header (raw.data adds it); an inline
+    // Str's from its spilled words in a cold block, a heap Str's at the
+    // price of the tag test
+    let before = g.m_()
+    let d = g.new_vreg(false)
+    let inl = g.new_block(true)
+    let heap = g.new_block(false)
+    let cont = g.new_block(false)
+    let _b = g.add(Inst{kind: K_CONDBR, cond: "tbnz", bit: 0, us: [obj], targets: [inl, heap]})
+    g.cur = heap
+    let s = g.def1(false, "add $d0, $u0, $u1, lsr #32", [obj, w1])
+    g.pmove([d], regs([s]))
+    let _j = g.add(Inst{kind: K_JUMP, targets: [cont]})
+    g.cur = inl
+    let slot = g.inl_spill(obj, w1)
+    let t = g.def1(false, "sub $d0, $u0, #15", [slot])
+    g.pmove([d], regs([t]))
+    let _j2 = g.add(Inst{kind: K_JUMP, targets: [cont]})
+    g.cur = cont
+    g.inherit(before)
+    g.clobber()
+    return d
+  }
   if g.x86 {
     let off = g.def1(false, "lsr $d0, $u0, #32", [w1])
     return g.def1(false, "add $d0, $u0, $u1", [obj, off])
@@ -621,6 +730,15 @@ fn (var g: G) str_obj_at(ws: List[Int]) -> Int {
 /// str_data once per block for a value (STR_VIEWS only): the memo is the
 /// one bytes_load keeps.
 fn (var g: G) str_base(ws: List[Int]) -> Int {
+  if g.inl_str() {
+    return g.str_base_inl(ws)
+  }
+  return g.str_base_heap(ws)
+}
+
+/// str_base for a value that is never an inline Str (Bytes: --inline-str,
+/// decision 0370, keeps only Str values in their words): no tag test.
+fn (var g: G) str_base_heap(ws: List[Int]) -> Int {
   let obj = g.real(ws[0])
   if !STR_VIEWS {
     let _mi = g.m_()
@@ -688,8 +806,8 @@ fn (var g: G) str_len(ws: List[Int]) -> Int {
 /// Loads byte i (SSA value iv, register i) of the Bytes object in
 /// register obj0; the data address, and data + j for i = j + c (0 < c <
 /// 4096), are computed once per block (isel.go bytesLoad, decision 0184).
-fn (var g: G) bytes_load(ws: List[Int], iv: Int, i: Int) -> Int {
-  let d = g.str_base(ws)
+fn (var g: G) bytes_load(ws: List[Int], iv: Int, i: Int, borrowed: Bool) -> Int {
+  let d = if borrowed { g.str_base_inl(ws) } else { g.str_base_heap(ws) }
   let x = g.f.values[iv]
   if x.op == ssa.Op.Add {
     let (c, is_k) = g.const_int(x.args[1])
@@ -1115,13 +1233,21 @@ fn (var g: G) call_op(v: Int) {
       g.cm.lens[l2] = nl
       g.set(v, [l2] + o)
     }
-    "str.concat" => {
+    "str.concat" | "str.concat_obj" => {
       let a = g.words(x.args[0])
       let b = g.words(x.args[1])
       let n = g.def1(false, "add $d0, $u0, $u1", [g.str_len(a), g.str_len(b)])
-      // obj.xo's rs_append through its export, with no C level
-      let obj = g.rt("xo_x_obj_rs_concat", regs([a[0], a[1], b[0], b[1]]), [false])
-      g.set(v, [obj[0], n])
+      if g.inl_str() && name == "str.concat" {
+        // a short result is an inline Str (decision 0370): the runtime
+        // returns its first word and stores the second
+        let o = g.rt("xo_x_inl_concat", [rsrc(a[0]), rsrc(a[1]), rsrc(b[0]), rsrc(b[1]), framesrc()], [false])
+        let n2 = g.def1(false, "ldr $d0, [sp, #$OUT]", [])
+        g.set(v, [o[0], n2])
+      } else {
+        // obj.xo's rs_append through its export, with no C level
+        let obj = g.rt("xo_x_obj_rs_concat", regs([a[0], a[1], b[0], b[1]]), [false])
+        g.set(v, [obj[0], n])
+      }
     }
     "str.concat_int" | "str.concat_float" => {
       let a = g.words(x.args[0])
@@ -1248,7 +1374,9 @@ fn (var g: G) call_op(v: Int) {
         g.index_facts(i)
         g.less_fact(x.args[1], alen)
       }
-      g.set(v, [g.bytes_load(a, x.args[1], i)])
+      let bv = g.f.values[x.args[0]]
+      let borrowed = g.inl_str() && bv.op == ssa.Op.Call && aux_str(bv.aux) == "rt.str_bytes" && !g.escapes[x.args[0]]
+      g.set(v, [g.bytes_load(a, x.args[1], i, borrowed)])
     }
     "Str.len" => g.set(v, [g.str_len(g.words(x.args[0]))])
     "Str.is_empty" => g.set(v, [g.def1(false, "cmp $u0, #0\ncset $d0, eq", [g.real(g.str_len(g.words(x.args[0])))])])
@@ -1810,7 +1938,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     "rt.float_from_bits" => g.set(v, [g.def1(true, "fmov $d0, $u0", [g.word(x.args[0])])])
     "rt.bytes_word" => {
       let ws = g.words(x.args[0])
-      let d = g.str_data(ws)
+      let d = g.str_base_heap(ws)
       g.set(v, [g.def1(false, "ldr $d0, [$u0, $u1]", [d, g.word(x.args[1])])])
     }
     "rt.sys6" => {
@@ -1927,6 +2055,10 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.sched_ref = true
       g.set(v, [g.sym_addr(g.sym("xo_fiber_entry"))])
     }
+    "rt.str_inline" => {
+      let ws = g.words(x.args[0])
+      g.set(v, [g.def1(false, "and $d0, $u0, #1", [g.real(ws[0])])])
+    }
     "rt.frame_addr" => {
       // the frame record the prologue makes (decision 0233): x29, with
       // the frame kept for this instruction's block (Inst.frame)
@@ -1951,7 +2083,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     "rt.clz" => g.set(v, [g.def1(false, "clz $d0, $u0", [g.word(x.args[0])])])
     "rt.bytes_eq16" | "rt.bytes_high16" | "rt.bytes_eq16_bits" | "rt.bytes_high16_bits" => {
       let ws = g.words(x.args[0])
-      let d = g.str_data(ws)
+      let d = g.str_base_heap(ws)
       var us = [d, g.word(x.args[1])]
       if g.x86 {
         g.set(v, [g.x86_bytes16(x, us)])
@@ -2005,7 +2137,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     }
     "rt.rs_put_word" => {
       let ws = g.words(x.args[0])
-      let d = g.str_data(ws)
+      let d = g.str_base_heap(ws)
       let _i = g.plain("str $u2, [$u0, $u1]", [], [d, g.word(x.args[1]), g.word(x.args[2])])
       g.set(v, ws)
     }
@@ -2255,6 +2387,38 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
         g.set(v, [ws[0]])
       }
     }
+    "rt.str_bytes" => {
+      // Str.bytes() under --inline-str (decision 0370): the same words,
+      // counted once more, for a Str with an object; an inline Str becomes
+      // a string object (the runtime), since Bytes holds none inline
+      let ws = g.words(x.args[0])
+      let obj = g.real(ws[0])
+      let w1 = g.real(ws[1])
+      let rp = g.new_vreg(false)
+      let rn = g.new_vreg(false)
+      let slow = g.new_block(true)
+      let fast = g.new_block(false)
+      let cont = g.new_block(false)
+      let _b = g.add(Inst{kind: K_CONDBR, cond: "tbnz", bit: 0, us: [obj], targets: [slow, fast]})
+      g.cur = fast
+      g.inc(obj)
+      g.pmove([rp, rn], regs([obj, w1]))
+      let _j = g.add(Inst{kind: K_JUMP, targets: [cont]})
+      g.cur = slow
+      if g.escapes[v] {
+        let o = g.rt("xo_x_inl_bytes", [rsrc(obj), rsrc(w1), framesrc()], [false])
+        let n2 = g.def1(false, "ldr $d0, [sp, #$OUT]", [])
+        g.pmove([rp, rn], regs([o[0], n2]))
+      } else {
+        // only read here (isel reads_borrowed): the inline Str itself
+        g.pmove([rp, rn], regs([obj, w1]))
+      }
+      let _j2 = g.add(Inst{kind: K_JUMP, targets: [cont]})
+      g.cur = cont
+      g.clobber()
+      g.set(v, [rp, rn])
+      return true
+    }
     "rt.str_view" => {
       // s[lo..hi] with the range already checked (decision 0330 step 3): the
       // same object, counted once more, and w1 = (hi - lo) | ((off + lo) << 32)
@@ -2263,6 +2427,65 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
       let hi = g.real(g.word(x.args[2]))
       let obj = g.real(ws[0])
       let w1 = g.real(ws[1])
+      if g.inl_str() {
+        // an inline Str (decision 0370) has no object to share: its bytes
+        // lo..hi are a new inline Str, made by the runtime
+        let rp = g.new_vreg(false)
+        let rn = g.new_vreg(false)
+        let slow = g.new_block(false)
+        let fast = g.new_block(false)
+        let cont = g.new_block(false)
+        let _b = g.add(Inst{kind: K_CONDBR, cond: "tbnz", bit: 0, us: [obj], targets: [slow, fast]})
+        g.cur = fast
+        g.inc(obj)
+        let n = g.def1(false, "sub $d0, $u0, $u1", [hi, lo])
+        let off = g.def1(false, "lsr $d0, $u0, #32", [w1])
+        let off2 = g.def1(false, "add $d0, $u0, $u1", [off, lo])
+        let sh = g.def1(false, "lsl $d0, $u0, #32", [off2])
+        let wn = g.def1(false, "orr $d0, $u0, $u1", [sh, n])
+        g.pmove([rp, rn], regs([obj, wn]))
+        let _j = g.add(Inst{kind: K_JUMP, targets: [cont]})
+        g.cur = slow
+        let (klo, lo_const) = g.const_int(x.args[1])
+        if !lo_const || klo < 0 || klo > 10 {
+          // a variable start: the runtime (inlstr.view), one call
+          let o = g.rt("xo_x_inl_view", [rsrc(obj), rsrc(w1), rsrc(lo), rsrc(hi), framesrc()], [false])
+          let n2 = g.def1(false, "ldr $d0, [sp, #$OUT]", [])
+          g.pmove([rp, rn], regs([o[0], n2]))
+        } else {
+          // bytes klo..hi of the 88 bit text b1:b0, in registers
+          let t1 = g.def1(false, "lsr $d0, $u0, #8", [obj])
+          let t2 = g.def1(false, "lsr $d0, $u0, #32\nand $d0, $d0, #255", [w1])
+          let b0 = g.def1(false, "orr $d0, $u0, $u1, lsl #56", [t1, t2])
+          let b1 = g.def1(false, "lsr $d0, $u0, #40\nand $d0, $d0, #0xffffff", [w1])
+          var nb0 = b0
+          var nb1 = b1
+          if klo > 0 && klo < 8 {
+            let a1 = g.def1(false, "lsr $d0, $u0, #${8 * klo}", [b0])
+            nb0 = g.def1(false, "orr $d0, $u0, $u1, lsl #${64 - 8 * klo}", [a1, b1])
+            nb1 = g.def1(false, "lsr $d0, $u0, #${8 * klo}", [b1])
+          } else if klo >= 8 {
+            nb0 = g.def1(false, "lsr $d0, $u0, #${8 * (klo - 8)}", [b1])
+            nb1 = g.def1(false, "mov $d0, #0", [])
+          }
+          let n3 = g.def1(false, "sub $d0, $u0, #${klo}", [hi])
+          let n8 = g.def1(false, "lsl $d0, $u0, #3", [n3])
+          let m0 = g.def1(false, "mov x16, #1\nlsl x16, x16, $u1\nsub x16, x16, #1\ncmp $u0, #8\ncsinv $d0, x16, xzr, lo", [n3, n8])
+          let m1 = g.def1(false, "sub x16, $u0, #8\nlsl x16, x16, #3\nmov x17, #1\nlsl x16, x17, x16\nsub x16, x16, #1\ncmp $u0, #8\ncsel $d0, x16, xzr, hi", [n3])
+          let c0 = g.def1(false, "and $d0, $u0, $u1", [nb0, m0])
+          let c1 = g.def1(false, "and $d0, $u0, $u1", [nb1, m1])
+          let w0n = g.def1(false, "lsl $d0, $u0, #8\norr $d0, $d0, #1", [c0])
+          let h8 = g.def1(false, "lsr $d0, $u0, #56", [c0])
+          let xx = g.def1(false, "orr $d0, $u0, $u1, lsl #8", [h8, c1])
+          let w1n = g.def1(false, "orr $d0, $u1, $u0, lsl #32", [xx, n3])
+          g.pmove([rp, rn], regs([w0n, w1n]))
+        }
+        let _j2 = g.add(Inst{kind: K_JUMP, targets: [cont]})
+        g.cur = cont
+        g.clobber()
+        g.set(v, [rp, rn])
+        return true
+      }
       g.inc(obj)
       let n = g.def1(false, "sub $d0, $u0, $u1", [hi, lo])
       let off = g.def1(false, "lsr $d0, $u0, #32", [w1])

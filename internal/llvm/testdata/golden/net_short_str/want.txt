@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+sent 7145 bytes, echoed 7145, equal true
+texts 800 total 7145
+--- stderr

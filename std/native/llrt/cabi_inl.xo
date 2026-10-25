@@ -1,0 +1,48 @@
+// The C ABI exports of --inline-str (decision 0370): declared only when the
+// build keeps short Strs inline (compiler/ssa build.xo declare_exports), so
+// a build without it holds none of this code.
+use native/llrt/fault
+use native/llrt/inlstr
+use native/llrt/obj
+use native/rt
+
+/// A new inline Str of the bytes lo..hi of the inline Str (w0, w1)
+/// (rt.str_view): its second word stored at lenp, its first returned.
+/// a + b for str.concat (decision 0370): a short result is an inline Str, its
+/// second word stored at lenp, its first returned; else a's object grown (or
+/// a new one), the length stored at lenp.
+fn inl_concat(a: Int, an: Int, b: Int, bn: Int, lenp: Int) -> Int {
+  let n = (an & 4294967295).wrapping_add(bn & 4294967295)
+  if n > 4294967295 {
+    fault.raise_str_at("Str or Bytes longer than 4 GiB (4294967295 bytes)", 0, 0)
+  }
+  obj.concat_o(a, an, b, bn, n, lenp)
+}
+
+/// a == b for the Strs (a0, a1) and (b0, b1), either inline (the equality
+/// helpers of generated code read their fields' words).
+fn inl_eq(a0: Int, a1: Int, b0: Int, b1: Int) -> Int {
+  let n = a1 & 4294967295
+  if n != b1 & 4294967295 {
+    return 0
+  }
+  var i = 0
+  while i < n {
+    if byte_at(a0, a1, i) != byte_at(b0, b1, i) {
+      return 0
+    }
+    i = i.wrapping_add(1)
+  }
+  1
+}
+
+fn byte_at(w0: Int, w1: Int, i: Int) -> Int {
+  if inlstr.is_inline(w0) {
+    return inlstr.byte(w0, w1, i)
+  }
+  rt.mem_load(w0, (w1 >> 32).wrapping_add(16).wrapping_add(i), 1)
+}
+
+fn inl_bytes(w0: Int, w1: Int, lenp: Int) -> Int { obj.promote_inline(w0, w1, lenp) }
+
+fn inl_view(w0: Int, w1: Int, lo: Int, hi: Int, lenp: Int) -> Int { inlstr.view(w0, w1, lo, hi, lenp) }

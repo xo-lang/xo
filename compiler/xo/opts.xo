@@ -64,6 +64,9 @@ struct Opts {
   /// --pack-lists (decision 0369, on unless --pack-lists=false): a List of a sized
   /// integer stores its elements in their width; the native and LLVM backends
   pack_lists: Bool = true
+  /// --inline-str (experimental, decision 0370): a Str of up to 11 bytes
+  /// keeps its text in its two words; arm64 only
+  inline_str: Bool = false
   /// --error-args: parameter values in error frames (11.1)
   error_args: Int = -1
   /// --debug-contracts: the `(debug)` contract clauses (spec 8)
@@ -148,7 +151,7 @@ fn value_flags() -> List[Str] {
 
 /// The boolean flags.
 fn bool_flags() -> List[Str] {
-  ["json", "ci", "release", "error-args", "hybrid", "mono", "no-mono", "arenas", "no-arenas", "no-preempt", "no-gc", "holes", "race", "v", "real", "fail-empty", "phase-times", "offline", "s", "debug-info", "dsym", "profile-support", "trace-support", "trimpath", "pack-lists", "watch", "debug-contracts", "dbg"]
+  ["json", "ci", "release", "error-args", "hybrid", "mono", "no-mono", "arenas", "no-arenas", "no-preempt", "no-gc", "holes", "race", "v", "real", "fail-empty", "phase-times", "offline", "s", "debug-info", "dsym", "profile-support", "trace-support", "trimpath", "inline-str", "pack-lists", "watch", "debug-contracts", "dbg"]
 }
 
 /// The usage of xo1's hidden commands (asm, keys) and of an unknown one;
@@ -647,6 +650,8 @@ fn set_bool(os: Os, var o: Opts, name: Str, on: Bool) {
     o.trimpath = if on { 1 } else { 0 }
   } else if name == "pack-lists" {
     o.pack_lists = on
+  } else if name == "inline-str" {
+    o.inline_str = on
   } else if name == "error-args" {
     o.error_args = if on { 1 } else { 0 }
   } else if name == "hybrid" {

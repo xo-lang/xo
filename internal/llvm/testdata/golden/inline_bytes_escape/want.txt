@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+total 21816 seen 25737 smash 456 ret ret4 closures 270
+--- stderr

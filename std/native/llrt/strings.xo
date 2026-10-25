@@ -156,13 +156,13 @@ pub fn replace_bytes(b: Bytes, old: Bytes, new: Bytes) -> Bytes {
   let sl = b.len()
   let m = old.len()
   if m == 0 {
-    return rt.cast[Str, Bytes](replace_build(b, old, new, -1, replace_cap(sl, m, new, 0)))
+    return replace_build(b, old, new, -1, replace_cap(sl, m, new, 0)).bytes()
   }
   let cnt = scan.count_bytes(b, old)
   if cnt == 0 {
     return b
   }
-  rt.cast[Str, Bytes](replace_build(b, old, new, -1, replace_cap(sl, m, new, cnt)))
+  replace_build(b, old, new, -1, replace_cap(sl, m, new, cnt)).bytes()
 }
 
 /// bytes.Replace with a count: replace_n's, b itself when nothing changes.
@@ -180,7 +180,7 @@ pub fn replace_bytes_n(b: Bytes, old: Bytes, new: Bytes, n: Int) -> Bytes {
     return replace_bytes(b, old, new)
   }
   let cap = if m == 0 { sl + n * new.len() } else { sl + n * (new.len() - m) }
-  rt.cast[Str, Bytes](replace_build(b, old, new, n, cap))
+  replace_build(b, old, new, n, cap).bytes()
 }
 
 /// Whether the rune r is white space (unicode.IsSpace).

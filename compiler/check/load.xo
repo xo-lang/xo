@@ -130,6 +130,9 @@ pub struct Checker {
   pub dwarf: Bool = true
   /// --pack-lists (decision 0369): sized integer lists keep their width
   pub pack_lists: Bool = false
+  /// --inline-str (decision 0370): a call of native/llrt/inlstr.built()
+  /// is this, and the arm64 backend keeps a short Str's text in its words
+  pub inline_str: Bool = false
   pub det: Bool = false
   /// --race (decision 0273): set by the driver; on windows the builder
   /// declares std/native/llrt/cabi_race.xo's exports, the functions the

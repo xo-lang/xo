@@ -2232,7 +2232,9 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
       }
       _ => {
         let a = b.io_arg(fo, es, 0, st)
-        b.place_set(p, b.call("str.concat", st, "", [cur, a]))
+        // a builder stays an object (decision 0370): its pieces are not
+        // folded into an inline Str and back
+        b.place_set(p, b.call(if b.c.inline_str { "str.concat_obj" } else { "str.concat" }, st, "", [cur, a]))
       }
     }
     return Some(b.unit())
@@ -2255,7 +2257,15 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
   }
   match key {
     "StrBuilder.len" | "BytesBuilder.len" => return Some(b.call("Str.len", it, "", [recv]))
-    "StrBuilder.freeze" | "BytesBuilder.freeze" => return Some(recv)
+    "StrBuilder.freeze" => return Some(recv)
+    "BytesBuilder.freeze" => {
+      if b.c.inline_str {
+        // the builder is a Str's words, and a short one is inline
+        // (decision 0370): Bytes is never inline
+        return Some(b.rt("str_bytes", nt, [recv]))
+      }
+      return Some(recv)
+    }
     "Env.args" => return Some(b.llrt_or_rt("env_args", b.m.list(st), []))
     "Env.program" => {
       // argv[0] (decision 0190: the CLI servers run themselves again)
@@ -2293,7 +2303,14 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
       b.rt("set_grace", -1, [b.io_arg(fo, es, 0, it)])
       return Some(b.unit())
     }
-    "Str.bytes" => return Some(recv)
+    "Str.bytes" => {
+      if b.c.inline_str {
+        // Bytes is never inline (decision 0370): an inline Str becomes an
+        // object, any other is counted once more (the arm64 lowering)
+        return Some(b.rt("str_bytes", nt, [recv]))
+      }
+      return Some(recv)
+    }
     "Bytes.len" => return Some(b.call("Str.len", it, "", [recv]))
     "Bytes.is_empty" => return Some(b.add(Op.Eq, b.bool_t(), Aux.None, [b.call("Str.len", it, "", [recv]), b.cint(0)]))
     "Bytes.to_str" => {

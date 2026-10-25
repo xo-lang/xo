@@ -1,0 +1,34 @@
+// s[lo..hi] of every short Str (0 to 12 bytes) at every range, built at run
+// time so it is inline with --inline-str (decision 0370): the checksum of the
+// views' bytes and lengths must be the same on every backend.
+fn mk(n: Int, seed: Int) -> Str {
+  var s = ""
+  for i in 0..n {
+    s += "${(seed * 7 + i * 13) % 10}"
+  }
+  s
+}
+
+fn main(os: Os) {
+  var h = 0
+  var cnt = 0
+  for n in 0..13 {
+    for seed in 0..4 {
+      let s = mk(n, seed)
+      for lo in 0..(n + 1) {
+        for hi in lo..(n + 1) {
+          let v = s[lo..hi]
+          cnt += 1
+          h = (h * 31 + v.len()) % 1000000007
+          for b in v.bytes() {
+            h = (h * 131 + Int(b)) % 1000000007
+          }
+          if v != s[lo..hi] || v.len() != hi - lo {
+            os.stdio.println("bad ${n} ${seed} ${lo} ${hi}")
+          }
+        }
+      }
+    }
+  }
+  os.stdio.println("views ${cnt} hash ${h}")
+}

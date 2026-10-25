@@ -457,6 +457,9 @@ pub struct Module {
   /// --pack-lists (decision 0369): the backends store a List of a sized integer
   /// or Float32 in its width
   pub pack_lists: Bool = false
+  /// --inline-str (decision 0370): a Str of up to 11 bytes keeps its text in
+  /// its two words (std/native/llrt/inlstr.xo); the arm64 backend only
+  pub inline_str: Bool = false
   /// The directory the sources' names are relative to (DW_AT_comp_dir).
   pub comp_dir: Str = ""
   /// The directory std/'s files are named relative to (std/..): their

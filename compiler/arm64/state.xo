@@ -295,6 +295,8 @@ struct G {
   /// the machine block of each SSA block
   bmap: List[Int] = []
   nuses: List[Int] = []
+  /// a value some instruction reads other than as a borrowed Bytes (--inline-str, calls.xo "rt.str_bytes")
+  escapes: List[Bool] = []
   /// push runs (pushrun.xo): a run's last push and its list and values;
   /// the run's other pushes, which make no list
   push_run: Map[Int, List[Int]] = {}
@@ -361,6 +363,9 @@ struct G {
   /// the value of each register g.imm loaded (str_base: a literal's
   /// length and view offset word)
   kvals: Map[Int, Int] = {}
+  /// the registers holding a string literal's object address (decision 0370:
+  /// never an inline Str, so no tag test)
+  lit_objs: Map[Int, Bool] = {}
   ksyms: Map[Int, Str] = {}
   /// FAR_BASE when the frame is past MAX_FRAME, or 0
   base: Int = 0
@@ -462,6 +467,7 @@ fn (var g: G) begin_func(fi: Int) {
   g.vranges = []
   g.kints = {}
   g.kvals = {}
+  g.lit_objs = {}
   g.ksyms = {}
   g.dl_n = 0
   g.du_n = 0
@@ -481,6 +487,7 @@ fn (var g: G) begin_func(fi: Int) {
   g.vals = []
   g.has_val = []
   g.nuses = []
+  g.escapes = []
   g.users = []
   g.lazy = []
   g.spec = {}
@@ -489,6 +496,7 @@ fn (var g: G) begin_func(fi: Int) {
     g.vals.push([])
     g.has_val.push(false)
     g.nuses.push(0)
+    g.escapes.push(false)
     g.users.push(-1)
     g.lazy.push(false)
     g.cancel.push(false)

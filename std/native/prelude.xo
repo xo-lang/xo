@@ -13,6 +13,7 @@ use native/llrt/cabi_nolibc
 use native/llrt/cabi_poll
 use native/llrt/cabi_race
 use native/llrt/cabi_racefn
+use native/llrt/cabi_inl
 use native/llrt/cabi_tw
 use native/llrt/fault
 use native/llrt/fsops
@@ -921,7 +922,7 @@ fn bytes_map_runes[E, fx: Effects](b: Bytes, f: fn(Rune) -> Rune? ! E uses fx) -
   if cp < i {
     o = rt.rs_append_bytes(o, b, cp, i, 0)
   }
-  rt.cast[Str, Bytes](o)
+  o.bytes()
 }
 
 /// bytes.EqualFold: Str.equal_fold's comparison over two byte slices.

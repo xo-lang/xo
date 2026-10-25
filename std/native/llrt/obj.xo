@@ -24,6 +24,7 @@
 // fault. check_no_alloc does not check it: it calls alloc.xo's and
 // rc.xo's functions, which that check allows no module.
 use native/llrt/alloc
+use native/llrt/inlstr
 use native/llrt/libcstr
 use native/llrt/rc
 use native/llrt/rtstats
@@ -414,6 +415,13 @@ pub fn str_cmp(a: Int, an: Int, b: Int, bn: Int) -> Int {
 
 /// The bytes of the decimal text of v (and its sign).
 fn int_text_len(v: Int) -> Int {
+  if inlstr.built() && v > -10000000 && v < 100000000 {
+    // comparisons instead of a division a digit (decision 0370)
+    if v < 0 {
+      return inlstr.digits_of(0 - v) + 1
+    }
+    return inlstr.digits_of(v)
+  }
   var n = if v < 0 { 2 } else { 1 }
   var x = v / 10
   while x != 0 {
@@ -449,15 +457,188 @@ fn put_int(p: Int, n: Int, v: Int) {
 pub fn rs_concat_int(a: Int, an: Int, v: Int, lenp: Int) -> Int {
   let n = int_text_len(v)
   let len = an & LEN_MASK
+  if inlstr.built() && addw(len, n) <= inlstr.MAX && !keep_object(a) {
+    return inline_int(a, an, len, v, n, lenp)
+  }
   rt.mem_store(lenp, 0, addw(len, n), 8)
   let s = reserve(a, an, n)
   put_int(addw(addw(s, S_HDR), len), n, v)
   s
 }
 
+/// The accumulator of the len bytes of the Str (a, an): an inline Str's
+/// words, or an object's bytes from the view's offset.
+fn inline_acc(a: Int, an: Int, len: Int) -> inlstr.Acc {
+  if inlstr.is_inline(a) {
+    return inlstr.of_inline(a, an)
+  }
+  if len == 0 {
+    return inlstr.Acc{}
+  }
+  inlstr.of_bytes(addw(addw(a, S_HDR), an.shr_logical(32)), len)
+}
+
+/// The inline Str (decision 0370) of the len bytes of a and the n digits of
+/// v: its second word stored at lenp, its first returned. len + n is at
+/// most inlstr.MAX.
+fn inline_int(a: Int, an: Int, len: Int, v: Int, n: Int, lenp: Int) -> Int {
+  if v > -10000000 && v < 100000000 {
+    // the digits are one word: pushed like any short word
+    let (w0, w1) = inline_push_t(a, an, inlstr.small_int_word(v), n)
+    rt.mem_store(lenp, 0, w1, 8)
+    return w0
+  }
+  var acc = if len > 0 { inline_acc(a, an, len) } else { inlstr.Acc{} }
+  var u = v
+  var at = len
+  if v < 0 {
+    acc.put(len, 45)
+    u = 0 - v
+    at = addw(len, 1)
+  }
+  var i = subw(addw(len, n), 1)
+  while i >= at {
+    acc.put(i, 48 + u % 10)
+    u = u / 10
+    i = subw(i, 1)
+  }
+  if len > 0 {
+    consume(a)
+  }
+  rt.mem_store(lenp, 0, acc.w1(addw(len, n)), 8)
+  acc.w0()
+}
+
+/// The inline Str (decision 0370) of the len bytes of a and the k (0 to 8)
+/// low bytes of w, lowest first: its second word stored at lenp, its first
+/// returned. len + k is at most inlstr.MAX.
+pub fn inline_push(a: Int, an: Int, w: Int, k: Int, lenp: Int) -> Int {
+  let (w0, w1) = inline_push_t(a, an, w, k)
+  rt.mem_store(lenp, 0, w1, 8)
+  w0
+}
+
+/// inline_push returning the two words of the Str (no store and reload of
+/// the second word).
+pub fn inline_push_t(a: Int, an: Int, w: Int, k: Int) -> (Int, Int) {
+  let len = an & LEN_MASK
+  if len <= 8 && k <= 8 && len + k <= inlstr.MAX {
+    // the common case in scalars (no Acc, no calls): the text so far is
+    // b0 (bytes 0 to 7), w's k bytes go on at len
+    var b0 = 0
+    var b1 = 0
+    if inlstr.is_inline(a) {
+      b0 = a.shr_logical(8) | (an.shr_logical(32) & 255).wrapping_shl(56)
+      b1 = an.shr_logical(40) & 16777215
+    } else if len > 0 {
+      b0 = inlstr.load_n(addw(addw(a, S_HDR), an.shr_logical(32)), len)
+    }
+    let m = if k >= 8 { -1 } else { 1.wrapping_shl(8 * k) - 1 }
+    let n = w & m
+    if len < 8 {
+      b0 = b0 | n.wrapping_shl(8 * len)
+      if len > 0 {
+        b1 = b1 | n.shr_logical(64 - 8 * len)
+      }
+    } else {
+      b1 = b1 | n
+    }
+    consume(a)
+    return (b0.wrapping_shl(8) | 1, (b0.shr_logical(56) | b1.wrapping_shl(8)).wrapping_shl(32) | (len + k))
+  }
+  var acc = inline_acc(a, an, len)
+  acc.add(len, w, k)
+  consume(a)
+  (acc.w0(), acc.w1(addw(len, k)))
+}
+
+/// inline_push for rs_push_words: four words, their lengths in the nibbles
+/// of lens.
+pub fn inline_push_words(a: Int, an: Int, w0: Int, w1: Int, w2: Int, w3: Int, lens: Int, lenp: Int) -> Int {
+  let len = an & LEN_MASK
+  var acc = inline_acc(a, an, len)
+  let k0 = lens & 15
+  let k1 = (lens >> 4) & 15
+  let k2 = (lens >> 8) & 15
+  let k3 = (lens >> 12) & 15
+  acc.add(len, w0, k0)
+  acc.add(addw(len, k0), w1, k1)
+  acc.add(addw(addw(len, k0), k1), w2, k2)
+  let at = addw(addw(addw(len, k0), k1), k2)
+  acc.add(at, w3, k3)
+  consume(a)
+  rt.mem_store(lenp, 0, acc.w1(addw(at, k3)), 8)
+  acc.w0()
+}
+
+/// Whether the builder a (an object) is kept as an object though the result
+/// would be short (decision 0370): a unique string with room for 32 bytes
+/// or more was sized for a long result (an interpolation of many parts), and
+/// turning it into an inline Str now would only make the later pushes
+/// allocate again.
+pub fn keep_object(a: Int) -> Bool {
+  !inlstr.is_inline(a) && rt.slot_load(a, 0, 0) == 1 && rt.mem_load(a, 8, 8) >= 32
+}
+
+/// The string object (count 1) holding the inline Str (a, an)'s text, its
+/// length stored at lenp (Str.bytes of an inline Str: Bytes holds no inline
+/// text, decision 0370).
+pub fn promote_inline(a: Int, an: Int, lenp: Int) -> Int {
+  let len = an & LEN_MASK
+  rt.mem_store(lenp, 0, len, 8)
+  reserve_inline(a, an, 0)
+}
+
+/// a + b (str.concat under --inline-str): n is the total length, stored at
+/// lenp unless the result is inline (then its second word is).
+pub fn concat_o(a: Int, an: Int, b: Int, bn: Int, n: Int, lenp: Int) -> Int {
+  let len = an & LEN_MASK
+  let blen = bn & LEN_MASK
+  if n <= inlstr.MAX && !keep_object(a) {
+    var acc = inline_acc(a, an, len)
+    if blen > 0 {
+      if inlstr.is_inline(b) {
+        let bb = inlstr.of_inline(b, bn)
+        acc.add(len, bb.b0, if blen < 8 { blen } else { 8 })
+        if blen > 8 {
+          acc.add(addw(len, 8), bb.b1, subw(blen, 8))
+        }
+      } else {
+        acc.add_bytes(len, addw(addw(b, S_HDR), bn.shr_logical(32)), blen)
+      }
+    }
+    consume(a)
+    rt.mem_store(lenp, 0, acc.w1(n), 8)
+    return acc.w0()
+  }
+  rt.mem_store(lenp, 0, n, 8)
+  if inlstr.is_inline(b) {
+    return rs_append_inline(a, an, b, bn)
+  }
+  rs_append(a, an, addw(addw(b, S_HDR), bn.shr_logical(32)), blen)
+}
+
+/// The reference the builders consume: a, an object (a literal's count is
+/// immortal, an inline Str has none), loses it, and is freed when that was
+/// the last.
+fn consume(a: Int) {
+  if !inlstr.is_inline(a) && count(a) != IMMORTAL && rc.dec(a) != 0 {
+    hfree(heap_word(), a)
+  }
+}
+
 /// "${v}" for generated code (xo_rs_of_int), its length stored at lenp.
 pub fn rs_of_int(v: Int, lenp: Int) -> Int {
   let n = int_text_len(v)
+  if inlstr.built() && n <= inlstr.MAX {
+    if v > -10000000 && v < 100000000 {
+      // the digits are one word: the Str's two words with no accumulator
+      let w = inlstr.small_int_word(v)
+      rt.mem_store(lenp, 0, w.shr_logical(56).wrapping_shl(32) | n, 8)
+      return w.wrapping_shl(8) | 1
+    }
+    return inline_int(0, 0, 0, v, n, lenp)
+  }
   rt.mem_store(lenp, 0, n, 8)
   let s = rs_with_cap(n)
   put_int(addw(s, S_HDR), n, v)
@@ -772,6 +953,15 @@ fn rs_new_mt(n: Int) -> Int {
 /// a itself when its count is 1 and it has the room.
 fn reserve(a: Int, an: Int, k: Int) -> Int {
   let need = addw(an & LEN_MASK, k)
+  if inlstr.built() {
+    // an inline Str (decision 0370) is not a pointer: one test with the
+    // view's, ahead of the loads, and the same blocks as the plain form so
+    // that reserve stays inlinable; reserve_slow takes the inline case
+    if ((a & 1) | an >> 32) == 0 && rt.slot_load(a, 0, 0) == 1 && rt.mem_load(a, 8, 8) >= need {
+      return a
+    }
+    return reserve_slow(a, an, need)
+  }
   // the count with a relaxed atomic load (no cost on arm64): a shared
   // string's count changes on other threads, and a plain load of it is a
   // data race (ThreadSanitizer, decision 0241); a view (an's high word not 0,
@@ -783,6 +973,16 @@ fn reserve(a: Int, an: Int, k: Int) -> Int {
   reserve_slow(a, an, need)
 }
 
+/// An inline Str (decision 0370) becomes a string object with room for k
+/// more bytes: the bytes copied, the Str itself holding no reference.
+fn reserve_inline(a: Int, an: Int, k: Int) -> Int {
+  let len = an & LEN_MASK
+  let need = addw(len, k)
+  let s = rs_new(heap_word(), if need < 16 { 16 } else { need })
+  inlstr.copy_to(addw(s, S_HDR), a, an, len)
+  s
+}
+
 /// reserve's other paths (xo_rt.c rs_append): a unique string (rc.claim:
 /// a shared one held only by the caller too) grows in place, doubling
 /// (Perceus reuse, so a loop of `s = s + x` is linear); otherwise the
@@ -792,6 +992,9 @@ fn reserve(a: Int, an: Int, k: Int) -> Int {
 fn reserve_slow(a: Int, an: Int, need: Int) -> Int {
   if need < 0 {
     return reserve_slow(a, an, 0) // not taken: the inliner's cycle
+  }
+  if inlstr.built() && inlstr.is_inline(a) {
+    return reserve_inline(a, an, need - (an & LEN_MASK))
   }
   let hw = heap_word()
   let len = an & LEN_MASK
@@ -841,6 +1044,39 @@ fn move_at(d: Int, p: Int, n: Int) {
   rt.mem_move(d, p, n)
 }
 
+/// a + the n bytes of the inline Str (b, bn) (decision 0370): the reserve
+/// first, then the bytes written from the words.
+pub fn rs_append_inline(a: Int, an: Int, b: Int, bn: Int) -> Int {
+  let n = bn & LEN_MASK
+  let s = reserve(a, an, n)
+  inlstr.copy_to(addw(addw(s, S_HDR), an & LEN_MASK), b, bn, n)
+  s
+}
+
+/// The inline Str (decision 0370) of the len bytes of a and the n bytes at
+/// p: its second word stored at lenp, its first returned. len + n is at
+/// most inlstr.MAX.
+pub fn inline_append(a: Int, an: Int, p: Int, n: Int, lenp: Int) -> Int {
+  let len = an & LEN_MASK
+  var acc = inline_acc(a, an, len)
+  acc.add_bytes(len, p, n)
+  consume(a)
+  rt.mem_store(lenp, 0, acc.w1(addw(len, n)), 8)
+  acc.w0()
+}
+
+/// rs_append_bytes with an inline source (b, bn): its text goes to a
+/// temporary object first.
+pub fn rs_append_bytes_inline(a: Int, an: Int, b: Int, bn: Int, lo: Int, hi: Int, mode: Int) -> Int {
+  let hw = heap_word()
+  let len = bn & LEN_MASK
+  let t = rs_new(hw, if len < 16 { 16 } else { len })
+  inlstr.copy_to(addw(t, S_HDR), b, bn, len)
+  let s = rs_append_bytes(a, an, t, lo, hi, mode)
+  hfree(hw, t)
+  s
+}
+
 /// a + the byte x (xo_rs_push_byte).
 pub fn rs_push_byte(a: Int, an: Int, x: Int) -> Int {
   let s = reserve(a, an, 1)
@@ -853,6 +1089,11 @@ pub fn rs_push_byte(a: Int, an: Int, x: Int) -> Int {
 /// reserved; text alone (appended to the literal "") gets a new string
 /// of 32.
 pub fn rs_push_word(a: Int, an: Int, w: Int) -> Int {
+  if inlstr.built() && inlstr.is_inline(a) {
+    let t = reserve_inline(a, an, 8)
+    rt.mem_store(addw(t, S_HDR), an & LEN_MASK, w, 8)
+    return t
+  }
   var s = a
   if rt.slot_load(a, 0, 0) != 1 || an >> 32 != 0 || subw(rt.mem_load(a, 8, 8), an) < 8 {
     s = push_slow(a, an, 8, 32)
@@ -861,10 +1102,28 @@ pub fn rs_push_word(a: Int, an: Int, w: Int) -> Int {
   s
 }
 
+/// The four words of rs_push_words stored after an bytes of s (the inline
+/// case, decision 0370).
+fn store_words(s: Int, an: Int, w0: Int, w1: Int, w2: Int, w3: Int, lens: Int) {
+  var d = addw(addw(s, S_HDR), an & LEN_MASK)
+  rt.mem_store(d, 0, w0, 8)
+  d = addw(d, lens & 15)
+  rt.mem_store(d, 0, w1, 8)
+  d = addw(d, (lens >> 4) & 15)
+  rt.mem_store(d, 0, w2, 8)
+  d = addw(d, (lens >> 8) & 15)
+  rt.mem_store(d, 0, w3, 8)
+}
+
 /// a + four words of up to 8 bytes, their lengths in the nibbles of lens
 /// (xo_rs_push_words): each whole word stored over the slack of the one
 /// before, so 32 bytes of room.
 pub fn rs_push_words(a: Int, an: Int, w0: Int, w1: Int, w2: Int, w3: Int, lens: Int) -> Int {
+  if inlstr.built() && inlstr.is_inline(a) {
+    let t = reserve_inline(a, an, 32)
+    store_words(t, an, w0, w1, w2, w3, lens)
+    return t
+  }
   var s = a
   if rt.slot_load(a, 0, 0) != 1 || an >> 32 != 0 || subw(rt.mem_load(a, 8, 8), an) < 32 {
     s = push_slow(a, an, 32, 64)
@@ -883,6 +1142,9 @@ pub fn rs_push_words(a: Int, an: Int, w0: Int, w1: Int, w2: Int, w3: Int, lens: 
 /// The push paths with no room: the empty literal becomes a new string
 /// of fresh bytes, else reserve's slow path.
 fn push_slow(a: Int, an: Int, k: Int, fresh: Int) -> Int {
+  if inlstr.built() && inlstr.is_inline(a) {
+    return reserve_inline(a, an, k)
+  }
   if an == 0 && count(a) == IMMORTAL {
     return rs_new_n(fresh)
   }

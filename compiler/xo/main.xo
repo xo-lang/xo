@@ -674,6 +674,8 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   // the native and LLVM backends; the Go backend's lists are Go slices (packed
   // already) and wasm keeps its own
   c.pack_lists = o.pack_lists && (o.backend.is_empty() || o.backend == "arm64" || o.backend == "llvm")
+  // the prototype is arm64's only (decision 0370)
+  c.inline_str = o.inline_str && (o.backend == "arm64" || (o.backend.is_empty() && host_arch() == "arm64"))
   c.dwarf = o.cmd == "asm" || (!o.strip && debug_info_eff(o, o.release && o.cmd != "test") != "off")
   // --race: the builder declares a windows program's race exports
   // (native/llrt/cabi_race)

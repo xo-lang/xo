@@ -998,9 +998,12 @@ work or use wall. Last verified: 2026-10-22.
 
 Last verified: 2026-10-25
 
-- `--pack-lists=false` (decision 0369; on by default on the native and LLVM
-  backends): a `List` of `Int8`..`UInt32`, `Rune` or `Float32` takes 1, 2 or 4
-  bytes an element instead of 8. wasm and the Go backend keep their own lists.
+- `--inline-str` (decision 0370; arm64 and amd64 native only, default off): a
+  Str of at most 11 bytes keeps its text in its two words, with no heap object.
+  A list of one million short keys takes 0.38 of the memory, a `Map[Str, Int]`
+  0.69, its sort 0.62; instructions on the Str heavy benches rise 1 to 11%
+  and a release server's `__text` 8.4%. Build with it for memory bound programs;
+  the flag changes no semantics (the goldens, the corpora and stdfuzz agree).
 
 ## Profiling
 
@@ -1012,12 +1015,6 @@ time goes; Docker callgrind (bench/perf/llvm/rust-docker.sh's method,
 or valgrind in scripts/docker-linux.sh) is for exact instruction counts
 and for diffing two builds function by function, not for a first look.
 
-- A profile names inlined code after the function it came from (the DWARF
-  inlined-subroutine), so a function the inliner copied into its caller still
-  shows as a frame with its own samples, as if it were a call; check
-  `XO_INLINE_REPORT=NAME xo build ...` ("small", "few" or "loop" is inlined at
-  some sites, "no" never) before reading one as call overhead (2026-10-25: an
-  inlined `inlstr.is_inline` looked like a 2.6% call).
 - `XO_PROF=cpu ./prog`: SIGPROF at `XO_PROF_HZ` per second of CPU time
   (default 100; 1000 for a short program), frames walked with the fault
   unwinder's tables. At exit (main's end or os.proc.exit) it writes a

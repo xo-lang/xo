@@ -462,6 +462,7 @@ fn (var g: G) words(v: Int) -> List[Int] {
         }
         let r = g.sym_addr(g.str_obj(bs))
         g.cm.cs[bs] = r
+        g.lit_objs[r] = true
         return [r, g.cimm(bs.len())]
       }
       _ => {
@@ -556,15 +557,35 @@ fn rpo_succs(f: ssa.Func, b: Int) -> List[Int] {
   out
 }
 
+/// Whether argument j of x only reads the text of a Bytes that is a
+/// borrowed Str (--inline-str, decision 0370): Bytes.len, Bytes.is_empty
+/// and b[i], which read through the Str's own (tag tested) address, and
+/// the reference counts of the value. Any call, store, return or block
+/// argument is an escape, whatever the callee: a Bytes made from an inline
+/// Str is then an object.
+fn (g: G) reads_borrowed(x: ssa.Value, j: Int) -> Bool {
+  if x.op is ssa.Op.Retain | ssa.Op.Release | ssa.Op.Drop | ssa.Op.Share {
+    return true
+  }
+  if x.op != ssa.Op.Call || j != 0 {
+    return false
+  }
+  aux_str(x.aux) is "bytes.index" | "Str.len" | "Str.is_empty"
+}
+
 fn (var g: G) isel() {
   let nb = g.f.blocks.len()
   for b in 0..nb {
     for v in g.f.blocks[b].instrs {
-      for a in g.f.values[v].args {
+      let xv = g.f.values[v]
+      for j in 0..xv.args.len() {
+        let a = xv.args[j]
         g.nuses[a] += 1
         g.users[a] = v
+        if g.inl_str() && !g.reads_borrowed(xv, j) {
+          g.escapes[a] = true
+        }
       }
-      let xv = g.f.values[v]
       if xv.op == ssa.Op.Call && xv.args.len() >= 2 && (aux_str(xv.aux) is "list.index" | "list.set" | "list.take") {
         let ix = g.f.values[xv.args[1]]
         if ix.op == ssa.Op.Add || ix.op == ssa.Op.Sub {
@@ -580,6 +601,7 @@ fn (var g: G) isel() {
       for e in g.f.values[v].succs {
         for a in g.f.edges[e].args {
           g.nuses[a] += 1
+          g.escapes[a] = true
         }
       }
     }

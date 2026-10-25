@@ -6,10 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
-- Lists of `Int8` to `UInt32`, `Rune` and `Float32` take 1, 2 or 4 bytes an element on the
-  native and LLVM backends (decision 0369; `--pack-lists=false` turns it off): 10 million
-  `UInt32` and 10 million `UInt8` in lists take 0.27 of the memory and run in 0.53 of the
-  time.
+- `xo build --inline-str` (experimental, decision 0370, arm64 and amd64, default off): a Str
+  of up to 11 bytes keeps its text in its two words. A list of a million short keys takes
+  0.38 of the memory, a `Map[Str, Int]` 0.69, its sort 0.62 (wall 0.77, 0.84 and 0.65);
+  Str heavy benches run 1 to 11% more instructions and a release server is 8.4% larger.
 - Faster Unicode classification and text splitting on darwin/arm64 and linux/arm64:
   the native inliner counts 23 more runtime operations as leaf instructions, and a
   call in tail position stays a branch instead of pushing its caller over the inline

@@ -574,6 +574,6 @@ fn (var b: Builder) assign(span: Span, op: lexer.Kind, target: Expr, value: Expr
     r = b.value_as(value, p.t())
   }
   let old = b.place_get(p)
-  let nv = b.arith(o, old, r, span)
+  let nv = b.bytes_plus(o, target, b.arith(o, old, r, span))
   b.place_set(p, nv)
 }

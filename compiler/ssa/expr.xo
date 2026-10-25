@@ -756,6 +756,10 @@ fn (var b: Builder) target_test(e: Expr) -> Bool? {
     // handlers need them; a release build gives them up for size)
     return Some(b.conc || !b.release)
   }
+  if b.llrt_flag_call(e, "native/llrt/inlstr", "built") {
+    // a short Str's text in its words (--inline-str, decision 0370)
+    return Some(b.c.inline_str)
+  }
   if b.llrt_flag_call(e, "native/llrt/dwline", "built") {
     // the DWARF readers: in a program that has DWARF (Checker.dwarf)
     return Some(b.c.dwarf)
@@ -1599,7 +1603,17 @@ fn (var b: Builder) binary(e: Expr) -> Int {
   if cmp_op(op) != None {
     return b.compare_values(op, l, r)
   }
-  b.arith(op, l, r, span)
+  b.bytes_plus(op, x, b.arith(op, l, r, span))
+}
+
+/// v, the result of `x op ...` in a build with inline Strs (decision 0370):
+/// a Bytes sum is made an object, since Bytes is never inline and its
+/// concat is the Str's.
+fn (var b: Builder) bytes_plus(op: lexer.Kind, x: Expr, v: Int) -> Int {
+  if !b.c.inline_str || op != lexer.Kind.Plus || b.tkind(b.vty(v)) != Kind.Str || !b.is_prelude_named(b.nat_check(x), ["Bytes"]) {
+    return v
+  }
+  b.rt("str_bytes", b.str_t(), [v])
 }
 
 /// The variant index of v when it is a variant without a payload, made

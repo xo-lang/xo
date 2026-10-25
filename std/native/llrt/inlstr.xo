@@ -1,0 +1,195 @@
+// A short Str's text inside its two words (decision 0370, --inline-str).
+//
+// A Str is (w0, w1): an object's address and `len | off << 32` (decision
+// 0330). With --inline-str, a Str of at most 11 bytes is inline: bit 0 of
+// w0 is 1 (an object's address is 8 aligned), w1's low 32 bits are the
+// length as ever, its high 32 bits (the offset of a view) are the last four
+// of the text's bytes, and w0's bits 8 to 63 the first seven. Stored to
+// memory at S + 4 (w1) and then at S (w0), the text is contiguous at S + 1.
+// An inline Str has no object: no count, no free.
+
+use native/rt
+
+/// Whether this build keeps short Strs inline: the compiler folds a call of
+/// this to --inline-str, so a build without it has none of the code below.
+pub fn built() -> Bool { false }
+
+/// The most bytes an inline Str holds.
+pub const MAX = 11
+
+/// Whether w0 is an inline Str's first word.
+pub fn is_inline(w0: Int) -> Bool { w0 & 1 == 1 }
+
+
+/// Byte i (0 to 10) of the inline Str whose words are w0 and w1.
+pub fn byte(w0: Int, w1: Int, i: Int) -> Int {
+  if i < 7 {
+    return w0.shr_logical(8 + 8 * i) & 255
+  }
+  w1.shr_logical(32 + 8 * (i - 7)) & 255
+}
+
+/// The text of an inline Str being built, as two Ints: b0 holds bytes 0 to
+/// 7 (byte 0 lowest), b1 bytes 8 to 10. Bytes not yet set are zero.
+pub struct Acc {
+  pub b0: Int = 0
+  pub b1: Int = 0
+}
+
+/// Sets byte i (0 to 10) to c (0 to 255), which must be zero before.
+pub fn (var a: Acc) put(i: Int, c: Int) {
+  if i < 8 {
+    a.b0 = a.b0 | c.wrapping_shl(8 * i)
+  } else {
+    a.b1 = a.b1 | c.wrapping_shl(8 * (i - 8))
+  }
+}
+
+/// The k (0 to 8) low bytes of w, the lowest first, from byte at on (at + k
+/// at most 11): whole shifts, no byte loop.
+pub fn (var a: Acc) add(at: Int, w: Int, k: Int) {
+  if k == 0 {
+    return
+  }
+  let m = if k >= 8 { -1 } else { 1.wrapping_shl(8 * k) - 1 }
+  let n = w & m
+  if at < 8 {
+    a.b0 = a.b0 | n.wrapping_shl(8 * at)
+    if at > 0 {
+      a.b1 = a.b1 | n.shr_logical(64 - 8 * at)
+    }
+  } else {
+    a.b1 = a.b1 | n.wrapping_shl(8 * (at - 8))
+  }
+}
+
+/// The first word of the inline Str built in a (any length).
+pub fn (a: Acc) w0() -> Int { a.b0.wrapping_shl(8) | 1 }
+
+/// The second word of the inline Str of n bytes built in a: bytes 7 to 10
+/// above the length.
+pub fn (a: Acc) w1(n: Int) -> Int {
+  (a.b0.shr_logical(56) | a.b1.wrapping_shl(8)).wrapping_shl(32) | n
+}
+
+/// The accumulator holding the inline Str (w0, w1).
+pub fn of_inline(w0: Int, w1: Int) -> Acc {
+  Acc{b0: w0.shr_logical(8) | (w1.shr_logical(32) & 255).wrapping_shl(56), b1: w1.shr_logical(40) & 16777215}
+}
+
+/// The n (0 to 8) bytes at p as an Int, the first lowest, read with loads
+/// of exactly those bytes (none past them: p + n may end a mapping).
+pub fn load_n(p: Int, n: Int) -> Int {
+  if n >= 8 {
+    return rt.mem_load(p, 0, 8)
+  }
+  var w = 0
+  var at = 0
+  if n & 4 != 0 {
+    w = rt.mem_load(p, at, 4)
+    at += 4
+  }
+  if n & 2 != 0 {
+    w = w | rt.mem_load(p, at, 2).wrapping_shl(8 * at)
+    at += 2
+  }
+  if n & 1 != 0 {
+    w = w | rt.mem_load(p, at, 1).wrapping_shl(8 * at)
+  }
+  w
+}
+
+/// The accumulator holding the n (0 to 11) bytes at p.
+pub fn of_bytes(p: Int, n: Int) -> Acc {
+  var a = Acc{}
+  a.add_bytes(0, p, n)
+  a
+}
+
+/// The n (0 to 11 - at) bytes at p from byte at on.
+pub fn (var a: Acc) add_bytes(at: Int, p: Int, n: Int) {
+  if n <= 0 {
+    return
+  }
+  if n > 8 {
+    a.add(at, rt.mem_load(p, 0, 8), 8)
+    a.add(at + 8, load_n(p + 8, n - 8), n - 8)
+    return
+  }
+  a.add(at, load_n(p, n), n)
+}
+
+/// The inline Str of the bytes lo..hi of the inline Str (w0, w1): its second
+/// word stored at lenp, its first returned.
+pub fn view(w0: Int, w1: Int, lo: Int, hi: Int, lenp: Int) -> Int {
+  let a = of_inline(w0, w1)
+  var b0 = a.b0
+  var b1 = a.b1
+  let n = hi - lo
+  if lo > 0 {
+    if lo < 8 {
+      b0 = b0.shr_logical(8 * lo) | b1.wrapping_shl(64 - 8 * lo)
+      b1 = b1.shr_logical(8 * lo)
+    } else {
+      b0 = b1.shr_logical(8 * (lo - 8))
+      b1 = 0
+    }
+  }
+  if n <= 0 {
+    b0 = 0
+    b1 = 0
+  } else if n < 8 {
+    b0 = b0 & (1.wrapping_shl(8 * n) - 1)
+    b1 = 0
+  } else if n < 11 {
+    b1 = b1 & (1.wrapping_shl(8 * (n - 8)) - 1)
+  }
+  let r = Acc{b0: b0, b1: b1}
+  rt.mem_store(lenp, 0, r.w1(n), 8)
+  r.w0()
+}
+
+/// Copies the n bytes of the inline Str (w0, w1) to memory at d.
+pub fn copy_to(d: Int, w0: Int, w1: Int, n: Int) {
+  for i in 0..n {
+    rt.mem_store(d, i, byte(w0, w1, i), 1)
+  }
+}
+
+/// The digit count of u (0 <= u < 10^8).
+pub fn digits_of(u: Int) -> Int {
+  if u < 10000 {
+    return if u < 100 { if u < 10 { 1 } else { 2 } } else if u < 1000 { 3 } else { 4 }
+  }
+  if u < 1000000 {
+    return if u < 100000 { 5 } else { 6 }
+  }
+  if u < 10000000 { 7 } else { 8 }
+}
+
+/// The decimal text of v (-10^7 < v < 10^8) in the low bytes of an Int, the
+/// first lowest ("-" first when negative); digits_of(|v|) bytes, one more
+/// for the sign (the same arithmetic as num.xo append_int, whose lanes are
+/// bounded so nothing overflows).
+pub fn small_int_word(v: Int) -> Int {
+  var u = v
+  if v < 0 {
+    u = 0 - v
+  }
+  let k = digits_of(u)
+  let x = u & 0x7FFFFFF
+  let hi = x / 10000
+  let lo = x % 10000
+  let m = (hi & 0x3FFF) | (lo & 0x3FFF).wrapping_shl(32)
+  let h = m.wrapping_mul(10486).shr_logical(20) & 0x7F0000007F
+  let l = m.wrapping_sub(h.wrapping_mul(100))
+  let m2 = (h | l.wrapping_shl(16)) & 0x7F007F007F007F
+  let h2 = m2.wrapping_mul(103).shr_logical(10) & 0xF000F000F000F
+  let l2 = m2.wrapping_sub(h2.wrapping_mul(10))
+  let d = h2 | (l2 & 0xF000F000F000F).wrapping_shl(8) | 0x3030303030303030
+  let w = d.shr_logical(((8 - (k & 15)) & 7).wrapping_shl(3))
+  if v >= 0 {
+    return w
+  }
+  (w & 0x7FFFFFFFFFFFFF).wrapping_shl(8) | 45
+}

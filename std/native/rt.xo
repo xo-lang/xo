@@ -191,6 +191,9 @@ fn rune_of(v: Int, bits: Int, uns: Int, at: Str) -> Int
 fn floor_div(a: Int, b: Int) -> Int
 /// The hash of a Str Map key.
 fn str_hash(s: Str) -> Int
+/// Whether the Str keeps its text in its words (--inline-str, decision 0370);
+/// the arm64 backend's, so only under inlstr.built()
+fn str_inline(s: Str) -> Bool
 /// Whether a op b fits an Int (op 0 +, 1 -, 2 *, 3 /).
 fn int_fits(op: Int, a: Int, b: Int) -> Bool
 

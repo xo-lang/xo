@@ -1,0 +1,66 @@
+// Str.bytes() of a short Str (decision 0370: a build with --inline-str keeps
+// it inside the Str's words). A Bytes that is only read (length, b[i]) may
+// borrow the Str; one that is stored, returned, passed on or captured must
+// be a real object that outlives the Str and its frame.
+
+struct Keep {
+  data: Bytes
+  tag: Int
+}
+
+fn read_only(s: Str) -> Int {
+  let b = s.bytes()
+  var sum = b.len()
+  for i in 0..b.len() {
+    sum += Int(b[i]) * (i + 1)
+  }
+  sum
+}
+
+fn stored(s: Str, keep: List[Keep]) -> List[Keep] {
+  var out = keep
+  out.push(Keep{data: s.bytes(), tag: s.len()})
+  out
+}
+
+fn returned(s: Str) -> Bytes {
+  s.bytes()
+}
+
+fn smash(depth: Int) -> Int {
+  // overwrites the stack the earlier frames used
+  if depth == 0 {
+    return 0
+  }
+  var pad = "pad${depth}x${depth * 31}"
+  return pad.len() + smash(depth - 1)
+}
+
+fn main(os: Os) {
+  var keep: List[Keep] = []
+  var total = 0
+  for i in 0..40 {
+    let s = "v${i * 13}"
+    total += read_only(s)
+    keep = stored(s, keep)
+  }
+  let r = returned("ret${total % 7}")
+  let n = smash(50)
+  var seen = 0
+  for k in keep {
+    seen += k.data.len() * 100 + k.tag
+    for j in 0..k.data.len() {
+      seen += Int(k.data[j])
+    }
+  }
+  var cl: List[fn() -> Int] = []
+  for i in 0..5 {
+    let b = "cap${i}".bytes()
+    cl.push(fn() -> Int { b.len() + Int(b[b.len() - 1]) })
+  }
+  var cs = 0
+  for f in cl {
+    cs += f()
+  }
+  os.stdio.println("total ${total} seen ${seen} smash ${n} ret ${r.to_str() ?? "?"} closures ${cs}")
+}
