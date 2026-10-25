@@ -16,7 +16,11 @@
 #       python  no build step: the first import of the server module with no
 #               __pycache__ (CPython compiles it to bytecode then), again, and
 #               after an edit; the installed packages were compiled at install
-#   - size of what ships: the binary (xo, go, rust); for Node the esbuild
+#   - size of what ships: the binary (xo, go, rust), each as built by the
+#     build rows (xo build and go build keep DWARF, cargo --release has
+#     none) and again with the shipping flags (xo build --release, go build
+#     -ldflags="-s -w", cargo --release), so the sizes compare like with
+#     like; for Node the esbuild
 #     bundle, Node's own binary, and a single executable application (the
 #     bundle injected into a copy of the official Node binary with postject,
 #     signed ad hoc); for Python the virtual environment's site-packages and
@@ -115,7 +119,7 @@ body=$out/body.md
 {
 	echo "## Build and size"
 	echo
-	echo "Wall milliseconds of one build; peak MB is the build's largest resident set (cold / warm / edit); size MB is the output (a binary, Node's tsc output directory or esbuild bundle; Python has none)."
+	echo "Wall milliseconds of one build; peak MB is the build's largest resident set (cold / warm / edit); size MB is the output as built (a binary, with DWARF for Xo and Go, none for Rust; the shipping-flag sizes are in What ships; Node's tsc output directory or esbuild bundle; Python has none)."
 	echo
 	echo "| program | side | cold ms | second ms | warm ms | edit ms | peak MB (c/w/e) | size MB |"
 	echo "|---|---|---|---|---|---|---|---|"
@@ -188,6 +192,14 @@ set -- $sea_t
 	echo "Node single executable application (the bundle injected into a copy of the official node $nodever binary with postject, signed ad hoc): $1 ms, peak $2 MB, $(mb "$(stat -f %z "$sea/crud-sea")") MB."
 } >>"$body"
 
+# the shipping flags: Xo --release and Go -s -w drop the debug info the
+# plain builds keep (Rust's release profile has none); built here into the
+# copies the build rows used, with their warm caches (the time is not measured)
+for n in crud hello; do
+	(cd "$work/src-xo-$n" && env XO_BACKEND_CACHE_DIR="$work/cache-xo-$n/backend" "$xo" build --release -o prog-release . >/dev/null)
+	(cd "$work/src-go-$n" && env GOCACHE="$work/cache-go-$n/go" go build -trimpath -ldflags="-s -w" -o prog-stripped . >/dev/null)
+done
+
 # sizes of what ships
 pyprefix=$("$py" -c 'import sys; print(sys.base_prefix)')
 site=$("$py" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
@@ -197,9 +209,16 @@ site=$("$py" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')
 	echo
 	echo "| side | what | MB |"
 	echo "|---|---|---|"
-	echo "| xo | the CRUD server binary | $(mb "$(stat -f %z "$work/src-xo-crud/prog")") |"
-	echo "| go | the CRUD server binary | $(mb "$(stat -f %z "$work/src-go-crud/prog")") |"
-	echo "| rust | the CRUD server binary | $(mb "$(stat -f %z "$work/cache-rust-crud/release/crudperf")") |"
+	echo "| xo | the CRUD server binary, \`xo build\` (with DWARF) | $(mb "$(stat -f %z "$work/src-xo-crud/prog")") |"
+	echo "| xo | the CRUD server binary, \`xo build --release\` | $(mb "$(stat -f %z "$work/src-xo-crud/prog-release")") |"
+	echo "| go | the CRUD server binary, \`go build -trimpath\` (with DWARF) | $(mb "$(stat -f %z "$work/src-go-crud/prog")") |"
+	echo "| go | the CRUD server binary, \`go build -trimpath -ldflags=\"-s -w\"\` | $(mb "$(stat -f %z "$work/src-go-crud/prog-stripped")") |"
+	echo "| rust | the CRUD server binary, \`cargo build --release\` (no debug info) | $(mb "$(stat -f %z "$work/cache-rust-crud/release/crudperf")") |"
+	echo "| xo | the hello binary, \`xo build\` (with DWARF) | $(mb "$(stat -f %z "$work/src-xo-hello/prog")") |"
+	echo "| xo | the hello binary, \`xo build --release\` | $(mb "$(stat -f %z "$work/src-xo-hello/prog-release")") |"
+	echo "| go | the hello binary, \`go build -trimpath\` (with DWARF) | $(mb "$(stat -f %z "$work/src-go-hello/prog")") |"
+	echo "| go | the hello binary, \`go build -trimpath -ldflags=\"-s -w\"\` | $(mb "$(stat -f %z "$work/src-go-hello/prog-stripped")") |"
+	echo "| rust | the hello binary, \`cargo build --release\` (no debug info) | $(mb "$(stat -f %z "$work/cache-rust-hello/release/hello")") |"
 	echo "| node | the esbuild bundle of the server (needs a node runtime) | $(mb "$(stat -f %z "$bundle")") |"
 	echo "| node | the official node $nodever binary (the runtime) | $(mb "$(stat -f %z "$NODE_SEA")") |"
 	echo "| node | the single executable application | $(mb "$(stat -f %z "$sea/crud-sea")") |"
