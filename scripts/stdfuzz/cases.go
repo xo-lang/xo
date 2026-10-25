@@ -707,6 +707,47 @@ fn fz_rsa_sign() -> Str {
 }
 `
 
+const limitsHelpers = `
+fn fz_fields(rows: List[List[Str]]) -> Int {
+  var t = 0
+  for r in rows {
+    for f in r {
+      t += f.len()
+    }
+  }
+  t
+}
+fn fz_lim(kind: Int, pat: Str, n: Int) -> Str {
+  let s = pat.repeat(n)
+  let b = s.bytes()
+  match kind {
+    0 => "${s.len()}/${s.rune_count()}"
+    1 => "${s.to_lower().len()}/${s.to_upper().len()}"
+    2 => "${s.find("a") ?? -1}/${s.rfind("a") ?? -1}"
+    3 => "${s.replace("a", "xy").len()}"
+    4 => "${s.trim().len()}/${s.trim_start_chars("a").len()}"
+    5 => "${b.len()}/${b.rune_count()}/${b.find(b"a") ?? -1}"
+    6 => "${base64.encode(b).len()}/${(base64.decode(base64.encode(b)).ok() ?? b"").len()}"
+    7 => "${base32.encode(b).len()}/${(base32.decode(base32.encode(b)).ok() ?? b"").len()}"
+    8 => "${compress.gzip(b).len()}/${(compress.gunzip(compress.gzip(b)).ok() ?? b"").len()}"
+    9 => match json.parse_value(json.encode_str(s)) {
+      Ok(v) => "${json.encode_str(s).len()}/${v.encode().len()}"
+      Err(e) => "err:${e.display()}"
+    }
+    10 => match csv.parse("a,${s},b") {
+      Ok(rows) => "${rows.len()}/${fz_fields(rows)}"
+      Err(e) => "err:${e.display()}"
+    }
+    11 => {
+      let esc = url.query_escape(s)
+      let back = url.query_unescape(esc).ok() ?? ""
+      "${esc.len()}/${back.len()}"
+    }
+    _ => "${b.split(b"a").len()}/${b.split(b"a")[0].len()}"
+  }
+}
+`
+
 // A fuzzCase is one line of the generated program: the name it prints and
 // the Xo expression that computes its value as a Str, so every result
 // compares as one line of text.
@@ -753,6 +794,7 @@ func allAreas() []area {
 		{"cryptostream", []string{"std/internal"}, cryptoHelpers, genCrypto},
 		{"x509", []string{"std/internal"}, x509Helpers, genX509},
 		{"ecc", []string{"std/internal"}, eccHelpers, genECC},
+		{"limits", []string{"std/base32", "std/base64", "std/compress", "std/csv", "std/json", "std/url"}, limitsHelpers, genLimits},
 	}
 }
 
@@ -2088,6 +2130,40 @@ func genECC(r *rand.Rand, n int) []fuzzCase {
 		case 7:
 			out = append(out, fuzzCase{name, "fz_rsa_sign()"})
 		}
+	}
+	return out
+}
+
+// genLimits puts inputs at the chunk and buffer edges: the empty input,
+// one byte either side of 16, 32, 64, 256, 512, 1K, 2K, 4K, 8K, 16K,
+// 32K, 64K, 128K and 256K, and 1 MiB, through the Str/Bytes operations
+// that may special case a length (rune counts, search, replace, trim),
+// then base64, base32, gzip, JSON, CSV, URL escaping and split, whose
+// results must match on every backend. Every input is a short pattern
+// repeated, so no case carries a large literal.
+func genLimits(r *rand.Rand, n int) []fuzzCase {
+	sizes := []int{0, 1, 2, 3, 7, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129,
+		255, 256, 257, 511, 512, 513, 1023, 1024, 1025, 2047, 4095, 4096, 4097,
+		8191, 8192, 8193, 16383, 16384, 16385, 32767, 32768, 32769, 65535, 65536,
+		65537, 131071, 131072, 262143, 262144, 1048575, 1048576}
+	pats := []string{"a", "ab", "abc", "a b", "a,b", "a\n", "\\t", "é", "aé",
+		"🚀", "a🚀", "é🚀", "\"", "\\\\"}
+	out := make([]fuzzCase, 0, n)
+	for i := 0; i < n; i++ {
+		name := fmt.Sprintf("limits.%04d", i)
+		kind := i % 12
+		sz := sizes[r.Intn(len(sizes))]
+		if kind == 10 || kind == 11 {
+			// the CSV row and the escaped query stay small: both build
+			// lists or multiply the text
+			if sz > 65536 {
+				sz = 65536
+			}
+		}
+		if kind == 12 && sz > 65536 {
+			sz = 65536
+		}
+		out = append(out, fuzzCase{name, fmt.Sprintf("fz_lim(%d, %s, %d)", kind, xq(pick(r, pats)), sz)})
 	}
 	return out
 }
