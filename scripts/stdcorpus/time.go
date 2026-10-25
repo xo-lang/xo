@@ -316,6 +316,24 @@ func timeCorpus() string {
 		}
 		rows = append(rows, rfcRow{text: s, note: "Go reads it; Xo refuses it, as std/native/prelude.xo time_parse_rfc3339 says Go's parser alone takes a comma fraction or a one digit hour"})
 	}
+	// The fraction length guard: parse_time_at reads at most nine digits and
+	// drops the rest (a leading DEEPSEEK-AGENTS rule: a change to a guard
+	// carries the values at its boundary and one past it). Go's Parse reads
+	// every one of these and truncates the same way.
+	for _, frac := range []string{
+		"", ".5", ".12", ".12345678", ".123456789", ".1234567899",
+		".1234567890123", ".000000000", ".0000000009", ".999999999",
+		".9999999999", ".000000001", ".100000000", ".007",
+	} {
+		s := "2026-10-24T12:34:56" + frac + "Z"
+		can, secs, ms, ok := timeRFC3339(s)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "stdcorpus: Go refuses the fraction boundary row %q\n", s)
+			os.Exit(1)
+		}
+		rows = append(rows, rfcRow{text: s, ok: true, can: can, secs: secs, ms: ms,
+			note: "the fraction length guard: nine digits are kept, the rest dropped, not rounded (2026-10-25)"})
+	}
 	// Seeded instants from inside the range, every second and nanosecond
 	// shape: the text is Go's format of the same instant.
 	rr := rand.New(rand.NewSource(79))

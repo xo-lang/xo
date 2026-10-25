@@ -1,5 +1,24 @@
 # std/time changes
 
+## 2026-10-25: perf: an RFC 3339 time's fraction and digits are read in single passes (Time.parse_rfc3339, a decoded JSON Time)
+
+- Kind: perf
+- Commit: this commit
+- Found by: the sampler on bench/perf/text time_parse (XO_PROF=cpu at 1 kHz: text.parse_time_at 24 ms of 286 samples on arm64 and 18 ms of 210 on LLVM, the hottest line text.xo:601, the nine iteration fraction loop with its `i + 1 + k < j` test)
+- Go reference: time/format_rfc3339.go parseRFC3339 (go1.26.1), whose fraction it parses and truncates to nanoseconds the same way
+- Test: text_test on arm64 and LLVM; TestStdCorpora time and strconv on arm64 and LLVM (13 fraction length rows added at the guard: lengths 0 to 12, all nines at 9 and 10); stdfuzz -area=time (200 lines per backend, no divergence); the wasm goldens sample; the fixed point (bootstrap ok)
+
+A full nine digit fraction now reads its digits with no test a digit, at the
+form num2 and num4 take; a shorter one pads with zeros, and digits past the
+ninth are dropped, not rounded, as before. The five separators are one xor
+test instead of five branches, and the year's four digits are one 32 bit load
+and one nibble test (high nibble 3, low nibble at most 9) instead of two num2
+calls, four loads. bench/perf/text time_parse against main's std (one xo, A
+the parent's std): instructions 0.955 on arm64 (0.948 to 0.964) and 0.976 on
+LLVM (0.974 to 0.979), wall within noise on both. A single test a fraction
+byte (`d | (9 - d)` sign bit) measured better on arm64 and worse on LLVM than
+Go's two compares, so the compares stay.
+
 ## 2026-10-24: perf: an RFC 3339 time is parsed with one span check (Time.parse_rfc3339, a decoded JSON Time)
 
 - Kind: perf

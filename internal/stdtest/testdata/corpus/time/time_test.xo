@@ -846,6 +846,34 @@ const RFC_CASES: List[(Str, Bool, Str, Int, Int)] = [
   ("2010-02-04T21:00:57,012Z", false, "", 0, 0),
   // Go reads it; Xo refuses it, as std/native/prelude.xo time_parse_rfc3339 says Go's parser alone takes a comma fraction or a one digit hour
   ("2010-02-04T1:00:57Z", false, "", 0, 0),
+  // the fraction length guard: nine digits are kept, the rest dropped, not rounded (2026-10-25)
+  ("2026-10-24T12:34:56Z", true, "2026-10-24T12:34:56Z", 1792845296, 1792845296000),
+  // the fraction length guard: nine digits are kept, the rest dropped, not rounded (2026-10-25)
+  ("2026-10-24T12:34:56.5Z", true, "2026-10-24T12:34:56.5Z", 1792845296, 1792845296500),
+  // the fraction length guard: nine digits are kept, the rest dropped, not rounded (2026-10-25)
+  ("2026-10-24T12:34:56.12Z", true, "2026-10-24T12:34:56.12Z", 1792845296, 1792845296120),
+  // the fraction length guard: nine digits are kept, the rest dropped, not rounded (2026-10-25)
+  ("2026-10-24T12:34:56.12345678Z", true, "2026-10-24T12:34:56.12345678Z", 1792845296, 1792845296123),
+  // the fraction length guard: nine digits are kept, the rest dropped, not rounded (2026-10-25)
+  ("2026-10-24T12:34:56.123456789Z", true, "2026-10-24T12:34:56.123456789Z", 1792845296, 1792845296123),
+  // the fraction length guard: nine digits are kept, the rest dropped, not rounded (2026-10-25)
+  ("2026-10-24T12:34:56.1234567899Z", true, "2026-10-24T12:34:56.123456789Z", 1792845296, 1792845296123),
+  // the fraction length guard: nine digits are kept, the rest dropped, not rounded (2026-10-25)
+  ("2026-10-24T12:34:56.1234567890123Z", true, "2026-10-24T12:34:56.123456789Z", 1792845296, 1792845296123),
+  // the fraction length guard: nine digits are kept, the rest dropped, not rounded (2026-10-25)
+  ("2026-10-24T12:34:56.000000000Z", true, "2026-10-24T12:34:56Z", 1792845296, 1792845296000),
+  // the fraction length guard: nine digits are kept, the rest dropped, not rounded (2026-10-25)
+  ("2026-10-24T12:34:56.0000000009Z", true, "2026-10-24T12:34:56Z", 1792845296, 1792845296000),
+  // the fraction length guard: nine digits are kept, the rest dropped, not rounded (2026-10-25)
+  ("2026-10-24T12:34:56.999999999Z", true, "2026-10-24T12:34:56.999999999Z", 1792845296, 1792845296999),
+  // the fraction length guard: nine digits are kept, the rest dropped, not rounded (2026-10-25)
+  ("2026-10-24T12:34:56.9999999999Z", true, "2026-10-24T12:34:56.999999999Z", 1792845296, 1792845296999),
+  // the fraction length guard: nine digits are kept, the rest dropped, not rounded (2026-10-25)
+  ("2026-10-24T12:34:56.000000001Z", true, "2026-10-24T12:34:56.000000001Z", 1792845296, 1792845296000),
+  // the fraction length guard: nine digits are kept, the rest dropped, not rounded (2026-10-25)
+  ("2026-10-24T12:34:56.100000000Z", true, "2026-10-24T12:34:56.1Z", 1792845296, 1792845296100),
+  // the fraction length guard: nine digits are kept, the rest dropped, not rounded (2026-10-25)
+  ("2026-10-24T12:34:56.007Z", true, "2026-10-24T12:34:56.007Z", 1792845296, 1792845296007),
   ("2185-01-01T21:17:23.617682494Z", true, "2185-01-01T21:17:23.617682494Z", 6784895843, 6784895843617),
   ("2045-10-06T20:44:59.682944925Z", true, "2045-10-06T20:44:59.682944925Z", 2390935499, 2390935499682),
   ("2110-12-15T11:03:26.25305644Z", true, "2110-12-15T11:03:26.25305644Z", 4448084606, 4448084606253),

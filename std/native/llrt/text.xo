@@ -524,12 +524,19 @@ fn num2(p: Int, at: Int) -> Int {
 
 /// The four decimal digits at p + at as a number, or -1 (num2's).
 fn num4(p: Int, at: Int) -> Int {
-  let h = num2(p, at)
-  let l = num2(p, at + 2)
-  if (h | l) < 0 {
+  // the four bytes as one 32 bit word (2026-10-25): each a digit means its
+  // high nibble is 3 and its low nibble at most 9, and adding 0x06060606
+  // carries out of a nibble exactly when it was 10 or more, so the word
+  // takes one load and one test where two num2 calls take four loads.
+  let w = rt.mem_load(p, at, 4)
+  let lo = w & 0x0F0F0F0F
+  if (w & 0xF0F0F0F0) != 0x30303030 || ((lo.wrapping_add(0x06060606)) & 0xF0F0F0F0) != 0 {
     return -1
   }
-  h.wrapping_mul(100).wrapping_add(l)
+  // digits: no overflow to check
+  let a = (lo & 0xFF).wrapping_mul(10).wrapping_add((lo >> 8) & 0xFF)
+  let b = ((lo >> 16) & 0xFF).wrapping_mul(10).wrapping_add(lo >> 24)
+  a.wrapping_mul(100).wrapping_add(b)
 }
 
 /// Whether x is in lo..=hi.
@@ -586,23 +593,46 @@ pub fn parse_time_at(b: Bytes, o: Int, n: Int) -> Int? {
   if !within(day, 1, days_in(month, year)) || !within(hour, 0, 23) || !within(min, 0, 59) || !within(sec, 0, 59) {
     return None
   }
-  if byte_at(p, 4) != 45 || byte_at(p, 7) != 45 || byte_at(p, 10) != 84 || byte_at(p, 13) != 58 || byte_at(p, 16) != 58 {
+  // The five separators, one test instead of five branches: xor each byte
+  // with the one it must be and or the results, so a wrong byte anywhere
+  // makes a nonzero (2026-10-25).
+  if ((byte_at(p, 4) ^ 45) | (byte_at(p, 7) ^ 45) | (byte_at(p, 10) ^ 84) | (byte_at(p, 13) ^ 58) | (byte_at(p, 16) ^ 58)) != 0 {
     return None
   }
   var i = 19
   var nsec = 0
   if n - i >= 2 && byte_at(p, i) == 46 && byte_at(p, i + 1) >= 48 && byte_at(p, i + 1) <= 57 {
-    var j = i + 1
+    let d0 = i + 1
+    var j = d0 + 1
     while j < n && byte_at(p, j) >= 48 && byte_at(p, j) <= 57 {
       j += 1
     }
-    var k = 0
-    while k < 9 {
-      nsec = nsec.wrapping_mul(10)
-      if i + 1 + k < j {
-        nsec = nsec.wrapping_add(byte_at(p, i + 1 + k).wrapping_sub(48))
+    // Nine digits of nanoseconds: a full fraction (j - d0 >= 9) reads them
+    // with no test a digit, the form num2 and num4 take (2026-10-25: the
+    // nine iteration loop with `i + 1 + k < j` inside was the hottest line
+    // of bench/perf/text time_parse on arm64); a shorter fraction pads with
+    // zeros, and digits past the ninth are dropped, as Go's Parse drops
+    // them.
+    if j - d0 >= 9 {
+      nsec = byte_at(p, d0).wrapping_sub(48)
+      nsec = nsec.wrapping_mul(10).wrapping_add(byte_at(p, d0 + 1).wrapping_sub(48))
+      nsec = nsec.wrapping_mul(10).wrapping_add(byte_at(p, d0 + 2).wrapping_sub(48))
+      nsec = nsec.wrapping_mul(10).wrapping_add(byte_at(p, d0 + 3).wrapping_sub(48))
+      nsec = nsec.wrapping_mul(10).wrapping_add(byte_at(p, d0 + 4).wrapping_sub(48))
+      nsec = nsec.wrapping_mul(10).wrapping_add(byte_at(p, d0 + 5).wrapping_sub(48))
+      nsec = nsec.wrapping_mul(10).wrapping_add(byte_at(p, d0 + 6).wrapping_sub(48))
+      nsec = nsec.wrapping_mul(10).wrapping_add(byte_at(p, d0 + 7).wrapping_sub(48))
+      nsec = nsec.wrapping_mul(10).wrapping_add(byte_at(p, d0 + 8).wrapping_sub(48))
+    } else {
+      var k = d0
+      while k < j {
+        nsec = nsec.wrapping_mul(10).wrapping_add(byte_at(p, k).wrapping_sub(48))
+        k += 1
       }
-      k += 1
+      while k < d0 + 9 {
+        nsec = nsec.wrapping_mul(10)
+        k += 1
+      }
     }
     i = j
   }
