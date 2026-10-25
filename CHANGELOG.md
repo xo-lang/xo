@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Programs with several Map types are smaller on the native and LLVM backends: a
+  Map's key-side code is generated once per key type, its values in a list or value
+  log of their own (decision 0372). Eight `Map[Str, V]` types take 388,280 bytes of
+  __text instead of 444,252; a CRUD server 1.2% less. Map speed and memory are
+  unchanged within 3% (quiet `--ab`); `XO_PASSES=-map_core` turns off the lists'
+  half.
 - A Map used with literal keys (`m["id"] = ...`) no longer gets copies of its put
   and lookup code per key on the native and LLVM backends (decision 0368's addendum:
   a literal clones a callee only when the callee compares it and does not hash or

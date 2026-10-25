@@ -1,7 +1,8 @@
 # 0372: one Map core per key class instead of per Map type (native size)
 
-Status: Proposed (2026-10-24, size step 2 for the Xo Lead; step 1
-measured, see Step 1 results; the design refined from it; nothing built).
+Status: Accepted (owner, 2026-10-24 23:00, with the landing conditions
+below; built the same day: stage A in compiler/ssa map.xo and mapcore.xo,
+stage B in maplog.xo and maphyb.xo, see As built).
 
 ## Context
 
@@ -160,6 +161,165 @@ over K only, and keep a small typed value side:
 - **Behind XO_MAP_CORE** until each stage passes the map benches under
   quiet `--ab` (wall within 1.03), the goldens on every backend, and the
   fixed point. Then it becomes the default, with an addendum here.
+
+## Acceptance (owner, 2026-10-24 23:00)
+
+Accepted with these landing conditions (Xo Lead):
+
+1. The map benches in a quiet `xo bench --ab`, wall within 1.03 of the
+   typed form.
+2. The concurrent map tests under `--race` (internal/llvm
+   TestGoldenTasks, TestRaceSyncTable and TestRaceSyncTableArm64), plus
+   a reader and writer stress run at several XO_THREADS.
+3. DS-2's maps fuzz area clean, with and without `-release`.
+4. xo's own build time and peak RSS (a cold build of compiler/xo) not
+   worse beyond noise, since xo has about 100 Map types.
+5. A seed bump, called out here, if the core needs new runtime
+   intrinsics. It needs none: it uses only rt.slot_cas, slot_store,
+   slot_load, clz, obj_addr, log.push and log.set, which older seeds
+   build.
+
+Stage A stays behind the pass `map_core` (XO_PASSES=-map_core) until the
+conditions pass; then the default flips with the default-change full
+suites. Stage B replaces the log representation with no runtime switch
+(two copies of the log would be the larger risk) and lands as its own
+commit, so one revert undoes it.
+
+## As built (2026-10-24, branch xo4-mapcore)
+
+- **Stage A** (compiler/ssa map.xo, mapcore.xo):
+  - The lists representation's find and scan take the key lists
+    (keys, live, slots), named by the key type: `xo.map.find[K]`.
+  - put's key side is `xo.map.putk[K]`: the probe, the insert or the
+    rebuild of the key lists (`xo.map.rebuildk[K]`) in one pass. It
+    returns the entry's index and whether the values list is set,
+    pushed, or compacted first (`xo.map.vcompact[V]`, a function of the
+    value type).
+  - The fe, fn and part cache keys carry `mapcore`.
+- **Stage B** (maplog.xo, maphyb.xo):
+  - A log map is `{kl: MapLogK[K], vdir, vpar}`. The key side keeps
+    0291's eight fields, with `MapEntry[K] {h, prev, org, k}` and
+    `MapLevel[K]`; a lists level keeps keys, live, slots and n.
+  - The value log vdir has the key side's chunk layout: own entry i's
+    value is at i's slot and offset. `MapVLevel[V] {vdir, lv}` is one
+    per parent level.
+  - The K-only functions are probe, find, findx, each (fresh entries
+    plus each one's find result), claimk, recordk, flatten, table,
+    putpos, eachpos, ktolog, kfork and entry. The typed wrappers are
+    claim, record, put, remove, vals (values of find results), kv,
+    list, tolog, fork, oflog and vpos. The per-V functions are vtable
+    and vfork.
+  - A record appends the value after recordk has appended the entry and
+    stored its index slot. Readers of other values read values only
+    inside their own views, so the order is safe; an index slot past a
+    view is read for its key and prev only, as before.
+  - mlog_iterdir and for_mlog had no callers and are gone.
+
+- **Speed fixes**, found on instructions before any timing:
+  - The first cut sent every put through putk's tuple of lists:
+    bench/perf/xo putget was 1.37x main's instructions.
+  - Every log put called claimk and unpacked its tuple: copymut 1.27x,
+    branch 1.17x.
+  - Now xo.map.put keeps the found-key update and the insert with room
+    in the table in line, and calls putk only to grow the table. The
+    hybrid's cold putrest and listput always call putk.
+  - The typed claim tries its table's next position (slot_cas) in line
+    first. claimk retrying the same expected length fails exactly when
+    that did, because the claim cell only grows.
+  - A table's value log is made at its first value: a fork or a first
+    table starts with the shared empty list.
+
+Release builds, main 4dbcd4e1c against the branch on it (tw431
+fe647f95d), one xo each:
+
+| program | main __text | core __text | change |
+|---|---|---|---|
+| synthetic 8 Map[Str, V] | 444,252 | 388,280 | -12.6% |
+| bench/perf/http/xo (CRUD) | 1,467,848 | 1,449,924 | -1.2% |
+
+Instructions, branch over main, minimum of runs:
+
+| row | ratio |
+|---|---|
+| perf/xo putget | 1.006 |
+| perf/xo get | 1.002 |
+| perf/xo update | 1.002 |
+| perf/xo iter | 1.001 |
+| perf/xo copymut | 1.003 |
+| perf/xo branch | 1.038 |
+| perf/xo insrem | 1.001 |
+| perf/xo copyset | 1.004 |
+| perf/json maps | 0.991 |
+| perf/json small | 0.999 |
+| 200k Str keys to a struct (put, get, remove, iterate) | 0.990 |
+| the same with Int keys | 1.007 |
+
+- Outputs are identical in every row, and CRUD's 11 tests pass.
+- branch's 3.8% is the fork's second directory, for the value log, and
+  its value level.
+- Stress: the map_log_stress golden (concurrent copies of a 2,000 key
+  table written by four tasks while four read it, plus a Mutex store's
+  writes and snapshots, every read checked). internal/arm64
+  TestMapLogStress runs it 5 times at each XO_THREADS of 1, 2, 4 and 8,
+  and its `--race` build at 2 and 8. No bad read and no race report, on
+  main and on the branch.
+
+Wall, quiet `xo bench --ab` (A = main 4dbcd4e1c, B = the branch). The
+second window (40 rounds, 30 for the typed rows) is the one with the
+RSS fix; the first (20 rounds) covers the rest:
+
+| row | wall B/A | range |
+|---|---|---|
+| perf/xo putget | 0.956 | 0.945 to 0.964 |
+| perf/xo get | 1.000 | 0.909 to 1.01 |
+| perf/xo update | 0.897 | 0.874 to 0.927 |
+| perf/xo iter | 0.996 | 0.971 to 1.044 |
+| perf/xo copymut | 0.998 | 0.984 to 1.014 |
+| perf/xo branch | 1.027 | 1.007 to 1.038 |
+| perf/xo insrem | 1.002 | 0.99 to 1.009 |
+| perf/xo copyset | 1.009 | 0.971 to 1.037 |
+| perf/json maps | 1.005 | 0.996 to 1.015 |
+| 200k Str keys to a struct | 1.011 | 1.005 to 1.018 |
+| the same with Int keys | 1.026 | 1.017 to 1.033 |
+
+Peak RSS, B/A: Str keys 1.009, Int keys 0.923, putget 0.983, copymut
+1.007; the first cut was 1.15 and 1.2 (gotchas/ssa-tuple-of-lists-call-costs.md).
+
+The race bar (Xo Lead, 2026-10-25): on the Mac,
+- TestMapLogStress's `--race` runs at XO_THREADS 2 and 8;
+- internal/llvm TestTSanSharedMaps (maps shared under a Mutex in all
+  three Map forms);
+- TestGoldenTasks, TestRaceSyncTable and TestRaceSyncTableArm64.
+
+The linux/arm64 CI run failed the same three tests the same way main
+does (Linux clang, lld and no TSan runtime): known Linux issues, best
+effort. Its plain TestMapLogStress runs passed.
+
+xo itself, its s2 of the fixed point (s2 and s3 identical): __text
+60,609,056 on main, 59,642,480 on the branch
+(-966,576, -1.6%; the step 1 estimate of 1.9 MB counted the log's
+typed wrappers as shared). A cold build of compiler/xo (caches off),
+two runs alternating: main 32.45 and 34.47 s with 9.33 and 8.37 GB peak
+RSS, the branch 35.08 and 33.87 s with 8.68 and 8.85 GB, within the run
+to run spread.
+
+**Known costs.**
+- branch (many one-key forks of a 50k map) and the Int keyed struct
+  map are within the 1.03 bar on their point estimates, but their
+  ranges reach 1.033 to 1.038. Both are about 1% more instructions.
+  branch's share is the fork's value directory and value level, beside
+  the key side's.
+- A program with one Map type is about 3 KB larger, from the shared
+  functions plus the wrappers.
+
+**Follow-ups.**
+- One directory for a fork's entries and its values. The lazy value
+  directory is in already and did not move branch.
+- Shrink the hybrid's typed slow paths further: slowput 2.6 KB and
+  slowrem 1.4 KB a type.
+- Mark putk and vcompact cold, as the old rebuild was. Measure it on its
+  own.
+- Flip map_core's default only after its default-change suites.
 
 ## Consequences
 
