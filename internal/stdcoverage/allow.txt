@@ -40,16 +40,3 @@ internal.rt_probe  the runtime's probe hook, called by xo debug
 internal.rt_queued  the realtime queue depth, native backends only
 internal.rt_allocs  the realtime allocation count, native backends only
 internal.lock_shared  the shared fs lock a reader takes; no corpus opens one
-
-# std/xmlcodec's helpers: the xml corpus drives xmlcodec's marshal and
-# decode paths through the derive, and these are the steps inside them.
-xmlcodec.open_path  opens the path a field's parents name
-xmlcodec.chardata  character data inside the open element
-xmlcodec.comment  a comment inside the open element
-xmlcodec.parse_root  the root element of a text, inside the decode path
-xmlcodec.attr_of  an attribute of a local name, inside the decode path
-xmlcodec.direct_text  an element's own text, inside the decode path
-xmlcodec.float_text  Go's FormatFloat('g') for a JSON field
-xmlcodec.int_of  Go's ParseInt with the decode's error text
-xmlcodec.float_of  Go's ParseFloat with the decode's error text
-xmlcodec.bool_of  Go's ParseBool with the decode's error text
