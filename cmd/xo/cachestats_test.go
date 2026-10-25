@@ -18,6 +18,9 @@ func TestCacheStats(t *testing.T) {
 	}
 	tmp := t.TempDir()
 	setenv(t, "XO_BACKEND_CACHE_DIR", filepath.Join(tmp, "backend"))
+	// the cache on whatever the run's environment says (scripts/gate.sh
+	// exports XO_BACKEND_CACHE=off, and an off cache stores nothing)
+	setenv(t, "XO_BACKEND_CACHE", "on")
 	setenv(t, "XO_BUILD_DIR", filepath.Join(tmp, "build"))
 	setenv(t, "XO_BIN_CACHE", "off")
 	setenv(t, "XO_CACHE_STATS", "1")
@@ -80,6 +83,10 @@ func TestCacheStatsKeysHashes(t *testing.T) {
 	setenv(t, "XO_BUILD_DIR", filepath.Join(tmp, "build"))
 	setenv(t, "XO_BIN_CACHE", "off")
 	setenv(t, "XO_WHOLE_BUILD", "off")
+	// the cache on whatever the run's environment says (scripts/gate.sh
+	// exports XO_BACKEND_CACHE=off: the 6 writes and no pack entries of the
+	// 2026-10-24 tier 14 failure were the build dir's objects alone)
+	setenv(t, "XO_BACKEND_CACHE", "on")
 	dir := filepath.Join(tmp, "prog")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
