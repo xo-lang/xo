@@ -1,7 +1,7 @@
 # 0372: one Map core per key class instead of per Map type (native size)
 
-Status: Proposed (2026-10-24, size step 2 for the Xo Lead; nothing
-built).
+Status: Proposed (2026-10-24, size step 2 for the Xo Lead; step 1
+measured, see Step 1 results; the design refined from it; nothing built).
 
 ## Context
 
@@ -83,6 +83,83 @@ itself, which has many Map types, gains more; to be measured in step 1.
    value's indirect release is the cost to watch.
 3. Build the cores in compiler/ssa, behind XO_MAP_CORE, with tests over
    each key class and value widths of 1, 2 and n words.
+
+## Step 1 results (2026-10-24)
+
+**Size model.** A source-level prototype of the layout, in synthetic
+programs with 1, 2, 4 and 8 `Map[Str, V]` types (V = Int, Str, Float,
+Bool, List[Int], (Int, Str), Bytes, List[Str]) and the same work on each.
+The core form is a `Map[Str, Int]` index into a typed `List[V]`, plus a
+free list. Release __text, xo 94028338e:
+
+| Map types | today | today's map code | core form | core's map code |
+|---|---|---|---|---|
+| 1 | 265,668 | 24,908 | 268,004 | 25,452 |
+| 2 | 295,564 | 51,544 | 271,748 | 26,096 |
+| 4 | 350,872 | 101,480 | 277,864 | 26,096 |
+| 8 | 444,252 | 185,416 | 291,124 | 26,096 |
+
+So an added Str-keyed Map type costs 25.5 KB of __text today and 3.3 KB
+in the core form. xo itself has 2,499,724 bytes of map code: 1,750
+functions over about 107 Map types (4.2% of its __text). With about 10
+key types, the estimate is 10 × 25 KB of cores plus 107 × 3.3 KB of
+value code, about 0.6 MB, so about 1.9 MB saved.
+
+**Folding identical code instead.** Measured, and too small to replace
+the core:
+
+- All of xo: 300,564 bytes of byte-identical functions (0.5%). CRUD:
+  6,868.
+- xo's map code alone: 228,568 bytes with exact callees, or 607,460 with
+  callees that differ only in name folded too.
+
+**Speed of the source model.** 200k Str keys, value Rec{Str, Int},
+instructions (min of 3):
+
+| phase | typed | core | extra |
+|---|---|---|---|
+| put 200k + iterate | 262.0M | 309.0M | +47M |
+| get, 2M | 328.9M | 346.8M | +17.9M (about 9 a get) |
+| remove 100k | 24.5M | 28.6M | +4.1M |
+| Int keys, whole run | 262.1M | 303.3M | 1.157x |
+
+XO_PROF puts the put phase's extra in a second probe: Xo source cannot
+insert or find in one probe, and `Map.update`'s closure made it 6M
+worse. A compiler-built core probes once, so the put row is the
+source model's cost, not the design's. The get row is the indirection
+from index to value. The wall comparison is not measured yet: one
+unquiet run gave 0.20 s for the core and 0.31 s for typed, and a quiet
+`--ab` follows.
+
+**Per operation, today.** In CRUD's instances, six of the 25 operations
+have the same size for every V: map.find, map.scan, mlog.find,
+mlog.findx, mlog.probe and mlog.eachpos. They read only the keys. The
+lists representation already keeps the values in their own `List[V]`
+(keys, vals, live, slots, n). Only the log representation (decision
+0291) holds V inside its entry (`MapEntry {h, prev, org, k, v}`), and
+its functions are most of a type's 24 KB.
+
+## Refined decision (proposed, from step 1)
+
+No value descriptor and no indirect calls. Make the key side generic
+over K only, and keep a small typed value side:
+
+- **A. Lists representation.** find, scan, put's probe and insert, the
+  rebuild of the key lists and slots, and remove's probe become
+  functions of K that take and return the key side (keys, live, slots,
+  n) and the entry's index. The typed part is the write of `vals[idx]`
+  (a set or a push) and the compaction of vals in a rebuild, inlined at
+  the caller. This is today's work in one probe, so its speed cost
+  should be close to none.
+- **B. Log representation.** MapEntry drops `v`. A table keeps a
+  parallel value log (`vdir: List[List[V]]`) with the same chunking as
+  its entry log: the same positions, appended in place the same way.
+  Every log function (claim, record, each, findx, probe, the fork walk)
+  becomes a function of K, and reading or writing a value at a position
+  is a typed two-load operation.
+- **Behind XO_MAP_CORE** until each stage passes the map benches under
+  quiet `--ab` (wall within 1.03), the goldens on every backend, and the
+  fixed point. Then it becomes the default, with an addendum here.
 
 ## Consequences
 
