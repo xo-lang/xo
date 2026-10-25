@@ -192,7 +192,138 @@ fn (var xs: List[T]) sort_in_place_by[K: Ord, E, fx: Effects](key: fn(T) -> K ! 
   Ints and 2.0 to 1.7 MB on UInt8; instructions go 1.42, 1.12 and 1.18
   times `sort`'s, which is the counting step 3 removes; Strs are 0.83 of
   `sort`'s wall (0.63 to 0.52 s), Ints and UInt8 within the timer's
-  resolution.
+  resolution. `sort_in_place_by` is measured against `sort_by`, the fair
+  comparison because both pay a keys and an index array: 1.12, 1.09 and
+  1.12 times its instructions and 0.86, 0.89 and 0.81 of its extra RSS.
+
+### Step 3 design: how the moves become swaps (measured, not landed)
+
+The plan said "the merge's moves switch to `rt.list_swap`". `rt.list_swap`
+swaps two elements of ONE list's array, and std Xo cannot make a list hold
+the scratch: List has no truncate, resize or set_len (std/prelude.xo:497
+has only `with_capacity`), so a list cannot be grown by n/2 placeholders
+and shortened again. Two shapes were then possible, and both were built and
+measured (bench/results/sortip-swap-2026-10-25.md, 2M Ints, Strs and UInt8,
+instructions and RSS; wall indicative):
+
+- **Rotation merge (built, rejected).** Runs of 16 by swap insertion, then
+  merges that place the longer run's middle element with a binary search in
+  the other run and rotate the block between them with three reversals of
+  swaps, recursing. No scratch at all, stable, and it passes the module's
+  25 tests and the corpus on arm64 and LLVM. It costs 5.16, 2.71 and 3.44
+  times `sort`'s instructions and 4.62, 2.03 and 2.94 times step 2's: a
+  rotation merge is O(n log^2 n) moves where the half-buffer merge is
+  O(n log n), and the ~30 instructions a Str move saves do not pay for 1.3
+  to 2.3 extra moves a level. Its only win is zero extra RSS, and only on
+  Strs does that show in wall (1.08 s against `sort`'s 1.02).
+- **Half-buffer merge with a two-list swap (preferred, needs a seed).**
+  Step 2's merge with every move a swap between the list and the scratch,
+  which needs one new intrinsic, `rt.list_swap2`.
+
+**`rt.list_swap2(a, i, b, j)`**: swaps element i of a's array with element
+j of b's array as words, with no count and no release, the same lowering
+family as `list_swap` (two element addresses, two loads, two stores). The
+soundness argument is the same and rests on the pair of arrays together:
+every swap leaves the multiset of references held by `list ∪ scratch`
+unchanged, so nothing needs counting; an element is only ever overwritten in
+a slot that has already been consumed (both cursors move forward, and the
+value a swap writes into the dead slot is never read again).
+
+**Where the scratch's content comes from, and what it costs.** `list_swap2`
+bounds-checks j like `list_swap`, so the scratch must have at least as many
+elements as the left run before the first swap, and a generic `T` has no
+default value, so the slots are filled with copies of a list element:
+
+```xo
+var scratch: List[T] = []
+while scratch.len() < left_max {
+  scratch.push(xs[0])          // one counted retain a slot
+}
+```
+
+That is `n/2` counted retains at the start of a sort (the widest merge's
+left run is at most half the list) and `n/2` releases when the scratch is
+dropped at the end. It is cheap against what it replaces: at 2M elements a
+sort makes about 21 moves an element, so the 1M count pairs of the init are
+about one fortieth of the ~42M counted moves step 2 pays, and they are
+paid once, not per level.
+
+There is no raw uninitialized route in std Xo: `List.with_capacity(n)`
+gives an allocation with those slots but a length of 0, so a swap into them
+reads or writes past the logical end and the bounds check refuses it; making
+the slots addressable means changing a list's length, which is the
+`truncate`/`set_len` alternative below, rejected. So the initializer above
+is the design, and its counting is stated rather than hidden.
+
+The invariant, stated exactly: at the start of the sort, `list ∪ scratch`
+holds the list's elements once each plus `left_max` copies of `xs[0]`, every
+one of those references counted; each swap leaves that multiset unchanged;
+and the scratch's drop at the end releases exactly the copies, so every
+count returns to where it started. "Each element exactly once" in the
+soundness paragraph above is the same statement with the copies excluded.
+
+**What the scratch holds between levels and at the end.** After the
+left-run move-out and the merge, the merged elements are all back in the
+list, and the scratch's slots that were used hold the cast-off copies of
+`xs[0]` again; the copies are never read by the merge, only written over and
+then swapped back, so the scratch between levels holds `left_max` copies of
+one element and nothing else. At the end of the sort it holds exactly those
+copies, and dropping it is what releases them.
+
+Cases the design has to answer:
+
+- **a == b.** Legal and it degenerates to `list_swap`. The sort never calls
+  it that way, but the lowering must not assume distinct objects: read both
+  element addresses from their own headers and let the same pointer work.
+- **b shared.** Unsound, and by construction impossible to hit: the scratch
+  is made inside the sort and no other binding ever holds it, so its count
+  is 1. The intrinsic's doc states the contract (b must be uniquely owned),
+  the same way `list_swap`'s now states its own precondition.
+- **Different element widths.** The call site's two lists are both
+  `List[T]` (the scratch is declared `List[T]`), so one element size serves
+  both, a packed `T` (a Bool, a small struct) included because the size comes
+  from the type. A pair of different element types would corrupt memory, so
+  the checker should reject a call whose two list types are not the same
+  instantiation, and the lowering reads the size from that type once.
+- **Copy-on-write.** a is the receiver and must be unique, which is the
+  `list_swap` precondition (gotchas/list-swap-bypasses-copy-on-write.md);
+  the sort forces it with one counted element write before the first swap.
+  b needs nothing: it is fresh.
+- **Bounds.** Both indices are checked, as `list_swap`'s are.
+
+**The expected instruction ratio, before it is built.** Step 2 measures
+1.42 (Strs), 1.12 (Ints) and 1.18 (UInt8) times `sort`, and that is what
+step 3 has to move:
+
+- **Strs:** expected to fall below step 2's 1.42 and toward, possibly below,
+  `sort`'s 1.00. A counted Str move is a retain and a release (each with its
+  own inline test and an atomic slow path on a shared object) plus two
+  stores; a swap is two loads, two stores and two bounds compares. The init
+  adds `n/2` count pairs against ~21 moves an element.
+- **Ints and UInt8:** expected to be a few percent WORSE than step 2's 1.12
+  and 1.18, because there is nothing to count: a move is one store and a
+  swap is two loads, two stores and two compares. If the measurement shows
+  that loss is real, the open option is a compile-time choice of merge by
+  element type (plain moves when `T` holds nothing counted), which this ADR
+  leaves to the numbers rather than to guesswork.
+- The number to report is the same table, same probe, with the `sort` and
+  step 2 columns beside it, and the init's `n/2` counts called out on their
+  own line.
+
+The alternative, a length-changing method (`List.truncate(n)` or
+`set_len(n)` keeping the scratch beyond the logical end of one list), was
+compared and rejected: it needs a method that changes a list's length in
+place with capacity semantics, it must release the elements it cuts off
+(n/2 releases a sort, which is the same init cost as the copies above, so
+no win there), it
+interacts with the unique/capacity invariants and with `len()` inside the
+merge (the logical length and the scratch's room would differ), and it
+still needs the same uniqueness force. That is more std surface and more
+invariants for the same shape, and it locks the scratch into the receiver's
+own allocation, so a sort could not use a smaller scratch.
+
+So step 3 is `list_swap2` plus the half-buffer merge, landed and gated
+before the next seed, with step 2 the form that ships until then.
 
 ## Consequences
 
