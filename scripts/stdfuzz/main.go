@@ -304,6 +304,9 @@ func program(uses map[string]bool, helpers []string, cases []fuzzCase) string {
 	for _, h := range helpers {
 		b.WriteString(h)
 	}
+	for _, pre := range preludes {
+		b.WriteString(pre)
+	}
 	b.WriteString("\nfn main(os: Os) {\n")
 	for _, c := range cases {
 		b.WriteString(c.stmt())

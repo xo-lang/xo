@@ -9,9 +9,19 @@ import (
 	"compress/zlib"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/asn1"
 	"fmt"
 	"math"
+	"math/big"
 	"math/rand"
+	"net"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -575,6 +585,43 @@ fn fz_seal_open(area: Str, key: Bytes, nonce: Bytes, pt: Bytes, aad: Bytes) -> S
 }
 `
 
+const x509Helpers = `
+fn fz_xop(op: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Str {
+  internal.crypto_op(op, a, b, c, d).to_hex()
+}
+fn fz_x509_plain(i: Int) -> Str {
+  match Bytes.from_hex(CERT_HEX[i]) {
+    Some(der) => fz_xop("x509.check", der, b"", b"", b"")
+    None => "bad hex"
+  }
+}
+fn fz_x509_mut(i: Int, pos: Int, nib: Str) -> Str {
+  let h = CERT_HEX[i]
+  let m = if pos < 1 || pos + 1 >= h.len() { h } else { h[0..pos] + nib + h[pos + 1..h.len()] }
+  match Bytes.from_hex(m) {
+    Some(der) => fz_xop("x509.check", der, b"", b"", b"")
+    None => "bad hex"
+  }
+}
+fn fz_x509_cut(i: Int, cut: Int) -> Str {
+  let h = CERT_HEX[i]
+  let m = h[0..(if cut < h.len() { cut } else { h.len() })]
+  match Bytes.from_hex(m) {
+    Some(der) => fz_xop("x509.check", der, b"", b"", b"")
+    None => "bad hex"
+  }
+}
+fn fz_x509_pair(i: Int, j: Int) -> Str {
+  match Bytes.from_hex(CERT_HEX[i]) {
+    Some(der) => match Bytes.from_hex(CERT_HEX[j]) {
+      Some(other) => fz_xop("x509.signed_by", der, other, b"", b"")
+      None => "bad hex"
+    }
+    None => "bad hex"
+  }
+}
+`
+
 // A fuzzCase is one line of the generated program: the name it prints and
 // the Xo expression that computes its value as a Str, so every result
 // compares as one line of text.
@@ -619,6 +666,7 @@ func allAreas() []area {
 		{"http", []string{"std/http"}, httpHelpers, genHTTP},
 		{"template", []string{"std/template", "std/json"}, templateHelpers, genTemplate},
 		{"cryptostream", []string{"std/internal"}, cryptoHelpers, genCrypto},
+		{"x509", []string{"std/internal"}, x509Helpers, genX509},
 	}
 }
 
@@ -1595,4 +1643,185 @@ func randBytesN(r *rand.Rand, n int) []byte {
 	b := make([]byte, n)
 	r.Read(b)
 	return b
+}
+
+// ---------------------------------------------------------------------------
+// x509: real certificates, made deterministically here, then mutated.
+
+// detReader is a deterministic io.Reader over a math/rand source, so key
+// generation and signing give the same certificates on every run.
+type detReader struct{ r *rand.Rand }
+
+func (d detReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = byte(d.r.Intn(256))
+	}
+	return len(p), nil
+}
+
+var fuzzCertHexesOnce []string
+
+// preludes are declarations an area needs outside fn main (the x509
+// certificate table).
+var preludes []string
+
+// fuzzCertHexes builds the certificate set once: a P-256 root, a P-256
+// leaf with DNS, IP, email and URI names, a P-384 expired certificate, an
+// Ed25519 not-yet-valid one, an RSA name-constrained CA, a P-256
+// certificate with an unknown critical extension, a P-256 certificate
+// with an empty subject and an RSA root.
+func fuzzCertHexes() []string {
+	if fuzzCertHexesOnce != nil {
+		return fuzzCertHexesOnce
+	}
+	dr := detReader{rand.New(rand.NewSource(99))}
+	nb := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	na := time.Date(2040, 1, 1, 0, 0, 0, 0, time.UTC)
+	ca := func(cn string, serial int64) *x509.Certificate {
+		return &x509.Certificate{
+			SerialNumber:          big.NewInt(serial),
+			Subject:               pkix.Name{CommonName: cn, Organization: []string{"Fuzz"}, Country: []string{"US"}},
+			NotBefore:             nb,
+			NotAfter:              na,
+			IsCA:                  true,
+			BasicConstraintsValid: true,
+			KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign | x509.KeyUsageDigitalSignature,
+			SubjectKeyId:          []byte{1, 2, 3, 4},
+		}
+	}
+	leaf := ca("fuzz leaf", 2)
+	leaf.IsCA = false
+	leaf.KeyUsage = x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment
+	u, err := url.Parse("https://example.com/a?b=c")
+	if err != nil {
+		panic(err)
+	}
+	leaf.DNSNames = []string{"example.com", "*.example.com", "xn--bcher-kva.example"}
+	leaf.IPAddresses = []net.IP{net.ParseIP("192.0.2.1"), net.ParseIP("2001:db8::1")}
+	leaf.EmailAddresses = []string{"a@example.com"}
+	leaf.URIs = []*url.URL{u}
+	leaf.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}
+
+	expired := ca("fuzz expired", 3)
+	expired.NotBefore = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	expired.NotAfter = time.Date(2001, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	future := ca("fuzz future", 4)
+	future.NotBefore = time.Date(2050, 1, 1, 0, 0, 0, 0, time.UTC)
+	future.NotAfter = time.Date(2060, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	constrained := ca("fuzz constrained", 5)
+	constrained.PermittedDNSDomainsCritical = true
+	constrained.PermittedDNSDomains = []string{".example.com", "other.example"}
+	constrained.ExcludedDNSDomains = []string{".bad.example"}
+	constrained.PermittedIPRanges = []*net.IPNet{{IP: net.ParseIP("192.0.2.0").To4(), Mask: net.CIDRMask(24, 32)}}
+
+	unknown := ca("fuzz unknown ext", 6)
+	unknown.ExtraExtensions = []pkix.Extension{{
+		Id:       asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 99999, 1},
+		Critical: true,
+		Value:    []byte{5, 0},
+	}}
+
+	empty := ca("", 7)
+	empty.Subject = pkix.Name{}
+	empty.SubjectKeyId = nil
+
+	type kp struct {
+		priv any
+		pub  any
+	}
+	mkKey := func(kind int) kp {
+		switch kind {
+		case 0:
+			k, err := ecdsa.GenerateKey(elliptic.P256(), dr)
+			if err != nil {
+				panic(err)
+			}
+			return kp{k, &k.PublicKey}
+		case 1:
+			k, err := ecdsa.GenerateKey(elliptic.P384(), dr)
+			if err != nil {
+				panic(err)
+			}
+			return kp{k, &k.PublicKey}
+		case 2:
+			pub, priv, err := ed25519.GenerateKey(dr)
+			if err != nil {
+				panic(err)
+			}
+			return kp{priv, pub}
+		default:
+			k, err := rsa.GenerateKey(dr, 2048)
+			if err != nil {
+				panic(err)
+			}
+			return kp{k, &k.PublicKey}
+		}
+	}
+	out := make([]string, 0, 8)
+	for i, tm := range []*x509.Certificate{nil, leaf, expired, future, constrained, unknown, empty, nil} {
+		var k kp
+		switch i {
+		case 0:
+			tm, k = ca("fuzz root", 1), mkKey(0)
+		case 2:
+			k = mkKey(1)
+		case 3:
+			k = mkKey(2)
+		case 4:
+			k = mkKey(3)
+		case 7:
+			tm, k = ca("fuzz rsa root", 8), mkKey(3)
+		default:
+			k = mkKey(0)
+		}
+		der, err := x509.CreateCertificate(dr, tm, tm, k.pub, k.priv)
+		if err != nil {
+			panic(fmt.Sprintf("stdfuzz: creating fuzz certificate %d: %v", i, err))
+		}
+		out = append(out, fmt.Sprintf("%x", der))
+	}
+	fuzzCertHexesOnce = out
+	return out
+}
+
+// certTable is the Xo const the x509 cases read, one certificate a line.
+func certTable(hexes []string) string {
+	var b strings.Builder
+	b.WriteString("\n/// the certificates the cases mutate, in hex (made by the generator with crypto/x509 from a fixed seed)\nconst CERT_HEX: List[Str] = [\n")
+	for _, h := range hexes {
+		fmt.Fprintf(&b, "  %s,\n", xq(h))
+	}
+	b.WriteString("]\n")
+	return b.String()
+}
+
+// genX509 covers the certificate parser through internal.crypto_op:
+// x509.check on an unmodified certificate, on one with a changed nibble
+// (outside the first byte, so the outer length stays sane) and on one cut
+// short, and x509.signed_by over every pair of the set.
+func genX509(r *rand.Rand, n int) []fuzzCase {
+	hexes := fuzzCertHexes()
+	preludes = append(preludes, certTable(hexes))
+	out := []fuzzCase{{Name: "x509.0000", Expr: "fz_x509_plain(0)"}}
+	for i := 1; i < n; i++ {
+		name := fmt.Sprintf("x509.%04d", i)
+		idx := r.Intn(len(hexes))
+		hlen := len(hexes[idx])
+		switch i % 4 {
+		case 0:
+			out = append(out, fuzzCase{name, fmt.Sprintf("fz_x509_plain(%d)", idx)})
+		case 1:
+			pos := 2 + r.Intn(hlen-2)
+			nib := string("0123456789abcdef"[r.Intn(16)])
+			out = append(out, fuzzCase{name, fmt.Sprintf("fz_x509_mut(%d, %d, %q)", idx, pos, nib)})
+		case 2:
+			cut := 2 * (r.Intn(hlen/2) + 1)
+			out = append(out, fuzzCase{name, fmt.Sprintf("fz_x509_cut(%d, %d)", idx, cut)})
+		default:
+			out = append(out, fuzzCase{name, fmt.Sprintf("fz_x509_pair(%d, %d)", idx, r.Intn(len(hexes)))})
+		}
+	}
+	return out
 }
