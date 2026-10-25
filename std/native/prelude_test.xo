@@ -7,6 +7,163 @@
 // fresh from the model. Int and Str keys (the Str keys share lengths and
 // prefixes: the small map compares lengths first).
 
+use native/rt
+use native/llrt/heapos
+
+// rt.list_swap (decision 0374 step 1) lives in native/rt. Its tests are
+// here rather than in a test file beside that module: a test module takes
+// the name of a source module beside it, and native/rt's source is
+// declarations only, so `xo test --std-module=native/rt` reports no tests
+// at all, and the heapos import below would close a cycle through obj
+// (obj -> darwin/linux/sysio/windows -> obj). This module is above all of
+// them. An element is swapped as words, so a Bool's byte, a two word Str
+// and a multi word struct all keep their layout, and no element is
+// counted or released: a permutation leaves each one referenced exactly
+// as often, which the reference count row below reads after the list is
+// dropped.
+
+/// Every class's free list count (heapos.nfree, which entry.xo's heapstats
+/// sums the same way): a swap that counted or released an element would
+/// show here once the list dies, since a value counted twice is never
+/// freed and one released early is freed before its time.
+fn swap_free_total() -> Int {
+  var n = 0
+  for c in 1..73 {
+    n += heapos.nfree(c)
+  }
+  n
+}
+
+/// Two unique heap strings (a literal is immortal, so its count never
+/// moves), swapped and then dropped with the list.
+fn swap_heap_strs() -> Bool {
+  var xs: List[Str] = ["alpha" + "!", "beta" + "!"]
+  rt.list_swap(xs, 0, 1)
+  xs == ["beta!", "alpha!"]
+}
+
+struct SwapPair {
+  a: Str
+  b: Int
+}
+
+test "list_swap: two Int elements trade places" {
+  var xs = [3, 1, 4, 1, 5, 9]
+  rt.list_swap(xs, 0, 5)
+  expect(xs == [9, 1, 4, 1, 5, 3])
+  rt.list_swap(xs, 2, 3)
+  expect(xs == [9, 1, 1, 4, 5, 3])
+}
+
+test "list_swap: an element swapped with itself is unchanged" {
+  var xs = [7, 8, 9]
+  rt.list_swap(xs, 1, 1)
+  expect(xs == [7, 8, 9])
+}
+
+test "list_swap: the last element swaps with the first" {
+  var xs = [1, 2, 3, 4]
+  rt.list_swap(xs, 3, 0)
+  expect(xs == [4, 2, 3, 1])
+}
+
+test "list_swap: Bool elements swap as bytes" {
+  var xs = [true, false, true]
+  rt.list_swap(xs, 0, 1)
+  expect(xs == [false, true, true])
+}
+
+test "list_swap: Str elements keep their text and their count" {
+  var xs = ["alpha", "beta", "gamma"]
+  // one more reference to the first, held outside the list across the
+  // swap: the swap must not release what the list still holds
+  let held = xs[0]
+  rt.list_swap(xs, 0, 2)
+  expect(xs == ["gamma", "beta", "alpha"])
+  expect(held == "alpha")
+  rt.list_swap(xs, 0, 1)
+  expect(xs == ["beta", "gamma", "alpha"])
+}
+
+test "list_swap: struct elements swap whole" {
+  var xs = [SwapPair{a: "one", b: 1}, SwapPair{a: "two", b: 2}]
+  rt.list_swap(xs, 0, 1)
+  expect(xs[0].a == "two")
+  expect(xs[0].b == 2)
+  expect(xs[1].a == "one")
+  expect(xs[1].b == 1)
+}
+
+// Packed elements (decision 0369, on by default): the element is one, two
+// or four bytes of the list's own array, so the swap's width has to be the
+// element's and not a word's. wasm keeps eight byte elements, so these rows
+// check its other path; the Go backend packs through its own types.
+
+test "list_swap: packed UInt8 elements swap as single bytes" {
+  var xs: List[UInt8] = [0, 1, 2, 250, 255]
+  rt.list_swap(xs, 0, 4)
+  var want: List[UInt8] = [255, 1, 2, 250, 0]
+  expect(xs == want)
+  rt.list_swap(xs, 1, 3)
+  var want2: List[UInt8] = [255, 250, 2, 1, 0]
+  expect(xs == want2)
+}
+
+test "list_swap: packed Int16 elements keep their sign" {
+  // -32768 is the type's minimum: a swap that went through a wider or an
+  // unsigned load would come back 32768 or something else
+  var xs: List[Int16] = [-32768, 32767, 0, -1]
+  rt.list_swap(xs, 0, 1)
+  var want: List[Int16] = [32767, -32768, 0, -1]
+  expect(xs == want)
+  rt.list_swap(xs, 2, 3)
+  var want2: List[Int16] = [32767, -32768, -1, 0]
+  expect(xs == want2)
+}
+
+test "list_swap: packed UInt32 elements keep their high bit" {
+  var xs: List[UInt32] = [4294967295, 0, 2147483648, 7]
+  rt.list_swap(xs, 0, 2)
+  var want: List[UInt32] = [2147483648, 0, 4294967295, 7]
+  expect(xs == want)
+  rt.list_swap(xs, 1, 3)
+  var want2: List[UInt32] = [2147483648, 7, 4294967295, 0]
+  expect(xs == want2)
+}
+
+test "list_swap: packed Float32 elements keep their values" {
+  var xs: List[Float32] = [1.5, -2.25, 0.75]
+  rt.list_swap(xs, 0, 1)
+  var want: List[Float32] = [-2.25, 1.5, 0.75]
+  expect(xs == want)
+  rt.list_swap(xs, 1, 2)
+  var want2: List[Float32] = [-2.25, 0.75, 1.5]
+  expect(xs == want2)
+}
+
+test "list_swap: a two word tuple swaps both words" {
+  var xs: List[(Int, Int)] = [(1, 2), (3, 4), (5, 6)]
+  rt.list_swap(xs, 0, 2)
+  var want: List[(Int, Int)] = [(5, 6), (3, 4), (1, 2)]
+  expect(xs == want)
+  rt.list_swap(xs, 0, 1)
+  var want2: List[(Int, Int)] = [(3, 4), (5, 6), (1, 2)]
+  expect(xs == want2)
+}
+
+test "list_swap: a Str swap changes no reference count" {
+  let before = swap_free_total()
+  expect(swap_heap_strs())
+  let after = swap_free_total()
+  expect(after == before)
+}
+
+test "list_swap: a swap inside a longer list disturbs nothing else" {
+  var xs = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+  rt.list_swap(xs, 2, 6)
+  expect(xs == [1, 2, 7, 4, 5, 6, 3, 8, 9])
+}
+
 fn mm_next(x: Int) -> Int { (x * 1103515245 + 12345) % 2147483648 }
 
 fn mm_find(ks: List[Int], k: Int) -> Int {

@@ -362,6 +362,14 @@ fn obj_addr[T](x: T) -> Int
 /// once more (the reference counting of the result releases it, so the
 /// object's count is unchanged once the value is dead; decision 0207).
 fn obj_at[T](a: Int) -> T
+/// Swaps the elements at i and j of xs's own array as words, with no
+/// count and no release: a permutation of a list's elements leaves each
+/// one referenced exactly as often, so nothing is counted (lowered
+/// inline: both element addresses, two loads and two stores; decision
+/// 0374). Faults when either index is outside the list. Both elements
+/// are loaded before either is stored, so i == j writes back what it
+/// read.
+fn list_swap[T](xs: List[T], i: Int, j: Int)
 
 /// a as a B: a std type and its implementation type (http.Response and
 /// the implementation's Response), which lower to one type (decision

@@ -75,6 +75,16 @@ fn (var b: Builder) generic_intrinsic(x: Expr, ci: check.CallInfo, es: List[Expr
     }
     return b.rt(name, nt, vs)
   }
+  if name == "list_swap" {
+    // decision 0374: the elements at i and j trade places as words, with no
+    // count and no release; every native emitter lowers it inline with both
+    // indices bounds checked. The type argument is the element type (xs is
+    // List[T]), so the list is built from it
+    let l = b.value_as(es[0] ?? fault("arg"), b.m.list(b.typ(b.intrinsic_targ(ci, 0))))
+    let i = b.value_as(es[1] ?? fault("arg"), b.int_t())
+    let j = b.value_as(es[2] ?? fault("arg"), b.int_t())
+    return b.rt(name, nt, [l, i, j])
+  }
   if name is "launder1" | "launder2" {
     // the function itself (only its effects are accounted for here)
     return b.value_as(es[0] ?? fault("arg"), nt)

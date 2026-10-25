@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+ebdca 12 11 10 255 250 2 1 0 0
+--- stderr

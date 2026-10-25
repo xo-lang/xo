@@ -182,6 +182,24 @@ fn (var g: Gen) call(v: Int) {
       g.variant_into(v, ot, g.m.variant_index(ot, "None"), 0, [])
       g.e("end")
     }
+    "rt.list_swap" => {
+      // decision 0374: the two elements trade places with no count and no
+      // release (a permutation leaves each element referenced as often),
+      // both read before either is written so i == j writes back what it
+      // read; elem_addr bounds checks both indices
+      let et = g.m.types[g.vty(x.args[0])].elems[0]
+      let el = g.leaves(et)
+      if !el.is_empty() {
+        let a = g.elem_addr(v, x.args[0], x.args[1], et)
+        let b = g.elem_addr(v, x.args[0], x.args[2], et)
+        let wa = g.scratch(el)
+        let wb = g.scratch(el)
+        g.load_leaves(a, 0, wa, el)
+        g.load_leaves(b, 0, wb, el)
+        g.store_leaves(a, 0, wb, el)
+        g.store_leaves(b, 0, wa, el)
+      }
+    }
     "list.set" => {
       let et = g.vty(x.args[2])
       let a = g.elem_addr(v, x.args[0], x.args[1], et)

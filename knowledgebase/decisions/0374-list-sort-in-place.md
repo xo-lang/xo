@@ -1,8 +1,11 @@
 # 0374: List.sort_in_place, a stable sort that mutates the receiver
 
-Status: Proposed (the owner chose option 1 on 2026-10-25: "superior, and
-we are not at v1 so API changes are fine"; written for review before the
-implementation, per the lead).
+Status: Proposed, step 1 built (DS-1, 2026-10-25: rt.list_swap in four
+lowerings, its tests in std/native/prelude_test.xo and a caller on every
+backend through internal.crypto_op and the golden native_list_swap; steps
+2 and 3 pending, and step 2 needs the seed that carries the intrinsic). The owner chose
+option 1 on 2026-10-25: "superior, and we are not at v1 so API changes
+are fine"; written for review before the implementation, per the lead.
 
 ## Context
 
@@ -80,6 +83,61 @@ fn (var xs: List[T]) sort_in_place_by[K: Ord, E, fx: Effects](key: fn(T) -> K ! 
    reference counting from the measured 1.48: the sorted result is the
    list's own array, the scratch is at most half a list, and the moves
    are a few instructions.
+
+### Step 1 as built
+
+- `rt.list_swap[T](xs: List[T], i: Int, j: Int)` (std/native/rt.xo).
+- arm64 (amd64 retargets the same code): the two element addresses from
+  `elem_addr`, two `load_elem`s then two `store_elem`s, so the element
+  width is the emitter's own: a Bool's byte, a one word element, and a
+  multi word element such as a two word Str or a struct all swap
+  correctly. LLVM: two `elem_ptr`s and `elem_load`/`elem_store`, so a
+  packed element (decision 0369: `List[UInt8]`, `List[Int16]`,
+  `List[UInt32]`, `List[Float32]`) is loaded at its width, widened, and
+  stored back narrowed; the first version loaded `g.ll(et)` and stored it
+  raw, which overwrote a packed element's neighbours, and the packed rows
+  below caught it. wasm: `elem_addr`,
+  `load_leaves` and `store_leaves`. It is in inline.xo's intrinsic list,
+  so a caller stays a leaf.
+- Both indices are bounds checked (`elem_addr`/`bounds_check` and the
+  faulting shape of `list.set`): the plan said unchecked, and a sort that
+  handed a wrong index to an unchecked swap would corrupt a list
+  silently, where the check is two compares a swap. The two elements are
+  loaded before either is stored, so i == j writes back what it read.
+- The tests are in `std/native/prelude_test.xo` (`xo test
+  --std-module=native/prelude`, which internal/stdtest walks): a test
+  module takes the name of a source module beside it, and native/rt's
+  source is declarations only, so `xo test --std-module=native/rt` finds
+  no tests at all; the obj module beside the lowering cannot host them
+  because the reference count row reads `heapos.nfree` and obj importing
+  native/llrt/heapos closes an import cycle through
+  darwin/linux/sysio/windows. They cover Int, Bool, Str with a reference
+  held outside the list across the swap, a struct, i == j, the first and
+  last elements, and the reference count itself: two unique heap strings
+  (a literal is immortal, so its count cannot move) swapped and dropped
+  with the list, and the free-list total from `heapos.nfree` over all 73
+  classes equal before and after, so a swap that counted an element twice
+  or released one early fails. Five rows swap packed elements, since
+  packing (0369) is on by default: `List[UInt8]` with 250 and 255,
+  `List[Int16]` at the type's minimum -32768 (a wider or unsigned access
+  would return 32768), `List[UInt32]` with its high bit set,
+  `List[Float32]`, and a two word tuple; wasm keeps eight byte elements,
+  so those rows take its other path there. The golden's packed row prints
+  `255 250 2 1 0` with the mismatches at 0.
+- A codegen pattern is still impossible (`xo dev codegen` matches a
+  function by name and nothing calls the intrinsic yet, the blind spot
+  0373's step 1 had), so a caller on every backend comes from
+  `internal.crypto_op("rt.list_swap")` and the golden
+  `internal/llvm/testdata/golden/native_list_swap`: std/native/internal.xo
+  `probe_list_swap` runs the swaps through the intrinsic for arm64, LLVM
+  and wasm, std/rt's Go switch answers the same text, and the wasm run's
+  `XO_LEAKCHECK=1` is the reference count check there.
+- The intrinsic is lowered in `inline_rt` (arm64) and `inline_rt` (LLVM),
+  and dispatched from `compiler/ssa/json.xo` `generic_intrinsic` because it
+  takes a type argument. Not in `call_op`/`call`, which match on names
+  too: both route `rt.` to `rt_call` before their match, so an arm there
+  never runs, which the first gate run found as an undefined symbol.
+  internal/repotest's reachability check now reports that shape.
 
 ## Consequences
 

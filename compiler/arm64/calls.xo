@@ -2142,6 +2142,28 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.set(v, ws)
     }
     "rt.rs_set_len" => g.set(v, [g.words(x.args[0])[0], g.word(x.args[1])])
+    "rt.list_swap" => {
+      // decision 0374: the two elements trade places as words, with no
+      // count or release. A permutation of a list's elements leaves each
+      // one referenced exactly as often, so nothing is counted here; the
+      // two elements are loaded before either is stored, so a list of one
+      // element (i == j) writes back what it read. inline_rt, not call_op:
+      // "rt." reaches rt_call before call_op's name match
+      let l = g.word(x.args[0])
+      let i = g.word(x.args[1])
+      let j = g.word(x.args[2])
+      let et = g.m.types[g.vty(x.args[0])].elems[0]
+      g.bounds_check(v, l, i)
+      g.bounds_check(v, l, j)
+      let a = g.elem_addr(l, i, x.args[1], et)
+      let b = g.elem_addr(l, j, x.args[2], et)
+      let wa = g.load_elem(a, et, false)
+      let wb = g.load_elem(b, et, false)
+      g.store_elem(a, et, wb)
+      g.store_elem(b, et, wa)
+      // the call's type is Unit, as slot_store's
+      g.set(v, [])
+    }
     "rt.slot_load" | "rt.slot_store" | "rt.slot_swap" | "rt.slot_cas" | "rt.slot_add" | "rt.slot_addr" | "rt.fence" | "rt.spin_hint" => g.atomic(v)
     _ => return g.inline_raw(v)
   }

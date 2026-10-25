@@ -100,6 +100,28 @@ func Internal_crypto_op(_ *Task, op string, a, b, c, d Bytes) Bytes {
 			// libcstr's copies are the native runtime's; Go's copy has no
 			// mismatches to report
 			r, ok = Bytes("0"), true
+		case "list_swap":
+			// the element swap of decision 0374 (std/native/internal.xo
+			// probe_list_swap): the same two swaps and the identity one,
+			// Go's assignment in place of rt.list_swap, and a packed list
+			// (0369) whose bytes 255 and 250 must survive
+			xs := []string{"a", "b", "c", "d", "e"}
+			xs[0], xs[4] = xs[4], xs[0]
+			xs[1], xs[1] = xs[1], xs[1]
+			xs[2], xs[3] = xs[3], xs[2]
+			ns := []int64{10, 11, 12}
+			ns[0], ns[2] = ns[2], ns[0]
+			ps := []uint8{0, 1, 2, 250, 255}
+			ps[0], ps[4] = ps[4], ps[0]
+			ps[1], ps[3] = ps[3], ps[1]
+			packed := ""
+			for _, b := range ps {
+				packed += " " + strconv.FormatUint(uint64(b), 10)
+			}
+			r, ok = Bytes(strings.Join(xs, "")+" "+
+				strconv.FormatInt(ns[0], 10)+" "+
+				strconv.FormatInt(ns[1], 10)+" "+
+				strconv.FormatInt(ns[2], 10)+packed+" 0"), true
 		}
 	case "tls13srv":
 		r, ok = cryptoTLS13Srv(what, a, b, c, d)
