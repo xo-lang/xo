@@ -378,6 +378,39 @@ fn (g: G) range_of(v: Int) -> (Interval, Bool) {
       }
       (full_interval(), true)
     }
+    Or | Xor => {
+      // nonnegative operands: below the next power of two above the
+      // larger bound (2026-10-25: text.digits_word's
+      // `(w << 8) | (48 + x % 10)` once unrolled; its masks and its
+      // shift checks wait on these bounds)
+      let (a, ok1) = g.range_get(x.args[0])
+      let (b, ok2) = g.range_get(x.args[1])
+      if !ok1 || !ok2 {
+        return none
+      }
+      if a.lo >= 0 && b.lo >= 0 {
+        let hi = imax(a.hi, b.hi)
+        var m = 1
+        while m <= hi && m < (1 << 62) {
+          m = m << 1
+        }
+        let top = if hi >= (1 << 62) { MAX_INT } else { m - 1 }
+        return (Interval{lo: if x.op == ssa.Op.Or { imax(a.lo, b.lo) } else { 0 }, hi: top}, true)
+      }
+      (full_interval(), true)
+    }
+    Shl => {
+      // by a constant that loses no bit of a nonnegative operand
+      let (a, ok) = g.range_get(x.args[0])
+      let (k, is_k) = g.const_int(x.args[1])
+      if !ok {
+        return none
+      }
+      if is_k && k >= 0 && k <= 62 && a.lo >= 0 && a.hi <= (MAX_INT >> k) {
+        return (Interval{lo: a.lo << k, hi: a.hi << k}, true)
+      }
+      (full_interval(), true)
+    }
     Shr => {
       let (a, ok) = g.range_get(x.args[0])
       let (k, is_k) = g.const_int(x.args[1])

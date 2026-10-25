@@ -1236,6 +1236,14 @@ fn (var g: G) instr1(v: Int) {
       // moves out of a loop, where the immediate was a movabsq through
       // r11 at each use (2026-10-22: jsontext.str_end's 0x22 and 0x80
       // byte masks, every 8 bytes)
+      if qc && x.op == ssa.Op.And && n > 0 && n < MAX_INT && n & (n + 1) == 0 {
+        // a low mask over a value already inside it changes nothing
+        let (plo, phi) = g.bounds(p)
+        if plo >= 0 && phi <= n {
+          g.set(v, [g.word(p)])
+          return
+        }
+      }
       if qc && (if g.x86 { imm32(n) } else { ones_run(n) }) {
         // a logical immediate (decision 0184)
         let w = g.word(p)

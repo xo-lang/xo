@@ -101,7 +101,7 @@ fn or_not(a: Int, b: Int) -> Int {
 
 fn main(os: Os) {
   let n = os.env.args().len()
-  os.stdio.println("${times8(n)} ${div4(n)} ${fold()} ${times3(n)} ${clear_low(n + 6)} ${bit1(n)} ${low_bits(n)} ${word_index(n)} ${word_rem(n)} ${by_zero(n)} ${rune_rem(n * 7919)} ${u64_mod(UInt64(n) * 12345)} ${and_not(n * 5, n)} ${or_not(n, n * 3)} ${digit_or(n + 50)}")
+  os.stdio.println("${times8(n)} ${div4(n)} ${fold()} ${times3(n)} ${clear_low(n + 6)} ${bit1(n)} ${low_bits(n)} ${word_index(n)} ${word_rem(n)} ${by_zero(n)} ${rune_rem(n * 7919)} ${u64_mod(UInt64(n) * 12345)} ${and_not(n * 5, n)} ${or_not(n, n * 3)} ${digit_or(n + 50)} ${packed(n)} ${packed_mask(n)}")
 }
 
 // `d < 0 || d > 9` of a `d = x - 48` is one unsigned compare (isel
@@ -114,4 +114,18 @@ fn digit_or(x: Int) -> Int {
     return -1
   }
   d
+}
+
+// The bounds of `|` and `<<` (ranges.xo, 2026-10-25): a byte shifted up
+// and or'd with a constant is below 2^16, so the shift of it by 40 loses
+// no bit (no overflow check), and a mask of 2^16 - 1 over it changes
+// nothing (no and). text.digits_word's words were checked and masked.
+fn packed(x: Int) -> Int {
+  // arm64: -"xo_fault_raise_shl" -"fault_shl"
+  (((x & 255) << 8) | 48) << 40
+}
+
+fn packed_mask(x: Int) -> Int {
+  // arm64: -"and x[0-9]+, x[0-9]+, #65535"
+  (((x & 255) << 8) | 48) & 65535
 }
