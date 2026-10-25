@@ -256,6 +256,49 @@ the bench's own `cut_suffix` (and time.civil, ints.op_message) goes from "no
 (pads)" to "small", time.offset_secs from "small" to "no (size)". Because main's
 speed would move for the sake of a 64 byte flag-off difference, the +64 B stays.
 
+## Container-only short strings: a hand model, stopped (2026-10-25)
+
+The idea (owner, 2026-10-25): only a List or Map element slot stores a Str of
+at most 14 bytes inline (two Ints), while a Str value keeps today's layout, so
+ordinary Str code has no tag tests. Putting a Str into a slot packs it; reading
+an element as a Str unpacks it. Models in /tmp-style programs, 2M keys
+`"key${n}"`, release, quiet `--ab`, B/A with A = main (wall / instructions /
+max RSS): `--inline-str`: build 0.73 / 0.81 / 0.42, map 0.94 / 1.63 / 0.71,
+sort 0.68 / 1.00 / 0.60, read 0.99 / 0.95 / 0.42. Container-only (C, packing
+in Xo byte loops, so its build, map and read rows are inflated): build 2.92 /
+3.32 / 0.42, map 1.40 / 4.16 / 0.71, sort 0.35 / 0.67 / 0.44, read 6.43 / 7.81
+/ 0.42. The slots alone with no conversion at all (B): build 1.70, map 0.86 /
+1.31, sort 0.37 / 0.80 / 0.44.
+
+What it shows: memory equals `--inline-str` for build and map and is better
+for sort (merge buffers of 16 byte slots: RSS 0.44 against 0.60, wall 0.35
+against 0.68, even with the inflated conversion). The cost is the READ of an
+element as a Str: main's `for s in list` loop costs 12 instructions an element
+(a load of the length and the first byte) because the Str is already there; a
+copy out allocates (745 instructions in the model, an estimated 80 to 100
+natively, 7 to 8 times main's loop).
+
+The cheaper read, a Str VIEW of the slot bytes in the list's own buffer (no
+allocation, no copy), was modelled as a view of one buffer Str (model D, 16
+byte slots, `buf[k*16..k*16+len]`): 96 instructions an element in Xo (checks
+and the generic slice), and by counting the instructions a native view needs
+(a retain, the (offset | length) word, the release at the end of the
+iteration, the length byte of the slot) about 28 against main's 12, i.e. 2.3
+times on a loop that does nothing else. Three further problems of a view into
+a List buffer: (1) a Str view's last release frees its base as a string
+object, which a List buffer is not (its elements would have to be dropped, and
+slots holding a long Str are pointers); (2) a live view makes the list's count
+2, so the next `push` or `set` copies the whole list (copy on write), an O(n)
+surprise after any stored view; (3) a stored view keeps the whole buffer alive,
+like a Go substring.
+
+Verdict: stopped at the model. The read of an element as a Str is the most
+common operation on a list of Strs, it costs about 2 times either way, and the
+view variant adds the copy-on-write hazard. Sort-heavy programs would gain more
+than `--inline-str` does; a variant restricted to sort and Map key storage (the
+slots never read back as Strs except at the end) stays open as a possible
+specialised container, not a general layout.
+
 ## Alternatives
 
 - A headerless packed class for small strings (an 8 byte header with
