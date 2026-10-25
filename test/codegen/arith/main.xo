@@ -87,7 +87,19 @@ fn u64_mod(x: UInt64) -> UInt64 {
   x % 1000
 }
 
+// `a & (b ^ -1)` is one bic, `a | (b ^ -1)` one orn: the complement as
+// the operand, no eor (2026-10-24: the SWAR helpers' `& (w ^ -1)`).
+fn and_not(a: Int, b: Int) -> Int {
+  // arm64: "bic x[0-9]+, x[0-9]+, x[0-9]+" -"eor"
+  a & (b ^ -1)
+}
+
+fn or_not(a: Int, b: Int) -> Int {
+  // arm64: "orn x[0-9]+, x[0-9]+, x[0-9]+" -"eor"
+  (-1 ^ b) | a
+}
+
 fn main(os: Os) {
   let n = os.env.args().len()
-  os.stdio.println("${times8(n)} ${div4(n)} ${fold()} ${times3(n)} ${clear_low(n + 6)} ${bit1(n)} ${low_bits(n)} ${word_index(n)} ${word_rem(n)} ${by_zero(n)} ${rune_rem(n * 7919)} ${u64_mod(UInt64(n) * 12345)}")
+  os.stdio.println("${times8(n)} ${div4(n)} ${fold()} ${times3(n)} ${clear_low(n + 6)} ${bit1(n)} ${low_bits(n)} ${word_index(n)} ${word_rem(n)} ${by_zero(n)} ${rune_rem(n * 7919)} ${u64_mod(UInt64(n) * 12345)} ${and_not(n * 5, n)} ${or_not(n, n * 3)}")
 }

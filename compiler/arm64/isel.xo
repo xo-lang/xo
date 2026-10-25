@@ -1222,10 +1222,15 @@ fn (var g: G) instr1(v: Int) {
       }
       // an operand that is a complement: bic, orn, eon take it inverted
       // (2026-10-16: Keccak's chi was mvn and and, 100 of each a call);
-      // the mvn, with no other use, is then dead
+      // the mvn, with no other use, is then dead. `y ^ -1` is one too
+      // (2026-10-24: the SWAR helpers' `& (w ^ -1)`, obj.fold_copy's and
+      // between8's, was an eor and an and)
       for j in [1, 0] {
         let c = x.args[j]
-        let cx = g.f.values[c]
+        var cx = g.f.values[c]
+        if let Some(y) = g.xor_ones(c) {
+          cx = ssa.Value{op: ssa.Op.Not, ty: cx.ty, aux: ssa.Aux.None, args: [y]}
+        }
         if cx.op == ssa.Op.Not && g.kind(cx.ty) != ssa.Kind.Bool {
           if g.x86 {
             // ~k of a constant k: x86's immediate (`n & ~31`: andq $-32,
@@ -1583,6 +1588,23 @@ fn (var g: G) fold_decided(blocks: List[Int], idom: List[Int]) {
       g.nuses[c] -= 1
     }
   }
+}
+
+/// y when Int value v is `y ^ -1` (either operand the constant): a
+/// complement for bic, orn and eon, as a Not is.
+fn (g: G) xor_ones(v: Int) -> Int? {
+  let x = g.f.values[v]
+  // arm64 only: x86_64 keeps its eor and and (no output change there)
+  if g.x86 || x.op != ssa.Op.Xor || x.args.len() != 2 || x.ty < 0 || g.kind(x.ty) != ssa.Kind.Int {
+    return None
+  }
+  for j in 0..2 {
+    let (k, ok) = g.logic_const(x.args[j])
+    if ok && k == -1 {
+      return Some(x.args[1 - j])
+    }
+  }
+  None
 }
 
 /// The outcome of block b's branch on c when a dominating block branches
