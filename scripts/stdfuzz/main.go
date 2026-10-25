@@ -192,6 +192,13 @@ func main() {
 	if err := os.WriteFile(prog, []byte(src), 0o644); err != nil {
 		fatal(err)
 	}
+	// std/internal is importable only from modules under
+	// github.com/xo-lang/xo (std/internal.xo's header), which the crypto
+	// area needs for internal.crypto_op.
+	mod := filepath.Join(dir, "xo.mod")
+	if err := os.WriteFile(mod, []byte("module github.com/xo-lang/xo/fuzz\nedition preview\n"), 0o644); err != nil {
+		fatal(err)
+	}
 
 	xo, err := xotool.Path()
 	if err != nil {

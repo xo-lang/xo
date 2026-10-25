@@ -7,6 +7,8 @@ import (
 	"compress/flate"
 	"compress/gzip"
 	"compress/zlib"
+	"crypto/aes"
+	"crypto/cipher"
 	"fmt"
 	"math"
 	"math/rand"
@@ -561,6 +563,18 @@ fn fz_tmpl_named(src: Str, src2: Str, data: Str) -> Str {
 }
 `
 
+const cryptoHelpers = `
+fn fz_cop(op: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Str {
+  internal.crypto_op(op, a, b, c, d).to_hex()
+}
+fn fz_seal_open(area: Str, key: Bytes, nonce: Bytes, pt: Bytes, aad: Bytes) -> Str {
+  let sealed = internal.crypto_op("${area}.seal", key, nonce, pt, aad)
+  let opened = internal.crypto_op("${area}.open", key, nonce, sealed, aad)
+  let garbage = internal.crypto_op("${area}.open", key, nonce, b"not a sealed record", aad)
+  "${sealed.to_hex()}|${opened.to_hex()}|${garbage.to_hex()}"
+}
+`
+
 // A fuzzCase is one line of the generated program: the name it prints and
 // the Xo expression that computes its value as a Str, so every result
 // compares as one line of text.
@@ -604,6 +618,7 @@ func allAreas() []area {
 		{"sql", []string{"std/sql"}, sqlHelpers, genSQL},
 		{"http", []string{"std/http"}, httpHelpers, genHTTP},
 		{"template", []string{"std/template", "std/json"}, templateHelpers, genTemplate},
+		{"cryptostream", []string{"std/internal"}, cryptoHelpers, genCrypto},
 	}
 }
 
@@ -1490,4 +1505,94 @@ func genTemplate(r *rand.Rand, n int) []fuzzCase {
 		}
 	}
 	return out
+}
+
+// goGCMSeal is Go's AES-GCM sealing, the fiducial the native decoder must
+// accept in the aes.open cases.
+func goGCMSeal(key, nonce, pt, aad []byte) []byte {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		panic(err)
+	}
+	g, err := cipher.NewGCM(block)
+	if err != nil {
+		panic(err)
+	}
+	return g.Seal(nil, nonce, pt, aad)
+}
+
+// genCrypto covers the AEADs and streams of the native TLS stack through
+// internal.crypto_op: AES-GCM and ChaCha20-Poly1305 seal, open (with a
+// round trip, garbage that must fail the tag, and, for AES, ciphertext
+// sealed by Go's own crypto/aes), AES blocks and CBC, the ChaCha20 block,
+// xor and Poly1305, SHA-3 and SHAKE, HKDF and X25519.
+func genCrypto(r *rand.Rand, n int) []fuzzCase {
+	keyLens := []int{16, 24, 32}
+	pickKey := func(l int) []byte { return randBytesN(r, l) }
+	out := make([]fuzzCase, 0, n)
+	randLen := func(max int) []byte { return randBytesN(r, r.Intn(max+1)) }
+	for i := 0; i < n; i++ {
+		name := fmt.Sprintf("cryptostream.%04d", i)
+		switch i % 14 {
+		case 0:
+			key := pickKey(keyLens[r.Intn(len(keyLens))])
+			out = append(out, fuzzCase{name, "fz_cop(\"aes.block\", " + xbytes(key) + ", " + xbytes(randBytesN(r, 16)) + ", b\"\", b\"\")"})
+		case 1:
+			key := pickKey(keyLens[r.Intn(len(keyLens))])
+			out = append(out, fuzzCase{name, "fz_cop(\"aes.decrypt\", " + xbytes(key) + ", " + xbytes(randBytesN(r, 16)) + ", b\"\", b\"\")"})
+		case 2:
+			key := pickKey(keyLens[r.Intn(len(keyLens))])
+			data := randBytesN(r, 16*(r.Intn(4)))
+			out = append(out, fuzzCase{name, "fz_cop(\"aes.cbc_encrypt\", " + xbytes(key) + ", " + xbytes(randBytesN(r, 16)) + ", " + xbytes(data) + ", b\"\")"})
+		case 3:
+			key := pickKey(keyLens[r.Intn(len(keyLens))])
+			data := randBytesN(r, 16*(r.Intn(4)))
+			out = append(out, fuzzCase{name, "fz_cop(\"aes.cbc_decrypt\", " + xbytes(key) + ", " + xbytes(randBytesN(r, 16)) + ", " + xbytes(data) + ", b\"\")"})
+		case 4:
+			key := pickKey(keyLens[r.Intn(len(keyLens))])
+			out = append(out, fuzzCase{name, "fz_seal_open(\"aes\", " + xbytes(key) + ", " + xbytes(randBytesN(r, 12)) + ", " + xbytes(randLen(70)) + ", " + xbytes(randLen(20)) + ")"})
+		case 5:
+			key := pickKey(keyLens[r.Intn(len(keyLens))])
+			nonce := randBytesN(r, 12)
+			pt, aad := randLen(70), randLen(20)
+			out = append(out, fuzzCase{name, "fz_cop(\"aes.open\", " + xbytes(key) + ", " + xbytes(nonce) + ", " + xbytes(goGCMSeal(key, nonce, pt, aad)) + ", " + xbytes(aad) + ")"})
+		case 6:
+			out = append(out, fuzzCase{name, "fz_cop(\"chacha.block\", " + xbytes(pickKey(32)) + ", " + xbytes(randBytesN(r, 12)) + ", " + xbytes([]byte(fmt.Sprint(r.Intn(5)))) + ", b\"\")"})
+		case 7:
+			out = append(out, fuzzCase{name, "fz_cop(\"chacha.xor\", " + xbytes(pickKey(32)) + ", " + xbytes(randBytesN(r, 12)) + ", " + xbytes([]byte(fmt.Sprint(r.Intn(5)))) + ", " + xbytes(randLen(80)) + ")"})
+		case 8:
+			out = append(out, fuzzCase{name, "fz_cop(\"chacha.poly1305\", " + xbytes(pickKey(32)) + ", " + xbytes(randLen(100)) + ", b\"\", b\"\")"})
+		case 9:
+			out = append(out, fuzzCase{name, "fz_seal_open(\"chacha\", " + xbytes(pickKey(32)) + ", " + xbytes(randBytesN(r, 12)) + ", " + xbytes(randLen(70)) + ", " + xbytes(randLen(20)) + ")"})
+		case 10:
+			data := randLen(100)
+			op := pick(r, []string{"sha3_256", "sha3_512"})
+			out = append(out, fuzzCase{name, "fz_cop(\"sha3." + op + "\", " + xbytes(data) + ", b\"\", b\"\", b\"\")"})
+		case 11:
+			data := randLen(100)
+			outlen := []byte(fmt.Sprint(r.Intn(70)))
+			op := pick(r, []string{"sha3.shake128", "sha3.shake256"})
+			out = append(out, fuzzCase{name, "fz_cop(\"" + op + "\", " + xbytes(data) + ", " + xbytes(outlen) + ", b\"\", b\"\")"})
+		case 12:
+			if r.Intn(2) == 0 {
+				out = append(out, fuzzCase{name, "fz_cop(\"hkdf.extract256\", " + xbytes(randLen(32)) + ", " + xbytes(randLen(80)) + ", b\"\", b\"\")"})
+			} else {
+				out = append(out, fuzzCase{name, "fz_cop(\"hkdf.expand256\", " + xbytes(pickKey(32)) + ", " + xbytes(randLen(40)) + ", " + xbytes([]byte(fmt.Sprint(r.Intn(70)))) + ", b\"\" )"})
+			}
+		case 13:
+			if r.Intn(2) == 0 {
+				out = append(out, fuzzCase{name, "fz_cop(\"x25519.base\", " + xbytes(pickKey(32)) + ", b\"\", b\"\", b\"\")"})
+			} else {
+				out = append(out, fuzzCase{name, "fz_cop(\"x25519.mult\", " + xbytes(pickKey(32)) + ", " + xbytes(pickKey(32)) + ", b\"\", b\"\")"})
+			}
+		}
+	}
+	return out
+}
+
+// randBytesN is n seeded random bytes.
+func randBytesN(r *rand.Rand, n int) []byte {
+	b := make([]byte, n)
+	r.Read(b)
+	return b
 }
