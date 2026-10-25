@@ -1,7 +1,8 @@
 # 0369: pack the elements of a List of a sized integer, Float32 or Rune
 
-Status: Proposed (Xo Lang 3, 2026-10-24; for the owner's Sunday review,
-nothing built)
+Status: Accepted, on by default on the native and LLVM backends (owner,
+2026-10-25; `--pack-lists=false` turns it off). Proposed by Xo Lang 3,
+2026-10-24.
 
 ## Context
 
@@ -148,7 +149,14 @@ and of `i % 251` into a `List[UInt8]`, then a sum of each): max RSS 239.4 to
 430 M (0.74) on arm64 and 617 M to 428 M (0.69) on LLVM. A `List[Float32]` of
 10,000,000: 159.5 to 65.2 MB, instructions 0.80. `bench/perf/http/xo`
 `__text` is unchanged (1,410,412 bytes both ways).
-Wall: to be measured in a quiet window.
+Wall (quiet window, 20 rounds, `xo bench --ab`, on over off): the 10M
+`UInt32` + 10M `UInt8` build and sum 0.532 (0.526 to 0.538), max RSS 0.271,
+instructions 0.737. Gates for the default: every golden on arm64 (376) and
+LLVM (379) with the flag as default, the fixed point (s2 == s3 with the
+compiler itself running packed; xo is 148 KB smaller), stdfuzz plain and
+`--release` (5200 case lines on arm64, LLVM and Go, no divergence), the
+Docker linux/amd64 sample (48 programs identical with and without), and the
+full `go test` of cmd/xo, internal/llvm and internal/arm64.
 
 ## Alternatives
 
