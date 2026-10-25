@@ -1824,3 +1824,22 @@ scan.eq_at compares 8 to 16 bytes as two overlapping words and 4 to 7 bytes
 as two overlapping 4 byte loads, so a short affix such as "Bearer " takes no
 loop. xo bench --ab (10 rounds): instructions 0.939 on starts_with and
 ends_with of four literal affixes over a header list.
+
+## 2026-10-25: perf: Str.to_lower and Str.to_upper fold 64 ASCII bytes a step through a lane intrinsic
+
+- Kind: perf
+- Commit: this commit
+- Found by: profile (bench/results/case-swar-2026-10-25.md)
+- Go reference: none (Go folds a byte at a time, strings.Map; its ToLower/ToUpper take the unicode path)
+- Test: scripts/stdcorpus/case.go (the lane's boundaries and seeded mixed case texts), bench/perf/unicode
+- Timing: bench/results/case-fold16-2026-10-25.md
+
+The ASCII runs of a case conversion are folded by `rt.case_fold16`, one 16
+byte lane an instruction sequence (arm64 nine instructions of NEON, x86-64
+SSE2, LLVM a `<16 x i8>` sequence, wasm a byte loop), four lanes a step
+before the eight byte SWAR loop that stays for the tail. arm64 lower and
+upper go from 1.755 and 1.696 of LLVM's instructions to 0.644 of main's
+(0.884 and 0.879 in wall); LLVM's own rows improve to 0.965 and 0.932
+because its expansion stopped being SWAR words clang no longer widened.
+The two mixed rows cost 0.5 to 0.6 percent of instructions with every wall
+within noise, which the lead accepted on purpose (decision 0373).

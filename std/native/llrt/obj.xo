@@ -979,11 +979,39 @@ fn fold_copy_lo(src: Int, d: Int, n: Int) {
   let under = (0x80 - 65) * F_ONES
   let over = (0x7f - 90) * F_ONES
   var i = 0
-  while subw(n, i) >= 8 {
-    let w = rt.mem_load(src, i, 8)
-    let letters = between8(w & F_LOW7S, under, over) & (w ^ -1)
-    rt.mem_store(d, i, w.wrapping_add(letters.shr_logical(2)), 8)
-    i = addw(i, 8)
+  // 16 bytes a step where the backend folds a lane in one operation
+  // (arm64 a NEON fold, x86_64 SSE2): a third of the eight byte loop's
+  // instructions a byte on arm64, where this loop is 61 percent of the
+  // Unicode lower row. LLVM and wasm expand the call to the words below.
+  // Four lanes a step, so the test and the increment are a quarter of the
+  // bytes' work: with one lane a step LLVM's ASCII rows cost 1.7 to 5
+  // percent more instructions, its vectorizer no longer widening what
+  // these calls expand to (bench/results/case-fold16-2026-10-25.md). The
+  // word tests sit behind one `>= 8`, so a run too short for a word pays
+  // the same single test the eight byte loop paid alone: mixed text is
+  // mostly one and two byte runs between its non-ASCII runes, and the
+  // extra tests alone cost its rows 0.8 to 1.4 percent.
+  if subw(n, i) >= 8 {
+    while subw(n, i) >= 64 {
+      rt.case_fold16(d, src, i, 1)
+      let i16 = addw(i, 16)
+      rt.case_fold16(d, src, i16, 1)
+      let i32 = addw(i, 32)
+      rt.case_fold16(d, src, i32, 1)
+      let i48 = addw(i, 48)
+      rt.case_fold16(d, src, i48, 1)
+      i = addw(i, 64)
+    }
+    while subw(n, i) >= 16 {
+      rt.case_fold16(d, src, i, 1)
+      i = addw(i, 16)
+    }
+    while subw(n, i) >= 8 {
+      let w = rt.mem_load(src, i, 8)
+      let letters = between8(w & F_LOW7S, under, over) & (w ^ -1)
+      rt.mem_store(d, i, w.wrapping_add(letters.shr_logical(2)), 8)
+      i = addw(i, 8)
+    }
   }
   while i < n {
     let c = rt.mem_load(src, i, 1)
@@ -1002,11 +1030,27 @@ fn fold_copy_up(src: Int, d: Int, n: Int) {
   let under = (0x80 - 97) * F_ONES
   let over = (0x7f - 122) * F_ONES
   var i = 0
-  while subw(n, i) >= 8 {
-    let w = rt.mem_load(src, i, 8)
-    let letters = between8(w & F_LOW7S, under, over) & (w ^ -1)
-    rt.mem_store(d, i, w.wrapping_sub(letters.shr_logical(2)), 8)
-    i = addw(i, 8)
+  if subw(n, i) >= 8 {
+    while subw(n, i) >= 64 {
+      rt.case_fold16(d, src, i, 2)
+      let i16 = addw(i, 16)
+      rt.case_fold16(d, src, i16, 2)
+      let i32 = addw(i, 32)
+      rt.case_fold16(d, src, i32, 2)
+      let i48 = addw(i, 48)
+      rt.case_fold16(d, src, i48, 2)
+      i = addw(i, 64)
+    }
+    while subw(n, i) >= 16 {
+      rt.case_fold16(d, src, i, 2)
+      i = addw(i, 16)
+    }
+    while subw(n, i) >= 8 {
+      let w = rt.mem_load(src, i, 8)
+      let letters = between8(w & F_LOW7S, under, over) & (w ^ -1)
+      rt.mem_store(d, i, w.wrapping_sub(letters.shr_logical(2)), 8)
+      i = addw(i, 8)
+    }
   }
   while i < n {
     let c = rt.mem_load(src, i, 1)

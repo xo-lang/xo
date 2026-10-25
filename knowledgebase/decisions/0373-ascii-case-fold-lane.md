@@ -1,8 +1,9 @@
 # 0373: a 16 byte ASCII case-fold intrinsic for the native backends
 
-Status: Proposed, step 1 built (DS-1, 2026-10-25; the codegen, the four
-lowerings and the codegen pattern; measurement and landing pending, in
-two steps because of the seed, see "Landing").
+Status: Accepted (DS-1, 2026-10-25). Step 1, the four lowerings and the
+codegen pattern, landed before seed 0.31.0; step 2, the std call site, is
+measured in bench/results/case-fold16-2026-10-25.md and lands on that
+seed.
 
 ## Context
 
@@ -56,16 +57,23 @@ loop it vectorizes today; wasm a byte loop.
 
 ## Consequences
 
-- Instructions, expected: the lane replaces the fold's 1.875
-  instructions a byte, 61 percent of the row's 3.05. At nine
-  instructions a lane plus the std loop's step, about 0.75 a byte, the
-  fold falls to 24 percent of the row and the row to about 0.63 of
-  today.
-- Wall, expected: nearer 1.3 to 1.4 times on the row than the
-  instructions suggest, for 0366's reason: the fold is limited by its
-  memory traffic, not by its instruction count.
-- LLVM's row should not move: its expansion is the same words it
-  compiles today, and the bar is that it does not regress.
+- Instructions, measured (bench/results/case-fold16-2026-10-25.md): the
+  fold's 1.875 instructions a byte, 61 percent of the row's 3.05, is 0.75
+  a byte with nine a lane and the std step. The rows it targets: arm64
+  `lower` and `upper` 0.644 of main (they were 1.755 and 1.696 of LLVM's),
+  `lower_az` and `upper_az` 0.733 and 0.734; LLVM's `lower` 0.965 and
+  `upper` 0.932, so its row did not merely hold, it improved, because its
+  expansion became a `<16 x i8>` lane instead of the SWAR words (the words
+  regressed every LLVM row; see that file's "What did not work").
+- The two mixed rows cost 0.5 to 0.6 percent of instructions (LLVM
+  eqlower 1.005, lower_u 1.006; arm64 lower_u 1.000) with every wall
+  within noise, since mixed text is one and two byte runs between its
+  non-ASCII runes and never forms a lane. The lead relaxed the "neither
+  backend regresses" bar for this change on purpose, with the results
+  file as the record.
+- Wall, measured: 0.884 and 0.879 of main on arm64 `lower` and `upper`,
+  for the reason 0366 gave, that the fold is limited by its memory
+  traffic rather than its instruction count.
 - The lane's correctness rests on one property: for every byte value,
   `(c - first) mod 256` leaves the case range 0 to 25 exactly for the
   case's letters (0x00 to first-1 wrap to 2^8-1 and above, 0x80 and
@@ -73,7 +81,12 @@ loop it vectorizes today; wasm a byte loop.
   scripts/stdcorpus/case.go pins it with Go's results on the lane's
   boundaries and on seeded mixed case texts.
 - A 32 or 64 byte lane was refused: three scratch registers cannot hold
-  two data lanes and the two constants a lane needs.
+  two data lanes and the two constants a lane needs. What step 2 does
+  instead is four 16 byte lanes a step, rematerialising the 0x19 constant
+  a lane (0x41 stays in v29 across all four). A separate 64 byte
+  intrinsic was considered to remove the last half percent on the mixed
+  rows and dropped on measurement grounds: a 64 byte chunk never forms in
+  mixed text, so it cannot reach the rows that regressed.
 
 ## Landing
 
