@@ -135,3 +135,41 @@ Measured with `xo build --release` (text = `__text`): hello 322,104 to
 CRUD 1,605,596 to 1,519,088; a `--debug-info=on` hello stays at 322,104.
 Test: `TestReleaseTracebackDebugInfo` (cmd/xo), a release traceback without
 `file:line` and without `dwline` symbols, and `--debug-info=on` with both.
+
+## Addendum (2026-10-25): no path of the build in a binary, and the same-code promise
+
+An audit of the published v0.27.0 archives found no secret, only the build
+directory: the build information's `"dir"` in every binary, and the DWARF
+compile and std directories (the darwin and windows xo held the release
+checkout's path about 500 times). Both are gone, as Go's -trimpath does it:
+
+- A native binary's build information has `"dir":""` and `"sources"` lists
+  the program's own files and one `"<std>"` entry (the hash of xo's files
+  by path relative to the std directory), 16 KB less in every program
+  (hello release, file: 332,297 to 315,794 bytes; `xo version -m` prints a
+  dir only when there is one). The Go backend keeps `"dir"` and the
+  source list: `xo replay` rebuilds from them.
+- `--trimpath` (a setting like the others, on by default, `=off` for the
+  old behavior) records `DW_AT_comp_dir` and the std directory relative to
+  the working directory, `.` when not below it. Debuggers started in that
+  directory find the sources; elsewhere a source map points them there
+  (toolchain.md, "A program's build information"). scripts/release.sh
+  builds the shipped xo with xo1 (the seed may predate the flag) and fails
+  when a release executable holds the checkout's or the home directory's
+  path. Tests: cmd/xo TestBuildCarriesNoBuildPaths (plain, `--release` and
+  `--release --debug-info=on` in a temp dir: neither it nor $HOME in the
+  bytes), TestVersionM.
+
+The same-code promise (decision 0252: debug information does not change
+the code you debug) is narrowed by the DWARF readers' fold (24824095f): a
+build without debug information neither builds nor links the runtime's
+DWARF readers (`dwline.built()` folds to the debug information setting).
+So the promise is: the program's own functions are identical with and
+without debug information; the runtime's DWARF readers are present only
+with debug information, and a runtime function that calls them differs by
+that branch. TestDebugInfoSameCode and TestAmd64DebugInfoSameCode compare
+the program's functions by body (merged functions carry hash names;
+addresses, callee names, pages and nops normalized). The arm64 test builds
+without inlining, a stopgap: the inliner's call-site counts see the readers
+as callers in one build only (gotchas/same-code-test-inline-hole.md; the
+fix is to fold the call after the inliner).

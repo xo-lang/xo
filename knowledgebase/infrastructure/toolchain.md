@@ -1636,7 +1636,24 @@ version -m` prints `build inline=fallback (ERROR)`, the crash report's
 line ends `inline=fallback`, and `xo bench --ab` refuses such a binary
 (exit 2, naming it) unless `--allow-fallback` (2026-10-24; a scratch
 measurement read a fallback build's numbers as a 3 to 7% slowdown).
-Last verified: 2026-10-24.
+
+No path of the build ships (2026-10-25, decision 0354's addendum, Go's
+-trimpath): a native binary's `"dir"` is `""` (the Go backend keeps it:
+`xo replay` rebuilds from it), `"sources"` lists the program's files and
+one `"<std>"` entry, the sha256 of xo's own files (paths relative to the
+std directory and their hashes, so it is the same wherever xo is
+installed; it was 600 lines, 16 KB of every program), and `--trimpath`
+(on; `--trimpath=off` keeps the absolute directories) records the DWARF
+compile and std directories relative to the working directory of the build
+(`.` when not below it). A debugger finds the sources when started in that
+directory; started elsewhere, point it at them: lldb `settings set
+target.source-map ./app /path/to/app` (the directory in `DW_AT_comp_dir`,
+`dwarfdump --debug-info PROG | grep comp_dir`, replaced by the real one;
+verified 2026-10-25 with a program built as `xo build app`). scripts/
+release.sh builds the shipped darwin/arm64 xo with xo1 and fails if a
+release executable holds the checkout's or the home directory's path
+(cmd/xo TestBuildCarriesNoBuildPaths).
+Last verified: 2026-10-25.
 
 ### HTTP callgrind: short or full
 
