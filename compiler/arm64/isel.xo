@@ -1992,7 +1992,7 @@ fn (var g: G) branch_op(v: Int) {
     return
   }
   var inst = Inst{kind: K_CONDBR}
-  if g.lazy[c] && (g.range_branch(x) || g.range_and(x) || (!g.x86 && (g.range_or(x) || g.range_or_join(x)))) {
+  if g.lazy[c] && (g.range_branch(x) || g.range_and(x) || g.range_or(x) || g.range_or_join(x)) {
     return
   }
   if g.lazy[c] {
@@ -2438,8 +2438,7 @@ fn (var g: G) range_and(x: ssa.Value) -> Bool {
 /// through a block of constants) passing true, and otherwise to block B,
 /// which holds only `c > hi` (and constants) and jumps to J passing it; J
 /// only branches on that parameter. Its false target is the in range
-/// edge. arm64 only so far (the x86_64 retarget of range_test is range_branch's;
-/// its Docker amd64 sample not yet run for these).
+/// edge. On x86_64 too, through range_test's retarget, as range_branch.
 fn (var g: G) range_or_join(x: ssa.Value) -> Bool {
   // c < lo is c <= lo - 1
   let (v, lo1, ok) = g.bound_of(x.args[0], false)
