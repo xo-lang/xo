@@ -629,6 +629,17 @@ fn (var b: Builder) dec_need(d: Dec, k: Int, msg: Str) {
 /// Decodes the value at node j as xt; on an error returns from this
 /// decoder with seg in front of the error's path (child).
 fn (var b: Builder) dec_child(d: Dec, xt: Int, j: Int, seg: Int) -> Int {
+  b.dec_child_at(d, xt, j, seg, -1)
+}
+
+/// dec_child for an element of a list or set: the path segment "[k]" is made
+/// only when the element fails to decode (it was made, two concats and an
+/// allocation, for every element: 15% of a JSON list of Times).
+fn (var b: Builder) dec_child_idx(d: Dec, xt: Int, j: Int, k: Int) -> Int {
+  b.dec_child_at(d, xt, j, -1, k)
+}
+
+fn (var b: Builder) dec_child_at(d: Dec, xt: Int, j: Int, seg0: Int, idx: Int) -> Int {
   let st = b.str_t()
   let it = b.int_t()
   let bt = b.bool_t()
@@ -644,6 +655,11 @@ fn (var b: Builder) dec_child(d: Dec, xt: Int, j: Int, seg: Int) -> Int {
   let tag = b.add(Op.Tag, it, Aux.None, [r])
   let (no, join) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [tag, b.cint(ce)]))
   let e = b.add(Op.Payload, cdt, Aux.P(tag: ce, field: 0), [r])
+  var seg = seg0
+  if idx >= 0 {
+    let s1 = b.call("str.concat_int", st, "", [b.const_str("["), idx])
+    seg = b.call("str.concat", st, "", [s1, b.const_str("]")])
+  }
   let p = b.call("str.concat", st, "", [seg, b.add(Op.Field, st, Aux.I(n: 0), [e])])
   let msg = b.add(Op.Field, st, Aux.I(n: 1), [e])
   b.retv(b.dec_err(d, p, msg))
@@ -839,9 +855,7 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
     let cnt = b.dec_at(d, i, 1)
     let (k, head, exit) = b.for_up_to_begin(cnt, iv)
     let j = b.read(jv)
-    let s1 = b.call("str.concat_int", st, "", [b.const_str("["), k])
-    let seg = b.call("str.concat", st, "", [s1, b.const_str("]")])
-    let e = b.dec_child(d, args[0], j, seg)
+    let e = b.dec_child_idx(d, args[0], j, k)
     let cur = b.read(lv)
     let ce = b.coerce(e, et)
     b.write_var(lv, b.call("list.push", lt, "", [cur, ce]))
