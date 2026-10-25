@@ -232,3 +232,50 @@ per-function cache, its whole-build condition, and bcache.xo's
 reference count cache) now read `passes_changed(os)`, which is true for
 either a `-` or a `+` entry: a `+hollow` build neither stores nor
 reuses entries of a plain build.
+
+## Addendum 2026-10-25: conc.built, the scheduler out of programs that cannot use it (Xo Lang 3)
+
+`native/llrt/concflag.built()` is folded by the SSA builder to its `conc`
+(ssa/expr.xo target_test): true when the program has a scope, a task, a
+channel, `select`, a Mutex, an Atomic, a sleep, the network or standard
+input (ssa/conc.xo), else false, like `dwline.built()`.
+Elsewhere it is true (the Go, wasm and LLVM runtimes keep everything). Three
+runtime sites ask it, and a development build keeps all three (the fold is
+`conc || !release`; `xo dump` and the signal handlers stay where a developer
+looks for a hang; a release build gives them up for size, as it does the
+DWARF readers, ADR 0354's addendum):
+
+- entry.xo main: with it false, main runs on its own 1 GiB thread (the path
+  XO_MAIN_FIBER=0 always had), not on a fiber under the root's scheduler loop;
+- ctx.xo init: the fiber, worker and stdin pump entries are not stored in the
+  services record (their addresses kept the scheduler's whole call graph);
+- entry.xo signals: no event loop (no poller thread, no self pipe) and no
+  SIGINT, SIGTERM or SIGQUIT handler, only SIGPIPE ignored. The handlers
+  count a signal and wake the poller, which a program with nothing to wake does
+  not need: SIGINT and SIGTERM end it as the system does.
+
+Changes in a release build of a program that never spawns, sleeps, waits on
+I/O, takes a Mutex or asks `task.stop_requested` (that call is `conc` too):
+SIGQUIT no longer writes the task tree (`xo dump` has no poller to
+ask; the system's default SIGQUIT, a core dump, applies), and the monitor and
+poller threads do not exist. `proc.run` and the network and stdin set `conc`;
+file reads, `clock.now` and the rest of std do not and ran unchanged.
+
+Release hello on darwin/arm64 (`__text`): 164,872 to 114,212 bytes (-30.7%),
+file 308 to 228 KB; the CRUD server (conc) 1,404,588 to 1,410,412 (+0.4%, the
+rest of this branch). All 379 goldens (every one built both ways by the same
+run), the arm64 run corpus (26) and the std corpora (38) pass; hello builds
+and runs with `--race`. Mutex-only, sleep-only, stdin-only, `proc.run`,
+network-only and file-read programs were built and run by hand.
+Open: the unwinder (21 KB, any fault raises through it), the crash reporter
+(12 KB) and the profiler (14 KB with debug info) stay.
+
+Known baseline of the goldens built with `--release` (2026-10-25, the same on
+the merge-base xo and on this branch): of the 375 programs of
+internal/llvm/testdata/golden, two differ from their `want.txt`, dbg_values and
+lazy_const. Both print `dbg(x)` lines (`[main.xo:23:3] p = Point{x: 1, y: -2}`)
+to standard error that a release build does not write, since `--dbg` is off
+there and `dbg(x)` is `x` (core 11.4, 2.x flags table). The goldens are meant
+to run as development builds; this is the expected release difference, not a
+miscompile. Run them with `xo dev goldens --flags=--release` and expect exactly
+these two.

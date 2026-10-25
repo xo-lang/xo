@@ -16,6 +16,7 @@
 // B20).
 //
 // Nothing here allocates on the common path.
+use native/llrt/concflag
 use native/llrt/fault
 use native/llrt/layout
 use native/llrt/rtstats
@@ -135,9 +136,13 @@ pub fn init() {
   let fs = rt.heap_large(FS_SIZE)
   rt.mem_set(fs, 0, FS_SIZE)
   rt.mem_store(svc, SV_FIBERS, fs, 8)
-  rt.mem_store(svc, SV_FIBER_MAIN, rt.fn_addr("fiber_main"), 8)
-  rt.mem_store(svc, SV_WORKER_MAIN, rt.fn_addr("worker_main"), 8)
-  rt.mem_store(svc, SV_STDIN_PUMP, rt.fn_addr("stdin_pump_main"), 8)
+  // a program that cannot use concurrency (concflag.xo) has no fibers,
+  // workers or stdin pump to start: their entries stay out of it
+  if concflag.built() {
+    rt.mem_store(svc, SV_FIBER_MAIN, rt.fn_addr("fiber_main"), 8)
+    rt.mem_store(svc, SV_WORKER_MAIN, rt.fn_addr("worker_main"), 8)
+    rt.mem_store(svc, SV_STDIN_PUMP, rt.fn_addr("stdin_pump_main"), 8)
+  }
   // the worker pool's record (a root waits before the pool starts)
   let p = rt.heap_large(P_SIZE)
   rt.mem_set(p, 0, P_SIZE)

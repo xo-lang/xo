@@ -1,0 +1,8 @@
+// Whether the program keeps the scheduler, the poller and the monitor (the
+// ADR 0371 addendum): the compiler folds a call of this to the builder's
+// `conc` (the program has a scope, a task, a channel, a Mutex, an Atomic, a
+// sleep, the network, standard input or a task.stop_requested: ssa/conc.xo)
+// or to a development build; only a release build of a program that cannot
+// use concurrency drops them. A build that does not fold it (the Go and wasm
+// backends, a test of this module) keeps them.
+pub fn built() -> Bool { true }

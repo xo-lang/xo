@@ -12,6 +12,7 @@
 // from the program's heap (the leak check counts every block): scratch
 // memory is rt.heap_large's, from malloc.
 use native/llrt/atexit
+use native/llrt/concflag
 use native/llrt/crash
 use native/llrt/ctx
 use native/llrt/fault
@@ -108,7 +109,9 @@ pub fn main(argc: Int, argv: Int, envp: Int, entry: Int, n: Int) -> Int {
     // main's body on a fiber (decision 0286 step 1), its stack reserved
     // here, where main's thread's was: the thread runs the root's loop
     var ms = 0
-    if main_fiber_on() {
+    // a program that cannot use concurrency runs main on its own thread
+    // (no root loop, no scheduler: concflag.xo)
+    if concflag.built() && main_fiber_on() {
       let page = poolsetup.page_size()
       ms = pool.map_main_stack(MAIN_STACK, page)
       if ms != 0 {
@@ -304,6 +307,23 @@ fn atoll(a: Int) -> Int {
 /// and SIGTERM, and a stack overflow ends the program with "fatal error:
 /// stack overflow" and status 2 (decision 0197, stage 5).
 fn signals() {
+  if !concflag.built() {
+    // a program that cannot use concurrency (concflag.xo) has no poller to
+    // count a signal: SIGINT and SIGTERM end it as the system does, SIGQUIT
+    // is not the task tree's dump (`xo dump` needs the poller), and a write
+    // to a closed socket still returns EPIPE
+    match target.os {
+      TargetOs.Linux => {
+        let _p = linux.sigaction(SIGPIPE, SIG_IGN, 0)
+      }
+      TargetOs.Darwin => {
+        let sa = rt.heap_large(16)
+        darwin_sig(sa, SIGPIPE, SIG_IGN, 0)
+      }
+      _ => {}
+    }
+    return
+  }
   let _e = rt.call_c2(rt.fn_addr("poll_ev_start"), 0, 0)
   // SIGINT and SIGTERM's handler (poll.xo on_signal); Windows' console
   // handler (poll.xo on_console)

@@ -750,6 +750,12 @@ fn (var b: Builder) target_test(e: Expr) -> Bool? {
     // a deterministic run's scheduler (decision 0350)
     return Some(b.m.det)
   }
+  if b.llrt_flag_call(e, "native/llrt/concflag", "built") {
+    // the scheduler, poller and monitor: in a program that can use
+    // concurrency, and in every development build (`xo dump` and the signal
+    // handlers need them; a release build gives them up for size)
+    return Some(b.conc || !b.release)
+  }
   if b.llrt_flag_call(e, "native/llrt/dwline", "built") {
     // the DWARF readers: in a program that has DWARF (Checker.dwarf)
     return Some(b.c.dwarf)
