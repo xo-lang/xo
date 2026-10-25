@@ -1461,7 +1461,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // arm64 (x86_64's AT&T text not yet checked), a program whose link
     // has no `use c` objects (they could call an
     // export by name), not `xo asm`; XO_PASSES=-hollow keeps them
-    if tgoos == "darwin" && march == "arm64" && o.cmd != "asm" && !c.mods.any(fn(m) { !m.c_prefix.is_empty() }) && !passes_off(os).contains("hollow") {
+    if tgoos == "darwin" && march == "arm64" && o.cmd != "asm" && !c.mods.any(fn(m) { !m.c_prefix.is_empty() }) && pass_on(os, "hollow") {
       if p.parts.len() > 1 {
         let (hp, _hs) = arm64.hollow_unreached(p.parts)
         p.parts = hp
@@ -2216,6 +2216,13 @@ fn lap(os: Os, on: Bool, name: Str, t: Time) -> Time {
 
 /// The optional passes $XO_PASSES turns off (arm64 passes.xo); a wrong
 /// value fails the build.
+/// Whether the optional pass name is on ($XO_PASSES does not turn it
+/// off): the driver's own passes' check, which internal/repotest
+/// TestPassesListed finds by this form.
+fn pass_on(os: Os, name: Str) -> Bool {
+  !passes_off(os).contains(name)
+}
+
 fn passes_off(os: Os) -> List[Str] {
   let (off, err) = arm64.parse_passes(os.env.get("XO_PASSES") ?? "")
   if !err.is_empty() {
