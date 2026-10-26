@@ -113,12 +113,18 @@ func smtpServe(c net.Conn, s smtpScript) []string {
 	}
 }
 
+// smtpErrText is the code and Go's own error text, which std/smtp's
+// SmtpErr must carry in both: display is "CODE MSG" for a textproto.Error
+// and the message alone for the client's other errors (decision 0358), so
+// the corpus checks the code apart from display and the display against
+// Go's text, and neither substitutes for the other.
 func smtpErrText(err error) string {
 	var te *textproto.Error
+	code := 0
 	if errors.As(err, &te) {
-		return fmt.Sprintf("err %d %s", te.Code, te.Msg)
+		code = te.Code
 	}
-	return "err 0 " + err.Error()
+	return fmt.Sprintf("err %d %s", code, err.Error())
 }
 
 // smtpRun is SendMail against the script: the transcript and the result.
@@ -320,7 +326,7 @@ test "send talks to a server as Go's SendMail does, with its results" {
     }
     let got = match smtp.send(os.net, addr, from, to.split(";"), msg.bytes(), auth: a, security: smtp.Security.None) {
       Ok(_) => "ok"
-      Err(e) => "err ${e.code} ${e.msg}"
+      Err(e) => "err ${e.code} ${e.display()}"
     }
     l.close()
     let _ = server.await.ignore_err("the server ends when the listener closes")
