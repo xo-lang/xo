@@ -184,6 +184,14 @@ fn tool_id(os: Os, goos: Str, name: Str, args: List[Str]) -> Str {
 /// asks for the C compiler's id in the run cache key and again in the
 /// backend's keys, two process spawns each. A tool that changed between
 /// two xo processes still changes the id, the memo lives in ctx.
+///
+/// Across processes too, in the backend cache's toolid/ directory under
+/// the hash of the arguments and tool_stamp: `cc --version` and stat(1)
+/// took 9.2 and 2.3 ms on the Mac, on every build, hit or miss of the run
+/// cache (2026-10-26). The limit is self_id's: a tool replaced by one of
+/// the same size and the same modified time (to the millisecond) keeps
+/// the old id; installers and xcode-select switches change the stamp,
+/// and XO_BACKEND_CACHE=off avoids the memo.
 fn tool_id_memo(os: Os, ctx: Ctx, name: Str, args: List[Str]) -> Str {
   let m = match ctx.tools {
     Some(m) => m
@@ -193,9 +201,83 @@ fn tool_id_memo(os: Os, ctx: Ctx, name: Str, args: List[Str]) -> Str {
   if let Some(v) = m.with(fn(t) { t.get(k) }) {
     return v
   }
+  var memo = ""
+  let st = tool_stamp(os, ctx.goos, name)
+  let dir = backend_cache_dir(os, ctx)
+  if !st.is_empty() && !dir.is_empty() {
+    memo = "${dir}/toolid/${crypto.sha256("xo tool id v1\n${k}\n${st}".bytes()).to_hex()}"
+    match os.fs.read(memo) {
+      Ok(b) => {
+        if let Some(v) = b.to_str() {
+          m.with(fn(var t) { t[k] = v })
+          return v
+        }
+      }
+      // xo:allow XO0903 a memo: a failed read runs the tool
+      Err(_) => {}
+    }
+  }
   let id = tool_id(os, ctx.goos, name, args)
   m.with(fn(var t) { t[k] = id })
+  if !memo.is_empty() {
+    cache_put(os, memo, id.bytes())
+  }
   id
+}
+
+/// What tool_id_memo's memo is keyed on, "" when the tool is not found
+/// (no memo): the path of each file the tool's run goes through, with its
+/// size and modified time in milliseconds: name on PATH, each symbolic
+/// link it follows, and on macOS, for a /usr/bin shim (cc, clang), the
+/// developer directory xcrun picks (DEVELOPER_DIR, else xcode-select's
+/// link, else the Command Line Tools) and the tool and clang in it,
+/// with the environment xcrun reads.
+fn tool_stamp(os: Os, goos: Str, name: Str) -> Str {
+  if is_windows() {
+    return ""
+  }
+  var p = look_path(os, name)
+  if p.is_empty() {
+    return ""
+  }
+  var b = StrBuilder.new()
+  var hops = 0
+  while hops < 16 {
+    b.write(file_stamp(os, p))
+    let t = match os.fs.read_link(p) {
+      Ok(Some(t)) => t
+      _ => break
+    }
+    p = if t.starts_with("/") { t } else { "${dir_name(p)}/${t}" }
+    hops += 1
+  }
+  if goos == "darwin" && p.starts_with("/usr/bin/") {
+    let dev0 = os.env.get("DEVELOPER_DIR") ?? ""
+    let dev = if !dev0.is_empty() {
+      dev0
+    } else {
+      match os.fs.read_link("/var/db/xcode_select_link") {
+        Ok(Some(t)) => t
+        _ => "/Library/Developer/CommandLineTools"
+      }
+    }
+    b.write("dev ${dev}\nenv ${os.env.get("TOOLCHAINS") ?? ""}\x00${os.env.get("SDKROOT") ?? ""}\n")
+    let base = p.trim_prefix("/usr/bin/")
+    for d in ["${dev}/usr/bin", "${dev}/Toolchains/XcodeDefault.xctoolchain/usr/bin"] {
+      b.write(file_stamp(os, "${d}/${base}"))
+      b.write(file_stamp(os, "${d}/clang"))
+    }
+  }
+  b.freeze()
+}
+
+/// A line naming p's size and modified time (milliseconds, following
+/// links), "-" for both when it cannot be read.
+fn file_stamp(os: Os, p: Str) -> Str {
+  match os.fs.stat(p) {
+    Ok(Some(fi)) => "${p} ${fi.size} ${fi.modified.unix_millis()}\n"
+    _ => "${p} - -\n"
+  }
 }
 
 /// The modification time of p in Unix nanoseconds (os.Stat's ModTime

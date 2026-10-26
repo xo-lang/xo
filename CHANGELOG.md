@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Every native build is about 10 ms faster to start: the C toolchain's identity
+  (`cc --version` and a stat(1) of it, which the run cache's key reads) is
+  remembered across builds in the backend cache, keyed by the size and
+  modified time of the tool and, on macOS, of the clang xcode-select points to.
 - An edit rebuild hollows only the changed parts on linux and on amd64 too (it was
   darwin/arm64 only): an ELF part's facts also key on every part's extra labels
   (hextra/ entries). Per edit, hollow on linux/amd64 went from 196 to 86 ms for
