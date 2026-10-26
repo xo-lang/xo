@@ -1,5 +1,18 @@
 # prelude changes
 
+## 2026-10-26: feature: Float.fma, a multiply-add rounded once (decision 0385)
+
+- Kind: feature
+- Commit: this commit
+- Found by: the owner's choice (2026-10-26): an explicit fused multiply-add, no implicit fusing
+- Go reference: math.FMA (math/fma.go ported line by line to std/native/llrt/gomath.xo, BSD-style license; the Go backend calls math.FMA)
+- Test: golden float_fma (32 edge cases by bit pattern and a 20,000 case digest, 2,350 of them unlike two roundings) on arm64 TestGoldenRun, LLVM TestGolden, TestGoldenGoParity and the wasm goldens; want.txt is the Go backend's output, Go's math.FMA; float_no_fma unchanged
+- Timing: a chain of 10M dependent fma calls on arm64, median of three: Xo 10.9 ns a call against Go's own fma.go compiled as plain Go 10.4 (1.05); Go's math.FMA, which Go lowers to fmadd on arm64, 1.75 (stage 2 lowers Xo's to fmadd too)
+
+`x.fma(y, z)` is `x * y + z` computed exactly and rounded once, Go's
+math.FMA bit for bit on every backend; `x * y + z` written out still rounds
+twice everywhere. This step is the software body (Go's algorithm: a 128 bit
+product, one aligned add with a sticky bit, one rounding to nearest even).
 ## 2026-10-26: fix: a list swap checks each index against the list it indexes (sort_in_place and anything else that swaps)
 
 - Kind: fix

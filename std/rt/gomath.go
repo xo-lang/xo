@@ -52,6 +52,10 @@ func Float_atan2(_ *Task, f, x float64) float64 { return gmAtan2(f, x) }
 
 func Float_hypot(_ *Task, f, y float64) float64 { return gmHypot(f, y) }
 
+// Float_fma is `f.fma(y, z)` (decision 0385): math.FMA, exact on every
+// architecture (an instruction or Go's software path).
+func Float_fma(_ *Task, f, y, z float64) float64 { return math.FMA(f, y, z) }
+
 func Float_mod(_ *Task, f, y float64) float64 { return gmMod(f, y) }
 
 func Float_is_inf(_ *Task, f float64) bool { return gmIsInf(f, 0) }

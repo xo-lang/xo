@@ -70,6 +70,7 @@ var (
 	_ func(*Task, float64) float64                                  = Float_cbrt
 	_ func(*Task, float64, float64) float64                         = Float_atan2
 	_ func(*Task, float64, float64) float64                         = Float_hypot
+	_ func(*Task, float64, float64, float64) float64                = Float_fma
 	_ func(*Task, float64, float64) float64                         = Float_mod
 	_ func(*Task, float64) bool                                     = Float_is_inf
 	_ func(*Task, float64) int64                                    = Float_to_bits

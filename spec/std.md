@@ -149,7 +149,10 @@ the same in a native build and on the Go backend (which runs a copy of
 them with each product rounded, not Go's package: Go fuses
 multiply-adds on arm64 and runs other assembly algorithms on amd64).
 Every Float operation in Xo rounds, on every backend: no backend fuses a
-multiply and an add (golden float_no_fma). Special values are Go's:
+multiply and an add (golden float_no_fma). A fused multiply-add is asked
+for by name: `x.fma(y, z)` is `x * y + z` computed exactly and rounded
+once (IEEE 754 fusedMultiplyAdd, Go's `math.FMA`), the same bits on every
+backend (decision 0385, golden float_fma). Special values are Go's:
 `(-1.0).log()` is NaN, `(0.0).log()` is -Inf, `x.pow(0.0)` is 1.0. Float
 constants (`Float.PI`, `Float.INF`) are a later step; `Float.parse("inf")`
 gives infinity.
@@ -4125,7 +4128,7 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
 
 Every function and method of std/prelude.xo, by type, as declared there
 (the sections above explain them); interface methods take `self`.
-435 declarations.
+436 declarations.
 
 ### Range
 
@@ -4219,6 +4222,7 @@ fn (f: Float) tanh() -> Float
 fn (f: Float) cbrt() -> Float
 fn (f: Float) atan2(x: Float) -> Float
 fn (f: Float) hypot(y: Float) -> Float
+fn (f: Float) fma(y: Float, z: Float) -> Float
 fn (f: Float) mod(y: Float) -> Float
 fn (f: Float) is_inf() -> Bool
 fn (f: Float) to_bits() -> Int

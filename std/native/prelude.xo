@@ -4317,6 +4317,8 @@ fn float_atan2(f: Float, x: Float) -> Float { gomath.atan2(f, x) }
 
 fn float_hypot(f: Float, y: Float) -> Float { gomath.hypot(f, y) }
 
+fn float_fma(f: Float, y: Float, z: Float) -> Float { gomath.fma(f, y, z) }
+
 fn float_mod(f: Float, y: Float) -> Float { gomath.mod(f, y) }
 
 fn float_is_inf(f: Float) -> Bool { gomath.is_inf(f, 0) }

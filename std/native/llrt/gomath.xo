@@ -1011,3 +1011,158 @@ pub fn mod(x: Float, y0: Float) -> Float {
   }
   r
 }
+
+// Fused multiply-add (decision 0385): Go's math/fma.go (Copyright 2019
+// The Go Authors, BSD-style license), line by line. Unsigned 64 bit
+// words are Ints: logical shifts, wrapping adds, unsigned compares, and
+// a shift by 64 or more (or by a negative count, Go's uint wrap) is 0.
+
+fn nonzero(x: Int) -> Int { if x != 0 { 1 } else { 0 } }
+
+fn zero(x: Int) -> Int { if x == 0 { 1 } else { 0 } }
+
+/// a << s for a uint64, 0 when s is out of 0 to 63 (Go's shift by a uint).
+fn ushl(a: Int, s: Int) -> Int { if s < 0 || s >= 64 { 0 } else { a.wrapping_shl(s) } }
+
+/// a >> s for a uint64, 0 when s is out of 0 to 63.
+fn ushr(a: Int, s: Int) -> Int { if s < 0 || s >= 64 { 0 } else { a.shr_logical(s) } }
+
+/// (u1:u2) << n, n in 0 to 127.
+fn shl128(u1: Int, u2: Int, n: Int) -> (Int, Int) { (ushl(u1, n) | ushr(u2, 64 - n) | ushl(u2, n - 64), ushl(u2, n)) }
+
+/// (u1:u2) >> n, n in 0 to 127.
+fn shr128(u1: Int, u2: Int, n: Int) -> (Int, Int) { (ushr(u1, n), ushr(u2, n) | ushl(u1, 64 - n) | ushr(u1, n - 64)) }
+
+/// (u1:u2) >> n with bit 0 the OR of the n + 1 bits shifted out and it.
+fn shrcompress(u1: Int, u2: Int, n: Int) -> (Int, Int) {
+  if n == 0 {
+    return (u1, u2)
+  }
+  if n == 64 {
+    return (0, u1 | nonzero(u2))
+  }
+  if n >= 128 {
+    return (0, nonzero(u1 | u2))
+  }
+  let (r1, r2) = shr128(u1, u2, n)
+  if n < 64 {
+    return (r1, r2 | nonzero(u2 & ushl(1, n).wrapping_sub(1)))
+  }
+  (r1, r2 | nonzero((u1 & ushl(1, n - 64).wrapping_sub(1)) | u2))
+}
+
+/// The leading zeros of (u1:u2).
+fn lz128(u1: Int, u2: Int) -> Int {
+  let l = rt.clz(u1)
+  if l == 64 { 64 + rt.clz(u2) } else { l }
+}
+
+/// b's sign, biased exponent, and mantissa with its implicit bit (a
+/// subnormal normalized).
+fn fsplit(b: Int) -> (Int, Int, Int) {
+  let sign = b.shr_logical(63)
+  var exp = b.shr_logical(52) & MASK
+  var m = b & 0xFFFFFFFFFFFFF
+  if exp == 0 {
+    let shift = rt.clz(m) - 11
+    m = m.wrapping_shl(shift)
+    exp = 1 - shift
+  } else {
+    m = m | (1).wrapping_shl(52)
+  }
+  (sign, exp, m)
+}
+
+/// x * y + z with one rounding (math.FMA).
+pub fn fma(x: Float, y: Float, z: Float) -> Float {
+  let bx = bits(x)
+  let by = bits(y)
+  let bz = bits(z)
+  // inf, NaN or zero involved: at most one rounding occurs
+  if x == 0.0 || y == 0.0 || (bx & UVINF) == UVINF || (by & UVINF) == UVINF {
+    return x * y + z
+  }
+  // z zero: x * y, so a negative product that underflows keeps its sign
+  if z == 0.0 {
+    return x * y
+  }
+  // x and y finite, z infinite: z
+  if (bz & UVINF) == UVINF {
+    return z
+  }
+  let (xs, xe, xm) = fsplit(bx)
+  let (ys, ye, ym) = fsplit(by)
+  let (zs0, ze0, zmw) = fsplit(bz)
+  // the product's exponent (its normal bit not taken yet) and its 128
+  // bit mantissa, shifted left 21
+  var pe = xe + ye - BIAS + 1
+  let a = xm.wrapping_shl(10)
+  let b = ym.wrapping_shl(11)
+  var pm1 = a.mul_hi_unsigned(b)
+  var pm2 = a.wrapping_mul(b)
+  var zm1 = zmw.wrapping_shl(10)
+  var zm2 = 0
+  var ps = xs ^ ys
+  var zs = zs0
+  var ze = ze0
+  // normalize to bit 62
+  let is62zero = (~pm1).shr_logical(62) & 1
+  let (n1, n2) = shl128(pm1, pm2, is62zero)
+  pm1 = n1
+  pm2 = n2
+  pe -= is62zero
+  // swap so that |p| >= |z|
+  if pe < ze || pe == ze && pm1.lt_unsigned(zm1) {
+    let (ts, te, t1, t2) = (ps, pe, pm1, pm2)
+    ps = zs
+    pe = ze
+    pm1 = zm1
+    pm2 = zm2
+    zs = ts
+    ze = te
+    zm1 = t1
+    zm2 = t2
+  }
+  // p == -z: +0 (neither operand is zero)
+  if ps != zs && pe == ze && pm1 == zm1 && pm2 == zm2 {
+    return 0.0
+  }
+  // align the significands
+  let (a1, a2) = shrcompress(zm1, zm2, pe - ze)
+  zm1 = a1
+  zm2 = a2
+  var m = 0
+  if ps == zs {
+    // (pm1:pm2) + (zm1:zm2)
+    let lo = pm2.wrapping_add(zm2)
+    let c = if lo.lt_unsigned(pm2) { 1 } else { 0 }
+    pm2 = lo
+    pm1 = pm1.wrapping_add(zm1).wrapping_add(c)
+    pe -= (~pm1).shr_logical(63)
+    let (r1, r2) = shrcompress(pm1, pm2, 64 + pm1.shr_logical(63))
+    pm1 = r1
+    m = r2
+  } else {
+    // (pm1:pm2) - (zm1:zm2)
+    let c = if pm2.lt_unsigned(zm2) { 1 } else { 0 }
+    pm2 = pm2.wrapping_sub(zm2)
+    pm1 = pm1.wrapping_sub(zm1).wrapping_sub(c)
+    let nz = lz128(pm1, pm2)
+    pe -= nz
+    let (r1, r2) = shl128(pm1, pm2, nz - 1)
+    m = r1 | nonzero(r2)
+  }
+  // round, ties to even
+  if pe > 1022 + BIAS || pe == 1022 + BIAS && m.wrapping_add((1).wrapping_shl(9)).shr_logical(63) == 1 {
+    // the rounded value overflows the exponent range
+    return from_bits(ps.wrapping_shl(63) | UVINF)
+  }
+  if pe < 0 {
+    let n = -pe
+    m = ushr(m, n) | nonzero(m & ushl(1, n).wrapping_sub(1))
+    pe = 0
+  }
+  m = m.wrapping_add((1).wrapping_shl(9)).shr_logical(10) & ~zero((m & 1023) ^ 512)
+  pe = pe & -nonzero(m)
+  from_bits(ps.wrapping_shl(63).wrapping_add(pe.wrapping_shl(52)).wrapping_add(m))
+}

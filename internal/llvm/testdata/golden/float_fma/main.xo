@@ -1,0 +1,108 @@
+// Float.fma (decision 0385): x * y + z rounded once, Go's math.FMA bit
+// for bit on every backend. The cases name their operands by bits:
+// results where fusing differs from two roundings, signed zeros, NaN and
+// the infinities, a product that overflows or underflows on its own,
+// subnormals, z far above and far below the product, and ties of the one
+// rounding; then a digest of 20,000 cases from a generator, exponents
+// drawn so that the product and z overlap.
+fn f(b: Int) -> Float { Float.from_bits(b) }
+
+/// b with the sign bit set (a negative operand's bits).
+fn n(b: Int) -> Int { b | -0x8000000000000000 }
+
+/// b's bits in hex, a set sign bit as a leading "-".
+fn hex(b: Int) -> Str { if b < 0 { "-${(b & 0x7FFFFFFFFFFFFFFF).to_str_base(16)}" } else { b.to_str_base(16) } }
+
+fn next(s: Int) -> Int { s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) }
+
+fn main(os: Os) {
+  let one = 0x3FF0000000000000
+  let cases: List[(Int, Int, Int)] = [
+    // 0.1 * 10 - 1: 2^-54 fused, 0 unfused
+    (0x3FB999999999999A, 0x4024000000000000, n(0x3FF0000000000000)),
+    // (1 + 2^-30)(1 - 2^-30) - 1 = -2^-60
+    (0x3FF0000000400000, 0x3FEFFFFFFF800000, n(0x3FF0000000000000)),
+    // zeros and their signs
+    (0, 0, 0),
+    (n(0x0000000000000000), 0, 0),
+    (n(0x0000000000000000), 0, n(0x0000000000000000)),
+    (one, n(0x0000000000000000), n(0x0000000000000000)),
+    (one, one, n(0x3FF0000000000000)),
+    (n(0x3FF0000000000000), one, one),
+    // NaN and infinities
+    (0x7FF8000000000000, one, one),
+    (one, one, 0x7FF8000000000000),
+    (0x7FF0000000000000, 0, one),
+    (0x7FF0000000000000, one, n(0x7FF0000000000000)),
+    (0x7FF0000000000000, one, 0x7FF0000000000000),
+    (one, one, n(0x7FF0000000000000)),
+    (0x7FEFFFFFFFFFFFFF, 0x7FEFFFFFFFFFFFFF, n(0x7FF0000000000000)),
+    // a product that overflows alone, brought back by z; and one that
+    // overflows after the add
+    (0x7FEFFFFFFFFFFFFF, 0x4000000000000000, n(0x7FEFFFFFFFFFFFFF)),
+    (0x7FEFFFFFFFFFFFFF, 0x3FF0000000000001, 0x7C90000000000000),
+    // a product that underflows alone
+    (0x0010000000000000, 0x3CB0000000000000, 0x0010000000000000),
+    (0x0000000000000001, 0x3FE0000000000000, 0),
+    (0x0000000000000003, 0x3FE0000000000000, n(0x0000000000000000)),
+    (n(0x0000000000000001), 0x3FE0000000000000, 0x0000000000000001),
+    // subnormal operands
+    (0x000FFFFFFFFFFFFF, 0x4330000000000000, 0x0000000000000001),
+    (0x0000000000000001, 0x7FE0000000000000, 0x3CA0000000000000),
+    // z far above and far below the product
+    (one, 0x3C90000000000000, 0x4340000000000000),
+    (0x4340000000000000, 0x4340000000000000, 0x0000000000000001),
+    (0x4340000000000000, one, n(0x3CA0000000000000)),
+    // ties of the one rounding: to even
+    (0x3FF0000000000001, 0x3FF0000000000001, n(0x3FF0000000000000)),
+    (0x4340000000000001, one, 0x3FE0000000000000),
+    (0x4340000000000000, one, 0x3FE0000000000000),
+    (0x4340000000000000, one, 0x3FF8000000000000),
+    // exact cancellation is +0
+    (0x4008000000000000, 0x4010000000000000, n(0x4028000000000000)),
+    (n(0x4008000000000000), 0x4010000000000000, 0x4028000000000000),
+  ]
+  for (x, y, z) in cases {
+    let r = f(x).fma(f(y), f(z))
+    let u = f(x) * f(y) + f(z)
+    os.stdio.println("${hex(x)} ${hex(y)} ${hex(z)} = ${hex(r.to_bits())} ${r} (two roundings ${u})")
+  }
+  var s = 42
+  var h = 0
+  var diff = 0
+  for i in 0..20000 {
+    s = next(s)
+    let ex = 1023 + (s.shr_logical(11) % 400) - 200
+    s = next(s)
+    let ey = 1023 + (s.shr_logical(11) % 400) - 200
+    s = next(s)
+    // z near the product's exponent, sometimes far, sometimes subnormal
+    var ez = ex + ey - 1023 + (s.shr_logical(11) % 130) - 65
+    if i % 97 == 0 {
+      ez = 0
+    }
+    if ez < 0 {
+      ez = 0
+    }
+    if ez > 2046 {
+      ez = 2046
+    }
+    s = next(s)
+    let mx = s.shr_logical(12)
+    s = next(s)
+    let my = s.shr_logical(12)
+    s = next(s)
+    let mz = s.shr_logical(12)
+    s = next(s)
+    let signs = s.shr_logical(61)
+    let x = f((signs & 1).wrapping_shl(63) | ex.wrapping_shl(52) | mx)
+    let y = f((signs.shr_logical(1) & 1).wrapping_shl(63) | ey.wrapping_shl(52) | my)
+    let z = f((signs.shr_logical(2) & 1).wrapping_shl(63) | ez.wrapping_shl(52) | mz)
+    let r = x.fma(y, z)
+    if r.to_bits() != (x * y + z).to_bits() {
+      diff += 1
+    }
+    h = (h.wrapping_mul(31).wrapping_add(r.to_bits())).wrapping_mul(1000003) & 0xffffffffffff
+  }
+  os.stdio.println("digest ${h}, ${diff} of 20000 differ from two roundings")
+}

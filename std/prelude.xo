@@ -240,6 +240,11 @@ fn (f: Float) cbrt() -> Float
 /// atan(f / x) in the quadrant of (x, f), as Go's Atan2(f, x).
 fn (f: Float) atan2(x: Float) -> Float
 fn (f: Float) hypot(y: Float) -> Float
+/// f * y + z computed exactly and rounded once (IEEE 754
+/// fusedMultiplyAdd; Go's math.FMA), the same bits on every backend
+/// (decision 0385). `f * y + z` written out rounds twice and is never
+/// fused.
+fn (f: Float) fma(y: Float, z: Float) -> Float
 /// Go's Mod: the remainder of f / y with the sign of f.
 fn (f: Float) mod(y: Float) -> Float
 fn (f: Float) is_inf() -> Bool
