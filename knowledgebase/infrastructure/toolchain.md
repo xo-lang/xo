@@ -980,7 +980,11 @@ percentile bootstrap interval over the rounds, and a verdict (better,
 worse, within noise; too few rounds under 5; no ratio when A's median
 is 0 and B's is not, both 0 is ratio 1; too coarse when both medians are
 under 10x the metric's resolution, cpu_ms being 10 ms). Metrics: wall_ms, cpu_ms,
-cpu_us_per_op, instructions (macOS only), max_rss_kb, and every number on
+cpu_us_per_op, instructions, instructions_per_op, cycles, cycles_per_op and
+ipc (instructions per cycle, higher is better; these from macOS `time -l`'s
+"instructions retired" and "cycles elapsed" lines, 2026-10-26; on Linux
+GNU time reports neither, and the text output says so in an `n/a` line
+under the table), max_rss_kb, and every number on
 the program's last JSON line (`loadgen`'s rps, p99_us, requests, ...).
 Before each run it waits for the guards: the quiet window file
 (`XO_QUIET_FILE`, default `~/xo-lead/quiet`; a future epoch in it means
@@ -992,7 +996,10 @@ printed and in `--json`. Stage 1 measures through `/usr/bin/time -l`
 (macOS, centisecond CPU resolution, instructions retired) or GNU
 `time -v` (Linux; the Docker image has it since tag `-4`), so runs of
 under about 100 ms are dominated by that resolution: make a run do more
-work or use wall. Last verified: 2026-10-22.
+work or use wall. When wall moves and instructions do not (or move the
+other way), the cycles and ipc rows say whether the same instructions ran
+at a different rate (an IPC drop: Lang 3's cut_suffix, 2026-10-25, +1.6%
+instructions and +9.7% wall). Last verified: 2026-10-26.
 
 ## Experimental and sizing flags
 

@@ -129,6 +129,9 @@ pub fn verdict(r: Ratio, rounds: Int, lower_better: Bool) -> Str {
 /// value is better (rates and throughput); all others are lower is better.
 pub fn higher_better(name: Str) -> Bool {
   let n = name.to_lower()
+  if n == "ipc" {
+    return true
+  }
   for w in ["rps", "mbps", "per_sec", "throughput", "ops_s"] {
     if n.contains(w) {
       return true

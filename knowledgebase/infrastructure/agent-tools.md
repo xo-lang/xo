@@ -362,6 +362,13 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 ## Measuring
 
+- Fewer instructions is not faster (agent poll 2026-10-26: the most
+  misleading trap; Lang 3's cut_suffix ran +1.6% instructions and +9.7%
+  wall, an IPC drop). `xo bench --ab` on macOS reports cycles,
+  cycles_per_op and ipc beside instructions, each with its B/A interval:
+  explain a wall change that instructions do not with the cycles and ipc
+  rows, and quote them with the instruction ratio. Linux GNU time has
+  neither counter (`n/a`).
 - Code size is measured with `go run ./scripts/sizebreak [-top=N] [-json]
   [-reach] BINARY` (Mach-O and ELF; use it through heavy.sh like any build
   or test): it sizes every text symbol by the gap to the next one, checks

@@ -1,11 +1,21 @@
 use std/testing
 
 test "rusage reads macOS time -l" {
-  let err = "        0.40 real         0.31 user         0.02 sys\n             8306688  maximum resident set size\n  25632703  instructions retired\n"
+  let err = "        0.40 real         0.31 user         0.02 sys\n             8306688  maximum resident set size\n  25632703  instructions retired\n             4621817  cycles elapsed\n             1130736  peak memory footprint\n"
   let m = rusage("darwin", err)
   expect(m.get("cpu_ms") == Some(330.0))
   expect(m.get("max_rss_kb") == Some(8112.0))
   expect(m.get("instructions") == Some(25632703.0))
+  expect(m.get("cycles") == Some(4621817.0))
+}
+
+test "ipc is higher is better, cycles lower" {
+  expect(higher_better("ipc")) == true
+  expect(higher_better("cycles_per_op")) == false
+}
+
+test "counters are n/a on Linux" {
+  expect(counters_na("linux").contains("n/a")) == true
 }
 
 test "rusage reads GNU time -v" {
@@ -14,6 +24,7 @@ test "rusage reads GNU time -v" {
   expect(m.get("cpu_ms") == Some(300.0))
   expect(m.get("max_rss_kb") == Some(9000.0))
   expect(m.get("instructions") == None)
+  expect(m.get("cycles") == None)
 }
 
 test "reported takes the numbers of the last JSON line" {

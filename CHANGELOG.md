@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo bench --ab` on macOS reports cycles, cycles per op and instructions
+  per cycle (ipc, higher is better) beside instructions, each with its
+  B/A ratio and interval, from `time -l`'s "cycles elapsed" line, so a
+  change that runs fewer instructions but more slowly (a lower ipc)
+  shows why; on Linux, whose GNU time has neither counter, the text output
+  says `n/a` under the table instead of leaving the rows out silently.
 - `xo refs A B C` answers several names from one check, in order (JSON
   `{"results": [...]}`, a name with no answer an entry with its error and
   exit status 1), so a sweep pays the program and std check once.

@@ -256,7 +256,7 @@ fn num_before(l: Str, suffix: Str) -> Float? {
 }
 
 /// The rusage figures `/usr/bin/time` printed on stderr: cpu_ms,
-/// max_rss_kb, and (macOS) instructions.
+/// max_rss_kb, and (macOS) instructions and cycles.
 fn rusage(goos: Str, err: Str) -> Map[Str, Float] {
   var out: Map[Str, Float] = {}
   for l in err.split("\n") {
@@ -274,6 +274,9 @@ fn rusage(goos: Str, err: Str) -> Map[Str, Float] {
       }
       if let Some(v) = num_before(t, " instructions retired") {
         out["instructions"] = v
+      }
+      if let Some(v) = num_before(t, " cycles elapsed") {
+        out["cycles"] = v
       }
     } else {
       if t.starts_with("User time (seconds):") || t.starts_with("System time (seconds):") {
@@ -340,6 +343,18 @@ fn run_once(os: Os, h: Host, o: Opts, prog: Str, args: List[Str], env: List[Str]
         }
         if let Some(n) = m.get("instructions") {
           m["instructions_per_op"] = n / ops
+        }
+        if let Some(n) = m.get("cycles") {
+          m["cycles_per_op"] = n / ops
+        }
+      }
+      // instructions per cycle: fewer instructions can still run slower
+      // when this drops (a wall change the instruction count misses)
+      if let Some(n) = m.get("instructions") {
+        if let Some(cy) = m.get("cycles") {
+          if cy > 0.0 {
+            m["ipc"] = n / cy
+          }
         }
       }
       Sample{vals: m, ok: true, why: ""}
@@ -413,7 +428,7 @@ fn rows_of(o: Opts, rounds: List[Round]) -> List[Row] {
       }
     }
   }
-  let order = ["wall_ms", "cpu_ms", "cpu_us_per_op", "instructions", "instructions_per_op", "max_rss_kb"]
+  let order = ["wall_ms", "cpu_ms", "cpu_us_per_op", "instructions", "instructions_per_op", "cycles", "cycles_per_op", "ipc", "max_rss_kb"]
   var rest: List[Str] = []
   var first: List[Str] = []
   for k in order {
@@ -532,6 +547,15 @@ fn vals_json(m: Map[Str, Float]) -> Str {
   out.freeze()
 }
 
+/// The line saying the counter rows are missing, and why: GNU time
+/// (Linux) reports neither instructions nor cycles.
+fn counters_na(goos: Str) -> Str {
+  if goos == "darwin" {
+    return "instructions, cycles, ipc: n/a (time -l printed no cycles elapsed line)"
+  }
+  "instructions, cycles, ipc: n/a (GNU time reports neither instructions nor cycles; only macOS time -l does)"
+}
+
 /// run is `xo bench ARGS` and returns the exit status.
 /// The first verification error a binary's build information records
 /// when it was built without inlining (compiler/xo binfo.xo
@@ -627,6 +651,9 @@ pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, p
       os.stdio.println("no round was usable: every round ran under load (see --max-load, --guard, --load-wait, --keep-loaded)")
     } else {
       os.stdio.print(table(rows))
+      if !rows.any(fn(r: Row) { r.name == "cycles" }) && (o.metrics.is_empty() || o.metrics.any(fn(k) { k is "cycles" | "cycles_per_op" | "ipc" | "instructions" })) {
+        os.stdio.println(counters_na(h.goos))
+      }
     }
   }
   if failed { 1 } else { 0 }
