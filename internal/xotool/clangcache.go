@@ -137,6 +137,29 @@ func RunCachedClang(real string, args []string) int {
 
 const ltoFlag = "-Wl,-object_path_lto,"
 
+// osoFlag strips a directory from the object paths of the debug map
+// (xo's darwin LLVM link).
+const osoFlag = "-Wl,-oso_prefix,"
+
+// selfContainedC reports whether a C source reads no file but itself and
+// system headers: its every #include (and #import, #embed) names a
+// <header>.
+func selfContainedC(src []byte) bool {
+	for _, l := range strings.Split(string(src), "\n") {
+		t := strings.TrimSpace(l)
+		if !strings.HasPrefix(t, "#") {
+			continue
+		}
+		t = strings.TrimSpace(strings.TrimPrefix(t, "#"))
+		for _, d := range []string{"include", "import", "embed"} {
+			if strings.HasPrefix(t, d) && !strings.HasPrefix(strings.TrimSpace(strings.TrimPrefix(t, d)), "<") {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // clangKey is the cache key of a clang call, its output, and its
 // -object_path_lto argument; ok is false for a call the cache leaves
 // alone (no output, a C or assembly source, the preprocessor).
@@ -155,17 +178,33 @@ func clangKey(real string, args []string) (key, out, lto string, ok bool) {
 			lto = a
 			fmt.Fprintf(h, "lto %s\n", filepath.Base(strings.TrimPrefix(a, ltoFlag)))
 			continue
+		case strings.HasPrefix(a, osoFlag):
+			// the build's private directory, removed from the debug map's
+			// object paths (46c61ffeb): the output does not depend on it,
+			// and it differs per build (2026-10-26: every LLVM test build
+			// missed the cache, about 29 s of clang for big_struct)
+			fmt.Fprintf(h, "oso_prefix\n")
+			continue
 		case a == "-###" || a == "-E" || a == "-S" || strings.HasPrefix(a, "-M") || a == "-":
 			return "", "", "", false
 		}
 		if st, err := os.Stat(a); err == nil && st.Mode().IsRegular() {
-			switch filepath.Ext(a) {
-			case ".ll", ".bc", ".o", ".a":
-			default:
-				return "", "", "", false
-			}
 			data, err := os.ReadFile(a)
 			if err != nil {
+				return "", "", "", false
+			}
+			switch filepath.Ext(a) {
+			case ".ll", ".bc", ".o", ".a":
+			case ".c":
+				// xo's generated C (xo_buildinfo.c, xo_tzdata.c) goes into
+				// the same clang call as the IR: its contents decide its
+				// object when it includes only system headers, which the
+				// clang version and sysroot in the key stand for; a quoted
+				// include reads a file the key does not see
+				if !selfContainedC(data) {
+					return "", "", "", false
+				}
+			default:
 				return "", "", "", false
 			}
 			fmt.Fprintf(h, "file %s %d\n", filepath.Ext(a), len(data))
