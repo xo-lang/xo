@@ -132,7 +132,7 @@ fn (c: Checker) go_bind_root(root: Str) -> Str {
 fn (var c: Checker) go_unpinned(f: Int, sp: Span, xomod: Str, mod_path: Str, version: Str) {
   let d = c.error_at(f, "XO1319", sp, "Go module ${mod_path} has no `require go` line in xo.mod: builds would follow its latest version")
   c.note(d, "the binding resolved ${mod_path} ${version}; pin it so every build uses that version (decision 0356)")
-  let text = c.fs.read_text(xomod).ok() ?? ""
+  let text = (c.read_source(xomod) ?? b"").to_str() ?? ""
   if text.is_empty() {
     return
   }
@@ -267,7 +267,9 @@ fn go_binding_header(data: Bytes) -> GoBindHeader {
 /// gobind ReadPins: the `require go <module> <version>` lines of an xo.mod.
 fn (c: Checker) go_pins(xomod: Str) -> Map[Str, Str] {
   var pins: Map[Str, Str] = {}
-  let data = c.fs.read(xomod).ok() ?? None
+  // through the overlay: xo fix's rounds hold the xo.mod a fix
+  // edited (2026-10-26: it added the pin once a round, 25 times)
+  let data = c.read_source(xomod)
   if let Some(b) = data {
     for line in scan_lines(b) {
       let fs = fields(line)
@@ -297,7 +299,9 @@ fn go_pin_for(pins: Map[Str, Str], gopath: Str) -> Str {
 /// <path> [names...]` lines of an xo.mod ("*" for a line without names).
 fn (c: Checker) go_rerun(xomod: Str, gopath: Str) -> List[Str] {
   var out: List[Str] = []
-  let data = c.fs.read(xomod).ok() ?? None
+  // through the overlay: xo fix's rounds hold the xo.mod a fix
+  // edited (2026-10-26: it added the pin once a round, 25 times)
+  let data = c.read_source(xomod)
   if let Some(b) = data {
     for line in scan_lines(b) {
       var t = line

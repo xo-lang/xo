@@ -297,7 +297,9 @@ func JsonDec[T any](tk *Task, dst *T, x any, path string) *Json_DecodeErr {
 		}
 		f, err := num.Float64()
 		if err != nil {
-			return JsonErr(path, "expected number")
+			// out of range: Go's words with Xo's type (decode's native
+			// llrt_json_range_msg)
+			return JsonErr(path, "cannot unmarshal number "+string(num)+" into Float")
 		}
 		*d = f
 	case *float32:
@@ -307,7 +309,7 @@ func JsonDec[T any](tk *Task, dst *T, x any, path string) *Json_DecodeErr {
 		}
 		f, err := strconv.ParseFloat(string(num), 32)
 		if err != nil {
-			return JsonErr(path, "expected number")
+			return JsonErr(path, "cannot unmarshal number "+string(num)+" into Float32")
 		}
 		*d = float32(f)
 	case *bool:

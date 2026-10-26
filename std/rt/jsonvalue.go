@@ -21,7 +21,7 @@ func jsonValueOf(x any) Json_Value {
 }
 
 // jsonValueAt is the Value of a parsed tree; a number out of Float64's
-// range (strconv's range error, "expected number" in decode) is an error
+// range (strconv's range error) is "cannot unmarshal number N into Float"
 // at its path, as std/native/json.xo's parse_bytes gives.
 func jsonValueAt(x any, path string) (Json_Value, *Json_DecodeErr) {
 	switch t := x.(type) {
@@ -35,7 +35,7 @@ func jsonValueAt(x any, path string) (Json_Value, *Json_DecodeErr) {
 		}
 		f, err := strconv.ParseFloat(string(t), 64)
 		if err != nil && math.IsInf(f, 0) {
-			return Json_Value{}, JsonErr(path, "expected number")
+			return Json_Value{}, JsonErr(path, "cannot unmarshal number "+string(t)+" into Float")
 		}
 		return Json_Value{Tag: 4, P: Json_Value_Num{F_n: f}}, nil
 	case string:

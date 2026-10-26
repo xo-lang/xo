@@ -3848,6 +3848,8 @@ fn llrt_json_uint_ok(src: Bytes, tape: List[Int], i: Int) -> Bool { jsontext.uin
 
 fn llrt_json_float_opt(src: Bytes, tape: List[Int], i: Int) -> Float? { jsontext.float_opt(src, tape, i) }
 
+fn llrt_json_range_msg(src: Bytes, tape: List[Int], i: Int, ty: Str) -> Str { jsontext.range_msg(src, tape, i, ty) }
+
 fn llrt_rs_append_json_str(s: Str, t: Str) -> Str { jsontext.append_str(s, t) }
 
 fn llrt_rs_append_json_body(s: Str, t: Str) -> Str { jsontext.append_body(s, t) }

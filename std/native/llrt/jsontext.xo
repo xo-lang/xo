@@ -1020,6 +1020,15 @@ pub fn float_opt(src: Bytes, tape: List[Int], i: Int) -> Float? {
   num.parse_float_at(src, lo, lo + tape[i + 2])
 }
 
+/// The error of a number node at i out of range for type ty, in Go's
+/// words (encoding/json's "cannot unmarshal number 1e400 into Go value of
+/// type float64"), naming Xo's type: `cannot unmarshal number 1e400 into
+/// Float`.
+pub fn range_msg(src: Bytes, tape: List[Int], i: Int, ty: Str) -> Str {
+  let lo = tape[i + 1]
+  "cannot unmarshal number ${src[lo..lo + tape[i + 2]].to_str() ?? ""} into ${ty}"
+}
+
 /// The Float of the number node at i (0.0 when it is not one).
 pub fn float_at(src: Bytes, tape: List[Int], i: Int) -> Float {
   let lo = tape[i + 1]

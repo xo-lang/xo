@@ -791,8 +791,18 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
     }
     Float => {
       b.dec_need(d, JK_NUM, "expected number")
-      let f = b.dec_some(d, b.json_rt("json_float_opt", b.float_t(), [d.src, d.tape, i]), "expected number")
-      if b.m.is_f32(t) {
+      let f32 = b.m.is_f32(t)
+      let tyname = if f32 { "Float32" } else { "Float" }
+      // a number out of range: Go's words with Xo's type (`cannot
+      // unmarshal number 1e400 into Float`, llrt_json_range_msg)
+      let o = b.json_rt("json_float_opt", b.float_t(), [d.src, d.tape, i])
+      let ot = b.vty(o)
+      let some = b.m.variant_index(ot, "Some")
+      let (no1, join1) = b.if_then_begin(b.add(Op.Ne, bt, Aux.None, [b.add(Op.Tag, b.int_t(), Aux.None, [o]), b.cint(some)]))
+      b.retv(b.dec_err(d, b.const_str(""), b.json_rt("json_range_msg", b.str_t(), [d.src, d.tape, i, b.const_str(tyname)])))
+      b.if_then_end(no1, join1)
+      let f = b.add(Op.Payload, b.m.types[ot].variants[some].fields[0].ty, Aux.P(tag: some, field: 0), [o])
+      if f32 {
         // strconv.ParseFloat(s, 32): a value that rounds past the largest
         // Float32 (2^128 - 2^103 and beyond) is out of range
         let ft = b.float_t()
@@ -802,7 +812,7 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
         let nlim = b.add(Op.Const, ft, Aux.F(f: -340282356779733661637539395458142568448.0), [])
         let over = b.add(Op.Or, bt, Aux.None, [b.add(Op.Gt, bt, Aux.None, [f, lim]), b.add(Op.Lt, bt, Aux.None, [f, nlim])])
         let (no2, join2) = b.if_then_begin(over)
-        b.dec_fail(d, "expected number")
+        b.retv(b.dec_err(d, b.const_str(""), b.json_rt("json_range_msg", b.str_t(), [d.src, d.tape, i, b.const_str(tyname)])))
         b.if_then_end(no2, join2)
         b.dec_ok(d, b.rt("f32_round", t, [f]))
         return

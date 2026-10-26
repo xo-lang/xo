@@ -1,5 +1,5 @@
 // json.parse_value on numbers at and past Float's range: 1e308 is a Num, an
-// overflow is refused with decode's "expected number" at the number's path
+// overflow is refused with decode's "cannot unmarshal number N into Float" at its path
 // (the native backends once read it as 0, the Go backend as +Inf), and an
 // underflow is 0.
 use std/json

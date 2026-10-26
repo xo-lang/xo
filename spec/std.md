@@ -1669,7 +1669,7 @@ fn (p: Patch[T]) apply_opt(current: T?) -> T? // Absent keeps, Null clears, Valu
 | `Patch[T]` field | missing key is `Absent`, `null` is `Null`, value is `Value(v)` |
 | unknown keys | ignored |
 | `Int`, `Float`, `Bool`, `Str` | number, number, boolean, string |
-| `Int8`, `Int16`, `Int32`, `UInt8`, `UInt16`, `UInt32`, `UInt64`, `Float32` | number; decoding refuses a number out of the type's range (`expected integer` for a signed type, `expected non negative integer` for an unsigned one, `expected number` for a Float32 past its largest value), on every backend |
+| `Int8`, `Int16`, `Int32`, `UInt8`, `UInt16`, `UInt32`, `UInt64`, `Float32` | number; decoding refuses a number out of the type's range (`expected integer` for a signed type, `expected non negative integer` for an unsigned one, `cannot unmarshal number 1e39 into Float32` for a Float32 past its largest value, Go's words with Xo's type), on every backend |
 | `List[T]`, `Set[T]` | array |
 | `Map[Str, V]` | object |
 | enum unit variant | string `"Variant"` |
@@ -1696,8 +1696,8 @@ fn (v: Value) get(key: Str) -> Value?        // an object's field
 ```
 
 - A number out of Float's range (`1e999`, `-1e309`) is an error at its
-  path, `expected number`, as `decode` of a Float gives; an underflow
-  (`1e-999`) is `0.0`.
+  path, `cannot unmarshal number 1e999 into Float` (Go's words with Xo's
+  type), as `decode` of a Float gives; an underflow (`1e-999`) is `0.0`.
 - Go's decoding into `any`, with two differences: a number without a
   fraction or exponent that fits an Int is `Int` (Go gives float64, which
   loses ids above 2^53), any other `Num`; an object keeps its keys in the

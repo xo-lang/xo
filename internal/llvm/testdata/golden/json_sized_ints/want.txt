@@ -25,10 +25,10 @@ a string: at $.a: expected integer
 h string: at $.h: expected number
 h fine: ok 0 0 0 0 0 0 0 0.10000000149011612 | {"a":0,"b":0,"c":0,"d":0,"e":0,"f":0,"g":0,"h":0.10000000149011612}
 h round: ok 0 0 0 0 0 0 0 1.6777216e+07 | {"a":0,"b":0,"c":0,"d":0,"e":0,"f":0,"g":0,"h":16777216}
-h past the limit: at $.h: expected number
+h past the limit: at $.h: cannot unmarshal number 3.4028236e38 into Float32
 h below limit: ok 0 0 0 0 0 0 0 3.4028234663852886e+38 | {"a":0,"b":0,"c":0,"d":0,"e":0,"f":0,"g":0,"h":3.4028234663852886e+38}
-h past the negative limit: at $.h: expected number
-h huge: at $.h: expected number
+h past the negative limit: at $.h: cannot unmarshal number -3.4028236e38 into Float32
+h huge: at $.h: cannot unmarshal number 1e39 into Float32
 h tiny: ok 0 0 0 0 0 0 0 0.0 | {"a":0,"b":0,"c":0,"d":0,"e":0,"f":0,"g":0,"h":0}
 g exp: at $.g: expected non negative integer
 --- stderr

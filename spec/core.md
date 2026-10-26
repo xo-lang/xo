@@ -606,13 +606,15 @@ b"raw bytes\x00"                          // Bytes, escapes but no interpolation
 | `()` | Unit |
 | `Never` | The type with no values. Type of `return`, `break`, `continue`, `fault(...)`, `proc.exit(...)`, and infinite loops. Converts to every type. |
 
-Representation note (2026-10-24, not a language rule): on the native and
-LLVM backends a `List[T]` element takes 8 bytes for every `T` that is an
-integer of any width, `Float32`, `Rune` or `Duration`, and 8 bytes a word
-for a larger `T` (a `Str` is 16); only `List[Bool]` is 1 byte an element and
-`Bytes` is packed. A `List[UInt8]` of a million elements is 8 MB, a `Bytes`
-of them 1 MB. The Go backend stores Go's own sized types (decision 0369,
-Proposed, costs packing the others).
+Representation note (2026-10-26, not a language rule): with list packing
+(decision 0369, Accepted 2026-10-25 and on by default; `--pack-lists=off`
+turns it off) a `List[T]` element on the native arm64 and LLVM backends
+takes the width of `T` for `Int8`, `UInt8`, `Int16`, `UInt16`, `Int32`,
+`UInt32`, `Rune` and `Float32` (1, 2 or 4 bytes), 8 bytes for `Int`,
+`UInt64`, `Float` and `Duration`, and 8 bytes a word for a larger `T` (a
+`Str` is 16); `List[Bool]` is 1 byte an element and `Bytes` is packed. A
+`List[UInt8]` of a million elements is 1 MB, as a `Bytes` of them is. The
+Go backend stores Go's own sized types.
 
 A `Str` is always valid UTF-8: literals are, operations on `Str` keep it, and
 std makes outside bytes valid where they become a `Str` (std.md 0, decision

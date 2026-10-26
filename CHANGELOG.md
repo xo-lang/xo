@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo fix` adds a missing `require go` pin once: each fix round's check now
+  reads the xo.mod the previous round edited, where it read the file on
+  disk and added the pin again every round (25 copies in one run; Intel
+  tester b12).
+- `xo build -h` lists `--pack-lists` and `--inline-str`; `--inline-str` on a
+  build other than native arm64 warns that it has no effect (decision 0370).
+- JSON: a number out of Float's or Float32's range fails with Go's words,
+  `cannot unmarshal number 1e400 into Float`, in `decode` and `parse_value`
+  on every backend (was `expected number`).
 - The back-end cache stores its entries and pack segments LZ4 compressed
   (decision 0365; a port of the LZ4 block format in xo itself,
   std/native/llrt/lz4.xo): about a third of the bytes written (a warm

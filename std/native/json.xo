@@ -46,8 +46,8 @@ fn patch_apply_opt[T](p: json.Patch[T], current: T?) -> T? {
 // Value (decision 0299): built from jsontext's tape, as decode reads it
 
 /// None when a number is out of Float's range (strconv.ParseFloat's
-/// range error, which decode reports as "expected number"); bad_path
-/// names it.
+/// range error, which decode reports as "cannot unmarshal number N into
+/// Float"); bad_path names it.
 fn value_at(src: Bytes, tape: List[Int], i: Int) -> json.Value? {
   let k = tape[i]
   if k == 0 {
@@ -86,12 +86,12 @@ fn value_at(src: Bytes, tape: List[Int], i: Int) -> json.Value? {
 }
 
 /// The decode path (".key", "[2]") of the first number at or under node i
-/// that is out of Float's range, or None.
-fn bad_path(src: Bytes, tape: List[Int], i: Int) -> Str? {
+/// that is out of Float's range, with that number's node, or None.
+fn bad_path(src: Bytes, tape: List[Int], i: Int) -> (Str, Int)? {
   let k = tape[i]
   if k == 3 {
     if !jsontext.int_ok(src, tape, i) && jsontext.float_opt(src, tape, i) == None {
-      return Some("")
+      return Some(("", i))
     }
     return None
   }
@@ -99,8 +99,8 @@ fn bad_path(src: Bytes, tape: List[Int], i: Int) -> Str? {
     var j = i + 3
     var n = 0
     while j < tape[i + 2] {
-      if let Some(p) = bad_path(src, tape, j) {
-        return Some("[${n}]" + p)
+      if let Some((p, at)) = bad_path(src, tape, j) {
+        return Some(("[${n}]" + p, at))
       }
       j = jsontext.next(tape, j)
       n += 1
@@ -111,8 +111,8 @@ fn bad_path(src: Bytes, tape: List[Int], i: Int) -> Str? {
     let ms = jsontext.members(src, tape, i)
     var m = 0
     while m + 1 < ms.len() {
-      if let Some(p) = bad_path(src, tape, ms[m + 1]) {
-        return Some("." + jsontext.str_at(src, tape, ms[m]) + p)
+      if let Some((p, at)) = bad_path(src, tape, ms[m + 1]) {
+        return Some(("." + jsontext.str_at(src, tape, ms[m]) + p, at))
       }
       m += 2
     }
@@ -131,7 +131,11 @@ fn parse_bytes(src: Bytes) -> json.Value ! json.DecodeErr {
   }
   match value_at(src, tape, 0) {
     Some(v) => Ok(v)
-    None => Err(json.DecodeErr{path: "$" + (bad_path(src, tape, 0) ?? ""), msg: "expected number"})
+    None => {
+      // Go's wording (encoding/json's UnmarshalTypeError), Xo's type
+      let (p, at) = bad_path(src, tape, 0) ?? ("", 0)
+      Err(json.DecodeErr{path: "$" + p, msg: jsontext.range_msg(src, tape, at, "Float")})
+    }
   }
 }
 

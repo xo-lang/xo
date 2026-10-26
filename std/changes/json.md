@@ -1,5 +1,20 @@
 # std/json changes
 
+## 2026-10-26: behavior: a number out of range says so in Go's words
+
+- Kind: behavior
+- Commit: this commit
+- Found by: the owner's Intel tester on 0.32.0 (`1e400` was `at $: expected number`: it is a number, out of range)
+- Go reference: encoding/json's UnmarshalTypeError, "cannot unmarshal number 1e400 into Go value of type float64"
+- Test: goldens json_float_range and json_sized_ints on arm64, LLVM, wasm and Go parity (the Go backend prints the same text)
+
+`decode` into a Float or Float32, and `parse_value`, now fail on a number
+that is out of the type's range with `cannot unmarshal number 1e400 into
+Float` (`into Float32` for a Float32 past its largest value), at the same
+path as before. A value that is not a number at all keeps `expected
+number`. The text is Go's with Xo's type name in place of `Go value of
+type float64`.
+
 ## 2026-10-25: perf: a list element's error path is built only on an error
 
 - Kind: perf

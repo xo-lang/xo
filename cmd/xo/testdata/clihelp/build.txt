@@ -4,8 +4,8 @@ usage: xo build [--targets=all|os/arch,...] [--backend=go|llvm|arm64|amd64|wasm]
                 [--error-args=on|off] [--debug-info=on|off|split]
                 [--profile-support=on|off] [--trace-support=on|off] [--opt=O0..O3]
                 [--trimpath=on|off] [-s] [--dsym] [--ld=macho|cc] [--race]
-                [--stamp NAME=VALUE]... [--hybrid]
-                [--json] [-o out] <dirs...>
+                [--stamp NAME=VALUE]... [--hybrid] [--pack-lists=on|off]
+                [--inline-str] [--json] [-o out] <dirs...>
 
 Compile to static binaries (default: the host). The directories are one
 program. The default backend is native (decisions 0248 and 0270): arm64
@@ -47,7 +47,12 @@ sets a `const NAME: Str` of the main module for this build (XO1501
 otherwise). std/time zone data is embedded per use (decision 0094);
 --tzdata=system (also on run and test) reads the host's database
 instead. --hybrid is deprecated: a plain Go backend build with a
-warning (decision 0084).
+warning (decision 0084). --pack-lists (on by default, decision 0369)
+stores a List of a sized integer type in its elements' width on the
+arm64 and LLVM backends; --pack-lists=off keeps a word an element.
+--inline-str (experimental, off by default, decision 0370) keeps a Str
+of up to 11 bytes in its two words; it works on the native arm64
+backend only, and elsewhere warns that it has no effect.
 
 A directory means that directory alone; DIR/... covers the directories
 below it too, up to 6,000 .xo files or 60,000 entries (decision 0345).

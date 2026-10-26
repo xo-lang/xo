@@ -134,6 +134,14 @@ func TestUseGoPin(t *testing.T) {
 	if !strings.Contains(string(data), "\nrequire go github.com/google/uuid v1.") {
 		t.Fatalf("xo fix did not pin it: xo.mod\n%s\n%s%s", data, out.String(), errOut.String())
 	}
+	// once, and a second fix adds nothing: each round's check reads the
+	// xo.mod the last round edited (Intel b12: one fix wrote the pin 25
+	// times, once a round, as the check read xo.mod from disk)
+	run(t, []string{"fix", app}, &out, &errOut)
+	data, _ = os.ReadFile(filepath.Join(dir, "xo.mod"))
+	if n := strings.Count(string(data), "require go github.com/google/uuid"); n != 1 {
+		t.Fatalf("after two xo fix runs xo.mod pins the module %d times:\n%s", n, data)
+	}
 	// pinned, xo.lock has no go.sum hash for it yet (stage b): XO1305,
 	// which tidy records
 	out.Reset()
@@ -176,5 +184,31 @@ func TestUseGoPin(t *testing.T) {
 	data, _ = os.ReadFile(filepath.Join(dir, "xo.mod"))
 	if !strings.Contains(string(data), "require go github.com/google/uuid v1.") || strings.Contains(string(data), "require go strings") {
 		t.Fatalf("tidy: xo.mod\n%s", data)
+	}
+}
+
+// TestInlineStrWarnsOffArm64: --inline-str works on the native arm64
+// backend only (decision 0370); a build where it does nothing says so
+// instead of accepting it silently (Intel tester, 0.32.0), and an arm64
+// build does not warn.
+func TestInlineStrWarnsOffArm64(t *testing.T) {
+	t.Parallel()
+	dir := writeFiles(t, map[string]string{
+		"xo.mod":  "module ex\n",
+		"main.xo": "fn main(os: Os) {\n  os.stdio.println(\"hi\")\n}\n",
+	})
+	for _, c := range []struct {
+		backend string
+		warn    bool
+	}{{"amd64", true}, {"arm64", false}} {
+		var out, errOut bytes.Buffer
+		code := run(t, []string{"build", "--backend=" + c.backend, "--inline-str", "-o", filepath.Join(dir, "prog-"+c.backend), dir}, &out, &errOut)
+		if code != 0 {
+			t.Fatalf("build --backend=%s --inline-str: exit %d\n%s%s", c.backend, code, out.String(), errOut.String())
+		}
+		got := strings.Contains(errOut.String(), "--inline-str has no effect here")
+		if got != c.warn {
+			t.Errorf("build --backend=%s --inline-str: warned %v, want %v\n%s", c.backend, got, c.warn, errOut.String())
+		}
 	}
 }
