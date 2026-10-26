@@ -40,7 +40,7 @@ pub struct Host {
 }
 
 pub fn usage() -> Str {
-  "usage: xo dev goldens|errorcheck|codegen|bisect-pass|dwarf|unwind|symbolize|debug|compare|new-code|new-golden|dump|record [flags] ..."
+  "usage: xo dev goldens|errorcheck|codegen|bisect-pass|dwarf|unwind|symbolize|debug|compare|new-code|new-golden|dump|edges|record [flags] ..."
 }
 
 /// run runs `xo dev <args>` for the commands of this module and returns

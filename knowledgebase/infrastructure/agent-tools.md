@@ -31,6 +31,17 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   examples/realtime-control) is left out and the rest checked, and the
   answer names it (`"skipped"` in JSON, a `note: skipped` line in text).
   Last verified: 2026-10-21.
+- `xo dev edges [--out=FILE] DIR` prints every reference the checker
+  resolves in DIR's program, one tab separated line each: the function
+  whose body holds it, the declaration it names (path, line, name), and
+  the reference itself (path, line, column, name). It is the resolved
+  reference graph a name scan cannot give: `s.find_where(f)` resolves to
+  `Str.find_where` although the receiver written is a variable, not a
+  type. `scripts/stdcoverage -edges=DIR` reads a directory of its .tsv
+  files and reports the name scan's coverage against it (2026-10-25: of
+  1455 declarations the scan over-claims 129, 86 of them with no
+  collision to explain them, and misses none; 43 are interface dispatch,
+  which needs implementation edges). Last verified: 2026-10-25.
 - `xo edit [--dry-run] rename OLD NEW` renames functions, methods,
   constants, types, fields and enum variants (`Type.member`), and
   interface methods (`Iface.m`, with every implementing type's method),
