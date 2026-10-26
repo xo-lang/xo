@@ -723,7 +723,12 @@ fn verify_by_keys(os: Os, var mi: ssa.Module, keys: List[Str], dir: Str, id: Str
       vidx.push(fi)
     }
   }
-  ssa.force_lazy(mi, vidx, jobs)
+  // none to verify: force_lazy decodes every undecoded function for an
+  // empty list, which an edit that adds no reachable function hit, all
+  // 1,300 of llvm-fib's inline hits decoded and none verified (2026-10-26)
+  if !vidx.is_empty() {
+    ssa.force_lazy(mi, vidx, jobs)
+  }
   let errs = mi.verify_jobs_skip(jobs, skip)
   if errs.is_empty() && fresh > 0 {
     // the keys of earlier builds too (an edit and its revert), until

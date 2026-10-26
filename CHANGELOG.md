@@ -27,6 +27,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   the undefined-symbol check and hashing the parts again: one cache entry names the
   objects the last such build made (`phase tail`). llvm-fib's and conc-mutex's edit
   rebuilds take 270 ms instead of 320; the binary is byte for byte a cold build's.
+- An edit rebuild whose edit adds no reachable function no longer decodes every
+  cached inlining result it does not verify: `inline.verify` about 18 ms to 7.
+  With the entry above, llvm-fib's and conc-mutex's edit rebuilds take 260 ms
+  instead of 320.
 - `xo bench --ab` with no `--max-load` now marks a round loaded when a side
   starts at a 1 minute load of 6 or more, and leaves it out of the
   statistics unless `--keep-loaded` (it does not wait for the load, as
