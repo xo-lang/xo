@@ -2,9 +2,13 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"math/rand"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // The bytes corpus: Go's bytes package as the oracle for Bytes.contains,
@@ -910,10 +914,163 @@ func bytesCorpus() string {
 	}
 	o.WriteString("]\n")
 
+	o.WriteString(bytesMiscTables())
 	o.WriteString(bytesTests)
 	o.WriteString(byteswhereCorpus())
 	return o.String()
 }
+
+// bytesMiscTables is the half of Bytes the audit found no call for
+// (2026-10-26): find and rfind (bytes.Index, bytes.LastIndex), rune_count
+// (utf8.RuneCount), decode_rune (utf8.DecodeRune at every offset, including
+// one past the end, which Go answers RuneError, 0), quote
+// (strconv.Quote), to_base64 (base64.StdEncoding), to_str (Ok only for
+// valid UTF-8), is_empty, indexed and clone. The inputs are the short
+// strings that make a find miss, hit at 0, hit at the end, or hit a byte
+// inside a multi byte rune, plus seeded random bytes with invalid UTF-8,
+// since these are bytes and not text.
+func bytesMiscTables() string {
+	r := rand.New(rand.NewSource(71))
+	var cs []bytesCase
+	for _, s := range []string{"", "a", "abc", "hello", "日本語", "\xff\xfe", "a\xffb", "aaa", "\x80", "a\x80b"} {
+		for _, sub := range []string{"", "a", "abc", "bc", "日本語", "\xff", "\xfe", "aa", "abcd", "\x80"} {
+			cs = append(cs, bytesCase{[]byte(s), []byte(sub)})
+		}
+	}
+	for i := 0; i < 800; i++ {
+		b := bytesGen(r, bytesLens[r.Intn(len(bytesLens))])
+		cs = append(cs, bytesCase{b, bytesRandomSub(r, b)})
+	}
+	var o strings.Builder
+	o.WriteString("\n/// (b, sub, Go's Index and LastIndex as an Int, -1 when none)\nconst MISC_FIND: List[(Bytes, Bytes, Int, Int)] = [\n")
+	for _, c := range cs {
+		f, l := bytes.Index(c.b, c.sub), bytes.LastIndex(c.b, c.sub)
+		fmt.Fprintf(&o, "  (%s, %s, %d, %d),\n", xbytes(c.b), xbytes(c.sub), f, l)
+	}
+	o.WriteString("]\n")
+
+	o.WriteString("\n/// (b, Go's RuneCount, Quote, StdEncoding, whether it is valid UTF-8 and its text as hex, IsEmpty, Indexed as i:b, ...)\n")
+	o.WriteString("/// Quote and the base64 output are ASCII, and the text is hex, so none of them\n")
+	o.WriteString("/// can hold the U+001F separator.\n")
+	o.WriteString("const MISC_TEXT: List[(Bytes, Int, Str, Str, Str, Bool, Str)] = [\n")
+	for _, c := range cs {
+		b := c.b
+		text := "none"
+		if utf8.Valid(b) {
+			text = "ok " + hex.EncodeToString(b)
+		}
+		var idx strings.Builder
+		for i, v := range b {
+			if i > 0 {
+				idx.WriteString(",")
+			}
+			fmt.Fprintf(&idx, "%d:%d", i, v)
+		}
+		fmt.Fprintf(&o, "  (%s, %d, %s, %s, %s, %v, %s),\n", xbytes(b),
+			utf8.RuneCount(b), xq(strconv.Quote(string(b))), xq(base64.StdEncoding.EncodeToString(b)),
+			xq(text), len(b) == 0, xq(idx.String()))
+	}
+	o.WriteString("]\n")
+
+	o.WriteString("\n/// (b, Go's DecodeRune at each offset 0..len, as rune:size joined with ,)\nconst MISC_DECODE: List[(Bytes, Str)] = [\n")
+	for _, c := range cs {
+		var d strings.Builder
+		for i := 0; i <= len(c.b); i++ {
+			rr, n := utf8.DecodeRune(c.b[i:])
+			if i > 0 {
+				d.WriteString(",")
+			}
+			fmt.Fprintf(&d, "%d:%d", rr, n)
+		}
+		fmt.Fprintf(&o, "  (%s, %s),\n", xbytes(c.b), xq(d.String()))
+	}
+	o.WriteString("]\n")
+	o.WriteString(bytesMiscTests)
+	return o.String()
+}
+
+const bytesMiscTests = `
+fn show_misc[T](bad: List[T]) -> List[T] {
+  bad[0..(if bad.len() < 20 { bad.len() } else { 20 })]
+}
+
+fn misc_find_of(b: Bytes, sub: Bytes) -> Str {
+  let f = match b.find(sub) {
+    Some(i) => "${i}"
+    None => "-1"
+  }
+  let l = match b.rfind(sub) {
+    Some(i) => "${i}"
+    None => "-1"
+  }
+  "${f}\u{1f}${l}"
+}
+
+fn misc_text_of(b: Bytes) -> Str {
+  let text = match b.to_str() {
+    Some(s) => "ok ${s.bytes().to_hex()}"
+    None => "none"
+  }
+  let idx = b.indexed().map(fn(p) { "${p.0}:${Int(p.1)}" }).join(",")
+  "${b.rune_count()}\u{1f}${b.quote()}\u{1f}${b.to_base64()}\u{1f}${text}\u{1f}${b.is_empty()}\u{1f}${idx}"
+}
+
+fn misc_decode_of(b: Bytes) -> Str {
+  var out: List[Str] = []
+  var i = 0
+  while i <= b.len() {
+    let (r, n) = b.decode_rune(i)
+    out.push("${Int(r)}:${n}")
+    i += 1
+  }
+  out.join(",")
+}
+
+test "find and rfind are Go's Index and LastIndex" {
+  expect(MISC_FIND.len() >= 900)
+  var bad: List[(Bytes, Bytes, Str, Str)] = []
+  for (b, sub, f, l) in MISC_FIND {
+    let got = misc_find_of(b, sub)
+    let want = "${f}\u{1f}${l}"
+    if got != want {
+      bad.push((b, sub, got, want))
+    }
+  }
+  expect(show(bad)) == []
+}
+
+test "rune_count, quote, to_base64, to_str, is_empty and indexed are Go's" {
+  expect(MISC_TEXT.len() >= 900)
+  var bad: List[(Bytes, Str, Str)] = []
+  for (b, rc, q, b64, text, empty, idx) in MISC_TEXT {
+    let got = misc_text_of(b)
+    let want = "${rc}\u{1f}${q}\u{1f}${b64}\u{1f}${text}\u{1f}${empty}\u{1f}${idx}"
+    if got != want {
+      bad.push((b, got, want))
+    }
+  }
+  expect(show_misc(bad)) == []
+}
+
+test "decode_rune is Go's DecodeRune at every offset" {
+  expect(MISC_DECODE.len() >= 900)
+  var bad: List[(Bytes, Str, Str)] = []
+  for (b, want) in MISC_DECODE {
+    let got = misc_decode_of(b)
+    if got != want {
+      bad.push((b, got, want))
+    }
+  }
+  expect(show_misc(bad)) == []
+}
+
+test "clone is an equal copy" {
+  for (b, _, _, _) in MISC_FIND {
+    expect(b.clone()) == b
+    expect(b.clone().len()) == b.len()
+  }
+}
+`
 
 const bytesTests = `
 fn oracle_of(b: Bytes, sub: Bytes) -> Str {

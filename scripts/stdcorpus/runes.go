@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math/rand"
 	"strconv"
 	"strings"
 	"unicode"
@@ -132,8 +133,48 @@ func runesCorpus() string {
 	o.WriteString("]\n")
 
 	o.WriteString(runesTests)
+	o.WriteString(runeQuoteTable())
 	return o.String()
 }
+
+// runeQuoteTable is Rune.quote (Go's strconv.QuoteRune) over the printable
+// and non printable edges and seeded random scalar values: the audit found
+// no call for it (2026-10-26). Only scalar values are rows: Rune(v) faults
+// for the surrogate gap, above U+10FFFF and below 0 (core 2.4), so Go's
+// U+FFFD form for those is unreachable from a Rune.
+func runeQuoteTable() string {
+	r := rand.New(rand.NewSource(73))
+	vals := []int{0, 1, 6, 7, 8, 9, 10, 11, 12, 13, 26, 27, 28, 31, 32, 33, 34, 39, 92, 126, 127, 128, 0x80, 0x9f, 0xa0, 0xad, 0x200b, 0x2028, 0x2029, 0x3000, 0xfeff, 0xfffd, 0xffff, 0x10000, 0x10ffff, 0xd7ff, 0xe000}
+	vals = append(vals, 0x41, 0x61, 0x30, 0xe9, 0x65e5, 0x1f600, 0x1d7ce, 0x4e00)
+	for i := 0; i < 400; i++ {
+		vals = append(vals, r.Intn(0x110000))
+	}
+	var o strings.Builder
+	o.WriteString("\n/// (the Rune's Int, Go's strconv.QuoteRune)\nconst QUOTES: List[(Int, Str)] = [\n")
+	for _, v := range vals {
+		if !utf8.ValidRune(rune(v)) {
+			continue
+		}
+		fmt.Fprintf(&o, "  (%d, %s),\n", v, xq(strconv.QuoteRune(rune(v))))
+	}
+	o.WriteString("]\n")
+	o.WriteString(runeQuoteTests)
+	return o.String()
+}
+
+const runeQuoteTests = `
+test "Rune.quote is Go's QuoteRune" {
+  expect(QUOTES.len() >= 430)
+  var bad: List[Str] = []
+  for (v, want) in QUOTES {
+    let got = Rune(v).quote()
+    if got != want {
+      bad.push("u+${v}: ${got} want ${want}")
+    }
+  }
+  expect(show(bad)) == []
+}
+`
 
 const runesTests = `
 fn bit(b: Bool, v: Int) -> Int {
