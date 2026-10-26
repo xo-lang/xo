@@ -26,15 +26,10 @@ import (
 	"fmt"
 	"math/rand"
 	"net/http"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
-
-	"github.com/xo-lang/xo/internal/testtmp"
-	"github.com/xo-lang/xo/internal/xotool"
 )
 
 // headCase is one raw request head and the answer both sides must give.
@@ -234,34 +229,6 @@ func hfXoFile(cases []headCase) string {
 	return b.String()
 }
 
-// xoStr is s as an Xo string literal.
-func xoStr(s string) string {
-	var b strings.Builder
-	b.WriteByte('"')
-	for _, r := range s {
-		switch {
-		case r == '"':
-			b.WriteString(`\"`)
-		case r == '\\':
-			b.WriteString(`\\`)
-		case r == '$':
-			b.WriteString(`\$`)
-		case r == '\n':
-			b.WriteString(`\n`)
-		case r == '\r':
-			b.WriteString(`\r`)
-		case r == '\t':
-			b.WriteString(`\t`)
-		case r < 0x20 || r == 0x7f:
-			fmt.Fprintf(&b, `\u{%x}`, r)
-		default:
-			b.WriteRune(r)
-		}
-	}
-	b.WriteByte('"')
-	return b.String()
-}
-
 // TestHttpHeadFuzz runs the generated cases with parse_head on the native
 // backends and expects Go's net/http.ReadRequest answer for each.
 // XO_HEADFUZZ_N sets the case count (default 300) and XO_HEADFUZZ_BACKENDS
@@ -270,59 +237,8 @@ func TestHttpHeadFuzz(t *testing.T) {
 	if testing.Short() {
 		t.Skip("the raw header block fuzz is a heavy test")
 	}
-	root, err := xotool.Root()
-	if err != nil {
-		t.Fatal(err)
-	}
-	xo, err := xotool.Path()
-	if err != nil {
-		t.Fatal(err)
-	}
-	n := 300
-	if v := os.Getenv("XO_HEADFUZZ_N"); v != "" {
-		if _, err := fmt.Sscanf(v, "%d", &n); err != nil {
-			t.Fatalf("XO_HEADFUZZ_N: %v", err)
-		}
-	}
-	backends := []string{"arm64"}
-	if v := os.Getenv("XO_HEADFUZZ_BACKENDS"); v != "" {
-		backends = strings.Split(v, ",")
-	}
+	n := envInt(t, "XO_HEADFUZZ_N", 300)
+	backends := envBackends("XO_HEADFUZZ_BACKENDS", []string{"arm64"})
 	cases := hfHeadCases(rand.New(rand.NewSource(64)), n)
-	work, err := testtmp.Dir("xo-headfuzz-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(work)
-	std := filepath.Join(work, "std")
-	if err := os.CopyFS(std, os.DirFS(filepath.Join(root, "std"))); err != nil {
-		t.Fatal(err)
-	}
-	tests := filepath.Join(std, "native", "llrt", "http1_test.xo")
-	if err := os.WriteFile(tests, []byte(hfXoFile(cases)), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	for _, b := range backends {
-		cmd := testtmp.Guard(exec.Command(xo, "test", "--std-module=native/llrt/http1", "--backend="+b))
-		cmd.Dir = root
-		cmd.Env = append(os.Environ(), "XO_STD="+std, "PWD="+root)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("xo test --std-module=native/llrt/http1 --backend=%s: %v\n%s", b, err, hfFailures(string(out)))
-		}
-	}
-}
-
-// hfFailures trims a failing xo test run to the lines that name cases.
-func hfFailures(out string) string {
-	var keep []string
-	for _, line := range strings.Split(out, "\n") {
-		if strings.Contains(line, "head case") || strings.Contains(line, "FAIL") || strings.Contains(line, "panic") || strings.Contains(line, "fault") || strings.Contains(line, "got ") {
-			keep = append(keep, line)
-		}
-	}
-	if len(keep) == 0 {
-		return out
-	}
-	return strings.Join(keep, "\n")
+	probeModule(t, "native/llrt/http1", filepath.Join("native", "llrt", "http1_test.xo"), hfXoFile(cases), backends, len(cases))
 }

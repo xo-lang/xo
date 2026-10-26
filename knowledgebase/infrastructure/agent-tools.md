@@ -257,6 +257,17 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   server layer (gotchas/readrequest-not-the-server-layer.md). The bytes are
   the Str the parser sees, so invalid UTF-8 arrives as U+FFFD (decision
   0259); the byte-to-text step has its own tests.
+- The response head parser has the same shape (2026-10-26):
+  `go test ./internal/stdtest -run TestHttpResponseFuzz` generates seeded
+  raw response heads (bad status codes and versions, Content-Length and
+  Transfer-Encoding shapes, Trailer, Connection, Pragma, obs-folds,
+  control bytes, LF endings) and compares `http1.parse_response` with
+  `net/http.ReadResponse`; `XO_RESPFUZZ_N` and `XO_RESPFUZZ_BACKENDS`
+  work as for the request fuzz, 2000 cases on arm64 and LLVM take about
+  11 s. Two `RespHead` fields are deliberately not Go's public ones
+  (`clen` is readTransfer's realLength, `close` is shouldClose): the
+  oracle derives them from the head, see the gotcha. The field order and
+  a refused head's error text are not compared yet.
 - `go run ./scripts/stdsync [-check]` after changing std/prelude.xo: one
   command for every file a prelude change derives, spec/std.md's Appendix A
   index (every prelude function and method by type, internal/stdindex), the

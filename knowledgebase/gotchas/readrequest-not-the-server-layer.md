@@ -25,6 +25,25 @@ alone is the client-shaped reader. The extra server checks are:
 Comparing `parse_head` with `ReadRequest` therefore compares two layers,
 and every server-only check reads as a parser divergence.
 
+## The response side
+
+A differential of `parse_response` against `net/http.ReadResponse` hit the
+same trap from the other end (`internal/stdtest/httprespfuzz_test.go`): two
+of `RespHead`'s fields are deliberately not Go's public ones.
+
+- `clen` is readTransfer's `realLength`, not `resp.ContentLength`: a HEAD
+  response, a 1xx, 204 or 304 has 0 there even when Content-Length says 5,
+  and chunked is -1.
+- `close` is `shouldClose`, not `resp.Close`: Go also sets `resp.Close` for
+  an unbounded body, while the port keeps framing apart (`Exchange.keep`).
+
+Both differed in the first 300 seeded cases and read as parser
+divergences; the oracle now derives them from the head the way the port
+does. A folded `Connection` (a continuation line after it) is a third:
+the token list must come from the folded field (`close "q"` is not
+`close`), so the oracle reads the block with textproto rather than line by
+line.
+
 ## Fix
 
 In a differential oracle, apply the server's rules on the Go side too:
