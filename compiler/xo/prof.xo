@@ -547,6 +547,17 @@ fn top_text(flat: List[Int], cum: List[Int], names: List[Str], hot: List[Str], t
 // pprof's protobuf (github.com/google/pprof proto/profile.proto)
 
 fn varint(var b: BytesBuilder, v0: Int) {
+  if v0 < 0 {
+    // a negative value is its two's complement as a uint64: nine groups
+    // of seven bits, then the top bit (protobuf's int64 form; a pc at or
+    // above 2^63 is one). The loop below cannot encode it: v >> 7 stays
+    // -1 and the loop never ends (2026-10-26).
+    for i in 0..9 {
+      b.write_byte(UInt8(((v0 >> (7 * i)) & 127) | 128))
+    }
+    b.write_byte(UInt8((v0 >> 63) & 1))
+    return
+  }
   var v = v0
   while true {
     let low = v & 127

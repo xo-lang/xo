@@ -1,0 +1,38 @@
+// Tests of the raw profile reader and writer (trace.xo, prof.xo): a raw
+// file's words are u64s, so one at or above 2^63 must read as its bit
+// pattern, a negative Int, and not fault, and write back as a varint of
+// ten bytes, not spin (2026-10-26: a 2,127 sample profile of
+// bench/perf/text's float_fmt held the pc 0xbab6799c00000000 and `xo
+// prof` stopped with "integer overflow: 52554979092725760 * 256 does not
+// fit Int"; with that read fixed it then spun in varint).
+
+test "a raw word at or above 2^63 reads as its bit pattern" {
+  // 0xbab6799c00000000 little endian
+  let b = Bytes.from_hex("000000009c79b6ba") ?? b""
+  expect(b.len()) == 8
+  expect(u64(b, 0)) == -4992669425971757056
+}
+
+test "a profile holding such a pc reads to its error, not a fault" {
+  // the 64 byte header (XORAW1, kind 2), then one PS_CPU section of 56
+  // bytes: hz, period, dur, lost, one sample, whose first and only pc is
+  // 0xbab6799c00000000, and no table, so the section is truncated
+  let head = "584f5241573100000200000000000000" + "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+  let sec = "1000000000000000" + "3800000000000000" + "e803000000000000" + "40420f0000000000" + "0100000000000000" + "0000000000000000" + "0100000000000000" + "0100000000000000" + "000000009c79b6ba"
+  let b = Bytes.from_hex(head + sec) ?? b""
+  expect(b.len()) == 136
+  match prof_parse(b) {
+    Ok(_) => expect(false) == true
+    Err(m) => expect(m) == "a truncated CPU profile section"
+  }
+}
+
+test "a negative varint is its uint64 bit pattern, ten bytes" {
+  var one = BytesBuilder.new()
+  varint(one, -1)
+  expect(one.freeze().to_hex()) == "ffffffffffffffffff01"
+  // the pc of the profile that stopped xo prof: 0xbab6799c00000000
+  var pc = BytesBuilder.new()
+  varint(pc, -4992669425971757056)
+  expect(pc.freeze().to_hex()) == "80808080c0b39edbba01"
+}

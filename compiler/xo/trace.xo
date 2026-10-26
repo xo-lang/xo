@@ -62,11 +62,15 @@ struct Raw {
   workers: Int
 }
 
+/// The raw word at byte at, little endian, as its bit pattern: the file
+/// holds u64s (addresses, pcs, counts), so a value at or above 2^63
+/// reads as a negative Int instead of faulting (a 2,127 sample profile
+/// held a pc at 0xbab6799c00000000; `xo prof` faulted on it, 2026-10-26).
 fn u64(b: Bytes, at: Int) -> Int {
   var v = 0
   var i = 7
   while i >= 0 {
-    v = v * 256 + Int(b[at + i])
+    v = v.wrapping_mul(256).wrapping_add(Int(b[at + i]))
     i -= 1
   }
   v
