@@ -15,15 +15,43 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/xo-lang/xo/internal/xotool"
 	"github.com/xo-lang/xo/std/rt"
 )
 
-// tool builds testdata/tool with backend.
+// tools are the built testdata/tool by backend: one build each for the
+// package, made one at a time (a release build of a program that imports
+// std/internal, whose native module brings in the TLS and crypto stack,
+// took about 5.7 GB cold; three in parallel beside other packages' tests
+// ran the Mac out of memory, 2026-10-26).
+var (
+	toolMu   sync.Mutex
+	tools    = map[string]string{}
+	toolDirs []string
+)
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	for _, d := range toolDirs {
+		os.RemoveAll(d)
+	}
+	os.Exit(code)
+}
+
+// tool builds testdata/tool with backend, once.
 func tool(t *testing.T, backend string) string {
 	t.Helper()
+	if testing.Short() {
+		t.Skip("builds testdata/tool with xo; golden lz4_roundtrip covers the codec on every backend")
+	}
+	toolMu.Lock()
+	defer toolMu.Unlock()
+	if bin, ok := tools[backend]; ok {
+		return bin
+	}
 	if backend == xotool.BackendLLVM {
 		if _, err := xotool.Clang(); err != nil {
 			t.Skipf("no clang: %v", err)
@@ -37,9 +65,11 @@ func tool(t *testing.T, backend string) string {
 		t.Fatalf("building testdata/tool:\n%s", r.Output)
 	}
 	if r.Dir != "" {
-		t.Cleanup(func() { os.RemoveAll(r.Dir) })
+		toolDirs = append(toolDirs, r.Dir)
 	}
-	return r.Binaries[xotool.Host()]
+	bin := r.Binaries[xotool.Host()]
+	tools[backend] = bin
+	return bin
 }
 
 // corpus is the inputs: the format's edge lengths (0 to 13 bytes, where
@@ -120,7 +150,7 @@ func run(t *testing.T, bin string, args ...string) {
 // through the generated code).
 func TestNativeMatchesGo(t *testing.T) {
 	for _, b := range []string{xotool.NativeBackend(), xotool.BackendLLVM, xotool.BackendGo} {
-		t.Run(b, func(t *testing.T) { t.Parallel(); matchesGo(t, tool(t, b)) })
+		t.Run(b, func(t *testing.T) { matchesGo(t, tool(t, b)) })
 	}
 }
 
