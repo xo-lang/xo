@@ -999,6 +999,12 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   if !tests {
     o.binfo_sources = binfo_sources(c, root, o.wd)
   }
+  // the retry's note names the cross module effect reads, which lower's
+  // link_view no longer has the effect tables to find (decision 0352)
+  var effect_reads: List[Str] = []
+  if c.mod_skip_auto && c.skip_unsafe && (o.phases || !(os.env.get("XO_CHK_CACHE") ?? "").is_empty()) {
+    effect_reads = c.effect_reads_across_modules()
+  }
   var lo = lower(os, o, c, strip, root, tests, release, uses_time, tgoos, tgoarch, backend == "wasm", backend is "arm64" | "amd64", t)
   if c.mod_skip_auto && (!lo.b.skip_src.is_empty() || c.skip_unsafe) {
     // XO_CHK_CACHE=auto skipped a module a body of which was built from
@@ -1018,7 +1024,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // program built for another target first, whose bodies the front end
     // cache keys apart), and a warning on every such build was noise
     if o.phases || !(os.env.get("XO_CHK_CACHE") ?? "").is_empty() {
-      os.stdio.eprintln("xo: note: the module check cache skipped ${no.len()} module(s) a body of which was built from source (${no.sort().join(", ")}${if c.skip_unsafe { "; effects read across modules: ${c.effect_reads_across_modules().join(", ")}" } else { "" }}); checking them again")
+      os.stdio.eprintln("xo: note: the module check cache skipped ${no.len()} module(s) a body of which was built from source (${no.sort().join(", ")}${if c.skip_unsafe { "; effects read across modules: ${effect_reads.join(", ")}" } else { "" }}); checking them again")
     }
     o.chk_noskip = o.chk_noskip + no
     c = check_program(os, o, true)
