@@ -223,6 +223,21 @@ the one 0383 names: a block once cut never grows back, so a run whose late deman
 245 growth events) can be starved of large blocks by an early cut; the measurement that decides is the same
 self build with a counter of the cuts and a count of the large requests that find no block.
 
+(a), the ledger measurement (2026-10-26, a scratch build of main with (c), counting only, cold self build): the
+central bytes of each class from the puts and takes, and at every chunk growth event a virtual cut of whole
+central magazines of larger classes, enough for 4 MiB, smallest donor first; a later real take of a class
+whose stock the cuts had taken away counts as starved (the virtual run would carve instead; no recut is
+modelled). With every larger class as a donor: 2,409 MiB of growth avoided and 1,619 MiB starved (5,717
+takes), net 790 MiB; the same with donors limited to 64 times the size asked. But a donor of 32 KiB or over
+is already given back by (c), so cutting it into small blocks makes its pages resident again and saves no
+footprint, while its starvation still costs. With only the resident donors (classes 2 KiB to 16 KiB and
+below, so (a) is a cut of the small classes' central magazines): 1,029 MiB avoided, 227 MiB starved (3,454
+takes), net about 800 MiB at the build's peak chunk count (1,751 chunks; the same figure at 1,350
+chunks), 11% of the 7.4 GB footprint. The growth is avoided only if a cut block's class gets the demand
+the cut anticipated, and the exact tiling of the layout change below is not modelled (requests of 2,041 to
+2,048 bytes move up a class). So (a) after (c) bounds 0.8 GB, not 3.2 GB: the 3.2 GB counted donors (c)
+already empties.
+
 A seed workaround: the request rides on rt.heap_grow, whose n argument carries a flag bit (2^61, below
 the heap profile's 2^62) and whose heap argument is the magazine, because a new rt.* name needs the seed's
 compiler to know it (gotchas/seed-older-than-intrinsics.md: a runtime function calling a name the seed
