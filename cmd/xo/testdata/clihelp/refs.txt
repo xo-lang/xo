@@ -1,7 +1,12 @@
-usage: xo refs [--dir=DIR] [--json|--text] NAME
+usage: xo refs [--dir=DIR] [--testdata] [--json|--text] NAME [NAME...]
 
 Every reference to NAME in the program, the declaration marked, NAME
-written as for xo def.
+written as for xo def. A root's check leaves out its `testdata`
+directories, as every DIR/... walk does (the answer names them, JSON
+"testdata_skipped"); --testdata checks the modules under them too (the
+program goldens of internal/*/testdata). Several names are answered
+from one check (JSON {"results": [...]}, one answer or {"target",
+"error"} each, in order; exit 1 when one has no answer).
 
 --dir=DIR checks the program in DIR (default .; a workspace or
 repository root checks the modules under it).
