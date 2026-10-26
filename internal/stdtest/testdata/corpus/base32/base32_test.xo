@@ -2109,6 +2109,69 @@ const DECODE: List[(Int, Str, Str)] = [
   (1, "XCAPSHOSUP7B7RLOBA", "err 0"),
   (3, "8T572CMVOEGMH3V0CSOH3G38C3QNM0", "ok 474a7132dfc3a1688fe0673111c068"),
 ]
+/// (variant, text, Go's error text for that input)
+const DECODEERR: List[(Int, Str, Str)] = [
+  (0, "6PMSF5Z7YILWQFN652XI2IXYX3REZO6HT2=XMYTY=", "illegal base32 data at input byte 34"),
+  (3, "AEN2HZ2BC4J6NO4\r\nTX3WNQUQV5J64H5DFHQI7ZA", "illegal base32 data at input byte 5"),
+  (1, "HXCPI37JSB5ZZ5CSA", "illegal base32 data at input byte 1"),
+  (2, "X37MLHGADUVQURBKPIAWQQ=", "illegal base32 data at input byte 22"),
+  (3, "HB654VE5R=O3A====", "illegal base32 data at input byte 9"),
+  (0, "BZUBIGAEB45HXDVP7CM2E==ZCHYXLQLHH3P6A", "illegal base32 data at input byte 21"),
+  (2, "0FL", "illegal base32 data at input byte 0"),
+  (0, "KNIQ==", "illegal base32 data at input byte 6"),
+  (0, "DO5UYNJ2R4YI", "illegal base32 data at input byte 8"),
+  (0, "SI80SF9P5ODCNH72 G8A3IDAKJC19T44EDR3PLNG", "illegal base32 data at input byte 2"),
+  (0, "4GHMVK4EKO6C5DVDOGDKS2SH30======", "illegal base32 data at input byte 25"),
+  (0, "S10F4N1B3NGM2UNFGUMF8", "illegal base32 data at input byte 1"),
+  (0, "5B6ECK4B8U2IDODERG1HK24S38F4PFJPF6I2S", "illegal base32 data at input byte 8"),
+  (2, "5GKL5QDHLLéOEE6O50", "illegal base32 data at input byte 10"),
+  (3, "XCXCD4PQ5K4KGCNE32YXHXK6PT7L2", "illegal base32 data at input byte 0"),
+  (1, "3WCA", "illegal base32 data at input byte 1"),
+  (1, "CGEN5QQT5", "illegal base32 data at input byte 8"),
+  (2, "HSSGRGTEA5QQS0\r\n57QABQ", "illegal base32 data at input byte 13"),
+  (3, "S=KLQLIOUV4R0====", "illegal base32 data at input byte 1"),
+  (0, "57X3K4H6X22V+AGREUV==2ESY7ZJJBSO===", "illegal base32 data at input byte 12"),
+  (0, "3B6IRZJQRKQZGB5OPF6E4", "illegal base32 data at input byte 16"),
+  (1, "I2WBVT3KTKJOMDIZRRKQ====", "illegal base32 data at input byte 2"),
+  (3, "SLUL6V4A5415E===", "illegal base32 data at input byte 13"),
+  (1, "CE4QAJA09+35ACG1", "illegal base32 data at input byte 9"),
+  (1, "VPDADIZOJZWHW2L OSNVAXKLYF54YZX", "illegal base32 data at input byte 6"),
+  (3, "IDAMBZPE57MV2UALPIT4KA4XYNLBVGB2CV6KVYYJF4DAWY=", "illegal base32 data at input byte 5"),
+  (1, "VMSP2CXQL24JIUQ=", "illegal base32 data at input byte 6"),
+  (2, "CHTSJ2SDCU9L130=", "illegal base32 data at input byte 10"),
+  (3, "EDPZTRRDNDH5SPBSMXFGFDNEAM======", "illegal base32 data at input byte 3"),
+  (1, "LJ", "illegal base32 data at input byte 0"),
+  (1, "0E_D936LBNHJMS===", "illegal base32 data at input byte 2"),
+  (2, "HQDC9OMOD9U7EP4DLGMUB6C", "illegal base32 data at input byte 4"),
+  (1, "LUL/8VFQ", "illegal base32 data at input byte 3"),
+  (0, "NCNQJSB7SPM2SEHNPN0EFGR1O95L67R771N5HBO=", "illegal base32 data at input byte 18"),
+  (0, "62KPEMRR5CM5KOIIE8Q9RNHMB1D5Q84Q4JH03V0=", "illegal base32 data at input byte 17"),
+  (2, "3HXAGVVECI======", "illegal base32 data at input byte 10"),
+  (0, "FHTBN3BE4CFQFL6BP==T1F97V+7FN19AQCKDP6AI===", "illegal base32 data at input byte 17"),
+  (1, "SG9UF4ALSACMH03OVOFM5F06AC7QNL7DEAJL6L", "illegal base32 data at input byte 32"),
+  (2, "3IDM2R96DUJQ2R0SVVFJM64PREGH5S7PJ3LEVS7KE8G", "illegal base32 data at input byte 6"),
+  (0, "CEP4H8VIRGG97BPE226ONO30O2DLFCLIKHN0TJ4VS0", "illegal base32 data at input byte 5"),
+  (1, "LO4ZTUNYPGYR3H3E", "illegal base32 data at input byte 3"),
+  (2, "L0RTPJ61Q5NS4023230KKG5PTOK\n5", "illegal base32 data at input byte 1"),
+  (1, "OFD8IO236", "illegal base32 data at input byte 8"),
+  (3, "N5MEO14PPKRSQRM24VRE8RQQG2O===", "illegal base32 data at input byte 27"),
+  (3, "43VFNR398U42701BSR6ESR9QF14IS982J1UTV38=", "illegal base32 data at input byte 39"),
+  (2, "O6IN2===", "illegal base32 data at input byte 5"),
+  (1, "FZG7CDRMFU6OSFCRHORTA54CVCD4PBTI2JV+Q", "illegal base32 data at input byte 1"),
+  (1, "ZAWLKHEGNFQ4OWT2QSQMINUZK3RVMNCSIYS===", "illegal base32 data at input byte 0"),
+  (0, "G64FAE0", "illegal base32 data at input byte 6"),
+  (0, "SJLE7WTGPYLWBGELJU5G6AA", "illegal base32 data at input byte 16"),
+  (0, "WRMJ3LHGTFEVM4JZXGXJV36B4", "illegal base32 data at input byte 24"),
+  (1, "R7VHA==", "illegal base32 data at input byte 7"),
+  (2, "ZU\r/\n", "illegal base32 data at input byte 2"),
+  (1, "\nGHJ3C==+=", "illegal base32 data at input byte 6"),
+  (2, "PA9KCOBSTQH50BE2VDTSVEDNLC=====", "illegal base32 data at input byte 2"),
+  (2, "8RFRDCPA2DGJR42HRG61H2QS9IV8BIO", "illegal base32 data at input byte 0"),
+  (1, "AJ3YNW2QK4RQ", "illegal base32 data at input byte 3"),
+  (2, "MZBDANROLOJVQ===", "illegal base32 data at input byte 13"),
+  (0, "VK", "illegal base32 data at input byte 0"),
+  (0, "19F1DFBCJKERMAUUE023GDCVKGPU08M8V61N1UNV1O======", "illegal base32 data at input byte 0"),
+]
 
 const VARIANTS: List[base32.Base32] = [base32.Base32.Std, base32.Base32.Hex, base32.Base32.RawStd, base32.Base32.RawHex]
 
@@ -2129,6 +2192,20 @@ test "decode gives Go's bytes or Go's error offset" {
     let got = match base32.decode(s, VARIANTS[k]) {
       Ok(b) => "ok ${b.to_hex()}"
       Err(e) => "err ${e.at}"
+    }
+    if got != want {
+      bad.push((k, s, got, want))
+    }
+  }
+  expect(bad[0..(if bad.len() < 20 { bad.len() } else { 20 })]) == []
+}
+
+test "decode error displays Go's error text" {
+  var bad: List[(Int, Str, Str, Str)] = []
+  for (k, s, want) in DECODEERR {
+    let got = match base32.decode(s, VARIANTS[k]) {
+      Ok(_) => "ok"
+      Err(e) => e.display()
     }
     if got != want {
       bad.push((k, s, got, want))

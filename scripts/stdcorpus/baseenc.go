@@ -34,6 +34,7 @@ func baseCorpus(mod string, seed int64, encs []baseEnc, alphabet string) string 
 		fmt.Fprintf(&o, "  (%d, %s, %s),\n", k, xbytes(b), xq(encs[k].enc.EncodeToString(b)))
 	}
 	o.WriteString("]\n\n/// (variant, text, Go's decoding: ok HEX or err AT)\nconst DECODE: List[(Int, Str, Str)] = [\n")
+	var errs []string
 	for i := 0; i < 1500; i++ {
 		k := r.Intn(len(encs))
 		b := make([]byte, r.Intn(30))
@@ -61,10 +62,21 @@ func baseCorpus(mod string, seed int64, encs []baseEnc, alphabet string) string 
 		if err != nil {
 			at, _ := strconv.Atoi(strings.TrimPrefix(err.Error(), "illegal "+mod+" data at input byte "))
 			w = fmt.Sprintf("err %d", at)
+			// Go's own error text for the same input, so the corpus checks
+			// display() against Go and not against Xo (the audit's
+			// 2026-10-26 display entries).
+			if len(errs) < 60 {
+				errs = append(errs, fmt.Sprintf("  (%d, %s, %s),\n", k, xq(str), xq(err.Error())))
+			}
 		} else {
 			w = "ok " + hex.EncodeToString(d)
 		}
 		fmt.Fprintf(&o, "  (%d, %s, %s),\n", k, xq(str), xq(w))
+	}
+	o.WriteString("]\n")
+	o.WriteString("/// (variant, text, Go's error text for that input)\nconst DECODEERR: List[(Int, Str, Str)] = [\n")
+	for _, e := range errs {
+		o.WriteString(e)
 	}
 	o.WriteString("]\n")
 	var vs []string
@@ -98,7 +110,21 @@ test "decode gives Go's bytes or Go's error offset" {
   }
   expect(bad[0..(if bad.len() < 20 { bad.len() } else { 20 })]) == []
 }
-`, mod, enumName, strings.Join(vs, ", "), mod, mod)
+
+test "decode error displays Go's error text" {
+  var bad: List[(Int, Str, Str, Str)] = []
+  for (k, s, want) in DECODEERR {
+    let got = match %s.decode(s, VARIANTS[k]) {
+      Ok(_) => "ok"
+      Err(e) => e.display()
+    }
+    if got != want {
+      bad.push((k, s, got, want))
+    }
+  }
+  expect(bad[0..(if bad.len() < 20 { bad.len() } else { 20 })]) == []
+}
+`, mod, enumName, strings.Join(vs, ", "), mod, mod, mod)
 	return o.String()
 }
 

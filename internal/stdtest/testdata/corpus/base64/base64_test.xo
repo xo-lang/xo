@@ -2109,6 +2109,69 @@ const DECODE: List[(Int, Str, Str)] = [
   (1, "r+", "err 1"),
   (3, "8TQmipyek\n8mUpawCy7M3y424Yn5q3A", "ok f134268a9c9e93c994a5ac02cbb337cb8db8627e6adc"),
 ]
+/// (variant, text, Go's error text for that input)
+const DECODEERR: List[(Int, Str, Str)] = [
+  (0, "r6mQtj268P/O5Q31REo9wVbxH3eJLor6F6q", "illegal base64 data at input byte 32"),
+  (1, "Dctqo2JGVNqvrgx8VRKpZa4JHDl46Cu0mQ", "illegal base64 data at input byte 32"),
+  (1, "z3rIxCUDvoopj54u2u", "illegal base64 data at input byte 16"),
+  (1, "65eCt/h6", "illegal base64 data at input byte 5"),
+  (1, "WV03z4hr/+zBTHz3dQ==", "illegal base64 data at input byte 8"),
+  (1, "95HgEq1tCsBS04OJ8PSAkgMztdo", "illegal base64 data at input byte 24"),
+  (0, "tIKJCDZQTTYMO6DtBhsOmfbVuQ", "illegal base64 data at input byte 24"),
+  (1, "KfOR5SHXq49yqddBbZTVz0kxI1JJJQ5yd1", "illegal base64 data at input byte 32"),
+  (0, "J9dH43lciG_dDh", "illegal base64 data at input byte 10"),
+  (1, "S1YOeO_VXpg", "illegal base64 data at input byte 8"),
+  (3, "W", "illegal base64 data at input byte 0"),
+  (0, "Yo7fI\n", "illegal base64 data at input byte 5"),
+  (1, "Q==", "illegal base64 data at input byte 1"),
+  (0, "_blhNauZPD_w22EXlZ=Jc=", "illegal base64 data at input byte 0"),
+  (0, "k0k", "illegal base64 data at input byte 0"),
+  (2, "qE==TNN9poPJ3e+pbY=", "illegal base64 data at input byte 2"),
+  (1, "lMgdugUFaEDGALh6w8fOKoq9fTxZCes7DOE", "illegal base64 data at input byte 32"),
+  (0, "/ ", "illegal base64 data at input byte 1"),
+  (1, "-o94J==", "illegal base64 data at input byte 5"),
+  (3, "sf-quodD3I_GE49dqVnE6Xs=", "illegal base64 data at input byte 23"),
+  (2, "J/cw!", "illegal base64 data at input byte 4"),
+  (0, "tsMldxJkZSCJbqd3s6gLmXjVbh6", "illegal base64 data at input byte 24"),
+  (2, "SIzEw_VI", "illegal base64 data at input byte 5"),
+  (0, "oVKkILxxiNAtAN!RV-", "illegal base64 data at input byte 14"),
+  (3, "d1J1!5WO2lQtcU0U=!", "illegal base64 data at input byte 4"),
+  (3, "5EByRhgc0gN7XY UhryQkN", "illegal base64 data at input byte 14"),
+  (2, "3owSwi+kIWJuj2iR8mGc=", "illegal base64 data at input byte 20"),
+  (2, "Sc54fqUPWhbBak04gTLuS8ataA==", "illegal base64 data at input byte 26"),
+  (3, "v", "illegal base64 data at input byte 0"),
+  (3, "58RM!", "illegal base64 data at input byte 4"),
+  (3, "Qz+rjr1ffK+1CuESA", "illegal base64 data at input byte 2"),
+  (3, "FHZjoC0-tzHEvefEbUwo7TmOa-zzzW-uoZgjgWk=", "illegal base64 data at input byte 39"),
+  (0, "tw= =", "illegal base64 data at input byte 2"),
+  (2, "AIKrFTlTQ6ibzl3x/qR2qtJ9RnXLe31txTJV+Q==", "illegal base64 data at input byte 38"),
+  (2, "p", "illegal base64 data at input byte 0"),
+  (3, "t7U!", "illegal base64 data at input byte 3"),
+  (3, "qIhYXh9s+PlGs/qNpXOOOea6tKjCHmPS", "illegal base64 data at input byte 8"),
+  (2, "axq0kLSAwY iL", "illegal base64 data at input byte 10"),
+  (3, "GdUaQfHH9Qbcu_j SAQ==", "illegal base64 data at input byte 15"),
+  (0, "y+P9m_rYuR", "illegal base64 data at input byte 5"),
+  (1, "mSU3Xvs3mm0", "illegal base64 data at input byte 8"),
+  (0, "LAH", "illegal base64 data at input byte 0"),
+  (0, "znS_c4FSEw", "illegal base64 data at input byte 3"),
+  (2, "hP-xjB4TKX1srEI", "illegal base64 data at input byte 2"),
+  (0, "Ld IVCFKWgwKFkuCFPA==", "illegal base64 data at input byte 2"),
+  (1, "v5wIaxcrH-hRK037sZwXKxHjepLeeQ", "illegal base64 data at input byte 28"),
+  (3, "WCCBHO+F+HmOr2t/ylNbAl9E07z4/Iu3W\n9H0U2tQ=", "illegal base64 data at input byte 6"),
+  (2, "FrGVJf_Fam/Lqvc=", "illegal base64 data at input byte 6"),
+  (0, "s8Irl53uQdWdZAvHpcanzGY0KH", "illegal base64 data at input byte 24"),
+  (3, "7B8BiyOdHYHvupD_guG-l8s6ZA4AluUnWr43yA==", "illegal base64 data at input byte 38"),
+  (0, "5abyéoc", "illegal base64 data at input byte 4"),
+  (1, "IZASxLkLBgIRSdF9Vj6Qr3hEiXGzUpFjFgo0Q", "illegal base64 data at input byte 36"),
+  (1, "zRGm/kE=", "illegal base64 data at input byte 4"),
+  (0, "piJtNmA8PQ", "illegal base64 data at input byte 8"),
+  (0, "9OxfLk", "illegal base64 data at input byte 4"),
+  (3, "xXiM4ulaC+IfCzD+8UD/J4A==", "illegal base64 data at input byte 9"),
+  (0, "PDVMm8n-UrwmMKeVEJZl6akS3Gzf-B", "illegal base64 data at input byte 7"),
+  (0, "LEI-jgfq", "illegal base64 data at input byte 3"),
+  (0, "FA+mkbZRD5lcbiU2GmKAtOf7M91EIfQ", "illegal base64 data at input byte 28"),
+  (0, "Wg", "illegal base64 data at input byte 0"),
+]
 
 const VARIANTS: List[base64.Base64] = [base64.Base64.Std, base64.Base64.Url, base64.Base64.RawStd, base64.Base64.RawUrl]
 
@@ -2129,6 +2192,20 @@ test "decode gives Go's bytes or Go's error offset" {
     let got = match base64.decode(s, VARIANTS[k]) {
       Ok(b) => "ok ${b.to_hex()}"
       Err(e) => "err ${e.at}"
+    }
+    if got != want {
+      bad.push((k, s, got, want))
+    }
+  }
+  expect(bad[0..(if bad.len() < 20 { bad.len() } else { 20 })]) == []
+}
+
+test "decode error displays Go's error text" {
+  var bad: List[(Int, Str, Str, Str)] = []
+  for (k, s, want) in DECODEERR {
+    let got = match base64.decode(s, VARIANTS[k]) {
+      Ok(_) => "ok"
+      Err(e) => e.display()
     }
     if got != want {
       bad.push((k, s, got, want))
