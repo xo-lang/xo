@@ -44,6 +44,29 @@ though 3 of 3 parts' keys say nothing but main's changed.
    field, a constant; TestBackendCacheEditIdentity and TestFrontCacheInterfaceEdits shapes), the
    fixed point. Opt in (XO_CHAIN_KEYS=1) until verify is clean over the golden corpus.
 
+## Correction after reading the code (2026-10-26, before any build)
+
+Step 1 above cannot chain the keys "without decoding" the replayed bodies. fe_replay (ssa
+fecache.xo) is not a decode of an independent function: it commits the entry's events in order into
+the builder (types made, functions made whole, generic instances, constants, site ids, renames:
+"so the module grows as a serial build at this point grows it", decision 0271), so a body's
+replay must run, in order, for the module to be what the later passes read; the 43 ms of the `ssa`
+phase is that floor. And the passes before the reference counting are interprocedural: prune_unwind
+drops or keeps each check by `may_fault` of its callee (a closure over the whole call graph) and
+fold_known_calls folds the calls of constant functions of every module, so a function's form after
+them depends on facts of its callees, not on its own entry alone; specialize_args (decision 0368)
+clones callees per constant argument of their callers.
+
+What a chained key can do, after the replay: key the replayed function once (key_func, about 20 ms
+of CPU for all 1,300, a cost the rc stage already pays after cleanup) together with the callee facts
+those passes read, and keep the post-pass form as a cache entry, read lazily like rc's, so
+prune_unwind's rewrite, add_landings, cleanup and renumber (cleanup 17 ms of wall, 61 ms of CPU)
+run for the changed functions only. That is about 30 to 40 ms of the 330, not the 120 ms estimated
+above; the replay (43 ms) and the key hashing stay. The hollow and undef summaries (step 2) are
+unaffected: about 30 to 40 ms of the 55. With decision 0380 (85 to 90 ms) the edit would be near
+200 ms, not Go's 100 ms. The remaining floor is the replay and the whole-program walks; the way
+under it is the compile server (decision 0283) or a replay that does not rebuild the whole module.
+
 ## Expected effect (to be measured)
 
 The edit's middle phases (108 ms) fall toward the cost of the 10 changed functions and the key
