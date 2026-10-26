@@ -435,6 +435,35 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   and the hollow pass that empties unreached functions); the Go backend
   stays an oracle run, and a plain run never exercises those paths
   (2026-10-24).
+- The private-module probes compare what only a std module can reach,
+  against Go, on a seeded or hand written table (2026-10-26):
+  TestHttpHeadFuzz and TestHttpResponseFuzz (internal/stdtest) generate
+  seeded raw request or response heads, write one xo test per case over
+  `native/llrt/http1`'s parse_head or parse_response into a temp std copy,
+  and compare with net/http's own parse. `XO_HEADFUZZ_N`/`XO_RESPFUZZ_N`
+  and `XO_HEADFUZZ_BACKENDS`/`XO_RESPFUZZ_BACKENDS` size and target a run
+  (defaults 300, arm64; the corpora's backends are arm64, llvm and go, but
+  llrt is native only, so the Go backend is not one of these). The harness
+  parses `xo test`'s "N passed, M failed" line and fails unless it equals
+  the generated case count, so a file that is not picked up cannot pass a
+  comparison of nothing; the count is logged per backend. TestHttpSmuggle
+  is the smuggling table: 36 hand rows (Content-Length duplicates and
+  conflicts, CL with Transfer-Encoding, TE lists, folds, casing, bad chunk
+  framing, Host shapes, name bytes) are sent to a Go net/http server on
+  127.0.0.1, which answers each request it accepts with the framing its
+  handler saw (Content-Length or chunked, the length, and the body bytes
+  read, or its error and the bytes before it); the Xo side reads the same
+  bytes with parse_head and takes the framing from its own Head (clen,
+  chunked), then chunked for the body. The comparison is that framing line
+  per request, joined in order, so a body framed differently by the two
+  sides fails even when both accept it, and the pipelined row pins where
+  the next request starts; the table fails if Go accepts or rejects fewer
+  than five rows or fewer than five carry framing, so it cannot go
+  vacuous. The port's two documented non-Go field shapes (RespHead.clen
+  is readTransfer's realLength, close is shouldClose) and the folded
+  Connection trap are in gotchas/readrequest-not-the-server-layer.md. A
+  divergence is reported to the lead before std changes, never fixed in
+  the probe.
 - `go run ./scripts/stdgen` after changing a std type (a struct, enum,
   newtype, or interface in std/*.xo) or a std function's signature:
   regenerates std/rt/std_gen_M.go, the Go backend's declarations of
