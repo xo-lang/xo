@@ -131,6 +131,20 @@ pages in RSS until the kernel reclaims them; heavy.sh's watch reads top's MEM, w
 A MAP_FIXED remap in place of the madvise was tried: footprint 7.2 GB and RSS 7.3 GB (-1.35 GB each) but
 5.7 s of system time, so MADV_FREE_REUSABLE is kept.
 
+The first --ab of (c) (quiet, 15 rounds, A the parent): wall within noise everywhere (ratios 0.99 to 1.017)
+except the alloc bench's `tasks` (20 ms): 15.8 to 24.7 ms (1.21 to 1.56, 30 rounds 1.089 to 1.625 interval),
+RSS 0.61 to 0.66; the madvise call per freed 32 KiB and larger block cost more than a short program's whole
+run. So (c) keeps a class's first 4 central magazines as they are and gives pages back only past that
+(SCAVENGE_KEEP in alloc.xo: a racy walk of at most 4 links before central_put, magazines never being
+unmapped). With the threshold: self build peak footprint 8.62 GB to 7.27 GB (-1.35 GB, one run each, a
+loaded machine; the unthresholded build gave -1.6 to -1.76 GB), system time 7.2 s to 8.0 s (+0.8 s; +1.3 s
+without the threshold), wall 45.3 s to 44.1 s (not a wall claim). `tasks` made ten times longer (500 rounds,
+about 200 ms, same allocation shape), 30 rounds, 0 loaded, load 2.7: wall 211.2 to 201.2 ms (0.953, 0.89 to
+0.999), cycles 0.949 (0.905 to 0.98), IPC 5.81 to 6.15, instructions 1.002 (noise). The other nine programs
+(alloc small, mixed, grow, strings, maps, bigtasks, conc fanout, pmap, spawn) within noise or better. The 20
+ms `tasks` run alone could not decide (A spread 42 to 55%): a program that short is startup and first-touch
+faults.
+
 A seed workaround: the request rides on rt.heap_grow, whose n argument carries a flag bit (2^61, below
 the heap profile's 2^62) and whose heap argument is the magazine, because a new rt.* name needs the seed's
 compiler to know it (gotchas/seed-older-than-intrinsics.md: a runtime function calling a name the seed
