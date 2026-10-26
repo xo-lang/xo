@@ -125,6 +125,32 @@ fn setup(p: Int) {
   if !pe.is_empty() && pe[0] == "0" {
     rt.slot_store[Int](rt.mem_load(p, P_DLK, 8), pool.DLK_NOPREEMPT, 1, RELEASE)
   }
+  // the worker cutoff (decision 0377), opt in: the workers with an index
+  // under it take part; XO_CAP=N fixes it at N (2 up to the CPUs), XO_CAP=auto
+  // starts it at the CPUs and follows the load; unset (or 0) is the CPUs
+  rt.slot_store[Int](p, layout.P_CAP, n, RELEASE)
+  let cp = process.env_real("XO_CAP")
+  if !cp.is_empty() {
+    let ct = cp[0]
+    if ct == "auto" {
+      rt.slot_store[Int](p, layout.P_CAP_MODE, 2, RELEASE)
+    } else {
+      var k = 0
+      var ok = ct.len() > 0
+      for i in 0..ct.len() {
+        let d = bt(ct, i) - 48
+        if d < 0 || d > 9 {
+          ok = false
+        } else {
+          k = k * 10 + d
+        }
+      }
+      if ok && k >= 2 && k < n {
+        rt.slot_store[Int](p, layout.P_CAP_MODE, 1, RELEASE)
+        rt.slot_store[Int](p, layout.P_CAP, k, RELEASE)
+      }
+    }
+  }
   rt.slot_store[Int](p + P_NCPU, 0, n, RELEASE)
 }
 

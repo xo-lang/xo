@@ -48,6 +48,10 @@ const SEQ_CST = 4
 /// these names stay for pool.xo's users.
 const P_MU = layout.P_MU
 const P_NCPU = layout.P_NCPU
+const P_CAP = layout.P_CAP
+const P_CAP_MODE = layout.P_CAP_MODE
+const P_CAP_WAKES = layout.P_CAP_WAKES
+const P_CAP_NONE = layout.P_CAP_NONE
 const P_SPIN_ROUNDS = layout.P_SPIN_ROUNDS
 const P_NW = layout.P_NW
 const P_ALIVE = layout.P_ALIVE
@@ -98,6 +102,7 @@ const W_ASYNC = layout.W_ASYNC
 const W_URGSET = layout.W_URGSET
 const W_RUNF = layout.W_RUNF
 const W_SIZE = layout.W_SIZE
+const W_IDX = layout.W_IDX
 const MAXW = 4096
 
 /// ctx.xo C_TRACE: the context's trace word.
@@ -229,6 +234,10 @@ const ST_WAKE_PUSH = 39
 const ST_WAKE_MON = 40
 const ST_IDLE_NOPOLL = 41
 const ST_IDLE_NPBLOCK = 42
+const ST_CAP_GROW = 48
+const ST_CAP_SHRINK = 49
+const ST_CAP_HOLD = 50
+const ST_CAP_SEEN = 51
 
 /// How long a fiber stays in its waker's next before a thief may take
 /// it (xo_rt.c XO_NEXT_GRACE_NS).
@@ -490,6 +499,7 @@ fn start_worker(p: Int) -> Bool {
   let w = rt.heap_large(W_SIZE)
   rt.mem_set(w, 0, W_SIZE)
   rt.mem_store(w, W_LIVE, 1, 4)
+  rt.mem_store(w, W_IDX, workers(p), 8)
   register_worker(p, w)
   rt.slot_store(p, P_ALIVE, rt.slot_load(p, P_ALIVE, SEQ_CST).wrapping_add(1), SEQ_CST)
   if thread_start(rt.mem_load(p, P_WORKER_MAIN, 8), w) {
@@ -506,6 +516,41 @@ fn start_worker(p: Int) -> Bool {
 /// The worker threads alive: P_ALIVE without the roots in their loop.
 fn workers(p: Int) -> Int {
   rt.slot_load(p, P_ALIVE, SEQ_CST).wrapping_sub(rt.slot_load(rt.mem_load(p, P_DLK, 8), DLK_LOOPS, SEQ_CST))
+}
+
+/// The workers awake: alive and not on the idle list (decision 0377).
+fn awake(p: Int) -> Int {
+  workers(p).wrapping_sub(rt.slot_load(p, P_NIDLE, SEQ_CST))
+}
+
+/// Whether the calling thread's ring or the inject queue holds more than
+/// one item (decision 0377: a push that leaves more work than the awake
+/// workers' next items).
+fn queue_deep(p: Int) -> Bool {
+  if rt.slot_load(p, P_ILEN, SEQ_CST) > 1 {
+    return true
+  }
+  let w = rt.tlocal_get(TLS_W)
+  w != 0 && rt.slot_load(w, RQ_TAIL, SEQ_CST).wrapping_sub(rt.slot_load(w, 0, SEQ_CST)) > 1
+}
+
+/// A worker that was woken (or started) looked for work: in 64 of them, 32
+/// that found none lower the cap by one, not below 2 (decision 0377).
+fn cap_note(p: Int, found: Bool) {
+  if rt.slot_load(p, P_CAP_MODE, RELAXED) != 2 {
+    return
+  }
+  if !found {
+    rt.slot_add(p, P_CAP_NONE, 1, SEQ_CST)
+  }
+  let n = rt.slot_add(p, P_CAP_WAKES, 1, SEQ_CST) + 1
+  if n >= 64 && rt.slot_cas(p, P_CAP_WAKES, n, 0, SEQ_CST) {
+    let none = rt.slot_swap(p, P_CAP_NONE, 0, SEQ_CST)
+    let cap = rt.slot_load(p, P_CAP, SEQ_CST)
+    if none >= 32 && cap > 2 && rt.slot_cas(p, P_CAP, cap, cap - 1, SEQ_CST) {
+      stat(ST_CAP_SHRINK)
+    }
+  }
 }
 
 fn wakep(p: Int) {
@@ -525,13 +570,30 @@ fn wakep(p: Int) {
     preempt_arm(p)
     return
   }
+  // the worker cutoff (decision 0377): only the workers with an index under
+  // the cap are woken or started, as XO_THREADS=cap, changing with the load
+  // when XO_CAP=auto
+  let cap = rt.slot_load(p, P_CAP, SEQ_CST)
+  stat(ST_CAP_SEEN)
   if !rt.slot_cas(p, P_SPINNING, 0, 1, SEQ_CST) {
     return
   }
   plock(p)
-  let w = rt.mem_load(p, P_IDLE, 8)
+  var w = rt.mem_load(p, P_IDLE, 8)
+  var prev = 0
+  if cap < ncpu {
+    while w != 0 && rt.mem_load(w, W_IDX, 8) >= cap {
+      prev = w
+      w = rt.mem_load(w, W_IDLE_NEXT, 8)
+    }
+  }
   if w != 0 {
-    rt.mem_store(p, P_IDLE, rt.mem_load(w, W_IDLE_NEXT, 8), 8)
+    let next = rt.mem_load(w, W_IDLE_NEXT, 8)
+    if prev == 0 {
+      rt.mem_store(p, P_IDLE, next, 8)
+    } else {
+      rt.mem_store(prev, W_IDLE_NEXT, next, 8)
+    }
     rt.mem_store(w, W_IDLE_NEXT, 0, 8)
     rt.slot_add(p, P_NIDLE, -1, SEQ_CST)
     punlock(p)
@@ -543,10 +605,20 @@ fn wakep(p: Int) {
     futex_wake(w.wrapping_add(W_WAKEW))
     return
   }
-  let started = workers(p) < ncpu && start_worker(p)
+  let started = workers(p) < cap && start_worker(p)
   punlock(p)
   if !started {
     rt.slot_add(p, P_SPINNING, -1, SEQ_CST)
+    // no worker under the cap is idle, none can start: with the load
+    // following on and the pusher holding more than one item, the cap
+    // rises by one
+    if cap < ncpu && rt.slot_load(p, P_CAP_MODE, RELAXED) == 2 && queue_deep(p) {
+      if rt.slot_cas(p, P_CAP, cap, cap + 1, SEQ_CST) {
+        stat(ST_CAP_GROW)
+      }
+    } else if cap < ncpu {
+      stat(ST_CAP_HOLD)
+    }
     np_break(p)
   }
 }
@@ -1220,6 +1292,9 @@ pub fn worker_main(w: Int) -> Int {
   var spinning = 1
   while true {
     let it = find_work(p, w, spinning)
+    if spinning != 0 {
+      cap_note(p, it != 0)
+    }
     if it != 0 {
       if spinning != 0 {
         spinning = 0
@@ -3051,6 +3126,11 @@ fn mon_scan(p: Int) -> Bool {
   // onto the long runner's thread, TestRuntimeTasks' magazines, whose
   // spawner spins while another worker frees)
   let async = async_on()
+  // work waits and the awake workers sit at the cap: a worker that has run a
+  // slice raises the cap to the CPUs (decision 0377), so a CPU bound program
+  // is not held to the cap it earned under a light load
+  let ncpu = rt.mem_load(p, P_NCPU, 8)
+  var capped = rt.slot_load(p, P_CAP_MODE, RELAXED) == 2 && rt.slot_load(p, P_CAP, SEQ_CST) < ncpu && any_work(p) != 0
   let waiting = any_work(p) != 0 && rt.slot_load(p, P_NIDLE, SEQ_CST) == 0 && workers(p) >= rt.mem_load(p, P_NCPU, 8) && rt.slot_load(rt.mem_load(p, P_DLK, 8), DLK_NOPREEMPT, RELAXED) == 0
   var i = 0
   while i < n {
@@ -3061,6 +3141,12 @@ fn mon_scan(p: Int) -> Bool {
     // which no other worker can help: work waits for it alone (a plain
     // read of the worker's word, a hint)
     let waiting = waiting || (async && rt.mem_load(w, W_PIN, 8) != 0)
+    if capped && ra != 0 && cpu.ticks_ns(cpu.ticks().wrapping_sub(ra)) >= SLICE_NS {
+      capped = false
+      rt.slot_store(p, P_CAP, ncpu, SEQ_CST)
+      stat(ST_CAP_GROW)
+      wakep(p)
+    }
     if ask != 0 {
       pending = true
       // an ask not served in a slice (the worker blocked, or no work

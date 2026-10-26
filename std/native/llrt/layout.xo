@@ -142,7 +142,16 @@ pub const P_ICAP = 96
 pub const P_FIBERS = 104
 pub const P_WORKER_MAIN = 112
 pub const P_DLK = 120
-pub const P_WS = 128
+pub const P_WS = 160
+/// The awake worker count (decision 0377): the cap (pool.xo wakep keeps the
+/// workers awake, running or spinning, at or below it; from 2 up to the
+/// CPUs, starting at the CPUs), the mode (0 follows the load, 1 fixed by
+/// XO_CAP), and the shrink window's wakes and the wakes that found nothing.
+/// Word indexes; the worker records start after them (P_WS).
+pub const P_CAP = 16
+pub const P_CAP_MODE = 17
+pub const P_CAP_WAKES = 18
+pub const P_CAP_NONE = 19
 
 /// xo_worker (byte offsets): the ring (sched.xo), next and when it was
 /// put there, live, the hooks word, the idle futex word (word 279), the
@@ -216,13 +225,16 @@ pub const W_URGSET = 3512
 pub const W_RUNF = 3520
 /// The record's size; poolsetup.xo's W_SIZE (the root's record) must match
 /// (XO_HEAP_GUARD found it 8 bytes short, 2026-10-20).
-pub const W_SIZE = 3528
+/// The worker's index among the worker threads in start order (roots 0):
+/// a worker at or over the cap (decision 0377) is not woken or started.
+pub const W_IDX = 3528
+pub const W_SIZE = 3536
 /// The pool record's size (pool.xo P_*: 16 words, then the 4096 worker
 /// records' addresses; ctx.xo makes it).
 /// The spawn sites' average run times (pool.xo site_note): 256 words after
 /// the worker records' addresses (decision 0359).
-pub const P_SITES = 32896
-pub const P_SIZE = 34944
+pub const P_SITES = 32928
+pub const P_SIZE = 34976
 
 /// xo_node, a cancellation node (pool.xo; xo_rt.c before; ctx.xo makes the
 /// context's, twrun.xo and pool.xo the others): its parent, first child,
