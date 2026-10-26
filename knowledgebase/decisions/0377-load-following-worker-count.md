@@ -65,6 +65,44 @@ this proposal keeps fewer workers awake instead.
 - The cap is one more word of scheduler state and two branches in wakep; the shrink counter is plain
   words under the pool lock.
 
+## Measured on 2026-10-26: the saving is real, but a cap on the awake count does not reach it
+
+Today's main, bench/perf/http/xo (native arm64, c=32, 8 s, quiet via heavy.sh measure; load 3), the same
+binary, three interleaved reps, XO_RTSTATS counts over the whole run:
+
+| XO_THREADS | req/s | p99 us | CPU us/request | wakes | idle sleeps | steals |
+|---|---|---|---|---|---|---|
+| 12 (default) | 144,958 / 152,329 / 145,559 | 671 / 639 / 680 | 24.88 / 21.69 / 24.66 | 294,548 / 253,260 / 297,047 | 284k / 246k / 287k | 571k / 510k / 565k |
+| 6 | 144,205 / 147,025 / 145,276 | 632 / 620 / 627 | 21.49 / 21.14 / 20.92 | 197k | 192k | 477k |
+| 4 | 148,329 / 148,945 / 148,430 | 600 / 603 / 604 | 19.61 / 18.92 / 19.50 | 134k | 131k | 372k |
+
+Median CPU a request 24.66 to 19.50 (-21%) at 4 workers and -14% at 6, with throughput equal or higher and
+p99 lower, wakes -55%: the 0377 table stands on today's build.
+
+The cap built to reach it (branch lw-cap: P_CAP, wakep refusing a worker while the awake count is at the cap,
+shrink by empty wakes, grow when the pusher holds more than one item or a worker runs a slice with work
+waiting; XO_CAP=N fixes it; counters cap_grow, cap_shrink, cap_hold, cap_seen) does nothing: fixed at 6 or 4
+or adaptive, wakes (255k to 262k), CPU a request (22.1 to 24.1) and rps equal the default's. cap_hold, the
+wakes the cap refused, is 64 to 83 of 260,000 wakep checks at XO_CAP=4: the awake count is below 4 almost
+every time a push wants a worker (about 3.6 CPUs of work spread over 12 workers: each push finds a sleeper,
+wakes it, and it sleeps after about a request). Adaptive: the cap shrank 46 to 67 and grew 44 to 64 times
+in a run, so "grow when the pusher's ring holds more than one item" cancels every shrink. The saving is not
+from fewer awake workers but from fewer workers taking part: with 4 workers the same load finds work in
+the 3 other rings before any worker sleeps (steals per wake 2.8 against 1.9, idle sleeps halved).
+
+### Design to build, if the owner agrees: a worker index cutoff
+
+P_CAP counts the workers that take part, as XO_THREADS=P_CAP does but changing at run time: the idle list
+holds every worker; wakep takes only a worker whose index is below the cap (a scan of the list from its head,
+at most 12 entries under the pool lock), start_worker starts one only below the cap, and a worker with an index
+at or over the cap that finishes its item goes to the idle list and is not woken (steal rounds already skip
+nothing, so the over-cap worker's ring is empty and stealing scans it for free). Grow: a wakep that finds
+every worker below the cap awake, with the pusher's queue deep, raises the cap by one (so the first burst
+gets its workers); the monitor tick raises it to the CPUs when a worker runs a slice with work waiting;
+shrink: 64 wakes of which 32 found nothing lower it by one, not below 2 (as built). Same kill switch
+(XO_CAP=0, XO_CAP=N). The prototype will first be run as a fixed cutoff (XO_CAP=4, 6) to check it reproduces
+the XO_THREADS rows above, then adaptive; no default changes until the owner sees those numbers.
+
 ## Measurement plan (all by `xo bench --ab` or run.sh medians, 5 interleaved reps, quiet machine; never callgrind)
 
 1. CRUD (bench/perf/http/xo, c=32, 8 s): req/s, p50/p99, CPU a request, wakes and futex wakes a request,
