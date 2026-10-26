@@ -1291,6 +1291,69 @@ func TestAgentRuntimeRefs(t *testing.T) {
 	}
 }
 
+// TestAgentRefsTestdata: refs at a root leaves out its testdata
+// directories, as every DIR/... walk does, and names them
+// ("testdata_skipped", a note in text); --testdata finds the calls in
+// the modules there (the program goldens: DS-2, 2026-10-25, `xo refs
+// prelude.Str.contains_where --dir=.` missed golden/strwhere), leaving
+// out a module whose requirement is not in the module cache, which
+// stopped the whole check. From a program's directory, refs of a std
+// name lists its uses in std and in the runtime: std modules are checked
+// only when their text spells the name, and the runtime's pgwire.xo,
+// which a filtered out native module used to bring in, stays.
+func TestAgentRefsTestdata(t *testing.T) {
+	t.Parallel()
+	prog := "fn main(os: Os) {\n  os.stdio.println(\"${\"a1\".contains_where(fn(r) { r == '1' })}\")\n}\n"
+	root := writeFiles(t, map[string]string{
+		"app/xo.mod":                      "module example.com/app\n",
+		"app/main.xo":                     prog,
+		"app/testdata/golden/w/xo.mod":    "module example.com/w\n",
+		"app/testdata/golden/w/main.xo":   prog,
+		"app/testdata/golden/net/xo.mod":  "module example.com/net\n\nrequire example.com/xo-refs-never-fetched v1.0.0\n",
+		"app/testdata/golden/net/main.xo": "use example.com/xo-refs-never-fetched/lib\n\nfn main(os: Os) {\n  os.stdio.println(lib.name())\n}\n",
+	})
+	userRefs := func(v map[string]any) []string {
+		var files []string
+		for _, r := range v["references"].([]any) {
+			f := r.(map[string]any)["file"].(string)
+			if strings.HasPrefix(f, root) || !strings.Contains(f, "std/") {
+				files = append(files, filepath.ToSlash(f))
+			}
+		}
+		return files
+	}
+	v := agentJSON(t, 0, "refs", "--dir="+root, "--json", "prelude.Str.contains_where")
+	if got := userRefs(v); len(got) != 1 || !strings.HasSuffix(got[0], "app/main.xo") {
+		t.Errorf("refs at the root: %v, want app/main.xo's call alone", got)
+	}
+	if td, _ := v["testdata_skipped"].([]any); len(td) != 1 || td[0] != "app/testdata" {
+		t.Errorf("testdata_skipped = %v, want [app/testdata]", v["testdata_skipped"])
+	}
+	v = agentJSON(t, 0, "refs", "--dir="+root, "--json", "--testdata", "prelude.Str.contains_where")
+	got := userRefs(v)
+	if joined := strings.Join(got, " "); len(got) != 2 || !strings.Contains(joined, "app/testdata/golden/w/main.xo") || !strings.Contains(joined, "app/main.xo") {
+		t.Errorf("refs --testdata: %v, want app/main.xo's and golden/w's calls", got)
+	}
+	if sk, _ := v["skipped"].([]any); len(sk) != 1 || !strings.HasSuffix(sk[0].(string), "golden/net") {
+		t.Errorf("refs --testdata: skipped = %v, want golden/net (its requirement is not in the module cache)", v["skipped"])
+	}
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"refs", "--dir=" + root, "--text", "prelude.Str.contains_where"}, &out, &errOut); code != 0 || !strings.Contains(out.String(), "note: not checked: app/testdata; --testdata checks them too") {
+		t.Errorf("refs --text at the root: exit %d: %s%s", code, out.String(), errOut.String())
+	}
+
+	// a std name from a program's directory: the runtime's uses too
+	pgwire := false
+	for _, r := range agentJSON(t, 0, "refs", "--dir="+filepath.Join(root, "app"), "--json", "prelude.Str.trim_prefix")["references"].([]any) {
+		if strings.HasSuffix(filepath.ToSlash(r.(map[string]any)["file"].(string)), "native/llrt/pgwire.xo") {
+			pgwire = true
+		}
+	}
+	if !pgwire {
+		t.Errorf("refs prelude.Str.trim_prefix from a program lists no call in std/native/llrt/pgwire.xo")
+	}
+}
+
 // TestAgentRootSkipsBrokenModule: at a root whose modules include one
 // whose `use c` binding is missing (the xo checkout's
 // examples/realtime-control), the lookups answer for the other modules

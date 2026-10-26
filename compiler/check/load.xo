@@ -192,6 +192,16 @@ pub struct Checker {
   /// check of a root leaves out a module whose missing binding stopped
   /// the previous check (agent.xo agent_session).
   pub exclude_dirs: List[Str] = []
+  /// find_module_dirs walks `testdata` directories too (`xo refs
+  /// --testdata`: the program goldens under internal/*/testdata).
+  pub walk_testdata: Bool = false
+  /// The `testdata` directories find_module_dirs left out, as it found
+  /// them, so a lookup at a root can say what it did not check.
+  pub testdata_skipped: List[Str] = []
+  /// The main modules whose requirements need a fetch (the reason the
+  /// check stops, Checker.unsupported), each found in one pass: a lookup
+  /// at a root leaves them out and checks again, as for bind_misses.
+  pub fetch_dirs: List[Str] = []
   /// The std module under test (`xo test --std-module`, decision 0262):
   /// its path (`std/json`, `native/http`, `native/llrt/scan`), or "".
   /// That module's _test.xo file, beside its source, is loaded with it,
@@ -481,7 +491,16 @@ pub fn (var c: Checker) check_dirs(dirs: List[Str]) -> () ! Str uses fs.read {
   // imports of required modules find their selected versions
   for dir in module_dirs {
     if let Some(r) = c.find_mod_root(dir) {
+      // which modules need a fetch, each of them: the first reason stays
+      let first = c.unsupported
+      c.unsupported = ""
       c.resolve_deps(r)
+      if !c.unsupported.is_empty() && !c.fetch_dirs.contains(r.dir) {
+        c.fetch_dirs.push(r.dir)
+      }
+      if !first.is_empty() {
+        c.unsupported = first
+      }
     }
   }
   for dir in module_dirs {
@@ -587,7 +606,12 @@ fn (var c: Checker) find_module_dirs(dir: Str, top: Bool, var out: List[Str]) {
       continue
     }
     let sub = join(dir, e.name)
-    if walk_skips(e.name) {
+    if e.name == "testdata" && c.walk_testdata {
+      // walked as asked: its modules are checked with the others
+    } else if walk_skips(e.name) {
+      if e.name == "testdata" {
+        c.testdata_skipped.push(sub)
+      }
       continue
     }
     // the std tree of this checker (a checkout's std/ under a workspace

@@ -28,8 +28,19 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   std functions of that name (`nosuchmod.park_wait` -> `pool.park_wait`).
   `--dir` may be a workspace or repository root; a module there whose
   `use go` or `use c` binding is missing (the xo checkout's
-  examples/realtime-control) is left out and the rest checked, and the
-  answer names it (`"skipped"` in JSON, a `note: skipped` line in text).
+  examples/realtime-control), or whose requirement is not in the module
+  cache, is left out and the rest checked, and the answer names it
+  (`"skipped"` in JSON, a `note: skipped` line in text).
+- A root's check skips every `testdata` directory, as each DIR/... walk
+  does (decision 0210), so the program goldens under
+  internal/*/testdata are not searched: refs names the directories it
+  left out (`"testdata_skipped"`, a `note: not checked` line), and
+  `xo refs --testdata` checks them too (the xo checkout: 11.5 s and 6 GB
+  against 4 s, so run it through heavy.sh). Refs of a std name checks
+  only the std and runtime files whose text spells the name: 0.08 to
+  0.4 s for a rare name, about 1 s for a common one (`find`, `push`),
+  where every std module was checked before (1.2 to 1.8 s on a quiet
+  Mac, 5 s under load). Last verified: 2026-10-26.
   Last verified: 2026-10-21.
 - `xo dev edges [--out=FILE] DIR` prints every reference the checker
   resolves in DIR's program, one tab separated line each: the function

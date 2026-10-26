@@ -89,7 +89,7 @@ pub fn edges_cmd(os: Os, args: List[Str]) -> Int uses (env, fs, fs.read, fs.writ
 /// The headless session of the program in dir, checked, with the std
 /// implementation files loaded and their bodies checked too.
 fn session(os: Os, dir: Str) -> Session ! Str uses (stdio, fs, env) {
-  let s = agent_session(os, dir, impl_modules(os, std_dir(os)))?
+  let s = agent_session(os, dir, impl_modules(os, std_dir(os)), false)?
   if !s.err.is_empty() {
     return Err(s.err)
   }

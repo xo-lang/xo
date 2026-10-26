@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo refs` at a repository root says which `testdata` directories it
+  did not search (`"testdata_skipped"`, a `note: not checked` line), and
+  `--testdata` searches them, so the program goldens' calls are found; a
+  module there whose requirement is not in the module cache is left out
+  and named instead of stopping the check. Refs of a std name checks
+  only the std and runtime files that spell the name: a rare name's
+  query takes 0.08 to 0.4 s instead of about 1.2 s, with the same
+  references.
 - `var (a, b) = f()` is error `XO0179` with a fix that writes `let`: a
   pattern binds with `let` (core 3.1, 3.5). It was a parse error and a
   "name not found" for every later use of each name. Whether `var` should

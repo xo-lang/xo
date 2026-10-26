@@ -490,10 +490,13 @@ load when a name refers to them (decision 0289).
 
 fn refs_text() -> Str {
   """
-usage: xo refs [--dir=DIR] [--json|--text] NAME
+usage: xo refs [--dir=DIR] [--testdata] [--json|--text] NAME
 
 Every reference to NAME in the program, the declaration marked, NAME
-written as for xo def.
+written as for xo def. A root's check leaves out its `testdata`
+directories, as every DIR/... walk does (the answer names them, JSON
+"testdata_skipped"); --testdata checks the modules under them too (the
+program goldens of internal/*/testdata).
 """ + "\n\n" + LOOKUP_DIR + "\n" + LOOKUP_OUT
 }
 

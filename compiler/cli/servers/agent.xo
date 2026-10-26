@@ -69,6 +69,8 @@ struct AgentArgs {
   file: Str = ""
   /// symbols: one module's, by import path (`--module=std/json`)
   module: Str = ""
+  /// a root's check walks its `testdata` directories too
+  testdata: Bool = false
 }
 
 fn agent_args(cmd: Str, args: List[Str]) -> AgentArgs ! Str {
@@ -82,6 +84,8 @@ fn agent_args(cmd: Str, args: List[Str]) -> AgentArgs ! Str {
       a.all = true
     } else if x == "--pub" {
       a.pub_only = true
+    } else if x == "--testdata" && cmd != "type" {
+      a.testdata = true
     } else if x.starts_with("--file=") && cmd == "symbols" {
       a.file = x.trim_prefix("--file=")
     } else if x.starts_with("--module=") && cmd == "symbols" {
@@ -149,7 +153,7 @@ pub fn run_agent(os: Os, cmd: Str, args: List[Str]) -> Int uses (stdio, fs, env)
     preload = [a.module]
   }
   let as_json = a.json || (!a.text && !os.stdio.stdout_is_tty())
-  var s = match agent_session(os, dir, preload) {
+  var s = match agent_session(os, dir, preload, a.testdata) {
     Ok(x) => x
     Err(e) => {
       // `xo doc NAME` or `xo def NAME` run outside a module (a scratch or
@@ -177,17 +181,32 @@ pub fn run_agent(os: Os, cmd: Str, args: List[Str]) -> Int uses (stdio, fs, env)
   for d in s.skipped {
     shown.push(d.trim_prefix("${s.wd.trim_suffix("/")}/"))
   }
-  let skip_note = if shown.is_empty() { "" } else { "skipped (missing use go or use c binding): ${shown.join(", ")}" }
+  let skip_note = if shown.is_empty() { "" } else { "skipped (a missing use go or use c binding, or a module to fetch): ${shown[0..shown.len().min(5)].join(", ")}${if shown.len() > 5 { ", ... (${shown.len()} modules)" } else { "" }}" }
+  // the references in a root's `testdata` directories (the program
+  // goldens) are not looked for unless --testdata: name the directories,
+  // relative to the root
+  var td: List[Str] = []
+  if cmd == "refs" {
+    let root = abs_of(cwd, dir).trim_suffix("/")
+    for d in s.testdata_skipped {
+      td.push(abs_of(s.wd, d).trim_prefix("${root}/"))
+    }
+  }
   match out {
     Ok(v0) => {
       var v = v0
       if !s.skipped.is_empty() {
-        if let J.Obj(keys, vals, raws) = v0 {
+        if let J.Obj(keys, vals, raws) = v {
           var items: List[J] = []
           for d in shown {
             items.push(jstr(d))
           }
           v = J.Obj(keys: keys + ["skipped"], vals: vals + [jarr(items)], raws: if raws.is_empty() { raws } else { raws + [""] })
+        }
+      }
+      if !td.is_empty() {
+        if let J.Obj(keys, vals, raws) = v {
+          v = J.Obj(keys: keys + ["testdata_skipped"], vals: vals + [jarr(td.map(fn(d) { jstr(d) }))], raws: if raws.is_empty() { raws } else { raws + [""] })
         }
       }
       if as_json {
@@ -196,6 +215,10 @@ pub fn run_agent(os: Os, cmd: Str, args: List[Str]) -> Int uses (stdio, fs, env)
         os.stdio.print(agent_text(cmd, v))
         if !skip_note.is_empty() {
           os.stdio.println("note: ${skip_note}")
+        }
+        if !td.is_empty() {
+          let more = if td.len() > 3 { ", ... (${td.len()} directories)" } else { "" }
+          os.stdio.println("note: not checked: ${td[0..td.len().min(3)].join(", ")}${more}; --testdata checks them too")
         }
       }
       0
@@ -345,14 +368,15 @@ fn std_session(os: Os, preload: List[Str]) -> Session? uses (stdio, fs, env) {
   os.fs.create_dir_all(tmp).ok() ?? return None
   // a directory with no .xo file is refused: one empty program
   os.fs.write("${tmp}/main.xo", "fn main() {}\n".bytes()).ok() ?? return None
-  let r = agent_session(os, tmp, preload).ok()
+  let r = agent_session(os, tmp, preload, false).ok()
   os.fs.remove_all(tmp).ignore_err("a temporary directory")
   r
 }
 
 /// A Session over the .xo files of dir, checked as `xo lsp` checks open
-/// documents, with nothing written to standard output.
-fn agent_session(os: Os, dir: Str, preload: List[Str]) -> Session ! Str uses (stdio, fs, env) {
+/// documents, with nothing written to standard output; at a root,
+/// testdata walks its `testdata` directories too.
+fn agent_session(os: Os, dir: Str, preload: List[Str], testdata: Bool) -> Session ! Str uses (stdio, fs, env) {
   let wd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
   var s = Session{version: "", std_dir: std_dir(os), wd: wd, lsp_std: "", quiet: true, preload: preload}
   let d = abs_of(wd, dir)
@@ -376,7 +400,7 @@ fn agent_session(os: Os, dir: Str, preload: List[Str]) -> Session ! Str uses (st
     }
     // a workspace or repository root: the modules under it, as `xo
     // query` and `xo check` find them (decision 0289)
-    var v = check_view(os, s.std_dir, wd, {}, [d], preload)
+    var v = check_view_excluding(os, s.std_dir, wd, {}, [d], preload, [], testdata)
     // a module below the root whose `use go` or `use c` binding is
     // missing stops the whole check: leave such modules out and check
     // again (the xo checkout's examples/realtime-control), naming them
@@ -395,9 +419,10 @@ fn agent_session(os: Os, dir: Str, preload: List[Str]) -> Session ! Str uses (st
       }
       skipped = skipped + more
       tries += 1
-      v = check_view_excluding(os, s.std_dir, wd, {}, [d], preload, skipped)
+      v = check_view_excluding(os, s.std_dir, wd, {}, [d], preload, skipped, testdata)
     }
     s.skipped = skipped
+    s.testdata_skipped = v.testdata_skipped
     // v.files holds the std files the check loaded too
     if v.err.is_empty() && !v.files.keys().any(fn(p) { p.starts_with("${d.trim_suffix("/")}/") }) {
       return Err("no .xo files in or under ${d}")

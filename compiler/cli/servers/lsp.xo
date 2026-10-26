@@ -360,8 +360,12 @@ struct Session {
   std_dir: Str
   wd: Str
   /// the module directories an agent session left out of its check of a
-  /// root (their `use go` or `use c` binding is missing)
+  /// root (their `use go` or `use c` binding is missing, or a module they
+  /// require is not in the module cache)
   skipped: List[Str] = []
+  /// the `testdata` directories an agent session's check of a root left
+  /// out (`--testdata` walks them)
+  testdata_skipped: List[Str] = []
   /// open documents: absolute path to text
   docs: Map[Str, Bytes] = {}
   dirty: Bool = true
@@ -443,6 +447,8 @@ struct View {
   /// and the module directories of the missing bindings behind it
   stopped: Str = ""
   stopped_dirs: List[Str] = []
+  /// the `testdata` directories the walk of a root left out
+  testdata_skipped: List[Str] = []
 }
 
 /// The open documents to check, without std copies (a std source opened
@@ -484,11 +490,12 @@ fn new_lsp_checker(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes]) -> c
 /// check_view: checks the modules of dirs with the open texts as the
 /// overlay. It reads no Session, so the server's worker task runs it.
 fn check_view(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes], dirs: List[Str], preload: List[Str]) -> View uses (fs, env) {
-  check_view_excluding(os, std_dir, wd, overlay, dirs, preload, [])
+  check_view_excluding(os, std_dir, wd, overlay, dirs, preload, [], false)
 }
 
-/// check_view, leaving out the module directories exclude.
-fn check_view_excluding(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes], dirs: List[Str], preload: List[Str], exclude: List[Str]) -> View uses (fs, env) {
+/// check_view, leaving out the module directories exclude; testdata
+/// walks the `testdata` directories too.
+fn check_view_excluding(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes], dirs: List[Str], preload: List[Str], exclude: List[Str], testdata: Bool) -> View uses (fs, env) {
   var v = View{}
   if dirs.is_empty() {
     return v
@@ -500,6 +507,7 @@ fn check_view_excluding(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes],
   c.check_bodies_of = preload
   c.runtime_files = true
   c.exclude_dirs = exclude
+  c.walk_testdata = testdata
   match c.check_dirs(dirs) {
     Ok(_) => {}
     Err(e) => {
@@ -519,7 +527,13 @@ fn check_view_excluding(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes],
     }
   }
   v.res = [new_res(c)]
+  v.testdata_skipped = c.testdata_skipped
   v.stopped = c.unsupported
+  for d in c.fetch_dirs {
+    if !v.stopped_dirs.contains(d) {
+      v.stopped_dirs.push(d)
+    }
+  }
   for bm in c.bind_misses {
     let d = if !bm.mod_dir.is_empty() { bm.mod_dir } else { bm.root }
     if !d.is_empty() && !v.stopped_dirs.contains(d) {

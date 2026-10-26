@@ -101,25 +101,43 @@ pub fn preloads_for(os: Os, std_dir: Str, name: Str) -> List[Str] uses fs.read {
 /// preloads_for, widened for references and callers: with a std module,
 /// every std module; with a runtime module, every runtime module (their
 /// uses are in the other modules of the same tree, tasks.xo's call of
-/// pool.park_wait).
+/// pool.park_wait). Only the files whose text holds the name's last
+/// segment are added: a reference spells it (every std module checked
+/// with its body took about 1.7 s a query). With a std module the
+/// runtime's files are scanned too: the native modules a filter leaves
+/// out are no longer there to bring in the runtime files they import
+/// (pgwire.xo's calls of Str.trim_prefix).
 pub fn preloads_wide(os: Os, std_dir: Str, name: Str) -> List[Str] uses fs.read {
+  let segs = name.split("/")
+  let ds = segs[segs.len() - 1].split(".")
+  let word = ds[ds.len() - 1]
   var out: List[Str] = []
   for p in preloads_for(os, std_dir, name) {
-    let (sub, prefix) = if p.starts_with("native/llrt/") {
-      ("native/llrt/", "native/llrt/")
-    } else if p.starts_with("native/") {
-      ("native/", "native/")
-    } else {
-      ("", "std/")
+    if !out.contains(p) {
+      out.push(p)
     }
-    if let Ok(es) = os.fs.read_dir("${std_dir}/${sub}") {
-      for fi in es {
-        if fi.is_dir || !fi.name.ends_with(".xo") || fi.name.ends_with("_test.xo") || fi.name.ends_with("_c.xo") {
-          continue
-        }
-        let q = "${prefix}${fi.name.trim_suffix(".xo")}"
-        if !out.contains(q) {
-          out.push(q)
+    let trees = if p.starts_with("native/llrt/") {
+      [("native/llrt/", "native/llrt/")]
+    } else if p.starts_with("native/") {
+      [("native/", "native/"), ("native/llrt/", "native/llrt/")]
+    } else {
+      [("", "std/"), ("native/llrt/", "native/llrt/")]
+    }
+    for (sub, prefix) in trees {
+      if let Ok(es) = os.fs.read_dir("${std_dir}/${sub}") {
+        for fi in es {
+          if fi.is_dir || !fi.name.ends_with(".xo") || fi.name.ends_with("_test.xo") || fi.name.ends_with("_c.xo") {
+            continue
+          }
+          let q = "${prefix}${fi.name.trim_suffix(".xo")}"
+          if out.contains(q) {
+            continue
+          }
+          // xo:allow XO0903 a file it cannot read is left out, as a missing one
+          let text = os.fs.read("${std_dir}/${sub}${fi.name}").ok() ?? b""
+          if word.is_empty() || text.contains(word.bytes()) {
+            out.push(q)
+          }
         }
       }
     }
