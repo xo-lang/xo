@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
@@ -197,22 +198,48 @@ type mpwPart struct {
 	data    []byte
 }
 
-// mpwEscape is std's escape_quotes: a synthesized Content-Disposition keeps
-// its quoted name well formed.
-func mpwEscape(s string) string {
-	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\r", "%0D", "\n", "%0A")
-	return r.Replace(s)
+// mpwSynth is the headers Go's own Writer adds for a form file or a form
+// field, read back from what it writes (CreateFormFile and CreateFormField),
+// so a change in Go's escaping shows up as a divergence instead of being
+// restated here. std's write adds these when the part's map lacks the exact
+// key: Content-Disposition always, and a file part's Content-Type with it.
+func mpwSynth(name, file string, hasFile bool) textproto.MIMEHeader {
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	if err := w.SetBoundary("B"); err != nil {
+		panic(err)
+	}
+	if hasFile {
+		if _, err := w.CreateFormFile(name, file); err != nil {
+			panic(err)
+		}
+	} else {
+		if _, err := w.CreateFormField(name); err != nil {
+			panic(err)
+		}
+	}
+	// the Writer buffers: Close flushes the part and its closing boundary
+	if err := w.Close(); err != nil {
+		panic(err)
+	}
+	// the part is "--B\r\n", the header block, then an empty line
+	raw := buf.Bytes()
+	i := bytes.Index(raw, []byte("\r\n"))
+	raw = raw[i+2:]
+	j := bytes.Index(raw, []byte("\r\n\r\n"))
+	raw = raw[:j+4]
+	h, err := textproto.NewReader(bufio.NewReader(bytes.NewReader(raw))).ReadMIMEHeader()
+	if err != nil {
+		panic(err)
+	}
+	return textproto.MIMEHeader(h)
 }
 
-// mpwWrite is Go's multipart.Writer bytes for parts at boundary. std's write
-// synthesizes the two headers Go's Writer leaves to its caller:
-// Content-Disposition when the part's map lacks that exact key (with the
-// filename when the part has one), and Content-Type
-// application/octet-stream when it synthesized one for a file part and the
-// map lacks Content-Type. The same synthesis runs here, so both sides write
-// the same headers, sorted. The headers go through textOf first: an Xo Str
-// holds U+FFFD where a header value's bytes were not UTF-8, so that is the
-// input both sides must see.
+// mpwWrite is Go's multipart.Writer bytes for parts at boundary, with std's
+// synthesized headers taken from Go's own Writer (mpwSynth) rather than
+// restated. The headers go through textOf first: an Xo Str holds U+FFFD
+// where a header value's bytes were not UTF-8, so that is the input both
+// sides must see.
 func mpwWrite(parts []mpwPart, boundary string) []byte {
 	var b bytes.Buffer
 	w := multipart.NewWriter(&b)
@@ -225,14 +252,9 @@ func mpwWrite(parts []mpwPart, boundary string) []byte {
 			h[textOf(kv[0])] = []string{textOf(kv[1])}
 		}
 		if _, ok := h["Content-Disposition"]; !ok {
-			d := `form-data; name="` + mpwEscape(textOf(p.name)) + `"`
-			if p.hasFile {
-				d += `; filename="` + mpwEscape(textOf(p.file)) + `"`
-			}
-			h["Content-Disposition"] = []string{d}
-			if p.hasFile {
-				if _, ok := h["Content-Type"]; !ok {
-					h["Content-Type"] = []string{"application/octet-stream"}
+			for k, v := range mpwSynth(textOf(p.name), textOf(p.file), p.hasFile) {
+				if _, have := h[k]; !have {
+					h[k] = v
 				}
 			}
 		}
