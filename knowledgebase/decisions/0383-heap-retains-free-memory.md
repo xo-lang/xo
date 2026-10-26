@@ -158,6 +158,17 @@ pmap, spawn), 15 rounds: wall 0.963 to 1.028, all within noise; instructions equ
 first-touch faults. Linux arm64 in Docker: every program's output equals the parent's, and 20 runs of the
 Str stress and 10 of the list stress pass with MADV_DONTNEED.
 
+Rc allocation churn is not the peak lever (2026-10-26). The Rc pass allocated 14 GB of the cold self build
+(43%), 33.7 GB in all with the memo of rc.xo leaves/leaf_uses (6b08ea06b: insert_rc 6.75 to 6.00 s, user CPU
+-3.4%, peak footprint unchanged). Its biggest line, the `Use{l, m}` objects of leaf_uses_fresh (5.9 GB), was
+replaced by two parallel lists (branch rc-uses-lists, c9f1430a6, not pushed): peak memory footprint 8.80 and
+8.81 GB (parent) against 8.76 and 8.86 GB (branch), heap at insert_rc 4869 to 4845 MB, insert_rc 6.15 and
+6.33 s against 6.88 and 6.46 s (no faster), outputs byte equal. Because the allocator keeps what it frees
+(this decision's cause), the churn only decides how fast the heap fills, not what stays live at the peak: the
+peak follows the live set and the retained free memory, which (c) and (a) address. The derived path Strs
+(4.06 GB) and the remaining Rc allocation sites are left alone; the 14 GB bound in the design notes does not
+turn into footprint.
+
 A seed workaround: the request rides on rt.heap_grow, whose n argument carries a flag bit (2^61, below
 the heap profile's 2^62) and whose heap argument is the magazine, because a new rt.* name needs the seed's
 compiler to know it (gotchas/seed-older-than-intrinsics.md: a runtime function calling a name the seed
