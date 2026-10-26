@@ -9,6 +9,8 @@
 # Steps:
 #   short    go test -short over the repository (runs/ excluded)
 #   arm64    the full tests of internal/arm64
+#            (with XO_GATE_CONCURRENT=1 and llvm named too, both run
+#            at once, arm64 in the background; opt in, 2026-10-26)
 #   llvm     the full tests of internal/llvm, skipped when every file
 #            the branch changes is native backend only (owner,
 #            2026-10-18; see native_only below); XO_GATE_LLVM=1 runs it;
@@ -219,15 +221,7 @@ llvm_goldens() {
   echo "$(echo "$names" | wc -l | tr -d ' ') of $total goldens, and the -O2 sample: $(echo "$names" | paste -sd' ' -)" >"$sel_note"
   echo "$names" | paste -sd, -
 }
-for step in "$@"; do
-  case $step in
-  short)
-    go test -short -count=1 $(go list ./... | grep -v /runs/) >"$logs/short.txt" 2>&1
-    k=$(grep -c '^--- FAIL' "$logs/short.txt")
-    [ "$k" -gt 0 ] && failed=1
-    echo "short fails: $k" ;;
-  arm64) full arm64 ./internal/arm64 ;;
-  llvm)
+llvm_step() {
     if [ -z "${XO_GATE_LLVM:-}" ] && native_only; then
       echo "llvm: skipped (native backend only change; XO_GATE_LLVM=1 runs it)"
     else
@@ -240,7 +234,38 @@ for step in "$@"; do
         full llvm ./internal/llvm
       fi
       unset XO_LLVM_GOLDENS
+    fi
+}
+# XO_GATE_CONCURRENT=1 (2026-10-26, opt in): with both arm64 and llvm
+# named, the two run at once, arm64 in the background: in a full tier at
+# most two tests ran for 72% of arm64's 1,904 s and 55% of llvm's
+# 1,866 s on the 12 core Mac, and the llvm step left 69% of memory free
+llvm_done=0
+has_llvm=0
+for s in "$@"; do [ "$s" = llvm ] && has_llvm=1; done
+for step in "$@"; do
+  case $step in
+  short)
+    go test -short -count=1 $(go list ./... | grep -v /runs/) >"$logs/short.txt" 2>&1
+    k=$(grep -c '^--- FAIL' "$logs/short.txt")
+    [ "$k" -gt 0 ] && failed=1
+    echo "short fails: $k" ;;
+  arm64)
+    if [ "${XO_GATE_CONCURRENT:-}" = 1 ] && [ "$has_llvm" = 1 ] && [ "$llvm_done" = 0 ]; then
+      ( failed=0; full arm64 ./internal/arm64; echo "$failed" >"$logs/arm64.failed" ) &
+      apid=$!
+      llvm_step
+      llvm_done=1
+      wait "$apid"
+      [ "$(cat "$logs/arm64.failed" 2>/dev/null || echo 1)" = 1 ] && failed=1
+    else
+      full arm64 ./internal/arm64
     fi ;;
+  llvm)
+    if [ "$llvm_done" = 1 ]; then
+      continue
+    fi
+    llvm_step ;;
   corpora)
     if go_backend; then
       full corpora ./internal/stdtest -run '^TestStdCorpora$/^go/'
