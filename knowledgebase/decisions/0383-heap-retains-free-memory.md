@@ -111,6 +111,33 @@ Rank by expected peak saving on xo itself: (a) first in potential (up to the 5.3
 lists, unknown until step 0) but the least certain and the largest change; (c) first to build
 (1.5 to 2.2 GB, certain, a few dozen lines, nothing else moves); (b) last (0 alone).
 
+## Measured since (2026-10-26)
+
+Step 0, the timeline (a scratch hook at every new chunk after the 700th, on xo itself, cold): 805 of
+the 1,050 new chunks (77%, about 3.2 GB of the 4.2 GB carved after chunk 700) were mapped while the
+central lists held free magazines of larger classes; 245 (23%, 1.0 GB) had only smaller ones. The class
+asked was never the class that held the memory (a magazine of the same class would have been taken).
+By class asked: 64 B class 157 of 157 events had larger free memory (about 2.0 GB on average), 16 KiB
+69 of 71, 32 KiB 175 of 177, 64 KiB 237 of 246, 128 KiB 86 of 129, 256 KiB 0 of 177 (nothing is larger:
+708 MiB of chunks only coalescing could avoid). So (a) reaches up to 3.2 GB of the 7.3 GB of chunks,
+with a size floor (the late demand is the large classes: 177 of the last 245 events), and the 256 KiB
+demand only by merging.
+
+(c), built on the branch scavenge-central: self build of compiler/xo, cold, every cache off, two runs
+each, the branch's xo against its parent's: peak memory footprint 8.60 GB to 6.84 to 7.02 GB (-1.6 to
+-1.76 GB, -18 to -20%; 0383 predicted 1.5 to 2.2 GB), wall time equal (33.8 and 34.5 s against 34.8 and
+34.6 s), system time 3.4 s to 4.7 s (the madvise calls), max RSS unchanged (macOS keeps MADV_FREE_REUSABLE
+pages in RSS until the kernel reclaims them; heavy.sh's watch reads top's MEM, which is the footprint).
+A MAP_FIXED remap in place of the madvise was tried: footprint 7.2 GB and RSS 7.3 GB (-1.35 GB each) but
+5.7 s of system time, so MADV_FREE_REUSABLE is kept.
+
+A seed workaround: the request rides on rt.heap_grow, whose n argument carries a flag bit (2^61, below
+the heap profile's 2^62) and whose heap argument is the magazine, because a new rt.* name needs the seed's
+compiler to know it (gotchas/seed-older-than-intrinsics.md: a runtime function calling a name the seed
+lacks cannot be built by it) and a seed bump needs the owner. Follow-up: replace it with a named
+intrinsic (rt.heap_scavenge, with its wasm lowering) after the next seed cut, so the flag does not become
+permanent by accident; the comments at alloc.xo free_mt and cabi.xo heap_grow say the same.
+
 ## Gate (for every step)
 
 The fixed point (scripts/bootstrap-xo.sh s2 and s3 identical), a self build's peak RSS and peak
