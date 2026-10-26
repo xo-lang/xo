@@ -40,3 +40,24 @@ Free lists at the insert_rc peak 58 MB; after the front end goes 205 MB (134 MB 
    (needs address order, a change to the free path of every allocation: --ab on every alloc bench);
    four classes per doubling from 2 KiB (internal waste 25% to about 12%); a region for the front end
    (dropped whole). Not decided: see the lead's order.
+
+## Size class rounding of the live heap (2026-10-26, edit rebuild of llvm-fib, after dd9e4a954)
+
+A scratch hook in `xo prof` (not committed) rounds the sampled live blocks of an
+XO_PROF_HEAP_AT snapshot to the allocator's classes (16 byte steps to 1 KiB, powers of two from 2 KiB
+to 256 KiB, pages above) with each block's 8 byte prefix; MB, live requested -> as classes:
+
+| at the end of | <=1 KiB | 2 KiB | 4 KiB | 8 KiB | 16 KiB | 32 KiB | 64 KiB | 128 KiB | 256 KiB | big | total |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| check | 18 -> 19 | 3 -> 4 | 34 -> 44 | 29 -> 43 | 1 -> 1 | 3 -> 5 | 5 -> 6 | 4 -> 5 | 2 -> 3 | 4 -> 4 | 106 -> 139 |
+| fe.build | 22 -> 24 | 3 -> 5 | 37 -> 48 | 39 -> 58 | 7 -> 9 | 8 -> 10 | 9 -> 11 | 6 -> 7 | 6 -> 8 | 27 -> 27 | 166 -> 212 |
+| ssa (the peak) | 29 -> 31 | 5 -> 7 | 45 -> 59 | 38 -> 56 | 3 -> 4 | 6 -> 8 | 8 -> 10 | 7 -> 9 | 6 -> 8 | 25 -> 26 | 174 -> 221 |
+| cleanup (the front end gone) | 7 -> 9 | 1 -> 1 | 1 -> 1 | 1 -> 1 | 2 -> 3 | 2 -> 3 | 3 -> 4 | 1 -> 2 | 2 -> 3 | 3 -> 3 | 27 -> 34 |
+
+The rounding is 46 MB at the ssa peak (26% of the requested bytes), 32 MB of it in the 4 KiB and
+8 KiB classes (the checker's tables and lists: a request between 2 KiB and 4 KiB takes 4 KiB). At
+that point the chunks are 212 MB (class bytes of the non big blocks about 195 MB, the free lists 4
+MB, the bump chunks' unused tails the rest, about 13 MB) and the mapped size 271 MB (the big blocks
+and the runtime's own mappings about 59 MB). Four classes per doubling from 2 KiB would cut the
+rounding to about half (an estimate: a request is on average 12% over its class instead of 26%),
+about 25 MB of the 272 MB peak (9%), at the cost of a larger class table and more free lists.
