@@ -195,6 +195,34 @@ of 2 (-0.34 to -0.40 GB, about 5%; N of 8: -0.36 to -0.65 GB), system time 5.7 a
 16.5 to 12.5 MB while system time goes from 0.09 to 4.8 s. A third of the 1.08 GB bound for the syscalls:
 (c2) is not pushed; (a), reuse across classes without a syscall, is the next design.
 
+(c2) with the system calls outside the heap lock (bounded experiment, same day): a page's counter carries a
+release bit from the moment the central lists fill it until its madvise returns, and c2_take waits for the
+bit before touching the page's blocks, so no thread is blocked on another's system call. Counting and
+relinking without any madvise cost nothing (self build wall 34.26 s against 34.65 s, system time 5.62 s
+against 5.56 s), so the cost is the calls. With the calls outside the lock: stress 64,000 of 64,000 intact in
+30 runs, but the churn stress still took 2.6 s against 1.5 s (system time 4.8 s against 0.09 s, footprint 16.5
+to 10.7 MB); the self build's peak footprint fell by 0.55 GB in one run and by 0.02 GB in the other (system
+time 7.1 and 8.2 s against 8.2 and 5.5 s), so the saving is not reproducible above the run to run spread
+(about 0.3 GB) and wall time is not within noise. Not pushed; branch c2-pages (commits 9ba212844, be4c6c11d
+and the last) keeps the code.
+
+(a) what the prefix does to splitting (found while writing the design for the owner). A block of class c is
+size + 8 bytes: the class word before the payload. 2^k + 8 does not tile 2^(k+1) + 8: a 64 KiB class block is
+65,544 bytes, two of them 131,088, eight bytes more than a 128 KiB block's 131,080, so cutting 128 KiB blocks
+into 64 KiB ones gives one block and drops the rest; a 256 KiB block gives three of 64 KiB (a quarter
+lost). The same eight bytes leave 262 KiB of every 4 MiB chunk uncarved at the 256 KiB class (15 blocks). So
+(a) needs the big classes' blocks to tile exactly: payload 2^k - 8 for the classes of 2 KiB and over (a
+request of 2,041 to 2,048 bytes moves up one class), after which a magazine of class c' cuts exactly into
+2^(c' - c) blocks of class c. What (a) then reaches: step 0's 805 of 1,050 late chunks were mapped while a
+larger class had free magazines (3.2 GB), by class asked: 64 B 157 of 157 events, 16 KiB 69 of 71, 32 KiB 175
+of 177, 64 KiB 237 of 246, 128 KiB 86 of 129; the 256 KiB class (177 events, 708 MiB) only by merging
+blocks, which this allocator never does (it would need an address ordered chunk map). The size floor: a
+class takes from a larger one only when the larger magazine is at most 64 times its size, so a 64 B request
+does not cut a 256 KiB block into 4,096 pieces that no later large request can use. The risk that remains is
+the one 0383 names: a block once cut never grows back, so a run whose late demand is large (the last 177 of
+245 growth events) can be starved of large blocks by an early cut; the measurement that decides is the same
+self build with a counter of the cuts and a count of the large requests that find no block.
+
 A seed workaround: the request rides on rt.heap_grow, whose n argument carries a flag bit (2^61, below
 the heap profile's 2^62) and whose heap argument is the magazine, because a new rt.* name needs the seed's
 compiler to know it (gotchas/seed-older-than-intrinsics.md: a runtime function calling a name the seed
