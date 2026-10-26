@@ -23,41 +23,44 @@ test "a sleep moves the clock to its deadline, and sleeps lists every request in
   expect(s[1].nanos()) == 10000000000
 }
 
-test "an advance fires the timers it covers and lets the woken tasks run before it returns" {
+test "an advance fires the timers it covers in scheduled order, and lets the woken tasks run before it returns" {
   let woke = Mutex.new([])
-  let a = os.tasks.spawn(fn() {
-    os.clock.sleep(Duration.from_secs_int(20))
-    woke.with(fn(var v) { v.push("a") })
-  })
   let b = os.tasks.spawn(fn() {
     os.clock.sleep(Duration.from_secs_int(10))
     woke.with(fn(var v) { v.push("b") })
   })
-  let c = os.tasks.spawn(fn() {
-    os.clock.sleep(Duration.from_secs_int(10))
-    woke.with(fn(var v) { v.push("c") })
-  })
-  // 8.2 does not promise that a spawn runs its task until the task blocks,
-  // so let the three reach their sleeps before time moves. The clock jumps
-  // only when every task is blocked, so waking from a 5s sleep here means
-  // the three have registered theirs (their deadlines are 10s and 20s).
+  // b schedules its timer at the start and c schedules one at 5s, both due
+  // at 10s, so "the order they were scheduled" is b then c whatever order
+  // the scheduler starts the tasks in (8.2 promises no order for a spawn
+  // until its task blocks). The clock jumps only when every task is
+  // blocked, so each sleep below means the task before it has registered.
   let base = os.clock.now()
   os.clock.sleep(Duration.from_secs_int(5))
   expect(os.clock.since(base).nanos()) == 5000000000
+  let c = os.tasks.spawn(fn() {
+    os.clock.sleep(Duration.from_secs_int(5))
+    woke.with(fn(var v) { v.push("c") })
+  })
+  os.clock.sleep(Duration.from_secs_int(1))
   let t0 = os.clock.now()
-  os.clock.advance(Duration.from_secs_int(10))
-  expect(os.clock.since(t0).nanos()) == 10000000000
-  // std.md 8.2 says the timers due at the same instant fire in the order
-  // they were scheduled; the Go backend fires these in the reverse of it
-  // (reported 2026-10-26), so this checks which tasks woke, not the order.
+  os.clock.advance(Duration.from_secs_int(4))
+  expect(os.clock.since(t0).nanos()) == 4000000000
+  // the two timers due at 10s fired in the order they were scheduled (the
+  // Go backend woke them in the reverse of it before 2026-10-26)
   let first = woke.with(fn(v) { v.join(",") })
-  expect(first.len()) == 3
-  expect(first.contains("b") && first.contains("c")) == true
+  expect(first) == "b,c"
+  // a timer beyond the advance's target does not fire until one covers it
+  let d = os.tasks.spawn(fn() {
+    os.clock.sleep(Duration.from_secs_int(20))
+    woke.with(fn(var v) { v.push("d") })
+  })
+  let t1 = os.clock.now()
   os.clock.advance(Duration.from_secs_int(10))
-  let second = woke.with(fn(v) { v.join(",") })
-  expect(second.len()) == 5
-  expect(second.contains("a")) == true
-  let _ = a.await
+  expect(os.clock.since(t1).nanos()) == 10000000000
+  expect(woke.with(fn(v) { v.join(",") })) == "b,c"
+  os.clock.advance(Duration.from_secs_int(10))
+  expect(woke.with(fn(v) { v.join(",") })) == "b,c,d"
   let _ = b.await
   let _ = c.await
+  let _ = d.await
 }

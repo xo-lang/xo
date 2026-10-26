@@ -301,22 +301,28 @@ func (w *World) dropDeadLocked() {
 	}
 }
 
-// fireNextLocked fires every timer due at the earliest instant.
+// fireNextLocked fires the earliest timer, and only that one: timers due
+// at the same instant fire in the order they were scheduled (std.md 8.2),
+// which the caller gets by letting the woken task run (and block again)
+// before the next timer fires. Firing every timer of the instant at once
+// makes the woken tasks ready together, and the scheduler picks among
+// ready threads by its seed, so a later timer's task could run first (the
+// Go backend woke them in the reverse of the scheduled order,
+// 2026-10-26).
 func (w *World) fireNextLocked() {
 	w.dropDeadLocked()
-	if len(w.timers) == 0 {
-		return
-	}
-	at := w.timers[0].at
-	if at > w.now {
-		w.now = at
-	}
-	for len(w.timers) > 0 && w.timers[0].at <= at {
+	for len(w.timers) > 0 {
 		t := heap.Pop(&w.timers).(*vtimer)
-		if !t.dead {
-			t.dead = true
-			t.fire()
+		if t.dead {
+			w.dropDeadLocked()
+			continue
 		}
+		if t.at > w.now {
+			w.now = t.at
+		}
+		t.dead = true
+		t.fire()
+		return
 	}
 }
 
