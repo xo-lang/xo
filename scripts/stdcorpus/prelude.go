@@ -681,5 +681,32 @@ test "Set.is_empty is false with elements, and true when there are none" {
   expect(none.is_empty()) == true
 }
 `)
+	// std.md 3.2 and decision 0280: Stream is the interface over both
+	// kinds of connection, a Conn from dial and a ServerConn from accept.
+	// Reading, writing and closing through it is how a server's connection
+	// code is written, and no corpus reached the interface (the 2026-10-26
+	// resolved audit), because every test used the concrete types.
+	o.WriteString(`
+fn stream_echo(s: Stream) -> () ! NetErr uses net {
+  let got = s.read(64)?
+  s.write(got ?? b"")?
+  s.close()
+}
+
+fn stream_serve(l: Listener) -> () ! NetErr uses net {
+  stream_echo(l.accept()?)
+}
+
+test "a dialed Conn and an accepted ServerConn read, write and close through Stream" {
+  let l = os.net.listen("127.0.0.1:0")?
+  let server = os.tasks.spawn(fn() ! NetErr { stream_serve(l) })
+  let s: Stream = os.net.dial(l.addr())?
+  s.write(b"hello stream")?
+  expect(s.read(64)?) == Some(b"hello stream")
+  s.close()
+  let _ = server.await.ignore_err("the server ends when the connection closes")
+  l.close()
+}
+`)
 	return o.String()
 }
