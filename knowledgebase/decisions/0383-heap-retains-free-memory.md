@@ -180,6 +180,21 @@ lists) and 1,397 MiB of 16 KiB pages fully covered by them, the same at assemble
 more (7.4 to about 6.0 GB) on Darwin's 16 KiB pages, more on Linux's 4 KiB; (a) bounds up to 3.2 GB with a
 size floor. Scratch code: not pushed (a chunk registry and scan in heapos.xo of a scratch worktree).
 
+(c2) built and measured (2026-10-26, branch c2-pages, not pushed). A central magazine's blocks link through
+a word in each block, so madvising a page of small blocks would zero the links: a magazine of the 2 KiB to
+16 KiB classes (the classes carrying 1,083 of the 1,404 MiB of fully free pages at emit: 2 KiB 311, 4 KiB
+100, 8 KiB 347, 16 KiB 325 MiB) lists its blocks' addresses in its first block when it goes on the central
+list, the blocks are counted into 16 KiB page counters (a two level table under the central lock), a page
+that reaches 16 KiB of central free bytes is madvised, and take undoes the counts and links the blocks
+again; a class counts only once its central list holds N magazines (pages given back and taken again at once
+cost more than they free). Correct (a stress of 16 workers over Strs of 1.5 to 16 KB with cross thread
+frees, every kept Str checked against its pattern: 64,000 of 64,000; the build from the seed). Cold self
+build, two runs each, main with (c) against (c2): peak footprint 7.09 and 7.03 GB to 6.66 and 6.69 GB with N
+of 2 (-0.34 to -0.40 GB, about 5%; N of 8: -0.36 to -0.65 GB), system time 5.7 and 5.4 s to 7.2 and 7.1 s
+(+1.5 s, about 25,000 madvise calls), wall +3 to 4%. On the churn stress alone the footprint falls from
+16.5 to 12.5 MB while system time goes from 0.09 to 4.8 s. A third of the 1.08 GB bound for the syscalls:
+(c2) is not pushed; (a), reuse across classes without a syscall, is the next design.
+
 A seed workaround: the request rides on rt.heap_grow, whose n argument carries a flag bit (2^61, below
 the heap profile's 2^62) and whose heap argument is the magazine, because a new rt.* name needs the seed's
 compiler to know it (gotchas/seed-older-than-intrinsics.md: a runtime function calling a name the seed
