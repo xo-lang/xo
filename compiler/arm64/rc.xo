@@ -482,6 +482,58 @@ fn (g: G) bare_variant(v: Int) -> Bool {
   }
 }
 
+/// Whether release v of enum a runs only where a holds a variant with no
+/// heap value: v's block is reached through single predecessors from
+/// a branch on `tag(a) == K`, its true edge (K) or, for an enum of two
+/// variants, its false edge (the other). A match's arm drops the
+/// scrutinee there: `Ok(d) =>` of a Result[Duration, E] called the
+/// Result's drop helper on every parse (dur_parse, 2026-10-26).
+fn (var g: G) bare_arm(v: Int, a: Int) -> Bool {
+  if g.vkind(a) != ssa.Kind.Enum {
+    return false
+  }
+  let vs = g.m.types[g.vty(a)].variants
+  var b = g.f.values[v].block
+  var steps = 0
+  while steps < 8 {
+    let preds = g.f.blocks[b].preds
+    if preds.len() != 1 {
+      return false
+    }
+    let e = preds[0]
+    let from = g.f.edges[e].from
+    let br = g.f.term(from)
+    if br >= 0 && g.op(br) == ssa.Op.Branch {
+      let c = g.arg(br, 0)
+      if g.op(c) == ssa.Op.Eq && g.op(g.arg(c, 0)) == ssa.Op.Tag && g.same_projection(g.arg(g.arg(c, 0), 0), a) {
+        let (k, isk) = g.const_int(g.arg(c, 1))
+        let bs = g.f.values[br].succs
+        if !isk || k < 0 || k >= vs.len() || bs[0] == bs[1] {
+          return false
+        }
+        var tag = -1
+        if e == bs[0] {
+          tag = k
+        } else if vs.len() == 2 {
+          tag = 1 - k
+        }
+        if tag < 0 {
+          return false
+        }
+        for f in vs[tag].fields {
+          if g.heap(f.ty) {
+            return false
+          }
+        }
+        return true
+      }
+    }
+    b = from
+    steps += 1
+  }
+  false
+}
+
 fn (var g: G) cancel_rc(v: Int) -> Bool {
   let r = g.cancelled_release(v)
   if r < 0 {

@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- arm64: a match arm whose variant holds no heap value drops nothing: the `Ok(d)` arm
+  of a `Result[Duration, DurationErr]` called the Result's drop helper on every parse.
+  `Duration.parse` loops 0.973 of the instructions, `cut_prefix` and `cut_suffix` 0.80
+  and 0.79, `cut` 0.88, JSON ints 0.97.
 - `xo bench --ab` on macOS reports cycles, cycles per op and instructions
   per cycle (ipc, higher is better) beside instructions, each with its
   B/A ratio and interval, from `time -l`'s "cycles elapsed" line, so a

@@ -1473,6 +1473,9 @@ fn (var g: G) instr1(v: Int) {
       if g.bare_variant(a) {
         return // holds no heap value (main's own Stdio after the 0307 fold)
       }
+      if g.bare_arm(v, a) {
+        return // a match arm whose variant holds no heap value (Ok(Duration))
+      }
       if imm_post(g.f, a, 0, []) {
         return // immortal once the callees are inlined (rcpair.xo imm_post)
       }

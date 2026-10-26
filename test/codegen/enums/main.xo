@@ -36,8 +36,21 @@ fn is_red(c: Color) -> Bool {
   c == Color.Red
 }
 
+// A match arm whose variant holds no heap value drops nothing: the Ok
+// arm of a Result[Duration, DurationErr] called the Result's drop helper
+// (a bl _xo_h<hash>) on every parse; the Err arm still drops its text.
+// Between the parse and the return: the text's release on Some and the
+// Err arm's drop, not a third (2026-10-26, bench/perf/text dur_parse).
+fn ok_nanos(t: Str) -> Int {
+  // arm64: "bl _xo_f_text_2eparse__duration" -"(?s)parse__duration.*bl _xo_h.*bl _xo_h.*bl _xo_h.*\tret"
+  match Duration.parse(t) {
+    Ok(d) => d.nanos()
+    Err(_) => -1
+  }
+}
+
 fn main(os: Os) {
   let n = os.env.args().len()
   let c = if n > 5 { Color.Blue(n: n) } else { Color.Red }
-  os.stdio.println("${is_mac() || !is_mac()} ${not_wasm()} ${same()} ${is_red(c)}")
+  os.stdio.println("${is_mac() || !is_mac()} ${not_wasm()} ${same()} ${is_red(c)} ${ok_nanos("${n}s")}")
 }
