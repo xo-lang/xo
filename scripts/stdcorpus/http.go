@@ -31,12 +31,20 @@ import (
 // ones: names that are not tokens, control bytes, multi-byte text, obs-fold
 // text in a value, and cookie lines built from every part of Go's grammar.
 // net/http's own Header, ParseCookie and ParseSetCookie answer each case.
+//
+// The struct-literal table is the other reading of a header map: a map a
+// program wrote as a literal keeps whatever case it wrote, so the documented
+// case-insensitive read (std.md 4.3) answers where Go's Header.Get, which
+// canonicalizes the lookup name and reads one key, misses. Each row records
+// both answers and which relation it is, so the difference is pinned rather
+// than assumed.
 func httpCorpus() string {
 	var o strings.Builder
 	o.WriteString(header("std/http's StatusError through the interface, Router.call's rendering of a handler error that carries a status, of one that does not, and of a middleware's (std.md 4.2), and header and cookie parsing and rendering against Go's Header, ParseCookie, ParseSetCookie and Cookie.String"))
 	o.WriteString("use std/http\n")
 	o.WriteString(httpTests)
 	o.WriteString(httpHeaderTables())
+	o.WriteString(literalHeaderTables())
 	o.WriteString(httpCookieTables())
 	return o.String()
 }
@@ -193,6 +201,201 @@ func xqStrList(xs []string) string {
 	}
 	return b.String()
 }
+
+// literalHeaderRows is the row count the generated test pins: a truncated
+// table (a bad regeneration, a hand cut row) fails on the count, not later.
+const literalHeaderRows = 2000
+
+// literalHeaderKeyAlphabet builds the keys a struct literal's headers map is
+// written with: a canonical token, the same name in other cases (what a
+// literal keeps, where Header.Set would canonicalize), names with a byte
+// outside a token, an empty name, multi-byte text, and raw bytes that are not
+// UTF-8 (textOf turns them into U+FFFD for both sides, decision 0259).
+var literalHeaderKeyAlphabet = []string{
+	"Content-Type", "content-type", "CONTENT-TYPE", "Content-type",
+	"X-A", "x-a", "X-Foo", "Host", "host", "TE", "te", "Set-Cookie",
+	"a b", " a", "a ", "\tType", "a:b", "a(b", "x-\x80", "é", "É", "日本",
+	"", "\xff", "a\xffb", "\xc3", "x\xe6\x97",
+}
+
+// literalHeaderLookup is the name a row looks up: a stored key, any case of
+// it, its canonical form, or another name entirely.
+func literalHeaderLookup(r *rand.Rand, key string) string {
+	switch r.Intn(10) {
+	case 0, 1, 2, 3:
+		return key
+	case 4, 5:
+		return headerCaseFlip(key, func() bool { return r.Intn(2) == 0 })
+	case 6:
+		return strings.ToLower(key)
+	case 7:
+		return strings.ToUpper(key)
+	case 8:
+		return textproto.CanonicalMIMEHeaderKey(key)
+	default:
+		return textOf(headerName(r))
+	}
+}
+
+// literalXoAnswer is the answer std.md 4.3 gives for the map a struct literal
+// wrote, the rule std/native/http.xo header_get implements: the value under
+// the lookup's canonical name, else, for a lookup name that is a token, the
+// value of the stored key that folds to it (the keys are fold-unique, so the
+// scan's order never decides the answer), else none.
+func literalXoAnswer(h map[string]string, lookup string) string {
+	if v, ok := h[textproto.CanonicalMIMEHeaderKey(lookup)]; ok {
+		return "ok " + v
+	}
+	if !isTokenName(lookup) {
+		return "none"
+	}
+	for k, v := range h {
+		if asciiFoldEqual(k, lookup) {
+			return "ok " + v
+		}
+	}
+	return "none"
+}
+
+// asciiFoldEqual is http1's equal_fold: equal bytes after ASCII lower, so a
+// non-ASCII pair that Unicode would fold (é and É) is not folded here.
+func asciiFoldEqual(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		if asciiLower(a[i]) != asciiLower(b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func asciiLower(c byte) byte {
+	if c >= 'A' && c <= 'Z' {
+		return c + 32
+	}
+	return c
+}
+
+// literalGoAnswer is net/http's answer for the same literal map: Header.Get
+// canonicalizes the lookup name and reads that key alone, so a map whose keys
+// were never canonicalized answers none where the documented read answers the
+// stored value. Get returns "" for a missing name and for an empty value; the
+// map read here keeps the two apart, since the key a lookup finds is what
+// this table compares and Get's answer otherwise follows it.
+func literalGoAnswer(h http.Header, lookup string) string {
+	if vs, ok := h[textproto.CanonicalMIMEHeaderKey(lookup)]; ok && len(vs) > 0 {
+		return "ok " + vs[0]
+	}
+	return "none"
+}
+
+// isTokenName is Go's httpguts.ValidHeaderFieldName's byte set (tchar).
+func isTokenName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' ||
+			c == '!' || c >= '#' && c <= '\'' || c == '*' || c == '+' || c == '-' ||
+			c == '.' || c == '^' || c == '_' || c == '`' || c == '|' || c == '~') {
+			return false
+		}
+	}
+	return true
+}
+
+// literalHeaderTables emits the struct-literal rows: a headers map written as
+// a literal (no canonicalization and no fields list, unlike new_request),
+// a lookup, the documented answer, Go's answer for the same map, and the
+// relation between them: "same" when Go agrees, "case" when the lookup is a
+// token and only the documented case-insensitive read finds the stored key
+// where Go's Header.Get misses.
+func literalHeaderTables() string {
+	r := rand.New(rand.NewSource(67))
+	var o strings.Builder
+	o.WriteString("\n/// (entries, lookup, std.md 4.3's answer, Go's Header.Get, same|case)\nconst LITERAL_HEADERS: List[(List[(Str, Str)], Str, Str, Str, Str)] = [\n")
+	for i := 0; i < literalHeaderRows; i++ {
+		ents := map[string]string{}
+		var order []string
+		for n, count := 0, 1+r.Intn(4); n < count; n++ {
+			k := textOf(literalHeaderKeyAlphabet[r.Intn(len(literalHeaderKeyAlphabet))])
+			// fold-unique keys: with two keys folding together and neither
+			// canonical, the fold scan's answer would depend on map order
+			dup := false
+			for seen := range ents {
+				if asciiFoldEqual(seen, k) {
+					dup = true
+					break
+				}
+			}
+			if dup {
+				continue
+			}
+			ents[k] = textOf(headerValue(r))
+			order = append(order, k)
+		}
+		if len(order) == 0 {
+			order = append(order, "Content-Type")
+			ents["Content-Type"] = textOf(headerValue(r))
+		}
+		gh := http.Header{}
+		var pairs []string
+		for _, k := range order {
+			gh[k] = []string{ents[k]}
+			pairs = append(pairs, fmt.Sprintf("(%s, %s)", xq(k), xq(ents[k])))
+		}
+		lookup := textOf(literalHeaderLookup(r, order[r.Intn(len(order))]))
+		xo := literalXoAnswer(ents, lookup)
+		got := literalGoAnswer(gh, lookup)
+		rel := "same"
+		if xo != got {
+			rel = "case"
+		}
+		fmt.Fprintf(&o, "  ([%s], %s, %s, %s, %s),\n", strings.Join(pairs, ", "), xq(lookup), xq(xo), xq(got), xq(rel))
+	}
+	o.WriteString("]\n")
+	o.WriteString(literalHeaderTests)
+	return o.String()
+}
+
+// literalHeaderTests is the Xo side: the map is built with put (the same Map
+// a literal builds, with no canonicalization and no fields list), the request
+// is a struct literal, and both answers are checked: header() must be the
+// documented one, and it must be Go's whenever Go agrees and the differing
+// shape (a token lookup over a literal key, which Go's Header.Get misses)
+// whenever the row says so.
+const literalHeaderTests = `
+test "a struct literal's headers read as std.md 4.3 says, next to Go's Header.Get on the same map" {
+  var bad: List[(List[(Str, Str)], Str, Str, Str, Str, Str, Str)] = []
+  var seen = 0
+  for (entries, lookup, want, go_want, rel) in LITERAL_HEADERS {
+    var h: Map[Str, Str] = {}
+    for (k, v) in entries {
+      h.put(k, v)
+    }
+    let u = http.Url{scheme: "http", host: "h", port: None, path: "/", query: {}}
+    let r = http.Request{method: "GET", path: "/", url: u, headers: h, body: b"", remote_ip: ""}
+    let got = header_answer(r, lookup)
+    let want_values = if want == "none" { "" } else { want[3..want.len()] }
+    let got_values = r.header_values(lookup).join("\u{1f}")
+    let ok = if rel == "same" {
+      got == want && go_want == want && got_values == want_values
+    } else {
+      got == want && go_want == "none" && want.starts_with("ok ") && got_values == want_values
+    }
+    if !ok {
+      bad.push((entries, lookup, want, go_want, rel, got, got_values))
+    }
+    seen += 1
+  }
+  expect(seen) == LITERAL_HEADERS.len()
+  expect(LITERAL_HEADERS.len()) == 2000
+  expect(first_bad(bad)) == []
+}
+`
 
 // httpCookieTables emits the cookie header lines and what Go makes of them:
 // each parsed cookie's String (joined with "|"), or the error's Error(), which
@@ -514,6 +717,9 @@ fn header_answer(r: http.Request, lookup: Str) -> Str {
 }
 
 test "a header name canonicalizes as Go's Header.Set does, and a lookup finds what Go's Get finds" {
+  // the seeded rows alone: a regeneration that loses rows fails here
+  // instead of quietly comparing less
+  expect(HEADERS.len() >= 2000)
   var bad: List[(Str, Str, Str, Str, Str)] = []
   for (name, value, lookup, want) in HEADERS {
     var h: Map[Str, Str] = {}
@@ -528,6 +734,7 @@ test "a header name canonicalizes as Go's Header.Set does, and a lookup finds wh
 }
 
 test "repeated fields keep Go's values, and header() sees Go's first" {
+  expect(REPEAT_HEADERS.len() >= 600)
   var bad: List[(List[Str], List[Str], Str, Str, Str)] = []
   for (names, values, lookup, want) in REPEAT_HEADERS {
     var r = http.new_request("GET", "http://h/", headers: {})
@@ -575,6 +782,7 @@ fn cookie_lines_joined(cs: List[http.Cookie]) -> Str {
 }
 
 test "parse_cookie is Go's ParseCookie and each cookie displays as Go's String" {
+  expect(COOKIE_LINES.len() >= 2000)
   var bad: List[(Str, Str, Str)] = []
   for (line, want) in COOKIE_LINES {
     let got = match http.parse_cookie(line) {
@@ -589,6 +797,7 @@ test "parse_cookie is Go's ParseCookie and each cookie displays as Go's String" 
 }
 
 test "parse_set_cookie is Go's ParseSetCookie and the cookie displays as Go's String" {
+  expect(SET_COOKIE_LINES.len() >= 2000)
   var bad: List[(Str, Str, Str)] = []
   for (line, want) in SET_COOKIE_LINES {
     let got = match http.parse_set_cookie(line) {
