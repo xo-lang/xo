@@ -31,3 +31,21 @@ entry is kept as $XO_FE_KEEP_DIR/KEY, else <cache>/fe-bad/KEY, for a
 look after the cache moved on. The root cause fix logs
 every type name an entry needs as a read, so such an entry misses
 before the commit starts.
+
+Observed again 2026-10-26, with the cause found (Xo Lang 2): "the front end
+cache entry ... (closure metrics.series_of.fn3, recorded by xo X) did not
+replay in xo X", the same xo recording and replaying. The kept entry
+replayed alone in a private cache reproduced it, and the dropped build's
+counts (XO_FE_STATS=1 now prints them as `fe dropped ...`) said
+`miss.absent`: the closure had made the Map helper
+`xo.maph.logget[Map[Str, metrics.Series]]` whole where it was recorded (a
+program with one histogram), and in a program where another body made the
+helper first (internal/llvm golden std_default_call) the entry's "absent"
+check refused it. A body's entry that misses is built from source; a
+closure's cannot be (its job's data is not kept), so the build was dropped
+and made again without the cache. Fix: a Map type's helpers (xo.map.*,
+xo.mlog.*, xo.maph.*[T]) are name-determined, as xo.const[] and
+xo.droplist[] were (fe_const_fn): thunk_func takes one already there by
+its name, so the commit keeps it. The replayed build's __text equals a
+fresh build's. Test: internal/arm64 TestFrontCacheClosureMadeMapHelper.
+The type-read hypothesis above did not apply to this case.

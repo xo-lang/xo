@@ -469,6 +469,14 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
     // the pack is rewritten without the old one; a third failure builds
     // without entries (gotchas/fe-cache-entry-does-not-replay.md)
     tries += 1
+    // the dropped build's counts (XO_FE_STATS=1): its misses name why an
+    // entry's replay failed (a closure's own entry that misses fails it),
+    // and only the final build's counts are printed after
+    if (os.env.get("XO_FE_STATS") ?? "") == "1" {
+      for (k, v) in b.fe_stats {
+        os.stdio.eprintln("fe dropped ${k} ${v}")
+      }
+    }
     for x in b.fe.bad {
       // "KEY (FUNCTION, recorded by xo ID)"; this xo is self_id
       let k = x.split(" ")[0]

@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- A front end cache entry of a closure that made a Map type's helper now
+  replays in a program where another body made the helper first; such a
+  build printed "the front end cache entry ... did not replay" and was
+  made again without the cache. `XO_FE_STATS=1` also prints the counts
+  of a build the cache dropped (`fe dropped ...`), which name the miss.
 - `xo dev edges` exits 1 with the reason when its program does not check: a
   `use go` or `use c` package with no binding stopped the check before names
   resolve and the command wrote only the standard library's references,

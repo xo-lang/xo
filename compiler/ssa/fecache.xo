@@ -1281,12 +1281,20 @@ pub fn (var b: Builder) fe_finalize() {
   b.fe.pending = []
 }
 
-/// Whether n names a function its name determines, which a body that
-/// reads a constant makes when it is the first: the constant's function
-/// (const_value's xo.const[M.N]) and the drop of its list type
-/// (drop_list's xo.droplist[T], an empty function). An entry that made
-/// one whole replays where another body made it already.
-fn fe_const_fn(n: Str) -> Bool { n.starts_with("xo.const[") || n.starts_with("xo.droplist[") }
+/// Whether n names a function its name determines, which a body makes
+/// when it is the first to need it: a constant's function (const_value's
+/// xo.const[M.N]), the drop of its list type (drop_list's
+/// xo.droplist[T], an empty function), and a Map type's helpers
+/// (xo.map.*, xo.mlog.*, xo.maph.*[T]: made by thunk_func, which takes
+/// one already there by its name). An entry that made one whole replays
+/// where another body made it already. (2026-10-26: a closure of
+/// std/metrics' series_of made xo.maph.logget[Map[Str, metrics.Series]]
+/// where it was recorded; in a program where another body made it first
+/// the closure's entry, which cannot fall back to its source, did not
+/// replay, and the build was made again without the cache.)
+fn fe_const_fn(n: Str) -> Bool {
+  n.starts_with("xo.const[") || n.starts_with("xo.droplist[") || n.starts_with("xo.map.") || n.starts_with("xo.mlog.") || n.starts_with("xo.maph.")
+}
 
 /// Whether an entry that made the thunk named n for target function fo
 /// with signature sig may replay with the thunk already there (its name,

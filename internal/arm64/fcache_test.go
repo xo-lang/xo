@@ -3050,3 +3050,57 @@ func TestSharedPackNegKeys(t *testing.T) {
 		t.Error("the build in the new directory differs from the cache-off build")
 	}
 }
+
+// TestFrontCacheClosureMadeMapHelper: a closure's front end entry that
+// made a Map helper whole (std/metrics' series_of closure makes
+// xo.maph.logget[Map[Str, metrics.Series]]) replays in a program where
+// another body made the helper first. Before (2026-10-26), its "absent"
+// check refused it there, and a closure's entry cannot fall back to its
+// source, so the second program's build printed "did not replay" and
+// was made again without the cache.
+func TestFrontCacheClosureMadeMapHelper(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	t.Parallel()
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-fehelper-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	// one histogram: the closure makes the helper whole (the program
+	// that recorded the entry kept in fe-bad on 2026-10-26)
+	one := filepath.Join(work, "one")
+	if err := os.MkdirAll(one, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(one, "xo.mod"), []byte("module gdef\n"), 0o644)
+	os.WriteFile(filepath.Join(one, "main.xo"), []byte("use std/metrics\n\nfn main(os: Os) {\n  let r = metrics.registry()\n  let h = r.histogram(\"x\", \"y\")\n  h.observe(0.3)\n  os.stdio.println(\"ok\")\n}\n"), 0o644)
+	// two histograms, one with labels: another body makes the helper
+	// before the closure's turn (the program it did not replay in)
+	two := filepath.Join("..", "llvm", "testdata", "golden", "std_default_call")
+	cache := filepath.Join(work, "cache")
+	for _, d := range []string{one, two} {
+		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", filepath.Join(work, filepath.Base(d)+".bin"), "."))
+		cmd.Dir = d
+		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on", "XO_BIN_CACHE=off", "XO_WHOLE_BUILD=off", "XO_SHARED_PACK=off", "XO_FE_KEEP_DIR="+filepath.Join(work, "kept"))
+		log, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s: xo build: %v\n%s", filepath.Base(d), err, log)
+		}
+		if strings.Contains(string(log), "did not replay") {
+			t.Errorf("%s: a front end cache entry did not replay:\n%s", filepath.Base(d), log)
+		}
+	}
+	out, err := testtmp.Guard(exec.Command(filepath.Join(work, "std_default_call.bin"))).Output()
+	if err != nil || !strings.Contains(string(out), `db_seconds_bucket{table="users",le="0.05"} 1`) {
+		t.Errorf("the second program's run: %v\n%s", err, out)
+	}
+}
