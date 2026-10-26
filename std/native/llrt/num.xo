@@ -13,6 +13,7 @@
 //
 // Nothing here interpolates a number: the interpolation is this code.
 use native/llrt/num_tables
+use native/llrt/raw
 use native/rt
 
 const MIN_INT: Int = -9223372036854775807 - 1
@@ -1510,6 +1511,29 @@ fn quad(b: Bytes, i: Int, r: Int) -> Int {
   (b64_quad(v) & 0xFFFF) | 0x3D3D0000
 }
 
+/// The six bytes the eight base64 characters at address i of bp decode to,
+/// the first lowest (tp: B64_VAL's address), or -1 when one is not an
+/// ordinary character (padding, \r, \n or invalid).
+fn dec8(bp: Int, tp: Int, i: Int) -> Int {
+  let x = rt.mem_load(bp, i, 8)
+  let a0 = rt.mem_load(tp, x & 255, 1)
+  let a1 = rt.mem_load(tp, shr(x, 8) & 255, 1)
+  let a2 = rt.mem_load(tp, shr(x, 16) & 255, 1)
+  let a3 = rt.mem_load(tp, shr(x, 24) & 255, 1)
+  let a4 = rt.mem_load(tp, shr(x, 32) & 255, 1)
+  let a5 = rt.mem_load(tp, shr(x, 40) & 255, 1)
+  let a6 = rt.mem_load(tp, shr(x, 48) & 255, 1)
+  let a7 = rt.mem_load(tp, shr(x, 56), 1)
+  if (a0 | a1 | a2 | a3 | a4 | a5 | a6 | a7) >= 64 {
+    return -1
+  }
+  let q1 = (a0 << 18) | (a1 << 12) | (a2 << 6) | a3
+  let q2 = (a4 << 18) | (a5 << 12) | (a6 << 6) | a7
+  let w1 = ((q1 >> 16) & 0xFF) | (q1 & 0xFF00) | ((q1 & 0xFF) << 16)
+  let w2 = ((q2 >> 16) & 0xFF) | (q2 & 0xFF00) | ((q2 & 0xFF) << 16)
+  w1 | (w2 << 24)
+}
+
 /// The bytes of standard base64 text (base64.StdEncoding.DecodeString:
 /// padding required, \r and \n ignored), or None.
 pub fn from_base64(s: Str) -> Bytes? {
@@ -1531,6 +1555,32 @@ pub fn from_base64(s: Str) -> Bytes? {
     // and the last characters, go a character at a time below
     // (2026-10-23: the per-character state was most of json bytes' time)
     if k == 0 {
+      // 32, then eight, ordinary characters at once (Go's assemble64): a word
+      // read, eight table lookups and six bytes out for each eight; only
+      // with no half word pending
+      if wk == 0 {
+        let tp = raw.bytes_addr(t)
+        let bp = raw.bytes_addr(b)
+        while i + 32 <= n {
+          let w0 = dec8(bp, tp, i)
+          let w1 = dec8(bp, tp, i + 8)
+          let w2 = dec8(bp, tp, i + 16)
+          let w3 = dec8(bp, tp, i + 24)
+          if (w0 | w1 | w2 | w3) < 0 {
+            break
+          }
+          out = rt.rs_push_words(out, w0, w1, w2, w3, 0x6666)
+          i += 32
+        }
+        while i + 8 <= n {
+          let w = dec8(bp, tp, i)
+          if w < 0 {
+            break
+          }
+          out = rt.rs_push_word(out, w, 6)
+          i += 8
+        }
+      }
       while i + 4 <= n {
         let a0 = Int(t[Int(b[i])])
         let a1 = Int(t[Int(b[i + 1])])

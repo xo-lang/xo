@@ -41,7 +41,7 @@ func main() {
 				}
 			}
 		}
-	} else {
+	} else if w == "decode" {
 		var encoded []string
 		for _, s := range ins {
 			encoded = append(encoded, base64.StdEncoding.EncodeToString([]byte(s)))

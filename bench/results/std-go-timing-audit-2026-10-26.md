@@ -35,8 +35,8 @@ twin, B the Xo program (native arm64, --release); ratios are B / A.
 
 | workload | Go wall | Xo wall | wall | instructions | cycles |
 |---|---|---|---|---|---|
-| base64 encode (2000 buffers of 0 to 3,000 bytes, 20 passes) | 48.5 ms | 74.6 ms | 1.537 | 2.093 | 1.302 |
-| base64 decode (same) | 35.7 ms | 74.4 ms | 2.085 | 2.713 | 1.950 |
+| base64 encode (2000 buffers of 0 to 3,000 bytes, 20 passes), first measurement | 48.5 ms | 74.6 ms | 1.537 | 2.093 | 1.302 |
+| base64 decode (same), first measurement | 35.7 ms | 74.4 ms | 2.085 | 2.713 | 1.950 |
 | strconv atoi (1,000 ints, 300 passes) | 4.9 ms | 5.5 ms | 1.128 | 0.870 | 1.187 |
 | strconv itoa | 7.4 ms | 8.3 ms | 1.113 | 0.609 | 1.137 |
 | strconv atof | 9.5 ms | 8.0 ms | 0.848 | 0.780 | 0.816 |
@@ -44,11 +44,20 @@ twin, B the Xo program (native arm64, --release); ratios are B / A.
 | cookie, parse_cookie (100,000 passes) | 24.4 ms | 21.5 ms | 0.880 | 0.760 | 0.760 |
 | cookie, parse_set_cookie | 28.5 ms | 23.5 ms | 0.827 | 0.748 | 0.784 |
 
-Worst: std/base64 (decode 2.09x wall, 2.7x instructions; encode 1.54x wall,
-2.1x instructions). The atoi and itoa wall figures (1.11 to 1.13) are 5 to 8 ms
+Worst, first measurement: std/base64 (decode 2.09x wall, 2.7x instructions;
+encode 1.54x wall, 2.1x instructions). That run was inflated by the Xo program's
+setup (6 MB of text built by 3 million string appends, 0.55 of Go's wall alone
+once replaced by a BytesBuilder), so bench/perf/base64 now has a `none`
+workload (the setup alone) and the rows below are the corrected ones. The atoi and itoa wall figures (1.11 to 1.13) are 5 to 8 ms
 runs where process start is a large share and Xo's instruction counts are
 lower (0.87, 0.61): not a finding. The number text and the cookie parsers are
 faster than Go's. Peak memory is lower for Xo in every row (0.15 to 0.66 of
 Go's). Machine: the development Mac, Go 1.26.1.
 
-Fix next, one module at a time: base64 (encode and decode).
+## base64, corrected and fixed (same day)
+
+With the setup fixed (`none` row: Xo 0.55 of Go's wall), main's std against Go: encode 1.084 (instructions
+1.52), decode 1.380 (instructions 1.97, cycles 1.28). After the change in std/changes/base64.md (Std runs
+Bytes.to_base64 and from_base64, which decodes eight and 32 characters at a time): encode 0.691
+(instructions 0.80, cycles 0.59), decode 1.078 (instructions 1.31, cycles 1.00). Both inside the 1.2x
+bar. Next twins: path, uuid, base32, mime, template, archive, compress.

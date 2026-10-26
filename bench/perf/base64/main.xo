@@ -1,25 +1,25 @@
 // base64: std/base64 encode and decode of 2000 buffers of 0 to 3,000 bytes,
 // 20 passes, against Go's encoding/base64 (twin.go.txt). Usage:
-// `<program> encode|decode`. Prints `<workload> <checksum>`; the twin prints
+// `<program> encode|decode|none` (none: the setup alone). Prints `<workload> <checksum>`; the twin prints
 // the same.
 use std/base64
 
 fn next(x: Int) -> Int { (x * 1103515245 + 12345) % 2147483648 }
 
-fn inputs() -> List[Str] {
-  var out: List[Str] = []
+fn inputs() -> List[Bytes] {
+  var out: List[Bytes] = []
   var r = 12345
   for _ in 0..2000 {
     r = next(r)
     let n = (r >> 8) % 3001
-    var s = ""
+    var bb = BytesBuilder.with_capacity(n)
     var i = 0
     while i < n {
       r = next(r)
-      s += "${(r >> 8) % 10}"
+      bb.write_byte(UInt8(48 + (r >> 8) % 10))
       i += 1
     }
-    out.push(s)
+    out.push(bb.freeze())
   }
   out
 }
@@ -31,17 +31,17 @@ fn main(os: Os) {
   if w == "encode" {
     for _ in 0..20 {
       for s in ins {
-        let e = base64.encode(s.bytes())
+        let e = base64.encode(s)
         sum += e.len()
         if e.len() > 0 {
           sum += Int(e.bytes()[e.len() - 1])
         }
       }
     }
-  } else {
+  } else if w == "decode" {
     var encoded: List[Str] = []
     for s in ins {
-      encoded.push(base64.encode(s.bytes()))
+      encoded.push(base64.encode(s))
     }
     for _ in 0..20 {
       for e in encoded {
