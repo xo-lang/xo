@@ -253,7 +253,7 @@ test "a Decompressor in pieces gives the whole decoder's result" {
       match d.write(s[at..at + n2]) {
         Ok(b) => out.write(b)
         Err(e) => {
-          err = e.msg
+          err = e.display()
           break
         }
       }
@@ -262,7 +262,7 @@ test "a Decompressor in pieces gives the whole decoder's result" {
     if err.is_empty() {
       match d.finish() {
         Ok(b) => out.write(b)
-        Err(e) => err = e.msg
+        Err(e) => err = e.display()
       }
     }
     let b = out.freeze()
@@ -320,7 +320,7 @@ test "the decoders give Go's output or error, bounded by max_size" {
     }
     let got = match r {
       Ok(b) => "ok ${b.len()} ${sha8(b)}"
-      Err(e) => "err ${e.msg}"
+      Err(e) => "err ${e.display()}"
     }
     if got != want {
       bad.push((f, i, got, want))

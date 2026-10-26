@@ -1520,7 +1520,7 @@ test "parse gives Go's parts and errors" {
     // the parts before an error are not returned: compare the error alone
     let got = match multipart.parse(body, boundary) {
       Ok(ps) => ps.map(part_text)
-      Err(e) => ["err ${e.msg}"]
+      Err(e) => ["err ${e.display()}"]
     }
     let w = if want.len() > 0 && want[want.len() - 1].starts_with("err ") { [want[want.len() - 1]] } else { want }
     if got != w {
@@ -1538,7 +1538,7 @@ test "parse_form gives Go's values, files, and errors" {
         let fs = f.files.keys().map(fn(k) { "${k}=[${(f.files.get(k) ?? []).map(part_text).join(", ")}]" }).sort()
         "ok ${f.values.encode()} files ${fs.join(" ")}"
       }
-      Err(e) => "err ${e.msg}"
+      Err(e) => "err ${e.display()}"
     }
     if got != want {
       bad.push((i, got, want))

@@ -7104,7 +7104,7 @@ test "parse_address is Go's" {
   for (s, want) in ADDRESSES {
     let got = match mail.parse_address(s) {
       Ok(a) => "ok ${a.name}|${a.address}|${a.display()}"
-      Err(e) => "err ${e.msg}"
+      Err(e) => "err ${e.display()}"
     }
     if got != want {
       bad.push((s, got, want))
@@ -7118,7 +7118,7 @@ test "parse_address_list is Go's" {
   for (s, want) in LISTS {
     let got = match mail.parse_address_list(s) {
       Ok(xs) => "ok " + xs.map(fn(a) { "${a.name}|${a.address}" }).join(";")
-      Err(e) => "err ${e.msg}"
+      Err(e) => "err ${e.display()}"
     }
     if got != want {
       bad.push((s, got, want))
@@ -7132,7 +7132,7 @@ test "parse_date is Go's" {
   for (s, want) in DATES {
     let got = match mail.parse_date(s) {
       Ok(t) => "ok ${t.unix()}"
-      Err(e) => "err ${e.msg}"
+      Err(e) => "err ${e.display()}"
     }
     if got != want {
       bad.push((s, got, want))
@@ -7162,7 +7162,7 @@ test "read_message is Go's" {
   for (m, want) in MESSAGES {
     let got = match mail.read_message(m) {
       Ok(x) => shape(x)
-      Err(e) => "err ${e.msg}"
+      Err(e) => "err ${e.display()}"
     }
     if got != want {
       bad.push((m, got, want))

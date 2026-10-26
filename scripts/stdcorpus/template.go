@@ -253,9 +253,9 @@ test "parse and render give Go's output and errors" {
     let got = match template.parse("t", src) {
       Ok(t) => match t.missing_key(missing).render(data) {
         Ok(s) => s
-        Err(e) => "err ${e.msg}"
+        Err(e) => "err ${e.display()}"
       }
-      Err(e) => "err ${e.msg}"
+      Err(e) => "err ${e.display()}"
     }
     if got != want {
       bad.push((src, got, want))
@@ -282,9 +282,9 @@ test "render_named executes the named template of the set" {
     let got = match named_set(kind, main) {
       Ok(t) => match t.missing_key(missing).render_named(name, data) {
         Ok(s) => s
-        Err(e) => "err ${e.msg}"
+        Err(e) => "err ${e.display()}"
       }
-      Err(e) => "err ${e.msg}"
+      Err(e) => "err ${e.display()}"
     }
     if got != want {
       bad.push(("set ${kind} ${name}", got, want))

@@ -82,7 +82,7 @@ test "parse gives google/uuid's UUID, version, and errors" {
   for (s, want) in PARSE {
     let got = match uuid.parse(s) {
       Ok(u) => "ok ${u} ${u.version()}"
-      Err(e) => "err ${e.msg}"
+      Err(e) => "err ${e.display()}"
     }
     if got != want {
       bad.push((s, got, want))
@@ -97,7 +97,7 @@ test "from_bytes is google/uuid's FromBytes, and bytes gives them back" {
     let b = Bytes.from_hex(h) ?? b""
     let got = match uuid.from_bytes(b) {
       Ok(u) => if u.bytes() == b { "ok ${u}" } else { "bytes differ" }
-      Err(e) => "err ${e.msg}"
+      Err(e) => "err ${e.display()}"
     }
     if got != want {
       bad.push((h, got, want))
