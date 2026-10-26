@@ -45,7 +45,58 @@ fn cycle(n: Int) -> Int {
   s
 }
 
+// The other edge of a guard is a fact too: `hi > xs.len()` returning
+// leaves `hi <= xs.len()` for everything after it, so a loop bounded by
+// hi indexes with no check of its own (2026-10-26).
+fn guard_fact(xs: List[Int], hi: Int) -> Int {
+  // arm64: "ldr x[0-9]+, \[x[0-9]+, x[0-9]+, lsl #3\]" -"b\.hs"
+  if hi > xs.len() {
+    return 0
+  }
+  var s = 0
+  for i in 0..hi {
+    s += xs[i]
+  }
+  s
+}
+
+// A clamp carries the same fact through the join: after `if h > xs.len()
+// { h = xs.len() }` both arms have h at most the length, so the loop's
+// index needs no check (the shape std's merge sort has, 2026-10-26).
+fn clamp_fact(xs: List[Int], h0: Int) -> Int {
+  // arm64: "ldr x[0-9]+, \[x[0-9]+, x[0-9]+, lsl #3\]" -"b\.hs"
+  var h = h0
+  if h > xs.len() {
+    h = xs.len()
+  }
+  var s = 0
+  for i in 0..h {
+    s += xs[i]
+  }
+  s
+}
+
+// The fact belongs to the block the guard's other edge enters, so a
+// guard on one arm of a branch does not bound the use after the join:
+// the check stays (2026-10-26).
+fn fact_not_dominating(xs: List[Int], hi: Int, flag: Bool) -> Int {
+  // arm64: "b\.hs"
+  if flag {
+    if hi > xs.len() {
+      return 0
+    }
+  }
+  var s = 0
+  var i = 0
+  while i < hi {
+    s += xs[i]
+    i += 1
+  }
+  s
+}
+
 fn main(os: Os) {
   let n = os.env.args().len()
   os.stdio.println("${sum([1, 2, n])} ${pick([1, 2, n], 5)} ${cycle(7)}")
+  os.stdio.println("${guard_fact([1, 2, n], 2)} ${clamp_fact([1, 2, n], 2)} ${fact_not_dominating([1, 2, n], 2, n > 3)}")
 }

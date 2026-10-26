@@ -47,6 +47,37 @@ programs that link std/internal's probes lose. The file above ranks the two
 ways to get it back: memoize the list_len load a check adds, and record the
 fall-through fact of a return guard so the merge's indexes prove.
 
+## 2026-10-26: fix: the merge sort's cursors are bounded by a comparison the arm64 proof reads
+
+- Kind: fix
+- Commit: this commit
+- Found by: measuring the swap index checks the merge paid after the arm64 bounds proof gained guard facts: `while i < left && j < hi` carries the second comparison in a phi (gotchas/bounds-proof-short-circuit.md), and the callee could not see the length fact the caller's clamp had
+- Go reference: none (Go's sort does not share this lowering)
+- Test: golden list_sort_guard (arm64, LLVM, the Go backend), the arm64 goldens that sort, test/codegen/lists guard_fact and clamp_fact fail on the base commit's xo and pass here, test/codegen/listbounds (the boundary of the fact: le_not_lt, bad_clamp and ge_guard_no_nonneg keep their check, ge_guard_nonneg is a regression guard that already held), compiler/arm64 proof_test.xo
+
+`merge_runs_in_place` says the fact once per merge: `if hi > xs.len()`
+calls `merge_end_past(hi, xs.len())`, a non generic `-> Never` helper
+whose body is one `rt.fault_raise("merge_runs_in_place: ...", "")`, so one
+cold body and one message serve every element type the sort is
+instantiated at. The idiom is the prelude's own: this module imports the
+`fault` module, which shadows the `fault(...)` expression, so the raise is
+`rt.fault_raise` with an empty position, the shape `Bytes.zeroed`'s fault
+already has (the message names the function instead of a hand written
+`file:line` that drifts). A broken caller stays loud as it did on its
+first read past the end, and the proof turns the edge into `hi <=
+xs.len()` for everything after it; with a plain `return` the tail would
+have gone silently unsorted. The merge then tests its two cursors with
+`while i < left { if j >= hi { break } ... }` so both comparisons reach a
+branch terminator. Two of the four index checks the
+hot loop paid are gone: xo bench --ab on bench/perf/sortip, 2,000,000
+elements, 10 rounds inside a measurement window (load 3.21),
+instructions 1,122,611,353 to 1,020,403,770 (0.909) and wall
+147.2 to 141.5 ms (0.961, 95% interval 0.947 to 0.971) for `ip_ints`;
+`ip_strs` instructions 0.973 with wall within noise (1.004, 0.971 to
+1.012). The
+slot index `w` and the placeholder loop's `lo + k` keep their checks: their
+bounds are loop invariants, not comparison facts.
+
 ## 2026-10-25: fix: raw.str_slice clamps a start past the end to an empty Str (the helper behind the prelude's Str slicing of paths and names)
 
 - Kind: fix

@@ -1520,6 +1520,16 @@ fn merge_sort_in_place[T](var xs: List[T], less: fn(T, T) -> Bool) {
   }
 }
 
+/// The end a merge was given past the list's length: a caller of
+/// merge_runs_in_place broke the clamp that says hi <= xs.len(). Kept out of
+/// the generic function so one cold body and one message serve every
+/// element type the sort is instantiated at. The message names the
+/// function, since this module imports `fault` and calls rt.fault_raise
+/// with no source position (the same shape Bytes.zeroed's fault has).
+fn merge_end_past(hi: Int, n: Int) -> Never {
+  rt.fault_raise("merge_runs_in_place: the merge's end ${hi} is past the list's length ${n}", "")
+}
+
 /// xs[lo..mid) and xs[mid..hi) merged inside xs's own array (decision 0374
 /// step 3b): the left run is swapped into scratch, whose every slot holds a
 /// copy of xs[0] until a swap replaces it, and the merge then swaps each
@@ -1530,6 +1540,15 @@ fn merge_sort_in_place[T](var xs: List[T], less: fn(T, T) -> Bool) {
 /// run's element goes first only when less, which keeps the order stable,
 /// and whatever is left of the right run is already in place.
 fn merge_runs_in_place[T](var xs: List[T], var scratch: List[T], lo: Int, mid: Int, hi: Int, less: fn(T, T) -> Bool) {
+  // the caller clamps hi to the length, which this body cannot see: said
+  // here once, it lets every j below go unchecked (2026-10-26). A caller
+  // that broke the clamp faults here, as it would have on the first read
+  // past the end, rather than leaving the tail unsorted. The guard calls a
+  // non generic helper, so the message is built once, not once per element
+  // type this generic function is instantiated at.
+  if hi > xs.len() {
+    merge_end_past(hi, xs.len())
+  }
   let left = mid - lo
   // a placeholder an element is one counted retain, once a width, not once
   // a merge
@@ -1544,7 +1563,14 @@ fn merge_runs_in_place[T](var xs: List[T], var scratch: List[T], lo: Int, mid: I
   var i = 0
   var j = mid
   var w = lo
-  while i < left && j < hi {
+  // the two cursors as one test plus a break, not `i < left && j < hi`:
+  // the proof reads a comparison branch, and the short circuit carries its
+  // second half in a phi instead (the body's j is then bounded by the
+  // fall through of the break's guard)
+  while i < left {
+    if j >= hi {
+      break
+    }
     if less(xs[j], scratch[i]) {
       rt.list_swap(xs, w, j)
       j += 1

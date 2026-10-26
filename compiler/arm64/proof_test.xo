@@ -1,0 +1,102 @@
+// The bounds-check proof (decision 0184 and 2026-10-26): the facts a
+// guard's other edge leaves, their use through a clamp's phi, and the
+// block that must dominate the use for either to count.
+//
+// The values carry no type (-1): the proof reads ops, arguments and aux,
+// never a type.
+
+use github.com/xo-lang/xo/compiler/ssa
+
+/// f(xs, hi): the length of xs, and a branch on `hi > len`. Its true edge
+/// block leaves the function, its false edge jumps to a loop header whose
+/// parameter is the index 0. Returns the module, the function index, the
+/// index value and the blocks (leave, jump, head, body, exit).
+fn guard_module() -> (ssa.Module, Int, Int, List[Int]) {
+  var m = ssa.Module{}
+  let fi = m.new_func("f", [-1, -1], [])
+  var f = m.funcs[fi]
+  let leave = f.new_block()
+  let skip = f.new_block()
+  let head = f.new_block()
+  let body = f.new_block()
+  let exit = f.new_block()
+  let len = f.add(0, ssa.Op.Call, -1, ssa.Aux.S(s: "list.len"), [0])
+  let gt = f.add(0, ssa.Op.Gt, -1, ssa.Aux.None, [1, len])
+  let _br = f.branch(0, gt, leave, skip)
+  let _r1 = f.add(leave, ssa.Op.Return, -1, ssa.Aux.None, [])
+  let zero = f.add(skip, ssa.Op.Const, -1, ssa.Aux.I(n: 0), [])
+  let _j = f.jump(skip, head, [zero])
+  let p = f.add_param(head, -1)
+  let lt = f.add(head, ssa.Op.Lt, -1, ssa.Aux.None, [p, 1])
+  let _b = f.branch(head, lt, body, exit)
+  let _r2 = f.add(body, ssa.Op.Return, -1, ssa.Aux.None, [])
+  let _r3 = f.add(exit, ssa.Op.Return, -1, ssa.Aux.None, [])
+  m.funcs[fi] = f
+  (m, fi, p, [leave, skip, head, body, exit])
+}
+
+test "the fall through of `if hi > len { leave }` bounds the loop below hi" {
+  let (m, fi, p, bl) = guard_module()
+  let f = m.funcs[fi]
+  let pr = new_proof(f, [0, bl[0], bl[1], bl[2], bl[3], bl[4]])
+  expect(pr.proven(f, bl[3], p, 0)) == true
+  // nothing says so where the guard left instead
+  expect(pr.proven(f, bl[0], p, 0)) == false
+}
+
+test "a guard on one arm of a branch does not bound the use after the join" {
+  var m = ssa.Module{}
+  let fi = m.new_func("f", [-1, -1, -1], [])
+  var f = m.funcs[fi]
+  let guarded = f.new_block()
+  let skip = f.new_block()
+  let leave = f.new_block()
+  let head = f.new_block()
+  let body = f.new_block()
+  let exit = f.new_block()
+  // xs, hi, flag: the guard is one arm, the other goes straight on
+  let _br = f.branch(0, 2, guarded, skip)
+  let len = f.add(guarded, ssa.Op.Call, -1, ssa.Aux.S(s: "list.len"), [0])
+  let gt = f.add(guarded, ssa.Op.Gt, -1, ssa.Aux.None, [1, len])
+  let _b = f.branch(guarded, gt, leave, skip)
+  let _r1 = f.add(leave, ssa.Op.Return, -1, ssa.Aux.None, [])
+  let zero = f.add(skip, ssa.Op.Const, -1, ssa.Aux.I(n: 0), [])
+  let _j = f.jump(skip, head, [zero])
+  let p = f.add_param(head, -1)
+  let lt = f.add(head, ssa.Op.Lt, -1, ssa.Aux.None, [p, 1])
+  let _b2 = f.branch(head, lt, body, exit)
+  let _r2 = f.add(body, ssa.Op.Return, -1, ssa.Aux.None, [])
+  let _r3 = f.add(exit, ssa.Op.Return, -1, ssa.Aux.None, [])
+  m.funcs[fi] = f
+  let pr = new_proof(f, [0, guarded, skip, leave, head, body, exit])
+  expect(pr.proven(f, body, p, 0)) == false
+}
+
+test "a clamp carries the fact through the join into the loop's bound" {
+  var m = ssa.Module{}
+  let fi = m.new_func("f", [-1, -1], [])
+  var f = m.funcs[fi]
+  let clamp = f.new_block()
+  let keep = f.new_block()
+  let join = f.new_block()
+  let head = f.new_block()
+  let body = f.new_block()
+  let exit = f.new_block()
+  let len = f.add(0, ssa.Op.Call, -1, ssa.Aux.S(s: "list.len"), [0])
+  let gt = f.add(0, ssa.Op.Gt, -1, ssa.Aux.None, [1, len])
+  // if hi > xs.len() { h = xs.len() } else { h = hi }, then the loop
+  let _b = f.branch(0, gt, clamp, keep)
+  let _j1 = f.jump(clamp, join, [len])
+  let _j2 = f.jump(keep, join, [1])
+  let h = f.add_param(join, -1)
+  let zero = f.add(join, ssa.Op.Const, -1, ssa.Aux.I(n: 0), [])
+  let _j3 = f.jump(join, head, [zero])
+  let p = f.add_param(head, -1)
+  let lt = f.add(head, ssa.Op.Lt, -1, ssa.Aux.None, [p, h])
+  let _b2 = f.branch(head, lt, body, exit)
+  let _r2 = f.add(body, ssa.Op.Return, -1, ssa.Aux.None, [])
+  let _r3 = f.add(exit, ssa.Op.Return, -1, ssa.Aux.None, [])
+  m.funcs[fi] = f
+  let pr = new_proof(f, [0, clamp, keep, join, head, body, exit])
+  expect(pr.proven(f, body, p, 0)) == true
+}

@@ -1,0 +1,61 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): the boundary of the
+// guard fact in test/codegen/lists. The fact is `hi` at most the length,
+// never below it, so these three keep their bounds check on both the
+// change's xo and the commit before it, and this program is the boundary
+// evidence for it (2026-10-26).
+
+// `hi > xs.len()` returning leaves `hi <= xs.len()`, not `hi < xs.len()`:
+// an index equal to hi is a length, one past the last element, so the
+// check stays.
+fn le_not_lt(xs: List[Int], hi: Int) -> Int {
+  // arm64: "b\.hs"
+  if hi > xs.len() {
+    return 0
+  }
+  Int(xs[hi])
+}
+
+// A clamp has to clamp: `if h > xs.len() { h = xs.len() + 1 }` passes a
+// value above the length on its true arm, so the join's parameter is not
+// at most the length and the loop keeps its check.
+fn bad_clamp(xs: List[Int], h0: Int) -> Int {
+  // arm64: "b\.hs"
+  var h = h0
+  if h > xs.len() {
+    h = xs.len() + 1
+  }
+  var s = 0
+  for i in 0..h {
+    s += xs[i]
+  }
+  s
+}
+
+// `if i >= xs.len() { return }` leaves `i < xs.len()`, and the index still
+// has to be known not negative: a parameter's sign is unknown, so the
+// check stays.
+fn ge_guard_no_nonneg(xs: List[Int], i: Int) -> Int {
+  // arm64: "b\.hs"
+  if i >= xs.len() {
+    return 0
+  }
+  Int(xs[i])
+}
+
+// The same guard with an index that is a length of another list, which is
+// never negative: no check. The base commit's xo already drops this one,
+// so the pattern is a regression guard, not fail-then-pass evidence.
+fn ge_guard_nonneg(xs: List[Int], ys: List[Int]) -> Int {
+  // arm64: -"b\.hs"
+  let i = ys.len()
+  if i >= xs.len() {
+    return 0
+  }
+  Int(xs[i])
+}
+
+fn main(os: Os) {
+  let n = os.env.args().len()
+  os.stdio.println("${le_not_lt([1, 2, n], 1)} ${bad_clamp([1, 2, n], 1)}")
+  os.stdio.println("${ge_guard_no_nonneg([1, 2, n], 1)} ${ge_guard_nonneg([1, 2, n], [1, n])}")
+}

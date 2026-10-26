@@ -1,0 +1,43 @@
+// The merge sort behind List.sort (decision 0374 step 3b) after the arm64
+// bounds proof learned the guard fact (2026-10-26): the merge says its
+// bound once and breaks on the right run's end, and the elements still
+// come out in order on every backend, with the duplicates, the empty list,
+// the single element, the already sorted list and a list of Str included.
+// Output: each list's elements in order, then the count.
+
+fn show(os: Stdio, name: Str, xs: List[Int]) {
+  var out = ""
+  for x in xs {
+    if out != "" {
+      out += " "
+    }
+    out += "${x}"
+  }
+  os.println("${name}: [${out}]")
+}
+
+fn main(os: Os) uses stdio {
+  let a = [9, 3, 7, 1, 8, 2, 6, 5, 4, 0].sort()
+  show(os.stdio, "ten", a)
+  let b = [5, 5, 1, 1, 9, 9, 5, 1].sort()
+  show(os.stdio, "dups", b)
+  let empty: List[Int] = []
+  let c = empty.sort()
+  show(os.stdio, "empty", c)
+  let d = [7].sort()
+  show(os.stdio, "one", d)
+  let e = [1, 2, 3, 4, 5].sort()
+  show(os.stdio, "sorted", e)
+  let f = [5, 4, 3, 2, 1].sort()
+  show(os.stdio, "reversed", f)
+  let t = ["pear", "apple", "fig", "apple"].sort()
+  var words = ""
+  for w in t {
+    if words != "" {
+      words += " "
+    }
+    words += w
+  }
+  os.stdio.println("words: [${words}]")
+  os.stdio.println("count ${a.len() + b.len() + c.len() + d.len() + e.len() + f.len() + t.len()}")
+}
