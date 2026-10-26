@@ -70,12 +70,24 @@ runtime's bodies, which the checker already reads for `xo refs`.
 ## Consequences
 
 A full sweep becomes routine, which makes the resolved comparison usable
-as a gate and makes the scan-vs-edges numbers checkable every release
-instead of as a one-off. The cache needs a format with a version and a
-verify path: a stale entry would quietly under-report coverage. One entry
-holds the std graph, about 22 MB of text (245,466 rows), not one per
+routinely instead of as a one-off. The cache needs a format with a version
+and a verify path: a stale entry would quietly under-report coverage. One
+entry holds the std graph, about 22 MB of text (245,466 rows), not one per
 program and not one per module set, so a release stores a handful of
 entries at most; the first sweep after a std change pays one full check.
+
+The audit path (decided 2026-10-26, lead, after the 890-program
+comparison ran as a one-off): the `-short` coverage check stays the name
+scan, because it costs seconds where the sweep cost 3.5 hours and 22 GB,
+and because its error direction is the safe one (over that run, of 1455
+declarations the scan called 126 uncovered, the edges called 187, and the
+scan never missed one the edges reached). The resolved comparison is a
+periodic audit instead: its procedure, its cost, and the last run's
+numbers and reasons live in knowledgebase/infrastructure/agent-tools.md
+under "std coverage", and its product is the list of declarations the scan
+credits that no edge reaches, with a reason each (interface dispatch
+against a corpus gap). Those entries are not recorded in
+internal/stdcoverage/allow.txt, which means "uncovered and accepted".
 
 ## Alternatives
 

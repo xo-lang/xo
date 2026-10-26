@@ -252,16 +252,56 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   sides: `go run ./scripts/stdcoverage -programs` prints the 890
   directories the sweep runs `xo dev edges` over (the corpora, the
   goldens, bench/perf, scripts), which is the file `-dirs` reads.
-  On a 99-program sample (2026-10-26, impl-file sites included): 579
-  uncovered by the scan, 945 by the edges, and 365 the scan credits that no
-  edge reaches, 65 of them interface methods (a call through an interface
-  resolves to the interface's method, never to the implementation). The
-  rest are bare-name collisions, the scan's known limit and not a corpus
-  gap: `prelude.Buf.push` has no reference while `prelude.List.push` has
-  7,553, `prelude.Bytes.contains` none while `prelude.Str.contains` has 525,
+  On the full sweep (2026-10-26, all 890 program dirs, impl-file sites
+  included, 219 million edges, plus a re-sweep of the three programs
+  commit e8fe6f28f added or changed): the name scan calls 126 declarations
+  uncovered and the resolved edges call 187; 61 declarations the scan
+  credits are reached by no edge and none goes the other way, so the scan
+  is the safe direction and remains the gate. The two causes of the 61,
+  which is what the audit is for: interface dispatch (a call through an
+  interface resolves to the interface's method, never to the
+  implementation, so `<Type>Err.display` looks unused) and bare-name
+  collisions, the scan's known limit and not a corpus gap: `prelude.Buf.push`
+  has no reference while `prelude.List.push` has 7,553,
+  `prelude.Bytes.contains` none while `prelude.Str.contains` has 525,
   `prelude.Duration.abs` none while `prelude.Int.abs` has 4 (checked with
   `xo refs`). A line the edges contradict is worth a look; a declaration
   the edges cannot reach is not by itself proof of a missing corpus.
+  The 61 split as 41 marked `[impl]` (30 of the 31 `.display` methods plus
+  eleven others) against 20 not: `sql.Driver.connect` and eight
+  of `sql.DriverConn`'s methods (an interface only a program's own driver
+  implements, the one corpus gap left), `prelude.read_or`,
+  `read_text_or`, `texts`, `llrt_concat_int`, `Stream.close`,
+  `internal.SharedLock.unlock`, `metrics.latency_buckets`,
+  `go.Error.message` and `go_type`, `http.StatusError.status` and
+  `display`, the cold paths no program in the sweep drives. Do not count
+  a declaration the sweep's base predates: the sweep's xo is older than
+  the corpora landed during it, and re-sweeping only the programs a later
+  commit added or changed is the cheap fix (three runs and one `-edges`
+  run found six declarations the base had left uncovered, 2026-10-26).
+  The audit's procedure, and why a sweep is not a gate: a sweep is 3.5
+  hours of `xo dev edges` and 22 GB of text (1.5 GB gzipped), against
+  seconds for the name scan. Run it as shards of about 90 programs (each
+  `HEAVY_CLASS=gate`, about 2 minutes: decompress the shard's parts, one
+  `-edges` run, delete them), never one long job (owner, 2026-10-26), and
+  merge the shards' lists. Because the roots are the non-std site paths and
+  the walk only crosses edges out of a root and then through std bodies, a
+  declaration is reached by the sweep exactly when one program's own edges
+  reach it, so the reached sets union and the uncovered sets intersect.
+  `-list=DIR` writes `uncovered.txt`, `over.txt` and `under.txt` with the
+  `[impl]` mark, which is what makes a sharded merge faithful. How to merge,
+  and which list to merge how: `uncovered.txt` intersects across the shards
+  (a declaration is uncovered by the sweep only when every shard leaves it
+  uncovered); `over.txt` must NOT be intersected shard by shard, because
+  each shard was run with an empty dirs file (`scanned` is everything, so
+  over is empty) and a project run instead can count a declaration as over
+  whose only reaching edge sits in another shard. Derive over after the
+  merge: the merged uncovered set minus the name scan's own uncovered set,
+  read from one `-dirs` run over all the program dirs (the same file the
+  sweep used). The mark and the two lists are the audit's product. Do not
+  record the audit's entries in allow.txt, which means "uncovered and
+  accepted": a declaration the edges contradict is documented with its
+  reason in the audit's results, not accepted.
 - `xo dev edges [--out=FILE] [--impls] DIR` writes the checked program's
   resolved references, one tab separated line each:
   SRC_PATH SRC_LINE SRC_NAME TGT_PATH TGT_LINE TGT_NAME SITE_PATH

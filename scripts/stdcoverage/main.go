@@ -30,6 +30,7 @@ func main() {
 	edgesDir := flag.String("edges", "", "a directory of `xo dev edges` output: report the resolution's coverage and its difference from the name scan")
 	dirsFile := flag.String("dirs", "", "a file of program directories (one per line, relative to the root): the name scan reads only those, so the comparison is like with like")
 	programs := flag.Bool("programs", false, "print the program directories a `xo dev edges` sweep runs over, one per line: the file -dirs reads")
+	listDir := flag.String("list", "", "with -edges: write `uncovered.txt`, `over.txt` and `under.txt` in this directory, one `module.symbol (kind)` an entry, `[impl]` on a method whose name a covered interface method has (so a sharded audit's lists can be merged)")
 	flag.Parse()
 	root, err := xotool.Root()
 	if err != nil {
@@ -73,7 +74,7 @@ func main() {
 		}
 	}
 	if *edgesDir != "" {
-		resolved(os.Stdout, root, *edgesDir, entries, total)
+		resolved(os.Stdout, root, *edgesDir, *listDir, entries, total)
 		return
 	}
 	rules, err := stdcoverage.Allow()
@@ -143,7 +144,11 @@ func readDirs(path string) ([]string, error) {
 // that no edge reaches (what it over-claims), and those the scan calls
 // uncovered that an edge does reach (what it under-claims). The two lists
 // are what a decision to replace the scan with edges has to answer for.
-func resolved(w io.Writer, root, dir string, scanned []stdcoverage.Entry, total int) {
+// listDir, when set, writes the three lists to files, each entry marked
+// [impl] as in the printed over list, so a sweep split into shards can be
+// merged (an entry is uncovered only when every shard says so, and the
+// mark survives the merge).
+func resolved(w io.Writer, root, dir, listDir string, scanned []stdcoverage.Entry, total int) {
 	paths, err := filepath.Glob(filepath.Join(dir, "*.tsv"))
 	if err != nil || len(paths) == 0 {
 		fmt.Fprintf(w, "stdcoverage: no .tsv edge files under %s\n", dir)
@@ -199,5 +204,33 @@ func resolved(w io.Writer, root, dir string, scanned []stdcoverage.Entry, total 
 	fmt.Fprintf(w, "the scan did not cover, an edge reaches (%d):\n", len(under))
 	for _, k := range under {
 		fmt.Fprintf(w, "  %s\n", k)
+	}
+	if listDir != "" {
+		var gotList []string
+		for k := range gotSet {
+			gotList = append(gotList, k)
+		}
+		sort.Strings(gotList)
+		writeList(listDir, "uncovered.txt", gotList, impls)
+		writeList(listDir, "over.txt", over, impls)
+		writeList(listDir, "under.txt", under, impls)
+	}
+}
+
+// writeList writes keys to listDir/name, one an entry, `[impl]` where the
+// run's interface marking says a method's name a covered interface method
+// has.
+func writeList(listDir, name string, keys []string, impls map[string]bool) {
+	var b strings.Builder
+	for _, k := range keys {
+		b.WriteString(k)
+		if impls[k] {
+			b.WriteString("  [impl]")
+		}
+		b.WriteString("\n")
+	}
+	if err := os.WriteFile(filepath.Join(listDir, name), []byte(b.String()), 0o644); err != nil {
+		fmt.Fprintln(os.Stderr, "stdcoverage:", err)
+		os.Exit(1)
 	}
 }
