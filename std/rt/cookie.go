@@ -28,7 +28,14 @@ func goCookie(c Http_Cookie) *http.Cookie {
 func xoCookie(g *http.Cookie) Http_Cookie {
 	c := Http_Cookie{F_name: g.Name, F_value: g.Value, F_quoted: g.Quoted, F_path: g.Path, F_domain: g.Domain, F_max_age: int64(g.MaxAge), F_secure: g.Secure, F_http_only: g.HttpOnly, F_partitioned: g.Partitioned, F_same_site: Http_SameSite{Tag: 1}}
 	if !g.Expires.IsZero() {
-		c.F_expires = Some(Time(g.Expires.UnixNano()))
+		// Time spans int64 nanoseconds (about 1678 to 2262, decision 0364),
+		// and net/http reads any year up to 9999. A date outside Time has no
+		// Expires, the same refusal std/native/http.xo's cookie_date makes
+		// through time.instant; UnixNano would otherwise wrap the date to a
+		// different year without a word.
+		if sec := g.Expires.Unix(); sec >= minTimeSecs && sec <= maxTimeSecs {
+			c.F_expires = Some(Time(sec*1_000_000_000 + int64(g.Expires.Nanosecond())))
+		}
 	}
 	switch g.SameSite {
 	case http.SameSiteLaxMode:

@@ -1,5 +1,24 @@
 # std/http changes
 
+## 2026-10-26: fix: an Expires date outside Time's range has no Expires on the Go backend
+
+- Kind: fix
+- Commit: this commit
+- Found by: the corpus's range rows on the Go backend (a four digit year
+  outside 1678 to 2262)
+- Go reference: net/http cookie.go ParseSetCookie, whose time.Time holds any
+  year up to 9999; Xo's Time is int64 nanoseconds (decision 0364)
+- Test: internal/stdtest/testdata/corpus/http (SET_COOKIE_LINES, go, arm64
+  and LLVM)
+
+`xoCookie` (std/rt/cookie.go) converted net/http's Expires with UnixNano,
+which wraps a date outside Time's range to a different year, so the Go
+backend reported an Expires for "Wed, 16 Dec 9999 09:51:07 GMT" where
+native's `cookie_date` has none (time.instant refuses it). A date outside
+the range now leaves Expires unset on both. net/http still holds the date,
+so the corpus's oracle drops it for Xo. The range's ends are held: "Fri, 01
+Jan 1678 00:00:00 GMT" and "Thu, 10 Apr 2262 00:00:00 GMT" both read.
+
 ## 2026-10-26: fix: a cookie date's month is read in any case, as Go reads it
 
 - Kind: fix

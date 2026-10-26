@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"math/rand"
 	"net/http"
 	"net/textproto"
 	"os"
 	"sort"
 	"strings"
+	"time"
 )
 
 // std/http's StatusError and the server's rendering of a handler's error
@@ -268,6 +270,16 @@ func httpCookieTables() string {
 		"\"a\"=b", "a=\"b\"", "a=b; Path", "a", "=b", "a=b; Max-Age=abc",
 		"a=b; Domain=bad_domain", "a=b; Path=/p; Path=/q", "a=b; Unknown=1",
 		"a=b; Partitioned", "a=b; SameSite=bogus",
+		// a date outside an Xo Time (about 1678 to 2262) has no Expires:
+		// native's time.instant refuses it, and std/rt refuses it too
+		"a=b; Expires=Wed, 16 Dec 9999 09:51:07 GMT",
+		"a=b; Expires=Wed, 16 Dec 9999 09:51:07 +0000",
+		"a=b; Expires=Sat, 30 Dec 1677 12:00:00 GMT",
+		"a=b; Expires=Thu, 01 Jan 1600 00:00:00 GMT",
+		"a=b; Expires=Wed, 16 Dec 2263 09:51:07 GMT",
+		// the ends themselves are held
+		"a=b; Expires=Fri, 01 Jan 1678 00:00:00 GMT",
+		"a=b; Expires=Thu, 10 Apr 2262 00:00:00 GMT",
 	}
 	cookieLines = append(cookieLines, seededCookieLines()...)
 	setLines = append(setLines, seededSetCookieLines()...)
@@ -298,11 +310,27 @@ func goParseCookie(line string) string {
 	return strings.Join(parts, "|")
 }
 
-// goParseSetCookie is Go's ParseSetCookie as the corpus records it.
+// timeMinSecs and timeMaxSecs are std/rt/timecivil.go's ends of an Xo Time
+// (int64 nanoseconds, about 1677-09-21 to 2262-04-11), one second inside the
+// partial end seconds so a nanosecond count is always representable.
+const (
+	timeMinSecs = math.MinInt64/1_000_000_000 + 1
+	timeMaxSecs = math.MaxInt64/1_000_000_000 - 1
+)
+
+// goParseSetCookie is Go's ParseSetCookie as the corpus records it, with one
+// Xo deviation: a date outside Time's range has no Expires in Xo, since
+// native's time.instant refuses it and std/rt refuses it too (Go's own
+// time.Time is wider, so the date is dropped from the oracle's answer).
 func goParseSetCookie(line string) string {
 	c, err := http.ParseSetCookie(line)
 	if err != nil {
 		return err.Error()
+	}
+	if !c.Expires.IsZero() {
+		if sec := c.Expires.Unix(); sec < timeMinSecs || sec > timeMaxSecs {
+			c.Expires = time.Time{}
+		}
 	}
 	return c.String()
 }
@@ -411,7 +439,7 @@ func cookieDate(r *rand.Rand) string {
 	wd := []string{"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "WED", "wed", "Wednesday", "Xyz", "Wedn", "W", "", "Mo"}
 	mo := []string{"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "JUN", "junk", ""}
 	zone := []string{"GMT", "UTC", "gmt", "CEST", "CESTD", "GMT+8", "GMT-8", "GMT+0", "GMT-23", "GMT+24", "GMTX", "GMTT", "+05", "-7", "+0023", "+0000", "-0000", "+0100", "+00:00", "GMT0", "UTC0", "ChST", "MeST", "ABCD", "WITA", "AKDST", "UTC+8", "UTCT", "UTCDT", "Z", "123", "é", "AB€", ""}
-	year := []int{1970, 1999, 2000, 2021, 2026, 10000}[r.Intn(6)]
+	year := []int{1970, 1999, 2000, 2021, 2026, 10000, 1600, 1677, 2263, 9999}[r.Intn(10)]
 	day := 1 + r.Intn(31)
 	h, m, s := r.Intn(24), r.Intn(60), r.Intn(60)
 	switch r.Intn(3) {

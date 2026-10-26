@@ -92,6 +92,9 @@ struct Cookie {
   quoted: Bool = false
   path: Str = ""
   domain: Str = ""
+  /// None when Go parses no date, and None for a date outside Time's range
+  /// (1678 to 2262, decision 0364): Go's parser reads any year, Xo has no
+  /// Time for it and refuses the date rather than wrap it
   expires: Time? = None
   /// seconds: 0 unset, < 0 delete now (Max-Age=0), > 0 Max-Age
   max_age: Int = 0
