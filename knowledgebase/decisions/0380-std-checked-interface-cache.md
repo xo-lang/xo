@@ -81,6 +81,23 @@ check (57 ms of wall), and with them most of the 186 MB: an upper bound of 85 to
 wall and 150 MB of the 298 MB; the entry's own load costs part of that. The next piece is
 not this decision: `ssa.cleaned` decodes and cleans 1,300 functions of which 10 changed (61 ms of CPU, 17 of wall).
 
+## Step (a) result (2026-10-26, Xo Lang 1): null
+
+Std modules let through the module check cache (check/modcache.xo mod_cacheable without
+`is_std`; the SSA builder records std modules' tasks and budgets scans as false so their
+entries are written), XO_CHK_CACHE=auto, llvm-fib edit rebuilds with every cache warm:
+`cache chk 25/26 modules` skipped, but `phase check` stays 55 ms and the heap after it 200 MB
+(55 ms and 196 to 208 MB without). Checking std's function bodies is not the cost. A profile of six
+such edits (XO_PROF=cpu of xo at 2000 Hz, CPU per edit): parsing the 195 std files about 75 ms
+on the prefetch tasks (about 30 ms of wall; lexing 31 ms of it, lexer.emit's allocation the largest
+part), check_program about 47 ms (Checker.run 24, resolve_sigs 9, declare 7, load_native 6). So the
+gain this decision bounds is all in step (b): declaring a std module from its entry without lexing,
+parsing, declaring or resolving its files, about 45 to 60 ms of an edit's wall (about 250 ms after
+the day's back-end changes, f365d3eeb and the others) and most of the 200 MB. Step (a) is not
+pushed (it writes entries and buys nothing alone; branch lang1-0380). Next: a spike measuring how
+fast a serialized declaration table of one large std module (json or http) loads against its
+parse and declare, the go or no-go for (b)'s format.
+
 ## Measurement plan
 
 1. First, an instrument, no entry: how much of the check's 57 ms and 186 MB is std (a run with only
