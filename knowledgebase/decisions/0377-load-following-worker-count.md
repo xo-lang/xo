@@ -90,6 +90,30 @@ in a run, so "grow when the pusher's ring holds more than one item" cancels ever
 from fewer awake workers but from fewer workers taking part: with 4 workers the same load finds work in
 the 3 other rings before any worker sleeps (steals per wake 2.8 against 1.9, idle sleeps halved).
 
+### Built (2026-10-26, 283716490): the cutoff, opt in
+
+P_CAP and a worker index (W_IDX, in start order; roots 0): wakep takes only an idle worker whose index is under
+the cap and starts one only under it; XO_CAP=N fixes the cap (2 up to the CPUs), XO_CAP=auto follows the load,
+unset or 0 is the CPUs (today's behavior, no cutoff). Counters cap_grow, cap_shrink, cap_hold (wakes the cutoff
+refused), cap_seen. CRUD (bench/perf/http/xo, c=32, 8 s, quiet via measure, 3 interleaved reps, medians):
+
+| config | req/s | p99 us | CPU us/request | wakes |
+|---|---|---|---|---|
+| default | 148.2k | 645 | 25.31 | 297k to 315k |
+| XO_CAP=4 | 147.2k | 620 | 19.40 (-23%) | 131k to 134k |
+| XO_CAP=6 | 146.0k | 624 | 21.27 (-16%) | 198k to 205k |
+| XO_THREADS=4 | 142.6k | 650 | 18.89 | 122k to 133k |
+| XO_CAP=auto | 147.0k | 646 | 24.57 (-3%) | 277k to 291k |
+
+The fixed cutoff reproduces the XO_THREADS rows (cap 4 is a little better on rps and p99). The adaptive rule is
+too timid so far: cap_grow 109 to 130 and cap_shrink 111 to 132 a run, the cap oscillating near the CPUs. Conc
+benches (15 rounds, quiet, against the default): XO_CAP=4: pmap 1.776x wall (a CPU bound program held to 4
+workers: instructions equal), fanout 0.994, spawn 0.993; XO_CAP=auto: pmap 1.008, fanout 1.007, spawn 1.000 (all
+noise). Gates: TestRuntime*, TestRace*, TestTSan (260 s), the arm64 scheduler goldens with and without
+XO_CAP=2, the fixed point from the seed (s2 = s3). The default is unchanged; flipping it, or tuning auto
+until CPU bound programs keep every worker and CRUD gets the 4 to 6 worker row, comes back to the owner with the
+numbers.
+
 ### Design to build, if the owner agrees: a worker index cutoff
 
 P_CAP counts the workers that take part, as XO_THREADS=P_CAP does but changing at run time: the idle list
