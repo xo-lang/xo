@@ -1974,6 +1974,8 @@ fn lower(os: Os, o: Opts, var c: check.Checker, strip: Bool, root: Str, tests: B
     // here, before the passes' peak (the caller's c is this variable)
     c = c.link_view(o.reuse_parse)
     b.c = c
+    // the marker TestFrontEndFreedByDefault looks for in --phase-times
+    t = lap(os, o.phases, "front_end_freed", t)
   }
   // b.run_passes(), timed; may_fault's scans on tasks
   b.m.jobs = emit_jobs(os)
