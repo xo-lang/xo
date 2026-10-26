@@ -1208,8 +1208,8 @@ fn (var p: Printer) label(l: parser.Ident?) {
 
 fn (var p: Printer) stmt(s: Stmt) {
   match s {
-    LetStmt(_, pattern, typ, value) => {
-      p.w("let ")
+    LetStmt(_, pattern, typ, value, is_var) => {
+      p.w(if is_var { "var " } else { "let " })
       p.pattern(pattern)
       if let Some(t) = typ {
         p.w(": ")

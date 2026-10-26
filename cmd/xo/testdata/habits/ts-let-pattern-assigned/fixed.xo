@@ -1,0 +1,9 @@
+fn split(s: Str) -> (Str, Int) {
+  (s, s.len())
+}
+
+fn both(s: Str) -> Str {
+  var (head, n) = split(s)
+  head = head + "!"
+  "${head} ${n}"
+}

@@ -1,0 +1,66 @@
+// `var PATTERN = e` (decision 0384): every name a tuple or struct pattern
+// binds is mutable.
+
+struct Point {
+  x: Int
+  y: Int
+}
+
+struct Named {
+  name: Str
+  tags: List[Str]
+}
+
+fn bounds(xs: List[Int]) -> (Int, Int) {
+  var lo = xs[0]
+  var hi = xs[0]
+  for x in xs {
+    lo = lo.min(x)
+    hi = hi.max(x)
+  }
+  (lo, hi)
+}
+
+fn fib_pair(n: Int) -> (Int, Int) {
+  var (a, b) = (0, 1)
+  for _ in 0..n {
+    let next = a + b
+    a = b
+    b = next
+  }
+  (a, b)
+}
+
+fn main(os: Os) {
+  // a tuple: both names change
+  var (lo, hi) = bounds([5, 3, 9, 1, 7])
+  lo -= 10
+  hi *= 2
+  os.stdio.println("${lo} ${hi}")
+
+  // a loop accumulator
+  let (f, g) = fib_pair(10)
+  os.stdio.println("${f} ${g}")
+
+  // a struct pattern, a wildcard, and reference counted values
+  var Point{x, y} = Point{x: 3, y: 4}
+  x += y
+  y = x * 2
+  os.stdio.println("${x} ${y}")
+  var Named{name, tags} = Named{name: "a", tags: ["t1"]}
+  name = name + "b"
+  tags.push("t2")
+  os.stdio.println("${name} ${tags.join(",")}")
+
+  // nested, with a type annotation, one name left unchanged
+  var ((p, q), r): ((Str, Int), Bool) = (("s", 1), false)
+  p += "!"
+  r = !r
+  os.stdio.println("${p} ${q} ${r}")
+
+  // a closure captures the value at its creation (core 3.3)
+  var (n, _) = (1, 2)
+  let show = fn() -> Int { n }
+  n = 5
+  os.stdio.println("${show()} ${n}")
+}

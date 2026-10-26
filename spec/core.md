@@ -1030,6 +1030,8 @@ Everything else, including all numeric conversions, is explicit.
 let x = 10            // immutable binding
 var total = 0         // mutable binding
 total += x
+let (q, r) = (7 / 2, 7 % 2)   // a pattern binds each name
+var (lo, hi) = (0, 10)        // every name mutable (decision 0384)
 const MAX_USERS = 1000
 const DEFAULT = Config{port: 8080}
 ```
@@ -1223,7 +1225,7 @@ match code {
   reported). The task is no longer shielded afterwards. Every backend
   behaves this way (decision 0085, amended 2026-10-10).
 
-**Patterns** are used in `match`, `let`, `if let`, `while let`, and `for`:
+**Patterns** are used in `match`, `let`, `var`, `if let`, `while let`, and `for`:
 
 | Pattern | Matches |
 |---|---|
@@ -1253,10 +1255,10 @@ special, the rest are not", as on a token kind enum) and is not reported; the
 warning names at most 8 hidden variants, then how many more (decision 0080).
 An `UpperCamel` name in a pattern always refers to a variant; bindings are
 `snake_case` (1.5), so the two never collide.
-`let` requires an irrefutable pattern (`let (a, b) = pair`). `var` binds
-one name: `var (a, b) = pair` is error `XO0179`, whose fix writes `let`;
-to change a destructured value, copy it into a `var` (`let (a0, b) =
-pair` then `var a = a0`).
+`let` requires an irrefutable pattern (`let (a, b) = pair`), and so does
+`var` with a pattern (`var (a, b) = pair`, `var [first, ..] = xs`,
+`var Point{x, y} = p`; decision 0384): every name it binds is mutable,
+as one `var` per name would be.
 
 ### 3.6 Indexing and slicing
 
@@ -2979,7 +2981,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0176` | error | parser | `pub` before something that cannot be exported |
 | `XO0177` | error | parser | syntax from another language (Go, Rust, TypeScript, Python, Swift, Kotlin); names the habit and the Xo form (decision 0087) |
 | `XO0178` | error | parser | a line starts with a binary operator (`\|\|`, `&&`, `+`, `==`, ...); end the previous line with it (core 1.3, decision 0136) |
-| `XO0179` | error | parser | `var` with a tuple or list pattern (`var (a, b) = ...`); patterns bind with `let`, with a fix that writes it (core 3.1, 3.5) |
+| `XO0179` | error | parser | retired, never reported; was: `var` with a tuple or list pattern; decision 0384 allows `var PATTERN = e` (the code stays reserved) |
 | `XO0201` | error | checker | Result value is never used (core 2.6) |
 | `XO0202` | error | checker | error type does not convert to the enclosing error type (core 2.6) |
 | `XO0203` | error | checker | success of a Result typed T must be written Ok(x) (core 2.6) |

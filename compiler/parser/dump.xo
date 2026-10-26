@@ -418,8 +418,8 @@ fn dump_stmt_opt(var out: StrBuilder, depth: Int, label: Str, s: Stmt?) {
 fn dump_stmt(var out: StrBuilder, depth: Int, label: Str, s: Stmt) {
   let d = depth + 1
   match s {
-    LetStmt(span, pattern, typ, value) => {
-      head(out, depth, label, "LetStmt", span)
+    LetStmt(span, pattern, typ, value, is_var) => {
+      head(out, depth, label, if is_var { "LetStmt var" } else { "LetStmt" }, span)
       out.write("\n")
       dump_pattern(out, d, "pattern", pattern)
       dump_type_opt(out, d, "type", typ)

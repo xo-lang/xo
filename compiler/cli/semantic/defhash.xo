@@ -863,8 +863,8 @@ fn (var c: Enc) use_label(var b: BytesBuilder, l: Ident?) {
 
 fn (var c: Enc) stmt(var b: BytesBuilder, s: Stmt) {
   match s {
-    LetStmt(_, pattern, typ, value) => {
-      open(b, "LetStmt")
+    LetStmt(_, pattern, typ, value, is_var) => {
+      open(b, if is_var { "VarPatStmt" } else { "LetStmt" })
       c.pattern(b, pattern)
       c.opt_typ(b, typ)
       c.expr(b, value)

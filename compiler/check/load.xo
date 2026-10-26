@@ -202,6 +202,9 @@ pub struct Checker {
   /// check stops, Checker.unsupported), each found in one pass: a lookup
   /// at a root leaves them out and checks again, as for bind_misses.
   pub fetch_dirs: List[Str] = []
+  /// How a pattern's names are declared: "let", or "var" while a `var`
+  /// pattern statement binds them (decision 0384).
+  pat_local: Str = "let"
   /// The std module under test (`xo test --std-module`, decision 0262):
   /// its path (`std/json`, `native/http`, `native/llrt/scan`), or "".
   /// That module's _test.xo file, beside its source, is loaded with it,

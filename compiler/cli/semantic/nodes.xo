@@ -65,7 +65,7 @@ fn walk_stmt(var out: List[Node], s: Stmt) {
   out.push(Node.S(s))
   match s {
     ExprStmt(_, x) => walk_expr(out, x)
-    LetStmt(_, _, _, value) => walk_expr(out, value)
+    LetStmt(_, _, _, value, _) => walk_expr(out, value)
     VarStmt(_, _, _, value) => walk_expr(out, value)
     AssignStmt(_, _, target, value) => {
       walk_expr(out, target)

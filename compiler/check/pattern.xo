@@ -11,7 +11,7 @@ fn (var c: Checker) pattern(p: Pattern, t: Int, refutable: Bool) -> IPat {
   match p {
     WildcardPat(..) | BadPat(..) => wild_pat()
     BindPat(name: name, ..) => {
-      c.declare_local(name, t, "let")
+      c.declare_local(name, t, c.pat_local)
       wild_pat()
     }
     LitPat(span: span, value: value) => c.lit_pattern(value, t, span)

@@ -59,7 +59,7 @@ fn (var c: Checker) require_mutable(e: Expr, code: Str, what: Str) {
     _ => "an immutable binding"
   }
   let d = c.error(code, id.span, "${what} needs `${text(id.name)}` to be `var`, but it is ${kind}")
-  if d >= 0 && c.objs[v].local == "let" && !c.objs[v].let_value.is_empty() && !c.objs[v].file.is_empty() {
+  if d >= 0 && c.objs[v].local == "let" && c.objs[v].let_span.start.line > 0 && !c.objs[v].file.is_empty() {
     let ls = c.objs[v].let_span.start
     c.fix(d, "declare `${text(id.name)}` with `var`", [c.replace_edit(Span{start: ls, end: parser.Pos{offset: ls.offset + 3, line: ls.line, col: ls.col + 3}}, "var")])
     c.note(d, "TypeScript's `let` can be reassigned; Xo's `let` cannot, like `const`, and `var` declares a binding that changes (core 3.1)")

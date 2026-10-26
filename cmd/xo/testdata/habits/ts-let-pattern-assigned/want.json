@@ -1,0 +1,44 @@
+[
+  {
+    "code": "XO0502",
+    "severity": "error",
+    "message": "assignment needs `head` to be `var`, but it is an immutable binding",
+    "span": {
+      "file": "main.xo",
+      "line": 7,
+      "col": 3,
+      "end_line": 7,
+      "end_col": 7
+    },
+    "notes": [
+      {
+        "message": "TypeScript's `let` can be reassigned; Xo's `let` cannot, like `const`, and `var` declares a binding that changes (core 3.1)"
+      },
+      {
+        "message": "`head` is declared here",
+        "span": {
+          "file": "main.xo",
+          "line": 6,
+          "col": 8
+        }
+      }
+    ],
+    "fixes": [
+      {
+        "title": "declare `head` with `var`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 6,
+              "col": 3,
+              "end_line": 6,
+              "end_col": 6
+            },
+            "replace": "var"
+          }
+        ]
+      }
+    ]
+  }
+]

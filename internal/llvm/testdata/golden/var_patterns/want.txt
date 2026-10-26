@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+-9 18
+55 89
+7 14
+ab t1,t2
+s! 1 true
+1 5
+--- stderr

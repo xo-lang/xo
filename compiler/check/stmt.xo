@@ -1123,7 +1123,7 @@ fn (var c: Checker) report_discards() {
 fn (var c: Checker) stmt(s: Stmt) {
   match s {
     ExprStmt(x: x, ..) => c.expr_stmt(x)
-    LetStmt(span: span, pattern: pattern, typ: typ, value: value) => c.let_stmt(span, pattern, typ, value)
+    LetStmt(span: span, pattern: pattern, typ: typ, value: value, is_var: is_var) => c.let_stmt(span, pattern, typ, value, is_var)
     VarStmt(name: name, typ: typ, value: value, ..) => c.var_stmt(name, typ, value)
     ConstDecl(d: cd) => c.local_const(cd)
     AssignStmt(span: span, op: op, target: target, value: value) => c.assign(span, op, target, value)
@@ -1265,7 +1265,7 @@ fn (var c: Checker) iter_elem(t: Int, e: Expr) -> Int {
   c.bad_ty
 }
 
-fn (var c: Checker) let_stmt(span: Span, pattern: Pattern, typ: Type?, value: Expr) {
+fn (var c: Checker) let_stmt(span: Span, pattern: Pattern, typ: Type?, value: Expr, is_var: Bool) {
   var t = -1
   if let Some(tt) = typ {
     var env = c.local_env()
@@ -1290,8 +1290,19 @@ fn (var c: Checker) let_stmt(span: Span, pattern: Pattern, typ: Type?, value: Ex
   if let BindPat(name: bname, ..) = pattern {
     c.check_name(bname, "variable")
   }
+  // `var PATTERN` (decision 0384): every name the pattern binds is var
+  c.pat_local = if is_var { "var" } else { "let" }
+  let first = c.objs.len()
   let ip = c.pattern(pattern, t, false)
-  c.require_irrefutable(ip, t, pattern, "a `let` pattern")
+  c.pat_local = "let"
+  c.require_irrefutable(ip, t, pattern, if is_var { "a `var` pattern" } else { "a `let` pattern" })
+  // the names a pattern bound: the statement's span, for XO0502's fix
+  // that writes `var` in place of `let`
+  for o in first..c.objs.len() {
+    if c.objs[o].kind == ObjKind.Local && c.objs[o].local == "let" {
+      c.objs[o].let_span = span
+    }
+  }
   if let BindPat(name: name, ..) = pattern {
     let v = c.lookup_local(name.name)
     if v >= 0 {

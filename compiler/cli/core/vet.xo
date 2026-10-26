@@ -465,7 +465,7 @@ fn stale_captures(c: check.Checker, f: Int, file: Str, b: parser.Block) -> List[
   var out: List[Diag] = []
   for (i, s) in b.stmts.indexed() {
     let (nm, fl) = match s {
-      LetStmt(_, BindPat(_, n), _, FnLit(x)) => (n, x)
+      LetStmt(_, BindPat(_, n), _, FnLit(x), _) => (n, x)
       _ => continue
     }
     let cid = c.var_of(f, nm)
@@ -1299,7 +1299,7 @@ fn walk_block(b: parser.Block, var out: List[parser.Expr]) {
 
 fn walk_stmt(s: parser.Stmt, var out: List[parser.Expr]) {
   match s {
-    LetStmt(_, pat, _, value) => {
+    LetStmt(_, pat, _, value, _) => {
       walk_pat(pat, out)
       walk_expr(value, out)
     }

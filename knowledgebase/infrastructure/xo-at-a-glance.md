@@ -30,7 +30,9 @@ Last verified: 2026-10-24 (spec/core.md and spec/std.md at main).
 
 ## Statements and expressions (core 3)
 
-- `let`, `var`, `const` (including `embed("path")`, 0304).
+- `let`, `var`, `const` (including `embed("path")`, 0304); `let` and
+  `var` take irrefutable patterns, `var (a, b) = f()` binding every name
+  mutable (0384).
 - A top-level `const` may call effect-free functions: computed once, at
   its first read, shared by every task; a fault in it is raised at every
   read (0332, XO0415, XO0416, XO-F009).

@@ -62,7 +62,7 @@ fn (var p: Parser) foreign_stmt() -> Stmt? {
       }
       p.expect(Kind.Assign, "`=` in `let`")
       let value = p.parse_expr()
-      return Some(Stmt.LetStmt(span: p.span_from(start), pattern: Pattern.BindPat(span: psp, name: name), typ: typ, value: value))
+      return Some(Stmt.LetStmt(span: p.span_from(start), pattern: Pattern.BindPat(span: psp, name: name), typ: typ, value: value, is_var: false))
     }
     return None
   }
@@ -160,14 +160,14 @@ fn (var p: Parser) short_decl() -> Stmt? {
       return Some(Stmt.VarStmt(span: p.span_from(start), name: Ident{span: names[0].span, name: names[0].text}, typ: None, value: value))
     }
     p.add_fix(d, "write `let`", [replace_span(head, "let ${n} =")])
-    return Some(Stmt.LetStmt(span: p.span_from(start), pattern: bind_tok(names[0]), typ: None, value: value))
+    return Some(Stmt.LetStmt(span: p.span_from(start), pattern: bind_tok(names[0]), typ: None, value: value, is_var: false))
   }
   let last = names[names.len() - 1]
   if names.len() == 2 && (last.text == b"err" || last.text == b"e") {
     let a = txt(names[0].text)
     let d = p.foreign(head, "`${a}, ${txt(last.text)} := f()` is Go's error return; an Xo function that can fail returns a Result: `let ${a} = f()?` propagates the error to the caller, and `match f() { Ok(v) => ... Err(e) => ... }` handles it (core 2.6)")
     let try = Expr.TryExpr(span: expr_span(value), x: value)
-    var res = Stmt.LetStmt(span: p.span_from(start), pattern: bind_tok(names[0]), typ: None, value: try)
+    var res = Stmt.LetStmt(span: p.span_from(start), pattern: bind_tok(names[0]), typ: None, value: try, is_var: false)
     if names[0].text == b"_" {
       res = Stmt.ExprStmt(span: p.span_from(start), x: try)
     }
@@ -198,7 +198,7 @@ fn (var p: Parser) short_decl() -> Stmt? {
     pats.push(bind_tok(n))
   }
   p.add_fix(d, "write `let (...) =`", [replace_span(head, "let (${texts.join(", ")}) =")])
-  Some(Stmt.LetStmt(span: p.span_from(start), pattern: Pattern.TuplePat(span: head, elems: pats), typ: None, value: value))
+  Some(Stmt.LetStmt(span: p.span_from(start), pattern: Pattern.TuplePat(span: head, elems: pats), typ: None, value: value, is_var: false))
 }
 
 /// Whether k is `=` or a compound assignment operator (token IsAssign).
@@ -335,7 +335,7 @@ fn (var p: Parser) guard_let() -> Stmt {
   let sp = name.span
   let pat = Pattern.VariantPat(span: sp, path: [Ident{span: sp, name: b"Some"}], parens: true, fields: [PatField{span: sp, name: None, pattern: Pattern.BindPat(span: sp, name: Ident{span: sp, name: name.name})}], rest: false)
   let ifx = IfExpr{span: p.span_from(start), pattern: Some(pat), value: Some(value), then: expr_block(Expr.Ident(Ident{span: sp, name: name.name})), els: Some(Expr.Block(body))}
-  Stmt.LetStmt(span: p.span_from(start), pattern: Pattern.BindPat(span: sp, name: name), typ: None, value: Expr.IfExpr(ifx))
+  Stmt.LetStmt(span: p.span_from(start), pattern: Pattern.BindPat(span: sp, name: name), typ: None, value: Expr.IfExpr(ifx), is_var: false)
 }
 
 /// `x++` and `x--` after the expression x of a statement, or None.

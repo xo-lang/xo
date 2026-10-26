@@ -298,7 +298,10 @@ pub struct FnTypeParam {
 // Statements
 
 pub enum Stmt {
-  LetStmt(span: Span, pattern: Pattern, typ: Type?, value: Expr)
+  /// `let PATTERN = e`, or `var PATTERN = e` (is_var, decision 0384: a
+  /// tuple, list or struct pattern whose names are all mutable; a single
+  /// name is VarStmt)
+  LetStmt(span: Span, pattern: Pattern, typ: Type?, value: Expr, is_var: Bool)
   VarStmt(span: Span, name: Ident, typ: Type?, value: Expr)
   AssignStmt(span: Span, op: Kind, target: Expr, value: Expr)
   /// `defer stmt`, or `defer { ... }` as an ExprStmt holding the Block.

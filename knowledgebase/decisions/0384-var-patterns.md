@@ -1,8 +1,8 @@
 # 0384: `var` with a tuple or list pattern (`var (a, b) = f()`)
 
-Status: Proposed (Xo Lang 2, 2026-10-26, for the owner; nothing in the
-language changed). The diagnostic half, error `XO0179`, shipped with
-this record, because the old error was wrong whichever way this goes.
+Status: Accepted (owner, 2026-10-26: "Option 2 approved"). Built by Xo
+Lang 2 the same day. Error `XO0179`, added first to replace a misleading
+parse error, is retired and stays reserved.
 
 ## Context
 
@@ -38,9 +38,12 @@ Other languages:
 - Rust: mutability is per binding, `let (mut a, b) = f()`.
 - TypeScript: `let [a, b] = f()` (mutable) and `const [a, b] = f()`.
 
-## Decision (proposed; the owner decides)
+## Decision
 
-Options:
+The owner chose option 2 (2026-10-26): `var PATTERN = e` takes the
+irrefutable patterns `let` takes (tuples, structs by field, lists whose
+shape is known), and every name it binds is mutable. A single name stays
+`var x = e`. The options as proposed:
 
 1. **Keep `let` only** (today, plus `XO0179`). No language change, and
    a pattern's names are always immutable. Code that needs one of them
@@ -68,6 +71,24 @@ Option 1 is the safe default if the owner prefers fewer ways to bind:
 the diagnostic already gives the rewrite.
 
 ## Consequences
+
+As built (option 2):
+
+- The parser reads `var` followed by `(`, `[`, or a type name and `{`
+  (or `.`) as a pattern: `Stmt.LetStmt` carries `is_var`, so every tool
+  that walks statements sees one form (the formatter prints `var`, the
+  definition hash and the AST JSON tell them apart).
+- The checker declares the pattern's names as `var` locals
+  (Checker.pat_local); every backend already assigns to `var` locals
+  the same way, so no backend changed. The golden
+  internal/llvm/testdata/golden/var_patterns runs on each backend.
+- A `let` pattern's name that is assigned is `XO0502` with a fix that
+  writes `var` for the whole pattern, as it already did for one name.
+- The compiler's own code must not use the form until a seed that
+  accepts it exists (the seed rule); the 49 copy sites are simplified
+  in a later change.
+
+As proposed:
 
 - Option 1: nothing more to do; `XO0179` stays.
 - Option 2: parser (`compiler/parser/stmt.xo`: the `var` branch parses

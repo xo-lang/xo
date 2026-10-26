@@ -339,8 +339,11 @@ fn ostmt(s: parser.Stmt?) -> Str? {
 
 fn stmt_json(s: parser.Stmt) -> Str {
   match s {
-    LetStmt(span, pattern, typ, value) => {
+    LetStmt(span, pattern, typ, value, is_var) => {
       var o = node("LetStmt", span)
+      if is_var {
+        o.put("var", "true")
+      }
       o.put("pattern", pat_json(pattern))
       o.opt("type", otype(typ))
       o.put("value", expr_json(value))

@@ -23,10 +23,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   only the std and runtime files that spell the name: a rare name's
   query takes 0.08 to 0.4 s instead of about 1.2 s, with the same
   references.
-- `var (a, b) = f()` is error `XO0179` with a fix that writes `let`: a
-  pattern binds with `let` (core 3.1, 3.5). It was a parse error and a
-  "name not found" for every later use of each name. Whether `var` should
-  take patterns is decision 0384, Proposed for the owner.
+- `var (a, b) = f()`, `var Point{x, y} = p`: `var` takes the irrefutable
+  patterns `let` takes, and every name it binds is mutable (decision 0384,
+  the owner, 2026-10-26). It was a parse error and a "name not found" for
+  every later use of each name; error `XO0179`, which briefly reported it
+  with a fix to `let`, is retired. A `let` pattern's name that is assigned
+  gets the fix that writes `var`.
 - arm64: a compare, add or sub with an immediate of 12 bits shifted left by 12 (0x2000,
   0x3000, 0x10000) takes the immediate (`cmp x, #2, lsl #12`) instead of a constant in
   a register: unicode runecase 0.983 of the instructions, classify and quote 0.995.

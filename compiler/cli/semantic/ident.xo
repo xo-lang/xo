@@ -376,7 +376,7 @@ pub fn (var w: Walk) opt_label(l: parser.Ident?) {
 
 pub fn (var w: Walk) stmt(st: parser.Stmt) {
   match st {
-    LetStmt(lsp, pattern, typ, value) => {
+    LetStmt(lsp, pattern, typ, value, _) => {
       w.lets.push((lsp.start.offset, lsp.end.offset))
       w.pat(pattern)
       if let Some(t) = typ {

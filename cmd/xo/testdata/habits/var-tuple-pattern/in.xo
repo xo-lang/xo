@@ -1,8 +1,0 @@
-fn split(s: Str) -> (Str, Str) {
-  (s, s)
-}
-
-fn both(s: Str) -> Str {
-  var (head, tail) = split(s)
-  head + tail
-}
