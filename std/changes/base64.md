@@ -3,7 +3,7 @@
 ## 2026-10-26: perf: the standard alphabet runs Bytes.to_base64 and from_base64, which decode eight characters at a time
 
 - Kind: perf
-- Commit: pending
+- Commit: 25eed1215
 - Found by: the std timing audit against Go's packages (bench/results/std-go-timing-audit-2026-10-26.md, bench/perf/base64)
 - Go reference: encoding/base64 StdEncoding.EncodeToString, DecodeString and Decode's 8 byte fast path (go1.26.1)
 - Test: internal/stdtest/testdata/corpus/base64 (go, arm64, LLVM); bench/perf/base64 twin (twincheck)
