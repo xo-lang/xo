@@ -1561,7 +1561,8 @@ fn pack_store(os: Os, p: Pack, entries: Map[Str, Bytes], stores: List[(Str, Byte
 /// (cache_id: the code generation key), so the prune's churn splits into
 /// the entries of new keys (a push that changed code generation) and
 /// repeats of known ones (2026-10-22). KIND is fe, fn, inl, rc, sum,
-/// obj, chk, or pack/KIND for a pack segment.
+/// obj, hobj (a hollowed part's object and its undefined-symbol facts),
+/// hfacts (a part's hollow facts), chk, or pack/KIND for a pack segment.
 fn note_store(os: Os, kind: Str, dir: Str, n: Int) {
   if n <= 0 {
     return
