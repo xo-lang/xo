@@ -43,6 +43,7 @@ var generators = map[string]func() string{
 	"csv":        csvCorpus,
 	"cut":        cutCorpus,
 	"equalfold":  equalfoldCorpus,
+	"fakeclock":  fakeclockCorpus,
 	"httpurl":    httpurlCorpus,
 	"json":       jsonCorpus,
 	"jsondecode": jsonDecodeCorpus,
