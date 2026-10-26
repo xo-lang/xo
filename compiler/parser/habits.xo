@@ -265,13 +265,23 @@ fn describe_go(t: Token) -> Str {
 
 /// Rewrites p.toks in place.
 fn (var p: Parser) lex_habits() {
+  // out stays empty while the tokens are unchanged (nearly always: the
+  // habits are other languages' syntax): the first change copies the
+  // tokens before it (edited), and an unchanged file keeps its list
+  // instead of pushing every token into a new one (2026-10-26: 105 MB
+  // of the edit rebuild's 947 MB allocated, a retain per Bytes field)
   var out: List[Token] = []
+  var edited = false
   var i = 0
   while i < p.toks.len() {
     var t = p.tok_at(i)
     if t.kind == Kind.Illegal && t.text == b"#" {
       let j = p.hash_habit(i)
       if j >= 0 {
+      if !edited {
+        out = p.toks[0..i]
+        edited = true
+      }
         out = p.drop_range(out, i, j)
         i = j
         continue
@@ -289,12 +299,20 @@ fn (var p: Parser) lex_habits() {
       if d >= 0 {
         p.diags[d].message = ("`@" + txt(name) + "` is a Kotlin, Swift, TypeScript, or Python annotation; Xo has none: tests are `test \"name\" { ... }` blocks (core 9.2), and derived behavior is `derive Json` after a type body (core 2.9)").bytes()
       }
+      if !edited {
+        out = p.toks[0..i]
+        edited = true
+      }
       out = p.drop_range(out, i, j)
       i = j
       continue
     } else if t.kind == Kind.Illegal && t.text == b"`" {
       let (j, nt) = p.template_habit(i)
       if j >= 0 {
+      if !edited {
+        out = p.toks[0..i]
+        edited = true
+      }
         out.push(nt)
         i = j
         continue
@@ -302,19 +320,36 @@ fn (var p: Parser) lex_habits() {
     } else if t.kind == Kind.Slash && i + 1 < p.toks.len() && p.tok_at(i + 1).kind == Kind.Star && adjacent(t, p.tok_at(i + 1)) {
       let j = p.block_comment(i)
       if j >= 0 {
+      if !edited {
+        out = p.toks[0..i]
+        edited = true
+      }
         out = p.drop_range(out, i, j)
         i = j
         continue
       }
     } else if t.kind == Kind.String {
+      let before = t
       t = p.swift_interp(t)
+      if !edited && (t.text != before.text || t.value != before.value || t.kind != before.kind) {
+        out = p.toks[0..i]
+        edited = true
+      }
     } else if t.kind == Kind.Newline && p.leading_operator(i) {
       // `a\n|| b`: read as `a || b` (XO0178)
+      if !edited {
+        out = p.toks[0..i]
+        edited = true
+      }
       i += 1
       continue
     } else if (t.kind == Kind.Plus || t.kind == Kind.Minus) && i + 2 < p.toks.len() && p.tok_at(i + 1).kind == t.kind && adjacent(t, p.tok_at(i + 1)) && p.tok_at(i + 2).kind != Kind.Newline && p.tok_at(i + 2).span.start.line > t.span.start.line {
       // `x++` at the end of a line: the lexer inserts no newline after an
       // operator, so add the one the Xo form `x += 1` would get.
+      if !edited {
+        out = p.toks[0..i]
+        edited = true
+      }
       out.push(t)
       out.push(p.tok_at(i + 1))
       let end = p.tok_at(i + 1).span.end
@@ -322,10 +357,14 @@ fn (var p: Parser) lex_habits() {
       i += 2
       continue
     }
-    out.push(t)
+    if edited {
+      out.push(t)
+    }
     i += 1
   }
-  p.toks = out
+  if edited {
+    p.toks = out
+  }
 }
 
 /// Skips tokens [i, j) and keeps a statement ending newline when the
