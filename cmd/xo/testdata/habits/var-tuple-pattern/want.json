@@ -1,0 +1,32 @@
+[
+  {
+    "code": "XO0179",
+    "severity": "error",
+    "message": "`var` binds one name; a tuple or list pattern binds with `let`: `let (a, b) = ...` (core 3.1, 3.5). To change one of its names later, bind it under another name and copy it: `let (a0, b) = ...` then `var a = a0`",
+    "span": {
+      "file": "main.xo",
+      "line": 6,
+      "col": 3,
+      "end_line": 6,
+      "end_col": 19
+    },
+    "notes": [],
+    "fixes": [
+      {
+        "title": "write `let`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 6,
+              "col": 3,
+              "end_line": 6,
+              "end_col": 6
+            },
+            "replace": "let"
+          }
+        ]
+      }
+    ]
+  }
+]

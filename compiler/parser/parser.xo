@@ -44,6 +44,7 @@ const EXPECTED_NEWLINE = "XO0175"
 const MISPLACED_PUB = "XO0176"
 const FOREIGN_SYNTAX = "XO0177"
 const LEADING_OPERATOR = "XO0178"
+const VAR_PATTERN = "XO0179"
 const MALFORMED_IMPORT_PATH = "XO0158"
 
 /// The tree of one file and its diagnostics. A file with no diagnostics

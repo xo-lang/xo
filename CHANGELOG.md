@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `var (a, b) = f()` is error `XO0179` with a fix that writes `let`: a
+  pattern binds with `let` (core 3.1, 3.5). It was a parse error and a
+  "name not found" for every later use of each name. Whether `var` should
+  take patterns is decision 0384, Proposed for the owner.
 - A Map type's cold put paths share one body (decision 0372's stage 0, arm64): the
   lists' put is one cold `xo.maph.putbody`, called by `xo.maph.putrest` (which keeps
   the shared mark) and by a forked hybrid map's replay, so the second copy of the

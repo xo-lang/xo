@@ -45,7 +45,23 @@ fn (var p: Parser) parse_stmt() -> Stmt {
       return Stmt.LetStmt(span: p.span_from(start), pattern: pattern, typ: typ, value: value)
     }
     Var => {
+      let var_tok = p.tok
       p.next()
+      if p.tok.kind is LParen | LBrack {
+        // `var (a, b) = f()`: a pattern binds with `let` only (core 3.1,
+        // 3.5); recovered as the `let` the fix writes, so the names it
+        // binds are not reported missing
+        let pattern = p.parse_pattern()
+        let d = p.soft(VAR_PATTERN, span_to(var_tok.span, pattern_span(pattern)), "`var` binds one name; a tuple or list pattern binds with `let`: `let (a, b) = ...` (core 3.1, 3.5). To change one of its names later, bind it under another name and copy it: `let (a0, b) = ...` then `var a = a0`")
+        p.add_fix(d, "write `let`", [replace_span(var_tok.span, "let")])
+        var typ: Type? = None
+        if p.got(Kind.Colon) {
+          typ = Some(p.parse_type())
+        }
+        p.expect(Kind.Assign, "`=` in `let`")
+        let value = p.parse_expr()
+        return Stmt.LetStmt(span: p.span_from(start), pattern: pattern, typ: typ, value: value)
+      }
       let name = p.expect_ident("a variable name")
       var typ: Type? = None
       if p.got(Kind.Colon) {
