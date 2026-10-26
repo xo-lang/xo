@@ -10,7 +10,7 @@
 use std/crypto
 
 /// The version of the entries and keys.
-const RC_CACHE_VERSION = "xo rc cache v9"
+const RC_CACHE_VERSION = "xo rc cache v10"
 
 /// What insert_rc_plan computed for the cache: the key of each function
 /// ("" for one not cached), and the pass's state after borrow inference.
@@ -45,9 +45,11 @@ pub struct LazyFn {
 
 /// What stands in the module for a lazy function: its name and the
 /// facts outside its body (the passes before force_lazy read the
-/// summary, not the body).
+/// summary, not the body). reader comes from the function as built: the
+/// inliner must see it without decoding the body (a build without debug
+/// information keeps the readers' stubs this way, 2026-10-25).
 fn lazy_shell(f: Func, key: Str, borrowed: List[Bool]) -> Func {
-  Func{name: f.name, file: f.file, results: f.results, indirect: f.indirect, entry: f.entry, export: f.export, catches: f.catches, borrowed: borrowed, ckey: "rc ${key}"}
+  Func{name: f.name, file: f.file, results: f.results, indirect: f.indirect, entry: f.entry, export: f.export, catches: f.catches, reader: f.reader, borrowed: borrowed, ckey: "rc ${key}"}
 }
 
 /// Decodes the lazy functions idx of m (all of them for idx []) in
@@ -554,7 +556,7 @@ fn encode_func(m: Module, f: Func) -> Option[Bytes] {
   e.str(f.name)
   e.types(m, f.results)
   e.ints(f.var_params)
-  e.uv((if f.indirect { 1 } else { 0 }) + (if f.entry { 2 } else { 0 }) + (if f.catches { 4 } else { 0 }))
+  e.uv((if f.indirect { 1 } else { 0 }) + (if f.entry { 2 } else { 0 }) + (if f.catches { 4 } else { 0 }) + (if f.reader { 8 } else { 0 }))
   e.sv(f.unwind_exit)
   e.types(m, f.captures)
   e.str(f.export)
@@ -790,6 +792,7 @@ fn decode_func_at(m: Module, d: Bytes, ops: Map[Str, Op], head_only: Bool) -> Op
   f.indirect = fl & 1 != 0
   f.entry = fl & 2 != 0
   f.catches = fl & 4 != 0
+  f.reader = fl & 8 != 0
   f.unwind_exit = r.sv()
   f.captures = r.types()
   f.export = r.str()

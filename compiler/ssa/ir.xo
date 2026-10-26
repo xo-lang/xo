@@ -332,6 +332,15 @@ pub struct Func {
   /// only such a function's constant result is folded into its callers
   /// (passes.xo fold_known_calls). Not in the codec.
   pub target: Bool = false
+  /// The builder folded `dwline.built()` in it, so it is a DWARF reader:
+  /// its body is the stub a build without debug information keeps plus
+  /// the arm one with it adds. The inliner decides for the readers and
+  /// the functions only they reach as the build without debug information
+  /// does (arm64/inline.xo), so both builds inline alike (the same-code
+  /// promise, decision 0354; 2026-10-25). In the codec, so a replayed
+  /// body keeps it, and rccache.xo lazy_shell reads it from the entry,
+  /// since a shell's body is not decoded.
+  pub reader: Bool = false
 }
 
 /// A lowered program (ssa.Module).
@@ -448,6 +457,12 @@ pub struct Module {
   /// Emit DWARF line tables (decision 0239): set by the driver; off for
   /// `xo asm`, `-s`, and release builds without --debug-info.
   pub debug_info: Bool = false
+  /// The DWARF readers have their full bodies (`debug_info`): the arm64
+  /// inliner then decides for them and for the functions only they reach
+  /// as a build without them does, so both builds inline alike (the
+  /// same-code promise, decision 0354; compiler/arm64 inline.xo
+  /// release_view, 2026-10-25).
+  pub reader_bodies: Bool = false
   /// Variable locations may name a data address (a string literal's
   /// object, DW_OP_addrx; compiler/arm64 dwvars.xo): set by the driver
   /// when the debug information's writer relocates it, an ELF link or

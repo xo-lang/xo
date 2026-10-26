@@ -163,13 +163,18 @@ checkout's path about 500 times). Both are gone, as Go's -trimpath does it:
 The same-code promise (decision 0252: debug information does not change
 the code you debug) is narrowed by the DWARF readers' fold (24824095f): a
 build without debug information neither builds nor links the runtime's
-DWARF readers (`dwline.built()` folds to the debug information setting).
-So the promise is: the program's own functions are identical with and
-without debug information; the runtime's DWARF readers are present only
-with debug information, and a runtime function that calls them differs by
-that branch. TestDebugInfoSameCode and TestAmd64DebugInfoSameCode compare
-the program's functions by body (merged functions carry hash names;
-addresses, callee names, pages and nops normalized). The arm64 test builds
-without inlining, a stopgap: the inliner's call-site counts see the readers
-as callers in one build only (gotchas/same-code-test-inline-hole.md; the
-fix is to fold the call after the inliner).
+DWARF readers (`dwline.built()` is a constant the build decides). So the
+promise is: the program's own functions are identical with and without
+debug information; the runtime's DWARF readers are present only with debug
+information, and a runtime function that calls them differs by that
+branch. TestDebugInfoSameCode and TestAmd64DebugInfoSameCode compare the
+program's functions by body (merged functions carry hash names; addresses,
+callee names, pages and nops normalized). Both build with inlining on: the
+fold of the flag still decides the readers' bodies at build time, and in the
+build that has them the inliner decides for a reader, and for a function only
+a reader reaches, as a build without debug information would (one
+instruction, never inlined, no call site counted; `Module.reader_bodies`
+turns those rules off where the readers are stubs, so a build without debug
+information is byte for byte what it was), so both builds inline alike
+(2026-10-25, gotchas/same-code-test-inline-hole.md; the arm64 test built
+without inlining as a stopgap until then).

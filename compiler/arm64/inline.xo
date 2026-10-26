@@ -164,14 +164,39 @@ fn args_key(f: ssa.Func, args: List[Int]) -> Str {
   parts.join(",")
 }
 
+/// Whether f is a DWARF reader: the builder folded `dwline.built()` in it
+/// (ssa/expr.xo target_test), so its body is the stub a build without
+/// debug information keeps plus the arm one with it adds. The inliner
+/// decides for the readers and what only they reach as a build without
+/// debug information does (release_view; the same-code promise, decision
+/// 0354, 2026-10-25, gotchas/same-code-test-inline-hole.md).
+fn is_reader(f: ssa.Func) -> Bool {
+  f.reader
+}
+
+/// Whether the inliner decides for f as a build without DWARF does: only
+/// in the build that has the readers' full bodies (m.reader_bodies), and
+/// only for a reader (its body is the stub there and the arm here) or a
+/// function only the readers reach (absent there). A build without
+/// the readers' bodies, and every other function, is decided as before.
+fn reader_hidden(m: ssa.Module, f: ssa.Func, vis: Map[Str, Bool]) -> Bool {
+  m.reader_bodies && (is_reader(f) || !vis.contains(f.name))
+}
+
 /// Walks function fi and its callees (inline.go inlinableSet's walk):
 /// state is 1 while a function is walked, 2 once done.
-fn inline_walk(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int], sites: Map[Str, Int], fi: Int, var state: Map[Str, Int], var costs: Map[Str, InlineCost]) -> InlineCost {
+fn inline_walk(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int], sites: Map[Str, Int], fi: Int, var state: Map[Str, Int], var costs: Map[Str, InlineCost], vis: Map[Str, Bool]) -> InlineCost {
   let f = m.funcs[fi]
   // the body's facts (inlsum.xo fn_sum, or the cache's for an undecoded
   // function), in the body's order
   let s = sums[fi]
   state[f.name] = 1
+  // a DWARF reader, or a function only a build with debug information
+  // has (release_view): a call where it is called, its body ignored, so
+  // the code both builds share is inlined alike
+  if reader_hidden(m, f, vis) {
+    return InlineCost{instrs: 0, blocks: 0, bad: true, hard: true, why: if is_reader(f) { "reader" } else { "reader only" }}
+  }
   // the runtime's slow paths stay calls (ssa.cold_fn)
   // a function that catches its faults returns on one (ssa raises):
   // inlined, the fault would reach the caller
@@ -215,6 +240,15 @@ fn inline_walk(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int], sites: 
       c.hard = true
       c.why = "frame_addr"
     }
+    if ci >= 0 && reader_hidden(m, m.funcs[ci], vis) {
+      // a DWARF reader, or a function only a build with debug
+      // information has: one instruction, as a call to a function this
+      // build's module does not hold (both builds' cost, so both inline
+      // the code they share alike; decision 0252)
+      c.instrs += 1
+      c.leaf = false
+      continue
+    }
     if ci < 0 {
       if !inline_intrinsic(name) {
         c.leaf = false
@@ -233,7 +267,7 @@ fn inline_walk(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int], sites: 
     } else if st == 2 {
       k = costs.get(cname) ?? k
     } else {
-      k = inline_walk(m, sums, by_name, sites, ci, state, costs)
+      k = inline_walk(m, sums, by_name, sites, ci, state, costs, vis)
     }
     if k.bad || k.pads || k.few {
       // a callee with pads is a call here unless its site passes a
@@ -329,13 +363,75 @@ fn updates_in_place(s: FnSum) -> Bool {
   false
 }
 
-/// The expanded cost of each function of m and the call sites of each
-/// (not counting a function's own).
+/// The functions a build without debug information has at inlining
+/// time: reached from a root through calls, where the DWARF reader
+/// (is_reader) is a leaf, since a build without DWARF folds its
+/// `dwline.built()` guard and keeps only its empty-value return, with no
+/// calls at all. A build with DWARF builds everything a reader's arm
+/// calls and only lazily leaves the rest (ssa lazy bodies), so a
+/// function only this walk reaches is in one module and not the other;
+/// the inliner ignores the ones only a build with DWARF has, so both
+/// builds count, cost and inline alike (decision 0252's same-code
+/// promise; 2026-10-25, gotchas/same-code-test-inline-hole.md).
+fn release_view(m: ssa.Module, sums: List[FnSum]) -> Map[Str, Bool] {
+  var seen: Map[Str, Bool] = {}
+  if !m.reader_bodies {
+    // the readers are stubs here: the module is the build without DWARF's
+    for f in m.funcs {
+      seen[f.name] = true
+    }
+    return seen
+  }
+  var by_name: Map[Str, List[Int]] = {}
+  for (i, f) in m.funcs.indexed() {
+    var ids = by_name.get(f.name) ?? []
+    ids.push(i)
+    by_name[f.name] = ids
+  }
+  var work: List[Str] = []
+  for f in m.funcs {
+    if (f.name == "main" || !f.export.is_empty() || f.entry) && !seen.contains(f.name) {
+      seen[f.name] = true
+      work.push(f.name)
+    }
+  }
+  while let Some(n) = work.pop() {
+    for fi in by_name.get(n) ?? [] {
+      if is_reader(m.funcs[fi]) {
+        continue
+      }
+      // every name the body's values use, calls and addresses taken, from
+      // its summary: the same for a decoded and a lazily undecoded body
+      // (a body read here would not be: m.block_names is keyed by a facts
+      // index that is stale for the shells, 2026-10-25)
+      for s in sums[fi].names {
+        if by_name.contains(s) && !seen.contains(s) {
+          seen[s] = true
+          work.push(s)
+        }
+      }
+    }
+  }
+  seen
+}
+
+/// The expanded cost of each function of m and the call sites of each,
+/// counted as a build without debug information counts them: no site
+/// inside a DWARF reader or a function only that build has
+/// (release_view), and a reader or such a function is a call where it is
+/// called, with its own body ignored. Its bodies hold the arm only a
+/// build with debug information adds, and they must not decide what the
+/// inliner does with the code both builds share (the same-code promise
+/// of decision 0252; 2026-10-25, gotchas/same-code-test-inline-hole.md).
 fn inline_costs(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int]) -> (Map[Str, InlineCost], Map[Str, Int]) {
+  let vis = release_view(m, sums)
   var state: Map[Str, Int] = {}
   var costs: Map[Str, InlineCost] = {}
   var sites: Map[Str, Int] = {}
   for (fi, f) in m.funcs.indexed() {
+    if reader_hidden(m, f, vis) {
+      continue
+    }
     for name in sums[fi].calls {
       if name != f.name {
         sites[name] = (sites.get(name) ?? 0) + 1
@@ -344,7 +440,7 @@ fn inline_costs(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int]) -> (Ma
   }
   for fi in 0..m.funcs.len() {
     if (state.get(m.funcs[fi].name) ?? 0) == 0 {
-      let _c = inline_walk(m, sums, by_name, sites, fi, state, costs)
+      let _c = inline_walk(m, sums, by_name, sites, fi, state, costs, vis)
     }
   }
   (costs, sites)

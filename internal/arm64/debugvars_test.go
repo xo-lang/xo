@@ -212,15 +212,14 @@ func TestDebugInfoSameCode(t *testing.T) {
 			t.Parallel()
 			var bins [2]map[string]string
 			for i, flags := range [][]string{nil, {"--debug-info=off"}} {
-				// STOPGAP: no inlining in either build. Which calls are
-				// inlined follows the call graph (call-site counts and
-				// callee costs, arm64/inline.xo), and the DWARF readers are
-				// callers in the build with debug information only, so with
-				// inlining on, main differs by what it inlines
-				// (gotchas/same-code-test-inline-hole.md): "debug
-				// information changes what is inlined" is not tested until
-				// the dwline.built() fold moves after the inliner.
-				res, err := xotool.Build([]string{dir}, xotool.Options{Backend: xotool.BackendArm64, Flags: flags, Env: []string{"XO_PASSES=-inline"}})
+				// inlining on: which calls are inlined follows call-site
+				// counts and callee costs, so the two builds must reach the
+				// inliner with one call graph. It decides for the DWARF
+				// readers and the functions only they reach as the build
+				// without them does (compiler/arm64 inline.xo
+				// release_view; gotchas/same-code-test-inline-hole.md,
+				// 2026-10-25)
+				res, err := xotool.Build([]string{dir}, xotool.Options{Backend: xotool.BackendArm64, Flags: flags})
 				if err != nil {
 					t.Fatalf("build: %v", err)
 				}

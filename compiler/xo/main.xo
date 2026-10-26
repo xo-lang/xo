@@ -1366,6 +1366,10 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   var cur_os = tgoos
   var cur_rk = lo.rc_keys
   var mi = cur.m
+  // the DWARF readers have their full bodies (dwline.built() folded true):
+  // the inliner then decides as a build without them does there
+  // (arm64/inline.xo release_view, decision 0354)
+  mi.reader_bodies = o.cmd != "asm" && !o.strip && debug_info_eff(o, release) != "off"
   t = check_assumptions(os, mi, phases, t)
   let later = defer_inline_verify(os, o, march, release)
   // the inline cache's hits left undecoded until read (decision 0283
@@ -1389,6 +1393,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       cur_os = tgoos
       cur_rk = l.rc_keys
       mi = cur.m
+      mi.reader_bodies = o.cmd != "asm" && !o.strip && debug_info_eff(o, release) != "off"
       let ta = check_assumptions(os, mi, phases, l.t)
       let (inl2, pend2, fb2) = inline_or_defer(os, mi, emit_jobs(os), phases, cur_os, release, cur_rk, later, lazy_inl)
       inl = inl2

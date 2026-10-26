@@ -16,7 +16,7 @@ use std/crypto
 use github.com/xo-lang/xo/compiler/ssa
 
 /// The version of the keys and entries.
-const INLINE_CACHE_VERSION = "xo inline cache v9"
+const INLINE_CACHE_VERSION = "xo inline cache v10"
 
 /// What inline_cached did: the entries to store (key, entry), the
 /// functions read from entries, the functions whose computed result
@@ -47,7 +47,7 @@ pub fn inline_keys(m: ssa.Module, rc_keys: List[Str], jobs: Int) -> InlineKeys {
     return InlineKeys{}
   }
   let st = inline_state_jobs(m, jobs)
-  let head = "${INLINE_CACHE_VERSION}\npasses ${m.passes_off.join(",")}\ndeny ${m.inline_deny.join(",")}\n"
+  let head = "${INLINE_CACHE_VERSION}\npasses ${m.passes_off.join(",")}\ndeny ${m.inline_deny.join(",")}\nreaders ${m.reader_bodies}\n"
   let texts = key_texts_all(st, rc_keys, head, jobs)
   var keys: List[Str] = []
   for i in 0..n {

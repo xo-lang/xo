@@ -760,8 +760,14 @@ fn (var b: Builder) target_test(e: Expr) -> Bool? {
     // a short Str's text in its words (--inline-str, decision 0370)
     return Some(b.c.inline_str)
   }
+  // dwline.built(): the DWARF readers are in a program that has DWARF
+  // (Checker.dwarf). A function that tests it is a reader: the arm it
+  // takes is built, and the inliner decides for the readers and what only
+  // they reach as a build without debug information would, so both builds
+  // inline alike (the same-code promise, decision 0354; 2026-10-25,
+  // gotchas/same-code-test-inline-hole.md)
   if b.llrt_flag_call(e, "native/llrt/dwline", "built") {
-    // the DWARF readers: in a program that has DWARF (Checker.dwarf)
+    b.s.f.reader = true
     return Some(b.c.dwarf)
   }
   if b.recorder_call(e) {

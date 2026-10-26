@@ -2156,7 +2156,7 @@ fn (var b: Builder) begin(fi: Int, file: Int) -> S {
   for p in ps {
     pvals.push(f.values[p])
   }
-  b.m.funcs[fi] = Func{name: f.name, results: f.results, var_params: f.var_params, indirect: f.indirect, captures: f.captures, entry: f.entry, export: f.export, catches: f.catches, blocks: [Block{params: ps}], values: pvals}
+  b.m.funcs[fi] = Func{name: f.name, results: f.results, var_params: f.var_params, indirect: f.indirect, captures: f.captures, entry: f.entry, export: f.export, catches: f.catches, reader: f.reader, blocks: [Block{params: ps}], values: pvals}
   var s = S{f: f, fi: fi, file: file}
   if file >= 0 {
     s.f.file = b.file_name(file)

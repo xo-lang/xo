@@ -12,6 +12,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   body and its `xo.maph.listput` wrapper are gone. A Map type is 848 B smaller in an
   8 type program (2.6% of the text), and a CRUD server 3,976 B (0.28%); copymut runs
   in 0.993 of the wall time and putget in 0.961, with instructions at parity.
+- Debug information changes no inlining: in a build that has the DWARF readers, the inliner decides
+  for a reader, and for a function only a reader reaches, as a build without debug information would
+  (no call site counted inside one, one instruction, never inlined), so both builds inline alike; a
+  build without debug information is unchanged, byte for byte. TestDebugInfoSameCode now builds both
+  variants with inlining on, so the same-code promise covers inlining.
+
 - arm64: a function's result bounded by one of its parameters is known to its callers (decision
   0376): `i < n` for an n from `strings.space_start(b, lo, b.len())` needs no bounds check.
   compiler/xo itself has 4% fewer bytes index checks and 2.5% fewer list index checks.
