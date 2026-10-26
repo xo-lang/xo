@@ -1114,8 +1114,10 @@ fn float_text(x: Float) -> Str {
 /// builds a constant on its first read: in a loop that keeps the
 /// constant's list (cache_const_reads) it runs once, and as a hot call
 /// it kept the loop's constants from being hoisted (2026-10-24).
+/// raw.str_cut_copy is the copy of a cut inside a UTF-8 sequence, the rare
+/// path of str_cut and str_slice: a call, so their view inlines (2026-10-25).
 pub fn cold_fn(name: Str) -> Bool {
-  name is "rt.const_once" | "prelude.slice_fail" | "pool.lock_slow" | "alloc.refill_alloc" | "alloc.mag_count" | "pool.futex_wake" | "budget.tick_slow" | "mutex.held_add_slow" | "obj.reserve_slow" | "obj.push_slow" | "obj.rl_free_n_slow" | "stdio.out_slow" | "jsontext.key_eq_slow" | "jsontext.keys_match_slow" | "jsontext.keys_eq_slow" ||
+  name is "rt.const_once" | "raw.str_cut_copy" | "prelude.slice_fail" | "pool.lock_slow" | "alloc.refill_alloc" | "alloc.mag_count" | "pool.futex_wake" | "budget.tick_slow" | "mutex.held_add_slow" | "obj.reserve_slow" | "obj.push_slow" | "obj.rl_free_n_slow" | "stdio.out_slow" | "jsontext.key_eq_slow" | "jsontext.keys_match_slow" | "jsontext.keys_eq_slow" ||
     name.starts_with("xo.map.rebuild[") || name.starts_with("xo.mlog.findx[") || name.starts_with("xo.mlog.newdir[") ||
     name.starts_with("xo.maph.slowput[") || name.starts_with("xo.maph.slowrem[") || name.starts_with("xo.maph.loglookup[") || name.starts_with("xo.maph.putrest[") || name.starts_with("xo.maph.remrest[") || name.starts_with("xo.maph.logget[") || name.starts_with("xo.maph.logkvl[")
 }
