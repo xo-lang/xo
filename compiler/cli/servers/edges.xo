@@ -93,6 +93,17 @@ fn session(os: Os, dir: Str) -> Session ! Str uses (stdio, fs, env) {
   if !s.err.is_empty() {
     return Err(s.err)
   }
+  // A `use go` or `use c` binding that is missing (or a module the program
+  // requires that is not in the module cache) stops the check before names
+  // resolve: the standard library alone checks, so the session holds its
+  // references and none of the program's own. Reporting them would make an
+  // empty program look like one with no calls (the 2026-10-26 coverage
+  // sweep read every unbound `use go` golden that way); the other agent
+  // commands keep answering from std and say the check stopped, which is
+  // useful to them, so only the edge list refuses.
+  if !s.stopped.is_empty() {
+    return Err(s.stopped)
+  }
   Ok(s)
 }
 

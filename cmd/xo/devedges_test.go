@@ -69,6 +69,58 @@ func TestDevEdges(t *testing.T) {
 	}
 }
 
+// TestDevEdgesMissingBinding: a program whose `use go` package has no
+// binding stops the check before names resolve, and `xo dev edges` must
+// exit 1 naming the reason instead of writing only the std references. A
+// sweep reads this file per program directory and cannot tell a silent
+// std-only dump from a program with no references of its own (the
+// 2026-10-26 coverage sweep lost every `use go` golden that way, and
+// go.Error.go_type looked unreached although golden/go_url calls it).
+func TestDevEdgesMissingBinding(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"xo.mod":  "module nobind\n",
+		"main.xo": "use go \"net/url\"\n\nfn main(os: Os) -> () {\n  os.stdio.println(\"x\")\n}\n",
+	})
+	var out, errOut bytes.Buffer
+	args := []string{"dev", "edges", dir}
+	if code := run(t, args, &out, &errOut); code == 0 {
+		t.Fatalf("xo dev edges wrote %d lines, all std, and exited 0; want exit 1 naming the missing binding\n--- stderr\n%s", len(strings.Split(strings.TrimSpace(out.String()), "\n")), errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "net/url") {
+		t.Errorf("the reason does not name the package: %q", errOut.String())
+	}
+}
+
+// TestDevEdgesMissingBindingKeepsOtherCommands: the edge list refuses a
+// program that did not check, and nothing else does. `xo def`, `xo refs`,
+// `xo doc`, `xo query` and `xo symbols` answer from std and say that the
+// check stopped, which is what tells a reader the answer is partial; the
+// sweep fix must not turn them into failures (reviewer, 2026-10-26).
+func TestDevEdgesMissingBindingKeepsOtherCommands(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"xo.mod":  "module nobind\n",
+		"main.xo": "use go \"net/url\"\n\nfn main(os: Os) -> () {\n  os.stdio.println(\"x\")\n}\n",
+	})
+	for _, args := range [][]string{
+		{"def", "--dir=" + dir, "parse"},
+		{"refs", "--dir=" + dir, "parse"},
+		{"doc", "--dir=" + dir, "parse"},
+	} {
+		var out, errOut bytes.Buffer
+		code := run(t, args, &out, &errOut)
+		text := out.String() + errOut.String()
+		if !strings.Contains(text, "the check stopped before resolving names") {
+			t.Errorf("xo %s: no stopped-check explanation: %q", strings.Join(args, " "), text)
+		}
+		if !strings.Contains(text, "net/url") {
+			t.Errorf("xo %s: the answer does not name the missing binding: %q", strings.Join(args, " "), text)
+		}
+		if code != 1 {
+			t.Errorf("xo %s: exit %d, want 1 (the name does not resolve)", strings.Join(args, " "), code)
+		}
+	}
+}
+
 // devEdges runs `xo dev edges [extra...] DIR` and splits its output into
 // tab separated fields, checking the field count on the way.
 func devEdges(t *testing.T, dir string, extra ...string) [][]string {

@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo dev edges` exits 1 with the reason when its program does not check: a
+  `use go` or `use c` package with no binding stopped the check before names
+  resolve and the command wrote only the standard library's references,
+  exiting 0, so a per-directory sweep read it as a program with no references
+  of its own. The reason names the package and the `.xo/gobind` file `xo
+  bind` or a Go check writes.
 - The Go backend builds a call of a std function whose default value is a
   call or another expression (`metrics.Registry.histogram`'s `buckets =
   latency_buckets()`), evaluated at each call as on the native backends; it

@@ -55,7 +55,9 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   files and reports the name scan's coverage against it (2026-10-25: of
   1455 declarations the scan over-claims 129, 86 of them with no
   collision to explain them, and misses none; 43 are interface dispatch,
-  which needs implementation edges). Last verified: 2026-10-25.
+  which needs implementation edges). A `use go` or `use c` program needs
+  its binding first, or the command exits 1 naming it. Last verified:
+  2026-10-26.
 - `xo edit [--dry-run] rename OLD NEW` renames functions, methods,
   constants, types, fields and enum variants (`Type.member`), and
   interface methods (`Iface.m`, with every implementing type's method),
@@ -346,6 +348,15 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   runtime check a program: 16 s for a small corpus against 0.3 s for
   `xo check`, so a sweep over 800 programs is hours; run it in a bulk
   slot, and sample when a full sweep is not needed.
+  A `use go` or `use c` program needs its binding before it checks: with
+  the binding missing the check stops before names resolve, and the
+  command now exits 1 with that reason. It wrote only the standard
+  library's references and exited 0 until 2026-10-26, so a per-directory
+  sweep counted every `use go` golden as a program with no references of
+  its own (the first coverage sweep lost them all, see its results file).
+  Run `xo bind --dir=DIR <go imports...>` in the module first, or use a
+  golden that commits its `.xo/gobind`; the binding can be deleted after
+  the sweep. TestDevEdgesMissingBinding holds the exit 1.
 - `go run ./scripts/stdfuzz` is the backend differential fuzzer: it
   generates one Xo program of seeded random inputs through pure std
   functions (strings, bytes, strconv, json encode/parse, runes, path,

@@ -375,6 +375,12 @@ struct Session {
   diags: Map[Str, List[check.Diag]] = {}
   published: List[Str] = []
   err: Str = ""
+  /// why the last check stopped before resolving names (Checker.unsupported:
+  /// a `use go` or `use c` binding that is missing, or a module the program
+  /// requires that is not in the module cache); a headless session reports
+  /// it rather than let a caller read the standard library's references as
+  /// the program's own (agent.xo, `xo dev edges`)
+  stopped: Str = ""
   /// the generation of the last change; a debounce wake of an older one
   /// does nothing
   gen: Int = 0
@@ -551,6 +557,7 @@ fn (var s: Session) use_view(v: View) {
   s.dirty = false
   s.checked = true
   s.err = v.err
+  s.stopped = v.stopped
   s.files = v.files
   s.res = v.res
   s.keys = v.keys
