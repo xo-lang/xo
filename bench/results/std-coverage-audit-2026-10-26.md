@@ -139,13 +139,22 @@ nothing and its own calls were dropped again. std/native/sql.xo's `Pool`,
 with `take`, `give`, `ping`, is the case that exposed it: `Driver.connect`,
 `DriverConn.ping`, `close` and `is_broken` are called only from those
 methods. `loadImplDecls` makes every body declaration a node of the walk
-(unlisted and uncounted: the reported set stays the API surface).
+(unlisted and uncounted: the reported set stays the API surface), and reads
+std/native/llrt/*.xo too, because a body calls the runtime helpers there and
+they call back into declarations (`Int.wrapping_shl` from the allocator,
+`prelude.fault`); an llrt file's module is its base name, which can equal a
+front file's (std/trace.xo against std/native/llrt/trace.xo), so llrt
+declarations never join an alias pair.
 
 Measured on the four dumps still on disk (the sql, prelude, http and
-prelude-stream programs, dumped the same day), uncovered 1357 to 1265 in
-two steps: the alias 1357 to 1316, 44 declarations, then the body-only
-nodes 1316 to 1265, 51 more (52 lines changed, one is an `[impl]` mark and
-not a new reach). 92 declarations are newly reached in all, among them
+prelude-stream programs, dumped the same day), uncovered 1357 to 1257 in
+three steps: the alias 1357 to 1316, 44 declarations, the body-only nodes
+1316 to 1265, 51 more (52 lines changed, one is an `[impl]` mark and not a
+new reach), and the llrt nodes 1265 to 1257, 8 more, all prelude
+(`Int.mul_hi_unsigned`, `Int.shr_logical`, `Int.wrapping_shl`, `List.insert`,
+`prelude.fault` and the four lowered `int_*`/`fault` helpers that
+std/native/llrt/alloc.xo and asn1.xo reach). 100 declarations are newly
+reached in all, among them
 `sql.Driver.connect`, every `sql.DriverConn` method,
 `sql.Row.items`, `prelude.read_or`, `read_text_or`, `Str.trim`,
 `starts_with`, `contains`, `is_empty`, `replace`, `List.is_empty`, `pop`,
@@ -156,8 +165,9 @@ is declared twice, front and body, keyed by path:line, so one was reached
 and its twin printed as unreached.
 
 The fix (internal/stdcoverage implAliases and loadImplDecls, with
-TestUncoveredResolvedCrossesImplementationBodies covering the chain front ->
-body-only helper -> declaration) is a separate commit. The numbers in the
+TestUncoveredResolvedCrossesImplementationBodies covering the chains front ->
+body-only helper -> declaration and front -> llrt helper -> declaration, and
+the llrt same name collision) landed as 4ff76b0e2 and its follow-up. The numbers in the
 sections above stand as the pre-fix measurement of that sweep; recomputing
 them needs the edges again, and the sweep deleted each shard's .tsv after
 comparing it, so the next audit is a full second sweep with the fixed tool.

@@ -308,16 +308,23 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   surface) and links same module, symbol and kind, so a covered front
   declaration follows its body's edges and covers its twin. A declaration
   that exists only in the body file (std/native/sql.xo's Pool) is a node of
-  the walk too (`loadImplDecls`), unlisted and uncounted, so body -> native
-  helper -> declaration chains are followed rather than dropped. Before
-  that, every declaration called only from an implementation body read as
-  unreached; measured on four programs, uncovered went 1357 to 1265 and 92
-  declarations were newly reached, among them `sql.Driver.connect`,
+  the walk too (`loadImplDecls`, which reads std/native/llrt/*.xo as well),
+  unlisted and uncounted, so body -> native helper -> declaration and body ->
+  llrt helper -> declaration chains are followed rather than dropped. An llrt
+  file's module is its base name and can equal a front file's
+  (std/native/llrt/trace.xo against std/trace.xo), so its declarations never
+  join an alias pair. Before that, every declaration called only from an
+  implementation body read as unreached; measured on four programs, uncovered
+  went 1357 to 1257 and 100 declarations were newly reached, among them
+  `sql.Driver.connect`,
   `sql.DriverConn.begin/commit/close/exec/is_broken/ping/query/rollback`,
-  `prelude.read_or`, `read_text_or` and `prelude.Str.trim`. Keep each shard's
-  .tsv until the audit's numbers are superseded: the first sweep deleted them
-  after each shard, so its figures can only be recomputed with a second full
-  sweep.
+  `prelude.read_or`, `read_text_or`, `prelude.Str.trim`, and 8 that llrt
+  helpers reach (`Int.wrapping_shl`, `Int.mul_hi_unsigned`,
+  `Int.shr_logical`, `List.insert` and `prelude.fault`, with their lowered
+  helpers; std/native/llrt/alloc.xo and asn1.xo are the callers). Keep each
+  shard's .tsv until the audit's numbers are superseded: the first sweep
+  deleted them after each shard, so its figures can only be recomputed with a
+  second full sweep.
 - `xo dev edges [--out=FILE] [--impls] DIR` writes the checked program's
   resolved references, one tab separated line each:
   SRC_PATH SRC_LINE SRC_NAME TGT_PATH TGT_LINE TGT_NAME SITE_PATH

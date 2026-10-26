@@ -312,18 +312,27 @@ func loadDecls(root string) ([]decl, error) {
 	return append(decls, ds...), nil
 }
 
-// loadImplDecls reads every declaration of std/native/*.xo: each module's
-// implementation bodies and std's own test files. It is the walk's extra
-// node set, not part of what Uncovered reports (the API surface is what
-// std/*.xo declares). A declaration that exists only here has no front twin
-// and no reported entry, so without it as a node an edge into it marks
-// nothing and the calls its body makes are never followed: std/native/sql.xo's
-// Pool, with take, give and ping, is what reaches DriverConn.ping and close
-// (measured 2026-10-26).
+// loadImplDecls reads every declaration of std/native/*.xo and
+// std/native/llrt/*.xo: each module's implementation bodies, std's own test
+// files, and the runtime helpers a body calls. It is the walk's extra node
+// set, not part of what Uncovered reports (the API surface is what std/*.xo
+// declares). A declaration that exists only here has no front twin and no
+// reported entry, so without it as a node an edge into it marks nothing and
+// the calls its body makes are never followed: std/native/sql.xo's Pool, with
+// take, give and ping, is what reaches DriverConn.ping and close, and a body
+// that calls a std/native/llrt helper that calls back into a declaration is
+// the same drop one level down (measured 2026-10-26).
 func loadImplDecls(root string) ([]decl, error) {
-	paths, err := filepath.Glob(filepath.Join(root, "std", "native", "*.xo"))
-	if err != nil {
-		return nil, err
+	var paths []string
+	for _, dir := range []string{
+		filepath.Join(root, "std", "native"),
+		filepath.Join(root, "std", "native", "llrt"),
+	} {
+		found, err := filepath.Glob(filepath.Join(dir, "*.xo"))
+		if err != nil {
+			return nil, err
+		}
+		paths = append(paths, found...)
 	}
 	sort.Strings(paths)
 	var out []decl
@@ -485,6 +494,17 @@ func ReadEdges(paths []string) ([]Edge, error) {
 // as the checker names it and its line.
 func posKey(path string, line int) string { return path + ":" + strconv.Itoa(line) }
 
+// aliasable reports whether a declaration's file pairs with another one: a
+// std/<module>.xo front file and its std/native/<module>.xo body are a pair,
+// and std/native/prelude.xo is the body of the prelude. A file below
+// std/native in a subdirectory is a different module that can share a base
+// name with a front file (std/trace.xo against std/native/llrt/trace.xo), so
+// its declarations never join a group.
+func aliasable(path string) bool {
+	rest, ok := strings.CutPrefix(path, "std/native/")
+	return !ok || !strings.Contains(rest, "/")
+}
+
 // implAliases maps a declaration's key to the keys of every file it is
 // declared in: a std module's front declaration lives in std/<module>.xo and
 // its body in std/native/<module>.xo, and `xo dev edges` names the body's
@@ -502,7 +522,7 @@ func implAliases(decls, impls []decl) map[string][]string {
 	group := map[string][]string{}
 	seen := map[string]bool{}
 	add := func(d decl) {
-		if d.path == "" {
+		if d.path == "" || !aliasable(d.path) {
 			return
 		}
 		g := d.Module + "|" + d.Symbol + "|" + d.Kind

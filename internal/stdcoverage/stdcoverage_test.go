@@ -15,7 +15,10 @@ import (
 // and 166 further targets behind them). The chain crosses a declaration that
 // exists only in the body file, like std/native/sql.xo's Pool: such a
 // declaration has no front twin, so it has to be a node of the walk itself or
-// the walk stops there.
+// the walk stops there. It crosses a std/native/llrt helper the same way, and
+// a helper whose file has the same base name as a front file must not join
+// that file's alias group (std/trace.xo and std/native/llrt/trace.xo both
+// exist).
 func TestUncoveredResolvedCrossesImplementationBodies(t *testing.T) {
 	root := t.TempDir()
 	// corpusTextIn walks these directories, so they must exist even when empty
@@ -43,13 +46,18 @@ func TestUncoveredResolvedCrossesImplementationBodies(t *testing.T) {
 	}
 	// the front declarations, of which the body file implements two
 	write("std/example.xo", "fn front(x: Int) -> Int\nfn behind() -> Int\nfn only_alpha() -> Int\n"+
-		"fn untouched() -> Int\nfn (a: Alpha) run() -> Int\nfn (b: Beta) run() -> Int\n")
+		"fn untouched() -> Int\nfn twinned() -> Int\nfn (a: Alpha) run() -> Int\nfn (b: Beta) run() -> Int\n")
 	// the body: `front` calls `hop`, which lives only in this file and calls
-	// `behind`; Alpha.run calls `only_alpha`; Beta.run has no body here and
-	// must not be credited through Alpha
+	// the llrt helper `rt_hop`; Alpha.run calls `only_alpha`; Beta.run has no
+	// body here and must not be credited through Alpha
 	write("std/native/example.xo", "fn front(x: Int) -> Int {\n  hop()\n}\n\n"+
-		"fn hop() -> Int {\n  behind()\n}\n\n"+
+		"fn hop() -> Int {\n  rt_hop()\n}\n\n"+
 		"fn (a: Alpha) run() -> Int {\n  only_alpha()\n}\n")
+	// the runtime helper: `rt_hop` names the reported `behind`, so the walk has
+	// to treat this file's declarations as nodes too; `twinned` shares its name
+	// with the front file's `twinned` because this file's base name is the same
+	write("std/native/llrt/example.xo", "fn rt_hop() -> Int {\n  behind()\n}\n\n"+
+		"fn twinned() -> Int {\n  behind()\n}\n")
 	// loadDecls always reads the native prelude, so the fixture needs one
 	write("std/native/prelude.xo", "fn lowered_by_a_method(x: Int) -> Int {\n  x\n}\n")
 	write("internal/stdtest/testdata/corpus/example/example_test.xo", "test \"front\" {\n  expect(front(1)) == 1\n}\n")
@@ -59,10 +67,16 @@ func TestUncoveredResolvedCrossesImplementationBodies(t *testing.T) {
 		{SrcPath: "", TgtPath: "std/example.xo", TgtLine: 1, TgtName: "front", SitePath: "internal/stdtest/testdata/corpus/example/example_test.xo"},
 		// the body's own site names `hop`, a declaration only the body file has
 		{SrcPath: "std/native/example.xo", SrcLine: 1, TgtPath: "std/native/example.xo", TgtLine: 5, TgtName: "hop", SitePath: "std/native/example.xo"},
-		// hop's body names `behind`, a reported declaration
-		{SrcPath: "std/native/example.xo", SrcLine: 5, TgtPath: "std/example.xo", TgtLine: 2, TgtName: "behind", SitePath: "std/native/example.xo"},
-		// a second root site calls Alpha.run (std/example.xo line 5)
-		{SrcPath: "", TgtPath: "std/example.xo", TgtLine: 5, TgtName: "Alpha.run", SitePath: "internal/stdtest/testdata/corpus/example/example_test.xo"},
+		// hop's body names the llrt helper `rt_hop`
+		{SrcPath: "std/native/example.xo", SrcLine: 5, TgtPath: "std/native/llrt/example.xo", TgtLine: 1, TgtName: "rt_hop", SitePath: "std/native/example.xo"},
+		// rt_hop's body names `behind`, a reported declaration
+		{SrcPath: "std/native/llrt/example.xo", SrcLine: 1, TgtPath: "std/example.xo", TgtLine: 2, TgtName: "behind", SitePath: "std/native/llrt/example.xo"},
+		// a root site reaches the llrt `twinned`, and must not thereby reach
+		// the front file's `twinned`: they share module, symbol and kind but are
+		// different declarations in different directories
+		{SrcPath: "", TgtPath: "std/native/llrt/example.xo", TgtLine: 5, TgtName: "twinned", SitePath: "internal/stdtest/testdata/corpus/example/example_test.xo"},
+		// a second root site calls Alpha.run (std/example.xo line 6)
+		{SrcPath: "", TgtPath: "std/example.xo", TgtLine: 6, TgtName: "Alpha.run", SitePath: "internal/stdtest/testdata/corpus/example/example_test.xo"},
 		// and Alpha.run's body names `only_alpha`
 		{SrcPath: "std/native/example.xo", SrcLine: 9, TgtPath: "std/example.xo", TgtLine: 3, TgtName: "only_alpha", SitePath: "std/native/example.xo"},
 	}
@@ -70,24 +84,25 @@ func TestUncoveredResolvedCrossesImplementationBodies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// the reported declarations are the std API surface: the four functions
+	// the reported declarations are the std API surface: the five functions
 	// and two methods of std/example.xo, plus the one declaration of the
-	// native prelude fixture; the body file's own declarations add nothing
-	if total != 7 {
-		t.Errorf("total = %d, want 7", total)
+	// native prelude fixture; the body and llrt files' declarations add nothing
+	if total != 8 {
+		t.Errorf("total = %d, want 8", total)
 	}
 	got := map[string]bool{}
 	for _, e := range entries {
 		got[e.Module+"."+e.Symbol] = true
 	}
-	// the body-only helper is a node of the walk, not a reported declaration
-	if got["example.hop"] {
-		t.Errorf("example.hop exists only in std/native/example.xo and is not an API declaration: %v", entries)
+	// the body-only and llrt helpers are nodes of the walk, not reported
+	// declarations; the llrt file's module is its base name, so rt_hop would
+	// be reported as example.rt_hop if llrt files were reported
+	if got["example.hop"] || got["example.rt_hop"] {
+		t.Errorf("a body-only helper is not an API declaration: %v", entries)
 	}
-	// front is a root target and behind is named only through `hop`, which
-	// only std/native/example.xo declares, so the walk has to cross into the
-	// body and then treat that body-only declaration as a node of its own; the
-	// same for Alpha.run and only_alpha
+	// front is a root target, and behind is named only through `hop` and the
+	// llrt `rt_hop`, so the walk has to cross into the body and then treat the
+	// llrt helper as a node of its own; the same for Alpha.run and only_alpha
 	for _, reached := range []string{"example.front", "example.behind", "example.Alpha.run", "example.only_alpha"} {
 		if got[reached] {
 			t.Errorf("%s reported uncovered, so the walk did not cross into the body: %v", reached, entries)
@@ -95,6 +110,17 @@ func TestUncoveredResolvedCrossesImplementationBodies(t *testing.T) {
 	}
 	if !got["example.untouched"] {
 		t.Errorf("example.untouched is named by no edge and must stay uncovered: %v", entries)
+	}
+	// the llrt file's `twinned` is reached and the front file's `twinned` is
+	// not: a pair is only a pair across std/<m>.xo and std/native/<m>.xo
+	nTwinned := 0
+	for _, e := range entries {
+		if e.Module+"."+e.Symbol == "example.twinned" {
+			nTwinned++
+		}
+	}
+	if !got["example.twinned"] || nTwinned != 1 {
+		t.Errorf("the reached std/native/llrt/example.xo twinned credited the front twinned: %v", entries)
 	}
 	// the alias key carries the receiver: Beta.run shares only the method
 	// name with Alpha.run, is a different declaration, and stays uncovered
