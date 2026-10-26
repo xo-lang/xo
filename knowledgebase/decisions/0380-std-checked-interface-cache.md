@@ -62,6 +62,25 @@ the heap before the SSA falls from 200 MB to the program's own modules plus the 
 falls with the allocation (the 928 MB). A guess of 100 ms and 100 to 150 MB of the 330 ms and 298 MB;
 the middle and back phases (hollow, undef, the key and verify passes: separate items) are the rest.
 
+## Step 1 result (2026-10-26): the bound, measured with no code change
+
+llvm-fib's own module is nine lines, so everything the check and the parse do in an edit of it is std:
+the bound needs no stub. Twenty edit rebuilds profiled at 100 Hz (XO_PROF=cpu of xo itself; the
+top-30 cumulative rows summed per run; average wall 311 ms, average CPU 515 ms, two to three threads):
+
+| where | CPU ms a run | share of CPU |
+|---|---|---|
+| parse of the 195 files (parse_prefetch tasks: parse_file_mode 89.5, of it lexer.lex 17.5) | 89.5 | 17% |
+| the check (build_native's own thread; 57 ms of wall, 186 MB of the heap) | about 57 | 11% |
+| cleanup of the decoded functions (ssa.cleaned 61.5, decode_func 43.5) | 61.5 | 12% |
+| list growth and copies in all of it (obj.rl_grow* 54 to 61, rl_copy 17.5, rl_new 92 cumulative) | 55 to 90 | 11 to 17% |
+| alloc.alloc (first touch of fresh pages, 28,000 page reclaims) | 113 | 22% |
+
+So the interface entry removes the parse (89.5 ms of CPU, about 30 ms of wall across the tasks) and the
+check (57 ms of wall), and with them most of the 186 MB: an upper bound of 85 to 90 ms of the 330 ms of
+wall and 150 MB of the 298 MB; the entry's own load costs part of that. The next piece is
+not this decision: `ssa.cleaned` decodes and cleans 1,300 functions of which 10 changed (61 ms of CPU, 17 of wall).
+
 ## Measurement plan
 
 1. First, an instrument, no entry: how much of the check's 57 ms and 186 MB is std (a run with only
