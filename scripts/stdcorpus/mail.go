@@ -254,7 +254,11 @@ func mailCorpus() string {
 const mailTests = `
 fn first_bad[T](bad: List[T]) -> List[T] { bad[0..(if bad.len() < 20 { bad.len() } else { 20 })] }
 
+// Each test pins the rows it needs first: a regeneration that loses rows (a
+// changed seed, a table cut short) fails here instead of quietly comparing
+// less. The seeded rows alone are the floor; Go's own test strings add more.
 test "parse_address is Go's" {
+  expect(ADDRESSES.len() >= 2500)
   var bad: List[(Str, Str, Str)] = []
   for (s, want) in ADDRESSES {
     let got = match mail.parse_address(s) {
@@ -269,6 +273,7 @@ test "parse_address is Go's" {
 }
 
 test "parse_address_list is Go's" {
+  expect(LISTS.len() >= 1000)
   var bad: List[(Str, Str, Str)] = []
   for (s, want) in LISTS {
     let got = match mail.parse_address_list(s) {
@@ -283,6 +288,7 @@ test "parse_address_list is Go's" {
 }
 
 test "parse_date is Go's" {
+  expect(DATES.len() >= 2000)
   var bad: List[(Str, Str, Str)] = []
   for (s, want) in DATES {
     let got = match mail.parse_date(s) {
@@ -313,6 +319,7 @@ fn shape(m: mail.Message) -> Str {
 }
 
 test "read_message is Go's" {
+  expect(MESSAGES.len() >= 600)
   var bad: List[(Bytes, Str, Str)] = []
   for (m, want) in MESSAGES {
     let got = match mail.read_message(m) {
