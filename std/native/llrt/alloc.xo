@@ -94,6 +94,9 @@ const SMALL_MAX = 1024
 /// The first class (32 KiB) whose blocks on the central lists give their
 /// inner pages back to the system (heapos.xo scavenge, decision 0383).
 const SCAVENGE_FROM = 69
+
+/// Magazines a class keeps on the central list with their pages in place.
+const SCAVENGE_KEEP = 4
 /// The bytes of blocks in a magazine (at least 8 blocks).
 const MAG_BYTES = 65536
 
@@ -440,11 +443,23 @@ pub fn free_mt(h: Int, p: Int) {
   if old != 0 {
     // blocks of 32 KiB and over give their inner pages back before they
     // wait on the central list (decision 0383)
-    if c >= SCAVENGE_FROM {
-      let _g = rt.heap_grow(old, SCAVENGE.wrapping_add(c))
-    }
     // central_put
     let cen = rt.mem_load(h, CENTRAL, 8)
+    // only once the class's central list already holds SCAVENGE_KEEP
+    // magazines (a racy walk: magazines are never unmapped, and a stale
+    // count only moves the cut by one), so a short program that frees a
+    // few big blocks never pays the system calls
+    if c >= SCAVENGE_FROM {
+      var k = 0
+      var w = rt.slot_load(cen, c, RELAXED)
+      while w != 0 && k < SCAVENGE_KEEP {
+        w = rt.mem_load(w, 8, 8)
+        k = k.wrapping_add(1)
+      }
+      if k >= SCAVENGE_KEEP {
+        let _g = rt.heap_grow(old, SCAVENGE.wrapping_add(c))
+      }
+    }
     rt.heap_lock()
     rt.mem_store(old, 8, rt.slot_load(cen, c, RELAXED), 8)
     rt.slot_store(cen, c, old, RELAXED)
