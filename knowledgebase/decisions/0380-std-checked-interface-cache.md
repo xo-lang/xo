@@ -1,6 +1,6 @@
 # 0380: A std module's checked interface is cached, so an edit does not parse and check std again
 
-Status: Proposed (Xo Lang 3, 2026-10-26, for the owner; nothing built). Follows the edit
+Status: Accepted (owner, 2026-10-26 ~14:30; proposed by Xo Lang 3; built by Xo Lang 1 in two steps: (a) std modules' body check through the module check cache, (b) declaring a std module from its entry without parsing it). Follows the edit
 rebuild breakdown the lead asked for after the v0.32.0 comparison with Go
 (bench/results/release-vs-go-v0.32.0.md: an edit rebuild of llvm-fib takes 330 to 360 ms and peaks
 at about 300 MB, Go's 100 ms and 67 MB; cold and warm builds beat Go).
