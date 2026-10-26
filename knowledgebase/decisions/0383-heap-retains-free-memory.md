@@ -135,15 +135,27 @@ The first --ab of (c) (quiet, 15 rounds, A the parent): wall within noise everyw
 except the alloc bench's `tasks` (20 ms): 15.8 to 24.7 ms (1.21 to 1.56, 30 rounds 1.089 to 1.625 interval),
 RSS 0.61 to 0.66; the madvise call per freed 32 KiB and larger block cost more than a short program's whole
 run. So (c) keeps a class's first 4 central magazines as they are and gives pages back only past that
-(SCAVENGE_KEEP in alloc.xo: a racy walk of at most 4 links before central_put, magazines never being
-unmapped). With the threshold: self build peak footprint 8.62 GB to 7.27 GB (-1.35 GB, one run each, a
-loaded machine; the unthresholded build gave -1.6 to -1.76 GB), system time 7.2 s to 8.0 s (+0.8 s; +1.3 s
-without the threshold), wall 45.3 s to 44.1 s (not a wall claim). `tasks` made ten times longer (500 rounds,
-about 200 ms, same allocation shape), 30 rounds, 0 loaded, load 2.7: wall 211.2 to 201.2 ms (0.953, 0.89 to
-0.999), cycles 0.949 (0.905 to 0.98), IPC 5.81 to 6.15, instructions 1.002 (noise). The other nine programs
-(alloc small, mixed, grow, strings, maps, bigtasks, conc fanout, pmap, spawn) within noise or better. The 20
-ms `tasks` run alone could not decide (A spread 42 to 55%): a program that short is startup and first-touch
-faults.
+(SCAVENGE_KEEP in alloc.xo): free_mt counts the class's central links, under the heap lock, before it
+scavenges the magazine it is about to put there, which only this thread holds at that point.
+
+A first version of the threshold read the links without the lock and was wrong: another thread can take a
+magazine and reuse its first block, so the second word holds user data and the walk followed it (the s1 xo
+built from the seed faulted building s2). Its numbers (an earlier version of this section) are withdrawn.
+Nothing random reproduces it: three stress programs (big Int lists, big Strs of 'x', 16 workers, up to 150
+runs each) passed on the racy build. The regression check is the s1-builds-s2 run of scripts/bootstrap-xo.sh
+from the seed (failed on the racy build, passes on the locked one: s2 and s3 identical), and a debug hook
+that widens the window would need a new rt name, so none was added.
+
+Results with the locked threshold, same measurements: self build of compiler/xo (one run each, parent
+then threshold) peak footprint 8.56 GB to 6.94 GB (-1.62 GB), system time 4.90 s to 5.04 s (+0.14 s), max
+RSS 8.34 to 8.66 GB (unchanged by design). `xo bench --ab`, quiet (load 2.8 to 3.9), driver with cycles and
+IPC: `tasks` made ten times longer (500 rounds, about 200 ms, same allocation shape), 30 rounds: wall 207.5
+to 202.2 ms (0.974, 0.917 to 1.004, noise), cycles 0.928 (0.891 to 0.961, better), IPC 5.77 to 6.24,
+instructions 0.999. The other nine programs (alloc small, mixed, grow, strings, maps, bigtasks, conc fanout,
+pmap, spawn), 15 rounds: wall 0.963 to 1.028, all within noise; instructions equal or lower. The 20 ms
+`tasks` run could not decide (the parent's own spread was 42 to 55%): a program that short is startup and
+first-touch faults. Linux arm64 in Docker: every program's output equals the parent's, and 20 runs of the
+Str stress and 10 of the list stress pass with MADV_DONTNEED.
 
 A seed workaround: the request rides on rt.heap_grow, whose n argument carries a flag bit (2^61, below
 the heap profile's 2^62) and whose heap argument is the magazine, because a new rt.* name needs the seed's
