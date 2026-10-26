@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+2023-11-14
+22:13:20
+2023-11-14T22:13:20Z
+Tue, 14 Nov 2023 22:13:20 UTC
+{year}-{month}-{day}
+parsed 1699920000
+--- stderr

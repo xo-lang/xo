@@ -1,5 +1,20 @@
 # std/time changes
 
+## 2026-10-26: fix: the named layouts build on the Go backend (Layout values, RFC3339_LAYOUT, RFC1123_LAYOUT, DATE_LAYOUT, TIME_LAYOUT)
+
+- Kind: fix
+- Commit: this commit
+- Found by: a Go backend program using `time.DATE_LAYOUT.format(t, time.utc())` failed to build with `main.xo:5:15: undefined: rt.Time_DATE_LAYOUT` (the arm64 and LLVM backends were right; reported by DS-2, 2026-10-26)
+- Go reference: n/a (std/rt's Go port of std/time.xo; the Go backend reads a std constant as a value)
+- Test: the golden time_named_layouts (the four layouts format, display and parse) on the Go backend through TestGoldenGoParity, and the same golden on arm64 and LLVM, whose want.txt is the arm64 output
+
+`std/rt/timefmt.go` now declares the four constants that `std/time.xo`
+defines as lazy constants (decision 0332): `var Time_DATE_LAYOUT =
+Time_layout(nil, Time_DATE)` and its three siblings, parsed once when the
+package loads instead of at the first read, which is the same thing since
+the parse is pure. There was no declaration at all, so every read of one
+of the four was a Go compile error.
+
 ## 2026-10-26: perf: the arithmetic of a duration's text that its own tests guard is not checked a second time (Duration.parse, a decoded JSON Duration)
 
 - Kind: perf

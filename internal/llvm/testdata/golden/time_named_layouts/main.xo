@@ -1,0 +1,19 @@
+// std/time's named layouts (std.md 13.3) are lazy constants (decision
+// 0332): parsed once at the first read. The Go backend had no Go
+// declaration for them, so `time.DATE_LAYOUT.format(t, time.utc())` failed
+// to build with "undefined: rt.Time_DATE_LAYOUT" (2026-10-26).
+use std/time
+
+fn main(os: Os) {
+  let t = Time.from_unix(1700000000)
+  let z = time.utc()
+  os.stdio.println(time.DATE_LAYOUT.format(t, z))
+  os.stdio.println(time.TIME_LAYOUT.format(t, z))
+  os.stdio.println(time.RFC3339_LAYOUT.format(t, z))
+  os.stdio.println(time.RFC1123_LAYOUT.format(t, z))
+  os.stdio.println(time.DATE_LAYOUT.display())
+  match time.DATE_LAYOUT.parse("2023-11-14", z) {
+    Ok(back) => os.stdio.println("parsed ${back.unix()}")
+    Err(e) => fault(e.display())
+  }
+}

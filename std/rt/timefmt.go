@@ -21,6 +21,21 @@ const (
 	Time_TIME    = "{hour}:{minute}:{second}"
 )
 
+// Time_RFC3339_LAYOUT and the other named layouts of std/time are the
+// lazy constants of std/time.xo (decision 0332): parsed once, here when
+// the package loads rather than at the first read, which parse is a pure
+// function so the two are the same. The Go backend reads a std constant
+// as a plain value (`rt.Time_DATE_LAYOUT.M_format`), so these are values
+// and not LazyConst pointers. There was no declaration at all before, and
+// `time.DATE_LAYOUT.format(t, time.utc())` failed to build with
+// "undefined: rt.Time_DATE_LAYOUT" (2026-10-26).
+var (
+	Time_RFC3339_LAYOUT = Time_layout(nil, Time_RFC3339)
+	Time_RFC1123_LAYOUT = Time_layout(nil, Time_RFC1123)
+	Time_DATE_LAYOUT    = Time_layout(nil, Time_DATE)
+	Time_TIME_LAYOUT    = Time_layout(nil, Time_TIME)
+)
+
 // tlItem is one piece of a layout: literal text (field "") or a field.
 type tlItem struct {
 	lit, field, arg string
