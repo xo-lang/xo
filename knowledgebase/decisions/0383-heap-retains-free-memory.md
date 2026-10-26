@@ -169,6 +169,17 @@ peak follows the live set and the retained free memory, which (c) and (a) addres
 (4.06 GB) and the remaining Rc allocation sites are left alone; the 14 GB bound in the design notes does not
 turn into footprint.
 
+What (c) leaves, and the bound on (c2) (2026-10-26, main with (c), cold self build). Peak footprint 7.47 and
+7.40 GB (8.8 GB before (c)). At the end of the build 7,044 MB of 7,148 MB of chunks are on free lists: 3,501 MB
+in classes below 32 KiB (64 B 813 MB, 2 KiB 726, 16 KiB 552, 8 KiB 523, 4 KiB 232, the rest about 650), 3,544
+MB in the classes (c) gives back. (c2), page-level scavenging of the small classes at the central list (a
+per-16 KiB-page count of the free blocks of magazines on the central list, a page whose count reaches its size
+madvised, central take subtracting; nothing counted on the thread-local lists): a scratch scan at the emit
+phase (the heap peak) found 2,541 MiB of the small classes on central magazines (the other ~1 GB on thread
+lists) and 1,397 MiB of 16 KiB pages fully covered by them, the same at assemble. So (c2) bounds about 1.4 GB
+more (7.4 to about 6.0 GB) on Darwin's 16 KiB pages, more on Linux's 4 KiB; (a) bounds up to 3.2 GB with a
+size floor. Scratch code: not pushed (a chunk registry and scan in heapos.xo of a scratch worktree).
+
 A seed workaround: the request rides on rt.heap_grow, whose n argument carries a flag bit (2^61, below
 the heap profile's 2^62) and whose heap argument is the magazine, because a new rt.* name needs the seed's
 compiler to know it (gotchas/seed-older-than-intrinsics.md: a runtime function calling a name the seed
