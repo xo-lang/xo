@@ -431,9 +431,9 @@ fn (var g: G) lsr_moves(e: Int, dsts0: List[Int], srcs0: List[Src]) -> (List[Int
       }
       let n = c * p.es
       var d = 0
-      if imm12(n) {
+      if addsub_imm(n) {
         d = g.def1(false, "add $d0, $u0, #${n}", [p.p])
-      } else if imm12(-n) {
+      } else if addsub_imm(-n) {
         d = g.def1(false, "sub $d0, $u0, #${-n}", [p.p])
       } else {
         d = g.def1(false, "add $d0, $u0, $u1", [p.p, g.cimm(n)])

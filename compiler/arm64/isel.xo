@@ -1087,7 +1087,7 @@ fn (var g: G) compare(v: Int) -> Cmp {
         n = na
         cond = swap_cond(cond)
       }
-      if yc && imm12(n) {
+      if yc && addsub_imm(n) {
         return Cmp{text: "cmp $u0, #${n}", us: [g.word(x)], cond: cond}
       }
       let wx = g.word(x)
@@ -1109,9 +1109,9 @@ fn (var g: G) compare(v: Int) -> Cmp {
         }
       }
       let (n, ok) = g.const_int(b)
-      if ok && imm12(n) {
+      if ok && addsub_imm(n) {
         return Cmp{text: "cmp $u0, #${n}", us: [g.word(a)], cond: cond}
-      } else if ok && n != MIN_INT && imm12(-n) {
+      } else if ok && n != MIN_INT && addsub_imm(-n) {
         return Cmp{text: "cmn $u0, #${-n}", us: [g.word(a)], cond: cond}
       }
       let wa = g.word(a)
@@ -2628,9 +2628,9 @@ fn (var g: G) logic_value(x: ssa.Value) -> Bool {
         let w = g.word(v)
         var t = w
         if lo != 0 {
-          t = if imm12(lo) { g.def1(false, "sub $d0, $u0, #${lo}", [w]) } else { g.def1(false, "sub $d0, $u0, $u1", [w, g.cimm(lo)]) }
+          t = if addsub_imm(lo) { g.def1(false, "sub $d0, $u0, #${lo}", [w]) } else { g.def1(false, "sub $d0, $u0, $u1", [w, g.cimm(lo)]) }
         }
-        pv = if span >= 0 && imm12(span) {
+        pv = if span >= 0 && addsub_imm(span) {
           g.def1(false, "cmp $u0, #${span}\ncset $d0, ls", [t])
         } else {
           g.def1(false, "cmp $u0, $u1\ncset $d0, ls", [t, g.cimm(span)])
@@ -2701,16 +2701,16 @@ fn (var g: G) range_test(v: Int, lo: Int, hi: Int, e_in: Int, e_out: Int) -> Boo
   let w = g.word(v)
   var t = w
   if lo != 0 {
-    if imm12(lo) {
+    if addsub_imm(lo) {
       t = g.def1(false, "sub $d0, $u0, #${lo}", [w])
-    } else if lo != MIN_INT && imm12(-lo) {
+    } else if lo != MIN_INT && addsub_imm(-lo) {
       t = g.def1(false, "add $d0, $u0, #${-lo}", [w])
     } else {
       t = g.def1(false, "sub $d0, $u0, $u1", [w, g.cimm(lo)])
     }
   }
   var inst = Inst{kind: K_CONDBR, text: "cmp $u0, #${span}", us: [t], cond: "ls"}
-  if span < 0 || !imm12(span) {
+  if span < 0 || !addsub_imm(span) {
     inst = Inst{kind: K_CONDBR, text: "cmp $u0, $u1", us: [t, g.cimm(span)], cond: "ls"}
   }
   let t0 = g.edge(e_in)
@@ -3057,7 +3057,7 @@ fn (var g: G) add_sub(v: Int) {
     checked = false // the bounds of a prove it
   }
   var flag = if checked { "s" } else { "" }
-  if bconst && (imm12(n0) || (n0 != MIN_INT && imm12(-n0))) {
+  if bconst && (addsub_imm(n0) || (n0 != MIN_INT && addsub_imm(-n0))) {
     var o = ins
     var n = n0
     if n < 0 {

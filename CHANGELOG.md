@@ -27,6 +27,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   pattern binds with `let` (core 3.1, 3.5). It was a parse error and a
   "name not found" for every later use of each name. Whether `var` should
   take patterns is decision 0384, Proposed for the owner.
+- arm64: a compare, add or sub with an immediate of 12 bits shifted left by 12 (0x2000,
+  0x3000, 0x10000) takes the immediate (`cmp x, #2, lsl #12`) instead of a constant in
+  a register: unicode runecase 0.983 of the instructions, classify and quote 0.995.
 - A Map type's cold put paths share one body (decision 0372's stage 0, arm64): the
   lists' put is one cold `xo.maph.putbody`, called by `xo.maph.putrest` (which keeps
   the shared mark) and by a forked hybrid map's replay, so the second copy of the

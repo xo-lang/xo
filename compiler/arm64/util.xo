@@ -140,6 +140,13 @@ fn imm12(n: Int) -> Bool {
   n >= 0 && n < 4096
 }
 
+/// Whether n is the immediate of an add, sub, cmp or cmn: 12 bits, or 12
+/// bits shifted left by 12 (0x2000, 0x10000), which the encoder writes as
+/// `#k, lsl #12`, so a page or block size compare needs no register.
+fn addsub_imm(n: Int) -> Bool {
+  imm12(n) || (n > 0 && n & 4095 == 0 && n >> 12 < 4096)
+}
+
 /// Whether off is the scaled unsigned immediate of a load or store of w
 /// bytes (1, 2, 4, or 8): a multiple of w below 4096 * w (rawImmOff).
 fn raw_imm_off(off: Int, w: Int) -> Bool {

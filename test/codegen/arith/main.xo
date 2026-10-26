@@ -104,7 +104,7 @@ fn or_not(a: Int, b: Int) -> Int {
 
 fn main(os: Os) {
   let n = os.env.args().len()
-  os.stdio.println("${times8(n)} ${div4(n)} ${fold()} ${times3(n)} ${clear_low(n + 6)} ${bit1(n)} ${low_bits(n)} ${word_index(n)} ${word_rem(n)} ${by_zero(n)} ${rune_rem(n * 7919)} ${u64_mod(UInt64(n) * 12345)} ${and_not(n * 5, n)} ${or_not(n, n * 3)} ${digit_or(n + 50)} ${packed(n)} ${packed_mask(n)}")
+  os.stdio.println("${times8(n)} ${div4(n)} ${fold()} ${times3(n)} ${clear_low(n + 6)} ${bit1(n)} ${low_bits(n)} ${word_index(n)} ${word_rem(n)} ${by_zero(n)} ${rune_rem(n * 7919)} ${u64_mod(UInt64(n) * 12345)} ${and_not(n * 5, n)} ${or_not(n, n * 3)} ${digit_or(n + 50)} ${packed(n)} ${packed_mask(n)} ${page_cmp(n)} ${page_cmn(n)}")
 }
 
 // `d < 0 || d > 9` of a `d = x - 48` is one unsigned compare (isel
@@ -134,4 +134,18 @@ fn packed(x: Int) -> Int {
 fn packed_mask(x: Int) -> Int {
   // arm64: -"and x[0-9]+, x[0-9]+, #65535"
   (((x & 255) << 8) | 48) & 65535
+}
+
+// A compare or add with a 12 bit immediate shifted left by 12 (0x2000,
+// 0x10000) takes the immediate, which the encoder writes as `#k, lsl
+// #12`: no mov of the constant (2026-10-26; a loop that kept those
+// constants in registers hoisted them into every call's preheader).
+fn page_cmp(x: Int) -> Bool {
+  // arm64: "cmp x[0-9]+, #8192" -"mov x[0-9]+, #8192"
+  x < 0x2000
+}
+
+fn page_cmn(x: Int) -> Bool {
+  // arm64: "cmn x[0-9]+, #65536" -"mov x[0-9]+, #-65536"
+  x == -0x10000
 }

@@ -1511,7 +1511,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       }
       let ins = ["add", "sub", "mul", "lsl", "lsr"][op]
       let (k, kc) = g.const_int(x.args[2])
-      if kc && op <= 1 && imm12(k) {
+      if kc && op <= 1 && addsub_imm(k) {
         // a constant addend is the immediate (decision 0207 stage 3)
         g.set(v, [g.def1(false, "${ins} $d0, $u0, #${k}", [a])])
         return true
