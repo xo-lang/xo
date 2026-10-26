@@ -1,0 +1,5 @@
+# twincheck: path: four workloads, the same names on both sides.
+- - clean
+- - join
+- - parts
+- - match

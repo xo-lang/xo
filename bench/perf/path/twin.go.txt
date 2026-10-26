@@ -1,0 +1,49 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"path"
+)
+
+var paths = []string{
+	"/a/b/../c/./d//e",
+	"a/b/c/d.txt",
+	"../../x/y/./z/",
+	"/usr/local/share/man/man1/ls.1.gz",
+	"dir//sub/./file.tar.gz",
+	"/",
+	"a",
+	"/a/b/c/../../../../d",
+}
+
+var pats = []string{"*.txt", "a/*/c?", "[a-z]*.gz", "/usr/*/share/*", "file.[tc]*", "*"}
+
+func main() {
+	w := "clean"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	sum := 0
+	for i := 0; i < 200000; i++ {
+		p := paths[i%8]
+		switch w {
+		case "clean":
+			sum += len(path.Clean(p))
+		case "join":
+			sum += len(path.Join(p, paths[(i+3)%8]))
+		case "parts":
+			d, f := path.Split(p)
+			sum += len(d) + len(f) + len(path.Dir(p)) + len(path.Base(p)) + len(path.Ext(p))
+			if path.IsAbs(p) {
+				sum++
+			}
+		default:
+			if ok, err := path.Match(pats[i%6], paths[(i+1)%8]); err == nil && ok {
+				sum++
+			}
+			sum += i % 3
+		}
+	}
+	fmt.Println(w, sum)
+}

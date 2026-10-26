@@ -61,3 +61,19 @@ With the setup fixed (`none` row: Xo 0.55 of Go's wall), main's std against Go: 
 Bytes.to_base64 and from_base64, which decodes eight and 32 characters at a time): encode 0.691
 (instructions 0.80, cycles 0.59), decode 1.078 (instructions 1.31, cycles 1.00). Both inside the 1.2x
 bar. Next twins: path, uuid, base32, mime, template, archive, compress.
+
+## path (same day)
+
+bench/perf/path (twin.go.txt against Go's path package; twincheck agrees on clean, join, parts, match).
+`xo bench --ab`, quiet (load 3.3), 15 rounds, A the Go twin, B the Xo program; Xo / Go wall (instructions,
+cycles); the runs are 8 to 24 ms, so process start is a share of each:
+
+| workload | Go wall | Xo wall | wall | instructions | cycles |
+|---|---|---|---|---|---|
+| path clean (200,000 passes over 8 paths) | 9.6 ms | 11.6 ms | 1.207 | 1.468 | 1.232 |
+| path join | 21.3 ms | 24.5 ms | 1.147 | 1.351 | 1.124 |
+| path parts (split, dir, base, ext, is_abs) | 9.4 ms | 14.6 ms | 1.541 | 1.732 | 1.658 |
+| path match (is_match against 6 patterns) | 8.2 ms | 14.0 ms | 1.697 | 1.602 | 1.862 |
+
+Over the 1.2x bar: parts (1.54x) and match (1.70x), clean at the bar's edge (1.21x). Peak memory 0.23 to 0.57
+of Go's. Fix next, one at a time: match, then parts.
