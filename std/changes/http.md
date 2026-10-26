@@ -1,5 +1,26 @@
 # std/http changes
 
+## 2026-10-26: fix: an Expires date in the standard cookie format is no longer dropped
+
+- Kind: fix
+- Commit: this commit
+- Found by: the new cookie corpus (internal/stdtest/testdata/corpus/http) on
+  arm64 and LLVM; the Go backend never had the bug
+- Go reference: net/http cookie.go readSetCookies, which parses Expires with
+  the cookie TimeFormat (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/http (SET_COOKIE_LINES, go, arm64 and
+  LLVM)
+
+`parse_set_cookie` read an Expires value through cookie_date, which split the
+date on spaces and accepted four fields after the weekday or three. Go's cookie
+TimeFormat leaves five ("02 Jan 2006 15:04:05 GMT"), so every standard
+Set-Cookie date returned None and the cookie lost its expiry: a value handed to
+a browser again kept a session cookie that should have expired. The hyphenated
+form with a four digit year ("02-Jan-2006 15:04:05 GMT") still reads, as it does
+in Go, whose parser is lenient about the separator; a two digit year (RFC 850), a
+date with no zone, and the ANSIC form leave Expires unset, which is also what Go
+does.
+
 ## 2026-10-23: fix: http.new_request's path on the Go backend
 
 - Kind: fix

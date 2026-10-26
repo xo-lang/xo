@@ -2599,20 +2599,28 @@ fn cookie_domain_name(s0: Str) -> Bool {
   ok
 }
 
-/// An Expires value as Go's time.Parse reads it with RFC1123 or
-/// "Mon, 02-Jan-2006 15:04:05 MST" (the weekday and the zone's name are
-/// not checked; the time is taken as UTC), else None.
+/// An Expires value as Go's ParseSetCookie reads it with the cookie
+/// TimeFormat: the date spaced ("Mon, 02 Jan 2006 15:04:05 GMT") or
+/// hyphenated with a four digit year ("Mon, 02-Jan-2006 15:04:05 GMT"),
+/// which Go's time.Parse accepts too. A two digit year (RFC 850), a date
+/// with no zone, and the ANSIC form come back as no Expires at all rather
+/// than an error, which is what Go does (measured 2026-10-26). The zone's
+/// name is not checked and the time is taken as UTC, which is Go's reading
+/// of a zone it does not know. Else None.
 fn cookie_date(v: Str) -> Time? {
   let (_, rest) = match v.find(", ") {
     Some(i) => (v[0..i], v[i + 2..])
     None => return None
   }
   let f = rest.split(" ")
-  if f.len() != 4 && f.len() != 3 {
+  // five fields after the weekday, or three: Go's own parser is lenient
+  // about the separators, so "09-Jun-2021" reads the same as "09 Jun 2021",
+  // but the zone is the fifth field and a date without one is not a date
+  if f.len() != 5 && f.len() != 3 {
     return None
   }
-  let dmy = if f.len() == 4 { [f[0], f[1], f[2]] } else { f[0].split("-") }
-  let clock = if f.len() == 4 { f[3] } else { f[1] }
+  let dmy = if f.len() == 5 { [f[0], f[1], f[2]] } else { f[0].split("-") }
+  let clock = if f.len() == 5 { f[3] } else { f[1] }
   if dmy.len() != 3 || dmy[0].len() != 2 {
     return None
   }
