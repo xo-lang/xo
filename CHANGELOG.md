@@ -15,6 +15,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   with the same answers. A position's lookup (`xo type`, `xo query type`)
   and `xo query effects` still check every body. `XO_LOOKUP_EAGER=1`
   checks every module and body for every lookup.
+- A native build of fewer than 4,096 functions is split into parts four times
+  smaller, so an edit regenerates and reassembles less: the HTTP server bench's edit
+  rebuild 585 ms to 520, its cold build and size unchanged; xo itself keeps its
+  parts (smaller ones made its edits 10% slower).
 - A split darwin build hollows and assembles part by part through the back-end cache:
   an edit rescans, hollows and assembles only the parts it changed, and the
   undefined-symbol check combines kept per-part facts (`phase hollow` now includes

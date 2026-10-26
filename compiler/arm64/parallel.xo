@@ -30,6 +30,17 @@ const PART_CUT = 128
 const PART_MAX = 512
 const PART_VALUES = 60000
 
+/// A module of fewer functions than PART_SMALL is cut four times finer
+/// (PART_MIN, PART_CUT, PART_MAX and PART_VALUES over 4): an edit
+/// reassembles a quarter of the code. The HTTP server bench (553
+/// functions) edit rebuild 620 ms to 570, its cold build alike; xo
+/// itself (about 60,000) is cut as before, since 493 parts instead of 131
+/// made its edit 10% and its cold build 4% slower (each part's pack read
+/// and object). A tier, not a size in proportion: an added function moves
+/// no cut but its own part's (2026-10-26).
+const PART_SMALL = 4096
+const PART_SMALL_DIV = 4
+
 /// What one part generated: its assembly (text, helpers, call site
 /// tables, data), its failure and skipped functions, and the program
 /// wide code it needs.
@@ -206,12 +217,17 @@ pub fn part_lists(m: ssa.Module) -> List[List[Int]] {
   if n < PART_FUNCS {
     return [all]
   }
-  cut_parts(m, rest) + cut_parts(m, rt)
+  let div = if n < PART_SMALL { PART_SMALL_DIV } else { 1 }
+  cut_parts(m, rest, div) + cut_parts(m, rt, div)
 }
 
 /// Group fis cut into parts by contents (PART_MIN, PART_CUT, PART_MAX,
 /// PART_VALUES); a short last part joins the one before.
-fn cut_parts(m: ssa.Module, fis: List[Int]) -> List[List[Int]] {
+fn cut_parts(m: ssa.Module, fis: List[Int], div: Int) -> List[List[Int]] {
+  let pmin = PART_MIN / div
+  let pmax = PART_MAX / div
+  let pcut = PART_CUT / div
+  let pvals = PART_VALUES / div
   var out: List[List[Int]] = []
   var cur: List[Int] = []
   var vals = 0
@@ -220,14 +236,14 @@ fn cut_parts(m: ssa.Module, fis: List[Int]) -> List[List[Int]] {
     // a function not decoded: its body facts' count (decision 0283 B)
     vals += m.value_count(fi)
     let k = cur.len()
-    if i + 1 < fis.len() && ((k >= PART_MIN && (k >= PART_MAX || fnv(m.funcs[fi].name) % PART_CUT == 0)) || vals >= PART_VALUES) {
+    if i + 1 < fis.len() && ((k >= pmin && (k >= pmax || fnv(m.funcs[fi].name) % pcut == 0)) || vals >= pvals) {
       out.push(cur)
       cur = []
       vals = 0
     }
   }
   if !cur.is_empty() {
-    if !out.is_empty() && cur.len() < PART_MIN {
+    if !out.is_empty() && cur.len() < pmin {
       let last = out.pop() ?? []
       out.push(last + cur)
     } else {
