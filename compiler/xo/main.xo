@@ -1495,7 +1495,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // (asmparts.xo incr_hollow): only the parts an edit changed are
     // scanned, hollowed and assembled; their texts hollowed later only if
     // a tool reads them (hollow_late)
-    let inc = if !fdir.is_empty() && tgoos == "darwin" && o.cmd != "asm" && o.asm_path.is_empty() && p.parts.len() > 1 && backend_cache_mode(os) != "verify" { incr_hollow(os, ctx, p.parts, march, hollow_now, jobs) } else { None }
+    // (amd64 too: it has no per-function cache, fdir, but incr_hollow needs
+    // only the back-end cache, which it checks)
+    let inc = if (tgoos is "darwin" | "linux") && o.cmd != "asm" && o.asm_path.is_empty() && p.parts.len() > 1 && backend_cache_mode(os) != "verify" { incr_hollow(os, ctx, p.parts, march, hollow_now, tgoos == "linux", jobs) } else { None }
     var hollow_late = false
     if inc.is_some() {
       hollow_late = hollow_now

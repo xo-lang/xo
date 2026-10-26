@@ -255,18 +255,47 @@ struct IncrOut {
 /// nothing reaches emptied when hollow, through the back-end cache, and
 /// the undefined symbols; None without the cache (the build then hollows
 /// and assembles the whole text).
-fn incr_hollow(os: Os, ctx: Ctx, parts: List[Str], march: Str, hollow: Bool, jobs: Int) -> IncrOut? {
+fn incr_hollow(os: Os, ctx: Ctx, parts: List[Str], march: Str, hollow: Bool, elf: Bool, jobs: Int) -> IncrOut? {
   let dir = backend_cache_dir(os, ctx)
   let id = cache_id(os)
   if dir.is_empty() || id.is_empty() || parts.len() < 2 {
     return None
   }
   let amd64 = march == "amd64"
-  let tk = part_keys("${HOLLOW_INCR_VERSION} facts ${id}", [], parts, jobs)
+  let tk = part_keys("${HOLLOW_INCR_VERSION} facts ${id} elf=${elf}", [], parts, jobs)
+  // ELF: an ELF part's scan reads the labels without the xo_ prefix that
+  // every part defines (hollow_extra), so each part's are kept by its text
+  // and a facts entry is keyed by its text and the hash of them all
+  var labels: List[Str] = []
+  var fstored = 0
+  if elf {
+    for (i, k) in tk.indexed() {
+      match entry_get(os, dir, "hextra", k) {
+        Some(b) => {
+          for l in (b.to_str() ?? "").split("\n") {
+            if !l.is_empty() {
+              labels.push(l)
+            }
+          }
+        }
+        None => {
+          let ls = arm64.hollow_extra_of(parts[i])
+          fstored += entry_put(os, dir, "hextra", k, ls.join("\n").bytes())
+          labels = labels + ls
+        }
+      }
+    }
+  }
+  let (extra, first) = arm64.hollow_extra_from(labels)
+  let eh = if elf { crypto.sha256(labels.join("\n").bytes()).to_hex() } else { "" }
+  var fk: List[Str] = []
+  for k in tk {
+    fk.push(if elf { crypto.sha256("${k}\x00${eh}".bytes()).to_hex() } else { k })
+  }
   // each part's facts, from the cache or scanned (on tasks)
   var facts: List[arm64.HFacts] = []
   var miss: List[Int] = []
-  for (i, k) in tk.indexed() {
+  for (i, k) in fk.indexed() {
     var f = arm64.HFacts{}
     var hit = false
     if let Some(b) = entry_get(os, dir, "hfacts", k) {
@@ -281,7 +310,6 @@ fn incr_hollow(os: Os, ctx: Ctx, parts: List[Str], march: Str, hollow: Bool, job
     facts.push(f)
   }
   if !miss.is_empty() {
-    let (extra, first) = arm64.hollow_extra(parts, false)
     let next = Atomic[Int].new(0)
     let n = miss.len()
     let done = scope sc {
@@ -295,7 +323,7 @@ fn incr_hollow(os: Os, ctx: Ctx, parts: List[Str], march: Str, hollow: Bool, job
               break
             }
             let i = miss[j]
-            mine.push((i, arm64.hollow_scan(parts[i], false, extra, first)))
+            mine.push((i, arm64.hollow_scan(parts[i], elf, extra, first)))
           }
           mine
         }))
@@ -308,12 +336,14 @@ fn incr_hollow(os: Os, ctx: Ctx, parts: List[Str], march: Str, hollow: Bool, job
     }
     for (i, f) in done {
       facts[i] = f
-      let _ = entry_put(os, dir, "hfacts", tk[i], arm64.hfacts_encode(f).bytes())
+      fstored += entry_put(os, dir, "hfacts", fk[i], arm64.hfacts_encode(f).bytes())
     }
   }
+  // counted toward the prune and logged (store-log), as every kind is
+  prune_backend_cache(os, "hfacts", dir, fstored)
   var live: List[List[Bool]] = []
   if hollow {
-    live = arm64.hollow_live(facts, false)
+    live = arm64.hollow_live(facts, elf)
   } else {
     for f in facts {
       var l: List[Bool] = []
@@ -329,9 +359,9 @@ fn incr_hollow(os: Os, ctx: Ctx, parts: List[Str], march: Str, hollow: Bool, job
   var okeys: List[Str] = []
   var ufs: List[arm64.UFacts] = []
   var amiss: List[Int] = []
-  for (i, k) in tk.indexed() {
+  for i in 0..tk.len() {
     let dead = arm64.hollow_dead_names(facts[i], live[i])
-    let ok = crypto.sha256("${HOLLOW_INCR_VERSION} obj ${id} amd64=${amd64} hollow=${hollow}\x00${k}\x00${dead.join("\n")}".bytes()).to_hex()
+    let ok = crypto.sha256("${HOLLOW_INCR_VERSION} obj ${id} amd64=${amd64} elf=${elf} hollow=${hollow}\x00${fk[i]}\x00${dead.join("\n")}".bytes()).to_hex()
     okeys.push(ok)
     var u = arm64.UFacts{}
     var got = false
@@ -357,15 +387,16 @@ fn incr_hollow(os: Os, ctx: Ctx, parts: List[Str], march: Str, hollow: Bool, job
       texts.push(t)
     }
     var stored = 0
-    for (j, r) in macho_objects(texts, false, amd64, jobs).indexed() {
+    for (j, r) in macho_objects(texts, elf, amd64, jobs).indexed() {
       let i = amiss[j]
       out.objs[i] = r
-      let u = arm64.undef_scan(texts[j])
+      // the undefined-symbol check is Mach-O's (main.xo, darwin)
+      let u = if elf { arm64.UFacts{} } else { arm64.undef_scan(texts[j]) }
       ufs[i] = u
       match r {
         Ok(b) => {
           stored += entry_put(os, dir, "hobj", okeys[i], b)
-          let _ = entry_put(os, dir, "hufacts", okeys[i], arm64.ufacts_encode(u).bytes())
+          stored += entry_put(os, dir, "hufacts", okeys[i], arm64.ufacts_encode(u).bytes())
         }
         Err(_) => {}
       }

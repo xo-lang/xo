@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- An edit rebuild hollows only the changed parts on linux and on amd64 too (it was
+  darwin/arm64 only): an ELF part's facts also key on every part's extra labels
+  (hextra/ entries). Per edit, hollow on linux/amd64 went from 196 to 86 ms for
+  the HTTP server and 51 to 30 ms for llvm-fib; each edit's binary is the file a
+  cold build writes on linux/arm64, linux/amd64, darwin/arm64 and darwin/amd64.
+  The store log now counts the hfacts and hextra entries a build writes.
 - `xo fix` adds a missing `require go` pin once: each fix round's check now
   reads the xo.mod the previous round edited, where it read the file on
   disk and added the pin again every round (25 copies in one run; Intel

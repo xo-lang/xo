@@ -124,36 +124,54 @@ pub struct HFacts {
 /// function above it, and every copy trapped, 2026-10-25); and the bytes
 /// they start with. Empty for Mach-O.
 pub fn hollow_extra(parts: List[Str], elf: Bool) -> (Map[Str, Bool], List[Bool]) {
+  var labels: List[Str] = []
+  if elf {
+    for p in parts {
+      labels = labels + hollow_extra_of(p)
+    }
+  }
+  hollow_extra_from(labels)
+}
+
+/// The extra labels part p defines (hollow_extra's for one part, in order):
+/// a build can keep them by the part's text (incremental hollowing of ELF
+/// parts, 2026-10-26).
+pub fn hollow_extra_of(p: Str) -> List[Str] {
+  var out: List[Str] = []
+  let b = p.bytes()
+  let n = b.len()
+  var i = 0
+  while i < n {
+    var j = i
+    while j < n && b[j] != 10 {
+      j += 1
+    }
+    if j > i && b[j - 1] == 58 && elf_sym_start(b[i]) && !starts_at(b, i, j, "xo_") {
+      var ok = true
+      for k in i..j - 1 {
+        if !ident_byte(b[k]) {
+          ok = false
+        }
+      }
+      if ok {
+        out.push(p[i..j - 1])
+      }
+    }
+    i = j + 1
+  }
+  out
+}
+
+/// hollow_extra's set and first bytes from the labels of every part.
+pub fn hollow_extra_from(labels: List[Str]) -> (Map[Str, Bool], List[Bool]) {
   var extra: Map[Str, Bool] = {}
   var first: List[Bool] = []
   for _ in 0..256 {
     first.push(false)
   }
-  if elf {
-    for p in parts {
-      let b = p.bytes()
-      let n = b.len()
-      var i = 0
-      while i < n {
-        var j = i
-        while j < n && b[j] != 10 {
-          j += 1
-        }
-        if j > i && b[j - 1] == 58 && elf_sym_start(b[i]) && !starts_at(b, i, j, "xo_") {
-          var ok = true
-          for k in i..j - 1 {
-            if !ident_byte(b[k]) {
-              ok = false
-            }
-          }
-          if ok {
-            extra[p[i..j - 1]] = true
-            first[Int(b[i])] = true
-          }
-        }
-        i = j + 1
-      }
-    }
+  for l in labels {
+    extra[l] = true
+    first[Int(l.bytes()[0])] = true
   }
   (extra, first)
 }

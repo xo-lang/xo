@@ -2557,7 +2557,7 @@ func TestCacheStoreLog(t *testing.T) {
 		b, _ := os.ReadFile(filepath.Join(cache, "store-log"))
 		return strings.Split(strings.TrimSpace(string(b)), "\n")
 	}
-	line := regexp.MustCompile(`^\d+ store (fe|fn|inl|rc|sum|obj|hobj|hfacts|chk|pack/[a-z]+) \d+ id [0-9a-f]{12}$`)
+	line := regexp.MustCompile(`^\d+ store (fe|fn|inl|rc|sum|obj|hobj|hfacts|hextra|chk|pack/[a-z]+) \d+ id [0-9a-f]{12}$`)
 	n := 0
 	for _, run := range []string{"cold", "warm"} {
 		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "--phase-times", "-o", filepath.Join(work, "prog"), "."))
