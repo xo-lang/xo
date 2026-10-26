@@ -122,6 +122,73 @@ content store would share across ids (49% at best), which compression
 removes within one id's segments as well. The cap would hold about five
 times the history (16 GiB of compressed segments).
 
+### Implementation note: compression in xo (Xo Lang 2, 2026-10-26; nothing built)
+
+**The codec.** xo writes the cache itself, so the codec must be Xo code
+(xo links no C library; zero C runtime). std has only DEFLATE today
+(std/compress: gzip, flate, zlib, a port of Go's compress/flate in
+std/native/llrt/flate.xo, 2,079 lines); no zstd, lz4 or snappy. Measured
+on a 450 MB sample of the same cache (newest part, fn, fe packs and obj;
+Xo program built --release, one core, measurement window at load 4):
+
+| area | Xo deflate -1: ratio, compress / inflate MB/s | deflate -6 | zstd -1 CLI, same files |
+|---|---|---|---|
+| part | 8.3x, 194 / 266 | 12.2x, 68 / 287 | 11.8x, 1,313 / 2,830 |
+| fn | 4.5x, 126 / 218 | 6.2x, 45 / 246 | 6.3x, 814 / 2,052 |
+| fe | 2.8x, 100 / 181 | 3.4x, 49 / 193 | 3.3x, 810 / 1,688 |
+| obj | 2.9x, 106 / 201 | 3.2x, 40 / 214 | 3.5x, 746 / 1,511 |
+
+(C gzip -1 compresses these at 160 to 450 MB/s, so the Xo port runs at
+about half of C.) DEFLATE in Xo would save about 75% of the bytes, but at
+about 230 MB/s inflate a warm llvm-fib build's 28.3 MB of reads would cost
+about 120 ms on a 300 ms build, and compressing the day's 1,097 GB about
+2.6 core hours: too slow for the hit path. A faster codec has to be ported:
+
+- **LZ4 block format** (recommended first): Go's pierrec/lz4 block code is
+  about 300 lines to compress (one fast level, a hash table of 4 byte
+  matches) and about 100 to decompress (literal runs and back copies,
+  mostly memmove), plus the frame we need (a length header; no LZ4 frame
+  format, the cache is our own). With tests against Go's output, a day or
+  two. Ratio 2.2 to 6.4x by the CLI (70% of the bytes saved); its decoder
+  is copies, which Xo does at memmove speed, so it should land near 1 GB/s
+  or better where DEFLATE's bit decoding ran at 230 MB/s: about 30 ms of a
+  warm build at worst. Measure the port before switching it on.
+- **zstd**: Go's standard library has a decoder only (internal/zstd, about
+  2,000 lines with FSE and Huffman), and an encoder means klauspost's
+  (the fastest level and its entropy coders, about 4,000 more lines): one
+  to two weeks, for 81% against lz4's 70%. A second step if the 11% is
+  wanted.
+
+**Hooks.** Every cache file goes through compiler/xo bcache.xo: writes
+through `cache_put(os, path, data)` (loose entries, `entry_path`, and
+pack segments, `pack_write_counted`'s `s-` files), reads through
+`cache_get(os, path)` (loose entries; obj entries are read into memory and
+written out for the link, so a compressed .o costs no extra step) and the
+segment reads in `cache_get_packed` and of the shared pack (`os.fs.read`
+of each segment, then `pack_index`). Compress whole segments (one call per
+segment, where the ratios above were measured) and each loose entry;
+decompress right after the read, before `pack_index` or the entry's own
+version check.
+
+**Format and versions.** A compressed file starts with a magic and codec
+byte (`XOZ` + 1 for lz4) and the uncompressed length; a reader that finds
+no magic takes the bytes as they are, so entries written before stay
+readable. Older xos must never read a compressed file as if it were plain
+(a pack index parsed from compressed bytes could name wrong entries):
+compressed segments get another name prefix (`z-`; cache_get_packed reads
+only `s-` names today, so an older xo skips them), and compressed loose
+entries another key salt (entry_path's key includes a codec tag), so an
+older xo misses them instead of reading them. Entries of a code generation
+key shared across xo builds (decision 0275) then split by codec for a
+while; the old ones age out through the prune.
+
+**Shared packs and prune.** The shared pack copies segment files byte for
+byte, so a compressed segment stays compressed there and is read the same
+way. Prune counts files by their size on disk, so the 16 GiB cap holds the
+compressed bytes (about five times the history); its walk, KEEP and
+version guard are unchanged. XO_CACHE_COMPRESS=off would write plain
+files (reads always accept both), for a measurement or a bisect.
+
 ### Recommendation (Xo Lang 2, for the owner)
 
 Build it, starting with the part and fn packs. The fixes of 2026-10-24
