@@ -9,6 +9,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - arm64: a function's result bounded by one of its parameters is known to its callers (decision
   0376): `i < n` for an n from `strings.space_start(b, lo, b.len())` needs no bounds check.
   compiler/xo itself has 4% fewer bytes index checks and 2.5% fewer list index checks.
+- A `std/NAME` module's test file is checked and its calls are built, the prelude's
+  included: `xo test --std-module=prelude` reported XO1201 "support is planned" for
+  every list literal and every call on a list in it, and XO1201 "the std function
+  `NAME.f`" for a call of the module's own function, though the same code compiled in
+  a program; only a `std/native/NAME` module's tests worked (decision 0262).
+
 - `xo build --inline-str` (experimental, decision 0370, arm64 and amd64, default off): a Str
   of up to 11 bytes keeps its text in its two words. A list of a million short keys takes
   0.38 of the memory, a `Map[Str, Int]` 0.69, its sort 0.62 (wall 0.77, 0.84 and 0.65);

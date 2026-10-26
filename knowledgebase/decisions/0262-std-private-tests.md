@@ -1,6 +1,6 @@
 # 0262: Private-function tests inside std
 
-Status: Accepted (owner, 2026-10-18, through the lead: approved as written); scheduled after decision 0261 stage (a) (Xo Lang 3); implemented 2026-10-18 (41a6afe2); the map_model and canonical_names goldens became module tests (std/native/prelude_test.xo, std/native/llrt/http1_test.xo)
+Status: Accepted (owner, 2026-10-18, through the lead: approved as written); scheduled after decision 0261 stage (a) (Xo Lang 3); implemented 2026-10-18 (41a6afe2); the map_model and canonical_names goldens became module tests (std/native/prelude_test.xo, std/native/llrt/http1_test.xo); a `std/NAME` module's test file (the prelude's included) was checked and built as nothing until 2026-10-25 (Implementation)
 
 ## Context
 
@@ -70,6 +70,24 @@ That costs every time a std function needs checking on its own
   0247 leaves the other runtime bodies to the build).
 - internal/stdtest walks std/ (not std/rt or testdata) for `_test.xo`
   files and runs each module on the tier's backends.
+- A std module under test is checked and built in full whatever its
+  shape, `std/NAME` (the prelude included) as `std/native/NAME`
+  (2026-10-25). Only a `std/native/...` module was: it is not a std
+  module to the checker, while a `std/NAME` one was skipped twice. The
+  checker checked no std module's bodies unless a caller named it
+  (`check_bodies_of`), so a test file beside `std/NAME.xo` was built with
+  no name in it resolved: every list literal and every call on a list was
+  XO1201 "support is planned", though the same code compiled in a
+  program. The builder then answered a call of the module's own function
+  through the std API lowerings, which end at XO1201 "the std function
+  `NAME.f`". Both gates now take the run's root std module:
+  `compiler/check/dump.xo` run checks it (`c.mods[m].root`), and
+  `compiler/ssa/call.xo` builds a function of it from its body when it
+  has one, after the implementation and prelude lowerings (List.push and
+  expect still lower as they do). TestStdModuleTestBodies in
+  internal/stdtest holds both: a probe module with a body of its own and
+  a test file using a list literal, a list method, an Option and the
+  private function.
 
 ## Consequences
 

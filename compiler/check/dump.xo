@@ -52,7 +52,14 @@ fn (var c: Checker) run() -> () ! Str {
     }
   }
   for m in c.order {
-    if !c.mods[m].is_std || bodies.contains(m) {
+    // a std module's bodies ship checked (TestStdChecks checks them in
+    // full), so a build does not check them again: except one named in
+    // check_bodies_of, and the std module under test
+    // (`xo test --std-module`, a root module), whose test file's bodies
+    // are its tests and are checked like a program's (2026-10-25: they
+    // were built unchecked, so every prelude name in a `std/NAME` module's
+    // test was XO1201, a list literal "support is planned")
+    if !c.mods[m].is_std || bodies.contains(m) || c.mods[m].root {
       c.check_module(m)
     }
   }

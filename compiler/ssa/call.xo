@@ -172,6 +172,16 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
     if b.is_conc_call(fo) {
       return b.conc_call(x, ci)
     }
+    // the std module under test (`xo test --std-module`, the run's root
+    // std module): a function of its own with a body is built from that
+    // body, as a program's is, since its test file calls it through the
+    // private access the test has (2026-10-25: the call was XO1201 "the
+    // std function `probe.seven`", as only the std API lowerings above
+    // could answer it)
+    let fd = b.c.objs[fo].fn_decl
+    if b.c.mods[fm].root && !fd.is_empty() && fd[0].body != None {
+      return b.call_as(x, ci, fo)
+    }
     return b.std_call(x, ci)
   }
   if fm >= 0 && b.c.mods[fm].path == "native/llrt/cpu" && !b.wasm {
