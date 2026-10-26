@@ -27,5 +27,8 @@ caller, which races with the next task's).
 
 Avoid: do not treat memory a finished context touched as free of history when a new context reuses it
 (stacks, arenas, fiber caches); a reuse needs the equivalent of a free and an alloc in the new context.
+Verified on windows/amd64 by CI run 40418639701 at 3acb40d34 (scripts/ci/windows-race.sh --mutex-loop, its own
+native xo): 120 of 120 runs ok across XO_THREADS 1, 4 and the CPUs; race_sync mutex_loop exit 0 with 0 races in all
+60, tsan_race exit 66 with races in all 60 (the detector alive).
 Tests: internal/llvm TestRaceSyncTable and TestRaceSyncTableArm64 (race_sync case mutex_loop, which failed on
 the arm64 backend before the fix), scripts/ci/windows-race.sh (the same case on windows/amd64).

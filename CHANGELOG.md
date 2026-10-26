@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `--race` no longer reports a data race between tasks that only reused one stack
+  (the Windows tester's report on v0.32.0: tasks looping only over
+  `m.with(fn(var c: Map[Int, Int]) { c[k] = v })` reported WARNING: DATA RACE
+  every run; a spawn site that takes a Mutex in a loop runs its tasks one after
+  another on one fiber stack, and the finished task's accesses to the
+  same stack slot were still in ThreadSanitizer's shadow). A task now starts with
+  the shadow of the dead stack below it reset (sanhook.xo dead_stack_reset).
+  Checked on darwin and linux/arm64 (the arm64 backend with clang's
+  ThreadSanitizer) and on windows/amd64 (CI run 40418639701: 120 of 120 runs,
+  the planted race still reported in all 60 of its runs).
 - Every native build is about 10 ms faster to start: the C toolchain's identity
   (`cc --version` and a stat(1) of it, which the run cache's key reads) is
   remembered across builds in the backend cache, keyed by the size and
