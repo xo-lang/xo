@@ -358,6 +358,13 @@ const ENCODINGS: List[(Str, Int)] = [
   ("movi v31.16b, #10", 0x4f00e55f),
   ("movi v31.16b, #255", 0x4f07e7ff),
   ("movi v31.16b, #44", 0x4f01e59f),
+  // an immediate in hex is the word in decimal: the emitter writes a
+  // mask over 32 bits in hex (arm64 calls.xo) and print_op every
+  // immediate in decimal (clang 21 assembles either; 2026-10-26)
+  ("movi v31.16b, #0x19", 0x4f00e73f),
+  ("movi v31.16b, #25", 0x4f00e73f),
+  ("and x9, x9, #0xffffff", 0x92405d29),
+  ("and x9, x9, #16777215", 0x92405d29),
   ("cmeq v30.16b, v30.16b, v31.16b", 0x6e3f8fde),
   ("cmlt v30.16b, v30.16b, #0", 0x4e20abde),
   // decision 0373's case fold lane, each word as clang assembles it
@@ -945,4 +952,20 @@ test "the emitter's assembly prints back from its Ops (XO_OP_SCAN, decision 0274
     }
   }
   expect(shown) == []
+}
+
+test "an immediate in another radix prints as the same instruction (XO_OP_VERIFY)" {
+  // obj.rs_append_bytes' case fold writes `movi v31.16b, #0x19` (arm64
+  // calls.xo) and print_op writes every immediate in decimal, so an
+  // XO_OP_VERIFY=1 build failed on it though both spell one word
+  // (ENCODINGS above, clang 21).
+  expect(op_round_trip("\tmovi v31.16b, #0x19")) == ""
+  expect(op_round_trip("\tand x9, x9, #0xffffff")) == ""
+  expect(op_round_trip("\tand x9, x9, #0xffff")) == ""
+  // another operand text in the same line is still a mismatch
+  expect(same_operands_mod_radix([b"x9", b"#0x19", b"x9"], [b"x9", b"#25", b"x9"]))
+  expect(!same_operands_mod_radix([b"x9", b"#0x19"], [b"x9", b"#25", b"x9"]))
+  expect(!same_operands_mod_radix([b"x9", b"#0x19"], [b"x10", b"#25"]))
+  expect(!same_operands_mod_radix([b"x9", b"#0x19"], [b"x9", b"x1"]))
+  expect(!same_operands_mod_radix([b"x9", b"#0x19"], [b"x9", b"#26"]))
 }

@@ -1533,7 +1533,11 @@ fn simd_word(m: Str, o: List[Operand]) -> Int {
 /// For one assembly line l: "" when it is not an instruction (a
 /// directive, label, comment, blank) or its Op prints as written, else
 /// "line => printed" (decision 0274 step 3's XO_OP_VERIFY and the corpus
-/// test).
+/// test). An immediate the text writes in another radix is not a
+/// difference: the emitter writes a mask over 32 bits in hex
+/// (calls.xo: `and x9, x9, #0xffffff`) and print_op writes every
+/// immediate in decimal, and either assembles to the same word, since
+/// the encoder parses either spelling to the value (macho enc.xo imm).
 pub fn op_round_trip(l: Str) -> Str {
   if !l.starts_with("\t") || l.starts_with("\t.") {
     return ""
@@ -1544,6 +1548,46 @@ pub fn op_round_trip(l: Str) -> Str {
   while k < bs.len() && bs[k] != ' ' {
     k += 1
   }
-  let printed = print_op(parse_op(body[0..k], split_operands(bs[k..])))
-  if printed == body { "" } else { "${body} => ${printed}" }
+  let toks = split_operands(bs[k..])
+  let printed = print_op(parse_op(body[0..k], toks))
+  if printed == body {
+    return ""
+  }
+  let pb = printed.bytes()
+  var pk = 0
+  while pk < pb.len() && pb[pk] != ' ' {
+    pk += 1
+  }
+  if bs[0..k] == pb[0..pk] && same_operands_mod_radix(toks, split_operands(pb[pk..])) {
+    return ""
+  }
+  "${body} => ${printed}"
+}
+
+/// Whether operand texts a and b say the same instruction but for an
+/// immediate's radix (the text's #0x19 against the print's #25): every
+/// operand text is equal, or both are immediates that parse to the same
+/// value. A register or a memory operand written another way is a real
+/// mismatch, not a radix.
+fn same_operands_mod_radix(a: List[Bytes], b: List[Bytes]) -> Bool {
+  if a.len() != b.len() {
+    return false
+  }
+  for i in 0..a.len() {
+    if a[i] == b[i] {
+      continue
+    }
+    if let Some(x) = imm(a[i]) {
+      let y = match imm(b[i]) {
+        Some(v) => v
+        None => return false
+      }
+      if x != y {
+        return false
+      }
+    } else {
+      return false
+    }
+  }
+  true
 }
