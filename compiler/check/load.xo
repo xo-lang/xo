@@ -1545,6 +1545,10 @@ pub fn (c: Checker) link_view(keep_parse: Bool) -> Checker {
   var v = Checker{fs: c.fs, std_dir: c.std_dir}
   v.mods = c.mods
   v.diags = c.diags
+  // what a module check cache retry reads after the lowering (build_native)
+  v.mod_skip = c.mod_skip
+  v.mod_skip_auto = c.mod_skip_auto
+  v.skip_unsafe = c.skip_unsafe
   if keep_parse {
     v.parse_cache = c.parse_cache
   }

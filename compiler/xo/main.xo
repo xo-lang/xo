@@ -985,13 +985,15 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     tgoarch = "wasm"
   }
   // decision 0352: lower lets the checker go once the SSA is built, in a
-  // native build for one target OS that is not a test and has no module
-  // check cache retry (which reads the checker after lowering)
+  // native build for one target OS that is not a test (2026-10-26: also
+  // under the module check cache's auto mode, the default since 2026-10-23,
+  // whose retry reads only link_view's skip fields; strip was off for it, so
+  // a default build kept the trees: 325 MB against 278 MB peak RSS)
   var one_os = true
   for tg in targets {
     one_os = one_os && tg.split("/")[0] == targets[0].split("/")[0]
   }
-  let strip = (backend is "arm64" | "amd64") && one_os && !tests && !c.mod_skip_auto && (os.env.get("XO_KEEP_FRONT") ?? "") != "1"
+  let strip = (backend is "arm64" | "amd64") && one_os && !tests && (os.env.get("XO_KEEP_FRONT") ?? "") != "1"
   // the build information's source hashes, before lower lets the
   // checker go (decision 0354 stage 2)
   if !tests {
