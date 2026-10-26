@@ -1467,6 +1467,81 @@ func TestAgentRefsSpellFilter(t *testing.T) {
 	}
 }
 
+// TestAgentRefsSamePath: three modules with one module path under a
+// root (the xo checkout's example.com/notes: bench/paper/v0.3 and
+// bench/xo/v0.4's notes services and internal/check's imports_deny
+// golden) are not one module: the first is checked and the others are
+// named (JSON "same_path", a note), where a whole-root check read only
+// the first module's files and lost the others' references without a
+// word (2026-10-26: json.decode in bench/xo/v0.4's store.xo).
+func TestAgentRefsSamePath(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	for name, src := range map[string]string{
+		"a-paper":  filepath.Join(repoRoot, "bench", "paper", "v0.3", "08-notes-service"),
+		"b-xo":     filepath.Join(repoRoot, "bench", "xo", "v0.4", "08-notes-service"),
+		"c-golden": filepath.Join(repoRoot, "internal", "check", "testdata", "golden", "imports_deny"),
+	} {
+		if err := os.CopyFS(filepath.Join(root, name), os.DirFS(src)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var out, errOut bytes.Buffer
+	// every module checked, so all three meet
+	code := runEnv(t, []string{"XO_REFS_SPELL=off"}, []string{"refs", "--dir=" + root, "--json", "prelude.Str.to_lower"}, &out, &errOut)
+	if code != 0 {
+		t.Fatalf("refs: exit %d: %s%s", code, out.String(), errOut.String())
+	}
+	var v struct {
+		References []struct {
+			File string `json:"file"`
+		} `json:"references"`
+		SamePath []struct {
+			Dir  string `json:"dir"`
+			Path string `json:"path"`
+			Kept string `json:"kept"`
+		} `json:"same_path"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &v); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	var dirs []string
+	for _, x := range v.SamePath {
+		if x.Path != "example.com/notes" || x.Kept != "a-paper" {
+			t.Errorf("same_path entry %+v, want example.com/notes kept as a-paper", x)
+		}
+		dirs = append(dirs, x.Dir)
+	}
+	sort.Strings(dirs)
+	if strings.Join(dirs, " ") != "b-xo c-golden" {
+		t.Errorf("same_path dirs %v, want b-xo and c-golden", dirs)
+	}
+	// the kept module's references are there; the others' are not
+	// claimed
+	paper := false
+	for _, r := range v.References {
+		if strings.Contains(r.File, "/b-xo/") || strings.Contains(r.File, "/c-golden/") {
+			t.Errorf("a reference in a module left out: %s", r.File)
+		}
+		if strings.Contains(r.File, "/a-paper/") {
+			paper = true
+		}
+	}
+	if !paper {
+		t.Errorf("no reference in the kept module a-paper: %+v", v.References)
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := runEnv(t, []string{"XO_REFS_SPELL=off"}, []string{"refs", "--dir=" + root, "--text", "prelude.Str.to_lower"}, &out, &errOut); code != 0 || !strings.Contains(out.String(), "note: not checked, another module under the root has its module path") {
+		t.Errorf("refs --text: exit %d, no note:\n%s%s", code, out.String(), errOut.String())
+	}
+	// one module alone (--dir) still answers for it
+	out.Reset()
+	if code := run(t, []string{"refs", "--dir=" + filepath.Join(root, "b-xo"), "--json", "prelude.Str.to_lower"}, &out, &errOut); code != 0 || !strings.Contains(out.String(), "/b-xo/") {
+		t.Errorf("refs --dir=b-xo: exit %d:\n%s", code, out.String())
+	}
+}
+
 // TestAgentRootSkipsBrokenModule: at a root whose modules include one
 // whose `use c` binding is missing (the xo checkout's
 // examples/realtime-control), the lookups answer for the other modules

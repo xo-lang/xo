@@ -40,7 +40,11 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   identifier (a module that does not cannot refer to it; 2026-10-26):
   at the xo root `Str.contains_where` takes 0.9 s and 0.9 GB (1.4 s,
   1.2 GB with --testdata), a common name such as `trim_prefix` about
-  3.5 s and 3.5 GB; XO_REFS_SPELL=off checks every module. Refs of a std name checks
+  3.5 s and 3.5 GB; XO_REFS_SPELL=off checks every module. Two modules
+  under a root with one module path (the xo checkout's
+  `example.com/notes` three times) are checked once: the first, and the
+  others named (`"same_path"`, a `note: not checked` line); look one up
+  with `--dir` (2026-10-26: their references were missing silently). Refs of a std name checks
   only the std and runtime files whose text spells the name: 0.08 to
   0.4 s for a rare name, about 1 s for a common one (`find`, `push`),
   where every std module was checked before (1.2 to 1.8 s on a quiet

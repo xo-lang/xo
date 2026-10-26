@@ -243,9 +243,24 @@ pub fn run_agent(os: Os, cmd: Str, args: List[Str]) -> Int uses (stdio, fs, env)
       td.push(abs_of(s.wd, d).trim_prefix("${root}/"))
     }
   }
+  // the module roots left out for a module path another module under the
+  // root has (Checker.same_path), relative to the root
+  let rootp = abs_of(cwd, dir).trim_suffix("/")
+  let rel = fn(d: Str) -> Str { abs_of(s.wd, d).trim_prefix("${rootp}/") }
+  var same: List[J] = []
+  var same_text: List[Str] = []
+  for (d, mp, kept) in s.same_path {
+    same.push(jobj(["dir", "path", "kept"], [jstr(rel(d)), jstr(mp), jstr(rel(kept))]))
+    same_text.push("${rel(d)} (${mp}, the path of ${rel(kept)})")
+  }
   match out {
     Ok(v0) => {
       var v = v0
+      if !same.is_empty() {
+        if let J.Obj(keys, vals, raws) = v {
+          v = J.Obj(keys: keys + ["same_path"], vals: vals + [jarr(same)], raws: if raws.is_empty() { raws } else { raws + [""] })
+        }
+      }
       if !s.skipped.is_empty() {
         if let J.Obj(keys, vals, raws) = v {
           var items: List[J] = []
@@ -270,6 +285,9 @@ pub fn run_agent(os: Os, cmd: Str, args: List[Str]) -> Int uses (stdio, fs, env)
         if !td.is_empty() {
           let more = if td.len() > 3 { ", ... (${td.len()} directories)" } else { "" }
           os.stdio.println("note: not checked: ${td[0..td.len().min(3)].join(", ")}${more}; --testdata checks them too")
+        }
+        if !same_text.is_empty() {
+          os.stdio.println("note: not checked, another module under the root has its module path (check it with --dir=DIR): ${same_text.join("; ")}")
         }
       }
       if batch_failed { 1 } else { 0 }
@@ -486,6 +504,7 @@ fn agent_session(os: Os, dir: Str, preload: List[Str], testdata: Bool, words: Li
     }
     s.skipped = skipped
     s.testdata_skipped = v.testdata_skipped
+    s.same_path = v.same_path
     // v.files holds the std files the check loaded too
     if v.err.is_empty() && !v.files.keys().any(fn(p) { p.starts_with("${d.trim_suffix("/")}/") }) {
       return Err("no .xo files in or under ${d}")

@@ -200,6 +200,12 @@ pub struct Checker {
   /// each name looked for; a module that does not spell the name cannot
   /// refer to it, and the one declaring it does). Empty: every one.
   pub testdata_words: List[Str] = []
+  /// The module roots a walk left out because a module checked before
+  /// them has their module path: (root, path, the root kept).
+  pub same_path: List[(Str, Str, Str)] = []
+  /// A walk checks one module of each module path and names the others
+  /// (same_path): the editor's and the agent lookups' checker sets it.
+  pub split_same_path: Bool = false
   /// The `testdata` directories find_module_dirs left out, as it found
   /// them, so a lookup at a root can say what it did not check.
   pub testdata_skipped: List[Str] = []
@@ -504,6 +510,40 @@ pub fn (var c: Checker) check_dirs(dirs: List[Str]) -> () ! Str uses fs.read {
     module_dirs = kept
   }
   module_dirs = module_dirs.sort()
+  // a walk of a root that holds two modules with one module path (copies
+  // of a program, bench/xo/v0.4 and bench/paper/v0.3's example.com/notes)
+  // checks the first only: load_dir finds a path's module by the path, so
+  // the second's files were never read and their references missing
+  // without a word (2026-10-26). The others are named (same_path). Only
+  // for the lookups (xo lsp, def, refs, symbols: split_same_path), which
+  // report them; a check keeps reading them as it did.
+  if c.walk_all && c.split_same_path {
+    var by_path: Map[Str, Str] = {}
+    var kept: List[Str] = []
+    for d in module_dirs {
+      let p = c.module_path_for(d)
+      match by_path.get(p) {
+        Some(first) => {
+          let (root, mpath) = match c.find_mod_root(d) {
+            Some(r) => (r.dir, r.path)
+            None => (d, p)
+          }
+          let first_root = match c.find_mod_root(first) {
+            Some(r) => r.dir
+            None => first
+          }
+          if !c.same_path.any(fn(x) { x.0 == root }) {
+            c.same_path.push((root, mpath, first_root))
+          }
+        }
+        None => {
+          by_path[p] = d
+          kept.push(d)
+        }
+      }
+    }
+    module_dirs = kept
+  }
   // resolve the requirements of every main module before loading, so
   // imports of required modules find their selected versions
   for dir in module_dirs {

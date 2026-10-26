@@ -366,6 +366,9 @@ struct Session {
   /// the `testdata` directories an agent session's check of a root left
   /// out (`--testdata` walks them)
   testdata_skipped: List[Str] = []
+  /// the module roots left out because another module under the root has
+  /// their module path (root, path, the root kept)
+  same_path: List[(Str, Str, Str)] = []
   /// open documents: absolute path to text
   docs: Map[Str, Bytes] = {}
   dirty: Bool = true
@@ -455,6 +458,9 @@ struct View {
   stopped_dirs: List[Str] = []
   /// the `testdata` directories the walk of a root left out
   testdata_skipped: List[Str] = []
+  /// the module roots the walk left out for their module path, as
+  /// Checker.same_path
+  same_path: List[(Str, Str, Str)] = []
 }
 
 /// The open documents to check, without std copies (a std source opened
@@ -490,6 +496,8 @@ fn new_lsp_checker(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes]) -> c
   // workspace or repository root (decision 0289), within the walk's
   // bound (decision 0345)
   c.walk_all = true
+  // one module a module path, the others named (same_path)
+  c.split_same_path = true
   c
 }
 
@@ -535,6 +543,7 @@ fn check_view_excluding(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes],
   }
   v.res = [new_res(c)]
   v.testdata_skipped = c.testdata_skipped
+  v.same_path = c.same_path
   v.stopped = c.unsupported
   for d in c.fetch_dirs {
     if !v.stopped_dirs.contains(d) {

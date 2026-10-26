@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo def`, `xo refs` and `xo symbols` at a root holding two modules with
+  one module path check the first and name the others (JSON `same_path`, a
+  note) instead of silently reading only the first's files, which lost
+  the others' references (the xo checkout's `example.com/notes`, three
+  copies).
 - `xo refs` at a workspace or repository root checks only the modules whose
   text spells the name looked for (its last segment, as a whole
   identifier): at the xo root a rare name's query takes 0.9 s and 0.9 GB
