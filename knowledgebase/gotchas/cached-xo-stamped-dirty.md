@@ -27,3 +27,15 @@ Before the fix, for a measurement or an identity check: delete bin/xo and
 bin/xo.key and rebuild with a private `XO_CHECKOUT_CACHE` (deleted after),
 then check `xo version -m bin/xo` shows the expected commit and an empty
 XO_DIRTY.
+
+Second bug of the same fix (2026-10-25, found by the seed cut's -short): two
+test packages ran Ensure on a cold key at once. The first built the entry and
+wrote its stamp; the second had read no stamp before, called
+buildLockedForce(force), took the lock after the first, and `os.Remove(out)`
+removed the freshly built xo while the first package's tests ran it: ten
+cmd/xo tests failed with "no xo to run: open .../checkout/KEY/xo: no such
+file". Fix: after taking the lock, a forced build returns when the entry's
+stamp now matches the tree's; a rebuild no longer removes out (BuildXo's
+rename replaces it). TestBuildLockedForceReusesConcurrentBuild holds the lock
+while a forced build waits, builds the entry, and checks the waiter used it
+(it failed before the fix with the build attempt).

@@ -1,12 +1,14 @@
 package xotool
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestTarget: Result.Binaries is keyed by the names xo prints, Go's, so a
@@ -337,5 +339,58 @@ func TestStampMatches(t *testing.T) {
 	}
 	if !stampMatches(entry, dirty) {
 		t.Error("a dirty tree's entry did not match the same dirty state")
+	}
+}
+
+// TestBuildLockedForceReusesConcurrentBuild: a process that waited for the
+// build lock with force set (it had seen no matching stamp) finds the entry
+// another process built while it waited, with a stamp that matches its
+// tree, and uses it: it neither builds nor removes the xo that process may
+// be running (2026-10-25: two test packages on a cold key, the second
+// removed the first's xo and ten cmd/xo tests found "no xo to run").
+func TestBuildLockedForceReusesConcurrentBuild(t *testing.T) {
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.email=t@t", "-c", "user.name=t"}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "-A")
+	git("commit", "-q", "-m", "a")
+	entry := filepath.Join(t.TempDir(), "entry")
+	if err := os.MkdirAll(entry, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(entry, exeName("xo"))
+	// the other process holds the lock while it builds
+	unlock, err := lockFile(filepath.Join(entry, "build.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- buildLockedForce(dir, out, io.Discard, true) }()
+	time.Sleep(300 * time.Millisecond)
+	if err := os.WriteFile(out, []byte("built by the other process"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	recordStamp(dir, entry)
+	unlock()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("buildLockedForce after the other process built the entry: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("buildLockedForce did not return")
+	}
+	b, err := os.ReadFile(out)
+	if err != nil || string(b) != "built by the other process" {
+		t.Errorf("the other process's xo was removed or replaced: %q, %v", b, err)
 	}
 }

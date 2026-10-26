@@ -521,8 +521,15 @@ func buildLockedForce(root, out string, log io.Writer, force bool) error {
 	if isFile(out) && !force {
 		return nil
 	}
-	if force {
-		os.Remove(out)
+	if force && isFile(out) {
+		// another process may have built the entry while this one waited
+		// for the lock (its stamp now matches the tree's): use it, and
+		// never remove an xo that process may be running (2026-10-25: two
+		// test packages on a cold key, the second removed the first's xo
+		// under its tests). A rebuild replaces out by BuildXo's rename.
+		if _, dirty := gitState(root); stampMatches(filepath.Dir(out), dirty) {
+			return nil
+		}
 	}
 	seeds, err := Seeds(root)
 	if err != nil {
