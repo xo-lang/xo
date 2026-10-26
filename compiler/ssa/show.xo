@@ -1094,6 +1094,13 @@ fn (var b: Builder) in_range(v: Int, to: Int) -> Int {
   if b.m.is_u64(to) {
     return b.add(Op.Ge, bt, Aux.None, [v, b.cint(0)])
   }
+  // Int64 is the machine word (bits 0, as UInt64 is): every Int value is in
+  // its range, so there is no narrow width to mask with. out_of would shift
+  // by bits - 1, which is -1 here (Int64.try faults the compiler with
+  // "shift amount -1 out of range for Int" without this).
+  if b.m.types[to].bits <= 0 {
+    return b.add(Op.Eq, bt, Aux.None, [b.cint(0), b.cint(0)])
+  }
   b.add(Op.Not, bt, Aux.None, [b.out_of(v, to)])
 }
 
