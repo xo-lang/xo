@@ -671,3 +671,38 @@ fn hlock_give() {
     pool.futex_wake(l)
   }
 }
+
+/// The granule the scavenger works in: 16 KiB, the page of Apple silicon and
+/// a multiple of Linux's 4 KiB.
+const SCAV_PAGE = 16384
+
+/// Gives back to the system (decision 0383) the whole pages inside each
+/// block of the magazine at m (class c, 32 KiB to 256 KiB, linked by their
+/// first word), except those holding the block's two link words (the
+/// block's first word is the list link, its second the central list's):
+/// the kernel returns zero pages on the next use, which a free block's
+/// contents allow. Linux MADV_DONTNEED (4) frees at once; Darwin
+/// MADV_FREE_REUSABLE (7) takes the pages out of the process's footprint.
+pub fn scavenge(m: Int, c: Int) {
+  if sanhook.sanitized() || sanhook.gorace() {
+    return
+  }
+  let size = (2048).wrapping_shl(c.wrapping_sub(65))
+  var r = m
+  while r != 0 {
+    let lo = (r + 16 + SCAV_PAGE - 1).shr_logical(14).wrapping_shl(14)
+    let hi = (r + size).shr_logical(14).wrapping_shl(14)
+    if hi > lo {
+      match target.os {
+        TargetOs.Linux => {
+          let _a = linux.madvise(lo, hi - lo, 4)
+        }
+        TargetOs.Darwin => {
+          let _a = sys_darwin.madvise(lo, hi - lo, 7)
+        }
+        TargetOs.Windows | TargetOs.Wasi => {}
+      }
+    }
+    r = rt.mem_load(r, 0, 8)
+  }
+}

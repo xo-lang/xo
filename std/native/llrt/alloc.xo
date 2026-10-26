@@ -82,8 +82,18 @@ const COUNT = 1864
 const SAMPLE_AT = 10344
 const PSAMPLE = 10360
 const SAMPLE = 4611686018427387904
+/// rt.heap_grow's request to scavenge the magazine passed as its heap (cabi.xo
+/// heap_grow, decision 0383), the class added. A seed workaround: the seed
+/// that builds this runtime knows rt.heap_grow, not a new rt name (a seed
+/// bump needs the owner). Replace it with a named intrinsic (rt.heap_scavenge,
+/// lowered on the native backends and in wasm's rt2.xo) after the next seed
+/// cut, so this flag does not become permanent by accident.
+const SCAVENGE = 2305843009213693952
 
 const SMALL_MAX = 1024
+/// The first class (32 KiB) whose blocks on the central lists give their
+/// inner pages back to the system (heapos.xo scavenge, decision 0383).
+const SCAVENGE_FROM = 69
 /// The bytes of blocks in a magazine (at least 8 blocks).
 const MAG_BYTES = 65536
 
@@ -428,6 +438,11 @@ pub fn free_mt(h: Int, p: Int) {
   }
   let old = rt.mem_load(fl, MAG, 8)
   if old != 0 {
+    // blocks of 32 KiB and over give their inner pages back before they
+    // wait on the central list (decision 0383)
+    if c >= SCAVENGE_FROM {
+      let _g = rt.heap_grow(old, SCAVENGE.wrapping_add(c))
+    }
     // central_put
     let cen = rt.mem_load(h, CENTRAL, 8)
     rt.heap_lock()

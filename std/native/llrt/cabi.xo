@@ -267,6 +267,14 @@ fn heap_release(b: Int) { libcmem.heap_release(b) }
 /// heap profile's SAMPLE added to n (alloc.xo), samples the block the
 /// heap just allocated (kept in the record's PSAMPLE) and returns it.
 fn heap_grow(h: Int, n: Int) -> Int {
+  // alloc.xo free_mt's scavenge (decision 0383): h is a magazine of class
+  // n - SCAVENGE, given back its inner pages. A seed workaround, not a new
+  // rt.* name (the seed that builds this runtime knows rt.heap_grow only):
+  // replace it with a named intrinsic after the next seed cut.
+  if n >= SCAVENGE && n < SAMPLE {
+    heapos.scavenge(h, n - SCAVENGE)
+    return 0
+  }
   if prof.supported() && n >= SAMPLE {
     return heapprof.sampled(h, rt.mem_load(h, PSAMPLE, 8), n - SAMPLE)
   }
@@ -276,6 +284,8 @@ fn heap_grow(h: Int, n: Int) -> Int {
 
 /// alloc.xo's SAMPLE and PSAMPLE (the heap profile's request).
 const SAMPLE = 4611686018427387904
+/// alloc.xo's SCAVENGE: a request to scavenge the magazine passed as h.
+const SCAVENGE = 2305843009213693952
 const PSAMPLE = 10360
 
 fn heap_lock() { heapos.lock() }
