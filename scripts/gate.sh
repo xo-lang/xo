@@ -69,9 +69,37 @@ echo "xobuild $(($(date +%s) - t0)) s"
 # step instead of building slower with a warning (decision 0342)
 export XO_CLI=$wt/bin/xo XO_BACKEND_CACHE=off XO_INLINE_STRICT=1
 failed=0
+# slowest JSON: the tests of a go test -json log by time, slowest first
+# (lead, 2026-10-26: the full tier's 83 minutes needed per-subtest times)
+slowest() {
+  python3 - "$1" <<'PY'
+import json, sys
+rows = []
+for line in open(sys.argv[1], errors="replace"):
+    try:
+        e = json.loads(line)
+    except ValueError:
+        continue
+    if e.get("Test") and e.get("Action") in ("pass", "fail", "skip"):
+        rows.append((e.get("Elapsed", 0), e["Action"], e["Test"]))
+for el, act, t in sorted(rows, reverse=True)[:40]:
+    print(f"{el:9.2f} {act:4} {t}")
+PY
+}
 full() { # NAME PKG [go test args]: one package's full tests
   n=$1; p=$2; shift 2
-  if go test -count=1 -timeout 120m "$p" "$@" >"$logs/$n.txt" 2>&1; then
+  # -json keeps every test's time ($logs/NAME.json, the 40 slowest in
+  # NAME.slow.txt); NAME.txt is its output as go test -v prints it
+  go test -json -count=1 -timeout 120m "$p" "$@" >"$logs/$n.json" 2>"$logs/$n.err"
+  rc=$?
+  python3 -c 'import json,sys
+for l in open(sys.argv[1], errors="replace"):
+    try: e = json.loads(l)
+    except ValueError: sys.stdout.write(l); continue
+    sys.stdout.write(e.get("Output", ""))' "$logs/$n.json" >"$logs/$n.txt"
+  cat "$logs/$n.err" >>"$logs/$n.txt"
+  slowest "$logs/$n.json" >"$logs/$n.slow.txt"
+  if [ "$rc" = 0 ]; then
     echo "$n: $(tail -1 "$logs/$n.txt")"
   else
     failed=1
