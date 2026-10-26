@@ -13,7 +13,15 @@ struct V {
 }
 
 fn bits(f: Float) -> Str {
-  "${f.to_bits()}"
+  let b = f.to_bits()
+  // every NaN here comes from an invalid operation on operands that are
+  // not NaNs (0.0 / 0.0, inf - inf, inf * 0.0), so it is the hardware's
+  // default NaN: the same payload with the sign bit set on x86_64 and
+  // clear on arm64 (gotchas/default-nan-sign-per-arch.md). The magnitude
+  // still compares the payload and the quiet bit, and the bits of every
+  // other value compare exactly (2026-10-25: the linux/amd64 golden run
+  // printed -2251799813685248 where want.txt has 9221120237041090560)
+  if f.is_nan() { "${b & 9223372036854775807}" } else { "${b}" }
 }
 
 // x and y loaded, combined lane by lane, stored back
