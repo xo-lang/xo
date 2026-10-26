@@ -93,3 +93,125 @@ test "Row.ints and Row.strs read an array column, and a wrong element type is Mi
     Err(_) => "other"
   }) == "mismatch nums"
 }
+
+struct FakeDriver {
+  n: Mutex[Int]
+  log: Mutex[List[Str]]
+}
+
+struct FakeConn {
+  n: Mutex[Int]
+  log: Mutex[List[Str]]
+  broken: Atomic[Bool]
+}
+
+fn record(log: Mutex[List[Str]], what: Str) {
+  log.with(fn(var ls: List[Str]) -> () { ls.push(what) })
+}
+
+fn (d: FakeDriver) connect(net: Net, dsn: Str) -> sql.DriverConn ! sql.SqlErr uses net.dial {
+  record(d.log, "connect")
+  if dsn.is_empty() {
+    return Err(sql.SqlErr.Conn(msg: "no dsn"))
+  }
+  Ok(FakeConn{n: d.n, log: d.log, broken: Atomic.new(false)})
+}
+
+fn (c: FakeConn) query(q: Str, args: List[sql.SqlValue]) -> sql.DriverRows ! sql.SqlErr uses net.dial {
+  record(c.log, "query")
+  let n = c.n.with_read(fn(v: Int) -> Int { v })
+  Ok(sql.DriverRows{columns: ["n"], rows: [[sql.int(n)]]})
+}
+
+fn (c: FakeConn) exec(q: Str, args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses net.dial {
+  record(c.log, "exec")
+  c.n.with(fn(var v) -> () { v += 1 })
+  Ok(sql.ExecResult{rows_affected: 1, last_insert_id: 0})
+}
+
+fn (c: FakeConn) begin() -> () ! sql.SqlErr uses net.dial {
+  record(c.log, "begin")
+  Ok(())
+}
+
+fn (c: FakeConn) commit() -> () ! sql.SqlErr uses net.dial {
+  record(c.log, "commit")
+  Ok(())
+}
+
+fn (c: FakeConn) rollback() -> () ! sql.SqlErr uses net.dial {
+  record(c.log, "rollback")
+  Ok(())
+}
+
+fn (c: FakeConn) ping() -> () ! sql.SqlErr uses net.dial {
+  record(c.log, "ping")
+  Ok(())
+}
+
+fn (c: FakeConn) close() uses net.dial {
+  record(c.log, "close")
+  c.broken.set(true)
+}
+
+fn (c: FakeConn) is_broken() -> Bool {
+  record(c.log, "is_broken")
+  c.broken.get()
+}
+
+test "a Driver the program writes drives Db's pool: query, exec, begin, commit, rollback, ping and close" {
+  let n = Mutex.new(0)
+  let log: Mutex[List[Str]] = Mutex.new([])
+  let db = sql.open_driver(os.net, FakeDriver{n: n, log: log}, "fake:mem", max_open: 1, max_idle: 0)?
+  // open_driver connected once before it returned, so connect ran
+  expect(db.query_one("SELECT n")?.int("n")?) == 0
+  // exec reaches the connection, and the pool gives it back afterwards
+  db.exec("BUMP")?
+  expect(db.query_one("SELECT n")?.int("n")?) == 1
+  db.ping()?
+  // a transaction holds its connection until it ends
+  let tx = db.begin()?
+  tx.exec("BUMP")?
+  tx.commit()?
+  expect(db.query_one("SELECT n")?.int("n")?) == 2
+  let tx2 = db.begin()?
+  tx2.exec("BUMP")?
+  tx2.rollback()?
+  // std/sql hands rollback to the driver, and this driver keeps no
+  // transaction log: the row stays, which is the driver's business
+  expect(db.query_one("SELECT n")?.int("n")?) == 3
+  db.close()?
+  // a closed Db refuses further work, so those calls reached the pool's state
+  expect(match db.query_one("SELECT n") {
+    Ok(_) => "ok"
+    Err(e) => e.display()
+  }) == "database is closed"
+  // every DriverConn method ran, because the driver recorded each call:
+  // the pool calls is_broken and then close whenever it does not keep a
+  // connection, and max_idle 0 keeps none
+  let calls = log.with_read(fn(ls: List[Str]) -> List[Str] { ls })
+  for want in ["connect", "query", "exec", "begin", "commit", "rollback", "ping", "close", "is_broken"] {
+    expect(calls.contains(want)) == true
+  }
+}
+
+test "a transaction on the in memory Db commits one row and rolls another back" {
+  let db = sql.memory("CREATE TABLE t (id SERIAL, n INT)")?
+  db.ping()?
+  let tx = db.begin()?
+  tx.exec("INSERT INTO t (n) VALUES ($1)", [sql.int(1)])?
+  tx.commit()?
+  let tx2 = db.begin()?
+  tx2.exec("INSERT INTO t (n) VALUES ($1)", [sql.int(2)])?
+  tx2.rollback()?
+  // the committed row is there, the rolled back one is not
+  let rows = db.query("SELECT n FROM t ORDER BY id")?
+  expect(rows.len()) == 1
+  expect(rows[0].int("n")?) == 1
+  // a transaction reads through its own state
+  let tx3 = db.begin()?
+  expect(tx3.query("SELECT n FROM t")?.len()) == 1
+  expect(tx3.query_one("SELECT n FROM t")?.int("n")?) == 1
+  tx3.rollback()?
+  db.close()?
+}

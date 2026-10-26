@@ -708,5 +708,24 @@ test "a dialed Conn and an accepted ServerConn read, write and close through Str
   l.close()
 }
 `)
+	// std.md 3.1: read_text_or and read_or are the file, or the default
+	// when it is not there; the default is not a stand in for an empty
+	// file, and an empty default is a value like any other.
+	o.WriteString(`
+test "read_text_or and read_or answer the default only when the file is missing" {
+  os.fs.write("present.txt", b"hello")?
+  expect(read_text_or(os.fs, "present.txt", "none")?) == "hello"
+  expect(read_or(os.fs, "present.txt", b"none")?) == b"hello"
+  expect(read_text_or(os.fs, "missing.txt", "none")?) == "none"
+  expect(read_or(os.fs, "missing.txt", b"none")?) == b"none"
+  // an empty file is empty, not the default
+  os.fs.write("empty.txt", b"")?
+  expect(read_text_or(os.fs, "empty.txt", "none")?) == ""
+  expect(read_or(os.fs, "empty.txt", b"none")?) == b""
+  // an empty default is still a default
+  expect(read_text_or(os.fs, "gone.txt", "")?) == ""
+  expect(read_or(os.fs, "gone.txt", b"")?) == b""
+}
+`)
 	return o.String()
 }
