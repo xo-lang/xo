@@ -424,6 +424,77 @@ fn (pr: Proof) bounds(at: Int, x: Int) -> List[Int] {
   out
 }
 
+/// Whether x is a call that returns a length.
+fn is_len_call(f: ssa.Func, x: Int) -> Bool {
+  let xv = f.values[x]
+  if xv.op != ssa.Op.Call || xv.args.len() != 1 {
+    return false
+  }
+  let what = aux_str(xv.aux)
+  what == "list.len" || what == "Str.len" || what == "bytes.len"
+}
+
+/// Whether idx is a length of sv shifted right (by 1 to 63) or divided by
+/// a constant of at least 2, with the length known to be at least 1 at
+/// block at. Both are then below the length itself, so an index into sv
+/// needs no bounds check (2026-10-26: the bench's `b[b.len() / 2]` kept
+/// its check, where Go's prove pass drops it; a length of 0 makes both 0
+/// and `b[0]` into an empty Bytes faults, so without the len_pos part the
+/// check stays).
+fn (pr: Proof) div_of_len(f: ssa.Func, at: Int, idx: Int, sv: Int) -> Bool {
+  let x = f.values[idx]
+  if (x.op != ssa.Op.Shr && x.op != ssa.Op.Div) || x.args.len() != 2 {
+    return false
+  }
+  let kv = f.values[x.args[1]]
+  if kv.op != ssa.Op.Const {
+    return false
+  }
+  let k = aux_int(kv.aux)
+  if x.op == ssa.Op.Shr {
+    // a shift of 64 or more takes a register (isel shift), where it is a
+    // shift by 0 and the index equals the length
+    if k < 1 || k > 63 {
+      return false
+    }
+  } else if k < 2 {
+    return false
+  }
+  if !is_len_call(f, x.args[0]) {
+    return false
+  }
+  let r = len_root(f, sv, [], FIELD_DEPTH)
+  r >= 0 && len_root(f, f.values[x.args[0]].args[0], [], FIELD_DEPTH) == r && pr.len_pos(f, at, sv)
+}
+
+/// Whether the length of container sv is at least 1 at block at: a len
+/// call on the same container was compared with 0 and the true edge of
+/// `len > 0` (`0 < len`) dominates at. The second len call is a value of
+/// its own, so the fact has to be found through the container, and
+/// div_of_len's rule needs it: `len / 2` is below len only when len is
+/// at least 1.
+fn (pr: Proof) len_pos(f: ssa.Func, at: Int, sv: Int) -> Bool {
+  let r = len_root(f, sv, [], FIELD_DEPTH)
+  if r < 0 {
+    return false
+  }
+  for (z, xs) in pr.less {
+    let zv = f.values[z]
+    if zv.op != ssa.Op.Const || aux_int(zv.aux) != 0 {
+      continue
+    }
+    for (n, tb) in xs {
+      if !dominates_b(pr.idom, pr.entry, tb, at) || !is_len_call(f, n) {
+        continue
+      }
+      if len_root(f, f.values[n].args[0], [], FIELD_DEPTH) == r {
+        return true
+      }
+    }
+  }
+  false
+}
+
 /// The list whose length list value x always has: through list.set,
 /// reuse, and block parameters whose incoming values agree; x itself
 /// when there is none other, -2 for a parameter already being walked.

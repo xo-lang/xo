@@ -1,0 +1,8 @@
+exit 70
+--- stdout
+55 108 -1
+55 108 -1
+5 6 -1
+55
+--- stderr
+fault: index 0 out of range for Bytes of length 0 at main.xo:28:7

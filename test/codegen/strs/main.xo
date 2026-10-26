@@ -55,7 +55,90 @@ fn cut_len(n: Int) -> Int {
   t
 }
 
+// An index that is a length halved is below the length once the length is
+// at least 1, so the bounds check is gone where `len > 0` is known, and the
+// shift stays (compiler/arm64 fieldlicm.xo div_of_len and len_pos,
+// 2026-10-26: 67 sites of `b[b.len() / 2]` and `b[b.len() >> 1]` in
+// bench/perf kept a compare and a branch that cannot fire).
+fn half_byte(b: Bytes) -> Int {
+  // arm64: "asr x[0-9]+, x[0-9]+, #1" -"_xo_x_fault_raise_bytes_index"
+  if b.len() > 0 {
+    return Int(b[b.len() / 2])
+  }
+  0
+}
+
+fn half_shift(b: Bytes) -> Int {
+  // arm64: -"_xo_x_fault_raise_bytes_index"
+  if b.len() > 0 {
+    return Int(b[b.len() >> 1])
+  }
+  0
+}
+
+// Without the length guard the check stays: a length of 0 makes the index 0
+// too, and b[0] into an empty Bytes faults.
+fn half_unguarded(b: Bytes) -> Int {
+  // arm64: "bl _xo_x_fault_raise_bytes_index"
+  Int(b[b.len() / 2])
+}
+
+// A shift of 0 and a division by a non-constant leave the index possibly
+// equal to the length.
+fn half_none(b: Bytes, one: Int) -> Int {
+  // arm64: "bl _xo_x_fault_raise_bytes_index"
+  if b.len() > 0 {
+    return Int(b[b.len() >> 0]) + Int(b[b.len() / one])
+  }
+  0
+}
+
+// A list index takes the same rule (calls.xo bounds_check).
+fn half_elem(xs: List[Str]) -> Str {
+  // arm64: -"_xo_x_fault_raise_index"
+  if xs.len() > 0 {
+    return xs[xs.len() / 2]
+  }
+  ""
+}
+
+// A guard on another Bytes proves nothing about this one's length: the
+// check stays (len_pos matches the container by len_root).
+fn half_other(a: Bytes, b: Bytes) -> Int {
+  // arm64: "bl _xo_x_fault_raise_bytes_index"
+  if a.len() > 0 {
+    return Int(b[b.len() / 2])
+  }
+  0
+}
+
+// The false edge of `len > 0` proves nothing about the length there: only
+// the true edge of a comparison is a fact (new_proof).
+fn half_else(b: Bytes) -> Int {
+  // arm64: "bl _xo_x_fault_raise_bytes_index"
+  if b.len() > 0 {
+    0
+  } else {
+    Int(b[b.len() / 2])
+  }
+}
+
+// A guard in a block that does not dominate the index proves nothing about
+// it: the fact belongs to the `> 0` edge's block only.
+fn half_after(b: Bytes) -> Int {
+  // arm64: "bl _xo_x_fault_raise_bytes_index"
+  if b.len() > 0 {
+    0
+  } else {
+    1
+  }
+  Int(b[b.len() / 2])
+}
+
 fn main(os: Os) {
   let hs = ["Bearer abc", "x", "Bearer", "nobody"]
   os.stdio.println("${token_len(hs)} ${count_nobody(hs)} ${count_long(hs)} ${cut_len(hs.len())}")
+  let b = "abcde".bytes()
+  os.stdio.println("${half_byte(b)} ${half_shift(b)} ${half_unguarded(b)} ${half_none(b, 2)} ${half_elem(hs)}")
+  os.stdio.println("${half_other(b, b)} ${half_else(b)} ${half_after(b)}")
 }

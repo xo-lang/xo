@@ -1,0 +1,37 @@
+// half_index: a length halved as an index is below the length once the
+// length is at least 1, so no bounds check is emitted when `len > 0` is
+// known (compiler/arm64 fieldlicm.xo div_of_len and len_pos, 2026-10-26);
+// the unguarded case at the end has no such guard and must still fault.
+
+fn mid(b: Bytes) -> Int {
+  if b.len() > 0 {
+    return Int(b[b.len() / 2])
+  }
+  -1
+}
+
+fn mid_shift(b: Bytes) -> Int {
+  if b.len() > 0 {
+    return Int(b[b.len() >> 1])
+  }
+  -1
+}
+
+fn mid_list(xs: List[Int]) -> Int {
+  if xs.len() > 0 {
+    return xs[xs.len() / 2]
+  }
+  -1
+}
+
+fn unguarded(b: Bytes) -> Int {
+  Int(b[b.len() / 2])
+}
+
+fn main(os: Os) {
+  os.stdio.println("${mid(b"7")} ${mid(b"hello")} ${mid(b"")}")
+  os.stdio.println("${mid_shift(b"7")} ${mid_shift(b"hello")} ${mid_shift(b"")}")
+  os.stdio.println("${mid_list([5])} ${mid_list([5, 6, 7])} ${mid_list([])}")
+  os.stdio.println("${unguarded(b"7")}")
+  os.stdio.println("${unguarded(b"")}")
+}

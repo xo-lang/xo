@@ -955,7 +955,10 @@ fn (var g: G) bounds_check(v: Int, l: Int, i: Int, sl: Int, si: Int) {
   // both take the index's SSA value, the register facts alone would test
   // another index's work
   let x = g.f.values[v]
-  if !g.proved_index(si, n, -1) && !g.proof.proven(g.f, x.block, si, sl) {
+  // len >> k and len / C are below len once len is at least 1, which
+  // len_pos reads from a dominating `if len > 0` (2026-10-26)
+  let short = g.proof.div_of_len(g.f, x.block, si, sl)
+  if !short && !g.proved_index(si, n, -1) && !g.proof.proven(g.f, x.block, si, sl) {
     g.check("cmp $u0, $u1", [i, n], "hs", "xo_fault_index", [rsrc(i), rsrc(n)] + g.loc_args(pos))
   }
   g.index_facts(i)
@@ -1372,7 +1375,9 @@ fn (var g: G) call_op(v: Int) {
         }
       }
       let alen = g.str_len(a)
-      if !x.pos.is_empty() && !g.proved_index(x.args[1], alen, k) {
+      // len >> k and len / C are below len once len is at least 1 (2026-10-26)
+      let short = g.proof.div_of_len(g.f, x.block, x.args[1], x.args[0])
+      if !x.pos.is_empty() && !short && !g.proved_index(x.args[1], alen, k) {
         g.check("cmp $u0, $u1", [i, alen], "hs", "xo_fault_bytes_index", [rsrc(i), rsrc(alen)] + g.loc_args(x.pos))
       }
       if !x.pos.is_empty() {
