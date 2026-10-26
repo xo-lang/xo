@@ -75,7 +75,9 @@ fn (f: StatFs) note_sum(path: Str, op: Str, size: Int, sum: Str) {
 /// XO_CACHE_STATS=keys: the entries of a stored pack segment, one log line
 /// each (`AREA item SIZE PATH sum HASH`, the hash of the entry's bytes), to
 /// tell entries that two stores hold in common whatever their keys.
-fn (f: StatFs) note_items(path: Str, data: Bytes) {
+fn (f: StatFs) note_items(path: Str, data0: Bytes) {
+  // a compressed segment's entries (decision 0365)
+  let data = segment_bytes(base_name(path), data0) ?? return
   let head = "${PACK_VERSION}\n"
   if data.len() < head.len() || data[0..head.len()].to_str() != Some(head) {
     return

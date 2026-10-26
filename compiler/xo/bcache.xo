@@ -813,7 +813,7 @@ fn cache_get_all(os: Os, dir: Str, kind: Str, keys: List[Str], jobs: Int) -> Map
             break
           }
           for j in i..(i + 64).min(n) {
-            if let Some(b) = cache_get(os, entry_path(dir, kind, ks[j])) {
+            if let Some(b) = entry_get(os, dir, kind, ks[j]) {
               mine.push((ks[j], b))
             }
           }
@@ -1184,13 +1184,16 @@ fn cache_get_packed(os: Os, dir: Str, kind: Str, target: Str, keys: List[Str], j
         p.seen = Int.parse(b.to_str() ?? "") ?? 0
       }
       for fi in list {
-        if !fi.name.starts_with("s-") || fi.name.contains(".") {
+        if !is_segment(fi.name) {
           continue
         }
         let path = "${p.dir}/${fi.name}"
         match os.fs.read(path) {
-          Ok(b) => {
+          Ok(rb) => {
             prune.mark_used_within(os.fs, os.clock, path, BACKEND_TOUCH)
+            // a damaged compressed segment holds no entry; the next
+            // compaction replaces it
+            let b = segment_bytes(fi.name, rb) ?? b""
             p.segs.push(fi.name)
             for (k, lo, hi) in pack_index(b) {
               p.held += 1
@@ -1336,8 +1339,7 @@ fn store_entries(os: Os, dir: Str, kind: Str, p: Pack, stores: List[(Str, Bytes)
   }
   var n = 0
   for (k, e) in stores {
-    cache_put(os, entry_path(dir, kind, k), e)
-    n += e.len()
+    n += entry_put(os, dir, kind, k, e)
   }
   n
 }
@@ -1368,13 +1370,14 @@ fn shared_read(os: Os, sdir: Str, need: Map[Str, Bool]) -> (Map[Str, Bytes], Lis
   var held = 0
   // xo:allow XO0903 no shared pack yet: every entry is read loose
   for fi in os.fs.read_dir(sdir).ok() ?? [] {
-    if !fi.name.starts_with("s-") || fi.name.contains(".") {
+    if !is_segment(fi.name) {
       continue
     }
     let path = "${sdir}/${fi.name}"
     // xo:allow XO0903 a segment it cannot read (another build compacted it) is a miss
-    if let Ok(b) = os.fs.read(path) {
+    if let Ok(rb) = os.fs.read(path) {
       prune.mark_used_within(os.fs, os.clock, path, BACKEND_TOUCH)
+      let b = segment_bytes(fi.name, rb) ?? b""
       segs.push(fi.name)
       for (k, lo, hi) in pack_index(b) {
         held += 1
@@ -1588,8 +1591,10 @@ fn pack_write_counted(os: Os, p: Pack, items: List[(Str, Bytes)], replaced: Int)
   for (_, b) in items {
     w.write(b)
   }
-  let data = w.freeze()
-  cache_put(os, "${p.dir}/s-${os.rand.bytes(8).to_hex()}", data)
+  // compressed (decision 0365): a z- segment
+  let z = compress_on(os)
+  let data = if z { zpack(w.freeze()) } else { w.freeze() }
+  cache_put(os, "${p.dir}/${if z { "z-" } else { "s-" }}${os.rand.bytes(8).to_hex()}", data)
   prune_backend_cache(os, "pack/${base_name(p.dir)}", p.root, (data.len() - replaced).max(0))
 }
 

@@ -1,0 +1,62 @@
+// Tests of the compressed cache files (zcache.xo, decision 0365).
+
+test "a packed body reads back, compressed when that is smaller" {
+  var sb = StrBuilder.new()
+  for i in 0..400 {
+    sb.write("fn f${i % 7}(x: Int) -> Int { x + ${i % 3} }\n")
+  }
+  let text = sb.freeze().bytes()
+  let p = zpack(text)
+  expect(p[0..3]) == b"XOZ"
+  // codec 1, lz4
+  expect(Int(p[3])) == 1
+  expect(p.len() < text.len() / 4) == true
+  expect(zunpack(p)) == Some(text)
+  // short or incompressible bodies are stored as they are (codec 0)
+  for b in [b"", b"x", b"\x82\xb7\x0e\xee\x7f\x1a\x50\x39\xbe\xf0\x7e\xc2\x34\x7f\x06\x6e\xd0\x8f\x5d\xc7\x51\x24\x47\xe3\x40\x43\x00\x02\x6b\x6e\x54\x55\x94\xa0\x65\x68\x5d\x64\xc4\x98"] {
+    let q = zpack(b)
+    expect(Int(q[3])) == 0
+    expect(zunpack(q)) == Some(b)
+  }
+}
+
+test "a file without the header is plain, a damaged one is None" {
+  // an entry an older xo wrote: no header, read as it is
+  expect(zunpack(b"xo-pack 3\nplain")) == Some(b"xo-pack 3\nplain")
+  var sb = StrBuilder.new()
+  for i in 0..200 {
+    sb.write("entry ${i % 5} ")
+  }
+  let p = zpack(sb.freeze().bytes())
+  // cut short, a length that does not match, an unknown codec
+  expect(zunpack(p[0..p.len() - 1])) == None
+  expect(zunpack(p[0..6])) == None
+  var bad = BytesBuilder.new()
+  bad.write(b"XOZ")
+  bad.write_byte(7)
+  bad.write(p[4..])
+  expect(zunpack(bad.freeze())) == None
+  var stored = BytesBuilder.new()
+  stored.write(b"XOZ")
+  stored.write_byte(0)
+  stored.write_byte(5)
+  stored.write(b"abc")
+  expect(zunpack(stored.freeze())) == None
+}
+
+test "segment names: s- plain, z- compressed, temporary files neither" {
+  expect(is_segment("s-0123abcd")) == true
+  expect(is_segment("z-0123abcd")) == true
+  expect(is_segment("z-0123abcd.tmp-ffee")) == false
+  expect(is_segment("seen")) == false
+  let p = zpack("xo-pack body xo-pack body xo-pack body xo-pack body".bytes())
+  expect(segment_bytes("z-1", p)) == Some("xo-pack body xo-pack body xo-pack body xo-pack body".bytes())
+  // an s- segment is never unpacked, whatever it starts with
+  expect(segment_bytes("s-1", p)) == Some(p)
+}
+
+test "a compressed entry has its own name beside the plain one" {
+  let k = "ab12cd"
+  expect(zentry_path("/c", "fn", k, false)) == "/c/fn/ab/ab12cd"
+  expect(zentry_path("/c", "fn", k, true)) == "/c/fn/ab/zab12cd"
+}

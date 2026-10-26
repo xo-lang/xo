@@ -5,6 +5,11 @@ nothing built). Deferred by the owner on 2026-10-24 ("measure a day of
 churn after today's cache fixes first"); that day is measured below
 (2026-10-26).
 
+Compression: Accepted and built (owner, 2026-10-26, ~14:30: "port LZ4 block
+into xo, internal codec, and compress the backend cache"; see "Built: LZ4
+compression" below). The content store itself stays Proposed, to be
+re-measured on the compressed cache.
+
 ## Context
 
 The back-end cache keys every entry with the code generation key (cache_id,
@@ -188,6 +193,62 @@ way. Prune counts files by their size on disk, so the 16 GiB cap holds the
 compressed bytes (about five times the history); its walk, KEEP and
 version guard are unchanged. XO_CACHE_COMPRESS=off would write plain
 files (reads always accept both), for a measurement or a bisect.
+
+### Built: LZ4 compression (Xo Lang 2, 2026-10-26)
+
+**Codec.** LZ4 block format, std/native/llrt/lz4.xo (the reference fast
+compressor's greedy matcher: a hash table of 4 byte sequences sized to
+the input, 2^10 to 2^16 slots, the search step growing every 64 misses,
+backward extension; the decoder checks every length and offset and uses
+8 byte copies into 32 bytes of slack, as lz4.c's wildcopy). It is
+`internal.lz4_compress` and `internal.lz4_decompress(src, start, n)` in
+std/internal (toolchain only, not std's public surface); std/rt's
+internal_lz4.go is the same algorithm for the Go backend. Tests:
+internal/lz4test builds testdata/tool on arm64, LLVM and the Go backend
+and checks that each writes the Go copy's bytes for a corpus (the
+format's edge lengths 0 to 20, runs, random, long literal and match
+runs, offsets 65535 and 65536, text, the repository's sources), that Go
+reads them back, and that on 6 cut and 6 flipped copies of every block
+both decoders agree (the same bytes or both None); with the lz4 tool
+installed, `lz4 -d` reads every native block and the native decoder
+reads `lz4 -1` and `-9` blocks.
+
+**Speed** (one core, measurement windows; `lz4tool bench`, 30 rounds; the C
+lz4 tool's `-b1` on the same files):
+
+| file | ratio (C) | compress MB/s (C) | decompress MB/s (C) |
+|---|---|---|---|
+| part segment, 13.4 MB | 5.75 (6.17) | 1,437 (1,732) | 2,947 (6,472) |
+| fn segment, 1.2 MB | 5.85 (6.20) | 1,619 (2,320) | 4,549 (11,921) |
+| fe segment, 3.0 MB | 1.96 (1.86) | 344 (985) | 2,103 (7,261) |
+| obj entry, 223 KB | 2.13 (2.12) | 639 (1,529) | 2,849 (6,539) |
+
+The decoder's short copies took it from 0.8 to 2.2 GB/s to the speeds
+above.
+
+**Format.** `XOZ`, a codec byte (1 lz4; 0 stored, when lz4 would not
+shrink the body or it is under 32 bytes), the body's length (varint),
+the body. A loose entry is `z<KEY>` beside `<KEY>` in its shard; a pack
+segment is `z-<ID>` beside `s-<ID>` (compiler/xo zcache.xo: entry_get,
+entry_put, is_segment, segment_bytes). An older xo looks only for
+`<KEY>` and `s-` names, so it misses compressed files instead of
+misreading them. With compression on (the default) a build reads `z`
+entries only (one open each) and segments of both kinds;
+`XO_CACHE_COMPRESS=off` reads and writes plain files. Plain entries of
+the same code generation key age out through the prune. Not compressed:
+the module check cache (chk), the fe-bad copies, and the small state
+files (seen, neg, hints, memos, logs).
+
+**Hit cost** (bench/perf/llvm/xo/fib, private caches per mode warmed by
+four builds, 15 interleaved rounds, medians; measurement window at load
+3): a warm build with whole-build reuse off 250 ms compressed against
+241 ms plain (+9 ms; the bar was 20 ms); an edit rebuild (one new
+function each round) 278 against 270 ms (+8 ms). The cache after the
+runs: 12.1 MB compressed, 34.1 MB plain (65% less).
+
+**Still to do:** re-measure the day's churn (the store-log) on
+2026-10-27 with compression on, then the content store's share on the
+compressed cache.
 
 ### Recommendation (Xo Lang 2, for the owner)
 

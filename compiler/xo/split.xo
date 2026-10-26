@@ -813,7 +813,7 @@ fn split_build(os: Os, ctx: Ctx, clang: Str, lls: List[Str], others: List[Str], 
     }
     keys.push(k)
     if !k.is_empty() {
-      if let Some(o) = cache_get(os, entry_path(c.objcache, "llobj", k)) {
+      if let Some(o) = entry_get(os, c.objcache, "llobj", k) {
         if os.fs.write(objs[i], o).is_ok() {
           c.reused += 1
           continue
@@ -855,7 +855,7 @@ fn split_build(os: Os, ctx: Ctx, clang: Str, lls: List[Str], others: List[Str], 
           fails.push("${lls[k]}: exit status ${code}\n${outb.freeze().to_str() ?? ""}")
         } else if !keys[k].is_empty() {
           if let Ok(o) = os.fs.read(objs[k]) {
-            cache_put(os, entry_path(c.objcache, "llobj", keys[k]), o)
+            let _ = entry_put(os, c.objcache, "llobj", keys[k], o)
           }
         }
       }

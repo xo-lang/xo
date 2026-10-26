@@ -61,6 +61,13 @@ Two kinds, both fixed std-side:
      instructions (sign2048 11.7%) against byte offsets carried with
      `wrapping_add` and `wrapping_shl(3)` and a mask (2026-10-24).
 
+   - a copy call per short run: the first LZ4 decoder called
+     `rt.mem_copy` for every literal run and match (most of them under
+     16 bytes) and decoded at 0.8 to 2.2 GB/s against C's 6 to 12; two
+     8 byte loads and stores into 32 bytes of slack past the output
+     (lz4.c's wildcopy), with mem_copy kept for long runs, took it to 2.1
+     to 4.5 GB/s (decision 0365 "Built", 2026-10-26).
+
 ## Fix
 
 - Port Go's fast paths from the start, not only its general algorithm;

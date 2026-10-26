@@ -1,0 +1,90 @@
+// Compressed back-end cache files (decision 0365): an entry's body and a
+// pack segment are stored LZ4 compressed (std/internal's lz4 block codec,
+// std/native/llrt/lz4.xo) behind a header, "XOZ", a codec byte (1: lz4;
+// 0: stored as it is, when lz4 would not shrink it) and the body's length
+// as a varint. A compressed file has its own name, so that an xo from
+// before this change misses it instead of reading it as plain bytes: a
+// loose entry `z<KEY>` beside `<KEY>` in its shard, a segment `z-<ID>`
+// beside `s-<ID>`. Reading takes the names of the mode it writes (one
+// open an entry) plus segments of both kinds; entries stored plain by an
+// older xo age out through the prune. XO_CACHE_COMPRESS=off stores and
+// reads plain files, as before.
+
+use std/internal
+
+/// Whether the cache's entries and segments are stored compressed
+/// (decision 0365): on unless $XO_CACHE_COMPRESS is off.
+fn compress_on(os: Os) -> Bool { (os.env.get("XO_CACHE_COMPRESS") ?? "") != "off" }
+
+/// The file of the entry of key under kind: compressed (z), the z name.
+fn zentry_path(dir: Str, kind: Str, key: Str, z: Bool) -> Str {
+  if z {
+    return "${dir}/${kind}/${key[0..2]}/z${key}"
+  }
+  entry_path(dir, kind, key)
+}
+
+/// A body under the header, LZ4 compressed when that is smaller.
+fn zpack(data: Bytes) -> Bytes {
+  let c = if data.len() >= 32 { internal.lz4_compress(data) } else { b"" }
+  let lz = !c.is_empty() && c.len() < data.len()
+  let body = if lz { c } else { data }
+  var w = BytesBuilder.with_capacity(body.len() + 16)
+  w.write_str("XOZ")
+  w.write_byte(if lz { 1 } else { 0 })
+  put_uv(w, data.len())
+  w.write(body)
+  w.freeze()
+}
+
+/// The body of a file zpack wrote; b itself when it has no header (a
+/// plain file), None when its header or block is damaged.
+fn zunpack(b: Bytes) -> Bytes? {
+  if b.len() < 5 || b[0] != 0x58 || b[1] != 0x4f || b[2] != 0x5a {
+    return Some(b)
+  }
+  let codec = Int(b[3])
+  let (n, pos) = get_uv(b, 4)
+  if n < 0 {
+    return None
+  }
+  match codec {
+    0 => if b.len() - pos == n { Some(b[pos..]) } else { None }
+    1 => internal.lz4_decompress(b, pos, n)
+    _ => None
+  }
+}
+
+/// The entry of key under kind (cache_get), in the cache's storage mode:
+/// decompressed when compressed; None when the cache does not hold it or
+/// it is damaged.
+fn entry_get(os: Os, dir: Str, kind: Str, key: Str) -> Bytes? {
+  let z = compress_on(os)
+  let b = cache_get(os, zentry_path(dir, kind, key, z)) ?? return None
+  if z { zunpack(b) } else { Some(b) }
+}
+
+/// Stores data as the entry of key under kind (cache_put), compressed
+/// unless XO_CACHE_COMPRESS is off; the bytes written, for the prune.
+fn entry_put(os: Os, dir: Str, kind: Str, key: Str, data: Bytes) -> Int {
+  if compress_on(os) {
+    let p = zpack(data)
+    cache_put(os, zentry_path(dir, kind, key, true), p)
+    return p.len()
+  }
+  cache_put(os, entry_path(dir, kind, key), data)
+  data.len()
+}
+
+/// Whether name is a pack segment's file: s-ID, or z-ID compressed
+/// (not a temporary file of either).
+fn is_segment(name: Str) -> Bool { (name.starts_with("s-") || name.starts_with("z-")) && !name.contains(".") }
+
+/// The bytes of the segment file name read as b: decompressed for a z-
+/// name; None when it is damaged.
+fn segment_bytes(name: Str, b: Bytes) -> Bytes? {
+  if name.starts_with("z-") {
+    return zunpack(b)
+  }
+  Some(b)
+}

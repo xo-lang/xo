@@ -10,6 +10,7 @@ use native/llrt/hkdf
 use native/llrt/hmac
 use native/llrt/libcstr
 use native/llrt/linux
+use native/llrt/lz4
 use native/llrt/mlkem
 use native/llrt/raw
 use native/llrt/mutex
@@ -456,6 +457,11 @@ fn probe_list_swap2() -> Str {
   }
   "${o} ${p} ${ps1[0]} ${ps1[1]} ${ps1[2]} ${ps2[0]} ${ps2[1]} ${ps2[2]} ${ss1[0]} ${ss1[1]} ${ss2[0]} ${ss2[1]} ${bad}"
 }
+
+/// LZ4 block compression (decision 0365): std/native/llrt/lz4.xo.
+pub fn lz4_compress(src: Bytes) -> Bytes { lz4.compress(src) }
+
+pub fn lz4_decompress(src: Bytes, start: Int, n: Int) -> Bytes? { lz4.decompress(src, start, n) }
 
 /// A swap whose first index a guard proves in range and whose second it
 /// does not (test/codegen/intrinsics, 2026-10-26). Both arrive as entry

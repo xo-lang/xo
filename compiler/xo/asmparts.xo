@@ -199,7 +199,7 @@ fn cached_macho_objects(os: Os, ctx: Ctx, srcs: List[Str], elf: Bool, amd64: Boo
   var miss: List[Int] = []
   var msrcs: List[Str] = []
   for (i, k) in keys.indexed() {
-    match cache_get(os, entry_path(dir, "obj", k)) {
+    match entry_get(os, dir, "obj", k) {
       Some(b) => out.push(Ok(b))
       None => {
         out.push(Err("not assembled"))
@@ -217,8 +217,7 @@ fn cached_macho_objects(os: Os, ctx: Ctx, srcs: List[Str], elf: Bool, amd64: Boo
     out[i] = r
     match r {
       Ok(b) => {
-        cache_put(os, entry_path(dir, "obj", keys[i]), b)
-        n += b.len()
+        n += entry_put(os, dir, "obj", keys[i], b)
       }
       Err(_) => {}
     }
@@ -270,7 +269,7 @@ fn incr_hollow(os: Os, ctx: Ctx, parts: List[Str], march: Str, hollow: Bool, job
   for (i, k) in tk.indexed() {
     var f = arm64.HFacts{}
     var hit = false
-    if let Some(b) = cache_get(os, entry_path(dir, "hfacts", k)) {
+    if let Some(b) = entry_get(os, dir, "hfacts", k) {
       if let Some(d) = arm64.hfacts_decode(b.to_str() ?? "") {
         f = d
         hit = true
@@ -309,7 +308,7 @@ fn incr_hollow(os: Os, ctx: Ctx, parts: List[Str], march: Str, hollow: Bool, job
     }
     for (i, f) in done {
       facts[i] = f
-      cache_put(os, entry_path(dir, "hfacts", tk[i]), arm64.hfacts_encode(f).bytes())
+      let _ = entry_put(os, dir, "hfacts", tk[i], arm64.hfacts_encode(f).bytes())
     }
   }
   var live: List[List[Bool]] = []
@@ -336,9 +335,9 @@ fn incr_hollow(os: Os, ctx: Ctx, parts: List[Str], march: Str, hollow: Bool, job
     okeys.push(ok)
     var u = arm64.UFacts{}
     var got = false
-    if let Some(ub) = cache_get(os, entry_path(dir, "hufacts", ok)) {
+    if let Some(ub) = entry_get(os, dir, "hufacts", ok) {
       if let Some(d) = arm64.ufacts_decode(ub.to_str() ?? "") {
-        if let Some(ob) = cache_get(os, entry_path(dir, "hobj", ok)) {
+        if let Some(ob) = entry_get(os, dir, "hobj", ok) {
           u = d
           out.objs.push(Ok(ob))
           got = true
@@ -365,9 +364,8 @@ fn incr_hollow(os: Os, ctx: Ctx, parts: List[Str], march: Str, hollow: Bool, job
       ufs[i] = u
       match r {
         Ok(b) => {
-          cache_put(os, entry_path(dir, "hobj", okeys[i]), b)
-          cache_put(os, entry_path(dir, "hufacts", okeys[i]), arm64.ufacts_encode(u).bytes())
-          stored += b.len()
+          stored += entry_put(os, dir, "hobj", okeys[i], b)
+          let _ = entry_put(os, dir, "hufacts", okeys[i], arm64.ufacts_encode(u).bytes())
         }
         Err(_) => {}
       }
@@ -422,7 +420,7 @@ fn cached_cc_assemble(os: Os, ctx: Ctx, cc: Str, flags: List[Str], srcs: List[St
     let obj = s.trim_suffix(".s") + ".o"
     objs.push(obj)
     var hit = false
-    match cache_get(os, entry_path(dir, "obj", keys[i])) {
+    match entry_get(os, dir, "obj", keys[i]) {
       Some(b) => hit = os.fs.write(obj, b).is_ok()
       None => {}
     }
@@ -442,8 +440,7 @@ fn cached_cc_assemble(os: Os, ctx: Ctx, cc: Str, flags: List[Str], srcs: List[St
   for i in miss {
     match os.fs.read(objs[i]) {
       Ok(b) => {
-        cache_put(os, entry_path(dir, "obj", keys[i]), b)
-        n += b.len()
+        n += entry_put(os, dir, "obj", keys[i], b)
       }
       // xo:allow XO0903 an object not stored in the cache is built again
       Err(_) => {}

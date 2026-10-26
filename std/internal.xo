@@ -27,6 +27,18 @@ fn (l: SharedLock) unlock()
 /// Only the unrestricted root Fs (`os.fs`) takes it, as lock_shared.
 fn dir_names(f: Fs, dir: Str) -> List[Str] ! FsErr uses fs.read
 
+/// src as one LZ4 block (lz4.org's block format; decision 0365: the
+/// back-end cache's compressed entries): the reference fast compressor's
+/// greedy matcher, the same bytes on every backend. The block carries no
+/// length; keep it beside the block.
+fn lz4_compress(src: Bytes) -> Bytes
+
+/// The n bytes of the LZ4 block src[start..] (the block after a header,
+/// without copying it out); None when it is not a block of exactly n
+/// bytes (damaged or cut) or start is outside src. No read or write
+/// leaves the buffers.
+fn lz4_decompress(src: Bytes, start: Int, n: Int) -> Bytes?
+
 /// A primitive of the native TLS stack's (work item B31, decision 0202)
 /// for the golden tests that diff it against Go's crypto (std/rt's
 /// internal_crypto.go): op is "area.what", a to d its inputs (unused ones

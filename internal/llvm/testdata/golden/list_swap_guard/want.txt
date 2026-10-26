@@ -2,4 +2,4 @@ exit 70
 --- stdout
 in range: 0
 --- stderr
-fault: index 3 out of range for List of length 3 at std/native/internal.xo:502:5
+fault: index 3 out of range for List of length 3 at std/native/internal.xo:508:5

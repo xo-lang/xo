@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The back-end cache stores its entries and pack segments LZ4 compressed
+  (decision 0365; a port of the LZ4 block format in xo itself,
+  std/native/llrt/lz4.xo): about a third of the bytes written (a warm
+  llvm-fib's cache 12.1 MB instead of 34.1), for 9 ms more on a warm
+  build of llvm-fib with whole-build reuse off and 8 ms on an edit
+  rebuild. Compressed files have their own names (`z<KEY>`, `z-<ID>`), so
+  older xos miss them rather than misread them. `XO_CACHE_COMPRESS=off`
+  stores plain files.
 - `xo def`, `xo doc` and `xo symbols` by name, and `xo query` def, api,
   imports and deps, parse and check no function body, and `xo query
   callers` only the bodies that spell the name: at the xo root `xo def`

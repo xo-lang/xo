@@ -1,0 +1,63 @@
+// The native LZ4 codec (std/internal's lz4_compress and lz4_decompress,
+// std/native/llrt/lz4.xo) for internal/lz4test's differential tests and
+// speed rows:
+//   c DIR        each NAME of DIR/list.txt compressed to DIR/NAME.lz4
+//   d DIR        each "NAME N" of DIR/dlist.txt decompressed to
+//                DIR/NAME.out, or DIR/NAME.none when it is not a block
+//                of N bytes
+//   bench FILE R compress and decompress FILE R times; MB/s of each
+use std/internal
+
+fn main(os: Os) -> () ! Str uses stdio, fs, env, clock {
+  let a = os.env.args()
+  if a.len() < 2 {
+    return Err("usage: c DIR | d DIR | bench FILE ROUNDS")
+  }
+  let dir = a[1]
+  match a[0] {
+    "c" => {
+      let list = os.fs.read("${dir}/list.txt").map_err(fn(e) { e.display() })?.to_str() ?? ""
+      for name in list.lines() {
+        if name.is_empty() {
+          continue
+        }
+        let src = os.fs.read("${dir}/${name}").map_err(fn(e) { e.display() })?
+        os.fs.write("${dir}/${name}.lz4", internal.lz4_compress(src)).map_err(fn(e) { e.display() })?
+      }
+    }
+    "d" => {
+      let list = os.fs.read("${dir}/dlist.txt").map_err(fn(e) { e.display() })?.to_str() ?? ""
+      for line in list.lines() {
+        let f = line.split(" ")
+        if f.len() != 2 {
+          continue
+        }
+        let src = os.fs.read("${dir}/${f[0]}").map_err(fn(e) { e.display() })?
+        match internal.lz4_decompress(src, 0, Int.parse(f[1]) ?? -1) {
+          Some(b) => os.fs.write("${dir}/${f[0]}.out", b).map_err(fn(e) { e.display() })?
+          None => os.fs.write("${dir}/${f[0]}.none", b"").map_err(fn(e) { e.display() })?
+        }
+      }
+    }
+    "bench" => {
+      let src = os.fs.read(dir).map_err(fn(e) { e.display() })?
+      let rounds = Int.parse(if a.len() > 2 { a[2] } else { "10" }) ?? 10
+      var c = internal.lz4_compress(src)
+      let t0 = os.clock.now()
+      for _ in 0..rounds {
+        c = internal.lz4_compress(src)
+      }
+      let ct = os.clock.since(t0).seconds()
+      var back = src.len()
+      let t1 = os.clock.now()
+      for _ in 0..rounds {
+        back = (internal.lz4_decompress(c, 0, src.len()) ?? b"").len()
+      }
+      let dt = os.clock.since(t1).seconds()
+      let mb = Float(src.len() * rounds) / 1000000.0
+      os.stdio.println("bytes ${src.len()} lz4 ${c.len()} ratio ${Float(src.len()) / Float(c.len().max(1))} compress ${mb / ct} MB/s decompress ${mb / dt} MB/s ok ${back == src.len()}")
+    }
+    _ => return Err("unknown command ${a[0]}")
+  }
+  Ok(())
+}

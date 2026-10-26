@@ -1,0 +1,268 @@
+// LZ4 block format (lz4.org's lz4_Block_format.md) for the back-end cache's
+// compressed entries (decision 0365): compress is the reference fast
+// compressor's greedy matcher (one hash table of 4 byte sequences, the
+// search step growing every 64 misses, matches extended backward), as
+// github.com/pierrec/lz4/v4's CompressBlock (BSD 3-Clause, Pierre
+// Curto) and lz4.c's LZ4_compress_fast at acceleration 1; decompress
+// checks every length and offset, so a damaged block is None, never a
+// read or write outside its buffers. Raw block only: the cache frames it
+// itself (XOZ, a codec byte, the length). std/rt's internal_lz4.go is
+// the Go backend's copy and the differential tests' reference.
+use native/rt
+use native/llrt/raw
+
+const MIN_MATCH: Int = 4
+// the last 5 bytes are always literals, and a match starts at least 12
+// bytes before the end (the format's end rules)
+const LAST_LITERALS: Int = 5
+const MF_LIMIT: Int = 12
+const MAX_OFFSET: Int = 65535
+// decompress's slack past the output (its short copies' overrun)
+const WILD: Int = 32
+
+/// The largest block compress makes of n bytes (LZ4_compressBound).
+pub fn bound(n: Int) -> Int { n + n / 255 + 16 }
+
+/// The 4 bytes at a + i, little endian.
+fn u32_at(a: Int, i: Int) -> Int { rt.mem_load(a, i, 4) }
+
+/// The hash of the 4 byte sequence v in hlog bits (Knuth's multiplier).
+fn hash4(v: Int, hlog: Int) -> Int { (v.wrapping_mul(2654435761) & 0xffffffff) >> (32 - hlog) }
+
+/// The length of the common prefix of the bytes at a + i and a + j, up to
+/// limit (exclusive) for i.
+fn common(a: Int, i0: Int, j0: Int, limit: Int) -> Int {
+  var i = i0
+  var j = j0
+  while i + 8 <= limit {
+    let x = rt.mem_load(a, i, 8) ^ rt.mem_load(a, j, 8)
+    if x != 0 {
+      return i - i0 + (rt.ctz(x) >> 3)
+    }
+    i += 8
+    j += 8
+  }
+  while i < limit && rt.mem_load(a, i, 1) == rt.mem_load(a, j, 1) {
+    i += 1
+    j += 1
+  }
+  i - i0
+}
+
+/// Writes a length's 255 continuation bytes at d + o (n >= 15 already
+/// taken by the token); the new offset.
+fn put_len(d: Int, o0: Int, n0: Int) -> Int {
+  var o = o0
+  var n = n0
+  while n >= 255 {
+    rt.mem_store(d, o, 255, 1)
+    o += 1
+    n -= 255
+  }
+  rt.mem_store(d, o, n, 1)
+  o + 1
+}
+
+/// Writes the sequence of the literals s[anchor..lit_end] and, when ml > 0,
+/// the match of ml bytes at offset off, at d + o; the new offset.
+fn put_seq(d: Int, o0: Int, s: Int, anchor: Int, lit_end: Int, off: Int, ml: Int) -> Int {
+  var o = o0
+  let ll = lit_end - anchor
+  let tok_lit = if ll >= 15 { 15 } else { ll }
+  let mx = if ml == 0 { 0 } else { ml - MIN_MATCH }
+  let tok_ml = if mx >= 15 { 15 } else { mx }
+  rt.mem_store(d, o, (tok_lit << 4) | tok_ml, 1)
+  o += 1
+  if ll >= 15 {
+    o = put_len(d, o, ll - 15)
+  }
+  if ll > 0 {
+    rt.mem_copy(d + o, s + anchor, ll)
+    o += ll
+  }
+  if ml > 0 {
+    rt.mem_store(d, o, off, 2)
+    o += 2
+    if mx >= 15 {
+      o = put_len(d, o, mx - 15)
+    }
+  }
+  o
+}
+
+/// src as one LZ4 block (at most bound(src.len()) bytes).
+pub fn compress(src: Bytes) -> Bytes {
+  let n = src.len()
+  let dst = raw.bytes_buf(bound(n))
+  let d = raw.bytes_addr(dst)
+  let s = raw.bytes_addr(src)
+  var o = 0
+  var anchor = 0
+  if n >= MF_LIMIT + 1 {
+    // the table: 4 bytes a slot, the position plus one (0: empty); 2^10
+    // slots up to 2^16, sized to the input so a small entry clears little
+    var hlog = 10
+    while hlog < 16 && (1 << hlog) < n {
+      hlog += 1
+    }
+    let tab = raw.bytes_buf(4 * (1 << hlog))
+    let t = raw.bytes_addr(tab)
+    rt.mem_set(t, 0, 4 * (1 << hlog))
+    let mflimit = n - MF_LIMIT
+    let matchlimit = n - LAST_LITERALS
+    rt.mem_store(t, 4 * hash4(u32_at(s, 0), hlog), 1, 4)
+    var ip = 1
+    var done = false
+    while !done {
+      // find a match: every 64 misses the step grows by one
+      var fwd = ip
+      var attempts = 64
+      var ref = 0
+      var found = false
+      while !found {
+        ip = fwd
+        let step = attempts >> 6
+        attempts += 1
+        fwd = ip + step
+        if fwd > mflimit {
+          done = true
+          break
+        }
+        let v = u32_at(s, ip)
+        let h = 4 * hash4(v, hlog)
+        let r = rt.mem_load(t, h, 4) - 1
+        rt.mem_store(t, h, ip + 1, 4)
+        if r >= 0 && ip - r <= MAX_OFFSET && u32_at(s, r) == v {
+          ref = r
+          found = true
+        }
+      }
+      if done {
+        break
+      }
+      // extend backward over equal bytes before the match
+      while ip > anchor && ref > 0 && rt.mem_load(s, ip - 1, 1) == rt.mem_load(s, ref - 1, 1) {
+        ip -= 1
+        ref -= 1
+      }
+      let ml = MIN_MATCH + common(s, ip + MIN_MATCH, ref + MIN_MATCH, matchlimit)
+      o = put_seq(d, o, s, anchor, ip, ip - ref, ml)
+      ip += ml
+      anchor = ip
+      if ip > mflimit {
+        break
+      }
+      // the position two back, for the next search
+      rt.mem_store(t, 4 * hash4(u32_at(s, ip - 2), hlog), ip - 1, 4)
+    }
+  }
+  // the last literals
+  o = put_seq(d, o, s, anchor, n, 0, 0)
+  raw.bytes_len(dst, o)
+}
+
+/// The n bytes of the LZ4 block src[start..]; None when it is not a
+/// block of exactly n bytes (a length or offset past its buffers, bytes
+/// left over, or fewer than n) or start is outside src.
+pub fn decompress(src: Bytes, start: Int, n: Int) -> Bytes? {
+  let sn = src.len()
+  if n < 0 || start < 0 || start > sn {
+    return None
+  }
+  // WILD bytes past n: the short copies below write 8 or 16 bytes at a
+  // time, past a sequence's end into bytes the next one writes or the
+  // length cuts off (lz4.c's wildcopy)
+  let dst = raw.bytes_buf(n + WILD)
+  let d = raw.bytes_addr(dst)
+  let s = raw.bytes_addr(src)
+  var ip = start
+  var op = 0
+  while true {
+    if ip >= sn {
+      return None
+    }
+    let tok = rt.mem_load(s, ip, 1)
+    ip += 1
+    var ll = tok >> 4
+    if ll == 15 {
+      var b = 255
+      while b == 255 {
+        if ip >= sn {
+          return None
+        }
+        b = rt.mem_load(s, ip, 1)
+        ip += 1
+        ll += b
+      }
+    }
+    if ll > sn - ip || ll > n - op {
+      return None
+    }
+    if ll <= 16 && ip + 16 <= sn {
+      // a short run: two 8 byte moves (most sequences' literals)
+      rt.mem_store(d, op, rt.mem_load(s, ip, 8), 8)
+      rt.mem_store(d, op + 8, rt.mem_load(s, ip + 8, 8), 8)
+    } else if ll > 0 {
+      rt.mem_copy(d + op, s + ip, ll)
+    }
+    ip += ll
+    op += ll
+    if ip == sn {
+      // the last sequence has literals only
+      break
+    }
+    if ip + 2 > sn {
+      return None
+    }
+    let off = rt.mem_load(s, ip, 2)
+    ip += 2
+    if off == 0 || off > op {
+      return None
+    }
+    var ml = tok & 15
+    if ml == 15 {
+      var b = 255
+      while b == 255 {
+        if ip >= sn {
+          return None
+        }
+        b = rt.mem_load(s, ip, 1)
+        ip += 1
+        ml += b
+      }
+    }
+    ml += MIN_MATCH
+    if ml > n - op {
+      return None
+    }
+    // the match: from op - off, in runs that do not overlap (the copied
+    // bytes repeat with period off, so each run may be as long as all
+    // that is behind op)
+    let from = op - off
+    if off >= 8 && ml <= 32 {
+      // a short match 8 bytes or more behind: 8 byte moves, each reading
+      // only bytes already written
+      var k = 0
+      while k < ml {
+        rt.mem_store(d, op + k, rt.mem_load(d, from + k, 8), 8)
+        k += 8
+      }
+      op += ml
+    } else if off >= ml {
+      rt.mem_copy(d + op, d + from, ml)
+      op += ml
+    } else {
+      var left = ml
+      while left > 0 {
+        let run = if op - from < left { op - from } else { left }
+        rt.mem_copy(d + op, d + from, run)
+        op += run
+        left -= run
+      }
+    }
+  }
+  if op != n {
+    return None
+  }
+  Some(raw.bytes_len(dst, n))
+}
