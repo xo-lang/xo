@@ -867,13 +867,25 @@ fn form_text(b: Bytes) -> Str {
   out.freeze().to_str() ?? ""
 }
 
+/// The value of field name: the Map's value under Go's canonical name, then,
+/// when the lookup name is a token, a case-insensitive scan of the stored
+/// names, which is the documented behavior for header names (std.md 4.3) and
+/// what a struct literal's headers get whatever case they were written in. A
+/// name with a byte outside a token ("a b", a tab, a control byte) matches
+/// only exactly: httpguts.ValidHeaderFieldName's set is the line, since such
+/// a name is canonicalized to itself and Go's Header.Get reads that key
+/// alone (seeded corpus, 2026-10-26).
 fn header_get(h: Map[Str, Str], name: Str) -> Str? {
-  match h.get(http1.canonical_key(name)) {
+  let k = http1.canonical_key(name)
+  match h.get(k) {
     Some(v) => return Some(v)
     None => ()
   }
-  for (k, v) in h {
-    if http1.equal_fold(k, name) {
+  if !cookie_token(name) {
+    return None
+  }
+  for (f, v) in h {
+    if http1.equal_fold(f, name) {
       return Some(v)
     }
   }

@@ -2,7 +2,10 @@ package main
 
 import (
 	"fmt"
+	"math/rand"
 	"net/http"
+	"net/textproto"
+	"sort"
 	"strings"
 )
 
@@ -18,14 +21,173 @@ import (
 // (Go's ParseCookie and ParseSetCookie), each cookie's display (Go's
 // Cookie.String), and CookieErr's display on a line Go refuses. The 2026-10-26
 // audit listed all three as reached by no edge.
+//
+// The header table carries hand written shapes and seeded random ones: names
+// that are not tokens, control bytes, multi-byte text and obs-fold text in a
+// value. net/http's own Header answers each case.
 func httpCorpus() string {
 	var o strings.Builder
-	o.WriteString(header("std/http's StatusError through the interface, Router.call's rendering of a handler error that carries a status, of one that does not, and of a middleware's (std.md 4.2), and cookie parsing and rendering against Go's ParseCookie, ParseSetCookie and Cookie.String"))
+	o.WriteString(header("std/http's StatusError through the interface, Router.call's rendering of a handler error that carries a status, of one that does not, and of a middleware's (std.md 4.2), and header and cookie parsing and rendering against Go's Header, ParseCookie, ParseSetCookie and Cookie.String"))
 	o.WriteString("use std/http\n")
 	o.WriteString(httpTests)
+	o.WriteString(httpHeaderTables())
 	o.WriteString(httpCookieTables())
 	return o.String()
 }
+
+// headerNameAlphabet and headerValueAlphabet are the pieces seeded header
+// names and values are built from: the token bytes, the bytes that make a name
+// not a token (Go keeps such a name as it is), control bytes, a multi byte
+// rune, U+FFFD (what a Str holds where the bytes were not UTF-8), and in a
+// value the CRLF a fold starts with.
+var headerNameAlphabet = []string{
+	"a", "b", "c", "z", "A", "Z", "0", "9", "-", "-", "_", ".", "X",
+	"Content", "Type", "Etag", "TE", "host", "Set-Cookie", "Authorization",
+	" ", "\t", ":", "\x00", "\x7f", "\u0080", "é", "日", "�", "\"",
+	"\\", ",", ";", "/", "=",
+}
+
+var headerValueAlphabet = []string{
+	"a", "b", "Z", "0", "!", "~", " ", "\t", "\r", "\n", "\r\n ", "\r\n\t",
+	"\x00", "\x1b", "\x7f", "\u0080", "é", "日本", "�", "\"", "\\",
+	";", ",", "=", "%", "+", "/", ":", "<", ">", "text/plain", "charset=utf-8",
+	"Wed, 09 Jun 2021 10:18:14 GMT",
+}
+
+func headerName(r *rand.Rand) string {
+	var b strings.Builder
+	for i, n := 0, r.Intn(4); i < n; i++ {
+		b.WriteString(headerNameAlphabet[r.Intn(len(headerNameAlphabet))])
+	}
+	return b.String()
+}
+
+func headerValue(r *rand.Rand) string {
+	var b strings.Builder
+	for i, n := 0, r.Intn(6); i < n; i++ {
+		b.WriteString(headerValueAlphabet[r.Intn(len(headerValueAlphabet))])
+	}
+	if r.Intn(6) == 0 {
+		b.WriteString(strings.Repeat("x", r.Intn(40)))
+	}
+	return b.String()
+}
+
+// headerCaseFlip flips the case of each letter it is asked to.
+func headerCaseFlip(s string, flip func() bool) string {
+	var b strings.Builder
+	for _, c := range s {
+		switch {
+		case c >= 'a' && c <= 'z' && flip():
+			b.WriteRune(c - 32)
+		case c >= 'A' && c <= 'Z' && flip():
+			b.WriteRune(c + 32)
+		default:
+			b.WriteRune(c)
+		}
+	}
+	return b.String()
+}
+
+// headerLookup is the name a lookup asks for: the name itself, any case of it,
+// its canonical form, or another name.
+func headerLookup(r *rand.Rand, name string) string {
+	switch r.Intn(10) {
+	case 0, 1, 2, 3:
+		return name
+	case 4, 5, 6:
+		return headerCaseFlip(name, func() bool { return r.Intn(2) == 0 })
+	case 7:
+		return strings.ToLower(name)
+	case 8:
+		return strings.ToUpper(name)
+	default:
+		return headerName(r)
+	}
+}
+
+// goHeader is Go's answer for one header: the canonical names it holds,
+// sorted, and Header.Get's answer for the lookup (the first value, or none).
+func goHeader(name, value, lookup string) string {
+	h := http.Header{}
+	h.Set(name, value)
+	var keys []string
+	for k := range h {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	got := "none"
+	if vs, ok := h[textproto.CanonicalMIMEHeaderKey(lookup)]; ok && len(vs) > 0 {
+		got = "ok " + vs[0]
+	}
+	return strings.Join(keys, "\x1f") + "|" + got
+}
+
+// goRepeatHeader is Go's answer for a name added several times: every value,
+// then the view std.md 4.3 gives the Map (a repeated name is joined with ", ",
+// but Set-Cookie keeps the first, decision 0288, where Go's Header.Get answers
+// the first for every name).
+func goRepeatHeader(names, values []string, lookup string) string {
+	h := http.Header{}
+	for i := range names {
+		h.Add(names[i], values[i])
+	}
+	k := textproto.CanonicalMIMEHeaderKey(lookup)
+	vs := h[k]
+	if len(vs) == 0 {
+		return "|none"
+	}
+	view := strings.Join(vs, ", ")
+	if k == "Set-Cookie" {
+		view = vs[0]
+	}
+	return strings.Join(vs, "\x1f") + "|ok " + view
+}
+
+// httpHeaderTables emits the header cases and what Go makes of them. A value
+// with CRLF in it is obs-fold text: new_request stores a value as given (the
+// server's reading of a folded field is http1's, a private module), so the case
+// records the storage and the lookup, not the fold.
+func httpHeaderTables() string {
+	r := rand.New(rand.NewSource(63))
+	var o strings.Builder
+	o.WriteString("\n/// (name, value, lookup, Go's Header: canonical names sorted joined with U+001F, then Header.Get's answer)\nconst HEADERS: List[(Str, Str, Str, Str)] = [\n")
+	for i := 0; i < 2000; i++ {
+		name := textOf(headerName(r))
+		value := textOf(headerValue(r))
+		lookup := textOf(headerLookup(r, name))
+		fmt.Fprintf(&o, "  (%s, %s, %s, %s),\n", xq(name), xq(value), xq(lookup), xq(goHeader(name, value, lookup)))
+	}
+	o.WriteString("]\n\n/// (names, values, lookup, Go's Header: every value joined with U+001F, then Get's first)\nconst REPEAT_HEADERS: List[(List[Str], List[Str], Str, Str)] = [\n")
+	for i := 0; i < 600; i++ {
+		first := textOf(headerName(r))
+		nack := 1 + r.Intn(4)
+		names := []string{first}
+		values := []string{textOf(headerValue(r))}
+		for j := 1; j < nack; j++ {
+			names = append(names, textOf(headerLookup(r, first)))
+			values = append(values, textOf(headerValue(r)))
+		}
+		lookup := textOf(headerLookup(r, first))
+		fmt.Fprintf(&o, "  ([%s], [%s], %s, %s),\n", xqStrList(names), xqStrList(values), xq(lookup), xq(goRepeatHeader(names, values, lookup)))
+	}
+	o.WriteString("]\n")
+	o.WriteString(httpHeaderTests)
+	return o.String()
+}
+
+// xqStrList is xs as an Xo List[Str] literal.
+func xqStrList(xs []string) string {
+	var b strings.Builder
+	for i, x := range xs {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(xq(x))
+	}
+	return b.String()
+}
+
 
 // httpCookieTables emits the cookie header lines and what Go makes of them:
 // each parsed cookie's String (joined with "|"), or the error's Error(), which
@@ -131,6 +293,124 @@ func goParseSetCookie(line string) string {
 	return c.String()
 }
 
+// cookieNameAlphabet and cookieValueAlphabet are the pieces the seeded cookie
+// lines are built from: plain and reserved names, names with a space, a quote
+// or a non-token byte, multi-byte text, U+FFFD, and values quoted, escaped,
+// padded, control or empty.
+var cookieNameAlphabet = []string{
+	"a", "b", "c", "key", "session", "x", "A", "$Version", "$Path",
+	"$Domain", "a b", "a=b", "a\tb", "a\"b", "é", "日本", "�", "",
+	"__Host-x", "-x-", "a,b", "a;b", "Max-Age",
+}
+
+var cookieValueAlphabet = []string{
+	"b", "", "v", "\"b\"", "\"a\\\"b\"", "v v", "é", "日本", "a;b",
+	"a,b", "a=b", "\x00", "\x7f", "\u0080", "a\tb", "\\", "\"unterminated",
+	"  padded  ", "\"\"", "a\"b", "%20", "again",
+}
+
+func cookieName(r *rand.Rand) string {
+	return cookieNameAlphabet[r.Intn(len(cookieNameAlphabet))]
+}
+
+func cookieValue(r *rand.Rand) string {
+	return cookieValueAlphabet[r.Intn(len(cookieValueAlphabet))]
+}
+
+// seededCookieLines are 2000 seeded Cookie header values: one to four pairs
+// separated by every separator Go splits on, sometimes a bare token, sometimes
+// a trailing separator.
+func seededCookieLines() []string {
+	r := rand.New(rand.NewSource(61))
+	seps := []string{"; ", ";", ",", " ", "\t", ";;", ";  "}
+	lines := make([]string, 0, 2000)
+	for i := 0; i < 2000; i++ {
+		var b strings.Builder
+		for j, n := 0, r.Intn(5); j < n; j++ {
+			if j > 0 {
+				b.WriteString(seps[r.Intn(len(seps))])
+			}
+			if r.Intn(8) == 0 {
+				b.WriteString(cookieName(r))
+				continue
+			}
+			b.WriteString(cookieName(r))
+			b.WriteString("=")
+			b.WriteString(cookieValue(r))
+		}
+		if r.Intn(10) == 0 {
+			b.WriteString(seps[r.Intn(len(seps))])
+		}
+		lines = append(lines, textOf(b.String()))
+	}
+	return lines
+}
+
+// seededSetCookieLines are 2000 seeded Set-Cookie values: a pair and zero to
+// four attributes of every shape Go reads, an Expires in any of the three date
+// shapes with any weekday, month and zone spelling.
+func seededSetCookieLines() []string {
+	r := rand.New(rand.NewSource(62))
+	lines := make([]string, 0, 2000)
+	for i := 0; i < 2000; i++ {
+		var b strings.Builder
+		b.WriteString(cookieName(r))
+		b.WriteString("=")
+		b.WriteString(cookieValue(r))
+		for j, n := 0, r.Intn(5); j < n; j++ {
+			b.WriteString("; ")
+			switch r.Intn(12) {
+			case 0, 1:
+				b.WriteString("Path=")
+				b.WriteString([]string{"/", "/x", "/a/b", "", "/x y", "/é", "/x;y", "\"/q\""}[r.Intn(8)])
+			case 2:
+				b.WriteString("Domain=")
+				b.WriteString([]string{"example.com", "sub.example.com", ".example.com", "not a domain", "bad_domain", "é.com", "", "1.2.3.4", "[::1]"}[r.Intn(9)])
+			case 3, 4:
+				b.WriteString("Expires=")
+				b.WriteString(cookieDate(r))
+			case 5:
+				b.WriteString("Max-Age=")
+				b.WriteString([]string{"0", "1", "-1", "3600", "999999999999999999999", "abc", "", "+5"}[r.Intn(8)])
+			case 6:
+				b.WriteString([]string{"Secure", "HttpOnly", "Partitioned", "Secure=1", "HttpOnly=x"}[r.Intn(5)])
+			case 7:
+				b.WriteString("SameSite=")
+				b.WriteString([]string{"Lax", "Strict", "None", "bogus", "", "lax"}[r.Intn(6)])
+			case 8:
+				b.WriteString([]string{"Priority=High", "SameParty", "Unknown=1", "Path", "Domain=", "Max-Age"}[r.Intn(6)])
+			case 9:
+				b.WriteString(cookieName(r))
+			default:
+				b.WriteString("Path=")
+				b.WriteString([]string{"/x", "/y"}[r.Intn(2)])
+			}
+		}
+		lines = append(lines, textOf(b.String()))
+	}
+	return lines
+}
+
+// cookieDate is an Expires value in Go's cookie TimeFormat, its RFC 850 shape,
+// or its ANSI C shape, with a weekday, month and zone that may not be Go's.
+func cookieDate(r *rand.Rand) string {
+	wd := []string{"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "WED", "wed", "Wednesday", "Xyz", "Wedn", "W", "", "Mo"}
+	mo := []string{"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "JUN", "junk", ""}
+	zone := []string{"GMT", "UTC", "gmt", "CEST", "CESTD", "GMT+8", "GMT-8", "GMT+0", "GMT-23", "GMT+24", "GMTX", "GMTT", "+05", "-7", "+0023", "+0000", "-0000", "+0100", "+00:00", "GMT0", "UTC0", "ChST", "MeST", "ABCD", "WITA", "AKDST", "UTC+8", "UTCT", "UTCDT", "Z", "123", "é", "AB€", ""}
+	year := []int{1970, 1999, 2000, 2021, 2026, 9999, 10000}[r.Intn(7)]
+	day := 1 + r.Intn(31)
+	h, m, s := r.Intn(24), r.Intn(60), r.Intn(60)
+	switch r.Intn(3) {
+	case 0:
+		return fmt.Sprintf("%s, %02d %s %04d %02d:%02d:%02d %s", wd[r.Intn(len(wd))], day, mo[r.Intn(len(mo))], year, h, m, s, zone[r.Intn(len(zone))])
+	case 1:
+		return fmt.Sprintf("%s, %02d-%s-%02d %02d:%02d:%02d %s", wd[r.Intn(len(wd))], day, mo[r.Intn(len(mo))], year%100, h, m, s, zone[r.Intn(len(zone))])
+	default:
+		return fmt.Sprintf("%s %s %2d %02d:%02d:%02d %04d", wd[r.Intn(len(wd))], mo[r.Intn(len(mo))], day, h, m, s, year)
+	}
+}
+
+
 const httpTests = `
 enum RouteErr {
   Teapot
@@ -181,6 +461,73 @@ test "a value of the interface reads its status and its display" {
 }
 `
 
+const httpHeaderTests = `
+fn first_bad[T](bad: List[T]) -> List[T] { bad[0..(if bad.len() < 20 { bad.len() } else { 20 })] }
+
+fn header_answer(r: http.Request, lookup: Str) -> Str {
+  let got = match r.header(lookup) {
+    Some(v) => "ok ${v}"
+    None => "none"
+  }
+  got
+}
+
+test "a header name canonicalizes as Go's Header.Set does, and a lookup finds what Go's Get finds" {
+  var bad: List[(Str, Str, Str, Str, Str)] = []
+  for (name, value, lookup, want) in HEADERS {
+    var h: Map[Str, Str] = {}
+    h.put(name, value)
+    let r = http.new_request("GET", "http://h/", headers: h)
+    let got = "${r.headers.keys().sort().join("\u{1f}")}|${header_answer(r, lookup)}"
+    if got != want {
+      bad.push((name, value, lookup, want, got))
+    }
+  }
+  expect(first_bad(bad)) == []
+}
+
+test "repeated fields keep Go's values, and header() sees Go's first" {
+  var bad: List[(List[Str], List[Str], Str, Str, Str)] = []
+  for (names, values, lookup, want) in REPEAT_HEADERS {
+    var r = http.new_request("GET", "http://h/", headers: {})
+    var i = 0
+    while i < names.len() {
+      r = r.add_header(names[i], values[i])
+      i += 1
+    }
+    let got = "${r.header_values(lookup).join("\u{1f}")}|${header_answer(r, lookup)}"
+    if got != want {
+      bad.push((names, values, lookup, want, got))
+    }
+  }
+  expect(first_bad(bad)) == []
+}
+
+test "a struct literal's headers read the way the spec says" {
+  let u = http.Url{scheme: "http", host: "h", port: None, path: "/", query: {}}
+  let r = http.Request{method: "GET", path: "/", url: u, headers: {"content-type": "text/plain", "\tType": "tab"}, body: b"", remote_ip: ""}
+  // a token name is case insensitive, whatever case a literal wrote
+  expect(header_answer(r, "Content-Type")) == "ok text/plain"
+  expect(header_answer(r, "CONTENT-TYPE")) == "ok text/plain"
+  expect(r.header_values("CONTENT-TYPE").join(",")) == "text/plain"
+  // a name with a non-token byte matches exactly, as Go matches it
+  expect(header_answer(r, "\tTYPE")) == "none"
+  expect(r.header_values("\tTYPE").is_empty())
+  expect(header_answer(r, "\tType")) == "ok tab"
+  // a Response reads the same way
+  let resp = http.Response{status: 200, headers: {"x-a": "1", "a b": "2"}, body: b""}
+  let xa = match resp.header("X-A") {
+    Some(v) => v
+    None => "none"
+  }
+  expect(xa) == "1"
+  let ab = match resp.header("A B") {
+    Some(v) => v
+    None => "none"
+  }
+  expect(ab) == "none"
+}
+`
 const httpCookieTests = `
 fn cookie_lines_joined(cs: List[http.Cookie]) -> Str {
   cs.map(fn(c) { c.display() }).join("|")

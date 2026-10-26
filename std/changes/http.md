@@ -1,5 +1,29 @@
 # std/http changes
 
+## 2026-10-26: fix: a header name with a non-token byte is matched exactly
+
+- Kind: fix
+- Commit: this commit
+- Found by: the seeded header corpus (internal/stdtest/testdata/corpus/http)
+  on go, arm64 and LLVM
+- Go reference: net/http Header.Get through textproto.CanonicalMIMEHeaderKey
+  (a name with a byte that is not a token is canonicalized to itself, so its
+  lookup is exact); go1.26.1
+- Test: internal/stdtest/testdata/corpus/http (HEADERS and REPEAT_HEADERS,
+  plus "a struct literal's headers read the way the spec says")
+
+`header` (and `header_values`, which reads the same way) canonicalizes the
+lookup name and, when that key is absent, still falls back to a
+case-insensitive scan of the stored names, which is the documented behavior
+(std.md 4.3) and what a struct literal's `headers: {"content-type": ...}`
+relies on. The fallback is now limited to lookup names that are RFC tokens:
+a name with a byte outside httpguts.ValidHeaderFieldName's set matches the
+canonical key only, as Go's Header.Get reads it, since Go's canonical name
+for such a name is the name itself. So with the field `"\tType"` stored,
+`header("\tTYPE")` is None as in Go, while `header("CONTENT-TYPE")` still
+reads a field stored as `content-type`. The HTTP/1.1 and HTTP/2 parsers
+canonicalize a received name already, so they read the same.
+
 ## 2026-10-26: fix: a cookie date's weekday and zone are checked as Go checks them
 
 - Kind: fix

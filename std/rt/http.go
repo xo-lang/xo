@@ -417,7 +417,9 @@ func (r Http_Request) M_query(_ *Task, name string) Option[string] {
 	return Map_get(nil, r.F_url.F_query, name)
 }
 
-// M_header is `req.header(name)`, case insensitive.
+// M_header is `req.header(name)`: the canonical name's value, then, when the
+// lookup name is a token, the case-insensitive scan of the stored names
+// (std.md 4.3). A name with a byte outside a token matches only exactly.
 func (r Http_Request) M_header(_ *Task, name string) Option[string] {
 	return headerGet(r.F_headers, name)
 }
@@ -426,12 +428,32 @@ func headerGet(h Map[string, string], name string) Option[string] {
 	if v := Map_get(nil, h, textproto.CanonicalMIMEHeaderKey(name)); v.Some {
 		return v
 	}
+	if !isTokenName(name) {
+		return Option[string]{}
+	}
 	for k, v := range Map_All(h) {
 		if strings.EqualFold(k, name) {
 			return Some(v)
 		}
 	}
 	return Option[string]{}
+}
+
+// isTokenName is httpguts.ValidHeaderFieldName: one or more token bytes.
+func isTokenName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		ok := c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' ||
+			c == '!' || c >= '#' && c <= '\'' || c == '*' || c == '+' || c == '-' ||
+			c == '.' || c == '^' || c == '_' || c == '`' || c == '|' || c == '~'
+		if !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // M_with_header is `req.with_header(name, value)`: a copy of the request

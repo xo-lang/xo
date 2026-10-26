@@ -1253,10 +1253,10 @@ fn (r: Request) query(name: Str) -> Str?
 fn (r: Request) query_all(name: Str) -> List[Str]   // every value of a repeated key, in order
 fn (r: Request) form() -> url.Values ! url.EscapeErr   // an urlencoded POST, PUT, or PATCH body (20)
 fn (r: Request) multipart_form() -> multipart.Form ! multipart.MultipartErr   // decision 0282
-fn (r: Request) header(name: Str) -> Str?           // case insensitive
+fn (r: Request) header(name: Str) -> Str?           // case insensitive for a token name; any other name matches only exactly
 fn (r: Request) json[T: Json]() -> T ! json.DecodeErr
 fn (r: Request) with_header(name: Str, value: Str) -> Request
-fn (r: Request) header_values(name: Str) -> List[Str]   // every field of name, in order (decision 0288)
+fn (r: Request) header_values(name: Str) -> List[Str]   // every field of name, in order (decision 0288); found the way header is
 fn (r: Request) add_header(name: Str, value: Str) -> Request   // one more field of name
 fn (r: Request) cookie(name: Str) -> Cookie?        // the first Cookie pair of that name (Go's Request.Cookie)
 fn (r: Request) cookies() -> List[Cookie]           // every Cookie pair that parses
@@ -1315,8 +1315,8 @@ fn (p: PartReader) next() -> StreamPart? ! multipart.MultipartErr   // the next 
 fn (p: PartReader) read(max: Int = 32768) -> Bytes? ! multipart.MultipartErr   // the open part's next bytes, None at its end
 fn (p: StreamPart) header_values(name: Str) -> List[Str]   // every value of a part's header, in order
 fn (r: Response) with_header(name: Str, value: Str) -> Response
-fn (r: Response) header(name: Str) -> Str?          // case insensitive
-fn (r: Response) header_values(name: Str) -> List[Str]   // every field of name, in order (decision 0288)
+fn (r: Response) header(name: Str) -> Str?          // case insensitive for a token name; any other name matches only exactly
+fn (r: Response) header_values(name: Str) -> List[Str]   // every field of name, in order (decision 0288); found the way header is
 fn (r: Response) add_header(name: Str, value: Str) -> Response   // one more field of name
 fn (r: Response) with_cookie(c: Cookie) -> Response     // one more Set-Cookie field (Go's SetCookie); none for an invalid name
 fn (r: Response) cookies() -> List[Cookie]              // every Set-Cookie field that parses (Go's Response.Cookies)
