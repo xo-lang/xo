@@ -137,6 +137,13 @@ var mailPieces = []string{
 	"[1.2.3.4]", "user@[127.0.0.1]", "a.@b", ".a@b", "a..b@c", "\"quoted local\"@x", "\\", "\"unclosed",
 	"é@ü.example", "José <jose@ex.com>", " ", ",", ";", "<", ">", "@", ":", "x", "Bob", "@route:a@b",
 	"a@b (Comment)", "<a@b> (c)", "\t", "a@b,", "=?UTF-8?Q?a_b?=", "\"\\\"esc\\\"\" <e@x>",
+	// hostile shapes: control bytes, tabs, folds, nesting, a domain label
+	// that runs long, a quoted local part with a newline in it
+	"a\t@b", "\x01a@b", "a@b\x7f", "a\x00b@c", "a@b\nc", "a@b\rc", "\r\n a@b",
+	"(a(b(c(d)))) a@b", "((unclosed)", "a@[::1]", "a@[fe80::1%25eth0]", "a@@b", "\"a\nb\"@c",
+	"\">\" <a@b>", "\"<\"@b", "a@b.c.", "a@-b", "a@b_", strings.Repeat("a", 120) + "@ex.com",
+	"a@" + strings.Repeat("b", 70) + ".com", "=?utf-8?b?!!?= <a@b>", "=?utf-8?q?=00?= <a@b>",
+	"a@b (", "a@b )", "a@b (Comment) (x)", "\" \" <a@b>", "'a' <a@b>", "a@b <c@d>", "Name a@b",
 }
 
 func randomAddress(r *rand.Rand) string {
@@ -199,6 +206,45 @@ func randomMessage(r *rand.Rand) []byte {
 	return b.Bytes()
 }
 
+// randomMessageHostile builds a message from the bytes a hostile sender
+// writes: header names and values with control bytes, NUL, DEL, obs-text
+// bytes that are not UTF-8, tabs and long runs before and after the colon,
+// folds in every position, CRLF and bare CR line ends, repeated names in
+// different cases, and a body with 8-bit bytes or no blank line at all.
+func randomMessageHostile(r *rand.Rand) []byte {
+	names := []string{"From", "to", "Subject", "SUBJECT", "subject", "X-A", "x-a", "Bad Name", "", "Key ", "X_U", "é", "X\tA", "X\x01", "\x80", "a:"}
+	values := []string{"", " ", "\t x", "a", " b ", "v\r\n folded", "v\n\tfolded", "a:b", "\xff", "\x00", "\x7f", "\xc3", "x\r", "x\n", strings.Repeat("v", 200), "=?utf-8?q?x?=", "=?bad?b?!!?=", "\xef\xbf\xbd"}
+	nls := []string{"\r\n", "\n", "\r"}
+	var b bytes.Buffer
+	switch r.Intn(6) {
+	case 0:
+		// a leading fold is not a header
+		b.WriteString([]string{" lead", "\t lead", "\r\n", "\r\n\r\n"}[r.Intn(4)])
+	}
+	for k, n := 0, r.Intn(6); k < n; k++ {
+		nv := names[r.Intn(len(names))]
+		switch r.Intn(8) {
+		case 0:
+			// no colon: a malformed header line
+			b.WriteString(nv + nls[r.Intn(len(nls))])
+		case 1:
+			// an empty name
+			b.WriteString(":" + values[r.Intn(len(values))] + nls[r.Intn(len(nls))])
+		default:
+			b.WriteString(nv + ":" + values[r.Intn(len(values))] + nls[r.Intn(len(nls))])
+		}
+	}
+	switch r.Intn(4) {
+	case 0:
+		// no blank line: the body is not there
+	case 1:
+		b.WriteString(nls[r.Intn(len(nls))])
+	default:
+		b.WriteString(nls[r.Intn(len(nls))] + []string{"body", "line1\r\nline2\n", "\xfe\xff", "", "\x00\x01", "é日"}[r.Intn(6)])
+	}
+	return b.Bytes()
+}
+
 func mailCorpus() string {
 	r := rand.New(rand.NewSource(1))
 	lits := goTestStrings("net/mail/message_test.go")
@@ -207,7 +253,7 @@ func mailCorpus() string {
 	o.WriteString("use std/mail\n\n")
 	o.WriteString("/// (input, Go's result: ok NAME|ADDRESS|DISPLAY or err TEXT)\nconst ADDRESSES: List[(Str, Str)] = [\n")
 	addrs := append([]string{}, lits...)
-	for i := 0; i < 2500; i++ {
+	for i := 0; i < 4000; i++ {
 		addrs = append(addrs, randomAddress(r))
 	}
 	for _, s := range addrs {
@@ -240,8 +286,12 @@ func mailCorpus() string {
 			msgs = append(msgs, []byte(s))
 		}
 	}
-	for i := 0; i < 600; i++ {
-		msgs = append(msgs, randomMessage(r))
+	for i := 0; i < 3000; i++ {
+		if i%2 == 0 {
+			msgs = append(msgs, randomMessage(r))
+		} else {
+			msgs = append(msgs, randomMessageHostile(r))
+		}
 	}
 	for _, m := range msgs {
 		fmt.Fprintf(&o, "  (%s, %s),\n", xbytes(m), xq(mailMessage(m)))
@@ -258,7 +308,7 @@ fn first_bad[T](bad: List[T]) -> List[T] { bad[0..(if bad.len() < 20 { bad.len()
 // changed seed, a table cut short) fails here instead of quietly comparing
 // less. The seeded rows alone are the floor; Go's own test strings add more.
 test "parse_address is Go's" {
-  expect(ADDRESSES.len() >= 2500)
+  expect(ADDRESSES.len() >= 4000)
   var bad: List[(Str, Str, Str)] = []
   for (s, want) in ADDRESSES {
     let got = match mail.parse_address(s) {
@@ -319,7 +369,7 @@ fn shape(m: mail.Message) -> Str {
 }
 
 test "read_message is Go's" {
-  expect(MESSAGES.len() >= 600)
+  expect(MESSAGES.len() >= 3000)
   var bad: List[(Bytes, Str, Str)] = []
   for (m, want) in MESSAGES {
     let got = match mail.read_message(m) {
