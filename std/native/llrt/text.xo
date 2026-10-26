@@ -251,7 +251,7 @@ fn unit_of(pa: Int, i: Int, j: Int) -> Int {
     return 0
   }
   if k == 2 {
-    if raw.byte_at(pa, i + 1) != 115 {
+    if raw.byte_at(pa, i.wrapping_add(1)) != 115 {
       return 0
     }
     if c == 110 {
@@ -265,8 +265,8 @@ fn unit_of(pa: Int, i: Int, j: Int) -> Int {
     }
     return 0
   }
-  if k == 3 && raw.byte_at(pa, i + 2) == 115 {
-    let c1 = raw.byte_at(pa, i + 1)
+  if k == 3 && raw.byte_at(pa, i.wrapping_add(2)) == 115 {
+    let c1 = raw.byte_at(pa, i.wrapping_add(1))
     // "µs" (U+00B5) or "μs" (U+03BC)
     if (c == 0xC2 && c1 == 0xB5) || (c == 0xCE && c1 == 0xBC) {
       return 1000
@@ -318,7 +318,7 @@ pub fn parse_duration(s: Str) -> Int? {
     neg = raw.byte_at(pa, i) == 45
     i += 1
   }
-  if n - i == 1 && raw.byte_at(pa, i) == 48 {
+  if n.wrapping_sub(i) == 1 && raw.byte_at(pa, i) == 48 {
     return Some(0)
   }
   if i == n {
@@ -359,7 +359,7 @@ pub fn parse_duration(s: Str) -> Int? {
       nv = 0
       var j = pl
       while j < i {
-        let c = raw.byte_at(pa, j) - 48
+        let c = raw.byte_at(pa, j).wrapping_sub(48)
         if nv < -922337203685477580 {
           return None
         }
@@ -424,20 +424,21 @@ pub fn parse_duration(s: Str) -> Int? {
       if nv < -unit_limit(unit) {
         return None
       }
-      nv = nv * unit
+      // nv >= -unit_limit(unit) above: the product fits
+      nv = nv.wrapping_mul(unit)
     }
     if nf < 0 {
       // the fraction's nanoseconds (less than the unit)
       let x = Int(-Float(nf) * (Float(unit) / scale))
-      if nv < MIN_INT + x {
+      if nv < MIN_INT.wrapping_add(x) {
         return None
       }
-      nv -= x
+      nv = nv.wrapping_sub(x)
     }
-    if nd < MIN_INT - nv {
+    if nd < MIN_INT.wrapping_sub(nv) {
       return None
     }
-    nd += nv
+    nd = nd.wrapping_add(nv)
   }
   if neg {
     return Some(nd)

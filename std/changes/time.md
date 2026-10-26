@@ -1,5 +1,19 @@
 # std/time changes
 
+## 2026-10-26: perf: the arithmetic of a duration's text that its own tests guard is not checked a second time (Duration.parse, a decoded JSON Duration)
+
+- Kind: perf
+- Commit: this commit
+- Found by: the arm64 assembly of `text.parse_duration` against LLVM's on bench/perf/text dur_parse (7 checked operations the guards before them already rule out: `nv * unit`, `nv - x`, `nd + nv`, the two guard expressions `MIN_INT + x` and `MIN_INT - nv`, `n - i`, `i + 1` and `i + 2` in unit_of, and `byte - 48`)
+- Go reference: time/format.go ParseDuration (go1.26.1), unchanged semantics
+- Test: duration_parse_edges, parse_edge_scalars, text_table, std_error_display, codex_gaps and the other time goldens on arm64 (10 of 10); stdfuzz -area=time,strconv seeds 1, 7 and 11 at 1500 lines per backend, no divergence
+
+Each is `wrapping_*` now with the guard named in a comment: `nv >= -unit_limit(unit)`
+bounds the product, `nv >= MIN_INT + x` (x >= 0) the difference, `nd >= MIN_INT - nv`
+(nv <= 0) the sum. bench/perf/text dur_parse, instructions on arm64: 3.255 G to
+3.166 G (0.973; LLVM 3.016 G, so 1.079 of LLVM's before, 1.050 after), the checksum
+unchanged.
+
 ## 2026-10-25: perf: a duration's text is read with unchecked byte reads (Duration.parse, a decoded JSON Duration)
 
 - Kind: perf
