@@ -15,7 +15,10 @@ test "a counter, a gauge and a histogram expose Prometheus text (std.md 37)" {
   expect(b.len()) == 11
   expect(b[0]) == 0.005
   expect(b[10]) == 10.0
-  let lat = r.histogram("req_seconds", "Request latency.", [], b)
+  // buckets is left to its default (latency_buckets(), the only call default
+  // in std), so this is the program that proves the default evaluates on
+  // every backend
+  let lat = r.histogram("req_seconds", "Request latency.", [])
   // 0.25 and 0.5 are bucket bounds: each lands in its own bucket and every
   // later one, since the counts are cumulative
   lat.observe(0.25)
@@ -72,12 +75,11 @@ test "the default latency buckets are the eleven up to ten seconds" {
   expect(b[5]) == 0.25
   expect(b[10]) == 10.0
   let r = metrics.registry()
-  // the buckets are passed explicitly: buckets has a call default
-  // (latency_buckets(), the only one in std), and the Go backend does not
-  // evaluate a std default that is a call (compiler/gen/support.xo
-  // "unsupported std default value", reported 2026-10-26), so a corpus
-  // that omitted the argument would fail on that backend alone
-  let h = r.histogram("plain_seconds", "Buckets given.", [], b)
+  // the buckets argument is omitted: buckets = latency_buckets() is the
+  // only call default in std, and the Go backend rejected it until f623b4826
+  // ("unsupported std default value"), so this corpus is the cross backend
+  // proof that the default evaluates
+  let h = r.histogram("plain_seconds", "Buckets defaulted.", [])
   h.observe(0.001)
   h.observe(30.0)
   let t = r.text()
