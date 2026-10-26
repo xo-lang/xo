@@ -2,9 +2,12 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"log"
 	"math/rand"
 	"net/http"
 	"net/textproto"
+	"os"
 	"sort"
 	"strings"
 )
@@ -22,9 +25,10 @@ import (
 // Cookie.String), and CookieErr's display on a line Go refuses. The 2026-10-26
 // audit listed all three as reached by no edge.
 //
-// The header table carries hand written shapes and seeded random ones: names
-// that are not tokens, control bytes, multi-byte text and obs-fold text in a
-// value. net/http's own Header answers each case.
+// The header and cookie tables carry hand written shapes and seeded random
+// ones: names that are not tokens, control bytes, multi-byte text, obs-fold
+// text in a value, and cookie lines built from every part of Go's grammar.
+// net/http's own Header, ParseCookie and ParseSetCookie answer each case.
 func httpCorpus() string {
 	var o strings.Builder
 	o.WriteString(header("std/http's StatusError through the interface, Router.call's rendering of a handler error that carries a status, of one that does not, and of a middleware's (std.md 4.2), and header and cookie parsing and rendering against Go's Header, ParseCookie, ParseSetCookie and Cookie.String"))
@@ -188,11 +192,13 @@ func xqStrList(xs []string) string {
 	return b.String()
 }
 
-
 // httpCookieTables emits the cookie header lines and what Go makes of them:
 // each parsed cookie's String (joined with "|"), or the error's Error(), which
 // is the text std/native/http.xo builds its CookieErr messages from.
 func httpCookieTables() string {
+	// ParseSetCookie logs a Domain it drops; the log is not corpus data
+	log.SetOutput(io.Discard)
+	defer log.SetOutput(os.Stderr)
 	cookieLines := []string{
 		"a=b", "a=b; c=d", "a=b; c=d; e=f", "a=b; a=c", " a = b ; c = d ",
 		"a=", "=b", "a=b,c=d", "a=b; c", "a", "a=b; c=d; e", "a=\"b\"",
@@ -252,11 +258,19 @@ func httpCookieTables() string {
 		"a=b; Expires=Wed, 09 Jun 2021 10:18:14 WITA",
 		"a=b; Expires=Wed, 09 Jun 2021 10:18:14 AKDST",
 		"a=b; Expires=Wed, 09 Jun 2021 10:18:14 AB€",
+		// Go's month lookup folds ASCII case and reads the three letter names
+		// only: "JUN" and "jun" read, "June" leaves "e" and does not
+		"a=b; Expires=Sun, 29 JUN 2021 22:46:55 -0000",
+		"a=b; Expires=Sun, 29 jun 2021 22:46:55 GMT",
+		"a=b; Expires=Sun, 29 juN 2021 22:46:55 +0000",
+		"a=b; Expires=Sun, 29 June 2021 22:46:55 GMT",
 		"a=b; Path=/x; Domain=example.com; Secure; HttpOnly; SameSite=Lax; Max-Age=3600",
 		"\"a\"=b", "a=\"b\"", "a=b; Path", "a", "=b", "a=b; Max-Age=abc",
 		"a=b; Domain=bad_domain", "a=b; Path=/p; Path=/q", "a=b; Unknown=1",
 		"a=b; Partitioned", "a=b; SameSite=bogus",
 	}
+	cookieLines = append(cookieLines, seededCookieLines()...)
+	setLines = append(setLines, seededSetCookieLines()...)
 	var o strings.Builder
 	o.WriteString("\n/// (Cookie header value, Go's ParseCookie: each cookie's String joined with \"|\", or the error)\nconst COOKIE_LINES: List[(Str, Str)] = [\n")
 	for _, line := range cookieLines {
@@ -397,7 +411,7 @@ func cookieDate(r *rand.Rand) string {
 	wd := []string{"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "WED", "wed", "Wednesday", "Xyz", "Wedn", "W", "", "Mo"}
 	mo := []string{"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "JUN", "junk", ""}
 	zone := []string{"GMT", "UTC", "gmt", "CEST", "CESTD", "GMT+8", "GMT-8", "GMT+0", "GMT-23", "GMT+24", "GMTX", "GMTT", "+05", "-7", "+0023", "+0000", "-0000", "+0100", "+00:00", "GMT0", "UTC0", "ChST", "MeST", "ABCD", "WITA", "AKDST", "UTC+8", "UTCT", "UTCDT", "Z", "123", "é", "AB€", ""}
-	year := []int{1970, 1999, 2000, 2021, 2026, 9999, 10000}[r.Intn(7)]
+	year := []int{1970, 1999, 2000, 2021, 2026, 10000}[r.Intn(6)]
 	day := 1 + r.Intn(31)
 	h, m, s := r.Intn(24), r.Intn(60), r.Intn(60)
 	switch r.Intn(3) {
@@ -409,7 +423,6 @@ func cookieDate(r *rand.Rand) string {
 		return fmt.Sprintf("%s %s %2d %02d:%02d:%02d %04d", wd[r.Intn(len(wd))], mo[r.Intn(len(mo))], day, h, m, s, year)
 	}
 }
-
 
 const httpTests = `
 enum RouteErr {

@@ -1,5 +1,28 @@
 # std/http changes
 
+## 2026-10-26: fix: a cookie date's month is read in any case, as Go reads it
+
+- Kind: fix
+- Commit: this commit
+- Found by: the seeded cookie table (internal/stdtest/testdata/corpus/http) on
+  go, arm64 and LLVM
+- Go reference: net/http cookie.go readSetCookies through time.Parse's month
+  lookup (format.go lookup and match: ASCII case folding, the three letter
+  names only); go1.26.1
+- Test: internal/stdtest/testdata/corpus/http (COOKIE_LINES, SET_COOKIE_LINES
+  and the seeded rows, go, arm64 and LLVM)
+
+`cookie_date` compared the month field with "Jan" to "Dec" exactly, so
+"Sun, 29 JUN 2021 22:46:55 GMT" kept no Expires where Go's parser reads June
+(Go compares the first three bytes under ASCII case folding). The comparison
+now folds case, which matches Go for every spelling: "JUN", "jun" and "juN"
+read, and "June" still does not, since Go's lookup matches "Jun" and leaves
+the "e" for the layout's next space to refuse. The corpus's cookie tables are
+now seeded as well: 2020 Cookie values and 2050 Set-Cookie values built from
+every separator, bare token, quoted and escaped value, control byte, and an
+Expires in all three of Go's date shapes with every weekday, month and zone
+spelling.
+
 ## 2026-10-26: fix: a header name with a non-token byte is matched exactly
 
 - Kind: fix

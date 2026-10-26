@@ -2721,8 +2721,9 @@ fn cookie_at(b: Bytes, off: Int, lit: Str) -> Bool {
 /// An Expires value as Go's ParseSetCookie reads it with the cookie
 /// TimeFormat: the date spaced ("Mon, 02 Jan 2006 15:04:05 GMT") or
 /// hyphenated with a four digit year ("Mon, 02-Jan-2006 15:04:05 GMT"),
-/// which Go's time.Parse accepts too. The weekday must be one of the seven
-/// three letter names, in any case, and the zone must be one Go's parser
+/// which Go's time.Parse accepts too. The weekday and the month must be their
+/// three letter names in any case (Go's lookup folds ASCII case and reads no
+/// longer name), and the zone must be one Go's parser
 /// reads in full (cookie_zone_ok), so "wed" and "UTC" read where "Xyz" and
 /// "gmt" do not; the time is taken as UTC, which is Go's reading of a zone
 /// it does not name (measured 2026-10-26). A two digit year (RFC 850), a
@@ -2751,10 +2752,13 @@ fn cookie_date(v: Str) -> Time? {
   if dmy.len() != 3 || dmy[0].len() != 2 {
     return None
   }
-  let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+  // Go's month lookup folds ASCII case ("JUN", "jun" and "juN" read) and
+  // takes the three letter names only: "June" matches "Jun" and leaves "e",
+  // which the layout's next space does not read, so the date does not parse
+  let months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
   var month = 0
   for (i, m) in months.indexed() {
-    if m == dmy[1] {
+    if m == dmy[1].to_lower() {
       month = i + 1
     }
   }
