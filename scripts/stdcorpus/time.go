@@ -376,6 +376,31 @@ func timeCorpus() string {
 	}
 	o.WriteString("]\n")
 
+	// Layouts (std.md 13.3): Xo names each field in braces, Go writes the
+	// reference digits. The oracle is Go's Time.Format on the same instants
+	// in UTC, and Go's Parse reads the text back for the layouts that carry
+	// both a date and a time (the only ones a round trip can reproduce).
+	layouts := [][2]string{
+		{"{year}-{month}-{day}", "2006-01-02"},
+		{"{hour}:{minute}:{second}", "15:04:05"},
+		{"{year}-{month}-{day} {hour}:{minute}:{second}", "2006-01-02 15:04:05"},
+		{"{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second}", "Mon, 02 Jan 2006 15:04:05"},
+		{"{weekday:name} {month:name} {day:1}, {year}", "Monday January 2, 2006"},
+		{"{year}/{month:1}/{day:1}", "2006/1/2"},
+		{"{hour12}:{minute} {ampm} {offset:compact}", "03:04 PM -0700"},
+		{"{hour12}:{minute} {ampm} {zone}", "03:04 PM MST"},
+		{"{lbrace}{year}{rbrace} {frac:3}", "{2006} .000"},
+	}
+	instants := []int64{0, 1, 86399, 951782400, 1700000000, -2208988800, 4102444800, 1234567890}
+	o.WriteString("\n/// (Xo layout, its Go reference layout, Unix second, Go's text in UTC)\nconst LAYOUT_CASES: List[(Str, Str, Int, Str)] = [\n")
+	for _, l := range layouts {
+		for _, s := range instants {
+			t := time.Unix(s, 0).UTC()
+			fmt.Fprintf(&o, "  (%s, %s, %d, %s),\n", xq(l[0]), xq(l[1]), s, xq(t.Format(l[1])))
+		}
+	}
+	o.WriteString("]\n")
+
 	// Date arithmetic (std.md 13.2). Go's time at midnight UTC is the
 	// oracle: weekday is Time.Weekday, add_days is AddDate(0, 0, n) (the
 	// same civil date), and days_until is the difference of the two
@@ -591,6 +616,60 @@ test "Time.parse_rfc3339 and format_rfc3339 are Go's RFC 3339 in UTC" {
   }
   expect(show3(bad)) == []
 }
+
+test "a layout formats as its Go reference layout and parses back" {
+  var bad: List[(Str, Str, Str)] = []
+  for (xo, _go, secs, want) in LAYOUT_CASES {
+    let t = Time.from_unix(secs)
+    let z = time.utc()
+    let got = time.format(t, z, xo)
+    if got != want {
+      bad.push((xo, got, want))
+    }
+    let cached = time.layout(xo)
+    let got2 = cached.format(t, z)
+    if got2 != want {
+      bad.push((xo, got2, want))
+    }
+    if cached.display() != xo {
+      bad.push((xo, cached.display(), xo))
+    }
+    // a layout with a date and a time is the only one a round trip can
+    // reproduce: the others drop the part they do not name
+    if xo.contains("{year}") && xo.contains("{hour}") {
+      let back = match cached.parse(want, z) {
+        Ok(x) => "${x.unix()}"
+        Err(_) => "!err"
+      }
+      if back != "${secs}" {
+        bad.push((xo, back, "${secs}"))
+      }
+    }
+  }
+  expect(show3(bad)) == []
+}
+
+test "a layout displays as its text, and check_layout decides" {
+  let t = Time.from_unix(1700000000)
+  let z = time.utc()
+  let d = time.layout(time.DATE)
+  expect(d.format(t, z)) == "2023-11-14"
+  expect(d.display()) == time.DATE
+  let ok = match time.check_layout("{year}-{month}") {
+    Ok(_) => true
+    Err(_) => false
+  }
+  expect(ok) == true
+  let bad = match time.check_layout(not_const("{yr}")) {
+    Ok(_) => "ok"
+    Err(e) => e.display()
+  }
+  expect(bad.starts_with("bad layout")) == true
+}
+
+/// A layout the checker cannot see through, so it is checked at run time
+/// (a constant layout is an error at compile time, XO0420).
+fn not_const(s: Str) -> Str { s }
 
 test "from_unix and unix agree with Go" {
   var bad: List[(Str, Str, Str)] = []

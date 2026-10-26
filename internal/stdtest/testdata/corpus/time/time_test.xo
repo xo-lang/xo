@@ -1210,6 +1210,82 @@ const MILLI_CASES: List[(Int, Int, Str)] = [
   (-9223372036854, -9223372037, "1677-09-21T00:12:43.146Z"),
 ]
 
+/// (Xo layout, its Go reference layout, Unix second, Go's text in UTC)
+const LAYOUT_CASES: List[(Str, Str, Int, Str)] = [
+  ("{year}-{month}-{day}", "2006-01-02", 0, "1970-01-01"),
+  ("{year}-{month}-{day}", "2006-01-02", 1, "1970-01-01"),
+  ("{year}-{month}-{day}", "2006-01-02", 86399, "1970-01-01"),
+  ("{year}-{month}-{day}", "2006-01-02", 951782400, "2000-02-29"),
+  ("{year}-{month}-{day}", "2006-01-02", 1700000000, "2023-11-14"),
+  ("{year}-{month}-{day}", "2006-01-02", -2208988800, "1900-01-01"),
+  ("{year}-{month}-{day}", "2006-01-02", 4102444800, "2100-01-01"),
+  ("{year}-{month}-{day}", "2006-01-02", 1234567890, "2009-02-13"),
+  ("{hour}:{minute}:{second}", "15:04:05", 0, "00:00:00"),
+  ("{hour}:{minute}:{second}", "15:04:05", 1, "00:00:01"),
+  ("{hour}:{minute}:{second}", "15:04:05", 86399, "23:59:59"),
+  ("{hour}:{minute}:{second}", "15:04:05", 951782400, "00:00:00"),
+  ("{hour}:{minute}:{second}", "15:04:05", 1700000000, "22:13:20"),
+  ("{hour}:{minute}:{second}", "15:04:05", -2208988800, "00:00:00"),
+  ("{hour}:{minute}:{second}", "15:04:05", 4102444800, "00:00:00"),
+  ("{hour}:{minute}:{second}", "15:04:05", 1234567890, "23:31:30"),
+  ("{year}-{month}-{day} {hour}:{minute}:{second}", "2006-01-02 15:04:05", 0, "1970-01-01 00:00:00"),
+  ("{year}-{month}-{day} {hour}:{minute}:{second}", "2006-01-02 15:04:05", 1, "1970-01-01 00:00:01"),
+  ("{year}-{month}-{day} {hour}:{minute}:{second}", "2006-01-02 15:04:05", 86399, "1970-01-01 23:59:59"),
+  ("{year}-{month}-{day} {hour}:{minute}:{second}", "2006-01-02 15:04:05", 951782400, "2000-02-29 00:00:00"),
+  ("{year}-{month}-{day} {hour}:{minute}:{second}", "2006-01-02 15:04:05", 1700000000, "2023-11-14 22:13:20"),
+  ("{year}-{month}-{day} {hour}:{minute}:{second}", "2006-01-02 15:04:05", -2208988800, "1900-01-01 00:00:00"),
+  ("{year}-{month}-{day} {hour}:{minute}:{second}", "2006-01-02 15:04:05", 4102444800, "2100-01-01 00:00:00"),
+  ("{year}-{month}-{day} {hour}:{minute}:{second}", "2006-01-02 15:04:05", 1234567890, "2009-02-13 23:31:30"),
+  ("{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second}", "Mon, 02 Jan 2006 15:04:05", 0, "Thu, 01 Jan 1970 00:00:00"),
+  ("{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second}", "Mon, 02 Jan 2006 15:04:05", 1, "Thu, 01 Jan 1970 00:00:01"),
+  ("{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second}", "Mon, 02 Jan 2006 15:04:05", 86399, "Thu, 01 Jan 1970 23:59:59"),
+  ("{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second}", "Mon, 02 Jan 2006 15:04:05", 951782400, "Tue, 29 Feb 2000 00:00:00"),
+  ("{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second}", "Mon, 02 Jan 2006 15:04:05", 1700000000, "Tue, 14 Nov 2023 22:13:20"),
+  ("{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second}", "Mon, 02 Jan 2006 15:04:05", -2208988800, "Mon, 01 Jan 1900 00:00:00"),
+  ("{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second}", "Mon, 02 Jan 2006 15:04:05", 4102444800, "Fri, 01 Jan 2100 00:00:00"),
+  ("{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second}", "Mon, 02 Jan 2006 15:04:05", 1234567890, "Fri, 13 Feb 2009 23:31:30"),
+  ("{weekday:name} {month:name} {day:1}, {year}", "Monday January 2, 2006", 0, "Thursday January 1, 1970"),
+  ("{weekday:name} {month:name} {day:1}, {year}", "Monday January 2, 2006", 1, "Thursday January 1, 1970"),
+  ("{weekday:name} {month:name} {day:1}, {year}", "Monday January 2, 2006", 86399, "Thursday January 1, 1970"),
+  ("{weekday:name} {month:name} {day:1}, {year}", "Monday January 2, 2006", 951782400, "Tuesday February 29, 2000"),
+  ("{weekday:name} {month:name} {day:1}, {year}", "Monday January 2, 2006", 1700000000, "Tuesday November 14, 2023"),
+  ("{weekday:name} {month:name} {day:1}, {year}", "Monday January 2, 2006", -2208988800, "Monday January 1, 1900"),
+  ("{weekday:name} {month:name} {day:1}, {year}", "Monday January 2, 2006", 4102444800, "Friday January 1, 2100"),
+  ("{weekday:name} {month:name} {day:1}, {year}", "Monday January 2, 2006", 1234567890, "Friday February 13, 2009"),
+  ("{year}/{month:1}/{day:1}", "2006/1/2", 0, "1970/1/1"),
+  ("{year}/{month:1}/{day:1}", "2006/1/2", 1, "1970/1/1"),
+  ("{year}/{month:1}/{day:1}", "2006/1/2", 86399, "1970/1/1"),
+  ("{year}/{month:1}/{day:1}", "2006/1/2", 951782400, "2000/2/29"),
+  ("{year}/{month:1}/{day:1}", "2006/1/2", 1700000000, "2023/11/14"),
+  ("{year}/{month:1}/{day:1}", "2006/1/2", -2208988800, "1900/1/1"),
+  ("{year}/{month:1}/{day:1}", "2006/1/2", 4102444800, "2100/1/1"),
+  ("{year}/{month:1}/{day:1}", "2006/1/2", 1234567890, "2009/2/13"),
+  ("{hour12}:{minute} {ampm} {offset:compact}", "03:04 PM -0700", 0, "12:00 AM +0000"),
+  ("{hour12}:{minute} {ampm} {offset:compact}", "03:04 PM -0700", 1, "12:00 AM +0000"),
+  ("{hour12}:{minute} {ampm} {offset:compact}", "03:04 PM -0700", 86399, "11:59 PM +0000"),
+  ("{hour12}:{minute} {ampm} {offset:compact}", "03:04 PM -0700", 951782400, "12:00 AM +0000"),
+  ("{hour12}:{minute} {ampm} {offset:compact}", "03:04 PM -0700", 1700000000, "10:13 PM +0000"),
+  ("{hour12}:{minute} {ampm} {offset:compact}", "03:04 PM -0700", -2208988800, "12:00 AM +0000"),
+  ("{hour12}:{minute} {ampm} {offset:compact}", "03:04 PM -0700", 4102444800, "12:00 AM +0000"),
+  ("{hour12}:{minute} {ampm} {offset:compact}", "03:04 PM -0700", 1234567890, "11:31 PM +0000"),
+  ("{hour12}:{minute} {ampm} {zone}", "03:04 PM MST", 0, "12:00 AM UTC"),
+  ("{hour12}:{minute} {ampm} {zone}", "03:04 PM MST", 1, "12:00 AM UTC"),
+  ("{hour12}:{minute} {ampm} {zone}", "03:04 PM MST", 86399, "11:59 PM UTC"),
+  ("{hour12}:{minute} {ampm} {zone}", "03:04 PM MST", 951782400, "12:00 AM UTC"),
+  ("{hour12}:{minute} {ampm} {zone}", "03:04 PM MST", 1700000000, "10:13 PM UTC"),
+  ("{hour12}:{minute} {ampm} {zone}", "03:04 PM MST", -2208988800, "12:00 AM UTC"),
+  ("{hour12}:{minute} {ampm} {zone}", "03:04 PM MST", 4102444800, "12:00 AM UTC"),
+  ("{hour12}:{minute} {ampm} {zone}", "03:04 PM MST", 1234567890, "11:31 PM UTC"),
+  ("{lbrace}{year}{rbrace} {frac:3}", "{2006} .000", 0, "{1970} .000"),
+  ("{lbrace}{year}{rbrace} {frac:3}", "{2006} .000", 1, "{1970} .000"),
+  ("{lbrace}{year}{rbrace} {frac:3}", "{2006} .000", 86399, "{1970} .000"),
+  ("{lbrace}{year}{rbrace} {frac:3}", "{2006} .000", 951782400, "{2000} .000"),
+  ("{lbrace}{year}{rbrace} {frac:3}", "{2006} .000", 1700000000, "{2023} .000"),
+  ("{lbrace}{year}{rbrace} {frac:3}", "{2006} .000", -2208988800, "{1900} .000"),
+  ("{lbrace}{year}{rbrace} {frac:3}", "{2006} .000", 4102444800, "{2100} .000"),
+  ("{lbrace}{year}{rbrace} {frac:3}", "{2006} .000", 1234567890, "{2009} .000"),
+]
+
 /// (year, month, day, Go's Weekday, the rule)
 const DATE_WEEKDAY_CASES: List[(Int, Int, Int, Str, Str)] = [
   (1970, 1, 1, "Thursday", "std.md 13.2 Date.weekday (Go's time.Weekday at midnight UTC)"),
@@ -4280,6 +4356,60 @@ test "Time.parse_rfc3339 and format_rfc3339 are Go's RFC 3339 in UTC" {
   }
   expect(show3(bad)) == []
 }
+
+test "a layout formats as its Go reference layout and parses back" {
+  var bad: List[(Str, Str, Str)] = []
+  for (xo, _go, secs, want) in LAYOUT_CASES {
+    let t = Time.from_unix(secs)
+    let z = time.utc()
+    let got = time.format(t, z, xo)
+    if got != want {
+      bad.push((xo, got, want))
+    }
+    let cached = time.layout(xo)
+    let got2 = cached.format(t, z)
+    if got2 != want {
+      bad.push((xo, got2, want))
+    }
+    if cached.display() != xo {
+      bad.push((xo, cached.display(), xo))
+    }
+    // a layout with a date and a time is the only one a round trip can
+    // reproduce: the others drop the part they do not name
+    if xo.contains("{year}") && xo.contains("{hour}") {
+      let back = match cached.parse(want, z) {
+        Ok(x) => "${x.unix()}"
+        Err(_) => "!err"
+      }
+      if back != "${secs}" {
+        bad.push((xo, back, "${secs}"))
+      }
+    }
+  }
+  expect(show3(bad)) == []
+}
+
+test "a layout displays as its text, and check_layout decides" {
+  let t = Time.from_unix(1700000000)
+  let z = time.utc()
+  let d = time.layout(time.DATE)
+  expect(d.format(t, z)) == "2023-11-14"
+  expect(d.display()) == time.DATE
+  let ok = match time.check_layout("{year}-{month}") {
+    Ok(_) => true
+    Err(_) => false
+  }
+  expect(ok) == true
+  let bad = match time.check_layout(not_const("{yr}")) {
+    Ok(_) => "ok"
+    Err(e) => e.display()
+  }
+  expect(bad.starts_with("bad layout")) == true
+}
+
+/// A layout the checker cannot see through, so it is checked at run time
+/// (a constant layout is an error at compile time, XO0420).
+fn not_const(s: Str) -> Str { s }
 
 test "from_unix and unix agree with Go" {
   var bad: List[(Str, Str, Str)] = []
