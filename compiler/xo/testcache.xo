@@ -387,6 +387,12 @@ fn run_store(os: Os, ctx: Ctx, key: Str, c: check.Checker, std: Str, wd: Str, bi
       }
     }
   }
+  // the working directory's files first: run_fetch stops at the first
+  // changed file, and an edit changes the program, not std (in path order
+  // std came first wherever it sorts before the program, so an edit's
+  // miss hashed all 195 std files first, about 20 ms, 2026-10-26)
+  let pre = if wd.ends_with("/") { wd } else { "${wd}/" }
+  files = files.filter(fn(p) { p.starts_with(pre) }) + files.filter(fn(p) { !p.starts_with(pre) })
   var b = StrBuilder.new()
   b.write("xo-testrun-v1\n")
   // a build's own outputs are not its inputs: `xo build -o prog .`

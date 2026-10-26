@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The whole-build cache records the program's own files ahead of std's, so an edit's
+  miss stops at the edited file instead of first hashing every std file: an edit
+  rebuild of llvm-fib or conc-mutex 260 ms to 250.
 - `xo check`, `xo vet` and `xo query` over directories holding two modules
   with one module path (copies of a program) check each of them on its own:
   they read only the first module's files under the path, so an error in
