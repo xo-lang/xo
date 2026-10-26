@@ -83,6 +83,45 @@ a day fewer bytes written, and the cap would hold about 30 to 44 minutes of
 stores instead of 22. The part and fn packs, 53% of the stored bytes (the store-log's count), are
 where the shares were highest (part packs 100% identical on equal code).
 
+### The alternative measured: compressing the cache (Xo Lang 2, 2026-10-26)
+
+A 2.2 GB sample of the real cache (copied read only, deleted after: the
+newest and oldest segments of each kind; part 829 MB in 7 segments, fn
+498 MB, fe 242 MB, inl 231 MB, rc 186 MB, obj 401 MB in 501 files), each
+file compressed alone, one core (`zstd -b -T1 -i2`, `lz4 -b`), in a
+measurement window at load 2 to 3:
+
+| area | zstd -1 ratio, MB/s c / d | zstd -3 | zstd -6 | lz4 -1 |
+|---|---|---|---|---|
+| part | 13.5x, 1,480 / 3,138 | 13.2x, 1,289 / 3,024 | 16.8x, 354 / 3,625 | 6.4x, 1,762 / 7,038 |
+| fn | 9.6x, 1,142 / 2,662 | 9.8x, 994 / 2,772 | 11.7x, 304 / 2,818 | 4.6x, 1,236 / 6,727 |
+| inl | 3.4x, 845 / 1,713 | 3.8x, 560 / 1,511 | 4.2x, 187 / 1,540 | 2.3x, 1,144 / 6,933 |
+| rc | 3.4x, 853 / 1,707 | 3.9x, 573 / 1,531 | 4.2x, 189 / 1,567 | 2.3x, 1,176 / 7,082 |
+| fe | 3.2x, 796 / 1,667 | 3.6x, 509 / 1,488 | 3.9x, 174 / 1,562 | 2.2x, 1,097 / 6,576 |
+| obj | 3.9x, 785 / 1,626 | 4.2x, 621 / 1,523 | 4.4x, 200 / 1,529 | 2.5x, 1,069 / 6,094 |
+
+On the last 24 hours' stores by kind (the store-log's part 335, fn 284,
+fe 179, inl 177, rc 93, obj 88 GB, the rest 21 GB taken at 3.5x), scaled
+to the 1,097 GB of the churn table:
+
+| | written a day | saved a day | compress CPU a day | warm llvm-fib build's reads |
+|---|---|---|---|---|
+| zstd -1 | 204 GB | 893 GB (81%) | 1,080 s (18 core minutes) | 13.0 ms |
+| zstd -3 | 187 GB | 910 GB (83%) | 1,440 s | 13.9 ms |
+| zstd -6 | 168 GB | 929 GB (85%) | 4,490 s (75 core minutes) | 13.2 ms |
+| lz4 -1 | 330 GB | 767 GB (70%) | 866 s | 4.2 ms |
+
+The hit path: a warm build of bench/perf/llvm/xo/fib (whole-build reuse
+off, XO_CACHE_STATS=1, xo at origin/main) reads 28.3 MB from the cache
+(4.6 MB of loose entries, 13.4 MB of its pack, 10.3 MB of the shared
+pack); at the mixes' decompress speed that is the time in the last column,
+against a warm build of about 300 ms, and the reads themselves shrink by
+the ratio. Part and fn segments compress so well (13x and 10x) because a
+segment repeats the same functions' code and names; this is the bytes the
+content store would share across ids (49% at best), which compression
+removes within one id's segments as well. The cap would hold about five
+times the history (16 GiB of compressed segments).
+
 ### Recommendation (Xo Lang 2, for the owner)
 
 Build it, starting with the part and fn packs. The fixes of 2026-10-24
@@ -98,6 +137,13 @@ the hit rate of an agent switching between two branches before and after.
 If the owner prefers less risk, keep it deferred and add zstd compression
 of the segments first (additive, no sweep); closing it would leave the
 churn as measured here.
+
+Revised after the compression measurement above (the same day): compress
+first. zstd at level 1 or 3 removes 81 to 83% of the bytes written (about
+900 GB a day) for under half an hour of one core a day and about 14 ms of
+a warm build, with no change to keys, pruning or sharing; the content
+store's 26 to 49% applies to what is left, and is worth re-measuring on
+the compressed cache before it is built.
 
 ## Decision
 
