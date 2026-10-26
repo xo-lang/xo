@@ -447,9 +447,11 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   status (`set -o pipefail`; a failed xobuild behind `| tail` left the old
   xo in place). Start a measurement with `HEAVY_CLASS=measure
   ~/xo-lead/agents/heavy.sh NAME CMD...` (2026-10-26): it waits its turn
-  (one measurement at a time), opens its own quiet window, lets the
-  running slots and gates finish (at most 30 minutes), runs, and closes
-  the window, so no lead go is needed; never start one by hand when the
+  (one measurement at a time), waits out the lead's full tier or main
+  check without a window, opens its own quiet window, lets the running
+  slots and gates finish (at most 30 minutes; past that it exits 75,
+  refused, rather than measure under load: start it again), runs, and
+  closes the window, so no lead go is needed; never start one by hand when the
   load drops (two runs started that way overlapped another agent's
   window).
 - Build both sides of an A/B (`xo build` in a scratch script, `xo bench
