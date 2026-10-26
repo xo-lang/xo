@@ -14,53 +14,91 @@
 /// comment) that names it, in the order first named. Mach-O text, whose
 /// symbols start with `_`.
 pub fn undefined_xo(parts: List[Str]) -> List[(Str, Str)] {
-  var defined: Map[Str, Bool] = {}
-  var weak: Map[Str, Bool] = {}
-  var named: List[(Str, Str)] = []
-  var seen: Map[Str, Bool] = {}
+  var fs: List[UFacts] = []
   for p in parts {
-    let b = p.bytes()
-    let n = b.len()
-    var fname = ""
-    var i = 0
-    while i < n {
-      var j = i
-      while j < n && b[j] != 10 {
-        j += 1
-      }
-      if j > i {
-        if starts_at(b, i, j, "// func ") {
-          fname = p[i + 8..j]
-        } else if starts_at(b, i, j, "_xo_") && b[j - 1] == 58 {
-          defined[p[i..j - 1]] = true
-        } else if b[i] == 9 {
-          if starts_at(b, i, j, "\t.weak_reference ") || starts_at(b, i, j, "\t.weak_definition ") {
-            let k = if starts_at(b, i, j, "\t.weak_reference ") { i + 17 } else { i + 18 }
-            weak[p[k..j].trim()] = true
-          } else if !(starts_at(b, i, j, "\t.globl") || starts_at(b, i, j, "\t.private_extern") || starts_at(b, i, j, "\t.ascii") || starts_at(b, i, j, "\t.asciz") || starts_at(b, i, j, "\t.string")) {
-            // (not a string's bytes: a Str literal may hold `_xo_` text)
-            // the `_xo_` tokens of an instruction or a data directive
-            var k = i + 1
-            while k + 4 <= j {
-              if b[k] == 95 && starts_at(b, k, j, "_xo_") && !ident_byte(b[k - 1]) {
-                var e = k + 4
-                while e < j && ident_byte(b[e]) {
-                  e += 1
-                }
-                let s = p[k..e]
-                if !seen.contains(s) {
-                  seen[s] = true
-                  named.push((s, fname))
-                }
-                k = e
-              } else {
-                k += 1
+    fs.push(undef_scan(p))
+  }
+  undef_combine(fs)
+}
+
+/// What one part defines, declares weak, and names (each `_xo_` symbol
+/// once, in order, with the function naming it first): undefined_xo's
+/// scan of one part, which a build can keep with the part's object.
+pub struct UFacts {
+  pub defined: List[Str] = []
+  pub weak: List[Str] = []
+  pub named: List[(Str, Str)] = []
+}
+
+/// The facts of part p (UFacts).
+pub fn undef_scan(p: Str) -> UFacts {
+  var u = UFacts{}
+  var seen: Map[Str, Bool] = {}
+  let b = p.bytes()
+  let n = b.len()
+  var fname = ""
+  var i = 0
+  while i < n {
+    var j = i
+    while j < n && b[j] != 10 {
+      j += 1
+    }
+    if j > i {
+      if starts_at(b, i, j, "// func ") {
+        fname = p[i + 8..j]
+      } else if starts_at(b, i, j, "_xo_") && b[j - 1] == 58 {
+        u.defined.push(p[i..j - 1])
+      } else if b[i] == 9 {
+        if starts_at(b, i, j, "\t.weak_reference ") || starts_at(b, i, j, "\t.weak_definition ") {
+          let k = if starts_at(b, i, j, "\t.weak_reference ") { i + 17 } else { i + 18 }
+          u.weak.push(p[k..j].trim())
+        } else if !(starts_at(b, i, j, "\t.globl") || starts_at(b, i, j, "\t.private_extern") || starts_at(b, i, j, "\t.ascii") || starts_at(b, i, j, "\t.asciz") || starts_at(b, i, j, "\t.string")) {
+          // (not a string's bytes: a Str literal may hold `_xo_` text)
+          // the `_xo_` tokens of an instruction or a data directive
+          var k = i + 1
+          while k + 4 <= j {
+            if b[k] == 95 && starts_at(b, k, j, "_xo_") && !ident_byte(b[k - 1]) {
+              var e = k + 4
+              while e < j && ident_byte(b[e]) {
+                e += 1
               }
+              let s = p[k..e]
+              if !seen.contains(s) {
+                seen[s] = true
+                u.named.push((s, fname))
+              }
+              k = e
+            } else {
+              k += 1
             }
           }
         }
       }
-      i = j + 1
+    }
+    i = j + 1
+  }
+  u
+}
+
+/// undefined_xo's answer from the parts' facts, in part order (a symbol
+/// first named in an earlier part keeps that part's function).
+pub fn undef_combine(fs: List[UFacts]) -> List[(Str, Str)] {
+  var defined: Map[Str, Bool] = {}
+  var weak: Map[Str, Bool] = {}
+  var named: List[(Str, Str)] = []
+  var seen: Map[Str, Bool] = {}
+  for u in fs {
+    for d in u.defined {
+      defined[d] = true
+    }
+    for w in u.weak {
+      weak[w] = true
+    }
+    for (s, f) in u.named {
+      if !seen.contains(s) {
+        seen[s] = true
+        named.push((s, f))
+      }
     }
   }
   var out: List[(Str, Str)] = []
@@ -76,4 +114,50 @@ pub fn undefined_xo(parts: List[Str]) -> List[(Str, Str)] {
     }
   }
   out
+}
+
+/// u as text for the back-end cache: `d SYM...`, `k SYM...` (weak) and a
+/// line `m<TAB>SYM<TAB>FUNCTION` per named symbol (a function's name can
+/// hold spaces).
+pub fn ufacts_encode(u: UFacts) -> Str {
+  var sb = StrBuilder.new()
+  sb.write("d")
+  for d in u.defined {
+    sb.write(" ")
+    sb.write(d)
+  }
+  sb.write("\nk")
+  for w in u.weak {
+    sb.write(" ")
+    sb.write(w)
+  }
+  sb.write("\n")
+  for (s, f) in u.named {
+    sb.write("m\t${s}\t${f}\n")
+  }
+  sb.freeze()
+}
+
+/// ufacts_encode's text back, or None.
+pub fn ufacts_decode(t: Str) -> UFacts? {
+  var u = UFacts{}
+  for l in t.split("\n") {
+    if l.is_empty() {
+      continue
+    }
+    if l.starts_with("m\t") {
+      let fs = l.split("\t")
+      if fs.len() < 3 {
+        return None
+      }
+      u.named.push((fs[1], fs[2..fs.len()].join("\t")))
+    } else if l == "d" || l.starts_with("d ") {
+      u.defined = l.split(" ")[1..l.split(" ").len()]
+    } else if l == "k" || l.starts_with("k ") {
+      u.weak = l.split(" ")[1..l.split(" ").len()]
+    } else {
+      return None
+    }
+  }
+  Some(u)
 }

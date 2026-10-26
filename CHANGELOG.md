@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- A split darwin build hollows and assembles part by part through the back-end cache:
+  an edit rescans, hollows and assembles only the parts it changed, and the
+  undefined-symbol check combines kept per-part facts (`phase hollow` now includes
+  assembling the changed parts). Changing a reachable function's body: llvm-fib's
+  rebuild about 330 ms to 280, the HTTP server bench's 740 to 590; the binaries are
+  byte for byte a cold build's.
 - The whole-build cache records the program's own files ahead of std's, so an edit's
   miss stops at the edited file instead of first hashing every std file: an edit
   rebuild of llvm-fib or conc-mutex 260 ms to 250.
@@ -27,9 +33,8 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   shares (`example.com/notes` three times in the xo checkout).
   `XO_REFS_SPELL=off` checks every module.
 - An edit rebuild whose every part comes from the back-end cache skips hollowing,
-  the undefined-symbol check and hashing the parts again: one cache entry names the
-  objects the last such build made (`phase tail`). llvm-fib's and conc-mutex's edit
-  rebuilds take 270 ms instead of 320; the binary is byte for byte a cold build's.
+  the undefined-symbol check and assembling (since the entry above, per part):
+  llvm-fib's and conc-mutex's edit rebuilds take 270 ms instead of 320.
 - An edit rebuild whose edit adds no reachable function no longer decodes every
   cached inlining result it does not verify: `inline.verify` about 18 ms to 7.
   With the entry above, llvm-fib's and conc-mutex's edit rebuilds take 260 ms

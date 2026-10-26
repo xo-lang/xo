@@ -45,14 +45,14 @@ pub const HOLLOW_UD2 = "ud2"
 
 /// A function of the assembly: its part and byte range, from its label
 /// line to the start of the next function or section switch.
-struct HChunk {
-  part: Int
-  start: Int
-  end: Int
-  name: Str
+pub struct HChunk {
+  pub part: Int
+  pub start: Int
+  pub end: Int
+  pub name: Str
   /// a local data object (a fault location's string, a Str literal's
   /// object) outside the text: dropped whole when nothing reaches it
-  data: Bool = false
+  pub data: Bool = false
 }
 
 /// The parts with the functions nothing reaches emptied, and a line of
@@ -72,19 +72,58 @@ pub fn hollow_unreached_elf(parts: List[Str]) -> (List[Str], Str) { hollow_text(
 pub fn hollow_unreached_amd64(parts: List[Str], elf: Bool) -> (List[Str], Str) { hollow_text(parts, elf, HOLLOW_UD2) }
 
 fn hollow_text(parts: List[Str], elf: Bool, trap: Str) -> (List[Str], Str) {
-  let loc = if elf { ".Lxo_" } else { "Lxo_" }
-  let gpre = if elf { "xo_" } else { "_" }
-  // the Mach-O symbol prefix: the markers are `_xo_utext_*` there
-  let mpre = if elf { "" } else { "_" }
-  var chunks: List[HChunk] = []
-  var by_name: Map[Str, Int] = {}
-  // the symbols a chunk names, by chunk; and those outside any chunk
-  var refs: List[List[Str]] = []
-  var roots: Map[Str, Bool] = if elf { {"main": true, "_start": true} } else { {"_main": true} }
-  // ELF: the global labels without the xo_ prefix (the nolibc runtime's
-  // memcpy, free, _start ...), found first, so the scan sees their calls
-  // (a first cut missed them: memcpy's body went with the function above
-  // it, and every copy trapped, 2026-10-25)
+  let (extra, first) = hollow_extra(parts, elf)
+  var facts: List[HFacts] = []
+  for p in parts {
+    facts.push(hollow_scan(p, elf, extra, first))
+  }
+  let live = hollow_live(facts, elf)
+  var dead = 0
+  var all = 0
+  for l in live {
+    all += l.len()
+    for x in l {
+      if !x {
+        dead += 1
+      }
+    }
+  }
+  if dead == 0 {
+    return (parts, "")
+  }
+  var out: List[Str] = []
+  var dead_data = 0
+  var dropped = 0
+  for (pi, p) in parts.indexed() {
+    let (t, dd, dr) = hollow_rewrite(p, facts[pi], live[pi], trap)
+    out.push(t)
+    dead_data += dd
+    dropped += dr
+  }
+  (out, "hollowed ${dead - dead_data} functions and dropped ${dead_data} data objects of ${all}, ${dropped} bytes of assembly")
+}
+
+/// What one part's scan found (hollow_scan): its functions and data
+/// objects (by byte range in the part), the symbols each names, the
+/// symbols named outside any (roots), every name of a chunk in the order
+/// seen (the first part to name one keeps it), and the local labels its
+/// __DWARF names. A part's facts depend on its text alone (and, for ELF,
+/// the extra labels of every part), so a build can keep them by the
+/// text's hash (2026-10-26: an edit rescans only its changed parts).
+pub struct HFacts {
+  pub chunks: List[HChunk] = []
+  pub refs: List[List[Str]] = []
+  pub roots: List[Str] = []
+  pub names: List[(Str, Int)] = []
+  pub dwarf: List[Str] = []
+}
+
+/// ELF: the global labels without the xo_ prefix (the nolibc runtime's
+/// memcpy, free, _start ...), found first in every part, so the scan sees
+/// their calls (a first cut missed them: memcpy's body went with the
+/// function above it, and every copy trapped, 2026-10-25); and the bytes
+/// they start with. Empty for Mach-O.
+pub fn hollow_extra(parts: List[Str], elf: Bool) -> (Map[Str, Bool], List[Bool]) {
   var extra: Map[Str, Bool] = {}
   var first: List[Bool] = []
   for _ in 0..256 {
@@ -116,131 +155,177 @@ fn hollow_text(parts: List[Str], elf: Bool, trap: Str) -> (List[Str], Str) {
       }
     }
   }
-  // the local labels __DWARF names: a data object among them stays (its
-  // label must still assemble)
-  var dwarf_names: Map[Str, Bool] = {}
-  for (pi, p) in parts.indexed() {
-    let b = p.bytes()
-    let n = b.len()
-    var in_text = false
-    var dwarf = false
-    var cur = -1
-    // whether the current chunk has a line past its labels and symbol
-    // directives: a global label before any is an alias of the same body
-    // (a drop helper's `_xo_f_drop_...:` then `_xo_h...:`)
-    var body = false
-    var i = 0
-    while i < n {
-      var j = i
-      while j < n && b[j] != 10 {
-        j += 1
-      }
-      // the line b[i..j]
-      if j > i {
-        let c0 = b[i]
-        // a label `_name:` (ELF: `xo_name:` or `main:`) of a symbol
-        let glabel = b[j - 1] == 58 && (if elf { starts_at(b, i, j, "xo_") || (elf_sym_start(c0) && extra.contains(p[i..j - 1])) } else { c0 == 95 })
-        if c0 == 9 && (starts_at(b, i, j, "\t.section ") || (elf && (j - i == 6 && starts_at(b, i, j, "\t.text") || j - i == 6 && starts_at(b, i, j, "\t.data") || j - i == 5 && starts_at(b, i, j, "\t.bss")))) {
-          if cur >= 0 {
-            chunks[cur].end = i
-            cur = -1
-          }
-          in_text = if elf { j - i == 6 && starts_at(b, i, j, "\t.text") || starts_at(b, i, j, "\t.section .text") } else { starts_at(b, i, j, "\t.section __TEXT,__text") }
-          dwarf = if elf { starts_at(b, i, j, "\t.section .debug") } else { starts_at(b, i, j, "\t.section __DWARF") }
-        } else if !in_text && !dwarf && b[j - 1] == 58 && (glabel || starts_at(b, i, j, loc)) {
-          // a label in data: a local one starts a data object (to the next
-          // label or section), a global one ends it (its data are roots)
-          if cur >= 0 {
-            chunks[cur].end = i
-            cur = -1
-          }
-          if !glabel {
-            let name = p[i..j - 1]
-            cur = chunks.len()
-            chunks.push(HChunk{part: pi, start: i, end: n, name: name, data: true})
-            refs.push([])
-            if !by_name.contains(name) {
-              by_name[name] = cur
-            }
-          }
-        } else if in_text && glabel {
-          // a global label `_name:`
+  (extra, first)
+}
+
+/// The facts of part p (HFacts): its chunks' parts are 0.
+pub fn hollow_scan(p: Str, elf: Bool, extra: Map[Str, Bool], first: List[Bool]) -> HFacts {
+  let loc = if elf { ".Lxo_" } else { "Lxo_" }
+  let gpre = if elf { "xo_" } else { "_" }
+  // the Mach-O symbol prefix: the markers are `_xo_utext_*` there
+  let mpre = if elf { "" } else { "_" }
+  var f = HFacts{}
+  var named: Map[Str, Bool] = {}
+  let b = p.bytes()
+  let n = b.len()
+  var in_text = false
+  var dwarf = false
+  var cur = -1
+  // whether the current chunk has a line past its labels and symbol
+  // directives: a global label before any is an alias of the same body
+  // (a drop helper's `_xo_f_drop_...:` then `_xo_h...:`)
+  var body = false
+  var i = 0
+  while i < n {
+    var j = i
+    while j < n && b[j] != 10 {
+      j += 1
+    }
+    // the line b[i..j]
+    if j > i {
+      let c0 = b[i]
+      // a label `_name:` (ELF: `xo_name:` or `main:`) of a symbol
+      let glabel = b[j - 1] == 58 && (if elf { starts_at(b, i, j, "xo_") || (elf_sym_start(c0) && extra.contains(p[i..j - 1])) } else { c0 == 95 })
+      if c0 == 9 && (starts_at(b, i, j, "\t.section ") || (elf && (j - i == 6 && starts_at(b, i, j, "\t.text") || j - i == 6 && starts_at(b, i, j, "\t.data") || j - i == 5 && starts_at(b, i, j, "\t.bss")))) {
+        if cur >= 0 {
+          f.chunks[cur].end = i
+          cur = -1
+        }
+        in_text = if elf { j - i == 6 && starts_at(b, i, j, "\t.text") || starts_at(b, i, j, "\t.section .text") } else { starts_at(b, i, j, "\t.section __TEXT,__text") }
+        dwarf = if elf { starts_at(b, i, j, "\t.section .debug") } else { starts_at(b, i, j, "\t.section __DWARF") }
+      } else if !in_text && !dwarf && b[j - 1] == 58 && (glabel || starts_at(b, i, j, loc)) {
+        // a label in data: a local one starts a data object (to the next
+        // label or section), a global one ends it (its data are roots)
+        if cur >= 0 {
+          f.chunks[cur].end = i
+          cur = -1
+        }
+        if !glabel {
           let name = p[i..j - 1]
-          if cur < 0 || body {
+          cur = f.chunks.len()
+          f.chunks.push(HChunk{part: 0, start: i, end: n, name: name, data: true})
+          f.refs.push([])
+          if !named.contains(name) {
+            named[name] = true
+            f.names.push((name, cur))
+          }
+        }
+      } else if in_text && glabel {
+        // a global label `_name:`
+        let name = p[i..j - 1]
+        if cur < 0 || body {
+          if cur >= 0 {
+            f.chunks[cur].end = i
+          }
+          cur = f.chunks.len()
+          f.chunks.push(HChunk{part: 0, start: i, end: n, name: name})
+          f.refs.push([])
+          body = false
+        }
+        if !named.contains(name) {
+          named[name] = true
+          f.names.push((name, cur))
+        }
+        if name.starts_with("${mpre}xo_utext_") || name.starts_with("${mpre}xo_utend_") {
+          f.roots.push(name)
+        }
+      } else if in_text && cur >= 0 && starts_at(b, i, j, loc) && b[j - 1] == 58 {
+        // a shared local label in the chunk (Lxo_drop1: other functions
+        // branch to it): a name of the chunk
+        let name = p[i..j - 1]
+        if !named.contains(name) {
+          named[name] = true
+          f.names.push((name, cur))
+        }
+      } else if c0 == 9 && (starts_at(b, i, j, "\t.globl") || starts_at(b, i, j, "\t.private_extern") || starts_at(b, i, j, "\t.p2align") || starts_at(b, i, j, "\t.hidden") || starts_at(b, i, j, "\t.type") || starts_at(b, i, j, "\t.size")) {
+        // a symbol's declaration names it without using it (the next
+        // function's .globl sits in the range of the one above)
+      } else if c0 == 9 && dwarf {
+        var k = i + 1
+        while k < j {
+          if starts_at(b, k, j, loc) && !ident_byte(b[k - 1]) {
+            var e = k + 4
+            while e < j && ident_byte(b[e]) {
+              e += 1
+            }
+            f.dwarf.push(p[k..e])
+            k = e
+          } else {
+            k += 1
+          }
+        }
+      } else if c0 == 9 && !dwarf {
+        if cur >= 0 {
+          body = true
+        }
+        // an instruction or directive: the symbols it names (global ones
+        // and the shared local Lxo_ ones)
+        var k = i + 1
+        while k < j {
+          if (starts_at(b, k, j, gpre) || starts_at(b, k, j, loc) || (elf && first[Int(b[k])] && elf_extra_at(b, k, j, p, extra))) && !ident_byte(b[k - 1]) {
+            var e = k + 1
+            while e < j && ident_byte(b[e]) {
+              e += 1
+            }
+            let s = p[k..e]
             if cur >= 0 {
-              chunks[cur].end = i
-            }
-            cur = chunks.len()
-            chunks.push(HChunk{part: pi, start: i, end: n, name: name})
-            refs.push([])
-            body = false
-          }
-          if !by_name.contains(name) {
-            by_name[name] = cur
-          }
-          if name.starts_with("${mpre}xo_utext_") || name.starts_with("${mpre}xo_utend_") {
-            roots[name] = true
-          }
-        } else if in_text && cur >= 0 && starts_at(b, i, j, loc) && b[j - 1] == 58 {
-          // a shared local label in the chunk (Lxo_drop1: other functions
-          // branch to it): a name of the chunk
-          let name = p[i..j - 1]
-          if !by_name.contains(name) {
-            by_name[name] = cur
-          }
-        } else if c0 == 9 && (starts_at(b, i, j, "\t.globl") || starts_at(b, i, j, "\t.private_extern") || starts_at(b, i, j, "\t.p2align") || starts_at(b, i, j, "\t.hidden") || starts_at(b, i, j, "\t.type") || starts_at(b, i, j, "\t.size")) {
-          // a symbol's declaration names it without using it (the next
-          // function's .globl sits in the range of the one above)
-        } else if c0 == 9 && dwarf {
-          var k = i + 1
-          while k < j {
-            if starts_at(b, k, j, loc) && !ident_byte(b[k - 1]) {
-              var e = k + 4
-              while e < j && ident_byte(b[e]) {
-                e += 1
-              }
-              dwarf_names[p[k..e]] = true
-              k = e
+              f.refs[cur].push(s)
             } else {
-              k += 1
+              f.roots.push(s)
             }
-          }
-        } else if c0 == 9 && !dwarf {
-          if cur >= 0 {
-            body = true
-          }
-          // an instruction or directive: the symbols it names (global ones
-          // and the shared local Lxo_ ones)
-          var k = i + 1
-          while k < j {
-            if (starts_at(b, k, j, gpre) || starts_at(b, k, j, loc) || (elf && first[Int(b[k])] && elf_extra_at(b, k, j, p, extra))) && !ident_byte(b[k - 1]) {
-              var e = k + 1
-              while e < j && ident_byte(b[e]) {
-                e += 1
-              }
-              let s = p[k..e]
-              if cur >= 0 {
-                refs[cur].push(s)
-              } else {
-                roots[s] = true
-              }
-              k = e
-            } else {
-              k += 1
-            }
+            k = e
+          } else {
+            k += 1
           }
         }
       }
-      i = j + 1
     }
-    if cur >= 0 {
-      chunks[cur].end = n
+    i = j + 1
+  }
+  if cur >= 0 {
+    f.chunks[cur].end = n
+  }
+  f
+}
+
+/// Whether each chunk of each part is reached from the roots (main, the
+/// symbols named outside a chunk, the unsafe-range markers), a data
+/// object __DWARF names kept too; a name the first part that names it
+/// keeps.
+pub fn hollow_live(facts: List[HFacts], elf: Bool) -> List[List[Bool]] {
+  // chunk ids across the parts: base[pi] + local index
+  var base: List[Int] = []
+  var total = 0
+  for f in facts {
+    base.push(total)
+    total += f.chunks.len()
+  }
+  var by_name: Map[Str, Int] = {}
+  var roots: Map[Str, Bool] = if elf { {"main": true, "_start": true} } else { {"_main": true} }
+  var dwarf_names: Map[Str, Bool] = {}
+  for (pi, f) in facts.indexed() {
+    for (name, ci) in f.names {
+      if !by_name.contains(name) {
+        by_name[name] = base[pi] + ci
+      }
+    }
+    for r in f.roots {
+      roots[r] = true
+    }
+    for d in f.dwarf {
+      dwarf_names[d] = true
     }
   }
-  // reach from the roots
   var live: List[Bool] = []
-  for _ in 0..chunks.len() {
+  for _ in 0..total {
     live.push(false)
+  }
+  // a chunk id's part and local index
+  var owner: List[(Int, Int)] = []
+  for (pi, f) in facts.indexed() {
+    for ci in 0..f.chunks.len() {
+      owner.push((pi, ci))
+    }
   }
   var work: List[Int] = []
   for (s, _) in roots {
@@ -252,7 +337,8 @@ fn hollow_text(parts: List[Str], elf: Bool, trap: Str) -> (List[Str], Str) {
     }
   }
   while let Some(ci) = work.pop() {
-    for s in refs[ci] {
+    let (pi, li) = owner[ci]
+    for s in facts[pi].refs[li] {
       if let Some(cj) = by_name.get(s) {
         if !live[cj] {
           live[cj] = true
@@ -261,86 +347,100 @@ fn hollow_text(parts: List[Str], elf: Bool, trap: Str) -> (List[Str], Str) {
       }
     }
   }
-  for (ci, ch) in chunks.indexed() {
-    if ch.data && !live[ci] && dwarf_names.contains(ch.name) {
-      live[ci] = true
+  var out: List[List[Bool]] = []
+  for (pi, f) in facts.indexed() {
+    var l: List[Bool] = []
+    for (ci, ch) in f.chunks.indexed() {
+      let x = live[base[pi] + ci]
+      l.push(x || (ch.data && dwarf_names.contains(ch.name)))
+    }
+    out.push(l)
+  }
+  out
+}
+
+/// The names of part f's chunks that live leaves dead, in order: with the
+/// part's text they fix its hollowed text.
+pub fn hollow_dead_names(f: HFacts, live: List[Bool]) -> List[Str] {
+  var out: List[Str] = []
+  for (ci, ch) in f.chunks.indexed() {
+    if !live[ci] {
+      out.push(ch.name)
     }
   }
-  var dead = 0
+  out
+}
+
+/// Part p with its dead chunks' lines but their labels and layout
+/// directives dropped (a function's body one trap); the dead data objects
+/// and the bytes dropped.
+pub fn hollow_rewrite(p: Str, f: HFacts, live: List[Bool], trap: Str) -> (Str, Int, Int) {
+  var any = false
   for l in live {
     if !l {
-      dead += 1
+      any = true
     }
   }
-  if dead == 0 {
-    return (parts, "")
+  if !any {
+    return (p, 0, 0)
   }
+  let b = p.bytes()
+  var sb = StrBuilder.new()
+  var at = 0
   var dead_data = 0
-  // the parts again, a dead chunk's lines but its labels and layout
-  // directives dropped
-  var out: List[Str] = []
-  var ci = 0
   var dropped = 0
-  for (pi, p) in parts.indexed() {
-    let b = p.bytes()
-    var sb = StrBuilder.new()
-    var at = 0
-    while ci < chunks.len() && chunks[ci].part == pi {
-      let ch = chunks[ci]
-      if !live[ci] && ch.data {
-        sb.write(p[at..ch.start])
-        // nothing names it: its label and data go, its layout directives
-        // stay (the next object's alignment can sit in its range)
-        var i = ch.start
-        while i < ch.end {
-          var j = i
-          while j < ch.end && b[j] != 10 {
-            j += 1
-          }
-          if keep_line(b, i, j) {
-            sb.write(p[i..(if j < ch.end { j + 1 } else { j })])
-          } else {
-            dropped += j - i
-          }
-          i = j + 1
+  for (ci, ch) in f.chunks.indexed() {
+    if !live[ci] && ch.data {
+      sb.write(p[at..ch.start])
+      // nothing names it: its label and data go, its layout directives
+      // stay (the next object's alignment can sit in its range)
+      var i = ch.start
+      while i < ch.end {
+        var j = i
+        while j < ch.end && b[j] != 10 {
+          j += 1
         }
-        dead_data += 1
-        at = ch.end
-      } else if !live[ci] {
-        sb.write(p[at..ch.start])
-        // one trap as the body: a path the scan missed (an address made at
-        // run time, a name looked up by prof.symbols, a table to come)
-        // faults at once instead of running into the next function
-        var brk = false
-        var i = ch.start
-        while i < ch.end {
-          var j = i
-          while j < ch.end && b[j] != 10 {
-            j += 1
-          }
-          let keep = j == i || b[i] != 9 || keep_line(b, i, j)
-          if keep {
-            sb.write(p[i..(if j < ch.end { j + 1 } else { j })])
-          } else {
-            if !brk {
-              sb.write("\t${trap}\n")
-              brk = true
-            }
-            dropped += j - i
-          }
-          i = j + 1
+        if keep_line(b, i, j) {
+          sb.write(p[i..(if j < ch.end { j + 1 } else { j })])
+        } else {
+          dropped += j - i
         }
-        if !brk {
-          sb.write("\t${trap}\n")
-        }
-        at = ch.end
+        i = j + 1
       }
-      ci += 1
+      dead_data += 1
+      at = ch.end
+    } else if !live[ci] {
+      sb.write(p[at..ch.start])
+      // one trap as the body: a path the scan missed (an address made at
+      // run time, a name looked up by prof.symbols, a table to come)
+      // faults at once instead of running into the next function
+      var brk = false
+      var i = ch.start
+      while i < ch.end {
+        var j = i
+        while j < ch.end && b[j] != 10 {
+          j += 1
+        }
+        let keep = j == i || b[i] != 9 || keep_line(b, i, j)
+        if keep {
+          sb.write(p[i..(if j < ch.end { j + 1 } else { j })])
+        } else {
+          if !brk {
+            sb.write("\t${trap}\n")
+            brk = true
+          }
+          dropped += j - i
+        }
+        i = j + 1
+      }
+      if !brk {
+        sb.write("\t${trap}\n")
+      }
+      at = ch.end
     }
-    sb.write(p[at..p.len()])
-    out.push(sb.freeze())
   }
-  (out, "hollowed ${dead - dead_data} functions and dropped ${dead_data} data objects of ${chunks.len()}, ${dropped} bytes of assembly")
+  sb.write(p[at..p.len()])
+  (sb.freeze(), dead_data, dropped)
 }
 
 /// Whether c can start an ELF symbol of the program's own labels (not a
@@ -384,4 +484,80 @@ fn starts_at(b: Bytes, i: Int, j: Int, t: Str) -> Bool {
 /// Whether byte c can be in an assembly symbol name.
 fn ident_byte(c: UInt8) -> Bool {
   (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57) || c == 95 || c == 36 || c == 46
+}
+
+/// f as text for the back-end cache: a line per chunk (`c START END DATA
+/// NAME REF...`), the roots (`o SYM...`), the names (`n NAME CHUNK`) and
+/// the DWARF names (`w NAME...`), fields split by spaces (symbols hold
+/// none).
+pub fn hfacts_encode(f: HFacts) -> Str {
+  var sb = StrBuilder.new()
+  for (ci, ch) in f.chunks.indexed() {
+    sb.write("c ${ch.start} ${ch.end} ${if ch.data { 1 } else { 0 }} ${ch.name}")
+    for r in f.refs[ci] {
+      sb.write(" ")
+      sb.write(r)
+    }
+    sb.write("\n")
+  }
+  sb.write("o")
+  for r in f.roots {
+    sb.write(" ")
+    sb.write(r)
+  }
+  sb.write("\n")
+  for (name, ci) in f.names {
+    sb.write("n ${name} ${ci}\n")
+  }
+  sb.write("w")
+  for d in f.dwarf {
+    sb.write(" ")
+    sb.write(d)
+  }
+  sb.write("\n")
+  sb.freeze()
+}
+
+/// hfacts_encode's text back, or None when it is not one.
+pub fn hfacts_decode(t: Str) -> HFacts? {
+  var f = HFacts{}
+  for l in t.split("\n") {
+    if l.is_empty() {
+      continue
+    }
+    let fs = l.split(" ")
+    match fs[0] {
+      "c" => {
+        if fs.len() < 5 {
+          return None
+        }
+        let st = Int.parse(fs[1]) ?? -1
+        let en = Int.parse(fs[2]) ?? -1
+        if st < 0 || en < st {
+          return None
+        }
+        f.chunks.push(HChunk{part: 0, start: st, end: en, name: fs[4], data: fs[3] == "1"})
+        f.refs.push(fs[5..fs.len()])
+      }
+      "o" => f.roots = fs[1..fs.len()]
+      "n" => {
+        if fs.len() != 3 {
+          return None
+        }
+        let ci = Int.parse(fs[2]) ?? -1
+        if ci < 0 {
+          return None
+        }
+        f.names.push((fs[1], ci))
+      }
+      "w" => f.dwarf = fs[1..fs.len()]
+      _ => return None
+    }
+  }
+  for (_, ci) in f.names {
+    if ci >= f.chunks.len() {
+      return None
+    }
+  }
+  Some(f)
 }

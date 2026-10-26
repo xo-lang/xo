@@ -1487,17 +1487,15 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // a program whose link has no `use c` objects (they could call an
     // export by name), not `xo asm`; XO_PASSES=-hollow keeps them
     let hollow_now = (tgoos is "darwin" | "linux") && (march == "arm64" || march == "amd64") && o.cmd != "asm" && !c.mods.any(fn(m) { !m.c_prefix.is_empty() }) && hollow_on(os, march, tgoos)
-    // an edit whose every part came from the cache: its objects by the
-    // tail entry (asmparts.xo), no hollow and no undefined-symbol scan;
-    // hollowed later only if a tool reads the texts (hollow_late)
-    let tkey = if !fdir.is_empty() && (tgoos is "darwin" | "linux") && o.cmd != "asm" && o.asm_path.is_empty() && p.parts.len() > 1 && !fc.part_keys.is_empty() && p.parts_reused == fc.part_keys.len() { tail_key(os, p.parts, march, tgoos, hollow_now, jobs) } else { "" }
-    let tail = tail_objects(os, ctx, tkey, p.parts.len())
-    if !tkey.is_empty() {
-      t = lap(os, phases, "tail", t)
-    }
+    // a split darwin build through the back-end cache, part by part
+    // (asmparts.xo incr_hollow): only the parts an edit changed are
+    // scanned, hollowed and assembled; their texts hollowed later only if
+    // a tool reads them (hollow_late)
+    let inc = if !fdir.is_empty() && tgoos == "darwin" && o.cmd != "asm" && o.asm_path.is_empty() && p.parts.len() > 1 && backend_cache_mode(os) != "verify" { incr_hollow(os, ctx, p.parts, march, hollow_now, jobs) } else { None }
     var hollow_late = false
-    if hollow_now && !tail.is_empty() {
-      hollow_late = true
+    if inc.is_some() {
+      hollow_late = hollow_now
+      t = lap(os, phases, "hollow", t)
     } else if hollow_now {
       if p.parts.len() > 1 {
         p.parts = hollow_parts(p.parts, march, tgoos == "linux")
@@ -1509,8 +1507,11 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // a symbol of the program that nothing defines (arm64 undef.xo): an
     // rt.* intrinsic no backend lowers, called directly, would stop the
     // link with no hint of the call
-    if tgoos == "darwin" && o.cmd != "asm" && tail.is_empty() {
-      let und = arm64.undefined_xo(if p.parts.len() > 1 { p.parts } else { [p.asm] })
+    if tgoos == "darwin" && o.cmd != "asm" {
+      let und = match inc {
+        Some(r) => r.undef
+        None => arm64.undefined_xo(if p.parts.len() > 1 { p.parts } else { [p.asm] })
+      }
       if !und.is_empty() {
         let (sym, at) = und[0]
         let rt = if sym.starts_with("_xo_x_") { "" } else { " (the runtime call rt.${sym.trim_prefix("_xo_")}: no backend lowers it, so call it through its std wrapper)" }
@@ -1563,8 +1564,10 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // cc (or clang, windows) reads the whole file when there are no parts
     let cc_reads = if win { o.assembler == "cc" } else { !macho_as }
     if hollow_late && (keep_asm || asm_only || !macho_as) {
-      // a tail hit whose texts a tool reads after all
-      p.parts = hollow_parts(p.parts, march, tgoos == "linux")
+      // texts a tool reads after all
+      if let Some(r) = inc {
+        p.parts = incr_texts(p.parts, r, march)
+      }
       t = lap(os, phases, "hollow", t)
     }
     if keep_asm || asm_only || (cc_reads && p.parts.len() <= 1) {
@@ -1715,14 +1718,15 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       var objs: List[Str] = []
       var assembled: List[Result[Bytes, Str]] = []
       var nasm = 0
-      if tail.is_empty() {
-        let (a, n, okeys) = cached_macho_objects(os, ctx, srcs, tgoos == "linux", march == "amd64", jobs)
-        assembled = a
-        nasm = n
-        tail_put(os, ctx, tkey, okeys)
-      } else {
-        for b in tail {
-          assembled.push(Ok(b))
+      match inc {
+        Some(r) => {
+          assembled = r.objs
+          nasm = r.nasm
+        }
+        None => {
+          let (a, n, _okeys) = cached_macho_objects(os, ctx, srcs, tgoos == "linux", march == "amd64", jobs)
+          assembled = a
+          nasm = n
         }
       }
       for (i, r) in assembled.indexed() {

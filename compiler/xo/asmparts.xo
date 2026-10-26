@@ -3,6 +3,7 @@
 // apart: by compiler/macho on parallel tasks, or by parallel `cc -c`
 // processes, before one link.
 
+use github.com/xo-lang/xo/compiler/arm64
 use github.com/xo-lang/xo/compiler/macho
 use std/crypto
 
@@ -227,62 +228,167 @@ fn cached_macho_objects(os: Os, ctx: Ctx, srcs: List[Str], elf: Bool, amd64: Boo
 }
 
 // ---------------------------------------------------------------------------
-// The tail entry: an edit whose every part came from the cache has the
-// same hollowed texts, the same undefined-symbol verdict and the same
-// objects as the build that stored the parts, so it reads the objects'
-// keys from one entry instead of hollowing every part (28 ms for
-// llvm-fib), scanning them for undefined symbols (21 ms) and hashing
-// their texts for the object keys (2026-10-26: 49 of an edit's 335 ms).
+// Hollowing a split darwin build part by part (2026-10-26): a part's
+// facts (arm64 hollow.xo HFacts: its functions, what each names, its
+// roots) are kept by the hash of its text, the reach runs over every
+// part's facts, and a part's object (and its undefined-symbol facts) by
+// the hash of its text and the names of its functions the reach left
+// dead, which with the text fix the hollowed text. So an edit scans,
+// hollows, hashes and assembles only the parts it changed (or whose dead
+// set it changed), not every part: llvm-fib's edit spent 28 ms in hollow,
+// 21 in the undefined-symbol scan and 7 to 25 assembling.
 
-const TAIL_VERSION = "xo backend v1 tail"
+const HOLLOW_INCR_VERSION = "xo backend v1 hollow incr"
 
-/// The tail key of a build's texts before hollowing, for its target and
-/// whether it hollows; "" without the cache. The texts, not the parts'
-/// keys: the last file (the entry, exports, helpers and data) has no key,
-/// and dropping weak symbols (parallel.xo drop_weak_all) rewrites every
-/// part by the program's exports.
-fn tail_key(os: Os, texts: List[Str], march: Str, tgoos: Str, hollow: Bool, jobs: Int) -> Str {
-  let id = cache_id(os)
-  if id.is_empty() || texts.len() < 2 {
-    return ""
-  }
-  let tk = part_keys("${TAIL_VERSION}\x00${id}\x00${march} ${tgoos} hollow=${hollow}", [], texts, jobs)
-  crypto.sha256(tk.join("\n").bytes()).to_hex()
+/// incr_hollow's result: each part's object (Ok, or the assembler's
+/// error), the undefined symbols (arm64 undef_combine), how many parts
+/// were assembled, and each part's facts and live chunks (to hollow its
+/// text when a tool reads it: incr_texts).
+struct IncrOut {
+  objs: List[Result[Bytes, Str]] = []
+  undef: List[(Str, Str)] = []
+  nasm: Int = 0
+  facts: List[arm64.HFacts] = []
+  live: List[List[Bool]] = []
 }
 
-/// The objects a tail entry names, in order, or [] when the entry or any
-/// object is gone (pruned apart): the build then hollows and assembles.
-fn tail_objects(os: Os, ctx: Ctx, key: Str, n: Int) -> List[Bytes] {
+/// The objects of parts (Mach-O, arm64 or amd64) with the functions
+/// nothing reaches emptied when hollow, through the back-end cache, and
+/// the undefined symbols; None without the cache (the build then hollows
+/// and assembles the whole text).
+fn incr_hollow(os: Os, ctx: Ctx, parts: List[Str], march: Str, hollow: Bool, jobs: Int) -> IncrOut? {
   let dir = backend_cache_dir(os, ctx)
-  // verify mode builds every object again (and checks it against its entry)
-  if key.is_empty() || dir.is_empty() || backend_cache_mode(os) == "verify" {
-    return []
+  let id = cache_id(os)
+  if dir.is_empty() || id.is_empty() || parts.len() < 2 {
+    return None
   }
-  let ks = match cache_get(os, entry_path(dir, "tail", key)) {
-    Some(b) => (b.to_str() ?? "").split("\n")
-    None => return []
+  let amd64 = march == "amd64"
+  let tk = part_keys("${HOLLOW_INCR_VERSION} facts ${id}", [], parts, jobs)
+  // each part's facts, from the cache or scanned (on tasks)
+  var facts: List[arm64.HFacts] = []
+  var miss: List[Int] = []
+  for (i, k) in tk.indexed() {
+    var f = arm64.HFacts{}
+    var hit = false
+    if let Some(b) = cache_get(os, entry_path(dir, "hfacts", k)) {
+      if let Some(d) = arm64.hfacts_decode(b.to_str() ?? "") {
+        f = d
+        hit = true
+      }
+    }
+    if !hit {
+      miss.push(i)
+    }
+    facts.push(f)
   }
-  if ks.len() != n {
-    return []
-  }
-  var out: List[Bytes] = []
-  for k in ks {
-    match cache_get(os, entry_path(dir, "obj", k)) {
-      Some(b) => out.push(b)
-      None => return []
+  if !miss.is_empty() {
+    let (extra, first) = arm64.hollow_extra(parts, false)
+    let next = Atomic[Int].new(0)
+    let n = miss.len()
+    let done = scope sc {
+      var ts = []
+      for _ in 0..jobs.min(n).max(1) {
+        ts.push(sc.spawn(fn() -> List[(Int, arm64.HFacts)] {
+          var mine: List[(Int, arm64.HFacts)] = []
+          while true {
+            let j = next.add(1) - 1
+            if j >= n {
+              break
+            }
+            let i = miss[j]
+            mine.push((i, arm64.hollow_scan(parts[i], false, extra, first)))
+          }
+          mine
+        }))
+      }
+      var all: List[(Int, arm64.HFacts)] = []
+      for t in ts {
+        all = all + t.await
+      }
+      all
+    }
+    for (i, f) in done {
+      facts[i] = f
+      cache_put(os, entry_path(dir, "hfacts", tk[i]), arm64.hfacts_encode(f).bytes())
     }
   }
-  out
+  var live: List[List[Bool]] = []
+  if hollow {
+    live = arm64.hollow_live(facts, false)
+  } else {
+    for f in facts {
+      var l: List[Bool] = []
+      for _ in 0..f.chunks.len() {
+        l.push(true)
+      }
+      live.push(l)
+    }
+  }
+  let trap = if amd64 { arm64.HOLLOW_UD2 } else { "brk #${arm64.HOLLOW_BRK}" }
+  // each part's object and undefined-symbol facts, by its text and dead set
+  var out = IncrOut{facts: facts, live: live}
+  var okeys: List[Str] = []
+  var ufs: List[arm64.UFacts] = []
+  var amiss: List[Int] = []
+  for (i, k) in tk.indexed() {
+    let dead = arm64.hollow_dead_names(facts[i], live[i])
+    let ok = crypto.sha256("${HOLLOW_INCR_VERSION} obj ${id} amd64=${amd64} hollow=${hollow}\x00${k}\x00${dead.join("\n")}".bytes()).to_hex()
+    okeys.push(ok)
+    var u = arm64.UFacts{}
+    var got = false
+    if let Some(ub) = cache_get(os, entry_path(dir, "hufacts", ok)) {
+      if let Some(d) = arm64.ufacts_decode(ub.to_str() ?? "") {
+        if let Some(ob) = cache_get(os, entry_path(dir, "hobj", ok)) {
+          u = d
+          out.objs.push(Ok(ob))
+          got = true
+        }
+      }
+    }
+    if !got {
+      out.objs.push(Err("not assembled"))
+      amiss.push(i)
+    }
+    ufs.push(u)
+  }
+  if !amiss.is_empty() {
+    var texts: List[Str] = []
+    for i in amiss {
+      let (t, _, _) = arm64.hollow_rewrite(parts[i], facts[i], live[i], trap)
+      texts.push(t)
+    }
+    var stored = 0
+    for (j, r) in macho_objects(texts, false, amd64, jobs).indexed() {
+      let i = amiss[j]
+      out.objs[i] = r
+      let u = arm64.undef_scan(texts[j])
+      ufs[i] = u
+      match r {
+        Ok(b) => {
+          cache_put(os, entry_path(dir, "hobj", okeys[i]), b)
+          cache_put(os, entry_path(dir, "hufacts", okeys[i]), arm64.ufacts_encode(u).bytes())
+          stored += b.len()
+        }
+        Err(_) => {}
+      }
+    }
+    prune_backend_cache(os, "hobj", dir, stored)
+  }
+  out.nasm = amiss.len()
+  out.undef = arm64.undef_combine(ufs)
+  Some(out)
 }
 
-/// Records the objects' keys of a build whose tail key is key, after its
-/// undefined-symbol check passed.
-fn tail_put(os: Os, ctx: Ctx, key: Str, okeys: List[Str]) {
-  let dir = backend_cache_dir(os, ctx)
-  if key.is_empty() || dir.is_empty() || okeys.is_empty() {
-    return
+/// The hollowed texts of an incr_hollow build, for a tool that reads them
+/// (--ld=cc, XO_KEEP_ASM=1).
+fn incr_texts(parts: List[Str], inc: IncrOut, march: Str) -> List[Str] {
+  let trap = if march == "amd64" { arm64.HOLLOW_UD2 } else { "brk #${arm64.HOLLOW_BRK}" }
+  var out: List[Str] = []
+  for (i, p) in parts.indexed() {
+    let (t, _, _) = arm64.hollow_rewrite(p, inc.facts[i], inc.live[i], trap)
+    out.push(t)
   }
-  cache_put(os, entry_path(dir, "tail", key), okeys.join("\n").bytes())
+  out
 }
 
 /// The flags of a `cc -c` of assembly: the link's flags without the
