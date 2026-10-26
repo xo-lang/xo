@@ -504,6 +504,16 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 - A measurement needing a quiet machine runs with HEAVY_CLASS=measure
   (above); inside a window the lead opened by hand, it waits with
   `~/xo-lead/agents/quiet.sh wait [LOAD]`.
+- Gate before measuring a runtime or allocator change (lead, 2026-10-26:
+  a threshold allocator was measured twice and its self-build footprint
+  taken before its fixed point from the seed showed a race that crashed
+  s1; every number was redone): the fixed point (from the seed when the
+  change is in std/native or llrt) and the change's tests pass on the
+  exact build you measure, then the `--ab`.
+- An arm64 or x86 isel or emitter change runs internal/arm64
+  `TestGoldenAsm` in its gate (lead, 2026-10-26: a compare encoding
+  change reached main with four stale assembly goldens; `-update`, review
+  the diff, commit the goldens with the change).
 - Which tool answers what (owner, 2026-10-22): `xo bench --ab` decides
   "is it faster" (real time, interleaved, with an interval; threads,
   waits and I/O included); callgrind (instruction counts, deterministic)
