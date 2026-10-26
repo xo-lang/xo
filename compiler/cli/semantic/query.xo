@@ -22,17 +22,31 @@ pub fn load_session(os: Os, dirs0: List[Str], exact: Bool, overlay: Map[Str, Byt
 /// too, imported or not (preloads_for), so a lookup of `tls.client` or
 /// `pool.park_wait` finds them.
 pub fn load_session_for(os: Os, dirs0: List[Str], exact: Bool, overlay: Map[Str, Bytes], names: List[Str], wide: Bool) -> Session ! Str uses env, fs, proc {
-  load_session_pc(os, dirs0, exact, overlay, names, wide, {})
+  load_session_pc(os, dirs0, exact, overlay, names, wide, {}, Bodies.All)
+}
+
+/// Which function bodies a query's check parses and checks: every one,
+/// none (a lookup of declarations: def, api, imports, deps), or those
+/// that spell one of the words (callers: the names' last segments).
+pub enum Bodies {
+  All
+  Decls
+  Spelling(words: List[Str])
 }
 
 /// load_session_for reusing the std parses of an earlier check (pc, its
 /// Checker.parse_cache): `xo edit`'s check of the edited program
 /// (decision 0289).
-pub fn load_session_pc(os: Os, dirs0: List[Str], exact: Bool, overlay: Map[Str, Bytes], names: List[Str], wide: Bool, pc: Map[Str, check.ParseEntry]) -> Session ! Str uses env, fs, proc {
+pub fn load_session_pc(os: Os, dirs0: List[Str], exact: Bool, overlay: Map[Str, Bytes], names: List[Str], wide: Bool, pc: Map[Str, check.ParseEntry], bodies: Bodies) -> Session ! Str uses env, fs, proc {
   let wd = wd_of(os)
   let std = std_dir_of(os)
   var c = check.new_checker(os.fs, std)
   c.parse_cache = pc
+  match bodies {
+    All => {}
+    Decls => c.decls_only = true
+    Spelling(words: w) => c.body_words = w
+  }
   for n in names {
     for p in if wide { preloads_wide(os, std, n) } else { preloads_for(os, std, n) } {
       if !c.preload.contains(p) {
@@ -1128,7 +1142,23 @@ fn imports_json(r: ImportsResult) -> JVal {
 fn semantic_query(os: Os, kind: Str, dirs: List[Str], rest: List[Str], file: Str, line: Int, col: Int, as_json: Bool) -> Int uses env, fs, proc, stdio {
   // a name may be a std or runtime module's the program does not import
   let names = if kind is "def" | "callers" | "effects" { rest } else { [] }
-  let s = match load_session_for(os, dirs, false, {}, names, kind == "callers") {
+  // def, api, imports and deps read declarations only, and callers the
+  // bodies that spell the name's last segment (XO_LOOKUP_EAGER=1: every
+  // body; TestQueryLookupsEager)
+  var bodies = Bodies.All
+  if (os.env.get("XO_LOOKUP_EAGER") ?? "") != "1" {
+    if kind is "def" | "api" | "imports" | "deps" {
+      bodies = Bodies.Decls
+    } else if kind == "callers" && rest.len() == 1 {
+      let segs = rest[0].split("/")
+      let ds = segs[segs.len() - 1].split(".")
+      let w = ds[ds.len() - 1]
+      if !w.is_empty() {
+        bodies = Bodies.Spelling(words: [w])
+      }
+    }
+  }
+  let s = match load_session_pc(os, dirs, false, {}, names, kind == "callers", {}, bodies) {
     Ok(x) => x
     Err(e) => {
       os.stdio.eprintln("xo query: ${e}")

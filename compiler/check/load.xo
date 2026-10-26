@@ -95,9 +95,10 @@ pub struct Checker {
   /// does not spell a name holds no reference to it, and a check of every
   /// body held 1.9 GB at the xo root. Empty: every body.
   pub body_words: List[Str] = []
-  /// body_words: the functions empty_lazy_bodies emptied after the check
-  /// (file and name), for a look (XO_REFS_DEBUG=1)
-  pub lazy_left: List[Str] = []
+  /// Lookups that read declarations only (xo def, doc and symbols by
+  /// name, 2026-10-26): no function body is parsed or checked, as if
+  /// body_words spelled nothing.
+  pub decls_only: Bool = false
   pub lazy: Bool = false
   /// Map and Set as decision 0291's hybrid (every backend since 2026-10-21,
   /// the playground's too; compiler/xo main.xo turns it off for
@@ -604,9 +605,15 @@ pub fn (var c: Checker) check_dirs(dirs: List[Str]) -> () ! Str uses fs.read {
   if c.unsupported.is_empty() {
     c.run()?
   }
-  if !c.body_words.is_empty() {
+  if c.bodies_filtered() {
     c.empty_lazy_bodies()
   }
+}
+
+/// Whether function bodies are parsed and checked only when they spell
+/// one of body_words (none with decls_only).
+pub fn (c: Checker) bodies_filtered() -> Bool {
+  c.decls_only || !c.body_words.is_empty()
 }
 
 /// body_words: the function bodies still unparsed after
@@ -619,7 +626,6 @@ fn (var c: Checker) empty_lazy_bodies() {
     for i in 0..n {
       if let parser.Decl.FnDecl(d: fd) = c.files[f].ast.decls[i] {
         if fd.lazy.is_some() {
-          c.lazy_left.push("${c.files[f].path} ${fd.name.name.to_str() ?? "?"}")
           var nf = fd
           nf.body = Some(parser.Block{span: fd.span})
           nf.lazy = None
@@ -1148,7 +1154,7 @@ fn (var c: Checker) parse_cached(path: Str, src: Bytes, sig: Bool) -> parser.Par
 /// for check_lazy anyway (lazy_mod), but not the std module under test,
 /// which is checked in full.
 pub fn (c: Checker) parse_lazy_path(path: Str) -> Bool {
-  if !c.body_words.is_empty() {
+  if c.bodies_filtered() {
     // std's files too: a std module whose bodies refs checks (its
     // preloads) checks only those that spell a name
     return true

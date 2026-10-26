@@ -400,6 +400,9 @@ struct Session {
   /// std and runtime modules to load with the program (agent.xo: those
   /// the looked up name refers to, semantic.preloads_for)
   preload: List[Str] = []
+  /// agent.xo's def, doc and symbols by name: no body checked
+  /// (Checker.decls_only)
+  decls_only: Bool = false
   /// the texts the published diagnostics' positions are in
   dfiles: Map[Str, Bytes] = {}
   /// `xo lsp` (run_lsp) checks each open directory on its own, in a
@@ -504,12 +507,12 @@ fn new_lsp_checker(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes]) -> c
 /// check_view: checks the modules of dirs with the open texts as the
 /// overlay. It reads no Session, so the server's worker task runs it.
 fn check_view(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes], dirs: List[Str], preload: List[Str]) -> View uses (fs, env) {
-  check_view_excluding(os, std_dir, wd, overlay, dirs, preload, [], false, [])
+  check_view_excluding(os, std_dir, wd, overlay, dirs, preload, [], false, [], false)
 }
 
 /// check_view, leaving out the module directories exclude; testdata
 /// walks the `testdata` directories too.
-fn check_view_excluding(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes], dirs: List[Str], preload: List[Str], exclude: List[Str], testdata: Bool, words: List[Str]) -> View uses (fs, env) {
+fn check_view_excluding(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes], dirs: List[Str], preload: List[Str], exclude: List[Str], testdata: Bool, words: List[Str], decls_only: Bool) -> View uses (fs, env) {
   var v = View{}
   if dirs.is_empty() {
     return v
@@ -518,13 +521,15 @@ fn check_view_excluding(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes],
   c.preload = preload
   // the preloaded std and runtime modules a name refers to: their bodies
   // too, so that xo refs finds the calls inside them
-  c.check_bodies_of = preload
+  c.check_bodies_of = if decls_only { [] } else { preload }
   c.runtime_files = true
   c.exclude_dirs = exclude
   c.walk_testdata = testdata
   c.testdata_words = words
   // refs: bodies that spell none of the names stay unparsed
   c.body_words = words
+  // def, doc, symbols: no body
+  c.decls_only = decls_only
   match c.check_dirs(dirs) {
     Ok(_) => {}
     Err(e) => {
@@ -580,7 +585,7 @@ fn (var s: Session) use_view(v: View) {
 /// diagnostics.
 fn (var s: Session) recheck(os: Os) uses (stdio, fs, env) {
   let overlay = s.overlay()
-  let v = check_view(os, s.std_dir, s.wd, overlay, dirs_of(overlay), s.preload)
+  let v = check_view_excluding(os, s.std_dir, s.wd, overlay, dirs_of(overlay), s.preload, [], false, [], s.decls_only)
   s.use_view(v)
   s.diags = v.diags
   s.dfiles = v.files

@@ -1470,6 +1470,64 @@ func TestAgentRefsSpellFilter(t *testing.T) {
 	}
 }
 
+// TestAgentLookupsEager: def, doc and symbols by name, and xo query's
+// def, api, imports, deps and callers, parse and check no function body
+// (callers only those that spell the name; 2026-10-26), and answer
+// exactly as a check of every body (XO_LOOKUP_EAGER=1) does, in a module
+// and at a root holding two.
+func TestAgentLookupsEager(t *testing.T) {
+	t.Parallel()
+	root := writeFiles(t, map[string]string{
+		"app/xo.mod":     "module example.com/app\n",
+		"app/main.xo":    "use example.com/app/lib\nuse std/json\n\n/// Limit caps a count.\nconst LIMIT = 4\n\nfn quiet(n: Int) -> Int {\n  let inner = fn(x: Int) -> Int { x * 3 }\n  inner(n)\n}\n\nfn main(os: Os) {\n  var b = lib.Box.new(quiet(LIMIT))\n  b.grow(1)\n  let v = json.decode[Int](\"2\".bytes()) ?? e => 0\n  os.stdio.println(\"${lib.helper(b.n)} ${v} ${\"ab\".trim_prefix(\"a\")}\")\n}\n",
+		"app/lib/lib.xo": "/// Box holds a count.\npub struct Box {\n  pub n: Int\n}\n\n/// new makes a Box.\npub fn Box.new(n: Int) -> Box { Box{n: n} }\n\n/// grow adds d.\npub fn (var b: Box) grow(d: Int) { b.n += helper(d) }\n\n/// helper adds one.\npub fn helper(n: Int) -> Int { n + 1 }\n",
+		"other/xo.mod":   "module example.com/other\n",
+		"other/main.xo":  "fn helper() -> Int {\n  let h = fn() -> Int { 2 }\n  h()\n}\n\nfn main(os: Os) {\n  os.stdio.println(\"${helper()}\")\n}\n",
+	})
+	app := filepath.Join(root, "app")
+	cases := []struct {
+		dir  string
+		args []string
+	}{
+		{app, []string{"def", "quiet"}},
+		{app, []string{"def", "LIMIT"}},
+		{app, []string{"def", "lib.helper"}},
+		{app, []string{"def", "lib.Box.grow"}},
+		{app, []string{"def", "Str.trim_prefix"}},
+		{app, []string{"def", "json.decode"}},
+		{app, []string{"doc", "lib.Box"}},
+		{app, []string{"doc", "Str"}},
+		{app, []string{"symbols"}},
+		{app, []string{"symbols", "--module=example.com/app/lib"}},
+		{root, []string{"def", "helper"}},
+		{root, []string{"def", "Box.grow"}},
+		{root, []string{"doc", "Box"}},
+		{root, []string{"symbols", "--module=example.com/app/lib"}},
+		{root, []string{"refs", "lib.helper"}},
+		{app, []string{"refs", "lib.helper"}},
+		{app, []string{"query", "def", "lib.Box.grow"}},
+		{app, []string{"query", "api", "example.com/app/lib"}},
+		{app, []string{"query", "imports", "example.com/app"}},
+		{app, []string{"query", "deps", "example.com/app"}},
+		{app, []string{"query", "callers", "lib.helper"}},
+		{root, []string{"query", "def", "helper"}},
+		{root, []string{"query", "callers", "example.com/app/lib.helper"}},
+	}
+	for _, c := range cases {
+		args := append(append([]string{}, c.args...), "--dir="+c.dir, "--json")
+		var lazy, lazyErr, eager, eagerErr bytes.Buffer
+		lc := runEnv(t, nil, args, &lazy, &lazyErr)
+		ec := runEnv(t, []string{"XO_LOOKUP_EAGER=1"}, args, &eager, &eagerErr)
+		if lc != 0 || lazy.Len() == 0 {
+			t.Errorf("%v: exit %d: %s%s", args, lc, lazy.String(), lazyErr.String())
+			continue
+		}
+		if lc != ec || lazy.String() != eager.String() {
+			t.Errorf("%v: declarations only, exit %d:\n%s\nevery body, exit %d:\n%s%s", args, lc, lazy.String(), ec, eager.String(), eagerErr.String())
+		}
+	}
+}
+
 // TestAgentRefsSamePath: three modules with one module path under a
 // root (the xo checkout's example.com/notes: bench/paper/v0.3 and
 // bench/xo/v0.4's notes services and internal/check's imports_deny

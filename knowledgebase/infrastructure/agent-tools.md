@@ -43,7 +43,15 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   --testdata, `trim_prefix` (350 refs) takes 1.35 s and 1.0 GB (was
   15.5 s and 5.8 GB), `json.decode` 0.8 s and 0.7 GB,
   `Str.contains_where` 0.46 GB (Last verified: 2026-10-26);
-  XO_REFS_SPELL=off checks every module and body. Two modules
+  XO_REFS_SPELL=off checks every module and body. def, doc and
+  symbols by name, and query def, api, imports and deps, check no
+  function body at all (Checker.decls_only), and query callers only the
+  bodies that spell the name: def at the xo root 0.38 s and 0.38 GB, doc
+  0.53 s, query callers 0.38 s; in compiler/ 0.24 to 0.37 s (was 1.1 to
+  2.3 s and 1.8 to 2.7 GB; Last verified: 2026-10-26). type FILE:L:C,
+  query type and query effects still check every body (0.2 s, and 1.1
+  to 1.4 s for effects). XO_LOOKUP_EAGER=1 checks every module and body
+  for every lookup (TestAgentLookupsEager compares the two). Two modules
   under a root with one module path (the xo checkout's
   `example.com/notes` three times) are checked once: the first, and the
   others named (`"same_path"`, a `note: not checked` line); look one up

@@ -190,7 +190,7 @@ fn (var s: EditSession) apply(os: Os, edits: List[TextEdit]) -> EditResult ! Str
   s.res.files = s.res.files.sort()
   s.res.edits = edits.len()
   // the std files parse as they did in the first check
-  let cr = load_session_pc(os, s.dirs, true, overlay, [], false, s.q.c.parse_cache)?
+  let cr = load_session_pc(os, s.dirs, true, overlay, [], false, s.q.c.parse_cache, Bodies.All)?
   let errs = errors_of(cr.c.diags)
   if !errs.is_empty() {
     s.res.diagnostics = errs

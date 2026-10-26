@@ -120,7 +120,7 @@ fn (var c: Checker) check_module(m: Int) {
             if lazy && (eager.is_empty() || !eager.contains(c.eager_name(fo))) {
               c.lazy_fns[fo] = true
               c.check_fn_defaults(fo)
-            } else if !c.body_words.is_empty() && fd.lazy.is_some() && !c.body_spells(f, fd) {
+            } else if c.bodies_filtered() && fd.lazy.is_some() && !c.body_spells(f, fd) {
               // body_words: a body that spells no name is left empty, in
               // the declaration and the file's tree alike (every later
               // pass walks one or the other), and not checked

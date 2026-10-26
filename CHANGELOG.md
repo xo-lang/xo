@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo def`, `xo doc` and `xo symbols` by name, and `xo query` def, api,
+  imports and deps, parse and check no function body, and `xo query
+  callers` only the bodies that spell the name: at the xo root `xo def`
+  takes 0.38 s and 0.38 GB instead of 1.4 s and 2.0 GB, `xo doc` 0.53 s
+  and 0.49 GB instead of 2.3 s and 2.7 GB, `xo query callers` 0.38 s
+  instead of 1.6 s; in compiler/ 0.24 to 0.37 s instead of 1.1 to 2.0 s,
+  with the same answers. A position's lookup (`xo type`, `xo query type`)
+  and `xo query effects` still check every body. `XO_LOOKUP_EAGER=1`
+  checks every module and body for every lookup.
 - A split darwin build hollows and assembles part by part through the back-end cache:
   an edit rescans, hollows and assembles only the parts it changed, and the
   undefined-symbol check combines kept per-part facts (`phase hollow` now includes
