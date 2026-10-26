@@ -40,7 +40,10 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   only the std and runtime files whose text spells the name: 0.08 to
   0.4 s for a rare name, about 1 s for a common one (`find`, `push`),
   where every std module was checked before (1.2 to 1.8 s on a quiet
-  Mac, 5 s under load). Last verified: 2026-10-26.
+  Mac, 5 s under load). `xo refs A B C` answers several names from one
+  check (JSON `{"results": [...]}`, in order; exit 1 when one has no
+  answer): use it for a sweep instead of one call per name. Last
+  verified: 2026-10-26.
   Last verified: 2026-10-21.
 - `xo dev edges [--out=FILE] DIR` prints every reference the checker
   resolves in DIR's program, one tab separated line each: the function

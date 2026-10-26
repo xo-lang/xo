@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo refs A B C` answers several names from one check, in order (JSON
+  `{"results": [...]}`, a name with no answer an entry with its error and
+  exit status 1), so a sweep pays the program and std check once.
 - `xo refs` at a repository root says which `testdata` directories it
   did not search (`"testdata_skipped"`, a `note: not checked` line), and
   `--testdata` searches them, so the program goldens' calls are found; a

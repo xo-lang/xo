@@ -71,6 +71,9 @@ struct AgentArgs {
   module: Str = ""
   /// a root's check walks its `testdata` directories too
   testdata: Bool = false
+  /// refs: the names after the first (`xo refs A B C`), answered from
+  /// one check
+  more: List[Str] = []
 }
 
 fn agent_args(cmd: Str, args: List[Str]) -> AgentArgs ! Str {
@@ -100,6 +103,8 @@ fn agent_args(cmd: Str, args: List[Str]) -> AgentArgs ! Str {
       return Err("xo ${cmd}: unknown flag ${x}")
     } else if a.target.is_empty() {
       a.target = x
+    } else if cmd == "refs" {
+      a.more.push(x)
     } else {
       return Err("xo ${cmd}: one target only (got ${a.target} and ${x})")
     }
@@ -111,6 +116,9 @@ fn agent_args(cmd: Str, args: List[Str]) -> AgentArgs ! Str {
   }
   if cmd == "symbols" && !a.file.is_empty() && !a.module.is_empty() {
     return Err("xo symbols: --file or --module, not both")
+  }
+  if !a.more.is_empty() && ([a.target] + a.more).any(fn(t) { position_of(t).is_some() }) {
+    return Err("xo refs: several targets are names only, not FILE:LINE:COL positions")
   }
   if a.target.is_empty() && cmd != "symbols" {
     return Err("xo ${cmd}: no ${if cmd == "type" { "FILE:LINE:COL" } else { "NAME" }}")
@@ -148,6 +156,14 @@ pub fn run_agent(os: Os, cmd: Str, args: List[Str]) -> Int uses (stdio, fs, env)
   }
   // the std and runtime modules a name refers to load with the program
   var preload = if a.target.is_empty() || position_of(a.target).is_some() { [] } else if cmd == "refs" { semantic.preloads_wide(os, std_dir(os), a.target) } else { semantic.preloads_for(os, std_dir(os), a.target) }
+  // several names: every one's modules, loaded and checked once
+  for t in a.more {
+    for p in semantic.preloads_wide(os, std_dir(os), t) {
+      if !preload.contains(p) {
+        preload.push(p)
+      }
+    }
+  }
   if cmd == "symbols" && (a.module.starts_with("std/") || a.module.starts_with("native/")) {
     // a std or runtime module loads with the program
     preload = [a.module]
@@ -169,9 +185,25 @@ pub fn run_agent(os: Os, cmd: Str, args: List[Str]) -> Int uses (stdio, fs, env)
       }
     }
   }
+  // several names: each one's answer or error, in order; exit 1 when one
+  // failed
+  var batch_failed = false
   let out = match cmd {
     "def" => s.agent_def(os, a.target, false)
     "doc" => s.agent_def(os, a.target, true)
+    "refs" if !a.more.is_empty() => {
+      var rs: List[J] = []
+      for t in [a.target] + a.more {
+        match s.agent_refs(os, t) {
+          Ok(v) => rs.push(v)
+          Err(e) => {
+            batch_failed = true
+            rs.push(jobj(["target", "error"], [jstr(t), jstr(e)]))
+          }
+        }
+      }
+      Ok(jobj(["results"], [jarr(rs)]))
+    }
     "refs" => s.agent_refs(os, a.target)
     "type" => s.agent_type(os, a.target)
     _ => s.agent_symbols(os, dir, a.pub_only, if a.file.is_empty() { "" } else { abs_of(cwd, a.file) }, a.module)
@@ -221,7 +253,7 @@ pub fn run_agent(os: Os, cmd: Str, args: List[Str]) -> Int uses (stdio, fs, env)
           os.stdio.println("note: not checked: ${td[0..td.len().min(3)].join(", ")}${more}; --testdata checks them too")
         }
       }
-      0
+      if batch_failed { 1 } else { 0 }
     }
     Err(e) => fail(os, cmd, as_json, if skip_note.is_empty() { e } else { "${e} (${skip_note})" })
   }
@@ -282,6 +314,18 @@ fn agent_text(cmd: Str, v: J) -> Str {
         for m in items_of(d, "methods") {
           b.write("\n")
           b.write(decl_text(m, "  "))
+        }
+      }
+    }
+    "refs" if get(v, "results").is_some() => {
+      // several names: each answer, a blank line between
+      for (i, r) in items_of(v, "results").indexed() {
+        if i > 0 {
+          b.write("\n")
+        }
+        match get(r, "error") {
+          Some(_) => b.write("xo refs: ${jstr_of(r, "target")}: ${jstr_of(r, "error")}\n")
+          None => b.write(agent_text("refs", r))
         }
       }
     }

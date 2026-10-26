@@ -1354,6 +1354,43 @@ func TestAgentRefsTestdata(t *testing.T) {
 	}
 }
 
+// TestAgentRefsBatch: `xo refs A B C` answers every name from one check
+// (DS-2, 2026-10-25: a sweep of N names paid the std load N times), in
+// order, a name with no answer an {"target", "error"} entry and exit 1;
+// the text form prints each answer, a blank line between.
+func TestAgentRefsBatch(t *testing.T) {
+	t.Parallel()
+	dir := writeFiles(t, map[string]string{"main.xo": "fn one() -> Int { 1 }\n\nfn two() -> Int { one() + 1 }\n\nfn main(os: Os) {\n  os.stdio.println(\"${two()}\".trim_prefix(\"x\"))\n}\n"})
+	v := agentJSON(t, 1, "refs", "--dir="+dir, "--json", "one", "prelude.Str.trim_prefix", "no_such_name")
+	rs := v["results"].([]any)
+	if len(rs) != 3 {
+		t.Fatalf("results: %v", v)
+	}
+	if n := len(rs[0].(map[string]any)["references"].([]any)); n != 2 {
+		t.Errorf("one: %d references, want the declaration and the call", n)
+	}
+	pgwire := false
+	for _, r := range rs[1].(map[string]any)["references"].([]any) {
+		if strings.HasSuffix(filepath.ToSlash(r.(map[string]any)["file"].(string)), "native/llrt/pgwire.xo") {
+			pgwire = true
+		}
+	}
+	if !pgwire {
+		t.Errorf("prelude.Str.trim_prefix in a batch lists no call in pgwire.xo: %v", rs[1])
+	}
+	if e, _ := rs[2].(map[string]any)["error"].(string); rs[2].(map[string]any)["target"] != "no_such_name" || e == "" {
+		t.Errorf("no_such_name: %v, want its error", rs[2])
+	}
+	var out, errOut bytes.Buffer
+	code := run(t, []string{"refs", "--dir=" + dir, "--text", "one", "two"}, &out, &errOut)
+	if code != 0 || strings.Count(out.String(), "reference(s)") != 2 || !strings.Contains(out.String(), "2 reference(s)\n\n") {
+		t.Errorf("refs --text one two: exit %d:\n%s%s", code, out.String(), errOut.String())
+	}
+	if code := run(t, []string{"refs", "--dir=" + dir, "one", "main.xo:1:4"}, &out, &errOut); code != 2 {
+		t.Errorf("refs with a position among several names: exit %d, want 2", code)
+	}
+}
+
 // TestAgentRootSkipsBrokenModule: at a root whose modules include one
 // whose `use c` binding is missing (the xo checkout's
 // examples/realtime-control), the lookups answer for the other modules
