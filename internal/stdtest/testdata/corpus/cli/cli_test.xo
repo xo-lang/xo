@@ -47,6 +47,45 @@ test "a malformed duration is a Usage error with exit status 2" {
   }) == 2
 }
 
+test "a Usage error displays its message, not the usage lines, and exits 2" {
+  let cmd = cli.command("app", "h", flags: [cli.duration_flag("wait", "how long")])
+  match cli.parse(cmd, ["--wait"], os.env) {
+    Err(e) => {
+      expect(e.display()) == "flag --wait needs a value"
+      expect(e.exit_code()) == 2
+    }
+    Ok(_) => expect("a usage error") == "ok"
+  }
+}
+
+test "help and version are the text itself, with exit status 0" {
+  let sub = cli.command("sub", "do the thing", flags: [cli.str_flag("out", "where")])
+  let cmd = cli.command("app", "h", commands: [sub], version: "1.2.3")
+  match cli.parse(cmd, ["-h"], os.env) {
+    Err(e) => {
+      expect(e.display()) == cli.help(cmd)
+      expect(e.display().contains("Flags:")) == true
+      expect(e.exit_code()) == 0
+    }
+    Ok(_) => expect("help") == "ok"
+  }
+  match cli.parse(cmd, ["--version"], os.env) {
+    Err(e) => {
+      expect(e.display()) == "app 1.2.3"
+      expect(e.exit_code()) == 0
+    }
+    Ok(_) => expect("version") == "ok"
+  }
+  match cli.parse(cmd, ["sub", "--help"], os.env) {
+    Err(e) => {
+      expect(e.display()) == cli.help(cmd, "sub")
+      expect(e.display().contains("sub")) == true
+      expect(e.exit_code()) == 0
+    }
+    Ok(_) => expect("sub help") == "ok"
+  }
+}
+
 test "FakeEnv.set_args is what env.args gives back" {
   os.env.set_args(["app", "--wait", "2s"])
   expect(os.env.args()) == ["app", "--wait", "2s"]
