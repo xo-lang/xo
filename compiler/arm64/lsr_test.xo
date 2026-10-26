@@ -37,6 +37,31 @@ test "pair_mem: a branch target between two loads ends the pair (ELF)" {
   expect(pair_mem(t, "")) == t
 }
 
+test "pair_mem: a load pair is not formed over bytes a single store wrote in part" {
+  // nbody: vx stored by a str d, the pair (z, vx) loaded later: a 16 byte
+  // load cannot be forwarded from an 8 byte store (2026-10-26)
+  let t = "\tstr d16, [x9, #48]\n\tldr d28, [x11, #40]\n\tldr d23, [x11, #48]\n\tret"
+  expect(pair_mem(t, "")) == t
+  // a 16 byte store over exactly the pair forwards
+  let u = "\tstp d16, d17, [x9, #40]\n\tldr d28, [x11, #40]\n\tldr d23, [x11, #48]\n\tret"
+  expect(pair_mem(u, "")) == "\tstp d16, d17, [x9, #40]\n\tldp d28, d23, [x11, #40]\n\tret"
+  // x registers still pair (a copy through two bases), as do a store that
+  // does not touch the pair and a frame (sp) pair
+  let x = "\tstr x1, [x9, #48]\n\tldr x2, [x11, #40]\n\tldr x3, [x11, #48]\n\tret"
+  expect(pair_mem(x, "")) == "\tstr x1, [x9, #48]\n\tldp x2, x3, [x11, #40]\n\tret"
+  let v = "\tstr d16, [x9, #64]\n\tldr d28, [x11, #40]\n\tldr d23, [x11, #48]\n\tret"
+  expect(pair_mem(v, "")) == "\tstr d16, [x9, #64]\n\tldp d28, d23, [x11, #40]\n\tret"
+  let w = "\tstr x1, [sp, #16]\n\tldr x2, [sp, #16]\n\tldr x3, [sp, #24]\n\tret"
+  expect(pair_mem(w, "")) == "\tstr x1, [sp, #16]\n\tldp x2, x3, [sp, #16]\n\tret"
+  // q stores partly over the pair too, and the items port agrees
+  let q = "\tstr q16, [x9, #48]\n\tldr d28, [x11, #40]\n\tldr d23, [x11, #48]\n\tret"
+  expect(pair_mem(q, "")) == q
+  for s in [t, u, v, w, q, x] {
+    let ls = s.split("\n")
+    expect(line_texts(pair_mem_ops(to_lines(ls), label_counts(ls, ""))).join("\n")) == pair_mem(s, "")
+  }
+}
+
 test "pair_mem: d registers pair like x registers; an x and a d do not" {
   let t = "\tldr d16, [x9, #24]\n\tldr d17, [x9, #32]\n\tstr d22, [x9, #48]\n\tstr d23, [x9, #56]\n\tret"
   expect(pair_mem(t, "")) == "\tldp d16, d17, [x9, #24]\n\tstp d22, d23, [x9, #48]\n\tret"

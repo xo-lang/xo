@@ -1190,6 +1190,80 @@ fn pair_loads(text: Str) -> Str {
   out.join("\n")
 }
 
+/// The bytes a store line writes, as (true, offset, size) for `str`,
+/// `stur` and `stp` of x, d, w, s or q registers through a plain
+/// `[xN, #off]` (not sp: the frame's saves and restores pair as they
+/// were stored), else (false, 0, 0). pair_mem_l keeps a load pair of d
+/// registers from bytes a store covers in part (2026-10-26; x pairs stay:
+/// a 16 byte copy through two bases pairs, and no measured stall).
+fn store_span_l(l: Str) -> (Bool, Int, Int) {
+  let no = (false, 0, 0)
+  var mn = ""
+  if l.starts_with("\tstp ") {
+    mn = "stp"
+  } else if l.starts_with("\tstur ") {
+    mn = "stur"
+  } else if l.starts_with("\tstr ") {
+    mn = "str"
+  } else {
+    return no
+  }
+  let open = l.find(", [") ?? -1
+  if open < 0 || !l.ends_with("]") {
+    return no
+  }
+  let regs = l[mn.len() + 2..open]
+  var size = 0
+  if regs.starts_with("q") {
+    size = 16
+  } else if regs.starts_with("x") || regs.starts_with("d") {
+    size = 8
+  } else if regs.starts_with("w") || regs.starts_with("s") {
+    size = 4
+  } else {
+    return no
+  }
+  let inner = l[open + 3..l.len() - 1]
+  let c = inner.find(", #") ?? -1
+  if c < 0 {
+    return no
+  }
+  let base = inner[0..c]
+  let num = inner[c + 3..inner.len()]
+  if !is_xreg(base) || !is_signed_digits(num) {
+    return no
+  }
+  match Int.parse(num) {
+    Some(off) => (true, off, if mn == "stp" { size * 2 } else { size })
+    None => no
+  }
+}
+
+/// store_span_l of each line that is a store.
+fn store_spans(lines: List[Str]) -> List[(Int, Int)] {
+  var out: List[(Int, Int)] = []
+  for l in lines {
+    let (ok, off, size) = store_span_l(l)
+    if ok {
+      out.push((off, size))
+    }
+  }
+  out
+}
+
+/// Whether a store of spans writes part of the 16 bytes at a without
+/// being exactly them: a load pair of them cannot be forwarded from it
+/// and waits for the store to commit (an ldp of two fields that two
+/// single stores wrote: nbody 1.43 times Go's cycles, 2026-10-26).
+fn partial_store(spans: List[(Int, Int)], a: Int) -> Bool {
+  for (o, s) in spans {
+    if o < a + 16 && o + s > a && !(o == a && s == 16) {
+      return true
+    }
+  }
+  false
+}
+
 /// pair_mem_l of text's lines (lsr_test.xo).
 fn pair_mem(text: Str, ext: Str) -> Str {
   let ls = text.split("\n")
@@ -1208,6 +1282,7 @@ fn pair_mem_l(lines: List[Str], nrefs: Map[Str, Int]) -> List[Str] {
   var out: List[Str] = []
   var i = 0
   let n = lines.len()
+  let spans = store_spans(lines)
   while i < n {
     let (lok, l1, l2, l3) = parse_ldr(lines[i])
     let (sok, s1, s2, s3) = parse_str(lines[i])
@@ -1239,7 +1314,7 @@ fn pair_mem_l(lines: List[Str], nrefs: Map[Str, Int]) -> List[Str] {
       if j < n {
         let (cok, c1, c2, c3) = if st { parse_str(lines[j]) } else { parse_ldr(lines[j]) }
         if cok && a2 == c2 && (st || (a1 != c1 && a1 != a2)) && same_class(a1, c1) {
-          if c3 == a3 + 8 && a3 % 8 == 0 && a3 >= -512 && a3 <= 504 {
+          if c3 == a3 + 8 && a3 % 8 == 0 && a3 >= -512 && a3 <= 504 && (st || a2 == "sp" || !a1.starts_with("d") || !partial_store(spans, a3)) {
             let op = if st { "stp" } else { "ldp" }
             for r in rows {
               out.push(r)

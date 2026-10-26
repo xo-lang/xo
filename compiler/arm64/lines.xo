@@ -326,12 +326,55 @@ fn op_word_mem(x: Line, st: Bool) -> (Bool, Str, Str, Int) {
   bad
 }
 
+/// store_span_l on an item: the bytes a `str`, `stur` or `stp` of x, d, w,
+/// s or q registers through a plain `[xN, #off]` writes.
+fn store_span_op(x: Line) -> (Bool, Int, Int) {
+  let no = (false, 0, 0)
+  if let Some(o) = x.op {
+    if o.m != "str" && o.m != "stur" && o.m != "stp" {
+      return no
+    }
+    let nr = if o.m == "stp" { 2 } else { 1 }
+    if o.ops.len() != nr + 1 {
+      return no
+    }
+    var size = 0
+    if let macho.Operand.Reg(n: _, kind: k) = o.ops[0] {
+      if k == macho.RQ {
+        size = 16
+      } else if k == macho.RX || k == macho.RD {
+        size = 8
+      } else if k == macho.RW || k == macho.RS {
+        size = 4
+      } else {
+        return no
+      }
+    } else {
+      return no
+    }
+    if let macho.Operand.MemOp(m: mo) = o.ops[nr] {
+      if !mo.ok || mo.mode != 0 || !mo.explicit || mo.base == 31 {
+        return no
+      }
+      return (true, mo.off, size * nr)
+    }
+  }
+  no
+}
+
 /// pair_mem_l on items (lsr.xo's text pass; its loads and stores read
 /// from the Op).
 fn pair_mem_ops(xs: List[Line], nrefs: Map[Str, Int]) -> List[Line] {
   var out: List[Line] = List.with_capacity(xs.len())
   var i = 0
   let n = xs.len()
+  var spans: List[(Int, Int)] = []
+  for x in xs {
+    let (ok, off, size) = store_span_op(x)
+    if ok {
+      spans.push((off, size))
+    }
+  }
   while i < n {
     let (lok, l1, l2, l3) = op_word_mem(xs[i], false)
     let (sok, s1, s2, s3) = op_word_mem(xs[i], true)
@@ -362,7 +405,7 @@ fn pair_mem_ops(xs: List[Line], nrefs: Map[Str, Int]) -> List[Line] {
       if j < n {
         let (cok, c1, c2, c3) = op_word_mem(xs[j], st)
         if cok && a2 == c2 && (st || (a1 != c1 && a1 != a2)) && same_class(a1, c1) {
-          if c3 == a3 + 8 && a3 % 8 == 0 && a3 >= -512 && a3 <= 504 {
+          if c3 == a3 + 8 && a3 % 8 == 0 && a3 >= -512 && a3 <= 504 && (st || a2 == "sp" || !a1.starts_with("d") || !partial_store(spans, a3)) {
             let op = if st { "stp" } else { "ldp" }
             for r in rows {
               out.push(r)
