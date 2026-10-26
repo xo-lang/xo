@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+before
+inherited
+code 0
+after
+--- stderr

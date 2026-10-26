@@ -21,10 +21,9 @@ prelude.str_prefix7  the sorted() fast path's seven byte prefix
 prelude.list_sort_str  the sorted() fast path for List[Str]
 prelude.int_range_list  lowers Range.to_list
 
-# A child's stdio: the child inherits the program's own, so a corpus has
-# nothing to observe.
-prelude.Cmd.inherit  hands the child the program's own stdio
-prelude.cmd_inherit  the lowering of Cmd.inherit
+# A child's stdio: Cmd.inherit and its lowering are covered by the
+# cmd_inherit golden, whose child's line arrives in the program's own
+# standard output (internal/llvm/testdata/golden/cmd_inherit).
 
 # The heap profiler and the memory budget act only under XO_PROF=heap and
 # XO_MAX_MEM, which a corpus does not set.

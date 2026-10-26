@@ -5,11 +5,13 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"iter"
 	"math"
 	"math/rand"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -111,7 +113,7 @@ func sortShape(keys []string) string {
 
 func preludeCorpus() string {
 	var o strings.Builder
-	o.WriteString(header("Go's math.IsInf and strconv.Unquote (quote_test.go's unquotetests and misquoted), std.md 2.5's Option.or_err and Option.and_then, std.md 2.6's Duration.ceil_seconds, and List.sort of Strs (Go's sort.Strings order) on Go's tables and seeded texts, Float bit patterns, nanosecond counts and key shapes: the prelude methods no other corpus reaches (Go's strconv tests are Copyright 2009 The Go Authors, BSD-style license)"))
+	o.WriteString(header("Go's math.IsInf and strconv.Unquote (quote_test.go's unquotetests and misquoted), std.md 2.5's Option.or_err and Option.and_then, std.md 2.6's Duration.ceil_seconds, slices.Collect over ranges for Range.to_list, sort.Stable for List.sort_by's stability, and List.sort of Strs (Go's sort.Strings order, a seven byte prefix table included) on Go's tables and seeded texts, Float bit patterns, nanosecond counts, key shapes and range bounds: the prelude methods no other corpus reaches (Go's strconv tests are Copyright 2009 The Go Authors, BSD-style license)"))
 
 	// Float.is_inf: Go's math.IsInf(f, 0). Both infinities are true, a NaN is
 	// not, and no finite Float is, the largest and the subnormals included.
@@ -254,6 +256,137 @@ func preludeCorpus() string {
 		want := append([]string(nil), keys...)
 		sort.Strings(want)
 		fmt.Fprintf(&o, "  (%q, %q, %q),\n", strings.Join(keys, "\x1f"), strings.Join(want, "\x1f"), sortShape(keys))
+	}
+	o.WriteString("]\n")
+
+	// The seven byte prefix path: rows where every key shares its first
+	// seven bytes and differs after them, keys shorter than seven bytes
+	// (their prefix is the whole key), and keys where one is the prefix of
+	// another across the seven byte edge ("abcdefg" and "abcdefgh"). A sort
+	// that orders by the prefix alone passes the shared prefix rows only by
+	// accident, so the rows make the second comparison load bearing.
+	var p7 [][]string
+	rp7 := rand.New(rand.NewSource(113))
+	var shared []string
+	for i := 0; i < 40; i++ {
+		shared = append(shared, fmt.Sprintf("abcdefg%03d", rp7.Intn(1000)))
+	}
+	p7 = append(p7, shared)
+	p7 = append(p7, []string{"abcdefg", "abcdefgh", "abcdefghi", "abcdef", "abcde"})
+	p7 = append(p7, []string{"abcdefg2", "abcdefg10", "abcdefg1", "abcdefg02", "abcdefg"})
+	p7 = append(p7, []string{"", "a", "ab", "abc", "abcd", "abcde", "abcdef", "abcdefg"})
+	p7 = append(p7, []string{"abcdefh", "abcdefg", "abcdef", "abcdefga", "abcdefg\u007f"})
+	o.WriteString("\n/// (the keys joined by a unit separator, Go's sort.Strings order, the shape)\nconst SORT_PREFIX7_CASES: List[(Str, Str, Str)] = [\n")
+	for _, keys := range p7 {
+		want := append([]string(nil), keys...)
+		sort.Strings(want)
+		fmt.Fprintf(&o, "  (%q, %q, %q),\n", strings.Join(keys, "\x1f"), strings.Join(want, "\x1f"), sortShape(keys))
+	}
+	o.WriteString("]\n")
+
+	// List.sort_by's stability against Go's sort.Stable: rows of keys with
+	// duplicates, where the order of equal keys is what a stable sort
+	// promises and an unstable one may change. The oracle is Go's
+	// sort.SliceStable over the row's indices, so the expected text is the
+	// tags in the order a stable sort leaves them.
+	type stableRow struct{ keys, want, shape string }
+	var stableRows []stableRow
+	stableSeeds := [][]string{
+		{"b", "a", "b", "a", "b"},
+		{"k", "k", "k"},
+		{"z", "a", "z", "b", "a", "z"},
+		{"same", "same", "diff", "same", "diff"},
+	}
+	for _, keys := range stableSeeds {
+		order := make([]int, len(keys))
+		for i := range order {
+			order[i] = i
+		}
+		sort.SliceStable(order, func(i, j int) bool { return keys[order[i]] < keys[order[j]] })
+		var tags []string
+		for _, oi := range order {
+			tags = append(tags, fmt.Sprint(oi))
+		}
+		stableRows = append(stableRows, stableRow{strings.Join(keys, "\x1f"), strings.Join(tags, ","), sortShape(keys)})
+	}
+	rs2 := rand.New(rand.NewSource(109))
+	for k := 0; k < 6; k++ {
+		n := 20 + rs2.Intn(40)
+		var keys []string
+		for i := 0; i < n; i++ {
+			keys = append(keys, fmt.Sprintf("k%d", rs2.Intn(5)))
+		}
+		order := make([]int, len(keys))
+		for i := range order {
+			order[i] = i
+		}
+		sort.SliceStable(order, func(i, j int) bool { return keys[order[i]] < keys[order[j]] })
+		var tags []string
+		for _, oi := range order {
+			tags = append(tags, fmt.Sprint(oi))
+		}
+		stableRows = append(stableRows, stableRow{strings.Join(keys, "\x1f"), strings.Join(tags, ","), sortShape(keys)})
+	}
+	o.WriteString("\n/// (the keys joined by a unit separator, the tags in the order Go's sort.SliceStable leaves them, the shape)\nconst SORT_STABLE_CASES: List[(Str, Str, Str)] = [\n")
+	for _, r := range stableRows {
+		fmt.Fprintf(&o, "  (%q, %q, %q),\n", r.keys, r.want, r.shape)
+	}
+	o.WriteString("]\n")
+
+	// Range.to_list: Go's slices.Collect over the same range. An exclusive
+	// range stops before the upper bound, an inclusive one includes it, an
+	// upper bound at or below the lower one is empty, and the bounds may be
+	// negative or far apart.
+	type rangeRow struct {
+		lo, hi    int64
+		inclusive bool
+		want      string
+		shape     string
+	}
+	var rangeRows []rangeRow
+	addRange := func(lo, hi int64, inclusive bool, shape string) {
+		var seq iter.Seq[int64]
+		if inclusive {
+			seq = func(yield func(int64) bool) {
+				for i := lo; i <= hi; i++ {
+					if !yield(i) {
+						return
+					}
+					if i == math.MaxInt64 {
+						break
+					}
+				}
+			}
+		} else {
+			seq = func(yield func(int64) bool) {
+				for i := lo; i < hi; i++ {
+					if !yield(i) {
+						return
+					}
+				}
+			}
+		}
+		var got []string
+		for _, v := range slices.Collect(seq) {
+			got = append(got, fmt.Sprint(v))
+		}
+		rangeRows = append(rangeRows, rangeRow{lo, hi, inclusive, strings.Join(got, "\x1f"), shape})
+	}
+	addRange(5, 5, false, "an empty exclusive range")
+	addRange(7, 3, false, "lo above hi, empty")
+	addRange(2, 3, false, "one element")
+	addRange(0, 5, false, "five elements from zero")
+	addRange(-3, 2, false, "crossing zero")
+	addRange(-4, -1, false, "negative bounds")
+	addRange(0, 3, true, "an inclusive range")
+	addRange(5, 5, true, "an inclusive range of one")
+	addRange(-2, -2, true, "an inclusive negative range of one")
+	addRange(-500, 500, false, "a thousand elements")
+	addRange(1000000, 1000100, false, "a large start")
+	addRange(math.MaxInt64-3, math.MaxInt64, false, "the top of Int")
+	o.WriteString("\n/// (lo, hi, inclusive, the elements joined by a unit separator as Go's slices.Collect gives them, the shape)\nconst RANGE_CASES: List[(Int, Int, Bool, Str, Str)] = [\n")
+	for _, r := range rangeRows {
+		fmt.Fprintf(&o, "  (%d, %d, %v, %q, %q),\n", r.lo, r.hi, r.inclusive, r.want, r.shape)
 	}
 	o.WriteString("]\n")
 
@@ -413,6 +546,51 @@ test "List.sort_in_place_by orders every shape Go's sort.Strings orders" {
     let got = xs.join("\u{1f}")
     if got != want {
       bad.push((shape, got, want))
+    }
+  }
+  expect(show3(bad)) == []
+}
+
+test "List.sort orders keys that share a seven byte prefix" {
+  var bad: List[(Str, Str, Str)] = []
+  for (keys, want, shape) in SORT_PREFIX7_CASES {
+    let got = split_keys(keys).sort().join("\u{1f}")
+    if got != want {
+      bad.push((shape, got, want))
+    }
+  }
+  expect(show3(bad)) == []
+}
+
+test "List.sort_by keeps equal keys in Go's sort.Stable order" {
+  var bad: List[(Str, Str, Str)] = []
+  for (keys, want, shape) in SORT_STABLE_CASES {
+    let ks = split_keys(keys)
+    var pairs: List[(Str, Int)] = []
+    for i in 0..ks.len() {
+      pairs.push((ks[i], i))
+    }
+    let got = pairs.sort_by(fn(p) { p.0 }).map(fn(p) { "${p.1}" }).join(",")
+    if got != want {
+      bad.push((shape, got, want))
+    }
+  }
+  expect(show3(bad)) == []
+}
+
+/// The first 80 bytes of a range's text, since a thousand elements are not
+/// a readable failure.
+fn head80(s: Str) -> Str {
+  s[0..(if s.len() < 80 { s.len() } else { 80 })]
+}
+
+test "Range.to_list is Go's slices.Collect over the range" {
+  var bad: List[(Str, Str, Str)] = []
+  for (lo, hi, inclusive, want, shape) in RANGE_CASES {
+    let got = if inclusive { (lo..=hi).to_list() } else { (lo..hi).to_list() }
+    let text = got.map(fn(n) { "${n}" }).join("\u{1f}")
+    if text != want {
+      bad.push((shape, head80(text), head80(want)))
     }
   }
   expect(show3(bad)) == []

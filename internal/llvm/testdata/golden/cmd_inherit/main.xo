@@ -1,0 +1,15 @@
+// Cmd.inherit hands the child this program's own standard streams. The
+// child writes the marker line into the program's standard output (the
+// golden's), which is what want.txt compares; a child whose streams were
+// piped would write into a pipe this program never reads, and the line
+// would be missing. The shell is named by its absolute path because the
+// command's PATH is this environment's, which a test run may not set.
+fn main(os: Os) {
+  os.stdio.println("before")
+  let r = os.proc.cmd("/bin/sh", ["-c", "printf 'inherited\\n'"]).inherit().run()
+  match r {
+    Ok(code) => os.stdio.println("code ${code}")
+    Err(e) => os.stdio.println("err ${e}")
+  }
+  os.stdio.println("after")
+}
