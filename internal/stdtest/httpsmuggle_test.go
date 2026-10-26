@@ -81,6 +81,18 @@ func smCases() []smCase {
 		{"name space before colon", "POST / HTTP/1.1\r\nHost: h\r\nContent-Length : 5\r\n\r\nhello"},
 		{"lf lines", "POST / HTTP/1.1\nHost: h\nContent-Length: 5\n\nhello"},
 		{"cl zero with pipelined bytes", "POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 0\r\n\r\nGET / HTTP/1.1\r\nHost: h\r\n\r\n"},
+		// short data is an error with the bytes read so far, never a body
+		// taken from a request that follows
+		{"cl short body", "POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 5\r\n\r\nhel"},
+		{"cl swallows pipelined bytes", "POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 5\r\n\r\nhelGET / HTTP/1.1\r\nHost: h\r\n\r\n"},
+		// header values with bytes outside ASCII: valid UTF-8, and obs-text
+		// bytes that are not valid UTF-8 (parse_head reads the raw bytes, as
+		// the server does: no conversion)
+		{"value utf8", "POST / HTTP/1.1\r\nHost: h\r\nX-V: \xc3\xa9\xe6\x97\xa5\r\nContent-Length: 0\r\n\r\n"},
+		{"value obs text", "POST / HTTP/1.1\r\nHost: h\r\nX-V: \xff\xfe\r\nContent-Length: 0\r\n\r\n"},
+		// an invalid byte inside a Content-Length body: the length counts
+		// raw bytes, so a converted body would frame the wrong three
+		{"cl body invalid byte", "POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 3\r\n\r\na\xffb"},
 	}
 }
 
@@ -118,6 +130,22 @@ func smGoFrames(t *testing.T, addr, raw string) (codes []int, frames []string) {
 	}
 }
 
+// smBytes is b as an Xo Bytes literal, so a row's raw bytes reach the Xo
+// side unchanged (an invalid byte cannot sit in a Str literal).
+func smBytes(b []byte) string {
+	var o strings.Builder
+	o.WriteString(`b"`)
+	for _, c := range b {
+		if c >= 0x20 && c < 0x7f && c != '"' && c != '\\' && c != '$' {
+			o.WriteByte(c)
+		} else {
+			fmt.Fprintf(&o, `\x%02x`, c)
+		}
+	}
+	o.WriteByte('"')
+	return o.String()
+}
+
 // smXoFile is the generated test file: one test per case, comparing the
 // framing both sides see.
 func smXoFile(cases []smCase, frames []string) string {
@@ -126,21 +154,26 @@ func smXoFile(cases []smCase, frames []string) string {
 	b.WriteString(smFrameFn)
 	for i, c := range cases {
 		fmt.Fprintf(&b, "test \"smuggle case %d: %s\" {\n", i, c.name)
-		fmt.Fprintf(&b, "  expect(sm_frame(%s)) == %s\n}\n\n", xoStr(c.raw), xoStr(frames[i]))
+		fmt.Fprintf(&b, "  expect(sm_frame(%s)) == %s\n}\n\n", smBytes([]byte(c.raw)), xoStr(frames[i]))
 	}
 	return b.String()
 }
 
 // smFrameFn is the Xo side of the comparison: the framing of every request
 // parse_head finds in raw, read the way its own Head says, as
-// kind|clen|bodyhex lines joined with ";".
-const smFrameFn = `fn sm_frame(raw: Str) -> Str {
-  let rb = raw.bytes()
+// kind|clen|bodyhex lines joined with ";". The bytes become a Str the way
+// the server does it (rt.cast[Bytes, Str], no conversion: http1's input is
+// raw.str_at over the socket buffer), and every slice is over the raw Bytes,
+// so an invalid byte inside a body keeps the offsets a Content-Length
+// counts.
+const smFrameFn = `use native/rt
+
+fn sm_frame(raw: Bytes) -> Str {
   var off = 0
   var lines: List[Str] = []
   var guard = 0
-  while guard < 4 && off < rb.len() {
-    let p = parse_head(rb[off..rb.len()].to_str() ?? "", true)
+  while guard < 4 && off < raw.len() {
+    let p = parse_head(rt.cast[Bytes, Str](raw[off..raw.len()]), true)
     if p.res != OK {
       break
     }
@@ -150,7 +183,7 @@ const smFrameFn = `fn sm_frame(raw: Str) -> Str {
     var n = h.clen
     var body: Bytes = b""
     if h.chunked {
-      let c = chunked(rb[off + used..rb.len()].to_str() ?? "", true)
+      let c = chunked(rt.cast[Bytes, Str](raw[off + used..raw.len()]), true)
       if c.res != HB_OK {
         lines.push("err|${c.body.bytes().to_hex()}")
         break
@@ -158,8 +191,14 @@ const smFrameFn = `fn sm_frame(raw: Str) -> Str {
       kind = "chunked"
       body = c.body.bytes()
       used = used + c.used
-    } else if n > 0 && off + used + n <= rb.len() {
-      body = rb[off + used..off + used + n]
+    } else if n > 0 {
+      // short data is an error with the bytes read so far, never a body
+      // taken from what follows
+      if raw.len() - (off + used) < n {
+        lines.push("err|${raw[off + used..raw.len()].to_hex()}")
+        break
+      }
+      body = raw[off + used..off + used + n]
       used = used + n
     }
     lines.push("${kind}|${n}|${body.to_hex()}")

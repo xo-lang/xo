@@ -447,14 +447,20 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   parses `xo test`'s "N passed, M failed" line and fails unless it equals
   the generated case count, so a file that is not picked up cannot pass a
   comparison of nothing; the count is logged per backend. TestHttpSmuggle
-  is the smuggling table: 36 hand rows (Content-Length duplicates and
-  conflicts, CL with Transfer-Encoding, TE lists, folds, casing, bad chunk
-  framing, Host shapes, name bytes) are sent to a Go net/http server on
+  is the smuggling table: 40 hand rows (Content-Length duplicates and
+  conflicts, CL with Transfer-Encoding, short bodies and a CL that
+  swallows pipelined bytes, TE lists, folds, casing, bad chunk framing,
+  Host shapes, name bytes, and header values with valid UTF-8 and with
+  obs-text bytes) are sent to a Go net/http server on
   127.0.0.1, which answers each request it accepts with the framing its
   handler saw (Content-Length or chunked, the length, and the body bytes
   read, or its error and the bytes before it); the Xo side reads the same
-  bytes with parse_head and takes the framing from its own Head (clen,
-  chunked), then chunked for the body. The comparison is that framing line
+  bytes as a Str the way the server does (rt.cast[Bytes, Str], no
+  conversion), takes the framing from its own Head (clen, chunked), then
+  chunked for the body, slices bodies from the raw Bytes, and reports short
+  data as an error with the bytes
+  read so far, never as a body taken from what follows. The comparison is
+  that framing line
   per request, joined in order, so a body framed differently by the two
   sides fails even when both accept it, and the pipelined row pins where
   the next request starts; the table fails if Go accepts or rejects fewer
