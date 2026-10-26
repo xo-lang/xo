@@ -302,6 +302,22 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   record the audit's entries in allow.txt, which means "uncovered and
   accepted": a declaration the edges contradict is documented with its
   reason in the audit's results, not accepted.
+  Since 2026-10-26 the walk also crosses from a std module's front
+  declaration into its implementation: `implAliases` reads std/native/<module>.xo
+  for positions only (they are not reported declarations, which are the API
+  surface) and links same module, symbol and kind, so a covered front
+  declaration follows its body's edges and covers its twin. A declaration
+  that exists only in the body file (std/native/sql.xo's Pool) is a node of
+  the walk too (`loadImplDecls`), unlisted and uncounted, so body -> native
+  helper -> declaration chains are followed rather than dropped. Before
+  that, every declaration called only from an implementation body read as
+  unreached; measured on four programs, uncovered went 1357 to 1265 and 92
+  declarations were newly reached, among them `sql.Driver.connect`,
+  `sql.DriverConn.begin/commit/close/exec/is_broken/ping/query/rollback`,
+  `prelude.read_or`, `read_text_or` and `prelude.Str.trim`. Keep each shard's
+  .tsv until the audit's numbers are superseded: the first sweep deleted them
+  after each shard, so its figures can only be recomputed with a second full
+  sweep.
 - `xo dev edges [--out=FILE] [--impls] DIR` writes the checked program's
   resolved references, one tab separated line each:
   SRC_PATH SRC_LINE SRC_NAME TGT_PATH TGT_LINE TGT_NAME SITE_PATH

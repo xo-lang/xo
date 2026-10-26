@@ -120,3 +120,74 @@ group in the re-sweep.
 - The next audit is worth running after the sql driver program (a
   measurement, not a gate): it should show 61 down to about 52, with 0
   under.
+
+## Correction, same day: the walk could not cross into an implementation body
+
+The counts above under-count, and this section says how. `loadDecls` read
+std/*.xo plus std/native/prelude.xo, and every other module's implementation
+lives in std/native/<module>.xo. A front declaration has no body edges of
+its own, so the walk stopped at it: a declaration called only from a body
+read as unreached, and a front declaration reached from a root never
+credited anything its body calls.
+
+The first half of the fix links a front declaration to its body
+(`implAliases`: same module, symbol and kind, positions read from
+std/native/*.xo and described there). A second half was needed for the same
+reason one level down: a declaration that exists only in the body file, with
+no front twin, is in no list the walk visits, so an edge into it marked
+nothing and its own calls were dropped again. std/native/sql.xo's `Pool`,
+with `take`, `give`, `ping`, is the case that exposed it: `Driver.connect`,
+`DriverConn.ping`, `close` and `is_broken` are called only from those
+methods. `loadImplDecls` makes every body declaration a node of the walk
+(unlisted and uncounted: the reported set stays the API surface).
+
+Measured on the four dumps still on disk (the sql, prelude, http and
+prelude-stream programs, dumped the same day), uncovered 1357 to 1265 in
+two steps: the alias 1357 to 1316, 44 declarations, then the body-only
+nodes 1316 to 1265, 51 more (52 lines changed, one is an `[impl]` mark and
+not a new reach). 92 declarations are newly reached in all, among them
+`sql.Driver.connect`, every `sql.DriverConn` method,
+`sql.Row.items`, `prelude.read_or`, `read_text_or`, `Str.trim`,
+`starts_with`, `contains`, `is_empty`, `replace`, `List.is_empty`, `pop`,
+`Mutex.new`, `with`, `with_read`, `Chan.send`, `recv`, `Atomic.set`,
+`Fs.read`, `read_text`, `float_parse`, `task.is_canceled` and the fs_*
+helpers. The same mechanism explains the two `prelude.read_or` entries: it
+is declared twice, front and body, keyed by path:line, so one was reached
+and its twin printed as unreached.
+
+The fix (internal/stdcoverage implAliases and loadImplDecls, with
+TestUncoveredResolvedCrossesImplementationBodies covering the chain front ->
+body-only helper -> declaration) is a separate commit. The numbers in the
+sections above stand as the pre-fix measurement of that sweep; recomputing
+them needs the edges again, and the sweep deleted each shard's .tsv after
+comparing it, so the next audit is a full second sweep with the fixed tool.
+Keep the dumps until the numbers are superseded.
+
+## What the same-day corpora already closed, and what the cold paths really are
+
+Landed the same day (main 83f5ae058): a prelude test for `Stream.read`,
+`write` and `close` through a dialed and an accepted connection; a new http
+corpus that calls `status`/`display` through a value typed
+`http.StatusError`; a new metrics corpus (the module had none); and a sql
+corpus that writes a Driver and drives it through `open_driver`, so
+`Driver.connect` and every `DriverConn` method run (the pool calls
+`is_broken` on every connection it is given back and `close` whenever it
+keeps none).
+
+With the fix, three of the remaining cold paths stop being cold without any
+new program: `prelude.read_or` and `read_text_or` (their twins, and the
+corpora that call them), and `prelude.texts`, which `llrt_env_args`,
+`llrt_env_get` and `llrt_env_vars` call and programs do reach through
+os.env (`corpus/cli`, `golden/closure_env_frame`, `golden/fs_native`).
+`llrt_concat_int` stays: the compiler emits its call, so no site names it and
+it is allow-listed already, as `texts` is. `internal.SharedLock.unlock` is
+called by compiler/xo, which the sweep has no root for (a program-list
+question). `go.Error.go_type` IS called by `internal/gen/testdata/golden/go_url`
+(main.xo:26) and the audit still lists it, so its edge resolves to something
+other than std/go.xo:19; that is one line of a future dump to look at, not a
+corpus gap. `go.Error.message` has no caller anywhere: it needs a `use go`
+program that calls it, and the gen goldens' want.txt is rewritten wholesale by
+`-golden-update`, so that is a deliberate change to one golden, not a
+by-product.
+
+

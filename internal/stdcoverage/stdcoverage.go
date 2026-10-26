@@ -312,6 +312,35 @@ func loadDecls(root string) ([]decl, error) {
 	return append(decls, ds...), nil
 }
 
+// loadImplDecls reads every declaration of std/native/*.xo: each module's
+// implementation bodies and std's own test files. It is the walk's extra
+// node set, not part of what Uncovered reports (the API surface is what
+// std/*.xo declares). A declaration that exists only here has no front twin
+// and no reported entry, so without it as a node an edge into it marks
+// nothing and the calls its body makes are never followed: std/native/sql.xo's
+// Pool, with take, give and ping, is what reaches DriverConn.ping and close
+// (measured 2026-10-26).
+func loadImplDecls(root string) ([]decl, error) {
+	paths, err := filepath.Glob(filepath.Join(root, "std", "native", "*.xo"))
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(paths)
+	var out []decl
+	for _, p := range paths {
+		mod := strings.TrimSuffix(filepath.Base(p), ".xo")
+		ds, err := declared(mod, p)
+		if err != nil {
+			return nil, err
+		}
+		for i := range ds {
+			ds[i].path = relPath(root, p)
+		}
+		out = append(out, ds...)
+	}
+	return out, nil
+}
+
 // relPath is p as the checker names it in `xo dev edges`: relative to the
 // repository root, slash separated.
 func relPath(root, p string) string {
@@ -456,6 +485,53 @@ func ReadEdges(paths []string) ([]Edge, error) {
 // as the checker names it and its line.
 func posKey(path string, line int) string { return path + ":" + strconv.Itoa(line) }
 
+// implAliases maps a declaration's key to the keys of every file it is
+// declared in: a std module's front declaration lives in std/<module>.xo and
+// its body in std/native/<module>.xo, and `xo dev edges` names the body's
+// sites with the body's file and line. Without the link the walk stops at the
+// front declaration, which has no edges of its own, so every declaration the
+// body calls reads as unreached (measured 2026-10-26 on one dump: 28
+// std/sql.xo declarations reached from roots, 166 further targets behind
+// them).
+//
+// The body files are read for positions only: they are not added to the
+// declarations the tool reports, which are the std API surface. A pair is
+// matched on module, symbol and kind, so a native helper that shares a bare
+// name with an interface method does not link to it.
+func implAliases(decls, impls []decl) map[string][]string {
+	group := map[string][]string{}
+	seen := map[string]bool{}
+	add := func(d decl) {
+		if d.path == "" {
+			return
+		}
+		g := d.Module + "|" + d.Symbol + "|" + d.Kind
+		k := posKey(d.path, d.line)
+		// std/native/prelude.xo is in both lists
+		if seen[g+"\x00"+k] {
+			return
+		}
+		seen[g+"\x00"+k] = true
+		group[g] = append(group[g], k)
+	}
+	for _, d := range decls {
+		add(d)
+	}
+	for _, d := range impls {
+		add(d)
+	}
+	out := map[string][]string{}
+	for _, keys := range group {
+		if len(keys) < 2 {
+			continue
+		}
+		for _, k := range keys {
+			out[k] = keys
+		}
+	}
+	return out
+}
+
 // isStdPath reports whether a checker path names a std file (the corpora,
 // the goldens, and the tool's own test programs are otherwise).
 func isStdPath(p string) bool { return strings.HasPrefix(p, "std/") }
@@ -482,8 +558,29 @@ func UncoveredResolved(root string, edges []Edge) (entries []Entry, total int, i
 	if err != nil {
 		return nil, 0, nil, err
 	}
+	implDs, err := loadImplDecls(root)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	// nodes are what the walk visits: the reported declarations plus every
+	// implementation-only one (a std/native helper with no front twin), so an
+	// edge into a body helper marks it and the calls its body makes are
+	// followed. Only the first len(decls) of them are counted and listed.
+	nodes := append([]decl{}, decls...)
+	seenKey := map[string]bool{}
+	for _, d := range decls {
+		seenKey[posKey(d.path, d.line)] = true
+	}
+	for _, d := range implDs {
+		k := posKey(d.path, d.line)
+		if seenKey[k] {
+			continue
+		}
+		seenKey[k] = true
+		nodes = append(nodes, d)
+	}
 	byKey := map[string]int{}
-	for i, d := range decls {
+	for i, d := range nodes {
 		k := posKey(d.path, d.line)
 		if _, ok := byKey[k]; !ok {
 			byKey[k] = i
@@ -496,12 +593,38 @@ func UncoveredResolved(root string, edges []Edge) (entries []Entry, total int, i
 		}
 		bySrc[posKey(e.SrcPath, e.SrcLine)] = append(bySrc[posKey(e.SrcPath, e.SrcLine)], e)
 	}
-	covered := make([]bool, len(decls))
+	aliases := implAliases(decls, implDs)
+	// srcKeys is every key whose edges a covered declaration's call site
+	// reaches: its own, and its implementation bodies' (implAliases).
+	srcKeys := func(d decl) []string {
+		if ks, ok := aliases[posKey(d.path, d.line)]; ok {
+			return ks
+		}
+		return []string{posKey(d.path, d.line)}
+	}
+	covered := make([]bool, len(nodes))
+	keyToDecl := map[string][]int{}
+	for i, d := range nodes {
+		k := posKey(d.path, d.line)
+		keyToDecl[k] = append(keyToDecl[k], i)
+	}
 	queue := []int{}
+	// mark covers i and, with it, every declaration sharing a key with it: a
+	// front declaration and its body are one declaration to a reader, so
+	// reaching one reaches both.
 	mark := func(i int) {
-		if !covered[i] {
-			covered[i] = true
-			queue = append(queue, i)
+		if covered[i] {
+			return
+		}
+		covered[i] = true
+		queue = append(queue, i)
+		for _, k := range srcKeys(nodes[i]) {
+			for _, j := range keyToDecl[k] {
+				if !covered[j] {
+					covered[j] = true
+					queue = append(queue, j)
+				}
+			}
 		}
 	}
 	for _, e := range edges {
@@ -536,15 +659,17 @@ func UncoveredResolved(root string, edges []Edge) (entries []Entry, total int, i
 	for len(queue) > 0 {
 		i := queue[len(queue)-1]
 		queue = queue[:len(queue)-1]
-		d := decls[i]
+		d := nodes[i]
 		if d.Kind == "method" || d.Kind == "ifmethod" {
 			for _, j := range fnBySymbol[strings.ToLower(d.recv)+"_"+d.bare] {
 				mark(j)
 			}
 		}
-		for _, e := range bySrc[posKey(d.path, d.line)] {
-			if j, ok := byKey[posKey(e.TgtPath, e.TgtLine)]; ok {
-				mark(j)
+		for _, k := range srcKeys(d) {
+			for _, e := range bySrc[k] {
+				if j, ok := byKey[posKey(e.TgtPath, e.TgtLine)]; ok {
+					mark(j)
+				}
 			}
 		}
 	}
