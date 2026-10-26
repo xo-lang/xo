@@ -32,9 +32,12 @@ const XS: List[Int] = [3, 1, 4, 1, 5, 9]
 // A constant's list read in a loop is kept around it after the first
 // read (cache_const_reads), the length's read and the element's are one
 // read, and the list is immortal, so no release: no bounds check and no
-// drop call (2026-10-24).
+// call to the allocator's release helpers, which a module function names
+// as bl _xo_h<hash> (bl Lxo_drop<n> is a local label inside the runtime's
+// own drop code, so it never matched there; a variant holding a List[Str]
+// shows the bl _xo_h call, 2026-10-26).
 fn cycle(n: Int) -> Int {
-  // arm64: "_xo_x_const_once" -"b\.hs" -"bl Lxo_drop"
+  // arm64: "_xo_x_const_once" -"b\.hs" -"bl _xo_h"
   var s = 0
   for i in 0..n {
     s += XS[i % XS.len()]

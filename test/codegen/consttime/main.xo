@@ -63,7 +63,11 @@ fn main(os: Os) {
 // decapsulation's implicit rejection (a mask from the whole ciphertext
 // compare, the key picked under it), and RSA's private exponentiation
 // (bigmod.exp_into's window table under masks). The branches left are loops
-// over public counts and bounds checks on public indices.
+// over public counts and bounds checks on public indices. compress's own
+// arithmetic is Int, so its divide is sdiv; udiv is named beside it as
+// the guard for an unsigned divide, which LLVM's IR spells udiv (a
+// variant dividing two UInt64s shows it) and which is as variable-time as
+// sdiv on these cores (2026-10-26).
 // func nistec.pt_mul
 // arm64: -"csel" -"cset"
 // llvm: -"select"

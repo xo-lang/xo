@@ -43,8 +43,11 @@ const CP: Bytes = b"  "
 // A view of a constant (cut_prefix's of CS) is the constant's immortal
 // object: its release at the end of the expression is no call (isel.xo
 // Release, rcpair.xo imm_post; DS-2, 2026-10-24: one release call a cut).
+// The emitter writes a call as tab, bl, space, symbol (arm64 emit.xo), so
+// the space form is the one that recognizes it (the tab form spelled a
+// separator no line holds, 2026-10-26).
 fn cut_len(n: Int) -> Int {
-  // arm64: -"bl\t_xo_h" -"bl _xo_h"
+  // arm64: -"bl _xo_h"
   var t = 0
   for _ in 0..n {
     t += (CS.cut_prefix(CP) ?? b"").len()

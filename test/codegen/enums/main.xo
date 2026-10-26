@@ -9,22 +9,24 @@ enum Color {
 }
 
 // The target's fields are variants known at build time: no call to the
-// enum's equality, no compare.
+// enum's equality, no compare. The emitter writes a call as tab, bl,
+// space, symbol (arm64 emit.xo), so the space form is the one that
+// recognizes it; the tab form never occurred (2026-10-26).
 fn is_mac() -> Bool {
-  // arm64: -"\tbl\t" -"\tbl "
+  // arm64: -"\tbl "
   // llvm: -"call " -"icmp"
   target.os == TargetOs.Darwin
 }
 
 fn not_wasm() -> Bool {
-  // arm64: -"\tbl\t" -"\tbl "
+  // arm64: -"\tbl "
   // llvm: -"call " -"icmp"
   target.arch != TargetArch.Wasm32
 }
 
 // Two literal variants of a user enum.
 fn same() -> Bool {
-  // arm64: -"\tbl\t" -"\tbl "
+  // arm64: -"\tbl "
   // llvm: -"call " -"icmp"
   Color.Red == Color.Green
 }
