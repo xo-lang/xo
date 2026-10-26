@@ -20,6 +20,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xo-lang/xo/internal/runfilter"
 	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
@@ -69,6 +70,31 @@ func devGoldens(t *testing.T, args ...string) {
 	if os.Getenv("XO_DEV_FORCE") == "1" {
 		full = append(full, "--force")
 	}
+	// -run TestDevGoldensX/NAME (and -skip) choose the programs built,
+	// not only the subtests reported: --only keeps the directories that
+	// contain /NAME (a longer name that starts with NAME is built too and
+	// not reported)
+	sel, filtered := runfilter.Sub(t)
+	chosen := map[string]bool{}
+	if filtered {
+		var only []string
+		for _, a := range args {
+			if strings.HasPrefix(a, "-") {
+				continue
+			}
+			ents, _ := os.ReadDir(filepath.Join(root, a))
+			for _, e := range ents {
+				if e.IsDir() && sel(e.Name()) {
+					chosen[e.Name()] = true
+					only = append(only, "/"+e.Name())
+				}
+			}
+		}
+		if len(only) == 0 {
+			t.Skip("-run selects no program")
+		}
+		full = append(full, "--only="+strings.Join(only, ","))
+	}
 	full = append(full, args...)
 	cmd := testtmp.Guard(exec.Command(xo, full...))
 	cmd.Dir = root
@@ -94,16 +120,26 @@ func devGoldens(t *testing.T, args ...string) {
 		if jerr := json.Unmarshal(line, &o); jerr != nil {
 			t.Fatalf("line %q: %v", line, jerr)
 		}
+		if filtered && !chosen[filepath.Base(o.Dir)] && o.Name != "(discovery)" {
+			continue
+		}
 		if o.Status == "fail" {
 			fails = append(fails, o.Dir+": "+o.Why)
 		}
+		// one subtest a program, so -run selects programs as it does for
+		// the other golden drivers
+		t.Run(filepath.Base(o.Dir), func(t *testing.T) {
+			if o.Status == "fail" {
+				t.Errorf("%s: %s", o.Dir, o.Why)
+			}
+		})
 	}
 	if sum.Programs == 0 {
 		t.Fatalf("xo %s: no summary (%v)\n%s%s", strings.Join(full, " "), err, out, stderr.String())
 	}
 	t.Logf("%d programs: %d pass (%d cached), %d fail, %d ms", sum.Programs, sum.Pass, sum.Cached, sum.Fail, sum.WallMS)
 	if len(fails) > 0 {
-		t.Fatalf("%d failing:\n%s", len(fails), strings.Join(fails, "\n"))
+		t.Logf("%d failing:\n%s", len(fails), strings.Join(fails, "\n"))
 	}
 }
 

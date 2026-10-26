@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/xo-lang/xo/internal/runfilter"
 	"github.com/xo-lang/xo/internal/testtmp"
 	"os"
 	"os/exec"
@@ -82,6 +83,20 @@ func TestSelfhostWasm(t *testing.T) {
 		}
 		dirs = keep
 	}
+	// -run TestSelfhostWasm/NAME (and -skip) choose the goldens compiled,
+	// not only the subtests reported: compiler/wasm --each over every
+	// golden took about 14 minutes to check one
+	sel, filtered := runfilter.Sub(t)
+	var chosen []string
+	for _, d := range dirs {
+		if sel(filepath.Base(d)) {
+			chosen = append(chosen, d)
+		}
+	}
+	if len(chosen) == 0 {
+		t.Skip("-run selects no golden")
+	}
+	dirs = chosen
 	out := t.TempDir()
 	var rel []string
 	for _, d := range dirs {
@@ -102,62 +117,64 @@ func TestSelfhostWasm(t *testing.T) {
 	var why []string
 	for _, r := range rel {
 		name := filepath.Base(r)
-		line, ok := results[r]
-		if !ok {
-			t.Errorf("%s: no result from compiler/wasm", name)
-			failed++
-			continue
-		}
-		if !strings.HasPrefix(line, "== ok ") {
-			if strings.HasPrefix(line, "== unsupported ") {
-				unsupported++
-				why = append(why, name+": "+strings.TrimPrefix(line, "== unsupported "))
-				continue
-			}
-			t.Errorf("%s: %s", name, line)
-			failed++
-			continue
-		}
-		dir := filepath.Join(root, r)
-		// want_wasm.txt, when a golden's output names the target (target.os
-		// is Wasi in a WASI module, 4da985517), else want.txt
-		wantFile := filepath.Join(dir, "want_wasm.txt")
-		if _, err := os.Stat(wantFile); err != nil {
-			wantFile = filepath.Join(dir, "want.txt")
-		}
-		want, err := os.ReadFile(wantFile)
-		if err != nil {
-			t.Fatal(err)
-		}
-		wasm := filepath.Join(out, name+".wasm")
-		got := runWasm(t, node, runner, wasm, dir, false)
-		if m := wasmCCallRE.FindString(got.String()); m != "" && got.String() != string(want) {
-			// a C library call (decision 0232) in a WASI module: std's
-			// guard faults by design, as an unsupported call would
-			unsupported++
-			why = append(why, name+": "+m)
-			continue
-		}
-		if got.String() != string(want) {
-			t.Errorf("%s: the wasm module's run differs from want.txt\n--- got\n%s--- want\n%s", name, got.String(), want)
-			failed++
-			continue
-		}
-		if got.exit == 0 {
-			lk := runWasm(t, node, runner, wasm, dir, true)
-			if m := wasmLeakRE.FindStringSubmatch(lk.rawStderr); m == nil || m[1] != "0" {
-				t.Errorf("%s: leak check: %q", name, lk.rawStderr)
+		t.Run(name, func(t *testing.T) {
+			line, ok := results[r]
+			if !ok {
+				t.Errorf("%s: no result from compiler/wasm", name)
 				failed++
-				continue
+				return
 			}
-		}
-		pass++
+			if !strings.HasPrefix(line, "== ok ") {
+				if strings.HasPrefix(line, "== unsupported ") {
+					unsupported++
+					why = append(why, name+": "+strings.TrimPrefix(line, "== unsupported "))
+					return
+				}
+				t.Errorf("%s: %s", name, line)
+				failed++
+				return
+			}
+			dir := filepath.Join(root, r)
+			// want_wasm.txt, when a golden's output names the target (target.os
+			// is Wasi in a WASI module, 4da985517), else want.txt
+			wantFile := filepath.Join(dir, "want_wasm.txt")
+			if _, err := os.Stat(wantFile); err != nil {
+				wantFile = filepath.Join(dir, "want.txt")
+			}
+			want, err := os.ReadFile(wantFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wasm := filepath.Join(out, name+".wasm")
+			got := runWasm(t, node, runner, wasm, dir, false)
+			if m := wasmCCallRE.FindString(got.String()); m != "" && got.String() != string(want) {
+				// a C library call (decision 0232) in a WASI module: std's
+				// guard faults by design, as an unsupported call would
+				unsupported++
+				why = append(why, name+": "+m)
+				return
+			}
+			if got.String() != string(want) {
+				t.Errorf("%s: the wasm module's run differs from want.txt\n--- got\n%s--- want\n%s", name, got.String(), want)
+				failed++
+				return
+			}
+			if got.exit == 0 {
+				lk := runWasm(t, node, runner, wasm, dir, true)
+				if m := wasmLeakRE.FindStringSubmatch(lk.rawStderr); m == nil || m[1] != "0" {
+					t.Errorf("%s: leak check: %q", name, lk.rawStderr)
+					failed++
+					return
+				}
+			}
+			pass++
+		})
 	}
 	t.Logf("wasm goldens: %d pass, %d unsupported, %d fail of %d", pass, unsupported, failed, len(rel))
 	for _, w := range why {
 		t.Logf("unsupported %s", w)
 	}
-	if os.Getenv("XO_WASM_GOLDENS") == "" && pass < wasmMinPass {
+	if os.Getenv("XO_WASM_GOLDENS") == "" && !filtered && pass < wasmMinPass {
 		t.Errorf("%d goldens pass, want at least %d (wasmMinPass)", pass, wasmMinPass)
 	}
 }

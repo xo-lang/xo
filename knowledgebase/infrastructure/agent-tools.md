@@ -200,6 +200,16 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   comparison), or the whole package with `-timeout 90m`. The test binary
   itself now stops such a run at once with that advice
   (internal/llvm/golden_timeout_test.go), and -short is unaffected.
+- One golden on every golden driver (2026-10-26): `-run 'TEST/NAME$'`
+  builds only NAME. internal/llvm TestGolden and TestGoldenGoParity,
+  internal/arm64 TestGoldenRun and internal/gen TestGolden build inside
+  each subtest; TestSelfhostWasm (XO_SELFHOST_TIER=merge) and the
+  internal/devgoldens tests (TestDevGoldensArm64, LLVM, Go, ELF) read the
+  pattern (internal/runfilter) and compile only the goldens it selects,
+  then report one subtest a golden. Before that change a one-golden
+  TestSelfhostWasm compiled every golden (about 14 minutes) and the
+  devgoldens tests ran every program. A pattern that names a test but no
+  subtest still runs them all.
 - A runtime fault cannot run inside a test binary, so its corpus is one
   small program per case: internal/stdtest/testdata/faults/AREA/NAME/
   main.xo with the behavior recorded in its want.txt (exit status, stdout,

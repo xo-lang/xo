@@ -1,6 +1,8 @@
 # TestSelfhostWasm with -run on one golden still builds every golden
 
-Status: Observed (Xo Lang 2, 2026-10-26).
+Status: Observed and fixed (Xo Lang 2, 2026-10-26): TestSelfhostWasm and
+the internal/devgoldens tests now compile only the goldens `-run` selects
+(internal/runfilter).
 
 ## Symptom
 
