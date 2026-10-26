@@ -446,16 +446,20 @@ pub fn free_mt(h: Int, p: Int) {
     // central_put
     let cen = rt.mem_load(h, CENTRAL, 8)
     // only once the class's central list already holds SCAVENGE_KEEP
-    // magazines (a racy walk: magazines are never unmapped, and a stale
-    // count only moves the cut by one), so a short program that frees a
-    // few big blocks never pays the system calls
+    // magazines, counted under the lock (another thread may take a
+    // magazine and reuse its first block, so the links are read only
+    // while it is held), so a short program that frees a few big blocks
+    // never pays the system calls; the scavenge itself runs outside the
+    // lock and before old is linked, while this thread alone holds it
     if c >= SCAVENGE_FROM {
       var k = 0
+      rt.heap_lock()
       var w = rt.slot_load(cen, c, RELAXED)
       while w != 0 && k < SCAVENGE_KEEP {
         w = rt.mem_load(w, 8, 8)
         k = k.wrapping_add(1)
       }
+      rt.heap_unlock()
       if k >= SCAVENGE_KEEP {
         let _g = rt.heap_grow(old, SCAVENGE.wrapping_add(c))
       }
