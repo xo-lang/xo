@@ -39,6 +39,15 @@ look for it with the hand edit harness (`macho asm` and `macho link` on the gene
 unedited control first) before widening the rule. The hazard is the same on every Apple core;
 other targets are unmeasured.
 
+### x pairs on a quiet machine (2026-10-26, load 1.7 at start, middle and end)
+
+The same comparison (every x `ldp` split, 9 interleaved runs of 16 json, bytessearch and sort
+workloads, min and median cycles of the split build over the control) gave 0.97 to 1.07 on the
+minimum and 0.97 to 1.02 on the median, instructions +0 to +2%: no stall. The x register pair is
+not a measured hazard on these programs; the d register rule stays as it is. The nbody wall
+(`xo bench --ab`, 15 rounds, same window): 228.2 ms to 171.1 ms (0.75, 0.747 to 0.756), instructions
++1.9%.
+
 ### x pairs on real code (2026-10-26, first look)
 
 Splitting EVERY x `ldp` of a program into two `ldr`s (3,062 of 4,041 in the text bench, 2,059 in
