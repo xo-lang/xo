@@ -1,9 +1,12 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"math/rand"
 	"regexp"
+	"regexp/syntax"
+	"strconv"
 	"strings"
 )
 
@@ -99,10 +102,19 @@ func regexpCorpus() string {
 	o.WriteString(header("regexp's Compile, MatchString, FindStringIndex, FindAllString, FindStringSubmatchIndex, ReplaceAllString, ReplaceAllLiteralString and Split on curated and seeded random patterns against curated and random texts"))
 	o.WriteString("use std/regexp\n\n/// (pattern, whether it compiles, then per input in INPUTS the joined results)\nconst CASES: List[(Str, Bool, List[Str])] = [\n")
 	inputs := regexpInputs(r)
+	// errs is what a bad pattern's display must say: Xo's own wording
+	// ("invalid regexp "P": CODE: `EXPR`", std/native/regexp.xo) around
+	// the code and the expression Go's syntax.Error names.
+	var errs []string
 	for _, p := range regexpPatterns(r) {
 		re, err := regexp.Compile(p)
 		if err != nil {
 			fmt.Fprintf(&o, "  (%s, false, []),\n", xq(p))
+			var se *syntax.Error
+			if errors.As(err, &se) {
+				errs = append(errs, fmt.Sprintf("  (%s, %s),\n", xq(p),
+					xq(fmt.Sprintf("invalid regexp %s: %s: `%s`", strconv.Quote(p), se.Code, se.Expr))))
+			}
 			continue
 		}
 		var rs []string
@@ -117,6 +129,10 @@ func regexpCorpus() string {
 			o.WriteString(", ")
 		}
 		o.WriteString(xq(s))
+	}
+	o.WriteString("]\n\n/// (pattern, what its RegexErr displays: Xo's wording around Go's code and expression)\nconst ERRS: List[(Str, Str)] = [\n")
+	for _, e := range errs {
+		o.WriteString(e)
 	}
 	o.WriteString("]\n")
 	o.WriteString(regexpTests)
@@ -168,6 +184,20 @@ test "regexp is Go's on the corpus" {
           bad.push((pat, "did not compile", "", ""))
         }
       }
+    }
+  }
+  expect(bad[0..(if bad.len() < 10 { bad.len() } else { 10 })]) == []
+}
+
+test "a bad pattern displays Xo's wording around Go's code and expression" {
+  var bad: List[(Str, Str, Str)] = []
+  for (pat, want) in ERRS {
+    let got = match regexp.compile(pat) {
+      Ok(_) => "compiled"
+      Err(e) => e.display()
+    }
+    if got != want {
+      bad.push((pat, got, want))
     }
   }
   expect(bad[0..(if bad.len() < 10 { bad.len() } else { 10 })]) == []
