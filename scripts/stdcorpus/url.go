@@ -9,9 +9,10 @@ import (
 )
 
 func urlText(r *rand.Rand) string {
+	alpha := []string{"a", "Z", "0", " ", "+", "%", "%2", "%20", "%2B", "%zz", "%C3%A9", "%c3%a9", "%FF", "%", "é", "&", "=", ";", "/", "?", "#", "~", "-", "_", ".", "!", "*", "'", "(", ")", ":", "@", "$", ",", "[", "]", "\x00", "\t", "\n", "\x7f", "\u0080", "�", "日", "%00"}
 	var b strings.Builder
 	for i, n := 0, r.Intn(12); i < n; i++ {
-		b.WriteString([]string{"a", "Z", "0", " ", "+", "%", "%2", "%20", "%2B", "%zz", "%C3%A9", "%FF", "é", "&", "=", ";", "/", "?", "#", "~", "-", "_", ".", "!", "*", "'", "(", ")", ":", "@", "$", ",", "[", "]", "\x00", "\t", "\n", "日"}[r.Intn(38)])
+		b.WriteString(alpha[r.Intn(len(alpha))])
 	}
 	return textOf(b.String())
 }
@@ -87,14 +88,17 @@ func urlCorpus() string {
 		fmt.Fprintf(&o, "  (%s, %s, %s, %s, %s),\n", xq(s), xq(url.QueryEscape(s)), xq(url.PathEscape(s)), xq(urlUnesc(qu, qe)), xq(urlUnesc(pu, pe)))
 	}
 	o.WriteString("]\n\n/// (query, Go's result: ok KEY=V,V|... ENCODED or err TEXT)\nconst QUERIES: List[(Str, Str)] = [\n")
-	for i := 0; i < 1200; i++ {
+	for i := 0; i < 3000; i++ {
 		var b strings.Builder
 		for j, n := 0, r.Intn(5); j < n; j++ {
 			if j > 0 {
-				b.WriteString([]string{"&", "&", "&", "&&", ";"}[r.Intn(5)])
+				b.WriteString([]string{"&", "&", "&", "&&", ";", ";;", "&&&"}[r.Intn(7)])
 			}
-			b.WriteString([]string{"a", "b", "key", "a+b", "%61", "x%zz", "", "é", "k%20"}[r.Intn(9)])
+			b.WriteString([]string{"a", "b", "key", "a+b", "%61", "x%zz", "", "é", "k%20", "%2F", "%", "%c3%a9", "日本", "�", "\x7f", "\u0080"}[r.Intn(16)])
 			if r.Intn(5) > 0 {
+				b.WriteString("=" + urlText(r))
+			}
+			if r.Intn(12) == 0 {
 				b.WriteString("=" + urlText(r))
 			}
 		}

@@ -37,11 +37,11 @@ func mimeValue(r *rand.Rand) string {
 		b.WriteString([]string{"=", "=", "=", "=", "=", " = ", ""}[r.Intn(7)])
 		switch r.Intn(9) {
 		case 0, 1, 6, 7:
-			b.WriteString([]string{"utf-8", "abc", "a.b", "--x", "1", "é", "a b"}[r.Intn(7)])
+			b.WriteString([]string{"utf-8", "abc", "a.b", "--x", "1", "é", "a b", "日本", "�", "a\tb", "a\r\nb", "a\x00b", "a\u0080b"}[r.Intn(13)])
 		case 2, 3:
 			b.WriteString("\"")
 			for j, m := 0, r.Intn(4); j < m; j++ {
-				b.WriteString([]string{"a", " ", "b", "c d", "\\\"", "\\\\", ";", "é", "\\", "=", "\x00", "\xff"}[r.Intn(12)])
+				b.WriteString([]string{"a", " ", "b", "c d", "\\\"", "\\\\", ";", "é", "\\", "=", "\x00", "\xff", "\x1b", "\u0080", "日", "�", "\r\n ", "\t"}[r.Intn(18)])
 			}
 			if r.Intn(6) > 0 {
 				b.WriteString("\"")
@@ -77,7 +77,7 @@ func mimeCorpus() string {
 	var o strings.Builder
 	o.WriteString(header("mime.ParseMediaType and FormatMediaType and net/http.DetectContentType as std/rt/mime.go calls them, on seeded random media types (RFC 2231 continuations and charsets, quoting, bad bytes) and sniffed byte prefixes"))
 	o.WriteString("use std/mime\n\n/// (value, Go's result: ok KIND;k=v... sorted, or err TEXT)\nconst PARSE: List[(Str, Str)] = [\n")
-	for i := 0; i < 2500; i++ {
+	for i := 0; i < 4000; i++ {
 		// a Str holds no invalid UTF-8: Go parses the text the Xo side gets
 		v := textOf(mimeValue(r))
 		fmt.Fprintf(&o, "  (%s, %s),\n", xq(v), xq(textOf(mimeParse(v))))
