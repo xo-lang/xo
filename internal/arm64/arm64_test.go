@@ -14,7 +14,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/xo-lang/xo/internal/testtmp"
@@ -70,29 +72,34 @@ var benchDir = filepath.Join("..", "..", "bench", "perf", "llvm", "xo")
 func TestGoldenAsm(t *testing.T) {
 	for _, name := range []string{"fib", "sieve"} {
 		for _, goos := range []string{"darwin", "linux"} {
-			full := asm(t, filepath.Join(benchDir, name), goos)
-			got := ownFuncs(full)
-			path := filepath.Join("testdata", name+"."+goos+".s")
-			if *update {
-				if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
-					t.Fatal(err)
+			// the four asm runs in parallel (lead, 2026-10-26: TestGoldenAsm
+			// runs in every arm64 and x86 isel or emitter gate)
+			t.Run(name+"/"+goos, func(t *testing.T) {
+				t.Parallel()
+				full := asm(t, filepath.Join(benchDir, name), goos)
+				got := ownFuncs(full)
+				path := filepath.Join("testdata", name+"."+goos+".s")
+				if *update {
+					if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
+						t.Fatal(err)
+					}
+					return
 				}
-				continue
-			}
-			want, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatalf("missing golden file (run with -update): %v", err)
-			}
-			if string(want) != got {
-				t.Errorf("%s: assembly differs from the golden file (run with -update and review the diff)", path)
-			}
-			if goos == "linux" {
-				whole := filepath.Join(t.TempDir(), name+".s")
-				if err := os.WriteFile(whole, []byte(full), 0o644); err != nil {
-					t.Fatal(err)
+				want, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatalf("missing golden file (run with -update): %v", err)
 				}
-				assembleELF(t, whole)
-			}
+				if string(want) != got {
+					t.Errorf("%s: assembly differs from the golden file (run with -update and review the diff)", path)
+				}
+				if goos == "linux" {
+					whole := filepath.Join(t.TempDir(), name+".s")
+					if err := os.WriteFile(whole, []byte(full), 0o644); err != nil {
+						t.Fatal(err)
+					}
+					assembleELF(t, whole)
+				}
+			})
 		}
 	}
 }
@@ -206,10 +213,47 @@ func buildRunOpts(t *testing.T, dir string, probes bool) (runResult, error) {
 	return buildRunWith(t, dir, xotool.Options{Backend: xotool.BackendArm64})
 }
 
-// buildRunWith builds dir with opts and runs it with XO_LEAKCHECK=1.
+// sharedBuilds holds the builds of this test binary by sharedKey: the
+// full tier built every golden twice the same way, in TestGoldenRun and
+// in TestDebugInfoSameCode's build with debug information (lead,
+// 2026-10-26, the full tier's 83 minutes), with every cache off.
+var sharedBuilds sync.Map
+
+type sharedEntry struct {
+	once sync.Once
+	res  *xotool.Result
+	err  error
+}
+
+// sharedKey names a build: the directory, the options and every XO_
+// variable of the environment the xo process inherits, so a test that
+// sets one (t.Setenv) gets a build of its own.
+func sharedKey(dir string, opts xotool.Options) string {
+	var env []string
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "XO_") {
+			env = append(env, kv)
+		}
+	}
+	sort.Strings(env)
+	return fmt.Sprintf("%s\x00%#v\x00%s", dir, opts, strings.Join(env, "\x00"))
+}
+
+// sharedBuild is xotool.Build of dir, once per key for the whole test
+// binary. The result is shared: its binary is only read, and its
+// directory is removed by TestMain (xotool.CleanupTemp), never by a test.
+func sharedBuild(dir string, opts xotool.Options) (*xotool.Result, error) {
+	v, _ := sharedBuilds.LoadOrStore(sharedKey(dir, opts), &sharedEntry{})
+	e := v.(*sharedEntry)
+	e.once.Do(func() { e.res, e.err = xotool.Build([]string{dir}, opts) })
+	return e.res, e.err
+}
+
+// buildRunWith builds dir with opts (sharedBuild) and runs it with
+// XO_LEAKCHECK=1.
 func buildRunWith(t *testing.T, dir string, opts xotool.Options) (runResult, error) {
 	t.Helper()
-	res, err := xotool.Build([]string{dir}, opts)
+	res, err := sharedBuild(dir, opts)
 	if err != nil {
 		return runResult{}, err
 	}

@@ -219,12 +219,21 @@ func TestDebugInfoSameCode(t *testing.T) {
 				// without them does (compiler/arm64 inline.xo
 				// release_view; gotchas/same-code-test-inline-hole.md,
 				// 2026-10-25)
-				res, err := xotool.Build([]string{dir}, xotool.Options{Backend: xotool.BackendArm64, Flags: flags})
+				// the default build is TestGoldenRun's (sharedBuild);
+				// the other is removed after it
+				opts := xotool.Options{Backend: xotool.BackendArm64, Flags: flags}
+				var res *xotool.Result
+				var err error
+				if flags == nil {
+					res, err = sharedBuild(dir, opts)
+				} else {
+					res, err = xotool.Build([]string{dir}, opts)
+					if err == nil && res.Dir != "" {
+						defer os.RemoveAll(res.Dir)
+					}
+				}
 				if err != nil {
 					t.Fatalf("build: %v", err)
-				}
-				if res.Dir != "" {
-					defer os.RemoveAll(res.Dir)
 				}
 				if res.Failed {
 					t.Fatalf("build failed:\n%s", res.Output)

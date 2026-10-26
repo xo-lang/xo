@@ -33,6 +33,8 @@ func TestAmd64DebugInfoSameCode(t *testing.T) {
 	digits := regexp.MustCompile(`^[0-9]+:$`)
 	for _, name := range []string{"http_server", "fault_unwind", "float_libm", "json_text"} {
 		t.Run(name, func(t *testing.T) {
+			// independent cross builds (lead, 2026-10-26: serial, 8 builds)
+			t.Parallel()
 			dir := filepath.Join("..", "llvm", "testdata", "golden", name)
 			ins := func(flags ...string) map[string][]string {
 				out := filepath.Join(t.TempDir(), "a.s")
@@ -120,6 +122,8 @@ func TestAmd64CrossBuilds(t *testing.T) {
 	for name, dir := range dirs {
 		for _, target := range []string{"linux/amd64", "windows/amd64", "darwin/amd64"} {
 			t.Run(name+"/"+strings.ReplaceAll(target, "/", "_"), func(t *testing.T) {
+				// independent cross builds (lead, 2026-10-26: serial, 12 builds)
+				t.Parallel()
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 				defer cancel()
 				args := append(append([]string{}, cli[1:]...), "build", "--backend=amd64", "--targets="+target, "-o", filepath.Join(t.TempDir(), "b"), ".")

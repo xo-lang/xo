@@ -612,6 +612,9 @@ func TestFrontCacheAbsentHelper(t *testing.T) {
 // root, so its functions are named as main's (2026-10-20: a std body
 // recorded there called "svc" for stop.svc in other builds).
 func TestFrontCacheAcrossPrograms(t *testing.T) {
+	// its own work and cache directories: beside the other tests
+	// (lead, 2026-10-26: run alone, it was the full tier's serial time)
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -923,6 +926,9 @@ func TestFrontCacheEntryDoesNotReplay(t *testing.T) {
 // the fallback checks them again, with a warning); every build's binary
 // is the cache-off build's.
 func TestModuleCheckAuto(t *testing.T) {
+	// its own work and cache directories: beside the other tests
+	// (lead, 2026-10-26: run alone, it was the full tier's serial time)
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -2218,6 +2224,9 @@ func TestIfaceLexMatchesParse(t *testing.T) {
 	if testing.Short() {
 		t.Skip("reads every std file many times")
 	}
+	// std and compiler at once, beside the other tests (lead, 2026-10-26:
+	// 204 s serial in the full tier)
+	t.Parallel()
 	xo, err := xotool.Path()
 	if err != nil {
 		t.Fatal(err)
@@ -2227,12 +2236,15 @@ func TestIfaceLexMatchesParse(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, d := range []string{"std", "compiler"} {
-		out, err := testtmp.Guard(exec.Command(xo, "dev", "iface-check", filepath.Join(root, d))).CombinedOutput()
-		if err != nil {
-			t.Errorf("iface-check %s: %v\n%s", d, err, out)
-			continue
-		}
-		t.Logf("%s: %s", d, strings.TrimSpace(string(out)))
+		t.Run(d, func(t *testing.T) {
+			t.Parallel()
+			out, err := testtmp.Guard(exec.Command(xo, "dev", "iface-check", filepath.Join(root, d))).CombinedOutput()
+			if err != nil {
+				t.Errorf("iface-check %s: %v\n%s", d, err, out)
+				return
+			}
+			t.Logf("%s: %s", d, strings.TrimSpace(string(out)))
+		})
 	}
 }
 
