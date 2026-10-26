@@ -39,6 +39,18 @@ look for it with the hand edit harness (`macho asm` and `macho link` on the gene
 unedited control first) before widening the rule. The hazard is the same on every Apple core;
 other targets are unmeasured.
 
+### x pairs on real code (2026-10-26, first look)
+
+Splitting EVERY x `ldp` of a program into two `ldr`s (3,062 of 4,041 in the text bench, 2,059 in
+json, 1,609 in bytessearch, 940 in sort; script `splitx.py` in the lead's notes, linked with
+`macho asm` and `macho link`) and comparing cycles with the unedited control on json, bytessearch
+and sort workloads gave ratios between 0.76 and 1.19 with the median and the minimum of nine
+interleaved runs disagreeing (cut: min 1.19, median 0.91; rfind_any: min 0.76, median 0.99) at a
+load average of 28 to 34: noise, no reproducible stall, instructions +0 to +2%. Not conclusive
+below about 10%: repeat on a quiet machine, per workload, before widening the rule. A static scan
+for an x `ldp` and a store through any base that covers it in part finds hundreds of functions
+(CRUD: 262), which only says the pattern exists, not that it is hot.
+
 ## Measuring
 
 Instructions retired do not show it; use cycles (`/usr/bin/time -l`: "cycles elapsed" next to
