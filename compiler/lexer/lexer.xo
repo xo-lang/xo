@@ -464,6 +464,18 @@ fn (var l: Lexer) digits() {
 
 /// b without the bytes c, or b itself when it holds none.
 fn without_byte(b: Bytes, c: UInt8) -> Bytes {
+  // most numbers have none: no builder for them (2026-10-26: 31 MB of
+  // the edit rebuild's 800 MB allocated)
+  var has = false
+  for i in 0..b.len() {
+    if b[i] == c {
+      has = true
+      break
+    }
+  }
+  if !has {
+    return b
+  }
   var out = BytesBuilder.with_capacity(b.len())
   var run = 0
   for i in 0..b.len() {
