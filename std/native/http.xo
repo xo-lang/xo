@@ -2599,24 +2599,139 @@ fn cookie_domain_name(s0: Str) -> Bool {
   ok
 }
 
+/// The weekday a cookie date names: one of the seven three letter names, in
+/// any case. Go reads "wed" and "WED" and refuses "Xyz", "Wedn" and "W"
+/// (measured 2026-10-26).
+fn cookie_weekday_ok(w: Str) -> Bool {
+  ["mon", "tue", "wed", "thu", "fri", "sat", "sun"].contains(w.to_lower())
+}
+
+/// The zone a cookie date names: whether Go's time.Parse reads all of z as
+/// the zone of the cookie TimeFormat, which ends in the zone, so a partial
+/// read leaves text and the date does not parse.
+fn cookie_zone_ok(z: Str) -> Bool {
+  let b = z.bytes()
+  let used = cookie_zone_len(b)
+  used > 0 && used == b.len()
+}
+
+/// cookie_zone_len: how many leading bytes Go reads as a zone, 0 when it
+/// reads none. A port of parseTimeZone, parseGMT and parseSignedOffset from
+/// the Go standard library (go1.26.1 src/time/format.go), over bytes:
+/// "ChST" and "MeST" are the only zones with a lower case letter; "GMT" may
+/// carry a sign and an hour of 23 or less; a leading sign is an hour of 23
+/// or less with nothing after it; otherwise three to five capitals, where a
+/// fourth of five must end in T, and a fourth may also be "WITA".
+fn cookie_zone_len(b: Bytes) -> Int {
+  let n = b.len()
+  if n < 3 {
+    return 0
+  }
+  // Parse's stdTZ case reads "UTC" before anything else: exactly three
+  // bytes, so "UTCT" leaves "T" and the date does not parse
+  if cookie_at(b, 0, "UTC") {
+    return 3
+  }
+  if n >= 4 && (cookie_at(b, 0, "ChST") || cookie_at(b, 0, "MeST")) {
+    return 4
+  }
+  if cookie_at(b, 0, "GMT") {
+    return cookie_gmt_len(b)
+  }
+  if b[0] == 43 || b[0] == 45 {
+    return cookie_offset_len(b)
+  }
+  var caps = 0
+  while caps < 6 && caps < n && b[caps] >= 65 && b[caps] <= 90 {
+    caps += 1
+  }
+  if caps == 3 {
+    return 3
+  }
+  if caps == 4 && (b[3] == 84 || cookie_at(b, 0, "WITA")) {
+    return 4
+  }
+  if caps == 5 && b[4] == 84 {
+    return 5
+  }
+  0
+}
+
+/// cookie_gmt_len: parseGMT, "GMT" alone or with a signed hour of 23 or less
+/// and nothing else.
+fn cookie_gmt_len(b: Bytes) -> Int {
+  if b.len() == 3 {
+    return 3
+  }
+  if b[3] != 43 && b[3] != 45 {
+    return 0
+  }
+  let (digits, hour) = cookie_leading_int(b[4..])
+  if digits == 0 || hour > 23 || b.len() != 3 + 1 + digits {
+    return 0
+  }
+  b.len()
+}
+
+/// cookie_offset_len: parseSignedOffset, a sign and an hour of 23 or less
+/// with nothing after it ("+05", "-7", "+0023" read; "+0100" is 100 hours).
+fn cookie_offset_len(b: Bytes) -> Int {
+  let (digits, hour) = cookie_leading_int(b[1..])
+  if digits == 0 || hour >= 24 || b.len() != 1 + digits {
+    return 0
+  }
+  b.len()
+}
+
+/// cookie_leading_int: the leading ASCII digits of b, as a count and a
+/// value, saturating far above every bound the callers check.
+fn cookie_leading_int(b: Bytes) -> (Int, Int) {
+  var i = 0
+  var v = 0
+  while i < b.len() && b[i] >= 48 && b[i] <= 57 {
+    if v < 1000000 {
+      v = v * 10 + Int(b[i]) - 48
+    }
+    i += 1
+  }
+  (i, v)
+}
+
+/// cookie_at: whether b holds lit at byte offset off.
+fn cookie_at(b: Bytes, off: Int, lit: Str) -> Bool {
+  let l = lit.bytes()
+  if off + l.len() > b.len() {
+    return false
+  }
+  b[off..off + l.len()] == l
+}
+
 /// An Expires value as Go's ParseSetCookie reads it with the cookie
 /// TimeFormat: the date spaced ("Mon, 02 Jan 2006 15:04:05 GMT") or
 /// hyphenated with a four digit year ("Mon, 02-Jan-2006 15:04:05 GMT"),
-/// which Go's time.Parse accepts too. A two digit year (RFC 850), a date
-/// with no zone, and the ANSIC form come back as no Expires at all rather
-/// than an error, which is what Go does (measured 2026-10-26). The zone's
-/// name is not checked and the time is taken as UTC, which is Go's reading
-/// of a zone it does not know. Else None.
+/// which Go's time.Parse accepts too. The weekday must be one of the seven
+/// three letter names, in any case, and the zone must be one Go's parser
+/// reads in full (cookie_zone_ok), so "wed" and "UTC" read where "Xyz" and
+/// "gmt" do not; the time is taken as UTC, which is Go's reading of a zone
+/// it does not name (measured 2026-10-26). A two digit year (RFC 850), a
+/// date with no zone, and the ANSIC form come back as no Expires at all
+/// rather than an error, which is what Go does. Else None.
 fn cookie_date(v: Str) -> Time? {
-  let (_, rest) = match v.find(", ") {
+  let (wd, rest) = match v.find(", ") {
     Some(i) => (v[0..i], v[i + 2..])
     None => return None
+  }
+  if !cookie_weekday_ok(wd) {
+    return None
   }
   let f = rest.split(" ")
   // five fields after the weekday, or three: Go's own parser is lenient
   // about the separators, so "09-Jun-2021" reads the same as "09 Jun 2021",
   // but the zone is the fifth field and a date without one is not a date
   if f.len() != 5 && f.len() != 3 {
+    return None
+  }
+  if !cookie_zone_ok(f[f.len() - 1]) {
     return None
   }
   let dmy = if f.len() == 5 { [f[0], f[1], f[2]] } else { f[0].split("-") }

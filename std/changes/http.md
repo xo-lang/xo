@@ -1,5 +1,32 @@
 # std/http changes
 
+## 2026-10-26: fix: a cookie date's weekday and zone are checked as Go checks them
+
+- Kind: fix
+- Commit: this commit
+- Found by: the cookie corpus's follow-up rows, xo-lang-4's review of the
+  Expires fix below
+- Go reference: net/http cookie.go readSetCookies with the cookie TimeFormat,
+  through time.Parse's weekday and zone parsing; cookie_zone_len is a port of
+  parseTimeZone, parseGMT and parseSignedOffset (go1.26.1
+  src/time/format.go, over bytes as Go does)
+- Test: internal/stdtest/testdata/corpus/http (SET_COOKIE_LINES, go, arm64 and
+  LLVM)
+
+`cookie_date` read the weekday without looking at it and the zone without
+looking at it either, so "Xyz, 09 Jun 2021 10:18:14 GMT" and
+"Wed, 09 Jun 2021 10:18:14 gmt" both became expiry dates. Go leaves Expires
+unset for both, and so does Xo now. The weekday is one of the seven three
+letter names in any case ("wed" and "WED" read). The zone is what Go's parser
+reads in full, ported from the standard library: three to five capitals where
+a fourth or fifth must end in T ("UTC", "CEST", "AKDST"), a fourth may also be
+"WITA", "ChST" and "MeST" are the only zones with a lower case letter, "GMT"
+takes a sign and an hour of 23 or less ("GMT+8", "GMT-23"), and a bare sign is
+an hour of 23 or less with nothing after it ("+05", "+0023"). A lowercase
+"gmt", a numeric "123", a bare sign in front of four digits ("+0100", 100
+hours), "GMT+24", "UTC+8", "ABCD", and a non ASCII zone all leave Expires
+unset, exactly as in Go. The time itself is still read as UTC.
+
 ## 2026-10-26: fix: an Expires date in the standard cookie format is no longer dropped
 
 - Kind: fix
