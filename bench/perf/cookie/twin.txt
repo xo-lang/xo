@@ -1,0 +1,3 @@
+# twincheck: cookie: two workloads, the same names on both sides.
+- - cookie
+- - setcookie

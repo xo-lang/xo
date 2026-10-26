@@ -1,0 +1,5 @@
+# twincheck: strconv: four workloads, the same names on both sides.
+- - atoi
+- - itoa
+- - atof
+- - ftoa

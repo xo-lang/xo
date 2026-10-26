@@ -1,0 +1,53 @@
+// strconv: the text of numbers, against Go's strconv (twin.go.txt):
+// atoi parses 1,000 decimal integers (Int.parse), itoa writes 1,000
+// integers as text ("${n}"), atof parses 1,000 decimals (Float.parse),
+// ftoa writes 1,000 decimals as text ("${f}"); each 300 passes. Usage:
+// `<program> atoi|itoa|atof|ftoa`. Prints `<workload> <checksum>`; the twin
+// prints the same.
+
+fn next(x: Int) -> Int { (x * 1103515245 + 12345) % 2147483648 }
+
+fn main(os: Os) {
+  let w = os.env.args().get(0) ?? "atoi"
+  var ints: List[Int] = []
+  var texts: List[Str] = []
+  var fts: List[Str] = []
+  var fls: List[Float] = []
+  var r = 12345
+  for _ in 0..1000 {
+    r = next(r)
+    var n = (r >> 4) % 2000000000
+    if r % 7 == 0 {
+      n = n % 1000
+    }
+    if r % 5 == 0 {
+      n = 0 - n
+    }
+    ints.push(n)
+    texts.push("${n}")
+    let f = Float(n % 100000) / 8.0 + 0.5
+    fls.push(f)
+    fts.push("${f}")
+  }
+  var sum = 0
+  for _ in 0..300 {
+    if w == "atoi" {
+      for t in texts {
+        sum += Int.parse(t) ?? fault("parse")
+      }
+    } else if w == "itoa" {
+      for n in ints {
+        sum += "${n}".len()
+      }
+    } else if w == "atof" {
+      for t in fts {
+        sum += Int((Float.parse(t) ?? fault("parse")) * 8.0)
+      }
+    } else {
+      for f in fls {
+        sum += "${f}".len()
+      }
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

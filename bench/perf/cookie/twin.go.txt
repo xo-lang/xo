@@ -1,0 +1,58 @@
+package main
+
+import (
+	"fmt"
+	"net/http"
+	"os"
+)
+
+var lines = []string{
+	"session=abc123def456; theme=dark; lang=en-US",
+	"a=1; b=2; c=3; d=4; e=5; f=6; g=7; h=8",
+	"token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVP; _ga=GA1.2.1234567890.1700000000",
+	"x=\"quoted value\"; y=plain",
+}
+
+var sets = []string{
+	"id=abc; Path=/; HttpOnly; Secure; SameSite=Lax",
+	"session=xyz789; Path=/app; Domain=example.com; Max-Age=3600; HttpOnly",
+	"theme=dark; Path=/; Expires=Wed, 21 Oct 2026 07:28:00 GMT; SameSite=Strict",
+	"t=1; Max-Age=0; Path=/",
+}
+
+func main() {
+	w := "cookie"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	sum := 0
+	for i := 0; i < 100000; i++ {
+		if w == "cookie" {
+			cs, err := http.ParseCookie(lines[i%4])
+			if err != nil {
+				panic(err)
+			}
+			sum += len(cs)
+			for _, c := range cs {
+				sum += len(c.Name) + len(c.Value)
+			}
+		} else {
+			c, err := http.ParseSetCookie(sets[i%4])
+			if err != nil {
+				panic(err)
+			}
+			ma := c.MaxAge
+			if ma < 0 {
+				ma = -1
+			}
+			sum += len(c.Name) + len(c.Value) + len(c.Path) + len(c.Domain) + ma
+			if c.Secure {
+				sum++
+			}
+			if c.HttpOnly {
+				sum += 2
+			}
+		}
+	}
+	fmt.Println(w, sum)
+}

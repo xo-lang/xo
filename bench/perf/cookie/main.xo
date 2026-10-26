@@ -1,0 +1,43 @@
+// cookie: std/http's parse_cookie and parse_set_cookie against Go's
+// net/http ParseCookie and ParseSetCookie (twin.go.txt), 4 Cookie lines and
+// 4 Set-Cookie lines, 100,000 passes each. Usage: `<program> cookie|setcookie`.
+// Prints `<workload> <checksum>`; the twin prints the same.
+use std/http
+
+const LINES: List[Str] = [
+  "session=abc123def456; theme=dark; lang=en-US",
+  "a=1; b=2; c=3; d=4; e=5; f=6; g=7; h=8",
+  "token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVP; _ga=GA1.2.1234567890.1700000000",
+  "x=\"quoted value\"; y=plain",
+]
+
+const SETS: List[Str] = [
+  "id=abc; Path=/; HttpOnly; Secure; SameSite=Lax",
+  "session=xyz789; Path=/app; Domain=example.com; Max-Age=3600; HttpOnly",
+  "theme=dark; Path=/; Expires=Wed, 21 Oct 2026 07:28:00 GMT; SameSite=Strict",
+  "t=1; Max-Age=0; Path=/",
+]
+
+fn main(os: Os) {
+  let w = os.env.args().get(0) ?? "cookie"
+  var sum = 0
+  for i in 0..100000 {
+    if w == "cookie" {
+      let cs = http.parse_cookie(LINES[i % 4]).ok() ?? fault("parse")
+      sum += cs.len()
+      for c in cs {
+        sum += c.name.len() + c.value.len()
+      }
+    } else {
+      let c = http.parse_set_cookie(SETS[i % 4]).ok() ?? fault("parse")
+      sum += c.name.len() + c.value.len() + c.path.len() + c.domain.len() + c.max_age
+      if c.secure {
+        sum += 1
+      }
+      if c.http_only {
+        sum += 2
+      }
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

@@ -1,0 +1,75 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+)
+
+// ftoa is Xo's text of a Float: the shortest digits, and ".0" for a whole number.
+func ftoa(f float64) string {
+	s := strconv.FormatFloat(f, 'f', -1, 64)
+	if !strings.Contains(s, ".") {
+		s += ".0"
+	}
+	return s
+}
+
+func next(x int) int { return (x*1103515245 + 12345) % 2147483648 }
+
+func main() {
+	w := "atoi"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	var ints []int
+	var texts, fts []string
+	var fls []float64
+	r := 12345
+	for i := 0; i < 1000; i++ {
+		r = next(r)
+		n := (r >> 4) % 2000000000
+		if r%7 == 0 {
+			n = n % 1000
+		}
+		if r%5 == 0 {
+			n = 0 - n
+		}
+		ints = append(ints, n)
+		texts = append(texts, strconv.Itoa(n))
+		f := float64(n%100000)/8.0 + 0.5
+		fls = append(fls, f)
+		fts = append(fts, ftoa(f))
+	}
+	sum := 0
+	for p := 0; p < 300; p++ {
+		switch w {
+		case "atoi":
+			for _, t := range texts {
+				v, err := strconv.Atoi(t)
+				if err != nil {
+					panic(err)
+				}
+				sum += v
+			}
+		case "itoa":
+			for _, n := range ints {
+				sum += len(strconv.Itoa(n))
+			}
+		case "atof":
+			for _, t := range fts {
+				v, err := strconv.ParseFloat(t, 64)
+				if err != nil {
+					panic(err)
+				}
+				sum += int(v * 8.0)
+			}
+		default:
+			for _, f := range fls {
+				sum += len(ftoa(f))
+			}
+		}
+	}
+	fmt.Println(w, sum)
+}
