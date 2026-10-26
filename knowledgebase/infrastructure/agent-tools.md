@@ -242,6 +242,21 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   -fault-update` records want.txt from the Go backend, whose message and
   position are the oracle: a native backend that says anything else fails
   the test. The Str and Bytes slice cases are spec/core.md 3.6.
+- The request head parser has its own differential (2026-10-26):
+  `go test ./internal/stdtest -run TestHttpHeadFuzz` generates seeded raw
+  header blocks (obs-fold lines, tabs, control bytes, repeated names, LF
+  endings, an empty line mid-block) and compares `http1.parse_head` with
+  `net/http.ReadRequest`, one `xo test` case per draw, so a failure names
+  the case. The parser is a private runtime module, so no corpus can reach
+  it: the test copies std into a temp dir and writes a generated
+  `http1_test.xo` there (the `stdprobe_test.go` shape). `XO_HEADFUZZ_N`
+  sets the case count (default 300) and `XO_HEADFUZZ_BACKENDS` the
+  backends (default arm64); 2000 cases run both arm64 and LLVM in about
+  10 s. The oracle applies the server's own name rule
+  (`ValidHeaderFieldName`) and keeps `Host` valid: `ReadRequest` is not the
+  server layer (gotchas/readrequest-not-the-server-layer.md). The bytes are
+  the Str the parser sees, so invalid UTF-8 arrives as U+FFFD (decision
+  0259); the byte-to-text step has its own tests.
 - `go run ./scripts/stdsync [-check]` after changing std/prelude.xo: one
   command for every file a prelude change derives, spec/std.md's Appendix A
   index (every prelude function and method by type, internal/stdindex), the
