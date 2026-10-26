@@ -117,7 +117,7 @@ fn sysc_op(what: Str, a: Bytes) -> Bytes? {
 /// its address, the text's length and first byte (5 and '1' for 12345).
 /// "frame_addr": whether the frame address is not 0, a callee's frame
 /// is below it, and within 64 KiB.
-fn rt_op(what: Str) -> Bytes? {
+fn rt_op(what: Str, a: Bytes) -> Bytes? {
   var s = rt.rs_with_cap(3)
   if what == "mem_check" {
     // libcstr's copies against byte loops: the mismatches, in decimal
@@ -133,6 +133,11 @@ fn rt_op(what: Str) -> Bytes? {
     // native_list_swap2: every backend runs its own lowering, and the Go
     // backend std/rt's answer
     return Some(probe_list_swap2().bytes())
+  }
+  if what == "list_swap_at" {
+    // the swap shape of test/codegen/lists: the first index proven, the
+    // second not (calls.xo bounds_check, 2026-10-26)
+    return Some("${probe_list_swap_at(a)}".bytes())
   }
   if what == "fn_addr" {
     let buf = rt.heap_large(32)
@@ -452,6 +457,60 @@ fn probe_list_swap2() -> Str {
   "${o} ${p} ${ps1[0]} ${ps1[1]} ${ps1[2]} ${ps2[0]} ${ps2[1]} ${ps2[2]} ${ss1[0]} ${ss1[1]} ${ss2[0]} ${ss2[1]} ${bad}"
 }
 
+/// A swap whose first index a guard proves in range and whose second it
+/// does not (test/codegen/intrinsics, 2026-10-26). Both arrive as entry
+/// parameters, so neither is known non negative, which proven also asks:
+/// two checks remain, where the parent's xo emitted none.
+pub fn list_swap_at(xs: List[Int], i: Int, j: Int) {
+  if i < xs.len() {
+    rt.list_swap(xs, i, j)
+  }
+}
+
+/// The same swap with both indexes known non negative (lengths) and proven
+/// by the guards: no bounds check at all.
+pub fn list_swap_both(xs: List[Int], ys: List[Int], zs: List[Int]) {
+  let i = ys.len()
+  let j = zs.len()
+  if i < xs.len() && j < xs.len() {
+    rt.list_swap(xs, i, j)
+  }
+}
+
+/// crypto_op's "rt.list_swap_at": a swap whose first index a branch proves
+/// in range and whose second index it does not, the shape that has to keep
+/// the second index's bounds check (calls.xo bounds_check, 2026-10-26:
+/// reading the index off the operation's own arguments checked j as i and
+/// dropped its check). The golden list_swap_guard passes both indexes in
+/// one Bytes, even positions summed into i and odd into j; both arrive
+/// through a loop, so neither is a constant the compiler can fold away.
+/// The mismatches (0).
+fn probe_list_swap_at(a: Bytes) -> Int {
+  var xs: List[Int] = [1, 2, 3]
+  var i = 0
+  var j = 0
+  var k = 0
+  while k < a.len() {
+    if k % 2 == 0 {
+      i += Int(a[k])
+    } else {
+      j += Int(a[k])
+    }
+    k += 1
+  }
+  if i < xs.len() {
+    rt.list_swap(xs, i, j)
+    rt.list_swap(xs, i, j)
+  }
+  var bad = 0
+  for w in 0..3 {
+    if xs[w] != 1 + w {
+      bad += 1
+    }
+  }
+  bad
+}
+
 /// crypto_op's "rt.mem_check": libcstr's memcpy, memmove, and memset against
 /// byte loops, every size to 130 at source and destination alignments 0
 /// to 7 (memcpy, memset) and memmove at every overlap shift from -40 to
@@ -599,7 +658,7 @@ fn crypto_op(op: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes {
     "sha1" => sha1.op(what, a, b, c, d)
     "cpu" => cpu.op(what, a, b, c, d)
     "sysc" => sysc_op(what, a)
-    "rt" => rt_op(what)
+    "rt" => rt_op(what, a)
     "tls12" => if what == "server" { tls12srv.op(what, a, b, c, d) } else { tls12.op(what, a, b, c, d) }
     "tls13srv" => tls13srv.op(what, a, b, c, d)
     "sha3" => sha3.op(what, a, b, c, d)

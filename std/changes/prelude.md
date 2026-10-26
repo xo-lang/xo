@@ -1,5 +1,27 @@
 # prelude changes
 
+## 2026-10-26: fix: a list swap checks each index against the list it indexes (sort_in_place and anything else that swaps)
+
+- Kind: fix
+- Commit: be41164b8
+- Found by: reading calls.xo bounds_check for Proof.div_of_len: for rt.list_swap(xs, i, j) and rt.list_swap2(a, i, b, j) it read the index and the list off the operation's own arguments, so j was checked as i against the first list, and a dominating branch that proved i in range dropped j's check entirely; under that, the SSA builder gave the inlined swap call no source position, and bounds_check skips a value it cannot name a location for, so no native backend checked either index
+- Go reference: none (a Go list assignment bounds checks every index; std/rt's list methods do too)
+- Test: golden list_swap_guard (the in range swap, then `index 3 out of range for List of length 3` at exit 70) on arm64 TestGoldenRun, LLVM TestGolden and TestGoldenGoParity (want_go.txt: the Go backend's known gap, its crypto_op has no rt.list_swap_at), the wasm goldens, test/codegen/intrinsics' two swap shapes (b.hs present for two entry parameters, absent for two lengths the guards prove; the parent's xo fails the first), arm64 and LLVM goldens 387 of 387, tests short
+- Timing: bench/results/sortip-swap-checks-2026-10-26.md
+
+A swap now compares both indexes with the list's length before it loads or
+stores, on arm64, LLVM and wasm alike, and a fault from a swap is a fault the
+calling function's defer sees (faulting_rt). The cost is priced on the one
+hot path that keeps the checks: sort_in_place's merge, whose indexes come
+from the caller's `hi <= xs.len()` clamp, a fact the callee cannot see and
+Proof cannot record (it keeps only a branch's true edge). ip_ints goes to
+1.137 of the parent's instructions and ip_u8 to 1.138 (wall 1.031 and 1.136),
+ip_strs to 1.056, with the gen controls at 1.000; over the 34 program sweep
++0.008 percent, since text (-578) and json (-324) gain more than the three
+programs that link std/internal's probes lose. The file above ranks the two
+ways to get it back: memoize the list_len load a check adds, and record the
+fall-through fact of a return guard so the merge's indexes prove.
+
 ## 2026-10-25: fix: raw.str_slice clamps a start past the end to an empty Str (the helper behind the prelude's Str slicing of paths and names)
 
 - Kind: fix

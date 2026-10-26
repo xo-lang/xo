@@ -2773,6 +2773,16 @@ fn (var b: Builder) rt(name: Str, t0: Int, args: List[Int]) -> Int {
   b.add(Op.Call, t, Aux.S(s: "rt.${name}"), args)
 }
 
+/// A call of the C runtime (`rt.<name>`) at a source position; t -1 is
+/// unit. A lowering that can fault needs it: the native emitters skip a
+/// bounds check whose value has no position, since a fault has to name
+/// its call site (rt.list_swap's two, 2026-10-26).
+fn (var b: Builder) rt_at(name: Str, t: Int, pos: Str, args: List[Int]) -> Int {
+  let v = b.rt(name, t, args)
+  b.set_pos(v, pos)
+  v
+}
+
 /// A call of the native prelude's llrt_<name>: runtime text written in
 /// Xo (std/native/llrt/text.xo, decision 0193), called where the C
 /// runtime's rt.<name> was (fn.llrt).

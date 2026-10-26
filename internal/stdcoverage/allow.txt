@@ -39,3 +39,10 @@ internal.rt_probe  the runtime's probe hook, called by xo debug
 internal.rt_queued  the realtime queue depth, native backends only
 internal.rt_allocs  the realtime allocation count, native backends only
 internal.lock_shared  the shared fs lock a reader takes; no corpus opens one
+
+# Swap shapes a codegen pattern needs a call site for (test/codegen/intrinsics,
+# the bounds check of each index): a golden cannot call them, because a golden
+# runs on the Go backend too and a List passed by value there is copy on write,
+# so the swap would not reach the caller's list.
+internal.list_swap_at  a swap at two runtime indexes, for the codegen pattern
+internal.list_swap_both  a swap at two list lengths, for the codegen pattern

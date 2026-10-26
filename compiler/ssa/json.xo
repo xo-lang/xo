@@ -7,6 +7,7 @@
 // the Go builder's genFunc builds them (they declare functions).
 
 use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/parser
 
 // Tape node kinds (std/native/llrt/jsontext.xo).
 const JK_NULL = 0
@@ -79,11 +80,14 @@ fn (var b: Builder) generic_intrinsic(x: Expr, ci: check.CallInfo, es: List[Expr
     // decision 0374: the elements at i and j trade places as words, with no
     // count and no release; every native emitter lowers it inline with both
     // indices bounds checked. The type argument is the element type (xs is
-    // List[T]), so the list is built from it
+    // List[T]), so the list is built from it. The call site's position
+    // travels with the call: an emitter skips a bounds check whose value
+    // has no position, so both indices went unchecked and a fault had no
+    // location (2026-10-26)
     let l = b.value_as(es[0] ?? fault("arg"), b.m.list(b.typ(b.intrinsic_targ(ci, 0))))
     let i = b.value_as(es[1] ?? fault("arg"), b.int_t())
     let j = b.value_as(es[2] ?? fault("arg"), b.int_t())
-    return b.rt(name, nt, [l, i, j])
+    return b.rt_at(name, nt, b.pos(parser.expr_span(x)), [l, i, j])
   }
   if name == "list_swap2" {
     // decision 0374 step 3: the element at i of a and the element at j of
@@ -91,12 +95,13 @@ fn (var b: Builder) generic_intrinsic(x: Expr, ci: check.CallInfo, es: List[Expr
     // emitter lowers it inline with both indices bounds checked. Both
     // lists carry the type argument's element T, so a packed or a multi
     // word element is one emitter decision on both sides, and a == b is
-    // list_swap (the comment on the declaration in std/native/rt.xo)
+    // list_swap (the comment on the declaration in std/native/rt.xo). The
+    // position travels for the same reason as list_swap's
     let l1 = b.value_as(es[0] ?? fault("arg"), b.m.list(b.typ(b.intrinsic_targ(ci, 0))))
     let i = b.value_as(es[1] ?? fault("arg"), b.int_t())
     let l2 = b.value_as(es[2] ?? fault("arg"), b.m.list(b.typ(b.intrinsic_targ(ci, 0))))
     let j = b.value_as(es[3] ?? fault("arg"), b.int_t())
-    return b.rt(name, nt, [l1, i, l2, j])
+    return b.rt_at(name, nt, b.pos(parser.expr_span(x)), [l1, i, l2, j])
   }
   if name is "launder1" | "launder2" {
     // the function itself (only its effects are accounted for here)

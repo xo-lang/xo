@@ -934,7 +934,12 @@ fn (g: G) len_is(v: Int, n: Int) -> Bool {
   false
 }
 
-fn (var g: G) bounds_check(v: Int, l: Int, i: Int) {
+/// The bounds check of the index SSA value si into the list whose SSA value
+/// is sl (in the register l), for the operation v. The list and the index
+/// are passed in rather than read off v: a swap checks two indexes of one
+/// list, or one of each of two lists, and reading v's own arg 1 and arg 0
+/// checks the first index against the first list for both.
+fn (var g: G) bounds_check(v: Int, l: Int, i: Int, sl: Int, si: Int) {
   let pos = g.f.values[v].pos
   if pos.is_empty() {
     return
@@ -945,15 +950,16 @@ fn (var g: G) bounds_check(v: Int, l: Int, i: Int) {
   }
   g.cm.checked[(l, i)] = true
   let n = g.list_len(l)
-  let iv = g.arg(v, 1)
   // decision 0257: a branch on idx < len in a dominating block, which
-  // the per block memo does not carry into a loop
+  // the per block memo does not carry into a loop. proved_index and proven
+  // both take the index's SSA value, the register facts alone would test
+  // another index's work
   let x = g.f.values[v]
-  if !g.proved_index(iv, n, -1) && !g.proof.proven(g.f, x.block, x.args[1], x.args[0]) {
+  if !g.proved_index(si, n, -1) && !g.proof.proven(g.f, x.block, si, sl) {
     g.check("cmp $u0, $u1", [i, n], "hs", "xo_fault_index", [rsrc(i), rsrc(n)] + g.loc_args(pos))
   }
   g.index_facts(i)
-  g.less_fact(iv, n)
+  g.less_fact(si, n)
 }
 
 /// Option words on two paths: in the current block when cond holds (the
@@ -1111,7 +1117,7 @@ fn (var g: G) call_op(v: Int) {
     "list.index" => {
       let l = g.word(x.args[0])
       let i = g.word(x.args[1])
-      g.bounds_check(v, l, i)
+      g.bounds_check(v, l, i, x.args[0], x.args[1])
       let et = x.ty
       let base = g.elem_addr(l, i, x.args[1], et)
       if base.idx == 0 && g.elem_in_place(v) {
@@ -1126,7 +1132,7 @@ fn (var g: G) call_op(v: Int) {
       // placeholder that releasing ignores until list.set stores back
       let l = g.word(x.args[0])
       let i = g.word(x.args[1])
-      g.bounds_check(v, l, i)
+      g.bounds_check(v, l, i, x.args[0], x.args[1])
       let et = g.m.types[x.ty].elems[1]
       let base = g.elem_addr(l, i, x.args[1], et)
       let e = g.load_elem(base, et, false)
@@ -1145,7 +1151,7 @@ fn (var g: G) call_op(v: Int) {
       let i = g.word(x.args[1])
       let et = g.vty(x.args[2])
       let w = g.store_words(x.args[2])
-      g.bounds_check(v, l, i)
+      g.bounds_check(v, l, i, x.args[0], x.args[1])
       let base = g.elem_addr(l, i, x.args[1], et)
       if g.heap(et) && !g.after_take(v) {
         let old = g.load_elem(base, et, false)
@@ -2153,8 +2159,8 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       let i = g.word(x.args[1])
       let j = g.word(x.args[2])
       let et = g.m.types[g.vty(x.args[0])].elems[0]
-      g.bounds_check(v, l, i)
-      g.bounds_check(v, l, j)
+      g.bounds_check(v, l, i, x.args[0], x.args[1])
+      g.bounds_check(v, l, j, x.args[0], x.args[2])
       let a = g.elem_addr(l, i, x.args[1], et)
       let b = g.elem_addr(l, j, x.args[2], et)
       let wa = g.load_elem(a, et, false)
@@ -2178,8 +2184,8 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       let l2 = g.word(x.args[2])
       let j = g.word(x.args[3])
       let et = g.m.types[g.vty(x.args[0])].elems[0]
-      g.bounds_check(v, l1, i)
-      g.bounds_check(v, l2, j)
+      g.bounds_check(v, l1, i, x.args[0], x.args[1])
+      g.bounds_check(v, l2, j, x.args[2], x.args[3])
       let a = g.elem_addr(l1, i, x.args[1], et)
       let b = g.elem_addr(l2, j, x.args[3], et)
       let wa = g.load_elem(a, et, false)

@@ -1,0 +1,20 @@
+// A swap checks each index against its own list (calls.xo bounds_check,
+// 2026-10-26): rt.list_swap(xs, i, j) and rt.list_swap2(a, i, b, j) read
+// the index and the list off the operation's own arguments, so j was
+// checked as i, and a dominating branch that proved i in range dropped j's
+// check, letting the swap store past the end of the list. Under that sat a
+// second gap: the call carried no source position, and bounds_check skips a
+// check it cannot name a location for, so neither index was checked at all
+// until the SSA builder kept the call site's (ssa.rt_at). The first swap
+// here is in range and leaves the list as it was; the second has i = 0
+// proven by the guard and j = 3, one past a three element list, so the
+// second index has to fault with the location of the swap, in
+// std/native/internal.xo. Reached through internal.crypto_op, whose
+// std/native/internal.xo probe_list_swap_at takes both indexes in one
+// Bytes: even positions sum into i, odd into j.
+use std/internal
+
+fn main(os: Os) uses stdio {
+  os.stdio.println("in range: ${internal.crypto_op("rt.list_swap_at", b"\x00\x01", b"", b"", b"").to_str() ?? ""}")
+  os.stdio.println("out of range: ${internal.crypto_op("rt.list_swap_at", b"\x00\x03", b"", b"", b"").to_str() ?? ""}")
+}

@@ -40,6 +40,15 @@ fn dir_names(f: Fs, dir: Str) -> List[Str] ! FsErr uses fs.read
 /// faults.
 fn crypto_op(op: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes
 
+/// A swap whose first index a guard proves in range and whose second it
+/// does not: the checks stay (test/codegen/intrinsics, 2026-10-26;
+/// std/native/internal.xo).
+fn list_swap_at(xs: List[Int], i: Int, j: Int)
+
+/// The same swap with both indexes known non negative (lengths) and proven
+/// by the guards: no bounds check at all.
+fn list_swap_both(xs: List[Int], ys: List[Int], zs: List[Int])
+
 /// A probe of the native runtime for the toolchain's own tests of it
 /// (decision 0241: the C stress tests of std/llrt/testdata as Xo
 /// programs), over the runtime's functions; a to d are its inputs, 0 when

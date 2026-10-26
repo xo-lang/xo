@@ -1253,7 +1253,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
           let bad = g.def("icmp uge i64 ${ak}, ${n}")
           let bk = g.op(x.args[k])
           let lc = g.loc(v)
-          g.fault_if(bad, "@xo_x_fault_raise_index(i64 ${bk}, i64 ${n}, i64 ptrtoint (ptr ${lc} to i64))")
+          g.fault_if(bad, "@xo_x_fault_raise_index(i64 ${bk}, i64 ${n}, ${lc})")
         }
       }
       if g.kind(et) != ssa.Kind.Unit {
@@ -1284,13 +1284,13 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
         let bad1 = g.def("icmp uge i64 ${a1}, ${n1}")
         let b1 = g.op(x.args[1])
         let lc1 = g.loc(v)
-        g.fault_if(bad1, "@xo_x_fault_raise_index(i64 ${b1}, i64 ${n1}, i64 ptrtoint (ptr ${lc1} to i64))")
+        g.fault_if(bad1, "@xo_x_fault_raise_index(i64 ${b1}, i64 ${n1}, ${lc1})")
         let n2 = g.list_len(l2, md)
         let a2 = g.op(x.args[3])
         let bad2 = g.def("icmp uge i64 ${a2}, ${n2}")
         let b2 = g.op(x.args[3])
         let lc2 = g.loc(v)
-        g.fault_if(bad2, "@xo_x_fault_raise_index(i64 ${b2}, i64 ${n2}, i64 ptrtoint (ptr ${lc2} to i64))")
+        g.fault_if(bad2, "@xo_x_fault_raise_index(i64 ${b2}, i64 ${n2}, ${lc2})")
       }
       if g.kind(et) != ssa.Kind.Unit {
         let pa = g.elem_ptr(et, l1, g.op(x.args[1]))

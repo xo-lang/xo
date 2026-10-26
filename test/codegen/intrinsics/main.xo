@@ -19,6 +19,11 @@ fn main(os: Os) {
   // a run long enough for fold_copy_lo's 16 byte lane (decision 0373)
   let f = ("The Quick Brown Fox Jumps Over The Lazy Dog ${n}").to_lower()
   let u = ("the quick brown fox jumps over the lazy dog ${n}").to_upper()
+  // the swap's two index checks, from a runtime index so neither is proven
+  let xs = [1, 2, 3]
+  let ys = xs[0..n]
+  internal.list_swap_at(xs, n, n + 1)
+  internal.list_swap_both(xs, ys, ys)
   os.stdio.println("${p.to_hex()} ${g.to_hex()} ${c.to_hex()} ${cc.to_hex()} ${h.to_hex()} ${s3.to_hex()} ${f.len() + u.len()}")
 }
 
@@ -101,3 +106,13 @@ fn main(os: Os) {
 // func chacha.absorb
 // arm64: -"smulh" -"b\.vs"
 // llvm: -"with.overflow"
+
+// A swap checks each index against the list it indexes (2026-10-26): with
+// entry parameters as indexes, neither known non negative, both checks
+// remain (b.hs to a fault), where before the call carried no position and
+// bounds_check emitted nothing at all. With both indexes lengths that the
+// guards prove in range there is no check.
+// func internal.list_swap_at
+// arm64: "b\.hs"
+// func internal.list_swap_both
+// arm64: -"b\.hs"
