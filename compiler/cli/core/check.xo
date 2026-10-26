@@ -202,8 +202,22 @@ fn load_mode(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map[Str, B
 /// a full check's. The entries are `xo check`'s own (their flags say so):
 /// a build's entries also record what its front end cache replays.
 fn load_mode_cached(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map[Str, Bytes], preload: List[Str], native: Bool, cached: Bool) -> Session ! Str uses fs, proc, net, rand, env {
+  load_walked(os, ctx, dirs, exact, overlay, preload, native, cached, [])
+}
+
+/// load_mode_cached with the directories of walk walked (DIR/...): a
+/// module root left out for its module path is checked as the walk found
+/// it, its packages below it.
+fn load_walked(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map[Str, Bytes], preload: List[Str], native: Bool, cached: Bool, walk: List[Str]) -> Session ! Str uses fs, proc, net, rand, env {
   var c = new_checker(os, ctx)
+  for w in walk {
+    c.walk.push(abs_path(ctx, w))
+  }
   c.native = native
+  // two modules with one module path under the directories: one is
+  // checked here and each other on its own below (lead, 2026-10-26: a
+  // check read only the first's files, so an error in the second passed)
+  c.split_same_path = true
   let chk = cached && native && overlay.is_empty() && !ctx.chk_dir.is_empty()
   if chk {
     c.mod_cache_dir = ctx.chk_dir
@@ -237,12 +251,22 @@ fn load_mode_cached(os: Os, ctx: Ctx, dirs: List[Str], exact: Bool, overlay: Map
   if chk && !c.mod_skip.is_empty() && !c.effect_reads_across_modules().is_empty() {
     // a checked body reads a skipped module's inferred effects: check
     // everything (gotchas/module-check-cache-skips-whole-program-passes.md)
-    return load_mode_cached(os, ctx, dirs, exact, overlay, preload, native, false)
+    return load_walked(os, ctx, dirs, exact, overlay, preload, native, false, walk)
   }
   if chk {
     store_check_entries(os, c)
   }
-  let ds = sort_diags(c.diags)
+  var all_diags = c.diags
+  // each module left out for its module path, checked on its own: its
+  // diagnostics and its root modules join this check's
+  for (root, _, _) in c.same_path {
+    let sub = load_walked(os, ctx, [root], true, overlay, preload, native, cached, [root])?
+    all_diags = all_diags + sub.diags
+    for m in sub.mods {
+      mods.push(m)
+    }
+  }
+  let ds = sort_diags(all_diags)
   Ok(Session{c: c, mods: mods, diags: ds})
 }
 

@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo check`, `xo vet` and `xo query` over directories holding two modules
+  with one module path (copies of a program) check each of them on its own:
+  they read only the first module's files under the path, so an error in
+  another copy passed the check.
 - `xo def`, `xo refs` and `xo symbols` at a root holding two modules with
   one module path check the first and name the others (JSON `same_path`, a
   note) instead of silently reading only the first's files, which lost

@@ -203,8 +203,9 @@ pub struct Checker {
   /// The module roots a walk left out because a module checked before
   /// them has their module path: (root, path, the root kept).
   pub same_path: List[(Str, Str, Str)] = []
-  /// A walk checks one module of each module path and names the others
-  /// (same_path): the editor's and the agent lookups' checker sets it.
+  /// check_dirs checks one module of each module path and names the others
+  /// (same_path): the editor's and the agent lookups' checker, and xo
+  /// check's, vet's and query's (which check the others on their own).
   pub split_same_path: Bool = false
   /// The `testdata` directories find_module_dirs left out, as it found
   /// them, so a lookup at a root can say what it did not check.
@@ -514,10 +515,10 @@ pub fn (var c: Checker) check_dirs(dirs: List[Str]) -> () ! Str uses fs.read {
   // of a program, bench/xo/v0.4 and bench/paper/v0.3's example.com/notes)
   // checks the first only: load_dir finds a path's module by the path, so
   // the second's files were never read and their references missing
-  // without a word (2026-10-26). The others are named (same_path). Only
-  // for the lookups (xo lsp, def, refs, symbols: split_same_path), which
-  // report them; a check keeps reading them as it did.
-  if c.walk_all && c.split_same_path {
+  // without a word (2026-10-26). The others are named (same_path), for a
+  // checker that asks (split_same_path): the lookups report them, and xo
+  // check, vet and query check each on its own (cli/core load_mode_cached).
+  if c.split_same_path {
     var by_path: Map[Str, Str] = {}
     var kept: List[Str] = []
     for d in module_dirs {

@@ -157,3 +157,62 @@ pub fn sticky(m: Mutex[St]) -> Int ! E {
 		t.Errorf("XO_CHK_CACHE=off: exit %d\n%s", code, got)
 	}
 }
+
+// TestCheckSameModulePath: `xo check DIR/...` over a root holding three
+// modules with one module path (the xo checkout's example.com/notes:
+// bench/paper/v0.3 and bench/xo/v0.4's notes services and internal/check's
+// imports_deny golden) checks each of them, so a type error planted in
+// the second copy is reported and the check fails; before (2026-10-26)
+// the check read only the first module's files under that path and the
+// error passed.
+func TestCheckSameModulePath(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	for name, src := range map[string]string{
+		"a-paper":  filepath.Join(repoRoot, "bench", "paper", "v0.3", "08-notes-service"),
+		"b-xo":     filepath.Join(repoRoot, "bench", "xo", "v0.4", "08-notes-service"),
+		"c-golden": filepath.Join(repoRoot, "internal", "check", "testdata", "golden", "imports_deny"),
+	} {
+		if err := os.CopyFS(filepath.Join(root, name), os.DirFS(src)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// a type error in the second copy's store package
+	bad := filepath.Join(root, "b-xo", "store", "planted.xo")
+	if err := os.WriteFile(bad, []byte("fn planted() -> Int {\n  \"not an Int\"\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	code := run(t, []string{"check", "--json", root + "/..."}, &out, &errOut)
+	var res struct {
+		Modules     []string `json:"modules"`
+		Diagnostics []struct {
+			Code string `json:"code"`
+			Span struct {
+				File string `json:"file"`
+			} `json:"span"`
+		} `json:"diagnostics"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &res); err != nil {
+		t.Fatalf("xo check: exit %d, not JSON: %v\n%s%s", code, err, out.String(), errOut.String())
+	}
+	planted := false
+	for _, d := range res.Diagnostics {
+		if strings.HasSuffix(filepath.ToSlash(d.Span.File), "b-xo/store/planted.xo") {
+			planted = true
+		}
+	}
+	if code != 1 || !planted {
+		t.Errorf("xo check: exit %d, the planted error reported %v; want exit 1 and the error\n%s", code, planted, out.String())
+	}
+	// each copy's modules are checked: example.com/notes three times
+	n := 0
+	for _, m := range res.Modules {
+		if m == "example.com/notes/store" {
+			n++
+		}
+	}
+	if n < 2 {
+		t.Errorf("modules %v: example.com/notes/store checked %d times, want each copy's", res.Modules, n)
+	}
+}

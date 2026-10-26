@@ -44,7 +44,8 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   under a root with one module path (the xo checkout's
   `example.com/notes` three times) are checked once: the first, and the
   others named (`"same_path"`, a `note: not checked` line); look one up
-  with `--dir` (2026-10-26: their references were missing silently). Refs of a std name checks
+  with `--dir` (2026-10-26: their references were missing silently).
+  `xo check`, vet and query check each such module on its own. Refs of a std name checks
   only the std and runtime files whose text spells the name: 0.08 to
   0.4 s for a rare name, about 1 s for a common one (`find`, `push`),
   where every std module was checked before (1.2 to 1.8 s on a quiet
