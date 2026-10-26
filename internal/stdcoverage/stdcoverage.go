@@ -191,20 +191,37 @@ func callsIn(body string) map[string]bool {
 	return out
 }
 
-// corpusText concatenates the .xo files of the corpora, the program
-// goldens and the tool's own test programs.
-func corpusText(root string) (string, error) {
-	var b strings.Builder
+// corpusDirs are the roots of the corpora, the program goldens and the
+// tool's own test programs.
+func corpusDirs() []string {
 	// cmd/xo's test programs are joined in two steps: TestCacheTable reads
 	// the literal `"xo", "NAME"` as a cache directory under the user's cache.
 	xoDir := filepath.Join("cmd", "xo")
-	for _, dir := range []string{
+	return []string{
 		filepath.Join("internal", "stdtest", "testdata", "corpus"),
 		filepath.Join("internal", "llvm", "testdata", "golden"),
 		filepath.Join("internal", "arm64", "testdata"),
 		filepath.Join("internal", "gen", "testdata"),
 		filepath.Join(xoDir, "testdata"),
-	} {
+	}
+}
+
+// corpusText concatenates the .xo files of the corpora, the program
+// goldens and the tool's own test programs.
+func corpusText(root string) (string, error) {
+	return corpusTextIn(root, corpusDirs())
+}
+
+// CorpusTextIn is the text UncoveredIn scans: every .xo file under dirs
+// (paths relative to root).
+func CorpusTextIn(root string, dirs []string) (string, error) {
+	return corpusTextIn(root, dirs)
+}
+
+// corpusTextIn concatenates the .xo files under the given directories.
+func corpusTextIn(root string, dirs []string) (string, error) {
+	var b strings.Builder
+	for _, dir := range dirs {
 		err := filepath.WalkDir(filepath.Join(root, dir), func(p string, d os.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -270,12 +287,18 @@ func relPath(root, p string) string {
 // Uncovered returns every declaration no corpus or golden reaches, sorted
 // by module and symbol, and the count of declarations seen.
 func Uncovered(root string) (entries []Entry, total int, err error) {
-	decls, err := loadDecls(root)
+	text, err := corpusText(root)
 	if err != nil {
 		return nil, 0, err
 	}
+	return UncoveredIn(root, text)
+}
 
-	text, err := corpusText(root)
+// UncoveredIn is Uncovered over the given corpus text, for a report that
+// must compare like with like: the resolved edges can only cover the
+// programs they were run on.
+func UncoveredIn(root, text string) (entries []Entry, total int, err error) {
+	decls, err := loadDecls(root)
 	if err != nil {
 		return nil, 0, err
 	}

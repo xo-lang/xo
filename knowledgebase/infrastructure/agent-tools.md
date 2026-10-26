@@ -214,6 +214,25 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   declaration that internal/stdcoverage/allow.txt does not name with its
   reason, and for an allowlist line that matches nothing; a new std
   function or method needs a corpus, a golden, or such a line.
+  The name scan cannot tell two receivers apart (a corpus writes
+  `xs.map(f)`, so the receiver of a method call is a variable), so
+  `xo dev edges` resolves the calls instead: over the corpus and the
+  goldens, 214 declarations are uncovered by resolution against 128 by the
+  name scan, and 86 declarations the scan calls covered are reached by no
+  edge (2026-10-25, internal/stdcoverage UncoveredResolved;
+  `-edges=DIR -dirs=FILE` compares the two over the same programs).
+- `xo dev edges [--out=FILE] [--impls] DIR` writes the checked program's
+  resolved references, one tab separated line each:
+  SRC_PATH SRC_LINE SRC_NAME TGT_PATH TGT_LINE TGT_NAME SITE_PATH
+  SITE_LINE SITE_COL SITE_NAME, where SRC is the function whose body holds
+  the site (line 0 outside one) and TGT is the declaration it resolves to
+  (compiler/cli/servers/edges.xo). `--impls` adds an edge from each
+  interface method to the method of every type whose method names cover
+  the interface's (the checker's structural rule, the one
+  rename_iface_method uses), with the interface method as SRC and 0 as the
+  site column; a call through an interface names the interface method, so
+  without these edges every implementation looks unused. TestDevEdges runs
+  it on the strwhere golden.
 - `go run ./scripts/stdfuzz` is the backend differential fuzzer: it
   generates one Xo program of seeded random inputs through pure std
   functions (strings, bytes, strconv, json encode/parse, runes, path,

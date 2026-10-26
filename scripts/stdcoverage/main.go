@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/xo-lang/xo/internal/stdcoverage"
 	"github.com/xo-lang/xo/internal/xotool"
@@ -25,16 +26,37 @@ import (
 func main() {
 	check := flag.Bool("check", false, "exit 1 when an uncovered declaration is not in allow.txt")
 	edgesDir := flag.String("edges", "", "a directory of `xo dev edges` output: report the resolution's coverage and its difference from the name scan")
+	dirsFile := flag.String("dirs", "", "a file of program directories (one per line, relative to the root): the name scan reads only those, so the comparison is like with like")
 	flag.Parse()
 	root, err := xotool.Root()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "stdcoverage:", err)
 		os.Exit(1)
 	}
-	entries, total, err := stdcoverage.Uncovered(root)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "stdcoverage:", err)
-		os.Exit(1)
+	var entries []stdcoverage.Entry
+	var total int
+	if *dirsFile != "" {
+		dirs, err := readDirs(*dirsFile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "stdcoverage:", err)
+			os.Exit(1)
+		}
+		text, err := stdcoverage.CorpusTextIn(root, dirs)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "stdcoverage:", err)
+			os.Exit(1)
+		}
+		entries, total, err = stdcoverage.UncoveredIn(root, text)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "stdcoverage:", err)
+			os.Exit(1)
+		}
+	} else {
+		entries, total, err = stdcoverage.Uncovered(root)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "stdcoverage:", err)
+			os.Exit(1)
+		}
 	}
 	if *edgesDir != "" {
 		resolved(os.Stdout, root, *edgesDir, entries, total)
@@ -82,6 +104,24 @@ func main() {
 			os.Exit(1)
 		}
 	}
+}
+
+// readDirs reads the program directories of -dirs: one path per line,
+// blank lines and # comments skipped.
+func readDirs(path string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, l := range strings.Split(string(data), "\n") {
+		l = strings.TrimSpace(l)
+		if l == "" || strings.HasPrefix(l, "#") {
+			continue
+		}
+		out = append(out, l)
+	}
+	return out, nil
 }
 
 // resolved prints the coverage the checker's resolution gives, and the

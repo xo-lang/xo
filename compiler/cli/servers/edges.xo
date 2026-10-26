@@ -1,6 +1,6 @@
 // `xo dev edges`: every resolved reference of a checked program as a call
 // graph edge, for tools that must not guess a name from its text
-// (scripts/coverage: a corpus writes `xs.map(f)`, so the receiver of a
+// (scripts/stdcoverage: a corpus writes `xs.map(f)`, so the receiver of a
 // method call is a variable and only the checker knows its type).
 //
 // One line per reference site, tab separated, no header:
@@ -14,6 +14,16 @@
 // 1 based bytes. A declaration's own name is not a reference to itself
 // and is not emitted.
 //
+// --impls adds the implementation edges a call through an interface needs:
+// a call written on an interface value names the interface method, so the
+// methods that implement it are never named anywhere. Each such edge has
+// the interface method's declaration as SRC and the implementing method as
+// TGT; a tool that follows SRC to decide what is reachable then reaches
+// the implementations only once the interface method itself is reached.
+// The rule is the checker's structural one (a type implements the
+// interface when its methods have every name the interface's do), so a
+// program that declares its own interface gets those edges too.
+//
 // The edges are those of the last check, so a program that does not check
 // writes nothing and exits 1 with the reason on standard error.
 
@@ -21,18 +31,21 @@ use github.com/xo-lang/xo/compiler/check
 
 /// edges_usage is the command line of `xo dev edges`.
 pub fn edges_usage() -> Str {
-  "usage: xo dev edges [--out=FILE] [--dir=DIR] DIR\n  every resolved reference of the checked program in DIR as SRC and TGT declaration lines"
+  "usage: xo dev edges [--out=FILE] [--impls] [--dir=DIR] DIR\n  every resolved reference of the checked program in DIR as SRC and TGT declaration lines; --impls adds an edge from each interface method to the methods that implement it"
 }
 
-/// edges_cmd is `xo dev edges [--out=FILE] [--dir=DIR] DIR`: the edges of
-/// the program in DIR (this directory when no DIR is given).
+/// edges_cmd is `xo dev edges [--out=FILE] [--impls] [--dir=DIR] DIR`: the
+/// edges of the program in DIR (this directory when no DIR is given).
 pub fn edges_cmd(os: Os, args: List[Str]) -> Int uses (env, fs, fs.read, fs.write, stdio) {
   var dir = "."
   var out = ""
   var saw_dir = false
+  var impls = false
   for a in args {
     if a.starts_with("--out=") {
       out = a.trim_prefix("--out=")
+    } else if a == "--impls" {
+      impls = true
     } else if a.starts_with("--dir=") {
       dir = a.trim_prefix("--dir=")
       saw_dir = true
@@ -54,7 +67,12 @@ pub fn edges_cmd(os: Os, args: List[Str]) -> Int uses (env, fs, fs.read, fs.writ
       return 1
     }
   }
-  let text = s.edge_lines().join("\n")
+  var lines = s.edge_lines()
+  if impls {
+    lines = lines + s.impl_lines()
+    lines = lines.sort()
+  }
+  let text = lines.join("\n")
   if out.is_empty() {
     os.stdio.println(text)
     return 0
@@ -113,6 +131,83 @@ fn (s: Session) def_line(tg: LspTarget) -> Int {
   }
   let (l, _) = line_col(s.res[0].c.files[df].src, tg.def_start)
   l
+}
+
+/// The impl edge lines: for every type whose method set has every name of
+/// an interface's methods, one edge from the interface method's declaration
+/// to the type's method of that name (the checker's structural rule, the
+/// one rename_iface_method uses). SRC is the interface method, so a
+/// consumer that follows SRC reaches the implementations only when the
+/// interface method itself is reached.
+fn (var s: Session) impl_lines() -> List[Str] {
+  var r = s.res[0]
+  let c = r.c
+  // a type's methods, by the receiver type's object
+  var by_recv: Map[Int, List[Int]] = {}
+  for (o, ob) in c.objs.indexed() {
+    if ob.kind != check.ObjKind.Func || ob.recv < 0 || ob.iface {
+      continue
+    }
+    var l = by_recv.get(ob.recv) ?? []
+    l.push(o)
+    by_recv[ob.recv] = l
+  }
+  var ifaces: List[Int] = []
+  for (oi, ob) in c.objs.indexed() {
+    if ob.tkind == "interface" && !ob.iface_meths.is_empty() {
+      ifaces.push(oi)
+    }
+  }
+  s.res[0] = r
+  var out: List[Str] = []
+  for ti in ifaces {
+    let meths = s.res[0].c.objs[ti].iface_meths
+    for (_recv, ms) in by_recv.entries() {
+      // the method of the type with each interface method's name (the
+      // checker's structural rule, matched on the bare name: display_name
+      // qualifies it with the receiver, which differs by design)
+      var found: List[Int] = []
+      for im in meths {
+        var hit = -1
+        for o in ms {
+          if s.res[0].c.objs[o].name == s.res[0].c.objs[im].name {
+            hit = o
+          }
+        }
+        found.push(hit)
+      }
+      if found.contains(-1) {
+        continue
+      }
+      for i in 0..meths.len() {
+        let (sp, sl, sn) = s.obj_pos(meths[i])
+        let (tp, tl, tn) = s.obj_pos(found[i])
+        if tp.is_empty() {
+          continue
+        }
+        out.push("${sp}\t${sl}\t${sn}\t${tp}\t${tl}\t${tn}\t${sp}\t${sl}\t0\t${sn}")
+      }
+    }
+  }
+  out
+}
+
+/// The path, 1 based line and name of the declaration of object oi (a file
+/// with line 0 and no path when it has no declaration site).
+fn (var s: Session) obj_pos(oi: Int) -> (Str, Int, Str) {
+  var r = s.res[0]
+  let tg = r.obj_target(oi)
+  s.res[0] = r
+  let name = s.res[0].c.display_name(oi)
+  if tg.def_file.is_empty() {
+    return ("", 0, name)
+  }
+  let df = s.file_named(tg.def_file)
+  if df < 0 {
+    return (tg.def_file, 0, name)
+  }
+  let (l, _) = line_col(s.res[0].c.files[df].src, tg.def_start)
+  (tg.def_file, l, name)
 }
 
 /// The path, line and name of the function whose body holds off in file
