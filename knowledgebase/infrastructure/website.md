@@ -25,6 +25,7 @@ domains (decision 0135) still show Namecheap's default 302 to `www`; their
 | Publish | push to `main`; `.github/workflows/pages.yml` deploys to GitHub Pages |
 | Rebuild the playground's WebAssembly (after compiler, std/rt, or Go changes) | `python3 scripts/build-playground.py` (infrastructure/playground.md) |
 | Change the orange announcement bar | `params.announcement` in `hugo.toml` |
+| Analytics | Cloudflare Web Analytics (owner, 2026-10-25): the beacon in `layouts/baseof.html`, its public site token in `params.cfBeaconToken` (empty turns it off); no cookies; `/play/` is excluded (its CSP blocks outside scripts); the dashboard is in the owner's Cloudflare account under Web Analytics. Last verified: 2026-10-25 |
 
 What comes from this repo: `spec/core.md`, `spec/std.md`, each
 `## vX.Y.Z (date)` section of `CHANGELOG.md` (one blog post per release),
