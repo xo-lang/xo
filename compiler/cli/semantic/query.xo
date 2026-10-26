@@ -135,7 +135,7 @@ pub fn preloads_wide(os: Os, std_dir: Str, name: Str) -> List[Str] uses fs.read 
           }
           // xo:allow XO0903 a file it cannot read is left out, as a missing one
           let text = os.fs.read("${std_dir}/${sub}${fi.name}").ok() ?? b""
-          if word.is_empty() || text.contains(word.bytes()) {
+          if check.spells_ident(text, word) {
             out.push(q)
           }
         }

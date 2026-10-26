@@ -35,8 +35,12 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   does (decision 0210), so the program goldens under
   internal/*/testdata are not searched: refs names the directories it
   left out (`"testdata_skipped"`, a `note: not checked` line), and
-  `xo refs --testdata` checks them too (the xo checkout: 11.5 s and 6 GB
-  against 4 s, so run it through heavy.sh). Refs of a std name checks
+  `xo refs --testdata` checks them too. At a root, refs checks only the
+  modules whose text spells the name's last segment as a whole
+  identifier (a module that does not cannot refer to it; 2026-10-26):
+  at the xo root `Str.contains_where` takes 0.9 s and 0.9 GB (1.4 s,
+  1.2 GB with --testdata), a common name such as `trim_prefix` about
+  3.5 s and 3.5 GB; XO_REFS_SPELL=off checks every module. Refs of a std name checks
   only the std and runtime files whose text spells the name: 0.08 to
   0.4 s for a rare name, about 1 s for a common one (`find`, `push`),
   where every std module was checked before (1.2 to 1.8 s on a quiet

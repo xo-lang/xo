@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo refs` at a workspace or repository root checks only the modules whose
+  text spells the name looked for (its last segment, as a whole
+  identifier): at the xo root a rare name's query takes 0.9 s and 0.9 GB
+  instead of 4.4 s and 3.1 GB (with `--testdata`, 1.4 s and 1.2 GB instead
+  of 6.5 s and 3.2 GB), with the same references; it also no longer loses
+  the references of a module whose path another module under the root
+  shares (`example.com/notes` three times in the xo checkout).
+  `XO_REFS_SPELL=off` checks every module.
 - `xo bench --ab` with no `--max-load` now marks a round loaded when a side
   starts at a 1 minute load of 6 or more, and leaves it out of the
   statistics unless `--keep-loaded` (it does not wait for the load, as

@@ -195,6 +195,11 @@ pub struct Checker {
   /// find_module_dirs walks `testdata` directories too (`xo refs
   /// --testdata`: the program goldens under internal/*/testdata).
   pub walk_testdata: Bool = false
+  /// A walked module (walk_all, below a root) is checked only when one of
+  /// its .xo files holds one of these texts (xo refs: the last segment of
+  /// each name looked for; a module that does not spell the name cannot
+  /// refer to it, and the one declaring it does). Empty: every one.
+  pub testdata_words: List[Str] = []
   /// The `testdata` directories find_module_dirs left out, as it found
   /// them, so a lookup at a root can say what it did not check.
   pub testdata_skipped: List[Str] = []
@@ -489,6 +494,15 @@ pub fn (var c: Checker) check_dirs(dirs: List[Str]) -> () ! Str uses fs.read {
   if !c.walk_err.is_empty() {
     return Err(c.walk_err)
   }
+  if c.walk_all && !c.testdata_words.is_empty() {
+    var kept: List[Str] = []
+    for d in module_dirs {
+      if c.dir_spells(d, c.testdata_words) {
+        kept.push(d)
+      }
+    }
+    module_dirs = kept
+  }
   module_dirs = module_dirs.sort()
   // resolve the requirements of every main module before loading, so
   // imports of required modules find their selected versions
@@ -633,6 +647,54 @@ fn (var c: Checker) find_module_dirs(dir: Str, top: Bool, var out: List[Str]) {
     }
     c.find_module_dirs(sub, false, out)
   }
+}
+
+/// Whether one of the .xo files directly in dir holds one of words.
+fn (var c: Checker) dir_spells(dir: Str, words: List[Str]) -> Bool uses fs.read {
+  for e in c.list_dir(dir) {
+    if e.is_dir || !e.name.ends_with(".xo") {
+      continue
+    }
+    // xo:allow XO0903 a file it cannot read is checked, as without the filter
+    let b = c.fs.read(join(dir, e.name)).ok() ?? return true
+    for w in words {
+      if spells_ident(b, w) {
+        return true
+      }
+    }
+  }
+  false
+}
+
+/// Whether src holds w as a whole identifier: not inside a longer one
+/// (`decode` in `json.decode(`, not in `decode_all` or `xdecode`). An
+/// empty w is in every text.
+pub fn spells_ident(src: Bytes, w: Str) -> Bool {
+  let wb = w.bytes()
+  let m = wb.len()
+  if m == 0 {
+    return true
+  }
+  let n = src.len()
+  let f = wb[0]
+  var i = 0
+  while i + m <= n {
+    if src[i] == f {
+      var j = 1
+      while j < m && src[i + j] == wb[j] {
+        j += 1
+      }
+      if j == m && (i == 0 || !ident_byte(src[i - 1])) && (i + m == n || !ident_byte(src[i + m])) {
+        return true
+      }
+    }
+    i += 1
+  }
+  false
+}
+
+fn ident_byte(c: UInt8) -> Bool {
+  (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
 }
 
 /// walk_skips reports whether a DIR/... walk skips the directory named

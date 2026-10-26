@@ -496,12 +496,12 @@ fn new_lsp_checker(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes]) -> c
 /// check_view: checks the modules of dirs with the open texts as the
 /// overlay. It reads no Session, so the server's worker task runs it.
 fn check_view(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes], dirs: List[Str], preload: List[Str]) -> View uses (fs, env) {
-  check_view_excluding(os, std_dir, wd, overlay, dirs, preload, [], false)
+  check_view_excluding(os, std_dir, wd, overlay, dirs, preload, [], false, [])
 }
 
 /// check_view, leaving out the module directories exclude; testdata
 /// walks the `testdata` directories too.
-fn check_view_excluding(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes], dirs: List[Str], preload: List[Str], exclude: List[Str], testdata: Bool) -> View uses (fs, env) {
+fn check_view_excluding(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes], dirs: List[Str], preload: List[Str], exclude: List[Str], testdata: Bool, words: List[Str]) -> View uses (fs, env) {
   var v = View{}
   if dirs.is_empty() {
     return v
@@ -514,6 +514,7 @@ fn check_view_excluding(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes],
   c.runtime_files = true
   c.exclude_dirs = exclude
   c.walk_testdata = testdata
+  c.testdata_words = words
   match c.check_dirs(dirs) {
     Ok(_) => {}
     Err(e) => {

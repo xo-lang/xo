@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/xo-lang/xo/internal/testtmp"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1305,12 +1307,13 @@ func TestAgentRefsTestdata(t *testing.T) {
 	t.Parallel()
 	prog := "fn main(os: Os) {\n  os.stdio.println(\"${\"a1\".contains_where(fn(r) { r == '1' })}\")\n}\n"
 	root := writeFiles(t, map[string]string{
-		"app/xo.mod":                      "module example.com/app\n",
-		"app/main.xo":                     prog,
-		"app/testdata/golden/w/xo.mod":    "module example.com/w\n",
-		"app/testdata/golden/w/main.xo":   prog,
-		"app/testdata/golden/net/xo.mod":  "module example.com/net\n\nrequire example.com/xo-refs-never-fetched v1.0.0\n",
-		"app/testdata/golden/net/main.xo": "use example.com/xo-refs-never-fetched/lib\n\nfn main(os: Os) {\n  os.stdio.println(lib.name())\n}\n",
+		"app/xo.mod":                     "module example.com/app\n",
+		"app/main.xo":                    prog,
+		"app/testdata/golden/w/xo.mod":   "module example.com/w\n",
+		"app/testdata/golden/w/main.xo":  prog,
+		"app/testdata/golden/net/xo.mod": "module example.com/net\n\nrequire example.com/xo-refs-never-fetched v1.0.0\n",
+		// contains_where in a comment: refs checks it (it spells the name)
+		"app/testdata/golden/net/main.xo": "use example.com/xo-refs-never-fetched/lib\n\n// not contains_where\nfn main(os: Os) {\n  os.stdio.println(lib.name())\n}\n",
 	})
 	userRefs := func(v map[string]any) []string {
 		var files []string
@@ -1391,6 +1394,79 @@ func TestAgentRefsBatch(t *testing.T) {
 	}
 }
 
+// runEnv is run with env added to the xo process's environment.
+func runEnv(t testing.TB, env, args []string, stdout, stderr io.Writer) int {
+	cli, err := xoCommand()
+	if err != nil {
+		fmt.Fprintf(stderr, "no xo to run: %v\n", err)
+		return -1
+	}
+	cmd := command(t, cli[0], append(append([]string{}, cli[1:]...), args...)...)
+	cmd.Env = append(cmd.Env, env...)
+	cmd.Stdout, cmd.Stderr = stdout, stderr
+	if err := cmd.Run(); err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			return ee.ExitCode()
+		}
+		return -1
+	}
+	return 0
+}
+
+// TestAgentRefsSpellFilter: refs at a root checks only the modules whose
+// text spells the name's last segment as a whole identifier (2026-10-26:
+// --testdata at the xo root took 5 to 12 s and up to 6 GB checking every
+// module), and finds the same references as a check of every module
+// (XO_REFS_SPELL=off) for a function of the program, a std function and
+// a prelude method, with and without --testdata.
+func TestAgentRefsSpellFilter(t *testing.T) {
+	t.Parallel()
+	root := writeFiles(t, map[string]string{
+		"app/xo.mod":             "module example.com/app\n",
+		"app/main.xo":            "use example.com/lib\nuse std/json\n\nfn main(os: Os) {\n  let n = lib.helper(1)\n  let v = json.decode[Int](\"2\".bytes()) ?? e => 0\n  os.stdio.println(\"${n} ${v} ${\"ab\".trim_prefix(\"a\")}\")\n}\n",
+		"lib/xo.mod":             "module example.com/lib\n",
+		"lib/lib.xo":             "pub fn helper(n: Int) -> Int { n + 1 }\n\npub fn helper_two(n: Int) -> Int { helper(n) * 2 }\n",
+		"other/xo.mod":           "module example.com/other\n",
+		"other/main.xo":          "fn main(os: Os) {\n  os.stdio.println(\"helpers decode trim\")\n}\n",
+		"app/testdata/g/xo.mod":  "module example.com/g\n",
+		"app/testdata/g/main.xo": "use std/json\n\nfn main(os: Os) {\n  os.stdio.println(\"${\"xy\".trim_prefix(\"x\")}\")\n  let _r = json.decode[Int](\"1\".bytes()).ok()\n}\n",
+	})
+	refs := func(env string, args ...string) []string {
+		t.Helper()
+		var out, errOut bytes.Buffer
+		if code := runEnv(t, []string{env}, append([]string{"refs", "--dir=" + root, "--json"}, args...), &out, &errOut); code != 0 {
+			t.Fatalf("refs %v (%s): exit %d: %s%s", args, env, code, out.String(), errOut.String())
+		}
+		var v struct {
+			References []struct {
+				File string `json:"file"`
+				Line int    `json:"line"`
+				Col  int    `json:"col"`
+			} `json:"references"`
+		}
+		if err := json.Unmarshal(out.Bytes(), &v); err != nil {
+			t.Fatalf("refs %v: %v\n%s", args, err, out.String())
+		}
+		var got []string
+		for _, r := range v.References {
+			got = append(got, fmt.Sprintf("%s:%d:%d", r.File, r.Line, r.Col))
+		}
+		sort.Strings(got)
+		return got
+	}
+	for _, name := range []string{"lib.helper", "json.decode", "prelude.Str.trim_prefix"} {
+		for _, td := range [][]string{nil, {"--testdata"}} {
+			args := append(append([]string{}, td...), name)
+			on := refs("XO_REFS_SPELL=on", args...)
+			off := refs("XO_REFS_SPELL=off", args...)
+			if strings.Join(on, "\n") != strings.Join(off, "\n") || len(on) == 0 {
+				t.Errorf("refs %v: with the filter %v, every module %v", args, on, off)
+			}
+		}
+	}
+}
+
 // TestAgentRootSkipsBrokenModule: at a root whose modules include one
 // whose `use c` binding is missing (the xo checkout's
 // examples/realtime-control), the lookups answer for the other modules
@@ -1403,7 +1479,9 @@ func TestAgentRootSkipsBrokenModule(t *testing.T) {
 		"good/main.xo": "fn helper(n: Int) -> Int { n + 1 }\n\nfn main(os: Os) {\n  os.stdio.println(\"${helper(1)}\")\n}\n",
 		"bad/xo.mod":   "module example.com/bad\n",
 		"bad/clock.h":  "long now_ns(void);\n",
-		"bad/main.xo":  "use c \"clock.h\" uses none\n\nfn main(os: Os) {\n  os.stdio.println(\"${clock.now_ns()}\")\n}\n",
+		// it spells helper (a comment), so refs checks it (only a module that
+		// spells the name can refer to it) and finds it broken
+		"bad/main.xo": "use c \"clock.h\" uses none\n\n// not the helper\nfn main(os: Os) {\n  os.stdio.println(\"${clock.now_ns()}\")\n}\n",
 	})
 	v := agentJSON(t, 0, "refs", "--dir="+root, "--json", "helper")
 	refs := v["references"].([]any)

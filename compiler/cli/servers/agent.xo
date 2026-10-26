@@ -169,7 +169,26 @@ pub fn run_agent(os: Os, cmd: Str, args: List[Str]) -> Int uses (stdio, fs, env)
     preload = [a.module]
   }
   let as_json = a.json || (!a.text && !os.stdio.stdout_is_tty())
-  var s = match agent_session(os, dir, preload, a.testdata) {
+  // refs of names: a module under a root whose text spells none of the
+  // names' last segments cannot refer to them, so it is not checked (the
+  // declaring module spells its name; 2026-10-26: --testdata at the xo
+  // root checked every module, 5 to 12 s and 6 GB)
+  // XO_REFS_SPELL=off checks every module (the comparison in cmd/xo's
+  // TestAgentRefsSpellFilter)
+  var words: List[Str] = []
+  if cmd == "refs" && (os.env.get("XO_REFS_SPELL") ?? "") != "off" {
+    for t in [a.target] + a.more {
+      if position_of(t).is_none() {
+        let segs = t.split("/")
+        let ds = segs[segs.len() - 1].split(".")
+        words.push(ds[ds.len() - 1])
+      }
+    }
+    if a.target.is_empty() || words.any(fn(w) { w.is_empty() }) || words.len() < 1 + a.more.len() {
+      words = []
+    }
+  }
+  var s = match agent_session(os, dir, preload, a.testdata, words) {
     Ok(x) => x
     Err(e) => {
       // `xo doc NAME` or `xo def NAME` run outside a module (a scratch or
@@ -412,7 +431,7 @@ fn std_session(os: Os, preload: List[Str]) -> Session? uses (stdio, fs, env) {
   os.fs.create_dir_all(tmp).ok() ?? return None
   // a directory with no .xo file is refused: one empty program
   os.fs.write("${tmp}/main.xo", "fn main() {}\n".bytes()).ok() ?? return None
-  let r = agent_session(os, tmp, preload, false).ok()
+  let r = agent_session(os, tmp, preload, false, []).ok()
   os.fs.remove_all(tmp).ignore_err("a temporary directory")
   r
 }
@@ -420,7 +439,7 @@ fn std_session(os: Os, preload: List[Str]) -> Session? uses (stdio, fs, env) {
 /// A Session over the .xo files of dir, checked as `xo lsp` checks open
 /// documents, with nothing written to standard output; at a root,
 /// testdata walks its `testdata` directories too.
-fn agent_session(os: Os, dir: Str, preload: List[Str], testdata: Bool) -> Session ! Str uses (stdio, fs, env) {
+fn agent_session(os: Os, dir: Str, preload: List[Str], testdata: Bool, words: List[Str]) -> Session ! Str uses (stdio, fs, env) {
   let wd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
   var s = Session{version: "", std_dir: std_dir(os), wd: wd, lsp_std: "", quiet: true, preload: preload}
   let d = abs_of(wd, dir)
@@ -444,7 +463,7 @@ fn agent_session(os: Os, dir: Str, preload: List[Str], testdata: Bool) -> Sessio
     }
     // a workspace or repository root: the modules under it, as `xo
     // query` and `xo check` find them (decision 0289)
-    var v = check_view_excluding(os, s.std_dir, wd, {}, [d], preload, [], testdata)
+    var v = check_view_excluding(os, s.std_dir, wd, {}, [d], preload, [], testdata, words)
     // a module below the root whose `use go` or `use c` binding is
     // missing stops the whole check: leave such modules out and check
     // again (the xo checkout's examples/realtime-control), naming them
@@ -463,7 +482,7 @@ fn agent_session(os: Os, dir: Str, preload: List[Str], testdata: Bool) -> Sessio
       }
       skipped = skipped + more
       tries += 1
-      v = check_view_excluding(os, s.std_dir, wd, {}, [d], preload, skipped, testdata)
+      v = check_view_excluding(os, s.std_dir, wd, {}, [d], preload, skipped, testdata, words)
     }
     s.skipped = skipped
     s.testdata_skipped = v.testdata_skipped
