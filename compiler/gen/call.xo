@@ -536,7 +536,7 @@ fn (var g: Gen) param_default(fo: Int, i: Int, sub: Map[Int, Int]) -> Str {
     pt = g.sub_apply(pt, sub)
   }
   if g.ostd(fo) {
-    return g.std_default(p.default[0], pt)
+    return g.std_default(p.default[0], pt, g.c.objs[fo].decl_file)
   }
   let targs = g.targs_code(g.c.objs[fo].tparams, sub)
   let pr = g.pkg_ref(g.omod(fo))

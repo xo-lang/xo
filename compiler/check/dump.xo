@@ -61,6 +61,14 @@ fn (var c: Checker) run() -> () ! Str {
     // test was XO1201, a list literal "support is planned")
     if !c.mods[m].is_std || bodies.contains(m) || c.mods[m].root {
       c.check_module(m)
+    } else if !c.native {
+      // the Go backend lowers a std declaration's default values itself
+      // (gen std_default): a call or other expression there needs its
+      // types and calls (DS-2's metrics corpus, 2026-10-26: `buckets:
+      // List[Float] = latency_buckets()` was "unsupported std default
+      // value"); the native backends read the implementation module's
+      // (unchanged here)
+      c.check_std_defaults(m)
     }
   }
   if c.mod_skip_auto && !c.mod_skip.is_empty() && !c.effect_reads_across_modules().is_empty() {

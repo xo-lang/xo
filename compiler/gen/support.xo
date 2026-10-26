@@ -171,9 +171,13 @@ fn is_none_node(n: Node) -> Bool {
 // ---------------------------------------------------------------------------
 // Std defaults
 
-/// The default value of a std parameter or field: literal forms
-/// (stdDefault).
-fn (var g: Gen) std_default(e: Expr, t: Int) -> Str {
+/// The default value of a std parameter or field declared in file: the
+/// literal forms directly (stdDefault), any other expression (a call,
+/// `latency_buckets()` in std/metrics, a non-empty literal, an
+/// interpolated string) lowered as code would be, in its declaration's
+/// file, so it is evaluated at each call as the native backends do
+/// (DS-2's metrics corpus, 2026-10-26: "unsupported std default value").
+fn (var g: Gen) std_default(e: Expr, t: Int, file: Int) -> Str {
   let r = g.rt()
   match e {
     IntLit(value: value, ..) => return g.int_lit(check.text(value), t)
@@ -189,13 +193,24 @@ fn (var g: Gen) std_default(e: Expr, t: Int) -> Str {
     RuneLit(value: value, ..) => return "${r}Rune(${value})"
     BytesLit(value: value, ..) => return "${r}Bytes(${value.quote()})"
     StringLit(s) => {
-      var b = BytesBuilder.new()
-      for p in s.parts {
-        b.write(p.text)
+      if !s.parts.any(fn(p) { p.expr.is_some() }) {
+        var b = BytesBuilder.new()
+        for p in s.parts {
+          b.write(p.text)
+        }
+        return b.freeze().quote()
       }
-      return b.freeze().quote()
     }
-    MapLit(..) | ListLit(..) | SetLit(..) => return g.go_type(t) + "{}"
+    MapLit(entries: es, ..) => {
+      if es.is_empty() {
+        return g.go_type(t) + "{}"
+      }
+    }
+    ListLit(elems: es, ..) | SetLit(elems: es, ..) => {
+      if es.is_empty() {
+        return g.go_type(t) + "{}"
+      }
+    }
     SelectorExpr(sel: sel, ..) => {
       let o = g.nobj(t)
       if o >= 0 && g.tkind(o) == "enum" {
@@ -217,8 +232,16 @@ fn (var g: Gen) std_default(e: Expr, t: Int) -> Str {
     }
     _ => {}
   }
-  g.errorf(parser.expr_span(e), "unsupported std default value")
-  "nil"
+  if file < 0 {
+    g.errorf(parser.expr_span(e), "unsupported std default value")
+    return "nil"
+  }
+  // the checker typed the expression in its declaration's file
+  let saved = g.f.file
+  g.f.file = file
+  let code = g.val(e)
+  g.f.file = saved
+  code
 }
 
 // ---------------------------------------------------------------------------

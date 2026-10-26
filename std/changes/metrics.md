@@ -1,5 +1,21 @@
 # std/metrics changes
 
+## 2026-10-26: fix: `histogram` without buckets builds on the Go backend
+
+- Kind: fix
+- Commit: this commit
+- Found by: DS-2 (the metrics corpus: `r.histogram("x", "y")` with `--backend=go`)
+- Go reference: none (the Go backend's lowering of std default values)
+- Test: golden std_default_call on arm64, LLVM and the Go backend (TestGoldenGoParity)
+
+`buckets: List[Float] = latency_buckets()` was "unsupported std default
+value" with `--backend=go`, so a program that called `histogram` without
+buckets did not build there; arm64 and LLVM built it. The Go backend now
+lowers any default value of a std declaration (a call, a non-empty list,
+map or set, an interpolated string), evaluated at each call as on the
+native backends; before, a non-empty list default would have become an
+empty one.
+
 ## 2026-10-21: feature: Registry.middleware, request counts and latencies for a router
 
 - Kind: feature

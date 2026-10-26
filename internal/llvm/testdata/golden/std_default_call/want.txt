@@ -1,0 +1,38 @@
+exit 0
+--- stdout
+# HELP req_seconds request time
+# TYPE req_seconds histogram
+req_seconds_bucket{le="0.005"} 1
+req_seconds_bucket{le="0.01"} 1
+req_seconds_bucket{le="0.025"} 1
+req_seconds_bucket{le="0.05"} 1
+req_seconds_bucket{le="0.1"} 1
+req_seconds_bucket{le="0.25"} 2
+req_seconds_bucket{le="0.5"} 2
+req_seconds_bucket{le="1"} 2
+req_seconds_bucket{le="2.5"} 2
+req_seconds_bucket{le="5"} 2
+req_seconds_bucket{le="10"} 3
+req_seconds_bucket{le="+Inf"} 3
+req_seconds_sum 7.203
+req_seconds_count 3
+# HELP db_seconds query time
+# TYPE db_seconds histogram
+db_seconds_bucket{table="users",le="0.005"} 0
+db_seconds_bucket{table="users",le="0.01"} 0
+db_seconds_bucket{table="users",le="0.025"} 0
+db_seconds_bucket{table="users",le="0.05"} 1
+db_seconds_bucket{table="users",le="0.1"} 1
+db_seconds_bucket{table="users",le="0.25"} 1
+db_seconds_bucket{table="users",le="0.5"} 1
+db_seconds_bucket{table="users",le="1"} 1
+db_seconds_bucket{table="users",le="2.5"} 1
+db_seconds_bucket{table="users",le="5"} 1
+db_seconds_bucket{table="users",le="10"} 1
+db_seconds_bucket{table="users",le="+Inf"} 1
+db_seconds_sum{table="users"} 0.05
+db_seconds_count{table="users"} 1
+# HELP xo_metrics_dropped_total Series dropped past the per instrument limit.
+# TYPE xo_metrics_dropped_total counter
+xo_metrics_dropped_total 0
+--- stderr

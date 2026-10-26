@@ -202,6 +202,34 @@ fn (c: Checker) lazy_mod(m: Int) -> Bool {
   (c.lazy && c.mods[m].native && !c.mods[m].root) || c.mod_skip.contains(m)
 }
 
+/// The default values of std module m's function parameters and struct
+/// fields, for a build that does not check its bodies (the Go backend's;
+/// check_bodies_of in run).
+fn (var c: Checker) check_std_defaults(m: Int) {
+  c.cur_mod = m
+  for f in c.mods[m].files {
+    c.set_file(f)
+    let decls = c.files[f].ast.decls
+    for (i, d) in decls.indexed() {
+      let o = c.files[f].decl_objs[i]
+      if o < 0 {
+        continue
+      }
+      match d {
+        FnDecl(..) => c.check_fn_defaults(o)
+        StructDecl(..) => {
+          for fl in c.objs[o].fields {
+            if !fl.default.is_empty() {
+              c.check_default(fl.default[0], fl.ty)
+            }
+          }
+        }
+        _ => {}
+      }
+    }
+  }
+}
+
 /// The default values of fo's parameters (check_fn_decl's), for a
 /// function whose body waits for check_lazy: a caller's build reads them.
 fn (var c: Checker) check_fn_defaults(fo: Int) {

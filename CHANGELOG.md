@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The Go backend builds a call of a std function whose default value is a
+  call or another expression (`metrics.Registry.histogram`'s `buckets =
+  latency_buckets()`), evaluated at each call as on the native backends; it
+  was "unsupported std default value".
 - arm64: a retain before a call that only borrows the value moves into the paths after
   it, where a release meets it: a list's Str passed to `Duration.parse`, which keeps it
   only in its error, is no longer counted up and down on every successful parse

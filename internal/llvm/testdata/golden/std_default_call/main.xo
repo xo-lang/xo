@@ -1,0 +1,16 @@
+// A std parameter whose default is a call (std/metrics' histogram buckets
+// = latency_buckets()), on every backend: the Go backend reported
+// "unsupported std default value" (DS-2's metrics corpus, 2026-10-26).
+use std/metrics
+
+fn main(os: Os) {
+  let r = metrics.registry()
+  // the default buckets, evaluated at each call: two histograms
+  let a = r.histogram("req_seconds", "request time")
+  let b = r.histogram("db_seconds", "query time", ["table"])
+  a.observe(0.003)
+  a.observe(0.2)
+  a.observe(7.0)
+  b.observe(0.05, ["users"])
+  os.stdio.print(r.text())
+}

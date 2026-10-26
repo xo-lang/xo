@@ -575,7 +575,7 @@ fn (var g: Gen) box_if(boxed: Bool, c: Str) -> Str {
 fn (var g: Gen) field_default(obj: Int, fi: Int, n: Int) -> Str {
   let fo = g.c.objs[obj].fields[fi]
   if g.ostd(obj) {
-    return g.std_default(fo.default[0], fo.ty)
+    return g.std_default(fo.default[0], fo.ty, g.c.objs[obj].decl_file)
   }
   var targs = ""
   let args = g.type_args(n)
