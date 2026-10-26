@@ -1,0 +1,2132 @@
+// A lossless binary form of a parse (decision 0380 step b, 2026-10-26): a
+// std file's lazy parse (its declarations, the source ranges of the bodies
+// it skipped, its interface hash and diagnostics) is kept in the back-end
+// cache by the hash of the file, so an edit's build does not lex and parse
+// std again (about 75 ms of CPU of an llvm-fib edit). encode_parse and
+// decode_parse are exact inverses: every node, span, flag and byte string
+// (astcodec_test.xo round-trips std's files).
+
+use github.com/xo-lang/xo/compiler/lexer
+
+/// The version of the form: a change to the AST or this file changes it.
+pub const AST_CODEC_VERSION = "xo ast codec v1"
+
+struct Enc {
+  b: BytesBuilder = BytesBuilder.new()
+}
+
+fn (var e: Enc) int(n0: Int) {
+  // zigzag, then 7 bits a byte
+  var n = if n0 < 0 { ((0 - (n0 + 1)) << 1) | 1 } else { n0 << 1 }
+  while n >= 128 {
+    e.b.write_byte(UInt8((n & 127) | 128))
+    n = n >> 7
+  }
+  e.b.write_byte(UInt8(n))
+}
+
+fn (var e: Enc) bool(x: Bool) {
+  e.b.write_byte(if x { UInt8(1) } else { UInt8(0) })
+}
+
+fn (var e: Enc) bytes(x: Bytes) {
+  e.int(x.len())
+  e.b.write(x)
+}
+
+fn (var e: Enc) str(x: Str) {
+  e.bytes(x.bytes())
+}
+
+fn (var e: Enc) pos(p: Pos) {
+  e.int(p.offset)
+  e.int(p.line)
+  e.int(p.col)
+}
+
+fn (var e: Enc) span(s: Span) {
+  e.pos(s.start)
+  e.pos(s.end)
+}
+
+fn (var e: Enc) ident(x: Ident) {
+  e.span(x.span)
+  e.bytes(x.name)
+}
+
+fn (var e: Enc) oident(x: Ident?) {
+  match x {
+    Some(v) => {
+      e.bool(true)
+      e.ident(v)
+    }
+    None => e.bool(false)
+  }
+}
+
+fn (var e: Enc) idents(xs: List[Ident]) {
+  e.int(xs.len())
+  for x in xs {
+    e.ident(x)
+  }
+}
+
+fn (var e: Enc) odoc(x: Doc?) {
+  match x {
+    Some(d) => {
+      e.bool(true)
+      e.span(d.span)
+      e.bytes(d.text)
+    }
+    None => e.bool(false)
+  }
+}
+
+fn (var e: Enc) kind(k: Kind) {
+  e.int(kind_code(k))
+}
+
+fn (var e: Enc) effect(x: Effect) {
+  e.span(x.span)
+  e.ident(x.name)
+  e.oident(x.sub)
+}
+
+fn (var e: Enc) effects(xs: List[Effect]) {
+  e.int(xs.len())
+  for x in xs {
+    e.effect(x)
+  }
+}
+
+fn (var e: Enc) typ(t: Type) {
+  match t {
+    NamedType(span, path, args) => {
+      e.int(0)
+      e.span(span)
+      e.idents(path)
+      e.types(args)
+    }
+    OptionalType(span, elem) => {
+      e.int(1)
+      e.span(span)
+      e.typ(elem)
+    }
+    TupleType(span, elems) => {
+      e.int(2)
+      e.span(span)
+      e.types(elems)
+    }
+    FnType(f) => {
+      e.int(3)
+      e.span(f.span)
+      e.int(f.params.len())
+      for p in f.params {
+        e.span(p.span)
+        e.bool(p.is_var)
+        e.typ(p.typ)
+      }
+      e.otyp(f.result)
+      e.oerr(f.err)
+      e.effects(f.effects)
+      e.bool(f.uses_parens)
+    }
+    BadType(span) => {
+      e.int(4)
+      e.span(span)
+    }
+  }
+}
+
+fn (var e: Enc) types(xs: List[Type]) {
+  e.int(xs.len())
+  for x in xs {
+    e.typ(x)
+  }
+}
+
+fn (var e: Enc) otyp(x: Type?) {
+  match x {
+    Some(t) => {
+      e.bool(true)
+      e.typ(t)
+    }
+    None => e.bool(false)
+  }
+}
+
+fn (var e: Enc) oerr(x: ErrSpec?) {
+  match x {
+    Some(s) => {
+      e.bool(true)
+      e.span(s.span)
+      e.otyp(s.typ)
+    }
+    None => e.bool(false)
+  }
+}
+
+fn (var e: Enc) tparams(xs: List[TypeParam]) {
+  e.int(xs.len())
+  for x in xs {
+    e.span(x.span)
+    e.ident(x.name)
+    e.otyp(x.constraint)
+    e.bool(x.effects)
+  }
+}
+
+fn (var e: Enc) param(x: Param) {
+  e.span(x.span)
+  e.bool(x.is_var)
+  e.bool(x.is_self)
+  e.ident(x.name)
+  e.otyp(x.typ)
+  e.oexpr(x.default)
+}
+
+fn (var e: Enc) params(xs: List[Param]) {
+  e.int(xs.len())
+  for x in xs {
+    e.param(x)
+  }
+}
+
+fn (var e: Enc) clause(c: Clause) {
+  match c {
+    UsesClause(span, effects, parens) => {
+      e.int(0)
+      e.span(span)
+      e.effects(effects)
+      e.bool(parens)
+    }
+    RequiresClause(span, debug, cond, els) => {
+      e.int(1)
+      e.span(span)
+      e.bool(debug)
+      e.expr(cond)
+      e.oexpr(els)
+    }
+    EnsuresClause(span, debug, cond) => {
+      e.int(2)
+      e.span(span)
+      e.bool(debug)
+      e.expr(cond)
+    }
+  }
+}
+
+fn (var e: Enc) fndecl(d: FnDecl) {
+  e.span(d.span)
+  e.odoc(d.doc)
+  e.bool(d.is_pub)
+  match d.recv {
+    Some(r) => {
+      e.bool(true)
+      e.span(r.span)
+      e.bool(r.is_var)
+      e.ident(r.name)
+      e.typ(r.typ)
+    }
+    None => e.bool(false)
+  }
+  e.ident(d.name)
+  e.tparams(d.type_params)
+  e.params(d.params)
+  e.otyp(d.result)
+  e.oerr(d.err)
+  e.int(d.clauses.len())
+  for c in d.clauses {
+    e.clause(c)
+  }
+  e.oblock(d.body)
+  match d.lazy {
+    Some(l) => {
+      e.bool(true)
+      e.pos(l.start)
+      e.int(l.end)
+    }
+    None => e.bool(false)
+  }
+  e.bool(d.bad_sig)
+  e.bool(d.params_list)
+}
+
+fn (var e: Enc) constdecl(d: ConstDecl) {
+  e.span(d.span)
+  e.odoc(d.doc)
+  e.bool(d.is_pub)
+  e.ident(d.name)
+  e.otyp(d.typ)
+  e.expr(d.value)
+}
+
+fn (var e: Enc) decl(d: Decl) {
+  match d {
+    FnDecl(f) => {
+      e.int(0)
+      e.fndecl(f)
+    }
+    StructDecl(s) => {
+      e.int(1)
+      e.span(s.span)
+      e.odoc(s.doc)
+      e.bool(s.is_pub)
+      e.ident(s.name)
+      e.tparams(s.type_params)
+      e.int(s.fields.len())
+      for f in s.fields {
+        e.span(f.span)
+        e.odoc(f.doc)
+        e.bool(f.is_pub)
+        e.ident(f.name)
+        e.typ(f.typ)
+        e.oexpr(f.default)
+        match f.wire {
+          Some(w) => {
+            e.bool(true)
+            e.bytes(w)
+          }
+          None => e.bool(false)
+        }
+        match f.wire_span {
+          Some(ws) => {
+            e.bool(true)
+            e.span(ws)
+          }
+          None => e.bool(false)
+        }
+        e.int(f.formats.len())
+        for fw in f.formats {
+          e.bytes(fw.format)
+          e.bytes(fw.wire)
+          e.span(fw.span)
+        }
+      }
+      e.oexpr(s.inv)
+      e.idents(s.derive)
+      e.int(s.derive_args.len())
+      for a in s.derive_args {
+        e.span(a.span)
+        e.ident(a.derive)
+        e.ident(a.key)
+        e.ident(a.value)
+      }
+    }
+    EnumDecl(en) => {
+      e.int(2)
+      e.span(en.span)
+      e.odoc(en.doc)
+      e.bool(en.is_pub)
+      e.ident(en.name)
+      e.tparams(en.type_params)
+      e.int(en.variants.len())
+      for v in en.variants {
+        e.span(v.span)
+        e.odoc(v.doc)
+        e.ident(v.name)
+        match v.fields {
+          Some(fs) => {
+            e.bool(true)
+            e.int(fs.len())
+            for f in fs {
+              e.span(f.span)
+              e.oident(f.name)
+              e.bool(f.from)
+              e.typ(f.typ)
+            }
+          }
+          None => e.bool(false)
+        }
+      }
+      e.idents(en.derive)
+    }
+    InterfaceDecl(i) => {
+      e.int(3)
+      e.span(i.span)
+      e.odoc(i.doc)
+      e.bool(i.is_pub)
+      e.ident(i.name)
+      e.tparams(i.type_params)
+      e.int(i.methods.len())
+      for m in i.methods {
+        e.fndecl(m)
+      }
+    }
+    TypeDecl(t) => {
+      e.int(4)
+      e.span(t.span)
+      e.odoc(t.doc)
+      e.bool(t.is_pub)
+      e.ident(t.name)
+      e.tparams(t.type_params)
+      e.bool(t.newtype)
+      e.otyp(t.typ)
+    }
+    ConstDecl(c) => {
+      e.int(5)
+      e.constdecl(c)
+    }
+    TestDecl(t) => {
+      e.int(6)
+      e.span(t.span)
+      e.odoc(t.doc)
+      match t.name {
+        Some(n) => {
+          e.bool(true)
+          e.strlit(n)
+        }
+        None => e.bool(false)
+      }
+      e.params(t.params)
+      e.oexpr(t.seed)
+      e.effects(t.effects)
+      e.oblock(t.body)
+    }
+    BadDecl(span) => {
+      e.int(7)
+      e.span(span)
+    }
+  }
+}
+
+fn (var e: Enc) block(b: Block) {
+  e.span(b.span)
+  e.int(b.stmts.len())
+  for s in b.stmts {
+    e.stmt(s)
+  }
+  e.bool(b.exit)
+}
+
+fn (var e: Enc) oblock(x: Block?) {
+  match x {
+    Some(b) => {
+      e.bool(true)
+      e.block(b)
+    }
+    None => e.bool(false)
+  }
+}
+
+fn (var e: Enc) exprs(xs: List[Expr]) {
+  e.int(xs.len())
+  for x in xs {
+    e.expr(x)
+  }
+}
+
+fn (var e: Enc) oexpr(x: Expr?) {
+  match x {
+    Some(v) => {
+      e.bool(true)
+      e.expr(v)
+    }
+    None => e.bool(false)
+  }
+}
+
+fn (var e: Enc) stmt(s: Stmt) {
+  match s {
+    LetStmt(span, pattern, typ, value, is_var) => {
+      e.int(0)
+      e.span(span)
+      e.pat(pattern)
+      e.otyp(typ)
+      e.expr(value)
+      e.bool(is_var)
+    }
+    VarStmt(span, name, typ, value) => {
+      e.int(1)
+      e.span(span)
+      e.ident(name)
+      e.otyp(typ)
+      e.expr(value)
+    }
+    AssignStmt(span, op, target, value) => {
+      e.int(2)
+      e.span(span)
+      e.kind(op)
+      e.expr(target)
+      e.expr(value)
+    }
+    DeferStmt(span, body) => {
+      e.int(3)
+      e.span(span)
+      e.stmt(body)
+    }
+    ReturnStmt(span, value) => {
+      e.int(4)
+      e.span(span)
+      e.oexpr(value)
+    }
+    BreakStmt(span, label) => {
+      e.int(5)
+      e.span(span)
+      e.oident(label)
+    }
+    ContinueStmt(span, label) => {
+      e.int(6)
+      e.span(span)
+      e.oident(label)
+    }
+    ForStmt(span, label, pattern, iter, bound, body, go_range) => {
+      e.int(7)
+      e.span(span)
+      e.oident(label)
+      e.pat(pattern)
+      e.expr(iter)
+      e.exprs(bound)
+      e.block(body)
+      e.bool(go_range)
+    }
+    WhileStmt(span, label, cond, pattern, value, bound, body) => {
+      e.int(8)
+      e.span(span)
+      e.oident(label)
+      e.oexpr(cond)
+      e.pats(pattern)
+      e.exprs(value)
+      e.exprs(bound)
+      e.block(body)
+    }
+    ExprStmt(span, x) => {
+      e.int(9)
+      e.span(span)
+      e.expr(x)
+    }
+    BadStmt(span) => {
+      e.int(10)
+      e.span(span)
+    }
+    ConstDecl(d) => {
+      e.int(11)
+      e.constdecl(d)
+    }
+    LazyStmt(span) => {
+      e.int(12)
+      e.span(span)
+    }
+  }
+}
+
+fn (var e: Enc) ostmt(x: Stmt?) {
+  match x {
+    Some(s) => {
+      e.bool(true)
+      e.stmt(s)
+    }
+    None => e.bool(false)
+  }
+}
+
+fn (var e: Enc) strlit(s: StringLit) {
+  e.span(s.span)
+  e.int(match s.kind {
+    Plain => 0
+    Triple => 1
+    Raw => 2
+  })
+  e.int(s.parts.len())
+  for p in s.parts {
+    e.bytes(p.text)
+    e.oexpr(p.expr)
+    e.bool(p.debug)
+  }
+}
+
+fn (var e: Enc) fields(xs: List[FieldInit]) {
+  e.int(xs.len())
+  for f in xs {
+    e.span(f.span)
+    e.ident(f.name)
+    e.expr(f.value)
+  }
+}
+
+fn (var e: Enc) ifexpr(x: IfExpr) {
+  e.span(x.span)
+  e.oexpr(x.cond)
+  match x.pattern {
+    Some(p) => {
+      e.bool(true)
+      e.pat(p)
+    }
+    None => e.bool(false)
+  }
+  e.oexpr(x.value)
+  e.block(x.then)
+  e.oexpr(x.els)
+}
+
+fn (var e: Enc) expr(x: Expr) {
+  match x {
+    Ident(id) => {
+      e.int(0)
+      e.ident(id)
+    }
+    IntLit(span, raw, value) => {
+      e.int(1)
+      e.span(span)
+      e.bytes(raw)
+      e.bytes(value)
+    }
+    FloatLit(span, raw) => {
+      e.int(2)
+      e.span(span)
+      e.bytes(raw)
+    }
+    DurationLit(span, raw, nanos) => {
+      e.int(3)
+      e.span(span)
+      e.bytes(raw)
+      e.bytes(nanos)
+    }
+    RuneLit(span, raw, value) => {
+      e.int(4)
+      e.span(span)
+      e.bytes(raw)
+      e.int(value)
+    }
+    StringLit(s) => {
+      e.int(5)
+      e.strlit(s)
+    }
+    BytesLit(span, value) => {
+      e.int(6)
+      e.span(span)
+      e.bytes(value)
+    }
+    HoleExpr(span) => {
+      e.int(7)
+      e.span(span)
+    }
+    UnitExpr(span) => {
+      e.int(8)
+      e.span(span)
+    }
+    ParenExpr(span, x1) => {
+      e.int(9)
+      e.span(span)
+      e.expr(x1)
+    }
+    TupleExpr(span, elems) => {
+      e.int(10)
+      e.span(span)
+      e.exprs(elems)
+    }
+    ListLit(span, elems) => {
+      e.int(11)
+      e.span(span)
+      e.exprs(elems)
+    }
+    MapLit(span, entries) => {
+      e.int(12)
+      e.span(span)
+      e.int(entries.len())
+      for m in entries {
+        e.span(m.span)
+        e.expr(m.key)
+        e.expr(m.value)
+      }
+    }
+    SetLit(span, elems) => {
+      e.int(13)
+      e.span(span)
+      e.exprs(elems)
+    }
+    StructLit(span, typ, fields) => {
+      e.int(14)
+      e.span(span)
+      e.expr(typ)
+      e.fields(fields)
+    }
+    UnaryExpr(span, op, x1) => {
+      e.int(15)
+      e.span(span)
+      e.kind(op)
+      e.expr(x1)
+    }
+    BinaryExpr(span, op, x1, y) => {
+      e.int(16)
+      e.span(span)
+      e.kind(op)
+      e.expr(x1)
+      e.expr(y)
+    }
+    IsExpr(span, x1, pattern) => {
+      e.int(17)
+      e.span(span)
+      e.expr(x1)
+      e.pat(pattern)
+    }
+    RangeExpr(span, lo, hi, inclusive) => {
+      e.int(18)
+      e.span(span)
+      e.oexpr(lo)
+      e.oexpr(hi)
+      e.bool(inclusive)
+    }
+    SelectorExpr(span, x1, sel) => {
+      e.int(19)
+      e.span(span)
+      e.expr(x1)
+      e.ident(sel)
+    }
+    CallExpr(span, fun, args) => {
+      e.int(20)
+      e.span(span)
+      e.expr(fun)
+      e.int(args.len())
+      for a in args {
+        e.span(a.span)
+        e.oident(a.name)
+        e.expr(a.value)
+      }
+    }
+    TypeArgsExpr(span, x1, types) => {
+      e.int(21)
+      e.span(span)
+      e.expr(x1)
+      e.types(types)
+    }
+    IndexExpr(span, x1, index) => {
+      e.int(22)
+      e.span(span)
+      e.expr(x1)
+      e.expr(index)
+    }
+    TryExpr(span, x1) => {
+      e.int(23)
+      e.span(span)
+      e.expr(x1)
+    }
+    WithExpr(span, x1, fields) => {
+      e.int(24)
+      e.span(span)
+      e.expr(x1)
+      e.fields(fields)
+    }
+    IfExpr(i) => {
+      e.int(25)
+      e.ifexpr(i)
+    }
+    MatchExpr(span, subject, arms) => {
+      e.int(26)
+      e.span(span)
+      e.expr(subject)
+      e.int(arms.len())
+      for a in arms {
+        e.span(a.span)
+        e.pat(a.pattern)
+        e.oexpr(a.guard)
+        e.ostmt(a.body)
+        e.bool(a.coalesce)
+      }
+    }
+    ScopeExpr(span, name, body) => {
+      e.int(27)
+      e.span(span)
+      e.ident(name)
+      e.block(body)
+    }
+    SelectExpr(span, arms) => {
+      e.int(28)
+      e.span(span)
+      e.int(arms.len())
+      for a in arms {
+        e.span(a.span)
+        e.oident(a.bind)
+        e.oexpr(a.op)
+        e.oexpr(a.after)
+        e.ostmt(a.body)
+      }
+    }
+    Block(b) => {
+      e.int(29)
+      e.block(b)
+    }
+    FnLit(f) => {
+      e.int(30)
+      e.span(f.span)
+      e.params(f.params)
+      e.otyp(f.result)
+      e.oerr(f.err)
+      e.effects(f.effects)
+      e.block(f.body)
+    }
+    WhileExpr(span, body) => {
+      e.int(31)
+      e.span(span)
+      e.block(body)
+    }
+    BadExpr(span) => {
+      e.int(32)
+      e.span(span)
+    }
+  }
+}
+
+fn (var e: Enc) pats(xs: List[Pattern]) {
+  e.int(xs.len())
+  for x in xs {
+    e.pat(x)
+  }
+}
+
+fn (var e: Enc) patfields(xs: List[PatField]) {
+  e.int(xs.len())
+  for f in xs {
+    e.span(f.span)
+    e.oident(f.name)
+    e.pat(f.pattern)
+  }
+}
+
+fn (var e: Enc) pat(p: Pattern) {
+  match p {
+    WildcardPat(span) => {
+      e.int(0)
+      e.span(span)
+    }
+    BindPat(span, name) => {
+      e.int(1)
+      e.span(span)
+      e.ident(name)
+    }
+    LitPat(span, value) => {
+      e.int(2)
+      e.span(span)
+      e.expr(value)
+    }
+    RangePat(span, lo, hi, inclusive) => {
+      e.int(3)
+      e.span(span)
+      e.expr(lo)
+      e.expr(hi)
+      e.bool(inclusive)
+    }
+    OrPat(span, alts) => {
+      e.int(4)
+      e.span(span)
+      e.pats(alts)
+    }
+    TuplePat(span, elems) => {
+      e.int(5)
+      e.span(span)
+      e.pats(elems)
+    }
+    VariantPat(span, path, parens, fields, rest) => {
+      e.int(6)
+      e.span(span)
+      e.idents(path)
+      e.bool(parens)
+      e.patfields(fields)
+      e.bool(rest)
+    }
+    StructPat(span, path, fields, rest) => {
+      e.int(7)
+      e.span(span)
+      e.idents(path)
+      e.patfields(fields)
+      e.bool(rest)
+    }
+    ListPat(span, elems, rest) => {
+      e.int(8)
+      e.span(span)
+      e.pats(elems)
+      e.int(rest)
+    }
+    BadPat(span) => {
+      e.int(9)
+      e.span(span)
+    }
+  }
+}
+
+fn (var e: Enc) diag(d: Diag) {
+  e.str(d.code)
+  e.span(d.span)
+  e.bytes(d.message)
+  e.int(d.notes.len())
+  for n in d.notes {
+    e.bytes(n.message)
+    match n.span {
+      Some(s) => {
+        e.bool(true)
+        e.span(s)
+      }
+      None => e.bool(false)
+    }
+  }
+  e.int(d.fixes.len())
+  for f in d.fixes {
+    e.bytes(f.title)
+    e.int(f.edits.len())
+    for ed in f.edits {
+      e.span(ed.span)
+      e.bytes(ed.replace)
+    }
+  }
+}
+
+/// r in the binary form (decode_parse reads it back).
+pub fn encode_parse(r: ParseResult) -> Bytes {
+  var e = Enc{}
+  e.str(AST_CODEC_VERSION)
+  let f = r.file
+  e.span(f.span)
+  e.bytes(f.name)
+  e.int(f.imports.len())
+  for u in f.imports {
+    e.span(u.span)
+    e.bytes(u.path)
+    e.oident(u.alias)
+    e.bool(u.go)
+    e.bool(u.c)
+    e.int(u.links.len())
+    for l in u.links {
+      e.bytes(l)
+    }
+    match u.effects {
+      Some(fx) => {
+        e.bool(true)
+        e.effects(fx)
+      }
+      None => e.bool(false)
+    }
+  }
+  e.int(f.decls.len())
+  for d in f.decls {
+    e.decl(d)
+  }
+  e.int(r.diags.len())
+  for d in r.diags {
+    e.diag(d)
+  }
+  e.bool(r.hard)
+  e.str(r.iface)
+  e.b.freeze()
+}
+
+// ---------------------------------------------------------------------------
+// Decoding: a reader that marks itself bad on any malformed input, so a
+// damaged cache entry is a miss (the file is parsed), never a wrong tree.
+
+struct Dec {
+  d: Bytes
+  i: Int = 0
+  bad: Bool = false
+}
+
+fn (var r: Dec) int() -> Int {
+  var n = 0
+  var sh = 0
+  while true {
+    if r.i >= r.d.len() || sh > 63 {
+      r.bad = true
+      return 0
+    }
+    let c = Int(r.d[r.i])
+    r.i += 1
+    n = n | ((c & 127) << sh)
+    if c < 128 {
+      break
+    }
+    sh += 7
+  }
+  if n & 1 == 1 { 0 - (n >> 1) - 1 } else { n >> 1 }
+}
+
+fn (var r: Dec) bool() -> Bool {
+  if r.i >= r.d.len() {
+    r.bad = true
+    return false
+  }
+  let c = r.d[r.i]
+  r.i += 1
+  c == 1
+}
+
+fn (var r: Dec) count() -> Int {
+  let n = r.int()
+  if n < 0 || n > r.d.len() {
+    r.bad = true
+    return 0
+  }
+  n
+}
+
+fn (var r: Dec) bytes() -> Bytes {
+  let n = r.count()
+  if r.bad || r.i + n > r.d.len() {
+    r.bad = true
+    return b""
+  }
+  let x = r.d[r.i..r.i + n]
+  r.i += n
+  x
+}
+
+fn (var r: Dec) str() -> Str {
+  r.bytes().to_str() ?? ""
+}
+
+fn (var r: Dec) pos() -> Pos {
+  let o = r.int()
+  let l = r.int()
+  let c = r.int()
+  Pos{offset: o, line: l, col: c}
+}
+
+fn (var r: Dec) span() -> Span {
+  let s = r.pos()
+  let e = r.pos()
+  Span{start: s, end: e}
+}
+
+fn (var r: Dec) ident() -> Ident {
+  let s = r.span()
+  let n = r.bytes()
+  Ident{span: s, name: n}
+}
+
+fn (var r: Dec) oident() -> Ident? {
+  if r.bool() { Some(r.ident()) } else { None }
+}
+
+fn (var r: Dec) idents() -> List[Ident] {
+  let n = r.count()
+  var out: List[Ident] = []
+  for _ in 0..n {
+    if r.bad {
+      break
+    }
+    out.push(r.ident())
+  }
+  out
+}
+
+fn (var r: Dec) odoc() -> Doc? {
+  if !r.bool() {
+    return None
+  }
+  let s = r.span()
+  let t = r.bytes()
+  Some(Doc{span: s, text: t})
+}
+
+fn (var r: Dec) kind() -> Kind {
+  match kind_of(r.int()) {
+    Some(k) => k
+    None => {
+      r.bad = true
+      Kind.Illegal
+    }
+  }
+}
+
+fn (var r: Dec) effect() -> Effect {
+  let s = r.span()
+  let n = r.ident()
+  let sub = r.oident()
+  Effect{span: s, name: n, sub: sub}
+}
+
+fn (var r: Dec) effects() -> List[Effect] {
+  let n = r.count()
+  var out: List[Effect] = []
+  for _ in 0..n {
+    if r.bad {
+      break
+    }
+    out.push(r.effect())
+  }
+  out
+}
+
+fn (var r: Dec) typ() -> Type {
+  let tag = r.int()
+  match tag {
+    0 => {
+      let s = r.span()
+      let p = r.idents()
+      let a = r.types()
+      Type.NamedType(span: s, path: p, args: a)
+    }
+    1 => {
+      let s = r.span()
+      let el = r.typ()
+      Type.OptionalType(span: s, elem: el)
+    }
+    2 => {
+      let s = r.span()
+      let el = r.types()
+      Type.TupleType(span: s, elems: el)
+    }
+    3 => {
+      let s = r.span()
+      let n = r.count()
+      var ps: List[FnTypeParam] = []
+      for _ in 0..n {
+        if r.bad {
+          break
+        }
+        let ps_s = r.span()
+        let v = r.bool()
+        let t = r.typ()
+        ps.push(FnTypeParam{span: ps_s, is_var: v, typ: t})
+      }
+      let res = r.otyp()
+      let er = r.oerr()
+      let fx = r.effects()
+      let up = r.bool()
+      Type.FnType(t: FnType{span: s, params: ps, result: res, err: er, effects: fx, uses_parens: up})
+    }
+    _ => {
+      if tag != 4 {
+        r.bad = true
+      }
+      Type.BadType(span: r.span())
+    }
+  }
+}
+
+fn (var r: Dec) types() -> List[Type] {
+  let n = r.count()
+  var out: List[Type] = []
+  for _ in 0..n {
+    if r.bad {
+      break
+    }
+    out.push(r.typ())
+  }
+  out
+}
+
+fn (var r: Dec) otyp() -> Type? {
+  if r.bool() { Some(r.typ()) } else { None }
+}
+
+fn (var r: Dec) oerr() -> ErrSpec? {
+  if !r.bool() {
+    return None
+  }
+  let s = r.span()
+  let t = r.otyp()
+  Some(ErrSpec{span: s, typ: t})
+}
+
+fn (var r: Dec) tparams() -> List[TypeParam] {
+  let n = r.count()
+  var out: List[TypeParam] = []
+  for _ in 0..n {
+    if r.bad {
+      break
+    }
+    let s = r.span()
+    let nm = r.ident()
+    let c = r.otyp()
+    let fx = r.bool()
+    out.push(TypeParam{span: s, name: nm, constraint: c, effects: fx})
+  }
+  out
+}
+
+fn (var r: Dec) param() -> Param {
+  let s = r.span()
+  let v = r.bool()
+  let sf = r.bool()
+  let n = r.ident()
+  let t = r.otyp()
+  let df = r.oexpr()
+  Param{span: s, is_var: v, is_self: sf, name: n, typ: t, default: df}
+}
+
+fn (var r: Dec) params() -> List[Param] {
+  let n = r.count()
+  var out: List[Param] = []
+  for _ in 0..n {
+    if r.bad {
+      break
+    }
+    out.push(r.param())
+  }
+  out
+}
+
+fn (var r: Dec) clause() -> Clause {
+  let tag = r.int()
+  match tag {
+    0 => {
+      let s = r.span()
+      let fx = r.effects()
+      let p = r.bool()
+      Clause.UsesClause(span: s, effects: fx, parens: p)
+    }
+    1 => {
+      let s = r.span()
+      let db = r.bool()
+      let c = r.expr()
+      let el = r.oexpr()
+      Clause.RequiresClause(span: s, debug: db, cond: c, els: el)
+    }
+    _ => {
+      if tag != 2 {
+        r.bad = true
+      }
+      let s = r.span()
+      let db = r.bool()
+      let c = r.expr()
+      Clause.EnsuresClause(span: s, debug: db, cond: c)
+    }
+  }
+}
+
+fn (var r: Dec) fndecl() -> FnDecl {
+  let s = r.span()
+  let doc = r.odoc()
+  let pb = r.bool()
+  var recv: Receiver? = None
+  if r.bool() {
+    let rs = r.span()
+    let rv = r.bool()
+    let rn = r.ident()
+    let rt = r.typ()
+    recv = Some(Receiver{span: rs, is_var: rv, name: rn, typ: rt})
+  }
+  let name = r.ident()
+  let tps = r.tparams()
+  let ps = r.params()
+  let res = r.otyp()
+  let er = r.oerr()
+  let nc = r.count()
+  var cls: List[Clause] = []
+  for _ in 0..nc {
+    if r.bad {
+      break
+    }
+    cls.push(r.clause())
+  }
+  let body = r.oblock()
+  var lazy: LazyBody? = None
+  if r.bool() {
+    let st = r.pos()
+    let en = r.int()
+    lazy = Some(LazyBody{start: st, end: en})
+  }
+  let bs = r.bool()
+  let pl = r.bool()
+  FnDecl{span: s, doc: doc, is_pub: pb, recv: recv, name: name, type_params: tps, params: ps, result: res, err: er, clauses: cls, body: body, lazy: lazy, bad_sig: bs, params_list: pl}
+}
+
+fn (var r: Dec) constdecl() -> ConstDecl {
+  let s = r.span()
+  let doc = r.odoc()
+  let pb = r.bool()
+  let n = r.ident()
+  let t = r.otyp()
+  let v = r.expr()
+  ConstDecl{span: s, doc: doc, is_pub: pb, name: n, typ: t, value: v}
+}
+
+fn (var r: Dec) decl() -> Decl {
+  let tag = r.int()
+  match tag {
+    0 => Decl.FnDecl(d: r.fndecl())
+    1 => {
+      let s = r.span()
+      let doc = r.odoc()
+      let pb = r.bool()
+      let n = r.ident()
+      let tps = r.tparams()
+      let nf = r.count()
+      var fs: List[Field] = []
+      for _ in 0..nf {
+        if r.bad {
+          break
+        }
+        let fsp = r.span()
+        let fdoc = r.odoc()
+        let fpb = r.bool()
+        let fname = r.ident()
+        let ftyp = r.typ()
+        let fdef = r.oexpr()
+        var wire: Bytes? = None
+        if r.bool() {
+          wire = Some(r.bytes())
+        }
+        var wsp: Span? = None
+        if r.bool() {
+          wsp = Some(r.span())
+        }
+        let nw = r.count()
+        var fws: List[FormatWire] = []
+        for _ in 0..nw {
+          if r.bad {
+            break
+          }
+          let fm = r.bytes()
+          let w = r.bytes()
+          let ws = r.span()
+          fws.push(FormatWire{format: fm, wire: w, span: ws})
+        }
+        fs.push(Field{span: fsp, doc: fdoc, is_pub: fpb, name: fname, typ: ftyp, default: fdef, wire: wire, wire_span: wsp, formats: fws})
+      }
+      let inv = r.oexpr()
+      let dv = r.idents()
+      let na = r.count()
+      var das: List[DeriveArg] = []
+      for _ in 0..na {
+        if r.bad {
+          break
+        }
+        let asp = r.span()
+        let ad = r.ident()
+        let ak = r.ident()
+        let av = r.ident()
+        das.push(DeriveArg{span: asp, derive: ad, key: ak, value: av})
+      }
+      Decl.StructDecl(d: StructDecl{span: s, doc: doc, is_pub: pb, name: n, type_params: tps, fields: fs, inv: inv, derive: dv, derive_args: das})
+    }
+    2 => {
+      let s = r.span()
+      let doc = r.odoc()
+      let pb = r.bool()
+      let n = r.ident()
+      let tps = r.tparams()
+      let nv = r.count()
+      var vs: List[Variant] = []
+      for _ in 0..nv {
+        if r.bad {
+          break
+        }
+        let vsp = r.span()
+        let vdoc = r.odoc()
+        let vname = r.ident()
+        var vfs: List[VariantField]? = None
+        if r.bool() {
+          let nvf = r.count()
+          var l: List[VariantField] = []
+          for _ in 0..nvf {
+            if r.bad {
+              break
+            }
+            let fsp = r.span()
+            let fname = r.oident()
+            let fr = r.bool()
+            let ft = r.typ()
+            l.push(VariantField{span: fsp, name: fname, from: fr, typ: ft})
+          }
+          vfs = Some(l)
+        }
+        vs.push(Variant{span: vsp, doc: vdoc, name: vname, fields: vfs})
+      }
+      let dv = r.idents()
+      Decl.EnumDecl(d: EnumDecl{span: s, doc: doc, is_pub: pb, name: n, type_params: tps, variants: vs, derive: dv})
+    }
+    3 => {
+      let s = r.span()
+      let doc = r.odoc()
+      let pb = r.bool()
+      let n = r.ident()
+      let tps = r.tparams()
+      let nm = r.count()
+      var ms: List[FnDecl] = []
+      for _ in 0..nm {
+        if r.bad {
+          break
+        }
+        ms.push(r.fndecl())
+      }
+      Decl.InterfaceDecl(d: InterfaceDecl{span: s, doc: doc, is_pub: pb, name: n, type_params: tps, methods: ms})
+    }
+    4 => {
+      let s = r.span()
+      let doc = r.odoc()
+      let pb = r.bool()
+      let n = r.ident()
+      let tps = r.tparams()
+      let nt = r.bool()
+      let t = r.otyp()
+      Decl.TypeDecl(d: TypeDecl{span: s, doc: doc, is_pub: pb, name: n, type_params: tps, newtype: nt, typ: t})
+    }
+    5 => Decl.ConstDecl(d: r.constdecl())
+    6 => {
+      let s = r.span()
+      let doc = r.odoc()
+      var nm: StringLit? = None
+      if r.bool() {
+        nm = Some(r.strlit())
+      }
+      let ps = r.params()
+      let sd = r.oexpr()
+      let fx = r.effects()
+      let body = r.oblock()
+      Decl.TestDecl(d: TestDecl{span: s, doc: doc, name: nm, params: ps, seed: sd, effects: fx, body: body})
+    }
+    _ => {
+      if tag != 7 {
+        r.bad = true
+      }
+      Decl.BadDecl(span: r.span())
+    }
+  }
+}
+
+fn (var r: Dec) block() -> Block {
+  let s = r.span()
+  let n = r.count()
+  var ss: List[Stmt] = []
+  for _ in 0..n {
+    if r.bad {
+      break
+    }
+    ss.push(r.stmt())
+  }
+  let ex = r.bool()
+  Block{span: s, stmts: ss, exit: ex}
+}
+
+fn (var r: Dec) oblock() -> Block? {
+  if r.bool() { Some(r.block()) } else { None }
+}
+
+fn (var r: Dec) exprs() -> List[Expr] {
+  let n = r.count()
+  var out: List[Expr] = []
+  for _ in 0..n {
+    if r.bad {
+      break
+    }
+    out.push(r.expr())
+  }
+  out
+}
+
+fn (var r: Dec) oexpr() -> Expr? {
+  if r.bool() { Some(r.expr()) } else { None }
+}
+
+fn (var r: Dec) stmt() -> Stmt {
+  let tag = r.int()
+  match tag {
+    0 => {
+      let s = r.span()
+      let p = r.pat()
+      let t = r.otyp()
+      let v = r.expr()
+      let iv = r.bool()
+      Stmt.LetStmt(span: s, pattern: p, typ: t, value: v, is_var: iv)
+    }
+    1 => {
+      let s = r.span()
+      let n = r.ident()
+      let t = r.otyp()
+      let v = r.expr()
+      Stmt.VarStmt(span: s, name: n, typ: t, value: v)
+    }
+    2 => {
+      let s = r.span()
+      let op = r.kind()
+      let tg = r.expr()
+      let v = r.expr()
+      Stmt.AssignStmt(span: s, op: op, target: tg, value: v)
+    }
+    3 => {
+      let s = r.span()
+      let b = r.stmt()
+      Stmt.DeferStmt(span: s, body: b)
+    }
+    4 => {
+      let s = r.span()
+      let v = r.oexpr()
+      Stmt.ReturnStmt(span: s, value: v)
+    }
+    5 => {
+      let s = r.span()
+      let l = r.oident()
+      Stmt.BreakStmt(span: s, label: l)
+    }
+    6 => {
+      let s = r.span()
+      let l = r.oident()
+      Stmt.ContinueStmt(span: s, label: l)
+    }
+    7 => {
+      let s = r.span()
+      let l = r.oident()
+      let p = r.pat()
+      let it = r.expr()
+      let bd = r.exprs()
+      let b = r.block()
+      let gr = r.bool()
+      Stmt.ForStmt(span: s, label: l, pattern: p, iter: it, bound: bd, body: b, go_range: gr)
+    }
+    8 => {
+      let s = r.span()
+      let l = r.oident()
+      let c = r.oexpr()
+      let p = r.pats()
+      let v = r.exprs()
+      let bd = r.exprs()
+      let b = r.block()
+      Stmt.WhileStmt(span: s, label: l, cond: c, pattern: p, value: v, bound: bd, body: b)
+    }
+    9 => {
+      let s = r.span()
+      let x = r.expr()
+      Stmt.ExprStmt(span: s, x: x)
+    }
+    10 => Stmt.BadStmt(span: r.span())
+    11 => Stmt.ConstDecl(d: r.constdecl())
+    _ => {
+      if tag != 12 {
+        r.bad = true
+      }
+      Stmt.LazyStmt(span: r.span())
+    }
+  }
+}
+
+fn (var r: Dec) ostmt() -> Stmt? {
+  if r.bool() { Some(r.stmt()) } else { None }
+}
+
+fn (var r: Dec) strlit() -> StringLit {
+  let s = r.span()
+  let kc = r.int()
+  var k = StringKind.Plain
+  if kc == 1 {
+    k = StringKind.Triple
+  } else if kc == 2 {
+    k = StringKind.Raw
+  } else if kc != 0 {
+    r.bad = true
+  }
+  let n = r.count()
+  var ps: List[StringPart] = []
+  for _ in 0..n {
+    if r.bad {
+      break
+    }
+    let t = r.bytes()
+    let x = r.oexpr()
+    let db = r.bool()
+    ps.push(StringPart{text: t, expr: x, debug: db})
+  }
+  StringLit{span: s, kind: k, parts: ps}
+}
+
+fn (var r: Dec) fields() -> List[FieldInit] {
+  let n = r.count()
+  var out: List[FieldInit] = []
+  for _ in 0..n {
+    if r.bad {
+      break
+    }
+    let s = r.span()
+    let nm = r.ident()
+    let v = r.expr()
+    out.push(FieldInit{span: s, name: nm, value: v})
+  }
+  out
+}
+
+fn (var r: Dec) ifexpr() -> IfExpr {
+  let s = r.span()
+  let c = r.oexpr()
+  var p: Pattern? = None
+  if r.bool() {
+    p = Some(r.pat())
+  }
+  let v = r.oexpr()
+  let th = r.block()
+  let el = r.oexpr()
+  IfExpr{span: s, cond: c, pattern: p, value: v, then: th, els: el}
+}
+
+fn (var r: Dec) expr() -> Expr {
+  let tag = r.int()
+  match tag {
+    0 => Expr.Ident(id: r.ident())
+    1 => {
+      let s = r.span()
+      let raw = r.bytes()
+      let v = r.bytes()
+      Expr.IntLit(span: s, raw: raw, value: v)
+    }
+    2 => {
+      let s = r.span()
+      let raw = r.bytes()
+      Expr.FloatLit(span: s, raw: raw)
+    }
+    3 => {
+      let s = r.span()
+      let raw = r.bytes()
+      let ns = r.bytes()
+      Expr.DurationLit(span: s, raw: raw, nanos: ns)
+    }
+    4 => {
+      let s = r.span()
+      let raw = r.bytes()
+      let v = r.int()
+      Expr.RuneLit(span: s, raw: raw, value: v)
+    }
+    5 => Expr.StringLit(s: r.strlit())
+    6 => {
+      let s = r.span()
+      let v = r.bytes()
+      Expr.BytesLit(span: s, value: v)
+    }
+    7 => Expr.HoleExpr(span: r.span())
+    8 => Expr.UnitExpr(span: r.span())
+    9 => {
+      let s = r.span()
+      let x = r.expr()
+      Expr.ParenExpr(span: s, x: x)
+    }
+    10 => {
+      let s = r.span()
+      let el = r.exprs()
+      Expr.TupleExpr(span: s, elems: el)
+    }
+    11 => {
+      let s = r.span()
+      let el = r.exprs()
+      Expr.ListLit(span: s, elems: el)
+    }
+    12 => {
+      let s = r.span()
+      let n = r.count()
+      var es: List[MapEntry] = []
+      for _ in 0..n {
+        if r.bad {
+          break
+        }
+        let ms = r.span()
+        let k = r.expr()
+        let v = r.expr()
+        es.push(MapEntry{span: ms, key: k, value: v})
+      }
+      Expr.MapLit(span: s, entries: es)
+    }
+    13 => {
+      let s = r.span()
+      let el = r.exprs()
+      Expr.SetLit(span: s, elems: el)
+    }
+    14 => {
+      let s = r.span()
+      let t = r.expr()
+      let fs = r.fields()
+      Expr.StructLit(span: s, typ: t, fields: fs)
+    }
+    15 => {
+      let s = r.span()
+      let op = r.kind()
+      let x = r.expr()
+      Expr.UnaryExpr(span: s, op: op, x: x)
+    }
+    16 => {
+      let s = r.span()
+      let op = r.kind()
+      let x = r.expr()
+      let y = r.expr()
+      Expr.BinaryExpr(span: s, op: op, x: x, y: y)
+    }
+    17 => {
+      let s = r.span()
+      let x = r.expr()
+      let p = r.pat()
+      Expr.IsExpr(span: s, x: x, pattern: p)
+    }
+    18 => {
+      let s = r.span()
+      let lo = r.oexpr()
+      let hi = r.oexpr()
+      let inc = r.bool()
+      Expr.RangeExpr(span: s, lo: lo, hi: hi, inclusive: inc)
+    }
+    19 => {
+      let s = r.span()
+      let x = r.expr()
+      let sel = r.ident()
+      Expr.SelectorExpr(span: s, x: x, sel: sel)
+    }
+    20 => {
+      let s = r.span()
+      let f = r.expr()
+      let n = r.count()
+      var args: List[Arg] = []
+      for _ in 0..n {
+        if r.bad {
+          break
+        }
+        let asp = r.span()
+        let an = r.oident()
+        let av = r.expr()
+        args.push(Arg{span: asp, name: an, value: av})
+      }
+      Expr.CallExpr(span: s, fun: f, args: args)
+    }
+    21 => {
+      let s = r.span()
+      let x = r.expr()
+      let ts = r.types()
+      Expr.TypeArgsExpr(span: s, x: x, types: ts)
+    }
+    22 => {
+      let s = r.span()
+      let x = r.expr()
+      let i = r.expr()
+      Expr.IndexExpr(span: s, x: x, index: i)
+    }
+    23 => {
+      let s = r.span()
+      let x = r.expr()
+      Expr.TryExpr(span: s, x: x)
+    }
+    24 => {
+      let s = r.span()
+      let x = r.expr()
+      let fs = r.fields()
+      Expr.WithExpr(span: s, x: x, fields: fs)
+    }
+    25 => Expr.IfExpr(e: r.ifexpr())
+    26 => {
+      let s = r.span()
+      let subj = r.expr()
+      let n = r.count()
+      var arms: List[MatchArm] = []
+      for _ in 0..n {
+        if r.bad {
+          break
+        }
+        let asp = r.span()
+        let p = r.pat()
+        let g = r.oexpr()
+        let b = r.ostmt()
+        let co = r.bool()
+        arms.push(MatchArm{span: asp, pattern: p, guard: g, body: b, coalesce: co})
+      }
+      Expr.MatchExpr(span: s, subject: subj, arms: arms)
+    }
+    27 => {
+      let s = r.span()
+      let n = r.ident()
+      let b = r.block()
+      Expr.ScopeExpr(span: s, name: n, body: b)
+    }
+    28 => {
+      let s = r.span()
+      let n = r.count()
+      var arms: List[SelectArm] = []
+      for _ in 0..n {
+        if r.bad {
+          break
+        }
+        let asp = r.span()
+        let bd = r.oident()
+        let op = r.oexpr()
+        let af = r.oexpr()
+        let b = r.ostmt()
+        arms.push(SelectArm{span: asp, bind: bd, op: op, after: af, body: b})
+      }
+      Expr.SelectExpr(span: s, arms: arms)
+    }
+    29 => Expr.Block(b: r.block())
+    30 => {
+      let s = r.span()
+      let ps = r.params()
+      let res = r.otyp()
+      let er = r.oerr()
+      let fx = r.effects()
+      let b = r.block()
+      Expr.FnLit(f: FnLit{span: s, params: ps, result: res, err: er, effects: fx, body: b})
+    }
+    31 => {
+      let s = r.span()
+      let b = r.block()
+      Expr.WhileExpr(span: s, body: b)
+    }
+    _ => {
+      if tag != 32 {
+        r.bad = true
+      }
+      Expr.BadExpr(span: r.span())
+    }
+  }
+}
+
+fn (var r: Dec) pats() -> List[Pattern] {
+  let n = r.count()
+  var out: List[Pattern] = []
+  for _ in 0..n {
+    if r.bad {
+      break
+    }
+    out.push(r.pat())
+  }
+  out
+}
+
+fn (var r: Dec) patfields() -> List[PatField] {
+  let n = r.count()
+  var out: List[PatField] = []
+  for _ in 0..n {
+    if r.bad {
+      break
+    }
+    let s = r.span()
+    let nm = r.oident()
+    let p = r.pat()
+    out.push(PatField{span: s, name: nm, pattern: p})
+  }
+  out
+}
+
+fn (var r: Dec) pat() -> Pattern {
+  let tag = r.int()
+  match tag {
+    0 => Pattern.WildcardPat(span: r.span())
+    1 => {
+      let s = r.span()
+      let n = r.ident()
+      Pattern.BindPat(span: s, name: n)
+    }
+    2 => {
+      let s = r.span()
+      let v = r.expr()
+      Pattern.LitPat(span: s, value: v)
+    }
+    3 => {
+      let s = r.span()
+      let lo = r.expr()
+      let hi = r.expr()
+      let inc = r.bool()
+      Pattern.RangePat(span: s, lo: lo, hi: hi, inclusive: inc)
+    }
+    4 => {
+      let s = r.span()
+      let a = r.pats()
+      Pattern.OrPat(span: s, alts: a)
+    }
+    5 => {
+      let s = r.span()
+      let el = r.pats()
+      Pattern.TuplePat(span: s, elems: el)
+    }
+    6 => {
+      let s = r.span()
+      let p = r.idents()
+      let pr = r.bool()
+      let fs = r.patfields()
+      let rs = r.bool()
+      Pattern.VariantPat(span: s, path: p, parens: pr, fields: fs, rest: rs)
+    }
+    7 => {
+      let s = r.span()
+      let p = r.idents()
+      let fs = r.patfields()
+      let rs = r.bool()
+      Pattern.StructPat(span: s, path: p, fields: fs, rest: rs)
+    }
+    8 => {
+      let s = r.span()
+      let el = r.pats()
+      let rs = r.int()
+      Pattern.ListPat(span: s, elems: el, rest: rs)
+    }
+    _ => {
+      if tag != 9 {
+        r.bad = true
+      }
+      Pattern.BadPat(span: r.span())
+    }
+  }
+}
+
+fn (var r: Dec) diag() -> Diag {
+  let code = r.str()
+  let s = r.span()
+  let msg = r.bytes()
+  let nn = r.count()
+  var notes: List[lexer.Note] = []
+  for _ in 0..nn {
+    if r.bad {
+      break
+    }
+    let m = r.bytes()
+    var sp: Span? = None
+    if r.bool() {
+      sp = Some(r.span())
+    }
+    notes.push(lexer.Note{message: m, span: sp})
+  }
+  let nf = r.count()
+  var fixes: List[lexer.Fix] = []
+  for _ in 0..nf {
+    if r.bad {
+      break
+    }
+    let t = r.bytes()
+    let ne = r.count()
+    var eds: List[lexer.Edit] = []
+    for _ in 0..ne {
+      if r.bad {
+        break
+      }
+      let es = r.span()
+      let rp = r.bytes()
+      eds.push(lexer.Edit{span: es, replace: rp})
+    }
+    fixes.push(lexer.Fix{title: t, edits: eds})
+  }
+  Diag{code: code, span: s, message: msg, notes: notes, fixes: fixes}
+}
+
+/// encode_parse's bytes back, or None when they are not a whole, well
+/// formed parse of this version.
+pub fn decode_parse(d: Bytes) -> ParseResult? {
+  var r = Dec{d: d}
+  if r.str() != AST_CODEC_VERSION {
+    return None
+  }
+  let fs = r.span()
+  let name = r.bytes()
+  let ni = r.count()
+  var imports: List[UseDecl] = []
+  for _ in 0..ni {
+    if r.bad {
+      break
+    }
+    let s = r.span()
+    let p = r.bytes()
+    let a = r.oident()
+    let g = r.bool()
+    let c = r.bool()
+    let nl = r.count()
+    var links: List[Bytes] = []
+    for _ in 0..nl {
+      if r.bad {
+        break
+      }
+      links.push(r.bytes())
+    }
+    var fx: List[Effect]? = None
+    if r.bool() {
+      fx = Some(r.effects())
+    }
+    imports.push(UseDecl{span: s, path: p, alias: a, go: g, c: c, links: links, effects: fx})
+  }
+  let nd = r.count()
+  var decls: List[Decl] = []
+  for _ in 0..nd {
+    if r.bad {
+      break
+    }
+    decls.push(r.decl())
+  }
+  let ng = r.count()
+  var diags: List[Diag] = []
+  for _ in 0..ng {
+    if r.bad {
+      break
+    }
+    diags.push(r.diag())
+  }
+  let hard = r.bool()
+  let iface = r.str()
+  if r.bad || r.i != d.len() {
+    return None
+  }
+  Some(ParseResult{file: File{span: fs, name: name, imports: imports, decls: decls}, diags: diags, hard: hard, iface: iface})
+}
+
+fn kind_code(k: Kind) -> Int {
+  match k {
+    Illegal => 0
+    Eof => 1
+    Newline => 2
+    Ident => 3
+    Int => 4
+    Float => 5
+    Duration => 6
+    Rune => 7
+    String => 8
+    RawString => 9
+    Bytes => 10
+    ImportPath => 11
+    Hole => 12
+    Plus => 13
+    Minus => 14
+    Star => 15
+    Slash => 16
+    Percent => 17
+    Shl => 18
+    Shr => 19
+    Amp => 20
+    Pipe => 21
+    Caret => 22
+    Tilde => 23
+    Bang => 24
+    AndAnd => 25
+    OrOr => 26
+    Coalesce => 27
+    Question => 28
+    Eq => 29
+    NotEq => 30
+    Lt => 31
+    LtEq => 32
+    Gt => 33
+    GtEq => 34
+    Assign => 35
+    PlusAssign => 36
+    MinusAssign => 37
+    StarAssign => 38
+    SlashAssign => 39
+    PercentAssign => 40
+    AmpAssign => 41
+    PipeAssign => 42
+    CaretAssign => 43
+    ShlAssign => 44
+    ShrAssign => 45
+    Arrow => 46
+    FatArrow => 47
+    DotDot => 48
+    DotDotEq => 49
+    Dot => 50
+    Comma => 51
+    Colon => 52
+    LParen => 53
+    RParen => 54
+    LBrack => 55
+    RBrack => 56
+    LBrace => 57
+    RBrace => 58
+    HashLBrace => 59
+    As => 60
+    Break => 61
+    Const => 62
+    Continue => 63
+    Defer => 64
+    Else => 65
+    Ensures => 66
+    Enum => 67
+    Fn => 68
+    For => 69
+    If => 70
+    In => 71
+    Interface => 72
+    Invariant => 73
+    Let => 74
+    Match => 75
+    Pub => 76
+    Requires => 77
+    Return => 78
+    Scope => 79
+    Select => 80
+    Struct => 81
+    Test => 82
+    Type => 83
+    Use => 84
+    Uses => 85
+    Var => 86
+    While => 87
+  }
+}
+
+fn kind_of(n: Int) -> Kind? {
+  match n {
+    0 => Some(Kind.Illegal)
+    1 => Some(Kind.Eof)
+    2 => Some(Kind.Newline)
+    3 => Some(Kind.Ident)
+    4 => Some(Kind.Int)
+    5 => Some(Kind.Float)
+    6 => Some(Kind.Duration)
+    7 => Some(Kind.Rune)
+    8 => Some(Kind.String)
+    9 => Some(Kind.RawString)
+    10 => Some(Kind.Bytes)
+    11 => Some(Kind.ImportPath)
+    12 => Some(Kind.Hole)
+    13 => Some(Kind.Plus)
+    14 => Some(Kind.Minus)
+    15 => Some(Kind.Star)
+    16 => Some(Kind.Slash)
+    17 => Some(Kind.Percent)
+    18 => Some(Kind.Shl)
+    19 => Some(Kind.Shr)
+    20 => Some(Kind.Amp)
+    21 => Some(Kind.Pipe)
+    22 => Some(Kind.Caret)
+    23 => Some(Kind.Tilde)
+    24 => Some(Kind.Bang)
+    25 => Some(Kind.AndAnd)
+    26 => Some(Kind.OrOr)
+    27 => Some(Kind.Coalesce)
+    28 => Some(Kind.Question)
+    29 => Some(Kind.Eq)
+    30 => Some(Kind.NotEq)
+    31 => Some(Kind.Lt)
+    32 => Some(Kind.LtEq)
+    33 => Some(Kind.Gt)
+    34 => Some(Kind.GtEq)
+    35 => Some(Kind.Assign)
+    36 => Some(Kind.PlusAssign)
+    37 => Some(Kind.MinusAssign)
+    38 => Some(Kind.StarAssign)
+    39 => Some(Kind.SlashAssign)
+    40 => Some(Kind.PercentAssign)
+    41 => Some(Kind.AmpAssign)
+    42 => Some(Kind.PipeAssign)
+    43 => Some(Kind.CaretAssign)
+    44 => Some(Kind.ShlAssign)
+    45 => Some(Kind.ShrAssign)
+    46 => Some(Kind.Arrow)
+    47 => Some(Kind.FatArrow)
+    48 => Some(Kind.DotDot)
+    49 => Some(Kind.DotDotEq)
+    50 => Some(Kind.Dot)
+    51 => Some(Kind.Comma)
+    52 => Some(Kind.Colon)
+    53 => Some(Kind.LParen)
+    54 => Some(Kind.RParen)
+    55 => Some(Kind.LBrack)
+    56 => Some(Kind.RBrack)
+    57 => Some(Kind.LBrace)
+    58 => Some(Kind.RBrace)
+    59 => Some(Kind.HashLBrace)
+    60 => Some(Kind.As)
+    61 => Some(Kind.Break)
+    62 => Some(Kind.Const)
+    63 => Some(Kind.Continue)
+    64 => Some(Kind.Defer)
+    65 => Some(Kind.Else)
+    66 => Some(Kind.Ensures)
+    67 => Some(Kind.Enum)
+    68 => Some(Kind.Fn)
+    69 => Some(Kind.For)
+    70 => Some(Kind.If)
+    71 => Some(Kind.In)
+    72 => Some(Kind.Interface)
+    73 => Some(Kind.Invariant)
+    74 => Some(Kind.Let)
+    75 => Some(Kind.Match)
+    76 => Some(Kind.Pub)
+    77 => Some(Kind.Requires)
+    78 => Some(Kind.Return)
+    79 => Some(Kind.Scope)
+    80 => Some(Kind.Select)
+    81 => Some(Kind.Struct)
+    82 => Some(Kind.Test)
+    83 => Some(Kind.Type)
+    84 => Some(Kind.Use)
+    85 => Some(Kind.Uses)
+    86 => Some(Kind.Var)
+    87 => Some(Kind.While)
+    _ => None
+  }
+}

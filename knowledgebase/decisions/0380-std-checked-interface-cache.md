@@ -98,6 +98,33 @@ pushed (it writes entries and buys nothing alone; branch lang1-0380). Next: a sp
 fast a serialized declaration table of one large std module (json or http) loads against its
 parse and declare, the go or no-go for (b)'s format.
 
+## Step (b), staged (2026-10-26, Xo Lang 1)
+
+A spike first: 12,000 declaration records (std has about 11,500 top-level declarations: 8,018
+functions and methods, 2,986 constants, 413 structs, 61 enums, 30 interfaces), as tab-separated
+lines with every type interned into a map, decode in 2.2 ms against about 75 ms of CPU of parsing and
+23 of declaring std an edit: go.
+
+Step (b) lands in three stages, each on its own:
+
+1. The parse's binary form (compiler/parser astcodec.xo): encode_parse and decode_parse, exact
+   inverses over the whole tree (every declaration, statement, expression, pattern and type, every
+   span, flag and byte string), the lazy parse's body ranges (decision 0351), the interface hash and
+   the diagnostics; a varint and length-prefixed form whose first field is AST_CODEC_VERSION, and a
+   decoder that turns any malformed input into None (a miss), never a wrong tree. Gate:
+   astcodec_test.xo round-trips a sample of every construct, a file that does not parse, damaged
+   bytes, and (with --real and XO_AST_CODEC_FILES) every .xo file of std, compiler/ and the LLVM
+   goldens, 1,076 files, lazy and full: the decoded tree dumps (dump_result) and encodes the same.
+2. Std's parses from the back-end cache (opt in, XO_IFC_CACHE=1): the parse prefetch and
+   check.parse_entry read a std file's entry, keyed by the SHA-256 of the file's bytes, the parse
+   mode (lazy, sig) and AST_CODEC_VERSION, and parse and store it on a miss. The checker still
+   declares, resolves and checks everything, so no whole-program result can go missing (the hazard
+   of gotchas/module-check-cache-skips-whole-program-passes.md does not arise). Expected: most of
+   the parse's 75 ms of CPU, about 30 ms of an edit's wall, and allocation churn.
+3. The default, after the identity and timing gates; then declaring std modules from entries (the
+   checker's declarations serialized, types by stable names with a remap on load), the rest of the
+   bound (resolve, declare, about 23 ms of CPU, and most of the 200 MB).
+
 ## Measurement plan
 
 1. First, an instrument, no entry: how much of the check's 57 ms and 186 MB is std (a run with only
