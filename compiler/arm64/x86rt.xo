@@ -331,7 +331,15 @@ fn (var g: G) x86_eq_body(var b: List[Str], sym: Str, t: Int, yes: Str, no: Str,
         let lp = g.helper_label("eq_loop")
         b.push("\txorl %r14d, %r14d\n\tleaq ${LIST_HDR}(%rdi), %rbx\n\tleaq ${LIST_HDR}(%rsi), %r12\n")
         b.push("${lp}:\n\tcmpq %r13, %r14\n\tje ${yes}\n")
-        g.x86_eq_at(b, et, "%rbx", "%r12", 0, no, g.kind(et) == ssa.Kind.Bool)
+        let nw = g.narrow_w(et)
+        if nw > 0 {
+          // packed elements (decision 0369): compared at their width, as
+          // arm64's helper does (8 bytes read past the element, field bug b13)
+          let (ld, cmp, r) = if nw == 1 { ("movzbl", "cmpb", "%r11b") } else if nw == 2 { ("movzwl", "cmpw", "%r11w") } else { ("movl", "cmpl", "%r11d") }
+          b.push("\t${ld} (%rbx), %r11d\n\t${cmp} (%r12), ${r}\n\tjne ${no}\n")
+        } else {
+          g.x86_eq_at(b, et, "%rbx", "%r12", 0, no, g.kind(et) == ssa.Kind.Bool)
+        }
         b.push("\taddq $${es}, %rbx\n\taddq $${es}, %r12\n\taddq $1, %r14\n\tjmp ${lp}\n")
       }
     }

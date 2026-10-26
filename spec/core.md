@@ -608,8 +608,8 @@ b"raw bytes\x00"                          // Bytes, escapes but no interpolation
 
 Representation note (2026-10-26, not a language rule): with list packing
 (decision 0369, Accepted 2026-10-25 and on by default; `--pack-lists=off`
-turns it off) a `List[T]` element on the native arm64 and LLVM backends
-takes the width of `T` for `Int8`, `UInt8`, `Int16`, `UInt16`, `Int32`,
+turns it off) a `List[T]` element on the native arm64 and amd64 backends
+and on LLVM takes the width of `T` for `Int8`, `UInt8`, `Int16`, `UInt16`, `Int32`,
 `UInt32`, `Rune` and `Float32` (1, 2 or 4 bytes), 8 bytes for `Int`,
 `UInt64`, `Float` and `Duration`, and 8 bytes a word for a larger `T` (a
 `Str` is 16); `List[Bool]` is 1 byte an element and `Bytes` is packed. A

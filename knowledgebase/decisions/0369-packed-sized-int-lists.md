@@ -124,9 +124,17 @@ without the flag.
   signed 32 bit `ldrsw`; `strb`, `strh`, `str w`; a Float32 by `ldr s`, `fcvt`
   and `fcvt`, `str s`), the register offset's scale (`lsl #0..#2`), the
   immediate offsets (`fits_off`), and the list equality helper (closures.xo).
-- amd64: the x86 retargeting (x86.xo) already maps those mnemonics, so only
-  the `x86` guard in `narrow_w` was left out; the Docker linux/amd64 sample
-  (48 goldens) is identical with and without the flag.
+- amd64: wrong as first written. `narrow_w` kept an `x86` guard, so native
+  amd64 stored every element in 8 bytes and the Docker linux/amd64 sample was
+  identical with and without the flag because the flag did nothing there; and
+  `--backend=amd64` did not pass the flag through. Field bug b13 (the owner's
+  Intel tester, v0.32.0: a 20M UInt8 list peaked at 175 MB on native amd64,
+  41 MB on LLVM) found it on 2026-10-26. The fix removed the guard and the
+  backend check, mapped the signed narrow loads on x86 (`ldrsw`, `ldrsb`,
+  `ldrsh` to `movslq`, `movsbq`/`movsbl`, `movswq`/`movswl`), and compares
+  packed elements at their width in x86's list equality helper (x86rt.xo),
+  as arm64's does; golden pack_lists_size (4M UInt8 must peak under 24 MB)
+  runs on every backend, in Docker linux/amd64 and on darwin/amd64.
 - LLVM (compiler/llvm): `Gen.pnarrow`, `esize`, `elem_ll`, `elem_load`,
   `elem_store` (a narrow load then `zext`, `sext` or `fpext`; `trunc` or
   `fptrunc` then a narrow store), the GEP element type, and the equality

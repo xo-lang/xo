@@ -618,7 +618,9 @@ fn (var g: G) esize(t: Int) -> Int {
 /// The bytes (1, 2 or 4) a list element of the sized integer type t takes
 /// with --pack-lists (decision 0369), else 0.
 fn (g: G) narrow_w(t: Int) -> Int {
-  if !g.m.pack_lists || g.x86 {
+  // amd64 too: the x86 retargeting maps the narrow loads and stores (the
+  // guard that kept x86 at 8 bytes stayed in by mistake, field bug b13)
+  if !g.m.pack_lists {
     return 0
   }
   if g.kind(t) == ssa.Kind.Float {

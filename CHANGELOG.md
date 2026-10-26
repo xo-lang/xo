@@ -15,6 +15,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - JSON: a number out of Float's or Float32's range fails with Go's words,
   `cannot unmarshal number 1e400 into Float`, in `decode` and `parse_value`
   on every backend (was `expected number`).
+- Native amd64 packs lists of sized integers as arm64 and LLVM do (decision 0369, on
+  by default): it kept every `UInt8`, `Int16`, `UInt32`, `Rune` or `Float32` element
+  in 8 bytes. A 20M `List[UInt8]` on darwin/amd64 peaks at 44 MB instead of 175
+  (field bug b13). The x86 loads of signed narrow elements and the equality of packed
+  lists, which the change exposed, are fixed with it.
 - The back-end cache stores its entries and pack segments LZ4 compressed
   (decision 0365; a port of the LZ4 block format in xo itself,
   std/native/llrt/lz4.xo): about a third of the bytes written (a warm

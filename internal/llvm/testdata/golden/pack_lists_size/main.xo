@@ -1,0 +1,25 @@
+// A List[UInt8] keeps its elements in one byte each (decision 0369, on by
+// default): 4M of them peak under 24 MB, where 8 byte elements peak at
+// about 64 MB with the list's growth. Native amd64 kept 8 bytes until field
+// bug b13 (2026-10-26).
+use std/debug
+
+fn fill(n: Int) -> List[UInt8] {
+  var xs: List[UInt8] = []
+  for i in 0..n {
+    xs.push(UInt8(i % 251))
+  }
+  xs
+}
+
+fn main(os: Os) {
+  let before = debug.mem_peak()
+  let xs = fill(4000000)
+  var sum = 0
+  for x in xs {
+    sum += Int(x)
+  }
+  let grew = debug.mem_peak() - before
+  os.stdio.println("sum ${sum}")
+  os.stdio.println(if grew < 24000000 { "packed" } else { "not packed: peak grew ${grew} bytes" })
+}

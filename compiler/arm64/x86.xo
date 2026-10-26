@@ -680,7 +680,7 @@ fn (var g: G) x86_line(inst: Inst, var x: XT, m: Str, ops: List[Str], single: Bo
       true
     }
     "cset" | "csinc" | "csel" | "cneg" | "fcsel" => g.x86_select(inst, x, m, ops, single)
-    "ldr" | "ldrb" | "ldrh" | "ldar" | "str" | "strb" | "strh" | "stlr" | "stp" | "ldp" => g.x86_mem(inst, x, m, ops)
+    "ldr" | "ldrb" | "ldrh" | "ldrsw" | "ldrsb" | "ldrsh" | "ldar" | "str" | "strb" | "strh" | "stlr" | "stp" | "ldp" => g.x86_mem(inst, x, m, ops)
     "adrp" => {
       // adrp and its add or ldr: the address, or the GOT entry's word
       if n != 2 {
@@ -1344,6 +1344,10 @@ fn (var g: G) x86_mem(inst: Inst, var x: XT, m: Str, ops: List[Str]) -> Bool {
     }
     "ldrb" => x.lines.push("movzbl ${mm}, ${xop(r, 4)}")
     "ldrh" => x.lines.push("movzwl ${mm}, ${xop(r, 4)}")
+    // a packed list's signed elements (decision 0369, field bug b13)
+    "ldrsw" => x.lines.push("movslq ${mm}, ${xop(r, 8)}")
+    "ldrsb" => x.lines.push(if w { "movsbl ${mm}, ${xop(r, 4)}" } else { "movsbq ${mm}, ${xop(r, 8)}" })
+    "ldrsh" => x.lines.push(if w { "movswl ${mm}, ${xop(r, 4)}" } else { "movswq ${mm}, ${xop(r, 8)}" })
     "str" => {
       if r == "xzr" || r == "wzr" {
         x.lines.push("mov${if w { "l" } else { "q" }} $0, ${mm}")

@@ -673,7 +673,7 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   // (xo asm prints assembly and keeps them)
   // the native and LLVM backends; the Go backend's lists are Go slices (packed
   // already) and wasm keeps its own
-  c.pack_lists = o.pack_lists && (o.backend.is_empty() || o.backend == "arm64" || o.backend == "llvm")
+  c.pack_lists = o.pack_lists && (o.backend.is_empty() || o.backend == "arm64" || o.backend == "amd64" || o.backend == "llvm")
   // the prototype is arm64's only (decision 0370)
   c.inline_str = o.inline_str && (o.backend == "arm64" || (o.backend.is_empty() && host_arch() == "arm64"))
   if o.inline_str && !c.inline_str && (o.cmd is "build" | "run" | "test") {
