@@ -1,0 +1,84 @@
+// The cleanup cache's keys and entries (decision 0382 step 1): a key by
+// name, not by index; the may_fault bits of what a function calls in it;
+// an entry that reads back as the function it was made of.
+
+/// f calls g and h; g faults, h does not. With extra, an unrelated
+/// function comes first (every index moves by one).
+fn calls_module(extra: Bool) -> Module {
+  var m = Module{}
+  let it = m.intern(SType{kind: Kind.Int, name: "Int"})
+  if extra {
+    let _z = m.new_func("z", [], [])
+  }
+  let fi = m.new_func("f", [it], [it])
+  let gi = m.new_func("g", [], [])
+  let hi = m.new_func("h", [], [])
+  var g = m.funcs[gi]
+  let _flt = g.add(0, Op.Fault, -1, Aux.None, [])
+  m.funcs[gi] = g
+  var h = m.funcs[hi]
+  let _r = h.add(0, Op.Return, -1, Aux.None, [])
+  m.funcs[hi] = h
+  var f = m.funcs[fi]
+  let p = f.blocks[0].params[0]
+  let _cg = f.add(0, Op.Call, -1, Aux.S(s: "g"), [])
+  let _ch = f.add(0, Op.Call, -1, Aux.S(s: "h"), [])
+  let _rf = f.add(0, Op.Return, -1, Aux.None, [p])
+  m.funcs[fi] = f
+  m
+}
+
+fn key_of(m: Module, name: Str, flags: Str) -> Str {
+  cln_key(m, m.func_index(name), m.may_fault(), type_keys(m), "xo-id", flags)
+}
+
+test "a cln key is the same when every index moves" {
+  let a = calls_module(false)
+  let b = calls_module(true)
+  expect(key_of(a, "f", "fl")) == key_of(b, "f", "fl")
+  expect(key_of(a, "f", "fl") == key_of(a, "g", "fl")) == false
+}
+
+test "a cln key changes with a callee's may_fault bit, the flags and the identity" {
+  let m = calls_module(false)
+  let k = key_of(m, "f", "fl")
+  var faults = m.may_fault()
+  faults[m.func_index("h")] = true
+  expect(cln_key(m, m.func_index("f"), faults, type_keys(m), "xo-id", "fl") == k) == false
+  // a function f does not name
+  var other = m.may_fault()
+  let mz = calls_module(true)
+  expect(key_of(mz, "f", "fl")) == k
+  other[m.func_index("f")] = !other[m.func_index("f")]
+  expect(cln_key(m, m.func_index("f"), other, type_keys(m), "xo-id", "fl")) == k
+  expect(key_of(m, "f", "fl2") == k) == false
+  expect(cln_key(m, m.func_index("f"), m.may_fault(), type_keys(m), "xo-id2", "fl") == k) == false
+}
+
+test "cln keys on tasks are one task's" {
+  var m = calls_module(false)
+  for k in 0..200 {
+    let _x = m.new_func("x${k}", [], [])
+  }
+  let faults = m.may_fault()
+  let tk = type_keys(m)
+  expect(cln_keys(m, faults, tk, "id", "fl", 4)) == cln_keys(m, faults, tk, "id", "fl", 1)
+}
+
+test "a cln entry reads back as its function, and not where a type is missing" {
+  let m = calls_module(false)
+  let f = cleaned(m.funcs[m.func_index("f")])
+  let e = cln_entry(m, f) ?? b""
+  expect(e.is_empty()) == false
+  let back = cln_of_entry(m, e) ?? Func{name: "none"}
+  expect(back.name) == "f"
+  var x = m
+  x.funcs[x.func_index("f")] = back
+  var y = m
+  y.funcs[y.func_index("f")] = f
+  expect(x.text()) == y.text()
+  // a module without Int
+  var bare = Module{}
+  let _f = bare.new_func("f", [], [])
+  expect((cln_of_entry(bare, e) ?? Func{name: "none"}).name) == "none"
+}

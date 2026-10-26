@@ -88,6 +88,23 @@ of llvm-fib and the HTTP server), TestBackendCacheEditIdentity and the fixed poi
 keys and the "cln" entry's storage with a round-trip test; (2) the reuse behind XO_CHAIN_KEYS=1,
 clean under XO_BACKEND_CACHE=verify; (3) the default.
 
+## Stage 1 (2026-10-26, Xo Lang 1): keys and entries
+
+The key point is after prune_unwind and fold_known_calls (both still run on every function, about
+8 ms), not before: fold_const_branches can drop a call of a function that faults, so may_fault after
+the fold can differ from before it, and add_landings reads the later one. compiler/ssa clncache.xo
+cln_key hashes the compiler's identity, the build's flags (fe_flags and the builder's own), the
+target, the function in full (key_func, plus reader, target, moved and inlined sites, which key_func
+leaves out), and for each name it uses that names a function, that function's may_fault bit and
+whether it catches, by name. add_landings_with takes the may_fault list from its caller, so the pass
+and the keys read one list, and reports per function whether its landings grew the module or the
+builder (a type, a function, a generated body, fe_fixed's counts): such a function is never cached,
+so skipping a hit never changes the order in which the module grows. An entry is the reference
+counting cache's encoding of the function after the cleanup (cln_entry, cln_of_entry); one naming
+a type the module does not have yet does not decode, and the function misses. Tests:
+clncache_test.xo (a key by name when every index moves; a callee's bit, the flags and the identity
+change it; keys on tasks; an entry reads back as its function).
+
 ## Expected effect (to be measured)
 
 The edit's middle phases (108 ms) fall toward the cost of the 10 changed functions and the key

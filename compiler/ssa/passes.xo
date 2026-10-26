@@ -501,9 +501,25 @@ fn const_int(f: Func, v: Int) -> Option[Int] {
 /// (examples/notes-service: 1.4 s of every build, 2026-10-15). The blocks
 /// are made in the same order as before.
 pub fn (var b: Builder) add_landings() {
-  let faults = b.m.may_fault()
+  let _g = b.add_landings_with(b.m.may_fault(), {})
+}
+
+/// add_landings with may_fault's result from the caller, which the
+/// cleanup cache's keys hash (decision 0382: the pass and the keys read
+/// one list), leaving the functions in skip as they are (their cached
+/// form stands in for them). Returns, per function, whether its landings
+/// grew the module or the builder (a type, a function, a generated body,
+/// fe_fixed's counts): a cached form cannot stand in for such a function,
+/// as skipping it would change what the module grows next.
+pub fn (var b: Builder) add_landings_with(faults: List[Bool], skip: Map[Int, Bool]) -> List[Bool] {
   let n = b.m.funcs.len()
+  var grew: List[Bool] = []
   for fi in 0..n {
+    if skip.contains(fi) {
+      grew.push(false)
+      continue
+    }
+    let before = "${b.m.types.len()} ${b.m.funcs.len()} ${b.fe_fixed()}"
     let saved = b.begin(fi, -1)
     var lazy_src: Map[Int, List[Int]] = {}
     var lazy_off: Map[Int, Int] = {}
@@ -545,8 +561,10 @@ pub fn (var b: Builder) add_landings() {
       bi += 1
     }
     b.end(saved)
+    grew.push("${b.m.types.len()} ${b.m.funcs.len()} ${b.fe_fixed()}" != before)
   }
   b.run_gens()
+  grew
 }
 
 /// Ends block bl, whose last instruction is w, with a check only a fault

@@ -1,0 +1,103 @@
+// The per-function cache of the landings and the cleanup (decision 0382
+// step 1): after prune_unwind and fold_known_calls, a function's
+// add_landings and cleanup read its own SSA, the builder's flags, and of
+// each function it names only whether that one can fault (may_fault, the
+// list add_landings_with is handed) and whether it catches (raises reads
+// a called closure's), so its form after them is cached under the hash of
+// those (cln_key) and, on a hit, read back instead of computed. All by
+// name: a function added before another moves its index, not its key.
+// compiler/xo reads and writes the entries (XO_CHAIN_KEYS, bcache.xo).
+
+use std/crypto
+
+/// The version of the keys (the entries are the reference counting
+/// cache's encoding, RC_CACHE_VERSION).
+const CLN_CACHE_VERSION = "xo cln cache v1"
+
+/// The key of function fi as fold_known_calls left it: the SHA-256 of
+/// the compiler's identity, the build's flags, the target, the function
+/// in full (key_func, and the fields key_func leaves out: reader, target,
+/// moved, inlined sites and values), and for every name it uses that
+/// names a function of the module, that function's may_fault bit and
+/// whether it catches.
+pub fn cln_key(m: Module, fi: Int, faults: List[Bool], tk: List[Str], id: Str, flags: Str) -> Str {
+  let f = m.funcs[fi]
+  var b = BytesBuilder.new()
+  b.write_str("${CLN_CACHE_VERSION}\n${id}\n${flags}\n${m.goarch}\n")
+  key_func(b, f, tk)
+  var mv: List[Int] = []
+  for (k, _) in f.moved {
+    mv.push(k)
+  }
+  b.write_str("reader=${f.reader} target=${f.target} moved=[${ints_line(mv.sort())}] sites=${f.inl_sites.len()}\n")
+  for (vi, x) in f.values.indexed() {
+    if x.inl >= 0 {
+      b.write_str("inl ${vi} ${x.inl}\n")
+    }
+  }
+  var seen: Map[Str, Bool] = {}
+  for x in f.values {
+    if let S(s) = x.aux {
+      if !seen.contains(s) {
+        seen[s] = true
+        let g = m.func_index(s)
+        if g >= 0 && g < faults.len() {
+          b.write_str("callee ${s.len()}:${s} ${faults[g]} ${m.funcs[g].catches}\n")
+        }
+      }
+    }
+  }
+  crypto.sha256(b.freeze()).to_hex()
+}
+
+/// The flags the keys hash: the driver's (fe_flags) and the builder's
+/// own.
+pub fn (var b: Builder) cln_flags(flags: Str) -> Str { "${flags} ${b.fe_own_flags()}" }
+
+/// cln_key of every function of m, on up to jobs tasks (flags from
+/// cln_flags).
+pub fn cln_keys(m: Module, faults: List[Bool], tk: List[Str], id: Str, flags: Str, jobs: Int) -> List[Str] {
+  let fl = flags
+  let n = m.funcs.len()
+  let next = Atomic[Int].new(0)
+  let done = scope s {
+    var ts = []
+    for _ in 0..jobs.min((n + 63) / 64).max(1) {
+      ts.push(s.spawn(fn() -> List[(Int, Str)] {
+        var mine: List[(Int, Str)] = []
+        while true {
+          let i = next.add(64) - 64
+          if i >= n {
+            break
+          }
+          for fi in i..(i + 64).min(n) {
+            mine.push((fi, cln_key(m, fi, faults, tk, id, fl)))
+          }
+        }
+        mine
+      }))
+    }
+    var all: List[(Int, Str)] = []
+    for t in ts {
+      all = all + t.await
+    }
+    all
+  }
+  var keys: List[Str] = []
+  for _ in 0..n {
+    keys.push("")
+  }
+  for (fi, k) in done {
+    keys[fi] = k
+  }
+  keys
+}
+
+/// Function f after the landings and the cleanup as a cache entry; none
+/// when it holds what an entry cannot (encode_func).
+pub fn cln_entry(m: Module, f: Func) -> Option[Bytes] { encode_func(m, f) }
+
+/// The function of a cache entry with this module's type ids; none when
+/// it does not decode or names a type the module does not have yet (the
+/// function then misses: a cold build's landings would have made it).
+pub fn cln_of_entry(m: Module, d: Bytes) -> Option[Func] { decode_func(m, d, ops_by_name()) }
