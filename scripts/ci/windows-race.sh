@@ -22,6 +22,8 @@
 # the rest are skipped (one SKIP line, exit 1): a systematic hang would
 # otherwise cost 234 x RUN_TIMEOUT, past the job limit.
 #
+# --mutex-loop: only tsan_race and race_sync mutex_loop, 20 runs at each thread count (about 15 minutes with the build)
+#
 # Release mode (lead, 0.27.0): `windows-race.sh ARCHIVE SHA256` tests a
 # release archive as release-smoke.sh does (ARCHIVE a path in the
 # checkout, else a name under ci/release/ of the seed bucket, checked
@@ -36,12 +38,17 @@ set -uo pipefail
 # cache under the job's temporary directory, removed with it (a cold
 # build's cost, whatever the runner's cache holds)
 fresh=0
+only=0
 while [ $# -gt 0 ]; do
   case $1 in
   --no-prune)
     export XO_BACKEND_CACHE_MAX=64000000000
     echo "windows-race: --no-prune: XO_BACKEND_CACHE_MAX=$XO_BACKEND_CACHE_MAX" ;;
   --fresh-cache) fresh=1 ;;
+  # --mutex-loop (2026-10-26): only the mutex_loop case (and the planted race, so a
+  # silent detector is told from a clean run), 20 runs at each thread count, the
+  # full stderr of a failing run kept: the owner's Windows tester's report #12
+  --mutex-loop) only=1 ;;
   *) break ;;
   esac
   shift
@@ -134,7 +141,9 @@ if ! "$XO_CLI" build --phase-times --backend=amd64 -o "$(np "$w/plain_tsan_race.
 fi
 echo "build plain tsan_race ms=$(($(now_ms) - t0))" | tee -a "$sum"
 fail=0
-for p in tsan_race race_sync race_stacks; do
+progs="tsan_race race_sync race_stacks"
+[ $only = 0 ] || progs="tsan_race race_sync"
+for p in $progs; do
   t0=$(now_ms)
   if ! "$XO_CLI" build --phase-times --race --backend=amd64 -o "$(np "$w/$p.exe")" "internal/llvm/testdata/$p" > "$o/build-$p.txt" 2>&1; then
     echo "FAIL build $p: $(tail -3 "$o/build-$p.txt")" | tee -a "$sum"
@@ -179,6 +188,13 @@ cases="spawn join scope chan chan_buffered select mutex await_done atomic atomic
 for threads in "" 4 1; do
   if [ -n "$threads" ]; then export XO_THREADS=$threads; else unset XO_THREADS; fi
   t=${threads:-cpus}
+  if [ $only = 1 ]; then
+    for r in $(seq 1 20); do
+      check "t=$t r=$r tsan_race" tsan_race.exe 66 +
+      XO_RACE_CASE=mutex_loop XO_RACE_SYNC=1 check "t=$t r=$r race_sync mutex_loop" race_sync.exe 0 0
+    done
+    continue
+  fi
   for r in $(seq 1 "$REPS"); do
     check "t=$t r=$r tsan_race" tsan_race.exe 66 +
     for c in $cases; do
