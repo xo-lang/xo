@@ -7,10 +7,16 @@ programs with fast, structured feedback. It keeps what makes Go productive
 standard library, a compatibility promise) and moves the bugs tests usually
 miss into the compiler.
 
-Status: experimental, toolchain 0.26.0. The compiler and the `xo`
+Status: experimental, toolchain 0.32.0. The compiler and the `xo`
 toolchain are written in Xo and compile to native code (arm64, amd64,
 LLVM), Go, and WebAssembly. Xo stays on 0.x and expect breaking changes until
 1.0.
+
+The repository is mostly Xo: about 20 MB of Xo in the compiler, toolchain
+and standard library (685 files), and about 52 MB counting tests and
+benchmarks, against about 6 MB of Go (the Go backend's runtime, the test
+drivers and benchmark twins). GitHub's language bar does not recognize
+`.xo` files, so it shows only the Go.
 
 Xo is built almost entirely by AI agents working under one maintainer,
 and the full git history is kept to show it: every design decision is an
