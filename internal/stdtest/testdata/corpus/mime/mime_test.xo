@@ -4621,7 +4621,7 @@ test "parse_media_type gives Go's kind, params, and errors" {
   for (v, want) in PARSE {
     let got = match mime.parse_media_type(v) {
       Ok(m) => "ok ${m.kind};${m.params.keys().sort().map(fn(k) { "${k}=${m.params.get(k) ?? ""}" }).join(";")}"
-      Err(e) => "err ${e.msg}"
+      Err(e) => "err ${e.display()}"
     }
     if got != want {
       bad.push((v, got, want))

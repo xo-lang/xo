@@ -178,7 +178,7 @@ test "parse_addr gives Go's address, predicates, and errors" {
   for (s, want) in ADDRS {
     let got = match netip.parse_addr(s) {
       Ok(a) => addr_text(a)
-      Err(e) => "err ${e.msg}"
+      Err(e) => "err ${e.display()}"
     }
     if got != want {
       bad.push((s, got, want))
@@ -199,7 +199,7 @@ test "parse_prefix gives Go's prefix, masked prefix, contains, and errors" {
         }
         "${p}|${p.masked()}|${cs}"
       }
-      Err(e) => "err ${e.msg}"
+      Err(e) => "err ${e.display()}"
     }
     if got != want {
       bad.push((s, got, want))

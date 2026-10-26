@@ -6678,7 +6678,7 @@ fn recs_of(rs: List[List[Str]]) -> Str {
 fn read_of(text: Str, sep: Rune, comment: Rune, fields: Int, lazy: Bool, trim: Bool) -> Str {
   match csv.parse(text, sep: sep, comment: comment, fields: fields, lazy_quotes: lazy, trim_leading_space: trim) {
     Ok(rs) => recs_of(rs)
-    Err(e) => "err ${e}"
+    Err(e) => "err ${e.display()}"
   }
 }
 
@@ -6751,7 +6751,7 @@ test "format then parse is the same records" {
   for (rows, sep) in ROUND_TRIP {
     let got = match csv.parse(csv.format(rows, sep: sep), sep: sep) {
       Ok(rs) => recs_of(rs)
-      Err(e) => "err ${e}"
+      Err(e) => "err ${e.display()}"
     }
     let want = recs_of(rows)
     if got != want {

@@ -2715,7 +2715,7 @@ fn first_bad[T](bad: List[T]) -> List[T] { bad[0..(if bad.len() < 20 { bad.len()
 fn unesc(r: Result[Str, url.EscapeErr]) -> Str {
   match r {
     Ok(s) => "ok ${s}"
-    Err(e) => "err ${e.msg}"
+    Err(e) => "err ${e.display()}"
   }
 }
 
@@ -2736,7 +2736,7 @@ test "parse_query and encode are Go's" {
   for (s, want) in QUERIES {
     let got = match url.parse_query(s) {
       Ok(v) => "ok ${v.keys().map(fn(k) { "${k}=${v.all(k).join(",")}" }).join("|")} ${v.encode()}"
-      Err(e) => "err ${e.msg}"
+      Err(e) => "err ${e.display()}"
     }
     if got != want {
       bad.push((s, got, want))
