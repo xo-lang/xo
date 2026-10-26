@@ -127,6 +127,22 @@ func bigOp(op string, a, b *big.Int, k int) string {
 	panic(op)
 }
 
+// bigParseDisplay is what std/big's display must say for a SetString call:
+// the value's decimal text when Go parses it (Go's z.String()), and
+// otherwise the message std/native/big.xo builds, "invalid base N" for a
+// base SetString refuses before reading digits and "invalid number "T" in
+// base N" otherwise (Go reports only ok, so this wording is Xo's own and
+// the corpus pins it).
+func bigParseDisplay(s string, base int, z *big.Int, ok bool) string {
+	if ok {
+		return z.Text(10)
+	}
+	if base < 0 || base == 1 || base > 62 {
+		return fmt.Sprintf("invalid base %d", base)
+	}
+	return fmt.Sprintf("invalid number %q in base %d", s, base)
+}
+
 func bigCorpus() string {
 	r := rand.New(rand.NewSource(5))
 	var o strings.Builder
@@ -203,7 +219,7 @@ func bigCorpus() string {
 		want := bigOp(op, a, big.NewInt(0), 0)
 		fmt.Fprintf(&o, "  (%q, %q, %q, %d, %q),\n", op, bigHex(a), bigHex(big.NewInt(0)), 0, want)
 	}
-	o.WriteString("]\n\n/// (text, base, Go's SetString: the value in hex, or \"bad\")\nconst PARSE: List[(Str, Int, Str)] = [\n")
+	o.WriteString("]\n\n/// (text, base, Go's SetString: the value in hex, or \"bad\"; then the\n/// display: the value's decimal text, or for \"bad\" the error std/big\n/// documents, invalid number (quoted) in base N, or invalid base N)\nconst PARSE: List[(Str, Int, Str, Str)] = [\n")
 	texts := []string{"", "0", "-0", "+7", "--1", "12x", "0x_1f", "0x1f", "0X1F", "0b101", "0o17", "017", "08", "0_1", "1__2", "1_2", "_1", "1_", "0x", "0b", "ff", "FF", "zz", "ZZ", "-", "+", " 1", "1 ", "9223372036854775808", "-9223372036854775809", "1.5"}
 	for i := 0; i < 400; i++ {
 		var s string
@@ -227,7 +243,7 @@ func bigCorpus() string {
 			if ok {
 				w = bigHex(z)
 			}
-			fmt.Fprintf(&o, "  (%s, %d, %q),\n", xq(s), base, w)
+			fmt.Fprintf(&o, "  (%s, %d, %q, %q),\n", xq(s), base, w, bigParseDisplay(s, base, z, ok))
 		}
 	}
 	o.WriteString("]\n")
@@ -307,13 +323,31 @@ test "the order of BigInt is the numbers' order" {
 
 test "parse accepts and reads what Go's SetString does" {
   var bad: List[(Str, Int, Str, Str)] = []
-  for (s, base, want) in PARSE {
+  for (s, base, want, disp) in PARSE {
     let got = match big.parse(s, base: base) {
-      Ok(x) => hx(x)
-      Err(_) => "bad"
+      Ok(x) => {
+        if want == "bad" {
+          "parsed"
+        } else if hx(x) != want {
+          "hex ${hx(x)}"
+        } else if x.display() != disp {
+          "display ${x.display()}"
+        } else {
+          "ok"
+        }
+      }
+      Err(e) => {
+        if want != "bad" {
+          "did not parse"
+        } else if e.display() != disp {
+          "display ${e.display()}"
+        } else {
+          "ok"
+        }
+      }
     }
-    if got != want {
-      bad.push((s, base, got, want))
+    if got != "ok" {
+      bad.push((s, base, got, disp))
     }
   }
   expect(first_bad(bad)) == []
