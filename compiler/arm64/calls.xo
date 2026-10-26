@@ -1362,6 +1362,8 @@ fn (var g: G) call_op(v: Int) {
       g.set(v, [g.def1(true, "${ins} $d0, $u0", [g.word(x.args[0])])])
     }
     "Float.is_nan" => g.set(v, [g.def1(false, "fcmp $u0, $u0\ncset $d0, vs", [g.word(x.args[0])])])
+    // f * y + z rounded once (decision 0385): fmadd d, n, m, a is n * m + a
+    "Float.fma" => g.set(v, [g.def1(true, "fmadd $d0, $u0, $u1, $u2", [g.word(x.args[0]), g.word(x.args[1]), g.word(x.args[2])])])
     "bytes.index" => {
       // b[i] on Bytes (decision 0081): the data is 16 bytes into the
       // string object

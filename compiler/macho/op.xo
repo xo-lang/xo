@@ -279,7 +279,7 @@ pub fn encode_op(o: Op) -> Int {
     "stadd" | "ldaddal" | "ldadd" | "ldaddl" | "ldadda" | "staddl" | "swp" | "swpa" | "swpl" | "swpal" => return atomic_word(o.m, o.ops)
     "cas" | "casa" | "casl" | "casal" => return cas_word(o.m, o.ops)
     "ldxr" | "ldaxr" | "stxr" | "stlxr" | "ldar" | "stlr" => return excl_word(o.m, o.ops)
-    "fadd" | "fsub" | "fmul" | "fdiv" | "fneg" | "fabs" | "fsqrt" | "frintz" | "frinta" | "frintm" | "frintp" | "frintn" | "frintx" | "frinti" | "scvtf" | "ucvtf" | "fcvt" | "fcvtzs" | "fcvtzu" | "fcmp" | "fcmpe" | "fcsel" | "fccmp" | "fccmpe" | "fmov" => return fp_word(o.m, o.ops)
+    "fadd" | "fsub" | "fmul" | "fdiv" | "fmadd" | "fneg" | "fabs" | "fsqrt" | "frintz" | "frinta" | "frintm" | "frintp" | "frintn" | "frintx" | "frinti" | "scvtf" | "ucvtf" | "fcvt" | "fcvtzs" | "fcvtzu" | "fcmp" | "fcmpe" | "fcsel" | "fccmp" | "fccmpe" | "fmov" => return fp_word(o.m, o.ops)
     "movz" | "movn" | "movk" => return movw_word(o.m, o.ops)
     "sxtw" => {
       // sbfm xd, xn, #0, #31 (rt.mem_cmp's result, decision 0207)
@@ -1011,6 +1011,18 @@ fn rk_of(x: Operand) -> (Int, Int) {
 fn fp_word(m: Str, o: List[Operand]) -> Int {
   let n = o.len()
   match m {
+    "fmadd" => {
+      // fmadd d, n, m, a: floating-point data-processing (3 source),
+      // double (decision 0385)
+      if n != 4 {
+        return -1
+      }
+      let (d, kd) = rk_of(o[0])
+      let (x, kx) = rk_of(o[1])
+      let (y, ky) = rk_of(o[2])
+      let (a, ka) = rk_of(o[3])
+      if kd != RD || kx != RD || ky != RD || ka != RD { -1 } else { 0x1f400000 | (y * 0x10000) | (a * 0x400) | (x * 32) | d }
+    }
     "fadd" | "fsub" | "fmul" | "fdiv" => {
       let base = match m {
         "fadd" => 0x1e602800

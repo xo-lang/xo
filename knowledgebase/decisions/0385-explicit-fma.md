@@ -1,8 +1,9 @@
 # 0385: An explicit fused multiply-add, Float.fma
 
 Status: Accepted (owner, 2026-10-26: explicit FMA only, no implicit
-fusing; written up by Xo Lang 2, 2026-10-26). Stage 1 built
-(2026-10-26); stages 2 and 3 to do.
+fusing; written up by Xo Lang 2, 2026-10-26). Stages 1 and 2 built
+(2026-10-26: arm64 1.62 ns a call against Go's 1.75, the software body
+10.9 against Go's 10.4); stage 3 to do.
 
 ## Context
 
@@ -73,7 +74,10 @@ library (zero C runtime); the call goes to the software body instead.
      Float.sqrt) only when `b.goarch == "arm64"`, as the AES and ChaCha
      intrinsics are gated, so wasm, the amd64 emitters and an arm64
      build's Go backend keep calling the software body (float_fma in
-     std/native/prelude.xo) and need no change;
+     std/native/prelude.xo) and need no change; and the call skips
+     `impl_of` on arm64, since a method with a native body is called
+     before the intrinsic table is looked at (Float.sqrt has no body,
+     so it never met this);
    - compiler/arm64 calls.xo: `"Float.fma" => g.def1(true, "fmadd $d0,
      $u0, $u1, $u2", [x, y, z])` (fmadd d, n, m, a is n * m + a);
    - compiler/macho op.xo: fmadd's encoding (floating-point

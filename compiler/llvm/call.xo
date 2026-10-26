@@ -444,6 +444,13 @@ fn (var g: Gen) call(v: Int) {
       let a0 = g.op(args[0])
       g.set(v, "call double @llvm.${intr}.f64(double ${a0})")
     }
+    "Float.fma" => {
+      // decision 0385: reached for arm64 targets only (compiler/ssa)
+      let a0 = g.op(args[0])
+      let a1 = g.op(args[1])
+      let a2 = g.op(args[2])
+      g.set(v, "call double @llvm.fma.f64(double ${a0}, double ${a1}, double ${a2})")
+    }
     "Float.is_nan" => {
       let a0 = g.op(args[0])
       let b0 = g.op(args[0])

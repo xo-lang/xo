@@ -1,0 +1,21 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): Float operations.
+
+// x.fma(y, z) is one fused multiply-add on arm64, with no call (decision
+// 0385 stage 2).
+fn fused(x: Float, y: Float, z: Float) -> Float {
+  // arm64: "fmadd d[0-9]+, d[0-9]+, d[0-9]+, d[0-9]+" -"\tbl "
+  // llvm: "@llvm.fma.f64\(double"
+  x.fma(y, z)
+}
+
+// A multiply and an add written out round twice: never fused (decision
+// 0287, golden float_no_fma).
+fn unfused(x: Float, y: Float, z: Float) -> Float {
+  // arm64: "fmul d" "fadd d" -"fmadd"
+  // llvm: "fmul double" "fadd double" -"llvm.fma" -"contract"
+  x * y + z
+}
+
+fn main(os: Os) {
+  os.stdio.println("${fused(1.5, 2.0, 0.25)} ${unfused(1.5, 2.0, 0.25)}")
+}

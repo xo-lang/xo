@@ -159,7 +159,9 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
     if let Some(v) = b.list_move_call(x, ci) {
       return v
     }
-    let impl = b.impl_of(fo)
+    // Float.fma on arm64 is one instruction (decision 0385 stage 2): the
+    // native body (gomath.fma) is the other targets'
+    let impl = if b.goarch == "arm64" && b.c.display_name(fo) == "Float.fma" { -1 } else { b.impl_of(fo) }
     if impl >= 0 {
       // a dependency's log record carries the dependency (decision
       // 0173): set just before the call, after its arguments (call_as)
@@ -2056,6 +2058,12 @@ fn (var b: Builder) std_call(x: Expr, ci: check.CallInfo) -> Int {
       }
       let key = "${rname}.${fname}"
       if key is "Int.abs" | "Int.min" | "Int.max" | "Float.min" | "Float.max" | "Float.sqrt" | "Float.floor" | "Float.ceil" | "Float.trunc" | "Float.round" | "Float.abs" | "Float.is_nan" | "Str.len" | "Str.is_empty" {
+        return b.call(key, nt, pos, vs)
+      }
+      // a fused multiply-add is one instruction on arm64 (decision 0385
+      // stage 2: fmadd, llvm.fma); elsewhere the software body
+      // (gomath.fma) is called
+      if key == "Float.fma" && b.goarch == "arm64" {
         return b.call(key, nt, pos, vs)
       }
     }

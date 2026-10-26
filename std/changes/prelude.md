@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-10-26: perf: Float.fma is one fmadd on arm64 (decision 0385 stage 2)
+
+- Kind: perf
+- Commit: this commit
+- Found by: decision 0385's plan (stage 1 was the software body)
+- Go reference: math.FMA, which Go lowers to fmadd on arm64
+- Test: golden float_fma (the 20,000 case digest unchanged) on arm64 TestGoldenRun, LLVM TestGolden at O1 and O2, wasm; float_no_fma unchanged; test/codegen/floats: `x.fma(y, z)` is one fmadd with no call on arm64 and @llvm.fma.f64 on LLVM, `x * y + z` keeps fmul and fadd
+- Timing: a chain of 10M dependent fma calls on arm64, median of three: 1.62 ns a call (the software body 10.9) against Go's math.FMA 1.75 (0.93)
+
+On arm64 targets the native and LLVM backends lower `x.fma(y, z)` to the
+instruction; amd64 and wasm keep the software body (stage 3 adds
+vfmadd231sd behind a CPUID check).
 ## 2026-10-26: feature: Float.fma, a multiply-add rounded once (decision 0385)
 
 - Kind: feature
