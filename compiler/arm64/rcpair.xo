@@ -80,6 +80,191 @@ fn cancel_rc_pairs(var f: ssa.Func) -> Bool {
   true
 }
 
+/// Moves each retain down through the rest of its block and into the
+/// block its jump enters, or both arms of the branch that ends it, when nothing on the way counts, frees
+/// or consumes a heap value (rc_pure), but for the landing check and
+/// direct calls that borrow the retained value and take no other heap
+/// value; the blocks are entered only from that block. Each arm gets its
+/// own retain, which cancel_rc_pairs then meets with the arm's release:
+/// a function inlined with an owned parameter it consumes only on one
+/// path (prelude.duration_parse keeps its text in DurationErr) released
+/// it on the others, and the caller retained it before the call
+/// (2026-10-26, bench/perf/text dur_parse). The value's owner is out of
+/// the call's reach: the value is a function parameter, or read from
+/// one through fields, payloads and list.index; whether it changed f.
+fn sink_retains(var f: ssa.Func, m: ssa.Module, by_name: Map[Str, Int]) -> Bool {
+  var changed = false
+  var rounds = 0
+  var again = true
+  while again && rounds < 8 {
+    again = false
+    rounds += 1
+    for b in 0..f.blocks.len() {
+      let ins = f.blocks[b].instrs
+      if ins.is_empty() {
+        continue
+      }
+      let t = f.values[ins[ins.len() - 1]]
+      if !((t.op == ssa.Op.Branch && t.succs.len() == 2) || (t.op == ssa.Op.Jump && t.succs.len() == 1)) {
+        continue
+      }
+      var tos: List[Int] = []
+      var ok_edges = true
+      for e in t.succs {
+        let to = f.edges[e].to
+        if to == b || tos.contains(to) || f.blocks[to].preds.len() != 1 || !f.edges[e].args.is_empty() {
+          ok_edges = false
+        }
+        tos.push(to)
+      }
+      if !ok_edges {
+        continue
+      }
+      // the last retain in b whose value nothing after it takes but a
+      // borrowing call
+      var k = ins.len() - 2
+      var r = -1
+      while k >= 0 {
+        let x = f.values[ins[k]]
+        if x.op == ssa.Op.Retain && x.args.len() == 1 && sink_root_ok(f, by_name, x.args[0], 4) {
+          var ok = true
+          for j in k + 1..ins.len() - 1 {
+            if !sink_past(f, m, by_name, f.values[ins[j]], x.args[0]) {
+              ok = false
+              break
+            }
+          }
+          if ok {
+            r = k
+          }
+          break
+        }
+        k -= 1
+      }
+      if r < 0 {
+        continue
+      }
+      let rv = ins[r]
+      let a = f.values[rv].args[0]
+      var out: List[Int] = []
+      for (i, v) in ins.indexed() {
+        if i != r {
+          out.push(v)
+        }
+      }
+      f.blocks[b].instrs = out
+      for to in tos {
+        // a copy of the retain (its landing and line too) at to's start
+        var c = f.values[rv]
+        c.block = to
+        let nv = f.values.len()
+        f.values.push(c)
+        f.blocks[to].instrs = [nv] + f.blocks[to].instrs
+      }
+      let _a = a
+      changed = true
+      again = true
+    }
+  }
+  changed
+}
+
+/// Whether x, after a retain of a in the same block, lets the retain
+/// move past it (sink_retains): pure, the landing check, or a direct
+/// call to a function that borrows a where it passes it and takes
+/// nothing else on the heap.
+fn sink_past(f: ssa.Func, m: ssa.Module, by_name: Map[Str, Int], x: ssa.Value, a: Int) -> Bool {
+  if rc_pure(x) && !(x.op is ssa.Op.Tuple) {
+    return true
+  }
+  if x.op != ssa.Op.Call {
+    return false
+  }
+  let name = aux_str(x.aux)
+  if name == "rt.landing" {
+    return true
+  }
+  let ci = by_name.get(name) ?? -1
+  if ci < 0 {
+    return false
+  }
+  let cf = m.funcs[ci]
+  for (i, v) in x.args.indexed() {
+    if v == a {
+      if i >= cf.borrowed.len() || !cf.borrowed[i] {
+        return false
+      }
+      continue
+    }
+    let ty = f.values[v].ty
+    if ty < 0 || !(m.types[ty].kind is ssa.Kind.Int | ssa.Kind.Bool | ssa.Kind.Float | ssa.Kind.Unit) {
+      return false
+    }
+  }
+  true
+}
+
+/// Whether a is a value whose owner no call can drop (sink_retains): a
+/// constant, a parameter of f's entry block, the result of a direct call
+/// to a function of the program or of a list operation other than
+/// list.index and list.get (an owned value: new, push, set, pop, take),
+/// a block parameter every edge passes such a value (depth more), or
+/// read from one through fields, payloads, list.index and list.get (a
+/// borrowed element). Not a box's contents or a runtime read.
+fn sink_root_ok(f: ssa.Func, by_name: Map[Str, Int], a0: Int, depth: Int) -> Bool {
+  var a = a0
+  var steps = 0
+  while steps < 16 {
+    let x = f.values[a]
+    if x.op == ssa.Op.Const {
+      return true
+    }
+    if x.op == ssa.Op.Param {
+      if x.block == 0 {
+        return true
+      }
+      if depth <= 0 {
+        return false
+      }
+      let ps = f.blocks[x.block].params
+      var k = -1
+      for (i, p) in ps.indexed() {
+        if p == a {
+          k = i
+        }
+      }
+      if k < 0 {
+        return false
+      }
+      for e in f.blocks[x.block].preds {
+        let ea = f.edges[e].args
+        if k >= ea.len() {
+          return false
+        }
+        // a loop's own value passed around it adds nothing
+        if ea[k] != a && !sink_root_ok(f, by_name, ea[k], depth - 1) {
+          return false
+        }
+      }
+      return true
+    }
+    if x.op is ssa.Op.Field | ssa.Op.Payload {
+      a = x.args[0]
+    } else if x.op == ssa.Op.Call {
+      let name = aux_str(x.aux)
+      if (name is "list.index" | "list.get") && x.args.len() == 2 {
+        a = x.args[0]
+      } else {
+        return by_name.contains(name) || name.starts_with("list.")
+      }
+    } else {
+      return false
+    }
+    steps += 1
+  }
+  false
+}
+
 /// A value's heap word as its root and field path ("v27.2"): the same
 /// for two Field chains of one root; "" for a value whose root is not
 /// known here.

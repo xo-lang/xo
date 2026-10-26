@@ -1,0 +1,25 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): retains and
+// releases after inlining (compiler/arm64 rcpair.xo).
+
+// A list's Str passed to Duration.parse, which keeps it only in its
+// error: the retain before the call moved into the error path
+// (sink_retains), so the Ok path neither counts it up nor releases it.
+// An inline retain tests bit 63 of the count (tbnz or tbz); none is laid out
+// before the parse call (2026-10-26, bench/perf/text dur_parse). One
+// call site, so prelude.duration_parse is inlined.
+fn ok_sum(xs: List[Str]) -> Int {
+  // arm64: "bl _xo_f_text_2eparse__duration" -"(?s)tbn?z x[0-9]+, #63.*bl _xo_f_text_2eparse__duration"
+  var s = 0
+  for t in xs {
+    match Duration.parse(t) {
+      Ok(d) => s += d.nanos() % 1000
+      Err(_) => s -= 1
+    }
+  }
+  s
+}
+
+fn main(os: Os) {
+  let n = os.env.args().len()
+  os.stdio.println("${ok_sum(["${n}s", "x"])}")
+}

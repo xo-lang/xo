@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- arm64: a retain before a call that only borrows the value moves into the paths after
+  it, where a release meets it: a list's Str passed to `Duration.parse`, which keeps it
+  only in its error, is no longer counted up and down on every successful parse
+  (dur_parse 0.94 of the wall time, 0.979 of the instructions).
 - arm64: a match arm whose variant holds no heap value drops nothing: the `Ok(d)` arm
   of a `Result[Duration, DurationErr]` called the Result's drop helper on every parse.
   `Duration.parse` loops 0.973 of the instructions, `cut_prefix` and `cut_suffix` 0.80

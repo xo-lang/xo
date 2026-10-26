@@ -32,6 +32,7 @@ pub fn passes() -> List[Str] {
     // and a one-block body, after inlining, unrolled
     "unroll_small",
     "cancel_rc_pairs",
+    "sink_retains",
     // viewlen.xo: a Str view used only for its length is the length
     "view_lens",
     "hoist_fields",

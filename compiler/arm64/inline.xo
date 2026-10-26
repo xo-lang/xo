@@ -641,6 +641,11 @@ fn inline_one(var m: ssa.Module, st: InlineState, fi: Int) -> Bool {
       }
       let _j3 = ssa.merge_straight(f, m, block_calls(f))
     }
+    // a retain before a call that only borrows the value goes down into
+    // the branches after it, where a release may meet it
+    if pass_on(m, "sink_retains") {
+      let _s = sink_retains(f, m, st.by_name)
+    }
     // a callee's release of its parameter meets the caller's retain
     if pass_on(m, "cancel_rc_pairs") {
       let _c = cancel_rc_pairs(f)
