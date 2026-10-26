@@ -224,7 +224,10 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   `-edges=DIR -dirs=FILE` compares the two over the same programs). Those
   numbers predate the impl-file sites (2026-10-26, next bullet), so most of
   the 86 were sites the edges never held; the comparison has to be re-run
-  with them.
+  with them. A like-with-like comparison needs the same programs on both
+  sides: `go run ./scripts/stdcoverage -programs` prints the 890
+  directories the sweep runs `xo dev edges` over (the corpora, the
+  goldens, bench/perf, scripts), which is the file `-dirs` reads.
 - `xo dev edges [--out=FILE] [--impls] DIR` writes the checked program's
   resolved references, one tab separated line each:
   SRC_PATH SRC_LINE SRC_NAME TGT_PATH TGT_LINE TGT_NAME SITE_PATH

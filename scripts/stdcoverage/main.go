@@ -6,6 +6,8 @@
 //
 //	go run ./scripts/stdcoverage
 //	go run ./scripts/stdcoverage -check   # exit 1 when allow.txt is not enough
+//	go run ./scripts/stdcoverage -programs > dirs.txt   # the sweep's list
+//	go run ./scripts/stdcoverage -edges=OUT -dirs=dirs.txt  # resolution vs scan
 //
 // internal/repotest's TestStdAPICovered runs the same check in the fast set.
 package main
@@ -27,11 +29,23 @@ func main() {
 	check := flag.Bool("check", false, "exit 1 when an uncovered declaration is not in allow.txt")
 	edgesDir := flag.String("edges", "", "a directory of `xo dev edges` output: report the resolution's coverage and its difference from the name scan")
 	dirsFile := flag.String("dirs", "", "a file of program directories (one per line, relative to the root): the name scan reads only those, so the comparison is like with like")
+	programs := flag.Bool("programs", false, "print the program directories a `xo dev edges` sweep runs over, one per line: the file -dirs reads")
 	flag.Parse()
 	root, err := xotool.Root()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "stdcoverage:", err)
 		os.Exit(1)
+	}
+	if *programs {
+		dirs, err := stdcoverage.ProgramDirs(root)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "stdcoverage:", err)
+			os.Exit(1)
+		}
+		for _, d := range dirs {
+			fmt.Println(filepath.ToSlash(d))
+		}
+		return
 	}
 	var entries []stdcoverage.Entry
 	var total int

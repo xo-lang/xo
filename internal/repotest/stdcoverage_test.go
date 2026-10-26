@@ -1,6 +1,8 @@
 package repotest
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/xo-lang/xo/internal/stdcoverage"
@@ -41,6 +43,39 @@ func TestStdAPICovered(t *testing.T) {
 	for i, r := range rules {
 		if !used[i] {
 			t.Errorf("internal/stdcoverage/allow.txt's %q matches no uncovered declaration: remove the line, or correct it", r.Pattern)
+		}
+	}
+}
+
+// TestProgramDirs: ProgramDirs lists the directories a `xo dev edges`
+// sweep runs over, so a resolved comparison can be made like with like: the
+// corpora, the goldens, the benchmark programs and the scripts, sorted and
+// without duplicates, each holding a .xo file.
+// `go run ./scripts/stdcoverage -programs` prints it.
+func TestProgramDirs(t *testing.T) {
+	dirs, err := stdcoverage.ProgramDirs(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dirs) < 800 {
+		t.Fatalf("found %d program directories, too few: the list read the wrong tree", len(dirs))
+	}
+	seen := map[string]bool{}
+	for i, d := range dirs {
+		if seen[d] {
+			t.Errorf("%s is listed twice", d)
+		}
+		seen[d] = true
+		if i > 0 && dirs[i-1] >= d {
+			t.Errorf("%s does not follow %s: the list is not sorted", d, dirs[i-1])
+		}
+		if _, err := os.Stat(filepath.Join(root, d)); err != nil {
+			t.Errorf("%s: %v", d, err)
+		}
+	}
+	for _, want := range []string{"bench/perf/aesgcm", "scripts/pgtls", "internal/llvm/testdata/golden/strwhere"} {
+		if !seen[want] {
+			t.Errorf("%s is not in the program directories", want)
 		}
 	}
 }

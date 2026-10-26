@@ -222,6 +222,40 @@ func CorpusTextIn(root string, dirs []string) (string, error) {
 	return corpusTextIn(root, dirs)
 }
 
+// ProgramDirs lists the program directories of the corpora, the goldens and
+// the repository's own programs (corpusDirs): every directory under them
+// that holds a .xo file, relative to root and sorted. It is the list a
+// `xo dev edges` sweep runs over and the file -dirs reads, so a resolved
+// comparison covers the same programs as the name scan.
+func ProgramDirs(root string) ([]string, error) {
+	seen := map[string]bool{}
+	var out []string
+	for _, dir := range corpusDirs() {
+		err := filepath.WalkDir(filepath.Join(root, dir), func(p string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() || !strings.HasSuffix(p, ".xo") {
+				return nil
+			}
+			rel, err := filepath.Rel(root, filepath.Dir(p))
+			if err != nil {
+				return err
+			}
+			if !seen[rel] {
+				seen[rel] = true
+				out = append(out, rel)
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
 // corpusTextIn concatenates the .xo files under the given directories.
 func corpusTextIn(root string, dirs []string) (string, error) {
 	var b strings.Builder
