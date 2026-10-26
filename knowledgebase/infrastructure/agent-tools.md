@@ -228,6 +228,16 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   sides: `go run ./scripts/stdcoverage -programs` prints the 890
   directories the sweep runs `xo dev edges` over (the corpora, the
   goldens, bench/perf, scripts), which is the file `-dirs` reads.
+  On a 99-program sample (2026-10-26, impl-file sites included): 579
+  uncovered by the scan, 945 by the edges, and 365 the scan credits that no
+  edge reaches, 65 of them interface methods (a call through an interface
+  resolves to the interface's method, never to the implementation). The
+  rest are bare-name collisions, the scan's known limit and not a corpus
+  gap: `prelude.Buf.push` has no reference while `prelude.List.push` has
+  7,553, `prelude.Bytes.contains` none while `prelude.Str.contains` has 525,
+  `prelude.Duration.abs` none while `prelude.Int.abs` has 4 (checked with
+  `xo refs`). A line the edges contradict is worth a look; a declaration
+  the edges cannot reach is not by itself proof of a missing corpus.
 - `xo dev edges [--out=FILE] [--impls] DIR` writes the checked program's
   resolved references, one tab separated line each:
   SRC_PATH SRC_LINE SRC_NAME TGT_PATH TGT_LINE TGT_NAME SITE_PATH
