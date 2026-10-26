@@ -84,7 +84,7 @@ func stableStderr(s string) string {
 	s = timeRE.ReplaceAllString(s, "<time>")
 	var out []string
 	for _, l := range strings.Split(s, "\n") {
-		if l == "" || strings.HasPrefix(l, " ") || strings.HasPrefix(l, "\t") || strings.HasPrefix(l, "crash bundle:") || l == "traceback:" {
+		if l == "" || strings.HasPrefix(l, " ") || strings.HasPrefix(l, "\t") || strings.HasPrefix(l, "crash bundle:") || l == "traceback:" || strings.HasPrefix(l, "xo leakcheck:") {
 			continue
 		}
 		out = append(out, l)
@@ -104,6 +104,20 @@ func buildAndRun(t *testing.T, dir string, opts xotool.Options) runResult {
 // buildRun builds and runs the program in dir and also returns the build
 // result.
 func buildRun(t *testing.T, dir string, opts xotool.Options) (runResult, *xotool.Result) {
+	t.Helper()
+	return buildRunEnv(t, dir, opts, false)
+}
+
+// buildRunLeak is buildRun with XO_LEAKCHECK=1 on the one run: a program
+// that exits 0 must free every allocation (leakCheck's check, without a
+// second run; lead, 2026-10-26: TestGolden and TestGoldenSplit ran every
+// passing golden twice). The leak line is not part of the result.
+func buildRunLeak(t *testing.T, dir string, opts xotool.Options) (runResult, *xotool.Result) {
+	t.Helper()
+	return buildRunEnv(t, dir, opts, true)
+}
+
+func buildRunEnv(t *testing.T, dir string, opts xotool.Options, leak bool) (runResult, *xotool.Result) {
 	t.Helper()
 	if why := xotool.Arm64Skip(opts.Backend); why != "" {
 		// every arm64 subtest of the diff tests (TestCABIDiff,
@@ -127,6 +141,9 @@ func buildRun(t *testing.T, dir string, opts xotool.Options) (runResult, *xotool
 	cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()], progArgs(dir)...))
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), progEnv(dir)...)
+	if leak {
+		cmd.Env = append(cmd.Env, "XO_LEAKCHECK=1")
+	}
 	cmd.Stdin = progStdin(dir)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -137,6 +154,13 @@ func buildRun(t *testing.T, dir string, opts xotool.Options) (runResult, *xotool
 		code = ee.ExitCode()
 	} else if err != nil {
 		t.Fatalf("run: %v", err)
+	}
+	if leak && code == 0 {
+		if m := leakRE.FindStringSubmatch(stderr.String()); m == nil {
+			t.Errorf("no leak check line in stderr:\n%s", stderr.String())
+		} else if m[1] != "0" {
+			t.Errorf("%s allocations still live at exit (of %s)", m[1], m[2])
+		}
 	}
 	return runResult{exit: code, stdout: stdout.String(), stderr: stableStderr(stderr.String())}, res
 }
@@ -278,10 +302,7 @@ func TestGolden(t *testing.T) {
 			}
 			skipUnselected(t, dir)
 			t.Parallel()
-			llRes, b := buildRun(t, dir, xotool.Options{Backend: xotool.BackendLLVM, Env: goldenEnv(dir)})
-			if llRes.exit == 0 {
-				leakCheck(t, b.Binaries[xotool.Host()], dir)
-			}
+			llRes, _ := buildRunLeak(t, dir, xotool.Options{Backend: xotool.BackendLLVM, Env: goldenEnv(dir)})
 			wantPath := filepath.Join(dir, "want.txt")
 			if *updateGolden {
 				if _, err := os.Stat(filepath.Join(dir, "want_go.txt")); err == nil {
@@ -379,16 +400,13 @@ func TestGoldenSplit(t *testing.T) {
 			}
 			skipUnselected(t, dir)
 			t.Parallel()
-			res, b := buildRun(t, dir, xotool.Options{Backend: xotool.BackendLLVM, Env: []string{"XO_LLVM_SPLIT=3", "XO_LLVM_JOBS=3", "XO_LLVM_LTO=" + lto, goldenOpt(dir)}})
+			res, _ := buildRunLeak(t, dir, xotool.Options{Backend: xotool.BackendLLVM, Env: []string{"XO_LLVM_SPLIT=3", "XO_LLVM_JOBS=3", "XO_LLVM_LTO=" + lto, goldenOpt(dir)}})
 			want, err := os.ReadFile(filepath.Join(dir, "want.txt"))
 			if err != nil {
 				t.Fatal(err)
 			}
 			if string(want) != res.String() {
 				t.Errorf("split build differs from want.txt\n--- want\n%s\n--- got\n%s", want, res)
-			}
-			if res.exit == 0 {
-				leakCheck(t, b.Binaries[xotool.Host()], dir)
 			}
 		})
 	}

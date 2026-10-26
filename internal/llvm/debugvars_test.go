@@ -101,12 +101,14 @@ func TestDebugInfoSameOutputLLVM(t *testing.T) {
 			var runs [2]runResult
 			// release builds (-O2, decision 0220) without and with
 			// --debug-info for o2Goldens; the rest at goldenEnv's level
-			// stripped (-s) and not (a build that is not a release build
-			// has debug information), so the second is TestGolden's build
-			// (the clang cache's, xotool.EnableTestClangCache)
-			pair := [][]string{{"-s"}, nil}
+			// stripped (-s), whose output must be want.txt: the build
+			// with debug information is TestGolden's, which checks
+			// want.txt already (lead, 2026-10-26: building it again here
+			// cost a front end and a run of every golden in the full tier)
+			pair := [][]string{{"-s"}}
 			env := goldenEnv(dir)
-			if o2Goldens[filepath.Base(dir)] || os.Getenv("XO_TEST_LLVM_OPT") != "" {
+			release := o2Goldens[filepath.Base(dir)] || os.Getenv("XO_TEST_LLVM_OPT") != ""
+			if release {
 				pair = [][]string{{"--release"}, {"--release", "--debug-info"}}
 				env = nil
 			}
@@ -129,6 +131,16 @@ func TestDebugInfoSameOutputLLVM(t *testing.T) {
 					t.Fatalf("run %v: %v", flags, err)
 				}
 				runs[i] = r
+			}
+			if !release {
+				want, err := os.ReadFile(filepath.Join(dir, "want.txt"))
+				if err != nil {
+					t.Fatalf("missing want.txt: %v", err)
+				}
+				if runs[0].String() != string(want) {
+					t.Errorf("the output differs without debug information (-s) from want.txt, which the build with it (TestGolden) prints\n--- -s\n%s\n--- want.txt\n%s", runs[0], want)
+				}
+				return
 			}
 			if runs[0] != runs[1] {
 				t.Errorf("the output differs with debug information\n--- --release\n%s\n--- --release --debug-info\n%s", runs[0], runs[1])
