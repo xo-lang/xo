@@ -44,6 +44,7 @@ var generators = map[string]func() string{
 	"cut":        cutCorpus,
 	"equalfold":  equalfoldCorpus,
 	"fakeclock":  fakeclockCorpus,
+	"http":       httpCorpus,
 	"httpurl":    httpurlCorpus,
 	"json":       jsonCorpus,
 	"jsondecode": jsonDecodeCorpus,
