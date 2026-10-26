@@ -1,0 +1,40 @@
+// std/internal's LZ4 block codec (decision 0365, the back-end cache's
+// compression) on every backend: blocks of the format's edge lengths,
+// a run, text and a long match round-trip; the block bytes are the same
+// everywhere (their hex digest); a block decoded at an offset reads past
+// a header; damaged blocks (cut short, the wrong length, a start past the
+// end) are None.
+use std/internal
+
+fn digest(b: Bytes) -> Int {
+  var h = 7
+  for x in b {
+    h = (h.wrapping_mul(31).wrapping_add(Int(x))) & 0xffffffffffff
+  }
+  h
+}
+
+fn main(os: Os) {
+  var sb = StrBuilder.new()
+  for i in 0..300 {
+    sb.write("entry ${i % 17} of the cache, ")
+  }
+  let text = sb.freeze().bytes()
+  let cases: List[(Str, Bytes)] = [("empty", b""), ("one", b"x"), ("twelve", b"abcdefghijkl"), ("thirteen", b"aaaaaaaaaaaaa"), ("run", "z".repeat(5000).bytes()), ("text", text)]
+  for (name, src) in cases {
+    let c = internal.lz4_compress(src)
+    let back = internal.lz4_decompress(c, 0, src.len())
+    os.stdio.println("${name}: ${src.len()} -> ${c.len()} digest ${digest(c)} back ${back == Some(src)}")
+  }
+  let c = internal.lz4_compress(text)
+  // after a 3 byte header
+  var hb = BytesBuilder.new()
+  hb.write(b"XOZ")
+  hb.write(c)
+  let framed = hb.freeze()
+  os.stdio.println("at 3: ${internal.lz4_decompress(framed, 3, text.len()) == Some(text)}")
+  os.stdio.println("cut: ${internal.lz4_decompress(c[0..c.len() - 1], 0, text.len()) == None}")
+  os.stdio.println("short n: ${internal.lz4_decompress(c, 0, text.len() - 1) == None}")
+  os.stdio.println("long n: ${internal.lz4_decompress(c, 0, text.len() + 1) == None}")
+  os.stdio.println("start past end: ${internal.lz4_decompress(c, c.len() + 1, 5) == None}")
+}

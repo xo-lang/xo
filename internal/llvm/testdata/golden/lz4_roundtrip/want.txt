@@ -1,0 +1,14 @@
+exit 0
+--- stdout
+empty: 0 -> 1 digest 217 back true
+one: 1 -> 2 digest 7343 back true
+twelve: 12 -> 13 digest 78250572509407 back true
+thirteen: 13 -> 14 digest 11967895666840 back true
+run: 5000 -> 30 digest 208918630337166 back true
+text: 6720 -> 167 digest 239715779532810 back true
+at 3: true
+cut: true
+short n: true
+long n: true
+start past end: true
+--- stderr
