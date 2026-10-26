@@ -1,5 +1,5 @@
 usage: xo doc [--json] [--all] [--dir=<dir>] [module dir or import path]
-       xo doc [--dir=DIR] [--json|--text] NAME
+       xo doc [--dir=DIR] [--json] NAME
 
 Markdown documentation from doc comments and signatures, with the
 example code blocks of each doc comment. --all includes declarations
@@ -7,7 +7,8 @@ that are not pub. Default: the modules under .
 
 With a NAME that is not a directory or an import path (`Map`,
 `std/tls.client`), the declaration's doc comment and, for a type, its
-methods, as xo def finds it.
+methods, as xo def finds it: the declaration with its whole doc, then
+a method a line (its signature and the first line of its doc).
 
 A directory means that directory alone; DIR/... covers the directories
 below it too, up to 6,000 .xo files or 60,000 entries (decision 0345).

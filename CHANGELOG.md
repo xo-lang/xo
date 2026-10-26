@@ -10,6 +10,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   (`cc --version` and a stat(1) of it, which the run cache's key reads) is
   remembered across builds in the backend cache, keyed by the size and
   modified time of the tool and, on macOS, of the clang xcode-select points to.
+- `xo def`, `xo refs`, `xo symbols`, `xo doc NAME` and `xo type` print
+  compact text by default, a record a line, also when standard output is
+  not a terminal (decision 0386; they printed JSON on one line there:
+  `xo symbols --dir=compiler/ssa` was one 540 KB line, now 1,935 lines
+  and 173 KB). `xo symbols [--dir=D] NAME` filters by name (`check_*`),
+  `--limit=N` cuts symbols and refs, `--doc` adds symbols' doc comments,
+  and `--json` prints the same JSON shape broken over lines. Scripts
+  that read the JSON pass `--json`.
 - An edit rebuild hollows only the changed parts on linux and on amd64 too (it was
   darwin/arm64 only): an ELF part's facts also key on every part's extra labels
   (hextra/ entries). Per edit, hollow on linux/amd64 went from 196 to 86 ms for

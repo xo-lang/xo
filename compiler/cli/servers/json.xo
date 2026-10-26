@@ -607,6 +607,66 @@ pub fn encode(v: J, html: Bool) -> Str {
   b.freeze().to_str() ?? ""
 }
 
+/// v as JSON a line per record (the lookups' --json, 2026-10-26: one line
+/// of up to 540 KB could not be grepped or cut): an object or array that
+/// holds an object or array is broken over lines, indented two spaces a
+/// level; a flat one (scalars only: a reference, a symbol without
+/// methods) stays on one line.
+pub fn encode_lines(v: J) -> Str {
+  var b = StrBuilder.new()
+  lines_into(b, v, "")
+  b.write("\n")
+  b.freeze()
+}
+
+fn container(v: J) -> Bool {
+  match v {
+    J.Obj(..) | J.Arr(..) => true
+    J.Null | J.Bool(_) | J.Num(_) | J.Str(_) | J.Raw(_) => false
+  }
+}
+
+fn nested(v: J) -> Bool {
+  match v {
+    J.Obj(_, vals, _) => vals.any(fn(x) { container(x) })
+    J.Arr(items, _) => items.any(fn(x) { container(x) })
+    J.Null | J.Bool(_) | J.Num(_) | J.Str(_) | J.Raw(_) => false
+  }
+}
+
+fn lines_into(var b: StrBuilder, v: J, ind: Str) {
+  if !nested(v) {
+    b.write(encode(v, false))
+    return
+  }
+  let in2 = ind + "  "
+  match v {
+    J.Obj(keys, vals, _) => {
+      b.write("{\n")
+      for (i, k) in keys.indexed() {
+        b.write(in2)
+        b.write(encode(jstr(k), false))
+        b.write(": ")
+        lines_into(b, vals[i], in2)
+        b.write(if i + 1 < keys.len() { ",\n" } else { "\n" })
+      }
+      b.write(ind)
+      b.write("}")
+    }
+    J.Arr(items, _) => {
+      b.write("[\n")
+      for (i, x) in items.indexed() {
+        b.write(in2)
+        lines_into(b, x, in2)
+        b.write(if i + 1 < items.len() { ",\n" } else { "\n" })
+      }
+      b.write(ind)
+      b.write("]")
+    }
+    J.Null | J.Bool(_) | J.Num(_) | J.Str(_) | J.Raw(_) => b.write(encode(v, false))
+  }
+}
+
 /// v as Go writes it after decoding it into an `any`: object keys sorted
 /// at every depth (a later duplicate key replaces an earlier one), and
 /// numbers through float64.

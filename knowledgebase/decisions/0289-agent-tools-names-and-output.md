@@ -2,6 +2,8 @@
 
 Status: Accepted (owner, 2026-10-20: the fix-up list from the two tool
 polls of 2026-10-20, through the lead)
+Its output rule (text at a terminal, JSON otherwise) is superseded by
+decision 0386 (2026-10-26): text everywhere unless --json.
 
 ## Context
 

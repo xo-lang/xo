@@ -22,7 +22,7 @@ func TestDocPreludeMethods(t *testing.T) {
 	}
 	chdir(t, dir)
 	var out, errb bytes.Buffer
-	if code := runXo(t, []string{"doc", "--dir=.", "Map"}, &out, &errb); code != 0 {
+	if code := runXo(t, []string{"doc", "--dir=.", "--json", "Map"}, &out, &errb); code != 0 {
 		t.Fatalf("xo doc Map: exit %d\n%s%s", code, out.String(), errb.String())
 	}
 	for _, want := range []string{`"name":"Map.get"`, `"name":"Map.contains"`} {

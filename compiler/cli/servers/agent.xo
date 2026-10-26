@@ -53,8 +53,9 @@ pub fn is_agent_command(os: Os, args: List[Str]) -> Bool uses fs {
   }
 }
 
-/// A command's arguments: the target, --dir, and the output form
-/// (--json, --text; at a terminal text, else JSON, decision 0289).
+/// A command's arguments: the target, --dir, and the output form (text,
+/// or --json; decision 0386: text everywhere by default, where 0289 gave
+/// JSON whenever standard output was not a terminal).
 struct AgentArgs {
   target: Str
   dir: Str
@@ -74,6 +75,10 @@ struct AgentArgs {
   /// refs: the names after the first (`xo refs A B C`), answered from
   /// one check
   more: List[Str] = []
+  /// symbols and refs: at most this many records (--limit=N; 0: all)
+  limit: Int = 0
+  /// symbols: the doc comments too (--doc)
+  docs: Bool = false
 }
 
 fn agent_args(cmd: Str, args: List[Str]) -> AgentArgs ! Str {
@@ -93,6 +98,13 @@ fn agent_args(cmd: Str, args: List[Str]) -> AgentArgs ! Str {
       a.file = x.trim_prefix("--file=")
     } else if x.starts_with("--module=") && cmd == "symbols" {
       a.module = x.trim_prefix("--module=")
+    } else if x.starts_with("--limit=") && cmd is "symbols" | "refs" {
+      a.limit = Int.parse(x.trim_prefix("--limit=")) ?? -1
+      if a.limit < 0 {
+        return Err("xo ${cmd}: --limit takes a count, not ${x.trim_prefix("--limit=")}")
+      }
+    } else if x == "--doc" && cmd == "symbols" {
+      a.docs = true
     } else if x is "--json" | "-json" {
       a.json = true
       a.text = false
@@ -142,8 +154,14 @@ pub fn run_agent(os: Os, cmd: Str, args: List[Str]) -> Int uses (stdio, fs, env)
     }
   }
   var dir = a.dir
+  // symbols' argument: a directory (as before), else a name pattern
+  // (`xo symbols --dir=D NAME`, `*` matches any run; decision 0386)
+  var pattern = ""
   if cmd == "symbols" && !a.target.is_empty() {
-    dir = a.target
+    match os.fs.stat(a.target) {
+      Ok(Some(fi)) if fi.is_dir => dir = a.target
+      _ => pattern = a.target
+    }
   }
   let cwd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
   if cmd == "symbols" && !a.file.is_empty() {
@@ -168,7 +186,8 @@ pub fn run_agent(os: Os, cmd: Str, args: List[Str]) -> Int uses (stdio, fs, env)
     // a std or runtime module loads with the program
     preload = [a.module]
   }
-  let as_json = a.json || (!a.text && !os.stdio.stdout_is_tty())
+  // text unless --json (decision 0386)
+  let as_json = a.json
   // refs of names: a module under a root whose text spells none of the
   // names' last segments cannot refer to them, so it is not checked (the
   // declaring module spells its name; 2026-10-26: --testdata at the xo
@@ -283,10 +302,16 @@ pub fn run_agent(os: Os, cmd: Str, args: List[Str]) -> Int uses (stdio, fs, env)
           v = J.Obj(keys: keys + ["testdata_skipped"], vals: vals + [jarr(td.map(fn(d) { jstr(d) }))], raws: if raws.is_empty() { raws } else { raws + [""] })
         }
       }
+      // --limit and symbols' pattern, in both forms
+      let (v2, cut) = trim_answer(cmd, v, pattern, a.limit)
+      v = v2
       if as_json {
         print_json(os, v)
       } else {
-        os.stdio.print(agent_text(cmd, v))
+        os.stdio.print(agent_text(os, cmd, v, a.docs, cwd, s.std_dir))
+        if !cut.is_empty() {
+          os.stdio.println("note: ${cut}")
+        }
         if !skip_note.is_empty() {
           os.stdio.println("note: ${skip_note}")
         }
@@ -304,7 +329,76 @@ pub fn run_agent(os: Os, cmd: Str, args: List[Str]) -> Int uses (stdio, fs, env)
   }
 }
 
-fn print_json(os: Os, v: J) uses stdio { os.stdio.println(encode(v, false)) }
+/// JSON a record a line (encode_lines), so grep and head work on it.
+fn print_json(os: Os, v: J) uses stdio { os.stdio.print(encode_lines(v)) }
+
+/// Whether name matches pattern: `*` any run of characters, otherwise a
+/// substring (symbols' NAME, decision 0386).
+fn name_matches(name: Str, pat: Str) -> Bool {
+  if pat.is_empty() {
+    return true
+  }
+  if !pat.contains("*") {
+    return name.contains(pat)
+  }
+  let parts = pat.split("*")
+  var at = 0
+  for (i, p) in parts.indexed() {
+    if p.is_empty() {
+      continue
+    }
+    if i == 0 {
+      if !name.starts_with(p) {
+        return false
+      }
+      at = p.len()
+      continue
+    }
+    match name[at..].find(p) {
+      Some(k) => at = at + k + p.len()
+      None => return false
+    }
+  }
+  pat.ends_with("*") || parts[parts.len() - 1].is_empty() || name.ends_with(parts[parts.len() - 1])
+}
+
+/// The answer with symbols' pattern and --limit applied, and a note of
+/// what was cut ("" when nothing): the list keeps its key, and a cut
+/// list gets "total" beside it.
+fn trim_answer(cmd: Str, v: J, pattern: Str, limit: Int) -> (J, Str) {
+  let key = match cmd {
+    "symbols" => "symbols"
+    "refs" => "references"
+    _ => return (v, "")
+  }
+  let (keys, vals, raws) = match v {
+    J.Obj(k, vs, r) => (k, vs, r)
+    J.Null | J.Bool(_) | J.Num(_) | J.Str(_) | J.Arr(..) | J.Raw(_) => return (v, "")
+  }
+  let i = keys.index_of(key) ?? return (v, "")
+  var items = items_of(v, key)
+  if !pattern.is_empty() {
+    items = items.filter(fn(d) { name_matches(jstr_of(d, "name"), pattern) })
+  }
+  let total = items.len()
+  if limit > 0 && items.len() > limit {
+    items = items[0..limit]
+  }
+  var nv = vals
+  nv[i] = jarr(items)
+  var nk = keys
+  var nr = raws
+  var note = ""
+  if items.len() < total {
+    nk = nk + ["total"]
+    nv = nv + [J.Num(text: "${total}")]
+    if !nr.is_empty() {
+      nr = nr + [""]
+    }
+    note = "showing ${items.len()} of ${total} ${key} (--limit)"
+  }
+  (J.Obj(keys: nk, vals: nv, raws: nr), note)
+}
 
 /// An error: {"error": ...} on standard output as JSON, else a line on
 /// standard error; exit status 1.
@@ -324,16 +418,25 @@ fn items_of(v: J, key: Str) -> List[J] {
   }
 }
 
-/// A declaration's text: `file:line:col: kind name`, its doc as `///`
-/// lines, and its signature (as `xo query def --text` writes one).
-fn decl_text(d: J, indent: Str) -> Str {
-  var b = StrBuilder.new()
+/// d's place, `file:line:col`, or "" for none.
+fn place(d: J) -> Str {
   let file = jstr_of(d, "file")
-  let at = if file.is_empty() { "" } else { "${file}:${int_of(get(d, "line"))}:${int_of(get(d, "col"))}: " }
-  b.write("${indent}${at}${jstr_of(d, "kind")} ${jstr_of(d, "name")}\n")
-  let doc = jstr_of(d, "doc")
+  if file.is_empty() { "" } else { "${file}:${int_of(get(d, "line"))}:${int_of(get(d, "col"))}" }
+}
+
+/// The first line of d's doc comment, or "".
+fn doc_line(d: J) -> Str { jstr_of(d, "doc").trim().split("\n")[0] }
+
+/// A declaration's text (decision 0386): `file:line:col: kind name`, the
+/// doc (all of it with full, else its first line) as `///` lines, and the
+/// signature.
+fn decl_text(d: J, indent: Str, full: Bool) -> Str {
+  var b = StrBuilder.new()
+  let at = place(d)
+  b.write("${indent}${if at.is_empty() { "" } else { "${at}: " }}${jstr_of(d, "kind")} ${jstr_of(d, "name")}\n")
+  let doc = jstr_of(d, "doc").trim()
   if !doc.is_empty() {
-    for l in doc.trim_suffix("\n").split("\n") {
+    for l in if full { doc.split("\n") } else { [doc.split("\n")[0]] } {
       b.write("${indent}/// ${l}\n")
     }
   }
@@ -346,8 +449,44 @@ fn decl_text(d: J, indent: Str) -> Str {
   b.freeze()
 }
 
-/// The text form of a command's JSON answer.
-fn agent_text(cmd: Str, v: J) -> Str {
+/// The source line a reference is on, trimmed and cut to 120 bytes (its
+/// context); "" when the file cannot be read. Files are read once.
+fn ref_context(os: Os, var cache: Map[Str, List[Str]], file: Str, line: Int, cwd: Str, std_dir: Str) -> Str uses fs.read {
+  if !cache.contains(file) {
+    var text = ""
+    // a std file's path is relative to std's parent (std/prelude.xo)
+    for p in [abs_of(cwd, file), "${dir_of(std_dir.trim_suffix("/"))}/${file}"] {
+      if let Ok(b) = os.fs.read(p) {
+        text = b.to_str() ?? ""
+        break
+      }
+    }
+    cache[file] = text.split("\n")
+  }
+  let ls = cache.get(file) ?? []
+  if line < 1 || line > ls.len() {
+    return ""
+  }
+  let t = ls[line - 1].trim()
+  if t.len() <= 120 {
+    return t
+  }
+  var sb = StrBuilder.new()
+  for r in t.runes() {
+    if sb.len() >= 117 {
+      break
+    }
+    sb.write("${r}")
+  }
+  "${sb.freeze()}..."
+}
+
+/// The text form of a command's answer (decision 0386): a record a line,
+/// compact. symbols: `kind name  file:line  signature` (docs only with
+/// --doc); refs: the declaration's line, then `file:line:col  context`
+/// per reference; def: place, the doc's first line, the signature; doc:
+/// the declaration with its whole doc, then a member a line.
+fn agent_text(os: Os, cmd: Str, v: J, docs: Bool, cwd: Str, std_dir: Str) -> Str uses fs.read {
   var b = StrBuilder.new()
   match cmd {
     "def" | "doc" => {
@@ -355,10 +494,11 @@ fn agent_text(cmd: Str, v: J) -> Str {
         if i > 0 {
           b.write("\n")
         }
-        b.write(decl_text(d, ""))
+        b.write(decl_text(d, "", cmd == "doc"))
         for m in items_of(d, "methods") {
-          b.write("\n")
-          b.write(decl_text(m, "  "))
+          let sig = jstr_of(m, "signature").split("\n")[0]
+          let dl = doc_line(m)
+          b.write("  ${jstr_of(m, "name")}  ${sig}${if dl.is_empty() { "" } else { "  // ${dl}" }}\n")
         }
       }
     }
@@ -370,27 +510,39 @@ fn agent_text(cmd: Str, v: J) -> Str {
         }
         match get(r, "error") {
           Some(_) => b.write("xo refs: ${jstr_of(r, "target")}: ${jstr_of(r, "error")}\n")
-          None => b.write(agent_text("refs", r))
+          None => b.write(agent_text(os, "refs", r, docs, cwd, std_dir))
         }
       }
     }
     "refs" => {
-      b.write(decl_text(get(v, "declaration") ?? J.Null, ""))
+      let d = get(v, "declaration") ?? J.Null
+      b.write("declaration: ${place(d)} ${jstr_of(d, "kind")} ${jstr_of(d, "name")}\n")
       let refs = items_of(v, "references")
+      var cache: Map[Str, List[Str]] = {}
       for r in refs {
         let decl = match get(r, "declaration") {
           Some(J.Bool(true)) => " (declaration)"
           _ => ""
         }
-        b.write("${jstr_of(r, "file")}:${int_of(get(r, "line"))}:${int_of(get(r, "col"))}${decl}\n")
+        let ctx = ref_context(os, cache, jstr_of(r, "file"), int_of(get(r, "line")), cwd, std_dir)
+        b.write("${place(r)}${decl}  ${ctx}\n")
       }
-      b.write("${refs.len()} reference(s)\n")
+      let total = int_of(get(v, "total"))
+      b.write("${if total > refs.len() { total } else { refs.len() }} reference(s)\n")
     }
-    "type" => b.write(decl_text(jobj(["kind", "name", "signature", "doc"], [get(v, "kind") ?? J.Null, get(v, "target") ?? J.Null, get(v, "signature") ?? J.Null, get(v, "doc") ?? J.Null]), ""))
+    "type" => b.write(decl_text(jobj(["kind", "name", "signature", "doc"], [get(v, "kind") ?? J.Null, get(v, "target") ?? J.Null, get(v, "signature") ?? J.Null, get(v, "doc") ?? J.Null]), "", true))
     _ => {
       for d in items_of(v, "symbols") {
         let sig = jstr_of(d, "signature").split("\n")[0]
-        b.write("${jstr_of(d, "file")}:${int_of(get(d, "line"))}: ${jstr_of(d, "kind")} ${jstr_of(d, "name")}  ${sig}\n")
+        b.write("${jstr_of(d, "kind")} ${jstr_of(d, "name")}  ${jstr_of(d, "file")}:${int_of(get(d, "line"))}  ${sig}\n")
+        if docs {
+          let doc = jstr_of(d, "doc").trim()
+          if !doc.is_empty() {
+            for l in doc.split("\n") {
+              b.write("  /// ${l}\n")
+            }
+          }
+        }
       }
     }
   }

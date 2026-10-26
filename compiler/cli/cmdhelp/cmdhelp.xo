@@ -457,7 +457,7 @@ Default dir: .
 fn doc_text() -> Str {
   """
 usage: xo doc [--json] [--all] [--dir=<dir>] [module dir or import path]
-       xo doc [--dir=DIR] [--json|--text] NAME
+       xo doc [--dir=DIR] [--json] NAME
 
 Markdown documentation from doc comments and signatures, with the
 example code blocks of each doc comment. --all includes declarations
@@ -465,7 +465,8 @@ that are not pub. Default: the modules under .
 
 With a NAME that is not a directory or an import path (`Map`,
 `std/tls.client`), the declaration's doc comment and, for a type, its
-methods, as xo def finds it.
+methods, as xo def finds it: the declaration with its whole doc, then
+a method a line (its signature and the first line of its doc).
 """
 }
 
@@ -475,27 +476,30 @@ const LOOKUP_DIR = """
 repository root checks the modules under it).
 """
 
-/// The output and exit status of the lookups (decision 0289).
+/// The output and exit status of the lookups (decisions 0289, 0386).
 const LOOKUP_OUT = """
-Output is text at a terminal and JSON otherwise; --json or --text
-chooses. Exit status: 0 with an answer, 1 for no match, 2 for a usage
-error.
+Output is compact text, a record a line, so grep and head cut it
+(decision 0386); --json is the same answer as JSON, broken over lines
+with a flat record (a reference, a symbol) on one line. Exit status: 0
+with an answer, 1 for no match, 2 for a usage error.
 """
 
 fn def_text() -> Str {
   """
-usage: xo def [--dir=DIR] [--json|--text] NAME
+usage: xo def [--dir=DIR] [--json] NAME
 
 Where NAME is declared, with its signature and doc comment. NAME is
 written as code writes it: `greet`, `Counter.next`, `Str.find`,
 `check.Checker.check_dirs`, `std/tls.client`; std and runtime modules
-load when a name refers to them (decision 0289).
+load when a name refers to them (decision 0289). Text: the place, the
+doc comment's first line, the signature (xo doc NAME has the whole
+doc and the methods).
 """ + "\n\n" + LOOKUP_DIR + "\n" + LOOKUP_OUT
 }
 
 fn refs_text() -> Str {
   """
-usage: xo refs [--dir=DIR] [--testdata] [--json|--text] NAME [NAME...]
+usage: xo refs [--dir=DIR] [--testdata] [--limit=N] [--json] NAME [NAME...]
 
 Every reference to NAME in the program, the declaration marked, NAME
 written as for xo def. A root's check leaves out its `testdata`
@@ -503,13 +507,16 @@ directories, as every DIR/... walk does (the answer names them, JSON
 "testdata_skipped"); --testdata checks the modules under them too (the
 program goldens of internal/*/testdata). Several names are answered
 from one check (JSON {"results": [...]}, one answer or {"target",
-"error"} each, in order; exit 1 when one has no answer).
+"error"} each, in order; exit 1 when one has no answer). Text: the
+declaration's line, then `file:line:col  context` per reference (the
+source line, trimmed). --limit=N shows the first N references and
+says how many there are (JSON "total").
 """ + "\n\n" + LOOKUP_DIR + "\n" + LOOKUP_OUT
 }
 
 fn type_text() -> Str {
   """
-usage: xo type [--json|--text] FILE:LINE:COL
+usage: xo type [--json] FILE:LINE:COL
 
 The type of the expression at a position (1 based line and column) and
 the declaration it refers to; FILE's directory is the program checked.
@@ -518,14 +525,19 @@ the declaration it refers to; FILE's directory is the program checked.
 
 fn symbols_text() -> Str {
   """
-usage: xo symbols [--dir=DIR] [--pub] [--json|--text] [DIR | FILE.xo]
-       xo symbols --file=FILE.xo | --module=PATH [--pub]
+usage: xo symbols [--dir=DIR] [--pub] [--doc] [--limit=N] [--json] [DIR | FILE.xo | NAME]
+       xo symbols --file=FILE.xo | --module=PATH [--pub] [--doc] [NAME]
 
 The declarations of one directory's own files, private ones too; --pub
 lists the exported surface only. At a root with no .xo files of its
 own, the directories below that have them are named. --file (or a .xo
 argument) lists one file's; --module one module's by its import path,
-std and runtime ones too (std/json, native/llrt/pool).
+std and runtime ones too (std/json, native/llrt/pool). A NAME that is
+not a directory keeps the declarations whose name contains it, or
+matches it with `*` for any run (`check_*`). Text: `kind name
+file:line  signature` a line (a signature's first line); --doc adds
+each doc comment. --limit=N shows the first N and says how many there
+are (JSON "total").
 """ + "\n\n" + LOOKUP_OUT
 }
 

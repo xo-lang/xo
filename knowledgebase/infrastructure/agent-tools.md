@@ -11,7 +11,14 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   declarations; at a root with no .xo files of its own it names the
   directories below that have them; `--file=F.xo` or a .xo argument for
   one file, `--module=std/json` or `native/llrt/pool` or an import path
-  for one module, 2026-10-21); `--dir=DIR`, `--json` or `--text` (text at a terminal).
+  for one module, 2026-10-21); `--dir=DIR`. Output is compact text, a
+  record a line, everywhere (decision 0386, 2026-10-26: the old JSON
+  default printed `xo symbols --dir=compiler/ssa` as one 540 KB line):
+  symbols `kind name  file:line  signature`, refs `file:line:col
+  context`; `xo symbols [--dir=D] NAME` filters by name (substring, or
+  `check_*`), `--limit=N` on symbols and refs, `--doc` adds symbols' doc
+  comments, `--json` is JSON a record a line for scripts. Pipe through
+  grep or head freely; prefer NAME and --limit over a whole listing.
   Use them instead of grep for declarations, callers, types, and to check
   that a method exists before calling it (`Map.update` existed while
   agents guessed `update_or`, 2026-10-18).

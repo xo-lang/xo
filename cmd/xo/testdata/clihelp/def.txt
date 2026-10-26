@@ -1,12 +1,15 @@
-usage: xo def [--dir=DIR] [--json|--text] NAME
+usage: xo def [--dir=DIR] [--json] NAME
 
 Where NAME is declared, with its signature and doc comment. NAME is
 written as code writes it: `greet`, `Counter.next`, `Str.find`,
 `check.Checker.check_dirs`, `std/tls.client`; std and runtime modules
-load when a name refers to them (decision 0289).
+load when a name refers to them (decision 0289). Text: the place, the
+doc comment's first line, the signature (xo doc NAME has the whole
+doc and the methods).
 
 --dir=DIR checks the program in DIR (default .; a workspace or
 repository root checks the modules under it).
-Output is text at a terminal and JSON otherwise; --json or --text
-chooses. Exit status: 0 with an answer, 1 for no match, 2 for a usage
-error.
+Output is compact text, a record a line, so grep and head cut it
+(decision 0386); --json is the same answer as JSON, broken over lines
+with a flat record (a reference, a symbol) on one line. Exit status: 0
+with an answer, 1 for no match, 2 for a usage error.

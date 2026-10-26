@@ -496,6 +496,8 @@ func xoStd() string {
 
 func agentJSON(t *testing.T, code int, args ...string) map[string]any {
 	t.Helper()
+	// text is the default (decision 0386): ask for JSON
+	args = append(append([]string{}, args...), "--json")
 	var out, errOut bytes.Buffer
 	if got := run(t, args, &out, &errOut); got != code {
 		t.Fatalf("%v: exit %d, want %d: %s%s", args, got, code, out.String(), errOut.String())
@@ -2632,5 +2634,56 @@ func TestVetCostViewStoreMapPut(t *testing.T) {
 	lines := vetCostNotes(t, vetCostViewMapPutProg)
 	if len(lines) != 2 || lines[0] != 4 || lines[1] != 5 {
 		t.Errorf("XO0911 at lines %v, want [4 5]", lines)
+	}
+}
+
+// TestLookupsCompactText covers decision 0386: with standard output not a
+// terminal the lookups print text a record a line (they printed one line
+// of JSON), symbols takes a NAME filter and --limit, refs --limit and a
+// context per reference, and --json is the same JSON broken over lines.
+func TestLookupsCompactText(t *testing.T) {
+	t.Parallel()
+	dir := writeFiles(t, map[string]string{
+		"xo.mod":  "module ex\n",
+		"main.xo": "/// Adds one.\n/// The second doc line.\nfn add_one(n: Int) -> Int { n + 1 }\n\nfn add_two(n: Int) -> Int { add_one(add_one(n)) }\n\nfn other() -> Int { 3 }\n\nfn main(os: Os) {\n  os.stdio.println(\"${add_two(1)} ${other()}\")\n}\n",
+	})
+	lookup := func(args ...string) string {
+		t.Helper()
+		var out, errOut bytes.Buffer
+		if code := run(t, append(args, "--dir="+dir), &out, &errOut); code != 0 {
+			t.Fatalf("xo %v: exit %d\n%s%s", args, code, out.String(), errOut.String())
+		}
+		return out.String()
+	}
+	syms := lookup("symbols")
+	if strings.HasPrefix(syms, "{") || !strings.Contains(syms, "func add_one  "+filepath.Join(dir, "main.xo")+":3  fn add_one(n: Int) -> Int\n") || strings.Contains(syms, "Adds one") {
+		t.Errorf("symbols text:\n%s", syms)
+	}
+	if got := lookup("symbols", "add_*"); strings.Count(got, "\n") != 2 || strings.Contains(got, "other") {
+		t.Errorf("symbols add_*:\n%s", got)
+	}
+	if got := lookup("symbols", "--limit=1"); !strings.Contains(got, "note: showing 1 of ") {
+		t.Errorf("symbols --limit=1:\n%s", got)
+	}
+	if got := lookup("symbols", "--doc", "add_one"); !strings.Contains(got, "  /// The second doc line.") {
+		t.Errorf("symbols --doc:\n%s", got)
+	}
+	refs := lookup("refs", "add_one")
+	if !strings.Contains(refs, "main.xo:5:29  fn add_two(n: Int) -> Int { add_one(add_one(n)) }") || !strings.Contains(refs, "3 reference(s)") {
+		t.Errorf("refs text:\n%s", refs)
+	}
+	if got := lookup("refs", "add_one", "--limit=1"); !strings.Contains(got, "note: showing 1 of 3 references") || !strings.Contains(got, "3 reference(s)") {
+		t.Errorf("refs --limit=1:\n%s", got)
+	}
+	def := lookup("def", "add_one")
+	if !strings.Contains(def, "/// Adds one.") || strings.Contains(def, "second doc line") {
+		t.Errorf("def text (the doc's first line only):\n%s", def)
+	}
+	js := lookup("refs", "add_one", "--json")
+	var v struct {
+		References []struct{ File string } `json:"references"`
+	}
+	if err := json.Unmarshal([]byte(js), &v); err != nil || len(v.References) != 3 || strings.Count(js, "\n") < 4 {
+		t.Errorf("refs --json (%v, %d references):\n%s", err, len(v.References), js)
 	}
 }
