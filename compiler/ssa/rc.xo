@@ -101,6 +101,22 @@ struct Rc {
   skip_imm: Bool = false
   /// the numbers of leaf paths (Rc.leaf, leaf_key): "" is 0
   pids: Map[Str, Int] = {}
+  /// the memo of leaves (decision 0383's follow-up: the pass allocated 14
+  /// GB of the compiler's cold self build, 43%, asking again for the
+  /// leaves of a value): function lm_fi's leaves by value index, whether
+  /// each is made (lm_set); lm_fi -1 for none, which rc_func sets when it
+  /// starts and ends (it renumbers the values), lm_check (the tests) comparing
+  /// every hit with a fresh answer
+  lm_fi: Int = -1
+  lm_v: List[List[Leaf]] = []
+  lm_set: List[Bool] = []
+  lm_check: Bool = false
+  /// the memo of leaf_uses, as lm_*: function um_fi's uses by instruction
+  /// (the passes of rc_func ask for each one's uses again and again), made
+  /// after borrow_projections (its owner uses read bproj)
+  um_fi: Int = -1
+  um_v: List[List[Use]] = []
+  um_set: List[Bool] = []
   /// decision 0322's facts of what each function's calls hand back, by
   /// index (apply_uniq, UniqFacts.facts: [0] its List result, [1 + k]
   /// its k-th `var` out; empty for none), and the mark of a reuse they
@@ -281,12 +297,57 @@ fn (var r: Rc) base(f: Func, v: Int) -> Leaf {
   Leaf{root: v, path: ""}
 }
 
-/// The heap leaves v denotes (leaves).
+/// The heap leaves v denotes (leaves), from the memo when function r.fi has
+/// asked before: values do not change under the passes in a way that moves
+/// their leaves (rc_func clears the memo around its renumbering).
 fn (var r: Rc) leaves(f: Func, v: Int) -> List[Leaf] {
+  if r.lm_fi == r.fi && v < r.lm_set.len() && r.lm_set[v] {
+    if r.lm_check {
+      let fresh = r.leaves_fresh(f, v)
+      if fresh.len() != r.lm_v[v].len() {
+        r.leaves_stale(f, v)
+      }
+      for (i, l) in fresh.indexed() {
+        if leaf_key(l) != leaf_key(r.lm_v[v][i]) || l.path != r.lm_v[v][i].path {
+          r.leaves_stale(f, v)
+        }
+      }
+    }
+    return r.lm_v[v]
+  }
+  let out = r.leaves_fresh(f, v)
+  if r.lm_fi != r.fi {
+    r.lm_fi = r.fi
+    r.lm_v = []
+    r.lm_set = []
+  }
+  while r.lm_set.len() <= v {
+    r.lm_set.push(false)
+    r.lm_v.push([])
+  }
+  r.lm_v[v] = out
+  r.lm_set[v] = true
+  out
+}
+
+/// The memo's answer for v is not what leaves_fresh finds (XO_RC_CHECK
+/// for the tests): a value changed under a pass that does not clear it.
+fn (r: Rc) leaves_stale(f: Func, v: Int) {
+  let none: List[Int] = []
+  // a fault names the function in its trace: the stack's callers print it
+  let _x = none[v + 1]
+}
+
+/// leaves without the memo.
+fn (var r: Rc) leaves_fresh(f: Func, v: Int) -> List[Leaf] {
   let b = r.base(f, v)
   var out: List[Leaf] = []
   for lp in r.leaf_paths(f.values[v].ty) {
-    out.push(r.leaf(b.root, "${b.path}${lp}"))
+    if b.path.is_empty() {
+      out.push(r.leaf(b.root, lp))
+    } else {
+      out.push(r.leaf(b.root, "${b.path}${lp}"))
+    }
   }
   out
 }
@@ -440,6 +501,38 @@ fn fill_modes(n: Int, m: Mode) -> List[Mode] {
 
 /// The heap leaves v uses, in operand order (uses).
 fn (var r: Rc) leaf_uses(f: Func, v: Int) -> List[Use] {
+  if r.um_fi == r.fi && v < r.um_set.len() && r.um_set[v] {
+    if r.lm_check {
+      let fresh = r.leaf_uses_fresh(f, v)
+      let have = r.um_v[v]
+      if fresh.len() != have.len() {
+        r.leaves_stale(f, v)
+      }
+      for (i, u) in fresh.indexed() {
+        if leaf_key(u.l) != leaf_key(have[i].l) || u.l.path != have[i].l.path || u.m != have[i].m {
+          r.leaves_stale(f, v)
+        }
+      }
+    }
+    return r.um_v[v]
+  }
+  let out = r.leaf_uses_fresh(f, v)
+  if r.um_fi != r.fi {
+    r.um_fi = r.fi
+    r.um_v = []
+    r.um_set = []
+  }
+  while r.um_set.len() <= v {
+    r.um_set.push(false)
+    r.um_v.push([])
+  }
+  r.um_v[v] = out
+  r.um_set[v] = true
+  out
+}
+
+/// leaf_uses without the memo.
+fn (var r: Rc) leaf_uses_fresh(f: Func, v: Int) -> List[Use] {
   var out: List[Use] = []
   let x = f.values[v]
   for (i, m) in r.modes(f, v).indexed() {
@@ -452,9 +545,10 @@ fn (var r: Rc) leaf_uses(f: Func, v: Int) -> List[Use] {
       // the replaced field is not used
       let b = r.base(f, a)
       let pre = "${b.path}.${aux_int(x.aux)}"
+      let pre_dot = "${pre}."
       let n0 = out.len()
       for l in ls {
-        if l.path == pre || l.path.starts_with("${pre}.") {
+        if l.path == pre || l.path.starts_with(pre_dot) {
           continue
         }
         out.push(Use{l: l, m: m})
@@ -1203,6 +1297,8 @@ fn (var b: Builder) rc_run(r0: Rc, keys: List[Str], entries: Map[Str, Bytes], su
 /// The reference counting of function fi (f), after borrow inference.
 fn (var r: Rc) rc_func(var f: Func, fi: Int) {
   r.fi = fi
+  r.lm_fi = -1
+  r.um_fi = -1
   // a function with no body, one block with no instruction: `xo dev dump
   // ssa --fn=NAME` makes every function NAME matches a root, and a std
   // function no build reaches can be one; walk reads each block's
@@ -1214,6 +1310,7 @@ fn (var r: Rc) rc_func(var f: Func, fi: Int) {
   }
   var c = RcFunc{}
   r.borrow_projections(f)
+  r.um_fi = -1
   r.liveness(f, c)
   for s in c.live_in {
     c.live_sorted.push(sorted_leaves(f, s))
@@ -1221,13 +1318,18 @@ fn (var r: Rc) rc_func(var f: Func, fi: Int) {
   r.insert(f, c)
   r.cancel(f)
   r.reuse(f)
+  r.um_fi = -1
   r.group_releases(f)
+  r.um_fi = -1
   r.sink_landings(f)
+  r.um_fi = -1
   prune_landings(f)
   if r.chain {
     r.chain_pads(f)
   }
   renumber(f)
+  r.lm_fi = -1
+  r.um_fi = -1
   f.borrowed = r.borrowed[fi]
 }
 
