@@ -1,7 +1,9 @@
 # 0365: A content store behind the back-end cache's per-id keys
 
 Status: Proposed (Xo Lang 3, 2026-10-24; for the owner's Sunday review,
-nothing built)
+nothing built). Deferred by the owner on 2026-10-24 ("measure a day of
+churn after today's cache fixes first"); that day is measured below
+(2026-10-26).
 
 ## Context
 
@@ -45,6 +47,57 @@ key.
 holds none, 8 KB bodies, 20,000 entries): a direct hit reads 115 microseconds
 on one thread (26 at 8 threads); a hit through a pointer file (read the
 pointer, then the body) 215 (45 at 8 threads). sha256 hashes 3.0 GB/s.
+
+## Measured: a day of churn after the fixes (Xo Lang 2, 2026-10-26)
+
+From the cache's store-log and prune-log (scripts/cache-churn.sh, read
+only; the hourly rows are UTC, the day below is 2026-10-24 00:00 to 24:00
+EDT; distinct ids, kinds and id lifetimes counted from the store-log
+directly). Cap 16 GiB throughout.
+
+| | 2026-10-24 (before the fixes) | last 24 h (to 2026-10-26 12:30 EDT) |
+|---|---|---|
+| stored | 1,406 GB | 1,097 GB |
+| pruned | 674 GB | 381 GB |
+| distinct ids that stored | 224 | 197 |
+| stored by ids retired at the report (no store in its last hour) | 97 to 100% an hour | 86% |
+| stored by ids that lived under 3 hours (first to last store) | 55% | 75% |
+| stored by the 5 biggest ids | 27% | 20% |
+| id lifetime, median and p90 | 0.0 h, 1.6 h | 0.1 h, 2.3 h |
+| by kind (GB) | pack/part 419, pack/fn 273, pack/inl 192, pack/fe 167, pack/rc 109, obj 104 | pack/part 335, pack/fn 284, pack/fe 179, pack/inl 177, pack/rc 93, obj 88 |
+
+Stored bytes count pack segments each time one is written, rewrites
+included, which is why stored exceeds pruned by more than the cap; the
+identical-bytes shares above were measured on the entries inside the
+segments, so they apply to the same counting. The day after the fixes
+stored 22% less, about what the lower agent activity explains (197 ids
+against 224); per id the volume is unchanged (5.6 and 6.3 GB). The shape
+did not change: three quarters of the bytes come from ids that live under
+three hours (an agent's branch, a bisect step, a measurement's two xos),
+each re-storing what the ids before it stored. At today's rate the cap
+holds about 22 minutes of stores (16 GiB, 17.2 GB, at 45.7 GB an hour).
+
+What the measured shares would save on today's churn: 26% (every function
+changed) to 49% (a small backend change) of the 1,097 GB, so 285 to 537 GB
+a day fewer bytes written, and the cap would hold about 30 to 44 minutes of
+stores instead of 22. The part and fn packs, 53% of the stored bytes (the store-log's count), are
+where the shares were highest (part packs 100% identical on equal code).
+
+### Recommendation (Xo Lang 2, for the owner)
+
+Build it, starting with the part and fn packs. The fixes of 2026-10-24
+lowered the volume only as far as activity fell, and the churn is still
+three quarters short-lived ids re-storing bytes another id already wrote;
+that is the case this decision targets and nothing else in the cache
+addresses (idle-id eviction frees nothing, as the Context says). The gain
+is about 0.3 to 0.5 TB a day less written to the Mac's SSD and a cache
+that remembers up to twice as long, against one more read per pointer
+hit and a reference sweep in prune; stage it so the sweep is tested with
+fault injection before the fn, inl and rc packs move over, and measure
+the hit rate of an agent switching between two branches before and after.
+If the owner prefers less risk, keep it deferred and add zstd compression
+of the segments first (additive, no sweep); closing it would leave the
+churn as measured here.
 
 ## Decision
 
