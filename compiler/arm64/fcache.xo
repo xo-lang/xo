@@ -21,7 +21,7 @@ const FP_TOKEN = "\x01F\x01"
 const FN_TOKEN = "\x01N\x01"
 
 /// The version of the entries and keys.
-const FN_CACHE_VERSION = "xo fn cache v9"
+const FN_CACHE_VERSION = "xo fn cache v11"
 
 /// What a generation takes from the cache: the key of each function of
 /// the module ("" for a function not cached; none when the cache is

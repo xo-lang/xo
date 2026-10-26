@@ -541,8 +541,31 @@ fn (var b: Builder) lists_put(t: Int) -> Str {
   name
 }
 
+/// xo.maph.putbody[T](m, k, v) -> T (ssa.cold_fn): the lists' put, one
+/// copy for both of its cold callers. It marks nothing, because only the
+/// put that found the values list held once has to (putrest does it on the
+/// result), and that keeps the replay path free of a test it would always
+/// fail. Two copies, and then one copy behind a mode test, each cost more
+/// than this: 0.9 to 1.1 KB a Map type, or a branch a replay put pays
+/// (0372 follow-up, 2026-10-25).
+fn (var b: Builder) maph_putbody(t: Int, rebuild: Str, hash: Str) -> Str {
+  let kt = map_key(b.m, t)
+  let vt = map_val(b.m, t)
+  let name = "xo.maph.putbody[${b.m.types[t].name}]"
+  let fi = b.thunk_func(name, [t, kt, vt], [t], [])
+  if fi < 0 {
+    return name
+  }
+  let saved = b.begin(fi, b.s.file)
+  b.put_body(t, b.param(0), b.param(1), b.param(2), -1, rebuild, hash)
+  b.finish_fn()
+  b.end(saved)
+  name
+}
+
 /// xo.maph.putrest[T](m, k, v) -> T (ssa.cold_fn): the hybrid's put when
-/// the values list is not held once (lists_put).
+/// the values list is not held once: the lists' put through putbody, then
+/// the shared mark when the put found the lists held once.
 fn (var b: Builder) maph_putrest(t: Int, rebuild: Str, hash: Str) -> Str {
   let kt = map_key(b.m, t)
   let vt = map_val(b.m, t)
@@ -556,7 +579,8 @@ fn (var b: Builder) maph_putrest(t: Int, rebuild: Str, hash: Str) -> Str {
   let k = b.param(1)
   let v = b.param(2)
   let sh = b.maph_put_pro(t, mp, k, v)
-  b.put_body(t, mp, k, v, sh, rebuild, hash)
+  let body = b.maph_putbody(t, rebuild, hash)
+  b.retv(b.maph_marked(t, b.call(body, t, "", [mp, k, v]), sh))
   b.finish_fn()
   b.end(saved)
   name

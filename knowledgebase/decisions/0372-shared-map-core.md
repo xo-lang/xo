@@ -316,10 +316,158 @@ to run spread.
 - One directory for a fork's entries and its values. The lazy value
   directory is in already and did not move branch.
 - Shrink the hybrid's typed slow paths further: slowput 2.6 KB and
-  slowrem 1.4 KB a type.
+  slowrem 1.4 KB a type. Stage 0 (below) took the cold shells; slowput's
+  and slowrem's own bodies are still a copy a type.
 - Mark putk and vcompact cold, as the old rebuild was. Measure it on its
-  own.
+  own. Tried in stage 0 (-76 B on CRUD, -300 B on the 8 Map type
+  synthetic) and rejected on measurement in the stage 0 addendum below:
+  `vcompact` cold costs copymut 6% of its wall time for 1.6 KB, and
+  `putk`'s coldness does not survive into the binary.
 - Flip map_core's default only after its default-change suites.
+
+## Stage 0, the hybrid's cold shells (2026-10-25, measured)
+
+Lever 1 of the follow-up "shrink the hybrid's typed slow paths further",
+with putk and vcompact made cold (the other follow-up):
+
+- `xo.maph.putrest[T](m, k, v, mode)` serves both cold lists puts: mode 0
+  is the put when the values list is not held once (lists_put), mode 1 is
+  maph_goback's replay, so `xo.maph.listput[T]` is gone.
+- One `put_body` serves both modes. The shared flag is computed only in
+  the mode 0 arm (`sv = false` in mode 1, where the old listput passed
+  -1, "no mark"); a second body costs 0.9 to 1.1 KB a Map type.
+- `xo.map.putk` and `xo.map.vcompact` are in `cold_fn`; that alone is
+  -76 B on CRUD and -300 B on the 8 Map type synthetic, since the two
+  are one function a key type and one a value type.
+- Fn cache v11, part cache v7 (main had v9 and v4 when this landed; the
+  shapes measured below used v10, v11, v12 and v5 to v9 meanwhile).
+
+Release arm64, one xo each, the same tree with the diff reverted and then
+applied (`/tmp/sb4/ab.sh`), on CRUD `bench/perf/http/xo` and an 8 Map type
+synthetic (Str and Int keys, value widths 1 to 3 words, each put, get and
+remove):
+
+| program | base __text | stage 0 __text | change |
+|---|---|---|---|
+| CRUD | 1,445,680 | 1,441,376 | -4,304 (-0.30%) |
+| 8 Map types | 261,296 | 254,440 | -6,856 (-2.62%) |
+
+Map families: CRUD 81,092 -> 76,788 (xo.maph 32,180 -> 27,952, xo.map
+11,820 -> 11,744, xo.mlog 37,092 unchanged); the synthetic 124,524 ->
+117,668 (xo.maph 54,396 -> 47,844, xo.map 20,160 -> 19,860, xo.mlog
+49,968 -> 49,964). 819 B a Map type on the synthetic and 1,057 B a type
+on CRUD's four.
+
+**Measured negative, the first shape.** Deleting listput and letting
+putrest carry the replay as an arm per mode kept two put_body copies
+inside the one function, so only the entry, prologue and epilogue were
+deduped: CRUD -1,768 B and the synthetic -2,032 B, 216 B a type rather
+than the 0.9 to 1.1 KB the estimate assumed. The estimate was right about
+the body's size and wrong about what a merged thunk saves
+(gotchas/merged-thunk-keeps-body-copies.md).
+
+Gate (2026-10-25):
+
+- ds-gate-base PASS (the codegen patterns included); arm64 fault goldens
+  ok, the same 24 goldens ok on LLVM and under `XO_TEST_GO_PARITY=1`.
+- TestMapLogStress plain at XO_THREADS 1, 2, 4 and 8 and `--race` at 2
+  and 8: no bad read, no race report.
+- stdfuzz maps, plain and `-release`: clean.
+- The fixed point (scripts/bootstrap-xo.sh, XO_BOOTSTRAP_SEED_IS_S1=1):
+  s2 and s3 identical (738,015,812 B of arm64 assembly, 105,977,839 B of
+  binary). xo's own s2 `__text` is 60,540,240 B, 14,332 symbols.
+- Max RSS, the log form of a 100,000 key map: 17,285,120 -> 17,317,888 B
+  peak (+0.19%, stage 0 changes no map memory).
+- The Docker amd64 sample (scripts/docker-amd64-sample.txt, native amd64
+  backend with Xo's own assembler and linker): 48 of 48 ok.
+
+## Stage 0, one shared body (2026-10-25, measured, as built)
+
+The stage 0 above still had one `put_body` copy per cold entry: the mode
+test chose the shared flag, and the body stayed inside `putrest`. The
+shape as built moves the body into its own cold function:
+
+- `xo.maph.putbody[T](m, k, v)` is a `cold_fn` holding the one lists put;
+  every path returns the new map unmarked.
+- `xo.maph.putrest[T](m, k, v)` computes the shared flag with
+  `put_pro`, calls `putbody`, and marks the result. The replay of a forked
+  map (`maph_goback`) calls `putbody` directly: no flag, no mode test, and
+  no mark on a path that never needed one.
+- `putk` and `vcompact` are NOT cold: making `vcompact` cold is what cost
+  copymut its wall time (below), and making `putk` cold does not survive
+  into the binary at all.
+- Fn cache v11, part cache v7.
+
+Four shapes, each against the parent tree, arm64 release build of CRUD
+`bench/perf/http/xo` and of an 8 Map type synthetic, `XO_INLINE_STRICT=1`,
+one std for both sides:
+
+| shape | CRUD __text | 8 Map __text | copymut wall | copymut instructions | putget wall | putget instructions |
+|---|---|---|---|---|---|---|
+| parent | 1,445,680 | 261,296 | 1 | 1 | 1 | 1 |
+| one body behind a mode test, `putk` and `vcompact` hot | -2,656 | -3,936 | 1.033 (0.962 to 1.06) | 1.012 | 0.965 (0.944 to 1.016) | 1.014 |
+| mode test, `putk` and `vcompact` cold (the stage 0 above) | -4,304 | -6,856 | 1.061 (1.008 to 1.085) | 0.992 | 0.968 (0.933 to 0.997) | 0.992 |
+| `putbody`, no mode test, `putk` and `vcompact` cold | -5,584 | -9,728 | 1.063 (1.045 to 1.083) | 0.979 | 0.971 (0.933 to 1.009) | 0.977 |
+| **as built**: `putbody`, no mode test, `putk` and `vcompact` hot | -3,976 | -6,784 | 0.993 (0.947 to 1.022) | 0.999 | 0.961 (0.93 to 0.981) | 1.0 |
+
+What the table settles:
+
+- The wall loss tracks `vcompact` being cold, not the mode test and not the
+  shared body. The shape that kept it hot cost 3.3% on copymut (not
+  significant); both shapes with it cold cost about 6%. A variant with only
+  `vcompact` cold has byte counts identical to the stage 0 shape, so
+  `putk`'s coldness does not survive into the binary at this point (the
+  -76 B and -300 B recorded under stage 0 are below what this measurement
+  can separate).
+- A program that runs 2% fewer instructions and 6% more wall time is paying
+  for where the compaction code sits, not for extra work. The control that
+  makes this readable: the parent binary against a byte copy of itself runs
+  1.001 wall (0.982 to 1.019) and 1.0 instructions at the same load, and the
+  loss reproduced three times (1.061, 1.063, 1.070).
+- The shape as built is the smallest one whose copymut wall is inside 1.03.
+  It is 1,648 B larger on CRUD than the cold `vcompact` shapes and inside
+  every bar; putget gets 3.9% faster on wall because the replay no longer
+  pays for a mark it never needed.
+
+Measured and rejected:
+
+- **A mode test in one shared `putrest`** with `putk` and `vcompact` cold
+  (the stage 0 shape): 1,648 B smaller than the shape as built on CRUD for
+  a reproduced 6.1% copymut wall loss. Instructions alone would have
+  preferred it; the wall column decides (decision 0340, and the 1.03 rule
+  the lead set for this work).
+- **`vcompact` cold with `putk` hot**: identical bytes to the stage 0
+  shape and the same wall loss, so the extra 1.6 KB buys nothing.
+
+Gate (2026-10-25, the shape as built):
+
+- ds-gate-base PASS: xobuild, xotool and repotest short, 14 program builds
+  and 188 codegen patterns, 0 fail.
+- TestMapLogStress plain at XO_THREADS 1, 2, 4 and 8 and `--race` at 2
+  and 8: no bad read, no race report.
+- Every arm64 golden ok (the fault and the slice corpora among them).
+- stdfuzz maps, plain and `-release`: no divergence on arm64, LLVM and Go.
+- The fixed point (scripts/bootstrap-xo.sh): s2 and s3 identical
+  (743,110,805 B of arm64 assembly, 106,666,159 B of binary), and s1
+  equals s2. The compiler's own size was measured before the rebase,
+  against its parent: xo's s2 `__text` 60,540,240 -> 60,566,272 B with
+  14,332 -> 14,245 symbols (+26,032 B, +0.04%), which is the compiler's
+  own source growing by the new function and its instances, not the
+  programs it builds (CRUD -3,976 B, the 8 Map type synthetic -6,784 B).
+  On the rebased tree s2's `__text` is 60,967,128 B with 14,262 symbols;
+  its parent was not rebuilt, since main's own changes move that
+  absolute and the delta is our source growing.
+- Max RSS, the log form of a 100,000 key map: 17,334,272 -> 17,367,040 B
+  peak (+0.19%, one page; the shape changes no map memory).
+- The Docker amd64 sample (scripts/docker-amd64-sample.txt, native amd64
+  backend with Xo's own assembler and linker): 48 of 48 ok.
+
+Landed as one commit on main 2455c462d. The rebase re-ran the proofs on
+the new base: ds-gate-base PASS, TestMapLogStress PASS, the fixed point
+above, and the size A/B reproduced the same deltas on different
+absolutes (CRUD 1,442,272 -> 1,438,296 and families 81,028 -> 77,052;
+the synthetic 260,448 -> 253,664 and families 124,352 -> 117,568),
+because main's 0376 bounds-check elision moved both sides together.
 
 ## Consequences
 

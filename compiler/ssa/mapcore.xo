@@ -220,7 +220,8 @@ fn (var b: Builder) put_body_core(t: Int, mp: Int, k: Int, v: Int, sh: Int) {
   // in xo.map.put, a new key with room in the table (or a small map's
   // scan): appended in line, as the lists' put did; only a put that grows
   // the table calls putk (a tuple of lists cost 62 instructions an
-  // insert). The hybrid's cold puts (putrest, listput) always call putk.
+  // insert). The hybrid's cold puts (putrest and the replay's putbody)
+  // always call putk.
   let keys0 = b.mfield(t, 0, mp)
   let n0 = b.add(Op.Field, it, Aux.I(n: 4), [mp])
   if b.s.f.name.starts_with("xo.map.put[") {

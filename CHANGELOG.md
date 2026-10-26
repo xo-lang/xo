@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- A Map type's cold put paths share one body (decision 0372's stage 0, arm64): the
+  lists' put is one cold `xo.maph.putbody`, called by `xo.maph.putrest` (which keeps
+  the shared mark) and by a forked hybrid map's replay, so the second copy of the
+  body and its `xo.maph.listput` wrapper are gone. A Map type is 848 B smaller in an
+  8 type program (2.6% of the text), and a CRUD server 3,976 B (0.28%); copymut runs
+  in 0.993 of the wall time and putget in 0.961, with instructions at parity.
 - arm64: a function's result bounded by one of its parameters is known to its callers (decision
   0376): `i < n` for an n from `strings.space_start(b, lo, b.len())` needs no bounds check.
   compiler/xo itself has 4% fewer bytes index checks and 2.5% fewer list index checks.
@@ -14,7 +20,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   every list literal and every call on a list in it, and XO1201 "the std function
   `NAME.f`" for a call of the module's own function, though the same code compiled in
   a program; only a `std/native/NAME` module's tests worked (decision 0262).
-
 - `xo build --inline-str` (experimental, decision 0370, arm64 and amd64, default off): a Str
   of up to 11 bytes keeps its text in its two words. A list of a million short keys takes
   0.38 of the memory, a `Map[Str, Int]` 0.69, its sort 0.62 (wall 0.77, 0.84 and 0.65);
