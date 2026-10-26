@@ -73,15 +73,20 @@ fn push_num(out: Str, v: Int, sw: Int, sk: Int) -> Str {
 /// (k + sk at most 8).
 fn cat(x: Int, k: Int, sw: Int) -> Int { x | (sw << (8 * k)) }
 
-/// 10^k (0 <= k <= 9).
+/// 10^k (0 <= k, 10^9 from 9 up) as one of ten constants: the loop's
+/// multiply was an overflow check per digit, and its result had no lower
+/// bound, so every division by it was a zero check too (2026-10-25)
 fn pow10(k: Int) -> Int {
-  var p = 1
-  var i = 0
-  while i < k {
-    p *= 10
-    i += 1
+  if k < 5 {
+    if k < 3 {
+      return if k < 2 { if k < 1 { 1 } else { 10 } } else { 100 }
+    }
+    return if k < 4 { 1000 } else { 10000 }
   }
-  p
+  if k < 8 {
+    return if k < 7 { if k < 6 { 100000 } else { 1000000 } } else { 10000000 }
+  }
+  if k < 9 { 100000000 } else { 1000000000 }
 }
 
 /// out + the pieces a (ak bytes) and b (bk bytes), then iv (0 <= iv <
@@ -489,16 +494,36 @@ pub fn append_time(out: Str, t: Int) -> Str {
   var k = 9
   while x % 10 == 0 {
     x = x / 10
-    k -= 1
+    // the mask changes nothing (the loop runs at most 8 times, so k stays
+    // 1 to 9) and lets the backends prove the countdown cannot overflow,
+    // so it is unchecked (2026-10-25)
+    k = (k - 1) & 0xF
   }
-  var j = 4
-  if k < j {
-    j = k
+  // j and r take the ranges the shifts and the size word below need
+  // proved: j at most 4, r at most 5 (masks that change nothing)
+  let j = (if k < 4 { k } else { 4 }) & 7
+  let r = (if k > 4 { k - 4 } else { 0 }) & 7
+  // 10^r as one of eight constants, written out here because a function's
+  // result has no range: a constant value proves the divisor is not zero,
+  // so `x / q` and `x % q` are unchecked (2026-10-25)
+  let q = if r < 4 {
+    if r < 2 {
+      if r < 1 { 1 } else { 10 }
+    } else {
+      if r < 3 { 100 } else { 1000 }
+    }
+  } else {
+    if r < 6 {
+      if r < 5 { 10000 } else { 100000 }
+    } else {
+      if r < 7 { 1000000 } else { 10000000 }
+    }
   }
-  let r = k - j
-  let q = pow10(r)
-  let c = ss | (46 << 24) | (digits_word(x / q, j) << 32)
-  rt.rs_push_words(out, w0, w1, c, cat(digits_word(x % q, r), r, 90), 8 | (8 << 4) | ((4 + j) << 8) | ((r + 1) << 12))
+  let c = ss | (46 << 24) | ((digits_word(x / q, j) & 0x7FFFFFFF) << 32)
+  // the rest of the digits and "Z": cat's arguments here are proved
+  // (r <= 7, so 8 * r < 64 and 90 << 56 still fits), which its own
+  // definition cannot see
+  rt.rs_push_words(out, w0, w1, c, digits_word(x % q, r) | (90 << (8 * r)), 8 | (8 << 4) | ((4 + j) << 8) | ((r + 1) << 12))
 }
 
 /// The byte at p + at (parse_time_at's reads, unchecked: it checks its

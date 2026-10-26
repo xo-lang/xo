@@ -1,5 +1,35 @@
 # prelude changes
 
+## 2026-10-25: perf: the fraction of a formatted Time has no range checks
+
+- Kind: perf
+- Commit: this commit
+- Found by: the arm64 assembly of `text.append_time`, whose `ns != 0`
+  tail carried ten checks (`fault1` to `fault10`): the trailing zero
+  countdown, `r = k - j`, `pow10`'s multiply, `digits_word(x / q, j) << 32`,
+  three inside `cat`, `r + 1`, `(4 + j) << 8` and `(r + 1) << 12`
+- Go reference: none (Go's `time.Time.Format` divides by a power of ten
+  taken from a table, and an overflow is not a check in the language)
+- Test: the time goldens on arm64, LLVM with Go parity and the wasm
+  subset (time_fixed_offsets, time_parse_digits, floor_div_time,
+  clock_timers, duration_parse_edges, rt_poll_timer, realtime_section), a
+  301,476 line format sweep hashed against the before std, stdfuzz's time
+  area (200 cases, three backends, no divergence)
+- Timing: bench/results/time-fmt-tail-2026-10-25.md, arm64: `time_fmt`
+  goes from 152,186,300 to 142,235,040 instructions retired (0.934, and
+  0.977 of LLVM's where it was 1.046), `dur_fmt` from 133,918,809 to
+  130,876,372 (0.977), the checksums unchanged
+
+The tail's values are now written so the value ranges prove them: the
+countdown masks with `0xF` (it runs at most 8 times), `j` and `r` with
+`0x7`, `10^r` is a tree of constants written at the call site because a
+call's result has no range there, `cat` is written out, and
+`digits_word(x / q, j)` masks with `0x7FFFFFFF` before the shift.
+`pow10` itself is a tree of ten constants for `frac_words`, whose
+`dur_fmt` rows lose their multiply and zero checks. arm64's
+`text.append_time` goes from 703 to 543 lines of assembly, and no value
+changes.
+
 ## 2026-10-25: perf: sort_in_place's merge moves elements by swapping, so nothing is counted
 
 - Kind: perf
