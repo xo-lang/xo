@@ -191,8 +191,10 @@ func callsIn(body string) map[string]bool {
 	return out
 }
 
-// corpusDirs are the roots of the corpora, the program goldens and the
-// tool's own test programs.
+// corpusDirs are the roots of the corpora, the program goldens, the tool's
+// own test programs, and the repository's programs: the benchmark twins
+// under bench/perf and the scripts (they are checked as programs like the
+// goldens, so a call they make is a call std sees).
 func corpusDirs() []string {
 	// cmd/xo's test programs are joined in two steps: TestCacheTable reads
 	// the literal `"xo", "NAME"` as a cache directory under the user's cache.
@@ -203,6 +205,8 @@ func corpusDirs() []string {
 		filepath.Join("internal", "arm64", "testdata"),
 		filepath.Join("internal", "gen", "testdata"),
 		filepath.Join(xoDir, "testdata"),
+		filepath.Join("bench", "perf"),
+		"scripts",
 	}
 }
 

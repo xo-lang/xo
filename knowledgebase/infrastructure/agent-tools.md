@@ -208,8 +208,9 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 - `go run ./scripts/stdcoverage` prints every std function and method no
   corpus or golden calls (internal/stdcoverage): std/*.xo and
   std/native/prelude.xo against the calls in internal/stdtest's corpora,
-  internal/llvm's and internal/arm64's goldens, internal/gen's goldens and
-  cmd/xo's testdata, following std's own calls and the prelude lowering
+  internal/llvm's and internal/arm64's goldens, internal/gen's goldens,
+  cmd/xo's testdata, bench/perf's benchmark programs and scripts/,
+  following std's own calls and the prelude lowering
   (decision 0074). The -short TestStdAPICovered fails for an uncovered
   declaration that internal/stdcoverage/allow.txt does not name with its
   reason, and for an allowlist line that matches nothing; a new std
@@ -220,7 +221,10 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   goldens, 214 declarations are uncovered by resolution against 128 by the
   name scan, and 86 declarations the scan calls covered are reached by no
   edge (2026-10-25, internal/stdcoverage UncoveredResolved;
-  `-edges=DIR -dirs=FILE` compares the two over the same programs).
+  `-edges=DIR -dirs=FILE` compares the two over the same programs). Those
+  numbers predate the impl-file sites (2026-10-26, next bullet), so most of
+  the 86 were sites the edges never held; the comparison has to be re-run
+  with them.
 - `xo dev edges [--out=FILE] [--impls] DIR` writes the checked program's
   resolved references, one tab separated line each:
   SRC_PATH SRC_LINE SRC_NAME TGT_PATH TGT_LINE TGT_NAME SITE_PATH
@@ -233,6 +237,15 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   site column; a call through an interface names the interface method, so
   without these edges every implementation looks unused. TestDevEdges runs
   it on the strwhere golden.
+  The check preloads `native/NAME` for every `std/NAME.xo` that has a
+  `std/native/NAME.xo`, so the implementation files' bodies are checked
+  and their sites are in the output: without that the eight impl files
+  that nothing imports (the prelude's, big, http, internal, log, sql,
+  testing, time) had no site and no target at all, and every declaration
+  they implement looked unreachable (2026-10-26). The cost is a full
+  runtime check a program: 16 s for a small corpus against 0.3 s for
+  `xo check`, so a sweep over 800 programs is hours; run it in a bulk
+  slot, and sample when a full sweep is not needed.
 - `go run ./scripts/stdfuzz` is the backend differential fuzzer: it
   generates one Xo program of seeded random inputs through pure std
   functions (strings, bytes, strconv, json encode/parse, runes, path,

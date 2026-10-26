@@ -86,13 +86,38 @@ pub fn edges_cmd(os: Os, args: List[Str]) -> Int uses (env, fs, fs.read, fs.writ
   }
 }
 
-/// The headless session of the program in dir, checked.
+/// The headless session of the program in dir, checked, with the std
+/// implementation files loaded and their bodies checked too.
 fn session(os: Os, dir: Str) -> Session ! Str uses (stdio, fs, env) {
-  let s = agent_session(os, dir, [])?
+  let s = agent_session(os, dir, impl_modules(os, std_dir(os)))?
   if !s.err.is_empty() {
     return Err(s.err)
   }
   Ok(s)
+}
+
+/// The std modules whose bodies an implementation file holds: `native/NAME`
+/// for each `std/NAME.xo` that has a `std/native/NAME.xo` (decision 0074
+/// lowers a prelude method to a function there by symbol, so no import
+/// names the file). Without them in the preload the checker reads the
+/// declarations only, and their sites, which are most of what a corpus
+/// calls, are nowhere in the edges.
+fn impl_modules(os: Os, std_dir: Str) -> List[Str] uses fs.read {
+  var out: List[Str] = []
+  if std_dir.is_empty() {
+    return out
+  }
+  let entries = os.fs.read_dir(std_dir).ok() ?? []
+  for e in entries {
+    if e.is_dir || !e.name.ends_with(".xo") || e.name.ends_with("_test.xo") {
+      continue
+    }
+    let name = e.name.trim_suffix(".xo")
+    if os.fs.read("${std_dir.trim_suffix("/")}/native/${name}.xo").is_ok() {
+      out.push("native/${name}")
+    }
+  }
+  out
 }
 
 /// The edge lines of the last check, sorted.

@@ -30,6 +30,19 @@ func TestDevEdges(t *testing.T) {
 	if !hit {
 		t.Errorf("xo dev edges %s: no edge resolves a contains_where call to std/prelude.xo", dir)
 	}
+	// a body of a std implementation file is checked too (the preload of
+	// native/NAME for std/NAME.xo, without which most of what a corpus
+	// calls has no site at all): std/native/prelude.xo holds the sites of
+	// the prelude methods this program uses
+	hitImpl := false
+	for _, f := range plain {
+		if f[0] == "std/native/prelude.xo" {
+			hitImpl = true
+		}
+	}
+	if !hitImpl {
+		t.Errorf("xo dev edges %s: no site in std/native/prelude.xo, so the implementation file's bodies were not checked", dir)
+	}
 	impls := devEdges(t, dir, "--impls")
 	extra := 0
 	// an interface method of the prelude, reached through the interface,
