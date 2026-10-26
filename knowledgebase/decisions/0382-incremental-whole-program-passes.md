@@ -1,6 +1,7 @@
 # 0382: The passes between the caches become per function and per part in an edit rebuild
 
-Status: Proposed (Xo Lang 3, 2026-10-26, for the owner; nothing built). The second half of the
+Status: Accepted (owner, 2026-10-26 ~18:20, for 0.33.0; proposed by Xo Lang 3; built by Xo Lang 1,
+step 1 only as corrected below: step 2 shipped as the incremental hollow, see Accepted scope). The second half of the
 edit rebuild work (decision 0380 is the front end half): after the front end, every cache hits
 and an edit of one function still costs the rest of the 330 ms because each phase walks all
 1,300 functions and all the emitted text.
@@ -66,6 +67,26 @@ above; the replay (43 ms) and the key hashing stay. The hollow and undef summari
 unaffected: about 30 to 40 ms of the 55. With decision 0380 (85 to 90 ms) the edit would be near
 200 ms, not Go's 100 ms. The remaining floor is the replay and the whole-program walks; the way
 under it is the compile server (decision 0283) or a replay that does not rebuild the whole module.
+
+## Accepted scope (2026-10-26, Xo Lang 1)
+
+Step 2 is already built: the incremental hollow (compiler/xo asmparts.xo incr_hollow) keeps each
+part's hollow facts (hfacts) and undefined-symbol facts (hufacts) beside its text, runs
+reachability over the facts, and rewrites only the parts with an unreached function; ELF parts also
+key on every part's extra labels (hextra). Edit timings with it: hollow on linux/amd64, HTTP server
+196 to 86 ms, llvm-fib 51 to 30 ms. What is built here is step 1 as the correction above states:
+after the replay, a key per function from key_func and the callee facts the passes before the
+reference counting read, and a post-pass "cln" entry read lazily, so those passes run for the
+changed functions only. Expected: 30 to 40 ms.
+
+The edit breakdown it starts from (llvm-fib, one body edit, about 280 to 300 ms of wall, Xo Lang 1,
+2026-10-26): front end about 140 (check 55, fe.keys 9, fe.read 6, fe.build 25, ssa 46), the middle
+phases about 95, the back end about 21, the run cache's check about 15 to 18 (a miss).
+
+Stages, each landing on its own with every edit binary byte-equal to a cold build (real body edits
+of llvm-fib and the HTTP server), TestBackendCacheEditIdentity and the fixed point: (1) the chained
+keys and the "cln" entry's storage with a round-trip test; (2) the reuse behind XO_CHAIN_KEYS=1,
+clean under XO_BACKEND_CACHE=verify; (3) the default.
 
 ## Expected effect (to be measured)
 

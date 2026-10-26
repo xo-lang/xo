@@ -125,6 +125,14 @@ Step (b) lands in three stages, each on its own:
    checker's declarations serialized, types by stable names with a remap on load), the rest of the
    bound (resolve, declare, about 23 ms of CPU, and most of the 200 MB).
 
+Stage 1 landed (7b32ec87e). Stage 2 result (2026-10-26 18:08, Xo Lang 1): small, not pushed. With
+XO_IFC_CACHE=1 against the same xo with it off, alternating edits: llvm-fib edit about 305 to 295 ms
+(check 58 to 51 ms), the HTTP server about 610 to 595 ms, peak RSS unchanged. The parse already ran
+on prefetch tasks off the critical path, and a decoded tree allocates as much as a parsed one, so
+the 75 ms of parse CPU was mostly not wall time. An opt-in flag worth about 10 ms was not landed;
+the branch is kept as refs/recover/lang1-0380-stage2. Declaring std from entries (stage 3) is what
+remains of the bound; the edit loop's next lever is decision 0382.
+
 ## Measurement plan
 
 1. First, an instrument, no entry: how much of the check's 57 ms and 186 MB is std (a run with only
