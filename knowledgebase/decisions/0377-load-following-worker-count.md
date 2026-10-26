@@ -73,6 +73,12 @@ this proposal keeps fewer workers awake instead.
 3. The conc twins (the concurrency benchmarks in bench/perf: sysio chan, ctx, atomic/contended): flat.
 4. CPU bound: pmap (tasks over a list), nbody and a handler that computes for 1 ms: wall within noise
    against the default, the cap growing to ncpu in the counters (add a `cap_grow` counter to XO_RTSTATS).
+   pmap (bench/perf/conc/xo/pmap) is the guard, and its gap to Go splits in two (instructions and
+   cycles from /usr/bin/time -l, 2026-10-26, load ~43, ratios only): the kernel's overflow checks
+   (`3 * n`, `c += 1`: +25% instructions, +4% cycles single threaded, 2.04 G against Go's 1.96 G;
+   not this decision's) and the coordination cost (Xo's parallel run burns 4% more cycles than its
+   own serial run, 2.12 G against 2.04 G, where Go's parallel equals its serial): the part this
+   decision can move. Expect pmap's cycles to fall toward the serial figure, never above today's.
 5. The bursty case: a server idle for a second, then 1,000 requests at once: first-burst p99 against the
    default.
 6. The sweep (bench/perf/sweep.py) for instructions of the scheduler benches, and scheduler goldens on
