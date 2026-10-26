@@ -1,6 +1,7 @@
 # 0383: The heap hands back none of the memory the build frees, so xo building itself peaks at 10.4 GB with 0.2 GB live
 
-Status: Proposed (Xo Lang 3, 2026-10-26, for the owner and the lead; nothing built). Follows the
+Status: Proposed for (a) and (b); (c), the scavenge of big classes' central magazines with a threshold of 4,
+Accepted (owner, 2026-10-26) and pushed as 811c4fb8d (Xo Lang 3, 2026-10-26). Follows the
 cold peak study the lead asked for after tokens as offsets proved not to be the peak lever.
 
 ## Context
