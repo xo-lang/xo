@@ -365,6 +365,7 @@ pub fn task_enter(fib: Int, w: Int, made: Int) -> Int {
       rt.mem_store(slot, 0, nf, 8)
     }
     rt.tlocal_set(TL_RACE_THR, nf)
+    dead_stack_reset(fib)
     return old
   }
   if !user_mode() {
@@ -380,8 +381,70 @@ pub fn task_enter(fib: Int, w: Int, made: Int) -> Int {
     rt.mem_store(slot, 0, nf, 8)
   }
   sys_c.weak___tsan_switch_to_fiber(nf, 1)
+  dead_stack_reset(fib)
   old
 }
+
+/// pool.xo F_MEM and F_SIZE: a fiber record's stack mapping and its size.
+const F_MEM_OFF = 8
+const F_SIZE_OFF = 16
+
+/// The stack memory below the running frame is the dead frames of earlier
+/// tasks that ran on this stack (a cached fiber's, or the fiber of a task
+/// that runs the others it spawned at its join, decision 0363's small
+/// sites), whose accesses ThreadSanitizer still holds: the task starting
+/// now, a context of its own that nothing orders after them, would race
+/// with them on the same addresses (a `var` parameter's slot in the
+/// caller's frame, written by the closure of a Mutex's `with` in every
+/// task: the Windows tester's report of v0.32.0). The shadow of up to 64
+/// KiB of that dead memory is reset in the new task's context, as a
+/// thread's exit resets its stack's: the Go flavor by its racemalloc,
+/// the C flavor by the Java interface's alloc (a free first), which
+/// resets without a write of its own. The range ends at the running
+/// frame's record (the frames of the caller are above it) and stays well
+/// above the stack's guard; a task with no fiber (a thread's own stack,
+/// bounds unknown) is left.
+fn dead_stack_reset(fib: Int) {
+  if fib == 0 {
+    return
+  }
+  let mem = rt.mem_load(fib, F_MEM_OFF, 8)
+  let hi = rt.frame_addr() & -8
+  var lo = hi.wrapping_sub(65536)
+  if lo < mem.wrapping_add(131072) {
+    lo = mem.wrapping_add(131072)
+  }
+  if hi <= lo || hi > mem.wrapping_add(rt.mem_load(fib, F_SIZE_OFF, 8)) {
+    return
+  }
+  if gorace() {
+    race_alloc(lo, hi.wrapping_sub(lo))
+    return
+  }
+  java_ready()
+  sys_c.weak___tsan_java_free(lo, hi.wrapping_sub(lo))
+  sys_c.weak___tsan_java_alloc(lo, hi.wrapping_sub(lo))
+}
+
+/// ThreadSanitizer's Java interface is initialized once, over the whole
+/// application range (its alloc and free check the range only): word
+/// W_RACE_INIT, which a C flavor build has no other use for (0 not yet,
+/// 1 being made, 2 made).
+fn java_ready() {
+  let w = rt.static_word(W_RACE_INIT)
+  if rt.slot_load(w, 0, ACQUIRE) == 2 {
+    return
+  }
+  if rt.slot_cas(w, 0, 0, 1, ACQUIRE) {
+    sys_c.weak___tsan_java_init(65536, 140737488224256)
+    rt.slot_store(w, 0, 2, RELEASE)
+    return
+  }
+  while rt.slot_load(w, 0, ACQUIRE) != 2 {
+    rt.spin_hint()
+  }
+}
+
 
 /// A task's ThreadSanitizer context, made at its spawn by the spawner
 /// (task_enter takes it), or 0 outside a --race build.

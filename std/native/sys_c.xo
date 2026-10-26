@@ -19,6 +19,12 @@ fn weak___tsan_destroy_fiber(fiber: Int)
 fn weak___tsan_switch_to_fiber(fiber: Int, flags: Int)
 fn weak___tsan_acquire(addr: Int)
 fn weak___tsan_release(addr: Int)
+/// ThreadSanitizer's Java interface, whose alloc resets a range's shadow
+/// memory as a malloc does, without a write of the caller's: the dead stack
+/// below a task that starts on a reused stack (sanhook.xo dead_stack_reset)
+fn weak___tsan_java_init(heap_begin: Int, heap_size: Int)
+fn weak___tsan_java_alloc(ptr: Int, size: Int)
+fn weak___tsan_java_free(ptr: Int, size: Int)
 
 /// The C library's allocator, for a --race build's heap (decision 0273
 /// mode 2, heapos.xo large_room: its interceptors reset a block's shadow

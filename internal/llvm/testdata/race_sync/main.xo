@@ -107,6 +107,27 @@ fn mutex_case(shared: Bytes, sync: Bool) {
   }
 }
 
+// a Mutex taken only in a loop (decision 0363's lockish spawn site: its
+// burst stays on the spawner and runs serially at the join, each task in a
+// context of its own): the map is written under the lock, so no race, with
+// or without sync (Windows tester, v0.32.0: a --race build reported one)
+fn mutex_loop_case() {
+  let m = Mutex.new({})
+  scope s {
+    for t in 0..4 {
+      s.spawn(fn() {
+        for i in 0..1000 {
+          m.with(fn(var c: Map[Int, Int]) { c[t * 1000 + i] = i })
+        }
+      })
+    }
+  }
+  let n = m.with(fn(c) { c.len() })
+  if n != 4000 {
+    fault("mutex_loop: ${n} entries")
+  }
+}
+
 // an await of a task that already finished (its fast path)
 fn await_done_case(os: Os, shared: Bytes, sync: Bool) {
   scope s {
@@ -195,6 +216,7 @@ fn main(os: Os) {
     "chan_buffered" => chan_case(shared, sync, Chan[Int].new(cap: 4))
     "select" => select_case(shared, sync)
     "mutex" => mutex_case(shared, sync)
+    "mutex_loop" => mutex_loop_case()
     "await_done" => await_done_case(os, shared, sync)
     "atomic" => atomic_case(os, shared, sync, false)
     "atomic_add" => atomic_case(os, shared, sync, true)

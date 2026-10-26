@@ -13,7 +13,7 @@
 # race_stacks with --race --backend=amd64 and runs each with XO_THREADS
 # unset (one worker per CPU), 4 and 1, REPS times: the planted race found
 # (exit 66), every race_sync case clean when synchronized and reported when
-# not (lazy_const clean both ways), race_stacks' 200 isolated faults caught
+# not (lazy_const and mutex_loop clean both ways), race_stacks' 200 isolated faults caught
 # and its race reported with its stacks. $XO_CI_OUT/windows-race.txt has a
 # line per run; exit 1 on any mismatch. Each run is bounded by
 # RUN_TIMEOUT seconds (default 120; a hung race binary otherwise holds the
@@ -166,6 +166,7 @@ check() {
   if [ $ok = 1 ]; then echo "ok   $line" >> "$sum"; else
     echo "FAIL $line (want exit $want, races $races${grep:+, \"$grep\"})" | tee -a "$sum"
     tail -20 "$o/run.err" | sed 's/^/     /' >> "$sum"
+    cp "$o/run.err" "$o/fail-$(echo "$name" | tr -c "A-Za-z0-9=" "_").txt"
     fail=1
   fi
   if [ "$hangs" -ge "$MAX_HANGS" ]; then
@@ -187,6 +188,9 @@ for threads in "" 4 1; do
     for s in 1 0; do
       XO_RACE_CASE=lazy_const XO_RACE_SYNC=$s check "t=$t r=$r race_sync lazy_const sync=$s" race_sync.exe 0 0
     done
+    # a Mutex taken only in a loop (decision 0363's lockish site; the
+    # owner's Windows tester, v0.32.0, saw WARNING: DATA RACE every run)
+    XO_RACE_CASE=mutex_loop XO_RACE_SYNC=1 check "t=$t r=$r race_sync mutex_loop" race_sync.exe 0 0
     check "t=$t r=$r race_stacks" race_stacks.exe 66 + "faults 200"
     grep -q "touch()" "$o/run.err" && grep -q "created at" "$o/run.err" || { echo "FAIL t=$t r=$r race_stacks: no touch() frame or created at stack" | tee -a "$sum"; fail=1; }
   done
