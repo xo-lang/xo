@@ -1,5 +1,19 @@
 # prelude changes
 
+## 2026-10-25: fix: raw.str_slice clamps a start past the end to an empty Str (the helper behind the prelude's Str slicing of paths and names)
+
+- Kind: fix
+- Commit: 40f67b3a2
+- Found by: reading raw.str_slice for the inliner (its doc says the range is clamped to s, but `lo` was only clamped below: a `lo0` past the end made `hi` equal `lo`, past the end, and the checked `s[lo..hi]` faulted)
+- Go reference: none (Go's slicing panics; this helper is not a Go function)
+- Test: arm64 goldens 382 of 382, the LLVM sample 40 of 40, stdfuzz strings, bytes, runes, csv, path and url (seeds 1 and 7, 1500 lines each, no divergence)
+
+`lo` is now clamped to the length as well (`lo0.max(0).min(n)`, `hi` between `lo`
+and the length), so a start past the end gives "" as the doc says; no std caller
+passes one (134 callers read), so only a bug in a caller changes: it returns ""
+instead of faulting. The same commit makes str_slice 8 instructions (it was 62)
+so it inlines at its 52 sites; see the commit for the sweep and sizes.
+
 ## 2026-10-25: perf: the fraction of a formatted Time has no range checks
 
 - Kind: perf
