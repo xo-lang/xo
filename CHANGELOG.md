@@ -23,6 +23,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   the references of a module whose path another module under the root
   shares (`example.com/notes` three times in the xo checkout).
   `XO_REFS_SPELL=off` checks every module.
+- An edit rebuild whose every part comes from the back-end cache skips hollowing,
+  the undefined-symbol check and hashing the parts again: one cache entry names the
+  objects the last such build made (`phase tail`). llvm-fib's and conc-mutex's edit
+  rebuilds take 270 ms instead of 320; the binary is byte for byte a cold build's.
 - `xo bench --ab` with no `--max-load` now marks a round loaded when a side
   starts at a 1 minute load of 6 or more, and leaves it out of the
   statistics unless `--keep-loaded` (it does not wait for the load, as

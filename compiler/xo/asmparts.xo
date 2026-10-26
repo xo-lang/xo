@@ -182,14 +182,16 @@ fn part_keys(prefix: Str, tags: List[Str], srcs: List[Str], jobs: Int) -> List[S
 /// macho_objects through the back-end cache (decision 0220 addendum): a
 /// part whose assembly the cache holds is not assembled again. A program
 /// of one file does not use the cache.
-fn cached_macho_objects(os: Os, ctx: Ctx, srcs: List[Str], elf: Bool, amd64: Bool, jobs: Int) -> (List[Result[Bytes, Str]], Int) {
+/// Also the objects' keys ([] without the cache), which a tail entry
+/// records (tail_put).
+fn cached_macho_objects(os: Os, ctx: Ctx, srcs: List[Str], elf: Bool, amd64: Bool, jobs: Int) -> (List[Result[Bytes, Str]], Int, List[Str]) {
   let dir = backend_cache_dir(os, ctx)
   if dir.is_empty() || srcs.len() < 2 {
-    return (macho_objects(srcs, elf, amd64, jobs), srcs.len())
+    return (macho_objects(srcs, elf, amd64, jobs), srcs.len(), [])
   }
   let id = cache_id(os)
   if id.is_empty() {
-    return (macho_objects(srcs, elf, amd64, jobs), srcs.len())
+    return (macho_objects(srcs, elf, amd64, jobs), srcs.len(), [])
   }
   let keys = part_keys("xo backend v1 obj macho elf=${elf} ${id}", [], srcs, jobs)
   var out: List[Result[Bytes, Str]] = []
@@ -206,7 +208,7 @@ fn cached_macho_objects(os: Os, ctx: Ctx, srcs: List[Str], elf: Bool, amd64: Boo
     }
   }
   if miss.is_empty() {
-    return (out, 0)
+    return (out, 0, keys)
   }
   var n = 0
   for (j, r) in macho_objects(msrcs, elf, amd64, jobs).indexed() {
@@ -221,7 +223,66 @@ fn cached_macho_objects(os: Os, ctx: Ctx, srcs: List[Str], elf: Bool, amd64: Boo
     }
   }
   prune_backend_cache(os, "obj", dir, n)
-  (out, miss.len())
+  (out, miss.len(), keys)
+}
+
+// ---------------------------------------------------------------------------
+// The tail entry: an edit whose every part came from the cache has the
+// same hollowed texts, the same undefined-symbol verdict and the same
+// objects as the build that stored the parts, so it reads the objects'
+// keys from one entry instead of hollowing every part (28 ms for
+// llvm-fib), scanning them for undefined symbols (21 ms) and hashing
+// their texts for the object keys (2026-10-26: 49 of an edit's 335 ms).
+
+const TAIL_VERSION = "xo backend v1 tail"
+
+/// The tail key of a build's texts before hollowing, for its target and
+/// whether it hollows; "" without the cache. The texts, not the parts'
+/// keys: the last file (the entry, exports, helpers and data) has no key,
+/// and dropping weak symbols (parallel.xo drop_weak_all) rewrites every
+/// part by the program's exports.
+fn tail_key(os: Os, texts: List[Str], march: Str, tgoos: Str, hollow: Bool, jobs: Int) -> Str {
+  let id = cache_id(os)
+  if id.is_empty() || texts.len() < 2 {
+    return ""
+  }
+  let tk = part_keys("${TAIL_VERSION}\x00${id}\x00${march} ${tgoos} hollow=${hollow}", [], texts, jobs)
+  crypto.sha256(tk.join("\n").bytes()).to_hex()
+}
+
+/// The objects a tail entry names, in order, or [] when the entry or any
+/// object is gone (pruned apart): the build then hollows and assembles.
+fn tail_objects(os: Os, ctx: Ctx, key: Str, n: Int) -> List[Bytes] {
+  let dir = backend_cache_dir(os, ctx)
+  // verify mode builds every object again (and checks it against its entry)
+  if key.is_empty() || dir.is_empty() || backend_cache_mode(os) == "verify" {
+    return []
+  }
+  let ks = match cache_get(os, entry_path(dir, "tail", key)) {
+    Some(b) => (b.to_str() ?? "").split("\n")
+    None => return []
+  }
+  if ks.len() != n {
+    return []
+  }
+  var out: List[Bytes] = []
+  for k in ks {
+    match cache_get(os, entry_path(dir, "obj", k)) {
+      Some(b) => out.push(b)
+      None => return []
+    }
+  }
+  out
+}
+
+/// Records the objects' keys of a build whose tail key is key, after its
+/// undefined-symbol check passed.
+fn tail_put(os: Os, ctx: Ctx, key: Str, okeys: List[Str]) {
+  let dir = backend_cache_dir(os, ctx)
+  if key.is_empty() || dir.is_empty() || okeys.is_empty() {
+    return
+  }
+  cache_put(os, entry_path(dir, "tail", key), okeys.join("\n").bytes())
 }
 
 /// The flags of a `cc -c` of assembly: the link's flags without the

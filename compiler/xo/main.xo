@@ -1486,27 +1486,30 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // (x86's emptied bodies are `ud2`; darwin/amd64 is XO_PASSES=+hollow),
     // a program whose link has no `use c` objects (they could call an
     // export by name), not `xo asm`; XO_PASSES=-hollow keeps them
-    if (tgoos is "darwin" | "linux") && (march == "arm64" || march == "amd64") && o.cmd != "asm" && !c.mods.any(fn(m) { !m.c_prefix.is_empty() }) && hollow_on(os, march, tgoos) {
-      let elf = tgoos == "linux"
-      let ps = if p.parts.len() > 1 { p.parts } else { [p.asm] }
-      let (hp, _hs) = if march == "amd64" {
-        arm64.hollow_unreached_amd64(ps, elf)
-      } else if elf {
-        arm64.hollow_unreached_elf(ps)
-      } else {
-        arm64.hollow_unreached(ps)
-      }
+    let hollow_now = (tgoos is "darwin" | "linux") && (march == "arm64" || march == "amd64") && o.cmd != "asm" && !c.mods.any(fn(m) { !m.c_prefix.is_empty() }) && hollow_on(os, march, tgoos)
+    // an edit whose every part came from the cache: its objects by the
+    // tail entry (asmparts.xo), no hollow and no undefined-symbol scan;
+    // hollowed later only if a tool reads the texts (hollow_late)
+    let tkey = if !fdir.is_empty() && (tgoos is "darwin" | "linux") && o.cmd != "asm" && o.asm_path.is_empty() && p.parts.len() > 1 && !fc.part_keys.is_empty() && p.parts_reused == fc.part_keys.len() { tail_key(os, p.parts, march, tgoos, hollow_now, jobs) } else { "" }
+    let tail = tail_objects(os, ctx, tkey, p.parts.len())
+    if !tkey.is_empty() {
+      t = lap(os, phases, "tail", t)
+    }
+    var hollow_late = false
+    if hollow_now && !tail.is_empty() {
+      hollow_late = true
+    } else if hollow_now {
       if p.parts.len() > 1 {
-        p.parts = hp
+        p.parts = hollow_parts(p.parts, march, tgoos == "linux")
       } else {
-        p.asm = hp[0]
+        p.asm = hollow_parts([p.asm], march, tgoos == "linux")[0]
       }
       t = lap(os, phases, "hollow", t)
     }
     // a symbol of the program that nothing defines (arm64 undef.xo): an
     // rt.* intrinsic no backend lowers, called directly, would stop the
     // link with no hint of the call
-    if tgoos == "darwin" && o.cmd != "asm" {
+    if tgoos == "darwin" && o.cmd != "asm" && tail.is_empty() {
       let und = arm64.undefined_xo(if p.parts.len() > 1 { p.parts } else { [p.asm] })
       if !und.is_empty() {
         let (sym, at) = und[0]
@@ -1559,6 +1562,11 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     let s = if asm_only { "${sdir}/prog-${tgoos}.s" } else { "${dir}/prog-${tgoos}.s" }
     // cc (or clang, windows) reads the whole file when there are no parts
     let cc_reads = if win { o.assembler == "cc" } else { !macho_as }
+    if hollow_late && (keep_asm || asm_only || !macho_as) {
+      // a tail hit whose texts a tool reads after all
+      p.parts = hollow_parts(p.parts, march, tgoos == "linux")
+      t = lap(os, phases, "hollow", t)
+    }
     if keep_asm || asm_only || (cc_reads && p.parts.len() <= 1) {
       write_or_fail(os, dir, s, dw_real(gm, p.text()).bytes())
     }
@@ -1705,7 +1713,18 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       // tasks for the parts
       let srcs = if p.parts.len() > 1 { p.parts } else { [code] }
       var objs: List[Str] = []
-      let (assembled, nasm) = cached_macho_objects(os, ctx, srcs, tgoos == "linux", march == "amd64", jobs)
+      var assembled: List[Result[Bytes, Str]] = []
+      var nasm = 0
+      if tail.is_empty() {
+        let (a, n, okeys) = cached_macho_objects(os, ctx, srcs, tgoos == "linux", march == "amd64", jobs)
+        assembled = a
+        nasm = n
+        tail_put(os, ctx, tkey, okeys)
+      } else {
+        for b in tail {
+          assembled.push(Ok(b))
+        }
+      }
       for (i, r) in assembled.indexed() {
         let obj = if progs.len() > 1 { "${dir}/prog-${tgoos}.${i}.o" } else { "${dir}/prog-${tgoos}.o" }
         match r {
@@ -2513,4 +2532,17 @@ fn check_cache(os: Os, args: List[Str]) -> (Str, Str) {
   }
   let id = cache_id(os)
   if id.is_empty() { ("", "") } else { (dir, id) }
+}
+
+/// The parts with the functions nothing reaches emptied (arm64 hollow.xo)
+/// for march, ELF or Mach-O.
+fn hollow_parts(ps: List[Str], march: Str, elf: Bool) -> List[Str] {
+  let (hp, _hs) = if march == "amd64" {
+    arm64.hollow_unreached_amd64(ps, elf)
+  } else if elf {
+    arm64.hollow_unreached_elf(ps)
+  } else {
+    arm64.hollow_unreached(ps)
+  }
+  hp
 }
