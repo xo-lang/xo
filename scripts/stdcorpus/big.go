@@ -115,6 +115,12 @@ func bigOp(op string, a, b *big.Int, k int) string {
 		return strconv.Itoa(a.Cmp(b))
 	case "cmpabs":
 		return strconv.Itoa(a.CmpAbs(b))
+	case "abs":
+		return bigHex(z.Abs(a))
+	case "neg":
+		return bigHex(z.Neg(a))
+	case "sign":
+		return strconv.Itoa(a.Sign())
 	case "prime":
 		return strconv.FormatBool(a.ProbablyPrime(k))
 	}
@@ -182,6 +188,20 @@ func bigCorpus() string {
 			continue
 		}
 		fmt.Fprintf(&o, "  (%q, %q, %q, %d, %q),\n", op, bigHex(a), bigHex(b), k, want)
+	}
+	// abs, neg, and sign (Go's Int.Abs, Int.Neg, Int.Sign), which no
+	// operation above reaches; drawn from its own source, so the rows
+	// above keep their operands.
+	r2 := rand.New(rand.NewSource(7))
+	for i := 0; i < 120; i++ {
+		op := []string{"abs", "neg", "sign"}[i%3]
+		a := bigRand(r2, []int{64, 130, 600, 1500}[r2.Intn(4)])
+		if i < 3 {
+			// minus one, zero, and one first: where a sign is the answer
+			a = big.NewInt(int64(i - 1))
+		}
+		want := bigOp(op, a, big.NewInt(0), 0)
+		fmt.Fprintf(&o, "  (%q, %q, %q, %d, %q),\n", op, bigHex(a), bigHex(big.NewInt(0)), 0, want)
 	}
 	o.WriteString("]\n\n/// (text, base, Go's SetString: the value in hex, or \"bad\")\nconst PARSE: List[(Str, Int, Str)] = [\n")
 	texts := []string{"", "0", "-0", "+7", "--1", "12x", "0x_1f", "0x1f", "0X1F", "0b101", "0o17", "017", "08", "0_1", "1__2", "1_2", "_1", "1_", "0x", "0b", "ff", "FF", "zz", "ZZ", "-", "+", " 1", "1 ", "9223372036854775808", "-9223372036854775809", "1.5"}
@@ -251,6 +271,9 @@ fn run(op: Str, a: big.BigInt, b: big.BigInt, k: Int) -> Str {
     "tofloat" => "${a.to_float().to_bits()}"
     "cmp" => "${a.cmp(b)}"
     "cmpabs" => "${a.cmp_abs(b)}"
+    "abs" => hx(a.abs())
+    "neg" => hx(a.neg())
+    "sign" => "${a.sign()}"
     _ => "${a.probably_prime(k)}"
   }
 }
