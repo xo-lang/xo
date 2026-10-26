@@ -191,13 +191,43 @@ corpora that call them), and `prelude.texts`, which `llrt_env_args`,
 os.env (`corpus/cli`, `golden/closure_env_frame`, `golden/fs_native`).
 `llrt_concat_int` stays: the compiler emits its call, so no site names it and
 it is allow-listed already, as `texts` is. `internal.SharedLock.unlock` is
-called by compiler/xo, which the sweep has no root for (a program-list
-question). `go.Error.go_type` IS called by `internal/gen/testdata/golden/go_url`
-(main.xo:26) and the audit still lists it, so its edge resolves to something
-other than std/go.xo:19; that is one line of a future dump to look at, not a
-corpus gap. `go.Error.message` has no caller anywhere: it needs a `use go`
-program that calls it, and the gen goldens' want.txt is rewritten wholesale by
-`-golden-update`, so that is a deliberate change to one golden, not a
-by-product.
+called only by `compiler/xo/gobackend.xo`, and the sweep's roots are the
+corpora, the goldens, bench/perf and scripts, never the toolchain: it is a
+documented over entry with that reason, not a corpus gap, and the sweep's
+definition stays fixed rather than grow a toolchain root (lead,
+2026-10-26). `go.Error.message` had no caller anywhere; golden/go_url now
+calls it (below).
+
+## Correction, same day: `xo dev edges` lost every `use go` program silently
+
+The sweep ran `xo dev edges` once per program directory and took each
+directory's quiet output as that program's references. A program with `use go`
+whose binding is not in the directory's `.xo/gobind` stops the check before
+names resolve; `xo dev edges` then wrote only the standard library's
+references and exited 0, with nothing on standard error. Every `use go` golden
+was therefore measured as a program with no references of its own
+(`internal/gen/testdata/golden/go_url`, `go_regexp`, `go_strconv`,
+`go_sha256`, `go_hex`, `go_uuid`, `go_strings`, `test_go_interop`, and the
+replay programs; those that commit their `.xo/gobind` were measured, which is
+why the loss was invisible).
+
+So the earlier reading of `go.Error.go_type` here ("its edge resolves to
+something other than std/go.xo:19") was wrong. With the binding present the
+edge is exactly `internal/gen/testdata/golden/go_url/main.xo:24 ->
+std/go.xo:19 Error.go_type`, measured on 2026-10-26 with
+`xo bind --dir=<copy> net/url` and one `xo dev edges` run; `go.Error.display`
+and `go_type` are reachable and only `message` lacked a caller.
+
+`xo dev edges` now exits 1 with the reason when its program does not check
+(compiler/cli/servers/agent.xo, Session.stopped), held by
+TestDevEdgesMissingBinding: before the change the test read
+"17989 lines, all std, and exited 0". golden/go_url also prints
+`e.message()` now, so `go.Error.message` has a caller and its want.txt carries
+the line (`message: parse "http://[::1": missing ']' in host`, the same text
+as `display`, which is what std/go.xo says it is).
+
+The second sweep therefore has to bind first: `xo bind --dir=DIR <imports>`
+for each `use go` program before its `xo dev edges` run, and the binding
+removed after, or the sweep reports those programs as failures instead.
 
 
