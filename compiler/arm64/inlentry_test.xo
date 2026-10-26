@@ -41,7 +41,7 @@ test "an inline entry gives back the function, or a shell with its facts" {
       expect(shell.values.len()) == 0
       expect(shell.ckey) == "inl K"
       expect(x.nvalues) == f.values.len()
-      expect(x.params) == ssa.body_facts(f).params
+      expect(x.params) == ssa.body_facts(f, m.types).params
       expect(l.ckey) == "inl K"
       // the lazy entry decodes to the function
       match ssa.func_of_entry(m, l.entry, ssa.op_names()) {

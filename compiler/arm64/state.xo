@@ -160,6 +160,11 @@ struct G {
   x86_dead: List[Int] = []
   /// the last function of each name (Go's byName)
   by_name: Map[Str, Int] = {}
+  /// the parameter each function's result is at most (retle.xo), by index
+  retle: Map[Int, Int] = {}
+  retge: Map[Int, Int] = {}
+  /// per function: the SSA value each Int value is at most (compute_ub)
+  ub: Map[Int, Int] = {}
   /// value layouts by type: 0 not computed, 1 on the current path, 2 done
   lay_st: List[Int] = []
   lay: List[List[Bool]] = []
@@ -475,6 +480,8 @@ fn (var g: G) begin_func(fi: Int) {
   g.tl_blk = -1
   g.fi = fi
   g.f = g.m.funcs[fi]
+  g.ub = {}
+  g.compute_ub()
   let nv = g.f.values.len()
   let nb = g.f.blocks.len()
   g.fp = [false]

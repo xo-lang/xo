@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- arm64: a function's result bounded by one of its parameters is known to its callers (decision
+  0376): `i < n` for an n from `strings.space_start(b, lo, b.len())` needs no bounds check.
+  compiler/xo itself has 4% fewer bytes index checks and 2.5% fewer list index checks.
 - `xo build --inline-str` (experimental, decision 0370, arm64 and amd64, default off): a Str
   of up to 11 bytes keeps its text in its two words. A list of a million short keys takes
   0.38 of the memory, a `Map[Str, Int]` 0.69, its sort 0.62 (wall 0.77, 0.84 and 0.65);

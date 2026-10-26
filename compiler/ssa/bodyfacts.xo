@@ -21,13 +21,17 @@ pub struct BodyFacts {
   /// the immortal fields of its one returned struct, [] for none
   /// (immortal_returns: the verifier and its keys read them)
   pub imm: List[Bool] = []
+  /// the parameter its one Int result is at most, and the one it is at
+  /// least, -1 for none (retle.xo)
+  pub ret_le: Int = -1
+  pub ret_ge: Int = -1
 }
 
 /// The version of the facts' encoding.
-pub const BODY_FACTS_VERSION = "xo body facts v1"
+pub const BODY_FACTS_VERSION = "xo body facts v2"
 
 /// The facts of f.
-pub fn body_facts(f: Func) -> BodyFacts {
+pub fn body_facts(f: Func, types: List[SType]) -> BodyFacts {
   var in_block: Map[Int, Bool] = {}
   var faults = false
   for bl in f.blocks {
@@ -50,7 +54,7 @@ pub fn body_facts(f: Func) -> BodyFacts {
       params.push(f.values[p].ty)
     }
   }
-  BodyFacts{nvalues: f.values.len(), params: params, names: names, faults: faults, imm: imm_return_of(f)}
+  BodyFacts{nvalues: f.values.len(), params: params, names: names, faults: faults, imm: imm_return_of(f), ret_le: ret_le_param(f, types), ret_ge: ret_ge_param(f, types)}
 }
 
 /// The facts as bytes (types by name, as encode_func's); none when a
@@ -70,6 +74,8 @@ pub fn encode_facts(m: Module, x: BodyFacts) -> Option[Bytes] {
   for b in x.imm {
     e.bool(b)
   }
+  e.uv(x.ret_le + 1)
+  e.uv(x.ret_ge + 1)
   if !e.ok {
     return None
   }
@@ -128,6 +134,8 @@ pub fn decode_facts(m: Module, d: Bytes) -> Option[BodyFacts] {
   for _ in 0..ni {
     x.imm.push(r.bool())
   }
+  x.ret_le = r.uv() - 1
+  x.ret_ge = r.uv() - 1
   if !r.ok || r.at != d.len() {
     return None
   }

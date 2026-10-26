@@ -1,0 +1,180 @@
+// A function's result bounded by one of its parameters (2026-10-25): the
+// Int a function returns is at most its parameter k, so a caller that
+// tests `i < n` of such a result n proves `i < k`, and with k a length
+// the index checks of b[i] go. strings.space_start(b, lo, hi) returns an
+// n with lo <= n <= hi; the native range pass relates no value across a
+// call, so every b[i] under `i < n` kept its bounds check.
+
+/// The index of the parameter that f's one Int result is at most (every
+/// path), or -1: the result is the parameter, a block parameter whose
+/// every incoming value is, or one of those less a constant or plus a
+/// negative one (a checked add or subtract that overflows faults, so the
+/// order holds when it returns).
+pub fn ret_le_param(f: Func, types: List[SType]) -> Int { ret_bound_param(f, types, true) }
+
+/// The index of the parameter that f's one Int result is at least, or -1.
+pub fn ret_ge_param(f: Func, types: List[SType]) -> Int { ret_bound_param(f, types, false) }
+
+fn ret_bound_param(f: Func, types: List[SType], up: Bool) -> Int {
+  if f.results.len() != 1 || f.blocks.is_empty() || f.indirect || f.catches {
+    return -1
+  }
+  let rt = f.results[0]
+  if rt < 0 || rt >= types.len() || types[rt].kind != Kind.Int || types[rt].bits != 0 {
+    return -1
+  }
+  let ps = f.blocks[0].params
+  for k in 0..ps.len() {
+    let pt = f.values[ps[k]].ty
+    if pt < 0 || pt >= types.len() || types[pt].kind != Kind.Int || types[pt].bits != 0 {
+      continue
+    }
+    if le_holds(f, ps[k], up) {
+      return k
+    }
+  }
+  -1
+}
+
+/// Whether every returned value of f is at most value p (a parameter of
+/// its entry block): the greatest set of block parameters whose incoming
+/// values are at most p.
+fn le_holds(f: Func, p: Int, up: Bool) -> Bool {
+  var ok: Map[Int, Bool] = {}
+  for bi in 1..f.blocks.len() {
+    for q in f.blocks[bi].params {
+      ok[q] = true
+    }
+  }
+  var again = true
+  var rounds = 0
+  while again && rounds < 32 {
+    again = false
+    rounds += 1
+    for bi in 1..f.blocks.len() {
+      let bl = f.blocks[bi]
+      for (k, q) in bl.params.indexed() {
+        if !(ok.get(q) ?? false) {
+          continue
+        }
+        for e in bl.preds {
+          let ed = f.edges[e]
+          if k >= ed.args.len() || ed.args[k] < 0 || !le_value(f, ed.args[k], p, ok, up) {
+            ok[q] = false
+            again = true
+            break
+          }
+        }
+      }
+    }
+  }
+  var any = false
+  for bl in f.blocks {
+    if bl.instrs.is_empty() {
+      continue
+    }
+    let t = f.values[bl.instrs[bl.instrs.len() - 1]]
+    if t.op != Op.Return {
+      continue
+    }
+    any = true
+    if t.args.len() < 1 || !le_value(f, t.args[0], p, ok, up) {
+      return false
+    }
+  }
+  any
+}
+
+/// Whether value v is at most p (up) or at least p, given the block
+/// parameters of ok.
+fn le_value(f: Func, v: Int, p: Int, ok: Map[Int, Bool], up: Bool) -> Bool {
+  var u = v
+  for _ in 0..16 {
+    if u == p {
+      return true
+    }
+    let x = f.values[u]
+    if x.op == Op.Param {
+      return ok.get(u) ?? false
+    }
+    if x.args.len() != 2 || !(x.op == Op.Add || x.op == Op.Sub) {
+      return false
+    }
+    let a = x.args[0]
+    let b = x.args[1]
+    var nxt = -1
+    if x.op == Op.Sub {
+      // u - c: below u for c >= 0, above it for c <= 0
+      if up && nonneg(f, b) {
+        nxt = a
+      } else if !up && nonpos_const(f, b) {
+        nxt = a
+      }
+    } else if up {
+      // u + c, c <= 0 a constant
+      if nonpos_const(f, b) {
+        nxt = a
+      } else if nonpos_const(f, a) {
+        nxt = b
+      }
+    } else if nonneg(f, b) {
+      nxt = a
+    } else if nonneg(f, a) {
+      nxt = b
+    }
+    if nxt < 0 {
+      return false
+    }
+    u = nxt
+  }
+  false
+}
+
+/// Whether v is never negative: a constant, or a mask by a constant.
+fn nonneg(f: Func, v: Int) -> Bool {
+  let x = f.values[v]
+  if x.op == Op.Const {
+    match x.aux {
+      I(n) => return n >= 0
+      None | F(_) | B(_) | S(_) | Bs(_) | P(_, _) => return false
+    }
+  }
+  if x.op == Op.And && x.args.len() == 2 {
+    for j in [0, 1] {
+      let c = f.values[x.args[j]]
+      if c.op == Op.Const {
+        match c.aux {
+          I(n) => {
+            if n >= 0 {
+              return true
+            }
+          }
+          None | F(_) | B(_) | S(_) | Bs(_) | P(_, _) => {}
+        }
+      }
+    }
+  }
+  false
+}
+
+/// Whether v is a constant at most 0.
+fn nonpos_const(f: Func, v: Int) -> Bool {
+  let x = f.values[v]
+  if x.op != Op.Const {
+    return false
+  }
+  match x.aux {
+    I(n) => n <= 0
+    None | F(_) | B(_) | S(_) | Bs(_) | P(_, _) => false
+  }
+}
+
+/// The parameters function fi's one Int result is at most and at least
+/// (-1 for none): from its body facts when it is not decoded, else from
+/// its body.
+pub fn (m: Module) ret_bounds(fi: Int) -> (Int, Int) {
+  match m.facts.get(fi) {
+    Some(x) => (x.ret_le, x.ret_ge)
+    None => (ret_le_param(m.funcs[fi], m.types), ret_ge_param(m.funcs[fi], m.types))
+  }
+}

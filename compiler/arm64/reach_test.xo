@@ -34,7 +34,7 @@ test "dead function removal reads a shell's facts as its body" {
   expect(names(full)) == ["main", "a", "b"]
   // a as a shell: no body, its facts kept
   var lazy = reach_module()
-  lazy.facts[1] = ssa.body_facts(lazy.funcs[1])
+  lazy.facts[1] = ssa.body_facts(lazy.funcs[1], lazy.types)
   lazy.funcs[1] = ssa.Func{name: "a"}
   let _e = drop_unreached(lazy)
   expect(names(lazy)) == names(full)

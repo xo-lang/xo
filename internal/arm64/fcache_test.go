@@ -200,6 +200,96 @@ func TestBackendCacheEditIdentity(t *testing.T) {
 	}
 }
 
+// TestBackendCacheCalleeSummary: a caller's code reads its callee's
+// result bounds (compiler/ssa retle.xo: the result is at most a
+// parameter), so the function cache keys them. A caller whose bounds
+// check is proved by `i < n` for the n that trim_end(b, b.len()) returns
+// has none; when an edit widens trim_end's result the cached caller must
+// be generated again and the check is back, and a build through the
+// cache equals one with XO_BACKEND_CACHE=off after every step, also from
+// the third build on, when both functions are left undecoded and read
+// their bounds from their body facts (2026-10-25).
+func TestBackendCacheCalleeSummary(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-retle-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	src := filepath.Join(work, "src")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gen := func(widen bool) string {
+		var b strings.Builder
+		for i := 0; i < 300; i++ {
+			fmt.Fprintf(&b, "fn f%d(x: Int) -> Int {\n", i)
+			if i == 299 {
+				b.WriteString("  x * 3\n}\n\n")
+				continue
+			}
+			fmt.Fprintf(&b, "  if x > %d {\n    f%d(x - 1) + %d\n  } else {\n    x * 3\n  }\n}\n\n", i, i+1, i)
+		}
+		ret := "n"
+		if widen {
+			ret = "n + 1"
+		}
+		fmt.Fprintf(&b, "fn trim_end(b: Bytes, hi: Int) -> Int {\n  var n = hi\n  while n > 0 && b[n - 1] == 32 {\n    n -= 1\n  }\n  %s\n}\n\n", ret)
+		b.WriteString("fn first_nonspace(b: Bytes) -> Int {\n  let n = trim_end(b, b.len())\n  var i = 0\n  var c = 0\n  while i < n {\n    c += Int(b[i])\n    i += 1\n  }\n  c\n}\n\n")
+		b.WriteString("fn main(os: Os) {\n  os.stdio.println(\"${f0(400)} ${first_nonspace(\"ab  \".bytes())}\")\n}\n")
+		return b.String()
+	}
+	asm := func(t *testing.T, mode string) string {
+		cmd := testtmp.Guard(exec.Command(xo, "asm", "--backend=arm64", "--targets=linux/arm64", "."))
+		cmd.Dir = src
+		// trim_end stays a call (inlined, its loop would carry the proof)
+		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_BACKEND_CACHE="+mode, "XO_INLINE_DENY=trim_end")
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("XO_BACKEND_CACHE=%s: %v", mode, err)
+		}
+		return string(out)
+	}
+	// the text of function first_nonspace: its label to the next function
+	fn := func(t *testing.T, text string) string {
+		i := strings.Index(text, "first__nonspace:")
+		if i < 0 {
+			t.Fatalf("no first_nonspace in the assembly")
+		}
+		j := strings.Index(text[i:], ".cfi_endproc")
+		if j < 0 {
+			t.Fatalf("no end of first_nonspace in the assembly")
+		}
+		return text[i : i+j]
+	}
+	for _, s := range []struct {
+		name  string
+		widen bool
+	}{{"first", false}, {"again", false}, {"third", false}, {"widen", true}, {"revert", false}} {
+		if err := os.WriteFile(filepath.Join(src, "main.xo"), []byte(gen(s.widen)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		on := asm(t, "on")
+		off := asm(t, "off")
+		if on != off {
+			t.Errorf("%s: the build through the cache differs from the build with XO_BACKEND_CACHE=off", s.name)
+		}
+		checks := strings.Count(fn(t, off), "b.hs")
+		if s.widen && checks == 0 {
+			t.Errorf("%s: trim_end's result n + 1 is past the length, and first_nonspace has no bounds check", s.name)
+		}
+		if !s.widen && checks != 0 {
+			t.Errorf("%s: first_nonspace has %d bounds checks, though n is at most b.len()", s.name, checks)
+		}
+	}
+}
+
 // TestFrontCacheInterfaceEdits: the front end cache (decision 0220
 // addendum stage 2) keys a body by its module's interface, so an edit of
 // a struct's field, of a callee's signature, or of a constant's value

@@ -22,7 +22,7 @@ fn facts_module() -> (Module, Int) {
 
 test "the facts of a body: count, parameters, names in order, fault" {
   let (m, fi) = facts_module()
-  let x = body_facts(m.funcs[fi])
+  let x = body_facts(m.funcs[fi], m.types)
   expect(x.nvalues) == m.funcs[fi].values.len()
   expect(x.params) == [m.type_at.get("Int") ?? -1, m.type_at.get("Str") ?? -1]
   expect(x.names.len()) == 3
@@ -37,7 +37,7 @@ test "the facts of a body: count, parameters, names in order, fault" {
 
 test "the facts round trip through their encoding" {
   let (m, fi) = facts_module()
-  let x = body_facts(m.funcs[fi])
+  let x = body_facts(m.funcs[fi], m.types)
   let d = encode_facts(m, x) ?? b""
   expect(d.is_empty()) == false
   match decode_facts(m, d) {
@@ -64,7 +64,7 @@ test "block_names and taken_names: the same from facts as from the body" {
   let body_taken = m0.taken_names(fi)
   expect(body_taken) == ["h"]
   var m = m0
-  m.facts[fi] = body_facts(m.funcs[fi])
+  m.facts[fi] = body_facts(m.funcs[fi], m.types)
   m.funcs[fi] = Func{name: "f"}
   expect(m.block_names(fi).sort()) == body_names.sort()
   expect(m.taken_names(fi)) == body_taken
@@ -80,7 +80,7 @@ test "param_types, value_names and fault_facts: the same from facts as from the 
   expect(mf) == true
   expect(cs) == [m0.func_index("g")]
   var m = m0
-  m.facts[fi] = body_facts(m.funcs[fi])
+  m.facts[fi] = body_facts(m.funcs[fi], m.types)
   m.funcs[fi] = Func{name: "f"}
   expect(m.param_types(fi)) == pt
   expect(m.value_names(fi)) == vn

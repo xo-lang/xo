@@ -16,7 +16,7 @@ use std/crypto
 use github.com/xo-lang/xo/compiler/ssa
 
 /// The version of the keys and entries.
-const INLINE_CACHE_VERSION = "xo inline cache v8"
+const INLINE_CACHE_VERSION = "xo inline cache v9"
 
 /// What inline_cached did: the entries to store (key, entry), the
 /// functions read from entries, the functions whose computed result
@@ -435,7 +435,7 @@ fn encode_all(mt: ssa.Module, m: ssa.Module, computed: List[(Int, Bool)], jobs: 
 /// 0283 stage B: what the passes after inlining read of a function left
 /// undecoded), then the function (ssa.func_entry).
 fn inline_entry(m: ssa.Module, f: ssa.Func, ch: Bool) -> Option[Bytes] {
-  let facts = match ssa.encode_facts(m, ssa.body_facts(f)) {
+  let facts = match ssa.encode_facts(m, ssa.body_facts(f, m.types)) {
     Some(x) => x
     None => return None
   }

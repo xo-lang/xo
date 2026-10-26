@@ -1,0 +1,52 @@
+// A callee's result bounded by its parameters (compiler/ssa retle.xo, the
+// arm64 range pass and bounds checks): trim_end's result is at most hi, so
+// the reads under `i < n` of its result need no check; round_up's result
+// is above hi for an odd length, so its reads keep theirs and the last
+// call faults at the index past the end.
+
+/// The end of b without trailing spaces: at most hi (hi at most b.len()).
+fn trim_end(b: Bytes, hi: Int) -> Int {
+  var n = hi
+  while n > 0 && b[n - 1] == 32 {
+    n -= 1
+  }
+  n
+}
+
+/// lo, then lo + 2 while below hi: at least lo, and past hi by one when
+/// hi - lo is odd.
+fn round_up(lo: Int, hi: Int) -> Int {
+  var i = lo
+  while i < hi {
+    i += 2
+  }
+  i
+}
+
+fn sum_trimmed(b: Bytes) -> Int {
+  let n = trim_end(b, b.len())
+  var i = 0
+  var c = 0
+  while i < n {
+    c += Int(b[i])
+    i += 1
+  }
+  c
+}
+
+fn sum_rounded(b: Bytes) -> Int {
+  let n = round_up(0, b.len())
+  var i = 0
+  var c = 0
+  while i < n {
+    c += Int(b[i])
+    i += 1
+  }
+  c
+}
+
+fn main(os: Os) {
+  os.stdio.println("${sum_trimmed("ab  ".bytes())} ${sum_trimmed("   ".bytes())} ${sum_trimmed("".bytes())}")
+  os.stdio.println("${sum_rounded("ab".bytes())} ${sum_rounded("".bytes())}")
+  os.stdio.println("${sum_rounded("abc".bytes())}")
+}

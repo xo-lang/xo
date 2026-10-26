@@ -759,6 +759,12 @@ fn (var g: G) proved_index(i: Int, n: Int, k: Int) -> Bool {
     }
   }
   let fi = g.add_forms(i)
+  // i = a - c (c at least 1) of the length register a itself: below it
+  for a in fi {
+    if a.hi < 0 && g.has_val[a.base] && g.vals[a.base].len() == 1 && g.vals[a.base][0] == n {
+      return true
+    }
+  }
   let _mi = g.m_()
   let facts = g.cm.less
   for (key, x) in facts {
@@ -811,6 +817,26 @@ fn (var g: G) less_fact(x: Int, y: Int) {
   let w = g.vals[x][0]
   let _mi = g.m_()
   g.cm.less[(w, y)] = x
+}
+
+/// The parameter the result of function ci is at least, or -1.
+fn (var g: G) ret_ge_of(ci: Int) -> Int {
+  if let Some(k) = g.retge.get(ci) {
+    return k
+  }
+  let _k = g.ret_le_of(ci)
+  g.retge.get(ci) ?? -1
+}
+
+/// The parameter the result of function ci is at most, or -1.
+fn (var g: G) ret_le_of(ci: Int) -> Int {
+  if let Some(k) = g.retle.get(ci) {
+    return k
+  }
+  let (k, kg) = g.m.ret_bounds(ci)
+  g.retle[ci] = k
+  g.retge[ci] = kg
+  k
 }
 
 /// Whether a + b (Add) or a - b (Sub) cannot overflow for a in [alo,
@@ -936,9 +962,26 @@ fn (var g: G) cond_facts(c: Int, truth: Bool) {
     if g.has_val[y] && g.vals[y].len() == 1 {
       g.less_fact(x, g.vals[y][0])
     }
+    g.less_ub(x, y)
   } else if o == ssa.Op.Gt {
     if g.has_val[x] && g.vals[x].len() == 1 {
       g.less_fact(y, g.vals[x][0])
+    }
+    g.less_ub(y, x)
+  }
+  if o == ssa.Op.Eq {
+    // a - b == c with c at least 1: b < a (a checked subtraction that
+    // overflows faults, so the difference is exact)
+    for (s, z) in [(x, y), (y, x)] {
+      let (c, isc) = g.const_int(z)
+      if isc && c >= 1 && g.op(s) == ssa.Op.Sub && !g.f.values[s].pos.is_empty() {
+        let a = g.arg(s, 0)
+        let b = g.arg(s, 1)
+        if g.has_val[a] && g.vals[a].len() == 1 {
+          g.less_fact(b, g.vals[a][0])
+        }
+        g.less_ub(b, a)
+      }
     }
   }
   if o == ssa.Op.Ne {
@@ -997,6 +1040,17 @@ fn (var g: G) narrow(x: Int, o: ssa.Op, ylo: Int, yhi: Int) {
     Eq => {
       lo = imax(lo, ylo)
       hi = imin(hi, yhi)
+    }
+    Ne => {
+      // x != c at an end of x's interval leaves the rest (`len != 0` of
+      // a length is at least 1)
+      if ylo == yhi {
+        if lo == ylo && lo < MAX_INT {
+          lo += 1
+        } else if hi == ylo && hi > MIN_INT {
+          hi -= 1
+        }
+      }
     }
     _ => {}
   }
@@ -2406,4 +2460,105 @@ fn (var g: G) live_dce() {
 /// landing pad.
 fn ld_dead(d: Int, live: List[Int], pad_live: List[Int]) -> Bool {
   d != 0 && !bits_has(live, d) && !bits_has(pad_live, d)
+}
+
+/// Records x < w for each value w that y is at most (x < y <= w), the
+/// bounds of compute_ub, and for the result of a call of a function whose
+/// result is at most its parameter (retle.xo): the `i < n` of an n from
+/// strings.space_start(b, lo, b.len()) puts i under b's length.
+fn (var g: G) less_ub(x: Int, y: Int) {
+  var w = y
+  for _ in 0..4 {
+    let nx = g.ub.get(w) ?? -1
+    if nx < 0 {
+      return
+    }
+    w = nx
+    if g.has_val[w] && g.vals[w].len() == 1 {
+      g.less_fact(x, g.vals[w][0])
+    }
+  }
+}
+
+/// The value each Int value of the function is at most, where one is
+/// known (ub): a call result at most its parameter k (ret_le_of), and a
+/// block parameter every incoming value of which is that value or is at
+/// most it. Run once for a function that has such a call.
+fn (var g: G) compute_ub() {
+  var any = false
+  for bl in g.f.blocks {
+    for v in bl.instrs {
+      let x = g.f.values[v]
+      if x.op != ssa.Op.Call {
+        continue
+      }
+      let ci = g.by_name.get(aux_str(x.aux)) ?? -1
+      if ci < 0 {
+        continue
+      }
+      let k = g.ret_le_of(ci)
+      if k >= 0 && k < x.args.len() {
+        g.ub[v] = x.args[k]
+        any = true
+      }
+    }
+  }
+  if !any {
+    return
+  }
+  for _ in 0..3 {
+    for bi in 1..g.f.blocks.len() {
+      let bl = g.f.blocks[bi]
+      for (k, q) in bl.params.indexed() {
+        if g.ub.contains(q) || bl.preds.is_empty() {
+          continue
+        }
+        let first = g.f.edges[bl.preds[0]].args
+        if k >= first.len() || first[k] < 0 {
+          continue
+        }
+        // the candidates: the first incoming value and what it is at most
+        var cands: List[Int] = [first[k]]
+        var u = first[k]
+        for _ in 0..4 {
+          let nx = g.ub.get(u) ?? -1
+          if nx < 0 {
+            break
+          }
+          cands.push(nx)
+          u = nx
+        }
+        for t in cands {
+          var all = true
+          for e in bl.preds {
+            let a = g.f.edges[e].args
+            if k >= a.len() || a[k] < 0 || !g.ub_le(a[k], t) {
+              all = false
+              break
+            }
+          }
+          if all {
+            g.ub[q] = t
+            break
+          }
+        }
+      }
+    }
+  }
+}
+
+/// Whether value v is t or is known at most t.
+fn (g: G) ub_le(v: Int, t: Int) -> Bool {
+  var u = v
+  for _ in 0..6 {
+    if u == t {
+      return true
+    }
+    let nx = g.ub.get(u) ?? -1
+    if nx < 0 {
+      return false
+    }
+    u = nx
+  }
+  false
 }

@@ -287,7 +287,7 @@ fn (var g: G) range_set(v: Int, r0: Interval, ups: List[Int], downs: List[Int], 
 
 /// The interval of v from its operands' (false while an operand has none
 /// yet).
-fn (g: G) range_of(v: Int) -> (Interval, Bool) {
+fn (var g: G) range_of(v: Int) -> (Interval, Bool) {
   let x = g.f.values[v]
   let none = (Interval{lo: 0, hi: 0}, false)
   match x.op {
@@ -442,7 +442,7 @@ fn (g: G) range_of(v: Int) -> (Interval, Bool) {
         // bytes in memory (decision 0184): an address space of 2^48
         "Str.len" => (Interval{lo: 0, hi: MAX_STR_LEN}, true)
         "bytes.index" => (Interval{lo: 0, hi: 255}, true)
-        _ => (full_interval(), true)
+        _ => g.call_bound(x)
       }
     }
     IntConv => g.range_get(x.args[0])
@@ -474,4 +474,31 @@ fn (var g: G) safe_mul(v: Int) -> Bool {
     }
   }
   true
+}
+
+/// The interval of a call's Int result from the callee's summary
+/// (retle.xo): at least its parameter j and at most its parameter k, as
+/// those arguments' intervals say (strings.space_end(b, 0, n) is never
+/// negative).
+fn (var g: G) call_bound(x: ssa.Value) -> (Interval, Bool) {
+  var r = full_interval()
+  let ci = g.by_name.get(aux_str(x.aux)) ?? -1
+  if ci < 0 || x.ty < 0 || g.kind(x.ty) != ssa.Kind.Int {
+    return (r, true)
+  }
+  let lk = g.ret_ge_of(ci)
+  if lk >= 0 && lk < x.args.len() {
+    let (a, ok) = g.range_get(x.args[lk])
+    if ok {
+      r = Interval{lo: a.lo, hi: r.hi}
+    }
+  }
+  let hk = g.ret_le_of(ci)
+  if hk >= 0 && hk < x.args.len() {
+    let (a, ok) = g.range_get(x.args[hk])
+    if ok && a.hi >= r.lo {
+      r = Interval{lo: r.lo, hi: a.hi}
+    }
+  }
+  (r, true)
 }
