@@ -58,3 +58,36 @@ seldom takes. Telling them apart needs trip counts or branch weights.
 3. Lower INLINE_LOOP_INSTRS for a callee whose loop site sits on a
    branch after the loop's exit test (eq_at in find_bytes), or keep
    eq_at a call there with a site rule, then measure cut again.
+
+## Rerun on the shifted immediates (2026-10-26)
+
+Next step 1 landed as 28fe5d24c (`cmp x, #k, lsl #12` for 0x2000,
+0x3000, 0x10000; 163 workloads, 0 slower, 5 faster; its TestGoldenAsm goldens c79a62256). is_space then
+compared offsets from 0x2000 (`refs/recover/lang1-isspace`, 3fc907734; alone 0 slower, 0 faster of 74 rows, so not landed), so none of its
+constants needs a register. Rule 3 rebased on both
+(`refs/recover/xo4-hoist-rule3b`), 2 rounds, base the two changes:
+
+| rule | text/cut | slower rows (of 163) | worst |
+|---|---|---|---|
+| 3 | 0.950 | 4 | unicode/title 1.017, stdio/err 1.015, stdio/mixed 1.012, ctx/spawn 1.006 |
+| 3b: constants an inner loop's pass lifted into its preheader do not stay | 0.950 | 3 | unicode/title 1.017, json/parse 1.008, sysio/write 1.023 (spread 1.008; 1.017 in an unrelated sweep the same hour) |
+
+classify went from 1.011 to 1.000 (is_space). title's cost is
+unicode.case_map, inlined through title_sum into main: its found path
+(the delta's lookup, `kind * 3`, 16777216 and 8388608 masks) is outside
+the binary search's natural loop and on the rune loop's non-ASCII
+branch, so rule 3 keeps its constants there, run on every non-ASCII
+rune, where the base hoists them out of the whole loop. That branch is
+the common one for title's input and the rare one for find_bytes'
+candidate loop; the static rule still cannot tell them apart.
+
+Ranked next steps (replacing the list above):
+
+1. A static trip-count estimate per loop (find_bytes' candidate loop
+   exits on its first match; a loop whose only latch is on a mismatch
+   path runs about once a call), used by hoist_consts: keep a rare
+   branch's constants only in a loop estimated to run about once.
+2. eq_at kept a call at find_bytes' candidate site (an inliner site
+   rule), then text/cut measured again without any hoist change.
+3. Profile-guided weights (XO_PROF samples per block) for hoist_consts;
+   the largest change, needs a profile format for blocks.
