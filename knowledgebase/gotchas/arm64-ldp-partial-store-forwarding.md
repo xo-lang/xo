@@ -67,3 +67,12 @@ Instructions retired do not show it; use cycles (`/usr/bin/time -l`: "cycles ela
 `xo build --asm=prog.s`, `macho asm -o prog.o prog.s`, `macho link -o prog prog.o` (compiler/macho
 built with xo), after checking that the unedited `.s` reproduces the xo binary's instructions and
 cycles.
+
+## Known gap in the guard (DS-2's review, 2026-10-26)
+
+The guard (`partial_store` in compiler/arm64 lsr.xo and lines.xo) compares the offsets and sizes of
+stores and loads through a base, so it can only over suppress a pair, never form one it should not
+(the aliasing direction is safe). The gap is the other way, performance only: lsr.xo:1199 and
+lines.xo:331 need an explicit immediate offset, so a store written `str d0, [x1]` (no offset), a pre
+or post index store and a register offset store are invisible to it, and an ldp over bytes such a store
+wrote still forms and can stall. Fix only if a benchmark shows it (none does today).
