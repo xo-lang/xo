@@ -31,7 +31,6 @@ debug.heap_start  heap profiling starts from the environment
 debug.mem_budget  the memory budget comes from XO_MAX_MEM
 debug.mem_label  the budget's label, set by XO_MAX_MEM's label
 debug.mem_mapped  the profiled heap's mapped bytes
-debug.mem_peak  the profiled heap's peak
 debug.mem_total  the profiled heap's total
 
 # Runtime self checks for `xo debug` and the realtime tests.
