@@ -21,7 +21,13 @@ fn main(os: Os) -> () ! Error {
   os.stdio.println("${url.query_escape("a b&c")} ${url.path_escape("a b/c")}")
   match url.parse("http://[::1") {
     Ok(_) => os.stdio.println("unexpected success")
-    Err(e) => os.stdio.println("error: ${e} (${e.go_type()})")
+    // display (the interpolation), go_type and message are the three
+    // methods std/go.xo declares on go.Error, and no other program calls
+    // message (the 2026-10-26 coverage audit listed it unreached)
+    Err(e) => {
+      os.stdio.println("error: ${e} (${e.go_type()})")
+      os.stdio.println("message: ${e.message()}")
+    }
   }
   let base = url.parse("https://example.com/dir/sub/")?
   match base.resolve_reference(url.parse("../x?y=1")?) {

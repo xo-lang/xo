@@ -6,9 +6,10 @@ x=1&x=4&y=two&z=3
 user user password pw true
 a+b%26c a%20b%2Fc
 error: parse "http://[::1": missing ']' in host (*url.Error)
+message: parse "http://[::1": missing ']' in host
 https://example.com/dir/x?y=1
 http://h.example/p%20q
 1 a=1&a=3&b=2
 --- stderr
 error: parse "http://h/%zz": invalid URL escape "%zz"
-  at go_url.main()                      main.xo:38
+  at go_url.main()                      main.xo:44
