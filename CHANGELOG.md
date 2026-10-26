@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo bench --ab` with no `--max-load` now marks a round loaded when a side
+  starts at a 1 minute load of 6 or more, and leaves it out of the
+  statistics unless `--keep-loaded` (it does not wait for the load, as
+  `--max-load` does). Before, without `--max-load` no round was ever
+  loaded, and a run at a steady load of 20 reported "0 loaded". The summary
+  gives each side's median load and "loaded: N of M rounds", with a warning
+  when the machine was busy through the run (`--json`: `load_note`).
 - A front end cache entry of a closure that made a Map type's helper now
   replays in a program where another body made the helper first; such a
   build printed "the front end cache entry ... did not replay" and was

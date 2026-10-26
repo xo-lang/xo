@@ -196,6 +196,47 @@ fn window_open(os: Os) -> Bool uses (clock, env, fs.read) {
   }
 }
 
+/// The 1 minute load at or above which a round is loaded when no
+/// --max-load is given (it is then left out unless --keep-loaded; the
+/// guard does not wait for it): the idle Claude sessions hold the Mac near
+/// 2 (lead, 2026-10-26: a run at a steady load of 20 reported "0 loaded",
+/// since without --max-load no round ever was).
+const WARN_LOAD = 6.0
+
+/// Whether a side that starts at 1 minute load ld makes its round loaded
+/// without the guard having waited: only with no --max-load (with one,
+/// wait_ok waits, and a round it gave up on is loaded).
+fn started_loaded(o: Opts, ld: Float) -> Bool {
+  o.max_load == 0.0 && ld >= WARN_LOAD
+}
+
+/// The summary's load line: the median load of each side and how many
+/// rounds were loaded (started at or above --max-load, else WARN_LOAD),
+/// with a warning when a median is over the limit; "" with no rounds.
+fn load_note(o: Opts, rounds: List[Round]) -> Str {
+  if rounds.is_empty() {
+    return ""
+  }
+  let lim = if o.max_load > 0.0 { o.max_load } else { WARN_LOAD }
+  var la: List[Float] = []
+  var lb: List[Float] = []
+  var over = 0
+  for r in rounds {
+    la.push(r.load_a)
+    lb.push(r.load_b)
+    if r.load_a >= lim || r.load_b >= lim {
+      over += 1
+    }
+  }
+  let ma = median(la)
+  let mb = median(lb)
+  var line = "load: median ${fmt(ma)} (A) / ${fmt(mb)} (B); loaded: ${over} of ${rounds.len()} rounds (at or above ${fmt(lim)})"
+  if ma >= lim || mb >= lim {
+    line = "${line}\nwarning: the machine was busy through the run (median load at or above ${fmt(lim)}): wall and cpu ratios are not reliable; measure with HEAVY_CLASS=measure (agent-tools.md Measuring) or --max-load"
+  }
+  line
+}
+
 /// wait_ok waits until the guards allow a run: the quiet window closed
 /// (or this run is its measurement, in_window_run), the load under
 /// max_load, the guard command successful. It returns false
@@ -510,7 +551,7 @@ fn table(rows: List[Row]) -> Str {
 
 fn json_out(o: Opts, rounds: List[Round], used: Int, rows: List[Row]) -> Str {
   var out = StrBuilder.new()
-  out.write("{\"rounds\":${o.rounds},\"used\":${used},\"alpha\":${o.alpha},\"seed\":${o.seed},\"metrics\":{")
+  out.write("{\"rounds\":${o.rounds},\"used\":${used},\"load_note\":${load_note(o, rounds).quote()},\"alpha\":${o.alpha},\"seed\":${o.seed},\"metrics\":{")
   var first = true
   for r in rows {
     if !first {
@@ -611,6 +652,12 @@ pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, p
         loaded = true
       }
       let ld = load1(os, h.goos)
+      // with no --max-load the guard does not wait, but a side started
+      // at or above WARN_LOAD marks the round loaded (left out of the
+      // statistics unless --keep-loaded)
+      if started_loaded(o, ld) {
+        loaded = true
+      }
       if is_a {
         la = ld
         ra = run_once(os, h, o, pa, aa, o.env_a)
@@ -649,8 +696,10 @@ pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, p
     os.stdio.println("${used.len()} of ${rounds.len()} rounds used (${rounds.len() - used.len()} loaded), loads A/B per round: ${rounds.map(fn(r: Round) -> Str { "${fmt(r.load_a)}/${fmt(r.load_b)}" }).join(" ")}\n")
     if rows.is_empty() {
       os.stdio.println("no round was usable: every round ran under load (see --max-load, --guard, --load-wait, --keep-loaded)")
+      os.stdio.println(load_note(o, rounds))
     } else {
       os.stdio.print(table(rows))
+      os.stdio.println(load_note(o, rounds))
       if !rows.any(fn(r: Row) { r.name == "cycles" }) && (o.metrics.is_empty() || o.metrics.any(fn(k) { k is "cycles" | "cycles_per_op" | "ipc" | "instructions" })) {
         os.stdio.println(counters_na(h.goos))
       }

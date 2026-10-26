@@ -91,3 +91,42 @@ test "a quiet window holds a run unless it is the window's measurement" {
   os.fs.write("/quiet", "1".bytes())?
   expect(ok("", "")) == 1
 }
+
+test "a round started at load 6 or more is loaded with no --max-load" {
+  let o = match parse_opts(["--ab", "a", "b"]) {
+    Ok(x) => x
+    Err(e) => fault(e)
+  }
+  expect(started_loaded(o, 20.0)) == true
+  expect(started_loaded(o, 6.0)) == true
+  expect(started_loaded(o, 2.5)) == false
+  // with --max-load the guard waits; the start load alone does not mark
+  let m = match parse_opts(["--ab", "--max-load=4", "a", "b"]) {
+    Ok(x) => x
+    Err(e) => fault(e)
+  }
+  expect(started_loaded(m, 20.0)) == false
+}
+
+test "the load note counts loaded rounds and warns at a busy median" {
+  let o = match parse_opts(["--ab", "a", "b"]) {
+    Ok(x) => x
+    Err(e) => fault(e)
+  }
+  let s = Sample{vals: {}, ok: true, why: ""}
+  var rs: List[Round] = []
+  for l in [20.0, 18.0, 21.0, 2.0] {
+    rs.push(Round{a: s, b: s, load_a: l, load_b: l, a_first: true, loaded: l >= 6.0})
+  }
+  let n = load_note(o, rs)
+  expect(n.contains("loaded: 3 of 4 rounds")) == true
+  expect(n.contains("warning: the machine was busy")) == true
+  var quiet: List[Round] = []
+  for l in [2.0, 2.5, 3.0] {
+    quiet.push(Round{a: s, b: s, load_a: l, load_b: l, a_first: true, loaded: false})
+  }
+  let q = load_note(o, quiet)
+  expect(q.contains("loaded: 0 of 3 rounds")) == true
+  expect(q.contains("warning")) == false
+  expect(load_note(o, [])) == ""
+}

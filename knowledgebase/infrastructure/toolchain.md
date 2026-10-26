@@ -991,8 +991,14 @@ Before each run it waits for the guards: the quiet window file
 another session is measuring; `--no-guard` skips this), `--max-load X`
 (1 minute load average) and `--guard CMD` (`sh -c`, exit 0 to go); after
 `--load-wait` (10 min) the round runs marked loaded and is left out of
-the statistics unless `--keep-loaded`. The load before every run is
-printed and in `--json`. Stage 1 measures through `/usr/bin/time -l`
+the statistics unless `--keep-loaded`. Without `--max-load` (2026-10-26)
+the guard does not wait for the load, but a side that starts at a 1 minute
+load of 6 or more marks its round loaded all the same (the idle sessions
+hold the Mac near 2; a run at a steady load of 20 used to report "0
+loaded"). The load before every run is printed and in `--json`, and under
+the table a load line gives each side's median load and "loaded: N of M
+rounds", with a warning when a median is at or above the limit (`--json`:
+`load_note`). Stage 1 measures through `/usr/bin/time -l`
 (macOS, centisecond CPU resolution, instructions retired) or GNU
 `time -v` (Linux; the Docker image has it since tag `-4`), so runs of
 under about 100 ms are dominated by that resolution: make a run do more
