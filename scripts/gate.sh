@@ -25,6 +25,24 @@
 #            compiler/gen (go_backend); skipped otherwise
 #   cmd      the full tests of cmd/xo
 #   gen      the full tests of internal/gen
+#   fuzz     the private-module parser differentials of internal/stdtest
+#            against Go's own parsers: http1's raw request head, its
+#            response head, the request smuggling framing table, and
+#            neturl's URL parse, non -short and at their default case
+#            counts. 20 s alone and 42 s while corpora-all ran, both
+#            measured 2026-10-26 (2000 URL cases on arm64 and
+#            LLVM, 300 head and response cases, 41 smuggling rows) with a
+#            warm xo; run it in every tier (lead, 2026-10-26: 0.33.0's
+#            exit criterion 6 is that these run in the full tier)
+#   corpora-all
+#            every testdata corpus of internal/stdtest on every backend
+#            (TestStdCorpora, no /go/ suffix: go, arm64 and LLVM; the http,
+#            httpurl, mime, multipart and mail tables are the seeded
+#            Go-oracle differentials among them). 10 min 32 s measured
+#            2026-10-26, mostly clang -O2 thin LTO links of the LLVM
+#            corpora; the 8-hourly full tier runs it every time (lead,
+#            2026-10-26). The `corpora` step below is the cheaper Go
+#            backend only subset a per-change gate runs.
 #   alloff   internal/arm64's goldens with every optional pass off
 #            (XO_PASSES, compiler/arm64 passes.xo)
 #   fp       the self rebuild fixed point (scripts/bootstrap-xo.sh); its
@@ -280,6 +298,16 @@ for step in "$@"; do
     fi ;;
   cmd) full cmd ./cmd/xo ;;
   gen) full gen ./internal/gen ;;
+  fuzz)
+    # the private-module probes only (the http parsers and neturl), at
+    # their default counts, non -short: they skip under -short. 20 s alone,
+    # 42 s while corpora-all ran (both measured 2026-10-26).
+    full fuzz ./internal/stdtest -run '^(TestHttpHeadFuzz|TestHttpResponseFuzz|TestHttpSmuggle|TestHttpUrlFuzz)$' ;;
+  corpora-all)
+    # every corpus of internal/stdtest on every backend, non -short (under
+    # -short the corpora run the host backend alone). 10 min 32 s measured
+    # 2026-10-26, mostly the LLVM corpora's clang links.
+    full corpora ./internal/stdtest -run '^TestStdCorpora$' ;;
   alloff)
     off=$(sed -n '/^pub fn passes()/,/^}/p' compiler/arm64/passes.xo | grep -o '"[a-z0-9_]*"' | tr -d '"' | sed 's/^/-/' | paste -sd, -)
     XO_PASSES=$off full alloff ./internal/arm64 -run '^TestGoldenRun$' ;;

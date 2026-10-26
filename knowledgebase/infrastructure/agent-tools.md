@@ -447,7 +447,7 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   parses `xo test`'s "N passed, M failed" line and fails unless it equals
   the generated case count, so a file that is not picked up cannot pass a
   comparison of nothing; the count is logged per backend. TestHttpSmuggle
-  is the smuggling table: 40 hand rows (Content-Length duplicates and
+  is the smuggling table: 41 hand rows (Content-Length duplicates and
   conflicts, CL with Transfer-Encoding, short bodies and a CL that
   swallows pipelined bytes, TE lists, folds, casing, bad chunk framing,
   Host shapes, name bytes, and header values with valid UTF-8 and with
@@ -469,6 +469,31 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   is readTransfer's realLength, close is shouldClose) and the folded
   Connection trap are in gotchas/readrequest-not-the-server-layer.md. A
   divergence is reported to the lead before std changes, never fixed in
+  the probe. TestHttpUrlFuzz is the same shape over `native/llrt/neturl`:
+  2000 seeded URLs (a structured shape, an absolute shape with an
+  authority, and random bytes; a sixth cut short or byte changed) against
+  net/url's Parse and ParseRequestURI, `XO_URLFUZZ_N`/`XO_URLFUZZ_BACKENDS`
+  sized (defaults 2000, arm64 and llvm). Three rules make it faithful: a
+  Parse input is cut at the first '#' (every caller cuts the fragment, and
+  Go's Parse would otherwise validate escapes in a fragment nobody reads),
+  ParseRequestURI gets the target as it is (a request target has no
+  fragment) and an empty target is "empty url" (http1's own error), and the
+  whole answer line is compared as hex, because the fields can hold bytes
+  that are not UTF-8; each component is rendered the way neturl keeps it,
+  an invalid byte staying its %XX escape (decision 0259). It exercises
+  scheme, userinfo (validated only: neturl returns no user), host with
+  IPv4, IPv6 with a zone and a port, a port that is not a number, escaped
+  and empty hosts, multi-byte and invalid bytes, path escapes, and query
+  text, and it fails if the answers stop covering errors, schemes, hosts,
+  paths and queries. scripts/gate.sh has two steps for them (lead,
+  2026-10-26): `fuzz` runs these four probes, non -short, at their
+  defaults, 20 s alone and 42 s while corpora-all ran, both measured
+  2026-10-26, and every tier runs it; `corpora-all`
+  runs every corpus on every backend (TestStdCorpora with no /go/ suffix),
+  10 min 32 s measured 2026-10-26 mostly in the LLVM corpora's clang
+  links, and the 8-hourly full tier runs it every time. Both are where
+  0.33.0's exit criterion 6 is met.
+  A divergence is reported to the lead before std changes, never fixed in
   the probe.
 - `go run ./scripts/stdgen` after changing a std type (a struct, enum,
   newtype, or interface in std/*.xo) or a std function's signature:
