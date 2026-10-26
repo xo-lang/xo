@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+--- stderr
+<time> ERROR disk full path=/var free=0

@@ -390,6 +390,49 @@ func preludeCorpus() string {
 	}
 	o.WriteString("]\n")
 
+	// Int64.try and UInt32.try: Some inside the target type's range, None
+	// outside (std.md 2.2, "same for every sized type"). Int64 has Int's
+	// range, so its probe is the identity at the edges too; UInt32 is 0 to
+	// 4294967295. Go's constants are the oracle: every row's want is computed
+	// from the bounds, not written by hand.
+	const (
+		u32Max = int64(4294967295)
+		iMax   = int64(9223372036854775807)
+		iMin   = int64(-9223372036854775808)
+	)
+	probe := []int64{
+		0, 1, -1,
+		u32Max, u32Max + 1, -u32Max, -u32Max - 1,
+		2147483647, 2147483648,
+		iMax, -iMax, iMin,
+	}
+	rt := rand.New(rand.NewSource(99))
+	for i := 0; i < 12; i++ {
+		probe = append(probe, rt.Int63())
+		if i%3 == 0 {
+			probe = append(probe, -rt.Int63())
+		}
+	}
+	inRange := func(x, lo, hi int64) bool { return x >= lo && x <= hi }
+	o.WriteString("\n/// (the Int, UInt32.try of it as Go's bounds give it, the rule)\nconst TRY_U32_CASES: List[(Int, Str, Str)] = [\n")
+	for _, x := range probe {
+		want := "none"
+		if inRange(x, 0, u32Max) {
+			want = fmt.Sprintf("some %d", x)
+		}
+		fmt.Fprintf(&o, "  (%d, %q, %q),\n", x, want, "std.md 2.2 UInt32.try: Some inside 0 to 4294967295")
+	}
+	o.WriteString("]\n")
+	o.WriteString("\n/// (the Int, Int64.try of it as Go's bounds give it, the rule)\nconst TRY_I64_CASES: List[(Int, Str, Str)] = [\n")
+	for _, x := range probe {
+		want := "none"
+		if inRange(x, iMin, iMax) {
+			want = fmt.Sprintf("some %d", x)
+		}
+		fmt.Fprintf(&o, "  (%d, %q, %q),\n", x, want, "std.md 2.2 Int64.try: Int64 has Int's range")
+	}
+	o.WriteString("]\n")
+
 	o.WriteString(`
 fn show3(bad: List[(Str, Str, Str)]) -> List[(Str, Str, Str)] {
   bad[0..(if bad.len() < 20 { bad.len() } else { 20 })]
@@ -594,6 +637,48 @@ test "Range.to_list is Go's slices.Collect over the range" {
     }
   }
   expect(show3(bad)) == []
+}
+
+test "Int64.try and UInt32.try are Go's range checks for the sized types" {
+  var bad: List[(Str, Str, Str)] = []
+  for (x, want, why) in TRY_I64_CASES {
+    let got = match Int64.try(x) {
+      Some(n) => "some ${n}"
+      None => "none"
+    }
+    if got != want {
+      bad.push((why, got, want))
+    }
+  }
+  for (x, want, why) in TRY_U32_CASES {
+    let got = match UInt32.try(x) {
+      Some(n) => "some ${n}"
+      None => "none"
+    }
+    if got != want {
+      bad.push((why, got, want))
+    }
+  }
+  expect(show3(bad)) == []
+}
+
+test "Set.is_empty is false with elements, and true when there are none" {
+  let some = ["a", "b", "a"].to_set()
+  expect(some.len()) == 2
+  expect(some.is_empty()) == false
+  var s = ["a", "b"].to_set()
+  expect(s.remove("a")) == true
+  expect(s.is_empty()) == false
+  expect(s.remove("b")) == true
+  expect(s.is_empty()) == true
+  expect(s.remove("b")) == false
+  let none = ["x"].to_set().filter(fn(x) { false })
+  expect(none.len()) == 0
+  expect(none.is_empty()) == true
+  var grown = none
+  grown.add("y")
+  expect(grown.is_empty()) == false
+  expect(none.is_empty()) == true
 }
 `)
 	return o.String()

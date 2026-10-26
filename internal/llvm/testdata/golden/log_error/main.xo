@@ -1,0 +1,11 @@
+// std/log's Error level (std.md's log.Level): a record at Error is emitted
+// when the sink's level is Error, and the lower levels are dropped; its
+// fields are written in the same sorted form as every other record.
+use std/log
+
+fn main(os: Os) {
+  log.configure(os.stdio, level: log.Level.Error)
+  log.info("filtered out", {})
+  log.warn("filtered out", {})
+  log.error("disk full", {"path": "/var", "free": 0})
+}

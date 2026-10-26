@@ -409,6 +409,70 @@ const RANGE_CASES: List[(Int, Int, Bool, Str, Str)] = [
   (9223372036854775804, 9223372036854775807, false, "9223372036854775804\x1f9223372036854775805\x1f9223372036854775806", "the top of Int"),
 ]
 
+/// (the Int, UInt32.try of it as Go's bounds give it, the rule)
+const TRY_U32_CASES: List[(Int, Str, Str)] = [
+  (0, "some 0", "std.md 2.2 UInt32.try: Some inside 0 to 4294967295"),
+  (1, "some 1", "std.md 2.2 UInt32.try: Some inside 0 to 4294967295"),
+  (-1, "none", "std.md 2.2 UInt32.try: Some inside 0 to 4294967295"),
+  (4294967295, "some 4294967295", "std.md 2.2 UInt32.try: Some inside 0 to 4294967295"),
+  (4294967296, "none", "std.md 2.2 UInt32.try: Some inside 0 to 4294967295"),
+  (-4294967295, "none", "std.md 2.2 UInt32.try: Some inside 0 to 4294967295"),
+  (-4294967296, "none", "std.md 2.2 UInt32.try: Some inside 0 to 4294967295"),
+  (2147483647, "some 2147483647", "std.md 2.2 UInt32.try: Some inside 0 to 4294967295"),
+  (2147483648, "some 2147483648", "std.md 2.2 UInt32.try: Some inside 0 to 4294967295"),
+  (9223372036854775807, "none", "std.md 2.2 UInt32.try: Some inside 0 to 4294967295"),
+  (-9223372036854775807, "none", "std.md 2.2 UInt32.try: Some inside 0 to 4294967295"),
+  (-9223372036854775808, "none", "std.md 2.2 UInt32.try: Some inside 0 to 4294967295"),
+  (2431074399724039541, "none", "std.md 2.2 UInt32.try: Some inside 0 to 4294967295"),
+  (-5864379541603903257, "none", "std.md 2.2 UInt32.try: Some inside 0 to 4294967295"),
+  (6196522365232470547, "none", "std.md 2.2 UInt32.try: Some inside 0 to 4294967295"),
+  (5797861749467499218, "none", "std.md 2.2 UInt32.try: Some inside 0 to 4294967295"),
+  (4154943554711330841, "none", "std.md 2.2 UInt32.try: Some inside 0 to 4294967295"),
+  (-8820085581875928884, "none", "std.md 2.2 UInt32.try: Some inside 0 to 4294967295"),
+  (2934557112820330314, "none", "std.md 2.2 UInt32.try: Some inside 0 to 4294967295"),
+  (3603234229518892170, "none", "std.md 2.2 UInt32.try: Some inside 0 to 4294967295"),
+  (1485203512935528753, "none", "std.md 2.2 UInt32.try: Some inside 0 to 4294967295"),
+  (-947343654871041209, "none", "std.md 2.2 UInt32.try: Some inside 0 to 4294967295"),
+  (3147790424037659096, "none", "std.md 2.2 UInt32.try: Some inside 0 to 4294967295"),
+  (79876466084125000, "none", "std.md 2.2 UInt32.try: Some inside 0 to 4294967295"),
+  (6448003867665845275, "none", "std.md 2.2 UInt32.try: Some inside 0 to 4294967295"),
+  (-6385191596466280420, "none", "std.md 2.2 UInt32.try: Some inside 0 to 4294967295"),
+  (785295407437822083, "none", "std.md 2.2 UInt32.try: Some inside 0 to 4294967295"),
+  (3546343826724305832, "none", "std.md 2.2 UInt32.try: Some inside 0 to 4294967295"),
+]
+
+/// (the Int, Int64.try of it as Go's bounds give it, the rule)
+const TRY_I64_CASES: List[(Int, Str, Str)] = [
+  (0, "some 0", "std.md 2.2 Int64.try: Int64 has Int's range"),
+  (1, "some 1", "std.md 2.2 Int64.try: Int64 has Int's range"),
+  (-1, "some -1", "std.md 2.2 Int64.try: Int64 has Int's range"),
+  (4294967295, "some 4294967295", "std.md 2.2 Int64.try: Int64 has Int's range"),
+  (4294967296, "some 4294967296", "std.md 2.2 Int64.try: Int64 has Int's range"),
+  (-4294967295, "some -4294967295", "std.md 2.2 Int64.try: Int64 has Int's range"),
+  (-4294967296, "some -4294967296", "std.md 2.2 Int64.try: Int64 has Int's range"),
+  (2147483647, "some 2147483647", "std.md 2.2 Int64.try: Int64 has Int's range"),
+  (2147483648, "some 2147483648", "std.md 2.2 Int64.try: Int64 has Int's range"),
+  (9223372036854775807, "some 9223372036854775807", "std.md 2.2 Int64.try: Int64 has Int's range"),
+  (-9223372036854775807, "some -9223372036854775807", "std.md 2.2 Int64.try: Int64 has Int's range"),
+  (-9223372036854775808, "some -9223372036854775808", "std.md 2.2 Int64.try: Int64 has Int's range"),
+  (2431074399724039541, "some 2431074399724039541", "std.md 2.2 Int64.try: Int64 has Int's range"),
+  (-5864379541603903257, "some -5864379541603903257", "std.md 2.2 Int64.try: Int64 has Int's range"),
+  (6196522365232470547, "some 6196522365232470547", "std.md 2.2 Int64.try: Int64 has Int's range"),
+  (5797861749467499218, "some 5797861749467499218", "std.md 2.2 Int64.try: Int64 has Int's range"),
+  (4154943554711330841, "some 4154943554711330841", "std.md 2.2 Int64.try: Int64 has Int's range"),
+  (-8820085581875928884, "some -8820085581875928884", "std.md 2.2 Int64.try: Int64 has Int's range"),
+  (2934557112820330314, "some 2934557112820330314", "std.md 2.2 Int64.try: Int64 has Int's range"),
+  (3603234229518892170, "some 3603234229518892170", "std.md 2.2 Int64.try: Int64 has Int's range"),
+  (1485203512935528753, "some 1485203512935528753", "std.md 2.2 Int64.try: Int64 has Int's range"),
+  (-947343654871041209, "some -947343654871041209", "std.md 2.2 Int64.try: Int64 has Int's range"),
+  (3147790424037659096, "some 3147790424037659096", "std.md 2.2 Int64.try: Int64 has Int's range"),
+  (79876466084125000, "some 79876466084125000", "std.md 2.2 Int64.try: Int64 has Int's range"),
+  (6448003867665845275, "some 6448003867665845275", "std.md 2.2 Int64.try: Int64 has Int's range"),
+  (-6385191596466280420, "some -6385191596466280420", "std.md 2.2 Int64.try: Int64 has Int's range"),
+  (785295407437822083, "some 785295407437822083", "std.md 2.2 Int64.try: Int64 has Int's range"),
+  (3546343826724305832, "some 3546343826724305832", "std.md 2.2 Int64.try: Int64 has Int's range"),
+]
+
 fn show3(bad: List[(Str, Str, Str)]) -> List[(Str, Str, Str)] {
   bad[0..(if bad.len() < 20 { bad.len() } else { 20 })]
 }
@@ -612,4 +676,46 @@ test "Range.to_list is Go's slices.Collect over the range" {
     }
   }
   expect(show3(bad)) == []
+}
+
+test "Int64.try and UInt32.try are Go's range checks for the sized types" {
+  var bad: List[(Str, Str, Str)] = []
+  for (x, want, why) in TRY_I64_CASES {
+    let got = match Int64.try(x) {
+      Some(n) => "some ${n}"
+      None => "none"
+    }
+    if got != want {
+      bad.push((why, got, want))
+    }
+  }
+  for (x, want, why) in TRY_U32_CASES {
+    let got = match UInt32.try(x) {
+      Some(n) => "some ${n}"
+      None => "none"
+    }
+    if got != want {
+      bad.push((why, got, want))
+    }
+  }
+  expect(show3(bad)) == []
+}
+
+test "Set.is_empty is false with elements, and true when there are none" {
+  let some = ["a", "b", "a"].to_set()
+  expect(some.len()) == 2
+  expect(some.is_empty()) == false
+  var s = ["a", "b"].to_set()
+  expect(s.remove("a")) == true
+  expect(s.is_empty()) == false
+  expect(s.remove("b")) == true
+  expect(s.is_empty()) == true
+  expect(s.remove("b")) == false
+  let none = ["x"].to_set().filter(fn(x) { false })
+  expect(none.len()) == 0
+  expect(none.is_empty()) == true
+  var grown = none
+  grown.add("y")
+  expect(grown.is_empty()) == false
+  expect(none.is_empty()) == true
 }
