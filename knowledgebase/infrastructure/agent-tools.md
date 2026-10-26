@@ -405,9 +405,13 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   trees (a dirty tree's xo, XO_DIRTY set, runs on cold caches and measured
   5 times slower), and print each xo's `xo version -m` and each build's exit
   status (`set -o pipefail`; a failed xobuild behind `| tail` left the old
-  xo in place). Start a measurement only on the lead's go in a window,
-  never automatically when the load drops: two runs started that way
-  overlapped another agent's window.
+  xo in place). Start a measurement with `HEAVY_CLASS=measure
+  ~/xo-lead/agents/heavy.sh NAME CMD...` (2026-10-26): it waits its turn
+  (one measurement at a time), opens its own quiet window, lets the
+  running slots and gates finish (at most 30 minutes), runs, and closes
+  the window, so no lead go is needed; never start one by hand when the
+  load drops (two runs started that way overlapped another agent's
+  window).
 - Build both sides of an A/B (`xo build` in a scratch script, `xo bench
   --ab`) with `XO_INLINE_STRICT=1`: without it a module that fails
   verification builds without inlining and says so in one warning line
@@ -455,8 +459,9 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   `XO_PROF=cpu` for a program, and compares the same breakdown from a
   known good xo. Check how each xo under comparison was built (`xo
   version -m`: backend, release preset) before blaming the code.
-- A measurement needing a quiet machine waits with
-  `~/xo-lead/agents/quiet.sh wait [LOAD]` inside the lead's window.
+- A measurement needing a quiet machine runs with HEAVY_CLASS=measure
+  (above); inside a window the lead opened by hand, it waits with
+  `~/xo-lead/agents/quiet.sh wait [LOAD]`.
 - Which tool answers what (owner, 2026-10-22): `xo bench --ab` decides
   "is it faster" (real time, interleaved, with an interval; threads,
   waits and I/O included); callgrind (instruction counts, deterministic)
