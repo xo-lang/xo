@@ -1417,14 +1417,17 @@ func runEnv(t testing.TB, env, args []string, stdout, stderr io.Writer) int {
 // TestAgentRefsSpellFilter: refs at a root checks only the modules whose
 // text spells the name's last segment as a whole identifier (2026-10-26:
 // --testdata at the xo root took 5 to 12 s and up to 6 GB checking every
-// module), and finds the same references as a check of every module
-// (XO_REFS_SPELL=off) for a function of the program, a std function and
-// a prelude method, with and without --testdata.
+// module), and leaves unchecked a function body that spells none of
+// them (Checker.body_words: trim_prefix at the xo root with --testdata,
+// 5.8 GB to 1.0 GB), and finds the same references as a check of every
+// module and body (XO_REFS_SPELL=off) for a function of the program, a
+// std function and a prelude method, with and without --testdata; app's
+// quiet spells none, wrapped names lib.helper only inside a closure.
 func TestAgentRefsSpellFilter(t *testing.T) {
 	t.Parallel()
 	root := writeFiles(t, map[string]string{
 		"app/xo.mod":             "module example.com/app\n",
-		"app/main.xo":            "use example.com/lib\nuse std/json\n\nfn main(os: Os) {\n  let n = lib.helper(1)\n  let v = json.decode[Int](\"2\".bytes()) ?? e => 0\n  os.stdio.println(\"${n} ${v} ${\"ab\".trim_prefix(\"a\")}\")\n}\n",
+		"app/main.xo":            "use example.com/lib\nuse std/json\n\nfn quiet(n: Int) -> Int { n * 3 }\n\nfn wrapped() -> Int {\n  let f = fn(x: Int) -> Int { lib.helper(x) }\n  f(quiet(2))\n}\n\nfn main(os: Os) {\n  let n = lib.helper(wrapped())\n  let v = json.decode[Int](\"2\".bytes()) ?? e => 0\n  os.stdio.println(\"${n} ${v} ${\"ab\".trim_prefix(\"a\")}\")\n}\n",
 		"lib/xo.mod":             "module example.com/lib\n",
 		"lib/lib.xo":             "pub fn helper(n: Int) -> Int { n + 1 }\n\npub fn helper_two(n: Int) -> Int { helper(n) * 2 }\n",
 		"other/xo.mod":           "module example.com/other\n",

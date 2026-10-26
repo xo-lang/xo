@@ -38,9 +38,12 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   `xo refs --testdata` checks them too. At a root, refs checks only the
   modules whose text spells the name's last segment as a whole
   identifier (a module that does not cannot refer to it; 2026-10-26):
-  at the xo root `Str.contains_where` takes 0.9 s and 0.9 GB (1.4 s,
-  1.2 GB with --testdata), a common name such as `trim_prefix` about
-  3.5 s and 3.5 GB; XO_REFS_SPELL=off checks every module. Two modules
+  inside those, a function body that spells none of the names is not
+  parsed or checked (Checker.body_words). At the xo root with
+  --testdata, `trim_prefix` (350 refs) takes 1.35 s and 1.0 GB (was
+  15.5 s and 5.8 GB), `json.decode` 0.8 s and 0.7 GB,
+  `Str.contains_where` 0.46 GB (Last verified: 2026-10-26);
+  XO_REFS_SPELL=off checks every module and body. Two modules
   under a root with one module path (the xo checkout's
   `example.com/notes` three times) are checked once: the first, and the
   others named (`"same_path"`, a `note: not checked` line); look one up

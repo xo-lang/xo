@@ -15,6 +15,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - The whole-build cache records the program's own files ahead of std's, so an edit's
   miss stops at the edited file instead of first hashing every std file: an edit
   rebuild of llvm-fib or conc-mutex 260 ms to 250.
+- `xo refs` at a root also leaves unparsed and unchecked each function
+  body that spells none of the names looked for: at the xo root with
+  `--testdata`, `trim_prefix` (350 references) takes 1.35 s and 1.0 GB
+  instead of 15.5 s and 5.8 GB, `json.decode` 0.8 s and 0.7 GB, with the
+  same references (`XO_REFS_SPELL=off` checks every body).
 - `xo check`, `xo vet` and `xo query` over directories holding two modules
   with one module path (copies of a program) check each of them on its own:
   they read only the first module's files under the path, so an error in

@@ -523,6 +523,8 @@ fn check_view_excluding(os: Os, std_dir: Str, wd: Str, overlay: Map[Str, Bytes],
   c.exclude_dirs = exclude
   c.walk_testdata = testdata
   c.testdata_words = words
+  // refs: bodies that spell none of the names stay unparsed
+  c.body_words = words
   match c.check_dirs(dirs) {
     Ok(_) => {}
     Err(e) => {

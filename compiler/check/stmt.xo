@@ -120,11 +120,27 @@ fn (var c: Checker) check_module(m: Int) {
             if lazy && (eager.is_empty() || !eager.contains(c.eager_name(fo))) {
               c.lazy_fns[fo] = true
               c.check_fn_defaults(fo)
+            } else if !c.body_words.is_empty() && fd.lazy.is_some() && !c.body_spells(f, fd) {
+              // body_words: a body that spells no name is left empty, in
+              // the declaration and the file's tree alike (every later
+              // pass walks one or the other), and not checked
+              var nf = fd
+              nf.body = Some(parser.Block{span: fd.span})
+              nf.lazy = None
+              c.objs[fo].fn_decl = [nf]
+              c.files[f].ast.decls[i] = parser.Decl.FnDecl(d: nf)
+              c.lazy_fns[fo] = true
+              c.check_fn_defaults(fo)
             } else {
               if !eager.is_empty() {
                 c.eager_fns[fo] = true
               }
-              c.check_fn_decl(fd, fo)
+              if fd.lazy.is_some() {
+                // body_words: the body parsed, in the file's tree too
+                c.force_body(fo)
+                c.files[f].ast.decls[i] = parser.Decl.FnDecl(d: c.objs[fo].fn_decl[0])
+              }
+              c.check_fn_decl(c.objs[fo].fn_decl[0], fo)
             }
           }
         }
@@ -238,6 +254,17 @@ fn (var c: Checker) check_fn_defaults(fo: Int) {
       c.check_default(p.default[0], p.ty)
     }
   }
+}
+
+/// Whether the unparsed body of fd in file f spells one of body_words.
+fn (c: Checker) body_spells(f: Int, fd: parser.FnDecl) -> Bool {
+  let lb = match fd.lazy {
+    Some(x) => x
+    None => return true
+  }
+  let src = c.files[f].src
+  let text = src[lb.start.offset..lb.end.min(src.len())]
+  c.body_words.any(fn(w) { spells_ident(text, w) })
 }
 
 /// Parses fo's body when the lazy parse skipped it (decision 0351 stage

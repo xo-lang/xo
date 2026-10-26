@@ -89,6 +89,15 @@ pub struct Checker {
   /// XO_LAZY_PARSE=off turns it off):
   /// skipped by their braces, parsed when check_lazy forces them.
   pub lazy_parse: Bool = false
+  /// xo refs (2026-10-26): a program file's function bodies are parsed
+  /// and checked only when their text spells one of these words (the
+  /// names looked for), the others keep their signature only: a body that
+  /// does not spell a name holds no reference to it, and a check of every
+  /// body held 1.9 GB at the xo root. Empty: every body.
+  pub body_words: List[Str] = []
+  /// body_words: the functions empty_lazy_bodies emptied after the check
+  /// (file and name), for a look (XO_REFS_DEBUG=1)
+  pub lazy_left: List[Str] = []
   pub lazy: Bool = false
   /// Map and Set as decision 0291's hybrid (every backend since 2026-10-21,
   /// the playground's too; compiler/xo main.xo turns it off for
@@ -595,6 +604,30 @@ pub fn (var c: Checker) check_dirs(dirs: List[Str]) -> () ! Str uses fs.read {
   if c.unsupported.is_empty() {
     c.run()?
   }
+  if !c.body_words.is_empty() {
+    c.empty_lazy_bodies()
+  }
+}
+
+/// body_words: the function bodies still unparsed after
+/// the check (declarations the check did not reach: a duplicate, a module
+/// that stopped) left empty, so no later reader meets the lazy parse's
+/// marker; none of them was checked, so none holds a resolved reference.
+fn (var c: Checker) empty_lazy_bodies() {
+  for f in 0..c.files.len() {
+    let n = c.files[f].ast.decls.len()
+    for i in 0..n {
+      if let parser.Decl.FnDecl(d: fd) = c.files[f].ast.decls[i] {
+        if fd.lazy.is_some() {
+          c.lazy_left.push("${c.files[f].path} ${fd.name.name.to_str() ?? "?"}")
+          var nf = fd
+          nf.body = Some(parser.Block{span: fd.span})
+          nf.lazy = None
+          c.files[f].ast.decls[i] = parser.Decl.FnDecl(d: nf)
+        }
+      }
+    }
+  }
 }
 
 /// check_dirs for a std module under test (std_test): loads it, with
@@ -1100,6 +1133,9 @@ fn (var c: Checker) parse_cached(path: Str, src: Bytes, sig: Bool) -> parser.Par
   if !path.starts_with("std/") {
     // a program file's parse is in the cache only when the driver
     // parsed it ahead
+    if lazy {
+      return parser.parse_file_lazy(path.bytes(), src, sig)
+    }
     return parser.parse_file(path.bytes(), src, sig)
   }
   let r = if lazy { parser.parse_file_lazy(path.bytes(), src, sig) } else { parser.parse_file(path.bytes(), src, sig) }
@@ -1112,6 +1148,11 @@ fn (var c: Checker) parse_cached(path: Str, src: Bytes, sig: Bool) -> parser.Par
 /// for check_lazy anyway (lazy_mod), but not the std module under test,
 /// which is checked in full.
 pub fn (c: Checker) parse_lazy_path(path: Str) -> Bool {
+  if !c.body_words.is_empty() {
+    // std's files too: a std module whose bodies refs checks (its
+    // preloads) checks only those that spell a name
+    return true
+  }
   c.lazy && c.lazy_parse && path.starts_with("std/native/") && (c.std_test.is_empty() || !path.starts_with("std/${c.std_test}/") && path != "std/${c.std_test}.xo")
 }
 

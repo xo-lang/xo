@@ -173,7 +173,10 @@ pub fn run_agent(os: Os, cmd: Str, args: List[Str]) -> Int uses (stdio, fs, env)
   // names' last segments cannot refer to them, so it is not checked (the
   // declaring module spells its name; 2026-10-26: --testdata at the xo
   // root checked every module, 5 to 12 s and 6 GB)
-  // XO_REFS_SPELL=off checks every module (the comparison in cmd/xo's
+  // and a function body that spells none of them is not parsed or
+  // checked either (Checker.body_words; trim_prefix at the xo root with
+  // --testdata, 5.8 GB to 1.0 GB). XO_REFS_SPELL=off checks every module
+  // and body (the comparison in cmd/xo's
   // TestAgentRefsSpellFilter)
   var words: List[Str] = []
   if cmd == "refs" && (os.env.get("XO_REFS_SPELL") ?? "") != "off" {
