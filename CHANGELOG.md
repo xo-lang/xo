@@ -10,6 +10,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   parts) regenerates only the edited part instead of all of them: its parts
   are kept from the first build when they are under 128 MiB in all (before, only
   a module of fewer than 16 parts).
+- `xo build` and `xo run` load std/testing only when a program file has a test
+  block (it imports http, sql, log and json, so every build parsed them): an
+  llvm-fib edit rebuild 283 to 244 ms. `xo check`, `xo test`, vet and the language
+  server load it as before, and a build still type-checks inline test blocks.
 - An edit rebuild is a few ms faster: the checker's syntax trees and tables are
   released on a task beside the passes after the SSA is built, not on the build's
   thread. Opt in (XO_CHAIN_KEYS=1, decision 0382): the landings and the cleanup

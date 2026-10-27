@@ -133,6 +133,28 @@ the 75 ms of parse CPU was mostly not wall time. An opt-in flag worth about 10 m
 the branch is kept as refs/recover/lang1-0380-stage2. Declaring std from entries (stage 3) is what
 remains of the bound; the edit loop's next lever is decision 0382.
 
+
+## std/testing only where a test block is (2026-10-27, Xo Lang 1)
+
+An oracle of the edit's critical path (decision 0382's ceiling runs) found the largest share of the
+check's 54 ms was not std as such but std/testing: load_prelude loaded it in every build, for the
+predeclared `os`, `expect` and `testing` of test blocks, and it imports std/http, sql, log and json,
+which bring their implementations and the HTTP, TLS, SQL, flate and DNS runtime modules. llvm-fib
+parsed and declared 195 std files; 59 hold code its binary runs. A build or run (skip_tests,
+decision 0348) now loads std/testing only when a program file has a test block (check/load.xo
+load_testing_if, before load_native); `xo check`, vet, fix, the language server and `xo test` load
+it as before, and a build still checks inline test blocks (cmd/xo TestBuildInlineTestBlocks).
+The oracle (same xo, the load skipped, quiet, n=8): llvm-fib edit 277.9 to 241.8 ms (check 55 to
+28 ms, 195 to 97 files parsed), the HTTP server 577.6 to 565.1 (it imports http and json itself;
+check 56 to 52, 197 to 179 files). The change itself, quiet --ab against an xo built at its parent (n=8): llvm-fib edit 282.9 to
+243.8 ms with identical output; the HTTP server 588.6 to 587.4 ms, unchanged, since its main.xo
+has an inline test block and so still loads std/testing (the oracle's 6.5 ms there is the owner's
+question of whether a build skips test blocks altogether). The prelude imports native/llrt/cabi_net
+now: a build without std/testing lost the http import that had brought it in, and os.net's rt.*
+calls lower to its exports (repotest TestRtExportsImportedByPrelude;
+gotchas/implicit-std-testing-hid-prelude-import.md). Stage 3 (declaring std from entries) is
+measured on top of this.
+
 ## Measurement plan
 
 1. First, an instrument, no entry: how much of the check's 57 ms and 186 MB is std (a run with only
