@@ -127,3 +127,84 @@ Still over the 1.2x bar: uuid parse and bytes (the representation: a Uuid is its
 character is a write call; a native word writer, as base64's to_base64, is the next step), mime format (1.23)
 and detect (1.22, at the edge), path parts (1.53, clean's byte at a time buffer and the slice checks above).
 
+
+## compress, template, mail, archive, big, xmlcodec, toml, websocket (2026-10-27, Xo Lang 2)
+
+Twins: bench/perf/compress (compress/gzip, compress/flate), template (text/template), mail (net/mail),
+archive (archive/tar, archive/zip; the checksum counts entries and content bytes, not archive bytes),
+big (math/big), xmlcodec (derive Xml against encoding/xml), toml (github.com/pelletier/go-toml/v2 v2.4.3)
+and websocket (github.com/gorilla/websocket v1.5.3, an echo server and client on loopback in one program).
+twincheck agrees on all 35 workloads. `xo bench --ab`, quiet, 15 rounds (big and websocket 10), A the Go
+twin, B the Xo program (native arm64, --release, main at fbbf37322); Xo / Go:
+
+| workload | Go wall | Xo wall | wall | instructions |
+|---|---|---|---|---|
+| compress none (40 buffers of 32 KB of text) | 6.73 ms | 4.93 ms | 0.733 | 0.686 |
+| compress gzip (default level, 10 passes) | 490.5 ms | 719.9 ms | 1.468 | 1.933 |
+| compress gzip1 (BestSpeed) | 87.2 ms | 169.1 ms | 1.939 | 2.514 |
+| compress gunzip | 88.7 ms | 172.7 ms | 1.947 | 2.426 |
+| compress deflate | 489.0 ms | 699.3 ms | 1.430 | 1.909 |
+| compress inflate | 87.4 ms | 124.7 ms | 1.426 | 1.935 |
+| template none | 3.42 ms | 2.95 ms | 0.862 | 0.680 |
+| template parse (a page template, 20,000) | 105.1 ms | 105.7 ms | 1.006 | 1.078 |
+| template render (30 items of JSON data, 20,000) | 210.6 ms | 614.4 ms | 2.917 | 1.847 |
+| mail none | 3.32 ms | 3.05 ms | 0.919 | 0.957 |
+| mail addr (five forms, one bad, 100,000) | 31.6 ms | 43.5 ms | 1.379 | 1.056 |
+| mail list (four addresses) | 92.6 ms | 131.3 ms | 1.418 | 0.991 |
+| mail display | 13.2 ms | 37.0 ms | 2.796 | 1.769 |
+| mail msg (read_message, two header lookups) | 94.2 ms | 57.1 ms | 0.606 | 0.527 |
+| mail date (four RFC 5322 dates) | 92.5 ms | 40.0 ms | 0.432 | 0.314 |
+| archive none (50 files of 1 to 4 KB, 3 directories) | 3.26 ms | 2.77 ms | 0.848 | 0.722 |
+| archive tar (200 passes) | 13.7 ms | 16.5 ms | 1.207 | 1.396 |
+| archive untar | 23.1 ms | 9.4 ms | 0.406 | 0.342 |
+| archive zip (deflated) | 473.0 ms | 729.1 ms | 1.541 | 2.387 |
+| archive unzip | 84.7 ms | 137.9 ms | 1.629 | 2.159 |
+| big none | 3.04 ms | 2.55 ms | 0.839 | 0.718 |
+| big mul (2048 by 2048 bits, 20,000) | 10.7 ms | 32.1 ms | 2.997 | 3.938 |
+| big quorem (4096 by 2048 bits, 10,000) | 11.6 ms | 23.5 ms | 2.025 | 2.975 |
+| big text (2048 bits to decimal, 2,000) | 7.56 ms | 11.25 ms | 1.490 | 1.831 |
+| big parse (decimal, 2,000) | 10.1 ms | 5.49 ms | 0.544 | 0.593 |
+| big exp (1024 bit base, exponent, odd modulus; 200) | 60.0 ms | 764.3 ms | 12.75 | 6.037 |
+| xmlcodec none | 3.05 ms | 2.66 ms | 0.872 | 0.763 |
+| xmlcodec encode (an order of 20 lines, 20,000) | 173.8 ms | 310.7 ms | 1.788 | 1.413 |
+| xmlcodec decode | 572.2 ms | 704.4 ms | 1.231 | 0.766 |
+| toml none | 3.08 ms | 2.58 ms | 0.837 | 0.690 |
+| toml decode (a config into a struct, 20,000) | 51.0 ms | 113.7 ms | 2.230 | 1.947 |
+| websocket none | 4.73 ms | 3.48 ms | 0.735 | 0.510 |
+| websocket small (64 byte text round trips, 20,000) | 314.7 ms | 332.8 ms | 1.057 | 1.100 |
+| websocket big (16 KB binary round trips, 5,000) | 161.1 ms | 249.8 ms | 1.550 | 2.818 |
+| websocket dial (handshake, one round trip, close; 500) | 59.8 ms | 52.0 ms | 0.868 | 0.706 |
+
+Fixed the same day (std/changes compress.md, mail.md, big.md 2026-10-27), --ab against the parent's std:
+
+| workload | against the parent | Xo / Go now |
+|---|---|---|
+| compress gunzip (CRC-32 slicing-by-8, no member copy) | 0.773 | about 1.51 |
+| mail display (quote by bytes) | 0.361 | about 1.01 |
+| big exp (bigmod's Montgomery exp for an odd modulus) | 0.072 | 0.920 (measured) |
+
+Still over 1.2x, with an XO_PROF=cpu profile line each (loops scaled 10x; flat shares), waiting:
+
+- template render 2.92: refcount traffic on the tree walk, no single hot spot: Ex.walk 9%, drop Ctx 7.6%,
+  Ex.at_node 7.2%, walk_list 6.7%, dup Node 4.9%, drop V 4.8%, drop Node 4.6% (dup and drop together about
+  25%).
+- compress deflate and gzip 1.43 to 1.47 (and archive zip 1.54): Deflater.deflate 80% (the match search).
+  gzip1 1.94: Blocks.write_tokens 33%, index_tokens 20%, Fast.encode 18%. inflate 1.43 (archive unzip 1.63;
+  gunzip after the fix): huffman_block 38%, huff_sym 17%, memmove 12.5% (the output is a List[Int], one
+  word a byte).
+- big mul 3.00: nat_mul 86% (Go's addMulVVW is assembly). quorem 2.03: nat_divmod_basic 84%. text 1.49:
+  convert_words 29% (few samples).
+- toml decode 2.23: spread out: alloc 7.8%, TomlParser.key 7.8%, memmove 6.8%, json_string 5.8% (decode goes
+  through JSON text), ws 5.8%, basic_string 4.9%.
+- xmlcodec encode 1.79: string building: obj.rs_append 12%, move_at 6.9%, Printer.write_start 6.1%,
+  encode_element 5.4%. decode 1.23: the byte reader: Dec.getc 12.8%, raw 10%, token 9.4%, mustgetc 7.3%.
+- websocket big 1.55: _sendto 60%, kevent 18%, _ulock_wait 8%, read 7%: syscall and wait bound; whether a
+  frame goes out in more than one sendto is the next check.
+- mail list 1.42 and addr 1.38: rune decoding: bytes_decode_rune 7.6 to 13.9%, raw.decode 9.2%, is_atext 6.7 to
+  13.9%, llrt_str_slice_chk 7.6%.
+- archive tar 1.21 (a 14 ms run): set_ustar 27%.
+
+Under the bar: template parse, mail msg and date, archive untar, big parse, websocket small and dial, and
+the fixed rows. Still without a row: metrics (no Go counterpart in the module cache offline:
+prometheus/client_golang), smtp and sql (need a server), and http's request-head parser (bench/perf/httpparse
+exists; its row is Xo Lang 3's).
