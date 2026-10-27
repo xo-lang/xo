@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+true false true false true
+apple,apple2,fig,pear
+-7,-1,0,3
+-7 2 5
+0.99 1.2 1.10
+10.5 false
+true true
+--- stderr

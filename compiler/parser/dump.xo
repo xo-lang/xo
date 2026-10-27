@@ -306,6 +306,9 @@ fn dump_decl(var out: StrBuilder, depth: Int, label: Str, decl: Decl) {
       dump_ident(out, d, "name", t.name)
       dump_type_params(out, d, t.type_params)
       dump_type_opt(out, d, "type", t.typ)
+      if !t.derive.is_empty() {
+        dump_idents(out, d, "derive", t.derive)
+      }
     }
     ConstDecl(c) => dump_const(out, depth, label, c)
     TestDecl(t) => {

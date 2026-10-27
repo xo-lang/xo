@@ -1,0 +1,47 @@
+// derive Ord on a newtype (decision 0390): the order of its value, for
+// `<`, sorting, min and max, and `T: Ord` code, with the newtype over a
+// Str, a negative Int, a derived Ord struct, and a type parameter.
+
+type Name struct(Str) derive Ord
+
+type Temp struct(Int) derive Ord
+
+struct Ver {
+  major: Int
+  minor: Int
+} derive Ord
+
+type Tag struct(Ver) derive Ord
+
+type Wrap[T] struct(T) derive Ord
+
+fn largest[T: Ord](xs: List[T]) -> T? {
+  var best: T? = None
+  for x in xs {
+    if let Some(b) = best {
+      if x > b {
+        best = Some(x)
+      }
+    } else {
+      best = Some(x)
+    }
+  }
+  best
+}
+
+fn main(os: Os) {
+  let a = Name("alpha")
+  let b = Name("beta")
+  os.stdio.println("${a < b} ${a > b} ${a <= Name("alpha")} ${a >= b} ${a == Name("alpha")}")
+  let names = [Name("pear"), Name("apple"), Name("fig"), Name("apple2")].sort()
+  os.stdio.println(names.map(fn(n) { n.0 }).join(","))
+  let temps = [Temp(3), Temp(-7), Temp(0), Temp(-1)].sort()
+  os.stdio.println(temps.map(fn(t) { "${t.0}" }).join(","))
+  os.stdio.println("${Temp(-7).min(Temp(2)).0} ${Temp(-7).max(Temp(2)).0} ${Temp(9).clamp(Temp(0), Temp(5)).0}")
+  let tags = [Tag(Ver{major: 1, minor: 10}), Tag(Ver{major: 1, minor: 2}), Tag(Ver{major: 0, minor: 99})].sort()
+  os.stdio.println(tags.map(fn(t) { "${t.0.major}.${t.0.minor}" }).join(" "))
+  let ws = [Wrap(2.5), Wrap(-1.0), Wrap(10.5)]
+  os.stdio.println("${(largest(ws) ?? Wrap(0.0)).0} ${Wrap("b") < Wrap("a")}")
+  let o: Name? = Some(Name("z"))
+  os.stdio.println("${o > None} ${Some(Name("a")) < o}")
+}

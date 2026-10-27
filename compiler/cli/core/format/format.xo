@@ -1017,6 +1017,7 @@ fn (var p: Printer) type_decl(d: parser.TypeDecl) {
       p.typ(t)
     }
     p.w(")")
+    p.derive(d.derive, [])
     return
   }
   p.w(" = ")

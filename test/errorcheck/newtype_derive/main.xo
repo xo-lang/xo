@@ -1,0 +1,17 @@
+// derive on a newtype (decision 0390): Ord only, over an Ord value.
+
+struct Point {
+  x: Int
+}
+
+type Spot struct(Point) derive Ord // ERROR XO0404 "needs the newtype's value to implement `Ord`, but `Spot` holds `Point`"
+
+type Callback struct(fn(Int) -> Int) derive Ord // ERROR XO0404 "needs the newtype's value to implement `Ord`"
+
+type Label struct(Str) derive Display // ERROR XO0404 "a newtype derives only `Ord`"
+
+type Plain struct(Str)
+
+fn main(os: Os) {
+  os.stdio.println("${Plain("a") < Plain("b")}") // ERROR XO0404 "`Plain` does not implement `Ord`"
+}

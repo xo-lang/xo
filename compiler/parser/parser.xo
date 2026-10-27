@@ -1459,6 +1459,14 @@ fn (var p: Parser) parse_type_decl(doc: Doc?, is_pub: Bool, start: Pos) -> Decl 
     p.expect(Kind.LParen, "`(` after `struct` in a newtype")
     d.typ = Some(p.parse_type())
     p.expect(Kind.RParen, "`)`")
+    if !p.bad {
+      // decision 0390: the checker takes Ord only and reports arguments
+      let (ds, args) = p.parse_derive()
+      d.derive = ds
+      if let Some(a) = args.first() {
+        p.fail(UNEXPECTED_TOKEN, a.span, "a newtype's derive takes no arguments: it derives `Ord` only (decision 0390)")
+      }
+    }
   } else {
     p.error_expected("`=` or `struct(` in a type declaration")
   }

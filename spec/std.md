@@ -53,7 +53,8 @@ interface Debug   { fn debug(self) -> Str }     // implemented for every type
 `Eq` and `Hash` are automatic when all fields implement them (handles and
 function values never do, so a value holding one is not comparable: core
 2.9, decision 0112); `Ord` comes from
-`derive Ord` (field order, then variant order). Builtin scalar types, `Str`,
+`derive Ord` (field order, then variant order; a newtype's value's order,
+core 2.8, decision 0390). Builtin scalar types, `Str`,
 `Duration`, and `Time` are `Ord`. `Float` is `Ord` with a total order in which
 NaN sorts after every other value (all NaNs are equal in the order) and
 `-0.0` and `0.0` are equal: `-Inf < ... < -0.0 = 0.0 < ... < +Inf < NaN`

@@ -308,6 +308,7 @@ fn (var c: Checker) resolve_type_obj(t: Int) {
         Some(x) => c.resolve_type(x, env)
         None => c.bad_ty
       }
+      c.objs[t].derives = c.derives_of(td.derive)
     }
     _ => {}
   }

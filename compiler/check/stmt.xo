@@ -162,6 +162,11 @@ fn (var c: Checker) check_module(m: Int) {
             c.check_derives(c.files[f].decl_objs[i], ed.derive)
           }
         }
+        TypeDecl(d: td) => {
+          if !td.derive.is_empty() && c.is_scope_entry(f, i, td.name.name) {
+            c.check_newtype_derives(c.files[f].decl_objs[i], td.derive)
+          }
+        }
         _ => {}
       }
     }
@@ -691,6 +696,30 @@ fn (var c: Checker) const_bad(sp: Span, what: Str) {
 
 // ---------------------------------------------------------------------------
 // Derives (stmt.go checkDerives)
+
+/// A newtype's derives (decision 0390): `Ord` only, the order of its
+/// value, which must be Ord; its equality, hashing and JSON are its
+/// value's already (core 2.8).
+fn (var c: Checker) check_newtype_derives(t: Int, ids: List[Ident]) {
+  for id in ids {
+    let n = text(id.name)
+    if !is_derivable(id.name) {
+      // derives_of reported it
+      continue
+    }
+    if n != "Ord" {
+      c.error("XO0404", id.span, "a newtype derives only `Ord`: `${text(c.objs[t].name)}` has its value's equality, hashing and JSON already (core 2.8, decision 0390)")
+      continue
+    }
+    let vt = c.objs[t].target
+    if vt < 0 || c.is_bad(vt) || c.mentions_param(vt) {
+      continue
+    }
+    if !c.is_ord(vt) {
+      c.error("XO0404", id.span, "`derive Ord` needs the newtype's value to implement `Ord`, but `${text(c.objs[t].name)}` holds `${c.show(vt)}`")
+    }
+  }
+}
 
 fn (var c: Checker) check_derives(t: Int, ids: List[Ident]) {
   for id in ids {

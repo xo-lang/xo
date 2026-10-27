@@ -925,6 +925,12 @@ whose underlying type is Json is Json):
   same name, the variant is meant.
 - Construction and reading are open wherever the type is visible; a type
   that must guard its value is a struct with a non `pub` field.
+- `derive Ord` after the declaration (`type Name struct(Str) derive Ord`)
+  orders the newtype by its value: `<`, sorting, `min`, `max`, and
+  `T: Ord` code see `Name("a") < Name("b")` as `"a" < "b"`. The value's
+  type must be `Ord` (else `XO0404`). A newtype is not ordered without
+  it, and `Ord` is the only derive it takes (`XO0404` for any other: its
+  equality, hashing, and JSON are its value's already; decision 0390).
 
 ```
 type Email struct(Str)
@@ -3458,7 +3464,7 @@ EnumDecl    = "enum" ident [ TypeParams ] "{" { Variant } "}" [ Derive ] .
 Variant     = { DocComment } ident [ "(" VField { "," VField } ")" ] .
 VField      = ident ":" Type | "from" Type .
 IfaceDecl   = "interface" ident [ TypeParams ] "{" { FnSig } "}" .
-TypeDecl    = "type" ident [ TypeParams ] ( "=" Type | "struct" "(" Type ")" ) .
+TypeDecl    = "type" ident [ TypeParams ] ( "=" Type | "struct" "(" Type ")" [ Derive ] ) .
 ConstDecl   = "const" ident [ ":" Type ] "=" Expr .
 TestDecl    = "test" string [ "for" Param { "," Param } ] [ "seed" int ]
               [ "uses" EffectList ] Block .

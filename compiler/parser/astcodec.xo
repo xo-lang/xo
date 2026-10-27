@@ -9,7 +9,7 @@
 use github.com/xo-lang/xo/compiler/lexer
 
 /// The version of the form: a change to the AST or this file changes it.
-pub const AST_CODEC_VERSION = "xo ast codec v1"
+pub const AST_CODEC_VERSION = "xo ast codec v2"
 
 struct Enc {
   b: BytesBuilder = BytesBuilder.new()
@@ -362,6 +362,7 @@ fn (var e: Enc) decl(d: Decl) {
       e.tparams(t.type_params)
       e.bool(t.newtype)
       e.otyp(t.typ)
+      e.idents(t.derive)
     }
     ConstDecl(c) => {
       e.int(5)
@@ -1349,7 +1350,8 @@ fn (var r: Dec) decl() -> Decl {
       let tps = r.tparams()
       let nt = r.bool()
       let t = r.otyp()
-      Decl.TypeDecl(d: TypeDecl{span: s, doc: doc, is_pub: pb, name: n, type_params: tps, newtype: nt, typ: t})
+      let dv = r.idents()
+      Decl.TypeDecl(d: TypeDecl{span: s, doc: doc, is_pub: pb, name: n, type_params: tps, newtype: nt, typ: t, derive: dv})
     }
     5 => Decl.ConstDecl(d: r.constdecl())
     6 => {

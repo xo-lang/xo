@@ -230,6 +230,8 @@ pub struct TypeDecl {
   pub type_params: List[TypeParam]
   pub newtype: Bool = false
   pub typ: Type? = None
+  /// a newtype's `derive Ord` (decision 0390)
+  pub derive: List[Ident] = []
 }
 
 /// `const NAME [: T] = value`, at top level or as a statement.

@@ -1726,8 +1726,9 @@ fn (var b: Builder) raw_generic(name: Str, t: Int, es: List[Expr?]) -> (Int, Boo
   (-1, false)
 }
 
-/// a.min(b) or a.max(b) on Int, Float, the sized integers, and Str; -1
-/// for another type (ordMinMax).
+/// a.min(b) or a.max(b) on Int, Float, the sized integers, Str, and an
+/// orderable struct, enum, tuple or newtype; -1 for another type
+/// (ordMinMax).
 fn (var b: Builder) ord_min_max(name: Str, a: Int, c: Int) -> Int {
   let t = b.vty(a)
   if b.m.is_sized(t) {
@@ -1737,9 +1738,12 @@ fn (var b: Builder) ord_min_max(name: Str, a: Int, c: Int) -> Int {
     let base = if b.tkind(t) == Kind.Float { "Float" } else { "Int" }
     return b.call("${base}.${name}", t, "", [a, c])
   }
-  if b.tkind(t) == Kind.Str {
+  // Str by str.cmp; a derived Ord struct, enum or tuple, or a newtype
+  // (decision 0390), by its xo.cmp[T]
+  let cf = if b.tkind(t) == Kind.Str { "str.cmp" } else { b.cmp_func(t) }
+  if !cf.is_empty() {
     let bt = b.bool_t()
-    let cmp = b.call("str.cmp", b.int_t(), "", [c, a])
+    let cmp = b.call(cf, b.int_t(), "", [c, a])
     var pick = -1
     if name == "min" {
       pick = b.add(Op.Lt, bt, Aux.None, [cmp, b.cint(0)])
