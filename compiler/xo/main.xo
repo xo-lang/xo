@@ -1452,11 +1452,10 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // and target directories name the architecture, m.goarch; amd64 since
     // 2026-10-26), not with $XO_PASSES changed either way (+ or -: its keys
     // do not say so), nor for --race (its instrumented code has the same
-    // keys), nor for windows: emitting a function records the C functions
-    // it calls in g.w64 (x86win.xo w64_sym), whose thunks w64_thunks
-    // writes, and a cached function is not emitted, so its thunks would be
-    // missing (an undefined xo_w64_WaitOnAddress, 2026-10-26)
-    let (fc, fdir, fpk) = if passes_changed(os) || gm.race || tgoos == "windows" { (arm64.FnCache{}, "", Pack{}) } else { fn_cache_load(os, ctx, gm, tgoos, jobs, release, pre) }
+    // keys); windows since 2026-10-27: an entry carries the thunks and
+    // weak symbols its functions call through (fcache.xo put_w64; they
+    // were missing on a hit, an undefined xo_w64_WaitOnAddress)
+    let (fc, fdir, fpk) = if passes_changed(os) || gm.race { (arm64.FnCache{}, "", Pack{}) } else { fn_cache_load(os, ctx, gm, tgoos, jobs, release, pre) }
     if !fdir.is_empty() {
       t = lap(os, phases, "fn_keys", t)
     }

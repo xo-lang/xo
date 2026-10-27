@@ -50,6 +50,10 @@ struct FnRec {
   wants: List[(Str, Int, Str, Str, Str)] = []
   /// the program wide code it uses (ref_flags)
   flags: Int = 0
+  /// windows/amd64: the thunks (G.w64) and weak symbols (G.wsyms) it
+  /// calls through, which w64_thunks and w64_weak write once per module
+  w64: Map[Str, Str] = {}
+  wsyms: Map[Str, Bool] = {}
 }
 
 // ---------------------------------------------------------------------------
@@ -123,12 +127,18 @@ fn (var g: G) canon_function(fi: Int) -> (FnRec, List[(Str, Want)]) {
   g.helped = {}
   let saved = g.ref_flags()
   g.set_ref_flags(0)
+  let sw = g.w64
+  let ss = g.wsyms
+  g.w64 = {}
+  g.wsyms = {}
   let t0 = g.text.len()
   let l0 = g.lsdas.len()
   let d0 = g.dbgs.len()
   g.function(fi)
-  var r = FnRec{strs: g.cstrs, locs: g.clocs, flags: g.ref_flags()}
+  var r = FnRec{strs: g.cstrs, locs: g.clocs, flags: g.ref_flags(), w64: g.w64, wsyms: g.wsyms}
   g.set_ref_flags(saved)
+  g.w64 = sw
+  g.wsyms = ss
   if g.text.len() > t0 {
     r.text = g.text.pop() ?? ""
   }
@@ -164,6 +174,12 @@ fn (var g: G) place_text(r: FnRec, wants: List[(Str, Want)]) {
     }
   }
   g.set_ref_flags(g.ref_flags() | r.flags)
+  for (k, sig) in r.w64 {
+    g.w64[k] = sig
+  }
+  for (k, _) in r.wsyms {
+    g.wsyms[k] = true
+  }
   let fp = "${g.ns}f${g.nfunc}"
   let fnum = "${g.ns}${g.nfunc}"
   if !r.text.is_empty() {
@@ -280,7 +296,36 @@ fn encode_rec(r: FnRec, ws: List[(Str, Int, Str, Str, Str)]) -> Bytes {
     put_field(b, tn.bytes())
     put_field(b, fname.bytes())
   }
+  put_w64(b, r.w64, r.wsyms)
   b.freeze()
+}
+
+/// The windows/amd64 thunks and weak symbols of an entry, sorted, as an
+/// optional tail: nothing when both are empty, so every other target's
+/// entries (and their keys) stay as they were, and an older xo reads a
+/// tail as a malformed entry, a miss.
+fn put_w64(var b: BytesBuilder, w64: Map[Str, Str], wsyms: Map[Str, Bool]) {
+  if w64.is_empty() && wsyms.is_empty() {
+    return
+  }
+  var ks: List[Str] = []
+  for (k, _) in w64 {
+    ks.push(k)
+  }
+  var ss: List[Str] = []
+  for (k, _) in wsyms {
+    ss.push(k)
+  }
+  put_field(b, "w64".bytes())
+  put_field(b, "${ks.len()}".bytes())
+  for k in ks.sort() {
+    put_field(b, k.bytes())
+    put_field(b, (w64.get(k) ?? "").bytes())
+  }
+  put_field(b, "${ss.len()}".bytes())
+  for k in ss.sort() {
+    put_field(b, k.bytes())
+  }
 }
 
 /// A reader of length prefixed fields; ok turns false on a malformed
@@ -321,6 +366,35 @@ fn (var r: FieldReader) str() -> Str {
       ""
     }
   }
+}
+
+/// The optional tail put_w64 writes, when the entry has one.
+fn (var r: FieldReader) w64_tail() -> (Map[Str, Str], Map[Str, Bool]) {
+  var w64: Map[Str, Str] = {}
+  var wsyms: Map[Str, Bool] = {}
+  if !r.ok || r.at >= r.d.len() {
+    return (w64, wsyms)
+  }
+  if r.str() != "w64" {
+    r.ok = false
+    return (w64, wsyms)
+  }
+  let n = r.int()
+  for _ in 0..n {
+    if !r.ok {
+      return (w64, wsyms)
+    }
+    let k = r.str()
+    w64[k] = r.str()
+  }
+  let m = r.int()
+  for _ in 0..m {
+    if !r.ok {
+      return (w64, wsyms)
+    }
+    wsyms[r.str()] = true
+  }
+  (w64, wsyms)
 }
 
 fn (var r: FieldReader) int() -> Int {
@@ -371,6 +445,9 @@ fn decode_rec(d: Bytes) -> Option[(FnRec, List[(Str, Int, Str, Str, Str)])] {
     let fname = r.str()
     ws.push((k, op, kind, tn, fname))
   }
+  let (w64, wsyms) = r.w64_tail()
+  rec.w64 = w64
+  rec.wsyms = wsyms
   if !r.ok || r.at != d.len() {
     return None
   }

@@ -165,12 +165,9 @@ func TestBackendCacheEditIdentity(t *testing.T) {
 			t.Fatal(err)
 		}
 		// the amd64 backend's per-function and part caches too (2026-10-26):
-		// an x86 ELF and an x86_64 Mach-O, cross built here; a PE has no
-		// per-function or part cache (its C functions' thunks are recorded
-		// while a function is emitted) but the rest of the edit path, checked
-		// the same
+		// an x86 ELF, an x86_64 Mach-O and a PE, cross built here (the PE's
+		// since 2026-10-27: its entries carry the C functions' thunks)
 		for _, target := range []string{"", "linux/arm64", "linux/amd64", "darwin/amd64", "windows/amd64"} {
-			pe := strings.HasPrefix(target, "windows/")
 			on, log := build(t, "on", target, "XO_BACKEND_CACHE=on")
 			off, _ := build(t, "off", target, "XO_BACKEND_CACHE=off")
 			if !bytes.Equal(on, off) {
@@ -181,13 +178,13 @@ func TestBackendCacheEditIdentity(t *testing.T) {
 			if s.name != "first" && !regexp.MustCompile(`cache fe [1-9]\d*/\d+ bodies`).MatchString(log) {
 				t.Errorf("%s %s: no function body read from the front end cache:\n%s", s.name, target, log)
 			}
-			if s.name != "first" && (!reused(log, "rc") || !pe && !reused(log, "functions")) {
+			if s.name != "first" && (!reused(log, "rc") || !reused(log, "functions")) {
 				t.Errorf("%s %s: no function read from the cache, so the test compares nothing:\n%s", s.name, target, log)
 			}
 			// from the third build on (the parts are in the target's pack
 			// only, written by the second), an unchanged part is read
 			// whole (stage D 2e) and the edited function's is generated
-			if s.name != "first" && s.name != "again" && !pe && !reused(log, "parts") {
+			if s.name != "first" && s.name != "again" && !reused(log, "parts") {
 				t.Errorf("%s %s: no part read from the cache, so the part cache is not tested:\n%s", s.name, target, log)
 			}
 			// from the third build on, functions whose inlining is read

@@ -558,12 +558,14 @@ knowledgebase/gotchas/amd64-retarget-semantic-gaps.md:
 
 Not yet: darwin/amd64 and windows/amd64 (Mach-O and PE, stage 4's
 rest), DWARF variable locations (debug_info is off for
-amd64), the per-function cache on windows/amd64 (darwin and linux since
-2026-10-26, with lazy inline decode and the deferred verification:
-bench/results/amd64-edit-cache-2026-10-26.md), native x86 selection where the
+amd64), native x86 selection where the
 translation costs (the bench/perf comparison with LLVM, the lead's third
 condition). Shrink wrapping (decision 0224) runs for amd64 since
-2026-10-17.
+2026-10-17. The per-function and part cache, lazy inline decode and the
+deferred verification run for amd64 on darwin and linux since 2026-10-26
+(bench/results/amd64-edit-cache-2026-10-26.md) and on windows since
+2026-10-27, its entries carrying the thunks and weak symbols their
+functions call through (gotchas/fn-cache-hit-skips-emit-side-tables.md).
 
 - Stage 1 landed (Xo Lang 2, 2026-10-17): selfhost/macho enc_amd64.xo
   (the encoder) and asm_amd64.xo (the assembler, with amd64 paths in

@@ -14,6 +14,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   block (it imports http, sql, log and json, so every build parsed them): an
   llvm-fib edit rebuild 283 to 244 ms. `xo check`, `xo test`, vet and the language
   server load it as before, and a build still type-checks inline test blocks.
+- `--backend=amd64` edit rebuilds for windows reuse every unchanged function
+  and part through the back-end cache too, as darwin and linux builds have since
+  2026-10-26 (each cache entry carries the Win64 thunks its functions call through)
 - An edit rebuild is a few ms faster: the checker's syntax trees and tables are
   released on a task beside the passes after the SSA is built, not on the build's
   thread. Opt in (XO_CHAIN_KEYS=1, decision 0382): the landings and the cleanup

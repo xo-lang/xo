@@ -90,6 +90,7 @@ fn encode_part(g: G, part: Part) -> Option[Bytes] {
     put_field(b, tn.bytes())
     put_field(b, fname.bytes())
   }
+  put_w64(b, part.w64, part.wsyms)
   Some(b.freeze())
 }
 
@@ -122,6 +123,9 @@ fn decode_part(g: G, d: Bytes) -> Option[Part] {
     let fname = r.str()
     nws.push((k, op, kind, tn, fname))
   }
+  let (w64, wsyms) = r.w64_tail()
+  p.w64 = w64
+  p.wsyms = wsyms
   if !r.ok || r.at != d.len() {
     return None
   }

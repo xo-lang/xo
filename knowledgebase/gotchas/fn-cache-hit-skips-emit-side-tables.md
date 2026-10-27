@@ -17,11 +17,13 @@ read from the cache (arm64.generate_cached) is never emitted, so it
 records nothing, and its thunks are missing. The cache entry carries the
 text, not the side tables the text depends on.
 
-**Fix.** The per-function and part cache stays off for windows
-(compiler/xo/main.xo build_native, `tgoos == "windows"`); lazy inline
-decode and the deferred verification run there, since they do not
-depend on it. To turn it on for windows, store each function's g.w64
-entries in its cache entry and add them back on a hit (and check every
-other `g.` table an emitter fills per function the same way). The
-general rule: before serving a function's text from a cache, list every
+**Fix.** Until 2026-10-27 the per-function and part cache stayed off for
+windows. Since then each function's entry (compiler/arm64 fcache.xo
+FnRec) and each part's (partcache.xo) carry the g.w64 thunks and the
+g.wsyms weak symbols (COFF `/alternatename`, calls.xo weak_ref) their
+functions recorded, as an optional tail (put_w64) written only when one
+is non-empty, so other targets' entries and keys are unchanged; a hit
+adds them back (place_text, gen_part's merge). The other per-function
+tables an emitter fills are the ref flags, wants, strings and positions,
+which the entry already carried. The general rule: before serving a function's text from a cache, list every
 table its emission writes outside its text.
