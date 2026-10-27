@@ -744,18 +744,39 @@ fn parse_address_list(s: Str) -> List[mail.Address] ! mail.MailErr {
 // Address.String
 
 fn quote_string(s: Str) -> Str {
-  var out = StrBuilder.new()
-  out.write("\"")
-  for r in s.runes() {
-    if is_qtext(r) || is_wsp(r) {
-      out.write("${r}")
-    } else if is_vchar(r) {
-      out.write("\\")
-      out.write("${r}")
+  let b = s.bytes()
+  var out = BytesBuilder.with_capacity(b.len() + 4)
+  out.write_byte('"')
+  var i = 0
+  while i < b.len() {
+    let c = b[i]
+    if c >= 128 {
+      // a rune at or above U+0080 is qtext; invalid UTF-8 becomes U+FFFD
+      let (r, n) = b.decode_rune(i)
+      out.write_str("${r}")
+      i += n
+    } else {
+      if c == '\\' || c == '"' {
+        out.write_byte('\\')
+        out.write_byte(c)
+      } else if (c >= '!' && c <= '~') || c == ' ' || c == '\t' {
+        out.write_byte(c)
+      }
+      i += 1
     }
   }
-  out.write("\"")
-  out.freeze()
+  out.write_byte('"')
+  bytes_text(out.freeze())
+}
+
+/// Every byte of s printable ASCII, a space or a tab.
+fn plain_ascii(s: Str) -> Bool {
+  for c in s.bytes() {
+    if !((c >= '!' && c <= '~') || c == ' ' || c == '\t') {
+      return false
+    }
+  }
+  true
 }
 
 fn address_display(a: mail.Address) -> Str {
@@ -794,7 +815,7 @@ fn address_display(a: mail.Address) -> Str {
   if a.name.is_empty() {
     return s
   }
-  if a.name.runes().all(fn(r) { (is_vchar(r) || is_wsp(r)) && Int(r) < 128 }) {
+  if plain_ascii(a.name) {
     return quote_string(a.name) + " " + s
   }
   for c in "\"#$%&'(),.:;<>@[]^`{|}~".runes() {

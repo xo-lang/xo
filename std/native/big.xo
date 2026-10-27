@@ -6,6 +6,7 @@
 // elsewhere (stage 1: the results are the same, the speed is not Go's for
 // operands of thousands of bits). Variable time: not for secrets.
 use std/big
+use native/llrt/bigmod
 use native/llrt/raw
 
 fn bigerr_display(e: big.BigErr) -> Str { e.msg }
@@ -635,6 +636,12 @@ fn nat_exp(x: List[Int], y: List[Int], m: List[Int]) -> List[Int] {
   }
   if x.len() == 1 && x[0] == 1 {
     return [1]
+  }
+  if m.len() > 1 && (m[0] & 1) == 1 {
+    // an odd modulus of more than one word: Montgomery multiplication
+    // (Go's expNNMontgomery), bigmod's 4 bit window
+    let md = bigmod.modulus(m)
+    return norm(bigmod.from_mont(md, bigmod.exp(md, bigmod.reduce(md, x), y)))
   }
   var base = x
   if !m.is_empty() {

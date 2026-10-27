@@ -1,5 +1,19 @@
 # std/big changes
 
+## 2026-10-27: perf: exp with an odd modulus uses Montgomery multiplication
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/big, the std Go twin (exp 12.75x Go: a full division after every product)
+- Go reference: math/big nat.expNNMontgomery (go1.26.1)
+- Test: internal/stdtest big corpus; bench/perf/big twincheck
+
+`x.exp(y, Some(m))` with m odd and above one word runs in
+native/llrt/bigmod's Montgomery domain (its 4 bit window, the RSA code's
+exp), as Go does for an odd modulus of more than one word. Quiet --ab, 10
+rounds: a 1024 bit exp wall 0.072 against the parent (instructions
+0.196), 0.92x Go.
+
 ## 2026-10-21: perf: divide and conquer text natively
 
 - Kind: perf

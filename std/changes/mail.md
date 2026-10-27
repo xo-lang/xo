@@ -1,5 +1,19 @@
 # std/mail changes
 
+## 2026-10-27: perf: Address.display quotes a name by its bytes
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/mail, the std Go twin (display 2.80x Go: a rune list per check and a string per rune)
+- Go reference: net/mail Address.String, quoteString (go1.26.1)
+- Test: internal/stdtest mail corpus; bench/perf/mail twincheck
+
+quote_string writes ASCII bytes straight to a BytesBuilder and decodes a
+rune only at a byte of 128 or more (invalid UTF-8 still becomes U+FFFD),
+and the printable ASCII test of the name is a byte loop instead of
+`runes().all`. Quiet --ab, 15 rounds, the parent's std as A: display wall
+0.361 (instructions 0.497), about 1.01x Go; addr within noise.
+
 ## 2026-10-22: perf: the Date header uses a time.Layout
 
 - Kind: perf

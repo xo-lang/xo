@@ -44,8 +44,10 @@ fn zeros(n: Int) -> List[Int] { raw.zero_ints(n) }
 // ---------------------------------------------------------------------------
 // CRC-32 (IEEE), hash/crc32
 
+/// Eight 256 entry tables, slicing-by-8 (hash/crc32's slicing8Table):
+/// entry k*256+i is the CRC of byte i followed by k zero bytes.
 pub fn crc_table() -> List[Int] {
-  var t: List[Int] = []
+  var t = zeros(2048)
   var i = 0
   while i < 256 {
     var c = i
@@ -58,7 +60,13 @@ pub fn crc_table() -> List[Int] {
       }
       k += 1
     }
-    t.push(c)
+    t[i] = c
+    i += 1
+  }
+  i = 256
+  while i < 2048 {
+    let p = t[i - 256]
+    t[i] = (p >> 8) ^ t[p & 255]
     i += 1
   }
   t
@@ -68,8 +76,29 @@ pub fn crc32(t: List[Int], crc0: Int, b: Bytes) -> Int {
   var c = crc0 ^ 0xffffffff
   var i = 0
   let n = b.len()
+  while i + 8 <= n {
+    c = c ^ (byte_of(b, i) | (byte_of(b, i + 1) << 8) | (byte_of(b, i + 2) << 16) | (byte_of(b, i + 3) << 24))
+    c = t[1792 + (c & 255)] ^ t[1536 + ((c >> 8) & 255)] ^ t[1280 + ((c >> 16) & 255)] ^ t[1024 + (c >> 24)] ^ t[768 + byte_of(b, i + 4)] ^ t[512 + byte_of(b, i + 5)] ^ t[256 + byte_of(b, i + 6)] ^ t[byte_of(b, i + 7)]
+    i += 8
+  }
   while i < n {
     c = t[(c ^ byte_of(b, i)) & 255] ^ (c >> 8)
+    i += 1
+  }
+  c ^ 0xffffffff
+}
+
+/// crc32 of the bytes l[from..to] (each 0 to 255), without copying them.
+pub fn crc32_list(t: List[Int], crc0: Int, l: List[Int], from: Int, to: Int) -> Int {
+  var c = crc0 ^ 0xffffffff
+  var i = from
+  while i + 8 <= to {
+    c = c ^ (l[i] | (l[i + 1] << 8) | (l[i + 2] << 16) | (l[i + 3] << 24))
+    c = t[1792 + (c & 255)] ^ t[1536 + ((c >> 8) & 255)] ^ t[1280 + ((c >> 16) & 255)] ^ t[1024 + (c >> 24)] ^ t[768 + l[i + 4]] ^ t[512 + l[i + 5]] ^ t[256 + l[i + 6]] ^ t[l[i + 7]]
+    i += 8
+  }
+  while i < to {
+    c = t[(c ^ l[i]) & 255] ^ (c >> 8)
     i += 1
   }
   c ^ 0xffffffff
@@ -1831,14 +1860,8 @@ pub fn gunzip_members(data: Bytes, limit: Int) -> List[Int] ! Str {
     if n - pos < 8 {
       return Err("unexpected EOF")
     }
-    var member: List[Int] = []
-    var i = member_start
-    while i < out.len() {
-      member.push(out[i])
-      i += 1
-    }
     let size = out.len() - member_start
-    if get_u32(data, pos) != crc32(t, 0, bytes_of(member)) || get_u32(data, pos + 4) != (size & 0xffffffff) {
+    if get_u32(data, pos) != crc32_list(t, 0, out, member_start, out.len()) || get_u32(data, pos + 4) != (size & 0xffffffff) {
       return Err("gzip: invalid checksum")
     }
     pos += 8
