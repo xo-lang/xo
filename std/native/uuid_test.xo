@@ -139,7 +139,7 @@ const PARSE: List[(Str, Str, Str)] = [
 
 test "google/uuid parse" {
   for (input, want, e) in PARSE {
-    let got = parse(input).map(fn(u) { u.0 })
+    let got = parse(input).map(fn(u) { u.display() })
     if e.is_empty() {
       expect(got) == Ok(want)
     } else {
@@ -152,8 +152,8 @@ test "v4 and v7 bits" {
   for _ in 0..50 {
     let a = v4(os.rand)
     expect(uuid_version(a)) == 4
-    expect("89ab".contains(a.0[19..20])) == true
-    expect(parse(a.0)) == Ok(a)
+    expect("89ab".contains(a.display()[19..20])) == true
+    expect(parse(a.display())) == Ok(a)
     let b = v7(os.rand, os.clock)
     expect(uuid_version(b)) == 7
     // the first 48 bits are the Unix time in milliseconds
@@ -170,12 +170,14 @@ test "v7 keys sort by time" {
   let first = v7(os.rand, os.clock)
   os.clock.advance(5ms)
   let second = v7(os.rand, os.clock)
-  expect(first.0 < second.0) == true
+  expect(first < second) == true
+  expect([second, first].sort()) == [first, second]
+  expect(second.max(first)) == second
 }
 
 test "bytes round trip" {
   let u = parse("6ba7b810-9dad-11d1-80b4-00c04fd430c8").or_fault("parses")
   expect(from_bytes(uuid_bytes(u))) == Ok(u)
   expect(from_bytes(b"\x00").is_err()) == true
-  expect(nil().0) == "00000000-0000-0000-0000-000000000000"
+  expect(nil().display()) == "00000000-0000-0000-0000-000000000000"
 }

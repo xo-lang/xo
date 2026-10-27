@@ -8,4 +8,5 @@ error invalid UUID length: 35
 error invalid urn prefix: "urn:uid::"
 error invalid UUID format
 v4 4 36 v7 7 true nil 00000000-0000-0000-0000-000000000000
+order true true false 0000 00ff 1000 1
 --- stderr

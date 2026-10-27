@@ -2,11 +2,13 @@
 // rules are listed at the top of std/prelude.xo. RFC 9562 UUIDs, following
 // github.com/google/uuid: random (v4) and time ordered (v7) ones from the
 // Rand and Clock capabilities, and parsing. A Uuid is its canonical text
-// (lower case 8-4-4-4-12): equality, order, hashing, and JSON are the
-// text's, and it reads and writes as a Postgres uuid with sql.str.
+// (lower case 8-4-4-4-12): equality, order (`u < v`, derive Ord on the
+// newtype, decision 0390), hashing, and JSON are the text's, and it reads and writes as a Postgres uuid with sql.str.
 
-/// A UUID: its canonical text, `u.0` (compare texts to order UUIDs).
-type Uuid struct(Str)
+/// A UUID: its canonical text, `u.display()`; `u < v` orders UUIDs as
+/// their bytes. `u.0`, the pattern `Uuid(p)`, and `Uuid(s)` are deprecated
+/// (XO0912, decision 0387): the next minor makes a Uuid two Ints.
+type Uuid struct(Str) derive Ord
 
 /// Displays as google/uuid's texts: `invalid UUID length: 35`,
 /// `invalid UUID format`, `invalid urn prefix: "urn:uid::"`.

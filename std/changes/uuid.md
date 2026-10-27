@@ -1,5 +1,33 @@
 # std/uuid changes
 
+## 2026-10-27: feature: a Uuid is Ord (`u < v`, sort, min, max)
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0387 (owner, 2026-10-27, option (c)): order with `u < v` instead of `u.0 < v.0`, which XO0912 deprecates
+- Go reference: google/uuid's UUID is a [16]byte array, which Go orders with bytes.Compare
+- Test: std/native/uuid_test.xo "v7 keys sort by time" (`<`, sort, max; arm64, LLVM); golden uuid_basic's order line (every backend)
+
+`type Uuid struct(Str) derive Ord` (decision 0390): two UUIDs order as
+their canonical texts, which is the order of their bytes, so v7 keys made
+later sort later. The two Int representation of the next minor keeps the
+same order.
+
+## 2026-10-27: behavior: reading or building a Uuid's text directly is deprecated (vet XO0912)
+
+- Kind: behavior
+- Commit: this commit
+- Found by: decision 0387 (owner, 2026-10-27, option (c)): the two Int representation the bytes row needs removes the text field next release
+- Go reference: google/uuid's UUID is a [16]byte value with String()
+- Test: cmd/xo TestVetUuidText (`.0`, the pattern, the constructor flagged once each; display(), parse and another newtype's `.0` not)
+
+`u.0`, the pattern `uuid.Uuid(p)` and `uuid.Uuid(s)` keep working in
+0.33.0, and `xo vet` reports each outside std as the warning XO0912.
+`u.display()` (or `"${u}"`) gives the text and `uuid.parse` builds a
+UUID from one. The next minor release makes a Uuid two Ints and removes
+them. The repository's uses (bench/perf/uuid, golden uuid_basic,
+std/native/uuid_test.xo) read `display()` now.
+
 ## 2026-10-27: perf: the text is written and read through std/internal hooks with tables
 
 - Kind: perf

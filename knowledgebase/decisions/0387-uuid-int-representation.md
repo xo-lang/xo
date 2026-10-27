@@ -1,8 +1,8 @@
 # 0387: Uuid as two Ints instead of its canonical text
 
-Status: Proposed (Xo Lang 2, 2026-10-27, for the owner; the lead put it in
-the morning summary). Changes decision 0282's representation of
-`uuid.Uuid`, a public std type.
+Status: Accepted (owner, 2026-10-27): option (c), deprecate first and
+switch next release. Changes decision 0282's representation of
+`uuid.Uuid`, a public std type. Proposed by Xo Lang 2 the same day.
 
 ## Context
 
@@ -72,7 +72,26 @@ section 24 and the std change log say the representation changes in the
 next minor. In the next release: the two Int representation as in "break
 now", with its timings.
 
-## Recommendation
+## Decision
+
+(c), accepted by the owner on 2026-10-27. In 0.33.0:
+
+- `u.0`, the pattern `uuid.Uuid(p)` and `uuid.Uuid(s)` are deprecated:
+  `xo vet` reports each outside std as the warning `XO0912` (spec core
+  10.6), naming `u.display()` or `uuid.parse`. `display()` keeps its
+  name: it is the method `"${u}"` already calls.
+- `Uuid` becomes `Ord` (`u < v`, sorting), the order of its bytes, which
+  is the text's. Newtypes could not derive `Ord`; decision 0390 adds an
+  opt-in `derive Ord` after a newtype for this.
+- spec/std.md section 24 and std/changes/uuid.md say the representation
+  changes in the next minor.
+- The repository's own uses (bench/perf/uuid, golden uuid_basic, the
+  std tests) move to `display()` in the same change.
+
+In the next minor release: the two Int representation as in "break now",
+with its timings.
+
+## Recommendation (as proposed)
 
 (c). It gets the bytes row under the bar one release later without
 breaking code without notice, and costs one deprecation warning now. The

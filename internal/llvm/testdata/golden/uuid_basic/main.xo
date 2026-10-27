@@ -12,5 +12,10 @@ fn main(os: Os) {
   }
   let a = uuid.v4(os.rand)
   let b = uuid.v7(os.rand, os.clock)
-  os.stdio.println("v4 ${a.version()} ${a.0.len()} v7 ${b.version()} ${uuid.parse(b.0) == Ok(b)} nil ${uuid.nil().0}")
+  os.stdio.println("v4 ${a.version()} ${a.display().len()} v7 ${b.version()} ${uuid.parse(b.display()) == Ok(b)} nil ${uuid.nil().display()}")
+  // order (derive Ord, decisions 0387 and 0390): the bytes' order
+  let lo = uuid.parse("00000000-0000-0000-0000-0000000000ff").ok() ?? uuid.nil()
+  let hi = uuid.parse("10000000-0000-0000-0000-000000000000").ok() ?? uuid.nil()
+  let sorted = [hi, uuid.nil(), lo].sort()
+  os.stdio.println("order ${uuid.nil() < lo} ${lo < hi} ${hi <= lo} ${sorted.map(fn(u) { u.display()[0..2] + u.display()[34..36] }).join(" ")} ${lo.max(hi).display()[0..1]}")
 }

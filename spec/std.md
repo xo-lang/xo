@@ -3557,10 +3557,16 @@ following github.com/google/uuid v1.6.0 (outside Go's std; RFC 9562);
 google/uuid's Parse results on its test inputs in
 `std/native/uuid_test.xo`; golden `uuid_basic`. A `Uuid` field of a
 `derive Json` struct waits for newtype JSON (a code bug against core 2.8,
-being fixed); until then store `u.0`.
+being fixed); until then store `u.display()`.
+
+Deprecated in 0.33.0 (decision 0387): reading the text with `u.0`, the
+pattern `uuid.Uuid(p)`, and `uuid.Uuid(s)`. `xo vet` reports each as
+`XO0912`. The next minor release makes a `Uuid` two Ints (its 128 bits),
+which removes them; `u.display()`, `"${u}"`, `uuid.parse` and `u.bytes()`
+stay.
 
 ```
-type Uuid struct(Str)                     // its canonical text, lower case 8-4-4-4-12: `u.0`
+type Uuid struct(Str) derive Ord          // its canonical text, lower case 8-4-4-4-12: `u.display()`
 struct UuidErr { msg: Str }               // google/uuid's texts: `invalid UUID length: 35`
 
 pub fn v4(r: Rand) -> Uuid uses rand
@@ -3574,9 +3580,11 @@ fn (u: Uuid) display() -> Str
 ```
 
 - A `Uuid` is a newtype over its canonical text, so equality, hashing,
-  and JSON (a string, core 2.8) are the text's, and two UUIDs order as their texts do (`a.0 < b.0`,
-  which is the order of their bytes). It reads and writes as a Postgres
-  `uuid` column through `sql.str(u.0)` and `uuid.parse(row.str(...)?)`.
+  and JSON (a string, core 2.8) are the text's, and `a < b` (sorting,
+  `min`, `max`; `derive Ord`, decision 0390) orders two UUIDs as their
+  texts, which is the order of their bytes. It
+  reads and writes as a Postgres `uuid` column through
+  `sql.str(u.display())` and `uuid.parse(row.str(...)?)`.
 - `v4` is 122 random bits from `r` with the version 4 and variant bits
   set; `v7` is the Unix time in milliseconds from `c` (48 bits), then
   random bits, so keys made later sort later to the millisecond (no
