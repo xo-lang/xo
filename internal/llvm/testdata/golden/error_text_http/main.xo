@@ -17,7 +17,11 @@ fn main(os: Os) {
   os.stdio.println("url ${http.UrlErr{msg: "invalid port"}}")
   os.stdio.println("cookie ${http.CookieErr{msg: "bad name"}}")
   os.stdio.println("http tls ${http.TlsErr{msg: "bad pem"}}")
-  os.stdio.println("tls ${tls.TlsErr{msg: "no certificates"}}")
+  // the tls error is displayed on its concrete type: interpolating a value
+  // held in an error slot reaches only the interface's method, so the
+  // coverage sweep's walk never credited tls.TlsErr.display; the text is
+  // the same either way and want.txt does not change
+  os.stdio.println("tls ${tls.TlsErr{msg: "no certificates"}.display()}")
   os.stdio.println("smtp ${smtp.SmtpErr{code: 550, msg: "5.1.1 no such user"}}")
   os.stdio.println("smtp0 ${smtp.SmtpErr{code: 0, msg: "smtp: server doesn't support STARTTLS"}}")
   os.stdio.println("template ${template.TemplateErr{msg: "template: t:1: function \"nope\" not defined"}}")
