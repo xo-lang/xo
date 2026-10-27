@@ -30,6 +30,24 @@ since this commit), B Xo, N=20000 records of 16 KiB, 11 rounds: seal1
 wall 1.089 (1.077 to 1.097), open1 1.021 (1.004 to 1.04), from 3.671
 and 3.486; seal 1.133 (1.114 to 1.153), open 1.148 (1.13 to 1.165); a
 key and an empty seal 1.276 (1.252 to 1.291).
+## 2026-10-27: perf: ChaCha20's portable block keeps its words in locals (amd64 ChaCha20 4.1 times faster, ChaCha20-Poly1305 3.4 times)
+
+- Kind: perf
+- Commit: this commit
+- Found by: Xo Lang 4's amd64 parity audit (bench/results/amd64-crypto-vs-go-2026-10-27.md: ChaCha20 alone 5.2 times Go's scalar Go code)
+- Go reference: golang.org/x/crypto/chacha20's generic block (the sixteen words as locals)
+- Test: internal/llvm golden chacha_blocks4 (its want.txt is Go's ChaCha20) built for darwin/amd64 and run on an i7-9750H, where the portable body runs; the chacha twin's checksums equal Go's (seal, open, xor, poly); arm64 cpu_prims, crypto_prims and chacha_blocks4 goldens; wasm and Docker amd64 goldens in the gate
+
+cpu.chacha_blocks4's portable body, which amd64, LLVM on x86-64 and wasm
+run (arm64 has NEON), made two Lists a 64 byte block (the sixteen words,
+then a copy on the first write) and indexed them, with bounds checks, in
+every quarter round. The words are locals now and the quarter round
+returns its four words; the key stream is xored 8 bytes at a time.
+`xo bench --ab` on the i7-9750H, N=20000 records of 16 KiB, 11 rounds:
+A the parent, B this: ChaCha20 alone (xor) 0.244 (0.243 to 0.246),
+ChaCha20-Poly1305 seal 0.293 (0.292 to 0.294); against Go 1.26.1's twin,
+xor 1.259 (from 5.172) and seal 5.918 (from 20.39; Go's chacha20poly1305
+uses AVX2 on amd64).
 
 ## 2026-10-24: perf: RSA's Montgomery loops carry byte offsets (native sign4096 0.922 of the instructions, sign2048 0.883)
 
