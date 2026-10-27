@@ -4555,6 +4555,13 @@ paths (2026-10-18). Let seed-cut.sh make the version commit; if main
 already carries a `Version X.Y.0` commit at its head (a manual bump),
 it cuts from that commit as is instead of refusing.
 
+With agents running (lead, 2026-10-27; Last verified: 2026-10-27):
+freeze main and pause measure jobs first, and run the cut with
+`XO_HEAVY="$HOME/xo-lead/agents/heavy.sh NAME" HEAVY_PRIORITY=1`: each
+heavy step queues on its own, and the 0.33.0 cut (bulk class) took 70
+minutes instead of 35 because its gate and its darwin build each waited
+behind measure jobs queued before them.
+
 seed-cut.sh stops at the first failure, before anything is pushed when
 the failure is in the bump, `-short` (internal/xotool, cmd/xo), or the
 gate (the bump's xo builds and runs hello, and the fixed point holds).
